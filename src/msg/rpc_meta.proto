@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package msg;
+
+message rpc_meta {
+    string service_name = 1;
+    string method_name = 2;
+    int32 data_size = 3;
+}
+
+message reply_meta {
+    int32 status = 1;
+}
