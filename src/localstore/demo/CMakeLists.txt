@@ -1,16 +1,56 @@
-# obj_demo
-add_executable(obj_demo
-  obj_demo.cc
-)
+# demos
 
-target_link_libraries(obj_demo 
-  PUBLIC
+add_custom_target (demos)
+
+macro (compile_demo name)
+  set (args ${ARGN})
+
+  cmake_parse_arguments (
+    parsed_args
+    ""
+    ""
+    "SOURCES;DEPS;COPTS"
+    ${args})
+
+  set (target ${name})
+  add_executable (${target} ${parsed_args_SOURCES})
+
+  target_include_directories (${target}
+    PRIVATE 
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      "$<BUILD_INTERFACE:${COMMON_INCLUDE_DIRS}>")
+
+  target_link_libraries (${target}
+    PRIVATE
+      ${parsed_args_DEPS})
+
+  target_compile_options(${target}
+    PRIVATE
+      -Wno-error=write-strings
+      ${parsed_args_COPTS}
+  ) 
+
+  add_dependencies (demos ${target})
+endmacro ()
+
+
+compile_demo(demo_rolling
+  SOURCES
+    demo_rolling.cc
+  DEPS
     fastblock_localstore
-  PRIVATE
-    ${COMMON_LINKOPTS}
 )
 
-target_include_directories(obj_demo
-  PUBLIC
-  "$<BUILD_INTERFACE:${COMMON_INCLUDE_DIRS}>"
+compile_demo(demo_log
+  SOURCES
+    demo_log.cc
+  DEPS
+    fastblock_localstore
+)
+
+compile_demo(demo_obj
+  SOURCES
+    demo_obj.cc
+  DEPS
+    fastblock_localstore
 )

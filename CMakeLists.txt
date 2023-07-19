@@ -35,8 +35,7 @@ list(APPEND BASE_CXX_FLAGS_LIST -fPIC)
 list(APPEND BASE_C_FLAGS_LIST -fPIC)
 
 if ("${CMAKE_BUILD_TYPE}" MATCHES "Debug")
- # set(COMMON_LINKOPTS "-lasan -lubsan")
- set(COMMON_LINKOPTS)
+set(COMMON_LINKOPTS "-lasan -lubsan")
   # TODO(sunyifang):
   #   加上sanitizer，链接时就会链接动态的dpdk
   #   但是spdk的dpdk并没有导出，所以会报错无法找到对应的库
