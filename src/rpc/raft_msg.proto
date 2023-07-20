@@ -1,0 +1,162 @@
+syntax = "proto3";
+option cc_generic_services = true;
+
+message raft_entry_data_t
+{
+    string obj_name = 1;
+    bytes buf = 2;
+}
+
+// Entry that is stored in the server's entry log. 
+message raft_entry_t
+{
+    /** the entry's term at the point it was created */
+    int64 term = 1;
+
+    int64 idx = 2;
+
+    /** type of entry */
+    int32 type = 3;
+
+    raft_entry_data_t data = 4;
+}
+
+/** Appendentries message.
+ * This message is used to tell nodes if it's safe to apply entries to the FSM.
+ * Can be sent without any entries as a keep alive message.
+ * This message could force a leader/candidate to become a follower. */
+message msg_appendentries_t
+{
+    int32  node_id = 1;
+    uint64 pool_id = 2;
+    uint64 pg_id = 3;
+
+    // currentTerm, to force other leader/candidate to step down 
+    int64 term = 4;
+
+    /** the index of the log just before the newest entry for the node who
+     * receives this message */
+    int64 prev_log_idx = 5;
+
+    /** the term of the log just before the newest entry for the node who
+     * receives this message */
+    int64 prev_log_term = 6;
+
+    /** the index of the entry that has been appended to the majority of the
+     * cluster. Entries up to this index will be applied to the FSM */
+    int64 leader_commit = 7;
+
+    // array of entries within this message 
+    repeated raft_entry_t entries = 8;
+}
+
+
+/** Appendentries response message.
+ * Can be sent without any entries as a keep alive message.
+ * This message could force a leader/candidate to become a follower. */
+message msg_appendentries_response_t
+{
+    int32  node_id = 1;
+
+    /** currentTerm, to force other leader/candidate to step down */
+    int64 term = 2;
+
+    /** true if follower contained entry matching prevLogidx and prevLogTerm */
+    int32 success = 3;
+
+    /** lease expiration time */
+    int64 lease = 4;
+
+    /* Non-Raft fields follow: */
+    /* Having the following fields allows us to do less book keeping in
+     * regards to full fledged RPC */
+
+    /** If success, this is the highest log IDX we've received and appended to
+     * our log; otherwise, this is the our currentIndex */
+    int64 current_idx = 5;
+
+    /** The first idx that we received within the appendentries message */
+    int64 first_idx = 6;
+}
+
+/** Vote/prevote request message.
+ * Sent to nodes when a server wants to become leader.
+ * This message could force a leader/candidate to become a follower. */
+message msg_requestvote_t
+{
+    int32  node_id = 1;
+    uint64 pool_id = 2;
+    uint64 pg_id = 3;
+
+    /** currentTerm, to force other leader/candidate to step down */
+    int64 term = 4;
+
+    /** candidate requesting vote */
+    int32 candidate_id = 5;
+
+    /** index of candidate's last log entry */
+    int64 last_log_idx = 6;
+
+    /** term of candidate's last log entry */
+    int64 last_log_term = 7;
+
+    /** true if this is a prevote request */
+    int32 prevote = 8;
+}
+
+/** Vote/prevote response message.
+ * Indicates if node has accepted, or would accept, the server's vote request. */
+message msg_requestvote_response_t
+{
+    int32  node_id = 1;
+
+    /** currentTerm, for candidate to update itself */
+    int64 term = 2;
+
+    /** true means candidate received vote */
+    int32 vote_granted = 3;
+
+    /** true if this is a prevote response */
+    int32 prevote = 4;
+}
+
+/** InstallSnapshot request message. */
+message msg_installsnapshot_t
+{
+    int32  node_id = 1;
+    uint64 pool_id = 2;
+    uint64 pg_id = 3;
+
+    /** currentTerm, to force other leader/candidate to step down */
+    int64 term = 4;
+
+    /** Index of the last entry represented by this snapshot */
+    int64 last_idx = 5;
+
+    /** Term of the last entry represented by this snapshot */
+    int64 last_term = 6;
+}
+
+/** InstallSnapshot response message. */
+message msg_installsnapshot_response_t
+{
+    int32  node_id = 1;
+
+    /** currentTerm, to force other leader/candidate to step down */
+    int64 term = 2;
+
+    /** Same with the one in the request message */
+    int64 last_idx = 3;
+
+    /** True if the snapshot has been fully received */
+    int32 complete = 4;
+
+    /** lease expiration time */
+    int64 lease = 5;
+}
+
+service rpc_service_raft{
+    rpc append_entries(msg_appendentries_t) returns (msg_appendentries_response_t);
+    rpc vote(msg_requestvote_t) returns (msg_requestvote_response_t);
+    rpc install_snapshot(msg_installsnapshot_t) returns (msg_installsnapshot_response_t);
+}
