@@ -359,13 +359,6 @@ public:
         return cb.get_time() - election_timer;
     }
 
-    /**
-     * @return number of items within log */
-    raft_index_t raft_get_log_count()
-    {
-        return log->log_count();
-    }
-
     void raft_set_voted_for(raft_node_id_t _voted_for)
     {
         voted_for = _voted_for;
@@ -406,7 +399,7 @@ public:
      * @return current log index */
     raft_index_t raft_get_current_idx()
     {
-        return log->log_get_current_idx();
+        return current_idx;
     }
 
     /** Set the commit idx.

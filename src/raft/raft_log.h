@@ -11,7 +11,6 @@ class raft_log
 public:
     raft_log(storage::log&& log)
     : _log(std::move(log))
-    , _count(0)
     , _next_idx(0)
     , _base(0)
     , _base_term(0){}
@@ -32,17 +31,6 @@ public:
         _log.disk_append(entries, complete);
     }
 
-    /**
-     * @return number of entries held within log */
-    raft_index_t log_count(){
-        return _count;
-    }
-
-    raft_index_t log_get_current_idx()
-    {
-        return log_count() + _base;
-    }
-
     /** Get an array of entries from this index onwards.
      * This is used for batching.
      */
@@ -58,7 +46,6 @@ public:
 
     void log_clear()
     {
-        _count = 0;
         _base = 0;
         _base_term = 0;
         _entries.clear();
@@ -94,8 +81,6 @@ public:
 
 private:
     storage::log _log;
-    /* the amount of elements in the array */
-    raft_index_t _count;
 
     /* position of the queue */
     // raft_index_t front;

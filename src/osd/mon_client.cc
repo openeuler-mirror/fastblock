@@ -179,7 +179,8 @@ fbclient_monitor_rpc_processer(void *arg)
 									osds.push_back(ctx->osdmap.osd_map[osd]);
 									// osd_str += std::to_string(osd) + ",";
 								}
-								// SPDK_NOTICELOG("----- core [%u] pool:%d pg:%d osd list: [%s]--------\r\n", spdk_env_get_current_core(), p.first, pit.pgid, osd_str.c_str());
+								// SPDK_NOTICELOG("----- core [%u] pool:%d pg:%d osd list: [%s]--------\r\n", 
+								        // spdk_env_get_current_core(), p.first, pit.pgid, osd_str.c_str());
 								pit.osd_list = std::move(ol);
 								ctx->pgmap.pool_pg_map[pair.first][pg.pgid()] = std::move(pit);
 								ctx->pm->create_partition(p.first, pg.pgid(), std::move(osds), pv[pair.first]);

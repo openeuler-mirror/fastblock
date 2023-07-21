@@ -97,8 +97,6 @@ block_started(void *arg1)
 		spdk_app_stop(-1);
 		return;
 	}
-	 
-    global_pm->create_spdk_threads();
 
 	global_rs = new raft_service<partition_manager>(global_pm);
 	global_os = new osd_service(global_pm);

@@ -3,9 +3,9 @@
 
 #include "storage/log_manager.h"
 #include "raft/pg_group.h"
-#include "spdk/thread.h"
 #include "osd/osd_sm.h"
 #include "osd/mon_client.h"
+#include "utils/core_sharded.h"
 
 struct shard_revision {
     uint32_t _shard;
@@ -22,6 +22,7 @@ public:
     , _core_num(core_num)
     , _logdir(logdir)
     , _datadir(datadir)
+    , _shared(core_num)
     , _mon(host, port, node_id, this) {
         uint32_t i = 0;
         for(i = 0; i < _core_num; i++){
@@ -46,7 +47,6 @@ public:
         return _datadir;
     }
 
-    void create_spdk_threads();
     void create_pg(uint64_t pool_id, uint64_t pg_id, std::vector<osd_info_t> osds, uint32_t core_id, int64_t revision_id);
     void delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t core_id);
 
@@ -61,7 +61,12 @@ public:
         std::string name = pg_id_to_name(pool_id, pg_id);
         return _pgs.get_pg(core_id, name);
     }
-public:
+
+    int invoke_on(uint32_t core_id, core_context *context){
+        return _shared.invoke_on(core_id, context);
+    }
+
+private:
     uint32_t get_next_core_id(){
         uint32_t core_id = _next_core;
         _next_core = (_next_core + 1) % _core_num;
@@ -90,7 +95,7 @@ public:
     const uint32_t _core_num;
     std::string  _logdir;
     std::string  _datadir;
-    std::vector<struct spdk_thread *> _threads;
+    core_sharded  _shared;
     std::vector<std::map<std::string, std::shared_ptr<osd_sm>>> _sm_table;
     mon_client _mon;
 };

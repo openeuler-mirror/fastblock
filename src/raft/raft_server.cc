@@ -916,6 +916,9 @@ int raft_server_t::raft_write_entry(std::shared_ptr<msg_entry_t> ety,
     if (0 != e)
         return e;
 
+    if (raft_entry_is_voting_cfg_change(ety_ptr))
+        raft_set_voting_cfg_change_log_idx(ety->idx());
+
     if(current_idx > commit_idx){
         return 0;
     }
@@ -942,17 +945,6 @@ int raft_server_t::raft_write_entry(std::shared_ptr<msg_entry_t> ety,
 
     disk_append_complete *append_complete = new disk_append_complete(first_idx, current_idx, this);
     raft_disk_append_entries(first_idx, current_idx, append_complete);
-
-    /* if we're the only node, we can consider the entry committed */
-    // if (1 == raft_get_num_voting_nodes())
-        // raft_set_commit_idx(raft_get_current_idx());
-
-    // r->id = ety->id();
-    // r->idx = raft_get_current_idx();
-    // r->term = raft_get_current_term();
-
-    if (raft_entry_is_voting_cfg_change(ety_ptr))
-        raft_set_voting_cfg_change_log_idx(raft_get_current_idx());
 
     return 0;
 }
