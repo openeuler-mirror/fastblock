@@ -11,3 +11,13 @@ public:
         delete this;
     }  
 };
+
+struct osd_info_t
+{
+	int node_id;
+	bool isin;
+	bool isup;
+	bool ispendingcreate;
+	int port;
+	std::string address;
+};

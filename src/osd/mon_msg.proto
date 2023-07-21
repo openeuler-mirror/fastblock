@@ -1,0 +1,160 @@
+syntax = "proto3";
+package msg;
+
+message CreatePoolRequest{
+    string name = 1;
+    int32 pgsize = 2;
+    int32 pgcount = 3;
+    string failuredomain = 4;
+    string root = 5;
+}
+
+message CreatePoolResponse{
+    bool ok = 1;
+    int32 poolid = 2;
+}
+
+message ListPoolsRequest{
+}
+
+message poolinfo{
+    int32 poolid = 1;
+    string name = 2;
+    int32 pgsize = 3;
+    int32 pgcount = 4;
+    string failuredomain = 5;
+    string root = 6;
+}
+
+message ListPoolsResponse{
+    repeated poolinfo pi = 1;
+}
+
+
+message DeletePoolRequest{
+    string name = 1;
+}
+
+message DeletePoolResponse{
+    bool ok = 1;
+}
+
+message ApplyIDRequest{
+    string uuid = 1;
+}
+
+message ApplyIDResponse{
+    string uuid = 1;
+    int32 id = 2;
+}
+
+message BootRequest {
+    int32 osd_id = 1;
+    string uuid = 2;
+    int64 size = 3;
+    uint32 port = 4;
+    string address = 5;
+    string host = 6;
+}
+
+message PGInfo {
+    int32 pgid = 2;
+    repeated int32 osdid = 3;
+}
+
+message PGInfos {
+    repeated PGInfo pi = 1;
+}
+
+enum GetPgMapErrorCode
+{
+    pgMapGetOk = 0;
+    pgMapclientVersionHigher = 1;
+    PgMapclusterNoPools = 2;
+    PgMapSameVersion = 3;
+}
+
+message GetPgMapRequest{ 
+    map<int32, int64> pool_versions = 1;
+}
+
+// when osd restarts, following infomation is changed(host may not)
+message OsdDynamicInfo{  
+	int32 osdid = 1;
+	string address =2;           
+	int32 port  =3;         
+	bool isin    = 4;        
+	bool isup     = 5;       
+    bool ispendingcreate = 6;
+}
+
+message GetPgMapResponse {
+    map<int32, GetPgMapErrorCode> errorcode = 1;
+    map<int32, int64> poolid_pgmapversion = 2;
+    map<int32, PGInfos> pgs = 3;
+}
+
+message GetOsdMapRequest{ 
+    int64 currentversion = 1;
+}
+
+enum OsdMapErrorCode
+{
+    ok = 0;
+    clientVersionHigher = 1;
+    clientVersionInvalid = 2;
+    noOsdsExist = 3;
+}
+
+message GetOsdMapResponse {
+    OsdMapErrorCode errorcode = 1;
+    int64 osdmapversion = 2;
+    repeated OsdDynamicInfo osds = 3;
+}
+
+message BootResponse {
+bool ok = 1;
+}
+
+message OsdStopRequest {
+    int32 id = 1;
+}
+
+
+message OsdStopResponse {
+bool ok = 1;
+}
+
+message HeartbeatRequest {
+    int32 id = 1;
+}
+message HeartbeatResponse {
+bool ok = 1;
+}
+
+message Request {
+    oneof union {
+        BootRequest boot_request = 1;
+        OsdStopRequest osd_stop_request = 2;
+        HeartbeatRequest heartbeat_request = 3;
+        GetOsdMapRequest get_osdmap_request = 4;
+        ListPoolsRequest list_pools_request = 5;
+        ApplyIDRequest apply_id_request = 6;
+        CreatePoolRequest create_pool_request = 7;
+        GetPgMapRequest get_pgmap_request = 8;
+    }
+}
+
+message Response {
+    oneof union {
+        BootResponse boot_response = 1;
+        OsdStopResponse osd_stop_response = 2;
+        HeartbeatResponse heartbeat_response = 3;
+        GetOsdMapResponse get_osdmap_response = 4;
+        ListPoolsResponse list_pools_response = 5;
+        ApplyIDResponse apply_id_response = 6;
+        CreatePoolResponse create_pool_response = 7;
+        GetPgMapResponse get_pgmap_response = 8;
+
+    }
+}

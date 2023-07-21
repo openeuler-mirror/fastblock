@@ -5,6 +5,7 @@
 #include "raft/pg_group.h"
 #include "spdk/thread.h"
 #include "osd/osd_sm.h"
+#include "osd/mon_client.h"
 
 struct shard_revision {
     uint32_t _shard;
@@ -13,16 +14,23 @@ struct shard_revision {
 
 class partition_manager{
 public:
-    partition_manager(int node_id, uint32_t core_num, const std::string&  logdir, const std::string& datadir)
+    partition_manager(
+            int node_id, uint32_t core_num, const std::string&  logdir, const std::string& datadir,
+            std::string& host, int port)
     : _pgs(node_id, core_num)
     , _next_core(0)
     , _core_num(core_num)
     , _logdir(logdir)
-    , _datadir(datadir) {
+    , _datadir(datadir)
+    , _mon(host, port, node_id, this) {
         uint32_t i = 0;
         for(i = 0; i < _core_num; i++){
             _sm_table.push_back(std::map<std::string, std::shared_ptr<osd_sm>>());
         }
+    }
+
+    int connect_mon(){
+        return _mon.connect_mon();
     }
 
     int create_partition(uint64_t pool_id, uint64_t pg_id, std::vector<osd_info_t>&& osds, int64_t revision_id);
@@ -84,6 +92,7 @@ public:
     std::string  _datadir;
     std::vector<struct spdk_thread *> _threads;
     std::vector<std::map<std::string, std::shared_ptr<osd_sm>>> _sm_table;
+    mon_client _mon;
 };
 
 #endif

@@ -4,9 +4,10 @@ if [[ -z ${CC} ]]; then export CC=/usr/bin/gcc; fi
 if [[ -z ${CXX} ]]; then export CXX=/usr/bin/g++; fi
 
 (cd $root/src/rpc && ./build.sh)
+(cd $root/src/osd && ./build.sh)
 
 # Change Debug via  -DCMAKE_BUILD_TYPE=Release
-cmake -DCMAKE_BUILD_TYPE=Debug \
+cmake -DCMAKE_BUILD_TYPE=Release \
   -B$root/build \
   -H$root \
   -DCMAKE_C_COMPILER=$CC \

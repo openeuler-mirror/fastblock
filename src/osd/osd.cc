@@ -2,6 +2,7 @@
 #include "spdk/env.h"
 #include "spdk/event.h"
 #include "spdk/log.h"
+#include "spdk/string.h"
 #include "raft/raft.h"
 #include "osd/partition_manager.h"
 #include "raft/raft_service.h"
@@ -15,12 +16,17 @@ static partition_manager* global_pm = nullptr;
 static raft_service<partition_manager>* global_rs = nullptr;
 static osd_service* global_os = nullptr;
 
+static char *g_host = "127.0.0.1";
+static int g_port = 3333;
+
 typedef struct
 {
     /* the server's node ID */
     int node_id;
 	std::string log_dir;
 	std::string date_dir;
+	std::string host;
+	int port;
 }server_t;
 
 static void
@@ -30,6 +36,8 @@ block_usage(void)
 	printf(" -I <id>                   save osd id\n");
 	printf(" -l <logdir>               the log directory\n");
 	printf(" -D <datedir>              the date directory\n");
+    printf(" -h <host_addr>            monitor host address\n");
+	printf(" -p <port>                 monitor port number\n");
 }
 
 static void
@@ -55,7 +63,7 @@ block_parse_arg(int ch, char *arg)
 		g_pid_path = arg;
 		break;
 	case 'I':
-	    global_osd_id = atoi(arg);
+	    global_osd_id = spdk_strtol(arg, 10);
 		break;
 	case 'l':
 	    g_log_dir = arg;
@@ -63,6 +71,12 @@ block_parse_arg(int ch, char *arg)
 	case 'D':
 	    g_date_dir = arg;
 		break;	
+	case 'h':
+	    g_host = arg;
+		break;
+	case 'p':
+	    g_port = spdk_strtol(arg, 10);
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -76,7 +90,14 @@ block_started(void *arg1)
 	
     SPDK_NOTICELOG("------block start, cpu count : %u  log_dir : %s date_dir: %s\n", 
 	        spdk_env_get_core_count(), server->log_dir.c_str(), server->date_dir.c_str());
-    global_pm = new partition_manager(server->node_id, spdk_env_get_core_count(), server->log_dir, server->date_dir);
+    global_pm = new partition_manager(
+		    server->node_id, spdk_env_get_core_count(), server->log_dir, server->date_dir, 
+			server->host, server->port);
+	if(global_pm->connect_mon() != 0){
+		spdk_app_stop(-1);
+		return;
+	}
+	 
     global_pm->create_spdk_threads();
 
 	global_rs = new raft_service<partition_manager>(global_pm);
@@ -112,6 +133,8 @@ main(int argc, char *argv[])
 	    server.log_dir = g_log_dir;
 	if(g_date_dir)
 	    server.date_dir = g_date_dir;
+	server.host = g_host;
+	server.port = g_port;
 
 	/* Blocks until the application is exiting */
 	rc = spdk_app_start(&opts, block_started, &server);

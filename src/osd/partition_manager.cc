@@ -49,8 +49,8 @@ void partition_manager::create_pg(
 void create_partition_func(void *arg){
     partition_args* partition = (partition_args*)arg;
     partition_manager* pm = partition->pm;
-    SPDK_NOTICELOG("create_partition in core %u pool_id %lu _next_core %u _core_num %u\n", 
-        spdk_env_get_current_core(), partition->pool_id, pm->_next_core, pm->_core_num);
+    SPDK_NOTICELOG("create_partition in core %u pool_id %lu pg_id %lu _next_core %u _core_num %u\n", 
+        spdk_env_get_current_core(), partition->pool_id, partition->pg_id,  pm->_next_core, pm->_core_num);
     pm->create_pg(partition->pool_id, partition->pg_id, 
                 std::move(partition->osds), spdk_env_get_current_core(), partition->revision_id);
     delete partition;
@@ -63,6 +63,8 @@ int partition_manager::create_partition(
     _add_pg_core(pool_id, pg_id, core_id, revision_id);
 
     if(spdk_env_get_current_core() == core_id){
+        SPDK_NOTICELOG("create_partition in core %u pool_id %lu pg_id %lu _next_core %u _core_num %u\n", 
+            spdk_env_get_current_core(), pool_id, pg_id,  _next_core, _core_num);
         create_pg(pool_id, pg_id, std::move(osds), core_id, revision_id);
     }else{
         auto partition = new partition_args(
