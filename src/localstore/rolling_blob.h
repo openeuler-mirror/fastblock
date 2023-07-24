@@ -1,8 +1,9 @@
 #pragma once
 
-#include "coding.h"
+#include "buffer_pool.h"
 #include "spdk_buffer.h"
 #include "utils/units.h"
+#include "utils/varint.h"
 
 #include <spdk/blob.h>
 #include <spdk/blob_bdev.h>
@@ -57,7 +58,7 @@ struct rblob_close_ctx {
  *   从左往右写，随着数据的增加，front往右推进，但此时还没写到blob最右侧。
  *   最前面4k是super block，保存一些基本元数据。
  *    __________________________________________________
- *    |super|      back|                  front|    end| 
+ *    |begin       back|                  front|    end| 
  *                     |<-------- used ------->| 
  *                                    
  * 
@@ -65,9 +66,9 @@ struct rblob_close_ctx {
  *   数据向右写到了 blob 结尾处，要从 blob 的起始位置重新开始写。
  *   但front数字不会变小，它只会单调增加。对blob size取余，即可知道它在blob中的具体位置。
  *   后边的虚线为了方便理解，假设把blob拼接在右边。
- *    ___________________________________________________ _ _ _ _ _ _ _ _ _ _ _ _
- *    |super|                         back|          end|super|        front|      
- *          |                             |<-- used1 -->|     |<-- used2 -->|
+ *    __________________________________________________ _ _ _ _ _ _ _ _ _ _ _ _
+ *    |begin                         back|          end|        front|      
+ *                                       |<-- used1 -->|<-- used2 -->|
 */
 class rolling_blob {
 public:
@@ -82,13 +83,11 @@ public:
     , blob_size(blob_size)
     , front(0, super_size)
     , back(0, super_size)
-    , super((char*)spdk_malloc(4096, 0x1000, NULL, 
-                  SPDK_ENV_LCORE_ID_ANY,
-                  SPDK_MALLOC_DMA), 4096)
+    , super(buffer_pool_get())
     { }
 
     ~rolling_blob() {
-      spdk_free(super.get_buf());
+      buffer_pool_put(super);
     }
 
     void make_test() {
@@ -212,18 +211,21 @@ public:
             next->lba = pos_to_lba(next->start_pos);
             next->len = second_len;
 
+            // SPDK_NOTICELOG("read lba from:%lu len:%lu and from:%lu len:%lu\n", 
+            //         ctx->lba, first_len, next->lba, second_len);
             spdk_blob_io_readv(blob, channel, ctx->iov.data(), ctx->iov.size(), 
                             ctx->lba / unit_size, ctx->len / unit_size, rw_done, ctx);
             return;
         }
 
         // 除了需要分两次读写的情况，到这里就是可以一次性读取
-        SPDK_NOTICELOG("read lba from %lu to %lu\n", pos_to_lba(start), length);
         //虽然iovec数组本身在ctx结束后就析构了，但是外部传进来的bl，其每片地址指向的内存是一直存在的
         ctx->iov = std::move(bl.to_iovec()); 
         ctx->start_pos = start;
         ctx->lba = pos_to_lba(start);
         ctx->len = length;
+
+        // SPDK_NOTICELOG("read lba from:%lu len:%lu\n", ctx->lba, length);
         spdk_blob_io_readv(blob, channel, ctx->iov.data(), ctx->iov.size(), 
                             ctx->lba / unit_size, ctx->len / unit_size, rw_done, ctx);
         return;
@@ -323,25 +325,32 @@ public:
     }
 
     void serilize_super() {
+        size_t sz;
+    
         super.reset();
-        EncodeFixed64(super.get_append(), back.lba);
-        EncodeFixed64(super.get_append(), back.pos);
-        EncodeFixed64(super.get_append(), front.lba);
-        EncodeFixed64(super.get_append(), front.pos);
+        sz = encode_fixed64(super.get_append(), back.lba);
+        super.inc(sz);
+
+        sz = encode_fixed64(super.get_append(), back.pos);
+        super.inc(sz);
+
+        sz = encode_fixed64(super.get_append(), front.lba);
+        super.inc(sz);
+
+        sz = encode_fixed64(super.get_append(), front.pos);
+        super.inc(sz);
     }
 
 public:
     void close(rblob_op_complete cb_fn, void* arg) {
       struct rblob_close_ctx *ctx = new rblob_close_ctx(cb_fn, arg);
 
-      SPDK_ERRLOG("rolling_blob close\n");
       spdk_blob_close(blob, close_done, ctx);
     }
 
     static void close_done(void *arg, int rberrno) {
       struct rblob_close_ctx* ctx = (struct rblob_close_ctx*)arg;
 
-      SPDK_ERRLOG("close_done\n");
       if (rberrno) {
           SPDK_ERRLOG("rolling_blob close failed:%s\n", spdk_strerror(rberrno));
           ctx->cb_fn(ctx->arg, rberrno);
@@ -455,10 +464,12 @@ make_open_done(void *arg, struct spdk_blob *blob, int rberrno) {
   if (rberrno) {
       SPDK_ERRLOG("make_rolling_blob failed during open. error:%s\n", spdk_strerror(rberrno));
       ctx->cb_fn(ctx->arg, nullptr, rberrno);
+      delete ctx;
       return;
   }
 
   struct rolling_blob* rblob = new rolling_blob(blob, ctx->channel, ctx->blob_size);
+  SPDK_ERRLOG("rolling_blob size:%lu\n", sizeof(rolling_blob));
   ctx->cb_fn(ctx->arg, rblob, 0);
   delete ctx;
 }

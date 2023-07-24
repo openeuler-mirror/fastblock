@@ -15,12 +15,10 @@
 #include "localstore/spdk_buffer.h"
 #include "localstore/raft_log.h"
 
-#define append_ITERATIONS 10
-#define read_ITERATIONS   10
+#define append_ITERATIONS 100
+#define read_ITERATIONS   100
 
 static const char *g_bdev_name = NULL;
-static uint64_t g_index = 0;
-static uint64_t g_read_index = 0;
 
 /*
  * We'll use this struct to gather housekeeping hello_context to pass between
@@ -47,6 +45,10 @@ struct test_ctx_t {
 
   int read_idx, read_max;
   int append_idx, append_max;
+
+  uint64_t append_raft_index{0};
+  uint64_t read_raft_index{0};
+
   uint64_t start;
 };
 
@@ -74,10 +76,6 @@ static inline double env_ticks_to_usecs(uint64_t j)
   return env_ticks_to_secs(j) * 1000 * 1000;
 }
 
-static void
-write_blob_iterates(struct hello_context_t *hello_context);
-
-
 uint64_t create_blob_tsc, create_snap_tsc;
 
 uint64_t write_blob_tsc, write_snap_tsc;
@@ -89,7 +87,6 @@ static void
 hello_cleanup(struct hello_context_t *hello_context)
 {
     delete hello_context->log;
-    delete hello_context->rblob;
     delete hello_context;
 }
 
@@ -152,8 +149,40 @@ log_stop(struct hello_context_t* hello_context)
 }
 
 /********************************************************************/
+static void
+log_read_continue(void *arg, log_entry_t&& entry, int rberrno) {
+  struct test_ctx_t *ctx = (struct test_ctx_t *)arg;
+  struct hello_context_t *hello_context = ctx->hello_ctx;
 
+  if (rberrno) {
+    unload_bs(hello_context, "Error in rolling append continue completion", rberrno);
+    return;
+  }
 
+  ctx->read_idx++;
+  SPDK_NOTICELOG("log read done, index:%lu size:%lu term:%lu name:%s, data len:%lu\n", 
+                  entry.index, entry.size, entry.term_id, entry.data.obj_name.c_str(), 
+                  entry.data.buf.bytes());
+  free_buffer_list(entry.data.buf);
+
+  if (ctx->read_idx < ctx->read_max) {
+      ctx->log->read(ctx->read_raft_index++, log_read_continue, ctx);
+  } else {
+      uint64_t now = spdk_get_ticks();
+      double us = env_ticks_to_usecs(now - ctx->start);
+      SPDK_NOTICELOG("iterates read %d entry, total time: %lf us\n", ctx->append_idx, us);
+
+      free_buffer_list(ctx->bl);
+      delete ctx;
+
+      log_stop(hello_context);
+  }
+}
+
+static void
+log_read_iterates(struct test_ctx_t* ctx) {
+  ctx->log->read(ctx->read_raft_index++, log_read_continue, ctx);
+}
 /********************************************************************/
 static void
 log_append_continue(void *arg, int rberrno) {
@@ -167,17 +196,17 @@ log_append_continue(void *arg, int rberrno) {
 
   ctx->append_idx++;
   if (ctx->append_idx < ctx->append_max) {
-      log_entry_t entry{ .term_id = 1, .index = g_index++, .size = ctx->bl.bytes(), .data = {"test", ctx->bl}};
+      log_entry_t entry{ .term_id = 4147483647, .index = ctx->append_raft_index++, .size = ctx->bl.bytes(), .data = {"test", ctx->bl}};
+        SPDK_NOTICELOG("log append, index:%lu size:%lu term:%lu name:%s, data len:%lu\n", 
+                  entry.index, entry.size, entry.term_id, entry.data.obj_name.c_str(), 
+                  entry.data.buf.bytes());
       ctx->log->append(&entry, log_append_continue, ctx);
   } else {
       uint64_t now = spdk_get_ticks();
       double us = env_ticks_to_usecs(now - ctx->start);
       SPDK_NOTICELOG("iterates append %d entry, total time: %lf us\n", ctx->append_idx, us);
 
-      free_buffer_list(ctx->bl);
-      delete ctx;
-
-      log_stop(hello_context);
+      log_read_iterates(ctx);
   }
 }
 
@@ -195,7 +224,10 @@ log_append_iterates(struct hello_context_t* hello_context) {
   ctx->bl = make_buffer_list(8);
   ctx->start = spdk_get_ticks();
 
-  log_entry_t entry{ .term_id = 1, .index = g_index++, .size = ctx->bl.bytes(), .data = {"test", ctx->bl}};
+  log_entry_t entry{ .term_id = 4147483647, .index = ctx->append_raft_index++, .size = ctx->bl.bytes(), .data = {"test", ctx->bl}};
+  SPDK_NOTICELOG("log append, index:%lu size:%lu term:%lu name:%s, data len:%lu\n", 
+                  entry.index, entry.size, entry.term_id, entry.data.obj_name.c_str(), 
+                  entry.data.buf.bytes());
   ctx->log->append(&entry, log_append_continue, ctx);
 }
 /********************************************************************/
@@ -209,6 +241,7 @@ make_rblob_done(void *arg, struct rolling_blob* rblob, int rberrno) {
     return;
   }
 
+  hello_context->rblob = rblob;
   hello_context->log = new raft_log(rblob);
 
   log_append_iterates(hello_context);
@@ -265,7 +298,7 @@ hello_start(void *arg1)
     return;
   }
 
-  header_pool_init();
+  buffer_pool_init();
   spdk_bs_init(bs_dev, NULL, bs_init_complete, hello_context);
 }
 
@@ -324,6 +357,7 @@ main(int argc, char **argv)
   }
   /* Gracefully close out all of the SPDK subsystems. */
   spdk_app_fini();
+  buffer_pool_fini();
   hello_cleanup(hello_context);
   return rc;
 }

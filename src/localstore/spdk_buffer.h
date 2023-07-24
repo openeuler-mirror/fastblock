@@ -47,8 +47,6 @@ public:
 
     size_t remain() { return size > used ? size - used : 0; }
 
-    void free() { spdk_free(buf); }
-
 private:
     char* buf;
     size_t size;
@@ -59,9 +57,6 @@ private:
 // 偷懒的做法，不想封装迭代器，直接继承list
 class buffer_list : public std::list<spdk_buffer> {
 public:
-  constexpr static size_t default_alloc = 4096;
-
-  buffer_list() = default;
 
   void append_buffer(buffer_list& bl) {
     size_t byte = bl.bytes();
@@ -92,6 +87,7 @@ public:
   }
 
   // 需要用户一直持有std::vector，保证数组所在内存不会析构
+  // 现在默认每段内存都是 4K 长，没有检查过，如果不是4k的可能会出现问题
   iovecs to_iovec(size_t pos, size_t len) {
     iovecs iovs;
     auto it = begin();
@@ -127,12 +123,3 @@ private:
 buffer_list make_buffer_list(size_t n);
 
 void free_buffer_list(buffer_list& bl);
-
-/*
-
-hello_context->write_buff = (char*)spdk_malloc(4096,
-				0x1000, NULL, SPDK_ENV_LCORE_ID_ANY,
-				SPDK_MALLOC_DMA);
-memset(hello_context->write_buff, 0x5a, 4096);
-
-*/

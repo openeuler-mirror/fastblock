@@ -36,10 +36,12 @@ function(compile_library)
       PRIVATE ${DEFAULT_COPTS}
       PRIVATE ${CC_LIB_COPTS})
     target_link_libraries(${_NAME}
-      PUBLIC ${CC_LIB_DEPS}
+      PUBLIC
+        ${DEFAULT_LINKOPTS}
+        ${CC_LIB_DEPS}
+
       PRIVATE
-      ${CC_LIB_LINKOPTS}
-      ${DEFAULT_LINKOPTS}
+        ${CC_LIB_LINKOPTS}
       )
     target_compile_definitions(${_NAME} PUBLIC ${CC_LIB_DEFINES})
     # INTERFACE libraries can't have the CXX_STANDARD property set

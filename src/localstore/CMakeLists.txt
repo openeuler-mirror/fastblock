@@ -4,8 +4,7 @@ compile_library (
     object_store.cc
     rolling_blob.cc
     raft_log.cc
-    coding.cc
-    header_pool.cc
+    buffer_pool.cc
     spdk_buffer.cc
   DEPS
     spdk::spdk
