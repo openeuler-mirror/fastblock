@@ -17,4 +17,5 @@ target_link_libraries(osd
     raft
     storage
     osd_msg
+    msg
   )

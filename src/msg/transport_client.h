@@ -23,7 +23,7 @@
 namespace msg {
 namespace rdma {
 
-SPDK_LOG_REGISTER_COMPONENT(transport_client)
+// SPDK_LOG_REGISTER_COMPONENT(transport_client)
 
 class transport_client {
 public:
@@ -199,7 +199,7 @@ public:
             auto& service_name = m->service()->name();
             if (service_name.size() > max_rpc_meta_string_size) {
                 SPDK_ERRLOG(
-                  "ERROR: RPC service name's length(%ls) is beyond the max size(%ld)\n",
+                  "ERROR: RPC service name's length(%ld) is beyond the max size(%d)\n",
                   service_name.size(), max_rpc_meta_string_size);
                 ctrlr->SetFailed(fmt::format(
                   "service name too long, should less than or equal to {}",
@@ -211,7 +211,7 @@ public:
             auto& method_name = m->name();
             if (method_name.size() > max_rpc_meta_string_size) {
                 SPDK_ERRLOG(
-                  "ERROR: RPC method name's length(%ls) is beyond the max size(%ld)\n",
+                  "ERROR: RPC method name's length(%ld) is beyond the max size(%d)\n",
                   method_name.size(), max_rpc_meta_string_size);
                 ctrlr->SetFailed(fmt::format(
                   "method name is too long, should less than or equal to {}",
@@ -455,7 +455,7 @@ public:
             throw std::runtime_error{fmt::format(
               "construct client transport ctrlr failed: {}", ::spdk_strerror(errno)),};
         }
-        _pg->group = ::spdk_client_poll_group_create(_pg.get(), nullptr);
+        _pg->group = ::spdk_client_poll_group_create(_pg.get());
         SPDK_NOTICELOG(
           "Construct a new ctrlr = %p, a new poll group = %p\n",
           _pg->ctrlr, _pg->group);

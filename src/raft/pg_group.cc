@@ -26,7 +26,7 @@ void pg_t::free_pg(){
 /** Raft callback for handling periodic logic */
 static int periodic_func(void* arg){
     pg_t* pg = (pg_t*)arg;
-	SPDK_NOTICELOG("_periodic in core %u\n", spdk_env_get_current_core());
+	// SPDK_NOTICELOG("_periodic in core %u\n", spdk_env_get_current_core());
     pg->raft->raft_periodic();
     return 0;
 }
@@ -42,35 +42,11 @@ static raft_time_t get_time(){
     return now_ms.time_since_epoch().count();
 }
 
-static int send_requestvote(raft_server_t* raft,  void *user_data, raft_node* node, msg_requestvote_t* msg){
-    (void)raft;
-    (void)user_data;
-    (void)node;
-    (void)msg;
-    return 0;
-}
-
-static int send_appendentries(raft_server_t* raft, void *user_data, raft_node* node, msg_appendentries_t* msg){
-    (void)raft;
-    (void)user_data;
-    (void)node;
-    (void)msg;
-    return 0;    
-}
-
-static int send_installsnapshot(raft_server_t* raft, void *user_data, raft_node* node, msg_installsnapshot_t* msg){
-    (void)raft;
-    (void)user_data;
-    (void)node;
-    (void)msg;
-    return 0;    
-}
-
 static int recv_installsnapshot(
        raft_server_t* raft,
        void *user_data,
        raft_node* node,
-       msg_installsnapshot_t* msg,
+       const msg_installsnapshot_t* msg,
        msg_installsnapshot_response_t* r){
     (void)raft;
     (void)user_data;
@@ -151,9 +127,6 @@ static void notify_membership_event(
 
 
 raft_cbs_t raft_funcs = {
-    .send_requestvote = send_requestvote,
-    .send_appendentries = send_appendentries,
-    .send_installsnapshot = send_installsnapshot,
     .recv_installsnapshot = recv_installsnapshot,
     .recv_installsnapshot_response = recv_installsnapshot_response,
     .persist_vote = persist_vote,
@@ -164,13 +137,13 @@ raft_cbs_t raft_funcs = {
     .get_time = get_time
 };
 
-int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t core_id, uint64_t pool_id, 
+int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard_id, uint64_t pool_id, 
             uint64_t pg_id, std::vector<osd_info_t>&& osds, storage::log&& log){
     int ret = 0;
-    auto raft = raft_new(std::move(log), sm_ptr, pool_id, pg_id);
+    auto raft = raft_new(_client, std::move(log), sm_ptr, pool_id, pg_id);
     raft->raft_set_callbacks(&raft_funcs, NULL);
 
-    ret = _pg_add(core_id, raft, pool_id, pg_id);
+    ret = _pg_add(shard_id, raft, pool_id, pg_id);
     if(ret != 0){
         return ret; 
     }
@@ -188,7 +161,7 @@ int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t core_
     }
 
     raft->raft_set_current_term(1);
-    auto pg = get_pg(core_id, pool_id, pg_id);
+    auto pg = get_pg(shard_id, pool_id, pg_id);
 
     /*  这里需要与其它osd建立链接，链接信息保存在raft_server_t中 ？ */
 
@@ -197,8 +170,8 @@ int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t core_
     return 0;
 }
 
-void pg_group_t::delete_pg(uint32_t core_id, uint64_t pool_id, uint64_t pg_id){
-    _pg_remove(core_id, pool_id, pg_id);
+void pg_group_t::delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id){
+    _pg_remove(shard_id, pool_id, pg_id);
 }
 
 

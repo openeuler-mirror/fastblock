@@ -311,7 +311,7 @@ public:
         auto port_str = std::to_string(port);
         ::strncpy(_trid->trsvcid, port_str.c_str(), port_str.size());
 
-        auto ret = ::spdk_srv_transport_listen(_transport, _trid.get(), nullptr);
+        auto ret = ::spdk_srv_transport_listen(_transport, _trid.get());
         if (ret != 0) {
             SPDK_ERRLOG("ERROR: server bound on %s:%d failed\n", _trid->traddr, port);
             throw std::runtime_error{fmt::format("server bound on {}:{} failed", host, port)};

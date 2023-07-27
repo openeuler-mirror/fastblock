@@ -27,13 +27,17 @@ struct pg_map_t
 class partition_manager;
 
 struct mon_client{
-    mon_client(std::string& _host, int _port, int _osd_id, partition_manager* _pm)
-    : host(_host)
-    , port(_port)
+    mon_client(std::string& _mon_host, int _mon_port, int _osd_id, std::string& _osd_addr, 
+            int _osd_port, std::string& _osd_uuid, partition_manager* _pm)
+    : mon_host(_mon_host)
+    , mon_port(_mon_port)
     , osd_id(_osd_id)
     , is_booted(false) 
     , is_running(false)
-    , pm(_pm) {}
+    , pm(_pm)
+    , osd_addr(_osd_addr)
+    , osd_port(_osd_port) 
+    , osd_uuid(_osd_uuid) {}
 
     int connect_mon();
     int sock_quit(int rc);
@@ -43,12 +47,15 @@ struct mon_client{
 	    is_running = false;
     }
 
-	std::string host;
-	int port;
+	std::string mon_host;
+	int mon_port;
 	int osd_id;
     bool is_booted;
     bool is_running;
     partition_manager* pm;
+    std::string osd_addr;
+    int osd_port;
+    std::string osd_uuid;
 
 	struct spdk_sock *sock;
 	struct spdk_sock_group *group;

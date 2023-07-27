@@ -87,7 +87,7 @@ fbclient_monitor_rpc_processer(void *arg)
 
 			if (ec != msg::OsdMapErrorCode::ok)
 			{
-				SPDK_NOTICELOG("getosdmap: errorode is: %d\r\n", resp.get_osdmap_response().errorcode());
+				// SPDK_NOTICELOG("getosdmap: errorode is: %d\r\n", resp.get_osdmap_response().errorcode());
 				return SPDK_POLLER_IDLE;
 			}
 			else
@@ -98,9 +98,9 @@ fbclient_monitor_rpc_processer(void *arg)
 					ctx->osdmap.osdmap_version = osdmap_version;
 					// SPDK_NOTICELOG("getosdmap: errorode is: %d\r\n", resp.get_osdmap_response().errorcode());
 					auto osds = resp.get_osdmap_response().osds();
-
+                    
+					std::map<int32_t, osd_info_t> osd_map_tmp;
 					// they have higher version, update our map, we should clean o
-					ctx->osdmap.osd_map.clear();
 					for (int i = 0; i < osds.size(); i++)
 					{
 						osd_info_t osd_info;
@@ -110,8 +110,26 @@ fbclient_monitor_rpc_processer(void *arg)
 						osd_info.ispendingcreate = osds[i].ispendingcreate();
 						osd_info.port = osds[i].port();
                         osd_info.address = osds[i].address();
-						ctx->osdmap.osd_map[osd_info.node_id] = std::move(osd_info);
+						SPDK_NOTICELOG("---- node_id %d isup %d current node id %d ---\n", 
+						        osd_info.node_id, osd_info.isup, ctx->osd_id);
+						if(ctx->osdmap.osd_map.count(osd_info.node_id) == 0
+						        && ctx->osd_id != osd_info.node_id
+								&& osd_info.isup){
+							ctx->pm->get_pg_group().create_connect(osd_info.node_id, osd_info.address, osd_info.port);
+						}
+						osd_map_tmp[osd_info.node_id] = std::move(osd_info);
 					}
+
+                    auto iter = ctx->osdmap.osd_map.begin();
+					while(iter != ctx->osdmap.osd_map.end()){
+						if(osd_map_tmp.count(iter->first) == 0
+						        && ctx->osd_id != iter->first){
+							ctx->pm->get_pg_group().remove_connect(iter->first);
+						}
+						iter++;
+					}
+					ctx->osdmap.osd_map.clear();
+					ctx->osdmap.osd_map = std::move(osd_map_tmp);
 				}
 				else if (osdmap_version == ctx->osdmap.osdmap_version)
 				{
@@ -131,7 +149,7 @@ fbclient_monitor_rpc_processer(void *arg)
 			auto pv = resp.get_pgmap_response().poolid_pgmapversion();
 			if (pv.empty())
 			{
-				SPDK_NOTICELOG("got pgmap, no pools created yet\r\n");
+				// SPDK_NOTICELOG("got pgmap, no pools created yet\r\n");
 				return SPDK_POLLER_IDLE;
 			}
 
@@ -443,14 +461,17 @@ int mon_client::send_bootrequest()
 	req->mutable_boot_request();
 
 	msg::BootRequest br;
-	//(fixme)use parsed config file address
-	br.set_address("127.0.0.1");
-	br.set_address("fbdev");
-	//(fixme) use montor port + 1 to avoid conflict
-	br.set_port(port + 1);
+	
+	br.set_osd_id(osd_id);
+	br.set_uuid(osd_uuid.c_str());
+	br.set_address(osd_addr.c_str());
+	br.set_port(osd_port);
 	//(fixme)use hard coded size
 	br.set_size(1024 * 1024);
 
+    char hostname[1024];
+	gethostname(hostname, sizeof(hostname));
+	br.set_host(hostname);
 	/*
 	br.set_osd_id(ctx->osd_id);
 	struct spdk_uuid id;
@@ -459,10 +480,6 @@ int mon_client::send_bootrequest()
 	spdk_uuid_fmt_lower(uuid_char, SPDK_UUID_STRING_LEN, &id);
 	br.set_uuid(uuid_char);
 	*/
-
-	//(fixme)using for debug, remember to remove this
-	br.set_osd_id(1);
-	br.set_uuid("3e5307a4-e0c2-452d-ab1a-1517c8ce8dda");
 
 	req->set_allocated_boot_request(&br);
 
@@ -487,9 +504,9 @@ int mon_client::connect_mon(){
 	spdk_sock_get_default_opts(&opts);
 	opts.zcopy = true;
 
-	SPDK_NOTICELOG("Connecting to the server on %s:%d\n", host.c_str(), port);
+	SPDK_NOTICELOG("Connecting to the server on %s:%d\n", mon_host.c_str(), mon_port);
 
-	sock = spdk_sock_connect_ext(host.c_str(), port, g_impl_name, &opts);
+	sock = spdk_sock_connect_ext(mon_host.c_str(), mon_port, g_impl_name, &opts);
 	if (sock == NULL)
 	{
 		SPDK_ERRLOG("connect error(%d): %s\n", errno, spdk_strerror(errno));

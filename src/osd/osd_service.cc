@@ -24,7 +24,7 @@ public:
     , ety(_ety) {}
 
     void run_task() override {
-        SPDK_NOTICELOG("delete pg in core %u\n", spdk_env_get_current_core());
+        SPDK_NOTICELOG("raft_write_entry in core %u\n", spdk_env_get_current_core());
         auto ret = raft->raft_write_entry(ety, complete);
         if(ret != 0){
             complete->response->set_state(ret);
@@ -42,9 +42,9 @@ void osd_service::process_write(google::protobuf::RpcController* controller,
              google::protobuf::Closure* done){
     auto pool_id = request->pool_id();
     auto pg_id = request->pg_id();
-    uint32_t core_id;
-    _pm->get_pg_core(pool_id, pg_id, core_id);
-    auto pg = _pm->get_pg(core_id, pool_id, pg_id);
+    uint32_t shard_id;
+    _pm->get_pg_shard(pool_id, pg_id, shard_id);
+    auto pg = _pm->get_pg(shard_id, pool_id, pg_id);
     write_cmd cmd;
     cmd.set_object_name(request->object_name());
     cmd.set_offset(request->offset());
@@ -60,7 +60,7 @@ void osd_service::process_write(google::protobuf::RpcController* controller,
 
     write_data_complete *complete = new write_data_complete(response, done);
     write_context* context = new write_context(pg->raft, complete, entry_ptr);
-    _pm->invoke_on(core_id, context);
+    _pm->invoke_on(shard_id, context);
 }
 
 void osd_service::process_read(::google::protobuf::RpcController* controller,

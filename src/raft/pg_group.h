@@ -7,6 +7,7 @@
 #include "raft/raft.h"
 #include "spdk/env.h"
 #include "utils/utils.h"
+#include "base/core_sharded.h"
 
 #define  HEARTBEAT_TIMER_PERIOD_MSEC  1000   //毫秒
 
@@ -26,10 +27,10 @@ public:
     std::string name;
 };
 
-class core_manager{
+class shard_manager{
 public:
-    core_manager(uint32_t core)
-    : _core(core) {
+    shard_manager(uint32_t shard_id)
+    : _shard_id(shard_id) {
         // heartbeat_timer = SPDK_POLLER_REGISTER(, , HEARTBEAT_TIMER_PERIOD_MSEC * 1000);
     }
 
@@ -47,7 +48,7 @@ public:
         return pgs[name];
     }
 private:
-    uint32_t _core;  //cpu core
+    uint32_t _shard_id;  //cpu shard id
 
     //记录此cpu核上的所有pg
     std::map<std::string, std::shared_ptr<pg_t>> pgs;
@@ -56,57 +57,64 @@ private:
 
 class pg_group_t{
 public:
-    pg_group_t(int current_node_id, uint32_t core_num)
-    : _core_num(core_num)
-    , _current_node_id(current_node_id) {
+    pg_group_t(int current_node_id)
+    : _shard_cores(get_shard_cores())
+    , _current_node_id(current_node_id)
+    , _client() {
         uint32_t i = 0;
-        for(i = 0; i < _core_num; i++){
-            _core_mg.push_back(core_manager(i));
+        auto shard_num = _shard_cores.size();
+        for(i = 0; i < shard_num; i++){
+            _shard_mg.push_back(shard_manager(i));
         }
     }
 
-
-    int create_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t core_id, uint64_t pool_id, uint64_t pg_id,
-                std::vector<osd_info_t>&& osds, storage::log&& log);
-
-    void delete_pg(uint32_t core_id, uint64_t pool_id, uint64_t pg_id);
-
-    std::shared_ptr<pg_t> get_pg(uint32_t core_id, uint64_t pool_id, uint64_t pg_id){
-        auto name = pg_id_to_name(pool_id, pg_id);
-        return _core_mg[core_id].get_pg(name);
+    void create_connect(int node_id, std::string& address, int port){
+        _client.create_connect(node_id, address, port);
     }
 
-    std::shared_ptr<pg_t> get_pg(uint32_t core_id, std::string& name){
-        return _core_mg[core_id].get_pg(name);
+    void remove_connect(int node_id){
+        _client.remove_connect(node_id);
+    }
+
+    int create_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,
+                std::vector<osd_info_t>&& osds, storage::log&& log);
+
+    void delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id);
+
+    std::shared_ptr<pg_t> get_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id){
+        auto name = pg_id_to_name(pool_id, pg_id);
+        return _shard_mg[shard_id].get_pg(name);
+    }
+
+    std::shared_ptr<pg_t> get_pg(uint32_t shard_id, std::string& name){
+        return _shard_mg[shard_id].get_pg(name);
     }
 
     int get_current_node_id(){
         return _current_node_id;
     }
 
-    uint32_t get_core_num(){
-        return _core_num;
-    }
 private:
-    int _pg_add(uint32_t core_id, std::shared_ptr<raft_server_t> raft, uint64_t pool_id, uint64_t pg_id){
+    int _pg_add(uint32_t shard_id, std::shared_ptr<raft_server_t> raft, uint64_t pool_id, uint64_t pg_id){
         auto name = pg_id_to_name(pool_id, pg_id);
         auto pg = std::make_shared<pg_t>(raft, name);
-        _core_mg[core_id].add_pg(name, pg);
+        _shard_mg[shard_id].add_pg(name, pg);
         return 0;        
     }
 
-    int _pg_remove(uint32_t core_id, uint64_t pool_id, uint64_t pg_id){
+    int _pg_remove(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id){
         auto name = pg_id_to_name(pool_id, pg_id);
-        auto pg = _core_mg[core_id].get_pg(name);
+        auto pg = _shard_mg[shard_id].get_pg(name);
         pg->free_pg();
-        _core_mg[core_id].delete_pg(name);
+        _shard_mg[shard_id].delete_pg(name);
         return 0;        
     }
 
     //所有的pg按核区分保持在_core_mg中
-    uint32_t _core_num;
-    std::vector<core_manager> _core_mg;
+    std::vector<uint32_t> _shard_cores;
+    std::vector<shard_manager> _shard_mg;
     int _current_node_id;
+    raft_client_protocol _client;
 };
 
 #endif

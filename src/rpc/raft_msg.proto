@@ -27,9 +27,10 @@ message raft_entry_t
  * This message could force a leader/candidate to become a follower. */
 message msg_appendentries_t
 {
-    int32  node_id = 1;
+    //leader node id
+    int32  node_id = 1;  
     uint64 pool_id = 2;
-    uint64 pg_id = 3;
+    uint64 pg_id = 3; 
 
     // currentTerm, to force other leader/candidate to step down 
     int64 term = 4;
@@ -56,6 +57,7 @@ message msg_appendentries_t
  * This message could force a leader/candidate to become a follower. */
 message msg_appendentries_response_t
 {
+    //The node who sent us this message
     int32  node_id = 1;
 
     /** currentTerm, to force other leader/candidate to step down */
@@ -84,6 +86,7 @@ message msg_appendentries_response_t
  * This message could force a leader/candidate to become a follower. */
 message msg_requestvote_t
 {
+    //leader node id
     int32  node_id = 1;
     uint64 pool_id = 2;
     uint64 pg_id = 3;
@@ -108,6 +111,7 @@ message msg_requestvote_t
  * Indicates if node has accepted, or would accept, the server's vote request. */
 message msg_requestvote_response_t
 {
+    //The node who sent us this message
     int32  node_id = 1;
 
     /** currentTerm, for candidate to update itself */
@@ -123,6 +127,7 @@ message msg_requestvote_response_t
 /** InstallSnapshot request message. */
 message msg_installsnapshot_t
 {
+    //leader node id
     int32  node_id = 1;
     uint64 pool_id = 2;
     uint64 pg_id = 3;
@@ -140,6 +145,7 @@ message msg_installsnapshot_t
 /** InstallSnapshot response message. */
 message msg_installsnapshot_response_t
 {
+    //The node who sent us this message
     int32  node_id = 1;
 
     /** currentTerm, to force other leader/candidate to step down */

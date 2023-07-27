@@ -23,13 +23,13 @@ enum class status : uint32_t {
 };
 
 namespace {
-static const char* const success_string{"success"};
-static const char* const method_not_found_string{"method_not_found"};
-static const char* const service_not_found_string{"service_not_found"};
-static const char* const request_timeout_string{"request_timeout_found"};
-static const char* const bad_response_string{"bad_response_found"};
-static const char* const server_string{"server_found"};
-static const char* const unknown_status_string{"unknown status"};
+static  char*  success_string = (char*)"success";
+static  char*  method_not_found_string = (char*)"method_not_found";
+static  char*  service_not_found_string = (char*)"service_not_found";
+static  char*  request_timeout_string = (char*)"request_timeout_found";
+static  char*  bad_response_string = (char*)"bad_response_found";
+static  char*  server_string = (char*)"server_found";
+static  char*  unknown_status_string = (char*)"unknown status";
 }
 
 struct request_meta {
@@ -49,7 +49,7 @@ struct reply_meta {
 };
 static constexpr size_t reply_meta_size{sizeof(reply_meta)};
 
-inline const char* const string_status(const status s) noexcept {
+inline char*  string_status(const status s) noexcept {
     switch (s) {
     case status::success:
         return success_string;
@@ -68,7 +68,7 @@ inline const char* const string_status(const status s) noexcept {
     }
 }
 
-inline const char* const string_status(const std::underlying_type_t<status> s) noexcept {
+inline char*  string_status(const std::underlying_type_t<status> s) noexcept {
     return string_status(static_cast<status>(s));
 }
 

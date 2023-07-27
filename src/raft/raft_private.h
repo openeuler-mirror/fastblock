@@ -1,12 +1,3 @@
-/**
- * Copyright (c) 2013, Willem-Hendrik Thiart
- * Use of this source code is governed by a BSD-style license that can be
- * found in the LICENSE file. 
- *
- * @file
- * @author Willem Thiart himself@willemthiart.com
- */
-
 #ifndef RAFT_PRIVATE_H_
 #define RAFT_PRIVATE_H_
 #include <assert.h>
@@ -17,6 +8,7 @@
 #include "state_machine.h"
 #include "rpc/raft_msg.pb.h"
 #include "utils/utils.h"
+#include "raft/raft_client_protocol.h"
 
 enum {
     RAFT_NODE_STATUS_DISCONNECTED,
@@ -44,51 +36,6 @@ typedef raft_entry_t msg_entry_t;
 
 class raft_server_t;
 
-/** Callback for sending request vote messages.
- * @param[in] raft The Raft server making this callback
- * @param[in] user_data User data that is passed from Raft server
- * @param[in] node The node that we are sending this message to
- * @param[in] msg The request vote message to be sent
- * @return 0 on success */
-typedef int (
-*func_send_requestvote_f
-)   (
-    raft_server_t* raft,
-    void *user_data,
-    raft_node* node,
-    msg_requestvote_t* msg
-    );
-
-/** Callback for sending append entries messages.
- * @param[in] raft The Raft server making this callback
- * @param[in] user_data User data that is passed from Raft server
- * @param[in] node The node that we are sending this message to
- * @param[in] msg The appendentries message to be sent
- * @return 0 on success */
-typedef int (
-*func_send_appendentries_f
-)   (
-    raft_server_t* raft,
-    void *user_data,
-    raft_node* node,
-    msg_appendentries_t* msg
-    );
-
-/** Callback for sending InstallSnapshot request messages.
- * @param[in] raft The Raft server making this callback
- * @param[in] user_data User data that is passed from Raft server
- * @param[in] node The node that we are sending this message to
- * @param[in] msg The InstallSnapshot message to be sent
- * @return 0 on success */
-typedef int (
-*func_send_installsnapshot_f
-)   (
-    raft_server_t* raft,
-    void *user_data,
-    raft_node* node,
-    msg_installsnapshot_t* msg
-    );
-
 /** Callback for receiving InstallSnapshot request messages.
  * @param[in] raft The Raft server making this callback
  * @param[in] user_data User data that is passed from Raft server
@@ -105,7 +52,7 @@ typedef int (
     raft_server_t* raft,
     void *user_data,
     raft_node* node,
-    msg_installsnapshot_t* msg,
+    const msg_installsnapshot_t* msg,
     msg_installsnapshot_response_t* r
     );
 
@@ -215,15 +162,6 @@ typedef raft_time_t (
     
 struct raft_cbs_t
 {
-    /** Callback for sending request vote messages */
-    func_send_requestvote_f send_requestvote;
-
-    /** Callback for sending appendentries messages */
-    func_send_appendentries_f send_appendentries;
-
-    /** Callback for sending InstallSnapshot messages */
-    func_send_installsnapshot_f send_installsnapshot;
-
     /** Callback for receiving InstallSnapshot messages */
     func_recv_installsnapshot_f recv_installsnapshot;
 
@@ -256,7 +194,7 @@ struct raft_cbs_t
 
 class raft_server_t{
 public:
-    raft_server_t(storage::log&& log, std::shared_ptr<state_machine> sm_ptr, uint64_t pool_id, uint64_t pg_id);
+    raft_server_t(raft_client_protocol& client, storage::log&& log, std::shared_ptr<state_machine> sm_ptr, uint64_t pool_id, uint64_t pg_id);
 
     ~raft_server_t();
 
@@ -703,6 +641,8 @@ public:
      *  RAFT_ERR_SHUTDOWN when server MUST shutdown */
     int raft_periodic();
 
+    void follow_raft_disk_append_finish(raft_index_t start_idx, raft_index_t end_idx, raft_index_t _commit_idx, int result);
+
     /** Receive an appendentries message.
      *
      * Will block (ie. by syncing to disk) if we need to append a message.
@@ -725,7 +665,8 @@ public:
      *  */
     int raft_recv_appendentries(raft_node_id_t node_id,
                                 const msg_appendentries_t* ae,
-                                msg_appendentries_response_t *r);
+                                msg_appendentries_response_t *r,
+                                context* complete);
 
     /** Receive a response from an appendentries message we sent.
      * @param[in] node The node who sent us this message
@@ -734,8 +675,7 @@ public:
      *  0 on success;
      *  -1 on error;
      *  RAFT_ERR_NOT_LEADER server is not the leader */
-    int raft_recv_appendentries_response(raft_node* node,
-                                         msg_appendentries_response_t* r);
+    int raft_process_appendentries_reply(msg_appendentries_response_t* r);
 
     /** Become follower. This may be used to give up leadership. It does not change
      * currentTerm. */
@@ -844,27 +784,26 @@ public:
      * @param[in] vr The requestvote message
      * @param[out] r The resulting response
      * @return 0 on success */
-    int raft_recv_requestvote(raft_node* node,
-                              msg_requestvote_t* vr,
+    int raft_recv_requestvote(raft_node_id_t node_id,
+                              const msg_requestvote_t* vr,
                               msg_requestvote_response_t *r);
 
     /** Receive a response from a requestvote message we sent.
-     * @param[in] node The node this response was sent by
      * @param[in] r The requestvote response message
      * @return
      *  0 on success;
      *  RAFT_ERR_SHUTDOWN server MUST shutdown; */
-    int raft_recv_requestvote_response(raft_node* node,
+    int raft_process_requestvote_reply(
                                        msg_requestvote_response_t* r);
 
     /** Receive an InstallSnapshot message. */
-    int raft_recv_installsnapshot(raft_node* node,
-                                  msg_installsnapshot_t* is,
-                                  msg_installsnapshot_response_t *r);
+    int raft_recv_installsnapshot(raft_node_id_t node_id,
+                                  const msg_installsnapshot_t* is,
+                                  msg_installsnapshot_response_t *r,
+                                  context* complete);
 
     /** Receive an InstallSnapshot message. */
-    int raft_recv_installsnapshot_response(raft_node* node,
-                                           msg_installsnapshot_response_t *r);
+    int raft_process_installsnapshot_reply(msg_installsnapshot_response_t *r);
     void raft_offer_log(std::vector<std::shared_ptr<raft_entry_t>>& entries,
                         raft_index_t idx);
 
@@ -910,10 +849,10 @@ public:
 private:
     int _has_majority_leases(raft_time_t now, int with_grace);
     int _cfg_change_is_valid(msg_entry_t* ety);
-    int _should_grant_vote(msg_requestvote_t* vr);
+    int _should_grant_vote(const msg_requestvote_t* vr);
     int _raft_send_installsnapshot(raft_node* node);
     int _has_lease(raft_node* node, raft_time_t now, int with_grace);
-    void _raft_get_entries_from_idx(raft_index_t idx, msg_appendentries_t& ae);
+    void _raft_get_entries_from_idx(raft_index_t idx, msg_appendentries_t* ae);
 
     std::vector<std::shared_ptr<raft_node>> nodes;
 
@@ -987,8 +926,7 @@ private:
 
     raft_index_t first_idx;     //当前正在处理的一批msg中第一个的idx
     raft_index_t current_idx;   //当前正在处理的一批msg中最后一个的idx
-    //Save network links to other osds
-    //std::map<int, > connects;
+    raft_client_protocol& client;
 }; 
 
 int raft_votes_is_majority(const int nnodes, const int nvotes);
