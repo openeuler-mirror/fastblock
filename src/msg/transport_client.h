@@ -1,9 +1,6 @@
 #pragma once
 
-#include "rpc_meta.pb.h"
-
-#include "pooled_chunk.h"
-#include "types.h"
+#include "msg/types.h"
 
 #include <spdk/log.h>
 #include <spdk/rdma_client.h>
@@ -12,6 +9,8 @@
 
 #include <fmt/core.h>
 
+#include <google/protobuf/descriptor.h>
+#include <google/protobuf/message.h>
 #include <google/protobuf/service.h>
 
 #include <exception>
@@ -20,10 +19,11 @@
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
-#include <tuple>
 
 namespace msg {
 namespace rdma {
+
+SPDK_LOG_REGISTER_COMPONENT(transport_client)
 
 class transport_client {
 public:
@@ -36,19 +36,18 @@ public:
             using key_type = uint64_t;
 
             key_type request_key{};
-            google::protobuf::MethodDescriptor* method{nullptr};
+            const google::protobuf::MethodDescriptor* method{nullptr};
             google::protobuf::RpcController* ctrlr{nullptr};
-            google::protobuf::Message* request{nullptr};
+            const google::protobuf::Message* request{nullptr};
             google::protobuf::Message* response{nullptr};
             google::protobuf::Closure* closure{nullptr};
-            std::unique_ptr<rpc_meta> meta{nullptr};
-            size_t chunk_need{0};
-            std::unique_ptr<pooled_chunk> data_chunk{nullptr};
+            std::unique_ptr<char[]> meta{nullptr};
+            size_t serialized_size{0};
+            std::unique_ptr<char[]> serialized_buf{nullptr};
         };
 
         struct unresponsed_request {
             std::unique_ptr<rpc_request> request{nullptr};
-            std::unique_ptr<::iovec[]> iovs{nullptr};
             connection* this_connection{nullptr};
         };
 
@@ -84,41 +83,58 @@ public:
             conn->set_connected();
         }
 
-        static void on_request_done(void* arg, int status, ::iovec* iovs, int iovcnt, int length) {
+        static void on_response(void* arg, int status, ::iovec* iovs, int iovcnt, int length) {
             auto req = reinterpret_cast<unresponsed_request*>(arg);
             req->this_connection->process_response(req, status, iovs, iovcnt, length);
         }
 
     private:
 
+        void serialize_request(std::unique_ptr<rpc_request>& req) {
+            std::memcpy(req->serialized_buf.get(), req->meta.get(), request_meta_size);
+            req->request->SerializeToArray(
+              req->serialized_buf.get() + request_meta_size,
+              req->request->ByteSizeLong());
+        }
+
         int process_request_once(std::unique_ptr<rpc_request>& req) {
             if (::spdk_client_empty_free_request(_conn)) {
                 return -EAGAIN;
             }
 
-            if (not req->data_chunk) {
-                auto mempool_count = ::spdk_mempool_count(_conn->ctrlr->rpc_data_mp);
-                if (mempool_count < req->chunk_need) {
-                    SPDK_DEBUGLOG(
-                      "not enough chunks for request %d, current remain %d\n",
-                      req->request_key, mempool_count);
-                    return -EAGAIN;
-                }
-                req->data_chunk = std::make_unique<pooled_chunk>(_conn->ctrlr->rpc_data_mp, req->chunk_need);
+            if (not ::spdk_client_ctrlr_has_free_memory(_conn, req->serialized_size)) {
+                SPDK_DEBUGLOG(
+                  transport_client,
+                  "not enough chunks for request %d, which needs %ld bytes\n",
+                  req->request_key, req->serialized_size);
+                return -EAGAIN;
             }
+            req->serialized_buf = std::make_unique<char[]>(req->serialized_size);
+            SPDK_DEBUGLOG(
+              transport_client,
+              "request id is %ld, request serialize size is %ld, request body size is %ld\n",
+              req->request_key,
+              req->serialized_size - request_meta_size,
+              req->request->ByteSizeLong()
+            );
+            serialize_request(req);
 
             auto k = req->request_key;
-            auto req_iov = req->data_chunk->to_iovs();
+            auto* req_ptr = req.get();
             auto unresponsed_req = std::make_unique<unresponsed_request>(
-              std::move(req), std::move(req_iov), this);
+              std::move(req), this);
             auto cb_arg = unresponsed_req.get();
             _unresponsed_requests.emplace(k, std::move(unresponsed_req));
 
-            auto rc = ::spdk_client_submit_rpc_request_iovs_directly(
-              _conn, req_iov.get(),
-              req->data_chunk->capacity(),
-              req->data_chunk->capacity() * SPDK_SRV_MEMORY_POOL_ELEMENT_SIZE,
-              on_request_done, cb_arg);
+            SPDK_DEBUGLOG(
+              transport_client,
+              "Send rpc request(id: %ld) on %p, with body size %ld\n",
+              k, req_ptr->serialized_buf.get(), req_ptr->serialized_size);
+
+            auto rc = ::spdk_client_submit_rpc_request(
+              _conn, static_cast<uint32_t>(status::success),
+              req_ptr->serialized_buf.get(),
+              req_ptr->serialized_size, on_response, cb_arg, false);
 
             return rc;
         }
@@ -150,7 +166,7 @@ public:
 
         void connect(std::shared_ptr<::client_poll_group> pg) {
             SPDK_NOTICELOG("Connecting to %s:%d...\n", _host.c_str(), _port);
-            auto trans_id = fmt::format("trtype:RDMA adrfam:IPV4 traddr:{}, trsvcid:{}", _host, _port);
+            auto trans_id = fmt::format("trtype:RDMA adrfam:IPV4 traddr:{} trsvcid:{}", _host, _port);
             _trid = std::make_unique<::spdk_client_transport_id>();
             auto rc = ::spdk_client_transport_id_parse(_trid.get(), trans_id.c_str());
             if (rc != 0) {
@@ -178,50 +194,57 @@ public:
           const google::protobuf::MethodDescriptor* m,
           google::protobuf::RpcController* ctrlr,
           const google::protobuf::Message* request,
-          google::protobuf::Message* reponse,
+          google::protobuf::Message* response,
           google::protobuf::Closure* c) override {
-            auto meta = std::make_unique<rpc_meta>();
-            meta->set_service_name(m->service()->name());
-            meta->set_method_name(m->name());
-            meta->set_data_size(request->ByteSize());
-
-            auto serialized_size = meta->ByteSize() + request->ByteSize();
-            auto chunk_need = std::ceil(static_cast<double>(serialized_size) / SPDK_SRV_MEMORY_POOL_ELEMENT_SIZE);
-            auto mempool_count = ::spdk_mempool_count(_conn->ctrlr->rpc_data_mp);
-            SPDK_DEBUGLOG(
-              "going to serialize %d bytes, need %d chunks, current availabled chunks %d\n",
-              serialized_size, chunk_need, mempool_count);
-
-            if (chunk_need > mempool_count) {
-                auto req = std::make_unique<rpc_request>(
-                  _unresponsed_request_key_gen++,
-                  m, ctrlr, request, reponse, c,
-                  std::move(meta), chunk_need, nullptr);
-                enqueue_request(std::move(req), is_priority_request(m));
-            } else {
-                auto data_chunk = std::make_unique<pooled_chunk>(_conn->ctrlr->rpc_data_mp, chunk_need);
-                if (data_chunk->empty()) {
-                    SPDK_ERRLOG("ERROR: get memory from memory pool failed\n");
-                    throw std::runtime_error{"get memory from memory pool failed"};
-                }
-
-                if (data_chunk->capacity() == 1) {
-                    auto mem = data_chunk->head();
-                    meta->SerializeToArray(mem, meta->ByteSize());
-                    request->SerializeToArray(mem + meta->ByteSize(), request->ByteSize());
-                } else {
-                    auto serialized = request->SerializeAsString();
-                    auto* serialized_mem = serialized.c_str();
-                    for (size_t i{0}; i < data_chunk->capacity(); ++i) {
-                        data_chunk->append(i, serialized_mem + i * SPDK_SRV_MEMORY_POOL_ELEMENT_SIZE);
-                    }
-                }
-                auto req = std::make_unique<rpc_request>(
-                  _unresponsed_request_key_gen++,
-                  m, ctrlr, request, reponse, c,
-                  std::move(meta), chunk_need, std::move(data_chunk));
-                enqueue_request(std::move(req), is_priority_request(m));
+            auto& service_name = m->service()->name();
+            if (service_name.size() > max_rpc_meta_string_size) {
+                SPDK_ERRLOG(
+                  "ERROR: RPC service name's length(%ls) is beyond the max size(%ld)\n",
+                  service_name.size(), max_rpc_meta_string_size);
+                ctrlr->SetFailed(fmt::format(
+                  "service name too long, should less than or equal to {}",
+                  max_rpc_meta_string_size));
+                c->Run();
+                return;
             }
+
+            auto& method_name = m->name();
+            if (method_name.size() > max_rpc_meta_string_size) {
+                SPDK_ERRLOG(
+                  "ERROR: RPC method name's length(%ls) is beyond the max size(%ld)\n",
+                  method_name.size(), max_rpc_meta_string_size);
+                ctrlr->SetFailed(fmt::format(
+                  "method name is too long, should less than or equal to {}",
+                  max_rpc_meta_string_size));
+                c->Run();
+                return;
+            }
+
+            // avoid align
+            auto meta_holder = std::make_unique<char[]>(request_meta_size);
+            auto* meta = reinterpret_cast<request_meta*>(meta_holder.get());
+            meta->service_name_size =
+              static_cast<request_meta::name_size_type>(service_name.size());
+            service_name.copy(meta->service_name, meta->service_name_size);
+            meta->method_name_size =
+              static_cast<request_meta::name_size_type>(method_name.size());
+            method_name.copy(meta->method_name, meta->method_name_size);
+            meta->data_size = static_cast<request_meta::data_size_type>(request->ByteSizeLong());
+
+            SPDK_DEBUGLOG(
+              transport_client,
+              "rpc meta service name is %s, method name is %s, data size is %ld\n",
+              meta->service_name,
+              meta->method_name,
+              meta->data_size);
+
+            auto serialized_size = request->ByteSizeLong() + request_meta_size;
+            auto req = std::make_unique<rpc_request>(
+              _unresponsed_request_key_gen++,
+              m, ctrlr, request, response, c,
+              std::move(meta_holder), serialized_size, nullptr);
+
+            enqueue_request(std::move(req), is_priority_request(m));
         }
 
         bool process_priority_rpc_request(std::list<std::shared_ptr<connection>>::iterator busy_it) {
@@ -229,19 +252,34 @@ public:
                 return false;
             }
 
-            rpc_request* task{nullptr};
+            SPDK_DEBUGLOG(
+              transport_client,
+              "process %ld rpc call heartbeat()\n",
+              _priority_inflight_requests.size());
+
             int rc{0};
+            auto erase_it_end = _priority_inflight_requests.begin();
             for (auto it = _priority_inflight_requests.begin(); it != _priority_inflight_requests.end(); ++it) {
                 rc = process_request_once(*it);
                 if (rc == -EAGAIN) {
-                    return true;
+                    break;
                 } else if (rc != 0) {
-                    SPDK_ERRLOG("ERROR: send priority rpc request(key: %d) failed\n", it->get()->request_key);
+                    SPDK_ERRLOG(
+                      "ERROR: send priority rpc request(key: %ld) failed\n",
+                      it->get()->request_key);
                     throw std::runtime_error{"send priority rpc request failed"};
                 }
 
-                _priority_inflight_requests.erase(it);
+                erase_it_end = it;
             }
+
+            if (rc == -EAGAIN) {
+                _priority_inflight_requests.erase(
+                  _priority_inflight_requests.begin(),
+                  erase_it_end);
+                return true;
+            }
+
             _busy_priority_list->erase(busy_it);
 
             return true;
@@ -257,7 +295,9 @@ public:
             if (rc == -EAGAIN) {
                 return true;
             } else if (rc != 0) {
-                SPDK_ERRLOG("ERROR: send rpc request(key: %d) failed\n", it->get()->request_key);
+                SPDK_ERRLOG(
+                  "ERROR: send rpc request(key: %ld) failed\n",
+                  it->get()->request_key);
                 throw std::runtime_error{"send rpc request failed"};
             }
 
@@ -274,77 +314,59 @@ public:
           int length) {
             auto e_status = static_cast<std::underlying_type_t<status>>(raw_status);
             SPDK_NOTICELOG(
-              "Received response of request %d, status is %s, iovec count is %d, length is %d\n",
-              request->request->request_key, string_status(e_status).c_str(), iovcnt, length);
+              "Received response of request %ld, status is %s, iovec count is %d, length is %d\n",
+              request->request->request_key,
+              string_status(e_status),
+              iovcnt, length);
 
             auto request_it = _unresponsed_requests.find(request->request->request_key);
             if (request_it == _unresponsed_requests.end()) {
                 SPDK_ERRLOG(
-                  "ERROR: Cant find the request record of request key %d on connection %d\n",
+                  "ERROR: Cant find the request record of request key %ld on connection %ld\n",
                   request->request->request_key, _id);
                 throw std::runtime_error{fmt::format(
                   "cant find the request record of request key {} on connection {}",
                   request->request->request_key, _id)};
             }
 
-            auto tmp_buf = std::make_unique<char[]>(length);
-            std::ptrdiff_t offset{0};
-            for (int i{0}; i < iovcnt; ++i) {
-                std::memcpy(tmp_buf.get() + offset, iovs[i].iov_base, iovs[i].iov_len);
-                offset += iovs[i].iov_len;
-            }
-            auto reply_status = std::make_unique<reply_meta>();
-            auto is_parsed = reply_status->ParseFromArray(tmp_buf.get(), reply_status->ByteSize());
+            auto reply_status = reinterpret_cast<reply_meta*>(iovs[0].iov_base);
+            status reply_status_e{reply_status->reply_status};
 
-            if (not is_parsed) {
-                SPDK_ERRLOG("ERROR: Parse reply status error\n");
-                request->request->ctrlr->SetFailed("parse reply status failed");
-                request->request->closure->Run();
-                _unresponsed_requests.erase(request_it);
-
-                return;
-            }
-
-            status reply_status_e{reply_status->status()};
             SPDK_DEBUGLOG(
-              rdma,
-              "reply status of request %d is %s\n",
+              transport_client,
+              "reply status of request %ld is %s\n",
               request->request->request_key,
-              string_status(reply_status_e).c_str());
+              string_status(reply_status_e));
 
             switch (reply_status_e) {
             case status::success: {
                 auto* response = request->request->response;
-                SPDK_DEBUGLOG(
-                  rdma,
-                  "response->ByteSize() is %d, unparsed buffer size is %d\n",
-                  response->ByteSize, length - reply_status->ByteSize());
+                bool is_parsed{false};
+                if (iovcnt == 1) {
+                    is_parsed = response->ParseFromArray(
+                      reinterpret_cast<char*>(iovs[0].iov_base) + reply_meta_size,
+                      iovs[0].iov_len - reply_meta_size);
+                } else {
+                    auto tmp_buf = std::make_unique<char[]>(length);
+                    std::ptrdiff_t offset{0};
+                    for (int i{0}; i < iovcnt; ++i) {
+                        std::memcpy(tmp_buf.get() + offset, iovs[i].iov_base, iovs[i].iov_len);
+                        offset += iovs[i].iov_len;
+                    }
 
-                if (response->ByteSize() != length - reply_status->ByteSize()) {
-                    SPDK_ERRLOG(
-                      "ERROR: Unparsed buffer's size(%d bytes) of request %d is not equal to response's body size(%d bytes)\n",
-                      length - reply_status->ByteSize(),
-                      request->request->request_key,
-                      response->ByteSize());
-                    request->request->ctrlr->SetFailed("mismatch unserialize size");
-                    request->request->closure->Run();
-                    _unresponsed_requests.erase(request_it);
-
-                    return;
+                    is_parsed = response->ParseFromArray(
+                      tmp_buf.get() + reply_meta_size,
+                      length - reply_meta_size);
                 }
 
-                is_parsed = response->ParseFromArray(
-                  tmp_buf.get() + reply_status->ByteSize(),
-                  response->ByteSize());
                 if (not is_parsed) {
                     SPDK_ERRLOG(
-                      "ERROR: Parse response body failed of request %d\n",
+                      "ERROR: Parse response body failed of request %ld\n",
                       request->request->request_key);
 
                     request->request->ctrlr->SetFailed("unserialize failed");
                     request->request->closure->Run();
                     _unresponsed_requests.erase(request_it);
-
                     return;
                 }
 
@@ -354,9 +376,9 @@ public:
             }
             default: {
                 SPDK_ERRLOG(
-                  "ERROR: RPC call failed of request %d with reply status %s\n",
+                  "ERROR: RPC call failed of request %ld with reply status %s\n",
                   request->request->request_key,
-                  string_status(reply_status_e).c_str());
+                  string_status(reply_status_e));
                 request->request->ctrlr->SetFailed(fmt::format(""));
                 request->request->closure->Run();
                 _unresponsed_requests.erase(request_it);
@@ -386,7 +408,9 @@ public:
 
 public:
 
-    transport_client() = default;
+    transport_client() {
+        SPDK_NOTICELOG("construct transport_client, this is %p\n", this);
+    }
 
     transport_client(const transport_client&) = delete;
 
@@ -397,6 +421,7 @@ public:
     transport_client& operator=(transport_client&&) = delete;
 
     ~transport_client() noexcept {
+        SPDK_NOTICELOG("destruct transport_client\n");
         ::spdk_poller_unregister(&_poller);
     }
 
@@ -443,18 +468,22 @@ public:
               errno, ::spdk_strerror(errno))};
         }
 
-        _poller = SPDK_POLLER_REGISTER(poll_fn, _pg.get(), 0);
+        _poller = SPDK_POLLER_REGISTER(poll_fn, this, 0);
     }
 
     std::shared_ptr<connection>
-    emplace_connection(const connection::id_type id, std::string& host, const uint16_t port) {
+    emplace_connection(const connection::id_type id, std::string host, const uint16_t port) {
         auto conn = std::make_shared<connection>(id, host, port, _busy_connections, _busy_priority_connections);
         conn->connect(_pg);
-        _connect_tasks.emplace_back(conn);
+        SPDK_NOTICELOG("Connected to %s:%d\n", host.c_str(), port);
+        _connect_tasks.push_back(conn);
+
         return conn;
     }
 
-    void erase_connection(const connection::id_type id) {}
+    void erase_connection(const connection::id_type id) {
+        // TODO:
+    }
 
 public:
 
@@ -509,9 +538,9 @@ private:
 
 namespace std {
 template <>
-struct hash<rpc::rdma::transport_client::connection> {
-    auto operator()(const rpc::rdma::transport_client::connection& v) {
-        return hash<rpc::rdma::transport_client::connection::id_type>{}(v.id());
+struct hash<msg::rdma::transport_client::connection> {
+    auto operator()(const msg::rdma::transport_client::connection& v) {
+        return hash<msg::rdma::transport_client::connection::id_type>{}(v.id());
     }
 };
 } // namespace std

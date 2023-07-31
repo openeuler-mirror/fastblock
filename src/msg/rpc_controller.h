@@ -22,6 +22,7 @@ public:
     virtual void StartCancel() override { /*TODO:*/ }
 
     virtual void SetFailed(const std::string& error) override {
+        _failed = true;
         _error_reason = error;
     }
 

@@ -28,7 +28,9 @@ else()
     nvme
     syslibs
     thread
-    vhost)
+    vhost
+    rdma
+    rdma_server)
 endif()
 
 include (FindPackageHandleStandardArgs)
@@ -115,7 +117,7 @@ find_package_handle_standard_args (spdk
 if (spdk_FOUND AND NOT (TARGET spdk::spdk))
   set (spdk_LIBRARIES ${spdk_libs})
   set (whole_archive_link_opts
-    -Wl,--whole-archive -Wl,-Bstatic ${spdk_link_opts} -Wl,--no-whole-archive -Wl,-Bdynamic -luuid -lz -laio)
+    -Wl,--whole-archive ${spdk_link_opts} -Wl,--no-whole-archive -Wl,-Bdynamic -luuid -lz -laio)
   add_library (spdk::spdk INTERFACE IMPORTED)
   set_target_properties (spdk::spdk
     PROPERTIES

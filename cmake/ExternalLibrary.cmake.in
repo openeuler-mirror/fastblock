@@ -56,7 +56,7 @@ set(build_env
 
 if (@CMAKE_BUILD_TYPE@ MATCHES "Debug")
   set(spdk_debug "--enable-debug")
-  set(spdk_asan "--enable-asan")  
+  set(spdk_asan "--enable-asan")
   set(spdk_ubsan "--enable-ubsan")
 else()
   set(spdk_debug "")
@@ -66,13 +66,13 @@ endif()
 
 ExternalProject_Add(spdk
   # SOURCE_DIR /code/spdk
-  GIT_REPOSITORY  git@gitee.com:custorage/spdk.git#git@github.com:spdk/spdk.git
-  GIT_TAG v22.05.x
+  GIT_REPOSITORY  git@gitee.com:custorage/spdk.git
+  GIT_TAG 58286b0743f89339490eac15e7d5f5b5bd896f2c
   BUILD_IN_SOURCE ON
   INSTALL_DIR    @FASTBLOCK_DEPS_INSTALL_DIR@
   CONFIGURE_COMMAND
-    <SOURCE_DIR>/configure --without-isal 
-      --disable-tests --disable-unit-tests --disable-examples --disable-apps 
+    <SOURCE_DIR>/configure --without-isal
+      --disable-tests --disable-unit-tests --disable-examples --disable-apps --with-rdma
       --prefix=<INSTALL_DIR>
       ${spdk_debug} ${spdk_asan} ${spdk_ubsan}
   BUILD_COMMAND
