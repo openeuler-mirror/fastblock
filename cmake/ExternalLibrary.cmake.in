@@ -66,7 +66,7 @@ endif()
 
 ExternalProject_Add(spdk
   # SOURCE_DIR /code/spdk
-  GIT_REPOSITORY  git@gitee.com:custorage/spdk.git
+  GIT_REPOSITORY  git@gitee.com:custorage/spdk.git#git@github.com:spdk/spdk.git
   GIT_TAG v22.05.x
   BUILD_IN_SOURCE ON
   INSTALL_DIR    @FASTBLOCK_DEPS_INSTALL_DIR@
@@ -83,7 +83,7 @@ ExternalProject_Add(spdk
 
 ExternalProject_Add(abseil
   # SOURCE_DIR /code/abseil-cpp
-  GIT_REPOSITORY  git@gitee.com:custorage/abseil-cpp.git
+  GIT_REPOSITORY  git@gitee.com:custorage/abseil-cpp.git   #git@github.com:abseil/abseil-cpp.git
   GIT_TAG lts_2022_06_23
   INSTALL_DIR    @FASTBLOCK_DEPS_INSTALL_DIR@
   BUILD_IN_SOURCE ON

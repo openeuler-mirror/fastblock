@@ -20,7 +20,7 @@
 
 #include <functional>
 #include <string>
-
+#include <map>
 // typedef void (*object_rw_complete)(void *arg, int errno);
 using object_rw_complete = std::function<void (void *arg, int objerrno)>;
 
@@ -55,6 +55,15 @@ public:
              object_rw_complete cb_fn, void* arg);
 
   void stop(object_rw_complete cb_fn, void* arg);
+  void snap_look(std::string object_name, object_rw_complete cb_fn, void* arg);
+    //读取快照
+  void load_snap(std::string object_name, int version, object_rw_complete cb_fn, void* arg);
+
+  //快照链的长度
+  int get_snapsize(std::string object_name); 
+
+  //删除快照
+  void delete_snap(std::string object_name,int version, object_rw_complete cb_fn, void* arg);
 
 private:
   void readwrite(std::string object_name, 
@@ -65,6 +74,10 @@ private:
                        uint64_t offset, char* buf, uint64_t len, 
                        object_rw_complete cb_fn, void* arg, bool is_read);
 
+  //快照函数
+  void snap_create(std::string object_name, object_rw_complete cb_fn, void* arg);
+  // void snap_create(spdk_blob_id blobid);
+
 
   // 下面都是一些回调函数
   static void rw_done(void *arg, int objerrno);
@@ -72,7 +85,14 @@ private:
   static void create_done(void *arg, spdk_blob_id blobid, int objerrno);
   static void open_done(void *arg, struct spdk_blob *blob, int objerrno);
   static void close_done(void *arg, int objerrno);
-
+  //快照回调函数
+  static void snap_done(void *arg, spdk_blob_id blobid, int objerrno);
+  //快照链表添加
+  static void snap_add(void *arg, spdk_blob* blob, int objerrno);
+  static void snap_add_statues(void *arg, int objerrno);
+  //快照删除的回调函数
+  static void del_done(void *arg, int objerrno); 
+  static void close_snap (void *arg, int objerrno) ;
   static bool is_lba_aligned(uint64_t offset, uint64_t length) {
     uint32_t lba_size = object_store::unit_size;
 
@@ -94,15 +114,22 @@ private:
   }
 
 public:
+  struct fb_blob;
+  struct snap_Node {
+    struct fb_blob * snap_fb;
+    //快照版本怎么弄，用数字还是生成时间
+  };
   struct fb_blob {
     struct spdk_blob* blob;
     spdk_blob_id      blobid;
+    std::list<snap_Node*>  sp_list;
   };
+  //快照版本链表的结点。
   using container = absl::flat_hash_map<std::string, struct fb_blob*>;
   using iterator = container::iterator;
-
-
   container table;
   struct spdk_blob_store *bs;       // 我们不掌握blob_store的生命周期
-  struct spdk_io_channel *channel;  // 所以不用担心这两个指针的free 
+  struct spdk_io_channel *channel;  // 所以不用担心这两个指针的free
+                            //obiect_store是管理所有块的类
+  //std::map<std::string,std::list<snap_Node*>> snap_hashlist;//这个hash表时存储快照的链式hash。
 };

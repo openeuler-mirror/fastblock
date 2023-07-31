@@ -54,3 +54,10 @@ compile_demo(demo_obj
   DEPS
     fastblock_localstore
 )
+
+compile_demo(demo_snap
+  SOURCES
+  demo_snaplook.cc
+  DEPS
+    fastblock_localstore
+)
