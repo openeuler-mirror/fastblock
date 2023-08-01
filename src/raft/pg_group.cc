@@ -7,6 +7,7 @@
 #define TIMER_PERIOD_MSEC 500    //毫秒
 
 #define  ELECTION_TIMER_PERIOD_MSEC  1000   //毫秒
+#define  LEASE_MAINTENANCE_GRACE     1000   //毫秒
 
 std::string pg_id_to_name(uint64_t pool_id, uint64_t pg_id){
     char name[128];
@@ -34,6 +35,7 @@ static int periodic_func(void* arg){
 void pg_t::start_raft_periodic_timer(){
     timer = SPDK_POLLER_REGISTER(periodic_func, this, TIMER_PERIOD_MSEC * 1000);
 	raft->raft_set_election_timeout(ELECTION_TIMER_PERIOD_MSEC);
+    raft->raft_set_lease_maintenance_grace(LEASE_MAINTENANCE_GRACE);
 }
 
 static raft_time_t get_time(){
@@ -149,6 +151,7 @@ int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard
     }
 
     for(auto& osd : osds){
+        SPDK_NOTICELOG("-- raft_add_node node %d in node %d ---\n", osd.node_id, get_current_node_id());
         if(osd.node_id == get_current_node_id()){
             raft->raft_add_node(NULL, osd.node_id, true);
         }else{

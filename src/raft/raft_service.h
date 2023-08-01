@@ -37,6 +37,7 @@ struct append_entries_complete : public context{
     : done(_done) {}
 
     void finish(int ) override {
+        SPDK_NOTICELOG("append_entries_complete\n");
         done->Run();
     }
 };

@@ -7,7 +7,7 @@
 
 
 #define ACCEPT_TIMEOUT_US 1000
-#define GET_OSDMAP_US 5000000
+#define GET_OSDMAP_US 3000000
 #define GET_PGMAP_US 5000000
 #define CLOSE_TIMEOUT_US 1000000
 #define BUFFER_SIZE 65536
@@ -87,7 +87,7 @@ fbclient_monitor_rpc_processer(void *arg)
 
 			if (ec != msg::OsdMapErrorCode::ok)
 			{
-				// SPDK_NOTICELOG("getosdmap: errorode is: %d\r\n", resp.get_osdmap_response().errorcode());
+				SPDK_NOTICELOG("getosdmap: errorode is: %d\r\n", resp.get_osdmap_response().errorcode());
 				return SPDK_POLLER_IDLE;
 			}
 			else
@@ -145,9 +145,10 @@ fbclient_monitor_rpc_processer(void *arg)
 				// a osd not booted can't receive this kind of message
 				return SPDK_POLLER_IDLE;
 			}
-			if(ctx->osdmap.osd_map.size() == 0){
-				return SPDK_POLLER_BUSY;
-			}
+			// if(ctx->osdmap.osd_map.size() == 0){
+				// SPDK_ERRLOG("osd_map is empty\n");
+				// return SPDK_POLLER_BUSY;
+			// }
 			// SPDK_NOTICELOG("got getpgmap response\r\n");
 
 			auto pv = resp.get_pgmap_response().poolid_pgmapversion();
@@ -393,12 +394,9 @@ fbclient_get_osdmap_poll(void *arg)
 	req->SerializeToArray(buf_out, size);
 	iov.iov_base = buf_out;
 	iov.iov_len = size;
-	SPDK_NOTICELOG("fbclient_get_osdmap_poll...\n");
+	// SPDK_NOTICELOG("fbclient_get_osdmap_poll...\n");
 	rc = spdk_sock_writev(ctx->sock, &iov, 1);
     free(buf_out);
-	if(rc > 0){
-		fbclient_get_pgmap_poll(arg);
-	}
 	return rc > 0 ? SPDK_POLLER_BUSY : SPDK_POLLER_IDLE;
 }
 
@@ -535,7 +533,7 @@ int mon_client::connect_mon(){
 	is_running = true;
 	poller_in = SPDK_POLLER_REGISTER(fbclient_monitor_rpc_processer, this, 0);
 	poller_getosdmap = SPDK_POLLER_REGISTER(fbclient_get_osdmap_poll, this, GET_OSDMAP_US);
-	// poller_getpgmap = SPDK_POLLER_REGISTER(fbclient_get_pgmap_poll, this, GET_PGMAP_US);
+	poller_getpgmap = SPDK_POLLER_REGISTER(fbclient_get_pgmap_poll, this, GET_PGMAP_US);
 	// poller_printpgmap = SPDK_POLLER_REGISTER(fbclient_print_osdmap_and_pgmap, this, GET_OSDMAP_US);
 
 	send_bootrequest();

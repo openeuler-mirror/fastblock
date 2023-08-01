@@ -164,6 +164,9 @@ int raft_server_t::_has_lease(raft_node* node, raft_time_t now, int with_grace)
 
     if (with_grace)
     {
+        // SPDK_NOTICELOG("now:%ld lease:%ld lease_maintenance_grace:%d effective_time:%ld election_timeout:%d\n",
+                // now, node->raft_node_get_lease(), raft_get_lease_maintenance_grace(),
+                // node->raft_node_get_effective_time(), raft_get_election_timeout());
         if (now < node->raft_node_get_lease() + raft_get_lease_maintenance_grace())
             return 1;
         /* Since a leader has no lease from any other node at the beginning of
@@ -218,7 +221,7 @@ int raft_server_t::raft_periodic()
 
     if (raft_get_state() == RAFT_STATE_LEADER)
     {
-        if (_has_majority_leases(now, 1 /* with_grace */))
+        if (!_has_majority_leases(now, 1 /* with_grace */))
         {
             /* A leader who can't maintain majority leases shall step down. */
             SPDK_NOTICELOG("now %ld unable to maintain majority leases\n", now);
@@ -227,7 +230,7 @@ int raft_server_t::raft_periodic()
         }
         else if (raft_get_request_timeout() <= now - raft_get_election_timer())
         {
-            raft_send_appendentries_all();
+            raft_send_heartbeat_all();
         }
     }
     else if (raft_get_election_timeout_rand() <= now - raft_get_election_timer() &&
@@ -290,6 +293,7 @@ int raft_server_t::raft_process_appendentries_reply(
     if (!node)
         return -1;
 
+    node->raft_set_suppress_heartbeats(false);
     if (!raft_is_leader())
         return RAFT_ERR_NOT_LEADER;
 
@@ -992,12 +996,15 @@ int raft_server_t::raft_write_entry(std::shared_ptr<msg_entry_t> ety,
             !node->raft_node_is_voting())
             continue;
 
+        
         /* Only send new entries.
          * Don't send the entry to peers who are behind, to prevent them from
          * becoming congested. */
         raft_index_t next_idx = node->raft_node_get_next_idx();
-        if (next_idx == first_idx)
+        if (next_idx == first_idx){
+            _node->raft_set_suppress_heartbeats(true);
             raft_send_appendentries(node);
+        }
     }
 
     disk_append_complete *append_complete = new disk_append_complete(first_idx, current_idx, this);
@@ -1060,6 +1067,38 @@ void raft_server_t::_raft_get_entries_from_idx(raft_index_t idx, msg_appendentri
     }
 }
 
+int raft_server_t::raft_send_heartbeat(raft_node* node)
+{
+    assert(node);
+    assert(!raft_is_self(node));
+
+    msg_appendentries_t* ae = new msg_appendentries_t();
+    ae->set_node_id(raft_get_nodeid());
+    ae->set_pool_id(pool_id);
+    ae->set_pg_id(pg_id);
+    ae->set_term(raft_get_current_term());
+    raft_index_t next_idx = node->raft_node_get_next_idx();  
+    ae->set_prev_log_idx(next_idx - 1);  
+    raft_term_t term;
+    int got = raft_get_entry_term(ae->prev_log_idx(), &term);
+    assert(got);
+    (void)got;
+    ae->set_prev_log_term(term);
+    ae->set_leader_commit(raft_get_commit_idx());
+
+    SPDK_NOTICELOG("sending heartbeat appendentries to node %d: ci:%ld comi:%ld t:%ld lc:%ld pli:%ld plt:%ld \n",
+          node->raft_node_get_id(),
+          raft_get_current_idx(),
+          raft_get_commit_idx(),
+          ae->term(),
+          ae->leader_commit(),
+          ae->prev_log_idx(),
+          ae->prev_log_term());
+
+
+    client.send_appendentries(this, node->raft_node_get_id(), ae);
+    return 0;
+}
 
 int raft_server_t::raft_send_appendentries(raft_node* node)
 {
@@ -1099,11 +1138,11 @@ int raft_server_t::raft_send_appendentries(raft_node* node)
     return 0;
 }
 
-int raft_server_t::raft_send_appendentries_all()
+int raft_server_t::raft_send_heartbeat_all()
 {
     int e;
 
-    SPDK_NOTICELOG("in raft_send_appendentries_all\n");
+    SPDK_NOTICELOG("in raft_send_heartbeat_all\n");
     auto election_timer = raft_get_cbs().get_time();
     raft_set_election_timer(election_timer);
     for(auto _node : nodes)
@@ -1112,7 +1151,9 @@ int raft_server_t::raft_send_appendentries_all()
         if (raft_is_self(node))
             continue;
 
-        e = raft_send_appendentries(node);
+        if(_node->raft_get_suppress_heartbeats())
+            continue;
+        e = raft_send_heartbeat(node);
         if (0 != e)
             return e;
     }

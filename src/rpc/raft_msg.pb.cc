@@ -56,6 +56,7 @@ static void InitDefaultsscc_info_msg_appendentries_response_t_raft_5fmsg_2eproto
     new (ptr) ::msg_appendentries_response_t();
     ::PROTOBUF_NAMESPACE_ID::internal::OnShutdownDestroyMessage(ptr);
   }
+  ::msg_appendentries_response_t::InitAsDefaultInstance();
 }
 
 ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_msg_appendentries_response_t_raft_5fmsg_2eproto =
@@ -69,6 +70,7 @@ static void InitDefaultsscc_info_msg_appendentries_t_raft_5fmsg_2eproto() {
     new (ptr) ::msg_appendentries_t();
     ::PROTOBUF_NAMESPACE_ID::internal::OnShutdownDestroyMessage(ptr);
   }
+  ::msg_appendentries_t::InitAsDefaultInstance();
 }
 
 ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<1> scc_info_msg_appendentries_t_raft_5fmsg_2eproto =
@@ -83,6 +85,7 @@ static void InitDefaultsscc_info_msg_installsnapshot_response_t_raft_5fmsg_2epro
     new (ptr) ::msg_installsnapshot_response_t();
     ::PROTOBUF_NAMESPACE_ID::internal::OnShutdownDestroyMessage(ptr);
   }
+  ::msg_installsnapshot_response_t::InitAsDefaultInstance();
 }
 
 ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_msg_installsnapshot_response_t_raft_5fmsg_2eproto =
@@ -96,6 +99,7 @@ static void InitDefaultsscc_info_msg_installsnapshot_t_raft_5fmsg_2eproto() {
     new (ptr) ::msg_installsnapshot_t();
     ::PROTOBUF_NAMESPACE_ID::internal::OnShutdownDestroyMessage(ptr);
   }
+  ::msg_installsnapshot_t::InitAsDefaultInstance();
 }
 
 ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_msg_installsnapshot_t_raft_5fmsg_2eproto =
@@ -109,6 +113,7 @@ static void InitDefaultsscc_info_msg_requestvote_response_t_raft_5fmsg_2eproto()
     new (ptr) ::msg_requestvote_response_t();
     ::PROTOBUF_NAMESPACE_ID::internal::OnShutdownDestroyMessage(ptr);
   }
+  ::msg_requestvote_response_t::InitAsDefaultInstance();
 }
 
 ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_msg_requestvote_response_t_raft_5fmsg_2eproto =
@@ -122,6 +127,7 @@ static void InitDefaultsscc_info_msg_requestvote_t_raft_5fmsg_2eproto() {
     new (ptr) ::msg_requestvote_t();
     ::PROTOBUF_NAMESPACE_ID::internal::OnShutdownDestroyMessage(ptr);
   }
+  ::msg_requestvote_t::InitAsDefaultInstance();
 }
 
 ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_msg_requestvote_t_raft_5fmsg_2eproto =
@@ -135,6 +141,7 @@ static void InitDefaultsscc_info_raft_entry_data_t_raft_5fmsg_2eproto() {
     new (ptr) ::raft_entry_data_t();
     ::PROTOBUF_NAMESPACE_ID::internal::OnShutdownDestroyMessage(ptr);
   }
+  ::raft_entry_data_t::InitAsDefaultInstance();
 }
 
 ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_raft_entry_data_t_raft_5fmsg_2eproto =
@@ -148,6 +155,7 @@ static void InitDefaultsscc_info_raft_entry_t_raft_5fmsg_2eproto() {
     new (ptr) ::raft_entry_t();
     ::PROTOBUF_NAMESPACE_ID::internal::OnShutdownDestroyMessage(ptr);
   }
+  ::raft_entry_t::InitAsDefaultInstance();
 }
 
 ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<1> scc_info_raft_entry_t_raft_5fmsg_2eproto =
@@ -323,6 +331,8 @@ static bool dynamic_init_dummy_raft_5fmsg_2eproto = (static_cast<void>(::PROTOBU
 
 // ===================================================================
 
+void raft_entry_data_t::InitAsDefaultInstance() {
+}
 class raft_entry_data_t::_Internal {
  public:
 };
@@ -338,12 +348,12 @@ raft_entry_data_t::raft_entry_data_t(const raft_entry_data_t& from)
   _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
   obj_name_.UnsafeSetDefault(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
   if (!from._internal_obj_name().empty()) {
-    obj_name_.Set(::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::EmptyDefault{}, from._internal_obj_name(), 
+    obj_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), from._internal_obj_name(),
       GetArena());
   }
   buf_.UnsafeSetDefault(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
   if (!from._internal_buf().empty()) {
-    buf_.Set(::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::EmptyDefault{}, from._internal_buf(), 
+    buf_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), from._internal_buf(),
       GetArena());
   }
   // @@protoc_insertion_point(copy_constructor:raft_entry_data_t)
@@ -388,13 +398,14 @@ void raft_entry_data_t::Clear() {
   // Prevent compiler warnings about cached_has_bits being unused
   (void) cached_has_bits;
 
-  obj_name_.ClearToEmpty();
-  buf_.ClearToEmpty();
+  obj_name_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
+  buf_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
   _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
 }
 
 const char* raft_entry_data_t::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) {
 #define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  ::PROTOBUF_NAMESPACE_ID::Arena* arena = GetArena(); (void)arena;
   while (!ctx->Done(&ptr)) {
     ::PROTOBUF_NAMESPACE_ID::uint32 tag;
     ptr = ::PROTOBUF_NAMESPACE_ID::internal::ReadTag(ptr, &tag);
@@ -562,6 +573,10 @@ void raft_entry_data_t::InternalSwap(raft_entry_data_t* other) {
 
 // ===================================================================
 
+void raft_entry_t::InitAsDefaultInstance() {
+  ::_raft_entry_t_default_instance_._instance.get_mutable()->data_ = const_cast< ::raft_entry_data_t*>(
+      ::raft_entry_data_t::internal_default_instance());
+}
 class raft_entry_t::_Internal {
  public:
   static const ::raft_entry_data_t& data(const raft_entry_t* msg);
@@ -593,9 +608,8 @@ raft_entry_t::raft_entry_t(const raft_entry_t& from)
 
 void raft_entry_t::SharedCtor() {
   ::PROTOBUF_NAMESPACE_ID::internal::InitSCC(&scc_info_raft_entry_t_raft_5fmsg_2eproto.base);
-  ::memset(reinterpret_cast<char*>(this) + static_cast<size_t>(
-      reinterpret_cast<char*>(&data_) - reinterpret_cast<char*>(this)),
-      0, static_cast<size_t>(reinterpret_cast<char*>(&type_) -
+  ::memset(&data_, 0, static_cast<size_t>(
+      reinterpret_cast<char*>(&type_) -
       reinterpret_cast<char*>(&data_)) + sizeof(type_));
 }
 
@@ -643,6 +657,7 @@ void raft_entry_t::Clear() {
 
 const char* raft_entry_t::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) {
 #define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  ::PROTOBUF_NAMESPACE_ID::Arena* arena = GetArena(); (void)arena;
   while (!ctx->Done(&ptr)) {
     ::PROTOBUF_NAMESPACE_ID::uint32 tag;
     ptr = ::PROTOBUF_NAMESPACE_ID::internal::ReadTag(ptr, &tag);
@@ -855,6 +870,8 @@ void raft_entry_t::InternalSwap(raft_entry_t* other) {
 
 // ===================================================================
 
+void msg_appendentries_t::InitAsDefaultInstance() {
+}
 class msg_appendentries_t::_Internal {
  public:
 };
@@ -878,9 +895,8 @@ msg_appendentries_t::msg_appendentries_t(const msg_appendentries_t& from)
 
 void msg_appendentries_t::SharedCtor() {
   ::PROTOBUF_NAMESPACE_ID::internal::InitSCC(&scc_info_msg_appendentries_t_raft_5fmsg_2eproto.base);
-  ::memset(reinterpret_cast<char*>(this) + static_cast<size_t>(
-      reinterpret_cast<char*>(&pool_id_) - reinterpret_cast<char*>(this)),
-      0, static_cast<size_t>(reinterpret_cast<char*>(&node_id_) -
+  ::memset(&pool_id_, 0, static_cast<size_t>(
+      reinterpret_cast<char*>(&node_id_) -
       reinterpret_cast<char*>(&pool_id_)) + sizeof(node_id_));
 }
 
@@ -924,6 +940,7 @@ void msg_appendentries_t::Clear() {
 
 const char* msg_appendentries_t::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) {
 #define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  ::PROTOBUF_NAMESPACE_ID::Arena* arena = GetArena(); (void)arena;
   while (!ctx->Done(&ptr)) {
     ::PROTOBUF_NAMESPACE_ID::uint32 tag;
     ptr = ::PROTOBUF_NAMESPACE_ID::internal::ReadTag(ptr, &tag);
@@ -1232,6 +1249,8 @@ void msg_appendentries_t::InternalSwap(msg_appendentries_t* other) {
 
 // ===================================================================
 
+void msg_appendentries_response_t::InitAsDefaultInstance() {
+}
 class msg_appendentries_response_t::_Internal {
  public:
 };
@@ -1252,9 +1271,8 @@ msg_appendentries_response_t::msg_appendentries_response_t(const msg_appendentri
 }
 
 void msg_appendentries_response_t::SharedCtor() {
-  ::memset(reinterpret_cast<char*>(this) + static_cast<size_t>(
-      reinterpret_cast<char*>(&term_) - reinterpret_cast<char*>(this)),
-      0, static_cast<size_t>(reinterpret_cast<char*>(&first_idx_) -
+  ::memset(&term_, 0, static_cast<size_t>(
+      reinterpret_cast<char*>(&first_idx_) -
       reinterpret_cast<char*>(&term_)) + sizeof(first_idx_));
 }
 
@@ -1297,6 +1315,7 @@ void msg_appendentries_response_t::Clear() {
 
 const char* msg_appendentries_response_t::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) {
 #define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  ::PROTOBUF_NAMESPACE_ID::Arena* arena = GetArena(); (void)arena;
   while (!ctx->Done(&ptr)) {
     ::PROTOBUF_NAMESPACE_ID::uint32 tag;
     ptr = ::PROTOBUF_NAMESPACE_ID::internal::ReadTag(ptr, &tag);
@@ -1553,6 +1572,8 @@ void msg_appendentries_response_t::InternalSwap(msg_appendentries_response_t* ot
 
 // ===================================================================
 
+void msg_requestvote_t::InitAsDefaultInstance() {
+}
 class msg_requestvote_t::_Internal {
  public:
 };
@@ -1573,9 +1594,8 @@ msg_requestvote_t::msg_requestvote_t(const msg_requestvote_t& from)
 }
 
 void msg_requestvote_t::SharedCtor() {
-  ::memset(reinterpret_cast<char*>(this) + static_cast<size_t>(
-      reinterpret_cast<char*>(&pool_id_) - reinterpret_cast<char*>(this)),
-      0, static_cast<size_t>(reinterpret_cast<char*>(&prevote_) -
+  ::memset(&pool_id_, 0, static_cast<size_t>(
+      reinterpret_cast<char*>(&prevote_) -
       reinterpret_cast<char*>(&pool_id_)) + sizeof(prevote_));
 }
 
@@ -1618,6 +1638,7 @@ void msg_requestvote_t::Clear() {
 
 const char* msg_requestvote_t::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) {
 #define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  ::PROTOBUF_NAMESPACE_ID::Arena* arena = GetArena(); (void)arena;
   while (!ctx->Done(&ptr)) {
     ::PROTOBUF_NAMESPACE_ID::uint32 tag;
     ptr = ::PROTOBUF_NAMESPACE_ID::internal::ReadTag(ptr, &tag);
@@ -1920,6 +1941,8 @@ void msg_requestvote_t::InternalSwap(msg_requestvote_t* other) {
 
 // ===================================================================
 
+void msg_requestvote_response_t::InitAsDefaultInstance() {
+}
 class msg_requestvote_response_t::_Internal {
  public:
 };
@@ -1940,9 +1963,8 @@ msg_requestvote_response_t::msg_requestvote_response_t(const msg_requestvote_res
 }
 
 void msg_requestvote_response_t::SharedCtor() {
-  ::memset(reinterpret_cast<char*>(this) + static_cast<size_t>(
-      reinterpret_cast<char*>(&term_) - reinterpret_cast<char*>(this)),
-      0, static_cast<size_t>(reinterpret_cast<char*>(&prevote_) -
+  ::memset(&term_, 0, static_cast<size_t>(
+      reinterpret_cast<char*>(&prevote_) -
       reinterpret_cast<char*>(&term_)) + sizeof(prevote_));
 }
 
@@ -1985,6 +2007,7 @@ void msg_requestvote_response_t::Clear() {
 
 const char* msg_requestvote_response_t::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) {
 #define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  ::PROTOBUF_NAMESPACE_ID::Arena* arena = GetArena(); (void)arena;
   while (!ctx->Done(&ptr)) {
     ::PROTOBUF_NAMESPACE_ID::uint32 tag;
     ptr = ::PROTOBUF_NAMESPACE_ID::internal::ReadTag(ptr, &tag);
@@ -2195,6 +2218,8 @@ void msg_requestvote_response_t::InternalSwap(msg_requestvote_response_t* other)
 
 // ===================================================================
 
+void msg_installsnapshot_t::InitAsDefaultInstance() {
+}
 class msg_installsnapshot_t::_Internal {
  public:
 };
@@ -2215,9 +2240,8 @@ msg_installsnapshot_t::msg_installsnapshot_t(const msg_installsnapshot_t& from)
 }
 
 void msg_installsnapshot_t::SharedCtor() {
-  ::memset(reinterpret_cast<char*>(this) + static_cast<size_t>(
-      reinterpret_cast<char*>(&pool_id_) - reinterpret_cast<char*>(this)),
-      0, static_cast<size_t>(reinterpret_cast<char*>(&node_id_) -
+  ::memset(&pool_id_, 0, static_cast<size_t>(
+      reinterpret_cast<char*>(&node_id_) -
       reinterpret_cast<char*>(&pool_id_)) + sizeof(node_id_));
 }
 
@@ -2260,6 +2284,7 @@ void msg_installsnapshot_t::Clear() {
 
 const char* msg_installsnapshot_t::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) {
 #define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  ::PROTOBUF_NAMESPACE_ID::Arena* arena = GetArena(); (void)arena;
   while (!ctx->Done(&ptr)) {
     ::PROTOBUF_NAMESPACE_ID::uint32 tag;
     ptr = ::PROTOBUF_NAMESPACE_ID::internal::ReadTag(ptr, &tag);
@@ -2516,6 +2541,8 @@ void msg_installsnapshot_t::InternalSwap(msg_installsnapshot_t* other) {
 
 // ===================================================================
 
+void msg_installsnapshot_response_t::InitAsDefaultInstance() {
+}
 class msg_installsnapshot_response_t::_Internal {
  public:
 };
@@ -2536,9 +2563,8 @@ msg_installsnapshot_response_t::msg_installsnapshot_response_t(const msg_install
 }
 
 void msg_installsnapshot_response_t::SharedCtor() {
-  ::memset(reinterpret_cast<char*>(this) + static_cast<size_t>(
-      reinterpret_cast<char*>(&term_) - reinterpret_cast<char*>(this)),
-      0, static_cast<size_t>(reinterpret_cast<char*>(&lease_) -
+  ::memset(&term_, 0, static_cast<size_t>(
+      reinterpret_cast<char*>(&lease_) -
       reinterpret_cast<char*>(&term_)) + sizeof(lease_));
 }
 
@@ -2581,6 +2607,7 @@ void msg_installsnapshot_response_t::Clear() {
 
 const char* msg_installsnapshot_response_t::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) {
 #define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  ::PROTOBUF_NAMESPACE_ID::Arena* arena = GetArena(); (void)arena;
   while (!ctx->Done(&ptr)) {
     ::PROTOBUF_NAMESPACE_ID::uint32 tag;
     ptr = ::PROTOBUF_NAMESPACE_ID::internal::ReadTag(ptr, &tag);

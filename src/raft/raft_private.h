@@ -722,9 +722,11 @@ public:
         return voting_cfg_change_log_idx != -1;
     }
 
+    int raft_send_heartbeat(raft_node* node);
+
     int raft_send_appendentries(raft_node* node);
     int raft_get_entry_term(raft_index_t idx, raft_term_t* term);
-    int raft_send_appendentries_all();
+    int raft_send_heartbeat_all();
 
     /**
      * @return number of votes this server has received this election */

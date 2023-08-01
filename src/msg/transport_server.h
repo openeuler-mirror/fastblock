@@ -301,7 +301,7 @@ public:
         start_listen(host.c_str(), port);
     }
 
-    void start_listen(char* host, const uint16_t port) {
+    void start_listen(const char* host, const uint16_t port) {
         _trid = std::make_unique<::spdk_srv_transport_id>();
         _trid->trtype = SPDK_SRV_TRANSPORT_RDMA;
         _trid->adrfam = SPDK_SRV_ADRFAM_IPV4;
