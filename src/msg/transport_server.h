@@ -147,8 +147,9 @@ public:
         ~rpc_task() noexcept {
             if (not data) { return; }
 
-            if (not _in_pool) {
+            if (_in_pool) {
                 _mem_pool->put(data);
+                return;
             }
 
             ::spdk_free(data);

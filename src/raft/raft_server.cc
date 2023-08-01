@@ -221,7 +221,7 @@ int raft_server_t::raft_periodic()
         if (_has_majority_leases(now, 1 /* with_grace */))
         {
             /* A leader who can't maintain majority leases shall step down. */
-            SPDK_NOTICELOG("unable to maintain majority leases\n");
+            SPDK_NOTICELOG("now %ld unable to maintain majority leases\n", now);
             raft_become_follower();
             raft_set_current_leader(-1);
         }
@@ -272,13 +272,19 @@ int raft_server_t::raft_get_entry_term(raft_index_t idx, raft_term_t* term)
 int raft_server_t::raft_process_appendentries_reply(
                                      msg_appendentries_response_t* r)
 {
+    SPDK_NOTICELOG("received appendentries response from %d at %ld\n", 
+            r->node_id(), raft_get_cbs().get_time());
     SPDK_NOTICELOG(
-          "received appendentries response %s ci:%ld rci:%ld 1stidx:%ld ls=%ld\n",
-          r->success() == 1 ? "SUCCESS" : "fail",
+          "received appendentries response %s from %d ci:%ld rci:%ld 1stidx:%ld\
+           ls=%ld  ct:%ld rt:%ld\n",
+          r->success() == 1 ? "SUCCESS" : "fail", 
+          r->node_id(),
           raft_get_current_idx(),
           r->current_idx(),
           r->first_idx(),
-          r->lease());
+          r->lease(),
+          raft_get_current_term(),
+          r->term());
 
     raft_node* node = raft_get_node(r->node_id());
     if (!node)
@@ -395,6 +401,7 @@ struct follow_disk_append_complete : public context{
     , raft(_raft) {}
 
     void finish(int r) override {
+        SPDK_NOTICELOG("follow_disk_append_complete finish, commit_idx %ld.\n", commit_idx);
         raft->follow_raft_disk_append_finish(start_idx, end_idx, commit_idx, r);
     }
     raft_index_t start_idx;
@@ -421,8 +428,11 @@ int raft_server_t::raft_recv_appendentries(
     follow_disk_append_complete *append_complete;
     raft_index_t commit_idx = 0; 
 
-    if (0 < entries_num)
-        SPDK_NOTICELOG("recvd appendentries t:%ld ci:%ld lc:%ld pli:%ld plt:%ld #%d\n",
+    SPDK_NOTICELOG("received appendentries  from %d at %ld\n", 
+            ae->node_id(), raft_get_cbs().get_time());
+    // if (0 < entries_num)
+        SPDK_NOTICELOG("recvd appendentries ct: %ld t:%ld ci:%ld lc:%ld pli:%ld plt:%ld #%d\n",
+              raft_get_current_term(),
               ae->term(),
               raft_get_current_idx(),
               ae->leader_commit(),
@@ -537,6 +547,7 @@ int raft_server_t::raft_recv_appendentries(
     }
     start_idx = ae->prev_log_idx() + 1 + i;
     end_idx =  start_idx + k - 1;
+    SPDK_NOTICELOG("start_idx: %ld  end_idx: %ld \n", start_idx, end_idx);
     e = raft_append_entries(entrys);
     i += k;
     r->set_current_idx(ae->prev_log_idx() + i);
@@ -554,6 +565,11 @@ int raft_server_t::raft_recv_appendentries(
     
     r->set_term(current_term);
     r->set_first_idx(ae->prev_log_idx() + 1);
+    if(start_idx > end_idx){
+        //空的append entry request，既心跳包
+        complete->complete(0);
+        return 0;
+    }
     append_complete = new follow_disk_append_complete(start_idx, end_idx, commit_idx, this);
     raft_disk_append_entries(start_idx, end_idx, append_complete);
     return 0;
@@ -603,6 +619,10 @@ int raft_server_t::raft_recv_requestvote(raft_node_id_t node_id,
     raft_time_t now = raft_get_cbs().get_time();
     int e = 0;
 
+    SPDK_NOTICELOG("raft_recv_requestvote from node %d term %ld current_term %ld candidate_id %d \
+            last_log_idx %ld last_log_term %ld prevote %d\n", 
+            node_id, vr->term(), raft_get_current_term(), vr->candidate_id(), 
+            vr->last_log_idx(), vr->last_log_term(), vr->prevote());
     raft_node* node = raft_get_node(node_id);
     if (!node)
         node = raft_get_node(vr->candidate_id());
@@ -621,6 +641,7 @@ int raft_server_t::raft_recv_requestvote(raft_node_id_t node_id,
 
     if (raft_get_current_term() < vr->term())
     {
+        SPDK_NOTICELOG("ct %ld  rt %ld\n", raft_get_current_term(), vr->term());
         e = raft_set_current_term(vr->term());
         if (0 != e) {
             r->set_vote_granted(0);
@@ -632,6 +653,7 @@ int raft_server_t::raft_recv_requestvote(raft_node_id_t node_id,
 
     if (_should_grant_vote(vr))
     {
+        SPDK_NOTICELOG("should_grant_vote\n");
         /* It shouldn't be possible for a leader or prevoted candidate to grant a vote
          * Both states would have voted for themselves
          * A candidate may grant a prevote though */
@@ -688,8 +710,9 @@ int raft_votes_is_majority(const int num_nodes, const int nvotes)
 int raft_server_t::raft_process_requestvote_reply(
                                    msg_requestvote_response_t* r)
 {
-    SPDK_NOTICELOG("node responded to requestvote%s status:%s ct:%ld rt:%ld \n",
-          r->prevote() ? " (prevote)" : "",
+    SPDK_NOTICELOG("node responded to requestvote%s from node %d status:%s ct:%ld rt:%ld \n",
+          r->prevote() ? " (prevote)" : "", 
+          r->node_id(),
           r->vote_granted() == 1 ? "granted" :
           r->vote_granted() == 0 ? "not granted" : "unknown",
           raft_get_current_term(),

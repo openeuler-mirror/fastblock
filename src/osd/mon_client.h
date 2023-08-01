@@ -9,7 +9,7 @@
 struct osd_map_t
 {
 	std::map<int32_t, osd_info_t> osd_map;
-	int64_t osdmap_version;
+	int64_t osdmap_version{-1};
 };
 
 struct pg_info_t
