@@ -1,18 +1,11 @@
-/**
- * Copyright (c) 2013, Willem-Hendrik Thiart
- * Use of this source code is governed by a BSD-style license that can be
- * found in the LICENSE file.
- *
- * @file
- * @author Willem Thiart himself@willemthiart.com
- */
 #include <assert.h>
 
 #include "raft.h"
 #include "raft_log.h"
 #include "raft_private.h"
 
-raft_server_t::raft_server_t(storage::log&& _log, std::shared_ptr<state_machine> sm_ptr, uint64_t _pool_id, uint64_t _pg_id)
+raft_server_t::raft_server_t(raft_client_protocol& _client, storage::log&& _log, 
+        std::shared_ptr<state_machine> sm_ptr, uint64_t _pool_id, uint64_t _pg_id)
     : current_term(0)
     , voted_for(-1)
     , commit_idx(0)
@@ -36,6 +29,7 @@ raft_server_t::raft_server_t(storage::log&& _log, std::shared_ptr<state_machine>
     , pg_id(_pg_id)
     , first_idx(0)
     , current_idx(0)
+    , client(_client)
 {
         raft_randomize_election_timeout();  
         log = log_new(std::move(_log)); 

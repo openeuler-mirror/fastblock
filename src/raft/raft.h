@@ -1,12 +1,3 @@
-/**
- * Copyright (c) 2013, Willem-Hendrik Thiart
- * Use of this source code is governed by a BSD-style license that can be
- * found in the LICENSE file.
- *
- * @file
- * @author Willem Thiart himself@willemthiart.com
- */
-
 #ifndef RAFT_H_
 #define RAFT_H_
 #include <string>
@@ -92,7 +83,7 @@ struct raft_node_configuration_t
  * Election timeout defaults to 1000 milliseconds
  *
  * @return newly initialised Raft server */
-extern std::shared_ptr<raft_server_t> raft_new(
+extern std::shared_ptr<raft_server_t> raft_new(raft_client_protocol& client,
         storage::log&& log, std::shared_ptr<state_machine> sm_ptr, uint64_t pool_id, uint64_t pg_id);
 
 /** Determine if entry is voting configuration change.

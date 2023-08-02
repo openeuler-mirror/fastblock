@@ -58,6 +58,7 @@ static void InitDefaultsscc_info_delete_cmd_osd_5fmsg_2eproto() {
     new (ptr) ::delete_cmd();
     ::PROTOBUF_NAMESPACE_ID::internal::OnShutdownDestroyMessage(ptr);
   }
+  ::delete_cmd::InitAsDefaultInstance();
 }
 
 ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_delete_cmd_osd_5fmsg_2eproto =
@@ -71,6 +72,7 @@ static void InitDefaultsscc_info_delete_reply_osd_5fmsg_2eproto() {
     new (ptr) ::delete_reply();
     ::PROTOBUF_NAMESPACE_ID::internal::OnShutdownDestroyMessage(ptr);
   }
+  ::delete_reply::InitAsDefaultInstance();
 }
 
 ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_delete_reply_osd_5fmsg_2eproto =
@@ -84,6 +86,7 @@ static void InitDefaultsscc_info_delete_request_osd_5fmsg_2eproto() {
     new (ptr) ::delete_request();
     ::PROTOBUF_NAMESPACE_ID::internal::OnShutdownDestroyMessage(ptr);
   }
+  ::delete_request::InitAsDefaultInstance();
 }
 
 ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_delete_request_osd_5fmsg_2eproto =
@@ -97,6 +100,7 @@ static void InitDefaultsscc_info_read_cmd_osd_5fmsg_2eproto() {
     new (ptr) ::read_cmd();
     ::PROTOBUF_NAMESPACE_ID::internal::OnShutdownDestroyMessage(ptr);
   }
+  ::read_cmd::InitAsDefaultInstance();
 }
 
 ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_read_cmd_osd_5fmsg_2eproto =
@@ -110,6 +114,7 @@ static void InitDefaultsscc_info_read_reply_osd_5fmsg_2eproto() {
     new (ptr) ::read_reply();
     ::PROTOBUF_NAMESPACE_ID::internal::OnShutdownDestroyMessage(ptr);
   }
+  ::read_reply::InitAsDefaultInstance();
 }
 
 ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_read_reply_osd_5fmsg_2eproto =
@@ -123,6 +128,7 @@ static void InitDefaultsscc_info_read_request_osd_5fmsg_2eproto() {
     new (ptr) ::read_request();
     ::PROTOBUF_NAMESPACE_ID::internal::OnShutdownDestroyMessage(ptr);
   }
+  ::read_request::InitAsDefaultInstance();
 }
 
 ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_read_request_osd_5fmsg_2eproto =
@@ -136,6 +142,7 @@ static void InitDefaultsscc_info_write_cmd_osd_5fmsg_2eproto() {
     new (ptr) ::write_cmd();
     ::PROTOBUF_NAMESPACE_ID::internal::OnShutdownDestroyMessage(ptr);
   }
+  ::write_cmd::InitAsDefaultInstance();
 }
 
 ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_write_cmd_osd_5fmsg_2eproto =
@@ -149,6 +156,7 @@ static void InitDefaultsscc_info_write_reply_osd_5fmsg_2eproto() {
     new (ptr) ::write_reply();
     ::PROTOBUF_NAMESPACE_ID::internal::OnShutdownDestroyMessage(ptr);
   }
+  ::write_reply::InitAsDefaultInstance();
 }
 
 ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_write_reply_osd_5fmsg_2eproto =
@@ -162,6 +170,7 @@ static void InitDefaultsscc_info_write_request_osd_5fmsg_2eproto() {
     new (ptr) ::write_request();
     ::PROTOBUF_NAMESPACE_ID::internal::OnShutdownDestroyMessage(ptr);
   }
+  ::write_request::InitAsDefaultInstance();
 }
 
 ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_write_request_osd_5fmsg_2eproto =
@@ -315,6 +324,8 @@ static bool dynamic_init_dummy_osd_5fmsg_2eproto = (static_cast<void>(::PROTOBUF
 
 // ===================================================================
 
+void write_request::InitAsDefaultInstance() {
+}
 class write_request::_Internal {
  public:
 };
@@ -330,12 +341,12 @@ write_request::write_request(const write_request& from)
   _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
   object_name_.UnsafeSetDefault(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
   if (!from._internal_object_name().empty()) {
-    object_name_.Set(::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::EmptyDefault{}, from._internal_object_name(), 
+    object_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), from._internal_object_name(),
       GetArena());
   }
   data_.UnsafeSetDefault(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
   if (!from._internal_data().empty()) {
-    data_.Set(::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::EmptyDefault{}, from._internal_data(), 
+    data_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), from._internal_data(),
       GetArena());
   }
   ::memcpy(&pool_id_, &from.pool_id_,
@@ -348,9 +359,8 @@ void write_request::SharedCtor() {
   ::PROTOBUF_NAMESPACE_ID::internal::InitSCC(&scc_info_write_request_osd_5fmsg_2eproto.base);
   object_name_.UnsafeSetDefault(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
   data_.UnsafeSetDefault(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
-  ::memset(reinterpret_cast<char*>(this) + static_cast<size_t>(
-      reinterpret_cast<char*>(&pool_id_) - reinterpret_cast<char*>(this)),
-      0, static_cast<size_t>(reinterpret_cast<char*>(&offset_) -
+  ::memset(&pool_id_, 0, static_cast<size_t>(
+      reinterpret_cast<char*>(&offset_) -
       reinterpret_cast<char*>(&pool_id_)) + sizeof(offset_));
 }
 
@@ -387,8 +397,8 @@ void write_request::Clear() {
   // Prevent compiler warnings about cached_has_bits being unused
   (void) cached_has_bits;
 
-  object_name_.ClearToEmpty();
-  data_.ClearToEmpty();
+  object_name_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
+  data_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
   ::memset(&pool_id_, 0, static_cast<size_t>(
       reinterpret_cast<char*>(&offset_) -
       reinterpret_cast<char*>(&pool_id_)) + sizeof(offset_));
@@ -397,6 +407,7 @@ void write_request::Clear() {
 
 const char* write_request::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) {
 #define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  ::PROTOBUF_NAMESPACE_ID::Arena* arena = GetArena(); (void)arena;
   while (!ctx->Done(&ptr)) {
     ::PROTOBUF_NAMESPACE_ID::uint32 tag;
     ptr = ::PROTOBUF_NAMESPACE_ID::internal::ReadTag(ptr, &tag);
@@ -639,6 +650,8 @@ void write_request::InternalSwap(write_request* other) {
 
 // ===================================================================
 
+void write_reply::InitAsDefaultInstance() {
+}
 class write_reply::_Internal {
  public:
 };
@@ -654,7 +667,7 @@ write_reply::write_reply(const write_reply& from)
   _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
   str_.UnsafeSetDefault(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
   if (!from._internal_str().empty()) {
-    str_.Set(::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::EmptyDefault{}, from._internal_str(), 
+    str_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), from._internal_str(),
       GetArena());
   }
   state_ = from.state_;
@@ -699,13 +712,14 @@ void write_reply::Clear() {
   // Prevent compiler warnings about cached_has_bits being unused
   (void) cached_has_bits;
 
-  str_.ClearToEmpty();
+  str_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
   state_ = 0;
   _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
 }
 
 const char* write_reply::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) {
 #define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  ::PROTOBUF_NAMESPACE_ID::Arena* arena = GetArena(); (void)arena;
   while (!ctx->Done(&ptr)) {
     ::PROTOBUF_NAMESPACE_ID::uint32 tag;
     ptr = ::PROTOBUF_NAMESPACE_ID::internal::ReadTag(ptr, &tag);
@@ -872,6 +886,8 @@ void write_reply::InternalSwap(write_reply* other) {
 
 // ===================================================================
 
+void read_request::InitAsDefaultInstance() {
+}
 class read_request::_Internal {
  public:
 };
@@ -887,7 +903,7 @@ read_request::read_request(const read_request& from)
   _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
   object_name_.UnsafeSetDefault(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
   if (!from._internal_object_name().empty()) {
-    object_name_.Set(::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::EmptyDefault{}, from._internal_object_name(), 
+    object_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), from._internal_object_name(),
       GetArena());
   }
   ::memcpy(&pool_id_, &from.pool_id_,
@@ -899,9 +915,8 @@ read_request::read_request(const read_request& from)
 void read_request::SharedCtor() {
   ::PROTOBUF_NAMESPACE_ID::internal::InitSCC(&scc_info_read_request_osd_5fmsg_2eproto.base);
   object_name_.UnsafeSetDefault(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
-  ::memset(reinterpret_cast<char*>(this) + static_cast<size_t>(
-      reinterpret_cast<char*>(&pool_id_) - reinterpret_cast<char*>(this)),
-      0, static_cast<size_t>(reinterpret_cast<char*>(&length_) -
+  ::memset(&pool_id_, 0, static_cast<size_t>(
+      reinterpret_cast<char*>(&length_) -
       reinterpret_cast<char*>(&pool_id_)) + sizeof(length_));
 }
 
@@ -937,7 +952,7 @@ void read_request::Clear() {
   // Prevent compiler warnings about cached_has_bits being unused
   (void) cached_has_bits;
 
-  object_name_.ClearToEmpty();
+  object_name_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
   ::memset(&pool_id_, 0, static_cast<size_t>(
       reinterpret_cast<char*>(&length_) -
       reinterpret_cast<char*>(&pool_id_)) + sizeof(length_));
@@ -946,6 +961,7 @@ void read_request::Clear() {
 
 const char* read_request::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) {
 #define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  ::PROTOBUF_NAMESPACE_ID::Arena* arena = GetArena(); (void)arena;
   while (!ctx->Done(&ptr)) {
     ::PROTOBUF_NAMESPACE_ID::uint32 tag;
     ptr = ::PROTOBUF_NAMESPACE_ID::internal::ReadTag(ptr, &tag);
@@ -1186,6 +1202,8 @@ void read_request::InternalSwap(read_request* other) {
 
 // ===================================================================
 
+void read_reply::InitAsDefaultInstance() {
+}
 class read_reply::_Internal {
  public:
 };
@@ -1201,7 +1219,7 @@ read_reply::read_reply(const read_reply& from)
   _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
   data_.UnsafeSetDefault(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
   if (!from._internal_data().empty()) {
-    data_.Set(::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::EmptyDefault{}, from._internal_data(), 
+    data_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), from._internal_data(),
       GetArena());
   }
   state_ = from.state_;
@@ -1246,13 +1264,14 @@ void read_reply::Clear() {
   // Prevent compiler warnings about cached_has_bits being unused
   (void) cached_has_bits;
 
-  data_.ClearToEmpty();
+  data_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
   state_ = 0;
   _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
 }
 
 const char* read_reply::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) {
 #define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  ::PROTOBUF_NAMESPACE_ID::Arena* arena = GetArena(); (void)arena;
   while (!ctx->Done(&ptr)) {
     ::PROTOBUF_NAMESPACE_ID::uint32 tag;
     ptr = ::PROTOBUF_NAMESPACE_ID::internal::ReadTag(ptr, &tag);
@@ -1419,6 +1438,8 @@ void read_reply::InternalSwap(read_reply* other) {
 
 // ===================================================================
 
+void delete_request::InitAsDefaultInstance() {
+}
 class delete_request::_Internal {
  public:
 };
@@ -1434,7 +1455,7 @@ delete_request::delete_request(const delete_request& from)
   _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
   object_name_.UnsafeSetDefault(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
   if (!from._internal_object_name().empty()) {
-    object_name_.Set(::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::EmptyDefault{}, from._internal_object_name(), 
+    object_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), from._internal_object_name(),
       GetArena());
   }
   ::memcpy(&pool_id_, &from.pool_id_,
@@ -1446,9 +1467,8 @@ delete_request::delete_request(const delete_request& from)
 void delete_request::SharedCtor() {
   ::PROTOBUF_NAMESPACE_ID::internal::InitSCC(&scc_info_delete_request_osd_5fmsg_2eproto.base);
   object_name_.UnsafeSetDefault(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
-  ::memset(reinterpret_cast<char*>(this) + static_cast<size_t>(
-      reinterpret_cast<char*>(&pool_id_) - reinterpret_cast<char*>(this)),
-      0, static_cast<size_t>(reinterpret_cast<char*>(&pg_id_) -
+  ::memset(&pool_id_, 0, static_cast<size_t>(
+      reinterpret_cast<char*>(&pg_id_) -
       reinterpret_cast<char*>(&pool_id_)) + sizeof(pg_id_));
 }
 
@@ -1484,7 +1504,7 @@ void delete_request::Clear() {
   // Prevent compiler warnings about cached_has_bits being unused
   (void) cached_has_bits;
 
-  object_name_.ClearToEmpty();
+  object_name_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
   ::memset(&pool_id_, 0, static_cast<size_t>(
       reinterpret_cast<char*>(&pg_id_) -
       reinterpret_cast<char*>(&pool_id_)) + sizeof(pg_id_));
@@ -1493,6 +1513,7 @@ void delete_request::Clear() {
 
 const char* delete_request::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) {
 #define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  ::PROTOBUF_NAMESPACE_ID::Arena* arena = GetArena(); (void)arena;
   while (!ctx->Done(&ptr)) {
     ::PROTOBUF_NAMESPACE_ID::uint32 tag;
     ptr = ::PROTOBUF_NAMESPACE_ID::internal::ReadTag(ptr, &tag);
@@ -1687,6 +1708,8 @@ void delete_request::InternalSwap(delete_request* other) {
 
 // ===================================================================
 
+void delete_reply::InitAsDefaultInstance() {
+}
 class delete_reply::_Internal {
  public:
 };
@@ -1702,7 +1725,7 @@ delete_reply::delete_reply(const delete_reply& from)
   _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
   str_.UnsafeSetDefault(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
   if (!from._internal_str().empty()) {
-    str_.Set(::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::EmptyDefault{}, from._internal_str(), 
+    str_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), from._internal_str(),
       GetArena());
   }
   state_ = from.state_;
@@ -1747,13 +1770,14 @@ void delete_reply::Clear() {
   // Prevent compiler warnings about cached_has_bits being unused
   (void) cached_has_bits;
 
-  str_.ClearToEmpty();
+  str_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
   state_ = 0;
   _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
 }
 
 const char* delete_reply::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) {
 #define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  ::PROTOBUF_NAMESPACE_ID::Arena* arena = GetArena(); (void)arena;
   while (!ctx->Done(&ptr)) {
     ::PROTOBUF_NAMESPACE_ID::uint32 tag;
     ptr = ::PROTOBUF_NAMESPACE_ID::internal::ReadTag(ptr, &tag);
@@ -1920,6 +1944,8 @@ void delete_reply::InternalSwap(delete_reply* other) {
 
 // ===================================================================
 
+void write_cmd::InitAsDefaultInstance() {
+}
 class write_cmd::_Internal {
  public:
 };
@@ -1935,12 +1961,12 @@ write_cmd::write_cmd(const write_cmd& from)
   _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
   object_name_.UnsafeSetDefault(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
   if (!from._internal_object_name().empty()) {
-    object_name_.Set(::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::EmptyDefault{}, from._internal_object_name(), 
+    object_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), from._internal_object_name(),
       GetArena());
   }
   buf_.UnsafeSetDefault(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
   if (!from._internal_buf().empty()) {
-    buf_.Set(::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::EmptyDefault{}, from._internal_buf(), 
+    buf_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), from._internal_buf(),
       GetArena());
   }
   offset_ = from.offset_;
@@ -1987,14 +2013,15 @@ void write_cmd::Clear() {
   // Prevent compiler warnings about cached_has_bits being unused
   (void) cached_has_bits;
 
-  object_name_.ClearToEmpty();
-  buf_.ClearToEmpty();
+  object_name_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
+  buf_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
   offset_ = PROTOBUF_ULONGLONG(0);
   _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
 }
 
 const char* write_cmd::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) {
 #define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  ::PROTOBUF_NAMESPACE_ID::Arena* arena = GetArena(); (void)arena;
   while (!ctx->Done(&ptr)) {
     ::PROTOBUF_NAMESPACE_ID::uint32 tag;
     ptr = ::PROTOBUF_NAMESPACE_ID::internal::ReadTag(ptr, &tag);
@@ -2186,6 +2213,8 @@ void write_cmd::InternalSwap(write_cmd* other) {
 
 // ===================================================================
 
+void read_cmd::InitAsDefaultInstance() {
+}
 class read_cmd::_Internal {
  public:
 };
@@ -2201,7 +2230,7 @@ read_cmd::read_cmd(const read_cmd& from)
   _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
   object_name_.UnsafeSetDefault(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
   if (!from._internal_object_name().empty()) {
-    object_name_.Set(::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::EmptyDefault{}, from._internal_object_name(), 
+    object_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), from._internal_object_name(),
       GetArena());
   }
   ::memcpy(&offset_, &from.offset_,
@@ -2213,9 +2242,8 @@ read_cmd::read_cmd(const read_cmd& from)
 void read_cmd::SharedCtor() {
   ::PROTOBUF_NAMESPACE_ID::internal::InitSCC(&scc_info_read_cmd_osd_5fmsg_2eproto.base);
   object_name_.UnsafeSetDefault(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
-  ::memset(reinterpret_cast<char*>(this) + static_cast<size_t>(
-      reinterpret_cast<char*>(&offset_) - reinterpret_cast<char*>(this)),
-      0, static_cast<size_t>(reinterpret_cast<char*>(&length_) -
+  ::memset(&offset_, 0, static_cast<size_t>(
+      reinterpret_cast<char*>(&length_) -
       reinterpret_cast<char*>(&offset_)) + sizeof(length_));
 }
 
@@ -2251,7 +2279,7 @@ void read_cmd::Clear() {
   // Prevent compiler warnings about cached_has_bits being unused
   (void) cached_has_bits;
 
-  object_name_.ClearToEmpty();
+  object_name_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
   ::memset(&offset_, 0, static_cast<size_t>(
       reinterpret_cast<char*>(&length_) -
       reinterpret_cast<char*>(&offset_)) + sizeof(length_));
@@ -2260,6 +2288,7 @@ void read_cmd::Clear() {
 
 const char* read_cmd::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) {
 #define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  ::PROTOBUF_NAMESPACE_ID::Arena* arena = GetArena(); (void)arena;
   while (!ctx->Done(&ptr)) {
     ::PROTOBUF_NAMESPACE_ID::uint32 tag;
     ptr = ::PROTOBUF_NAMESPACE_ID::internal::ReadTag(ptr, &tag);
@@ -2454,6 +2483,8 @@ void read_cmd::InternalSwap(read_cmd* other) {
 
 // ===================================================================
 
+void delete_cmd::InitAsDefaultInstance() {
+}
 class delete_cmd::_Internal {
  public:
 };
@@ -2469,7 +2500,7 @@ delete_cmd::delete_cmd(const delete_cmd& from)
   _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
   object_name_.UnsafeSetDefault(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited());
   if (!from._internal_object_name().empty()) {
-    object_name_.Set(::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::EmptyDefault{}, from._internal_object_name(), 
+    object_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), from._internal_object_name(),
       GetArena());
   }
   // @@protoc_insertion_point(copy_constructor:delete_cmd)
@@ -2512,12 +2543,13 @@ void delete_cmd::Clear() {
   // Prevent compiler warnings about cached_has_bits being unused
   (void) cached_has_bits;
 
-  object_name_.ClearToEmpty();
+  object_name_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
   _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
 }
 
 const char* delete_cmd::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) {
 #define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  ::PROTOBUF_NAMESPACE_ID::Arena* arena = GetArena(); (void)arena;
   while (!ctx->Done(&ptr)) {
     ::PROTOBUF_NAMESPACE_ID::uint32 tag;
     ptr = ::PROTOBUF_NAMESPACE_ID::internal::ReadTag(ptr, &tag);

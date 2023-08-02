@@ -17,7 +17,8 @@ public:
     , _flags(RAFT_NODE_VOTING)
     , _id(id)
     , _lease(0)
-    , _effective_time(0){}
+    , _effective_time(0)
+    , _suppress_heartbeats(false){}
 
     void raft_node_set_effective_time(raft_time_t effective_time)
     {
@@ -122,6 +123,14 @@ public:
     {
         return _effective_time;
     }
+
+    void raft_set_suppress_heartbeats(bool suppressed){
+        _suppress_heartbeats = suppressed;
+    }
+
+    bool raft_get_suppress_heartbeats(){
+        return _suppress_heartbeats;
+    }
 private:
 
     void* _udata;
@@ -137,6 +146,8 @@ private:
     raft_time_t _lease;
     /* time when this node becomes part of leader's configuration */
     raft_time_t _effective_time;
+
+    bool _suppress_heartbeats;
 };
 
 #endif

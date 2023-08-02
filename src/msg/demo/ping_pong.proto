@@ -1,3 +1,5 @@
+syntax = "proto3";
+
 package ping_pong;
 
 option cc_generic_services = true;

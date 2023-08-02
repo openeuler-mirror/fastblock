@@ -2,7 +2,7 @@ include(CMakeParseArguments)
 
 set(CXX_STANDARD 20)
 set(DEFAULT_LINKOPTS ${COMMON_LINKOPTS})
-set(DEFAULT_COPTS -Wall -Wextra -Werror -Wno-missing-field-initializers)
+set(DEFAULT_COPTS  -Wextra -Werror -Wno-missing-field-initializers)
 
 function(compile_library)
   cmake_parse_arguments(CC_LIB

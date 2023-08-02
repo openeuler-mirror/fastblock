@@ -4,6 +4,8 @@ add_executable(osd
   osd_service.cc
   partition_manager.cc
   osd_sm.cc
+  mon_msg.pb.cc
+  mon_client.cc
   )
 
 target_include_directories (osd
@@ -15,4 +17,5 @@ target_link_libraries(osd
     raft
     storage
     osd_msg
+    msg
   )

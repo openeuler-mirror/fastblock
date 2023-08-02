@@ -301,7 +301,7 @@ public:
         start_listen(host.c_str(), port);
     }
 
-    void start_listen(char* host, const uint16_t port) {
+    void start_listen(const char* host, const uint16_t port) {
         _trid = std::make_unique<::spdk_srv_transport_id>();
         _trid->trtype = SPDK_SRV_TRANSPORT_RDMA;
         _trid->adrfam = SPDK_SRV_ADRFAM_IPV4;
@@ -312,7 +312,7 @@ public:
         auto port_str = std::to_string(port);
         ::strncpy(_trid->trsvcid, port_str.c_str(), port_str.size());
 
-        auto ret = ::spdk_srv_transport_listen(_transport, _trid.get(), nullptr);
+        auto ret = ::spdk_srv_transport_listen(_transport, _trid.get());
         if (ret != 0) {
             SPDK_ERRLOG("ERROR: server bound on %s:%d failed\n", _trid->traddr, port);
             throw std::runtime_error{fmt::format("server bound on {}:{} failed", host, port)};
