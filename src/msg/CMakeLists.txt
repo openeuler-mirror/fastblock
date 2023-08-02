@@ -3,8 +3,6 @@ compile_library (
   DEPS
     spdk::spdk
     fmt
-    rte_timer
-    rte_meter
     protobuf
 )
 
