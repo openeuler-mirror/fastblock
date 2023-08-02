@@ -1,50 +1,46 @@
 find_package (PkgConfig REQUIRED)
 
-if(spdk_FIND_COMPONENTS)
-  if(NOT bdev IN_LIST spdk_FIND_COMPONENTS)
-    list (APPEND spdk_FIND_COMPONENTS bdev)
-  endif()
-else()
-  set(spdk_FIND_COMPONENTS
-    bdev
-    event_bdev
-    event_accel
-    event_vhost_blk
-    event_vhost_scsi
-    event_vmd
-    event_sock
-    accel
-    init
-    blobfs
-    blob
-    env_dpdk
-    event
-    ftl
-    iscsi
-    json
-    jsonrpc
-    log
-    lvol
-    nvme
-    syslibs
-    thread
-    vhost
-    rdma
-    rdma_server)
-endif()
-
 include (FindPackageHandleStandardArgs)
+
+set(spdk_FIND_COMPONENTS
+  bdev
+  event_bdev
+  event_accel
+  event_vhost_blk
+  event_vhost_scsi
+  event_vmd
+  event_sock
+  accel
+  init
+  blobfs
+  blob
+  env_dpdk
+  event
+  ftl
+  iscsi
+  json
+  jsonrpc
+  log
+  lvol
+  nvme
+  thread
+  vhost
+  rdma
+  rdma_server)
+
+set(spdk_FIND_SYSLIBS_COMPONENT syslibs)
+
 set (spdk_INCLUDE_DIR)
-set (spdk_LINK_DIRECTORIES)
+set (spdk_STATIC_LINK_DIRECTORIES)
+set (tmp_spdk_static_link_opts)
+set (spdk_static_link_opts)
+set (spdk_lib_vars)
 
-set (_spdk_env_dpdk_deps archive)
-set (_spdk_bdev_aio_deps aio)
-set (_spdk_util_deps uuid)
-
-foreach (component ${spdk_FIND_COMPONENTS})
+function(find_spdk_component component)
   pkg_check_modules (spdk_${component} spdk_${component}) # QUIET
   set (prefix spdk_${component}_STATIC)
   list (APPEND spdk_lib_vars ${prefix}_LIBRARIES)
+  set (spdk_lib_vars ${spdk_lib_vars} PARENT_SCOPE)
   if (NOT spdk_${component}_FOUND)
     continue ()
   endif ()
@@ -80,17 +76,19 @@ foreach (component ${spdk_FIND_COMPONENTS})
   message(STATUS ${prefix} "_LDFLAGS: " ${${prefix}_LDFLAGS})
   message(STATUS ${prefix} "_LIBRARIES: " ${${prefix}_LIBRARIES})
 
-  if (NOT spdk_INCLUDE_DIR)
-    set (spdk_INCLUDE_DIR ${${prefix}_INCLUDE_DIRS})
-  endif ()
+  set (tmp_spdk_static_link_opts "${${prefix}_LDFLAGS}" PARENT_SCOPE)
+  set (spdk_INCLUDE_DIR ${${prefix}_INCLUDE_DIRS} PARENT_SCOPE)
+  set (spdk_STATIC_LINK_DIRECTORIES ${${prefix}_LIBRARY_DIRS} PARENT_SCOPE)
+endfunction()
 
-  message(STATUS ${prefix} "_INCLUDE_DIRS: " ${${prefix}_INCLUDE_DIRS})
+# FIXME: keep this calling sort or error
+find_spdk_component(${spdk_FIND_SYSLIBS_COMPONENT})
+set(spdk_syslibs_link_opts ${tmp_spdk_static_link_opts})
 
-  if (NOT spdk_LINK_DIRECTORIES)
-    set (spdk_LINK_DIRECTORIES ${${prefix}_LIBRARY_DIRS})
-  endif ()
-  list (APPEND spdk_link_opts "${${prefix}_LDFLAGS}")
-  list (APPEND spdk_libs ${${prefix}_LIBRARIES})
+set (tmp_spdk_static_link_opts "")
+foreach (component ${spdk_FIND_COMPONENTS})
+  find_spdk_component(${component})
+  list (APPEND spdk_static_link_opts ${tmp_spdk_static_link_opts})
 endforeach ()
 
 if (spdk_INCLUDE_DIR AND EXISTS "${spdk_INCLUDE_DIR}/spdk/version.h")
@@ -109,21 +107,19 @@ list(REMOVE_DUPLICATES spdk_lib_vars)
 find_package_handle_standard_args (spdk
   REQUIRED_VARS
     spdk_INCLUDE_DIR
-    spdk_LINK_DIRECTORIES
+    spdk_STATIC_LINK_DIRECTORIES
     ${spdk_lib_vars}
   VERSION_VAR
     spdk_VERSION_STRING)
 
 if (spdk_FOUND AND NOT (TARGET spdk::spdk))
-  set (spdk_LIBRARIES ${spdk_libs})
   set (whole_archive_link_opts
-    -Wl,--whole-archive ${spdk_link_opts} -Wl,--no-whole-archive -Wl,-Bdynamic -luuid -lz -laio)
+    -Wl,--whole-archive -Wl,-Bstatic ${spdk_static_link_opts} -Wl,--no-whole-archive -Wl,-Bdynamic ${spdk_syslibs_link_opts})
   add_library (spdk::spdk INTERFACE IMPORTED)
   set_target_properties (spdk::spdk
     PROPERTIES
       INTERFACE_COMPILE_OPTIONS "${spdk_PC_STATIC_bdev_CFLAGS}"
       INTERFACE_INCLUDE_DIRECTORIES "${spdk_INCLUDE_DIR}"
       INTERFACE_LINK_OPTIONS "${whole_archive_link_opts}"
-      INTERFACE_LINK_LIBRARIES "${spdk_LIBRARIES}"
-      INTERFACE_LINK_DIRECTORIES "${spdk_LINK_DIRECTORIES}")
+      INTERFACE_LINK_DIRECTORIES "${spdk_STATIC_LINK_DIRECTORIES}")
 endif ()
