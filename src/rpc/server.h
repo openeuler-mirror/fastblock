@@ -9,19 +9,6 @@ class rpc_server{
 public:
     using transport_server_ptr = std::shared_ptr<msg::rdma::transport_server>;
 
-    class rpc_server_context : public core_context{
-    public:
-        rpc_server_context(transport_server_ptr _transport)
-        : transport(_transport) {}
-    
-        void run_task() override {
-            SPDK_NOTICELOG("start transport in core %u\n", spdk_env_get_current_core());
-            transport->start();
-        }
-
-        transport_server_ptr transport;
-    };
-
     rpc_server(const rpc_server&) = delete;
     rpc_server& operator=(const rpc_server&) = delete;
 
@@ -33,8 +20,12 @@ public:
         _transport->start_listen(address, port);
         auto shard_num = _shard.count();
         for(uint32_t i = 0; i < shard_num; i++){
-            rpc_server_context *context = new rpc_server_context(_transport);
-            _shard.invoke_on(i, context);
+            _shard.invoke_on(
+              i, 
+              [this](){
+                SPDK_NOTICELOG("start transport in core %u\n", spdk_env_get_current_core());
+                _transport->start();
+              });
         }
     }
 

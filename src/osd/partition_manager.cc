@@ -24,40 +24,18 @@ void partition_manager::create_pg(
     _pgs.create_pg(sm, shard_id, pool_id, pg_id, std::move(osds), std::move(log)); 
 }
 
-class create_pg_context : public core_context{
-public:
-    create_pg_context(
-        partition_manager* _pm, uint64_t _pool_id, uint64_t _pg_id, 
-        std::vector<osd_info_t>&& _osds, int64_t _revision_id, uint32_t _shard_id)
-    : pm(_pm)
-    , pool_id(_pool_id)
-    , pg_id(_pg_id)
-    , osds(std::move(_osds))
-    , revision_id(_revision_id)
-    , shard_id(_shard_id){}
-
-    void run_task() override {
-        SPDK_NOTICELOG("create pg in core %u  shard_id %u pool_id %lu pg_id %lu \n", 
-            spdk_env_get_current_core(), shard_id, pool_id, pg_id);
-        pm->create_pg(pool_id, pg_id, 
-                std::move(osds), shard_id, revision_id);        
-    }
-
-    partition_manager* pm;
-    uint64_t pool_id;
-    uint64_t pg_id;
-    std::vector<osd_info_t> osds;
-    int64_t revision_id;
-    uint32_t shard_id;
-};
-
 int partition_manager::create_partition(
         uint64_t pool_id, uint64_t pg_id, std::vector<osd_info_t>&& osds, int64_t revision_id){
     auto shard_id = get_next_shard_id();
     _add_pg_shard(pool_id, pg_id, shard_id, revision_id);
 
-    create_pg_context* context = new create_pg_context(this, pool_id, pg_id, std::move(osds), revision_id, shard_id);
-    return _shard.invoke_on(shard_id, context);
+    return _shard.invoke_on(
+      shard_id, 
+      [this, pool_id, pg_id, osds = std::move(osds), revision_id, shard_id](){
+        SPDK_NOTICELOG("create pg in core %u  shard_id %u pool_id %lu pg_id %lu \n", 
+            spdk_env_get_current_core(), shard_id, pool_id, pg_id);
+        create_pg(pool_id, pg_id, std::move(osds), shard_id, revision_id);                
+      });
 }
 
 void partition_manager::delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id){
@@ -67,26 +45,6 @@ void partition_manager::delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t sha
     _log.remove();
     _pgs.delete_pg(shard_id, pool_id, pg_id);
 }
- 
-class delete_pg_context : public core_context{
-public:
-    delete_pg_context(partition_manager* _pm, uint64_t _pool_id, uint64_t _pg_id, uint32_t _shard_id)
-    : pm(_pm)
-    , pool_id(_pool_id)
-    , pg_id(_pg_id)
-    , shard_id(_shard_id) {}
-
-    void run_task() override {
-        SPDK_NOTICELOG("delete pg in core %u shard_id %u pool_id %lu pg_id %lu \n", 
-            spdk_env_get_current_core(), shard_id, pool_id, pg_id);
-        pm->delete_pg(pool_id, pg_id, shard_id);        
-    }
-
-    partition_manager* pm;
-    uint64_t pool_id;
-    uint64_t pg_id;
-    uint32_t shard_id;
-};
 
 int partition_manager::delete_partition(uint64_t pool_id, uint64_t pg_id){
     uint32_t shard_id;
@@ -94,6 +52,12 @@ int partition_manager::delete_partition(uint64_t pool_id, uint64_t pg_id){
     if(!get_pg_shard(pool_id, pg_id, shard_id)){
         return -1;
     }
-    delete_pg_context* context = new delete_pg_context(this, pool_id, pg_id, shard_id);
-    return _shard.invoke_on(shard_id, context);
+    
+    return _shard.invoke_on(
+      shard_id, 
+      [this, pool_id, pg_id, shard_id](){
+        SPDK_NOTICELOG("delete pg in core %u shard_id %u pool_id %lu pg_id %lu \n", 
+            spdk_env_get_current_core(), shard_id, pool_id, pg_id);
+        delete_pg(pool_id, pg_id, shard_id);                   
+      });
 }

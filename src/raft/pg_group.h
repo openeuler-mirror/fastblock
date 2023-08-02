@@ -43,7 +43,7 @@ public:
     }
 
     std::shared_ptr<pg_t> get_pg(std::string& name){
-        if(pgs.count(name) == 0)
+        if(pgs.find(name) == pgs.end())
             return nullptr;
         return pgs[name];
     }

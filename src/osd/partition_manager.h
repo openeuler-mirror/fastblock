@@ -63,10 +63,6 @@ public:
         return _pgs.get_pg(shard_id, name);
     }
 
-    int invoke_on(uint32_t shard_id, core_context *context){
-        return _shard.invoke_on(shard_id, context);
-    }
-
     core_sharded& get_shard(){
         return _shard;
     }

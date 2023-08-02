@@ -15,27 +15,6 @@ struct write_data_complete : public context{
     }
 };
 
-class write_context : public core_context{
-public:
-    write_context(std::shared_ptr<raft_server_t> _raft, write_data_complete *_complete, 
-            std::shared_ptr<msg_entry_t> _ety)
-    : raft(_raft)
-    , complete(_complete)
-    , ety(_ety) {}
-
-    void run_task() override {
-        SPDK_NOTICELOG("raft_write_entry in core %u\n", spdk_env_get_current_core());
-        auto ret = raft->raft_write_entry(ety, complete);
-        if(ret != 0){
-            complete->response->set_state(ret);
-            complete->done->Run();
-        }               
-    }
-    std::shared_ptr<raft_server_t> raft;
-    write_data_complete *complete;
-    std::shared_ptr<msg_entry_t> ety;
-};
-
 void osd_service::process_write(google::protobuf::RpcController* controller,
              const write_request* request,
              write_reply* response,
@@ -59,8 +38,16 @@ void osd_service::process_write(google::protobuf::RpcController* controller,
     data->set_buf(std::move(buf));
 
     write_data_complete *complete = new write_data_complete(response, done);
-    write_context* context = new write_context(pg->raft, complete, entry_ptr);
-    _pm->invoke_on(shard_id, context);
+
+    _pm->get_shard().invoke_on(
+      shard_id, 
+      [this, complete, entry_ptr = std::move(entry_ptr), raft = pg->raft](){
+        SPDK_NOTICELOG("raft_write_entry in core %u\n", spdk_env_get_current_core());
+        auto ret = raft->raft_write_entry(entry_ptr, complete);
+        if(ret != 0){
+            complete->complete(ret);
+        }
+      });
 }
 
 void osd_service::process_read(::google::protobuf::RpcController* controller,
