@@ -38,26 +38,15 @@ if ("${CMAKE_BUILD_TYPE}" MATCHES "Debug")
   set(COMMON_LINKOPTS "-lasan -lubsan")
   add_compile_definitions(DEBUG)
 
-  # TODO(sunyifang):
-  #   加上sanitizer，链接时就会链接动态的dpdk
-  #   但是spdk的dpdk并没有导出，所以会报错无法找到对应的库
-  # 解决方法：
-  #   1. 修改spdk的dpdkbuild以及CONFIG，让dpdk安装到指定目录
-  #   2. 或者使用单独的dpdk库，在spdk命令行指定dpdk路径
-  #   3. 寻找原因，为什么加上sanitizer，就会链接动态的dpdk库
-  #
-  #    list(APPEND BASE_CXX_FLAGS_LIST
-  #            -fsanitize=undefined
-  #            -fsanitize=address
-  #            )
-  #    list(APPEND BASE_C_FLAGS_LIST
-  #            -fsanitize=undefined
-  #            -fsanitize=address
-  #            )
-  #    list(APPEND BASE_LD_FLAGS_LIST
-  #            -fsanitize=undefined
-  #            -fsanitize=address
-  #            )
+  list(APPEND BASE_CXX_FLAGS_LIST
+    -fsanitize=undefined
+    -fsanitize=address)
+  list(APPEND BASE_C_FLAGS_LIST
+    -fsanitize=undefined
+    -fsanitize=address)
+  list(APPEND BASE_LD_FLAGS_LIST
+    -fsanitize=undefined
+    -fsanitize=address)
 else()
   set(COMMON_LINKOPTS)
 endif()
