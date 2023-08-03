@@ -332,7 +332,7 @@ public:
 
         SPDK_DEBUGLOG(
           msg,
-          "serialize size %d, request id %d\n",
+          "serialize size %ld, request id %ld\n",
           serialize_size, reply->task->id);
 
         reply->serialized_buf = std::make_unique<char[]>(serialize_size);

@@ -14,7 +14,6 @@
 #include "localstore/rolling_blob.h"
 #include "localstore/spdk_buffer.h"
 
-#define CLUSTER_SIZE 1024
 #define BLOB_CLUSTERS 4
 #define CLUSTER_SIZE 1 << 20 // 1Mb
 
@@ -123,7 +122,7 @@ unload_complete(void *cb_arg, int objerrno)
  * Unload the blobstore, cleaning up as needed.
  */
 static void
-unload_bs(struct hello_context_t *hello_context, char *msg, int objerrno)
+unload_bs(struct hello_context_t *hello_context, const char *msg, int objerrno)
 {
   SPDK_NOTICELOG("unload_bs, objerrno:%d \n", objerrno);
   if (objerrno) {

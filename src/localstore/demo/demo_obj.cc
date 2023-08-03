@@ -112,7 +112,7 @@ unload_complete(void *cb_arg, int objerrno)
  * Unload the blobstore, cleaning up as needed.
  */
 static void
-unload_bs(struct hello_context_t *hello_context, char *msg, int objerrno)
+unload_bs(struct hello_context_t *hello_context, const char *msg, int objerrno)
 {
 	SPDK_NOTICELOG("unload_bs, objerrno:%d \n", objerrno);
 	if (objerrno) {
@@ -185,8 +185,8 @@ object_write_iterates(struct hello_context_t* hello_context) {
   uint64_t offset = rand() % (hello_context->block_num - 1);
   offset *= hello_context->write_size + 12;
   std::string str = rand_str(20);
-  SPDK_NOTICELOG("write first object:%s offset:%d length:%d\n", str.c_str(), offset, 512 * BLOCK_UNITS);
-  hello_context->omgr->write(str, offset, ctx->write_buff, 512 * BLOCK_UNITS, 
+  SPDK_NOTICELOG("write first object:%s offset:%ld length:%d\n", str.c_str(), offset, 512 * BLOCK_UNITS);
+  hello_context->omgr->write(str, offset, ctx->write_buff, 512 * BLOCK_UNITS,
                              object_write_continue, ctx);
 }
 

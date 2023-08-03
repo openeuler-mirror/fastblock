@@ -45,6 +45,8 @@ EncodeLogHeader(spdk_buffer& sbuf, log_entry_t* entry) {
 
     rc = sbuf.append(str.c_str(), str.size());
     if (rc != str.size()) { return false; }
+
+    return true;
 }
 
 inline bool
