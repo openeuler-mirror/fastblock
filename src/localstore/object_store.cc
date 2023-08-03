@@ -13,6 +13,9 @@
 
 #include "object_store.h"
 #include <functional>
+
+SPDK_LOG_REGISTER_COMPONENT(object_store)
+
 struct blob_rw_ctx {
   bool is_read;
   struct spdk_blob *blob;
@@ -172,7 +175,7 @@ void object_store::snap_done(void *arg, spdk_blob_id snap_id, int objerrno)
   ctx->snap_blob->blobid = snap_id;
   //想要通过blobid找到blob块，但是没到直接的函数，这里通过open打开，保存在snap-ctx中。
   spdk_bs_open_blob(ctx->bs, snap_id,snap_add,ctx);
-  SPDK_DEBUGLOG("object %s of snap is created successfully",ctx->object_name);
+  SPDK_DEBUGLOG(object_store, "object %s of snap is created successfully",ctx->object_name);
 }
 
 //快照链添加函数
@@ -193,7 +196,7 @@ void object_store::snap_add(void *arg, spdk_blob* blob, int objerrno)
   auto temp = ctx->hashlist->find(ctx->object_name)->second;
   //进行头插
   temp->sp_list.push_front(snap_node);
-  SPDK_DEBUGLOG("the snapshot is add to the list of snaplist, object %s",ctx->object_name);
+  SPDK_DEBUGLOG(object_store, "the snapshot is add to the list of snaplist, object %s",ctx->object_name);
   //关闭快照
   spdk_blob_close(ctx->snap_blob->blob, close_snap, ctx);
 }
@@ -228,7 +231,7 @@ void object_store::load_snap(std::string object_name, int version, object_rw_com
   ctx->cb_fn=cb_fn;
   ctx->arg=arg;
   spdk_blob_close(itb->second->blob,snap_add_statues,ctx);
-  SPDK_DEBUGLOG("snap : %s is load successful%s",object_name);
+  SPDK_DEBUGLOG(object_store, "snap : %s is load successful%s",object_name);
 }
 //读取快照的函数，主要替换是否成功
 void object_store::snap_add_statues(void *arg, int objerrno) {
@@ -242,7 +245,7 @@ void object_store::snap_add_statues(void *arg, int objerrno) {
   //ctx->hashlist->find(ctx->object_name)->second->sp_list.erase(ctx->it);
   ctx->itb->second->blob = (*ctx->it) ->snap_fb->blob;
   ctx->itb->second->blobid = (*ctx->it) ->snap_fb->blobid;
-  SPDK_DEBUGLOG("snapshot install of raw data is successful");
+  SPDK_DEBUGLOG(object_store, "snapshot install of raw data is successful");
   //关闭快照
   //spdk_blob_close(ctx->itb->second->blob, close_snap, ctx);
   ctx->cb_fn(ctx->arg, objerrno);
@@ -258,7 +261,7 @@ void object_store::snap_add_statues(void *arg, int objerrno) {
     SPDK_ERRLOG("snapshot close is failed:%s\n", spdk_strerror(objerrno));
     return ;
   }
-    SPDK_DEBUGLOG("snapshot close is successful");
+    SPDK_DEBUGLOG(object_store, "snapshot close is successful");
     if(ctx->snap_blob->blob==nullptr) {
       printf("回调blob 为零 \n");
     }
@@ -290,8 +293,8 @@ void object_store::delete_snap(std::string object_name,int version,object_rw_com
   ctx->object_name=object_name;
   ctx->hashlist=&table;
   //然后通过函数，删除快照保存的块
-  spdk_bs_delete_blob(bs,(*it)->snap_fb->blobid, del_done, ctx);  
-  SPDK_DEBUGLOG("snapshot listnode delete is successful");
+  spdk_bs_delete_blob(bs,(*it)->snap_fb->blobid, del_done, ctx);
+  SPDK_DEBUGLOG(object_store, "snapshot listnode delete is successful");
 }
 
 //快照删除的回调函数
@@ -304,7 +307,7 @@ void object_store::del_done(void *arg, int objerrno)
     SPDK_ERRLOG("snapshot delete is failed:%s\n", spdk_strerror(objerrno));
     return ;
   }
-  SPDK_DEBUGLOG("snapshot delete is successful");
+  SPDK_DEBUGLOG(object_store, "snapshot delete is successful");
   //然后应该自动加载最新的快照，如果没有则不添加
   if(ctx->itb->second->sp_list.size()!=0) {
       //则加载快照
@@ -312,7 +315,7 @@ void object_store::del_done(void *arg, int objerrno)
       ctx->hashlist->find(ctx->object_name)->second=(*it) ->snap_fb;
   }
   else {
-    SPDK_DEBUGLOG("the snaplook is not exits");
+    SPDK_DEBUGLOG(object_store, "the snaplook is not exits");
   }
   ctx->cb_fn(ctx->arg, objerrno);
   delete ctx;
@@ -323,7 +326,7 @@ void object_store::readwrite(std::string object_name,
                      uint64_t offset, char* buf, uint64_t len, 
                      object_rw_complete cb_fn, void* arg, bool is_read) 
 {
-    SPDK_DEBUGLOG("object %s offset:%lu len:%lu\n", object_name.c_str(), offset, len);
+    SPDK_DEBUGLOG(object_store, "object %s offset:%lu len:%lu\n", object_name.c_str(), offset, len);
     if (offset + len >= blob_size) {
       SPDK_WARNLOG("object %s offset:%lu len:%lu beyond blob size %u\n",
           object_name.c_str(), offset, len, blob_size);
@@ -332,10 +335,10 @@ void object_store::readwrite(std::string object_name,
 
     auto it = table.find(object_name);
     if (it != table.end()) {
-        SPDK_DEBUGLOG("object %s found, blob id:%" PRIu64 "\n", object_name.c_str(), it->second->blobid);
+        SPDK_DEBUGLOG(object_store, "object %s found, blob id:%" PRIu64 "\n", object_name.c_str(), it->second->blobid);
         blob_readwrite(it->second->blob, channel, offset, buf, len, cb_fn, arg, is_read);
     } else {
-        SPDK_DEBUGLOG("object %s not found\n", object_name.c_str());
+        SPDK_DEBUGLOG(object_store, "object %s not found\n", object_name.c_str());
         // 没找到，就先创建blob对象，之后再调用write_blob
         struct blob_create_ctx* ctx = new blob_create_ctx();
         struct spdk_blob_opts opts;
@@ -379,7 +382,7 @@ void object_store::blob_readwrite(struct spdk_blob *blob, struct spdk_io_channel
   pin_buf_length = num_lba * lba_size;
 
   if (is_lba_aligned(offset, len)) {
-      SPDK_DEBUGLOG("aligned offset:%lu len:%lu\n", offset, len);
+      SPDK_DEBUGLOG(object_store, "aligned offset:%lu len:%lu\n", offset, len);
       ctx->is_aligned = true;
       if (is_read) {
         spdk_blob_io_write(blob, channel, buf, start_lba, num_lba, rw_done, ctx);
@@ -387,7 +390,7 @@ void object_store::blob_readwrite(struct spdk_blob *blob, struct spdk_io_channel
         spdk_blob_io_read(blob, channel, buf, start_lba, num_lba, rw_done, ctx);
       }
   } else {
-      SPDK_DEBUGLOG("not aligned offset:%lu len:%lu\n", offset, len);
+      SPDK_DEBUGLOG(object_store, "not aligned offset:%lu len:%lu\n", offset, len);
       ctx->is_aligned = false;
       ctx->blob = blob;
       ctx->channel = channel;
@@ -419,7 +422,7 @@ void object_store::rw_done(void *arg, int objerrno) {
   // object层的处理代码，可以写在这里 
 
   if (ctx->pin_buf) {
-    SPDK_DEBUGLOG("free pin_buf: %p\n", ctx->pin_buf);
+    SPDK_DEBUGLOG(object_store, "free pin_buf: %p\n", ctx->pin_buf);
     spdk_free(ctx->pin_buf);
   }
   //最后执行用户的回调
@@ -473,7 +476,7 @@ void object_store::open_done(void *arg, struct spdk_blob *blob, int objerrno) {
         ctx->object_name.c_str(), ctx->blobid, spdk_strerror(objerrno));
 		return;
 	}
-  SPDK_DEBUGLOG("name:%s blobid:%" PRIu64 " opened\n", ctx->object_name.c_str(), ctx->blobid);
+  SPDK_DEBUGLOG(object_store, "name:%s blobid:%" PRIu64 " opened\n", ctx->object_name.c_str(), ctx->blobid);
 
   // 成功打开
   struct object_store::fb_blob* fblob = new fb_blob;
@@ -518,11 +521,11 @@ void object_store::close_done(void *arg, int objerrno) {
 		return;
 	}
 
-  SPDK_DEBUGLOG("close %u blobid:" PRIu64 " closed\n", ctx->count, ctx->it->second->blobid);
+  SPDK_DEBUGLOG(object_store, "close %u blobid:" PRIu64 " closed\n", ctx->count, ctx->it->second->blobid);
   ctx->it++;
   auto& table = ctx->mgr->table;
   if (ctx->it == table.end()) {
-    SPDK_DEBUGLOG("close %u blobids finish\n", table.size());
+    SPDK_DEBUGLOG(object_store, "close %u blobids finish\n", table.size());
     ctx->cb_fn(ctx->arg, 0);
     delete ctx;
     return;

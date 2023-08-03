@@ -27,11 +27,8 @@
 namespace msg {
 namespace rdma {
 
-SPDK_LOG_REGISTER_COMPONENT(transport_server)
-
 class transport_server;
 
-// std::unordered_map<uint32_t, std::shared_ptr<transport_server>> g_transport_shard{};
 namespace {
 std::unordered_map<uint32_t, std::weak_ptr<transport_server>> g_transport_shard{};
 }
@@ -334,7 +331,7 @@ public:
         }
 
         SPDK_DEBUGLOG(
-          transport_server,
+          msg,
           "serialize size %d, request id %d\n",
           serialize_size, reply->task->id);
 
@@ -453,7 +450,7 @@ public:
     }
 
     void erase_reply_record(rpc_task::id_type id) {
-        SPDK_DEBUGLOG(transport_server, "Erase rpc request with id %ld\n", id);
+        SPDK_DEBUGLOG(msg, "Erase rpc request with id %ld\n", id);
         _reply_records.erase(id);
     }
 
@@ -467,7 +464,7 @@ public:
 
         auto* meta = reinterpret_cast<request_meta*>(task->data->iovs->iov_base);
         SPDK_DEBUGLOG(
-          transport_server,
+          msg,
           "parsed rpc meta, service name is %s, method name is %s\n",
           meta->service_name,
           meta->method_name);
