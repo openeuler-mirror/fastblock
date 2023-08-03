@@ -95,7 +95,8 @@ message GetPgMapResponse {
 }
 
 message GetOsdMapRequest{ 
-    int64 currentversion = 1;
+    int32 osdid = 1;
+    int64 currentversion = 2;
 }
 
 enum OsdMapErrorCode
@@ -142,6 +143,7 @@ message Request {
         ApplyIDRequest apply_id_request = 6;
         CreatePoolRequest create_pool_request = 7;
         GetPgMapRequest get_pgmap_request = 8;
+        DeletePoolRequest delete_pool_request = 9;
     }
 }
 
@@ -155,6 +157,6 @@ message Response {
         ApplyIDResponse apply_id_response = 6;
         CreatePoolResponse create_pool_response = 7;
         GetPgMapResponse get_pgmap_response = 8;
-
+        DeletePoolResponse delete_pool_response = 9;
     }
 }

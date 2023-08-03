@@ -20,6 +20,8 @@ extern PROTOBUF_INTERNAL_EXPORT_mon_5fmsg_2eproto ::PROTOBUF_NAMESPACE_ID::inter
 extern PROTOBUF_INTERNAL_EXPORT_mon_5fmsg_2eproto ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_BootResponse_mon_5fmsg_2eproto;
 extern PROTOBUF_INTERNAL_EXPORT_mon_5fmsg_2eproto ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_CreatePoolRequest_mon_5fmsg_2eproto;
 extern PROTOBUF_INTERNAL_EXPORT_mon_5fmsg_2eproto ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_CreatePoolResponse_mon_5fmsg_2eproto;
+extern PROTOBUF_INTERNAL_EXPORT_mon_5fmsg_2eproto ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_DeletePoolRequest_mon_5fmsg_2eproto;
+extern PROTOBUF_INTERNAL_EXPORT_mon_5fmsg_2eproto ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_DeletePoolResponse_mon_5fmsg_2eproto;
 extern PROTOBUF_INTERNAL_EXPORT_mon_5fmsg_2eproto ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_GetOsdMapRequest_mon_5fmsg_2eproto;
 extern PROTOBUF_INTERNAL_EXPORT_mon_5fmsg_2eproto ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<1> scc_info_GetOsdMapResponse_mon_5fmsg_2eproto;
 extern PROTOBUF_INTERNAL_EXPORT_mon_5fmsg_2eproto ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<1> scc_info_GetPgMapRequest_mon_5fmsg_2eproto;
@@ -154,6 +156,7 @@ class RequestDefaultTypeInternal {
   const ::msg::ApplyIDRequest* apply_id_request_;
   const ::msg::CreatePoolRequest* create_pool_request_;
   const ::msg::GetPgMapRequest* get_pgmap_request_;
+  const ::msg::DeletePoolRequest* delete_pool_request_;
 } _Request_default_instance_;
 class ResponseDefaultTypeInternal {
  public:
@@ -166,6 +169,7 @@ class ResponseDefaultTypeInternal {
   const ::msg::ApplyIDResponse* apply_id_response_;
   const ::msg::CreatePoolResponse* create_pool_response_;
   const ::msg::GetPgMapResponse* get_pgmap_response_;
+  const ::msg::DeletePoolResponse* delete_pool_response_;
 } _Response_default_instance_;
 }  // namespace msg
 static void InitDefaultsscc_info_ApplyIDRequest_mon_5fmsg_2eproto() {
@@ -533,8 +537,8 @@ static void InitDefaultsscc_info_Request_mon_5fmsg_2eproto() {
   ::msg::Request::InitAsDefaultInstance();
 }
 
-::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<8> scc_info_Request_mon_5fmsg_2eproto =
-    {{ATOMIC_VAR_INIT(::PROTOBUF_NAMESPACE_ID::internal::SCCInfoBase::kUninitialized), 8, 0, InitDefaultsscc_info_Request_mon_5fmsg_2eproto}, {
+::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<9> scc_info_Request_mon_5fmsg_2eproto =
+    {{ATOMIC_VAR_INIT(::PROTOBUF_NAMESPACE_ID::internal::SCCInfoBase::kUninitialized), 9, 0, InitDefaultsscc_info_Request_mon_5fmsg_2eproto}, {
       &scc_info_BootRequest_mon_5fmsg_2eproto.base,
       &scc_info_OsdStopRequest_mon_5fmsg_2eproto.base,
       &scc_info_HeartbeatRequest_mon_5fmsg_2eproto.base,
@@ -542,7 +546,8 @@ static void InitDefaultsscc_info_Request_mon_5fmsg_2eproto() {
       &scc_info_ListPoolsRequest_mon_5fmsg_2eproto.base,
       &scc_info_ApplyIDRequest_mon_5fmsg_2eproto.base,
       &scc_info_CreatePoolRequest_mon_5fmsg_2eproto.base,
-      &scc_info_GetPgMapRequest_mon_5fmsg_2eproto.base,}};
+      &scc_info_GetPgMapRequest_mon_5fmsg_2eproto.base,
+      &scc_info_DeletePoolRequest_mon_5fmsg_2eproto.base,}};
 
 static void InitDefaultsscc_info_Response_mon_5fmsg_2eproto() {
   GOOGLE_PROTOBUF_VERIFY_VERSION;
@@ -555,8 +560,8 @@ static void InitDefaultsscc_info_Response_mon_5fmsg_2eproto() {
   ::msg::Response::InitAsDefaultInstance();
 }
 
-::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<8> scc_info_Response_mon_5fmsg_2eproto =
-    {{ATOMIC_VAR_INIT(::PROTOBUF_NAMESPACE_ID::internal::SCCInfoBase::kUninitialized), 8, 0, InitDefaultsscc_info_Response_mon_5fmsg_2eproto}, {
+::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<9> scc_info_Response_mon_5fmsg_2eproto =
+    {{ATOMIC_VAR_INIT(::PROTOBUF_NAMESPACE_ID::internal::SCCInfoBase::kUninitialized), 9, 0, InitDefaultsscc_info_Response_mon_5fmsg_2eproto}, {
       &scc_info_BootResponse_mon_5fmsg_2eproto.base,
       &scc_info_OsdStopResponse_mon_5fmsg_2eproto.base,
       &scc_info_HeartbeatResponse_mon_5fmsg_2eproto.base,
@@ -564,7 +569,8 @@ static void InitDefaultsscc_info_Response_mon_5fmsg_2eproto() {
       &scc_info_ListPoolsResponse_mon_5fmsg_2eproto.base,
       &scc_info_ApplyIDResponse_mon_5fmsg_2eproto.base,
       &scc_info_CreatePoolResponse_mon_5fmsg_2eproto.base,
-      &scc_info_GetPgMapResponse_mon_5fmsg_2eproto.base,}};
+      &scc_info_GetPgMapResponse_mon_5fmsg_2eproto.base,
+      &scc_info_DeletePoolResponse_mon_5fmsg_2eproto.base,}};
 
 static void InitDefaultsscc_info_poolinfo_mon_5fmsg_2eproto() {
   GOOGLE_PROTOBUF_VERIFY_VERSION;
@@ -739,6 +745,7 @@ const ::PROTOBUF_NAMESPACE_ID::uint32 TableStruct_mon_5fmsg_2eproto::offsets[] P
   ~0u,  // no _extensions_
   ~0u,  // no _oneof_case_
   ~0u,  // no _weak_field_map_
+  PROTOBUF_FIELD_OFFSET(::msg::GetOsdMapRequest, osdid_),
   PROTOBUF_FIELD_OFFSET(::msg::GetOsdMapRequest, currentversion_),
   ~0u,  // no _has_bits_
   PROTOBUF_FIELD_OFFSET(::msg::GetOsdMapResponse, _internal_metadata_),
@@ -791,6 +798,7 @@ const ::PROTOBUF_NAMESPACE_ID::uint32 TableStruct_mon_5fmsg_2eproto::offsets[] P
   offsetof(::msg::RequestDefaultTypeInternal, apply_id_request_),
   offsetof(::msg::RequestDefaultTypeInternal, create_pool_request_),
   offsetof(::msg::RequestDefaultTypeInternal, get_pgmap_request_),
+  offsetof(::msg::RequestDefaultTypeInternal, delete_pool_request_),
   PROTOBUF_FIELD_OFFSET(::msg::Request, union_),
   ~0u,  // no _has_bits_
   PROTOBUF_FIELD_OFFSET(::msg::Response, _internal_metadata_),
@@ -805,6 +813,7 @@ const ::PROTOBUF_NAMESPACE_ID::uint32 TableStruct_mon_5fmsg_2eproto::offsets[] P
   offsetof(::msg::ResponseDefaultTypeInternal, apply_id_response_),
   offsetof(::msg::ResponseDefaultTypeInternal, create_pool_response_),
   offsetof(::msg::ResponseDefaultTypeInternal, get_pgmap_response_),
+  offsetof(::msg::ResponseDefaultTypeInternal, delete_pool_response_),
   PROTOBUF_FIELD_OFFSET(::msg::Response, union_),
 };
 static const ::PROTOBUF_NAMESPACE_ID::internal::MigrationSchema schemas[] PROTOBUF_SECTION_VARIABLE(protodesc_cold) = {
@@ -828,14 +837,14 @@ static const ::PROTOBUF_NAMESPACE_ID::internal::MigrationSchema schemas[] PROTOB
   { 132, 139, sizeof(::msg::GetPgMapResponse_PgsEntry_DoNotUse)},
   { 141, -1, sizeof(::msg::GetPgMapResponse)},
   { 149, -1, sizeof(::msg::GetOsdMapRequest)},
-  { 155, -1, sizeof(::msg::GetOsdMapResponse)},
-  { 163, -1, sizeof(::msg::BootResponse)},
-  { 169, -1, sizeof(::msg::OsdStopRequest)},
-  { 175, -1, sizeof(::msg::OsdStopResponse)},
-  { 181, -1, sizeof(::msg::HeartbeatRequest)},
-  { 187, -1, sizeof(::msg::HeartbeatResponse)},
-  { 193, -1, sizeof(::msg::Request)},
-  { 207, -1, sizeof(::msg::Response)},
+  { 156, -1, sizeof(::msg::GetOsdMapResponse)},
+  { 164, -1, sizeof(::msg::BootResponse)},
+  { 170, -1, sizeof(::msg::OsdStopRequest)},
+  { 176, -1, sizeof(::msg::OsdStopResponse)},
+  { 182, -1, sizeof(::msg::HeartbeatRequest)},
+  { 188, -1, sizeof(::msg::HeartbeatResponse)},
+  { 194, -1, sizeof(::msg::Request)},
+  { 209, -1, sizeof(::msg::Response)},
 };
 
 static ::PROTOBUF_NAMESPACE_ID::Message const * const file_default_instances[] = {
@@ -903,42 +912,45 @@ const char descriptor_table_protodef_mon_5fmsg_2eproto[] PROTOBUF_SECTION_VARIAB
   "de:\0028\001\0329\n\027PoolidPgmapversionEntry\022\013\n\003key"
   "\030\001 \001(\005\022\r\n\005value\030\002 \001(\003:\0028\001\0328\n\010PgsEntry\022\013\n"
   "\003key\030\001 \001(\005\022\033\n\005value\030\002 \001(\0132\014.msg.PGInfos:"
-  "\0028\001\"*\n\020GetOsdMapRequest\022\026\n\016currentversio"
-  "n\030\001 \001(\003\"v\n\021GetOsdMapResponse\022\'\n\terrorcod"
-  "e\030\001 \001(\0162\024.msg.OsdMapErrorCode\022\025\n\rosdmapv"
-  "ersion\030\002 \001(\003\022!\n\004osds\030\003 \003(\0132\023.msg.OsdDyna"
-  "micInfo\"\032\n\014BootResponse\022\n\n\002ok\030\001 \001(\010\"\034\n\016O"
-  "sdStopRequest\022\n\n\002id\030\001 \001(\005\"\035\n\017OsdStopResp"
-  "onse\022\n\n\002ok\030\001 \001(\010\"\036\n\020HeartbeatRequest\022\n\n\002"
-  "id\030\001 \001(\005\"\037\n\021HeartbeatResponse\022\n\n\002ok\030\001 \001("
-  "\010\"\246\003\n\007Request\022(\n\014boot_request\030\001 \001(\0132\020.ms"
-  "g.BootRequestH\000\022/\n\020osd_stop_request\030\002 \001("
-  "\0132\023.msg.OsdStopRequestH\000\0222\n\021heartbeat_re"
-  "quest\030\003 \001(\0132\025.msg.HeartbeatRequestH\000\0223\n\022"
-  "get_osdmap_request\030\004 \001(\0132\025.msg.GetOsdMap"
-  "RequestH\000\0223\n\022list_pools_request\030\005 \001(\0132\025."
-  "msg.ListPoolsRequestH\000\022/\n\020apply_id_reque"
-  "st\030\006 \001(\0132\023.msg.ApplyIDRequestH\000\0225\n\023creat"
-  "e_pool_request\030\007 \001(\0132\026.msg.CreatePoolReq"
-  "uestH\000\0221\n\021get_pgmap_request\030\010 \001(\0132\024.msg."
-  "GetPgMapRequestH\000B\007\n\005union\"\267\003\n\010Response\022"
-  "*\n\rboot_response\030\001 \001(\0132\021.msg.BootRespons"
-  "eH\000\0221\n\021osd_stop_response\030\002 \001(\0132\024.msg.Osd"
-  "StopResponseH\000\0224\n\022heartbeat_response\030\003 \001"
-  "(\0132\026.msg.HeartbeatResponseH\000\0225\n\023get_osdm"
-  "ap_response\030\004 \001(\0132\026.msg.GetOsdMapRespons"
-  "eH\000\0225\n\023list_pools_response\030\005 \001(\0132\026.msg.L"
-  "istPoolsResponseH\000\0221\n\021apply_id_response\030"
-  "\006 \001(\0132\024.msg.ApplyIDResponseH\000\0227\n\024create_"
-  "pool_response\030\007 \001(\0132\027.msg.CreatePoolResp"
-  "onseH\000\0223\n\022get_pgmap_response\030\010 \001(\0132\025.msg"
-  ".GetPgMapResponseH\000B\007\n\005union*p\n\021GetPgMap"
-  "ErrorCode\022\016\n\npgMapGetOk\020\000\022\034\n\030pgMapclient"
-  "VersionHigher\020\001\022\027\n\023PgMapclusterNoPools\020\002"
-  "\022\024\n\020PgMapSameVersion\020\003*]\n\017OsdMapErrorCod"
-  "e\022\006\n\002ok\020\000\022\027\n\023clientVersionHigher\020\001\022\030\n\024cl"
-  "ientVersionInvalid\020\002\022\017\n\013noOsdsExist\020\003b\006p"
-  "roto3"
+  "\0028\001\"9\n\020GetOsdMapRequest\022\r\n\005osdid\030\001 \001(\005\022\026"
+  "\n\016currentversion\030\002 \001(\003\"v\n\021GetOsdMapRespo"
+  "nse\022\'\n\terrorcode\030\001 \001(\0162\024.msg.OsdMapError"
+  "Code\022\025\n\rosdmapversion\030\002 \001(\003\022!\n\004osds\030\003 \003("
+  "\0132\023.msg.OsdDynamicInfo\"\032\n\014BootResponse\022\n"
+  "\n\002ok\030\001 \001(\010\"\034\n\016OsdStopRequest\022\n\n\002id\030\001 \001(\005"
+  "\"\035\n\017OsdStopResponse\022\n\n\002ok\030\001 \001(\010\"\036\n\020Heart"
+  "beatRequest\022\n\n\002id\030\001 \001(\005\"\037\n\021HeartbeatResp"
+  "onse\022\n\n\002ok\030\001 \001(\010\"\335\003\n\007Request\022(\n\014boot_req"
+  "uest\030\001 \001(\0132\020.msg.BootRequestH\000\022/\n\020osd_st"
+  "op_request\030\002 \001(\0132\023.msg.OsdStopRequestH\000\022"
+  "2\n\021heartbeat_request\030\003 \001(\0132\025.msg.Heartbe"
+  "atRequestH\000\0223\n\022get_osdmap_request\030\004 \001(\0132"
+  "\025.msg.GetOsdMapRequestH\000\0223\n\022list_pools_r"
+  "equest\030\005 \001(\0132\025.msg.ListPoolsRequestH\000\022/\n"
+  "\020apply_id_request\030\006 \001(\0132\023.msg.ApplyIDReq"
+  "uestH\000\0225\n\023create_pool_request\030\007 \001(\0132\026.ms"
+  "g.CreatePoolRequestH\000\0221\n\021get_pgmap_reque"
+  "st\030\010 \001(\0132\024.msg.GetPgMapRequestH\000\0225\n\023dele"
+  "te_pool_request\030\t \001(\0132\026.msg.DeletePoolRe"
+  "questH\000B\007\n\005union\"\360\003\n\010Response\022*\n\rboot_re"
+  "sponse\030\001 \001(\0132\021.msg.BootResponseH\000\0221\n\021osd"
+  "_stop_response\030\002 \001(\0132\024.msg.OsdStopRespon"
+  "seH\000\0224\n\022heartbeat_response\030\003 \001(\0132\026.msg.H"
+  "eartbeatResponseH\000\0225\n\023get_osdmap_respons"
+  "e\030\004 \001(\0132\026.msg.GetOsdMapResponseH\000\0225\n\023lis"
+  "t_pools_response\030\005 \001(\0132\026.msg.ListPoolsRe"
+  "sponseH\000\0221\n\021apply_id_response\030\006 \001(\0132\024.ms"
+  "g.ApplyIDResponseH\000\0227\n\024create_pool_respo"
+  "nse\030\007 \001(\0132\027.msg.CreatePoolResponseH\000\0223\n\022"
+  "get_pgmap_response\030\010 \001(\0132\025.msg.GetPgMapR"
+  "esponseH\000\0227\n\024delete_pool_response\030\t \001(\0132"
+  "\027.msg.DeletePoolResponseH\000B\007\n\005union*p\n\021G"
+  "etPgMapErrorCode\022\016\n\npgMapGetOk\020\000\022\034\n\030pgMa"
+  "pclientVersionHigher\020\001\022\027\n\023PgMapclusterNo"
+  "Pools\020\002\022\024\n\020PgMapSameVersion\020\003*]\n\017OsdMapE"
+  "rrorCode\022\006\n\002ok\020\000\022\027\n\023clientVersionHigher\020"
+  "\001\022\030\n\024clientVersionInvalid\020\002\022\017\n\013noOsdsExi"
+  "st\020\003b\006proto3"
   ;
 static const ::PROTOBUF_NAMESPACE_ID::internal::DescriptorTable*const descriptor_table_mon_5fmsg_2eproto_deps[1] = {
 };
@@ -974,7 +986,7 @@ static ::PROTOBUF_NAMESPACE_ID::internal::SCCInfoBase*const descriptor_table_mon
 };
 static ::PROTOBUF_NAMESPACE_ID::internal::once_flag descriptor_table_mon_5fmsg_2eproto_once;
 const ::PROTOBUF_NAMESPACE_ID::internal::DescriptorTable descriptor_table_mon_5fmsg_2eproto = {
-  false, false, descriptor_table_protodef_mon_5fmsg_2eproto, "mon_msg.proto", 2725,
+  false, false, descriptor_table_protodef_mon_5fmsg_2eproto, "mon_msg.proto", 2852,
   &descriptor_table_mon_5fmsg_2eproto_once, descriptor_table_mon_5fmsg_2eproto_sccs, descriptor_table_mon_5fmsg_2eproto_deps, 28, 0,
   schemas, file_default_instances, TableStruct_mon_5fmsg_2eproto::offsets,
   file_level_metadata_mon_5fmsg_2eproto, 28, file_level_enum_descriptors_mon_5fmsg_2eproto, file_level_service_descriptors_mon_5fmsg_2eproto,
@@ -4973,12 +4985,16 @@ GetOsdMapRequest::GetOsdMapRequest(::PROTOBUF_NAMESPACE_ID::Arena* arena)
 GetOsdMapRequest::GetOsdMapRequest(const GetOsdMapRequest& from)
   : ::PROTOBUF_NAMESPACE_ID::Message() {
   _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
-  currentversion_ = from.currentversion_;
+  ::memcpy(&currentversion_, &from.currentversion_,
+    static_cast<size_t>(reinterpret_cast<char*>(&osdid_) -
+    reinterpret_cast<char*>(&currentversion_)) + sizeof(osdid_));
   // @@protoc_insertion_point(copy_constructor:msg.GetOsdMapRequest)
 }
 
 void GetOsdMapRequest::SharedCtor() {
-  currentversion_ = PROTOBUF_LONGLONG(0);
+  ::memset(&currentversion_, 0, static_cast<size_t>(
+      reinterpret_cast<char*>(&osdid_) -
+      reinterpret_cast<char*>(&currentversion_)) + sizeof(osdid_));
 }
 
 GetOsdMapRequest::~GetOsdMapRequest() {
@@ -5012,7 +5028,9 @@ void GetOsdMapRequest::Clear() {
   // Prevent compiler warnings about cached_has_bits being unused
   (void) cached_has_bits;
 
-  currentversion_ = PROTOBUF_LONGLONG(0);
+  ::memset(&currentversion_, 0, static_cast<size_t>(
+      reinterpret_cast<char*>(&osdid_) -
+      reinterpret_cast<char*>(&currentversion_)) + sizeof(osdid_));
   _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
 }
 
@@ -5024,9 +5042,16 @@ const char* GetOsdMapRequest::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPA
     ptr = ::PROTOBUF_NAMESPACE_ID::internal::ReadTag(ptr, &tag);
     CHK_(ptr);
     switch (tag >> 3) {
-      // int64 currentversion = 1;
+      // int32 osdid = 1;
       case 1:
         if (PROTOBUF_PREDICT_TRUE(static_cast<::PROTOBUF_NAMESPACE_ID::uint8>(tag) == 8)) {
+          osdid_ = ::PROTOBUF_NAMESPACE_ID::internal::ReadVarint64(&ptr);
+          CHK_(ptr);
+        } else goto handle_unusual;
+        continue;
+      // int64 currentversion = 2;
+      case 2:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<::PROTOBUF_NAMESPACE_ID::uint8>(tag) == 16)) {
           currentversion_ = ::PROTOBUF_NAMESPACE_ID::internal::ReadVarint64(&ptr);
           CHK_(ptr);
         } else goto handle_unusual;
@@ -5059,10 +5084,16 @@ failure:
   ::PROTOBUF_NAMESPACE_ID::uint32 cached_has_bits = 0;
   (void) cached_has_bits;
 
-  // int64 currentversion = 1;
+  // int32 osdid = 1;
+  if (this->osdid() != 0) {
+    target = stream->EnsureSpace(target);
+    target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::WriteInt32ToArray(1, this->_internal_osdid(), target);
+  }
+
+  // int64 currentversion = 2;
   if (this->currentversion() != 0) {
     target = stream->EnsureSpace(target);
-    target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::WriteInt64ToArray(1, this->_internal_currentversion(), target);
+    target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::WriteInt64ToArray(2, this->_internal_currentversion(), target);
   }
 
   if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
@@ -5081,11 +5112,18 @@ size_t GetOsdMapRequest::ByteSizeLong() const {
   // Prevent compiler warnings about cached_has_bits being unused
   (void) cached_has_bits;
 
-  // int64 currentversion = 1;
+  // int64 currentversion = 2;
   if (this->currentversion() != 0) {
     total_size += 1 +
       ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::Int64Size(
         this->_internal_currentversion());
+  }
+
+  // int32 osdid = 1;
+  if (this->osdid() != 0) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::Int32Size(
+        this->_internal_osdid());
   }
 
   if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
@@ -5122,6 +5160,9 @@ void GetOsdMapRequest::MergeFrom(const GetOsdMapRequest& from) {
   if (from.currentversion() != 0) {
     _internal_set_currentversion(from._internal_currentversion());
   }
+  if (from.osdid() != 0) {
+    _internal_set_osdid(from._internal_osdid());
+  }
 }
 
 void GetOsdMapRequest::CopyFrom(const ::PROTOBUF_NAMESPACE_ID::Message& from) {
@@ -5145,7 +5186,12 @@ bool GetOsdMapRequest::IsInitialized() const {
 void GetOsdMapRequest::InternalSwap(GetOsdMapRequest* other) {
   using std::swap;
   _internal_metadata_.Swap<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(&other->_internal_metadata_);
-  swap(currentversion_, other->currentversion_);
+  ::PROTOBUF_NAMESPACE_ID::internal::memswap<
+      PROTOBUF_FIELD_OFFSET(GetOsdMapRequest, osdid_)
+      + sizeof(GetOsdMapRequest::osdid_)
+      - PROTOBUF_FIELD_OFFSET(GetOsdMapRequest, currentversion_)>(
+          reinterpret_cast<char*>(&currentversion_),
+          reinterpret_cast<char*>(&other->currentversion_));
 }
 
 ::PROTOBUF_NAMESPACE_ID::Metadata GetOsdMapRequest::GetMetadata() const {
@@ -6416,6 +6462,8 @@ void Request::InitAsDefaultInstance() {
       ::msg::CreatePoolRequest::internal_default_instance());
   ::msg::_Request_default_instance_.get_pgmap_request_ = const_cast< ::msg::GetPgMapRequest*>(
       ::msg::GetPgMapRequest::internal_default_instance());
+  ::msg::_Request_default_instance_.delete_pool_request_ = const_cast< ::msg::DeletePoolRequest*>(
+      ::msg::DeletePoolRequest::internal_default_instance());
 }
 class Request::_Internal {
  public:
@@ -6427,6 +6475,7 @@ class Request::_Internal {
   static const ::msg::ApplyIDRequest& apply_id_request(const Request* msg);
   static const ::msg::CreatePoolRequest& create_pool_request(const Request* msg);
   static const ::msg::GetPgMapRequest& get_pgmap_request(const Request* msg);
+  static const ::msg::DeletePoolRequest& delete_pool_request(const Request* msg);
 };
 
 const ::msg::BootRequest&
@@ -6460,6 +6509,10 @@ Request::_Internal::create_pool_request(const Request* msg) {
 const ::msg::GetPgMapRequest&
 Request::_Internal::get_pgmap_request(const Request* msg) {
   return *msg->union_.get_pgmap_request_;
+}
+const ::msg::DeletePoolRequest&
+Request::_Internal::delete_pool_request(const Request* msg) {
+  return *msg->union_.delete_pool_request_;
 }
 void Request::set_allocated_boot_request(::msg::BootRequest* boot_request) {
   ::PROTOBUF_NAMESPACE_ID::Arena* message_arena = GetArena();
@@ -6581,6 +6634,21 @@ void Request::set_allocated_get_pgmap_request(::msg::GetPgMapRequest* get_pgmap_
   }
   // @@protoc_insertion_point(field_set_allocated:msg.Request.get_pgmap_request)
 }
+void Request::set_allocated_delete_pool_request(::msg::DeletePoolRequest* delete_pool_request) {
+  ::PROTOBUF_NAMESPACE_ID::Arena* message_arena = GetArena();
+  clear_union();
+  if (delete_pool_request) {
+    ::PROTOBUF_NAMESPACE_ID::Arena* submessage_arena =
+      ::PROTOBUF_NAMESPACE_ID::Arena::GetArena(delete_pool_request);
+    if (message_arena != submessage_arena) {
+      delete_pool_request = ::PROTOBUF_NAMESPACE_ID::internal::GetOwnedMessage(
+          message_arena, delete_pool_request, submessage_arena);
+    }
+    set_has_delete_pool_request();
+    union_.delete_pool_request_ = delete_pool_request;
+  }
+  // @@protoc_insertion_point(field_set_allocated:msg.Request.delete_pool_request)
+}
 Request::Request(::PROTOBUF_NAMESPACE_ID::Arena* arena)
   : ::PROTOBUF_NAMESPACE_ID::Message(arena) {
   SharedCtor();
@@ -6622,6 +6690,10 @@ Request::Request(const Request& from)
     }
     case kGetPgmapRequest: {
       _internal_mutable_get_pgmap_request()->::msg::GetPgMapRequest::MergeFrom(from._internal_get_pgmap_request());
+      break;
+    }
+    case kDeletePoolRequest: {
+      _internal_mutable_delete_pool_request()->::msg::DeletePoolRequest::MergeFrom(from._internal_delete_pool_request());
       break;
     }
     case UNION_NOT_SET: {
@@ -6715,6 +6787,12 @@ void Request::clear_union() {
       }
       break;
     }
+    case kDeletePoolRequest: {
+      if (GetArena() == nullptr) {
+        delete union_.delete_pool_request_;
+      }
+      break;
+    }
     case UNION_NOT_SET: {
       break;
     }
@@ -6794,6 +6872,13 @@ const char* Request::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::in
       case 8:
         if (PROTOBUF_PREDICT_TRUE(static_cast<::PROTOBUF_NAMESPACE_ID::uint8>(tag) == 66)) {
           ptr = ctx->ParseMessage(_internal_mutable_get_pgmap_request(), ptr);
+          CHK_(ptr);
+        } else goto handle_unusual;
+        continue;
+      // .msg.DeletePoolRequest delete_pool_request = 9;
+      case 9:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<::PROTOBUF_NAMESPACE_ID::uint8>(tag) == 74)) {
+          ptr = ctx->ParseMessage(_internal_mutable_delete_pool_request(), ptr);
           CHK_(ptr);
         } else goto handle_unusual;
         continue;
@@ -6889,6 +6974,14 @@ failure:
         8, _Internal::get_pgmap_request(this), target, stream);
   }
 
+  // .msg.DeletePoolRequest delete_pool_request = 9;
+  if (_internal_has_delete_pool_request()) {
+    target = stream->EnsureSpace(target);
+    target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::
+      InternalWriteMessage(
+        9, _Internal::delete_pool_request(this), target, stream);
+  }
+
   if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
     target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormat::InternalSerializeUnknownFieldsToArray(
         _internal_metadata_.unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(::PROTOBUF_NAMESPACE_ID::UnknownFieldSet::default_instance), target, stream);
@@ -6962,6 +7055,13 @@ size_t Request::ByteSizeLong() const {
           *union_.get_pgmap_request_);
       break;
     }
+    // .msg.DeletePoolRequest delete_pool_request = 9;
+    case kDeletePoolRequest: {
+      total_size += 1 +
+        ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::MessageSize(
+          *union_.delete_pool_request_);
+      break;
+    }
     case UNION_NOT_SET: {
       break;
     }
@@ -7030,6 +7130,10 @@ void Request::MergeFrom(const Request& from) {
       _internal_mutable_get_pgmap_request()->::msg::GetPgMapRequest::MergeFrom(from._internal_get_pgmap_request());
       break;
     }
+    case kDeletePoolRequest: {
+      _internal_mutable_delete_pool_request()->::msg::DeletePoolRequest::MergeFrom(from._internal_delete_pool_request());
+      break;
+    }
     case UNION_NOT_SET: {
       break;
     }
@@ -7085,6 +7189,8 @@ void Response::InitAsDefaultInstance() {
       ::msg::CreatePoolResponse::internal_default_instance());
   ::msg::_Response_default_instance_.get_pgmap_response_ = const_cast< ::msg::GetPgMapResponse*>(
       ::msg::GetPgMapResponse::internal_default_instance());
+  ::msg::_Response_default_instance_.delete_pool_response_ = const_cast< ::msg::DeletePoolResponse*>(
+      ::msg::DeletePoolResponse::internal_default_instance());
 }
 class Response::_Internal {
  public:
@@ -7096,6 +7202,7 @@ class Response::_Internal {
   static const ::msg::ApplyIDResponse& apply_id_response(const Response* msg);
   static const ::msg::CreatePoolResponse& create_pool_response(const Response* msg);
   static const ::msg::GetPgMapResponse& get_pgmap_response(const Response* msg);
+  static const ::msg::DeletePoolResponse& delete_pool_response(const Response* msg);
 };
 
 const ::msg::BootResponse&
@@ -7129,6 +7236,10 @@ Response::_Internal::create_pool_response(const Response* msg) {
 const ::msg::GetPgMapResponse&
 Response::_Internal::get_pgmap_response(const Response* msg) {
   return *msg->union_.get_pgmap_response_;
+}
+const ::msg::DeletePoolResponse&
+Response::_Internal::delete_pool_response(const Response* msg) {
+  return *msg->union_.delete_pool_response_;
 }
 void Response::set_allocated_boot_response(::msg::BootResponse* boot_response) {
   ::PROTOBUF_NAMESPACE_ID::Arena* message_arena = GetArena();
@@ -7250,6 +7361,21 @@ void Response::set_allocated_get_pgmap_response(::msg::GetPgMapResponse* get_pgm
   }
   // @@protoc_insertion_point(field_set_allocated:msg.Response.get_pgmap_response)
 }
+void Response::set_allocated_delete_pool_response(::msg::DeletePoolResponse* delete_pool_response) {
+  ::PROTOBUF_NAMESPACE_ID::Arena* message_arena = GetArena();
+  clear_union();
+  if (delete_pool_response) {
+    ::PROTOBUF_NAMESPACE_ID::Arena* submessage_arena =
+      ::PROTOBUF_NAMESPACE_ID::Arena::GetArena(delete_pool_response);
+    if (message_arena != submessage_arena) {
+      delete_pool_response = ::PROTOBUF_NAMESPACE_ID::internal::GetOwnedMessage(
+          message_arena, delete_pool_response, submessage_arena);
+    }
+    set_has_delete_pool_response();
+    union_.delete_pool_response_ = delete_pool_response;
+  }
+  // @@protoc_insertion_point(field_set_allocated:msg.Response.delete_pool_response)
+}
 Response::Response(::PROTOBUF_NAMESPACE_ID::Arena* arena)
   : ::PROTOBUF_NAMESPACE_ID::Message(arena) {
   SharedCtor();
@@ -7291,6 +7417,10 @@ Response::Response(const Response& from)
     }
     case kGetPgmapResponse: {
       _internal_mutable_get_pgmap_response()->::msg::GetPgMapResponse::MergeFrom(from._internal_get_pgmap_response());
+      break;
+    }
+    case kDeletePoolResponse: {
+      _internal_mutable_delete_pool_response()->::msg::DeletePoolResponse::MergeFrom(from._internal_delete_pool_response());
       break;
     }
     case UNION_NOT_SET: {
@@ -7384,6 +7514,12 @@ void Response::clear_union() {
       }
       break;
     }
+    case kDeletePoolResponse: {
+      if (GetArena() == nullptr) {
+        delete union_.delete_pool_response_;
+      }
+      break;
+    }
     case UNION_NOT_SET: {
       break;
     }
@@ -7463,6 +7599,13 @@ const char* Response::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::i
       case 8:
         if (PROTOBUF_PREDICT_TRUE(static_cast<::PROTOBUF_NAMESPACE_ID::uint8>(tag) == 66)) {
           ptr = ctx->ParseMessage(_internal_mutable_get_pgmap_response(), ptr);
+          CHK_(ptr);
+        } else goto handle_unusual;
+        continue;
+      // .msg.DeletePoolResponse delete_pool_response = 9;
+      case 9:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<::PROTOBUF_NAMESPACE_ID::uint8>(tag) == 74)) {
+          ptr = ctx->ParseMessage(_internal_mutable_delete_pool_response(), ptr);
           CHK_(ptr);
         } else goto handle_unusual;
         continue;
@@ -7558,6 +7701,14 @@ failure:
         8, _Internal::get_pgmap_response(this), target, stream);
   }
 
+  // .msg.DeletePoolResponse delete_pool_response = 9;
+  if (_internal_has_delete_pool_response()) {
+    target = stream->EnsureSpace(target);
+    target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::
+      InternalWriteMessage(
+        9, _Internal::delete_pool_response(this), target, stream);
+  }
+
   if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
     target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormat::InternalSerializeUnknownFieldsToArray(
         _internal_metadata_.unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(::PROTOBUF_NAMESPACE_ID::UnknownFieldSet::default_instance), target, stream);
@@ -7631,6 +7782,13 @@ size_t Response::ByteSizeLong() const {
           *union_.get_pgmap_response_);
       break;
     }
+    // .msg.DeletePoolResponse delete_pool_response = 9;
+    case kDeletePoolResponse: {
+      total_size += 1 +
+        ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::MessageSize(
+          *union_.delete_pool_response_);
+      break;
+    }
     case UNION_NOT_SET: {
       break;
     }
@@ -7697,6 +7855,10 @@ void Response::MergeFrom(const Response& from) {
     }
     case kGetPgmapResponse: {
       _internal_mutable_get_pgmap_response()->::msg::GetPgMapResponse::MergeFrom(from._internal_get_pgmap_response());
+      break;
+    }
+    case kDeletePoolResponse: {
+      _internal_mutable_delete_pool_response()->::msg::DeletePoolResponse::MergeFrom(from._internal_delete_pool_response());
       break;
     }
     case UNION_NOT_SET: {

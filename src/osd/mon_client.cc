@@ -270,7 +270,14 @@ fbclient_monitor_rpc_processer(void *arg)
 			else
 			{
 				auto boot_resp = resp.mutable_boot_response();
-				assert(boot_resp->ok());
+
+				// if assert fails ,this osd is not a good osd, just quit
+				if (!boot_resp->ok())
+				{
+					SPDK_NOTICELOG("monitor notifies boot failed, quit\r\n");
+					exit(-1);
+				}
+
 				ctx->is_booted = true;
 				SPDK_NOTICELOG("osd is booted\r\n");
 				return SPDK_POLLER_BUSY;
@@ -386,6 +393,7 @@ fbclient_get_osdmap_poll(void *arg)
 	msg::GetOsdMapRequest osdmap_req;
 
 	osdmap_req.set_currentversion(-1);
+	osdmap_req.set_osdid(ctx->osd_id);
 	req->set_allocated_get_osdmap_request(&osdmap_req);
 
 	size_t size = req->ByteSizeLong();
