@@ -27,13 +27,13 @@ struct request {
     bool read;
 };
 void write_cb(void *cb_arg, int bserrno) {
-    printf("cb_arg: %s\n", (char *)cb_arg);
-    printf("bserrno: %d\n", bserrno);
+    SPDK_NOTICELOG("cb_arg: %s\n", (char *)cb_arg);
+    SPDK_NOTICELOG("bserrno: %d\n", bserrno);
 }
 
 void read_cb(void *cb_arg, int bserrno) {
-    printf("read_cb\n");
-    printf("bserrno: %d\n", bserrno);
+    SPDK_NOTICELOG("read_cb\n");
+    SPDK_NOTICELOG("bserrno: %d\n", bserrno);
 }
 
 

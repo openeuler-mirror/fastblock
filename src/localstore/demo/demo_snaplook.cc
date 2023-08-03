@@ -128,7 +128,7 @@ delete_blob(void *arg1, int bserrno)
 static void
 read_complete(void *arg1, int bserrno)
 {
-	printf("进入读完成函数\n");
+	SPDK_NOTICELOG("进入读完成函数\n");
 	struct hello_context_t *hello_context = (hello_context_t *)arg1;
 	int match_res = -1;
 
@@ -139,7 +139,7 @@ read_complete(void *arg1, int bserrno)
 			   hello_context->io_unit_size);
 	if (match_res) {
 		// unload_bs(hello_context, "Error in data compare", -1);
-		printf("读缓冲区和写缓冲区不匹配\n");
+		SPDK_NOTICELOG("读缓冲区和写缓冲区不匹配\n");
 		// return;
 	} else {
 		SPDK_NOTICELOG("read SUCCESS and data matches!  read和wirte的buff都是 %p   bbid %" PRIu64 "\n"  ,hello_context->read_buff,hello_context->blobid);
@@ -169,7 +169,7 @@ read_blob(struct hello_context_t *hello_context,object_rw_complete cb_fn)
 			  -ENOMEM);
 		return;
 	}
-	 printf("spdk_blob_io_read\n");
+	 SPDK_NOTICELOG("spdk_blob_io_read\n");
 	 hello_context->cb_fn= cb_fn;
 	/* Issue the read and compare the results in the callback. */
 	spdk_blob_io_read(hello_context->blob, hello_context->channel,
@@ -189,7 +189,7 @@ write_complete(void *arg1, int bserrno)
 	if (bserrno) {
 		// unload_bs(hello_context, "Error in write completion",
 		// 	  bserrno);
-		printf("错误 %s \n" ,spdk_strerror(bserrno));
+		SPDK_NOTICELOG("错误 %s \n" ,spdk_strerror(bserrno));
 		//return;
 	}
 
@@ -225,7 +225,7 @@ blob_write(struct hello_context_t *hello_context,int context, object_rw_complete
 		return;
 	}
 	hello_context->cb_fn=cb_fn;
-	printf("spdk_blob_io_write\n");
+	SPDK_NOTICELOG("spdk_blob_io_write\n");
 	/* Let's perform the write, 1 io_unit at offset 0. */
 	spdk_blob_io_write(hello_context->blob, hello_context->channel,
 			   hello_context->write_buff,
@@ -442,7 +442,7 @@ void protest(void *arg1) {
     // //首先创建创建对象
 		hello_context->object_blob->bs=hello_context->bs;
     	//blob_store的table进行插入
-		printf("原本的内容 %" PRIu64 "\n   %p",hello_context->blobid,hello_context->write_buff );
+		SPDK_NOTICELOG("原本的内容 %" PRIu64 "\n   %p",hello_context->blobid,hello_context->write_buff );
         blob_write(hello_context,0x21,create_snap);
 		hello_context->t_bid=hello_context->blobid;	
 }
@@ -477,7 +477,7 @@ void re_read(void *arg1,int objerrno) {
 void re_write2(void *arg1,int objerrno) {
 	struct hello_context_t *hello_context = (hello_context_t *)arg1;
 	hello_context->cb_fn=load_snap;
-	printf("原blob进行覆写 的 bbid %" PRIu64 " %p  \n",hello_context->blobid,hello_context->read_buff);
+	SPDK_NOTICELOG("原blob进行覆写 的 bbid %" PRIu64 " %p  \n",hello_context->blobid,hello_context->read_buff);
 	//对原数据读写
 	blob_write(hello_context,0x31,load_snap);
 }
@@ -498,7 +498,7 @@ void close_snap(void *arg1,int objerrno) {
 	hello_context->cb_fn=nullptr;
 	hello_context->cb_fn=del_snap;
 	int sn_sz2 = hello_context->object_blob->table.find("word_blob")->second->sp_list.size();
-	printf("载入快照前内容 %p  快照链长度 %d \n " ,hello_context->read_buff,sn_sz2);
+	SPDK_NOTICELOG("载入快照前内容 %p  快照链长度 %d \n " ,hello_context->read_buff,sn_sz2);
 	del_snap(hello_context,0);
 }
 
@@ -507,10 +507,10 @@ void del_snap(void *arg1,int objerrno) {
 	struct hello_context_t *hello_context = (hello_context_t *)arg1;
 	//输出快照内容
 	int sn_sz1 = hello_context->object_blob->table.find("word_blob")->second->sp_list.size();
-	printf("快照内容 %p,快照链长度 %ld \n" ,hello_context->read_buff,sn_sz1);
+	SPDK_NOTICELOG("快照内容 %p,快照链长度 %d \n" ,hello_context->read_buff,sn_sz1);
 	//首先获取快照链的长度。
 	int sn_sz = hello_context->object_blob->table.find("word_blob")->second->sp_list.size();
-	printf("删除快照前长度 %ld \n" ,sn_sz);
+	SPDK_NOTICELOG("删除快照前长度 %d \n" ,sn_sz);
 	//删除快照
 	hello_context->object_blob->delete_snap("word_blob",1,find_b,hello_context);
 	hello_context->blob=hello_context->object_blob->table.find("word_blob")->second->blob;
@@ -521,7 +521,7 @@ void del_snap(void *arg1,int objerrno) {
 void find_b(void *arg1,int objerrno) {
 	struct hello_context_t *hello_context = (hello_context_t *)arg1;
 	hello_context->cb_fn=load_snap;
-	printf("进行覆写 的 bbid %" PRIu64 "   \n",hello_context->blobid);
+	SPDK_NOTICELOG("进行覆写 的 bbid %" PRIu64 "   \n",hello_context->blobid);
 	//打开
 	spdk_bs_open_blob(hello_context->object_blob->bs,hello_context->t_bid ,re_write_snap,hello_context);
 }
@@ -538,7 +538,7 @@ void re_write_snap(void *arg1, struct spdk_blob *blb,int objerrno) {
 void result(void *arg1,int objerrno) {
 	struct hello_context_t *hello_context = (hello_context_t *)arg1;
 	int sn_sz = hello_context->object_blob->table.find("word_blob")->second->sp_list.size();
-	printf("snap list of size after delted %ld\n" ,sn_sz);
+	SPDK_NOTICELOG("snap list of size after delted %d\n" ,sn_sz);
 	spdk_app_stop(0);
 }
 

@@ -153,7 +153,7 @@ static void
 			  bserrno);
 		return;
 	}
-    printf("结束`````````````````````````````````````````\n");
+    SPDK_NOTICELOG("结束`````````````````````````````````````````\n");
 }
 
 
@@ -230,7 +230,7 @@ static void
 write_complete1(void *arg1, int bserrno)
 {
 	struct hello_context_t *hello_context = (hello_context_t *)arg1;
-	printf("write_complete1---------------------\n");	
+	SPDK_NOTICELOG("write_complete1---------------------\n");
 	SPDK_NOTICELOG("entry\n");
 	if (bserrno) {
 		unload_bs(hello_context, "Error in write1 completion",
@@ -270,7 +270,7 @@ blob_write1(struct hello_context_t *hello_context)
 			  -ENOMEM);
 		return;
 	}
-	printf("blob_write1---------------------\n");
+	SPDK_NOTICELOG("blob_write1---------------------\n");
 	/* Let's perform the write, 1 io_unit at offset 0. */
 	spdk_blob_io_write(hello_context->blob, hello_context->channel,
 			   hello_context->write_buff,
@@ -291,7 +291,7 @@ create_complete(void *arg1, spdk_blob_id blobid, int bserrno) {
 		return;
 	    }
 
-	printf("create_complete---------------------\n");
+	SPDK_NOTICELOG("create_complete---------------------\n");
     blob_write1(hello_context);
 }
 

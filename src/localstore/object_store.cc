@@ -263,7 +263,7 @@ void object_store::snap_add_statues(void *arg, int objerrno) {
   }
     SPDK_DEBUGLOG(object_store, "snapshot close is successful\n");
     if(ctx->snap_blob->blob==nullptr) {
-      printf("回调blob 为零 \n");
+      SPDK_NOTICELOG("回调blob 为零 \n");
     }
     ctx->cb_fn(ctx->arg, objerrno);
     delete ctx;
