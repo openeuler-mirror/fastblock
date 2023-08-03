@@ -543,7 +543,7 @@ void result(void *arg1,int objerrno) {
 }
 
 
-main(int argc, char **argv)
+int main(int argc, char **argv)
 {
 	struct spdk_app_opts opts = {};
 	int rc = 0;
