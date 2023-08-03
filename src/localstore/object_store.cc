@@ -175,7 +175,7 @@ void object_store::snap_done(void *arg, spdk_blob_id snap_id, int objerrno)
   ctx->snap_blob->blobid = snap_id;
   //想要通过blobid找到blob块，但是没到直接的函数，这里通过open打开，保存在snap-ctx中。
   spdk_bs_open_blob(ctx->bs, snap_id,snap_add,ctx);
-  SPDK_DEBUGLOG(object_store, "object %s of snap is created successfully",ctx->object_name);
+  SPDK_DEBUGLOG(object_store, "object %s of snap is created successfully\n",ctx->object_name.c_str());
 }
 
 //快照链添加函数
@@ -196,7 +196,7 @@ void object_store::snap_add(void *arg, spdk_blob* blob, int objerrno)
   auto temp = ctx->hashlist->find(ctx->object_name)->second;
   //进行头插
   temp->sp_list.push_front(snap_node);
-  SPDK_DEBUGLOG(object_store, "the snapshot is add to the list of snaplist, object %s",ctx->object_name);
+  SPDK_DEBUGLOG(object_store, "the snapshot is add to the list of snaplist, object %s\n",ctx->object_name.c_str());
   //关闭快照
   spdk_blob_close(ctx->snap_blob->blob, close_snap, ctx);
 }
@@ -231,7 +231,7 @@ void object_store::load_snap(std::string object_name, int version, object_rw_com
   ctx->cb_fn=cb_fn;
   ctx->arg=arg;
   spdk_blob_close(itb->second->blob,snap_add_statues,ctx);
-  SPDK_DEBUGLOG(object_store, "snap : %s is load successful%s",object_name);
+  SPDK_DEBUGLOG(object_store, "snap : %s is load successful\n",object_name.c_str());
 }
 //读取快照的函数，主要替换是否成功
 void object_store::snap_add_statues(void *arg, int objerrno) {
@@ -245,7 +245,7 @@ void object_store::snap_add_statues(void *arg, int objerrno) {
   //ctx->hashlist->find(ctx->object_name)->second->sp_list.erase(ctx->it);
   ctx->itb->second->blob = (*ctx->it) ->snap_fb->blob;
   ctx->itb->second->blobid = (*ctx->it) ->snap_fb->blobid;
-  SPDK_DEBUGLOG(object_store, "snapshot install of raw data is successful");
+  SPDK_DEBUGLOG(object_store, "snapshot install of raw data is successful\n");
   //关闭快照
   //spdk_blob_close(ctx->itb->second->blob, close_snap, ctx);
   ctx->cb_fn(ctx->arg, objerrno);
@@ -261,7 +261,7 @@ void object_store::snap_add_statues(void *arg, int objerrno) {
     SPDK_ERRLOG("snapshot close is failed:%s\n", spdk_strerror(objerrno));
     return ;
   }
-    SPDK_DEBUGLOG(object_store, "snapshot close is successful");
+    SPDK_DEBUGLOG(object_store, "snapshot close is successful\n");
     if(ctx->snap_blob->blob==nullptr) {
       printf("回调blob 为零 \n");
     }
@@ -294,7 +294,7 @@ void object_store::delete_snap(std::string object_name,int version,object_rw_com
   ctx->hashlist=&table;
   //然后通过函数，删除快照保存的块
   spdk_bs_delete_blob(bs,(*it)->snap_fb->blobid, del_done, ctx);
-  SPDK_DEBUGLOG(object_store, "snapshot listnode delete is successful");
+  SPDK_DEBUGLOG(object_store, "snapshot listnode delete is successful\n");
 }
 
 //快照删除的回调函数
@@ -307,7 +307,7 @@ void object_store::del_done(void *arg, int objerrno)
     SPDK_ERRLOG("snapshot delete is failed:%s\n", spdk_strerror(objerrno));
     return ;
   }
-  SPDK_DEBUGLOG(object_store, "snapshot delete is successful");
+  SPDK_DEBUGLOG(object_store, "snapshot delete is successful\n");
   //然后应该自动加载最新的快照，如果没有则不添加
   if(ctx->itb->second->sp_list.size()!=0) {
       //则加载快照
@@ -315,7 +315,7 @@ void object_store::del_done(void *arg, int objerrno)
       ctx->hashlist->find(ctx->object_name)->second=(*it) ->snap_fb;
   }
   else {
-    SPDK_DEBUGLOG(object_store, "the snaplook is not exits");
+    SPDK_DEBUGLOG(object_store, "the snaplook is not exits\n");
   }
   ctx->cb_fn(ctx->arg, objerrno);
   delete ctx;
@@ -521,11 +521,11 @@ void object_store::close_done(void *arg, int objerrno) {
 		return;
 	}
 
-  SPDK_DEBUGLOG(object_store, "close %u blobid:" PRIu64 " closed\n", ctx->count, ctx->it->second->blobid);
+  SPDK_DEBUGLOG(object_store, "blobid:%" PRIu64 " closed\n", ctx->it->second->blobid);
   ctx->it++;
   auto& table = ctx->mgr->table;
   if (ctx->it == table.end()) {
-    SPDK_DEBUGLOG(object_store, "close %u blobids finish\n", table.size());
+    SPDK_DEBUGLOG(object_store, "close %lu blobids finish\n", table.size());
     ctx->cb_fn(ctx->arg, 0);
     delete ctx;
     return;

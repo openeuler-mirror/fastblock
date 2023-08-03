@@ -103,7 +103,7 @@ public:
             if (not ::spdk_client_ctrlr_has_free_memory(_conn, req->serialized_size)) {
                 SPDK_DEBUGLOG(
                   msg,
-                  "not enough chunks for request %d, which needs %ld bytes\n",
+                  "not enough chunks for request %ld, which needs %ld bytes\n",
                   req->request_key, req->serialized_size);
                 return -EAGAIN;
             }
@@ -231,7 +231,7 @@ public:
 
             SPDK_DEBUGLOG(
               msg,
-              "rpc meta service name is %s, method name is %s, data size is %ld\n",
+              "rpc meta service name is %s, method name is %s, data size is %d\n",
               meta->service_name,
               meta->method_name,
               meta->data_size);
