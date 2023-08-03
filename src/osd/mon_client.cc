@@ -270,7 +270,14 @@ fbclient_monitor_rpc_processer(void *arg)
 			else
 			{
 				auto boot_resp = resp.mutable_boot_response();
-				assert(boot_resp->ok());
+
+				// if assert fails ,this osd is not a good osd, just quit
+				if (!boot_resp->ok())
+				{
+					SPDK_NOTICELOG("monitor notifies boot failed, quit\r\n");
+					exit(-1);
+				}
+
 				ctx->is_booted = true;
 				SPDK_NOTICELOG("osd is booted\r\n");
 				return SPDK_POLLER_BUSY;
