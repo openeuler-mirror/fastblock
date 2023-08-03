@@ -68,7 +68,7 @@ unload_complete(void *cb_arg, int bserrno)
  * Unload the blobstore, cleaning up as needed.
  */
 static void
-unload_bs(struct hello_context_t *hello_context, char *msg, int bserrno)
+unload_bs(struct hello_context_t *hello_context, const char *msg, int bserrno)
 {
 	if (bserrno) {
 		SPDK_ERRLOG("%s (err %d)\n", msg, bserrno);

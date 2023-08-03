@@ -14,13 +14,13 @@ static int global_osd_id = 0;
 static const char * g_log_dir = nullptr;
 static const char * g_date_dir = nullptr;
 static partition_manager* global_pm = nullptr;
-static  char * g_osd_addr = "127.0.0.1";
+static const char* g_osd_addr = "127.0.0.1";
 static  int g_osd_port = 8888;
 
 // use default uuid
-static char *g_uuid = "00000000-0000-0000-0000-000000000000";
+static const char *g_uuid = "00000000-0000-0000-0000-000000000000";
 
-static char *g_mon_addr = "127.0.0.1";
+static const char *g_mon_addr = "127.0.0.1";
 static int g_mon_port = 3333;
 
 typedef struct

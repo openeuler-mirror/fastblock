@@ -108,7 +108,7 @@ unload_complete(void *cb_arg, int objerrno)
 }
 
 static void
-unload_bs(struct hello_context_t *hello_context, char *msg, int objerrno)
+unload_bs(struct hello_context_t *hello_context, const char *msg, int objerrno)
 {
   SPDK_NOTICELOG("unload_bs, objerrno:%d \n", objerrno);
   if (objerrno) {
