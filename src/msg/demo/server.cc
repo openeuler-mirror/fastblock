@@ -116,7 +116,7 @@ int main(int argc, char** argv) {
     opts.rpc_addr = "/var/tmp/spdk_srv.sock";
     opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
     ::spdk_log_set_flag("rdma");
-    ::spdk_log_set_flag("transport_server");
+    ::spdk_log_set_flag("msg");
 
     auto rpc_server = std::make_shared<msg::rdma::transport_server>();
     demo_ping_pong_service rpc_service{};

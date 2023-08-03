@@ -110,7 +110,7 @@ int main(int argc, char** argv) {
     opts.rpc_addr = "/var/tmp/spdk_cli.sock";
     opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
     ::spdk_log_set_flag("rdma");
-    ::spdk_log_set_flag("transport_client");
+    ::spdk_log_set_flag("msg");
     ::spdk_log_set_print_level(SPDK_LOG_DEBUG);
 
     rc = ::spdk_app_start(&opts, start_rpc_client, nullptr);

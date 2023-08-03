@@ -23,8 +23,6 @@
 namespace msg {
 namespace rdma {
 
-// SPDK_LOG_REGISTER_COMPONENT(transport_client)
-
 class transport_client {
 public:
 
@@ -104,14 +102,14 @@ public:
 
             if (not ::spdk_client_ctrlr_has_free_memory(_conn, req->serialized_size)) {
                 SPDK_DEBUGLOG(
-                  transport_client,
+                  msg,
                   "not enough chunks for request %d, which needs %ld bytes\n",
                   req->request_key, req->serialized_size);
                 return -EAGAIN;
             }
             req->serialized_buf = std::make_unique<char[]>(req->serialized_size);
             SPDK_DEBUGLOG(
-              transport_client,
+              msg,
               "request id is %ld, request serialize size is %ld, request body size is %ld\n",
               req->request_key,
               req->serialized_size - request_meta_size,
@@ -127,7 +125,7 @@ public:
             _unresponsed_requests.emplace(k, std::move(unresponsed_req));
 
             SPDK_DEBUGLOG(
-              transport_client,
+              msg,
               "Send rpc request(id: %ld) on %p, with body size %ld\n",
               k, req_ptr->serialized_buf.get(), req_ptr->serialized_size);
 
@@ -232,7 +230,7 @@ public:
             meta->data_size = static_cast<request_meta::data_size_type>(request->ByteSizeLong());
 
             SPDK_DEBUGLOG(
-              transport_client,
+              msg,
               "rpc meta service name is %s, method name is %s, data size is %ld\n",
               meta->service_name,
               meta->method_name,
@@ -253,7 +251,7 @@ public:
             }
 
             SPDK_DEBUGLOG(
-              transport_client,
+              msg,
               "process %ld rpc call heartbeat()\n",
               _priority_inflight_requests.size());
 
@@ -333,7 +331,7 @@ public:
             status reply_status_e{reply_status->reply_status};
 
             SPDK_DEBUGLOG(
-              transport_client,
+              msg,
               "reply status of request %ld is %s\n",
               request->request->request_key,
               string_status(reply_status_e));
