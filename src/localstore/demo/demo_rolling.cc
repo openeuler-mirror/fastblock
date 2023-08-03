@@ -14,7 +14,6 @@
 #include "localstore/rolling_blob.h"
 #include "localstore/spdk_buffer.h"
 
-#define CLUSTER_SIZE 1024
 #define BLOB_CLUSTERS 4
 #define CLUSTER_SIZE 1 << 20 // 1Mb
 
