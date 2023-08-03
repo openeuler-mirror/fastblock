@@ -140,9 +140,9 @@ raft_cbs_t raft_funcs = {
 };
 
 int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard_id, uint64_t pool_id, 
-            uint64_t pg_id, std::vector<osd_info_t>&& osds, storage::log&& log){
+            uint64_t pg_id, std::vector<osd_info_t>&& osds, disk_log* log){
     int ret = 0;
-    auto raft = raft_new(_client, std::move(log), sm_ptr, pool_id, pg_id);
+    auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id);
     raft->raft_set_callbacks(&raft_funcs, NULL);
 
     ret = _pg_add(shard_id, raft, pool_id, pg_id);

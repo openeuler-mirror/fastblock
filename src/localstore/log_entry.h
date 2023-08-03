@@ -23,22 +23,22 @@ struct log_entry_t {
 static constexpr uint64_t entry_header_size = sizeof(uint64_t) * 3;
 
 inline bool 
-EncodeLogHeader(spdk_buffer& sbuf, log_entry_t* entry) {
+EncodeLogHeader(spdk_buffer& sbuf, log_entry_t& entry) {
     size_t rc, sz;
 
-    sz = encode_fixed64(sbuf.get_append(), entry->term_id);
+    sz = encode_fixed64(sbuf.get_append(), entry.term_id);
     rc = sbuf.inc(sz);
     if (rc != sz) { return false; }
 
-    sz = encode_fixed64(sbuf.get_append(), entry->index);
+    sz = encode_fixed64(sbuf.get_append(), entry.index);
     rc = sbuf.inc(sz);
     if (rc != sz) { return false; }
 
-    sz = encode_fixed64(sbuf.get_append(), entry->size);
+    sz = encode_fixed64(sbuf.get_append(), entry.size);
     rc = sbuf.inc(sz);
     if (rc != sz) { return false; }
 
-    auto& str = entry->data.obj_name;
+    auto& str = entry.data.obj_name;
     sz = encode_fixed64(sbuf.get_append(), str.size());
     rc = sbuf.inc(sz);
     if (rc != sz) { return false; }

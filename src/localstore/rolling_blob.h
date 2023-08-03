@@ -86,7 +86,8 @@ public:
     , super(buffer_pool_get())
     { }
 
-    ~rolling_blob() {
+    void stop() {
+      SPDK_NOTICELOG("put rblob super\n");
       buffer_pool_put(super);
     }
 
@@ -254,8 +255,8 @@ public:
         SPDK_NOTICELOG("trim back case 2. pos from  %lu to %lu, lba from  %lu to %lu\n", 
             back.pos, back.pos + length,
             pos_to_lba(back.pos), pos_to_lba(back.pos + length));
-        uint64_t first_len = back_to_end();
-        uint64_t second_len = length - first_len;
+        // uint64_t first_len = back_to_end();
+        // uint64_t second_len = length - first_len;
 
         back.pos += length;
         back.lba = pos_to_lba(back.pos);
@@ -487,7 +488,7 @@ make_create_done(void *arg, spdk_blob_id blobid, int rberrno) {
   spdk_bs_open_blob(ctx->bs, blobid, make_open_done, ctx);
 }
 
-void make_rolling_blob(struct spdk_blob_store *bs, struct spdk_io_channel *channel, 
+inline void make_rolling_blob(struct spdk_blob_store *bs, struct spdk_io_channel *channel, 
                        uint64_t size, make_rblob_complete cb_fn, void* arg) 
 {
   struct make_rblob_ctx* ctx;

@@ -1,7 +1,8 @@
 #include "partition_manager.h"
-#include "storage/pp_config.h"
 #include "spdk/env.h"
 #include "spdk/log.h"
+#include "localstore/blob_manager.h"
+#include "localstore/disk_log.h"
 
 bool partition_manager::get_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t &shard_id){
     std::string name = pg_id_to_name(pool_id, pg_id);
@@ -12,16 +13,37 @@ bool partition_manager::get_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t 
     return true;
 }
 
+struct make_log_context{
+    uint64_t pool_id;
+    uint64_t pg_id;
+    std::vector<osd_info_t> osds;
+    uint32_t shard_id; 
+    int64_t revision_id;
+    partition_manager* pm;
+};
+
+static void make_log_done(void *arg, struct disk_log* dlog, int rberrno){
+    make_log_context* mlc = (make_log_context*)arg;
+    partition_manager* pm = mlc->pm;
+
+    if(rberrno){
+        return;
+    }
+    auto sm = std::make_shared<osd_sm>(pm->get_datadir());
+    pm->add_osd_sm(mlc->pool_id, mlc->pg_id, mlc->shard_id, sm);
+    pm->get_pg_group().create_pg(sm, mlc->shard_id, mlc->pool_id, mlc->pg_id, std::move(mlc->osds), dlog);
+    delete mlc;
+}
+
 void partition_manager::create_pg(
         uint64_t pool_id, uint64_t pg_id, std::vector<osd_info_t> osds, 
         uint32_t shard_id, int64_t revision_id){
-    auto sm = std::make_shared<osd_sm>(_datadir);
-    auto name = pg_id_to_name(pool_id, pg_id);
-    _sm_table[shard_id][std::move(name)] = sm; 
-
-    storage::pp_config pp_cfg(pool_id, pg_id, _logdir, _datadir, revision_id);
-    auto log =  _log.manage(std::move(pp_cfg));  
-    _pgs.create_pg(sm, shard_id, pool_id, pg_id, std::move(osds), std::move(log)); 
+    make_log_context *ctx = new make_log_context{pool_id, pg_id, std::move(osds), shard_id, revision_id, this};
+#ifdef ENABLE_LOG
+    make_disk_log(global_blobstore(), global_io_channel(), make_log_done, ctx);
+#else
+    make_log_done(ctx, nullptr, 0);
+#endif
 }
 
 int partition_manager::create_partition(
@@ -42,7 +64,6 @@ void partition_manager::delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t sha
     auto name = pg_id_to_name(pool_id, pg_id);
     _sm_table[shard_id].erase(name);
 
-    _log.remove();
     _pgs.delete_pg(shard_id, pool_id, pg_id);
 }
 

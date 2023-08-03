@@ -107,10 +107,14 @@ block_started(void *arg1)
 {
     server_t *server = (server_t *)arg1;
 	
+#ifdef ENABLE_LOG
+//    blobstore_init(const char *bdev_name, bm_complete cb_fn, void* args);
+#endif
+
     SPDK_NOTICELOG("------block start, cpu count : %u  log_dir : %s date_dir: %s\n", 
 	        spdk_env_get_core_count(), server->log_dir.c_str(), server->date_dir.c_str());
     global_pm = new partition_manager(
-		    server->node_id, server->log_dir, server->date_dir, 
+		    server->node_id, server->date_dir, 
 			server->mon_addr, server->mon_port,
 			server->osd_addr, server->osd_port, server->osd_uuid);
 	if(global_pm->connect_mon() != 0){

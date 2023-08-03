@@ -77,7 +77,7 @@ public:
     }
 
     int create_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,
-                std::vector<osd_info_t>&& osds, storage::log&& log);
+                std::vector<osd_info_t>&& osds, disk_log* log);
 
     void delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id);
 

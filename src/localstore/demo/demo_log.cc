@@ -13,7 +13,7 @@
 
 #include "localstore/rolling_blob.h"
 #include "localstore/spdk_buffer.h"
-#include "localstore/raft_log.h"
+#include "localstore/disk_log.h"
 
 #define append_ITERATIONS 100
 #define read_ITERATIONS   100
@@ -33,14 +33,14 @@ struct hello_context_t {
   char* bdev_name;
 
   rolling_blob* rblob;
-  raft_log* log;
+  disk_log* log;
   int rc;
 };
 
 struct test_ctx_t {
   struct hello_context_t* hello_ctx;
 
-  raft_log* log;
+  disk_log* log;
   buffer_list bl;
 
   int read_idx, read_max;
@@ -144,7 +144,7 @@ close_complete(void *arg, int rberrno)
 static void
 log_stop(struct hello_context_t* hello_context)
 {
-  SPDK_NOTICELOG("close_rblob hello\n");
+  SPDK_NOTICELOG("disklog stop\n");
   hello_context->log->stop(close_complete, hello_context);
 }
 
@@ -200,7 +200,7 @@ log_append_continue(void *arg, int rberrno) {
         SPDK_NOTICELOG("log append, index:%lu size:%lu term:%lu name:%s, data len:%lu\n", 
                   entry.index, entry.size, entry.term_id, entry.data.obj_name.c_str(), 
                   entry.data.buf.bytes());
-      ctx->log->append(&entry, log_append_continue, ctx);
+      ctx->log->append(entry, log_append_continue, ctx);
   } else {
       uint64_t now = spdk_get_ticks();
       double us = env_ticks_to_usecs(now - ctx->start);
@@ -228,7 +228,7 @@ log_append_iterates(struct hello_context_t* hello_context) {
   SPDK_NOTICELOG("log append, index:%lu size:%lu term:%lu name:%s, data len:%lu\n", 
                   entry.index, entry.size, entry.term_id, entry.data.obj_name.c_str(), 
                   entry.data.buf.bytes());
-  ctx->log->append(&entry, log_append_continue, ctx);
+  ctx->log->append(entry, log_append_continue, ctx);
 }
 /********************************************************************/
 
@@ -242,7 +242,7 @@ make_rblob_done(void *arg, struct rolling_blob* rblob, int rberrno) {
   }
 
   hello_context->rblob = rblob;
-  hello_context->log = new raft_log(rblob);
+  hello_context->log = new disk_log(rblob);
 
   log_append_iterates(hello_context);
 }
@@ -338,7 +338,6 @@ main(int argc, char **argv)
     exit(rc);
   }
 
-  // hello_context = new hello_context_t();
   hello_context = new hello_context_t();
   if (hello_context != NULL) {
     srand(time(0));

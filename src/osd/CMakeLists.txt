@@ -15,7 +15,7 @@ target_link_libraries(osd
   PUBLIC 
     spdk::spdk
     raft
-    storage
     osd_msg
     msg
+    localstore
   )

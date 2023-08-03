@@ -3,6 +3,7 @@
 #include <spdk/env.h>
 #include <spdk/log.h>
 
+#include <string>
 #include <cstring>
 #include <list>
 #include <vector>
@@ -26,6 +27,10 @@ public:
       std::memcpy(get_append(), in, sz);
       used += sz;
       return sz;
+    }
+
+    size_t append(const std::string& str) {
+      return append(str.c_str(), str.size());
     }
 
     char* get_buf() { return buf; }

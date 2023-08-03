@@ -2,15 +2,16 @@
 #define RAFT_LOG_H_
 
 #include "raft_cache.h"
-#include "storage/log.h"
+#include "localstore/disk_log.h"
+#include "localstore/spdk_buffer.h"
 
 struct raft_cbs_t;
 
 class raft_log
 {
 public:
-    raft_log(storage::log&& log)
-    : _log(std::move(log))
+    raft_log(disk_log* log)
+    : _log(log)
     , _next_idx(0)
     , _base(0)
     , _base_term(0){}
@@ -28,7 +29,18 @@ public:
     void disk_append(raft_index_t start_idx, raft_index_t end_idx, context* complete){
         std::vector<std::shared_ptr<raft_entry_t>> entries;
         _entries.get_between(start_idx, end_idx, entries);
-        _log.disk_append(entries, complete);
+        if(!_log){
+            complete->complete(0);
+            return;
+        }
+#ifdef ENABLE_LOG
+        _log->disk_append(entries, 
+          [](void *arg, int rberrno){
+              context* ctx = (context*)arg;
+              ctx->complete(rberrno);
+          },
+          complete);
+#endif
     }
 
     /** Get an array of entries from this index onwards.
@@ -80,7 +92,7 @@ public:
     }
 
 private:
-    storage::log _log;
+    disk_log* _log;
 
     /* position of the queue */
     // raft_index_t front;
@@ -99,6 +111,6 @@ private:
     void* _raft;
 };
 
-std::shared_ptr<raft_log> log_new(storage::log&& log);
+std::shared_ptr<raft_log> log_new(disk_log* log);
 
 #endif /* RAFT_LOG_H_ */
