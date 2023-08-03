@@ -194,7 +194,7 @@ struct raft_cbs_t
 
 class raft_server_t{
 public:
-    raft_server_t(raft_client_protocol& client, storage::log&& log, std::shared_ptr<state_machine> sm_ptr, uint64_t pool_id, uint64_t pg_id);
+    raft_server_t(raft_client_protocol& client, disk_log* log, std::shared_ptr<state_machine> sm_ptr, uint64_t pool_id, uint64_t pg_id);
 
     ~raft_server_t();
 

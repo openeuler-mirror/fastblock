@@ -1,5 +1,5 @@
 
-#include "raft_log.h"
+#include "disk_log.h"
 #include "utils/itos.h"
 #include "utils/units.h"
 

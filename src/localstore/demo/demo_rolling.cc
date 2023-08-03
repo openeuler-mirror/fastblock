@@ -207,6 +207,7 @@ rolling_append_continue(void *arg, rblob_rw_result result, int objerrno) {
       SPDK_NOTICELOG("iterates write %d block, total time: %lf us\n", ctx->idx, us);
 
       free_buffer_list(ctx->bl);
+      ctx->rblob->stop();
       delete ctx;
       close_blob(hello_context);
   }
@@ -216,6 +217,7 @@ static void
 rolling_append_iterates(struct hello_context_t* hello_context) {
   struct write_ctx_t* ctx = new write_ctx_t();
 
+  
   ctx->hello_ctx = hello_context;
   ctx->rblob = hello_context->rblob;
   ctx->idx = 0;
@@ -225,6 +227,7 @@ rolling_append_iterates(struct hello_context_t* hello_context) {
 
 //   SPDK_NOTICELOG("append length:%d\n", ctx->bl.bytes());
 //   ctx->rblob->make_test();
+  SPDK_NOTICELOG("iterates start\n");
   ctx->rblob->append(ctx->bl, rolling_append_continue, ctx);
 }
 /********************************************************************/
@@ -235,11 +238,14 @@ static void
 open_blob_done(void *arg, struct spdk_blob *blob, int bserrno) {
   struct hello_context_t *hello_context = (struct hello_context_t *)arg;
 
+  SPDK_NOTICELOG("open complete\n");
+
   if (bserrno) {
     unload_bs(hello_context, "Error in open completion", bserrno);
     return;
   }
 
+  
   hello_context->blob = blob;
   hello_context->rblob = new rolling_blob(blob, hello_context->channel, rolling_blob::huge_blob_size);
 
@@ -249,6 +255,8 @@ open_blob_done(void *arg, struct spdk_blob *blob, int bserrno) {
 static void
 create_blob_done(void *arg, spdk_blob_id blobid, int bserrno) {
   struct hello_context_t *hello_context = (struct hello_context_t *)arg;
+
+  SPDK_NOTICELOG("create complete\n");
 
   if (bserrno) {
     unload_bs(hello_context, "Error in blob create callback", bserrno);
@@ -280,7 +288,7 @@ bs_init_complete(void *cb_arg, struct spdk_blob_store *bs,
   struct hello_context_t *hello_context = (struct hello_context_t *)cb_arg;
   uint64_t free = 0;
 
-  SPDK_NOTICELOG("init entry\n");
+  SPDK_NOTICELOG("init complete\n");
   if (bserrno) {
     unload_bs(hello_context, "Error initing the blobstore", bserrno);
     return;
@@ -319,8 +327,9 @@ hello_start(void *arg1)
   struct spdk_bs_dev *bs_dev = NULL;
   int rc;
 
-  SPDK_NOTICELOG("start create bs_dev %s\n", g_bdev_name);
+  buffer_pool_init();
 
+  SPDK_NOTICELOG("create bs_dev %s\n", g_bdev_name);
   rc = spdk_bdev_create_bs_dev_ext(g_bdev_name, base_bdev_event_cb, NULL, &bs_dev);
   if (rc != 0) {
     SPDK_ERRLOG("Could not create blob bdev, %s!!\n",
@@ -329,6 +338,7 @@ hello_start(void *arg1)
     return;
   }
 
+  SPDK_NOTICELOG("init start\n");
   spdk_bs_init(bs_dev, NULL, bs_init_complete, hello_context);
 }
 
@@ -387,6 +397,7 @@ main(int argc, char **argv)
   }
   /* Gracefully close out all of the SPDK subsystems. */
   spdk_app_fini();
+  buffer_pool_fini();
   hello_cleanup(hello_context);
   return rc;
 }

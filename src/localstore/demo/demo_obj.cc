@@ -21,6 +21,8 @@
 
 #define WRITE_ITERATIONS 100
 
+static const char *g_bdev_name = NULL;
+
 /*
  * We'll use this struct to gather housekeeping hello_context to pass between
  * our events and callbacks.
@@ -88,7 +90,7 @@ static void
 hello_cleanup(struct hello_context_t *hello_context)
 {
   delete hello_context->omgr;
-	free(hello_context);
+	delete hello_context;
 }
 
 /*
@@ -249,7 +251,7 @@ hello_start(void *arg1)
 
 	SPDK_NOTICELOG("entry\n");
 
-	rc = spdk_bdev_create_bs_dev_ext(hello_context->bdev_name, base_bdev_event_cb, NULL, &bs_dev);
+	rc = spdk_bdev_create_bs_dev_ext(g_bdev_name, base_bdev_event_cb, NULL, &bs_dev);
 	if (rc != 0) {
 		SPDK_ERRLOG("Could not create blob bdev, %s!!\n",
 			    spdk_strerror(-rc));
@@ -258,6 +260,25 @@ hello_start(void *arg1)
 	}
 
 	spdk_bs_init(bs_dev, NULL, bs_init_complete, hello_context);
+}
+
+static void
+demo_usage(void)
+{
+  printf(" -b <bdev_name>             bdev name\n");
+}
+
+static int
+demo_parse_arg(int ch, char *arg)
+{
+  switch (ch) {
+  case 'b':
+    g_bdev_name = arg;
+    break;
+  default:
+    return -EINVAL;
+  }
+  return 0;
 }
 
 int
@@ -269,17 +290,17 @@ main(int argc, char **argv)
 
 	SPDK_NOTICELOG("entry\n");
 
-	spdk_app_opts_init(&opts, sizeof(opts));
+  spdk_app_opts_init(&opts, sizeof(opts));
+  opts.name = "hello_blob";
+  if ((rc = spdk_app_parse_args(argc, argv, &opts, "b:", NULL,
+          demo_parse_arg, demo_usage)) !=
+      SPDK_APP_PARSE_ARGS_SUCCESS) {
+    exit(rc);
+  }
 
-	opts.name = "hello_blob";
-	opts.json_config_file = argv[1];
-
-  // hello_context = new hello_context_t();
-	hello_context = (struct hello_context_t*)calloc(1, sizeof(struct hello_context_t));
+  hello_context = new hello_context_t();
 	if (hello_context != NULL) {
 		srand(time(0));
-		hello_context->bdev_name = argv[2];
-		SPDK_WARNLOG("bdev name:%s\n", hello_context->bdev_name);
 		rc = spdk_app_start(&opts, hello_start, hello_context);
 		if (rc) {
 			SPDK_NOTICELOG("ERROR!\n");

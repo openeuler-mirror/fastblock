@@ -14,9 +14,9 @@ void raft_log::log_load_from_snapshot(raft_index_t idx, raft_term_t term)
     _base_term = term;
 }
 
-std::shared_ptr<raft_log> log_new(storage::log&& log)
+std::shared_ptr<raft_log> log_new(disk_log* log)
 {
-    return std::make_shared<raft_log>(std::move(log));
+    return std::make_shared<raft_log>(log);
 }
 
 int raft_log::log_append(std::vector<std::pair<std::shared_ptr<msg_entry_t>, context*>>& entries)

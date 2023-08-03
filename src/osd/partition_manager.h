@@ -1,7 +1,6 @@
 #ifndef  PARTITION_MANAGER_H_
 #define  PARTITION_MANAGER_H_
 
-#include "storage/log_manager.h"
 #include "raft/pg_group.h"
 #include "osd/osd_sm.h"
 #include "osd/mon_client.h"
@@ -15,11 +14,10 @@ struct shard_revision {
 class partition_manager{
 public:
     partition_manager(
-            int node_id, const std::string&  logdir, const std::string& datadir,
+            int node_id, const std::string& datadir,
             std::string& host, int port, std::string& osd_addr, int osd_port, std::string& osd_uuid)
     : _pgs(node_id)
     , _next_shard(0)
-    , _logdir(logdir)
     , _datadir(datadir)
     , _shard(core_sharded::get_core_sharded())
     , _shard_cores(get_shard_cores())
@@ -40,10 +38,6 @@ public:
 
     bool get_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t &shard_id);
 
-    std::string get_logdir(){
-        return _logdir;
-    }
-
     std::string get_datadir(){
         return _datadir;
     }
@@ -63,16 +57,17 @@ public:
         return _pgs.get_pg(shard_id, name);
     }
 
-    int invoke_on(uint32_t shard_id, core_context *context){
-        return _shard.invoke_on(shard_id, context);
-    }
-
     core_sharded& get_shard(){
         return _shard;
     }
 
     pg_group_t& get_pg_group(){
         return _pgs;
+    }
+
+    void add_osd_sm(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id, std::shared_ptr<osd_sm> sm){
+        auto name = pg_id_to_name(pool_id, pg_id);
+        _sm_table[shard_id][std::move(name)] = sm; 
     }
 private:
     uint32_t get_next_shard_id(){
@@ -95,12 +90,10 @@ private:
         return 0;
     }
 
-    storage::log_manager _log;
     pg_group_t _pgs;
     //记录pg到cpu核的对应关系
     std::map<std::string, shard_revision> _shard_table;
     uint32_t _next_shard;
-    std::string  _logdir;
     std::string  _datadir;
     core_sharded&  _shard;
     std::vector<uint32_t> _shard_cores;

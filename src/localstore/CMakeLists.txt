@@ -3,12 +3,14 @@ compile_library (
   SRCS 
     object_store.cc
     rolling_blob.cc
-    raft_log.cc
+    disk_log.cc
     buffer_pool.cc
     spdk_buffer.cc
+    blob_manager.cc
   DEPS
     spdk::spdk
     absl::flat_hash_map
+    fastblock_base;
   COPTS
     -Wno-error=unused-variable
     -Wno-error=pointer-arith  # 对void*进行加减运算

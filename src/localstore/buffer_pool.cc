@@ -6,7 +6,7 @@
 #include <spdk/env.h>
 #include <spdk/log.h>
 
-static thread_local struct spdk_mempool* tls_buffer_pool;
+static struct spdk_mempool* tls_buffer_pool;
 
 struct spdk_mempool* buffer_pool() {
     return tls_buffer_pool;

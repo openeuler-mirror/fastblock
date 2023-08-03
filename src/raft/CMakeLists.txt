@@ -15,4 +15,5 @@ compile_library(
     raft_msg
     msg
     base
+    localstore
 )

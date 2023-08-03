@@ -11,7 +11,7 @@
 #include "spdk/env.h"
 
 std::shared_ptr<raft_server_t> raft_new(raft_client_protocol& client,
-        storage::log&& log, std::shared_ptr<state_machine> sm_ptr, uint64_t pool_id, uint64_t pg_id)
+        disk_log* log, std::shared_ptr<state_machine> sm_ptr, uint64_t pool_id, uint64_t pg_id)
 {
     auto raft = std::make_shared<raft_server_t>(client, std::move(log), sm_ptr, pool_id, pg_id);
     return raft;

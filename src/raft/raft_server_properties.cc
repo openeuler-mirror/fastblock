@@ -4,7 +4,7 @@
 #include "raft_log.h"
 #include "raft_private.h"
 
-raft_server_t::raft_server_t(raft_client_protocol& _client, storage::log&& _log, 
+raft_server_t::raft_server_t(raft_client_protocol& _client, disk_log* _log, 
         std::shared_ptr<state_machine> sm_ptr, uint64_t _pool_id, uint64_t _pg_id)
     : current_term(0)
     , voted_for(-1)
