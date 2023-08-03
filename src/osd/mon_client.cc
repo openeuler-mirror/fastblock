@@ -393,6 +393,7 @@ fbclient_get_osdmap_poll(void *arg)
 	msg::GetOsdMapRequest osdmap_req;
 
 	osdmap_req.set_currentversion(-1);
+	osdmap_req.set_osdid(ctx->osd_id);
 	req->set_allocated_get_osdmap_request(&osdmap_req);
 
 	size_t size = req->ByteSizeLong();

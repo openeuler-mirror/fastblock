@@ -3065,15 +3065,25 @@ class GetOsdMapRequest PROTOBUF_FINAL :
   // accessors -------------------------------------------------------
 
   enum : int {
-    kCurrentversionFieldNumber = 1,
+    kCurrentversionFieldNumber = 2,
+    kOsdidFieldNumber = 1,
   };
-  // int64 currentversion = 1;
+  // int64 currentversion = 2;
   void clear_currentversion();
   ::PROTOBUF_NAMESPACE_ID::int64 currentversion() const;
   void set_currentversion(::PROTOBUF_NAMESPACE_ID::int64 value);
   private:
   ::PROTOBUF_NAMESPACE_ID::int64 _internal_currentversion() const;
   void _internal_set_currentversion(::PROTOBUF_NAMESPACE_ID::int64 value);
+  public:
+
+  // int32 osdid = 1;
+  void clear_osdid();
+  ::PROTOBUF_NAMESPACE_ID::int32 osdid() const;
+  void set_osdid(::PROTOBUF_NAMESPACE_ID::int32 value);
+  private:
+  ::PROTOBUF_NAMESPACE_ID::int32 _internal_osdid() const;
+  void _internal_set_osdid(::PROTOBUF_NAMESPACE_ID::int32 value);
   public:
 
   // @@protoc_insertion_point(class_scope:msg.GetOsdMapRequest)
@@ -3084,6 +3094,7 @@ class GetOsdMapRequest PROTOBUF_FINAL :
   typedef void InternalArenaConstructable_;
   typedef void DestructorSkippable_;
   ::PROTOBUF_NAMESPACE_ID::int64 currentversion_;
+  ::PROTOBUF_NAMESPACE_ID::int32 osdid_;
   mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
   friend struct ::TableStruct_mon_5fmsg_2eproto;
 };
@@ -3987,6 +3998,7 @@ class Request PROTOBUF_FINAL :
     kApplyIdRequest = 6,
     kCreatePoolRequest = 7,
     kGetPgmapRequest = 8,
+    kDeletePoolRequest = 9,
     UNION_NOT_SET = 0,
   };
 
@@ -4075,6 +4087,7 @@ class Request PROTOBUF_FINAL :
     kApplyIdRequestFieldNumber = 6,
     kCreatePoolRequestFieldNumber = 7,
     kGetPgmapRequestFieldNumber = 8,
+    kDeletePoolRequestFieldNumber = 9,
   };
   // .msg.BootRequest boot_request = 1;
   bool has_boot_request() const;
@@ -4220,6 +4233,24 @@ class Request PROTOBUF_FINAL :
       ::msg::GetPgMapRequest* get_pgmap_request);
   ::msg::GetPgMapRequest* unsafe_arena_release_get_pgmap_request();
 
+  // .msg.DeletePoolRequest delete_pool_request = 9;
+  bool has_delete_pool_request() const;
+  private:
+  bool _internal_has_delete_pool_request() const;
+  public:
+  void clear_delete_pool_request();
+  const ::msg::DeletePoolRequest& delete_pool_request() const;
+  ::msg::DeletePoolRequest* release_delete_pool_request();
+  ::msg::DeletePoolRequest* mutable_delete_pool_request();
+  void set_allocated_delete_pool_request(::msg::DeletePoolRequest* delete_pool_request);
+  private:
+  const ::msg::DeletePoolRequest& _internal_delete_pool_request() const;
+  ::msg::DeletePoolRequest* _internal_mutable_delete_pool_request();
+  public:
+  void unsafe_arena_set_allocated_delete_pool_request(
+      ::msg::DeletePoolRequest* delete_pool_request);
+  ::msg::DeletePoolRequest* unsafe_arena_release_delete_pool_request();
+
   void clear_union();
   UnionCase union_case() const;
   // @@protoc_insertion_point(class_scope:msg.Request)
@@ -4233,6 +4264,7 @@ class Request PROTOBUF_FINAL :
   void set_has_apply_id_request();
   void set_has_create_pool_request();
   void set_has_get_pgmap_request();
+  void set_has_delete_pool_request();
 
   inline bool has_union() const;
   inline void clear_has_union();
@@ -4250,6 +4282,7 @@ class Request PROTOBUF_FINAL :
     ::msg::ApplyIDRequest* apply_id_request_;
     ::msg::CreatePoolRequest* create_pool_request_;
     ::msg::GetPgMapRequest* get_pgmap_request_;
+    ::msg::DeletePoolRequest* delete_pool_request_;
   } union_;
   mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
   ::PROTOBUF_NAMESPACE_ID::uint32 _oneof_case_[1];
@@ -4303,6 +4336,7 @@ class Response PROTOBUF_FINAL :
     kApplyIdResponse = 6,
     kCreatePoolResponse = 7,
     kGetPgmapResponse = 8,
+    kDeletePoolResponse = 9,
     UNION_NOT_SET = 0,
   };
 
@@ -4391,6 +4425,7 @@ class Response PROTOBUF_FINAL :
     kApplyIdResponseFieldNumber = 6,
     kCreatePoolResponseFieldNumber = 7,
     kGetPgmapResponseFieldNumber = 8,
+    kDeletePoolResponseFieldNumber = 9,
   };
   // .msg.BootResponse boot_response = 1;
   bool has_boot_response() const;
@@ -4536,6 +4571,24 @@ class Response PROTOBUF_FINAL :
       ::msg::GetPgMapResponse* get_pgmap_response);
   ::msg::GetPgMapResponse* unsafe_arena_release_get_pgmap_response();
 
+  // .msg.DeletePoolResponse delete_pool_response = 9;
+  bool has_delete_pool_response() const;
+  private:
+  bool _internal_has_delete_pool_response() const;
+  public:
+  void clear_delete_pool_response();
+  const ::msg::DeletePoolResponse& delete_pool_response() const;
+  ::msg::DeletePoolResponse* release_delete_pool_response();
+  ::msg::DeletePoolResponse* mutable_delete_pool_response();
+  void set_allocated_delete_pool_response(::msg::DeletePoolResponse* delete_pool_response);
+  private:
+  const ::msg::DeletePoolResponse& _internal_delete_pool_response() const;
+  ::msg::DeletePoolResponse* _internal_mutable_delete_pool_response();
+  public:
+  void unsafe_arena_set_allocated_delete_pool_response(
+      ::msg::DeletePoolResponse* delete_pool_response);
+  ::msg::DeletePoolResponse* unsafe_arena_release_delete_pool_response();
+
   void clear_union();
   UnionCase union_case() const;
   // @@protoc_insertion_point(class_scope:msg.Response)
@@ -4549,6 +4602,7 @@ class Response PROTOBUF_FINAL :
   void set_has_apply_id_response();
   void set_has_create_pool_response();
   void set_has_get_pgmap_response();
+  void set_has_delete_pool_response();
 
   inline bool has_union() const;
   inline void clear_has_union();
@@ -4566,6 +4620,7 @@ class Response PROTOBUF_FINAL :
     ::msg::ApplyIDResponse* apply_id_response_;
     ::msg::CreatePoolResponse* create_pool_response_;
     ::msg::GetPgMapResponse* get_pgmap_response_;
+    ::msg::DeletePoolResponse* delete_pool_response_;
   } union_;
   mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
   ::PROTOBUF_NAMESPACE_ID::uint32 _oneof_case_[1];
@@ -6305,7 +6360,27 @@ GetPgMapResponse::mutable_pgs() {
 
 // GetOsdMapRequest
 
-// int64 currentversion = 1;
+// int32 osdid = 1;
+inline void GetOsdMapRequest::clear_osdid() {
+  osdid_ = 0;
+}
+inline ::PROTOBUF_NAMESPACE_ID::int32 GetOsdMapRequest::_internal_osdid() const {
+  return osdid_;
+}
+inline ::PROTOBUF_NAMESPACE_ID::int32 GetOsdMapRequest::osdid() const {
+  // @@protoc_insertion_point(field_get:msg.GetOsdMapRequest.osdid)
+  return _internal_osdid();
+}
+inline void GetOsdMapRequest::_internal_set_osdid(::PROTOBUF_NAMESPACE_ID::int32 value) {
+  
+  osdid_ = value;
+}
+inline void GetOsdMapRequest::set_osdid(::PROTOBUF_NAMESPACE_ID::int32 value) {
+  _internal_set_osdid(value);
+  // @@protoc_insertion_point(field_set:msg.GetOsdMapRequest.osdid)
+}
+
+// int64 currentversion = 2;
 inline void GetOsdMapRequest::clear_currentversion() {
   currentversion_ = PROTOBUF_LONGLONG(0);
 }
@@ -7116,6 +7191,79 @@ inline ::msg::GetPgMapRequest* Request::mutable_get_pgmap_request() {
   return _internal_mutable_get_pgmap_request();
 }
 
+// .msg.DeletePoolRequest delete_pool_request = 9;
+inline bool Request::_internal_has_delete_pool_request() const {
+  return union_case() == kDeletePoolRequest;
+}
+inline bool Request::has_delete_pool_request() const {
+  return _internal_has_delete_pool_request();
+}
+inline void Request::set_has_delete_pool_request() {
+  _oneof_case_[0] = kDeletePoolRequest;
+}
+inline void Request::clear_delete_pool_request() {
+  if (_internal_has_delete_pool_request()) {
+    if (GetArena() == nullptr) {
+      delete union_.delete_pool_request_;
+    }
+    clear_has_union();
+  }
+}
+inline ::msg::DeletePoolRequest* Request::release_delete_pool_request() {
+  // @@protoc_insertion_point(field_release:msg.Request.delete_pool_request)
+  if (_internal_has_delete_pool_request()) {
+    clear_has_union();
+      ::msg::DeletePoolRequest* temp = union_.delete_pool_request_;
+    if (GetArena() != nullptr) {
+      temp = ::PROTOBUF_NAMESPACE_ID::internal::DuplicateIfNonNull(temp);
+    }
+    union_.delete_pool_request_ = nullptr;
+    return temp;
+  } else {
+    return nullptr;
+  }
+}
+inline const ::msg::DeletePoolRequest& Request::_internal_delete_pool_request() const {
+  return _internal_has_delete_pool_request()
+      ? *union_.delete_pool_request_
+      : *reinterpret_cast< ::msg::DeletePoolRequest*>(&::msg::_DeletePoolRequest_default_instance_);
+}
+inline const ::msg::DeletePoolRequest& Request::delete_pool_request() const {
+  // @@protoc_insertion_point(field_get:msg.Request.delete_pool_request)
+  return _internal_delete_pool_request();
+}
+inline ::msg::DeletePoolRequest* Request::unsafe_arena_release_delete_pool_request() {
+  // @@protoc_insertion_point(field_unsafe_arena_release:msg.Request.delete_pool_request)
+  if (_internal_has_delete_pool_request()) {
+    clear_has_union();
+    ::msg::DeletePoolRequest* temp = union_.delete_pool_request_;
+    union_.delete_pool_request_ = nullptr;
+    return temp;
+  } else {
+    return nullptr;
+  }
+}
+inline void Request::unsafe_arena_set_allocated_delete_pool_request(::msg::DeletePoolRequest* delete_pool_request) {
+  clear_union();
+  if (delete_pool_request) {
+    set_has_delete_pool_request();
+    union_.delete_pool_request_ = delete_pool_request;
+  }
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:msg.Request.delete_pool_request)
+}
+inline ::msg::DeletePoolRequest* Request::_internal_mutable_delete_pool_request() {
+  if (!_internal_has_delete_pool_request()) {
+    clear_union();
+    set_has_delete_pool_request();
+    union_.delete_pool_request_ = CreateMaybeMessage< ::msg::DeletePoolRequest >(GetArena());
+  }
+  return union_.delete_pool_request_;
+}
+inline ::msg::DeletePoolRequest* Request::mutable_delete_pool_request() {
+  // @@protoc_insertion_point(field_mutable:msg.Request.delete_pool_request)
+  return _internal_mutable_delete_pool_request();
+}
+
 inline bool Request::has_union() const {
   return union_case() != UNION_NOT_SET;
 }
@@ -7711,6 +7859,79 @@ inline ::msg::GetPgMapResponse* Response::_internal_mutable_get_pgmap_response()
 inline ::msg::GetPgMapResponse* Response::mutable_get_pgmap_response() {
   // @@protoc_insertion_point(field_mutable:msg.Response.get_pgmap_response)
   return _internal_mutable_get_pgmap_response();
+}
+
+// .msg.DeletePoolResponse delete_pool_response = 9;
+inline bool Response::_internal_has_delete_pool_response() const {
+  return union_case() == kDeletePoolResponse;
+}
+inline bool Response::has_delete_pool_response() const {
+  return _internal_has_delete_pool_response();
+}
+inline void Response::set_has_delete_pool_response() {
+  _oneof_case_[0] = kDeletePoolResponse;
+}
+inline void Response::clear_delete_pool_response() {
+  if (_internal_has_delete_pool_response()) {
+    if (GetArena() == nullptr) {
+      delete union_.delete_pool_response_;
+    }
+    clear_has_union();
+  }
+}
+inline ::msg::DeletePoolResponse* Response::release_delete_pool_response() {
+  // @@protoc_insertion_point(field_release:msg.Response.delete_pool_response)
+  if (_internal_has_delete_pool_response()) {
+    clear_has_union();
+      ::msg::DeletePoolResponse* temp = union_.delete_pool_response_;
+    if (GetArena() != nullptr) {
+      temp = ::PROTOBUF_NAMESPACE_ID::internal::DuplicateIfNonNull(temp);
+    }
+    union_.delete_pool_response_ = nullptr;
+    return temp;
+  } else {
+    return nullptr;
+  }
+}
+inline const ::msg::DeletePoolResponse& Response::_internal_delete_pool_response() const {
+  return _internal_has_delete_pool_response()
+      ? *union_.delete_pool_response_
+      : *reinterpret_cast< ::msg::DeletePoolResponse*>(&::msg::_DeletePoolResponse_default_instance_);
+}
+inline const ::msg::DeletePoolResponse& Response::delete_pool_response() const {
+  // @@protoc_insertion_point(field_get:msg.Response.delete_pool_response)
+  return _internal_delete_pool_response();
+}
+inline ::msg::DeletePoolResponse* Response::unsafe_arena_release_delete_pool_response() {
+  // @@protoc_insertion_point(field_unsafe_arena_release:msg.Response.delete_pool_response)
+  if (_internal_has_delete_pool_response()) {
+    clear_has_union();
+    ::msg::DeletePoolResponse* temp = union_.delete_pool_response_;
+    union_.delete_pool_response_ = nullptr;
+    return temp;
+  } else {
+    return nullptr;
+  }
+}
+inline void Response::unsafe_arena_set_allocated_delete_pool_response(::msg::DeletePoolResponse* delete_pool_response) {
+  clear_union();
+  if (delete_pool_response) {
+    set_has_delete_pool_response();
+    union_.delete_pool_response_ = delete_pool_response;
+  }
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:msg.Response.delete_pool_response)
+}
+inline ::msg::DeletePoolResponse* Response::_internal_mutable_delete_pool_response() {
+  if (!_internal_has_delete_pool_response()) {
+    clear_union();
+    set_has_delete_pool_response();
+    union_.delete_pool_response_ = CreateMaybeMessage< ::msg::DeletePoolResponse >(GetArena());
+  }
+  return union_.delete_pool_response_;
+}
+inline ::msg::DeletePoolResponse* Response::mutable_delete_pool_response() {
+  // @@protoc_insertion_point(field_mutable:msg.Response.delete_pool_response)
+  return _internal_mutable_delete_pool_response();
 }
 
 inline bool Response::has_union() const {
