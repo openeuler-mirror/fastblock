@@ -249,7 +249,7 @@ int raft_server_t::raft_periodic()
     if (raft_get_last_applied_idx() < raft_get_commit_idx() &&
         !raft_get_snapshot_in_progress())
     {
-        int e = machine->raft_apply_all();
+        int e = machine->raft_apply_entry();
         if (0 != e)
             return e;
     }
@@ -985,7 +985,7 @@ int raft_server_t::raft_write_entry(std::shared_ptr<msg_entry_t> ety,
     }
     //上一次的log已经commit了
     auto last_cache_idx = raft_get_last_cache_entry();
-    first_idx = current_idx + 1;
+    first_idx = current_idx == 0 ? current_idx : current_idx + 1;
     current_idx = last_cache_idx;
 
     for(auto _node : nodes)

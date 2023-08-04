@@ -41,7 +41,7 @@ int raft_log::log_delete(raft_index_t idx)
     int n = _entries.for_upper(idx, 0, raft_pop_log, _raft);
     // if (_cb && _cb->log_pop)
         // e = _cb->log_pop(_raft, ((raft_server_t*)_raft)->raft_get_udata(), ptr, start_idx, &k);  
-    _entries.delete_upper(idx, n);
+    _entries.remove_upper(idx, n);
     return 0;
 }
 

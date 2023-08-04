@@ -3,6 +3,7 @@
 
 #include "raft_types.h"
 #include "rpc/raft_msg.pb.h"
+#include "utils/utils.h"
 
 class raft_server_t;
 
@@ -38,8 +39,12 @@ public:
      *  0 on success;
      *  RAFT_ERR_SHUTDOWN when server MUST shutdown */
     int raft_apply_all();
+    int raft_apply_entries();
 
-    virtual void apply(std::shared_ptr<raft_entry_t> entry) = 0;
+    virtual void apply(std::shared_ptr<raft_entry_t> entry, context *complete) = 0;
+    raft_server_t* get_raft(){
+        return _raft;
+    }
 private:
     raft_server_t* _raft;
 
