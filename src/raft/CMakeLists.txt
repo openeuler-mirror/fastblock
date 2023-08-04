@@ -17,3 +17,5 @@ compile_library(
     base
     localstore
 )
+
+add_subdirectory(demo)

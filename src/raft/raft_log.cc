@@ -29,7 +29,7 @@ int raft_log::log_append(std::vector<std::pair<std::shared_ptr<msg_entry_t>, con
         auto complete = entry_pair.second;
         entry->set_idx(_next_idx);
         _next_idx++;  
-        _entries.add(entry->data().obj_name(), entry, complete);
+        _entries.add(entry->obj_name(), entry, complete);
     }   
     
     // ((raft_server_t*)_raft)->raft_offer_log(entries, first_idx);

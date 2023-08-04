@@ -42,16 +42,19 @@ bs_init_complete(void *args, struct spdk_blob_store *bs, int bserrno)
   SPDK_NOTICELOG("bs_init complete\n");
   if (bserrno) {
     ctx->cb_fn(ctx->args, bserrno);
+    delete ctx;
     return;
   }
 
   g_bs_mgr.blobstore = bs;
   g_bs_mgr.channel = spdk_bs_alloc_io_channel(bs);
+  SPDK_NOTICELOG("blobstore:%p io_channel:%p\n", bs, g_bs_mgr.channel);
 
   free = spdk_bs_free_cluster_count(bs);
   SPDK_NOTICELOG("blobstore has FREE clusters of %lu\n", free);
 
   ctx->cb_fn(ctx->args, 0);
+  delete ctx;
 }
 
 void

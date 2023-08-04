@@ -1,12 +1,6 @@
 syntax = "proto3";
 option cc_generic_services = true;
 
-message raft_entry_data_t
-{
-    string obj_name = 1;
-    bytes buf = 2;
-}
-
 // Entry that is stored in the server's entry log. 
 message raft_entry_t
 {
@@ -18,7 +12,9 @@ message raft_entry_t
     /** type of entry */
     int32 type = 3;
 
-    raft_entry_data_t data = 4;
+    bytes obj_name = 4;
+    bytes meta = 5;
+    bytes data = 6;
 }
 
 /** Appendentries message.

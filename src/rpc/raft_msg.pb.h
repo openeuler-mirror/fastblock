@@ -48,7 +48,7 @@ struct TableStruct_raft_5fmsg_2eproto {
     PROTOBUF_SECTION_VARIABLE(protodesc_cold);
   static const ::PROTOBUF_NAMESPACE_ID::internal::AuxillaryParseTableField aux[]
     PROTOBUF_SECTION_VARIABLE(protodesc_cold);
-  static const ::PROTOBUF_NAMESPACE_ID::internal::ParseTable schema[8]
+  static const ::PROTOBUF_NAMESPACE_ID::internal::ParseTable schema[7]
     PROTOBUF_SECTION_VARIABLE(protodesc_cold);
   static const ::PROTOBUF_NAMESPACE_ID::internal::FieldMetadata field_metadata[];
   static const ::PROTOBUF_NAMESPACE_ID::internal::SerializationTable serialization_table[];
@@ -73,9 +73,6 @@ extern msg_requestvote_response_tDefaultTypeInternal _msg_requestvote_response_t
 class msg_requestvote_t;
 class msg_requestvote_tDefaultTypeInternal;
 extern msg_requestvote_tDefaultTypeInternal _msg_requestvote_t_default_instance_;
-class raft_entry_data_t;
-class raft_entry_data_tDefaultTypeInternal;
-extern raft_entry_data_tDefaultTypeInternal _raft_entry_data_t_default_instance_;
 class raft_entry_t;
 class raft_entry_tDefaultTypeInternal;
 extern raft_entry_tDefaultTypeInternal _raft_entry_t_default_instance_;
@@ -86,191 +83,10 @@ template<> ::msg_installsnapshot_response_t* Arena::CreateMaybeMessage<::msg_ins
 template<> ::msg_installsnapshot_t* Arena::CreateMaybeMessage<::msg_installsnapshot_t>(Arena*);
 template<> ::msg_requestvote_response_t* Arena::CreateMaybeMessage<::msg_requestvote_response_t>(Arena*);
 template<> ::msg_requestvote_t* Arena::CreateMaybeMessage<::msg_requestvote_t>(Arena*);
-template<> ::raft_entry_data_t* Arena::CreateMaybeMessage<::raft_entry_data_t>(Arena*);
 template<> ::raft_entry_t* Arena::CreateMaybeMessage<::raft_entry_t>(Arena*);
 PROTOBUF_NAMESPACE_CLOSE
 
 // ===================================================================
-
-class raft_entry_data_t PROTOBUF_FINAL :
-    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:raft_entry_data_t) */ {
- public:
-  inline raft_entry_data_t() : raft_entry_data_t(nullptr) {};
-  virtual ~raft_entry_data_t();
-
-  raft_entry_data_t(const raft_entry_data_t& from);
-  raft_entry_data_t(raft_entry_data_t&& from) noexcept
-    : raft_entry_data_t() {
-    *this = ::std::move(from);
-  }
-
-  inline raft_entry_data_t& operator=(const raft_entry_data_t& from) {
-    CopyFrom(from);
-    return *this;
-  }
-  inline raft_entry_data_t& operator=(raft_entry_data_t&& from) noexcept {
-    if (GetArena() == from.GetArena()) {
-      if (this != &from) InternalSwap(&from);
-    } else {
-      CopyFrom(from);
-    }
-    return *this;
-  }
-
-  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* descriptor() {
-    return GetDescriptor();
-  }
-  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* GetDescriptor() {
-    return GetMetadataStatic().descriptor;
-  }
-  static const ::PROTOBUF_NAMESPACE_ID::Reflection* GetReflection() {
-    return GetMetadataStatic().reflection;
-  }
-  static const raft_entry_data_t& default_instance();
-
-  static void InitAsDefaultInstance();  // FOR INTERNAL USE ONLY
-  static inline const raft_entry_data_t* internal_default_instance() {
-    return reinterpret_cast<const raft_entry_data_t*>(
-               &_raft_entry_data_t_default_instance_);
-  }
-  static constexpr int kIndexInFileMessages =
-    0;
-
-  friend void swap(raft_entry_data_t& a, raft_entry_data_t& b) {
-    a.Swap(&b);
-  }
-  inline void Swap(raft_entry_data_t* other) {
-    if (other == this) return;
-    if (GetArena() == other->GetArena()) {
-      InternalSwap(other);
-    } else {
-      ::PROTOBUF_NAMESPACE_ID::internal::GenericSwap(this, other);
-    }
-  }
-  void UnsafeArenaSwap(raft_entry_data_t* other) {
-    if (other == this) return;
-    GOOGLE_DCHECK(GetArena() == other->GetArena());
-    InternalSwap(other);
-  }
-
-  // implements Message ----------------------------------------------
-
-  inline raft_entry_data_t* New() const final {
-    return CreateMaybeMessage<raft_entry_data_t>(nullptr);
-  }
-
-  raft_entry_data_t* New(::PROTOBUF_NAMESPACE_ID::Arena* arena) const final {
-    return CreateMaybeMessage<raft_entry_data_t>(arena);
-  }
-  void CopyFrom(const ::PROTOBUF_NAMESPACE_ID::Message& from) final;
-  void MergeFrom(const ::PROTOBUF_NAMESPACE_ID::Message& from) final;
-  void CopyFrom(const raft_entry_data_t& from);
-  void MergeFrom(const raft_entry_data_t& from);
-  PROTOBUF_ATTRIBUTE_REINITIALIZES void Clear() final;
-  bool IsInitialized() const final;
-
-  size_t ByteSizeLong() const final;
-  const char* _InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) final;
-  ::PROTOBUF_NAMESPACE_ID::uint8* _InternalSerialize(
-      ::PROTOBUF_NAMESPACE_ID::uint8* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const final;
-  int GetCachedSize() const final { return _cached_size_.Get(); }
-
-  private:
-  inline void SharedCtor();
-  inline void SharedDtor();
-  void SetCachedSize(int size) const final;
-  void InternalSwap(raft_entry_data_t* other);
-  friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
-  static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
-    return "raft_entry_data_t";
-  }
-  protected:
-  explicit raft_entry_data_t(::PROTOBUF_NAMESPACE_ID::Arena* arena);
-  private:
-  static void ArenaDtor(void* object);
-  inline void RegisterArenaDtor(::PROTOBUF_NAMESPACE_ID::Arena* arena);
-  public:
-
-  ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadata() const final;
-  private:
-  static ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadataStatic() {
-    ::PROTOBUF_NAMESPACE_ID::internal::AssignDescriptors(&::descriptor_table_raft_5fmsg_2eproto);
-    return ::descriptor_table_raft_5fmsg_2eproto.file_level_metadata[kIndexInFileMessages];
-  }
-
-  public:
-
-  // nested types ----------------------------------------------------
-
-  // accessors -------------------------------------------------------
-
-  enum : int {
-    kObjNameFieldNumber = 1,
-    kBufFieldNumber = 2,
-  };
-  // string obj_name = 1;
-  void clear_obj_name();
-  const std::string& obj_name() const;
-  void set_obj_name(const std::string& value);
-  void set_obj_name(std::string&& value);
-  void set_obj_name(const char* value);
-  void set_obj_name(const char* value, size_t size);
-  std::string* mutable_obj_name();
-  std::string* release_obj_name();
-  void set_allocated_obj_name(std::string* obj_name);
-  GOOGLE_PROTOBUF_RUNTIME_DEPRECATED("The unsafe_arena_ accessors for"
-  "    string fields are deprecated and will be removed in a"
-  "    future release.")
-  std::string* unsafe_arena_release_obj_name();
-  GOOGLE_PROTOBUF_RUNTIME_DEPRECATED("The unsafe_arena_ accessors for"
-  "    string fields are deprecated and will be removed in a"
-  "    future release.")
-  void unsafe_arena_set_allocated_obj_name(
-      std::string* obj_name);
-  private:
-  const std::string& _internal_obj_name() const;
-  void _internal_set_obj_name(const std::string& value);
-  std::string* _internal_mutable_obj_name();
-  public:
-
-  // bytes buf = 2;
-  void clear_buf();
-  const std::string& buf() const;
-  void set_buf(const std::string& value);
-  void set_buf(std::string&& value);
-  void set_buf(const char* value);
-  void set_buf(const void* value, size_t size);
-  std::string* mutable_buf();
-  std::string* release_buf();
-  void set_allocated_buf(std::string* buf);
-  GOOGLE_PROTOBUF_RUNTIME_DEPRECATED("The unsafe_arena_ accessors for"
-  "    string fields are deprecated and will be removed in a"
-  "    future release.")
-  std::string* unsafe_arena_release_buf();
-  GOOGLE_PROTOBUF_RUNTIME_DEPRECATED("The unsafe_arena_ accessors for"
-  "    string fields are deprecated and will be removed in a"
-  "    future release.")
-  void unsafe_arena_set_allocated_buf(
-      std::string* buf);
-  private:
-  const std::string& _internal_buf() const;
-  void _internal_set_buf(const std::string& value);
-  std::string* _internal_mutable_buf();
-  public:
-
-  // @@protoc_insertion_point(class_scope:raft_entry_data_t)
- private:
-  class _Internal;
-
-  template <typename T> friend class ::PROTOBUF_NAMESPACE_ID::Arena::InternalHelper;
-  typedef void InternalArenaConstructable_;
-  typedef void DestructorSkippable_;
-  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr obj_name_;
-  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr buf_;
-  mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
-  friend struct ::TableStruct_raft_5fmsg_2eproto;
-};
-// -------------------------------------------------------------------
 
 class raft_entry_t PROTOBUF_FINAL :
     public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:raft_entry_t) */ {
@@ -314,7 +130,7 @@ class raft_entry_t PROTOBUF_FINAL :
                &_raft_entry_t_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    1;
+    0;
 
   friend void swap(raft_entry_t& a, raft_entry_t& b) {
     a.Swap(&b);
@@ -385,28 +201,87 @@ class raft_entry_t PROTOBUF_FINAL :
   // accessors -------------------------------------------------------
 
   enum : int {
-    kDataFieldNumber = 4,
+    kObjNameFieldNumber = 4,
+    kMetaFieldNumber = 5,
+    kDataFieldNumber = 6,
     kTermFieldNumber = 1,
     kIdxFieldNumber = 2,
     kTypeFieldNumber = 3,
   };
-  // .raft_entry_data_t data = 4;
-  bool has_data() const;
+  // bytes obj_name = 4;
+  void clear_obj_name();
+  const std::string& obj_name() const;
+  void set_obj_name(const std::string& value);
+  void set_obj_name(std::string&& value);
+  void set_obj_name(const char* value);
+  void set_obj_name(const void* value, size_t size);
+  std::string* mutable_obj_name();
+  std::string* release_obj_name();
+  void set_allocated_obj_name(std::string* obj_name);
+  GOOGLE_PROTOBUF_RUNTIME_DEPRECATED("The unsafe_arena_ accessors for"
+  "    string fields are deprecated and will be removed in a"
+  "    future release.")
+  std::string* unsafe_arena_release_obj_name();
+  GOOGLE_PROTOBUF_RUNTIME_DEPRECATED("The unsafe_arena_ accessors for"
+  "    string fields are deprecated and will be removed in a"
+  "    future release.")
+  void unsafe_arena_set_allocated_obj_name(
+      std::string* obj_name);
   private:
-  bool _internal_has_data() const;
+  const std::string& _internal_obj_name() const;
+  void _internal_set_obj_name(const std::string& value);
+  std::string* _internal_mutable_obj_name();
   public:
+
+  // bytes meta = 5;
+  void clear_meta();
+  const std::string& meta() const;
+  void set_meta(const std::string& value);
+  void set_meta(std::string&& value);
+  void set_meta(const char* value);
+  void set_meta(const void* value, size_t size);
+  std::string* mutable_meta();
+  std::string* release_meta();
+  void set_allocated_meta(std::string* meta);
+  GOOGLE_PROTOBUF_RUNTIME_DEPRECATED("The unsafe_arena_ accessors for"
+  "    string fields are deprecated and will be removed in a"
+  "    future release.")
+  std::string* unsafe_arena_release_meta();
+  GOOGLE_PROTOBUF_RUNTIME_DEPRECATED("The unsafe_arena_ accessors for"
+  "    string fields are deprecated and will be removed in a"
+  "    future release.")
+  void unsafe_arena_set_allocated_meta(
+      std::string* meta);
+  private:
+  const std::string& _internal_meta() const;
+  void _internal_set_meta(const std::string& value);
+  std::string* _internal_mutable_meta();
+  public:
+
+  // bytes data = 6;
   void clear_data();
-  const ::raft_entry_data_t& data() const;
-  ::raft_entry_data_t* release_data();
-  ::raft_entry_data_t* mutable_data();
-  void set_allocated_data(::raft_entry_data_t* data);
-  private:
-  const ::raft_entry_data_t& _internal_data() const;
-  ::raft_entry_data_t* _internal_mutable_data();
-  public:
+  const std::string& data() const;
+  void set_data(const std::string& value);
+  void set_data(std::string&& value);
+  void set_data(const char* value);
+  void set_data(const void* value, size_t size);
+  std::string* mutable_data();
+  std::string* release_data();
+  void set_allocated_data(std::string* data);
+  GOOGLE_PROTOBUF_RUNTIME_DEPRECATED("The unsafe_arena_ accessors for"
+  "    string fields are deprecated and will be removed in a"
+  "    future release.")
+  std::string* unsafe_arena_release_data();
+  GOOGLE_PROTOBUF_RUNTIME_DEPRECATED("The unsafe_arena_ accessors for"
+  "    string fields are deprecated and will be removed in a"
+  "    future release.")
   void unsafe_arena_set_allocated_data(
-      ::raft_entry_data_t* data);
-  ::raft_entry_data_t* unsafe_arena_release_data();
+      std::string* data);
+  private:
+  const std::string& _internal_data() const;
+  void _internal_set_data(const std::string& value);
+  std::string* _internal_mutable_data();
+  public:
 
   // int64 term = 1;
   void clear_term();
@@ -442,7 +317,9 @@ class raft_entry_t PROTOBUF_FINAL :
   template <typename T> friend class ::PROTOBUF_NAMESPACE_ID::Arena::InternalHelper;
   typedef void InternalArenaConstructable_;
   typedef void DestructorSkippable_;
-  ::raft_entry_data_t* data_;
+  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr obj_name_;
+  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr meta_;
+  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr data_;
   ::PROTOBUF_NAMESPACE_ID::int64 term_;
   ::PROTOBUF_NAMESPACE_ID::int64 idx_;
   ::PROTOBUF_NAMESPACE_ID::int32 type_;
@@ -493,7 +370,7 @@ class msg_appendentries_t PROTOBUF_FINAL :
                &_msg_appendentries_t_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    2;
+    1;
 
   friend void swap(msg_appendentries_t& a, msg_appendentries_t& b) {
     a.Swap(&b);
@@ -716,7 +593,7 @@ class msg_appendentries_response_t PROTOBUF_FINAL :
                &_msg_appendentries_response_t_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    3;
+    2;
 
   friend void swap(msg_appendentries_response_t& a, msg_appendentries_response_t& b) {
     a.Swap(&b);
@@ -908,7 +785,7 @@ class msg_requestvote_t PROTOBUF_FINAL :
                &_msg_requestvote_t_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    4;
+    3;
 
   friend void swap(msg_requestvote_t& a, msg_requestvote_t& b) {
     a.Swap(&b);
@@ -1122,7 +999,7 @@ class msg_requestvote_response_t PROTOBUF_FINAL :
                &_msg_requestvote_response_t_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    5;
+    4;
 
   friend void swap(msg_requestvote_response_t& a, msg_requestvote_response_t& b) {
     a.Swap(&b);
@@ -1292,7 +1169,7 @@ class msg_installsnapshot_t PROTOBUF_FINAL :
                &_msg_installsnapshot_t_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    6;
+    5;
 
   friend void swap(msg_installsnapshot_t& a, msg_installsnapshot_t& b) {
     a.Swap(&b);
@@ -1484,7 +1361,7 @@ class msg_installsnapshot_response_t PROTOBUF_FINAL :
                &_msg_installsnapshot_response_t_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    7;
+    6;
 
   friend void swap(msg_installsnapshot_response_t& a, msg_installsnapshot_response_t& b) {
     a.Swap(&b);
@@ -1705,172 +1582,6 @@ class rpc_service_raft_Stub : public rpc_service_raft {
   #pragma GCC diagnostic push
   #pragma GCC diagnostic ignored "-Wstrict-aliasing"
 #endif  // __GNUC__
-// raft_entry_data_t
-
-// string obj_name = 1;
-inline void raft_entry_data_t::clear_obj_name() {
-  obj_name_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
-}
-inline const std::string& raft_entry_data_t::obj_name() const {
-  // @@protoc_insertion_point(field_get:raft_entry_data_t.obj_name)
-  return _internal_obj_name();
-}
-inline void raft_entry_data_t::set_obj_name(const std::string& value) {
-  _internal_set_obj_name(value);
-  // @@protoc_insertion_point(field_set:raft_entry_data_t.obj_name)
-}
-inline std::string* raft_entry_data_t::mutable_obj_name() {
-  // @@protoc_insertion_point(field_mutable:raft_entry_data_t.obj_name)
-  return _internal_mutable_obj_name();
-}
-inline const std::string& raft_entry_data_t::_internal_obj_name() const {
-  return obj_name_.Get();
-}
-inline void raft_entry_data_t::_internal_set_obj_name(const std::string& value) {
-  
-  obj_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), value, GetArena());
-}
-inline void raft_entry_data_t::set_obj_name(std::string&& value) {
-  
-  obj_name_.Set(
-    &::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::move(value), GetArena());
-  // @@protoc_insertion_point(field_set_rvalue:raft_entry_data_t.obj_name)
-}
-inline void raft_entry_data_t::set_obj_name(const char* value) {
-  GOOGLE_DCHECK(value != nullptr);
-  
-  obj_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(value),
-              GetArena());
-  // @@protoc_insertion_point(field_set_char:raft_entry_data_t.obj_name)
-}
-inline void raft_entry_data_t::set_obj_name(const char* value,
-    size_t size) {
-  
-  obj_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(
-      reinterpret_cast<const char*>(value), size), GetArena());
-  // @@protoc_insertion_point(field_set_pointer:raft_entry_data_t.obj_name)
-}
-inline std::string* raft_entry_data_t::_internal_mutable_obj_name() {
-  
-  return obj_name_.Mutable(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
-}
-inline std::string* raft_entry_data_t::release_obj_name() {
-  // @@protoc_insertion_point(field_release:raft_entry_data_t.obj_name)
-  return obj_name_.Release(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
-}
-inline void raft_entry_data_t::set_allocated_obj_name(std::string* obj_name) {
-  if (obj_name != nullptr) {
-    
-  } else {
-    
-  }
-  obj_name_.SetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), obj_name,
-      GetArena());
-  // @@protoc_insertion_point(field_set_allocated:raft_entry_data_t.obj_name)
-}
-inline std::string* raft_entry_data_t::unsafe_arena_release_obj_name() {
-  // @@protoc_insertion_point(field_unsafe_arena_release:raft_entry_data_t.obj_name)
-  GOOGLE_DCHECK(GetArena() != nullptr);
-  
-  return obj_name_.UnsafeArenaRelease(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
-      GetArena());
-}
-inline void raft_entry_data_t::unsafe_arena_set_allocated_obj_name(
-    std::string* obj_name) {
-  GOOGLE_DCHECK(GetArena() != nullptr);
-  if (obj_name != nullptr) {
-    
-  } else {
-    
-  }
-  obj_name_.UnsafeArenaSetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
-      obj_name, GetArena());
-  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:raft_entry_data_t.obj_name)
-}
-
-// bytes buf = 2;
-inline void raft_entry_data_t::clear_buf() {
-  buf_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
-}
-inline const std::string& raft_entry_data_t::buf() const {
-  // @@protoc_insertion_point(field_get:raft_entry_data_t.buf)
-  return _internal_buf();
-}
-inline void raft_entry_data_t::set_buf(const std::string& value) {
-  _internal_set_buf(value);
-  // @@protoc_insertion_point(field_set:raft_entry_data_t.buf)
-}
-inline std::string* raft_entry_data_t::mutable_buf() {
-  // @@protoc_insertion_point(field_mutable:raft_entry_data_t.buf)
-  return _internal_mutable_buf();
-}
-inline const std::string& raft_entry_data_t::_internal_buf() const {
-  return buf_.Get();
-}
-inline void raft_entry_data_t::_internal_set_buf(const std::string& value) {
-  
-  buf_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), value, GetArena());
-}
-inline void raft_entry_data_t::set_buf(std::string&& value) {
-  
-  buf_.Set(
-    &::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::move(value), GetArena());
-  // @@protoc_insertion_point(field_set_rvalue:raft_entry_data_t.buf)
-}
-inline void raft_entry_data_t::set_buf(const char* value) {
-  GOOGLE_DCHECK(value != nullptr);
-  
-  buf_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(value),
-              GetArena());
-  // @@protoc_insertion_point(field_set_char:raft_entry_data_t.buf)
-}
-inline void raft_entry_data_t::set_buf(const void* value,
-    size_t size) {
-  
-  buf_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(
-      reinterpret_cast<const char*>(value), size), GetArena());
-  // @@protoc_insertion_point(field_set_pointer:raft_entry_data_t.buf)
-}
-inline std::string* raft_entry_data_t::_internal_mutable_buf() {
-  
-  return buf_.Mutable(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
-}
-inline std::string* raft_entry_data_t::release_buf() {
-  // @@protoc_insertion_point(field_release:raft_entry_data_t.buf)
-  return buf_.Release(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
-}
-inline void raft_entry_data_t::set_allocated_buf(std::string* buf) {
-  if (buf != nullptr) {
-    
-  } else {
-    
-  }
-  buf_.SetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), buf,
-      GetArena());
-  // @@protoc_insertion_point(field_set_allocated:raft_entry_data_t.buf)
-}
-inline std::string* raft_entry_data_t::unsafe_arena_release_buf() {
-  // @@protoc_insertion_point(field_unsafe_arena_release:raft_entry_data_t.buf)
-  GOOGLE_DCHECK(GetArena() != nullptr);
-  
-  return buf_.UnsafeArenaRelease(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
-      GetArena());
-}
-inline void raft_entry_data_t::unsafe_arena_set_allocated_buf(
-    std::string* buf) {
-  GOOGLE_DCHECK(GetArena() != nullptr);
-  if (buf != nullptr) {
-    
-  } else {
-    
-  }
-  buf_.UnsafeArenaSetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
-      buf, GetArena());
-  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:raft_entry_data_t.buf)
-}
-
-// -------------------------------------------------------------------
-
 // raft_entry_t
 
 // int64 term = 1;
@@ -1933,85 +1644,247 @@ inline void raft_entry_t::set_type(::PROTOBUF_NAMESPACE_ID::int32 value) {
   // @@protoc_insertion_point(field_set:raft_entry_t.type)
 }
 
-// .raft_entry_data_t data = 4;
-inline bool raft_entry_t::_internal_has_data() const {
-  return this != internal_default_instance() && data_ != nullptr;
+// bytes obj_name = 4;
+inline void raft_entry_t::clear_obj_name() {
+  obj_name_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
-inline bool raft_entry_t::has_data() const {
-  return _internal_has_data();
+inline const std::string& raft_entry_t::obj_name() const {
+  // @@protoc_insertion_point(field_get:raft_entry_t.obj_name)
+  return _internal_obj_name();
 }
-inline void raft_entry_t::clear_data() {
-  if (GetArena() == nullptr && data_ != nullptr) {
-    delete data_;
+inline void raft_entry_t::set_obj_name(const std::string& value) {
+  _internal_set_obj_name(value);
+  // @@protoc_insertion_point(field_set:raft_entry_t.obj_name)
+}
+inline std::string* raft_entry_t::mutable_obj_name() {
+  // @@protoc_insertion_point(field_mutable:raft_entry_t.obj_name)
+  return _internal_mutable_obj_name();
+}
+inline const std::string& raft_entry_t::_internal_obj_name() const {
+  return obj_name_.Get();
+}
+inline void raft_entry_t::_internal_set_obj_name(const std::string& value) {
+  
+  obj_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), value, GetArena());
+}
+inline void raft_entry_t::set_obj_name(std::string&& value) {
+  
+  obj_name_.Set(
+    &::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::move(value), GetArena());
+  // @@protoc_insertion_point(field_set_rvalue:raft_entry_t.obj_name)
+}
+inline void raft_entry_t::set_obj_name(const char* value) {
+  GOOGLE_DCHECK(value != nullptr);
+  
+  obj_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(value),
+              GetArena());
+  // @@protoc_insertion_point(field_set_char:raft_entry_t.obj_name)
+}
+inline void raft_entry_t::set_obj_name(const void* value,
+    size_t size) {
+  
+  obj_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(
+      reinterpret_cast<const char*>(value), size), GetArena());
+  // @@protoc_insertion_point(field_set_pointer:raft_entry_t.obj_name)
+}
+inline std::string* raft_entry_t::_internal_mutable_obj_name() {
+  
+  return obj_name_.Mutable(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
+}
+inline std::string* raft_entry_t::release_obj_name() {
+  // @@protoc_insertion_point(field_release:raft_entry_t.obj_name)
+  return obj_name_.Release(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
+}
+inline void raft_entry_t::set_allocated_obj_name(std::string* obj_name) {
+  if (obj_name != nullptr) {
+    
+  } else {
+    
   }
-  data_ = nullptr;
+  obj_name_.SetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), obj_name,
+      GetArena());
+  // @@protoc_insertion_point(field_set_allocated:raft_entry_t.obj_name)
 }
-inline const ::raft_entry_data_t& raft_entry_t::_internal_data() const {
-  const ::raft_entry_data_t* p = data_;
-  return p != nullptr ? *p : *reinterpret_cast<const ::raft_entry_data_t*>(
-      &::_raft_entry_data_t_default_instance_);
+inline std::string* raft_entry_t::unsafe_arena_release_obj_name() {
+  // @@protoc_insertion_point(field_unsafe_arena_release:raft_entry_t.obj_name)
+  GOOGLE_DCHECK(GetArena() != nullptr);
+  
+  return obj_name_.UnsafeArenaRelease(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
+      GetArena());
 }
-inline const ::raft_entry_data_t& raft_entry_t::data() const {
+inline void raft_entry_t::unsafe_arena_set_allocated_obj_name(
+    std::string* obj_name) {
+  GOOGLE_DCHECK(GetArena() != nullptr);
+  if (obj_name != nullptr) {
+    
+  } else {
+    
+  }
+  obj_name_.UnsafeArenaSetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
+      obj_name, GetArena());
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:raft_entry_t.obj_name)
+}
+
+// bytes meta = 5;
+inline void raft_entry_t::clear_meta() {
+  meta_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
+}
+inline const std::string& raft_entry_t::meta() const {
+  // @@protoc_insertion_point(field_get:raft_entry_t.meta)
+  return _internal_meta();
+}
+inline void raft_entry_t::set_meta(const std::string& value) {
+  _internal_set_meta(value);
+  // @@protoc_insertion_point(field_set:raft_entry_t.meta)
+}
+inline std::string* raft_entry_t::mutable_meta() {
+  // @@protoc_insertion_point(field_mutable:raft_entry_t.meta)
+  return _internal_mutable_meta();
+}
+inline const std::string& raft_entry_t::_internal_meta() const {
+  return meta_.Get();
+}
+inline void raft_entry_t::_internal_set_meta(const std::string& value) {
+  
+  meta_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), value, GetArena());
+}
+inline void raft_entry_t::set_meta(std::string&& value) {
+  
+  meta_.Set(
+    &::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::move(value), GetArena());
+  // @@protoc_insertion_point(field_set_rvalue:raft_entry_t.meta)
+}
+inline void raft_entry_t::set_meta(const char* value) {
+  GOOGLE_DCHECK(value != nullptr);
+  
+  meta_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(value),
+              GetArena());
+  // @@protoc_insertion_point(field_set_char:raft_entry_t.meta)
+}
+inline void raft_entry_t::set_meta(const void* value,
+    size_t size) {
+  
+  meta_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(
+      reinterpret_cast<const char*>(value), size), GetArena());
+  // @@protoc_insertion_point(field_set_pointer:raft_entry_t.meta)
+}
+inline std::string* raft_entry_t::_internal_mutable_meta() {
+  
+  return meta_.Mutable(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
+}
+inline std::string* raft_entry_t::release_meta() {
+  // @@protoc_insertion_point(field_release:raft_entry_t.meta)
+  return meta_.Release(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
+}
+inline void raft_entry_t::set_allocated_meta(std::string* meta) {
+  if (meta != nullptr) {
+    
+  } else {
+    
+  }
+  meta_.SetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), meta,
+      GetArena());
+  // @@protoc_insertion_point(field_set_allocated:raft_entry_t.meta)
+}
+inline std::string* raft_entry_t::unsafe_arena_release_meta() {
+  // @@protoc_insertion_point(field_unsafe_arena_release:raft_entry_t.meta)
+  GOOGLE_DCHECK(GetArena() != nullptr);
+  
+  return meta_.UnsafeArenaRelease(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
+      GetArena());
+}
+inline void raft_entry_t::unsafe_arena_set_allocated_meta(
+    std::string* meta) {
+  GOOGLE_DCHECK(GetArena() != nullptr);
+  if (meta != nullptr) {
+    
+  } else {
+    
+  }
+  meta_.UnsafeArenaSetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
+      meta, GetArena());
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:raft_entry_t.meta)
+}
+
+// bytes data = 6;
+inline void raft_entry_t::clear_data() {
+  data_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
+}
+inline const std::string& raft_entry_t::data() const {
   // @@protoc_insertion_point(field_get:raft_entry_t.data)
   return _internal_data();
 }
-inline void raft_entry_t::unsafe_arena_set_allocated_data(
-    ::raft_entry_data_t* data) {
-  if (GetArena() == nullptr) {
-    delete reinterpret_cast<::PROTOBUF_NAMESPACE_ID::MessageLite*>(data_);
-  }
-  data_ = data;
-  if (data) {
-    
-  } else {
-    
-  }
-  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:raft_entry_t.data)
+inline void raft_entry_t::set_data(const std::string& value) {
+  _internal_set_data(value);
+  // @@protoc_insertion_point(field_set:raft_entry_t.data)
 }
-inline ::raft_entry_data_t* raft_entry_t::release_data() {
-  auto temp = unsafe_arena_release_data();
-  if (GetArena() != nullptr) {
-    temp = ::PROTOBUF_NAMESPACE_ID::internal::DuplicateIfNonNull(temp);
-  }
-  return temp;
-}
-inline ::raft_entry_data_t* raft_entry_t::unsafe_arena_release_data() {
-  // @@protoc_insertion_point(field_release:raft_entry_t.data)
-  
-  ::raft_entry_data_t* temp = data_;
-  data_ = nullptr;
-  return temp;
-}
-inline ::raft_entry_data_t* raft_entry_t::_internal_mutable_data() {
-  
-  if (data_ == nullptr) {
-    auto* p = CreateMaybeMessage<::raft_entry_data_t>(GetArena());
-    data_ = p;
-  }
-  return data_;
-}
-inline ::raft_entry_data_t* raft_entry_t::mutable_data() {
+inline std::string* raft_entry_t::mutable_data() {
   // @@protoc_insertion_point(field_mutable:raft_entry_t.data)
   return _internal_mutable_data();
 }
-inline void raft_entry_t::set_allocated_data(::raft_entry_data_t* data) {
-  ::PROTOBUF_NAMESPACE_ID::Arena* message_arena = GetArena();
-  if (message_arena == nullptr) {
-    delete data_;
-  }
-  if (data) {
-    ::PROTOBUF_NAMESPACE_ID::Arena* submessage_arena =
-      ::PROTOBUF_NAMESPACE_ID::Arena::GetArena(data);
-    if (message_arena != submessage_arena) {
-      data = ::PROTOBUF_NAMESPACE_ID::internal::GetOwnedMessage(
-          message_arena, data, submessage_arena);
-    }
+inline const std::string& raft_entry_t::_internal_data() const {
+  return data_.Get();
+}
+inline void raft_entry_t::_internal_set_data(const std::string& value) {
+  
+  data_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), value, GetArena());
+}
+inline void raft_entry_t::set_data(std::string&& value) {
+  
+  data_.Set(
+    &::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::move(value), GetArena());
+  // @@protoc_insertion_point(field_set_rvalue:raft_entry_t.data)
+}
+inline void raft_entry_t::set_data(const char* value) {
+  GOOGLE_DCHECK(value != nullptr);
+  
+  data_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(value),
+              GetArena());
+  // @@protoc_insertion_point(field_set_char:raft_entry_t.data)
+}
+inline void raft_entry_t::set_data(const void* value,
+    size_t size) {
+  
+  data_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(
+      reinterpret_cast<const char*>(value), size), GetArena());
+  // @@protoc_insertion_point(field_set_pointer:raft_entry_t.data)
+}
+inline std::string* raft_entry_t::_internal_mutable_data() {
+  
+  return data_.Mutable(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
+}
+inline std::string* raft_entry_t::release_data() {
+  // @@protoc_insertion_point(field_release:raft_entry_t.data)
+  return data_.Release(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
+}
+inline void raft_entry_t::set_allocated_data(std::string* data) {
+  if (data != nullptr) {
     
   } else {
     
   }
-  data_ = data;
+  data_.SetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), data,
+      GetArena());
   // @@protoc_insertion_point(field_set_allocated:raft_entry_t.data)
+}
+inline std::string* raft_entry_t::unsafe_arena_release_data() {
+  // @@protoc_insertion_point(field_unsafe_arena_release:raft_entry_t.data)
+  GOOGLE_DCHECK(GetArena() != nullptr);
+  
+  return data_.UnsafeArenaRelease(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
+      GetArena());
+}
+inline void raft_entry_t::unsafe_arena_set_allocated_data(
+    std::string* data) {
+  GOOGLE_DCHECK(GetArena() != nullptr);
+  if (data != nullptr) {
+    
+  } else {
+    
+  }
+  data_.UnsafeArenaSetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
+      data, GetArena());
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:raft_entry_t.data)
 }
 
 // -------------------------------------------------------------------
@@ -2800,8 +2673,6 @@ inline void msg_installsnapshot_response_t::set_lease(::PROTOBUF_NAMESPACE_ID::i
 #ifdef __GNUC__
   #pragma GCC diagnostic pop
 #endif  // __GNUC__
-// -------------------------------------------------------------------
-
 // -------------------------------------------------------------------
 
 // -------------------------------------------------------------------
