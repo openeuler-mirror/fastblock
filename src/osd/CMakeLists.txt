@@ -19,3 +19,5 @@ target_link_libraries(osd
     msg
     localstore
   )
+
+add_subdirectory(demo)

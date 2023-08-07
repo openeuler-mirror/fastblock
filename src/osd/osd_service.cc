@@ -22,6 +22,7 @@ void osd_service::process_write(google::protobuf::RpcController* controller,
     auto pool_id = request->pool_id();
     auto pg_id = request->pg_id();
     uint32_t shard_id;
+
     _pm->get_pg_shard(pool_id, pg_id, shard_id);
     auto pg = _pm->get_pg(shard_id, pool_id, pg_id);
     osd::write_cmd cmd;
@@ -29,6 +30,9 @@ void osd_service::process_write(google::protobuf::RpcController* controller,
     cmd.set_offset(request->offset());
     std::string buf;
     cmd.SerializeToString(&buf);
+
+    SPDK_NOTICELOG("process write_request in shard %u, pool %lu pg %lu object_name %s offset %lu len %u\n", 
+            shard_id, pool_id, pg_id, request->object_name().c_str(), request->offset(), request->data().size());
 
     auto entry_ptr = std::make_shared<msg_entry_t>();
     entry_ptr->set_type(RAFT_LOGTYPE_WRITE);

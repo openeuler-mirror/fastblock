@@ -275,8 +275,6 @@ int raft_server_t::raft_get_entry_term(raft_index_t idx, raft_term_t* term)
 int raft_server_t::raft_process_appendentries_reply(
                                      msg_appendentries_response_t* r)
 {
-    SPDK_NOTICELOG("received appendentries response from %d at %ld\n", 
-            r->node_id(), raft_get_cbs().get_time());
     SPDK_NOTICELOG(
           "received appendentries response %s from %d ci:%ld rci:%ld 1stidx:%ld\
            ls=%ld  ct:%ld rt:%ld\n",
@@ -358,6 +356,7 @@ int raft_server_t::raft_process_appendentries_reply(
 
     /* Update commit idx */
     raft_index_t point = r->current_idx();
+    SPDK_NOTICELOG("current_idx: %lu commit_idx: %lu\n", r->current_idx(), raft_get_commit_idx());
     if (point && raft_get_commit_idx() < point)
     {
         raft_term_t term;
@@ -432,9 +431,7 @@ int raft_server_t::raft_recv_appendentries(
     follow_disk_append_complete *append_complete;
     raft_index_t commit_idx = 0; 
 
-    SPDK_NOTICELOG("received appendentries  from %d at %ld\n", 
-            ae->node_id(), raft_get_cbs().get_time());
-    // if (0 < entries_num)
+    if (0 < entries_num)
         SPDK_NOTICELOG("recvd appendentries ct: %ld t:%ld ci:%ld lc:%ld pli:%ld plt:%ld #%d\n",
               raft_get_current_term(),
               ae->term(),
@@ -970,7 +967,7 @@ int raft_server_t::raft_write_entry(std::shared_ptr<msg_entry_t> ety,
             return RAFT_ERR_INVALID_CFG_CHANGE;
     }
 
-    // ety->set_term(current_term);
+    ety->set_term(current_term);
     std::vector<std::pair<std::shared_ptr<msg_entry_t>, context*>> entrys;
     entrys.push_back(std::make_pair(ety, complete));
     int e = raft_append_entries(entrys);
@@ -980,13 +977,15 @@ int raft_server_t::raft_write_entry(std::shared_ptr<msg_entry_t> ety,
     if (raft_entry_is_voting_cfg_change(ety_ptr))
         raft_set_voting_cfg_change_log_idx(ety->idx());
 
+    //todo  上一次的log commit后，需要通知这里
     if(current_idx > commit_idx){
         return 0;
     }
     //上一次的log已经commit了
     auto last_cache_idx = raft_get_last_cache_entry();
-    first_idx = current_idx == 0 ? current_idx : current_idx + 1;
+    first_idx = current_idx + 1;
     current_idx = last_cache_idx;
+    SPDK_NOTICELOG("------ first_idx: %lu current_idx: %lu ------\n", first_idx, current_idx);
 
     for(auto _node : nodes)
     {
@@ -1002,7 +1001,6 @@ int raft_server_t::raft_write_entry(std::shared_ptr<msg_entry_t> ety,
          * becoming congested. */
         raft_index_t next_idx = node->raft_node_get_next_idx();
         if (next_idx == first_idx){
-            _node->raft_set_suppress_heartbeats(true);
             raft_send_appendentries(node);
         }
     }
@@ -1104,6 +1102,7 @@ int raft_server_t::raft_send_appendentries(raft_node* node)
 {
     assert(node);
     assert(!raft_is_self(node));
+    node->raft_set_suppress_heartbeats(true);
 
     msg_appendentries_t* ae = new msg_appendentries_t();
     ae->set_node_id(raft_get_nodeid());
@@ -1126,8 +1125,8 @@ int raft_server_t::raft_send_appendentries(raft_node* node)
     (void)got;
     ae->set_prev_log_term(term);
 
-    SPDK_NOTICELOG("sending appendentries node: ci:%ld comi:%ld t:%ld lc:%ld pli:%ld plt:%ld \n",
-          raft_get_current_idx(),
+    SPDK_NOTICELOG("sending appendentries node %d: ci:%ld comi:%ld t:%ld lc:%ld pli:%ld plt:%ld \n",
+          node->raft_node_get_id(),   raft_get_current_idx(),
           raft_get_commit_idx(),
           ae->term(),
           ae->leader_commit(),
@@ -1142,7 +1141,6 @@ int raft_server_t::raft_send_heartbeat_all()
 {
     int e;
 
-    SPDK_NOTICELOG("in raft_send_heartbeat_all\n");
     auto election_timer = raft_get_cbs().get_time();
     raft_set_election_timer(election_timer);
     for(auto _node : nodes)

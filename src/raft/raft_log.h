@@ -14,7 +14,7 @@ class raft_log
 public:
     raft_log(disk_log* log)
     : _log(log)
-    , _next_idx(0)
+    , _next_idx(1)
     , _base(0)
     , _base_term(0){}
 
