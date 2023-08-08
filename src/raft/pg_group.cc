@@ -6,9 +6,9 @@
 
 #define TIMER_PERIOD_MSEC 500    //毫秒
 
-#define  ELECTION_TIMER_PERIOD_MSEC  1000   //毫秒
-#define  LEASE_MAINTENANCE_GRACE     1000   //毫秒
-#define  REQUEST_TIMER_PERIOD_MSEC     2000   //毫秒
+#define  ELECTION_TIMER_PERIOD_MSEC  5000   //毫秒
+#define  LEASE_MAINTENANCE_GRACE     5000   //毫秒
+#define  REQUEST_TIMER_PERIOD_MSEC     5000   //毫秒
 
 std::string pg_id_to_name(uint64_t pool_id, uint64_t pg_id){
     char name[128];

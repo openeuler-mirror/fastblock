@@ -9,14 +9,9 @@
 // 每次写8个units，就是4k
 #define BLOCK_UNITS 8
 
-osd_sm::osd_sm(std::string base_data_dir)
-: state_machine()
-, _base_data_dir(base_data_dir) 
-#ifdef ENABLE_OBJSTORE
+osd_sm::osd_sm()
+: state_machine() 
 , _store(global_blobstore(), global_io_channel())
-#else
-, _store(nullptr, nullptr)
-#endif
 {}
 
 void osd_sm::apply(std::shared_ptr<raft_entry_t> entry, context *complete){
@@ -45,15 +40,11 @@ void write_obj_done(void *arg, int objerrno){
 }
 
 void osd_sm::write_obj(const std::string& obj_name, uint64_t offset, const std::string& data, context *complete){
-#ifdef ENABLE_OBJSTORE
     uint64_t len = align_up<uint64_t>(data.size(), 512 * BLOCK_UNITS);
     char* buf = (char*)spdk_zmalloc(len, 0x1000, NULL, SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA); 
     memcpy(buf, data.c_str(), data.size());
     write_obj_ctx * ctx = new write_obj_ctx{buf, complete};
     _store.write(obj_name, offset, buf, data.size(), write_obj_done, ctx);
-#else
-    complete->complete(err::E_SUCCESS);
-#endif
 }
 
 void osd_sm::delete_obj(const std::string& obj_name, context *complete){

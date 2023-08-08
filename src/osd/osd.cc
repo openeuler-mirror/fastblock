@@ -8,11 +8,11 @@
 #include "raft/raft_service.h"
 #include "osd/osd_service.h"
 #include "rpc/server.h"
+#include "localstore/blob_manager.h"
 
 static const char *g_pid_path = nullptr;
 static int global_osd_id = 0;
-static const char * g_log_dir = nullptr;
-static const char * g_date_dir = nullptr;
+static const char * g_bdev_disk = nullptr;
 static partition_manager* global_pm = nullptr;
 static const char* g_osd_addr = "127.0.0.1";
 static  int g_osd_port = 8888;
@@ -27,8 +27,7 @@ typedef struct
 {
     /* the server's node ID */
     int node_id;
-	std::string log_dir;
-	std::string date_dir;
+	std::string bdev_disk;
 	std::string mon_addr;
 	int mon_port;
 	std::string osd_addr;
@@ -41,8 +40,7 @@ block_usage(void)
 {
 	printf(" -f <path>                 save pid to file under given path\n");
 	printf(" -I <id>                   save osd id\n");
-	printf(" -l <logdir>               the log directory\n");
-	printf(" -D <datedir>              the date directory\n");
+	printf(" -D <bdev_disk>            bdev disk\n");
     printf(" -H <host_addr>            monitor host address\n");
 	printf(" -P <port>                 monitor port number\n");
     printf(" -o <osd_addr>             osd address\n");
@@ -75,12 +73,9 @@ block_parse_arg(int ch, char *arg)
 	case 'I':
 	    global_osd_id = spdk_strtol(arg, 10);
 		break;
-	case 'l':
-	    g_log_dir = arg;
-		break;
 	case 'D':
-	    g_date_dir = arg;
-		break;
+	    g_bdev_disk = arg;
+		break;	
 	case 'H':
 	    g_mon_addr = arg;
 		break;
@@ -102,26 +97,23 @@ block_parse_arg(int ch, char *arg)
 	return 0;
 }
 
-static void
-block_started(void *arg1)
-{
-    server_t *server = (server_t *)arg1;
-
-#ifdef ENABLE_LOG
-      //初始化log磁盘
-//    blobstore_init(const char *bdev_name, bm_complete cb_fn, void* args); 
-#endif
-#ifdef ENABLE_OBJSTORE
-      //初始化数据盘
-//    blobstore_init(const char *bdev_name, bm_complete cb_fn, void* args);	 
-#endif
-
-    SPDK_NOTICELOG("------block start, cpu count : %u  log_dir : %s date_dir: %s\n",
-	        spdk_env_get_core_count(), server->log_dir.c_str(), server->date_dir.c_str());
+void date_disk_init_complete(void *arg, int rberrno){
+    if(rberrno != 0){
+		SPDK_NOTICELOG("Failed to initialize the date disk\n");
+		spdk_app_stop(rberrno);
+		return;
+	}
+	server_t *server = (server_t *)arg;
+    SPDK_NOTICELOG("------block start, cpu count : %u  bdev_disk: %s\n", 
+	        spdk_env_get_core_count(), server->bdev_disk.c_str());
     global_pm = new partition_manager(
-		    server->node_id, server->date_dir,
+		    server->node_id,  
 			server->mon_addr, server->mon_port,
 			server->osd_addr, server->osd_port, server->osd_uuid);
+	if(global_pm->connect_mon() != 0){
+		spdk_app_stop(-1);
+		return;
+	}
 
     rpc_server& rserver = rpc_server::get_server(global_pm->get_shard());
 	auto rs = new raft_service<partition_manager>(global_pm);
@@ -129,15 +121,27 @@ block_started(void *arg1)
 	rserver.register_service(rs);
 	rserver.register_service(os);
 	rserver.start(server->osd_addr, server->osd_port);
+}
 
-    if (global_pm->connect_mon() != 0) {
-		spdk_app_stop(-1);
+void log_disk_init_complete(void *arg, int rberrno){
+    if(rberrno != 0){
+		SPDK_NOTICELOG("Failed to initialize the log disk\n");
+		spdk_app_stop(rberrno);
 		return;
 	}
+	server_t *server = (server_t *)arg;
+      //初始化数据盘
+    blobstore_init(server->bdev_disk.c_str(), date_disk_init_complete, arg);	 
+}
 
-	// std::vector<osd_info_t> osds;
-	// osds.push_back(osd_info_t{1, "192.168.1.11", 8888});
-	// global_pm->create_partition(1, 1, std::move(osds), 1);
+static void
+block_started(void *arg)
+{
+    server_t *server = (server_t *)arg;
+
+    buffer_pool_init();
+      //初始化log磁盘
+    blobstore_init(server->bdev_disk.c_str(), log_disk_init_complete, arg); 
 }
 
 int
@@ -154,7 +158,7 @@ main(int argc, char *argv[])
     ::spdk_log_set_flag("msg");
     ::spdk_log_set_flag("mon");
 
-	if ((rc = spdk_app_parse_args(argc, argv, &opts, "f:I:l:D:H:P:o:t:U:", NULL,
+	if ((rc = spdk_app_parse_args(argc, argv, &opts, "f:I:D:H:P:o:t:U:", NULL,
 				      block_parse_arg, block_usage)) !=
 	    SPDK_APP_PARSE_ARGS_SUCCESS) {
 		exit(rc);
@@ -165,10 +169,11 @@ main(int argc, char *argv[])
 	}
 
     server.node_id = global_osd_id;
-    if(g_log_dir)
-	    server.log_dir = g_log_dir;
-	if(g_date_dir)
-	    server.date_dir = g_date_dir;
+    if(!g_bdev_disk){
+		std::cerr << "No bdev name is specified" << std::endl;
+		return -1;
+	}
+	server.bdev_disk = g_bdev_disk;
 	server.mon_addr = g_mon_addr;
 	server.mon_port = g_mon_port;
 	server.osd_addr = g_osd_addr;
@@ -179,6 +184,7 @@ main(int argc, char *argv[])
 	rc = spdk_app_start(&opts, block_started, &server);
 
 	spdk_app_fini();
+	buffer_pool_fini();
 
 	return rc;
 }
