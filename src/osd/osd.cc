@@ -108,7 +108,12 @@ block_started(void *arg1)
     server_t *server = (server_t *)arg1;
 	
 #ifdef ENABLE_LOG
-//    blobstore_init(const char *bdev_name, bm_complete cb_fn, void* args);
+      //初始化log磁盘
+//    blobstore_init(const char *bdev_name, bm_complete cb_fn, void* args); 
+#endif
+#ifdef ENABLE_OBJSTORE
+      //初始化数据盘
+//    blobstore_init(const char *bdev_name, bm_complete cb_fn, void* args);	 
 #endif
 
     SPDK_NOTICELOG("------block start, cpu count : %u  log_dir : %s date_dir: %s\n", 

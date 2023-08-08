@@ -14,7 +14,7 @@ class raft_log
 public:
     raft_log(disk_log* log)
     : _log(log)
-    , _next_idx(0)
+    , _next_idx(1)
     , _base(0)
     , _base_term(0){}
 
@@ -86,6 +86,11 @@ public:
         _entries.get_upper(idx, entrys);
     }
 
+    void log_get_from_idx(raft_index_t idx, int num, std::vector<std::shared_ptr<raft_entry_t>> &entrys)
+    { 
+        return _entries.get(idx, num, entrys); 
+    }
+
     std::shared_ptr<raft_entry_t> log_get_at_idx(raft_index_t idx)
     {
         return _entries.get(idx);
@@ -124,6 +129,10 @@ public:
 
     void raft_write_entry_finish(raft_index_t start_idx, raft_index_t end_idx, int result){
         _entries.complete_entry_between(start_idx, end_idx, result);
+    }
+
+    entry_cache& get_entry_cache(){
+        return _entries;
     }
 
 private:

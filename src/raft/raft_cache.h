@@ -43,12 +43,25 @@ public:
     uint32_t get_num(std::string obj_name){
         return _mmcs.count(obj_name);
     }
+    
+    void remove(raft_index_t idx){
+        auto it = _idx_mcs.find(idx);
+        if(it == _idx_mcs.end())
+            return;
 
-    void erase(std::string obj_name){
+        auto iter = it->second;
+        auto item = *iter;
+        auto entry_ptr = item->entry;
+        _idx_mcs.erase(entry_ptr->idx());
+        remove_mmcs(entry_ptr->obj_name(), entry_ptr->idx());
+        iter = _cache.erase(iter);             
+    }
+
+    void remove_mmcs(std::string obj_name){
       auto iter = _get_mmcs(obj_name);
       auto it = iter.first;  
       while(it != iter.second){
-        it = _erase(it);
+        it = _remove_mmcs(it);
       }      
     }
 
@@ -113,6 +126,19 @@ public:
         return item->entry;  
     }
 
+    void get(raft_index_t idx, int num, std::vector<std::shared_ptr<raft_entry_t>> &entrys){
+        auto it = _idx_mcs.find(idx);
+        if(it == _idx_mcs.end())
+            return; 
+        auto itr = it->second;
+        while(itr != _cache.end() && num){
+            auto item = *itr;
+            entrys.push_back(item->entry);
+            num--;
+            itr++;
+        }        
+    }
+
     int  for_upper(raft_index_t idx, int n, func_handle_entry_f handle, void *arg){
         auto it = _idx_mcs.find(idx);
         if(it == _idx_mcs.end())
@@ -135,7 +161,7 @@ public:
     }
 
     //删除大于等于给定idx的cache
-    void delete_upper(raft_index_t idx, int num){
+    void remove_upper(raft_index_t idx, int num){
         auto it = _idx_mcs.find(idx);
         if(it == _idx_mcs.end())
             return;
@@ -148,7 +174,7 @@ public:
             auto item = *iter;
             auto entry_ptr = item->entry;
             _idx_mcs.erase(entry_ptr->idx());
-            erase_mmcs_upper(entry_ptr->obj_name(), entry_ptr->idx());
+            remove_mmcs_upper(entry_ptr->obj_name(), entry_ptr->idx());
             iter = _cache.erase(iter);
             num--;
         }        
@@ -167,13 +193,29 @@ public:
         return last->entry->idx(); 
     }
 
+    //删除_mmcs表中key等于obj_name，value中等于idx的成员
+    void remove_mmcs(const std::string& obj_name, raft_index_t idx){
+        auto iter = _mmcs.equal_range(obj_name);
+        auto it = iter.first;
+        while(it != iter.second){
+            auto item = *(it->second);
+            auto entry_ptr = item->entry;
+            auto _idx = entry_ptr->idx();
+            if(_idx == idx){
+                it = _mmcs.erase(it);
+            }else{
+                it++;
+            }
+        }        
+    }
+
 private:
     //返回的是符合条件的迭代器的返回  [start, end), 第一个为start, 第二个为end
     std::pair<mulmap_cache_t::iterator, mulmap_cache_t::iterator> _get_mmcs(std::string obj_name){
         return _mmcs.equal_range(obj_name);
     }
 
-    mulmap_cache_t::iterator _erase(mulmap_cache_t::iterator iter){
+    mulmap_cache_t::iterator _remove_mmcs(mulmap_cache_t::iterator iter){
         auto item = *(iter->second);
         auto entry = item->entry;
         raft_index_t idx = entry->idx();
@@ -183,7 +225,8 @@ private:
         return it;      
     }
 
-    void erase_mmcs_upper(const std::string& obj_name, raft_index_t idx){
+    //删除_mmcs表中key等于obj_name，value中大于等于idx的成员
+    void remove_mmcs_upper(const std::string& obj_name, raft_index_t idx){
         auto iter = _mmcs.equal_range(obj_name);
         auto it = iter.first;
         while(it != iter.second){
