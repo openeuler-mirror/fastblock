@@ -6,16 +6,13 @@
 
 #include "utils/varint.h"
 
-struct log_entry_data_t {
-    std::string obj_name;
-    buffer_list buf;
-};
-
 struct log_entry_t {
     uint64_t term_id{init};
     uint64_t index{init};
     uint64_t size{init};
-    log_entry_data_t data;
+
+    std::string meta;
+    buffer_list data;
 
     static constexpr uint64_t init = std::numeric_limits<uint64_t>::max();
 };
@@ -38,7 +35,7 @@ EncodeLogHeader(spdk_buffer& sbuf, log_entry_t& entry) {
     rc = sbuf.inc(sz);
     if (rc != sz) { return false; }
 
-    auto& str = entry.data.obj_name;
+    auto& str = entry.meta;
     sz = encode_fixed64(sbuf.get_append(), str.size());
     rc = sbuf.inc(sz);
     if (rc != sz) { return false; }
@@ -69,6 +66,6 @@ DecodeLogHeader(spdk_buffer& sbuf, log_entry_t* entry) {
     rc = sbuf.inc(str_size);
     if (rc != str_size) { return false; }
 
-    entry->data.obj_name = std::move(str);
+    entry->meta = std::move(str);
     return true;
 }

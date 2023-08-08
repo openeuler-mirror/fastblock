@@ -18,7 +18,7 @@ int state_machine::raft_apply_entry()
         return -1;
 
     SPDK_NOTICELOG("applying log: %ld, idx: %ld size: %u \n",
-          log_idx, ety->idx(), (uint32_t)ety->data().buf().size());
+          log_idx, ety->idx(), (uint32_t)ety->data().size());
 
     _last_applied_idx += 1;
 

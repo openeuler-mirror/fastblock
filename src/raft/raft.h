@@ -28,7 +28,8 @@ typedef enum {
      * Regular log type.
      * This is solely for application data intended for the FSM.
      */
-    RAFT_LOGTYPE_NORMAL,
+    RAFT_LOGTYPE_WRITE,
+    RAFT_LOGTYPE_DELETE,
     /**
      * Membership change.
      * Non-voting nodes can't cast votes or start elections.

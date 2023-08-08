@@ -1,26 +1,12 @@
 syntax = "proto3";
 option cc_generic_services = true;
-
-/*
-enum request_type
-{
-    READ = 0;
-    WRITE = 1;
-    DELETE = 2;
-}
-
-message request_header
-{
-    request_type type = 1;
-    uint32 payload_size = 2;
-}
-*/
+package osd;
 
 message write_request
 {
     uint64 pool_id = 1;
     uint64 pg_id = 2;
-    string object_name = 3;
+    bytes object_name = 3;
     uint64 offset = 4;
     bytes data = 5;    
 }
@@ -28,14 +14,14 @@ message write_request
 message write_reply
 {
     int32 state = 1;
-    string  str = 2; 
+    bytes  str = 2; 
 }
 
 message read_request 
 {
     uint64 pool_id = 1;
     uint64 pg_id = 2;
-    string object_name = 3;
+    bytes object_name = 3;
     uint64 offset = 4;
     uint64 length = 5;
 }
@@ -43,39 +29,38 @@ message read_request
 message read_reply 
 {
     int32 state = 1;
-    string data = 2;
+    bytes data = 2;
 }
 
 message delete_request 
 {
     uint64 pool_id = 1;
     uint64 pg_id = 2;
-    string object_name = 3;
+    bytes object_name = 3;
 }
 
 message delete_reply 
 {
     int32 state = 1;
-    string  str = 2; 
+    bytes  str = 2; 
 }
 
 message write_cmd 
 {
-    string object_name = 1;
+    bytes object_name = 1;
     uint64 offset = 2;
-    bytes buf = 3;
 }
 
 message read_cmd 
 {
-    string object_name = 1;
+    bytes object_name = 1;
     uint64 offset = 2;
     uint64 length = 3;
 }
 
 message delete_cmd 
 {
-    string object_name = 1;
+    bytes object_name = 1;
 }
 
 service rpc_service_osd{

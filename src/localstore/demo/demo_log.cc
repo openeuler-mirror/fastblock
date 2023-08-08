@@ -160,10 +160,10 @@ log_read_continue(void *arg, log_entry_t&& entry, int rberrno) {
   }
 
   ctx->read_idx++;
-  SPDK_NOTICELOG("log read done, index:%lu size:%lu term:%lu name:%s, data len:%lu\n", 
-                  entry.index, entry.size, entry.term_id, entry.data.obj_name.c_str(), 
-                  entry.data.buf.bytes());
-  free_buffer_list(entry.data.buf);
+  SPDK_NOTICELOG("log append, index:%lu size:%lu term:%lu meta:%s, data len:%lu\n", 
+                     entry.index, entry.size, entry.term_id, entry.meta.c_str(), 
+                     entry.data.bytes());
+  free_buffer_list(entry.data);
 
   if (ctx->read_idx < ctx->read_max) {
       ctx->log->read(ctx->read_raft_index++, log_read_continue, ctx);
@@ -196,10 +196,14 @@ log_append_continue(void *arg, int rberrno) {
 
   ctx->append_idx++;
   if (ctx->append_idx < ctx->append_max) {
-      log_entry_t entry{ .term_id = 4147483647, .index = ctx->append_raft_index++, .size = ctx->bl.bytes(), .data = {"test", ctx->bl}};
-        SPDK_NOTICELOG("log append, index:%lu size:%lu term:%lu name:%s, data len:%lu\n", 
-                  entry.index, entry.size, entry.term_id, entry.data.obj_name.c_str(), 
-                  entry.data.buf.bytes());
+      log_entry_t entry{ .term_id = 4147483647, 
+                         .index = ctx->append_raft_index++, 
+                         .size = ctx->bl.bytes(), 
+                         .meta = "test",
+                         .data = ctx->bl};
+      SPDK_NOTICELOG("log append, index:%lu size:%lu term:%lu meta:%s, data len:%lu\n", 
+                     entry.index, entry.size, entry.term_id, entry.meta.c_str(), 
+                     entry.data.bytes());
       ctx->log->append(entry, log_append_continue, ctx);
   } else {
       uint64_t now = spdk_get_ticks();
@@ -224,10 +228,14 @@ log_append_iterates(struct hello_context_t* hello_context) {
   ctx->bl = make_buffer_list(8);
   ctx->start = spdk_get_ticks();
 
-  log_entry_t entry{ .term_id = 4147483647, .index = ctx->append_raft_index++, .size = ctx->bl.bytes(), .data = {"test", ctx->bl}};
-  SPDK_NOTICELOG("log append, index:%lu size:%lu term:%lu name:%s, data len:%lu\n", 
-                  entry.index, entry.size, entry.term_id, entry.data.obj_name.c_str(), 
-                  entry.data.buf.bytes());
+  log_entry_t entry{ .term_id = 4147483647, 
+                     .index = ctx->append_raft_index++, 
+                     .size = ctx->bl.bytes(),
+                     .meta = "test",
+                     .data = ctx->bl};
+  SPDK_NOTICELOG("log append, index:%lu size:%lu term:%lu meta:%s, data len:%lu\n", 
+                  entry.index, entry.size, entry.term_id, entry.meta.c_str(), 
+                  entry.data.bytes());
   ctx->log->append(entry, log_append_continue, ctx);
 }
 /********************************************************************/

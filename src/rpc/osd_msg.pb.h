@@ -55,6 +55,7 @@ struct TableStruct_osd_5fmsg_2eproto {
   static const ::PROTOBUF_NAMESPACE_ID::uint32 offsets[];
 };
 extern const ::PROTOBUF_NAMESPACE_ID::internal::DescriptorTable descriptor_table_osd_5fmsg_2eproto;
+namespace osd {
 class delete_cmd;
 class delete_cmdDefaultTypeInternal;
 extern delete_cmdDefaultTypeInternal _delete_cmd_default_instance_;
@@ -82,22 +83,24 @@ extern write_replyDefaultTypeInternal _write_reply_default_instance_;
 class write_request;
 class write_requestDefaultTypeInternal;
 extern write_requestDefaultTypeInternal _write_request_default_instance_;
+}  // namespace osd
 PROTOBUF_NAMESPACE_OPEN
-template<> ::delete_cmd* Arena::CreateMaybeMessage<::delete_cmd>(Arena*);
-template<> ::delete_reply* Arena::CreateMaybeMessage<::delete_reply>(Arena*);
-template<> ::delete_request* Arena::CreateMaybeMessage<::delete_request>(Arena*);
-template<> ::read_cmd* Arena::CreateMaybeMessage<::read_cmd>(Arena*);
-template<> ::read_reply* Arena::CreateMaybeMessage<::read_reply>(Arena*);
-template<> ::read_request* Arena::CreateMaybeMessage<::read_request>(Arena*);
-template<> ::write_cmd* Arena::CreateMaybeMessage<::write_cmd>(Arena*);
-template<> ::write_reply* Arena::CreateMaybeMessage<::write_reply>(Arena*);
-template<> ::write_request* Arena::CreateMaybeMessage<::write_request>(Arena*);
+template<> ::osd::delete_cmd* Arena::CreateMaybeMessage<::osd::delete_cmd>(Arena*);
+template<> ::osd::delete_reply* Arena::CreateMaybeMessage<::osd::delete_reply>(Arena*);
+template<> ::osd::delete_request* Arena::CreateMaybeMessage<::osd::delete_request>(Arena*);
+template<> ::osd::read_cmd* Arena::CreateMaybeMessage<::osd::read_cmd>(Arena*);
+template<> ::osd::read_reply* Arena::CreateMaybeMessage<::osd::read_reply>(Arena*);
+template<> ::osd::read_request* Arena::CreateMaybeMessage<::osd::read_request>(Arena*);
+template<> ::osd::write_cmd* Arena::CreateMaybeMessage<::osd::write_cmd>(Arena*);
+template<> ::osd::write_reply* Arena::CreateMaybeMessage<::osd::write_reply>(Arena*);
+template<> ::osd::write_request* Arena::CreateMaybeMessage<::osd::write_request>(Arena*);
 PROTOBUF_NAMESPACE_CLOSE
+namespace osd {
 
 // ===================================================================
 
 class write_request PROTOBUF_FINAL :
-    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:write_request) */ {
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:osd.write_request) */ {
  public:
   inline write_request() : write_request(nullptr) {};
   virtual ~write_request();
@@ -186,7 +189,7 @@ class write_request PROTOBUF_FINAL :
   void InternalSwap(write_request* other);
   friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
   static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
-    return "write_request";
+    return "osd.write_request";
   }
   protected:
   explicit write_request(::PROTOBUF_NAMESPACE_ID::Arena* arena);
@@ -215,13 +218,13 @@ class write_request PROTOBUF_FINAL :
     kPgIdFieldNumber = 2,
     kOffsetFieldNumber = 4,
   };
-  // string object_name = 3;
+  // bytes object_name = 3;
   void clear_object_name();
   const std::string& object_name() const;
   void set_object_name(const std::string& value);
   void set_object_name(std::string&& value);
   void set_object_name(const char* value);
-  void set_object_name(const char* value, size_t size);
+  void set_object_name(const void* value, size_t size);
   std::string* mutable_object_name();
   std::string* release_object_name();
   void set_allocated_object_name(std::string* object_name);
@@ -292,7 +295,7 @@ class write_request PROTOBUF_FINAL :
   void _internal_set_offset(::PROTOBUF_NAMESPACE_ID::uint64 value);
   public:
 
-  // @@protoc_insertion_point(class_scope:write_request)
+  // @@protoc_insertion_point(class_scope:osd.write_request)
  private:
   class _Internal;
 
@@ -310,7 +313,7 @@ class write_request PROTOBUF_FINAL :
 // -------------------------------------------------------------------
 
 class write_reply PROTOBUF_FINAL :
-    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:write_reply) */ {
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:osd.write_reply) */ {
  public:
   inline write_reply() : write_reply(nullptr) {};
   virtual ~write_reply();
@@ -399,7 +402,7 @@ class write_reply PROTOBUF_FINAL :
   void InternalSwap(write_reply* other);
   friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
   static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
-    return "write_reply";
+    return "osd.write_reply";
   }
   protected:
   explicit write_reply(::PROTOBUF_NAMESPACE_ID::Arena* arena);
@@ -425,13 +428,13 @@ class write_reply PROTOBUF_FINAL :
     kStrFieldNumber = 2,
     kStateFieldNumber = 1,
   };
-  // string str = 2;
+  // bytes str = 2;
   void clear_str();
   const std::string& str() const;
   void set_str(const std::string& value);
   void set_str(std::string&& value);
   void set_str(const char* value);
-  void set_str(const char* value, size_t size);
+  void set_str(const void* value, size_t size);
   std::string* mutable_str();
   std::string* release_str();
   void set_allocated_str(std::string* str);
@@ -459,7 +462,7 @@ class write_reply PROTOBUF_FINAL :
   void _internal_set_state(::PROTOBUF_NAMESPACE_ID::int32 value);
   public:
 
-  // @@protoc_insertion_point(class_scope:write_reply)
+  // @@protoc_insertion_point(class_scope:osd.write_reply)
  private:
   class _Internal;
 
@@ -474,7 +477,7 @@ class write_reply PROTOBUF_FINAL :
 // -------------------------------------------------------------------
 
 class read_request PROTOBUF_FINAL :
-    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:read_request) */ {
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:osd.read_request) */ {
  public:
   inline read_request() : read_request(nullptr) {};
   virtual ~read_request();
@@ -563,7 +566,7 @@ class read_request PROTOBUF_FINAL :
   void InternalSwap(read_request* other);
   friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
   static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
-    return "read_request";
+    return "osd.read_request";
   }
   protected:
   explicit read_request(::PROTOBUF_NAMESPACE_ID::Arena* arena);
@@ -592,13 +595,13 @@ class read_request PROTOBUF_FINAL :
     kOffsetFieldNumber = 4,
     kLengthFieldNumber = 5,
   };
-  // string object_name = 3;
+  // bytes object_name = 3;
   void clear_object_name();
   const std::string& object_name() const;
   void set_object_name(const std::string& value);
   void set_object_name(std::string&& value);
   void set_object_name(const char* value);
-  void set_object_name(const char* value, size_t size);
+  void set_object_name(const void* value, size_t size);
   std::string* mutable_object_name();
   std::string* release_object_name();
   void set_allocated_object_name(std::string* object_name);
@@ -653,7 +656,7 @@ class read_request PROTOBUF_FINAL :
   void _internal_set_length(::PROTOBUF_NAMESPACE_ID::uint64 value);
   public:
 
-  // @@protoc_insertion_point(class_scope:read_request)
+  // @@protoc_insertion_point(class_scope:osd.read_request)
  private:
   class _Internal;
 
@@ -671,7 +674,7 @@ class read_request PROTOBUF_FINAL :
 // -------------------------------------------------------------------
 
 class read_reply PROTOBUF_FINAL :
-    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:read_reply) */ {
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:osd.read_reply) */ {
  public:
   inline read_reply() : read_reply(nullptr) {};
   virtual ~read_reply();
@@ -760,7 +763,7 @@ class read_reply PROTOBUF_FINAL :
   void InternalSwap(read_reply* other);
   friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
   static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
-    return "read_reply";
+    return "osd.read_reply";
   }
   protected:
   explicit read_reply(::PROTOBUF_NAMESPACE_ID::Arena* arena);
@@ -786,13 +789,13 @@ class read_reply PROTOBUF_FINAL :
     kDataFieldNumber = 2,
     kStateFieldNumber = 1,
   };
-  // string data = 2;
+  // bytes data = 2;
   void clear_data();
   const std::string& data() const;
   void set_data(const std::string& value);
   void set_data(std::string&& value);
   void set_data(const char* value);
-  void set_data(const char* value, size_t size);
+  void set_data(const void* value, size_t size);
   std::string* mutable_data();
   std::string* release_data();
   void set_allocated_data(std::string* data);
@@ -820,7 +823,7 @@ class read_reply PROTOBUF_FINAL :
   void _internal_set_state(::PROTOBUF_NAMESPACE_ID::int32 value);
   public:
 
-  // @@protoc_insertion_point(class_scope:read_reply)
+  // @@protoc_insertion_point(class_scope:osd.read_reply)
  private:
   class _Internal;
 
@@ -835,7 +838,7 @@ class read_reply PROTOBUF_FINAL :
 // -------------------------------------------------------------------
 
 class delete_request PROTOBUF_FINAL :
-    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:delete_request) */ {
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:osd.delete_request) */ {
  public:
   inline delete_request() : delete_request(nullptr) {};
   virtual ~delete_request();
@@ -924,7 +927,7 @@ class delete_request PROTOBUF_FINAL :
   void InternalSwap(delete_request* other);
   friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
   static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
-    return "delete_request";
+    return "osd.delete_request";
   }
   protected:
   explicit delete_request(::PROTOBUF_NAMESPACE_ID::Arena* arena);
@@ -951,13 +954,13 @@ class delete_request PROTOBUF_FINAL :
     kPoolIdFieldNumber = 1,
     kPgIdFieldNumber = 2,
   };
-  // string object_name = 3;
+  // bytes object_name = 3;
   void clear_object_name();
   const std::string& object_name() const;
   void set_object_name(const std::string& value);
   void set_object_name(std::string&& value);
   void set_object_name(const char* value);
-  void set_object_name(const char* value, size_t size);
+  void set_object_name(const void* value, size_t size);
   std::string* mutable_object_name();
   std::string* release_object_name();
   void set_allocated_object_name(std::string* object_name);
@@ -994,7 +997,7 @@ class delete_request PROTOBUF_FINAL :
   void _internal_set_pg_id(::PROTOBUF_NAMESPACE_ID::uint64 value);
   public:
 
-  // @@protoc_insertion_point(class_scope:delete_request)
+  // @@protoc_insertion_point(class_scope:osd.delete_request)
  private:
   class _Internal;
 
@@ -1010,7 +1013,7 @@ class delete_request PROTOBUF_FINAL :
 // -------------------------------------------------------------------
 
 class delete_reply PROTOBUF_FINAL :
-    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:delete_reply) */ {
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:osd.delete_reply) */ {
  public:
   inline delete_reply() : delete_reply(nullptr) {};
   virtual ~delete_reply();
@@ -1099,7 +1102,7 @@ class delete_reply PROTOBUF_FINAL :
   void InternalSwap(delete_reply* other);
   friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
   static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
-    return "delete_reply";
+    return "osd.delete_reply";
   }
   protected:
   explicit delete_reply(::PROTOBUF_NAMESPACE_ID::Arena* arena);
@@ -1125,13 +1128,13 @@ class delete_reply PROTOBUF_FINAL :
     kStrFieldNumber = 2,
     kStateFieldNumber = 1,
   };
-  // string str = 2;
+  // bytes str = 2;
   void clear_str();
   const std::string& str() const;
   void set_str(const std::string& value);
   void set_str(std::string&& value);
   void set_str(const char* value);
-  void set_str(const char* value, size_t size);
+  void set_str(const void* value, size_t size);
   std::string* mutable_str();
   std::string* release_str();
   void set_allocated_str(std::string* str);
@@ -1159,7 +1162,7 @@ class delete_reply PROTOBUF_FINAL :
   void _internal_set_state(::PROTOBUF_NAMESPACE_ID::int32 value);
   public:
 
-  // @@protoc_insertion_point(class_scope:delete_reply)
+  // @@protoc_insertion_point(class_scope:osd.delete_reply)
  private:
   class _Internal;
 
@@ -1174,7 +1177,7 @@ class delete_reply PROTOBUF_FINAL :
 // -------------------------------------------------------------------
 
 class write_cmd PROTOBUF_FINAL :
-    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:write_cmd) */ {
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:osd.write_cmd) */ {
  public:
   inline write_cmd() : write_cmd(nullptr) {};
   virtual ~write_cmd();
@@ -1263,7 +1266,7 @@ class write_cmd PROTOBUF_FINAL :
   void InternalSwap(write_cmd* other);
   friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
   static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
-    return "write_cmd";
+    return "osd.write_cmd";
   }
   protected:
   explicit write_cmd(::PROTOBUF_NAMESPACE_ID::Arena* arena);
@@ -1287,16 +1290,15 @@ class write_cmd PROTOBUF_FINAL :
 
   enum : int {
     kObjectNameFieldNumber = 1,
-    kBufFieldNumber = 3,
     kOffsetFieldNumber = 2,
   };
-  // string object_name = 1;
+  // bytes object_name = 1;
   void clear_object_name();
   const std::string& object_name() const;
   void set_object_name(const std::string& value);
   void set_object_name(std::string&& value);
   void set_object_name(const char* value);
-  void set_object_name(const char* value, size_t size);
+  void set_object_name(const void* value, size_t size);
   std::string* mutable_object_name();
   std::string* release_object_name();
   void set_allocated_object_name(std::string* object_name);
@@ -1315,31 +1317,6 @@ class write_cmd PROTOBUF_FINAL :
   std::string* _internal_mutable_object_name();
   public:
 
-  // bytes buf = 3;
-  void clear_buf();
-  const std::string& buf() const;
-  void set_buf(const std::string& value);
-  void set_buf(std::string&& value);
-  void set_buf(const char* value);
-  void set_buf(const void* value, size_t size);
-  std::string* mutable_buf();
-  std::string* release_buf();
-  void set_allocated_buf(std::string* buf);
-  GOOGLE_PROTOBUF_RUNTIME_DEPRECATED("The unsafe_arena_ accessors for"
-  "    string fields are deprecated and will be removed in a"
-  "    future release.")
-  std::string* unsafe_arena_release_buf();
-  GOOGLE_PROTOBUF_RUNTIME_DEPRECATED("The unsafe_arena_ accessors for"
-  "    string fields are deprecated and will be removed in a"
-  "    future release.")
-  void unsafe_arena_set_allocated_buf(
-      std::string* buf);
-  private:
-  const std::string& _internal_buf() const;
-  void _internal_set_buf(const std::string& value);
-  std::string* _internal_mutable_buf();
-  public:
-
   // uint64 offset = 2;
   void clear_offset();
   ::PROTOBUF_NAMESPACE_ID::uint64 offset() const;
@@ -1349,7 +1326,7 @@ class write_cmd PROTOBUF_FINAL :
   void _internal_set_offset(::PROTOBUF_NAMESPACE_ID::uint64 value);
   public:
 
-  // @@protoc_insertion_point(class_scope:write_cmd)
+  // @@protoc_insertion_point(class_scope:osd.write_cmd)
  private:
   class _Internal;
 
@@ -1357,7 +1334,6 @@ class write_cmd PROTOBUF_FINAL :
   typedef void InternalArenaConstructable_;
   typedef void DestructorSkippable_;
   ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr object_name_;
-  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr buf_;
   ::PROTOBUF_NAMESPACE_ID::uint64 offset_;
   mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
   friend struct ::TableStruct_osd_5fmsg_2eproto;
@@ -1365,7 +1341,7 @@ class write_cmd PROTOBUF_FINAL :
 // -------------------------------------------------------------------
 
 class read_cmd PROTOBUF_FINAL :
-    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:read_cmd) */ {
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:osd.read_cmd) */ {
  public:
   inline read_cmd() : read_cmd(nullptr) {};
   virtual ~read_cmd();
@@ -1454,7 +1430,7 @@ class read_cmd PROTOBUF_FINAL :
   void InternalSwap(read_cmd* other);
   friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
   static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
-    return "read_cmd";
+    return "osd.read_cmd";
   }
   protected:
   explicit read_cmd(::PROTOBUF_NAMESPACE_ID::Arena* arena);
@@ -1481,13 +1457,13 @@ class read_cmd PROTOBUF_FINAL :
     kOffsetFieldNumber = 2,
     kLengthFieldNumber = 3,
   };
-  // string object_name = 1;
+  // bytes object_name = 1;
   void clear_object_name();
   const std::string& object_name() const;
   void set_object_name(const std::string& value);
   void set_object_name(std::string&& value);
   void set_object_name(const char* value);
-  void set_object_name(const char* value, size_t size);
+  void set_object_name(const void* value, size_t size);
   std::string* mutable_object_name();
   std::string* release_object_name();
   void set_allocated_object_name(std::string* object_name);
@@ -1524,7 +1500,7 @@ class read_cmd PROTOBUF_FINAL :
   void _internal_set_length(::PROTOBUF_NAMESPACE_ID::uint64 value);
   public:
 
-  // @@protoc_insertion_point(class_scope:read_cmd)
+  // @@protoc_insertion_point(class_scope:osd.read_cmd)
  private:
   class _Internal;
 
@@ -1540,7 +1516,7 @@ class read_cmd PROTOBUF_FINAL :
 // -------------------------------------------------------------------
 
 class delete_cmd PROTOBUF_FINAL :
-    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:delete_cmd) */ {
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:osd.delete_cmd) */ {
  public:
   inline delete_cmd() : delete_cmd(nullptr) {};
   virtual ~delete_cmd();
@@ -1629,7 +1605,7 @@ class delete_cmd PROTOBUF_FINAL :
   void InternalSwap(delete_cmd* other);
   friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
   static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
-    return "delete_cmd";
+    return "osd.delete_cmd";
   }
   protected:
   explicit delete_cmd(::PROTOBUF_NAMESPACE_ID::Arena* arena);
@@ -1654,13 +1630,13 @@ class delete_cmd PROTOBUF_FINAL :
   enum : int {
     kObjectNameFieldNumber = 1,
   };
-  // string object_name = 1;
+  // bytes object_name = 1;
   void clear_object_name();
   const std::string& object_name() const;
   void set_object_name(const std::string& value);
   void set_object_name(std::string&& value);
   void set_object_name(const char* value);
-  void set_object_name(const char* value, size_t size);
+  void set_object_name(const void* value, size_t size);
   std::string* mutable_object_name();
   std::string* release_object_name();
   void set_allocated_object_name(std::string* object_name);
@@ -1679,7 +1655,7 @@ class delete_cmd PROTOBUF_FINAL :
   std::string* _internal_mutable_object_name();
   public:
 
-  // @@protoc_insertion_point(class_scope:delete_cmd)
+  // @@protoc_insertion_point(class_scope:osd.delete_cmd)
  private:
   class _Internal;
 
@@ -1706,16 +1682,16 @@ class rpc_service_osd : public ::PROTOBUF_NAMESPACE_ID::Service {
   static const ::PROTOBUF_NAMESPACE_ID::ServiceDescriptor* descriptor();
 
   virtual void process_write(::PROTOBUF_NAMESPACE_ID::RpcController* controller,
-                       const ::write_request* request,
-                       ::write_reply* response,
+                       const ::osd::write_request* request,
+                       ::osd::write_reply* response,
                        ::google::protobuf::Closure* done);
   virtual void process_read(::PROTOBUF_NAMESPACE_ID::RpcController* controller,
-                       const ::read_request* request,
-                       ::read_reply* response,
+                       const ::osd::read_request* request,
+                       ::osd::read_reply* response,
                        ::google::protobuf::Closure* done);
   virtual void process_delete(::PROTOBUF_NAMESPACE_ID::RpcController* controller,
-                       const ::delete_request* request,
-                       ::delete_reply* response,
+                       const ::osd::delete_request* request,
+                       ::osd::delete_reply* response,
                        ::google::protobuf::Closure* done);
 
   // implements Service ----------------------------------------------
@@ -1747,16 +1723,16 @@ class rpc_service_osd_Stub : public rpc_service_osd {
   // implements rpc_service_osd ------------------------------------------
 
   void process_write(::PROTOBUF_NAMESPACE_ID::RpcController* controller,
-                       const ::write_request* request,
-                       ::write_reply* response,
+                       const ::osd::write_request* request,
+                       ::osd::write_reply* response,
                        ::google::protobuf::Closure* done);
   void process_read(::PROTOBUF_NAMESPACE_ID::RpcController* controller,
-                       const ::read_request* request,
-                       ::read_reply* response,
+                       const ::osd::read_request* request,
+                       ::osd::read_reply* response,
                        ::google::protobuf::Closure* done);
   void process_delete(::PROTOBUF_NAMESPACE_ID::RpcController* controller,
-                       const ::delete_request* request,
-                       ::delete_reply* response,
+                       const ::osd::delete_request* request,
+                       ::osd::delete_reply* response,
                        ::google::protobuf::Closure* done);
  private:
   ::PROTOBUF_NAMESPACE_ID::RpcChannel* channel_;
@@ -1784,7 +1760,7 @@ inline ::PROTOBUF_NAMESPACE_ID::uint64 write_request::_internal_pool_id() const 
   return pool_id_;
 }
 inline ::PROTOBUF_NAMESPACE_ID::uint64 write_request::pool_id() const {
-  // @@protoc_insertion_point(field_get:write_request.pool_id)
+  // @@protoc_insertion_point(field_get:osd.write_request.pool_id)
   return _internal_pool_id();
 }
 inline void write_request::_internal_set_pool_id(::PROTOBUF_NAMESPACE_ID::uint64 value) {
@@ -1793,7 +1769,7 @@ inline void write_request::_internal_set_pool_id(::PROTOBUF_NAMESPACE_ID::uint64
 }
 inline void write_request::set_pool_id(::PROTOBUF_NAMESPACE_ID::uint64 value) {
   _internal_set_pool_id(value);
-  // @@protoc_insertion_point(field_set:write_request.pool_id)
+  // @@protoc_insertion_point(field_set:osd.write_request.pool_id)
 }
 
 // uint64 pg_id = 2;
@@ -1804,7 +1780,7 @@ inline ::PROTOBUF_NAMESPACE_ID::uint64 write_request::_internal_pg_id() const {
   return pg_id_;
 }
 inline ::PROTOBUF_NAMESPACE_ID::uint64 write_request::pg_id() const {
-  // @@protoc_insertion_point(field_get:write_request.pg_id)
+  // @@protoc_insertion_point(field_get:osd.write_request.pg_id)
   return _internal_pg_id();
 }
 inline void write_request::_internal_set_pg_id(::PROTOBUF_NAMESPACE_ID::uint64 value) {
@@ -1813,23 +1789,23 @@ inline void write_request::_internal_set_pg_id(::PROTOBUF_NAMESPACE_ID::uint64 v
 }
 inline void write_request::set_pg_id(::PROTOBUF_NAMESPACE_ID::uint64 value) {
   _internal_set_pg_id(value);
-  // @@protoc_insertion_point(field_set:write_request.pg_id)
+  // @@protoc_insertion_point(field_set:osd.write_request.pg_id)
 }
 
-// string object_name = 3;
+// bytes object_name = 3;
 inline void write_request::clear_object_name() {
   object_name_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline const std::string& write_request::object_name() const {
-  // @@protoc_insertion_point(field_get:write_request.object_name)
+  // @@protoc_insertion_point(field_get:osd.write_request.object_name)
   return _internal_object_name();
 }
 inline void write_request::set_object_name(const std::string& value) {
   _internal_set_object_name(value);
-  // @@protoc_insertion_point(field_set:write_request.object_name)
+  // @@protoc_insertion_point(field_set:osd.write_request.object_name)
 }
 inline std::string* write_request::mutable_object_name() {
-  // @@protoc_insertion_point(field_mutable:write_request.object_name)
+  // @@protoc_insertion_point(field_mutable:osd.write_request.object_name)
   return _internal_mutable_object_name();
 }
 inline const std::string& write_request::_internal_object_name() const {
@@ -1843,28 +1819,28 @@ inline void write_request::set_object_name(std::string&& value) {
   
   object_name_.Set(
     &::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::move(value), GetArena());
-  // @@protoc_insertion_point(field_set_rvalue:write_request.object_name)
+  // @@protoc_insertion_point(field_set_rvalue:osd.write_request.object_name)
 }
 inline void write_request::set_object_name(const char* value) {
   GOOGLE_DCHECK(value != nullptr);
   
   object_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(value),
               GetArena());
-  // @@protoc_insertion_point(field_set_char:write_request.object_name)
+  // @@protoc_insertion_point(field_set_char:osd.write_request.object_name)
 }
-inline void write_request::set_object_name(const char* value,
+inline void write_request::set_object_name(const void* value,
     size_t size) {
   
   object_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(
       reinterpret_cast<const char*>(value), size), GetArena());
-  // @@protoc_insertion_point(field_set_pointer:write_request.object_name)
+  // @@protoc_insertion_point(field_set_pointer:osd.write_request.object_name)
 }
 inline std::string* write_request::_internal_mutable_object_name() {
   
   return object_name_.Mutable(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline std::string* write_request::release_object_name() {
-  // @@protoc_insertion_point(field_release:write_request.object_name)
+  // @@protoc_insertion_point(field_release:osd.write_request.object_name)
   return object_name_.Release(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline void write_request::set_allocated_object_name(std::string* object_name) {
@@ -1875,10 +1851,10 @@ inline void write_request::set_allocated_object_name(std::string* object_name) {
   }
   object_name_.SetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), object_name,
       GetArena());
-  // @@protoc_insertion_point(field_set_allocated:write_request.object_name)
+  // @@protoc_insertion_point(field_set_allocated:osd.write_request.object_name)
 }
 inline std::string* write_request::unsafe_arena_release_object_name() {
-  // @@protoc_insertion_point(field_unsafe_arena_release:write_request.object_name)
+  // @@protoc_insertion_point(field_unsafe_arena_release:osd.write_request.object_name)
   GOOGLE_DCHECK(GetArena() != nullptr);
   
   return object_name_.UnsafeArenaRelease(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
@@ -1894,7 +1870,7 @@ inline void write_request::unsafe_arena_set_allocated_object_name(
   }
   object_name_.UnsafeArenaSetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
       object_name, GetArena());
-  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:write_request.object_name)
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:osd.write_request.object_name)
 }
 
 // uint64 offset = 4;
@@ -1905,7 +1881,7 @@ inline ::PROTOBUF_NAMESPACE_ID::uint64 write_request::_internal_offset() const {
   return offset_;
 }
 inline ::PROTOBUF_NAMESPACE_ID::uint64 write_request::offset() const {
-  // @@protoc_insertion_point(field_get:write_request.offset)
+  // @@protoc_insertion_point(field_get:osd.write_request.offset)
   return _internal_offset();
 }
 inline void write_request::_internal_set_offset(::PROTOBUF_NAMESPACE_ID::uint64 value) {
@@ -1914,7 +1890,7 @@ inline void write_request::_internal_set_offset(::PROTOBUF_NAMESPACE_ID::uint64 
 }
 inline void write_request::set_offset(::PROTOBUF_NAMESPACE_ID::uint64 value) {
   _internal_set_offset(value);
-  // @@protoc_insertion_point(field_set:write_request.offset)
+  // @@protoc_insertion_point(field_set:osd.write_request.offset)
 }
 
 // bytes data = 5;
@@ -1922,15 +1898,15 @@ inline void write_request::clear_data() {
   data_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline const std::string& write_request::data() const {
-  // @@protoc_insertion_point(field_get:write_request.data)
+  // @@protoc_insertion_point(field_get:osd.write_request.data)
   return _internal_data();
 }
 inline void write_request::set_data(const std::string& value) {
   _internal_set_data(value);
-  // @@protoc_insertion_point(field_set:write_request.data)
+  // @@protoc_insertion_point(field_set:osd.write_request.data)
 }
 inline std::string* write_request::mutable_data() {
-  // @@protoc_insertion_point(field_mutable:write_request.data)
+  // @@protoc_insertion_point(field_mutable:osd.write_request.data)
   return _internal_mutable_data();
 }
 inline const std::string& write_request::_internal_data() const {
@@ -1944,28 +1920,28 @@ inline void write_request::set_data(std::string&& value) {
   
   data_.Set(
     &::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::move(value), GetArena());
-  // @@protoc_insertion_point(field_set_rvalue:write_request.data)
+  // @@protoc_insertion_point(field_set_rvalue:osd.write_request.data)
 }
 inline void write_request::set_data(const char* value) {
   GOOGLE_DCHECK(value != nullptr);
   
   data_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(value),
               GetArena());
-  // @@protoc_insertion_point(field_set_char:write_request.data)
+  // @@protoc_insertion_point(field_set_char:osd.write_request.data)
 }
 inline void write_request::set_data(const void* value,
     size_t size) {
   
   data_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(
       reinterpret_cast<const char*>(value), size), GetArena());
-  // @@protoc_insertion_point(field_set_pointer:write_request.data)
+  // @@protoc_insertion_point(field_set_pointer:osd.write_request.data)
 }
 inline std::string* write_request::_internal_mutable_data() {
   
   return data_.Mutable(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline std::string* write_request::release_data() {
-  // @@protoc_insertion_point(field_release:write_request.data)
+  // @@protoc_insertion_point(field_release:osd.write_request.data)
   return data_.Release(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline void write_request::set_allocated_data(std::string* data) {
@@ -1976,10 +1952,10 @@ inline void write_request::set_allocated_data(std::string* data) {
   }
   data_.SetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), data,
       GetArena());
-  // @@protoc_insertion_point(field_set_allocated:write_request.data)
+  // @@protoc_insertion_point(field_set_allocated:osd.write_request.data)
 }
 inline std::string* write_request::unsafe_arena_release_data() {
-  // @@protoc_insertion_point(field_unsafe_arena_release:write_request.data)
+  // @@protoc_insertion_point(field_unsafe_arena_release:osd.write_request.data)
   GOOGLE_DCHECK(GetArena() != nullptr);
   
   return data_.UnsafeArenaRelease(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
@@ -1995,7 +1971,7 @@ inline void write_request::unsafe_arena_set_allocated_data(
   }
   data_.UnsafeArenaSetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
       data, GetArena());
-  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:write_request.data)
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:osd.write_request.data)
 }
 
 // -------------------------------------------------------------------
@@ -2010,7 +1986,7 @@ inline ::PROTOBUF_NAMESPACE_ID::int32 write_reply::_internal_state() const {
   return state_;
 }
 inline ::PROTOBUF_NAMESPACE_ID::int32 write_reply::state() const {
-  // @@protoc_insertion_point(field_get:write_reply.state)
+  // @@protoc_insertion_point(field_get:osd.write_reply.state)
   return _internal_state();
 }
 inline void write_reply::_internal_set_state(::PROTOBUF_NAMESPACE_ID::int32 value) {
@@ -2019,23 +1995,23 @@ inline void write_reply::_internal_set_state(::PROTOBUF_NAMESPACE_ID::int32 valu
 }
 inline void write_reply::set_state(::PROTOBUF_NAMESPACE_ID::int32 value) {
   _internal_set_state(value);
-  // @@protoc_insertion_point(field_set:write_reply.state)
+  // @@protoc_insertion_point(field_set:osd.write_reply.state)
 }
 
-// string str = 2;
+// bytes str = 2;
 inline void write_reply::clear_str() {
   str_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline const std::string& write_reply::str() const {
-  // @@protoc_insertion_point(field_get:write_reply.str)
+  // @@protoc_insertion_point(field_get:osd.write_reply.str)
   return _internal_str();
 }
 inline void write_reply::set_str(const std::string& value) {
   _internal_set_str(value);
-  // @@protoc_insertion_point(field_set:write_reply.str)
+  // @@protoc_insertion_point(field_set:osd.write_reply.str)
 }
 inline std::string* write_reply::mutable_str() {
-  // @@protoc_insertion_point(field_mutable:write_reply.str)
+  // @@protoc_insertion_point(field_mutable:osd.write_reply.str)
   return _internal_mutable_str();
 }
 inline const std::string& write_reply::_internal_str() const {
@@ -2049,28 +2025,28 @@ inline void write_reply::set_str(std::string&& value) {
   
   str_.Set(
     &::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::move(value), GetArena());
-  // @@protoc_insertion_point(field_set_rvalue:write_reply.str)
+  // @@protoc_insertion_point(field_set_rvalue:osd.write_reply.str)
 }
 inline void write_reply::set_str(const char* value) {
   GOOGLE_DCHECK(value != nullptr);
   
   str_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(value),
               GetArena());
-  // @@protoc_insertion_point(field_set_char:write_reply.str)
+  // @@protoc_insertion_point(field_set_char:osd.write_reply.str)
 }
-inline void write_reply::set_str(const char* value,
+inline void write_reply::set_str(const void* value,
     size_t size) {
   
   str_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(
       reinterpret_cast<const char*>(value), size), GetArena());
-  // @@protoc_insertion_point(field_set_pointer:write_reply.str)
+  // @@protoc_insertion_point(field_set_pointer:osd.write_reply.str)
 }
 inline std::string* write_reply::_internal_mutable_str() {
   
   return str_.Mutable(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline std::string* write_reply::release_str() {
-  // @@protoc_insertion_point(field_release:write_reply.str)
+  // @@protoc_insertion_point(field_release:osd.write_reply.str)
   return str_.Release(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline void write_reply::set_allocated_str(std::string* str) {
@@ -2081,10 +2057,10 @@ inline void write_reply::set_allocated_str(std::string* str) {
   }
   str_.SetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), str,
       GetArena());
-  // @@protoc_insertion_point(field_set_allocated:write_reply.str)
+  // @@protoc_insertion_point(field_set_allocated:osd.write_reply.str)
 }
 inline std::string* write_reply::unsafe_arena_release_str() {
-  // @@protoc_insertion_point(field_unsafe_arena_release:write_reply.str)
+  // @@protoc_insertion_point(field_unsafe_arena_release:osd.write_reply.str)
   GOOGLE_DCHECK(GetArena() != nullptr);
   
   return str_.UnsafeArenaRelease(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
@@ -2100,7 +2076,7 @@ inline void write_reply::unsafe_arena_set_allocated_str(
   }
   str_.UnsafeArenaSetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
       str, GetArena());
-  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:write_reply.str)
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:osd.write_reply.str)
 }
 
 // -------------------------------------------------------------------
@@ -2115,7 +2091,7 @@ inline ::PROTOBUF_NAMESPACE_ID::uint64 read_request::_internal_pool_id() const {
   return pool_id_;
 }
 inline ::PROTOBUF_NAMESPACE_ID::uint64 read_request::pool_id() const {
-  // @@protoc_insertion_point(field_get:read_request.pool_id)
+  // @@protoc_insertion_point(field_get:osd.read_request.pool_id)
   return _internal_pool_id();
 }
 inline void read_request::_internal_set_pool_id(::PROTOBUF_NAMESPACE_ID::uint64 value) {
@@ -2124,7 +2100,7 @@ inline void read_request::_internal_set_pool_id(::PROTOBUF_NAMESPACE_ID::uint64 
 }
 inline void read_request::set_pool_id(::PROTOBUF_NAMESPACE_ID::uint64 value) {
   _internal_set_pool_id(value);
-  // @@protoc_insertion_point(field_set:read_request.pool_id)
+  // @@protoc_insertion_point(field_set:osd.read_request.pool_id)
 }
 
 // uint64 pg_id = 2;
@@ -2135,7 +2111,7 @@ inline ::PROTOBUF_NAMESPACE_ID::uint64 read_request::_internal_pg_id() const {
   return pg_id_;
 }
 inline ::PROTOBUF_NAMESPACE_ID::uint64 read_request::pg_id() const {
-  // @@protoc_insertion_point(field_get:read_request.pg_id)
+  // @@protoc_insertion_point(field_get:osd.read_request.pg_id)
   return _internal_pg_id();
 }
 inline void read_request::_internal_set_pg_id(::PROTOBUF_NAMESPACE_ID::uint64 value) {
@@ -2144,23 +2120,23 @@ inline void read_request::_internal_set_pg_id(::PROTOBUF_NAMESPACE_ID::uint64 va
 }
 inline void read_request::set_pg_id(::PROTOBUF_NAMESPACE_ID::uint64 value) {
   _internal_set_pg_id(value);
-  // @@protoc_insertion_point(field_set:read_request.pg_id)
+  // @@protoc_insertion_point(field_set:osd.read_request.pg_id)
 }
 
-// string object_name = 3;
+// bytes object_name = 3;
 inline void read_request::clear_object_name() {
   object_name_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline const std::string& read_request::object_name() const {
-  // @@protoc_insertion_point(field_get:read_request.object_name)
+  // @@protoc_insertion_point(field_get:osd.read_request.object_name)
   return _internal_object_name();
 }
 inline void read_request::set_object_name(const std::string& value) {
   _internal_set_object_name(value);
-  // @@protoc_insertion_point(field_set:read_request.object_name)
+  // @@protoc_insertion_point(field_set:osd.read_request.object_name)
 }
 inline std::string* read_request::mutable_object_name() {
-  // @@protoc_insertion_point(field_mutable:read_request.object_name)
+  // @@protoc_insertion_point(field_mutable:osd.read_request.object_name)
   return _internal_mutable_object_name();
 }
 inline const std::string& read_request::_internal_object_name() const {
@@ -2174,28 +2150,28 @@ inline void read_request::set_object_name(std::string&& value) {
   
   object_name_.Set(
     &::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::move(value), GetArena());
-  // @@protoc_insertion_point(field_set_rvalue:read_request.object_name)
+  // @@protoc_insertion_point(field_set_rvalue:osd.read_request.object_name)
 }
 inline void read_request::set_object_name(const char* value) {
   GOOGLE_DCHECK(value != nullptr);
   
   object_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(value),
               GetArena());
-  // @@protoc_insertion_point(field_set_char:read_request.object_name)
+  // @@protoc_insertion_point(field_set_char:osd.read_request.object_name)
 }
-inline void read_request::set_object_name(const char* value,
+inline void read_request::set_object_name(const void* value,
     size_t size) {
   
   object_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(
       reinterpret_cast<const char*>(value), size), GetArena());
-  // @@protoc_insertion_point(field_set_pointer:read_request.object_name)
+  // @@protoc_insertion_point(field_set_pointer:osd.read_request.object_name)
 }
 inline std::string* read_request::_internal_mutable_object_name() {
   
   return object_name_.Mutable(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline std::string* read_request::release_object_name() {
-  // @@protoc_insertion_point(field_release:read_request.object_name)
+  // @@protoc_insertion_point(field_release:osd.read_request.object_name)
   return object_name_.Release(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline void read_request::set_allocated_object_name(std::string* object_name) {
@@ -2206,10 +2182,10 @@ inline void read_request::set_allocated_object_name(std::string* object_name) {
   }
   object_name_.SetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), object_name,
       GetArena());
-  // @@protoc_insertion_point(field_set_allocated:read_request.object_name)
+  // @@protoc_insertion_point(field_set_allocated:osd.read_request.object_name)
 }
 inline std::string* read_request::unsafe_arena_release_object_name() {
-  // @@protoc_insertion_point(field_unsafe_arena_release:read_request.object_name)
+  // @@protoc_insertion_point(field_unsafe_arena_release:osd.read_request.object_name)
   GOOGLE_DCHECK(GetArena() != nullptr);
   
   return object_name_.UnsafeArenaRelease(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
@@ -2225,7 +2201,7 @@ inline void read_request::unsafe_arena_set_allocated_object_name(
   }
   object_name_.UnsafeArenaSetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
       object_name, GetArena());
-  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:read_request.object_name)
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:osd.read_request.object_name)
 }
 
 // uint64 offset = 4;
@@ -2236,7 +2212,7 @@ inline ::PROTOBUF_NAMESPACE_ID::uint64 read_request::_internal_offset() const {
   return offset_;
 }
 inline ::PROTOBUF_NAMESPACE_ID::uint64 read_request::offset() const {
-  // @@protoc_insertion_point(field_get:read_request.offset)
+  // @@protoc_insertion_point(field_get:osd.read_request.offset)
   return _internal_offset();
 }
 inline void read_request::_internal_set_offset(::PROTOBUF_NAMESPACE_ID::uint64 value) {
@@ -2245,7 +2221,7 @@ inline void read_request::_internal_set_offset(::PROTOBUF_NAMESPACE_ID::uint64 v
 }
 inline void read_request::set_offset(::PROTOBUF_NAMESPACE_ID::uint64 value) {
   _internal_set_offset(value);
-  // @@protoc_insertion_point(field_set:read_request.offset)
+  // @@protoc_insertion_point(field_set:osd.read_request.offset)
 }
 
 // uint64 length = 5;
@@ -2256,7 +2232,7 @@ inline ::PROTOBUF_NAMESPACE_ID::uint64 read_request::_internal_length() const {
   return length_;
 }
 inline ::PROTOBUF_NAMESPACE_ID::uint64 read_request::length() const {
-  // @@protoc_insertion_point(field_get:read_request.length)
+  // @@protoc_insertion_point(field_get:osd.read_request.length)
   return _internal_length();
 }
 inline void read_request::_internal_set_length(::PROTOBUF_NAMESPACE_ID::uint64 value) {
@@ -2265,7 +2241,7 @@ inline void read_request::_internal_set_length(::PROTOBUF_NAMESPACE_ID::uint64 v
 }
 inline void read_request::set_length(::PROTOBUF_NAMESPACE_ID::uint64 value) {
   _internal_set_length(value);
-  // @@protoc_insertion_point(field_set:read_request.length)
+  // @@protoc_insertion_point(field_set:osd.read_request.length)
 }
 
 // -------------------------------------------------------------------
@@ -2280,7 +2256,7 @@ inline ::PROTOBUF_NAMESPACE_ID::int32 read_reply::_internal_state() const {
   return state_;
 }
 inline ::PROTOBUF_NAMESPACE_ID::int32 read_reply::state() const {
-  // @@protoc_insertion_point(field_get:read_reply.state)
+  // @@protoc_insertion_point(field_get:osd.read_reply.state)
   return _internal_state();
 }
 inline void read_reply::_internal_set_state(::PROTOBUF_NAMESPACE_ID::int32 value) {
@@ -2289,23 +2265,23 @@ inline void read_reply::_internal_set_state(::PROTOBUF_NAMESPACE_ID::int32 value
 }
 inline void read_reply::set_state(::PROTOBUF_NAMESPACE_ID::int32 value) {
   _internal_set_state(value);
-  // @@protoc_insertion_point(field_set:read_reply.state)
+  // @@protoc_insertion_point(field_set:osd.read_reply.state)
 }
 
-// string data = 2;
+// bytes data = 2;
 inline void read_reply::clear_data() {
   data_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline const std::string& read_reply::data() const {
-  // @@protoc_insertion_point(field_get:read_reply.data)
+  // @@protoc_insertion_point(field_get:osd.read_reply.data)
   return _internal_data();
 }
 inline void read_reply::set_data(const std::string& value) {
   _internal_set_data(value);
-  // @@protoc_insertion_point(field_set:read_reply.data)
+  // @@protoc_insertion_point(field_set:osd.read_reply.data)
 }
 inline std::string* read_reply::mutable_data() {
-  // @@protoc_insertion_point(field_mutable:read_reply.data)
+  // @@protoc_insertion_point(field_mutable:osd.read_reply.data)
   return _internal_mutable_data();
 }
 inline const std::string& read_reply::_internal_data() const {
@@ -2319,28 +2295,28 @@ inline void read_reply::set_data(std::string&& value) {
   
   data_.Set(
     &::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::move(value), GetArena());
-  // @@protoc_insertion_point(field_set_rvalue:read_reply.data)
+  // @@protoc_insertion_point(field_set_rvalue:osd.read_reply.data)
 }
 inline void read_reply::set_data(const char* value) {
   GOOGLE_DCHECK(value != nullptr);
   
   data_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(value),
               GetArena());
-  // @@protoc_insertion_point(field_set_char:read_reply.data)
+  // @@protoc_insertion_point(field_set_char:osd.read_reply.data)
 }
-inline void read_reply::set_data(const char* value,
+inline void read_reply::set_data(const void* value,
     size_t size) {
   
   data_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(
       reinterpret_cast<const char*>(value), size), GetArena());
-  // @@protoc_insertion_point(field_set_pointer:read_reply.data)
+  // @@protoc_insertion_point(field_set_pointer:osd.read_reply.data)
 }
 inline std::string* read_reply::_internal_mutable_data() {
   
   return data_.Mutable(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline std::string* read_reply::release_data() {
-  // @@protoc_insertion_point(field_release:read_reply.data)
+  // @@protoc_insertion_point(field_release:osd.read_reply.data)
   return data_.Release(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline void read_reply::set_allocated_data(std::string* data) {
@@ -2351,10 +2327,10 @@ inline void read_reply::set_allocated_data(std::string* data) {
   }
   data_.SetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), data,
       GetArena());
-  // @@protoc_insertion_point(field_set_allocated:read_reply.data)
+  // @@protoc_insertion_point(field_set_allocated:osd.read_reply.data)
 }
 inline std::string* read_reply::unsafe_arena_release_data() {
-  // @@protoc_insertion_point(field_unsafe_arena_release:read_reply.data)
+  // @@protoc_insertion_point(field_unsafe_arena_release:osd.read_reply.data)
   GOOGLE_DCHECK(GetArena() != nullptr);
   
   return data_.UnsafeArenaRelease(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
@@ -2370,7 +2346,7 @@ inline void read_reply::unsafe_arena_set_allocated_data(
   }
   data_.UnsafeArenaSetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
       data, GetArena());
-  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:read_reply.data)
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:osd.read_reply.data)
 }
 
 // -------------------------------------------------------------------
@@ -2385,7 +2361,7 @@ inline ::PROTOBUF_NAMESPACE_ID::uint64 delete_request::_internal_pool_id() const
   return pool_id_;
 }
 inline ::PROTOBUF_NAMESPACE_ID::uint64 delete_request::pool_id() const {
-  // @@protoc_insertion_point(field_get:delete_request.pool_id)
+  // @@protoc_insertion_point(field_get:osd.delete_request.pool_id)
   return _internal_pool_id();
 }
 inline void delete_request::_internal_set_pool_id(::PROTOBUF_NAMESPACE_ID::uint64 value) {
@@ -2394,7 +2370,7 @@ inline void delete_request::_internal_set_pool_id(::PROTOBUF_NAMESPACE_ID::uint6
 }
 inline void delete_request::set_pool_id(::PROTOBUF_NAMESPACE_ID::uint64 value) {
   _internal_set_pool_id(value);
-  // @@protoc_insertion_point(field_set:delete_request.pool_id)
+  // @@protoc_insertion_point(field_set:osd.delete_request.pool_id)
 }
 
 // uint64 pg_id = 2;
@@ -2405,7 +2381,7 @@ inline ::PROTOBUF_NAMESPACE_ID::uint64 delete_request::_internal_pg_id() const {
   return pg_id_;
 }
 inline ::PROTOBUF_NAMESPACE_ID::uint64 delete_request::pg_id() const {
-  // @@protoc_insertion_point(field_get:delete_request.pg_id)
+  // @@protoc_insertion_point(field_get:osd.delete_request.pg_id)
   return _internal_pg_id();
 }
 inline void delete_request::_internal_set_pg_id(::PROTOBUF_NAMESPACE_ID::uint64 value) {
@@ -2414,23 +2390,23 @@ inline void delete_request::_internal_set_pg_id(::PROTOBUF_NAMESPACE_ID::uint64 
 }
 inline void delete_request::set_pg_id(::PROTOBUF_NAMESPACE_ID::uint64 value) {
   _internal_set_pg_id(value);
-  // @@protoc_insertion_point(field_set:delete_request.pg_id)
+  // @@protoc_insertion_point(field_set:osd.delete_request.pg_id)
 }
 
-// string object_name = 3;
+// bytes object_name = 3;
 inline void delete_request::clear_object_name() {
   object_name_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline const std::string& delete_request::object_name() const {
-  // @@protoc_insertion_point(field_get:delete_request.object_name)
+  // @@protoc_insertion_point(field_get:osd.delete_request.object_name)
   return _internal_object_name();
 }
 inline void delete_request::set_object_name(const std::string& value) {
   _internal_set_object_name(value);
-  // @@protoc_insertion_point(field_set:delete_request.object_name)
+  // @@protoc_insertion_point(field_set:osd.delete_request.object_name)
 }
 inline std::string* delete_request::mutable_object_name() {
-  // @@protoc_insertion_point(field_mutable:delete_request.object_name)
+  // @@protoc_insertion_point(field_mutable:osd.delete_request.object_name)
   return _internal_mutable_object_name();
 }
 inline const std::string& delete_request::_internal_object_name() const {
@@ -2444,28 +2420,28 @@ inline void delete_request::set_object_name(std::string&& value) {
   
   object_name_.Set(
     &::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::move(value), GetArena());
-  // @@protoc_insertion_point(field_set_rvalue:delete_request.object_name)
+  // @@protoc_insertion_point(field_set_rvalue:osd.delete_request.object_name)
 }
 inline void delete_request::set_object_name(const char* value) {
   GOOGLE_DCHECK(value != nullptr);
   
   object_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(value),
               GetArena());
-  // @@protoc_insertion_point(field_set_char:delete_request.object_name)
+  // @@protoc_insertion_point(field_set_char:osd.delete_request.object_name)
 }
-inline void delete_request::set_object_name(const char* value,
+inline void delete_request::set_object_name(const void* value,
     size_t size) {
   
   object_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(
       reinterpret_cast<const char*>(value), size), GetArena());
-  // @@protoc_insertion_point(field_set_pointer:delete_request.object_name)
+  // @@protoc_insertion_point(field_set_pointer:osd.delete_request.object_name)
 }
 inline std::string* delete_request::_internal_mutable_object_name() {
   
   return object_name_.Mutable(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline std::string* delete_request::release_object_name() {
-  // @@protoc_insertion_point(field_release:delete_request.object_name)
+  // @@protoc_insertion_point(field_release:osd.delete_request.object_name)
   return object_name_.Release(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline void delete_request::set_allocated_object_name(std::string* object_name) {
@@ -2476,10 +2452,10 @@ inline void delete_request::set_allocated_object_name(std::string* object_name) 
   }
   object_name_.SetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), object_name,
       GetArena());
-  // @@protoc_insertion_point(field_set_allocated:delete_request.object_name)
+  // @@protoc_insertion_point(field_set_allocated:osd.delete_request.object_name)
 }
 inline std::string* delete_request::unsafe_arena_release_object_name() {
-  // @@protoc_insertion_point(field_unsafe_arena_release:delete_request.object_name)
+  // @@protoc_insertion_point(field_unsafe_arena_release:osd.delete_request.object_name)
   GOOGLE_DCHECK(GetArena() != nullptr);
   
   return object_name_.UnsafeArenaRelease(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
@@ -2495,7 +2471,7 @@ inline void delete_request::unsafe_arena_set_allocated_object_name(
   }
   object_name_.UnsafeArenaSetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
       object_name, GetArena());
-  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:delete_request.object_name)
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:osd.delete_request.object_name)
 }
 
 // -------------------------------------------------------------------
@@ -2510,7 +2486,7 @@ inline ::PROTOBUF_NAMESPACE_ID::int32 delete_reply::_internal_state() const {
   return state_;
 }
 inline ::PROTOBUF_NAMESPACE_ID::int32 delete_reply::state() const {
-  // @@protoc_insertion_point(field_get:delete_reply.state)
+  // @@protoc_insertion_point(field_get:osd.delete_reply.state)
   return _internal_state();
 }
 inline void delete_reply::_internal_set_state(::PROTOBUF_NAMESPACE_ID::int32 value) {
@@ -2519,23 +2495,23 @@ inline void delete_reply::_internal_set_state(::PROTOBUF_NAMESPACE_ID::int32 val
 }
 inline void delete_reply::set_state(::PROTOBUF_NAMESPACE_ID::int32 value) {
   _internal_set_state(value);
-  // @@protoc_insertion_point(field_set:delete_reply.state)
+  // @@protoc_insertion_point(field_set:osd.delete_reply.state)
 }
 
-// string str = 2;
+// bytes str = 2;
 inline void delete_reply::clear_str() {
   str_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline const std::string& delete_reply::str() const {
-  // @@protoc_insertion_point(field_get:delete_reply.str)
+  // @@protoc_insertion_point(field_get:osd.delete_reply.str)
   return _internal_str();
 }
 inline void delete_reply::set_str(const std::string& value) {
   _internal_set_str(value);
-  // @@protoc_insertion_point(field_set:delete_reply.str)
+  // @@protoc_insertion_point(field_set:osd.delete_reply.str)
 }
 inline std::string* delete_reply::mutable_str() {
-  // @@protoc_insertion_point(field_mutable:delete_reply.str)
+  // @@protoc_insertion_point(field_mutable:osd.delete_reply.str)
   return _internal_mutable_str();
 }
 inline const std::string& delete_reply::_internal_str() const {
@@ -2549,28 +2525,28 @@ inline void delete_reply::set_str(std::string&& value) {
   
   str_.Set(
     &::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::move(value), GetArena());
-  // @@protoc_insertion_point(field_set_rvalue:delete_reply.str)
+  // @@protoc_insertion_point(field_set_rvalue:osd.delete_reply.str)
 }
 inline void delete_reply::set_str(const char* value) {
   GOOGLE_DCHECK(value != nullptr);
   
   str_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(value),
               GetArena());
-  // @@protoc_insertion_point(field_set_char:delete_reply.str)
+  // @@protoc_insertion_point(field_set_char:osd.delete_reply.str)
 }
-inline void delete_reply::set_str(const char* value,
+inline void delete_reply::set_str(const void* value,
     size_t size) {
   
   str_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(
       reinterpret_cast<const char*>(value), size), GetArena());
-  // @@protoc_insertion_point(field_set_pointer:delete_reply.str)
+  // @@protoc_insertion_point(field_set_pointer:osd.delete_reply.str)
 }
 inline std::string* delete_reply::_internal_mutable_str() {
   
   return str_.Mutable(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline std::string* delete_reply::release_str() {
-  // @@protoc_insertion_point(field_release:delete_reply.str)
+  // @@protoc_insertion_point(field_release:osd.delete_reply.str)
   return str_.Release(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline void delete_reply::set_allocated_str(std::string* str) {
@@ -2581,10 +2557,10 @@ inline void delete_reply::set_allocated_str(std::string* str) {
   }
   str_.SetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), str,
       GetArena());
-  // @@protoc_insertion_point(field_set_allocated:delete_reply.str)
+  // @@protoc_insertion_point(field_set_allocated:osd.delete_reply.str)
 }
 inline std::string* delete_reply::unsafe_arena_release_str() {
-  // @@protoc_insertion_point(field_unsafe_arena_release:delete_reply.str)
+  // @@protoc_insertion_point(field_unsafe_arena_release:osd.delete_reply.str)
   GOOGLE_DCHECK(GetArena() != nullptr);
   
   return str_.UnsafeArenaRelease(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
@@ -2600,27 +2576,27 @@ inline void delete_reply::unsafe_arena_set_allocated_str(
   }
   str_.UnsafeArenaSetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
       str, GetArena());
-  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:delete_reply.str)
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:osd.delete_reply.str)
 }
 
 // -------------------------------------------------------------------
 
 // write_cmd
 
-// string object_name = 1;
+// bytes object_name = 1;
 inline void write_cmd::clear_object_name() {
   object_name_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline const std::string& write_cmd::object_name() const {
-  // @@protoc_insertion_point(field_get:write_cmd.object_name)
+  // @@protoc_insertion_point(field_get:osd.write_cmd.object_name)
   return _internal_object_name();
 }
 inline void write_cmd::set_object_name(const std::string& value) {
   _internal_set_object_name(value);
-  // @@protoc_insertion_point(field_set:write_cmd.object_name)
+  // @@protoc_insertion_point(field_set:osd.write_cmd.object_name)
 }
 inline std::string* write_cmd::mutable_object_name() {
-  // @@protoc_insertion_point(field_mutable:write_cmd.object_name)
+  // @@protoc_insertion_point(field_mutable:osd.write_cmd.object_name)
   return _internal_mutable_object_name();
 }
 inline const std::string& write_cmd::_internal_object_name() const {
@@ -2634,28 +2610,28 @@ inline void write_cmd::set_object_name(std::string&& value) {
   
   object_name_.Set(
     &::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::move(value), GetArena());
-  // @@protoc_insertion_point(field_set_rvalue:write_cmd.object_name)
+  // @@protoc_insertion_point(field_set_rvalue:osd.write_cmd.object_name)
 }
 inline void write_cmd::set_object_name(const char* value) {
   GOOGLE_DCHECK(value != nullptr);
   
   object_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(value),
               GetArena());
-  // @@protoc_insertion_point(field_set_char:write_cmd.object_name)
+  // @@protoc_insertion_point(field_set_char:osd.write_cmd.object_name)
 }
-inline void write_cmd::set_object_name(const char* value,
+inline void write_cmd::set_object_name(const void* value,
     size_t size) {
   
   object_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(
       reinterpret_cast<const char*>(value), size), GetArena());
-  // @@protoc_insertion_point(field_set_pointer:write_cmd.object_name)
+  // @@protoc_insertion_point(field_set_pointer:osd.write_cmd.object_name)
 }
 inline std::string* write_cmd::_internal_mutable_object_name() {
   
   return object_name_.Mutable(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline std::string* write_cmd::release_object_name() {
-  // @@protoc_insertion_point(field_release:write_cmd.object_name)
+  // @@protoc_insertion_point(field_release:osd.write_cmd.object_name)
   return object_name_.Release(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline void write_cmd::set_allocated_object_name(std::string* object_name) {
@@ -2666,10 +2642,10 @@ inline void write_cmd::set_allocated_object_name(std::string* object_name) {
   }
   object_name_.SetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), object_name,
       GetArena());
-  // @@protoc_insertion_point(field_set_allocated:write_cmd.object_name)
+  // @@protoc_insertion_point(field_set_allocated:osd.write_cmd.object_name)
 }
 inline std::string* write_cmd::unsafe_arena_release_object_name() {
-  // @@protoc_insertion_point(field_unsafe_arena_release:write_cmd.object_name)
+  // @@protoc_insertion_point(field_unsafe_arena_release:osd.write_cmd.object_name)
   GOOGLE_DCHECK(GetArena() != nullptr);
   
   return object_name_.UnsafeArenaRelease(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
@@ -2685,7 +2661,7 @@ inline void write_cmd::unsafe_arena_set_allocated_object_name(
   }
   object_name_.UnsafeArenaSetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
       object_name, GetArena());
-  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:write_cmd.object_name)
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:osd.write_cmd.object_name)
 }
 
 // uint64 offset = 2;
@@ -2696,7 +2672,7 @@ inline ::PROTOBUF_NAMESPACE_ID::uint64 write_cmd::_internal_offset() const {
   return offset_;
 }
 inline ::PROTOBUF_NAMESPACE_ID::uint64 write_cmd::offset() const {
-  // @@protoc_insertion_point(field_get:write_cmd.offset)
+  // @@protoc_insertion_point(field_get:osd.write_cmd.offset)
   return _internal_offset();
 }
 inline void write_cmd::_internal_set_offset(::PROTOBUF_NAMESPACE_ID::uint64 value) {
@@ -2705,108 +2681,27 @@ inline void write_cmd::_internal_set_offset(::PROTOBUF_NAMESPACE_ID::uint64 valu
 }
 inline void write_cmd::set_offset(::PROTOBUF_NAMESPACE_ID::uint64 value) {
   _internal_set_offset(value);
-  // @@protoc_insertion_point(field_set:write_cmd.offset)
-}
-
-// bytes buf = 3;
-inline void write_cmd::clear_buf() {
-  buf_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
-}
-inline const std::string& write_cmd::buf() const {
-  // @@protoc_insertion_point(field_get:write_cmd.buf)
-  return _internal_buf();
-}
-inline void write_cmd::set_buf(const std::string& value) {
-  _internal_set_buf(value);
-  // @@protoc_insertion_point(field_set:write_cmd.buf)
-}
-inline std::string* write_cmd::mutable_buf() {
-  // @@protoc_insertion_point(field_mutable:write_cmd.buf)
-  return _internal_mutable_buf();
-}
-inline const std::string& write_cmd::_internal_buf() const {
-  return buf_.Get();
-}
-inline void write_cmd::_internal_set_buf(const std::string& value) {
-  
-  buf_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), value, GetArena());
-}
-inline void write_cmd::set_buf(std::string&& value) {
-  
-  buf_.Set(
-    &::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::move(value), GetArena());
-  // @@protoc_insertion_point(field_set_rvalue:write_cmd.buf)
-}
-inline void write_cmd::set_buf(const char* value) {
-  GOOGLE_DCHECK(value != nullptr);
-  
-  buf_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(value),
-              GetArena());
-  // @@protoc_insertion_point(field_set_char:write_cmd.buf)
-}
-inline void write_cmd::set_buf(const void* value,
-    size_t size) {
-  
-  buf_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(
-      reinterpret_cast<const char*>(value), size), GetArena());
-  // @@protoc_insertion_point(field_set_pointer:write_cmd.buf)
-}
-inline std::string* write_cmd::_internal_mutable_buf() {
-  
-  return buf_.Mutable(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
-}
-inline std::string* write_cmd::release_buf() {
-  // @@protoc_insertion_point(field_release:write_cmd.buf)
-  return buf_.Release(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
-}
-inline void write_cmd::set_allocated_buf(std::string* buf) {
-  if (buf != nullptr) {
-    
-  } else {
-    
-  }
-  buf_.SetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), buf,
-      GetArena());
-  // @@protoc_insertion_point(field_set_allocated:write_cmd.buf)
-}
-inline std::string* write_cmd::unsafe_arena_release_buf() {
-  // @@protoc_insertion_point(field_unsafe_arena_release:write_cmd.buf)
-  GOOGLE_DCHECK(GetArena() != nullptr);
-  
-  return buf_.UnsafeArenaRelease(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
-      GetArena());
-}
-inline void write_cmd::unsafe_arena_set_allocated_buf(
-    std::string* buf) {
-  GOOGLE_DCHECK(GetArena() != nullptr);
-  if (buf != nullptr) {
-    
-  } else {
-    
-  }
-  buf_.UnsafeArenaSetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
-      buf, GetArena());
-  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:write_cmd.buf)
+  // @@protoc_insertion_point(field_set:osd.write_cmd.offset)
 }
 
 // -------------------------------------------------------------------
 
 // read_cmd
 
-// string object_name = 1;
+// bytes object_name = 1;
 inline void read_cmd::clear_object_name() {
   object_name_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline const std::string& read_cmd::object_name() const {
-  // @@protoc_insertion_point(field_get:read_cmd.object_name)
+  // @@protoc_insertion_point(field_get:osd.read_cmd.object_name)
   return _internal_object_name();
 }
 inline void read_cmd::set_object_name(const std::string& value) {
   _internal_set_object_name(value);
-  // @@protoc_insertion_point(field_set:read_cmd.object_name)
+  // @@protoc_insertion_point(field_set:osd.read_cmd.object_name)
 }
 inline std::string* read_cmd::mutable_object_name() {
-  // @@protoc_insertion_point(field_mutable:read_cmd.object_name)
+  // @@protoc_insertion_point(field_mutable:osd.read_cmd.object_name)
   return _internal_mutable_object_name();
 }
 inline const std::string& read_cmd::_internal_object_name() const {
@@ -2820,28 +2715,28 @@ inline void read_cmd::set_object_name(std::string&& value) {
   
   object_name_.Set(
     &::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::move(value), GetArena());
-  // @@protoc_insertion_point(field_set_rvalue:read_cmd.object_name)
+  // @@protoc_insertion_point(field_set_rvalue:osd.read_cmd.object_name)
 }
 inline void read_cmd::set_object_name(const char* value) {
   GOOGLE_DCHECK(value != nullptr);
   
   object_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(value),
               GetArena());
-  // @@protoc_insertion_point(field_set_char:read_cmd.object_name)
+  // @@protoc_insertion_point(field_set_char:osd.read_cmd.object_name)
 }
-inline void read_cmd::set_object_name(const char* value,
+inline void read_cmd::set_object_name(const void* value,
     size_t size) {
   
   object_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(
       reinterpret_cast<const char*>(value), size), GetArena());
-  // @@protoc_insertion_point(field_set_pointer:read_cmd.object_name)
+  // @@protoc_insertion_point(field_set_pointer:osd.read_cmd.object_name)
 }
 inline std::string* read_cmd::_internal_mutable_object_name() {
   
   return object_name_.Mutable(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline std::string* read_cmd::release_object_name() {
-  // @@protoc_insertion_point(field_release:read_cmd.object_name)
+  // @@protoc_insertion_point(field_release:osd.read_cmd.object_name)
   return object_name_.Release(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline void read_cmd::set_allocated_object_name(std::string* object_name) {
@@ -2852,10 +2747,10 @@ inline void read_cmd::set_allocated_object_name(std::string* object_name) {
   }
   object_name_.SetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), object_name,
       GetArena());
-  // @@protoc_insertion_point(field_set_allocated:read_cmd.object_name)
+  // @@protoc_insertion_point(field_set_allocated:osd.read_cmd.object_name)
 }
 inline std::string* read_cmd::unsafe_arena_release_object_name() {
-  // @@protoc_insertion_point(field_unsafe_arena_release:read_cmd.object_name)
+  // @@protoc_insertion_point(field_unsafe_arena_release:osd.read_cmd.object_name)
   GOOGLE_DCHECK(GetArena() != nullptr);
   
   return object_name_.UnsafeArenaRelease(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
@@ -2871,7 +2766,7 @@ inline void read_cmd::unsafe_arena_set_allocated_object_name(
   }
   object_name_.UnsafeArenaSetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
       object_name, GetArena());
-  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:read_cmd.object_name)
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:osd.read_cmd.object_name)
 }
 
 // uint64 offset = 2;
@@ -2882,7 +2777,7 @@ inline ::PROTOBUF_NAMESPACE_ID::uint64 read_cmd::_internal_offset() const {
   return offset_;
 }
 inline ::PROTOBUF_NAMESPACE_ID::uint64 read_cmd::offset() const {
-  // @@protoc_insertion_point(field_get:read_cmd.offset)
+  // @@protoc_insertion_point(field_get:osd.read_cmd.offset)
   return _internal_offset();
 }
 inline void read_cmd::_internal_set_offset(::PROTOBUF_NAMESPACE_ID::uint64 value) {
@@ -2891,7 +2786,7 @@ inline void read_cmd::_internal_set_offset(::PROTOBUF_NAMESPACE_ID::uint64 value
 }
 inline void read_cmd::set_offset(::PROTOBUF_NAMESPACE_ID::uint64 value) {
   _internal_set_offset(value);
-  // @@protoc_insertion_point(field_set:read_cmd.offset)
+  // @@protoc_insertion_point(field_set:osd.read_cmd.offset)
 }
 
 // uint64 length = 3;
@@ -2902,7 +2797,7 @@ inline ::PROTOBUF_NAMESPACE_ID::uint64 read_cmd::_internal_length() const {
   return length_;
 }
 inline ::PROTOBUF_NAMESPACE_ID::uint64 read_cmd::length() const {
-  // @@protoc_insertion_point(field_get:read_cmd.length)
+  // @@protoc_insertion_point(field_get:osd.read_cmd.length)
   return _internal_length();
 }
 inline void read_cmd::_internal_set_length(::PROTOBUF_NAMESPACE_ID::uint64 value) {
@@ -2911,27 +2806,27 @@ inline void read_cmd::_internal_set_length(::PROTOBUF_NAMESPACE_ID::uint64 value
 }
 inline void read_cmd::set_length(::PROTOBUF_NAMESPACE_ID::uint64 value) {
   _internal_set_length(value);
-  // @@protoc_insertion_point(field_set:read_cmd.length)
+  // @@protoc_insertion_point(field_set:osd.read_cmd.length)
 }
 
 // -------------------------------------------------------------------
 
 // delete_cmd
 
-// string object_name = 1;
+// bytes object_name = 1;
 inline void delete_cmd::clear_object_name() {
   object_name_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline const std::string& delete_cmd::object_name() const {
-  // @@protoc_insertion_point(field_get:delete_cmd.object_name)
+  // @@protoc_insertion_point(field_get:osd.delete_cmd.object_name)
   return _internal_object_name();
 }
 inline void delete_cmd::set_object_name(const std::string& value) {
   _internal_set_object_name(value);
-  // @@protoc_insertion_point(field_set:delete_cmd.object_name)
+  // @@protoc_insertion_point(field_set:osd.delete_cmd.object_name)
 }
 inline std::string* delete_cmd::mutable_object_name() {
-  // @@protoc_insertion_point(field_mutable:delete_cmd.object_name)
+  // @@protoc_insertion_point(field_mutable:osd.delete_cmd.object_name)
   return _internal_mutable_object_name();
 }
 inline const std::string& delete_cmd::_internal_object_name() const {
@@ -2945,28 +2840,28 @@ inline void delete_cmd::set_object_name(std::string&& value) {
   
   object_name_.Set(
     &::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::move(value), GetArena());
-  // @@protoc_insertion_point(field_set_rvalue:delete_cmd.object_name)
+  // @@protoc_insertion_point(field_set_rvalue:osd.delete_cmd.object_name)
 }
 inline void delete_cmd::set_object_name(const char* value) {
   GOOGLE_DCHECK(value != nullptr);
   
   object_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(value),
               GetArena());
-  // @@protoc_insertion_point(field_set_char:delete_cmd.object_name)
+  // @@protoc_insertion_point(field_set_char:osd.delete_cmd.object_name)
 }
-inline void delete_cmd::set_object_name(const char* value,
+inline void delete_cmd::set_object_name(const void* value,
     size_t size) {
   
   object_name_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(
       reinterpret_cast<const char*>(value), size), GetArena());
-  // @@protoc_insertion_point(field_set_pointer:delete_cmd.object_name)
+  // @@protoc_insertion_point(field_set_pointer:osd.delete_cmd.object_name)
 }
 inline std::string* delete_cmd::_internal_mutable_object_name() {
   
   return object_name_.Mutable(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline std::string* delete_cmd::release_object_name() {
-  // @@protoc_insertion_point(field_release:delete_cmd.object_name)
+  // @@protoc_insertion_point(field_release:osd.delete_cmd.object_name)
   return object_name_.Release(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
 }
 inline void delete_cmd::set_allocated_object_name(std::string* object_name) {
@@ -2977,10 +2872,10 @@ inline void delete_cmd::set_allocated_object_name(std::string* object_name) {
   }
   object_name_.SetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), object_name,
       GetArena());
-  // @@protoc_insertion_point(field_set_allocated:delete_cmd.object_name)
+  // @@protoc_insertion_point(field_set_allocated:osd.delete_cmd.object_name)
 }
 inline std::string* delete_cmd::unsafe_arena_release_object_name() {
-  // @@protoc_insertion_point(field_unsafe_arena_release:delete_cmd.object_name)
+  // @@protoc_insertion_point(field_unsafe_arena_release:osd.delete_cmd.object_name)
   GOOGLE_DCHECK(GetArena() != nullptr);
   
   return object_name_.UnsafeArenaRelease(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
@@ -2996,7 +2891,7 @@ inline void delete_cmd::unsafe_arena_set_allocated_object_name(
   }
   object_name_.UnsafeArenaSetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
       object_name, GetArena());
-  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:delete_cmd.object_name)
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:osd.delete_cmd.object_name)
 }
 
 #ifdef __GNUC__
@@ -3021,6 +2916,7 @@ inline void delete_cmd::unsafe_arena_set_allocated_object_name(
 
 // @@protoc_insertion_point(namespace_scope)
 
+}  // namespace osd
 
 // @@protoc_insertion_point(global_scope)
 

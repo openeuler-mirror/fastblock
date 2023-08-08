@@ -2,10 +2,10 @@
 #include "utils/utils.h"
 
 struct write_data_complete : public context{
-    write_reply* response;
+    osd::write_reply* response;
     google::protobuf::Closure* done;
 
-    write_data_complete(write_reply* _response, google::protobuf::Closure* _done)
+    write_data_complete(osd::write_reply* _response, google::protobuf::Closure* _done)
     : response(_response)
     , done(_done) {}
 
@@ -16,26 +16,25 @@ struct write_data_complete : public context{
 };
 
 void osd_service::process_write(google::protobuf::RpcController* controller,
-             const write_request* request,
-             write_reply* response,
+             const osd::write_request* request,
+             osd::write_reply* response,
              google::protobuf::Closure* done){
     auto pool_id = request->pool_id();
     auto pg_id = request->pg_id();
     uint32_t shard_id;
     _pm->get_pg_shard(pool_id, pg_id, shard_id);
     auto pg = _pm->get_pg(shard_id, pool_id, pg_id);
-    write_cmd cmd;
+    osd::write_cmd cmd;
     cmd.set_object_name(request->object_name());
     cmd.set_offset(request->offset());
-    cmd.set_buf(std::move(request->data()));
     std::string buf;
     cmd.SerializeToString(&buf);
 
     auto entry_ptr = std::make_shared<msg_entry_t>();
-    entry_ptr->set_type(RAFT_LOGTYPE_NORMAL);
-    auto data = entry_ptr->mutable_data();
-    data->set_obj_name(request->object_name());
-    data->set_buf(std::move(buf));
+    entry_ptr->set_type(RAFT_LOGTYPE_WRITE);
+    entry_ptr->set_obj_name(request->object_name());
+    entry_ptr->set_meta(std::move(buf));
+    entry_ptr->set_data(std::move(request->data()));
 
     write_data_complete *complete = new write_data_complete(response, done);
 
@@ -50,20 +49,20 @@ void osd_service::process_write(google::protobuf::RpcController* controller,
       });
 }
 
-void osd_service::process_read(::google::protobuf::RpcController* controller,
-             const ::read_request* request,
-             ::read_reply* response,
-             ::google::protobuf::Closure* done) {
+void osd_service::process_read(google::protobuf::RpcController* controller,
+             const osd::read_request* request,
+             osd::read_reply* response,
+             google::protobuf::Closure* done) {
     (void)controller;
     (void)request;
     (void)response;
     (void)done;
 }
 
-void osd_service::process_delete(::google::protobuf::RpcController* controller,
-             const ::delete_request* request,
-             ::delete_reply* response,
-             ::google::protobuf::Closure* done){
+void osd_service::process_delete(google::protobuf::RpcController* controller,
+             const osd::delete_request* request,
+             osd::delete_reply* response,
+             google::protobuf::Closure* done){
     (void)controller;
     (void)request;
     (void)response;

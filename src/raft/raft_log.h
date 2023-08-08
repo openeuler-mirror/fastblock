@@ -5,6 +5,8 @@
 #include "localstore/disk_log.h"
 #include "localstore/spdk_buffer.h"
 
+// #define ENABLE_LOG
+
 struct raft_cbs_t;
 
 class raft_log
@@ -26,16 +28,49 @@ public:
      * appended entries in 'n' */
     int log_append(std::vector<std::pair<std::shared_ptr<raft_entry_t>, context*>>& entries);
 
+    log_entry_t raft_entry_to_log_entry(raft_entry_t& raft_entry) {
+        log_entry_t entry;
+            
+        entry.index = raft_entry.idx();
+        entry.term_id = raft_entry.term();;
+        entry.size = raft_entry.data().size();
+        entry.meta = raft_entry.meta();
+        
+        if (entry.size % 4096 != 0) {
+            SPDK_ERRLOG("data size:%lu not align.\n", entry.size);
+            /// TODO: 怎么处理这个错误
+            return log_entry_t{};
+        }
+
+        auto datastr = raft_entry.data();
+        entry.data = make_buffer_list(entry.size / 4096);
+        int i = 0;
+        for (auto sbuf : entry.data) {
+            sbuf.append(datastr.c_str() + i * 4096, 4096);
+            i++;
+        }
+        return entry;
+    }
+
     void disk_append(raft_index_t start_idx, raft_index_t end_idx, context* complete){
-        std::vector<std::shared_ptr<raft_entry_t>> entries;
-        _entries.get_between(start_idx, end_idx, entries);
+        std::vector<std::shared_ptr<raft_entry_t>> raft_entries;
+        _entries.get_between(start_idx, end_idx, raft_entries);
+        SPDK_NOTICELOG("start_idx:%lu end_idx:%lu.\n", start_idx, end_idx);
+
         if(!_log){
             complete->complete(0);
             return;
         }
 #ifdef ENABLE_LOG
-        _log->disk_append(entries, 
+        std::vector<log_entry_t> log_entries;
+        for (auto& raft_entry : raft_entries) {
+            log_entries.emplace_back(raft_entry_to_log_entry(*raft_entry));
+        }
+
+        SPDK_NOTICELOG("disk_append size:%lu.\n", log_entries.size());
+        _log->append(log_entries, 
           [](void *arg, int rberrno){
+              SPDK_NOTICELOG("after disk_append.\n");
               context* ctx = (context*)arg;
               ctx->complete(rberrno);
           },

@@ -6,7 +6,6 @@
 #include "utils/units.h"
 #include "utils/varint.h"
 #include "utils/utils.h"
-#include "rpc/raft_msg.pb.h"
 
 #include <spdk/blob.h>
 #include <spdk/blob_bdev.h>
@@ -20,7 +19,6 @@
 #include <errno.h>
 
 class disk_log;
-// struct raft_entry_t;
 
 using log_op_complete = std::function<void (void *arg, int rberrno)>;
 using log_op_with_entry_complete = std::function<void (void *arg, log_entry_t&&, int rberrno)>;
@@ -56,34 +54,6 @@ public:
     disk_log(rolling_blob* rblob) : rblob(rblob), log_index(0) {}
     ~disk_log() { delete rblob; }
 
-    void disk_append(std::vector<std::shared_ptr<raft_entry_t>>& raft_entries, log_op_complete cb_fn, void* arg) {
-        std::vector<log_entry_t> log_entries;
-        for (auto& raft_entry : raft_entries) {
-            log_entry_t log_entry;
-            
-            log_entry.index = raft_entry->idx();
-            log_entry.term_id = raft_entry->term();;
-            log_entry.size = raft_entry->data().buf().size();
-            log_entry.data.obj_name = raft_entry->data().obj_name();
-            
-            if (log_entry.size % 4096 != 0) {
-                SPDK_ERRLOG("data size:%lu not align.\n", log_entry.size);
-                return;
-            }
-
-            auto datastr = raft_entry->data().buf();
-            log_entry.data.buf = make_buffer_list(log_entry.size / 4096);
-            int i = 0;
-            for (auto sbuf : log_entry.data.buf) {
-                sbuf.append(datastr.c_str() + i * 4096, 4096);
-                i++;
-            }
-
-            log_entries.emplace_back(std::move(log_entry));
-        }
-        append(log_entries, cb_fn, arg);
-    }
-
     void append(std::vector<log_entry_t>& entries, log_op_complete cb_fn, void* arg) {
         struct log_append_ctx* ctx = new log_append_ctx{ .cb_fn = cb_fn, .arg = arg, .log = this};
 
@@ -93,7 +63,7 @@ public:
             EncodeLogHeader(sbuf, entry);
 
             ctx->bl.append_buffer(sbuf);
-            ctx->bl.append_buffer(std::move(entry.data.buf));
+            ctx->bl.append_buffer(std::move(entry.data));
             ctx->idx_pos.push_back({entry.index, pos});
             pos += (entry.size + 4_KB);
         }
@@ -109,7 +79,7 @@ public:
         EncodeLogHeader(sbuf, entry);
 
         ctx->bl.append_buffer(sbuf);
-        ctx->bl.append_buffer(std::move(entry.data.buf));
+        ctx->bl.append_buffer(std::move(entry.data));
         ctx->idx_pos.push_back({entry.index, rblob->front_pos()});
 
         rblob->append(ctx->bl, log_append_done, ctx);
@@ -196,12 +166,12 @@ private:
           ctx->bl.trim_front();
           buffer_pool_put(sbuf);
         }
-        entry.data.buf.append_buffer(std::move(ctx->bl));
+        entry.data.append_buffer(std::move(ctx->bl));
 
 
         // 如果entry的数据还没读完
-        if (entry.size > entry.data.buf.bytes()) {
-          uint64_t remain = entry.size - entry.data.buf.bytes();
+        if (entry.size > entry.data.bytes()) {
+          uint64_t remain = entry.size - entry.data.bytes();
           ctx->bl = std::move(make_buffer_list(remain / 4096));
 
         //   SPDK_NOTICELOG("log read some, index:%lu size:%lu term:%lu name:%s, get:%lu remain:%lu, start:%lu len:%lu\n", 

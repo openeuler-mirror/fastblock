@@ -148,7 +148,7 @@ public:
             auto item = *iter;
             auto entry_ptr = item->entry;
             _idx_mcs.erase(entry_ptr->idx());
-            erase_mmcs_upper(entry_ptr->data().obj_name(), entry_ptr->idx());
+            erase_mmcs_upper(entry_ptr->obj_name(), entry_ptr->idx());
             iter = _cache.erase(iter);
             num--;
         }        
