@@ -17,8 +17,8 @@
 #include <functional>
 #include <list>
 #include <memory>
+#include <optional>
 #include <unordered_map>
-#include <unordered_set>
 
 namespace msg {
 namespace rdma {
@@ -76,7 +76,8 @@ public:
 
     public:
 
-        static void on_connected(void* arg, int) {
+        static void on_connected(void* arg, int status) {
+            SPDK_DEBUGLOG(msg, "connect status is %d\n", status);
             auto conn = reinterpret_cast<connection*>(arg);
             conn->set_connected();
         }
@@ -161,6 +162,10 @@ public:
         auto id() const noexcept { return _id; }
 
         void set_connected() noexcept { _connected = true; }
+
+        auto& host() noexcept { return _host; }
+
+        auto port() noexcept { return _port; }
 
         void connect(std::shared_ptr<::client_poll_group> pg) {
             SPDK_NOTICELOG("Connecting to %s:%d...\n", _host.c_str(), _port);
@@ -404,6 +409,11 @@ public:
         std::shared_ptr<std::list<std::shared_ptr<connection>>> _busy_priority_list{};
     };
 
+    struct connect_task_stack {
+        std::shared_ptr<connection> conn{nullptr};
+        std::optional<std::function<void()>> cb{std::nullopt};
+    };
+
 public:
 
     transport_client() {
@@ -470,11 +480,12 @@ public:
     }
 
     std::shared_ptr<connection>
-    emplace_connection(const connection::id_type id, std::string host, const uint16_t port) {
+    emplace_connection(const connection::id_type id, std::string host, const uint16_t port, std::optional<std::function<void()>> cb = std::nullopt) {
         auto conn = std::make_shared<connection>(id, host, port, _busy_connections, _busy_priority_connections);
         conn->connect(_pg);
-        SPDK_NOTICELOG("Connected to %s:%d\n", host.c_str(), port);
-        _connect_tasks.push_back(conn);
+        SPDK_NOTICELOG("Connecting to %s:%d\n", host.c_str(), port);
+        auto conn_stack = std::make_unique<connect_task_stack>(conn, cb);
+        _connect_tasks.push_back(std::move(conn_stack));
 
         return conn;
     }
@@ -490,10 +501,19 @@ public:
 
         auto task_iter = _connect_tasks.begin();
         auto* task = task_iter->get();
-        if (not task->is_connected()) {
+        if (not task->conn->is_connected()) {
             return true;
         }
-        _connections.emplace(task->id(), std::move(*task_iter));
+
+        SPDK_DEBUGLOG(
+          msg,
+          "Callback for connection(%s:%u)\n",
+          task->conn->host().c_str(), task->conn->port());
+
+        if (task->cb) {
+            (*task->cb)();
+        }
+        _connections.emplace(task->conn->id(), std::move(task->conn));
         _connect_tasks.erase(task_iter);
 
         return true;
@@ -521,7 +541,7 @@ public:
 private:
 
     ::spdk_poller* _poller{nullptr};
-    std::list<std::shared_ptr<connection>> _connect_tasks{};
+    std::list<std::unique_ptr<connect_task_stack>> _connect_tasks{};
     std::unordered_map<connection::id_type, std::shared_ptr<connection>> _connections{};
     std::shared_ptr<std::list<std::shared_ptr<connection>>> _busy_connections{
       std::make_shared<std::list<std::shared_ptr<connection>>>()};

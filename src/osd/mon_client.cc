@@ -1,10 +1,11 @@
-#include<string>
 #include "mon_client.h"
 #include "spdk/log.h"
 #include "spdk/thread.h"
 #include "spdk/string.h"
 #include "partition_manager.h"
 
+#include <string>
+#include <list>
 
 #define ACCEPT_TIMEOUT_US 1000
 #define GET_OSDMAP_US 3000000
@@ -13,7 +14,15 @@
 #define BUFFER_SIZE 65536
 #define ADDR_STR_LEN INET_ADDRSTRLEN
 
+SPDK_LOG_REGISTER_COMPONENT(mon)
+
 static char g_impl_name[] = "posix";
+struct mon_client_cluster_map_response_stack {
+	std::shared_ptr<msg::Response> response{nullptr};
+	size_t un_connected_count{0};
+};
+
+static std::list<std::unique_ptr<::mon_client_cluster_map_response_stack>> g_cluster_map_responses{};
 
 static int
 fbclient_sock_close_timeout_poll(void *arg)
@@ -44,10 +53,117 @@ mon_client::sock_quit(int _rc)
 	return 0;
 }
 
+static void fbclient_monitor_process_pg_map(mon_client* ctx, const msg::GetPgMapResponse& pg_map_response)
+{
+    auto& pv = pg_map_response.poolid_pgmapversion();
+    if (pv.empty()) {
+        SPDK_NOTICELOG("Empty pg map from cluster map response\n");
+        return;
+    }
+
+    auto& ec = pg_map_response.errorcode();
+    auto& pgs = pg_map_response.pgs();
+
+    SPDK_DEBUGLOG(mon, "ec count is %ld, pgs count is %ld\n", ec.size(), pgs.size());
+
+    for (auto& pair : ec)
+    {
+        if (pair.second != msg::GetPgMapErrorCode::pgMapGetOk)
+        {
+            SPDK_ERRLOG("ERROR: get pg map return error: %d\n", pair.second);
+            continue;
+        }
+        if (!pgs.contains(pair.first) || !pv.contains(pair.first))
+        {
+            SPDK_ERRLOG("pool %d has no pgmap, that is a error\r\n", pair.first);
+            //(fixme)
+            continue;
+        }
+
+        SPDK_DEBUGLOG(mon, "going to process pg with key %d\n", pair.first);
+        // this is a new pool, we don't know any thing about it, we trust
+        if (!ctx->pgmap.pool_pg_map.contains(pair.first))
+        {
+            ctx->pgmap.pool_version[pair.first] = pv.at(pair.first);
+
+            // we'd rather do copy from protobuf data structure
+            // clear pgmap for this pool
+            ctx->pgmap.pool_pg_map[pair.first].clear();
+            SPDK_DEBUGLOG(mon, "pgs size is %ld\n", pgs.size());
+
+            for (auto p : pgs)
+            {
+                // only print current pool
+                if (p.first == pair.first)
+                {
+                    for (auto pg : p.second.pi())
+                    {
+                        pg_info_t pit;
+                        std::vector<int> ol;
+                        pit.pgid = pg.pgid();
+                        // std::string osd_str = "";
+                        std::vector<osd_info_t> osds;
+                        for (auto osd : pg.osdid())
+                        {
+                            ol.push_back(osd);
+                            osds.push_back(ctx->osdmap.osd_map[osd]);
+                            // osd_str += std::to_string(osd) + ",";
+                        }
+                        SPDK_DEBUGLOG(mon, "core [%u] pool: %d pg: %d\n",
+                                spdk_env_get_current_core(), p.first, pit.pgid);
+                        pit.osd_list = std::move(ol);
+                        ctx->pgmap.pool_pg_map[pair.first][pg.pgid()] = std::move(pit);
+                        ctx->pm->create_partition(p.first, pg.pgid(), std::move(osds), pv.at(pair.first));
+                    }
+                    break;
+                }
+            }
+        }
+        else
+        {
+            // we receive message from existing pool
+            // according to our protocol, when there is a update, map vers
+            if (ctx->pgmap.pool_version[pair.first] < pv.at(pair.first))
+            {
+                // update pool_version
+                ctx->pgmap.pool_version[pair.first] = pv.at(pair.first);
+
+                // we trust monitor
+                ctx->pgmap.pool_pg_map.clear();
+                for (auto p : pgs)
+                {
+                    // only print current pool
+                    if (p.first == pair.first)
+                    {
+
+                        SPDK_NOTICELOG("pgs of pool:%d \r\n", p.first);
+                        for (auto pg : p.second.pi())
+                        {
+                            pg_info_t pit;
+                            std::vector<int> ol;
+                            pit.pgid = pg.pgid();
+                            for (auto osd : pg.osdid())
+                            {
+                                ol.push_back(osd);
+                            }
+                            pit.osd_list = std::move(ol);
+                            ctx->pgmap.pool_pg_map[pair.first][pit.pgid] = std::move(pit);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    return;
+}
+
 static int
 fbclient_monitor_rpc_processer(void *arg)
 {
 	mon_client *ctx = (mon_client *)arg;
+
 	int rc;
 	char buf_in[BUFFER_SIZE];
 
@@ -69,187 +185,168 @@ fbclient_monitor_rpc_processer(void *arg)
 
 	if (rc > 0)
 	{
-		// SPDK_NOTICELOG("got %d bytes of data\r\n", rc);
-
 		//(fixme) use switch/case
 		// deserilize the response
-		msg::Response resp;
+		auto shared_resp = std::make_shared<msg::Response>();
+		auto& resp = *shared_resp;
 		// resp.ParseFromString(buf_in);
 		resp.ParseFromArray(buf_in, rc);
-		if (resp.has_get_osdmap_response())
+
+		if (resp.has_get_cluster_map_response())
 		{
+			SPDK_NOTICELOG("received cluster map response\n");
+
 			if (!ctx->is_booted)
 			{
 				// a osd not booted can't receive this kind of message
+				SPDK_NOTICELOG("Monitor client has not been booted yet\n");
 				return SPDK_POLLER_IDLE;
 			}
-			auto ec = resp.get_osdmap_response().errorcode();
 
-			if (ec != msg::OsdMapErrorCode::ok)
-			{
-				SPDK_NOTICELOG("getosdmap: errorode is: %d\r\n", resp.get_osdmap_response().errorcode());
+            if (not g_cluster_map_responses.empty()) {
+				auto head_it = g_cluster_map_responses.begin();
+				auto* stack_ptr = head_it->get();
+
+				SPDK_DEBUGLOG(mon, "head response un-connected count is %ld\n", stack_ptr->un_connected_count);
+				if (stack_ptr->un_connected_count == 0) {
+					auto& pg_map_response = stack_ptr->response->get_cluster_map_response().gpm_response();
+                    ::fbclient_monitor_process_pg_map(ctx, pg_map_response);
+					g_cluster_map_responses.erase(head_it);
+				}
+			}
+
+			auto& cluster_map_response = resp.get_cluster_map_response();
+
+			auto& osd_map_response = cluster_map_response.gom_response();
+			if (osd_map_response.errorcode() != msg::OsdMapErrorCode::ok) {
+				SPDK_ERRLOG("ERROR: get osd map return error, error code is %d\n", osd_map_response.errorcode());
 				return SPDK_POLLER_IDLE;
 			}
-			else
+
+			auto osdmap_version = osd_map_response.osdmapversion();
+			if (osdmap_version > ctx->osdmap.osdmap_version)
 			{
-				auto osdmap_version = resp.get_osdmap_response().osdmapversion();
-				if (osdmap_version > ctx->osdmap.osdmap_version)
+				SPDK_DEBUGLOG(mon, "getosdmap: errorode is: %d\r\n", osd_map_response.errorcode());
+
+				auto& osds = osd_map_response.osds();
+
+				SPDK_NOTICELOG(
+					"Got newer version %ld of osd map, local version is %ld, osd size is %d\n",
+					osdmap_version, ctx->osdmap.osdmap_version, osds.size());
+
+				ctx->osdmap.osdmap_version = osdmap_version;
+
+                std::unique_ptr<::mon_client_cluster_map_response_stack> resp_stack{nullptr};
+
+				// they have higher version, update our map, we should clean o
+				for (int i = 0; i < osds.size(); i++)
 				{
-					ctx->osdmap.osdmap_version = osdmap_version;
-					SPDK_NOTICELOG("getosdmap: errorode is: %d\r\n", resp.get_osdmap_response().errorcode());
-					auto osds = resp.get_osdmap_response().osds();
-                    
-					std::map<int32_t, osd_info_t> osd_map_tmp;
-					// they have higher version, update our map, we should clean o
-					for (int i = 0; i < osds.size(); i++)
-					{
+					auto osd_it = ctx->osdmap.osd_map.find(osds[i].osdid());
+					bool should_create_connect{false};
+
+					if (osd_it != ctx->osdmap.osd_map.end()) {
+						if (not osd_it->second.isup and osds[i].isup() and osd_it->second.node_id != ctx->osd_id) {
+							should_create_connect = true;
+						}
+
+                        SPDK_DEBUGLOG(
+                            mon, "osd %d found, should_create_connect is %d\n",
+                            osd_it->second.node_id,
+                            should_create_connect);
+
+						osd_it->second.node_id = osds[i].osdid();
+						osd_it->second.isin = osds[i].isin();
+						osd_it->second.ispendingcreate = osds[i].ispendingcreate();
+						osd_it->second.port = osds[i].port();
+						osd_it->second.address = osds[i].address();
+					} else {
+						if (osds[i].isup() and osds[i].osdid() != ctx->osd_id) {
+							should_create_connect = true;
+						}
+
+                        SPDK_DEBUGLOG(
+                            mon, "osd %d not found, should_create_connect is %d\n",
+                            osds[i].osdid(),
+                            should_create_connect);
+
 						osd_info_t osd_info;
 						osd_info.node_id = osds[i].osdid();
 						osd_info.isin = osds[i].isin();
 						osd_info.isup = osds[i].isup();
 						osd_info.ispendingcreate = osds[i].ispendingcreate();
 						osd_info.port = osds[i].port();
-                        osd_info.address = osds[i].address();
-						SPDK_NOTICELOG("---- node_id %d isup %d current node id %d ---\n", 
-						        osd_info.node_id, osd_info.isup, ctx->osd_id);
-						if(ctx->osdmap.osd_map.count(osd_info.node_id) == 0
-						        && ctx->osd_id != osd_info.node_id
-								&& osd_info.isup){
-							ctx->pm->get_pg_group().create_connect(osd_info.node_id, osd_info.address, osd_info.port);
-						}
-						osd_map_tmp[osd_info.node_id] = std::move(osd_info);
+						osd_info.address = osds[i].address();
+
+						auto [it, _] = ctx->osdmap.osd_map.emplace(osd_info.node_id, std::move(osd_info));
+						osd_it = it;
 					}
 
-                    auto iter = ctx->osdmap.osd_map.begin();
-					while(iter != ctx->osdmap.osd_map.end()){
-						if(osd_map_tmp.count(iter->first) == 0
-						        && ctx->osd_id != iter->first){
-							ctx->pm->get_pg_group().remove_connect(iter->first);
-						}
-						iter++;
+					auto& osd_info = osd_it->second;
+					SPDK_DEBUGLOG(
+						mon, "osd id %d, is up %d, port %d, address %s\n",
+						osd_info.node_id,
+						osd_info.isup,
+						osd_info.port,
+						osd_info.address.c_str());
+
+					if (should_create_connect) {
+						SPDK_NOTICELOG(
+							"Connect to osd %d(%s:%d)\n",
+							osd_info.node_id,
+							osd_info.address.c_str(),
+							osd_info.port);
+
+                        if (not resp_stack) {
+                            resp_stack = std::make_unique<::mon_client_cluster_map_response_stack>(
+                              shared_resp, 0);
+                        }
+
+						ctx->pm->get_pg_group().create_connect(
+							osd_info.node_id, osd_info.address, osd_info.port,
+                            [raw_stack = resp_stack.get()] () {
+                                raw_stack->un_connected_count--;
+                                SPDK_NOTICELOG(
+                                    "Connected, un-connected count is %ld\n",
+                                    raw_stack->un_connected_count);
+                            });
+                        resp_stack->un_connected_count++;
 					}
-					ctx->osdmap.osd_map.clear();
-					ctx->osdmap.osd_map = std::move(osd_map_tmp);
 				}
-				else if (osdmap_version == ctx->osdmap.osdmap_version)
-				{
-					SPDK_NOTICELOG("getosdmap: osdmapversion is the same: %ld : %ld, do nothing\r\n",
-					        osdmap_version, ctx->osdmap.osdmap_version);
+
+				for (auto& osd_info_pair : ctx->osdmap.osd_map) {
+					auto it = std::find_if(osds.begin(), osds.end(), [v = osd_info_pair.first] (const auto& osd) {
+						return osd.osdid() == v;
+					});
+					if (it != osds.end()) {
+						continue;
+					}
+
+					SPDK_NOTICELOG("The osd with id %d not found in the newer osd map\n", osd_info_pair.first);
+					ctx->pm->get_pg_group().remove_connect(osd_info_pair.first);
 				}
+
+                if (not resp_stack) {
+                    SPDK_DEBUGLOG(mon, "empty response stack struct\n");
+                    return SPDK_POLLER_BUSY;
+                }
+
+                auto factor = ctx->pm->get_pg_group().get_raft_client_proto().connect_factor();
+                resp_stack->un_connected_count *= factor;
+                SPDK_DEBUGLOG(
+                    mon, "created response_stack, un-connected size is %lu\n",
+                    resp_stack->un_connected_count);
+
+				g_cluster_map_responses.push_back(std::move(resp_stack));
 			}
-		}
-		else if (resp.has_get_pgmap_response())
-		{
-			if (!ctx->is_booted)
+			else if (osdmap_version == ctx->osdmap.osdmap_version)
 			{
-				// a osd not booted can't receive this kind of message
-				return SPDK_POLLER_IDLE;
-			}
-			// if(ctx->osdmap.osd_map.size() == 0){
-				// SPDK_ERRLOG("osd_map is empty\n");
-				// return SPDK_POLLER_BUSY;
-			// }
-			// SPDK_NOTICELOG("got getpgmap response\r\n");
-
-			auto pv = resp.get_pgmap_response().poolid_pgmapversion();
-			if (pv.empty())
-			{
-				// SPDK_NOTICELOG("got pgmap, no pools created yet\r\n");
-				return SPDK_POLLER_IDLE;
+				SPDK_NOTICELOG(
+                    "getosdmap: osdmapversion is the same: %ld : %ld, process pg map directly\n",
+					osdmap_version, ctx->osdmap.osdmap_version);
+                ::fbclient_monitor_process_pg_map(ctx, resp.get_cluster_map_response().gpm_response());
 			}
 
-			auto ec = resp.get_pgmap_response().errorcode();
-			auto pgs = resp.get_pgmap_response().pgs();
-
-			// pair.first为poolid，second为errorcode
-			for (auto pair : ec)
-			{
-				// SPDK_NOTICELOG("pool %d ec is :%d\r\n", pair.first, pair.second);
-				if (pair.second != msg::GetPgMapErrorCode::pgMapGetOk)
-				{
-					continue;
-				}
-				if (!pgs.contains(pair.first) || !pv.contains(pair.first))
-				{
-					SPDK_ERRLOG("pool %d has no pgmap, that is a error\r\n", pair.first);
-					//(fixme)
-					continue;
-				}
-				// this is a new pool, we don't know any thing about it, we trust 
-				if (!ctx->pgmap.pool_pg_map.contains(pair.first))
-				{
-					ctx->pgmap.pool_version[pair.first] = pv[pair.first];
-
-					// we'd rather do copy from protobuf data structure
-					// clear pgmap for this pool
-					ctx->pgmap.pool_pg_map[pair.first].clear();
-
-					for (auto p : pgs)
-					{
-						// only print current pool
-						if (p.first == pair.first)
-						{
-							for (auto pg : p.second.pi())
-							{
-								pg_info_t pit;
-								std::vector<int> ol;
-								pit.pgid = pg.pgid();
-								// std::string osd_str = "";
-								std::vector<osd_info_t> osds;
-								for (auto osd : pg.osdid())
-								{
-									ol.push_back(osd);
-									osds.push_back(ctx->osdmap.osd_map[osd]);
-									// osd_str += std::to_string(osd) + ",";
-								}
-								// SPDK_NOTICELOG("----- core [%u] pool:%d pg:%d osd list: [%s]--------\r\n", 
-								        // spdk_env_get_current_core(), p.first, pit.pgid, osd_str.c_str());
-								pit.osd_list = std::move(ol);
-								ctx->pgmap.pool_pg_map[pair.first][pg.pgid()] = std::move(pit);
-								ctx->pm->create_partition(p.first, pg.pgid(), std::move(osds), pv[pair.first]);
-							}
-							break;
-						}
-					}
-				}
-				else
-				{
-					// we receive message from existing pool
-					// according to our protocol, when there is a update, map vers
-					if (ctx->pgmap.pool_version[pair.first] < pv[pair.first])
-					{
-						// update pool_version
-						ctx->pgmap.pool_version[pair.first] = pv[pair.first];
-
-						// we trust monitor
-						ctx->pgmap.pool_pg_map.clear();
-						for (auto p : pgs)
-						{
-							// only print current pool
-							if (p.first == pair.first)
-							{
-
-								SPDK_NOTICELOG("pgs of pool:%d \r\n", p.first);
-								for (auto pg : p.second.pi())
-								{
-									pg_info_t pit;
-									std::vector<int> ol;
-									pit.pgid = pg.pgid();
-									for (auto osd : pg.osdid())
-									{
-										ol.push_back(osd);
-									}
-									pit.osd_list = std::move(ol);
-									ctx->pgmap.pool_pg_map[pair.first][pit.pgid] = std::move(pit);
-								}
-								break;
-							}
-						}
-					}
-				}
-			}
-
-			return SPDK_POLLER_IDLE;
+			return SPDK_POLLER_BUSY;
 		}
 		else if (resp.has_apply_id_response())
 		{
@@ -322,7 +419,7 @@ fbclient_monitor_rpc_processer(void *arg)
 static int
 fbclient_print_osdmap_and_pgmap(void *arg)
 {
-    mon_client *ctx = (mon_client *)arg;
+	mon_client *ctx = (mon_client *)arg;
 	if (!ctx->is_booted)
 	{
 		// a osd not booted can't send this kind of message
@@ -354,7 +451,7 @@ fbclient_print_osdmap_and_pgmap(void *arg)
 		{
 			auto& pg = pg_map.second;
 			std::string osd_str = "";
-            for(auto osdid : pg.osd_list){
+			for(auto osdid : pg.osd_list){
 				osd_str += std::to_string(osdid) + ",";
 			}
 			// (fixme)use hardcode 3 copies as we usually do it
@@ -369,89 +466,46 @@ fbclient_print_osdmap_and_pgmap(void *arg)
 
 static int fbclient_get_pgmap_poll(void *arg);
 
-static int
-fbclient_get_osdmap_poll(void *arg)
-{
-	mon_client *ctx = (mon_client *)arg;
-	int rc = 0;
-	struct iovec iov;
-
-	if (!ctx->is_running)
-	{
-		/* EOF */
-		SPDK_NOTICELOG("Closing connection...\n");
-		ctx->sock_quit(0);
-		return SPDK_POLLER_IDLE;
-	}
-	if (!ctx->is_booted)
-	{
-		// a osd not booted can't send this kind of message
-		return SPDK_POLLER_IDLE;
-	}
-
-	msg::Request *req = new msg::Request();
-	msg::GetOsdMapRequest osdmap_req;
-
-	osdmap_req.set_currentversion(-1);
-	osdmap_req.set_osdid(ctx->osd_id);
-	req->set_allocated_get_osdmap_request(&osdmap_req);
-
-	size_t size = req->ByteSizeLong();
-	char *buf_out = (char *)malloc(size);
-
-	req->SerializeToArray(buf_out, size);
-	iov.iov_base = buf_out;
-	iov.iov_len = size;
-	// SPDK_NOTICELOG("fbclient_get_osdmap_poll...\n");
-	rc = spdk_sock_writev(ctx->sock, &iov, 1);
-    free(buf_out);
-	return rc > 0 ? SPDK_POLLER_BUSY : SPDK_POLLER_IDLE;
-}
-
-static int
-fbclient_get_pgmap_poll(void *arg)
-{
-	mon_client *ctx = (mon_client *)arg;
-	int rc = 0;
-	struct iovec iov;
-
-	if (!ctx->is_running)
-	{
-		/* EOF */
-		SPDK_NOTICELOG("Closing connection...\n");
+static int fbclient_get_cluster_map_poll(void* arg) {
+	auto* ctx = reinterpret_cast<::mon_client*>(arg);
+	if (not ctx->is_running) {
+		SPDK_ERRLOG("ERROR: monitor client is not running, closing connection...\n");
 		ctx->sock_quit(0);
 		return SPDK_POLLER_IDLE;
 	}
 
-	if (!ctx->is_booted)
-	{
-		// a osd not booted can't send this kind of message
+	if (not ctx->is_booted) {
 		return SPDK_POLLER_IDLE;
 	}
-	msg::Request *req = new msg::Request();
-	req->mutable_get_pgmap_request();
 
-	msg::GetPgMapRequest pgmap_req;
-	req->set_allocated_get_pgmap_request(&pgmap_req);
+	auto* req = new msg::Request{};
+	msg::GetClusterMapRequest cluster_map_req{};
 
-	// if we do have version
-	if (ctx->pgmap.pool_version.size() != 0)
-	{
-		for (const auto &pair : ctx->pgmap.pool_version)
-		{
-			(*pgmap_req.mutable_pool_versions())[pair.first] = pair.second;
+	auto* osd_map_req = cluster_map_req.mutable_gom_request();
+	osd_map_req->set_currentversion(-1);
+	osd_map_req->set_osdid(ctx->osd_id);
+
+	if (not ctx->pgmap.pool_version.empty()) {
+		auto* pg_map_req = cluster_map_req.mutable_gpm_request();
+		for (const auto& pair : ctx->pgmap.pool_version) {
+			(*(pg_map_req->mutable_pool_versions()))[pair.first] = pair.second;
 		}
 	}
 
-	size_t size = req->ByteSizeLong();
-	char *buf_out = (char *)malloc(size);
+	req->set_allocated_get_cluster_map_request(&cluster_map_req);
+	auto serialized_size = req->ByteSizeLong();
+	auto buf = std::make_unique<char[]>(serialized_size);
+	req->SerializeToArray(buf.get(), serialized_size);
+	::iovec iov{buf.get(), serialized_size};
 
-	req->SerializeToArray(buf_out, size);
-	iov.iov_base = buf_out;
-	iov.iov_len = size;
-	rc = spdk_sock_writev(ctx->sock, &iov, 1);
-    free(buf_out);
-	return rc > 0 ? SPDK_POLLER_BUSY : SPDK_POLLER_IDLE;
+	auto rc = ::spdk_sock_writev(ctx->sock, &iov, 1);
+	if (rc <= 0) {
+		SPDK_ERRLOG("ERROR: send iov via sock return error: %ld\n", rc);
+	} else {
+		SPDK_NOTICELOG("Sent get cluster map request, return code is %ld\n", rc);
+	}
+
+	return SPDK_POLLER_BUSY;
 }
 
 int mon_client::send_bootrequest()
@@ -476,7 +530,7 @@ int mon_client::send_bootrequest()
 	req->mutable_boot_request();
 
 	msg::BootRequest br;
-	
+
 	br.set_osd_id(osd_id);
 	br.set_uuid(osd_uuid.c_str());
 	br.set_address(osd_addr.c_str());
@@ -484,7 +538,7 @@ int mon_client::send_bootrequest()
 	//(fixme)use hard coded size
 	br.set_size(1024 * 1024);
 
-    char hostname[1024];
+	char hostname[1024];
 	gethostname(hostname, sizeof(hostname));
 	br.set_host(hostname);
 	/*
@@ -505,7 +559,7 @@ int mon_client::send_bootrequest()
 	iov.iov_base = buf_out;
 	iov.iov_len = size;
 	rc = spdk_sock_writev(sock, &iov, 1);
-    free(buf_out);
+	free(buf_out);
 	return rc > 0 ? SPDK_POLLER_BUSY : SPDK_POLLER_IDLE;
 }
 
@@ -540,10 +594,8 @@ int mon_client::connect_mon(){
 
 	is_running = true;
 	poller_in = SPDK_POLLER_REGISTER(fbclient_monitor_rpc_processer, this, 0);
-	poller_getosdmap = SPDK_POLLER_REGISTER(fbclient_get_osdmap_poll, this, GET_OSDMAP_US);
-	poller_getpgmap = SPDK_POLLER_REGISTER(fbclient_get_pgmap_poll, this, GET_PGMAP_US);
-	// poller_printpgmap = SPDK_POLLER_REGISTER(fbclient_print_osdmap_and_pgmap, this, GET_OSDMAP_US);
+	poller_getosdmap = SPDK_POLLER_REGISTER(fbclient_get_cluster_map_poll, this, GET_OSDMAP_US);
 
 	send_bootrequest();
-	return 0;    
+	return 0;
 }

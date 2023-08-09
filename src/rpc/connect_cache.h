@@ -16,11 +16,11 @@ public:
     connect_cache(const connect_cache&) = delete;
     connect_cache& operator=(const connect_cache&) = delete;
 
-    connect_ptr create_connect(uint32_t shard_id, int node_id, std::string& address, int port){
+    connect_ptr create_connect(uint32_t shard_id, int node_id, auto&&... args){
         pthread_mutex_lock(&_mutex);
         auto id = _id++;
         pthread_mutex_unlock(&_mutex);
-        auto connect = _transport->emplace_connection(id, address, port);
+        auto connect = _transport->emplace_connection(id, std::forward<decltype(args)>(args)...);
         _cache[shard_id][node_id] = std::make_pair(id, connect);
         return connect;
     }
