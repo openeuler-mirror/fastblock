@@ -16,10 +16,16 @@ public:
                  const osd::read_request* request,
                  osd::read_reply* response,
                  google::protobuf::Closure* done) override;
-    void process_delete(google::protobuf::RpcController* controller,
-                 const osd::delete_request* request,
-                 osd::delete_reply* response,
-                 google::protobuf::Closure* done) override;    
+    void process_delete(google::protobuf::RpcController *controller,
+                        const osd::delete_request *request,
+                        osd::delete_reply *response,
+                        google::protobuf::Closure *done) override;
+
+    void process_rpc_bench(google::protobuf::RpcController *controller,
+                           const osd::bench_request *request,
+                           osd::bench_response *response,
+                           google::protobuf::Closure *done) override;
+
 private:
     partition_manager* _pm;
 };

@@ -63,8 +63,20 @@ message delete_cmd
     bytes object_name = 1;
 }
 
+message bench_request
+{
+    bytes req = 1;
+}
+
+message bench_response
+{
+    bytes resp = 1; 
+}
+
+
 service rpc_service_osd{
     rpc process_write(write_request) returns (write_reply);
     rpc process_read(read_request) returns (read_reply);
     rpc process_delete(delete_request) returns (delete_reply);
+    rpc process_rpc_bench(bench_request) returns (bench_response);
 }
