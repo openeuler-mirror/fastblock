@@ -113,6 +113,17 @@ message GetOsdMapResponse {
     repeated OsdDynamicInfo osds = 3;
 }
 
+message GetClusterMapRequest{
+    GetOsdMapRequest gom_request = 1;
+    GetPgMapRequest  gpm_request = 2;
+}
+
+message GetClusterMapResponse {
+    GetOsdMapResponse gom_response = 1;
+    GetPgMapResponse  gpm_response = 2;
+}
+
+
 message BootResponse {
 bool ok = 1;
 }
@@ -144,6 +155,7 @@ message Request {
         CreatePoolRequest create_pool_request = 7;
         GetPgMapRequest get_pgmap_request = 8;
         DeletePoolRequest delete_pool_request = 9;
+        GetClusterMapRequest get_cluster_map_request = 10;
     }
 }
 
@@ -158,5 +170,6 @@ message Response {
         CreatePoolResponse create_pool_response = 7;
         GetPgMapResponse get_pgmap_response = 8;
         DeletePoolResponse delete_pool_response = 9;
+        GetClusterMapResponse get_cluster_map_response = 10;
     }
 }

@@ -11,14 +11,14 @@ class appendentries_source{
 public:
     appendentries_source(msg_appendentries_t* request,
             raft_server_t *raft)
-    : _request(request)        
+    : _request(request)
     , _raft(raft) {}
 
     ~appendentries_source(){
         if(_request)
             delete _request;
         if(_done)
-            delete _done;        
+            delete _done;
     }
 
     void process_response();
@@ -39,14 +39,14 @@ class vote_source{
 public:
     vote_source(msg_requestvote_t* request,
             raft_server_t *raft)
-    : _request(request)    
+    : _request(request)
     , _raft(raft) {}
 
     ~vote_source(){
         if(_request)
             delete _request;
         if(_done)
-            delete _done;        
+            delete _done;
     }
 
     void process_response();
@@ -67,14 +67,14 @@ class install_snapshot_source{
 public:
     install_snapshot_source(msg_installsnapshot_t* request,
             raft_server_t *raft)
-    : _request(request)        
+    : _request(request)
     , _raft(raft) {}
 
     ~install_snapshot_source(){
         if(_request)
             delete _request;
         if(_done)
-            delete _done;        
+            delete _done;
     }
 
     void process_response();
@@ -103,12 +103,16 @@ public:
         }
     }
 
-    void create_connect(int node_id, std::string& address, int port){
+    auto connect_factor() noexcept {
+        return _shard_cores.size();
+    }
+
+    void create_connect(int node_id, std::string& address, int port, std::optional<std::function<void()>> cb = std::nullopt){
         uint32_t shard_id = 0;
-        for(shard_id = 0; shard_id < _shard_cores.size(); shard_id++){
-            SPDK_NOTICELOG("create connect to node %d (address %s, port %d) in core %u\n", 
+        for(shard_id = 0; shard_id < connect_factor() * 1; shard_id++){
+            SPDK_NOTICELOG("create connect to node %d (address %s, port %d) in core %u\n",
                     node_id, address.c_str(), port, _shard_cores[shard_id]);
-            auto connect = _cache.create_connect(shard_id, node_id, address, port);
+            auto connect = _cache.create_connect(shard_id, node_id, address, port, cb);
             auto &stub = _stubs[shard_id];
             stub[node_id] = std::make_shared<rpc_service_raft_Stub>(connect.get());
         }

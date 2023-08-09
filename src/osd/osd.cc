@@ -46,7 +46,7 @@ block_usage(void)
     printf(" -H <host_addr>            monitor host address\n");
 	printf(" -P <port>                 monitor port number\n");
     printf(" -o <osd_addr>             osd address\n");
-	printf(" -t <osd_port>             osd port\n");	
+	printf(" -t <osd_port>             osd port\n");
 	printf(" -U <osd uuid>             osd uuid\n");
 }
 
@@ -80,7 +80,7 @@ block_parse_arg(int ch, char *arg)
 		break;
 	case 'D':
 	    g_date_dir = arg;
-		break;	
+		break;
 	case 'H':
 	    g_mon_addr = arg;
 		break;
@@ -106,7 +106,7 @@ static void
 block_started(void *arg1)
 {
     server_t *server = (server_t *)arg1;
-	
+
 #ifdef ENABLE_LOG
       //初始化log磁盘
 //    blobstore_init(const char *bdev_name, bm_complete cb_fn, void* args); 
@@ -116,16 +116,12 @@ block_started(void *arg1)
 //    blobstore_init(const char *bdev_name, bm_complete cb_fn, void* args);	 
 #endif
 
-    SPDK_NOTICELOG("------block start, cpu count : %u  log_dir : %s date_dir: %s\n", 
+    SPDK_NOTICELOG("------block start, cpu count : %u  log_dir : %s date_dir: %s\n",
 	        spdk_env_get_core_count(), server->log_dir.c_str(), server->date_dir.c_str());
     global_pm = new partition_manager(
-		    server->node_id, server->date_dir, 
+		    server->node_id, server->date_dir,
 			server->mon_addr, server->mon_port,
 			server->osd_addr, server->osd_port, server->osd_uuid);
-	if(global_pm->connect_mon() != 0){
-		spdk_app_stop(-1);
-		return;
-	}
 
     rpc_server& rserver = rpc_server::get_server(global_pm->get_shard());
 	auto rs = new raft_service<partition_manager>(global_pm);
@@ -133,7 +129,12 @@ block_started(void *arg1)
 	rserver.register_service(rs);
 	rserver.register_service(os);
 	rserver.start(server->osd_addr, server->osd_port);
-    
+
+    if (global_pm->connect_mon() != 0) {
+		spdk_app_stop(-1);
+		return;
+	}
+
 	// std::vector<osd_info_t> osds;
 	// osds.push_back(osd_info_t{1, "192.168.1.11", 8888});
 	// global_pm->create_partition(1, 1, std::move(osds), 1);
@@ -148,6 +149,10 @@ main(int argc, char *argv[])
 
 	spdk_app_opts_init(&opts, sizeof(opts));
 	opts.name = "block";
+    opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
+    ::spdk_log_set_flag("rdma");
+    ::spdk_log_set_flag("msg");
+    ::spdk_log_set_flag("mon");
 
 	if ((rc = spdk_app_parse_args(argc, argv, &opts, "f:I:l:D:H:P:o:t:U:", NULL,
 				      block_parse_arg, block_usage)) !=
@@ -167,7 +172,7 @@ main(int argc, char *argv[])
 	server.mon_addr = g_mon_addr;
 	server.mon_port = g_mon_port;
 	server.osd_addr = g_osd_addr;
-	server.osd_port = g_osd_port;	
+	server.osd_port = g_osd_port;
 	server.osd_uuid = g_uuid;
 
 	/* Blocks until the application is exiting */

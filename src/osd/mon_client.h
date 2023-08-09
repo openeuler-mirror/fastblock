@@ -27,16 +27,16 @@ struct pg_map_t
 class partition_manager;
 
 struct mon_client{
-    mon_client(std::string& _mon_host, int _mon_port, int _osd_id, std::string& _osd_addr, 
+    mon_client(std::string& _mon_host, int _mon_port, int _osd_id, std::string& _osd_addr,
             int _osd_port, std::string& _osd_uuid, partition_manager* _pm)
     : mon_host(_mon_host)
     , mon_port(_mon_port)
     , osd_id(_osd_id)
-    , is_booted(false) 
+    , is_booted(false)
     , is_running(false)
     , pm(_pm)
     , osd_addr(_osd_addr)
-    , osd_port(_osd_port) 
+    , osd_port(_osd_port)
     , osd_uuid(_osd_uuid) {}
 
     int connect_mon();
@@ -63,7 +63,7 @@ struct mon_client{
 	struct spdk_poller *poller_getosdmap;
 	struct spdk_poller *poller_getpgmap;
 	// struct spdk_poller *poller_printpgmap;
-	struct spdk_poller *time_out;    
+	struct spdk_poller *time_out;
     osd_map_t osdmap;
     pg_map_t pgmap;
     int rc;

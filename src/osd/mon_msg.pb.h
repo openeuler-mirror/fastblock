@@ -51,7 +51,7 @@ struct TableStruct_mon_5fmsg_2eproto {
     PROTOBUF_SECTION_VARIABLE(protodesc_cold);
   static const ::PROTOBUF_NAMESPACE_ID::internal::AuxillaryParseTableField aux[]
     PROTOBUF_SECTION_VARIABLE(protodesc_cold);
-  static const ::PROTOBUF_NAMESPACE_ID::internal::ParseTable schema[28]
+  static const ::PROTOBUF_NAMESPACE_ID::internal::ParseTable schema[30]
     PROTOBUF_SECTION_VARIABLE(protodesc_cold);
   static const ::PROTOBUF_NAMESPACE_ID::internal::FieldMetadata field_metadata[];
   static const ::PROTOBUF_NAMESPACE_ID::internal::SerializationTable serialization_table[];
@@ -83,6 +83,12 @@ extern DeletePoolRequestDefaultTypeInternal _DeletePoolRequest_default_instance_
 class DeletePoolResponse;
 class DeletePoolResponseDefaultTypeInternal;
 extern DeletePoolResponseDefaultTypeInternal _DeletePoolResponse_default_instance_;
+class GetClusterMapRequest;
+class GetClusterMapRequestDefaultTypeInternal;
+extern GetClusterMapRequestDefaultTypeInternal _GetClusterMapRequest_default_instance_;
+class GetClusterMapResponse;
+class GetClusterMapResponseDefaultTypeInternal;
+extern GetClusterMapResponseDefaultTypeInternal _GetClusterMapResponse_default_instance_;
 class GetOsdMapRequest;
 class GetOsdMapRequestDefaultTypeInternal;
 extern GetOsdMapRequestDefaultTypeInternal _GetOsdMapRequest_default_instance_;
@@ -153,6 +159,8 @@ template<> ::msg::CreatePoolRequest* Arena::CreateMaybeMessage<::msg::CreatePool
 template<> ::msg::CreatePoolResponse* Arena::CreateMaybeMessage<::msg::CreatePoolResponse>(Arena*);
 template<> ::msg::DeletePoolRequest* Arena::CreateMaybeMessage<::msg::DeletePoolRequest>(Arena*);
 template<> ::msg::DeletePoolResponse* Arena::CreateMaybeMessage<::msg::DeletePoolResponse>(Arena*);
+template<> ::msg::GetClusterMapRequest* Arena::CreateMaybeMessage<::msg::GetClusterMapRequest>(Arena*);
+template<> ::msg::GetClusterMapResponse* Arena::CreateMaybeMessage<::msg::GetClusterMapResponse>(Arena*);
 template<> ::msg::GetOsdMapRequest* Arena::CreateMaybeMessage<::msg::GetOsdMapRequest>(Arena*);
 template<> ::msg::GetOsdMapResponse* Arena::CreateMaybeMessage<::msg::GetOsdMapResponse>(Arena*);
 template<> ::msg::GetPgMapRequest* Arena::CreateMaybeMessage<::msg::GetPgMapRequest>(Arena*);
@@ -3268,6 +3276,338 @@ class GetOsdMapResponse PROTOBUF_FINAL :
 };
 // -------------------------------------------------------------------
 
+class GetClusterMapRequest PROTOBUF_FINAL :
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:msg.GetClusterMapRequest) */ {
+ public:
+  inline GetClusterMapRequest() : GetClusterMapRequest(nullptr) {};
+  virtual ~GetClusterMapRequest();
+
+  GetClusterMapRequest(const GetClusterMapRequest& from);
+  GetClusterMapRequest(GetClusterMapRequest&& from) noexcept
+    : GetClusterMapRequest() {
+    *this = ::std::move(from);
+  }
+
+  inline GetClusterMapRequest& operator=(const GetClusterMapRequest& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline GetClusterMapRequest& operator=(GetClusterMapRequest&& from) noexcept {
+    if (GetArena() == from.GetArena()) {
+      if (this != &from) InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* descriptor() {
+    return GetDescriptor();
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* GetDescriptor() {
+    return GetMetadataStatic().descriptor;
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Reflection* GetReflection() {
+    return GetMetadataStatic().reflection;
+  }
+  static const GetClusterMapRequest& default_instance();
+
+  static void InitAsDefaultInstance();  // FOR INTERNAL USE ONLY
+  static inline const GetClusterMapRequest* internal_default_instance() {
+    return reinterpret_cast<const GetClusterMapRequest*>(
+               &_GetClusterMapRequest_default_instance_);
+  }
+  static constexpr int kIndexInFileMessages =
+    21;
+
+  friend void swap(GetClusterMapRequest& a, GetClusterMapRequest& b) {
+    a.Swap(&b);
+  }
+  inline void Swap(GetClusterMapRequest* other) {
+    if (other == this) return;
+    if (GetArena() == other->GetArena()) {
+      InternalSwap(other);
+    } else {
+      ::PROTOBUF_NAMESPACE_ID::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(GetClusterMapRequest* other) {
+    if (other == this) return;
+    GOOGLE_DCHECK(GetArena() == other->GetArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  inline GetClusterMapRequest* New() const final {
+    return CreateMaybeMessage<GetClusterMapRequest>(nullptr);
+  }
+
+  GetClusterMapRequest* New(::PROTOBUF_NAMESPACE_ID::Arena* arena) const final {
+    return CreateMaybeMessage<GetClusterMapRequest>(arena);
+  }
+  void CopyFrom(const ::PROTOBUF_NAMESPACE_ID::Message& from) final;
+  void MergeFrom(const ::PROTOBUF_NAMESPACE_ID::Message& from) final;
+  void CopyFrom(const GetClusterMapRequest& from);
+  void MergeFrom(const GetClusterMapRequest& from);
+  PROTOBUF_ATTRIBUTE_REINITIALIZES void Clear() final;
+  bool IsInitialized() const final;
+
+  size_t ByteSizeLong() const final;
+  const char* _InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) final;
+  ::PROTOBUF_NAMESPACE_ID::uint8* _InternalSerialize(
+      ::PROTOBUF_NAMESPACE_ID::uint8* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const final;
+  int GetCachedSize() const final { return _cached_size_.Get(); }
+
+  private:
+  inline void SharedCtor();
+  inline void SharedDtor();
+  void SetCachedSize(int size) const final;
+  void InternalSwap(GetClusterMapRequest* other);
+  friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
+  static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
+    return "msg.GetClusterMapRequest";
+  }
+  protected:
+  explicit GetClusterMapRequest(::PROTOBUF_NAMESPACE_ID::Arena* arena);
+  private:
+  static void ArenaDtor(void* object);
+  inline void RegisterArenaDtor(::PROTOBUF_NAMESPACE_ID::Arena* arena);
+  public:
+
+  ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadata() const final;
+  private:
+  static ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadataStatic() {
+    ::PROTOBUF_NAMESPACE_ID::internal::AssignDescriptors(&::descriptor_table_mon_5fmsg_2eproto);
+    return ::descriptor_table_mon_5fmsg_2eproto.file_level_metadata[kIndexInFileMessages];
+  }
+
+  public:
+
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+
+  enum : int {
+    kGomRequestFieldNumber = 1,
+    kGpmRequestFieldNumber = 2,
+  };
+  // .msg.GetOsdMapRequest gom_request = 1;
+  bool has_gom_request() const;
+  private:
+  bool _internal_has_gom_request() const;
+  public:
+  void clear_gom_request();
+  const ::msg::GetOsdMapRequest& gom_request() const;
+  ::msg::GetOsdMapRequest* release_gom_request();
+  ::msg::GetOsdMapRequest* mutable_gom_request();
+  void set_allocated_gom_request(::msg::GetOsdMapRequest* gom_request);
+  private:
+  const ::msg::GetOsdMapRequest& _internal_gom_request() const;
+  ::msg::GetOsdMapRequest* _internal_mutable_gom_request();
+  public:
+  void unsafe_arena_set_allocated_gom_request(
+      ::msg::GetOsdMapRequest* gom_request);
+  ::msg::GetOsdMapRequest* unsafe_arena_release_gom_request();
+
+  // .msg.GetPgMapRequest gpm_request = 2;
+  bool has_gpm_request() const;
+  private:
+  bool _internal_has_gpm_request() const;
+  public:
+  void clear_gpm_request();
+  const ::msg::GetPgMapRequest& gpm_request() const;
+  ::msg::GetPgMapRequest* release_gpm_request();
+  ::msg::GetPgMapRequest* mutable_gpm_request();
+  void set_allocated_gpm_request(::msg::GetPgMapRequest* gpm_request);
+  private:
+  const ::msg::GetPgMapRequest& _internal_gpm_request() const;
+  ::msg::GetPgMapRequest* _internal_mutable_gpm_request();
+  public:
+  void unsafe_arena_set_allocated_gpm_request(
+      ::msg::GetPgMapRequest* gpm_request);
+  ::msg::GetPgMapRequest* unsafe_arena_release_gpm_request();
+
+  // @@protoc_insertion_point(class_scope:msg.GetClusterMapRequest)
+ private:
+  class _Internal;
+
+  template <typename T> friend class ::PROTOBUF_NAMESPACE_ID::Arena::InternalHelper;
+  typedef void InternalArenaConstructable_;
+  typedef void DestructorSkippable_;
+  ::msg::GetOsdMapRequest* gom_request_;
+  ::msg::GetPgMapRequest* gpm_request_;
+  mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
+  friend struct ::TableStruct_mon_5fmsg_2eproto;
+};
+// -------------------------------------------------------------------
+
+class GetClusterMapResponse PROTOBUF_FINAL :
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:msg.GetClusterMapResponse) */ {
+ public:
+  inline GetClusterMapResponse() : GetClusterMapResponse(nullptr) {};
+  virtual ~GetClusterMapResponse();
+
+  GetClusterMapResponse(const GetClusterMapResponse& from);
+  GetClusterMapResponse(GetClusterMapResponse&& from) noexcept
+    : GetClusterMapResponse() {
+    *this = ::std::move(from);
+  }
+
+  inline GetClusterMapResponse& operator=(const GetClusterMapResponse& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline GetClusterMapResponse& operator=(GetClusterMapResponse&& from) noexcept {
+    if (GetArena() == from.GetArena()) {
+      if (this != &from) InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* descriptor() {
+    return GetDescriptor();
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* GetDescriptor() {
+    return GetMetadataStatic().descriptor;
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Reflection* GetReflection() {
+    return GetMetadataStatic().reflection;
+  }
+  static const GetClusterMapResponse& default_instance();
+
+  static void InitAsDefaultInstance();  // FOR INTERNAL USE ONLY
+  static inline const GetClusterMapResponse* internal_default_instance() {
+    return reinterpret_cast<const GetClusterMapResponse*>(
+               &_GetClusterMapResponse_default_instance_);
+  }
+  static constexpr int kIndexInFileMessages =
+    22;
+
+  friend void swap(GetClusterMapResponse& a, GetClusterMapResponse& b) {
+    a.Swap(&b);
+  }
+  inline void Swap(GetClusterMapResponse* other) {
+    if (other == this) return;
+    if (GetArena() == other->GetArena()) {
+      InternalSwap(other);
+    } else {
+      ::PROTOBUF_NAMESPACE_ID::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(GetClusterMapResponse* other) {
+    if (other == this) return;
+    GOOGLE_DCHECK(GetArena() == other->GetArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  inline GetClusterMapResponse* New() const final {
+    return CreateMaybeMessage<GetClusterMapResponse>(nullptr);
+  }
+
+  GetClusterMapResponse* New(::PROTOBUF_NAMESPACE_ID::Arena* arena) const final {
+    return CreateMaybeMessage<GetClusterMapResponse>(arena);
+  }
+  void CopyFrom(const ::PROTOBUF_NAMESPACE_ID::Message& from) final;
+  void MergeFrom(const ::PROTOBUF_NAMESPACE_ID::Message& from) final;
+  void CopyFrom(const GetClusterMapResponse& from);
+  void MergeFrom(const GetClusterMapResponse& from);
+  PROTOBUF_ATTRIBUTE_REINITIALIZES void Clear() final;
+  bool IsInitialized() const final;
+
+  size_t ByteSizeLong() const final;
+  const char* _InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) final;
+  ::PROTOBUF_NAMESPACE_ID::uint8* _InternalSerialize(
+      ::PROTOBUF_NAMESPACE_ID::uint8* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const final;
+  int GetCachedSize() const final { return _cached_size_.Get(); }
+
+  private:
+  inline void SharedCtor();
+  inline void SharedDtor();
+  void SetCachedSize(int size) const final;
+  void InternalSwap(GetClusterMapResponse* other);
+  friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
+  static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
+    return "msg.GetClusterMapResponse";
+  }
+  protected:
+  explicit GetClusterMapResponse(::PROTOBUF_NAMESPACE_ID::Arena* arena);
+  private:
+  static void ArenaDtor(void* object);
+  inline void RegisterArenaDtor(::PROTOBUF_NAMESPACE_ID::Arena* arena);
+  public:
+
+  ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadata() const final;
+  private:
+  static ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadataStatic() {
+    ::PROTOBUF_NAMESPACE_ID::internal::AssignDescriptors(&::descriptor_table_mon_5fmsg_2eproto);
+    return ::descriptor_table_mon_5fmsg_2eproto.file_level_metadata[kIndexInFileMessages];
+  }
+
+  public:
+
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+
+  enum : int {
+    kGomResponseFieldNumber = 1,
+    kGpmResponseFieldNumber = 2,
+  };
+  // .msg.GetOsdMapResponse gom_response = 1;
+  bool has_gom_response() const;
+  private:
+  bool _internal_has_gom_response() const;
+  public:
+  void clear_gom_response();
+  const ::msg::GetOsdMapResponse& gom_response() const;
+  ::msg::GetOsdMapResponse* release_gom_response();
+  ::msg::GetOsdMapResponse* mutable_gom_response();
+  void set_allocated_gom_response(::msg::GetOsdMapResponse* gom_response);
+  private:
+  const ::msg::GetOsdMapResponse& _internal_gom_response() const;
+  ::msg::GetOsdMapResponse* _internal_mutable_gom_response();
+  public:
+  void unsafe_arena_set_allocated_gom_response(
+      ::msg::GetOsdMapResponse* gom_response);
+  ::msg::GetOsdMapResponse* unsafe_arena_release_gom_response();
+
+  // .msg.GetPgMapResponse gpm_response = 2;
+  bool has_gpm_response() const;
+  private:
+  bool _internal_has_gpm_response() const;
+  public:
+  void clear_gpm_response();
+  const ::msg::GetPgMapResponse& gpm_response() const;
+  ::msg::GetPgMapResponse* release_gpm_response();
+  ::msg::GetPgMapResponse* mutable_gpm_response();
+  void set_allocated_gpm_response(::msg::GetPgMapResponse* gpm_response);
+  private:
+  const ::msg::GetPgMapResponse& _internal_gpm_response() const;
+  ::msg::GetPgMapResponse* _internal_mutable_gpm_response();
+  public:
+  void unsafe_arena_set_allocated_gpm_response(
+      ::msg::GetPgMapResponse* gpm_response);
+  ::msg::GetPgMapResponse* unsafe_arena_release_gpm_response();
+
+  // @@protoc_insertion_point(class_scope:msg.GetClusterMapResponse)
+ private:
+  class _Internal;
+
+  template <typename T> friend class ::PROTOBUF_NAMESPACE_ID::Arena::InternalHelper;
+  typedef void InternalArenaConstructable_;
+  typedef void DestructorSkippable_;
+  ::msg::GetOsdMapResponse* gom_response_;
+  ::msg::GetPgMapResponse* gpm_response_;
+  mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
+  friend struct ::TableStruct_mon_5fmsg_2eproto;
+};
+// -------------------------------------------------------------------
+
 class BootResponse PROTOBUF_FINAL :
     public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:msg.BootResponse) */ {
  public:
@@ -3310,7 +3650,7 @@ class BootResponse PROTOBUF_FINAL :
                &_BootResponse_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    21;
+    23;
 
   friend void swap(BootResponse& a, BootResponse& b) {
     a.Swap(&b);
@@ -3447,7 +3787,7 @@ class OsdStopRequest PROTOBUF_FINAL :
                &_OsdStopRequest_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    22;
+    24;
 
   friend void swap(OsdStopRequest& a, OsdStopRequest& b) {
     a.Swap(&b);
@@ -3584,7 +3924,7 @@ class OsdStopResponse PROTOBUF_FINAL :
                &_OsdStopResponse_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    23;
+    25;
 
   friend void swap(OsdStopResponse& a, OsdStopResponse& b) {
     a.Swap(&b);
@@ -3721,7 +4061,7 @@ class HeartbeatRequest PROTOBUF_FINAL :
                &_HeartbeatRequest_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    24;
+    26;
 
   friend void swap(HeartbeatRequest& a, HeartbeatRequest& b) {
     a.Swap(&b);
@@ -3858,7 +4198,7 @@ class HeartbeatResponse PROTOBUF_FINAL :
                &_HeartbeatResponse_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    25;
+    27;
 
   friend void swap(HeartbeatResponse& a, HeartbeatResponse& b) {
     a.Swap(&b);
@@ -3999,6 +4339,7 @@ class Request PROTOBUF_FINAL :
     kCreatePoolRequest = 7,
     kGetPgmapRequest = 8,
     kDeletePoolRequest = 9,
+    kGetClusterMapRequest = 10,
     UNION_NOT_SET = 0,
   };
 
@@ -4008,7 +4349,7 @@ class Request PROTOBUF_FINAL :
                &_Request_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    26;
+    28;
 
   friend void swap(Request& a, Request& b) {
     a.Swap(&b);
@@ -4088,6 +4429,7 @@ class Request PROTOBUF_FINAL :
     kCreatePoolRequestFieldNumber = 7,
     kGetPgmapRequestFieldNumber = 8,
     kDeletePoolRequestFieldNumber = 9,
+    kGetClusterMapRequestFieldNumber = 10,
   };
   // .msg.BootRequest boot_request = 1;
   bool has_boot_request() const;
@@ -4251,6 +4593,24 @@ class Request PROTOBUF_FINAL :
       ::msg::DeletePoolRequest* delete_pool_request);
   ::msg::DeletePoolRequest* unsafe_arena_release_delete_pool_request();
 
+  // .msg.GetClusterMapRequest get_cluster_map_request = 10;
+  bool has_get_cluster_map_request() const;
+  private:
+  bool _internal_has_get_cluster_map_request() const;
+  public:
+  void clear_get_cluster_map_request();
+  const ::msg::GetClusterMapRequest& get_cluster_map_request() const;
+  ::msg::GetClusterMapRequest* release_get_cluster_map_request();
+  ::msg::GetClusterMapRequest* mutable_get_cluster_map_request();
+  void set_allocated_get_cluster_map_request(::msg::GetClusterMapRequest* get_cluster_map_request);
+  private:
+  const ::msg::GetClusterMapRequest& _internal_get_cluster_map_request() const;
+  ::msg::GetClusterMapRequest* _internal_mutable_get_cluster_map_request();
+  public:
+  void unsafe_arena_set_allocated_get_cluster_map_request(
+      ::msg::GetClusterMapRequest* get_cluster_map_request);
+  ::msg::GetClusterMapRequest* unsafe_arena_release_get_cluster_map_request();
+
   void clear_union();
   UnionCase union_case() const;
   // @@protoc_insertion_point(class_scope:msg.Request)
@@ -4265,6 +4625,7 @@ class Request PROTOBUF_FINAL :
   void set_has_create_pool_request();
   void set_has_get_pgmap_request();
   void set_has_delete_pool_request();
+  void set_has_get_cluster_map_request();
 
   inline bool has_union() const;
   inline void clear_has_union();
@@ -4283,6 +4644,7 @@ class Request PROTOBUF_FINAL :
     ::msg::CreatePoolRequest* create_pool_request_;
     ::msg::GetPgMapRequest* get_pgmap_request_;
     ::msg::DeletePoolRequest* delete_pool_request_;
+    ::msg::GetClusterMapRequest* get_cluster_map_request_;
   } union_;
   mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
   ::PROTOBUF_NAMESPACE_ID::uint32 _oneof_case_[1];
@@ -4337,6 +4699,7 @@ class Response PROTOBUF_FINAL :
     kCreatePoolResponse = 7,
     kGetPgmapResponse = 8,
     kDeletePoolResponse = 9,
+    kGetClusterMapResponse = 10,
     UNION_NOT_SET = 0,
   };
 
@@ -4346,7 +4709,7 @@ class Response PROTOBUF_FINAL :
                &_Response_default_instance_);
   }
   static constexpr int kIndexInFileMessages =
-    27;
+    29;
 
   friend void swap(Response& a, Response& b) {
     a.Swap(&b);
@@ -4426,6 +4789,7 @@ class Response PROTOBUF_FINAL :
     kCreatePoolResponseFieldNumber = 7,
     kGetPgmapResponseFieldNumber = 8,
     kDeletePoolResponseFieldNumber = 9,
+    kGetClusterMapResponseFieldNumber = 10,
   };
   // .msg.BootResponse boot_response = 1;
   bool has_boot_response() const;
@@ -4589,6 +4953,24 @@ class Response PROTOBUF_FINAL :
       ::msg::DeletePoolResponse* delete_pool_response);
   ::msg::DeletePoolResponse* unsafe_arena_release_delete_pool_response();
 
+  // .msg.GetClusterMapResponse get_cluster_map_response = 10;
+  bool has_get_cluster_map_response() const;
+  private:
+  bool _internal_has_get_cluster_map_response() const;
+  public:
+  void clear_get_cluster_map_response();
+  const ::msg::GetClusterMapResponse& get_cluster_map_response() const;
+  ::msg::GetClusterMapResponse* release_get_cluster_map_response();
+  ::msg::GetClusterMapResponse* mutable_get_cluster_map_response();
+  void set_allocated_get_cluster_map_response(::msg::GetClusterMapResponse* get_cluster_map_response);
+  private:
+  const ::msg::GetClusterMapResponse& _internal_get_cluster_map_response() const;
+  ::msg::GetClusterMapResponse* _internal_mutable_get_cluster_map_response();
+  public:
+  void unsafe_arena_set_allocated_get_cluster_map_response(
+      ::msg::GetClusterMapResponse* get_cluster_map_response);
+  ::msg::GetClusterMapResponse* unsafe_arena_release_get_cluster_map_response();
+
   void clear_union();
   UnionCase union_case() const;
   // @@protoc_insertion_point(class_scope:msg.Response)
@@ -4603,6 +4985,7 @@ class Response PROTOBUF_FINAL :
   void set_has_create_pool_response();
   void set_has_get_pgmap_response();
   void set_has_delete_pool_response();
+  void set_has_get_cluster_map_response();
 
   inline bool has_union() const;
   inline void clear_has_union();
@@ -4621,6 +5004,7 @@ class Response PROTOBUF_FINAL :
     ::msg::CreatePoolResponse* create_pool_response_;
     ::msg::GetPgMapResponse* get_pgmap_response_;
     ::msg::DeletePoolResponse* delete_pool_response_;
+    ::msg::GetClusterMapResponse* get_cluster_map_response_;
   } union_;
   mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
   ::PROTOBUF_NAMESPACE_ID::uint32 _oneof_case_[1];
@@ -6485,6 +6869,338 @@ GetOsdMapResponse::osds() const {
 
 // -------------------------------------------------------------------
 
+// GetClusterMapRequest
+
+// .msg.GetOsdMapRequest gom_request = 1;
+inline bool GetClusterMapRequest::_internal_has_gom_request() const {
+  return this != internal_default_instance() && gom_request_ != nullptr;
+}
+inline bool GetClusterMapRequest::has_gom_request() const {
+  return _internal_has_gom_request();
+}
+inline void GetClusterMapRequest::clear_gom_request() {
+  if (GetArena() == nullptr && gom_request_ != nullptr) {
+    delete gom_request_;
+  }
+  gom_request_ = nullptr;
+}
+inline const ::msg::GetOsdMapRequest& GetClusterMapRequest::_internal_gom_request() const {
+  const ::msg::GetOsdMapRequest* p = gom_request_;
+  return p != nullptr ? *p : *reinterpret_cast<const ::msg::GetOsdMapRequest*>(
+      &::msg::_GetOsdMapRequest_default_instance_);
+}
+inline const ::msg::GetOsdMapRequest& GetClusterMapRequest::gom_request() const {
+  // @@protoc_insertion_point(field_get:msg.GetClusterMapRequest.gom_request)
+  return _internal_gom_request();
+}
+inline void GetClusterMapRequest::unsafe_arena_set_allocated_gom_request(
+    ::msg::GetOsdMapRequest* gom_request) {
+  if (GetArena() == nullptr) {
+    delete reinterpret_cast<::PROTOBUF_NAMESPACE_ID::MessageLite*>(gom_request_);
+  }
+  gom_request_ = gom_request;
+  if (gom_request) {
+    
+  } else {
+    
+  }
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:msg.GetClusterMapRequest.gom_request)
+}
+inline ::msg::GetOsdMapRequest* GetClusterMapRequest::release_gom_request() {
+  auto temp = unsafe_arena_release_gom_request();
+  if (GetArena() != nullptr) {
+    temp = ::PROTOBUF_NAMESPACE_ID::internal::DuplicateIfNonNull(temp);
+  }
+  return temp;
+}
+inline ::msg::GetOsdMapRequest* GetClusterMapRequest::unsafe_arena_release_gom_request() {
+  // @@protoc_insertion_point(field_release:msg.GetClusterMapRequest.gom_request)
+  
+  ::msg::GetOsdMapRequest* temp = gom_request_;
+  gom_request_ = nullptr;
+  return temp;
+}
+inline ::msg::GetOsdMapRequest* GetClusterMapRequest::_internal_mutable_gom_request() {
+  
+  if (gom_request_ == nullptr) {
+    auto* p = CreateMaybeMessage<::msg::GetOsdMapRequest>(GetArena());
+    gom_request_ = p;
+  }
+  return gom_request_;
+}
+inline ::msg::GetOsdMapRequest* GetClusterMapRequest::mutable_gom_request() {
+  // @@protoc_insertion_point(field_mutable:msg.GetClusterMapRequest.gom_request)
+  return _internal_mutable_gom_request();
+}
+inline void GetClusterMapRequest::set_allocated_gom_request(::msg::GetOsdMapRequest* gom_request) {
+  ::PROTOBUF_NAMESPACE_ID::Arena* message_arena = GetArena();
+  if (message_arena == nullptr) {
+    delete gom_request_;
+  }
+  if (gom_request) {
+    ::PROTOBUF_NAMESPACE_ID::Arena* submessage_arena =
+      ::PROTOBUF_NAMESPACE_ID::Arena::GetArena(gom_request);
+    if (message_arena != submessage_arena) {
+      gom_request = ::PROTOBUF_NAMESPACE_ID::internal::GetOwnedMessage(
+          message_arena, gom_request, submessage_arena);
+    }
+    
+  } else {
+    
+  }
+  gom_request_ = gom_request;
+  // @@protoc_insertion_point(field_set_allocated:msg.GetClusterMapRequest.gom_request)
+}
+
+// .msg.GetPgMapRequest gpm_request = 2;
+inline bool GetClusterMapRequest::_internal_has_gpm_request() const {
+  return this != internal_default_instance() && gpm_request_ != nullptr;
+}
+inline bool GetClusterMapRequest::has_gpm_request() const {
+  return _internal_has_gpm_request();
+}
+inline void GetClusterMapRequest::clear_gpm_request() {
+  if (GetArena() == nullptr && gpm_request_ != nullptr) {
+    delete gpm_request_;
+  }
+  gpm_request_ = nullptr;
+}
+inline const ::msg::GetPgMapRequest& GetClusterMapRequest::_internal_gpm_request() const {
+  const ::msg::GetPgMapRequest* p = gpm_request_;
+  return p != nullptr ? *p : *reinterpret_cast<const ::msg::GetPgMapRequest*>(
+      &::msg::_GetPgMapRequest_default_instance_);
+}
+inline const ::msg::GetPgMapRequest& GetClusterMapRequest::gpm_request() const {
+  // @@protoc_insertion_point(field_get:msg.GetClusterMapRequest.gpm_request)
+  return _internal_gpm_request();
+}
+inline void GetClusterMapRequest::unsafe_arena_set_allocated_gpm_request(
+    ::msg::GetPgMapRequest* gpm_request) {
+  if (GetArena() == nullptr) {
+    delete reinterpret_cast<::PROTOBUF_NAMESPACE_ID::MessageLite*>(gpm_request_);
+  }
+  gpm_request_ = gpm_request;
+  if (gpm_request) {
+    
+  } else {
+    
+  }
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:msg.GetClusterMapRequest.gpm_request)
+}
+inline ::msg::GetPgMapRequest* GetClusterMapRequest::release_gpm_request() {
+  auto temp = unsafe_arena_release_gpm_request();
+  if (GetArena() != nullptr) {
+    temp = ::PROTOBUF_NAMESPACE_ID::internal::DuplicateIfNonNull(temp);
+  }
+  return temp;
+}
+inline ::msg::GetPgMapRequest* GetClusterMapRequest::unsafe_arena_release_gpm_request() {
+  // @@protoc_insertion_point(field_release:msg.GetClusterMapRequest.gpm_request)
+  
+  ::msg::GetPgMapRequest* temp = gpm_request_;
+  gpm_request_ = nullptr;
+  return temp;
+}
+inline ::msg::GetPgMapRequest* GetClusterMapRequest::_internal_mutable_gpm_request() {
+  
+  if (gpm_request_ == nullptr) {
+    auto* p = CreateMaybeMessage<::msg::GetPgMapRequest>(GetArena());
+    gpm_request_ = p;
+  }
+  return gpm_request_;
+}
+inline ::msg::GetPgMapRequest* GetClusterMapRequest::mutable_gpm_request() {
+  // @@protoc_insertion_point(field_mutable:msg.GetClusterMapRequest.gpm_request)
+  return _internal_mutable_gpm_request();
+}
+inline void GetClusterMapRequest::set_allocated_gpm_request(::msg::GetPgMapRequest* gpm_request) {
+  ::PROTOBUF_NAMESPACE_ID::Arena* message_arena = GetArena();
+  if (message_arena == nullptr) {
+    delete gpm_request_;
+  }
+  if (gpm_request) {
+    ::PROTOBUF_NAMESPACE_ID::Arena* submessage_arena =
+      ::PROTOBUF_NAMESPACE_ID::Arena::GetArena(gpm_request);
+    if (message_arena != submessage_arena) {
+      gpm_request = ::PROTOBUF_NAMESPACE_ID::internal::GetOwnedMessage(
+          message_arena, gpm_request, submessage_arena);
+    }
+    
+  } else {
+    
+  }
+  gpm_request_ = gpm_request;
+  // @@protoc_insertion_point(field_set_allocated:msg.GetClusterMapRequest.gpm_request)
+}
+
+// -------------------------------------------------------------------
+
+// GetClusterMapResponse
+
+// .msg.GetOsdMapResponse gom_response = 1;
+inline bool GetClusterMapResponse::_internal_has_gom_response() const {
+  return this != internal_default_instance() && gom_response_ != nullptr;
+}
+inline bool GetClusterMapResponse::has_gom_response() const {
+  return _internal_has_gom_response();
+}
+inline void GetClusterMapResponse::clear_gom_response() {
+  if (GetArena() == nullptr && gom_response_ != nullptr) {
+    delete gom_response_;
+  }
+  gom_response_ = nullptr;
+}
+inline const ::msg::GetOsdMapResponse& GetClusterMapResponse::_internal_gom_response() const {
+  const ::msg::GetOsdMapResponse* p = gom_response_;
+  return p != nullptr ? *p : *reinterpret_cast<const ::msg::GetOsdMapResponse*>(
+      &::msg::_GetOsdMapResponse_default_instance_);
+}
+inline const ::msg::GetOsdMapResponse& GetClusterMapResponse::gom_response() const {
+  // @@protoc_insertion_point(field_get:msg.GetClusterMapResponse.gom_response)
+  return _internal_gom_response();
+}
+inline void GetClusterMapResponse::unsafe_arena_set_allocated_gom_response(
+    ::msg::GetOsdMapResponse* gom_response) {
+  if (GetArena() == nullptr) {
+    delete reinterpret_cast<::PROTOBUF_NAMESPACE_ID::MessageLite*>(gom_response_);
+  }
+  gom_response_ = gom_response;
+  if (gom_response) {
+    
+  } else {
+    
+  }
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:msg.GetClusterMapResponse.gom_response)
+}
+inline ::msg::GetOsdMapResponse* GetClusterMapResponse::release_gom_response() {
+  auto temp = unsafe_arena_release_gom_response();
+  if (GetArena() != nullptr) {
+    temp = ::PROTOBUF_NAMESPACE_ID::internal::DuplicateIfNonNull(temp);
+  }
+  return temp;
+}
+inline ::msg::GetOsdMapResponse* GetClusterMapResponse::unsafe_arena_release_gom_response() {
+  // @@protoc_insertion_point(field_release:msg.GetClusterMapResponse.gom_response)
+  
+  ::msg::GetOsdMapResponse* temp = gom_response_;
+  gom_response_ = nullptr;
+  return temp;
+}
+inline ::msg::GetOsdMapResponse* GetClusterMapResponse::_internal_mutable_gom_response() {
+  
+  if (gom_response_ == nullptr) {
+    auto* p = CreateMaybeMessage<::msg::GetOsdMapResponse>(GetArena());
+    gom_response_ = p;
+  }
+  return gom_response_;
+}
+inline ::msg::GetOsdMapResponse* GetClusterMapResponse::mutable_gom_response() {
+  // @@protoc_insertion_point(field_mutable:msg.GetClusterMapResponse.gom_response)
+  return _internal_mutable_gom_response();
+}
+inline void GetClusterMapResponse::set_allocated_gom_response(::msg::GetOsdMapResponse* gom_response) {
+  ::PROTOBUF_NAMESPACE_ID::Arena* message_arena = GetArena();
+  if (message_arena == nullptr) {
+    delete gom_response_;
+  }
+  if (gom_response) {
+    ::PROTOBUF_NAMESPACE_ID::Arena* submessage_arena =
+      ::PROTOBUF_NAMESPACE_ID::Arena::GetArena(gom_response);
+    if (message_arena != submessage_arena) {
+      gom_response = ::PROTOBUF_NAMESPACE_ID::internal::GetOwnedMessage(
+          message_arena, gom_response, submessage_arena);
+    }
+    
+  } else {
+    
+  }
+  gom_response_ = gom_response;
+  // @@protoc_insertion_point(field_set_allocated:msg.GetClusterMapResponse.gom_response)
+}
+
+// .msg.GetPgMapResponse gpm_response = 2;
+inline bool GetClusterMapResponse::_internal_has_gpm_response() const {
+  return this != internal_default_instance() && gpm_response_ != nullptr;
+}
+inline bool GetClusterMapResponse::has_gpm_response() const {
+  return _internal_has_gpm_response();
+}
+inline void GetClusterMapResponse::clear_gpm_response() {
+  if (GetArena() == nullptr && gpm_response_ != nullptr) {
+    delete gpm_response_;
+  }
+  gpm_response_ = nullptr;
+}
+inline const ::msg::GetPgMapResponse& GetClusterMapResponse::_internal_gpm_response() const {
+  const ::msg::GetPgMapResponse* p = gpm_response_;
+  return p != nullptr ? *p : *reinterpret_cast<const ::msg::GetPgMapResponse*>(
+      &::msg::_GetPgMapResponse_default_instance_);
+}
+inline const ::msg::GetPgMapResponse& GetClusterMapResponse::gpm_response() const {
+  // @@protoc_insertion_point(field_get:msg.GetClusterMapResponse.gpm_response)
+  return _internal_gpm_response();
+}
+inline void GetClusterMapResponse::unsafe_arena_set_allocated_gpm_response(
+    ::msg::GetPgMapResponse* gpm_response) {
+  if (GetArena() == nullptr) {
+    delete reinterpret_cast<::PROTOBUF_NAMESPACE_ID::MessageLite*>(gpm_response_);
+  }
+  gpm_response_ = gpm_response;
+  if (gpm_response) {
+    
+  } else {
+    
+  }
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:msg.GetClusterMapResponse.gpm_response)
+}
+inline ::msg::GetPgMapResponse* GetClusterMapResponse::release_gpm_response() {
+  auto temp = unsafe_arena_release_gpm_response();
+  if (GetArena() != nullptr) {
+    temp = ::PROTOBUF_NAMESPACE_ID::internal::DuplicateIfNonNull(temp);
+  }
+  return temp;
+}
+inline ::msg::GetPgMapResponse* GetClusterMapResponse::unsafe_arena_release_gpm_response() {
+  // @@protoc_insertion_point(field_release:msg.GetClusterMapResponse.gpm_response)
+  
+  ::msg::GetPgMapResponse* temp = gpm_response_;
+  gpm_response_ = nullptr;
+  return temp;
+}
+inline ::msg::GetPgMapResponse* GetClusterMapResponse::_internal_mutable_gpm_response() {
+  
+  if (gpm_response_ == nullptr) {
+    auto* p = CreateMaybeMessage<::msg::GetPgMapResponse>(GetArena());
+    gpm_response_ = p;
+  }
+  return gpm_response_;
+}
+inline ::msg::GetPgMapResponse* GetClusterMapResponse::mutable_gpm_response() {
+  // @@protoc_insertion_point(field_mutable:msg.GetClusterMapResponse.gpm_response)
+  return _internal_mutable_gpm_response();
+}
+inline void GetClusterMapResponse::set_allocated_gpm_response(::msg::GetPgMapResponse* gpm_response) {
+  ::PROTOBUF_NAMESPACE_ID::Arena* message_arena = GetArena();
+  if (message_arena == nullptr) {
+    delete gpm_response_;
+  }
+  if (gpm_response) {
+    ::PROTOBUF_NAMESPACE_ID::Arena* submessage_arena =
+      ::PROTOBUF_NAMESPACE_ID::Arena::GetArena(gpm_response);
+    if (message_arena != submessage_arena) {
+      gpm_response = ::PROTOBUF_NAMESPACE_ID::internal::GetOwnedMessage(
+          message_arena, gpm_response, submessage_arena);
+    }
+    
+  } else {
+    
+  }
+  gpm_response_ = gpm_response;
+  // @@protoc_insertion_point(field_set_allocated:msg.GetClusterMapResponse.gpm_response)
+}
+
+// -------------------------------------------------------------------
+
 // BootResponse
 
 // bool ok = 1;
@@ -7264,6 +7980,79 @@ inline ::msg::DeletePoolRequest* Request::mutable_delete_pool_request() {
   return _internal_mutable_delete_pool_request();
 }
 
+// .msg.GetClusterMapRequest get_cluster_map_request = 10;
+inline bool Request::_internal_has_get_cluster_map_request() const {
+  return union_case() == kGetClusterMapRequest;
+}
+inline bool Request::has_get_cluster_map_request() const {
+  return _internal_has_get_cluster_map_request();
+}
+inline void Request::set_has_get_cluster_map_request() {
+  _oneof_case_[0] = kGetClusterMapRequest;
+}
+inline void Request::clear_get_cluster_map_request() {
+  if (_internal_has_get_cluster_map_request()) {
+    if (GetArena() == nullptr) {
+      delete union_.get_cluster_map_request_;
+    }
+    clear_has_union();
+  }
+}
+inline ::msg::GetClusterMapRequest* Request::release_get_cluster_map_request() {
+  // @@protoc_insertion_point(field_release:msg.Request.get_cluster_map_request)
+  if (_internal_has_get_cluster_map_request()) {
+    clear_has_union();
+      ::msg::GetClusterMapRequest* temp = union_.get_cluster_map_request_;
+    if (GetArena() != nullptr) {
+      temp = ::PROTOBUF_NAMESPACE_ID::internal::DuplicateIfNonNull(temp);
+    }
+    union_.get_cluster_map_request_ = nullptr;
+    return temp;
+  } else {
+    return nullptr;
+  }
+}
+inline const ::msg::GetClusterMapRequest& Request::_internal_get_cluster_map_request() const {
+  return _internal_has_get_cluster_map_request()
+      ? *union_.get_cluster_map_request_
+      : *reinterpret_cast< ::msg::GetClusterMapRequest*>(&::msg::_GetClusterMapRequest_default_instance_);
+}
+inline const ::msg::GetClusterMapRequest& Request::get_cluster_map_request() const {
+  // @@protoc_insertion_point(field_get:msg.Request.get_cluster_map_request)
+  return _internal_get_cluster_map_request();
+}
+inline ::msg::GetClusterMapRequest* Request::unsafe_arena_release_get_cluster_map_request() {
+  // @@protoc_insertion_point(field_unsafe_arena_release:msg.Request.get_cluster_map_request)
+  if (_internal_has_get_cluster_map_request()) {
+    clear_has_union();
+    ::msg::GetClusterMapRequest* temp = union_.get_cluster_map_request_;
+    union_.get_cluster_map_request_ = nullptr;
+    return temp;
+  } else {
+    return nullptr;
+  }
+}
+inline void Request::unsafe_arena_set_allocated_get_cluster_map_request(::msg::GetClusterMapRequest* get_cluster_map_request) {
+  clear_union();
+  if (get_cluster_map_request) {
+    set_has_get_cluster_map_request();
+    union_.get_cluster_map_request_ = get_cluster_map_request;
+  }
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:msg.Request.get_cluster_map_request)
+}
+inline ::msg::GetClusterMapRequest* Request::_internal_mutable_get_cluster_map_request() {
+  if (!_internal_has_get_cluster_map_request()) {
+    clear_union();
+    set_has_get_cluster_map_request();
+    union_.get_cluster_map_request_ = CreateMaybeMessage< ::msg::GetClusterMapRequest >(GetArena());
+  }
+  return union_.get_cluster_map_request_;
+}
+inline ::msg::GetClusterMapRequest* Request::mutable_get_cluster_map_request() {
+  // @@protoc_insertion_point(field_mutable:msg.Request.get_cluster_map_request)
+  return _internal_mutable_get_cluster_map_request();
+}
+
 inline bool Request::has_union() const {
   return union_case() != UNION_NOT_SET;
 }
@@ -7934,6 +8723,79 @@ inline ::msg::DeletePoolResponse* Response::mutable_delete_pool_response() {
   return _internal_mutable_delete_pool_response();
 }
 
+// .msg.GetClusterMapResponse get_cluster_map_response = 10;
+inline bool Response::_internal_has_get_cluster_map_response() const {
+  return union_case() == kGetClusterMapResponse;
+}
+inline bool Response::has_get_cluster_map_response() const {
+  return _internal_has_get_cluster_map_response();
+}
+inline void Response::set_has_get_cluster_map_response() {
+  _oneof_case_[0] = kGetClusterMapResponse;
+}
+inline void Response::clear_get_cluster_map_response() {
+  if (_internal_has_get_cluster_map_response()) {
+    if (GetArena() == nullptr) {
+      delete union_.get_cluster_map_response_;
+    }
+    clear_has_union();
+  }
+}
+inline ::msg::GetClusterMapResponse* Response::release_get_cluster_map_response() {
+  // @@protoc_insertion_point(field_release:msg.Response.get_cluster_map_response)
+  if (_internal_has_get_cluster_map_response()) {
+    clear_has_union();
+      ::msg::GetClusterMapResponse* temp = union_.get_cluster_map_response_;
+    if (GetArena() != nullptr) {
+      temp = ::PROTOBUF_NAMESPACE_ID::internal::DuplicateIfNonNull(temp);
+    }
+    union_.get_cluster_map_response_ = nullptr;
+    return temp;
+  } else {
+    return nullptr;
+  }
+}
+inline const ::msg::GetClusterMapResponse& Response::_internal_get_cluster_map_response() const {
+  return _internal_has_get_cluster_map_response()
+      ? *union_.get_cluster_map_response_
+      : *reinterpret_cast< ::msg::GetClusterMapResponse*>(&::msg::_GetClusterMapResponse_default_instance_);
+}
+inline const ::msg::GetClusterMapResponse& Response::get_cluster_map_response() const {
+  // @@protoc_insertion_point(field_get:msg.Response.get_cluster_map_response)
+  return _internal_get_cluster_map_response();
+}
+inline ::msg::GetClusterMapResponse* Response::unsafe_arena_release_get_cluster_map_response() {
+  // @@protoc_insertion_point(field_unsafe_arena_release:msg.Response.get_cluster_map_response)
+  if (_internal_has_get_cluster_map_response()) {
+    clear_has_union();
+    ::msg::GetClusterMapResponse* temp = union_.get_cluster_map_response_;
+    union_.get_cluster_map_response_ = nullptr;
+    return temp;
+  } else {
+    return nullptr;
+  }
+}
+inline void Response::unsafe_arena_set_allocated_get_cluster_map_response(::msg::GetClusterMapResponse* get_cluster_map_response) {
+  clear_union();
+  if (get_cluster_map_response) {
+    set_has_get_cluster_map_response();
+    union_.get_cluster_map_response_ = get_cluster_map_response;
+  }
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:msg.Response.get_cluster_map_response)
+}
+inline ::msg::GetClusterMapResponse* Response::_internal_mutable_get_cluster_map_response() {
+  if (!_internal_has_get_cluster_map_response()) {
+    clear_union();
+    set_has_get_cluster_map_response();
+    union_.get_cluster_map_response_ = CreateMaybeMessage< ::msg::GetClusterMapResponse >(GetArena());
+  }
+  return union_.get_cluster_map_response_;
+}
+inline ::msg::GetClusterMapResponse* Response::mutable_get_cluster_map_response() {
+  // @@protoc_insertion_point(field_mutable:msg.Response.get_cluster_map_response)
+  return _internal_mutable_get_cluster_map_response();
+}
+
 inline bool Response::has_union() const {
   return union_case() != UNION_NOT_SET;
 }
@@ -7946,6 +8808,10 @@ inline Response::UnionCase Response::union_case() const {
 #ifdef __GNUC__
   #pragma GCC diagnostic pop
 #endif  // __GNUC__
+// -------------------------------------------------------------------
+
+// -------------------------------------------------------------------
+
 // -------------------------------------------------------------------
 
 // -------------------------------------------------------------------

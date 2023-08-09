@@ -22,6 +22,8 @@ extern PROTOBUF_INTERNAL_EXPORT_mon_5fmsg_2eproto ::PROTOBUF_NAMESPACE_ID::inter
 extern PROTOBUF_INTERNAL_EXPORT_mon_5fmsg_2eproto ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_CreatePoolResponse_mon_5fmsg_2eproto;
 extern PROTOBUF_INTERNAL_EXPORT_mon_5fmsg_2eproto ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_DeletePoolRequest_mon_5fmsg_2eproto;
 extern PROTOBUF_INTERNAL_EXPORT_mon_5fmsg_2eproto ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_DeletePoolResponse_mon_5fmsg_2eproto;
+extern PROTOBUF_INTERNAL_EXPORT_mon_5fmsg_2eproto ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<2> scc_info_GetClusterMapRequest_mon_5fmsg_2eproto;
+extern PROTOBUF_INTERNAL_EXPORT_mon_5fmsg_2eproto ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<2> scc_info_GetClusterMapResponse_mon_5fmsg_2eproto;
 extern PROTOBUF_INTERNAL_EXPORT_mon_5fmsg_2eproto ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_GetOsdMapRequest_mon_5fmsg_2eproto;
 extern PROTOBUF_INTERNAL_EXPORT_mon_5fmsg_2eproto ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<1> scc_info_GetOsdMapResponse_mon_5fmsg_2eproto;
 extern PROTOBUF_INTERNAL_EXPORT_mon_5fmsg_2eproto ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<1> scc_info_GetPgMapRequest_mon_5fmsg_2eproto;
@@ -125,6 +127,14 @@ class GetOsdMapResponseDefaultTypeInternal {
  public:
   ::PROTOBUF_NAMESPACE_ID::internal::ExplicitlyConstructed<GetOsdMapResponse> _instance;
 } _GetOsdMapResponse_default_instance_;
+class GetClusterMapRequestDefaultTypeInternal {
+ public:
+  ::PROTOBUF_NAMESPACE_ID::internal::ExplicitlyConstructed<GetClusterMapRequest> _instance;
+} _GetClusterMapRequest_default_instance_;
+class GetClusterMapResponseDefaultTypeInternal {
+ public:
+  ::PROTOBUF_NAMESPACE_ID::internal::ExplicitlyConstructed<GetClusterMapResponse> _instance;
+} _GetClusterMapResponse_default_instance_;
 class BootResponseDefaultTypeInternal {
  public:
   ::PROTOBUF_NAMESPACE_ID::internal::ExplicitlyConstructed<BootResponse> _instance;
@@ -157,6 +167,7 @@ class RequestDefaultTypeInternal {
   const ::msg::CreatePoolRequest* create_pool_request_;
   const ::msg::GetPgMapRequest* get_pgmap_request_;
   const ::msg::DeletePoolRequest* delete_pool_request_;
+  const ::msg::GetClusterMapRequest* get_cluster_map_request_;
 } _Request_default_instance_;
 class ResponseDefaultTypeInternal {
  public:
@@ -170,6 +181,7 @@ class ResponseDefaultTypeInternal {
   const ::msg::CreatePoolResponse* create_pool_response_;
   const ::msg::GetPgMapResponse* get_pgmap_response_;
   const ::msg::DeletePoolResponse* delete_pool_response_;
+  const ::msg::GetClusterMapResponse* get_cluster_map_response_;
 } _Response_default_instance_;
 }  // namespace msg
 static void InitDefaultsscc_info_ApplyIDRequest_mon_5fmsg_2eproto() {
@@ -283,6 +295,38 @@ static void InitDefaultsscc_info_DeletePoolResponse_mon_5fmsg_2eproto() {
 
 ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_DeletePoolResponse_mon_5fmsg_2eproto =
     {{ATOMIC_VAR_INIT(::PROTOBUF_NAMESPACE_ID::internal::SCCInfoBase::kUninitialized), 0, 0, InitDefaultsscc_info_DeletePoolResponse_mon_5fmsg_2eproto}, {}};
+
+static void InitDefaultsscc_info_GetClusterMapRequest_mon_5fmsg_2eproto() {
+  GOOGLE_PROTOBUF_VERIFY_VERSION;
+
+  {
+    void* ptr = &::msg::_GetClusterMapRequest_default_instance_;
+    new (ptr) ::msg::GetClusterMapRequest();
+    ::PROTOBUF_NAMESPACE_ID::internal::OnShutdownDestroyMessage(ptr);
+  }
+  ::msg::GetClusterMapRequest::InitAsDefaultInstance();
+}
+
+::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<2> scc_info_GetClusterMapRequest_mon_5fmsg_2eproto =
+    {{ATOMIC_VAR_INIT(::PROTOBUF_NAMESPACE_ID::internal::SCCInfoBase::kUninitialized), 2, 0, InitDefaultsscc_info_GetClusterMapRequest_mon_5fmsg_2eproto}, {
+      &scc_info_GetOsdMapRequest_mon_5fmsg_2eproto.base,
+      &scc_info_GetPgMapRequest_mon_5fmsg_2eproto.base,}};
+
+static void InitDefaultsscc_info_GetClusterMapResponse_mon_5fmsg_2eproto() {
+  GOOGLE_PROTOBUF_VERIFY_VERSION;
+
+  {
+    void* ptr = &::msg::_GetClusterMapResponse_default_instance_;
+    new (ptr) ::msg::GetClusterMapResponse();
+    ::PROTOBUF_NAMESPACE_ID::internal::OnShutdownDestroyMessage(ptr);
+  }
+  ::msg::GetClusterMapResponse::InitAsDefaultInstance();
+}
+
+::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<2> scc_info_GetClusterMapResponse_mon_5fmsg_2eproto =
+    {{ATOMIC_VAR_INIT(::PROTOBUF_NAMESPACE_ID::internal::SCCInfoBase::kUninitialized), 2, 0, InitDefaultsscc_info_GetClusterMapResponse_mon_5fmsg_2eproto}, {
+      &scc_info_GetOsdMapResponse_mon_5fmsg_2eproto.base,
+      &scc_info_GetPgMapResponse_mon_5fmsg_2eproto.base,}};
 
 static void InitDefaultsscc_info_GetOsdMapRequest_mon_5fmsg_2eproto() {
   GOOGLE_PROTOBUF_VERIFY_VERSION;
@@ -537,8 +581,8 @@ static void InitDefaultsscc_info_Request_mon_5fmsg_2eproto() {
   ::msg::Request::InitAsDefaultInstance();
 }
 
-::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<9> scc_info_Request_mon_5fmsg_2eproto =
-    {{ATOMIC_VAR_INIT(::PROTOBUF_NAMESPACE_ID::internal::SCCInfoBase::kUninitialized), 9, 0, InitDefaultsscc_info_Request_mon_5fmsg_2eproto}, {
+::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<10> scc_info_Request_mon_5fmsg_2eproto =
+    {{ATOMIC_VAR_INIT(::PROTOBUF_NAMESPACE_ID::internal::SCCInfoBase::kUninitialized), 10, 0, InitDefaultsscc_info_Request_mon_5fmsg_2eproto}, {
       &scc_info_BootRequest_mon_5fmsg_2eproto.base,
       &scc_info_OsdStopRequest_mon_5fmsg_2eproto.base,
       &scc_info_HeartbeatRequest_mon_5fmsg_2eproto.base,
@@ -547,7 +591,8 @@ static void InitDefaultsscc_info_Request_mon_5fmsg_2eproto() {
       &scc_info_ApplyIDRequest_mon_5fmsg_2eproto.base,
       &scc_info_CreatePoolRequest_mon_5fmsg_2eproto.base,
       &scc_info_GetPgMapRequest_mon_5fmsg_2eproto.base,
-      &scc_info_DeletePoolRequest_mon_5fmsg_2eproto.base,}};
+      &scc_info_DeletePoolRequest_mon_5fmsg_2eproto.base,
+      &scc_info_GetClusterMapRequest_mon_5fmsg_2eproto.base,}};
 
 static void InitDefaultsscc_info_Response_mon_5fmsg_2eproto() {
   GOOGLE_PROTOBUF_VERIFY_VERSION;
@@ -560,8 +605,8 @@ static void InitDefaultsscc_info_Response_mon_5fmsg_2eproto() {
   ::msg::Response::InitAsDefaultInstance();
 }
 
-::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<9> scc_info_Response_mon_5fmsg_2eproto =
-    {{ATOMIC_VAR_INIT(::PROTOBUF_NAMESPACE_ID::internal::SCCInfoBase::kUninitialized), 9, 0, InitDefaultsscc_info_Response_mon_5fmsg_2eproto}, {
+::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<10> scc_info_Response_mon_5fmsg_2eproto =
+    {{ATOMIC_VAR_INIT(::PROTOBUF_NAMESPACE_ID::internal::SCCInfoBase::kUninitialized), 10, 0, InitDefaultsscc_info_Response_mon_5fmsg_2eproto}, {
       &scc_info_BootResponse_mon_5fmsg_2eproto.base,
       &scc_info_OsdStopResponse_mon_5fmsg_2eproto.base,
       &scc_info_HeartbeatResponse_mon_5fmsg_2eproto.base,
@@ -570,7 +615,8 @@ static void InitDefaultsscc_info_Response_mon_5fmsg_2eproto() {
       &scc_info_ApplyIDResponse_mon_5fmsg_2eproto.base,
       &scc_info_CreatePoolResponse_mon_5fmsg_2eproto.base,
       &scc_info_GetPgMapResponse_mon_5fmsg_2eproto.base,
-      &scc_info_DeletePoolResponse_mon_5fmsg_2eproto.base,}};
+      &scc_info_DeletePoolResponse_mon_5fmsg_2eproto.base,
+      &scc_info_GetClusterMapResponse_mon_5fmsg_2eproto.base,}};
 
 static void InitDefaultsscc_info_poolinfo_mon_5fmsg_2eproto() {
   GOOGLE_PROTOBUF_VERIFY_VERSION;
@@ -586,7 +632,7 @@ static void InitDefaultsscc_info_poolinfo_mon_5fmsg_2eproto() {
 ::PROTOBUF_NAMESPACE_ID::internal::SCCInfo<0> scc_info_poolinfo_mon_5fmsg_2eproto =
     {{ATOMIC_VAR_INIT(::PROTOBUF_NAMESPACE_ID::internal::SCCInfoBase::kUninitialized), 0, 0, InitDefaultsscc_info_poolinfo_mon_5fmsg_2eproto}, {}};
 
-static ::PROTOBUF_NAMESPACE_ID::Metadata file_level_metadata_mon_5fmsg_2eproto[28];
+static ::PROTOBUF_NAMESPACE_ID::Metadata file_level_metadata_mon_5fmsg_2eproto[30];
 static const ::PROTOBUF_NAMESPACE_ID::EnumDescriptor* file_level_enum_descriptors_mon_5fmsg_2eproto[2];
 static constexpr ::PROTOBUF_NAMESPACE_ID::ServiceDescriptor const** file_level_service_descriptors_mon_5fmsg_2eproto = nullptr;
 
@@ -756,6 +802,20 @@ const ::PROTOBUF_NAMESPACE_ID::uint32 TableStruct_mon_5fmsg_2eproto::offsets[] P
   PROTOBUF_FIELD_OFFSET(::msg::GetOsdMapResponse, osdmapversion_),
   PROTOBUF_FIELD_OFFSET(::msg::GetOsdMapResponse, osds_),
   ~0u,  // no _has_bits_
+  PROTOBUF_FIELD_OFFSET(::msg::GetClusterMapRequest, _internal_metadata_),
+  ~0u,  // no _extensions_
+  ~0u,  // no _oneof_case_
+  ~0u,  // no _weak_field_map_
+  PROTOBUF_FIELD_OFFSET(::msg::GetClusterMapRequest, gom_request_),
+  PROTOBUF_FIELD_OFFSET(::msg::GetClusterMapRequest, gpm_request_),
+  ~0u,  // no _has_bits_
+  PROTOBUF_FIELD_OFFSET(::msg::GetClusterMapResponse, _internal_metadata_),
+  ~0u,  // no _extensions_
+  ~0u,  // no _oneof_case_
+  ~0u,  // no _weak_field_map_
+  PROTOBUF_FIELD_OFFSET(::msg::GetClusterMapResponse, gom_response_),
+  PROTOBUF_FIELD_OFFSET(::msg::GetClusterMapResponse, gpm_response_),
+  ~0u,  // no _has_bits_
   PROTOBUF_FIELD_OFFSET(::msg::BootResponse, _internal_metadata_),
   ~0u,  // no _extensions_
   ~0u,  // no _oneof_case_
@@ -799,6 +859,7 @@ const ::PROTOBUF_NAMESPACE_ID::uint32 TableStruct_mon_5fmsg_2eproto::offsets[] P
   offsetof(::msg::RequestDefaultTypeInternal, create_pool_request_),
   offsetof(::msg::RequestDefaultTypeInternal, get_pgmap_request_),
   offsetof(::msg::RequestDefaultTypeInternal, delete_pool_request_),
+  offsetof(::msg::RequestDefaultTypeInternal, get_cluster_map_request_),
   PROTOBUF_FIELD_OFFSET(::msg::Request, union_),
   ~0u,  // no _has_bits_
   PROTOBUF_FIELD_OFFSET(::msg::Response, _internal_metadata_),
@@ -814,6 +875,7 @@ const ::PROTOBUF_NAMESPACE_ID::uint32 TableStruct_mon_5fmsg_2eproto::offsets[] P
   offsetof(::msg::ResponseDefaultTypeInternal, create_pool_response_),
   offsetof(::msg::ResponseDefaultTypeInternal, get_pgmap_response_),
   offsetof(::msg::ResponseDefaultTypeInternal, delete_pool_response_),
+  offsetof(::msg::ResponseDefaultTypeInternal, get_cluster_map_response_),
   PROTOBUF_FIELD_OFFSET(::msg::Response, union_),
 };
 static const ::PROTOBUF_NAMESPACE_ID::internal::MigrationSchema schemas[] PROTOBUF_SECTION_VARIABLE(protodesc_cold) = {
@@ -838,13 +900,15 @@ static const ::PROTOBUF_NAMESPACE_ID::internal::MigrationSchema schemas[] PROTOB
   { 141, -1, sizeof(::msg::GetPgMapResponse)},
   { 149, -1, sizeof(::msg::GetOsdMapRequest)},
   { 156, -1, sizeof(::msg::GetOsdMapResponse)},
-  { 164, -1, sizeof(::msg::BootResponse)},
-  { 170, -1, sizeof(::msg::OsdStopRequest)},
-  { 176, -1, sizeof(::msg::OsdStopResponse)},
-  { 182, -1, sizeof(::msg::HeartbeatRequest)},
-  { 188, -1, sizeof(::msg::HeartbeatResponse)},
-  { 194, -1, sizeof(::msg::Request)},
-  { 209, -1, sizeof(::msg::Response)},
+  { 164, -1, sizeof(::msg::GetClusterMapRequest)},
+  { 171, -1, sizeof(::msg::GetClusterMapResponse)},
+  { 178, -1, sizeof(::msg::BootResponse)},
+  { 184, -1, sizeof(::msg::OsdStopRequest)},
+  { 190, -1, sizeof(::msg::OsdStopResponse)},
+  { 196, -1, sizeof(::msg::HeartbeatRequest)},
+  { 202, -1, sizeof(::msg::HeartbeatResponse)},
+  { 208, -1, sizeof(::msg::Request)},
+  { 224, -1, sizeof(::msg::Response)},
 };
 
 static ::PROTOBUF_NAMESPACE_ID::Message const * const file_default_instances[] = {
@@ -869,6 +933,8 @@ static ::PROTOBUF_NAMESPACE_ID::Message const * const file_default_instances[] =
   reinterpret_cast<const ::PROTOBUF_NAMESPACE_ID::Message*>(&::msg::_GetPgMapResponse_default_instance_),
   reinterpret_cast<const ::PROTOBUF_NAMESPACE_ID::Message*>(&::msg::_GetOsdMapRequest_default_instance_),
   reinterpret_cast<const ::PROTOBUF_NAMESPACE_ID::Message*>(&::msg::_GetOsdMapResponse_default_instance_),
+  reinterpret_cast<const ::PROTOBUF_NAMESPACE_ID::Message*>(&::msg::_GetClusterMapRequest_default_instance_),
+  reinterpret_cast<const ::PROTOBUF_NAMESPACE_ID::Message*>(&::msg::_GetClusterMapResponse_default_instance_),
   reinterpret_cast<const ::PROTOBUF_NAMESPACE_ID::Message*>(&::msg::_BootResponse_default_instance_),
   reinterpret_cast<const ::PROTOBUF_NAMESPACE_ID::Message*>(&::msg::_OsdStopRequest_default_instance_),
   reinterpret_cast<const ::PROTOBUF_NAMESPACE_ID::Message*>(&::msg::_OsdStopResponse_default_instance_),
@@ -916,45 +982,54 @@ const char descriptor_table_protodef_mon_5fmsg_2eproto[] PROTOBUF_SECTION_VARIAB
   "\n\016currentversion\030\002 \001(\003\"v\n\021GetOsdMapRespo"
   "nse\022\'\n\terrorcode\030\001 \001(\0162\024.msg.OsdMapError"
   "Code\022\025\n\rosdmapversion\030\002 \001(\003\022!\n\004osds\030\003 \003("
-  "\0132\023.msg.OsdDynamicInfo\"\032\n\014BootResponse\022\n"
-  "\n\002ok\030\001 \001(\010\"\034\n\016OsdStopRequest\022\n\n\002id\030\001 \001(\005"
-  "\"\035\n\017OsdStopResponse\022\n\n\002ok\030\001 \001(\010\"\036\n\020Heart"
-  "beatRequest\022\n\n\002id\030\001 \001(\005\"\037\n\021HeartbeatResp"
-  "onse\022\n\n\002ok\030\001 \001(\010\"\335\003\n\007Request\022(\n\014boot_req"
-  "uest\030\001 \001(\0132\020.msg.BootRequestH\000\022/\n\020osd_st"
-  "op_request\030\002 \001(\0132\023.msg.OsdStopRequestH\000\022"
-  "2\n\021heartbeat_request\030\003 \001(\0132\025.msg.Heartbe"
-  "atRequestH\000\0223\n\022get_osdmap_request\030\004 \001(\0132"
-  "\025.msg.GetOsdMapRequestH\000\0223\n\022list_pools_r"
-  "equest\030\005 \001(\0132\025.msg.ListPoolsRequestH\000\022/\n"
-  "\020apply_id_request\030\006 \001(\0132\023.msg.ApplyIDReq"
-  "uestH\000\0225\n\023create_pool_request\030\007 \001(\0132\026.ms"
-  "g.CreatePoolRequestH\000\0221\n\021get_pgmap_reque"
-  "st\030\010 \001(\0132\024.msg.GetPgMapRequestH\000\0225\n\023dele"
-  "te_pool_request\030\t \001(\0132\026.msg.DeletePoolRe"
-  "questH\000B\007\n\005union\"\360\003\n\010Response\022*\n\rboot_re"
-  "sponse\030\001 \001(\0132\021.msg.BootResponseH\000\0221\n\021osd"
-  "_stop_response\030\002 \001(\0132\024.msg.OsdStopRespon"
-  "seH\000\0224\n\022heartbeat_response\030\003 \001(\0132\026.msg.H"
-  "eartbeatResponseH\000\0225\n\023get_osdmap_respons"
-  "e\030\004 \001(\0132\026.msg.GetOsdMapResponseH\000\0225\n\023lis"
-  "t_pools_response\030\005 \001(\0132\026.msg.ListPoolsRe"
-  "sponseH\000\0221\n\021apply_id_response\030\006 \001(\0132\024.ms"
-  "g.ApplyIDResponseH\000\0227\n\024create_pool_respo"
-  "nse\030\007 \001(\0132\027.msg.CreatePoolResponseH\000\0223\n\022"
-  "get_pgmap_response\030\010 \001(\0132\025.msg.GetPgMapR"
-  "esponseH\000\0227\n\024delete_pool_response\030\t \001(\0132"
-  "\027.msg.DeletePoolResponseH\000B\007\n\005union*p\n\021G"
-  "etPgMapErrorCode\022\016\n\npgMapGetOk\020\000\022\034\n\030pgMa"
-  "pclientVersionHigher\020\001\022\027\n\023PgMapclusterNo"
-  "Pools\020\002\022\024\n\020PgMapSameVersion\020\003*]\n\017OsdMapE"
-  "rrorCode\022\006\n\002ok\020\000\022\027\n\023clientVersionHigher\020"
-  "\001\022\030\n\024clientVersionInvalid\020\002\022\017\n\013noOsdsExi"
-  "st\020\003b\006proto3"
+  "\0132\023.msg.OsdDynamicInfo\"m\n\024GetClusterMapR"
+  "equest\022*\n\013gom_request\030\001 \001(\0132\025.msg.GetOsd"
+  "MapRequest\022)\n\013gpm_request\030\002 \001(\0132\024.msg.Ge"
+  "tPgMapRequest\"r\n\025GetClusterMapResponse\022,"
+  "\n\014gom_response\030\001 \001(\0132\026.msg.GetOsdMapResp"
+  "onse\022+\n\014gpm_response\030\002 \001(\0132\025.msg.GetPgMa"
+  "pResponse\"\032\n\014BootResponse\022\n\n\002ok\030\001 \001(\010\"\034\n"
+  "\016OsdStopRequest\022\n\n\002id\030\001 \001(\005\"\035\n\017OsdStopRe"
+  "sponse\022\n\n\002ok\030\001 \001(\010\"\036\n\020HeartbeatRequest\022\n"
+  "\n\002id\030\001 \001(\005\"\037\n\021HeartbeatResponse\022\n\n\002ok\030\001 "
+  "\001(\010\"\233\004\n\007Request\022(\n\014boot_request\030\001 \001(\0132\020."
+  "msg.BootRequestH\000\022/\n\020osd_stop_request\030\002 "
+  "\001(\0132\023.msg.OsdStopRequestH\000\0222\n\021heartbeat_"
+  "request\030\003 \001(\0132\025.msg.HeartbeatRequestH\000\0223"
+  "\n\022get_osdmap_request\030\004 \001(\0132\025.msg.GetOsdM"
+  "apRequestH\000\0223\n\022list_pools_request\030\005 \001(\0132"
+  "\025.msg.ListPoolsRequestH\000\022/\n\020apply_id_req"
+  "uest\030\006 \001(\0132\023.msg.ApplyIDRequestH\000\0225\n\023cre"
+  "ate_pool_request\030\007 \001(\0132\026.msg.CreatePoolR"
+  "equestH\000\0221\n\021get_pgmap_request\030\010 \001(\0132\024.ms"
+  "g.GetPgMapRequestH\000\0225\n\023delete_pool_reque"
+  "st\030\t \001(\0132\026.msg.DeletePoolRequestH\000\022<\n\027ge"
+  "t_cluster_map_request\030\n \001(\0132\031.msg.GetClu"
+  "sterMapRequestH\000B\007\n\005union\"\260\004\n\010Response\022*"
+  "\n\rboot_response\030\001 \001(\0132\021.msg.BootResponse"
+  "H\000\0221\n\021osd_stop_response\030\002 \001(\0132\024.msg.OsdS"
+  "topResponseH\000\0224\n\022heartbeat_response\030\003 \001("
+  "\0132\026.msg.HeartbeatResponseH\000\0225\n\023get_osdma"
+  "p_response\030\004 \001(\0132\026.msg.GetOsdMapResponse"
+  "H\000\0225\n\023list_pools_response\030\005 \001(\0132\026.msg.Li"
+  "stPoolsResponseH\000\0221\n\021apply_id_response\030\006"
+  " \001(\0132\024.msg.ApplyIDResponseH\000\0227\n\024create_p"
+  "ool_response\030\007 \001(\0132\027.msg.CreatePoolRespo"
+  "nseH\000\0223\n\022get_pgmap_response\030\010 \001(\0132\025.msg."
+  "GetPgMapResponseH\000\0227\n\024delete_pool_respon"
+  "se\030\t \001(\0132\027.msg.DeletePoolResponseH\000\022>\n\030g"
+  "et_cluster_map_response\030\n \001(\0132\032.msg.GetC"
+  "lusterMapResponseH\000B\007\n\005union*p\n\021GetPgMap"
+  "ErrorCode\022\016\n\npgMapGetOk\020\000\022\034\n\030pgMapclient"
+  "VersionHigher\020\001\022\027\n\023PgMapclusterNoPools\020\002"
+  "\022\024\n\020PgMapSameVersion\020\003*]\n\017OsdMapErrorCod"
+  "e\022\006\n\002ok\020\000\022\027\n\023clientVersionHigher\020\001\022\030\n\024cl"
+  "ientVersionInvalid\020\002\022\017\n\013noOsdsExist\020\003b\006p"
+  "roto3"
   ;
 static const ::PROTOBUF_NAMESPACE_ID::internal::DescriptorTable*const descriptor_table_mon_5fmsg_2eproto_deps[1] = {
 };
-static ::PROTOBUF_NAMESPACE_ID::internal::SCCInfoBase*const descriptor_table_mon_5fmsg_2eproto_sccs[28] = {
+static ::PROTOBUF_NAMESPACE_ID::internal::SCCInfoBase*const descriptor_table_mon_5fmsg_2eproto_sccs[30] = {
   &scc_info_ApplyIDRequest_mon_5fmsg_2eproto.base,
   &scc_info_ApplyIDResponse_mon_5fmsg_2eproto.base,
   &scc_info_BootRequest_mon_5fmsg_2eproto.base,
@@ -963,6 +1038,8 @@ static ::PROTOBUF_NAMESPACE_ID::internal::SCCInfoBase*const descriptor_table_mon
   &scc_info_CreatePoolResponse_mon_5fmsg_2eproto.base,
   &scc_info_DeletePoolRequest_mon_5fmsg_2eproto.base,
   &scc_info_DeletePoolResponse_mon_5fmsg_2eproto.base,
+  &scc_info_GetClusterMapRequest_mon_5fmsg_2eproto.base,
+  &scc_info_GetClusterMapResponse_mon_5fmsg_2eproto.base,
   &scc_info_GetOsdMapRequest_mon_5fmsg_2eproto.base,
   &scc_info_GetOsdMapResponse_mon_5fmsg_2eproto.base,
   &scc_info_GetPgMapRequest_mon_5fmsg_2eproto.base,
@@ -986,10 +1063,10 @@ static ::PROTOBUF_NAMESPACE_ID::internal::SCCInfoBase*const descriptor_table_mon
 };
 static ::PROTOBUF_NAMESPACE_ID::internal::once_flag descriptor_table_mon_5fmsg_2eproto_once;
 const ::PROTOBUF_NAMESPACE_ID::internal::DescriptorTable descriptor_table_mon_5fmsg_2eproto = {
-  false, false, descriptor_table_protodef_mon_5fmsg_2eproto, "mon_msg.proto", 2852,
-  &descriptor_table_mon_5fmsg_2eproto_once, descriptor_table_mon_5fmsg_2eproto_sccs, descriptor_table_mon_5fmsg_2eproto_deps, 28, 0,
+  false, false, descriptor_table_protodef_mon_5fmsg_2eproto, "mon_msg.proto", 3205,
+  &descriptor_table_mon_5fmsg_2eproto_once, descriptor_table_mon_5fmsg_2eproto_sccs, descriptor_table_mon_5fmsg_2eproto_deps, 30, 0,
   schemas, file_default_instances, TableStruct_mon_5fmsg_2eproto::offsets,
-  file_level_metadata_mon_5fmsg_2eproto, 28, file_level_enum_descriptors_mon_5fmsg_2eproto, file_level_service_descriptors_mon_5fmsg_2eproto,
+  file_level_metadata_mon_5fmsg_2eproto, 30, file_level_enum_descriptors_mon_5fmsg_2eproto, file_level_service_descriptors_mon_5fmsg_2eproto,
 };
 
 // Force running AddDescriptors() at dynamic initialization time.
@@ -5466,6 +5543,534 @@ void GetOsdMapResponse::InternalSwap(GetOsdMapResponse* other) {
 
 // ===================================================================
 
+void GetClusterMapRequest::InitAsDefaultInstance() {
+  ::msg::_GetClusterMapRequest_default_instance_._instance.get_mutable()->gom_request_ = const_cast< ::msg::GetOsdMapRequest*>(
+      ::msg::GetOsdMapRequest::internal_default_instance());
+  ::msg::_GetClusterMapRequest_default_instance_._instance.get_mutable()->gpm_request_ = const_cast< ::msg::GetPgMapRequest*>(
+      ::msg::GetPgMapRequest::internal_default_instance());
+}
+class GetClusterMapRequest::_Internal {
+ public:
+  static const ::msg::GetOsdMapRequest& gom_request(const GetClusterMapRequest* msg);
+  static const ::msg::GetPgMapRequest& gpm_request(const GetClusterMapRequest* msg);
+};
+
+const ::msg::GetOsdMapRequest&
+GetClusterMapRequest::_Internal::gom_request(const GetClusterMapRequest* msg) {
+  return *msg->gom_request_;
+}
+const ::msg::GetPgMapRequest&
+GetClusterMapRequest::_Internal::gpm_request(const GetClusterMapRequest* msg) {
+  return *msg->gpm_request_;
+}
+GetClusterMapRequest::GetClusterMapRequest(::PROTOBUF_NAMESPACE_ID::Arena* arena)
+  : ::PROTOBUF_NAMESPACE_ID::Message(arena) {
+  SharedCtor();
+  RegisterArenaDtor(arena);
+  // @@protoc_insertion_point(arena_constructor:msg.GetClusterMapRequest)
+}
+GetClusterMapRequest::GetClusterMapRequest(const GetClusterMapRequest& from)
+  : ::PROTOBUF_NAMESPACE_ID::Message() {
+  _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+  if (from._internal_has_gom_request()) {
+    gom_request_ = new ::msg::GetOsdMapRequest(*from.gom_request_);
+  } else {
+    gom_request_ = nullptr;
+  }
+  if (from._internal_has_gpm_request()) {
+    gpm_request_ = new ::msg::GetPgMapRequest(*from.gpm_request_);
+  } else {
+    gpm_request_ = nullptr;
+  }
+  // @@protoc_insertion_point(copy_constructor:msg.GetClusterMapRequest)
+}
+
+void GetClusterMapRequest::SharedCtor() {
+  ::PROTOBUF_NAMESPACE_ID::internal::InitSCC(&scc_info_GetClusterMapRequest_mon_5fmsg_2eproto.base);
+  ::memset(&gom_request_, 0, static_cast<size_t>(
+      reinterpret_cast<char*>(&gpm_request_) -
+      reinterpret_cast<char*>(&gom_request_)) + sizeof(gpm_request_));
+}
+
+GetClusterMapRequest::~GetClusterMapRequest() {
+  // @@protoc_insertion_point(destructor:msg.GetClusterMapRequest)
+  SharedDtor();
+  _internal_metadata_.Delete<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
+}
+
+void GetClusterMapRequest::SharedDtor() {
+  GOOGLE_DCHECK(GetArena() == nullptr);
+  if (this != internal_default_instance()) delete gom_request_;
+  if (this != internal_default_instance()) delete gpm_request_;
+}
+
+void GetClusterMapRequest::ArenaDtor(void* object) {
+  GetClusterMapRequest* _this = reinterpret_cast< GetClusterMapRequest* >(object);
+  (void)_this;
+}
+void GetClusterMapRequest::RegisterArenaDtor(::PROTOBUF_NAMESPACE_ID::Arena*) {
+}
+void GetClusterMapRequest::SetCachedSize(int size) const {
+  _cached_size_.Set(size);
+}
+const GetClusterMapRequest& GetClusterMapRequest::default_instance() {
+  ::PROTOBUF_NAMESPACE_ID::internal::InitSCC(&::scc_info_GetClusterMapRequest_mon_5fmsg_2eproto.base);
+  return *internal_default_instance();
+}
+
+
+void GetClusterMapRequest::Clear() {
+// @@protoc_insertion_point(message_clear_start:msg.GetClusterMapRequest)
+  ::PROTOBUF_NAMESPACE_ID::uint32 cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  if (GetArena() == nullptr && gom_request_ != nullptr) {
+    delete gom_request_;
+  }
+  gom_request_ = nullptr;
+  if (GetArena() == nullptr && gpm_request_ != nullptr) {
+    delete gpm_request_;
+  }
+  gpm_request_ = nullptr;
+  _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
+}
+
+const char* GetClusterMapRequest::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) {
+#define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  ::PROTOBUF_NAMESPACE_ID::Arena* arena = GetArena(); (void)arena;
+  while (!ctx->Done(&ptr)) {
+    ::PROTOBUF_NAMESPACE_ID::uint32 tag;
+    ptr = ::PROTOBUF_NAMESPACE_ID::internal::ReadTag(ptr, &tag);
+    CHK_(ptr);
+    switch (tag >> 3) {
+      // .msg.GetOsdMapRequest gom_request = 1;
+      case 1:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<::PROTOBUF_NAMESPACE_ID::uint8>(tag) == 10)) {
+          ptr = ctx->ParseMessage(_internal_mutable_gom_request(), ptr);
+          CHK_(ptr);
+        } else goto handle_unusual;
+        continue;
+      // .msg.GetPgMapRequest gpm_request = 2;
+      case 2:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<::PROTOBUF_NAMESPACE_ID::uint8>(tag) == 18)) {
+          ptr = ctx->ParseMessage(_internal_mutable_gpm_request(), ptr);
+          CHK_(ptr);
+        } else goto handle_unusual;
+        continue;
+      default: {
+      handle_unusual:
+        if ((tag & 7) == 4 || tag == 0) {
+          ctx->SetLastTag(tag);
+          goto success;
+        }
+        ptr = UnknownFieldParse(tag,
+            _internal_metadata_.mutable_unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(),
+            ptr, ctx);
+        CHK_(ptr != nullptr);
+        continue;
+      }
+    }  // switch
+  }  // while
+success:
+  return ptr;
+failure:
+  ptr = nullptr;
+  goto success;
+#undef CHK_
+}
+
+::PROTOBUF_NAMESPACE_ID::uint8* GetClusterMapRequest::_InternalSerialize(
+    ::PROTOBUF_NAMESPACE_ID::uint8* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const {
+  // @@protoc_insertion_point(serialize_to_array_start:msg.GetClusterMapRequest)
+  ::PROTOBUF_NAMESPACE_ID::uint32 cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  // .msg.GetOsdMapRequest gom_request = 1;
+  if (this->has_gom_request()) {
+    target = stream->EnsureSpace(target);
+    target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::
+      InternalWriteMessage(
+        1, _Internal::gom_request(this), target, stream);
+  }
+
+  // .msg.GetPgMapRequest gpm_request = 2;
+  if (this->has_gpm_request()) {
+    target = stream->EnsureSpace(target);
+    target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::
+      InternalWriteMessage(
+        2, _Internal::gpm_request(this), target, stream);
+  }
+
+  if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
+    target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormat::InternalSerializeUnknownFieldsToArray(
+        _internal_metadata_.unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(::PROTOBUF_NAMESPACE_ID::UnknownFieldSet::default_instance), target, stream);
+  }
+  // @@protoc_insertion_point(serialize_to_array_end:msg.GetClusterMapRequest)
+  return target;
+}
+
+size_t GetClusterMapRequest::ByteSizeLong() const {
+// @@protoc_insertion_point(message_byte_size_start:msg.GetClusterMapRequest)
+  size_t total_size = 0;
+
+  ::PROTOBUF_NAMESPACE_ID::uint32 cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  // .msg.GetOsdMapRequest gom_request = 1;
+  if (this->has_gom_request()) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::MessageSize(
+        *gom_request_);
+  }
+
+  // .msg.GetPgMapRequest gpm_request = 2;
+  if (this->has_gpm_request()) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::MessageSize(
+        *gpm_request_);
+  }
+
+  if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
+    return ::PROTOBUF_NAMESPACE_ID::internal::ComputeUnknownFieldsSize(
+        _internal_metadata_, total_size, &_cached_size_);
+  }
+  int cached_size = ::PROTOBUF_NAMESPACE_ID::internal::ToCachedSize(total_size);
+  SetCachedSize(cached_size);
+  return total_size;
+}
+
+void GetClusterMapRequest::MergeFrom(const ::PROTOBUF_NAMESPACE_ID::Message& from) {
+// @@protoc_insertion_point(generalized_merge_from_start:msg.GetClusterMapRequest)
+  GOOGLE_DCHECK_NE(&from, this);
+  const GetClusterMapRequest* source =
+      ::PROTOBUF_NAMESPACE_ID::DynamicCastToGenerated<GetClusterMapRequest>(
+          &from);
+  if (source == nullptr) {
+  // @@protoc_insertion_point(generalized_merge_from_cast_fail:msg.GetClusterMapRequest)
+    ::PROTOBUF_NAMESPACE_ID::internal::ReflectionOps::Merge(from, this);
+  } else {
+  // @@protoc_insertion_point(generalized_merge_from_cast_success:msg.GetClusterMapRequest)
+    MergeFrom(*source);
+  }
+}
+
+void GetClusterMapRequest::MergeFrom(const GetClusterMapRequest& from) {
+// @@protoc_insertion_point(class_specific_merge_from_start:msg.GetClusterMapRequest)
+  GOOGLE_DCHECK_NE(&from, this);
+  _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+  ::PROTOBUF_NAMESPACE_ID::uint32 cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  if (from.has_gom_request()) {
+    _internal_mutable_gom_request()->::msg::GetOsdMapRequest::MergeFrom(from._internal_gom_request());
+  }
+  if (from.has_gpm_request()) {
+    _internal_mutable_gpm_request()->::msg::GetPgMapRequest::MergeFrom(from._internal_gpm_request());
+  }
+}
+
+void GetClusterMapRequest::CopyFrom(const ::PROTOBUF_NAMESPACE_ID::Message& from) {
+// @@protoc_insertion_point(generalized_copy_from_start:msg.GetClusterMapRequest)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+void GetClusterMapRequest::CopyFrom(const GetClusterMapRequest& from) {
+// @@protoc_insertion_point(class_specific_copy_from_start:msg.GetClusterMapRequest)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+bool GetClusterMapRequest::IsInitialized() const {
+  return true;
+}
+
+void GetClusterMapRequest::InternalSwap(GetClusterMapRequest* other) {
+  using std::swap;
+  _internal_metadata_.Swap<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(&other->_internal_metadata_);
+  ::PROTOBUF_NAMESPACE_ID::internal::memswap<
+      PROTOBUF_FIELD_OFFSET(GetClusterMapRequest, gpm_request_)
+      + sizeof(GetClusterMapRequest::gpm_request_)
+      - PROTOBUF_FIELD_OFFSET(GetClusterMapRequest, gom_request_)>(
+          reinterpret_cast<char*>(&gom_request_),
+          reinterpret_cast<char*>(&other->gom_request_));
+}
+
+::PROTOBUF_NAMESPACE_ID::Metadata GetClusterMapRequest::GetMetadata() const {
+  return GetMetadataStatic();
+}
+
+
+// ===================================================================
+
+void GetClusterMapResponse::InitAsDefaultInstance() {
+  ::msg::_GetClusterMapResponse_default_instance_._instance.get_mutable()->gom_response_ = const_cast< ::msg::GetOsdMapResponse*>(
+      ::msg::GetOsdMapResponse::internal_default_instance());
+  ::msg::_GetClusterMapResponse_default_instance_._instance.get_mutable()->gpm_response_ = const_cast< ::msg::GetPgMapResponse*>(
+      ::msg::GetPgMapResponse::internal_default_instance());
+}
+class GetClusterMapResponse::_Internal {
+ public:
+  static const ::msg::GetOsdMapResponse& gom_response(const GetClusterMapResponse* msg);
+  static const ::msg::GetPgMapResponse& gpm_response(const GetClusterMapResponse* msg);
+};
+
+const ::msg::GetOsdMapResponse&
+GetClusterMapResponse::_Internal::gom_response(const GetClusterMapResponse* msg) {
+  return *msg->gom_response_;
+}
+const ::msg::GetPgMapResponse&
+GetClusterMapResponse::_Internal::gpm_response(const GetClusterMapResponse* msg) {
+  return *msg->gpm_response_;
+}
+GetClusterMapResponse::GetClusterMapResponse(::PROTOBUF_NAMESPACE_ID::Arena* arena)
+  : ::PROTOBUF_NAMESPACE_ID::Message(arena) {
+  SharedCtor();
+  RegisterArenaDtor(arena);
+  // @@protoc_insertion_point(arena_constructor:msg.GetClusterMapResponse)
+}
+GetClusterMapResponse::GetClusterMapResponse(const GetClusterMapResponse& from)
+  : ::PROTOBUF_NAMESPACE_ID::Message() {
+  _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+  if (from._internal_has_gom_response()) {
+    gom_response_ = new ::msg::GetOsdMapResponse(*from.gom_response_);
+  } else {
+    gom_response_ = nullptr;
+  }
+  if (from._internal_has_gpm_response()) {
+    gpm_response_ = new ::msg::GetPgMapResponse(*from.gpm_response_);
+  } else {
+    gpm_response_ = nullptr;
+  }
+  // @@protoc_insertion_point(copy_constructor:msg.GetClusterMapResponse)
+}
+
+void GetClusterMapResponse::SharedCtor() {
+  ::PROTOBUF_NAMESPACE_ID::internal::InitSCC(&scc_info_GetClusterMapResponse_mon_5fmsg_2eproto.base);
+  ::memset(&gom_response_, 0, static_cast<size_t>(
+      reinterpret_cast<char*>(&gpm_response_) -
+      reinterpret_cast<char*>(&gom_response_)) + sizeof(gpm_response_));
+}
+
+GetClusterMapResponse::~GetClusterMapResponse() {
+  // @@protoc_insertion_point(destructor:msg.GetClusterMapResponse)
+  SharedDtor();
+  _internal_metadata_.Delete<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
+}
+
+void GetClusterMapResponse::SharedDtor() {
+  GOOGLE_DCHECK(GetArena() == nullptr);
+  if (this != internal_default_instance()) delete gom_response_;
+  if (this != internal_default_instance()) delete gpm_response_;
+}
+
+void GetClusterMapResponse::ArenaDtor(void* object) {
+  GetClusterMapResponse* _this = reinterpret_cast< GetClusterMapResponse* >(object);
+  (void)_this;
+}
+void GetClusterMapResponse::RegisterArenaDtor(::PROTOBUF_NAMESPACE_ID::Arena*) {
+}
+void GetClusterMapResponse::SetCachedSize(int size) const {
+  _cached_size_.Set(size);
+}
+const GetClusterMapResponse& GetClusterMapResponse::default_instance() {
+  ::PROTOBUF_NAMESPACE_ID::internal::InitSCC(&::scc_info_GetClusterMapResponse_mon_5fmsg_2eproto.base);
+  return *internal_default_instance();
+}
+
+
+void GetClusterMapResponse::Clear() {
+// @@protoc_insertion_point(message_clear_start:msg.GetClusterMapResponse)
+  ::PROTOBUF_NAMESPACE_ID::uint32 cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  if (GetArena() == nullptr && gom_response_ != nullptr) {
+    delete gom_response_;
+  }
+  gom_response_ = nullptr;
+  if (GetArena() == nullptr && gpm_response_ != nullptr) {
+    delete gpm_response_;
+  }
+  gpm_response_ = nullptr;
+  _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
+}
+
+const char* GetClusterMapResponse::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) {
+#define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  ::PROTOBUF_NAMESPACE_ID::Arena* arena = GetArena(); (void)arena;
+  while (!ctx->Done(&ptr)) {
+    ::PROTOBUF_NAMESPACE_ID::uint32 tag;
+    ptr = ::PROTOBUF_NAMESPACE_ID::internal::ReadTag(ptr, &tag);
+    CHK_(ptr);
+    switch (tag >> 3) {
+      // .msg.GetOsdMapResponse gom_response = 1;
+      case 1:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<::PROTOBUF_NAMESPACE_ID::uint8>(tag) == 10)) {
+          ptr = ctx->ParseMessage(_internal_mutable_gom_response(), ptr);
+          CHK_(ptr);
+        } else goto handle_unusual;
+        continue;
+      // .msg.GetPgMapResponse gpm_response = 2;
+      case 2:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<::PROTOBUF_NAMESPACE_ID::uint8>(tag) == 18)) {
+          ptr = ctx->ParseMessage(_internal_mutable_gpm_response(), ptr);
+          CHK_(ptr);
+        } else goto handle_unusual;
+        continue;
+      default: {
+      handle_unusual:
+        if ((tag & 7) == 4 || tag == 0) {
+          ctx->SetLastTag(tag);
+          goto success;
+        }
+        ptr = UnknownFieldParse(tag,
+            _internal_metadata_.mutable_unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(),
+            ptr, ctx);
+        CHK_(ptr != nullptr);
+        continue;
+      }
+    }  // switch
+  }  // while
+success:
+  return ptr;
+failure:
+  ptr = nullptr;
+  goto success;
+#undef CHK_
+}
+
+::PROTOBUF_NAMESPACE_ID::uint8* GetClusterMapResponse::_InternalSerialize(
+    ::PROTOBUF_NAMESPACE_ID::uint8* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const {
+  // @@protoc_insertion_point(serialize_to_array_start:msg.GetClusterMapResponse)
+  ::PROTOBUF_NAMESPACE_ID::uint32 cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  // .msg.GetOsdMapResponse gom_response = 1;
+  if (this->has_gom_response()) {
+    target = stream->EnsureSpace(target);
+    target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::
+      InternalWriteMessage(
+        1, _Internal::gom_response(this), target, stream);
+  }
+
+  // .msg.GetPgMapResponse gpm_response = 2;
+  if (this->has_gpm_response()) {
+    target = stream->EnsureSpace(target);
+    target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::
+      InternalWriteMessage(
+        2, _Internal::gpm_response(this), target, stream);
+  }
+
+  if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
+    target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormat::InternalSerializeUnknownFieldsToArray(
+        _internal_metadata_.unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(::PROTOBUF_NAMESPACE_ID::UnknownFieldSet::default_instance), target, stream);
+  }
+  // @@protoc_insertion_point(serialize_to_array_end:msg.GetClusterMapResponse)
+  return target;
+}
+
+size_t GetClusterMapResponse::ByteSizeLong() const {
+// @@protoc_insertion_point(message_byte_size_start:msg.GetClusterMapResponse)
+  size_t total_size = 0;
+
+  ::PROTOBUF_NAMESPACE_ID::uint32 cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  // .msg.GetOsdMapResponse gom_response = 1;
+  if (this->has_gom_response()) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::MessageSize(
+        *gom_response_);
+  }
+
+  // .msg.GetPgMapResponse gpm_response = 2;
+  if (this->has_gpm_response()) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::MessageSize(
+        *gpm_response_);
+  }
+
+  if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
+    return ::PROTOBUF_NAMESPACE_ID::internal::ComputeUnknownFieldsSize(
+        _internal_metadata_, total_size, &_cached_size_);
+  }
+  int cached_size = ::PROTOBUF_NAMESPACE_ID::internal::ToCachedSize(total_size);
+  SetCachedSize(cached_size);
+  return total_size;
+}
+
+void GetClusterMapResponse::MergeFrom(const ::PROTOBUF_NAMESPACE_ID::Message& from) {
+// @@protoc_insertion_point(generalized_merge_from_start:msg.GetClusterMapResponse)
+  GOOGLE_DCHECK_NE(&from, this);
+  const GetClusterMapResponse* source =
+      ::PROTOBUF_NAMESPACE_ID::DynamicCastToGenerated<GetClusterMapResponse>(
+          &from);
+  if (source == nullptr) {
+  // @@protoc_insertion_point(generalized_merge_from_cast_fail:msg.GetClusterMapResponse)
+    ::PROTOBUF_NAMESPACE_ID::internal::ReflectionOps::Merge(from, this);
+  } else {
+  // @@protoc_insertion_point(generalized_merge_from_cast_success:msg.GetClusterMapResponse)
+    MergeFrom(*source);
+  }
+}
+
+void GetClusterMapResponse::MergeFrom(const GetClusterMapResponse& from) {
+// @@protoc_insertion_point(class_specific_merge_from_start:msg.GetClusterMapResponse)
+  GOOGLE_DCHECK_NE(&from, this);
+  _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+  ::PROTOBUF_NAMESPACE_ID::uint32 cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  if (from.has_gom_response()) {
+    _internal_mutable_gom_response()->::msg::GetOsdMapResponse::MergeFrom(from._internal_gom_response());
+  }
+  if (from.has_gpm_response()) {
+    _internal_mutable_gpm_response()->::msg::GetPgMapResponse::MergeFrom(from._internal_gpm_response());
+  }
+}
+
+void GetClusterMapResponse::CopyFrom(const ::PROTOBUF_NAMESPACE_ID::Message& from) {
+// @@protoc_insertion_point(generalized_copy_from_start:msg.GetClusterMapResponse)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+void GetClusterMapResponse::CopyFrom(const GetClusterMapResponse& from) {
+// @@protoc_insertion_point(class_specific_copy_from_start:msg.GetClusterMapResponse)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+bool GetClusterMapResponse::IsInitialized() const {
+  return true;
+}
+
+void GetClusterMapResponse::InternalSwap(GetClusterMapResponse* other) {
+  using std::swap;
+  _internal_metadata_.Swap<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(&other->_internal_metadata_);
+  ::PROTOBUF_NAMESPACE_ID::internal::memswap<
+      PROTOBUF_FIELD_OFFSET(GetClusterMapResponse, gpm_response_)
+      + sizeof(GetClusterMapResponse::gpm_response_)
+      - PROTOBUF_FIELD_OFFSET(GetClusterMapResponse, gom_response_)>(
+          reinterpret_cast<char*>(&gom_response_),
+          reinterpret_cast<char*>(&other->gom_response_));
+}
+
+::PROTOBUF_NAMESPACE_ID::Metadata GetClusterMapResponse::GetMetadata() const {
+  return GetMetadataStatic();
+}
+
+
+// ===================================================================
+
 void BootResponse::InitAsDefaultInstance() {
 }
 class BootResponse::_Internal {
@@ -6464,6 +7069,8 @@ void Request::InitAsDefaultInstance() {
       ::msg::GetPgMapRequest::internal_default_instance());
   ::msg::_Request_default_instance_.delete_pool_request_ = const_cast< ::msg::DeletePoolRequest*>(
       ::msg::DeletePoolRequest::internal_default_instance());
+  ::msg::_Request_default_instance_.get_cluster_map_request_ = const_cast< ::msg::GetClusterMapRequest*>(
+      ::msg::GetClusterMapRequest::internal_default_instance());
 }
 class Request::_Internal {
  public:
@@ -6476,6 +7083,7 @@ class Request::_Internal {
   static const ::msg::CreatePoolRequest& create_pool_request(const Request* msg);
   static const ::msg::GetPgMapRequest& get_pgmap_request(const Request* msg);
   static const ::msg::DeletePoolRequest& delete_pool_request(const Request* msg);
+  static const ::msg::GetClusterMapRequest& get_cluster_map_request(const Request* msg);
 };
 
 const ::msg::BootRequest&
@@ -6513,6 +7121,10 @@ Request::_Internal::get_pgmap_request(const Request* msg) {
 const ::msg::DeletePoolRequest&
 Request::_Internal::delete_pool_request(const Request* msg) {
   return *msg->union_.delete_pool_request_;
+}
+const ::msg::GetClusterMapRequest&
+Request::_Internal::get_cluster_map_request(const Request* msg) {
+  return *msg->union_.get_cluster_map_request_;
 }
 void Request::set_allocated_boot_request(::msg::BootRequest* boot_request) {
   ::PROTOBUF_NAMESPACE_ID::Arena* message_arena = GetArena();
@@ -6649,6 +7261,21 @@ void Request::set_allocated_delete_pool_request(::msg::DeletePoolRequest* delete
   }
   // @@protoc_insertion_point(field_set_allocated:msg.Request.delete_pool_request)
 }
+void Request::set_allocated_get_cluster_map_request(::msg::GetClusterMapRequest* get_cluster_map_request) {
+  ::PROTOBUF_NAMESPACE_ID::Arena* message_arena = GetArena();
+  clear_union();
+  if (get_cluster_map_request) {
+    ::PROTOBUF_NAMESPACE_ID::Arena* submessage_arena =
+      ::PROTOBUF_NAMESPACE_ID::Arena::GetArena(get_cluster_map_request);
+    if (message_arena != submessage_arena) {
+      get_cluster_map_request = ::PROTOBUF_NAMESPACE_ID::internal::GetOwnedMessage(
+          message_arena, get_cluster_map_request, submessage_arena);
+    }
+    set_has_get_cluster_map_request();
+    union_.get_cluster_map_request_ = get_cluster_map_request;
+  }
+  // @@protoc_insertion_point(field_set_allocated:msg.Request.get_cluster_map_request)
+}
 Request::Request(::PROTOBUF_NAMESPACE_ID::Arena* arena)
   : ::PROTOBUF_NAMESPACE_ID::Message(arena) {
   SharedCtor();
@@ -6694,6 +7321,10 @@ Request::Request(const Request& from)
     }
     case kDeletePoolRequest: {
       _internal_mutable_delete_pool_request()->::msg::DeletePoolRequest::MergeFrom(from._internal_delete_pool_request());
+      break;
+    }
+    case kGetClusterMapRequest: {
+      _internal_mutable_get_cluster_map_request()->::msg::GetClusterMapRequest::MergeFrom(from._internal_get_cluster_map_request());
       break;
     }
     case UNION_NOT_SET: {
@@ -6793,6 +7424,12 @@ void Request::clear_union() {
       }
       break;
     }
+    case kGetClusterMapRequest: {
+      if (GetArena() == nullptr) {
+        delete union_.get_cluster_map_request_;
+      }
+      break;
+    }
     case UNION_NOT_SET: {
       break;
     }
@@ -6879,6 +7516,13 @@ const char* Request::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::in
       case 9:
         if (PROTOBUF_PREDICT_TRUE(static_cast<::PROTOBUF_NAMESPACE_ID::uint8>(tag) == 74)) {
           ptr = ctx->ParseMessage(_internal_mutable_delete_pool_request(), ptr);
+          CHK_(ptr);
+        } else goto handle_unusual;
+        continue;
+      // .msg.GetClusterMapRequest get_cluster_map_request = 10;
+      case 10:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<::PROTOBUF_NAMESPACE_ID::uint8>(tag) == 82)) {
+          ptr = ctx->ParseMessage(_internal_mutable_get_cluster_map_request(), ptr);
           CHK_(ptr);
         } else goto handle_unusual;
         continue;
@@ -6982,6 +7626,14 @@ failure:
         9, _Internal::delete_pool_request(this), target, stream);
   }
 
+  // .msg.GetClusterMapRequest get_cluster_map_request = 10;
+  if (_internal_has_get_cluster_map_request()) {
+    target = stream->EnsureSpace(target);
+    target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::
+      InternalWriteMessage(
+        10, _Internal::get_cluster_map_request(this), target, stream);
+  }
+
   if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
     target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormat::InternalSerializeUnknownFieldsToArray(
         _internal_metadata_.unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(::PROTOBUF_NAMESPACE_ID::UnknownFieldSet::default_instance), target, stream);
@@ -7062,6 +7714,13 @@ size_t Request::ByteSizeLong() const {
           *union_.delete_pool_request_);
       break;
     }
+    // .msg.GetClusterMapRequest get_cluster_map_request = 10;
+    case kGetClusterMapRequest: {
+      total_size += 1 +
+        ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::MessageSize(
+          *union_.get_cluster_map_request_);
+      break;
+    }
     case UNION_NOT_SET: {
       break;
     }
@@ -7134,6 +7793,10 @@ void Request::MergeFrom(const Request& from) {
       _internal_mutable_delete_pool_request()->::msg::DeletePoolRequest::MergeFrom(from._internal_delete_pool_request());
       break;
     }
+    case kGetClusterMapRequest: {
+      _internal_mutable_get_cluster_map_request()->::msg::GetClusterMapRequest::MergeFrom(from._internal_get_cluster_map_request());
+      break;
+    }
     case UNION_NOT_SET: {
       break;
     }
@@ -7191,6 +7854,8 @@ void Response::InitAsDefaultInstance() {
       ::msg::GetPgMapResponse::internal_default_instance());
   ::msg::_Response_default_instance_.delete_pool_response_ = const_cast< ::msg::DeletePoolResponse*>(
       ::msg::DeletePoolResponse::internal_default_instance());
+  ::msg::_Response_default_instance_.get_cluster_map_response_ = const_cast< ::msg::GetClusterMapResponse*>(
+      ::msg::GetClusterMapResponse::internal_default_instance());
 }
 class Response::_Internal {
  public:
@@ -7203,6 +7868,7 @@ class Response::_Internal {
   static const ::msg::CreatePoolResponse& create_pool_response(const Response* msg);
   static const ::msg::GetPgMapResponse& get_pgmap_response(const Response* msg);
   static const ::msg::DeletePoolResponse& delete_pool_response(const Response* msg);
+  static const ::msg::GetClusterMapResponse& get_cluster_map_response(const Response* msg);
 };
 
 const ::msg::BootResponse&
@@ -7240,6 +7906,10 @@ Response::_Internal::get_pgmap_response(const Response* msg) {
 const ::msg::DeletePoolResponse&
 Response::_Internal::delete_pool_response(const Response* msg) {
   return *msg->union_.delete_pool_response_;
+}
+const ::msg::GetClusterMapResponse&
+Response::_Internal::get_cluster_map_response(const Response* msg) {
+  return *msg->union_.get_cluster_map_response_;
 }
 void Response::set_allocated_boot_response(::msg::BootResponse* boot_response) {
   ::PROTOBUF_NAMESPACE_ID::Arena* message_arena = GetArena();
@@ -7376,6 +8046,21 @@ void Response::set_allocated_delete_pool_response(::msg::DeletePoolResponse* del
   }
   // @@protoc_insertion_point(field_set_allocated:msg.Response.delete_pool_response)
 }
+void Response::set_allocated_get_cluster_map_response(::msg::GetClusterMapResponse* get_cluster_map_response) {
+  ::PROTOBUF_NAMESPACE_ID::Arena* message_arena = GetArena();
+  clear_union();
+  if (get_cluster_map_response) {
+    ::PROTOBUF_NAMESPACE_ID::Arena* submessage_arena =
+      ::PROTOBUF_NAMESPACE_ID::Arena::GetArena(get_cluster_map_response);
+    if (message_arena != submessage_arena) {
+      get_cluster_map_response = ::PROTOBUF_NAMESPACE_ID::internal::GetOwnedMessage(
+          message_arena, get_cluster_map_response, submessage_arena);
+    }
+    set_has_get_cluster_map_response();
+    union_.get_cluster_map_response_ = get_cluster_map_response;
+  }
+  // @@protoc_insertion_point(field_set_allocated:msg.Response.get_cluster_map_response)
+}
 Response::Response(::PROTOBUF_NAMESPACE_ID::Arena* arena)
   : ::PROTOBUF_NAMESPACE_ID::Message(arena) {
   SharedCtor();
@@ -7421,6 +8106,10 @@ Response::Response(const Response& from)
     }
     case kDeletePoolResponse: {
       _internal_mutable_delete_pool_response()->::msg::DeletePoolResponse::MergeFrom(from._internal_delete_pool_response());
+      break;
+    }
+    case kGetClusterMapResponse: {
+      _internal_mutable_get_cluster_map_response()->::msg::GetClusterMapResponse::MergeFrom(from._internal_get_cluster_map_response());
       break;
     }
     case UNION_NOT_SET: {
@@ -7520,6 +8209,12 @@ void Response::clear_union() {
       }
       break;
     }
+    case kGetClusterMapResponse: {
+      if (GetArena() == nullptr) {
+        delete union_.get_cluster_map_response_;
+      }
+      break;
+    }
     case UNION_NOT_SET: {
       break;
     }
@@ -7606,6 +8301,13 @@ const char* Response::_InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::i
       case 9:
         if (PROTOBUF_PREDICT_TRUE(static_cast<::PROTOBUF_NAMESPACE_ID::uint8>(tag) == 74)) {
           ptr = ctx->ParseMessage(_internal_mutable_delete_pool_response(), ptr);
+          CHK_(ptr);
+        } else goto handle_unusual;
+        continue;
+      // .msg.GetClusterMapResponse get_cluster_map_response = 10;
+      case 10:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<::PROTOBUF_NAMESPACE_ID::uint8>(tag) == 82)) {
+          ptr = ctx->ParseMessage(_internal_mutable_get_cluster_map_response(), ptr);
           CHK_(ptr);
         } else goto handle_unusual;
         continue;
@@ -7709,6 +8411,14 @@ failure:
         9, _Internal::delete_pool_response(this), target, stream);
   }
 
+  // .msg.GetClusterMapResponse get_cluster_map_response = 10;
+  if (_internal_has_get_cluster_map_response()) {
+    target = stream->EnsureSpace(target);
+    target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::
+      InternalWriteMessage(
+        10, _Internal::get_cluster_map_response(this), target, stream);
+  }
+
   if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
     target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormat::InternalSerializeUnknownFieldsToArray(
         _internal_metadata_.unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(::PROTOBUF_NAMESPACE_ID::UnknownFieldSet::default_instance), target, stream);
@@ -7789,6 +8499,13 @@ size_t Response::ByteSizeLong() const {
           *union_.delete_pool_response_);
       break;
     }
+    // .msg.GetClusterMapResponse get_cluster_map_response = 10;
+    case kGetClusterMapResponse: {
+      total_size += 1 +
+        ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::MessageSize(
+          *union_.get_cluster_map_response_);
+      break;
+    }
     case UNION_NOT_SET: {
       break;
     }
@@ -7859,6 +8576,10 @@ void Response::MergeFrom(const Response& from) {
     }
     case kDeletePoolResponse: {
       _internal_mutable_delete_pool_response()->::msg::DeletePoolResponse::MergeFrom(from._internal_delete_pool_response());
+      break;
+    }
+    case kGetClusterMapResponse: {
+      _internal_mutable_get_cluster_map_response()->::msg::GetClusterMapResponse::MergeFrom(from._internal_get_cluster_map_response());
       break;
     }
     case UNION_NOT_SET: {
@@ -7962,6 +8683,12 @@ template<> PROTOBUF_NOINLINE ::msg::GetOsdMapRequest* Arena::CreateMaybeMessage<
 }
 template<> PROTOBUF_NOINLINE ::msg::GetOsdMapResponse* Arena::CreateMaybeMessage< ::msg::GetOsdMapResponse >(Arena* arena) {
   return Arena::CreateMessageInternal< ::msg::GetOsdMapResponse >(arena);
+}
+template<> PROTOBUF_NOINLINE ::msg::GetClusterMapRequest* Arena::CreateMaybeMessage< ::msg::GetClusterMapRequest >(Arena* arena) {
+  return Arena::CreateMessageInternal< ::msg::GetClusterMapRequest >(arena);
+}
+template<> PROTOBUF_NOINLINE ::msg::GetClusterMapResponse* Arena::CreateMaybeMessage< ::msg::GetClusterMapResponse >(Arena* arena) {
+  return Arena::CreateMessageInternal< ::msg::GetClusterMapResponse >(arena);
 }
 template<> PROTOBUF_NOINLINE ::msg::BootResponse* Arena::CreateMaybeMessage< ::msg::BootResponse >(Arena* arena) {
   return Arena::CreateMessageInternal< ::msg::BootResponse >(arena);

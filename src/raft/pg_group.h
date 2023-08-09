@@ -22,8 +22,8 @@ public:
     void free_pg();
     void start_raft_periodic_timer();
 
-    std::shared_ptr<raft_server_t> raft;   
-    struct spdk_poller * timer; 
+    std::shared_ptr<raft_server_t> raft;
+    struct spdk_poller * timer;
     std::string name;
 };
 
@@ -52,7 +52,7 @@ private:
 
     //记录此cpu核上的所有pg
     std::map<std::string, std::shared_ptr<pg_t>> pgs;
-    struct spdk_poller * heartbeat_timer; 
+    struct spdk_poller * heartbeat_timer;
 };
 
 class pg_group_t{
@@ -68,8 +68,12 @@ public:
         }
     }
 
-    void create_connect(int node_id, std::string& address, int port){
-        _client.create_connect(node_id, address, port);
+    void create_connect(int node_id, auto&&... args){
+        _client.create_connect(node_id, std::forward<decltype(args)>(args)...);
+    }
+
+    auto& get_raft_client_proto() noexcept {
+        return _client;
     }
 
     void remove_connect(int node_id){
@@ -99,7 +103,7 @@ private:
         auto name = pg_id_to_name(pool_id, pg_id);
         auto pg = std::make_shared<pg_t>(raft, name);
         _shard_mg[shard_id].add_pg(name, pg);
-        return 0;        
+        return 0;
     }
 
     int _pg_remove(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id){
@@ -107,7 +111,7 @@ private:
         auto pg = _shard_mg[shard_id].get_pg(name);
         pg->free_pg();
         _shard_mg[shard_id].delete_pg(name);
-        return 0;        
+        return 0;
     }
 
     //所有的pg按核区分保持在_core_mg中
