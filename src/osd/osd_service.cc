@@ -15,6 +15,15 @@ struct write_data_complete : public context{
     }
 };
 
+void osd_service::process_rpc_bench(google::protobuf::RpcController *controller,
+                                    const osd::bench_request *request,
+                                    osd::bench_response *response,
+                                    google::protobuf::Closure *done)
+{
+    response->set_resp(request->req());
+    done->Run();
+}
+
 void osd_service::process_write(google::protobuf::RpcController* controller,
              const osd::write_request* request,
              osd::write_reply* response,

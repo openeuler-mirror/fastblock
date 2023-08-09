@@ -1,5 +1,5 @@
 add_executable(demo
-  demo_main.cc
+  rpcbench.cc
   )
 
 target_include_directories (demo
