@@ -27,6 +27,17 @@ deb_deps=(
   libprotobuf23
   libprotobuf-dev
   libfmt-dev
+  cmake
+  libnl-3-dev
+  libnl-route-3-dev
+  libibverbs-dev
+  librdmacm-dev 
+  meson
+  python3-pyelftools
+  uuid-dev
+  libssl-dev
+  libaio-dev
+  ninja-build
 )
 
 case "$ID" in
