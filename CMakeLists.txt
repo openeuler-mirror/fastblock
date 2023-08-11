@@ -115,3 +115,4 @@ endif()
 
 include(compile_library)
 add_subdirectory(src)
+add_subdirectory(tools)
