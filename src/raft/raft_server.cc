@@ -228,7 +228,7 @@ int raft_server_t::raft_periodic()
             raft_become_follower();
             raft_set_current_leader(-1);
         }
-        else if (raft_get_request_timeout() <= now - raft_get_election_timer())
+        else if (raft_get_heartbeat_timeout() <= now - raft_get_election_timer())
         {
             raft_send_heartbeat_all();
         }
@@ -981,6 +981,11 @@ int raft_server_t::raft_write_entry(std::shared_ptr<msg_entry_t> ety,
     if(current_idx > commit_idx){
         return 0;
     }
+    raft_flush();
+    return 0;
+}
+
+void raft_server_t::raft_flush(){
     //上一次的log已经commit了
     auto last_cache_idx = raft_get_last_cache_entry();
     first_idx = current_idx + 1;
@@ -1006,9 +1011,7 @@ int raft_server_t::raft_write_entry(std::shared_ptr<msg_entry_t> ety,
     }
 
     disk_append_complete *append_complete = new disk_append_complete(first_idx, current_idx, this);
-    raft_disk_append_entries(first_idx, current_idx, append_complete);
-
-    return 0;
+    raft_disk_append_entries(first_idx, current_idx, append_complete);    
 }
 
 int raft_server_t::raft_send_requestvote(raft_node* node)
@@ -1019,8 +1022,8 @@ int raft_server_t::raft_send_requestvote(raft_node* node)
     assert(node);
     assert(!raft_is_self(node));
 
-    SPDK_NOTICELOG("sending requestvote%s to: %d , pool.pg %lu.%lu\n",
-          raft_get_prevote() ? " (prevote)" : "", node->raft_node_get_id(), pool_id, pg_id);
+    SPDK_NOTICELOG("sending requestvote%s  term: %ld to: %d , pool.pg %lu.%lu\n",
+          raft_get_prevote() ? " (prevote)" : "", current_term, node->raft_node_get_id(), pool_id, pg_id);
 
     rv->set_node_id(raft_get_nodeid());
     rv->set_pool_id(pool_id);

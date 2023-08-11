@@ -9,8 +9,6 @@
 #include "utils/utils.h"
 #include "base/core_sharded.h"
 
-#define  HEARTBEAT_TIMER_PERIOD_MSEC  1000   //毫秒
-
 std::string pg_id_to_name(uint64_t pool_id, uint64_t pg_id);
 
 class pg_t{

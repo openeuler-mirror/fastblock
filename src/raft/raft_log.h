@@ -5,8 +5,6 @@
 #include "localstore/disk_log.h"
 #include "localstore/spdk_buffer.h"
 
-// #define ENABLE_LOG
-
 struct raft_cbs_t;
 
 class raft_log
@@ -61,7 +59,7 @@ public:
             complete->complete(0);
             return;
         }
-#ifdef ENABLE_LOG
+
         std::vector<log_entry_t> log_entries;
         for (auto& raft_entry : raft_entries) {
             log_entries.emplace_back(raft_entry_to_log_entry(*raft_entry));
@@ -75,7 +73,6 @@ public:
               ctx->complete(rberrno);
           },
           complete);
-#endif
     }
 
     /** Get an array of entries from this index onwards.

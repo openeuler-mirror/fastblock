@@ -4,6 +4,7 @@
 #include "localstore/blob_manager.h"
 #include "localstore/disk_log.h"
 
+
 bool partition_manager::get_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t &shard_id){
     std::string name = pg_id_to_name(pool_id, pg_id);
     if(_shard_table.count(name) == 0)
@@ -26,10 +27,11 @@ static void make_log_done(void *arg, struct disk_log* dlog, int rberrno){
     make_log_context* mlc = (make_log_context*)arg;
     partition_manager* pm = mlc->pm;
 
+    SPDK_NOTICELOG("make_log_done, rberrno %d\n", rberrno);
     if(rberrno){
         return;
     }
-    auto sm = std::make_shared<osd_sm>(pm->get_datadir());
+    auto sm = std::make_shared<osd_sm>();
     pm->add_osd_sm(mlc->pool_id, mlc->pg_id, mlc->shard_id, sm);
     pm->get_pg_group().create_pg(sm, mlc->shard_id, mlc->pool_id, mlc->pg_id, std::move(mlc->osds), dlog);
     delete mlc;
@@ -39,11 +41,7 @@ void partition_manager::create_pg(
         uint64_t pool_id, uint64_t pg_id, std::vector<osd_info_t> osds, 
         uint32_t shard_id, int64_t revision_id){
     make_log_context *ctx = new make_log_context{pool_id, pg_id, std::move(osds), shard_id, revision_id, this};
-#ifdef ENABLE_LOG
     make_disk_log(global_blobstore(), global_io_channel(), make_log_done, ctx);
-#else
-    make_log_done(ctx, nullptr, 0);
-#endif
 }
 
 int partition_manager::create_partition(

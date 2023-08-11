@@ -14,7 +14,7 @@ raft_server_t::raft_server_t(raft_client_protocol& _client, disk_log* _log,
     , start_time(0)
     , election_timer(0)
     , election_timeout(1000)
-    , request_timeout(200)
+    , heartbeat_timeout(200)
     , leader_id(-1)
     , node_id(-1)
     , voting_cfg_change_log_idx(-1)

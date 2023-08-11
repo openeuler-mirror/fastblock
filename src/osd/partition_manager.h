@@ -14,14 +14,13 @@ struct shard_revision {
 class partition_manager{
 public:
     partition_manager(
-            int node_id, const std::string& datadir,
-            std::string& host, int port, std::string& osd_addr, int osd_port, std::string& osd_uuid)
+            int node_id, std::string& mon_addr, int mon_port, std::string& osd_addr, 
+            int osd_port, std::string& osd_uuid)
     : _pgs(node_id)
     , _next_shard(0)
-    , _datadir(datadir)
     , _shard(core_sharded::get_core_sharded())
     , _shard_cores(get_shard_cores())
-    , _mon(host, port, node_id, osd_addr, osd_port, osd_uuid, this) {
+    , _mon(mon_addr, mon_port, node_id, osd_addr, osd_port, osd_uuid, this) {
         uint32_t i = 0;
         auto shard_num = _shard_cores.size();
         for(i = 0; i < shard_num; i++){
@@ -37,10 +36,6 @@ public:
     int delete_partition(uint64_t pool_id, uint64_t pg_id);
 
     bool get_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t &shard_id);
-
-    std::string get_datadir(){
-        return _datadir;
-    }
 
     void create_pg(uint64_t pool_id, uint64_t pg_id, std::vector<osd_info_t> osds, uint32_t shard_id, int64_t revision_id);
     void delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id);
@@ -94,7 +89,6 @@ private:
     //记录pg到cpu核的对应关系
     std::map<std::string, shard_revision> _shard_table;
     uint32_t _next_shard;
-    std::string  _datadir;
     core_sharded&  _shard;
     std::vector<uint32_t> _shard_cores;
     std::vector<std::map<std::string, std::shared_ptr<osd_sm>>> _sm_table;

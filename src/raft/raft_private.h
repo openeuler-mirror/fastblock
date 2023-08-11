@@ -225,9 +225,9 @@ public:
     /** Set request timeout in milliseconds.
      * The amount of time before we resend an appendentries message
      * @param[in] msec Request timeout in milliseconds */
-    void raft_set_request_timeout(int millisec)
+    void raft_set_heartbeat_timeout(int millisec)
     {
-        request_timeout = millisec;
+        heartbeat_timeout = millisec;
     }
 
     /** Set lease maintenance grace.
@@ -278,9 +278,9 @@ public:
 
     /**
      * @return request timeout in milliseconds */
-    int raft_get_request_timeout()
+    int raft_get_heartbeat_timeout()
     {
-        return request_timeout;
+        return heartbeat_timeout;
     }
     
     /**
@@ -717,6 +717,8 @@ public:
      */
     int raft_write_entry(std::shared_ptr<msg_entry_t> ety, context *complete);
 
+    void raft_flush();
+
     int raft_voting_change_is_in_progress()
     {
         return voting_cfg_change_log_idx != -1;
@@ -895,7 +897,7 @@ private:
 
     int election_timeout;
     int election_timeout_rand;
-    int request_timeout;
+    int heartbeat_timeout;
 
     /* what this node thinks is the node ID of the current leader,
      * or -1 if there isn't a known current leader. */

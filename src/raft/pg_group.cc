@@ -4,11 +4,10 @@
 #include "spdk/env.h"
 #include "spdk/util.h"
 
-#define TIMER_PERIOD_MSEC 500    //毫秒
-
-#define  ELECTION_TIMER_PERIOD_MSEC  1000   //毫秒
-#define  LEASE_MAINTENANCE_GRACE     1000   //毫秒
-#define  REQUEST_TIMER_PERIOD_MSEC     2000   //毫秒
+constexpr int32_t TIMER_PERIOD_MSEC = 500;    //毫秒
+constexpr int32_t HEARTBEAT_TIMER_PERIOD_MSEC = 1000;   //毫秒
+constexpr int32_t ELECTION_TIMER_PERIOD_MSEC = 2 * HEARTBEAT_TIMER_PERIOD_MSEC; //毫秒
+constexpr int32_t LEASE_MAINTENANCE_GRACE = 1000;   //毫秒
 
 std::string pg_id_to_name(uint64_t pool_id, uint64_t pg_id){
     char name[128];
@@ -37,7 +36,7 @@ void pg_t::start_raft_periodic_timer(){
     timer = SPDK_POLLER_REGISTER(periodic_func, this, TIMER_PERIOD_MSEC * 1000);
 	raft->raft_set_election_timeout(ELECTION_TIMER_PERIOD_MSEC);
     raft->raft_set_lease_maintenance_grace(LEASE_MAINTENANCE_GRACE);
-    raft->raft_set_request_timeout(REQUEST_TIMER_PERIOD_MSEC);
+    raft->raft_set_heartbeat_timeout(HEARTBEAT_TIMER_PERIOD_MSEC);
 }
 
 static raft_time_t get_time(){
