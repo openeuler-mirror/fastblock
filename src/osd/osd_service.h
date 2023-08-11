@@ -25,6 +25,10 @@ public:
                            const osd::bench_request *request,
                            osd::bench_response *response,
                            google::protobuf::Closure *done) override;
+    void process_get_leader(google::protobuf::RpcController* controller,
+                       const osd::pg_leader_request* request,
+                       osd::pg_leader_response* response,
+                       google::protobuf::Closure* done) override;
 
 private:
     partition_manager* _pm;

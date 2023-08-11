@@ -14,7 +14,6 @@ message write_request
 message write_reply
 {
     int32 state = 1;
-    bytes  str = 2; 
 }
 
 message read_request 
@@ -73,10 +72,24 @@ message bench_response
     bytes resp = 1; 
 }
 
+message pg_leader_request
+{
+    uint64 pool_id = 1;
+    uint64 pg_id = 2;    
+}
+
+message pg_leader_response
+{
+    int32 state = 1;
+    int32 leader_id = 2;
+    bytes leader_addr = 3;
+    int32 leader_port = 4;
+}
 
 service rpc_service_osd{
     rpc process_write(write_request) returns (write_reply);
     rpc process_read(read_request) returns (read_reply);
     rpc process_delete(delete_request) returns (delete_reply);
     rpc process_rpc_bench(bench_request) returns (bench_response);
+    rpc process_get_leader(pg_leader_request) returns (pg_leader_response);
 }

@@ -1,5 +1,6 @@
 #include "osd_service.h"
 #include "utils/utils.h"
+#include "utils/err_num.h"
 
 struct write_data_complete : public context{
     osd::write_reply* response;
@@ -60,6 +61,29 @@ void osd_service::process_write(google::protobuf::RpcController* controller,
             complete->complete(ret);
         }
       });
+}
+
+void osd_service::process_get_leader(google::protobuf::RpcController* controller,
+            const osd::pg_leader_request* request,
+            osd::pg_leader_response* response,
+            google::protobuf::Closure* done){
+    auto pool_id = request->pool_id();
+    auto pg_id = request->pg_id();
+    uint32_t shard_id;
+
+    _pm->get_pg_shard(pool_id, pg_id, shard_id);
+    auto pg = _pm->get_pg(shard_id, pool_id, pg_id);
+    auto leader_id = pg->raft->raft_get_current_leader();
+    auto res = _pm->get_mon().get_osd_addr(leader_id);
+    if(res.first.size() == 0){
+        response->set_state(err::RAFT_ERR_NOT_FOUND_LEADER);
+    }else{
+        response->set_state(err::E_SUCCESS);
+        response->set_leader_id(leader_id);
+        response->set_leader_addr(res.first);
+        response->set_leader_port(res.second);
+    }
+    done->Run();
 }
 
 void osd_service::process_read(google::protobuf::RpcController* controller,
