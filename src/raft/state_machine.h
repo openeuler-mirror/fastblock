@@ -11,7 +11,8 @@ class state_machine{
 public:
     state_machine()
     : _raft(nullptr)
-    , _last_applied_idx(0) {}
+    , _last_applied_idx(0)
+    , _apply_in_progress(false) {}
 
     void set_raft(raft_server_t* raft){
         _raft = raft;
@@ -45,11 +46,20 @@ public:
     raft_server_t* get_raft(){
         return _raft;
     }
+
+    bool get_apply_in_progress(){
+        return _apply_in_progress;
+    }
+
+    void set_apply_in_progress(bool apply_in_progress){
+        _apply_in_progress = apply_in_progress;
+    }
 private:
     raft_server_t* _raft;
 
     /* idx of highest log entry applied to state machine */
     raft_index_t _last_applied_idx;
+    bool _apply_in_progress;
 };
 
 #endif

@@ -18,6 +18,7 @@ struct apply_complete : public context{
             if (idx == stm->get_raft()->raft_get_voting_cfg_change_log_idx())
                 stm->get_raft()->raft_set_voting_cfg_change_log_idx(-1);
         }
+        stm->set_apply_in_progress(false);
     }
     raft_index_t idx;
     state_machine* stm;
@@ -32,11 +33,17 @@ int state_machine::raft_apply_entry()
     if (_last_applied_idx == _raft->raft_get_commit_idx())
         return -1;
 
+    if(get_apply_in_progress())
+        return 0;
+    set_apply_in_progress(true);
+
     raft_index_t log_idx = _last_applied_idx + 1;
 
     auto ety =  _raft->raft_get_entry_from_idx(log_idx);
-    if (!ety)
+    if (!ety){
+        set_apply_in_progress(false);
         return -1;
+    }
 
     SPDK_NOTICELOG("applying log: %ld, idx: %ld size: %u \n",
           log_idx, ety->idx(), (uint32_t)ety->data().size());
