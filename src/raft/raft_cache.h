@@ -117,6 +117,29 @@ public:
         }                      
     }
 
+    void remove_entry_between(raft_index_t start_idx, raft_index_t end_idx){
+        if(start_idx > end_idx)
+            return;
+        auto it = _idx_mcs.find(start_idx);
+        if(it == _idx_mcs.end())
+            return;
+
+        raft_index_t idx;
+        auto iter = it->second;
+        while(iter != _cache.end()){
+            auto item = *iter;
+            idx = item->entry->idx();
+
+            auto entry_ptr = item->entry;
+            _idx_mcs.erase(entry_ptr->idx());
+            remove_mmcs(entry_ptr->obj_name(), entry_ptr->idx());
+            iter = _cache.erase(iter);             
+
+            if(idx == end_idx)
+               break;
+        }
+    }
+
     std::shared_ptr<raft_entry_t> get(raft_index_t idx){
         auto it = _idx_mcs.find(idx);
         if(it == _idx_mcs.end())

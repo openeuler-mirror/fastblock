@@ -9,6 +9,7 @@
 #include "raft_private.h"
 #include "spdk/log.h"
 #include "spdk/env.h"
+#include "utils/err_num.h"
 
 std::shared_ptr<raft_server_t> raft_new(raft_client_protocol& client,
         disk_log* log, std::shared_ptr<state_machine> sm_ptr, uint64_t pool_id, uint64_t pg_id)
@@ -293,7 +294,7 @@ int raft_server_t::raft_process_appendentries_reply(
 
     node->raft_set_suppress_heartbeats(false);
     if (!raft_is_leader())
-        return RAFT_ERR_NOT_LEADER;
+        return err::RAFT_ERR_NOT_LEADER;
 
     /* If response contains term T > currentTerm: set currentTerm = T
        and convert to follower (§5.3) */
@@ -392,7 +393,7 @@ int raft_server_t::raft_process_appendentries_reply(
 void raft_server_t::follow_raft_disk_append_finish(raft_index_t start_idx, raft_index_t end_idx, raft_index_t _commit_idx, int result){
     if (raft_get_commit_idx() < _commit_idx)
         raft_set_commit_idx(_commit_idx);    
-    raft_write_entry_finish(start_idx, end_idx, result);
+    follow_raft_write_entry_finish(start_idx, end_idx, result);
 }
 
 struct follow_disk_append_complete : public context{
@@ -492,7 +493,7 @@ int raft_server_t::raft_recv_appendentries(
             {
                 /* Should never happen; something is seriously wrong! */
                 SPDK_NOTICELOG("AE prev conflicts with committed entry\n");
-                e = RAFT_ERR_SHUTDOWN;
+                e = err::RAFT_ERR_SHUTDOWN;
                 goto out;
             }
             /* Delete all the following log entries because they don't match */
@@ -521,7 +522,7 @@ int raft_server_t::raft_recv_appendentries(
                 SPDK_NOTICELOG("AE entry conflicts with committed entry ci:%ld comi:%ld lcomi:%ld pli:%ld \n",
                       raft_get_current_idx(), raft_get_commit_idx(),
                       ae->leader_commit(), ae->prev_log_idx());
-                e = RAFT_ERR_SHUTDOWN;
+                e = err::RAFT_ERR_SHUTDOWN;
                 goto out;
             }
             e = raft_delete_entry_from_idx(ety_index);
@@ -598,16 +599,16 @@ int raft_server_t::_should_grant_vote(const msg_requestvote_t* vr)
 
     /* Below we check if log is more up-to-date... */
 
-    raft_index_t current_idx = raft_get_current_idx();
+    raft_index_t current_idx_tmp = raft_get_current_idx();
 
     raft_term_t term;
-    int got = raft_get_entry_term(current_idx, &term);
+    int got = raft_get_entry_term(current_idx_tmp, &term);
     assert(got);
     (void)got;
     if (term < vr->last_log_term())
         return 1;
 
-    if (vr->last_log_term() == term && current_idx <= vr->last_log_idx())
+    if (vr->last_log_term() == term && current_idx_tmp <= vr->last_log_idx())
         return 1;
 
     return 0;
@@ -754,7 +755,7 @@ int raft_server_t::raft_process_requestvote_reply(
         case RAFT_REQUESTVOTE_ERR_UNKNOWN_NODE:
             if (raft_get_my_node()->raft_node_is_voting() &&
                 raft_is_connected() == RAFT_NODE_STATUS_DISCONNECTING)
-                return RAFT_ERR_SHUTDOWN;
+                return err::RAFT_ERR_SHUTDOWN;
             break;
 
         default:
@@ -834,7 +835,7 @@ int raft_server_t::raft_process_installsnapshot_reply(
         return -1;
 
     if (!raft_is_leader())
-        return RAFT_ERR_NOT_LEADER;
+        return err::RAFT_ERR_NOT_LEADER;
 
     if (raft_get_current_term() < r->term())
     {
@@ -906,6 +907,12 @@ int raft_server_t::_cfg_change_is_valid(msg_entry_t* ety)
 }
 
 void raft_server_t::raft_write_entry_finish(raft_index_t start_idx, raft_index_t end_idx, int result){
+    SPDK_NOTICELOG("raft_write_entry_finish, [%ld-%ld] result: %d\n", start_idx, end_idx, result);
+    raft_get_log()->raft_write_entry_finish(start_idx, end_idx, result);
+    raft_flush();
+}
+
+void raft_server_t::follow_raft_write_entry_finish(raft_index_t start_idx, raft_index_t end_idx, int result){
     raft_get_log()->raft_write_entry_finish(start_idx, end_idx, result);
 }
 
@@ -937,6 +944,7 @@ struct disk_append_complete : public context{
     , raft(_raft) {}
 
     void finish(int r) override {
+        SPDK_NOTICELOG("disk_append_complete, result: %d\n", r);
         raft->raft_disk_append_finish(start_idx, end_idx, r);
     }
     raft_index_t start_idx;
@@ -949,22 +957,22 @@ int raft_server_t::raft_write_entry(std::shared_ptr<msg_entry_t> ety,
 {
     auto ety_ptr = ety.get();
     if (!raft_is_leader())
-        return RAFT_ERR_NOT_LEADER;
+        return err::RAFT_ERR_NOT_LEADER;
 
     if (raft_entry_is_cfg_change(ety_ptr))
     {
         /* Multi-threading: need to fail here because user might be
          * snapshotting membership settings. */
         if (raft_get_snapshot_in_progress())
-            return RAFT_ERR_SNAPSHOT_IN_PROGRESS;
+            return err::RAFT_ERR_SNAPSHOT_IN_PROGRESS;
 
         /* Only one voting cfg change at a time */
         if (raft_entry_is_voting_cfg_change(ety_ptr) &&
             raft_voting_change_is_in_progress())
-                return RAFT_ERR_ONE_VOTING_CHANGE_ONLY;
+                return err::RAFT_ERR_ONE_VOTING_CHANGE_ONLY;
 
         if (!_cfg_change_is_valid(ety_ptr))
-            return RAFT_ERR_INVALID_CFG_CHANGE;
+            return err::RAFT_ERR_INVALID_CFG_CHANGE;
     }
 
     ety->set_term(current_term);
@@ -988,6 +996,15 @@ int raft_server_t::raft_write_entry(std::shared_ptr<msg_entry_t> ety,
 void raft_server_t::raft_flush(){
     //上一次的log已经commit了
     auto last_cache_idx = raft_get_last_cache_entry();
+    if(!raft_is_leader()){
+        SPDK_ERRLOG("not leader\n");
+        raft_get_log()->raft_write_entry_finish(current_idx + 1, last_cache_idx, err::RAFT_ERR_NOT_LEADER);
+        raft_get_log()->remove_entry_between(current_idx + 1, last_cache_idx);
+        return;
+    }
+    if(last_cache_idx == current_idx){
+        return;
+    }
     first_idx = current_idx + 1;
     current_idx = last_cache_idx;
     SPDK_NOTICELOG("------ first_idx: %lu current_idx: %lu ------\n", first_idx, current_idx);
@@ -1457,7 +1474,7 @@ int raft_server_t::raft_begin_load_snapshot(
         return -1;
 
     if (last_included_term == raft_get_snapshot_last_term() && last_included_index == raft_get_snapshot_last_idx())
-        return RAFT_ERR_SNAPSHOT_ALREADY_LOADED;
+        return err::RAFT_ERR_SNAPSHOT_ALREADY_LOADED;
 
     if (last_included_index <= raft_get_commit_idx())
         return -1;
