@@ -38,8 +38,8 @@ int state_machine::raft_apply_entry()
     if (!ety)
         return -1;
 
-    SPDK_NOTICELOG("applying log: %ld, idx: %ld size: %u \n",
-          log_idx, ety->idx(), (uint32_t)ety->data().size());
+    SPDK_NOTICELOG("osd %d applying log: %ld, idx: %ld size: %u \n",
+                   get_raft()->raft_get_nodeid(), log_idx, ety->idx(), (uint32_t)ety->data().size());
 
     apply_complete *complete = new apply_complete(log_idx, this);
     apply(ety, complete);

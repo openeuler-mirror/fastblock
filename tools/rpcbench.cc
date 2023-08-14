@@ -7,7 +7,8 @@ block_usage(void)
     printf(" -I <id>                   save osd id\n");
     printf(" -o <osd_addr>             osd address\n");
     printf(" -t <osd_port>             osd port\n");
-    printf(" -s <io_size>              io_size\n");
+    printf(" -S <io_size>              io_size\n");
+    printf(" -k <total_seconds>        seconds to run this bench\n");
 }
 
 static int
@@ -27,9 +28,13 @@ block_parse_arg(int ch, char *arg)
     case 't':
         g_osd_port = spdk_strtol(arg, 10);
         break;
-    case 's':
+    case 'S':
         g_io_size = spdk_strtol(arg, 10);
         break;
+    case 'k':
+        g_total_seconds = spdk_strtol(arg, 10);
+        break;
+
     default:
         return -EINVAL;
     }
@@ -39,13 +44,31 @@ block_parse_arg(int ch, char *arg)
 void _send_request(server_t *server, client *cli)
 {
     osd::bench_request *request = new osd::bench_request();
-    request->set_req(random_string(g_io_size));
+    char sz[g_io_size + 1];
+    sz[g_io_size] = 0;
+    request->set_req(sz);
     cli->send_bench_request(server->node_id, request);
+}
+
+int _rpcbench_print_stats(void *p)
+{
+    g_seconds++;
+    SPDK_NOTICELOG("last second processed: %d\r\n", g_counter - g_counter_last_value);
+    g_counter_last_value = g_counter;
+
+    if (g_total_seconds <= g_seconds)
+    {
+        SPDK_NOTICELOG("ops is: %d\r\n", (g_counter / g_seconds));
+        exit(0);
+    }
+    return SPDK_POLLER_BUSY;
 }
 
 static void
 block_started(void *arg1)
 {
+    // for simpicity, print every second
+    _rpcbench_poller_printer = SPDK_POLLER_REGISTER(_rpcbench_print_stats, nullptr, 1000000);
     server_t *server = (server_t *)arg1;
     SPDK_NOTICELOG("------block start, cpu count : %u \n", spdk_env_get_core_count());
     client *cli = new client(server);
@@ -58,10 +81,6 @@ void rpcbench_source::process_response()
 {
     // SPDK_NOTICELOG("got response, size is %lu\r\n", response.ByteSizeLong());
     g_counter++;
-    if (g_counter % 1000 == 0)
-    {
-        SPDK_NOTICELOG("processed %d requests\r\n", g_counter);
-    }
 
     _send_request(_s, _c);
 }
@@ -75,7 +94,7 @@ int main(int argc, char *argv[])
     spdk_app_opts_init(&opts, sizeof(opts));
     opts.name = "block";
 
-    if ((rc = spdk_app_parse_args(argc, argv, &opts, "f:I:o:t:", NULL,
+    if ((rc = spdk_app_parse_args(argc, argv, &opts, "f:S:I:o:t:k:", NULL,
                                   block_parse_arg, block_usage)) !=
         SPDK_APP_PARSE_ARGS_SUCCESS)
     {

@@ -17,7 +17,12 @@ static int global_osd_id = 0;
 static const char *g_osd_addr = "127.0.0.1";
 static int g_osd_port = 8888;
 static int g_io_size = 4;
+static int g_total_seconds = 120;
 static int g_counter = 0;
+static int g_seconds = 0;
+static int g_counter_last_value = 0;
+static spdk_poller *_rpcbench_poller_printer;
+
 typedef struct
 {
     /* the server's node ID */
