@@ -296,6 +296,9 @@ int raft_server_t::raft_process_appendentries_reply(
     if (!raft_is_leader())
         return err::RAFT_ERR_NOT_LEADER;
 
+    if(r->success() == err::RAFT_ERR_NOT_FOUND_PG){
+        return err::RAFT_ERR_NOT_FOUND_PG;
+    }
     /* If response contains term T > currentTerm: set currentTerm = T
        and convert to follower (§5.3) */
     if (raft_get_current_term() < r->term())
@@ -430,7 +433,7 @@ int raft_server_t::raft_recv_appendentries(
     raft_index_t start_idx;
     raft_index_t end_idx;
     follow_disk_append_complete *append_complete;
-    raft_index_t commit_idx = 0; 
+    raft_index_t new_commit_idx = 0; 
 
     if (0 < entries_num)
         SPDK_NOTICELOG("recvd appendentries ct: %ld t:%ld ci:%ld lc:%ld pli:%ld plt:%ld #%d\n",
@@ -560,9 +563,7 @@ int raft_server_t::raft_recv_appendentries(
         min(leaderCommit, index of last new entry) */
     if (raft_get_commit_idx() < ae->leader_commit())
     {
-        commit_idx = std::min(ae->leader_commit(), r->current_idx());
-        // if (raft_get_commit_idx() < commit_idx)
-            // raft_set_commit_idx(commit_idx);
+        new_commit_idx = std::min(ae->leader_commit(), r->current_idx());
     }
     
     r->set_term(current_term);
@@ -572,7 +573,8 @@ int raft_server_t::raft_recv_appendentries(
         complete->complete(0);
         return 0;
     }
-    append_complete = new follow_disk_append_complete(start_idx, end_idx, commit_idx, this);
+    current_idx = end_idx;
+    append_complete = new follow_disk_append_complete(start_idx, end_idx, new_commit_idx, this);
     raft_disk_append_entries(start_idx, end_idx, append_complete);
     return 0;
 
@@ -985,7 +987,6 @@ int raft_server_t::raft_write_entry(std::shared_ptr<msg_entry_t> ety,
     if (raft_entry_is_voting_cfg_change(ety_ptr))
         raft_set_voting_cfg_change_log_idx(ety->idx());
 
-    //todo  上一次的log commit后，需要通知这里
     if(current_idx > commit_idx){
         return 0;
     }

@@ -32,11 +32,12 @@ static int periodic_func(void* arg){
     return 0;
 }
 
-void pg_t::start_raft_periodic_timer(){
+void pg_t::start_raft_timer(){
     timer = SPDK_POLLER_REGISTER(periodic_func, this, TIMER_PERIOD_MSEC * 1000);
 	raft->raft_set_election_timeout(ELECTION_TIMER_PERIOD_MSEC);
     raft->raft_set_lease_maintenance_grace(LEASE_MAINTENANCE_GRACE);
     raft->raft_set_heartbeat_timeout(HEARTBEAT_TIMER_PERIOD_MSEC);
+    raft->start_timed_task();
 }
 
 static raft_time_t get_time(){
@@ -146,10 +147,7 @@ int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard
     auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id);
     raft->raft_set_callbacks(&raft_funcs, NULL);
 
-    ret = _pg_add(shard_id, raft, pool_id, pg_id);
-    if(ret != 0){
-        return ret; 
-    }
+    _pg_add(shard_id, raft, pool_id, pg_id);
 
     for(auto& osd : osds){
         SPDK_NOTICELOG("-- raft_add_node node %d in node %d ---\n", osd.node_id, get_current_node_id());
@@ -167,9 +165,8 @@ int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard
     raft->raft_set_current_term(1);
     auto pg = get_pg(shard_id, pool_id, pg_id);
 
-    /*  这里需要与其它osd建立链接，链接信息保存在raft_server_t中 ？ */
-
-    pg->start_raft_periodic_timer();
+    
+    pg->start_raft_timer();
 
     return 0;
 }
