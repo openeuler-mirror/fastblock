@@ -316,11 +316,11 @@ public:
           int iovcnt,
           int length) {
             auto e_status = static_cast<std::underlying_type_t<status>>(raw_status);
-            SPDK_NOTICELOG(
-              "Received response of request %ld, status is %s, iovec count is %d, length is %d\n",
-              request->request->request_key,
-              string_status(e_status),
-              iovcnt, length);
+            // SPDK_NOTICELOG(
+            //   "Received response of request %ld, status is %s, iovec count is %d, length is %d\n",
+            //   request->request->request_key,
+            //   string_status(e_status),
+            //   iovcnt, length);
 
             auto request_it = _unresponsed_requests.find(request->request->request_key);
             if (request_it == _unresponsed_requests.end()) {

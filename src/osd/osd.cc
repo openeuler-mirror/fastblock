@@ -153,10 +153,10 @@ main(int argc, char *argv[])
 
 	spdk_app_opts_init(&opts, sizeof(opts));
 	opts.name = "block";
-    opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
-    ::spdk_log_set_flag("rdma");
-    ::spdk_log_set_flag("msg");
-    ::spdk_log_set_flag("mon");
+	opts.print_level = ::spdk_log_level::SPDK_LOG_WARN;
+	::spdk_log_set_flag("rdma");
+	::spdk_log_set_flag("msg");
+	::spdk_log_set_flag("mon");
 
 	if ((rc = spdk_app_parse_args(argc, argv, &opts, "f:I:D:H:P:o:t:U:", NULL,
 				      block_parse_arg, block_usage)) !=
