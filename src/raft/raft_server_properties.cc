@@ -32,6 +32,7 @@ raft_server_t::raft_server_t(raft_client_protocol& _client, disk_log* _log,
     , client(_client)
     , stm_in_apply(false)
     , _append_entries_buffer(this)
+    , prev_log_term(0)
 {
         raft_randomize_election_timeout();  
         log = log_new(std::move(_log)); 

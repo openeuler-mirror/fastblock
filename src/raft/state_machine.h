@@ -4,6 +4,7 @@
 #include "raft_types.h"
 #include "rpc/raft_msg.pb.h"
 #include "utils/utils.h"
+#include "spdk/thread.h"
 
 class raft_server_t;
 
@@ -21,6 +22,11 @@ public:
     void set_last_applied_idx(raft_index_t idx)
     {
         _last_applied_idx = idx;
+    }
+
+    void start();
+    void stop(){
+        spdk_poller_unregister(&_timer);
     }
 
     /**
@@ -60,6 +66,7 @@ private:
     /* idx of highest log entry applied to state machine */
     raft_index_t _last_applied_idx;
     bool _apply_in_progress;
+    struct spdk_poller * _timer;
 };
 
 #endif

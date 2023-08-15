@@ -33,7 +33,11 @@ void osd_service::process_write(google::protobuf::RpcController* controller,
     auto pg_id = request->pg_id();
     uint32_t shard_id;
 
-    _pm->get_pg_shard(pool_id, pg_id, shard_id);
+    if(!_pm->get_pg_shard(pool_id, pg_id, shard_id)){
+        response->set_state(err::RAFT_ERR_NOT_FOUND_PG);
+        done->Run();
+        return;
+    }
     auto pg = _pm->get_pg(shard_id, pool_id, pg_id);
     osd::write_cmd cmd;
     cmd.set_object_name(request->object_name());

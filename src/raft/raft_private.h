@@ -862,12 +862,21 @@ public:
 
     void start_timed_task(){
         _append_entries_buffer.start();
+        machine->start();
     }
 
     void append_entries_to_buffer(const msg_appendentries_t* request,
                 msg_appendentries_response_t* response,
                 google::protobuf::Closure* done){
         _append_entries_buffer.enqueue(request, response, done);
+    }
+
+    raft_term_t get_prev_log_term(){
+        return prev_log_term;
+    }
+
+    void set_prev_log_term(raft_term_t term){
+        prev_log_term = term;
     }
 private:
     int _has_majority_leases(raft_time_t now, int with_grace);
@@ -954,6 +963,7 @@ private:
     bool stm_in_apply;     //状态机正在apply
 
     append_entries_buffer _append_entries_buffer;
+    raft_term_t prev_log_term;
 }; 
 
 int raft_votes_is_majority(const int nnodes, const int nvotes);
