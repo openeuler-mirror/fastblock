@@ -34,6 +34,7 @@ public:
         entry.size = raft_entry.data().size();
         entry.meta = raft_entry.meta();
         
+        SPDK_NOTICELOG("entry.size:%lu \n", entry.size);
         if (entry.size % 4096 != 0) {
             SPDK_ERRLOG("data size:%lu not align.\n", entry.size);
             /// TODO: 怎么处理这个错误
@@ -126,6 +127,10 @@ public:
 
     void raft_write_entry_finish(raft_index_t start_idx, raft_index_t end_idx, int result){
         _entries.complete_entry_between(start_idx, end_idx, result);
+    }
+
+    void remove_entry_between(raft_index_t start_idx, raft_index_t end_idx){
+        _entries.remove_entry_between(start_idx, end_idx);
     }
 
     entry_cache& get_entry_cache(){

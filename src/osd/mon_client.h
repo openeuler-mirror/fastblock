@@ -47,6 +47,14 @@ struct mon_client{
 	    is_running = false;
     }
 
+    std::pair<std::string, int> get_osd_addr(int osd_id){
+        auto iter = osdmap.osd_map.find(osd_id);
+        if(iter == osdmap.osd_map.end()){
+            return std::make_pair("", 0);
+        }
+        return std::make_pair(iter->second.address, iter->second.port);
+    }
+
 	std::string mon_host;
 	int mon_port;
 	int osd_id;

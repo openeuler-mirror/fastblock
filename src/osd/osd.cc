@@ -99,7 +99,7 @@ block_parse_arg(int ch, char *arg)
 
 void date_disk_init_complete(void *arg, int rberrno){
     if(rberrno != 0){
-		SPDK_NOTICELOG("Failed to initialize the date disk\n");
+		SPDK_NOTICELOG("Failed to initialize the date disk, rberrno %d\n", rberrno);
 		spdk_app_stop(rberrno);
 		return;
 	}
@@ -125,7 +125,7 @@ void date_disk_init_complete(void *arg, int rberrno){
 
 void log_disk_init_complete(void *arg, int rberrno){
     if(rberrno != 0){
-		SPDK_NOTICELOG("Failed to initialize the log disk\n");
+		SPDK_NOTICELOG("Failed to initialize the log disk, rberrno %d\n", rberrno);
 		spdk_app_stop(rberrno);
 		return;
 	}

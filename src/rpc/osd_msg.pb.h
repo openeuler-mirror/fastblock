@@ -48,7 +48,7 @@ struct TableStruct_osd_5fmsg_2eproto {
     PROTOBUF_SECTION_VARIABLE(protodesc_cold);
   static const ::PROTOBUF_NAMESPACE_ID::internal::AuxillaryParseTableField aux[]
     PROTOBUF_SECTION_VARIABLE(protodesc_cold);
-  static const ::PROTOBUF_NAMESPACE_ID::internal::ParseTable schema[11]
+  static const ::PROTOBUF_NAMESPACE_ID::internal::ParseTable schema[13]
     PROTOBUF_SECTION_VARIABLE(protodesc_cold);
   static const ::PROTOBUF_NAMESPACE_ID::internal::FieldMetadata field_metadata[];
   static const ::PROTOBUF_NAMESPACE_ID::internal::SerializationTable serialization_table[];
@@ -71,6 +71,12 @@ extern delete_replyDefaultTypeInternal _delete_reply_default_instance_;
 class delete_request;
 class delete_requestDefaultTypeInternal;
 extern delete_requestDefaultTypeInternal _delete_request_default_instance_;
+class pg_leader_request;
+class pg_leader_requestDefaultTypeInternal;
+extern pg_leader_requestDefaultTypeInternal _pg_leader_request_default_instance_;
+class pg_leader_response;
+class pg_leader_responseDefaultTypeInternal;
+extern pg_leader_responseDefaultTypeInternal _pg_leader_response_default_instance_;
 class read_cmd;
 class read_cmdDefaultTypeInternal;
 extern read_cmdDefaultTypeInternal _read_cmd_default_instance_;
@@ -96,6 +102,8 @@ template<> ::osd::bench_response* Arena::CreateMaybeMessage<::osd::bench_respons
 template<> ::osd::delete_cmd* Arena::CreateMaybeMessage<::osd::delete_cmd>(Arena*);
 template<> ::osd::delete_reply* Arena::CreateMaybeMessage<::osd::delete_reply>(Arena*);
 template<> ::osd::delete_request* Arena::CreateMaybeMessage<::osd::delete_request>(Arena*);
+template<> ::osd::pg_leader_request* Arena::CreateMaybeMessage<::osd::pg_leader_request>(Arena*);
+template<> ::osd::pg_leader_response* Arena::CreateMaybeMessage<::osd::pg_leader_response>(Arena*);
 template<> ::osd::read_cmd* Arena::CreateMaybeMessage<::osd::read_cmd>(Arena*);
 template<> ::osd::read_reply* Arena::CreateMaybeMessage<::osd::read_reply>(Arena*);
 template<> ::osd::read_request* Arena::CreateMaybeMessage<::osd::read_request>(Arena*);
@@ -433,34 +441,8 @@ class write_reply PROTOBUF_FINAL :
   // accessors -------------------------------------------------------
 
   enum : int {
-    kStrFieldNumber = 2,
     kStateFieldNumber = 1,
   };
-  // bytes str = 2;
-  void clear_str();
-  const std::string& str() const;
-  void set_str(const std::string& value);
-  void set_str(std::string&& value);
-  void set_str(const char* value);
-  void set_str(const void* value, size_t size);
-  std::string* mutable_str();
-  std::string* release_str();
-  void set_allocated_str(std::string* str);
-  GOOGLE_PROTOBUF_RUNTIME_DEPRECATED("The unsafe_arena_ accessors for"
-  "    string fields are deprecated and will be removed in a"
-  "    future release.")
-  std::string* unsafe_arena_release_str();
-  GOOGLE_PROTOBUF_RUNTIME_DEPRECATED("The unsafe_arena_ accessors for"
-  "    string fields are deprecated and will be removed in a"
-  "    future release.")
-  void unsafe_arena_set_allocated_str(
-      std::string* str);
-  private:
-  const std::string& _internal_str() const;
-  void _internal_set_str(const std::string& value);
-  std::string* _internal_mutable_str();
-  public:
-
   // int32 state = 1;
   void clear_state();
   ::PROTOBUF_NAMESPACE_ID::int32 state() const;
@@ -477,7 +459,6 @@ class write_reply PROTOBUF_FINAL :
   template <typename T> friend class ::PROTOBUF_NAMESPACE_ID::Arena::InternalHelper;
   typedef void InternalArenaConstructable_;
   typedef void DestructorSkippable_;
-  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr str_;
   ::PROTOBUF_NAMESPACE_ID::int32 state_;
   mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
   friend struct ::TableStruct_osd_5fmsg_2eproto;
@@ -1980,6 +1961,340 @@ class bench_response PROTOBUF_FINAL :
   mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
   friend struct ::TableStruct_osd_5fmsg_2eproto;
 };
+// -------------------------------------------------------------------
+
+class pg_leader_request PROTOBUF_FINAL :
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:osd.pg_leader_request) */ {
+ public:
+  inline pg_leader_request() : pg_leader_request(nullptr) {};
+  virtual ~pg_leader_request();
+
+  pg_leader_request(const pg_leader_request& from);
+  pg_leader_request(pg_leader_request&& from) noexcept
+    : pg_leader_request() {
+    *this = ::std::move(from);
+  }
+
+  inline pg_leader_request& operator=(const pg_leader_request& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline pg_leader_request& operator=(pg_leader_request&& from) noexcept {
+    if (GetArena() == from.GetArena()) {
+      if (this != &from) InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* descriptor() {
+    return GetDescriptor();
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* GetDescriptor() {
+    return GetMetadataStatic().descriptor;
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Reflection* GetReflection() {
+    return GetMetadataStatic().reflection;
+  }
+  static const pg_leader_request& default_instance();
+
+  static void InitAsDefaultInstance();  // FOR INTERNAL USE ONLY
+  static inline const pg_leader_request* internal_default_instance() {
+    return reinterpret_cast<const pg_leader_request*>(
+               &_pg_leader_request_default_instance_);
+  }
+  static constexpr int kIndexInFileMessages =
+    11;
+
+  friend void swap(pg_leader_request& a, pg_leader_request& b) {
+    a.Swap(&b);
+  }
+  inline void Swap(pg_leader_request* other) {
+    if (other == this) return;
+    if (GetArena() == other->GetArena()) {
+      InternalSwap(other);
+    } else {
+      ::PROTOBUF_NAMESPACE_ID::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(pg_leader_request* other) {
+    if (other == this) return;
+    GOOGLE_DCHECK(GetArena() == other->GetArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  inline pg_leader_request* New() const final {
+    return CreateMaybeMessage<pg_leader_request>(nullptr);
+  }
+
+  pg_leader_request* New(::PROTOBUF_NAMESPACE_ID::Arena* arena) const final {
+    return CreateMaybeMessage<pg_leader_request>(arena);
+  }
+  void CopyFrom(const ::PROTOBUF_NAMESPACE_ID::Message& from) final;
+  void MergeFrom(const ::PROTOBUF_NAMESPACE_ID::Message& from) final;
+  void CopyFrom(const pg_leader_request& from);
+  void MergeFrom(const pg_leader_request& from);
+  PROTOBUF_ATTRIBUTE_REINITIALIZES void Clear() final;
+  bool IsInitialized() const final;
+
+  size_t ByteSizeLong() const final;
+  const char* _InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) final;
+  ::PROTOBUF_NAMESPACE_ID::uint8* _InternalSerialize(
+      ::PROTOBUF_NAMESPACE_ID::uint8* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const final;
+  int GetCachedSize() const final { return _cached_size_.Get(); }
+
+  private:
+  inline void SharedCtor();
+  inline void SharedDtor();
+  void SetCachedSize(int size) const final;
+  void InternalSwap(pg_leader_request* other);
+  friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
+  static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
+    return "osd.pg_leader_request";
+  }
+  protected:
+  explicit pg_leader_request(::PROTOBUF_NAMESPACE_ID::Arena* arena);
+  private:
+  static void ArenaDtor(void* object);
+  inline void RegisterArenaDtor(::PROTOBUF_NAMESPACE_ID::Arena* arena);
+  public:
+
+  ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadata() const final;
+  private:
+  static ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadataStatic() {
+    ::PROTOBUF_NAMESPACE_ID::internal::AssignDescriptors(&::descriptor_table_osd_5fmsg_2eproto);
+    return ::descriptor_table_osd_5fmsg_2eproto.file_level_metadata[kIndexInFileMessages];
+  }
+
+  public:
+
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+
+  enum : int {
+    kPoolIdFieldNumber = 1,
+    kPgIdFieldNumber = 2,
+  };
+  // uint64 pool_id = 1;
+  void clear_pool_id();
+  ::PROTOBUF_NAMESPACE_ID::uint64 pool_id() const;
+  void set_pool_id(::PROTOBUF_NAMESPACE_ID::uint64 value);
+  private:
+  ::PROTOBUF_NAMESPACE_ID::uint64 _internal_pool_id() const;
+  void _internal_set_pool_id(::PROTOBUF_NAMESPACE_ID::uint64 value);
+  public:
+
+  // uint64 pg_id = 2;
+  void clear_pg_id();
+  ::PROTOBUF_NAMESPACE_ID::uint64 pg_id() const;
+  void set_pg_id(::PROTOBUF_NAMESPACE_ID::uint64 value);
+  private:
+  ::PROTOBUF_NAMESPACE_ID::uint64 _internal_pg_id() const;
+  void _internal_set_pg_id(::PROTOBUF_NAMESPACE_ID::uint64 value);
+  public:
+
+  // @@protoc_insertion_point(class_scope:osd.pg_leader_request)
+ private:
+  class _Internal;
+
+  template <typename T> friend class ::PROTOBUF_NAMESPACE_ID::Arena::InternalHelper;
+  typedef void InternalArenaConstructable_;
+  typedef void DestructorSkippable_;
+  ::PROTOBUF_NAMESPACE_ID::uint64 pool_id_;
+  ::PROTOBUF_NAMESPACE_ID::uint64 pg_id_;
+  mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
+  friend struct ::TableStruct_osd_5fmsg_2eproto;
+};
+// -------------------------------------------------------------------
+
+class pg_leader_response PROTOBUF_FINAL :
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:osd.pg_leader_response) */ {
+ public:
+  inline pg_leader_response() : pg_leader_response(nullptr) {};
+  virtual ~pg_leader_response();
+
+  pg_leader_response(const pg_leader_response& from);
+  pg_leader_response(pg_leader_response&& from) noexcept
+    : pg_leader_response() {
+    *this = ::std::move(from);
+  }
+
+  inline pg_leader_response& operator=(const pg_leader_response& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline pg_leader_response& operator=(pg_leader_response&& from) noexcept {
+    if (GetArena() == from.GetArena()) {
+      if (this != &from) InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* descriptor() {
+    return GetDescriptor();
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* GetDescriptor() {
+    return GetMetadataStatic().descriptor;
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Reflection* GetReflection() {
+    return GetMetadataStatic().reflection;
+  }
+  static const pg_leader_response& default_instance();
+
+  static void InitAsDefaultInstance();  // FOR INTERNAL USE ONLY
+  static inline const pg_leader_response* internal_default_instance() {
+    return reinterpret_cast<const pg_leader_response*>(
+               &_pg_leader_response_default_instance_);
+  }
+  static constexpr int kIndexInFileMessages =
+    12;
+
+  friend void swap(pg_leader_response& a, pg_leader_response& b) {
+    a.Swap(&b);
+  }
+  inline void Swap(pg_leader_response* other) {
+    if (other == this) return;
+    if (GetArena() == other->GetArena()) {
+      InternalSwap(other);
+    } else {
+      ::PROTOBUF_NAMESPACE_ID::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(pg_leader_response* other) {
+    if (other == this) return;
+    GOOGLE_DCHECK(GetArena() == other->GetArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  inline pg_leader_response* New() const final {
+    return CreateMaybeMessage<pg_leader_response>(nullptr);
+  }
+
+  pg_leader_response* New(::PROTOBUF_NAMESPACE_ID::Arena* arena) const final {
+    return CreateMaybeMessage<pg_leader_response>(arena);
+  }
+  void CopyFrom(const ::PROTOBUF_NAMESPACE_ID::Message& from) final;
+  void MergeFrom(const ::PROTOBUF_NAMESPACE_ID::Message& from) final;
+  void CopyFrom(const pg_leader_response& from);
+  void MergeFrom(const pg_leader_response& from);
+  PROTOBUF_ATTRIBUTE_REINITIALIZES void Clear() final;
+  bool IsInitialized() const final;
+
+  size_t ByteSizeLong() const final;
+  const char* _InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) final;
+  ::PROTOBUF_NAMESPACE_ID::uint8* _InternalSerialize(
+      ::PROTOBUF_NAMESPACE_ID::uint8* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const final;
+  int GetCachedSize() const final { return _cached_size_.Get(); }
+
+  private:
+  inline void SharedCtor();
+  inline void SharedDtor();
+  void SetCachedSize(int size) const final;
+  void InternalSwap(pg_leader_response* other);
+  friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
+  static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
+    return "osd.pg_leader_response";
+  }
+  protected:
+  explicit pg_leader_response(::PROTOBUF_NAMESPACE_ID::Arena* arena);
+  private:
+  static void ArenaDtor(void* object);
+  inline void RegisterArenaDtor(::PROTOBUF_NAMESPACE_ID::Arena* arena);
+  public:
+
+  ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadata() const final;
+  private:
+  static ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadataStatic() {
+    ::PROTOBUF_NAMESPACE_ID::internal::AssignDescriptors(&::descriptor_table_osd_5fmsg_2eproto);
+    return ::descriptor_table_osd_5fmsg_2eproto.file_level_metadata[kIndexInFileMessages];
+  }
+
+  public:
+
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+
+  enum : int {
+    kLeaderAddrFieldNumber = 3,
+    kStateFieldNumber = 1,
+    kLeaderIdFieldNumber = 2,
+    kLeaderPortFieldNumber = 4,
+  };
+  // bytes leader_addr = 3;
+  void clear_leader_addr();
+  const std::string& leader_addr() const;
+  void set_leader_addr(const std::string& value);
+  void set_leader_addr(std::string&& value);
+  void set_leader_addr(const char* value);
+  void set_leader_addr(const void* value, size_t size);
+  std::string* mutable_leader_addr();
+  std::string* release_leader_addr();
+  void set_allocated_leader_addr(std::string* leader_addr);
+  GOOGLE_PROTOBUF_RUNTIME_DEPRECATED("The unsafe_arena_ accessors for"
+  "    string fields are deprecated and will be removed in a"
+  "    future release.")
+  std::string* unsafe_arena_release_leader_addr();
+  GOOGLE_PROTOBUF_RUNTIME_DEPRECATED("The unsafe_arena_ accessors for"
+  "    string fields are deprecated and will be removed in a"
+  "    future release.")
+  void unsafe_arena_set_allocated_leader_addr(
+      std::string* leader_addr);
+  private:
+  const std::string& _internal_leader_addr() const;
+  void _internal_set_leader_addr(const std::string& value);
+  std::string* _internal_mutable_leader_addr();
+  public:
+
+  // int32 state = 1;
+  void clear_state();
+  ::PROTOBUF_NAMESPACE_ID::int32 state() const;
+  void set_state(::PROTOBUF_NAMESPACE_ID::int32 value);
+  private:
+  ::PROTOBUF_NAMESPACE_ID::int32 _internal_state() const;
+  void _internal_set_state(::PROTOBUF_NAMESPACE_ID::int32 value);
+  public:
+
+  // int32 leader_id = 2;
+  void clear_leader_id();
+  ::PROTOBUF_NAMESPACE_ID::int32 leader_id() const;
+  void set_leader_id(::PROTOBUF_NAMESPACE_ID::int32 value);
+  private:
+  ::PROTOBUF_NAMESPACE_ID::int32 _internal_leader_id() const;
+  void _internal_set_leader_id(::PROTOBUF_NAMESPACE_ID::int32 value);
+  public:
+
+  // int32 leader_port = 4;
+  void clear_leader_port();
+  ::PROTOBUF_NAMESPACE_ID::int32 leader_port() const;
+  void set_leader_port(::PROTOBUF_NAMESPACE_ID::int32 value);
+  private:
+  ::PROTOBUF_NAMESPACE_ID::int32 _internal_leader_port() const;
+  void _internal_set_leader_port(::PROTOBUF_NAMESPACE_ID::int32 value);
+  public:
+
+  // @@protoc_insertion_point(class_scope:osd.pg_leader_response)
+ private:
+  class _Internal;
+
+  template <typename T> friend class ::PROTOBUF_NAMESPACE_ID::Arena::InternalHelper;
+  typedef void InternalArenaConstructable_;
+  typedef void DestructorSkippable_;
+  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr leader_addr_;
+  ::PROTOBUF_NAMESPACE_ID::int32 state_;
+  ::PROTOBUF_NAMESPACE_ID::int32 leader_id_;
+  ::PROTOBUF_NAMESPACE_ID::int32 leader_port_;
+  mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
+  friend struct ::TableStruct_osd_5fmsg_2eproto;
+};
 // ===================================================================
 
 class rpc_service_osd_Stub;
@@ -2010,6 +2325,10 @@ class rpc_service_osd : public ::PROTOBUF_NAMESPACE_ID::Service {
   virtual void process_rpc_bench(::PROTOBUF_NAMESPACE_ID::RpcController* controller,
                        const ::osd::bench_request* request,
                        ::osd::bench_response* response,
+                       ::google::protobuf::Closure* done);
+  virtual void process_get_leader(::PROTOBUF_NAMESPACE_ID::RpcController* controller,
+                       const ::osd::pg_leader_request* request,
+                       ::osd::pg_leader_response* response,
                        ::google::protobuf::Closure* done);
 
   // implements Service ----------------------------------------------
@@ -2055,6 +2374,10 @@ class rpc_service_osd_Stub : public rpc_service_osd {
   void process_rpc_bench(::PROTOBUF_NAMESPACE_ID::RpcController* controller,
                        const ::osd::bench_request* request,
                        ::osd::bench_response* response,
+                       ::google::protobuf::Closure* done);
+  void process_get_leader(::PROTOBUF_NAMESPACE_ID::RpcController* controller,
+                       const ::osd::pg_leader_request* request,
+                       ::osd::pg_leader_response* response,
                        ::google::protobuf::Closure* done);
  private:
   ::PROTOBUF_NAMESPACE_ID::RpcChannel* channel_;
@@ -2318,87 +2641,6 @@ inline void write_reply::_internal_set_state(::PROTOBUF_NAMESPACE_ID::int32 valu
 inline void write_reply::set_state(::PROTOBUF_NAMESPACE_ID::int32 value) {
   _internal_set_state(value);
   // @@protoc_insertion_point(field_set:osd.write_reply.state)
-}
-
-// bytes str = 2;
-inline void write_reply::clear_str() {
-  str_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
-}
-inline const std::string& write_reply::str() const {
-  // @@protoc_insertion_point(field_get:osd.write_reply.str)
-  return _internal_str();
-}
-inline void write_reply::set_str(const std::string& value) {
-  _internal_set_str(value);
-  // @@protoc_insertion_point(field_set:osd.write_reply.str)
-}
-inline std::string* write_reply::mutable_str() {
-  // @@protoc_insertion_point(field_mutable:osd.write_reply.str)
-  return _internal_mutable_str();
-}
-inline const std::string& write_reply::_internal_str() const {
-  return str_.Get();
-}
-inline void write_reply::_internal_set_str(const std::string& value) {
-  
-  str_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), value, GetArena());
-}
-inline void write_reply::set_str(std::string&& value) {
-  
-  str_.Set(
-    &::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::move(value), GetArena());
-  // @@protoc_insertion_point(field_set_rvalue:osd.write_reply.str)
-}
-inline void write_reply::set_str(const char* value) {
-  GOOGLE_DCHECK(value != nullptr);
-  
-  str_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(value),
-              GetArena());
-  // @@protoc_insertion_point(field_set_char:osd.write_reply.str)
-}
-inline void write_reply::set_str(const void* value,
-    size_t size) {
-  
-  str_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(
-      reinterpret_cast<const char*>(value), size), GetArena());
-  // @@protoc_insertion_point(field_set_pointer:osd.write_reply.str)
-}
-inline std::string* write_reply::_internal_mutable_str() {
-  
-  return str_.Mutable(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
-}
-inline std::string* write_reply::release_str() {
-  // @@protoc_insertion_point(field_release:osd.write_reply.str)
-  return str_.Release(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
-}
-inline void write_reply::set_allocated_str(std::string* str) {
-  if (str != nullptr) {
-    
-  } else {
-    
-  }
-  str_.SetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), str,
-      GetArena());
-  // @@protoc_insertion_point(field_set_allocated:osd.write_reply.str)
-}
-inline std::string* write_reply::unsafe_arena_release_str() {
-  // @@protoc_insertion_point(field_unsafe_arena_release:osd.write_reply.str)
-  GOOGLE_DCHECK(GetArena() != nullptr);
-  
-  return str_.UnsafeArenaRelease(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
-      GetArena());
-}
-inline void write_reply::unsafe_arena_set_allocated_str(
-    std::string* str) {
-  GOOGLE_DCHECK(GetArena() != nullptr);
-  if (str != nullptr) {
-    
-  } else {
-    
-  }
-  str_.UnsafeArenaSetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
-      str, GetArena());
-  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:osd.write_reply.str)
 }
 
 // -------------------------------------------------------------------
@@ -3386,9 +3628,202 @@ inline void bench_response::unsafe_arena_set_allocated_resp(
   // @@protoc_insertion_point(field_unsafe_arena_set_allocated:osd.bench_response.resp)
 }
 
+// -------------------------------------------------------------------
+
+// pg_leader_request
+
+// uint64 pool_id = 1;
+inline void pg_leader_request::clear_pool_id() {
+  pool_id_ = PROTOBUF_ULONGLONG(0);
+}
+inline ::PROTOBUF_NAMESPACE_ID::uint64 pg_leader_request::_internal_pool_id() const {
+  return pool_id_;
+}
+inline ::PROTOBUF_NAMESPACE_ID::uint64 pg_leader_request::pool_id() const {
+  // @@protoc_insertion_point(field_get:osd.pg_leader_request.pool_id)
+  return _internal_pool_id();
+}
+inline void pg_leader_request::_internal_set_pool_id(::PROTOBUF_NAMESPACE_ID::uint64 value) {
+  
+  pool_id_ = value;
+}
+inline void pg_leader_request::set_pool_id(::PROTOBUF_NAMESPACE_ID::uint64 value) {
+  _internal_set_pool_id(value);
+  // @@protoc_insertion_point(field_set:osd.pg_leader_request.pool_id)
+}
+
+// uint64 pg_id = 2;
+inline void pg_leader_request::clear_pg_id() {
+  pg_id_ = PROTOBUF_ULONGLONG(0);
+}
+inline ::PROTOBUF_NAMESPACE_ID::uint64 pg_leader_request::_internal_pg_id() const {
+  return pg_id_;
+}
+inline ::PROTOBUF_NAMESPACE_ID::uint64 pg_leader_request::pg_id() const {
+  // @@protoc_insertion_point(field_get:osd.pg_leader_request.pg_id)
+  return _internal_pg_id();
+}
+inline void pg_leader_request::_internal_set_pg_id(::PROTOBUF_NAMESPACE_ID::uint64 value) {
+  
+  pg_id_ = value;
+}
+inline void pg_leader_request::set_pg_id(::PROTOBUF_NAMESPACE_ID::uint64 value) {
+  _internal_set_pg_id(value);
+  // @@protoc_insertion_point(field_set:osd.pg_leader_request.pg_id)
+}
+
+// -------------------------------------------------------------------
+
+// pg_leader_response
+
+// int32 state = 1;
+inline void pg_leader_response::clear_state() {
+  state_ = 0;
+}
+inline ::PROTOBUF_NAMESPACE_ID::int32 pg_leader_response::_internal_state() const {
+  return state_;
+}
+inline ::PROTOBUF_NAMESPACE_ID::int32 pg_leader_response::state() const {
+  // @@protoc_insertion_point(field_get:osd.pg_leader_response.state)
+  return _internal_state();
+}
+inline void pg_leader_response::_internal_set_state(::PROTOBUF_NAMESPACE_ID::int32 value) {
+  
+  state_ = value;
+}
+inline void pg_leader_response::set_state(::PROTOBUF_NAMESPACE_ID::int32 value) {
+  _internal_set_state(value);
+  // @@protoc_insertion_point(field_set:osd.pg_leader_response.state)
+}
+
+// int32 leader_id = 2;
+inline void pg_leader_response::clear_leader_id() {
+  leader_id_ = 0;
+}
+inline ::PROTOBUF_NAMESPACE_ID::int32 pg_leader_response::_internal_leader_id() const {
+  return leader_id_;
+}
+inline ::PROTOBUF_NAMESPACE_ID::int32 pg_leader_response::leader_id() const {
+  // @@protoc_insertion_point(field_get:osd.pg_leader_response.leader_id)
+  return _internal_leader_id();
+}
+inline void pg_leader_response::_internal_set_leader_id(::PROTOBUF_NAMESPACE_ID::int32 value) {
+  
+  leader_id_ = value;
+}
+inline void pg_leader_response::set_leader_id(::PROTOBUF_NAMESPACE_ID::int32 value) {
+  _internal_set_leader_id(value);
+  // @@protoc_insertion_point(field_set:osd.pg_leader_response.leader_id)
+}
+
+// bytes leader_addr = 3;
+inline void pg_leader_response::clear_leader_addr() {
+  leader_addr_.ClearToEmpty(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
+}
+inline const std::string& pg_leader_response::leader_addr() const {
+  // @@protoc_insertion_point(field_get:osd.pg_leader_response.leader_addr)
+  return _internal_leader_addr();
+}
+inline void pg_leader_response::set_leader_addr(const std::string& value) {
+  _internal_set_leader_addr(value);
+  // @@protoc_insertion_point(field_set:osd.pg_leader_response.leader_addr)
+}
+inline std::string* pg_leader_response::mutable_leader_addr() {
+  // @@protoc_insertion_point(field_mutable:osd.pg_leader_response.leader_addr)
+  return _internal_mutable_leader_addr();
+}
+inline const std::string& pg_leader_response::_internal_leader_addr() const {
+  return leader_addr_.Get();
+}
+inline void pg_leader_response::_internal_set_leader_addr(const std::string& value) {
+  
+  leader_addr_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), value, GetArena());
+}
+inline void pg_leader_response::set_leader_addr(std::string&& value) {
+  
+  leader_addr_.Set(
+    &::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::move(value), GetArena());
+  // @@protoc_insertion_point(field_set_rvalue:osd.pg_leader_response.leader_addr)
+}
+inline void pg_leader_response::set_leader_addr(const char* value) {
+  GOOGLE_DCHECK(value != nullptr);
+  
+  leader_addr_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(value),
+              GetArena());
+  // @@protoc_insertion_point(field_set_char:osd.pg_leader_response.leader_addr)
+}
+inline void pg_leader_response::set_leader_addr(const void* value,
+    size_t size) {
+  
+  leader_addr_.Set(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), ::std::string(
+      reinterpret_cast<const char*>(value), size), GetArena());
+  // @@protoc_insertion_point(field_set_pointer:osd.pg_leader_response.leader_addr)
+}
+inline std::string* pg_leader_response::_internal_mutable_leader_addr() {
+  
+  return leader_addr_.Mutable(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
+}
+inline std::string* pg_leader_response::release_leader_addr() {
+  // @@protoc_insertion_point(field_release:osd.pg_leader_response.leader_addr)
+  return leader_addr_.Release(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), GetArena());
+}
+inline void pg_leader_response::set_allocated_leader_addr(std::string* leader_addr) {
+  if (leader_addr != nullptr) {
+    
+  } else {
+    
+  }
+  leader_addr_.SetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(), leader_addr,
+      GetArena());
+  // @@protoc_insertion_point(field_set_allocated:osd.pg_leader_response.leader_addr)
+}
+inline std::string* pg_leader_response::unsafe_arena_release_leader_addr() {
+  // @@protoc_insertion_point(field_unsafe_arena_release:osd.pg_leader_response.leader_addr)
+  GOOGLE_DCHECK(GetArena() != nullptr);
+  
+  return leader_addr_.UnsafeArenaRelease(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
+      GetArena());
+}
+inline void pg_leader_response::unsafe_arena_set_allocated_leader_addr(
+    std::string* leader_addr) {
+  GOOGLE_DCHECK(GetArena() != nullptr);
+  if (leader_addr != nullptr) {
+    
+  } else {
+    
+  }
+  leader_addr_.UnsafeArenaSetAllocated(&::PROTOBUF_NAMESPACE_ID::internal::GetEmptyStringAlreadyInited(),
+      leader_addr, GetArena());
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:osd.pg_leader_response.leader_addr)
+}
+
+// int32 leader_port = 4;
+inline void pg_leader_response::clear_leader_port() {
+  leader_port_ = 0;
+}
+inline ::PROTOBUF_NAMESPACE_ID::int32 pg_leader_response::_internal_leader_port() const {
+  return leader_port_;
+}
+inline ::PROTOBUF_NAMESPACE_ID::int32 pg_leader_response::leader_port() const {
+  // @@protoc_insertion_point(field_get:osd.pg_leader_response.leader_port)
+  return _internal_leader_port();
+}
+inline void pg_leader_response::_internal_set_leader_port(::PROTOBUF_NAMESPACE_ID::int32 value) {
+  
+  leader_port_ = value;
+}
+inline void pg_leader_response::set_leader_port(::PROTOBUF_NAMESPACE_ID::int32 value) {
+  _internal_set_leader_port(value);
+  // @@protoc_insertion_point(field_set:osd.pg_leader_response.leader_port)
+}
+
 #ifdef __GNUC__
   #pragma GCC diagnostic pop
 #endif  // __GNUC__
+// -------------------------------------------------------------------
+
+// -------------------------------------------------------------------
+
 // -------------------------------------------------------------------
 
 // -------------------------------------------------------------------

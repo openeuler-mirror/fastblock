@@ -64,6 +64,10 @@ public:
         auto name = pg_id_to_name(pool_id, pg_id);
         _sm_table[shard_id][std::move(name)] = sm; 
     }
+
+    mon_client& get_mon(){
+        return _mon;
+    }
 private:
     uint32_t get_next_shard_id(){
         uint32_t shard_id = _next_shard;
