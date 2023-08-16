@@ -23,9 +23,8 @@ struct append_entries_complete : public context{
 void append_entries_buffer::enqueue(const msg_appendentries_t* request,
             msg_appendentries_response_t* response,
             google::protobuf::Closure* done){
-    _request.push(request);
-    _response.push(response);
-    _done.push(done);
+    item_type item{request, response, done};
+    _request.push(std::move(item));
 }
 
 void append_entries_buffer::start(){
@@ -41,13 +40,16 @@ void append_entries_buffer::do_flush(){
         return;
     if(_in_progress)
         return;
+    
     _in_progress = true;
-    auto request = _request.front();
+
+    
+    auto item = _request.front();
     _request.pop();
-    auto response = _response.front();
-    _response.pop();
-    auto done = _done.front();
-    _done.pop();
+    auto request = item.request;
+    auto response = item.response;
+    auto done = item.done;
+
     append_entries_complete* complete = new append_entries_complete(done, this);
 
     int ret = _raft->raft_recv_appendentries(request->node_id(), request, response, complete);
