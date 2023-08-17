@@ -18,7 +18,7 @@ public:
     , name(_name){}
 
     void free_pg();
-    void start_raft_periodic_timer();
+    void start_raft_timer();
 
     std::shared_ptr<raft_server_t> raft;
     struct spdk_poller * timer;

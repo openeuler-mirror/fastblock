@@ -2,6 +2,7 @@
 #define RAFT_SERVICE_H_
 #include "rpc/raft_msg.pb.h"
 #include "utils/utils.h"
+#include "utils/err_num.h"
 #include "raft/raft_private.h"
 #include "base/core_sharded.h"
 
@@ -30,18 +31,6 @@ private:
     PartitionManager* _pm;
 };
 
-struct append_entries_complete : public context{
-    google::protobuf::Closure* done;
-
-    append_entries_complete(google::protobuf::Closure* _done)
-    : done(_done) {}
-
-    void finish(int ) override {
-        SPDK_NOTICELOG("append_entries_complete\n");
-        done->Run();
-    }
-};
-
 template<typename PartitionManager>
 void raft_service<PartitionManager>::append_entries(google::protobuf::RpcController* controller,
              const msg_appendentries_t* request,
@@ -50,18 +39,19 @@ void raft_service<PartitionManager>::append_entries(google::protobuf::RpcControl
     auto pool_id = request->pool_id();
     auto pg_id = request->pg_id();
     uint32_t shard_id;
-    _pm->get_pg_shard(pool_id, pg_id, shard_id);
+    if(!_pm->get_pg_shard(pool_id, pg_id, shard_id)){
+        response->set_node_id(_pm->get_current_node_id());
+        response->set_success(err::RAFT_ERR_NOT_FOUND_PG);
+        done->Run();
+        return;
+    }
     auto pg = _pm->get_pg(shard_id, pool_id, pg_id);
 
-    append_entries_complete* complete = new append_entries_complete(done);
     _pm->get_shard().invoke_on(
       shard_id, 
-      [this, raft = pg->raft, complete, request, response](){
+      [this, raft = pg->raft, done, request, response](){
         SPDK_NOTICELOG("raft_recv_appendentries in core %u\n", spdk_env_get_current_core());
-        int ret = raft->raft_recv_appendentries(request->node_id(), request, response, complete);
-        if(ret != 0){
-            complete->complete(-1);
-        }                    
+        raft->append_entries_to_buffer(request, response, done);
       });
 }
 

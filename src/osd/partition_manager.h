@@ -68,6 +68,10 @@ public:
     mon_client& get_mon(){
         return _mon;
     }
+
+    int get_current_node_id(){
+        return _pgs.get_current_node_id();
+    }
 private:
     uint32_t get_next_shard_id(){
         uint32_t shard_id = _next_shard;

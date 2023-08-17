@@ -9,6 +9,7 @@
 #include "rpc/raft_msg.pb.h"
 #include "utils/utils.h"
 #include "raft/raft_client_protocol.h"
+#include "raft/append_entry_buffer.h"
 
 enum {
     RAFT_NODE_STATUS_DISCONNECTED,
@@ -858,6 +859,25 @@ public:
     void set_stm_in_apply(bool _stm_in_apply){
         stm_in_apply = _stm_in_apply;
     }
+
+    void start_timed_task(){
+        _append_entries_buffer.start();
+        machine->start();
+    }
+
+    void append_entries_to_buffer(const msg_appendentries_t* request,
+                msg_appendentries_response_t* response,
+                google::protobuf::Closure* done){
+        _append_entries_buffer.enqueue(request, response, done);
+    }
+
+    raft_term_t get_prev_log_term(){
+        return prev_log_term;
+    }
+
+    void set_prev_log_term(raft_term_t term){
+        prev_log_term = term;
+    }
 private:
     int _has_majority_leases(raft_time_t now, int with_grace);
     int _cfg_change_is_valid(msg_entry_t* ety);
@@ -941,6 +961,9 @@ private:
     raft_client_protocol& client;
 
     bool stm_in_apply;     //状态机正在apply
+
+    append_entries_buffer _append_entries_buffer;
+    raft_term_t prev_log_term;
 }; 
 
 int raft_votes_is_majority(const int nnodes, const int nvotes);

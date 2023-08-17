@@ -10,6 +10,7 @@ compile_library(
     raft_server_properties.cc
     state_machine.cc
     raft_client_protocol.cc
+    append_entry_buffer.cc
   DEPS
     spdk::spdk
     raft_msg
