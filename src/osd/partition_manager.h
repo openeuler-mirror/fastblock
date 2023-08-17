@@ -28,6 +28,14 @@ public:
         }
     }
 
+    void start(context *complete){
+        _pgs.start(complete);
+    }
+
+    void stop(){
+        _pgs.stop();
+    }
+
     int connect_mon(){
         return _mon.connect_mon();
     }

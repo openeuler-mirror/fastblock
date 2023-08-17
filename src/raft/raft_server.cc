@@ -12,9 +12,18 @@
 #include "utils/err_num.h"
 
 std::shared_ptr<raft_server_t> raft_new(raft_client_protocol& client,
-        disk_log* log, std::shared_ptr<state_machine> sm_ptr, uint64_t pool_id, uint64_t pg_id)
+        disk_log* log, std::shared_ptr<state_machine> sm_ptr, uint64_t pool_id, uint64_t pg_id
+#ifdef KVSTORE
+        , kv_store *kv
+#endif                
+        )
 {
-    auto raft = std::make_shared<raft_server_t>(client, std::move(log), sm_ptr, pool_id, pg_id);
+    auto raft = std::make_shared<raft_server_t>(client, std::move(log), sm_ptr, 
+                                               pool_id, pg_id
+#ifdef KVSTORE
+                                               , kv
+#endif                    
+    );
     return raft;
 }
 
@@ -1247,8 +1256,10 @@ void raft_server_t::raft_destroy_nodes()
 
 void raft_server_t::raft_destroy()
 {
+    stop_timed_task();
     raft_destroy_nodes();
     machine.reset();
+    log->destroy_log();
 }
 
 int raft_server_t::raft_get_nvotes_for_me()
@@ -1269,11 +1280,9 @@ int raft_server_t::raft_get_nvotes_for_me()
 
 int raft_server_t::raft_vote_for_nodeid(const raft_node_id_t nodeid)
 {
-    if (raft_get_cbs().persist_vote) {
-        int e = raft_get_cbs().persist_vote(this, udata, nodeid);
-        if (0 != e)
-            return e;
-    }
+    int ret = save_vote_for(nodeid);
+    if(0 != ret)
+        return ret;
     raft_set_voted_for(nodeid);
     return 0;
 }

@@ -97,9 +97,35 @@ block_parse_arg(int ch, char *arg)
 	return 0;
 }
 
-void date_disk_init_complete(void *arg, int rberrno){
+static void service_init(partition_manager* pm, server_t *server){
+    rpc_server& rserver = rpc_server::get_server(pm->get_shard());
+	auto rs = new raft_service<partition_manager>(pm);
+	auto os = new osd_service(pm);
+	rserver.register_service(rs);
+	rserver.register_service(os);
+	rserver.start(server->osd_addr, server->osd_port);
+}
+
+struct pm_start_context : public context{
+    server_t *server;
+    partition_manager* pm;
+
+    pm_start_context(server_t *_server, partition_manager* _pm)
+    : server(_server)
+    , pm(_pm) {}
+
+    void finish(int r) override {
+		if(r != 0){
+            spdk_app_stop(r);
+			return;
+		}
+		service_init(pm, server);
+    }
+};
+
+void disk_init_complete(void *arg, int rberrno){
     if(rberrno != 0){
-		SPDK_NOTICELOG("Failed to initialize the date disk, rberrno %d\n", rberrno);
+		SPDK_NOTICELOG("Failed to initialize the  disk, rberrno %d\n", rberrno);
 		spdk_app_stop(rberrno);
 		return;
 	}
@@ -115,23 +141,8 @@ void date_disk_init_complete(void *arg, int rberrno){
 		return;
 	}
 
-    rpc_server& rserver = rpc_server::get_server(global_pm->get_shard());
-	auto rs = new raft_service<partition_manager>(global_pm);
-	auto os = new osd_service(global_pm);
-	rserver.register_service(rs);
-	rserver.register_service(os);
-	rserver.start(server->osd_addr, server->osd_port);
-}
-
-void log_disk_init_complete(void *arg, int rberrno){
-    if(rberrno != 0){
-		SPDK_NOTICELOG("Failed to initialize the log disk, rberrno %d\n", rberrno);
-		spdk_app_stop(rberrno);
-		return;
-	}
-	server_t *server = (server_t *)arg;
-      //初始化数据盘
-    blobstore_init(server->bdev_disk.c_str(), date_disk_init_complete, arg);	 
+    pm_start_context *ctx = new pm_start_context{server, global_pm};
+	global_pm->start(ctx);
 }
 
 static void
@@ -141,7 +152,7 @@ block_started(void *arg)
 
     buffer_pool_init();
       //初始化log磁盘
-    blobstore_init(server->bdev_disk.c_str(), log_disk_init_complete, arg); 
+    blobstore_init(server->bdev_disk.c_str(), disk_init_complete, arg); 
 }
 
 int

@@ -96,6 +96,22 @@ public:
         return _current_node_id;
     }
 
+    void start(context *complete);
+
+#ifdef KVSTORE
+    void add_kvstore(kv_store *kv){
+        _kvs.push_back(kv);
+    }
+#endif
+
+    void stop(){
+#ifdef KVSTORE
+        _kv->stop([](void*, int){}, nullptr);
+        delete _kv;
+        _kv = nullptr;
+#endif
+    }
+
 private:
     int _pg_add(uint32_t shard_id, std::shared_ptr<raft_server_t> raft, uint64_t pool_id, uint64_t pg_id){
         auto name = pg_id_to_name(pool_id, pg_id);
@@ -117,6 +133,9 @@ private:
     std::vector<shard_manager> _shard_mg;
     int _current_node_id;
     raft_client_protocol _client;
+#ifdef KVSTORE
+    std::vector<kv_store *> _kvs;
+#endif
 };
 
 #endif
