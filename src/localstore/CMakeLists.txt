@@ -7,10 +7,13 @@ compile_library (
     buffer_pool.cc
     spdk_buffer.cc
     blob_manager.cc
+    kv_store.cc
+
   DEPS
     spdk::spdk
     absl::flat_hash_map
     fastblock_base;
+
   COPTS
     -Wno-error=unused-variable
     -Wno-error=pointer-arith  # 对void*进行加减运算

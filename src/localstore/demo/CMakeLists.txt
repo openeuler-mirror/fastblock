@@ -1,7 +1,5 @@
 # demos
 
-add_custom_target (demos)
-
 macro (compile_demo name)
   set (args ${ARGN})
 
@@ -29,8 +27,6 @@ macro (compile_demo name)
       -Wno-error=write-strings
       ${parsed_args_COPTS}
   ) 
-
-  add_dependencies (demos ${target})
 endmacro ()
 
 
@@ -58,6 +54,20 @@ compile_demo(demo_obj
 compile_demo(demo_snap
   SOURCES
   demo_snaplook.cc
+  DEPS
+    fastblock_localstore
+)
+
+compile_demo(demo_kvstore
+  SOURCES
+    demo_kvstore.cc
+  DEPS
+    fastblock_localstore
+)
+
+compile_demo(demo_bufferlist
+  SOURCES
+    demo_bufferlist.cc
   DEPS
     fastblock_localstore
 )
