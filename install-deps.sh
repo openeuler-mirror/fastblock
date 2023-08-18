@@ -40,10 +40,36 @@ deb_deps=(
   ninja-build
 )
 
+# Add support for centos/rhel/openEuler/suse
+
+rpm_deps=(
+  pkgconfig
+  git
+  autoconf
+  automake
+  gcc
+  gcc-c++
+  protobuf-devel
+  fmt-devel
+  cmake
+  libnl3-devel
+  libibverbs-devel
+  librdmacm-devel
+  meson
+  python3-pyelftools
+  libuuid-devel
+  openssl-devel
+  libaio-devel
+  ninja-build
+)
+
 case "$ID" in
   ubuntu | debian)
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y "${deb_deps[@]}"
+    ;;
+  centos | rhel | openEuler | suse | culinux)
+    yum install -y "${rpm_deps[@]}"
     ;;
   *)
     echo "Please help us make the script better by sending patches with your OS $ID"

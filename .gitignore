@@ -1,3 +1,5 @@
 build
 .vscode
 *.swp
+*.pb.cc
+*.pb.h
