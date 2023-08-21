@@ -4,40 +4,11 @@
 #include "spdk/env.h"
 #include "spdk/util.h"
 
-constexpr int32_t TIMER_PERIOD_MSEC = 500;    //毫秒
-constexpr int32_t HEARTBEAT_TIMER_PERIOD_MSEC = 1000;   //毫秒
-constexpr int32_t ELECTION_TIMER_PERIOD_MSEC = 2 * HEARTBEAT_TIMER_PERIOD_MSEC; //毫秒
-constexpr int32_t LEASE_MAINTENANCE_GRACE = 1000;   //毫秒
-
 std::string pg_id_to_name(uint64_t pool_id, uint64_t pg_id){
     char name[128];
     
     snprintf(name, sizeof(name), "%lu.%lu", pool_id, pg_id);
     return name;
-}
-
-void pg_t::free_pg(){
-    //可能还需要其它处理 ？
-
-    spdk_poller_unregister(&timer);
-    raft->raft_destroy();
-    raft.reset();
-}
-
-/** Raft callback for handling periodic logic */
-static int periodic_func(void* arg){
-    pg_t* pg = (pg_t*)arg;
-	// SPDK_NOTICELOG("_periodic in core %u\n", spdk_env_get_current_core());
-    pg->raft->raft_periodic();
-    return 0;
-}
-
-void pg_t::start_raft_timer(){
-    timer = SPDK_POLLER_REGISTER(periodic_func, this, TIMER_PERIOD_MSEC * 1000);
-	raft->raft_set_election_timeout(ELECTION_TIMER_PERIOD_MSEC);
-    raft->raft_set_lease_maintenance_grace(LEASE_MAINTENANCE_GRACE);
-    raft->raft_set_heartbeat_timeout(HEARTBEAT_TIMER_PERIOD_MSEC);
-    raft->start_timed_task();
 }
 
 static raft_time_t get_time(){
@@ -143,11 +114,8 @@ int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard
     }
 
     raft->raft_set_current_term(1);
-    auto pg = get_pg(shard_id, pool_id, pg_id);
-
     
-    pg->start_raft_timer();
-
+    raft->start_raft_timer();
     return 0;
 }
 

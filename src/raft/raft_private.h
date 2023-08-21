@@ -886,6 +886,8 @@ public:
 #endif
     }
 
+    void start_raft_timer();
+
 private:
     int _has_majority_leases(raft_time_t now, int with_grace);
     int _cfg_change_is_valid(msg_entry_t* ety);
@@ -976,6 +978,8 @@ private:
 #ifdef KVSTORE
     kv_store *kv;
 #endif
+   
+    struct spdk_poller * raft_timer;
 }; 
 
 int raft_votes_is_majority(const int nnodes, const int nvotes);

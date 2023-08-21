@@ -11,6 +11,11 @@
 #include "spdk/env.h"
 #include "utils/err_num.h"
 
+constexpr int32_t TIMER_PERIOD_MSEC = 500;    //毫秒
+constexpr int32_t HEARTBEAT_TIMER_PERIOD_MSEC = 1000;   //毫秒
+constexpr int32_t ELECTION_TIMER_PERIOD_MSEC = 2 * HEARTBEAT_TIMER_PERIOD_MSEC; //毫秒
+constexpr int32_t LEASE_MAINTENANCE_GRACE = 1000;   //毫秒
+
 std::shared_ptr<raft_server_t> raft_new(raft_client_protocol& client,
         disk_log* log, std::shared_ptr<state_machine> sm_ptr, uint64_t pool_id, uint64_t pg_id
 #ifdef KVSTORE
@@ -1256,6 +1261,8 @@ void raft_server_t::raft_destroy_nodes()
 
 void raft_server_t::raft_destroy()
 {
+    //可能还需要其它处理 ？ todo
+    spdk_poller_unregister(&raft_timer);
     stop_timed_task();
     raft_destroy_nodes();
     machine.reset();
@@ -1521,4 +1528,20 @@ int raft_server_t::raft_end_load_snapshot()
     }
 
     return 0;
+}
+
+/** Raft callback for handling periodic logic */
+static int periodic_func(void* arg){
+    raft_server_t* raft = (raft_server_t*)arg;
+	// SPDK_NOTICELOG("_periodic in core %u\n", spdk_env_get_current_core());
+    raft->raft_periodic();
+    return 0;
+}
+
+void raft_server_t::start_raft_timer(){
+    raft_timer = SPDK_POLLER_REGISTER(periodic_func, this, TIMER_PERIOD_MSEC * 1000);
+	raft_set_election_timeout(ELECTION_TIMER_PERIOD_MSEC);
+    raft_set_lease_maintenance_grace(LEASE_MAINTENANCE_GRACE);
+    raft_set_heartbeat_timeout(HEARTBEAT_TIMER_PERIOD_MSEC);
+    start_timed_task();
 }

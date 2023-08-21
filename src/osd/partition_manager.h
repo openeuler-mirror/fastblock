@@ -55,7 +55,7 @@ public:
         return _sm_table[shard_id][name];
     }
     
-    std::shared_ptr<pg_t> get_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id){
+    std::shared_ptr<raft_server_t> get_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id){
         std::string name = pg_id_to_name(pool_id, pg_id);
         return _pgs.get_pg(shard_id, name);
     }

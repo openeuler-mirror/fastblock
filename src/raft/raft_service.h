@@ -45,11 +45,11 @@ void raft_service<PartitionManager>::append_entries(google::protobuf::RpcControl
         done->Run();
         return;
     }
-    auto pg = _pm->get_pg(shard_id, pool_id, pg_id);
+    auto raft = _pm->get_pg(shard_id, pool_id, pg_id);
 
     _pm->get_shard().invoke_on(
       shard_id, 
-      [this, raft = pg->raft, done, request, response](){
+      [this, raft, done, request, response](){
         SPDK_NOTICELOG("raft_recv_appendentries in core %u\n", spdk_env_get_current_core());
         raft->append_entries_to_buffer(request, response, done);
       });
@@ -64,11 +64,11 @@ void raft_service<PartitionManager>::vote(google::protobuf::RpcController* contr
     auto pg_id = request->pg_id();
     uint32_t shard_id;
     _pm->get_pg_shard(pool_id, pg_id, shard_id);
-    auto pg = _pm->get_pg(shard_id, pool_id, pg_id);
+    auto raft = _pm->get_pg(shard_id, pool_id, pg_id);
 
     _pm->get_shard().invoke_on(
       shard_id, 
-      [this, raft = pg->raft, request, response, done](){
+      [this, raft, request, response, done](){
         SPDK_NOTICELOG("raft_recv_requestvote in core %u\n", spdk_env_get_current_core());
         raft->raft_recv_requestvote(request->node_id(), request, response);
         done->Run();                
@@ -95,12 +95,12 @@ void raft_service<PartitionManager>::install_snapshot(google::protobuf::RpcContr
     auto pg_id = request->pg_id();
     uint32_t shard_id;
     _pm->get_pg_shard(pool_id, pg_id, shard_id);
-    auto pg = _pm->get_pg(shard_id, pool_id, pg_id);
+    auto raft = _pm->get_pg(shard_id, pool_id, pg_id);
 
     install_snapshot_complete* complete = new install_snapshot_complete(done);
     _pm->get_shard().invoke_on(
       shard_id, 
-      [this, raft = pg->raft, complete, request, response](){
+      [this, raft, complete, request, response](){
         SPDK_NOTICELOG("raft_recv_installsnapshot in core %u\n", spdk_env_get_current_core());
         int ret = raft->raft_recv_installsnapshot(request->node_id(), request, response, complete);
         if(ret != 0){
