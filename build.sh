@@ -5,6 +5,7 @@ if [[ -z ${CXX} ]]; then export CXX=/usr/bin/g++; fi
 
 (cd $root/src/rpc && ./build.sh)
 (cd $root/src/osd && ./build.sh)
+(cd $root/src/msg/demo && ./gen.sh)
 
 # Change Debug via  -DCMAKE_BUILD_TYPE=Release
 cmake -DCMAKE_BUILD_TYPE=Release \
