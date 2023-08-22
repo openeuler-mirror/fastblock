@@ -111,7 +111,31 @@ struct snap_delete_ctx {
   void*  arg;
 };
 
+static void
+object_get_xattr_value(void *arg, const char *name, const void **value, size_t *value_len) {
+  struct blob_create_ctx* ctx = (struct blob_create_ctx*)arg;
 
+  if (!strcmp("object", name)) {
+		*value = ctx->object_name.c_str();
+		*value_len = ctx->object_name.size();
+		return;
+	}
+	*value = NULL;
+	*value_len = 0;
+}
+
+static void
+snapshot_get_xattr_value(void *arg, const char *name, const void **value, size_t *value_len) {
+  struct snap_create_ctx* ctx = (struct snap_create_ctx*)arg;
+
+  if (!strcmp("object", name)) {
+		*value = ctx->object_name.c_str();
+		*value_len = ctx->object_name.size();
+		return;
+	}
+	*value = NULL;
+	*value_len = 0;
+}
 
 void object_store::write(std::string object_name, 
                       uint64_t offset, char* buf, uint64_t len, 
@@ -138,13 +162,7 @@ void object_store::snap_create(std::string object_name, object_rw_complete cb_fn
   //首先在table中找到原始数据块
   auto it = table.find(object_name);
   if (it!=table.end()) {
-    //找到块并提取出对应块
-    //利用spdk的opt对快照扩展参数进行初始化
-    struct spdk_blob_opts opts;
-    //用于标识快照函数的上下文信息。
     struct snap_create_ctx* ctx = new snap_create_ctx();
-    spdk_blob_opts_init(&opts, sizeof(opts));
-    //初始化上下文信息，这里目前不确定哪些信息有效，先空着，目前只有版本信息。
     //ctx.snap_version = xxxxxx;
     ctx->pre_blob = it->second;
     ctx->object_name = object_name;
@@ -154,8 +172,14 @@ void object_store::snap_create(std::string object_name, object_rw_complete cb_fn
     ctx->cb_fn =cb_fn;
     ctx->arg=arg;
     //调用spdk的spdk_bs_create_snapshot函数，创建快照，并通过snap_done返回创建的结果。
-    // const struct spdk_blob_xattr_opts te = &(opts.xattrs); 
-    spdk_bs_create_snapshot(bs, it->second->blobid,&(opts.xattrs),snap_done, ctx);
+
+    struct spdk_blob_xattr_opts snapshot_xattrs;
+    snapshot_xattrs.count = 1;
+    char *xattr_names[] = {"object"};
+    snapshot_xattrs.names = xattr_names;
+    snapshot_xattrs.ctx = ctx;
+    snapshot_xattrs.get_value = snapshot_get_xattr_value;
+    spdk_bs_create_snapshot(bs, it->second->blobid, &snapshot_xattrs, snap_done, ctx);
   }else {
     SPDK_ERRLOG("the fb_blob name is not exist :%s\n",object_name.c_str());
 }
@@ -350,8 +374,14 @@ void object_store::readwrite(std::string object_name,
         ctx->len = len;
         ctx->cb_fn = cb_fn;
         ctx->arg = arg;
+
         spdk_blob_opts_init(&opts, sizeof(opts));
         opts.num_clusters = object_store::blob_cluster;
+        opts.xattrs.count = 1;
+        char *xattr_names[] = {"object"};
+        opts.xattrs.names = xattr_names;
+        opts.xattrs.ctx = ctx;
+        opts.xattrs.get_value = object_get_xattr_value;
         spdk_bs_create_blob_ext(bs, &opts, create_done, ctx);
     }
 }
