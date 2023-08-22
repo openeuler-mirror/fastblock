@@ -7,7 +7,7 @@
 #include <cstring>
 #include <list>
 #include <vector>
-
+#include <iostream>
 #include <errno.h>
 #include <sys/uio.h>
 
@@ -17,6 +17,7 @@ using iovecs = std::vector<::iovec>;
 class spdk_buffer {
 public:
     spdk_buffer(char* buf, size_t sz) : buf(buf), size(sz), used(0) {}
+    spdk_buffer() noexcept = default;
 
     size_t append(const char* in, size_t len) {
       if (len > remain()) {
@@ -32,6 +33,7 @@ public:
     size_t append(const std::string& str) {
       return append(str.c_str(), str.size());
     }
+
 
     char* get_buf() { return buf; }
 
@@ -49,7 +51,7 @@ public:
     void reset() { used = 0; }
 
     size_t len() const { return size; }
-
+    size_t used_size() { return used; }
     size_t remain() { return size > used ? size - used : 0; }
 
 private:
@@ -91,24 +93,47 @@ public:
     total -= len;
   }
 
-  // 需要用户一直持有std::vector，保证数组所在内存不会析构
-  // 现在默认每段内存都是 4K 长，没有检查过，如果不是4k的可能会出现问题
+  // 1. 需要用户要保证pos和len长度位置有效
+  // 2. 需要用户一直持有返回的std::vector，保证数组所在内存不会析构
+  // 3. 需要地址4k对齐
   iovecs to_iovec(size_t pos, size_t len) {
+    // std::cout << "pos:" << pos << " len:" << len << " size:" << bytes() << std::endl;
+    if (pos + len > bytes()) {
+        return iovecs{};
+    }
+
     iovecs iovs;
     auto it = begin();
     size_t discard = 0, chosen = 0;
-    while (discard < pos && it != end()) {
+
+    while (discard + it->len() <= pos && it != end()) {
       discard += it->len();
+      // std::cout << "discard:" << discard << std::endl;
       it++;
     }
+
+    if (discard < pos && it != end()) {
+      iovec iov;
+      iov.iov_base = it->get_buf() + (pos - discard);
+      size_t left_in_buf = it->len() - (pos - discard);
+      iov.iov_len = std::min(left_in_buf, len);
+      iovs.push_back(iov);
+      // std::cout << "discard:" << discard << " iov_len:" << iov.iov_len << std::endl;
+
+      chosen += iov.iov_len;
+      it++;
+    } 
 
     while (chosen < len && it != end()) {
       iovec iov;
       iov.iov_base = it->get_buf();
-      iov.iov_len = it->len();     
+      size_t still_need = len - chosen;
+      iov.iov_len = std::min(it->len(), still_need);     
       iovs.push_back(iov);
+      
 
-      chosen += it->len();
+      chosen += iov.iov_len;
+      // std::cout << "chosen:" << chosen << " iov_len:" << iov.iov_len << std::endl;
       it++;
     }
 

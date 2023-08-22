@@ -43,7 +43,10 @@ struct rblob_rw_ctx {
   rolling_blob* rb;
 };
 
-struct rblob_sync_ctx {
+struct rblob_md_ctx {
+  bool is_load;
+  rolling_blob* rblob;
+
   rblob_op_complete cb_fn;
   void* arg;
 };
@@ -96,6 +99,12 @@ public:
         back.lba = front.lba - 512_MB;
     }
 
+    void append(spdk_buffer sb, rblob_rw_complete cb_fn, void* arg) {
+        buffer_list bl;
+        bl.append_buffer(sb);
+        append(bl, cb_fn, arg);
+    }
+
     void append(buffer_list bl, rblob_rw_complete cb_fn, void* arg) {
         struct rblob_rw_ctx* ctx;
         uint64_t length = bl.bytes();
@@ -117,7 +126,6 @@ public:
 
         // 如果右侧空间足够，就直接写，不需要分割
         if (is_rolled() || length < front_to_end()) {
-            // SPDK_NOTICELOG("append from:%lu len:%lu\n", front.lba, length);
             uint64_t start_pos = front.pos;
 
             ctx->iov = std::move(bl.to_iovec());
@@ -125,6 +133,7 @@ public:
             ctx->lba = pos_to_lba(start_pos);
             ctx->len = length;
 
+            // SPDK_NOTICELOG("blob append pos from:%lu (lba:%lu) len:%lu\n", ctx->start_pos, ctx->lba, ctx->len);
             inflight_rw.emplace(start_pos + length, false);
             spdk_blob_io_writev(blob, channel, ctx->iov.data(), ctx->iov.size(), 
                                 ctx->lba / unit_size, ctx->len / unit_size, rw_done, ctx);
@@ -155,11 +164,18 @@ public:
         next->lba = pos_to_lba(next->start_pos);
         next->len = second_len;
 
-        // SPDK_NOTICELOG("append from:%lu len:%lu and from:%lu len:%lu\n", 
-        //                 ctx->lba, first_len, next->lba, second_len);
+
+        // SPDK_NOTICELOG("blob append pos from:%lu (lba:%lu) len:%lu and from:%lu (lba:%lu) len:%lu\n", 
+        //                ctx->start_pos, ctx->lba, first_len, next->start_pos, next->lba, second_len);
         inflight_rw.emplace(next->start_pos + second_len, false); // 只等待第二次写的偏移
         spdk_blob_io_writev(blob, channel, ctx->iov.data(), ctx->iov.size(), 
                                 ctx->lba / unit_size, ctx->len / unit_size, rw_done, ctx);
+    }
+
+    void read(uint64_t start, uint64_t length, spdk_buffer sb, rblob_rw_complete cb_fn, void* arg) {
+        buffer_list bl;
+        bl.append_buffer(sb);
+        read(start, length, bl, cb_fn, arg);
     }
 
     void read(uint64_t start, uint64_t length, buffer_list bl, 
@@ -212,8 +228,8 @@ public:
             next->lba = pos_to_lba(next->start_pos);
             next->len = second_len;
 
-            // SPDK_NOTICELOG("read lba from:%lu len:%lu and from:%lu len:%lu\n", 
-            //         ctx->lba, first_len, next->lba, second_len);
+            // SPDK_NOTICELOG("blob read pos from:%lu (lba:%lu) len:%lu and from:%lu (lba:%lu) len:%lu\n", 
+            //         ctx->start_pos, ctx->lba, first_len, next->start_pos, next->lba, second_len);
             spdk_blob_io_readv(blob, channel, ctx->iov.data(), ctx->iov.size(), 
                             ctx->lba / unit_size, ctx->len / unit_size, rw_done, ctx);
             return;
@@ -226,7 +242,7 @@ public:
         ctx->lba = pos_to_lba(start);
         ctx->len = length;
 
-        // SPDK_NOTICELOG("read lba from:%lu len:%lu\n", ctx->lba, length);
+        // SPDK_NOTICELOG("blob read pos from:%lu (lba:%lu) len:%lu\n", ctx->start_pos, ctx->lba, length);
         spdk_blob_io_readv(blob, channel, ctx->iov.data(), ctx->iov.size(), 
                             ctx->lba / unit_size, ctx->len / unit_size, rw_done, ctx);
         return;
@@ -302,17 +318,30 @@ public:
 public:
     // 同步元数据，其实就是写一次super block
     void sync_md(rblob_op_complete cb_fn, void* arg) {
-        struct rblob_sync_ctx* ctx = new rblob_sync_ctx();
+        struct rblob_md_ctx* ctx = new rblob_md_ctx();
+        ctx->is_load = false;
+        ctx->rblob = this;
         ctx->cb_fn = cb_fn; 
         ctx->arg = arg;
 
-        serilize_super();
+        serialize_super();
         spdk_blob_io_write(blob, channel, super.get_buf(),
                             0, super.len() / unit_size, md_done, ctx);
     }
 
+    void load_md(rblob_op_complete cb_fn, void* arg) {
+        struct rblob_md_ctx* ctx = new rblob_md_ctx();
+        ctx->is_load = true;
+        ctx->rblob = this;
+        ctx->cb_fn = cb_fn; 
+        ctx->arg = arg;
+
+        spdk_blob_io_read(blob, channel, super.get_buf(),
+                          0, super.len() / unit_size, md_done, ctx);
+    }
+
     static void md_done(void *arg, int rberrno) {
-        struct rblob_sync_ctx* ctx = (struct rblob_sync_ctx*)arg;
+        struct rblob_md_ctx* ctx = (struct rblob_md_ctx*)arg;
 
         if (rberrno) {
             SPDK_ERRLOG("rolling_blob sync md failed:%s\n", spdk_strerror(rberrno));
@@ -321,11 +350,15 @@ public:
             return;
         }
 
-        ctx->cb_fn(ctx->arg, rberrno);
+        if (ctx->is_load) {
+            ctx->rblob->deserialize_super();
+        }
+
+        ctx->cb_fn(ctx->arg, 0);
         delete ctx;
     }
 
-    void serilize_super() {
+    void serialize_super() {
         size_t sz;
     
         super.reset();
@@ -339,6 +372,23 @@ public:
         super.inc(sz);
 
         sz = encode_fixed64(super.get_append(), front.pos);
+        super.inc(sz);
+    }
+
+    void deserialize_super() {
+        size_t sz;
+    
+        super.reset();
+        std::tie(back.lba, sz) = decode_fixed64(super.get_append(), super.remain());
+        super.inc(sz);
+        
+        std::tie(back.pos, sz) = decode_fixed64(super.get_append(), super.remain());
+        super.inc(sz);
+
+        std::tie(front.lba, sz) = decode_fixed64(super.get_append(), super.remain());
+        super.inc(sz);
+
+        std::tie(front.pos, sz) = decode_fixed64(super.get_append(), super.remain());
         super.inc(sz);
     }
 
@@ -469,6 +519,7 @@ make_open_done(void *arg, struct spdk_blob *blob, int rberrno) {
       return;
   }
 
+  SPDK_NOTICELOG("open success\n");
   struct rolling_blob* rblob = new rolling_blob(blob, ctx->channel, ctx->blob_size);
   SPDK_NOTICELOG("rolling_blob size:%lu\n", sizeof(rolling_blob));
   ctx->cb_fn(ctx->arg, rblob, 0);
@@ -485,6 +536,7 @@ make_create_done(void *arg, spdk_blob_id blobid, int rberrno) {
       return;
   }
 
+  SPDK_NOTICELOG("create success\n");
   spdk_bs_open_blob(ctx->bs, blobid, make_open_done, ctx);
 }
 
