@@ -91,6 +91,36 @@ private:
     raft_server_t *_raft;
 };
 
+class pg_group_t;
+class heartbeat_source{
+public:
+    heartbeat_source(heartbeat_request* request, pg_group_t* group, uint32_t shard_id)
+    : _request(request)
+    , _group(group)
+    , _shard_id(shard_id){}
+
+    ~heartbeat_source(){
+        if(_request)
+            delete _request;
+        if(_done)
+            delete _done;
+    }
+
+    void process_response();
+
+    void set_done(google::protobuf::Closure* done){
+        _done = done;
+    }
+
+    msg::rdma::rpc_controller ctrlr;
+    heartbeat_response response;
+private:
+    heartbeat_request* _request;
+    google::protobuf::Closure* _done;
+    pg_group_t *_group;
+    uint32_t _shard_id;
+};
+
 class raft_client_protocol{
 public:
     raft_client_protocol()
@@ -155,6 +185,16 @@ public:
         source->set_done(done);
         auto stub = _get_stub(shard_id, target_node_id);
         stub->install_snapshot(&source->ctrlr, request, &source->response, done);
+    }
+
+    void send_heartbeat(int32_t target_node_id, heartbeat_request* request, pg_group_t* group){
+        auto shard_id = _get_shard_id();
+        heartbeat_source * source = new heartbeat_source(request, group, shard_id);
+
+        auto done = google::protobuf::NewCallback(source, &heartbeat_source::process_response);
+        source->set_done(done);
+        auto stub = _get_stub(shard_id, target_node_id);
+        stub->heartbeat(&source->ctrlr, request, &source->response, done);
     }
 
 private:

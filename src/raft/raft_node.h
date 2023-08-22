@@ -18,7 +18,9 @@ public:
     , _id(id)
     , _lease(0)
     , _effective_time(0)
-    , _suppress_heartbeats(false){}
+    , _suppress_heartbeats(false)
+    , _append_time(0)
+    , _is_heartbeating(false){}
 
     void raft_node_set_effective_time(raft_time_t effective_time)
     {
@@ -131,6 +133,22 @@ public:
     bool raft_get_suppress_heartbeats(){
         return _suppress_heartbeats;
     }
+
+    void raft_set_append_time(raft_time_t append_time){
+        _append_time = append_time;
+    }
+
+    raft_time_t raft_get_append_time(){
+        return _append_time;
+    }
+
+    bool raft_node_is_heartbeating(){
+        return _is_heartbeating;
+    }
+
+    void raft_node_set_heartbeating(bool is_heartbeating){
+        _is_heartbeating = is_heartbeating;
+    }
 private:
 
     void* _udata;
@@ -148,6 +166,8 @@ private:
     raft_time_t _effective_time;
 
     bool _suppress_heartbeats;
+    raft_time_t _append_time;
+    bool _is_heartbeating;
 };
 
 #endif

@@ -2,6 +2,7 @@
 #define APPEND_ENTRY_BUFFER_H_
 #include <queue>
 #include "rpc/raft_msg.pb.h"
+#include "utils/utils.h"
 
 class raft_server_t;
 
@@ -10,7 +11,7 @@ public:
     struct item_type{
         const msg_appendentries_t* request;
         msg_appendentries_response_t* response;
-        google::protobuf::Closure* done;
+        context* complete;
     };
 
     append_entries_buffer(raft_server_t* raft)
@@ -19,7 +20,7 @@ public:
 
     void enqueue(const msg_appendentries_t* request,
                 msg_appendentries_response_t* response,
-                google::protobuf::Closure* done);
+                context* complete);
 
     void start();
 

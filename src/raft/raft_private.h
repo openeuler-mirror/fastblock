@@ -11,6 +11,12 @@
 #include "raft/raft_client_protocol.h"
 #include "raft/append_entry_buffer.h"
 
+constexpr int32_t TIMER_PERIOD_MSEC = 500;    //毫秒
+constexpr int32_t HEARTBEAT_TIMER_INTERVAL_MSEC = 500;   //毫秒
+constexpr int32_t HEARTBEAT_TIMER_PERIOD_MSEC = 2 * HEARTBEAT_TIMER_INTERVAL_MSEC;   //毫秒
+constexpr int32_t ELECTION_TIMER_PERIOD_MSEC = 2 * HEARTBEAT_TIMER_PERIOD_MSEC; //毫秒
+constexpr int32_t LEASE_MAINTENANCE_GRACE = HEARTBEAT_TIMER_PERIOD_MSEC;   //毫秒
+
 enum {
     RAFT_NODE_STATUS_DISCONNECTED,
     RAFT_NODE_STATUS_CONNECTED,
@@ -121,14 +127,6 @@ typedef void (
     raft_entry_t *entry,
     raft_membership_e type
     );
-
-/** Callback for getting the current time.
- * @param[in] raft The Raft server making this callback
- * @param[in] user_data User data that is passed from Raft server
- * @return The current time */
-typedef raft_time_t (
-*func_get_time_f
-)   ();
     
 struct raft_cbs_t
 {
@@ -148,9 +146,6 @@ struct raft_cbs_t
     func_node_has_sufficient_logs_f node_has_sufficient_logs;
 
     func_membership_event_f notify_membership_event;
-
-    /** Callback for getting the current time */
-    func_get_time_f get_time;
 };
 
 class raft_server_t{
@@ -255,7 +250,7 @@ public:
      * @return currently elapsed timeout in milliseconds */
     int raft_get_timeout_elapsed()
     {
-        return cb.get_time() - election_timer;
+        return get_time() - election_timer;
     }
 
     void raft_set_voted_for(raft_node_id_t _voted_for)
@@ -832,8 +827,8 @@ public:
 
     void append_entries_to_buffer(const msg_appendentries_t* request,
                 msg_appendentries_response_t* response,
-                google::protobuf::Closure* done){
-        _append_entries_buffer.enqueue(request, response, done);
+                context* complete){
+        _append_entries_buffer.enqueue(request, response, complete);
     }
 
     raft_term_t get_prev_log_term(){
@@ -887,7 +882,19 @@ public:
     }
 
     void start_raft_timer();
+    template<typename Func>
+    void for_each_osd_id(Func&& f) const {
+        std::for_each(
+          std::cbegin(nodes), std::cend(nodes), std::forward<Func>(f));
+    }
 
+    uint64_t raft_get_pool_id(){
+        return pool_id;
+    }
+
+    uint64_t raft_get_pg_id(){
+        return pg_id;
+    }
 private:
     int _has_majority_leases(raft_time_t now, int with_grace);
     int _cfg_change_is_valid(msg_entry_t* ety);

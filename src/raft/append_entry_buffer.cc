@@ -5,25 +5,24 @@
 
 constexpr int32_t TIMER_APPEND_ENTRIER_BUFFER_USEC = 0;    //微秒
 
-struct append_entries_complete : public context{
-    google::protobuf::Closure* done;
+struct flush_complete : public context{
+    context* comp;
     append_entries_buffer *buffer;
 
-    append_entries_complete(google::protobuf::Closure* _done, append_entries_buffer *_buffer)
-    : done(_done)
+    flush_complete(context* _complete, append_entries_buffer *_buffer)
+    : comp(_complete)
     , buffer(_buffer) {}
 
-    void finish(int ) override {
-        SPDK_NOTICELOG("append_entries_complete\n");
+    void finish(int res) override {
         buffer->set_in_progress(false);
-        done->Run();
+        comp->complete(res);
     }
 };
 
 void append_entries_buffer::enqueue(const msg_appendentries_t* request,
             msg_appendentries_response_t* response,
-            google::protobuf::Closure* done){
-    item_type item{request, response, done};
+            context* complete){
+    item_type item{request, response, complete};
     _request.push(std::move(item));
 }
 
@@ -48,9 +47,9 @@ void append_entries_buffer::do_flush(){
     _request.pop();
     auto request = item.request;
     auto response = item.response;
-    auto done = item.done;
+    auto comp = item.complete;
 
-    append_entries_complete* complete = new append_entries_complete(done, this);
+    flush_complete* complete = new flush_complete(comp, this);
 
     int ret = _raft->raft_recv_appendentries(request->node_id(), request, response, complete);
     if(ret != 0){
