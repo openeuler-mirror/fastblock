@@ -50,6 +50,36 @@ void _send_request(server_t *server, client *cli)
     cli->send_bench_request(server->node_id, request);
 }
 
+static const double _cutoffs[] = {
+    0.1,
+    0.5,
+    0.90,
+    0.95,
+    0.99,
+    0.999,
+    -1,
+};
+
+static void
+_check_cutoff(void *ctx, uint64_t start, uint64_t end, uint64_t count,
+              uint64_t total, uint64_t so_far)
+{
+    double so_far_pct;
+    double **cutoff = (double **)ctx;
+
+    if (count == 0)
+    {
+        return;
+    }
+
+    so_far_pct = (double)so_far / total;
+    while (so_far_pct >= **cutoff && **cutoff > 0)
+    {
+        printf("%f%:%fus ", **cutoff * 100, (double)end * 1000 * 1000 / spdk_get_ticks_hz());
+        (*cutoff)++;
+    }
+}
+
 int _rpcbench_print_stats(void *p)
 {
     g_seconds++;
@@ -58,7 +88,13 @@ int _rpcbench_print_stats(void *p)
 
     if (g_total_seconds <= g_seconds)
     {
-        SPDK_NOTICELOG("ops is: %d\r\n", (g_counter / g_seconds));
+	printf("ops is: %d, average latency is %fus\r\n", (g_counter / g_seconds), double(1000 * 1000 / (g_counter / g_seconds)));
+        printf("latency histogram: min:%fus ", double(g_latency_min * 1000 * 1000 / spdk_get_ticks_hz()));
+        const double *cutoff = _cutoffs;
+        spdk_histogram_data_iterate(g_histogram, _check_cutoff, &cutoff);
+        printf("max:%fus", double(g_latency_max * 1000 * 1000 / spdk_get_ticks_hz()));
+        printf("\n");
+
         exit(0);
     }
     return SPDK_POLLER_BUSY;
@@ -69,6 +105,7 @@ block_started(void *arg1)
 {
     // for simpicity, print every second
     _rpcbench_poller_printer = SPDK_POLLER_REGISTER(_rpcbench_print_stats, nullptr, 1000000);
+    g_histogram = spdk_histogram_data_alloc();
     server_t *server = (server_t *)arg1;
     SPDK_NOTICELOG("------block start, cpu count : %u \n", spdk_env_get_core_count());
     client *cli = new client(server);
@@ -81,6 +118,16 @@ void rpcbench_source::process_response()
 {
     // SPDK_NOTICELOG("got response, size is %lu\r\n", response.ByteSizeLong());
     g_counter++;
+    auto tsc_diff = spdk_get_ticks() - _submit_tsc;
+    if (tsc_diff > g_latency_max) {
+        g_latency_max = tsc_diff;
+    }
+    if (tsc_diff < g_latency_min) {
+        g_latency_min = tsc_diff;
+    }
+
+
+    spdk_histogram_data_tally(g_histogram, tsc_diff);
 
     _send_request(_s, _c);
 }
