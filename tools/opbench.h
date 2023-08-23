@@ -6,6 +6,7 @@
 #include "spdk/log.h"
 #include "spdk/string.h"
 #include "spdk/thread.h"
+#include "spdk/histogram_data.h"
 
 #include "rpc/connect_cache.h"
 #include "rpc/osd_msg.pb.h"
@@ -23,6 +24,9 @@ static int g_counter = 0;
 static int g_seconds = 0;
 static int g_counter_last_value = 0;
 static spdk_poller *poller_printer;
+static struct spdk_histogram_data *g_histogram;
+static uint64_t g_latency_min = -1;
+static uint64_t g_latency_max = 0;
 
 typedef struct
 {
@@ -37,7 +41,10 @@ class opbench_source
 {
 public:
     opbench_source(osd::write_request *request, server_t *s, client *c)
-        : _request(request), _s(s), _c(c) {}
+        : _request(request), _s(s), _c(c)
+    {
+        _submit_tsc = spdk_get_ticks();
+    }
 
     ~opbench_source()
     {
@@ -60,6 +67,7 @@ public:
 private:
     server_t *_s;
     client *_c;
+    uint64_t _submit_tsc;
     osd::write_request *_request;
     google::protobuf::Closure *_done;
 };
