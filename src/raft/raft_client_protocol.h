@@ -17,21 +17,14 @@ public:
     ~appendentries_source(){
         if(_request)
             delete _request;
-        if(_done)
-            delete _done;
     }
 
     void process_response();
-
-    void set_done(google::protobuf::Closure* done){
-        _done = done;
-    }
 
     msg::rdma::rpc_controller ctrlr;
     msg_appendentries_response_t response;
 private:
     msg_appendentries_t* _request;
-    google::protobuf::Closure* _done;
     raft_server_t *_raft;
 };
 
@@ -45,21 +38,14 @@ public:
     ~vote_source(){
         if(_request)
             delete _request;
-        if(_done)
-            delete _done;
     }
 
     void process_response();
-
-    void set_done(google::protobuf::Closure* done){
-        _done = done;
-    }
 
     msg::rdma::rpc_controller ctrlr;
     msg_requestvote_response_t response;
 private:
     msg_requestvote_t* _request;
-    google::protobuf::Closure* _done;
     raft_server_t *_raft;
 };
 
@@ -73,21 +59,14 @@ public:
     ~install_snapshot_source(){
         if(_request)
             delete _request;
-        if(_done)
-            delete _done;
     }
 
     void process_response();
-
-    void set_done(google::protobuf::Closure* done){
-        _done = done;
-    }
 
     msg::rdma::rpc_controller ctrlr;
     msg_installsnapshot_response_t response;
 private:
     msg_installsnapshot_t* _request;
-    google::protobuf::Closure* _done;
     raft_server_t *_raft;
 };
 
@@ -102,21 +81,14 @@ public:
     ~heartbeat_source(){
         if(_request)
             delete _request;
-        if(_done)
-            delete _done;
     }
 
     void process_response();
-
-    void set_done(google::protobuf::Closure* done){
-        _done = done;
-    }
 
     msg::rdma::rpc_controller ctrlr;
     heartbeat_response response;
 private:
     heartbeat_request* _request;
-    google::protobuf::Closure* _done;
     pg_group_t *_group;
     uint32_t _shard_id;
 };
@@ -162,7 +134,6 @@ public:
         appendentries_source * source = new appendentries_source(request, raft);
 
         auto done = google::protobuf::NewCallback(source, &appendentries_source::process_response);
-        source->set_done(done);
         auto stub = _get_stub(shard_id, target_node_id);
         stub->append_entries(&source->ctrlr, request, &source->response, done);
     }
@@ -172,7 +143,6 @@ public:
         vote_source * source = new vote_source(request, raft);
 
         auto done = google::protobuf::NewCallback(source, &vote_source::process_response);
-        source->set_done(done);
         auto stub = _get_stub(shard_id, target_node_id);
         stub->vote(&source->ctrlr, request, &source->response, done);
     }
@@ -182,7 +152,6 @@ public:
         install_snapshot_source * source = new install_snapshot_source(request, raft);
 
         auto done = google::protobuf::NewCallback(source, &install_snapshot_source::process_response);
-        source->set_done(done);
         auto stub = _get_stub(shard_id, target_node_id);
         stub->install_snapshot(&source->ctrlr, request, &source->response, done);
     }
@@ -192,7 +161,6 @@ public:
         heartbeat_source * source = new heartbeat_source(request, group, shard_id);
 
         auto done = google::protobuf::NewCallback(source, &heartbeat_source::process_response);
-        source->set_done(done);
         auto stub = _get_stub(shard_id, target_node_id);
         stub->heartbeat(&source->ctrlr, request, &source->response, done);
     }

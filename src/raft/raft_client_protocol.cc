@@ -5,14 +5,17 @@
 SPDK_LOG_REGISTER_COMPONENT(client_proto)
 void appendentries_source::process_response(){
     _raft->raft_process_appendentries_reply(&response);
+    delete this;
 }
 
 void vote_source::process_response(){
     _raft->raft_process_requestvote_reply(&response);
+    delete this;
 }
 
 void install_snapshot_source::process_response(){
     _raft->raft_process_installsnapshot_reply(&response);
+    delete this;
 }
 
 void heartbeat_source::process_response(){
@@ -28,4 +31,5 @@ void heartbeat_source::process_response(){
 
         raft->raft_process_appendentries_reply(rsp);
     }
+    delete this;
 }
