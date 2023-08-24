@@ -265,6 +265,7 @@ public:
             for (auto it = _priority_inflight_requests.begin(); it != _priority_inflight_requests.end(); ++it) {
                 rc = process_request_once(*it);
                 if (rc == -EAGAIN) {
+                    erase_it_end = it;
                     break;
                 } else if (rc != 0) {
                     SPDK_ERRLOG(
@@ -283,6 +284,7 @@ public:
                 return true;
             }
 
+            _priority_inflight_requests.clear();
             _busy_priority_list->erase(busy_it);
 
             return true;
