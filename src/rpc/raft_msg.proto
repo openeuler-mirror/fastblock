@@ -157,8 +157,44 @@ message msg_installsnapshot_response_t
     int64 lease = 5;
 }
 
+message heartbeat_metadata
+{
+    //leader node id
+    int32  node_id = 1;
+    int32  target_node_id = 2;
+
+    uint64 pool_id = 3;
+    uint64 pg_id = 4;   
+
+    // currentTerm, to force other leader/candidate to step down 
+    int64 term = 5;
+
+    /** the index of the log just before the newest entry for the node who
+     * receives this message */
+    int64 prev_log_idx = 6;
+
+    /** the term of the log just before the newest entry for the node who
+     * receives this message */
+    int64 prev_log_term = 7;
+
+    /** the index of the entry that has been appended to the majority of the
+     * cluster. Entries up to this index will be applied to the FSM */
+    int64 leader_commit = 8;      
+}
+
+message heartbeat_request
+{
+    repeated heartbeat_metadata heartbeats = 1;
+}
+
+message heartbeat_response
+{
+    repeated msg_appendentries_response_t meta = 1;
+}
+
 service rpc_service_raft{
     rpc append_entries(msg_appendentries_t) returns (msg_appendentries_response_t);
     rpc vote(msg_requestvote_t) returns (msg_requestvote_response_t);
     rpc install_snapshot(msg_installsnapshot_t) returns (msg_installsnapshot_response_t);
+    rpc heartbeat(heartbeat_request) returns (heartbeat_response);
 }

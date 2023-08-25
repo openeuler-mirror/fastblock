@@ -5,7 +5,11 @@
 #include "raft_private.h"
 
 raft_server_t::raft_server_t(raft_client_protocol& _client, disk_log* _log, 
-        std::shared_ptr<state_machine> sm_ptr, uint64_t _pool_id, uint64_t _pg_id)
+        std::shared_ptr<state_machine> sm_ptr, uint64_t _pool_id, uint64_t _pg_id
+#ifdef KVSTORE
+       , kv_store *_kv
+#endif        
+        )
     : current_term(0)
     , voted_for(-1)
     , commit_idx(0)
@@ -33,6 +37,9 @@ raft_server_t::raft_server_t(raft_client_protocol& _client, disk_log* _log,
     , stm_in_apply(false)
     , _append_entries_buffer(this)
     , prev_log_term(0)
+#ifdef KVSTORE
+    , kv(_kv)
+#endif        
 {
         raft_randomize_election_timeout();  
         log = log_new(std::move(_log)); 
@@ -50,12 +57,10 @@ int raft_server_t::raft_set_current_term(const raft_term_t term)
     if (current_term < term)
     {
         raft_node_id_t voted_for_local = -1;
-        if (cb.persist_term)
-        {
-            int e = cb.persist_term(this, udata, term, voted_for_local);
-            if (0 != e)
-                return e;
-        }
+        int ret = save_term(term);
+        if(ret != 0)
+            return ret;
+            
         current_term = term;
         voted_for = voted_for_local;
     }

@@ -38,7 +38,7 @@ void osd_service::process_write(google::protobuf::RpcController* controller,
         done->Run();
         return;
     }
-    auto pg = _pm->get_pg(shard_id, pool_id, pg_id);
+    auto raft = _pm->get_pg(shard_id, pool_id, pg_id);
     osd::write_cmd cmd;
     cmd.set_object_name(request->object_name());
     cmd.set_offset(request->offset());
@@ -58,7 +58,7 @@ void osd_service::process_write(google::protobuf::RpcController* controller,
 
     _pm->get_shard().invoke_on(
       shard_id, 
-      [this, complete, entry_ptr = std::move(entry_ptr), raft = pg->raft](){
+      [this, complete, entry_ptr = std::move(entry_ptr), raft](){
         SPDK_NOTICELOG("raft_write_entry in core %u\n", spdk_env_get_current_core());
         auto ret = raft->raft_write_entry(entry_ptr, complete);
         if(ret != 0){
@@ -80,8 +80,8 @@ void osd_service::process_get_leader(google::protobuf::RpcController* controller
         done->Run();
         return;
     }
-    auto pg = _pm->get_pg(shard_id, pool_id, pg_id);
-    auto leader_id = pg->raft->raft_get_current_leader();
+    auto raft = _pm->get_pg(shard_id, pool_id, pg_id);
+    auto leader_id = raft->raft_get_current_leader();
     auto res = _pm->get_mon().get_osd_addr(leader_id);
     if(res.first.size() == 0){
         response->set_state(err::RAFT_ERR_NOT_FOUND_LEADER);

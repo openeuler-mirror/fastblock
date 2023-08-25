@@ -12,9 +12,18 @@
 #include "utils/err_num.h"
 
 std::shared_ptr<raft_server_t> raft_new(raft_client_protocol& client,
-        disk_log* log, std::shared_ptr<state_machine> sm_ptr, uint64_t pool_id, uint64_t pg_id)
+        disk_log* log, std::shared_ptr<state_machine> sm_ptr, uint64_t pool_id, uint64_t pg_id
+#ifdef KVSTORE
+        , kv_store *kv
+#endif                
+        )
 {
-    auto raft = std::make_shared<raft_server_t>(client, std::move(log), sm_ptr, pool_id, pg_id);
+    auto raft = std::make_shared<raft_server_t>(client, std::move(log), sm_ptr, 
+                                               pool_id, pg_id
+#ifdef KVSTORE
+                                               , kv
+#endif                    
+    );
     return raft;
 }
 
@@ -25,7 +34,7 @@ void raft_server_t::raft_set_callbacks(raft_cbs_t* funcs, void* _udata)
     raft_get_log()->log_set_raft((void *)this);
 
     /* We couldn't initialize the time fields without the callback. */
-    raft_time_t now = cb.get_time();
+    raft_time_t now = get_time();
     raft_set_election_timer(now);
     raft_set_start_time(now);
 }
@@ -42,7 +51,7 @@ int raft_server_t::raft_delete_entry_from_idx(raft_index_t idx)
 
 int raft_server_t::raft_election_start()
 {
-    SPDK_NOTICELOG("election starting: pool.pg %lu.%lu %d %ld, term: %ld ci: %ld\n", pool_id, pg_id,
+    SPDK_WARNLOG("election starting: pool.pg %lu.%lu %d %ld, term: %ld ci: %ld\n", pool_id, pg_id,
           raft_get_election_timeout_rand(), raft_get_election_timer(), raft_get_current_term(),
           raft_get_current_idx());
 
@@ -51,10 +60,10 @@ int raft_server_t::raft_election_start()
 
 void raft_server_t::raft_become_leader()
 {
-    SPDK_NOTICELOG("becoming leader term:%ld\n", raft_get_current_term());
+    SPDK_WARNLOG("becoming leader of pg %lu.%lu at term:%ld\n", pool_id, pg_id, raft_get_current_term());
 
     raft_set_state(RAFT_STATE_LEADER);
-    raft_time_t now = raft_get_cbs().get_time();
+    raft_time_t now = get_time();
     raft_set_election_timer(now);
     for(auto _node : nodes){
         raft_node* node = _node.get(); 
@@ -100,7 +109,7 @@ int raft_server_t::raft_become_candidate()
 
     raft_set_current_leader(-1);
     raft_randomize_election_timeout();
-    auto election_timer = raft_get_cbs().get_time();
+    auto election_timer = get_time();
     raft_set_election_timer(election_timer);
 
     for(auto _node : nodes){
@@ -154,7 +163,7 @@ void raft_server_t::raft_become_follower()
     SPDK_NOTICELOG("becoming follower, term: %ld\n", raft_get_current_term());
     raft_set_state(RAFT_STATE_FOLLOWER);
     raft_randomize_election_timeout();
-    auto election_timer = raft_get_cbs().get_time();
+    auto election_timer = get_time();
     raft_set_election_timer(election_timer);
 }
 
@@ -212,26 +221,22 @@ int raft_server_t::raft_has_majority_leases()
 
     /* Check without grace, because the caller may be checking leadership for
      * linearizability (§6.4). */
-    return _has_majority_leases(raft_get_cbs().get_time(), 0 /* with_grace */);
+    return _has_majority_leases(get_time(), 0 /* with_grace */);
 }
 
 int raft_server_t::raft_periodic()
 {
     raft_node *my_node = raft_get_my_node();
-    raft_time_t now = raft_get_cbs().get_time();
+    raft_time_t now = get_time();
 
     if (raft_get_state() == RAFT_STATE_LEADER)
     {
         if (!_has_majority_leases(now, 1 /* with_grace */))
         {
             /* A leader who can't maintain majority leases shall step down. */
-            SPDK_NOTICELOG("now %ld unable to maintain majority leases\n", now);
+            SPDK_WARNLOG("pg: %lu.%lu unable to maintain majority leases\n", pool_id, pg_id);
             raft_become_follower();
             raft_set_current_leader(-1);
-        }
-        else if (raft_get_heartbeat_timeout() <= now - raft_get_election_timer())
-        {
-            raft_send_heartbeat_all();
         }
     }
     else if (raft_get_election_timeout_rand() <= now - raft_get_election_timer() &&
@@ -464,7 +469,7 @@ int raft_server_t::raft_recv_appendentries(
     /* update current leader because ae->term is up to date */
     raft_set_current_leader(node_id);
 
-    election_timer = raft_get_cbs().get_time();
+    election_timer = get_time();
     raft_set_election_timer(election_timer);
     r->set_lease(election_timer + election_timeout);
 
@@ -621,7 +626,7 @@ int raft_server_t::raft_recv_requestvote(raft_node_id_t node_id,
                           const msg_requestvote_t* vr,
                           msg_requestvote_response_t *r)
 {
-    raft_time_t now = raft_get_cbs().get_time();
+    raft_time_t now = get_time();
     int e = 0;
 
     SPDK_NOTICELOG("raft_recv_requestvote from node %d term %ld current_term %ld candidate_id %d \
@@ -797,7 +802,7 @@ int raft_server_t::raft_recv_installsnapshot(raft_node_id_t node_id,
         raft_become_follower();
 
     raft_set_current_leader(node_id);
-    auto election_timer = raft_get_cbs().get_time();
+    auto election_timer = get_time();
     raft_set_election_timer(election_timer);
     r->set_lease(election_timer + election_timeout);
 
@@ -1156,7 +1161,7 @@ int raft_server_t::raft_send_appendentries(raft_node* node)
           ae->leader_commit(),
           ae->prev_log_idx(),
           ae->prev_log_term());
-
+    node->raft_set_append_time(get_time());
     client.send_appendentries(this, node->raft_node_get_id(), ae);
     return 0;
 }
@@ -1165,7 +1170,7 @@ int raft_server_t::raft_send_heartbeat_all()
 {
     int e;
 
-    auto election_timer = raft_get_cbs().get_time();
+    auto election_timer = get_time();
     raft_set_election_timer(election_timer);
     for(auto _node : nodes)
     {
@@ -1192,7 +1197,7 @@ raft_node* raft_server_t::raft_add_node_internal(raft_entry_t *ety, void* udata,
 
     auto node = std::make_shared<raft_node>(udata, id);
     if (raft_is_leader())
-        node->raft_node_set_effective_time(raft_get_cbs().get_time());
+        node->raft_node_set_effective_time(get_time());
 
     nodes.push_back(node);
     if (is_self)
@@ -1247,8 +1252,12 @@ void raft_server_t::raft_destroy_nodes()
 
 void raft_server_t::raft_destroy()
 {
+    //可能还需要其它处理 ？ todo
+    spdk_poller_unregister(&raft_timer);
+    stop_timed_task();
     raft_destroy_nodes();
     machine.reset();
+    log->destroy_log();
 }
 
 int raft_server_t::raft_get_nvotes_for_me()
@@ -1269,11 +1278,9 @@ int raft_server_t::raft_get_nvotes_for_me()
 
 int raft_server_t::raft_vote_for_nodeid(const raft_node_id_t nodeid)
 {
-    if (raft_get_cbs().persist_vote) {
-        int e = raft_get_cbs().persist_vote(this, udata, nodeid);
-        if (0 != e)
-            return e;
-    }
+    int ret = save_vote_for(nodeid);
+    if(0 != ret)
+        return ret;
     raft_set_voted_for(nodeid);
     return 0;
 }
@@ -1512,4 +1519,20 @@ int raft_server_t::raft_end_load_snapshot()
     }
 
     return 0;
+}
+
+/** Raft callback for handling periodic logic */
+static int periodic_func(void* arg){
+    raft_server_t* raft = (raft_server_t*)arg;
+	// SPDK_NOTICELOG("_periodic in core %u\n", spdk_env_get_current_core());
+    raft->raft_periodic();
+    return 0;
+}
+
+void raft_server_t::start_raft_timer(){
+    raft_timer = SPDK_POLLER_REGISTER(periodic_func, this, TIMER_PERIOD_MSEC * 1000);
+	raft_set_election_timeout(ELECTION_TIMER_PERIOD_MSEC);
+    raft_set_lease_maintenance_grace(LEASE_MAINTENANCE_GRACE);
+    raft_set_heartbeat_timeout(HEARTBEAT_TIMER_PERIOD_MSEC);
+    start_timed_task();
 }

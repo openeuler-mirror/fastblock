@@ -137,6 +137,14 @@ public:
         return _entries;
     }
 
+    void destroy_log(){
+        if(_log){
+            _log->stop([](void*, int){}, nullptr);
+            delete _log;
+            _log = nullptr;
+        }
+    }
+
 private:
     disk_log* _log;
 

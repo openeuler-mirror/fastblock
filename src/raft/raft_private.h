@@ -11,6 +11,12 @@
 #include "raft/raft_client_protocol.h"
 #include "raft/append_entry_buffer.h"
 
+constexpr int32_t TIMER_PERIOD_MSEC = 500;    //毫秒
+constexpr int32_t HEARTBEAT_TIMER_INTERVAL_MSEC = 500;   //毫秒
+constexpr int32_t HEARTBEAT_TIMER_PERIOD_MSEC = 2 * HEARTBEAT_TIMER_INTERVAL_MSEC;   //毫秒
+constexpr int32_t ELECTION_TIMER_PERIOD_MSEC = 2 * HEARTBEAT_TIMER_PERIOD_MSEC; //毫秒
+constexpr int32_t LEASE_MAINTENANCE_GRACE = HEARTBEAT_TIMER_PERIOD_MSEC;   //毫秒
+
 enum {
     RAFT_NODE_STATUS_DISCONNECTED,
     RAFT_NODE_STATUS_CONNECTED,
@@ -87,37 +93,6 @@ typedef int (
     raft_index_t entry_idx
     );
 
-/** Callback for saving who we voted for to disk.
- * For safety reasons this callback MUST flush the change to disk.
- * @param[in] raft The Raft server making this callback
- * @param[in] user_data User data that is passed from Raft server
- * @param[in] vote The node we voted for
- * @return 0 on success */
-typedef int (
-*func_persist_vote_f
-)   (
-    raft_server_t* raft,
-    void *user_data,
-    raft_node_id_t vote
-    );
-
-/** Callback for saving current term (and nil vote) to disk.
- * For safety reasons this callback MUST flush the term and vote changes to
- * disk atomically.
- * @param[in] raft The Raft server making this callback
- * @param[in] user_data User data that is passed from Raft server
- * @param[in] term Current term
- * @param[in] vote The node value dicating we haven't voted for anybody
- * @return 0 on success */
-typedef int (
-*func_persist_term_f
-)   (
-    raft_server_t* raft,
-    void *user_data,
-    raft_term_t term,
-    raft_node_id_t vote
-    );
-
 /** Callback for detecting when non-voting nodes have obtained enough logs.
  * This triggers only when there are no pending configuration changes.
  * @param[in] raft The Raft server making this callback
@@ -152,14 +127,6 @@ typedef void (
     raft_entry_t *entry,
     raft_membership_e type
     );
-
-/** Callback for getting the current time.
- * @param[in] raft The Raft server making this callback
- * @param[in] user_data User data that is passed from Raft server
- * @return The current time */
-typedef raft_time_t (
-*func_get_time_f
-)   ();
     
 struct raft_cbs_t
 {
@@ -168,15 +135,6 @@ struct raft_cbs_t
 
     /** Callback for receiving InstallSnapshot responses */
     func_recv_installsnapshot_response_f recv_installsnapshot_response;
-
-    /** Callback for persisting vote data
-     * For safety reasons this callback MUST flush the change to disk. */
-    func_persist_vote_f persist_vote;
-
-    /** Callback for persisting term (and nil vote) data
-     * For safety reasons this callback MUST flush the term and vote changes to
-     * disk atomically. */
-    func_persist_term_f persist_term;
 
     /** Callback for determining which node this configuration log entry
      * affects. This call only applies to configuration change log entries.
@@ -188,9 +146,6 @@ struct raft_cbs_t
     func_node_has_sufficient_logs_f node_has_sufficient_logs;
 
     func_membership_event_f notify_membership_event;
-
-    /** Callback for getting the current time */
-    func_get_time_f get_time;
 };
 
 class raft_server_t{
@@ -295,7 +250,7 @@ public:
      * @return currently elapsed timeout in milliseconds */
     int raft_get_timeout_elapsed()
     {
-        return cb.get_time() - election_timer;
+        return get_time() - election_timer;
     }
 
     void raft_set_voted_for(raft_node_id_t _voted_for)
@@ -865,10 +820,15 @@ public:
         machine->start();
     }
 
+    void stop_timed_task(){
+        _append_entries_buffer.stop();
+        machine->stop();
+    }
+
     void append_entries_to_buffer(const msg_appendentries_t* request,
                 msg_appendentries_response_t* response,
-                google::protobuf::Closure* done){
-        _append_entries_buffer.enqueue(request, response, done);
+                context* complete){
+        _append_entries_buffer.enqueue(request, response, complete);
     }
 
     raft_term_t get_prev_log_term(){
@@ -877,6 +837,63 @@ public:
 
     void set_prev_log_term(raft_term_t term){
         prev_log_term = term;
+    }
+
+    int  save_vote_for(const raft_node_id_t nodeid){
+#ifdef KVSTORE
+        std::string key = std::to_string(pool_id) + "." + std::to_string(pg_id) + ".vote_for";
+        std::string val = std::to_string(nodeid);
+        kv.set(key, val);
+#endif
+        return 0;
+    }
+
+    std::optional<raft_node_id_t> load_vote_for(){
+#ifdef KVSTORE
+        std::string key = std::to_string(pool_id) + "." + std::to_string(pg_id) + ".vote_for";
+        auto val = kv.get(key);
+        if(!val.has_value())
+            return std::nnullopt;
+        return atoi(val.value().c_str());
+#else
+        return std::nullopt;
+#endif 
+    }
+
+    int save_term(const raft_term_t term){
+#ifdef KVSTORE
+        std::string key = std::to_string(pool_id) + "." + std::to_string(pg_id) + ".term";
+        std::string val = std::to_string(term);
+        kv.set(key, val);
+#endif
+        return 0;
+    }
+
+    std::optional<raft_term_t> load_term(){
+#ifdef KVSTORE
+        std::string key = std::to_string(pool_id) + "." + std::to_string(pg_id) + ".term";
+        auto val = kv.get(key);
+        if(!val.has_value())
+            return std::nullopt;
+        return atol(val.value().c_str());
+#else
+        return std::nullopt;
+#endif
+    }
+
+    void start_raft_timer();
+    template<typename Func>
+    void for_each_osd_id(Func&& f) const {
+        std::for_each(
+          std::cbegin(nodes), std::cend(nodes), std::forward<Func>(f));
+    }
+
+    uint64_t raft_get_pool_id(){
+        return pool_id;
+    }
+
+    uint64_t raft_get_pg_id(){
+        return pg_id;
     }
 private:
     int _has_majority_leases(raft_time_t now, int with_grace);
@@ -964,6 +981,12 @@ private:
 
     append_entries_buffer _append_entries_buffer;
     raft_term_t prev_log_term;
+
+#ifdef KVSTORE
+    kv_store *kv;
+#endif
+   
+    struct spdk_poller * raft_timer;
 }; 
 
 int raft_votes_is_majority(const int nnodes, const int nvotes);

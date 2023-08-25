@@ -4,46 +4,15 @@
 #include "spdk/env.h"
 #include "spdk/util.h"
 
-constexpr int32_t TIMER_PERIOD_MSEC = 500;    //毫秒
-constexpr int32_t HEARTBEAT_TIMER_PERIOD_MSEC = 1000;   //毫秒
-constexpr int32_t ELECTION_TIMER_PERIOD_MSEC = 2 * HEARTBEAT_TIMER_PERIOD_MSEC; //毫秒
-constexpr int32_t LEASE_MAINTENANCE_GRACE = 1000;   //毫秒
+#include <absl/container/flat_hash_map.h>
+
+SPDK_LOG_REGISTER_COMPONENT(pg_group)
 
 std::string pg_id_to_name(uint64_t pool_id, uint64_t pg_id){
     char name[128];
     
     snprintf(name, sizeof(name), "%lu.%lu", pool_id, pg_id);
     return name;
-}
-
-void pg_t::free_pg(){
-    //可能还需要其它处理 ？
-
-    spdk_poller_unregister(&timer);
-    raft->raft_destroy();
-    raft.reset();
-}
-
-/** Raft callback for handling periodic logic */
-static int periodic_func(void* arg){
-    pg_t* pg = (pg_t*)arg;
-	// SPDK_NOTICELOG("_periodic in core %u\n", spdk_env_get_current_core());
-    pg->raft->raft_periodic();
-    return 0;
-}
-
-void pg_t::start_raft_timer(){
-    timer = SPDK_POLLER_REGISTER(periodic_func, this, TIMER_PERIOD_MSEC * 1000);
-	raft->raft_set_election_timeout(ELECTION_TIMER_PERIOD_MSEC);
-    raft->raft_set_lease_maintenance_grace(LEASE_MAINTENANCE_GRACE);
-    raft->raft_set_heartbeat_timeout(HEARTBEAT_TIMER_PERIOD_MSEC);
-    raft->start_timed_task();
-}
-
-static raft_time_t get_time(){
-    auto now = std::chrono::system_clock::now();
-    auto now_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(now);
-    return now_ms.time_since_epoch().count();
 }
 
 static int recv_installsnapshot(
@@ -70,28 +39,6 @@ static int recv_installsnapshot_response(
     (void)node;
     (void)r;
     return 0;        
-}
-
-static int persist_vote(
-        raft_server_t* raft,
-        void *user_data,
-        raft_node_id_t vote){
-    (void)raft;
-    (void)user_data;
-    (void)vote;
-    return 0;        
-}
-
-static int persist_term(
-        raft_server_t* raft,
-        void *user_data,
-        raft_term_t term,
-        raft_node_id_t vote){
-    (void)raft;
-    (void)user_data;
-    (void)term;
-    (void)vote;
-    return 0;            
 }
 
 int log_get_node_id(
@@ -133,24 +80,25 @@ static void notify_membership_event(
 raft_cbs_t raft_funcs = {
     .recv_installsnapshot = recv_installsnapshot,
     .recv_installsnapshot_response = recv_installsnapshot_response,
-    .persist_vote = persist_vote,
-    .persist_term = persist_term,
     .log_get_node_id = log_get_node_id,
     .node_has_sufficient_logs = node_has_sufficient_logs,
-    .notify_membership_event = notify_membership_event,
-    .get_time = get_time
+    .notify_membership_event = notify_membership_event
 };
 
 int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard_id, uint64_t pool_id, 
             uint64_t pg_id, std::vector<osd_info_t>&& osds, disk_log* log){
     int ret = 0;
-    auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id);
+    auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id
+                                        #ifdef KVSTORE
+                                               , _kvs[shard_id]
+                                        #endif                        
+                                            );
     raft->raft_set_callbacks(&raft_funcs, NULL);
 
     _pg_add(shard_id, raft, pool_id, pg_id);
 
     for(auto& osd : osds){
-        SPDK_NOTICELOG("-- raft_add_node node %d in node %d ---\n", osd.node_id, get_current_node_id());
+        SPDK_DEBUGLOG(pg_group, "-- raft_add_node node %d in node %d ---\n", osd.node_id, get_current_node_id());
         if(osd.node_id == get_current_node_id()){
             raft->raft_add_node(NULL, osd.node_id, true);
         }else{
@@ -163,11 +111,8 @@ int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard
     }
 
     raft->raft_set_current_term(1);
-    auto pg = get_pg(shard_id, pool_id, pg_id);
-
     
-    pg->start_raft_timer();
-
+    raft->start_raft_timer();
     return 0;
 }
 
@@ -175,4 +120,129 @@ void pg_group_t::delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id){
     _pg_remove(shard_id, pool_id, pg_id);
 }
 
+#ifdef KVSTORE
+struct make_kvstore_context{
+	context *complete;
+    pg_group_t* pg;
+    int num;
+    int count;
+    int rberrno;
+};
 
+static void make_kvstore_done(void *arg, kv_store* kv, int rberrno){
+    make_kvstore_context* mkc = (make_kvstore_context*)arg;
+    context *complete = mkc->complete;
+    pg_group_t* pgs = mkc->pg;
+
+    mkc->num++;
+    SPDK_DEBUGLOG(pg_group, "make_kvstore_done, rberrno %d\n", rberrno);
+    if(rberrno){
+        mkc->rberrno = rberrno;
+    }else{
+        pgs->add_kvstore(kv);
+    }
+    if(mkc->num == mkc->count){
+        if(mkc->rberrno){
+            pgs->start_shard_manager();
+            complete->complete(mkc->rberrno);
+        }else
+            complete->complete(rberrno);
+        delete mkc;
+    }
+}
+#endif
+
+void pg_group_t::start(context *complete){
+#ifdef KVSTORE
+    uint32_t i = 0;
+    auto shard_num = _shard_cores.size();
+    make_kvstore_context *ctx = new make_kvstore_context{complete, this, 0, shard_num, 0};
+    for(i = 0; i < shard_num; i++){
+        make_kvstore(global_blobstore(), global_io_channel(), make_kvstore_done, ctx);
+    }
+#else
+    start_shard_manager();
+    complete->complete(0);
+#endif
+}
+
+
+static int heartbeat_task(void *arg){
+    shard_manager* manager = (shard_manager *)arg;
+    manager->dispatch_heartbeats();
+    return 0;
+}
+
+void shard_manager::start(){
+    _heartbeat_timer = SPDK_POLLER_REGISTER(&heartbeat_task, this, HEARTBEAT_TIMER_PERIOD_MSEC * 1000);    
+}
+
+
+std::vector<shard_manager::node_heartbeat> shard_manager::get_heartbeat_requests(){
+    absl::flat_hash_map<
+      raft_node_id_t,
+      heartbeat_request*> pending_beats;
+
+    raft_time_t now = get_time();
+    for(auto& p : _pgs){
+        auto raft = p.second;
+        if(raft->raft_get_state() != RAFT_STATE_LEADER){
+            continue;
+        }
+
+        auto create_heartbeat_request = [this, raft, now, &pending_beats](const std::shared_ptr<raft_node> node) mutable{
+            if (raft->raft_is_self(node.get()))
+                return;
+            SPDK_DEBUGLOG(pg_group, "node: %d pg: %lu.%lu suppress_heartbeats: %d heartbeating: %d  append_time: %lu heartbeat_timeout: %d now: %lu\n", 
+                    node->raft_node_get_id(), raft->raft_get_pool_id(), raft->raft_get_pg_id(),
+                    node->raft_get_suppress_heartbeats(),
+                    node->raft_node_is_heartbeating(), node->raft_get_append_time(),
+                    raft->raft_get_heartbeat_timeout(), now);
+            if(node->raft_get_suppress_heartbeats())
+                return;
+            
+            if(node->raft_node_is_heartbeating())
+                return;
+            if(node->raft_get_append_time() + raft->raft_get_heartbeat_timeout() > now)
+                return;
+            
+            SPDK_DEBUGLOG(pg_group, "------ heartbeat to node: %d pg: %lu.%lu\n", 
+                    node->raft_node_get_id(), raft->raft_get_pool_id(), raft->raft_get_pg_id());
+            node->raft_node_set_heartbeating(true);
+
+            raft->raft_set_election_timer(now);
+            heartbeat_request* req = nullptr;
+            if(pending_beats.contains(node->raft_node_get_id())){
+                req = pending_beats[node->raft_node_get_id()];
+            }else{
+                req = new heartbeat_request();
+                pending_beats[node->raft_node_get_id()] = req;
+            }
+            auto meta_ptr = req->add_heartbeats();
+            meta_ptr->set_node_id(raft->raft_get_nodeid());
+            meta_ptr->set_target_node_id(node->raft_node_get_id());
+            meta_ptr->set_pool_id(raft->raft_get_pool_id());
+            meta_ptr->set_pg_id(raft->raft_get_pg_id());
+            meta_ptr->set_term(raft->raft_get_current_term());
+            raft_index_t next_idx = node->raft_node_get_next_idx();
+            meta_ptr->set_prev_log_idx(next_idx - 1);
+            meta_ptr->set_prev_log_term(raft->get_prev_log_term());
+            meta_ptr->set_leader_commit(raft->raft_get_commit_idx());
+        };
+        raft->for_each_osd_id(create_heartbeat_request);
+    }
+
+    std::vector<shard_manager::node_heartbeat> reqs;
+    for (auto& p : pending_beats) {        
+        shard_manager::node_heartbeat req(p.first, p.second);
+        reqs.push_back(std::move(req));
+    }
+    return reqs; 
+}
+
+void shard_manager::dispatch_heartbeats(){
+    auto reqs = get_heartbeat_requests();
+    for(auto &req : reqs){
+        _group->get_raft_client_proto().send_heartbeat(req.target, req.request, _group);
+    }
+}
