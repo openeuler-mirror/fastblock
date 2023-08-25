@@ -18,15 +18,18 @@ static const char *g_pid_path = nullptr;
 static int global_osd_id = 0;
 static const char *g_osd_addr = "127.0.0.1";
 static int g_osd_port = 8888;
+static int g_bench_type = 0;
 static int g_io_size = 4;
-static int g_total_seconds = 120;
+static int g_total_seconds = 0;
 static int g_counter = 0;
+static int g_total_ios = 0;
 static int g_seconds = 0;
 static int g_counter_last_value = 0;
 static spdk_poller *poller_printer;
 static struct spdk_histogram_data *g_histogram;
 static uint64_t g_latency_min = -1;
 static uint64_t g_latency_max = 0;
+static uint64_t g_first_io_tsc = 0;
 
 typedef struct
 {
@@ -37,46 +40,42 @@ typedef struct
 } server_t;
 class client;
 
-class opbench_source
-{
-public:
-    opbench_source(osd::write_request *request, server_t *s, client *c)
-        : _request(request), _s(s), _c(c)
-    {
-        _submit_tsc = spdk_get_ticks();
-    }
-
-    ~opbench_source()
-    {
-        if (_request)
-            delete _request;
-        if (_done)
-            delete _done;
-    }
-
-    void process_response();
-
-    void set_done(google::protobuf::Closure *done)
-    {
-        _done = done;
-    }
-
-    msg::rdma::rpc_controller ctrlr;
-    osd::write_reply response;
-
-private:
-    server_t *_s;
-    client *_c;
-    uint64_t _submit_tsc;
-    osd::write_request *_request;
-    google::protobuf::Closure *_done;
+static const double _cutoffs[] = {
+    0.1,
+    0.5,
+    0.90,
+    0.95,
+    0.99,
+    0.999,
+    -1,
 };
+static void process_response(client *c);
+
+static void
+_check_cutoff(void *ctx, uint64_t start, uint64_t end, uint64_t count,
+              uint64_t total, uint64_t so_far)
+{
+    double so_far_pct;
+    double **cutoff = (double **)ctx;
+
+    if (count == 0)
+    {
+        return;
+    }
+
+    so_far_pct = (double)so_far / total;
+    while (so_far_pct >= **cutoff && **cutoff > 0)
+    {
+        printf("%f%:%fus ", **cutoff * 100, (double)end * 1000 * 1000 / spdk_get_ticks_hz());
+        (*cutoff)++;
+    }
+}
 
 class client
 {
 public:
-    client(server_t *s)
-        : _cache(connect_cache::get_connect_cache()), _shard_cores(get_shard_cores()), _s(s)
+    client(server_t *s, int type)
+        : _cache(connect_cache::get_connect_cache()), _shard_cores(get_shard_cores()), _s(s), _type(type)
     {
         uint32_t i = 0;
         auto shard_num = _shard_cores.size();
@@ -99,16 +98,51 @@ public:
         }
     }
 
-    void send_write_request(int32_t target_node_id, osd::write_request *request)
+    void send_request(int32_t target_node_id)
     {
         // SPDK_NOTICELOG("send bench request\n");
         auto shard_id = 0;
-        opbench_source *source = new opbench_source(request, _s, this);
-
-        auto done = google::protobuf::NewCallback(source, &opbench_source::process_response);
-        source->set_done(done);
         auto stub = _get_stub(shard_id, target_node_id);
-        stub->process_write(&source->ctrlr, request, &source->response, done);
+        _submit_tsc = spdk_get_ticks();
+        auto _done = google::protobuf::NewCallback(process_response, this);
+        if (_type == 1)
+        {
+            osd::write_request *request = new osd::write_request();
+            request->set_pool_id(1);
+            request->set_pg_id(0);
+            request->set_object_name("obj");
+            request->set_offset(0);
+            char sz[g_io_size + 1];
+            memset(sz, 0x55, g_io_size);
+            sz[4096] = 0;
+            request->set_data(sz);
+            stub->process_write(&ctrlr, request, &_wr, _done);
+        }
+        else if (_type == 0)
+        {
+            osd::bench_request *request = new osd::bench_request();
+            char sz[g_io_size + 1];
+            sz[g_io_size] = 0;
+            request->set_req(sz);
+            stub->process_rpc_bench(&ctrlr, request, &_br, _done);
+        }
+    }
+    int get_type() {
+        return _type;
+    }
+
+    uint64_t get_tsc() {
+        return _submit_tsc;
+    }
+    auto get_wr() {
+        return _wr;
+    }
+    auto get_br() {
+        return _br;
+    }
+
+    auto get_server() {
+        return _s;
     }
 
 private:
@@ -120,26 +154,14 @@ private:
     connect_cache &_cache;
     server_t *_s;
     std::vector<uint32_t> _shard_cores;
+    msg::rdma::rpc_controller ctrlr;
+    // latest request submitted tsc
+    uint64_t _submit_tsc;
+    osd::write_reply _wr;
+    osd::bench_response _br;
+
+    int _type;
     // 每个cpu核上有一个map
     std::vector<std::map<int, std::shared_ptr<osd::rpc_service_osd_Stub>>> _stubs;
 };
 
-std::string random_string(const size_t length)
-{
-    static std::string chars{
-        "abcdefghijklmnopqrstuvwxyz"
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        "1234567890"
-        "!@#$%^&*()"
-        "`~-_=+[{]}\\|;:'\",<.>/? "};
-
-    std::random_device rd{};
-    std::uniform_int_distribution<decltype(chars)::size_type> index_dist{0, chars.size() - 1};
-    std::string ret(length, ' ');
-    for (size_t i{0}; i < length; ++i)
-    {
-        ret[i] = chars[index_dist(rd)];
-    }
-
-    return ret;
-}

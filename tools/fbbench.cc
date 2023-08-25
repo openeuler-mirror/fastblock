@@ -1,21 +1,25 @@
-#include "opbench.h"
+#include "fbbench.h"
 
 static void
-block_usage(void)
+fbbench_usage(void)
 {
     printf(" -f <path>                 save pid to file under given path\n");
     printf(" -I <id>                   save osd id\n");
     printf(" -o <osd_addr>             osd address\n");
     printf(" -t <osd_port>             osd port\n");
+    printf(" -T <io_type>              type of bench request, support write, rpc\n");
     printf(" -S <io_size>              io_size\n");
     printf(" -k <total_seconds>        total_seconds\n");
 }
 
 static int
-block_parse_arg(int ch, char *arg)
+fbbench_parse_arg(int ch, char *arg)
 {
     switch (ch)
     {
+    case 'E':
+        g_total_ios = spdk_strtol(arg, 10);
+        break;
     case 'f':
         g_pid_path = arg;
         break;
@@ -27,6 +31,21 @@ block_parse_arg(int ch, char *arg)
         break;
     case 't':
         g_osd_port = spdk_strtol(arg, 10);
+        break;
+    case 'T':
+        if (!strcmp(arg, "rpc") && !strcmp(arg, "write"))
+        {
+            printf("io_type should be rpc or write");
+            return -EINVAL;
+        }
+        if (strcmp(arg, "rpc") == 0) {
+            g_bench_type = 0;
+        }
+        else 
+        {
+            g_bench_type = 1;
+        }
+
         break;
     case 'S':
         g_io_size = spdk_strtol(arg, 10);
@@ -40,57 +59,13 @@ block_parse_arg(int ch, char *arg)
     return 0;
 }
 
-void _send_request(server_t *server, client *cli)
-{
-    osd::write_request *request = new osd::write_request();
-    request->set_pool_id(1);
-    request->set_pg_id(0);
-    request->set_object_name("obj");
-    request->set_offset(0);
-    char sz[g_io_size + 1];
-    memset(sz, 0x55, g_io_size);
-    sz[4096] = 0;
-    request->set_data(sz);
-    cli->send_write_request(server->node_id, request);
-}
-
-static const double _cutoffs[] = {
-    0.1,
-    0.5,
-    0.90,
-    0.95,
-    0.99,
-    0.999,
-    -1,
-};
-
-static void
-_check_cutoff(void *ctx, uint64_t start, uint64_t end, uint64_t count,
-              uint64_t total, uint64_t so_far)
-{
-    double so_far_pct;
-    double **cutoff = (double **)ctx;
-
-    if (count == 0)
-    {
-        return;
-    }
-
-    so_far_pct = (double)so_far / total;
-    while (so_far_pct >= **cutoff && **cutoff > 0)
-    {
-	printf("%f%:%fus ", **cutoff * 100, (double)end * 1000 * 1000 / spdk_get_ticks_hz());
-        (*cutoff)++;
-    }
-}
-
 int print_stats(void *p)
 {
     g_seconds++;
 
     SPDK_NOTICELOG("last second processed: %d\r\n", g_counter - g_counter_last_value);
     g_counter_last_value = g_counter;
-    if (g_total_seconds <= g_seconds)
+    if (g_total_seconds && g_total_seconds <= g_seconds)
     {
         printf("ops is: %d, average latency is %fus\r\n", (g_counter / g_seconds), double(1000 * 1000 / (g_counter / g_seconds)));
         printf("latency histogram: min:%fus ", double(g_latency_min * 1000 * 1000 / spdk_get_ticks_hz()));
@@ -107,7 +82,7 @@ int print_stats(void *p)
 }
 
 static void
-block_started(void *arg1)
+fbbench_started(void *arg1)
 {
     poller_printer = SPDK_POLLER_REGISTER(print_stats, nullptr, 1000000);
     g_histogram = spdk_histogram_data_alloc();
@@ -115,34 +90,59 @@ block_started(void *arg1)
     server_t *server = (server_t *)arg1;
 
     SPDK_NOTICELOG("------block start, cpu count : %u \n", spdk_env_get_core_count());
-    client *cli = new client(server);
+    client *cli = new client(server, g_bench_type);
     cli->create_connect(server->osd_addr, server->osd_port, server->node_id);
 
     //(fixme)wait connection, should make it as a callback
     usleep(3000);
-    _send_request(server, cli);
+
+    if (g_total_ios)
+    {
+        g_first_io_tsc = spdk_get_ticks();
+    }
+
+    cli->send_request(server->node_id);
 }
 
-void opbench_source::process_response()
+static void process_response(client *c)
 {
     // SPDK_NOTICELOG("got response, size is %lu\r\n", response.ByteSizeLong());
-    if (response.state() != 0)
+    if(c->get_type() == 1)
     {
-        SPDK_NOTICELOG("write request failed, state is %d", response.state());
+        if (c->get_wr().state() != 0)
+        {
+            SPDK_ERRLOG("write request failed, state is %d, most likely this node is not the raft leader\r\n", c->get_wr().state());
+            exit(-1);
+        }
     }
 
-    auto tsc_diff = spdk_get_ticks() - _submit_tsc;
-    if (tsc_diff > g_latency_max) {
+    auto tsc_diff = spdk_get_ticks() - c->get_tsc();
+    if (tsc_diff > g_latency_max)
+    {
         g_latency_max = tsc_diff;
     }
-    if (tsc_diff < g_latency_min) {
+    if (tsc_diff < g_latency_min)
+    {
         g_latency_min = tsc_diff;
     }
 
     spdk_histogram_data_tally(g_histogram, tsc_diff);
     g_counter++;
 
-    _send_request(_s, _c);
+    // stop sending more ios
+    if (g_total_ios && g_counter >= g_total_ios)
+    {
+        auto tsc_diff_2 = spdk_get_ticks() - g_first_io_tsc;
+        printf("ops is: %d, average latency is %fus\r\n", int(g_counter / float((1.0 * tsc_diff_2 / spdk_get_ticks_hz()))), float(1000.0 * 1000.0 / (g_counter / float(1.0 * tsc_diff_2 / spdk_get_ticks_hz()))));
+        printf("latency histogram: min:%fus ", double(g_latency_min * 1000 * 1000 / spdk_get_ticks_hz()));
+        const double *cutoff = _cutoffs;
+        spdk_histogram_data_iterate(g_histogram, _check_cutoff, &cutoff);
+        printf("max:%fus", double(g_latency_max * 1000 * 1000 / spdk_get_ticks_hz()));
+        printf("\n");
+        exit(-1);
+    }
+
+    c->send_request(c->get_server()->node_id);
 }
 
 int main(int argc, char *argv[])
@@ -152,13 +152,19 @@ int main(int argc, char *argv[])
     int rc;
 
     spdk_app_opts_init(&opts, sizeof(opts));
-    opts.name = "block";
+    opts.name = "fbbench";
 
-    if ((rc = spdk_app_parse_args(argc, argv, &opts, "f:I:o:t:S:k:", NULL,
-                                  block_parse_arg, block_usage)) !=
+    if ((rc = spdk_app_parse_args(argc, argv, &opts, "E:f:I:o:t:S:T:k:", NULL,
+                                  fbbench_parse_arg, fbbench_usage)) !=
         SPDK_APP_PARSE_ARGS_SUCCESS)
     {
         exit(rc);
+    }
+
+    if ((g_total_ios == 0 && g_total_seconds == 0) || (g_total_ios != 0 && g_total_seconds != 0))
+    {
+        printf("you should configure either total ios or total seconds");
+        exit(-1);
     }
 
     server.node_id = global_osd_id;
@@ -166,7 +172,7 @@ int main(int argc, char *argv[])
     server.osd_port = g_osd_port;
 
     /* Blocks until the application is exiting */
-    rc = spdk_app_start(&opts, block_started, &server);
+    rc = spdk_app_start(&opts, fbbench_started, &server);
 
     spdk_app_fini();
 
