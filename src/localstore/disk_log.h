@@ -17,6 +17,9 @@
 #include <vector>
 #include <utility>
 #include <errno.h>
+#include <algorithm>
+#include <string>
+#include <sstream>
 
 class disk_log;
 
@@ -53,13 +56,18 @@ class disk_log {
     static constexpr uint64_t header_size = 4_KB;
 
 public:
-    disk_log(rolling_blob* rblob) : rblob(rblob), log_index(0) {}
-    ~disk_log() { delete rblob; }
+    disk_log(rolling_blob* rblob) : _rblob(rblob) {
+      _trim_poller = SPDK_POLLER_REGISTER(trim_poller, this, 20);
+    }
+    ~disk_log() { 
+      delete _rblob;
+      spdk_poller_unregister(&_trim_poller);
+    }
 
     void append(std::vector<log_entry_t>& entries, log_op_complete cb_fn, void* arg) {
         struct log_append_ctx* ctx = new log_append_ctx{ .cb_fn = cb_fn, .arg = arg, .log = this};
 
-        uint64_t pos = rblob->front_pos();
+        uint64_t pos = _rblob->front_pos();
         for (auto& entry : entries) {
             auto sbuf = buffer_pool_get();
             EncodeLogHeader(sbuf, entry);
@@ -75,13 +83,13 @@ public:
             pos += (entry.size + 4_KB);
         }
 
-        rblob->append(ctx->bl, log_append_done, ctx);
+        _rblob->append(ctx->bl, log_append_done, ctx);
     }
 
     void append(log_entry_t& entry, log_op_complete cb_fn, void* arg) {
         struct log_append_ctx* ctx = new log_append_ctx{ .cb_fn = cb_fn, .arg = arg, .log = this};
 
-        uint64_t pos = rblob->front_pos();
+        uint64_t pos = _rblob->front_pos();
         auto sbuf = buffer_pool_get();
         EncodeLogHeader(sbuf, entry);
 
@@ -90,14 +98,10 @@ public:
         ctx->bl.append_buffer(entry.data);
         ctx->idx_pos.emplace_back(entry.index, pos, entry.size + 4_KB, entry.term_id);
 
-        rblob->append(ctx->bl, log_append_done, ctx);
+        _rblob->append(ctx->bl, log_append_done, ctx);
     }
 
-    void trim_back(uint64_t length, log_op_complete cb_fn, void* arg) {
-        rblob->trim_back(length, cb_fn, arg);
-    };
-
-
+    // TODO(sunyifang): 改成用reader类来读，因为有些状态是只属于本次读取的。
     void read(uint64_t index, log_op_with_entry_complete cb_fn, void* arg) {
         read(index, index, cb_fn, arg);
     }
@@ -112,9 +116,9 @@ public:
             return;
         }
 
-        auto start_it = index_map.find(start_index);
-        auto end_it = index_map.find(end_index);
-        if (start_it == index_map.end() || end_it == index_map.end()) {
+        auto start_it = _index_map.find(start_index);
+        auto end_it = _index_map.find(end_index);
+        if (start_it == _index_map.end() || end_it == _index_map.end()) {
             SPDK_ERRLOG("can not find index. start:%lu end:%lu\n", start_index, end_index);
             cb_fn(arg, {}, -EINVAL);
             return;
@@ -133,7 +137,7 @@ public:
         ctx->bl = std::move(make_buffer_list(size / 4096));
         // 注意:read的时候，buffer_list整体都是在这里申请的。
         //     其中header部分在decode后马上就free了，而data部分会放在log_entry.data中返回给调用者
-        rblob->read(pos, size, ctx->bl, log_read_done, ctx);
+        _rblob->read(pos, size, ctx->bl, log_read_done, ctx);
     }
 
     // TODO(sunyifang): 不应该这样free。
@@ -141,10 +145,10 @@ public:
     void stop(log_op_complete cb_fn, void* arg) {
         // 始终记住cb_fn是上面一层传入的函数，我们传入的lambda会在close之后调用
         // 调用时，里面会把arg传进lambda的第一个参数
-        rblob->close(
+        _rblob->close(
           [cb_fn, this](void* arg, int rberrno){
             SPDK_NOTICELOG("disklog stop\n");
-            rblob->stop();
+            _rblob->stop();
             cb_fn(arg, rberrno);
           },
           arg);
@@ -152,7 +156,7 @@ public:
     }
 
     uint64_t get_term_id(uint64_t index) {
-        if (auto it = index_map.find(index); it != index_map.end()) {
+        if (auto it = _index_map.find(index); it != _index_map.end()) {
             return it->second.term_id;
         }
         return 0;
@@ -218,21 +222,93 @@ private:
         delete ctx;
     }
 
+public:
+    static int trim_poller(void *arg) {
+        disk_log* ctx = (disk_log*)arg;
+        return ctx->maybe_trim() ? SPDK_POLLER_BUSY : SPDK_POLLER_IDLE;
+    }
+
+    // 只保留apply_index前面的1000条，超过1500条就trim一次
+    bool maybe_trim() {
+      _polls_count++;
+      if (_apply_index - _lowest_index > 1500) {
+          // trim前： lowest_index: 100  apply_index: 1700
+          //   trim:  从 100 到 700
+          // trim后： lowest_index: 701  apply_index: 1700 (一共保留1000条)
+          trim_back(_lowest_index, _apply_index - 1000, [](void *, int){}, nullptr);
+          _trims_count++;
+          return true;
+      }
+      return false;
+    }
+
+    // trim范围 [start_index, end_index]，包括 end_index 在内也会读到
+    void trim_back(uint64_t start_index, uint64_t end_index, log_op_complete cb_fn, void* arg) {
+        if (end_index < start_index) {
+            SPDK_ERRLOG("end_index little than start_index. start:%lu end:%lu\n", start_index, end_index);
+            cb_fn(arg, -EINVAL);
+            return;
+        }
+        auto start_it = _index_map.find(start_index);
+        auto end_it = _index_map.find(end_index);
+        if (start_it == _index_map.end() || end_it == _index_map.end()) {
+            SPDK_ERRLOG("can not find index. start:%lu end:%lu\n", start_index, end_index);
+            cb_fn(arg, -EINVAL);
+            return;
+        }
+
+        end_it++;
+        uint64_t trim_length = 0;
+        for (auto it = start_it; it != end_it; it++) {
+            trim_length += it->second.size;
+        }
+
+        // 处理 disklog 中保存的数据
+        _index_map.erase(start_it, end_it);
+        _lowest_index = end_index + 1;
+
+        _rblob->trim_back(trim_length, cb_fn, arg);
+    }
+
+    void advance_apply(uint64_t applied) {
+        _apply_index = std::max(_apply_index, applied);
+    }
+
+    std::string dump_state() {
+      std::stringstream sstream;
+      sstream << "\nlowest_index:" << _lowest_index
+              << " apply_index:" << _apply_index
+              << " highest_index:" << _highest_index
+              << "\nhold:" << _highest_index - _lowest_index + 1
+              << " index_map size:" << _index_map.size()
+              << "\nindex_map begin:" << _index_map.begin()->first
+              << " index_map rbegin:" << _index_map.rbegin()->first
+              << " _polls_count:" << _polls_count
+              << " _trims_count:" << _trims_count
+              << std::endl;
+      return sstream.str();
+    }
 
 private:
-    rolling_blob* rblob;
+    rolling_blob* _rblob;
+    struct spdk_poller *_trim_poller;
+    uint64_t _polls_count = 0;
+    uint64_t _trims_count = 0;
 
-    uint32_t log_index;
+    uint64_t _lowest_index = 0; //只有trim时候会改
+    uint64_t _apply_index = 0;
+    uint64_t _highest_index = 0;
     struct log_position {
         uint64_t pos;
-        uint64_t size; // data.siz + header size(4_KB)
+        uint64_t size; // data.size + header size(4_KB)
         uint64_t term_id;
     };
-    std::map<uint64_t, log_position> index_map;
+    std::map<uint64_t, log_position> _index_map;
 
 private:
     void maybe_index(uint64_t index, log_position&& log_pos) {
-        index_map.emplace(index, std::move(log_pos));
+        _highest_index = std::max(_highest_index, index);
+        _index_map.emplace(index, std::move(log_pos));
     }
 };
 

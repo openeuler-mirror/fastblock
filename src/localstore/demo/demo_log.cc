@@ -16,7 +16,7 @@
 #include "localstore/spdk_buffer.h"
 #include "localstore/disk_log.h"
 
-#define append_ITERATIONS 100
+#define append_ITERATIONS 10000
 #define read_ITERATIONS   100
 
 static const char *g_bdev_name = NULL;
@@ -49,6 +49,7 @@ struct test_ctx_t {
 
   uint64_t append_raft_index{0};
   uint64_t read_raft_index{0};
+  uint64_t apply_raft_index{0};
 
   uint64_t start;
 };
@@ -181,14 +182,14 @@ log_read_continue(void *arg, std::vector<log_entry_t>&& entries, int rberrno) {
   ctx->read_idx++;
   if (ctx->read_idx < ctx->read_max) {
       uint64_t start = ctx->read_raft_index++;
-      uint64_t end = std::min(start + 2, (uint64_t)ctx->read_max);
+      uint64_t end = std::min(start + 2, ctx->apply_raft_index);
       SPDK_NOTICELOG("iterates read start:%lu end:%lu\n", start, end);
       ctx->log->read(start, end, log_read_continue, ctx);
       // ctx->log->read(0, 2, log_read_continue, ctx);
   } else {
       uint64_t now = spdk_get_ticks();
       double us = env_ticks_to_usecs(now - ctx->start);
-      SPDK_NOTICELOG("iterates read %d entry, total time: %lf us\n", ctx->append_idx, us);
+      SPDK_NOTICELOG("iterates read %d entry, total time: %lf us\n", ctx->read_idx, us);
 
       free_buffer_list(ctx->bl);
       delete ctx;
@@ -199,12 +200,15 @@ log_read_continue(void *arg, std::vector<log_entry_t>&& entries, int rberrno) {
 
 static void
 log_read_iterates(struct test_ctx_t* ctx) {
+  ctx->read_raft_index = append_ITERATIONS - read_ITERATIONS;
   uint64_t start = ctx->read_raft_index++;
-  uint64_t end = std::min(start + 2, (uint64_t)ctx->read_max);
+  uint64_t end = std::min(start + 2, ctx->apply_raft_index);
   SPDK_NOTICELOG("iterates read start:%lu end:%lu\n", start, end);
   ctx->log->read(start, end, log_read_continue, ctx);
 }
+
 /********************************************************************/
+
 static void
 log_append_continue(void *arg, int rberrno) {
   struct test_ctx_t *ctx = (struct test_ctx_t *)arg;
@@ -216,20 +220,29 @@ log_append_continue(void *arg, int rberrno) {
   }
 
   ctx->append_idx++;
+
+  ctx->log->advance_apply(ctx->apply_raft_index);
+  if (ctx->append_idx % 1000 == 0) {
+    auto dump = ctx->log->dump_state();
+    SPDK_NOTICELOG("%d-th log state:%s", ctx->append_idx, dump.c_str());
+  }
+
   if (ctx->append_idx < ctx->append_max) {
-      log_entry_t entry{ .term_id = 4147483647, 
-                         .index = ctx->append_raft_index++, 
+      log_entry_t entry{ .term_id = ctx->append_raft_index, 
+                         .index = ctx->append_raft_index, 
                          .size = ctx->bl.bytes(), 
                          .meta = "test",
                          .data = ctx->bl};
-      SPDK_NOTICELOG("log append, index:%lu size:%lu term:%lu meta:%s, data len:%lu\n", 
-                     entry.index, entry.size, entry.term_id, entry.meta.c_str(), 
-                     entry.data.bytes());
+      ctx->apply_raft_index = ctx->append_raft_index;
+      ctx->append_raft_index++;
+      // SPDK_NOTICELOG("log append, index:%lu size:%lu term:%lu meta:%s, data len:%lu\n", 
+      //                entry.index, entry.size, entry.term_id, entry.meta.c_str(), 
+      //                entry.data.bytes());
       ctx->log->append(entry, log_append_continue, ctx);
   } else {
       uint64_t now = spdk_get_ticks();
       double us = env_ticks_to_usecs(now - ctx->start);
-      SPDK_NOTICELOG("iterates append %d entry, total time: %lf us\n", ctx->append_idx, us);
+      SPDK_NOTICELOG("iterates append %d, apply:%lu entries, total time: %lf us\n", ctx->append_idx, ctx->apply_raft_index, us);
 
       log_read_iterates(ctx);
   }
@@ -252,13 +265,15 @@ log_append_iterates(struct hello_context_t* hello_context) {
 
   std::vector<log_entry_t> entry_vec;
   for (int i = 0; i < 3; i++) {
-      auto entry = entry_vec.emplace_back(log_entry_t{ .term_id = 4147483647, 
-                                    .index = ctx->append_raft_index++, 
+      auto entry = entry_vec.emplace_back(log_entry_t{ .term_id = ctx->append_raft_index, 
+                                    .index = ctx->append_raft_index, 
                                     .size = ctx->bl.bytes(),
                                     .meta = "meta",
                                     .data = ctx->bl});
-      SPDK_NOTICELOG("log append vector %d-th, index:%lu size:%lu term:%lu meta:%s, data len:%lu\n", 
-                  i, entry.index, entry.size, entry.term_id, entry.meta.c_str(), entry.data.bytes());
+      // SPDK_NOTICELOG("log append vector %d-th, index:%lu size:%lu term:%lu meta:%s, data len:%lu\n", 
+      //             i, entry.index, entry.size, entry.term_id, entry.meta.c_str(), entry.data.bytes());
+      ctx->apply_raft_index = ctx->append_raft_index;
+      ctx->append_raft_index++;
   }
   ctx->log->append(entry_vec, log_append_continue, ctx);
 }
