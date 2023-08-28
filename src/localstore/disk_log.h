@@ -151,6 +151,13 @@ public:
         
     }
 
+    uint64_t get_term_id(uint64_t index) {
+        if (auto it = index_map.find(index); it != index_map.end()) {
+            return it->second.term_id;
+        }
+        return 0;
+    }
+
 private:
     // 传进rolling_blob的回调函数
     static void log_append_done(void *arg, rblob_rw_result result, int rberrno) {
