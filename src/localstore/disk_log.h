@@ -24,7 +24,7 @@ using log_op_complete = std::function<void (void *arg, int rberrno)>;
 using log_op_with_entry_complete = std::function<void (void *arg, std::vector<log_entry_t>&&, int rberrno)>;
 
 struct log_append_ctx {
-  std::vector<std::tuple<uint64_t,uint64_t,uint64_t>> idx_pos;
+  std::vector<std::tuple<uint64_t,uint64_t,uint64_t,uint64_t>> idx_pos;
   std::vector<spdk_buffer> headers;
   buffer_list bl;
 
@@ -71,7 +71,7 @@ public:
             ctx->bl.append_buffer(std::move(entry.data));
             /// NOTE: 这个vector是写完之后要往map里保存的，从raft_index到rblob中pos和size的映射，
             ///    为了方便读取，这里保存的size，是包括了header长度(4_KB)和数据长度的。
-            ctx->idx_pos.emplace_back(entry.index, pos, entry.size + 4_KB);
+            ctx->idx_pos.emplace_back(entry.index, pos, entry.size + 4_KB, entry.term_id);
             pos += (entry.size + 4_KB);
         }
 
@@ -88,7 +88,7 @@ public:
         ctx->headers.emplace_back(sbuf);
         ctx->bl.append_buffer(sbuf);
         ctx->bl.append_buffer(std::move(entry.data));
-        ctx->idx_pos.emplace_back(entry.index, pos, entry.size + 4_KB);
+        ctx->idx_pos.emplace_back(entry.index, pos, entry.size + 4_KB, entry.term_id);
 
         rblob->append(ctx->bl, log_append_done, ctx);
     }
@@ -120,7 +120,7 @@ public:
             return;
         }
 
-        auto [pos, size] = start_it->second;
+        auto [pos, size, _] = start_it->second;
         start_it++;
         end_it++;
         for (auto it = start_it; it != end_it; it++) {
@@ -169,8 +169,8 @@ private:
         }        
 
         // 保存每个index到pos和size的映射
-        for (auto [idx, pos, size] : ctx->idx_pos) {
-            ctx->log->maybe_index(idx, pos, size);
+        for (auto [idx, pos, size, term_id] : ctx->idx_pos) {
+            ctx->log->maybe_index(idx, log_position{pos, size, term_id});
         }
 
         ctx->cb_fn(ctx->arg, 0);
@@ -218,13 +218,14 @@ private:
     uint32_t log_index;
     struct log_position {
         uint64_t pos;
-        uint64_t size;
+        uint64_t size; // data.siz + header size(4_KB)
+        uint64_t term_id;
     };
     std::map<uint64_t, log_position> index_map;
 
 private:
-    void maybe_index(uint64_t index, uint64_t pos, uint64_t size) {
-        index_map.emplace(index, log_position{pos, size});
+    void maybe_index(uint64_t index, log_position&& log_pos) {
+        index_map.emplace(index, std::move(log_pos));
     }
 };
 
