@@ -1,5 +1,6 @@
 #ifndef RAFT_LOG_H_
 #define RAFT_LOG_H_
+#include <limits>
 
 #include "raft_cache.h"
 #include "localstore/disk_log.h"
@@ -32,6 +33,7 @@ public:
         entry.index = raft_entry.idx();
         entry.term_id = raft_entry.term();;
         entry.size = raft_entry.data().size();
+        entry.type = raft_entry.type();
         entry.meta = raft_entry.meta();
 
         SPDK_INFOLOG(pg_group, "entry.size:%lu \n", entry.size);
@@ -78,6 +80,50 @@ public:
             complete);
     }
 
+    raft_entry_t raft_entry_to_log_entry(log_entry_t& log_entry){
+        raft_entry_t raft_entry;
+        raft_entry.set_term(log_entry.term_id);
+        raft_entry.set_idx(log_entry.index);
+        raft_entry.set_type(log_entry.type);
+        raft_entry.set_obj_name("");
+        raft_entry.set_meta(log_entry.meta);
+        std::string data;
+        for (auto sbuf : log_entry.data){
+            data += sbuf.get_buf();
+        }
+        raft_entry.set_data(std::move(data));
+        return raft_entry;
+    }
+
+    using log_read_complete = std::function<void (std::vector<raft_entry_t>&&, int rberrno)>;
+    void disk_read(raft_index_t start_idx, raft_index_t end_idx, log_read_complete cb_fn){
+        _log->read(
+          start_idx, 
+          end_idx, 
+          [this, cb_fn = std::move(cb_fn)](void *, std::vector<log_entry_t>&& entries, int rberrno){
+            std::vector<raft_entry_t> raft_entries;
+            if(rberrno != 0){
+                cb_fn({}, rberrno);
+                return;
+            }  
+            for(auto& entry : entries){
+                raft_entries.emplace_back(raft_entry_to_log_entry(entry));
+            }
+
+            cb_fn(std::move(raft_entries), rberrno);
+          }, 
+          nullptr);
+    }
+
+    bool disk_get_term(raft_index_t idx, raft_term_t& term){
+        auto _term = _log->get_term_id(idx);
+        if(_term == 0){
+            return false;
+        }
+        term = _term;
+        return true;
+    }
+
     /** Get an array of entries from this index onwards.
      * This is used for batching.
      */
@@ -94,6 +140,13 @@ public:
     std::shared_ptr<raft_entry_t> log_get_at_idx(raft_index_t idx)
     {
         return _entries.get(idx);
+    }
+
+    raft_index_t first_log_in_cache(){
+        auto entry = _entries.get_first_entry();
+        if(!entry)
+            return std::numeric_limits<raft_index_t>::max();
+        return entry->idx();
     }
 
     void log_clear()

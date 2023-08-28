@@ -424,10 +424,6 @@ public:
         return (node && node->raft_node_get_id() == node_id);
     }
 
-    /** The the most recent log's term
-     * @return the last log term */
-    raft_term_t raft_get_last_log_term();
-
     int raft_is_connected()
     {
         return connected;
@@ -631,7 +627,7 @@ public:
      *  0 on success;
      *  -1 on error;
      *  RAFT_ERR_NOT_LEADER server is not the leader */
-    int raft_process_appendentries_reply(msg_appendentries_response_t* r);
+    int raft_process_appendentries_reply(msg_appendentries_response_t* r, bool is_heartbeat = false);
 
     /** Become follower. This may be used to give up leadership. It does not change
      * currentTerm. */
@@ -684,7 +680,9 @@ public:
     int raft_send_heartbeat(raft_node* node);
 
     int raft_send_appendentries(raft_node* node);
-    int raft_get_entry_term(raft_index_t idx, raft_term_t* term);
+
+    bool raft_get_entry_term(raft_index_t idx, raft_term_t& term);
+    
     int raft_send_heartbeat_all();
 
     /**
@@ -831,14 +829,6 @@ public:
         _append_entries_buffer.enqueue(request, response, complete);
     }
 
-    raft_term_t get_prev_log_term(){
-        return prev_log_term;
-    }
-
-    void set_prev_log_term(raft_term_t term){
-        prev_log_term = term;
-    }
-
     int  save_vote_for(const raft_node_id_t nodeid){
 #ifdef KVSTORE
         std::string key = std::to_string(pool_id) + "." + std::to_string(pg_id) + ".vote_for";
@@ -895,6 +885,10 @@ public:
     uint64_t raft_get_pg_id(){
         return pg_id;
     }
+
+    msg_appendentries_t* create_appendentries(raft_node* node);
+    void dispatch_recovery(raft_node* node);
+    void do_recovery(raft_node* node);
 private:
     int _has_majority_leases(raft_time_t now, int with_grace);
     int _cfg_change_is_valid(msg_entry_t* ety);
@@ -980,7 +974,6 @@ private:
     bool stm_in_apply;     //状态机正在apply
 
     append_entries_buffer _append_entries_buffer;
-    raft_term_t prev_log_term;
 
 #ifdef KVSTORE
     kv_store *kv;

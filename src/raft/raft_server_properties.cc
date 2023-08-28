@@ -36,7 +36,6 @@ raft_server_t::raft_server_t(raft_client_protocol& _client, disk_log* _log,
     , client(_client)
     , stm_in_apply(false)
     , _append_entries_buffer(this)
-    , prev_log_term(0)
 #ifdef KVSTORE
     , kv(_kv)
 #endif        
@@ -65,16 +64,6 @@ int raft_server_t::raft_set_current_term(const raft_term_t term)
         voted_for = voted_for_local;
     }
     return 0;
-}
-
-raft_term_t raft_server_t::raft_get_last_log_term()
-{
-    raft_index_t current_idx = raft_get_current_idx();
-    raft_term_t term;
-    int got = raft_get_entry_term(current_idx, &term);
-    assert(got);
-    (void)got;
-    return term;
 }
 
 std::shared_ptr<raft_entry_t> raft_server_t::raft_get_last_applied_entry()
