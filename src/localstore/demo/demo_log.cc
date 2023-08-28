@@ -10,6 +10,7 @@
 #include <time.h>
 #include <stdlib.h>
 #include <string>
+#include <algorithm>
 
 #include "localstore/rolling_blob.h"
 #include "localstore/spdk_buffer.h"
@@ -150,23 +151,40 @@ log_stop(struct hello_context_t* hello_context)
 
 /********************************************************************/
 static void
-log_read_continue(void *arg, log_entry_t&& entry, int rberrno) {
+log_read_continue(void *arg, std::vector<log_entry_t>&& entries, int rberrno) {
   struct test_ctx_t *ctx = (struct test_ctx_t *)arg;
   struct hello_context_t *hello_context = ctx->hello_ctx;
 
   if (rberrno) {
-    unload_bs(hello_context, "Error in rolling append continue completion", rberrno);
-    return;
+      SPDK_ERRLOG("Error in log read continue completion %s\n", spdk_strerror(rberrno));
+      free_buffer_list(ctx->bl);
+      delete ctx;
+      log_stop(hello_context);
+      return;
   }
 
-  ctx->read_idx++;
-  SPDK_NOTICELOG("log append, index:%lu size:%lu term:%lu meta:%s, data len:%lu\n", 
+  if (entries.size() == 0) {
+      SPDK_ERRLOG("read entries size zero\n");
+      free_buffer_list(ctx->bl);
+      delete ctx;
+      log_stop(hello_context);
+      return;
+  }
+
+  for (auto& entry : entries) {
+      SPDK_NOTICELOG("log read, index:%lu size:%lu term:%lu meta:%s, data len:%lu\n", 
                      entry.index, entry.size, entry.term_id, entry.meta.c_str(), 
                      entry.data.bytes());
-  free_buffer_list(entry.data);
-
+      free_buffer_list(entry.data);
+  }
+  
+  ctx->read_idx++;
   if (ctx->read_idx < ctx->read_max) {
-      ctx->log->read(ctx->read_raft_index++, log_read_continue, ctx);
+      uint64_t start = ctx->read_raft_index++;
+      uint64_t end = std::min(start + 2, (uint64_t)ctx->read_max);
+      SPDK_NOTICELOG("iterates read start:%lu end:%lu\n", start, end);
+      ctx->log->read(start, end, log_read_continue, ctx);
+      // ctx->log->read(0, 2, log_read_continue, ctx);
   } else {
       uint64_t now = spdk_get_ticks();
       double us = env_ticks_to_usecs(now - ctx->start);
@@ -181,7 +199,10 @@ log_read_continue(void *arg, log_entry_t&& entry, int rberrno) {
 
 static void
 log_read_iterates(struct test_ctx_t* ctx) {
-  ctx->log->read(ctx->read_raft_index++, log_read_continue, ctx);
+  uint64_t start = ctx->read_raft_index++;
+  uint64_t end = std::min(start + 2, (uint64_t)ctx->read_max);
+  SPDK_NOTICELOG("iterates read start:%lu end:%lu\n", start, end);
+  ctx->log->read(start, end, log_read_continue, ctx);
 }
 /********************************************************************/
 static void
@@ -228,15 +249,18 @@ log_append_iterates(struct hello_context_t* hello_context) {
   ctx->bl = make_buffer_list(8);
   ctx->start = spdk_get_ticks();
 
-  log_entry_t entry{ .term_id = 4147483647, 
-                     .index = ctx->append_raft_index++, 
-                     .size = ctx->bl.bytes(),
-                     .meta = "test",
-                     .data = ctx->bl};
-  SPDK_NOTICELOG("log append, index:%lu size:%lu term:%lu meta:%s, data len:%lu\n", 
-                  entry.index, entry.size, entry.term_id, entry.meta.c_str(), 
-                  entry.data.bytes());
-  ctx->log->append(entry, log_append_continue, ctx);
+
+  std::vector<log_entry_t> entry_vec;
+  for (int i = 0; i < 3; i++) {
+      auto entry = entry_vec.emplace_back(log_entry_t{ .term_id = 4147483647, 
+                                    .index = ctx->append_raft_index++, 
+                                    .size = ctx->bl.bytes(),
+                                    .meta = "meta",
+                                    .data = ctx->bl});
+      SPDK_NOTICELOG("log append vector %d-th, index:%lu size:%lu term:%lu meta:%s, data len:%lu\n", 
+                  i, entry.index, entry.size, entry.term_id, entry.meta.c_str(), entry.data.bytes());
+  }
+  ctx->log->append(entry_vec, log_append_continue, ctx);
 }
 /********************************************************************/
 

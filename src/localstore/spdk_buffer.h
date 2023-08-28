@@ -62,16 +62,16 @@ private:
 
 
 // 偷懒的做法，不想封装迭代器，直接继承list
-class buffer_list : public std::list<spdk_buffer> {
+class buffer_list : private std::list<spdk_buffer> {
 public:
 
-  void append_buffer(buffer_list& bl) {
+  void append_buffer(buffer_list& bl) noexcept {
     size_t byte = bl.bytes();
-    splice(end(), bl, bl.begin(), bl.end());
+    splice(end(), bl);
     total += byte;
   }
 
-  void append_buffer(buffer_list&& bl) {
+  void append_buffer(buffer_list&& bl) noexcept {
     size_t bytes = bl.bytes();
     splice(end(), std::move(bl));
     total += bytes;
@@ -87,10 +87,26 @@ public:
     total += sbuf.len();
   }
 
-  void trim_front() {
+  void trim_front() noexcept {
     size_t len = front().len();
     pop_front();
     total -= len;
+  }
+
+  spdk_buffer pop_front() noexcept {
+    spdk_buffer ret = front();
+    size_t len = ret.len();
+    std::list<spdk_buffer>::pop_front();
+    total -= len;
+    return ret;
+  }
+
+  buffer_list pop_front_list(size_t len) {
+    buffer_list bl;
+    while(len--) {
+      bl.append_buffer(pop_front());
+    }
+    return bl;
   }
 
   // 1. 需要用户要保证pos和len长度位置有效
@@ -144,10 +160,20 @@ public:
     return to_iovec(0, total);
   }
 
-  size_t bytes() { return total; }
+  size_t bytes() noexcept { return total; }
+
+  using base = std::list<spdk_buffer>;
+  using base::iterator;
+  using base::const_iterator;
+  using base::begin;
+  using base::end;
 
 private:
   size_t total{0};
+
+private:
+  friend buffer_list make_buffer_list(size_t n); 
+  friend void free_buffer_list(buffer_list& bl);
 };
 
 buffer_list make_buffer_list(size_t n);
