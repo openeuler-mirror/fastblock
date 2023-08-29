@@ -1,6 +1,6 @@
 性能测试报告
 # 测试环境
-- commit hash: `1f04b215124238ce6ef0d2322c17d00d71ef6411`, Release模式编译
+- commit hash: `8fdf3422bd98c490af67c0d6f5e0dcd54094f3b5`, Release模式编译
 - 服务器: 40核80线程，网卡25G支持RDMA，384G内存, CPU采用性能模式
 - 磁盘：测试是采用3个P4510作为后端存储(仅启动三个osd), 采用spdk nvme用户态驱动和aio bdev分别进行测试
 - 测试项: 单pg测试，分别测试了一副本、二副本和三副本下的fbbench的write和rpc，以及一副本下的fbbench的rpc测试, 另外benchmark工具也能够控制写同一个对象还是不通对象，且能够展示ops、平均延迟和延迟分位统计
