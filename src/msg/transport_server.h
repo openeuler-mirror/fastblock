@@ -375,9 +375,9 @@ public:
             return;
         }
 
-        SPDK_NOTICELOG(
-          "Sending rpc response body of request id %ld\n",
-          reply_rd->task->id);
+        SPDK_INFOLOG(msg,
+                     "Sending rpc response body of request id %ld\n",
+                     reply_rd->task->id);
         send_reply(reply_rd, status::success);
     }
 

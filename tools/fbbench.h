@@ -110,7 +110,9 @@ public:
             osd::write_request *request = new osd::write_request();
             request->set_pool_id(1);
             request->set_pg_id(0);
-            request->set_object_name("obj");
+            char oname[32];
+            sprintf(oname, "%s%d", "objectname", g_counter);
+            request->set_object_name(oname);
             request->set_offset(0);
             char sz[g_io_size + 1];
             memset(sz, 0x55, g_io_size);

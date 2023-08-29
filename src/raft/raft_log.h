@@ -33,8 +33,8 @@ public:
         entry.term_id = raft_entry.term();;
         entry.size = raft_entry.data().size();
         entry.meta = raft_entry.meta();
-        
-        SPDK_NOTICELOG("entry.size:%lu \n", entry.size);
+
+        SPDK_INFOLOG(pg_group, "entry.size:%lu \n", entry.size);
         if (entry.size % 4096 != 0) {
             SPDK_ERRLOG("data size:%lu not align.\n", entry.size);
             /// TODO: 怎么处理这个错误
@@ -54,7 +54,7 @@ public:
     void disk_append(raft_index_t start_idx, raft_index_t end_idx, context* complete){
         std::vector<std::shared_ptr<raft_entry_t>> raft_entries;
         _entries.get_between(start_idx, end_idx, raft_entries);
-        SPDK_NOTICELOG("start_idx:%lu end_idx:%lu.\n", start_idx, end_idx);
+        SPDK_INFOLOG(pg_group, "start_idx:%lu end_idx:%lu.\n", start_idx, end_idx);
 
         if(!_log){
             complete->complete(0);
@@ -66,14 +66,16 @@ public:
             log_entries.emplace_back(raft_entry_to_log_entry(*raft_entry));
         }
 
-        SPDK_NOTICELOG("disk_append size:%lu.\n", log_entries.size());
-        _log->append(log_entries, 
-          [](void *arg, int rberrno){
-              SPDK_NOTICELOG("after disk_append.\n");
-              context* ctx = (context*)arg;
-              ctx->complete(rberrno);
-          },
-          complete);
+        SPDK_INFOLOG(pg_group, "disk_append size:%lu.\n", log_entries.size());
+        _log->append(
+            log_entries,
+            [](void *arg, int rberrno)
+            {
+                SPDK_INFOLOG(pg_group, "after disk_append.\n");
+                context *ctx = (context *)arg;
+                ctx->complete(rberrno);
+            },
+            complete);
     }
 
     /** Get an array of entries from this index onwards.

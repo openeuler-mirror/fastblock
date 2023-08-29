@@ -45,8 +45,8 @@ void osd_service::process_write(google::protobuf::RpcController* controller,
     std::string buf;
     cmd.SerializeToString(&buf);
 
-    SPDK_NOTICELOG("process write_request in shard %u, pool %lu pg %lu object_name %s offset %lu len %u\n", 
-            shard_id, pool_id, pg_id, request->object_name().c_str(), request->offset(), request->data().size());
+    SPDK_INFOLOG(pg_group, "process write_request in shard %u, pool %lu pg %lu object_name %s offset %lu len %u\n",
+                 shard_id, pool_id, pg_id, request->object_name().c_str(), request->offset(), request->data().size());
 
     auto entry_ptr = std::make_shared<msg_entry_t>();
     entry_ptr->set_type(RAFT_LOGTYPE_WRITE);
@@ -57,14 +57,16 @@ void osd_service::process_write(google::protobuf::RpcController* controller,
     write_data_complete *complete = new write_data_complete(response, done);
 
     _pm->get_shard().invoke_on(
-      shard_id, 
-      [this, complete, entry_ptr = std::move(entry_ptr), raft](){
-        SPDK_NOTICELOG("raft_write_entry in core %u\n", spdk_env_get_current_core());
-        auto ret = raft->raft_write_entry(entry_ptr, complete);
-        if(ret != 0){
-            complete->complete(ret);
-        }
-      });
+        shard_id,
+        [this, complete, entry_ptr = std::move(entry_ptr), raft]()
+        {
+            SPDK_INFOLOG(pg_group, "raft_write_entry in core %u\n", spdk_env_get_current_core());
+            auto ret = raft->raft_write_entry(entry_ptr, complete);
+            if (ret != 0)
+            {
+                complete->complete(ret);
+            }
+        });
 }
 
 void osd_service::process_get_leader(google::protobuf::RpcController* controller,
