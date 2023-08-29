@@ -915,7 +915,7 @@ int raft_server_t::_cfg_change_is_valid(msg_entry_t* ety)
 }
 
 void raft_server_t::raft_write_entry_finish(raft_index_t start_idx, raft_index_t end_idx, int result){
-    SPDK_NOTICELOG("raft_write_entry_finish, [%ld-%ld] result: %d\n", start_idx, end_idx, result);
+    SPDK_INFOLOG(pg_group, "raft_write_entry_finish, [%ld-%ld] result: %d\n", start_idx, end_idx, result);
     set_prev_log_term(raft_get_current_term());
     raft_get_log()->raft_write_entry_finish(start_idx, end_idx, result);
     raft_flush();
@@ -953,7 +953,7 @@ struct disk_append_complete : public context{
     , raft(_raft) {}
 
     void finish(int r) override {
-        SPDK_NOTICELOG("disk_append_complete, result: %d\n", r);
+        SPDK_INFOLOG(pg_group, "disk_append_complete, result: %d\n", r);
         raft->raft_disk_append_finish(start_idx, end_idx, r);
     }
     raft_index_t start_idx;
@@ -1015,7 +1015,7 @@ void raft_server_t::raft_flush(){
     }
     first_idx = current_idx + 1;
     current_idx = last_cache_idx;
-    SPDK_NOTICELOG("------ first_idx: %lu current_idx: %lu ------\n", first_idx, current_idx);
+    SPDK_INFOLOG(pg_group, "------ first_idx: %lu current_idx: %lu ------\n", first_idx, current_idx);
 
     for(auto _node : nodes)
     {
@@ -1154,13 +1154,13 @@ int raft_server_t::raft_send_appendentries(raft_node* node)
 
     ae->set_prev_log_term(term);
 
-    SPDK_NOTICELOG("sending appendentries node %d: next_idx: %ld ci:%ld comi:%ld t:%ld lc:%ld pli:%ld plt:%ld \n",
-          node->raft_node_get_id(),  next_idx, raft_get_current_idx(),
-          raft_get_commit_idx(),
-          ae->term(),
-          ae->leader_commit(),
-          ae->prev_log_idx(),
-          ae->prev_log_term());
+    SPDK_INFOLOG(pg_group, "sending appendentries node %d: next_idx: %ld ci:%ld comi:%ld t:%ld lc:%ld pli:%ld plt:%ld \n",
+                 node->raft_node_get_id(), next_idx, raft_get_current_idx(),
+                 raft_get_commit_idx(),
+                 ae->term(),
+                 ae->leader_commit(),
+                 ae->prev_log_idx(),
+                 ae->prev_log_term());
     node->raft_set_append_time(get_time());
     client.send_appendentries(this, node->raft_node_get_id(), ae);
     return 0;
