@@ -63,11 +63,11 @@ int print_stats(void *p)
 {
     g_seconds++;
 
-    SPDK_NOTICELOG("last second processed: %d\r\n", g_counter - g_counter_last_value);
+    SPDK_NOTICELOG("last second processed: %d\n", g_counter - g_counter_last_value);
     g_counter_last_value = g_counter;
     if (g_total_seconds && g_total_seconds <= g_seconds)
     {
-        printf("ops is: %d, average latency is %fus\r\n", (g_counter / g_seconds), double(1000 * 1000 / (g_counter / g_seconds)));
+        printf("ops is: %d, average latency is %fus\r\n", (g_counter / g_seconds), double(1000 * 1000 * 1.0 / (g_counter / g_seconds)));
         printf("latency histogram: min:%fus ", double(g_latency_min * 1000 * 1000 / spdk_get_ticks_hz()));
         const double *cutoff = _cutoffs;
         spdk_histogram_data_iterate(g_histogram, _check_cutoff, &cutoff);
