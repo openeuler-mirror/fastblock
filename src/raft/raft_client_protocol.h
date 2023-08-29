@@ -160,7 +160,7 @@ public:
         auto shard_id = _get_shard_id();
         heartbeat_source * source = new heartbeat_source(request, group, shard_id);
 
-        SPDK_NOTICELOG("heartbeat msg contains %d raft groups, to osd %d\r\n", request->heartbeats_size(), target_node_id);
+        SPDK_INFOLOG(pg_group, "heartbeat msg contains %d raft groups, to osd %d\n", request->heartbeats_size(), target_node_id);
         auto done = google::protobuf::NewCallback(source, &heartbeat_source::process_response);
         auto stub = _get_stub(shard_id, target_node_id);
         stub->heartbeat(&source->ctrlr, request, &source->response, done);

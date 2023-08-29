@@ -275,17 +275,17 @@ int raft_server_t::raft_get_entry_term(raft_index_t idx, raft_term_t* term)
 int raft_server_t::raft_process_appendentries_reply(
                                      msg_appendentries_response_t* r)
 {
-    SPDK_NOTICELOG(
-          "received appendentries response %s from %d ci:%ld rci:%ld 1stidx:%ld\
-           ls=%ld  ct:%ld rt:%ld\n",
-          r->success() == 1 ? "SUCCESS" : "fail", 
-          r->node_id(),
-          raft_get_current_idx(),
-          r->current_idx(),
-          r->first_idx(),
-          r->lease(),
-          raft_get_current_term(),
-          r->term());
+    SPDK_INFOLOG(pg_group,
+                 "received appendentries response %s from %d ci:%ld rci:%ld 1stidx:%ld\
+                 ls=%ld  ct:%ld rt:%ld\n",
+                 r->success() == 1 ? "SUCCESS" : "fail",
+                 r->node_id(),
+                 raft_get_current_idx(),
+                 r->current_idx(),
+                 r->first_idx(),
+                 r->lease(),
+                 raft_get_current_term(),
+                 r->term());
 
     raft_node* node = raft_get_node(r->node_id());
     if (!node)
@@ -359,7 +359,7 @@ int raft_server_t::raft_process_appendentries_reply(
 
     /* Update commit idx */
     raft_index_t point = r->current_idx();
-    SPDK_NOTICELOG("current_idx: %lu commit_idx: %lu\n", r->current_idx(), raft_get_commit_idx());
+    SPDK_INFOLOG(pg_group, "current_idx: %lu commit_idx: %lu\n", r->current_idx(), raft_get_commit_idx());
     if (point && raft_get_commit_idx() < point)
     {
         raft_term_t term;
@@ -407,7 +407,7 @@ struct follow_disk_append_complete : public context{
     , raft(_raft) {}
 
     void finish(int r) override {
-        SPDK_NOTICELOG("follow_disk_append_complete finish, commit_idx %ld.\n", commit_idx);
+        SPDK_INFOLOG(pg_group, "follow_disk_append_complete finish, commit_idx %ld.\n", commit_idx);
         raft->follow_raft_disk_append_finish(start_idx, end_idx, commit_idx, r);
     }
     raft_index_t start_idx;
@@ -435,14 +435,14 @@ int raft_server_t::raft_recv_appendentries(
     raft_index_t new_commit_idx = 0; 
 
     if (0 < entries_num)
-        SPDK_NOTICELOG("recvd appendentries ct: %ld t:%ld ci:%ld lc:%ld pli:%ld plt:%ld #%d\n",
-              raft_get_current_term(),
-              ae->term(),
-              raft_get_current_idx(),
-              ae->leader_commit(),
-              ae->prev_log_idx(),
-              ae->prev_log_term(),
-              entries_num);
+        SPDK_INFOLOG(pg_group, "recvd appendentries ct: %ld t:%ld ci:%ld lc:%ld pli:%ld plt:%ld #%d\n",
+                     raft_get_current_term(),
+                     ae->term(),
+                     raft_get_current_idx(),
+                     ae->leader_commit(),
+                     ae->prev_log_idx(),
+                     ae->prev_log_term(),
+                     entries_num);
 
     r->set_node_id(raft_get_nodeid());
     r->set_success(0);
@@ -558,7 +558,7 @@ int raft_server_t::raft_recv_appendentries(
     }
     start_idx = ae->prev_log_idx() + 1 + i;
     end_idx =  start_idx + k - 1;
-    SPDK_NOTICELOG("start_idx: %ld  end_idx: %ld \n", start_idx, end_idx);
+    SPDK_INFOLOG(pg_group, "start_idx: %ld  end_idx: %ld \n", start_idx, end_idx);
     e = raft_append_entries(entrys);
     i += k;
     r->set_current_idx(ae->prev_log_idx() + i);
