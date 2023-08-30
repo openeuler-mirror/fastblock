@@ -10,6 +10,7 @@ fbbench_usage(void)
     printf(" -T <io_type>              type of bench request, support write, rpc\n");
     printf(" -S <io_size>              io_size\n");
     printf(" -k <total_seconds>        total_seconds\n");
+    printf(" -Q <queue_depth>          max inflight ios we can submit to cluster\n");
 }
 
 static int
@@ -38,10 +39,11 @@ fbbench_parse_arg(int ch, char *arg)
             printf("io_type should be rpc or write");
             return -EINVAL;
         }
-        if (strcmp(arg, "rpc") == 0) {
+        if (strcmp(arg, "rpc") == 0)
+        {
             g_bench_type = 0;
         }
-        else 
+        else
         {
             g_bench_type = 1;
         }
@@ -49,6 +51,9 @@ fbbench_parse_arg(int ch, char *arg)
         break;
     case 'S':
         g_io_size = spdk_strtol(arg, 10);
+        break;
+    case 'Q':
+        g_queue_depth = spdk_strtol(arg, 10);
         break;
     case 'k':
         g_total_seconds = spdk_strtol(arg, 10);
@@ -94,7 +99,7 @@ fbbench_started(void *arg1)
     cli->create_connect(server->osd_addr, server->osd_port, server->node_id);
 
     //(fixme)wait connection, should make it as a callback
-    usleep(3000);
+    usleep(5000);
 
     if (g_total_ios)
     {
@@ -104,10 +109,9 @@ fbbench_started(void *arg1)
     cli->send_request(server->node_id);
 }
 
-static void process_response(client *c)
+static void process_response(client *c, uint64_t id)
 {
-    // SPDK_NOTICELOG("got response, size is %lu\r\n", response.ByteSizeLong());
-    if(c->get_type() == 1)
+    if (c->get_type() == 1)
     {
         if (c->get_wr().state() != 0)
         {
@@ -116,7 +120,7 @@ static void process_response(client *c)
         }
     }
 
-    auto tsc_diff = spdk_get_ticks() - c->get_tsc();
+    auto tsc_diff = spdk_get_ticks() - c->get_op_tsc(id);
     if (tsc_diff > g_latency_max)
     {
         g_latency_max = tsc_diff;
@@ -125,8 +129,10 @@ static void process_response(client *c)
     {
         g_latency_min = tsc_diff;
     }
+    c->remove_op_from_inflight_list(id);
 
     spdk_histogram_data_tally(g_histogram, tsc_diff);
+    c->decrease_inflight_ops();
     g_counter++;
 
     // stop sending more ios
@@ -154,7 +160,7 @@ int main(int argc, char *argv[])
     spdk_app_opts_init(&opts, sizeof(opts));
     opts.name = "fbbench";
 
-    if ((rc = spdk_app_parse_args(argc, argv, &opts, "E:f:I:o:t:S:T:k:", NULL,
+    if ((rc = spdk_app_parse_args(argc, argv, &opts, "E:f:I:o:t:S:T:k:Q:", NULL,
                                   fbbench_parse_arg, fbbench_usage)) !=
         SPDK_APP_PARSE_ARGS_SUCCESS)
     {

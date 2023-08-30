@@ -20,6 +20,7 @@ static const char *g_osd_addr = "127.0.0.1";
 static int g_osd_port = 8888;
 static int g_bench_type = 0;
 static int g_io_size = 4;
+static int g_queue_depth = 1;
 static int g_total_seconds = 0;
 static int g_counter = 0;
 static int g_total_ios = 0;
@@ -49,7 +50,7 @@ static const double _cutoffs[] = {
     0.999,
     -1,
 };
-static void process_response(client *c);
+static void process_response(client *c, uint64_t id);
 
 static void
 _check_cutoff(void *ctx, uint64_t start, uint64_t end, uint64_t count,
@@ -100,42 +101,54 @@ public:
 
     void send_request(int32_t target_node_id)
     {
-        // SPDK_NOTICELOG("send bench request\n");
-        auto shard_id = 0;
-        auto stub = _get_stub(shard_id, target_node_id);
-        _submit_tsc = spdk_get_ticks();
-        auto _done = google::protobuf::NewCallback(process_response, this);
-        if (_type == 1)
+        if (_inflight_ops_counter < g_queue_depth)
         {
-            osd::write_request *request = new osd::write_request();
-            request->set_pool_id(1);
-            request->set_pg_id(0);
-            char oname[32];
-            sprintf(oname, "%s%d", "objectname", g_counter);
-            request->set_object_name(oname);
-            request->set_offset(0);
-            char sz[g_io_size + 1];
-            memset(sz, 0x55, g_io_size);
-            sz[4096] = 0;
-            request->set_data(sz);
-            stub->process_write(&ctrlr, request, &_wr, _done);
-        }
-        else if (_type == 0)
-        {
-            osd::bench_request *request = new osd::bench_request();
-            char sz[g_io_size + 1];
-            sz[g_io_size] = 0;
-            request->set_req(sz);
-            stub->process_rpc_bench(&ctrlr, request, &_br, _done);
+            auto shard_id = 0;
+            auto stub = _get_stub(shard_id, target_node_id);
+            auto _done = google::protobuf::NewCallback(process_response, this, _last_submitted_id);
+            if (_type == 1)
+            {
+                osd::write_request *request = new osd::write_request();
+                request->set_pool_id(1);
+                request->set_pg_id(0);
+                char oname[32];
+                sprintf(oname, "%s%d", "objectname", g_counter);
+                request->set_object_name(oname);
+                request->set_offset(0);
+                char sz[g_io_size + 1];
+                memset(sz, 0x55, g_io_size);
+                sz[4096] = 0;
+                request->set_data(sz);
+                stub->process_write(&ctrlr, request, &_wr, _done);
+            }
+            else if (_type == 0)
+            {
+                osd::bench_request *request = new osd::bench_request();
+                char sz[g_io_size + 1];
+                sz[g_io_size] = 0;
+                request->set_req(sz);
+                stub->process_rpc_bench(&ctrlr, request, &_br, _done);
+            }
+            _op_submit_tsc[_last_submitted_id] = spdk_get_ticks();
+            _last_submitted_id++;
+            _inflight_ops_counter++;
+            send_request(target_node_id);
         }
     }
     int get_type() {
         return _type;
     }
 
-    uint64_t get_tsc() {
-        return _submit_tsc;
+    uint64_t get_op_tsc(uint64_t id)
+    {
+        return _op_submit_tsc[id];
     }
+
+    void remove_op_from_inflight_list(uint64_t id)
+    {
+        _op_submit_tsc.erase(id);
+    }
+
     auto get_wr() {
         return _wr;
     }
@@ -145,6 +158,11 @@ public:
 
     auto get_server() {
         return _s;
+    }
+
+    void decrease_inflight_ops()
+    {
+        _inflight_ops_counter--;
     }
 
 private:
@@ -157,10 +175,13 @@ private:
     server_t *_s;
     std::vector<uint32_t> _shard_cores;
     msg::rdma::rpc_controller ctrlr;
-    // latest request submitted tsc
-    uint64_t _submit_tsc;
     osd::write_reply _wr;
     osd::bench_response _br;
+    int _inflight_ops_counter = 0;
+    uint64_t _last_submitted_id = 0;
+
+    // ops tick
+    std::map<uint64_t, uint64_t> _op_submit_tsc;
 
     int _type;
     // 每个cpu核上有一个map
