@@ -13,6 +13,7 @@ enum {
     E_BUSY  = -EBUSY,		  /*  -16 Device or resource busy */
     E_NODEV = -ENODEV,		  /*  -19  No such device */
     E_INVAL = -EINVAL,       /*  -22  Invalid argument */
+    E_ENOSPC = -ENOSPC,      /* -28  No space left on device */
 
     RAFT_ERR_NOT_LEADER = -135,
     RAFT_ERR_ONE_VOTING_CHANGE_ONLY = -136,

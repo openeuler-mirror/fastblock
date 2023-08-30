@@ -68,7 +68,7 @@ public:
             //      所以在回调函数中回收这些，并不回收后面的buffer_list
             ctx->headers.emplace_back(sbuf);
             ctx->bl.append_buffer(sbuf);
-            ctx->bl.append_buffer(std::move(entry.data));
+            ctx->bl.append_buffer(entry.data);
             /// NOTE: 这个vector是写完之后要往map里保存的，从raft_index到rblob中pos和size的映射，
             ///    为了方便读取，这里保存的size，是包括了header长度(4_KB)和数据长度的。
             ctx->idx_pos.emplace_back(entry.index, pos, entry.size + 4_KB, entry.term_id);
@@ -87,7 +87,7 @@ public:
 
         ctx->headers.emplace_back(sbuf);
         ctx->bl.append_buffer(sbuf);
-        ctx->bl.append_buffer(std::move(entry.data));
+        ctx->bl.append_buffer(entry.data);
         ctx->idx_pos.emplace_back(entry.index, pos, entry.size + 4_KB, entry.term_id);
 
         rblob->append(ctx->bl, log_append_done, ctx);

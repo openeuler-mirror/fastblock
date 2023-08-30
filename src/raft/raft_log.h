@@ -71,16 +71,19 @@ public:
         SPDK_INFOLOG(pg_group, "disk_append size:%lu.\n", log_entries.size());
         _log->append(
             log_entries,
-            [](void *arg, int rberrno)
+            [log_entries](void *arg, int rberrno) mutable
             {
                 SPDK_INFOLOG(pg_group, "after disk_append.\n");
                 context *ctx = (context *)arg;
+                for(auto & entry : log_entries){
+                    free_buffer_list(entry.data);
+                }
                 ctx->complete(rberrno);
             },
             complete);
     }
 
-    raft_entry_t raft_entry_to_log_entry(log_entry_t& log_entry){
+    raft_entry_t log_entry_to_raft_entry(log_entry_t& log_entry){
         raft_entry_t raft_entry;
         raft_entry.set_term(log_entry.term_id);
         raft_entry.set_idx(log_entry.index);
@@ -107,7 +110,8 @@ public:
                 return;
             }  
             for(auto& entry : entries){
-                raft_entries.emplace_back(raft_entry_to_log_entry(entry));
+                raft_entries.emplace_back(log_entry_to_raft_entry(entry));
+                free_buffer_list(entry.data);
             }
 
             cb_fn(std::move(raft_entries), rberrno);
