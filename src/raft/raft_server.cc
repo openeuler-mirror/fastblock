@@ -275,49 +275,111 @@ bool raft_server_t::raft_get_entry_term(raft_index_t idx, raft_term_t& term)
 int raft_server_t::raft_process_appendentries_reply(
                                      msg_appendentries_response_t* r, bool is_heartbeat)
 {
-    SPDK_INFOLOG(pg_group,
-                 "received appendentries response %s from %d ci:%ld rci:%ld 1stidx:%ld\
-                 ls=%ld  ct:%ld rt:%ld\n",
-                 r->success() == 1 ? "SUCCESS" : "fail",
-                 r->node_id(),
-                 raft_get_current_idx(),
-                 r->current_idx(),
-                 r->first_idx(),
-                 r->lease(),
-                 raft_get_current_term(),
-                 r->term());
+    SPDK_INFOLOG(pg_group, 
+          "received appendentries response %s from %d ci:%ld rci:%ld 1stidx:%ld\
+           ls=%ld  ct:%ld rt:%ld\n",
+          r->success() == 1 ? "SUCCESS" : "fail", 
+          r->node_id(),
+          raft_get_current_idx(),
+          r->current_idx(),
+          r->first_idx(),
+          r->lease(),
+          raft_get_current_term(),
+          r->term());
 
     raft_node* node = raft_get_node(r->node_id());
     if (!node)
-        return -1;
+        return 1;
+
+    auto  process_response = [this, r, node](int result, raft_index_t end_idx){
+        if(node->raft_node_is_recovering() && result != 0){
+            node->raft_node_set_recovering(false);
+            return;
+        }
+        
+        raft_index_t point = end_idx;
+        SPDK_INFOLOG(pg_group, "current_idx: %lu commit_idx: %lu\n", end_idx, raft_get_commit_idx());
+
+        if (point && raft_get_commit_idx() < point)
+        {
+            raft_term_t term;
+            bool got = false;
+            auto _entry = raft_get_log()->log_get_at_idx(point);
+            if(_entry){
+                got = true;
+                term = _entry->term();
+            }else
+                got = raft_get_entry_term(point, term);
+            if (got && term == raft_get_current_term())
+            {
+                int votes = 0;
+                for(auto _node : nodes)
+                {
+                    raft_node* tmpnode = _node.get();
+                    if (
+                        tmpnode->raft_node_is_voting() &&
+                        (point <= tmpnode->raft_node_get_match_idx() || 
+                        (result != 0 && _node->raft_node_get_id() == node->raft_node_get_id())))
+                    {
+                        votes++;
+                    }
+                }
+    
+                if (raft_get_num_voting_nodes() / 2 < votes){
+                    raft_set_commit_idx(point);
+                    raft_write_entry_finish(first_idx, current_idx, result); 
+                }
+            }
+        }
+    };
 
     node->raft_set_suppress_heartbeats(false);
-    if (!raft_is_leader())
+    if (!raft_is_leader()){
+        SPDK_ERRLOG("node %d is not leader\n", raft_get_nodeid());
+        process_response(err::RAFT_ERR_NOT_LEADER, node->raft_get_end_idx());
         return err::RAFT_ERR_NOT_LEADER;
+    }
 
     if(r->success() == err::RAFT_ERR_NOT_FOUND_PG){
+        SPDK_ERRLOG("node %d does not find pg\n", r->node_id());
+        process_response(err::RAFT_ERR_NOT_FOUND_PG, node->raft_get_end_idx());
         return err::RAFT_ERR_NOT_FOUND_PG;
     }
 
     if(r->success() == err::E_ENOSPC){
         SPDK_ERRLOG("node %d does not have space\n", r->node_id());
+        process_response(err::E_ENOSPC, node->raft_get_end_idx());
         return err::E_ENOSPC;
     }
+
+    if(r->success() == err::RAFT_ERR_SHUTDOWN){
+        SPDK_ERRLOG("node %d has a seriously wrong\n", r->node_id());
+        process_response(err::RAFT_ERR_SHUTDOWN, node->raft_get_end_idx());
+        return err::RAFT_ERR_SHUTDOWN;
+    }
+
     /* If response contains term T > currentTerm: set currentTerm = T
        and convert to follower (§5.3) */
     if (raft_get_current_term() < r->term())
     {
-        int e = raft_set_current_term(r->term());
-        if (0 != e)
-            return e;
+        raft_set_current_term(r->term());
         raft_become_follower();
         raft_set_current_leader(-1);
-        return 0;
+        SPDK_ERRLOG("node %d change from leader to follow\n", raft_get_nodeid());
+        process_response(err::RAFT_ERR_NOT_LEADER, node->raft_get_end_idx());
+        return err::RAFT_ERR_NOT_LEADER;
     }
     else if (raft_get_current_term() != r->term()){
         SPDK_WARNLOG("current term %ld:  res term: %ld\n", raft_get_current_term(), r->term());
-        return 0;
+        return 1;
     }
+
+    if(r->success() == err::RAFT_ERR_LOG_NOT_MATCH){
+        node->raft_node_set_next_idx(r->current_idx() + 1);
+        dispatch_recovery(node);
+        return 1;
+    }
+    
 
     node->raft_node_set_lease(r->lease());
 
@@ -337,7 +399,7 @@ int raft_server_t::raft_process_appendentries_reply(
                 node->raft_node_set_next_idx(r->current_idx() + 1);
             }
             dispatch_recovery(node);
-            return -1;
+            return 1;
         }else{
             node->raft_node_set_next_idx(r->current_idx() + 1);
         }
@@ -345,8 +407,10 @@ int raft_server_t::raft_process_appendentries_reply(
         if(r->first_idx() - 1 > r->current_idx()){
             //should recovery
             dispatch_recovery(node);
+        }else{
+            process_response(err::RAFT_ERR_UNKNOWN, node->raft_get_end_idx());
         }
-        return -1;
+        return 1;
     }
 
 
@@ -380,33 +444,7 @@ int raft_server_t::raft_process_appendentries_reply(
         return 0;
     }
 
-    /* Update commit idx */
-    raft_index_t point = r->current_idx();
-    SPDK_INFOLOG(pg_group, "current_idx: %lu commit_idx: %lu\n", r->current_idx(), raft_get_commit_idx());
-    if (point && raft_get_commit_idx() < point)
-    {
-        raft_term_t term;
-        auto got = raft_get_entry_term(point, term);
-        if (got && term == raft_get_current_term())
-        {
-            int votes = 0;
-            for(auto _node : nodes)
-            {
-                raft_node* tmpnode = _node.get();
-                if (
-                    tmpnode->raft_node_is_voting() &&
-                    point <= tmpnode->raft_node_get_match_idx())
-                {
-                    votes++;
-                }
-            }
-
-            if (raft_get_num_voting_nodes() / 2 < votes){
-                raft_set_commit_idx(point);
-                raft_write_entry_finish(first_idx, current_idx, 0); 
-            }
-        }
-    }
+    process_response(0, r->current_idx());
 
     /* Aggressively send remaining entries */
     if (node->raft_node_get_next_idx() <= raft_get_current_idx()){
@@ -465,14 +503,15 @@ int raft_server_t::raft_recv_appendentries(
     raft_index_t new_commit_idx = 0; 
 
     if (0 < entries_num)
-        SPDK_INFOLOG(pg_group, "recvd appendentries ct: %ld t:%ld ci:%ld lc:%ld pli:%ld plt:%ld #%d\n",
-                     raft_get_current_term(),
-                     ae->term(),
-                     raft_get_current_idx(),
-                     ae->leader_commit(),
-                     ae->prev_log_idx(),
-                     ae->prev_log_term(),
-                     entries_num);
+        SPDK_INFOLOG(pg_group, "recvd appendentries from node %d ct: %ld t:%ld ci:%ld lc:%ld pli:%ld plt:%ld #%d\n",
+              ae->node_id(),
+              raft_get_current_term(),
+              ae->term(),
+              raft_get_current_idx(),
+              ae->leader_commit(),
+              ae->prev_log_idx(),
+              ae->prev_log_term(),
+              entries_num);
 
     r->set_node_id(raft_get_nodeid());
     r->set_success(0);
@@ -511,13 +550,7 @@ int raft_server_t::raft_recv_appendentries(
            whose term matches prevLogTerm (§5.3) */
         raft_term_t term;
 
-        bool got;
-        if(ae->prev_log_idx() == raft_get_current_idx()){
-            term = raft_get_current_term();
-            got = true;
-        }else{
-            got = raft_get_entry_term(ae->prev_log_idx(), term);
-        }
+        bool got = raft_get_entry_term(ae->prev_log_idx(), term);
         if (!got && raft_get_current_idx() < ae->prev_log_idx())
         {
             //follower滞后leader，需要recovery
@@ -534,10 +567,12 @@ int raft_server_t::raft_recv_appendentries(
                 /* Should never happen; something is seriously wrong! */
                 SPDK_NOTICELOG("AE prev conflicts with committed entry\n");
                 e = err::RAFT_ERR_SHUTDOWN;
+                r->set_success(e);
                 goto out;
             }
             /* Delete all the following log entries because they don't match */
             e = raft_delete_entry_from_idx(ae->prev_log_idx());
+            r->set_success(err::RAFT_ERR_LOG_NOT_MATCH);
             goto out;
         }
     }
@@ -563,6 +598,7 @@ int raft_server_t::raft_recv_appendentries(
                       raft_get_current_idx(), raft_get_commit_idx(),
                       ae->leader_commit(), ae->prev_log_idx());
                 e = err::RAFT_ERR_SHUTDOWN;
+                r->set_success(e);
                 goto out;
             }
             e = raft_delete_entry_from_idx(ety_index);
@@ -618,7 +654,7 @@ int raft_server_t::raft_recv_appendentries(
 
 out:
     r->set_term(current_term);
-    if (0 == r->success())
+    if (1 != r->success())
         r->set_current_idx(raft_get_current_idx());
     r->set_first_idx(ae->prev_log_idx() + 1);
     return e;
@@ -1064,14 +1100,16 @@ void raft_server_t::raft_flush(){
          * becoming congested. */
         raft_index_t next_idx = node->raft_node_get_next_idx();
         if(!node->raft_node_is_recovering() && next_idx == first_idx){
-            SPDK_WARNLOG("send to node %d next_idx: %ld\n", node->raft_node_get_id(), next_idx);
+            SPDK_INFOLOG(pg_group, "send to node %d next_idx: %ld current_idx: %ld\n", 
+                    node->raft_node_get_id(), next_idx, current_idx);
+            node->raft_set_end_idx(current_idx);
             raft_send_appendentries(node);
         }
         else{
             if(node->raft_node_is_recovering())
-                SPDK_WARNLOG("--- node %d is recovering\n", node->raft_node_get_id());
+                SPDK_INFOLOG(pg_group, "--- node %d is recovering\n", node->raft_node_get_id());
             else
-                SPDK_WARNLOG("++++ node %d is fall behind,  next_idx: %ld first_idx: %ld +++\n", 
+                SPDK_INFOLOG(pg_group, "++++ node %d is fall behind,  next_idx: %ld first_idx: %ld +++\n", 
                     node->raft_node_get_id(), next_idx, first_idx);
         }             
     }
@@ -1590,7 +1628,7 @@ void raft_server_t::start_raft_timer(){
 void raft_server_t::do_recovery(raft_node* node){
     raft_index_t next_idx = node->raft_node_get_next_idx();
     if (next_idx <= raft_get_log()->log_get_base()){
-        SPDK_WARNLOG("node %d  next_idx %ld  raft base log: %ld\n", 
+        SPDK_DEBUGLOG("node %d  next_idx %ld  raft base log: %ld\n", 
                 node->raft_node_get_id(), next_idx, raft_get_log()->log_get_base());
         _raft_send_installsnapshot(node);
         return;
@@ -1611,7 +1649,7 @@ void raft_server_t::do_recovery(raft_node* node){
         long entry_num = std::min(recovery_max_entry_num, raft_get_current_idx() - next_idx + 1);
         raft_get_log()->log_get_from_idx(next_idx, raft_get_current_idx() - next_idx + 1, entries);
         msg_appendentries_t*ae = create_appendentries(node);
-        SPDK_WARNLOG("read %ld entry first: %ld from cache for recovery to node %d\n", 
+        SPDK_DEBUGLOG(pg_group, "read %ld entry first: %ld from cache for recovery to node %d\n", 
                 entries.size(), next_idx, node->raft_node_get_id());
         for(auto entry : entries){
             auto entry_ptr = ae->add_entries();
@@ -1629,7 +1667,7 @@ void raft_server_t::do_recovery(raft_node* node){
       next_idx + entry_num - 1, 
       [this, node, send_entries = std::move(send_recovery_entries), next_idx](std::vector<raft_entry_t>&& entries, int rberrno){
         assert(rberrno == 0);
-        SPDK_WARNLOG("read %ld entry first: %ld from disk log for recovery to node %d\n", 
+        SPDK_DEBUGLOG(pg_group, "read %ld entry first: %ld from disk log for recovery to node %d\n", 
                 entries.size(), next_idx, node->raft_node_get_id());
         send_entries(std::move(entries));
       });
@@ -1643,7 +1681,7 @@ void raft_server_t::dispatch_recovery(raft_node* node){
     }
     
     if(node->raft_node_get_match_idx() == raft_get_current_idx()){
-        SPDK_WARNLOG("end recovery. node %d match_idx: %ld  raft current idx: %ld\n", 
+        SPDK_DEBUGLOG(pg_group, "end recovery. node %d match_idx: %ld  raft current idx: %ld\n", 
                 node->raft_node_get_id(), node->raft_node_get_match_idx(), raft_get_current_idx());
         node->raft_node_set_recovering(false);
         return;

@@ -21,7 +21,8 @@ public:
     , _suppress_heartbeats(false)
     , _append_time(0)
     , _is_heartbeating(false)
-    , _is_recovering(false){}
+    , _is_recovering(false)
+    , _end_idx(0) {}
 
     void raft_node_set_effective_time(raft_time_t effective_time)
     {
@@ -158,6 +159,14 @@ public:
     void raft_node_set_recovering(bool recovering){
         _is_recovering = recovering;
     }
+
+    raft_index_t raft_get_end_idx(){
+        return _end_idx;
+    }
+
+    void raft_set_end_idx(raft_index_t idx){
+        _end_idx = idx;
+    }
 private:
 
     void* _udata;
@@ -178,6 +187,8 @@ private:
     raft_time_t _append_time;
     bool _is_heartbeating;
     bool _is_recovering;
+
+    raft_index_t _end_idx;  //leader发给此node的append entry request中最后一个log
 };
 
 #endif
