@@ -16,7 +16,7 @@
 #include "localstore/spdk_buffer.h"
 #include "localstore/disk_log.h"
 
-#define append_ITERATIONS 10000
+#define append_ITERATIONS 600000
 #define read_ITERATIONS   100
 
 static const char *g_bdev_name = NULL;
@@ -88,7 +88,6 @@ uint64_t write_blob_tsc, write_snap_tsc;
 static void
 hello_cleanup(struct hello_context_t *hello_context)
 {
-    delete hello_context->log;
     delete hello_context;
 }
 
@@ -140,6 +139,7 @@ close_complete(void *arg, int rberrno)
     return;
   }
 
+  delete hello_context->log;
   unload_bs(hello_context, "", 0);
 }
 
@@ -220,9 +220,8 @@ log_append_continue(void *arg, int rberrno) {
   }
 
   ctx->append_idx++;
-
   ctx->log->advance_apply(ctx->apply_raft_index);
-  if (ctx->append_idx % 1000 == 0) {
+  if (ctx->append_idx % 5000 == 0) {
     auto dump = ctx->log->dump_state();
     SPDK_NOTICELOG("%d-th log state:%s", ctx->append_idx, dump.c_str());
   }
@@ -277,10 +276,29 @@ log_append_iterates(struct hello_context_t* hello_context) {
   }
   ctx->log->append(entry_vec, log_append_continue, ctx);
 }
+
 /********************************************************************/
 
 static void
-make_rblob_done(void *arg, struct rolling_blob* rblob, int rberrno) {
+make_2th_log_done(void *arg, struct rolling_blob* rblob, int rberrno) {
+  struct hello_context_t *hello_context = (struct hello_context_t *)arg;
+
+  if (rberrno) {
+    unload_bs(hello_context, "Error in blob create callback", rberrno);
+    return;
+  }
+
+  auto log = new disk_log(rblob);
+  log->stop([hello_context, log] (void *, int) {
+      SPDK_NOTICELOG("close second disk_log\n");
+      log_append_iterates(hello_context);
+      delete log;
+    },
+    nullptr); 
+}
+
+static void
+make_log_done(void *arg, struct rolling_blob* rblob, int rberrno) {
   struct hello_context_t *hello_context = (struct hello_context_t *)arg;
 
   if (rberrno) {
@@ -291,7 +309,10 @@ make_rblob_done(void *arg, struct rolling_blob* rblob, int rberrno) {
   hello_context->rblob = rblob;
   hello_context->log = new disk_log(rblob);
 
-  log_append_iterates(hello_context);
+  // log_append_iterates(hello_context);
+  // 打开第二个log
+  make_rolling_blob(hello_context->bs, hello_context->channel, rolling_blob::huge_blob_size, 
+                    make_2th_log_done, hello_context);
 }
 
 static void
@@ -315,7 +336,7 @@ bs_init_complete(void *cb_arg, struct spdk_blob_store *bs,
   SPDK_NOTICELOG("blobstore has FREE clusters of %" PRIu64 "\n", free);
   
   make_rolling_blob(hello_context->bs, hello_context->channel, rolling_blob::huge_blob_size, 
-                    make_rblob_done, hello_context);
+                    make_log_done, hello_context);
 }
 
 static void

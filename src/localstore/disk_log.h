@@ -57,7 +57,7 @@ class disk_log {
 
 public:
     disk_log(rolling_blob* rblob) : _rblob(rblob) {
-      _trim_poller = SPDK_POLLER_REGISTER(trim_poller, this, 20);
+      _trim_poller = SPDK_POLLER_REGISTER(trim_poller, this, 5000);
     }
     ~disk_log() { 
       delete _rblob;
@@ -242,7 +242,9 @@ public:
       return false;
     }
 
-    // trim范围 [start_index, end_index]，包括 end_index 在内也会读到
+    /**
+     * trim范围 [start_index, end_index]，包括 end_index 在内也会读到
+     */
     void trim_back(uint64_t start_index, uint64_t end_index, log_op_complete cb_fn, void* arg) {
         if (end_index < start_index) {
             SPDK_ERRLOG("end_index little than start_index. start:%lu end:%lu\n", start_index, end_index);
@@ -285,6 +287,7 @@ public:
               << " index_map rbegin:" << _index_map.rbegin()->first
               << " _polls_count:" << _polls_count
               << " _trims_count:" << _trims_count
+              << "\nrblob state:" << _rblob->dump_state()
               << std::endl;
       return sstream.str();
     }
