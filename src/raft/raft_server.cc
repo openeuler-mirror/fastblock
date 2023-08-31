@@ -276,9 +276,10 @@ int raft_server_t::raft_process_appendentries_reply(
                                      msg_appendentries_response_t* r, bool is_heartbeat)
 {
     SPDK_INFOLOG(pg_group, 
-          "received appendentries response %s from %d ci:%ld rci:%ld 1stidx:%ld\
+          "received appendentries response %s res: %d from %d ci:%ld rci:%ld 1stidx:%ld\
            ls=%ld  ct:%ld rt:%ld\n",
           r->success() == 1 ? "SUCCESS" : "fail", 
+          r->success(),
           r->node_id(),
           raft_get_current_idx(),
           r->current_idx(),
@@ -450,10 +451,12 @@ int raft_server_t::raft_process_appendentries_reply(
         return 0;
     }
 
+    auto cur_idx = raft_get_current_idx();
     process_response(0, r->current_idx());
 
     /* Aggressively send remaining entries */
-    if (node->raft_node_get_next_idx() <= raft_get_current_idx()){
+    if (node->raft_node_get_next_idx() <= cur_idx){
+        SPDK_INFOLOG(pg_group, "node: %d next_idx: %ld cur_idx: %ld\n", node->raft_node_get_id(), node->raft_node_get_next_idx(), cur_idx);
         dispatch_recovery(node);
     }
 
@@ -537,7 +540,7 @@ int raft_server_t::raft_recv_appendentries(
     else if (ae->term() < raft_get_current_term())
     {
         /* 1. Reply false if term < currentTerm (§5.1) */
-        SPDK_NOTICELOG("AE from %d term %ld is less than current term %ld\n",
+        SPDK_INFOLOG(pg_group, "AE from %d term %ld is less than current term %ld\n",
               ae->node_id(), ae->term(), raft_get_current_term());
         goto out;
     }
@@ -566,13 +569,13 @@ int raft_server_t::raft_recv_appendentries(
         }
         else if (got && term != ae->prev_log_term())
         { 
-            SPDK_NOTICELOG("AE term doesn't match prev_term (ie. %ld vs %ld) ci:%ld comi:%ld lcomi:%ld pli:%ld \n",
+            SPDK_INFOLOG(pg_group, "AE term doesn't match prev_term (ie. %ld vs %ld) ci:%ld comi:%ld lcomi:%ld pli:%ld \n",
                   term, ae->prev_log_term(), raft_get_current_idx(),
                   raft_get_commit_idx(), ae->leader_commit(), ae->prev_log_idx());
             if (ae->prev_log_idx() <= raft_get_commit_idx())
             {
                 /* Should never happen; something is seriously wrong! */
-                SPDK_NOTICELOG("AE prev conflicts with committed entry\n");
+                SPDK_INFOLOG(pg_group, "AE prev conflicts with committed entry\n");
                 e = err::RAFT_ERR_SHUTDOWN;
                 r->set_success(e);
                 goto out;
@@ -601,7 +604,7 @@ int raft_server_t::raft_recv_appendentries(
             if (ety_index <= raft_get_commit_idx())
             {
                 /* Should never happen; something is seriously wrong! */
-                SPDK_NOTICELOG("AE entry conflicts with committed entry ci:%ld comi:%ld lcomi:%ld pli:%ld \n",
+                SPDK_INFOLOG(pg_group, "AE entry conflicts with committed entry ci:%ld comi:%ld lcomi:%ld pli:%ld \n",
                       raft_get_current_idx(), raft_get_commit_idx(),
                       ae->leader_commit(), ae->prev_log_idx());
                 e = err::RAFT_ERR_SHUTDOWN;
@@ -1116,9 +1119,9 @@ void raft_server_t::raft_flush(){
         }
         else{
             if(node->raft_node_is_recovering())
-                SPDK_INFOLOG(pg_group, "--- node %d is recovering\n", node->raft_node_get_id());
+                SPDK_INFOLOG(pg_group, "node %d is recovering\n", node->raft_node_get_id());
             else
-                SPDK_INFOLOG(pg_group, "++++ node %d is fall behind,  next_idx: %ld first_idx: %ld +++\n", 
+                SPDK_INFOLOG(pg_group, "node %d is fall behind,  next_idx: %ld first_idx: %ld \n", 
                     node->raft_node_get_id(), next_idx, first_idx);
         }             
     }
