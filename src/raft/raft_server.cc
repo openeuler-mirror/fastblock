@@ -298,7 +298,8 @@ int raft_server_t::raft_process_appendentries_reply(
         }
         
         raft_index_t point = end_idx;
-        SPDK_INFOLOG(pg_group, "current_idx: %lu commit_idx: %lu\n", end_idx, raft_get_commit_idx());
+        SPDK_INFOLOG(pg_group, "current_idx: %lu commit_idx: %lu from node: %d\n", 
+                end_idx, raft_get_commit_idx(), node->raft_node_get_id());
 
         if (point && raft_get_commit_idx() < point)
         {
@@ -313,6 +314,7 @@ int raft_server_t::raft_process_appendentries_reply(
             if (got && term == raft_get_current_term())
             {
                 int votes = 0;
+                bool leader_match = false;
                 for(auto _node : nodes)
                 {
                     raft_node* tmpnode = _node.get();
@@ -323,9 +325,13 @@ int raft_server_t::raft_process_appendentries_reply(
                     {
                         votes++;
                     }
+                    if(raft_is_self(tmpnode) && tmpnode->raft_node_is_voting() && point <= tmpnode->raft_node_get_match_idx()){
+                        //确保leader已经提交了这条log
+                        leader_match = true;
+                    }
                 }
     
-                if (raft_get_num_voting_nodes() / 2 < votes){
+                if (raft_get_num_voting_nodes() / 2 < votes && leader_match){
                     raft_set_commit_idx(point);
                     raft_write_entry_finish(first_idx, current_idx, result); 
                 }
@@ -470,7 +476,8 @@ struct follow_disk_append_complete : public context{
     , rsp(_rsp) {}
 
     void finish(int r) override {
-        SPDK_INFOLOG(pg_group, "follow_disk_append_complete finish, commit_idx %ld.\n", commit_idx);
+        SPDK_INFOLOG(pg_group, "follow_disk_append_complete finish, start_idx: %ld end_idx: %ld commit_idx %ld result: %d.\n", 
+                start_idx, end_idx, commit_idx, r);
         if(r != 0){
             SPDK_ERRLOG("follow_disk_append_complete, result: %d\n", r);
             rsp->set_success(r);
@@ -983,7 +990,8 @@ int raft_server_t::_cfg_change_is_valid(msg_entry_t* ety)
 }
 
 void raft_server_t::raft_write_entry_finish(raft_index_t start_idx, raft_index_t end_idx, int result){
-    SPDK_INFOLOG(pg_group, "raft_write_entry_finish, [%ld-%ld] result: %d\n", start_idx, end_idx, result);
+    SPDK_INFOLOG(pg_group, "raft_write_entry_finish, [%ld-%ld] commit: %ld result: %d\n", 
+            start_idx, end_idx, raft_get_commit_idx(), result);
     raft_get_log()->raft_write_entry_finish(start_idx, end_idx, result);
     raft_flush();
 }
@@ -1020,7 +1028,8 @@ struct disk_append_complete : public context{
     , raft(_raft) {}
 
     void finish(int r) override {
-        SPDK_INFOLOG(pg_group, "disk_append_complete, result: %d\n", r);
+        SPDK_INFOLOG(pg_group, "disk_append_complete, start_idx: %ld end_idx: %ld result: %d\n", 
+                start_idx, end_idx, r);
         if(r != 0)
             SPDK_ERRLOG("disk_append_complete, result: %d\n", r);
         raft->raft_disk_append_finish(start_idx, end_idx, r);
@@ -1628,7 +1637,7 @@ void raft_server_t::start_raft_timer(){
 void raft_server_t::do_recovery(raft_node* node){
     raft_index_t next_idx = node->raft_node_get_next_idx();
     if (next_idx <= raft_get_log()->log_get_base()){
-        SPDK_DEBUGLOG("node %d  next_idx %ld  raft base log: %ld\n", 
+        SPDK_DEBUGLOG(pg_group, "node %d  next_idx %ld  raft base log: %ld\n", 
                 node->raft_node_get_id(), next_idx, raft_get_log()->log_get_base());
         _raft_send_installsnapshot(node);
         return;
