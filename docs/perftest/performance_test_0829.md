@@ -1,11 +1,11 @@
 性能测试报告
 # 测试环境
-- commit hash: `235bba92af2b3d1f402138d11064f382a591d688`, Release模式编译
+- commit hash: `ccc4dc89aee076aad7dc5bdfa8458ecf5e75b873`, Release模式编译
 - 服务器: 40核80线程，网卡25G支持RDMA，384G内存, CPU采用性能模式
 - 磁盘：测试是采用3个P4510作为后端存储(仅启动三个osd), 采用spdk nvme用户态驱动和aio bdev分别进行测试
 - 测试项: 单pg测试，分别测试了一副本、二副本和三副本下的fbbench的write和rpc，以及一副本下的fbbench的rpc测试, 另外benchmark工具也能够控制写同一个对象还是不通对象，且能够展示ops、平均延迟和延迟分位统计
 - 重大变更事项: 相比8.17测试报告，本次最大变更时对关键路径上的SPDK_NOTICELOG进行了注释，因为测试结果表明，这些注释对性能有超乎想象的影响, rsyslog体系会成为重大性能瓶颈
-- 支持Queue Depth: 新版本fbbench支持设置QD，以便提高系统吞吐, 因三副本时跑高QD会让raft退化为两副本，所以未做三副本的多QD测试
+- 支持Queue Depth: 新版本fbbench支持设置QD，以便提高系统吞吐
 - 其它: 测试时，所有进程都仅使用一个核，且是大核，避免使用同一个物理核上的两个线程
 - 其它：因目前raft log回收存在bug，此次测试时因iops较高会导致raft log空间不够用，所以修改了raft log的size为100GB
 - 其它：可使用spdk的iostat.py脚本监控被spdk接管的nvme盘
@@ -1217,3 +1217,190 @@ cpu_stat:  user_stat  nice_stat  system_stat  iowait_stat  steal_stat  idle_stat
 Device   tps      KB_read/s  KB_wrtn/s  KB_dscd/s  KB_read  KB_wrtn    KB_dscd
 test1n1  4859.15  4808.48    471461.39  0.00       4840.00  474552.00  0.00
 ```
+
+
+
+## 三副本 QD=8,16,64
+### nvme bdev QD=8
+```
+root@ceph144:~/fb/fastblock/build/tools# ./fbbench -o 172.31.77.144 -t 8001 -S 4096 -k 30 -m 0x8 -T write -Q 8
+[2023-09-01 11:31:29.845830] Starting SPDK v22.05.1-pre git sha1 58286b074 / DPDK 22.03.0 initialization...
+[2023-09-01 11:31:29.845945] [ DPDK EAL parameters: [2023-09-01 11:31:29.845975] fbbench [2023-09-01 11:31:29.845998] --no-shconf [2023-09-01 11:31:29.846019] -c 0x8 [2023-09-01 11:31:29.846041] --huge-unlink [2023-09-01 11:31:29.846063] --log-level=lib.eal:6 [2023-09-01 11:31:29.846084] --log-level=lib.cryptodev:5 [2023-09-01 11:31:29.846107] --log-level=user1:6 [2023-09-01 11:31:29.846132] --iova-mode=pa [2023-09-01 11:31:29.846156] --base-virtaddr=0x200000000000 [2023-09-01 11:31:29.846177] --match-allocations [2023-09-01 11:31:29.846199] --file-prefix=spdk_pid2934051 [2023-09-01 11:31:29.846222] ]
+EAL: No free 2048 kB hugepages reported on node 1
+TELEMETRY: No legacy callbacks, legacy socket not created
+[2023-09-01 11:31:29.926078] app.c: 603:spdk_app_start: *NOTICE*: Total cores available: 1
+[2023-09-01 11:31:30.072415] reactor.c: 947:reactor_run: *NOTICE*: Reactor started on core 3
+[2023-09-01 11:31:30.072489] accel_engine.c: 969:sw_accel_engine_init: *NOTICE*: Accel framework software engine initialized.
+[2023-09-01 11:31:30.117967] rpc.c: 185:spdk_rpc_listen: *ERROR*: RPC Unix domain socket path /var/tmp/spdk.sock in use. Specify another.
+[2023-09-01 11:31:30.118022] rpc.c:  70:spdk_rpc_initialize: *ERROR*: Unable to start RPC service at /var/tmp/spdk.sock
+[2023-09-01 11:31:30.118060] /root/fb/fastblock/tools/fbbench.cc:  97:fbbench_started: *NOTICE*: ------block start, cpu count : 1
+[2023-09-01 11:31:30.118079] /root/fb/fastblock/src/msg/transport_client.h: 422:transport_client: *NOTICE*: construct transport_client, this is 0x562b40cb04a0
+[2023-09-01 11:31:30.158518] /root/fb/fastblock/src/msg/transport_client.h: 469:start: *NOTICE*: Construct a new ctrlr = 0x562b40cb06d0, a new poll group = 0x562b40cb4d00
+[2023-09-01 11:31:30.158590] /root/fb/fastblock/tools/fbbench.h:  94:create_connect: *NOTICE*: create connect to node 0 (address 172.31.77.144, port 8001) in core 3
+[2023-09-01 11:31:30.158612] /root/fb/fastblock/src/msg/transport_client.h: 171:connect: *NOTICE*: Connecting to 172.31.77.144:8001...
+[2023-09-01 11:31:30.158668] client.c: 521:spdk_client_ctrlr_alloc_io_qpair_async: *NOTICE*: spdk_client_ctrlr_alloc_io_qpair : io_queue_size 128
+[2023-09-01 11:31:30.158688] rdma_c.c:2385:client_rdma_ctrlr_create_io_qpair: *NOTICE*: client_rdma_ctrlr_create_io_qpair io_queue_size: 128 io_queue_requests: 4096
+[2023-09-01 11:31:30.159073] rdma_c.c:2127:client_rdma_ctrlr_create_qpair: *NOTICE*: client_rdma_ctrlr_create_qpair num_entries: 128
+[2023-09-01 11:31:30.162054] /root/fb/fastblock/src/msg/transport_client.h: 191:connect: *NOTICE*: Conneting to 172.31.77.144:8001 done, conn is 0x562b40cb7a90, ctrlr is 0x562b40cb06d0, group is 0x562b40cb4d00
+[2023-09-01 11:31:30.162088] /root/fb/fastblock/src/msg/transport_client.h: 488:emplace_connection: *NOTICE*: Connecting to 172.31.77.144:8001
+[2023-09-01 11:31:30.179536] rdma_c.c: 589:client_rdma_qpair_process_cm_event: *NOTICE*: client_rdma_qpair_process_cm_event num_entries before: 128
+[2023-09-01 11:31:30.179575] rdma_c.c: 593:client_rdma_qpair_process_cm_event: *NOTICE*: client_rdma_qpair_process_cm_event num_entries: 128 128
+[2023-09-01 11:31:30.179591] rdma_c.c:1271:client_rdma_register_reqs: *NOTICE*: client_rdma_register_reqs: 128
+[2023-09-01 11:31:31.120401] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 35715
+[2023-09-01 11:31:32.122761] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 40279
+[2023-09-01 11:31:33.125125] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 39647
+[2023-09-01 11:31:34.127484] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 39606
+[2023-09-01 11:31:35.129846] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 39393
+[2023-09-01 11:31:36.132210] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 39404
+[2023-09-01 11:31:37.134571] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 39039
+[2023-09-01 11:31:38.136933] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 39254
+[2023-09-01 11:31:39.139295] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 38913
+[2023-09-01 11:31:40.141656] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 39254
+[2023-09-01 11:31:41.144025] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 38896
+[2023-09-01 11:31:42.146384] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 39485
+[2023-09-01 11:31:43.148745] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 38971
+[2023-09-01 11:31:44.151107] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 38921
+[2023-09-01 11:31:45.153477] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 38545
+[2023-09-01 11:31:46.155834] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 39120
+[2023-09-01 11:31:47.158196] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 39132
+[2023-09-01 11:31:48.160566] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 39234
+[2023-09-01 11:31:49.162936] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 39042
+[2023-09-01 11:31:50.165295] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 38912
+[2023-09-01 11:31:51.167657] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 38905
+[2023-09-01 11:31:52.170018] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 38781
+[2023-09-01 11:31:53.172380] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 38907
+[2023-09-01 11:31:54.174742] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 38827
+[2023-09-01 11:31:55.177103] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 38513
+[2023-09-01 11:31:56.179465] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 38530
+[2023-09-01 11:31:57.181827] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 38664
+[2023-09-01 11:31:58.184189] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 38534
+[2023-09-01 11:31:59.186550] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 38567
+[2023-09-01 11:32:00.188912] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 38896
+ops is: 38929, average latency is 25.687791us
+latency histogram: min:80.000000us 10.000000%:164.815238us 50.000000%:186.270476us 90.000000%:222.354286us 95.000000%:255.512381us 99.000000%:472.015238us 99.900000%:3151.969524us max:23535.000000us
+[2023-09-01 11:32:00.189045] /root/fb/fastblock/src/msg/transport_client.h: 434:~transport_client: *NOTICE*: destruct transport_client
+```
+
+![磁盘IO](3copy_nvme_qd8.png)
+
+### nvme bdev QD=16
+```
+root@ceph144:~/fb/fastblock/build/tools# ./fbbench -o 172.31.77.144 -t 8003 -S 4096 -k 30 -m 0x8 -T write -Q 16
+[2023-09-01 11:35:22.194181] Starting SPDK v22.05.1-pre git sha1 58286b074 / DPDK 22.03.0 initialization...
+[2023-09-01 11:35:22.194304] [ DPDK EAL parameters: [2023-09-01 11:35:22.194333] fbbench [2023-09-01 11:35:22.194358] --no-shconf [2023-09-01 11:35:22.194381] -c 0x8 [2023-09-01 11:35:22.194402] --huge-unlink [2023-09-01 11:35:22.194425] --log-level=lib.eal:6 [2023-09-01 11:35:22.194449] --log-level=lib.cryptodev:5 [2023-09-01 11:35:22.194475] --log-level=user1:6 [2023-09-01 11:35:22.194498] --iova-mode=pa [2023-09-01 11:35:22.194519] --base-virtaddr=0x200000000000 [2023-09-01 11:35:22.194542] --match-allocations [2023-09-01 11:35:22.194563] --file-prefix=spdk_pid2934195 [2023-09-01 11:35:22.194587] ]
+EAL: No free 2048 kB hugepages reported on node 1
+TELEMETRY: No legacy callbacks, legacy socket not created
+[2023-09-01 11:35:22.276374] app.c: 603:spdk_app_start: *NOTICE*: Total cores available: 1
+[2023-09-01 11:35:22.422627] reactor.c: 947:reactor_run: *NOTICE*: Reactor started on core 3
+[2023-09-01 11:35:22.422701] accel_engine.c: 969:sw_accel_engine_init: *NOTICE*: Accel framework software engine initialized.
+[2023-09-01 11:35:22.468194] rpc.c: 185:spdk_rpc_listen: *ERROR*: RPC Unix domain socket path /var/tmp/spdk.sock in use. Specify another.
+[2023-09-01 11:35:22.468242] rpc.c:  70:spdk_rpc_initialize: *ERROR*: Unable to start RPC service at /var/tmp/spdk.sock
+[2023-09-01 11:35:22.468275] /root/fb/fastblock/tools/fbbench.cc:  97:fbbench_started: *NOTICE*: ------block start, cpu count : 1
+[2023-09-01 11:35:22.468293] /root/fb/fastblock/src/msg/transport_client.h: 422:transport_client: *NOTICE*: construct transport_client, this is 0x5611473ef4a0
+[2023-09-01 11:35:22.510673] /root/fb/fastblock/src/msg/transport_client.h: 469:start: *NOTICE*: Construct a new ctrlr = 0x5611473ef6d0, a new poll group = 0x5611473f3d00
+[2023-09-01 11:35:22.510743] /root/fb/fastblock/tools/fbbench.h:  94:create_connect: *NOTICE*: create connect to node 0 (address 172.31.77.144, port 8003) in core 3
+[2023-09-01 11:35:22.510765] /root/fb/fastblock/src/msg/transport_client.h: 171:connect: *NOTICE*: Connecting to 172.31.77.144:8003...
+[2023-09-01 11:35:22.510817] client.c: 521:spdk_client_ctrlr_alloc_io_qpair_async: *NOTICE*: spdk_client_ctrlr_alloc_io_qpair : io_queue_size 128
+[2023-09-01 11:35:22.510837] rdma_c.c:2385:client_rdma_ctrlr_create_io_qpair: *NOTICE*: client_rdma_ctrlr_create_io_qpair io_queue_size: 128 io_queue_requests: 4096
+[2023-09-01 11:35:22.511198] rdma_c.c:2127:client_rdma_ctrlr_create_qpair: *NOTICE*: client_rdma_ctrlr_create_qpair num_entries: 128
+[2023-09-01 11:35:22.513973] /root/fb/fastblock/src/msg/transport_client.h: 191:connect: *NOTICE*: Conneting to 172.31.77.144:8003 done, conn is 0x5611473f6a90, ctrlr is 0x5611473ef6d0, group is 0x5611473f3d00
+[2023-09-01 11:35:22.514006] /root/fb/fastblock/src/msg/transport_client.h: 488:emplace_connection: *NOTICE*: Connecting to 172.31.77.144:8003
+[2023-09-01 11:35:22.530937] rdma_c.c: 589:client_rdma_qpair_process_cm_event: *NOTICE*: client_rdma_qpair_process_cm_event num_entries before: 128
+[2023-09-01 11:35:22.530982] rdma_c.c: 593:client_rdma_qpair_process_cm_event: *NOTICE*: client_rdma_qpair_process_cm_event num_entries: 128 128
+[2023-09-01 11:35:22.531000] rdma_c.c:1271:client_rdma_register_reqs: *NOTICE*: client_rdma_register_reqs: 128
+[2023-09-01 11:35:23.470554] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 45973
+[2023-09-01 11:35:24.472854] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 49102
+[2023-09-01 11:35:25.475145] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 46317
+[2023-09-01 11:35:26.477440] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 47546
+[2023-09-01 11:35:27.479735] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 46915
+[2023-09-01 11:35:28.482033] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 47277
+[2023-09-01 11:35:29.484327] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 47408
+[2023-09-01 11:35:30.486628] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 46548
+[2023-09-01 11:35:31.488920] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 47519
+[2023-09-01 11:35:32.491217] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 46742
+[2023-09-01 11:35:33.493512] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 47459
+[2023-09-01 11:35:34.495808] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 47299
+[2023-09-01 11:35:35.498104] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 47368
+[2023-09-01 11:35:36.500403] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 47032
+[2023-09-01 11:35:37.502699] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 47567
+[2023-09-01 11:35:38.504999] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 47372
+[2023-09-01 11:35:39.507292] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 46708
+[2023-09-01 11:35:40.509589] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 47421
+[2023-09-01 11:35:41.511886] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 46616
+[2023-09-01 11:35:42.514183] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 47719
+[2023-09-01 11:35:43.516480] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 46827
+[2023-09-01 11:35:44.518776] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 47326
+[2023-09-01 11:35:45.521092] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 46815
+[2023-09-01 11:35:46.523386] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 47106
+[2023-09-01 11:35:47.525683] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 46512
+[2023-09-01 11:35:48.527981] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 46277
+[2023-09-01 11:35:49.530278] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 46966
+[2023-09-01 11:35:50.532576] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 46387
+[2023-09-01 11:35:51.534874] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 46261
+[2023-09-01 11:35:52.537177] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 46421
+ops is: 47026, average latency is 21.264832us
+latency histogram: min:93.000000us 10.000000%:267.215238us 50.000000%:312.076190us 90.000000%:392.045714us 95.000000%:438.857143us 99.000000%:885.516190us 99.900000%:3370.422857us max:14853.000000us
+[2023-09-01 11:35:52.537308] /root/fb/fastblock/src/msg/transport_client.h: 434:~transport_client: *NOTICE*: destruct transport_client
+```
+
+![磁盘IO](3copy_nvme_qd16.png)
+
+### nvme bdev QD=64
+```
+root@ceph144:~/fb/fastblock/build/tools# ./fbbench -o 172.31.77.144 -t 8002 -S 4096 -k 30 -m 0x8 -T write -Q 64
+[2023-09-01 11:24:15.130495] Starting SPDK v22.05.1-pre git sha1 58286b074 / DPDK 22.03.0 initialization...
+[2023-09-01 11:24:15.130606] [ DPDK EAL parameters: [2023-09-01 11:24:15.130631] fbbench [2023-09-01 11:24:15.130654] --no-shconf [2023-09-01 11:24:15.130673] -c 0x8 [2023-09-01 11:24:15.130692] --huge-unlink [2023-09-01 11:24:15.130710] --log-level=lib.eal:6 [2023-09-01 11:24:15.130729] --log-level=lib.cryptodev:5 [2023-09-01 11:24:15.130748] --log-level=user1:6 [2023-09-01 11:24:15.130768] --iova-mode=pa [2023-09-01 11:24:15.130789] --base-virtaddr=0x200000000000 [2023-09-01 11:24:15.130810] --match-allocations [2023-09-01 11:24:15.130830] --file-prefix=spdk_pid2933851 [2023-09-01 11:24:15.130850] ]
+EAL: No free 2048 kB hugepages reported on node 1
+TELEMETRY: No legacy callbacks, legacy socket not created
+[2023-09-01 11:24:15.213609] app.c: 603:spdk_app_start: *NOTICE*: Total cores available: 1
+[2023-09-01 11:24:15.360496] reactor.c: 947:reactor_run: *NOTICE*: Reactor started on core 3
+[2023-09-01 11:24:15.360568] accel_engine.c: 969:sw_accel_engine_init: *NOTICE*: Accel framework software engine initialized.
+[2023-09-01 11:24:15.406079] rpc.c: 185:spdk_rpc_listen: *ERROR*: RPC Unix domain socket path /var/tmp/spdk.sock in use. Specify another.
+[2023-09-01 11:24:15.406127] rpc.c:  70:spdk_rpc_initialize: *ERROR*: Unable to start RPC service at /var/tmp/spdk.sock
+[2023-09-01 11:24:15.406163] /root/fb/fastblock/tools/fbbench.cc:  97:fbbench_started: *NOTICE*: ------block start, cpu count : 1
+[2023-09-01 11:24:15.406182] /root/fb/fastblock/src/msg/transport_client.h: 422:transport_client: *NOTICE*: construct transport_client, this is 0x55d69480c4a0
+[2023-09-01 11:24:15.446475] /root/fb/fastblock/src/msg/transport_client.h: 469:start: *NOTICE*: Construct a new ctrlr = 0x55d69480c6d0, a new poll group = 0x55d694810d00
+[2023-09-01 11:24:15.446545] /root/fb/fastblock/tools/fbbench.h:  94:create_connect: *NOTICE*: create connect to node 0 (address 172.31.77.144, port 8002) in core 3
+[2023-09-01 11:24:15.446568] /root/fb/fastblock/src/msg/transport_client.h: 171:connect: *NOTICE*: Connecting to 172.31.77.144:8002...
+[2023-09-01 11:24:15.446620] client.c: 521:spdk_client_ctrlr_alloc_io_qpair_async: *NOTICE*: spdk_client_ctrlr_alloc_io_qpair : io_queue_size 128
+[2023-09-01 11:24:15.446640] rdma_c.c:2385:client_rdma_ctrlr_create_io_qpair: *NOTICE*: client_rdma_ctrlr_create_io_qpair io_queue_size: 128 io_queue_requests: 4096
+[2023-09-01 11:24:15.446996] rdma_c.c:2127:client_rdma_ctrlr_create_qpair: *NOTICE*: client_rdma_ctrlr_create_qpair num_entries: 128
+[2023-09-01 11:24:15.450013] /root/fb/fastblock/src/msg/transport_client.h: 191:connect: *NOTICE*: Conneting to 172.31.77.144:8002 done, conn is 0x55d694813a90, ctrlr is 0x55d69480c6d0, group is 0x55d694810d00
+[2023-09-01 11:24:15.450047] /root/fb/fastblock/src/msg/transport_client.h: 488:emplace_connection: *NOTICE*: Connecting to 172.31.77.144:8002
+[2023-09-01 11:24:15.467405] rdma_c.c: 589:client_rdma_qpair_process_cm_event: *NOTICE*: client_rdma_qpair_process_cm_event num_entries before: 128
+[2023-09-01 11:24:15.467448] rdma_c.c: 593:client_rdma_qpair_process_cm_event: *NOTICE*: client_rdma_qpair_process_cm_event num_entries: 128 128
+[2023-09-01 11:24:15.467470] rdma_c.c:1271:client_rdma_register_reqs: *NOTICE*: client_rdma_register_reqs: 128
+[2023-09-01 11:24:16.408513] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 54824
+[2023-09-01 11:24:17.410874] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 57547
+[2023-09-01 11:24:18.413236] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 56295
+[2023-09-01 11:24:19.415601] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 56238
+[2023-09-01 11:24:20.417966] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 56711
+[2023-09-01 11:24:21.420331] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 56708
+[2023-09-01 11:24:22.422718] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 56583
+[2023-09-01 11:24:23.425079] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 55701
+[2023-09-01 11:24:24.427444] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 56227
+[2023-09-01 11:24:25.429808] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 56564
+[2023-09-01 11:24:26.432178] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 56198
+[2023-09-01 11:24:27.434542] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 55781
+[2023-09-01 11:24:28.436905] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 55758
+[2023-09-01 11:24:29.439268] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 56465
+[2023-09-01 11:24:30.441632] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 56117
+[2023-09-01 11:24:31.443996] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 56058
+[2023-09-01 11:24:32.446384] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 56171
+[2023-09-01 11:24:33.448757] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 57032
+[2023-09-01 11:24:34.451120] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 56411
+[2023-09-01 11:24:35.453489] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 56560
+[2023-09-01 11:24:36.455860] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 56326
+[2023-09-01 11:24:37.458225] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 55557
+[2023-09-01 11:24:38.460589] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 55658
+[2023-09-01 11:24:39.462953] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 55502
+[2023-09-01 11:24:40.465317] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 55429
+[2023-09-01 11:24:41.467681] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 55781
+[2023-09-01 11:24:42.470046] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 55865
+[2023-09-01 11:24:43.472413] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 55547
+[2023-09-01 11:24:44.474804] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 55910
+[2023-09-01 11:24:45.477165] /root/fb/fastblock/tools/fbbench.cc:  71:print_stats: *NOTICE*: last second processed: 55280
+ops is: 56093, average latency is 17.827536us
+latency histogram: min:168.000000us 10.000000%:780.190476us 50.000000%:1076.662857us 90.000000%:1521.371429us 95.000000%:1654.003810us 99.000000%:3542.064762us 99.900000%:4462.689524us max:16823.000000us
+```
+![磁盘IO](3copy_nvme_qd64.png)
