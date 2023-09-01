@@ -196,6 +196,16 @@ public:
         return _entries;
     }
 
+    /// TODO: 这里一定要改。等raft_index_t改成uint64_t，这里就不用强制转换了
+    void set_trim_index(raft_index_t index) {
+        _log->advance_trim_index((uint64_t)index);
+    }
+
+    void set_applied_index(raft_index_t idx) {
+        get_entry_cache().remove(idx);
+        set_trim_index(idx);
+    }
+
     void destroy_log(){
         if(_log){
             _log->stop([](void*, int){}, nullptr);

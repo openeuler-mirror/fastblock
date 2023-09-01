@@ -231,11 +231,11 @@ public:
     // 只保留apply_index前面的1000条，超过1500条就trim一次
     bool maybe_trim() {
       _polls_count++;
-      if (_apply_index - _lowest_index > 1500) {
+      if (_trim_index - _lowest_index > 1500) {
           // trim前： lowest_index: 100  apply_index: 1700
           //   trim:  从 100 到 700
           // trim后： lowest_index: 701  apply_index: 1700 (一共保留1000条)
-          trim_back(_lowest_index, _apply_index - 1000, [](void *, int){}, nullptr);
+          trim_back(_lowest_index, _trim_index - 1000, [](void *, int){}, nullptr);
           _trims_count++;
           return true;
       }
@@ -272,14 +272,14 @@ public:
         _rblob->trim_back(trim_length, cb_fn, arg);
     }
 
-    void advance_apply(uint64_t applied) {
-        _apply_index = std::max(_apply_index, applied);
+    void advance_trim_index(uint64_t index) {
+        _trim_index = std::max(_trim_index, index);
     }
 
     std::string dump_state() {
       std::stringstream sstream;
       sstream << "\nlowest_index:" << _lowest_index
-              << " apply_index:" << _apply_index
+              << " apply_index:" << _trim_index
               << " highest_index:" << _highest_index
               << "\nhold:" << _highest_index - _lowest_index + 1
               << " index_map size:" << _index_map.size()
@@ -299,7 +299,7 @@ private:
     uint64_t _trims_count = 0;
 
     uint64_t _lowest_index = 0; //只有trim时候会改
-    uint64_t _apply_index = 0;
+    uint64_t _trim_index = 0;
     uint64_t _highest_index = 0;
     struct log_position {
         uint64_t pos;
