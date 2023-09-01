@@ -149,6 +149,13 @@ public:
         return item->entry;  
     }
 
+    std::shared_ptr<raft_entry_t> get_first_entry(){
+        if(_cache.empty())
+            return nullptr;
+        auto item = _cache.front();
+        return item->entry;
+    }
+
     void get(raft_index_t idx, int num, std::vector<std::shared_ptr<raft_entry_t>> &entrys){
         auto it = _idx_mcs.find(idx);
         if(it == _idx_mcs.end())

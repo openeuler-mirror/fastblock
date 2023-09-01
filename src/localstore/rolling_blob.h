@@ -519,9 +519,8 @@ make_open_done(void *arg, struct spdk_blob *blob, int rberrno) {
       return;
   }
 
-  SPDK_NOTICELOG("open success\n");
+  SPDK_NOTICELOG("open rblob success\n");
   struct rolling_blob* rblob = new rolling_blob(blob, ctx->channel, ctx->blob_size);
-  SPDK_NOTICELOG("rolling_blob size:%lu\n", sizeof(rolling_blob));
   ctx->cb_fn(ctx->arg, rblob, 0);
   delete ctx;
 }

@@ -29,7 +29,7 @@ void heartbeat_source::process_response(){
         auto node = raft->raft_get_node(rsp->node_id());
         node->raft_node_set_heartbeating(false);
 
-        raft->raft_process_appendentries_reply(rsp);
+        raft->raft_process_appendentries_reply(rsp, true);
     }
     delete this;
 }

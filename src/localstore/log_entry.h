@@ -11,6 +11,7 @@ struct log_entry_t {
     uint64_t index{init};
     uint64_t size{init};
 
+    uint64_t type{init};
     std::string meta;
     buffer_list data;
 
@@ -32,6 +33,10 @@ EncodeLogHeader(spdk_buffer& sbuf, log_entry_t& entry) {
     if (rc != sz) { return false; }
 
     sz = encode_fixed64(sbuf.get_append(), entry.size);
+    rc = sbuf.inc(sz);
+    if (rc != sz) { return false; }
+
+    sz = encode_fixed64(sbuf.get_append(), entry.type);
     rc = sbuf.inc(sz);
     if (rc != sz) { return false; }
 
@@ -57,6 +62,9 @@ DecodeLogHeader(spdk_buffer& sbuf, log_entry_t* entry) {
     rc = sbuf.inc(sz);
 
     std::tie(entry->size, sz) = decode_fixed64(sbuf.get_append(), sbuf.remain());
+    rc = sbuf.inc(sz);
+
+    std::tie(entry->type, sz) = decode_fixed64(sbuf.get_append(), sbuf.remain());
     rc = sbuf.inc(sz);
 
     std::tie(str_size, sz) = decode_fixed64(sbuf.get_append(), sbuf.remain());

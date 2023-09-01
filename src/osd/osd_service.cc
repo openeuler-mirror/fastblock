@@ -11,6 +11,8 @@ struct write_data_complete : public context{
     , done(_done) {}
 
     void finish(int r) override {
+        if(r != 0)
+            SPDK_ERRLOG("write data failed: %d\n", r);
         response->set_state(r);
         done->Run();
     }

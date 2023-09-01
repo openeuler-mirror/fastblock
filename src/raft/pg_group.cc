@@ -226,7 +226,12 @@ std::vector<shard_manager::node_heartbeat> shard_manager::get_heartbeat_requests
             meta_ptr->set_term(raft->raft_get_current_term());
             raft_index_t next_idx = node->raft_node_get_next_idx();
             meta_ptr->set_prev_log_idx(next_idx - 1);
-            meta_ptr->set_prev_log_term(raft->get_prev_log_term());
+            
+            raft_term_t term = 0;
+            auto got = raft->raft_get_entry_term(meta_ptr->prev_log_idx(), term);
+            assert(got);
+            (void)got;
+            meta_ptr->set_prev_log_term(term);
             meta_ptr->set_leader_commit(raft->raft_get_commit_idx());
         };
         raft->for_each_osd_id(create_heartbeat_request);
