@@ -298,9 +298,9 @@ private:
     uint64_t _polls_count = 0;
     uint64_t _trims_count = 0;
 
-    uint64_t _lowest_index = 0; //只有trim时候会改
-    uint64_t _trim_index = 0;
-    uint64_t _highest_index = 0;
+    uint64_t _lowest_index = 1; //只有trim时候会改
+    uint64_t _trim_index = 1;
+    uint64_t _highest_index = 1;
     struct log_position {
         uint64_t pos;
         uint64_t size; // data.size + header size(4_KB)

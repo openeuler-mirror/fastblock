@@ -220,7 +220,7 @@ log_append_continue(void *arg, int rberrno) {
   }
 
   ctx->append_idx++;
-  ctx->log->advance_apply(ctx->apply_raft_index);
+  ctx->log->advance_trim_index(ctx->apply_raft_index);
   if (ctx->append_idx % 5000 == 0) {
     auto dump = ctx->log->dump_state();
     SPDK_NOTICELOG("%d-th log state:%s", ctx->append_idx, dump.c_str());
