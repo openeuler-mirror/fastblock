@@ -15,6 +15,7 @@
 #include <map>
 #include <memory>
 #include <errno.h>
+#include <sstream>
 
 class rolling_blob;
 
@@ -45,6 +46,19 @@ struct rblob_rw_ctx {
 
 struct rblob_md_ctx {
   bool is_load;
+  rolling_blob* rblob;
+
+  rblob_op_complete cb_fn;
+  void* arg;
+};
+
+struct rblob_trim_ctx {
+  struct spdk_blob *blob;
+  struct spdk_io_channel *channel;
+
+  uint64_t lba;
+  uint64_t len;
+  struct rblob_trim_ctx* next;
   rolling_blob* rblob;
 
   rblob_op_complete cb_fn;
@@ -119,8 +133,6 @@ public:
         ctx->is_read = false;
         ctx->blob = blob;
         ctx->channel = channel;
-        ctx->cb_fn = cb_fn; 
-        ctx->arg = arg;
         ctx->next = nullptr;
         ctx->rb = this;
 
@@ -132,6 +144,8 @@ public:
             ctx->start_pos = start_pos;
             ctx->lba = pos_to_lba(start_pos);
             ctx->len = length;
+            ctx->cb_fn = std::move(cb_fn);
+            ctx->arg = arg;
 
             // SPDK_NOTICELOG("blob append pos from:%lu (lba:%lu) len:%lu\n", ctx->start_pos, ctx->lba, ctx->len);
             inflight_rw.emplace(start_pos + length, false);
@@ -142,6 +156,15 @@ public:
 
         // 如果右侧空间不够，就分成两次写。第一次写到end，第二次从4k开始继续往后写。
         struct rblob_rw_ctx* next = new rblob_rw_ctx();
+        ctx->next = next;
+        next->is_read = false;
+        next->blob = blob;
+        next->channel = channel;
+        next->cb_fn = std::move(cb_fn); 
+        next->arg = arg;
+        next->next = nullptr;
+        next->rb = this;
+
         uint64_t first_len = front_to_end();
         uint64_t second_len = length - first_len;
 
@@ -149,21 +172,11 @@ public:
         ctx->start_pos = front.pos; // 从front开始写
         ctx->lba = pos_to_lba(ctx->start_pos);
         ctx->len = first_len;
-        ctx->next = next;
-
-        next->is_read = false;
-        next->blob = blob;
-        next->channel = channel;
-        next->cb_fn = cb_fn; 
-        next->arg = arg;
-        next->next = nullptr;
-        next->rb = this;
 
         next->iov = std::move(bl.to_iovec(first_len, second_len));
         next->start_pos = front.pos + first_len;    // 从第一次写结束位置开始写
         next->lba = pos_to_lba(next->start_pos);
         next->len = second_len;
-
 
         // SPDK_NOTICELOG("blob append pos from:%lu (lba:%lu) len:%lu and from:%lu (lba:%lu) len:%lu\n", 
         //                ctx->start_pos, ctx->lba, first_len, next->start_pos, next->lba, second_len);
@@ -198,30 +211,27 @@ public:
         ctx->is_read = true;
         ctx->blob = blob;
         ctx->channel = channel;
-        ctx->cb_fn = cb_fn; 
-        ctx->arg = arg;
         ctx->next = nullptr;
         ctx->rb = this;
 
         // 如果这次读需要 roll，那就分成两次读
         if (need_roll(start, length)) {
             struct rblob_rw_ctx* next = new rblob_rw_ctx();
+            ctx->next = next;
+            next->is_read = true;
+            next->blob = blob;
+            next->channel = channel;
+            next->cb_fn = std::move(cb_fn);
+            next->arg = arg;
+            next->next = nullptr;
+            next->rb = this;
+
             uint64_t first_len = pos_to_end(start);
             uint64_t second_len = length - first_len;
-
             ctx->iov = std::move(bl.to_iovec(0, first_len)); 
             ctx->start_pos = start;
             ctx->lba = pos_to_lba(ctx->start_pos);
             ctx->len = first_len;
-            ctx->next = next;
-
-            next->is_read = true;
-            next->blob = blob;
-            next->channel = channel;
-            next->cb_fn = cb_fn; 
-            next->arg = arg;
-            next->next = nullptr;
-            next->rb = this;
 
             next->iov = std::move(bl.to_iovec(first_len, second_len));
             next->start_pos = start + first_len;    // 从第一次写结束位置开始写
@@ -241,6 +251,8 @@ public:
         ctx->start_pos = start;
         ctx->lba = pos_to_lba(start);
         ctx->len = length;
+        ctx->cb_fn = std::move(cb_fn);
+        ctx->arg = arg;
 
         // SPDK_NOTICELOG("blob read pos from:%lu (lba:%lu) len:%lu\n", ctx->start_pos, ctx->lba, length);
         spdk_blob_io_readv(blob, channel, ctx->iov.data(), ctx->iov.size(), 
@@ -248,35 +260,59 @@ public:
         return;
     }
 
-    // TODO(sunyifang): 暂时先不实现iomap，以后要改成调用 spdk_blob_io_unmap 的实现
     void trim_back(uint64_t length, rblob_op_complete cb_fn, void* arg) {
         if (length > used()) {
             SPDK_ERRLOG("trim back overflow. length:%lu used:%lu\n", length, used());
             cb_fn(arg, -ENOSPC);
             return;
         }
-        
-        // 如果右侧有足够的空间，直接trim
+
+        struct rblob_trim_ctx* ctx = new rblob_trim_ctx;
+        ctx->next = nullptr;
+        ctx->rblob = this;
+
+        // 如果前方有足够的空间，直接trim
         if (!is_rolled() || length < back_to_end()) {
-            SPDK_NOTICELOG("trim back case 1. pos from  %lu to %lu, lba from  %lu to %lu\n", 
-                back.pos, back.pos + length,
-                pos_to_lba(back.pos), pos_to_lba(back.pos + length));
+            // SPDK_NOTICELOG("trim back case 1. pos from  %lu to %lu, lba from  %lu to %lu\n", 
+            //     back.pos, back.pos + length,
+            //     pos_to_lba(back.pos), pos_to_lba(back.pos + length));
+            ctx->lba = back.lba;
+            ctx->len = length;
+            ctx->cb_fn = std::move(cb_fn);
+            ctx->arg = arg;
+
+            // trim比较特殊，在异步trim完成之前，就直接修改偏移
             back.pos += length;
             back.lba = pos_to_lba(back.pos);
-            cb_fn(arg, 0);
+
+            spdk_blob_io_unmap(blob, channel, ctx->lba / unit_size, ctx->len / unit_size, trim_done, ctx);
             return;
         }
 
         // 否则就分成两份
-        SPDK_NOTICELOG("trim back case 2. pos from  %lu to %lu, lba from  %lu to %lu\n", 
-            back.pos, back.pos + length,
-            pos_to_lba(back.pos), pos_to_lba(back.pos + length));
-        // uint64_t first_len = back_to_end();
-        // uint64_t second_len = length - first_len;
+        struct rblob_trim_ctx* next = new rblob_trim_ctx;
+        ctx->next = next;
+        next->blob = blob;
+        next->channel = channel;
+        next->next = nullptr;
+        next->rblob = this;
+        next->cb_fn = std::move(cb_fn);
+        next->arg = arg;
 
+        uint64_t first_len = back_to_end();
+        uint64_t second_len = length - first_len;
+        ctx->lba = back.lba;
+        ctx->len = first_len;
+        next->lba = pos_to_lba(0);
+        next->len = second_len;
+
+        // trim比较特殊，现在设计成可以在异步trim完成之前，就直接修改偏移
         back.pos += length;
         back.lba = pos_to_lba(back.pos);
-        cb_fn(arg, 0);
+
+        // SPDK_NOTICELOG("trim back case 2. lba %lu len %lu and lba %lu len %lu, ctx:%p next:%p\n", 
+        //     ctx->lba, ctx->len, next->lba, next->len, ctx, next);
+        spdk_blob_io_unmap(blob, channel, ctx->lba / unit_size, ctx->len / unit_size, trim_done, ctx);
         return;
     }
 
@@ -315,13 +351,37 @@ public:
         delete(ctx);
     }
 
+    static void trim_done(void *arg, int rberrno) {
+        struct rblob_trim_ctx* ctx = (struct rblob_trim_ctx*)arg;
+
+        if (rberrno) {
+            SPDK_ERRLOG("rolling_blob lba:%lu len:%lu trim back failed:%s\n", ctx->lba, ctx->len, spdk_strerror(rberrno));
+            ctx->cb_fn(ctx->arg, rberrno);
+            /// TODO(sunyifang): 这里还有些问题，如果有next，也并不会delete next。
+            ///       上面rw也存在这个问题，下次统一fix。
+            delete ctx;
+            return;
+        }
+
+        if (ctx->next) {
+          struct rblob_trim_ctx* next = ctx->next;
+          spdk_blob_io_unmap(next->blob, next->channel, next->lba / unit_size, next->len / unit_size, trim_done, next);
+          delete(ctx);
+          return;
+        }
+
+        // 每次trim完要同步一次super block
+        ctx->rblob->sync_md(std::move(ctx->cb_fn), ctx->arg);
+        delete(ctx);
+    }
+
 public:
     // 同步元数据，其实就是写一次super block
     void sync_md(rblob_op_complete cb_fn, void* arg) {
         struct rblob_md_ctx* ctx = new rblob_md_ctx();
         ctx->is_load = false;
         ctx->rblob = this;
-        ctx->cb_fn = cb_fn; 
+        ctx->cb_fn = std::move(cb_fn);
         ctx->arg = arg;
 
         serialize_super();
@@ -333,7 +393,7 @@ public:
         struct rblob_md_ctx* ctx = new rblob_md_ctx();
         ctx->is_load = true;
         ctx->rblob = this;
-        ctx->cb_fn = cb_fn; 
+        ctx->cb_fn = std::move(cb_fn);
         ctx->arg = arg;
 
         spdk_blob_io_read(blob, channel, super.get_buf(),
@@ -418,6 +478,18 @@ public:
 
     uint64_t front_pos() { return front.pos; } 
 
+    std::string dump_state() {
+      std::stringstream sstream;
+      sstream << "\nback.pos:" << back.pos
+              << " back.lba:" << back.lba
+              << " front.pos:" << front.pos
+              << " front.lba:" << front.lba
+              << " used:" << used()
+              << " size:" << size()
+              << std::endl;
+      return sstream.str();
+    }
+
 private:
     bool is_rolled() { 
         return front.pos / size()  != back.pos / size(); 
@@ -454,6 +526,8 @@ private:
 
     uint64_t pos_to_lba(uint64_t pos) { return pos % size() + super_size; }
 
+    /// TODO(sunyifang): 之前设计时认为可以并发写，所以使用 inflight_rw 保存每次写的位置。
+    ///               但现在不再考虑支持并发写,准备删除掉 inflight_rw.
     void maybe_advance_front(uint64_t offset) {
         auto it = inflight_rw.find(offset);
         if (it != inflight_rw.end()) {
