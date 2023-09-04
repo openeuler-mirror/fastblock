@@ -160,6 +160,9 @@ int main(int argc, char *argv[])
     spdk_app_opts_init(&opts, sizeof(opts));
     opts.name = "fbbench";
 
+    // tracing is memory consuming
+    opts.num_entries = 0;
+
     if ((rc = spdk_app_parse_args(argc, argv, &opts, "E:f:I:o:t:S:T:k:Q:", NULL,
                                   fbbench_parse_arg, fbbench_usage)) !=
         SPDK_APP_PARSE_ARGS_SUCCESS)

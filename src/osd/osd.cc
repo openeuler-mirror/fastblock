@@ -164,6 +164,9 @@ main(int argc, char *argv[])
 
 	spdk_app_opts_init(&opts, sizeof(opts));
 	opts.name = "block";
+
+	// disable tracing because it's memory consuming
+	opts.num_entries = 0;
 	opts.print_level = ::spdk_log_level::SPDK_LOG_WARN;
 	::spdk_log_set_flag("rdma");
 	::spdk_log_set_flag("msg");
