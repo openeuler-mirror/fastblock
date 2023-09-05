@@ -4,6 +4,7 @@
 #include "localstore/blob_manager.h"
 #include "localstore/disk_log.h"
 
+SPDK_LOG_REGISTER_COMPONENT(osd)
 
 bool partition_manager::get_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t &shard_id){
     std::string name = pg_id_to_name(pool_id, pg_id);
@@ -31,8 +32,8 @@ static void make_log_done(void *arg, struct disk_log* dlog, int rberrno){
     if(rberrno){
         return;
     }
-    auto sm = std::make_shared<osd_sm>();
-    pm->add_osd_sm(mlc->pool_id, mlc->pg_id, mlc->shard_id, sm);
+    auto sm = std::make_shared<osd_stm>();
+    pm->add_osd_stm(mlc->pool_id, mlc->pg_id, mlc->shard_id, sm);
     pm->get_pg_group().create_pg(sm, mlc->shard_id, mlc->pool_id, mlc->pg_id, std::move(mlc->osds), dlog);
     delete mlc;
 }
