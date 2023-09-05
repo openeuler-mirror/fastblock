@@ -1,0 +1,13 @@
+{
+    "pid_path": "/var/tmp/osd_1.pid",
+    "osd_id": 1,
+    "bdev_disk": "AIO1",
+    "address": "127.0.0.1",
+    "port": 9001,
+    "uuid": "d685a1ca-4a59-4c4f-80ff-59997f3d0494",
+    "monitor": [
+        {"host": "127.0.0.1", "port": 8001},
+        {"host": "127.0.0.2", "port": 8002},
+        {"host": "127.0.0.3", "port": 8003}
+    ]
+}

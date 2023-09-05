@@ -3,6 +3,8 @@
 #include "spdk/event.h"
 #include "spdk/log.h"
 #include "spdk/string.h"
+
+#include "mon/client.h"
 #include "raft/raft.h"
 #include "osd/partition_manager.h"
 #include "raft/raft_service.h"
@@ -10,42 +12,31 @@
 #include "rpc/server.h"
 #include "localstore/blob_manager.h"
 
-static const char *g_pid_path = nullptr;
-static int global_osd_id = 0;
-static const char * g_bdev_disk = nullptr;
-static partition_manager* global_pm = nullptr;
-static const char* g_osd_addr = "127.0.0.1";
-static  int g_osd_port = 8888;
+#include <boost/property_tree/ptree.hpp>
+#include <boost/property_tree/json_parser.hpp>
 
-// use default uuid
-static const char *g_uuid = "00000000-0000-0000-0000-000000000000";
-
-static const char *g_mon_addr = "127.0.0.1";
-static int g_mon_port = 3333;
+static const char* g_json_conf{nullptr};
+static std::unique_ptr<::raft_service<::partition_manager>> global_raft_service{nullptr};
+static std::unique_ptr<::osd_service> global_osd_service{nullptr};
+static std::shared_ptr<::partition_manager> global_pm{nullptr};
+static std::shared_ptr<monitor::client> monitor_client{nullptr};
 
 typedef struct
 {
     /* the server's node ID */
     int node_id;
 	std::string bdev_disk;
-	std::string mon_addr;
-	int mon_port;
 	std::string osd_addr;
 	int osd_port;
 	std::string osd_uuid;
+    std::vector<monitor::client::endpoint> monitors{};
+    std::unique_ptr<monitor::client::request_context> mon_boot_req{nullptr};
 }server_t;
 
 static void
 block_usage(void)
 {
-	printf(" -f <path>                 save pid to file under given path\n");
-	printf(" -I <id>                   save osd id\n");
-	printf(" -D <bdev_disk>            bdev disk\n");
-    printf(" -H <host_addr>            monitor host address\n");
-	printf(" -P <port>                 monitor port number\n");
-    printf(" -o <osd_addr>             osd address\n");
-	printf(" -t <osd_port>             osd port\n");
-	printf(" -U <osd uuid>             osd uuid\n");
+	printf(" -C <osd json config file> path to json config file\n");
 }
 
 static void
@@ -67,30 +58,9 @@ static int
 block_parse_arg(int ch, char *arg)
 {
 	switch (ch) {
-	case 'f':
-		g_pid_path = arg;
-		break;
-	case 'I':
-	    global_osd_id = spdk_strtol(arg, 10);
-		break;
-	case 'D':
-	    g_bdev_disk = arg;
-		break;	
-	case 'H':
-	    g_mon_addr = arg;
-		break;
-	case 'P':
-	    g_mon_port = spdk_strtol(arg, 10);
-		break;
-	case 'o':
-        g_osd_addr = arg;
-		break;
-	case 't':
-	    g_osd_port = spdk_strtol(arg, 10);
-		break;
-	case 'U':
-	    g_uuid  = arg;
-		break;
+    case 'C':
+        g_json_conf = arg;
+        break;
 	default:
 		return -EINVAL;
 	}
@@ -99,10 +69,11 @@ block_parse_arg(int ch, char *arg)
 
 static void service_init(partition_manager* pm, server_t *server){
     rpc_server& rserver = rpc_server::get_server(pm->get_shard());
-	auto rs = new raft_service<partition_manager>(pm);
-	auto os = new osd_service(pm);
-	rserver.register_service(rs);
-	rserver.register_service(os);
+	global_raft_service = std::make_unique<::raft_service<::partition_manager>>(global_pm.get());
+    global_osd_service = std::make_unique<::osd_service>(global_pm.get(), monitor_client);
+
+	rserver.register_service(global_raft_service.get());
+	rserver.register_service(global_osd_service.get());
 	rserver.start(server->osd_addr, server->osd_port);
 }
 
@@ -123,6 +94,23 @@ struct pm_start_context : public context{
     }
 };
 
+void start_monitor(server_t* ctx) {
+    monitor_client->start();
+    monitor::client::on_response_callback_type cb =
+      [] (const monitor::client::response_status s, monitor::client::request_context* req_ctx) {
+          if (s != monitor::client::response_status::ok) {
+              SPDK_ERRLOG("ERROR: OSD boot failed\n");
+              throw std::runtime_error{"OSD boot failed"};
+          }
+
+          req_ctx->this_client->start_cluster_map_poller();
+      };
+
+    ctx->mon_boot_req = monitor_client->emplace_osd_boot_request(
+      ctx->node_id, ctx->osd_addr, ctx->osd_uuid,
+      1024 * 1024, std::move(cb));
+}
+
 void disk_init_complete(void *arg, int rberrno){
     if(rberrno != 0){
 		SPDK_NOTICELOG("Failed to initialize the  disk, rberrno %d\n", rberrno);
@@ -130,18 +118,17 @@ void disk_init_complete(void *arg, int rberrno){
 		return;
 	}
 	server_t *server = (server_t *)arg;
-    SPDK_NOTICELOG("------block start, cpu count : %u  bdev_disk: %s\n", 
+    SPDK_NOTICELOG("------block start, cpu count : %u  bdev_disk: %s\n",
 	        spdk_env_get_core_count(), server->bdev_disk.c_str());
-    global_pm = new partition_manager(
-		    server->node_id,  
-			server->mon_addr, server->mon_port,
-			server->osd_addr, server->osd_port, server->osd_uuid);
-	if(global_pm->connect_mon() != 0){
-		spdk_app_stop(-1);
-		return;
-	}
 
-    pm_start_context *ctx = new pm_start_context{server, global_pm};
+    global_pm = std::make_shared<partition_manager>(
+	  server->node_id, server->osd_addr, server->osd_port, server->osd_uuid);
+    monitor_client = std::make_shared<monitor::client>(
+      server->monitors, global_pm, server->node_id);
+
+    start_monitor(server);
+
+    pm_start_context *ctx = new pm_start_context{server, global_pm.get()};
 	global_pm->start(ctx);
 }
 
@@ -152,7 +139,7 @@ block_started(void *arg)
 
     buffer_pool_init();
       //初始化log磁盘
-    blobstore_init(server->bdev_disk.c_str(), disk_init_complete, arg); 
+    blobstore_init(server->bdev_disk.c_str(), disk_init_complete, arg);
 }
 
 int
@@ -172,27 +159,36 @@ main(int argc, char *argv[])
 	::spdk_log_set_flag("msg");
 	::spdk_log_set_flag("mon");
 
-	if ((rc = spdk_app_parse_args(argc, argv, &opts, "f:I:D:H:P:o:t:U:", NULL,
+	if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:f:I:D:H:P:o:t:U:", NULL,
 				      block_parse_arg, block_usage)) !=
 	    SPDK_APP_PARSE_ARGS_SUCCESS) {
 		exit(rc);
 	}
 
-	if (g_pid_path) {
-		save_pid(g_pid_path);
-	}
+    SPDK_NOTICELOG("Osd config file is %s\n", g_json_conf);
+    boost::property_tree::ptree pt;
+    boost::property_tree::read_json(std::string(g_json_conf), pt);
 
-    server.node_id = global_osd_id;
-    if(!g_bdev_disk){
-		std::cerr << "No bdev name is specified" << std::endl;
-		return -1;
+    auto pid_path = pt.get_child("pid_path").get_value<std::string>();
+	if (not pid_path.empty()) {
+		save_pid(pid_path.c_str());
 	}
-	server.bdev_disk = g_bdev_disk;
-	server.mon_addr = g_mon_addr;
-	server.mon_port = g_mon_port;
-	server.osd_addr = g_osd_addr;
-	server.osd_port = g_osd_port;
-	server.osd_uuid = g_uuid;
+    server.node_id = pt.get_child("osd_id").get_value<decltype(server.node_id)>();
+    server.bdev_disk = pt.get_child("bdev_disk").get_value<std::string>();
+    if (server.bdev_disk.empty()) {
+        std::cerr << "No bdev name is specified" << std::endl;
+		return -1;
+    }
+    server.osd_addr = pt.get_child("address").get_value<std::string>();
+    server.osd_port = pt.get_child("port").get_value<decltype(server.osd_port)>();
+    server.osd_uuid = pt.get_child("uuid").get_value<std::string>();
+
+    auto& monitors = pt.get_child("monitor");
+    for (auto& monitor_node : monitors) {
+        auto mon_host = monitor_node.second.get_child("host").get_value<std::string>();
+        auto mon_port = monitor_node.second.get_child("port").get_value<uint16_t>();
+        server.monitors.emplace_back(std::move(mon_host), mon_port);
+    }
 
 	/* Blocks until the application is exiting */
 	rc = spdk_app_start(&opts, block_started, &server);

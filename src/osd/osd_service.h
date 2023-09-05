@@ -2,11 +2,12 @@
 #define OSD_SERVICE_H_
 #include "rpc/osd_msg.pb.h"
 #include "partition_manager.h"
+#include "mon/client.h"
 
 class osd_service : public osd::rpc_service_osd{
 public:
-    osd_service(partition_manager* pm)
-    : _pm(pm) {}
+    osd_service(partition_manager* pm, std::shared_ptr<monitor::client> mon_cli)
+    : _pm(pm), _monitor_client{mon_cli} {}
 
     void process_write(google::protobuf::RpcController* controller,
                  const osd::write_request* request,
@@ -32,6 +33,7 @@ public:
 
 private:
     partition_manager* _pm;
+    std::shared_ptr<monitor::client> _monitor_client{nullptr};
 };
 
 #endif

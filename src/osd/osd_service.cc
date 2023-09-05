@@ -47,7 +47,7 @@ void osd_service::process_write(google::protobuf::RpcController* controller,
     std::string buf;
     cmd.SerializeToString(&buf);
 
-    SPDK_INFOLOG(pg_group, "process write_request in shard %u, pool %lu pg %lu object_name %s offset %lu len %u\n",
+    SPDK_INFOLOG(pg_group, "process write_request in shard %u, pool %lu pg %lu object_name %s offset %lu len %lu\n",
                  shard_id, pool_id, pg_id, request->object_name().c_str(), request->offset(), request->data().size());
 
     auto entry_ptr = std::make_shared<msg_entry_t>();
@@ -86,7 +86,7 @@ void osd_service::process_get_leader(google::protobuf::RpcController* controller
     }
     auto raft = _pm->get_pg(shard_id, pool_id, pg_id);
     auto leader_id = raft->raft_get_current_leader();
-    auto res = _pm->get_mon().get_osd_addr(leader_id);
+    auto res = _monitor_client->get_osd_addr(leader_id);
     if(res.first.size() == 0){
         response->set_state(err::RAFT_ERR_NOT_FOUND_LEADER);
     }else{
@@ -116,4 +116,4 @@ void osd_service::process_delete(google::protobuf::RpcController* controller,
     (void)request;
     (void)response;
     (void)done;
-}  
+}

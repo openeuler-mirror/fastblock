@@ -3,30 +3,28 @@
 
 #include "raft/pg_group.h"
 #include "osd/osd_sm.h"
-#include "osd/mon_client.h"
 #include "base/core_sharded.h"
+
+#include <memory>
 
 struct shard_revision {
     uint32_t _shard;
     int64_t _revision;
 };
 
-class partition_manager{
+class partition_manager : public std::enable_shared_from_this<partition_manager> {
 public:
-    partition_manager(
-            int node_id, std::string& mon_addr, int mon_port, std::string& osd_addr, 
-            int osd_port, std::string& osd_uuid)
-    : _pgs(node_id)
-    , _next_shard(0)
-    , _shard(core_sharded::get_core_sharded())
-    , _shard_cores(get_shard_cores())
-    , _mon(mon_addr, mon_port, node_id, osd_addr, osd_port, osd_uuid, this) {
-        uint32_t i = 0;
-        auto shard_num = _shard_cores.size();
-        for(i = 0; i < shard_num; i++){
-            _sm_table.push_back(std::map<std::string, std::shared_ptr<osd_sm>>());
-        }
-    }
+    partition_manager(int node_id, std::string& osd_addr, int osd_port, std::string& osd_uuid)
+      : _pgs(node_id)
+      , _next_shard(0)
+      , _shard(core_sharded::get_core_sharded())
+      , _shard_cores(get_shard_cores()) {
+          uint32_t i = 0;
+          auto shard_num = _shard_cores.size();
+          for(i = 0; i < shard_num; i++){
+              _sm_table.push_back(std::map<std::string, std::shared_ptr<osd_sm>>());
+          }
+      }
 
     void start(context *complete){
         _pgs.start(complete);
@@ -34,10 +32,6 @@ public:
 
     void stop(){
         _pgs.stop();
-    }
-
-    int connect_mon(){
-        return _mon.connect_mon();
     }
 
     int create_partition(uint64_t pool_id, uint64_t pg_id, std::vector<osd_info_t>&& osds, int64_t revision_id);
@@ -54,7 +48,7 @@ public:
             return nullptr;
         return _sm_table[shard_id][name];
     }
-    
+
     std::shared_ptr<raft_server_t> get_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id){
         std::string name = pg_id_to_name(pool_id, pg_id);
         return _pgs.get_pg(shard_id, name);
@@ -70,11 +64,7 @@ public:
 
     void add_osd_sm(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id, std::shared_ptr<osd_sm> sm){
         auto name = pg_id_to_name(pool_id, pg_id);
-        _sm_table[shard_id][std::move(name)] = sm; 
-    }
-
-    mon_client& get_mon(){
-        return _mon;
+        _sm_table[shard_id][std::move(name)] = sm;
     }
 
     int get_current_node_id(){
@@ -108,7 +98,6 @@ private:
     core_sharded&  _shard;
     std::vector<uint32_t> _shard_cores;
     std::vector<std::map<std::string, std::shared_ptr<osd_sm>>> _sm_table;
-    mon_client _mon;
 };
 
 #endif

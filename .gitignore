@@ -3,3 +3,4 @@ build
 *.swp
 *.pb.cc
 *.pb.h
+tmp

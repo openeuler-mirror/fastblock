@@ -22,6 +22,7 @@ deb_deps=(
   autoconf
   automake
   pandoc
+  libboost-all-dev
   build-essential
   protobuf-compiler
   libprotobuf23
@@ -31,7 +32,7 @@ deb_deps=(
   libnl-3-dev
   libnl-route-3-dev
   libibverbs-dev
-  librdmacm-dev 
+  librdmacm-dev
   meson
   python3-pyelftools
   uuid-dev

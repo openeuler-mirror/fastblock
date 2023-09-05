@@ -1,7 +1,8 @@
-#include "utils/itos.h"
 #include "spdk_buffer.h"
 #include "buffer_pool.h"
+#include "utils/itos.h"
 
+#include <fmt/core.h>
 #include <string>
 #include <spdk/env.h>
 #include <spdk/log.h>

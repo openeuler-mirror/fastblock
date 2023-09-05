@@ -1,9 +1,8 @@
 compile_library (
   NAME localstore
-  SRCS 
+  SRCS
     object_store.cc
     rolling_blob.cc
-    disk_log.cc
     buffer_pool.cc
     spdk_buffer.cc
     blob_manager.cc

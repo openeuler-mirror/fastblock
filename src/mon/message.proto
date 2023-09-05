@@ -1,4 +1,6 @@
 syntax = "proto3";
+//option go_package = "./";
+
 package msg;
 
 message CreatePoolRequest{
@@ -18,7 +20,8 @@ message ListPoolsRequest{
 }
 
 message poolinfo{
-    int32 poolid = 1;
+    int32
+     poolid = 1;
     string name = 2;
     int32 pgsize = 3;
     int32 pgcount = 4;
@@ -74,17 +77,17 @@ enum GetPgMapErrorCode
     PgMapSameVersion = 3;
 }
 
-message GetPgMapRequest{ 
+message GetPgMapRequest{
     map<int32, int64> pool_versions = 1;
 }
 
 // when osd restarts, following infomation is changed(host may not)
-message OsdDynamicInfo{  
+message OsdDynamicInfo{
 	int32 osdid = 1;
-	string address =2;           
-	int32 port  =3;         
-	bool isin    = 4;        
-	bool isup     = 5;       
+	string address =2;
+	int32 port  =3;
+	bool isin    = 4;
+	bool isup     = 5;
     bool ispendingcreate = 6;
 }
 
@@ -94,10 +97,12 @@ message GetPgMapResponse {
     map<int32, PGInfos> pgs = 3;
 }
 
-message GetOsdMapRequest{ 
+message GetOsdMapRequest{
     int32 osdid = 1;
     int64 currentversion = 2;
 }
+
+
 
 enum OsdMapErrorCode
 {
@@ -125,7 +130,7 @@ message GetClusterMapResponse {
 
 
 message BootResponse {
-bool ok = 1;
+    bool ok = 1;
 }
 
 message OsdStopRequest {
@@ -134,14 +139,91 @@ message OsdStopRequest {
 
 
 message OsdStopResponse {
-bool ok = 1;
+    bool ok = 1;
 }
 
 message HeartbeatRequest {
     int32 id = 1;
 }
 message HeartbeatResponse {
-bool ok = 1;
+    bool ok = 1;
+}
+
+message ImageInfo{
+    string poolname=1;
+    string imagename=2;
+    int64 size=3;
+    int64 object_size=4;
+}
+
+message  CreateImageRequest{
+    string poolname=1;
+    string imagename=2;
+    int64 size=3;
+    int64 object_size=4;
+}
+
+enum CreateImageErrorCode
+{
+    createImageOk = 0;
+    imageExists = 1;
+    unknownPoolName = 2;
+    marshalImageContextError = 3;
+    putEtcdError = 4;
+}
+
+message  CreateImageResponse{
+    CreateImageErrorCode errorcode = 1;
+    ImageInfo ImageInfo = 2;
+}
+
+message  RemoveImageRequest{
+     string poolname=1;
+     string imagename=2;
+}
+
+enum RemoveImageErrorCode {
+    removeImageOk = 0;
+    imageNotFound = 1;
+    removeImageFail = 2;
+}
+
+message  RemoveImageResponse{
+    RemoveImageErrorCode errorcode = 1;
+    ImageInfo ImageInfo=2;
+}
+
+message ResizeImageRequest{
+    string poolname=1;
+    string imagename=2;
+    int64  size=3;
+}
+
+enum ResizeImageErrorCode {
+    resizeImageOk = 0;
+    resizeImageNotFound = 1;
+    marshalResizeImageContextError = 2;
+    putResizeImageEtcdError = 3;
+}
+
+message ResizeImageResponse{
+    ResizeImageErrorCode errorcode = 1;
+    ImageInfo ImageInfo=2;
+}
+
+message GetImageInfoRequest{
+     string poolname=1;
+     string imagename=2;
+}
+
+enum GetImageErrorCode {
+    getImageOk = 0;
+    getImageNotFound = 1;
+}
+
+message GetImageInfoResponse{
+    GetImageErrorCode errorcode = 1;
+    ImageInfo ImageInfo=2;
 }
 
 message Request {
@@ -156,6 +238,11 @@ message Request {
         GetPgMapRequest get_pgmap_request = 8;
         DeletePoolRequest delete_pool_request = 9;
         GetClusterMapRequest get_cluster_map_request = 10;
+        CreateImageRequest create_image_request=11;
+        RemoveImageRequest remove_image_request=12;
+        ResizeImageRequest resize_image_request=13;
+        GetImageInfoRequest get_ImageInfo_Request=14;
+
     }
 }
 
@@ -171,5 +258,9 @@ message Response {
         GetPgMapResponse get_pgmap_response = 8;
         DeletePoolResponse delete_pool_response = 9;
         GetClusterMapResponse get_cluster_map_response = 10;
+        CreateImageResponse create_image_response=11;
+        RemoveImageResponse remove_image_response=12;
+        ResizeImageResponse resize_image_response=13;
+        GetImageInfoResponse get_imageInfo_response=14;
     }
 }
