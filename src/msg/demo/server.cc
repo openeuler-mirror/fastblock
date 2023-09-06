@@ -94,7 +94,7 @@ void start_rpc_server(void* arg) {
     SPDK_ENV_FOREACH_CORE(core_no) {
         ::spdk_cpuset_zero(&tmp_cpumask);
         ::spdk_cpuset_set_cpu(&tmp_cpumask, core_no, true);
-        std::string thread_name{fmt::format("rpc_server_poller_{}", core_no)};
+        std::string thread_name{(boost::format("rpc_server_poller_%1%") % core_no).str()};
         thread = ::spdk_thread_create(thread_name.c_str(), &tmp_cpumask);
         assert(!!thread);
         ::spdk_thread_send_msg(thread, on_thread_received_msg, arg);

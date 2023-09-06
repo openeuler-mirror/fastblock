@@ -6,8 +6,7 @@
 
 #include <spdk/event.h>
 
-#include <fmt/core.h>
-
+#include <boost/format.hpp>
 #include <boost/test/included/unit_test.hpp>
 
 #include <memory>
@@ -232,15 +231,14 @@ BOOST_AUTO_TEST_CASE(monitor_client_test) {
     auto argc = parse_args();
 
     if (argc == 8) {
-        BOOST_TEST_MESSAGE(fmt::format(
-          "monitor server is {}:{}, osd is {}:{}, osd id is {}, osd uuid is {}",
-          monitor1_host, monitor1_port,
-          osd_host, osd_port, osd_id, osd_uuid));
+        BOOST_TEST_MESSAGE(boost::format(
+          "monitor server is %1%:%2%, osd is %3%:%4%, osd id is %5%, osd uuid is %6%")
+          % monitor1_host % monitor1_port % osd_host % osd_port % osd_id % osd_uuid);
     } else {
-        BOOST_TEST_MESSAGE(fmt::format(
-          "monitor server is [{}:{}, {}:{}, {}:{}], osd is {}:{}, osd id is {}, osd uuid is {}",
-          monitor1_host, monitor1_port, monitor2_host, monitor2_port,
-          monitor3_host, monitor3_port, osd_host, osd_port, osd_id, osd_uuid));
+        BOOST_TEST_MESSAGE(boost::format(
+          "monitor server is [%1%:%2%, %3%:%4%, %5%:%6%], osd is %7%:%8%, osd id is %9%, osd uuid is %10%")
+          % monitor1_host % monitor1_port % monitor2_host % monitor2_port
+          % monitor3_host % monitor3_port % osd_host % osd_port % osd_id % osd_uuid);
     }
 
     ::spdk_app_opts opts{};
@@ -258,9 +256,9 @@ BOOST_AUTO_TEST_CASE(monitor_client_test) {
     ctx.image_size = utils::random_int<decltype(ctx.image_size)>(4096 * 3, 4096 * 7);
     ctx.object_size = utils::random_int<decltype(ctx.object_size)>(4096, 4096 * 3);
     ctx.resize_size = utils::random_int<decltype(ctx.resize_size)>(ctx.image_size, ctx.image_size * 3);
-    BOOST_TEST_MESSAGE(fmt::format(
-      "image name is {}, image size is {}, object size is {}, resize size is {}",
-      ctx.image_name, ctx.image_size, ctx.object_size, ctx.resize_size));
+    BOOST_TEST_MESSAGE(boost::format(
+      "image name is %1%, image size is %2%, object size is %3%, resize size is %4%")
+      % ctx.image_name % ctx.image_size % ctx.object_size % ctx.resize_size);
     auto rc = ::spdk_app_start(&opts, monitor_client_test_on_app_start, &ctx);
     ::spdk_app_fini();
 }

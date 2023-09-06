@@ -13,7 +13,7 @@
 #include <google/protobuf/message.h>
 #include <google/protobuf/service.h>
 
-#include <fmt/core.h>
+#include <boost/format.hpp>
 
 #include <cstdio>
 #include <exception>
@@ -213,8 +213,7 @@ public:
         if (task_list_it == _sharded_task_list.end()) {
             SPDK_ERRLOG("ERROR: Can not find the task list on core %d\n", current_core);
             // TODO: handle error grace
-            throw std::runtime_error{
-              fmt::format("can not find the task list on core {}", current_core)};
+            throw std::runtime_error{"can not find the task list"};
         }
         task_list_it->second.push_back(std::move(task));
     }
@@ -225,7 +224,7 @@ public:
 
         if (not _mp) {
             // FIXME: hard code prefix
-            auto mem_pool_name = fmt::format("mem_pool_{}", cur_core);
+            auto mem_pool_name = (boost::format("mem_pool_%1%") % cur_core).str();
             _mp = std::make_shared<memory_pool>(
               mem_pool_name.c_str(),
               _mem_pool_count,
@@ -303,7 +302,7 @@ public:
         _trid->trtype = SPDK_SRV_TRANSPORT_RDMA;
         _trid->adrfam = SPDK_SRV_ADRFAM_IPV4;
         _trid->priority = 0;
-        auto name = fmt::format("listener_{}", ::spdk_env_get_current_core());
+        auto name = (boost::format("listener_%1%") % ::spdk_env_get_current_core()).str();
         ::strncpy(_trid->traddr, host, INET_ADDRSTRLEN);
         ::strncpy(_trid->trstring, name.c_str(), SPDK_SRV_TRSTRING_MAX_LEN);
         auto port_str = std::to_string(port);
@@ -312,7 +311,7 @@ public:
         auto ret = ::spdk_srv_transport_listen(_transport, _trid.get(), nullptr);
         if (ret != 0) {
             SPDK_ERRLOG("ERROR: server bound on %s:%d failed\n", _trid->traddr, port);
-            throw std::runtime_error{fmt::format("server bound on {}:{} failed", host, port)};
+            throw std::runtime_error{(boost::format("server bound on %1%:%2% failed") % host % port).str()};
         }
     }
 

@@ -4,7 +4,6 @@ compile_library (
     log_components.cc
   DEPS
     spdk::spdk
-    fmt
     protobuf
 )
 

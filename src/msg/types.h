@@ -2,8 +2,6 @@
 
 #include <spdk/log.h>
 
-#include <fmt/core.h>
-
 #include <cstdint>
 #include <string>
 #include <type_traits>
