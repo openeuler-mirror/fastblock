@@ -212,15 +212,15 @@ void monitor_client_test_on_app_start(void* arg) {
         ctx->mon_cli->start_cluster_map_poller();
     } else {
         boot_ctx = ctx->mon_cli->emplace_osd_boot_request(
-          osd_id, osd_host, osd_uuid, 1024 * 1024,
-          [app_ctx = ctx] (const monitor::client::response_status s, monitor::client::request_context* ctx) {
-              BOOST_ASSERT(s == monitor::client::response_status::ok);
-              BOOST_TEST_MESSAGE("OSD booted");
+            osd_id, osd_host, osd_port, osd_uuid, 1024 * 1024,
+            [app_ctx = ctx](const monitor::client::response_status s, monitor::client::request_context *ctx)
+            {
+                BOOST_ASSERT(s == monitor::client::response_status::ok);
+                BOOST_TEST_MESSAGE("OSD booted");
 
-              app_ctx->test_state = monitor_client_test_state::booted;
-              ctx->this_client->start_cluster_map_poller();
-          }
-    );
+                app_ctx->test_state = monitor_client_test_state::booted;
+                ctx->this_client->start_cluster_map_poller();
+            });
     }
 
 

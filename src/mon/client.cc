@@ -77,6 +77,7 @@ void client::handle_start_cluster_map_poller() {
 client::emplace_osd_boot_request(
   const int osd_id,
   const std::string& osd_addr,
+  const int osd_port,
   const std::string& osd_uuid,
   const int64_t size,
   on_response_callback_type&& cb) {
@@ -85,7 +86,7 @@ client::emplace_osd_boot_request(
     boot_req->set_osd_id(osd_id);
     boot_req->set_uuid(osd_uuid.c_str());
     boot_req->set_address(osd_addr.c_str());
-    boot_req->set_port(_cluster->current_node_port());
+    boot_req->set_port(osd_port);
     boot_req->set_size(size);
     char hostname[1024];
     ::gethostname(hostname, sizeof(hostname));

@@ -293,6 +293,7 @@ public:
     emplace_osd_boot_request(
       const int,
       const std::string&,
+      const int,
       const std::string&,
       const int64_t,
       on_response_callback_type&&);
