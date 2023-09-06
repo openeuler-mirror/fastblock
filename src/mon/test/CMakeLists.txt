@@ -1,7 +1,7 @@
 add_executable(mon_client_test main.cc)
 target_link_libraries(mon_client_test
   PUBLIC
-    fmt
+
     spdk::spdk
     fastblock_osd_lib
   PRIVATE

@@ -27,7 +27,6 @@ deb_deps=(
   protobuf-compiler
   libprotobuf23
   libprotobuf-dev
-  libfmt-dev
   cmake
   libnl-3-dev
   libnl-route-3-dev
@@ -51,7 +50,6 @@ rpm_deps=(
   gcc
   gcc-c++
   protobuf-devel
-  fmt-devel
   cmake
   libnl3-devel
   libibverbs-devel

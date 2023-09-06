@@ -7,7 +7,7 @@
 #include <spdk/string.h>
 #include <spdk/thread.h>
 
-#include <fmt/core.h>
+#include <boost/format.hpp>
 
 #include <google/protobuf/descriptor.h>
 #include <google/protobuf/message.h>
@@ -169,16 +169,14 @@ public:
 
         void connect(std::shared_ptr<::client_poll_group> pg) {
             SPDK_NOTICELOG("Connecting to %s:%d...\n", _host.c_str(), _port);
-            auto trans_id = fmt::format("trtype:RDMA adrfam:IPV4 traddr:{} trsvcid:{}", _host, _port);
+            auto trans_id = (boost::format("trtype:RDMA adrfam:IPV4 traddr:%1% trsvcid:%2%") %  _host % _port).str();
             _trid = std::make_unique<::spdk_client_transport_id>();
             auto rc = ::spdk_client_transport_id_parse(_trid.get(), trans_id.c_str());
             if (rc != 0) {
                 SPDK_ERRLOG(
                   "ERROR: spdk_client_transport_id_parse() failed, errno %d: %s\n",
                   errno, spdk_strerror(errno));
-                throw std::runtime_error{fmt::format(
-                  "ERROR: spdk_client_transport_id_parse() failed, errno {}: {}",
-                  errno, spdk_strerror(errno))};
+                throw std::runtime_error{"ERROR: spdk_client_transport_id_parse() failed"};
             }
 
             _pg = pg;
@@ -204,9 +202,8 @@ public:
                 SPDK_ERRLOG(
                   "ERROR: RPC service name's length(%ld) is beyond the max size(%d)\n",
                   service_name.size(), max_rpc_meta_string_size);
-                ctrlr->SetFailed(fmt::format(
-                  "service name too long, should less than or equal to {}",
-                  max_rpc_meta_string_size));
+                ctrlr->SetFailed((boost::format(
+                  "service name too long, should less than or equal to %1%") % max_rpc_meta_string_size).str());
                 c->Run();
                 return;
             }
@@ -216,9 +213,8 @@ public:
                 SPDK_ERRLOG(
                   "ERROR: RPC method name's length(%ld) is beyond the max size(%d)\n",
                   method_name.size(), max_rpc_meta_string_size);
-                ctrlr->SetFailed(fmt::format(
-                  "method name is too long, should less than or equal to {}",
-                  max_rpc_meta_string_size));
+                ctrlr->SetFailed((boost::format(
+                  "method name is too long, should less than or equal to %1%") % max_rpc_meta_string_size).str());
                 c->Run();
                 return;
             }
@@ -329,9 +325,8 @@ public:
                 SPDK_ERRLOG(
                   "ERROR: Cant find the request record of request key %ld on connection %ld\n",
                   request->request->request_key, _id);
-                throw std::runtime_error{fmt::format(
-                  "cant find the request record of request key {} on connection {}",
-                  request->request->request_key, _id)};
+                throw std::runtime_error{(boost::format(
+                  "cant find the request record of request key %1% on connection %2%") % request->request->request_key % _id).str()};
             }
 
             auto reply_status = reinterpret_cast<reply_meta*>(iovs[0].iov_base);
@@ -384,7 +379,8 @@ public:
                   "ERROR: RPC call failed of request %ld with reply status %s\n",
                   request->request->request_key,
                   string_status(reply_status_e));
-                request->request->ctrlr->SetFailed(fmt::format(""));
+                request->request->ctrlr->SetFailed(
+                  (boost::format("rpc call failed with reply status %1%") % string_status(reply_status_e)).str());
                 request->request->closure->Run();
                 _unresponsed_requests.erase(request_it);
 
@@ -462,8 +458,7 @@ public:
         if (not _pg->ctrlr) {
             SPDK_ERRLOG("ERROR: construct client transport ctrlr failed, errno %d: %s\n",
               errno, ::spdk_strerror(errno));
-            throw std::runtime_error{fmt::format(
-              "construct client transport ctrlr failed: {}", ::spdk_strerror(errno)),};
+            throw std::runtime_error{"construct client transport ctrlr failed"};
         }
         _pg->group = ::spdk_client_poll_group_create(_pg.get(), nullptr);
         SPDK_NOTICELOG(
@@ -473,9 +468,7 @@ public:
             SPDK_ERRLOG(
               "ERROR: spdk_client_poll_group_create() failed, errno %d: %s\n",
               errno, ::spdk_strerror(errno));
-            throw std::runtime_error{fmt::format(
-              "spdk_client_poll_group_create() failed, errno {}: {}",
-              errno, ::spdk_strerror(errno))};
+            throw std::runtime_error{"spdk_client_poll_group_create() failed"};
         }
 
         _poller = SPDK_POLLER_REGISTER(poll_fn, this, 0);
