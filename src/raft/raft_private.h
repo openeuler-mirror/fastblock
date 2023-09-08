@@ -584,7 +584,7 @@ public:
      *  nonzero if server is leader and has leases from majority of voting nodes;
      *  0 if server is not leader or lacks leases from majority of voting nodes;
     */
-    int raft_has_majority_leases();
+    bool raft_has_majority_leases();
 
     /** Process events that are dependent on time passing.
      * @return
@@ -886,11 +886,15 @@ public:
         return pg_id;
     }
 
+    bool is_lease_valid(){
+        return raft_has_majority_leases();
+    }
+
     msg_appendentries_t* create_appendentries(raft_node* node);
     void dispatch_recovery(raft_node* node);
     void do_recovery(raft_node* node);
 private:
-    int _has_majority_leases(raft_time_t now, int with_grace);
+    bool _has_majority_leases(raft_time_t now, int with_grace);
     int _cfg_change_is_valid(msg_entry_t* ety);
     int _should_grant_vote(const msg_requestvote_t* vr);
     int _raft_send_installsnapshot(raft_node* node);
@@ -980,6 +984,8 @@ private:
 #endif
    
     struct spdk_poller * raft_timer;
+
+    raft_index_t _last_index_before_become_leader;
 }; 
 
 int raft_votes_is_majority(const int nnodes, const int nvotes);

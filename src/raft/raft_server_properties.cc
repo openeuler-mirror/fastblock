@@ -38,7 +38,8 @@ raft_server_t::raft_server_t(raft_client_protocol& _client, disk_log* _log,
     , _append_entries_buffer(this)
 #ifdef KVSTORE
     , kv(_kv)
-#endif        
+#endif  
+    , _last_index_before_become_leader(0)      
 {
         raft_randomize_election_timeout();  
         log = log_new(std::move(_log)); 

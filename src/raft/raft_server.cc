@@ -67,6 +67,7 @@ void raft_server_t::raft_become_leader()
     raft_set_state(RAFT_STATE_LEADER);
     raft_time_t now = get_time();
     raft_set_election_timer(now);
+    _last_index_before_become_leader = raft_get_current_idx();
     for(auto _node : nodes){
         raft_node* node = _node.get(); 
 
@@ -196,7 +197,7 @@ int raft_server_t::_has_lease(raft_node* node, raft_time_t now, int with_grace)
     return 0;
 }
 
-int raft_server_t::_has_majority_leases(raft_time_t now, int with_grace)
+bool raft_server_t::_has_majority_leases(raft_time_t now, int with_grace)
 {
     assert(raft_get_state() == RAFT_STATE_LEADER);
 
@@ -216,10 +217,10 @@ int raft_server_t::_has_majority_leases(raft_time_t now, int with_grace)
     return n_voting / 2 + 1 <= n;
 }
 
-int raft_server_t::raft_has_majority_leases()
+bool raft_server_t::raft_has_majority_leases()
 {
     if (raft_get_state() != RAFT_STATE_LEADER)
-        return 0;
+        return false;
 
     /* Check without grace, because the caller may be checking leadership for
      * linearizability (§6.4). */
@@ -1252,7 +1253,9 @@ msg_appendentries_t* raft_server_t::create_appendentries(raft_node* node)
           ae->leader_commit(),
           ae->prev_log_idx(),
           ae->prev_log_term());
-    node->raft_set_append_time(get_time());    
+    auto cur_timer = get_time();
+    node->raft_set_append_time(cur_timer); 
+    raft_set_election_timer(cur_timer);  
     return ae;
 }
 

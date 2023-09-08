@@ -117,3 +117,12 @@ int state_machine::raft_apply_entries(){
     return 0;
 }
 #endif
+
+bool state_machine::linearization() {
+    // 在租期不会发生选举，确保 Leader 不会变。
+    if (_raft->is_lease_valid()) {
+        return true;
+    }
+  
+    return false;
+}

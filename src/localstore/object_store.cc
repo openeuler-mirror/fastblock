@@ -414,7 +414,7 @@ void object_store::blob_readwrite(struct spdk_blob *blob, struct spdk_io_channel
   if (is_lba_aligned(offset, len)) {
       SPDK_DEBUGLOG(object_store, "aligned offset:%lu len:%lu\n", offset, len);
       ctx->is_aligned = true;
-      if (is_read) {
+      if (!is_read) {
         spdk_blob_io_write(blob, channel, buf, start_lba, num_lba, rw_done, ctx);
       } else {
         spdk_blob_io_read(blob, channel, buf, start_lba, num_lba, rw_done, ctx);

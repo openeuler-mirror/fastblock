@@ -2,7 +2,7 @@ compile_library(
   NAME par_mgr
   SRCS
     partition_manager.cc
-    osd_sm.cc
+    osd_stm.cc
   DEPS
     spdk::spdk
     raft_msg
@@ -27,7 +27,7 @@ add_executable(osd
   osd.cc
   osd_service.cc
   partition_manager.cc
-  osd_sm.cc
+  osd_stm.cc
 )
 
 target_include_directories (osd

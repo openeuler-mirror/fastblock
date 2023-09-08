@@ -2,7 +2,7 @@
 #define  PARTITION_MANAGER_H_
 
 #include "raft/pg_group.h"
-#include "osd/osd_sm.h"
+#include "osd/osd_stm.h"
 #include "base/core_sharded.h"
 
 #include <memory>
@@ -22,7 +22,7 @@ public:
           uint32_t i = 0;
           auto shard_num = _shard_cores.size();
           for(i = 0; i < shard_num; i++){
-              _sm_table.push_back(std::map<std::string, std::shared_ptr<osd_sm>>());
+              _sm_table.push_back(std::map<std::string, std::shared_ptr<osd_stm>>());
           }
       }
 
@@ -42,7 +42,7 @@ public:
     void create_pg(uint64_t pool_id, uint64_t pg_id, std::vector<osd_info_t> osds, uint32_t shard_id, int64_t revision_id);
     void delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id);
 
-    std::shared_ptr<osd_sm> get_osd_sm(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id){
+    std::shared_ptr<osd_stm> get_osd_stm(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id){
         std::string name = pg_id_to_name(pool_id, pg_id);
         if(_sm_table[shard_id].count(name) == 0)
             return nullptr;
@@ -62,7 +62,7 @@ public:
         return _pgs;
     }
 
-    void add_osd_sm(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id, std::shared_ptr<osd_sm> sm){
+    void add_osd_stm(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id, std::shared_ptr<osd_stm> sm){
         auto name = pg_id_to_name(pool_id, pg_id);
         _sm_table[shard_id][std::move(name)] = sm;
     }
@@ -97,7 +97,7 @@ private:
     uint32_t _next_shard;
     core_sharded&  _shard;
     std::vector<uint32_t> _shard_cores;
-    std::vector<std::map<std::string, std::shared_ptr<osd_sm>>> _sm_table;
+    std::vector<std::map<std::string, std::shared_ptr<osd_stm>>> _sm_table;
 };
 
 #endif

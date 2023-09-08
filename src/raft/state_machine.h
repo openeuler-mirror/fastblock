@@ -60,6 +60,9 @@ public:
     void set_apply_in_progress(bool apply_in_progress){
         _apply_in_progress = apply_in_progress;
     }
+
+    bool linearization();
+
 private:
     raft_server_t* _raft;
 
