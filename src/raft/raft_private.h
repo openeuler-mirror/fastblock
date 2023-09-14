@@ -634,6 +634,7 @@ public:
     void raft_become_follower();
 
     void raft_write_entry_finish(raft_index_t start_idx, raft_index_t end_idx, int result);
+    void follow_raft_write_entry_finish(raft_index_t start_idx, raft_index_t end_idx, int result);
 
     void raft_disk_append_finish(raft_index_t start_idx, raft_index_t end_idx, int result);
 

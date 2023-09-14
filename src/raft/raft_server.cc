@@ -466,7 +466,8 @@ int raft_server_t::raft_process_appendentries_reply(
 
 void raft_server_t::follow_raft_disk_append_finish(raft_index_t start_idx, raft_index_t end_idx, raft_index_t _commit_idx, int result){
     if (raft_get_commit_idx() < _commit_idx)
-        raft_set_commit_idx(_commit_idx);    
+        raft_set_commit_idx(_commit_idx);  
+    follow_raft_write_entry_finish(start_idx, end_idx, result);  
 }
 
 struct follow_disk_append_complete : public context{
@@ -997,6 +998,10 @@ void raft_server_t::raft_write_entry_finish(raft_index_t start_idx, raft_index_t
             start_idx, end_idx, raft_get_commit_idx(), result);
     raft_get_log()->raft_write_entry_finish(start_idx, end_idx, result);
     raft_flush();
+}
+
+void raft_server_t::follow_raft_write_entry_finish(raft_index_t start_idx, raft_index_t end_idx, int result){
+    raft_get_log()->raft_write_entry_finish(start_idx, end_idx, result);
 }
 
 void raft_server_t::raft_disk_append_finish(raft_index_t start_idx, raft_index_t end_idx, int result){
