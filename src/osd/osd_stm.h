@@ -125,8 +125,8 @@ private:
             
             if (try_lock(w.type)) {
                 _runners++;
-                _waiters.pop_front();
                 w.complete->complete(0);
+                _waiters.pop_front();
             } else {
                 SPDK_DEBUGLOG(osd, "lock wake->break type %u, current type %u\n", (uint32_t)w.type, (uint32_t)_lock_type);
                 break;
