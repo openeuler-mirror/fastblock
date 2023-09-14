@@ -89,7 +89,7 @@ struct rblob_close_ctx {
 */
 class rolling_blob {
 public:
-    static constexpr uint64_t huge_blob_size = 100_GB;    // log 默认使用1G的blob，滚动写
+    static constexpr uint64_t huge_blob_size = 1_GB;    // log 默认使用1G的blob，滚动写
     static constexpr uint64_t small_blob_size = 32_MB;    // kv 默认使用32M的blob，滚动写
     static constexpr uint64_t super_size = 4_KB;  // 最前面4K的super block保存这个blob的元数据
     static constexpr uint64_t unit_size = 512;

@@ -25,6 +25,7 @@ struct apply_complete : public context{
     void finish(int r) override {
         if(r == err::E_SUCCESS){
             stm->set_last_applied_idx(idx);
+            stm->get_raft()->raft_get_log()->raft_write_entry_finish(idx, idx, r);
             stm->get_raft()->raft_get_log()->set_applied_index(idx);
             /* voting cfg change is now complete */
             if (idx == stm->get_raft()->raft_get_voting_cfg_change_log_idx())
