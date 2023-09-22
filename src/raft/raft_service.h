@@ -7,8 +7,6 @@
 #include "raft/raft_private.h"
 #include "base/core_sharded.h"
 
-SPDK_LOG_REGISTER_COMPONENT(raft_service)
-
 template<class PartitionManager>
 class raft_service : public rpc_service_raft{
 public:
@@ -206,7 +204,7 @@ void raft_service<PartitionManager>::heartbeat(google::protobuf::RpcController* 
         req->set_leader_commit(meta.leader_commit());
         complete->reps.push_back(req);
 
-        SPDK_DEBUGLOG(raft_service, "recv heartbeat from %d pg: %lu.%lu\n", meta.node_id(), pool_id, pg_id);
+        SPDK_DEBUGLOG(pg_group, "recv heartbeat from %d pg: %lu.%lu\n", meta.node_id(), pool_id, pg_id);
         _pm->get_shard().invoke_on(
           shard_id, 
           [this, raft, complete, req, rsp](){

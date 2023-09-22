@@ -11,7 +11,7 @@
 #define BLOCK_UNITS 8
 
 osd_stm::osd_stm()
-: state_machine() 
+: state_machine()
 , _store(global_blobstore(), global_io_channel())
 , _object_rw_lock()
 {}
@@ -46,14 +46,14 @@ void write_obj_done(void *arg, int obj_errno){
 
 void osd_stm::write_obj(const std::string& obj_name, uint64_t offset, const std::string& data, context *complete){
     uint64_t len = align_up<uint64_t>(data.size(), 512 * BLOCK_UNITS);
-    char* buf = (char*)spdk_zmalloc(len, 0x1000, NULL, SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA); 
+    char* buf = (char*)spdk_zmalloc(len, 0x1000, NULL, SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
     memcpy(buf, data.c_str(), data.size());
     write_obj_ctx * ctx = new write_obj_ctx{this, obj_name, buf, complete};
     _store.write(obj_name, offset, buf, data.size(), write_obj_done, ctx);
 }
 
 void osd_stm::delete_obj(const std::string& obj_name, context *complete){
-    //delete object 
+    //delete object
 
     _object_rw_lock.unlock(obj_name, operation_type::DELETE);
     complete->complete(err::E_SUCCESS);
@@ -97,7 +97,7 @@ struct osd_service_complete : public context{
         }
         response->set_state(r);
         done->Run();
-    }    
+    }
 };
 
 using lock_complete_func = std::function<void ()>;
@@ -108,16 +108,16 @@ struct lock_complete : public context{
     : func(std::move(_func)) {}
 
     void finish(int ) override {
-        func(); 
-    }    
+        func();
+    }
 };
 
 void osd_stm::write_and_wait(
-            const osd::write_request* request, 
-            osd::write_reply* response, 
+            const osd::write_request* request,
+            osd::write_reply* response,
             google::protobuf::Closure* done){
 
-    osd_service_complete<osd::write_reply> *write_complete = 
+    osd_service_complete<osd::write_reply> *write_complete =
                     new osd_service_complete<osd::write_reply>(this, request->object_name(), response, done);
 
     auto write_func = [this, request, write_complete](){
@@ -126,24 +126,24 @@ void osd_stm::write_and_wait(
         cmd.set_offset(request->offset());
         std::string buf;
         cmd.SerializeToString(&buf);
-     
+
         SPDK_INFOLOG(osd, "process write_request , pool %lu pg %lu object_name %s offset %lu len %lu\n",
-                     request->pool_id(), request->pg_id(), request->object_name().c_str(), request->offset(), 
+                     request->pool_id(), request->pg_id(), request->object_name().c_str(), request->offset(),
                      request->data().size());
-    
+
         auto entry_ptr = std::make_shared<msg_entry_t>();
         entry_ptr->set_type(RAFT_LOGTYPE_WRITE);
         entry_ptr->set_obj_name(request->object_name());
         entry_ptr->set_meta(std::move(buf));
-        entry_ptr->set_data(std::move(request->data())); 
-    
+        entry_ptr->set_data(std::move(request->data()));
+
         auto ret = get_raft()->raft_write_entry(entry_ptr, write_complete);
         if (ret != 0)
         {
             write_complete->complete(ret);
-        }   
+        }
     };
-    
+
     lock_complete *complete = new lock_complete(std::move(write_func));
     _object_rw_lock.lock(request->object_name(), operation_type::WRITE, complete);
 }
@@ -166,11 +166,11 @@ void read_obj_done(void *arg, int obj_errno){
 }
 
 void osd_stm::read_and_wait(
-            const osd::read_request* request, 
-            osd::read_reply* response, 
+            const osd::read_request* request,
+            osd::read_reply* response,
             google::protobuf::Closure* done){
 
-    osd_service_complete<osd::read_reply> *read_complete = 
+    osd_service_complete<osd::read_reply> *read_complete =
                     new osd_service_complete<osd::read_reply>(this, request->object_name(), response, done);
 
     auto read_func = [this, request, response, read_complete](){
@@ -183,7 +183,7 @@ void osd_stm::read_and_wait(
         }
 
         SPDK_INFOLOG(osd, "process read_request , pool %lu pg %lu object_name %s offset %lu len %lu\n",
-                     request->pool_id(), request->pg_id(), request->object_name().c_str(), request->offset(), 
+                     request->pool_id(), request->pg_id(), request->object_name().c_str(), request->offset(),
                      request->length());
 
         uint64_t len = align_up<uint64_t>(request->length(), 512 * BLOCK_UNITS);
@@ -194,37 +194,37 @@ void osd_stm::read_and_wait(
     };
 
     lock_complete *complete = new lock_complete(std::move(read_func));
-    _object_rw_lock.lock(request->object_name(), operation_type::READ, complete);    
+    _object_rw_lock.lock(request->object_name(), operation_type::READ, complete);
 }
 
 void osd_stm::delete_and_wait(
-            const osd::delete_request* request, 
-            osd::delete_reply* response, 
+            const osd::delete_request* request,
+            osd::delete_reply* response,
             google::protobuf::Closure* done){
-    osd_service_complete<osd::delete_reply> *delete_complete = 
+    osd_service_complete<osd::delete_reply> *delete_complete =
                     new osd_service_complete<osd::delete_reply>(this, request->object_name(), response, done);
-    
+
     auto delete_func = [this, request, delete_complete](){
         osd::delete_cmd cmd;
         cmd.set_object_name(request->object_name());
         std::string buf;
         cmd.SerializeToString(&buf);
-    
+
         SPDK_INFOLOG(osd, "process delete_request , pool %lu pg %lu object_name %s \n",
                      request->pool_id(), request->pg_id(), request->object_name().c_str());
-    
+
         auto entry_ptr = std::make_shared<msg_entry_t>();
         entry_ptr->set_type(RAFT_LOGTYPE_DELETE);
         entry_ptr->set_obj_name(request->object_name());
-        entry_ptr->set_meta(std::move(buf)); 
-    
+        entry_ptr->set_meta(std::move(buf));
+
         auto ret = get_raft()->raft_write_entry(entry_ptr, delete_complete);
         if (ret != 0)
         {
             delete_complete->complete(ret);
-        }           
+        }
     };
 
     lock_complete *complete = new lock_complete(std::move(delete_func));
-    _object_rw_lock.lock(request->object_name(), operation_type::DELETE, complete);       
+    _object_rw_lock.lock(request->object_name(), operation_type::DELETE, complete);
 }

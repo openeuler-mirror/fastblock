@@ -4,3 +4,5 @@ build
 *.pb.cc
 *.pb.h
 tmp
+build.rel
+build.debug

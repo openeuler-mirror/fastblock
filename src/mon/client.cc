@@ -33,6 +33,7 @@ void do_start(void* arg) {
 }
 
 void do_start_cluster_map_poller(void* arg) {
+    SPDK_INFOLOG(mon, "Starting clustermap poller...\n");
     auto* mon_cli = reinterpret_cast<client*>(arg);
     mon_cli->handle_start_cluster_map_poller();
 }
@@ -52,7 +53,7 @@ void client::start() {
         throw std::runtime_error{"cant get current spdk thread"};
     }
 
-    ::spdk_thread_send_msg(_current_thread, do_start, this);
+    spdk_thread_send_msg(_current_thread, do_start, this);
 }
 
 void client::handle_start() {
@@ -93,7 +94,7 @@ client::emplace_osd_boot_request(
     boot_req->set_host(hostname);
 
     auto ret = std::make_unique<client::request_context>(
-      this, std::move(req), nullptr, std::move(cb));
+      this, std::move(req), std::monostate{}, std::move(cb));
     enqueue_request(ret.get());
 
     return ret;
@@ -112,7 +113,7 @@ client::emplace_create_image_request(
     create_image_req->set_object_size(object_size);
 
     auto ret = std::make_unique<client::request_context>(
-      this, std::move(req), nullptr, std::move(cb));
+      this, std::move(req), std::monostate{}, std::move(cb));
     enqueue_request(ret.get());
 
     return ret;
@@ -129,7 +130,7 @@ client::emplace_remove_image_request(
     real_req->set_imagename(std::move(image_name));
 
     auto ret = std::make_unique<client::request_context>(
-      this, std::move(req), nullptr, std::move(cb));
+      this, std::move(req), std::monostate{}, std::move(cb));
     enqueue_request(ret.get());
 
     return ret;
@@ -146,7 +147,7 @@ client::emplace_resize_image_request(
     real_req->set_size(size);
 
     auto ret = std::make_unique<client::request_context>(
-      this, std::move(req), nullptr, std::move(cb));
+      this, std::move(req), std::monostate{}, std::move(cb));
     enqueue_request(ret.get());
 
     return ret;
@@ -163,7 +164,18 @@ client::emplace_get_image_info_request(
     real_req->set_imagename(std::move(image_name));
 
     auto ret = std::make_unique<client::request_context>(
-      this, std::move(req), nullptr, std::move(cb));
+      this, std::move(req), std::monostate{}, std::move(cb));
+    enqueue_request(ret.get());
+
+    return ret;
+}
+
+[[nodiscard]] std::unique_ptr<client::request_context>
+client::emplace_list_pool_request(on_response_callback_type&& cb) {
+    auto req = std::make_unique<msg::Request>();
+    [[maybe_unused]] auto _ = req->mutable_list_pools_request();
+    auto ret = std::make_unique<client::request_context>(
+      this, std::move(req), std::monostate{}, std::move(cb));
     enqueue_request(ret.get());
 
     return ret;
@@ -296,18 +308,18 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
             for (auto& info : info_it->second.pi()) {
                 auto pit = std::make_unique<pg_map::pg_info>();
                 pit->pg_id = info.pgid();
-                std::vector<::osd_info_t> osds{};
                 for (auto osd_id : info.osdid()) {
                     pit->osds.push_back(osd_id);
-                    osds.push_back(*(_osd_map.data.at(osd_id)));
                 }
                 SPDK_DEBUGLOG(mon, "core [%u] pool: %d pg: %d\n",
                   ::spdk_env_get_current_core(), pg_key, pit->pg_id);
 
                 _pg_map.pool_pg_map[pg_key].emplace(
                   info.pgid(), std::move(pit));
-                _pm.lock()->create_partition(
-                  pg_key, info.pgid(), std::move(osds), pv.at(pg_key));
+
+                if (_new_pg_cb) {
+                    _new_pg_cb.value()(info, pg_key, pv.at(pg_key), _osd_map);
+                }
             }
 
             continue;
@@ -428,8 +440,7 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
               osd_info.node_id, osd_info.address, osd_info.port,
               [raw_stack = resp_stack.get()] () {
                   raw_stack->un_connected_count--;
-                  SPDK_DEBUGLOG(
-                  mon, "Connected, un-connected count is %ld\n",
+                  SPDK_DEBUGLOG(mon, "Connected, un-connected count is %ld\n",
                   raw_stack->un_connected_count);
               }
             );
@@ -482,6 +493,10 @@ void client::process_clustermap_response(std::shared_ptr<msg::Response> response
 }
 
 int client::send_request(std::unique_ptr<msg::Request> req, bool send_directly) {
+    return send_request(req.get(), send_directly);
+}
+
+int client::send_request(msg::Request* req, bool send_directly) {
     if (not send_directly) {
         auto serialized_size = req->ByteSizeLong();
         if (serialized_size > _last_request_serialize_size) {
@@ -552,11 +567,37 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
 
         auto* req_ctx = _on_flight_requests.front();
         _on_flight_requests.pop_front();
-        req_ctx->img_info = std::make_unique<client::image_info>(
+        req_ctx->response_data = std::make_unique<client::image_info>(
           img_info.poolname(), img_info.imagename(),
           img_info.size(), img_info.object_size());
 
         req_ctx->cb(to_response_status(err_code), req_ctx);
+
+        break;
+    }
+    case msg::Response::UnionCase::kListPoolsResponse: {
+        SPDK_DEBUGLOG(mon, "Received list pools response\n");
+        auto& response_pools = response->list_pools_response().pi();
+        auto pools_size = response_pools.size();
+
+        SPDK_DEBUGLOG(mon, "List pool size is %d\n", pools_size);
+
+        auto pools_info = std::make_unique<pools>(pools_size, nullptr);
+        pools_info->data = std::make_unique<pools::pool[]>(pools_size);
+
+        for (int i{0}; i < pools_size; ++i) {
+            pools_info->data[i].pool_id = response_pools.at(i).poolid();
+            pools_info->data[i].name = response_pools.at(i).name();
+            pools_info->data[i].pg_size = response_pools.at(i).pgsize();
+            pools_info->data[i].pg_count = response_pools.at(i).pgcount();
+            pools_info->data[i].failure_domain = response_pools.at(i).failuredomain();
+            pools_info->data[i].root = response_pools.at(i).root();
+        }
+
+         auto* req_ctx = _on_flight_requests.front();
+        _on_flight_requests.pop_front();
+        req_ctx->response_data = std::move(pools_info);
+        req_ctx->cb(response_status::ok, req_ctx);
 
         break;
     }
@@ -611,7 +652,7 @@ void client::enqueue_request(client::request_context* ctx) {
 
 void client::consume_general_request(bool is_cached) {
     auto* head_req = _requests.front();
-    auto rc = send_request(std::move(head_req->req), is_cached);
+    auto rc = send_request(head_req->req.get(), is_cached);
 
     if (rc < 0) {
         _cached = client::cached_request_class::general;
@@ -620,8 +661,8 @@ void client::consume_general_request(bool is_cached) {
         }
     } else {
         _cached = client::cached_request_class::none;
-        _requests.pop_front();
         _on_flight_requests.push_back(head_req);
+        _requests.pop_front();
     }
 }
 
@@ -681,6 +722,45 @@ bool client::consume_request() {
     }
 
     return ret;
+}
+
+::osd_info_t* client::get_pg_first_available_osd_info(int32_t pool_id, int32_t pg_id) {
+    auto it = _pg_map.pool_pg_map.find(pool_id);
+    if (it == _pg_map.pool_pg_map.end()) {
+        SPDK_ERRLOG("ERROR: Cant find the pg map of pool id %d\n", pool_id);
+        return nullptr;
+    }
+
+    auto map_it = it->second.find(pg_id);
+    if (map_it == it->second.end()) {
+        SPDK_ERRLOG("ERROR: Cant find the pg map of pg id %d\n", pg_id);
+        return nullptr;
+    }
+
+    decltype(_osd_map.data)::iterator osd_map_it{};
+    for (auto osd_id : map_it->second->osds) {
+        osd_map_it = _osd_map.data.find(osd_id);
+        if (osd_map_it == _osd_map.data.end()) {
+            continue;
+        }
+
+        if (osd_map_it->second->isup and osd_map_it->second->isin) {
+            return osd_map_it->second.get();
+        }
+    }
+
+    return nullptr;
+}
+
+int client::get_pg_num(int32_t pool_id) {
+    auto it = _pg_map.pool_pg_map.find(pool_id);
+    if (it == _pg_map.pool_pg_map.end()) {
+        SPDK_DEBUGLOG(mon, "_pg_map.pool_pg_map.size() is %u\n", _pg_map.pool_pg_map.size());
+        SPDK_ERRLOG("ERROR: Cant find this pg map of pool: %d\n", pool_id);
+        return -1;
+    }
+
+    return it->second.size();
 }
 
 }

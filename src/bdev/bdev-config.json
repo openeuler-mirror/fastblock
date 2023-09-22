@@ -1,0 +1,21 @@
+{
+    "subsystems": [
+        {
+            "subsystem": "bdev",
+            "config": [
+                {
+                    "method": "bdev_fastblock_create",
+                    "params": {
+                        "pool_id": 1,
+                        "image_name": "fbimage",
+                        "block_size": 4096,
+                        "image_size": 2147483648,
+                        "object_size": 0,
+                        "monitor_address": "127.0.0.1:2379",
+                        "name": "fbdev"
+                    }
+                }
+            ]
+        }
+    ]
+}

@@ -121,10 +121,18 @@ void disk_init_complete(void *arg, int rberrno){
     SPDK_NOTICELOG("------block start, cpu count : %u  bdev_disk: %s\n",
 	        spdk_env_get_core_count(), server->bdev_disk.c_str());
 
-    global_pm = std::make_shared<partition_manager>(
-	  server->node_id, server->osd_addr, server->osd_port, server->osd_uuid);
+    global_pm = std::make_shared<partition_manager>(server->node_id);
+    monitor::client::on_new_pg_callback_type pg_map_cb =
+      [pm = global_pm] (const msg::PGInfo& pg_info, const int32_t pg_key, const int32_t pg_map_ver, const monitor::client::osd_map& osd_map) {
+          SPDK_DEBUGLOG(osd, "enter pg_map_cb()\n");
+          std::vector<::osd_info_t> osds{};
+          for (auto osd_id : pg_info.osdid()) {
+              osds.push_back(*(osd_map.data.at(osd_id)));
+          }
+          pm->create_partition(pg_key, pg_info.pgid(), std::move(osds), pg_map_ver);
+      };
     monitor_client = std::make_shared<monitor::client>(
-      server->monitors, global_pm, server->node_id);
+      server->monitors, global_pm, std::move(pg_map_cb), server->node_id);
 
     start_monitor(server);
 
@@ -157,7 +165,9 @@ main(int argc, char *argv[])
 	opts.print_level = ::spdk_log_level::SPDK_LOG_WARN;
 	::spdk_log_set_flag("rdma");
 	::spdk_log_set_flag("msg");
-	::spdk_log_set_flag("mon");
+	::spdk_log_set_flag("osd");
+	::spdk_log_set_flag("pg_group");
+	::spdk_log_set_flag("object_store");
 
 	if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:f:I:D:H:P:o:t:U:", NULL,
 				      block_parse_arg, block_usage)) !=

@@ -2,7 +2,6 @@
 #include "raft/raft_client_protocol.h"
 #include "raft/pg_group.h"
 
-SPDK_LOG_REGISTER_COMPONENT(client_proto)
 void appendentries_source::process_response(){
     _raft->raft_process_appendentries_reply(&response);
     delete this;

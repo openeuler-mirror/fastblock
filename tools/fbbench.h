@@ -135,7 +135,8 @@ public:
             send_request(target_node_id);
         }
     }
-    int get_type() {
+    int get_type()
+    {
         return _type;
     }
 
@@ -149,14 +150,17 @@ public:
         _op_submit_tsc.erase(id);
     }
 
-    auto get_wr() {
+    auto get_wr()
+    {
         return _wr;
     }
-    auto get_br() {
+    auto get_br()
+    {
         return _br;
     }
 
-    auto get_server() {
+    auto get_server()
+    {
         return _s;
     }
 
@@ -187,4 +191,3 @@ private:
     // 每个cpu核上有一个map
     std::vector<std::map<int, std::shared_ptr<osd::rpc_service_osd_Stub>>> _stubs;
 };
-

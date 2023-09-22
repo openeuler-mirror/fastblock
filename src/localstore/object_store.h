@@ -1,14 +1,14 @@
 /* Copyright (c) 2023 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
- * You can use this software according to the terms and conditions of the Mulan PSL v2. 
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
- *          http://license.coscl.org.cn/MulanPSL2 
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, 
- * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, 
- * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.  
- * See the Mulan PSL v2 for more details.  
+ *          http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
  */
- 
+
 #pragma once
 
 #include <absl/container/flat_hash_map.h>
@@ -25,7 +25,7 @@
 using object_rw_complete = std::function<void (void *arg, int objerrno)>;
 
 class object_store {
-  static constexpr uint32_t blob_cluster = 8;
+  static constexpr uint32_t blob_cluster = 4;
   static constexpr uint32_t cluster_size = 1024 * 1024;
   static constexpr uint32_t blob_size = blob_cluster * cluster_size;
   static constexpr uint32_t unit_size = 512;
@@ -46,12 +46,12 @@ public:
   /**
    * 由于要直接读写blob，这里的buf务必用spdk_malloc申请
    */
-  void read(std::string object_name, 
-            uint64_t offset, char* buf, uint64_t len, 
+  void read(std::string object_name,
+            uint64_t offset, char* buf, uint64_t len,
             object_rw_complete cb_fn, void* arg);
 
-  void write(std::string object_name, 
-             uint64_t offset, char* buf, uint64_t len, 
+  void write(std::string object_name,
+             uint64_t offset, char* buf, uint64_t len,
              object_rw_complete cb_fn, void* arg);
 
   void stop(object_rw_complete cb_fn, void* arg);
@@ -60,18 +60,18 @@ public:
   void load_snap(std::string object_name, int version, object_rw_complete cb_fn, void* arg);
 
   //快照链的长度
-  int get_snapsize(std::string object_name); 
+  int get_snapsize(std::string object_name);
 
   //删除快照
   void delete_snap(std::string object_name,int version, object_rw_complete cb_fn, void* arg);
 
 private:
-  void readwrite(std::string object_name, 
-                     uint64_t offset, char* buf, uint64_t len, 
+  void readwrite(std::string object_name,
+                     uint64_t offset, char* buf, uint64_t len,
                      object_rw_complete cb_fn, void* arg, bool is_read);
 
   static void blob_readwrite(struct spdk_blob *blob, struct spdk_io_channel * channel,
-                       uint64_t offset, char* buf, uint64_t len, 
+                       uint64_t offset, char* buf, uint64_t len,
                        object_rw_complete cb_fn, void* arg, bool is_read);
 
   //快照函数
@@ -91,7 +91,7 @@ private:
   static void snap_add(void *arg, spdk_blob* blob, int objerrno);
   static void snap_add_statues(void *arg, int objerrno);
   //快照删除的回调函数
-  static void del_done(void *arg, int objerrno); 
+  static void del_done(void *arg, int objerrno);
   static void close_snap (void *arg, int objerrno) ;
   static bool is_lba_aligned(uint64_t offset, uint64_t length) {
     uint32_t lba_size = object_store::unit_size;

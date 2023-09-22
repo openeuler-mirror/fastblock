@@ -107,10 +107,11 @@ int main_poller_cb(void* arg) {
           pool, ctx->image_name, [ctx] (const monitor::client::response_status s, [[maybe_unused]] auto _) {
               BOOST_TEST_MESSAGE("test on image info got");
               BOOST_TEST(s == monitor::client::response_status::ok);
-              BOOST_TEST(ctx->image_name == get_image_ctx->img_info->image_name);
-              BOOST_TEST(ctx->image_size == get_image_ctx->img_info->size);
-              BOOST_TEST(ctx->object_size == get_image_ctx->img_info->object_size);
-              BOOST_TEST(pool == get_image_ctx->img_info->pool_name);
+              auto& img_info = std::get<std::unique_ptr<monitor::client::image_info>>(get_image_ctx->response_data);
+              BOOST_TEST(ctx->image_name == img_info->image_name);
+              BOOST_TEST(ctx->image_size == img_info->size);
+              BOOST_TEST(ctx->object_size == img_info->object_size);
+              BOOST_TEST(pool == img_info->pool_name);
               ctx->test_state = monitor_client_test_state::image_info_got;
           }
         );
@@ -135,10 +136,11 @@ int main_poller_cb(void* arg) {
           pool, ctx->image_name, [ctx] (const monitor::client::response_status s, [[maybe_unused]] auto _) {
               BOOST_TEST_MESSAGE("test on image info got");
               BOOST_TEST(s == monitor::client::response_status::ok);
-              BOOST_TEST(ctx->image_name == get_image_ctx->img_info->image_name);
-              BOOST_TEST(ctx->resize_size == get_image_ctx->img_info->size);
-              BOOST_TEST(ctx->object_size == get_image_ctx->img_info->object_size);
-              BOOST_TEST(pool == get_image_ctx->img_info->pool_name);
+              auto& img_info = std::get<std::unique_ptr<monitor::client::image_info>>(get_image_ctx->response_data);
+              BOOST_TEST(ctx->image_name == img_info->image_name);
+              BOOST_TEST(ctx->resize_size == img_info->size);
+              BOOST_TEST(ctx->object_size == img_info->object_size);
+              BOOST_TEST(pool == img_info->pool_name);
               ctx->test_state = monitor_client_test_state::image_resized_info_got;
           }
         );
@@ -191,8 +193,7 @@ int main_poller_cb(void* arg) {
 
 void monitor_client_test_on_app_start(void* arg) {
     auto* ctx = reinterpret_cast<monitor_client_test_context*>(arg);
-    ctx->pm = std::make_shared<::partition_manager>(
-      osd_id, osd_host, osd_port, osd_uuid);
+    ctx->pm = std::make_shared<::partition_manager>(osd_id);
     std::vector<monitor::client::endpoint> eps{};
     eps.emplace_back(monitor1_host, monitor1_port);
 
@@ -201,9 +202,18 @@ void monitor_client_test_on_app_start(void* arg) {
         eps.emplace_back(monitor3_host, monitor3_port);
     }
 
-    ctx->mon_cli = std::make_unique<monitor::client>(
-      eps,
-      ctx->pm);
+    monitor::client::on_new_pg_callback_type pg_map_cb =
+      [pm = ctx->pm] (const msg::PGInfo& pg_info, const int32_t pg_key, const int32_t pg_map_ver, const monitor::client::osd_map& osd_map) {
+          BOOST_TEST_MESSAGE("call pg_map_cb()");
+
+          std::vector<::osd_info_t> osds{};
+          for (auto osd_id : pg_info.osdid()) {
+              osds.push_back(*(osd_map.data.at(osd_id)));
+          }
+          pm->create_partition(pg_key, pg_info.pgid(), std::move(osds), pg_map_ver);
+      };
+
+    ctx->mon_cli = std::make_unique<monitor::client>(eps, ctx->pm, std::move(pg_map_cb));
     ctx->mon_cli->start();
 
     if (osd_id == -1) {

@@ -100,10 +100,12 @@ public:
 
     using log_read_complete = std::function<void (std::vector<raft_entry_t>&&, int rberrno)>;
     void disk_read(raft_index_t start_idx, raft_index_t end_idx, log_read_complete cb_fn){
+        SPDK_INFOLOG(pg_group, "start_idx:%lu end_idx:%lu.\n", start_idx, end_idx);
         _log->read(
           start_idx, 
           end_idx, 
           [this, cb_fn = std::move(cb_fn)](void *, std::vector<log_entry_t>&& entries, int rberrno){
+            SPDK_INFOLOG(pg_group, "after disk_read, rberrno: %d, entry size: %lu\n", rberrno, entries.size());
             std::vector<raft_entry_t> raft_entries;
             if(rberrno != 0){
                 cb_fn({}, rberrno);

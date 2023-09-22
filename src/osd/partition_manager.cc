@@ -3,6 +3,7 @@
 #include "spdk/log.h"
 #include "localstore/blob_manager.h"
 #include "localstore/disk_log.h"
+#include "raft/pg_group.h"
 
 SPDK_LOG_REGISTER_COMPONENT(osd)
 

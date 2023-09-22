@@ -45,6 +45,7 @@ void osd_service::process(const request_type* request, reply_type* response, goo
     uint32_t shard_id;
 
     if(!_pm->get_pg_shard(pool_id, pg_id, shard_id)){
+        SPDK_WARNLOG("not find pg %lu.%lu\n", request->pool_id(), request->pg_id());
         response->set_state(err::RAFT_ERR_NOT_FOUND_PG);
         done->Run();
         return;

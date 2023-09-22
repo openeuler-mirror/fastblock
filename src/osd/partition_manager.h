@@ -4,6 +4,7 @@
 #include "raft/pg_group.h"
 #include "osd/osd_stm.h"
 #include "base/core_sharded.h"
+#include "raft/pg_group.h"
 
 #include <memory>
 
@@ -14,7 +15,7 @@ struct shard_revision {
 
 class partition_manager : public std::enable_shared_from_this<partition_manager> {
 public:
-    partition_manager(int node_id, std::string& osd_addr, int osd_port, std::string& osd_uuid)
+    partition_manager(int node_id)
       : _pgs(node_id)
       , _next_shard(0)
       , _shard(core_sharded::get_core_sharded())

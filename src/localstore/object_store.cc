@@ -351,7 +351,8 @@ void object_store::readwrite(std::string object_name,
                      object_rw_complete cb_fn, void* arg, bool is_read) 
 {
     SPDK_DEBUGLOG(object_store, "object %s offset:%lu len:%lu\n", object_name.c_str(), offset, len);
-    if (offset + len >= blob_size) {
+    if (offset + len > blob_size)
+    {
       SPDK_WARNLOG("object %s offset:%lu len:%lu beyond blob size %u\n",
           object_name.c_str(), offset, len, blob_size);
       len = blob_size - offset;
