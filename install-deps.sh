@@ -38,6 +38,9 @@ deb_deps=(
   libssl-dev
   libaio-dev
   ninja-build
+  libubsan1
+  libasan6
+  libboost-dev
 )
 
 # Add support for centos/rhel/openEuler/suse
@@ -60,6 +63,10 @@ rpm_deps=(
   openssl-devel
   libaio-devel
   ninja-build
+  libubsan
+  libasan
+  boost-dev
+  boost
 )
 
 case "$ID" in
