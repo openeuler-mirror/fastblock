@@ -91,8 +91,9 @@ public:
         raft_entry.set_obj_name("");
         raft_entry.set_meta(log_entry.meta);
         std::string data;
+        data.reserve(log_entry.data.bytes());
         for (auto sbuf : log_entry.data){
-            data += sbuf.get_buf();
+            data.append(sbuf.get_buf(), sbuf.len());
         }
         raft_entry.set_data(std::move(data));
         return raft_entry;
