@@ -284,6 +284,7 @@ public:
     client& operator=(client&&) = delete;
 
     ~client() noexcept = default;
+
 public:
 
     bool is_running() noexcept { return _is_running; }
@@ -295,6 +296,10 @@ public:
         }
 
         return std::pair<std::string, int>{it->second->address, it->second->port};
+    }
+
+    auto last_cluster_map_at() noexcept {
+        return _last_cluster_map_at;
     }
 
 public:
@@ -348,8 +353,9 @@ public:
     void handle_emplace_request(request_context*);
     void send_cluster_map_request();
     bool core_poller_handler();
-    ::osd_info_t *get_pg_first_available_osd_info(int32_t pool_id, int32_t pg_id);
+    ::osd_info_t* get_pg_first_available_osd_info(int32_t pool_id, int32_t pg_id);
     int get_pg_num(int32_t pool_id);
+    ::osd_info_t* get_osd_info(const int32_t node_id);
 
 private:
 
@@ -423,6 +429,7 @@ private:
     utils::time_check _log_time_check;
 
     std::optional<on_new_pg_callback_type> _new_pg_cb{std::nullopt};
+    std::chrono::system_clock::time_point _last_cluster_map_at{};
 
 private:
 

@@ -519,6 +519,7 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
 
     switch (response_case) {
     case msg::Response::UnionCase::kGetClusterMapResponse:
+        _last_cluster_map_at = std::chrono::system_clock::now();
         SPDK_DEBUGLOG(mon, "received cluster map response\n");
         process_clustermap_response(response);
         break;
@@ -761,6 +762,15 @@ int client::get_pg_num(int32_t pool_id) {
     }
 
     return it->second.size();
+}
+
+::osd_info_t* client::get_osd_info(const int32_t node_id) {
+    auto it = _osd_map.data.find(node_id);
+    if (it == _osd_map.data.end()) {
+        return nullptr;
+    }
+
+    return it->second.get();
 }
 
 }

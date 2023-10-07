@@ -46,24 +46,6 @@ bool fblock_client::connect_state()
     return _connect->is_connected();
 }
 
-std::shared_ptr<osd::rpc_service_osd_Stub> fblock_client::get_stub(::osd_info_t *osdinfo)
-{
-    return get_stub(osdinfo->node_id, osdinfo->address, osdinfo->port);
-}
-
-std::shared_ptr<osd::rpc_service_osd_Stub> fblock_client::get_stub(const int node_id, const std::string& addr, const int port)
-{
-    // 配置OSD
-    auto connect_ptr = _cache.get_connect(0, node_id);
-    if (connect_ptr)
-    {
-        return std::make_shared<osd::rpc_service_osd_Stub>(connect_ptr.get());
-    }
-
-    connect_ptr = _cache.create_connect(0, node_id, addr, port);
-    return std::make_shared<osd::rpc_service_osd_Stub>(connect_ptr.get());
-}
-
 unsigned str_hash(const std::string &str, unsigned length)
 {
     const unsigned char *k = (const unsigned char *)str.c_str();

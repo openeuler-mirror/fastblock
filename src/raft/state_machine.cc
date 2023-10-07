@@ -4,8 +4,6 @@
 #include "utils/err_num.h"
 
 constexpr uint32_t default_parallel_apply_num = 32;
-constexpr int32_t TIMER_STATE_MACHINE_USEC = 10; // 微秒
-
 
 static int apply_task(void *arg){
     state_machine* stm = (state_machine *)arg;
@@ -14,7 +12,7 @@ static int apply_task(void *arg){
 }
 
 void state_machine::start(){
-        _timer = SPDK_POLLER_REGISTER(&apply_task, this, TIMER_STATE_MACHINE_USEC);
+    _timer = SPDK_POLLER_REGISTER(&apply_task, this, 0);
 }
 
 struct apply_complete : public context{
