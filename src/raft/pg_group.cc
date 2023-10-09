@@ -3,6 +3,7 @@
 #include "spdk/thread.h"
 #include "spdk/env.h"
 #include "spdk/util.h"
+#include "localstore/storage_manager.h"
 
 #include <absl/container/flat_hash_map.h>
 
@@ -89,10 +90,10 @@ int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard
             uint64_t pg_id, std::vector<osd_info_t>&& osds, disk_log* log){
     int ret = 0;
     auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id
-                                        #ifdef KVSTORE
-                                               , _kvs[shard_id]
-                                        #endif                        
-                                            );
+                                        // #ifdef KVSTORE
+                                        //        , _kvs[shard_id]
+                                        // #endif                        
+                                        , global_storage().kvs());
     raft->raft_set_callbacks(&raft_funcs, NULL);
 
     _pg_add(shard_id, raft, pool_id, pg_id);
@@ -120,50 +121,50 @@ void pg_group_t::delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id){
     _pg_remove(shard_id, pool_id, pg_id);
 }
 
-#ifdef KVSTORE
-struct make_kvstore_context{
-	context *complete;
-    pg_group_t* pg;
-    int num;
-    int count;
-    int rberrno;
-};
+// #ifdef KVSTORE
+// struct make_kvstore_context{
+// 	context *complete;
+//     pg_group_t* pg;
+//     int num;
+//     int count;
+//     int rberrno;
+// };
 
-static void make_kvstore_done(void *arg, kv_store* kv, int rberrno){
-    make_kvstore_context* mkc = (make_kvstore_context*)arg;
-    context *complete = mkc->complete;
-    pg_group_t* pgs = mkc->pg;
+// static void make_kvstore_done(void *arg, kv_store* kv, int rberrno){
+//     make_kvstore_context* mkc = (make_kvstore_context*)arg;
+//     context *complete = mkc->complete;
+//     pg_group_t* pgs = mkc->pg;
 
-    mkc->num++;
-    SPDK_DEBUGLOG(pg_group, "make_kvstore_done, rberrno %d\n", rberrno);
-    if(rberrno){
-        mkc->rberrno = rberrno;
-    }else{
-        pgs->add_kvstore(kv);
-    }
-    if(mkc->num == mkc->count){
-        if(mkc->rberrno){
-            pgs->start_shard_manager();
-            complete->complete(mkc->rberrno);
-        }else
-            complete->complete(rberrno);
-        delete mkc;
-    }
-}
-#endif
+//     mkc->num++;
+//     SPDK_DEBUGLOG(pg_group, "make_kvstore_done, rberrno %d\n", rberrno);
+//     if(rberrno){
+//         mkc->rberrno = rberrno;
+//     }else{
+//         pgs->add_kvstore(kv);
+//     }
+//     if(mkc->num == mkc->count){
+//         if(mkc->rberrno){
+//             pgs->start_shard_manager();
+//             complete->complete(mkc->rberrno);
+//         }else
+//             complete->complete(rberrno);
+//         delete mkc;
+//     }
+// }
+// #endif
 
 void pg_group_t::start(context *complete){
-#ifdef KVSTORE
-    uint32_t i = 0;
-    auto shard_num = _shard_cores.size();
-    make_kvstore_context *ctx = new make_kvstore_context{complete, this, 0, shard_num, 0};
-    for(i = 0; i < shard_num; i++){
-        make_kvstore(global_blobstore(), global_io_channel(), make_kvstore_done, ctx);
-    }
-#else
+// #ifdef KVSTORE
+//     uint32_t i = 0;
+//     auto shard_num = _shard_cores.size();
+//     make_kvstore_context *ctx = new make_kvstore_context{complete, this, 0, shard_num, 0};
+//     for(i = 0; i < shard_num; i++){
+//         make_kvstore(global_blobstore(), global_io_channel(), make_kvstore_done, ctx);
+//     }
+// #else
     start_shard_manager();
     complete->complete(0);
-#endif
+// #endif
 }
 
 

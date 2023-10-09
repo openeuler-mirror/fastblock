@@ -11,6 +11,9 @@
 #include "osd/osd_service.h"
 #include "rpc/server.h"
 #include "localstore/blob_manager.h"
+#include "localstore/storage_manager.h"
+
+#include <spdk/string.h>
 
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
@@ -111,9 +114,9 @@ void start_monitor(server_t* ctx) {
 		1024 * 1024, std::move(cb));
 }
 
-void disk_init_complete(void *arg, int rberrno){
+void storage_init_complete(void *arg, int rberrno){
     if(rberrno != 0){
-		SPDK_NOTICELOG("Failed to initialize the  disk, rberrno %d\n", rberrno);
+		SPDK_NOTICELOG("Failed to initialize the storage system. %s\n", spdk_strerror(rberrno));
 		spdk_app_stop(rberrno);
 		return;
 	}
@@ -138,6 +141,16 @@ void disk_init_complete(void *arg, int rberrno){
 
     pm_start_context *ctx = new pm_start_context{server, global_pm.get()};
 	global_pm->start(ctx);
+}
+
+void disk_init_complete(void *arg, int rberrno){
+    if(rberrno != 0){
+		SPDK_NOTICELOG("Failed to initialize the disk. %s\n", spdk_strerror(rberrno));
+		spdk_app_stop(rberrno);
+		return;
+	}
+	
+	storage_init(storage_init_complete, arg);
 }
 
 static void

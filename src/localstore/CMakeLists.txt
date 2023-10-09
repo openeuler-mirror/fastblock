@@ -1,12 +1,14 @@
 compile_library(
   NAME localstore
   SRCS
-  object_store.cc
-  rolling_blob.cc
-  buffer_pool.cc
-  spdk_buffer.cc
-  blob_manager.cc
-  kv_store.cc
+    object_store.cc
+    rolling_blob.cc
+    buffer_pool.cc
+    spdk_buffer.cc
+    storage_manager.cc
+    blob_manager.cc
+    kv_store.cc
+    kv_checkpoint.cc
 
   DEPS
   spdk::spdk

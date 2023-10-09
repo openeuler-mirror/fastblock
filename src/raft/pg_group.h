@@ -8,6 +8,7 @@
 #include "spdk/env.h"
 #include "utils/utils.h"
 #include "base/core_sharded.h"
+#include "localstore/kv_store.h"
 
 std::string pg_id_to_name(uint64_t pool_id, uint64_t pg_id);
 
@@ -121,20 +122,18 @@ public:
 
     void start(context *complete);
 
-#ifdef KVSTORE
-    void add_kvstore(kv_store *kv)
-    {
-        _kvs.push_back(kv);
-    }
-#endif
+// #ifdef KVSTORE
+//     void add_kvstore(kv_store *kv){
+//         _kvs.push_back(kv);
+//     }
+// #endif
 
-    void stop()
-    {
-#ifdef KVSTORE
-        _kv->stop([](void *, int) {}, nullptr);
-        delete _kv;
-        _kv = nullptr;
-#endif
+    void stop(){
+// #ifdef KVSTORE
+//         _kv->stop([](void*, int){}, nullptr);
+//         delete _kv;
+//         _kv = nullptr;
+// #endif
         stop_shard_manager();
     }
 
@@ -190,9 +189,9 @@ private:
     std::vector<shard_manager> _shard_mg;
     int _current_node_id;
     raft_client_protocol _client;
-#ifdef KVSTORE
-    std::vector<kv_store *> _kvs;
-#endif
+// #ifdef KVSTORE
+//     std::vector<kv_store *> _kvs;
+// #endif
     core_sharded &_shard;
 };
 

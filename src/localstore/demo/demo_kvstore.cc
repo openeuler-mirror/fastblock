@@ -14,6 +14,8 @@
 #include "localstore/rolling_blob.h"
 #include "localstore/spdk_buffer.h"
 #include "localstore/kv_store.h"
+#include "localstore/storage_manager.h"
+#include "sleep.h"
 #include "utils/itos.h"
 
 #define append_ITERATIONS 100
@@ -30,10 +32,10 @@ struct hello_context_t {
   struct spdk_blob *blob;
   spdk_blob_id blobid;
 
+  struct spdk_poller* poller;
   struct spdk_io_channel *channel;
   char* bdev_name;
 
-  rolling_blob* rblob;
   kvstore* kvs;
   int rc;
 };
@@ -72,7 +74,6 @@ uint64_t write_blob_tsc, write_snap_tsc;
 static void
 hello_cleanup(struct hello_context_t *hello_context)
 {
-    delete hello_context->kvs;
     delete hello_context;
 }
 
@@ -89,7 +90,7 @@ unload_complete(void *cb_arg, int objerrno)
     SPDK_ERRLOG("Error %d unloading the bobstore\n", objerrno);
     hello_context->rc = objerrno;
   }
-
+  delete hello_context->kvs;
   spdk_app_stop(hello_context->rc);
 }
 
@@ -101,15 +102,7 @@ unload_bs(struct hello_context_t *hello_context, const char *msg, int objerrno)
     SPDK_ERRLOG("%s (err %d %s)\n", msg, objerrno, spdk_strerror(objerrno));
     hello_context->rc = objerrno;
   }
-  if (hello_context->bs) {
-    if (hello_context->channel) {
-      SPDK_NOTICELOG("unload_bs, free io_channel\n");
-      spdk_bs_free_io_channel(hello_context->channel);
-    }
-    spdk_bs_unload(hello_context->bs, unload_complete, hello_context);
-  } else {
-    spdk_app_stop(objerrno);
-  }
+  blobstore_fini(unload_complete, hello_context);
 }
 
 static void
@@ -126,6 +119,28 @@ close_complete(void *arg, int rberrno)
   unload_bs(hello_context, "", 0);
 }
 
+static void kvstore_stop(void *arg, int rberrno) {
+  struct hello_context_t *hello_context = (struct hello_context_t *)arg;
+
+  if (rberrno) {
+    unload_bs(hello_context, "Error in rolling append continue completion", rberrno);
+    return;
+  }
+
+  SPDK_NOTICELOG("kvstore_stop. kvstore size: %lu \n", hello_context->kvs->size());
+  // for (int i = 0; i < 150000; i += 5000) {
+  //     auto key = std::string("key") + itos(i);
+  //     auto val = hello_context->kvs->get(key);
+  //     if (val) {
+  //         SPDK_NOTICELOG("key:%s get value:%s\n", key.c_str(), val->c_str());
+  //     } else {
+  //         SPDK_NOTICELOG("key:%s no value\n", key.c_str());
+  //     }
+  // }
+
+  hello_context->kvs->stop(close_complete, hello_context);
+}
+
 static void kvstore_replay_done(void *arg, int rberrno) {
   struct hello_context_t *hello_context = (struct hello_context_t *)arg;
 
@@ -134,9 +149,9 @@ static void kvstore_replay_done(void *arg, int rberrno) {
     return;
   }
 
-  SPDK_NOTICELOG("kvstore_replay_done. kvstore size: %lu \n", hello_context->kvs->size());
+  SPDK_NOTICELOG("kvstore_replay done. kvstore size: %lu \n", hello_context->kvs->size());
 
-  for (int i = 0; i < 150000; i += 5000) {
+  for (int i = 0; i < 180000; i += 5000) {
       auto key = std::string("key") + itos(i);
       auto val = hello_context->kvs->get(key);
       if (val) {
@@ -146,7 +161,8 @@ static void kvstore_replay_done(void *arg, int rberrno) {
       }
   }
 
-  hello_context->kvs->stop(close_complete, hello_context);
+  kvstore_stop(hello_context, 0);
+  // hello_context->kvs->save_checkpoint(kvstore_stop, hello_context);
 }
 
 static void
@@ -158,9 +174,9 @@ kvstore_replay(void *arg, int rberrno) {
     return;
   }
 
-  SPDK_NOTICELOG("kvstore_persist_second done. kvstore size: %lu \n", hello_context->kvs->size());
+  SPDK_NOTICELOG("kvstore before replay. kvstore size: %lu \n", hello_context->kvs->size());
 
-  for (int i = 0; i < 150000; i += 5000) {
+  for (int i = 0; i < 180000; i += 5000) {
       auto key = std::string("key") + itos(i);
       auto val = hello_context->kvs->get(key);
       if (val) {
@@ -177,7 +193,7 @@ kvstore_replay(void *arg, int rberrno) {
 }
 
 static void
-kvstore_persist_third(void *arg, int rberrno) {
+kvstore_put_4th_done(void *arg, int rberrno) {
   struct hello_context_t *hello_context = (struct hello_context_t *)arg;
 
   if (rberrno) {
@@ -185,26 +201,86 @@ kvstore_persist_third(void *arg, int rberrno) {
     return;
   }
 
-  SPDK_NOTICELOG("kvstore_persist_second done. kvstore size: %lu \n", hello_context->kvs->size());
+  SPDK_NOTICELOG("kvstore_put_4th done. kvstore size: %lu \n", hello_context->kvs->size());
 
-  for (int i = 0; i < 150000; i += 5000) {
+  for (int i = 0; i < 180000; i += 5000) {
       auto key = std::string("key") + itos(i);
       auto val = hello_context->kvs->get(key);
       if (val) {
-          SPDK_NOTICELOG("key:%s get value:%s\n", key.c_str(), val->c_str());
+          SPDK_NOTICELOG("key:%s value:%s\n", key.c_str(), val->c_str());
       } else {
           SPDK_NOTICELOG("key:%s no value\n", key.c_str());
       }
   }
+
+  for (int i = 170000; i < 180000; i++) {
+      hello_context->kvs->put(std::string("key") + itos(i), rand_str(4) + itos(i));
+  }
+
+  spdk_sleep(&hello_context->poller, 500000, kvstore_replay, hello_context);
+  // hello_context->kvs->commit(kvstore_replay, hello_context);
+}
+
+static void
+kvstore_put_3rd_done(void *arg, int rberrno) {
+  struct hello_context_t *hello_context = (struct hello_context_t *)arg;
+
+  if (rberrno) {
+    unload_bs(hello_context, "Error in rolling append continue completion", rberrno);
+    return;
+  }
+
+  SPDK_NOTICELOG("kvstore_put_3rd done. kvstore size: %lu \n", hello_context->kvs->size());
+
+  // for (int i = 0; i < 180000; i += 5000) {
+  //     auto key = std::string("key") + itos(i);
+  //     auto val = hello_context->kvs->get(key);
+  //     if (val) {
+  //         SPDK_NOTICELOG("key:%s get value:%s\n", key.c_str(), val->c_str());
+  //     } else {
+  //         SPDK_NOTICELOG("key:%s no value\n", key.c_str());
+  //     }
+  // }
+
+  for (int i = 0; i < 120000; i++) {
+      hello_context->kvs->put(std::string("key") + itos(i), rand_str(4) + itos(i));
+  }
+
+  spdk_sleep(&hello_context->poller, 500000, kvstore_put_4th_done, hello_context);
+  // hello_context->kvs->commit(kvstore_replay, hello_context);
+}
+
+static void
+kvstore_put_2nd_done(void *arg, int rberrno) {
+  struct hello_context_t *hello_context = (struct hello_context_t *)arg;
+
+  if (rberrno) {
+    unload_bs(hello_context, "Error in rolling append continue completion", rberrno);
+    return;
+  }
+
+  SPDK_NOTICELOG("kvstore_put_2nd done. kvstore size: %lu \n", hello_context->kvs->size());
+
+  // for (int i = 0; i < 180000; i += 5000) {
+  //     auto key = std::string("key") + itos(i);
+  //     auto val = hello_context->kvs->get(key);
+  //     if (val) {
+  //         SPDK_NOTICELOG("key:%s get value:%s\n", key.c_str(), val->c_str());
+  //     } else {
+  //         SPDK_NOTICELOG("key:%s no value\n", key.c_str());
+  //     }
+  // }
 
   for (int i = 100000; i < 150000; i++) {
       hello_context->kvs->put(std::string("key") + itos(i), rand_str(4) + itos(i));
   }
-  hello_context->kvs->persist(kvstore_replay, hello_context);
+
+  spdk_sleep(&hello_context->poller, 500000, kvstore_put_3rd_done, hello_context);
+  // hello_context->kvs->commit(kvstore_replay, hello_context);
 }
 
 static void
-kvstore_persist_second(void *arg, int rberrno) {
+kvstore_put_1st_done(void *arg, int rberrno) {
   struct hello_context_t *hello_context = (struct hello_context_t *)arg;
 
   if (rberrno) {
@@ -212,72 +288,74 @@ kvstore_persist_second(void *arg, int rberrno) {
     return;
   }
 
-  SPDK_NOTICELOG("kvstore_persist_first done. kvstore size: %lu \n", hello_context->kvs->size());
+  SPDK_NOTICELOG("kvstore_put_1st done. kvstore size: %lu \n", hello_context->kvs->size());
 
-  for (int i = 0; i < 150000; i += 5000) {
-      auto key = std::string("key") + itos(i);
-      auto val = hello_context->kvs->get(key);
-      if (val) {
-          SPDK_NOTICELOG("key:%s get value:%s\n", key.c_str(), val->c_str());
-      } else {
-          SPDK_NOTICELOG("key:%s no value\n", key.c_str());
-      }
-  }
+  // for (int i = 0; i < 150000; i += 5000) {
+  //     auto key = std::string("key") + itos(i);
+  //     auto val = hello_context->kvs->get(key);
+  //     if (val) {
+  //         SPDK_NOTICELOG("key:%s get value:%s\n", key.c_str(), val->c_str());
+  //     } else {
+  //         SPDK_NOTICELOG("key:%s no value\n", key.c_str());
+  //     }
+  // }
 
   for (int i = 0; i < 50000; i++) {
       hello_context->kvs->remove(std::string("key") + itos(i));
   }
-  hello_context->kvs->persist(kvstore_persist_third, hello_context);
+
+  spdk_sleep(&hello_context->poller, 500000, kvstore_put_2nd_done, hello_context);
+  // hello_context->kvs->commit(kvstore_commit_third, hello_context);
 }
 
 static void
-kvstore_persist_first(hello_context_t *hello_context) {
+kvstore_put(hello_context_t *hello_context) {
   SPDK_NOTICELOG("kvstore size: %lu \n", hello_context->kvs->size());
 
   for (int i = 0; i < 100000; i++) {
       hello_context->kvs->put(std::string("key") + itos(i), rand_str(6) + itos(i));
   }
 
-  hello_context->kvs->persist(kvstore_persist_second, hello_context);
+  spdk_sleep(&hello_context->poller, 500000, kvstore_put_1st_done, hello_context);
+  // hello_context->kvs->commit(kvstore_commit_second, hello_context);
 }
 
 static void
-make_rblob_done(void *arg, struct rolling_blob* rblob, int rberrno) {
-  struct hello_context_t *hello_context = (struct hello_context_t *)arg;
-
-  if (rberrno) {
-      unload_bs(hello_context, "Error in blob create callback", rberrno);
-      return;
-  }
-
-  SPDK_NOTICELOG("make_rblob_done\n");
-  hello_context->kvs = new kvstore(rblob);
-
-  kvstore_persist_first(hello_context);
-}
-
-static void
-bs_init_complete(void *cb_arg, struct spdk_blob_store *bs,
-     int rberrno)
+storage_init_complete(void *cb_arg, int rberrno)
 { 
   struct hello_context_t *hello_context = (struct hello_context_t *)cb_arg;
   uint64_t free = 0;
 
-  SPDK_NOTICELOG("init entry\n");
+  SPDK_NOTICELOG("storage_init_complete\n");
+  if (rberrno) {
+    unload_bs(hello_context, "Error initing the blobstore", rberrno);
+    return;
+  }
+  
+  hello_context->kvs = global_storage().kvs();
+  kvstore_put(hello_context);
+}
+
+
+static void
+bs_init_complete(void *cb_arg, int rberrno)
+{
+  struct hello_context_t *hello_context = (struct hello_context_t *)cb_arg;
+  uint64_t free = 0;
+
+  SPDK_NOTICELOG("bs_init_complete\n");
   if (rberrno) {
     unload_bs(hello_context, "Error initing the blobstore", rberrno);
     return;
   }
 
-  hello_context->bs = bs;
-  SPDK_NOTICELOG("blobstore: %p\n", hello_context->bs);
-  hello_context->channel = spdk_bs_alloc_io_channel(hello_context->bs);
+  hello_context->bs = global_blobstore();
+  hello_context->channel = global_io_channel();
 
   free = spdk_bs_free_cluster_count(hello_context->bs);
   SPDK_NOTICELOG("blobstore has FREE clusters of %" PRIu64 "\n", free);
   
-  make_rolling_blob(hello_context->bs, hello_context->channel, rolling_blob::huge_blob_size, 
-                    make_rblob_done, hello_context);
+  storage_init(storage_init_complete, hello_context);
 }
 
 static void
@@ -294,22 +372,11 @@ static void
 hello_start(void *arg1)
 {
   struct hello_context_t *hello_context = (struct hello_context_t *)arg1;
-  struct spdk_bs_dev *bs_dev = NULL;
-  int rc;
-
   
   buffer_pool_init();
-  SPDK_NOTICELOG("start create bs_dev %s\n", g_bdev_name);
 
-  rc = spdk_bdev_create_bs_dev_ext(g_bdev_name, base_bdev_event_cb, NULL, &bs_dev);
-  if (rc != 0) {
-    SPDK_ERRLOG("Could not create blob bdev, %s!!\n",
-          spdk_strerror(-rc));
-    spdk_app_stop(-1);
-    return;
-  }
-
-  spdk_bs_init(bs_dev, NULL, bs_init_complete, hello_context);
+  blobstore_init(g_bdev_name, bs_init_complete, hello_context);
+  // blobstore_load(g_bdev_name, bs_init_complete, hello_context);
 }
 
 static void
@@ -342,6 +409,8 @@ main(int argc, char **argv)
 
   spdk_app_opts_init(&opts, sizeof(opts));
   opts.name = "hello_blob";
+  opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
+	// spdk_log_set_flag("kvlog");
   if ((rc = spdk_app_parse_args(argc, argv, &opts, "b:", NULL,
           demo_parse_arg, demo_usage)) !=
       SPDK_APP_PARSE_ARGS_SUCCESS) {

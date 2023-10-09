@@ -3,12 +3,13 @@
 #include "raft.h"
 #include "raft_log.h"
 #include "raft_private.h"
+#include "localstore/kv_store.h"
 
 raft_server_t::raft_server_t(raft_client_protocol& _client, disk_log* _log, 
         std::shared_ptr<state_machine> sm_ptr, uint64_t _pool_id, uint64_t _pg_id
-#ifdef KVSTORE
-       , kv_store *_kv
-#endif        
+// #ifdef KVSTORE
+       , kvstore *_kv
+// #endif        
         )
     : current_term(0)
     , voted_for(-1)
@@ -36,9 +37,9 @@ raft_server_t::raft_server_t(raft_client_protocol& _client, disk_log* _log,
     , client(_client)
     , stm_in_apply(false)
     , _append_entries_buffer(this)
-#ifdef KVSTORE
+// #ifdef KVSTORE
     , kv(_kv)
-#endif  
+// #endif
     , _last_index_before_become_leader(0)      
 {
         raft_randomize_election_timeout();  

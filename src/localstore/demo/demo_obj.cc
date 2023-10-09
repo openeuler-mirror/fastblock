@@ -10,14 +10,18 @@
 #include <time.h>
 #include <stdlib.h>
 #include <string>
+#include <openssl/sha.h>
 
 #include "localstore/object_store.h"
+#include "localstore/object_recovery.h"
 
 #define BLOB_CLUSTERS 4
 #define CLUSTER_SIZE 1 << 20 // 1Mb
 
 // 每次写8个units，就是4k
-#define BLOCK_UNITS 8
+#define UNIT_SIZE 512
+#define BLOCK_UNITS 8 * 1024
+#define WRITE_SIZE (BLOCK_UNITS * UNIT_SIZE) // 写 4 Mb
 
 #define WRITE_ITERATIONS 100
 
@@ -30,7 +34,6 @@ static const char *g_bdev_name = NULL;
 struct hello_context_t {
   struct spdk_blob_store *bs;
   struct spdk_io_channel *channel;
-  char* bdev_name;
 
   uint64_t io_unit_size;
   int blob_size;
@@ -39,13 +42,21 @@ struct hello_context_t {
 
   object_store* omgr;
   int rc;
+
+  char *write_buff;
+  char *read_buff;
 };
 
 
 struct write_ctx_t {
   struct hello_context_t* hello_ctx;
-  object_store* omgr;
-  char *write_buff;
+  int idx, max;
+  uint64_t start;
+};
+
+struct recover_ctx_t {
+  struct hello_context_t* hello_ctx;
+  object_recovery* recovery;
 
   int idx, max;
   uint64_t start;
@@ -89,6 +100,8 @@ uint64_t write_blob_tsc, write_snap_tsc;
 static void
 hello_cleanup(struct hello_context_t *hello_context)
 {
+  spdk_free(hello_context->write_buff);
+  spdk_free(hello_context->read_buff);
   delete hello_context->omgr;
 	delete hello_context;
 }
@@ -141,6 +154,154 @@ obj_unload_bs(void *cb_arg, int objerrno) {
 }
 
 static void
+recovery_delete_complete(void *arg, int objerrno) {
+  struct recover_ctx_t *ctx = (struct recover_ctx_t *)arg;
+  struct hello_context_t *hello_context = ctx->hello_ctx;
+
+  if (objerrno ) {
+    unload_bs(hello_context, "Error in write blob iterates completion", objerrno);
+    return;
+  } 
+
+  uint64_t now = spdk_get_ticks();
+  double us = env_ticks_to_usecs(now - ctx->start);
+  SPDK_NOTICELOG("recovery delete complete, total time: %lf us\n", us);
+
+  hello_context->omgr->stop(obj_unload_bs, hello_context);
+  delete ctx->recovery;
+  delete ctx;
+}
+
+static void
+recovery_delete(void *arg) {
+  struct recover_ctx_t *ctx = (struct recover_ctx_t *)arg;
+  struct hello_context_t *hello_context = ctx->hello_ctx;
+
+  SPDK_NOTICELOG("delete recovery.\n");
+  ctx->start = spdk_get_ticks();
+  ctx->recovery->recovery_delete(recovery_delete_complete, ctx);
+}
+
+static void
+recovery_read_continue(void *arg, int objerrno) {
+  struct recover_ctx_t *ctx = (struct recover_ctx_t *)arg;
+  struct hello_context_t *hello_context = ctx->hello_ctx;
+
+  if (objerrno == -ENOENT) {
+    uint64_t now = spdk_get_ticks();
+    double us = env_ticks_to_usecs(now - ctx->start);
+    SPDK_NOTICELOG("recovery read complete, total time: %lf us\n", us);
+    recovery_delete(ctx);
+    return;
+  }
+
+  if (objerrno) {
+    unload_bs(hello_context, "Error in read blob iterates completion", objerrno);
+    return;
+  }
+
+  // 检验sha256
+  unsigned char result[32];
+  SHA256((const unsigned char*)hello_context->read_buff, WRITE_SIZE, result);
+  SPDK_NOTICELOG("read length:%d sha256:\n", WRITE_SIZE);
+  for (int i = 0; i < 32; i++) { printf("%02x ", result[i]); } printf("\n");
+  memset(hello_context->write_buff, 0x33, UNIT_SIZE);
+
+  ctx->recovery->recovery_read_iter_next(recovery_read_continue, hello_context->read_buff, ctx);
+}
+
+static void
+recovery_read_iterates(void *arg) {
+  struct recover_ctx_t *ctx = (struct recover_ctx_t*)arg;
+  struct hello_context_t *hello_context = ctx->hello_ctx;
+
+  SPDK_NOTICELOG("recovery snapshot start...\n");
+  hello_context->read_buff = (char*)spdk_malloc(WRITE_SIZE,
+                  0x1000, NULL, SPDK_ENV_LCORE_ID_ANY,
+                  SPDK_MALLOC_DMA);
+  memset(hello_context->write_buff, 0x33, UNIT_SIZE); // 随便写几个字节，等读完再看看sha256
+
+  ctx->start = spdk_get_ticks();
+  ctx->recovery->recovery_read_iter_first(recovery_read_continue, hello_context->read_buff, ctx);
+}
+
+static void
+recovery_create_complete(void *arg, int objerrno) {
+  struct recover_ctx_t *ctx = (struct recover_ctx_t *)arg;
+  struct hello_context_t *hello_context = ctx->hello_ctx;
+
+  if (objerrno) {
+    unload_bs(hello_context, "Error in recovery_create", objerrno);
+    return;
+  }
+
+  uint64_t now = spdk_get_ticks();
+  double us = env_ticks_to_usecs(now - ctx->start);
+  SPDK_NOTICELOG("recovery create complete, total time: %lf us\n", us);
+
+  recovery_read_iterates(ctx);
+}
+
+static void
+recovery_create(struct hello_context_t* hello_context) {
+  struct recover_ctx_t* ctx = (struct recover_ctx_t*)malloc(sizeof(struct recover_ctx_t));
+
+  ctx->hello_ctx = hello_context;
+  ctx->idx = 0;
+  ctx->max = WRITE_ITERATIONS;
+  ctx->start = spdk_get_ticks();
+  ctx->recovery = new object_recovery(hello_context->omgr);
+
+  ctx->recovery->recovery_create(recovery_create_complete, ctx);
+}
+
+static void
+object_create_snap3_done(void *arg, int objerrno) {
+  struct recover_ctx_t *ctx = (struct recover_ctx_t *)arg;
+  struct hello_context_t *hello_context = ctx->hello_ctx;
+
+  if (objerrno) {
+    unload_bs(hello_context, "Error in object_create_snap3", objerrno);
+    return;
+  }
+
+  recovery_create(hello_context);
+  free(ctx);
+}
+
+static void
+object_create_snap3(void *arg, int objerrno) {
+  struct write_ctx_t *ctx = (struct write_ctx_t *)arg;
+  struct hello_context_t *hello_context = ctx->hello_ctx;
+  std::string file_name = "file1";
+  hello_context->omgr->snap_create(file_name, "snap3", object_create_snap3_done, ctx);
+}
+
+static void
+object_delete_snap1(void *arg, int objerrno) {
+  struct write_ctx_t *ctx = (struct write_ctx_t *)arg;
+  struct hello_context_t *hello_context = ctx->hello_ctx;
+  std::string file_name = "file1";
+  hello_context->omgr->snap_delete(file_name, "snap1", object_create_snap3, ctx);
+}
+
+static void
+object_create_snap2(void *arg, int objerrno) {
+  struct write_ctx_t *ctx = (struct write_ctx_t *)arg;
+  struct hello_context_t *hello_context = ctx->hello_ctx;
+  std::string file_name = "file1";
+  hello_context->omgr->snap_create(file_name, "snap2", object_delete_snap1, ctx);
+}
+
+static void
+object_create_snap1(void *arg) {
+  struct write_ctx_t *ctx = (struct write_ctx_t *)arg;
+  struct hello_context_t *hello_context = ctx->hello_ctx;
+  std::string file_name = "file1";
+  hello_context->omgr->snap_create(file_name, "snap1", object_create_snap2, ctx);
+}
+
+static void
 object_write_continue(void *arg, int objerrno) {
   struct write_ctx_t *ctx = (struct write_ctx_t *)arg;
   struct hello_context_t *hello_context = ctx->hello_ctx;
@@ -152,20 +313,18 @@ object_write_continue(void *arg, int objerrno) {
 
 	ctx->idx++;
 	if (ctx->idx < ctx->max) {
-      int offset = rand() % (hello_context->block_num - 1);
-      offset *= BLOCK_UNITS;
-      std::string str = rand_str(20);
-      SPDK_NOTICELOG("write next object:%s offset:%d length:%d\n", str.c_str(), offset, 512 * BLOCK_UNITS);
-      ctx->omgr->write(rand_str(20), offset, ctx->write_buff, 512 * BLOCK_UNITS, 
+      // int offset = rand() % (hello_context->block_num - 1);
+      // offset *= BLOCK_UNITS;
+      std::string str = rand_str(10);
+      SPDK_NOTICELOG("write next object:%s length:%d\n", str.c_str(), WRITE_SIZE);
+      hello_context->omgr->write(rand_str(20), 0, hello_context->write_buff, WRITE_SIZE, 
                       object_write_continue, ctx);
 	} else {
       uint64_t now = spdk_get_ticks();
       double us = env_ticks_to_usecs(now - ctx->start);
       SPDK_NOTICELOG("iterates write %d block, total time: %lf us\n", ctx->idx, us);
 
-      ctx->omgr->stop(obj_unload_bs, hello_context);
-      free(ctx);
-      // spdk_app_stop(-1);
+      object_create_snap1(ctx);
 	}
 }
 
@@ -175,20 +334,22 @@ object_write_iterates(struct hello_context_t* hello_context) {
   SPDK_NOTICELOG("arg address:%p\n", ctx);
 
   ctx->hello_ctx = hello_context;
-  ctx->omgr = hello_context->omgr;
   ctx->idx = 0;
   ctx->max = WRITE_ITERATIONS;
   ctx->start = spdk_get_ticks();
-  ctx->write_buff = (char*)spdk_malloc(512 * BLOCK_UNITS,
+  hello_context->write_buff = (char*)spdk_malloc(WRITE_SIZE, // 4M
                   0x1000, NULL, SPDK_ENV_LCORE_ID_ANY,
                   SPDK_MALLOC_DMA);
-  memset(ctx->write_buff, 0x87, 512 * BLOCK_UNITS);
+  memset(hello_context->write_buff, 0x87, WRITE_SIZE);
 
-  uint64_t offset = rand() % (hello_context->block_num - 1);
-  offset *= hello_context->write_size + 12;
-  std::string str = rand_str(20);
-  SPDK_NOTICELOG("write first object:%s offset:%ld length:%d\n", str.c_str(), offset, 512 * BLOCK_UNITS);
-  hello_context->omgr->write(str, offset, ctx->write_buff, 512 * BLOCK_UNITS,
+  unsigned char result[32];
+  SHA256((const unsigned char*)hello_context->write_buff, WRITE_SIZE, result);
+  SPDK_NOTICELOG("write length:%d sha256:\n", WRITE_SIZE);
+  for (int i = 0; i < 32; i++) { printf("%02x ", result[i]); } printf("\n");
+
+  std::string str = "file1";
+  SPDK_NOTICELOG("write first object:%s length:%d\n", str.c_str(), WRITE_SIZE);
+  hello_context->omgr->write(str, 0, hello_context->write_buff, WRITE_SIZE,
                              object_write_continue, ctx);
 }
 

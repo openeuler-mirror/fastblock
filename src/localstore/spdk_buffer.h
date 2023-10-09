@@ -1,5 +1,7 @@
 #pragma once
 
+#include "utils/varint.h"
+
 #include <spdk/env.h>
 #include <spdk/log.h>
 
@@ -16,17 +18,13 @@ using iovecs = std::vector<::iovec>;
 
 class spdk_buffer {
 public:
-    spdk_buffer(char* buf, size_t sz) : buf(buf), size(sz), used(0) {}
+    spdk_buffer(char* buf, size_t sz) : _buf(buf), _size(sz), _used(0) {}
     spdk_buffer() noexcept = default;
 
     size_t append(const char* in, size_t len) {
-      if (len > remain()) {
-        SPDK_NOTICELOG("spdk_buffer no memory, size: %lu, len:%lu \n", size, len);
-        return -ENOMEM;
-      }
-      const size_t sz = std::min(len, remain());
+      size_t sz = std::min(len, remain());
       std::memcpy(get_append(), in, sz);
-      used += sz;
+      _used += sz;
       return sz;
     }
 
@@ -35,29 +33,28 @@ public:
     }
 
 
-    char* get_buf() { return buf; }
+    char* get_buf() { return _buf; }
 
-    char* get_append() { return buf + used; }
+    char* get_append() { return _buf + _used; }
 
-    size_t inc(size_t n) { 
-      if (n > remain()) { 
-        SPDK_NOTICELOG("spdk_buffer no memory. need %lu while have %lu\n", n, size);
-        return -ENOMEM;
-      }
-      used += n;
-      return n; 
+    size_t inc(size_t n) {
+      size_t sz = std::min(n, remain());
+      _used += sz;
+      return sz; 
     } 
 
-    void reset() { used = 0; }
+    void reset() { _used = 0; }
 
-    size_t len() const { return size; }
-    size_t used_size() { return used; }
-    size_t remain() { return size > used ? size - used : 0; }
+    void set_used(size_t u) { _used = u > _size ? _size : u; }
+
+    size_t size() const { return _size; }
+    size_t used() { return _used; }
+    size_t remain() { return _size > _used ? _size - _used : 0; }
 
 private:
-    char* buf;
-    size_t size;
-    size_t used;
+    char*  _buf;
+    size_t _size;
+    size_t _used;
 };
 
 
@@ -79,23 +76,23 @@ public:
 
   void append_buffer(const spdk_buffer& sbuf) {
     push_back(sbuf);
-    total += sbuf.len();
+    total += sbuf.size();
   }
 
   void prepend_buffer(const spdk_buffer& sbuf) {
     push_front(sbuf);
-    total += sbuf.len();
+    total += sbuf.size();
   }
 
   void trim_front() noexcept {
-    size_t len = front().len();
+    size_t len = front().size();
     pop_front();
     total -= len;
   }
 
   spdk_buffer pop_front() noexcept {
     spdk_buffer ret = front();
-    size_t len = ret.len();
+    size_t len = ret.size();
     std::list<spdk_buffer>::pop_front();
     total -= len;
     return ret;
@@ -122,8 +119,8 @@ public:
     auto it = begin();
     size_t discard = 0, chosen = 0;
 
-    while (discard + it->len() <= pos && it != end()) {
-      discard += it->len();
+    while (discard + it->size() <= pos && it != end()) {
+      discard += it->size();
       // std::cout << "discard:" << discard << std::endl;
       it++;
     }
@@ -131,7 +128,7 @@ public:
     if (discard < pos && it != end()) {
       iovec iov;
       iov.iov_base = it->get_buf() + (pos - discard);
-      size_t left_in_buf = it->len() - (pos - discard);
+      size_t left_in_buf = it->size() - (pos - discard);
       iov.iov_len = std::min(left_in_buf, len);
       iovs.push_back(iov);
       // std::cout << "discard:" << discard << " iov_len:" << iov.iov_len << std::endl;
@@ -144,7 +141,7 @@ public:
       iovec iov;
       iov.iov_base = it->get_buf();
       size_t still_need = len - chosen;
-      iov.iov_len = std::min(it->len(), still_need);     
+      iov.iov_len = std::min(it->size(), still_need);     
       iovs.push_back(iov);
       
 
@@ -174,6 +171,146 @@ private:
 private:
   friend buffer_list make_buffer_list(size_t n); 
   friend void free_buffer_list(buffer_list& bl);
+};
+
+/**
+ * 用来帮助序列化数据到buffer list的类。
+ * 
+ * 缺陷是还没有考虑过buffer_list空间不足怎么办。另外返回的bool值暂时也没有用到。
+ */
+class buffer_list_encoder {
+public:
+  bool put(const std::string& value) {
+      return put(value.size()) && put(value.c_str(), value.size());
+  }
+  bool put(uint64_t value) {
+      if (this->remain() < sizeof(uint64_t)) { return false; }
+
+      if (_itor->remain() < sizeof(uint64_t)) {
+          auto prev = _itor++;
+          // ++_itor;
+          size_t prev_bytes = prev->remain();
+          _itor->reset();
+
+          encode_fixed64(prev->get_append(), prev_bytes, _itor->get_append(), value);
+
+          _itor->inc(sizeof(uint64_t) - prev_bytes);
+          prev->inc(prev_bytes);
+          _used += sizeof(uint64_t);
+          return true;
+      }
+
+      encode_fixed64(_itor->get_append(), value);
+      _itor->inc(sizeof(uint64_t));
+      _used += sizeof(uint64_t);
+      return true;
+  }
+
+  bool put(const char* ptr, size_t len) {
+      if (this->remain() < len) { return false; }
+
+      if (_itor->remain() < len) {
+          auto prev = _itor++;
+          size_t prev_bytes = prev->remain();
+          _itor->reset();
+
+          prev->append(ptr, prev_bytes);
+          _itor->append(ptr + prev_bytes, len - prev_bytes);
+          _used += len;
+          return true;
+      }
+      _itor->append(ptr, len);
+      _used += len;
+      return true;
+  }
+
+  bool get(std::string& str) {
+      uint64_t size;
+      if (!get(size)) { 
+          return false; 
+      };
+
+      str.resize(size);
+      // std::cout << "get str_size:" << size << std::endl;
+      if (!get(str.data(), size)) {
+          return false;
+      }
+      return true;
+  }
+
+  bool get(uint64_t& value) {
+      if (this->remain() < sizeof(uint64_t)) { return false; }
+
+      if (_itor->remain() < sizeof(uint64_t)) {
+          auto prev = _itor++;
+          size_t prev_bytes = prev->remain();
+          _itor->reset();
+
+          value = decode_fixed64(prev->get_append(), prev_bytes, _itor->get_append());
+          // std::cout << "1 prev_size:" << prev->size() 
+          //         << " used:" << prev->used()
+          //         << " remain:" << prev->remain()
+          //         << " value:" << value
+          //         << std::endl;
+          // SPDK_NOTICELOG("1 size:%lu used:%lu remain:%lu value:%lu \n", 
+          //     prev->size(), prev->used(), prev->remain(), value); 
+          _itor->inc(sizeof(uint64_t) - prev_bytes);
+          prev->inc(prev_bytes);
+
+          _used += sizeof(uint64_t);
+          return true;
+      }
+
+      value = decode_fixed64(_itor->get_append());
+      // std::cout << "2 value:" << value
+      //             << std::endl;
+      // SPDK_NOTICELOG("2 value:%lu used:%lu\n", value, _used); 
+      // std::string str(_itor->get_append(), 8);
+      // printf("\n"); for (auto& c : str) { printf("%x ", c); } printf("\n");
+      _itor->inc(sizeof(uint64_t));
+      _used += sizeof(uint64_t);
+      return true;
+  }
+
+  bool get(char* ptr, size_t len) {
+      if (this->remain() < len) { return false; }
+
+      if (_itor->remain() < len) {
+          auto prev = _itor++;
+          size_t prev_bytes = prev->remain();
+          _itor->reset();
+
+          // SPDK_NOTICELOG("1 str size:%lu used:%lu remain:%lu len:%lu \n", 
+          //     prev->size(), prev->used(), prev->remain(), len);
+          memcpy(ptr, prev->get_append(), prev_bytes);
+          memcpy(ptr + prev_bytes, _itor->get_append(), len - prev_bytes);
+          prev->inc(prev_bytes);
+          _itor->inc(len - prev_bytes);
+
+          _used += len;
+          return true;
+      }
+      
+      
+      memcpy(ptr, _itor->get_append(), len);
+      // std::string str(_itor->get_append(), len);
+      // std::cout << "get str:" << str.c_str() << " used:" << _used << " len:" << len << std::endl;
+      // SPDK_NOTICELOG("2 str:%s used:%lu\n", str.c_str(), _used); 
+      _itor->inc(len);
+      _used += len;
+      return true;
+  }
+
+  size_t bytes() noexcept { return _buffer_list.bytes(); }
+  size_t used() { return _used; }
+  size_t remain() { return _buffer_list.bytes() - _used; }
+
+public:
+  buffer_list_encoder(buffer_list& bl) : _buffer_list(bl) , _itor(bl.begin()) {}
+private:
+  buffer_list& _buffer_list;
+  buffer_list::iterator _itor;
+  uint64_t _used = 0;
 };
 
 buffer_list make_buffer_list(size_t n);

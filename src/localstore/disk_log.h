@@ -207,7 +207,7 @@ private:
 
             spdk_buffer sbuf = ctx->bl.pop_front();
             sbuf.reset();
-            DecodeLogHeader(sbuf, &entry);
+            DecodeLogHeader(sbuf, entry);
             buffer_pool_put(sbuf);
 
             buffer_list&& bl = ctx->bl.pop_front_list(entry.size / 4096);

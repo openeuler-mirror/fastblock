@@ -10,6 +10,7 @@
 #include "utils/utils.h"
 #include "raft/raft_client_protocol.h"
 #include "raft/append_entry_buffer.h"
+#include "localstore/kv_store.h"
 
 constexpr int32_t TIMER_PERIOD_MSEC = 500;    //毫秒
 constexpr int32_t HEARTBEAT_TIMER_INTERVAL_MSEC = 500;   //毫秒
@@ -150,7 +151,7 @@ struct raft_cbs_t
 
 class raft_server_t{
 public:
-    raft_server_t(raft_client_protocol& client, disk_log* log, std::shared_ptr<state_machine> sm_ptr, uint64_t pool_id, uint64_t pg_id);
+    raft_server_t(raft_client_protocol& client, disk_log* log, std::shared_ptr<state_machine> sm_ptr, uint64_t pool_id, uint64_t pg_id, kvstore *);
 
     ~raft_server_t();
 
@@ -830,45 +831,45 @@ public:
     }
 
     int  save_vote_for(const raft_node_id_t nodeid){
-#ifdef KVSTORE
+// #ifdef KVSTORE
         std::string key = std::to_string(pool_id) + "." + std::to_string(pg_id) + ".vote_for";
         std::string val = std::to_string(nodeid);
-        kv.set(key, val);
-#endif
+        kv->put(key, val);
+// #endif
         return 0;
     }
 
     std::optional<raft_node_id_t> load_vote_for(){
-#ifdef KVSTORE
+// #ifdef KVSTORE
         std::string key = std::to_string(pool_id) + "." + std::to_string(pg_id) + ".vote_for";
-        auto val = kv.get(key);
+        auto val = kv->get(key);
         if(!val.has_value())
-            return std::nnullopt;
+            return std::nullopt;
         return atoi(val.value().c_str());
-#else
-        return std::nullopt;
-#endif 
+// #else
+//         return std::nullopt;
+// #endif 
     }
 
     int save_term(const raft_term_t term){
-#ifdef KVSTORE
+// #ifdef KVSTORE
         std::string key = std::to_string(pool_id) + "." + std::to_string(pg_id) + ".term";
         std::string val = std::to_string(term);
-        kv.set(key, val);
-#endif
+        kv->put(key, val);
+// #endif
         return 0;
     }
 
     std::optional<raft_term_t> load_term(){
-#ifdef KVSTORE
+// #ifdef KVSTORE
         std::string key = std::to_string(pool_id) + "." + std::to_string(pg_id) + ".term";
-        auto val = kv.get(key);
+        auto val = kv->get(key);        
         if(!val.has_value())
             return std::nullopt;
         return atol(val.value().c_str());
-#else
-        return std::nullopt;
-#endif
+// #else
+//         return std::nullopt;
+// #endif
     }
 
     void start_raft_timer();
@@ -979,9 +980,9 @@ private:
 
     append_entries_buffer _append_entries_buffer;
 
-#ifdef KVSTORE
-    kv_store *kv;
-#endif
+// #ifdef KVSTORE
+    kvstore *kv;
+// #endif
    
     struct spdk_poller * raft_timer;
 

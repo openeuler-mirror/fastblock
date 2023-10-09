@@ -11,6 +11,8 @@
 
 #pragma once
 
+#include "types.h"
+
 #include <absl/container/flat_hash_map.h>
 #include <spdk/blob.h>
 #include <spdk/blob_bdev.h>
@@ -21,6 +23,7 @@
 #include <functional>
 #include <string>
 #include <map>
+#include <errno.h>
 // typedef void (*object_rw_complete)(void *arg, int errno);
 using object_rw_complete = std::function<void (void *arg, int objerrno)>;
 
@@ -37,14 +40,14 @@ public:
   : bs(bs)
   , channel(channel) { }
 
-  ~object_store() {
-    for (auto& pr : table) {
-      delete pr.second;
-    }
+  ~object_store(){
+  //   // for (auto& pr : table) {
+  //   //   delete pr.second;
+  //   // }
   }
 
   /**
-   * 由于要直接读写blob，这里的buf务必用spdk_malloc申请
+   * 由于要直接读写blob，这里的buf务必用spdk_malloc申请。len的单位是字节，而不是io unit。
    */
   void read(std::string object_name,
             uint64_t offset, char* buf, uint64_t len,
@@ -55,15 +58,21 @@ public:
              object_rw_complete cb_fn, void* arg);
 
   void stop(object_rw_complete cb_fn, void* arg);
-  void snap_look(std::string object_name, object_rw_complete cb_fn, void* arg);
-    //读取快照
-  void load_snap(std::string object_name, int version, object_rw_complete cb_fn, void* arg);
 
-  //快照链的长度
-  int get_snapsize(std::string object_name);
+  void snap_create(std::string object_name, std::string snap_name,
+                   object_rw_complete cb_fn, void* arg);
 
-  //删除快照
-  void delete_snap(std::string object_name,int version, object_rw_complete cb_fn, void* arg);
+  void snap_delete(std::string object_name, std::string snap_name, 
+                   object_rw_complete cb_fn, void* arg);
+    
+  void recovery_create(std::string object_name, 
+                 object_rw_complete cb_fn, void* arg);
+  
+  void recovery_read(std::string object_name, char* buf, 
+                 object_rw_complete cb_fn, void* arg);
+  
+  void recovery_delete(std::string object_name, 
+                 object_rw_complete cb_fn, void* arg);
 
 private:
   void readwrite(std::string object_name,
@@ -73,33 +82,27 @@ private:
   static void blob_readwrite(struct spdk_blob *blob, struct spdk_io_channel * channel,
                        uint64_t offset, char* buf, uint64_t len,
                        object_rw_complete cb_fn, void* arg, bool is_read);
-
-  //快照函数
-  void snap_create(std::string object_name, object_rw_complete cb_fn, void* arg);
-  // void snap_create(spdk_blob_id blobid);
-
-
   // 下面都是一些回调函数
   static void rw_done(void *arg, int objerrno);
   static void read_done(void *arg, int objerrno);
   static void create_done(void *arg, spdk_blob_id blobid, int objerrno);
   static void open_done(void *arg, struct spdk_blob *blob, int objerrno);
   static void close_done(void *arg, int objerrno);
-  //快照回调函数
-  static void snap_done(void *arg, spdk_blob_id blobid, int objerrno);
-  //快照链表添加
-  static void snap_add(void *arg, spdk_blob* blob, int objerrno);
-  static void snap_add_statues(void *arg, int objerrno);
-  //快照删除的回调函数
-  static void del_done(void *arg, int objerrno);
-  static void close_snap (void *arg, int objerrno) ;
+
+  static void snap_delete_complete(void *arg, int objerrno);  // 用户主动删除snapshot
+  static void snap_create_complete(void *arg, spdk_blob_id snap_id, int objerrno);
+
+  static void recovery_create_complete(void *arg, spdk_blob_id blob_id, int objerrno);
+  static void recovery_open_complete(void *arg, struct spdk_blob *blob, int objerrno);
+  static void recovery_close_complete(void *arg, int objerrno);
+  static void recovery_delete_complete(void *arg, int objerrno);
+  static void recovery_read_complete(void *arg, int objerrno);
+
   static bool is_lba_aligned(uint64_t offset, uint64_t length) {
     uint32_t lba_size = object_store::unit_size;
-
     if ((offset % lba_size == 0) && (length % lba_size == 0)) {
       return true;
     }
-
     return false;
   }
 
@@ -114,18 +117,17 @@ private:
   }
 
 public:
-  struct fb_blob;
-  struct snap_Node {
-    struct fb_blob * snap_fb;
-    //快照版本怎么弄，用数字还是生成时间
+  struct snap {
+    fb_blob     snap_blob;
+    std::string snap_name;
   };
-  struct fb_blob {
-    struct spdk_blob* blob;
-    spdk_blob_id      blobid;
-    std::list<snap_Node*>  sp_list;
+  struct object {
+    fb_blob         origin;
+    fb_blob         recover;
+    std::list<snap> snap_list;
   };
   //快照版本链表的结点。
-  using container = absl::flat_hash_map<std::string, struct fb_blob*>;
+  using container = absl::flat_hash_map<std::string, object>;
   using iterator = container::iterator;
   container table;
   struct spdk_blob_store *bs;       // 我们不掌握blob_store的生命周期

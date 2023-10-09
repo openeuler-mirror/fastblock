@@ -93,7 +93,7 @@ public:
         std::string data;
         data.reserve(log_entry.data.bytes());
         for (auto sbuf : log_entry.data){
-            data.append(sbuf.get_buf(), sbuf.len());
+            data.append(sbuf.get_buf(), sbuf.size());
         }
         raft_entry.set_data(std::move(data));
         return raft_entry;

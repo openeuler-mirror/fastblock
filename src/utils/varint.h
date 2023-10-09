@@ -109,22 +109,16 @@ decode_fixed64(const char* buffer) {
 */
 /***********************************************************/
 
-/** 
- *  再返回一个size常量，是为了接口和 encode_varint32 统一，
- *  减少以后varint和fix切换时的代码改动。
- *  由于是inline函数，且返回的是编译期常量，所以不会引入额外的开销。
- */ 
-inline size_t
+inline void
 encode_fixed32(char* dst, uint32_t value) {
   uint8_t* const buffer = reinterpret_cast<uint8_t*>(dst);
   buffer[0] = static_cast<uint8_t>(value);
   buffer[1] = static_cast<uint8_t>(value >> 8);
   buffer[2] = static_cast<uint8_t>(value >> 16);
   buffer[3] = static_cast<uint8_t>(value >> 24);
-  return sizeof(uint32_t);
 }
 
-inline size_t 
+inline void 
 encode_fixed64(char* dst, uint64_t value) {
   uint8_t* const buffer = reinterpret_cast<uint8_t*>(dst);
   buffer[0] = static_cast<uint8_t>(value);
@@ -135,22 +129,20 @@ encode_fixed64(char* dst, uint64_t value) {
   buffer[5] = static_cast<uint8_t>(value >> 40);
   buffer[6] = static_cast<uint8_t>(value >> 48);
   buffer[7] = static_cast<uint8_t>(value >> 56);
-  return sizeof(uint64_t);
 }
 
-inline std::pair<uint32_t, size_t>
-decode_fixed32(const char* ptr, size_t) {
+inline uint32_t
+decode_fixed32(const char* ptr) {
   const uint8_t* const buffer = reinterpret_cast<const uint8_t*>(ptr);
   uint32_t result = (static_cast<uint32_t>(buffer[0])) |
                     (static_cast<uint32_t>(buffer[1]) << 8) |
                     (static_cast<uint32_t>(buffer[2]) << 16) |
                     (static_cast<uint32_t>(buffer[3]) << 24);
-  return {result, sizeof(uint32_t)};
+  return result;
 }
 
-//  此处无需担心额外声明一个result变量的开销，会被RVO优化掉
-inline std::pair<uint64_t, size_t>
-decode_fixed64(const char* ptr, size_t) {
+inline uint64_t
+decode_fixed64(const char* ptr) {
   const uint8_t* const buffer = reinterpret_cast<const uint8_t*>(ptr);
   uint64_t result = (static_cast<uint64_t>(buffer[0])) |
                     (static_cast<uint64_t>(buffer[1]) << 8) |
@@ -160,5 +152,24 @@ decode_fixed64(const char* ptr, size_t) {
                     (static_cast<uint64_t>(buffer[5]) << 40) |
                     (static_cast<uint64_t>(buffer[6]) << 48) |
                     (static_cast<uint64_t>(buffer[7]) << 56);
-  return {result, sizeof(uint64_t)};
+  return result;
+}
+
+/**
+ * 新增对不连续地址的序列化。
+ */
+inline void 
+encode_fixed64(char* dst1, size_t len1, char* dst2, uint64_t value) {
+    char buffer[8];
+    encode_fixed64(buffer, value);
+    memcpy(dst1, buffer, len1);
+    memcpy(dst2, buffer + len1, 8 - len1);
+}
+
+inline uint64_t
+decode_fixed64(const char* ptr1, size_t len1, const char* ptr2) {
+    char buffer[8];
+    memcpy(buffer, ptr1, len1);
+    memcpy(buffer + len1, ptr2, 8 - len1);
+    return decode_fixed64(buffer);
 }

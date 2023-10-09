@@ -4,12 +4,12 @@
 #include <spdk/string.h>
 #include <functional>
 
-struct fb_blobstore_mgr {
+struct blobstore_manager {
 	struct spdk_blob_store* blobstore;
 	struct spdk_io_channel* channel;
 };
 
-static struct fb_blobstore_mgr g_bs_mgr;
+static blobstore_manager g_bs_mgr;
 
 /// TODO(sunyifang): 现在都是单核的
 struct spdk_blob_store* global_blobstore() {

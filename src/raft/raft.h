@@ -73,7 +73,7 @@ struct raft_node_configuration_t
  *
  * @return newly initialised Raft server */
 extern std::shared_ptr<raft_server_t> raft_new(raft_client_protocol& client,
-        disk_log* log, std::shared_ptr<state_machine> sm_ptr, uint64_t pool_id, uint64_t pg_id);
+        disk_log* log, std::shared_ptr<state_machine> sm_ptr, uint64_t pool_id, uint64_t pg_id, kvstore*);
 
 /** Determine if entry is voting configuration change.
  * @param[in] ety The entry to query.

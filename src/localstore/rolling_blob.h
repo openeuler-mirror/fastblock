@@ -2,6 +2,7 @@
 
 #include "buffer_pool.h"
 #include "spdk_buffer.h"
+#include "types.h"
 #include "utils/units.h"
 #include "utils/varint.h"
 
@@ -104,7 +105,7 @@ public:
     { }
 
     void stop() {
-      SPDK_NOTICELOG("put rblob super\n");
+      SPDK_NOTICELOG("put rblob super buffer\n");
       buffer_pool_put(super);
     }
 
@@ -386,7 +387,7 @@ public:
 
         serialize_super();
         spdk_blob_io_write(blob, channel, super.get_buf(),
-                            0, super.len() / unit_size, md_done, ctx);
+                            0, super.size() / unit_size, md_done, ctx);
     }
 
     void load_md(rblob_op_complete cb_fn, void* arg) {
@@ -397,7 +398,7 @@ public:
         ctx->arg = arg;
 
         spdk_blob_io_read(blob, channel, super.get_buf(),
-                          0, super.len() / unit_size, md_done, ctx);
+                          0, super.size() / unit_size, md_done, ctx);
     }
 
     static void md_done(void *arg, int rberrno) {
@@ -419,37 +420,19 @@ public:
     }
 
     void serialize_super() {
-        size_t sz;
-    
         super.reset();
-        sz = encode_fixed64(super.get_append(), back.lba);
-        super.inc(sz);
-
-        sz = encode_fixed64(super.get_append(), back.pos);
-        super.inc(sz);
-
-        sz = encode_fixed64(super.get_append(), front.lba);
-        super.inc(sz);
-
-        sz = encode_fixed64(super.get_append(), front.pos);
-        super.inc(sz);
+        PutFixed64(super, back.lba);
+        PutFixed64(super, back.pos);
+        PutFixed64(super, front.lba);
+        PutFixed64(super, front.pos);
     }
 
     void deserialize_super() {
-        size_t sz;
-    
         super.reset();
-        std::tie(back.lba, sz) = decode_fixed64(super.get_append(), super.remain());
-        super.inc(sz);
-        
-        std::tie(back.pos, sz) = decode_fixed64(super.get_append(), super.remain());
-        super.inc(sz);
-
-        std::tie(front.lba, sz) = decode_fixed64(super.get_append(), super.remain());
-        super.inc(sz);
-
-        std::tie(front.pos, sz) = decode_fixed64(super.get_append(), super.remain());
-        super.inc(sz);
+        GetFixed64(super, back.lba);
+        GetFixed64(super, back.pos);
+        GetFixed64(super, front.lba);
+        GetFixed64(super, front.pos);
     }
 
 public:
@@ -477,6 +460,13 @@ public:
     uint64_t back_pos() { return back.pos; }
 
     uint64_t front_pos() { return front.pos; } 
+
+    uint64_t used() { return front.pos - back.pos; }
+
+    // 前面4k是super block，用户是不能用的
+    uint64_t size() { return blob_size - super_size; }
+
+    uint64_t remain() { return size() - used(); }
 
     std::string dump_state() {
       std::stringstream sstream;
@@ -515,10 +505,7 @@ private:
         return end() - pos % size();
     }
 
-    uint64_t used() { return front.pos - back.pos; }
 
-    // 前面4k是super block，用户是不能用的
-    uint64_t size() { return blob_size - super_size; }
     
     // 可用区域的 begin 和 end
     uint64_t begin() { return 0; }
@@ -566,6 +553,10 @@ private:
     spdk_buffer super;
 
     std::map<uint64_t, bool> inflight_rw;
+
+    // 创建完，需要向blob中写入xattr，所以需要访问blob
+    friend void make_disklog_blob_done(void *, struct rolling_blob*, int);
+    friend void make_kvstore_blob_done(void *, struct rolling_blob*, int);
 };
 
 
