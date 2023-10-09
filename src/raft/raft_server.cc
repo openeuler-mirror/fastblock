@@ -442,8 +442,8 @@ int raft_server_t::raft_process_appendentries_reply(
     node->raft_node_set_next_idx(r->current_idx() + 1);
     node->raft_node_set_match_idx(r->current_idx());
     if(node->raft_node_is_recovering()){
-        SPDK_NOTICELOG("recovery idx [%ld - %ld] to node %d success. current idx %ld\n",
-                r->first_idx(), r->current_idx(), node->raft_node_get_id(), raft_get_current_idx());
+        SPDK_INFOLOG(pg_group, "recovery idx [%ld - %ld] to node %d success. current idx %ld\n",
+                     r->first_idx(), r->current_idx(), node->raft_node_get_id(), raft_get_current_idx());
         dispatch_recovery(node);
         return 0;
     }
@@ -570,13 +570,13 @@ int raft_server_t::raft_recv_appendentries(
         }
         else if (got && term != ae->prev_log_term())
         { 
-            SPDK_INFOLOG(pg_group, "AE term doesn't match prev_term (ie. %ld vs %ld) ci:%ld comi:%ld lcomi:%ld pli:%ld \n",
+            SPDK_WARNLOG("AE term doesn't match prev_term (ie. %ld vs %ld) ci:%ld comi:%ld lcomi:%ld pli:%ld \n",
                   term, ae->prev_log_term(), raft_get_current_idx(),
                   raft_get_commit_idx(), ae->leader_commit(), ae->prev_log_idx());
             if (ae->prev_log_idx() <= raft_get_commit_idx())
             {
                 /* Should never happen; something is seriously wrong! */
-                SPDK_INFOLOG(pg_group, "AE prev conflicts with committed entry\n");
+                SPDK_WARNLOG("AE prev conflicts with committed entry\n");
                 e = err::RAFT_ERR_SHUTDOWN;
                 r->set_success(e);
                 goto out;
@@ -605,7 +605,7 @@ int raft_server_t::raft_recv_appendentries(
             if (ety_index <= raft_get_commit_idx())
             {
                 /* Should never happen; something is seriously wrong! */
-                SPDK_INFOLOG(pg_group, "AE entry conflicts with committed entry ci:%ld comi:%ld lcomi:%ld pli:%ld \n",
+                SPDK_WARNLOG("AE entry conflicts with committed entry ci:%ld comi:%ld lcomi:%ld pli:%ld \n",
                       raft_get_current_idx(), raft_get_commit_idx(),
                       ae->leader_commit(), ae->prev_log_idx());
                 e = err::RAFT_ERR_SHUTDOWN;
@@ -1520,13 +1520,6 @@ void raft_pop_log(void *arg, raft_index_t idx, std::shared_ptr<raft_entry_t> ent
     }
 }
 
-raft_index_t raft_server_t::raft_get_first_entry_idx()
-{
-    assert(0 < raft_get_current_idx());
-
-    return raft_get_log()->log_get_base() + 1;
-}
-
 raft_index_t raft_server_t::raft_get_num_snapshottable_logs()
 {
     assert(raft_get_log()->log_get_base() <= raft_get_commit_idx());
@@ -1643,7 +1636,7 @@ void raft_server_t::start_raft_timer(){
 void raft_server_t::do_recovery(raft_node* node){
     raft_index_t next_idx = node->raft_node_get_next_idx();
     if (next_idx <= raft_get_log()->log_get_base()){
-        SPDK_DEBUGLOG(pg_group, "node %d  next_idx %ld  raft base log: %ld\n", 
+        SPDK_WARNLOG("node %d  next_idx %ld  raft base log: %ld\n", 
                 node->raft_node_get_id(), next_idx, raft_get_log()->log_get_base());
         _raft_send_installsnapshot(node);
         return;
@@ -1662,10 +1655,10 @@ void raft_server_t::do_recovery(raft_node* node){
     if(next_idx >= first_idx_cache){
         std::vector<std::shared_ptr<raft_entry_t>> entries;
         long entry_num = std::min(recovery_max_entry_num, raft_get_current_idx() - next_idx + 1);
-        raft_get_log()->log_get_from_idx(next_idx, raft_get_current_idx() - next_idx + 1, entries);
+        raft_get_log()->log_get_from_idx(next_idx, entry_num, entries);
         msg_appendentries_t*ae = create_appendentries(node);
-        SPDK_DEBUGLOG(pg_group, "read %ld entry first: %ld from cache for recovery to node %d\n", 
-                entries.size(), next_idx, node->raft_node_get_id());
+        SPDK_DEBUGLOG(pg_group, "read %ld entry first: %ld from cache for recovery to node %d. entry_num: %ld\n", 
+                entries.size(), next_idx, node->raft_node_get_id(), entry_num);
         for(auto entry : entries){
             auto entry_ptr = ae->add_entries();
             *entry_ptr = *entry;

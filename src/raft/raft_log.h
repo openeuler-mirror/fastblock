@@ -15,7 +15,8 @@ public:
     : _log(log)
     , _next_idx(1)
     , _base(0)
-    , _base_term(0){}
+    , _base_term(0)
+    , _max_applied_entry_num_in_cache(100) {}
 
     void log_set_raft(void* raft){
         _raft = raft;
@@ -204,8 +205,23 @@ public:
         _log->advance_trim_index((uint64_t)index);
     }
 
-    void set_applied_index(raft_index_t idx) {
-        get_entry_cache().remove(idx);
+    void set_applied_index(raft_index_t last_applied_idx, raft_index_t idx) {
+        auto first_entry_idx = first_log_in_cache();
+        if(first_entry_idx > last_applied_idx + 1){
+            //说明raft启动时没有加载未apply的日志到cache
+            SPDK_ERRLOG("first entry: %ld in cache > last_applied_idx + 1: %ld\n", 
+                    first_log_in_cache(), last_applied_idx + 1);
+            return;
+        }
+        uint32_t applied_num = last_applied_idx - first_entry_idx + 1;
+        SPDK_DEBUGLOG(pg_group, "apply [%ld, %ld], applied_num: %u, _max_applied_entry_num_in_cache: %u first_entry_idx: %ld\n",
+                last_applied_idx + 1, idx, applied_num, _max_applied_entry_num_in_cache, first_entry_idx);
+        if(applied_num + idx - last_applied_idx > _max_applied_entry_num_in_cache){
+            auto remove_size = applied_num + idx - last_applied_idx - _max_applied_entry_num_in_cache;
+            auto end_remove_idx = first_entry_idx + remove_size - 1;
+            SPDK_DEBUGLOG(pg_group, "remove entry [%ld, %ld] from cache\n", first_entry_idx, end_remove_idx);
+            get_entry_cache().remove_entry_between(first_entry_idx, end_remove_idx);
+        }
         set_trim_index(idx);
     }
 
@@ -235,6 +251,9 @@ private:
     entry_cache  _entries;
 
     void* _raft;
+    
+    /* The maximum number of entries that have been applied in the cache */
+    uint32_t _max_applied_entry_num_in_cache;
 };
 
 std::shared_ptr<raft_log> log_new(disk_log* log);

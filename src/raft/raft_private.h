@@ -804,8 +804,6 @@ public:
 
     raft_index_t raft_get_num_snapshottable_logs();
 
-    raft_index_t raft_get_first_entry_idx();
-
     bool get_stm_in_apply(){
         return stm_in_apply;
     }
