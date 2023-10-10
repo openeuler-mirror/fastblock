@@ -1,0 +1,64 @@
+# Tools
+
+## Block bench tool
+
+配置采用 *json* 文件指定，示例如下：
+
+```json
+{
+    "io_type": "write_read",
+    "io_size": 4096,
+    "io_count": 128,
+    "io_depth": 16,
+    "image_name": "test_image",
+    "image_size": 2907152,
+    "object_size": 1048576,
+    "pool_id": 5,
+    "pool_name": "test_bdev",
+    "monitor": [
+        {"host": "127.0.0.1", "port": 3333},
+        {"host": "127.0.0.1", "port": 4333},
+        {"host": "127.0.0.1", "port": 5333}
+    ]
+}
+```
+
+该压测工具会在每个核上运行一个 *SPDK POLLER*，在 *SPDK POLLER* 中向 *osd* 发送 `io_count` 次请求。举个例子，如果 `io_count` 是 *128*，启动进程时通过 `-m` 指定值为 `[0-9]`，则总共会发送 `128 x 10`，即 *1280* 次请求。
+
+### io_type
+
+`io_type` 有三个可选值：`read`、`write` 和 `write_read`。`write` 和 `read` 对 `image_name` 对象进行读写。`write_read` 会先写 `io_count` 次对象，再读 `io_count` 次。
+
+### io_size
+
+用于指定对象大小。
+
+### io_count
+
+用于指定读写对象次数
+
+### image_name
+
+如果为空，则生成 *32* 位随机字符串
+
+### pool_id
+
+用于指定对象存储的 *pool id*
+
+### pool_name
+
+用于指定对象存储的 *pool name*
+
+### monitor
+
+用于指定 *monitor* 集群地址
+
+### 运行示例
+
+```
+$ ./block_bench -m '[31]' -C /etc/fastblock/block_bench.json
+...
+[2023-10-09 07:22:33.752135] /data/sdb/code/custorage/transfer/fastblock/tools/block_bench.cc: 270:watch_poller: *NOTICE*: ===============================[read  latency]========================================
+[2023-10-09 07:22:33.752306] /data/sdb/code/custorage/transfer/fastblock/tools/block_bench.cc: 291:watch_poller: *NOTICE*:  p0.1: 91199us p0.5: 92617us p0.9: 136487us p0.95: 137968us p0.99: 139579us p0.999: 139605us mean 107187us
+[2023-10-09 07:22:33.752320] /data/sdb/code/custorage/transfer/fastblock/tools/block_bench.cc: 297:watch_poller: *NOTICE*: ======================================================================================
+```

@@ -51,8 +51,9 @@ class libblk_client
 {
 public:
 
-    libblk_client(auto&&... args)
-      : _client{std::make_unique<fblock_client>(std::forward<decltype(args)>(args)...)} {}
+    libblk_client(monitor::client* cli)
+      : _client{std::make_unique<fblock_client>(cli)}
+      , _mon_cli{cli} {}
 
 public:
 
@@ -112,6 +113,7 @@ public:
 
 private:
 
+    monitor::client* _mon_cli{nullptr};
     std::list<std::unique_ptr<monitor::client::request_context>> _on_flight_request{};
 };
 #endif // LIBFBLOCK_H_

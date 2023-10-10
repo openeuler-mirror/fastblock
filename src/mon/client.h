@@ -113,6 +113,8 @@ public:
 
     using on_new_pg_callback_type = std::function<void(const msg::PGInfo&, const int32_t, const int32_t, const osd_map&)>;
 
+    using on_cluster_map_initialized_type = std::function<void()>;
+
     struct response_stack {
         std::shared_ptr<msg::Response> response{nullptr};
         size_t un_connected_count{0};
@@ -264,6 +266,7 @@ public:
       const std::vector<endpoint>& endpoints,
       std::weak_ptr<::partition_manager> pm,
       std::optional<on_new_pg_callback_type>&& new_pg_cb = std::nullopt,
+      std::optional<on_cluster_map_initialized_type>&& cluster_map_init_cb = std::nullopt,
       int osd_id = -1,
       const size_t max_fail = 5,
       const bool auto_reconnect = true,
@@ -274,7 +277,8 @@ public:
       , _current_thread{::spdk_get_thread()}
       , _current_core{::spdk_env_get_current_core()}
       , _log_time_check{dur}
-      , _new_pg_cb{std::move(new_pg_cb)} {}
+      , _new_pg_cb{std::move(new_pg_cb)}
+      , _cluster_map_init_cb{std::move(cluster_map_init_cb)} {}
 
     client(const client&) = delete;
 
@@ -289,6 +293,8 @@ public:
 public:
 
     bool is_running() noexcept { return _is_running; }
+
+    auto is_pg_map_empty() noexcept { return _pg_map.pool_pg_map.empty(); }
 
     std::pair<std::string, int> get_osd_addr(int osd_id) {
         auto it = _osd_map.data.find(osd_id);
@@ -431,6 +437,7 @@ private:
 
     std::optional<on_new_pg_callback_type> _new_pg_cb{std::nullopt};
     std::chrono::system_clock::time_point _last_cluster_map_at{};
+    std::optional<on_cluster_map_initialized_type> _cluster_map_init_cb{std::nullopt};
 
 private:
 

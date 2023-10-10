@@ -13,7 +13,7 @@ void libblk_client::create_image(
   const size_t size,
   const size_t object_size)
 {
-    auto ptr = global::mon_client->emplace_create_image_request(
+    auto ptr = _mon_cli->emplace_create_image_request(
         pool_name,
         image_name,
         size,
@@ -29,7 +29,7 @@ void libblk_client::create_image(
 
 void libblk_client::open_image(const std::string pool_name, const std::string image_name)
 {
-    std::unique_ptr<monitor::client::request_context> ptr = global::mon_client->emplace_get_image_info_request(
+    std::unique_ptr<monitor::client::request_context> ptr = _mon_cli->emplace_get_image_info_request(
         pool_name,
         image_name,
         [this](const monitor::client::response_status s, [[maybe_unused]] auto _)
@@ -42,7 +42,7 @@ void libblk_client::open_image(const std::string pool_name, const std::string im
 
 void libblk_client::remove_image(const std::string pool_name, const std::string image_name)
 {
-    std::unique_ptr<monitor::client::request_context> ptr = global::mon_client->emplace_remove_image_request(
+    std::unique_ptr<monitor::client::request_context> ptr = _mon_cli->emplace_remove_image_request(
         pool_name,
         image_name,
         [this](const monitor::client::response_status s, [[maybe_unused]] auto _)
@@ -56,7 +56,7 @@ void libblk_client::remove_image(const std::string pool_name, const std::string 
 
 void libblk_client::resize_image(const std::string pool_name, const std::string image_name, const size_t size)
 {
-    std::unique_ptr<monitor::client::request_context> ptr = global::mon_client->emplace_resize_image_request(
+    std::unique_ptr<monitor::client::request_context> ptr = _mon_cli->emplace_resize_image_request(
         pool_name,
         image_name,
         size,
@@ -70,7 +70,7 @@ void libblk_client::resize_image(const std::string pool_name, const std::string 
 
 void libblk_client::get_image_info(const std::string pool_name, const std::string image_name)
 {
-    std::unique_ptr<monitor::client::request_context> ptr = global::mon_client->emplace_get_image_info_request(
+    std::unique_ptr<monitor::client::request_context> ptr = _mon_cli->emplace_get_image_info_request(
         pool_name,
         image_name,
         [this](const monitor::client::response_status s, [[maybe_unused]] auto _)
@@ -336,7 +336,8 @@ std::string libblk_client::calc_image_object_prefix(const uint64_t pool_id, cons
     return std::to_string(pool_id) + "__blk_data___" + image_name;
 }
 
-std::tuple<size_t, uint64_t, uint64_t> libblk_client::calc_first_object_position(const uint64_t offset, const uint64_t length, const size_t object_size)
+std::tuple<size_t, uint64_t, uint64_t>
+libblk_client::calc_first_object_position(const uint64_t offset, const uint64_t length, const size_t object_size)
 {
     uint64_t first_object_offset = offset % object_size;
     size_t first_object_size = object_size - first_object_offset;

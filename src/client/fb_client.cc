@@ -129,14 +129,14 @@ cbits(T v)
     return (sizeof(v) * 8) - __builtin_clz(v);
 }
 
-unsigned fblock_client::calc_target(const std::string &sstr, uint64_t target_pool_id)
+unsigned fblock_client::calc_target(const std::string &sstr, int32_t target_pool_id)
 {
     unsigned seed = str_hash(sstr, sstr.size());
     calc_pg_masks(target_pool_id);
     return (seed % _pg_num);
 }
 
-void fblock_client::calc_pg_masks(uint64_t target_pool_id)
+void fblock_client::calc_pg_masks(int32_t target_pool_id)
 {
     _pg_num = _mon_cli->get_pg_num(target_pool_id);
     _pg_mask = (1 << cbits(_pg_num - 1)) - 1;

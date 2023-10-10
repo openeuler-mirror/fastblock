@@ -1,12 +1,12 @@
 /* Copyright (c) 2023 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
- * You can use this software according to the terms and conditions of the Mulan PSL v2. 
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
- *          http://license.coscl.org.cn/MulanPSL2 
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, 
- * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, 
- * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.  
- * See the Mulan PSL v2 for more details.  
+ *          http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
  */
 
 #include "object_store.h"
@@ -143,16 +143,16 @@ recovery_get_xattr_value(void *arg, const char *name, const void **value, size_t
 	*value_len = 0;
 }
 
-void object_store::write(std::string object_name, 
-                      uint64_t offset, char* buf, uint64_t len, 
+void object_store::write(std::string object_name,
+                      uint64_t offset, char* buf, uint64_t len,
                       object_rw_complete cb_fn, void* arg)
 {
     readwrite(object_name, offset, buf, len, cb_fn, arg, 0);
 }
 
-void object_store::read(std::string object_name, 
-                     uint64_t offset, char* buf, uint64_t len, 
-                     object_rw_complete cb_fn, void* arg) 
+void object_store::read(std::string object_name,
+                     uint64_t offset, char* buf, uint64_t len,
+                     object_rw_complete cb_fn, void* arg)
 {
     readwrite(object_name, offset, buf, len, cb_fn, arg, 1);
 }
@@ -206,7 +206,7 @@ void object_store::snap_create_complete(void *arg, spdk_blob_id snap_id, int obj
   ctx->snap.snap_blob.blob = nullptr;
   ctx->snap.snap_name = ctx->snap_name;
   it->second.snap_list.emplace_back(std::move(ctx->snap));
-  // SPDK_NOTICELOG("object:%s snap:%s added, snap size:%lu\n", 
+  // SPDK_NOTICELOG("object:%s snap:%s added, snap size:%lu\n",
   //     ctx->object_name.c_str(), ctx->snap_name.c_str(), it->second.snap_list.size());
 
   SPDK_DEBUGLOG(object_store, "object_name:%s snap_name:%s snapshot added.\n", ctx->object_name.c_str(), ctx->snap_name.c_str());
@@ -255,7 +255,7 @@ void object_store::snap_delete(std::string object_name, std::string snap_name, o
   spdk_bs_delete_blob(bs, ctx->blob_id, snap_delete_complete, ctx);
 }
 
-void object_store::snap_delete_complete(void *arg, int objerrno) { 
+void object_store::snap_delete_complete(void *arg, int objerrno) {
   struct snap_delete_ctx* ctx = (struct snap_delete_ctx*)arg;
   if (objerrno) {
     SPDK_ERRLOG("object_name:%s snap_name:%s delete failed:%s\n", ctx->object_name.c_str(), ctx->snap_name.c_str(), spdk_strerror(objerrno));
@@ -315,13 +315,13 @@ void object_store::recovery_create_complete(void *arg, spdk_blob_id blob_id, int
 
   auto &object = it->second;
   object.recover.blob = nullptr;
-  object.recover.blobid = blob_id; 
+  object.recover.blobid = blob_id;
   // SPDK_NOTICELOG("object:%s recovery open, blob_id:%lx\n", ctx->object_name.c_str(), blob_id);
   SPDK_DEBUGLOG(object_store, "object_name:%s recovery snapshot created.\n", ctx->object_name.c_str());
   spdk_bs_open_blob(ctx->bs, object.recover.blobid, recovery_open_complete, ctx);;
 }
 
-void object_store::recovery_open_complete(void *arg, struct spdk_blob *blob, int objerrno) { 
+void object_store::recovery_open_complete(void *arg, struct spdk_blob *blob, int objerrno) {
   struct recover_create_ctx *ctx = (struct recover_create_ctx*)arg;
   if (objerrno) {
     SPDK_ERRLOG("object_name:%s recovery snapshot open failed:%s\n", ctx->object_name.c_str(), spdk_strerror(objerrno));
@@ -389,7 +389,7 @@ void object_store::recovery_close_complete(void *arg, int objerrno) {
   spdk_bs_delete_blob(ctx->bs, ctx->blob.blobid, recovery_delete_complete, ctx);
 }
 
-void object_store::recovery_delete_complete(void *arg, int objerrno) { 
+void object_store::recovery_delete_complete(void *arg, int objerrno) {
   struct recover_delete_ctx* ctx = (struct recover_delete_ctx*)arg;
   if (objerrno) {
     SPDK_ERRLOG("object_name:%s recovery snapshot delete failed:%s\n", ctx->object_name.c_str(), spdk_strerror(objerrno));
@@ -426,7 +426,7 @@ void object_store::recovery_read(std::string object_name, char *buf, object_rw_c
 
   auto& recovery_snap = it->second.recover;
   if (recovery_snap.blobid == 0 || recovery_snap.blob == nullptr) {
-    SPDK_ERRLOG("object_name:%s invalid recovery snapshot. blob_id:%lu blob:%p.\n", 
+    SPDK_ERRLOG("object_name:%s invalid recovery snapshot. blob_id:%lu blob:%p.\n",
         object_name.c_str(), recovery_snap.blobid, recovery_snap.blob);
     cb_fn(arg, -EINVAL);
     return;
@@ -453,9 +453,9 @@ void object_store::recovery_read_complete(void *arg, int objerrno) {
   delete ctx;
 }
 
-void object_store::readwrite(std::string object_name, 
-                     uint64_t offset, char* buf, uint64_t len, 
-                     object_rw_complete cb_fn, void* arg, bool is_read) 
+void object_store::readwrite(std::string object_name,
+                     uint64_t offset, char* buf, uint64_t len,
+                     object_rw_complete cb_fn, void* arg, bool is_read)
 {
     SPDK_DEBUGLOG(object_store, "object %s offset:%lu len:%lu\n", object_name.c_str(), offset, len);
     if (offset + len > blob_size) {
@@ -466,7 +466,7 @@ void object_store::readwrite(std::string object_name,
 
     auto it = table.find(object_name);
     if (it != table.end()) {
-        SPDK_DEBUGLOG(object_store, "object %s found, blob id:%" PRIu64 "\n", object_name.c_str(), it->second.origin->blobid);
+        SPDK_DEBUGLOG(object_store, "object %s found, blob id:%" PRIu64 "\n", object_name.c_str(), it->second.origin.blobid);
         blob_readwrite(it->second.origin.blob, channel, offset, buf, len, cb_fn, arg, is_read);
     } else {
         SPDK_DEBUGLOG(object_store, "object %s not found\n", object_name.c_str());
@@ -496,9 +496,9 @@ void object_store::readwrite(std::string object_name,
  * 下面都是static函数，因为c++的成员函数隐含的第一个参数是this指针，
  * 要传递给c语言的函数指针，需要写为static成员函数，或者非成员函数
  */
-void object_store::blob_readwrite(struct spdk_blob *blob, struct spdk_io_channel * channel, 
-                       uint64_t offset, char* buf, uint64_t len, 
-                       object_rw_complete cb_fn, void* arg, bool is_read) 
+void object_store::blob_readwrite(struct spdk_blob *blob, struct spdk_io_channel * channel,
+                       uint64_t offset, char* buf, uint64_t len,
+                       object_rw_complete cb_fn, void* arg, bool is_read)
 {
   struct blob_rw_ctx* ctx;
   uint64_t start_lba, num_lba, pin_buf_length;
@@ -536,7 +536,7 @@ void object_store::blob_readwrite(struct spdk_blob *blob, struct spdk_io_channel
       ctx->pin_buf = (char*)spdk_malloc(pin_buf_length, lba_size, NULL,
                                         SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
       ctx->blocklen = lba_size;
-      
+
       spdk_blob_io_read(blob, channel, ctx->pin_buf, start_lba, num_lba,
           read_done, ctx);
   }
@@ -557,7 +557,7 @@ void object_store::rw_done(void *arg, int objerrno) {
 		return;
 	}
 
-  // object层的处理代码，可以写在这里 
+  // object层的处理代码，可以写在这里
 
   if (ctx->pin_buf) {
     SPDK_DEBUGLOG(object_store, "free pin_buf: %p\n", ctx->pin_buf);
@@ -575,7 +575,7 @@ void object_store::read_done(void *arg, int objerrno) {
   char*  pin_buf;
 
   if (objerrno) {
-    SPDK_ERRLOG("prior read offset:%lu len:%lu start_lba:%lu num_lba:%lu failed:%s\n", 
+    SPDK_ERRLOG("prior read offset:%lu len:%lu start_lba:%lu num_lba:%lu failed:%s\n",
         ctx->offset, ctx->len, ctx->start_lba, ctx->num_lba, spdk_strerror(objerrno));
     ctx->cb_fn(ctx->arg, objerrno);
     delete ctx;
@@ -598,7 +598,7 @@ void object_store::create_done(void *arg, spdk_blob_id blobid, int objerrno) {
   struct blob_create_ctx* ctx = (struct blob_create_ctx*)arg;
 
   if (objerrno) {
-    SPDK_ERRLOG("name:%s blobid:%" PRIu64 " create failed:%s\n", 
+    SPDK_ERRLOG("name:%s blobid:%" PRIu64 " create failed:%s\n",
         ctx->object_name.c_str(), blobid, spdk_strerror(objerrno));
     ctx->cb_fn(ctx->arg, objerrno);
     delete ctx;
@@ -614,7 +614,7 @@ void object_store::open_done(void *arg, struct spdk_blob *blob, int objerrno) {
   struct blob_create_ctx* ctx = (struct blob_create_ctx*)arg;
 
   if (objerrno) {
-    SPDK_ERRLOG("name:%s blobid:%" PRIu64 " open failed:%s\n", 
+    SPDK_ERRLOG("name:%s blobid:%" PRIu64 " open failed:%s\n",
         ctx->object_name.c_str(), ctx->blobid, spdk_strerror(objerrno));
     ctx->cb_fn(ctx->arg, objerrno);
     delete ctx;
@@ -628,14 +628,14 @@ void object_store::open_done(void *arg, struct spdk_blob *blob, int objerrno) {
   obj.origin.blob = blob;
   ctx->mgr->table.emplace(std::move(ctx->object_name), std::move(obj));
 
-  blob_readwrite(blob, ctx->mgr->channel, ctx->offset, ctx->buf, ctx->len, 
+  blob_readwrite(blob, ctx->mgr->channel, ctx->offset, ctx->buf, ctx->len,
                  ctx->cb_fn, ctx->arg, ctx->is_read);
   delete ctx;
 }
 
 /**
  * stop()停止运行，close掉所有blob
- * 
+ *
  * TODO(sunyifang):目前stop()会close所有对象origin blob，并delete所有snapshot。有待调整。
  */
 void object_store::stop(object_rw_complete cb_fn, void* arg) {
@@ -661,7 +661,7 @@ void object_store::close_done(void *arg, int objerrno) {
   struct blob_stop_ctx* ctx = (struct blob_stop_ctx*)arg;
 
   if (objerrno) {
-    SPDK_ERRLOG("object_name:%s delete failed:%s\n", 
+    SPDK_ERRLOG("object_name:%s delete failed:%s\n",
         ctx->it->first.c_str(), spdk_strerror(objerrno));
     ctx->cb_fn(ctx->arg, objerrno);
     delete ctx;

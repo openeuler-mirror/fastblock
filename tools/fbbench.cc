@@ -139,7 +139,10 @@ static void process_response(client *c, uint64_t id)
     if (g_total_ios && g_counter >= g_total_ios)
     {
         auto tsc_diff_2 = spdk_get_ticks() - g_first_io_tsc;
-        printf("ops is: %d, average latency is %fus\r\n", int(g_counter / float((1.0 * tsc_diff_2 / spdk_get_ticks_hz()))), float(1000.0 * 1000.0 / (g_counter / float(1.0 * tsc_diff_2 / spdk_get_ticks_hz()))));
+        printf(
+          "ops is: %d, average latency is %fus\r\n",
+          int(g_counter / float((1.0 * tsc_diff_2 / spdk_get_ticks_hz()))),
+          float(1000.0 * 1000.0 / (g_counter / float(1.0 * tsc_diff_2 / spdk_get_ticks_hz()))));
         printf("latency histogram: min:%fus ", double(g_latency_min * 1000 * 1000 / spdk_get_ticks_hz()));
         const double *cutoff = _cutoffs;
         spdk_histogram_data_iterate(g_histogram, _check_cutoff, &cutoff);

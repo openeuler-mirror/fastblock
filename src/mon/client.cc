@@ -538,11 +538,19 @@ void client::process_clustermap_response(std::shared_ptr<msg::Response> response
         auto head_it = _responses.begin();
         auto* stack_ptr = head_it->get();
         SPDK_DEBUGLOG(mon, "head response un-connected count is %ld\n",
-            stack_ptr->un_connected_count);
+          stack_ptr->un_connected_count);
         if (stack_ptr->un_connected_count == 0) {
             auto& pg_map_resp = stack_ptr->response->get_cluster_map_response().gpm_response();
             process_pg_map(pg_map_resp);
             _responses.erase(head_it);
+            if (_cluster_map_init_cb ) {
+                try {
+                    _cluster_map_init_cb.value()();
+                } catch (...) {
+                    SPDK_ERRLOG("ERRPR: invoke the callback on getting cluster map at first time\n");
+                }
+                _cluster_map_init_cb = std::nullopt;
+            }
         }
     }
 

@@ -135,7 +135,7 @@ void storage_init_complete(void *arg, int rberrno){
           pm->create_partition(pg_key, pg_info.pgid(), std::move(osds), pg_map_ver);
       };
     monitor_client = std::make_shared<monitor::client>(
-      server->monitors, global_pm, std::move(pg_map_cb), server->node_id);
+      server->monitors, global_pm, std::move(pg_map_cb), std::nullopt, server->node_id);
 
     start_monitor(server);
 
@@ -149,7 +149,7 @@ void disk_init_complete(void *arg, int rberrno){
 		spdk_app_stop(rberrno);
 		return;
 	}
-	
+
 	storage_init(storage_init_complete, arg);
 }
 

@@ -203,7 +203,7 @@ public:
     fblock_client(monitor::client* mon_cli);
 
     ~fblock_client() noexcept {
-        SPDK_DEBUGLOG(libblk, "call ~fblck_client()");
+        SPDK_DEBUGLOG(libblk, "call ~fblck_client()\n");
     }
 
     void connect(); // 连接函数。
@@ -405,7 +405,7 @@ public:
       std::string object_name,
       uint64_t offset,
       const std::string &buf,
-      uint64_t target_pool_id,
+      int32_t target_pool_id,
       write_object_callback cb_fn,
       void *source) {
         auto target_pg = calc_target(object_name, target_pool_id);
@@ -477,9 +477,9 @@ public:
 
 private:
     // 计算对象的地址
-    unsigned calc_target(const std::string &sstr, uint64_t target_pool_id);
+    unsigned calc_target(const std::string &sstr, int32_t target_pool_id);
     // 计算pg的掩码
-    void calc_pg_masks(uint64_t target_pool_id);
+    void calc_pg_masks(int32_t target_pool_id);
 
 private:
     // For now, we just use one osd and one stub
