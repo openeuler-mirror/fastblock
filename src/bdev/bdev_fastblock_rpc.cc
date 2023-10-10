@@ -1,34 +1,12 @@
-/*-
- *   BSD LICENSE
- *
- *   Copyright (c) Intel Corporation.
- *   All rights reserved.
- *
- *   Redistribution and use in source and binary forms, with or without
- *   modification, are permitted provided that the following conditions
- *   are met:
- *
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in
- *       the documentation and/or other materials provided with the
- *       distribution.
- *     * Neither the name of Intel Corporation nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
- *
- *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+/* Copyright (c) 2023 ChinaUnicom
+ * fastblock is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *          http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
  */
 
 #include "bdev_fastblock.h"
@@ -66,7 +44,6 @@ bdev_fastblock_decode_config(const struct spdk_json_val *values, void *out)
 
 	if (values->type == SPDK_JSON_VAL_NULL)
 	{
-		/* treated like empty object: empty config */
 		*map = (char **)calloc(1, sizeof(**map));
 		if (!*map)
 		{
@@ -90,7 +67,6 @@ bdev_fastblock_decode_config(const struct spdk_json_val *values, void *out)
 	{
 		const struct spdk_json_val *name = &values[i + 1];
 		const struct spdk_json_val *v = &values[i + 2];
-		/* Here we catch errors like invalid types. */
 		if (!(entry[0] = spdk_json_strdup(name)) ||
 			!(entry[1] = spdk_json_strdup(v)))
 		{
@@ -154,14 +130,6 @@ cleanup:
 	free_rpc_create_fastblock(&req);
 }
 
-// static void
-// async_rpc_bdev_fastblock_create(struct spdk_jsonrpc_request *request,
-// 								const struct spdk_json_val *params)
-// {
-// 	seastar::async([request, params]
-// 				   { rpc_bdev_fastblock_create(request, params); });
-// }
-// SPDK_RPC_REGISTER("bdev_fastblock_create", async_rpc_bdev_fastblock_create, SPDK_RPC_RUNTIME)
 SPDK_RPC_REGISTER("bdev_fastblock_create", rpc_bdev_fastblock_create, SPDK_RPC_RUNTIME)
 SPDK_RPC_REGISTER_ALIAS_DEPRECATED(bdev_fastblock_create, construct_fastblock_bdev)
 
@@ -220,14 +188,6 @@ cleanup:
 	free_rpc_bdev_fastblock_delete(&req);
 }
 
-// static void
-// async_rpc_bdev_fastblock_delete(struct spdk_jsonrpc_request *request,
-// 								const struct spdk_json_val *params)
-// {
-// 	seastar::async([request, params]
-// 				   { rpc_bdev_fastblock_delete(request, params); });
-// }
-// SPDK_RPC_REGISTER("bdev_fastblock_delete", async_rpc_bdev_fastblock_delete, SPDK_RPC_RUNTIME)
 SPDK_RPC_REGISTER("bdev_fastblock_delete", rpc_bdev_fastblock_delete, SPDK_RPC_RUNTIME)
 SPDK_RPC_REGISTER_ALIAS_DEPRECATED(bdev_fastblock_delete, delete_fastblock_bdev)
 
@@ -286,12 +246,4 @@ cleanup:
 	free_rpc_bdev_fastblock_resize(&req);
 }
 
-// static void
-// async_rpc_bdev_fastblock_resize(struct spdk_jsonrpc_request *request,
-// 								const struct spdk_json_val *params)
-// {
-// 	seastar::async([request, params]
-// 				   { rpc_bdev_fastblock_resize(request, params); });
-// }
-// SPDK_RPC_REGISTER("bdev_fastblock_resize", async_rpc_bdev_fastblock_resize, SPDK_RPC_RUNTIME)
 SPDK_RPC_REGISTER("bdev_fastblock_resize", rpc_bdev_fastblock_resize, SPDK_RPC_RUNTIME)

@@ -1,5 +1,3 @@
-
-
 compile_library(
   NAME raft
   SRCS
@@ -17,5 +15,3 @@ compile_library(
     base
     localstore
 )
-
-add_subdirectory(demo)

@@ -1,35 +1,14 @@
-/*-
- *   BSD LICENSE
- *
- *   Copyright (c) Intel Corporation.
- *   All rights reserved.
- *
- *   Redistribution and use in source and binary forms, with or without
- *   modification, are permitted provided that the following conditions
- *   are met:
- *
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in
- *       the documentation and/or other materials provided with the
- *       distribution.
- *     * Neither the name of Intel Corporation nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
- *
- *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+/* Copyright (c) 2023 ChinaUnicom
+ * fastblock is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *          http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
  */
+
 #include <sys/eventfd.h>
 #include <sys/epoll.h>
 
@@ -80,10 +59,6 @@ struct bdev_fastblock_group_channel
 
 struct bdev_fastblock_io_channel
 {
-	/*
-	rados_ioctx_t io_ctx;
-	rados_t cluster;
-	*/
 	int pfd;
 	// fastblock_image_t image;
 	struct bdev_fastblock *disk;
@@ -215,10 +190,6 @@ bdev_fastblock_reset_timer(void *arg)
 {
 	struct bdev_fastblock *disk = (struct bdev_fastblock *)arg;
 
-	/*
-	 * TODO: This should check if any I/O is still in flight before completing the reset.
-	 * For now, just complete after the timer expires.
-	 */
 	spdk_bdev_io_complete(disk->reset_bdev_io, SPDK_BDEV_IO_STATUS_SUCCESS);
 	spdk_poller_unregister(&disk->reset_timer);
 	disk->reset_bdev_io = NULL;
@@ -229,10 +200,6 @@ bdev_fastblock_reset_timer(void *arg)
 static int
 bdev_fastblock_reset(struct bdev_fastblock *disk, struct spdk_bdev_io *bdev_io)
 {
-	/*
-	 * HACK: Since librbd doesn't provide any way to cancel outstanding aio, just kick off a
-	 * timer to wait for in-flight I/O to complete.
-	 */
 	assert(disk->reset_bdev_io == NULL);
 	disk->reset_bdev_io = bdev_io;
 	disk->reset_timer = SPDK_POLLER_REGISTER(bdev_fastblock_reset_timer, disk, 1 * 1000 * 1000);
@@ -295,7 +262,7 @@ static void bdev_fastblock_read_callback(struct spdk_bdev_io *bdev_io, char* dat
 }
 
 /*
- * read 回调函数
+ * write 回调函数
  */
 static void bdev_fastblock_write_callback(struct spdk_bdev_io *bdev_io, int32_t res)
 {
@@ -330,11 +297,8 @@ bdev_fastblock_write(struct spdk_bdev_io *bdev_io,
 	for (int i = 0; i < iovcnt; i++)
 	{
 		total_len += iovs[i].iov_len;
-		//		vlog(seastar::spdk::logger.info,
-		//			"[syf] iov[{}] iov_base:{} iov_len:{}", i, iovs[i].iov_base, iovs[i].iov_len);
 	}
 	bool aligned = !(total_len % 4096);
-	//	vlog(seastar::spdk::logger.info, "[syf] id:{}, total len:{}, align:{}", read_id, total_len, aligned);
 	global::blk_client->write(fastblock->pool_id,
 								   std::string(fastblock->image_name),
 								   bdev_io->u.bdev.offset_blocks * bdev_io->bdev->blocklen,
@@ -374,12 +338,6 @@ bdev_fastblock_get_buf_cb(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_
 	struct iovec *iovs = bdev_io->u.bdev.iovs;
 	int iovcnt = bdev_io->u.bdev.iovcnt;
 
-	for (int i = 0; i < iovcnt; i++)
-	{
-		// SPDK_NOTICELOG("[syf] iov[%lu] iov_base:{%lu} iov_len:{%lu}\n",
-					//    i, iovs[i].iov_base, iovs[i].iov_len);
-	}
-
 	struct bdev_fastblock *fastblock = (struct bdev_fastblock *)bdev_io->bdev->ctxt;
 
 	uint64_t offset = bdev_io->u.bdev.offset_blocks * bdev_io->bdev->blocklen;
@@ -393,7 +351,6 @@ bdev_fastblock_get_buf_cb(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_
 		for (int i = 0; i < iovcnt; i++)
 		{
 			len += iovs[i].iov_len;
-			// SPDK_NOTICELOG("[syf] iov len:{%lu} total len:{%lu}\n", iovs[i].iov_len, len);
 		}
 	}
 	SPDK_INFOLOG(libblk, "[syf] start read: offset:{%lu} iovs len:{%lu} total len:{%lu}\n", offset, len, bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen);
@@ -423,7 +380,6 @@ static void _bdev_fastblock_submit_request(struct spdk_bdev_io *bdev_io)
 
 	case SPDK_BDEV_IO_TYPE_WRITE:
 	case SPDK_BDEV_IO_TYPE_FLUSH:
-		//		vlog(seastar::spdk::logger.info, "[syf] submit_request write");
 		bdev_fastblock_write(bdev_io,
 							 bdev_io->u.bdev.iovs,
 							 bdev_io->u.bdev.iovcnt,
@@ -443,7 +399,6 @@ static void _bdev_fastblock_submit_request(struct spdk_bdev_io *bdev_io)
 
 /*
  * [syf] 改成直接调用_bdev_fastblock_submit_request(bdev_io)
- * spdk中定义的接口就是返回void
  */
 static void bdev_fastblock_submit_request(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io)
 {
@@ -479,20 +434,6 @@ bdev_fastblock_free_channel(struct bdev_fastblock_io_channel *ch)
 		return;
 	}
 
-	/*
-		if (ch->image) {
-			bdev_fastblock_exit(ch->image);
-		}
-
-		if (ch->io_ctx) {
-			rados_ioctx_destroy(ch->io_ctx);
-		}
-
-		if (ch->cluster) {
-			rados_shutdown(ch->cluster);
-		}
-	*/
-
 	if (ch->pfd >= 0)
 	{
 		close(ch->pfd);
@@ -509,25 +450,7 @@ bdev_fastblock_handle(void *arg)
 {
 	struct bdev_fastblock_io_channel *ch = (struct bdev_fastblock_io_channel *)arg;
 	void *ret = arg;
-	int rc;
-/*
-	rc = bdev_rados_context_init(ch->disk->user_id, ch->disk->pool_name,
-					 (const char *const *)ch->disk->config
-					);
-	if (rc < 0) {
-		SPDK_ERRLOG("Failed to create rados context for user_id %s and fastblock_pool=%s\n",
-				ch->disk->user_id ? ch->disk->user_id : "admin (the default)", ch->disk->pool_name);
-		ret = NULL;
-		goto end;
-	}
 
-
-	if (image_open(ch->disk->image_name, &ch->image, NULL) < 0) {
-		SPDK_ERRLOG("Failed to open specified image device\n");
-		ret = NULL;
-	}
-*/
-end:
 	return ret;
 }
 
