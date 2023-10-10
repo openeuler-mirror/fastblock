@@ -41,11 +41,6 @@ public:
      * @return 1 if entry committed, 0 otherwise */
     int raft_apply_entry();
 
-    /** Apply all entries up to the commit index
-     * @return
-     *  0 on success;
-     *  RAFT_ERR_SHUTDOWN when server MUST shutdown */
-    int raft_apply_all();
     int raft_apply_entries();
 
     virtual void apply(std::shared_ptr<raft_entry_t> entry, context *complete) = 0;

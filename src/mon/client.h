@@ -104,6 +104,7 @@ public:
         struct pg_info {
             pg_id_type pg_id{0};
             std::vector<osd_map::osd_id_type> osds{};
+            bool is_update;
         };
 
         std::unordered_map<pool_id_type, std::unordered_map<pg_id_type, std::unique_ptr<pg_info>>> pool_pg_map{};

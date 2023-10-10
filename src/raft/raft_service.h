@@ -4,7 +4,7 @@
 #include "rpc/raft_msg.pb.h"
 #include "utils/utils.h"
 #include "utils/err_num.h"
-#include "raft/raft_private.h"
+#include "raft/raft.h"
 #include "base/core_sharded.h"
 
 template<class PartitionManager>

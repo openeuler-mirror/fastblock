@@ -164,13 +164,9 @@ public:
         _entries.clear();
     }
 
-    /**
-     * Delete all logs from this log onwards */
-    int log_delete(raft_index_t idx);
-
-    /**
-     * Remove all entries before and at idx. */
-    int log_poll(raft_index_t idx);
+    /*  
+    */
+    int log_truncate(raft_index_t idx);
 
     raft_index_t log_get_base()
     {

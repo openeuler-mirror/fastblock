@@ -1,7 +1,8 @@
 #include "raft/append_entry_buffer.h"
 #include "spdk/thread.h"
-#include "raft/raft_private.h"
+#include "raft/raft.h"
 #include "utils/utils.h"
+#include "utils/err_num.h"
 
 constexpr int32_t TIMER_APPEND_ENTRIER_BUFFER_USEC = 0;    //微秒
 
@@ -32,6 +33,15 @@ void append_entries_buffer::start(){
 
 void append_entries_buffer::stop(){
     spdk_poller_unregister(&_timer);
+    while(!_request.empty()){
+       auto item = _request.front();
+       _request.pop();
+       auto response = item.response;
+       auto comp = item.complete;
+       response->set_success(err::RAFT_ERR_PG_SHUTDOWN);
+       response->set_node_id(_raft->raft_get_nodeid());
+       comp->complete(err::RAFT_ERR_PG_SHUTDOWN);
+    }
 }
 
 void append_entries_buffer::do_flush(){

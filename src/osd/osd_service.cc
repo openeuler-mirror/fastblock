@@ -70,6 +70,12 @@ void osd_service::process(const request_type* request, reply_type* response, goo
         }
 
         auto osd_stm_p = _pm->get_osd_stm(shard_id, request->pool_id(), request->pg_id());
+        if(!osd_stm_p){
+            SPDK_WARNLOG("not find pg %lu.%lu\n", request->pool_id(), request->pg_id());
+            response->set_state(err::RAFT_ERR_NOT_FOUND_PG);
+            done->Run();
+            return;
+        }
         process(osd_stm_p, request, response, done);
       });    
 }

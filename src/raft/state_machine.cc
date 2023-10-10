@@ -65,24 +65,6 @@ int state_machine::raft_apply_entry()
     return 0;
 }
 
-int state_machine::raft_apply_all()
-{
-    if(_raft->get_stm_in_apply()){
-        return 0;
-    }
-    if (_raft->raft_get_snapshot_in_progress())
-        return 0;
-
-    while (_last_applied_idx < _raft->raft_get_commit_idx())
-    {
-        int e = raft_apply_entry();
-        if (0 != e)
-            return e;
-    }
-
-    return 0;
-}
-
 #ifdef MERGE_APPLY
 //合并重复对象的entry
 std::vector<std::shared_ptr<raft_entry_t>>

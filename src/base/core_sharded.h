@@ -35,7 +35,6 @@ public:
 
   virtual void run_task() override {
     std::apply(func, args);
-    // SPDK_NOTICELOG("aplly finish addr:%p\n", this);
   }
 
 private:

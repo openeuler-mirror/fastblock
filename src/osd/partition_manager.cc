@@ -29,7 +29,7 @@ static void make_log_done(void *arg, struct disk_log* dlog, int rberrno){
     make_log_context* mlc = (make_log_context*)arg;
     partition_manager* pm = mlc->pm;
 
-    SPDK_NOTICELOG("make_log_done, rberrno %d\n", rberrno);
+    SPDK_INFOLOG(osd, "make_log_done, rberrno %d\n", rberrno);
     if(rberrno){
         return;
     }
@@ -54,7 +54,7 @@ int partition_manager::create_partition(
     return _shard.invoke_on(
       shard_id, 
       [this, pool_id, pg_id, osds = std::move(osds), revision_id, shard_id](){
-        SPDK_NOTICELOG("create pg in core %u  shard_id %u pool_id %lu pg_id %lu \n", 
+        SPDK_INFOLOG(osd, "create pg in core %u  shard_id %u pool_id %lu pg_id %lu \n", 
             spdk_env_get_current_core(), shard_id, pool_id, pg_id);
         create_pg(pool_id, pg_id, std::move(osds), shard_id, revision_id);                
       });
@@ -74,10 +74,11 @@ int partition_manager::delete_partition(uint64_t pool_id, uint64_t pg_id){
         return -1;
     }
     
+    _remove_pg_shard(pool_id, pg_id);
     return _shard.invoke_on(
       shard_id, 
       [this, pool_id, pg_id, shard_id](){
-        SPDK_NOTICELOG("delete pg in core %u shard_id %u pool_id %lu pg_id %lu \n", 
+        SPDK_INFOLOG(osd, "delete pg in core %u shard_id %u pool_id %lu pg_id %lu \n", 
             spdk_env_get_current_core(), shard_id, pool_id, pg_id);
         delete_pg(pool_id, pg_id, shard_id);                   
       });

@@ -116,12 +116,12 @@ void start_monitor(server_t* ctx) {
 
 void storage_init_complete(void *arg, int rberrno){
     if(rberrno != 0){
-		SPDK_NOTICELOG("Failed to initialize the storage system. %s\n", spdk_strerror(rberrno));
+		SPDK_ERRLOG("Failed to initialize the storage system: \n", spdk_strerror(rberrno));
 		spdk_app_stop(rberrno);
 		return;
 	}
 	server_t *server = (server_t *)arg;
-    SPDK_NOTICELOG("------block start, cpu count : %u  bdev_disk: %s\n",
+    SPDK_INFOLOG(osd, "------block start, cpu count : %u  bdev_disk: %s\n",
 	        spdk_env_get_core_count(), server->bdev_disk.c_str());
 
     global_pm = std::make_shared<partition_manager>(server->node_id);
@@ -188,7 +188,7 @@ main(int argc, char *argv[])
 		exit(rc);
 	}
 
-    SPDK_NOTICELOG("Osd config file is %s\n", g_json_conf);
+    SPDK_INFOLOG(osd, "Osd config file is %s\n", g_json_conf);
     boost::property_tree::ptree pt;
     boost::property_tree::read_json(std::string(g_json_conf), pt);
 

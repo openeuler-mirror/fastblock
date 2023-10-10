@@ -1,4 +1,4 @@
-#include "raft/raft_private.h"
+#include "raft/raft.h"
 #include "raft/raft_client_protocol.h"
 #include "raft/pg_group.h"
 

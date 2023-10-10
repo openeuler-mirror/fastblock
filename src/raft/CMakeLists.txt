@@ -7,7 +7,6 @@ compile_library(
     raft_log.cc
     raft_node.cc
     raft_server.cc
-    raft_server_properties.cc
     state_machine.cc
     raft_client_protocol.cc
     append_entry_buffer.cc
