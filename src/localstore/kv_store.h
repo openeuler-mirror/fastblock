@@ -321,29 +321,6 @@ public:
         ctx->bl = std::move(bl);
 
         SPDK_DEBUGLOG(kvlog, "table serialized. map size:%lu buffer_list size:%lu\n", table.size(), ctx->bl.bytes()); 
-        // const char* buf = ctx->bl.begin()->get_buf();
-        // size_t size = ctx->bl.begin()->size();
-        // std::string str(buf, size);
-        // printf("\n"); for (auto& c : str) { printf("%02x ", c); } printf("\n");
-
-        // for (auto& buf : ctx->bl) {
-        //     buf.reset();
-        // }
-
-        // buffer_list_encoder bl_encoder2(ctx->bl);
-        
-        // uint64_t table_size = 0;
-        // bl_encoder2.get(table_size);
-        // SPDK_NOTICELOG("table_size:%lu.\n", table_size);
-        // for (uint64_t i = 0; i < table_size; i++) {
-        //     std::string key, value;
-        //     bl_encoder2.get(key);
-        //     bl_encoder2.get(value);
-        //     if (i < 10) {
-        //         SPDK_NOTICELOG("key:%s value:%s bl_encoder.used:%lu.\n", key.c_str(), value.c_str(), bl_encoder2.used());
-        //     }
-        // }
-
         checkpoint.start_checkpoint(ctx->bl.bytes(), checkpoint_start_complete, ctx);
     }
 
