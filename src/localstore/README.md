@@ -4,9 +4,9 @@ localstore实现了本地存储，基于spdk blobstrore进行存储。
 
 包含了3个主要功能：
 
-`disk_log`: 存储raft log，每个pg(对应一个raft组)都有一个。
+`disk_log`: 存储raft log，每个pg(对应一个raft组)都有一个。下文简称log
 
-`object_store`: 存储对象。每个pg都有一个，保存这个pg的所有块对象。下文简称log
+`object_store`: 存储对象。每个pg都有一个，保存这个pg的所有块对象。下文简称object
 
 `kv_store`: 每个cpu核拥有一个。保存当前cpu核上的需要保存的所有kv数据，包括raft的元数据、存储系统本身的数据。下文简称kv
 
@@ -160,7 +160,7 @@ std::optional<std::string> get(std::string key);
 
 `buffer_pool` 内存池，基于spdk_mempool实现。
 
-`disk_log` log相关代码。
+`disk_log` log相关代码。目前函数的实现都放在头文件里，因为还在开发功能，后续把实现放在源文件中。
 
 `kv_checkpoint`、`kv_store` kv相关代码。
 
