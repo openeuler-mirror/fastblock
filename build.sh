@@ -9,7 +9,7 @@ if [[ -z ${CXX} ]]; then export CXX=/usr/bin/g++; fi
 
 # Change Debug via  -DCMAKE_BUILD_TYPE=Release
 cmake -DCMAKE_BUILD_TYPE=Release \
-  -B$root/build.rel \
+  -B$root/build \
   -H$root \
   -DCMAKE_C_COMPILER=$CC \
   -DCMAKE_CXX_COMPILER=$CXX \
