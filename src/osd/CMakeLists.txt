@@ -23,18 +23,18 @@ compile_library (
     localstore
 )
 
-add_executable(osd
+add_executable(fastblock-osd
   osd.cc
   osd_service.cc
   partition_manager.cc
   osd_stm.cc
 )
 
-target_include_directories (osd
+target_include_directories (fastblock-osd
   PUBLIC
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-target_link_libraries(osd
+target_link_libraries(fastblock-osd
   PUBLIC
     fastblock_osd_lib
 )

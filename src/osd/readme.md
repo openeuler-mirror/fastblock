@@ -93,7 +93,7 @@ json文件的实例：`osd1_disk_bdev.json`
 启动命令：
 
 ```bash
-fastblock/build/src/osd/osd -s 1024 -m 0x1 -c osd1_disk_bdev.json -C osd1.json
+fastblock/build/src/osd/fastblock-osd -s 1024 -m 0x1 -c osd1_disk_bdev.json -C osd1.json
 ```
 
 参数 `-D` 为磁盘的名字，要和参数 `-c` 指定的 json 文件中的 `traddr` 对应
@@ -133,7 +133,7 @@ dd if=/dev/zero of=/tmp/aiofile bs=1G count=2
 启动命令：
       
 ```bash
-fastblock/build/src/osd/osd -s 1024 -m 0x1 -c osd1_disk_bdev.json -C osd.json
+fastblock/build/src/osd/fastblock-osd -s 1024 -m 0x1 -c osd1_disk_bdev.json -C osd.json
 ```
 
 注：**OSD 启动命令中的 `-U` 参数是此 OSD 对应的 uuid，使用下面的命令向 monitor 注册（fbclient 是 monitor 编译出来的命令）**

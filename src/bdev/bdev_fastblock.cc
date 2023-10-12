@@ -278,7 +278,7 @@ static void bdev_fastblock_write_callback(struct spdk_bdev_io *bdev_io, int32_t 
 }
 
 /*
- * [syf] bdev_fastblock_write
+ * bdev_fastblock_write
  * 写可以直接写
  * 返回 void
  */
@@ -308,21 +308,7 @@ bdev_fastblock_write(struct spdk_bdev_io *bdev_io,
 }
 
 /*
- * [syf] _is_buf_allocated 暂时添加，测试用的
- */
-static bool
-_is_buf_allocated(const struct iovec *iovs)
-{
-	if (iovs == NULL)
-	{
-		return false;
-	}
-
-	return iovs[0].iov_base != NULL;
-}
-
-/*
- * [syf] bdev_fastblock_get_buf_cb 在这里调用fastblock的read
+ * dev_fastblock_get_buf_cb 在这里调用fastblock的read
  * 返回 void
  */
 static void
@@ -353,7 +339,7 @@ bdev_fastblock_get_buf_cb(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_
 			len += iovs[i].iov_len;
 		}
 	}
-	SPDK_INFOLOG(libblk, "[syf] start read: offset:{%lu} iovs len:{%lu} total len:{%lu}\n", offset, len, bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen);
+	SPDK_INFOLOG(libblk, "start read: offset:{%lu} iovs len:{%lu} total len:{%lu}\n", offset, len, bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen);
 
 	uint64_t read_id = future_id++;
 
@@ -363,7 +349,7 @@ bdev_fastblock_get_buf_cb(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_
 }
 
 /*
- * [syf] 改成直接调用_bdev_fastblock_submit_request(bdev_io)
+ * 改成直接调用_bdev_fastblock_submit_request(bdev_io)
  * 返回 void
  */
 static void _bdev_fastblock_submit_request(struct spdk_bdev_io *bdev_io)
@@ -398,7 +384,7 @@ static void _bdev_fastblock_submit_request(struct spdk_bdev_io *bdev_io)
 }
 
 /*
- * [syf] 改成直接调用_bdev_fastblock_submit_request(bdev_io)
+ * 改成直接调用_bdev_fastblock_submit_request(bdev_io)
  */
 static void bdev_fastblock_submit_request(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io)
 {
