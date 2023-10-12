@@ -105,6 +105,8 @@ int main(int argc, char *argv[])
 	int rc;
 
 	spdk_app_opts_init(&opts, sizeof(opts));
+	// disable tracing because it's memory consuming
+	opts.num_entries = 0;
 	opts.name = "vhost";
 	opts.print_level = ::spdk_log_level::SPDK_LOG_WARN;
     ::spdk_log_set_flag("libblk");
