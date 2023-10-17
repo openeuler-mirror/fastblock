@@ -46,7 +46,7 @@ int raft_server_t::raft_truncate_from_idx(raft_index_t idx)
 
 int raft_server_t::raft_election_start()
 {
-    SPDK_WARNLOG("election starting: pool.pg %lu.%lu %d %ld, term: %ld ci: %ld\n", pool_id, pg_id,
+    SPDK_WARNLOG("election starting: pool.pg %lu.%lu %d %ld, current term: %ld current index: %ld\n", pool_id, pg_id,
           raft_get_election_timeout_rand(), raft_get_election_timer(), raft_get_current_term(),
           raft_get_current_idx());
 
@@ -93,6 +93,7 @@ int raft_server_t::raft_count_votes()
 
 int raft_server_t::raft_become_candidate()
 {
+    raft_set_current_term(raft_get_current_term() + 1);
     SPDK_INFOLOG(pg_group, "becoming candidate pool.pg %lu.%lu term: %ld\n", pool_id, pg_id, raft_get_current_term());
 
     raft_set_state(RAFT_STATE_CANDIDATE);
@@ -503,7 +504,7 @@ int raft_server_t::raft_recv_appendentries(
 {
     int e = 0;
     int k = 0;
-    raft_time_t election_timer;
+    raft_time_t election_timer1;
     int i;
     std::vector<std::pair<std::shared_ptr<raft_entry_t>, context*>> entrys;
     int entries_num = ae->entries_size();
@@ -513,8 +514,10 @@ int raft_server_t::raft_recv_appendentries(
     raft_index_t new_commit_idx = 0; 
 
     if (0 < entries_num)
-        SPDK_INFOLOG(pg_group, "recvd appendentries from node %d ct: %ld t:%ld ci:%ld lc:%ld pli:%ld plt:%ld #%d\n",
+        SPDK_INFOLOG(pg_group, "recvd appendentries from node %d pg: %lu.%lu current_term: %ld request_term:%ld current_idx:%ld \
+              request leader_commit:%ld request prev_log_idx:%ld request prev_log_term:%ld entry_num:%d\n",
               ae->node_id(),
+              ae->pool_id(), ae->pg_id(),
               raft_get_current_term(),
               ae->term(),
               raft_get_current_idx(),
@@ -548,9 +551,9 @@ int raft_server_t::raft_recv_appendentries(
     /* update current leader because ae->term is up to date */
     raft_set_current_leader(node_id);
 
-    election_timer = get_time();
-    raft_set_election_timer(election_timer);
-    r->set_lease(election_timer + election_timeout);
+    election_timer1 = get_time();
+    raft_set_election_timer(election_timer1);
+    r->set_lease(election_timer1 + election_timeout);
 
     /* Not the first appendentries we've received */
     /* NOTE: the log starts at 1 */
@@ -650,7 +653,7 @@ int raft_server_t::raft_recv_appendentries(
         new_commit_idx = std::min(ae->leader_commit(), r->current_idx());
     }
     
-    r->set_term(current_term);
+    r->set_term(raft_get_current_term());
     r->set_first_idx(ae->prev_log_idx() + 1);
     if(start_idx > end_idx){
         //空的append entry request，既心跳包
@@ -663,7 +666,7 @@ int raft_server_t::raft_recv_appendentries(
     return 0;
 
 out:
-    r->set_term(current_term);
+    r->set_term(raft_get_current_term());
     if (1 != r->success())
         r->set_current_idx(raft_get_current_idx());
     r->set_first_idx(ae->prev_log_idx() + 1);
@@ -707,9 +710,10 @@ int raft_server_t::raft_recv_requestvote(raft_node_id_t node_id,
     raft_time_t now = get_time();
     int e = 0;
 
-    SPDK_INFOLOG(pg_group, "raft_recv_requestvote from node %d term %ld current_term %ld candidate_id %d \
+    SPDK_INFOLOG(pg_group, "raft_recv_requestvote from node %d pg %lu.%lu term %ld current_term %ld candidate_id %d \
             last_log_idx %ld last_log_term %ld prevote %d\n", 
-            node_id, vr->term(), raft_get_current_term(), vr->candidate_id(), 
+            node_id, vr->pool_id(), vr->pg_id(),
+            vr->term(), raft_get_current_term(), vr->candidate_id(), 
             vr->last_log_idx(), vr->last_log_term(), vr->prevote());
     raft_node* node = raft_get_node(node_id);
     if (!node)
@@ -729,7 +733,7 @@ int raft_server_t::raft_recv_requestvote(raft_node_id_t node_id,
 
     if (raft_get_current_term() < vr->term())
     {
-        SPDK_INFOLOG(pg_group, "ct %ld  rt %ld\n", raft_get_current_term(), vr->term());
+        SPDK_INFOLOG(pg_group, "current_term %ld  request term %ld\n", raft_get_current_term(), vr->term());
         e = raft_set_current_term(vr->term());
         if (0 != e) {
             r->set_vote_granted(0);
@@ -798,8 +802,9 @@ int raft_votes_is_majority(const int num_nodes, const int nvotes)
 int raft_server_t::raft_process_requestvote_reply(
                                    msg_requestvote_response_t* r)
 {
-    SPDK_INFOLOG(pg_group, "node responded to requestvote%s from node %d status:%s ct:%ld rt:%ld \n",
+    SPDK_INFOLOG(pg_group, "node responded to requestvote%s for pg %lu.%lu from node %d status:%s current_term:%ld rsp term:%ld \n",
           r->prevote() ? " (prevote)" : "", 
+          raft_get_pool_id(), raft_get_pg_id(),
           r->node_id(),
           r->vote_granted() == 1 ? "granted" :
           r->vote_granted() == 0 ? "not granted" : "unknown",
@@ -873,7 +878,7 @@ int raft_server_t::raft_recv_installsnapshot(raft_node_id_t node_id,
         e = raft_set_current_term(is->term());
         if (0 != e)
             return e;
-        r->set_term(current_term);
+        r->set_term(raft_get_current_term());
     }
 
     if (!raft_is_follower())
@@ -1065,7 +1070,7 @@ int raft_server_t::raft_write_entry(std::shared_ptr<raft_entry_t> ety,
             return err::RAFT_ERR_INVALID_CFG_CHANGE;
     }
 
-    ety->set_term(current_term);
+    ety->set_term(raft_get_current_term());
     std::vector<std::pair<std::shared_ptr<raft_entry_t>, context*>> entrys;
     entrys.push_back(std::make_pair(ety, complete));
     int e = raft_append_entries(entrys);
@@ -1148,12 +1153,12 @@ int raft_server_t::raft_send_requestvote(raft_node* node)
     assert(!raft_is_self(node));
 
     SPDK_INFOLOG(pg_group, "sending requestvote%s  term: %ld to: %d , pool.pg %lu.%lu\n",
-          raft_get_prevote() ? " (prevote)" : "", current_term, node->raft_node_get_id(), pool_id, pg_id);
+          raft_get_prevote() ? " (prevote)" : "", raft_get_current_term(), node->raft_node_get_id(), pool_id, pg_id);
 
     rv->set_node_id(raft_get_nodeid());
     rv->set_pool_id(pool_id);
     rv->set_pg_id(pg_id);    
-    rv->set_term(current_term);
+    rv->set_term(raft_get_current_term());
     rv->set_last_log_idx(raft_get_current_idx());
 
     raft_term_t _term = 0;

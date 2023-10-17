@@ -337,7 +337,9 @@ public:
         reply->serialized_buf = std::make_unique<char[]>(serialize_size);
         auto* serialized_buf = reply->serialized_buf.get();
         std::memcpy(serialized_buf, reply_status.get(), reply_meta_size);
-        if (request_meta_size == serialize_size) {
+        if (reply_meta_size == serialize_size) {
+            SPDK_ERRLOG("request_meta_size: %ld reply_meta_size: %ld == serialize_size: %ld\n",
+                request_meta_size, reply_meta_size, serialize_size);
             return;
         }
 
