@@ -13,6 +13,7 @@ static constexpr uint8_t max_rpc_meta_string_size{31};
 
 enum class status : uint32_t {
     success = 200,
+    no_content = 204,
     method_not_found = 404,
     service_not_found,
     request_timeout = 408,
@@ -22,6 +23,7 @@ enum class status : uint32_t {
 
 namespace {
 static  char*  success_string = (char*)"success";
+static  char*  no_content_string = (char*)"no_content";
 static  char*  method_not_found_string = (char*)"method_not_found";
 static  char*  service_not_found_string = (char*)"service_not_found";
 static  char*  request_timeout_string = (char*)"request_timeout_found";
@@ -51,6 +53,8 @@ inline char*  string_status(const status s) noexcept {
     switch (s) {
     case status::success:
         return success_string;
+    case status::no_content:
+        return no_content_string;
     case status::method_not_found:
         return method_not_found_string;
     case status::service_not_found:

@@ -337,16 +337,16 @@ public:
         reply->serialized_buf = std::make_unique<char[]>(serialize_size);
         auto* serialized_buf = reply->serialized_buf.get();
         std::memcpy(serialized_buf, reply_status.get(), reply_meta_size);
-        if (reply_meta_size == serialize_size) {
-            SPDK_ERRLOG("request_meta_size: %ld reply_meta_size: %ld == serialize_size: %ld\n",
-                request_meta_size, reply_meta_size, serialize_size);
-            return;
+        if (reply_meta_size != serialize_size) {
+            auto offset = reply_meta_size;
+            reply->response_body->SerializeToArray(
+              serialized_buf + offset,
+              reply->response_body->ByteSizeLong());
+        } else {
+            SPDK_DEBUGLOG(msg, "empty response, reply directly. request_meta_size: %ld reply_meta_size: %ld == serialize_size: %ld s: %d\n",
+                request_meta_size, reply_meta_size, serialize_size, s);
+            s = status::no_content;
         }
-
-        auto offset = reply_meta_size;
-        reply->response_body->SerializeToArray(
-          serialized_buf + offset,
-          reply->response_body->ByteSizeLong());
 
         reply->task->data->cb(
           reply->task->data->cb_arg,

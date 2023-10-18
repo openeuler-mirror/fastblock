@@ -380,6 +380,11 @@ public:
                 _unresponsed_requests.erase(request_it);
                 return;
             }
+            case status::no_content: {
+                request->request->closure->Run();
+                _unresponsed_requests.erase(request_it);
+                return;
+            }
             default: {
                 SPDK_ERRLOG(
                   "ERROR: RPC call failed of request %ld with reply status %s\n",
