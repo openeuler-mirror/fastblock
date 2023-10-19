@@ -20,11 +20,18 @@ void osd_service::process_get_leader(google::protobuf::RpcController* controller
     uint32_t shard_id;
 
     if(!_pm->get_pg_shard(pool_id, pg_id, shard_id)){
+        SPDK_WARNLOG("not find pg %lu.%lu\n", pool_id, pg_id);
         response->set_state(err::RAFT_ERR_NOT_FOUND_PG);
         done->Run();
         return;
     }
     auto raft = _pm->get_pg(shard_id, pool_id, pg_id);
+    if(!raft){
+        SPDK_WARNLOG("not find pg %lu.%lu\n", pool_id, pg_id);
+        response->set_state(err::RAFT_ERR_NOT_FOUND_PG);
+        done->Run();
+        return;
+    }
     auto leader_id = raft->raft_get_current_leader();
     auto res = _monitor_client->get_osd_addr(leader_id);
     if(res.first.size() == 0){
