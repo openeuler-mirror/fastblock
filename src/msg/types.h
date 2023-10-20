@@ -22,14 +22,14 @@ enum class status : uint32_t {
 };
 
 namespace {
-static  char*  success_string = (char*)"success";
-static  char*  no_content_string = (char*)"no_content";
-static  char*  method_not_found_string = (char*)"method_not_found";
-static  char*  service_not_found_string = (char*)"service_not_found";
-static  char*  request_timeout_string = (char*)"request_timeout_found";
-static  char*  bad_response_string = (char*)"bad_response_found";
-static  char*  server_string = (char*)"server_found";
-static  char*  unknown_status_string = (char*)"unknown status";
+static char* success_string = (char*)"success";
+static char* no_content_string = (char*)"no_content";
+static char* method_not_found_string = (char*)"method_not_found";
+static char* service_not_found_string = (char*)"service_not_found";
+static char* request_timeout_string = (char*)"request_timeout_found";
+static char* bad_response_string = (char*)"bad_response_found";
+static char* server_string = (char*)"server_found";
+static char* unknown_status_string = (char*)"unknown status";
 }
 
 struct request_meta {

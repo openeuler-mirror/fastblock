@@ -309,6 +309,20 @@ public:
         return _last_cluster_map_at;
     }
 
+    auto is_terminate() noexcept {
+        return _is_terminate;
+    }
+
+    void stop() noexcept {
+        if (_is_terminate) {
+            return;
+        }
+
+        _is_terminate = true;
+        _get_cluster_map_poller.unregister();
+        _core_poller.unregister();
+    }
+
 public:
 
     void start();
@@ -317,13 +331,7 @@ public:
     void start_cluster_map_poller();
     void handle_start_cluster_map_poller();
 
-    /*
-     * 用户需要负责返回值 std::unique_ptr<request_context> 的生命周期，
-     * 直到 cb 调用返回为止，返回值 std::unique_ptr<request_context>
-     * 应该一直是可访问状态。
-     */
-    [[nodiscard]] std::unique_ptr<request_context>
-    emplace_osd_boot_request(
+    void emplace_osd_boot_request(
       const int,
       const std::string&,
       const int,
@@ -331,31 +339,26 @@ public:
       const int64_t,
       on_response_callback_type&&);
 
-    [[nodiscard]] std::unique_ptr<request_context>
-    emplace_create_image_request(
+    void emplace_create_image_request(
       const std::string,
       const std::string,
       const int64_t,
       const int64_t,
       on_response_callback_type&& cb);
 
-    [[nodiscard]] std::unique_ptr<request_context>
-    emplace_remove_image_request(
+    void emplace_remove_image_request(
       const std::string pool_name, const std::string image_name,
       on_response_callback_type&& cb);
 
-    [[nodiscard]] std::unique_ptr<request_context>
-    emplace_resize_image_request(
+    void emplace_resize_image_request(
       const std::string pool_name, const std::string image_name,
       const int64_t size, on_response_callback_type&& cb);
 
-    [[nodiscard]] std::unique_ptr<request_context>
-    emplace_get_image_info_request(
+    void emplace_get_image_info_request(
       const std::string pool_name, const std::string image_name,
       on_response_callback_type&& cb);
 
-    [[nodiscard]] std::unique_ptr<request_context>
-    emplace_list_pool_request(on_response_callback_type&& cb);
+    void emplace_list_pool_request(on_response_callback_type&& cb);
 
     void handle_emplace_request(request_context*);
     void send_cluster_map_request();
@@ -376,9 +379,9 @@ private:
           "Received image(%s) response, error code is %d\n",
           img_info.imagename().c_str(), err_code);
 
-        auto* req_ctx = _on_flight_requests.front();
+        auto& req_ctx = _on_flight_requests.front();
+        req_ctx->cb(to_response_status(err_code), req_ctx.get());
         _on_flight_requests.pop_front();
-        req_ctx->cb(to_response_status(err_code), req_ctx);
     }
 
 private:
@@ -401,6 +404,7 @@ private:
 
 private:
 
+    bool _is_terminate{false};
     std::unique_ptr<cluster> _cluster{nullptr};
 
     int _self_osd_id{-1};
@@ -425,8 +429,8 @@ private:
     std::unique_ptr<char[]> _request_serialize_buf{nullptr};
 
     cached_request_class _cached{cached_request_class::none};
-    std::list<request_context*> _requests{};
-    std::list<request_context*> _on_flight_requests{};
+    std::list<std::unique_ptr<request_context>> _requests{};
+    std::list<std::unique_ptr<request_context>> _on_flight_requests{};
     std::list<std::unique_ptr<response_stack>> _responses{};
 
     std::list<std::unique_ptr<msg::Request>> _internal_requests{};

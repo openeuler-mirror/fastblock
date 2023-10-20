@@ -67,7 +67,7 @@ endif()
 ExternalProject_Add(spdk
   # SOURCE_DIR /code/spdk
   GIT_REPOSITORY  git@gitee.com:custorage/spdk.git
-  GIT_TAG 58286b0743f89339490eac15e7d5f5b5bd896f2c
+  GIT_TAG 9875e860b97728b9e98e9d90bd27fa55f897201a
   UPDATE_COMMAND ""
   BUILD_IN_SOURCE ON
   INSTALL_DIR    @FASTBLOCK_DEPS_INSTALL_DIR@

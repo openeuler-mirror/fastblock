@@ -30,6 +30,11 @@ public:
     public:
         using id_type = uint64_t;
 
+        struct option {
+            int32_t io_queue_size;
+            int32_t io_queue_request;
+        };
+
         struct rpc_request {
             using key_type = uint64_t;
 
@@ -52,12 +57,34 @@ public:
     public:
         connection() = delete;
 
-        connection(const id_type id, const std::string host, const uint16_t port, std::shared_ptr<std::list<std::shared_ptr<connection>>> busy_list, std::shared_ptr<std::list<std::shared_ptr<connection>>> busy_priority_list)
+        connection(
+          const id_type id,
+          const std::string host,
+          const uint16_t port,
+          const option& opt,
+          std::shared_ptr<std::list<std::shared_ptr<connection>>> busy_list,
+          std::shared_ptr<std::list<std::shared_ptr<connection>>> busy_priority_list)
           : _id{id}
           , _host(host)
           , _port{port}
           , _busy_list{busy_list}
-          , _busy_priority_list{busy_priority_list} {}
+          , _busy_priority_list{busy_priority_list}
+          , _opt{opt} {}
+
+        connection(
+          const id_type id,
+          const std::string host,
+          const uint16_t port,
+          const int32_t io_queue_size,
+          const int32_t io_queue_request,
+          std::shared_ptr<std::list<std::shared_ptr<connection>>> busy_list,
+          std::shared_ptr<std::list<std::shared_ptr<connection>>> busy_priority_list)
+          : _id{id}
+          , _host(host)
+          , _port{port}
+          , _busy_list{busy_list}
+          , _busy_priority_list{busy_priority_list}
+          , _opt{io_queue_size, io_queue_request} {}
 
         connection(const connection&) = delete;
 
@@ -144,13 +171,13 @@ public:
 
         void enqueue_request(std::unique_ptr<rpc_request> req, bool priority_req) {
             if (priority_req) {
-                if (_priority_inflight_requests.empty()) {
+                if (_priority_onflight_requests.empty()) {
                     _busy_priority_list->push_back(shared_from_this());
                 }
-                _priority_inflight_requests.push_back(std::move(req));
+                _priority_onflight_requests.push_back(std::move(req));
             } else {
                 _busy_list->push_back(shared_from_this());
-                _inflight_requests.push_back(std::move(req));
+                _onflight_requests.push_back(std::move(req));
             }
         }
 
@@ -180,8 +207,11 @@ public:
             }
 
             _pg = pg;
+            ::spdk_client_io_qpair_opts opts{};
+            opts.io_queue_size = _opt.io_queue_size;
+            opts.io_queue_requests = _opt.io_queue_request;
             _conn = ::spdk_client_ctrlr_alloc_io_qpair_async(
-              _pg->ctrlr, nullptr, 0, _trid.get(), _pg->group, on_connected, this);
+              _pg->ctrlr, &opts, 0, _trid.get(), _pg->group, on_connected, this);
             if (not _conn) {
                 SPDK_ERRLOG("ERROR: allocate client io qpair failed\n");
                 throw std::runtime_error{"allocate client io qpair failed"};
@@ -251,18 +281,28 @@ public:
                 return false;
             }
 
-            if (_priority_inflight_requests.empty()) {
+            if (_priority_onflight_requests.empty()) {
+                return false;
+            }
+
+            if (_on_flight_request_size >= _opt.io_queue_size) {
                 return false;
             }
 
             SPDK_DEBUGLOG(
               msg,
               "process %ld rpc call heartbeat()\n",
-              _priority_inflight_requests.size());
+              _priority_onflight_requests.size());
 
             int rc{0};
-            auto erase_it_end = _priority_inflight_requests.begin();
-            for (auto it = _priority_inflight_requests.begin(); it != _priority_inflight_requests.end(); ++it) {
+            auto erase_it_end = _priority_onflight_requests.begin();
+            for (auto it = _priority_onflight_requests.begin(); it != _priority_onflight_requests.end(); ++it) {
+                if (_on_flight_request_size >= _opt.io_queue_size) {
+                    rc = -EAGAIN;
+                    erase_it_end = it;
+                    break;
+                }
+
                 rc = process_request_once(*it);
                 if (rc == -EAGAIN) {
                     erase_it_end = it;
@@ -274,17 +314,19 @@ public:
                     throw std::runtime_error{"send priority rpc request failed"};
                 }
 
+                ++_on_flight_request_size;
+                SPDK_DEBUGLOG(msg, "[++_on_flight_request_size] %d\n", _on_flight_request_size);
                 erase_it_end = it;
             }
 
             if (rc == -EAGAIN) {
-                _priority_inflight_requests.erase(
-                  _priority_inflight_requests.begin(),
+                _priority_onflight_requests.erase(
+                  _priority_onflight_requests.begin(),
                   erase_it_end);
                 return true;
             }
 
-            _priority_inflight_requests.clear();
+            _priority_onflight_requests.clear();
             _busy_priority_list->erase(busy_it);
 
             return true;
@@ -295,11 +337,15 @@ public:
                 return false;
             }
 
-            if (_inflight_requests.empty()) {
+            if (_onflight_requests.empty()) {
                 return false;
             }
 
-            auto it = _inflight_requests.begin();
+            if (_on_flight_request_size >= _opt.io_queue_size) {
+                return false;
+            }
+
+            auto it = _onflight_requests.begin();
             auto rc = process_request_once(*it);
             if (rc == -EAGAIN) {
                 return true;
@@ -310,7 +356,9 @@ public:
                 throw std::runtime_error{"send rpc request failed"};
             }
 
-            _inflight_requests.erase(it);
+            ++_on_flight_request_size;
+            SPDK_DEBUGLOG(msg, "[++_on_flight_request_size] %d\n", _on_flight_request_size);
+            _onflight_requests.erase(it);
             _busy_list->erase(busy_it);
             return true;
         }
@@ -321,6 +369,8 @@ public:
           ::iovec* iovs,
           int iovcnt,
           int length) {
+            --_on_flight_request_size;
+            SPDK_DEBUGLOG(msg, "[--_on_flight_request_size] %d\n", _on_flight_request_size);
             auto e_status = static_cast<std::underlying_type_t<status>>(raw_status);
             SPDK_DEBUGLOG(msg,
               "Received response of request %ld, status is %s, iovec count is %d, length is %d\n",
@@ -410,12 +460,14 @@ public:
         ::spdk_client_qpair *_conn{};
         std::shared_ptr<::client_poll_group> _pg{nullptr};
 
-        std::list<std::unique_ptr<rpc_request>> _inflight_requests{};
-        std::list<std::unique_ptr<rpc_request>> _priority_inflight_requests{};
+        int32_t _on_flight_request_size{0};
+        std::list<std::unique_ptr<rpc_request>> _onflight_requests{};
+        std::list<std::unique_ptr<rpc_request>> _priority_onflight_requests{};
         rpc_request::key_type _unresponsed_request_key_gen{0};
         std::unordered_map<rpc_request::key_type, std::unique_ptr<unresponsed_request>> _unresponsed_requests{};
         std::shared_ptr<std::list<std::shared_ptr<connection>>> _busy_list{};
         std::shared_ptr<std::list<std::shared_ptr<connection>>> _busy_priority_list{};
+        option _opt{};
     };
 
     struct connect_task_stack {
@@ -425,7 +477,12 @@ public:
 
 public:
 
-    transport_client() {
+    transport_client(const int32_t io_queue_size = 128, const int32_t io_queue_request = 1024)
+      : _conn_opt{io_queue_size, io_queue_request} {
+        if (_conn_opt.io_queue_size > _conn_opt.io_queue_request) {
+            SPDK_ERRLOG("io_queue_request at least as large as io_queue_size\n");
+            throw std::invalid_argument{"io_queue_request at least as large as io_queue_size"};
+        }
         SPDK_NOTICELOG("construct transport_client, this is %p\n", this);
     }
 
@@ -438,8 +495,10 @@ public:
     transport_client& operator=(transport_client&&) = delete;
 
     ~transport_client() noexcept {
-        SPDK_NOTICELOG("destruct transport_client\n");
-        ::spdk_poller_unregister(&_poller);
+        SPDK_DEBUGLOG(msg, "destruct transport_client\n");
+        if (_poller) {
+            ::spdk_poller_unregister(&_poller);
+        }
     }
 
 
@@ -451,6 +510,7 @@ public:
 
     static int poll_fn(void* arg) {
         auto* this_client = reinterpret_cast<transport_client*>(arg);
+        if (this_client->is_terminate()) { return SPDK_POLLER_IDLE; }
         auto ret = this_client->process_connect_task();
         auto pg = this_client->poll_group();
         auto num_completions = ::spdk_client_poll_group_process_completions(
@@ -483,21 +543,59 @@ public:
         }
 
         _poller = SPDK_POLLER_REGISTER(poll_fn, this, 0);
+        _is_start = true;
     }
 
+    void stop() noexcept {
+        if (_is_terminate) {
+            return;
+        }
+        _is_terminate = true;
+        ::spdk_poller_unregister(&_poller);
+    }
+
+    bool is_start() noexcept { return _is_start; }
+
+    bool is_terminate() noexcept { return _is_terminate; }
+
     std::shared_ptr<connection>
-    emplace_connection(const connection::id_type id, std::string host, const uint16_t port, std::optional<std::function<void()>> cb = std::nullopt) {
-        auto conn = std::make_shared<connection>(id, host, port, _busy_connections, _busy_priority_connections);
+    emplace_connection(
+      const connection::id_type id,
+      std::string host,
+      const uint16_t port,
+      const int32_t io_queue_size,
+      const int32_t io_queue_request,
+      std::optional<std::function<void()>> cb = std::nullopt) {
+        auto conn = std::make_shared<connection>(
+          id, host, port,
+          io_queue_size,
+          io_queue_request,
+          _busy_connections,
+          _busy_priority_connections);
         conn->connect(_pg);
-        SPDK_NOTICELOG("Connecting to %s:%d\n", host.c_str(), port);
+        SPDK_NOTICELOG("Connecting to %s:%d, io_queue_size %d, io_queue_request %d\n",
+        host.c_str(), port, io_queue_size, io_queue_request);
         auto conn_stack = std::make_unique<connect_task_stack>(conn, cb);
         _connect_tasks.push_back(std::move(conn_stack));
 
         return conn;
     }
 
+    std::shared_ptr<connection>
+    emplace_connection(
+      const connection::id_type id,
+      std::string host,
+      const uint16_t port,
+      std::optional<std::function<void()>> cb = std::nullopt) {
+        return emplace_connection(
+          id, host, port,
+          _conn_opt.io_queue_size,
+          _conn_opt.io_queue_request,
+          std::move(cb));
+    }
+
     void erase_connection(const connection::id_type id) {
-        // TODO:
+        _connections.erase(id);
     }
 
 public:
@@ -544,8 +642,14 @@ public:
         return ret;
     }
 
+    auto& connect_option() noexcept {
+        return _conn_opt;
+    }
+
 private:
 
+    bool _is_start{false};
+    bool _is_terminate{false};
     ::spdk_poller* _poller{nullptr};
     std::list<std::unique_ptr<connect_task_stack>> _connect_tasks{};
     std::unordered_map<connection::id_type, std::shared_ptr<connection>> _connections{};
@@ -555,6 +659,7 @@ private:
       std::make_shared<std::list<std::shared_ptr<connection>>>()};
     std::shared_ptr<::client_poll_group> _pg{nullptr};
     ::spdk_client_ctrlr_opts _ops{};
+    connection::option _conn_opt{128, 1024};
 };
 
 } // namespace msg

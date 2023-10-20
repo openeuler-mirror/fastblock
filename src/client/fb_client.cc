@@ -37,15 +37,6 @@
 
 SPDK_LOG_REGISTER_COMPONENT(libblk)
 
-// 直接连接osd
-fblock_client::fblock_client(monitor::client* mon_cli)
-    : _cache(connect_cache::get_connect_cache()), _mon_cli{mon_cli} {}
-
-bool fblock_client::connect_state()
-{
-    return _connect->is_connected();
-}
-
 unsigned str_hash(const std::string &str, unsigned length)
 {
     const unsigned char *k = (const unsigned char *)str.c_str();

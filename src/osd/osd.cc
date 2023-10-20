@@ -109,7 +109,7 @@ void start_monitor(server_t* ctx) {
           req_ctx->this_client->start_cluster_map_poller();
       };
 
-	ctx->mon_boot_req = monitor_client->emplace_osd_boot_request(
+	monitor_client->emplace_osd_boot_request(
 		ctx->node_id, ctx->osd_addr, ctx->osd_port, ctx->osd_uuid,
 		1024 * 1024, std::move(cb));
 }

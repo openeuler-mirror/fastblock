@@ -12,6 +12,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <iostream>
 #include <optional>
 #include <unordered_map>
 #include <vector>
@@ -37,10 +38,10 @@ struct request_stack {
 struct bench_context {
     void* watcher_ctx{nullptr};
     uint32_t core{};
-    utils::simple_poller* poller{nullptr};
     std::list<std::string> write_obj_name{};
     size_t request_id_gen{0};
     size_t on_flight_io_count{0};
+    size_t io_count{0};
     size_t done_io_count{0};
     std::unordered_map<size_t, std::unique_ptr<request_stack>> on_flight_request{};
     std::vector<double> durs{};
@@ -51,19 +52,20 @@ struct bench_context {
 struct watcher_context {
     bench_io_type io_type{};
     size_t io_size{};
-    size_t io_count{};
+    size_t total_io_count{};
     size_t io_depth{1};
     int32_t pool_id{};
+    int32_t io_queue_size{};
+    int32_t io_queue_request{};
     std::string pool_name{};
     std::string image_name{};
     size_t image_size{0};
     size_t object_size{0};
-    std::unique_ptr<monitor::client::request_context> create_img_req{nullptr};
     bool is_exit{false};
     bool is_image_ready{false};
     bench_io_type current_bench_type{bench_io_type::write};
     std::unique_ptr<::bench_context[]> core_ctxs{nullptr};
-    std::unique_ptr<utils::simple_poller[]> bench_pollers{nullptr};
+    std::unique_ptr<::spdk_thread*[]> bench_threads{nullptr};
     utils::simple_poller watch_poller_holder{};
     ::read_callback read_done_cb{};
     ::write_callback write_done_cb{};
@@ -153,24 +155,29 @@ void on_write_done(::spdk_bdev_io* ctx, [[maybe_unused]] int32_t res) {
     if (res != errc::success) {
         SPDK_ERRLOG("Write object error\n");
     }
-
     auto* stack_ptr = reinterpret_cast<request_stack*>(ctx);
     auto* bench_ctx = reinterpret_cast<bench_context*>(stack_ptr->ctx);
     auto* watcher_ctx = reinterpret_cast<watcher_context*>(bench_ctx->watcher_ctx);
-
-    if (bench_ctx->done_io_count != watcher_ctx->io_count) {
-        write_once(bench_ctx);
-    }
 
     auto dur = static_cast<double>(::spdk_get_ticks() - stack_ptr->start_tick);
     SPDK_DEBUGLOG(
       bbench,
       "write duration is %lfus/%lfms, raw value is %lf, start_tsc is %lf\n",
       tick_to_us(dur), tick_to_ms(dur), dur, stack_ptr->start_tick);
-
     bench_ctx->durs.push_back(dur);
     SPDK_DEBUGLOG(bbench, "The %dth write request done\n", stack_ptr->id);
     bench_ctx->done_io_count++;
+
+    if (stack_ptr->id % 100 == 0) {
+        SPDK_INFOLOG(
+          bbench,
+          "%ldth request done, done_io_count is %ld, io_count is %ld\n",
+          stack_ptr->id, bench_ctx->done_io_count, bench_ctx->io_count);
+    }
+
+    if (bench_ctx->on_flight_io_count < bench_ctx->io_count) {
+        write_once(bench_ctx);
+    }
 }
 
 void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
@@ -182,10 +189,6 @@ void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
     auto* bench_ctx = reinterpret_cast<bench_context*>(stack_ptr->ctx);
     auto* watcher_ctx = reinterpret_cast<watcher_context*>(bench_ctx->watcher_ctx);
 
-    if (bench_ctx->done_io_count != watcher_ctx->io_count) {
-        read_once(bench_ctx);
-    }
-
     auto dur = static_cast<double>(::spdk_get_ticks() - stack_ptr->start_tick);
     SPDK_DEBUGLOG(
       bbench,
@@ -195,14 +198,28 @@ void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
     SPDK_DEBUGLOG(bbench, "The %dth read request done\n", stack_ptr->id);
     bench_ctx->on_flight_request.erase(stack_ptr->id);
     bench_ctx->done_io_count++;
+
+    if (stack_ptr->id % 100 == 0) {
+        SPDK_INFOLOG(bbench, "%ldth request done\n", stack_ptr->id);
+    }
+
+    if (bench_ctx->on_flight_io_count < bench_ctx->io_count) {
+        read_once(bench_ctx);
+    }
 }
 
 void on_thread_received_msg(void* arg) {
-    auto ctx = reinterpret_cast<bench_context*>(arg);
-    SPDK_NOTICELOG("Start bench request on core %d\n", ctx->core);
+    auto* ctx = reinterpret_cast<bench_context*>(arg);
+    auto* watcher_ctx = reinterpret_cast<watcher_context*>(ctx->watcher_ctx);
+    SPDK_NOTICELOG(
+      "Start bench request on core %d, io count is %ld\n",
+      ctx->core, ctx->io_count);
+    ctx->blk_client = std::make_unique<::libblk_client>(
+      mon_client.get(),
+      watcher_ctx->io_queue_size,
+      watcher_ctx->io_queue_request);
     ctx->blk_client->start();
 
-    auto* watcher_ctx = reinterpret_cast<watcher_context*>(ctx->watcher_ctx);
     for (auto i{0}; i < watcher_ctx->io_depth; ++i) {
         switch (watcher_ctx->io_type) {
         case bench_io_type::write:
@@ -242,13 +259,15 @@ void on_thread_received_msg(void* arg) {
 
 int watch_poller(void* arg) {
     auto* ctx = reinterpret_cast<watcher_context*>(arg);
-    if (ctx->is_exit) { return SPDK_POLLER_IDLE; }
+    if (ctx->is_exit) {
+        return SPDK_POLLER_IDLE;
+    }
 
     bool is_all_done{true};
     auto n_core = ::spdk_env_get_core_count();
     auto& core_ctxs = ctx->core_ctxs;
     for (decltype(n_core) i{0}; i < n_core; ++i) {
-        is_all_done = is_all_done && (core_ctxs[i].done_io_count == ctx->io_count);
+        is_all_done = is_all_done && (core_ctxs[i].done_io_count == core_ctxs[i].io_count);
     }
 
     if (is_all_done) {
@@ -301,10 +320,10 @@ int watch_poller(void* arg) {
 
         switch (ctx->current_bench_type) {
         case bench_io_type::write:
-            SPDK_NOTICELOG("===============================[write latency]========================================\n");
+            std::cout << "===============================[write latency]========================================\n";
             break;
         case bench_io_type::read:
-            SPDK_NOTICELOG("===============================[read  latency]========================================\n");
+            std::cout << "===============================[read  latency]========================================\n";
             break;
         default:
             break;
@@ -331,15 +350,22 @@ int watch_poller(void* arg) {
         fmt = boost::format("%1%, mean: %2%us, min: %3%us, max: %4%us, biased stdv: %5%, iops: %6%")
           % fmt % tick_to_us(mean) % tick_to_us(min)
           % tick_to_us(max) % tick_to_us(biased_stdv)
-          % (ctx->io_count / (iops_dur / ::spdk_get_ticks_hz()));
+          % (ctx->total_io_count / (iops_dur / ::spdk_get_ticks_hz()));
 
-        SPDK_NOTICELOG("%s\n", fmt.str().c_str());
-        SPDK_NOTICELOG("======================================================================================\n");
+        std::cout << fmt.str() << "\n";
+        std::cout << "======================================================================================\n";
 
         if (should_exit) {
             ctx->is_exit = true;
-            SPDK_NOTICELOG("Exiting from application\n");
-            ::spdk_app_fini();
+            auto n_core = ::spdk_env_get_core_count();
+            for (int i{0}; i < n_core; ++i) {
+                ::spdk_set_thread(ctx->bench_threads[i]);
+                ctx->core_ctxs[i].blk_client->stop();
+                ::spdk_set_thread(nullptr);
+            }
+            mon_client->stop();
+            ctx->watch_poller_holder.unregister();
+            ::spdk_app_stop(0);
         }
     }
 
@@ -371,7 +397,7 @@ void on_app_start(void* arg) {
 
     watcher_ctx->io_size = pt.get_child("io_size").get_value<size_t>();
     sample_data = std::string(watcher_ctx->io_size, 0x55);
-    watcher_ctx->io_count = pt.get_child("io_count").get_value<size_t>();
+    watcher_ctx->total_io_count = pt.get_child("io_count").get_value<size_t>();
     watcher_ctx->io_depth = pt.get_child("io_depth").get_value<size_t>();
     watcher_ctx->image_name = pt.get_child("image_name").get_value<std::string>();
     watcher_ctx->image_size = pt.get_child("image_size").get_value<size_t>();
@@ -383,6 +409,8 @@ void on_app_start(void* arg) {
     if (watcher_ctx->image_name.empty()) {
         watcher_ctx->image_name = random_string(32);
     }
+    watcher_ctx->io_queue_size = pt.get_child("io_queue_size").get_value<int32_t>();
+    watcher_ctx->io_queue_request = pt.get_child("io_queue_request").get_value<int32_t>();
     watcher_ctx->pool_id = pt.get_child("pool_id").get_value<int32_t>();
     watcher_ctx->pool_name = pt.get_child("pool_name").get_value<std::string>();
 
@@ -398,20 +426,28 @@ void on_app_start(void* arg) {
     monitor::client::on_cluster_map_initialized_type cb = [watcher_ctx] () {
         auto n_core = ::spdk_env_get_core_count();
         watcher_ctx->core_ctxs = std::make_unique<bench_context[]>(n_core);
-        watcher_ctx->bench_pollers = std::make_unique<utils::simple_poller[]>(n_core);
         watcher_ctx->read_done_cb = on_read_done;
         watcher_ctx->write_done_cb = on_write_done;
+        watcher_ctx->bench_threads = std::make_unique<::spdk_thread*[]>(n_core);
 
         ::spdk_cpuset tmp_cpumask{};
         uint32_t core_no{0};
         ::spdk_thread* thread{};
         uint32_t core_count{0};
+        auto total_io_count = watcher_ctx->total_io_count;
+        auto io_count_per_core = total_io_count / static_cast<size_t>(n_core);
         SPDK_ENV_FOREACH_CORE(core_no) {
             auto& ctx = watcher_ctx->core_ctxs[core_count];
+            if (core_count == n_core - 1) {
+                ctx.io_count = total_io_count;
+                auto min_io_count = std::min(total_io_count, io_count_per_core);
+                watcher_ctx->io_depth = std::min(watcher_ctx->io_depth, min_io_count);
+            } else {
+                ctx.io_count = io_count_per_core;
+            }
+            total_io_count -= io_count_per_core;
             ctx.watcher_ctx = watcher_ctx;
             ctx.core = core_count;
-            ctx.poller = &(watcher_ctx->bench_pollers[core_count]);
-            ctx.blk_client = std::make_unique<::libblk_client>(mon_client.get());
 
             ::spdk_cpuset_zero(&tmp_cpumask);
             ::spdk_cpuset_set_cpu(&tmp_cpumask, core_no, true);
@@ -419,6 +455,7 @@ void on_app_start(void* arg) {
             thread = ::spdk_thread_create(thread_name.c_str(), &tmp_cpumask);
             assert(!!thread);
             ::spdk_thread_send_msg(thread, on_thread_received_msg, &ctx);
+            watcher_ctx->bench_threads[core_count] = thread;
             core_count++;
         }
         watcher_ctx->iops_start_at = ::spdk_get_ticks();
@@ -428,7 +465,7 @@ void on_app_start(void* arg) {
     mon_client = std::make_unique<monitor::client>(eps, par_mgr, std::nullopt, std::move(cb));
     mon_client->start();
     mon_client->start_cluster_map_poller();
-    watcher_ctx->create_img_req = mon_client->emplace_create_image_request(
+    mon_client->emplace_create_image_request(
       watcher_ctx->pool_name, watcher_ctx->image_name,
       watcher_ctx->image_size, watcher_ctx->object_size,
       [watcher_ctx] (const monitor::client::response_status s, monitor::client::request_context* req_ctx) {
@@ -456,11 +493,13 @@ int main(int argc, char** argv) {
     }
 
     opts.name = "block bench";
+    opts.print_level = ::spdk_log_level::SPDK_LOG_ERROR;
     watcher_context ctx{};
     rc = ::spdk_app_start(&opts, on_app_start, &ctx);
     if (rc) {
         SPDK_ERRLOG("ERROR: Start spdk app failed\n");
     }
 
+    ::spdk_app_fini();
     return rc;
 }

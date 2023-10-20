@@ -13,6 +13,10 @@ int core_poller_handler(void* arg) {
         return SPDK_POLLER_IDLE;
     }
 
+    if (mon_cli->is_terminate()) {
+        return SPDK_POLLER_IDLE;
+    }
+
     auto is_busy = mon_cli->core_poller_handler();
 
     return is_busy ? SPDK_POLLER_BUSY : SPDK_POLLER_IDLE;
@@ -21,6 +25,9 @@ int core_poller_handler(void* arg) {
 int send_cluster_map_request(void* arg) {
     auto* mon_cli = reinterpret_cast<client*>(arg);
     if (not mon_cli->is_running()) {
+        return SPDK_POLLER_IDLE;
+    }
+    if (mon_cli->is_terminate()) {
         return SPDK_POLLER_IDLE;
     }
     mon_cli->send_cluster_map_request();
@@ -74,8 +81,7 @@ void client::handle_start_cluster_map_poller() {
       monitor::send_cluster_map_request, this, _poll_period_us);
 }
 
-[[nodiscard]] std::unique_ptr<client::request_context>
-client::emplace_osd_boot_request(
+void client::emplace_osd_boot_request(
   const int osd_id,
   const std::string& osd_addr,
   const int osd_port,
@@ -93,15 +99,12 @@ client::emplace_osd_boot_request(
     ::gethostname(hostname, sizeof(hostname));
     boot_req->set_host(hostname);
 
-    auto ret = std::make_unique<client::request_context>(
-      this, std::move(req), std::monostate{}, std::move(cb));
-    enqueue_request(ret.get());
-
-    return ret;
+    auto* req_ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(req_ctx);
 }
 
-[[nodiscard]] std::unique_ptr<client::request_context>
-client::emplace_create_image_request(
+void client::emplace_create_image_request(
   const std::string pool_name, const std::string image_name,
   const int64_t size, const int64_t object_size,
   on_response_callback_type&& cb) {
@@ -112,15 +115,12 @@ client::emplace_create_image_request(
     create_image_req->set_size(size);
     create_image_req->set_object_size(object_size);
 
-    auto ret = std::make_unique<client::request_context>(
-      this, std::move(req), std::monostate{}, std::move(cb));
-    enqueue_request(ret.get());
-
-    return ret;
+    auto* ctx = new request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
 }
 
-[[nodiscard]] std::unique_ptr<client::request_context>
-client::emplace_remove_image_request(
+void client::emplace_remove_image_request(
   const std::string pool_name,
   const std::string image_name,
   on_response_callback_type&& cb) {
@@ -129,15 +129,12 @@ client::emplace_remove_image_request(
     real_req->set_poolname(std::move(pool_name));
     real_req->set_imagename(std::move(image_name));
 
-    auto ret = std::make_unique<client::request_context>(
-      this, std::move(req), std::monostate{}, std::move(cb));
-    enqueue_request(ret.get());
-
-    return ret;
+    auto* ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
 }
 
-[[nodiscard]] std::unique_ptr<client::request_context>
-client::emplace_resize_image_request(
+void client::emplace_resize_image_request(
   const std::string pool_name, const std::string image_name,
   const int64_t size, on_response_callback_type&& cb) {
     auto req = std::make_unique<msg::Request>();
@@ -146,15 +143,12 @@ client::emplace_resize_image_request(
     real_req->set_imagename(std::move(image_name));
     real_req->set_size(size);
 
-    auto ret = std::make_unique<client::request_context>(
-      this, std::move(req), std::monostate{}, std::move(cb));
-    enqueue_request(ret.get());
-
-    return ret;
+    auto* ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
 }
 
-[[nodiscard]] std::unique_ptr<client::request_context>
-client::emplace_get_image_info_request(
+void client::emplace_get_image_info_request(
   const std::string pool_name,
   const std::string image_name,
   on_response_callback_type&& cb) {
@@ -163,26 +157,21 @@ client::emplace_get_image_info_request(
     real_req->set_poolname(std::move(pool_name));
     real_req->set_imagename(std::move(image_name));
 
-    auto ret = std::make_unique<client::request_context>(
-      this, std::move(req), std::monostate{}, std::move(cb));
-    enqueue_request(ret.get());
-
-    return ret;
+    auto* ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
 }
 
-[[nodiscard]] std::unique_ptr<client::request_context>
-client::emplace_list_pool_request(on_response_callback_type&& cb) {
+void client::emplace_list_pool_request(on_response_callback_type&& cb) {
     auto req = std::make_unique<msg::Request>();
     [[maybe_unused]] auto _ = req->mutable_list_pools_request();
-    auto ret = std::make_unique<client::request_context>(
-      this, std::move(req), std::monostate{}, std::move(cb));
-    enqueue_request(ret.get());
-
-    return ret;
+    auto* ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
 }
 
 void client::handle_emplace_request(client::request_context* ctx) {
-    _requests.push_back(ctx);
+    _requests.push_back(std::unique_ptr<request_context>{ctx});
 }
 
 void client::send_cluster_map_request() {
@@ -344,17 +333,12 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
         }
 
         if (_pg_map.pool_version[pool_key] < pv.at(pool_key)) {
-            //pool has been updated.
             _pg_map.pool_version.emplace(pool_key, pv.at(pool_key));
-            // _pg_map.pool_pg_map.clear();
-            
-
             auto info_it = pgs.find(pool_key);
             if (info_it == pgs.end()) {
                 SPDK_INFOLOG(mon, "Cant find the info of pg %d\n", pool_key);
                 continue;
             }
-             
             for (auto& info : info_it->second.pi()) {
                 auto pgid = info.pgid();
                 if(_pg_map.pool_pg_map[pool_key].contains(pgid)){
@@ -388,7 +372,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
             auto& pgm = _pg_map.pool_pg_map[pool_key];
             auto pg_item = pgm.begin();
             while(pg_item != pgm.end()){
-                auto pg_id = pg_item->first; 
+                auto pg_id = pg_item->first;
                 auto& pit = pg_item->second;
                 if(!pit->is_update){
                     SPDK_INFOLOG(mon, "pg %d in pool %d is deleted\n", pg_id, pool_key);
@@ -423,9 +407,9 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
     }
 
     if (monitor_osd_map_version == _osd_map.version) {
-        SPDK_INFOLOG(mon, 
-            "getosdmap: osdmapversion is the same: %ld, process pg map directly\n",
-            monitor_osd_map_version);
+        SPDK_INFOLOG(mon,
+          "getosdmap: osdmapversion is the same: %ld, process pg map directly\n",
+          monitor_osd_map_version);
         process_pg_map(response->get_cluster_map_response().gpm_response());
         return;
     }
@@ -543,7 +527,7 @@ void client::process_clustermap_response(std::shared_ptr<msg::Response> response
             auto& pg_map_resp = stack_ptr->response->get_cluster_map_response().gpm_response();
             process_pg_map(pg_map_resp);
             _responses.erase(head_it);
-            if (_cluster_map_init_cb ) {
+            if (_cluster_map_init_cb) {
                 try {
                     _cluster_map_init_cb.value()();
                 } catch (...) {
@@ -591,16 +575,15 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
     case msg::Response::UnionCase::kBootResponse: {
         SPDK_DEBUGLOG(mon, "Received osd boot response\n");
 
-        auto* req_ctx = _on_flight_requests.front();
-        _on_flight_requests.pop_front();
-
+        auto& req_ctx = _on_flight_requests.front();
         if (not response->boot_response().ok()) {
             SPDK_ERRLOG("EREOR: monitor notifies boot failed\n");
             throw std::runtime_error{"monitor notifies boot failed"};
         }
 
-        req_ctx->cb(response_status::ok, req_ctx);
+        req_ctx->cb(response_status::ok, req_ctx.get());
         SPDK_NOTICELOG("osd %d is booted\n", _self_osd_id);
+        _on_flight_requests.pop_front();
         break;
     }
     case msg::Response::UnionCase::kCreateImageResponse: {
@@ -631,14 +614,13 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
           img_info.imagename().c_str(), err_code_str.c_str(), err_code,
           img_info.size(), img_info.object_size());
 
-        auto* req_ctx = _on_flight_requests.front();
-        _on_flight_requests.pop_front();
+        auto& req_ctx = _on_flight_requests.front();
         req_ctx->response_data = std::make_unique<client::image_info>(
           img_info.poolname(), img_info.imagename(),
           img_info.size(), img_info.object_size());
 
-        req_ctx->cb(to_response_status(err_code), req_ctx);
-
+        req_ctx->cb(to_response_status(err_code), req_ctx.get());
+        _on_flight_requests.pop_front();
         break;
     }
     case msg::Response::UnionCase::kListPoolsResponse: {
@@ -660,11 +642,10 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
             pools_info->data[i].root = response_pools.at(i).root();
         }
 
-         auto* req_ctx = _on_flight_requests.front();
-        _on_flight_requests.pop_front();
+        auto& req_ctx = _on_flight_requests.front();
         req_ctx->response_data = std::move(pools_info);
-        req_ctx->cb(response_status::ok, req_ctx);
-
+        req_ctx->cb(response_status::ok, req_ctx.get());
+        _on_flight_requests.pop_front();
         break;
     }
     default:
@@ -709,7 +690,7 @@ bool client::handle_response() {
 
 void client::enqueue_request(client::request_context* ctx) {
     if (::spdk_env_get_current_core() == _current_core) {
-        _requests.push_back(ctx);
+        _requests.push_back(std::unique_ptr<request_context>{ctx});
         return;
     }
 
@@ -717,7 +698,7 @@ void client::enqueue_request(client::request_context* ctx) {
 }
 
 void client::consume_general_request(bool is_cached) {
-    auto* head_req = _requests.front();
+    auto& head_req = _requests.front();
     auto rc = send_request(head_req->req.get(), is_cached);
 
     if (rc < 0) {
@@ -727,7 +708,7 @@ void client::consume_general_request(bool is_cached) {
         }
     } else {
         _cached = client::cached_request_class::none;
-        _on_flight_requests.push_back(head_req);
+        _on_flight_requests.push_back(std::move(head_req));
         _requests.pop_front();
     }
 }
