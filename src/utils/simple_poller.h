@@ -28,6 +28,15 @@ struct simple_poller {
         ::spdk_poller_unregister(&poller);
     }
 
+    void unregister() noexcept {
+        if (not poller) {
+            return;
+        }
+
+        ::spdk_poller_unregister(&poller);
+        poller = nullptr;
+    }
+
     ::spdk_poller* poller{nullptr};
 };
 

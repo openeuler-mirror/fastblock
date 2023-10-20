@@ -48,15 +48,10 @@ std::string osd_uuid{};
 std::string pool{};
 
 utils::simple_poller main_poller{};
-std::unique_ptr<monitor::client::request_context> boot_ctx{nullptr};
-std::unique_ptr<monitor::client::request_context> create_image_ctx{nullptr};
-std::unique_ptr<monitor::client::request_context> get_image_ctx{nullptr};
-std::unique_ptr<monitor::client::request_context> resize_image_ctx{nullptr};
-std::unique_ptr<monitor::client::request_context> remove_image_ctx{nullptr};
 
 static int parse_args() {
     auto argc = boost::unit_test::framework::master_test_suite().argc;
-    BOOST_ASSERT(argc == 8 or argc == 12); // 8 is standalone mnitor, 12 is monitor cluster
+    BOOST_ASSERT(argc == 7 or argc == 11); // 8 is standalone mnitor, 12 is monitor cluster
     auto argv = boost::unit_test::framework::master_test_suite().argv;
     int argv_idx{1};
 
@@ -91,7 +86,7 @@ int main_poller_cb(void* arg) {
     switch (ctx->test_state) {
     case monitor_client_test_state::booted: {
         BOOST_TEST_MESSAGE("enter monitor_client_test_state::booted");
-        create_image_ctx = ctx->mon_cli->emplace_create_image_request(
+        ctx->mon_cli->emplace_create_image_request(
           pool, ctx->image_name, ctx->image_size,
           ctx->object_size, [ctx] (auto status, [[maybe_unused]] auto _) {
               BOOST_TEST(status == monitor::client::response_status::ok);
@@ -103,11 +98,11 @@ int main_poller_cb(void* arg) {
     }
     case monitor_client_test_state::image_created: {
         BOOST_TEST_MESSAGE("enter monitor_client_test_state::image_created");
-        get_image_ctx = ctx->mon_cli->emplace_get_image_info_request(
-          pool, ctx->image_name, [ctx] (const monitor::client::response_status s, [[maybe_unused]] auto _) {
+        ctx->mon_cli->emplace_get_image_info_request(
+          pool, ctx->image_name, [ctx] (const monitor::client::response_status s, monitor::client::request_context* req_ctx) {
               BOOST_TEST_MESSAGE("test on image info got");
               BOOST_TEST(s == monitor::client::response_status::ok);
-              auto& img_info = std::get<std::unique_ptr<monitor::client::image_info>>(get_image_ctx->response_data);
+              auto& img_info = std::get<std::unique_ptr<monitor::client::image_info>>(req_ctx->response_data);
               BOOST_TEST(ctx->image_name == img_info->image_name);
               BOOST_TEST(ctx->image_size == img_info->size);
               BOOST_TEST(ctx->object_size == img_info->object_size);
@@ -119,7 +114,7 @@ int main_poller_cb(void* arg) {
         break;
     case monitor_client_test_state::image_info_got: {
         BOOST_TEST_MESSAGE("enter monitor_client_test_state::image_info_got");
-        resize_image_ctx = ctx->mon_cli->emplace_resize_image_request(
+        ctx->mon_cli->emplace_resize_image_request(
           pool, ctx->image_name, ctx->resize_size,
           [ctx] (auto s, [[maybe_unused]] auto _) {
               BOOST_TEST_MESSAGE("test on image info resized");
@@ -132,11 +127,11 @@ int main_poller_cb(void* arg) {
     }
     case monitor_client_test_state::image_resized: {
         BOOST_TEST_MESSAGE("enter monitor_client_test_state::image_resized");
-        get_image_ctx = ctx->mon_cli->emplace_get_image_info_request(
-          pool, ctx->image_name, [ctx] (const monitor::client::response_status s, [[maybe_unused]] auto _) {
+        ctx->mon_cli->emplace_get_image_info_request(
+          pool, ctx->image_name, [ctx] (const monitor::client::response_status s, monitor::client::request_context* req_ctx) {
               BOOST_TEST_MESSAGE("test on image info got");
               BOOST_TEST(s == monitor::client::response_status::ok);
-              auto& img_info = std::get<std::unique_ptr<monitor::client::image_info>>(get_image_ctx->response_data);
+              auto& img_info = std::get<std::unique_ptr<monitor::client::image_info>>(req_ctx->response_data);
               BOOST_TEST(ctx->image_name == img_info->image_name);
               BOOST_TEST(ctx->resize_size == img_info->size);
               BOOST_TEST(ctx->object_size == img_info->object_size);
@@ -149,7 +144,7 @@ int main_poller_cb(void* arg) {
     }
     case monitor_client_test_state::image_resized_info_got: {
         BOOST_TEST_MESSAGE("enter monitor_client_test_state::image_resized_info_got");
-        remove_image_ctx = ctx->mon_cli->emplace_remove_image_request(
+        ctx->mon_cli->emplace_remove_image_request(
           pool, ctx->image_name, [ctx] (auto s, [[maybe_unused]] auto _) {
               BOOST_TEST_MESSAGE("test on image removed");
               BOOST_TEST(s == monitor::client::response_status::ok);
@@ -161,7 +156,7 @@ int main_poller_cb(void* arg) {
     }
     case monitor_client_test_state::image_removed: {
         BOOST_TEST_MESSAGE("enter monitor_client_test_state::image_removed");
-        get_image_ctx = ctx->mon_cli->emplace_get_image_info_request(
+        ctx->mon_cli->emplace_get_image_info_request(
           pool, ctx->image_name, [ctx] (const monitor::client::response_status s, [[maybe_unused]] auto _) {
               BOOST_TEST_MESSAGE("test on image info got");
               BOOST_TEST(s == monitor::client::response_status::image_not_found);
@@ -220,16 +215,15 @@ void monitor_client_test_on_app_start(void* arg) {
         ctx->test_state = monitor_client_test_state::booted;
         ctx->mon_cli->start_cluster_map_poller();
     } else {
-        boot_ctx = ctx->mon_cli->emplace_osd_boot_request(
-            osd_id, osd_host, osd_port, osd_uuid, 1024 * 1024,
-            [app_ctx = ctx](const monitor::client::response_status s, monitor::client::request_context *ctx)
-            {
-                BOOST_ASSERT(s == monitor::client::response_status::ok);
-                BOOST_TEST_MESSAGE("OSD booted");
-
-                app_ctx->test_state = monitor_client_test_state::booted;
-                ctx->this_client->start_cluster_map_poller();
-            });
+        ctx->mon_cli->emplace_osd_boot_request(
+          osd_id, osd_host, osd_port, osd_uuid, 1024 * 1024,
+          [app_ctx = ctx](const monitor::client::response_status s, monitor::client::request_context *ctx)
+          {
+              BOOST_ASSERT(s == monitor::client::response_status::ok);
+              BOOST_TEST_MESSAGE("OSD booted");
+              app_ctx->test_state = monitor_client_test_state::booted;
+              ctx->this_client->start_cluster_map_poller();
+          });
     }
 
 

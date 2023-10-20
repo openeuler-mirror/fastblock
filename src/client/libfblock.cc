@@ -13,7 +13,7 @@ void libblk_client::create_image(
   const size_t size,
   const size_t object_size)
 {
-    auto ptr = _mon_cli->emplace_create_image_request(
+    _mon_cli->emplace_create_image_request(
         pool_name,
         image_name,
         size,
@@ -21,64 +21,52 @@ void libblk_client::create_image(
         [this](const monitor::client::response_status s, [[maybe_unused]] auto _)
         {
             SPDK_INFOLOG(libblk, "create_image image status %d\n", s);
-            _on_flight_request.pop_front();
         });
-
-    _on_flight_request.push_back(std::move(ptr));
 }
 
 void libblk_client::open_image(const std::string pool_name, const std::string image_name)
 {
-    std::unique_ptr<monitor::client::request_context> ptr = _mon_cli->emplace_get_image_info_request(
+    _mon_cli->emplace_get_image_info_request(
         pool_name,
         image_name,
         [this](const monitor::client::response_status s, [[maybe_unused]] auto _)
         {
-            SPDK_INFOLOG(libblk, "open  image status %d\n", s);
-            _on_flight_request.pop_front();
+            SPDK_INFOLOG(libblk, "open image status %d\n", s);
         });
-    _on_flight_request.push_back(std::move(ptr));
 }
 
 void libblk_client::remove_image(const std::string pool_name, const std::string image_name)
 {
-    std::unique_ptr<monitor::client::request_context> ptr = _mon_cli->emplace_remove_image_request(
+    _mon_cli->emplace_remove_image_request(
         pool_name,
         image_name,
         [this](const monitor::client::response_status s, [[maybe_unused]] auto _)
         {
             SPDK_INFOLOG(libblk, "remove image status %d\n", s);
-            _on_flight_request.pop_front();
-            // std::this_thread::sleep_for(std::chrono::seconds(2));
         });
-    _on_flight_request.push_back(std::move(ptr));
 }
 
 void libblk_client::resize_image(const std::string pool_name, const std::string image_name, const size_t size)
 {
-    std::unique_ptr<monitor::client::request_context> ptr = _mon_cli->emplace_resize_image_request(
+    _mon_cli->emplace_resize_image_request(
         pool_name,
         image_name,
         size,
         [this](const monitor::client::response_status s, [[maybe_unused]] auto _)
         {
             SPDK_INFOLOG(libblk, "resize_image status %d\n", s);
-            _on_flight_request.pop_front();
         });
-    _on_flight_request.push_back(std::move(ptr));
 }
 
 void libblk_client::get_image_info(const std::string pool_name, const std::string image_name)
 {
-    std::unique_ptr<monitor::client::request_context> ptr = _mon_cli->emplace_get_image_info_request(
+    _mon_cli->emplace_get_image_info_request(
         pool_name,
         image_name,
         [this](const monitor::client::response_status s, [[maybe_unused]] auto _)
         {
             SPDK_INFOLOG(libblk, "get image info status %d\n", s);
-            _on_flight_request.pop_front();
         });
-    _on_flight_request.push_back(std::move(ptr));
 }
 
 // bdev的IO，转化为char* buf 的io

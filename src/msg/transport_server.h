@@ -337,14 +337,15 @@ public:
         reply->serialized_buf = std::make_unique<char[]>(serialize_size);
         auto* serialized_buf = reply->serialized_buf.get();
         std::memcpy(serialized_buf, reply_status.get(), reply_meta_size);
-        if (request_meta_size == serialize_size) {
-            return;
+        if (reply_meta_size != serialize_size) {
+            auto offset = reply_meta_size;
+            reply->response_body->SerializeToArray(
+              serialized_buf + offset,
+              reply->response_body->ByteSizeLong());
+        } else {
+            SPDK_DEBUGLOG(msg, "empty response, reply directly\n");
+            s = status::no_content;
         }
-
-        auto offset = reply_meta_size;
-        reply->response_body->SerializeToArray(
-          serialized_buf + offset,
-          reply->response_body->ByteSizeLong());
 
         reply->task->data->cb(
           reply->task->data->cb_arg,
@@ -374,9 +375,10 @@ public:
             return;
         }
 
-        SPDK_INFOLOG(msg,
-                     "Sending rpc response body of request id %ld\n",
-                     reply_rd->task->id);
+        SPDK_INFOLOG(
+          msg,
+          "Sending rpc response body of request id %ld\n",
+          reply_rd->task->id);
         send_reply(reply_rd, status::success);
     }
 
@@ -389,7 +391,7 @@ public:
 
         auto service_it = _services.find(service_name);
         if (service_it == _services.end()) {
-            SPDK_ERRLOG("ERROR: can not find service %s\n", meta->service_name);
+            SPDK_ERRLOG("ERROR: can not find service [ %s ]\n", service_name);
             auto reply_ptr = reply_rd.get();
             _reply_records.emplace(reply_key, std::move(reply_rd));
             send_reply(reply_ptr, status::service_not_found);

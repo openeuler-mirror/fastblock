@@ -6,10 +6,12 @@
 
 ```json
 {
-    "io_type": "write_read",
+    "io_type": "write",
     "io_size": 4096,
-    "io_count": 128,
-    "io_depth": 16,
+    "io_count": 100000,
+    "io_depth": 8192,
+    "io_queue_size": 128,
+    "io_queue_request": 4096,
     "image_name": "test_image",
     "image_size": 2907152,
     "object_size": 1048576,
@@ -36,6 +38,14 @@
 ### io_count
 
 用于指定读写对象次数
+
+### io_queue_size
+
+连接 *IO* 队列深度
+
+### io_queue_request
+
+连接 *IO* 队列创建的请求数量，该值应该大于等于 *io_queue_size*。
 
 ### image_name
 

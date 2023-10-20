@@ -22,8 +22,7 @@ typedef void (*delete_callback)(struct spdk_bdev_io *, int32_t);
 typedef void (*read_object_callback)(void *src, uint64_t object_idx, const std::string &data, int32_t state);
 typedef void (*write_object_callback)(void *src, int32_t state);
 
-class fblock_client
-{
+class fblock_client {
 private:
 
 using request_type = std::variant<
@@ -46,14 +45,15 @@ using response_callback_type = std::variant<
 >;
 
 struct leader_request_stack_type {
-    std::shared_ptr<osd::rpc_service_osd_Stub> stub{nullptr};
+    osd::rpc_service_osd_Stub* stub{nullptr};
     std::unique_ptr<osd::pg_leader_request> leader_req{nullptr};
     std::unique_ptr<osd::pg_leader_response> leader_resp{nullptr};
+    ::osd_info_t* osd{nullptr};
     uint64_t leader_request_id{};
 };
 
 struct request_stack_type {
-    std::shared_ptr<osd::rpc_service_osd_Stub> stub{nullptr};
+    osd::rpc_service_osd_Stub* stub{nullptr};
     request_type req{std::monostate{}};
     response_type resp{std::monostate{}};
     response_callback_type resp_cb{std::monostate{}};
@@ -76,7 +76,23 @@ struct leader_osd_info {
     bool is_valid{false};
 };
 
+struct connection_id {
+    int32_t node_id;
+    uint32_t core_no;
+};
+
+static_assert(sizeof(connection_id) == sizeof(msg::rdma::transport_client::connection::id_type));
+
 private:
+
+    static msg::rdma::transport_client::connection::id_type to_connection_id(const int32_t node_id, const uint32_t core_no) {
+        msg::rdma::transport_client::connection::id_type ret{};
+        auto* conn_id = reinterpret_cast<connection_id*>(&ret);
+        conn_id->node_id = node_id;
+        conn_id->core_no = core_no;
+
+        return ret;
+    }
 
     auto get_stub(::osd_info_t *osdinfo) {
         return get_stub(osdinfo->node_id, osdinfo->address, osdinfo->port);
@@ -86,15 +102,23 @@ private:
         return get_stub(info->leader_id, info->addr, info->port);
     }
 
-    std::shared_ptr<osd::rpc_service_osd_Stub>
-    get_stub(const int node_id, const std::string& addr, const int port) {
-        auto connect_ptr = _cache.get_connect(0, node_id);
-        if (connect_ptr) {
-            return std::make_shared<osd::rpc_service_osd_Stub>(connect_ptr.get());
+    osd::rpc_service_osd_Stub*
+    get_stub(const int node_id, std::string addr, const int port) {
+        auto conn_id = to_connection_id(node_id, ::spdk_env_get_current_core());
+        SPDK_DEBUGLOG(libblk, "get stub of id %ld on core %d\n", conn_id, ::spdk_env_get_current_core());
+        auto stub_it = _stubs.find(conn_id);
+        if (stub_it == _stubs.end()) {
+            auto conn = _transport.emplace_connection(conn_id, addr, port);
+            if (not conn) {
+                throw std::runtime_error{"create connection error"};
+            }
+            auto stub = std::make_unique<osd::rpc_service_osd_Stub>(conn.get());
+            auto* ret = stub.get();
+            _stubs.emplace(conn_id, std::move(stub));
+            return ret;
         }
 
-        connect_ptr = _cache.create_connect(0, node_id, addr, port);
-        return std::make_shared<osd::rpc_service_osd_Stub>(connect_ptr.get());
+        return stub_it->second.get();
     }
 
     uint64_t make_leader_key(const int32_t pool_id, const int32_t pg_id) {
@@ -127,23 +151,17 @@ private:
         req->leader_req = std::make_unique<osd::pg_leader_request>();
         req->leader_req->set_pool_id(pool_id);
         req->leader_req->set_pg_id(pg_id);
-        auto done = google::protobuf::NewCallback(
-          this, &fblock_client::on_leader_acquired, req.get());
+        req->osd = first_osd;
 
         auto req_ptr = req.get();
         if (::spdk_env_get_current_core() == _current_core) {
-            req->stub = get_stub(first_osd);
             req->leader_request_id = _leader_req_id_gen++;
             _leader_requests.emplace(req->leader_request_id, std::move(req));
         } else {
             std::lock_guard<std::mutex> guard(_mutex);
-            req->stub = get_stub(first_osd);
             req->leader_request_id = _leader_req_id_gen++;
             _leader_requests.emplace(req->leader_request_id, std::move(req));
         }
-
-        req_ptr->stub->process_get_leader(
-          &_ctrlr, req_ptr->leader_req.get(), req_ptr->leader_resp.get(), done);
 
         return 0;
     }
@@ -200,14 +218,33 @@ private:
 
 public:
 
-    fblock_client(monitor::client* mon_cli);
+    fblock_client(monitor::client* mon_cli, int32_t io_queue_size = 128, int32_t io_queue_request = 1024)
+      : _transport{io_queue_size, io_queue_request}
+      , _mon_cli{mon_cli}
+      , _io_queue_size{io_queue_size}
+      , _io_queue_request{io_queue_request} {}
 
     ~fblock_client() noexcept {
         SPDK_DEBUGLOG(libblk, "call ~fblck_client()\n");
     }
 
-    void connect(); // 连接函数。
-    bool connect_state();
+    bool is_terminate() noexcept {
+        return _is_terminate;
+    }
+
+    bool is_ready() noexcept {
+        return _transport.is_start();
+    }
+
+    void stop() noexcept {
+        if (_is_terminate) {
+            return;
+        }
+
+        _is_terminate = true;
+        _transport.stop();
+        _poller.unregister();
+    }
 
     static void do_start(void* arg) {
         auto* arg_this = reinterpret_cast<fblock_client*>(arg);
@@ -216,7 +253,13 @@ public:
 
     static int do_poll(void* arg) {
         auto* arg_this = reinterpret_cast<fblock_client*>(arg);
-        auto is_busy = arg_this->process_request() | arg_this->process_response();
+        if (arg_this->is_terminate()) {
+            return SPDK_POLLER_IDLE;
+        }
+        if (not arg_this->is_ready()) {
+            return SPDK_POLLER_IDLE;
+        }
+        auto is_busy = arg_this->process_leader_request() | arg_this->process_request() | arg_this->process_response();
 
         return is_busy ? SPDK_POLLER_BUSY : SPDK_POLLER_IDLE;
     }
@@ -234,6 +277,7 @@ public:
 
     void handle_start() {
         SPDK_INFOLOG(libblk, "Starting block client...\n");
+        _transport.start();
         _poller.poller = SPDK_POLLER_REGISTER(do_poll, this, 0);
     }
 
@@ -295,7 +339,35 @@ public:
         return true;
     }
 
+    bool process_leader_request() {
+        if (not _transport.is_start()) {
+            return false;
+        }
+
+        if (_leader_requests.empty()) {
+            return false;
+        }
+
+        for (auto& req_pair : _leader_requests) {
+            auto* stack_ptr = req_pair.second.get();
+            stack_ptr->stub = get_stub(stack_ptr->osd);
+            auto done = google::protobuf::NewCallback(
+              this, &fblock_client::on_leader_acquired, stack_ptr);
+            stack_ptr->stub->process_get_leader(
+              &_ctrlr, stack_ptr->leader_req.get(), stack_ptr->leader_resp.get(), done);
+            _on_flight_leader_requests.insert(std::move(req_pair));
+        }
+
+        _leader_requests.clear();
+
+        return true;
+    }
+
     bool process_request() {
+        if (not _transport.is_start()) {
+            return false;
+        }
+
         if (_requests.empty()) {
             return false;
         }
@@ -354,8 +426,8 @@ public:
     }
 
     void on_leader_acquired(leader_request_stack_type* stack_ptr) {
-        auto it = _leader_requests.find(stack_ptr->leader_request_id);
-        if (it == _leader_requests.end()) {
+        auto it = _on_flight_leader_requests.find(stack_ptr->leader_request_id);
+        if (it == _on_flight_leader_requests.end()) {
             SPDK_ERRLOG("Cant find the leader request stack of id %ld\n", stack_ptr->leader_request_id);
             throw std::runtime_error{"cant find the leader request stack"};
         }
@@ -394,7 +466,7 @@ public:
             return;
         }
 
-        _leader_requests.erase(it);
+        _on_flight_leader_requests.erase(it);
     }
 
     void on_response(request_stack_type* stack_ptr) noexcept {
@@ -410,11 +482,6 @@ public:
       void *source) {
         auto target_pg = calc_target(object_name, target_pool_id);
 
-        SPDK_INFOLOG(
-          libblk,
-          "write_object pool: %lu pg: %lu object_name: %s offset: %lu length: %lu \n",
-          target_pool_id, target_pg, object_name.c_str(), offset, buf.size());
-
         auto req = std::make_unique<osd::write_request>();
         req->set_pool_id(target_pool_id);
         req->set_pg_id(target_pg);
@@ -422,6 +489,11 @@ public:
         req->set_offset(offset);
         req->set_data(buf);
         send_request(target_pool_id, target_pg, std::move(req), cb_fn, source);
+
+        SPDK_INFOLOG(
+          libblk,
+          "write_object pool: %lu pg: %lu object_name: %s offset: %lu length: %lu \n",
+          target_pool_id, target_pg, object_name.c_str(), offset, buf.size());
 
         return 0;
     }
@@ -482,10 +554,9 @@ private:
     void calc_pg_masks(int32_t target_pool_id);
 
 private:
-    // For now, we just use one osd and one stub
-    connect_cache &_cache;
-    std::shared_ptr<osd::rpc_service_osd_Stub> _stub;
-    connect_cache::connect_ptr _connect;
+    msg::rdma::transport_client _transport{};
+    std::unordered_map<msg::rdma::transport_client::connection::id_type, std::unique_ptr<osd::rpc_service_osd_Stub>>
+    _stubs{};
     monitor::client* _mon_cli{nullptr};
     uint32_t _pg_mask;
     uint32_t _pg_num;
@@ -493,6 +564,7 @@ private:
 
     uint64_t _leader_req_id_gen{0};
     std::unordered_map<uint64_t, std::unique_ptr<leader_request_stack_type>> _leader_requests{}; // leader 请求可以不考虑保序性
+    std::unordered_map<uint64_t, std::unique_ptr<leader_request_stack_type>> _on_flight_leader_requests{};
     std::list<std::unique_ptr<request_stack_type>> _requests{};
     std::list<std::unique_ptr<request_stack_type>> _on_flight_requests{};
     msg::rdma::rpc_controller _ctrlr{};
@@ -502,4 +574,8 @@ private:
     std::mutex _mutex{};
 
     std::unordered_map<uint64_t, std::unique_ptr<leader_osd_info>> _leader_osd{};
+
+    int32_t _io_queue_size{128};
+    int32_t _io_queue_request{1024};
+    bool _is_terminate{false};
 };

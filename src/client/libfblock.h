@@ -51,8 +51,8 @@ class libblk_client
 {
 public:
 
-    libblk_client(monitor::client* cli)
-      : _client{std::make_unique<fblock_client>(cli)}
+    libblk_client(monitor::client* cli, auto&&... args)
+      : _client{std::make_unique<fblock_client>(cli, std::forward<decltype(args)>(args)...)}
       , _mon_cli{cli} {}
 
 public:
@@ -65,8 +65,9 @@ public:
         _client->start();
     }
 
-    void connect() {}  // 连接connect函数
-    void shutdown() {} // 关闭函数
+    void stop() {
+        _client->stop();
+    }
 
     void create_image(
       const std::string pool_name,
@@ -114,6 +115,5 @@ public:
 private:
 
     monitor::client* _mon_cli{nullptr};
-    std::list<std::unique_ptr<monitor::client::request_context>> _on_flight_request{};
 };
 #endif // LIBFBLOCK_H_

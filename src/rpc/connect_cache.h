@@ -19,9 +19,9 @@ public:
     connect_ptr create_connect(uint32_t shard_id, int node_id, auto&&... args){
         pthread_mutex_lock(&_mutex);
         auto id = _id++;
-        pthread_mutex_unlock(&_mutex);
         auto connect = _transport->emplace_connection(id, std::forward<decltype(args)>(args)...);
         _cache[shard_id][node_id] = std::make_pair(id, connect);
+        pthread_mutex_unlock(&_mutex);
         return connect;
     }
 
@@ -37,7 +37,7 @@ public:
         auto iter = _cache[shard_id].find(node_id);
         if(iter == _cache[shard_id].end())
             return nullptr;
-        return iter->second.second;     
+        return iter->second.second;
     }
 
     void remove_connect(uint32_t shard_id, int node_id){
@@ -56,14 +56,18 @@ public:
         return s_connect_cache;
     }
 
+    void stop() noexcept {
+        _transport->stop();
+    }
+
 private:
     connect_cache()
-    : _mutex(PTHREAD_MUTEX_INITIALIZER) 
+    : _mutex(PTHREAD_MUTEX_INITIALIZER)
     , _id(0)
     , _shard_cores(get_shard_cores()) {
         _transport = std::make_unique<msg::rdma::transport_client>();
         _transport->start();
-        
+
         auto shard_num = _shard_cores.size();
         for(uint32_t i = 0; i < shard_num; i++){
             _cache.push_back(std::map<int, std::pair<uint64_t, connect_ptr>>());
@@ -74,7 +78,7 @@ private:
     uint64_t _id;
     transport_client_ptr  _transport;
     std::vector<uint32_t> _shard_cores;
-    //每个cpu核上有一个map    
+    //每个cpu核上有一个map
     std::vector<std::map<int, std::pair<uint64_t, connect_ptr>>> _cache;
 };
 

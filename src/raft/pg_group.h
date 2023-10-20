@@ -84,7 +84,7 @@ public:
         }
     }
 
-    void create_connect(int node_id, auto &&...args)
+    void create_connect(int node_id, auto&&...args)
     {
         _client.create_connect(node_id, std::forward<decltype(args)>(args)...);
     }

@@ -109,12 +109,12 @@ public:
         return _shard_cores.size();
     }
 
-    void create_connect(int node_id, std::string& address, int port, std::optional<std::function<void()>> cb = std::nullopt){
+    void create_connect(int node_id, std::string address, int port, auto&&... args){
         uint32_t shard_id = 0;
         for(shard_id = 0; shard_id < connect_factor() * 1; shard_id++){
             SPDK_INFOLOG(pg_group, "create connect to node %d (address %s, port %d) in core %u\n",
                     node_id, address.c_str(), port, _shard_cores[shard_id]);
-            auto connect = _cache.create_connect(shard_id, node_id, address, port, cb);
+            auto connect = _cache.create_connect(shard_id, node_id, address, port, std::forward<decltype(args)>(args)...);
             auto &stub = _stubs[shard_id];
             stub[node_id] = std::make_shared<rpc_service_raft_Stub>(connect.get());
         }
