@@ -14,6 +14,7 @@
 #include "rpc/connect_cache.h"
 #include "rpc/raft_msg.pb.h"
 #include "msg/rpc_controller.h"
+#include "utils/err_num.h"
 
 class raft_server_t;
 
@@ -139,41 +140,57 @@ public:
         }
     }
 
-    void send_appendentries(raft_server_t *raft, int32_t target_node_id, msg_appendentries_t* request){
+    int send_appendentries(raft_server_t *raft, int32_t target_node_id, msg_appendentries_t* request){
         auto shard_id = _get_shard_id();
         appendentries_source * source = new appendentries_source(request, raft);
 
         auto done = google::protobuf::NewCallback(source, &appendentries_source::process_response);
         auto stub = _get_stub(shard_id, target_node_id);
+        if(!stub){
+            return  err::RAFT_ERR_NO_CONNECTED;
+        }
         stub->append_entries(&source->ctrlr, request, &source->response, done);
+        return err::E_SUCCESS;
     }
 
-    void send_vote(raft_server_t *raft, int32_t target_node_id, msg_requestvote_t *request){
+    int send_vote(raft_server_t *raft, int32_t target_node_id, msg_requestvote_t *request){
         auto shard_id = _get_shard_id();
         vote_source * source = new vote_source(request, raft);
 
         auto done = google::protobuf::NewCallback(source, &vote_source::process_response);
         auto stub = _get_stub(shard_id, target_node_id);
+        if(!stub){
+            return  err::RAFT_ERR_NO_CONNECTED;
+        }
         stub->vote(&source->ctrlr, request, &source->response, done);
+        return err::E_SUCCESS;
     }
 
-    void send_install_snapshot(raft_server_t *raft, int32_t target_node_id, msg_installsnapshot_t *request){
+    int send_install_snapshot(raft_server_t *raft, int32_t target_node_id, msg_installsnapshot_t *request){
         auto shard_id = _get_shard_id();
         install_snapshot_source * source = new install_snapshot_source(request, raft);
 
         auto done = google::protobuf::NewCallback(source, &install_snapshot_source::process_response);
         auto stub = _get_stub(shard_id, target_node_id);
+        if(!stub){
+            return  err::RAFT_ERR_NO_CONNECTED;
+        }
         stub->install_snapshot(&source->ctrlr, request, &source->response, done);
+        return err::E_SUCCESS;
     }
 
-    void send_heartbeat(int32_t target_node_id, heartbeat_request* request, pg_group_t* group){
+    int send_heartbeat(int32_t target_node_id, heartbeat_request* request, pg_group_t* group){
         auto shard_id = _get_shard_id();
         heartbeat_source * source = new heartbeat_source(request, group, shard_id);
 
         SPDK_INFOLOG(pg_group, "heartbeat msg contains %d raft groups, to osd %d\n", request->heartbeats_size(), target_node_id);
         auto done = google::protobuf::NewCallback(source, &heartbeat_source::process_response);
         auto stub = _get_stub(shard_id, target_node_id);
+        if(!stub){
+            return  err::RAFT_ERR_NO_CONNECTED;
+        }
         stub->heartbeat(&source->ctrlr, request, &source->response, done);
+        return err::E_SUCCESS;
     }
 
 private:
