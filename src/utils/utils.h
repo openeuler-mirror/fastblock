@@ -14,6 +14,8 @@
 #include <random>
 #include <string>
 
+#include "spdk/env.h"
+
 class context {
 protected:
     virtual void finish(int r) = 0;
@@ -33,6 +35,46 @@ public:
     }
 private:
     bool _needs_delete;
+};
+
+using complete_fun = std::function<void (void *arg, int res)>;
+struct multi_complete : public context{
+    int count;
+    int num;
+    pthread_mutex_t mutex;
+    complete_fun fun;
+    void *arg;
+
+    multi_complete(int _count, complete_fun _fun, void *_arg)
+    : context(false)
+    , count(_count)
+    , num(0)
+    , mutex(PTHREAD_MUTEX_INITIALIZER)
+    , fun(_fun)
+    , arg(_arg) {}
+
+    void finish_del(int) override{
+        if(_need_mutex())
+            pthread_mutex_lock(&mutex);
+        num++;
+        if(num == count){
+            if(_need_mutex())
+                pthread_mutex_unlock(&mutex);
+            fun(arg, 0);
+            delete this;
+        }else{
+            if(_need_mutex())
+                pthread_mutex_unlock(&mutex);
+        }
+    }
+
+    void finish(int ) override {}
+private:
+    bool _need_mutex(){
+        if(count > 1 && spdk_env_get_core_count() > 1)
+            return true;
+        return false;
+    }    
 };
 
 struct osd_info_t

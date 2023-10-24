@@ -129,9 +129,25 @@ void pg_group_t::delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id){
     _pg_remove(shard_id, pool_id, pg_id);
 }
 
-void pg_group_t::start(context *complete){
-    start_shard_manager();
-    complete->complete(0);
+void pg_group_t::start_shard_manager(complete_fun fun, void *arg)
+{
+    uint32_t i = 0;
+    auto shard_num = _shard_mg.size();
+    multi_complete *complete = new multi_complete(shard_num, fun, arg);
+
+    for (i = 0; i < shard_num; i++)
+    {
+        _shard.invoke_on(
+            i,
+            [this, shard_id = i, complete](){
+                _shard_mg[shard_id].start();
+                complete->complete(0);
+            });
+    }
+}
+
+void pg_group_t::start(complete_fun fun, void *arg){
+    start_shard_manager(fun, arg);
 }
 
 

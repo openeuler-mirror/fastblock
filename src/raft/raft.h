@@ -163,6 +163,13 @@ struct raft_cbs_t
     func_membership_event_f notify_membership_event;
 };
 
+enum class raft_op_state {
+    RAFT_NONE, 
+    RAFT_ACTIVE, 
+    RAFT_DOWN, 
+    RAFT_DELETE
+};
+
 class raft_server_t{
 public:
     raft_server_t(raft_client_protocol& client, disk_log* log, std::shared_ptr<state_machine> sm_ptr, 
@@ -810,6 +817,14 @@ public:
     msg_appendentries_t* create_appendentries(raft_node* node);
     void dispatch_recovery(raft_node* node);
     void do_recovery(raft_node* node);
+
+    void raft_set_op_state(raft_op_state op_state){
+        _op_state = op_state;
+    }
+
+    raft_op_state raft_get_op_state(){
+        return _op_state;
+    }
 private:
     bool _has_majority_leases(raft_time_t now, int with_grace);
     int _cfg_change_is_valid(raft_entry_t* ety);
@@ -899,7 +914,8 @@ private:
     kvstore *kv;
    
     struct spdk_poller * raft_timer;
-
+    raft_op_state _op_state;
+    
     raft_index_t _last_index_before_become_leader;
 }; 
 

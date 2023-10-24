@@ -1070,6 +1070,16 @@ int raft_server_t::raft_write_entry(std::shared_ptr<raft_entry_t> ety,
     if (!raft_is_leader())
         return err::RAFT_ERR_NOT_LEADER;
 
+    if(raft_get_op_state() == raft_op_state::RAFT_DOWN){
+        SPDK_INFOLOG(pg_group, "pg %lu.%lu: %s\n", raft_get_pool_id(), raft_get_pg_id(), 
+                err::string_status(err::RAFT_ERR_PG_SHUTDOWN));
+        return err::RAFT_ERR_PG_SHUTDOWN;
+    }else if(raft_get_op_state() == raft_op_state::RAFT_DELETE){
+        SPDK_INFOLOG(pg_group, "pg %lu.%lu: %s\n", raft_get_pool_id(), raft_get_pg_id(), 
+                err::string_status(err::RAFT_ERR_PG_DELETED));
+        return err::RAFT_ERR_PG_DELETED;
+    }
+
     if (raft_entry_is_cfg_change(ety_ptr))
     {
         /* Multi-threading: need to fail here because user might be
@@ -1122,6 +1132,18 @@ void raft_server_t::raft_flush(){
         stop_flush(err::RAFT_ERR_NOT_LEADER);
         return;
     }
+    if(raft_get_op_state() == raft_op_state::RAFT_DOWN){
+        SPDK_INFOLOG(pg_group, "pg %lu.%lu: %s\n", raft_get_pool_id(), raft_get_pg_id(), 
+                err::string_status(err::RAFT_ERR_PG_SHUTDOWN));
+        stop_flush(err::RAFT_ERR_PG_SHUTDOWN);
+        return;
+    }else if(raft_get_op_state() == raft_op_state::RAFT_DELETE){
+        SPDK_INFOLOG(pg_group, "pg %lu.%lu: %s\n", raft_get_pool_id(), raft_get_pg_id(), 
+                err::string_status(err::RAFT_ERR_PG_DELETED));
+        stop_flush(err::RAFT_ERR_PG_DELETED);
+        return;
+    }
+
     if(last_cache_idx == current_idx){
         return;
     }
@@ -1389,6 +1411,7 @@ void raft_server_t::stop(){
     stop_timed_task();
     spdk_poller_unregister(&raft_timer);
     stop_flush(err::RAFT_ERR_PG_SHUTDOWN);
+    log->stop();
 }
 
 void raft_server_t::raft_destroy()
@@ -1397,7 +1420,6 @@ void raft_server_t::raft_destroy()
     stop();
     raft_destroy_nodes();
     machine.reset();
-    log->destroy_log();
 }
 
 int raft_server_t::raft_get_nvotes_for_me()
@@ -1672,6 +1694,7 @@ raft_server_t::raft_server_t(raft_client_protocol& _client, disk_log* _log,
     , stm_in_apply(false)
     , _append_entries_buffer(this)
     , kv(_kv) 
+    , _op_state(raft_op_state::RAFT_ACTIVE)
     , _last_index_before_become_leader(0)      
 {
         raft_randomize_election_timeout();  

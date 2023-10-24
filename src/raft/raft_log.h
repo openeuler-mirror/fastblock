@@ -235,7 +235,7 @@ public:
         set_trim_index(idx);
     }
 
-    void destroy_log(){
+    void stop(){
         if(_log){
             _log->stop([](void*, int){}, nullptr);
             delete _log;

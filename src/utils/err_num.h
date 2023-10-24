@@ -38,12 +38,15 @@ enum {
     RAFT_ERR_LOG_NOT_MATCH = -145,
     RAFT_ERR_PG_SHUTDOWN = -146,
     RAFT_ERR_NO_CONNECTED = -147,
+    RAFT_ERR_PG_DELETED = -148,
+    OSD_DOWN = -149,
+    OSD_STARTING = -150,
 
     RAFT_ERR_UNKNOWN = -199,
     RAFT_ERR_LAST = -200,
 };
 
-inline std::string  string_status(int raft_errno) noexcept{
+inline const char *  string_status(int raft_errno) noexcept{
     switch (raft_errno) {
     case E_SUCCESS:
         return "success";
@@ -79,6 +82,12 @@ inline std::string  string_status(int raft_errno) noexcept{
         return "pg is shutdown";
     case RAFT_ERR_NO_CONNECTED:
         return "No network connection was created";
+    case RAFT_ERR_PG_DELETED:
+        return "pg is deleted";
+    case OSD_DOWN:
+        return "osd is down";
+    case OSD_STARTING:
+        return "osd is initializing";
     default:
         return "unknown errno";
     }

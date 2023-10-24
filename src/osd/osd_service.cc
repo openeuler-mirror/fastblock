@@ -86,6 +86,22 @@ void osd_service::process(const request_type* request, reply_type* response, goo
             return;
         }
 
+        if(raft->raft_get_op_state() == raft_op_state::RAFT_DOWN){
+            SPDK_WARNLOG("pg %lu.%lu is down in node %d \n", 
+                    request->pool_id(), request->pg_id(), raft->raft_get_nodeid());
+            response->set_state(err::RAFT_ERR_PG_SHUTDOWN);
+            done->Run();
+            return;            
+        }
+
+        if(raft->raft_get_op_state() == raft_op_state::RAFT_DELETE){
+            SPDK_WARNLOG("pg %lu.%lu is deleted in node %d \n", 
+                    request->pool_id(), request->pg_id(), raft->raft_get_nodeid());
+            response->set_state(err::RAFT_ERR_PG_DELETED);
+            done->Run();
+            return;                        
+        }
+
         auto osd_stm_p = _pm->get_osd_stm(shard_id, request->pool_id(), request->pg_id());
         if(!osd_stm_p){
             SPDK_WARNLOG("not find pg %lu.%lu\n", request->pool_id(), request->pg_id());

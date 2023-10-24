@@ -57,8 +57,38 @@ void partition_manager::create_pg(
     make_disk_log(global_blobstore(), global_io_channel(), make_log_done, ctx);
 }
 
+int partition_manager::osd_state_is_not_active(){
+    switch (_state) {
+    case osd_state::OSD_STARTING:
+        SPDK_WARNLOG("%s.\n", err::string_status(err::OSD_STARTING));
+        return err::OSD_STARTING;
+    case osd_state::OSD_ACTIVE:
+        return 0;
+    case osd_state::OSD_DOWN:
+        SPDK_WARNLOG("%s.\n", err::string_status(err::OSD_DOWN));
+        return err::OSD_DOWN;
+    default:
+        SPDK_WARNLOG("unknown osd state.\n");
+        return -1;
+    }
+    return  0;
+}
+
+void partition_manager::start(context *complete){
+    _pgs.start(
+      [this, complete](void *, int res){
+        set_osd_state(osd_state::OSD_ACTIVE);
+        complete->complete(res);
+      },
+      nullptr
+    );
+}
+
 int partition_manager::create_partition(
         uint64_t pool_id, uint64_t pg_id, std::vector<osd_info_t>&& osds, int64_t revision_id){
+    int state = osd_state_is_not_active();
+    if(state != 0)
+        return state;
     auto shard_id = get_next_shard_id();
     _add_pg_shard(pool_id, pg_id, shard_id, revision_id);
 
@@ -72,14 +102,15 @@ int partition_manager::create_partition(
 }
 
 void partition_manager::delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id){
-    auto name = pg_id_to_name(pool_id, pg_id);
-    _sm_table[shard_id].erase(name);
-
     _pgs.delete_pg(shard_id, pool_id, pg_id);
+    del_osd_stm(pool_id, pg_id, shard_id);
 }
 
 int partition_manager::delete_partition(uint64_t pool_id, uint64_t pg_id){
     uint32_t shard_id;
+    int state = osd_state_is_not_active();
+    if(state != 0)
+        return state;
 
     if(!get_pg_shard(pool_id, pg_id, shard_id)){
         return -1;
