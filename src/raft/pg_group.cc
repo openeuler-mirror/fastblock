@@ -96,7 +96,7 @@ int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard
     _pg_add(shard_id, raft, pool_id, pg_id);
 
     for(auto& osd : osds){
-        SPDK_DEBUGLOG(pg_group, "-- raft_add_node node %d in node %d ---\n", osd.node_id, get_current_node_id());
+        SPDK_DEBUGLOG(pg_group, "-- raft_add_node node %d in pg %lu.%lu ---\n", osd.node_id, pool_id, pg_id);
         if(osd.node_id == get_current_node_id()){
             raft->raft_add_node(NULL, osd.node_id, true);
         }else{
@@ -108,7 +108,7 @@ int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard
         }
     }
 
-    raft->raft_set_current_term(1);
+    // raft->raft_set_current_term(1);
     
     raft->start_raft_timer();
     return 0;
@@ -132,7 +132,7 @@ static int heartbeat_task(void *arg){
 }
 
 void shard_manager::start(){
-    _heartbeat_timer = SPDK_POLLER_REGISTER(&heartbeat_task, this, HEARTBEAT_TIMER_PERIOD_MSEC * 1000);    
+    _heartbeat_timer = SPDK_POLLER_REGISTER(&heartbeat_task, this, HEARTBEAT_TIMER_INTERVAL_MSEC * 1000);    
 }
 
 
@@ -159,14 +159,15 @@ std::vector<shard_manager::node_heartbeat> shard_manager::get_heartbeat_requests
             if(node->raft_get_suppress_heartbeats())
                 return;
             
-            if(node->raft_node_is_heartbeating())
-                return;
+            // if(node->raft_node_is_heartbeating())
+                // return;
             if(node->raft_get_append_time() + raft->raft_get_heartbeat_timeout() > now)
                 return;
             
             SPDK_DEBUGLOG(pg_group, "------ heartbeat to node: %d pg: %lu.%lu\n", 
                     node->raft_node_get_id(), raft->raft_get_pool_id(), raft->raft_get_pg_id());
-            node->raft_node_set_heartbeating(true);
+            // node->raft_node_set_heartbeating(true);
+            node->raft_set_append_time(now); 
 
             raft->raft_set_election_timer(now);
             heartbeat_request* req = nullptr;

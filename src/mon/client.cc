@@ -802,7 +802,7 @@ bool client::consume_request() {
 int client::get_pg_num(int32_t pool_id) {
     auto it = _pg_map.pool_pg_map.find(pool_id);
     if (it == _pg_map.pool_pg_map.end()) {
-        SPDK_DEBUGLOG(mon, "_pg_map.pool_pg_map.size() is %u\n", _pg_map.pool_pg_map.size());
+        SPDK_DEBUGLOG(mon, "_pg_map.pool_pg_map.size() is %lu\n", _pg_map.pool_pg_map.size());
         SPDK_ERRLOG("ERROR: Cant find this pg map of pool: %d\n", pool_id);
         return -1;
     }

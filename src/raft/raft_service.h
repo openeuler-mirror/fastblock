@@ -57,16 +57,25 @@ void raft_service<PartitionManager>::append_entries(google::protobuf::RpcControl
     auto pg_id = request->pg_id();
     uint32_t shard_id;
     if(!_pm->get_pg_shard(pool_id, pg_id, shard_id)){
+        SPDK_WARNLOG("not find pg %lu.%lu\n", pool_id, pg_id);
         response->set_node_id(_pm->get_current_node_id());
         response->set_success(err::RAFT_ERR_NOT_FOUND_PG);
         done->Run();
         return;
     }
-    auto raft = _pm->get_pg(shard_id, pool_id, pg_id);
 
     _pm->get_shard().invoke_on(
       shard_id, 
-      [this, raft, done, request, response](){
+      [this, shard_id, done, request, response](){
+        auto raft = _pm->get_pg(shard_id, request->pool_id(), request->pg_id());
+        if(!raft){
+            SPDK_WARNLOG("not find pg %lu.%lu\n", request->pool_id(), request->pg_id());
+            response->set_node_id(_pm->get_current_node_id());
+            response->set_success(err::RAFT_ERR_NOT_FOUND_PG);
+            done->Run();
+            return;
+        }
+
         append_entries_complete *complete = new append_entries_complete(done);
         raft->append_entries_to_buffer(request, response, complete);
       });
@@ -81,17 +90,28 @@ void raft_service<PartitionManager>::vote(google::protobuf::RpcController* contr
     auto pg_id = request->pg_id();
     uint32_t shard_id;
     if(!_pm->get_pg_shard(pool_id, pg_id, shard_id)){
+        SPDK_WARNLOG("not find pg %lu.%lu\n", pool_id, pg_id);
         response->set_node_id(_pm->get_current_node_id());
-        response->set_vote_granted(0);
+        response->set_vote_granted(RAFT_REQUESTVOTE_ERR_NOT_GRANTED);
         response->set_prevote(request->prevote());
+        response->set_term(0);
         done->Run();
         return;
     }
-    auto raft = _pm->get_pg(shard_id, pool_id, pg_id);
 
     _pm->get_shard().invoke_on(
       shard_id, 
-      [this, raft, request, response, done](){
+      [this, shard_id, request, response, done](){
+        auto raft = _pm->get_pg(shard_id, request->pool_id(), request->pg_id());
+        if(!raft){
+            SPDK_WARNLOG("not find pg %lu.%lu\n", request->pool_id(), request->pg_id());
+            response->set_node_id(_pm->get_current_node_id());
+            response->set_vote_granted(RAFT_REQUESTVOTE_ERR_NOT_GRANTED);
+            response->set_prevote(request->prevote());
+            response->set_term(0);
+            done->Run();
+            return;
+        }
         raft->raft_recv_requestvote(request->node_id(), request, response);
         done->Run();                
       });
@@ -117,15 +137,22 @@ void raft_service<PartitionManager>::install_snapshot(google::protobuf::RpcContr
     auto pg_id = request->pg_id();
     uint32_t shard_id;
     if(!_pm->get_pg_shard(pool_id, pg_id, shard_id)){
+        SPDK_WARNLOG("not find pg %lu.%lu\n", pool_id, pg_id);
         done->Run();
         return;        
     }
-    auto raft = _pm->get_pg(shard_id, pool_id, pg_id);
 
-    install_snapshot_complete* complete = new install_snapshot_complete(done);
     _pm->get_shard().invoke_on(
       shard_id, 
-      [this, raft, complete, request, response](){
+      [this, shard_id, done, request, response](){
+        auto raft = _pm->get_pg(shard_id, request->pool_id(), request->pg_id());
+        if(!raft){
+            SPDK_WARNLOG("not find pg %lu.%lu\n", request->pool_id(), request->pg_id());
+            done->Run();
+            return; 
+        }
+
+        install_snapshot_complete* complete = new install_snapshot_complete(done);
         int ret = raft->raft_recv_installsnapshot(request->node_id(), request, response, complete);
         if(ret != 0){
             complete->complete(-1);
@@ -148,11 +175,11 @@ struct heartbeat_complete : public context{
     , mutex(PTHREAD_MUTEX_INITIALIZER) {}
 
     void finish_del(int ) override {
-        if(count > 1)
+        if(_need_mutex())
             pthread_mutex_lock(&mutex);
         num++;
         if(num == count){
-            if(count > 1)
+            if(_need_mutex())
                 pthread_mutex_unlock(&mutex);
             for(int i = 0; i < count; i++){
                 if(reps[i]){
@@ -162,12 +189,19 @@ struct heartbeat_complete : public context{
             done->Run();
             delete this;
         }else{
-            if(count > 1)
+            if(_need_mutex())
                 pthread_mutex_unlock(&mutex);
         }
     }
 
     void finish(int ) override {}
+
+private:
+    bool _need_mutex(){
+        if(count > 1 && spdk_env_get_core_count() > 1)
+            return true;
+        return false;
+    }
 };
 
 template<typename PartitionManager>
@@ -187,27 +221,37 @@ void raft_service<PartitionManager>::heartbeat(google::protobuf::RpcController* 
         auto pg_id = meta.pg_id();
         uint32_t shard_id;
         if(!_pm->get_pg_shard(pool_id, pg_id, shard_id)){
+            SPDK_WARNLOG("not find pg %lu.%lu\n", pool_id, pg_id);
             complete->reps.push_back(nullptr);
             rsp->set_node_id(_pm->get_current_node_id());
             rsp->set_success(err::RAFT_ERR_NOT_FOUND_PG); 
             complete->complete(err::RAFT_ERR_NOT_FOUND_PG);
             continue;           
         }
-        auto raft = _pm->get_pg(shard_id, pool_id, pg_id);
+
         msg_appendentries_t* req = new msg_appendentries_t();
-        req->set_node_id(meta.node_id());
-        req->set_pool_id(meta.pool_id());
-        req->set_pg_id(meta.pg_id());
-        req->set_term(meta.term());
-        req->set_prev_log_idx(meta.prev_log_idx());
-        req->set_prev_log_term(meta.prev_log_term());
-        req->set_leader_commit(meta.leader_commit());
         complete->reps.push_back(req);
 
         SPDK_DEBUGLOG(pg_group, "recv heartbeat from %d pg: %lu.%lu\n", meta.node_id(), pool_id, pg_id);
         _pm->get_shard().invoke_on(
           shard_id, 
-          [this, raft, complete, req, rsp](){
+          [this, &meta, shard_id, complete, req, rsp](){
+            auto raft = _pm->get_pg(shard_id, meta.pool_id(), meta.pg_id());
+            if(!raft){
+                SPDK_WARNLOG("not find pg %lu.%lu\n", meta.pool_id(), meta.pg_id());
+                rsp->set_node_id(_pm->get_current_node_id());
+                rsp->set_success(err::RAFT_ERR_NOT_FOUND_PG); 
+                complete->complete(err::RAFT_ERR_NOT_FOUND_PG);
+                return;           
+            }
+            req->set_node_id(meta.node_id());
+            req->set_pool_id(meta.pool_id());
+            req->set_pg_id(meta.pg_id());
+            req->set_term(meta.term());
+            req->set_prev_log_idx(meta.prev_log_idx());
+            req->set_prev_log_term(meta.prev_log_term());
+            req->set_leader_commit(meta.leader_commit());
+
             raft->append_entries_to_buffer(req, rsp, complete);
           });
     }   

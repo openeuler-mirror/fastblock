@@ -343,7 +343,8 @@ public:
               serialized_buf + offset,
               reply->response_body->ByteSizeLong());
         } else {
-            SPDK_DEBUGLOG(msg, "empty response, reply directly\n");
+            SPDK_DEBUGLOG(msg, "empty response, reply directly. request_meta_size: %ld reply_meta_size: %ld == serialize_size: %ld s: %d\n",
+                request_meta_size, reply_meta_size, serialize_size, s);
             s = status::no_content;
         }
 

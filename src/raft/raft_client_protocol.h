@@ -181,6 +181,8 @@ private:
 
     std::shared_ptr<rpc_service_raft_Stub> _get_stub(uint32_t shard_id, int32_t  node_id) {
         auto &stubs = _stubs[shard_id];
+        if(stubs.find(node_id) == stubs.end())
+            return nullptr;
         return stubs[node_id];
     }
 
