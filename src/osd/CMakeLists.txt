@@ -15,7 +15,7 @@ compile_library (
     osd_service.cc
   DEPS
     par_mgr
-    mon
+    monclient
     spdk::spdk
     raft
     osd_msg

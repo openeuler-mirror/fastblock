@@ -1,11 +1,20 @@
-#ifndef LIBFBLOCK_H_
-#define LIBFBLOCK_H_
+/* Copyright (c) 2023 ChinaUnicom
+ * fastblock is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *          http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+#pragma once
 
 #include "msg/rpc_controller.h"
 #include "rpc/osd_msg.pb.h"
 #include "rpc/connect_cache.h"
 #include "fb_client.h"
-#include "mon/client.h"
+#include "monclient/client.h"
 
 #include <google/protobuf/stubs/callback.h>
 
@@ -116,4 +125,3 @@ private:
 
     monitor::client* _mon_cli{nullptr};
 };
-#endif // LIBFBLOCK_H_

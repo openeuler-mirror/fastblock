@@ -13,5 +13,5 @@ target_link_libraries(fastblock-vhost
     spdk::spdk
     osd_msg
     msg
-    fb_client
+    fbclient
   )

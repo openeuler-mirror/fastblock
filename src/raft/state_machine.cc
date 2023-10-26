@@ -1,3 +1,14 @@
+/* Copyright (c) 2023 ChinaUnicom
+ * fastblock is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *          http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
 #include "state_machine.h"
 #include "raft.h"
 #include "spdk/log.h"
@@ -64,41 +75,6 @@ int state_machine::raft_apply_entry()
     apply(ety, complete);
     return 0;
 }
-
-#ifdef MERGE_APPLY
-//合并重复对象的entry
-std::vector<std::shared_ptr<raft_entry_t>>
-_merge_object(std::vector<std::shared_ptr<raft_entry_t>> &entrys, int num){
-    return entrys;
-}
-
-int state_machine::raft_apply_entries(){
-    if(_raft->get_stm_in_apply()){
-        return 0;
-    }
-
-    if (_raft->raft_get_snapshot_in_progress())
-        return 0;
-
-    _raft->set_stm_in_apply(true);
-
-    std::vector<std::shared_ptr<raft_entry_t>> entrys;
-    int num = 0;
-    _raft->raft_get_log()->log_get_from_idx(
-            _last_applied_idx + 1, default_parallel_apply_num, entrys);
-    for(auto entry : entrys){
-        if(entry->idx() > _raft->raft_get_commit_idx())
-            break;
-        num++;
-    }
-    if(num == 0)
-        return 0;
-    
-    auto merged_entrys = _merge_object(entrys, num);
-    
-    return 0;
-}
-#endif
 
 bool state_machine::linearization() {
     // 在租期不会发生选举，确保 Leader 不会变。

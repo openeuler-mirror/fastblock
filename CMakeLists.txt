@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.12.0)
-project(fastblock VERSION 0.0.1 LANGUAGES CXX)
+project(fastblock VERSION 0.1 LANGUAGES CXX)
 set(CMAKE_VERBOSE_MAKEFILE ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
@@ -115,4 +115,3 @@ endif()
 
 include(compile_library)
 add_subdirectory(src)
-add_subdirectory(tools)

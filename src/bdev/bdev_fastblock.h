@@ -8,9 +8,7 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
-
-#ifndef _BDEV_FASTBLOCK_H__
-#define _BDEV_FASTBLOCK_H__
+#pragma once
 
 #include <spdk/stdinc.h>
 #include <spdk/bdev.h>
@@ -51,5 +49,3 @@ extern struct spdk_bdev_module fastblock_if;
 uint64_t get_obj_size_of_image(struct spdk_bdev *bdev);
 
 uint64_t get_image_size(struct spdk_bdev *bdev);
-
-#endif

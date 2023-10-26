@@ -1,6 +1,20 @@
-#ifndef RAFT_NODE_H_
-#define RAFT_NODE_H_
+/* Copyright (c) 2023 ChinaUnicom
+ * fastblock is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *          http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+/**
+ * Copyright (c) 2013, Willem-Hendrik Thiart
+ * Use of this source code is governed by a BSD-style license that can be
+ * found in the raft/LICENSE file.
+ */
 
+#pragma once
 #include "raft_types.h"
 
 #define RAFT_NODE_VOTED_FOR_ME        (1 << 0)
@@ -190,5 +204,3 @@ private:
 
     raft_index_t _end_idx;  //leader发给此node的append entry request中最后一个log
 };
-
-#endif

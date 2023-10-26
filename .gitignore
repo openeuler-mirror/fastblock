@@ -6,3 +6,6 @@ build
 tmp
 build.rel
 build.debug
+monitor/fastblock-mon
+monitor/fastblock-client
+monitor/fastblock-fakeosd

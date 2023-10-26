@@ -1,5 +1,15 @@
-#ifndef RAFT_CLIENT_PROTOCOL
-#define RAFT_CLIENT_PROTOCOL
+/* Copyright (c) 2023 ChinaUnicom
+ * fastblock is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *          http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+#pragma once
 #include <google/protobuf/stubs/callback.h>
 #include "rpc/connect_cache.h"
 #include "rpc/raft_msg.pb.h"
@@ -191,5 +201,3 @@ private:
     //每个cpu核上有一个map
     std::vector<std::map<int, std::shared_ptr<rpc_service_raft_Stub>>> _stubs;
 };
-
-#endif

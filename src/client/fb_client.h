@@ -1,6 +1,17 @@
+/* Copyright (c) 2023 ChinaUnicom
+ * fastblock is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *          http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
 #pragma once
 
-#include "mon/client.h"
+#include "monclient/client.h"
 #include "msg/rpc_controller.h"
 #include "msg/transport_client.h"
 #include <utils/overload.h>
@@ -438,8 +449,8 @@ public:
         auto info_it = _leader_osd.find(leader_key);
         if (info_it == _leader_osd.end()) {
             SPDK_ERRLOG(
-              "ERROR: Cant find the leader osd info record of pool id %d, pg id %d\n",
-              it->second->leader_req->pool_id(), it->second->leader_req->pg_id());
+                "ERROR: Cant find the leader osd info record of pool id %lu, pg id %lu\n",
+                it->second->leader_req->pool_id(), it->second->leader_req->pg_id());
 
             throw std::runtime_error{"Cant find the leader osd info record"};
         }
@@ -480,7 +491,7 @@ public:
       int32_t target_pool_id,
       write_object_callback cb_fn,
       void *source) {
-        auto target_pg = calc_target(object_name, target_pool_id);
+        auto target_pg = calc_target_pg(object_name, target_pool_id);
 
         auto req = std::make_unique<osd::write_request>();
         req->set_pool_id(target_pool_id);
@@ -491,9 +502,9 @@ public:
         send_request(target_pool_id, target_pg, std::move(req), cb_fn, source);
 
         SPDK_INFOLOG(
-          libblk,
-          "write_object pool: %lu pg: %lu object_name: %s offset: %lu length: %lu \n",
-          target_pool_id, target_pg, object_name.c_str(), offset, buf.size());
+            libblk,
+            "write_object pool: %d pg: %d object_name: %s offset: %lu length: %lu \n",
+            target_pool_id, target_pg, object_name.c_str(), offset, buf.size());
 
         return 0;
     }
@@ -506,12 +517,12 @@ public:
       read_object_callback cb_fn,
       void *source,
       uint64_t object_idx) {
-        auto target_pg = calc_target(object_name, target_pool_id);
+        auto target_pg = calc_target_pg(object_name, target_pool_id);
 
         SPDK_INFOLOG(
-          libblk,
-          "read_object pool: %lu pg:%lu object:%s offset:%lu length: %lu\n",
-          target_pool_id, target_pg, object_name.c_str(), offset, length);
+            libblk,
+            "read_object pool: %lu pg:%u object:%s offset:%lu length: %lu\n",
+            target_pool_id, target_pg, object_name.c_str(), offset, length);
 
         auto req = std::make_unique<osd::read_request>();
         req->set_pool_id(target_pool_id);
@@ -530,12 +541,12 @@ public:
       uint64_t target_pool_id,
       delete_callback cb_fn,
       ::spdk_bdev_io *bdev_io) {
-        auto target_pg = calc_target(object_name, target_pool_id);
+        auto target_pg = calc_target_pg(object_name, target_pool_id);
 
         SPDK_INFOLOG(
-          libblk,
-          "delete_object pool: %lu pg: %lu object: %s\n",
-          target_pool_id, target_pg, object_name.c_str());
+            libblk,
+            "delete_object pool: %lu pg: %u object: %s\n",
+            target_pool_id, target_pg, object_name.c_str());
 
         auto req = std::make_unique<osd::delete_request>();
         req->set_pool_id(target_pool_id);
@@ -549,17 +560,13 @@ public:
 
 private:
     // 计算对象的地址
-    unsigned calc_target(const std::string &sstr, int32_t target_pool_id);
-    // 计算pg的掩码
-    void calc_pg_masks(int32_t target_pool_id);
+    unsigned calc_target_pg(const std::string &sstr, int32_t target_pool_id);
 
 private:
     msg::rdma::transport_client _transport{};
     std::unordered_map<msg::rdma::transport_client::connection::id_type, std::unique_ptr<osd::rpc_service_osd_Stub>>
-    _stubs{};
-    monitor::client* _mon_cli{nullptr};
-    uint32_t _pg_mask;
-    uint32_t _pg_num;
+        _stubs{};
+    monitor::client *_mon_cli{nullptr};
     utils::simple_poller _poller{};
 
     uint64_t _leader_req_id_gen{0};

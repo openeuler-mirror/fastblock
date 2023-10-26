@@ -41,6 +41,7 @@ deb_deps=(
   libubsan1
   libasan6
   libboost-dev
+  libnuma-dev
 )
 
 # Add support for centos/rhel/openEuler/suse
@@ -52,6 +53,7 @@ rpm_deps=(
   automake
   gcc
   gcc-c++
+  golang
   protobuf-devel
   cmake
   libnl3-devel
@@ -65,8 +67,9 @@ rpm_deps=(
   ninja-build
   libubsan
   libasan
-  boost-dev
+  boost-devel
   boost
+  numactl-devel
 )
 
 case "$ID" in

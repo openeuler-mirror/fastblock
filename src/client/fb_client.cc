@@ -1,10 +1,26 @@
+/* Copyright (c) 2023 ChinaUnicom
+ * fastblock is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *          http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
 #include "fb_client.h"
 #include "spdk/log.h"
 
 #include <tuple>
 
+// jenkins hash function
+// code is borrowed from http://burtleburtle.net/bob/hash/evahash.html
+// copyright belongs to the Robert J. Jenkins Jr
+
+SPDK_LOG_REGISTER_COMPONENT(libblk)
+/* The mixing step */
 #define mix(a, b, c)       \
-    do                     \
     {                      \
         a = a - b;         \
         a = a - c;         \
@@ -33,11 +49,9 @@
         c = c - a;         \
         c = c - b;         \
         c = c ^ (b >> 15); \
-    } while (0)
+    }
 
-SPDK_LOG_REGISTER_COMPONENT(libblk)
-
-unsigned str_hash(const std::string &str, unsigned length)
+unsigned jenkins_hash(const std::string &str, unsigned length)
 {
     const unsigned char *k = (const unsigned char *)str.c_str();
     uint32_t a, b, c; /* the internal state */
@@ -49,7 +63,7 @@ unsigned str_hash(const std::string &str, unsigned length)
     b = a;
     c = 0; /* variable initialization of internal state */
 
-    /* handle most of the key */
+    /*---------------------------------------- handle most of the key */
     while (len >= 12)
     {
         a = a + (k[0] + ((uint32_t)k[1] << 8) + ((uint32_t)k[2] << 16) +
@@ -63,10 +77,10 @@ unsigned str_hash(const std::string &str, unsigned length)
         len = len - 12;
     }
 
-    /* handle the last 11 bytes */
+    /*------------------------------------- handle the last 11 bytes */
     c = c + length;
-    switch (len)
-    { /* all the case statements fall through */
+    switch (len) /* all the case statements fall through */
+    {
     case 11:
         c = c + ((uint32_t)k[10] << 24);
         [[fallthrough]];
@@ -75,8 +89,8 @@ unsigned str_hash(const std::string &str, unsigned length)
         [[fallthrough]];
     case 9:
         c = c + ((uint32_t)k[8] << 8);
-        /* the first byte of c is reserved for the length */
         [[fallthrough]];
+    /* the first byte of c is reserved for the length */
     case 8:
         b = b + ((uint32_t)k[7] << 24);
         [[fallthrough]];
@@ -104,6 +118,7 @@ unsigned str_hash(const std::string &str, unsigned length)
     }
     mix(a, b, c);
 
+    /*-------------------------------------------- report the result */
     return c;
 }
 
@@ -120,16 +135,12 @@ cbits(T v)
     return (sizeof(v) * 8) - __builtin_clz(v);
 }
 
-unsigned fblock_client::calc_target(const std::string &sstr, int32_t target_pool_id)
+unsigned fblock_client::calc_target_pg(const std::string &sstr, int32_t target_pool_id)
 {
-    unsigned seed = str_hash(sstr, sstr.size());
-    calc_pg_masks(target_pool_id);
-    return (seed % _pg_num);
-}
+    unsigned seed = jenkins_hash(sstr, sstr.size());
 
-void fblock_client::calc_pg_masks(int32_t target_pool_id)
-{
-    _pg_num = _mon_cli->get_pg_num(target_pool_id);
-    _pg_mask = (1 << cbits(_pg_num - 1)) - 1;
-    return;
+    auto pg_num = _mon_cli->get_pg_num(target_pool_id);
+
+    //(TODO)make pg distribution stable
+    return (seed % pg_num);
 }

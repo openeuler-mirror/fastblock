@@ -1,6 +1,14 @@
-#ifndef  PARTITION_MANAGER_H_
-#define  PARTITION_MANAGER_H_
-
+/* Copyright (c) 2023 ChinaUnicom
+ * fastblock is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *          http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+#pragma once
 #include "raft/pg_group.h"
 #include "osd/osd_stm.h"
 #include "base/core_sharded.h"
@@ -100,5 +108,3 @@ private:
     std::vector<uint32_t> _shard_cores;
     std::vector<std::map<std::string, std::shared_ptr<osd_stm>>> _sm_table;
 };
-
-#endif
