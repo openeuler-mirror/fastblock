@@ -1691,7 +1691,6 @@ raft_server_t::raft_server_t(raft_client_protocol& _client, disk_log* _log,
     , first_idx(0)
     , current_idx(0)
     , client(_client)
-    , stm_in_apply(false)
     , _append_entries_buffer(this)
     , kv(_kv) 
     , _op_state(raft_op_state::RAFT_ACTIVE)
@@ -1704,7 +1703,6 @@ raft_server_t::raft_server_t(raft_client_protocol& _client, disk_log* _log,
 
 raft_server_t::~raft_server_t()
 {
-    log->log_clear();
     nodes.clear();
 }
 
@@ -1728,21 +1726,4 @@ std::shared_ptr<raft_entry_t> raft_server_t::raft_get_last_applied_entry()
     if (raft_get_last_applied_idx() == 0)
         return nullptr;
     return log->log_get_at_idx(raft_get_last_applied_idx());
-}
-
-void raft_server_t::raft_clear()
-{
-    current_term = 0;
-    voted_for = -1;
-    election_timer = 0;
-    raft_randomize_election_timeout();
-    voting_cfg_change_log_idx = -1;
-    raft_set_state(RAFT_STATE_FOLLOWER);
-    leader_id = -1;
-    commit_idx = 0;
-    node_id = -1;
-    log->log_clear();
-    start_time = 0;
-    lease_maintenance_grace = 0;
-    first_start = 0;
 }

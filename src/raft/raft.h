@@ -233,8 +233,7 @@ public:
     }
 
 
-   /** Set this server's node ID.
-     * This should be called right after raft_new/raft_clear. */
+   /** Set this server's node ID. */
     void raft_set_nodeid(raft_node_id_t id)
     {
         assert(node_id == -1);
@@ -482,9 +481,6 @@ public:
     raft_cbs_t&  raft_get_cbs(){
         return cb;
     }
-    
-    /** De-initialise Raft server. */
-    void raft_clear();
 
     std::shared_ptr<raft_log> raft_get_log(){
         return log;
@@ -741,14 +737,6 @@ public:
 
     raft_index_t raft_get_num_snapshottable_logs();
 
-    bool get_stm_in_apply(){
-        return stm_in_apply;
-    }
-
-    void set_stm_in_apply(bool _stm_in_apply){
-        stm_in_apply = _stm_in_apply;
-    }
-
     void start_timed_task(){
         _append_entries_buffer.start();
         machine->start();
@@ -906,8 +894,6 @@ private:
     raft_index_t first_idx;     //当前正在处理的一批msg中第一个的idx
     raft_index_t current_idx;   //当前正在处理的一批msg中最后一个的idx
     raft_client_protocol& client;
-
-    bool stm_in_apply;     //状态机正在apply
 
     append_entries_buffer _append_entries_buffer;
 
