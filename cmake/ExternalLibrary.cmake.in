@@ -1,0 +1,95 @@
+cmake_minimum_required(VERSION 3.12.0)
+project(build-deps NONE)
+cmake_host_system_information(
+  RESULT build_concurrency_factor
+  QUERY NUMBER_OF_LOGICAL_CORES)
+set(info_dir --infodir=@FASTBLOCK_DEPS_INSTALL_DIR@/share/info)
+include(ExternalProject)
+
+message("COMPILE_spdk")
+
+set(c_flags "@BASE_C_FLAGS@ @CMAKE_C_FLAGS_BUILD_TYPE@")
+set(cxx_flags "@BASE_CXX_FLAGS@ @CMAKE_CXX_FLAGS_BUILD_TYPE@ -std=c++20")
+set(ld_flags "@BASE_LD_FLAGS@")
+set(default_depends "")
+
+set(common_cmake_args
+  -DCMAKE_CXX_STANDARD=@CMAKE_CXX_STANDARD@
+  -DCMAKE_CXX_EXTENSIONS=@CMAKE_CXX_EXTENSIONS@
+  -DCMAKE_C_COMPILER=@CMAKE_C_COMPILER@
+  -DCMAKE_CXX_COMPILER=@CMAKE_CXX_COMPILER@
+  -DCMAKE_C_COMPILER_LAUNCHER=@CMAKE_C_COMPILER_LAUNCHER@
+  -DCMAKE_CXX_COMPILER_LAUNCHER=@CMAKE_CXX_COMPILER_LAUNCHER@
+  "-DCMAKE_C_FLAGS=@BASE_C_FLAGS@"
+  "-DCMAKE_C_FLAGS_@BUILD_TYPE@=@CMAKE_C_FLAGS_BUILD_TYPE@"
+  "-DCMAKE_CXX_FLAGS=@BASE_CXX_FLAGS@ -std=c++20"
+  "-DCMAKE_CXX_FLAGS_@BUILD_TYPE@=@CMAKE_CXX_FLAGS_BUILD_TYPE@"
+  "-DCMAKE_EXE_LINKER_FLAGS=@CMAKE_EXE_LINKER_FLAGS@"
+  "-DCMAKE_SHARED_LINKER_FLAGS=@CMAKE_SHARED_LINKER_FLAGS@"
+  "-DCMAKE_MODULE_LINKER_FLAGS=@CMAKE_MODULE_LINKER_FLAGS@"
+  -DCMAKE_BUILD_TYPE=@CMAKE_BUILD_TYPE@
+  -DCMAKE_PREFIX_PATH=@FASTBLOCK_DEPS_INSTALL_DIR@
+  -DCMAKE_INSTALL_PREFIX=@FASTBLOCK_DEPS_INSTALL_DIR@
+  -DCMAKE_INSTALL_RPATH=@FASTBLOCK_DEPS_INSTALL_DIR@/lib
+  -DCMAKE_SKIP_BUILD_RPATH=OFF
+  -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
+  -DCMAKE_POSITION_INDEPENDENT_CODE=@CMAKE_POSITION_INDEPENDENT_CODE@
+  -DCMAKE_VERBOSE_MAKEFILE=@CMAKE_VERBOSE_MAKEFILE@
+)
+# pkgconfig
+set(ENV{PKG_CONFIG_PATH}  @PKG_CONFIG_PATH@)
+set(cmake_build_env)
+
+# autotools
+set(base_env
+  CC=@CMAKE_C_COMPILER@
+  CXX=@CMAKE_CXX_COMPILER@
+  PKG_CONFIG_PATH=@PKG_CONFIG_PATH@
+)
+# For a libtool project
+set(build_env
+  ${base_env}
+  CFLAGS=${c_flags}
+  CXXFLAGS=${cxx_flags}
+  "LDFLAGS=${ld_flags}"
+)
+
+if (@CMAKE_BUILD_TYPE@ MATCHES "Debug")
+  set(spdk_debug "--enable-debug")
+  set(spdk_asan "--enable-asan")
+  set(spdk_ubsan "--enable-ubsan")
+else()
+  set(spdk_debug "")
+  set(spdk_asan "")
+  set(spdk_ubsan "")
+endif()
+
+ExternalProject_Add(spdk
+  GIT_REPOSITORY https://github.com/wuxingyi/spdk.git 
+  GIT_TAG fbspdk
+  UPDATE_COMMAND ""
+  BUILD_IN_SOURCE ON
+  INSTALL_DIR    @FASTBLOCK_DEPS_INSTALL_DIR@
+  CONFIGURE_COMMAND
+    <SOURCE_DIR>/configure --without-isal
+      --disable-tests --disable-unit-tests --disable-examples --disable-apps --with-rdma
+      --prefix=<INSTALL_DIR>
+      ${spdk_debug} ${spdk_asan} ${spdk_ubsan}
+  BUILD_COMMAND
+    make -j${build_concurrency_factor}
+  INSTALL_COMMAND
+    make install
+  )
+
+ExternalProject_Add(abseil
+  GIT_REPOSITORY  https://github.com/abseil/abseil-cpp
+  GIT_TAG lts_2022_06_23
+  UPDATE_COMMAND ""
+  INSTALL_DIR    @FASTBLOCK_DEPS_INSTALL_DIR@
+  BUILD_IN_SOURCE ON
+  CMAKE_COMMAND
+    ${CMAKE_COMMAND} -E env ${build_env} ${CMAKE_COMMAND}
+  DEPENDS ${default_depends}
+  CMAKE_ARGS
+    ${common_cmake_args}
+    -DABSL_ENABLE_INSTALL=ON)

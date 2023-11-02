@@ -1,0 +1,11 @@
+build
+.vscode
+*.swp
+*.pb.cc
+*.pb.h
+tmp
+build.rel
+build.debug
+monitor/fastblock-mon
+monitor/fastblock-client
+monitor/fastblock-fakeosd

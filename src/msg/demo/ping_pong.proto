@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package ping_pong;
+
+option cc_generic_services = true;
+
+message request {
+    string ping = 1;
+}
+
+message response {
+    string pong = 2;
+}
+
+service ping_pong_service {
+    rpc ping_pong(request) returns (response);
+    rpc heartbeat(request) returns (response);
+}
