@@ -1,0 +1,5 @@
+# spdk代码简介
+fastblock使用spdk框架来实现高性能、低延迟的块存储，我们使用了spdk的线程模型、nvmf的rdma通信模块、nvme用户态驱动等，其中我们修改的部分主要是根据nvmf的rdma模块作为传输层，实现我们所需的低延迟rpc系统。  
+我们的改动基于spdk的v22.05.x标签，将所有改动通过git format-patch生成了一个patch，在代码管理上，因为这部分代码相对稳定，且除了fastblock自己的bdev rpc之外，rdma消息通信跟fastblock项目本身的相关性不是很大，所以我们未将这部分代码引入到项目源码中。  
+出于快速开发考虑，我们使用了spdk nvmf的rdma传输层作为我们osd到osd以及osd到client之间的通信传输层，通过新增一个rdma_server的spdk模块，这个模块不再是传输nvme命令字，而是可以用于传输任意rpc消息。
+虽然复用spdk的rdma传输层为我们节省了很多开发时间，但是这部分代码繁琐冗长，且包含了大量的nvmf业务相关的逻辑(如消息命令字结构及nvmf状态机)，所以重写rdma传输层已在下一期开发计划之中。
