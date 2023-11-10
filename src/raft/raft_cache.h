@@ -36,7 +36,7 @@ public:
     typedef std::list<std::shared_ptr<cache_item>> cache_type;
     typedef std::map<raft_index_t, cache_type::iterator> map_cache_t;
 
-    void add(const std::string &obj_name, std::shared_ptr<raft_entry_t> entry, context *complete)
+    void add(std::shared_ptr<raft_entry_t> entry, context *complete)
     {
         auto item = std::make_shared<cache_item>(entry, complete);
         raft_index_t idx = entry->idx();

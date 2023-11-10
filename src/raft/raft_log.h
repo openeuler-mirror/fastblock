@@ -103,7 +103,6 @@ public:
         raft_entry.set_term(log_entry.term_id);
         raft_entry.set_idx(log_entry.index);
         raft_entry.set_type(log_entry.type);
-        raft_entry.set_obj_name("");
         raft_entry.set_meta(log_entry.meta);
         std::string data;
         data.reserve(log_entry.data.bytes());

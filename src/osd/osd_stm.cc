@@ -28,13 +28,14 @@ osd_stm::osd_stm()
 {}
 
 void osd_stm::apply(std::shared_ptr<raft_entry_t> entry, context *complete){
-    std::string obj_name = entry->obj_name();
     if(entry->type() == RAFT_LOGTYPE_WRITE){
         osd::write_cmd write;
         write.ParseFromString(entry->meta());
         write_obj(write.object_name(), write.offset(), entry->data(), complete);
     }else if(entry->type() == RAFT_LOGTYPE_DELETE){
-        delete_obj(obj_name, complete);
+        osd::delete_cmd del;
+        del.ParseFromString(entry->meta());
+        delete_obj(del.object_name(), complete);
     }else{
         complete->complete(err::E_SUCCESS);
     }
@@ -144,7 +145,6 @@ void osd_stm::write_and_wait(
     
         auto entry_ptr = std::make_shared<raft_entry_t>();
         entry_ptr->set_type(RAFT_LOGTYPE_WRITE);
-        entry_ptr->set_obj_name(request->object_name());
         entry_ptr->set_meta(std::move(buf));
         entry_ptr->set_data(std::move(request->data()));
 
@@ -226,7 +226,6 @@ void osd_stm::delete_and_wait(
     
         auto entry_ptr = std::make_shared<raft_entry_t>();
         entry_ptr->set_type(RAFT_LOGTYPE_DELETE);
-        entry_ptr->set_obj_name(request->object_name());
         entry_ptr->set_meta(std::move(buf));
 
         auto ret = get_raft()->raft_write_entry(entry_ptr, delete_complete);

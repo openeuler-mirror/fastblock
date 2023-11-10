@@ -11,10 +11,8 @@ message raft_entry_t
 
     /** type of entry */
     int32 type = 3;
-
-    bytes obj_name = 4;
-    bytes meta = 5;
-    bytes data = 6;
+    bytes meta = 4;
+    bytes data = 5;
 }
 
 /** Appendentries message.
