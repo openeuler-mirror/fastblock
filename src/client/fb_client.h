@@ -59,7 +59,7 @@ struct leader_request_stack_type {
     osd::rpc_service_osd_Stub* stub{nullptr};
     std::unique_ptr<osd::pg_leader_request> leader_req{nullptr};
     std::unique_ptr<osd::pg_leader_response> leader_resp{nullptr};
-    ::osd_info_t* osd{nullptr};
+    utils::osd_info_t* osd{nullptr};
     uint64_t leader_request_id{};
 };
 
@@ -105,7 +105,7 @@ private:
         return ret;
     }
 
-    auto get_stub(::osd_info_t *osdinfo) {
+    auto get_stub(utils::osd_info_t *osdinfo) {
         return get_stub(osdinfo->node_id, osdinfo->address, osdinfo->port);
     }
 

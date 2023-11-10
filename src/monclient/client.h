@@ -92,7 +92,7 @@ public:
         using osd_id_type = int32_t;
         using version_type = int64_t;
 
-        std::unordered_map<osd_id_type, std::unique_ptr<::osd_info_t>> data{};
+        std::unordered_map<osd_id_type, std::unique_ptr<utils::osd_info_t>> data{};
         version_type version{-1};
     };
 
@@ -363,9 +363,9 @@ public:
     void handle_emplace_request(request_context*);
     void send_cluster_map_request();
     bool core_poller_handler();
-    ::osd_info_t* get_pg_first_available_osd_info(int32_t pool_id, int32_t pg_id);
+    utils::osd_info_t* get_pg_first_available_osd_info(int32_t pool_id, int32_t pg_id);
     int get_pg_num(int32_t pool_id);
-    ::osd_info_t* get_osd_info(const int32_t node_id);
+    utils::osd_info_t* get_osd_info(const int32_t node_id);
 
 private:
 

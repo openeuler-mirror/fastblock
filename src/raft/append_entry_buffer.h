@@ -21,7 +21,7 @@ public:
     struct item_type{
         const msg_appendentries_t* request;
         msg_appendentries_response_t* response;
-        context* complete;
+        utils::context* complete;
     };
 
     append_entries_buffer(raft_server_t* raft)
@@ -30,7 +30,7 @@ public:
 
     void enqueue(const msg_appendentries_t* request,
                 msg_appendentries_response_t* response,
-                context* complete);
+                utils::context* complete);
 
     void start();
 

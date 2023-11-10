@@ -111,7 +111,7 @@ public:
     }
 
     int create_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,
-                  std::vector<osd_info_t> &&osds, disk_log *log);
+                  std::vector<utils::osd_info_t> &&osds, disk_log *log);
 
     void delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id);
 
@@ -131,7 +131,7 @@ public:
         return _current_node_id;
     }
 
-    void start(complete_fun fun, void *arg);
+    void start(utils::complete_fun fun, void *arg);
 
     void stop(){
         stop_shard_manager();
@@ -141,7 +141,7 @@ public:
         _shard_mg[shard_id].stop();
     }
 
-    void start_shard_manager(complete_fun fun, void *arg);
+    void start_shard_manager(utils::complete_fun fun, void *arg);
 
     void stop_shard_manager()
     {

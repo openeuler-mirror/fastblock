@@ -45,7 +45,7 @@ public:
     op_type_excl_lock(const op_type_excl_lock&) = delete;
     void operator=(const op_type_excl_lock&) = delete;
 
-    void lock(const op_type type, context *complete) {
+    void lock(const op_type type, utils::context *complete) {
         SPDK_DEBUGLOG(osd, "enter lock type %u\n", (uint32_t)type);
 
         if (try_lock(type)) {
@@ -85,11 +85,11 @@ private:
     uint64_t  _runners;
 
     struct waiter {
-        waiter(op_type _type, context *_complete)
+        waiter(op_type _type, utils::context *_complete)
         : complete(_complete)
         , type(_type) {}
 
-        context *complete;
+        utils::context *complete;
         op_type type;
     };
 
@@ -156,7 +156,7 @@ public:
         SPDK_INFOLOG(osd, "lock_manager initialized to %d\n", _disable_flag);
     }
 
-    void lock(const std::string& key, const operation_type type, context *complete){
+    void lock(const std::string& key, const operation_type type, utils::context *complete){
         if (_disable_flag) {
             complete->complete(0);
             return;
@@ -219,10 +219,10 @@ class osd_stm : public state_machine {
 public:
     osd_stm();
 
-    void apply(std::shared_ptr<raft_entry_t> entry, context *complete) override;
+    void apply(std::shared_ptr<raft_entry_t> entry, utils::context *complete) override;
 
-    void write_obj(const std::string& obj_name, uint64_t offset, const std::string& data, context *complete);
-    void delete_obj(const std::string& obj_name, context *complete);
+    void write_obj(const std::string& obj_name, uint64_t offset, const std::string& data, utils::context *complete);
+    void delete_obj(const std::string& obj_name, utils::context *complete);
 
     void write_and_wait(const osd::write_request* request, osd::write_reply* response, google::protobuf::Closure* done);
     void read_and_wait(const osd::read_request* request, osd::read_reply* response, google::protobuf::Closure* done);

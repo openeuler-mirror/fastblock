@@ -45,7 +45,7 @@ void raft_server_t::raft_set_callbacks(raft_cbs_t* funcs, void* _udata)
     raft_get_log()->log_set_raft((void *)this);
 
     /* We couldn't initialize the time fields without the callback. */
-    raft_time_t now = get_time();
+    raft_time_t now = utils::get_time();
     raft_set_election_timer(now);
     raft_set_start_time(now);
 }
@@ -74,7 +74,7 @@ void raft_server_t::raft_become_leader()
     SPDK_WARNLOG("becoming leader of pg %lu.%lu at term:%ld\n", pool_id, pg_id, raft_get_current_term());
 
     raft_set_state(RAFT_STATE_LEADER);
-    raft_time_t now = get_time();
+    raft_time_t now = utils::get_time();
     raft_set_election_timer(now);
     _last_index_before_become_leader = raft_get_current_idx();
     for(auto _node : nodes){
@@ -122,7 +122,7 @@ int raft_server_t::raft_become_candidate()
 
     raft_set_current_leader(-1);
     raft_randomize_election_timeout();
-    auto election_timer = get_time();
+    auto election_timer = utils::get_time();
     raft_set_election_timer(election_timer);
 
     for(auto _node : nodes){
@@ -176,7 +176,7 @@ void raft_server_t::raft_become_follower()
     SPDK_INFOLOG(pg_group, "becoming follower, term: %ld\n", raft_get_current_term());
     raft_set_state(RAFT_STATE_FOLLOWER);
     raft_randomize_election_timeout();
-    auto election_timer = get_time();
+    auto election_timer = utils::get_time();
     raft_set_election_timer(election_timer);
 }
 
@@ -234,13 +234,13 @@ bool raft_server_t::raft_has_majority_leases()
 
     /* Check without grace, because the caller may be checking leadership for
      * linearizability (§6.4). */
-    return _has_majority_leases(get_time(), 0 /* with_grace */);
+    return _has_majority_leases(utils::get_time(), 0 /* with_grace */);
 }
 
 int raft_server_t::raft_periodic()
 {
     raft_node *my_node = raft_get_my_node();
-    raft_time_t now = get_time();
+    raft_time_t now = utils::get_time();
 
     if (raft_get_state() == RAFT_STATE_LEADER)
     {
@@ -486,7 +486,7 @@ void raft_server_t::follow_raft_disk_append_finish(raft_index_t start_idx, raft_
     follow_raft_write_entry_finish(start_idx, end_idx, result);  
 }
 
-struct follow_disk_append_complete : public context{
+struct follow_disk_append_complete : public utils::context{
     follow_disk_append_complete(raft_index_t _start_idx, raft_index_t _end_idx,
     raft_index_t _commit_idx, raft_server_t* _raft, msg_appendentries_response_t *_rsp)
     : start_idx(_start_idx)
@@ -515,14 +515,14 @@ int raft_server_t::raft_recv_appendentries(
     raft_node_id_t node_id,
     const msg_appendentries_t* ae,
     msg_appendentries_response_t *r,
-    context* complete
+    utils::context* complete
     )
 {
     int e = 0;
     int k = 0;
     raft_time_t election_timer1;
     int i;
-    std::vector<std::pair<std::shared_ptr<raft_entry_t>, context*>> entrys;
+    std::vector<std::pair<std::shared_ptr<raft_entry_t>, utils::context*>> entrys;
     int entries_num = ae->entries_size();
     raft_index_t start_idx;
     raft_index_t end_idx;
@@ -567,7 +567,7 @@ int raft_server_t::raft_recv_appendentries(
     /* update current leader because ae->term is up to date */
     raft_set_current_leader(node_id);
 
-    election_timer1 = get_time();
+    election_timer1 = utils::get_time();
     raft_set_election_timer(election_timer1);
     r->set_lease(election_timer1 + election_timeout);
 
@@ -723,7 +723,7 @@ int raft_server_t::raft_recv_requestvote(raft_node_id_t node_id,
                           const msg_requestvote_t* vr,
                           msg_requestvote_response_t *r)
 {
-    raft_time_t now = get_time();
+    raft_time_t now = utils::get_time();
     int e = 0;
 
     SPDK_INFOLOG(pg_group, "raft_recv_requestvote from node %d pg %lu.%lu term %ld current_term %ld candidate_id %d \
@@ -875,7 +875,7 @@ int raft_server_t::raft_process_requestvote_reply(
 int raft_server_t::raft_recv_installsnapshot(raft_node_id_t node_id,
                               const msg_installsnapshot_t* is,
                               msg_installsnapshot_response_t* r,
-                              context* complete)
+                              utils::context* complete)
 {
     int e;
     raft_node* node = raft_get_node(node_id);
@@ -901,7 +901,7 @@ int raft_server_t::raft_recv_installsnapshot(raft_node_id_t node_id,
         raft_become_follower();
 
     raft_set_current_leader(node_id);
-    auto election_timer = get_time();
+    auto election_timer = utils::get_time();
     raft_set_election_timer(election_timer);
     r->set_lease(election_timer + election_timeout);
 
@@ -1045,7 +1045,7 @@ void raft_server_t::raft_disk_append_finish(raft_index_t start_idx, raft_index_t
     }
 }
 
-struct disk_append_complete : public context{
+struct disk_append_complete : public utils::context{
     disk_append_complete(raft_index_t _start_idx, raft_index_t _end_idx, raft_server_t* _raft)
     : start_idx(_start_idx)
     , end_idx(_end_idx)
@@ -1064,7 +1064,7 @@ struct disk_append_complete : public context{
 };
 
 int raft_server_t::raft_write_entry(std::shared_ptr<raft_entry_t> ety,
-                    context *complete)
+                    utils::context *complete)
 {
     auto ety_ptr = ety.get();
     if (!raft_is_leader())
@@ -1097,7 +1097,7 @@ int raft_server_t::raft_write_entry(std::shared_ptr<raft_entry_t> ety,
     }
 
     ety->set_term(raft_get_current_term());
-    std::vector<std::pair<std::shared_ptr<raft_entry_t>, context*>> entrys;
+    std::vector<std::pair<std::shared_ptr<raft_entry_t>, utils::context*>> entrys;
     entrys.push_back(std::make_pair(ety, complete));
     int e = raft_append_entries(entrys);
     if (0 != e)
@@ -1305,7 +1305,7 @@ msg_appendentries_t* raft_server_t::create_appendentries(raft_node* node)
           ae->leader_commit(),
           ae->prev_log_idx(),
           ae->prev_log_term());
-    auto cur_timer = get_time();
+    auto cur_timer = utils::get_time();
     node->raft_set_append_time(cur_timer); 
     raft_set_election_timer(cur_timer);  
     return ae;
@@ -1326,7 +1326,7 @@ int raft_server_t::raft_send_heartbeat_all()
 {
     int e;
 
-    auto election_timer = get_time();
+    auto election_timer = utils::get_time();
     raft_set_election_timer(election_timer);
     for(auto _node : nodes)
     {
@@ -1353,7 +1353,7 @@ raft_node* raft_server_t::raft_add_node_internal(raft_entry_t *ety, void* udata,
 
     auto node = std::make_shared<raft_node>(udata, id);
     if (raft_is_leader())
-        node->raft_node_set_effective_time(get_time());
+        node->raft_node_set_effective_time(utils::get_time());
 
     nodes.push_back(node);
     if (is_self)

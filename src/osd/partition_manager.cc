@@ -30,7 +30,7 @@ bool partition_manager::get_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t 
 struct make_log_context{
     uint64_t pool_id;
     uint64_t pg_id;
-    std::vector<osd_info_t> osds;
+    std::vector<utils::osd_info_t> osds;
     uint32_t shard_id; 
     int64_t revision_id;
     partition_manager* pm;
@@ -51,7 +51,7 @@ static void make_log_done(void *arg, struct disk_log* dlog, int rberrno){
 }
 
 void partition_manager::create_pg(
-        uint64_t pool_id, uint64_t pg_id, std::vector<osd_info_t> osds, 
+        uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t> osds, 
         uint32_t shard_id, int64_t revision_id){
     make_log_context *ctx = new make_log_context{pool_id, pg_id, std::move(osds), shard_id, revision_id, this};
     make_disk_log(global_blobstore(), global_io_channel(), make_log_done, ctx);
@@ -74,7 +74,7 @@ int partition_manager::osd_state_is_not_active(){
     return  0;
 }
 
-void partition_manager::start(context *complete){
+void partition_manager::start(utils::context *complete){
     _pgs.start(
       [this, complete](void *, int res){
         set_osd_state(osd_state::OSD_ACTIVE);
@@ -85,7 +85,7 @@ void partition_manager::start(context *complete){
 }
 
 int partition_manager::create_partition(
-        uint64_t pool_id, uint64_t pg_id, std::vector<osd_info_t>&& osds, int64_t revision_id){
+        uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t>&& osds, int64_t revision_id){
     int state = osd_state_is_not_active();
     if(state != 0)
         return state;

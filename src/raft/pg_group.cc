@@ -97,7 +97,7 @@ raft_cbs_t raft_funcs = {
 };
 
 int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard_id, uint64_t pool_id, 
-            uint64_t pg_id, std::vector<osd_info_t>&& osds, disk_log* log){
+            uint64_t pg_id, std::vector<utils::osd_info_t>&& osds, disk_log* log){
     int ret = 0;
     auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id       
                                         , global_storage().kvs());
@@ -129,11 +129,11 @@ void pg_group_t::delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id){
     _pg_remove(shard_id, pool_id, pg_id);
 }
 
-void pg_group_t::start_shard_manager(complete_fun fun, void *arg)
+void pg_group_t::start_shard_manager(utils::complete_fun fun, void *arg)
 {
     uint32_t i = 0;
     auto shard_num = _shard_mg.size();
-    multi_complete *complete = new multi_complete(shard_num, fun, arg);
+    utils::multi_complete *complete = new utils::multi_complete(shard_num, fun, arg);
 
     for (i = 0; i < shard_num; i++)
     {
@@ -146,7 +146,7 @@ void pg_group_t::start_shard_manager(complete_fun fun, void *arg)
     }
 }
 
-void pg_group_t::start(complete_fun fun, void *arg){
+void pg_group_t::start(utils::complete_fun fun, void *arg){
     start_shard_manager(fun, arg);
 }
 
@@ -167,7 +167,7 @@ std::vector<shard_manager::node_heartbeat> shard_manager::get_heartbeat_requests
       raft_node_id_t,
       heartbeat_request*> pending_beats;
 
-    raft_time_t now = get_time();
+    raft_time_t now = utils::get_time();
     for(auto& p : _pgs){
         auto raft = p.second;
         if(raft->raft_get_state() != RAFT_STATE_LEADER){

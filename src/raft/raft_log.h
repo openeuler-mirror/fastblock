@@ -40,7 +40,7 @@ public:
      * Add 'n' entries to the log with valid (positive, non-zero) IDs
      * that haven't already been added and save the number of successfully
      * appended entries in 'n' */
-    int log_append(std::vector<std::pair<std::shared_ptr<raft_entry_t>, context*>>& entries);
+    int log_append(std::vector<std::pair<std::shared_ptr<raft_entry_t>, utils::context*>>& entries);
 
     log_entry_t raft_entry_to_log_entry(raft_entry_t& raft_entry) {
         log_entry_t entry;
@@ -68,7 +68,7 @@ public:
         return entry;
     }
 
-    void disk_append(raft_index_t start_idx, raft_index_t end_idx, context* complete){
+    void disk_append(raft_index_t start_idx, raft_index_t end_idx, utils::context* complete){
         std::vector<std::shared_ptr<raft_entry_t>> raft_entries;
         _entries.get_between(start_idx, end_idx, raft_entries);
         SPDK_INFOLOG(pg_group, "start_idx:%lu end_idx:%lu.\n", start_idx, end_idx);
@@ -89,7 +89,7 @@ public:
             [log_entries](void *arg, int rberrno) mutable
             {
                 SPDK_INFOLOG(pg_group, "after disk_append.\n");
-                context *ctx = (context *)arg;
+                utils::context *ctx = (utils::context *)arg;
                 for(auto & entry : log_entries){
                     free_buffer_list(entry.data);
                 }

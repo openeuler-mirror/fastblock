@@ -32,7 +32,7 @@ std::shared_ptr<raft_log> log_new(disk_log* log)
     return std::make_shared<raft_log>(log);
 }
 
-int raft_log::log_append(std::vector<std::pair<std::shared_ptr<raft_entry_t>, context*>>& entries)
+int raft_log::log_append(std::vector<std::pair<std::shared_ptr<raft_entry_t>, utils::context*>>& entries)
 {
     // raft_index_t first_idx = _next_idx;
 

@@ -42,9 +42,9 @@ public:
           }
       }
       
-    void start(context *complete);
+    void start(utils::context *complete);
 
-    void stop(complete_fun fun, void *arg){
+    void stop(utils::complete_fun fun, void *arg){
         if(_state == osd_state::OSD_DOWN){
             return;
         }  
@@ -52,7 +52,7 @@ public:
 
         uint64_t shard_id = 0;
         auto shard_num = _sm_table.size();
-        multi_complete *complete = new multi_complete(shard_num, fun, arg);
+        utils::multi_complete *complete = new utils::multi_complete(shard_num, fun, arg);
 
         for(shard_id = 0; shard_id < shard_num; shard_id++){
             _shard.invoke_on(
@@ -70,12 +70,12 @@ public:
         }
     }
 
-    int create_partition(uint64_t pool_id, uint64_t pg_id, std::vector<osd_info_t>&& osds, int64_t revision_id);
+    int create_partition(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t>&& osds, int64_t revision_id);
     int delete_partition(uint64_t pool_id, uint64_t pg_id);
 
     bool get_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t &shard_id);
 
-    void create_pg(uint64_t pool_id, uint64_t pg_id, std::vector<osd_info_t> osds, uint32_t shard_id, int64_t revision_id);
+    void create_pg(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t> osds, uint32_t shard_id, int64_t revision_id);
     void delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id);
 
     std::shared_ptr<osd_stm> get_osd_stm(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id){

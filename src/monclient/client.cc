@@ -457,7 +457,7 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
               osds[i].osdid(),
               should_create_connect);
 
-            auto osd_info = std::make_unique<::osd_info_t>(
+            auto osd_info = std::make_unique<utils::osd_info_t>(
               osds[i].osdid(),
               osds[i].isin(),
               osds[i].isup(),
@@ -782,7 +782,7 @@ bool client::consume_request() {
     return ret;
 }
 
-::osd_info_t* client::get_pg_first_available_osd_info(int32_t pool_id, int32_t pg_id) {
+utils::osd_info_t* client::get_pg_first_available_osd_info(int32_t pool_id, int32_t pg_id) {
     auto it = _pg_map.pool_pg_map.find(pool_id);
     if (it == _pg_map.pool_pg_map.end()) {
         SPDK_ERRLOG("ERROR: Cant find the pg map of pool id %d\n", pool_id);
@@ -821,7 +821,7 @@ int client::get_pg_num(int32_t pool_id) {
     return it->second.size();
 }
 
-::osd_info_t* client::get_osd_info(const int32_t node_id) {
+utils::osd_info_t* client::get_osd_info(const int32_t node_id) {
     auto it = _osd_map.data.find(node_id);
     if (it == _osd_map.data.end()) {
         return nullptr;

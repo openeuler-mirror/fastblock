@@ -272,7 +272,7 @@ public:
      * @return currently elapsed timeout in milliseconds */
     int raft_get_timeout_elapsed()
     {
-        return get_time() - election_timer;
+        return utils::get_time() - election_timer;
     }
 
     void raft_set_voted_for(raft_node_id_t _voted_for)
@@ -622,7 +622,7 @@ public:
     int raft_recv_appendentries(raft_node_id_t node_id,
                                 const msg_appendentries_t* ae,
                                 msg_appendentries_response_t *r,
-                                context* complete);
+                                utils::context* complete);
 
     /** Receive a response from an appendentries message we sent.
      * @param[in] node The node who sent us this message
@@ -653,7 +653,7 @@ public:
      *  RAFT_ERR_NOT_LEADER server is not the leader;
      *  RAFT_ERR_NOMEM memory allocation failure
      */
-    int raft_write_entry(std::shared_ptr<raft_entry_t> ety, context *complete);
+    int raft_write_entry(std::shared_ptr<raft_entry_t> ety, utils::context *complete);
 
     void stop_flush(int state);
     void raft_flush();
@@ -683,11 +683,11 @@ public:
      * @return
      *  0 on success;
      *  RAFT_ERR_NOMEM memory allocation failure */
-    int raft_append_entries(std::vector<std::pair<std::shared_ptr<raft_entry_t>, context*>>& entries){
+    int raft_append_entries(std::vector<std::pair<std::shared_ptr<raft_entry_t>, utils::context*>>& entries){
         return raft_get_log()->log_append(entries);
     }
 
-    void raft_disk_append_entries(raft_index_t start_idx, raft_index_t end_idx, context* complete){
+    void raft_disk_append_entries(raft_index_t start_idx, raft_index_t end_idx, utils::context* complete){
         raft_get_log()->disk_append(start_idx, end_idx, complete);
     }
 
@@ -720,7 +720,7 @@ public:
     int raft_recv_installsnapshot(raft_node_id_t node_id,
                                   const msg_installsnapshot_t* is,
                                   msg_installsnapshot_response_t *r,
-                                  context* complete);
+                                  utils::context* complete);
 
     /** Receive an InstallSnapshot message. */
     int raft_process_installsnapshot_reply(msg_installsnapshot_response_t *r);
@@ -749,7 +749,7 @@ public:
 
     void append_entries_to_buffer(const msg_appendentries_t* request,
                 msg_appendentries_response_t* response,
-                context* complete){
+                utils::context* complete){
         _append_entries_buffer.enqueue(request, response, complete);
     }
 

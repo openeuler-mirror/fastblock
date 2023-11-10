@@ -47,7 +47,7 @@ private:
     PartitionManager* _pm;
 };
 
-struct append_entries_complete : public context{
+struct append_entries_complete : public utils::context{
     google::protobuf::Closure* done;
 
     append_entries_complete(google::protobuf::Closure* _done)
@@ -127,7 +127,7 @@ void raft_service<PartitionManager>::vote(google::protobuf::RpcController* contr
       });
 }
 
-struct install_snapshot_complete : public context{
+struct install_snapshot_complete : public utils::context{
     google::protobuf::Closure* done;
 
     install_snapshot_complete(google::protobuf::Closure* _done)
@@ -170,7 +170,7 @@ void raft_service<PartitionManager>::install_snapshot(google::protobuf::RpcContr
       });
 }
 
-struct heartbeat_complete : public context{
+struct heartbeat_complete : public utils::context{
     google::protobuf::Closure* done;
     std::vector<msg_appendentries_t*> reps;
     int count;
@@ -178,7 +178,7 @@ struct heartbeat_complete : public context{
     pthread_mutex_t mutex;
 
     heartbeat_complete(google::protobuf::Closure* _done, int _count, bool needs_delete)
-    : context(needs_delete)
+    : utils::context(needs_delete)
     , done(_done)
     , count(_count)
     , num(0)

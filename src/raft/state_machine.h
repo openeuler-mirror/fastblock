@@ -51,7 +51,7 @@ public:
 
     int raft_apply_entries();
 
-    virtual void apply(std::shared_ptr<raft_entry_t> entry, context *complete) = 0;
+    virtual void apply(std::shared_ptr<raft_entry_t> entry, utils::context *complete) = 0;
     raft_server_t* get_raft(){
         return _raft;
     }

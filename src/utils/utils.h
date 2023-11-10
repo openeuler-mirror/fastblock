@@ -15,7 +15,8 @@
 #include <string>
 
 #include "spdk/env.h"
-
+namespace utils {
+    
 class context {
 protected:
     virtual void finish(int r) = 0;
@@ -104,8 +105,6 @@ inline int64_t get_time(){
     auto now_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(now);
     return now_ms.time_since_epoch().count();
 }
-
-namespace utils {
 
 template<typename T>
 static T random_int(const T min, const T max) {

@@ -26,7 +26,7 @@ void state_machine::start(){
     _timer = SPDK_POLLER_REGISTER(&apply_task, this, 0);
 }
 
-struct apply_complete : public context{
+struct apply_complete : public utils::context{
     apply_complete(raft_index_t _idx, state_machine* _stm)
     : idx(_idx)
     , stm(_stm) {}
