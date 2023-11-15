@@ -1,6 +1,7 @@
 syntax = "proto3";
 option cc_generic_services = true;
 package osd;
+import "common_msg.proto";
 
 message write_request
 {
@@ -86,10 +87,59 @@ message pg_leader_response
     int32 leader_port = 4;
 }
 
+message create_pg_request
+{
+    uint64 pool_id = 1;
+    uint64 pg_id = 2;    
+    int64  vision_id = 3;   
+}
+
+message create_pg_response
+{
+    int32 state = 1;
+}
+
+message add_node_request {
+    uint64 pool_id = 1;
+    uint64 pg_id = 2;  
+    raft_node_info node = 3;
+}
+
+message add_node_response {
+    int32 state = 1;
+    repeated int32 new_nodes = 2;
+}
+
+message remove_node_request {
+    uint64 pool_id = 1;
+    uint64 pg_id = 2;  
+    raft_node_info node = 3;
+}
+
+message remove_node_response {
+    int32 state = 1;
+    repeated int32 new_nodes = 2;
+}
+
+message change_nodes_request {
+    uint64 pool_id = 1;
+    uint64 pg_id = 2;  
+    repeated raft_node_info new_nodes = 3;
+}
+
+message change_nodes_response {
+    int32 state = 1;
+    repeated int32 new_nodes = 2;
+}
+
 service rpc_service_osd{
     rpc process_write(write_request) returns (write_reply);
     rpc process_read(read_request) returns (read_reply);
     rpc process_delete(delete_request) returns (delete_reply);
     rpc process_rpc_bench(bench_request) returns (bench_response);
     rpc process_get_leader(pg_leader_request) returns (pg_leader_response);
+    rpc process_create_pg(create_pg_request) returns (create_pg_response);
+    rpc process_add_node(add_node_request) returns (add_node_response);
+    rpc process_remove_node(remove_node_request) returns (remove_node_response);
+    rpc process_change_nodes(change_nodes_request) returns (change_nodes_response);
 }

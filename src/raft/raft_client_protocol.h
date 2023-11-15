@@ -81,6 +81,27 @@ private:
     raft_server_t *_raft;
 };
 
+class timeout_now_source{
+public:
+    timeout_now_source(timeout_now_request* request,
+            raft_server_t *raft)
+    : _request(request)
+    , _raft(raft) {}
+
+    ~timeout_now_source(){
+        if(_request)
+            delete _request;
+    }
+
+    void process_response();
+
+    msg::rdma::rpc_controller ctrlr;
+    timeout_now_response response;
+private:
+    timeout_now_request* _request;
+    raft_server_t *_raft;
+};
+
 class pg_group_t;
 class heartbeat_source{
 public:
@@ -190,6 +211,19 @@ public:
             return  err::RAFT_ERR_NO_CONNECTED;
         }
         stub->heartbeat(&source->ctrlr, request, &source->response, done);
+        return err::E_SUCCESS;
+    }
+
+    int send_timeout_now(raft_server_t *raft, int32_t target_node_id, timeout_now_request* request){
+        auto shard_id = _get_shard_id();
+        auto source = new timeout_now_source(request, raft);
+
+        auto done = google::protobuf::NewCallback(source, &timeout_now_source::process_response);
+        auto stub = _get_stub(shard_id, target_node_id);
+        if(!stub){
+            return  err::RAFT_ERR_NO_CONNECTED;
+        }
+        stub->timeout_now(&source->ctrlr, request, &source->response, done);
         return err::E_SUCCESS;
     }
 

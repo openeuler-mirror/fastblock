@@ -41,6 +41,9 @@ enum {
     RAFT_ERR_PG_DELETED = -148,
     OSD_DOWN = -149,
     OSD_STARTING = -150,
+    RAFT_ERR_NO_FOUND_NODE = -151,
+    RAFT_ERR_PG_INITIALIZING = -152,
+    RAFT_ERR_MEMBERSHIP_CHANGING = -153,
 
     RAFT_ERR_UNKNOWN = -199,
     RAFT_ERR_LAST = -200,
@@ -88,6 +91,12 @@ inline const char *  string_status(int raft_errno) noexcept{
         return "osd is down";
     case OSD_STARTING:
         return "osd is initializing";
+    case RAFT_ERR_NO_FOUND_NODE:
+        return "node not found";
+    case RAFT_ERR_PG_INITIALIZING:
+        return "pg it initializing";
+    case RAFT_ERR_MEMBERSHIP_CHANGING:
+        return "the membership of pg is changing";
     default:
         return "unknown errno";
     }

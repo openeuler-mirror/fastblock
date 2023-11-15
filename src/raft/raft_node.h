@@ -15,21 +15,22 @@
  */
 
 #pragma once
-#include "raft_types.h"
+#include "raft/raft_types.h"
+// #include "raft/configuration_manager.h"
+#include "rpc/raft_msg.pb.h"
+
+#include <absl/container/node_hash_map.h>
 
 #define RAFT_NODE_VOTED_FOR_ME        (1 << 0)
-#define RAFT_NODE_VOTING              (1 << 1)
-#define RAFT_NODE_HAS_SUFFICIENT_LOG  (1 << 2)
 
 class raft_node
 {
 public:
-    raft_node(void* udata, raft_node_id_t id)
-    : _udata(udata)
-    , _next_idx(1)
+    raft_node(raft_node_info node_info)
+    : _next_idx(1)
     , _match_idx(0)
-    , _flags(RAFT_NODE_VOTING)
-    , _id(id)
+    , _flags(0)
+    , _info(std::move(node_info))
     , _lease(0)
     , _effective_time(0)
     , _suppress_heartbeats(false)
@@ -42,11 +43,6 @@ public:
     {
         _effective_time = effective_time;
     }
-
-    /** Turn a node into a voting node.
-     * Voting nodes can take part in elections and in-regards to commiting entries,
-     * are counted in majorities. */
-    void raft_node_set_voting(int voting);
 
     /**
      * @return the node's next index */
@@ -73,20 +69,6 @@ public:
         _match_idx = match_idx;
     }
 
-    /**
-     * @return this node's user data */
-    void* raft_node_get_udata()
-    {
-        return _udata;
-    }
-
-    /**
-     * Set this node's user data */
-    void raft_node_set_udata(void* udata)
-    {
-        _udata = udata;
-    }
-
     void raft_node_vote_for_me(const int vote)
     {
         if (vote)
@@ -100,28 +82,11 @@ public:
         return (_flags & RAFT_NODE_VOTED_FOR_ME) != 0;
     }
 
-    /** Tell if a node is a voting node or not. */
-    bool raft_node_is_voting()
-    {
-        return (_flags & RAFT_NODE_VOTING) != 0;
-    }
-
-    /** Check if a node has sufficient logs to be able to join the cluster. **/
-    bool raft_node_has_sufficient_logs()
-    {
-        return (_flags & RAFT_NODE_HAS_SUFFICIENT_LOG) != 0;
-    }
-
-    void raft_node_set_has_sufficient_logs()
-    {
-        _flags |= RAFT_NODE_HAS_SUFFICIENT_LOG;
-    }
-
     /** Get node's ID.
      * @return ID of node */
     raft_node_id_t raft_node_get_id()
     {
-        return _id;
+        return _info.node_id();
     }
 
     void raft_node_set_lease(raft_time_t lease)
@@ -181,16 +146,19 @@ public:
     void raft_set_end_idx(raft_index_t idx){
         _end_idx = idx;
     }
-private:
 
-    void* _udata;
+    const raft_node_info& raft_get_node_info(){
+        return _info;
+    }
+
+private:
 
     raft_index_t _next_idx;
     raft_index_t _match_idx;
 
     int _flags;
 
-    raft_node_id_t _id;
+    raft_node_info _info;
 
     /* lease expiration time */
     raft_time_t _lease;
@@ -203,4 +171,38 @@ private:
     bool _is_recovering;
 
     raft_index_t _end_idx;  //leader发给此node的append entry request中最后一个log
+};
+
+class node_configuration;
+
+class raft_nodes{
+    using nodes_type = absl::node_hash_map<raft_node_id_t, std::shared_ptr<raft_node>>;
+public:
+    raft_nodes(){}
+
+    void update_with_node_configuration(node_configuration& cfg, 
+            std::vector<std::shared_ptr<raft_node>> new_add_nodes = {});
+
+    bool contains(raft_node_id_t node_id) const {
+        return _nodes.find(node_id) != _nodes.end();
+    }
+
+    nodes_type::iterator find(raft_node_id_t node_id) { return _nodes.find(node_id); }
+    nodes_type::const_iterator find(raft_node_id_t node_id) const { return _nodes.find(node_id); }
+
+    nodes_type::iterator begin() { return _nodes.begin(); }
+    nodes_type::iterator end() { return _nodes.end(); }
+    nodes_type::const_iterator begin() const { return _nodes.begin(); }
+    nodes_type::const_iterator end() const { return _nodes.end(); }
+
+    size_t size() const { return _nodes.size(); }
+
+    std::shared_ptr<raft_node> get_node(raft_node_id_t node_id){
+        auto it = _nodes.find(node_id);
+        if(it == _nodes.end())
+            return nullptr;
+        return it->second;
+    }
+private:
+    nodes_type _nodes;
 };

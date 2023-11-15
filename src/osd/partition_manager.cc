@@ -125,3 +125,37 @@ int partition_manager::delete_partition(uint64_t pool_id, uint64_t pg_id){
         delete_pg(pool_id, pg_id, shard_id);                   
       });
 }
+
+int partition_manager::change_pg_membership(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t> new_osds, utils::context* complete){
+    uint32_t shard_id;
+    int state = osd_state_is_not_active();
+    if(state != 0){
+        if(complete)
+            complete->complete(state);
+        return state;
+    }
+
+    if(!get_pg_shard(pool_id, pg_id, shard_id)){
+        SPDK_WARNLOG("not found pg %lu.%lu\n", pool_id, pg_id);
+        if(complete)
+            complete->complete(err::RAFT_ERR_NOT_FOUND_PG);
+        return err::RAFT_ERR_NOT_FOUND_PG;
+    }
+
+    return _shard.invoke_on(
+      shard_id, 
+      [this, pool_id, pg_id, shard_id, new_osds = std::move(new_osds), complete]() mutable{
+        SPDK_INFOLOG(osd, "change pg membership in core %u shard_id %u pool_id %lu pg_id %lu \n", 
+            spdk_env_get_current_core(), shard_id, pool_id, pg_id);
+        std::vector<raft_node_info> osd_infos;
+        for(auto& new_osd : new_osds){
+            raft_node_info osd_info;
+            osd_info.set_node_id(new_osd.node_id);
+            osd_info.set_addr(new_osd.address);
+            osd_info.set_port(new_osd.port);
+            osd_infos.emplace_back(std::move(osd_info));
+        }
+        get_pg_group().change_pg_membership(shard_id, pool_id, pg_id, std::move(osd_infos), complete);                  
+      });    
+
+}

@@ -1,5 +1,12 @@
 syntax = "proto3";
 option cc_generic_services = true;
+import "common_msg.proto";
+
+message raft_configuration
+{
+    repeated raft_node_info old_nodes = 1;
+    repeated raft_node_info new_nodes = 2;
+}
 
 // Entry that is stored in the server's entry log. 
 message raft_entry_t
@@ -190,9 +197,25 @@ message heartbeat_response
     repeated msg_appendentries_response_t meta = 1;
 }
 
+message  timeout_now_request {
+    uint64 pool_id = 1;
+    uint64 pg_id = 2; 
+    //current node
+    int32  node_id = 3;     
+    int64 term = 4;
+}
+
+message  timeout_now_response {
+    //The node who sent us this message
+    int32  node_id = 1;
+    int64 term = 2;
+    int32 success = 3;    
+}
+
 service rpc_service_raft{
     rpc append_entries(msg_appendentries_t) returns (msg_appendentries_response_t);
     rpc vote(msg_requestvote_t) returns (msg_requestvote_response_t);
     rpc install_snapshot(msg_installsnapshot_t) returns (msg_installsnapshot_response_t);
     rpc heartbeat(heartbeat_request) returns (heartbeat_response);
+    rpc timeout_now(timeout_now_request) returns (timeout_now_response);
 }

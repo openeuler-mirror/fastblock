@@ -124,6 +124,9 @@ public:
     void set_osd_state(osd_state state){
         _state = state;
     }
+
+    int change_pg_membership(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t> new_osds, utils::context* complete);
+
 private:
     int osd_state_is_not_active();
     uint32_t get_next_shard_id(){

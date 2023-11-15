@@ -27,6 +27,11 @@ void install_snapshot_source::process_response(){
     delete this;
 }
 
+void timeout_now_source::process_response(){
+    _raft->raft_process_timeout_now_reply(&response);
+    delete this;
+}
+
 void heartbeat_source::process_response(){
     auto beat_num = _request->heartbeats_size();
     for(int i = 0; i < beat_num; i++){
