@@ -9,12 +9,13 @@
  * See the Mulan PSL v2 for more details.
  */
 #pragma once
+
+#include <algorithm>
 #include <string>
 #include <stdint.h>
 #include <concepts>
 
-
-template <class T> 
+template <class T>
 requires std::is_integral_v<T>
 inline std::string itos(T i) {
     if (i == 0) return "0";

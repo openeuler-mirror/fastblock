@@ -5,11 +5,13 @@ package ping_pong;
 option cc_generic_services = true;
 
 message request {
-    string ping = 1;
+    int64 id = 1;
+    string ping = 2;
 }
 
 message response {
-    string pong = 2;
+    int64 id = 3;
+    string pong = 4;
 }
 
 service ping_pong_service {

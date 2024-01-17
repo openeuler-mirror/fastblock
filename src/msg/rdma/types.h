@@ -10,25 +10,43 @@
  */
 #pragma once
 
-#include <spdk/log.h>
-
-#include <cstdint>
 #include <string>
 #include <type_traits>
+
+#include <spdk/env.h>
+
+#define make_spdk_unique_n(type, size)                                                                                      \
+    std::unique_ptr<type, decltype(::spdk_free)*>{                                                                          \
+      reinterpret_cast<type*>(::spdk_zmalloc(sizeof(type) * size, 0, nullptr, SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA)),    \
+      ::spdk_free}
+
+#define make_spdk_unique(type) make_spdk_unique_n(type, 1)
+
+#define spdk_unique_ptr(type, ptr)    \
+    std::unique_ptr<type, decltype(::spdk_free)*>{reinterpret_cast<type*>(ptr), ::spdk_free}
 
 namespace msg {
 namespace rdma {
 
+template<typename T>
+using spdk_unique_ptr_t = std::unique_ptr<T, decltype(::spdk_free)*>;
+
+enum class iterate_tag {
+    keep = 1,
+    stop
+};
+
 static constexpr uint8_t max_rpc_meta_string_size{31};
 
-enum class status : uint32_t {
-    success = 200,
-    no_content = 204,
-    method_not_found = 404,
+enum class status : uint8_t {
+    success = 1,
+    no_content,
+    method_not_found,
     service_not_found,
-    request_timeout = 408,
-    bad_response_body = 422,
-    server_error = 500,
+    request_timeout,
+    bad_request_body,
+    bad_response_body,
+    server_error
 };
 
 namespace {
@@ -37,7 +55,8 @@ static char* no_content_string = (char*)"no_content";
 static char* method_not_found_string = (char*)"method_not_found";
 static char* service_not_found_string = (char*)"service_not_found";
 static char* request_timeout_string = (char*)"request_timeout_found";
-static char* bad_response_string = (char*)"bad_response_found";
+static char* bad_request_string = (char*)"bad_request_body";
+static char* bad_response_string = (char*)"bad_response_body";
 static char* server_string = (char*)"server_found";
 static char* unknown_status_string = (char*)"unknown status";
 }
@@ -59,7 +78,7 @@ struct reply_meta {
 };
 static constexpr size_t reply_meta_size{sizeof(reply_meta)};
 
-inline char*  string_status(const status s) noexcept {
+inline char* string_status(const status s) noexcept {
     switch (s) {
     case status::success:
         return success_string;
@@ -71,6 +90,8 @@ inline char*  string_status(const status s) noexcept {
         return service_not_found_string;
     case status::request_timeout:
         return request_timeout_string;
+    case status::bad_request_body:
+        return bad_request_string;
     case status::bad_response_body:
         return bad_response_string;
     case status::server_error:

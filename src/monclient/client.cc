@@ -193,8 +193,8 @@ void client::send_cluster_map_request() {
     osd_req->set_currentversion(-1);
     osd_req->set_osdid(_self_osd_id);
 
+    auto* pg_map_req = cluster_req->mutable_gpm_request();
     if (not _pg_map.pool_version.empty()) {
-        auto* pg_map_req = cluster_req->mutable_gpm_request();
         for (const auto& pair : _pg_map.pool_version) {
             (*(pg_map_req->mutable_pool_versions()))[pair.first] = pair.second;
         }
@@ -490,7 +490,12 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
 
             _pm.lock()->get_pg_group().create_connect(
               osd_info.node_id, osd_info.address, osd_info.port,
-              [raw_stack = resp_stack.get()] () {
+              [raw_stack = resp_stack.get()] (bool is_ok, std::shared_ptr<msg::rdma::client::connection> conn) {
+                  if (not is_ok) {
+                      SPDK_ERRLOG("ERROR: Connect failed\n");
+                      throw std::runtime_error{"connect failed"};
+                  }
+
                   raw_stack->un_connected_count--;
                   SPDK_DEBUGLOG(mon, "Connected, un-connected count is %ld\n",
                   raw_stack->un_connected_count);

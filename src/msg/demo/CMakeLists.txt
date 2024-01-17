@@ -1,8 +1,9 @@
+find_package(mlx5 REQUIRED)
+
 add_executable(server ping_pong.pb.cc server.cc)
 target_link_libraries(server
-  PUBLIC
-    fastblock_msg
   PRIVATE
+      fastblock_msg
     ${COMMON_LINKOPTS}
 )
 target_include_directories(server
@@ -12,9 +13,8 @@ target_include_directories(server
 
 add_executable(client ping_pong.pb.cc client.cc)
 target_link_libraries(client
-  PUBLIC
-    fastblock_msg
   PRIVATE
+    fastblock_msg
     ${COMMON_LINKOPTS}
 )
 target_include_directories(client

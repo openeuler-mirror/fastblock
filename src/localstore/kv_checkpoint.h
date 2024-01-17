@@ -20,7 +20,7 @@
 #include <spdk/string.h>
 #include <functional>
 #include <errno.h>
-
+#include <utility>
 
 using checkpoint_op_complete = std::function<void (void *, int)>;
 
@@ -39,13 +39,13 @@ struct checkpoint_ctx {
 
 /**
  * 保存全量的kv数据，永远只保留一个最新的checkpoint，最新的写完就删除老的。
- * 
+ *
  * 创建新checkpoint的流程是：
  *     start_checkpoint() -> write_checkpoint() -> finish_checkpoint()
- * 
+ *
  * 从磁盘恢复checkpoint的流程是：
  *     open_checkpoint() -> read_checkpoint()
- * 
+ *
  * 进程退出时调用stop()
  */
 class kv_checkpoint {
@@ -62,7 +62,7 @@ public:
           return;
       }
 
-      // SPDK_NOTICELOG("start_checkpoint blobstore:%p\n", _bs); 
+      // SPDK_NOTICELOG("start_checkpoint blobstore:%p\n", _bs);
       struct checkpoint_ctx* ctx = new checkpoint_ctx();
       ctx->kv_ckpt = this;
       ctx->bs = _bs;
@@ -80,12 +80,12 @@ public:
       struct checkpoint_ctx *ctx = (struct checkpoint_ctx *)arg;
 
       if (rberrno) {
-          SPDK_ERRLOG("checkpoint new blob_id:0x%lx create failed:%s\n", blobid, spdk_strerror(rberrno)); 
+          SPDK_ERRLOG("checkpoint new blob_id:0x%lx create failed:%s\n", blobid, spdk_strerror(rberrno));
           ctx->cb_fn(ctx->arg, rberrno);
           delete ctx;
           return;
       }
-      // SPDK_NOTICELOG("checkpoint blob create complete. blob id:%p blob:%p\n", (void*)blobid, ctx->blob.blob); 
+      // SPDK_NOTICELOG("checkpoint blob create complete. blob id:%p blob:%p\n", (void*)blobid, ctx->blob.blob);
       ctx->blob.blobid = blobid;
       spdk_bs_open_blob(ctx->bs, blobid, new_blob_open_complete, ctx);
   }
@@ -94,15 +94,15 @@ public:
       struct checkpoint_ctx *ctx = (struct checkpoint_ctx *)arg;
 
       if (rberrno) {
-          SPDK_ERRLOG("checkpoint new blob_id:0x%lx open failed:%s\n", ctx->blob.blobid, spdk_strerror(rberrno)); 
+          SPDK_ERRLOG("checkpoint new blob_id:0x%lx open failed:%s\n", ctx->blob.blobid, spdk_strerror(rberrno));
           ctx->cb_fn(ctx->arg, rberrno);
           delete ctx;
           return;
       }
 
-      SPDK_DEBUGLOG(kvlog, "checkpoint blob open complete. blob id:%p blob:%p num_cluster:%lu size:%lu\n", 
+      SPDK_DEBUGLOG(kvlog, "checkpoint blob open complete. blob id:%p blob:%p num_cluster:%lu size:%lu\n",
           (void*)ctx->blob.blobid, blob, spdk_blob_get_num_clusters(blob),
-          spdk_blob_get_num_clusters(blob) * spdk_bs_get_cluster_size(ctx->bs)); 
+          spdk_blob_get_num_clusters(blob) * spdk_bs_get_cluster_size(ctx->bs));
       ctx->blob.blob = blob;
       ctx->kv_ckpt->_new_blob = ctx->blob;
       ctx->cb_fn(ctx->arg, 0);
@@ -133,10 +133,10 @@ public:
       ctx->blob = _new_blob;
       ctx->cb_fn = std::move(cb_fn);
       ctx->arg = arg;
-      SPDK_DEBUGLOG(kvlog, "checkpoint write len:%lu lba_len:%lu\n", 
-              len, len / spdk_bs_get_io_unit_size(_bs)); 
-      spdk_blob_io_write(_new_blob.blob, _channel, buf, 
-              0, len / spdk_bs_get_io_unit_size(_bs), 
+      SPDK_DEBUGLOG(kvlog, "checkpoint write len:%lu lba_len:%lu\n",
+              len, len / spdk_bs_get_io_unit_size(_bs));
+      spdk_blob_io_write(_new_blob.blob, _channel, buf,
+              0, len / spdk_bs_get_io_unit_size(_bs),
               new_blob_write_complete, ctx);
   }
 
@@ -153,11 +153,11 @@ public:
       ctx->iovs = std::move(iov);
       ctx->cb_fn = std::move(cb_fn);
       ctx->arg = arg;
-      
-      SPDK_DEBUGLOG(kvlog, "checkpoint write iovs size:%lu len:%lu lba_len:%lu\n", 
-              ctx->iovs.size(), len, len / spdk_bs_get_io_unit_size(_bs)); 
-      spdk_blob_io_writev(_new_blob.blob, _channel, ctx->iovs.data(), 
-              ctx->iovs.size(), 0, len / spdk_bs_get_io_unit_size(_bs), 
+
+      SPDK_DEBUGLOG(kvlog, "checkpoint write iovs size:%lu len:%lu lba_len:%lu\n",
+              ctx->iovs.size(), len, len / spdk_bs_get_io_unit_size(_bs));
+      spdk_blob_io_writev(_new_blob.blob, _channel, ctx->iovs.data(),
+              ctx->iovs.size(), 0, len / spdk_bs_get_io_unit_size(_bs),
               new_blob_write_complete, ctx);
   }
 
@@ -166,7 +166,7 @@ public:
       struct checkpoint_ctx *ctx = (struct checkpoint_ctx *)arg;
 
       if (rberrno) {
-          SPDK_ERRLOG("checkpoint new blob_id:0x%lx delete failed:%s\n", ctx->blob.blobid, spdk_strerror(rberrno)); 
+          SPDK_ERRLOG("checkpoint new blob_id:0x%lx delete failed:%s\n", ctx->blob.blobid, spdk_strerror(rberrno));
       }
 
       spdk_blob_close(ctx->blob.blob, new_blob_close_complete, ctx);
@@ -176,7 +176,7 @@ public:
       struct checkpoint_ctx *ctx = (struct checkpoint_ctx *)arg;
 
       if (rberrno) {
-          SPDK_ERRLOG("checkpoint new blob_id:0x%lx close failed:%s\n", ctx->blob.blobid, spdk_strerror(rberrno)); 
+          SPDK_ERRLOG("checkpoint new blob_id:0x%lx close failed:%s\n", ctx->blob.blobid, spdk_strerror(rberrno));
       }
 
       ctx->kv_ckpt->_new_blob.blob = nullptr;
@@ -220,7 +220,7 @@ public:
       struct checkpoint_ctx *ctx = (struct checkpoint_ctx *)arg;
 
       if (rberrno) {
-          SPDK_ERRLOG("checkpoint old blob_id:0x%lx delete failed:%s\n", ctx->blob.blobid, spdk_strerror(rberrno)); 
+          SPDK_ERRLOG("checkpoint old blob_id:0x%lx delete failed:%s\n", ctx->blob.blobid, spdk_strerror(rberrno));
       }
 
       ctx->cb_fn(ctx->arg, rberrno);
@@ -255,7 +255,7 @@ public:
       struct checkpoint_ctx *ctx = (struct checkpoint_ctx *)arg;
 
       if (rberrno) {
-          SPDK_ERRLOG("checkpoint old blob_id:0x%lx open failed:%s\n", ctx->blob.blobid, spdk_strerror(rberrno)); 
+          SPDK_ERRLOG("checkpoint old blob_id:0x%lx open failed:%s\n", ctx->blob.blobid, spdk_strerror(rberrno));
       }
 
       ctx->kv_ckpt->_ckpt_blob.blob = blob;
@@ -285,10 +285,10 @@ public:
       ctx->blob = _ckpt_blob;
       ctx->cb_fn = std::move(cb_fn);
       ctx->arg = arg;
-      SPDK_DEBUGLOG(kvlog, "checkpoint read blob:0x%lx len:%lu lba_len:%lu\n", 
-              _ckpt_blob.blobid, len, len / spdk_bs_get_io_unit_size(_bs)); 
-      spdk_blob_io_read(_ckpt_blob.blob, _channel, buf, 
-              0, len / spdk_bs_get_io_unit_size(_bs), 
+      SPDK_DEBUGLOG(kvlog, "checkpoint read blob:0x%lx len:%lu lba_len:%lu\n",
+              _ckpt_blob.blobid, len, len / spdk_bs_get_io_unit_size(_bs));
+      spdk_blob_io_read(_ckpt_blob.blob, _channel, buf,
+              0, len / spdk_bs_get_io_unit_size(_bs),
               ckpt_blob_read_complete, ctx);
   }
 
@@ -304,10 +304,10 @@ public:
       ctx->iovs = std::move(iov);
       ctx->cb_fn = std::move(cb_fn);
       ctx->arg = arg;
-      SPDK_DEBUGLOG(kvlog, "checkpoint read blob:0x%lx iovs size:%lu len:%lu lba_len:%lu\n", 
-              _ckpt_blob.blobid, ctx->iovs.size(), len, len / spdk_bs_get_io_unit_size(_bs)); 
-      spdk_blob_io_readv(_ckpt_blob.blob, _channel, ctx->iovs.data(), 
-              ctx->iovs.size(), 0, len / spdk_bs_get_io_unit_size(_bs), 
+      SPDK_DEBUGLOG(kvlog, "checkpoint read blob:0x%lx iovs size:%lu len:%lu lba_len:%lu\n",
+              _ckpt_blob.blobid, ctx->iovs.size(), len, len / spdk_bs_get_io_unit_size(_bs));
+      spdk_blob_io_readv(_ckpt_blob.blob, _channel, ctx->iovs.data(),
+              ctx->iovs.size(), 0, len / spdk_bs_get_io_unit_size(_bs),
               ckpt_blob_read_complete, ctx);
   }
 
@@ -316,7 +316,7 @@ public:
       struct checkpoint_ctx *ctx = (struct checkpoint_ctx *)arg;
 
       if (rberrno) {
-          SPDK_ERRLOG("checkpoint old blob_id:0x%lx read failed:%s\n", ctx->blob.blobid, spdk_strerror(rberrno)); 
+          SPDK_ERRLOG("checkpoint old blob_id:0x%lx read failed:%s\n", ctx->blob.blobid, spdk_strerror(rberrno));
       }
 
       spdk_blob_close(ctx->blob.blob, ckpt_blob_close_complete, ctx);
@@ -326,7 +326,7 @@ public:
       struct checkpoint_ctx *ctx = (struct checkpoint_ctx *)arg;
 
       if (rberrno) {
-          SPDK_ERRLOG("checkpoint old blob_id:0x%lx close failed:%s\n", ctx->blob.blobid, spdk_strerror(rberrno)); 
+          SPDK_ERRLOG("checkpoint old blob_id:0x%lx close failed:%s\n", ctx->blob.blobid, spdk_strerror(rberrno));
       }
 
       ctx->cb_fn(ctx->arg, rberrno);

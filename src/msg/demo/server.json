@@ -1,0 +1,28 @@
+{
+    "bind_address": "ip",
+    "bind_port": 8081,
+    "msg": {
+        "server": {
+            "listen_backlog": 1024,
+            "poll_cq_batch_size": 512,
+            "metadata_memory_pool_capacity": 16384,
+            "metadata_memory_pool_element_size_byte": 1024,
+            "data_memory_pool_capacity": 16384,
+            "data_memory_pool_element_size_byte": 8192,
+            "per_post_recv_num": 512,
+            "rpc_timeout_us": 1000000
+        },
+
+        "rdma": {
+            "resolve_timeout_us": 2000,
+            "poll_cm_event_timeout_us": 1000000,
+            "max_send_wr": 4096,
+            "max_send_sge": 128,
+            "max_recv_wr": 8192,
+            "max_recv_sge": 128,
+            "max_inline_data": 16,
+            "cq_num_entries": 1024,
+            "qp_sig_all": false
+        }
+    }
+}

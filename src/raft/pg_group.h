@@ -81,9 +81,11 @@ private:
 class pg_group_t
 {
 public:
-    pg_group_t(int current_node_id)
-        : _shard_cores(get_shard_cores()), _current_node_id(current_node_id), _client(), _shard(core_sharded::get_core_sharded())
-    {
+    pg_group_t(int current_node_id, std::shared_ptr<connect_cache> conn_cache)
+      : _shard_cores(get_shard_cores())
+      , _current_node_id(current_node_id)
+      , _client{conn_cache}
+      , _shard(core_sharded::get_core_sharded()) {
         uint32_t i = 0;
         auto shard_num = _shard_cores.size();
         for (i = 0; i < shard_num; i++)

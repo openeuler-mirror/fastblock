@@ -1,3 +1,13 @@
+/* Copyright (c) 2023 ChinaUnicom
+ * fastblock is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *          http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
 #include "spdk/stdinc.h"
 #include "spdk/env.h"
 #include "spdk/event.h"
@@ -21,6 +31,7 @@
 static const char* g_json_conf{nullptr};
 static std::unique_ptr<::raft_service<::partition_manager>> global_raft_service{nullptr};
 static std::unique_ptr<::osd_service> global_osd_service{nullptr};
+static std::shared_ptr<::connect_cache> global_conn_cache{nullptr};
 static std::shared_ptr<::partition_manager> global_pm{nullptr};
 static std::shared_ptr<monitor::client> monitor_client{nullptr};
 
@@ -33,8 +44,9 @@ typedef struct
 	int osd_port;
 	std::string osd_uuid;
     std::vector<monitor::client::endpoint> monitors{};
-    std::unique_ptr<monitor::client::request_context> mon_boot_req{nullptr};
-}server_t;
+    std::unique_ptr<rpc_server> rpc_srv{nullptr};
+    boost::property_tree::ptree pt{};
+} server_t;
 
 static void
 block_usage(void)
@@ -71,13 +83,20 @@ block_parse_arg(int ch, char *arg)
 }
 
 static void service_init(partition_manager* pm, server_t *server){
-    rpc_server& rserver = rpc_server::get_server(pm->get_shard());
 	global_raft_service = std::make_unique<::raft_service<::partition_manager>>(global_pm.get());
     global_osd_service = std::make_unique<::osd_service>(global_pm.get(), monitor_client);
 
-	rserver.register_service(global_raft_service.get());
-	rserver.register_service(global_osd_service.get());
-	rserver.start(server->osd_addr, server->osd_port);
+    // FIXME: options from json configuration file
+    auto srv_opts = msg::rdma::server::make_options(
+      server->pt.get_child("msg").get_child("server"),
+      server->pt.get_child("msg").get_child("rdma"));
+    srv_opts->bind_address = server->osd_addr;
+    srv_opts->port = server->osd_port;
+    server->rpc_srv = std::make_unique<rpc_server>(
+      ::spdk_env_get_current_core(),
+      srv_opts);
+	server->rpc_srv->register_service(global_raft_service.get());
+	server->rpc_srv->register_service(global_osd_service.get());
 }
 
 struct pm_start_context : public context{
@@ -124,7 +143,15 @@ void storage_init_complete(void *arg, int rberrno){
     SPDK_INFOLOG(osd, "------block start, cpu count : %u  bdev_disk: %s\n",
 	        spdk_env_get_core_count(), server->bdev_disk.c_str());
 
-    global_pm = std::make_shared<partition_manager>(server->node_id);
+    auto core_no = ::spdk_env_get_current_core();
+    ::spdk_cpuset cpumask{};
+    ::spdk_cpuset_zero(&cpumask);
+    ::spdk_cpuset_set_cpu(&cpumask, core_no, true);
+    auto opts = msg::rdma::client::make_options(
+      server->pt.get_child("msg").get_child("client"),
+      server->pt.get_child("msg").get_child("rdma"));
+    global_conn_cache = std::make_shared<::connect_cache>(&cpumask, opts);
+    global_pm = std::make_shared<partition_manager>(server->node_id, global_conn_cache);
     monitor::client::on_new_pg_callback_type pg_map_cb =
       [pm = global_pm] (const msg::PGInfo& pg_info, const int32_t pg_key, const int32_t pg_map_ver, const monitor::client::osd_map& osd_map) {
           SPDK_DEBUGLOG(osd, "enter pg_map_cb()\n");
@@ -163,6 +190,42 @@ block_started(void *arg)
     blobstore_init(server->bdev_disk.c_str(), disk_init_complete, arg);
 }
 
+static void from_configuration(server_t& server) {
+    auto& pt = server.pt;
+    auto current_osd_id = pt.get_child("current_osd_id").get_value<decltype(server.node_id)>();
+    auto& osds = pt.get_child("osds");
+    for (auto& osd : osds) {
+        auto osd_id = osd.second.get_child("osd_id").get_value<decltype(server.node_id)>();
+        if (osd_id != current_osd_id) {
+            continue;
+        }
+
+        auto& osd_pt = osd.second;
+        auto pid_path = osd_pt.get_child("pid_path").get_value<std::string>();
+        if (not pid_path.empty()) {
+            save_pid(pid_path.c_str());
+        }
+
+        server.node_id = osd_id;
+        server.bdev_disk = osd_pt.get_child("bdev_disk").get_value<std::string>();
+        if (server.bdev_disk.empty()) {
+            std::cerr << "No bdev name is specified" << std::endl;
+            throw std::invalid_argument{"empty bdev disk path"};
+        }
+
+        server.osd_addr = osd_pt.get_child("address").get_value<std::string>();
+        server.osd_port = osd_pt.get_child("port").get_value<decltype(server.osd_port)>();
+        server.osd_uuid = osd_pt.get_child("uuid").get_value<std::string>();
+
+        auto& monitors = osd_pt.get_child("monitor");
+        for (auto& monitor_node : monitors) {
+            auto mon_host = monitor_node.second.get_child("host").get_value<std::string>();
+            auto mon_port = monitor_node.second.get_child("port").get_value<uint16_t>();
+            server.monitors.emplace_back(std::move(mon_host), mon_port);
+        }
+    }
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -175,12 +238,7 @@ main(int argc, char *argv[])
 
 	// disable tracing because it's memory consuming
 	opts.num_entries = 0;
-	opts.print_level = ::spdk_log_level::SPDK_LOG_WARN;
-	::spdk_log_set_flag("rdma");
-	::spdk_log_set_flag("msg");
-	::spdk_log_set_flag("osd");
-	::spdk_log_set_flag("pg_group");
-	::spdk_log_set_flag("object_store");
+	opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
 
 	if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:f:I:D:H:P:o:t:U:", NULL,
 				      block_parse_arg, block_usage)) !=
@@ -189,29 +247,8 @@ main(int argc, char *argv[])
 	}
 
     SPDK_INFOLOG(osd, "Osd config file is %s\n", g_json_conf);
-    boost::property_tree::ptree pt;
-    boost::property_tree::read_json(std::string(g_json_conf), pt);
-
-    auto pid_path = pt.get_child("pid_path").get_value<std::string>();
-	if (not pid_path.empty()) {
-		save_pid(pid_path.c_str());
-	}
-    server.node_id = pt.get_child("osd_id").get_value<decltype(server.node_id)>();
-    server.bdev_disk = pt.get_child("bdev_disk").get_value<std::string>();
-    if (server.bdev_disk.empty()) {
-        std::cerr << "No bdev name is specified" << std::endl;
-		return -1;
-    }
-    server.osd_addr = pt.get_child("address").get_value<std::string>();
-    server.osd_port = pt.get_child("port").get_value<decltype(server.osd_port)>();
-    server.osd_uuid = pt.get_child("uuid").get_value<std::string>();
-
-    auto& monitors = pt.get_child("monitor");
-    for (auto& monitor_node : monitors) {
-        auto mon_host = monitor_node.second.get_child("host").get_value<std::string>();
-        auto mon_port = monitor_node.second.get_child("port").get_value<uint16_t>();
-        server.monitors.emplace_back(std::move(mon_host), mon_port);
-    }
+    boost::property_tree::read_json(std::string(g_json_conf), server.pt);
+    from_configuration(server);
 
 	/* Blocks until the application is exiting */
 	rc = spdk_app_start(&opts, block_started, &server);

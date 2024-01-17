@@ -23,8 +23,8 @@ struct shard_revision {
 
 class partition_manager : public std::enable_shared_from_this<partition_manager> {
 public:
-    partition_manager(int node_id)
-      : _pgs(node_id)
+    partition_manager(int node_id, std::shared_ptr<connect_cache> conn_cache)
+      : _pgs(node_id, conn_cache)
       , _next_shard(0)
       , _shard(core_sharded::get_core_sharded())
       , _shard_cores(get_shard_cores()) {

@@ -63,7 +63,7 @@ unsigned jenkins_hash(const std::string &str, unsigned length)
     b = a;
     c = 0; /* variable initialization of internal state */
 
-    /*---------------------------------------- handle most of the key */
+    /* handle most of the key */
     while (len >= 12)
     {
         a = a + (k[0] + ((uint32_t)k[1] << 8) + ((uint32_t)k[2] << 16) +
@@ -77,10 +77,10 @@ unsigned jenkins_hash(const std::string &str, unsigned length)
         len = len - 12;
     }
 
-    /*------------------------------------- handle the last 11 bytes */
+    /* handle the last 11 bytes */
     c = c + length;
-    switch (len) /* all the case statements fall through */
-    {
+    switch (len)
+    { /* all the case statements fall through */
     case 11:
         c = c + ((uint32_t)k[10] << 24);
         [[fallthrough]];
@@ -89,8 +89,8 @@ unsigned jenkins_hash(const std::string &str, unsigned length)
         [[fallthrough]];
     case 9:
         c = c + ((uint32_t)k[8] << 8);
+        /* the first byte of c is reserved for the length */
         [[fallthrough]];
-    /* the first byte of c is reserved for the length */
     case 8:
         b = b + ((uint32_t)k[7] << 24);
         [[fallthrough]];
@@ -118,7 +118,6 @@ unsigned jenkins_hash(const std::string &str, unsigned length)
     }
     mix(a, b, c);
 
-    /*-------------------------------------------- report the result */
     return c;
 }
 
@@ -135,12 +134,16 @@ cbits(T v)
     return (sizeof(v) * 8) - __builtin_clz(v);
 }
 
-unsigned fblock_client::calc_target_pg(const std::string &sstr, int32_t target_pool_id)
+unsigned fblock_client::calc_target(const std::string &sstr, int32_t target_pool_id)
 {
     unsigned seed = jenkins_hash(sstr, sstr.size());
+    calc_pg_masks(target_pool_id);
+    return (seed % _pg_num);
+}
 
-    auto pg_num = _mon_cli->get_pg_num(target_pool_id);
-
-    //(TODO)make pg distribution stable
-    return (seed % pg_num);
+void fblock_client::calc_pg_masks(int32_t target_pool_id)
+{
+    _pg_num = _mon_cli->get_pg_num(target_pool_id);
+    _pg_mask = (1 << cbits(_pg_num - 1)) - 1;
+    return;
 }
