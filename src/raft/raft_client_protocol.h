@@ -105,8 +105,8 @@ private:
 
 class raft_client_protocol{
 public:
-    raft_client_protocol()
-    : _cache(connect_cache::get_connect_cache())
+    raft_client_protocol(std::shared_ptr<connect_cache> conn_cache)
+    : _cache(conn_cache)
     , _shard_cores(get_shard_cores()) {
         uint32_t i = 0;
         auto shard_num = _shard_cores.size();
@@ -119,14 +119,21 @@ public:
         return _shard_cores.size();
     }
 
-    void create_connect(int node_id, std::string address, int port, auto&&... args){
+    void create_connect(int node_id, std::string address, int port, auto&& conn_cb) {
         uint32_t shard_id = 0;
         for(shard_id = 0; shard_id < connect_factor() * 1; shard_id++){
-            SPDK_INFOLOG(pg_group, "create connect to node %d (address %s, port %d) in core %u\n",
-                    node_id, address.c_str(), port, _shard_cores[shard_id]);
-            auto connect = _cache.create_connect(shard_id, node_id, address, port, std::forward<decltype(args)>(args)...);
-            auto &stub = _stubs[shard_id];
-            stub[node_id] = std::make_shared<rpc_service_raft_Stub>(connect.get());
+            SPDK_INFOLOG(
+              pg_group,
+              "create connect to node %d (address %s, port %d) in core %u\n",
+              node_id, address.c_str(), port, _shard_cores[shard_id]);
+
+            _cache->create_connect(
+              shard_id, node_id, address, port, std::move(conn_cb),
+              [this, shard_id, node_id] (msg::rdma::client::connection* conn) {
+                  auto &stub = _stubs[shard_id];
+                  stub[node_id] = std::make_shared<rpc_service_raft_Stub>(conn);
+              }
+            );
         }
     }
 
@@ -135,7 +142,7 @@ public:
         for(shard_id = 0; shard_id < _shard_cores.size(); shard_id++){
             auto &stub = _stubs[shard_id];
             stub.erase(node_id);
-            _cache.remove_connect(shard_id, node_id);
+            _cache->remove_connect(shard_id, node_id);
         }
     }
 
@@ -196,7 +203,7 @@ private:
         return stubs[node_id];
     }
 
-    connect_cache& _cache;
+    std::shared_ptr<connect_cache> _cache;
     std::vector<uint32_t> _shard_cores;
     //每个cpu核上有一个map
     std::vector<std::map<int, std::shared_ptr<rpc_service_raft_Stub>>> _stubs;

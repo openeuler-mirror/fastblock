@@ -13,15 +13,13 @@
 
 #include "monclient/client.h"
 #include "msg/rpc_controller.h"
-#include "msg/transport_client.h"
-#include <utils/overload.h>
+#include "msg/rdma/client.h"
+#include "utils/overload.h"
 #include "utils/simple_poller.h"
 #include "rpc/osd_msg.pb.h"
-#include "rpc/connect_cache.h"
 
 #include <google/protobuf/stubs/callback.h>
 
-#include <mutex>
 #include <variant>
 
 typedef void (*read_callback)(struct spdk_bdev_io *, char *, uint64_t, int32_t);
@@ -61,6 +59,7 @@ struct leader_request_stack_type {
     std::unique_ptr<osd::pg_leader_response> leader_resp{nullptr};
     ::osd_info_t* osd{nullptr};
     uint64_t leader_request_id{};
+    fblock_client* this_client{nullptr};
 };
 
 struct request_stack_type {
@@ -72,6 +71,8 @@ struct request_stack_type {
     void* ctx{nullptr};
     bool is_responsed{false};
     uint64_t leader_osd_key{};
+    fblock_client* this_client{nullptr};
+    bool is_connecting{false};
 };
 
 struct leader_key_type {
@@ -85,6 +86,7 @@ struct leader_osd_info {
     int32_t port{};
     std::chrono::system_clock::time_point epoch{};
     bool is_valid{false};
+    bool is_onflight{true};
 };
 
 struct connection_id {
@@ -92,12 +94,10 @@ struct connection_id {
     uint32_t core_no;
 };
 
-static_assert(sizeof(connection_id) == sizeof(msg::rdma::transport_client::connection::id_type));
-
 private:
 
-    static msg::rdma::transport_client::connection::id_type to_connection_id(const int32_t node_id, const uint32_t core_no) {
-        msg::rdma::transport_client::connection::id_type ret{};
+    static uint64_t to_connection_id(const int32_t node_id, const uint32_t core_no) {
+        uint64_t ret{};
         auto* conn_id = reinterpret_cast<connection_id*>(&ret);
         conn_id->node_id = node_id;
         conn_id->core_no = core_no;
@@ -116,23 +116,33 @@ private:
     osd::rpc_service_osd_Stub*
     get_stub(const int node_id, std::string addr, const int port) {
         auto conn_id = to_connection_id(node_id, ::spdk_env_get_current_core());
-        SPDK_DEBUGLOG(libblk, "get stub of id %ld on core %d\n", conn_id, ::spdk_env_get_current_core());
         auto stub_it = _stubs.find(conn_id);
         if (stub_it == _stubs.end()) {
-            auto conn = _transport.emplace_connection(conn_id, addr, port);
-            if (not conn) {
-                throw std::runtime_error{"create connection error"};
-            }
-            auto stub = std::make_unique<osd::rpc_service_osd_Stub>(conn.get());
-            auto* ret = stub.get();
-            _stubs.emplace(conn_id, std::move(stub));
-            return ret;
+            _stubs.emplace(conn_id, nullptr);
+            SPDK_DEBUGLOG(
+              libblk,
+              "emplaced stubs of node_id %d, current core is %d, conn id %lu, addr is '%s:%d'\n",
+               ::spdk_env_get_current_core(), node_id, conn_id, addr.c_str(), port);
+            _rpc_client->emplace_connection(
+              addr, port,
+              [this, conn_id, addr, port] (bool is_connected, std::shared_ptr<msg::rdma::client::connection> conn) {
+                  if (not is_connected) {
+                      SPDK_ERRLOG("ERROR: Connect to %s:%d failed\n", addr.c_str(), port);
+                      throw std::runtime_error{"make connection failed\n"};
+                  }
+
+                  auto stub = std::make_unique<osd::rpc_service_osd_Stub>(conn.get());
+                  _stubs.at(conn_id) = std::move(stub);
+              }
+            );
+
+            return nullptr;
         }
 
         return stub_it->second.get();
     }
 
-    uint64_t make_leader_key(const int32_t pool_id, const int32_t pg_id) {
+    uint64_t make_leader_key(const int32_t pool_id, const int32_t pg_id) noexcept {
         uint64_t leader_osd_key{};
         auto* struct_key = reinterpret_cast<leader_key_type*>(&leader_osd_key);
         struct_key->pg_id = pg_id;
@@ -141,13 +151,9 @@ private:
         return leader_osd_key;
     }
 
-    void enqueue_request(std::unique_ptr<request_stack_type> r) {
-        if (::spdk_env_get_current_core() == _current_core) {
-            _requests.push_back(std::move(r));
-        } else {
-            std::lock_guard<std::mutex> guard(_mutex);
-            _requests.push_back(std::move(r));
-        }
+    leader_key_type from_leader_key(uint64_t key_val) noexcept {
+        auto* struct_key = reinterpret_cast<leader_key_type*>(&key_val);
+        return { struct_key->pool_id, struct_key->pg_id };
     }
 
     int enqueue_leader_request(const int32_t pool_id, const int32_t pg_id) {
@@ -163,16 +169,9 @@ private:
         req->leader_req->set_pool_id(pool_id);
         req->leader_req->set_pg_id(pg_id);
         req->osd = first_osd;
-
-        auto req_ptr = req.get();
-        if (::spdk_env_get_current_core() == _current_core) {
-            req->leader_request_id = _leader_req_id_gen++;
-            _leader_requests.emplace(req->leader_request_id, std::move(req));
-        } else {
-            std::lock_guard<std::mutex> guard(_mutex);
-            req->leader_request_id = _leader_req_id_gen++;
-            _leader_requests.emplace(req->leader_request_id, std::move(req));
-        }
+        req->this_client = this;
+        req->leader_request_id = _leader_req_id_gen++;
+        _leader_requests.emplace(req->leader_request_id, std::move(req));
 
         return 0;
     }
@@ -201,39 +200,26 @@ private:
       const int32_t pool_id, const int32_t pg_id,
       request_type req, response_callback_type cb,
       void* ctx, uint64_t obj_idx = 0) {
-        uint64_t leader_osd_key = make_leader_key(pool_id, pg_id);
-        auto it = _leader_osd.find(leader_osd_key);
-
-        auto req_stk = std::make_unique<request_stack_type>();
+        auto* req_stk = new request_stack_type{};
         req_stk->req = std::move(req);
         req_stk->resp_cb = cb;
         req_stk->ctx = ctx;
         req_stk->obj_index = obj_idx;
-        req_stk->leader_osd_key = leader_osd_key;
-
-        bool should_acquire_leader =
-          it == _leader_osd.end() or
-          (it != _leader_osd.end() and not it->second->is_valid);
-
-        if (should_acquire_leader) {
-            _leader_osd.emplace(leader_osd_key, std::make_unique<leader_osd_info>());
-            enqueue_leader_request(pool_id, pg_id);
-        } else if (it->second) {
-            req_stk->stub = get_stub(it->second->leader_id, it->second->addr, it->second->port);
-        }
-
-        enqueue_request(std::move(req_stk));
-
+        req_stk->leader_osd_key = make_leader_key(pool_id, pg_id);
+        req_stk->this_client = this;
+        SPDK_DEBUGLOG(
+          libblk,
+          "pool_id: %d, pg_id: %d, leader_osd_key: %lu\n",
+          pool_id, pg_id, req_stk->leader_osd_key);
+        ::spdk_thread_send_msg(_current_thread, fblock_client::do_send_request, req_stk);
         return 0;
 }
 
 public:
 
-    fblock_client(monitor::client* mon_cli, int32_t io_queue_size = 128, int32_t io_queue_request = 1024)
-      : _transport{io_queue_size, io_queue_request}
-      , _mon_cli{mon_cli}
-      , _io_queue_size{io_queue_size}
-      , _io_queue_request{io_queue_request} {}
+    fblock_client(monitor::client* mon_cli, ::spdk_cpuset* cpumask, std::shared_ptr<msg::rdma::client::options> opts)
+      : _rpc_client{std::make_shared<msg::rdma::client>("fblock_client", cpumask, opts)}
+      , _mon_cli{mon_cli} {}
 
     ~fblock_client() noexcept {
         SPDK_DEBUGLOG(libblk, "call ~fblck_client()\n");
@@ -244,7 +230,17 @@ public:
     }
 
     bool is_ready() noexcept {
-        return _transport.is_start();
+        return _rpc_client->is_start();
+    }
+
+    void start() {
+        if (not _current_thread) {
+            SPDK_ERRLOG("ERROR: Cant get current spdk thread\n");
+            throw std::runtime_error{"cant get current spdk thread"};
+        }
+
+        SPDK_DEBUGLOG(libblk, "sending start message\n");
+        ::spdk_thread_send_msg(_current_thread, do_start, this);
     }
 
     void stop() noexcept {
@@ -253,9 +249,13 @@ public:
         }
 
         _is_terminate = true;
-        _transport.stop();
+        _rpc_client->stop();
         _poller.unregister();
     }
+
+    /************************************************************
+     * spdk_thread_send_msg callbacks
+     ************************************************************/
 
     static void do_start(void* arg) {
         auto* arg_this = reinterpret_cast<fblock_client*>(arg);
@@ -275,22 +275,55 @@ public:
         return is_busy ? SPDK_POLLER_BUSY : SPDK_POLLER_IDLE;
     }
 
-    //////////////////////////////////////////////////////////////
-
-    void start() {
-        if (not _current_thread) {
-            SPDK_ERRLOG("ERROR: Cant get current spdk thread\n");
-            throw std::runtime_error{"cant get current spdk thread"};
-        }
-
-        ::spdk_thread_send_msg(_current_thread, do_start, this);
+    static void do_send_request(void* arg) {
+        auto* stack_ptr = reinterpret_cast<request_stack_type*>(arg);
+        stack_ptr->this_client->handle_send_request(stack_ptr);
     }
+
+    /************************************************************
+     * spdk_thread_send_msg callbacks' callbacks
+     ************************************************************/
 
     void handle_start() {
         SPDK_INFOLOG(libblk, "Starting block client...\n");
-        _transport.start();
+        _rpc_client->start();
         _poller.poller = SPDK_POLLER_REGISTER(do_poll, this, 0);
     }
+
+    void handle_send_request(request_stack_type* req_stk) {
+        auto it = _leader_osd.find(req_stk->leader_osd_key);
+        bool should_acquire_leader{false};
+        if (it == _leader_osd.end()) {
+            SPDK_DEBUGLOG(libblk, "cant find the leader osd %ld\n", req_stk->leader_osd_key);
+            should_acquire_leader = true;
+        } else if (it->second->is_onflight) {
+            SPDK_DEBUGLOG(libblk, "leader osd %ld request on flight\n", req_stk->leader_osd_key);
+            should_acquire_leader = false;
+        } else if (not it->second->is_valid) {
+            SPDK_DEBUGLOG(libblk, "leader osd %ld is not valid\n", req_stk->leader_osd_key);
+            should_acquire_leader = true;
+        }
+
+        SPDK_DEBUGLOG(
+          libblk,
+          "leader_osd_key: %llu, should_acquire_leader: %d\n",
+          req_stk->leader_osd_key, should_acquire_leader);
+
+        if (should_acquire_leader) {
+            _leader_osd.emplace(req_stk->leader_osd_key, std::make_unique<leader_osd_info>());
+            SPDK_DEBUGLOG(libblk, "_leader_osd emplaced %llu\n", req_stk->leader_osd_key);
+            auto struct_key = from_leader_key(req_stk->leader_osd_key);
+            enqueue_leader_request(struct_key.pool_id, struct_key.pg_id);
+        } else if (it->second and not it->second->is_onflight) {
+            req_stk->stub = get_stub(it->second->leader_id, it->second->addr, it->second->port);
+        }
+
+        _requests.emplace_back(req_stk);
+    }
+
+    /************************************************************
+     * poller fns
+     ************************************************************/
 
     bool process_response() {
         if (_on_flight_requests.empty()) {
@@ -351,53 +384,74 @@ public:
     }
 
     bool process_leader_request() {
-        if (not _transport.is_start()) {
-            return false;
-        }
-
         if (_leader_requests.empty()) {
             return false;
         }
 
-        for (auto& req_pair : _leader_requests) {
-            auto* stack_ptr = req_pair.second.get();
-            stack_ptr->stub = get_stub(stack_ptr->osd);
-            auto done = google::protobuf::NewCallback(
-              this, &fblock_client::on_leader_acquired, stack_ptr);
-            stack_ptr->stub->process_get_leader(
-              &_ctrlr, stack_ptr->leader_req.get(), stack_ptr->leader_resp.get(), done);
-            _on_flight_leader_requests.insert(std::move(req_pair));
-        }
+        auto n = std::erase_if(
+          _leader_requests,
+          [this] (auto& kv) {
+              auto& [_, stack_ptr] = kv;
+              stack_ptr->stub = get_stub(stack_ptr->osd);
+              if (not stack_ptr->stub) {
+                  return false;
+              }
 
-        _leader_requests.clear();
+              auto done = google::protobuf::NewCallback(
+                this, &fblock_client::on_leader_acquired, stack_ptr.get());
+              stack_ptr->stub->process_get_leader(
+                &_ctrlr, stack_ptr->leader_req.get(), stack_ptr->leader_resp.get(), done);
+              _on_flight_leader_requests.insert(std::move(kv));
+              return true;
+          }
+        );
 
         return true;
     }
 
     bool process_request() {
-        if (not _transport.is_start()) {
-            return false;
-        }
-
         if (_requests.empty()) {
             return false;
         }
 
         auto& head = _requests.front();
-        if (not _leader_osd.contains(head->leader_osd_key)) {
+        auto osd_info_it = _leader_osd.find(head->leader_osd_key);
+        if (osd_info_it == _leader_osd.end()) {
             return false;
         }
 
-        auto osd_info_it = _leader_osd.find(head->leader_osd_key);
+        if (not head->stub) {
+            if (osd_info_it->second->is_onflight) {
+                return false;
+            }
+
+            SPDK_DEBUGLOG(
+              libblk,
+              "head->leader_osd_key: %lu, leader_id: %lu, addr: '%s:%d' is_onflight: %d, is_valid: %d\n",
+              head->leader_osd_key,
+              osd_info_it->second->leader_id,
+              osd_info_it->second->addr.c_str(),
+              osd_info_it->second->port,
+              osd_info_it->second->is_onflight,
+              osd_info_it->second->port);
+
+            head->stub = get_stub(
+              osd_info_it->second->leader_id,
+              osd_info_it->second->addr,
+              osd_info_it->second->port);
+            if (not head->stub) {
+                return false;
+            }
+        }
+
         update_leader_state(osd_info_it->second.get());
-        if (not osd_info_it->second->is_valid) {
+        if (not osd_info_it->second->is_valid or osd_info_it->second->is_onflight) {
             auto* struct_key = reinterpret_cast<leader_key_type*>(&(head->leader_osd_key));
             enqueue_leader_request(struct_key->pool_id, struct_key->pg_id);
 
             return true;
         }
 
-        head->stub = get_stub(osd_info_it->second.get());
         auto request_handler = utils::overload {
             [this, stack_ptr = head.get()] (std::unique_ptr<osd::write_request>& req) {
                 auto reply = std::make_unique<osd::write_reply>();
@@ -436,6 +490,8 @@ public:
         return true;
     }
 
+private:
+
     void on_leader_acquired(leader_request_stack_type* stack_ptr) {
         auto it = _on_flight_leader_requests.find(stack_ptr->leader_request_id);
         if (it == _on_flight_leader_requests.end()) {
@@ -449,17 +505,20 @@ public:
         auto info_it = _leader_osd.find(leader_key);
         if (info_it == _leader_osd.end()) {
             SPDK_ERRLOG(
-                "ERROR: Cant find the leader osd info record of pool id %lu, pg id %lu\n",
-                it->second->leader_req->pool_id(), it->second->leader_req->pg_id());
+              "ERROR: Cant find the leader osd info record of pool id %d, pg id %d\n",
+              it->second->leader_req->pool_id(), it->second->leader_req->pg_id());
 
             throw std::runtime_error{"Cant find the leader osd info record"};
         }
         auto* osd_info = info_it->second.get();
+        SPDK_INFOLOG(libblk, "Got leader osd %d, leader_key is %lu\n", stack_ptr->leader_request_id, leader_key);
+        osd_info->is_onflight = false;
         auto* resp = it->second->leader_resp.get();
         osd_info->epoch = std::chrono::system_clock::now();
         osd_info->leader_id = resp->leader_id();
         osd_info->addr = resp->leader_addr();
         osd_info->port = resp->leader_port();
+        SPDK_DEBUGLOG(libblk, "leader osd address: '%s:%d'\n", osd_info->addr.c_str(), osd_info->port);
 
         update_leader_state(info_it->second.get());
         if (not info_it->second->is_valid) {
@@ -484,6 +543,8 @@ public:
         stack_ptr->is_responsed = true;
     }
 
+public:
+
     int write_object(
       std::string object_name,
       uint64_t offset,
@@ -491,7 +552,7 @@ public:
       int32_t target_pool_id,
       write_object_callback cb_fn,
       void *source) {
-        auto target_pg = calc_target_pg(object_name, target_pool_id);
+        auto target_pg = calc_target(object_name, target_pool_id);
 
         auto req = std::make_unique<osd::write_request>();
         req->set_pool_id(target_pool_id);
@@ -502,9 +563,9 @@ public:
         send_request(target_pool_id, target_pg, std::move(req), cb_fn, source);
 
         SPDK_INFOLOG(
-            libblk,
-            "write_object pool: %d pg: %d object_name: %s offset: %lu length: %lu \n",
-            target_pool_id, target_pg, object_name.c_str(), offset, buf.size());
+          libblk,
+          "write_object pool: %lu pg: %lu object_name: %s offset: %lu length: %lu \n",
+          target_pool_id, target_pg, object_name.c_str(), offset, buf.size());
 
         return 0;
     }
@@ -517,12 +578,12 @@ public:
       read_object_callback cb_fn,
       void *source,
       uint64_t object_idx) {
-        auto target_pg = calc_target_pg(object_name, target_pool_id);
+        auto target_pg = calc_target(object_name, target_pool_id);
 
         SPDK_INFOLOG(
-            libblk,
-            "read_object pool: %lu pg:%u object:%s offset:%lu length: %lu\n",
-            target_pool_id, target_pg, object_name.c_str(), offset, length);
+          libblk,
+          "read_object pool: %lu pg:%lu object:%s offset:%lu length: %lu\n",
+          target_pool_id, target_pg, object_name.c_str(), offset, length);
 
         auto req = std::make_unique<osd::read_request>();
         req->set_pool_id(target_pool_id);
@@ -541,12 +602,12 @@ public:
       uint64_t target_pool_id,
       delete_callback cb_fn,
       ::spdk_bdev_io *bdev_io) {
-        auto target_pg = calc_target_pg(object_name, target_pool_id);
+        auto target_pg = calc_target(object_name, target_pool_id);
 
         SPDK_INFOLOG(
-            libblk,
-            "delete_object pool: %lu pg: %u object: %s\n",
-            target_pool_id, target_pg, object_name.c_str());
+          libblk,
+          "delete_object pool: %lu pg: %lu object: %s\n",
+          target_pool_id, target_pg, object_name.c_str());
 
         auto req = std::make_unique<osd::delete_request>();
         req->set_pool_id(target_pool_id);
@@ -560,13 +621,16 @@ public:
 
 private:
     // 计算对象的地址
-    unsigned calc_target_pg(const std::string &sstr, int32_t target_pool_id);
+    unsigned calc_target(const std::string &sstr, int32_t target_pool_id);
+    // 计算pg的掩码
+    void calc_pg_masks(int32_t target_pool_id);
 
 private:
-    msg::rdma::transport_client _transport{};
-    std::unordered_map<msg::rdma::transport_client::connection::id_type, std::unique_ptr<osd::rpc_service_osd_Stub>>
-        _stubs{};
-    monitor::client *_mon_cli{nullptr};
+    std::shared_ptr<msg::rdma::client> _rpc_client{nullptr};
+    std::unordered_map<uint64_t, std::unique_ptr<osd::rpc_service_osd_Stub>> _stubs{};
+    monitor::client* _mon_cli{nullptr};
+    uint32_t _pg_mask;
+    uint32_t _pg_num;
     utils::simple_poller _poller{};
 
     uint64_t _leader_req_id_gen{0};
@@ -578,7 +642,6 @@ private:
 
     ::spdk_thread* _current_thread{::spdk_get_thread()};
     uint32_t _current_core{::spdk_env_get_current_core()};
-    std::mutex _mutex{};
 
     std::unordered_map<uint64_t, std::unique_ptr<leader_osd_info>> _leader_osd{};
 

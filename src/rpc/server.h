@@ -12,43 +12,35 @@
 #include <google/protobuf/service.h>
 
 #include "base/core_sharded.h"
-#include "msg/transport_server.h"
+#include "msg/rdma/server.h"
 
 class rpc_server{
 public:
-    using transport_server_ptr = std::shared_ptr<msg::rdma::transport_server>;
+    using transport_server_ptr = std::shared_ptr<msg::rdma::server>;
 
     rpc_server(const rpc_server&) = delete;
+
+    rpc_server(const uint32_t core_no, std::shared_ptr<msg::rdma::server::options> srv_opts) {
+        ::spdk_cpuset cpumask{};
+        ::spdk_cpuset_zero(&cpumask);
+        ::spdk_cpuset_set_cpu(&cpumask, core_no, true);
+        _transport = std::make_shared<msg::rdma::server>(cpumask, srv_opts);
+        _transport->start();
+    }
+
     rpc_server& operator=(const rpc_server&) = delete;
+
+    ~rpc_server() noexcept {
+        _transport->stop();
+    }
+
+public:
 
     void register_service(google::protobuf::Service* service){
         _transport->add_service(service);
     }
 
-    void start(std::string& address, int port){
-        _transport->start_listen(address, port);
-        auto shard_num = _shard.count();
-        for(uint32_t i = 0; i < shard_num; i++){
-            _shard.invoke_on(
-              i, 
-              [this](){
-                SPDK_NOTICELOG("start transport in core %u\n", spdk_env_get_current_core());
-                _transport->start();
-              });
-        }
-    }
-
-    static rpc_server& get_server(core_sharded &shard){
-        static rpc_server s_server(shard);
-        return s_server;
-    }
 private:
-    rpc_server(core_sharded &shard)
-    : _shard(shard) {
-        _transport = std::make_unique<msg::rdma::transport_server>();
-        _transport->prepare();
-    }
 
-    transport_server_ptr _transport;
-    core_sharded &_shard;
+    transport_server_ptr _transport{nullptr};
 };

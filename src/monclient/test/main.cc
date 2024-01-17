@@ -36,6 +36,7 @@ enum monitor_client_test_state {
 };
 
 struct monitor_client_test_context {
+    std::shared_ptr<::connect_cache> conn_cache{nullptr};
     std::shared_ptr<::partition_manager> pm{nullptr};
     std::unique_ptr<monitor::client> mon_cli{nullptr};
     std::string image_name{};
@@ -199,7 +200,14 @@ int main_poller_cb(void* arg) {
 
 void monitor_client_test_on_app_start(void* arg) {
     auto* ctx = reinterpret_cast<monitor_client_test_context*>(arg);
-    ctx->pm = std::make_shared<::partition_manager>(osd_id);
+    auto core_no = ::spdk_env_get_current_core();
+    ::spdk_cpuset cpumask{};
+    ::spdk_cpuset_zero(&cpumask);
+    ::spdk_cpuset_set_cpu(&cpumask, core_no, true);
+    auto opts = std::make_shared<msg::rdma::client::options>();
+    opts->ep = std::make_unique<msg::rdma::endpoint>();
+    ctx->conn_cache = std::make_shared<::connect_cache>(&cpumask, opts);
+    ctx->pm = std::make_shared<::partition_manager>(osd_id, ctx->conn_cache);
     std::vector<monitor::client::endpoint> eps{};
     eps.emplace_back(monitor1_host, monitor1_port);
 

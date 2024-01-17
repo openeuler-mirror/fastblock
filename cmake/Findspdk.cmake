@@ -25,8 +25,7 @@ set(spdk_FIND_COMPONENTS
   nvme
   thread
   vhost
-  rdma
-  rdma_server)
+  rdma)
 
 set(spdk_FIND_SYSLIBS_COMPONENT syslibs)
 
@@ -42,8 +41,8 @@ function(find_spdk_component component)
   list (APPEND spdk_lib_vars ${prefix}_LIBRARIES)
   set (spdk_lib_vars ${spdk_lib_vars} PARENT_SCOPE)
   if (NOT spdk_${component}_FOUND)
-    continue ()
-  endif ()
+    return()
+  endif()
   add_library (spdk::${component} INTERFACE IMPORTED)
 
   message(STATUS "\nspdk::component: " spdk::${component})
@@ -104,6 +103,7 @@ if (spdk_INCLUDE_DIR AND EXISTS "${spdk_INCLUDE_DIR}/spdk/version.h")
 endif ()
 
 list(REMOVE_DUPLICATES spdk_lib_vars)
+set(spdk_INCLUDE_DIR "/usr/include")
 find_package_handle_standard_args (spdk
   REQUIRED_VARS
     spdk_INCLUDE_DIR

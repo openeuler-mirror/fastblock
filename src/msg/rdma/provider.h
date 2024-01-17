@@ -8,16 +8,20 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
-
 #pragma once
 
-#include "client/libfblock.h"
-#include "monclient/client.h"
-#include "osd/partition_manager.h"
+#include <rdma/rdma_cma.h>
+#include <infiniband/mlx5dv.h>
 
-namespace global {
-extern std::shared_ptr<connect_cache> conn_cache;
-extern std::shared_ptr<::partition_manager> par_mgr;
-extern std::unique_ptr<monitor::client> mon_client;
-extern std::shared_ptr<::libblk_client> blk_client;
-}
+namespace msg {
+namespace rdma {
+
+struct provider {
+    virtual ::ibv_qp* create_qp(::ibv_context*, ::ibv_pd*, ::ibv_qp_init_attr*) noexcept = 0;
+    virtual void complete_qp_connect(::rdma_cm_id*) = 0;
+    virtual void accept(::rdma_cm_id*, rdma_conn_param*) = 0;
+    virtual int disconnect(::rdma_cm_id*) noexcept = 0;
+};
+
+} // namespace msg
+} // namespace rpc

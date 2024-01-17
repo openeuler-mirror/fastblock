@@ -65,7 +65,7 @@ else()
 endif()
 
 ExternalProject_Add(spdk
-  GIT_REPOSITORY https://github.com/wuxingyi/spdk.git 
+  GIT_REPOSITORY https://github.com/wuxingyi/spdk.git
   GIT_TAG fbspdk
   UPDATE_COMMAND ""
   BUILD_IN_SOURCE ON
