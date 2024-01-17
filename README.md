@@ -76,11 +76,10 @@ libfastblock把用户对image的数据操作转换为对object（osd处理的基
 
 
 # 代码结构及编译
-fastblock代码主要位于src、monitor和spdk目录中:
+fastblock代码主要位于src、monitor和msg目录中:
 - src目录主要包含raft实现、rdma通信、底层存储引擎、块层API封装等功能, 详情见[src目录简介](src/README.md "src代码简介")
 - monitor目录则包含了集群元数据存储管理、monitor选举、pg分配、clustermap分发等功能, 详情见[monitor目录简介](monitor/README.md "monitor代码简介")
-- spdk目录是通过复用spdk的rdma通信模块以支撑低延迟的rpc通信, 详情见[spdk目录简介](spdk/README.md "spdk目录简介")
-编译之前需要先安装依赖，目前已进行了ubuntu 21.10和openEuler 22.03版本的验证，其他操作系统可酌情更改.  
+- msg目录中包含了RDMA RPC的所有实现，以及在一个简单的demo。
 ```
 ./install-deps.sh
 ```
@@ -105,7 +104,6 @@ fastblock代码主要位于src、monitor和spdk目录中:
 - 实现可定制的monitor的pg分配插件
 - 实现raft成员变更及与monitor的pg分配整体联调
 - 优化osd client的rdma连接管理
-- 重写rdma传输层以替换spdk nvmf版的rdma传输层
 - 支持DPU卸载vhost
 - 监控数据导出及集群运行时数据展示
 - 部署工具开发及系统配置文件简化
