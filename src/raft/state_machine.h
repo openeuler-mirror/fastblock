@@ -33,10 +33,7 @@ public:
     }
 
     void start();
-    virtual void stop() { spdk_poller_unregister(&_timer); }
-    virtual void stop([[maybe_unused]] std::function<void (void *arg, int objerrno)>, [[maybe_unused]] void*){
-        spdk_poller_unregister(&_timer);
-    }
+    void stop() { spdk_poller_unregister(&_timer); }
 
     /**
      * @return index of last applied entry */
@@ -52,7 +49,7 @@ public:
 
     int raft_apply_entries();
 
-    virtual void apply(std::shared_ptr<raft_entry_t> entry, context *complete) = 0;
+    virtual void apply(std::shared_ptr<raft_entry_t> entry, utils::context *complete) = 0;
     raft_server_t* get_raft(){
         return _raft;
     }

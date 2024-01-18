@@ -103,7 +103,7 @@ public:
         using osd_id_type = int32_t;
         using version_type = int64_t;
 
-        std::unordered_map<osd_id_type, std::unique_ptr<::osd_info_t>> data{};
+        std::unordered_map<osd_id_type, std::unique_ptr<utils::osd_info_t>> data{};
         version_type version{-1};
     };
 
@@ -114,12 +114,64 @@ public:
 
         struct pg_info {
             pg_id_type pg_id{0};
+            int64_t   version{0};
             std::vector<osd_map::osd_id_type> osds{};
-            bool is_update;
         };
+
+        struct pool_update_info{
+            version_type pool_version{0};
+            /* key为pg_id
+             * value的值表示状态
+             *  -1  表示更新失败
+             *  0   表示更新完成
+             *  1   表示更新中
+             */
+            std::unordered_map<pg_id_type, int> pgs{};
+        };
+
+        bool pool_is_updating(pool_id_type pool_id){
+            if(pool_update.find(pool_id) == pool_update.end())
+                return false;
+            bool ret = false;
+            int err_count = 0;
+
+            for(auto [_, state] : pool_update[pool_id].pgs){
+                if(state == 1){
+                    ret = true;
+                    break;
+                }else if(state == -1){
+                    err_count++;
+                }
+            }
+            if(!ret){
+                if(err_count == 0){
+                    pool_version[pool_id] = pool_update[pool_id].pool_version;
+                }
+                pool_update.erase(pool_id);
+            }
+            return ret;
+        }
+
+        void set_pool_update(pool_id_type pool_id, pg_id_type pg_id, version_type pool_version, int state){
+            if(pool_update.find(pool_id) == pool_update.end()){
+                if(state == 1){
+                    pool_update_info update_info;
+                    update_info.pool_version = pool_version;
+                    update_info.pgs[pg_id] = state;
+                    pool_update[pool_id] = std::move(update_info);
+                }
+            }else{
+                pool_update[pool_id].pgs[pg_id] = state;
+            }
+        }
+
+        void delete_pool_update(pool_id_type pool_id){
+            pool_update.erase(pool_id);
+        }
 
         std::unordered_map<pool_id_type, std::unordered_map<pg_id_type, std::unique_ptr<pg_info>>> pool_pg_map{};
         std::unordered_map<pool_id_type, version_type> pool_version{};
+        std::unordered_map<pool_id_type, pool_update_info> pool_update{};
     };
 
     using on_new_pg_callback_type = std::function<void(const msg::PGInfo&, const int32_t, const int32_t, const osd_map&)>;
@@ -375,10 +427,12 @@ public:
     void handle_emplace_request(request_context*);
     void send_cluster_map_request();
     bool core_poller_handler();
-    ::osd_info_t* get_pg_first_available_osd_info(int32_t pool_id, int32_t pg_id);
+    utils::osd_info_t* get_pg_first_available_osd_info(int32_t pool_id, int32_t pg_id);
     int get_pg_num(int32_t pool_id);
-    ::osd_info_t* get_osd_info(const int32_t node_id);
-
+    utils::osd_info_t* get_osd_info(const int32_t node_id);
+    pg_map& get_pg_map(){
+        return _pg_map;
+    }
 private:
 
     template<typename ResponseType>

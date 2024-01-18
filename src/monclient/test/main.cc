@@ -220,7 +220,7 @@ void monitor_client_test_on_app_start(void* arg) {
       [pm = ctx->pm] (const msg::PGInfo& pg_info, const int32_t pg_key, const int32_t pg_map_ver, const monitor::client::osd_map& osd_map) {
           BOOST_TEST_MESSAGE("call pg_map_cb()");
 
-          std::vector<::osd_info_t> osds{};
+          std::vector<utils::osd_info_t> osds{};
           for (auto osd_id : pg_info.osdid()) {
               osds.push_back(*(osd_map.data.at(osd_id)));
           }

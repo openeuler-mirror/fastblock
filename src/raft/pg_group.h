@@ -59,6 +59,9 @@ public:
     void stop()
     {
         spdk_poller_unregister(&_heartbeat_timer);
+        for(auto &[name, raft] : _pgs){
+            raft->stop();
+        }
     }
 
     uint32_t get_shard_id()
@@ -110,7 +113,7 @@ public:
     }
 
     int create_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,
-                  std::vector<osd_info_t> &&osds, disk_log *log);
+                  std::vector<utils::osd_info_t> &&osds, disk_log *log);
 
     void delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id);
 
@@ -130,26 +133,17 @@ public:
         return _current_node_id;
     }
 
-    void start(context *complete);
+    void start(utils::complete_fun fun, void *arg);
 
     void stop(){
         stop_shard_manager();
     }
 
-    void start_shard_manager()
-    {
-        uint32_t i = 0;
-        auto shard_num = _shard_mg.size();
-        for (i = 0; i < shard_num; i++)
-        {
-            _shard.invoke_on(
-                i,
-                [this, shard_id = i]()
-                {
-                    _shard_mg[shard_id].start();
-                });
-        }
+    void stop(uint64_t shard_id){
+        _shard_mg[shard_id].stop();
     }
+
+    void start_shard_manager(utils::complete_fun fun, void *arg);
 
     void stop_shard_manager()
     {
@@ -166,6 +160,8 @@ public:
         }
     }
 
+    void change_pg_membership(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, std::vector<raft_node_info>&& new_osds, utils::context* complete);
+    
 private:
     int _pg_add(uint32_t shard_id, std::shared_ptr<raft_server_t> raft, uint64_t pool_id, uint64_t pg_id)
     {
@@ -178,6 +174,8 @@ private:
     {
         auto name = pg_id_to_name(pool_id, pg_id);
         auto raft = _shard_mg[shard_id].get_pg(name);
+        if(!raft)
+            return 0;
         raft->raft_destroy();
         _shard_mg[shard_id].delete_pg(name);
         return 0;

@@ -26,12 +26,13 @@ void state_machine::start(){
     _timer = SPDK_POLLER_REGISTER(&apply_task, this, 0);
 }
 
-struct apply_complete : public context{
+struct apply_complete : public utils::context{
     apply_complete(raft_index_t _idx, state_machine* _stm)
     : idx(_idx)
     , stm(_stm) {}
 
     void finish(int r) override {
+        SPDK_INFOLOG(pg_group, "apply log index %ld return %d\n", idx, r);
         if(r == err::E_SUCCESS){
             auto last_applied_idx = stm->get_last_applied_idx();
             stm->set_last_applied_idx(idx);

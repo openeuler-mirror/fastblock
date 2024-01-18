@@ -30,8 +30,8 @@ bool partition_manager::get_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t 
 struct make_log_context{
     uint64_t pool_id;
     uint64_t pg_id;
-    std::vector<osd_info_t> osds;
-    uint32_t shard_id;
+    std::vector<utils::osd_info_t> osds;
+    uint32_t shard_id; 
     int64_t revision_id;
     partition_manager* pm;
 };
@@ -51,14 +51,44 @@ static void make_log_done(void *arg, struct disk_log* dlog, int rberrno){
 }
 
 void partition_manager::create_pg(
-        uint64_t pool_id, uint64_t pg_id, std::vector<osd_info_t> osds,
+        uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t> osds, 
         uint32_t shard_id, int64_t revision_id){
     make_log_context *ctx = new make_log_context{pool_id, pg_id, std::move(osds), shard_id, revision_id, this};
     make_disk_log(global_blobstore(), global_io_channel(), make_log_done, ctx);
 }
 
+int partition_manager::osd_state_is_not_active(){
+    switch (_state) {
+    case osd_state::OSD_STARTING:
+        SPDK_WARNLOG("%s.\n", err::string_status(err::OSD_STARTING));
+        return err::OSD_STARTING;
+    case osd_state::OSD_ACTIVE:
+        return 0;
+    case osd_state::OSD_DOWN:
+        SPDK_WARNLOG("%s.\n", err::string_status(err::OSD_DOWN));
+        return err::OSD_DOWN;
+    default:
+        SPDK_WARNLOG("unknown osd state.\n");
+        return -1;
+    }
+    return  0;
+}
+
+void partition_manager::start(utils::context *complete){
+    _pgs.start(
+      [this, complete](void *, int res){
+        set_osd_state(osd_state::OSD_ACTIVE);
+        complete->complete(res);
+      },
+      nullptr
+    );
+}
+
 int partition_manager::create_partition(
-        uint64_t pool_id, uint64_t pg_id, std::vector<osd_info_t>&& osds, int64_t revision_id){
+        uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t>&& osds, int64_t revision_id){
+    int state = osd_state_is_not_active();
+    if(state != 0)
+        return state;
     auto shard_id = get_next_shard_id();
     _add_pg_shard(pool_id, pg_id, shard_id, revision_id);
 
@@ -72,14 +102,15 @@ int partition_manager::create_partition(
 }
 
 void partition_manager::delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id){
-    auto name = pg_id_to_name(pool_id, pg_id);
-    _sm_table[shard_id].erase(name);
-
     _pgs.delete_pg(shard_id, pool_id, pg_id);
+    del_osd_stm(pool_id, pg_id, shard_id);
 }
 
 int partition_manager::delete_partition(uint64_t pool_id, uint64_t pg_id){
     uint32_t shard_id;
+    int state = osd_state_is_not_active();
+    if(state != 0)
+        return state;
 
     if(!get_pg_shard(pool_id, pg_id, shard_id)){
         return -1;
@@ -93,4 +124,38 @@ int partition_manager::delete_partition(uint64_t pool_id, uint64_t pg_id){
             spdk_env_get_current_core(), shard_id, pool_id, pg_id);
         delete_pg(pool_id, pg_id, shard_id);
       });
+}
+
+int partition_manager::change_pg_membership(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t> new_osds, utils::context* complete){
+    uint32_t shard_id;
+    int state = osd_state_is_not_active();
+    if(state != 0){
+        if(complete)
+            complete->complete(state);
+        return state;
+    }
+
+    if(!get_pg_shard(pool_id, pg_id, shard_id)){
+        SPDK_WARNLOG("not found pg %lu.%lu\n", pool_id, pg_id);
+        if(complete)
+            complete->complete(err::RAFT_ERR_NOT_FOUND_PG);
+        return err::RAFT_ERR_NOT_FOUND_PG;
+    }
+
+    return _shard.invoke_on(
+      shard_id, 
+      [this, pool_id, pg_id, shard_id, new_osds = std::move(new_osds), complete]() mutable{
+        SPDK_INFOLOG(osd, "change pg membership in core %u shard_id %u pool_id %lu pg_id %lu \n", 
+            spdk_env_get_current_core(), shard_id, pool_id, pg_id);
+        std::vector<raft_node_info> osd_infos;
+        for(auto& new_osd : new_osds){
+            raft_node_info osd_info;
+            osd_info.set_node_id(new_osd.node_id);
+            osd_info.set_addr(new_osd.address);
+            osd_info.set_port(new_osd.port);
+            osd_infos.emplace_back(std::move(osd_info));
+        }
+        get_pg_group().change_pg_membership(shard_id, pool_id, pg_id, std::move(osd_infos), complete);                  
+      });    
+
 }

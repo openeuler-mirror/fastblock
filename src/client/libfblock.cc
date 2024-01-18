@@ -169,8 +169,8 @@ struct write_source
 // get obj number
 static uint64_t get_obj_num(const uint64_t offset, const uint64_t length)
 {
-    auto start_off = align_down(offset, default_object_size);
-    auto end_off = align_up(offset + length, default_object_size);
+    auto start_off = utils::align_down(offset, default_object_size);
+    auto end_off = utils::align_up(offset + length, default_object_size);
 
     return (end_off - start_off) / default_object_size;
 }
