@@ -2,7 +2,7 @@ include(CMakeParseArguments)
 
 set(CXX_STANDARD 20)
 set(DEFAULT_LINKOPTS ${COMMON_LINKOPTS})
-set(DEFAULT_COPTS  -Wextra -Werror -Wno-missing-field-initializers)
+SET(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -Wformat -Wextra -Werror -Wno-missing-field-initializers")
 
 function(compile_library)
   cmake_parse_arguments(CC_LIB
@@ -33,7 +33,6 @@ function(compile_library)
       "$<BUILD_INTERFACE:${COMMON_INCLUDE_DIRS}>"
       )
     target_compile_options(${_NAME}
-      PRIVATE ${DEFAULT_COPTS}
       PRIVATE ${CC_LIB_COPTS})
     target_link_libraries(${_NAME}
       PUBLIC
