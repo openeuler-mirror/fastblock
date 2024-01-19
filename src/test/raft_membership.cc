@@ -22,16 +22,18 @@ enum {
 int g_op_type = ADD_NODE;
 int64_t g_pool_version = 0;
 std::vector<raft_node_info> g_osd_list;
+static const char* g_json_conf{nullptr};
 
 static void
 fbbench_usage(void)
 {
+    	printf(" -C <osd json config file> path to json config file\n");
     printf(" -I <id>                   osd id\n");
     printf(" -o <osd_addr>             osd address\n");
     printf(" -t <osd_port>             osd port\n");
     printf(" -P <pool_id>              pool id\n");
     printf(" -G <pg_id>                pg id\n");
-    printf(" -C <choice>               [add, remove, change, create]\n");
+    printf(" -N <choice>               [add, remove, change, create]\n");
     printf(" -O <osd_list>             osd list, Separated by commas. example: '1:192.168.1.2:8888,2:192.168.1.2:8889'\n");
     printf(" -V <pool_version>         pool version\n");
 }
@@ -41,6 +43,9 @@ fbbench_parse_arg(int ch, char *arg)
 {
     switch (ch)
     {
+    case 'C':
+        g_json_conf = arg;
+        break;
     case 'I':
         global_osd_id = spdk_strtol(arg, 10);
         break;
@@ -56,7 +61,7 @@ fbbench_parse_arg(int ch, char *arg)
     case 'G':
         g_pg_id = spdk_strtoll(arg, 10);
         break;   
-    case 'C':
+    case 'N':
     {
         if (!strcmp(arg, "add"))
             g_op_type = ADD_NODE;
@@ -128,41 +133,57 @@ raft_membership(void *arg1)
     server_t *server = (server_t *)arg1;
 
     SPDK_NOTICELOG("------block start, cpu count : %u \n", spdk_env_get_core_count());
-    osd_client *cli = new osd_client(server);
-    cli->create_connect(server->osd_addr, server->osd_port, server->node_id);
-    switch (g_op_type){
-    case ADD_NODE:
-    {
-        auto add_node_func = [cli, server, osd_list = g_osd_list](){
-            cli->add_node(server->pool_id, server->pg_id, osd_list[0].node_id(), osd_list[0].addr(), osd_list[0].port());
-        };
-        cli->get_leader(server->node_id, server->pool_id, server->pg_id, add_node_func);
-        break;
-    }
-    case REMOVE_NODE:
-    {
-        auto remove_node_func = [cli, server, osd_list = g_osd_list](){
-            cli->remove_node(server->pool_id, server->pg_id, osd_list[0].node_id(), osd_list[0].addr(), osd_list[0].port());
-        };
-        cli->get_leader(server->node_id, server->pool_id, server->pg_id, remove_node_func);
-        break;
-    }
-    case CHANGE_NODES:
-    {
-        auto change_node_func = [cli, server, osd_list = g_osd_list](){
-            cli->change_nodes(server->pool_id, server->pg_id, std::move(osd_list));
-        };
-        cli->get_leader(server->node_id, server->pool_id, server->pg_id, change_node_func);
-        break;
-    }
-    case CREATE_PG:
-    {
-        cli->create_pg(server->node_id, server->pool_id, server->pg_id, g_pool_version);
-        break;
-    }
-    default:
-        break;
-    }
+    auto core_no = ::spdk_env_get_current_core();
+    ::spdk_cpuset cpumask{};
+    ::spdk_cpuset_zero(&cpumask);
+    ::spdk_cpuset_set_cpu(&cpumask, core_no, true);
+    auto opts = msg::rdma::client::make_options(
+      server->pt.get_child("msg").get_child("client"),
+      server->pt.get_child("msg").get_child("rdma"));
+
+    osd_client *cli = new osd_client(server, &cpumask, opts);
+    auto connect_done = [cli, server](bool is_ok, std::shared_ptr<msg::rdma::client::connection> conn){
+        if (not is_ok) {
+            SPDK_ERRLOG("ERROR: Connect failed\n");
+            throw std::runtime_error{"connect failed"};
+        }
+
+        switch (g_op_type){
+        case ADD_NODE:
+        {
+            auto add_node_func = [cli, server, osd_list = g_osd_list](){
+                cli->add_node(server->pool_id, server->pg_id, osd_list[0].node_id(), osd_list[0].addr(), osd_list[0].port());
+            };
+            cli->get_leader(server->node_id, server->pool_id, server->pg_id, add_node_func);
+            break;
+        }
+        case REMOVE_NODE:
+        {
+            auto remove_node_func = [cli, server, osd_list = g_osd_list](){
+                cli->remove_node(server->pool_id, server->pg_id, osd_list[0].node_id(), osd_list[0].addr(), osd_list[0].port());
+            };
+            cli->get_leader(server->node_id, server->pool_id, server->pg_id, remove_node_func);
+            break;
+        }
+        case CHANGE_NODES:
+        {
+            auto change_node_func = [cli, server, osd_list = g_osd_list](){
+                cli->change_nodes(server->pool_id, server->pg_id, std::move(osd_list));
+            };
+            cli->get_leader(server->node_id, server->pool_id, server->pg_id, change_node_func);
+            break;
+        }
+        case CREATE_PG:
+        {
+            cli->create_pg(server->node_id, server->pool_id, server->pg_id, g_pool_version);
+            break;
+        }
+        default:
+            break;
+        }
+    };
+
+    cli->create_connect(server->osd_addr, server->osd_port, server->node_id, std::move(connect_done));
 }
 
 int main(int argc, char *argv[])
@@ -177,7 +198,7 @@ int main(int argc, char *argv[])
     // tracing is memory consuming
     opts.num_entries = 0;
 
-    if ((rc = spdk_app_parse_args(argc, argv, &opts, "I:o:t:P:G:C:O:V:", NULL,
+    if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:I:o:t:P:G:N:O:V:", NULL,
                                   fbbench_parse_arg, fbbench_usage)) !=
         SPDK_APP_PARSE_ARGS_SUCCESS)
     {
@@ -189,6 +210,9 @@ int main(int argc, char *argv[])
     server.osd_port = g_osd_port;
     server.pool_id = g_pool_id;
     server.pg_id = g_pg_id;
+
+    SPDK_NOTICELOG("config file is %s\n", g_json_conf);
+    boost::property_tree::read_json(std::string(g_json_conf), server.pt);
 
     /* Blocks until the application is exiting */
     rc = spdk_app_start(&opts, raft_membership, &server);

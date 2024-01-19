@@ -23,6 +23,9 @@
 #include "utils/err_num.h"
 #include <google/protobuf/stubs/callback.h>
 
+#include <boost/property_tree/ptree.hpp>
+#include <boost/property_tree/json_parser.hpp>
+
 static int global_osd_id = 0;
 static const char *g_osd_addr = "127.0.0.1";
 static int g_osd_port = 8888;
@@ -37,6 +40,7 @@ typedef struct
     int osd_port;
     uint64_t pool_id;
     uint64_t pg_id;
+    boost::property_tree::ptree pt{};
 } server_t;
 
 class osd_client;
@@ -112,8 +116,8 @@ private:
 
 class osd_client {
 public:
-    osd_client(server_t *s)
-        : _cache(connect_cache::get_connect_cache()), _shard_cores(get_shard_cores()), _s(s)
+    osd_client(server_t *s, ::spdk_cpuset* cpumask, std::shared_ptr<msg::rdma::client::options> opts)
+        : _cache(cpumask, opts), _shard_cores(get_shard_cores()), _s(s)
     {
         uint32_t i = 0;
         auto shard_num = _shard_cores.size();
@@ -123,16 +127,18 @@ public:
         }
     }
 
-    void create_connect(const std::string &addr, int port, int node_id)
+    void create_connect(const std::string &addr, int port, int node_id, auto&& conn_cb)
     {
         uint32_t shard_id = 0;
         for (shard_id = 0; shard_id < _shard_cores.size(); shard_id++)
         {
             SPDK_NOTICELOG("create connect to node %d (address %s, port %d) in core %u\n",
                            node_id, addr.c_str(), port, _shard_cores[shard_id]);
-            auto connect = _cache.create_connect(0, node_id, addr, port);
-            auto &stub = _stubs[shard_id];
-            stub[node_id] = std::make_shared<osd::rpc_service_osd_Stub>(connect.get());
+            _cache.create_connect(0, node_id, addr, port, std::move(conn_cb), 
+            [this, shard_id, node_id](msg::rdma::client::connection* connect){
+              auto &stub = _stubs[shard_id];
+              stub[node_id] = std::make_shared<osd::rpc_service_osd_Stub>(connect);
+            });
         }
     }
 
@@ -242,7 +248,7 @@ private:
         auto &stubs = _stubs[shard_id];
         return stubs[node_id];
     }
-    connect_cache &_cache;
+    connect_cache _cache;
     server_t *_s;
     std::vector<uint32_t> _shard_cores;
     int32_t _leader_id;
