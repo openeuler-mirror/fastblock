@@ -103,7 +103,6 @@ if (spdk_INCLUDE_DIR AND EXISTS "${spdk_INCLUDE_DIR}/spdk/version.h")
 endif ()
 
 list(REMOVE_DUPLICATES spdk_lib_vars)
-set(spdk_INCLUDE_DIR "/usr/include")
 find_package_handle_standard_args (spdk
   REQUIRED_VARS
     spdk_INCLUDE_DIR
