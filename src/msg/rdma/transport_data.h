@@ -278,7 +278,7 @@ public:
             }
             request->SerializeToArray(content + off, ser_size);
             data->io_length = static_cast<uint32_t>(ser_size);
-            SPDK_DEBUGLOG(msg, "serialized size is %ld + %ld\n", meta_size, data->io_length);
+            SPDK_DEBUGLOG(msg, "serialized size is %lu + %d\n", meta_size, data->io_length);
 
             return;
         }
@@ -545,7 +545,7 @@ private:
 
                 SPDK_DEBUGLOG(
                   msg,
-                  "[%d] raddr %p, rkey: %d\n",
+                  "[%lu] raddr %p, rkey: %d\n",
                   i, _datas[i]->mr->addr, _datas[i]->mr->rkey);
 
                 if (rm_info_counter + 1 == max_rm_info) {
@@ -557,7 +557,7 @@ private:
 
                     SPDK_DEBUGLOG(
                       msg,
-                      "correlation index: %d, metadata{io_count: %ld, io_length: %ld, rm_info_count: %ld}\n",
+                      "correlation index: %d, metadata{io_count: %d, io_length: %d, rm_info_count: %ld}\n",
                       _correlation_index, meta_ptr->io_count, meta_ptr->io_length, rm_info_counter + 1);
 
                     meta_ptr = reinterpret_cast<metadata*>(_metas[++meta_counter]->mr->addr);
@@ -576,7 +576,7 @@ private:
 
                         SPDK_DEBUGLOG(
                           msg,
-                          "last metadata{io_count: %ld, io_length: %ld}\n",
+                          "last metadata{io_count: %d, io_length: %d}\n",
                           meta_ptr->io_count, meta_ptr->io_length);
                     }
                 }

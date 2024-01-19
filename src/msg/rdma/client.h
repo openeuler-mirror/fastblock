@@ -230,14 +230,14 @@ public:
             if (not req->request_data->is_ready()) {
                 SPDK_DEBUGLOG(
                   msg,
-                  "not enough chunks for request %ld, which needs %ld bytes\n",
+                  "not enough chunks for request %d, which needs %ld bytes\n",
                   req->request_key, req->request_data->serilaized_size());
                 return -EAGAIN;
             }
 
             SPDK_DEBUGLOG(
               msg,
-              "request id is %ld, request serialize size is %ld, request body size is %ld\n",
+              "request id is %d, request serialize size is %ld, request body size is %ld\n",
               req->request_key,
               req->request->ByteSizeLong() + request_meta_size,
               req->request->ByteSizeLong());
@@ -245,7 +245,7 @@ public:
             auto* meta = reinterpret_cast<request_meta*>(req->meta.get());
             SPDK_DEBUGLOG(
               msg,
-              "service_name_size: %ld, service_name: %s, method_name_size: %ld, method_name: %s\n",
+              "service_name_size: %d, service_name: %s, method_name_size: %d, method_name: %s\n",
               meta->service_name_size, meta->service_name,
               meta->method_name_size, meta->method_name);
 
@@ -257,13 +257,13 @@ public:
 
             SPDK_INFOLOG(
               msg,
-              "Send rpc request(id: %ld) with body size %ld\n",
+              "Send rpc request(id: %d) with body size %ld\n",
               req_ptr->request_key, req_ptr->request_data->serilaized_size());
 
             auto err = send_metadata_request(req_ptr->request_data.get());
             if (err and err->value() == ENOMEM) {
                 SPDK_NOTICELOG(
-                  "Post the metadata of request %ld return enomem, onflight_send_wr: %d\n",
+                  "Post the metadata of request %d return enomem, onflight_send_wr: %d\n",
                   req_ptr->request_key, _onflight_send_wr);
                 return -EAGAIN;
             }
@@ -320,9 +320,9 @@ public:
             auto err = _sock->receive(&(_recv_ctx[0]->wr));
             if (err) {
                 SPDK_ERRLOG(
-                  "ERROR: post %ld receive wrs error, '%s'\n",
+                  "ERROR: post %lu receive wrs error, '%s'\n",
                   _opts->per_post_recv_num,
-                  err->message());
+                  err->message().c_str());
                 shutdown();
             }
             rdma_probe.receive_wr_posted(_opts->per_post_recv_num);
@@ -431,7 +431,7 @@ public:
 
             SPDK_DEBUGLOG(
               msg,
-              "service_name_size: %ld, service_name: %s, method_name_size: %ld, method_name: %s\n",
+              "service_name_size: %d, service_name: %s, method_name_size: %d, method_name: %s\n",
               meta->service_name_size, meta->service_name,
               meta->method_name_size, meta->method_name);
 
@@ -444,7 +444,7 @@ public:
 
             SPDK_DEBUGLOG(
               msg,
-              "transport data_size: %ld, serialized_size: %ld, req_key: %d, service: %s, method: %s\n",
+              "transport data_size: %d, serialized_size: %ld, req_key: %d, service: %s, method: %s\n",
               meta->data_size, serialized_size, req_key, service_name.c_str(), method_name.c_str());
 
             SPDK_INFOLOG(
@@ -487,7 +487,7 @@ public:
             if (rc == -EINVAL) {
                 auto* stack_ptr = it->get();
                 SPDK_ERRLOG(
-                  "ERROR: Timeout occured of rpc request key %ld\n",
+                  "ERROR: Timeout occured of rpc request key %d\n",
                   stack_ptr->request_key);
                 stack_ptr->ctrlr->SetFailed("timeout");
                 stack_ptr->closure->Run();
@@ -590,14 +590,14 @@ public:
             auto is_parsed = stack_ptr->reply_data->unserialize_data(stack_ptr->response, reply_meta_size);
             if (not is_parsed) {
                 SPDK_ERRLOG(
-                  "ERROR: Unserialize the response body of request key %ld failed\n",
+                  "ERROR: Unserialize the response body of request key %d failed\n",
                   stack_ptr->request_key);
                 stack_ptr->ctrlr->SetFailed("unserialize error");
             }
 
             SPDK_INFOLOG(
               msg,
-              "Read the response body of request %ld\n",
+              "Read the response body of request %d\n",
               stack_ptr->request_key);
 
             stack_ptr->closure->Run();
@@ -629,14 +629,14 @@ public:
                 auto req_key = transport_data::read_correlation_index(recv_ctx);
                 auto req_it = _unresponsed_requests.find(req_key);
                 if (req_it == _unresponsed_requests.end()) {
-                    SPDK_ERRLOG("ERROR: Cant find the request stack of key '%ld'\n", req_key);
+                    SPDK_ERRLOG("ERROR: Cant find the request stack of key '%d'\n", req_key);
                     shutdown();
                     return true;
                 }
 
                 if (is_timeout(req_it->second.get())) {
                     SPDK_ERRLOG(
-                      "Timeout occurred on rpc request of request key %ld\n",
+                      "Timeout occurred on rpc request of request key %d\n",
                       req_it->second->request_key);
                     req_it->second->ctrlr->SetFailed("timeout");
                     _free_server_list.push_back(req_it->second->request_key);
@@ -650,13 +650,13 @@ public:
                 auto reply_m = transport_data::read_reply_meta(it->second);
                 SPDK_INFOLOG(
                   msg,
-                  "Received reply of request %ld, status is %s\n",
+                  "Received reply of request %d, status is %s\n",
                   req_it->second->request_key,
                   string_status(reply_m));
 
                 SPDK_DEBUGLOG(
                   msg,
-                  "received reply of request %ld, status is %s, elapsed: %ldus\n",
+                  "received reply of request %d, status is %s, elapsed: %ldus\n",
                   req_it->second->request_key,
                   string_status(reply_m),
                   (std::chrono::system_clock::now() - req_it->second->start_at).count() / 1000);
@@ -690,7 +690,7 @@ public:
                         if (not req_it->second->reply_data->is_metadata_complete()) {
                             SPDK_DEBUGLOG(
                               msg,
-                              "request key %ld, metadata is not complete\n",
+                              "request key %d, metadata is not complete\n",
                               req_it->second->request_key);
                             break;
                         }
@@ -698,7 +698,7 @@ public:
                         if (not req_it->second->reply_data->is_ready()) {
                             SPDK_DEBUGLOG(
                               msg,
-                              "request key %ld, transport data is not ready\n",
+                              "request key %d, transport data is not ready\n",
                               req_it->second->request_key);
                             break;
                         }
@@ -721,7 +721,7 @@ public:
 
                         SPDK_DEBUGLOG(
                           msg,
-                          "request key of %ld start rdma reading, _wait_read_requests addr is %p\n",
+                          "request key of %d start rdma reading, _wait_read_requests addr is %p\n",
                           req_it->second->request_key,
                           &_wait_read_requests);
                         _wait_read_requests.push_back(std::move(req_it->second));
@@ -734,7 +734,7 @@ public:
                     SPDK_DEBUGLOG(msg, "_onflight_rpc_task_size: %ld\n", _onflight_rpc_task_size);
                     if (not is_parsed) {
                         SPDK_ERRLOG(
-                          "ERROR: Parse response body failed of request %ld\n",
+                          "ERROR: Parse response body failed of request %d\n",
                           req_it->second->request_key);
 
                         req_it->second->ctrlr->SetFailed("unserialize failed");
@@ -746,7 +746,7 @@ public:
 
                     SPDK_INFOLOG(
                       msg,
-                      "Read the response body of request %ld\n",
+                      "Read the response body of request %d\n",
                       req_it->second->request_key);
                     req_it->second->closure->Run();
                     _free_server_list.push_back(req_it->second->request_key);
@@ -755,7 +755,7 @@ public:
                 }
                 default: {
                     SPDK_ERRLOG(
-                      "ERROR: RPC call failed of request %ld with reply status %s\n",
+                      "ERROR: RPC call failed of request %d with reply status %s\n",
                       req_it->second->request_key,
                       string_status(reply_m));
                     req_it->second->ctrlr->SetFailed(
@@ -1092,7 +1092,7 @@ public:
                 if (not conn->is_terminated()) {
                     conn->fd().update_qp_attr();
                     SPDK_ERRLOG(
-                      "ERROR: Got error wc, wc.vendor_err={}, wc.status={}, qp.state={}\n",
+                      "ERROR: Got error wc, wc.vendor_err=%d, wc.status=%s, qp.state=%s\n",
                       cqe->vendor_err,
                       socket::wc_status_name(cqe->status).c_str(),
                       conn->fd().qp_state_str().c_str());

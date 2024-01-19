@@ -225,7 +225,7 @@ private:
                 return EAGAIN;
             }
             SPDK_ERRLOG(
-              "ERROR: Send reply of task '%ld' error '%s'\n",
+              "ERROR: Send reply of task '%d' error '%s'\n",
               task->id, err->message().c_str());
               close_connection(task->conn.get());
             return err->value();
@@ -282,7 +282,7 @@ private:
             SPDK_ERRLOG(
               "ERROR: post %ld receive wrs error, '%s'\n",
               _opts->per_post_recv_num,
-              err->message());
+              err->message().c_str());
             close_connection(conn);
         }
         SPDK_DEBUGLOG(msg, "post %ld receive wrs\n", _opts->per_post_recv_num);
@@ -382,7 +382,7 @@ private:
               "ERROR: failed process cm event, will close the connection(rdma cm id: %p)\n",
               conn_iter->first);
 
-            SPDK_NOTICELOG("Reomve the connection(id: %ld)\n", conn_iter->first);
+            SPDK_NOTICELOG("Reomve the connection(id: %p)\n", conn_iter->first);
             close_connection(conn_iter->second.get());
         }
 
@@ -471,7 +471,7 @@ private:
 
         SPDK_INFOLOG(
           msg,
-          "Making rpc response body of request id %ld\n",
+          "Making rpc response body of request id %d\n",
           task->id);
         task->response_data = make_response_data(task, status::success);
     }
@@ -599,7 +599,7 @@ private:
             }
 
             SPDK_ERRLOG(
-             "ERROR: Send reply of task '%ld' error '%s'\n",
+             "ERROR: Send reply of task '%d' error '%s'\n",
               task->id, err->message().c_str());
             close_connection(task->conn.get());
 
@@ -665,12 +665,12 @@ private:
         }
 
         if (not task->request_data->is_metadata_complete()) {
-            SPDK_DEBUGLOG(msg, "rpc task %ld, metadata is not complete\n", task->id);
+            SPDK_DEBUGLOG(msg, "rpc task %d, metadata is not complete\n", task->id);
             return SPDK_POLLER_IDLE;
         }
 
         if (not task->request_data->is_ready()) {
-            SPDK_DEBUGLOG(msg, "rpc task %ld, transport data is not complete\n", task->id);
+            SPDK_DEBUGLOG(msg, "rpc task %d, transport data is not complete\n", task->id);
             return SPDK_POLLER_IDLE;
         }
 
@@ -678,7 +678,7 @@ private:
         auto rc = send_read_request(task->conn.get(), task->request_data.get());
         if (rc and rc->value() == ENOMEM) {
             SPDK_NOTICELOG(
-              "Post the read wr of request %ld return enomem\n",
+              "Post the read wr of request %d return enomem\n",
               task->id);
             return SPDK_POLLER_IDLE;
         }
@@ -716,7 +716,7 @@ private:
                     SPDK_DEBUGLOG(msg, "recv_ctx_map wr_id: %lu\n", kv.first);
                 }
 
-                SPDK_DEBUGLOG(msg, "conn->recv_ctx_map.size(): %llu\n", conn->recv_ctx_map.size());
+                SPDK_DEBUGLOG(msg, "conn->recv_ctx_map.size(): %lu\n", conn->recv_ctx_map.size());
                 SPDK_ERRLOG(
                   "ERROR: Cant find the receive context of wr id '%s'\n",
                   work_request_id::fmt(cqe->wr_id).c_str());
@@ -750,7 +750,7 @@ private:
             SPDK_DEBUGLOG(msg, "cqe on task id %d\n", task_id);
             auto task_it = conn->rpc_tasks.find(task_id);
             if (task_it == conn->rpc_tasks.end()) {
-                SPDK_DEBUGLOG(msg, "new rpc task with correlation index %ld\n", task_id);
+                SPDK_DEBUGLOG(msg, "new rpc task with correlation index %d\n", task_id);
                 auto task = std::make_shared<rpc_task>(task_id, conn);
                 if (transport_data::is_inlined(recv_ctx)) {
                     auto* inlined_data = transport_data::read_inlined_content(recv_ctx);

@@ -111,7 +111,7 @@ void iter_on_pong(msg::rdma::rpc_controller* ctrlr, ping_pong::response* reply) 
 
     ++g_rpc_dur_count;
     g_all_rpc_dur += static_cast<double>(dur);
-    if (reply->id() >= g_iter_count) {
+    if (static_cast<size_t>(reply->id()) >= g_iter_count) {
         auto iops_dur = static_cast<double>((std::chrono::system_clock::now() - g_iops_start).count());
         SPDK_ERRLOG(
           "client iteration done, duration count is %lu, mean duration is %lfus, total dur: %lfus, iops: %lf\n",
@@ -134,7 +134,7 @@ void iter_on_pong(msg::rdma::rpc_controller* ctrlr, ping_pong::response* reply) 
 }
 
 void start_rpc_client(void* arg) {
-    SPDK_NOTICELOG("Start the rpc client, memory pool capacity is %llu\n", g_mempool_cap);
+    SPDK_NOTICELOG("Start the rpc client, memory pool capacity is %lu\n", g_mempool_cap);
 
     ::spdk_cpuset_zero(&g_cpumask);
     auto core_no = ::spdk_env_get_first_core();
