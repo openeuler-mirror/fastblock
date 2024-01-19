@@ -135,7 +135,7 @@ void start_monitor(server_t* ctx) {
 
 void storage_init_complete(void *arg, int rberrno){
     if(rberrno != 0){
-		SPDK_ERRLOG("Failed to initialize the storage system: \n", spdk_strerror(rberrno));
+		SPDK_ERRLOG("Failed to initialize the storage system: %s\n", spdk_strerror(rberrno));
 		spdk_app_stop(rberrno);
 		return;
 	}

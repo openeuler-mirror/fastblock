@@ -306,12 +306,12 @@ public:
 
         SPDK_DEBUGLOG(
           libblk,
-          "leader_osd_key: %llu, should_acquire_leader: %d\n",
+          "leader_osd_key: %lu, should_acquire_leader: %d\n",
           req_stk->leader_osd_key, should_acquire_leader);
 
         if (should_acquire_leader) {
             _leader_osd.emplace(req_stk->leader_osd_key, std::make_unique<leader_osd_info>());
-            SPDK_DEBUGLOG(libblk, "_leader_osd emplaced %llu\n", req_stk->leader_osd_key);
+            SPDK_DEBUGLOG(libblk, "_leader_osd emplaced %lu\n", req_stk->leader_osd_key);
             auto struct_key = from_leader_key(req_stk->leader_osd_key);
             enqueue_leader_request(struct_key.pool_id, struct_key.pg_id);
         } else if (it->second and not it->second->is_onflight) {
@@ -427,7 +427,7 @@ public:
 
             SPDK_DEBUGLOG(
               libblk,
-              "head->leader_osd_key: %lu, leader_id: %lu, addr: '%s:%d' is_onflight: %d, is_valid: %d\n",
+              "head->leader_osd_key: %lu, leader_id: %u, addr: '%s:%d' is_onflight: %d, is_valid: %d\n",
               head->leader_osd_key,
               osd_info_it->second->leader_id,
               osd_info_it->second->addr.c_str(),
@@ -505,13 +505,13 @@ private:
         auto info_it = _leader_osd.find(leader_key);
         if (info_it == _leader_osd.end()) {
             SPDK_ERRLOG(
-              "ERROR: Cant find the leader osd info record of pool id %d, pg id %d\n",
+              "ERROR: Cant find the leader osd info record of pool id %ld, pg id %ld\n",
               it->second->leader_req->pool_id(), it->second->leader_req->pg_id());
 
             throw std::runtime_error{"Cant find the leader osd info record"};
         }
         auto* osd_info = info_it->second.get();
-        SPDK_INFOLOG(libblk, "Got leader osd %d, leader_key is %lu\n", stack_ptr->leader_request_id, leader_key);
+        SPDK_INFOLOG(libblk, "Got leader osd %ld, leader_key is %lu\n", stack_ptr->leader_request_id, leader_key);
         osd_info->is_onflight = false;
         auto* resp = it->second->leader_resp.get();
         osd_info->epoch = std::chrono::system_clock::now();
@@ -564,7 +564,7 @@ public:
 
         SPDK_INFOLOG(
           libblk,
-          "write_object pool: %lu pg: %lu object_name: %s offset: %lu length: %lu \n",
+          "write_object pool: %u pg: %u object_name: %s offset: %lu length: %lu \n",
           target_pool_id, target_pg, object_name.c_str(), offset, buf.size());
 
         return 0;
@@ -582,7 +582,7 @@ public:
 
         SPDK_INFOLOG(
           libblk,
-          "read_object pool: %lu pg:%lu object:%s offset:%lu length: %lu\n",
+          "read_object pool: %lu pg: %u object: %s offset: %lu length: %lu\n",
           target_pool_id, target_pg, object_name.c_str(), offset, length);
 
         auto req = std::make_unique<osd::read_request>();
@@ -606,7 +606,7 @@ public:
 
         SPDK_INFOLOG(
           libblk,
-          "delete_object pool: %lu pg: %lu object: %s\n",
+          "delete_object pool: %lu pg: %u object: %s\n",
           target_pool_id, target_pg, object_name.c_str());
 
         auto req = std::make_unique<osd::delete_request>();

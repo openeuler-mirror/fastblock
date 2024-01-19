@@ -496,7 +496,7 @@ public:
 
         SPDK_DEBUGLOG(
           msg,
-          "process active side event: %s(id: %d)\n",
+          "process active side event: %s(id: %p)\n",
           ::rdma_event_str(evt->event), evt->id);
 
         std::exception_ptr eptr;
@@ -618,8 +618,9 @@ public:
         auto ret = ::rdma_resolve_route(_id, _ep.resolve_timeout_us);
         if (ret) [[unlikely]] {
             SPDK_ERRLOG(
-              "resolve route(src: {}, dst: {}) failed: {}\n",
-              host(_res->ai_src_addr), host(_res->ai_dst_addr),
+              "resolve route(src: %s, dst: %s) failed: %s\n",
+              host(_res->ai_src_addr).c_str(),
+              host(_res->ai_dst_addr).c_str(),
               std::strerror(errno));
             throw std::runtime_error{"resolve route failed"};
         }
@@ -648,7 +649,7 @@ public:
         }
 
         if (!known_qp_state()) {
-            SPDK_ERRLOG("bad qp state: %s\n", _qp_attr->qp_state);
+            SPDK_ERRLOG("bad qp state: %d\n", _qp_attr->qp_state);
             return IBV_QPS_ERR + 1;
         }
 
@@ -825,8 +826,9 @@ private:
         ret = ::rdma_resolve_route(_id, _ep.resolve_timeout_us);
         if (ret) {
             SPDK_ERRLOG(
-              "resolve route(src: {}, dst: {}) failed: {}\n",
-              host(_res->ai_src_addr), host(_res->ai_dst_addr),
+              "resolve route(src: %s, dst: %s) failed: %s\n",
+              host(_res->ai_src_addr).c_str(),
+              host(_res->ai_dst_addr).c_str(),
               std::strerror(errno));
         }
         process_active_cm_event(RDMA_CM_EVENT_ROUTE_RESOLVED);

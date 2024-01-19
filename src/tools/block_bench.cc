@@ -173,10 +173,10 @@ void on_write_done(::spdk_bdev_io* ctx, [[maybe_unused]] int32_t res) {
     auto dur = static_cast<double>(::spdk_get_ticks() - stack_ptr->start_tick);
     SPDK_DEBUGLOG(
       bbench,
-      "write duration is %lfus/%lfms, raw value is %lf, start_tsc is %lf\n",
+      "write duration is %lfus/%lfms, raw value is %lf, start_tsc is %ld\n",
       tick_to_us(dur), tick_to_ms(dur), dur, stack_ptr->start_tick);
     bench_ctx->durs.push_back(dur);
-    SPDK_DEBUGLOG(bbench, "The %dth write request done\n", stack_ptr->id);
+    SPDK_DEBUGLOG(bbench, "The %ldth write request done\n", stack_ptr->id);
     bench_ctx->done_io_count++;
 
     if (stack_ptr->id % 100 == 0) {
@@ -203,10 +203,10 @@ void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
     auto dur = static_cast<double>(::spdk_get_ticks() - stack_ptr->start_tick);
     SPDK_DEBUGLOG(
       bbench,
-      "read duration is %lfus/%lfms, raw value is %lf, start_tsc is %lf\n",
+      "read duration is %lfus/%lfms, raw value is %lf, start_tsc is %ld\n",
       tick_to_us(dur), tick_to_ms(dur), dur, stack_ptr->start_tick);
     bench_ctx->durs.push_back(dur);
-    SPDK_DEBUGLOG(bbench, "The %dth read request done\n", stack_ptr->id);
+    SPDK_DEBUGLOG(bbench, "The %ldth read request done\n", stack_ptr->id);
     bench_ctx->on_flight_request.erase(stack_ptr->id);
     bench_ctx->done_io_count++;
 
@@ -241,7 +241,7 @@ void on_thread_received_msg(void* arg) {
 
     SPDK_DEBUGLOG(bbench, "start sending rpc\n");
     watcher_ctx->iops_start_at = ::spdk_get_ticks();
-    for (auto i{0}; i < watcher_ctx->io_depth; ++i) {
+    for (size_t i{0}; i < watcher_ctx->io_depth; ++i) {
         switch (watcher_ctx->io_type) {
         case bench_io_type::write:
             write_once(ctx);
@@ -382,7 +382,7 @@ int watch_poller(void* arg) {
         if (should_exit) {
             ctx->is_exit = true;
             auto n_core = ::spdk_env_get_core_count();
-            for (int i{0}; i < n_core; ++i) {
+            for (uint32_t i{0}; i < n_core; ++i) {
                 ::spdk_set_thread(ctx->bench_threads[i]);
                 ctx->core_ctxs[i].blk_client->stop();
                 ::spdk_set_thread(nullptr);
