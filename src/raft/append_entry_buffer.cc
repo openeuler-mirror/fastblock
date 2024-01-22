@@ -72,8 +72,8 @@ void append_entries_buffer::do_flush(){
     flush_complete* complete = new flush_complete(comp, this);
 
     int ret = _raft->raft_recv_appendentries(request->node_id(), request, response, complete);
-    if(ret != 0){
-        complete->complete(ret);
-    }
+    // if(ret != 0){
+        // complete->complete(ret);
+    // }                        
 }
 

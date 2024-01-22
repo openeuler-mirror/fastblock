@@ -80,6 +80,9 @@ public:
         return _nodes;
     }
 
+    raft_index_t get_index(){
+        return _index;
+    }
 private:
     raft_index_t _index;
     raft_term_t  _term;
@@ -240,17 +243,20 @@ public:
 
     void updatet_raft_nodes_stat();
 
+    void truncate_by_idx(raft_index_t index);
 private:
     raft_server_t* _raft;
     std::deque<node_configuration> _configurations;
     cfg_state _state;
+
+    //暂存类型位RAFT_LOGTYPE_ADD_NONVOTING_NODE的log entry
     std::shared_ptr<raft_entry_t> _cfg_entry;
     utils::context* _cfg_complete;
 
     //进入CFG_CATCHING_UP状态时设置，保存添加的所有节点
     absl::node_hash_map<raft_node_id_t, catch_up_node> _catch_up_nodes;
 
-    //用于在CFG_UPDATE_NEW_CFG状态时标记RAFT_LOGTYPE_CONFIGURATION类型的entry的index
+    //用于在CFG_UPDATE_NEW_CFG状态时标记RAFT_LOGTYPE_CONFIGURATION类型的entry的index.只用在leader中
     raft_index_t _configuration_index;
 
     //用于统计CFG_JOINT或CFG_UPDATE_NEW_CFG状态时，RAFT_LOGTYPE_CONFIGURATION类型entry的commit信息

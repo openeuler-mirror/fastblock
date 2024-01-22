@@ -64,14 +64,11 @@ void raft_server_t::raft_set_timer()
     raft_set_start_time(now);
 }
 
-int raft_server_t::raft_truncate_from_idx(raft_index_t idx)
+int raft_server_t::raft_log_truncate(raft_index_t idx, log_op_complete cb_fn, void* arg)
 {
     assert(raft_get_commit_idx() < idx);
 
-    if (idx <= raft_get_voting_cfg_change_log_idx())
-        raft_set_voting_cfg_change_log_idx(-1);
-
-    return raft_get_log()->log_truncate(idx);
+    return raft_get_log()->log_truncate(idx, std::move(cb_fn), arg);
 }
 
 int raft_server_t::raft_election_start()
@@ -285,6 +282,12 @@ int raft_server_t::raft_periodic()
 bool raft_server_t::raft_get_entry_term(raft_index_t idx, raft_term_t& term)
 {
     raft_term_t _term;
+    auto entry = raft_get_log()->log_get_at_idx(idx);
+    if(entry){
+        term = entry->term();
+        return true;
+    }
+
     auto got = raft_get_log()->disk_get_term(idx, _term);
     if (got){
         term = _term;
@@ -524,15 +527,9 @@ int raft_server_t::raft_recv_appendentries(
     )
 {
     int e = 0;
-    int k = 0;
     raft_time_t election_timer1;
     int i;
-    std::vector<std::pair<std::shared_ptr<raft_entry_t>, utils::context*>> entrys;
     int entries_num = ae->entries_size();
-    raft_index_t start_idx;
-    raft_index_t end_idx;
-    follow_disk_append_complete *append_complete;
-    raft_index_t new_commit_idx = 0;
 
     if (0 < entries_num)
         SPDK_INFOLOG(pg_group, "recvd appendentries from node %d pg: %lu.%lu current_term: %ld request_term:%ld current_idx:%ld \
@@ -547,6 +544,15 @@ int raft_server_t::raft_recv_appendentries(
               ae->prev_log_term(),
               entries_num);
 
+    auto hand_error = [this, r, ae, complete](int err_num){
+        r->set_term(raft_get_current_term());
+        if (1 != r->success())
+            r->set_current_idx(raft_get_current_idx());
+        r->set_first_idx(ae->prev_log_idx() + 1);
+        complete->complete(err_num);
+        return err_num;
+    };
+
     r->set_node_id(raft_get_nodeid());
     r->set_success(0);
 
@@ -557,8 +563,9 @@ int raft_server_t::raft_recv_appendentries(
     else if (raft_get_current_term() < ae->term())
     {
         e = raft_set_current_term(ae->term());
-        if (0 != e)
-            goto out;
+        if (0 != e){
+            return hand_error(e);
+        }
         raft_become_follower();
     }
     else if (ae->term() < raft_get_current_term())
@@ -566,8 +573,7 @@ int raft_server_t::raft_recv_appendentries(
         /* 1. Reply false if term < currentTerm (§5.1) */
         SPDK_INFOLOG(pg_group, "AE from %d term %ld is less than current term %ld\n",
               ae->node_id(), ae->term(), raft_get_current_term());
-	e = err::E_INVAL;
-        goto out;
+        return hand_error(err::E_INVAL);
     }
 
     /* update current leader because ae->term is up to date */
@@ -588,10 +594,10 @@ int raft_server_t::raft_recv_appendentries(
         bool got = raft_get_entry_term(ae->prev_log_idx(), term);
         if (!got && raft_get_current_idx() < ae->prev_log_idx())
         {
-	    e = err::E_INVAL;
+            e = err::E_INVAL;
             //follower滞后leader，需要recovery
             SPDK_WARNLOG("AE from %d no log at prev_idx %ld , current idx %ld\n", ae->node_id(), ae->prev_log_idx(), raft_get_current_idx());
-            goto out;
+            return hand_error(e);
         }
         else if (got && term != ae->prev_log_term())
         {
@@ -604,19 +610,69 @@ int raft_server_t::raft_recv_appendentries(
                 SPDK_WARNLOG("AE prev conflicts with committed entry\n");
                 e = err::RAFT_ERR_SHUTDOWN;
                 r->set_success(e);
-                goto out;
+                return hand_error(e);
             }
             /* Delete all the following log entries because they don't match */
-	    raft_truncate_from_idx(ae->prev_log_idx());
-	    _current_idx = ae->prev_log_idx() - 1;
-	    e = err::RAFT_ERR_LOG_NOT_MATCH;
-            r->set_success(err::RAFT_ERR_LOG_NOT_MATCH);
-            goto out;
+            raft_log_truncate(
+              ae->prev_log_idx(), 
+              [this, ae, r, hand_error = std::move(hand_error)](void *arg, int rberrno){
+                _current_idx = ae->prev_log_idx() - 1;
+                int err_num = err::RAFT_ERR_LOG_NOT_MATCH;
+                if(rberrno != 0)
+                    err_num = rberrno;
+                r->set_success(err_num);
+                return hand_error(err_num);
+              }, 
+              nullptr);
+            return err::RAFT_ERR_LOG_NOT_MATCH;
         }
     }
 
     r->set_success(1);
     r->set_current_idx(ae->prev_log_idx());
+
+    auto append_entry_func = [this, entries_num, ae, complete, r](int i){
+        /* 4. Append any new entries not already in the log */
+        int k = entries_num - i;
+        std::vector<std::pair<std::shared_ptr<raft_entry_t>, utils::context*>> entrys;
+
+        for(auto j = i; j < entries_num; j++){
+            const raft_entry_t& ety = ae->entries(j);
+    
+            std::shared_ptr<raft_entry_t> ety_ptr = std::make_shared<raft_entry_t>(std::move(ety));
+            if(j == entries_num - 1){
+                entrys.emplace_back(std::make_pair(std::move(ety_ptr), complete));
+            }else{
+                entrys.emplace_back(std::make_pair(std::move(ety_ptr), nullptr));
+            }
+        }
+        raft_index_t start_idx = ae->prev_log_idx() + 1 + i;
+        raft_index_t end_idx =  start_idx + k - 1;
+        SPDK_DEBUGLOG(pg_group, "start_idx: %ld  end_idx: %ld \n", start_idx, end_idx);
+        raft_append_entries(entrys);
+        i += k;
+        r->set_current_idx(ae->prev_log_idx() + i);
+    
+        raft_index_t new_commit_idx = 0;
+        /* 5. If leaderCommit > commitIndex, set commitIndex =
+            min(leaderCommit, index of last new entry) */
+        if (raft_get_commit_idx() < ae->leader_commit())
+        {
+            new_commit_idx = std::min(ae->leader_commit(), r->current_idx());
+        }
+        
+        r->set_term(raft_get_current_term());
+        r->set_first_idx(ae->prev_log_idx() + 1);
+        if(start_idx > end_idx){
+            //空的append entry request
+            complete->complete(0);
+            return;
+        }
+        _current_idx = end_idx;
+        auto append_complete = new follow_disk_append_complete(start_idx, end_idx, new_commit_idx, this, r);
+        raft_disk_append_entries(start_idx, end_idx, append_complete);
+    };
+
 
     /* 3. If an existing entry conflicts with a new one (same index
        but different terms), delete the existing entry and all that
@@ -637,62 +693,24 @@ int raft_server_t::raft_recv_appendentries(
                       ae->leader_commit(), ae->prev_log_idx());
                 e = err::RAFT_ERR_SHUTDOWN;
                 r->set_success(e);
-                goto out;
+                return hand_error(e);
             }
-	    raft_truncate_from_idx(ety_index);
-            _current_idx = ety_index - 1;
-            break;
+            raft_log_truncate(
+              ety_index, 
+              [this, ety_index, append_entry_func, i](void *arg, int rberrno){
+                _current_idx = ety_index - 1;
+                append_entry_func(i);
+              }, 
+              nullptr);
+            return 0;
         }
         else if (!got && raft_get_current_idx() < ety_index)
             break;
         r->set_current_idx(ety_index);
     }
 
-    /* 4. Append any new entries not already in the log */
-    k = entries_num - i;
-    for(auto j = i; j < entries_num; j++){
-        const raft_entry_t& ety = ae->entries(j);
-
-        std::shared_ptr<raft_entry_t> ety_ptr = std::make_shared<raft_entry_t>(std::move(ety));
-        if(j == entries_num - 1){
-            entrys.emplace_back(std::make_pair(std::move(ety_ptr), complete));
-        }else{
-            entrys.emplace_back(std::make_pair(std::move(ety_ptr), nullptr));
-        }
-    }
-    start_idx = ae->prev_log_idx() + 1 + i;
-    end_idx =  start_idx + k - 1;
-    SPDK_INFOLOG(pg_group, "start_idx: %ld  end_idx: %ld \n", start_idx, end_idx);
-    raft_append_entries(entrys);
-    i += k;
-    r->set_current_idx(ae->prev_log_idx() + i);
-
-    /* 5. If leaderCommit > commitIndex, set commitIndex =
-        min(leaderCommit, index of last new entry) */
-    if (raft_get_commit_idx() < ae->leader_commit())
-    {
-        new_commit_idx = std::min(ae->leader_commit(), r->current_idx());
-    }
-
-    r->set_term(raft_get_current_term());
-    r->set_first_idx(ae->prev_log_idx() + 1);
-    if(start_idx > end_idx){
-        //空的append entry request
-        complete->complete(0);
-        return 0;
-    }
-    _current_idx = end_idx;
-    append_complete = new follow_disk_append_complete(start_idx, end_idx, new_commit_idx, this, r);
-    raft_disk_append_entries(start_idx, end_idx, append_complete);
+    append_entry_func(i);
     return 0;
-
-out:
-    r->set_term(raft_get_current_term());
-    if (1 != r->success())
-        r->set_current_idx(raft_get_current_idx());
-    r->set_first_idx(ae->prev_log_idx() + 1);
-    //complete->complete(e);
-    return e;
 }
 
 int raft_server_t::_should_grant_vote(const msg_requestvote_t* vr)
@@ -1430,55 +1448,6 @@ bool raft_entry_is_cfg_change(raft_entry_t* ety)
            RAFT_LOGTYPE_CONFIGURATION  == ety->type();
 }
 
-void raft_pop_log(void *arg, raft_index_t idx, std::shared_ptr<raft_entry_t> entry)
-{
-    raft_server_t* me_ = (raft_server_t*)arg;
-
-    // if (!raft_entry_is_cfg_change(entry.get()))
-        // return;   
-
-    if (idx <= me_->raft_get_voting_cfg_change_log_idx())
-        me_->raft_set_voting_cfg_change_log_idx(-1);
-
-    // raft_node_id_t node_id = me_->raft_get_cbs().log_get_node_id(me_, me_->raft_get_udata(),
-                                                        // entry.get(), idx);    
-    // 
-    // raft_node* node = me_->raft_get_node(node_id);
-    // bool is_self = node_id == me_->raft_get_nodeid();
-
-    // switch (entry->type())
-    // {
-        // case RAFT_LOGTYPE_DEMOTE_NODE:
-            // assert(node && !node->raft_node_is_voting());
-            // node->raft_node_set_voting(1);
-            // break;
-        // case RAFT_LOGTYPE_REMOVE_NODE:
-            // assert(!node);
-            // node = me_->raft_add_node_internal(entry.get(), NULL, node_id, is_self);
-            // assert(node);
-            // break;
-        // case RAFT_LOGTYPE_REMOVE_NONVOTING_NODE:
-            // assert(!node);
-            // node = me_->raft_add_non_voting_node_internal(entry.get(), NULL, node_id, is_self);
-            // assert(node);
-            // break;
-        // case RAFT_LOGTYPE_ADD_NONVOTING_NODE:
-            // assert(node && !node->raft_node_is_voting());
-            // me_->raft_remove_node(node);
-            // break;
-        // case RAFT_LOGTYPE_ADD_NODE:
-            // assert(node && node->raft_node_is_voting());
-            // me_->raft_remove_node(node);
-            // break;
-        // case RAFT_LOGTYPE_PROMOTE_NODE:
-            // assert(node && node->raft_node_is_voting());
-            // node->raft_node_set_voting(0);
-            // break;
-        // default:
-            // assert(0);
-    // }
-}
-
 /** Raft callback for handling periodic logic */
 static int periodic_func(void* arg){
     raft_server_t* raft = (raft_server_t*)arg;
@@ -1615,9 +1584,15 @@ int raft_server_t::raft_recv_installsnapshot(raft_node_id_t node_id,
         }else
             response->set_success(1);  
         if(done){
-	    set_index_after_snapshot(index);
-
-	    SPDK_INFOLOG(pg_group, "pg: %lu.%lu, set  _last_applied_idx, _current_idx, _commit_idx to %ld\n", _pool_id, _pg_id, index);
+            raft_get_log()->set_disk_log_index(
+              index,
+              [this, index, complete](void *arg, int rberrno){
+                set_index_after_snapshot(index);
+                SPDK_INFOLOG(pg_group, "pg: %lu.%lu, set  _last_applied_idx, _current_idx, _commit_idx to %ld rberrno %d\n", 
+                        _pool_id, _pg_id, index, rberrno);
+                complete->complete(rberrno);
+              },
+              nullptr);
             return;
         }
         complete->complete(rerrno);    
@@ -2271,7 +2246,6 @@ raft_server_t::raft_server_t(raft_client_protocol& client, disk_log* log,
     , _heartbeat_timeout(200)
     , _leader_id(-1)
     , _node_id(-1)
-    , voting_cfg_change_log_idx(-1)
     , _snapshot_in_progress(false)
     , _lease_maintenance_grace(0)
     , _first_start(false) 

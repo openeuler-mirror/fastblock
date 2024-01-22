@@ -36,6 +36,7 @@ int raft_log::log_append(std::vector<std::pair<std::shared_ptr<raft_entry_t>, ut
     {
         auto entry = entry_pair.first;
         auto complete = entry_pair.second;
+        SPDK_WARNLOG("entry index: %ld, _next_idx: %ld\n", entry->idx(), _next_idx);
         entry->set_idx(_next_idx);
         _next_idx++;  
         _entries.add(entry, complete);
@@ -101,11 +102,15 @@ int raft_log::config_cache_flush(){
     return count;
 }
 
-int raft_log::log_truncate(raft_index_t idx)
+int raft_log::log_truncate(raft_index_t idx, log_op_complete cb_fn, void* arg)
 {
-    int n = _entries.for_upper(idx, 0, raft_pop_log, _raft);
-    _entries.remove_upper(idx, n);
-    //截断log盘中idx（包含idx）后的entry      todo
+    auto last_cache_idx = get_last_cache_entry();
+    raft_write_entry_finish(idx, last_cache_idx, 0);
+    remove_entry_between(idx, last_cache_idx);
+    
+    _raft->get_node_configuration_manager().truncate_by_idx(idx);
+    
+    _log->truncate(idx, std::move(cb_fn), arg);
 
     return 0;
 }

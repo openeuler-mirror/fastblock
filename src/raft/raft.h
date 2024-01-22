@@ -355,14 +355,6 @@ public:
         return _start_time;
     }
 
-    void raft_set_voting_cfg_change_log_idx(raft_index_t _voting_cfg_change_log_idx){
-        voting_cfg_change_log_idx = _voting_cfg_change_log_idx;
-    }
-
-    raft_index_t raft_get_voting_cfg_change_log_idx(){
-        return voting_cfg_change_log_idx;
-    }
-
     int raft_get_prevote(){
         return _prevote;
     }
@@ -475,12 +467,6 @@ public:
     void raft_flush();
     void process_conf_change_entry(std::shared_ptr<raft_entry_t> entry);
 
-
-    int raft_voting_change_is_in_progress()
-    {
-        return voting_cfg_change_log_idx != -1;
-    }
-
     int raft_send_heartbeat(raft_node* node);
 
     int raft_send_appendentries(raft_node* node);
@@ -494,7 +480,7 @@ public:
     int raft_get_nvotes_for_me();
 
     //截断idx（包含）之后的log entry
-    int raft_truncate_from_idx(raft_index_t idx);
+    int raft_log_truncate(raft_index_t idx, log_op_complete cb_fn, void* arg);
 
     /** Add entries to the server's log cache. used by follower
      * @param[in] entries List of entries to be appended
@@ -721,6 +707,10 @@ public:
         _nodes_stat.update_with_node_configuration(cfg, new_add_nodes);   
     }
 
+    void update_nodes_stat(node_configuration& cfg){
+        _nodes_stat.update_with_node_configuration(cfg, {}); 
+    }
+
     raft_nodes&  get_nodes_stat(){
         return _nodes_stat;
     }
@@ -777,7 +767,10 @@ public:
         raft_set_current_idx(index);
         raft_set_commit_idx(index);
         raft_get_log()->set_next_idx(index + 1);
-	raft_get_log()->set_disk_log_index(index + 1);
+    }
+
+    node_configuration_manager &get_node_configuration_manager(){
+        return _configuration_manager;
     }
 private:
     int _recovery_by_snapshot(std::shared_ptr<raft_node> node);
@@ -825,9 +818,6 @@ private:
     /* my node ID */
     raft_node_id_t _node_id;
 
-    /* the log which has a voting cfg change, otherwise -1 */
-    raft_index_t voting_cfg_change_log_idx;
-
     bool _snapshot_in_progress;
 
     /* grace period after each lease expiration time honored when we determine
@@ -842,8 +832,8 @@ private:
     uint64_t _pool_id;
     uint64_t _pg_id;
 
-    raft_index_t _first_idx;     //当前正在处理的一批msg中第一个的idx
-    raft_index_t _current_idx;   //当前正在处理的一批msg中最后一个的idx
+    raft_index_t _first_idx;     //当前正在处理的一批log中第一个的idx(只用在leader中)
+    raft_index_t _current_idx;   //leader中是当前正在处理的一批log中最后一个的idx，follower中是已经处理的最新的idx
     raft_client_protocol& _client;
 
     append_entries_buffer _append_entries_buffer;
@@ -867,8 +857,6 @@ private:
 }; 
 
 int raft_votes_is_majority(const int nnodes, const int nvotes);
-
-void raft_pop_log(void *arg, raft_index_t idx, std::shared_ptr<raft_entry_t> entry);
 
 #define RAFT_REQUESTVOTE_ERR_GRANTED          1
 #define RAFT_REQUESTVOTE_ERR_NOT_GRANTED      0

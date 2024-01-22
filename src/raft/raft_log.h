@@ -174,10 +174,9 @@ public:
     {
         _entries.clear();
     }
-
-    /*
-    */
-    int log_truncate(raft_index_t idx);
+  
+    //截断idx（包含）之后的log entry
+    int log_truncate(raft_index_t idx, log_op_complete cb_fn, void* arg);
 
     raft_index_t log_get_base_index()
     {
@@ -260,9 +259,9 @@ public:
         _next_idx = next_idx;
     }
 
-    void set_disk_log_index(raft_index_t index){
+    void set_disk_log_index(raft_index_t index, log_op_complete cb_fn, void* arg){
         if(_log){
-            _log->set_index(index);
+            _log->set_index(index, std::move(cb_fn), arg);
         }
     }
 

@@ -243,3 +243,20 @@ void node_configuration_manager::updatet_raft_nodes_stat(){
     auto &cfg = get_last_node_configuration();
     _raft->update_nodes_stat(cfg, new_add_nodes);
 }
+
+void node_configuration_manager::truncate_by_idx(raft_index_t index){
+    bool update = false;
+    while(!_configurations.empty()){
+        auto &cfg = _configurations.back();
+        if(cfg.get_index() >= index){
+            _configurations.pop_back();
+            update = true;
+        }else{
+            break;
+        }
+    }
+    if(update){
+        auto &cfg = _configurations.back();
+        _raft->update_nodes_stat(cfg);
+    }
+}

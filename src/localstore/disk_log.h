@@ -283,6 +283,29 @@ public:
         _rblob->trim_back(trim_length, cb_fn, arg);
     }
 
+    /* 截断start_index（包括start_index）之后的log */
+    void truncate(uint64_t start_index, log_op_complete cb_fn, void* arg){
+        auto start_it = _index_map.find(start_index);
+        auto end_it = _index_map.end();
+
+        if(start_it == _index_map.end()){
+            SPDK_ERRLOG("can not find index :%lu \n", start_index);
+            cb_fn(arg, -EINVAL);
+            return;
+        }
+
+        uint64_t trim_length = 0;
+        for (auto it = start_it; it != end_it; it++) {
+            trim_length += it->second.size;
+        }
+
+        // 处理 disklog 中保存的数据
+        _index_map.erase(start_it, end_it);
+        _highest_index = start_index - 1;
+
+        _rblob->trim_front(trim_length, cb_fn, arg);
+    }
+
     void advance_trim_index(uint64_t index) {
         _trim_index = std::max(_trim_index, index);
     }
@@ -309,11 +332,23 @@ public:
 
     /*
      * follower节点在接收完leader的快照后，才能调用
+     * index之前（包括index）的对象都是通过快照发过来的，没有log，相当于在index的位置做了一个快照，
+     * index之前（包括index）的log可以trim掉了。但根据raft协议，这里follower都需要通过snapshot恢复数据了，log
+     * 中index（包括index）之后的数据（正常情况下不应该有数据）也需要删除了
      */
-    void set_index(uint64_t index){
-        _lowest_index = std::max(_lowest_index, index);
-        _trim_index = std::max(_trim_index, index);
-        _highest_index = std::max(_highest_index, index);
+    void set_index(uint64_t index, log_op_complete cb_fn, void* arg){
+        auto trim_done = [this, cb_fn = std::move(cb_fn), index](void *arg, int rberrno){
+            _lowest_index = std::max(_lowest_index, index);
+            _trim_index = std::max(_trim_index, index);
+            _highest_index = std::max(_highest_index, index);
+            cb_fn(arg, rberrno);
+        };
+
+        if(_index_map.empty()){
+            trim_done(arg, 0);
+        }else{
+            trim_back(_lowest_index, _highest_index, std::move(trim_done), arg);
+        }
     }
 private:
     rolling_blob* _rblob;

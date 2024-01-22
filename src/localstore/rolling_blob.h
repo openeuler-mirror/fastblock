@@ -328,6 +328,62 @@ public:
         return;
     }
 
+    void trim_front(uint64_t length, rblob_op_complete cb_fn, void* arg) {
+        if (length > used()) {
+            SPDK_ERRLOG("trim front overflow. length:%lu used:%lu\n", length, used());
+            cb_fn(arg, -ENOSPC);
+            return;
+        }
+
+        struct rblob_trim_ctx* ctx = new rblob_trim_ctx;
+        ctx->next = nullptr;
+        ctx->rblob = this;
+
+        // 如果front后方有足够的空间，直接trim
+        if (!is_rolled() || length < begin_to_front()) {
+            auto pos = front.pos - length;
+            ctx->lba = pos_to_lba(pos);
+            ctx->len = length;
+            ctx->cb_fn = std::move(cb_fn);
+            ctx->arg = arg;  
+
+            // trim比较特殊，在异步trim完成之前，就直接修改偏移
+            front.pos -=  length;
+            front.lba = pos_to_lba(front.pos); 
+
+            SPDK_WARNLOG("trim front case 1. pos [%lu - %lu), lba [%lu - %lu)\n",
+                    pos, front.pos, pos_to_lba(pos), pos_to_lba(front.pos));
+            spdk_blob_io_unmap(blob, channel, ctx->lba / unit_size, ctx->len / unit_size, trim_done, ctx);
+            return;        
+        }
+
+        // 否则就分成两份
+        struct rblob_trim_ctx* next = new rblob_trim_ctx;
+        ctx->next = next;
+        next->blob = blob;
+        next->channel = channel;
+        next->next = nullptr;
+        next->rblob = this;
+        next->cb_fn = std::move(cb_fn);
+        next->arg = arg;          
+
+        uint64_t first_len = begin_to_front();    
+        uint64_t second_len = length - first_len;
+        ctx->lba = pos_to_lba(begin());
+        ctx->len = first_len;   
+        next->lba = pos_to_lba(end() - second_len);
+        next->len = second_len; 
+
+        // trim比较特殊，现在设计成可以在异步trim完成之前，就直接修改偏移
+        front.pos -=  length;
+        front.lba = pos_to_lba(front.pos); 
+
+        SPDK_WARNLOG("trim front case 2. first lba %lu len %lu, second lba %lu len %lu\n",
+                ctx->lba, ctx->len, next->lba, next->len);
+        spdk_blob_io_unmap(blob, channel, ctx->lba / unit_size, ctx->len / unit_size, trim_done, ctx);
+        return;
+    }
+
     static void rw_done(void *arg, int rberrno) {
         struct rblob_rw_ctx* ctx = (struct rblob_rw_ctx*)arg;
 
@@ -516,8 +572,10 @@ private:
         return end() - pos % size();
     }
 
-
-
+    uint64_t begin_to_front() {
+        return front.pos % size();
+    }
+    
     // 可用区域的 begin 和 end
     uint64_t begin() { return 0; }
     uint64_t end() { return blob_size - super_size; }

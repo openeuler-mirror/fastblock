@@ -38,9 +38,6 @@ struct apply_complete : public utils::context{
             stm->set_last_applied_idx(idx);
             stm->get_raft()->raft_get_log()->raft_write_entry_finish(idx, idx, r);
             stm->get_raft()->raft_get_log()->set_applied_index(last_applied_idx, idx);
-            /* voting cfg change is now complete */
-            if (idx == stm->get_raft()->raft_get_voting_cfg_change_log_idx())
-                stm->get_raft()->raft_set_voting_cfg_change_log_idx(-1);
         }
         stm->set_apply_in_progress(false);
     }
