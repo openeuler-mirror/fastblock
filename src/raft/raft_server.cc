@@ -664,6 +664,18 @@ int raft_server_t::raft_recv_appendentries(
         r->set_term(raft_get_current_term());
         r->set_first_idx(ae->prev_log_idx() + 1);
         if(start_idx > end_idx){
+            /*
+             *   follower的_commit_idx是在收到leader的append entry后更新的，会比leader的_commit_idx滞后:
+             *   leader在收到follower的append entry的响应后，判断大部分已经节点已经响应后
+             *   就会更新_commit_idx为n，而follower在收到idx为n + 1的append entry处理后才会更新_commit_idx为n。
+             *   append entry请求中有leader_commit参数。
+             */
+            if (raft_get_commit_idx() < ae->leader_commit()  &&  raft_get_commit_idx() < new_commit_idx){
+                SPDK_INFOLOG(pg_group, "pg %lu.%lu,  start_idx: %ld end_idx: %ld set _commit_idx to %ld.\n",
+                        _pool_id, _pg_id, start_idx, end_idx, new_commit_idx);
+                raft_set_commit_idx(new_commit_idx);
+            }
+
             //空的append entry request
             complete->complete(0);
             return;
