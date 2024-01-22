@@ -19,6 +19,7 @@ namespace err{
 */
 enum {
     E_SUCCESS = 0,
+    E_ENOENT = -ENOENT,       /* -2  No such file or directory */
     E_NOMEM = -ENOMEM,        /* -12  Out of memory */
     E_BUSY  = -EBUSY,		  /*  -16 Device or resource busy */
     E_NODEV = -ENODEV,		  /*  -19  No such device */
@@ -53,6 +54,7 @@ inline const char *  string_status(int raft_errno) noexcept{
     switch (raft_errno) {
     case E_SUCCESS:
         return "success";
+    case E_ENOENT:
     case E_NOMEM:
     case E_BUSY:
     case E_NODEV:

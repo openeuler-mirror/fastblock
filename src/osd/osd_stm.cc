@@ -10,7 +10,6 @@
  */
 
 #include "osd_stm.h"
-#include "localstore/blob_manager.h"
 #include "raft/raft.h"
 #include "rpc/osd_msg.pb.h"
 #include "utils/utils.h"
@@ -23,7 +22,6 @@
 
 osd_stm::osd_stm()
 : state_machine()
-, _store(global_blobstore(), global_io_channel())
 , _object_rw_lock()
 {}
 

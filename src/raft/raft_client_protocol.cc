@@ -12,26 +12,6 @@
 #include "raft/raft_client_protocol.h"
 #include "raft/pg_group.h"
 
-void appendentries_source::process_response(){
-    _raft->raft_process_appendentries_reply(&response);
-    delete this;
-}
-
-void vote_source::process_response(){
-    _raft->raft_process_requestvote_reply(&response);
-    delete this;
-}
-
-void install_snapshot_source::process_response(){
-    _raft->raft_process_installsnapshot_reply(&response);
-    delete this;
-}
-
-void timeout_now_source::process_response(){
-    _raft->raft_process_timeout_now_reply(&response);
-    delete this;
-}
-
 void heartbeat_source::process_response(){
     auto beat_num = _request->heartbeats_size();
     for(int i = 0; i < beat_num; i++){
@@ -46,4 +26,24 @@ void heartbeat_source::process_response(){
         raft->raft_process_appendentries_reply(rsp, true);
     }
     delete this;
+}
+
+void process_appendentries_response(raft_server_t *raft, msg_appendentries_response_t* response){
+    raft->raft_process_appendentries_reply(response);
+}
+
+void process_requestvote_response(raft_server_t *raft, msg_requestvote_response_t* response){
+    raft->raft_process_requestvote_reply(response);
+}
+
+void process_timeout_now_response(raft_server_t *raft, timeout_now_response* response){
+    raft->raft_process_timeout_now_reply(response);
+}
+
+void process_snapshot_check_response(raft_server_t *raft, snapshot_check_response* response){
+    raft->raft_process_snapshot_check_reply(response);
+}
+
+void process_installsnapshot_response(raft_server_t *raft, installsnapshot_response* response){
+    raft->raft_process_installsnapshot_reply(response);
 }

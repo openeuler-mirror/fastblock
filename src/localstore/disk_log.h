@@ -303,13 +303,25 @@ public:
       return sstream.str();
     }
 
+    uint64_t get_lowest_index(){
+        return _lowest_index;
+    }
+
+    /*
+     * follower节点在接收完leader的快照后，才能调用
+     */
+    void set_index(uint64_t index){
+        _lowest_index = std::max(_lowest_index, index);
+        _trim_index = std::max(_trim_index, index);
+        _highest_index = std::max(_highest_index, index);
+    }
 private:
     rolling_blob* _rblob;
     struct spdk_poller *_trim_poller;
     uint64_t _polls_count = 0;
     uint64_t _trims_count = 0;
 
-    uint64_t _lowest_index = 1; //只有trim时候会改
+    uint64_t _lowest_index = 1; //只有trim_back和set_index时候会改
     uint64_t _trim_index = 1;
     uint64_t _highest_index = 1;
     struct log_position {

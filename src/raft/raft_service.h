@@ -33,20 +33,24 @@ public:
                  msg_requestvote_response_t* response,
                  google::protobuf::Closure* done) override;
 
-    void install_snapshot(google::protobuf::RpcController* controller,
-                         const msg_installsnapshot_t* request,
-                         msg_installsnapshot_response_t* response,
-                         google::protobuf::Closure* done) override;
-
     void heartbeat(google::protobuf::RpcController* controller,
                        const heartbeat_request* request,
                        heartbeat_response* response,
-                       google::protobuf::Closure* done);
+                       google::protobuf::Closure* done) override;
 
     void timeout_now(google::protobuf::RpcController* controller,
                        const timeout_now_request* request,
                        timeout_now_response* response,
-                       google::protobuf::Closure* done);
+                       google::protobuf::Closure* done) override;
+
+    void snapshot_check(google::protobuf::RpcController* controller,
+                       const snapshot_check_request* request,
+                       snapshot_check_response* response,
+                       google::protobuf::Closure* done) override;
+    void install_snapshot(google::protobuf::RpcController* controller,
+                       const installsnapshot_request* request,
+                       installsnapshot_response* response,
+                       google::protobuf::Closure* done) override;    
 private:
     PartitionManager* _pm;
 };
@@ -145,10 +149,10 @@ void raft_service<PartitionManager>::vote(google::protobuf::RpcController* contr
       });
 }
 
-struct install_snapshot_complete : public utils::context{
+struct snapshot_complete : public utils::context{
     google::protobuf::Closure* done;
 
-    install_snapshot_complete(google::protobuf::Closure* _done)
+    snapshot_complete(google::protobuf::Closure* _done)
     : done(_done) {}
 
     void finish(int ) override {
@@ -157,9 +161,46 @@ struct install_snapshot_complete : public utils::context{
 };
 
 template<typename PartitionManager>
+void raft_service<PartitionManager>::snapshot_check(google::protobuf::RpcController* controller,
+                   const snapshot_check_request* request,
+                   snapshot_check_response* response,
+                   google::protobuf::Closure* done) {
+    auto pool_id = request->pool_id();
+    auto pg_id = request->pg_id();
+    uint32_t shard_id;
+    if(!_pm->get_pg_shard(pool_id, pg_id, shard_id)){
+        SPDK_WARNLOG("not find pg %lu.%lu\n", pool_id, pg_id);
+        done->Run();
+        return;        
+    }
+
+    _pm->get_shard().invoke_on(
+      shard_id, 
+      [this, shard_id, done, request, response](){
+        auto raft = _pm->get_pg(shard_id, request->pool_id(), request->pg_id());
+        if(!raft){
+            SPDK_WARNLOG("not find pg %lu.%lu\n", request->pool_id(), request->pg_id());
+            done->Run();
+            return; 
+        }
+
+        auto err_num = raft_state_to_errno(raft->raft_get_op_state());
+        if(err_num != err::E_SUCCESS){
+            SPDK_WARNLOG("handle install_snapshot request of pg %lu.%lu failed: %s\n", 
+                    request->pool_id(), request->pg_id(), err::string_status(err_num));
+            done->Run();
+            return;            
+        }
+
+        snapshot_complete* complete = new snapshot_complete(done);
+        raft->raft_recv_snapshot_check(request->node_id(), request, response, complete);
+      });
+}
+
+template<typename PartitionManager>
 void raft_service<PartitionManager>::install_snapshot(google::protobuf::RpcController* controller,
-                     const msg_installsnapshot_t* request,
-                     msg_installsnapshot_response_t* response,
+                     const installsnapshot_request* request,
+                     installsnapshot_response* response,
                      google::protobuf::Closure* done) {
     auto pool_id = request->pool_id();
     auto pg_id = request->pg_id();
@@ -188,11 +229,8 @@ void raft_service<PartitionManager>::install_snapshot(google::protobuf::RpcContr
             return;            
         }
 
-        install_snapshot_complete* complete = new install_snapshot_complete(done);
-        int ret = raft->raft_recv_installsnapshot(request->node_id(), request, response, complete);
-        if(ret != 0){
-            complete->complete(-1);
-        }
+        snapshot_complete* complete = new snapshot_complete(done);
+        raft->raft_recv_installsnapshot(request->node_id(), request, response, complete);
       });
 }
 

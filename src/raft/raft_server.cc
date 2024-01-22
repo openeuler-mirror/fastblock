@@ -26,6 +26,7 @@
 #include "spdk/env.h"
 #include "utils/err_num.h"
 #include "localstore/kv_store.h"
+#include "utils/md5.h"
 
 constexpr long recovery_max_entry_num = 100;
 
@@ -53,10 +54,8 @@ std::shared_ptr<raft_server_t> raft_new(raft_client_protocol& client,
     return raft;
 }
 
-void raft_server_t::raft_set_callbacks(raft_cbs_t* funcs, void* _udata)
+void raft_server_t::raft_set_timer()
 {
-    memcpy(&cb, funcs, sizeof(raft_cbs_t));
-    raft_set_udata(_udata);
     raft_get_log()->log_set_raft(this);
 
     /* We couldn't initialize the time fields without the callback. */
@@ -289,8 +288,6 @@ bool raft_server_t::raft_get_entry_term(raft_index_t idx, raft_term_t& term)
     auto got = raft_get_log()->disk_get_term(idx, _term);
     if (got){
         term = _term;
-    }else if (idx == raft_get_log()->log_get_base()){
-        term = raft_get_log()->log_get_base_term();
     }else{
         return false;
     }
@@ -314,8 +311,10 @@ int raft_server_t::raft_process_appendentries_reply(
           r->term());
 
     auto node = raft_get_cfg_node(r->node_id());
-    if (!node)
+    if (!node){
+        SPDK_INFOLOG(pg_group, "not find node %d in cfg nodes\n", r->node_id());
         return 1;
+    }
 
     auto  process_response = [this, r, node](int result, raft_index_t end_idx){
         if(cfg_change_is_in_progress()){
@@ -412,7 +411,7 @@ int raft_server_t::raft_process_appendentries_reply(
 
     if(r->success() == err::RAFT_ERR_LOG_NOT_MATCH){
         node->raft_node_set_next_idx(r->current_idx() + 1);
-        (node);
+        dispatch_recovery(node);
         return 1;
     }
 
@@ -567,6 +566,7 @@ int raft_server_t::raft_recv_appendentries(
         /* 1. Reply false if term < currentTerm (§5.1) */
         SPDK_INFOLOG(pg_group, "AE from %d term %ld is less than current term %ld\n",
               ae->node_id(), ae->term(), raft_get_current_term());
+	e = err::E_INVAL;
         goto out;
     }
 
@@ -588,6 +588,7 @@ int raft_server_t::raft_recv_appendentries(
         bool got = raft_get_entry_term(ae->prev_log_idx(), term);
         if (!got && raft_get_current_idx() < ae->prev_log_idx())
         {
+	    e = err::E_INVAL;
             //follower滞后leader，需要recovery
             SPDK_WARNLOG("AE from %d no log at prev_idx %ld , current idx %ld\n", ae->node_id(), ae->prev_log_idx(), raft_get_current_idx());
             goto out;
@@ -606,7 +607,9 @@ int raft_server_t::raft_recv_appendentries(
                 goto out;
             }
             /* Delete all the following log entries because they don't match */
-            e = raft_truncate_from_idx(ae->prev_log_idx());
+	    raft_truncate_from_idx(ae->prev_log_idx());
+	    _current_idx = ae->prev_log_idx() - 1;
+	    e = err::RAFT_ERR_LOG_NOT_MATCH;
             r->set_success(err::RAFT_ERR_LOG_NOT_MATCH);
             goto out;
         }
@@ -636,9 +639,7 @@ int raft_server_t::raft_recv_appendentries(
                 r->set_success(e);
                 goto out;
             }
-            e = raft_truncate_from_idx(ety_index);
-            if (0 != e)
-                goto out;
+	    raft_truncate_from_idx(ety_index);
             _current_idx = ety_index - 1;
             break;
         }
@@ -662,7 +663,7 @@ int raft_server_t::raft_recv_appendentries(
     start_idx = ae->prev_log_idx() + 1 + i;
     end_idx =  start_idx + k - 1;
     SPDK_INFOLOG(pg_group, "start_idx: %ld  end_idx: %ld \n", start_idx, end_idx);
-    e = raft_append_entries(entrys);
+    raft_append_entries(entrys);
     i += k;
     r->set_current_idx(ae->prev_log_idx() + i);
 
@@ -690,7 +691,7 @@ out:
     if (1 != r->success())
         r->set_current_idx(raft_get_current_idx());
     r->set_first_idx(ae->prev_log_idx() + 1);
-    complete->complete(r->success());
+    //complete->complete(e);
     return e;
 }
 
@@ -832,7 +833,7 @@ int raft_server_t::raft_process_requestvote_reply(
           r->vote_granted() == 0 ? "not granted" : "unknown",
           raft_get_current_term(),
           r->term());
-    raft_node* node = raft_get_node(r->node_id());
+    auto node = raft_get_cfg_node(r->node_id());
 
     if (!raft_is_candidate() || raft_get_prevote() != r->prevote())
     {
@@ -874,110 +875,6 @@ int raft_server_t::raft_process_requestvote_reply(
         default:
             assert(0);
     }
-
-    return 0;
-}
-
-int raft_server_t::raft_recv_installsnapshot(raft_node_id_t node_id,
-                              const msg_installsnapshot_t* is,
-                              msg_installsnapshot_response_t* r,
-                              utils::context* complete)
-{
-    int e;
-    raft_node* node = raft_get_node(node_id);
-
-    r->set_node_id(raft_get_nodeid());
-    r->set_term(raft_get_current_term());
-
-    r->set_last_idx(is->last_idx());
-    r->set_complete(0);
-
-    if (is->term() < raft_get_current_term())
-        return 0;
-
-    if (raft_get_current_term() < is->term())
-    {
-        e = raft_set_current_term(is->term());
-        if (0 != e)
-            return e;
-        r->set_term(raft_get_current_term());
-    }
-
-    if (!raft_is_follower())
-        raft_become_follower();
-
-    raft_set_current_leader(node_id);
-    auto election_timer = utils::get_time();
-    raft_set_election_timer(election_timer);
-    r->set_lease(election_timer + _election_timeout);
-
-    if (is->last_idx() <= raft_get_commit_idx())
-    {
-        /* Committed entries must match the snapshot. */
-        r->set_complete(1);
-        return 0;
-    }
-
-    raft_term_t term;
-    auto got = raft_get_entry_term(is->last_idx(), term);
-    if (got && term == is->last_term())
-    {
-        raft_set_commit_idx(is->last_idx());
-        r->set_complete(1);
-        return 0;
-    }
-
-    assert(raft_get_cbs().recv_installsnapshot);
-    e = raft_get_cbs().recv_installsnapshot(this, raft_get_udata(), node, is, r);
-    if (e < 0)
-        return e;
-
-    if (e == 1)
-        r->set_complete(1);
-
-    //这里应该是固化installsnapshot成功后调用  todo
-    complete->complete(0);
-    return 0;
-}
-
-int raft_server_t::raft_process_installsnapshot_reply(
-                                       msg_installsnapshot_response_t *r)
-{
-    raft_node* node = raft_get_node(r->node_id());
-    if (!node)
-        return -1;
-
-    if (!raft_is_leader())
-        return err::RAFT_ERR_NOT_LEADER;
-
-    if (raft_get_current_term() < r->term())
-    {
-        int e = raft_set_current_term(r->term());
-        if (0 != e)
-            return e;
-        raft_become_follower();
-        raft_set_current_leader(-1);
-        return 0;
-    }
-    else if (raft_get_current_term() != r->term())
-        return 0;
-
-    node->raft_node_set_lease(r->lease());
-
-    assert(raft_get_cbs().recv_installsnapshot_response);
-    int e = raft_get_cbs().recv_installsnapshot_response(this, raft_get_udata(), node, r);
-    if (0 != e)
-        return e;
-
-    /* The snapshot installation is complete. Update the node state. */
-    if (r->complete() && node->raft_node_get_match_idx() < r->last_idx())
-    {
-        node->raft_node_set_match_idx(r->last_idx());
-        node->raft_node_set_next_idx(r->last_idx() + 1);
-    }
-
-    if (node->raft_node_get_next_idx() <= raft_get_current_idx())
-        raft_send_appendentries(node);
 
     return 0;
 }
@@ -1053,8 +950,10 @@ int raft_server_t::raft_write_entry(std::shared_ptr<raft_entry_t> ety,
     {
         /* Multi-threading: need to fail here because user might be
          * snapshotting membership settings. */
-        if (raft_get_snapshot_in_progress())
+        if (raft_get_snapshot_in_progress()){
+            SPDK_WARNLOG("pg %lu.%lu, snapshot is in porgress\n", raft_get_pool_id(), raft_get_pg_id());
             return err::RAFT_ERR_SNAPSHOT_IN_PROGRESS;
+        }
     }
 
     ety->set_term(raft_get_current_term());
@@ -1305,7 +1204,7 @@ void raft_server_t::process_conf_change_configuration(std::shared_ptr<raft_entry
 void raft_server_t::process_conf_change_add_nonvoting(std::shared_ptr<raft_entry_t> entry){
     set_configuration_state(cfg_state::CFG_CATCHING_UP);
 
-    SPDK_INFOLOG(pg_group, "process entry type %d, index: %ld \n", entry->type(), entry->idx());
+    SPDK_INFOLOG(pg_group, "pg: %lu.%lu, process entry type %d, index: %ld \n", _pool_id, _pg_id, entry->type(), entry->idx());
     raft_configuration config;
     config.ParseFromString(entry->meta());
 
@@ -1325,7 +1224,7 @@ void raft_server_t::process_conf_change_add_nonvoting(std::shared_ptr<raft_entry
 
     _configuration_manager.for_catch_up_node([this, next_idx = entry->idx()](std::shared_ptr<raft_node> node){
         node->raft_node_set_next_idx(next_idx);
-        SPDK_INFOLOG(pg_group, "send appendentries to node %d next_idx: %ld\n", node->raft_get_node_info().node_id(), next_idx);
+        SPDK_INFOLOG(pg_group, "pg: %lu.%lu, send appendentries to node %d next_idx: %ld\n", _pool_id, _pg_id, node->raft_get_node_info().node_id(), next_idx);
         msg_appendentries_t*ae = create_appendentries(node.get());
         
         _client.send_appendentries(this, node->raft_node_get_id(), ae);
@@ -1357,27 +1256,6 @@ int raft_server_t::raft_send_requestvote(raft_node* node)
     rv->set_prevote(raft_get_prevote());
     _client.send_vote(this, node->raft_node_get_id(), rv);
 
-    return 0;
-}
-
-int raft_server_t::_raft_send_installsnapshot(std::shared_ptr<raft_node> node)
-{
-    msg_installsnapshot_t* is = new msg_installsnapshot_t();
-    is->set_node_id(raft_get_nodeid());
-    is->set_pool_id(_pool_id);
-    is->set_pg_id(_pg_id);
-    is->set_term(raft_get_current_term());
-    is->set_last_idx(raft_get_log()->log_get_base());
-    is->set_last_term(raft_get_log()->log_get_base_term());
-
-    SPDK_INFOLOG(pg_group, "sending installsnapshot: ci:%ld comi:%ld t:%ld lli:%ld llt:%ld \n",
-          raft_get_current_idx(),
-          raft_get_commit_idx(),
-          is->term(),
-          is->last_idx(),
-          is->last_term());
-
-    _client.send_install_snapshot(this, node->raft_node_get_id(), is);
     return 0;
 }
 
@@ -1601,12 +1479,6 @@ void raft_pop_log(void *arg, raft_index_t idx, std::shared_ptr<raft_entry_t> ent
     // }
 }
 
-raft_index_t raft_server_t::raft_get_num_snapshottable_logs()
-{
-    assert(raft_get_log()->log_get_base() <= raft_get_commit_idx());
-    return raft_get_commit_idx() - raft_get_log()->log_get_base();
-}
-
 /** Raft callback for handling periodic logic */
 static int periodic_func(void* arg){
     raft_server_t* raft = (raft_server_t*)arg;
@@ -1622,12 +1494,681 @@ void raft_server_t::start_raft_timer(){
     start_timed_task();
 }
 
+class write_ctx;
+static void write_snapshot(write_ctx *wc);
+
+using write_complete = std::function<void (int rerrno)>;
+class write_ctx : public utils::context{
+public:
+    struct object_info{
+        std::string object_name;
+        char *buf;
+        std::size_t size;
+    };
+    write_ctx(int count, raft_server_t* raft, write_complete cb_fn)
+    : utils::context(false)
+    , _count(count)
+    , _num(0)
+    , _rerrno(0)
+    , _raft(raft)
+    , _fn(std::move(cb_fn)) {}
+
+    ~write_ctx(){
+        for(auto &obj : _objects){
+            spdk_free(obj.buf);
+        }
+    }  
+    
+    void finish_del(int rerrno) override{
+        _num++;
+        if(rerrno != 0){
+            if(_rerrno == 0)
+                _rerrno = rerrno;
+            if(_num % SNAPSHOT_MAX_CONCURRENT == 0 || _num == _count){
+                _fn(_rerrno);
+                return;
+            }
+        }
+
+        if(_num == _count){
+            _fn(0);
+            delete this;
+        }else if(_num % SNAPSHOT_MAX_CONCURRENT == 0){
+            write_snapshot(this);
+        }
+    }  
+
+    void finish(int ) override {}
+
+    void add_object(const std::string &object_name, const std::string& data, std::size_t data_size){
+        char* buf = (char*)spdk_zmalloc(data_size, 0x1000, NULL, SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
+        memcpy(buf, data.c_str(), data_size);
+        _objects.emplace_back(object_info{.object_name = object_name, .buf = buf, .size = data_size});
+    }
+
+    int _count;
+    int _num;
+    std::vector<object_info> _objects;
+    int _rerrno;
+    raft_server_t* _raft;
+    write_complete _fn;
+};
+
+static void write_snapshot(write_ctx *wc){
+    int num = std::min(wc->_count - wc->_num, SNAPSHOT_MAX_CONCURRENT);
+    auto store = wc->_raft->get_machine()->get_object_store();
+    int index = 0;
+
+    auto write_done = [](void *arg, int obj_errno){
+        write_ctx *wct = (write_ctx *)arg;
+        wct->complete(obj_errno);
+    };
+
+    for(int i = 0; i < num; i++){
+        index = wc->_num + i;
+        auto &object = wc->_objects[index];
+        SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, write object %s size %ld\n", 
+                wc->_raft->raft_get_pool_id(), wc->_raft->raft_get_pg_id(), object.object_name.c_str(), object.size);
+        store->write(object.object_name, 0, object.buf, object.size, write_done, wc);
+    }
+}
+
+int raft_server_t::raft_recv_installsnapshot(raft_node_id_t node_id,
+                              const installsnapshot_request* request,
+                              installsnapshot_response *response,
+                              utils::context* complete){
+    SPDK_INFOLOG(pg_group, "recvd installsnapshot_request from node %d pg: %lu.%lu term: %ld current_term: %ld  last_idx: %ld \
+          last_term: %ld done: %d\n", 
+          request->node_id(),
+          request->pool_id(), request->pg_id(),
+          request->term(),
+          raft_get_current_term(),
+          request->last_idx(),
+          request->last_term(),
+          request->done());
+    
+    response->set_node_id(raft_get_nodeid());
+    response->set_success(0);
+    // raft_node* node = raft_get_node(node_id);
+    if(request->term() < raft_get_current_term()){
+        SPDK_INFOLOG(pg_group, "installsnapshot_request from %d term %ld is less than current term %ld\n",
+              request->node_id(), request->term(), raft_get_current_term());        
+        response->set_term(raft_get_current_term());
+        auto election_timer = utils::get_time();
+        raft_set_election_timer(election_timer);
+        response->set_lease(election_timer + _election_timeout);
+        return err::E_INVAL;
+    }else if(request->term() > raft_get_current_term()){
+        raft_set_current_term(request->term());
+    }
+    response->set_term(raft_get_current_term());
+    if (!raft_is_follower())
+        raft_become_follower();
+    raft_set_current_leader(node_id);
+
+    auto write_fn = [this, response, complete, done = request->done(), index = request->last_idx(), term = request->last_term()](int rerrno){
+        auto election_timer = utils::get_time();
+        raft_set_election_timer(election_timer);
+        response->set_lease(election_timer + _election_timeout); 
+        if(rerrno != 0){
+            response->set_success(rerrno);
+        }else
+            response->set_success(1);  
+        if(done){
+	    set_index_after_snapshot(index);
+
+	    SPDK_INFOLOG(pg_group, "pg: %lu.%lu, set  _last_applied_idx, _current_idx, _commit_idx to %ld\n", _pool_id, _pg_id, index);
+            return;
+        }
+        complete->complete(rerrno);    
+    };
+    auto object_size = request->objects_size();
+    if(object_size == 0){
+        write_fn(0);
+        return 0;
+    }
+    write_ctx *wc = new write_ctx(object_size, this, std::move(write_fn));
+    
+    for(int i = 0; i < object_size; i++){
+        const object_data_info& object = request->objects(i);
+        wc->add_object(object.obj_name(), object.data(), object.data().size());
+    }
+
+    write_snapshot(wc);
+
+    return 0;
+}
+
+int raft_server_t::raft_process_installsnapshot_reply(installsnapshot_response *rsp){
+    SPDK_INFOLOG(pg_group, "recvd installsnapshot_response in pg: %lu.%lu from node %d term: %ld current_term: %ld success: %d\n",
+             _pool_id, _pg_id, rsp->node_id(), rsp->term(), raft_get_current_term(), rsp->success());
+    auto node = raft_get_cfg_node(rsp->node_id());
+    if(!node){
+        SPDK_INFOLOG(pg_group, "not find node %d in cfg nodes\n", rsp->node_id());
+        return 1;
+    }  
+
+    auto snap_end_err = [this, node](void *arg, int rerrno){
+        delete _obr;
+        _obr = nullptr;
+        raft_set_snapshot_in_progress(false);
+        node->raft_node_set_recovering(false);
+    };
+
+    auto snap_end = [this, node](void *arg, int rerrno){
+        delete _obr;
+        _obr = nullptr;
+        raft_set_snapshot_in_progress(false);
+        dispatch_recovery(node);
+    };    
+
+    if (!raft_is_leader()){
+        _obr->recovery_delete(snap_end_err, nullptr);
+        return err::RAFT_ERR_NOT_LEADER;
+    }
+
+    if (raft_get_current_term() < rsp->term()){
+        raft_set_current_term(rsp->term());
+        raft_become_follower();
+        raft_set_current_leader(-1);
+        SPDK_ERRLOG("node %d change from leader to follow: node id %d term %ld\n", 
+                raft_get_nodeid(), node->raft_node_get_id(), rsp->term());
+        _obr->recovery_delete(snap_end_err, nullptr);
+        return err::RAFT_ERR_NOT_LEADER;
+    }
+    else if (raft_get_current_term() != rsp->term()){
+        _obr->recovery_delete(snap_end_err, nullptr);
+        return 1;
+    }    
+
+    if(rsp->success() != 1){
+        _obr->recovery_delete(snap_end_err, nullptr);
+        return 1;
+    }
+
+    node->raft_node_set_lease(rsp->lease());
+    if(_obr->iter_is_end()){
+        SPDK_DEBUGLOG(pg_group, "pg %lu.%lu, snapshot is end.\n", _pool_id, _pg_id);
+        node->raft_node_set_next_idx(_snapshot_index + 1);
+        node->raft_node_set_match_idx(_snapshot_index);
+        _obr->recovery_delete(snap_end, nullptr);
+    }else{
+        int res = raft_send_snapshot_check(node);
+        if(res != err::E_SUCCESS){
+            _obr->recovery_delete(snap_end_err, nullptr);
+            SPDK_ERRLOG("pg: %lu.%lu, send snapshot_check_request failed, rerrno: %d\n", _pool_id, _pg_id, res);
+            return 1;
+        }        
+    } 
+      
+    return 0;
+}
+
+class objects_read;
+using objects_read_complete = std::function<void (int rerrno)>;
+struct read_object_ctx{
+    size_t idx;
+    char* buf;
+    objects_read *obr;
+    objects_read_complete cb_fn;
+};
+
+static constexpr uint32_t object_unit_size = 4 * 1024 * 1024;
+
+class objects_read {
+public:
+    objects_read(
+            const snapshot_check_request* request,
+            snapshot_check_response *response,
+            utils::context* complete,
+            raft_server_t *raft)
+    : _response(response)
+    , _complete(complete) 
+    , _raft(raft)
+    , _idx(0) {
+        auto object_num = request->object_names_size();
+        for(int i = 0; i < object_num; i++){
+            auto object_name = request->object_names(i);
+            _object_names.emplace_back(std::move(object_name));
+        }        
+    }
+
+    void read(read_object_ctx * ctx){
+        ctx->idx = get_iter_idx();
+        auto obj_name = iter_next_name();
+        
+        auto obs = _raft->get_machine()->get_object_store();
+        if(!obs->is_exist(obj_name)){
+            SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, object %s is not exist\n", _raft->raft_get_pool_id(), _raft->raft_get_pg_id(), obj_name.c_str());
+            auto object = _response->add_objects();
+            object->set_obj_name(obj_name);
+            object->set_exist(false);
+            read_continue(ctx, err::E_ENOENT);
+        }else{
+            obs->read(obj_name, 0, ctx->buf, object_unit_size, read_continue, ctx);
+        }
+    }
+
+    void first_read(objects_read_complete cb_fn){
+        iter_start();
+        if(iter_is_end()){
+            cb_fn(0);
+            return;
+        }
+        char* buf = (char*)spdk_zmalloc(object_unit_size, 0x1000, NULL, SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
+        read_object_ctx * ctx = new read_object_ctx{.buf = buf, .obr = this, .cb_fn = std::move(cb_fn)};
+        read(ctx);
+    }
+
+    static void read_continue(void *arg, int objerrno) {
+        read_object_ctx *ctx = (read_object_ctx *)arg;
+        if(objerrno != 0 && objerrno != err::E_ENOENT){
+            ctx->cb_fn(objerrno);
+            spdk_free(ctx->buf);
+            delete ctx;
+            return;
+        }
+        if(objerrno == 0){
+            auto obj_name = ctx->obr->get_iter_name(ctx->idx);
+            auto object = ctx->obr->get_response()->add_objects();
+            object->set_obj_name(obj_name);
+            object->set_exist(true);
+            auto hash_val = utils::md5(ctx->buf, object_unit_size);
+            object->set_data_hash(hash_val);
+    
+            SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, object %s data hash : %s\n", 
+                    ctx->obr->_raft->raft_get_pool_id(), ctx->obr->_raft->raft_get_pg_id(), obj_name.c_str(), hash_val.c_str());
+            memset(ctx->buf, 0, object_unit_size);
+        }
+
+        if(!ctx->obr->iter_is_end()){
+            ctx->obr->read(ctx);
+            return;
+        }
+
+        ctx->cb_fn(0);
+        spdk_free(ctx->buf);
+        delete ctx;        
+    }
+
+    void iter_start() { _idx = 0; }
+
+
+    std::string& iter_next_name() { return _object_names[_idx++]; }
+
+    bool iter_is_end() { return _idx == _object_names.size(); }
+    std::string& get_iter_name(size_t index)  { return _object_names[index]; }
+    size_t get_iter_idx() { return _idx; }
+
+    snapshot_check_response* get_response(){
+        return _response;
+    }
+// private:
+    std::vector<std::string> _object_names;
+    snapshot_check_response *_response;
+    utils::context* _complete;
+    raft_server_t *_raft;
+    size_t _idx;
+};
+
+
+
+int raft_server_t::raft_recv_snapshot_check(raft_node_id_t node_id,
+                              const snapshot_check_request* request,
+                              snapshot_check_response *response,
+                              utils::context* complete){
+    SPDK_INFOLOG(pg_group, "recvd snapshot_check_request from node %d pg: %lu.%lu term: %ld current_term: %ld\n", 
+          request->node_id(),
+          request->pool_id(), request->pg_id(),
+          request->term(),
+          raft_get_current_term());
+    
+    response->set_node_id(raft_get_nodeid());
+    response->set_success(0);
+
+    // raft_node* node = raft_get_node(node_id);
+    if(request->term() < raft_get_current_term()){
+        SPDK_INFOLOG(pg_group, "snapshot_check from %d term %ld is less than current term %ld\n",
+              request->node_id(), request->term(), raft_get_current_term());        
+        response->set_term(raft_get_current_term());
+        auto election_timer = utils::get_time();
+        raft_set_election_timer(election_timer);
+        response->set_lease(election_timer + _election_timeout);
+        return err::E_INVAL;
+    }else if(request->term() > raft_get_current_term()){
+        raft_set_current_term(request->term());
+    }
+    response->set_term(raft_get_current_term());
+    if (!raft_is_follower())
+        raft_become_follower();
+    raft_set_current_leader(node_id);
+
+    SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, _commit_idx: %ld _last_applied_idx: %ld\n", 
+            request->pool_id(), request->pg_id(), raft_get_commit_idx(), _machine->get_last_applied_idx());
+    if(raft_get_commit_idx() == _machine->get_last_applied_idx()){
+        response->set_success(1);
+        auto obr = std::make_shared<objects_read>(request, response, complete, this);
+        obr->first_read(
+          [this, obr, complete, response](int rerrno){
+            SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, read end rerrno: %d\n", _pool_id, _pg_id, rerrno);
+            auto election_timer = utils::get_time();
+            raft_set_election_timer(election_timer);
+            response->set_lease(election_timer + _election_timeout);
+
+            if(rerrno != 0){
+                response->set_success(rerrno);
+            }
+            complete->complete(rerrno);
+          });
+    }
+    return 0;
+}
+
+class read_ctx;
+static void read_snapshot(read_ctx* rc);
+
+class read_ctx : public utils::context{
+public:
+    struct object_info{
+        object_info() = default;
+
+        object_info(const std::string &_obj_name, const std::string &_follower_data_hash)
+        : obj_name(_obj_name)
+        , buf(nullptr)
+        , follower_data_hash(_follower_data_hash) {}
+
+        object_info(const object_info& obj)
+        : obj_name(obj.obj_name)
+        , buf(obj.buf)
+        , follower_data_hash(obj.follower_data_hash) {}
+
+        object_info& operator=(const object_info& obj) {
+            obj_name = obj.obj_name;
+            buf = obj.buf;
+            follower_data_hash = obj.follower_data_hash;
+            return *this;
+        }
+
+        std::string obj_name;
+        char *buf;
+        std::string follower_data_hash;
+    };
+
+    read_ctx(int count, raft_server_t* raft, raft_node_id_t node_id)
+    : utils::context(false) 
+    , _count(count)
+    , _num(0)
+    , _rerrno(0) 
+    , _raft(raft)
+    , _node_id(node_id) {}
+
+    ~read_ctx(){
+        for(auto &[_, obj] : objects){
+            spdk_free(obj.buf);
+        }
+    }
+
+    void handle_end(){
+        _raft->free_object_recovery();
+        _raft->raft_set_snapshot_in_progress(false);
+        auto node = _raft->raft_get_cfg_node(_node_id);
+        if(node)
+            node->raft_node_set_recovering(false);
+        delete this;
+    };
+
+    void send_snapshot(){
+        installsnapshot_request *snapshot = new installsnapshot_request();
+        snapshot->set_node_id(_raft->raft_get_nodeid());
+        snapshot->set_pool_id(_raft->raft_get_pool_id());
+        snapshot->set_pg_id(_raft->raft_get_pg_id());
+        snapshot->set_term(_raft->raft_get_current_term());   
+        snapshot->set_last_idx(_raft->get_snapshot_index());
+        snapshot->set_last_term(_raft->get_snapshot_term());
+        if(_raft->get_object_recovery()->iter_is_end())
+            snapshot->set_done(true);
+        else 
+            snapshot->set_done(false);
+        int obj_num = 0;
+        for(auto &[obj_name, obj] : objects){
+            if(obj.follower_data_hash.size() == 0){
+                auto object = snapshot->add_objects();
+                object->set_obj_name(obj_name);
+                object->set_data(obj.buf);
+                obj_num++;
+            }else{
+                auto hash_val = utils::md5(obj.buf, object_unit_size);
+                if(hash_val != obj.follower_data_hash){
+                    auto object = snapshot->add_objects();
+                    object->set_obj_name(obj_name);
+                    object->set_data(obj.buf);
+                    obj_num++;
+                }
+            }
+        }
+        if(obj_num == 0 && !_raft->get_object_recovery()->iter_is_end()){
+            delete snapshot;
+            auto node = _raft->raft_get_cfg_node(_node_id);
+            if(!node){
+                handle_end();
+                return;
+            }
+            auto res = _raft->raft_send_snapshot_check(node);
+            if(res != err::E_SUCCESS){
+                handle_end();
+                SPDK_ERRLOG("send installsnapshot_request failed, rerrno: %d\n", res);
+                return;
+            }            
+        }else{
+            SPDK_DEBUGLOG(pg_group, "send_snapshot to node %d\n", _node_id);
+            auto res = _raft->raft_send_installsnapshot(snapshot, _node_id);
+            if(res != err::E_SUCCESS){
+                handle_end();
+                SPDK_ERRLOG("send installsnapshot_request failed, rerrno: %d\n", res);
+                return;
+            }
+        }
+    }
+
+    void finish_del(int rerrno) override {
+        _num++;
+        if(rerrno != 0){
+            if(_rerrno == 0)
+                _rerrno = rerrno;
+            if(_num % SNAPSHOT_MAX_CONCURRENT == 0 || _num == _count){
+                handle_end();
+                return;
+            }
+        }
+
+        if(_num == _count){
+            SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, _num %d\n", _raft->raft_get_pool_id(), _raft->raft_get_pg_id(), _num);
+            if(!_raft->raft_is_leader()){
+                handle_end();
+                return;
+            }
+            send_snapshot();
+            delete this;
+        }else if(_num % SNAPSHOT_MAX_CONCURRENT == 0){
+            read_snapshot(this);
+        }
+    }
+
+    void finish(int ) override {}
+
+    void add_object(const std::string &obj_name, const std::string &follower_data_hash){
+        objects[obj_name] = object_info(obj_name, follower_data_hash);
+    }
+
+    void set_object(std::string &obj_name, char *buf){
+        auto it = objects.find(obj_name);
+        if(it == objects.end())
+            return;
+        it->second.buf = buf;
+    }
+
+    int _count;
+    int _num;
+    std::map<std::string, object_info> objects;
+    int _rerrno;
+    raft_server_t* _raft;
+    raft_node_id_t _node_id;
+};
+
+static void read_snapshot(read_ctx* rc){
+    int num = std::min(rc->_count - rc->_num, SNAPSHOT_MAX_CONCURRENT);
+    auto obr = rc->_raft->get_object_recovery();
+    int index = 0;
+
+    auto read_fn = [](void *arg, int rerrno){
+        read_ctx *rc = (read_ctx *)arg;
+        rc->complete(rerrno);
+    };
+
+    for(int i = 0; i < num; i++){
+        auto current_idx = obr->get_iter_idx();
+        auto object_name = obr->get_iter_name(current_idx);
+        char* buf = (char*)spdk_zmalloc(object_unit_size, 0x1000, NULL, SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
+        rc->set_object(object_name, buf);
+        SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, read object %s size %u\n", 
+                rc->_raft->raft_get_pool_id(), rc->_raft->raft_get_pg_id(), object_name.c_str(), object_unit_size);
+        if(current_idx == 0){
+            obr->recovery_read_iter_first(read_fn, buf, rc);
+        }else{
+            obr->recovery_read_iter_next(read_fn, buf, rc);
+        }
+    }  
+}
+
+int raft_server_t::raft_process_snapshot_check_reply(snapshot_check_response *rsp){
+    SPDK_INFOLOG(pg_group, "recvd snapshot_check_response in pg: %lu.%lu from node %d term: %ld current_term: %ld success: %d\n",
+            _pool_id, _pg_id, rsp->node_id(), rsp->term(), raft_get_current_term(), rsp->success());
+    auto node = raft_get_cfg_node(rsp->node_id());
+    if(!node){
+        SPDK_INFOLOG(pg_group, "not find node %d in cfg nodes\n", rsp->node_id());
+        return 1;
+    }
+
+    auto handle_error = [this, node](){
+        delete _obr;
+        _obr = nullptr;
+        raft_set_snapshot_in_progress(false);
+        node->raft_node_set_recovering(false);
+    };
+
+
+    if (!raft_is_leader()){
+        handle_error();
+        return err::RAFT_ERR_NOT_LEADER;
+    }
+    
+    if (raft_get_current_term() < rsp->term()){
+        raft_set_current_term(rsp->term());
+        raft_become_follower();
+        raft_set_current_leader(-1);
+        SPDK_ERRLOG("node %d change from leader to follow: node id %d term %ld\n", 
+                raft_get_nodeid(), node->raft_node_get_id(), rsp->term());
+        handle_error();
+        return err::RAFT_ERR_NOT_LEADER;
+    }
+    else if (raft_get_current_term() != rsp->term()){
+        handle_error();
+        return 1;
+    }
+    
+    if(rsp->success() != 1){
+        handle_error();
+        return 1;
+    }
+
+    node->raft_node_set_lease(rsp->lease());
+
+    auto object_size = rsp->objects_size();
+    read_ctx *rc = new read_ctx(object_size, this, rsp->node_id());
+    for(int i = 0; i < object_size; i++){
+        const object_check_info& object = rsp->objects(i);
+        if(object.exist()){
+            rc->add_object(object.obj_name(), object.data_hash());
+        }else{
+            rc->add_object(object.obj_name(), std::string(""));
+        }
+    }
+    
+    read_snapshot(rc);
+
+    return 0;
+}
+
+int raft_server_t::raft_send_snapshot_check(std::shared_ptr<raft_node> node){
+    assert(node);
+    assert(!raft_is_self(node.get()));
+
+    SPDK_DEBUGLOG(pg_group, "send snapshot_check_request to node %d pg %lu.%lu term %ld\n", 
+            node->raft_node_get_id(), _pool_id, _pg_id, raft_get_current_term());
+
+    auto obj_names = _obr->recovery_get_obj_names(_obr->get_iter_idx(), SNAPSHOT_MAX_CHUNK);
+    snapshot_check_request *ae = new snapshot_check_request();
+    ae->set_node_id(raft_get_nodeid());
+    ae->set_pool_id(_pool_id);
+    ae->set_pg_id(_pg_id);
+    ae->set_term(raft_get_current_term());
+    for(auto &obj_name : obj_names){
+        ae->add_object_names(obj_name);
+    }
+    return _client.send_snapshot_check(this, node->raft_node_get_id(), ae);
+}
+
+int raft_server_t::raft_send_installsnapshot(installsnapshot_request *req, raft_node_id_t node_id) {
+    return _client.send_install_snapshot(this, node_id, req);
+}
+
+int raft_server_t::_recovery_by_snapshot(std::shared_ptr<raft_node> node){
+    raft_set_snapshot_in_progress(true);
+
+    SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, recovery by snapshot to node %d\n", _pool_id, _pg_id, node->raft_node_get_id());
+    auto obs = _machine->get_object_store();
+    _obr = new object_recovery(obs);
+
+    auto handle_error = [this, node](){
+        delete _obr;
+        _obr = nullptr;
+        raft_set_snapshot_in_progress(false);
+        node->raft_node_set_recovering(false);
+    };
+
+    auto snap_fn = [this, node, handle_error = std::move(handle_error)](void *arg, int rerrno){
+        if(rerrno != 0){
+            handle_error();
+            SPDK_ERRLOG("pg: %lu.%lu, create raft snapshot failed, rerrno: %d\n", _pool_id, _pg_id, rerrno);
+            return;
+        }
+        _snapshot_index = _machine->get_last_applied_idx();
+        raft_term_t term;
+        if(!raft_get_entry_term(_snapshot_index, term)){
+            handle_error();
+            return;
+        }
+        _snapshot_term = term;
+        SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, _snapshot_index %ld _snapshot_term %ld\n", 
+                _pool_id, _pg_id, _snapshot_index, _snapshot_term);
+        _obr->iter_start();
+        int res = raft_send_snapshot_check(node);
+        if(res != err::E_SUCCESS){
+            handle_error();
+            SPDK_ERRLOG("pg: %lu.%lu, send snapshot_check_request failed, rerrno: %d\n", _pool_id, _pg_id, res);
+            return;
+        }
+    };
+    _obr->recovery_create(snap_fn, nullptr);
+    return 0;
+}
+
 void raft_server_t::do_recovery(std::shared_ptr<raft_node> node){
     raft_index_t next_idx = node->raft_node_get_next_idx();
-    if (next_idx <= raft_get_log()->log_get_base()){
-        SPDK_INFOLOG(pg_group, "node %d  next_idx %ld  raft base log: %ld\n",
-                node->raft_node_get_id(), next_idx, raft_get_log()->log_get_base());
-        _raft_send_installsnapshot(node);
+    SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, do_recovery for node %d, next_idx: %ld log base_index: %ld\n", 
+            _pool_id, _pg_id, node->raft_node_get_id(), next_idx, raft_get_log()->log_get_base_index());
+    if (next_idx < raft_get_log()->log_get_base_index()){
+        _recovery_by_snapshot(node);
         return;
     }
     
@@ -1732,8 +2273,6 @@ raft_server_t::raft_server_t(raft_client_protocol& client, disk_log* log,
     , _node_id(-1)
     , voting_cfg_change_log_idx(-1)
     , _snapshot_in_progress(false)
-    , snapshot_last_idx(0)
-    , snapshot_last_term(0)
     , _lease_maintenance_grace(0)
     , _first_start(false) 
     , _machine(sm_ptr)
@@ -1747,7 +2286,9 @@ raft_server_t::raft_server_t(raft_client_protocol& client, disk_log* log,
     , _op_state(raft_op_state::RAFT_INIT)
     , _last_index_before_become_leader(0)  
     , _nodes_stat()
-    , _configuration_manager(this)    
+    , _configuration_manager(this) 
+    , _snapshot_index(0)
+    , _snapshot_term(0)   
 {
         raft_randomize_election_timeout();  
         _log = log_new(std::move(log)); 
@@ -1826,7 +2367,7 @@ void raft_server_t::add_raft_membership(const raft_node_info& node, utils::conte
 }
 
 void raft_server_t::remove_raft_membership(const raft_node_info& node, utils::context* complete){
-    SPDK_WARNLOG("remove node %d %s %d to pg %lu.%lu\n", node.node_id(), node.addr().c_str(), 
+    SPDK_DEBUGLOG(pg_group, "remove node %d %s %d to pg %lu.%lu\n", node.node_id(), node.addr().c_str(), 
             node.port(), raft_get_pool_id(), raft_get_pg_id());
     
     raft_configuration config;
@@ -1858,11 +2399,11 @@ void raft_server_t::change_raft_membership(std::vector<raft_node_info>&& new_nod
     raft_configuration config;
     uint32_t add_count = 0;
 
-    SPDK_INFOLOG(pg_group, "change membership of pg %lu.%lu\n", raft_get_pool_id(), raft_get_pg_id());
+    SPDK_DEBUGLOG(pg_group, "change membership of pg %lu.%lu\n", raft_get_pool_id(), raft_get_pg_id());
     for(auto& new_node : new_nodes){
         auto info = config.add_new_nodes();
         *info = new_node;
-        SPDK_INFOLOG(pg_group, "new membership: %d\n", new_node.node_id());
+        SPDK_DEBUGLOG(pg_group, "new membership: %d\n", new_node.node_id());
     }
 
     std::map<int32_t, int32_t> old_nodes;
@@ -1918,13 +2459,13 @@ int raft_server_t::raft_send_timeout_now(raft_node_id_t target_node_id){
     request->set_node_id(raft_get_nodeid());
     request->set_term(raft_get_current_term());
 
-    SPDK_INFOLOG(pg_group, "sending timeout_now request to node %d in pg %lu.%lu \n", 
+    SPDK_DEBUGLOG(pg_group, "sending timeout_now request to node %d in pg %lu.%lu \n", 
             target_node_id, _pool_id, _pg_id);
     return _client.send_timeout_now(this, target_node_id, request);
 }
 
 int raft_server_t::raft_process_timeout_now_reply(timeout_now_response* rsp){
-    SPDK_INFOLOG(pg_group, "recev timeout_now response from node %d term %ld success %d\n", 
+    SPDK_DEBUGLOG(pg_group, "recev timeout_now response from node %d term %ld success %d\n", 
             rsp->node_id(), rsp->term(), rsp->success());
     return 0;
 }
@@ -1934,7 +2475,7 @@ void raft_server_t::raft_step_down(raft_index_t commit_index){
     raft_set_current_leader(-1);
 
     auto find_next_candidate = [this, commit_index](){
-        raft_node_id_t node_id;
+        raft_node_id_t node_id = 0;
         for(auto& node_stat : _nodes_stat){
             auto node = node_stat.second;
             if(node->raft_node_get_match_idx() == commit_index){
@@ -1942,7 +2483,7 @@ void raft_server_t::raft_step_down(raft_index_t commit_index){
                 break;
             }
         }
-        SPDK_INFOLOG(pg_group, "find next candidate node: %d  commit_index: %ld\n", node_id, commit_index);
+        SPDK_DEBUGLOG(pg_group, "find next candidate node: %d  commit_index: %ld\n", node_id, commit_index);
         return node_id;
     };
 

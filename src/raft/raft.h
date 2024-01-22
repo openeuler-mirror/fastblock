@@ -31,12 +31,16 @@
 #include "raft/append_entry_buffer.h"
 #include "localstore/kv_store.h"
 #include "raft/configuration_manager.h"
+#include "localstore/object_recovery.h"
 
 constexpr int32_t TIMER_PERIOD_MSEC = 500;    //毫秒
 constexpr int32_t HEARTBEAT_TIMER_INTERVAL_MSEC = 500;   //毫秒
 constexpr int32_t HEARTBEAT_TIMER_PERIOD_MSEC = 2 * HEARTBEAT_TIMER_INTERVAL_MSEC;   //毫秒
 constexpr int32_t ELECTION_TIMER_PERIOD_MSEC = 2 * HEARTBEAT_TIMER_PERIOD_MSEC; //毫秒
 constexpr int32_t LEASE_MAINTENANCE_GRACE = HEARTBEAT_TIMER_PERIOD_MSEC;   //毫秒
+
+constexpr int32_t SNAPSHOT_MAX_CHUNK = 10;
+constexpr int32_t SNAPSHOT_MAX_CONCURRENT = 5;
 
 constexpr int32_t CATCH_UP_NUM = 200;
 
@@ -63,54 +67,6 @@ int raft_state_to_errno(raft_op_state state);
 
 class raft_server_t;
 
-/** Callback for receiving InstallSnapshot request messages.
- * @param[in] raft The Raft server making this callback
- * @param[in] user_data User data that is passed from Raft server
- * @param[in] node The node that we are receiving this message from
- * @param[in] msg The InstallSnapshot message
- * @param[in] r The InstallSnapshot response to be sent
- * @return
- *  0 if this chunk is successful received
- *  1 if the whole snapshot is successfully received
- *  or an error */
-typedef int (
-*func_recv_installsnapshot_f
-)   (
-    raft_server_t* raft,
-    void *user_data,
-    raft_node* node,
-    const msg_installsnapshot_t* msg,
-    msg_installsnapshot_response_t* r
-    );
-
-/** Callback for receiving InstallSnapshot response messages.
- * @param[in] raft The Raft server making this callback
- * @param[in] user_data User data that is passed from Raft server
- * @param[in] node The node that we are sending this message to
- * @param[in] msg The InstallSnapshot message
- * @param[in] r The InstallSnapshot response to be sent
- * @return
- *  0 if this chunk is successful received
- *  1 if the whole snapshot is successfully received
- *  or an error */
-typedef int (
-*func_recv_installsnapshot_response_f
-)   (
-    raft_server_t* raft,
-    void *user_data,
-    raft_node* node,
-    msg_installsnapshot_response_t* r
-    );
-    
-struct raft_cbs_t
-{
-    /** Callback for receiving InstallSnapshot messages */
-    func_recv_installsnapshot_f recv_installsnapshot;
-
-    /** Callback for receiving InstallSnapshot responses */
-    func_recv_installsnapshot_response_f recv_installsnapshot_response;
-};
-
 class raft_server_t{
 public:
     raft_server_t(raft_client_protocol& client, disk_log* log, std::shared_ptr<state_machine> sm_ptr,
@@ -126,12 +82,6 @@ public:
     int raft_get_election_timeout_rand(){
         return _election_timeout_rand;
     }    
-
-    void raft_set_snapshot_metadata(raft_term_t term, raft_index_t idx)
-    {
-        snapshot_last_term = term;
-        snapshot_last_idx = idx;
-    }
 
     /** Set election timeout.
      * The amount of time that needs to elapse before we assume the leader is down
@@ -260,6 +210,10 @@ public:
         return _current_idx;
     }
 
+    void raft_set_current_idx(raft_index_t current_idx){
+        _current_idx = current_idx;
+    }
+
     /** Set the commit idx.
      * This should be used to reload persistent state, ie. the commit_idx field.
      * @param[in] commit_idx The new commit index. */
@@ -341,18 +295,6 @@ public:
         return raft_get_node(_leader_id);
     }
 
-    /**
-     * @return callback user data */
-    void* raft_get_udata()
-    {
-        return udata;
-    }
-
-    void raft_set_udata(void* _udata)
-    {
-        udata = _udata;
-    }
-
     bool raft_is_follower()
     {
         return raft_get_identity() == RAFT_STATE_FOLLOWER;
@@ -392,20 +334,6 @@ public:
 
     /** Get last applied entry **/
     std::shared_ptr<raft_entry_t> raft_get_last_applied_entry();
-
-    raft_index_t raft_get_snapshot_last_idx()
-    {
-        return snapshot_last_idx;
-    }
-
-    raft_term_t raft_get_snapshot_last_term()
-    {
-        return snapshot_last_term;
-    }
-
-    raft_cbs_t&  raft_get_cbs(){
-        return cb;
-    }
 
     std::shared_ptr<raft_log> raft_get_log(){
         return _log;
@@ -616,24 +544,9 @@ public:
     int raft_process_requestvote_reply(
                                        msg_requestvote_response_t* r);
 
-    /** Receive an InstallSnapshot message. */
-    int raft_recv_installsnapshot(raft_node_id_t node_id,
-                                  const msg_installsnapshot_t* is,
-                                  msg_installsnapshot_response_t *r,
-                                  utils::context* complete);
-
-    /** Receive an InstallSnapshot message. */
-    int raft_process_installsnapshot_reply(msg_installsnapshot_response_t *r);
-
-    /** Set callbacks and user data.
-     *
-     * @param[in] funcs Callbacks
-     * @param[in] user_data "User data" - user's context that's included in a callback */
-    void raft_set_callbacks(raft_cbs_t* funcs, void* user_data);
+    void raft_set_timer();
 
     int raft_election_start();
-
-    raft_index_t raft_get_num_snapshottable_logs();
 
     void start_timed_task(){
         _append_entries_buffer.start();
@@ -818,10 +731,58 @@ public:
 
     int raft_send_timeout_now(raft_node_id_t node_id);
     int raft_process_timeout_now_reply(timeout_now_response* rsp);
+
+    /** Receive an installsnapshot message. */
+    int raft_recv_installsnapshot(raft_node_id_t node_id,
+                                  const installsnapshot_request* request,
+                                  installsnapshot_response *response,
+                                  utils::context* complete);
+    int raft_process_installsnapshot_reply(installsnapshot_response *rsp);
+
+    /** Receive an snapshot_check message. */
+    int raft_recv_snapshot_check(raft_node_id_t node_id,
+                                  const snapshot_check_request* request,
+                                  snapshot_check_response *response,
+                                  utils::context* complete);
+    int raft_process_snapshot_check_reply(snapshot_check_response *rsp);
+    int raft_send_snapshot_check(std::shared_ptr<raft_node> node);
+    int raft_send_installsnapshot(installsnapshot_request *req, raft_node_id_t node_id);
+
+    std::shared_ptr<state_machine>  get_machine(){
+        return _machine;
+    }
+
+    raft_index_t get_snapshot_index(){
+        return _snapshot_index;
+    }
+
+    raft_term_t get_snapshot_term(){
+        return _snapshot_term;
+    }
+
+    object_recovery* get_object_recovery(){
+        return _obr;
+    }
+
+    void free_object_recovery(){
+        delete _obr;
+        _obr = nullptr;
+    }
+
+    /*
+     *  follower节点在接收完leader的快照后，才能调用
+     */
+    void set_index_after_snapshot(raft_index_t index){
+        raft_set_last_applied_idx(index);
+        raft_set_current_idx(index);
+        raft_set_commit_idx(index);
+        raft_get_log()->set_next_idx(index + 1);
+	raft_get_log()->set_disk_log_index(index + 1);
+    }
 private:
+    int _recovery_by_snapshot(std::shared_ptr<raft_node> node);
     bool _has_majority_leases(raft_time_t now, int with_grace);
     int _should_grant_vote(const msg_requestvote_t* vr);
-    int _raft_send_installsnapshot(std::shared_ptr<raft_node> node);
     int _has_lease(raft_node* node, raft_time_t now, int with_grace);
     void _raft_get_entries_from_idx(raft_index_t idx, msg_appendentries_t* ae);
 
@@ -864,18 +825,10 @@ private:
     /* my node ID */
     raft_node_id_t _node_id;
 
-    /* callbacks */
-    raft_cbs_t cb;
-    void* udata;
-
     /* the log which has a voting cfg change, otherwise -1 */
     raft_index_t voting_cfg_change_log_idx;
 
     bool _snapshot_in_progress;
-
-    /* Last compacted snapshot */
-    raft_index_t snapshot_last_idx;
-    raft_term_t snapshot_last_term;
 
     /* grace period after each lease expiration time honored when we determine
      * if a leader is maintaining leases from a majority (see raft_periodic) */
@@ -904,6 +857,13 @@ private:
 
     raft_nodes  _nodes_stat;  //配置更新后，这个需要更新为最新的
     node_configuration_manager _configuration_manager;
+
+    raft_index_t _snapshot_index;
+
+    /* term of the snapshot base */
+    raft_term_t _snapshot_term;
+
+    object_recovery *_obr; 
 }; 
 
 int raft_votes_is_majority(const int nnodes, const int nvotes);

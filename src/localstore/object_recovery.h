@@ -70,6 +70,18 @@ public:
       delete ctx;
   }
 
+  std::vector<std::string> recovery_get_obj_names(size_t start, size_t num){
+      std::vector<std::string> object_names;
+      size_t index = start;
+      size_t end = start + num;
+
+      while(!iter_is_end(index) && index < end){
+          object_names.emplace_back(get_iter_name(index));
+          index++;
+      }
+      return std::move(object_names);
+  }
+
   /**
    * 每次读取一个对象的全部 4_MB 数据。迭代结束时，errno返回-ENOENT。
    */
@@ -131,6 +143,10 @@ public:
   std::string& iter_next_name() { return _obj_names[idx++]; }
 
   bool iter_is_end() { return idx == _obj_names.size(); }
+
+  bool iter_is_end(size_t index) { return index == _obj_names.size(); }
+  std::string& get_iter_name(size_t index)  { return _obj_names[index]; }
+  size_t get_iter_idx() { return idx; }
 
 private:
   object_store *_obs;

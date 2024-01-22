@@ -22,9 +22,6 @@
 void raft_log::log_load_from_snapshot(raft_index_t idx, raft_term_t term)
 {
     log_clear();
-
-    _base = idx;
-    _base_term = term;
 }
 
 std::shared_ptr<raft_log> log_new(disk_log* log)

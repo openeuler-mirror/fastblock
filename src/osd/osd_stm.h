@@ -13,7 +13,6 @@
 #include <string>
 
 #include "raft/state_machine.h"
-#include "localstore/object_store.h"
 #include "rpc/osd_msg.pb.h"
 
 enum class operation_type : uint16_t {
@@ -236,6 +235,5 @@ public:
         _store.stop(cb_fn, arg);
     }
 private:
-    object_store _store;
     lock_manager<op_type_excl_lock<operation_type>>   _object_rw_lock;
 };

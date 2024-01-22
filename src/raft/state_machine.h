@@ -13,6 +13,8 @@
 #include "rpc/raft_msg.pb.h"
 #include "utils/utils.h"
 #include "spdk/thread.h"
+#include "localstore/object_store.h"
+#include "localstore/blob_manager.h"
 
 class raft_server_t;
 
@@ -21,7 +23,8 @@ public:
     state_machine()
     : _raft(nullptr)
     , _last_applied_idx(0)
-    , _apply_in_progress(false) {}
+    , _apply_in_progress(false)
+    , _store(global_blobstore(), global_io_channel()) {}
 
     void set_raft(raft_server_t* raft){
         _raft = raft;
@@ -64,6 +67,9 @@ public:
 
     bool linearization();
 
+    object_store* get_object_store(){
+        return &_store;
+    }
 private:
     raft_server_t* _raft;
 
@@ -71,4 +77,7 @@ private:
     raft_index_t _last_applied_idx;
     bool _apply_in_progress;
     struct spdk_poller * _timer;
+
+protected:
+    object_store _store;
 };

@@ -26,44 +26,13 @@ std::string pg_id_to_name(uint64_t pool_id, uint64_t pg_id){
     return name;
 }
 
-static int recv_installsnapshot(
-       raft_server_t* raft,
-       void *user_data,
-       raft_node* node,
-       const msg_installsnapshot_t* msg,
-       msg_installsnapshot_response_t* r){
-    (void)raft;
-    (void)user_data;
-    (void)node;
-    (void)msg;
-    (void)r;
-    return 0;
-}
-
-static int recv_installsnapshot_response(
-        raft_server_t* raft,
-        void *user_data,
-        raft_node* node,
-        msg_installsnapshot_response_t* r){
-    (void)raft;
-    (void)user_data;
-    (void)node;
-    (void)r;
-    return 0;
-}
-
-raft_cbs_t raft_funcs = {
-    .recv_installsnapshot = recv_installsnapshot,
-    .recv_installsnapshot_response = recv_installsnapshot_response
-};
-
 int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard_id, uint64_t pool_id, 
             uint64_t pg_id, std::vector<utils::osd_info_t>&& osds, disk_log* log){
     int ret = 0;
     auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id
                                         , global_storage().kvs());
 
-    raft->raft_set_callbacks(&raft_funcs, NULL);
+    raft->raft_set_timer();
     _pg_add(shard_id, raft, pool_id, pg_id);
 
     raft->init(std::move(osds), get_current_node_id());

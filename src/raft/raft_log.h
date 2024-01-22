@@ -20,7 +20,6 @@
 #include "localstore/disk_log.h"
 #include "localstore/spdk_buffer.h"
 
-struct raft_cbs_t;
 class raft_server_t;
 
 class raft_log
@@ -29,8 +28,6 @@ public:
     raft_log(disk_log* log)
     : _log(log)
     , _next_idx(1)
-    , _base(0)
-    , _base_term(0)
     , _max_applied_entry_num_in_cache(100) {}
 
     void log_set_raft(raft_server_t* raft){
@@ -175,8 +172,6 @@ public:
 
     void log_clear()
     {
-        _base = 0;
-        _base_term = 0;
         _entries.clear();
     }
 
@@ -184,14 +179,14 @@ public:
     */
     int log_truncate(raft_index_t idx);
 
-    raft_index_t log_get_base()
+    raft_index_t log_get_base_index()
     {
-        return _base;
+        return _log->get_lowest_index();
     }
 
     raft_term_t log_get_base_term()
     {
-        return _base_term;
+        return _log->get_term_id(_log->get_lowest_index());
     }
 
     raft_index_t get_last_cache_entry(){
@@ -260,6 +255,17 @@ public:
     std::shared_ptr<raft_entry_t> get_entry(raft_index_t idx){
         return _entries.get(idx);
     }
+
+    void set_next_idx(raft_index_t next_idx){
+        _next_idx = next_idx;
+    }
+
+    void set_disk_log_index(raft_index_t index){
+        if(_log){
+            _log->set_index(index);
+        }
+    }
+
 private:
     disk_log* _log;
 
@@ -267,12 +273,6 @@ private:
     // raft_index_t front;
 
     raft_index_t _next_idx;
-
-    /* we compact the log, and thus need to increment the Base Log Index */
-    raft_index_t _base;
-
-    /* term of the base */
-    raft_term_t _base_term;
 
     // raft_entry_t* entries;
     entry_cache  _entries;

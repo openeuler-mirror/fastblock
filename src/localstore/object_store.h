@@ -74,6 +74,11 @@ public:
   void recovery_delete(std::string object_name,
                  object_rw_complete cb_fn, void* arg);
 
+  bool is_exist(std::string object_name){
+      auto it = table.find(object_name);
+      return it != table.end();
+  }
+
 private:
   void readwrite(std::string object_name,
                      uint64_t offset, char* buf, uint64_t len,
