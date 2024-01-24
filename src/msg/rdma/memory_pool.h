@@ -14,6 +14,7 @@
 #include "utils/fmt.h"
 
 #include <spdk/env.h>
+#include <spdk/string.h>
 
 #include <memory>
 #include <string>
@@ -85,20 +86,28 @@ public:
     memory_pool& operator=(memory_pool&&) = delete;
 
     ~memory_pool() noexcept {
+        if (_net_contexts) {
+            auto ele_cache = std::make_unique<void*[]>(_capacity);
+            auto rc = ::spdk_mempool_get_bulk(_net_contexts, ele_cache.get(), _capacity);
+            if (not rc) {
+                for (size_t i{0}; i < _capacity; ++i) {
+                    auto* ctx = reinterpret_cast<net_context*>(ele_cache[i]);
+                    ::ibv_dereg_mr(ctx->mr);
+                }
+                ::spdk_mempool_put_bulk(_net_contexts, ele_cache.get(), _capacity);
+            } else {
+                SPDK_ERRLOG(
+                  "ERROR: Got bulk of net contexts failed, return code is %s, current pool size is %ld, capacity is %lu\n",
+                  ::spdk_strerror(rc),
+                  ::spdk_mempool_count(_net_contexts),
+                  _capacity);
+            }
+
+            ::spdk_mempool_free(_net_contexts);
+        }
+
         if (_pool) {
             ::spdk_mempool_free(_pool);
-        }
-
-        auto ele_cache = std::make_unique<void*[]>(_capacity);
-        ::spdk_mempool_get_bulk(_net_contexts, ele_cache.get(), _capacity);
-        for (size_t i{0}; i < _capacity; ++i) {
-            auto* ctx = reinterpret_cast<net_context*>(ele_cache[i]);
-            ::ibv_dereg_mr(ctx->mr);
-        }
-        ::spdk_mempool_put_bulk(_net_contexts, ele_cache.get(), _capacity);
-
-        if (_net_contexts) {
-            ::spdk_mempool_free(_net_contexts);
         }
     }
 

@@ -177,11 +177,11 @@ public:
         std::make_shared<memory_pool<::ibv_send_wr>>(
         _pd->value(), "srv_meta",
         _opts->metadata_memory_pool_capacity,
-        _opts->metadata_memory_pool_element_size)}
+        _opts->metadata_memory_pool_element_size, 0)}
       , _data_pool{std::make_shared<memory_pool<::ibv_send_wr>>(
         _pd->value(), "srv_data",
         _opts->data_memory_pool_capacity,
-        _opts->data_memory_pool_element_size)} {
+        _opts->data_memory_pool_element_size, 0)} {
         endpoint ep{_opts->bind_address, _opts->port};
         ep.passive = true;
         _listener = std::make_unique<socket>(ep, *_pd, nullptr, false);

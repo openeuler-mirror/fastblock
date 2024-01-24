@@ -886,11 +886,11 @@ public:
       , _meta_pool{std::make_shared<memory_pool<::ibv_send_wr>>(
         _pd->value(), FMT_1("%1%_m", name),
         _opts->metadata_memory_pool_capacity,
-        _opts->metadata_memory_pool_element_size)}
+        _opts->metadata_memory_pool_element_size, 0)}
       , _data_pool{std::make_shared<memory_pool<::ibv_send_wr>>(
         _pd->value(), FMT_1("%1%_d", name),
         _opts->data_memory_pool_capacity,
-        _opts->data_memory_pool_element_size)} {}
+        _opts->data_memory_pool_element_size, 0)} {}
 
     client(const client&) = delete;
 
