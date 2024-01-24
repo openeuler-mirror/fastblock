@@ -49,23 +49,23 @@ public:
   /**
    * 由于要直接读写blob，这里的buf务必用spdk_malloc申请。len的单位是字节，而不是io unit。
    */
-  void read(std::string object_name,
+  void read(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
             uint64_t offset, char* buf, uint64_t len,
             object_rw_complete cb_fn, void* arg);
 
-  void write(std::string object_name,
+  void write(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
              uint64_t offset, char* buf, uint64_t len,
              object_rw_complete cb_fn, void* arg);
 
   void stop(object_rw_complete cb_fn, void* arg);
 
-  void snap_create(std::string object_name, std::string snap_name,
+  void snap_create(std::map<std::string, xattr_val_type>& xattr, std::string object_name, std::string snap_name,
                    object_rw_complete cb_fn, void* arg);
 
   void snap_delete(std::string object_name, std::string snap_name,
                    object_rw_complete cb_fn, void* arg);
-
-  void recovery_create(std::string object_name,
+    
+  void recovery_create(std::map<std::string, xattr_val_type>& xattr, std::string object_name, 
                  object_rw_complete cb_fn, void* arg);
 
   void recovery_read(std::string object_name, char* buf,
@@ -80,7 +80,7 @@ public:
   }
 
 private:
-  void readwrite(std::string object_name,
+  void readwrite(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
                      uint64_t offset, char* buf, uint64_t len,
                      object_rw_complete cb_fn, void* arg, bool is_read);
 

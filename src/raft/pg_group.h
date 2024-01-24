@@ -18,8 +18,6 @@
 #include "base/core_sharded.h"
 #include "localstore/kv_store.h"
 
-std::string pg_id_to_name(uint64_t pool_id, uint64_t pg_id);
-
 class shard_manager
 {
 public:

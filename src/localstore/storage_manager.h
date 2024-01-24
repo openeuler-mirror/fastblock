@@ -27,6 +27,8 @@ void storage_init(storage_op_complete cb_fn, void* arg);
 
 void storage_fini(storage_op_complete cb_fn, void* arg);
 
+void storage_load(storage_op_complete cb_fn, void* arg);
+
 /**
  * storage_manager保存一个核上的所有存储对象：
  * - kvstore        所有pg共用一个
@@ -68,6 +70,23 @@ public:
             return;
         }, arg
     );
+  }
+
+  void load(spdk_blob_id blob_id, storage_op_complete cb_fn, void* arg){
+      load_kvstore(blob_id, global_blobstore(), global_io_channel(),
+        [this, cb_fn = std::move(cb_fn)](void *arg, kvstore* kvs, int error){
+            if (error) {
+                SPDK_ERRLOG("load storage failed. error:%s\n", spdk_strerror(error));
+                cb_fn(arg, error);
+                return;
+            }
+
+            this->_kvstore = kvs;
+            this->_started = true;
+            cb_fn(arg, 0);
+            return;
+        }, 
+      arg);
   }
 
   kvstore* kvs() {

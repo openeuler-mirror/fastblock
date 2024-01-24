@@ -564,3 +564,8 @@ using make_kvs_complete = std::function<void (void *arg, struct kvstore* kvs, in
 void make_kvstore(struct spdk_blob_store *bs,
                   struct spdk_io_channel *channel,
                   make_kvs_complete cb_fn, void* arg);
+
+void load_kvstore(spdk_blob_id blob_id,
+                  struct spdk_blob_store *bs, 
+                  struct spdk_io_channel *channel,
+                  make_kvs_complete cb_fn, void* arg);

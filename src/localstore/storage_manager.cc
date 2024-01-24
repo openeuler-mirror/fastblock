@@ -13,6 +13,8 @@
 
 #include <memory>
 
+SPDK_LOG_REGISTER_COMPONENT(storage_log)
+
 static storage_manager g_st_mgr;
 
 storage_manager& global_storage() {
@@ -23,7 +25,7 @@ void
 storage_init(storage_op_complete cb_fn, void* arg) {
   struct spdk_bs_dev *bs_dev = NULL;
 
-  SPDK_NOTICELOG("storage_init\n");
+  SPDK_INFOLOG(storage_log, "storage_init\n");
   std::construct_at(&g_st_mgr);
   g_st_mgr.start(std::move(cb_fn), arg);
 }
@@ -32,7 +34,7 @@ void
 storage_fini(storage_op_complete cb_fn, void* arg) {
   struct spdk_bs_dev *bs_dev = NULL;
 
-  SPDK_NOTICELOG("storage_fini\n");
+  SPDK_INFOLOG(storage_log, "storage_fini\n");
   g_st_mgr.stop(
     [cb_fn = std::move(cb_fn)](void *arg, int error){
         if (error) {
@@ -44,4 +46,15 @@ storage_fini(storage_op_complete cb_fn, void* arg) {
         return;
     }, arg
   );
+}
+
+
+void storage_load(storage_op_complete cb_fn, void* arg){
+  uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
+  SPDK_WARNLOG("storage_load in core %u\n", shard_id);
+  auto &blobs = global_blob_tree();
+  spdk_blob_id kv_blob_id = blobs.on_shard(shard_id).kv_blob;
+
+  std::construct_at(&g_st_mgr);
+  g_st_mgr.load(kv_blob_id, std::move(cb_fn), arg);  
 }

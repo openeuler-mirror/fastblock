@@ -70,6 +70,8 @@ public:
     object_store* get_object_store(){
         return &_store;
     }
+
+    std::string get_pg_name();
 private:
     raft_server_t* _raft;
 

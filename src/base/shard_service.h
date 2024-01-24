@@ -24,10 +24,16 @@ class sharded {
 public:
     template <typename... Args>
     void start(Args&&... args) {
-        _instances.resize(core_sharded::get_core_sharded().count());
+        uint32_t count = core_sharded::get_core_sharded().count();
+        uint32_t this_shard_id = core_sharded::get_core_sharded().this_shard_id();
+        _instances.resize(count);
 
-        for (uint32_t shard = 0; shard < core_sharded::get_core_sharded().count(); shard++) {
-            core_sharded::get_core_sharded().invoke_on(shard,
+        for (uint32_t shard = 0; shard < count; shard++) {
+            if (shard == this_shard_id) {
+                _instances[shard] = new Service(std::forward<Args>(args)...);
+                continue;
+            }
+            core_sharded::get_core_sharded().invoke_on(shard, 
               [this, shard](Args... args){
                   _instances[shard] = new Service(std::forward<Args>(args)...);
               },
@@ -39,6 +45,14 @@ public:
         uint32_t shard = core_sharded::get_core_sharded().this_shard_id();
         return *_instances[shard];
     }
+
+    // 一个线程不安全的方法，试图访问其他核使用的对象。
+    // 初始化时会有这种需求：0核修改数据，其他核使用，但用户要保证0核修改的时候，其他核不会同时访问
+    Service& on_shard(uint32_t shard) noexcept {
+        return *_instances[shard];
+    }
+
+    size_t size() { return _instances.size(); }
 
 private:
     std::vector<Service*> _instances;

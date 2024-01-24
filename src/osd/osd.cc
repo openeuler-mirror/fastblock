@@ -44,6 +44,7 @@ typedef struct
 } server_t;
 
 static const char* g_json_conf{nullptr};
+static bool g_mkfs{false};
 static std::unique_ptr<::raft_service<::partition_manager>> global_raft_service{nullptr};
 static std::unique_ptr<::osd_service> global_osd_service{nullptr};
 static std::shared_ptr<::connect_cache> global_conn_cache{nullptr};
@@ -56,6 +57,7 @@ static void
 block_usage(void)
 {
 	printf(" -C <osd json config file> path to json config file\n");
+    printf(" -f <mkfs> create new osd disk [ture, false]\n");
 }
 
 static void
@@ -73,12 +75,21 @@ save_pid(const char *pid_path)
 	fclose(pid_file);
 }
 
+static bool mkfs_arg(char *arg){
+    if(strcasecmp(arg, "true") == 0 || strcmp(arg, "1") == 0)
+       return true;
+    return false;
+}
+
 static int
 block_parse_arg(int ch, char *arg)
 {
 	switch (ch) {
     case 'C':
         g_json_conf = arg;
+        break;
+    case 'f':
+        g_mkfs = mkfs_arg(arg);
         break;
 	default:
         block_usage();
@@ -190,14 +201,32 @@ void disk_init_complete(void *arg, int rberrno) {
 	storage_init(storage_init_complete, arg);
 }
 
+void storage_load_complete(void *arg, int rberrno){
+
+}
+
+void disk_load_complete(void *arg, int rberrno){
+    if(rberrno != 0){
+		SPDK_NOTICELOG("Failed to initialize the disk. %s\n", spdk_strerror(rberrno));
+		spdk_app_stop(rberrno);
+		return;
+	}
+
+    // storage_load(storage_load_complete, arg);
+}
+
 static void
 block_started(void *arg)
 {
     server_t *server = (server_t *)arg;
 
     buffer_pool_init();
-      //初始化log磁盘
-    blobstore_init(server->bdev_disk.c_str(), disk_init_complete, arg);
+    if(g_mkfs){
+        //初始化log磁盘
+        blobstore_init(server->bdev_disk.c_str(), disk_init_complete, arg);
+    }else{
+        blobstore_load(server->bdev_disk.c_str(), disk_load_complete, arg);
+    }
 }
 
 static void from_configuration(server_t& server) {
@@ -298,7 +327,7 @@ main(int argc, char *argv[])
     std::signal(SIGINT, on_osd_stop);
     std::signal(SIGTERM, on_osd_stop);
 
-	if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:f:I:D:H:P:o:t:U:", NULL,
+	if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:f:", NULL,
 				      block_parse_arg, block_usage)) !=
 	    SPDK_APP_PARSE_ARGS_SUCCESS) {
 		exit(rc);

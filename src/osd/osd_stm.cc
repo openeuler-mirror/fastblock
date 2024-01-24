@@ -59,7 +59,11 @@ void osd_stm::write_obj(const std::string& obj_name, uint64_t offset, const std:
     char* buf = (char*)spdk_zmalloc(len, 0x1000, NULL, SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
     memcpy(buf, data.c_str(), data.size());
     write_obj_ctx * ctx = new write_obj_ctx{this, obj_name, buf, complete};
-    _store.write(obj_name, offset, buf, data.size(), write_obj_done, ctx);
+    std::map<std::string, xattr_val_type> xattr;
+    xattr["type"] = blob_type::object;
+    xattr["pg"] = get_pg_name();
+    SPDK_WARNLOG("write obj %s xattr type: %u pg: %s\n", obj_name.c_str(), (uint32_t)blob_type::object, get_pg_name().c_str());
+    _store.write(xattr, obj_name, offset, buf, data.size(), write_obj_done, ctx);
 }
 
 void osd_stm::delete_obj(const std::string& obj_name, utils::context *complete){
@@ -137,7 +141,7 @@ void osd_stm::write_and_wait(
         std::string buf;
         cmd.SerializeToString(&buf);
 
-        SPDK_INFOLOG(osd, "process write_request , pool %lu pg %lu object_name %s offset %lu len %lu\n",
+        SPDK_WARNLOG("process write_request , pool %lu pg %lu object_name %s offset %lu len %lu\n",
                      request->pool_id(), request->pg_id(), request->object_name().c_str(), request->offset(),
                      request->data().size());
 
@@ -199,7 +203,10 @@ void osd_stm::read_and_wait(
         char* buf = (char*)spdk_zmalloc(len, 0x1000, NULL, SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
         read_obj_ctx * ctx = new read_obj_ctx{buf, read_complete, response, request->length()};
 
-        _store.read(request->object_name(), request->offset(), buf, request->length(), read_obj_done, ctx);
+        std::map<std::string, xattr_val_type> xattr;
+        xattr["type"] = blob_type::object;
+        xattr["pg"] = get_pg_name();
+        _store.read(xattr, request->object_name(), request->offset(), buf, request->length(), read_obj_done, ctx);
     };
 
     lock_complete *complete = new lock_complete(std::move(read_func));

@@ -502,6 +502,9 @@ public:
         GetFixed64(super, front.pos);
     }
 
+    void set_blob_xattr(std::map<std::string, xattr_val_type>& xattr, rblob_op_complete&& cb_fn, void* arg){
+        ::set_blob_xattr(blob, xattr, std::move(cb_fn), arg);
+    }
 public:
     void close(rblob_op_complete cb_fn, void* arg) {
       struct rblob_close_ctx *ctx = new rblob_close_ctx(cb_fn, arg);
@@ -636,7 +639,6 @@ struct make_rblob_ctx {
     struct spdk_blob_store *bs;
     struct spdk_io_channel *channel;
 
-    uint64_t blob_size;
     make_rblob_complete cb_fn;
     void* arg;
 };
@@ -653,8 +655,9 @@ make_open_done(void *arg, struct spdk_blob *blob, int rberrno) {
       return;
   }
 
+  uint64_t blob_size = spdk_blob_get_num_clusters(blob) * spdk_bs_get_cluster_size(ctx->bs);
   SPDK_NOTICELOG("open rblob success\n");
-  struct rolling_blob* rblob = new rolling_blob(blob, ctx->channel, ctx->blob_size);
+  struct rolling_blob* rblob = new rolling_blob(blob, ctx->channel, blob_size);
   ctx->cb_fn(ctx->arg, rblob, 0);
   delete ctx;
 }
@@ -678,9 +681,16 @@ inline void make_rolling_blob(struct spdk_blob_store *bs, struct spdk_io_channel
 {
   struct make_rblob_ctx* ctx;
   struct spdk_blob_opts opts;
-
-  ctx = new make_rblob_ctx(bs, channel, size, cb_fn, arg);
+  
+  ctx = new make_rblob_ctx(bs, channel, cb_fn, arg);
   spdk_blob_opts_init(&opts, sizeof(opts));
   opts.num_clusters = size / spdk_bs_get_cluster_size(bs);
   spdk_bs_create_blob_ext(bs, &opts, make_create_done, ctx);
+}
+
+inline void open_rolling_blob(spdk_blob_id blob_id, struct spdk_blob_store *bs, struct spdk_io_channel *channel,
+                        make_rblob_complete cb_fn, void* arg){
+  struct make_rblob_ctx* ctx = new make_rblob_ctx(bs, channel, cb_fn, arg);
+
+  spdk_bs_open_blob(bs, blob_id, make_open_done, ctx);
 }

@@ -63,3 +63,26 @@ void make_kvstore(struct spdk_blob_store *bs, struct spdk_io_channel *channel,
   ctx = new make_kvs_ctx{.cb_fn = std::move(cb_fn), .arg = arg};
   make_rolling_blob(bs, channel, 4_MB, make_kvstore_blob_done, ctx);
 }
+
+static void load_kvstore_done(void *arg, struct rolling_blob* rblob, int kverrno){
+  struct make_kvs_ctx *ctx = (struct make_kvs_ctx *)arg;
+
+  if (kverrno) {
+      SPDK_ERRLOG("load_kvstore failed. error:%s\n", spdk_strerror(kverrno));
+      ctx->cb_fn(ctx->arg, nullptr, kverrno);
+      delete ctx;
+      return;
+  } 
+  ctx->rblob = rblob;
+  struct kvstore* kvs = new kvstore(rblob);
+  
+  //TODO  加载kvstore
+  ctx->cb_fn(ctx->arg, kvs, 0);
+}
+
+void load_kvstore(spdk_blob_id blob_id, struct spdk_blob_store *bs, 
+                  struct spdk_io_channel *channel,
+                  make_kvs_complete cb_fn, void* arg){
+  struct make_kvs_ctx* ctx = new make_kvs_ctx{.cb_fn = std::move(cb_fn), .arg = arg};
+  open_rolling_blob(blob_id, bs, channel, load_kvstore_done, ctx);
+}

@@ -65,6 +65,8 @@ enum class raft_op_state {
 
 int raft_state_to_errno(raft_op_state state);
 
+std::string pg_id_to_name(uint64_t pool_id, uint64_t pg_id);
+
 class raft_server_t;
 
 class raft_server_t{
@@ -596,6 +598,10 @@ public:
 
     uint64_t raft_get_pg_id(){
         return _pg_id;
+    }
+
+    std::string raft_get_pg_name(){
+        return pg_id_to_name(_pool_id, _pg_id);
     }
 
     bool is_lease_valid(){

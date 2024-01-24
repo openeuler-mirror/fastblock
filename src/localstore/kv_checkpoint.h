@@ -30,6 +30,8 @@ struct checkpoint_ctx {
   kv_checkpoint* kv_ckpt;
   struct spdk_blob_store *bs;
   fb_blob blob;
+  blob_type type;
+  uint32_t shard_id;
 
   iovecs iovs;
 
@@ -53,28 +55,27 @@ public:
   kv_checkpoint() : _bs(global_blobstore()), _channel(global_io_channel()) {}
 
 public:
+  static void
+  kv_get_xattr_value(void *arg, const char *name, const void **value, size_t *value_len){
+    struct checkpoint_ctx* ctx = (struct checkpoint_ctx*)arg;
+  
+    if(!strcmp("type", name)){
+  		*value = &(ctx->type);
+  		*value_len = sizeof(ctx->type);    
+        return; 
+  	} else if(!strcmp("shard", name)){
+  		*value = &(ctx->shard_id);
+  		*value_len = sizeof(ctx->shard_id); 
+      return;   
+    }
+  	*value = NULL;
+  	*value_len = 0;    
+  }
+
   /**
    * 开始checkpoint。创建一个新的blob，放在_new_blob中，等待写入。
    */
-  void start_checkpoint(size_t size, checkpoint_op_complete cb_fn, void* arg) {
-      if (_new_blob.blobid) {
-          cb_fn(arg, -EBUSY);
-          return;
-      }
-
-      // SPDK_NOTICELOG("start_checkpoint blobstore:%p\n", _bs);
-      struct checkpoint_ctx* ctx = new checkpoint_ctx();
-      ctx->kv_ckpt = this;
-      ctx->bs = _bs;
-      ctx->cb_fn = std::move(cb_fn);
-      ctx->arg = arg;
-
-      struct spdk_blob_opts opts;
-      spdk_blob_opts_init(&opts, sizeof(opts));
-      // 申请空间时，blob的cluster个数要向上取整
-      opts.num_clusters = SPDK_CEIL_DIV(size, spdk_bs_get_cluster_size(_bs));
-      spdk_bs_create_blob_ext(_bs, &opts, new_blob_create_complete, ctx);
-  }
+  void start_checkpoint(size_t size, checkpoint_op_complete cb_fn, void* arg);
 
   static void new_blob_create_complete(void *arg, spdk_blob_id blobid, int rberrno) {
       struct checkpoint_ctx *ctx = (struct checkpoint_ctx *)arg;
@@ -195,11 +196,25 @@ public:
           return;
       }
 
+      std::map<std::string, xattr_val_type> xattr;
+      xattr["type"] = blob_type::kv_checkpoint;
       if (_ckpt_blob.blobid == 0) {
           // SPDK_NOTICELOG("kv checkpoint first swap, old:0x%lx new:0x%lx.\n", _ckpt_blob.blobid, _new_blob.blobid);
           _ckpt_blob = std::exchange(_new_blob, {});
           // SPDK_NOTICELOG("kv checkpoint first swap, old:0x%lx new:0x%lx.\n", _ckpt_blob.blobid, _new_blob.blobid);
-          cb_fn(arg, 0);
+
+          ::set_blob_xattr(
+            _ckpt_blob.blob, 
+            xattr,
+            [cb_fn = std::move(cb_fn)](void *arg, int rberrno){
+              if(rberrno){
+                SPDK_ERRLOG("finish_checkpoint failed: %s\n", spdk_strerror(rberrno));
+              }
+              SPDK_WARNLOG("set_blob_xattr blob:%s to %s\n", 
+                  type_string(blob_type::kv_checkpoint_new).c_str(), type_string(blob_type::kv_checkpoint).c_str());
+              cb_fn(arg, rberrno);
+            },
+            arg);
           return;
       }
 
@@ -212,8 +227,19 @@ public:
       // SPDK_NOTICELOG("kv checkpoint swap, old:0x%lx new:0x%lx.\n", _ckpt_blob.blobid, _new_blob.blobid);
       _ckpt_blob = std::exchange(_new_blob, {});
       // SPDK_NOTICELOG("kv checkpoint swap, old:0x%lx new:0x%lx.\n", _ckpt_blob.blobid, _new_blob.blobid);
-
-      spdk_bs_delete_blob(ctx->bs, ctx->blob.blobid, blob_delete_complete, ctx);
+      ::set_blob_xattr(
+        _ckpt_blob.blob, 
+        xattr,
+        [this](void *arg, int rberrno){
+          struct checkpoint_ctx *ctx = (struct checkpoint_ctx *)arg;
+          if(rberrno){
+            SPDK_ERRLOG("finish_checkpoint failed: %s\n", spdk_strerror(rberrno));
+            ctx->cb_fn(ctx->arg, rberrno);
+            return;
+          }
+          spdk_bs_delete_blob(ctx->bs, ctx->blob.blobid, blob_delete_complete, ctx);
+        },
+        ctx);
   }
 
   static void blob_delete_complete(void *arg, int rberrno) {

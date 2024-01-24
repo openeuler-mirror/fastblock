@@ -1550,7 +1550,10 @@ static void write_snapshot(write_ctx *wc){
         auto &object = wc->_objects[index];
         SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, write object %s size %ld\n", 
                 wc->_raft->raft_get_pool_id(), wc->_raft->raft_get_pg_id(), object.object_name.c_str(), object.size);
-        store->write(object.object_name, 0, object.buf, object.size, write_done, wc);
+        std::map<std::string, xattr_val_type> xattr;
+        xattr["type"] = blob_type::object;
+        xattr["pg"] = wc->_raft->raft_get_pg_name();
+        store->write(xattr, object.object_name, 0, object.buf, object.size, write_done, wc);
     }
 }
 
@@ -1732,7 +1735,10 @@ public:
             object->set_exist(false);
             read_continue(ctx, err::E_ENOENT);
         }else{
-            obs->read(obj_name, 0, ctx->buf, object_unit_size, read_continue, ctx);
+            std::map<std::string, xattr_val_type> xattr;
+            xattr["type"] = blob_type::object;
+            xattr["pg"] = _raft->raft_get_pg_name();
+            obs->read(xattr, obj_name, 0, ctx->buf, object_unit_size, read_continue, ctx);
         }
     }
 
@@ -2146,7 +2152,10 @@ int raft_server_t::_recovery_by_snapshot(std::shared_ptr<raft_node> node){
             return;
         }
     };
-    _obr->recovery_create(snap_fn, nullptr);
+    std::map<std::string, xattr_val_type> xattr;
+    xattr["type"] = blob_type::object;
+    xattr["pg"] = raft_get_pg_name();
+    _obr->recovery_create(std::move(xattr), snap_fn, nullptr);
     return 0;
 }
 

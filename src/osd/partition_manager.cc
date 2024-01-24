@@ -38,16 +38,32 @@ struct make_log_context{
 
 static void make_log_done(void *arg, struct disk_log* dlog, int rberrno){
     make_log_context* mlc = (make_log_context*)arg;
-    partition_manager* pm = mlc->pm;
 
-    SPDK_INFOLOG(osd, "make_log_done, rberrno %d\n", rberrno);
     if(rberrno){
+        SPDK_ERRLOG("make_disk_log failed: %s\n", spdk_strerror(rberrno));
         return;
     }
-    auto sm = std::make_shared<osd_stm>();
-    pm->add_osd_stm(mlc->pool_id, mlc->pg_id, mlc->shard_id, sm);
-    pm->get_pg_group().create_pg(sm, mlc->shard_id, mlc->pool_id, mlc->pg_id, std::move(mlc->osds), dlog);
-    delete mlc;
+
+    std::map<std::string, xattr_val_type> xattr;
+    xattr["type"] = blob_type::log;
+    uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
+    xattr["shard"] = shard_id;
+    xattr["pg"] = pg_id_to_name(mlc->pool_id, mlc->pg_id);   
+    dlog->set_blob_xattr(xattr, 
+      [dlog](void *arg, int rberrno){
+        if(rberrno){
+            SPDK_ERRLOG("make_disk_log failed: %s\n", spdk_strerror(rberrno));
+            return;
+        }
+        SPDK_WARNLOG("make_log_done, rberrno %d\n", rberrno);
+        make_log_context* mlc = (make_log_context*)arg;
+        partition_manager* pm = mlc->pm;
+        auto sm = std::make_shared<osd_stm>();
+        pm->add_osd_stm(mlc->pool_id, mlc->pg_id, mlc->shard_id, sm);
+        pm->get_pg_group().create_pg(sm, mlc->shard_id, mlc->pool_id, mlc->pg_id, std::move(mlc->osds), dlog);
+        delete mlc;
+      },
+      mlc);
 }
 
 void partition_manager::create_pg(

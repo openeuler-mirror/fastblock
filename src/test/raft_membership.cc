@@ -27,7 +27,7 @@ static const char* g_json_conf{nullptr};
 static void
 fbbench_usage(void)
 {
-    	printf(" -C <osd json config file> path to json config file\n");
+    printf(" -C <osd json config file> path to json config file\n");
     printf(" -I <id>                   osd id\n");
     printf(" -o <osd_addr>             osd address\n");
     printf(" -t <osd_port>             osd port\n");

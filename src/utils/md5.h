@@ -5,7 +5,7 @@
 
 namespace utils {
 
-static std::string md5(char *data, size_t len)
+inline std::string md5(char *data, size_t len)
 {
     MD5_CTX c;
     unsigned char md[MD5_DIGEST_LENGTH];

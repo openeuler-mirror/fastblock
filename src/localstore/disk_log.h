@@ -350,6 +350,10 @@ public:
             trim_back(_lowest_index, _highest_index, std::move(trim_done), arg);
         }
     }
+    
+    void set_blob_xattr(std::map<std::string, xattr_val_type>& xattr, log_op_complete&& cb_fn, void* arg){
+        _rblob->set_blob_xattr(xattr, std::move(cb_fn), arg);
+    }
 private:
     rolling_blob* _rblob;
     struct spdk_poller *_trim_poller;
