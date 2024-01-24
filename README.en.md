@@ -18,7 +18,7 @@ FastBlock is designed to solve performance and latency problems, and it features
 # Fastblock design and architecture
 
 The architecture of FastBlock is very similar to that of Ceph, and many  concepts such as Monitor, OSD, and PG are the same as those of Ceph for  quick understanding, as shown in the following figure:
- ![arch](https://gitee.com/c2x9/fastblock/raw/master/docs/architecture.png) Thereinto:
+ ![arch](docs/architecture.png) Thereinto:
 
 - Compute stands for Compute Service 
 - Monitor cluster is responsible for maintaining cluster metadata (including  osdMap, pgMap, pool information, and image information), as well as  managing pools and pgs. 
@@ -43,7 +43,7 @@ For more information, see Monitor Overview
 ## OSD RPC subsystem
 
 RPC subsystem is an important system connecting each module, for the  requirements of heterogeneous network, the RPC subsystem is implemented  in two ways, namely socket-based (Control RPC) and RDMA (Data RPC and  Raft RPC), Socket-based is the classic Linux socket application  scenario, and RDMA-based RPC is implemented using asynchronous RDMA  (i.e., RDMA Write) semantics.
- ![rpc子系统](https://gitee.com/c2x9/fastblock/raw/master/docs/rpc_subsystem.png) 
+ ![rpc子系统](docs/rpc_subsystem.png) 
 The above figure shows the connection between each module in fastblock, from which it can be seen that three types of RPCs are used, namely  Control RPC, Data RPC and Raft RPC: Control rpc: Used to pass data such  as osdmap, pgmap and image information between the client and the  monitor, and between the osd and the monitor. So a socket-based  implementation can be used; Data RPC: used to transfer object data  operations and results between the client and OSD, which is relatively  large and frequent, so RDMA-based methods are required. Raft RPC: It is  used to transfer the content of the Raft RPC protocol between OSDs,  which protects object data, which is relatively large and frequent, so  an RDMA-based method is required. Data rpc and Raft rpc use protobuf's  RPC framework, the network interaction part code uses RDMA, and the  serial number of the data transmitted by the rpc uses protobuf.
 
 ## OSD Raft subsystem
@@ -58,7 +58,7 @@ Raft achieves consistency by electing a leader and then giving him full  respons
 - RAFT member change management (not yet implemented); 
 - Raft heartbeats merge. 
 
-The implementation of multi-group raft means that there are multiple rafts  coexisting, and the leader of each raft needs to send heartbeat packets  to its followers, so there will be multiple heartbeat packets, if there  are too many rafts, it will lead to too many heartbeat packets, which  occupies a lot of bandwidth and CPU resources. The solution is also very simple, each OSD may belong to multiple rafts, so you can merge the  rafts of the same leader and the same flower to reduce the number of  heartbeat packets. As shown in the figure below, there are two pgs  (rafts) are pg1 and pg2, pg1 and pg2 contain osd1, osd2, and osd3, osd1  is the leader, osd1 needs to send heartbeat (pg1) to osd2 and osd3, and  osd1 needs to send heartbeat (pg2) to osd2 and osd3 in pg2. After the  heartbeats are combined, only OSD1 needs to send heartbeat (PG1, PG2) to OSD2 and OSD3, respectively. ![心跳合并](https://gitee.com/c2x9/fastblock/raw/master/docs/heartbeat_merge.png)
+The implementation of multi-group raft means that there are multiple rafts  coexisting, and the leader of each raft needs to send heartbeat packets  to its followers, so there will be multiple heartbeat packets, if there  are too many rafts, it will lead to too many heartbeat packets, which  occupies a lot of bandwidth and CPU resources. The solution is also very simple, each OSD may belong to multiple rafts, so you can merge the  rafts of the same leader and the same flower to reduce the number of  heartbeat packets. As shown in the figure below, there are two pgs  (rafts) are pg1 and pg2, pg1 and pg2 contain osd1, osd2, and osd3, osd1  is the leader, osd1 needs to send heartbeat (pg1) to osd2 and osd3, and  osd1 needs to send heartbeat (pg2) to osd2 and osd3 in pg2. After the  heartbeats are combined, only OSD1 needs to send heartbeat (PG1, PG2) to OSD2 and OSD3, respectively. ![心跳合并](docs/heartbeat_merge.png)
 
 ## OSD KV subsystem
 
@@ -70,7 +70,7 @@ Local storage is based on SPDK Blobstrore and consists of three storage modules:
 
 - disk_log: Stores the raft log, and one PG (corresponding to a raft group) corresponds to one spdk blob. 
 - object_store: Stores object data, and each object corresponds to one spdk blob. 
-- kv_store: Each CPU core has one SPDK blob. Save all KV data that needs to be  saved on the CPU core, including the metadata of the raft and the data  of the storage system itself. As shown in the figure below, suppose we  run two rafts, and the localstore provides three storage functions for  these two rafts: log, object, and kv. ![本地存储引擎](https://gitee.com/c2x9/fastblock/raw/master/docs/osd_localstore.png)
+- kv_store: Each CPU core has one SPDK blob. Save all KV data that needs to be  saved on the CPU core, including the metadata of the raft and the data  of the storage system itself. As shown in the figure below, suppose we  run two rafts, and the localstore provides three storage functions for  these two rafts: log, object, and kv. ![本地存储引擎](docs/osd_localstore.png)
 
 ## client
 
