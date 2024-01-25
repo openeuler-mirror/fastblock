@@ -3,7 +3,7 @@ A distributed block storage system that uses mature Raft protocol and is designe
 
 ### Description
 The current distribution block storage system(Ceph) is facing challenges that hinder its ability to meet the needs of performance, latency, cost, and stability. The main issues are:
-* CPU Consumption: A significant amount of CPU resources is consumed, with the CPU becoming a bottleneck in nvme ssd clusters.
+* High CPU Cost: A significant amount of CPU resources is consumed, with the CPU becoming a bottleneck in nvme ssd clusters.
 * Suboptimal Availability: The implementation of a master-slave strong synchronous replication strategy is proving to be a liability. It leads to I/O operations being suspended during instances of cluster jitter.
 * Limited Performance on a Per-Volume Basis: Integration with QEMU reveals a marked degradation in performance. Stress testing also indicates the necessity for multiple volumes to maximize the cluster's throughput.
 * Elevated Latency for Single Volumes: It is unable to capitalize on the low-latency advantages of NVMe devices. RBD typically exhibits latency in the millisecond range.
