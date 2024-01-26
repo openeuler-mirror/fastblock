@@ -11,9 +11,12 @@
 
 #include "fbbench.h"
 
+static const char* g_json_conf{nullptr};
+
 static void
 fbbench_usage(void)
 {
+    printf(" -C <osd json config file> path to json config file\n");
     printf(" -f <path>                 save pid to file under given path\n");
     printf(" -I <id>                   save osd id\n");
     printf(" -o <osd_addr>             osd address\n");
@@ -29,6 +32,9 @@ fbbench_parse_arg(int ch, char *arg)
 {
     switch (ch)
     {
+    case 'C':
+        g_json_conf = arg;
+        break;
     case 'E':
         g_total_ios = spdk_strtol(arg, 10);
         break;
@@ -106,18 +112,25 @@ fbbench_started(void *arg1)
     server_t *server = (server_t *)arg1;
 
     SPDK_NOTICELOG("------block start, cpu count : %u \n", spdk_env_get_core_count());
-    client *cli = new client(server, g_bench_type);
-    cli->create_connect(server->osd_addr, server->osd_port, server->node_id);
+    auto core_no = ::spdk_env_get_current_core();
+    ::spdk_cpuset cpumask{};
+    ::spdk_cpuset_zero(&cpumask);
+    ::spdk_cpuset_set_cpu(&cpumask, core_no, true);
+    auto opts = msg::rdma::client::make_options(
+      server->pt.get_child("msg").get_child("client"),
+      server->pt.get_child("msg").get_child("rdma"));
+    
+    client *cli = new client(server, g_bench_type, &cpumask, opts);
+    auto connect_done = [cli, server](bool is_ok, std::shared_ptr<msg::rdma::client::connection> conn){
+        if (g_total_ios)
+        {
+            g_first_io_tsc = spdk_get_ticks();
+        }
+    
+        cli->send_request(server->node_id);
+    };
 
-    //(fixme)wait connection, should make it as a callback
-    usleep(5000);
-
-    if (g_total_ios)
-    {
-        g_first_io_tsc = spdk_get_ticks();
-    }
-
-    cli->send_request(server->node_id);
+    cli->create_connect(server->osd_addr, server->osd_port, server->node_id, std::move(connect_done));
 }
 
 static void process_response(client *c, uint64_t id)
@@ -177,7 +190,7 @@ int main(int argc, char *argv[])
     // tracing is memory consuming
     opts.num_entries = 0;
 
-    if ((rc = spdk_app_parse_args(argc, argv, &opts, "E:f:I:o:t:S:T:k:Q:", NULL,
+    if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:E:f:I:o:t:S:T:k:Q:", NULL,
                                   fbbench_parse_arg, fbbench_usage)) !=
         SPDK_APP_PARSE_ARGS_SUCCESS)
     {
@@ -193,6 +206,9 @@ int main(int argc, char *argv[])
     server.node_id = global_osd_id;
     server.osd_addr = g_osd_addr;
     server.osd_port = g_osd_port;
+
+    SPDK_NOTICELOG("config file is %s\n", g_json_conf);
+    boost::property_tree::read_json(std::string(g_json_conf), server.pt);
 
     /* Blocks until the application is exiting */
     rc = spdk_app_start(&opts, fbbench_started, &server);

@@ -23,6 +23,8 @@
 #include "msg/rpc_controller.h"
 #include <google/protobuf/stubs/callback.h>
 #include <random>
+#include <boost/property_tree/ptree.hpp>
+#include <boost/property_tree/json_parser.hpp>
 
 static const char *g_pid_path = nullptr;
 static int global_osd_id = 0;
@@ -48,6 +50,7 @@ typedef struct
     int node_id;
     std::string osd_addr;
     int osd_port;
+    boost::property_tree::ptree pt{};
 } server_t;
 class client;
 
@@ -77,7 +80,7 @@ _check_cutoff(void *ctx, uint64_t start, uint64_t end, uint64_t count,
     so_far_pct = (double)so_far / total;
     while (so_far_pct >= **cutoff && **cutoff > 0)
     {
-        printf("%f%:%fus ", **cutoff * 100, (double)end * 1000 * 1000 / spdk_get_ticks_hz());
+        printf("%f:%fus ", **cutoff * 100, (double)end * 1000 * 1000 / spdk_get_ticks_hz());
         (*cutoff)++;
     }
 }
@@ -85,8 +88,8 @@ _check_cutoff(void *ctx, uint64_t start, uint64_t end, uint64_t count,
 class client
 {
 public:
-    client(server_t *s, int type)
-        : _cache(connect_cache::get_connect_cache()), _shard_cores(get_shard_cores()), _s(s), _type(type)
+    client(server_t *s, int type, ::spdk_cpuset* cpumask, std::shared_ptr<msg::rdma::client::options> opts)
+        : _cache(cpumask, opts), _shard_cores(get_shard_cores()), _s(s), _type(type)
     {
         uint32_t i = 0;
         auto shard_num = _shard_cores.size();
@@ -96,16 +99,18 @@ public:
         }
     }
 
-    void create_connect(std::string &addr, int port, int node_id)
+    void create_connect(std::string &addr, int port, int node_id, auto&& conn_cb)
     {
         uint32_t shard_id = 0;
         for (shard_id = 0; shard_id < _shard_cores.size(); shard_id++)
         {
             SPDK_NOTICELOG("create connect to node %d (address %s, port %d) in core %u\n",
                            node_id, addr.c_str(), port, _shard_cores[shard_id]);
-            auto connect = _cache.create_connect(0, node_id, addr, port);
-            auto &stub = _stubs[shard_id];
-            stub[node_id] = std::make_shared<osd::rpc_service_osd_Stub>(connect.get());
+            _cache.create_connect(0, node_id, addr, port, std::move(conn_cb),
+            [this, shard_id, node_id](msg::rdma::client::connection* connect){
+              auto &stub = _stubs[shard_id];
+              stub[node_id] = std::make_shared<osd::rpc_service_osd_Stub>(connect);
+            });
         }
     }
 
@@ -186,7 +191,7 @@ private:
         auto &stubs = _stubs[shard_id];
         return stubs[node_id];
     }
-    connect_cache &_cache;
+    connect_cache _cache;
     server_t *_s;
     std::vector<uint32_t> _shard_cores;
     msg::rdma::rpc_controller ctrlr;
