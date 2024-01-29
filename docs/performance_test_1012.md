@@ -15,7 +15,7 @@ echo 32768 > /sys/devices/system/node/node1/hugepages/hugepages-2048kB/nr_hugepa
 ```
 
 ## 1.部署monitor集群并启动monitor
-monitor运行在172.31.77.144(fastblock144)上，monitor的配置如下:  
+monitor运行在172.31.77.144(fastblock144)上，monitor配置文件 *monitor.toml* 如下:  
 ```
 etcd_server = ["172.31.77.144:2379"] # Your etcd servers.
 address = "172.31.77.144"
@@ -36,7 +36,7 @@ log_level = "info"
 ```
 启动monitor进程:  
 ```
-fastblock-mon &
+fastblock-mon -conf monitor.toml &
 ```
 因monitor需要一定的时间(10s左右)进行etcd选举，然后才会开放tcp rpc端口影响fastblock-client和fastblock-osd的请求。
 
@@ -72,15 +72,56 @@ fastblock-client -op=fakeapplyid -uuid=$uuid -endpoint=172.31.77.144:3333
 将上面申请的uuid填充到osd的配置文件中，osd配置文件形如:    
 ```
 {
-    "pid_path": "/var/tmp/osd_1.pid",
-    "osd_id": 1,
-    "bdev_disk": "test1n1",
-    "address": "172.31.77.144",
-    "port": 8001,
-    "uuid": "$uuid",
-    "monitor": [
-        {"host": "172.31.77.144", "port": 3333}
-    ]
+    "current_osd_id": 1,
+    "osds": [
+        {
+            "pid_path": "/var/tmp/osd_1.pid",
+            "osd_id": 1,
+            "bdev_disk": "nvme0n1",
+            "address": "172.31.4.143",
+            "port": 9001,
+            "uuid": "d685a1ca-4a59-4c4f-80ff-59997f3d0494",
+            "monitor": [
+                {"host": "127.0.0.1", "port": 3333}
+            ]
+        }
+    ],
+
+    "msg": {
+        "server": {
+            "listen_backlog": 1024,
+            "poll_cq_batch_size": 32,
+            "metadata_memory_pool_capacity": 16384,
+            "metadata_memory_pool_element_size_byte": 1024,
+            "data_memory_pool_capacity": 16384,
+            "data_memory_pool_element_size_byte": 8192,
+            "per_post_recv_num": 512,
+            "rpc_timeout_us": 1000000
+        },
+
+        "client": {
+            "poll_cq_batch_size": 32,
+            "metadata_memory_pool_capacity": 16384,
+            "metadata_memory_pool_element_size_byte": 1024,
+            "data_memory_pool_capacity": 16384,
+            "data_memory_pool_element_size_byte": 8192,
+            "per_post_recv_num": 512,
+            "rpc_timeout_us": 1000000,
+            "rpc_batch_size": 1024
+        },
+
+        "rdma": {
+            "resolve_timeout_us": 2000,
+            "poll_cm_event_timeout_us": 1000000,
+            "max_send_wr": 4096,
+            "max_send_sge": 128,
+            "max_recv_wr": 8192,
+            "max_recv_sge": 1,
+            "max_inline_data": 16,
+            "cq_num_entries": 1024,
+            "qp_sig_all": false
+        }
+    }
 }
 ```
 然后启动osd进程:  
