@@ -10,17 +10,81 @@ OSD 使用 json 配置用户选项，命令行中使用 `-C` 指定 json 文件�
 
 ```json
 {
-    "pid_path": "/var/tmp/osd_1.pid",
-    "osd_id": 1,
-    "bdev_disk": "AIO1",
-    "address": "<osd ip addr>",
-    "port": 9001,
-    "uuid": "<uuid>",
-    "monitor": [
-        {"host": "127.0.0.1", "port": 3333},
-        {"host": "127.0.0.1", "port": 4333},
-        {"host": "127.0.0.1", "port": 5333}
-    ]
+    "current_osd_id": 1,
+    "osds": [
+        {
+            "pid_path": "/var/tmp/osd_1.pid",
+            "osd_id": 1,
+            "bdev_disk": "nvme0n1",
+            "address": "172.31.4.143",
+            "port": 9001,
+            "uuid": "d685a1ca-4a59-4c4f-80ff-59997f3d0494",
+            "monitor": [
+                {"host": "127.0.0.1", "port": 3333}
+            ]
+        },
+
+        {
+            "pid_path": "/var/tmp/osd_2.pid",
+            "osd_id": 2,
+            "bdev_disk": "nvme1n1",
+            "address": "172.31.4.143",
+            "port": 9002,
+            "uuid": "ee6289a5-74ee-4a41-ba62-3b465aa08ffd",
+            "monitor": [
+                {"host": "127.0.0.1", "port": 3333}
+            ]
+        },
+
+        {
+            "pid_path": "/var/tmp/osd_3.pid",
+            "osd_id": 3,
+            "bdev_disk": "nvme2n1",
+            "address": "172.31.4.143",
+            "port": 9003,
+            "uuid": "fd69cf95-f022-4529-bd45-7381a51f7359",
+            "monitor": [
+                {"host": "127.0.0.1", "port": 3333}
+            ]
+        }
+    ],
+
+    "msg": {
+        "server": {
+            "listen_backlog": 1024,
+            "poll_cq_batch_size": 32,
+            "metadata_memory_pool_capacity": 16384,
+            "metadata_memory_pool_element_size_byte": 1024,
+            "data_memory_pool_capacity": 16384,
+            "data_memory_pool_element_size_byte": 8192,
+            "per_post_recv_num": 512,
+            "rpc_timeout_us": 1000000
+        },
+
+        "client": {
+            "poll_cq_batch_size": 32,
+            "metadata_memory_pool_capacity": 16384,
+            "metadata_memory_pool_element_size_byte": 1024,
+            "data_memory_pool_capacity": 16384,
+            "data_memory_pool_element_size_byte": 8192,
+            "per_post_recv_num": 512,
+            "rpc_timeout_us": 1000000,
+            "rpc_batch_size": 1024
+        },
+
+        "rdma": {
+            "resolve_timeout_us": 2000,
+            "poll_cm_event_timeout_us": 1000000,
+            "max_send_wr": 4096,
+            "max_send_sge": 128,
+            "max_recv_wr": 8192,
+            "max_recv_sge": 1,
+            "max_inline_data": 16,
+            "cq_num_entries": 1024,
+            "qp_sig_all": false,
+	    "rdma_device_name": "mlx5_0"
+        }
+    }
 }
 ```
 
