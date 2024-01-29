@@ -1,120 +1,131 @@
-# Introduction to FastBlock
+# fastblock
+A distributed block storage system that uses mature Raft protocol and is designed for all-flash scenarios.
 
-The problems of the distributed block storage system (CEPH) in use today  can no longer meet the requirements for performance, latency, cost, and  stability, which are mainly reflected in: 
+### Description
+The current distribution block storage system(Ceph) is facing challenges that hinder its ability to meet the needs of performance, latency, cost, and stability. The main issues are:
+* High CPU Cost: A significant amount of CPU resources is consumed, with the CPU becoming a bottleneck in nvme ssd clusters.
+* Suboptimal Availability: The implementation of a master-slave strong synchronous replication strategy is proving to be a liability. It leads to I/O operations being suspended during instances of cluster jitter.
+* Limited Performance on a Per-Volume Basis: Integration with QEMU reveals a marked degradation in performance. Stress testing also indicates the necessity for multiple volumes to maximize the cluster's throughput.
+* Elevated Latency for Single Volumes: It is unable to capitalize on the low-latency advantages of NVMe devices. RBD typically exhibits latency in the millisecond range.
+* Insufficient Concurrency Performance: There is a noticeable disparity between the IOPS and throughput achievable by the system compared to the potential offered by the underlying hardware.
 
-- CPU economy: Currently, a large amount of CPU is consumed, and the CPU becomes a bottleneck in the NVMe SSD cluster 
-- Poor availability: The master-slave strong synchronous replication strategy  is adopted, and I/O will be hung when the cluster is jitter 
-- Insufficient performance of a single volume: The performance of a single volume is  even worse when interconnected to QEMU, and multiple volumes are  required to run the performance of the entire cluster during stress  testing 
-- Excessive single-volume latency: Failure to take full advantage of the low  latency characteristics of NVMe devices, RBD block devices typically  have millisecond latency 
-- nsufficient total concurrent performance: IOPS and throughput vary greatly from what hardware can provide 
+**fastblock is designed to tackle the challenges of performance and latency issues in distributed block storage system. Its key features include:**
 
-FastBlock is designed to solve performance and latency problems, and it features: 
+* **SPDK Framework Usage:** Using the SPDK framework, which leverages user-space NVMe drivers and lock-free queues to minimize I/O latency.
+* **RDMA Network Cards Integration:** Incorporating RDMA network cards to facilitate zero-copy, kernel bypassing, and CPU-independent network communication.
+* **Multi-Raft Data Replication:** Employing a multi-raft algorithm for data replication to ensure data reliability.
+* **Reliable Cluster Metadata Management:** Offering a straightforward, reliable, and easily customizable approach to managing cluster metadata. 
 
-- It is written using the spdk programming framework and uses features such  as user-mode nvme drivers and lock-free queues to reduce I/O path  latency 
-- RDMA network cards are introduced for zero-copy, kernel bypass, and network communication without CPU intervention 
-- Use multi-raft for data replication to ensure data reliability 
-- Simple, reliable, and easy-to-customize cluster metadata management 
+### Software Architecture
+The architecture is closely similar to Ceph, including many concepts such as monitor, OSD, and PG. For quick understanding, the architecture diagram is shown below.
+![arch](docs/architecture.png)
+* **Compute:** represents the compute services.
+* **Monitor cluster:** Responsible for maintaining cluster metadata, including `osdMap`, `pg`, `pgMap`, `pool`, and `image`.
+* **Storage cluster:** Each storage cluster comprises multiple Storage Nodes, and each Storage Node operates several OSDs.
+* **Control RPC:** Using TCP sockets to transmit metadata.
+* **Data RPC and Raft RPC:** Data RPC is for transferring data requests between clients and OSDs, while Raft RPC is used for transferring RPC messages between OSDs. Both Data RPC and Raft RPC employ protobuf and RDMA for communication.
+* **Monitor Client:** A client module for communication with the monitor.
+* **Command Dispatcher:** A message processing module that receives and handles data requests from clients.
+* **Raft Protocol Processor:** Handles Raft RPC messages, elections, membership changes, and other operations as stipulated by the Raft protocol.
+* **Raft Log Manager:** Manages and persists the Raft log, using SPDK blob for the persistence of the Raft log.
+* **Data State Machine:** Stores user data using SPDK blobstore.
+* **Raft Log Entry Cache:** Used for caching the Raft log to improve performance.
+* **KV System:** Provides a key-value API, using SPDK blob for persistence.
 
-# Fastblock design and architecture
+### Components and Interaction
 
-The architecture of FastBlock is very similar to that of Ceph, and many  concepts such as Monitor, OSD, and PG are the same as those of Ceph for  quick understanding, as shown in the following figure:
- ![arch](docs/architecture.png) Thereinto:
+#### monitor
+`monitor` is responsible for maintaining the status of storage nodes and managing node additions and deletions. It also handles the metadata for storage volumes, maintains the cluster's topological structure, responds to user requests for creating pools, and creates Raft groups on OSDs based on the current topology. 
+As a cluster management tool, monitor does not store data itself and does not aim for extreme performance. Therefore, it is implemented in Golang and uses etcd for multi-replica storage.
+The monitor cluster is crucial for ensuring consistency, as it provides a unified view to both clients and OSDs. For all client I/O operations, only the `PG` layer is visible. Both OSDs and clients initiate a timer at startup to periodically fetch `osdmap` and `pgmap` information from `monitor`. This ensures that all OSDs and clients perceive the same changes in PG status and respond accordingly. This design prevents write operations targeted at a specific PG from being incorrectly directed.
+For more details, refer to [monitor documentation](monitor/README.md "monitor documentation").
 
-- Compute stands for Compute Service 
-- Monitor cluster is responsible for maintaining cluster metadata (including  osdMap, pgMap, pool information, and image information), as well as  managing pools and pgs. 
-- Each storage cluster contains multiple storage nodes running multiple object storage dads (OSDs). 
-- Control rpc is used to transfer metadata, using TCP sockets; Data RPC is used  to transfer data requests between the client and the OSD; raft rpc is  used to transfer RPC messages defined in the raft paper between OSDs.  Data rpc and raft rpc use protobuf and RDMA. 
-- The monitor client is a monitor client module that communicates with the monitor. 
-- The Command Dispatcher is a message processing module that receives data requests from processing clients. 
-- The raft protocol Processor is used to process raft RPC messages,  elections, member changes, and other content specified in the raft  protocol. 
-- The raft log manager manages and persists the raft log, and the persistent raft log uses spdk blobs. 
-- The Data State Machine stores user data and uses the spdk blobstore. 
-- The raft log entry cache is used to cache raft logs to improve performance. 
-- The KV system provides a kv api and uses spdk blob for persistence. 
+#### OSD RPC 
+RPC subsystem in fastblock is a crucial system that interconnects various modules. To accommodate heterogeneous networks, the RPC subsystem is implemented in two ways: socket-based (Control RPC) and RDMA-based (Data RPC and Raft RPC). Socket-based RPC follows the classic Linux socket application scenario, while RDMA-based RPC utilizes asynchronous RDMA (i.e., RDMA write) semantics.
+![OSD RPC subsystem](docs/rpc_subsystem.png)
+There are three types of RPC interactions, as depicted in the diagram:
+* **Control RPC**: Used for transferring `osdmap`, `pgmap`, and `image` information between clients and monitor, and between OSDs and monitor. Since these data are not large in volume and are not frequently transmitted, a socket-based implementation is suitable.
+* **Data RPC**: Facilitates the transfer of object data operations and results between clients and OSDs. Due to the larger size and higher frequency of this data, RDMA-based methods are employed.
+* **Raft RPC**: Used for transferring Raft RPC protocol contents among OSDs, which include object data. Similar to Data RPC, the larger data volumes and high frequency necessitate the use of RDMA-based methods.
+Both Data RPC and Raft RPC utilize `protobuf`. The network communication parts employ RDMA, and RPC data serialization is managed using Protobuf.
 
-# fastblock component and interaction logic
+#### OSD Raft
+Raft achieves consistency in distributed systems by electing a leader and entrusting them with the responsibility of managing the replication log. The leader receives log entries from clients, replicates these entries to other servers, and coordinates when these entries can be safely applied to their state machines. There are many open-source implementations of Raft, and we referenced [Willemt's](https://github.com/willemt/raft "C language Raft implementation") C language raft implementation and additionally implemented multi-raft, which mainly includes:
+* Management of Raft Groups: This involves the creation, modification, and deletion of Raft.
+* Raft Election and Election Timeout Handling.
+* Raft Log Processing: This includes caching logs, persisting logs to disk, and replicating logs to follower nodes.
+* Data State Machine Processing: Managing the persistence of data to disk.
+* Raft Snapshot Management and Log Recovery.
+* Raft Membership Changes Management (not yet implemented).
+* Raft Heartbeat Merging.
 
-## monitor
+In a multi-group Raft setup, where multiple Raft groups coexist, each group's leader must send heartbeats to its followers. With many Raft groups, this could lead to an excessive number of heartbeats, consuming significant bandwidth and CPU resources. The solution is elegantly simple: since an `osd` might belong to multiple Raft groups, heartbeats can be consolidated for groups with the same leader and followers. This consolidation significantly reduces the number of heartbeat messages needed. For instance, consider a scenario with two PGs in Raft, namely `pg1` and `pg2`, where both include `osd1`, `osd2`, and `osd3`. `osd1` is the leader in this case. Without consolidation, `osd1` would need to send separate heartbeat messages for `pg1` and `pg2` to both `osd2` and `osd3`. However, with heartbeat consolidation, `osd1` only needs to send one combined heartbeat message to `osd2` and `osd3`.
 
-The Monitor service is responsible for maintaining the state of storage  nodes, deleting node additions, storing the metadata of volumes,  maintaining the topology of the cluster, responding to operations such  as creating pools by users, and evenly creating raft groups on OSDs  based on the current topology. As a cluster management tool, monitor  does not need to store data and does not need to pursue extreme  performance, so it is implemented by golang and monitor is implemented  with etcd for multi-copy storage.
-The monitor cluster is an important guarantee of consistency, because  the client and OSD see the same view. For all client IO operations, only the PG layer can be seen, and both the OSD and the client will open a  timer to get OSDMAP and PGMAP information from the monitor at startup,  so all OSD and clients can see the same PG status change and make the  same response, and write operations for a specific PG will not be  written to the wrong place.
-For more information, see Monitor Overview
+![Hearbeat Merging](docs/heartbeat_merge.png)
 
-## OSD RPC subsystem
+#### OSD KV
+The KV (Key-Value) subsystem is tailored for storing both the metadata of Raft and the data of the storage system itself. The design caters to the small scale of the data involved. It employs an in-memory hash map to store all the data, offering basic operations like `put`, `remove`, and `get`. To ensure data persistence, the modified data in the hash map is written to the disk at intervals of 10 milliseconds.
 
-RPC subsystem is an important system connecting each module, for the  requirements of heterogeneous network, the RPC subsystem is implemented  in two ways, namely socket-based (Control RPC) and RDMA (Data RPC and  Raft RPC), Socket-based is the classic Linux socket application  scenario, and RDMA-based RPC is implemented using asynchronous RDMA  (i.e., RDMA Write) semantics.
- ![rpc子系统](docs/rpc_subsystem.png) 
-The above figure shows the connection between each module in fastblock, from which it can be seen that three types of RPCs are used, namely  Control RPC, Data RPC and Raft RPC: Control rpc: Used to pass data such  as osdmap, pgmap and image information between the client and the  monitor, and between the osd and the monitor. So a socket-based  implementation can be used; Data RPC: used to transfer object data  operations and results between the client and OSD, which is relatively  large and frequent, so RDMA-based methods are required. Raft RPC: It is  used to transfer the content of the Raft RPC protocol between OSDs,  which protects object data, which is relatively large and frequent, so  an RDMA-based method is required. Data rpc and Raft rpc use protobuf's  RPC framework, the network interaction part code uses RDMA, and the  serial number of the data transmitted by the rpc uses protobuf.
+#### OSD Localstore
+OSD localstore utilizes SPDK blobstore for data storage and is comprised of three key storage modules:
+* **`disk_log`**: This module is responsible for storing the Raft log. Each PG corresponding to a Raft group, is associated with a specific SPDK blob.
+* **`object_store`**: This module handles the storage of object data, where each object is mapped to an SPDK blob.
+* **`kv_store`**: Each CPU core has its own SPDK blob, which stores all kv data required by that core. This includes Raft's metadata and the data of the storage system itself.
+For instance, if two Rafts are running, the localstore provides these three types of storage functionalities - log, object, and KV - for both Rafts.
+![localstore](docs/osd_localstore.png)
 
-## OSD Raft subsystem
+#### Client
+Clients is designed for creating, modifying, and deleting images. It converts user operations on images into operations on objects (the basic data units processed by OSDs) and then packages these as Data PRC messages to be sent to the leader OSD of the PG. The client also receives and processes responses from the leader OSD and returns the results to the user. Clients operate in various modes to accommodate different environments and uses. These modes include spdk vhost for virtual machines, NBD for bare metal, and CSI for virtual machines. In all these modes, the libfastblock library is called to handle the conversion from images to objects and to communicate with the OSDs. The focus of this explanation is on the spdk vhost for virtual machines.
+The client uses the SPDK library to create a vhost app. After initializing SPDK resources, a timer is set up to fetch `osdmap`, `pgmap` and `image` information from monitor. An SPDK script (`rpc.py`) is used to send requests to the vhost app for creating bdev (`bdev_fastblock_create`). Upon receiving a request, the vhost app creates an `image`, sends its information to the monitor, creates a bdev device, and then registers its operation interface (which calls the libfastblock library). The `rpc.py` script is also used to send requests to the vhost application for creating vhost-blk controller (`vhost_create_blk_controller`). Upon receiving the request, the vhost app opens the bdev device and registers a vhost driver to handle vhost message. This involves creating a socket for client connections (such as QEMU) and implementing connection services following the vhost protocol, a feature already estabilished in DPDK. Libfastblock converts user operations on images into operations on objects, encapsulates these into Data RPC messages, sends them to the leader OSD of the PG, and handles the responses from the leader OSD.
 
-Raft achieves consistency by electing a leader and then giving him full  responsibility for managing the replication logs. The leader receives  log entries from the client, copies them to other servers, and tells  other servers when they can safely apply them to their state machine.  raft already has a lot of open source implementations, we refer to  willemt's C language raft implementation, and additionally implement  multi-raft, this module mainly includes:
+### Build and Compile
+The source code is primarily organized into three directories: `src`, `monitor`, and `msg`, each serving distinct functions:
+* `src` directory primarily contains the implementation of Raft, RDMA communication, the underlying storage engine, and block layer API encapsulations. For more details, you can refer to the [documentation of src](src/README.md).
+* `monitor` directory includes features related to cluster metadata storage management, monitor elections, PG allocation, and distribution of `clustermap`. Detailed information about this directory can be found in the [documentation of monitor](monitor/README.md).
+* `msg` directory contains all the implementations of RDMA RPC, along with a simple demo illustrating its use.
 
-- Management of raft groups, including creating, modifying, and deleting rafts; 
-- raft elections and election overtime; 
-- Raft log processing, including log caching, log disking, and log replication to follower nodes. 
-- Data state machine processing, that is, data disking; 
-- Raft snapshot management and Raft log recovery; 
-- RAFT member change management (not yet implemented); 
-- Raft heartbeats merge. 
-
-The implementation of multi-group raft means that there are multiple rafts  coexisting, and the leader of each raft needs to send heartbeat packets  to its followers, so there will be multiple heartbeat packets, if there  are too many rafts, it will lead to too many heartbeat packets, which  occupies a lot of bandwidth and CPU resources. The solution is also very simple, each OSD may belong to multiple rafts, so you can merge the  rafts of the same leader and the same flower to reduce the number of  heartbeat packets. As shown in the figure below, there are two pgs  (rafts) are pg1 and pg2, pg1 and pg2 contain osd1, osd2, and osd3, osd1  is the leader, osd1 needs to send heartbeat (pg1) to osd2 and osd3, and  osd1 needs to send heartbeat (pg2) to osd2 and osd3 in pg2. After the  heartbeats are combined, only OSD1 needs to send heartbeat (PG1, PG2) to OSD2 and OSD3, respectively. ![心跳合并](docs/heartbeat_merge.png)
-
-## OSD KV subsystem
-
-The KV subsystem is used to store the metadata of the raft and the data of  the storage system itself. Because the amount of data is not large, the  hash map in memory can store all the data, provide put, remove, and get  interfaces, and write the modified data in the hash map to the disk  every 10 ms. 
-
-## osd localstore subsystem
-
-Local storage is based on SPDK Blobstrore and consists of three storage modules: 
-
-- disk_log: Stores the raft log, and one PG (corresponding to a raft group) corresponds to one spdk blob. 
-- object_store: Stores object data, and each object corresponds to one spdk blob. 
-- kv_store: Each CPU core has one SPDK blob. Save all KV data that needs to be  saved on the CPU core, including the metadata of the raft and the data  of the storage system itself. As shown in the figure below, suppose we  run two rafts, and the localstore provides three storage functions for  these two rafts: log, object, and kv. ![本地存储引擎](docs/osd_localstore.png)
-
-## client
-
-The client is used to create, modify, and delete images, convert the user's data operations on the image into operations on the object (the basic  data unit for OSD processing), and then encapsulate it as a data rpc  message to the leader osd of the pg, and receive the response returned  by the leader OSD, and the result is returned to the user. There are  several modes for the client: use the spdk vhost to make it available to the virtual machine; Use NBD for bare metal use; Use CSI to make it  available to virtual machines. Eventually, all three modes will call the libfastblock library to convert images to objects and communicate with  OSD. The following describes the modes that are used by using spdk vhost to provide to virtual machines:
-After the SPDK resources are initialized, you need to enable a timer to go to monitor to obtain OSDMAP, pgmap, and image information. Use the  rpc.py script of the spdk to send a request to the vhost app to create a bdev (bdev_fastblock_create), and the vhost app will create an image  after receiving the request, send the image information to the monitor,  create a bdev device, and then register the operation interface of the  device (this interface will call the libfastblock library). Use the  rpc.py script of the spdk to send a request to the vhost app to create a vhost-blk controller (vhost_create_blk_controller) for bdev, and the  vhost app will open the bdev device after receiving the request, and  register a vhost driver to process vhost messages (create a socket that  can be connected by a client (such as qemu), and follow the vhost  protocol to implement the connection service, which is a feature that  has been implemented in DPDK). libfastblock converts the user's data  operation on the image into an operation on the object (the basic data  unit for OSD processing), and then encapsulates it as a Data RPC message sent to the leader osd of the pg, and receives the response returned by the processing leader OSD.
-
-# Code structure and compilation
-
-The fastblock code is mainly located in the src, monitor, and msg directories: 
-
-- The src directory mainly contains functions such as raft implementation,  rdma communication, underlying storage engine, and block-layer API  encapsulation 
-- The monitor directory includes cluster metadata storage management, monitor election, PG allocation, clustermap distribution, and other functions 
-- The msg directory contains all implementations of RDMA RPC, as well as a simple demo. 
-
+For the first compilation, you need to acquire dependencies such as SPDK and abseil-cpp by running the following command:
 ```
 ./install-deps.sh
 ```
-
-When compiling for the first time, you need to obtain dependencies such as  spdk and abseil-cpp, and run the following command to compile the  montior and osd of the Release version respectively: 
-
+You can compile the Release versions of `monitor` and `osd` by running the following command:
 ```
 ./build.sh -t Release -c monitor
 ./build.sh -t Release -c osd
 ```
+After compilation, the binaries for `fastblock-mon` and `fastblock-client` will be located in the `mon/` directory, while `fastblock-osd` and `fastblock-vhost` binaries will be found in the `build/src/osd/` and `build/src/bdev` directories, respectively. For subsequent modifications, if there are code changes in the OSD or vhost, recompilation can be done directly in the `build/` directory. Similarly, for any updates to the monitor, a simple `make` command in the `mon/` directory suffices.
 
-After compilation, the and binary are in the `fastblock-mon` directory, while the and `fastblock-vhost` `fastblock-client` binary are in `mon/` the `build/src/osd/` directory `fastblock-osd` and `build/src/bdev` . If there are subsequent code changes to OSD and vhost, they can be  compiled only in the directory, and if there are changes to monitor,  they can be compiled only `build/` in `make` the `mon/` directory.
+### Deploy and Test
+According to the [Deployment and Performance Test Report](docs/performance_test_1012.md), in our test environment, with each OSD utilizing only one core, we achieved a latency of less than 100 microseconds for 4K random writes in a single thread, along with concurrent performance of 410,000 IOPS.
 
-# Deployment and performance testing
+### Future Works
+* **Volume snapshot and snapshot group features implementation.**
+* **Volume Qos implementation.**
+* **Multi-core performance optimization for osd and client.**
+* **Recoverability and optimization of local storage engine.**
+* **Testing system addition**, adding a testing system for unit tests, integration tests, and particularly fault testing of the Raft layer and local storage engine.
+* **CI system integration.**
+* **Customizable pg allocation plugin.**
+* **Raft membership changes and coordination with pg allocation.**
+* **Optimization of RDMA connection management in osd client.**
+* **Support for DPU offload of vhost.**
+* **Monitoring data export and cluster runtime data display.**
+* **Deployment tool development and simplification of system configuration files.**
+* **Volume encryption and decryption support.**
+* **Volume sharing support.**
 
-Referring to the deployment and test report, in our test environment, with only  one core per OSD, we achieved a latency of less than 100 μs for a 4K  random write single thread and a concurrent performance of 410,000 IOPS.
+### Contribution
 
-# future works
+1.  Fork the repository
+2.  Create Feat_xxx branch
+3.  Commit your code
+4.  Create Pull Request
 
-- Implement functions such as volume snapshots and snapshot groups 
-- Implement volume QoS 
-- Optimized the multi-core performance of OSD and client 
-- Achieve local storage engine recoverability and local storage engine optimization 
-- Add a test system for unit testing, integration testing, and especially  failure testing of the raft layer and local storage engines 
-- Connect to the CI system 
-- PG assignment plugin for implementing customizable monitors 
-- Implement the change of RAFT members and the overall joint debugging of PG allocation with Monitor 
-- Optimized RDMA connection management for OSD clients 
-- vhost The DPU can be unloaded from vhost 
-- Export monitoring data and display data while the cluster is running 
-- Deployment tool development and simplified system configuration files 
-- Volume encryption and decryption are supported 
-- Volume sharing is supported
+### Gitee Feature
+
+1.  You can use Readme\_XXX.md to support different languages, such as Readme\_en.md, Readme\_zh.md
+2.  Gitee blog [blog.gitee.com](https://blog.gitee.com)
+3.  Explore open source project [https://gitee.com/explore](https://gitee.com/explore)
+4.  The most valuable open source project [GVP](https://gitee.com/gvp)
+5.  The manual of Gitee [https://gitee.com/help](https://gitee.com/help)
+6.  The most popular members  [https://gitee.com/gitee-stars/](https://gitee.com/gitee-stars/)
