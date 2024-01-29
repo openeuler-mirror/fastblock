@@ -90,7 +90,6 @@ foreach (component ${spdk_FIND_COMPONENTS})
   list (APPEND spdk_static_link_opts ${tmp_spdk_static_link_opts})
 endforeach ()
 
-set(spdk_INCLUDE_DIR "/usr/include")
 if (spdk_INCLUDE_DIR AND EXISTS "${spdk_INCLUDE_DIR}/spdk/version.h")
   foreach(ver "MAJOR" "MINOR" "PATCH")
     file(STRINGS "${spdk_INCLUDE_DIR}/spdk/version.h" spdk_VER_${ver}_LINE
