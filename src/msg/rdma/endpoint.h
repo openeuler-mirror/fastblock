@@ -13,6 +13,7 @@
 #include <boost/format.hpp>
 #include <boost/property_tree/ptree.hpp>
 
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -46,6 +47,10 @@ public:
         max_recv_sge = conf.get_child("max_recv_sge").get_value<decltype(max_recv_sge)>();
         cq_num_entries = conf.get_child("cq_num_entries").get_value<decltype(cq_num_entries)>();
         qp_sig_all = conf.get_child("qp_sig_all").get_value<decltype(qp_sig_all)>();
+        auto dev_name = conf.get_child_optional("rdma_device_name");
+        if (dev_name.has_value()) {
+            device_name = dev_name.value().get_value<std::string>();
+        }
     }
 
     endpoint(const endpoint&) = default;
@@ -67,6 +72,7 @@ public:
 
     int cq_num_entries{16};
     bool qp_sig_all{false};
+    std::optional<std::string> device_name{std::nullopt};
 };
 } // namespace rdma
 } // namespace msg

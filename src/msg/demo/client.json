@@ -2,7 +2,7 @@
     "server_address": "ip",
     "server_port": 8081,
     "io_depth": 8,
-    "iteration_count": 10000,
+    "iteration_count": 1,
     "msg": {
         "client": {
             "poll_cq_batch_size": 8,
