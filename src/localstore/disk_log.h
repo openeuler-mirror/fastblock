@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 ChinaUnicom
+/* Copyright (c) 2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
@@ -70,7 +70,7 @@ public:
     disk_log(rolling_blob* rblob) : _rblob(rblob) {
       _trim_poller = SPDK_POLLER_REGISTER(trim_poller, this, 5000);
     }
-    ~disk_log() { 
+    ~disk_log() {
       delete _rblob;
       spdk_poller_unregister(&_trim_poller);
     }
@@ -120,7 +120,7 @@ public:
     // 读取范围 [start_index, end_index]，包括 end_index 在内也会读到
     void read(uint64_t start_index, uint64_t end_index, log_op_with_entry_complete cb_fn, void* arg) {
         struct log_read_ctx* ctx;
-        
+
         if (end_index < start_index) {
             SPDK_ERRLOG("end_index litter than start_index. start:%lu end:%lu\n", start_index, end_index);
             cb_fn(arg, {}, -EINVAL);
@@ -163,7 +163,7 @@ public:
             cb_fn(arg, rberrno);
           },
           arg);
-        
+
     }
 
     uint64_t get_term_id(uint64_t index) {
@@ -184,11 +184,11 @@ private:
             delete ctx;
             return;
         }
-    
+
         // 回收header
         for (auto header : ctx->headers) {
             buffer_pool_put(header);
-        }        
+        }
 
         // 保存每个index到pos和size的映射
         for (auto [idx, pos, size, term_id] : ctx->idx_pos) {
@@ -203,7 +203,7 @@ private:
         struct log_read_ctx* ctx = (struct log_read_ctx*)arg;
 
         if (rberrno) {
-            SPDK_ERRLOG("log append start_index:%lu end_index:%lu (rblob pos:%lu len:%lu) read failed:%s\n", 
+            SPDK_ERRLOG("log append start_index:%lu end_index:%lu (rblob pos:%lu len:%lu) read failed:%s\n",
                         ctx->start_index, ctx->end_index, result.start_pos, result.len, spdk_strerror(rberrno));
             ctx->cb_fn(ctx->arg, {}, rberrno);
             delete ctx;
@@ -350,10 +350,10 @@ make_disk_log_done(void *arg, struct rolling_blob* rblob, int logerrno) {
 }
 
 inline void make_disk_log(struct spdk_blob_store *bs, struct spdk_io_channel *channel,
-                   make_disklog_complete cb_fn, void* arg) 
+                   make_disklog_complete cb_fn, void* arg)
 {
   struct make_disklog_ctx* ctx;
-  
+
   ctx = new make_disklog_ctx(cb_fn, arg);
   make_rolling_blob(bs, channel, rolling_blob::huge_blob_size, make_disk_log_done, ctx);
 }

@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 ChinaUnicom
+/* Copyright (c) 2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
@@ -24,7 +24,7 @@
 #include <spdk/env.h>
 #include <spdk/log.h>
 
-inline size_t 
+inline size_t
 encode_varint32(char* dst, uint32_t v) {
   size_t bytes = 0;
   uint8_t* buffer = reinterpret_cast<uint8_t*>(dst);
@@ -36,7 +36,7 @@ encode_varint32(char* dst, uint32_t v) {
   return bytes;
 }
 
-inline size_t 
+inline size_t
 encode_varint64(char* dst, uint64_t v) {
   size_t bytes = 0;
   uint8_t* buffer = reinterpret_cast<uint8_t*>(dst);
@@ -87,7 +87,7 @@ decode_varint64(char* src, size_t len) {
 
 /***********************************************************/
 /*
-inline void 
+inline void
 encode_fixed32(char* buffer, uint32_t value) {
     for (int i = 0; i < 4; i++) {
         buffer[i] = static_cast<char>(value & 0xFF);
@@ -95,7 +95,7 @@ encode_fixed32(char* buffer, uint32_t value) {
     }
 }
 
-inline void 
+inline void
 encode_fixed64(char* buffer, uint64_t value) {
     for (int i = 0; i < 8; i++) {
         buffer[i] = static_cast<char>(value & 0xFF);
@@ -134,7 +134,7 @@ encode_fixed32(char* dst, uint32_t value) {
   buffer[3] = static_cast<uint8_t>(value >> 24);
 }
 
-inline void 
+inline void
 encode_fixed64(char* dst, uint64_t value) {
   uint8_t* const buffer = reinterpret_cast<uint8_t*>(dst);
   buffer[0] = static_cast<uint8_t>(value);
@@ -174,7 +174,7 @@ decode_fixed64(const char* ptr) {
 /**
  * 新增对不连续地址的序列化。
  */
-inline void 
+inline void
 encode_fixed64(char* dst1, size_t len1, char* dst2, uint64_t value) {
     char buffer[8];
     encode_fixed64(buffer, value);

@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 ChinaUnicom
+/* Copyright (c) 2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
@@ -59,10 +59,10 @@ void append_entries_buffer::do_flush(){
         return;
     if(_in_progress)
         return;
-    
+
     _in_progress = true;
 
-    
+
     auto item = _request.front();
     _request.pop();
     auto request = item.request;
@@ -74,6 +74,6 @@ void append_entries_buffer::do_flush(){
     int ret = _raft->raft_recv_appendentries(request->node_id(), request, response, complete);
     if(ret != 0){
         complete->complete(ret);
-    }                        
+    }
 }
 

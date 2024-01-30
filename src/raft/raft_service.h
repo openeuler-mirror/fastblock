@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 ChinaUnicom
+/* Copyright (c) 2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
@@ -75,7 +75,7 @@ void raft_service<PartitionManager>::append_entries(google::protobuf::RpcControl
     }
 
     _pm->get_shard().invoke_on(
-      shard_id, 
+      shard_id,
       [this, shard_id, done, request, response](){
         auto raft = _pm->get_pg(shard_id, request->pool_id(), request->pg_id());
         if(!raft){
@@ -110,7 +110,7 @@ void raft_service<PartitionManager>::vote(google::protobuf::RpcController* contr
     }
 
     _pm->get_shard().invoke_on(
-      shard_id, 
+      shard_id,
       [this, shard_id, request, response, done](){
         auto raft = _pm->get_pg(shard_id, request->pool_id(), request->pg_id());
         if(!raft){
@@ -123,7 +123,7 @@ void raft_service<PartitionManager>::vote(google::protobuf::RpcController* contr
             return;
         }
         raft->raft_recv_requestvote(request->node_id(), request, response);
-        done->Run();                
+        done->Run();
       });
 }
 
@@ -149,24 +149,24 @@ void raft_service<PartitionManager>::install_snapshot(google::protobuf::RpcContr
     if(!_pm->get_pg_shard(pool_id, pg_id, shard_id)){
         SPDK_WARNLOG("not find pg %lu.%lu\n", pool_id, pg_id);
         done->Run();
-        return;        
+        return;
     }
 
     _pm->get_shard().invoke_on(
-      shard_id, 
+      shard_id,
       [this, shard_id, done, request, response](){
         auto raft = _pm->get_pg(shard_id, request->pool_id(), request->pg_id());
         if(!raft){
             SPDK_WARNLOG("not find pg %lu.%lu\n", request->pool_id(), request->pg_id());
             done->Run();
-            return; 
+            return;
         }
 
         install_snapshot_complete* complete = new install_snapshot_complete(done);
         int ret = raft->raft_recv_installsnapshot(request->node_id(), request, response, complete);
         if(ret != 0){
             complete->complete(-1);
-        }               
+        }
       });
 }
 
@@ -222,9 +222,9 @@ void raft_service<PartitionManager>::heartbeat(google::protobuf::RpcController* 
     auto beat_num = request->heartbeats_size();
     heartbeat_complete *complete = new heartbeat_complete(done, beat_num, false);
 
-    for(int i = 0; i < beat_num; i++){ 
+    for(int i = 0; i < beat_num; i++){
         const heartbeat_metadata& meta = request->heartbeats(i);
-        
+
         auto rsp = response->add_meta();
 
         auto pool_id = meta.pool_id();
@@ -234,9 +234,9 @@ void raft_service<PartitionManager>::heartbeat(google::protobuf::RpcController* 
             SPDK_WARNLOG("not find pg %lu.%lu\n", pool_id, pg_id);
             complete->reps.push_back(nullptr);
             rsp->set_node_id(_pm->get_current_node_id());
-            rsp->set_success(err::RAFT_ERR_NOT_FOUND_PG); 
+            rsp->set_success(err::RAFT_ERR_NOT_FOUND_PG);
             complete->complete(err::RAFT_ERR_NOT_FOUND_PG);
-            continue;           
+            continue;
         }
 
         msg_appendentries_t* req = new msg_appendentries_t();
@@ -244,15 +244,15 @@ void raft_service<PartitionManager>::heartbeat(google::protobuf::RpcController* 
 
         SPDK_DEBUGLOG(pg_group, "recv heartbeat from %d pg: %lu.%lu\n", meta.node_id(), pool_id, pg_id);
         _pm->get_shard().invoke_on(
-          shard_id, 
+          shard_id,
           [this, &meta, shard_id, complete, req, rsp](){
             auto raft = _pm->get_pg(shard_id, meta.pool_id(), meta.pg_id());
             if(!raft){
                 SPDK_WARNLOG("not find pg %lu.%lu\n", meta.pool_id(), meta.pg_id());
                 rsp->set_node_id(_pm->get_current_node_id());
-                rsp->set_success(err::RAFT_ERR_NOT_FOUND_PG); 
+                rsp->set_success(err::RAFT_ERR_NOT_FOUND_PG);
                 complete->complete(err::RAFT_ERR_NOT_FOUND_PG);
-                return;           
+                return;
             }
             req->set_node_id(meta.node_id());
             req->set_pool_id(meta.pool_id());

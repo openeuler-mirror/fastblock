@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 ChinaUnicom
+/* Copyright (c) 2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
@@ -62,16 +62,16 @@ public:
   void snap_create(std::string object_name, std::string snap_name,
                    object_rw_complete cb_fn, void* arg);
 
-  void snap_delete(std::string object_name, std::string snap_name, 
+  void snap_delete(std::string object_name, std::string snap_name,
                    object_rw_complete cb_fn, void* arg);
-    
-  void recovery_create(std::string object_name, 
+
+  void recovery_create(std::string object_name,
                  object_rw_complete cb_fn, void* arg);
-  
-  void recovery_read(std::string object_name, char* buf, 
+
+  void recovery_read(std::string object_name, char* buf,
                  object_rw_complete cb_fn, void* arg);
-  
-  void recovery_delete(std::string object_name, 
+
+  void recovery_delete(std::string object_name,
                  object_rw_complete cb_fn, void* arg);
 
 private:

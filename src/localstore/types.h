@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 ChinaUnicom
+/* Copyright (c) 2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
@@ -50,7 +50,7 @@ inline std::string type_string(blob_type& type) {
 
 /**
  * 从spdk_buffer中读取数据的一系列函数。
- * 
+ *
  * \param sbuf 等待解析的地址。
  * \param out 出参，获取的值放在out中，是一个引用类型。
  * \return bool值，表示是否读取成功。这里注意如果返回false，
@@ -103,7 +103,7 @@ inline bool GetOptString(spdk_buffer& sbuf, std::optional<std::string>& out) {
 
 /**
  * 把数据序列化放进sbuf的一系列函数。
- * 
+ *
  * \param sbuf 等待放入的地址，引用类型。
  * \param value 放入的值。
  * \return bool值，表示是否成功序列化。如果返回false，则sbuf应该

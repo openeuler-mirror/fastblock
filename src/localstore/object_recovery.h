@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 ChinaUnicom
+/* Copyright (c) 2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
@@ -42,7 +42,7 @@ public:
       for (auto& pr : _obs->table) {
           _obj_names.emplace_back(pr.first);
       }
-      recovery_op_ctx* ctx = new recovery_op_ctx{.recv = this, .obs = _obs, 
+      recovery_op_ctx* ctx = new recovery_op_ctx{.recv = this, .obs = _obs,
                                     .cb_fn = std::move(cb_fn), .arg = arg};
       iter_start();
       auto next_name = iter_next_name();
@@ -65,7 +65,7 @@ public:
           ctx->obs->recovery_create(next_name, recovery_create_continue, ctx);
           return;
       }
-      
+
       ctx->cb_fn(ctx->arg, 0);
       delete ctx;
   }
@@ -98,7 +98,7 @@ public:
    * 删除所有对象的recovery snapshot。
    */
   void recovery_delete(recovery_op_complete cb_fn, void* arg) {
-      recovery_op_ctx* ctx = new recovery_op_ctx{.recv = this, .obs = _obs, 
+      recovery_op_ctx* ctx = new recovery_op_ctx{.recv = this, .obs = _obs,
                                     .cb_fn = std::move(cb_fn), .arg = arg};
       iter_start();
       auto next_name = iter_next_name();
@@ -121,7 +121,7 @@ public:
           ctx->obs->recovery_delete(next_name, recovery_delete_continue, ctx);
           return;
       }
-      
+
       ctx->cb_fn(ctx->arg, 0);
       delete ctx;
   }

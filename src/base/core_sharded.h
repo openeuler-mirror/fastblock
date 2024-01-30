@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 ChinaUnicom
+/* Copyright (c) 2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
@@ -27,21 +27,21 @@ protected:
     virtual void run_task() = 0;
 public:
     core_context() {}
-    virtual ~core_context() {}       
+    virtual ~core_context() {}
     static void run(void *arg) {
         core_context *con = (core_context *)arg;
-        con->run_task();  
+        con->run_task();
         delete con;
-    }  
+    }
 };
 
 template <typename Func, typename... Args>
 class lambda_ctx : public core_context {
 public:
   lambda_ctx(lambda_ctx* l) = delete;
-  lambda_ctx(Func func, Args&&... args) 
+  lambda_ctx(Func func, Args&&... args)
   : func(std::move(func))
-  , args(std::make_tuple(std::forward<Args>(args)...)) 
+  , args(std::make_tuple(std::forward<Args>(args)...))
   { }
 
   virtual void run_task() override {
@@ -100,7 +100,7 @@ private:
             spdk_cpuset_set_cpu(&cpumask, lcore, true);
             std::string thread_name = app_name + std::to_string(lcore);
 
-            struct spdk_thread *thread = spdk_thread_create(app_name.c_str(), &cpumask);   
+            struct spdk_thread *thread = spdk_thread_create(app_name.c_str(), &cpumask);
             _threads.push_back(thread);
         }
     }

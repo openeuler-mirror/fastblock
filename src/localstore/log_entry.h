@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 ChinaUnicom
+/* Copyright (c) 2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
@@ -32,7 +32,7 @@ struct log_entry_t {
 
 static constexpr uint64_t entry_header_size = sizeof(uint64_t) * 3;
 
-inline bool 
+inline bool
 EncodeLogHeader(spdk_buffer& sbuf, log_entry_t& entry) {
     bool rc;
 
