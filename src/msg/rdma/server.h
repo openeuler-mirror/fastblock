@@ -169,7 +169,7 @@ public:
       , _thread{::spdk_thread_create("rpc_srv", &_cpumask)}
       , _opts{std::move(opts)}
       , _dev{std::make_shared<device>(process_ib_event)}
-      , _pd{std::make_unique<protection_domain>(_dev)}
+      , _pd{std::make_unique<protection_domain>(_dev, _opts->ep->device_name)}
       , _cq{std::make_shared<completion_queue>(_opts->ep->cq_num_entries, *_pd)}
       , _listener{nullptr}
       , _wcs{std::make_unique<::ibv_wc[]>(_opts->poll_cq_batch_size)}
