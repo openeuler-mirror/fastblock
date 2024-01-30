@@ -558,6 +558,7 @@ int raft_server_t::raft_recv_appendentries(
 
     if (raft_is_candidate() && raft_get_current_term() == ae->term())
     {
+        SPDK_WARNLOG("become follower\n");
         raft_become_follower();
     }
     else if (raft_get_current_term() < ae->term())
@@ -566,6 +567,7 @@ int raft_server_t::raft_recv_appendentries(
         if (0 != e){
             return hand_error(e);
         }
+        SPDK_WARNLOG("become follower\n");
         raft_become_follower();
     }
     else if (ae->term() < raft_get_current_term())
@@ -1077,16 +1079,16 @@ void raft_server_t::raft_flush(){
          * becoming congested. */
         raft_index_t next_idx = node->raft_node_get_next_idx();
         if(!node->raft_node_is_recovering() && next_idx == _first_idx){
-            SPDK_INFOLOG(pg_group, "send to node %d next_idx: %ld current_idx: %ld\n", 
+            SPDK_WARNLOG("send to node %d next_idx: %ld current_idx: %ld\n", 
                     node->raft_node_get_id(), next_idx, _current_idx);
             node->raft_set_end_idx(_current_idx);
             raft_send_appendentries(node);
         }
         else{
             if(node->raft_node_is_recovering())
-                SPDK_INFOLOG(pg_group, "node %d is recovering\n", node->raft_node_get_id());
+                SPDK_WARNLOG("node %d is recovering\n", node->raft_node_get_id());
             else
-                SPDK_INFOLOG(pg_group, "node %d is fall behind,  next_idx: %ld first_idx: %ld \n", 
+                SPDK_WARNLOG("node %d is fall behind,  next_idx: %ld first_idx: %ld \n", 
                     node->raft_node_get_id(), next_idx, _first_idx);
         }             
     }
@@ -2315,7 +2317,7 @@ int raft_server_t::raft_set_current_term(const raft_term_t term)
     if (_current_term < term)
     {
         raft_node_id_t voted_for_local = -1;
-        int ret = save_term(term);
+        int ret = save_current_term(term);
         if(ret != 0)
             return ret;
             
@@ -2362,7 +2364,7 @@ void raft_server_t::add_raft_membership(const raft_node_info& node, utils::conte
 }
 
 void raft_server_t::remove_raft_membership(const raft_node_info& node, utils::context* complete){
-    SPDK_DEBUGLOG(pg_group, "remove node %d %s %d to pg %lu.%lu\n", node.node_id(), node.addr().c_str(), 
+    SPDK_WARNLOG("remove node %d %s %d to pg %lu.%lu\n", node.node_id(), node.addr().c_str(), 
             node.port(), raft_get_pool_id(), raft_get_pg_id());
     
     raft_configuration config;
@@ -2394,11 +2396,11 @@ void raft_server_t::change_raft_membership(std::vector<raft_node_info>&& new_nod
     raft_configuration config;
     uint32_t add_count = 0;
 
-    SPDK_DEBUGLOG(pg_group, "change membership of pg %lu.%lu\n", raft_get_pool_id(), raft_get_pg_id());
+    SPDK_INFOLOG(pg_group, "change membership of pg %lu.%lu\n", raft_get_pool_id(), raft_get_pg_id());
     for(auto& new_node : new_nodes){
         auto info = config.add_new_nodes();
         *info = new_node;
-        SPDK_DEBUGLOG(pg_group, "new membership: %d\n", new_node.node_id());
+        SPDK_WARNLOG("new membership: %d\n", new_node.node_id());
     }
 
     std::map<int32_t, int32_t> old_nodes;
@@ -2484,4 +2486,44 @@ void raft_server_t::raft_step_down(raft_index_t commit_index){
 
     auto next_candidate_id = find_next_candidate();
     raft_send_timeout_now(next_candidate_id);
+}
+
+void raft_server_t::load(raft_node_id_t current_node, raft_complete cb_fn, void *arg){
+    auto log_load_done = [this, current_node, cb_fn = std::move(cb_fn)](void *arg, int rerrno){
+        if(rerrno != 0){
+            cb_fn(arg, rerrno);
+            return;
+        }
+        
+        raft_set_current_idx(_log->get_next_idx() - 1);
+        load_current_term();
+        load_vote_for();
+        if(!_configuration_manager.load_node_configuration()){
+            SPDK_WARNLOG("load_node_configuration failed\n");
+        }
+        auto &cfg = _configuration_manager.get_last_node_configuration();
+        update_nodes_stat(cfg);
+
+        raft_set_commit_idx(raft_get_current_idx());
+
+        raft_index_t last_applied_idx;
+        auto lapply_idx_opl = load_last_apply_index();
+        if(lapply_idx_opl.has_value()){
+            last_applied_idx = lapply_idx_opl.value();
+            SPDK_INFOLOG(pg_group, "last_applied_idx %ld\n", last_applied_idx);
+        }else{
+            last_applied_idx = _log->log_get_base_index();
+            if(last_applied_idx > 0)
+                last_applied_idx -= 1;
+        }
+        _machine->set_last_applied_idx(last_applied_idx);
+
+        raft_set_nodeid(current_node);
+        SPDK_INFOLOG(pg_group, "raft load done. pg %lu.%lu _current_idx %lu _current_term %lu _voted_for %d _commit_idx %lu _last_applied_idx %ld _node_id %d\n", 
+                _pool_id, _pg_id, _current_idx, _current_term, _voted_for, _commit_idx, _machine->get_last_applied_idx(), _node_id);
+        start_raft_timer();
+        raft_set_op_state(raft_op_state::RAFT_ACTIVE);
+        cb_fn(arg, 0);
+    };
+    _log->load(std::move(log_load_done), arg);
 }

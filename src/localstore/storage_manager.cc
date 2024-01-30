@@ -51,10 +51,12 @@ storage_fini(storage_op_complete cb_fn, void* arg) {
 
 void storage_load(storage_op_complete cb_fn, void* arg){
   uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
-  SPDK_WARNLOG("storage_load in core %u\n", shard_id);
+  SPDK_INFOLOG(storage_log, "storage_load in core %u\n", shard_id);
   auto &blobs = global_blob_tree();
   spdk_blob_id kv_blob_id = blobs.on_shard(shard_id).kv_blob;
+  spdk_blob_id checkpoint_blob_id = blobs.on_shard(shard_id).kv_checkpoint_blob;
+  spdk_blob_id new_checkpoint_blob_id = blobs.on_shard(shard_id).kv_new_checkpoint_blob;
 
   std::construct_at(&g_st_mgr);
-  g_st_mgr.load(kv_blob_id, std::move(cb_fn), arg);  
+  g_st_mgr.load(kv_blob_id, checkpoint_blob_id, new_checkpoint_blob_id, std::move(cb_fn), arg);  
 }

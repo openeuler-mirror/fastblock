@@ -88,6 +88,12 @@ struct osd_info_t
 	std::string address;
 };
 
+struct pg_info_type {
+    uint64_t pg_id{0};
+    int64_t   version{0};
+    std::vector<int> osds{};
+};
+
 template <typename T>
 inline constexpr
 T align_up(T v, T align) {

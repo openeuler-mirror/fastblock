@@ -203,6 +203,15 @@ public:
             return nullptr;
         return it->second;
     }
+
+    std::vector<raft_node_id_t> get_node_ids(){
+        std::vector<raft_node_id_t> node_ids;
+
+        for(auto& [node_id, _] : _nodes){
+            node_ids.push_back(node_id);
+        }
+        return std::move(node_ids);
+    }
 private:
     nodes_type _nodes;
 };

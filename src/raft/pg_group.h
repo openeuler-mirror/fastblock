@@ -21,6 +21,8 @@
 class shard_manager
 {
 public:
+    friend class pg_group_t;
+
     struct node_heartbeat
     {
         node_heartbeat(
@@ -79,6 +81,8 @@ private:
     struct spdk_poller *_heartbeat_timer{};
 };
 
+using pg_complete = std::function<void (void *, int)>;
+
 class pg_group_t
 {
 public:
@@ -112,6 +116,9 @@ public:
 
     int create_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,
                   std::vector<utils::osd_info_t> &&osds, disk_log *log);
+    
+    void load_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,
+                disk_log *log, pg_complete cb_fn, void *arg);    
 
     void delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id);
 
@@ -159,7 +166,8 @@ public:
     }
 
     void change_pg_membership(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, std::vector<raft_node_info>&& new_osds, utils::context* complete);
-    
+    void load_pgs_map(std::map<uint64_t, std::vector<utils::pg_info_type>> &pools);
+
 private:
     int _pg_add(uint32_t shard_id, std::shared_ptr<raft_server_t> raft, uint64_t pool_id, uint64_t pg_id)
     {

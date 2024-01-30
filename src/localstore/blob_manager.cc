@@ -70,7 +70,7 @@ bs_init_complete(void *args, struct spdk_blob_store *bs, int bserrno)
     return;
   }
 
-  SPDK_WARNLOG("blobstore init success.\n");
+  // SPDK_WARNLOG("blobstore init success.\n");
   std::construct_at(&g_bs_mgr);
   g_bs_mgr.blobstore = bs;
   g_bs_mgr.channel = spdk_bs_alloc_io_channel(bs);
@@ -111,7 +111,7 @@ void parse_kv_xattr(struct spdk_blob *blob) {
   if (rc < 0) return;
 
   if (*shard_id > g_bs_mgr.blobs.size())  return;
-  SPDK_WARNLOG("kv xattr, blob id %lu has shard_id: %u\n", spdk_blob_get_id(blob), (*shard_id));
+  SPDK_INFOLOG(blob_log, "kv xattr, blob id %lu has shard_id: %u\n", spdk_blob_get_id(blob), (*shard_id));
   g_bs_mgr.blobs.on_shard(*shard_id).kv_blob = spdk_blob_get_id(blob);
 }
 
@@ -132,10 +132,12 @@ void parse_log_xattr(struct spdk_blob *blob) {
   if (rc < 0) 
     return;
   pg = std::string(value, len);
-  SPDK_WARNLOG("log xattr, blob id %lu shard_id %u  pg  %s \n", spdk_blob_get_id(blob), *shard_id, pg.c_str());
+  SPDK_INFOLOG(blob_log, "log xattr, blob id %lu shard_id %u  pg  %s \n", spdk_blob_get_id(blob), *shard_id, pg.c_str());
 
   if (*shard_id > g_bs_mgr.blobs.size())  return;
-  g_bs_mgr.blobs.on_shard(*shard_id).log_blobs[pg] = spdk_blob_get_id(blob);
+  SPDK_INFOLOG(blob_log, "log blob, blob id %ld blob size %lu\n", spdk_blob_get_id(blob), 
+          spdk_blob_get_num_clusters(blob) * spdk_bs_get_cluster_size(global_blobstore()));
+  g_bs_mgr.blobs.on_shard(*shard_id).log_blobs[pg] = blob;
 }
 
 void parse_object_xattr(struct spdk_blob *blob) {
@@ -177,7 +179,7 @@ void parse_object_xattr(struct spdk_blob *blob) {
       object.origin.blobid = spdk_blob_get_id(blob);    
   }
 
-  SPDK_WARNLOG("blob id %lu shard_id %u pg %s obj_name %s  snap_name %s recover_name %s\n", 
+  SPDK_INFOLOG(blob_log, "blob id %lu shard_id %u pg %s obj_name %s  snap_name %s recover_name %s\n", 
           spdk_blob_get_id(blob), *shard_id, pg.c_str(), obj_name.c_str(), snap_name.c_str(), 
           recover_name.c_str());
 }
@@ -191,7 +193,7 @@ void parse_kv_checkpoint_xattr(struct spdk_blob *blob) {
   if (rc < 0) return;
 
   if (*shard_id > g_bs_mgr.blobs.size())  return;
-  SPDK_WARNLOG("kv_checkpoint xattr, blob id %lu has shard_id: %u\n", spdk_blob_get_id(blob), (*shard_id));
+  SPDK_INFOLOG(blob_log, "kv_checkpoint xattr, blob id %lu has shard_id: %u\n", spdk_blob_get_id(blob), (*shard_id));
   g_bs_mgr.blobs.on_shard(*shard_id).kv_checkpoint_blob = spdk_blob_get_id(blob);
 }
 
@@ -204,22 +206,28 @@ void parse_kv_new_checkpoint_xattr(struct spdk_blob *blob) {
   if (rc < 0) return;
 
   if (*shard_id > g_bs_mgr.blobs.size())  return;
-  SPDK_WARNLOG("kv_new_checkpoint xattr, blob id %lu has shard_id: %u\n", spdk_blob_get_id(blob), (*shard_id));
+  SPDK_INFOLOG(blob_log, "kv_new_checkpoint xattr, blob id %lu has shard_id: %u\n", spdk_blob_get_id(blob), (*shard_id));
   g_bs_mgr.blobs.on_shard(*shard_id).kv_new_checkpoint_blob = spdk_blob_get_id(blob);
 }
 
-void parse_blob_xattr(struct spdk_blob *blob) {
-  blob_type *type;
-  // uint32_t *type;
-  size_t len;
-  int rc;
+struct parse_blob_ctx{
+  bm_complete cb_fn;
+  void* args;
+  blob_type type;
+};
 
-  rc = spdk_blob_get_xattr_value(blob, "type", (const void**)&type, &len);
-  if (rc < 0) return;
+static void parse_blob_xattr(void *arg, struct spdk_blob *blob, int rberrno){
+  parse_blob_ctx* ctx = (parse_blob_ctx*)arg;
+  if(rberrno){
+    SPDK_ERRLOG("open blob failed: %s\n", spdk_strerror(rberrno));
+    ctx->cb_fn(ctx->args, rberrno);
+    delete ctx;
+    return;
+  }
 
-  auto type_str = type_string(*type);
-  SPDK_WARNLOG("blob id %lu type: %s\n", spdk_blob_get_id(blob), type_str.c_str());
-  switch (*type) {
+  auto type_str = type_string(ctx->type);
+  SPDK_INFOLOG(blob_log, "blob id %lu type: %s\n", spdk_blob_get_id(blob), type_str.c_str());
+  switch (ctx->type) {
     case blob_type::kv:
       parse_kv_xattr(blob);
       break;
@@ -237,30 +245,74 @@ void parse_blob_xattr(struct spdk_blob *blob) {
       break;
     default:
       break;
+  }  
+  ctx->cb_fn(ctx->args, 0);
+  delete ctx;  
+}
+
+void parse_open_blob_xattr(struct spdk_blob *blob, bm_complete cb_fn, void* args){
+  //参数blob随后会在外部关闭
+  blob_type *type;
+  size_t len;
+  int rc;
+
+  rc = spdk_blob_get_xattr_value(blob, "type", (const void**)&type, &len);
+  if (rc < 0){
+    cb_fn(args, 0);
+    return;
+  }
+
+  parse_blob_ctx *ctx = new parse_blob_ctx{.cb_fn = std::move(cb_fn), .args = args, .type = *type};
+  switch (*type){
+  case blob_type::log:
+  case blob_type::object:
+    spdk_bs_open_blob(g_bs_mgr.blobstore, spdk_blob_get_id(blob),
+		       parse_blob_xattr, ctx);
+    break;
+  case blob_type::kv:
+  case blob_type::kv_checkpoint:
+  case blob_type::kv_checkpoint_new:
+    parse_blob_xattr(ctx, blob, 0);
+    break;
+  default:
+    cb_fn(args, 0);
+    break;
   }
 }
 
 static void
 blob_iter_complete(void *args, struct spdk_blob *blob, int bserrno)
 { 
-  if (bserrno) {
-    struct bm_context *ctx = (struct bm_context *)args;
-    if (bserrno == -ENOENT) {
-      // ENOENT 表示迭代顺利完成.
-      SPDK_INFOLOG(blob_log, "blob iteration complete.\n");
-      ctx->cb_fn(ctx->args, 0);
+  auto err_hand = [](void *arg, int berrno){
+    if (berrno) {
+      struct bm_context *ctx = (struct bm_context *)arg;
+      if (berrno == -ENOENT) {
+        // ENOENT 表示迭代顺利完成.
+        SPDK_INFOLOG(blob_log, "blob iteration complete.\n");
+        ctx->cb_fn(ctx->args, 0);
+        delete ctx;
+        return;
+      }
+      SPDK_ERRLOG("blob iteration failed: %s\n", spdk_strerror(berrno));
+      ctx->cb_fn(ctx->args, berrno);
       delete ctx;
       return;
     }
-    SPDK_ERRLOG("blob iteration failed: %s\n", spdk_strerror(bserrno));
-    ctx->cb_fn(ctx->args, bserrno);
-    delete ctx;
-    return;
+  };
+
+  if (bserrno) {
+    return err_hand(args, bserrno);
   }
 
-  parse_blob_xattr(blob);
-
-  spdk_bs_iter_next(g_bs_mgr.blobstore, blob, blob_iter_complete, args);
+  parse_open_blob_xattr(
+    blob,
+    [blob, err_hand = std::move(err_hand)](void *args, int berrno){
+      if(berrno){
+        return err_hand(args, berrno);
+      }
+      spdk_bs_iter_next(g_bs_mgr.blobstore, blob, blob_iter_complete, args);
+    },
+    args);
 }
 
 static void

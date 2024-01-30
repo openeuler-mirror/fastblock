@@ -15,6 +15,8 @@
 #include "utils/err_num.h"
 
 constexpr uint32_t default_parallel_apply_num = 32;
+uint64_t g_last_time = 0;
+raft_index_t g_last_index = 0;
 
 static int apply_task(void *arg){
     state_machine* stm = (state_machine *)arg;
@@ -50,6 +52,16 @@ int state_machine::raft_apply_entry()
     if (_raft->raft_get_snapshot_in_progress())
         return -1;
 
+    auto cur_time = utils::get_time();
+    if((cur_time - g_last_time) / 1000 > 1 || _last_applied_idx - g_last_index >= 100){
+        if(g_last_index != _last_applied_idx){
+            g_last_index = _last_applied_idx;
+            g_last_time = cur_time;
+            SPDK_INFOLOG(pg_group, "save last_apply_index %lu\n", _last_applied_idx);
+            get_raft()->save_last_apply_index(_last_applied_idx);
+        }
+    }
+
     /* Don't apply after the commit_idx */
     if (_last_applied_idx == _raft->raft_get_commit_idx())
         return -1;
@@ -60,17 +72,20 @@ int state_machine::raft_apply_entry()
 
     raft_index_t log_idx = _last_applied_idx + 1;
 
-    auto ety =  _raft->raft_get_entry_from_idx(log_idx);
-    if (!ety){
-        set_apply_in_progress(false);
-        return -1;
-    }
-
-    SPDK_INFOLOG(pg_group, "osd %d applying log: %ld, idx: %ld size: %u \n",
-                 get_raft()->raft_get_nodeid(), log_idx, ety->idx(), (uint32_t)ety->data().size());
-
-    apply_complete *complete = new apply_complete(log_idx, this);
-    apply(ety, complete);
+    _raft->raft_get_entry_by_idx(
+      log_idx,
+      [this, log_idx](std::shared_ptr<raft_entry_t> ety){
+        if (!ety){
+            SPDK_INFOLOG(pg_group, "not find log %ld\n", log_idx);
+            set_apply_in_progress(false);
+            return;
+        }
+        SPDK_INFOLOG(pg_group, "osd %d applying log: %ld, idx: %ld size: %u \n",
+                     get_raft()->raft_get_nodeid(), log_idx, ety->idx(), (uint32_t)ety->data().size());
+    
+        apply_complete *complete = new apply_complete(log_idx, this);
+        apply(ety, complete);
+      });
     return 0;
 }
 

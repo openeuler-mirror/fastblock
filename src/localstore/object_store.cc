@@ -550,7 +550,7 @@ void object_store::readwrite(std::map<std::string, xattr_val_type>& xattr, std::
 {
     SPDK_DEBUGLOG(object_store, "object %s offset:%lu len:%lu\n", object_name.c_str(), offset, len);
     if (offset + len > blob_size) {
-      SPDK_WARNLOG("object %s offset:%lu len:%lu beyond blob size %u\n",
+      SPDK_DEBUGLOG(object_store, "object %s offset:%lu len:%lu beyond blob size %u\n",
           object_name.c_str(), offset, len, blob_size);
       len = blob_size - offset;
     }
@@ -591,7 +591,7 @@ void object_store::readwrite(std::map<std::string, xattr_val_type>& xattr, std::
         opts.xattrs.names = xattr_names;
         opts.xattrs.ctx = ctx;
         opts.xattrs.get_value = object_get_xattr_value;
-        SPDK_WARNLOG("create blob, xattr type: %u pg: %s name: %s \n", (uint32_t)ctx->type, ctx->pg.c_str(), ctx->object_name.c_str());
+        SPDK_DEBUGLOG(object_store, "create blob, xattr type: %u pg: %s name: %s \n", (uint32_t)ctx->type, ctx->pg.c_str(), ctx->object_name.c_str());
         spdk_bs_create_blob_ext(bs, &opts, create_done, ctx);
     }
 }

@@ -27,6 +27,8 @@ enum class osd_state {
     OSD_DOWN
 };
 
+using pm_complete = std::function<void (void *, int)>;
+
 class partition_manager : public std::enable_shared_from_this<partition_manager> {
 public:
     partition_manager(int node_id, std::shared_ptr<connect_cache> conn_cache)
@@ -73,9 +75,13 @@ public:
 
     int create_partition(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t>&& osds, int64_t revision_id);
     int delete_partition(uint64_t pool_id, uint64_t pg_id);
+    int load_partition(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob, 
+                        object_store::container objects, pm_complete func, void *arg);
 
     bool get_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t &shard_id);
 
+    void load_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob, 
+                        object_store::container objects, pm_complete cb_fn, void *arg);
     void create_pg(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t> osds, uint32_t shard_id, int64_t revision_id);
     void delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id);
 
@@ -127,6 +133,10 @@ public:
     }
 
     int change_pg_membership(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t> new_osds, utils::context* complete);
+
+    void load_pgs_map(std::map<uint64_t, std::vector<utils::pg_info_type>> &pools){
+        _pgs.load_pgs_map(pools);
+    }
 
 private:
     int osd_state_is_not_active();

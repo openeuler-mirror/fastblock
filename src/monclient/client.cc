@@ -47,6 +47,7 @@ int send_cluster_map_request(void* arg) {
 
 void do_start(void* arg) {
     auto* mon_cli = reinterpret_cast<client*>(arg);
+    mon_cli->load_pgs();
     mon_cli->handle_start();
 }
 
@@ -59,6 +60,32 @@ void do_start_cluster_map_poller(void* arg) {
 void do_emplace_request(void* arg) {
     auto ctx = reinterpret_cast<client::request_context*>(arg);
     ctx->this_client->handle_emplace_request(ctx);
+}
+
+void client::load_pgs(){
+    // SPDK_WARNLOG("load pgs\n");
+    std::map<uint64_t, std::vector<utils::pg_info_type>> pools;
+    _pm.lock()->load_pgs_map(pools);
+    for(auto& [pool_id, infos] : pools){
+        _pg_map.pool_version[pool_id] = 0;
+        auto [it, _] = _pg_map.pool_pg_map.try_emplace(pool_id);
+        auto& pgs = it->second;
+        for(auto& info : infos){
+            pgs[info.pg_id] = std::make_unique<utils::pg_info_type>(std::move(info));
+        }
+    }
+
+//////////////////
+    // for(auto& [pool_id, pgs] : _pg_map.pool_pg_map){
+        // for(auto& [pg_id, pi] : pgs){
+            // std::string osds;
+            // for(auto osd_id : pi->osds){
+                // osds += std::to_string(osd_id);
+            // }
+            // SPDK_WARNLOG("pool %d pg %d osds %s\n", pool_id, pg_id, osds.c_str());
+        // }
+    // }
+///////////////
 }
 
 /*
@@ -284,6 +311,7 @@ public:
             return;
         }
         if(!_client->get_pg_map().pool_pg_map[_pool_id].contains(_pg_id)){
+            SPDK_INFOLOG(mon, "pg %lu.%lu not in pool_pg_map", _pool_id, _pg_id);
             return;
         }
         auto& pit = _client->get_pg_map().pool_pg_map[_pool_id][_pg_id];
@@ -360,7 +388,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
             }
 
             for (auto& info : info_it->second.pi()) {
-                auto pit = std::make_unique<pg_map::pg_info>();
+                auto pit = std::make_unique<utils::pg_info_type>();
                 pit->pg_id = info.pgid();
                 pit->version = info.version();
                 std::string osd_str;
@@ -369,7 +397,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                     osd_str += std::to_string(osd_id) + ",";
                 }
                 
-                SPDK_INFOLOG(mon, "core [%u] pool: %d pg: %d version: %ld  osd_list: %s\n",
+                SPDK_INFOLOG(mon, "core [%u] pool: %d pg: %lu version: %ld  osd_list: %s\n",
                   ::spdk_env_get_current_core(), pool_key, pit->pg_id, pit->version, osd_str.data());
 
                 _pg_map.pool_pg_map[pool_key].emplace(
@@ -409,23 +437,29 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                         new_osds.emplace_back(*osd_info);
                     }
 
-                    SPDK_INFOLOG(mon, "pool: %d version: %ld pg: %d version: %ld  osd_list: %s\n", 
+                    SPDK_INFOLOG(mon, "pool: %d version: %ld pg: %lu version: %ld  osd_list: %s\n", 
                             pool_key, pv.at(pool_key), pit->pg_id, info.version(), osd_str.data());
 
                     auto complete = new change_membership_complete(pool_key, pgid, info.version(), osds, this);
                     if(osds.size() != pit->osds.size()){
+                        // SPDK_WARNLOG("change_pg_membership\n");
                         _pg_map.set_pool_update(pool_key, pgid, pv.at(pool_key), 1);
                         //pg的osd成员已经变更，处理成员变更   todo
                         _pm.lock()->change_pg_membership(pool_key, pgid, new_osds, complete);
                     }else{
+                        // SPDK_WARNLOG("change_pg_membership\n");
                         if(!std::is_permutation(osds.begin(), osds.end(), pit->osds.begin())){
                             _pg_map.set_pool_update(pool_key, pgid, pv.at(pool_key), 1);
                             //pg的osd成员已经变更，处理成员变更   todo
                             _pm.lock()->change_pg_membership(pool_key, pgid, new_osds, complete);
+                        }else{
+                            // SPDK_WARNLOG("pg %d.%lu version %ld\n", pool_key, pit->pg_id, pit->version);
+                            pit->version = info.version();
+                            delete complete;
                         }
                     }
                 }else{
-                    auto pit = std::make_unique<pg_map::pg_info>();
+                    auto pit = std::make_unique<utils::pg_info_type>();
                     pit->pg_id = pgid;
                     pit->version = info.version();
                     std::string osd_str;
@@ -434,7 +468,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                         osd_str += std::to_string(osd_id) + ",";
                     }
                     _pg_map.pool_pg_map[pool_key].emplace(pit->pg_id, std::move(pit));
-                    SPDK_INFOLOG(mon, "pool: %d version: %ld pg: %d version: %ld  osd_list: %s\n", 
+                    SPDK_INFOLOG(mon, "pool: %d version: %ld pg: %lu version: %ld  osd_list: %s\n", 
                             pool_key, pv.at(pool_key), pit->pg_id, pit->version, osd_str.data());
                     if (_new_pg_cb) {
                         _new_pg_cb.value()(info, pool_key, pv.at(pool_key), _osd_map);

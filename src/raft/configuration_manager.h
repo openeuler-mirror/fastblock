@@ -25,6 +25,8 @@ class raft_server_t;
 
 class node_configuration{
 public:
+    friend class node_configuration_manager;
+
     node_configuration()
     : _index(0)
     , _term(0) {}
@@ -80,8 +82,16 @@ public:
         return _nodes;
     }
 
+    const std::vector<raft_node_info>& get_old_nodes(){
+        return _old_nodes;
+    }
+
     raft_index_t get_index(){
         return _index;
+    }
+
+    raft_term_t get_term(){
+        return _term;
     }
 private:
     raft_index_t _index;
@@ -120,6 +130,7 @@ public:
 
     void add_node_configuration(node_configuration&& node_config){
         _configurations.emplace_back(std::move(node_config));
+        save_node_configuration();
     }
 
     node_configuration& get_last_node_configuration(){
@@ -244,7 +255,14 @@ public:
     void updatet_raft_nodes_stat();
 
     void truncate_by_idx(raft_index_t index);
+
+    bool save_node_configuration();
+
+    bool load_node_configuration();
 private:
+    std::pair<bool, std::string> serialize();
+    bool deserialize(std::string& data);
+
     raft_server_t* _raft;
     std::deque<node_configuration> _configurations;
     cfg_state _state;

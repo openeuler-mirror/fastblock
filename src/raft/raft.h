@@ -67,6 +67,8 @@ int raft_state_to_errno(raft_op_state state);
 
 std::string pg_id_to_name(uint64_t pool_id, uint64_t pg_id);
 
+using raft_complete = std::function<void (void *, int)>;
+
 class raft_server_t;
 
 class raft_server_t{
@@ -365,12 +367,29 @@ public:
         _prevote = prevote;
     }
 
+    using get_entry_complete = std::function<void (std::shared_ptr<raft_entry_t>)>;
     /**
      * @param[in] idx The entry's index
      **/
-    std::shared_ptr<raft_entry_t> raft_get_entry_from_idx(raft_index_t idx)
+    void raft_get_entry_by_idx(raft_index_t idx, get_entry_complete cb_fn)
     {
-        return raft_get_log()->log_get_at_idx(idx);
+        auto ety = raft_get_log()->log_get_at_idx(idx);
+        if(ety){
+            cb_fn(ety);
+            return;
+        }
+
+        raft_get_log()->disk_read(
+          idx,
+          idx,
+          [cb_fn = std::move(cb_fn)](std::vector<raft_entry_t>&& entries, int rberrno){
+             if(rberrno != 0 || entries.size() == 0){
+               cb_fn(nullptr);
+               return; 
+             }
+             cb_fn(std::make_shared<raft_entry_t>(entries[0]));
+          }  
+        );
     }
 
     void stop();
@@ -564,23 +583,53 @@ public:
         auto val = _kv->get(key);
         if(!val.has_value())
             return std::nullopt;
-        return atoi(val.value().c_str());
+        _voted_for = atoi(val.value().c_str());
+        return _voted_for;
     }
 
-    int save_term(const raft_term_t term){
+    int save_current_term(const raft_term_t term){
         std::string key = std::to_string(_pool_id) + "." + std::to_string(_pg_id) + ".term";
         std::string val = std::to_string(term);
         _kv->put(key, val);
         return 0;
     }
 
-    std::optional<raft_term_t> load_term(){
+    std::optional<raft_term_t> load_current_term(){
         std::string key = std::to_string(_pool_id) + "." + std::to_string(_pg_id) + ".term";
         auto val = _kv->get(key);
         if(!val.has_value())
             return std::nullopt;
-        return atol(val.value().c_str());
+        _current_term = atol(val.value().c_str());
+        return _current_term;
     }
+
+    int save_node_configuration(std::string& value){
+        std::string key = std::to_string(_pool_id) + "." + std::to_string(_pg_id) + ".node_cfg";
+        _kv->put(key, value);
+        return 0;
+    }
+
+    int save_last_apply_index(raft_index_t last_applied_idx){
+        std::string key = std::to_string(_pool_id) + "." + std::to_string(_pg_id) + ".lapply_idx";
+        _kv->put(key, std::to_string(last_applied_idx));
+        return 0;        
+    }
+
+    std::optional<raft_index_t> load_last_apply_index(){
+        std::string key = std::to_string(_pool_id) + "." + std::to_string(_pg_id) + ".lapply_idx";
+        auto val = _kv->get(key);
+        if(!val.has_value())
+            return std::nullopt;
+        auto last_applied_idx = atol(val.value().c_str());  
+        return last_applied_idx;      
+    }
+
+    std::optional<std::string> load_node_configuration(){
+        std::string key = std::to_string(_pool_id) + "." + std::to_string(_pg_id) + ".node_cfg";
+        auto val = _kv->get(key);
+        return val;       
+    }
+
 
     void start_raft_timer();
 
@@ -778,6 +827,8 @@ public:
     node_configuration_manager &get_node_configuration_manager(){
         return _configuration_manager;
     }
+
+    void load(raft_node_id_t current_node, raft_complete cb_fn, void *arg);
 private:
     int _recovery_by_snapshot(std::shared_ptr<raft_node> node);
     bool _has_majority_leases(raft_time_t now, int with_grace);

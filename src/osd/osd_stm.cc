@@ -62,7 +62,7 @@ void osd_stm::write_obj(const std::string& obj_name, uint64_t offset, const std:
     std::map<std::string, xattr_val_type> xattr;
     xattr["type"] = blob_type::object;
     xattr["pg"] = get_pg_name();
-    SPDK_WARNLOG("write obj %s xattr type: %u pg: %s\n", obj_name.c_str(), (uint32_t)blob_type::object, get_pg_name().c_str());
+    SPDK_INFOLOG(osd, "write obj %s xattr type: %u pg: %s\n", obj_name.c_str(), (uint32_t)blob_type::object, get_pg_name().c_str());
     _store.write(xattr, obj_name, offset, buf, data.size(), write_obj_done, ctx);
 }
 
@@ -141,7 +141,7 @@ void osd_stm::write_and_wait(
         std::string buf;
         cmd.SerializeToString(&buf);
 
-        SPDK_WARNLOG("process write_request , pool %lu pg %lu object_name %s offset %lu len %lu\n",
+        SPDK_INFOLOG(osd, "process write_request , pool %lu pg %lu object_name %s offset %lu len %lu\n",
                      request->pool_id(), request->pg_id(), request->object_name().c_str(), request->offset(),
                      request->data().size());
 

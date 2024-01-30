@@ -150,13 +150,7 @@ void start_monitor(server_t* ctx) {
       1024 * 1024, std::move(cb));
 }
 
-void storage_init_complete(void *arg, int rberrno){
-    if(rberrno != 0){
-		SPDK_ERRLOG("Failed to initialize the storage system: %s\n", spdk_strerror(rberrno));
-        osd_exit_code = rberrno;
-        std::raise(SIGINT);
-		return;
-	}
+static void pm_init(void *arg){
 	server_t *server = (server_t *)arg;
     SPDK_NOTICELOG(
       "Block start, cpu count: %u, bdev_disk: %s\n",
@@ -179,10 +173,21 @@ void storage_init_complete(void *arg, int rberrno){
               osds.push_back(*(osd_map.data.at(osd_id)));
           }
           pm->create_partition(pg_key, pg_info.pgid(), std::move(osds), pg_map_ver);
-      };
+      }; 
     monitor_client = std::make_shared<monitor::client>(
-      server->monitors, global_pm, std::move(pg_map_cb), std::nullopt, server->node_id);
+      server->monitors, global_pm, std::move(pg_map_cb), std::nullopt, server->node_id);   
+}
 
+void storage_init_complete(void *arg, int rberrno){
+    if(rberrno != 0){
+		SPDK_ERRLOG("Failed to initialize the storage system: %s\n", spdk_strerror(rberrno));
+        osd_exit_code = rberrno;
+        std::raise(SIGINT);
+		return;
+	}
+    
+    server_t *server = (server_t *)arg;
+    pm_init(arg);
     start_monitor(server);
 
     pm_start_context *ctx = new pm_start_context{server, global_pm.get()};
@@ -201,18 +206,190 @@ void disk_init_complete(void *arg, int rberrno) {
 	storage_init(storage_init_complete, arg);
 }
 
-void storage_load_complete(void *arg, int rberrno){
+struct oad_load_ctx{
+    server_t *server;
+    partition_manager* pm;
+};
 
+class osd_load;
+struct load_op_ctx{
+    oad_load_ctx* ctx;
+    osd_load* load;
+    pm_complete func;
+    uint32_t shard_id;
+};
+
+class osd_load{
+public:
+    osd_load(std::map<std::string, struct spdk_blob*>&& log_blobs,
+            std::map<std::string, object_store::container>&& object_blobs)
+    : _log_blobs(std::move(log_blobs))
+    , _object_blobs(std::move(object_blobs)) {}
+
+    void start_load(uint32_t shard_id, pm_complete func, oad_load_ctx* ctx){
+        iter_start();
+        auto pg = iter->first;
+        struct spdk_blob* blob = iter->second;
+        uint64_t pool_id;
+        uint64_t pg_id;
+        if(!pg_to_id(pg, pool_id, pg_id)){
+            func(ctx, err::E_INVAL);
+            return;
+        }
+
+        object_store::container objects;
+        auto iter = _object_blobs.find(pg);
+        if(iter != _object_blobs.end()){
+            objects = std::move(iter->second);
+        }
+
+        auto blob_size = spdk_blob_get_num_clusters(blob) * spdk_bs_get_cluster_size(global_blobstore());
+        SPDK_INFOLOG(osd, "load blob, blob id %ld blob size %lu\n", spdk_blob_get_id(blob), blob_size);
+        load_op_ctx *op_ctx = new load_op_ctx{.ctx = ctx, .load = this, 
+                                            .func = std::move(func), .shard_id = shard_id};
+        ctx->pm->load_partition(shard_id, pool_id, pg_id, blob, std::move(objects), start_continue, op_ctx);
+    }
+
+    static void start_continue(void *arg, int lerrno){
+        load_op_ctx* ctx = (load_op_ctx *)arg;
+        if(lerrno){
+            ctx->func(ctx->ctx, lerrno);
+            delete ctx;
+            return;
+        }
+
+        auto iter = ctx->load->iter_next();
+        if(!ctx->load->iter_is_end()){
+            auto pg = iter->first;
+            struct spdk_blob* blob = iter->second;
+            uint64_t pool_id;
+            uint64_t pg_id;
+            if(!ctx->load->pg_to_id(pg, pool_id, pg_id)){
+                ctx->func(ctx->ctx, err::E_INVAL);
+                return;
+            } 
+
+            SPDK_INFOLOG(osd, "pg %s\n", pg.c_str());
+            object_store::container objects;
+            auto it = ctx->load->_object_blobs.find(pg);
+            if(it != ctx->load->_object_blobs.end()){
+                objects = std::move(it->second);
+            }    
+
+            ctx->ctx->pm->load_partition(ctx->shard_id, pool_id, pg_id, blob, std::move(objects), start_continue, ctx); 
+            return;      
+        }
+
+        ctx->func(ctx->ctx, 0);
+        delete ctx;
+    }
+
+    void iter_start() { 
+        iter = _log_blobs.begin(); 
+    }
+
+    std::map<std::string, struct spdk_blob*>::iterator iter_next(){
+        iter++;
+        return iter;
+    }
+    bool iter_is_end() { return iter == _log_blobs.end(); }
+
+    std::map<std::string, object_store::container>::iterator find_objects(std::string pg){
+        return _object_blobs.find(pg);
+    }
+
+    bool pg_to_id(std::string pg, uint64_t& pool_id, uint64_t& pg_id){
+        auto pos = pg.find(".");
+        if(pos == std::string::npos)
+            return false;
+        
+        try{
+            std::string val1 = pg.substr(0, pos);
+            std::string val2 = pg.substr(pos + 1, pg.size());
+            pool_id = stoull(val1);
+            pg_id = stoull(val2);
+        }
+        catch (std::invalid_argument){
+            return false;
+        }
+        return true;   
+    }
+public:
+    
+    std::map<std::string, struct spdk_blob*> _log_blobs;
+    std::map<std::string, object_store::container> _object_blobs;
+    std::map<std::string, struct spdk_blob*>::iterator iter;
+};
+
+struct pm_load_context : public utils::context{
+    server_t *server;
+    partition_manager* pm;
+
+    pm_load_context(server_t *_server, partition_manager* _pm)
+    : server(_server)
+    , pm(_pm) {}
+
+    void finish(int r) override {
+		if(r != 0){
+            SPDK_ERRLOG("load osd failed: %s\n", spdk_strerror(r));
+            osd_exit_code = r;
+            std::raise(SIGINT);
+			return;
+		}
+		
+        // SPDK_WARNLOG("pm start done\n");
+        auto& blobs = global_blob_tree();
+
+        //这里只处理单核的
+        uint32_t shard_id = 0;
+        // for(auto &[pg_name, log_blob] : blobs.on_shard(shard_id).log_blobs){
+            // SPDK_WARNLOG("pg_name %s blob id %lu\n", pg_name.c_str(), spdk_blob_get_id(log_blob));
+        // }
+        std::map<std::string, struct spdk_blob*> log_blobs = std::exchange(blobs.on_shard(shard_id).log_blobs, {});
+        std::map<std::string, object_store::container> object_blobs = std::exchange(blobs.on_shard(shard_id).object_blobs, {});
+        osd_load* load = new osd_load(std::move(log_blobs), std::move(object_blobs));
+        
+        auto load_done = [](void *arg, int lerrno){
+            if(lerrno != 0){
+                SPDK_ERRLOG("load osd failed: %s\n", spdk_strerror(lerrno));
+                osd_exit_code = lerrno;
+                std::raise(SIGINT);
+                return;
+            }
+            // SPDK_WARNLOG("load osd done\n");
+            oad_load_ctx* ctx = (oad_load_ctx* )arg;
+            service_init(ctx->pm, ctx->server);
+            start_monitor(ctx->server);
+        };
+        oad_load_ctx* ctx = new oad_load_ctx{.server = server, .pm = pm};
+        load->start_load(shard_id, std::move(load_done), ctx);
+    }
+};
+
+void storage_load_complete(void *arg, int rberrno){
+    if(rberrno != 0){
+		SPDK_ERRLOG("Failed to initialize the storage system: %s\n", spdk_strerror(rberrno));
+        osd_exit_code = rberrno;
+        std::raise(SIGINT);
+		return;
+	}
+
+    server_t *server = (server_t *)arg;
+    pm_init(arg);
+
+    pm_load_context *ctx = new pm_load_context{server, global_pm.get()};
+	global_pm->start(ctx);
 }
 
 void disk_load_complete(void *arg, int rberrno){
     if(rberrno != 0){
 		SPDK_NOTICELOG("Failed to initialize the disk. %s\n", spdk_strerror(rberrno));
-		spdk_app_stop(rberrno);
+        osd_exit_code = rberrno;
+        std::raise(SIGINT);
 		return;
 	}
 
-    // storage_load(storage_load_complete, arg);
+    storage_load(storage_load_complete, arg);
 }
 
 static void

@@ -133,6 +133,11 @@ public:
   };
   //快照版本链表的结点。
   using container = absl::flat_hash_map<std::string, object>;
+
+  void load(container objects){
+      table = std::move(objects);
+  }
+  
   using iterator = container::iterator;
   container table;
   struct spdk_blob_store *bs;       // 我们不掌握blob_store的生命周期

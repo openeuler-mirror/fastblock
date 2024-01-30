@@ -112,11 +112,11 @@ public:
         using pg_id_type = int32_t;
         using version_type = int64_t;
 
-        struct pg_info {
-            pg_id_type pg_id{0};
-            int64_t   version{0};
-            std::vector<osd_map::osd_id_type> osds{};
-        };
+        // struct pg_info {
+            // pg_id_type pg_id{0};
+            // int64_t   version{0};
+            // std::vector<osd_map::osd_id_type> osds{};
+        // };
 
         struct pool_update_info{
             version_type pool_version{0};
@@ -169,7 +169,7 @@ public:
             pool_update.erase(pool_id);
         }
 
-        std::unordered_map<pool_id_type, std::unordered_map<pg_id_type, std::unique_ptr<pg_info>>> pool_pg_map{};
+        std::unordered_map<pool_id_type, std::unordered_map<pg_id_type, std::unique_ptr<utils::pg_info_type>>> pool_pg_map{};
         std::unordered_map<pool_id_type, version_type> pool_version{};
         std::unordered_map<pool_id_type, pool_update_info> pool_update{};
     };
@@ -390,6 +390,7 @@ public:
 public:
 
     void start();
+    void load_pgs();
     void handle_start();
 
     void start_cluster_map_poller();

@@ -12,6 +12,7 @@
 #include "raft/configuration_manager.h"
 #include "raft/raft_node.h"
 #include "raft/raft.h"
+#include "localstore/types.h"
 
 
 void node_configuration_manager::add_catch_up_node(const raft_node_info& node_info){
@@ -257,6 +258,153 @@ void node_configuration_manager::truncate_by_idx(raft_index_t index){
     }
     if(update){
         auto &cfg = _configurations.back();
+        save_node_configuration();
         _raft->update_nodes_stat(cfg);
     }
+}
+
+bool node_configuration_manager::save_node_configuration(){
+    auto [res, value] = serialize();
+    if(!res){
+        SPDK_INFOLOG(pg_group, "serialize node_configuration failed.\n");
+        return false;
+    }
+
+    if(_raft->save_node_configuration(value) != 0){
+        SPDK_INFOLOG(pg_group, "save_node_configuration failed.\n");
+        return false;
+    }
+    return true;        
+}
+
+bool node_configuration_manager::load_node_configuration(){
+    auto val = _raft->load_node_configuration();
+    if(!val.has_value()){
+        SPDK_INFOLOG(pg_group, "no find node configuration\n");
+        return false;    
+    }
+    return  deserialize(val.value());     
+}
+
+std::pair<bool, std::string> node_configuration_manager::serialize(){
+    char* buf = (char*)spdk_malloc(1_MB,
+            0x1000, NULL, SPDK_ENV_LCORE_ID_ANY,
+            SPDK_MALLOC_DMA);
+    spdk_buffer sbuf = spdk_buffer(buf, 1_MB);
+    auto size = _configurations.size();
+    bool rc;
+    auto hand_end = [this, buf, &sbuf](bool res){
+        if(res){
+            std::string date(sbuf.get_buf(), sbuf.used());
+            return std::make_pair(res, std::move(date));
+        }
+        spdk_free(buf);
+        return std::make_pair(res, std::string());
+    };
+
+    rc = PutFixed32(sbuf, size);
+    if(!rc) return hand_end(false);
+    auto iter = _configurations.begin();
+    while(iter != _configurations.end()){
+        auto index = iter->get_index();
+        rc = PutFixed64(sbuf, index);
+        if(!rc) return hand_end(false);
+        auto term = iter->get_term();
+        rc = PutFixed64(sbuf, term);
+        if(!rc) return hand_end(false);
+
+        auto &nodes = iter->get_nodes();
+        rc = PutFixed32(sbuf, nodes.size());
+        if(!rc) return hand_end(false);   
+        for(auto& node : nodes){
+            rc = PutFixed32(sbuf, node.node_id());
+            if(!rc) return hand_end(false);   
+            rc = PutString(sbuf, node.addr());
+            if(!rc) return hand_end(false);    
+            rc = PutFixed32(sbuf, node.port());
+            if(!rc) return hand_end(false);                                  
+        }         
+
+        auto &old_nodes = iter->get_old_nodes();
+        rc = PutFixed32(sbuf, old_nodes.size());
+        if(!rc) return hand_end(false);     
+        for(auto& old_node : old_nodes){
+            rc = PutFixed32(sbuf, old_node.node_id());
+            if(!rc) return hand_end(false);   
+            rc = PutString(sbuf, old_node.addr());
+            if(!rc) return hand_end(false);    
+            rc = PutFixed32(sbuf, old_node.port());
+            if(!rc) return hand_end(false);                     
+        }                        
+        iter++;
+    }
+    return hand_end(true);
+}
+
+bool node_configuration_manager::deserialize(std::string& data){
+    char *date = const_cast<char*>(data.data());
+    spdk_buffer sbuf(date, data.size());
+    bool rc;
+    auto hand_error = [this](bool res){
+        if(!res)
+            _configurations.clear();
+        return res;
+    };
+    
+    uint32_t cfg_size;
+    rc = GetFixed32(sbuf, cfg_size);
+    if(!rc) return hand_error(false);
+    for(uint32_t i = 0; i < cfg_size; i++){
+        node_configuration node_cfg;
+        uint64_t index = 0;
+        uint64_t  term = 0;
+
+        rc = GetFixed64(sbuf, index);
+        if(!rc) return hand_error(false);  
+        rc = GetFixed64(sbuf, term);
+        if(!rc) return hand_error(false); 
+        node_cfg._index = index;
+        node_cfg._term = term;
+       
+        uint32_t node_size = 0;
+        uint32_t old_node_size = 0;
+        uint32_t node_id;
+        std::string addr;
+        uint32_t port;
+        rc = GetFixed32(sbuf, node_size);
+        if(!rc) return hand_error(false);
+
+        for(uint32_t j = 0; j < node_size; j++){
+            raft_node_info node;
+            rc = GetFixed32(sbuf, node_id);
+            if(!rc) return hand_error(false);
+            rc = GetString(sbuf, addr);
+            if(!rc) return hand_error(false);
+            rc = GetFixed32(sbuf, port);
+            if(!rc) return hand_error(false);   
+            node.set_node_id(node_id);
+            node.set_addr(addr);
+            node.set_port(port);
+            node_cfg._nodes.emplace_back(std::move(node));              
+        }
+
+        rc = GetFixed32(sbuf, old_node_size);
+        if(!rc) return hand_error(false); 
+        for(uint32_t j = 0; j < old_node_size; j++){
+            raft_node_info node;
+            rc = GetFixed32(sbuf, node_id);
+            if(!rc) return hand_error(false);
+            rc = GetString(sbuf, addr);
+            if(!rc) return hand_error(false);
+            rc = GetFixed32(sbuf, port);
+            if(!rc) return hand_error(false);   
+            node.set_node_id(node_id);
+            node.set_addr(addr);
+            node.set_port(port);
+            node_cfg._old_nodes.emplace_back(std::move(node));       
+        } 
+
+        _configurations.emplace_back(std::move(node_cfg));        
+    }
+    return true;
 }

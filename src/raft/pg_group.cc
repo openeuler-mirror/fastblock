@@ -29,8 +29,7 @@ std::string pg_id_to_name(uint64_t pool_id, uint64_t pg_id){
 int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard_id, uint64_t pool_id, 
             uint64_t pg_id, std::vector<utils::osd_info_t>&& osds, disk_log* log){
     int ret = 0;
-    auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id
-                                        , global_storage().kvs());
+    auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id, global_storage().kvs());
 
     raft->raft_set_timer();
     _pg_add(shard_id, raft, pool_id, pg_id);
@@ -38,6 +37,16 @@ int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard
     raft->init(std::move(osds), get_current_node_id());
     return 0;
 }
+
+void pg_group_t::load_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,
+                disk_log *log, pg_complete cb_fn, void *arg){
+    auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id, global_storage().kvs()); 
+
+    raft->raft_set_timer();
+    _pg_add(shard_id, raft, pool_id, pg_id);
+
+    raft->load(get_current_node_id(), std::move(cb_fn), arg);
+}  
 
 void pg_group_t::delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id){
     SPDK_INFOLOG(pg_group, "remove pg %lu.%lu\n", pool_id, pg_id);
@@ -105,6 +114,7 @@ void pg_group_t::change_pg_membership(uint32_t shard_id, uint64_t pool_id, uint6
         }
     }
 
+    SPDK_INFOLOG(pg_group, "add_count %d remove_count %d\n", add_count, remove_count);
     if(add_count + remove_count >= 2){
         raft->change_raft_membership(std::move(new_osds), complete);
     }else if(add_count == 1){
@@ -201,5 +211,21 @@ void shard_manager::dispatch_heartbeats(){
     auto reqs = get_heartbeat_requests();
     for(auto &req : reqs){
         _group->get_raft_client_proto().send_heartbeat(req.target, req.request, _group);
+    }
+}
+
+
+void pg_group_t::load_pgs_map(std::map<uint64_t, std::vector<utils::pg_info_type>> &pools){
+    for(auto &sm : _shard_mg){
+        for(auto &[_, pg] : sm._pgs){
+            auto pool_id = pg->raft_get_pool_id();
+            auto pg_id = pg->raft_get_pg_id();
+            auto node_ids = pg->get_nodes_stat().get_node_ids();
+            utils::pg_info_type info{.pg_id = pg_id, .version = 0, .osds = std::move(node_ids)};
+
+            SPDK_INFOLOG(pg_group, "pool %lu pg %lu osd size %ld\n", pool_id, pg_id, info.osds.size());
+            auto [it, res] = pools.try_emplace(pool_id);
+            it->second.emplace_back(std::move(info));
+        }
     }
 }

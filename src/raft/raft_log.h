@@ -215,7 +215,7 @@ public:
         auto first_entry_idx = first_log_in_cache();
         if(first_entry_idx > last_applied_idx + 1){
             //说明raft启动时没有加载未apply的日志到cache
-            SPDK_ERRLOG("first entry: %ld in cache > last_applied_idx + 1: %ld\n",
+            SPDK_INFOLOG(pg_group, "first entry: %ld in cache > last_applied_idx + 1: %ld\n", 
                     first_log_in_cache(), last_applied_idx + 1);
             return;
         }
@@ -259,10 +259,27 @@ public:
         _next_idx = next_idx;
     }
 
+    raft_index_t get_next_idx(){
+        return _next_idx;
+    }
+
     void set_disk_log_index(raft_index_t index, log_op_complete cb_fn, void* arg){
         if(_log){
             _log->set_index(index, std::move(cb_fn), arg);
         }
+    }
+
+    void load(log_op_complete cb_fn, void* arg){
+        _log->load(
+          [this, cb_fn = std::move(cb_fn)](void* arg, int lerrno){
+            if(lerrno != 0){
+                cb_fn(arg, lerrno);
+                return;
+            }
+            _next_idx = _log->get_highest_index() + 1;
+            cb_fn(arg, lerrno);
+          },
+          arg);
     }
 
 private:

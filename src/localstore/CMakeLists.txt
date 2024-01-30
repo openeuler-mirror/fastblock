@@ -21,3 +21,4 @@ compile_library(
   -Wno-error=write-strings # 把常量字符串当char*使用
 )
 
+add_subdirectory(demo)

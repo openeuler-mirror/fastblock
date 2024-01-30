@@ -192,6 +192,7 @@ private:
 
         // 保存每个index到pos和size的映射
         for (auto [idx, pos, size, term_id] : ctx->idx_pos) {
+            SPDK_INFOLOG(object_store, "++++ disk log append: index %lu pos %lu term_id %lu size %lu\n", idx, pos, term_id, size);
             ctx->log->maybe_index(idx, log_position{pos, size, term_id});
         }
 
@@ -330,6 +331,9 @@ public:
         return _lowest_index;
     }
 
+    uint64_t get_highest_index(){
+        return _highest_index;
+    }
     /*
      * follower节点在接收完leader的快照后，才能调用
      * index之前（包括index）的对象都是通过快照发过来的，没有log，相当于在index的位置做了一个快照，
@@ -353,6 +357,62 @@ public:
     
     void set_blob_xattr(std::map<std::string, xattr_val_type>& xattr, log_op_complete&& cb_fn, void* arg){
         _rblob->set_blob_xattr(xattr, std::move(cb_fn), arg);
+    }
+
+    void load(log_op_complete cb_fn, void* arg){
+        auto check_data = [this](buffer_list &bl, uint64_t pos) -> std::tuple<bool, uint64_t, uint64_t> {
+            auto bytes = bl.bytes();
+            size_t i = 0;
+
+            while(i < bytes){
+                log_entry_t entry;
+                spdk_buffer sbuf = bl.pop_front();
+                sbuf.reset();
+                DecodeLogHeader(sbuf, entry);
+                buffer_pool_put(sbuf);
+
+                /* 任期不能为0. 任期为0，表示这条log为空，或者是错误的 */
+                if(entry.term_id == 0){
+                    SPDK_INFOLOG(object_store, "invalid log entry, pos %lu\n", pos);
+                    return std::make_tuple(false, i, 0);  
+                }
+
+                /*
+                 *  header固定大小是4096
+                 *  
+                 */
+                if(entry.size > bytes - i - 4_KB){
+                    SPDK_INFOLOG(object_store, "incomplete log entry, pos %lu\n", pos);
+                    //剩余大小不足以解析出data
+                    return std::make_tuple(true, i, entry.size + 4_KB);
+                }
+                bl.pop_front_list(entry.size / 4096);
+                log_position log_pos{.pos = pos, .size = entry.size + 4_KB, .term_id = entry.term_id};
+                SPDK_INFOLOG(object_store, "--- disk log load: index %lu pos %lu term_id %lu size %lu\n", entry.index, pos, log_pos.term_id, log_pos.size);
+                maybe_index(entry.index, std::move(log_pos));
+                pos += entry.size + 4_KB;
+                i += entry.size + 4_KB;
+            }
+            return std::make_tuple(true, i, 0);
+        };
+
+        auto load_done = [this, cb_fn = std::move(cb_fn)](void *arg, int rberrno){
+            auto it = _index_map.begin();
+            if(it != _index_map.end()){
+                _lowest_index = it->first;
+            }
+            SPDK_INFOLOG(object_store, "disk log load done, _lowest_index %lu _highest_index %lu\n", _lowest_index, _highest_index);
+
+            if(rberrno != 0){
+                SPDK_ERRLOG("disk log load failed:%s\n", spdk_strerror(rberrno)); 
+                cb_fn(arg, rberrno); 
+                return;              
+            }
+            cb_fn(arg, 0);
+        };
+
+        SPDK_INFOLOG(object_store, "in disk log load, _lowest_index %lu _highest_index %lu\n", _lowest_index, _highest_index);
+        _rblob->load(std::move(load_done), arg, std::move(check_data));
     }
 private:
     rolling_blob* _rblob;
@@ -407,4 +467,12 @@ inline void make_disk_log(struct spdk_blob_store *bs, struct spdk_io_channel *ch
 
   ctx = new make_disklog_ctx(cb_fn, arg);
   make_rolling_blob(bs, channel, rolling_blob::huge_blob_size, make_disk_log_done, ctx);
+}
+
+inline struct disk_log* make_disk_log(struct spdk_blob_store *bs, struct spdk_io_channel *channel,
+                    struct spdk_blob* blob){
+    
+    struct rolling_blob* rblob = make_rolling_blob(bs, channel, blob);
+    struct disk_log* dlog = new disk_log(rblob);
+    return dlog;
 }

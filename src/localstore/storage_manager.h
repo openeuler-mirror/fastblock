@@ -72,8 +72,9 @@ public:
     );
   }
 
-  void load(spdk_blob_id blob_id, storage_op_complete cb_fn, void* arg){
-      load_kvstore(blob_id, global_blobstore(), global_io_channel(),
+  void load(spdk_blob_id blob_id, spdk_blob_id checkpoint_blob_id, spdk_blob_id new_checkpoint_blob_id, 
+          storage_op_complete cb_fn, void* arg){
+      load_kvstore(blob_id, checkpoint_blob_id, new_checkpoint_blob_id, global_blobstore(), global_io_channel(),
         [this, cb_fn = std::move(cb_fn)](void *arg, kvstore* kvs, int error){
             if (error) {
                 SPDK_ERRLOG("load storage failed. error:%s\n", spdk_strerror(error));

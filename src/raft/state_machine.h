@@ -18,6 +18,8 @@
 
 class raft_server_t;
 
+using stm_complete = std::function<void (void *, int)>;
+
 class state_machine{
 public:
     state_machine()
@@ -72,6 +74,10 @@ public:
     }
 
     std::string get_pg_name();
+
+    void load_object(object_store::container objects){
+        _store.load(std::move(objects));
+    }
 private:
     raft_server_t* _raft;
 
