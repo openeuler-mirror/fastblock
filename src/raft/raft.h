@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 ChinaUnicom
+/* Copyright (c) 2023-2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
@@ -142,7 +142,7 @@ typedef void (
     raft_entry_t *entry,
     raft_membership_e type
     );
-    
+
 struct raft_cbs_t
 {
     /** Callback for receiving InstallSnapshot messages */
@@ -165,7 +165,7 @@ struct raft_cbs_t
 
 class raft_server_t{
 public:
-    raft_server_t(raft_client_protocol& client, disk_log* log, std::shared_ptr<state_machine> sm_ptr, 
+    raft_server_t(raft_client_protocol& client, disk_log* log, std::shared_ptr<state_machine> sm_ptr,
                     uint64_t pool_id, uint64_t pg_id, kvstore *);
 
     ~raft_server_t();
@@ -177,7 +177,7 @@ public:
 
     int raft_get_election_timeout_rand(){
         return election_timeout_rand;
-    }    
+    }
 
     void raft_set_snapshot_metadata(raft_term_t term, raft_index_t idx)
     {
@@ -254,7 +254,7 @@ public:
     {
         return heartbeat_timeout;
     }
-    
+
     /**
      * @return lease maintenance grace in milliseconds */
     int raft_get_lease_maintenance_grace()
@@ -333,7 +333,7 @@ public:
     {
         return machine->get_last_applied_idx();
     }
-    
+
     raft_index_t raft_get_commit_idx()
     {
         return commit_idx;
@@ -346,7 +346,7 @@ public:
             leader_id = node_id;
         state = state_local;
     }
-    
+
     /** Tell if we are a leader, candidate or follower.
      * @return get state of type raft_state_e. */
     int raft_get_state()
@@ -363,7 +363,7 @@ public:
             if (nodeid == node->raft_node_get_id())
                 return node.get();
         }
-    
+
         return nullptr;
     }
 
@@ -405,7 +405,7 @@ public:
     void raft_set_udata(void* _udata)
     {
         udata = _udata;
-    }    
+    }
 
     /**
      * @return 1 if follower; 0 otherwise */
@@ -466,7 +466,7 @@ public:
     {
         return snapshot_last_idx;
     }
-    
+
     raft_term_t raft_get_snapshot_last_term()
     {
         return snapshot_last_term;
@@ -475,7 +475,7 @@ public:
     raft_cbs_t&  raft_get_cbs(){
         return cb;
     }
-    
+
     /** De-initialise Raft server. */
     void raft_clear();
 
@@ -639,7 +639,7 @@ public:
 
     void raft_disk_append_finish(raft_index_t start_idx, raft_index_t end_idx, int result);
 
-    /** 
+    /**
      *
      * Append the entry to the log and send appendentries to followers.
      *
@@ -665,7 +665,7 @@ public:
     int raft_send_appendentries(raft_node* node);
 
     bool raft_get_entry_term(raft_index_t idx, raft_term_t& term);
-    
+
     int raft_send_heartbeat_all();
 
     /**
@@ -829,7 +829,7 @@ private:
     raft_node_id_t voted_for;
 
     /* the log which is replicated */
-    std::shared_ptr<raft_log> log; 
+    std::shared_ptr<raft_log> log;
 
     /* Volatile state: */
 
@@ -897,11 +897,11 @@ private:
     append_entries_buffer _append_entries_buffer;
 
     kvstore *kv;
-   
+
     struct spdk_poller * raft_timer;
 
     raft_index_t _last_index_before_become_leader;
-}; 
+};
 
 int raft_votes_is_majority(const int nnodes, const int nvotes);
 

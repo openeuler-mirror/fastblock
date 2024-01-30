@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 ChinaUnicom
+/* Copyright (c) 2023-2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
@@ -44,7 +44,7 @@ public:
 
     log_entry_t raft_entry_to_log_entry(raft_entry_t& raft_entry) {
         log_entry_t entry;
-            
+
         entry.index = raft_entry.idx();
         entry.term_id = raft_entry.term();;
         entry.size = raft_entry.data().size();
@@ -118,22 +118,22 @@ public:
     void disk_read(raft_index_t start_idx, raft_index_t end_idx, log_read_complete cb_fn){
         SPDK_INFOLOG(pg_group, "start_idx:%lu end_idx:%lu.\n", start_idx, end_idx);
         _log->read(
-          start_idx, 
-          end_idx, 
+          start_idx,
+          end_idx,
           [this, cb_fn = std::move(cb_fn)](void *, std::vector<log_entry_t>&& entries, int rberrno){
             SPDK_INFOLOG(pg_group, "after disk_read, rberrno: %d, entry size: %lu\n", rberrno, entries.size());
             std::vector<raft_entry_t> raft_entries;
             if(rberrno != 0){
                 cb_fn({}, rberrno);
                 return;
-            }  
+            }
             for(auto& entry : entries){
                 raft_entries.emplace_back(log_entry_to_raft_entry(entry));
                 free_buffer_list(entry.data);
             }
 
             cb_fn(std::move(raft_entries), rberrno);
-          }, 
+          },
           nullptr);
     }
 
@@ -150,13 +150,13 @@ public:
      * This is used for batching.
      */
     void log_get_from_idx(raft_index_t idx, std::vector<std::shared_ptr<raft_entry_t>> &entrys)
-    { 
+    {
         _entries.get_upper(idx, entrys);
     }
 
     void log_get_from_idx(raft_index_t idx, int num, std::vector<std::shared_ptr<raft_entry_t>> &entrys)
-    { 
-        return _entries.get(idx, num, entrys); 
+    {
+        return _entries.get(idx, num, entrys);
     }
 
     std::shared_ptr<raft_entry_t> log_get_at_idx(raft_index_t idx)
@@ -178,7 +178,7 @@ public:
         _entries.clear();
     }
 
-    /*  
+    /*
     */
     int log_truncate(raft_index_t idx);
 
@@ -219,7 +219,7 @@ public:
         auto first_entry_idx = first_log_in_cache();
         if(first_entry_idx > last_applied_idx + 1){
             //说明raft启动时没有加载未apply的日志到cache
-            SPDK_ERRLOG("first entry: %ld in cache > last_applied_idx + 1: %ld\n", 
+            SPDK_ERRLOG("first entry: %ld in cache > last_applied_idx + 1: %ld\n",
                     first_log_in_cache(), last_applied_idx + 1);
             return;
         }
@@ -261,7 +261,7 @@ private:
     entry_cache  _entries;
 
     void* _raft;
-    
+
     /* The maximum number of entries that have been applied in the cache */
     uint32_t _max_applied_entry_num_in_cache;
 };
