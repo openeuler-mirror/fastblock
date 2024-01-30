@@ -15,8 +15,8 @@ echo 32768 > /sys/devices/system/node/node1/hugepages/hugepages-2048kB/nr_hugepa
 ```
 
 ## 1.部署monitor集群并启动monitor
-monitor运行在172.31.77.144(fastblock144)上，monitor的配置如下:  
-```
+monitor运行在172.31.77.144(fastblock144)上，monitor配置文件 *monitor.toml* 如下:  
+```toml
 etcd_server = ["172.31.77.144:2379"] # Your etcd servers.
 address = "172.31.77.144"
 etcd_name = "monitor1"
@@ -36,7 +36,7 @@ log_level = "info"
 ```
 启动monitor进程:  
 ```
-fastblock-mon &
+fastblock-mon -conf monitor.toml &
 ```
 因monitor需要一定的时间(10s左右)进行etcd选举，然后才会开放tcp rpc端口影响fastblock-client和fastblock-osd的请求。
 
@@ -45,7 +45,7 @@ fastblock-mon &
 ## 2.配置osd并启动osd:
 osd的配置文件包含两个部分，一个是spdk bdev的配置文件，一个是osd的配置文件，两个配置文件都是json格式的.  
 nvme驱动的bdev文件形如:  
-```
+```json
 {
     "subsystems": [
       {
@@ -65,27 +65,73 @@ nvme驱动的bdev文件形如:
 }
 ```
 uuid需要向monitor进行申请，命令行为:  
-```
+```bash
 uuid=`uudigen`
 fastblock-client -op=fakeapplyid -uuid=$uuid -endpoint=172.31.77.144:3333
 ```
 将上面申请的uuid填充到osd的配置文件中，osd配置文件形如:    
-```
+```json
 {
-    "pid_path": "/var/tmp/osd_1.pid",
-    "osd_id": 1,
-    "bdev_disk": "test1n1",
-    "address": "172.31.77.144",
-    "port": 8001,
-    "uuid": "$uuid",
-    "monitor": [
-        {"host": "172.31.77.144", "port": 3333}
-    ]
+    "current_osd_id": 1,
+    "osds": [
+        {
+            "pid_path": "/var/tmp/osd_1.pid",
+            "osd_id": 1,
+            "bdev_disk": "nvme0n1",
+            "address": "172.31.4.144",
+            "port": 9001,
+            "uuid": "$uuid",
+            "monitor": [
+                {"host": "127.0.0.1", "port": 3333},
+                {"host": "127.0.0.1", "port": 4333},
+                {"host": "127.0.0.1", "port": 5333}
+            ]
+        }
+    ],
+
+    "msg": {
+        "server": {
+            "listen_backlog": 1024,
+            "poll_cq_batch_size": 32,
+            "metadata_memory_pool_capacity": 16384,
+            "metadata_memory_pool_element_size_byte": 1024,
+            "data_memory_pool_capacity": 16384,
+            "data_memory_pool_element_size_byte": 8192,
+            "per_post_recv_num": 512,
+            "rpc_timeout_us": 1000000
+        },
+
+        "client": {
+            "poll_cq_batch_size": 32,
+            "metadata_memory_pool_capacity": 16384,
+            "metadata_memory_pool_element_size_byte": 1024,
+            "data_memory_pool_capacity": 16384,
+            "data_memory_pool_element_size_byte": 8192,
+            "per_post_recv_num": 512,
+            "rpc_timeout_us": 1000000,
+            "rpc_batch_size": 1024
+        },
+
+        "rdma": {
+            "resolve_timeout_us": 2000,
+            "poll_cm_event_timeout_us": 1000000,
+            "max_send_wr": 4096,
+            "max_send_sge": 128,
+            "max_recv_wr": 8192,
+            "max_recv_sge": 1,
+            "max_inline_data": 16,
+            "cq_num_entries": 1024,
+            "qp_sig_all": false,
+            "rdma_device_name": "mlx5_0"
+        }
+    }
 }
 ```
+
 然后启动osd进程:  
+
 ```
-/root/fb/fastblock/build/src/osd/fastblock-osd -m '['1']' -c bdev_1.json -r /var/tmp/socket.1.sock -C osd1.json
+/root/fb/fastblock/build/src/osd/fastblock-osd -m '['1']' -c bdev_1.json -C osd1.json
 ```
 按照上面的方式依次配置fastlock143,fastblock144,fastblock145三个节点上的12个osd，此时集群中便有了36个osd.
 注意，通过测试数据发现，每台服务器上的12个osd最好每6个跑在不同的numa节点上。  
@@ -99,8 +145,47 @@ fastblock-client -op=createimage -imagesize=$((100*1024*1024*1024))  -imagename=
 
 ## 4.启动fastblock-vhost，并初始化供qemu对接的bdev:  
 
+vhost.json 作为 `fastblock-vhost` 的配置文件如下：
+
+```json
+{
+    "pid_path": "/var/tmp/socket.bdev.sock",
+    "vhost_socket_path": "/var/tmp/bdev_vhost.sock",
+    "monitor": [
+        {"host": "127.0.0.1", "port": 3333},
+        {"host": "127.0.0.1", "port": 4333},
+        {"host": "127.0.0.1", "port": 5333}
+    ],
+    "msg": {
+        "client": {
+            "poll_cq_batch_size": 1024,
+            "metadata_memory_pool_capacity": 4096,
+            "metadata_memory_pool_element_size_byte": 1024,
+            "data_memory_pool_capacity": 4096,
+            "data_memory_pool_element_size_byte": 8192,
+            "per_post_recv_num": 512,
+            "rpc_timeout_us": 1000000,
+            "rpc_batch_size": 1024
+        },
+
+        "rdma": {
+            "resolve_timeout_us": 2000,
+            "poll_cm_event_timeout_us": 1000000,
+            "max_send_wr": 1024,
+            "max_send_sge": 128,
+            "max_recv_wr": 8192,
+            "max_recv_sge": 1,
+            "max_inline_data": 16,
+            "cq_num_entries": 1024,
+            "qp_sig_all": false
+        }
+    }
+}
+
 ```
-/root/fastblock/build/src/bdev/fastblock-vhost -m ['8'] -r /var/tmp/socket.bdev.sock -M 172.31.77.144:3333 &
+
+```shell
+/root/fastblock/build/src/bdev/fastblock-vhost -m ['8'] -C vhost.json &
 /root/spdk/scripts/rpc.py -s /var/tmp/socket.bdev.sock  bdev_fastblock_create -P 1 -p fb -i fbimage -k 4096 -I 100G -m "127.0.0.1:3333" -b fbdev
 /root/spdk/scripts/rpc.py -s /var/tmp/socket.bdev.sock  vhost_create_blk_controller --cpumask 0x8 vhost.1 fbdev
 ```
@@ -214,22 +299,48 @@ etcdctl get --prefix "" --endpoints=http://172.31.77.144:2379
 ## 7.使用block_bench进行性能测试
 block_bench是直接对接调用libfblock库的spdk app，可以直接使用多个核下发IO进行性能测试  
 对于4k随机写，block_bench需要使用一个json配置文件，形如:  
-```
+```json
 {
     "io_type": "write",
     "io_size": 4096,
-    "io_count": 5000000,
-    "io_depth": 128,
-    "io_queue_size": 1024,
+    "io_count": 1,
+    "io_depth": 8,
+    "io_queue_size": 128,
     "io_queue_request": 4096,
-    "image_name": "fbimage_bench",
-    "image_size":107374182400,
-    "object_size": 4194304,
-    "pool_name": "fb",
+    "image_name": "test_image",
+    "image_size": 2907152,
+    "object_size": 1048576,
     "pool_id": 1,
+    "pool_name": "test_bdev_2",
     "monitor": [
-        {"host": "172.31.77.144", "port": 3333}
-    ]
+        {"host": "127.0.0.1", "port": 3333},
+        {"host": "127.0.0.1", "port": 4333},
+        {"host": "127.0.0.1", "port": 5333}
+    ],
+    "msg": {
+        "client": {
+            "poll_cq_batch_size": 8,
+            "metadata_memory_pool_capacity": 16384,
+            "metadata_memory_pool_element_size_byte": 1024,
+            "data_memory_pool_capacity": 16384,
+            "data_memory_pool_element_size_byte": 8192,
+            "per_post_recv_num": 512,
+            "rpc_timeout_us": 1000000,
+            "rpc_batch_size": 1024
+        },
+
+        "rdma": {
+            "resolve_timeout_us": 2000,
+            "poll_cm_event_timeout_us": 1000000,
+            "max_send_wr": 4096,
+            "max_send_sge": 128,
+            "max_recv_wr": 8192,
+            "max_recv_sge": 128,
+            "max_inline_data": 16,
+            "cq_num_entries": 1024,
+            "qp_sig_all": false
+        }
+    }
 }
 ```
 使用4个物理核时，启动测试的方式为:  
