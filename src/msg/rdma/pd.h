@@ -27,15 +27,25 @@ class protection_domain {
 
 public:
 
-    protection_domain(std::shared_ptr<device> dev) : _device{dev} {
-        auto fn = [this] (device::device_context* ctx) -> iterate_tag {
-            auto dev_name = ::ibv_get_device_name(ctx->device);
+    protection_domain(std::shared_ptr<device> dev, std::optional<std::string> specify_device = std::nullopt) : _device{dev} {
+        auto fn = [this, &specify_device] (device::device_context* ctx) -> iterate_tag {
+            std::string dev_name(::ibv_get_device_name(ctx->device));
+            if (specify_device and dev_name != specify_device.value()) {
+                return iterate_tag::keep;
+            }
 
             _pd = ::ibv_alloc_pd(ctx->context);
             if (not _pd) {
+                if (specify_device) {
+                    SPDK_ERRLOG(
+                      "failed allocating protection domain on port %d of specified device %s\n",
+                      ctx->port, dev_name.c_str());
+                    return iterate_tag::stop;
+                }
+
                 SPDK_ERRLOG(
                   "failed allocating protection domain on port %d of %s\n",
-                  ctx->port, dev_name);
+                  ctx->port, dev_name.c_str());
 
                 return iterate_tag::keep;
             }
@@ -43,7 +53,7 @@ public:
             SPDK_INFOLOG(
               msg,
               "allocated protection domain on port %d of %s\n",
-              ctx->port, dev_name);
+              ctx->port, dev_name.c_str());
 
             _ctx = ctx;
             return iterate_tag::stop;
