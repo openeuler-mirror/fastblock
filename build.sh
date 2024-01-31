@@ -51,13 +51,13 @@ if [ "$component" = "monitor" ]; then
 fi
 if [ "$component" = "osd" ]; then
 	echo "build fastblock(fastblock-osd、fastblock-vhost) C/C++ code"
-	cmake -DCMAKE_BUILD_TYPE=$buildtype \
+	cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo \
 	  -B$root/build \
 	  -H$root \
 	  -DCMAKE_C_COMPILER=$CC \
 	  -DCMAKE_CXX_COMPILER=$CXX \
 	  "$@"
-	
+
 	(cd $root/build && make -j `grep -c ^processor /proc/cpuinfo`)
 	exit 0
 fi
