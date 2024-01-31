@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 ChinaUnicom
+/* Copyright (c) 2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
@@ -309,6 +309,11 @@ public:
                 _recv_ctx[i]->wr.wr_id = _dispatch_id.value();
                 _recv_ctx[i]->wr.next = &(_recv_ctx[i + 1]->wr);
                 _recv_ctx_map.emplace(_recv_ctx[i]->wr.wr_id, _recv_ctx[i]);
+                SPDK_DEBUGLOG(
+                  msg,
+                  "[%lu] posted 1 receive wr(id: %lu %s)\n",
+                  i, _recv_ctx[i]->wr.wr_id,
+                  work_request_id::fmt(_recv_ctx[i]->wr.wr_id).c_str());
             }
             _dispatch_id.inc_request_id();
             _recv_ctx[_opts->per_post_recv_num - 1]->wr.wr_id = _dispatch_id.value();
@@ -316,6 +321,12 @@ public:
             _recv_ctx_map.emplace(
               _recv_ctx[_opts->per_post_recv_num - 1]->wr.wr_id,
               _recv_ctx[_opts->per_post_recv_num - 1]);
+
+            SPDK_DEBUGLOG(
+              msg,
+              "[-1] posted 1 receive wr(id: %lu %s)\n",
+              _recv_ctx[_opts->per_post_recv_num - 1]->wr.wr_id,
+              work_request_id::fmt(_recv_ctx[_opts->per_post_recv_num - 1]->wr.wr_id).c_str());
 
             auto err = _sock->receive(&(_recv_ctx[0]->wr));
             if (err) {
@@ -770,7 +781,11 @@ public:
                 it->second->wr.wr_id = _dispatch_id.value();
                 it->second->wr.next = nullptr;
                 _sock->receive(&(it->second->wr));
-                SPDK_DEBUGLOG(msg, "posted 1 receive wr\n");
+                SPDK_DEBUGLOG(
+                  msg,
+                  "posted 1 receive wr(id: %lu %s)\n",
+                  it->second->wr.wr_id,
+                  work_request_id::fmt(it->second->wr.wr_id).c_str());
                 rdma_probe.receive_wr_posted();
                 _recv_ctx_map.emplace(it->second->wr.wr_id, it->second);
                 _recv_ctx_map.erase(it);

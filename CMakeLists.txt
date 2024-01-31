@@ -34,9 +34,9 @@ set(PKG_CONFIG_PATH_LIST
 list(APPEND BASE_CXX_FLAGS_LIST -fPIC)
 list(APPEND BASE_C_FLAGS_LIST -fPIC)
 
+add_compile_definitions(DEBUG)
 if ("${CMAKE_BUILD_TYPE}" MATCHES "Debug")
   set(COMMON_LINKOPTS "-lasan -lubsan")
-  add_compile_definitions(DEBUG)
 
   list(APPEND BASE_CXX_FLAGS_LIST
     -fsanitize=undefined
