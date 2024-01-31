@@ -302,8 +302,8 @@ public:
 
     public:
 
-#pragma GCC push_options
-#pragma GCC optimize ("O0")
+// #pragma GCC push_options
+// #pragma GCC optimize ("O0")
         void per_post_recv() {
             _recv_ctx = _recv_pool->get_bulk(_opts->per_post_recv_num);
             for (size_t i{0}; i < _opts->per_post_recv_num - 1; ++i) {
@@ -343,7 +343,7 @@ public:
 
             SPDK_DEBUGLOG(msg, "post %ld receive wrs\n", _opts->per_post_recv_num);
         }
-#pragma GCC pop_options
+// #pragma GCC pop_options
 
         void generate_id(const connection_id::serial_type serial_no) {
             _id.update(_sock->guid(), serial_no);

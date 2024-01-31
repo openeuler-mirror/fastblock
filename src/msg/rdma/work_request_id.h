@@ -121,12 +121,16 @@ public:
         return _value;
     }
 
+#if defined(__arm__) || defined(__aarch64__)
 #pragma GCC push_options
-#pragma GCC optimize ("O0")
+#pragma GCC optimize ("O2")
+#endif
     void inc_request_id() noexcept {
         *_request_id_pointer = *_request_id_pointer + 1;
     }
+#if defined(__arm__) || defined(__aarch64__)
 #pragma GCC pop_options
+#endif
 
     dispatch_id_type dispatch_id() noexcept {
         return _value & ~_request_id_mask;
