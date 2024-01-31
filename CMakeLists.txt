@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.12.0)
 project(fastblock VERSION 0.1 LANGUAGES CXX)
 set(CMAKE_VERBOSE_MAKEFILE ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
+set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 # CCACHE_DIR is initially provided by vtools
@@ -36,7 +37,7 @@ list(APPEND BASE_C_FLAGS_LIST -fPIC)
 
 add_compile_definitions(DEBUG)
 if ("${CMAKE_BUILD_TYPE}" MATCHES "Debug")
-  set(COMMON_LINKOPTS "-lasan -lubsan")
+set(COMMON_LINKOPTS "-lasan -lubsan")
 
   list(APPEND BASE_CXX_FLAGS_LIST
     -fsanitize=undefined
