@@ -324,7 +324,8 @@ public:
 
             SPDK_DEBUGLOG(
               msg,
-              "[-1] posted 1 receive wr(id: %lu %s)\n",
+              "[%lu] posted 1 receive wr(id: %lu %s)\n",
+              _opts->per_post_recv_num - 1,
               _recv_ctx[_opts->per_post_recv_num - 1]->wr.wr_id,
               work_request_id::fmt(_recv_ctx[_opts->per_post_recv_num - 1]->wr.wr_id).c_str());
 
