@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 ChinaUnicom
+/* Copyright (c) 2023-2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
@@ -55,7 +55,7 @@ void osd_service::process_get_leader(google::protobuf::RpcController* controller
     done->Run();
 }
 
-template<typename request_type, typename reply_type> 
+template<typename request_type, typename reply_type>
 void osd_service::process(const request_type* request, reply_type* response, google::protobuf::Closure* done){
     auto pool_id = request->pool_id();
     auto pg_id = request->pg_id();
@@ -66,8 +66,8 @@ void osd_service::process(const request_type* request, reply_type* response, goo
         response->set_state(err::RAFT_ERR_NOT_FOUND_PG);
         done->Run();
         return;
-    }  
-    
+    }
+
     _pm->get_shard().invoke_on(
       shard_id,
       [this, request, response, done, shard_id](){
@@ -79,7 +79,7 @@ void osd_service::process(const request_type* request, reply_type* response, goo
             return;
         }
         if(!raft->raft_is_leader()){
-            SPDK_WARNLOG("node %d is not the leader of pg %lu.%lu\n", 
+            SPDK_WARNLOG("node %d is not the leader of pg %lu.%lu\n",
                     raft->raft_get_nodeid(), request->pool_id(), request->pg_id());
             response->set_state(err::RAFT_ERR_NOT_LEADER);
             done->Run();
@@ -94,30 +94,30 @@ void osd_service::process(const request_type* request, reply_type* response, goo
             return;
         }
         process(osd_stm_p, request, response, done);
-      });    
+      });
 }
 
 void osd_service::process(
-        std::shared_ptr<osd_stm> osd_stm_p, 
-        const osd::write_request* request, 
-        osd::write_reply* response, 
+        std::shared_ptr<osd_stm> osd_stm_p,
+        const osd::write_request* request,
+        osd::write_reply* response,
         google::protobuf::Closure* done){
     osd_stm_p->write_and_wait(request, response, done);
 }
 
 void osd_service::process(
-        std::shared_ptr<osd_stm> osd_stm_p, 
-        const osd::read_request* request, 
-        osd::read_reply* response, 
+        std::shared_ptr<osd_stm> osd_stm_p,
+        const osd::read_request* request,
+        osd::read_reply* response,
         google::protobuf::Closure* done){
-    
+
     osd_stm_p->read_and_wait(request, response, done);
 }
 
 void osd_service::process(
         std::shared_ptr<osd_stm> osd_stm_p,
-        const osd::delete_request* request, 
-        osd::delete_reply* response, 
+        const osd::delete_request* request,
+        osd::delete_reply* response,
         google::protobuf::Closure* done){
     osd_stm_p->delete_and_wait(request, response, done);
 }

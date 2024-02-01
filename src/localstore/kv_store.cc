@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 ChinaUnicom
+/* Copyright (c) 2023-2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
@@ -18,7 +18,7 @@ struct make_kvs_ctx {
     void* arg;
 };
 
-static void 
+static void
 make_kvstore_sync_done(void *arg, int kverrno) {
   struct make_kvs_ctx *ctx = (struct make_kvs_ctx *)arg;
 
@@ -56,10 +56,10 @@ make_kvstore_blob_done(void *arg, struct rolling_blob* rblob, int kverrno) {
 }
 
 void make_kvstore(struct spdk_blob_store *bs, struct spdk_io_channel *channel,
-                   make_kvs_complete cb_fn, void* arg) 
+                   make_kvs_complete cb_fn, void* arg)
 {
   struct make_kvs_ctx* ctx;
-  
+
   ctx = new make_kvs_ctx{.cb_fn = std::move(cb_fn), .arg = arg};
   make_rolling_blob(bs, channel, 4_MB, make_kvstore_blob_done, ctx);
 }

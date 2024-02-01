@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 ChinaUnicom
+/* Copyright (c) 2023-2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
@@ -21,7 +21,7 @@ SPDK_LOG_REGISTER_COMPONENT(pg_group)
 
 std::string pg_id_to_name(uint64_t pool_id, uint64_t pg_id){
     char name[128];
-    
+
     snprintf(name, sizeof(name), "%lu.%lu", pool_id, pg_id);
     return name;
 }
@@ -37,7 +37,7 @@ static int recv_installsnapshot(
     (void)node;
     (void)msg;
     (void)r;
-    return 0;    
+    return 0;
 }
 
 static int recv_installsnapshot_response(
@@ -49,7 +49,7 @@ static int recv_installsnapshot_response(
     (void)user_data;
     (void)node;
     (void)r;
-    return 0;        
+    return 0;
 }
 
 int log_get_node_id(
@@ -61,7 +61,7 @@ int log_get_node_id(
     (void)user_data;
     (void)entry;
     (void)entry_idx;
-    return 0;                 
+    return 0;
 }
 
 static int node_has_sufficient_logs(
@@ -71,7 +71,7 @@ static int node_has_sufficient_logs(
     (void)raft;
     (void)user_data;
     (void)node;
-    return 0;          
+    return 0;
 }
 
 static void notify_membership_event(
@@ -84,7 +84,7 @@ static void notify_membership_event(
     (void)user_data;
     (void)node;
     (void)entry;
-    (void)type;         
+    (void)type;
 }
 
 
@@ -96,10 +96,10 @@ raft_cbs_t raft_funcs = {
     .notify_membership_event = notify_membership_event
 };
 
-int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard_id, uint64_t pool_id, 
+int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard_id, uint64_t pool_id,
             uint64_t pg_id, std::vector<osd_info_t>&& osds, disk_log* log){
     int ret = 0;
-    auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id       
+    auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id
                                         , global_storage().kvs());
     raft->raft_set_callbacks(&raft_funcs, NULL);
 
@@ -119,7 +119,7 @@ int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard
     }
 
     // raft->raft_set_current_term(1);
-    
+
     raft->start_raft_timer();
     return 0;
 }
@@ -142,7 +142,7 @@ static int heartbeat_task(void *arg){
 }
 
 void shard_manager::start(){
-    _heartbeat_timer = SPDK_POLLER_REGISTER(&heartbeat_task, this, HEARTBEAT_TIMER_INTERVAL_MSEC * 1000);    
+    _heartbeat_timer = SPDK_POLLER_REGISTER(&heartbeat_task, this, HEARTBEAT_TIMER_INTERVAL_MSEC * 1000);
 }
 
 
@@ -161,23 +161,23 @@ std::vector<shard_manager::node_heartbeat> shard_manager::get_heartbeat_requests
         auto create_heartbeat_request = [this, raft, now, &pending_beats](const std::shared_ptr<raft_node> node) mutable{
             if (raft->raft_is_self(node.get()))
                 return;
-            SPDK_DEBUGLOG(pg_group, "node: %d pg: %lu.%lu suppress_heartbeats: %d heartbeating: %d  append_time: %lu heartbeat_timeout: %d now: %lu\n", 
+            SPDK_DEBUGLOG(pg_group, "node: %d pg: %lu.%lu suppress_heartbeats: %d heartbeating: %d  append_time: %lu heartbeat_timeout: %d now: %lu\n",
                     node->raft_node_get_id(), raft->raft_get_pool_id(), raft->raft_get_pg_id(),
                     node->raft_get_suppress_heartbeats(),
                     node->raft_node_is_heartbeating(), node->raft_get_append_time(),
                     raft->raft_get_heartbeat_timeout(), now);
             if(node->raft_get_suppress_heartbeats())
                 return;
-            
+
             // if(node->raft_node_is_heartbeating())
                 // return;
             if(node->raft_get_append_time() + raft->raft_get_heartbeat_timeout() > now)
                 return;
-            
-            SPDK_DEBUGLOG(pg_group, "------ heartbeat to node: %d pg: %lu.%lu\n", 
+
+            SPDK_DEBUGLOG(pg_group, "------ heartbeat to node: %d pg: %lu.%lu\n",
                     node->raft_node_get_id(), raft->raft_get_pool_id(), raft->raft_get_pg_id());
             // node->raft_node_set_heartbeating(true);
-            node->raft_set_append_time(now); 
+            node->raft_set_append_time(now);
 
             raft->raft_set_election_timer(now);
             heartbeat_request* req = nullptr;
@@ -195,7 +195,7 @@ std::vector<shard_manager::node_heartbeat> shard_manager::get_heartbeat_requests
             meta_ptr->set_term(raft->raft_get_current_term());
             raft_index_t next_idx = node->raft_node_get_next_idx();
             meta_ptr->set_prev_log_idx(next_idx - 1);
-            
+
             raft_term_t term = 0;
             auto got = raft->raft_get_entry_term(meta_ptr->prev_log_idx(), term);
             assert(got);
@@ -207,11 +207,11 @@ std::vector<shard_manager::node_heartbeat> shard_manager::get_heartbeat_requests
     }
 
     std::vector<shard_manager::node_heartbeat> reqs;
-    for (auto& p : pending_beats) {        
+    for (auto& p : pending_beats) {
         shard_manager::node_heartbeat req(p.first, p.second);
         reqs.push_back(std::move(req));
     }
-    return reqs; 
+    return reqs;
 }
 
 void shard_manager::dispatch_heartbeats(){

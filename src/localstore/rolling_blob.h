@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 ChinaUnicom
+/* Copyright (c) 2023-2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
@@ -82,21 +82,21 @@ struct rblob_close_ctx {
   void* arg;
 };
 
-/** 
- *  Case 1(not rolled):  
+/**
+ *  Case 1(not rolled):
  *   从左往右写，随着数据的增加，front往右推进，但此时还没写到blob最右侧。
  *   最前面4k是super block，保存一些基本元数据。
  *    __________________________________________________
- *    |begin       back|                  front|    end| 
- *                     |<-------- used ------->| 
- *                                    
- * 
- *  Case 2(rolled):  
+ *    |begin       back|                  front|    end|
+ *                     |<-------- used ------->|
+ *
+ *
+ *  Case 2(rolled):
  *   数据向右写到了 blob 结尾处，要从 blob 的起始位置重新开始写。
  *   但front数字不会变小，它只会单调增加。对blob size取余，即可知道它在blob中的具体位置。
  *   后边的虚线为了方便理解，假设把blob拼接在右边。
  *    __________________________________________________ _ _ _ _ _ _ _ _ _ _ _ _
- *    |begin                         back|          end|        front|      
+ *    |begin                         back|          end|        front|
  *                                       |<-- used1 -->|<-- used2 -->|
 */
 class rolling_blob {
@@ -106,7 +106,7 @@ public:
     static constexpr uint64_t super_size = 4_KB;  // 最前面4K的super block保存这个blob的元数据
     static constexpr uint64_t unit_size = 512;
 
-    rolling_blob(struct spdk_blob* b, struct spdk_io_channel *ch, uint64_t blob_size) 
+    rolling_blob(struct spdk_blob* b, struct spdk_io_channel *ch, uint64_t blob_size)
     : blob(b)
     , channel(ch)
     , blob_size(blob_size)
@@ -161,7 +161,7 @@ public:
 
             // SPDK_NOTICELOG("blob append pos from:%lu (lba:%lu) len:%lu\n", ctx->start_pos, ctx->lba, ctx->len);
             inflight_rw.emplace(start_pos + length, false);
-            spdk_blob_io_writev(blob, channel, ctx->iov.data(), ctx->iov.size(), 
+            spdk_blob_io_writev(blob, channel, ctx->iov.data(), ctx->iov.size(),
                                 ctx->lba / unit_size, ctx->len / unit_size, rw_done, ctx);
             return;
         }
@@ -172,7 +172,7 @@ public:
         next->is_read = false;
         next->blob = blob;
         next->channel = channel;
-        next->cb_fn = std::move(cb_fn); 
+        next->cb_fn = std::move(cb_fn);
         next->arg = arg;
         next->next = nullptr;
         next->rb = this;
@@ -190,10 +190,10 @@ public:
         next->lba = pos_to_lba(next->start_pos);
         next->len = second_len;
 
-        // SPDK_NOTICELOG("blob append pos from:%lu (lba:%lu) len:%lu and from:%lu (lba:%lu) len:%lu\n", 
+        // SPDK_NOTICELOG("blob append pos from:%lu (lba:%lu) len:%lu and from:%lu (lba:%lu) len:%lu\n",
         //                ctx->start_pos, ctx->lba, first_len, next->start_pos, next->lba, second_len);
         inflight_rw.emplace(next->start_pos + second_len, false); // 只等待第二次写的偏移
-        spdk_blob_io_writev(blob, channel, ctx->iov.data(), ctx->iov.size(), 
+        spdk_blob_io_writev(blob, channel, ctx->iov.data(), ctx->iov.size(),
                                 ctx->lba / unit_size, ctx->len / unit_size, rw_done, ctx);
     }
 
@@ -203,7 +203,7 @@ public:
         read(start, length, bl, cb_fn, arg);
     }
 
-    void read(uint64_t start, uint64_t length, buffer_list bl, 
+    void read(uint64_t start, uint64_t length, buffer_list bl,
             rblob_rw_complete cb_fn, void* arg) {
         struct rblob_rw_ctx* ctx;
 
@@ -240,7 +240,7 @@ public:
 
             uint64_t first_len = pos_to_end(start);
             uint64_t second_len = length - first_len;
-            ctx->iov = std::move(bl.to_iovec(0, first_len)); 
+            ctx->iov = std::move(bl.to_iovec(0, first_len));
             ctx->start_pos = start;
             ctx->lba = pos_to_lba(ctx->start_pos);
             ctx->len = first_len;
@@ -250,16 +250,16 @@ public:
             next->lba = pos_to_lba(next->start_pos);
             next->len = second_len;
 
-            // SPDK_NOTICELOG("blob read pos from:%lu (lba:%lu) len:%lu and from:%lu (lba:%lu) len:%lu\n", 
+            // SPDK_NOTICELOG("blob read pos from:%lu (lba:%lu) len:%lu and from:%lu (lba:%lu) len:%lu\n",
             //         ctx->start_pos, ctx->lba, first_len, next->start_pos, next->lba, second_len);
-            spdk_blob_io_readv(blob, channel, ctx->iov.data(), ctx->iov.size(), 
+            spdk_blob_io_readv(blob, channel, ctx->iov.data(), ctx->iov.size(),
                             ctx->lba / unit_size, ctx->len / unit_size, rw_done, ctx);
             return;
         }
 
         // 除了需要分两次读写的情况，到这里就是可以一次性读取
         //虽然iovec数组本身在ctx结束后就析构了，但是外部传进来的bl，其每片地址指向的内存是一直存在的
-        ctx->iov = std::move(bl.to_iovec()); 
+        ctx->iov = std::move(bl.to_iovec());
         ctx->start_pos = start;
         ctx->lba = pos_to_lba(start);
         ctx->len = length;
@@ -267,7 +267,7 @@ public:
         ctx->arg = arg;
 
         // SPDK_NOTICELOG("blob read pos from:%lu (lba:%lu) len:%lu\n", ctx->start_pos, ctx->lba, length);
-        spdk_blob_io_readv(blob, channel, ctx->iov.data(), ctx->iov.size(), 
+        spdk_blob_io_readv(blob, channel, ctx->iov.data(), ctx->iov.size(),
                             ctx->lba / unit_size, ctx->len / unit_size, rw_done, ctx);
         return;
     }
@@ -285,7 +285,7 @@ public:
 
         // 如果前方有足够的空间，直接trim
         if (!is_rolled() || length < back_to_end()) {
-            // SPDK_NOTICELOG("trim back case 1. pos from  %lu to %lu, lba from  %lu to %lu\n", 
+            // SPDK_NOTICELOG("trim back case 1. pos from  %lu to %lu, lba from  %lu to %lu\n",
             //     back.pos, back.pos + length,
             //     pos_to_lba(back.pos), pos_to_lba(back.pos + length));
             ctx->lba = back.lba;
@@ -322,7 +322,7 @@ public:
         back.pos += length;
         back.lba = pos_to_lba(back.pos);
 
-        // SPDK_NOTICELOG("trim back case 2. lba %lu len %lu and lba %lu len %lu, ctx:%p next:%p\n", 
+        // SPDK_NOTICELOG("trim back case 2. lba %lu len %lu and lba %lu len %lu, ctx:%p next:%p\n",
         //     ctx->lba, ctx->len, next->lba, next->len, ctx, next);
         spdk_blob_io_unmap(blob, channel, ctx->lba / unit_size, ctx->len / unit_size, trim_done, ctx);
         return;
@@ -343,10 +343,10 @@ public:
           struct rblob_rw_ctx* next = (struct rblob_rw_ctx*)ctx->next;
           // SPDK_NOTICELOG("rw_done to next:%lu len:%lu\n", next->lba, next->len);
           if (next->is_read) {
-            spdk_blob_io_readv(next->blob, next->channel, next->iov.data(), next->iov.size(), 
+            spdk_blob_io_readv(next->blob, next->channel, next->iov.data(), next->iov.size(),
                               next->lba / unit_size, next->len / unit_size, rw_done, next);
           } else {
-            spdk_blob_io_writev(next->blob, next->channel, next->iov.data(), next->iov.size(), 
+            spdk_blob_io_writev(next->blob, next->channel, next->iov.data(), next->iov.size(),
                               next->lba / unit_size, next->len / unit_size, rw_done, next);
           }
           delete(ctx);
@@ -470,7 +470,7 @@ public:
 public:
     uint64_t back_pos() { return back.pos; }
 
-    uint64_t front_pos() { return front.pos; } 
+    uint64_t front_pos() { return front.pos; }
 
     uint64_t used() { return front.pos - back.pos; }
 
@@ -492,12 +492,12 @@ public:
     }
 
 private:
-    bool is_rolled() { 
-        return front.pos / size()  != back.pos / size(); 
+    bool is_rolled() {
+        return front.pos / size()  != back.pos / size();
     }
 
-    bool need_roll(uint64_t start, uint64_t length) { 
-        return start / size()  != (start + length) / size(); 
+    bool need_roll(uint64_t start, uint64_t length) {
+        return start / size()  != (start + length) / size();
     }
 
     uint64_t available() {
@@ -517,7 +517,7 @@ private:
     }
 
 
-    
+
     // 可用区域的 begin 和 end
     uint64_t begin() { return 0; }
     uint64_t end() { return blob_size - super_size; }
@@ -536,7 +536,7 @@ private:
         while (!inflight_rw.empty()) {
             it = inflight_rw.begin();
 
-            if (!it->second)    
+            if (!it->second)
                 break;
 
             advance = it->first;
@@ -615,12 +615,12 @@ make_create_done(void *arg, spdk_blob_id blobid, int rberrno) {
   spdk_bs_open_blob(ctx->bs, blobid, make_open_done, ctx);
 }
 
-inline void make_rolling_blob(struct spdk_blob_store *bs, struct spdk_io_channel *channel, 
-                       uint64_t size, make_rblob_complete cb_fn, void* arg) 
+inline void make_rolling_blob(struct spdk_blob_store *bs, struct spdk_io_channel *channel,
+                       uint64_t size, make_rblob_complete cb_fn, void* arg)
 {
   struct make_rblob_ctx* ctx;
   struct spdk_blob_opts opts;
-  
+
   ctx = new make_rblob_ctx(bs, channel, size, cb_fn, arg);
   spdk_blob_opts_init(&opts, sizeof(opts));
   opts.num_clusters = size / spdk_bs_get_cluster_size(bs);

@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 ChinaUnicom
+/* Copyright (c) 2023-2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
@@ -38,7 +38,7 @@ public:
   storage_manager() { }
 
   void start(storage_op_complete cb_fn, void* arg) {
-      make_kvstore(global_blobstore(), global_io_channel(), 
+      make_kvstore(global_blobstore(), global_io_channel(),
         [this, cb_fn = std::move(cb_fn)](void *arg, kvstore* kvs, int error){
             if (error) {
                 SPDK_ERRLOG("storage start failed. error:%s\n", spdk_strerror(error));
@@ -70,7 +70,7 @@ public:
 
   kvstore* kvs() {
       assert(_started);
-      return _kvstore; 
+      return _kvstore;
   }
 
 private:

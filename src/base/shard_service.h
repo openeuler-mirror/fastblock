@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 ChinaUnicom
+/* Copyright (c) 2023-2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
@@ -27,10 +27,10 @@ public:
         _instances.resize(core_sharded::get_core_sharded().count());
 
         for (uint32_t shard = 0; shard < core_sharded::get_core_sharded().count(); shard++) {
-            core_sharded::get_core_sharded().invoke_on(shard, 
+            core_sharded::get_core_sharded().invoke_on(shard,
               [this, shard](Args... args){
                   _instances[shard] = new Service(std::forward<Args>(args)...);
-              }, 
+              },
               std::forward<Args>(args)...);
         }
     }

@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 ChinaUnicom
+/* Copyright (c) 2023-2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
@@ -51,8 +51,8 @@ public:
     size_t inc(size_t n) {
       size_t sz = std::min(n, remain());
       _used += sz;
-      return sz; 
-    } 
+      return sz;
+    }
 
     void reset() { _used = 0; }
 
@@ -146,15 +146,15 @@ public:
 
       chosen += iov.iov_len;
       it++;
-    } 
+    }
 
     while (chosen < len && it != end()) {
       iovec iov;
       iov.iov_base = it->get_buf();
       size_t still_need = len - chosen;
-      iov.iov_len = std::min(it->size(), still_need);     
+      iov.iov_len = std::min(it->size(), still_need);
       iovs.push_back(iov);
-      
+
 
       chosen += iov.iov_len;
       // std::cout << "chosen:" << chosen << " iov_len:" << iov.iov_len << std::endl;
@@ -180,13 +180,13 @@ private:
   size_t total{0};
 
 private:
-  friend buffer_list make_buffer_list(size_t n); 
+  friend buffer_list make_buffer_list(size_t n);
   friend void free_buffer_list(buffer_list& bl);
 };
 
 /**
  * 用来帮助序列化数据到buffer list的类。
- * 
+ *
  * 缺陷是还没有考虑过buffer_list空间不足怎么办。另外返回的bool值暂时也没有用到。
  */
 class buffer_list_encoder {
@@ -237,8 +237,8 @@ public:
 
   bool get(std::string& str) {
       uint64_t size;
-      if (!get(size)) { 
-          return false; 
+      if (!get(size)) {
+          return false;
       };
 
       str.resize(size);
@@ -258,13 +258,13 @@ public:
           _itor->reset();
 
           value = decode_fixed64(prev->get_append(), prev_bytes, _itor->get_append());
-          // std::cout << "1 prev_size:" << prev->size() 
+          // std::cout << "1 prev_size:" << prev->size()
           //         << " used:" << prev->used()
           //         << " remain:" << prev->remain()
           //         << " value:" << value
           //         << std::endl;
-          // SPDK_NOTICELOG("1 size:%lu used:%lu remain:%lu value:%lu \n", 
-          //     prev->size(), prev->used(), prev->remain(), value); 
+          // SPDK_NOTICELOG("1 size:%lu used:%lu remain:%lu value:%lu \n",
+          //     prev->size(), prev->used(), prev->remain(), value);
           _itor->inc(sizeof(uint64_t) - prev_bytes);
           prev->inc(prev_bytes);
 
@@ -275,7 +275,7 @@ public:
       value = decode_fixed64(_itor->get_append());
       // std::cout << "2 value:" << value
       //             << std::endl;
-      // SPDK_NOTICELOG("2 value:%lu used:%lu\n", value, _used); 
+      // SPDK_NOTICELOG("2 value:%lu used:%lu\n", value, _used);
       // std::string str(_itor->get_append(), 8);
       // printf("\n"); for (auto& c : str) { printf("%x ", c); } printf("\n");
       _itor->inc(sizeof(uint64_t));
@@ -291,7 +291,7 @@ public:
           size_t prev_bytes = prev->remain();
           _itor->reset();
 
-          // SPDK_NOTICELOG("1 str size:%lu used:%lu remain:%lu len:%lu \n", 
+          // SPDK_NOTICELOG("1 str size:%lu used:%lu remain:%lu len:%lu \n",
           //     prev->size(), prev->used(), prev->remain(), len);
           memcpy(ptr, prev->get_append(), prev_bytes);
           memcpy(ptr + prev_bytes, _itor->get_append(), len - prev_bytes);
@@ -301,12 +301,12 @@ public:
           _used += len;
           return true;
       }
-      
-      
+
+
       memcpy(ptr, _itor->get_append(), len);
       // std::string str(_itor->get_append(), len);
       // std::cout << "get str:" << str.c_str() << " used:" << _used << " len:" << len << std::endl;
-      // SPDK_NOTICELOG("2 str:%s used:%lu\n", str.c_str(), _used); 
+      // SPDK_NOTICELOG("2 str:%s used:%lu\n", str.c_str(), _used);
       _itor->inc(len);
       _used += len;
       return true;

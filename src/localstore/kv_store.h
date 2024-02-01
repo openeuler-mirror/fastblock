@@ -1,4 +1,4 @@
-/* Copyright (c) 2023 ChinaUnicom
+/* Copyright (c) 2023-2024 ChinaUnicom
  * fastblock is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
@@ -69,7 +69,7 @@ struct kvstore_ckpt_ctx {
 
 class kvstore {
 public:
-    kvstore(rolling_blob* rblob) : rblob(rblob) { 
+    kvstore(rolling_blob* rblob) : rblob(rblob) {
         char* wbuf = (char*)spdk_malloc(32_MB,
                         0x1000, NULL, SPDK_ENV_LCORE_ID_ANY,
                         SPDK_MALLOC_DMA);
@@ -100,7 +100,7 @@ public:
             checkpoint.stop(
               [cb_fn = std::move(cb_fn), this](void* arg, int rberrno){
                   cb_fn(arg, rberrno);
-              }, 
+              },
               arg);
           },
           arg);
@@ -137,16 +137,16 @@ public:
                 table.emplace(std::move(key), std::move(*value));   // 插入
             } else {
                 // 非法操作，删除一个不存在的值
-                // SPDK_WARNLOG("error deleting non existent key: %s", key.c_str()); 
+                // SPDK_WARNLOG("error deleting non existent key: %s", key.c_str());
             }
         }
-    }   
+    }
 
     bool need_commit() { return op_log.size() > 0; }
 
     /**
      * commit: 把当前的op_log追加到磁盘。
-     * 
+     *
      * 现在用户不应该主动调用了，因为poller中会执行。
      */
     void commit(kvstore_rw_complete cb_fn, void* arg) {
@@ -154,7 +154,7 @@ public:
             cb_fn(arg, -EBUSY);
             return;
         }
-        
+
         if (!need_commit()) {
             cb_fn(arg, 0);
             return;
@@ -172,7 +172,7 @@ public:
 
         buffer_list bl;
         auto buf = spdk_buffer(write_buf.get_buf(), SPDK_ALIGN_CEIL(write_buf.used(), 4096));
-        SPDK_DEBUGLOG(kvlog, "op size:%lu op_length:%lu op used:%lu commit used:%lu aligned size:%lu\n", 
+        SPDK_DEBUGLOG(kvlog, "op size:%lu op_length:%lu op used:%lu commit used:%lu aligned size:%lu\n",
                 ctx->ops.size(), ctx->op_length, write_buf.used()-sizeof(uint64_t)*2, write_buf.used(), buf.size());
         bl.append_buffer(buf);
         rblob->append(bl, commit_done, ctx);
@@ -194,7 +194,7 @@ public:
             ctx->kvs->apply_op(op.key, op.value);
         }
 
-        SPDK_DEBUGLOG(kvlog, "commit result start_pos:%lu len:%lu, used:%lu size:%lu remain:%lu\n", 
+        SPDK_DEBUGLOG(kvlog, "commit result start_pos:%lu len:%lu, used:%lu size:%lu remain:%lu\n",
                 result.start_pos, result.len, ctx->kvs->rblob->used(), ctx->kvs->rblob->size(), ctx->kvs->rblob->remain());
         ctx->kvs->working = false;
         ctx->cb_fn(ctx->arg, 0);
@@ -209,7 +209,7 @@ public:
         //    total_size = sizeof(uint64_t) + sizeof(uint64_t) + op序列化后的size
         //   先占好位置，序列化结束后再写入
         write_buf.inc(sizeof(uint64_t));
-    
+
         // 2.保存op个数
         PutFixed64(write_buf, ops.size());
 
@@ -251,19 +251,19 @@ public:
      *                                Yes /         \ No
      *                              commit() ---> [no operation]
      * 整个流程不可重入，因此用 working 变量上锁。
-     */          
+     */
     static int worker_poll(void *arg) {
         kvstore* ctx = (kvstore*)arg;
         return ctx->maybe_work() ? SPDK_POLLER_BUSY : SPDK_POLLER_IDLE;
     }
 
     bool maybe_work() {
-        // SPDK_NOTICELOG("maybe_work working:%d need_checkpoint:%d need_commit():%d\n", 
+        // SPDK_NOTICELOG("maybe_work working:%d need_checkpoint:%d need_commit():%d\n",
         //                 working, need_checkpoint(), need_commit());
         if (working) { return false; }
 
         if (need_checkpoint()) {
-            SPDK_INFOLOG(kvlog, "need_checkpoint. op_length:%lu rblob->remain:%lu\n", 
+            SPDK_INFOLOG(kvlog, "need_checkpoint. op_length:%lu rblob->remain:%lu\n",
                         op_length, rblob->remain());
             // save checkpoint之后commit
             save_checkpoint(
@@ -274,7 +274,7 @@ public:
               this);
             return true;
         } else if (need_commit()) {
-            SPDK_INFOLOG(kvlog, "need_commit. op_length:%lu op_size:%lu rblob->remain:%lu\n", 
+            SPDK_INFOLOG(kvlog, "need_commit. op_length:%lu op_size:%lu rblob->remain:%lu\n",
                         op_length, op_log.size(), rblob->remain());
             // 如果不需要save checkpoint，就判断是否需要commit
             commit([](void *, int){ }, nullptr);
@@ -304,7 +304,7 @@ public:
         ctx->cb_fn = std::move(cb_fn);
         ctx->arg = arg;
         ctx->kv_ckpt = &checkpoint;
-  
+
         buffer_list bl = make_buffer_list(1);
         auto bl_encoder = buffer_list_encoder(bl);
         bl_encoder.put(table.size());
@@ -320,7 +320,7 @@ public:
         }
         ctx->bl = std::move(bl);
 
-        SPDK_DEBUGLOG(kvlog, "table serialized. map size:%lu buffer_list size:%lu\n", table.size(), ctx->bl.bytes()); 
+        SPDK_DEBUGLOG(kvlog, "table serialized. map size:%lu buffer_list size:%lu\n", table.size(), ctx->bl.bytes());
         checkpoint.start_checkpoint(ctx->bl.bytes(), checkpoint_start_complete, ctx);
     }
 
@@ -443,7 +443,7 @@ public:
     rolling_blob* rblob;
     kv_checkpoint checkpoint;
     // checkpoint和commit都由poller触发执行
-    struct spdk_poller *_worker_poller; 
+    struct spdk_poller *_worker_poller;
     bool working = false;
 
     friend class kvstore_loader;
@@ -451,7 +451,7 @@ public:
 
 class kvstore_loader {
 public:
-    kvstore_loader(kvstore* k) 
+    kvstore_loader(kvstore* k)
     : kvs(k)
     , rblob(kvs->rblob)
     , read_buf(kvs->read_buf)
@@ -497,7 +497,7 @@ public:
         if (data_size > ctx->len) {
             ctx->len = SPDK_ALIGN_CEIL(data_size, 4096);
             auto buf = spdk_buffer(ctx->read_buf.get_buf() + 4096, ctx->len - 4096);
-            SPDK_DEBUGLOG(kvlog, "kv replay_one_batch continue. start:%lu len:%lu\n", 
+            SPDK_DEBUGLOG(kvlog, "kv replay_one_batch continue. start:%lu len:%lu\n",
                 ctx->start_pos + 4096, ctx->len - 4096);
             ctx->rblob->read(ctx->start_pos + 4096, ctx->len - 4096, buf, replay_one_batch_done, ctx);
             return;
@@ -511,7 +511,7 @@ public:
         // 如果还没有 replay 到终点，就继续 replay
         auto replayed_pos = ctx->start_pos + ctx->len;
         bool finished = replayed_pos >= ctx->kvloader->end;
-        // SPDK_DEBUGLOG(kvlog, "kv table size:%lu. replayed_pos:%lu end:%lu finish?%d.\n", 
+        // SPDK_DEBUGLOG(kvlog, "kv table size:%lu. replayed_pos:%lu end:%lu finish?%d.\n",
         //         ctx->kvs->table.size(), replayed_pos, ctx->kvloader->end, finished);
         if (!finished) {
             ctx->start_pos = replayed_pos;
@@ -547,13 +547,13 @@ inline void kvstore::replay(kvstore_rw_complete cb_fn, void* arg) {
       [cb_fn = std::move(cb_fn), arg] (void *arg1, int kverrno) {
           kvstore_loader* kvloader = (struct kvstore_loader*)arg1;
           kvloader->replay_one_batch(cb_fn, arg);
-      }, 
+      },
       kvloader);
-    
+
 }
 
 using make_kvs_complete = std::function<void (void *arg, struct kvstore* kvs, int kverrno)>;
 
-void make_kvstore(struct spdk_blob_store *bs, 
+void make_kvstore(struct spdk_blob_store *bs,
                   struct spdk_io_channel *channel,
                   make_kvs_complete cb_fn, void* arg);
