@@ -218,7 +218,7 @@ private:
 public:
 
     fblock_client(monitor::client* mon_cli, ::spdk_cpuset* cpumask, std::shared_ptr<msg::rdma::client::options> opts)
-      : _rpc_client{std::make_shared<msg::rdma::client>("fblock_client", cpumask, opts)}
+      : _rpc_client{std::make_shared<msg::rdma::client>(FMT_1("fblock_%1%", utils::random_string(3)), cpumask, opts)}
       , _mon_cli{mon_cli} {}
 
     ~fblock_client() noexcept {
