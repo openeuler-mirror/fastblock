@@ -8,6 +8,7 @@ etcd_listen_client_urls = ["http://localhost:2379", "http://<host ip>:2379"]
 data_dir = "/tmp/monitor"
 election_master_key = "fastblock_master"
 hostname="monitor1"
+address="<host ip>"
 port=1111
 prometheus_port=1112
 log_path = "/var/log/fastblock/monitor1.log"
