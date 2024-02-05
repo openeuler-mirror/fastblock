@@ -168,6 +168,20 @@ func ProcessRemoveImageMessage(ctx context.Context, client *etcdapi.EtcdClient, 
 	return msg.RemoveImageErrorCode_removeImageOk, imageinfo
 }
 
+func IsImageExist(imagename string, poolname string) bool {
+	if len(Allimages) == 0 {
+		return false
+	}
+
+	for _, ic := range Allimages {
+		if imagename == ic.Imagename && poolname == ic.Poolname {
+			return true
+		}
+	}
+
+	return false
+}
+
 func ProcessGetImageMessage(ctx context.Context, imagename string, poolname string) (msg.GetImageErrorCode, *ImageConfig) {
 
 	log.Info(ctx, "  ProcessGetImageMessage   ")

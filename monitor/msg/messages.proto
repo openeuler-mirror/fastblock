@@ -226,6 +226,23 @@ message GetImageInfoResponse{
     ImageInfo ImageInfo=2;
 }
 
+message CreateSnapshotRequest {
+    string poolname = 1;
+    string imagename = 2;
+}
+
+enum CreateSnapshotErrorCode {
+    createSnapshotOk = 0;
+    createSnapshotImageNotFound = 1;
+    createSnapshotMonitorError = 2;
+    createSnapshotOsdError = 3;
+}
+
+message CreateSnapshotResponse {
+    CreateSnapshotErrorCode errorcode = 1;
+    int64 snapshotID = 2;
+}
+
 message Request {
     oneof union {
         BootRequest boot_request = 1;
@@ -242,7 +259,7 @@ message Request {
         RemoveImageRequest remove_image_request=12;
         ResizeImageRequest resize_image_request=13;
         GetImageInfoRequest get_ImageInfo_Request=14;
-
+        CreateSnapshotRequest create_snapshot_request = 15;
     }
 }
 
@@ -262,5 +279,6 @@ message Response {
         RemoveImageResponse remove_image_response=12;
         ResizeImageResponse resize_image_response=13;
         GetImageInfoResponse get_imageInfo_response=14;
+        CreateSnapshotResponse create_snapshot_response = 15;
     }
 }

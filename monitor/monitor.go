@@ -562,6 +562,57 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 					log.Error(ctx, "Error writing response:", err)
 					return
 				}
+			case *msg.Request_CreateSnapshotRequest:
+				log.Info(ctx, "Received CreateSnapshotRequest")
+				poolname := payload.CreateSnapshotRequest.Poolname
+				imagename := payload.CreateSnapshotRequest.Imagename
+				is_image_exist := osd.IsImageExist(imagename, poolname)
+				var response *msg.Response
+				if !is_image_exist {
+					response = &msg.Response{
+						Union: &msg.Response_CreateSnapshotResponse{
+							CreateSnapshotResponse: &msg.CreateSnapshotResponse{
+								Errorcode:  msg.CreateSnapshotErrorCode_createSnapshotImageNotFound,
+								SnapshotID: -1,
+							},
+						},
+					}
+				} else {
+					written_size, err := conn.Write(buffer[:n])
+					if err != nil {
+						log.Error(ctx, "Error writing to osd of creating snapshot message: ", err)
+						response = &msg.Response{
+							Union: &msg.Response_CreateSnapshotResponse{
+								CreateSnapshotResponse: &msg.CreateSnapshotResponse{
+									Errorcode:  msg.CreateSnapshotErrorCode_createSnapshotMonitorError,
+									SnapshotID: -1,
+								},
+							},
+						}
+					} else if written_size != n {
+						log.Error(ctx, "Error writing to osd of creating snapshot message: uncomplete message")
+						response = &msg.Response{
+							Union: &msg.Response_CreateSnapshotResponse{
+								CreateSnapshotResponse: &msg.CreateSnapshotResponse{
+									Errorcode:  msg.CreateSnapshotErrorCode_createSnapshotMonitorError,
+									SnapshotID: -1,
+								},
+							},
+						}
+					}
+				}
+
+				responseData, err := proto.Marshal(response)
+				if err != nil {
+					log.Error(ctx, "Error marshaling response:", err)
+					return
+				}
+
+				_, err = conn.Write(responseData)
+				if err != nil {
+					log.Error(ctx, "Error writing response:", err)
+					return
+				}
 			default:
 				log.Info(ctx, "Unknown payload type")
 			}

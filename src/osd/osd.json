@@ -5,7 +5,7 @@
             "pid_path": "/var/tmp/osd_1.pid",
             "osd_id": 1,
             "bdev_disk": "AIO1",
-            "address": "ip",
+            "address": "172.31.4.143",
             "port": 9001,
             "uuid": "d685a1ca-4a59-4c4f-80ff-59997f3d0494",
             "monitor": [
@@ -19,7 +19,7 @@
             "pid_path": "/var/tmp/osd_2.pid",
             "osd_id": 2,
             "bdev_disk": "AIO2",
-            "address": "ip",
+            "address": "172.31.4.143",
             "port": 9002,
             "uuid": "ee6289a5-74ee-4a41-ba62-3b465aa08ffd",
             "monitor": [
@@ -33,7 +33,7 @@
             "pid_path": "/var/tmp/osd_3.pid",
             "osd_id": 3,
             "bdev_disk": "AIO3",
-            "address": "ip",
+            "address": "172.31.4.143",
             "port": 9003,
             "uuid": "fd69cf95-f022-4529-bd45-7381a51f7359",
             "monitor": [

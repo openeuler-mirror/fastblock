@@ -104,12 +104,12 @@ int main(int argc, char *argv[])
 	// disable tracing because it's memory consuming
 	opts.num_entries = 0;
 	opts.name = "vhost";
-	opts.print_level = ::spdk_log_level::SPDK_LOG_WARN;
-    ::spdk_log_set_flag("libblk");
-    ::spdk_log_set_flag("bdev_fastblock");
-    ::spdk_log_set_flag("object_store");
-	::spdk_log_set_flag("libblk");
-	::spdk_log_set_flag("bdev_fastblock");
+	opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
+    // ::spdk_log_set_flag("libblk");
+    // ::spdk_log_set_flag("bdev_fastblock");
+    // ::spdk_log_set_flag("object_store");
+	// ::spdk_log_set_flag("libblk");
+	// ::spdk_log_set_flag("bdev_fastblock");
 
 	if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:", NULL,
 								  vhost_parse_arg, vhost_usage)) !=
