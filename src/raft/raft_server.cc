@@ -1259,7 +1259,9 @@ void raft_server_t::process_conf_change_add_nonvoting(std::shared_ptr<raft_entry
         SPDK_INFOLOG(pg_group, "pg: %lu.%lu, send appendentries to node %d next_idx: %ld\n", _pool_id, _pg_id, node->raft_get_node_info().node_id(), next_idx);
         msg_appendentries_t*ae = create_appendentries(node.get());
         
-        _client.send_appendentries(this, node->raft_node_get_id(), ae);
+        if(_client.send_appendentries(this, node->raft_node_get_id(), ae) != err::E_SUCCESS){
+            node->raft_set_suppress_heartbeats(false);
+        }
     });
 }
 
@@ -1377,7 +1379,9 @@ int raft_server_t::raft_send_appendentries(raft_node* node)
 
     _raft_get_entries_from_idx(next_idx, ae);
 
-    _client.send_appendentries(this, node->raft_node_get_id(), ae);
+    if(_client.send_appendentries(this, node->raft_node_get_id(), ae) != err::E_SUCCESS){
+        node->raft_set_suppress_heartbeats(false);
+    }
     return 0;
 }
 
@@ -2180,7 +2184,9 @@ void raft_server_t::do_recovery(std::shared_ptr<raft_node> node){
             auto entry_ptr = ae->add_entries();
             *entry_ptr = std::move(entry);
         }
-        _client.send_appendentries(this, node->raft_node_get_id(), ae);
+        if(_client.send_appendentries(this, node->raft_node_get_id(), ae) != err::E_SUCCESS){
+            node->raft_set_suppress_heartbeats(false);
+        }
     };
 
     auto first_idx_cache = raft_get_log()->first_log_in_cache();
@@ -2195,7 +2201,9 @@ void raft_server_t::do_recovery(std::shared_ptr<raft_node> node){
             auto entry_ptr = ae->add_entries();
             *entry_ptr = *entry;
         }
-        _client.send_appendentries(this, node->raft_node_get_id(), ae);
+        if(_client.send_appendentries(this, node->raft_node_get_id(), ae) != err::E_SUCCESS){
+            node->raft_set_suppress_heartbeats(false);
+        }
         return;
     }
 
