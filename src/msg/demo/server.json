@@ -1,5 +1,5 @@
 {
-    "bind_address": "ip",
+    "bind_address": "172.31.4.143",
     "bind_port": 8081,
     "msg": {
         "server": {
