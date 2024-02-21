@@ -488,10 +488,10 @@ public:
         return event;
     }
 
-    bool process_active_cm_event(::rdma_cm_event_type expected_evt) {
+    int process_active_cm_event(::rdma_cm_event_type expected_evt) noexcept {
         auto* evt = poll_event();
         if (not evt) {
-            return false;
+            return 0;
         }
 
         SPDK_DEBUGLOG(
@@ -499,15 +499,13 @@ public:
           "process active side event: %s(id: %p)\n",
           ::rdma_event_str(evt->event), evt->id);
 
-        std::exception_ptr eptr;
-
-        try {
-            validate_cm_event(expected_evt, evt);
-        } catch (...) {
+        auto is_valid = validate_cm_event(expected_evt, evt);
+        if (not is_valid) {
             ::rdma_ack_cm_event(evt);
-            std::rethrow_exception(eptr);
+            return -1;
         }
 
+        bool is_bad_evt{false};
         switch (evt->event) {
         case RDMA_CM_EVENT_ADDR_RESOLVED:
         case RDMA_CM_EVENT_ADDR_ERROR:
@@ -527,28 +525,24 @@ public:
             break;
         case RDMA_CM_EVENT_DISCONNECTED:
             SPDK_ERRLOG("ERROR: Got event 'RDMA_CM_EVENT_DISCONNECTED'\n");
-            eptr = std::make_exception_ptr(std::runtime_error{"got event 'RDMA_CM_EVENT_DISCONNECTED'"});
+            is_bad_evt = true;
             break;
         case RDMA_CM_EVENT_DEVICE_REMOVAL:
             SPDK_ERRLOG("ERROR: Got event 'RDMA_CM_EVENT_DEVICE_REMOVAL'\n");
-            eptr = std::make_exception_ptr(std::runtime_error{"got event 'RDMA_CM_EVENT_DEVICE_REMOVAL'"});
+            is_bad_evt = true;
             break;
         case RDMA_CM_EVENT_ADDR_CHANGE:
             SPDK_ERRLOG("ERROR: Got event 'RDMA_CM_EVENT_ADDR_CHANGE'\n");
-            eptr = std::make_exception_ptr(std::runtime_error{"got event 'RDMA_CM_EVENT_ADDR_CHANGE'"});
+            is_bad_evt = true;
             break;
         default:
             SPDK_ERRLOG("ERROR: Got unknown event '%d'\n", evt->event);
-            eptr = std::make_exception_ptr(std::runtime_error{"got unknown event"});
+            is_bad_evt = true;
             break;
         }
         ::rdma_ack_cm_event(evt);
 
-        if (eptr) [[unlikely]] {
-            std::rethrow_exception(eptr);
-        }
-
-        return true;
+        return is_bad_evt ? -1 : 1;
     }
 
     ::rdma_cm_id* process_passive_cm_event() {
@@ -760,11 +754,11 @@ public:
 
 private:
 
-    void validate_cm_event(
+    bool validate_cm_event(
       ::rdma_cm_event_type expected_event,
-      ::rdma_cm_event* reaped_event) {
+      ::rdma_cm_event* reaped_event) noexcept {
         if (expected_event == reaped_event->event) {
-            return;
+            return true;
         }
 
         switch (expected_event) {
@@ -776,7 +770,8 @@ private:
              */
             if (reaped_event->event == RDMA_CM_EVENT_REJECTED and
                 reaped_event->status == 10) {
-                throw std::runtime_error{"stale connection"};
+                SPDK_ERRLOG("ERROR: Stale connection");
+                return false;
             } else if (reaped_event->event == RDMA_CM_EVENT_CONNECT_RESPONSE) {
                 /*
                  *  If we are using a qpair which is not created using rdma cm API
@@ -800,7 +795,7 @@ private:
           ::rdma_event_str(reaped_event->event),
           reaped_event->event, reaped_event->status);
 
-        throw std::runtime_error{"unexpected event"};
+        return false;
     }
 
     void resolve_address() {
