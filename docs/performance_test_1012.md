@@ -165,7 +165,9 @@ vhost.json 作为 `fastblock-vhost` 的配置文件如下：
             "data_memory_pool_element_size_byte": 8192,
             "per_post_recv_num": 512,
             "rpc_timeout_us": 1000000,
-            "rpc_batch_size": 1024
+            "rpc_batch_size": 1024,
+            "connect_max_retry": 30,
+            "connect_retry_interval_us": 1000000
         },
 
         "rdma": {

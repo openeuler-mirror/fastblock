@@ -18,7 +18,9 @@
             "data_memory_pool_element_size_byte": 8192,
             "per_post_recv_num": 512,
             "rpc_timeout_us": 1000000,
-            "rpc_batch_size": 1024
+            "rpc_batch_size": 1024,
+            "connect_max_retry": 30,
+            "connect_retry_interval_us": 1000000
         },
         
         "server": {
@@ -77,4 +79,8 @@
 - *qp_sig_all*  
     配置 *RDMA Send WR* 是否产生 *CQE*
 - *rdma_device_name*  
-    指定了 *RDMA* 网卡的设备名
+    指定了 *RDMA* 网卡的设备名  
+- *connect_max_retry*  
+    指定 *RPC* 重连最大尝试次数  
+- *connect_retry_interval_us*  
+    指定每次重连的时间间隔
