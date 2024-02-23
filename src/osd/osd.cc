@@ -77,6 +77,7 @@ block_parse_arg(int ch, char *arg)
         g_json_conf = arg;
         break;
 	default:
+        block_usage();
 		return -EINVAL;
 	}
 	return 0;
@@ -247,7 +248,16 @@ main(int argc, char *argv[])
 	}
 
     SPDK_INFOLOG(osd, "Osd config file is %s\n", g_json_conf);
-    boost::property_tree::read_json(std::string(g_json_conf), server.pt);
+    try {
+        boost::property_tree::read_json(std::string(g_json_conf), server.pt);
+    } catch (const std::logic_error& e) {
+        std::string err_reason{e.what()};
+        SPDK_ERRLOG(
+          "ERROR: Parse json configuration file error, reason is '%s'\n",
+          err_reason.c_str());
+        block_usage();
+        return -EINVAL;
+    }
     from_configuration(server);
 
 	/* Blocks until the application is exiting */
