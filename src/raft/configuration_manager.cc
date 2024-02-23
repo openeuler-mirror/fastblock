@@ -135,8 +135,10 @@ int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_
             SPDK_INFOLOG(pg_group, "all_new_nodes_catch_up\n");
             int ret = 0;
             if(get_change_num(_cfg_entry) > 1){
+                //添加和删除节点之和大于1
                 ret = process_cfg_change(cfg_state::CFG_JOINT, _cfg_entry, _cfg_complete);
             }else{
+                //一次只添加1个节点
                 ret = process_cfg_change(cfg_state::CFG_UPDATE_NEW_CFG, _cfg_entry, _cfg_complete);
             }
             if(ret != 0){

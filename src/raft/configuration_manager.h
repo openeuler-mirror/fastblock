@@ -88,10 +88,17 @@ private:
 };
 
 enum class cfg_state {
+    /*  此阶段表示没有成员变更 */
     CFG_NONE = 0,
+    /* 成员变更开始阶段 */
     CFG_CATCHING_START,
+    /* 成员变更追赶阶段，只有添加成员（包括替换成员里的添加成员）时，才会进入这个阶段，类似于单步成员变更 */
     CFG_CATCHING_UP,
+    /* 联合一致阶段 */
     CFG_JOINT,
+    /* 
+     * 更新配置阶段，把新的成员配置表发送给新成员配置表里的所有成员，达到多数派后，变更结束。
+     * */
     CFG_UPDATE_NEW_CFG
 };
 

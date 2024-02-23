@@ -717,8 +717,11 @@ public:
 
     void init(std::vector<utils::osd_info_t>&& node_list, raft_node_id_t current_node);
 
+    //添加单个成员
     void add_raft_membership(const raft_node_info& node, utils::context* complete);
+    //删除单个成员
     void remove_raft_membership(const raft_node_info& node, utils::context* complete);
+    //变更多个成员
     void change_raft_membership(std::vector<raft_node_info>&& new_nodes, utils::context* complete);
 
     int raft_configuration_entry(std::shared_ptr<raft_entry_t> ety, utils::context *complete);

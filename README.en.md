@@ -18,7 +18,7 @@ The current distribution block storage system(Ceph) is facing challenges that hi
 
 ### Software Architecture
 The architecture is closely similar to Ceph, including many concepts such as monitor, OSD, and PG. For quick understanding, the architecture diagram is shown below.
-![arch](docs/architecture.png)
+![arch](docs/png/architecture.png)
 * **Compute:** represents the compute services.
 * **Monitor cluster:** Responsible for maintaining cluster metadata, including `osdMap`, `pg`, `pgMap`, `pool`, and `image`.
 * **Storage cluster:** Each storage cluster comprises multiple Storage Nodes, and each Storage Node operates several OSDs.
@@ -42,7 +42,7 @@ For more details, refer to [monitor documentation](monitor/README.md "monitor do
 
 #### OSD RPC 
 RPC subsystem in fastblock is a crucial system that interconnects various modules. To accommodate heterogeneous networks, the RPC subsystem is implemented in two ways: socket-based (Control RPC) and RDMA-based (Data RPC and Raft RPC). Socket-based RPC follows the classic Linux socket application scenario, while RDMA-based RPC utilizes asynchronous RDMA (i.e., RDMA write) semantics.
-![OSD RPC subsystem](docs/rpc_subsystem.png)
+![OSD RPC subsystem](docs/png/rpc_subsystem.png)
 There are three types of RPC interactions, as depicted in the diagram:
 * **Control RPC**: Used for transferring `osdmap`, `pgmap`, and `image` information between clients and monitor, and between OSDs and monitor. Since these data are not large in volume and are not frequently transmitted, a socket-based implementation is suitable.
 * **Data RPC**: Facilitates the transfer of object data operations and results between clients and OSDs. Due to the larger size and higher frequency of this data, RDMA-based methods are employed.
@@ -61,7 +61,7 @@ Raft achieves consistency in distributed systems by electing a leader and entrus
 
 In a multi-group Raft setup, where multiple Raft groups coexist, each group's leader must send heartbeats to its followers. With many Raft groups, this could lead to an excessive number of heartbeats, consuming significant bandwidth and CPU resources. The solution is elegantly simple: since an `osd` might belong to multiple Raft groups, heartbeats can be consolidated for groups with the same leader and followers. This consolidation significantly reduces the number of heartbeat messages needed. For instance, consider a scenario with two PGs in Raft, namely `pg1` and `pg2`, where both include `osd1`, `osd2`, and `osd3`. `osd1` is the leader in this case. Without consolidation, `osd1` would need to send separate heartbeat messages for `pg1` and `pg2` to both `osd2` and `osd3`. However, with heartbeat consolidation, `osd1` only needs to send one combined heartbeat message to `osd2` and `osd3`.
 
-![Hearbeat Merging](docs/heartbeat_merge.png)
+![Hearbeat Merging](docs/png/heartbeat_merge.png)
 
 #### OSD KV
 The KV (Key-Value) subsystem is tailored for storing both the metadata of Raft and the data of the storage system itself. The design caters to the small scale of the data involved. It employs an in-memory hash map to store all the data, offering basic operations like `put`, `remove`, and `get`. To ensure data persistence, the modified data in the hash map is written to the disk at intervals of 10 milliseconds.
@@ -72,7 +72,7 @@ OSD localstore utilizes SPDK blobstore for data storage and is comprised of thre
 * **`object_store`**: This module handles the storage of object data, where each object is mapped to an SPDK blob.
 * **`kv_store`**: Each CPU core has its own SPDK blob, which stores all kv data required by that core. This includes Raft's metadata and the data of the storage system itself.
 For instance, if two Rafts are running, the localstore provides these three types of storage functionalities - log, object, and KV - for both Rafts.
-![localstore](docs/osd_localstore.png)
+![localstore](docs/png/osd_localstore.png)
 
 #### Client
 Clients is designed for creating, modifying, and deleting images. It converts user operations on images into operations on objects (the basic data units processed by OSDs) and then packages these as Data PRC messages to be sent to the leader OSD of the PG. The client also receives and processes responses from the leader OSD and returns the results to the user. Clients operate in various modes to accommodate different environments and uses. These modes include spdk vhost for virtual machines, NBD for bare metal, and CSI for virtual machines. In all these modes, the libfastblock library is called to handle the conversion from images to objects and to communicate with the OSDs. The focus of this explanation is on the spdk vhost for virtual machines.
