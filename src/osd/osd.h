@@ -13,7 +13,6 @@
 #include <map>
 #include <string>
 #include "src/localstore/object_store.h"
-#include "src/msg/messages.pb-c.h"
 
 
 using namespace std;

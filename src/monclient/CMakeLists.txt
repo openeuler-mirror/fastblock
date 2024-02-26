@@ -3,7 +3,7 @@ compile_library (
     monclient
   SRCS
     log_components.cc
-    message.pb.cc
+    messages.pb.cc
     client.cc
   DEPS
     spdk::spdk

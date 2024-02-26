@@ -11,7 +11,7 @@
 
 #pragma once
 
-#include "monclient/message.pb.h"
+#include "monclient/messages.pb.h"
 #include "utils/utils.h"
 #include "utils/simple_poller.h"
 #include "utils/time_check.h"

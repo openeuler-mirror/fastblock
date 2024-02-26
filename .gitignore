@@ -3,6 +3,7 @@ build
 *.swp
 *.pb.cc
 *.pb.h
+*.pb.go
 tmp
 build.rel
 build.debug

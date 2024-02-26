@@ -52,7 +52,7 @@ type PoolPGsConfig struct {
 // type PGConfig []int
 type PGConfig struct {
     Version int64              `json:"version,omitempty"`
-	OsdList  []int             `json:"osdlist,omitempty"`
+    OsdList  []int             `json:"osdlist,omitempty"`
 }
 
 // PoolID defines pool ID.

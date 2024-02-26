@@ -1,1 +1,0 @@
-protoc --gogo_out=.  messages.proto
