@@ -73,11 +73,12 @@ struct mlx5dv : public provider {
     }
 
     ::ibv_qp*
-    create_qp(::ibv_context* ctx, ::ibv_pd* pd, ::ibv_qp_init_attr* attr) noexcept final {
+    create_qp(void* ctx, ::ibv_pd* pd, ::ibv_qp_init_attr* attr) noexcept final {
         assert(ctx && "null id");
         assert(pd && "null pd");
         assert(attr && "null qp init attr");
 
+        auto* ibv_ctx = reinterpret_cast<::ibv_context*>(ctx);
         ::ibv_qp_init_attr_ex dv_qp_attr = {
             .qp_context = attr->qp_context,
             .send_cq = attr->send_cq,
@@ -89,7 +90,7 @@ struct mlx5dv : public provider {
             .pd = pd
         };
 
-        auto* qp = ::mlx5dv_create_qp(ctx, &dv_qp_attr, nullptr);
+        auto* qp = ::mlx5dv_create_qp(ibv_ctx, &dv_qp_attr, nullptr);
 
         if (!qp) {
             return nullptr;

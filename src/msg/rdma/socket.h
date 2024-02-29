@@ -11,7 +11,8 @@
 #pragma once
 
 #include "msg/rdma/endpoint.h"
-#include "msg/rdma/mlx5dv.h"
+#include "msg/rdma/provider/mlx5dv.h"
+#include "msg/rdma/provider/verbs.h"
 #include "msg/rdma/pd.h"
 #include "msg/rdma/provider.h"
 #include "utils/fmt.h"
@@ -39,9 +40,9 @@ public:
       : _ep{ep}
       , _channel{channel}
       , _pd{pd.value()}
-      , _provider{std::make_unique<mlx5dv>()} {
-        assert(::mlx5dv_is_supported(pd.deivce()));
-
+      // , _provider{std::make_unique<mlx5dv>()} {
+      , _provider{std::make_unique<verbs>()}
+      , _mlx5dv_is_supported{::mlx5dv_is_supported(pd.deivce())} {
         if (not _channel) {
             _channel = ::rdma_create_event_channel();
             _process_channel_when_close = true;
@@ -93,7 +94,6 @@ public:
               msg,
               "bind %s:%d to rdma_cm_id %p\n",
               _ep.addr.c_str(), _ep.port, _id);
-
             return;
         }
 
@@ -134,9 +134,10 @@ public:
       : _ep{host(id), ::rdma_get_dst_port(id)}
       , _id{id}
       , _pd{_id->pd}
-      , _provider{std::make_unique<mlx5dv>()} {
+      , _provider{std::make_unique<verbs>()} {
         assert(_id && "argument 'id' must not be nullptr");
 
+        _id->verbs = _pd->context;
         create_qp(cq, reinterpret_cast<void*>(this));
         _id->context = reinterpret_cast<void*>(this);
         _connected = true;
@@ -600,11 +601,17 @@ public:
         return std::nullopt;
     }
 
-    bool is_resolve_address_done() {
+    auto is_resolve_address_done() {
+        SPDK_DEBUGLOG(msg, "_id->verbs is %p, _id->pd is %p, _pd is %p\n", _id->verbs, _id->pd, _pd);
+        _id->pd = _pd;
+        _id->verbs = _pd->context;
         return process_active_cm_event(RDMA_CM_EVENT_ADDR_RESOLVED);
     }
 
-    bool is_resolve_route_done() {
+    auto is_resolve_route_done() {
+        SPDK_DEBUGLOG(msg, "_id->verbs is %p, _id->pd is %p, _pd is %p\n", _id->verbs, _id->pd, _pd);
+        _id->pd = _pd;
+        _id->verbs = _pd->context;
         return process_active_cm_event(RDMA_CM_EVENT_ROUTE_RESOLVED);
     }
 
@@ -621,6 +628,7 @@ public:
     }
 
     void create_qp(protection_domain& pd, ::ibv_cq* cq) {
+        SPDK_DEBUGLOG(msg, "_id->pd is %p, _pd is %p, pd is %p\n", _id->pd, _pd, pd.value());
         create_qp(pd, cq, this);
     }
 
@@ -873,19 +881,22 @@ private:
           _ep.max_recv_sge);
 
         _qp_init_attr->cap.max_inline_data = _ep.max_inline_data;
-        _qp_init_attr->sq_sig_all = _ep.qp_sig_all;
+        // FIXME: _qp_init_attr->sq_sig_all = _ep.qp_sig_all;
+        _qp_init_attr->sq_sig_all = 1;
         _qp_init_attr->qp_type = ::IBV_QPT_RC;
         _qp_init_attr->qp_context = reinterpret_cast<void*>(ctx);
-        _qp_init_attr->qp_context = ctx;
 
-        auto* qp = _provider->create_qp(pd->context, pd, _qp_init_attr.get());
+        // if (_mlx5dv_is_supported) {
+        //     _id->qp = _provider->create_qp(pd->context, pd, _qp_init_attr.get());
+        // } else {
+            _provider->create_qp(_id, _pd, _qp_init_attr.get());
+        // }
 
-        if (!qp) {
+        if (!_id->qp) {
             SPDK_ERRLOG("ERROR: Create qp failed\n");
             throw std::runtime_error{"create qp failed"};
         }
 
-        _id->qp = qp;
         [[maybe_unused]] auto _ = update_qp_attr();
     }
 
@@ -938,6 +949,7 @@ private:
      * 所以需要区分哪些 rdma_socket 需要处理 channel
      */
     bool _process_channel_when_close{false};
+    bool _mlx5dv_is_supported{false};
 
 private:
 
