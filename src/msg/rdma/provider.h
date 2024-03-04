@@ -17,7 +17,7 @@ namespace msg {
 namespace rdma {
 
 struct provider {
-    virtual ::ibv_qp* create_qp(::ibv_context*, ::ibv_pd*, ::ibv_qp_init_attr*) noexcept = 0;
+    virtual ::ibv_qp* create_qp(void*, ::ibv_pd*, ::ibv_qp_init_attr*) noexcept = 0;
     virtual void complete_qp_connect(::rdma_cm_id*) = 0;
     virtual void accept(::rdma_cm_id*, rdma_conn_param*) = 0;
     virtual int disconnect(::rdma_cm_id*) noexcept = 0;

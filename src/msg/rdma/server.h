@@ -290,7 +290,7 @@ private:
 
     void handle_connect_request(::rdma_cm_event* evt) {
         evt->id->pd = _pd->value();
-        auto sock = std::make_unique<socket>(evt->id, _cq->cq());
+        auto sock = std::make_unique<socket>(evt->id, _cq->cq(), *_pd);
         SPDK_DEBUGLOG(
           msg,
           "add cm observer with id %p, current observers' size is %ld\n",

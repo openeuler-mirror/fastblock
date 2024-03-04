@@ -18,6 +18,7 @@
 #include <string>
 #include <utility>
 
+#include <infiniband/mlx5dv.h>
 #include <infiniband/verbs.h>
 
 namespace msg {
@@ -52,8 +53,8 @@ public:
 
             SPDK_INFOLOG(
               msg,
-              "allocated protection domain on port %d of %s\n",
-              ctx->port, dev_name.c_str());
+              "allocated protection domain(%p) on port %d of %s\n",
+              _pd, ctx->port, dev_name.c_str());
 
             _ctx = ctx;
             return iterate_tag::stop;
@@ -104,6 +105,10 @@ public:
 
     [[gnu::always_inline]] ibv_context* device_context() noexcept {
         return _ctx->context;
+    }
+
+    [[gnu::always_inline]] bool is_mlx5dv_supported() noexcept {
+        return ::mlx5dv_is_supported(_ctx->device);
     }
 
 private:
