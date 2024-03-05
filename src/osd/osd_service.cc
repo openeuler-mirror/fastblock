@@ -29,6 +29,7 @@ void osd_service::process_get_leader(google::protobuf::RpcController* controller
     auto pg_id = request->pg_id();
     uint32_t shard_id;
 
+    SPDK_INFOLOG(osd, "recv pg_leader_request, get the leader of pg %lu.%lu\n", request->pool_id(), request->pg_id());
     if(!_pm->get_pg_shard(pool_id, pg_id, shard_id)){
         SPDK_WARNLOG("not find pg %lu.%lu\n", pool_id, pg_id);
         response->set_state(err::RAFT_ERR_NOT_FOUND_PG);

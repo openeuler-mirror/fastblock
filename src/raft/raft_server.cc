@@ -746,7 +746,7 @@ int raft_server_t::_should_grant_vote(const msg_requestvote_t* vr)
 
     raft_term_t term = 0;
     auto got = raft_get_entry_term(current_idx_tmp, term);
-    assert(got);
+    assert(got || (!got && current_idx_tmp == 0));
     (void)got;
     if (term < vr->last_log_term())
         return 1;
@@ -1064,7 +1064,8 @@ void raft_server_t::raft_flush(){
     }
 
     _current_idx = last_cache_idx;
-    SPDK_INFOLOG(pg_group, "first_idx: %lu current_idx: %lu _commit_idx: %lu\n", _first_idx, _current_idx, _commit_idx);
+    SPDK_INFOLOG(pg_group, "in pg %lu.%lu first_idx: %lu current_idx: %lu _commit_idx: %lu\n", 
+            raft_get_pool_id(), raft_get_pg_id(), _first_idx, _current_idx, _commit_idx);
 
     for(auto &node_stat : _nodes_stat)
     {
@@ -1283,7 +1284,7 @@ int raft_server_t::raft_send_requestvote(raft_node* node)
 
     raft_term_t _term = 0;
     auto got = raft_get_entry_term(raft_get_current_idx(),  _term);
-    assert(got);
+    assert(got || (!got && raft_get_current_idx() == 0));
     (void)got;
     rv->set_last_log_term(_term);
     rv->set_candidate_id(raft_get_nodeid());
@@ -1317,7 +1318,7 @@ int raft_server_t::raft_send_heartbeat(raft_node* node)
     ae->set_prev_log_idx(next_idx - 1);
     raft_term_t term = 0;
     auto got = raft_get_entry_term(ae->prev_log_idx(), term);
-    assert(got);
+    assert(got || (!got && ae->prev_log_idx() == 0));
     (void)got;
     ae->set_prev_log_term(term);
     ae->set_leader_commit(raft_get_commit_idx());
@@ -1354,7 +1355,7 @@ msg_appendentries_t* raft_server_t::create_appendentries(raft_node* node)
     ae->set_prev_log_idx(next_idx - 1);
     raft_term_t term = 0;
     auto got = raft_get_entry_term(ae->prev_log_idx(), term);
-    assert(got);
+    assert(got || (!got && ae->prev_log_idx() == 0));
     (void)got;
 
     ae->set_prev_log_term(term);
@@ -2527,7 +2528,7 @@ void raft_server_t::load(raft_node_id_t current_node, raft_complete cb_fn, void 
         _machine->set_last_applied_idx(last_applied_idx);
 
         raft_set_nodeid(current_node);
-        SPDK_INFOLOG(pg_group, "raft load done. pg %lu.%lu _current_idx %lu _current_term %lu _voted_for %d _commit_idx %lu _last_applied_idx %ld _node_id %d\n", 
+        SPDK_INFOLOG(pg_group, "raft load done. in pg %lu.%lu _current_idx %lu _current_term %lu _voted_for %d _commit_idx %lu _last_applied_idx %ld _node_id %d\n", 
                 _pool_id, _pg_id, _current_idx, _current_term, _voted_for, _commit_idx, _machine->get_last_applied_idx(), _node_id);
         start_raft_timer();
         raft_set_op_state(raft_op_state::RAFT_ACTIVE);

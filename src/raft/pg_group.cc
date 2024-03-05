@@ -191,7 +191,7 @@ std::vector<shard_manager::node_heartbeat> shard_manager::get_heartbeat_requests
 
             raft_term_t term = 0;
             auto got = raft->raft_get_entry_term(meta_ptr->prev_log_idx(), term);
-            assert(got);
+            assert(got || (!got && meta_ptr->prev_log_idx() == 0));
             (void)got;
             meta_ptr->set_prev_log_term(term);
             meta_ptr->set_leader_commit(raft->raft_get_commit_idx());

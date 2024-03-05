@@ -398,6 +398,8 @@ public:
                   return false;
               }
 
+              SPDK_INFOLOG(libblk, "send get_leader request for pg %lu.%lu to osd %d\n",
+                      stack_ptr->leader_req->pool_id(), stack_ptr->leader_req->pg_id(), stack_ptr->osd->node_id);
               auto done = google::protobuf::NewCallback(
                 this, &fblock_client::on_leader_acquired, stack_ptr.get());
               stack_ptr->stub->process_get_leader(
@@ -519,7 +521,9 @@ private:
         osd_info->leader_id = resp->leader_id();
         osd_info->addr = resp->leader_addr();
         osd_info->port = resp->leader_port();
-        SPDK_DEBUGLOG(libblk, "leader osd address: '%s:%d'\n", osd_info->addr.c_str(), osd_info->port);
+        SPDK_DEBUGLOG(libblk, "Got leader osd of pg %lu.%lu: osd id %d osd address: '%s:%d'\n", 
+                it->second->leader_req->pool_id(), it->second->leader_req->pg_id(), osd_info->leader_id, 
+                osd_info->addr.c_str(), osd_info->port);
 
         update_leader_state(info_it->second.get());
         if (not info_it->second->is_valid) {

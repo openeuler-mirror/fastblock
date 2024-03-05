@@ -80,8 +80,8 @@ int state_machine::raft_apply_entry()
             set_apply_in_progress(false);
             return;
         }
-        SPDK_INFOLOG(pg_group, "osd %d applying log: %ld, idx: %ld size: %u \n",
-                     get_raft()->raft_get_nodeid(), log_idx, ety->idx(), (uint32_t)ety->data().size());
+        SPDK_INFOLOG(pg_group, "in pg %lu.%lu osd %d applying log: %ld, idx: %ld size: %u \n", get_raft()->raft_get_pool_id(),
+                    get_raft()->raft_get_pg_id(), get_raft()->raft_get_nodeid(), log_idx, ety->idx(), (uint32_t)ety->data().size());
     
         apply_complete *complete = new apply_complete(log_idx, this);
         apply(ety, complete);
