@@ -504,6 +504,7 @@ public:
             }
 
             _onflight_requests.erase(it);
+            _busy_list->erase(busy_it);
             return true;
         }
 
