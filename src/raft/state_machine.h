@@ -86,6 +86,9 @@ private:
     bool _apply_in_progress;
     struct spdk_poller * _timer;
 
+    uint64_t _last_save_time = 0;
+    raft_index_t _last_save_index = 0;
+
 protected:
     object_store _store;
 };

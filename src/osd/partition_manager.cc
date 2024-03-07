@@ -55,7 +55,7 @@ static void make_log_done(void *arg, struct disk_log* dlog, int rberrno){
             SPDK_ERRLOG("make_disk_log failed: %s\n", spdk_strerror(rberrno));
             return;
         }
-        SPDK_WARNLOG("make_log_done, rberrno %d\n", rberrno);
+        SPDK_INFOLOG(osd, "make_log_done, rberrno %d\n", rberrno);
         make_log_context* mlc = (make_log_context*)arg;
         partition_manager* pm = mlc->pm;
         auto sm = std::make_shared<osd_stm>();

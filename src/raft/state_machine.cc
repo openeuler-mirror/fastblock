@@ -15,8 +15,6 @@
 #include "utils/err_num.h"
 
 constexpr uint32_t default_parallel_apply_num = 32;
-uint64_t g_last_time = 0;
-raft_index_t g_last_index = 0;
 
 static int apply_task(void *arg){
     state_machine* stm = (state_machine *)arg;
@@ -34,7 +32,8 @@ struct apply_complete : public utils::context{
     , stm(_stm) {}
 
     void finish(int r) override {
-        SPDK_INFOLOG(pg_group, "apply log index %ld return %d\n", idx, r);
+        SPDK_INFOLOG(pg_group, "in pg %lu.%lu, apply log index %ld return %d\n", 
+                stm->get_raft()->raft_get_pool_id(), stm->get_raft()->raft_get_pg_id(), idx, r);
         if(r == err::E_SUCCESS){
             auto last_applied_idx = stm->get_last_applied_idx();
             stm->set_last_applied_idx(idx);
@@ -53,11 +52,12 @@ int state_machine::raft_apply_entry()
         return -1;
 
     auto cur_time = utils::get_time();
-    if((cur_time - g_last_time) / 1000 > 1 || _last_applied_idx - g_last_index >= 100){
-        if(g_last_index != _last_applied_idx){
-            g_last_index = _last_applied_idx;
-            g_last_time = cur_time;
-            SPDK_INFOLOG(pg_group, "save last_apply_index %lu\n", _last_applied_idx);
+    if((cur_time - _last_save_time) / 1000 > 1 || _last_applied_idx - _last_save_index >= 100){
+        if(_last_save_index != _last_applied_idx){
+            SPDK_INFOLOG(pg_group, "pg %lu.%lu save last_apply_index %lu  g_last_index %lu\n", 
+                    get_raft()->raft_get_pool_id(), get_raft()->raft_get_pg_id(), _last_applied_idx, _last_save_index);
+            _last_save_index = _last_applied_idx;
+            _last_save_time = cur_time;
             get_raft()->save_last_apply_index(_last_applied_idx);
         }
     }
@@ -80,7 +80,7 @@ int state_machine::raft_apply_entry()
             set_apply_in_progress(false);
             return;
         }
-        SPDK_INFOLOG(pg_group, "in pg %lu.%lu osd %d applying log: %ld, idx: %ld size: %u \n", get_raft()->raft_get_pool_id(),
+        SPDK_INFOLOG(pg_group, "pg %lu.%lu osd %d applying log: %ld, idx: %ld size: %u \n", get_raft()->raft_get_pool_id(),
                     get_raft()->raft_get_pg_id(), get_raft()->raft_get_nodeid(), log_idx, ety->idx(), (uint32_t)ety->data().size());
     
         apply_complete *complete = new apply_complete(log_idx, this);

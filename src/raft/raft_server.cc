@@ -367,6 +367,8 @@ int raft_server_t::raft_process_appendentries_reply(
 
                 if (raft_get_num_voting_nodes() / 2 < votes && leader_match){
                     raft_set_commit_idx(point);
+                    SPDK_DEBUGLOG(pg_group, "in pg %lu.%lu, _node_id %d _commit_idx %lu\n", raft_get_pool_id(), 
+                            raft_get_pg_id(), _node_id, _commit_idx);
                     raft_flush();
                 }
             }
@@ -489,8 +491,11 @@ int raft_server_t::raft_process_appendentries_reply(
 }
 
 void raft_server_t::follow_raft_disk_append_finish(raft_index_t start_idx, raft_index_t end_idx, raft_index_t commit_idx, int result){
-    if (raft_get_commit_idx() < commit_idx)
+    if (raft_get_commit_idx() < commit_idx){
         raft_set_commit_idx(commit_idx);  
+        SPDK_DEBUGLOG(pg_group, "in pg %lu.%lu, _node_id %d _commit_idx %lu\n", raft_get_pool_id(), 
+                raft_get_pg_id(), _node_id, _commit_idx);
+    }
     follow_raft_write_entry_finish(start_idx, end_idx, result);  
 }
 
@@ -939,6 +944,8 @@ void raft_server_t::raft_disk_append_finish(raft_index_t start_idx, raft_index_t
     }
     if((raft_get_commit_idx() < end_idx) && (raft_get_num_voting_nodes() / 2 < votes)){
         raft_set_commit_idx(end_idx);
+        SPDK_DEBUGLOG(pg_group, "in pg %lu.%lu, _node_id %d _commit_idx %lu\n", raft_get_pool_id(), 
+                raft_get_pg_id(), _node_id, _commit_idx);
         raft_flush();
     }
 }
@@ -2465,7 +2472,7 @@ int raft_server_t::raft_send_timeout_now(raft_node_id_t target_node_id){
     request->set_node_id(raft_get_nodeid());
     request->set_term(raft_get_current_term());
 
-    SPDK_DEBUGLOG(pg_group, "sending timeout_now request to node %d in pg %lu.%lu \n", 
+    SPDK_DEBUGLOG(pg_group, "sending timeout_now request to node %d in pg: %lu.%lu \n", 
             target_node_id, _pool_id, _pg_id);
     return _client.send_timeout_now(this, target_node_id, request);
 }
@@ -2525,11 +2532,13 @@ void raft_server_t::load(raft_node_id_t current_node, raft_complete cb_fn, void 
             if(last_applied_idx > 0)
                 last_applied_idx -= 1;
         }
-        _machine->set_last_applied_idx(last_applied_idx);
+        set_last_applied_idx_after_load(last_applied_idx);
 
         raft_set_nodeid(current_node);
-        SPDK_INFOLOG(pg_group, "raft load done. in pg %lu.%lu _current_idx %lu _current_term %lu _voted_for %d _commit_idx %lu _last_applied_idx %ld _node_id %d\n", 
-                _pool_id, _pg_id, _current_idx, _current_term, _voted_for, _commit_idx, _machine->get_last_applied_idx(), _node_id);
+        SPDK_INFOLOG(pg_group, "raft load done. in pg %lu.%lu _node_id %d, _current_idx %lu _current_term %lu _voted_for %d \
+                _commit_idx %lu _last_applied_idx %ld _node_id %d\n", 
+                _pool_id, _pg_id, _node_id, _current_idx, _current_term, _voted_for, _commit_idx, 
+                _machine->get_last_applied_idx(), _node_id);
         start_raft_timer();
         raft_set_op_state(raft_op_state::RAFT_ACTIVE);
         cb_fn(arg, 0);

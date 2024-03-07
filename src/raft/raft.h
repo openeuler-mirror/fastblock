@@ -829,6 +829,10 @@ public:
     }
 
     void load(raft_node_id_t current_node, raft_complete cb_fn, void *arg);
+    void set_last_applied_idx_after_load(raft_index_t idx){
+        _machine->set_last_applied_idx(idx);
+        _log->set_trim_index(idx);
+    }
 private:
     int _recovery_by_snapshot(std::shared_ptr<raft_node> node);
     bool _has_majority_leases(raft_time_t now, int with_grace);

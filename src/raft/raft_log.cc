@@ -36,7 +36,7 @@ int raft_log::log_append(std::vector<std::pair<std::shared_ptr<raft_entry_t>, ut
     {
         auto entry = entry_pair.first;
         auto complete = entry_pair.second;
-        SPDK_WARNLOG("entry index: %ld, _next_idx: %ld\n", entry->idx(), _next_idx);
+        // SPDK_WARNLOG("entry index: %ld, _next_idx: %ld\n", entry->idx(), _next_idx);
         entry->set_idx(_next_idx);
         _next_idx++;  
         _entries.add(entry, complete);
