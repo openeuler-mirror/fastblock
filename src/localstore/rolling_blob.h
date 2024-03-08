@@ -484,6 +484,7 @@ public:
         ctx->arg = arg;
 
         serialize_super();
+        SPDK_INFOLOG(blob_log, "sync_md, back pos %lu, front pos %lu\n", back.pos, front.pos);
         spdk_blob_io_write(blob, channel, super.get_buf(),
                             0, super.size() / unit_size, md_done, ctx);
     }

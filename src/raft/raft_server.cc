@@ -678,8 +678,8 @@ int raft_server_t::raft_recv_appendentries(
              *   append entry请求中有leader_commit参数。
              */
             if (raft_get_commit_idx() < ae->leader_commit()  &&  raft_get_commit_idx() < new_commit_idx){
-                SPDK_INFOLOG(pg_group, "pg %lu.%lu,  start_idx: %ld end_idx: %ld set _commit_idx to %ld.\n",
-                        _pool_id, _pg_id, start_idx, end_idx, new_commit_idx);
+                SPDK_INFOLOG(pg_group, "in pg %lu.%lu, _node_id %d start_idx: %ld end_idx: %ld set _commit_idx to %ld.\n",
+                        _pool_id, _pg_id, _node_id, start_idx, end_idx, new_commit_idx);
                 raft_set_commit_idx(new_commit_idx);
             }
 

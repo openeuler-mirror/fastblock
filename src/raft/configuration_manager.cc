@@ -91,9 +91,10 @@ int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_
         entry_ptr->set_meta(std::move(buf));
 
         int ret = _raft->raft_write_entry(entry_ptr, nullptr);
-        if(ret != 0){
-            complete->complete(ret);
-        }
+        //随后在finish_func中调用了_cfg_complete->complete
+        // if(ret != 0){
+            // complete->complete(ret);
+        // }
         return ret;
     };
 
@@ -114,9 +115,10 @@ int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_
         entry_ptr->set_meta(std::move(buf));
 
         int ret = _raft->raft_write_entry(entry_ptr, nullptr);
-        if(ret != 0){
-            complete->complete(ret);
-        }
+        //随后在finish_func中调用了_cfg_complete->complete
+        // if(ret != 0){
+            // complete->complete(ret);
+        // }
         return ret;
     };
 

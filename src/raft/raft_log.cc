@@ -82,7 +82,7 @@ int raft_log::config_cache_flush(){
             if(complete)
                 _raft->set_cfg_complete(complete);
             _raft->reset_cfg_entry();
-            _entries.add(entry, complete);
+            _entries.add(entry, nullptr);
         }
         _config_cache.pop_front();
         count++;
