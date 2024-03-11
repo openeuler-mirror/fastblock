@@ -54,6 +54,7 @@ struct rpc_context {
 
 ::spdk_cpuset g_cpumask{};
 char* g_json_conf{nullptr};
+std::shared_ptr<msg::rdma::server> g_rpc_server{nullptr};
 boost::property_tree::ptree g_pt{};
 }
 
@@ -76,12 +77,13 @@ int parse_arg(int ch, char* arg) {
 }
 
 void signal_handler(int signo) noexcept {
-    SPDK_NOTICELOG("triger signo(%d)", signo);
+    SPDK_NOTICELOG("triger signo(%d)\n", signo);
     ::spdk_app_stop(0);
 }
 
 void on_server_close() {
     SPDK_NOTICELOG("Close the rpc server\n");
+    g_rpc_server->stop();
     std::signal(SIGINT, signal_handler);
 }
 
@@ -98,10 +100,9 @@ void start_rpc_server(void* arg) {
     opts->bind_address =
       g_pt.get_child("bind_address").get_value<std::string>();
     opts->port = g_pt.get_child("bind_port").get_value<uint16_t>();
-    ctx->server = std::make_shared<msg::rdma::server>(g_cpumask, opts);
-
-    ctx->server->add_service(ctx->rpc_service);
-    ctx->server->start();
+    g_rpc_server = std::make_shared<msg::rdma::server>(g_cpumask, opts);
+    g_rpc_server->add_service(ctx->rpc_service);
+    g_rpc_server->start();
 }
 
 int main(int argc, char** argv) {

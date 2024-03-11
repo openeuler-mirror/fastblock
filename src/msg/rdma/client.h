@@ -48,7 +48,7 @@ class client : public std::enable_shared_from_this<client> {
 public:
 
     void handle_connection_shutdown(connection_id conn_id, work_request_id::dispatch_id_type dis_id) {
-        SPDK_NOTICELOG("erase connection with id %ld\n", conn_id.value());
+        SPDK_NOTICELOG("erase connection with id %lu\n", conn_id.value());
         _connections.erase(conn_id);
         _cqe_dispatch_map.erase(dis_id);
     }
@@ -791,14 +791,19 @@ public:
             return true;
         }
 
-        void shutdown() {
+        void shutdown_slient() {
             if (_is_terminated) {
                 return;
             }
 
             _is_terminated = true;
-            _master->handle_connection_shutdown(_id, _dispatch_id.dispatch_id());
             _poller.unregister();
+            SPDK_NOTICELOG("The poller of the connection has been unregistered\n");
+        }
+
+        void shutdown() {
+            shutdown_slient();
+            _master->handle_connection_shutdown(_id, _dispatch_id.dispatch_id());
         }
 
     public:
@@ -975,6 +980,19 @@ public:
 
         _is_terminated = true;
         _core_poller.unregister();
+        SPDK_NOTICELOG("The poller of the rpc client has been unregistered\n");
+
+        for (auto& conn_pair : _connections) {
+            conn_pair.second->shutdown_slient();
+        }
+
+        if (_thread) {
+            ::spdk_set_thread(_thread);
+            ::spdk_thread_exit(_thread);
+            ::spdk_set_thread(nullptr);
+
+            SPDK_NOTICELOG("SPDK thread of the rpc client has been marked as exited\n");
+        }
     }
 
     void handle_emplace_eonnection(std::unique_ptr<emplace_connection_context> ctx) {

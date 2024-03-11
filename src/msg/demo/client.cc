@@ -79,12 +79,12 @@ int parse_arg(int ch, char* arg) {
 }
 
 void signal_handler(int signo) noexcept {
-    SPDK_NOTICELOG("triger signo(%d)", signo);
+    SPDK_NOTICELOG("triger signo(%d)\n", signo);
     ::spdk_app_stop(0);
 }
 
 void on_client_close() {
-    SPDK_NOTICELOG("Close the rpc server\n");
+    SPDK_NOTICELOG("Close the rpc client\n");
     std::signal(SIGINT, signal_handler);
 }
 
@@ -120,7 +120,10 @@ void iter_on_pong(msg::rdma::rpc_controller* ctrlr, ping_pong::response* reply) 
           (g_all_rpc_dur / 1000),
           g_rpc_dur_count / (iops_dur / 1000 / 1000 / 1000));
 
-        std::exit(0);
+        SPDK_NOTICELOG("Stop the rpc client\n");
+        g_rpc_client->stop();
+        SPDK_NOTICELOG("Stop the demo client process\n");
+        ::spdk_app_stop(0);
     }
 
     g_call_stacks.pop_front();
@@ -173,7 +176,7 @@ void start_rpc_client(void* arg) {
 
           // iter test
 
-          SPDK_NOTICELOG("Start sending rpc request\n");
+          SPDK_NOTICELOG("Start sending rpc request %ld times\n", g_iter_count);
           g_iops_start = std::chrono::system_clock::now();
           for (size_t i{0}; i < g_io_depth; ++i) {
               auto rpc_stack = std::make_unique<call_stack>();
