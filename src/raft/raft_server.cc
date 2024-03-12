@@ -248,6 +248,20 @@ bool raft_server_t::raft_has_majority_leases()
     return _has_majority_leases(utils::get_time(), 0 /* with_grace */);
 }
 
+void raft_server_t::task_loop(){
+    while(!_tasks.empty()){
+        auto task = _tasks.front();
+        _tasks.pop();
+        switch (task.type){
+        case  task_type::SNAP_CHECK_TASK:
+            handle_snap_check_task(task);
+            break;
+        default:
+            break;
+        }
+    }
+}
+
 int raft_server_t::raft_periodic()
 {
     raft_node *my_node = raft_get_my_node();
@@ -276,6 +290,7 @@ int raft_server_t::raft_periodic()
         }
     }
 
+    task_loop();
     return 0;
 }
 
@@ -603,18 +618,19 @@ int raft_server_t::raft_recv_appendentries(
         {
             e = err::E_INVAL;
             //follower滞后leader，需要recovery
-            SPDK_WARNLOG("AE from %d no log at prev_idx %ld , current idx %ld\n", ae->node_id(), ae->prev_log_idx(), raft_get_current_idx());
+            SPDK_WARNLOG("pg %lu.%lu AE from %d no log at prev_idx %ld , current idx %ld\n", 
+                    _pool_id, _pg_id, ae->node_id(), ae->prev_log_idx(), raft_get_current_idx());
             return hand_error(e);
         }
         else if (got && term != ae->prev_log_term())
         {
-            SPDK_WARNLOG("AE term doesn't match prev_term (ie. %ld vs %ld) ci:%ld comi:%ld lcomi:%ld pli:%ld \n",
-                  term, ae->prev_log_term(), raft_get_current_idx(),
+            SPDK_WARNLOG("pg %lu.%lu AE term doesn't match prev_term (ie. %ld vs %ld) ci:%ld comi:%ld lcomi:%ld pli:%ld \n",
+                  _pool_id, _pg_id, term, ae->prev_log_term(), raft_get_current_idx(),
                   raft_get_commit_idx(), ae->leader_commit(), ae->prev_log_idx());
             if (ae->prev_log_idx() <= raft_get_commit_idx())
             {
                 /* Should never happen; something is seriously wrong! */
-                SPDK_WARNLOG("AE prev conflicts with committed entry\n");
+                SPDK_ERRLOG("pg %lu.%lu AE prev conflicts with committed entry\n", _pool_id, _pg_id);
                 e = err::RAFT_ERR_SHUTDOWN;
                 r->set_success(e);
                 return hand_error(e);
@@ -1576,14 +1592,15 @@ int raft_server_t::raft_recv_installsnapshot(raft_node_id_t node_id,
                               installsnapshot_response *response,
                               utils::context* complete){
     SPDK_INFOLOG(pg_group, "recvd installsnapshot_request from node %d pg: %lu.%lu term: %ld current_term: %ld  last_idx: %ld \
-          last_term: %ld done: %d\n", 
+          last_term: %ld done: %d  object_size %d\n", 
           request->node_id(),
           request->pool_id(), request->pg_id(),
           request->term(),
           raft_get_current_term(),
           request->last_idx(),
           request->last_term(),
-          request->done());
+          request->done(),
+          request->objects_size());
     
     response->set_node_id(raft_get_nodeid());
     response->set_success(0);
@@ -1867,6 +1884,9 @@ int raft_server_t::raft_recv_snapshot_check(raft_node_id_t node_id,
             }
             complete->complete(rerrno);
           });
+    }else{
+        response->set_success(err::RAFT_ERR_SNAPSHOT_WAIT_APPLY);
+        complete->complete(err::RAFT_ERR_SNAPSHOT_WAIT_APPLY);
     }
     return 0;
 }
@@ -1941,15 +1961,20 @@ public:
             if(obj.follower_data_hash.size() == 0){
                 auto object = snapshot->add_objects();
                 object->set_obj_name(obj_name);
-                object->set_data(obj.buf);
+                object->set_data(obj.buf, object_unit_size);
                 obj_num++;
+                SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, obj name %s , data size %lu\n", _raft->raft_get_pool_id(),
+                        _raft->raft_get_pg_id(), obj_name.c_str(), object->data().size());
             }else{
                 auto hash_val = utils::md5(obj.buf, object_unit_size);
                 if(hash_val != obj.follower_data_hash){
                     auto object = snapshot->add_objects();
                     object->set_obj_name(obj_name);
-                    object->set_data(obj.buf);
+                    object->set_data(obj.buf, object_unit_size);
                     obj_num++;
+                    SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, obj name %s , data size %lu, hash_val %s\n", 
+                        _raft->raft_get_pool_id(), _raft->raft_get_pg_id(), obj_name.c_str(), 
+                        object->data().size(), hash_val.c_str());
                 }
             }
         }
@@ -1957,21 +1982,26 @@ public:
             delete snapshot;
             auto node = _raft->raft_get_cfg_node(_node_id);
             if(!node){
+                SPDK_ERRLOG("pg: %lu.%lu, not contain the node %d\n",
+                        _raft->raft_get_pool_id(), _raft->raft_get_pg_id(), _node_id);
                 handle_end();
                 return;
             }
             auto res = _raft->raft_send_snapshot_check(node);
             if(res != err::E_SUCCESS){
                 handle_end();
-                SPDK_ERRLOG("send installsnapshot_request failed, rerrno: %d\n", res);
+                SPDK_ERRLOG("pg: %lu.%lu, send installsnapshot_request failed, rerrno: %d\n",
+                        _raft->raft_get_pool_id(), _raft->raft_get_pg_id(), res);
                 return;
             }            
         }else{
-            SPDK_DEBUGLOG(pg_group, "send_snapshot to node %d\n", _node_id);
+            SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, send_snapshot to node %d\n", 
+                    _raft->raft_get_pool_id(), _raft->raft_get_pg_id(), _node_id);
             auto res = _raft->raft_send_installsnapshot(snapshot, _node_id);
             if(res != err::E_SUCCESS){
                 handle_end();
-                SPDK_ERRLOG("send installsnapshot_request failed, rerrno: %d\n", res);
+                SPDK_ERRLOG("pg: %lu.%lu, send installsnapshot_request failed, rerrno: %d\n", 
+                        _raft->raft_get_pool_id(), _raft->raft_get_pg_id(), res);
                 return;
             }
         }
@@ -2037,8 +2067,8 @@ static void read_snapshot(read_ctx* rc){
         auto object_name = obr->get_iter_name(current_idx);
         char* buf = (char*)spdk_zmalloc(object_unit_size, 0x1000, NULL, SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
         rc->set_object(object_name, buf);
-        SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, read object %s size %u\n", 
-                rc->_raft->raft_get_pool_id(), rc->_raft->raft_get_pg_id(), object_name.c_str(), object_unit_size);
+        SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, read object %s size %u current_idx %lu\n", rc->_raft->raft_get_pool_id(), 
+                rc->_raft->raft_get_pg_id(), object_name.c_str(), object_unit_size, current_idx);
         if(current_idx == 0){
             obr->recovery_read_iter_first(read_fn, buf, rc);
         }else{
@@ -2048,8 +2078,10 @@ static void read_snapshot(read_ctx* rc){
 }
 
 int raft_server_t::raft_process_snapshot_check_reply(snapshot_check_response *rsp){
-    SPDK_INFOLOG(pg_group, "recvd snapshot_check_response in pg: %lu.%lu from node %d term: %ld current_term: %ld success: %d\n",
-            _pool_id, _pg_id, rsp->node_id(), rsp->term(), raft_get_current_term(), rsp->success());
+    SPDK_INFOLOG(pg_group, "recvd snapshot_check_response in pg: %lu.%lu from node %d term: %ld \
+            current_term: %ld success: %d object num %d\n",
+            _pool_id, _pg_id, rsp->node_id(), rsp->term(), raft_get_current_term(), rsp->success(), 
+            rsp->objects_size());
     auto node = raft_get_cfg_node(rsp->node_id());
     if(!node){
         SPDK_INFOLOG(pg_group, "not find node %d in cfg nodes\n", rsp->node_id());
@@ -2083,6 +2115,11 @@ int raft_server_t::raft_process_snapshot_check_reply(snapshot_check_response *rs
         return 1;
     }
     
+    if(rsp->success() == err::RAFT_ERR_SNAPSHOT_WAIT_APPLY){
+        push_task(raft_server_t::task_type::SNAP_CHECK_TASK, rsp->node_id());
+        return 1;
+    }
+
     if(rsp->success() != 1){
         handle_error();
         return 1;
@@ -2110,10 +2147,11 @@ int raft_server_t::raft_send_snapshot_check(std::shared_ptr<raft_node> node){
     assert(node);
     assert(!raft_is_self(node.get()));
 
-    SPDK_DEBUGLOG(pg_group, "send snapshot_check_request to node %d pg %lu.%lu term %ld\n", 
-            node->raft_node_get_id(), _pool_id, _pg_id, raft_get_current_term());
-
     auto obj_names = _obr->recovery_get_obj_names(_obr->get_iter_idx(), SNAPSHOT_MAX_CHUNK);
+    SPDK_DEBUGLOG(pg_group, "send snapshot_check_request to node %d pg %lu.%lu term %ld, \
+            start obj_idx %lu, obj num %lu\n", 
+            node->raft_node_get_id(), _pool_id, _pg_id, raft_get_current_term(), 
+            _obr->get_iter_idx(), obj_names.size());
     snapshot_check_request *ae = new snapshot_check_request();
     ae->set_node_id(raft_get_nodeid());
     ae->set_pool_id(_pool_id);
@@ -2123,6 +2161,28 @@ int raft_server_t::raft_send_snapshot_check(std::shared_ptr<raft_node> node){
         ae->add_object_names(obj_name);
     }
     return _client.send_snapshot_check(this, node->raft_node_get_id(), ae);
+}
+
+void raft_server_t::handle_snap_check_task(task_info& task){
+    auto handle_error = [this](std::shared_ptr<raft_node> node){
+        delete _obr;
+        _obr = nullptr;
+        raft_set_snapshot_in_progress(false);
+        if(node)
+            node->raft_node_set_recovering(false);
+    };
+
+    auto node = raft_get_cfg_node(task.node_id);
+    if(!node){
+        handle_error(node);
+        return;
+    }
+
+    int res = raft_send_snapshot_check(node);
+    if(res != err::E_SUCCESS){
+        handle_error(node);
+        return;
+    }
 }
 
 int raft_server_t::raft_send_installsnapshot(installsnapshot_request *req, raft_node_id_t node_id) {

@@ -833,6 +833,29 @@ public:
         _machine->set_last_applied_idx(idx);
         _log->set_trim_index(idx);
     }
+public:
+    enum class task_type : uint8_t{
+        SNAP_CHECK_TASK = 1
+    };
+    
+    struct task_info{
+        task_info(task_type type, raft_node_id_t node_id)
+        : type(type)
+        , node_id(node_id){
+
+        }
+
+        task_type type;
+        raft_node_id_t node_id; 
+    };
+
+    void push_task(task_type type, raft_node_id_t node_id){
+        task_info task(type, node_id);
+        _tasks.push(std::move(task));
+    }
+
+    void task_loop();
+    void handle_snap_check_task(task_info& task);
 private:
     int _recovery_by_snapshot(std::shared_ptr<raft_node> node);
     bool _has_majority_leases(raft_time_t now, int with_grace);
@@ -915,6 +938,7 @@ private:
     raft_term_t _snapshot_term;
 
     object_recovery *_obr; 
+    std::queue<task_info> _tasks;
 }; 
 
 int raft_votes_is_majority(const int nnodes, const int nvotes);

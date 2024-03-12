@@ -76,12 +76,14 @@ int state_machine::raft_apply_entry()
       log_idx,
       [this, log_idx](std::shared_ptr<raft_entry_t> ety){
         if (!ety){
-            SPDK_INFOLOG(pg_group, "not find log %ld\n", log_idx);
+            SPDK_INFOLOG(pg_group, "pg %lu.%lu not find log %ld\n",
+                    get_raft()->raft_get_pool_id(), get_raft()->raft_get_pg_id(), log_idx);
             set_apply_in_progress(false);
             return;
         }
-        SPDK_INFOLOG(pg_group, "pg %lu.%lu osd %d applying log: %ld, idx: %ld size: %u \n", get_raft()->raft_get_pool_id(),
-                    get_raft()->raft_get_pg_id(), get_raft()->raft_get_nodeid(), log_idx, ety->idx(), (uint32_t)ety->data().size());
+        SPDK_INFOLOG(pg_group, "pg %lu.%lu osd %d applying log: %ld, idx: %ld size: %u \n", 
+                    get_raft()->raft_get_pool_id(), get_raft()->raft_get_pg_id(), 
+                    get_raft()->raft_get_nodeid(), log_idx, ety->idx(), (uint32_t)ety->data().size());
     
         apply_complete *complete = new apply_complete(log_idx, this);
         apply(ety, complete);

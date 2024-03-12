@@ -28,7 +28,7 @@ public:
     raft_log(disk_log* log)
     : _log(log)
     , _next_idx(1)
-    , _max_applied_entry_num_in_cache(100) {}
+    , _max_applied_entry_num_in_cache(500) {}
 
     void log_set_raft(raft_server_t* raft){
         _raft = raft;

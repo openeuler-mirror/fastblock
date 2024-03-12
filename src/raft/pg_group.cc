@@ -173,6 +173,14 @@ std::vector<shard_manager::node_heartbeat> shard_manager::get_heartbeat_requests
             node->raft_set_append_time(now);
 
             raft->raft_set_election_timer(now);
+
+            raft_index_t next_idx = node->raft_node_get_next_idx();
+            raft_term_t term = 0;
+            auto got = raft->raft_get_entry_term(next_idx - 1, term);
+            if(!got && next_idx - 1 != 0){
+                return;
+            }
+
             heartbeat_request* req = nullptr;
             if(pending_beats.contains(node->raft_node_get_id())){
                 req = pending_beats[node->raft_node_get_id()];
@@ -186,13 +194,8 @@ std::vector<shard_manager::node_heartbeat> shard_manager::get_heartbeat_requests
             meta_ptr->set_pool_id(raft->raft_get_pool_id());
             meta_ptr->set_pg_id(raft->raft_get_pg_id());
             meta_ptr->set_term(raft->raft_get_current_term());
-            raft_index_t next_idx = node->raft_node_get_next_idx();
             meta_ptr->set_prev_log_idx(next_idx - 1);
 
-            raft_term_t term = 0;
-            auto got = raft->raft_get_entry_term(meta_ptr->prev_log_idx(), term);
-            assert(got || (!got && meta_ptr->prev_log_idx() == 0));
-            (void)got;
             meta_ptr->set_prev_log_term(term);
             meta_ptr->set_leader_commit(raft->raft_get_commit_idx());
         };
