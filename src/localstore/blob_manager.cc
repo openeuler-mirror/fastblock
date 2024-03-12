@@ -85,16 +85,23 @@ blobstore_init(const char *bdev_name, bm_complete cb_fn, void* args) {
   spdk_bs_init(bs_dev, NULL, bs_init_complete, ctx);
 }
 
+// void blobstore_close(::spdk_blob_op_complete cb_fn, void *cb_arg) {
+//     SPDK_NOTICELOG("Close the bs_dev\n");
+//     if (not g_bs_mgr.blobstore) {
+//         return;
+//     }
+//     ::spdk_blob_close(g_bs_mgr.blobstore, cb_fn, cb_arg);
+// }
 
 void
 blobstore_fini(bm_complete cb_fn, void* args)
 {
-	SPDK_NOTICELOG("blobstore_fini.\n");
-	if (g_bs_mgr.blobstore) {
-		if (g_bs_mgr.channel) {
-      SPDK_NOTICELOG("free io_channel\n");
-			spdk_bs_free_io_channel(g_bs_mgr.channel);
-		}
-		spdk_bs_unload(g_bs_mgr.blobstore, cb_fn, args);
-	}
+    SPDK_NOTICELOG("blobstore_fini.\n");
+    if (g_bs_mgr.blobstore) {
+        if (g_bs_mgr.channel) {
+            SPDK_NOTICELOG("free io_channel\n");
+            spdk_bs_free_io_channel(g_bs_mgr.channel);
+        }
+        spdk_bs_unload(g_bs_mgr.blobstore, cb_fn, args);
+    }
 }

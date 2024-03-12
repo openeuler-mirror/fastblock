@@ -76,15 +76,10 @@ int parse_arg(int ch, char* arg) {
     return 0;
 }
 
-void signal_handler(int signo) noexcept {
-    SPDK_NOTICELOG("triger signo(%d)\n", signo);
-    ::spdk_app_stop(0);
-}
-
 void on_server_close() {
     SPDK_NOTICELOG("Close the rpc server\n");
     g_rpc_server->stop();
-    std::signal(SIGINT, signal_handler);
+    ::spdk_app_stop(0);
 }
 
 void start_rpc_server(void* arg) {

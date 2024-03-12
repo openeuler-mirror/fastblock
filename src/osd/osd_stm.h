@@ -231,6 +231,11 @@ public:
     auto unlock(const std::string& key, const operation_type type){
         return _object_rw_lock.unlock(key, type);
     }
+
+    void stop(std::function<void (void *arg, int objerrno)> cb_fn, void* arg) override {
+        this->state_machine::stop(cb_fn, arg);
+        _store.stop(cb_fn, arg);
+    }
 private:
     object_store _store;
     lock_manager<op_type_excl_lock<operation_type>>   _object_rw_lock;

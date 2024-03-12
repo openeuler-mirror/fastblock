@@ -28,12 +28,7 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
 
-static const char* g_json_conf{nullptr};
-static std::unique_ptr<::raft_service<::partition_manager>> global_raft_service{nullptr};
-static std::unique_ptr<::osd_service> global_osd_service{nullptr};
-static std::shared_ptr<::connect_cache> global_conn_cache{nullptr};
-static std::shared_ptr<::partition_manager> global_pm{nullptr};
-static std::shared_ptr<monitor::client> monitor_client{nullptr};
+#include <csignal>
 
 typedef struct
 {
@@ -47,6 +42,15 @@ typedef struct
     std::unique_ptr<rpc_server> rpc_srv{nullptr};
     boost::property_tree::ptree pt{};
 } server_t;
+
+static const char* g_json_conf{nullptr};
+static std::unique_ptr<::raft_service<::partition_manager>> global_raft_service{nullptr};
+static std::unique_ptr<::osd_service> global_osd_service{nullptr};
+static std::shared_ptr<::connect_cache> global_conn_cache{nullptr};
+static std::shared_ptr<::partition_manager> global_pm{nullptr};
+static std::shared_ptr<monitor::client> monitor_client{nullptr};
+static server_t osd_server{};
+static int osd_exit_code{0};
 
 static void
 block_usage(void)
@@ -110,7 +114,8 @@ struct pm_start_context : public context{
 
     void finish(int r) override {
 		if(r != 0){
-            spdk_app_stop(r);
+            osd_exit_code = r;
+            std::raise(SIGINT);
 			return;
 		}
 		service_init(pm, server);
@@ -129,20 +134,23 @@ void start_monitor(server_t* ctx) {
           req_ctx->this_client->start_cluster_map_poller();
       };
 
-	monitor_client->emplace_osd_boot_request(
-		ctx->node_id, ctx->osd_addr, ctx->osd_port, ctx->osd_uuid,
-		1024 * 1024, std::move(cb));
+    monitor_client->emplace_osd_boot_request(
+      ctx->node_id, ctx->osd_addr, ctx->osd_port, ctx->osd_uuid,
+      1024 * 1024, std::move(cb));
 }
 
 void storage_init_complete(void *arg, int rberrno){
     if(rberrno != 0){
 		SPDK_ERRLOG("Failed to initialize the storage system: %s\n", spdk_strerror(rberrno));
-		spdk_app_stop(rberrno);
+        osd_exit_code = rberrno;
+        std::raise(SIGINT);
 		return;
 	}
 	server_t *server = (server_t *)arg;
-    SPDK_INFOLOG(osd, "------block start, cpu count : %u  bdev_disk: %s\n",
-	        spdk_env_get_core_count(), server->bdev_disk.c_str());
+    SPDK_NOTICELOG(
+      "Block start, cpu count: %u, bdev_disk: %s\n",
+      spdk_env_get_core_count(),
+      server->bdev_disk.c_str());
 
     auto core_no = ::spdk_env_get_current_core();
     ::spdk_cpuset cpumask{};
@@ -155,7 +163,6 @@ void storage_init_complete(void *arg, int rberrno){
     global_pm = std::make_shared<partition_manager>(server->node_id, global_conn_cache);
     monitor::client::on_new_pg_callback_type pg_map_cb =
       [pm = global_pm] (const msg::PGInfo& pg_info, const int32_t pg_key, const int32_t pg_map_ver, const monitor::client::osd_map& osd_map) {
-          SPDK_DEBUGLOG(osd, "enter pg_map_cb()\n");
           std::vector<::osd_info_t> osds{};
           for (auto osd_id : pg_info.osdid()) {
               osds.push_back(*(osd_map.data.at(osd_id)));
@@ -171,13 +178,15 @@ void storage_init_complete(void *arg, int rberrno){
 	global_pm->start(ctx);
 }
 
-void disk_init_complete(void *arg, int rberrno){
+void disk_init_complete(void *arg, int rberrno) {
     if(rberrno != 0){
 		SPDK_NOTICELOG("Failed to initialize the disk. %s\n", spdk_strerror(rberrno));
-		spdk_app_stop(rberrno);
+        osd_exit_code = rberrno;
+        std::raise(SIGINT);
 		return;
 	}
 
+    SPDK_NOTICELOG("Initialize the disk completed\n");
 	storage_init(storage_init_complete, arg);
 }
 
@@ -227,11 +236,56 @@ static void from_configuration(server_t& server) {
     }
 }
 
+static void on_blob_unloaded([[maybe_unused]] void *cb_arg, int bserrno) {
+    SPDK_NOTICELOG("The blob has been unloaded, return code is %d\n", bserrno);
+    auto& sharded_service = core_sharded::get_core_sharded();
+    SPDK_NOTICELOG("Start stopping sharded service\n");
+    sharded_service.stop();
+    SPDK_NOTICELOG("Stop the spdk app\n");
+    ::spdk_app_stop(osd_exit_code);
+}
+
+static void on_blob_closed([[maybe_unused]] void *cb_arg, int bserrno) {
+    SPDK_NOTICELOG("The bdev has been closed, return code is %d\n", bserrno);
+    SPDK_NOTICELOG("Start unloading bdev\n");
+    ::blobstore_fini(on_blob_unloaded, nullptr);
+}
+
+static void on_pm_closed([[maybe_unused]] void *cb_arg, int bserrno) {
+    SPDK_NOTICELOG("The partition manager has been closed, return code is %d\n", bserrno);
+}
+
+static void on_osd_stop() noexcept {
+    SPDK_NOTICELOG("Stop the osd service\n");
+
+    if (monitor_client) {
+        monitor_client->stop();
+    }
+
+    if (global_pm) {
+        global_pm->stop(on_pm_closed, nullptr);
+    }
+
+    if (global_conn_cache) {
+        global_conn_cache->stop();
+    }
+
+    if (osd_server.rpc_srv) {
+        osd_server.rpc_srv->stop();
+    }
+
+    ::storage_fini(on_blob_closed, nullptr);
+}
+
+static void on_osd_stop(int signo) noexcept {
+    SPDK_NOTICELOG("Catch signal %d\n", signo);
+    on_osd_stop();
+}
+
 int
 main(int argc, char *argv[])
 {
 	struct spdk_app_opts opts = {};
-	server_t server = {};
 	int rc;
 
 	spdk_app_opts_init(&opts, sizeof(opts));
@@ -239,7 +293,10 @@ main(int argc, char *argv[])
 
 	// disable tracing because it's memory consuming
 	opts.num_entries = 0;
+    opts.shutdown_cb = on_osd_stop;
 	opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
+    std::signal(SIGINT, on_osd_stop);
+    std::signal(SIGTERM, on_osd_stop);
 
 	if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:f:I:D:H:P:o:t:U:", NULL,
 				      block_parse_arg, block_usage)) !=
@@ -249,7 +306,7 @@ main(int argc, char *argv[])
 
     SPDK_INFOLOG(osd, "Osd config file is %s\n", g_json_conf);
     try {
-        boost::property_tree::read_json(std::string(g_json_conf), server.pt);
+        boost::property_tree::read_json(std::string(g_json_conf), osd_server.pt);
     } catch (const std::logic_error& e) {
         std::string err_reason{e.what()};
         SPDK_ERRLOG(
@@ -258,10 +315,10 @@ main(int argc, char *argv[])
         block_usage();
         return -EINVAL;
     }
-    from_configuration(server);
+    from_configuration(osd_server);
 
 	/* Blocks until the application is exiting */
-	rc = spdk_app_start(&opts, block_started, &server);
+	rc = spdk_app_start(&opts, block_started, &osd_server);
 
 	spdk_app_fini();
 	buffer_pool_fini();
