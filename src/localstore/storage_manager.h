@@ -49,6 +49,7 @@ public:
             this->_kvstore = kvs;
             this->_started = true;
             cb_fn(arg, 0);
+            SPDK_NOTICELOG("The storage manager has been started\n");
             return;
         }, arg
       );
@@ -63,6 +64,7 @@ public:
 
             cb_fn(arg, error);
             delete _kvstore;
+            SPDK_NOTICELOG("The storage manager has been stopped\n");
             return;
         }, arg
     );

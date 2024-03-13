@@ -329,6 +329,7 @@ public:
             return;
         }
 
+        SPDK_NOTICELOG("Stop the monitor client\n");
         _is_terminate = true;
         _get_cluster_map_poller.unregister();
         _core_poller.unregister();

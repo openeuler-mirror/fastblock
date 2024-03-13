@@ -39,8 +39,14 @@ public:
         _pgs.start(complete);
     }
 
-    void stop(){
+    void stop(object_rw_complete cb_fn, void* arg) {
         _pgs.stop();
+        for (auto& sm_map: _sm_table) {
+            for (auto& sm_pair: sm_map) {
+                SPDK_NOTICELOG("Stop the state_machine %s\n", sm_pair.first.c_str());
+                sm_pair.second->stop(cb_fn, arg);
+            }
+        }
     }
 
     int create_partition(uint64_t pool_id, uint64_t pg_id, std::vector<osd_info_t>&& osds, int64_t revision_id);
