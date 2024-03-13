@@ -88,6 +88,8 @@ static std::shared_ptr<::partition_manager> par_mgr;
 static std::unique_ptr<monitor::client> mon_client;
 static std::string sample_data{};
 static boost::property_tree::ptree g_pt{};
+static bool g_force_stop{false};
+static watcher_context g_watcher_ctx{};
 
 std::string random_string(const size_t length) {
     static std::string chars{
@@ -278,7 +280,35 @@ void on_thread_received_msg(void* arg) {
     }
 }
 
+void on_app_stop() noexcept {
+    SPDK_NOTICELOG("Stop the block_bench\n");
+    g_force_stop = true;
+
+    mon_client->stop();
+    SPDK_NOTICELOG("The monitor client has been stopped\n");
+    g_watcher_ctx.watch_poller_holder.unregister();
+    SPDK_NOTICELOG("The block_bench poller has been unregistered\n");
+    auto n_core = ::spdk_env_get_core_count();
+    for (uint32_t i{0}; i < n_core; ++i) {
+        ::spdk_set_thread(g_watcher_ctx.bench_threads[i]);
+        g_watcher_ctx.core_ctxs[i].blk_client->stop();
+        ::spdk_set_thread(nullptr);
+    }
+
+    for (uint32_t i{0}; i < n_core; ++i) {
+        ::spdk_set_thread(g_watcher_ctx.bench_threads[i]);
+        ::spdk_thread_exit(g_watcher_ctx.bench_threads[i]);
+        ::spdk_set_thread(nullptr);
+    }
+
+    SPDK_NOTICELOG("Stop the spdk app\n");
+    ::spdk_app_stop(0);
+}
+
 int watch_poller(void* arg) {
+    if (g_force_stop) {
+        return SPDK_POLLER_IDLE;
+    }
     auto* ctx = reinterpret_cast<watcher_context*>(arg);
     if (ctx->is_exit) {
         return SPDK_POLLER_IDLE;
@@ -381,15 +411,7 @@ int watch_poller(void* arg) {
 
         if (should_exit) {
             ctx->is_exit = true;
-            auto n_core = ::spdk_env_get_core_count();
-            for (uint32_t i{0}; i < n_core; ++i) {
-                ::spdk_set_thread(ctx->bench_threads[i]);
-                ctx->core_ctxs[i].blk_client->stop();
-                ::spdk_set_thread(nullptr);
-            }
-            mon_client->stop();
-            ctx->watch_poller_holder.unregister();
-            ::spdk_app_stop(0);
+            on_app_stop();
         }
     }
 
@@ -523,8 +545,8 @@ int main(int argc, char** argv) {
 
     opts.name = "block bench";
     opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
-    watcher_context ctx{};
-    rc = ::spdk_app_start(&opts, on_app_start, &ctx);
+    opts.shutdown_cb = on_app_stop;
+    rc = ::spdk_app_start(&opts, on_app_start, &g_watcher_ctx);
     if (rc) {
         SPDK_ERRLOG("ERROR: Start spdk app failed\n");
     }
