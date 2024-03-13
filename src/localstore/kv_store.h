@@ -82,9 +82,11 @@ public:
     }
 
     ~kvstore() {
-      spdk_free(write_buf.get_buf());
-      spdk_free(read_buf.get_buf());
-      spdk_poller_unregister(&_worker_poller);
+        spdk_free(write_buf.get_buf());
+        spdk_free(read_buf.get_buf());
+        if (_worker_poller) {
+            spdk_poller_unregister(&_worker_poller);
+        }
     }
 
     void clear() {
@@ -92,6 +94,11 @@ public:
     }
 
     void stop(kvstore_rw_complete cb_fn, void* arg) {
+        if (_worker_poller) {
+            spdk_poller_unregister(&_worker_poller);
+            _worker_poller = nullptr;
+        }
+
         rblob->close(
           [cb_fn = std::move(cb_fn), this](void* arg, int rberrno){
             SPDK_NOTICELOG("kvstore stop\n");

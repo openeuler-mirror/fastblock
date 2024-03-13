@@ -248,6 +248,7 @@ public:
             return;
         }
 
+        SPDK_NOTICELOG("Stop the fastblock client\n");
         _is_terminate = true;
         _rpc_client->stop();
         _poller.unregister();

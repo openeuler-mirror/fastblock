@@ -30,15 +30,15 @@ public:
 
     rpc_server& operator=(const rpc_server&) = delete;
 
-    ~rpc_server() noexcept {
-        _transport->stop();
-    }
+    ~rpc_server() noexcept = default;
 
 public:
 
     void register_service(google::protobuf::Service* service){
         _transport->add_service(service);
     }
+
+    void stop() noexcept { _transport->stop(); }
 
 private:
 

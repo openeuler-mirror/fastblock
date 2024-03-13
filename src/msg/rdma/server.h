@@ -871,6 +871,20 @@ public:
         _is_terminated = true;
         _ib_cm_event_poller.unregister();
         _cq_poller.unregister();
+        _cqe_poller.unregister();
+        _task_poller.unregister();
+        _task_read_poller.unregister();
+        _task_reply_poller.unregister();
+
+        SPDK_NOTICELOG("Pollers of rpc server have been unregistered\n");
+
+        if (_thread) {
+            ::spdk_set_thread(_thread);
+            ::spdk_thread_exit(_thread);
+            ::spdk_set_thread(nullptr);
+
+            SPDK_NOTICELOG("SPDK thread of the rpc server has been marked as exited\n");
+        }
     }
 
     void handle_add_service(std::unique_ptr<add_service_ctx> ctx) {

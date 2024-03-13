@@ -88,6 +88,15 @@ public:
         return std::numeric_limits<uint32_t>::max();
     }
 
+    void stop() noexcept {
+        for (auto* thread : _threads) {
+            if (not thread) { continue; }
+            ::spdk_set_thread(thread);
+            ::spdk_thread_exit(thread);
+            ::spdk_set_thread(nullptr);
+        }
+    }
+
 private:
     core_sharded(std::string app_name = "osd"){
         uint32_t lcore;

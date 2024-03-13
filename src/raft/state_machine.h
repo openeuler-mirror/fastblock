@@ -33,7 +33,8 @@ public:
     }
 
     void start();
-    void stop(){
+    virtual void stop() { spdk_poller_unregister(&_timer); }
+    virtual void stop([[maybe_unused]] std::function<void (void *arg, int objerrno)>, [[maybe_unused]] void*){
         spdk_poller_unregister(&_timer);
     }
 
