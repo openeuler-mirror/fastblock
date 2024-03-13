@@ -26,7 +26,7 @@ type OSDID int
 
 //(fixme) make it configurable
 const (
-	heartbeatInterval = 20 * time.Second
+	heartbeatInterval = 10 * time.Second
 	//the osd should have enough time to connect and heartbeat
 	maxFailedAttempts = 3
 	// min hearbeats before we mark it up

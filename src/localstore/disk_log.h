@@ -342,7 +342,7 @@ public:
      */
     void set_index(uint64_t index, log_op_complete cb_fn, void* arg){
         auto trim_done = [this, cb_fn = std::move(cb_fn), index](void *arg, int rberrno){
-            _lowest_index = std::max(_lowest_index, index);
+            _lowest_index = std::max(_lowest_index, index + 1);
             _trim_index = std::max(_trim_index, index);
             _highest_index = std::max(_highest_index, index);
             cb_fn(arg, rberrno);
@@ -422,7 +422,7 @@ private:
 
     uint64_t _lowest_index = 1; //只有trim_back和set_index时候会改
     uint64_t _trim_index = 1;
-    uint64_t _highest_index = 1;
+    uint64_t _highest_index = 0;
     struct log_position {
         uint64_t pos;
         uint64_t size; // data.size + header size(4_KB)
