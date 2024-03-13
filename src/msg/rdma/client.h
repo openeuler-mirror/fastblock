@@ -494,12 +494,16 @@ public:
               _onflight_rpc_task_size,
               _priority_onflight_requests.size() + _onflight_requests.size());
 
+            auto* stack_ptr = it->get();
             if (rc == -EINVAL) {
-                auto* stack_ptr = it->get();
                 SPDK_ERRLOG(
                   "ERROR: Timeout occured of rpc request key %d\n",
                   stack_ptr->request_key);
                 stack_ptr->ctrlr->SetFailed("timeout");
+                stack_ptr->closure->Run();
+            } else if (rc != 0) {
+                SPDK_ERRLOG("ERROR: Sending rpc request failed, rc is %d\n", rc);
+                stack_ptr->ctrlr->SetFailed(FMT_1("error, rc %1%", rc));
                 stack_ptr->closure->Run();
             }
 
@@ -520,6 +524,7 @@ public:
 
             int rc{0};
             auto erase_it_end = _priority_onflight_requests.begin();
+            rpc_request* stack_ptr;
             for (auto it = _priority_onflight_requests.begin(); it != _priority_onflight_requests.end(); ++it) {
                 auto* task_ptr = it->get();
                 rc = process_request_once(*it);
@@ -535,9 +540,13 @@ public:
                   _onflight_rpc_task_size,
                   _priority_onflight_requests.size() + _onflight_requests.size());
 
+                stack_ptr = it->get();
                 if (rc == -EINVAL) {
-                    auto* stack_ptr = it->get();
                     stack_ptr->ctrlr->SetFailed("timeout");
+                    stack_ptr->closure->Run();
+                } else if (rc != 0) {
+                    SPDK_ERRLOG("ERROR: Sending rpc request failed, rc is %d\n", rc);
+                    stack_ptr->ctrlr->SetFailed(FMT_1("error, rc %1%", rc));
                     stack_ptr->closure->Run();
                 }
 
