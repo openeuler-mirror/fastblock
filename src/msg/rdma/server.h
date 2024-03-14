@@ -142,20 +142,21 @@ public:
 
     static std::shared_ptr<options> make_options(boost::property_tree::ptree& conf, boost::property_tree::ptree& rdma_conf) {
         auto opts = std::make_shared<options>();
-        opts->listen_backlog = conf.get_child("listen_backlog").get_value<decltype(opts->listen_backlog)>();
-        opts->metadata_memory_pool_capacity =
-          conf.get_child("metadata_memory_pool_capacity").get_value<decltype(opts->metadata_memory_pool_capacity)>();
-        opts->metadata_memory_pool_element_size =
-          conf.get_child("metadata_memory_pool_element_size_byte").get_value<decltype(opts->metadata_memory_pool_element_size)>();
-        opts->data_memory_pool_capacity =
-          conf.get_child("data_memory_pool_capacity").get_value<decltype(opts->data_memory_pool_capacity)>();
-        opts->data_memory_pool_element_size =
-          conf.get_child("data_memory_pool_element_size_byte").get_value<decltype(opts->data_memory_pool_element_size)>();
-        opts->per_post_recv_num =
-          conf.get_child("per_post_recv_num").get_value<decltype(opts->per_post_recv_num)>();
-        auto timeout_us = conf.get_child("rpc_timeout_us").get_value<int64_t>();
-        opts->rpc_timeout = std::chrono::milliseconds{timeout_us};
-        opts->ep = std::make_unique<endpoint>(rdma_conf);
+        conf_or_s(conf, opts, listen_backlog);
+        conf_or_s(conf, opts, metadata_memory_pool_capacity);
+        conf_or_s(conf, opts, metadata_memory_pool_element_size);
+        conf_or_s(conf, opts, data_memory_pool_capacity);
+        conf_or_s(conf, opts, data_memory_pool_element_size);
+        conf_or_s(conf, opts, per_post_recv_num);
+
+        if (conf.count("rpc_timeout_us") != 0) {
+            auto timeout_us = conf.get_child("rpc_timeout_us").get_value<int64_t>();
+            opts->rpc_timeout = std::chrono::milliseconds{timeout_us};
+            opts->ep = std::make_unique<endpoint>(rdma_conf);
+        }
+        log_conf_pair(
+          "rpc_timeout_us",
+          std::chrono::duration_cast<std::chrono::milliseconds>(opts->rpc_timeout).count());
 
         return opts;
     }

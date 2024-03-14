@@ -20,6 +20,8 @@
 #include <infiniband/verbs.h>
 #include <rdma/rdma_cma.h>
 
+#define ep_conf_or(key_name) conf_or_s(conf, this, key_name)
+
 namespace msg {
 namespace rdma {
 
@@ -37,20 +39,20 @@ public:
       , port{port} {}
 
     endpoint(boost::property_tree::ptree& conf) {
-        resolve_timeout_us =
-          conf.get_child("resolve_timeout_us").get_value<decltype(resolve_timeout_us)>();
-        poll_cm_event_timeout_us =
-          conf.get_child("poll_cm_event_timeout_us").get_value<decltype(poll_cm_event_timeout_us)>();
-        max_send_wr = conf.get_child("max_send_wr").get_value<decltype(max_send_wr)>();
-        max_send_sge = conf.get_child("max_send_sge").get_value<decltype(max_send_sge)>();
-        max_recv_wr = conf.get_child("max_recv_wr").get_value<decltype(max_recv_wr)>();
-        max_recv_sge = conf.get_child("max_recv_sge").get_value<decltype(max_recv_sge)>();
-        cq_num_entries = conf.get_child("cq_num_entries").get_value<decltype(cq_num_entries)>();
-        qp_sig_all = conf.get_child("qp_sig_all").get_value<decltype(qp_sig_all)>();
+        ep_conf_or(resolve_timeout_us);
+        ep_conf_or(poll_cm_event_timeout_us);
+        ep_conf_or(max_send_wr);
+        ep_conf_or(max_send_sge);
+        ep_conf_or(max_recv_wr);
+        ep_conf_or(max_recv_sge);
+        ep_conf_or(cq_num_entries);
+        ep_conf_or(qp_sig_all);
+
         auto dev_name = conf.get_child_optional("rdma_device_name");
         if (dev_name.has_value()) {
             device_name = dev_name.value().get_value<std::string>();
         }
+        log_conf_pair_raw("rdma_device_name", device_name.value_or("").c_str());
     }
 
     endpoint(const endpoint&) = default;

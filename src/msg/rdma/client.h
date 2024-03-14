@@ -71,29 +71,33 @@ public:
 
     static std::shared_ptr<options> make_options(boost::property_tree::ptree& conf, boost::property_tree::ptree& rdma_conf) {
         auto opts = std::make_shared<options>();
-        opts->poll_cq_batch_size =
-          conf.get_child("poll_cq_batch_size").get_value<decltype(opts->poll_cq_batch_size)>();
-        opts->metadata_memory_pool_capacity =
-          conf.get_child("metadata_memory_pool_capacity").get_value<decltype(opts->metadata_memory_pool_capacity)>();
-        opts->metadata_memory_pool_element_size =
-          conf.get_child("metadata_memory_pool_element_size_byte").get_value<decltype(opts->metadata_memory_pool_element_size)>();
-        opts->data_memory_pool_capacity =
-          conf.get_child("data_memory_pool_capacity").get_value<decltype(opts->data_memory_pool_capacity)>();
-        opts->data_memory_pool_element_size =
-          conf.get_child("data_memory_pool_element_size_byte").get_value<decltype(opts->data_memory_pool_element_size)>();
-        opts->per_post_recv_num =
-          conf.get_child("per_post_recv_num").get_value<decltype(opts->per_post_recv_num)>();
-        auto timeout_us = conf.get_child("rpc_timeout_us").get_value<int64_t>();
-        opts->rpc_timeout = std::chrono::milliseconds{timeout_us};
-        opts->rpc_batch_size =
-          conf.get_child("rpc_batch_size").get_value<decltype(opts->rpc_batch_size)>();
-        opts->ep = std::make_unique<endpoint>(rdma_conf);
-        opts->connect_max_retry =
-          conf.get_child("connect_max_retry").get_value_optional<decltype(opts->connect_max_retry)>().value_or(0);
-        auto connect_retry_interval_us =
-          conf.get_child("connect_retry_interval_us").get_value_optional<int64_t>().value_or(0);
-        opts->retry_interval = std::chrono::microseconds{connect_retry_interval_us};
+        conf_or_s(conf, opts, poll_cq_batch_size);
+        conf_or_s(conf, opts, metadata_memory_pool_capacity);
+        conf_or_s(conf, opts, metadata_memory_pool_element_size);
+        conf_or_s(conf, opts, data_memory_pool_capacity);
+        conf_or_s(conf, opts, data_memory_pool_element_size);
+        conf_or_s(conf, opts, per_post_recv_num);
+        conf_or_s(conf, opts, rpc_batch_size);
+        conf_or_s(conf, opts, connect_max_retry);
+        conf_or_s(conf, opts, connect_max_retry);
 
+        if (conf.count("rpc_timeout_us") != 0) {
+            auto timeout_us = conf.get_child("rpc_timeout_us").get_value<int64_t>();
+            opts->rpc_timeout = std::chrono::milliseconds{timeout_us};
+        }
+        log_conf_pair(
+          "rpc_timeout_us",
+          std::chrono::duration_cast<std::chrono::milliseconds>(opts->rpc_timeout).count());
+
+        if (conf.count("connect_retry_interval_us") != 0) {
+            auto connect_retry_interval_us = conf.get_child("connect_retry_interval_us").get_value<int64_t>();
+            opts->retry_interval = std::chrono::milliseconds{connect_retry_interval_us};
+        }
+        log_conf_pair(
+          "connect_retry_interval_us",
+          opts->retry_interval.count());
+
+        opts->ep = std::make_unique<endpoint>(rdma_conf);
 
         return opts;
     }
