@@ -243,7 +243,7 @@ public:
     // 只保留apply_index前面的1000条，超过1500条就trim一次
     bool maybe_trim() {
       _polls_count++;
-      if (_trim_index - _lowest_index > 1500) {
+      if (_trim_index > 1500 + _lowest_index) {
           // trim前： lowest_index: 100  apply_index: 1700
           //   trim:  从 100 到 700
           // trim后： lowest_index: 701  apply_index: 1700 (一共保留1000条)

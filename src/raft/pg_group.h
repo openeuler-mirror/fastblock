@@ -109,9 +109,9 @@ public:
         return _client;
     }
 
-    void remove_connect(int node_id)
+    void remove_connect(int node_id, auto&&...args)
     {
-        _client.remove_connect(node_id);
+        _client.remove_connect(node_id, std::forward<decltype(args)>(args)...);
     }
 
     int create_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,

@@ -19,12 +19,20 @@
 #include "utils/err_num.h"
 
 class raft_server_t;
+class raft_client_protocol;
 
-void process_appendentries_response(raft_server_t *raft, msg_appendentries_response_t* response);
-void process_requestvote_response(raft_server_t *raft, msg_requestvote_response_t* response);
-void process_timeout_now_response(raft_server_t *raft, timeout_now_response* response);
-void process_snapshot_check_response(raft_server_t *raft, snapshot_check_response* response);
-void process_installsnapshot_response(raft_server_t *raft, installsnapshot_response* response);
+void process_appendentries_response(raft_server_t *raft, msg_appendentries_response_t* response,
+        msg::rdma::rpc_controller *clr, int32_t target_node_id, raft_client_protocol* rcp, uint32_t shard_id);
+void process_requestvote_response(raft_server_t *raft, msg_requestvote_response_t* response,
+        msg::rdma::rpc_controller *clr, int32_t target_node_id, raft_client_protocol* rcp, uint32_t shard_id);
+void process_timeout_now_response(raft_server_t *raft, timeout_now_response* response,
+        msg::rdma::rpc_controller *clr, int32_t target_node_id, raft_client_protocol* rcp, uint32_t shard_id);
+void process_snapshot_check_response(raft_server_t *raft, snapshot_check_response* response,
+        msg::rdma::rpc_controller *clr, int32_t target_node_id, raft_client_protocol* rcp, uint32_t shard_id);
+void process_installsnapshot_response(raft_server_t *raft, installsnapshot_response* response,
+        msg::rdma::rpc_controller *clr, int32_t target_node_id, raft_client_protocol* rcp, uint32_t shard_id);
+
+void process_disconnect_rpc(raft_client_protocol* rcp, raft_server_t *raft, uint32_t shard_id, int32_t target_node_id);
 
 template<typename req_type, typename rsp_type>
 concept msg_type_valid = (
@@ -40,33 +48,39 @@ requires msg_type_valid<request_type, response_type>
 class common_msg_source{
 public:
     common_msg_source(request_type* request,
-            raft_server_t *raft)
+            raft_server_t *raft,
+            int32_t target_node_id,
+            uint32_t shard_id,
+            raft_client_protocol* rcp)
     : _request(request)
-    , _raft(raft) {}
+    , _raft(raft)
+    , _target_node_id(target_node_id)
+    , _shard_id(shard_id)
+    , _rcp(rcp) {}
 
     ~common_msg_source(){
         if(_request)
             delete _request;
     }
 
-    void process_msg_response(msg_appendentries_response_t* response){
-        process_appendentries_response(_raft, response);
+    void process_msg_response(msg_appendentries_response_t* response, msg::rdma::rpc_controller *clr){
+        process_appendentries_response(_raft, response, clr, _target_node_id, _rcp, _shard_id);
     }  
-    void process_msg_response(msg_requestvote_response_t* response){
-        process_requestvote_response(_raft, response);
+    void process_msg_response(msg_requestvote_response_t* response, msg::rdma::rpc_controller *clr){
+        process_requestvote_response(_raft, response, clr, _target_node_id, _rcp, _shard_id);
     }    
-    void process_msg_response(timeout_now_response* response){
-        process_timeout_now_response(_raft, response);
+    void process_msg_response(timeout_now_response* response, msg::rdma::rpc_controller *clr){
+        process_timeout_now_response(_raft, response, clr, _target_node_id, _rcp, _shard_id);
     }  
-    void process_msg_response(snapshot_check_response* response){
-        process_snapshot_check_response(_raft, response);
+    void process_msg_response(snapshot_check_response* response, msg::rdma::rpc_controller *clr){
+        process_snapshot_check_response(_raft, response, clr, _target_node_id, _rcp, _shard_id);
     }
-    void process_msg_response(installsnapshot_response* response){
-        process_installsnapshot_response(_raft, response);
+    void process_msg_response(installsnapshot_response* response, msg::rdma::rpc_controller *clr){
+        process_installsnapshot_response(_raft, response, clr, _target_node_id, _rcp, _shard_id);
     }  
 
-    void process_response(){
-        process_msg_response(&response);
+    void process_response(msg::rdma::rpc_controller *clr){
+        process_msg_response(&response, clr);
         delete this;
     }
 
@@ -74,23 +88,29 @@ public:
     response_type response;
 private:
     request_type* _request;
-    raft_server_t *_raft;    
+    raft_server_t *_raft;   
+    int32_t _target_node_id; 
+    uint32_t _shard_id;
+    raft_client_protocol* _rcp;
 };
 
 class pg_group_t;
 class heartbeat_source{
 public:
-    heartbeat_source(heartbeat_request* request, pg_group_t* group, uint32_t shard_id)
+    heartbeat_source(heartbeat_request* request, pg_group_t* group, uint32_t shard_id, 
+            int32_t target_node_id, raft_client_protocol* rcp)
     : _request(request)
     , _group(group)
-    , _shard_id(shard_id){}
+    , _shard_id(shard_id)
+    , _target_node_id(target_node_id) 
+    , _rcp(rcp){}
 
     ~heartbeat_source(){
         if(_request)
             delete _request;
     }
 
-    void process_response();
+    void process_response(msg::rdma::rpc_controller *clr);
 
     msg::rdma::rpc_controller ctrlr;
     heartbeat_response response;
@@ -98,6 +118,8 @@ private:
     heartbeat_request* _request;
     pg_group_t *_group;
     uint32_t _shard_id;
+    int32_t _target_node_id; 
+    raft_client_protocol* _rcp;
 };
 
 class raft_client_protocol{
@@ -134,13 +156,15 @@ public:
         }
     }
 
-    void remove_connect(int node_id){
+    void remove_connect(int node_id, auto&& conn_cb){
         uint32_t shard_id = 0;
         for(shard_id = 0; shard_id < _shard_cores.size(); shard_id++){
-            auto &stub = _stubs[shard_id];
-            stub.erase(node_id);
             SPDK_INFOLOG(pg_group, "remove connect to node %d\n", node_id);
-            _cache->remove_connect(shard_id, node_id);
+            _cache->remove_connect(shard_id, node_id, std::move(conn_cb),
+            [this, shard_id, node_id](){
+                auto &stub = _stubs[shard_id];
+                stub.erase(node_id);
+            });
         }
     }
 

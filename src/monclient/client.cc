@@ -520,45 +520,59 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
               osd_it->second->node_id != _self_osd_id;
 
             SPDK_DEBUGLOG(
-              mon, "osd %d found, should_create_connect is %d\n",
-              osd_it->second->node_id, should_create_connect);
+              mon, "osd %d found, osd isup %d,  rsp osd isup %d, should_create_connect is %d\n",
+              osd_it->second->node_id, osd_it->second->isup, osds[i].isup(), should_create_connect);
 
             osd_it->second->node_id = osds[i].osdid();
             osd_it->second->isin = osds[i].isin();
             osd_it->second->ispendingcreate = osds[i].ispendingcreate();
             osd_it->second->port = osds[i].port();
             osd_it->second->address = osds[i].address();
+            if(osd_it->second->isup && !osds[i].isup() && osd_it->second->node_id != _self_osd_id){
+                SPDK_DEBUGLOG(mon, "osd %d is down, remove connect to it\n", osds[i].osdid());
+                _pm.lock()->get_pg_group().remove_connect(osds[i].osdid(),
+                  [this, node_id = osds[i].osdid()](bool is_ok){
+                    SPDK_DEBUGLOG(mon, "remove the connect to osd %d\n",node_id);
+                  });
+                osd_it->second->isup = false;
+            }
         } else {
             should_create_connect =
               osds[i].isup() and osds[i].osdid() != _self_osd_id;
 
-            SPDK_DEBUGLOG(
-              mon, "osd %d not found, should_create_connect is %d\n",
-              osds[i].osdid(),
-              should_create_connect);
-
-            auto osd_info = std::make_unique<utils::osd_info_t>(
-              osds[i].osdid(),
-              osds[i].isin(),
-              osds[i].isup(),
-              osds[i].ispendingcreate(),
-              osds[i].port(),
-              osds[i].address());
-
-            auto [it, _] = _osd_map.data.emplace(osd_info->node_id, std::move(osd_info));
-            osd_it = it;
+            if(should_create_connect || osds[i].osdid() == _self_osd_id){
+                SPDK_DEBUGLOG(mon, 
+                  "osd %d not found, rsp osd isup %d, should_create_connect is %d\n",
+                  osds[i].osdid(),
+                  osds[i].isup(),
+                  should_create_connect);
+    
+                auto osd_info = std::make_unique<utils::osd_info_t>(
+                  osds[i].osdid(),
+                  osds[i].isin(),
+                  osds[i].isup(),
+                  osds[i].ispendingcreate(),
+                  osds[i].port(),
+                  osds[i].address());
+    
+                auto [it, _] = _osd_map.data.emplace(osd_info->node_id, std::move(osd_info));
+                osd_it = it;
+            }else{
+                continue;
+            }
         }
 
         auto& osd_info = *(osd_it->second);
-        SPDK_DEBUGLOG(
-          mon, "osd id %d, is up %d, port %d, address %s\n",
+        SPDK_DEBUGLOG(mon, 
+          "osd id %d, is up %d, port %d, address %s, rsp is up %d\n",
           osd_info.node_id,
           osd_info.isup,
           osd_info.port,
-          osd_info.address.c_str());
+          osd_info.address.c_str(),
+          osds[i].isup());
 
         if (should_create_connect) {
-            SPDK_NOTICELOG(
+            SPDK_DEBUGLOG(mon,
               "Connect to osd %d(%s:%d)\n",
               osd_info.node_id,
               osd_info.address.c_str(),
@@ -570,10 +584,14 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
 
             _pm.lock()->get_pg_group().create_connect(
               osd_info.node_id, osd_info.address, osd_info.port,
-              [raw_stack = resp_stack.get()] (bool is_ok, std::shared_ptr<msg::rdma::client::connection> conn) {
+              [this, raw_stack = resp_stack.get(), node_id = osd_info.node_id] (bool is_ok, std::shared_ptr<msg::rdma::client::connection> conn) {
                   if (not is_ok) {
                       SPDK_ERRLOG("ERROR: Connect failed\n");
-                      throw std::runtime_error{"connect failed"};
+                      auto it = _osd_map.data.find(node_id);
+                      if (it != _osd_map.data.end()) {
+                          it->second->isup = false;
+                      }
+                    //   throw std::runtime_error{"connect failed"};
                   }
 
                   raw_stack->un_connected_count--;
@@ -585,19 +603,32 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
         }
     }
 
-    for (auto& osd_info_pair : _osd_map.data) {
+    auto data_it = _osd_map.data.begin();
+    while(data_it != _osd_map.data.end()){
         auto it = std::find_if(
             osds.begin(), osds.end(),
-            [k = osd_info_pair.first] (const auto& osd) {
+            [k = data_it->first] (const auto& osd) {
                 return osd.osdid() == k;
             }
         );
 
-        if (it != osds.end()) { continue; }
-        SPDK_NOTICELOG(
+        if (it != osds.end()) { 
+            data_it++;
+            continue; 
+        }
+
+        auto node_id = data_it->first;
+        data_it++;
+        SPDK_DEBUGLOG(mon,
           "The osd with id %d not found in the newer osd map\n",
-          osd_info_pair.first);
-        _pm.lock()->get_pg_group().remove_connect(osd_info_pair.first);
+          node_id);
+        _pm.lock()->get_pg_group().remove_connect(node_id,
+          [this, node_id](bool is_ok){
+            if(is_ok){
+              _osd_map.data.erase(node_id);
+              SPDK_DEBUGLOG(mon, "remove the connect to osd %d\n",node_id);
+            }
+          });
     }
 
     if (not resp_stack) {
