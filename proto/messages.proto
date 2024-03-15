@@ -21,7 +21,7 @@ message ListPoolsRequest{
 
 message poolinfo{
     int32
-     poolid = 1;
+    poolid = 1;
     string name = 2;
     int32 pgsize = 3;
     int32 pgcount = 4;
@@ -61,7 +61,8 @@ message BootRequest {
 }
 
 message PGInfo {
-    int32 pgid = 2;
+    int32 pgid = 1;
+    int64 version = 2;
     repeated int32 osdid = 3;
 }
 

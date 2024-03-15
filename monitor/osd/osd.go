@@ -26,11 +26,11 @@ type OSDID int
 
 //(fixme) make it configurable
 const (
-	heartbeatInterval = 100 * time.Second
+	heartbeatInterval = 10 * time.Second
 	//the osd should have enough time to connect and heartbeat
-	maxFailedAttempts = 5
+	maxFailedAttempts = 3
 	// min hearbeats before we mark it up
-	minSuccessAttempts = 5
+	minSuccessAttempts = 3
 )
 
 func isValidIPv4(address string) bool {
@@ -138,7 +138,7 @@ func ProcessApplyIDMessage(ctx context.Context, client *etcdapi.EtcdClient, uuid
 	}
 
 	AllOSDInfo.Osdinfo[OSDID(oid)] = oi
-	AllOSDInfo.Version++
+	// AllOSDInfo.Version++
 
 	if AllHeartBeatInfo == nil {
 		AllHeartBeatInfo = make(map[OSDID]*HeartBeatInfo)
@@ -157,7 +157,7 @@ func ProcessApplyIDMessage(ctx context.Context, client *etcdapi.EtcdClient, uuid
 		return -1, err
 	}
 
-	log.Info(ctx, "successfully update osdmap after newly apply")
+	log.Warn(ctx, "successfully update osdmap after newly apply")
 	return oid, nil
 }
 
@@ -216,7 +216,7 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 		return err
 	}
 
-	log.Info(ctx, "successfully put to ectd for newly booted osd ", id)
+	log.Warn(ctx, "successfully put to ectd for newly booted osd ", id)
 	GetOSDTreeUp(ctx)
 	return nil
 }
@@ -323,6 +323,7 @@ func CheckOsdHeartbeat(ctx context.Context, client *etcdapi.EtcdClient) {
 				if hi.lastHeartBeat.Add(heartbeatInterval).Before(time.Now()) {
 					hi.failedCounter++
 					if hi.failedCounter > maxFailedAttempts {
+						hi.failedCounter = 0
 						info.IsUp = false
 						isChange = true
 					}
@@ -341,7 +342,7 @@ func CheckOsdHeartbeat(ctx context.Context, client *etcdapi.EtcdClient) {
 				log.Error(ctx, err)
 			}
 
-			log.Info(ctx, "successfully update osdmap after heartbeat change")
+			log.Warn(ctx, "successfully update osdmap after heartbeat change")
 		}
 	}
 }

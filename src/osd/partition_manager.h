@@ -21,40 +21,68 @@ struct shard_revision {
     int64_t _revision;
 };
 
+enum class osd_state {
+    OSD_STARTING, 
+    OSD_ACTIVE, 
+    OSD_DOWN
+};
+
+using pm_complete = std::function<void (void *, int)>;
+
 class partition_manager : public std::enable_shared_from_this<partition_manager> {
 public:
     partition_manager(int node_id, std::shared_ptr<connect_cache> conn_cache)
       : _pgs(node_id, conn_cache)
       , _next_shard(0)
       , _shard(core_sharded::get_core_sharded())
-      , _shard_cores(get_shard_cores()) {
+      , _shard_cores(get_shard_cores())
+      , _state(osd_state::OSD_STARTING) {
           uint32_t i = 0;
           auto shard_num = _shard_cores.size();
           for(i = 0; i < shard_num; i++){
               _sm_table.push_back(std::map<std::string, std::shared_ptr<osd_stm>>());
           }
       }
+      
+    void start(utils::context *complete);
 
-    void start(context *complete){
-        _pgs.start(complete);
-    }
+    void stop(utils::complete_fun fun, void *arg){
+        if(_state == osd_state::OSD_DOWN){
+            return;
+        }  
+        _state = osd_state::OSD_DOWN;  
 
-    void stop(object_rw_complete cb_fn, void* arg) {
-        _pgs.stop();
-        for (auto& sm_map: _sm_table) {
-            for (auto& sm_pair: sm_map) {
-                SPDK_NOTICELOG("Stop the state_machine %s\n", sm_pair.first.c_str());
-                sm_pair.second->stop(cb_fn, arg);
-            }
+        uint64_t shard_id = 0;
+        auto shard_num = _sm_table.size();
+        utils::multi_complete *complete = new utils::multi_complete(shard_num, fun, arg);
+
+        for(shard_id = 0; shard_id < shard_num; shard_id++){
+            _shard.invoke_on(
+              shard_id,
+              [this, shard_id, complete](){
+                _pgs.stop(shard_id);
+
+                for(auto& [name, stm] : _sm_table[shard_id]){
+                    SPDK_NOTICELOG("Stop the object machine %s\n", name.c_str());
+                    stm->stop(
+                      [](void *, int){}, 
+                      nullptr);
+                }
+                complete->complete(0);
+              });
         }
     }
 
-    int create_partition(uint64_t pool_id, uint64_t pg_id, std::vector<osd_info_t>&& osds, int64_t revision_id);
+    int create_partition(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t>&& osds, int64_t revision_id);
     int delete_partition(uint64_t pool_id, uint64_t pg_id);
+    int load_partition(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob, 
+                        object_store::container objects, pm_complete func, void *arg);
 
     bool get_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t &shard_id);
 
-    void create_pg(uint64_t pool_id, uint64_t pg_id, std::vector<osd_info_t> osds, uint32_t shard_id, int64_t revision_id);
+    void load_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob, 
+                        object_store::container objects, pm_complete cb_fn, void *arg);
+    void create_pg(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t> osds, uint32_t shard_id, int64_t revision_id);
     void delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id);
 
     std::shared_ptr<osd_stm> get_osd_stm(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id){
@@ -82,10 +110,36 @@ public:
         _sm_table[shard_id][std::move(name)] = sm;
     }
 
+    void del_osd_stm(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id){
+        auto name = pg_id_to_name(pool_id, pg_id);
+        auto iter = _sm_table[shard_id].find(name);
+        if(iter == _sm_table[shard_id].end())
+            return;
+        auto stm = iter->second;
+        stm->stop(
+          [this, shard_id, name](void *, int){
+            _sm_table[shard_id].erase(name);   
+          },
+          nullptr
+        );     
+    }
+
     int get_current_node_id(){
         return _pgs.get_current_node_id();
     }
+
+    void set_osd_state(osd_state state){
+        _state = state;
+    }
+
+    int change_pg_membership(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t> new_osds, utils::context* complete);
+
+    void load_pgs_map(std::map<uint64_t, std::vector<utils::pg_info_type>> &pools){
+        _pgs.load_pgs_map(pools);
+    }
+
 private:
+    int osd_state_is_not_active();
     uint32_t get_next_shard_id(){
         uint32_t shard_id = _next_shard;
         _next_shard = (_next_shard + 1) % _shard_cores.size();
@@ -113,4 +167,5 @@ private:
     core_sharded&  _shard;
     std::vector<uint32_t> _shard_cores;
     std::vector<std::map<std::string, std::shared_ptr<osd_stm>>> _sm_table;
+    osd_state _state;
 };

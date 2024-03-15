@@ -49,23 +49,23 @@ public:
   /**
    * 由于要直接读写blob，这里的buf务必用spdk_malloc申请。len的单位是字节，而不是io unit。
    */
-  void read(std::string object_name,
+  void read(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
             uint64_t offset, char* buf, uint64_t len,
             object_rw_complete cb_fn, void* arg);
 
-  void write(std::string object_name,
+  void write(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
              uint64_t offset, char* buf, uint64_t len,
              object_rw_complete cb_fn, void* arg);
 
   void stop(object_rw_complete cb_fn, void* arg);
 
-  void snap_create(std::string object_name, std::string snap_name,
+  void snap_create(std::map<std::string, xattr_val_type>& xattr, std::string object_name, std::string snap_name,
                    object_rw_complete cb_fn, void* arg);
 
   void snap_delete(std::string object_name, std::string snap_name,
                    object_rw_complete cb_fn, void* arg);
-
-  void recovery_create(std::string object_name,
+    
+  void recovery_create(std::map<std::string, xattr_val_type>& xattr, std::string object_name, 
                  object_rw_complete cb_fn, void* arg);
 
   void recovery_read(std::string object_name, char* buf,
@@ -74,8 +74,13 @@ public:
   void recovery_delete(std::string object_name,
                  object_rw_complete cb_fn, void* arg);
 
+  bool is_exist(std::string object_name){
+      auto it = table.find(object_name);
+      return it != table.end();
+  }
+
 private:
-  void readwrite(std::string object_name,
+  void readwrite(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
                      uint64_t offset, char* buf, uint64_t len,
                      object_rw_complete cb_fn, void* arg, bool is_read);
 
@@ -128,6 +133,11 @@ public:
   };
   //快照版本链表的结点。
   using container = absl::flat_hash_map<std::string, object>;
+
+  void load(container objects){
+      table = std::move(objects);
+  }
+  
   using iterator = container::iterator;
   container table;
   struct spdk_blob_store *bs;       // 我们不掌握blob_store的生命周期

@@ -15,6 +15,10 @@
  */
 
 #pragma once
+
+#include <vector>
+#include <stdint.h>
+
 /**
  * Unique entry ids are mostly used for debugging and nothing else,
  * so there is little harm if they collide.
@@ -42,3 +46,5 @@ typedef int raft_node_id_t;
  * Timestamp in milliseconds.
  */
 typedef long int raft_time_t;
+
+typedef uint64_t raft_id_type;

@@ -27,6 +27,8 @@ struct recovery_op_ctx {
 
     recovery_op_complete cb_fn;
     void* arg;
+
+    std::map<std::string, xattr_val_type> xattr;
 };
 
 
@@ -37,17 +39,17 @@ public:
   /**
    * 创建所有对象的recovery snapshot。
    */
-  void recovery_create(recovery_op_complete cb_fn, void* arg) {
+  void recovery_create(std::map<std::string, xattr_val_type>&& xattr, recovery_op_complete cb_fn, void* arg) {
       _obj_names.reserve(_obs->table.size());
       for (auto& pr : _obs->table) {
           _obj_names.emplace_back(pr.first);
       }
-      recovery_op_ctx* ctx = new recovery_op_ctx{.recv = this, .obs = _obs,
-                                    .cb_fn = std::move(cb_fn), .arg = arg};
+      recovery_op_ctx* ctx = new recovery_op_ctx{.recv = this, .obs = _obs, 
+                                    .cb_fn = std::move(cb_fn), .arg = arg, .xattr = std::move(xattr)};
       iter_start();
       auto next_name = iter_next_name();
       // SPDK_NOTICELOG("object name:%s create recovery.\n", next_name.c_str());
-      _obs->recovery_create(next_name, recovery_create_continue, ctx);
+      _obs->recovery_create(ctx->xattr, next_name, recovery_create_continue, ctx);
   }
 
   static void recovery_create_continue(void *arg, int rerrno) {
@@ -62,12 +64,24 @@ public:
       if (!ctx->recv->iter_is_end()) {
           auto next_name = ctx->recv->iter_next_name();
           // SPDK_NOTICELOG("object name:%s create recovery.\n", next_name.c_str());
-          ctx->obs->recovery_create(next_name, recovery_create_continue, ctx);
+          ctx->obs->recovery_create(ctx->xattr, next_name, recovery_create_continue, ctx);
           return;
       }
 
       ctx->cb_fn(ctx->arg, 0);
       delete ctx;
+  }
+
+  std::vector<std::string> recovery_get_obj_names(size_t start, size_t num){
+      std::vector<std::string> object_names;
+      size_t index = start;
+      size_t end = start + num;
+
+      while(!iter_is_end(index) && index < end){
+          object_names.emplace_back(get_iter_name(index));
+          index++;
+      }
+      return std::move(object_names);
   }
 
   /**
@@ -131,6 +145,10 @@ public:
   std::string& iter_next_name() { return _obj_names[idx++]; }
 
   bool iter_is_end() { return idx == _obj_names.size(); }
+
+  bool iter_is_end(size_t index) { return index == _obj_names.size(); }
+  std::string& get_iter_name(size_t index)  { return _obj_names[index]; }
+  size_t get_iter_idx() { return idx; }
 
 private:
   object_store *_obs;

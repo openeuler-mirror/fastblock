@@ -1,5 +1,12 @@
 syntax = "proto3";
 option cc_generic_services = true;
+import "common_msg.proto";
+
+message raft_configuration
+{
+    repeated raft_node_info old_nodes = 1;
+    repeated raft_node_info new_nodes = 2;
+}
 
 // Entry that is stored in the server's entry log. 
 message raft_entry_t
@@ -11,10 +18,8 @@ message raft_entry_t
 
     /** type of entry */
     int32 type = 3;
-
-    bytes obj_name = 4;
-    bytes meta = 5;
-    bytes data = 6;
+    bytes meta = 4;
+    bytes data = 5;
 }
 
 /** Appendentries message.
@@ -120,43 +125,6 @@ message msg_requestvote_response_t
     int32 prevote = 4;
 }
 
-/** InstallSnapshot request message. */
-message msg_installsnapshot_t
-{
-    //leader node id
-    int32  node_id = 1;
-    uint64 pool_id = 2;
-    uint64 pg_id = 3;
-
-    /** currentTerm, to force other leader/candidate to step down */
-    int64 term = 4;
-
-    /** Index of the last entry represented by this snapshot */
-    int64 last_idx = 5;
-
-    /** Term of the last entry represented by this snapshot */
-    int64 last_term = 6;
-}
-
-/** InstallSnapshot response message. */
-message msg_installsnapshot_response_t
-{
-    //The node who sent us this message
-    int32  node_id = 1;
-
-    /** currentTerm, to force other leader/candidate to step down */
-    int64 term = 2;
-
-    /** Same with the one in the request message */
-    int64 last_idx = 3;
-
-    /** True if the snapshot has been fully received */
-    int32 complete = 4;
-
-    /** lease expiration time */
-    int64 lease = 5;
-}
-
 message heartbeat_metadata
 {
     //leader node id
@@ -192,9 +160,94 @@ message heartbeat_response
     repeated msg_appendentries_response_t meta = 1;
 }
 
+message  timeout_now_request {
+    uint64 pool_id = 1;
+    uint64 pg_id = 2; 
+    //leader node id
+    int32  node_id = 3;     
+    int64 term = 4;
+}
+
+message  timeout_now_response {
+    //The node who sent us this message
+    int32  node_id = 1;
+    int64 term = 2;
+    int32 success = 3;    
+}
+
+message snapshot_check_request {
+    //leader node id
+    int32  node_id = 1;
+
+    uint64 pool_id = 2;
+    uint64 pg_id = 3;
+
+    /** currentTerm, to force other leader/candidate to step down */
+    int64 term = 4;
+    repeated bytes object_names = 5;
+}
+
+message object_check_info {
+    bytes obj_name = 1;
+    bool exist = 2;
+    bytes data_hash = 3;
+}
+
+message snapshot_check_response {
+    //The node who sent us this message
+    int32  node_id = 1;
+
+    /** currentTerm, to force other leader/candidate to step down */
+    int64 term = 2;
+
+    /** lease expiration time */
+    int64 lease = 3;
+    int32 success = 4;
+
+    repeated object_check_info objects = 5;
+}
+
+message object_data_info {
+    bytes obj_name = 1;
+    bytes data = 2;
+}
+
+message installsnapshot_request {
+    //leader node id
+    int32  node_id = 1;
+    uint64 pool_id = 2;
+    uint64 pg_id = 3;
+
+    /** currentTerm, to force other leader/candidate to step down */
+    int64 term = 4;
+    /** Index of the last entry represented by this snapshot */
+    int64 last_idx = 5;
+    /** Term of the last entry represented by this snapshot */
+    int64 last_term = 6;
+    
+    /* true if this is the last chunk */
+    bool  done = 7;
+    repeated object_data_info objects = 8;
+}
+
+message installsnapshot_response {
+    //The node who sent us this message
+    int32  node_id = 1;
+
+    /** currentTerm, to force other leader/candidate to step down */
+    int64 term = 2;
+
+    /** lease expiration time */
+    int64 lease = 3;
+
+    int32 success = 4;
+}
+
 service rpc_service_raft{
     rpc append_entries(msg_appendentries_t) returns (msg_appendentries_response_t);
     rpc vote(msg_requestvote_t) returns (msg_requestvote_response_t);
-    rpc install_snapshot(msg_installsnapshot_t) returns (msg_installsnapshot_response_t);
     rpc heartbeat(heartbeat_request) returns (heartbeat_response);
+    rpc timeout_now(timeout_now_request) returns (timeout_now_response);
+    rpc snapshot_check(snapshot_check_request) returns (snapshot_check_response);
+    rpc install_snapshot(installsnapshot_request) returns (installsnapshot_response);
 }

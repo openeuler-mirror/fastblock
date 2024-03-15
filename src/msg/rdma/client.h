@@ -883,6 +883,11 @@ private:
         std::function<void(bool, std::shared_ptr<connection>)> cb{};
     };
 
+    struct remove_connection_context {
+        std::function<void(bool)> cb{};
+        std::shared_ptr<connection> conn;
+    };
+
     enum class connect_state {
         wait_address_resolved = 1,
         wait_route_resolved,
@@ -956,6 +961,13 @@ public:
         auto* ctx = reinterpret_cast<emplace_connection_context*>(arg);
         ctx->this_client->handle_emplace_eonnection(
           std::unique_ptr<emplace_connection_context>(ctx));
+    }
+
+    static void on_remove_connection(void* arg){
+        auto* ctx = reinterpret_cast<remove_connection_context*>(arg);
+        ctx->conn->shutdown();
+        ctx->cb(true);
+        delete ctx;
     }
 
     static int core_poller(void* arg) {
@@ -1220,6 +1232,12 @@ public:
         auto* ctx = new emplace_connection_context{
           this, addr, port, std::move(cb)};
         ::spdk_thread_send_msg(_thread, on_emplace_connection, ctx);
+    }
+
+    void remove_connection(std::shared_ptr<msg::rdma::client::connection> conn,
+      std::function<void(bool)> cb){
+        auto* ctx = new remove_connection_context{std::move(cb), conn};
+        ::spdk_thread_send_msg(_thread, on_remove_connection, ctx);
     }
 
     ::spdk_thread* get_thread() noexcept {

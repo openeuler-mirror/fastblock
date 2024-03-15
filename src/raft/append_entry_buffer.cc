@@ -16,11 +16,11 @@
 
 constexpr int32_t TIMER_APPEND_ENTRIER_BUFFER_USEC = 0;    //微秒
 
-struct flush_complete : public context{
-    context* comp;
+struct flush_complete : public utils::context{
+    utils::context* comp;
     append_entries_buffer *buffer;
 
-    flush_complete(context* _complete, append_entries_buffer *_buffer)
+    flush_complete(utils::context* _complete, append_entries_buffer *_buffer)
     : comp(_complete)
     , buffer(_buffer) {}
 
@@ -32,7 +32,7 @@ struct flush_complete : public context{
 
 void append_entries_buffer::enqueue(const msg_appendentries_t* request,
             msg_appendentries_response_t* response,
-            context* complete){
+            utils::context* complete){
     item_type item{request, response, complete};
     _request.push(std::move(item));
 }
@@ -72,8 +72,8 @@ void append_entries_buffer::do_flush(){
     flush_complete* complete = new flush_complete(comp, this);
 
     int ret = _raft->raft_recv_appendentries(request->node_id(), request, response, complete);
-    if(ret != 0){
-        complete->complete(ret);
-    }
+    // if(ret != 0){
+        // complete->complete(ret);
+    // }                        
 }
 

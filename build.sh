@@ -40,9 +40,9 @@ root="$(cd $(dirname ${BASH_SOURCE[0]}) && pwd)"
 if [[ -z ${CC} ]]; then export CC=/usr/bin/gcc; fi
 if [[ -z ${CXX} ]]; then export CXX=/usr/bin/g++; fi
 
-(cd $root/src/rpc && ./build.sh)
-(cd $root/src/monclient && ./build.sh)
 (cd $root/src/msg/demo && ./gen.sh)
+
+(cd $root/proto && ./build.sh)
 
 if [ "$component" = "monitor" ]; then
 	echo "build fastblock(fastblock-mon、fastblock-client) Golang code"

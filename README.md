@@ -14,7 +14,7 @@ fastblock是为解决性能和延迟问题而生的，它的特点是:
 
 # fastblock设计及架构
 fastblock的架构跟ceph非常类似，且monitor、osd、pg等众多概念都跟ceph一样以便于快速理解，架构如下图所示:  
-![arch](docs/architecture.png)
+![arch](docs/png/architecture.png)
 其中:  
 - Compute表示计算服务
 - Monitor cluster负责维护集群元数据（包括osdMap、pgMap、pool信息和image信息），以及pool和pg的管理。
@@ -36,7 +36,7 @@ monitor集群是一致性的重要保证，因为客户端、osd看到的都是�
 
 ## osd rpc子系统
 rpc子系统是连接各模块的重要系统，出于异构网络的要求，rpc子系统的实现了两种方式，即基于socket（Control rpc）的和基于rdma（Data Rpc和Raft Rpc）的，基于socket的就是经典的linux socket应用场景，而基于rdma的rpc则是使用异步rdma(即rdma write)语义实现的。  
-![rpc子系统](docs/rpc_subsystem.png)
+![rpc子系统](docs/png/rpc_subsystem.png)
 上图是fastblock中各个模块之间的联系，由图中可以看出使用了三种类型的rpc，分别为Control Rpc、Data Rpc和Raft Rpc:
 Control rpc： 用于在客户端与monitor之间，osd与monitor之间传递osdmap、pgmap和image信息等数据，这些数据量不大，频率不高，因此可以使用基于socket的实现;
 Data rpc：用于在客户端与osd之间传输对象数据操作和结果，这些数据量比较大，频率会很高，因此需要基于rdma的方法;
@@ -54,7 +54,7 @@ raft通过选举一个领导人，然后给予他全部的管理复制日志的�
 - raft心跳合并。
 
 实现multi-group raft,意味着有多个raft并存，每个raft的leader需要给它的follower发送心跳包，因此就会有多个心跳包，如果raft过多就会导致心跳包过多，占用大量的带宽和cpu资源。解决方法也很简单，每个osd可能属于多个raft，因此可以对相同leader、相同flower的raft进行心跳的合并，这样就可以减少心跳包数量。如下图所示，有两个pg（raft）分别为pg1和pg2，pg1和pg2中都包含osd1、osd2和osd3，osd1是leader，osd1需要给osd2和osd3分别发送heartbeat (pg1)，pg2中osd1需要给osd2和osd3分别发送heartbeat (pg2)。心跳合并后，只需要osd1给osd2和osd3分别发送heartbeat (pg1, pg2)。
-![心跳合并](docs/heartbeat_merge.png)
+![心跳合并](docs/png/heartbeat_merge.png)
 
 ## osd kv子系统
 kv子系统用于存储raft的元数据、存储系统本身的数据，由于数据量不大，就自己设计了一套。因为数据量不大，内存中的hash map就可以存储所有数据，提供put、remove和get接口，每隔10ms把hash map中修改的数据写到磁盘中。
@@ -65,7 +65,7 @@ kv子系统用于存储raft的元数据、存储系统本身的数据，由于�
 - object_store: 存储对象数据，一个对象对应一个spdk blob。
 - kv_store: 每个cpu核拥有一个spdk blob。保存当前cpu核上的需要保存的所有kv数据，包括raft的元数据、存储系统本身的数据。
 如下图所示，假设我们运行了两个raft，localstore为这两个raft提供了log、object和kv这3部分存储功能。
-![本地存储引擎](docs/osd_localstore.png)
+![本地存储引擎](docs/png/osd_localstore.png)
 
 ## 客户端
 客户端用于创建、修改和删除image，把用户对image的数据操作转换为对object（osd处理的基本数据单元）的操作，然后封装为Data Rpc消息发送给pg的 leader osd，并接收处理 leader osd返回的响应，结果返回给用户。 客户端有多种模式：使用spdk vhost提供给虚拟机使用；使用NBD提供给裸金属使用；使用CSI提供给虚拟机使用。这三种模式最终都会调用libfastblock库进行image到object的转换，并和osd通信。 下面主要介绍使用spdk vhost提供给虚拟机使用的模式:  

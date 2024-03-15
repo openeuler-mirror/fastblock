@@ -38,6 +38,7 @@ struct rblob_rw_result {
 
 using rblob_rw_complete = std::function<void (void *, rblob_rw_result, int)>;
 using rblob_op_complete = std::function<void (void *, int)>;
+using check_and_handle_data_func = std::function<std::tuple<bool, uint64_t, uint64_t> (buffer_list &, uint64_t)>;
 
 struct rblob_rw_ctx {
   bool is_read;
@@ -82,8 +83,24 @@ struct rblob_close_ctx {
   void* arg;
 };
 
-/**
- *  Case 1(not rolled):
+
+struct load_rblob_ctx {
+  rolling_blob *rblob;
+  buffer_list bl;
+
+  rblob_op_complete cb_fn;
+  void* arg;
+
+  check_and_handle_data_func check;
+
+  uint64_t pos;
+  uint64_t length;
+};
+
+constexpr size_t default_load_read_size = 4_MB;
+
+/** 
+ *  Case 1(not rolled):  
  *   从左往右写，随着数据的增加，front往右推进，但此时还没写到blob最右侧。
  *   最前面4k是super block，保存一些基本元数据。
  *    __________________________________________________
@@ -159,7 +176,7 @@ public:
             ctx->cb_fn = std::move(cb_fn);
             ctx->arg = arg;
 
-            // SPDK_NOTICELOG("blob append pos from:%lu (lba:%lu) len:%lu\n", ctx->start_pos, ctx->lba, ctx->len);
+            SPDK_INFOLOG(blob_log, "blob append pos from:%lu (lba:%lu) len:%lu\n", ctx->start_pos, ctx->lba, ctx->len);
             inflight_rw.emplace(start_pos + length, false);
             spdk_blob_io_writev(blob, channel, ctx->iov.data(), ctx->iov.size(),
                                 ctx->lba / unit_size, ctx->len / unit_size, rw_done, ctx);
@@ -190,21 +207,21 @@ public:
         next->lba = pos_to_lba(next->start_pos);
         next->len = second_len;
 
-        // SPDK_NOTICELOG("blob append pos from:%lu (lba:%lu) len:%lu and from:%lu (lba:%lu) len:%lu\n",
-        //                ctx->start_pos, ctx->lba, first_len, next->start_pos, next->lba, second_len);
+        SPDK_INFOLOG(blob_log, "blob append pos from:%lu (lba:%lu) len:%lu and from:%lu (lba:%lu) len:%lu\n", 
+                       ctx->start_pos, ctx->lba, first_len, next->start_pos, next->lba, second_len);
         inflight_rw.emplace(next->start_pos + second_len, false); // 只等待第二次写的偏移
         spdk_blob_io_writev(blob, channel, ctx->iov.data(), ctx->iov.size(),
                                 ctx->lba / unit_size, ctx->len / unit_size, rw_done, ctx);
     }
 
-    void read(uint64_t start, uint64_t length, spdk_buffer sb, rblob_rw_complete cb_fn, void* arg) {
+    void read(uint64_t start, uint64_t length, spdk_buffer sb, rblob_rw_complete cb_fn, void* arg, bool is_load = false) {
         buffer_list bl;
         bl.append_buffer(sb);
-        read(start, length, bl, cb_fn, arg);
+        read(start, length, bl, cb_fn, arg, is_load);
     }
 
-    void read(uint64_t start, uint64_t length, buffer_list bl,
-            rblob_rw_complete cb_fn, void* arg) {
+    void read(uint64_t start, uint64_t length, buffer_list bl, 
+            rblob_rw_complete cb_fn, void* arg, bool is_load = false) {
         struct rblob_rw_ctx* ctx;
 
         if (start < back.pos) {
@@ -213,10 +230,24 @@ public:
             return;
         }
 
-        if (length > used()) {
+        if (length > used() && !is_load) {
             SPDK_ERRLOG("read over length. length:%lu > used:%lu\n", length, used());
             cb_fn(arg, {start, length}, -ENOSPC);
             return;
+        }
+
+        if(is_load){
+            uint64_t max_pos = back.pos + size();
+            /*
+             *  读取的数据超过了back（数据起始地址）
+            */
+            if(start >= max_pos){
+                cb_fn(arg, {start, 0}, 0);
+                return;
+            }
+            if(start + length > max_pos){
+                length = max_pos - front.pos;
+            }
         }
 
         ctx = new rblob_rw_ctx();
@@ -250,9 +281,9 @@ public:
             next->lba = pos_to_lba(next->start_pos);
             next->len = second_len;
 
-            // SPDK_NOTICELOG("blob read pos from:%lu (lba:%lu) len:%lu and from:%lu (lba:%lu) len:%lu\n",
-            //         ctx->start_pos, ctx->lba, first_len, next->start_pos, next->lba, second_len);
-            spdk_blob_io_readv(blob, channel, ctx->iov.data(), ctx->iov.size(),
+            SPDK_INFOLOG(blob_log, "blob read pos from:%lu (lba:%lu) len:%lu and from:%lu (lba:%lu) len:%lu\n", 
+                    ctx->start_pos, ctx->lba, first_len, next->start_pos, next->lba, second_len);
+            spdk_blob_io_readv(blob, channel, ctx->iov.data(), ctx->iov.size(), 
                             ctx->lba / unit_size, ctx->len / unit_size, rw_done, ctx);
             return;
         }
@@ -266,8 +297,8 @@ public:
         ctx->cb_fn = std::move(cb_fn);
         ctx->arg = arg;
 
-        // SPDK_NOTICELOG("blob read pos from:%lu (lba:%lu) len:%lu\n", ctx->start_pos, ctx->lba, length);
-        spdk_blob_io_readv(blob, channel, ctx->iov.data(), ctx->iov.size(),
+        SPDK_INFOLOG(blob_log, "blob read pos from:%lu (lba:%lu) len:%lu\n", ctx->start_pos, ctx->lba, length);
+        spdk_blob_io_readv(blob, channel, ctx->iov.data(), ctx->iov.size(), 
                             ctx->lba / unit_size, ctx->len / unit_size, rw_done, ctx);
         return;
     }
@@ -324,6 +355,62 @@ public:
 
         // SPDK_NOTICELOG("trim back case 2. lba %lu len %lu and lba %lu len %lu, ctx:%p next:%p\n",
         //     ctx->lba, ctx->len, next->lba, next->len, ctx, next);
+        spdk_blob_io_unmap(blob, channel, ctx->lba / unit_size, ctx->len / unit_size, trim_done, ctx);
+        return;
+    }
+
+    void trim_front(uint64_t length, rblob_op_complete cb_fn, void* arg) {
+        if (length > used()) {
+            SPDK_ERRLOG("trim front overflow. length:%lu used:%lu\n", length, used());
+            cb_fn(arg, -ENOSPC);
+            return;
+        }
+
+        struct rblob_trim_ctx* ctx = new rblob_trim_ctx;
+        ctx->next = nullptr;
+        ctx->rblob = this;
+
+        // 如果front后方有足够的空间，直接trim
+        if (!is_rolled() || length < begin_to_front()) {
+            auto pos = front.pos - length;
+            ctx->lba = pos_to_lba(pos);
+            ctx->len = length;
+            ctx->cb_fn = std::move(cb_fn);
+            ctx->arg = arg;  
+
+            // trim比较特殊，在异步trim完成之前，就直接修改偏移
+            front.pos -=  length;
+            front.lba = pos_to_lba(front.pos); 
+
+            SPDK_INFOLOG(blob_log, "trim front case 1. pos [%lu - %lu), lba [%lu - %lu)\n",
+                    pos, front.pos, pos_to_lba(pos), pos_to_lba(front.pos));
+            spdk_blob_io_unmap(blob, channel, ctx->lba / unit_size, ctx->len / unit_size, trim_done, ctx);
+            return;        
+        }
+
+        // 否则就分成两份
+        struct rblob_trim_ctx* next = new rblob_trim_ctx;
+        ctx->next = next;
+        next->blob = blob;
+        next->channel = channel;
+        next->next = nullptr;
+        next->rblob = this;
+        next->cb_fn = std::move(cb_fn);
+        next->arg = arg;          
+
+        uint64_t first_len = begin_to_front();    
+        uint64_t second_len = length - first_len;
+        ctx->lba = pos_to_lba(begin());
+        ctx->len = first_len;   
+        next->lba = pos_to_lba(end() - second_len);
+        next->len = second_len; 
+
+        // trim比较特殊，现在设计成可以在异步trim完成之前，就直接修改偏移
+        front.pos -=  length;
+        front.lba = pos_to_lba(front.pos); 
+
+        SPDK_INFOLOG(blob_log, "trim front case 2. first lba %lu len %lu, second lba %lu len %lu\n",
+                ctx->lba, ctx->len, next->lba, next->len);
         spdk_blob_io_unmap(blob, channel, ctx->lba / unit_size, ctx->len / unit_size, trim_done, ctx);
         return;
     }
@@ -397,6 +484,7 @@ public:
         ctx->arg = arg;
 
         serialize_super();
+        SPDK_INFOLOG(blob_log, "sync_md, back pos %lu, front pos %lu\n", back.pos, front.pos);
         spdk_blob_io_write(blob, channel, super.get_buf(),
                             0, super.size() / unit_size, md_done, ctx);
     }
@@ -426,6 +514,12 @@ public:
             ctx->rblob->deserialize_super();
         }
 
+        /* 
+         * 因为super（里面包含front和back）并不是实时刷过到盘的，盘里的super数据front可能不是最新的，
+         * 需要从盘里读取log解析最新的front
+         * TODO
+        */
+
         ctx->cb_fn(ctx->arg, 0);
         delete ctx;
     }
@@ -446,6 +540,69 @@ public:
         GetFixed64(super, front.pos);
     }
 
+    void set_blob_xattr(std::map<std::string, xattr_val_type>& xattr, rblob_op_complete&& cb_fn, void* arg){
+        ::set_blob_xattr(blob, xattr, std::move(cb_fn), arg);
+    }
+
+    static void load_read_done(void *arg, rblob_rw_result res, int rberrno){
+        load_rblob_ctx* ctx = (load_rblob_ctx* )arg;
+
+        if (rberrno) {
+            SPDK_ERRLOG("load (rblob pos:%lu len:%lu) read failed:%s\n", 
+                        ctx->pos, ctx->length, spdk_strerror(rberrno));
+            ctx->cb_fn(ctx->arg, rberrno);
+            delete ctx;
+            return;
+        }   
+
+        auto result = ctx->check(ctx->bl, ctx->pos);
+        auto all_valid = std::get<0>(result);
+        auto valid_size = std::get<1>(result);
+        auto next_unit = std::get<2>(result);
+        if(next_unit > ctx->length)
+            ctx->length *= 2;
+        SPDK_INFOLOG(object_store, "load rblob: check res [%d, %lu, %lu]\n", all_valid, valid_size, next_unit);
+        if(all_valid && valid_size > 0){
+            ctx->pos += valid_size;
+            free_buffer_list(ctx->bl);
+            SPDK_INFOLOG(object_store, "load rblob: read pos %lu length %lu\n", ctx->pos, ctx->length);
+            ctx->bl = std::move(make_buffer_list(ctx->length / 4096));
+            ctx->rblob->read(ctx->pos, ctx->length, ctx->bl, &rolling_blob::load_read_done, ctx, true);
+            return;
+        }else{
+            ctx->pos += valid_size;
+            SPDK_INFOLOG(object_store, "load rblob: read pos %lu length %lu\n", ctx->pos, ctx->length);
+            free_buffer_list(ctx->bl);
+            //读到了空的或无效的blob data,设置front
+            ctx->rblob->set_front(ctx->pos);
+            ctx->cb_fn(ctx->arg, 0);
+            delete ctx;
+            return;
+        }
+    }
+
+    /*
+     * 这里得check用于检测读取的数据是否有效，类型是std::function<std::tuple<bool, uint64_t, uint64_t> (buffer_list &, uint64_t)>，
+     *  check函数的第一个参数是读取的数据，第二个参数是读取数据的起始位置。 返回值是一个tuple，第一个成员表示数据是否完全有效，第二个成员
+     * 是数据中有效的长度，第三个表示下次要读的长度（如果为0，则还按之前的长度来读取）
+     */
+    void load(rblob_op_complete cb_fn, void* arg, check_and_handle_data_func check, uint64_t read_unit = default_load_read_size){
+        auto load_md_done = [this, read_unit, cb_fn = std::move(cb_fn), check = std::move(check)](void *arg, int lerrno){
+            if(lerrno != 0){
+                cb_fn(arg, lerrno);
+                return;
+            } 
+
+            SPDK_INFOLOG(object_store, "load rblob: after load md back_pos %lu front_pos %lu\n", back_pos(), front_pos());
+            uint64_t start = back_pos();  
+            load_rblob_ctx* ctx = new load_rblob_ctx{.rblob = this, .cb_fn = std::move(cb_fn), .arg = arg, 
+                                        .check = std::move(check), .pos = start, .length = read_unit};
+            ctx->bl = std::move(make_buffer_list(read_unit / 4096));
+            read(start, read_unit, ctx->bl, load_read_done, ctx, true);    
+        };
+
+        load_md(std::move(load_md_done), arg);
+    }
 public:
     void close(rblob_op_complete cb_fn, void* arg) {
       struct rblob_close_ctx *ctx = new rblob_close_ctx(cb_fn, arg);
@@ -491,6 +648,14 @@ public:
       return sstream.str();
     }
 
+    /*
+     *  只有在load时才会调用
+     * 
+     */
+    void set_front(uint64_t pos){
+        front.pos = pos;
+        front.lba = pos_to_lba(front.pos);        
+    }
 private:
     bool is_rolled() {
         return front.pos / size()  != back.pos / size();
@@ -516,8 +681,10 @@ private:
         return end() - pos % size();
     }
 
-
-
+    uint64_t begin_to_front() {
+        return front.pos % size();
+    }
+    
     // 可用区域的 begin 和 end
     uint64_t begin() { return 0; }
     uint64_t end() { return blob_size - super_size; }
@@ -578,7 +745,6 @@ struct make_rblob_ctx {
     struct spdk_blob_store *bs;
     struct spdk_io_channel *channel;
 
-    uint64_t blob_size;
     make_rblob_complete cb_fn;
     void* arg;
 };
@@ -595,8 +761,9 @@ make_open_done(void *arg, struct spdk_blob *blob, int rberrno) {
       return;
   }
 
+  uint64_t blob_size = spdk_blob_get_num_clusters(blob) * spdk_bs_get_cluster_size(ctx->bs);
   SPDK_NOTICELOG("open rblob success\n");
-  struct rolling_blob* rblob = new rolling_blob(blob, ctx->channel, ctx->blob_size);
+  struct rolling_blob* rblob = new rolling_blob(blob, ctx->channel, blob_size);
   ctx->cb_fn(ctx->arg, rblob, 0);
   delete ctx;
 }
@@ -620,9 +787,23 @@ inline void make_rolling_blob(struct spdk_blob_store *bs, struct spdk_io_channel
 {
   struct make_rblob_ctx* ctx;
   struct spdk_blob_opts opts;
-
-  ctx = new make_rblob_ctx(bs, channel, size, cb_fn, arg);
+  
+  ctx = new make_rblob_ctx(bs, channel, cb_fn, arg);
   spdk_blob_opts_init(&opts, sizeof(opts));
   opts.num_clusters = size / spdk_bs_get_cluster_size(bs);
   spdk_bs_create_blob_ext(bs, &opts, make_create_done, ctx);
+}
+
+inline void open_rolling_blob(spdk_blob_id blob_id, struct spdk_blob_store *bs, struct spdk_io_channel *channel,
+                        make_rblob_complete cb_fn, void* arg){
+  struct make_rblob_ctx* ctx = new make_rblob_ctx(bs, channel, cb_fn, arg);
+
+  spdk_bs_open_blob(bs, blob_id, make_open_done, ctx);
+}
+
+inline struct rolling_blob* make_rolling_blob(struct spdk_blob_store *bs, struct spdk_io_channel *channel, 
+                        struct spdk_blob* blob){
+  uint64_t blob_size = spdk_blob_get_num_clusters(blob) * spdk_bs_get_cluster_size(bs);  
+  struct rolling_blob* rblob = new rolling_blob(blob, channel, blob_size);
+  return rblob;
 }

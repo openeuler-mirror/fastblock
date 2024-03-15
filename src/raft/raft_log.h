@@ -20,7 +20,7 @@
 #include "localstore/disk_log.h"
 #include "localstore/spdk_buffer.h"
 
-struct raft_cbs_t;
+class raft_server_t;
 
 class raft_log
 {
@@ -28,19 +28,19 @@ public:
     raft_log(disk_log* log)
     : _log(log)
     , _next_idx(1)
-    , _base(0)
-    , _base_term(0)
-    , _max_applied_entry_num_in_cache(100) {}
+    , _max_applied_entry_num_in_cache(500) {}
 
-    void log_set_raft(void* raft){
+    void log_set_raft(raft_server_t* raft){
         _raft = raft;
     }
 
     /**
-     * Add 'n' entries to the log with valid (positive, non-zero) IDs
-     * that haven't already been added and save the number of successfully
-     * appended entries in 'n' */
-    int log_append(std::vector<std::pair<std::shared_ptr<raft_entry_t>, context*>>& entries);
+     * Add 'n' entries to the log cache
+     */
+    int log_append(std::vector<std::pair<std::shared_ptr<raft_entry_t>, utils::context*>>& entries);
+
+    int log_append(std::shared_ptr<raft_entry_t>, utils::context*);
+
 
     log_entry_t raft_entry_to_log_entry(raft_entry_t& raft_entry) {
         log_entry_t entry;
@@ -68,7 +68,7 @@ public:
         return entry;
     }
 
-    void disk_append(raft_index_t start_idx, raft_index_t end_idx, context* complete){
+    void disk_append(raft_index_t start_idx, raft_index_t end_idx, utils::context* complete){
         std::vector<std::shared_ptr<raft_entry_t>> raft_entries;
         _entries.get_between(start_idx, end_idx, raft_entries);
         SPDK_INFOLOG(pg_group, "start_idx:%lu end_idx:%lu.\n", start_idx, end_idx);
@@ -89,7 +89,7 @@ public:
             [log_entries](void *arg, int rberrno) mutable
             {
                 SPDK_INFOLOG(pg_group, "after disk_append.\n");
-                context *ctx = (context *)arg;
+                utils::context *ctx = (utils::context *)arg;
                 for(auto & entry : log_entries){
                     free_buffer_list(entry.data);
                 }
@@ -103,7 +103,6 @@ public:
         raft_entry.set_term(log_entry.term_id);
         raft_entry.set_idx(log_entry.index);
         raft_entry.set_type(log_entry.type);
-        raft_entry.set_obj_name("");
         raft_entry.set_meta(log_entry.meta);
         std::string data;
         data.reserve(log_entry.data.bytes());
@@ -173,23 +172,20 @@ public:
 
     void log_clear()
     {
-        _base = 0;
-        _base_term = 0;
         _entries.clear();
     }
+  
+    //截断idx（包含）之后的log entry
+    int log_truncate(raft_index_t idx, log_op_complete cb_fn, void* arg);
 
-    /*
-    */
-    int log_truncate(raft_index_t idx);
-
-    raft_index_t log_get_base()
+    raft_index_t log_get_base_index()
     {
-        return _base;
+        return _log->get_lowest_index();
     }
 
     raft_term_t log_get_base_term()
     {
-        return _base_term;
+        return _log->get_term_id(_log->get_lowest_index());
     }
 
     raft_index_t get_last_cache_entry(){
@@ -219,7 +215,7 @@ public:
         auto first_entry_idx = first_log_in_cache();
         if(first_entry_idx > last_applied_idx + 1){
             //说明raft启动时没有加载未apply的日志到cache
-            SPDK_ERRLOG("first entry: %ld in cache > last_applied_idx + 1: %ld\n",
+            SPDK_INFOLOG(pg_group, "first entry: %ld in cache > last_applied_idx + 1: %ld\n", 
                     first_log_in_cache(), last_applied_idx + 1);
             return;
         }
@@ -235,12 +231,55 @@ public:
         set_trim_index(idx);
     }
 
-    void destroy_log(){
+    void stop(){
         if(_log){
             _log->stop([](void*, int){}, nullptr);
             delete _log;
             _log = nullptr;
         }
+    }
+
+    void clear_config_cache(int state){
+        while(!_config_cache.empty()){
+            auto &ec = _config_cache.front();
+            auto complete = ec.second;
+            if(complete)
+                complete->complete(state);
+            _config_cache.pop_front();
+        }
+    }
+
+    int config_cache_flush();
+
+    std::shared_ptr<raft_entry_t> get_entry(raft_index_t idx){
+        return _entries.get(idx);
+    }
+
+    void set_next_idx(raft_index_t next_idx){
+        _next_idx = next_idx;
+    }
+
+    raft_index_t get_next_idx(){
+        return _next_idx;
+    }
+
+    void set_disk_log_index(raft_index_t index, log_op_complete cb_fn, void* arg){
+        if(_log){
+            _log->set_index(index, std::move(cb_fn), arg);
+        }
+    }
+
+    void load(log_op_complete cb_fn, void* arg){
+        _log->load(
+          [this, cb_fn = std::move(cb_fn)](void* arg, int lerrno){
+            if(lerrno != 0){
+                cb_fn(arg, lerrno);
+                return;
+            }
+            _next_idx = _log->get_highest_index() + 1;
+            cb_fn(arg, lerrno);
+          },
+          arg);
     }
 
 private:
@@ -251,19 +290,16 @@ private:
 
     raft_index_t _next_idx;
 
-    /* we compact the log, and thus need to increment the Base Log Index */
-    raft_index_t _base;
-
-    /* term of the base */
-    raft_term_t _base_term;
-
     // raft_entry_t* entries;
     entry_cache  _entries;
 
-    void* _raft;
-
+    raft_server_t* _raft;
+    
     /* The maximum number of entries that have been applied in the cache */
     uint32_t _max_applied_entry_num_in_cache;
+
+    //成员变更的entry需要单独处理，此_cache是为这个目的
+    std::deque<std::pair<std::shared_ptr<raft_entry_t>, utils::context*>> _config_cache;
 };
 
 std::shared_ptr<raft_log> log_new(disk_log *log);

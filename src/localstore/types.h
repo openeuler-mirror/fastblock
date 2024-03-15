@@ -17,6 +17,10 @@
 #include <spdk/blob.h>
 #include <string>
 #include <optional>
+#include <variant>
+#include <functional>
+#include <map>
+#include <spdk/string.h>
 
 struct fb_blob {
     struct spdk_blob* blob   = nullptr;
@@ -28,10 +32,10 @@ enum class blob_type : uint32_t {
   object = 1,
   kv = 2,
   kv_checkpoint = 3,
-  kv_checkpoint_new = 4,
+  kv_checkpoint_new = 4
 };
 
-inline std::string type_string(blob_type& type) {
+inline std::string type_string(const blob_type& type) {
   switch (type) {
     case blob_type::log:
       return "blob_type::log";
@@ -46,6 +50,92 @@ inline std::string type_string(blob_type& type) {
     default:
       return "blob_type::unknown";
   }
+}
+
+using xattr_val_type = std::variant<blob_type, uint32_t, std::string>;
+
+using rblob_xattr_complete = std::function<void (void *, int)>;
+
+struct set_xattr_ctx {
+    rblob_xattr_complete cb_fn;
+    void* arg;
+};
+
+inline void sync_md_done(void *arg, int bserrno){
+    struct set_xattr_ctx *ctx = (struct set_xattr_ctx *)arg;
+
+    if (bserrno) {
+        SPDK_ERRLOG("set_blob_xattr failed. error:%s\n", spdk_strerror(bserrno));
+        ctx->cb_fn(ctx->arg, bserrno);
+        delete ctx;
+        return;
+    }
+  
+    ctx->cb_fn(ctx->arg, 0);
+    delete ctx;    
+}
+
+inline void set_blob_xattr(
+        struct spdk_blob* blob, 
+        std::map<std::string, xattr_val_type>& xattr, 
+        rblob_xattr_complete&& cb_fn, 
+        void* arg){
+    std::map<std::string, int> xattr_int = {
+        {"type",  1},
+        {"shard", 2},
+        {"pg",    3},
+        {"name",  4},
+        {"snap",  5},
+    };
+
+    auto it = xattr.begin();
+    std::string key;
+    while(it != xattr.end()){
+        key = it->first;
+        if(xattr_int.find(key) == xattr_int.end()){
+            it++;
+            continue;
+        }
+
+        int key_int = xattr_int[key];
+        switch (key_int){
+        case 1:
+        {
+            blob_type type = std::get<blob_type>(it->second);
+            spdk_blob_set_xattr(blob, key.c_str(), &type, sizeof(type));
+            break;
+        }
+        case 2:
+        {
+            uint32_t shard_id = std::get<uint32_t>(it->second);
+            spdk_blob_set_xattr(blob, key.c_str(), &shard_id, sizeof(shard_id));
+            break;
+        }
+        case 3:
+        {
+            std::string pg = std::get<std::string>(it->second);
+            spdk_blob_set_xattr(blob, key.c_str(), pg.c_str(), pg.size());
+            break;
+        }
+        case 4:
+        {
+            std::string name = std::get<std::string>(it->second);
+            spdk_blob_set_xattr(blob, key.c_str(), name.c_str(), name.size());
+            break;
+        }
+        case 5:
+        {
+            std::string snap = std::get<std::string>(it->second);
+            spdk_blob_set_xattr(blob, key.c_str(), snap.c_str(), snap.size());
+            break; 
+        }
+        default:
+            break;           
+        }
+        it++;
+    }
+    struct set_xattr_ctx *ctx = new set_xattr_ctx{.cb_fn = std::move(cb_fn), .arg = arg};
+    spdk_blob_sync_md(blob, sync_md_done, ctx);
 }
 
 /**

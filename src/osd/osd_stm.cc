@@ -10,7 +10,6 @@
  */
 
 #include "osd_stm.h"
-#include "localstore/blob_manager.h"
 #include "raft/raft.h"
 #include "rpc/osd_msg.pb.h"
 #include "utils/utils.h"
@@ -23,18 +22,18 @@
 
 osd_stm::osd_stm()
 : state_machine()
-, _store(global_blobstore(), global_io_channel())
 , _object_rw_lock()
 {}
 
-void osd_stm::apply(std::shared_ptr<raft_entry_t> entry, context *complete){
-    std::string obj_name = entry->obj_name();
+void osd_stm::apply(std::shared_ptr<raft_entry_t> entry, utils::context *complete){
     if(entry->type() == RAFT_LOGTYPE_WRITE){
         osd::write_cmd write;
         write.ParseFromString(entry->meta());
         write_obj(write.object_name(), write.offset(), entry->data(), complete);
     }else if(entry->type() == RAFT_LOGTYPE_DELETE){
-        delete_obj(obj_name, complete);
+        osd::delete_cmd del;
+        del.ParseFromString(entry->meta());
+        delete_obj(del.object_name(), complete);
     }else{
         complete->complete(err::E_SUCCESS);
     }
@@ -44,7 +43,7 @@ struct write_obj_ctx{
     osd_stm* stm;
     std::string obj_name;
     char* buf;
-    context *complete;
+    utils::context *complete;
 };
 
 void write_obj_done(void *arg, int obj_errno){
@@ -55,15 +54,19 @@ void write_obj_done(void *arg, int obj_errno){
     delete ctx;
 }
 
-void osd_stm::write_obj(const std::string& obj_name, uint64_t offset, const std::string& data, context *complete){
-    uint64_t len = align_up<uint64_t>(data.size(), 512 * BLOCK_UNITS);
+void osd_stm::write_obj(const std::string& obj_name, uint64_t offset, const std::string& data, utils::context *complete){
+    uint64_t len = utils::align_up<uint64_t>(data.size(), 512 * BLOCK_UNITS);
     char* buf = (char*)spdk_zmalloc(len, 0x1000, NULL, SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
     memcpy(buf, data.c_str(), data.size());
     write_obj_ctx * ctx = new write_obj_ctx{this, obj_name, buf, complete};
-    _store.write(obj_name, offset, buf, data.size(), write_obj_done, ctx);
+    std::map<std::string, xattr_val_type> xattr;
+    xattr["type"] = blob_type::object;
+    xattr["pg"] = get_pg_name();
+    SPDK_INFOLOG(osd, "write obj %s xattr type: %u pg: %s\n", obj_name.c_str(), (uint32_t)blob_type::object, get_pg_name().c_str());
+    _store.write(xattr, obj_name, offset, buf, data.size(), write_obj_done, ctx);
 }
 
-void osd_stm::delete_obj(const std::string& obj_name, context *complete){
+void osd_stm::delete_obj(const std::string& obj_name, utils::context *complete){
     //delete object
 
     _object_rw_lock.unlock(obj_name, operation_type::DELETE);
@@ -80,7 +83,7 @@ concept rsp_type_valid = (
 
 template<class rsp_type>
 requires rsp_type_valid<rsp_type>
-struct osd_service_complete : public context{
+struct osd_service_complete : public utils::context{
     using type = std::remove_reference_t<std::decay_t<rsp_type>>;
 
     rsp_type* response;
@@ -113,7 +116,7 @@ struct osd_service_complete : public context{
 
 using lock_complete_func = std::function<void ()>;
 
-struct lock_complete : public context{
+struct lock_complete : public utils::context{
     lock_complete_func func;
     lock_complete(lock_complete_func&& _func)
     : func(std::move(_func)) {}
@@ -144,7 +147,6 @@ void osd_stm::write_and_wait(
 
         auto entry_ptr = std::make_shared<raft_entry_t>();
         entry_ptr->set_type(RAFT_LOGTYPE_WRITE);
-        entry_ptr->set_obj_name(request->object_name());
         entry_ptr->set_meta(std::move(buf));
         entry_ptr->set_data(std::move(request->data()));
 
@@ -161,7 +163,7 @@ void osd_stm::write_and_wait(
 
 struct read_obj_ctx{
     char* buf;
-    context *complete;
+    utils::context *complete;
     osd::read_reply* response;
     uint64_t size;
 };
@@ -197,11 +199,14 @@ void osd_stm::read_and_wait(
                      request->pool_id(), request->pg_id(), request->object_name().c_str(), request->offset(),
                      request->length());
 
-        uint64_t len = align_up<uint64_t>(request->length(), 512 * BLOCK_UNITS);
+        uint64_t len = utils::align_up<uint64_t>(request->length(), 512 * BLOCK_UNITS);
         char* buf = (char*)spdk_zmalloc(len, 0x1000, NULL, SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
         read_obj_ctx * ctx = new read_obj_ctx{buf, read_complete, response, request->length()};
 
-        _store.read(request->object_name(), request->offset(), buf, request->length(), read_obj_done, ctx);
+        std::map<std::string, xattr_val_type> xattr;
+        xattr["type"] = blob_type::object;
+        xattr["pg"] = get_pg_name();
+        _store.read(xattr, request->object_name(), request->offset(), buf, request->length(), read_obj_done, ctx);
     };
 
     lock_complete *complete = new lock_complete(std::move(read_func));
@@ -226,7 +231,6 @@ void osd_stm::delete_and_wait(
 
         auto entry_ptr = std::make_shared<raft_entry_t>();
         entry_ptr->set_type(RAFT_LOGTYPE_DELETE);
-        entry_ptr->set_obj_name(request->object_name());
         entry_ptr->set_meta(std::move(buf));
 
         auto ret = get_raft()->raft_write_entry(entry_ptr, delete_complete);

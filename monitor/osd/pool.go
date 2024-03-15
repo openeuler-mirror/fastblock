@@ -42,14 +42,18 @@ type PGID uint64
 //
 // TODO: for each pool or any incremental update?
 type PoolPGsConfig struct {
-	Version int64               `json:"version,omitempty"`
-	PgMap   map[string]PGConfig `json:"pgmap,omitempty"`
+	Version int64                   `json:"version,omitempty"`
+	PgMap   map[string]PGConfig     `json:"pgmap,omitempty"`
 }
 
 // PGConfig for each pg in /config/pgmap, output.
 // Example: {"1":[1,2,3]}
 // TODO: use OSDID, not string. It requires parse change.
-type PGConfig []int
+// type PGConfig []int
+type PGConfig struct {
+    Version int64              `json:"version,omitempty"`
+    OsdList  []int             `json:"osdlist,omitempty"`
+}
 
 // PoolID defines pool ID.
 type PoolID int32
@@ -86,6 +90,7 @@ type PoolConfig struct {
 //已经包含了pg的分配表
 var AllPools map[PoolID]*PoolConfig
 var lastSeenPoolId int32
+var osdmapVersion  int64
 
 // findUsablePoolId finds the first available pool id
 // we don't reuse pool ids, so it always increaing
@@ -240,11 +245,12 @@ func ProcessGetPgMapMessage(ctx context.Context, pvs map[int32]int64) (*msg.GetP
 			for pgid, pc := range ppc.PoolPgMap.PgMap {
 				pgidToi, _ := strconv.Atoi(pgid)
 				var osdlist []int32
-				for _, oid := range pc {
+				for _, oid := range pc.OsdList {
 					osdlist = append(osdlist, int32(oid))
 				}
 				pi := &msg.PGInfo{
 					Pgid:  int32(pgidToi),
+					Version: pc.Version,
 					Osdid: osdlist,
 				}
 				pginfos.Pi = append(pginfos.Pi, pi)
@@ -275,11 +281,12 @@ func ProcessGetPgMapMessage(ctx context.Context, pvs map[int32]int64) (*msg.GetP
 				for pgid, pc := range ppc.PoolPgMap.PgMap {
 					pgidToi, _ := strconv.Atoi(pgid)
 					var osdlist []int32
-					for _, oid := range pc {
+					for _, oid := range pc.OsdList {
 						osdlist = append(osdlist, int32(oid))
 					}
 					pi := &msg.PGInfo{
 						Pgid:  int32(pgidToi),
+						Version: pc.Version,
 						Osdid: osdlist,
 					}
 					pginfos.Pi = append(pginfos.Pi, pi)

@@ -14,6 +14,9 @@
 #include <random>
 #include <string>
 
+#include "spdk/env.h"
+namespace utils {
+    
 class context {
 protected:
     virtual void finish(int r) = 0;
@@ -35,6 +38,46 @@ private:
     bool _needs_delete;
 };
 
+using complete_fun = std::function<void (void *arg, int res)>;
+struct multi_complete : public context{
+    int count;
+    int num;
+    pthread_mutex_t mutex;
+    complete_fun fun;
+    void *arg;
+
+    multi_complete(int _count, complete_fun _fun, void *_arg)
+    : context(false)
+    , count(_count)
+    , num(0)
+    , mutex(PTHREAD_MUTEX_INITIALIZER)
+    , fun(_fun)
+    , arg(_arg) {}
+
+    void finish_del(int) override{
+        if(_need_mutex())
+            pthread_mutex_lock(&mutex);
+        num++;
+        if(num == count){
+            if(_need_mutex())
+                pthread_mutex_unlock(&mutex);
+            fun(arg, 0);
+            delete this;
+        }else{
+            if(_need_mutex())
+                pthread_mutex_unlock(&mutex);
+        }
+    }
+
+    void finish(int ) override {}
+private:
+    bool _need_mutex(){
+        if(count > 1 && spdk_env_get_core_count() > 1)
+            return true;
+        return false;
+    }    
+};
+
 struct osd_info_t
 {
 	int node_id;
@@ -43,6 +86,12 @@ struct osd_info_t
 	bool ispendingcreate;
 	int port;
 	std::string address;
+};
+
+struct pg_info_type {
+    uint64_t pg_id{0};
+    int64_t   version{0};
+    std::vector<int> osds{};
 };
 
 template <typename T>
@@ -62,8 +111,6 @@ inline int64_t get_time(){
     auto now_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(now);
     return now_ms.time_since_epoch().count();
 }
-
-namespace utils {
 
 template<typename T>
 static T random_int(const T min, const T max) {

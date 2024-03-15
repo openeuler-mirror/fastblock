@@ -57,7 +57,7 @@ struct leader_request_stack_type {
     osd::rpc_service_osd_Stub* stub{nullptr};
     std::unique_ptr<osd::pg_leader_request> leader_req{nullptr};
     std::unique_ptr<osd::pg_leader_response> leader_resp{nullptr};
-    ::osd_info_t* osd{nullptr};
+    utils::osd_info_t* osd{nullptr};
     uint64_t leader_request_id{};
     fblock_client* this_client{nullptr};
 };
@@ -105,7 +105,7 @@ private:
         return ret;
     }
 
-    auto get_stub(::osd_info_t *osdinfo) {
+    auto get_stub(utils::osd_info_t *osdinfo) {
         return get_stub(osdinfo->node_id, osdinfo->address, osdinfo->port);
     }
 
@@ -398,6 +398,8 @@ public:
                   return false;
               }
 
+              SPDK_INFOLOG(libblk, "send get_leader request for pg %lu.%lu to osd %d\n",
+                      stack_ptr->leader_req->pool_id(), stack_ptr->leader_req->pg_id(), stack_ptr->osd->node_id);
               auto done = google::protobuf::NewCallback(
                 this, &fblock_client::on_leader_acquired, stack_ptr.get());
               stack_ptr->stub->process_get_leader(
@@ -519,7 +521,9 @@ private:
         osd_info->leader_id = resp->leader_id();
         osd_info->addr = resp->leader_addr();
         osd_info->port = resp->leader_port();
-        SPDK_DEBUGLOG(libblk, "leader osd address: '%s:%d'\n", osd_info->addr.c_str(), osd_info->port);
+        SPDK_DEBUGLOG(libblk, "Got leader osd of pg %lu.%lu: osd id %d osd address: '%s:%d'\n", 
+                it->second->leader_req->pool_id(), it->second->leader_req->pg_id(), osd_info->leader_id, 
+                osd_info->addr.c_str(), osd_info->port);
 
         update_leader_state(info_it->second.get());
         if (not info_it->second->is_valid) {

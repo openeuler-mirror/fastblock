@@ -16,18 +16,44 @@
 
 #include <assert.h>
 
-#include "raft.h"
+#include "raft/raft_node.h"
+#include "raft/configuration_manager.h"
+#include "spdk/log.h"
 
-void raft_node::raft_node_set_voting(int voting)
-{
-    if (voting)
-    {
-        assert(!raft_node_is_voting());
-        _flags |= RAFT_NODE_VOTING;
-    }
-    else
-    {
-        assert(raft_node_is_voting());
-        _flags &= ~RAFT_NODE_VOTING;
-    }
+void raft_nodes::update_with_node_configuration(node_configuration& cfg, 
+        std::vector<std::shared_ptr<raft_node>> new_add_nodes){
+    auto &node_infos = cfg.get_nodes();
+    for(auto& node_info : node_infos){
+        if(_nodes.contains(node_info.node_id()))
+            continue;
+        std::shared_ptr<raft_node> add_node = nullptr;
+        for(auto new_add_node : new_add_nodes){
+            if(new_add_node->raft_node_get_id() == node_info.node_id()){
+                add_node = new_add_node;
+                break;
+            }
+        }
+        if(add_node){
+            SPDK_INFOLOG(pg_group, "add node %d\n", node_info.node_id());
+            _nodes.emplace(node_info.node_id(), add_node);
+        }else{
+            SPDK_INFOLOG(pg_group, "add node %d\n", node_info.node_id());
+            auto node = std::make_shared<raft_node>(node_info);
+            _nodes.emplace(node_info.node_id(), node);
+        }
+    }   
+
+    absl::erase_if(_nodes, [&cfg](const nodes_type::value_type& p){
+        bool no_found = true;
+        for(auto node_id : cfg.get_nodes_id()){
+            if(p.first == node_id){
+                no_found = false;
+                break;
+            }
+        }
+        if(no_found)
+            SPDK_INFOLOG(pg_group, "remove node %d\n", p.first);
+        return no_found;
+    });     
 }
+

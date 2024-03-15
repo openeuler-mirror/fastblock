@@ -10,6 +10,7 @@
  */
 
 #include "object_store.h"
+#include "base/core_sharded.h"
 
 #include <spdk/log.h>
 #include <functional>
@@ -48,6 +49,9 @@ struct blob_create_ctx {
   struct object_store* mgr;
   object_rw_complete cb_fn;
   void*              arg;
+  uint32_t shard_id;
+  std::string pg;
+  blob_type type;
 };
 
 struct blob_stop_ctx {
@@ -66,6 +70,9 @@ struct snap_create_ctx {
 
   object_store::snap       snap;
   object_store::container* hashtable;
+  uint32_t shard_id;
+  std::string pg;
+  blob_type type;
 };
 
 struct snap_delete_ctx {
@@ -85,6 +92,9 @@ struct recover_create_ctx {
 
   spdk_blob_store*         bs;
   object_store::container* hashtable;
+  uint32_t shard_id;
+  std::string pg;
+  blob_type type;
 };
 
 //读取快照时函数的上下文状态
@@ -112,7 +122,23 @@ object_get_xattr_value(void *arg, const char *name, const void **value, size_t *
 		*value = ctx->object_name.c_str();
 		*value_len = ctx->object_name.size();
 		return;
-	}
+  } else if(!strcmp("type", name)){
+		*value = &(ctx->type);
+		*value_len = sizeof(ctx->type);    
+    return; 
+	} else if(!strcmp("shard", name)){
+		*value = &(ctx->shard_id);
+		*value_len = sizeof(ctx->shard_id); 
+    return;   
+  } else if(!strcmp("pg", name)){
+		*value = ctx->pg.c_str();
+		*value_len = ctx->pg.size();    
+    return; 
+  } else if(!strcmp("name", name)){
+		*value = ctx->object_name.c_str();
+		*value_len = ctx->object_name.size(); 
+    return; 
+  }
 	*value = NULL;
 	*value_len = 0;
 }
@@ -125,6 +151,26 @@ snapshot_get_xattr_value(void *arg, const char *name, const void **value, size_t
 		*value = ctx->object_name.c_str();
 		*value_len = ctx->object_name.size();
 		return;
+  } else if(!strcmp("type", name)){
+		*value = &(ctx->type);
+		*value_len = sizeof(ctx->type);    
+    return; 
+	} else if(!strcmp("shard", name)){
+		*value = &(ctx->shard_id);
+		*value_len = sizeof(ctx->shard_id); 
+    return;   
+  } else if(!strcmp("pg", name)){
+		*value = ctx->pg.c_str();
+		*value_len = ctx->pg.size();    
+    return; 
+  } else if(!strcmp("name", name)){
+		*value = ctx->object_name.c_str();
+		*value_len = ctx->object_name.size(); 
+    return; 
+	} else if(!strcmp("snap", name)){
+		*value = ctx->snap_name.c_str();
+		*value_len = ctx->snap_name.size(); 
+    return;     
 	}
 	*value = NULL;
 	*value_len = 0;
@@ -138,26 +184,47 @@ recovery_get_xattr_value(void *arg, const char *name, const void **value, size_t
 		*value = ctx->object_name.c_str();
 		*value_len = ctx->object_name.size();
 		return;
-	}
+  } else if(!strcmp("type", name)){
+		*value = &(ctx->type);
+		*value_len = sizeof(ctx->type);    
+    return; 
+	} else if(!strcmp("shard", name)){
+		*value = &(ctx->shard_id);
+		*value_len = sizeof(ctx->shard_id); 
+    return;   
+  } else if(!strcmp("pg", name)){
+		*value = ctx->pg.c_str();
+		*value_len = ctx->pg.size();    
+    return; 
+  } else if(!strcmp("name", name)){
+		*value = ctx->object_name.c_str();
+		*value_len = ctx->object_name.size(); 
+    return; 
+	} else if(!strcmp("recover", name)){
+		*value = ctx->object_name.c_str();
+		*value_len = ctx->object_name.size(); 
+    return;     
+  }
 	*value = NULL;
 	*value_len = 0;
 }
 
-void object_store::write(std::string object_name,
+void object_store::write(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
                       uint64_t offset, char* buf, uint64_t len,
                       object_rw_complete cb_fn, void* arg)
 {
-    readwrite(object_name, offset, buf, len, cb_fn, arg, 0);
+    readwrite(xattr, object_name, offset, buf, len, cb_fn, arg, 0);
 }
 
-void object_store::read(std::string object_name,
+void object_store::read(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
                      uint64_t offset, char* buf, uint64_t len,
                      object_rw_complete cb_fn, void* arg)
 {
-    readwrite(object_name, offset, buf, len, cb_fn, arg, 1);
+    readwrite(xattr, object_name, offset, buf, len, cb_fn, arg, 1);
 }
 
-void object_store::snap_create(std::string object_name, std::string snap_name, object_rw_complete cb_fn, void* arg) {
+void object_store::snap_create(std::map<std::string, xattr_val_type>& xattr, std::string object_name, 
+        std::string snap_name, object_rw_complete cb_fn, void* arg) {
   struct snap_create_ctx* ctx;
   auto it = table.find(object_name);
   if (it == table.end()) {
@@ -173,11 +240,23 @@ void object_store::snap_create(std::string object_name, std::string snap_name, o
   ctx->arg = arg;
   ctx->hashtable = &table;
 
+  auto item = xattr.begin();
+  while(item != xattr.end()){
+    if(item->first == "type"){
+      ctx->type = std::get<blob_type>(item->second);  
+    }else if(item->first == "pg"){
+      ctx->pg = std::get<std::string>(item->second);
+    }
+    item++;
+  }  
+  uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
+  ctx->shard_id = shard_id;  
+
   //调用spdk的spdk_bs_create_snapshot函数，创建快照，并通过snap_done返回创建的结果。
   struct spdk_blob_xattr_opts snapshot_xattrs;
-  snapshot_xattrs.count = 1;
-  char *xattr_names[] = {"object"};
+  char *xattr_names[] = {"object", "type", "shard", "pg", "name", "snap"};
   snapshot_xattrs.names = xattr_names;
+  snapshot_xattrs.count = SPDK_COUNTOF(xattr_names);
   snapshot_xattrs.ctx = ctx;
   snapshot_xattrs.get_value = snapshot_get_xattr_value;
 
@@ -270,7 +349,7 @@ void object_store::snap_delete_complete(void *arg, int objerrno) {
   return;
 }
 /************************************************************************************************************************************/
-void object_store::recovery_create(std::string object_name, object_rw_complete cb_fn, void* arg) {
+void object_store::recovery_create(std::map<std::string, xattr_val_type>& xattr, std::string object_name, object_rw_complete cb_fn, void* arg) {
   struct recover_create_ctx* ctx;
   auto it = table.find(object_name);
   if (it == table.end()) {
@@ -285,11 +364,23 @@ void object_store::recovery_create(std::string object_name, object_rw_complete c
   ctx->arg = arg;
   ctx->bs = bs;
   ctx->hashtable = &table;
+  auto item = xattr.begin();
+  while(item != xattr.end()){
+    if(item->first == "type"){
+      ctx->type = std::get<blob_type>(item->second);  
+    }else if(item->first == "pg"){
+      ctx->pg = std::get<std::string>(item->second);
+    }
+    item++;
+  }  
+  uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
+  ctx->shard_id = shard_id;
+
 
   struct spdk_blob_xattr_opts recovery_xattrs;
-  recovery_xattrs.count = 1;
-  char *xattr_names[] = {"object"};
+  char *xattr_names[] = {"object", "type", "shard", "pg", "name", "recover"};
   recovery_xattrs.names = xattr_names;
+  recovery_xattrs.count = SPDK_COUNTOF(xattr_names);
   recovery_xattrs.ctx = ctx;
   recovery_xattrs.get_value = recovery_get_xattr_value;
   // SPDK_NOTICELOG("object:%s recovery create, origin id:%lx\n", ctx->object_name.c_str(), it->second.origin.blobid);
@@ -453,13 +544,13 @@ void object_store::recovery_read_complete(void *arg, int objerrno) {
   delete ctx;
 }
 
-void object_store::readwrite(std::string object_name,
+void object_store::readwrite(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
                      uint64_t offset, char* buf, uint64_t len,
                      object_rw_complete cb_fn, void* arg, bool is_read)
 {
     SPDK_DEBUGLOG(object_store, "object %s offset:%lu len:%lu\n", object_name.c_str(), offset, len);
     if (offset + len > blob_size) {
-      SPDK_WARNLOG("object %s offset:%lu len:%lu beyond blob size %u\n",
+      SPDK_DEBUGLOG(object_store, "object %s offset:%lu len:%lu beyond blob size %u\n",
           object_name.c_str(), offset, len, blob_size);
       len = blob_size - offset;
     }
@@ -472,6 +563,8 @@ void object_store::readwrite(std::string object_name,
         SPDK_DEBUGLOG(object_store, "object %s not found\n", object_name.c_str());
         struct blob_create_ctx* ctx = new blob_create_ctx();
         struct spdk_blob_opts opts;
+        uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
+
         ctx->is_read = is_read;
         ctx->mgr = this;
         ctx->object_name = object_name;
@@ -480,14 +573,25 @@ void object_store::readwrite(std::string object_name,
         ctx->len = len;
         ctx->cb_fn = cb_fn;
         ctx->arg = arg;
+        auto it = xattr.begin();
+        while(it != xattr.end()){
+          if(it->first == "type"){
+            ctx->type = std::get<blob_type>(it->second);  
+          }else if(it->first == "pg"){
+            ctx->pg = std::get<std::string>(it->second);
+          }
+          it++;
+        }
+        ctx->shard_id = shard_id;
 
         spdk_blob_opts_init(&opts, sizeof(opts));
         opts.num_clusters = object_store::blob_cluster;
-        opts.xattrs.count = 1;
-        char *xattr_names[] = {"object"};
+        char *xattr_names[] = {"object", "type", "shard", "pg", "name"};
+        opts.xattrs.count = SPDK_COUNTOF(xattr_names);
         opts.xattrs.names = xattr_names;
         opts.xattrs.ctx = ctx;
         opts.xattrs.get_value = object_get_xattr_value;
+        SPDK_DEBUGLOG(object_store, "create blob, xattr type: %u pg: %s name: %s \n", (uint32_t)ctx->type, ctx->pg.c_str(), ctx->object_name.c_str());
         spdk_bs_create_blob_ext(bs, &opts, create_done, ctx);
     }
 }

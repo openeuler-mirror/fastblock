@@ -71,14 +71,27 @@ public:
         return iter->second;
     }
 
-    void remove_connect(uint32_t shard_id, int node_id){
-        if(shard_id >= _shard_cores.size())
+    void remove_connect(uint32_t shard_id, int node_id, auto&& cb, auto&& raft_cb){
+        if(shard_id >= _shard_cores.size()){
+            cb(false);
             return;
+        }
         auto iter = _cache[shard_id].find(node_id);
-        if(iter == _cache[shard_id].end())
+        if(iter == _cache[shard_id].end()){
+            cb(false);
             return;
-        iter->second->shutdown();
-        _cache[shard_id].erase(node_id);
+        }
+
+        _transport->remove_connection(iter->second, 
+          [this, node_id, shard_id, cb = std::move(cb), raft_cb = std::move(raft_cb)](bool is_ok){
+            if(is_ok){
+                ::pthread_mutex_lock(&_mutex);
+                _cache[shard_id].erase(node_id);
+                ::pthread_mutex_unlock(&_mutex);
+                raft_cb();
+            }
+            cb(is_ok);
+          });
     }
 
     void stop() noexcept {

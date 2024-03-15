@@ -192,6 +192,7 @@ private:
 
         // 保存每个index到pos和size的映射
         for (auto [idx, pos, size, term_id] : ctx->idx_pos) {
+            SPDK_INFOLOG(object_store, "++++ disk log append: index %lu pos %lu term_id %lu size %lu\n", idx, pos, term_id, size);
             ctx->log->maybe_index(idx, log_position{pos, size, term_id});
         }
 
@@ -242,7 +243,7 @@ public:
     // 只保留apply_index前面的1000条，超过1500条就trim一次
     bool maybe_trim() {
       _polls_count++;
-      if (_trim_index - _lowest_index > 1500) {
+      if (_trim_index > 1500 + _lowest_index) {
           // trim前： lowest_index: 100  apply_index: 1700
           //   trim:  从 100 到 700
           // trim后： lowest_index: 701  apply_index: 1700 (一共保留1000条)
@@ -283,6 +284,29 @@ public:
         _rblob->trim_back(trim_length, cb_fn, arg);
     }
 
+    /* 截断start_index（包括start_index）之后的log */
+    void truncate(uint64_t start_index, log_op_complete cb_fn, void* arg){
+        auto start_it = _index_map.find(start_index);
+        auto end_it = _index_map.end();
+
+        if(start_it == _index_map.end()){
+            SPDK_ERRLOG("can not find index :%lu \n", start_index);
+            cb_fn(arg, -EINVAL);
+            return;
+        }
+
+        uint64_t trim_length = 0;
+        for (auto it = start_it; it != end_it; it++) {
+            trim_length += it->second.size;
+        }
+
+        // 处理 disklog 中保存的数据
+        _index_map.erase(start_it, end_it);
+        _highest_index = start_index - 1;
+
+        _rblob->trim_front(trim_length, cb_fn, arg);
+    }
+
     void advance_trim_index(uint64_t index) {
         _trim_index = std::max(_trim_index, index);
     }
@@ -303,15 +327,102 @@ public:
       return sstream.str();
     }
 
+    uint64_t get_lowest_index(){
+        return _lowest_index;
+    }
+
+    uint64_t get_highest_index(){
+        return _highest_index;
+    }
+    /*
+     * follower节点在接收完leader的快照后，才能调用
+     * index之前（包括index）的对象都是通过快照发过来的，没有log，相当于在index的位置做了一个快照，
+     * index之前（包括index）的log可以trim掉了。但根据raft协议，这里follower都需要通过snapshot恢复数据了，log
+     * 中index（包括index）之后的数据（正常情况下不应该有数据）也需要删除了
+     */
+    void set_index(uint64_t index, log_op_complete cb_fn, void* arg){
+        auto trim_done = [this, cb_fn = std::move(cb_fn), index](void *arg, int rberrno){
+            _lowest_index = std::max(_lowest_index, index + 1);
+            _trim_index = std::max(_trim_index, index);
+            _highest_index = std::max(_highest_index, index);
+            cb_fn(arg, rberrno);
+        };
+
+        if(_index_map.empty()){
+            trim_done(arg, 0);
+        }else{
+            trim_back(_lowest_index, _highest_index, std::move(trim_done), arg);
+        }
+    }
+    
+    void set_blob_xattr(std::map<std::string, xattr_val_type>& xattr, log_op_complete&& cb_fn, void* arg){
+        _rblob->set_blob_xattr(xattr, std::move(cb_fn), arg);
+    }
+
+    void load(log_op_complete cb_fn, void* arg){
+        auto check_data = [this](buffer_list &bl, uint64_t pos) -> std::tuple<bool, uint64_t, uint64_t> {
+            auto bytes = bl.bytes();
+            size_t i = 0;
+
+            while(i < bytes){
+                log_entry_t entry;
+                spdk_buffer sbuf = bl.pop_front();
+                sbuf.reset();
+                DecodeLogHeader(sbuf, entry);
+                buffer_pool_put(sbuf);
+
+                /* 任期不能为0. 任期为0，表示这条log为空，或者是错误的 */
+                if(entry.term_id == 0){
+                    SPDK_INFOLOG(object_store, "invalid log entry, pos %lu\n", pos);
+                    return std::make_tuple(false, i, 0);  
+                }
+
+                /*
+                 *  header固定大小是4096
+                 *  
+                 */
+                if(entry.size > bytes - i - 4_KB){
+                    SPDK_INFOLOG(object_store, "incomplete log entry, pos %lu\n", pos);
+                    //剩余大小不足以解析出data
+                    return std::make_tuple(true, i, entry.size + 4_KB);
+                }
+                bl.pop_front_list(entry.size / 4096);
+                log_position log_pos{.pos = pos, .size = entry.size + 4_KB, .term_id = entry.term_id};
+                SPDK_INFOLOG(object_store, "--- disk log load: index %lu pos %lu term_id %lu size %lu\n", entry.index, pos, log_pos.term_id, log_pos.size);
+                maybe_index(entry.index, std::move(log_pos));
+                pos += entry.size + 4_KB;
+                i += entry.size + 4_KB;
+            }
+            return std::make_tuple(true, i, 0);
+        };
+
+        auto load_done = [this, cb_fn = std::move(cb_fn)](void *arg, int rberrno){
+            auto it = _index_map.begin();
+            if(it != _index_map.end()){
+                _lowest_index = it->first;
+            }
+            SPDK_INFOLOG(object_store, "disk log load done, _lowest_index %lu _highest_index %lu\n", _lowest_index, _highest_index);
+
+            if(rberrno != 0){
+                SPDK_ERRLOG("disk log load failed:%s\n", spdk_strerror(rberrno)); 
+                cb_fn(arg, rberrno); 
+                return;              
+            }
+            cb_fn(arg, 0);
+        };
+
+        SPDK_INFOLOG(object_store, "in disk log load, _lowest_index %lu _highest_index %lu\n", _lowest_index, _highest_index);
+        _rblob->load(std::move(load_done), arg, std::move(check_data));
+    }
 private:
     rolling_blob* _rblob;
     struct spdk_poller *_trim_poller;
     uint64_t _polls_count = 0;
     uint64_t _trims_count = 0;
 
-    uint64_t _lowest_index = 1; //只有trim时候会改
+    uint64_t _lowest_index = 1; //只有trim_back和set_index时候会改
     uint64_t _trim_index = 1;
-    uint64_t _highest_index = 1;
+    uint64_t _highest_index = 0;
     struct log_position {
         uint64_t pos;
         uint64_t size; // data.size + header size(4_KB)
@@ -356,4 +467,12 @@ inline void make_disk_log(struct spdk_blob_store *bs, struct spdk_io_channel *ch
 
   ctx = new make_disklog_ctx(cb_fn, arg);
   make_rolling_blob(bs, channel, rolling_blob::huge_blob_size, make_disk_log_done, ctx);
+}
+
+inline struct disk_log* make_disk_log(struct spdk_blob_store *bs, struct spdk_io_channel *channel,
+                    struct spdk_blob* blob){
+    
+    struct rolling_blob* rblob = make_rolling_blob(bs, channel, blob);
+    struct disk_log* dlog = new disk_log(rblob);
+    return dlog;
 }
