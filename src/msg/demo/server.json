@@ -1,5 +1,5 @@
 {
-    "bind_address": "ip",
+    "bind_address": "172.31.4.143",
     "bind_port": 8081,
     "msg": {
         "server": {
@@ -17,12 +17,12 @@
             "resolve_timeout_us": 2000,
             "poll_cm_event_timeout_us": 1000000,
             "max_send_wr": 4096,
-            "max_send_sge": 128,
-            "max_recv_wr": 8192,
-            "max_recv_sge": 128,
+            "max_send_sge": 8,
+            "max_recv_wr": 512,
+            "max_recv_sge": 8,
             "max_inline_data": 16,
             "cq_num_entries": 1024,
-            "qp_sig_all": false
+            "qp_sig_all": true
         }
     }
 }

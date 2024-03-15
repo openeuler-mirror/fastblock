@@ -11,6 +11,7 @@
 #pragma once
 
 #include "msg/rdma/endpoint.h"
+#include "msg/rdma/event_channel.h"
 #include "msg/rdma/provider/mlx5dv.h"
 #include "msg/rdma/provider/verbs.h"
 #include "msg/rdma/pd.h"

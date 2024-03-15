@@ -1117,6 +1117,8 @@ private:
     std::list<std::shared_ptr<rpc_task>> _read_task_list{};
     std::list<std::shared_ptr<rpc_task>> _reply_task_list{};
     std::list<std::shared_ptr<connection_record>> _cqe_conn_list{};
+
+    event_channel _channel{};
 };
 
 } // namespace rdma

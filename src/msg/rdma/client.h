@@ -490,9 +490,9 @@ public:
             ++_onflight_rpc_task_size;
             SPDK_DEBUGLOG(
               msg,
-              "_onflight_rpc_task_size: %ld, rpc queue depth: %ld\n",
+              "_onflight_rpc_task_size: %ld, rpc queue depth: %ld, rc is %d\n",
               _onflight_rpc_task_size,
-              _priority_onflight_requests.size() + _onflight_requests.size());
+              _priority_onflight_requests.size() + _onflight_requests.size(), rc);
 
             auto* stack_ptr = it->get();
             if (rc == -EINVAL) {
@@ -920,7 +920,12 @@ public:
       , _data_pool{std::make_shared<memory_pool<::ibv_send_wr>>(
         _pd->value(), FMT_1("%1%_d", name),
         _opts->data_memory_pool_capacity,
-        _opts->data_memory_pool_element_size, 0)} {}
+        _opts->data_memory_pool_element_size, 0)}
+      , _channel{::rdma_create_event_channel()} {
+        if (not _channel) {
+            throw std::runtime_error{"cant create rdma event channel"};
+        }
+    }
 
     client(const client&) = delete;
 
@@ -1009,7 +1014,7 @@ public:
         ep.addr = ctx->addr;
         ep.port = ctx->port;
         ep.passive = false;
-        auto sock = std::make_unique<socket>(ep, *_pd);
+        auto sock = std::make_unique<socket>(ep, *_pd, _channel);
         auto conn = std::make_shared<connection>(
           connection_id{},
           _cq_dispatch_id++,
@@ -1129,6 +1134,9 @@ public:
         }
 
         return;
+    }
+
+    void handle_cm_event() {
     }
 
     int handle_core_poll() {
@@ -1254,6 +1262,8 @@ private:
       std::make_shared<std::list<std::weak_ptr<connection>>>()};
     std::shared_ptr<std::list<std::weak_ptr<connection>>> _busy_priority_connections{
       std::make_shared<std::list<std::weak_ptr<connection>>>()};
+
+    ::rdma_event_channel* _channel{nullptr};
 };
 
 } // namespace rdma
