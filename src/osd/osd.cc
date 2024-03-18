@@ -41,6 +41,7 @@ typedef struct
     std::vector<monitor::client::endpoint> monitors{};
     std::unique_ptr<rpc_server> rpc_srv{nullptr};
     boost::property_tree::ptree pt{};
+    spdk_thread *cur_thread;
 } server_t;
 
 static const char* g_json_conf{nullptr};
@@ -178,6 +179,15 @@ static void pm_init(void *arg){
       server->monitors, global_pm, std::move(pg_map_cb), std::nullopt, server->node_id);   
 }
 
+static void osd_service_init(void* arg){
+    server_t *server = (server_t *)arg;
+    pm_init(arg);
+    start_monitor(server);
+
+    pm_start_context *ctx = new pm_start_context{server, global_pm.get()};
+	global_pm->start(ctx);
+}
+
 void storage_init_complete(void *arg, int rberrno){
     if(rberrno != 0){
 		SPDK_ERRLOG("Failed to initialize the storage system: %s\n", spdk_strerror(rberrno));
@@ -187,11 +197,12 @@ void storage_init_complete(void *arg, int rberrno){
 	}
     
     server_t *server = (server_t *)arg;
-    pm_init(arg);
-    start_monitor(server);
-
-    pm_start_context *ctx = new pm_start_context{server, global_pm.get()};
-	global_pm->start(ctx);
+    auto cur_thread = spdk_get_thread();
+    if(cur_thread != server->cur_thread){
+        spdk_thread_send_msg(server->cur_thread, osd_service_init, arg);
+    }else{
+        osd_service_init(arg);
+    }
 }
 
 void disk_init_complete(void *arg, int rberrno) {
@@ -366,6 +377,14 @@ struct pm_load_context : public utils::context{
     }
 };
 
+static void osd_service_load(void *arg){
+    server_t *server = (server_t *)arg;
+    pm_init(arg);
+
+    pm_load_context *ctx = new pm_load_context{server, global_pm.get()};
+	global_pm->start(ctx);
+}
+
 void storage_load_complete(void *arg, int rberrno){
     if(rberrno != 0){
 		SPDK_ERRLOG("Failed to initialize the storage system: %s\n", spdk_strerror(rberrno));
@@ -375,10 +394,12 @@ void storage_load_complete(void *arg, int rberrno){
 	}
 
     server_t *server = (server_t *)arg;
-    pm_init(arg);
-
-    pm_load_context *ctx = new pm_load_context{server, global_pm.get()};
-	global_pm->start(ctx);
+    auto cur_thread = spdk_get_thread();
+    if(cur_thread != server->cur_thread){
+        spdk_thread_send_msg(server->cur_thread, osd_service_load, arg);
+    }else{
+        osd_service_load(arg);
+    }
 }
 
 void disk_load_complete(void *arg, int rberrno){
@@ -396,14 +417,27 @@ static void
 block_started(void *arg)
 {
     server_t *server = (server_t *)arg;
-
+    server->cur_thread = spdk_get_thread();
     buffer_pool_init();
-    if(g_mkfs){
-        //初始化log磁盘
-        blobstore_init(server->bdev_disk.c_str(), disk_init_complete, arg);
-    }else{
-        blobstore_load(server->bdev_disk.c_str(), disk_load_complete, arg);
-    }
+    auto &shard = core_sharded::get_core_sharded();
+    /*
+      在spdk的函数bs_open_blob中有一个行“assert(spdk_get_thread() == bs->md_thread)”会检测当前spdk线程与blobstore的spdk线程是否相等，
+      raft在读写log核对象数据之前会先使用bs_open_blob打开blob，为了保证在debug模式下正常运行，在支持多核时，应该每个核上有一个blobstore。
+    */
+
+    //这里先支持单核
+    shard.invoke_on(
+      0,
+      [arg](){
+        server_t *server = (server_t *)arg;
+        if(g_mkfs){
+            //初始化log磁盘
+            blobstore_init(server->bdev_disk.c_str(), disk_init_complete, arg);
+        }else{
+            blobstore_load(server->bdev_disk.c_str(), disk_load_complete, arg);
+        }
+      }
+    );
 }
 
 static void from_configuration(server_t& server) {

@@ -90,11 +90,29 @@ int partition_manager::osd_state_is_not_active(){
     return  0;
 }
 
+struct pm_arg{
+    utils::context *complete;
+    int res;
+};
+
+void pm_start_done(void *arg){
+    pm_arg *pm = (pm_arg *)arg;
+    pm->complete->complete(pm->res);
+    delete pm;
+}
+
 void partition_manager::start(utils::context *complete){
+    auto cur_thread = spdk_get_thread();
     _pgs.start(
-      [this, complete](void *, int res){
+      [this, complete, cur_thread](void *, int res){
         set_osd_state(osd_state::OSD_ACTIVE);
-        complete->complete(res);
+        auto c_thread = spdk_get_thread();
+        if(cur_thread != c_thread){
+            pm_arg *arg = new pm_arg{.complete = complete, .res = res};
+            spdk_thread_send_msg(cur_thread, pm_start_done, arg);
+        }else{
+            complete->complete(res);
+        }
       },
       nullptr
     );
