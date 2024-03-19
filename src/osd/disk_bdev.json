@@ -1,0 +1,17 @@
+{
+    "subsystems": [
+      {
+        "subsystem": "bdev",
+        "config": [
+          {
+            "method": "bdev_aio_create",
+            "params": {
+              "name": "AIO1",
+	            "block_size": 512,
+	            "filename": "/dev/nvme10n1p1"
+            }
+          }
+        ]
+      }
+    ]
+  }

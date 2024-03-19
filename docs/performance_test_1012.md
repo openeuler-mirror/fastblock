@@ -29,6 +29,7 @@ data_dir = "/tmp/etcddir"
 
 election_master_key = "fastblock_monitor_election"
 hostname="monitor1"
+address="172.31.77.144"
 port=3333
 prometheus_port=3332
 log_path = "/var/log/fastblock/monitor1.log"
@@ -109,7 +110,9 @@ fastblock-client -op=fakeapplyid -uuid=$uuid -endpoint=172.31.77.144:3333
             "data_memory_pool_element_size_byte": 8192,
             "per_post_recv_num": 512,
             "rpc_timeout_us": 1000000,
-            "rpc_batch_size": 1024
+            "rpc_batch_size": 1024,
+            "connect_max_retry": 30,
+            "connect_retry_interval_us": 1000000
         },
 
         "rdma": {
@@ -128,10 +131,10 @@ fastblock-client -op=fakeapplyid -uuid=$uuid -endpoint=172.31.77.144:3333
 }
 ```
 
-然后启动osd进程:  
+然后启动osd进程(如果是首次启动osd，需要初始化本地存储，需加上-f true，后续启动osd只需指定-f false或者缺省):
 
 ```
-/root/fb/fastblock/build/src/osd/fastblock-osd -m '['1']' -c bdev_1.json -C osd1.json
+/root/fb/fastblock/build/src/osd/fastblock-osd -m '['1']' -c bdev_1.json -C osd1.json -f true
 ```
 按照上面的方式依次配置fastlock143,fastblock144,fastblock145三个节点上的12个osd，此时集群中便有了36个osd.
 注意，通过测试数据发现，每台服务器上的12个osd最好每6个跑在不同的numa节点上。  
@@ -328,7 +331,9 @@ block_bench是直接对接调用libfblock库的spdk app，可以直接使用多�
             "data_memory_pool_element_size_byte": 8192,
             "per_post_recv_num": 512,
             "rpc_timeout_us": 1000000,
-            "rpc_batch_size": 1024
+            "rpc_batch_size": 1024,
+            "connect_max_retry": 30,
+            "connect_retry_interval_us": 1000000
         },
 
         "rdma": {
