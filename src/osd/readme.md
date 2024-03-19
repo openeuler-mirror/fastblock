@@ -1,102 +1,14 @@
 # OSD
 
 当前的 osd 把对象数据和日志数据放到一个磁盘里，使用一个 bdev 设备。osd 进程根据此 json 文件创建 bdev。
-
-`src/osd/conf/disk_bdev.json`为 json 文件样例。
+`src/osd/disk_bdev.json`为 json 文件样例。
 
 ## 启动 OSD
+osd需要使用两个配置文件：
+ - 使用“-c”参数  指定bdev设备，以src/osd/disk_bdev.json为例
+ - 使用“-C”参数  指定osd信息和rpc配置，以src/osd/osd.json为例
 
-OSD 使用 json 配置用户选项，命令行中使用 `-C` 指定 json 文件的路径：
-
-```json
-{
-    "current_osd_id": 1,
-    "osds": [
-        {
-            "pid_path": "/var/tmp/osd_1.pid",
-            "osd_id": 1,
-            "bdev_disk": "nvme0n1",
-            "address": "osd1_addr",
-            "port": osd1_port,
-            "uuid": "d685a1ca-4a59-4c4f-80ff-59997f3d0494",
-            "monitor": [
-                {"host": "127.0.0.1", "port": 3333},
-                {"host": "127.0.0.1", "port": 4333},
-                {"host": "127.0.0.1", "port": 5333}
-            ]
-        },
-
-        {
-            "pid_path": "/var/tmp/osd_2.pid",
-            "osd_id": 2,
-            "bdev_disk": "nvme1n1",
-            "address": "osd2_addr",
-            "port": osd2_port,
-            "uuid": "ee6289a5-74ee-4a41-ba62-3b465aa08ffd",
-            "monitor": [
-                {"host": "127.0.0.1", "port": 3333},
-                {"host": "127.0.0.1", "port": 4333},
-                {"host": "127.0.0.1", "port": 5333}
-            ]
-        },
-
-        {
-            "pid_path": "/var/tmp/osd_3.pid",
-            "osd_id": 3,
-            "bdev_disk": "nvme2n1",
-            "address": "osd3_addr",
-            "port": osd3_port,
-            "uuid": "fd69cf95-f022-4529-bd45-7381a51f7359",
-            "monitor": [
-                {"host": "127.0.0.1", "port": 3333},
-                {"host": "127.0.0.1", "port": 4333},
-                {"host": "127.0.0.1", "port": 5333}
-            ]
-        }
-    ],
-
-    "msg": {
-        "server": {
-            "listen_backlog": 1024,
-            "poll_cq_batch_size": 32,
-            "metadata_memory_pool_capacity": 16384,
-            "metadata_memory_pool_element_size_byte": 1024,
-            "data_memory_pool_capacity": 16384,
-            "data_memory_pool_element_size_byte": 8192,
-            "per_post_recv_num": 512,
-            "rpc_timeout_us": 1000000
-        },
-
-        "client": {
-            "poll_cq_batch_size": 32,
-            "metadata_memory_pool_capacity": 16384,
-            "metadata_memory_pool_element_size_byte": 1024,
-            "data_memory_pool_capacity": 16384,
-            "data_memory_pool_element_size_byte": 8192,
-            "per_post_recv_num": 512,
-            "rpc_timeout_us": 1000000,
-            "rpc_batch_size": 1024,
-            "connect_max_retry": 30,
-            "connect_retry_interval_us": 1000000
-        },
-
-        "rdma": {
-            "resolve_timeout_us": 2000,
-            "poll_cm_event_timeout_us": 1000000,
-            "max_send_wr": 4096,
-            "max_send_sge": 128,
-            "max_recv_wr": 8192,
-            "max_recv_sge": 1,
-            "max_inline_data": 16,
-            "cq_num_entries": 1024,
-            "qp_sig_all": false,
-	        "rdma_device_name": "mlx5_0"
-        }
-    }
-}
-```
-
-OSD 的配置文件包含两部分，一部分用于配置 OSD 自身的，另一部分用于配置 RPC。关于 RPC 的配置说明，可以参考 `src/msg/README.md`。
+“-C”指定的配置文件包含两部分，一部分用于配置 OSD 自身的，另一部分用于配置 RPC。关于 RPC 的配置说明，可以参考 `src/msg/README.md`。
 
 - **osds**  
     OSD 节点配置数组，里面可以包含多个 OSD 的配置信息  
@@ -117,6 +29,7 @@ OSD 的配置文件包含两部分，一部分用于配置 OSD 自身的，另�
 - **monitor**  
     monitor 集群地址
 
+osd还有一个参数“-f [ture/false]”,如果是首次启动osd，需要初始化本地存储，需加上-f true，后续启动osd只需指定-f false或者缺省.
 ### 使用 Nvme 盘
 
 #### 1 Spdk 接管磁盘 
@@ -171,10 +84,9 @@ json文件的实例：`osd1_disk_bdev.json`
 启动命令：
 
 ```bash
-fastblock/build/src/osd/fastblock-osd -s 1024 -m 0x1 -c osd1_disk_bdev.json -C osd1.json
+fastblock/build/src/osd/fastblock-osd -s 1024 -m 0x1 -c osd1_disk_bdev.json -C osd1.json -f true
 ```
-
-参数 `-D` 为磁盘的名字，要和参数 `-c` 指定的 json 文件中的 `traddr` 对应
+(如果是首次启动osd，需要初始化本地存储，需加上-f true，后续启动osd只需指定-f false或者缺省)
 
 ### 使用 Aio
 
@@ -211,10 +123,10 @@ dd if=/dev/zero of=/tmp/aiofile bs=1G count=2
 启动命令：
 
 ```bash
-fastblock/build/src/osd/fastblock-osd -s 1024 -m 0x1 -c osd1_disk_bdev.json -C osd.json
+fastblock/build/src/osd/fastblock-osd -s 1024 -m 0x1 -c osd1_disk_bdev.json -C osd.json -f true
 ```
 
-注：**OSD 启动命令中的 `-U` 参数是此 OSD 对应的 uuid，使用下面的命令向 monitor 注册（fbclient 是 monitor 编译出来的命令）**
+注：**OSD 启动命令中的"-C"参数指定的配置文件中的"uuid"是此 OSD 对应的 uuid，使用下面的命令向 monitor 注册（fbclient 是 monitor 编译出来的命令）**
 
 ```bash
 fbclient -op=fakeapplyid -uuid=`uuidgen`

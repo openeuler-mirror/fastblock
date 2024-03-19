@@ -73,9 +73,11 @@ void osd_service::process_create_pg(google::protobuf::RpcController *controller,
     }else{
         std::vector<utils::osd_info_t> osds;
         SPDK_INFOLOG(osd, "create pg %lu.%lu\n", pool_id, pg_id);
-        auto ret = _pm->create_partition(pool_id, pg_id, std::move(osds), pool_version);
-        response->set_state(ret);
-        done->Run();
+        auto new_pg_done = [this, response, done](void *arg, int perrno){
+            response->set_state(perrno);
+            done->Run();
+        };
+        _pm->create_partition(pool_id, pg_id, std::move(osds), pool_version, std::move(new_pg_done), nullptr);
     }    
 }   
 

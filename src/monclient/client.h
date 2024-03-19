@@ -174,7 +174,8 @@ public:
         std::unordered_map<pool_id_type, pool_update_info> pool_update{};
     };
 
-    using on_new_pg_callback_type = std::function<void(const msg::PGInfo&, const int32_t, const int32_t, const osd_map&)>;
+    using pg_op_complete = std::function<void (void *, int)>;
+    using on_new_pg_callback_type = std::function<void(const msg::PGInfo&, const pg_map::pool_id_type, const osd_map&, pg_op_complete&&, void *)>;
 
     using on_cluster_map_initialized_type = std::function<void()>;
 
@@ -469,6 +470,7 @@ private:
     void consume_internal_request(bool);
     bool consume_request();
 
+    void _create_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_version, const msg::PGInfo &info);
 private:
 
     bool _is_terminate{false};

@@ -327,6 +327,36 @@ private:
     client* _client;
 };
 
+void client::_create_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_version, const msg::PGInfo &info){
+    if (_new_pg_cb) {
+        _pg_map.set_pool_update(pool_id, info.pgid(), pool_version, 1);
+        auto new_pg_done = [this, pool_id, pool_version, pg_id = info.pgid(), pg_version = info.version(), osds = info.osdid()]
+          (void *arg, int perrno){
+            if(perrno != 0){
+                SPDK_ERRLOG("create pg %d.%d failed: %s\n", pool_id, pg_id, spdk_strerror(perrno));
+                _pg_map.set_pool_update(pool_id, pg_id, pool_version, -1);
+                return;
+            }
+
+            auto pit = std::make_unique<utils::pg_info_type>();
+            pit->pg_id = pg_id;
+            pit->version = pg_version;
+            std::string osd_str;
+            for (auto osd_id : osds) {
+                pit->osds.push_back(osd_id);
+                osd_str += std::to_string(osd_id) + ",";
+            }
+            
+            SPDK_DEBUGLOG(mon, "core [%u] pool: %d pg: %lu version: %ld  osd_list: %s\n",
+              ::spdk_env_get_current_core(), pool_id, pit->pg_id, pit->version, osd_str.data());
+
+            _pg_map.pool_pg_map[pool_id].emplace(pit->pg_id, std::move(pit));
+            _pg_map.set_pool_update(pool_id, pg_id, pool_version, 0);
+        };
+        _new_pg_cb.value()(info, pool_id, _osd_map, std::move(new_pg_done), nullptr);
+    }
+}
+
 void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
     auto& pv = pg_map_response.poolid_pgmapversion();
 
@@ -337,14 +367,39 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
     while(pool_item != _pg_map.pool_pg_map.end()){
         auto pool_id = pool_item->first;
         if(!ec.contains(pool_id)){
-            SPDK_INFOLOG(mon, "pool %d is deleted\n", pool_id);
-            //pool被删除
-            auto& pg_infos = pool_item->second;
-            for(auto& pg_item : pg_infos){
-                auto pg_id = pg_item.first;
-                _pm.lock()->delete_partition(pool_id, pg_id);
+            if(_pg_map.pool_is_updating(pool_id)){
+                SPDK_DEBUGLOG(mon, "pool %d is updating\n", pool_id);
+                continue;
             }
-            pool_item = _pg_map.pool_pg_map.erase(pool_item);
+            SPDK_DEBUGLOG(mon, "pool %d is deleted\n", pool_id);
+            //pool被删除
+
+            auto& pg_infos = pool_item->second;
+            pool_item++;
+            auto pg_item = pg_infos.begin();
+            while(pg_item != pg_infos.end()){
+                auto pg_id = pg_item->first;
+                pg_item++;
+                auto pool_version = _pg_map.pool_version[pool_id];
+                auto delete_pg_done = [this, pool_id, pg_id, pool_version](void *arg, int perrono){
+                    if(perrono != 0){
+                        SPDK_ERRLOG("delete pg %d.%d failed: %s\n", pool_id, pg_id, spdk_strerror(perrono));
+                        _pg_map.set_pool_update(pool_id, pg_id, pool_version, -1);
+                        return;
+                    }
+                    _pg_map.set_pool_update(pool_id, pg_id, pool_version, 0);
+                    SPDK_DEBUGLOG(mon, "delete pg %d.%d success.\n", pool_id, pg_id);
+                    _pg_map.pool_pg_map[pool_id].erase(pg_id);
+                    if(_pg_map.pool_pg_map[pool_id].empty()){
+                        _pg_map.pool_pg_map.erase(pool_id);
+                        _pg_map.pool_version.erase(pool_id);
+                        SPDK_DEBUGLOG(mon, "delete pool %d success.\n", pool_id);
+                    }
+                };
+                
+                _pg_map.set_pool_update(pool_id, pg_id, pool_version, 1);
+                _pm.lock()->delete_partition(pool_id, pg_id, std::move(delete_pg_done), nullptr);
+            }
         }else{
             pool_item++;
         }
@@ -372,49 +427,48 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
         }
 
         if(_pg_map.pool_is_updating(pool_key)){
-            SPDK_INFOLOG(mon, "pool %d is updating\n", pool_key);
+            SPDK_DEBUGLOG(mon, "pool %d is updating\n", pool_key);
             continue;
         }
 
         SPDK_DEBUGLOG(mon, "going to process pg with key %d\n", pool_key);
         if (not _pg_map.pool_pg_map.contains(pool_key)) {
-            _pg_map.pool_version.emplace(pool_key, pv.at(pool_key));
-            SPDK_INFOLOG(mon, "pgs size is %ld\n", pgs.size());
-
             auto info_it = pgs.find(pool_key);
             if (info_it == pgs.end()) {
-                SPDK_WARNLOG("Cant find the info of pg %d\n", pool_key);
+                SPDK_DEBUGLOG(mon, "Cant find the info of pg %d\n", pool_key);
                 continue;
             }
 
+            _pg_map.pool_version.emplace(pool_key, pv.at(pool_key));
+            SPDK_DEBUGLOG(mon, "pgs size is %ld\n", pgs.size());
+
             for (auto& info : info_it->second.pi()) {
-                auto pit = std::make_unique<utils::pg_info_type>();
-                pit->pg_id = info.pgid();
-                pit->version = info.version();
-                std::string osd_str;
-                for (auto osd_id : info.osdid()) {
-                    pit->osds.push_back(osd_id);
-                    osd_str += std::to_string(osd_id) + ",";
-                }
-                
-                SPDK_INFOLOG(mon, "core [%u] pool: %d pg: %lu version: %ld  osd_list: %s\n",
-                  ::spdk_env_get_current_core(), pool_key, pit->pg_id, pit->version, osd_str.data());
-
-                _pg_map.pool_pg_map[pool_key].emplace(
-                  info.pgid(), std::move(pit));
-
-                if (_new_pg_cb) {
-                    _new_pg_cb.value()(info, pool_key, pv.at(pool_key), _osd_map);
-                }
+                _create_pg(pool_key, pv.at(pool_key), info);
             }
 
+            continue;
+        }
+
+        if(_pg_map.pool_version[pool_key] == pv.at(pool_key)){
+            //检查之前添加pool时，是否有pg没有添加成功
+            auto info_it = pgs.find(pool_key);
+            if (info_it == pgs.end()) {
+                SPDK_DEBUGLOG(mon, "Cant find the info of pg %d\n", pool_key);
+                continue;
+            }
+
+            for (auto& info : info_it->second.pi()){
+                if(not _pg_map.pool_pg_map[pool_key].contains(info.pgid())){
+                    _create_pg(pool_key, pv.at(pool_key), info); 
+                }
+            }
             continue;
         }
 
         if (_pg_map.pool_version[pool_key] < pv.at(pool_key)) {
             auto info_it = pgs.find(pool_key);
             if (info_it == pgs.end()) {
-                SPDK_WARNLOG("Cant find the info of pg %d\n", pool_key);
+                SPDK_DEBUGLOG(mon, "Cant find the info of pg %d\n", pool_key);
                 continue;
             }
             
@@ -459,20 +513,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                         }
                     }
                 }else{
-                    auto pit = std::make_unique<utils::pg_info_type>();
-                    pit->pg_id = pgid;
-                    pit->version = info.version();
-                    std::string osd_str;
-                    for (auto osd_id : info.osdid()) {
-                        pit->osds.push_back(osd_id);
-                        osd_str += std::to_string(osd_id) + ",";
-                    }
-                    _pg_map.pool_pg_map[pool_key].emplace(pit->pg_id, std::move(pit));
-                    SPDK_INFOLOG(mon, "pool: %d version: %ld pg: %lu version: %ld  osd_list: %s\n", 
-                            pool_key, pv.at(pool_key), pit->pg_id, pit->version, osd_str.data());
-                    if (_new_pg_cb) {
-                        _new_pg_cb.value()(info, pool_key, pv.at(pool_key), _osd_map);
-                    }
+                    _create_pg(pool_key, pv.at(pool_key), info);
                 }
             }
         }
