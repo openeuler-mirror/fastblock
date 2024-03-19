@@ -217,14 +217,15 @@ void monitor_client_test_on_app_start(void* arg) {
     }
 
     monitor::client::on_new_pg_callback_type pg_map_cb =
-      [pm = ctx->pm] (const msg::PGInfo& pg_info, const int32_t pg_key, const int32_t pg_map_ver, const monitor::client::osd_map& osd_map) {
+      [pm = ctx->pm] (const msg::PGInfo& pg_info, const int32_t pool_id, const monitor::client::osd_map& osd_map,
+        monitor::client::pg_op_complete&& cb_fn, void *arg) {
           BOOST_TEST_MESSAGE("call pg_map_cb()");
 
           std::vector<utils::osd_info_t> osds{};
           for (auto osd_id : pg_info.osdid()) {
               osds.push_back(*(osd_map.data.at(osd_id)));
           }
-          pm->create_partition(pg_key, pg_info.pgid(), std::move(osds), pg_map_ver);
+          pm->create_partition(pool_id, pg_info.pgid(), std::move(osds), 0, std::move(cb_fn), arg);
       };
 
     ctx->mon_cli = std::make_unique<monitor::client>(eps, ctx->pm, std::move(pg_map_cb));

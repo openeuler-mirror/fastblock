@@ -167,12 +167,13 @@ static void pm_init(void *arg){
     global_conn_cache = std::make_shared<::connect_cache>(&cpumask, opts);
     global_pm = std::make_shared<partition_manager>(server->node_id, global_conn_cache);
     monitor::client::on_new_pg_callback_type pg_map_cb =
-      [pm = global_pm] (const msg::PGInfo& pg_info, const int32_t pg_key, const int32_t pg_map_ver, const monitor::client::osd_map& osd_map) {
+      [pm = global_pm] (const msg::PGInfo& pg_info, const monitor::client::pg_map::pool_id_type pool_id, const monitor::client::osd_map& osd_map,
+        monitor::client::pg_op_complete&& cb_fn, void *arg) {
           std::vector<utils::osd_info_t> osds{};
           for (auto osd_id : pg_info.osdid()) {
               osds.push_back(*(osd_map.data.at(osd_id)));
           }
-          pm->create_partition(pg_key, pg_info.pgid(), std::move(osds), pg_map_ver);
+          pm->create_partition(pool_id, pg_info.pgid(), std::move(osds), 0, std::move(cb_fn), arg);
       }; 
     monitor_client = std::make_shared<monitor::client>(
       server->monitors, global_pm, std::move(pg_map_cb), std::nullopt, server->node_id);   

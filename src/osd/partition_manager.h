@@ -63,7 +63,6 @@ public:
                 _pgs.stop(shard_id);
 
                 for(auto& [name, stm] : _sm_table[shard_id]){
-                    SPDK_NOTICELOG("Stop the object machine %s\n", name.c_str());
                     stm->stop(
                       [](void *, int){}, 
                       nullptr);
@@ -73,16 +72,18 @@ public:
         }
     }
 
-    int create_partition(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t>&& osds, int64_t revision_id);
-    int delete_partition(uint64_t pool_id, uint64_t pg_id);
+    int create_partition(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t>&& osds, 
+                        int64_t revision_id, pm_complete&& cb_fn, void *arg);
+    int delete_partition(uint64_t pool_id, uint64_t pg_id, pm_complete&& cb_fn, void *arg);
     int load_partition(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob, 
-                        object_store::container objects, pm_complete func, void *arg);
+                        object_store::container objects, pm_complete&& func, void *arg);
 
     bool get_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t &shard_id);
 
     void load_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob, 
                         object_store::container objects, pm_complete cb_fn, void *arg);
-    void create_pg(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t> osds, uint32_t shard_id, int64_t revision_id);
+    void create_pg(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t> osds, uint32_t shard_id, 
+                        int64_t revision_id, pm_complete cb_fn, void *arg);
     void delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id);
 
     std::shared_ptr<osd_stm> get_osd_stm(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id){
@@ -138,26 +139,25 @@ public:
         _pgs.load_pgs_map(pools);
     }
 
+    int add_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id, int64_t revision_id){
+        std::string name = pg_id_to_name(pool_id, pg_id);
+        _shard_table[std::move(name)] = shard_revision{shard_id, revision_id};
+        return 0;
+    }
+
+    int remove_pg_shard(uint64_t pool_id, uint64_t pg_id){
+        std::string name = pg_id_to_name(pool_id, pg_id);
+        auto ret = _shard_table.erase(std::move(name));
+        if(ret == 0)
+            return -EEXIST;
+        return 0;
+    }
 private:
     int osd_state_is_not_active();
     uint32_t get_next_shard_id(){
         uint32_t shard_id = _next_shard;
         _next_shard = (_next_shard + 1) % _shard_cores.size();
         return shard_id;
-    }
-
-    int _add_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id, int64_t revision_id){
-        std::string name = pg_id_to_name(pool_id, pg_id);
-        _shard_table[std::move(name)] = shard_revision{shard_id, revision_id};
-        return 0;
-    }
-
-    int _remove_pg_shard(uint64_t pool_id, uint64_t pg_id){
-        std::string name = pg_id_to_name(pool_id, pg_id);
-        auto ret = _shard_table.erase(std::move(name));
-        if(ret == 0)
-            return -EEXIST;
-        return 0;
     }
 
     pg_group_t _pgs;
