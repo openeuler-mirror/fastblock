@@ -406,39 +406,109 @@ block_started(void *arg)
     }
 }
 
-static void from_configuration(server_t& server) {
-    auto& pt = server.pt;
-    auto current_osd_id = pt.get_child("current_osd_id").get_value<decltype(server.node_id)>();
+static void from_configuration(server_t* server) {
+    auto& pt = server->pt;
+    if (pt.count("current_osd_id") == 0) {
+        std::cerr << "The value of configuration key \"current_osd_id\" must be set\n";
+        std::raise(SIGINT);
+        return;
+    }
+
+    auto current_osd_id = pt.get_child("current_osd_id").get_value<decltype(server->node_id)>();
+    log_conf_pair("current_osd_id", current_osd_id);
+
     auto& osds = pt.get_child("osds");
+    bool osd_is_found{false};
     for (auto& osd : osds) {
-        auto osd_id = osd.second.get_child("osd_id").get_value<decltype(server.node_id)>();
+        if (osd.second.count("osd_id") == 0) {
+            std::cerr << "The value configuration key \"osd_id\" must be set\n";
+            std::raise(SIGINT);
+            return;
+        }
+
+        auto osd_id = osd.second.get_child("osd_id").get_value<decltype(server->node_id)>();
         if (osd_id != current_osd_id) {
             continue;
         }
 
+        osd_is_found = true;
         auto& osd_pt = osd.second;
-        auto pid_path = osd_pt.get_child("pid_path").get_value<std::string>();
-        if (not pid_path.empty()) {
-            save_pid(pid_path.c_str());
-        }
+        auto pid_path = osd_pt.get_child("pid_path").get_value_optional<std::string>().value_or(".");
+        save_pid(pid_path.c_str());
 
-        server.node_id = osd_id;
-        server.bdev_disk = osd_pt.get_child("bdev_disk").get_value<std::string>();
-        if (server.bdev_disk.empty()) {
+        server->node_id = osd_id;
+
+        if (osd_pt.count("bdev_disk") == 0) {
+            std::cerr << "The value configuration key \"bdev_disk\" must be set\n";
+            std::raise(SIGINT);
+            return;
+        }
+        server->bdev_disk = osd_pt.get_child("bdev_disk").get_value<std::string>();
+        if (server->bdev_disk.empty()) {
             std::cerr << "No bdev name is specified" << std::endl;
-            throw std::invalid_argument{"empty bdev disk path"};
+            std::raise(SIGINT);
+            return;
         }
 
-        server.osd_addr = osd_pt.get_child("address").get_value<std::string>();
-        server.osd_port = osd_pt.get_child("port").get_value<decltype(server.osd_port)>();
-        server.osd_uuid = osd_pt.get_child("uuid").get_value<std::string>();
+        if (osd_pt.count("address") == 0) {
+            std::cerr << "The value configuration key \"address\" must be set\n";
+            std::raise(SIGINT);
+            return;
+        }
+        server->osd_addr = osd_pt.get_child("address").get_value<std::string>();
+        if (server->osd_addr.empty()) {
+            std::cerr << "No address is specified" << std::endl;
+            std::raise(SIGINT);
+            return;
+        }
 
+        if (osd_pt.count("port") == 0) {
+            std::cerr << "The value configuration key \"port\" must be set\n";
+            std::raise(SIGINT);
+            return;
+        }
+        server->osd_port = osd_pt.get_child("port").get_value<decltype(server->osd_port)>();
+
+        if (osd_pt.count("uuid") == 0) {
+            std::cerr << "The value configuration key \"uuid\" must be set\n";
+            std::raise(SIGINT);
+            return;
+        }
+        server->osd_uuid = osd_pt.get_child("uuid").get_value<std::string>();
+        if (server->osd_uuid.empty()) {
+            std::cerr << "No uuid is specified" << std::endl;
+            std::raise(SIGINT);
+            return;
+        }
+
+
+        if (osd_pt.count("monitor") == 0) {
+            std::cerr << "The value configuration key \"monitor\" must be set\n";
+            std::raise(SIGINT);
+            return;
+        }
+
+        if (osd_pt.count("monitor") == 0) {
+            std::cerr << "No monitor cluster is specified" << std::endl;
+            std::raise(SIGINT);
+        }
         auto& monitors = osd_pt.get_child("monitor");
         for (auto& monitor_node : monitors) {
             auto mon_host = monitor_node.second.get_child("host").get_value<std::string>();
             auto mon_port = monitor_node.second.get_child("port").get_value<uint16_t>();
-            server.monitors.emplace_back(std::move(mon_host), mon_port);
+            server->monitors.emplace_back(std::move(mon_host), mon_port);
         }
+        if (server->monitors.empty()) {
+            std::cerr << "No monitor cluster is specified" << std::endl;
+            std::raise(SIGINT);
+        }
+
+        break;
+    }
+
+    if (not osd_is_found) {
+        std::cerr << "Cant find the configuration of osd " << current_osd_id << std::endl;
+        std::raise(SIGINT);
     }
 }
 
@@ -521,7 +591,7 @@ main(int argc, char *argv[])
         block_usage();
         return -EINVAL;
     }
-    from_configuration(osd_server);
+    from_configuration(&osd_server);
 
 	/* Blocks until the application is exiting */
 	rc = spdk_app_start(&opts, block_started, &osd_server);
