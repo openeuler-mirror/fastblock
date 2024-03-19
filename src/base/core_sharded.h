@@ -63,7 +63,8 @@ public:
         auto lambda = new lambda_ctx(std::move(func), std::forward<Args>(args)...);
 
         uint32_t core = _shard_cores[shard_id];
-        if(core == spdk_env_get_current_core()){
+        auto cur_thread = spdk_get_thread();
+        if(core == spdk_env_get_current_core() && cur_thread == _threads[shard_id]){
             core_context::run((void *)lambda);
             return 0;
         }else

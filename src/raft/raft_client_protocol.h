@@ -17,6 +17,7 @@
 #include "rpc/raft_msg.pb.h"
 #include "msg/rpc_controller.h"
 #include "utils/err_num.h"
+#include "base/core_sharded.h"
 
 class raft_server_t;
 class raft_client_protocol;
@@ -79,9 +80,15 @@ public:
         process_installsnapshot_response(_raft, response, clr, _target_node_id, _rcp, _shard_id);
     }  
 
-    void process_response(msg::rdma::rpc_controller *clr){
-        process_msg_response(&response, clr);
-        delete this;
+    void process_response(){
+        auto& core_shard = core_sharded::get_core_sharded();
+        core_shard.invoke_on(
+          _shard_id,
+          [this](){
+            process_msg_response(&response, &ctrlr);
+            delete this;
+          }  
+        );
     }
 
     msg::rdma::rpc_controller ctrlr;
@@ -110,7 +117,7 @@ public:
             delete _request;
     }
 
-    void process_response(msg::rdma::rpc_controller *clr);
+    void process_response();
 
     msg::rdma::rpc_controller ctrlr;
     heartbeat_response response;
