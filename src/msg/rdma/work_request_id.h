@@ -123,7 +123,7 @@ public:
 
 #if defined(__arm__) || defined(__aarch64__)
 #pragma GCC push_options
-#pragma GCC optimize ("O2")
+#pragma GCC optimize ("O0")
 #endif
     void inc_request_id() noexcept {
         *_request_id_pointer = *_request_id_pointer + 1;

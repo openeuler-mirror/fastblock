@@ -316,7 +316,7 @@ public:
 
 #if defined(__arm__) || defined(__aarch64__)
 #pragma GCC push_options
-#pragma GCC optimize ("O2")
+#pragma GCC optimize ("O0")
 #endif
         void per_post_recv() {
             _recv_ctx = _recv_pool->get_bulk(_opts->per_post_recv_num);
