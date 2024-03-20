@@ -354,6 +354,18 @@ void client::_create_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_
             _pg_map.set_pool_update(pool_id, pg_id, pool_version, 0);
         };
         _new_pg_cb.value()(info, pool_id, _osd_map, std::move(new_pg_done), nullptr);
+    }else{
+        auto pit = std::make_unique<utils::pg_info_type>();
+        pit->pg_id = info.pgid();
+        pit->version = info.version();
+        std::string osd_str;
+        for (auto osd_id : info.osdid()){
+            pit->osds.push_back(osd_id); 
+            osd_str += std::to_string(osd_id) + ",";
+        }
+        SPDK_DEBUGLOG(mon, "core [%u] pool: %d pg: %lu version: %ld  osd_list: %s\n",
+              ::spdk_env_get_current_core(), pool_id, pit->pg_id, pit->version, osd_str.data());
+        _pg_map.pool_pg_map[pool_id].emplace(pit->pg_id, std::move(pit));
     }
 }
 
