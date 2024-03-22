@@ -31,6 +31,7 @@
 
 #include <endian.h>
 
+#define conf_or_server(json_conf, opts, opts_key) conf_or_s(json_conf, "msg_server_"#opts_key, opts, opts_key)
 namespace msg {
 namespace rdma {
 
@@ -140,23 +141,23 @@ public:
         std::unique_ptr<endpoint> ep{nullptr};
     };
 
-    static std::shared_ptr<options> make_options(boost::property_tree::ptree& conf, boost::property_tree::ptree& rdma_conf) {
+    static std::shared_ptr<options> make_options(boost::property_tree::ptree& conf) {
         auto opts = std::make_shared<options>();
-        conf_or_s(conf, opts, listen_backlog);
-        conf_or_s(conf, opts, metadata_memory_pool_capacity);
-        conf_or_s(conf, opts, metadata_memory_pool_element_size);
-        conf_or_s(conf, opts, data_memory_pool_capacity);
-        conf_or_s(conf, opts, data_memory_pool_element_size);
-        conf_or_s(conf, opts, per_post_recv_num);
+        conf_or_server(conf, opts, listen_backlog);
+        conf_or_server(conf, opts, metadata_memory_pool_capacity);
+        conf_or_server(conf, opts, metadata_memory_pool_element_size);
+        conf_or_server(conf, opts, data_memory_pool_capacity);
+        conf_or_server(conf, opts, data_memory_pool_element_size);
+        conf_or_server(conf, opts, per_post_recv_num);
 
-        if (conf.count("rpc_timeout_us") != 0) {
-            auto timeout_us = conf.get_child("rpc_timeout_us").get_value<int64_t>();
+        if (conf.count("msg_server_rpc_timeout_us") != 0) {
+            auto timeout_us = conf.get_child("msg_server_rpc_timeout_us").get_value<int64_t>();
             opts->rpc_timeout = std::chrono::milliseconds{timeout_us};
-            opts->ep = std::make_unique<endpoint>(rdma_conf);
+            opts->ep = std::make_unique<endpoint>(conf);
         }
-        log_conf_pair(
-          "rpc_timeout_us",
-          std::chrono::duration_cast<std::chrono::milliseconds>(opts->rpc_timeout).count());
+        // log_conf_pair(
+        //   "rpc_timeout_us",
+        //   std::chrono::duration_cast<std::chrono::milliseconds>(opts->rpc_timeout).count());
 
         return opts;
     }

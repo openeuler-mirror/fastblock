@@ -20,7 +20,7 @@
 #include <infiniband/verbs.h>
 #include <rdma/rdma_cma.h>
 
-#define ep_conf_or(key_name) conf_or_s(conf, this, key_name)
+#define ep_conf_or(key_name) conf_or_s(conf, "msg_rdma_"#key_name, this, key_name)
 
 namespace msg {
 namespace rdma {
@@ -52,7 +52,7 @@ public:
         if (dev_name.has_value()) {
             device_name = dev_name.value().get_value<std::string>();
         }
-        log_conf_pair_raw("rdma_device_name", device_name.value_or("").c_str());
+        // log_conf_pair_raw("rdma_device_name", device_name.value_or("").c_str());
     }
 
     endpoint(const endpoint&) = default;

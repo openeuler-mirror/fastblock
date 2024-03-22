@@ -35,10 +35,10 @@
     if (json_conf.count(json_key) != 0) {                                                   \
         opts->opts_key =                                                                    \
             json_conf.get_child(json_key).get_value<decltype(opts->opts_key)>();            \
-    }                                                                                       \
-    log_conf_pair(json_key, opts->opts_key)
+    }                                                                                       
+    // log_conf_pair(json_key, opts->opts_key)
 
-#define conf_or_s(json_conf, opts, opts_key) conf_or(json_conf, #opts_key, opts, opts_key)
+#define conf_or_s(json_conf, json_key, opts, opts_key) conf_or(json_conf, json_key, opts, opts_key)
 
 namespace msg {
 namespace rdma {

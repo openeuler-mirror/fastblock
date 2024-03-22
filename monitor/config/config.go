@@ -13,8 +13,8 @@ package config
 import (
 	"io/ioutil"
 	"time"
-
-	"github.com/BurntSushi/toml"
+	"encoding/json"
+	"fmt"
 )
 
 const (
@@ -31,6 +31,8 @@ const (
 	defaultMonitorAddress        = "127.0.0.1"
 	defaultMonitorPort           = 3333
 	defaultPrometheusMonitorPort = 3332
+	defaultEtcdServerPort        = 2379
+	defaultEtcdPort              = 2380
 )
 
 // TODO: where should we keep all these keys?
@@ -48,37 +50,39 @@ const (
 
 // Config types.
 type Config struct {
-	EtcdServer         []string `toml:"etcd_server"`
-	EtcdName           string   `toml:"etcd_name"`
-	EtcdInitialCluster string   `toml:"etcd_initial_cluster"`
-	EtcdACUrls         []string `toml:"etcd_advertise_client_urls"`
-	EtcdAPUrls         []string `toml:"etcd_advertise_peer_urls"`
-	EtcdLPUrls         []string `toml:"etcd_listen_peer_urls"`
-	EtcdLCUrls         []string `toml:"etcd_listen_client_urls"`
-	EtcdPrefix         string   `toml:"etcd_prefix"`
-	EtcdStartTimeout   string   `toml:"etcd_start_timeout"` // In seconds.
-	EtcdMaxTTL         string   `toml:"etcd_max_ttl"`
+	Monitors           []string  `json:"monitors"`
+	MonHost            []string   `json:"mon_host"`
+	EtcdServer         []string `json:"etcd_server"`
+	EtcdName           string   `json:"etcd_name"`
+	EtcdInitialCluster string   `json:"etcd_initial_cluster"`
+	EtcdACUrls         []string `json:"etcd_advertise_client_urls"`
+	EtcdAPUrls         []string `json:"etcd_advertise_peer_urls"`
+	EtcdLPUrls         []string `json:"etcd_listen_peer_urls"`
+	EtcdLCUrls         []string `json:"etcd_listen_client_urls"`
+	EtcdPrefix         string   `json:"etcd_prefix"`
+	EtcdStartTimeout   string   `json:"etcd_start_timeout"` // In seconds.
+	EtcdMaxTTL         string   `json:"etcd_max_ttl"`
 
-	ElectionMasterKey       string `toml:"election_master_key"`
-	EtcdMasterRetryInterval string `toml:"etcd_master_retry_interval"`
-	LogPath                 string `toml:"log_path"`
-	LogLevel                string `toml:"log_level"` // "info", "warn", "error"
-	HostName                string `toml:"hostname"`
-	Address                 string `toml:"address"`
-	DataDir                 string `toml:"data_dir"`
-	Port                    int    `toml:"port"`
-	PrometheusPort          int    `toml:"prometheus_port"`
+	ElectionMasterKey       string `json:"election_master_key"`
+	EtcdMasterRetryInterval string `json:"etcd_master_retry_interval"`
+	LogPath                 string `json:"log_path"`
+	LogLevel                string `json:"log_level"` // "info", "warn", "error"
+	HostName                string `json:"hostname"`
+	Address                 string `json:"address"`
+	DataDir                 string `json:"data_dir"`
+	Port                    int    `json:"port"`
+	PrometheusPort          int    `json:"prometheus_port"`
 }
 
 // CONFIG parsed.
 var CONFIG Config
 
 // SetupConfig parse and check config file.
-func SetupConfig(configFilePath string) {
-	marshalTOMLConfig(configFilePath)
+func SetupConfig(configFilePath string, monitorId string) {
+	marshalJsonConfig(configFilePath, monitorId)
 }
 
-func marshalTOMLConfig(configFilePath string) error {
+func marshalJsonConfig(configFilePath string, monitorId string) error {
 	data, err := ioutil.ReadFile(configFilePath)
 	if err != nil {
 		if err != nil {
@@ -86,10 +90,10 @@ func marshalTOMLConfig(configFilePath string) error {
 		}
 	}
 	var c Config
-	_, err = toml.Decode(string(data), &c)
+    err = json.Unmarshal([]byte(data), &c)
 	if err != nil {
-		panic("load monitor.toml error: " + err.Error())
-	}
+		panic("load config file error: " + err.Error())
+	}	
 
 	validate(&c)
 
@@ -100,24 +104,61 @@ func marshalTOMLConfig(configFilePath string) error {
 	c.EtcdMasterRetryInterval = Ternary(c.EtcdMasterRetryInterval == "", defaultEtcdMasterRetryInterval, c.EtcdMasterRetryInterval).(string)
 	c.LogPath = Ternary(c.LogPath == "", defaultLogPath, c.LogPath).(string)
 	c.LogLevel = Ternary(c.LogLevel == "", defaultLogLevel, c.LogLevel).(string)
-	c.HostName = Ternary(c.HostName == "", defaultMonitorHostName, c.HostName).(string)
-	c.Address = Ternary(c.Address == "", defaultMonitorAddress, c.Address).(string)
+
+	c.EtcdServer = []string{}
+	c.EtcdACUrls = []string{}
+	c.EtcdAPUrls = []string{}
+	c.EtcdLPUrls = []string{}
+	c.EtcdLCUrls = []string{}
+
+	for i := range c.Monitors {
+		if c.Monitors[i] == monitorId {
+            c.EtcdName = c.Monitors[i]
+			c.HostName = c.Monitors[i]
+			c.EtcdInitialCluster = fmt.Sprintf("%s=http://%s:%d", c.Monitors[i], c.MonHost[i], defaultEtcdPort)
+			curl := fmt.Sprintf("http://%s:%d", c.MonHost[i], defaultEtcdServerPort)
+			c.EtcdACUrls = append(c.EtcdACUrls, curl)
+            url := fmt.Sprintf("http://%s:%d", c.MonHost[i], defaultEtcdPort)
+			c.EtcdAPUrls = append(c.EtcdAPUrls, url)
+			c.EtcdLPUrls = append(c.EtcdLPUrls, url)
+            
+			local_url := fmt.Sprintf("http://127.0.0.1:%d", defaultEtcdServerPort)
+			c.EtcdLCUrls = append(c.EtcdLCUrls, local_url)
+			c.EtcdLCUrls = append(c.EtcdLCUrls, curl)
+			c.Address = c.MonHost[i]
+
+		}
+		server := fmt.Sprintf("%s:%d", c.MonHost[i], defaultEtcdServerPort)
+		c.EtcdServer = append(c.EtcdServer, server)
+	}
 
 	if c.Port == 0 {
-		c.Port = defaultMonitorPort
+        c.Port = defaultMonitorPort
 	}
+
 	if c.PrometheusPort == 0 {
 		c.PrometheusPort = defaultPrometheusMonitorPort
 	}
 
-	CONFIG = c
+	if len(c.DataDir) == 0 {
+		c.DataDir = "/tmp/mon_" + c.HostName
+	} 
 
+	CONFIG = c
 	return nil
 }
 
 func validate(config *Config) {
-	if len(config.EtcdServer) == 0 {
-		panic("EtcdServer invalid")
+	if len(config.Monitors) == 0 {
+		panic("Monitors invalid")
+	}
+	
+	if len(config.MonHost) == 0 {
+		panic("MonHost invalid")
+	}
+
+	if len(config.Monitors) != len(config.MonHost) {
+		panic("Monitors and MonHost invalid")
 	}
 
 	if len(config.ElectionMasterKey) == 0 {

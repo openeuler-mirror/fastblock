@@ -94,9 +94,7 @@ void start_rpc_server(void* arg) {
     auto core_no = ::spdk_env_get_first_core();
     ::spdk_cpuset_set_cpu(&g_cpumask, core_no, true);
 
-    auto opts = msg::rdma::server::make_options(
-      g_pt.get_child("msg").get_child("server"),
-      g_pt.get_child("msg").get_child("rdma"));
+    auto opts = msg::rdma::server::make_options(g_pt);
     opts->bind_address =
       g_pt.get_child("bind_address").get_value<std::string>();
     opts->port = g_pt.get_child("bind_port").get_value<uint16_t>();

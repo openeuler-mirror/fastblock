@@ -578,7 +578,7 @@ int raft_server_t::raft_recv_appendentries(
 
     if (raft_is_candidate() && raft_get_current_term() == ae->term())
     {
-        SPDK_WARNLOG("become follower\n");
+        SPDK_INFOLOG(pg_group, "become follower\n");
         raft_become_follower();
     }
     else if (raft_get_current_term() < ae->term())
@@ -587,7 +587,7 @@ int raft_server_t::raft_recv_appendentries(
         if (0 != e){
             return hand_error(e);
         }
-        SPDK_WARNLOG("become follower\n");
+        SPDK_INFOLOG(pg_group, "become follower\n");
         raft_become_follower();
     }
     else if (ae->term() < raft_get_current_term())
@@ -1103,16 +1103,16 @@ void raft_server_t::raft_flush(){
          * becoming congested. */
         raft_index_t next_idx = node->raft_node_get_next_idx();
         if(!node->raft_node_is_recovering() && next_idx == _first_idx){
-            SPDK_WARNLOG("send to node %d next_idx: %ld current_idx: %ld\n", 
+            SPDK_INFOLOG(pg_group, "send to node %d next_idx: %ld current_idx: %ld\n", 
                     node->raft_node_get_id(), next_idx, _current_idx);
             node->raft_set_end_idx(_current_idx);
             raft_send_appendentries(node);
         }
         else{
             if(node->raft_node_is_recovering())
-                SPDK_WARNLOG("node %d is recovering\n", node->raft_node_get_id());
+                SPDK_INFOLOG(pg_group, "node %d is recovering\n", node->raft_node_get_id());
             else
-                SPDK_WARNLOG("node %d is fall behind,  next_idx: %ld first_idx: %ld \n", 
+                SPDK_INFOLOG(pg_group, "node %d is fall behind,  next_idx: %ld first_idx: %ld \n", 
                     node->raft_node_get_id(), next_idx, _first_idx);
         }             
     }
@@ -2411,7 +2411,7 @@ std::shared_ptr<raft_entry_t> raft_server_t::raft_get_last_applied_entry()
 }
 
 void raft_server_t::add_raft_membership(const raft_node_info& node, utils::context* complete){
-    SPDK_WARNLOG("add node %d %s %d to pg %lu.%lu\n", node.node_id(), node.addr().c_str(), 
+    SPDK_INFOLOG(pg_group, "add node %d %s %d to pg %lu.%lu\n", node.node_id(), node.addr().c_str(), 
             node.port(), raft_get_pool_id(), raft_get_pg_id());
     
     raft_configuration config;
@@ -2440,7 +2440,7 @@ void raft_server_t::add_raft_membership(const raft_node_info& node, utils::conte
 }
 
 void raft_server_t::remove_raft_membership(const raft_node_info& node, utils::context* complete){
-    SPDK_WARNLOG("remove node %d %s %d to pg %lu.%lu\n", node.node_id(), node.addr().c_str(), 
+    SPDK_INFOLOG(pg_group, "remove node %d %s %d to pg %lu.%lu\n", node.node_id(), node.addr().c_str(), 
             node.port(), raft_get_pool_id(), raft_get_pg_id());
     
     raft_configuration config;
@@ -2476,7 +2476,7 @@ void raft_server_t::change_raft_membership(std::vector<raft_node_info>&& new_nod
     for(auto& new_node : new_nodes){
         auto info = config.add_new_nodes();
         *info = new_node;
-        SPDK_WARNLOG("new membership: %d\n", new_node.node_id());
+        SPDK_INFOLOG(pg_group, "new membership: %d\n", new_node.node_id());
     }
 
     std::map<int32_t, int32_t> old_nodes;
@@ -2516,7 +2516,7 @@ void raft_server_t::change_raft_membership(std::vector<raft_node_info>&& new_nod
 int raft_server_t::raft_configuration_entry(std::shared_ptr<raft_entry_t> ety, utils::context *complete){
     if(_configuration_manager.is_busy()){
         auto err_num = err::RAFT_ERR_MEMBERSHIP_CHANGING;
-        SPDK_WARNLOG("change the membership of the pg %lu.%lu failed: %s\n", 
+        SPDK_INFOLOG(pg_group, "change the membership of the pg %lu.%lu failed: %s\n", 
                 raft_get_pool_id(), raft_get_pg_id(), err::string_status(err_num));
 
         return err_num;
