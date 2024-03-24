@@ -153,7 +153,7 @@ hello_start(void *arg)
       //初始化log磁盘
     if(g_mkfs){
         //初始化log磁盘
-        blobstore_init(server->bdev_disk.c_str(), disk_init_complete, arg);
+        blobstore_init(server->bdev_disk.c_str(), "", disk_init_complete, arg);
     }else{
         blobstore_load(server->bdev_disk.c_str(), disk_load_complete, arg);
     }

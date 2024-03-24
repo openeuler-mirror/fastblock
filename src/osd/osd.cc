@@ -46,6 +46,8 @@ typedef struct
     std::unique_ptr<rpc_server> rpc_srv{nullptr};
     boost::property_tree::ptree pt{};
     spdk_thread *cur_thread;
+    std::string bdev_addr;
+    std::string bdev_type;
 } server_t;
 
 static const char* g_json_conf{nullptr};
@@ -156,24 +158,6 @@ static void service_init(partition_manager* pm, server_t *server){
 	server->rpc_srv->register_service(global_osd_service.get());
 }
 
-struct pm_start_context : public utils::context{
-    server_t *server;
-    partition_manager* pm;
-
-    pm_start_context(server_t *_server, partition_manager* _pm)
-    : server(_server)
-    , pm(_pm) {}
-
-    void finish(int r) override {
-		if(r != 0){
-            osd_exit_code = r;
-            std::raise(SIGINT);
-			return;
-		}
-		service_init(pm, server);
-    }
-};
-
 void start_monitor(server_t* ctx) {
     monitor_client->start();
     monitor::client::on_response_callback_type cb =
@@ -193,7 +177,7 @@ void start_monitor(server_t* ctx) {
 
 static void pm_init(void *arg){
 	server_t *server = (server_t *)arg;
-    SPDK_NOTICELOG(
+    SPDK_INFOLOG(osd, 
       "Block start, cpu count: %u, bdev_disk: %s\n",
       spdk_env_get_core_count(),
       server->bdev_disk.c_str());
@@ -218,15 +202,6 @@ static void pm_init(void *arg){
       server->monitors, global_pm, std::move(pg_map_cb), std::nullopt, server->node_id);   
 }
 
-static void osd_service_init(void* arg){
-    server_t *server = (server_t *)arg;
-    pm_init(arg);
-    start_monitor(server);
-
-    pm_start_context *ctx = new pm_start_context{server, global_pm.get()};
-	global_pm->start(ctx);
-}
-
 void storage_init_complete(void *arg, int rberrno){
     if(rberrno != 0){
 		SPDK_ERRLOG("Failed to initialize the storage system: %s\n", spdk_strerror(rberrno));
@@ -234,25 +209,21 @@ void storage_init_complete(void *arg, int rberrno){
         std::raise(SIGINT);
 		return;
 	}
-    
-    server_t *server = (server_t *)arg;
-    auto cur_thread = spdk_get_thread();
-    if(cur_thread != server->cur_thread){
-        spdk_thread_send_msg(server->cur_thread, osd_service_init, arg);
-    }else{
-        osd_service_init(arg);
-    }
+
+    SPDK_NOTICELOG("mkfs done.\n");
+    osd_exit_code = 0;
+    std::raise(SIGINT);
 }
 
 void disk_init_complete(void *arg, int rberrno) {
     if(rberrno != 0){
-		SPDK_NOTICELOG("Failed to initialize the disk. %s\n", spdk_strerror(rberrno));
+		SPDK_NOTICELOG("Failed to initialize the disk. %s\n", err::string_status(rberrno));
         osd_exit_code = rberrno;
         std::raise(SIGINT);
 		return;
 	}
 
-    SPDK_NOTICELOG("Initialize the disk completed\n");
+    SPDK_INFOLOG(osd,  "Initialize the disk completed\n");
 	storage_init(storage_init_complete, arg);
 }
 
@@ -278,6 +249,10 @@ public:
 
     void start_load(uint32_t shard_id, pm_complete func, oad_load_ctx* ctx){
         iter_start();
+        if(iter_is_end()){
+            func(ctx, 0);
+            return;
+        }
         auto pg = iter->first;
         struct spdk_blob* blob = iter->second;
         uint64_t pool_id;
@@ -449,6 +424,9 @@ void disk_load_complete(void *arg, int rberrno){
 		return;
 	}
 
+    server_t *server = (server_t *)arg;
+    SPDK_INFOLOG(osd, "load blobstore done, uuid %s\n", server->osd_uuid.c_str());
+
     storage_load(storage_load_complete, arg);
 }
 
@@ -461,12 +439,18 @@ static void
 block_started(void *arg)
 {
     server_t *server = (server_t *)arg;
-    SPDK_NOTICELOG("node id %d, mkfs %d g_json_conf %s\n", g_id, g_mkfs, g_json_conf);
     std::string bdev_json_file = get_bdev_json_file_name();
     remove(bdev_json_file.c_str());
+    
+    buffer_pool_init();
+    if(g_mkfs){
+        //初始化log磁盘
+        blobstore_init(server->bdev_disk.c_str(), server->osd_uuid, 
+                disk_init_complete, arg);
+        return;
+    }
 
     server->cur_thread = spdk_get_thread();
-    buffer_pool_init();
     auto &shard = core_sharded::get_core_sharded();
     /*
       在spdk的函数bs_open_blob中有一个行“assert(spdk_get_thread() == bs->md_thread)”会检测当前spdk线程与blobstore的spdk线程是否相等，
@@ -478,12 +462,7 @@ block_started(void *arg)
       0,
       [arg](){
         server_t *server = (server_t *)arg;
-        if(g_mkfs){
-            //初始化log磁盘
-            blobstore_init(server->bdev_disk.c_str(), disk_init_complete, arg);
-        }else{
-            blobstore_load(server->bdev_disk.c_str(), disk_load_complete, arg);
-        }
+        blobstore_load(server->bdev_disk.c_str(), disk_load_complete, arg, &(server->osd_uuid));
       }
     );
 }
@@ -531,12 +510,12 @@ std::string get_rdma_addr(std::string rdma_device_name){
         }
         freeifaddrs(interfaces);
     }
+    closedir(dir);
 
     return ip_addr;
 }
 
-static void save_bdev_json(std::string& bdev_json_file, server_t& server, 
-        std::string& bdev_addr, std::string& bdev_type){
+static void save_bdev_json(std::string& bdev_json_file, server_t& server){
     std::ofstream ofs(bdev_json_file);
 
     if(ofs.is_open()){
@@ -546,7 +525,7 @@ static void save_bdev_json(std::string& bdev_json_file, server_t& server,
         ofs << "         \"subsystem\": \"bdev\",\n";
         ofs << "         \"config\": [\n";
         ofs << "             {\n";
-      if(bdev_type == "nvme"){
+      if(server.bdev_type == "nvme"){
         ofs << "               \"method\": \"bdev_nvme_attach_controller\",\n";
         ofs << "               \"params\": {\n";
         ofs << "                  \"name\": \"";
@@ -563,7 +542,7 @@ static void save_bdev_json(std::string& bdev_json_file, server_t& server,
         ofs << "                  \"block_size\": 512,\n";
         ofs << "                  \"filename\": \"";
       } 
-        ofs << bdev_addr;
+        ofs << server.bdev_addr;
         ofs << "\"\n";
         ofs << "               }\n";
         ofs << "             }\n";
@@ -607,6 +586,8 @@ static void from_configuration(server_t* server, std::string& bdev_json_file) {
     }
     server->bdev_disk = bdev_type + current_osd_id;
     server->osd_port = utils::get_random_port();
+    server->bdev_addr = bdev_addr;
+    server->bdev_type = bdev_type;
     
     auto ip_addr = get_rdma_addr(rdma_device_name);
     if(ip_addr.size() == 0){
@@ -636,8 +617,6 @@ static void from_configuration(server_t* server, std::string& bdev_json_file) {
 
     std::string pid_path = "/var/tmp/osd" + current_osd_id + ".pid";
     save_pid(pid_path.c_str());
-
-    save_bdev_json(bdev_json_file, osd_server, bdev_addr, bdev_type);
 }
 
 static void on_blob_unloaded([[maybe_unused]] void *cb_arg, int bserrno) {
@@ -729,6 +708,7 @@ main(int argc, char *argv[])
     }
     from_configuration(&osd_server, bdev_json_file);
 
+    save_bdev_json(bdev_json_file, osd_server);
     opts.json_config_file = bdev_json_file.c_str();
 	/* Blocks until the application is exiting */
 	rc = spdk_app_start(&opts, block_started, &osd_server);

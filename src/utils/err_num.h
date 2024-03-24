@@ -46,6 +46,7 @@ enum {
     RAFT_ERR_PG_INITIALIZING = -152,
     RAFT_ERR_MEMBERSHIP_CHANGING = -153,
     RAFT_ERR_SNAPSHOT_WAIT_APPLY = -154,
+    RAFT_ERR_DISK_NOT_EMPTY = -155,
 
     RAFT_ERR_UNKNOWN = -199,
     RAFT_ERR_LAST = -200,
@@ -102,6 +103,8 @@ inline const char *  string_status(int raft_errno) noexcept{
         return "the membership of pg is changing";
     case RAFT_ERR_SNAPSHOT_WAIT_APPLY:
         return "The snapshot is waiting for the log to apply";
+    case RAFT_ERR_DISK_NOT_EMPTY:
+        return "The disk is not empty";
     default:
         return "unknown errno";
     }
