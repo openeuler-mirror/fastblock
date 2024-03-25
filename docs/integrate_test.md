@@ -11,18 +11,20 @@ make
 mkdir -p /etc/fastblock
 mkdir -p /var/log/fastblock
 ```
-编辑/etc/fastblock/monitor.toml形如:  
+编辑/etc/fastblock/monitor.json形如:  
 ```
-etcd_server = ["127.0.0.1:2379"] # Your etcd servers.
-election_master_key = "fastblock_master"
-hostname="monitor1"
-log_path = "/var/log/fastblock/monitor1.log"
-log_level = "info"
+{
+    "monitors": ["monitor1"],
+    "mon_host": ["173.20.4.1"],
+    "log_path": "/var/log/fastblock/monitor1.log",
+    "log_level": "info",
+    "election_master_key": "fastblock_monitor_election"
+}
 ```
 默认情况下，monitor会绑定3333端口作为元数据rpc的端口，另有3332作为Prometheus端口(相关功能暂未完整开发)  
 配置好之后，启动monitor:
 ```
-./monitor
+./fastblock-mon -conf=/etc/fastblock/monitor.json -id=monitor1 
 ```
 
 # osd

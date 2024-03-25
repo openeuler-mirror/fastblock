@@ -8,43 +8,35 @@
 {
     "io_type": "write",
     "io_size": 4096,
-    "io_count": 1,
+    "io_count": 10000,
     "io_depth": 8,
     "io_queue_size": 128,
     "io_queue_request": 4096,
     "image_name": "test_image",
-    "image_size": 2907152,
+    "image_size": 107374182400,
     "object_size": 1048576,
-    "pool_id": 1,
-    "pool_name": "test_bdev_2",
-    "monitor": [
-
-        {"host": "127.0.0.1", "port": 3333}
-    ],
-    "msg": {
-        "client": {
-            "poll_cq_batch_size": 8,
-            "metadata_memory_pool_capacity": 16384,
-            "metadata_memory_pool_element_size_byte": 1024,
-            "data_memory_pool_capacity": 16384,
-            "data_memory_pool_element_size_byte": 8192,
-            "per_post_recv_num": 512,
-            "rpc_timeout_us": 1000000,
-            "rpc_batch_size": 1024
-        },
-
-        "rdma": {
-            "resolve_timeout_us": 2000,
-            "poll_cm_event_timeout_us": 1000000,
-            "max_send_wr": 4096,
-            "max_send_sge": 128,
-            "max_recv_wr": 8192,
-            "max_recv_sge": 128,
-            "max_inline_data": 16,
-            "cq_num_entries": 1024,
-            "qp_sig_all": false
-        }
-    }
+    "pool_id": 26,
+    "pool_name": "volume",
+    "mon_host": ["173.20.4.3","173.20.4.2","173.20.4.1"],
+    "msg_client_poll_cq_batch_size": 32,
+    "msg_client_metadata_memory_pool_capacity": 16384,
+    "msg_client_metadata_memory_pool_element_size": 1024,
+    "msg_client_data_memory_pool_capacity": 16384,
+    "msg_client_data_memory_pool_element_size": 8192,
+    "msg_client_per_post_recv_num": 512,
+    "msg_client_rpc_timeout_us": 1000000,
+    "msg_client_rpc_batch_size": 1024,
+    "msg_client_connect_max_retry": 30,
+    "msg_client_connect_retry_interval_us": 1000000,
+    "msg_rdma_resolve_timeout_us": 2000,
+    "msg_rdma_poll_cm_event_timeout_us": 1000000,
+    "msg_rdma_max_send_wr": 4096,
+    "msg_rdma_max_send_sge": 128,
+    "msg_rdma_max_recv_wr": 8192,
+    "msg_rdma_max_recv_sge": 1,
+    "msg_rdma_max_inline_data": 16,
+    "msg_rdma_cq_num_entries": 1024,
+    "msg_rdma_qp_sig_all": false   
 }
 ```
 
