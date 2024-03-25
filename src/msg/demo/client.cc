@@ -45,6 +45,7 @@ size_t g_iter_count{0};
 long g_current_send_rpc{0};
 ::spdk_cpuset g_cpumask{};
 std::string g_iter_msg{};
+bool g_is_terminated{false};
 
 struct call_stack {
     std::unique_ptr<ping_pong::request> req{std::make_unique<ping_pong::request>()};
@@ -52,6 +53,7 @@ struct call_stack {
     google::protobuf::Closure* cb{nullptr};
     std::chrono::system_clock::time_point start_at{};
 };
+
 double g_all_rpc_dur{0.0};
 size_t g_rpc_dur_count{0};
 size_t g_mempool_cap{4096};
@@ -103,8 +105,11 @@ void on_pong(msg::rdma::rpc_controller* ctrlr, ping_pong::response* reply) {
 void iter_on_pong(msg::rdma::rpc_controller* ctrlr, ping_pong::response* reply) {
     if (ctrlr->Failed()) {
         SPDK_ERRLOG("ERROR: exec rpc failed: %s\n", ctrlr->ErrorText().c_str());
+        g_is_terminated = true;
         std::raise(SIGINT);
     }
+
+    if (g_is_terminated) { return; }
 
     auto* stack_ptr = g_call_stacks.front().get();
     auto dur = (std::chrono::system_clock::now() - stack_ptr->start_at).count();
@@ -112,6 +117,7 @@ void iter_on_pong(msg::rdma::rpc_controller* ctrlr, ping_pong::response* reply) 
     ++g_rpc_dur_count;
     g_all_rpc_dur += static_cast<double>(dur);
     if (static_cast<size_t>(reply->id()) >= g_iter_count) {
+        g_is_terminated = true;
         auto iops_dur = static_cast<double>((std::chrono::system_clock::now() - g_iops_start).count());
         SPDK_ERRLOG(
           "client iteration done, duration count is %lu, mean duration is %lfus, total dur: %lfus, iops: %lf\n",
