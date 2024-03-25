@@ -185,7 +185,7 @@ public:
         _opts->data_memory_pool_element_size, 0)} {
         endpoint ep{_opts->bind_address, _opts->port};
         ep.passive = true;
-        _listener = std::make_unique<socket>(ep, *_pd, nullptr, false);
+        _listener = std::make_unique<socket>(ep, *_pd, _channel.value(), false);
     }
 
     server(const server&) = delete;
@@ -346,7 +346,7 @@ private:
         auto it = _cm_records.find(evt->id);
         if (it == _cm_records.end()) {
             SPDK_ERRLOG(
-              "ERROR: Received cm event %s with id not found in cm observers\n",
+              "ERROR: Received cm event %s, but the cm id can not be found in cm observers\n",
               ::rdma_event_str(evt->event));
 
             ::rdma_ack_cm_event(evt);
@@ -901,7 +901,7 @@ public:
         }
 
         _dev->process_ib_event();
-        auto evt = _listener->poll_event();
+        auto evt = _channel.poll();
         if (not evt) { return SPDK_POLLER_IDLE; }
 
         SPDK_INFOLOG(
@@ -1118,6 +1118,8 @@ private:
     std::list<std::shared_ptr<rpc_task>> _read_task_list{};
     std::list<std::shared_ptr<rpc_task>> _reply_task_list{};
     std::list<std::shared_ptr<connection_record>> _cqe_conn_list{};
+
+    event_channel _channel{};
 };
 
 } // namespace rdma

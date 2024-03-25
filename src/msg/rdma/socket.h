@@ -11,6 +11,7 @@
 #pragma once
 
 #include "msg/rdma/endpoint.h"
+#include "msg/rdma/event_channel.h"
 #include "msg/rdma/provider/mlx5dv.h"
 #include "msg/rdma/provider/verbs.h"
 #include "msg/rdma/pd.h"
@@ -36,20 +37,10 @@ public:
 
     socket() = delete;
 
-    socket(endpoint ep, protection_domain& pd, ::rdma_event_channel* channel = nullptr, bool reuseaddr = true)
+    socket(endpoint ep, protection_domain& pd, ::rdma_event_channel* channel, bool reuseaddr = true)
       : _ep{ep}
-      , _channel{channel}
       , _pd{pd.value()}
       , _mlx5dv_is_supported{::mlx5dv_is_supported(pd.deivce())} {
-        if (not _channel) {
-            _channel = ::rdma_create_event_channel();
-            _process_channel_when_close = true;
-        }
-
-        if (not _channel) {
-            throw std::runtime_error{"create rdma event channel failed"};
-        }
-
         if (_mlx5dv_is_supported) {
             SPDK_NOTICELOG("mlx5dv is supported\n");
             _provider = std::make_unique<mlx5dv>();
@@ -77,14 +68,14 @@ public:
               std::strerror(errno), _ep.addr.c_str(), _ep.port);
         }
 
-        ret = ::rdma_create_id(_channel, &_id, nullptr, ::RDMA_PS_TCP);
+        ret = ::rdma_create_id(channel, &_id, nullptr, ::RDMA_PS_TCP);
+        assert(_id->channel == channel);
         if (ret) {
             SPDK_ERRLOG("ERROR: Create rdma cm id failed\n");
             throw std::runtime_error{"create rdma cm id failed"};
         }
         _id->context = this;
         _id->pd = _pd;
-        nonblock_poll_fd(_cm_poll_fd, _channel->fd);
 
         if (_ep.passive) {
             ret = ::rdma_bind_addr(_id, _res->ai_src_addr);
@@ -247,24 +238,6 @@ public:
             return "IBV_WC_TM_RNDV_INCOMPLETE";
         default:
             return FMT_1("error status(%1%)", s);
-        }
-    }
-
-    static void nonblock_poll_fd(std::unique_ptr<::pollfd>& poll_fd, int fd) {
-        if (poll_fd) {
-            return;
-        }
-
-        poll_fd = std::make_unique<::pollfd>();
-        std::memset(poll_fd.get(), 0, sizeof(::pollfd));
-        poll_fd->fd = fd;
-        poll_fd->events = POLLIN;
-
-        int ret = ::fcntl(poll_fd->fd, F_GETFL);
-        ret = ::fcntl(poll_fd->fd, F_SETFL, ret | O_NONBLOCK);
-
-        if (ret) [[unlikely]] {
-            throw std::runtime_error{"make poll fd nonblock failed"};
         }
     }
 
@@ -503,12 +476,7 @@ public:
         return event;
     }
 
-    int process_active_cm_event(::rdma_cm_event_type expected_evt) noexcept {
-        auto* evt = poll_event();
-        if (not evt) {
-            return 0;
-        }
-
+    int process_active_cm_event(::rdma_cm_event_type expected_evt, ::rdma_cm_event* evt) noexcept {
         SPDK_DEBUGLOG(
           msg,
           "process active side event: %s(id: %p)\n",
@@ -557,40 +525,13 @@ public:
         }
         ::rdma_ack_cm_event(evt);
 
-        return is_bad_evt ? -1 : 1;
-    }
-
-    ::rdma_cm_id* process_passive_cm_event() {
-        auto evt = poll_event();
-
-        if (!evt) {
-            return nullptr;
-        }
-
-        SPDK_DEBUGLOG(
-          msg,
-          "received event: %s, status: %d\n",
-          rdma_event_str(evt->event), evt->status);
-
-        try {
-            auto ret = process_event_directly(evt);
-            ::rdma_ack_cm_event(evt);
-            return ret;
-        } catch (...) {
-            ::rdma_ack_cm_event(evt);
-            std::rethrow_exception(std::current_exception());
-        }
+        return is_bad_evt ? -1 : 0;
     }
 
     std::optional<std::error_code> accept() noexcept {
         int ret = ::rdma_accept(_id, nullptr);
 
         if (ret) [[unlikely]] {
-            return std::make_error_code(static_cast<std::errc>(errno));
-        }
-
-        nonblock_poll_fd(_cm_poll_fd, _id->channel->fd);
-        if (ret != 0) [[unlikely]] {
             return std::make_error_code(static_cast<std::errc>(errno));
         }
 
@@ -615,18 +556,20 @@ public:
         return std::nullopt;
     }
 
-    auto is_resolve_address_done() {
-        SPDK_DEBUGLOG(msg, "_id->verbs is %p, _id->pd is %p, _pd is %p\n", _id->verbs, _id->pd, _pd);
+    auto is_resolve_address_done(::rdma_cm_event* evt) {
         _id->pd = _pd;
         _id->verbs = _pd->context;
-        return process_active_cm_event(RDMA_CM_EVENT_ADDR_RESOLVED);
+        return process_active_cm_event(::RDMA_CM_EVENT_ADDR_RESOLVED, evt);
     }
 
-    auto is_resolve_route_done() {
-        SPDK_DEBUGLOG(msg, "_id->verbs is %p, _id->pd is %p, _pd is %p\n", _id->verbs, _id->pd, _pd);
+    auto is_resolve_route_done(::rdma_cm_event* evt) {
         _id->pd = _pd;
         _id->verbs = _pd->context;
-        return process_active_cm_event(RDMA_CM_EVENT_ROUTE_RESOLVED);
+        return process_active_cm_event(::RDMA_CM_EVENT_ROUTE_RESOLVED, evt);
+    }
+
+    auto is_established(::rdma_cm_event* evt) {
+        return process_active_cm_event(::RDMA_CM_EVENT_ESTABLISHED, evt);
     }
 
     void resolve_route() {
@@ -706,11 +649,6 @@ public:
          * 这种情况下，对端不会收到 RDMA_CM_EVENT_DISCONNECTED 事件
          */
         int ret{0};
-        if (_process_channel_when_close) {
-            ret = ::fcntl(_id->channel->fd, F_GETFL);
-            ret &= ~O_NONBLOCK;
-            ::fcntl(_id->channel->fd, F_SETFL, ret);
-        }
 
         ret = _provider->disconnect(_id);
         if (ret) {
@@ -757,13 +695,6 @@ public:
 
             ::rdma_destroy_id(_id);
             _id = nullptr;
-        }
-
-        if (_channel and _process_channel_when_close) {
-            ::rdma_destroy_event_channel(_channel);
-            _channel = nullptr;
-        } else {
-            SPDK_NOTICELOG("rdma event channel is null when destroy resource\n");
         }
 
         if (_res) {
@@ -820,36 +751,6 @@ private:
         return false;
     }
 
-    void resolve_address() {
-        int ret{0};
-
-        ret = ::rdma_resolve_addr(
-          _id,
-          _res->ai_src_addr,
-          _res->ai_dst_addr,
-          _ep.resolve_timeout_us);
-
-        if (ret) {
-            SPDK_ERRLOG(
-              "ERROR: Resolve address(src: %s, dst: %s) failed: %s\n",
-              host(_res->ai_src_addr).c_str(),
-              host(_res->ai_dst_addr).c_str(),
-              std::strerror(errno));
-
-            throw std::runtime_error{"resolve address failed"};
-        }
-        process_active_cm_event(RDMA_CM_EVENT_ADDR_RESOLVED);
-
-        ret = ::rdma_resolve_route(_id, _ep.resolve_timeout_us);
-        if (ret) {
-            SPDK_ERRLOG(
-              "resolve route(src: %s, dst: %s) failed: %s\n",
-              host(_res->ai_src_addr).c_str(),
-              host(_res->ai_dst_addr).c_str(),
-              std::strerror(errno));
-        }
-        process_active_cm_event(RDMA_CM_EVENT_ROUTE_RESOLVED);
-    }
 
     ::ibv_cq* create_cq(::ibv_device_attr* dev_attr) {
         auto cqe = cap_from_attr(
@@ -945,7 +846,6 @@ private:
 private:
 
     endpoint _ep;
-    ::rdma_event_channel* _channel{nullptr};
     ::rdma_cm_id* _id{nullptr};
     ::rdma_addrinfo* _res{nullptr};
     ::rdma_addrinfo _hints{};
