@@ -941,12 +941,14 @@ public:
         if (rc < 0) {
             SPDK_ERRLOG("ERROR: Poll cq error '%s', stop the server\n", std::strerror(errno));
             handle_stop();
-            return SPDK_POLLER_BUSY;
+            return SPDK_POLLER_IDLE;
         }
 
         if (rc == 0) {
             return SPDK_POLLER_IDLE;
         }
+
+        SPDK_DEBUGLOG(msg, "polled %d cqes\n", rc);
 
         ::ibv_wc* cqe{nullptr};
         work_request_id::dispatch_id_type dis_id{};

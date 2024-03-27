@@ -245,14 +245,6 @@ public:
             ++_last_rm_info_index;
         }
 
-        if (data->serial_no + 1 == data->metadata_count) {
-            _is_metadata_complete = true;
-            _serialized_size = _transport_size - 2 * _rdma_read_tag_length;
-            if (has_enough_memory()) {
-                alloc_reply_data();
-            }
-        }
-
         SPDK_DEBUGLOG(
           msg,
           "_data_count: %ld, _transport_size: %ld, data->io_count: %d, "
@@ -261,6 +253,14 @@ public:
           _data_count, _transport_size, data->io_count, data->io_length,
           data->is_inlined, data->correlation_index, data->metadata_count,
           data->serial_no);
+
+        if (data->serial_no + 1 == data->metadata_count) {
+            _is_metadata_complete = true;
+            _serialized_size = _transport_size - 2 * _rdma_read_tag_length;
+            if (has_enough_memory()) {
+                alloc_reply_data();
+            }
+        }
     }
 
     void serialize_data(void* meta_src, const size_t meta_size, const google::protobuf::Message* request) {
@@ -299,17 +299,10 @@ public:
               _serialized_buf.get() + copied,
               cpy_len);
 
-            SPDK_DEBUGLOG(msg, "serialize to %p, cpy_len: %lu\n", _datas[i]->mr->addr, cpy_len);
-
             copied += cpy_len;
             cpy_off = 0;
             cpy_len = std::min(_data_chunk_size - cpy_off, _serialized_size - copied);
         }
-
-        SPDK_DEBUGLOG(
-          msg,
-          "_head_tag(%p): %d, _tail_tag: %d\n",
-          _head_tag, *_head_tag, *_tail_tag);
     }
 
     void serialize_data(reply_meta* meta) {
@@ -391,7 +384,7 @@ public:
 
         if (_metas.size() > 1) {
             for (size_t i{1}; i < _metas.size(); ++i) {
-                _metas[i]->wr.next = &(_metas[i - 1]->wr);
+                _metas[i - 1]->wr.next = &(_metas[i]->wr);
             }
             _metas[_metas.size() - 1]->wr.next = nullptr;
         }
@@ -478,6 +471,10 @@ private:
         m->correlation_index = corr_idx;
         m->serial_no = serial_no;
         m->metadata_count = _meta_count;
+        SPDK_DEBUGLOG(
+          msg,
+          "io_count: %d, io_length: %d, corr_idx: %d, serial_no: %d\n",
+          io_count, io_length, corr_idx, serial_no);
     }
 
     inline void init_metadata(metadata* m) noexcept {
@@ -532,57 +529,107 @@ private:
 
             init_metadata(meta_ptr);
         } else {
-            size_t meta_counter{0};
+            size_t data_counter{0};
             size_t rm_info_counter{0};
+            metadata* meta_ptr{nullptr};
+            remote_info* rm_info{nullptr};
             auto max_rm_info = max_remote_info_size();
 
-            auto meta_ptr = reinterpret_cast<metadata*>(_metas[meta_counter]->mr->addr);
-            remote_info* rm_info = reinterpret_cast<remote_info*>(
-              reinterpret_cast<char*>(meta_ptr) + metadata_header_size);
-            for (size_t i{0}; i < _data_count; ++i) {
-                rm_info[rm_info_counter].raddr = _datas[i]->mr->addr;
-                rm_info[rm_info_counter].rkey = _datas[i]->mr->rkey;
+            for (size_t meta_counter{0}; meta_counter < _meta_count - 1; ++meta_counter) {
+                meta_ptr = reinterpret_cast<metadata*>(_metas[meta_counter]->mr->addr);
+                rm_info = reinterpret_cast<remote_info*>(
+                  reinterpret_cast<char*>(meta_ptr) + metadata_header_size);
+                for (rm_info_counter = 0; rm_info_counter < max_rm_info; ++rm_info_counter) {
+                    rm_info[rm_info_counter].raddr = _datas[data_counter]->mr->addr;
+                    rm_info[rm_info_counter].rkey = _datas[data_counter]->mr->rkey;
+                    ++data_counter;
+                }
+                init_metadata(
+                  meta_ptr,
+                  max_rm_info,
+                  max_rm_info * _data_chunk_size,
+                  _correlation_index, meta_counter);
 
                 SPDK_DEBUGLOG(
                   msg,
-                  "[%lu] raddr %p, rkey: %d\n",
-                  i, _datas[i]->mr->addr, _datas[i]->mr->rkey);
+                  "correlation index: %d, metadata{io_count: %d, io_length: %d, rm_info_counter: %ld, serial_no: %d}, "
+                  "max_rm_info: %ld, _metas.size(): %ld, meta_counter: %ld\n",
+                  _correlation_index, meta_ptr->io_count, meta_ptr->io_length, rm_info_counter + 1, meta_ptr->serial_no,
+                  max_rm_info, _metas.size(), meta_counter);
+            }
 
-                if (rm_info_counter + 1 == max_rm_info) {
-                    init_metadata(
-                      meta_ptr,
-                      rm_info_counter + 1,
-                      (rm_info_counter + 1) * _data_chunk_size,
-                      _correlation_index, meta_counter);
-
-                    SPDK_DEBUGLOG(
-                      msg,
-                      "correlation index: %d, metadata{io_count: %d, io_length: %d, rm_info_count: %ld}\n",
-                      _correlation_index, meta_ptr->io_count, meta_ptr->io_length, rm_info_counter + 1);
-
-                    meta_ptr = reinterpret_cast<metadata*>(_metas[++meta_counter]->mr->addr);
-                    rm_info = reinterpret_cast<remote_info*>(
-                      reinterpret_cast<char*>(_metas[0]->mr->addr) + metadata_header_size);
-                    rm_info_counter = 0;
-
-                    // the last metadata element
-                    if (meta_counter + 1 == _meta_count) {
-                        init_metadata(
-                          meta_ptr,
-                          _data_count - (i + 1),
-                          (meta_ptr->io_count) * _data_chunk_size,
-                          _correlation_index, meta_counter);
-
-
-                        SPDK_DEBUGLOG(
-                          msg,
-                          "last metadata{io_count: %d, io_length: %d}\n",
-                          meta_ptr->io_count, meta_ptr->io_length);
-                    }
-                }
-
+            // the last meta chunk
+            meta_ptr = reinterpret_cast<metadata*>(_metas[_meta_count - 1]->mr->addr);
+            rm_info = reinterpret_cast<remote_info*>(
+              reinterpret_cast<char*>(meta_ptr) + metadata_header_size);
+            rm_info_counter = 0;
+            for (size_t i{data_counter}; i < _data_count; ++i) {
+                rm_info[rm_info_counter].raddr = _datas[i]->mr->addr;
+                rm_info[rm_info_counter].rkey = _datas[i]->mr->rkey;
                 ++rm_info_counter;
             }
+            init_metadata(
+              meta_ptr,
+              _data_count - data_counter + 1,
+              (_data_count - data_counter + 1) * _data_chunk_size,
+              _correlation_index,
+              _meta_count - 1);
+            SPDK_DEBUGLOG(
+              msg,
+              "correlation index: %d, metadata{io_count: %d, io_length: %d, rm_info_counter: %ld, serial_no: %d}, "
+              "max_rm_info: %ld, _metas.size(): %ld, meta_counter: %ld\n",
+              _correlation_index, meta_ptr->io_count, meta_ptr->io_length, rm_info_counter + 1, meta_ptr->serial_no,
+              max_rm_info, _metas.size(), _meta_count - 1);
+
+
+
+
+
+
+
+
+            // size_t meta_counter{0};
+            // size_t rm_info_counter{0};
+
+            // auto meta_ptr = reinterpret_cast<metadata*>(_metas[meta_counter]->mr->addr);
+            // remote_info* rm_info = reinterpret_cast<remote_info*>(
+            //   reinterpret_cast<char*>(meta_ptr) + metadata_header_size);
+
+            // for (size_t i{0}; i < _data_count; ++i) {
+            //     rm_info[rm_info_counter].raddr = _datas[i]->mr->addr;
+            //     rm_info[rm_info_counter].rkey = _datas[i]->mr->rkey;
+
+            //     if (rm_info_counter + 1 == max_rm_info) {
+            //         init_metadata(
+            //           meta_ptr,
+            //           rm_info_counter + 1,
+            //           (rm_info_counter + 1) * _data_chunk_size,
+            //           _correlation_index, meta_counter);
+
+
+
+            //         meta_ptr = reinterpret_cast<metadata*>(_metas[std::min(++meta_counter, _metas.size() - 1)]->mr->addr);
+            //         rm_info = reinterpret_cast<remote_info*>(
+            //           reinterpret_cast<char*>(_metas[0]->mr->addr) + metadata_header_size);
+            //         rm_info_counter = 0;
+
+            //         // the last metadata element
+            //         if (meta_counter >= _meta_count) {
+            //             init_metadata(
+            //               meta_ptr,
+            //               _data_count - (i + 1),
+            //               (meta_ptr->io_count) * _data_chunk_size,
+            //               _correlation_index, _meta_count - 1);
+
+            //             SPDK_DEBUGLOG(
+            //               msg,
+            //               "last metadata{io_count: %d, io_length: %d}\n",
+            //               meta_ptr->io_count, meta_ptr->io_length);
+            //         }
+            //     }
+
+            //     ++rm_info_counter;
+            // }
         }
     }
 
@@ -599,9 +646,12 @@ private:
                 auto trans_size_f = static_cast<double>(_transport_size);
                 auto io_count_f = std::ceil(trans_size_f / _data_chunk_size);
                 _data_count = static_cast<size_t>(io_count_f);
-                auto num_meta_f = static_cast<double>(metadata_size() / _meta_pool->element_size());
+                double num_meta_f = static_cast<double>(metadata_size()) / _meta_pool->element_size();
 
-                SPDK_DEBUGLOG(msg, "_data_count: %ld, num_meta_f: %f\n", _data_count, num_meta_f);
+                SPDK_DEBUGLOG(
+                  msg,
+                  "metadata_size(): %ld, _data_count: %ld, num_meta_f: %f\n",
+                  metadata_size(), _data_count, num_meta_f);
 
                 if (fabs(num_meta_f - double{0.0}) <= std::numeric_limits<double>::epsilon()) {
                     _meta_count = 1;

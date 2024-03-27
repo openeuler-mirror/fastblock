@@ -1,12 +1,13 @@
 {
-    "server_address": "ip",
+    "server_address": "172.31.4.143",
     "server_port": 8081,
-    "io_depth": 8,
-    "iteration_count": 10000,
+    "io_depth": 1,
+    "iteration_count": 1,
+    "connection_size": 3,
     "msg": {
         "client": {
             "poll_cq_batch_size": 8,
-            "metadata_memory_pool_capacity": 16384,
+            "metadata_memory_pool_capacity": 1024,
             "metadata_memory_pool_element_size_byte": 1024,
             "data_memory_pool_capacity": 16384,
             "data_memory_pool_element_size_byte": 8192,
@@ -21,9 +22,9 @@
             "resolve_timeout_us": 2000,
             "poll_cm_event_timeout_us": 1000000,
             "max_send_wr": 4096,
-            "max_send_sge": 128,
-            "max_recv_wr": 8192,
-            "max_recv_sge": 128,
+            "max_send_sge": 8,
+            "max_recv_wr": 512,
+            "max_recv_sge": 8,
             "max_inline_data": 16,
             "cq_num_entries": 1024,
             "qp_sig_all": false

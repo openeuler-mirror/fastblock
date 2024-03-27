@@ -103,6 +103,7 @@ void on_pong(msg::rdma::rpc_controller* ctrlr, ping_pong::response* reply) {
 }
 
 void iter_on_pong(msg::rdma::rpc_controller* ctrlr, ping_pong::response* reply) {
+    SPDK_NOTICELOG("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n");
     if (ctrlr->Failed()) {
         SPDK_ERRLOG("ERROR: exec rpc failed: %s\n", ctrlr->ErrorText().c_str());
         g_is_terminated = true;
@@ -156,7 +157,7 @@ void start_rpc_client(void* arg) {
     g_io_depth = g_pt.get_child("io_depth").get_value<size_t>();
     g_rpc_client = std::make_shared<msg::rdma::client>("rpc_cli", &g_cpumask, opts);
     g_rpc_client->start();
-    g_iter_msg = demo::random_string(4096);
+    g_iter_msg = demo::random_string(1024 * 1024 * 10);
     g_rpc_client->emplace_connection(
       g_pt.get_child("server_address").get_value<std::string>(),
       g_pt.get_child("server_port").get_value<uint16_t>(),
@@ -168,17 +169,17 @@ void start_rpc_client(void* arg) {
           g_conn = conn;
           g_stub = std::make_unique<ping_pong::ping_pong_service_Stub>(g_conn.get());
 
-          demo::small_message = demo::random_string(demo::small_message_size);
-          SPDK_NOTICELOG("Sending small message rpc\n");
-          g_small_ping.set_ping(demo::small_message);
-          g_small_done = google::protobuf::NewCallback(on_pong, &g_ctrlr, &g_small_pong);
-          g_stub->ping_pong(&g_ctrlr, &g_small_ping, &g_small_pong, g_small_done);
+        //   demo::small_message = demo::random_string(demo::small_message_size);
+        //   SPDK_NOTICELOG("Sending small message rpc\n");
+        //   g_small_ping.set_ping(demo::small_message);
+        //   g_small_done = google::protobuf::NewCallback(on_pong, &g_ctrlr, &g_small_pong);
+        //   g_stub->ping_pong(&g_ctrlr, &g_small_ping, &g_small_pong, g_small_done);
 
-          demo::big_message = demo::random_string(demo::big_message_size);
-          SPDK_NOTICELOG("Sending heartbeat message rpc\n");
-          g_big_ping.set_ping(demo::big_message);
-          g_big_done = google::protobuf::NewCallback(on_pong, &g_ctrlr, &g_big_pong);
-          g_stub->heartbeat(&g_ctrlr, &g_big_ping, &g_big_pong, g_big_done);
+        //   demo::big_message = demo::random_string(demo::big_message_size);
+        //   SPDK_NOTICELOG("Sending heartbeat message rpc\n");
+        //   g_big_ping.set_ping(demo::big_message);
+        //   g_big_done = google::protobuf::NewCallback(on_pong, &g_ctrlr, &g_big_pong);
+        //   g_stub->heartbeat(&g_ctrlr, &g_big_ping, &g_big_pong, g_big_done);
 
           // iter test
 
