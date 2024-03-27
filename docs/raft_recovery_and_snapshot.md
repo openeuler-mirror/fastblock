@@ -21,7 +21,7 @@ recovery又分三种情况：
         std::vector<std::shared_ptr<raft_entry_t>> entries;
         long entry_num = std::min(recovery_max_entry_num, raft_get_current_idx() - next_idx + 1);
         raft_get_log()->log_get_from_idx(next_idx, entry_num, entries);
-        msg_appendentries_t*ae = create_appendentries(node.get());
+        msg_appendentries_t*ae = create_appendentries(node);
         for(auto entry : entries){
             auto entry_ptr = ae->add_entries();
             *entry_ptr = *entry;

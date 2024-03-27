@@ -263,17 +263,17 @@ public:
     /**
      * @param[in] node_id The node's ID
      * @return node pointed to by node ID */
-    raft_node* raft_get_node(raft_node_id_t node_id)
+    std::shared_ptr<raft_node> raft_get_node(raft_node_id_t node_id)
     { 
         auto nodep = _nodes_stat.get_node(node_id);
         if(!nodep)
             return nullptr;
-        return nodep.get();
+        return nodep;
     }
 
     /**
      * @return the server's node */
-    raft_node* raft_get_my_node()
+    std::shared_ptr<raft_node> raft_get_my_node()
     {
         return raft_get_node(_node_id);
     }
@@ -294,7 +294,7 @@ public:
     /** Get what this node thinks the node of the leader is.
      * @return node of what this node thinks is the valid leader;
      *   NULL if the leader is unknown */
-    raft_node* raft_get_current_leader_node()
+    std::shared_ptr<raft_node> raft_get_current_leader_node()
     {
         return raft_get_node(_leader_id);
     }
@@ -321,7 +321,7 @@ public:
 
     /**
      * @return 1 if node ID matches the server; 0 otherwise */
-    bool raft_is_self(raft_node* node)
+    bool raft_is_self(std::shared_ptr<raft_node> node)
     {
         return (node && node->raft_node_get_id() == _node_id);
     }
@@ -411,16 +411,6 @@ public:
      *  0 on success */
     int raft_vote_for_nodeid(const raft_node_id_t nodeid);
 
-    /** Vote for a server.
-     * This should be used to reload persistent state, ie. the voted-for field.
-     * @param[in] node The server to vote for
-     * @return
-     *  0 on success */
-    int raft_vote(raft_node* node)
-    {
-        return raft_vote_for_nodeid(node ? node->raft_node_get_id() : -1);
-    }
-
     int raft_count_votes();
 
     /** @return
@@ -488,9 +478,10 @@ public:
     void raft_flush();
     void process_conf_change_entry(std::shared_ptr<raft_entry_t> entry);
 
-    int raft_send_heartbeat(raft_node* node);
+    int raft_send_heartbeat(std::shared_ptr<raft_node> node);
 
-    int raft_send_appendentries(raft_node* node);
+    //send append entry request which containing raft_entry at [start_index, end_index] to node
+    int raft_send_appendentries(std::shared_ptr<raft_node> node, raft_index_t start_index, raft_index_t end_index);
 
     bool raft_get_entry_term(raft_index_t idx, raft_term_t& term);
 
@@ -532,7 +523,7 @@ public:
 
     /**
      * @return 0 on error */
-    int raft_send_requestvote(raft_node* node);
+    int raft_send_requestvote(std::shared_ptr<raft_node> node);
 
     /** Receive a requestvote message.
      * @param[in] node The node who sent us this message
@@ -657,7 +648,7 @@ public:
         return raft_has_majority_leases();
     }
 
-    msg_appendentries_t* create_appendentries(raft_node* node);
+    msg_appendentries_t* create_appendentries(std::shared_ptr<raft_node> node, raft_index_t next_idx);
     void dispatch_recovery(std::shared_ptr<raft_node> node);
     void do_recovery(std::shared_ptr<raft_node> node);
 
@@ -860,8 +851,8 @@ private:
     int _recovery_by_snapshot(std::shared_ptr<raft_node> node);
     bool _has_majority_leases(raft_time_t now, int with_grace);
     int _should_grant_vote(const msg_requestvote_t* vr);
-    int _has_lease(raft_node* node, raft_time_t now, int with_grace);
-    void _raft_get_entries_from_idx(raft_index_t idx, msg_appendentries_t* ae);
+    int _has_lease(std::shared_ptr<raft_node> node, raft_time_t now, int with_grace);
+    void _raft_get_entries_from_idx(raft_index_t start_index, raft_index_t end_index, msg_appendentries_t* ae);
 
     /* the server's best guess of what the current term is
      * starts at zero */

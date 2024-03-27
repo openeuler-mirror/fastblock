@@ -152,7 +152,7 @@ std::vector<shard_manager::node_heartbeat> shard_manager::get_heartbeat_requests
         }
 
         auto create_heartbeat_request = [this, raft, now, &pending_beats](const std::shared_ptr<raft_node> node) mutable{
-            if (raft->raft_is_self(node.get()))
+            if (raft->raft_is_self(node))
                 return;
             SPDK_DEBUGLOG(pg_group, "node: %d pg: %lu.%lu suppress_heartbeats: %d heartbeating: %d  append_time: %lu heartbeat_timeout: %d now: %lu\n",
                     node->raft_node_get_id(), raft->raft_get_pool_id(), raft->raft_get_pg_id(),
