@@ -570,66 +570,21 @@ private:
             }
             init_metadata(
               meta_ptr,
-              _data_count - data_counter + 1,
-              (_data_count - data_counter + 1) * _data_chunk_size,
+              _data_count - data_counter,
+              _transport_size - (_meta_count - 1) * _data_chunk_size * max_rm_info,
               _correlation_index,
               _meta_count - 1);
+
+            SPDK_DEBUGLOG(
+              msg,
+              "_transport_size: %ld, _meta_count: %ld, _data_count: %ld, data_counter: %ld\n",
+              _transport_size, _meta_count, _data_count, data_counter);
             SPDK_DEBUGLOG(
               msg,
               "correlation index: %d, metadata{io_count: %d, io_length: %d, rm_info_counter: %ld, serial_no: %d}, "
               "max_rm_info: %ld, _metas.size(): %ld, meta_counter: %ld\n",
               _correlation_index, meta_ptr->io_count, meta_ptr->io_length, rm_info_counter + 1, meta_ptr->serial_no,
               max_rm_info, _metas.size(), _meta_count - 1);
-
-
-
-
-
-
-
-
-            // size_t meta_counter{0};
-            // size_t rm_info_counter{0};
-
-            // auto meta_ptr = reinterpret_cast<metadata*>(_metas[meta_counter]->mr->addr);
-            // remote_info* rm_info = reinterpret_cast<remote_info*>(
-            //   reinterpret_cast<char*>(meta_ptr) + metadata_header_size);
-
-            // for (size_t i{0}; i < _data_count; ++i) {
-            //     rm_info[rm_info_counter].raddr = _datas[i]->mr->addr;
-            //     rm_info[rm_info_counter].rkey = _datas[i]->mr->rkey;
-
-            //     if (rm_info_counter + 1 == max_rm_info) {
-            //         init_metadata(
-            //           meta_ptr,
-            //           rm_info_counter + 1,
-            //           (rm_info_counter + 1) * _data_chunk_size,
-            //           _correlation_index, meta_counter);
-
-
-
-            //         meta_ptr = reinterpret_cast<metadata*>(_metas[std::min(++meta_counter, _metas.size() - 1)]->mr->addr);
-            //         rm_info = reinterpret_cast<remote_info*>(
-            //           reinterpret_cast<char*>(_metas[0]->mr->addr) + metadata_header_size);
-            //         rm_info_counter = 0;
-
-            //         // the last metadata element
-            //         if (meta_counter >= _meta_count) {
-            //             init_metadata(
-            //               meta_ptr,
-            //               _data_count - (i + 1),
-            //               (meta_ptr->io_count) * _data_chunk_size,
-            //               _correlation_index, _meta_count - 1);
-
-            //             SPDK_DEBUGLOG(
-            //               msg,
-            //               "last metadata{io_count: %d, io_length: %d}\n",
-            //               meta_ptr->io_count, meta_ptr->io_length);
-            //         }
-            //     }
-
-            //     ++rm_info_counter;
-            // }
         }
     }
 
