@@ -31,7 +31,7 @@ fastblock的架构跟ceph非常类似，且monitor、osd、pg等众多概念都�
 # fastblock组件及交互逻辑
 ## monitor
 monitor服务负责维护存储节点状态和节点加入删除、存储卷的元数据、维护集群的拓扑结构、响应用户创建pool等操作、根据当前的拓扑结构在osd上均匀创建raft group等。monitor作为集群管理工具，并不需要存储数据，也不需要追求极致性能，所以使用golang进行实现, monitor使用etcd进行多副本存储。  
-monitor集群是一致性的重要保证，因为客户端、osd看到的都是相同的视图。对于所有客户端的io操作都只能看到pg这一层，而osd和客户端都会在启动时开启一个定时器定时去向monitor获取osdmap和pgmap信息，所以所有的osd和客户端都能够看到相同的pg状态变化并作出相同的相应，针对特定pg的写入操作也不会写到错误的地方。  
+monitor集群是一致性的重要保证，因为客户端、osd看到的都是相同的视图。对于所有客户端的io操作都只能看到pg这一层，而osd和客户端都会在启动时开启一个定时器定时去向monitor获取osdmap和pgmap信息，所以所有的osd和客户端都能够看到相同的pg状态变化并作出相同的响应，针对特定pg的写入操作也不会写到错误的地方。  
 详情可参考[monitor简介](monitor/README.md "monitor简介")
 
 ## osd rpc子系统
