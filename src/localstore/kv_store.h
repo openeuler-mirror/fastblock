@@ -395,7 +395,8 @@ public:
         struct kvstore_ckpt_ctx* ctx = (kvstore_ckpt_ctx*)arg;
 
         if(err::E_NODEV == ckerror){
-            ctx->cb_fn(ctx->arg, 0);
+            SPDK_INFOLOG(kvlog, "checkpoint open failed:%s\n", err::string_status(ckerror));
+            ctx->cb_fn(ctx->arg, err::E_NODEV);
             delete ctx;
             return;
         }
@@ -587,6 +588,13 @@ inline void kvstore::replay(kvstore_rw_complete cb_fn, void* arg) {
         SPDK_DEBUGLOG(kvlog, "rblob back pos %lu  front pos %lu\n", kvloader->rblob->back_pos(), kvloader->rblob->front_pos());
         load_checkpoint(
           [cb_fn = std::move(cb_fn), arg] (void *arg1, int kverrno) {
+              if(kverrno){
+                  if(err::E_NODEV == kverrno)
+                    cb_fn(arg, 0); 
+                  else
+                    cb_fn(arg, kverrno); 
+                  return;
+              }
               kvstore_loader* kvloader = (struct kvstore_loader*)arg1;
               kvloader->replay_one_batch(std::move(cb_fn), arg);
           }, 
