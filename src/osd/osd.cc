@@ -442,6 +442,9 @@ block_started(void *arg)
     std::string bdev_json_file = get_bdev_json_file_name();
     remove(bdev_json_file.c_str());
     
+    if(server->bdev_type == "nvme")
+        server->bdev_disk = server->bdev_disk + "n1";
+
     buffer_pool_init();
     if(g_mkfs){
         //初始化log磁盘
