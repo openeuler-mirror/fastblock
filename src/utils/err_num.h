@@ -25,6 +25,7 @@ enum {
     E_NODEV = -ENODEV,		  /*  -19  No such device */
     E_INVAL = -EINVAL,       /*  -22  Invalid argument */
     E_ENOSPC = -ENOSPC,      /* -28  No space left on device */
+    E_EILSEQ = -EILSEQ,      /* Illegal byte sequence */   
 
     RAFT_ERR_NOT_LEADER = -135,
     RAFT_ERR_ONE_VOTING_CHANGE_ONLY = -136,
@@ -62,6 +63,7 @@ inline const char *  string_status(int raft_errno) noexcept{
     case E_NODEV:
     case E_INVAL:
     case E_ENOSPC:
+    case E_EILSEQ:
         return strerror(-1 * raft_errno);
     case RAFT_ERR_NOT_LEADER:
         return "the osd is not the leader of the pg";

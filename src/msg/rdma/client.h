@@ -1014,9 +1014,14 @@ public:
         }
 
         if (_thread) {
+            auto current_thread = spdk_get_thread();
             ::spdk_set_thread(_thread);
             ::spdk_thread_exit(_thread);
-            ::spdk_set_thread(nullptr);
+            if(current_thread == _thread){
+                ::spdk_set_thread(nullptr);
+            }else{
+                ::spdk_set_thread(current_thread);
+            }
 
             SPDK_NOTICELOG("SPDK thread of the rpc client has been marked as exited\n");
         }

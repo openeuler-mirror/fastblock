@@ -204,26 +204,29 @@ static void pm_init(void *arg){
 
 void storage_init_complete(void *arg, int rberrno){
     if(rberrno != 0){
-		SPDK_ERRLOG("Failed to initialize the storage system: %s\n", spdk_strerror(rberrno));
+		SPDK_ERRLOG("Failed to initialize the storage system: %s. thread id %lu\n", 
+            spdk_strerror(rberrno), spdk_thread_get_id(spdk_get_thread()));
         osd_exit_code = rberrno;
         std::raise(SIGINT);
 		return;
 	}
 
-    SPDK_NOTICELOG("mkfs done.\n");
+    SPDK_NOTICELOG("mkfs done, thread id %lu\n", spdk_thread_get_id(spdk_get_thread()));
     osd_exit_code = 0;
     std::raise(SIGINT);
 }
 
 void disk_init_complete(void *arg, int rberrno) {
     if(rberrno != 0){
-		SPDK_NOTICELOG("Failed to initialize the disk. %s\n", err::string_status(rberrno));
+		SPDK_NOTICELOG("Failed to initialize the disk: %s. thread id %lu\n", 
+            err::string_status(rberrno), spdk_thread_get_id(spdk_get_thread()));
         osd_exit_code = rberrno;
         std::raise(SIGINT);
 		return;
 	}
 
-    SPDK_INFOLOG(osd,  "Initialize the disk completed\n");
+    SPDK_INFOLOG(osd,  "Initialize the disk completed, thread id %lu\n", 
+        spdk_thread_get_id(spdk_get_thread()));
 	storage_init(storage_init_complete, arg);
 }
 
@@ -400,6 +403,7 @@ static void osd_service_load(void *arg){
 }
 
 void storage_load_complete(void *arg, int rberrno){
+    SPDK_INFOLOG(osd, "storage load done, thread id %lu\n", spdk_thread_get_id(spdk_get_thread()));
     if(rberrno != 0){
 		SPDK_ERRLOG("Failed to initialize the storage system: %s\n", spdk_strerror(rberrno));
         osd_exit_code = rberrno;
@@ -407,25 +411,29 @@ void storage_load_complete(void *arg, int rberrno){
 		return;
 	}
 
-    server_t *server = (server_t *)arg;
-    auto cur_thread = spdk_get_thread();
-    if(cur_thread != server->cur_thread){
-        spdk_thread_send_msg(server->cur_thread, osd_service_load, arg);
-    }else{
-        osd_service_load(arg);
-    }
+    // server_t *server = (server_t *)arg;
+    // auto cur_thread = spdk_get_thread();
+    // if(cur_thread != server->cur_thread){
+        // spdk_thread_send_msg(server->cur_thread, osd_service_load, arg);
+    // }else{
+        // osd_service_load(arg);
+    // }
+
+    osd_service_load(arg);
 }
 
 void disk_load_complete(void *arg, int rberrno){
     if(rberrno != 0){
-		SPDK_NOTICELOG("Failed to initialize the disk. %s\n", spdk_strerror(rberrno));
+		SPDK_NOTICELOG("Failed to initialize the disk: %s. thread id %lu\n", 
+            err::string_status(rberrno), spdk_thread_get_id(spdk_get_thread()));
         osd_exit_code = rberrno;
         std::raise(SIGINT);
 		return;
 	}
 
     server_t *server = (server_t *)arg;
-    SPDK_INFOLOG(osd, "load blobstore done, uuid %s\n", server->osd_uuid.c_str());
+    SPDK_INFOLOG(osd, "load blobstore done, uuid %s, thread id %lu\n", 
+        server->osd_uuid.c_str(), spdk_thread_get_id(spdk_get_thread()));
 
     storage_load(storage_load_complete, arg);
 }
@@ -448,26 +456,28 @@ block_started(void *arg)
     buffer_pool_init();
     if(g_mkfs){
         //初始化log磁盘
-        blobstore_init(server->bdev_disk.c_str(), server->osd_uuid, 
+        blobstore_init(server->bdev_disk, server->osd_uuid, 
                 disk_init_complete, arg);
         return;
+    }else{
+        blobstore_load(server->bdev_disk, disk_load_complete, arg, &(server->osd_uuid));
     }
 
-    server->cur_thread = spdk_get_thread();
-    auto &shard = core_sharded::get_core_sharded();
+    // server->cur_thread = spdk_get_thread();
+    // auto &shard = core_sharded::get_core_sharded();
     /*
       在spdk的函数bs_open_blob中有一个行“assert(spdk_get_thread() == bs->md_thread)”会检测当前spdk线程与blobstore的spdk线程是否相等，
       raft在读写log核对象数据之前会先使用bs_open_blob打开blob，为了保证在debug模式下正常运行，应该让raft的spdk线程与blobstore的spdk线程
       相同。
     */
     //这里先支持单核
-    shard.invoke_on(
-      0,
-      [arg](){
-        server_t *server = (server_t *)arg;
-        blobstore_load(server->bdev_disk.c_str(), disk_load_complete, arg, &(server->osd_uuid));
-      }
-    );
+    // shard.invoke_on(
+    //   0,
+    //   [arg](){
+        // server_t *server = (server_t *)arg;
+        // blobstore_load(server->bdev_disk, disk_load_complete, arg, &(server->osd_uuid));
+    //   }
+    // );
 }
 
 std::string get_rdma_addr(std::string rdma_device_name){
@@ -623,7 +633,8 @@ static void from_configuration(server_t* server, std::string& bdev_json_file) {
 }
 
 static void on_blob_unloaded([[maybe_unused]] void *cb_arg, int bserrno) {
-    SPDK_NOTICELOG("The blob has been unloaded, return code is %d\n", bserrno);
+    SPDK_NOTICELOG("The blob has been unloaded, return code is %d, thread id %lu\n", 
+            bserrno, spdk_thread_get_id(spdk_get_thread()));
     auto& sharded_service = core_sharded::get_core_sharded();
     SPDK_NOTICELOG("Start stopping sharded service\n");
     sharded_service.stop();
@@ -632,7 +643,8 @@ static void on_blob_unloaded([[maybe_unused]] void *cb_arg, int bserrno) {
 }
 
 static void on_blob_closed([[maybe_unused]] void *cb_arg, int bserrno) {
-    SPDK_NOTICELOG("The bdev has been closed, return code is %d\n", bserrno);
+    SPDK_NOTICELOG("The bdev has been closed, return code is %d, thread id %lu\n", 
+            bserrno, spdk_thread_get_id(spdk_get_thread()));
     SPDK_NOTICELOG("Start unloading bdev\n");
     ::blobstore_fini(on_blob_unloaded, nullptr);
 }
@@ -642,7 +654,7 @@ static void on_pm_closed([[maybe_unused]] void *cb_arg, int bserrno) {
 }
 
 static void on_osd_stop() noexcept {
-    SPDK_NOTICELOG("Stop the osd service\n");
+    SPDK_NOTICELOG("Stop the osd service, thread id %lu\n", spdk_thread_get_id(spdk_get_thread()));
 
     if (monitor_client) {
         monitor_client->stop();
