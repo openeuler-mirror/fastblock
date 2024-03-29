@@ -33,6 +33,7 @@
 #include <boost/property_tree/ptree.hpp>
 
 #include <chrono>
+#include <csignal>
 #include <functional>
 #include <optional>
 #include <list>
@@ -48,8 +49,10 @@ namespace rdma {
 class client : public std::enable_shared_from_this<client> {
 
 public:
-    void handle_connection_shutdown(connection_id conn_id, work_request_id::dispatch_id_type dis_id) {
+
+    void handle_connection_shutdown(::rdma_cm_id* cm_id, connection_id conn_id, work_request_id::dispatch_id_type dis_id) {
         SPDK_NOTICELOG("erase connection with id %lu\n", conn_id.value());
+        _cm_records.erase(cm_id);
         _connections.erase(conn_id);
         _cqe_dispatch_map.erase(dis_id);
     }
@@ -416,6 +419,12 @@ public:
           const google::protobuf::Message* request,
           google::protobuf::Message* response,
           google::protobuf::Closure* c) override {
+            if (_is_terminated) {
+                ctrlr->SetFailed("connection has been shutdown");
+                c->Run();
+                return;
+            }
+
             auto& service_name = m->service()->name();
             if (service_name.size() > max_rpc_meta_string_size) {
                 SPDK_ERRLOG(
@@ -496,9 +505,9 @@ public:
             ++_onflight_rpc_task_size;
             SPDK_DEBUGLOG(
               msg,
-              "_onflight_rpc_task_size: %ld, rpc queue depth: %ld\n",
+              "_onflight_rpc_task_size: %ld, rpc queue depth: %ld, rc is %d\n",
               _onflight_rpc_task_size,
-              _priority_onflight_requests.size() + _onflight_requests.size());
+              _priority_onflight_requests.size() + _onflight_requests.size(), rc);
 
             auto* stack_ptr = it->get();
             if (rc == -EINVAL) {
@@ -814,11 +823,35 @@ public:
             _is_terminated = true;
             _poller.unregister();
             SPDK_NOTICELOG("The poller of the connection has been unregistered\n");
+
+            for (auto& task : _onflight_requests) {
+                task->ctrlr->SetFailed("connection has been shutdown");
+                task->closure->Run();
+            }
+            _onflight_requests.clear();
+
+            for (auto& task : _priority_onflight_requests) {
+                task->ctrlr->SetFailed("connection has been shutdown");
+                task->closure->Run();
+            }
+            _priority_onflight_requests.clear();
+
+            for (auto& task : _wait_read_requests) {
+                task->ctrlr->SetFailed("connection has been shutdown");
+                task->closure->Run();
+            }
+            _wait_read_requests.clear();
+
+            for (auto& task_pair : _unresponsed_requests) {
+                task_pair.second->ctrlr->SetFailed("connection has been shutdown");
+                task_pair.second->closure->Run();
+            }
+            _unresponsed_requests.clear();
         }
 
         void shutdown() {
             shutdown_slient();
-            _master->handle_connection_shutdown(_id, _dispatch_id.dispatch_id());
+            _master->handle_connection_shutdown(_sock->id(), _id, _dispatch_id.dispatch_id());
         }
 
     public:
@@ -1032,7 +1065,8 @@ public:
         ep.addr = ctx->addr;
         ep.port = ctx->port;
         ep.passive = false;
-        auto sock = std::make_unique<socket>(ep, *_pd);
+        auto sock = std::make_unique<socket>(ep, *_pd, _channel.value());
+        auto* cm_id = sock->id();
         auto conn = std::make_shared<connection>(
           connection_id{},
           _cq_dispatch_id++,
@@ -1044,114 +1078,206 @@ public:
           _busy_priority_connections,
           shared_from_this());
         auto conn_task = std::make_unique<connect_task>(conn, std::move(ctx->cb));
-        _connect_tasks.push_back(std::move(conn_task));
+        _connect_tasks.emplace(cm_id, std::move(conn_task));
     }
 
-    void handle_connect_task() {
+    void process_connect_retry() {
         if (_connect_tasks.empty()) {
             return;
         }
 
-        for (auto it = _connect_tasks.begin(); it != _connect_tasks.end(); ++it) {
-            auto& task = *it;
-            switch (task->conn_state) {
-            case connect_state::wait_address_resolved: {
-                auto ret = task->conn->fd().is_resolve_address_done();
-                if (ret == 1) {
-                    task->conn->fd().resolve_route();
-                    task->conn_state = connect_state::wait_route_resolved;
-                } else if (ret == -1) {
-                    SPDK_ERRLOG(
-                      "ERROR: resolve route failed when connecting %s\n",
-                      task->conn->fd().peer_address().c_str());
-                    task->conn_state = connect_state::connect_failed;
-                }
-                break;
+        for (auto& conn_task_pair : _connect_tasks) {
+            auto* task_ptr = conn_task_pair.second.get();
+            if (task_ptr->conn_state != connect_state::connect_failed) {
+                continue;
             }
-            case connect_state::wait_route_resolved: {
-                auto ret = task->conn->fd().is_resolve_route_done();
-                if (ret == 1) {
-                    task->conn->fd().create_qp(*_pd, _cq->cq());
-                    auto rc = task->conn->fd().start_connect();
-                    if (rc) {
-                        SPDK_ERRLOG(
-                          "ERROR: Connect to %s error, '%s'\n",
-                          task->conn->fd().peer_address().c_str(),
-                          rc->message().c_str());
-                        task->conn_state = connect_state::connect_failed;
-                    } else {
-                        task->conn_state = connect_state::wait_connect_established;
-                    }
-                } else if (ret == -1) {
-                    task->conn_state = connect_state::connect_failed;
-                }
-                break;
-            }
-            case connect_state::wait_connect_established: {
-                auto ret = task->conn->fd().process_active_cm_event(::RDMA_CM_EVENT_ESTABLISHED);
-                if (ret == 1) {
-                    task->conn->generate_id(_serial++);
-                    _connections.emplace(task->conn->id(), task->conn);
-                    _cqe_dispatch_map.emplace(task->conn->dispatch_id(), task->conn);
-                    task->conn->start();
-                    task->conn->per_post_recv();
-                    SPDK_INFOLOG(msg, "Connected to %s\n", task->conn->fd().peer_address().c_str());
-                    task->cb(true, task->conn);
-                    _connect_tasks.erase(it--);
-                } else if (ret == -1) {
-                    SPDK_ERRLOG(
-                      "ERROR: wait 'RDMA_CM_EVENT_ESTABLISHED' failed when connecting %s\n",
-                      task->conn->fd().peer_address().c_str());
-                    task->conn_state = connect_state::connect_failed;
-                }
-                break;
-            }
-            case connect_state::connect_failed: {
-                if (not task->retry_ctx) {
-                    task->retry_ctx = std::make_unique<reconnect_context>();
-                    continue;
-                } else if (task->retry_ctx->connect_fail_at + _opts->retry_interval > std::chrono::system_clock::now()) {
-                    continue;
-                } else {
-                    task->retry_ctx->retry_times++;
-                    task->retry_ctx->connect_fail_at = std::chrono::system_clock::now();
-                }
 
-                if (task->retry_ctx->retry_times > _opts->connect_max_retry) {
-                    SPDK_ERRLOG(
-                      "ERROR: Trying reconnting to %s exceed max times %lu\n",
-                      task->conn->fd().peer_address().c_str(),
-                      task->retry_ctx->retry_times);
-                    task->cb(false, nullptr);
-                    _connect_tasks.erase(it--);
-                    break;
-                }
-
-                SPDK_INFOLOG(
-                  msg,
-                  "Try to connect %s at the %lu times\n",
-                  task->conn->fd().peer_address().c_str(),
-                  task->retry_ctx->retry_times);
-
-                auto sock = std::make_unique<socket>(task->conn->fd().get_endpoint(), *_pd);
-                task->conn = std::make_shared<connection>(
-                  connection_id{},
-                  _cq_dispatch_id++,
-                  std::move(sock),
-                  _opts,
-                  _meta_pool,
-                  _data_pool,
-                  _busy_connections,
-                  _busy_priority_connections,
-                  shared_from_this());
-                task->conn_state = connect_state::wait_address_resolved;
+            if (not task_ptr->retry_ctx) {
+                task_ptr->retry_ctx = std::make_unique<reconnect_context>();
+                continue;
             }
-            default:
+
+            if (task_ptr->retry_ctx->connect_fail_at + _opts->retry_interval > std::chrono::system_clock::now()) {
+                continue;
+            }
+
+            task_ptr->retry_ctx->retry_times++;
+            task_ptr->retry_ctx->connect_fail_at = std::chrono::system_clock::now();
+            if (task_ptr->retry_ctx->retry_times > _opts->connect_max_retry) {
+                SPDK_ERRLOG(
+                  "ERROR: Trying reconnting to %s exceed max times %lu\n",
+                  task_ptr->conn->fd().peer_address().c_str(),
+                  task_ptr->retry_ctx->retry_times);
+                task_ptr->cb(false, nullptr);
+                _connect_tasks.erase(task_ptr->conn->fd().id());
                 break;
             }
+
+            SPDK_NOTICELOG(
+              "Try to connect %s at the %lu times\n",
+              task_ptr->conn->fd().peer_address().c_str(),
+              task_ptr->retry_ctx->retry_times);
+
+            auto sock = std::make_unique<socket>(task_ptr->conn->fd().get_endpoint(), *_pd, _channel.value());
+            task_ptr->conn = std::make_shared<connection>(
+              connection_id{},
+              _cq_dispatch_id++,
+              std::move(sock),
+              _opts,
+              _meta_pool,
+              _data_pool,
+              _busy_connections,
+              _busy_priority_connections,
+              shared_from_this());
+            task_ptr->conn_state = connect_state::wait_address_resolved;
+        }
+    }
+
+    void process_connect_task(::rdma_cm_event* evt) {
+        auto task_it = _connect_tasks.find(evt->id);
+        if (task_it == _connect_tasks.end()) {
+            SPDK_ERRLOG(
+              "ERROR: Cant find the connect task of cm id %p on event %s in connect tasks map\n",
+              evt->id, ::rdma_event_str(evt->event));
+
+            auto cm_rd_it = _cm_records.find(evt->id);
+            if (cm_rd_it != _cm_records.end()) {
+                SPDK_ERRLOG(
+                  "ERROR: cm id %p should not occured in cm records map on event %s\n",
+                  evt->id, ::rdma_event_str(evt->event));
+                std::raise(SIGINT);
+            }
+
+            return;
         }
 
-        return;
+        auto evt_val = evt->event;
+        auto* task_ptr = task_it->second.get();
+        auto& fd = task_it->second->conn->fd();
+        switch (task_ptr->conn_state) {
+        case connect_state::wait_address_resolved: {
+            auto ret = fd.is_resolve_address_done(evt);
+            if (ret == 0) {
+                fd.resolve_route();
+                task_ptr->conn_state = connect_state::wait_route_resolved;
+            } else {
+                SPDK_ERRLOG(
+                  "ERROR: resolve route failed when connecting %s\n",
+                  fd.peer_address().c_str());
+                task_ptr->conn_state = connect_state::connect_failed;
+            }
+            break;
+        }
+        case connect_state::wait_route_resolved: {
+            auto ret = fd.is_resolve_route_done(evt);
+            if (ret == 0) {
+                fd.create_qp(*_pd, _cq->cq());
+                auto rc = fd.start_connect();
+                if (rc) {
+                    SPDK_ERRLOG(
+                      "ERROR: Connect to %s error, '%s'\n",
+                      fd.peer_address().c_str(),
+                      rc->message().c_str());
+                    task_ptr->conn_state = connect_state::connect_failed;
+                } else {
+                    task_ptr->conn_state = connect_state::wait_connect_established;
+                }
+            } else {
+                SPDK_ERRLOG(
+                  "ERROR: resolve route filaed when connecting %s\n",
+                  fd.peer_address().c_str());
+                task_ptr->conn_state = connect_state::connect_failed;
+            }
+            break;
+        }
+        case connect_state::wait_connect_established: {
+            auto ret = fd.is_established(evt);
+            if (ret == 0) {
+                task_ptr->conn->generate_id(_serial++);
+                _cm_records.emplace(fd.id(), task_ptr->conn);
+                _connections.emplace(task_ptr->conn->id(), task_ptr->conn);
+                _cqe_dispatch_map.emplace(task_ptr->conn->dispatch_id(), task_ptr->conn);
+                task_ptr->conn->start();
+                task_ptr->conn->per_post_recv();
+                SPDK_INFOLOG(msg, "Connected to %s\n", task_ptr->conn->fd().peer_address().c_str());
+                task_ptr->cb(true, task_ptr->conn);
+                _connect_tasks.erase(fd.id());
+            } else {
+                SPDK_ERRLOG(
+                  "ERROR: Wait 'RDMA_CM_EVENT_ESTABLISHED' failed when connecting %s\n",
+                  fd.peer_address().c_str());
+                task_ptr->conn_state = connect_state::connect_failed;
+            }
+            break;
+        }
+        default:
+            break;
+        }
+    }
+
+    void handle_cm_event() {
+        process_connect_retry();
+
+        auto* evt = _channel.poll();
+        if (not evt) { return; }
+
+        SPDK_INFOLOG(
+          msg,
+          "receive rdma cm event: %s, cm id: %p\n",
+          ::rdma_event_str(evt->event), evt->id);
+
+        if (_connect_tasks.contains(evt->id)) {
+            process_connect_task(evt);
+            return;
+        }
+
+        auto it = _cm_records.find(evt->id);
+        if (it == _cm_records.end()) {
+            SPDK_ERRLOG(
+              "ERROR: Received cm event %s, but the cm id can not be found in cm observers\n",
+              ::rdma_event_str(evt->event));
+
+            ::rdma_ack_cm_event(evt);
+            return;
+        }
+
+        auto conn_it = _connections.find(it->second->id());
+        if (conn_it == _connections.end()) {
+            SPDK_ERRLOG(
+              "ERROR: Received cm event %s, but the cm id can not be found in connection map\n",
+              ::rdma_event_str(evt->event));
+            _cm_records.erase(it);
+            ::rdma_ack_cm_event(evt);
+
+            return;
+        }
+
+        SPDK_INFOLOG(
+          msg,
+          "Received rdma cm event '%s' on rdma cm id %p\n",
+          ::rdma_event_str(evt->event),
+          conn_it->second->fd().id());
+
+        try {
+            conn_it->second->fd().process_event_directly(evt);
+            ::rdma_ack_cm_event(evt);
+            evt = nullptr;
+        } catch (...) {
+            auto evt_id = evt->id;
+            ::rdma_ack_cm_event(evt);
+            evt = nullptr;
+
+            SPDK_ERRLOG(
+              "ERROR: failed process cm event, will close the connection(rdma cm id: %p)\n",
+              evt_id);
+
+            SPDK_NOTICELOG("Reomve the connection(id: %p)\n", evt_id);
+            conn_it->second->shutdown();
+        }
+
+        if (evt) {
+            ::rdma_ack_cm_event(evt);
+        }
     }
 
     int handle_core_poll() {
@@ -1159,7 +1285,7 @@ public:
             return SPDK_POLLER_IDLE;
         }
 
-        handle_connect_task();
+        handle_cm_event();
 
         auto rc = _cq->poll(_wcs.get(), _opts->poll_cq_batch_size);
         if (rc < 0) {
@@ -1275,7 +1401,8 @@ private:
 
     std::unordered_map<work_request_id::dispatch_id_type, std::shared_ptr<connection>> _cqe_dispatch_map{};
     std::unordered_map<connection_id, std::shared_ptr<connection>> _connections{};
-    std::list<std::unique_ptr<connect_task>> _connect_tasks{};
+    std::unordered_map<::rdma_cm_id*, std::shared_ptr<connection>> _cm_records{};
+    std::unordered_map<::rdma_cm_id*, std::unique_ptr<connect_task>> _connect_tasks{};
     std::shared_ptr<memory_pool<::ibv_send_wr>> _meta_pool{nullptr};
     std::shared_ptr<memory_pool<::ibv_send_wr>> _data_pool{nullptr};
 
@@ -1283,6 +1410,8 @@ private:
       std::make_shared<std::list<std::weak_ptr<connection>>>()};
     std::shared_ptr<std::list<std::weak_ptr<connection>>> _busy_priority_connections{
       std::make_shared<std::list<std::weak_ptr<connection>>>()};
+
+    event_channel _channel{};
 };
 
 } // namespace rdma
