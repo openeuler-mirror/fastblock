@@ -294,6 +294,7 @@ public:
             uint64_t pg_id;
             if(!ctx->load->pg_to_id(pg, pool_id, pg_id)){
                 ctx->func(ctx->ctx, err::E_INVAL);
+                delete ctx;
                 return;
             } 
 
@@ -374,11 +375,12 @@ struct pm_load_context : public utils::context{
         std::map<std::string, object_store::container> object_blobs = std::exchange(blobs.on_shard(shard_id).object_blobs, {});
         osd_load* load = new osd_load(std::move(log_blobs), std::move(object_blobs));
         
-        auto load_done = [](void *arg, int lerrno){
+        auto load_done = [load](void *arg, int lerrno){
             oad_load_ctx* ctx = (oad_load_ctx* )arg;
             if(lerrno != 0){
                 SPDK_ERRLOG("load osd failed: %s\n", spdk_strerror(lerrno));
                 delete ctx;
+                delete load;
                 osd_exit_code = lerrno;
                 std::raise(SIGINT);
                 return;
@@ -387,6 +389,7 @@ struct pm_load_context : public utils::context{
             service_init(ctx->pm, ctx->server);
             start_monitor(ctx->server);
             delete ctx;
+            delete load;
         };
         oad_load_ctx* ctx = new oad_load_ctx{.server = server, .pm = pm};
         load->start_load(shard_id, std::move(load_done), ctx);

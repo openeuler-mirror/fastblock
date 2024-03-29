@@ -588,11 +588,12 @@ inline void kvstore::replay(kvstore_rw_complete cb_fn, void* arg) {
         SPDK_DEBUGLOG(kvlog, "rblob back pos %lu  front pos %lu\n", kvloader->rblob->back_pos(), kvloader->rblob->front_pos());
         load_checkpoint(
           [cb_fn = std::move(cb_fn), arg] (void *arg1, int kverrno) {
+              kvstore_loader* kvloader = (struct kvstore_loader*)arg1;
               if(kverrno){
                   cb_fn(arg, kverrno); 
+                  delete kvloader;
                   return;
               }
-              kvstore_loader* kvloader = (struct kvstore_loader*)arg1;
               kvloader->replay_one_batch(std::move(cb_fn), arg);
           }, 
           kvloader); 
