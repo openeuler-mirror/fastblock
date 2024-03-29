@@ -149,7 +149,7 @@ public:
                 table.emplace(std::move(key), std::move(*value));   // 插入
             } else {
                 // 非法操作，删除一个不存在的值
-                // SPDK_WARNLOG("error deleting non existent key: %s", key.c_str());
+                SPDK_DEBUGLOG(kvlog, "error deleting non existent key: %s", key.c_str());
             }
         }
     }
@@ -396,7 +396,7 @@ public:
 
         if(err::E_NODEV == ckerror){
             SPDK_INFOLOG(kvlog, "checkpoint open failed:%s\n", err::string_status(ckerror));
-            ctx->cb_fn(ctx->arg, err::E_NODEV);
+            ctx->cb_fn(ctx->arg, 0);
             delete ctx;
             return;
         }
@@ -529,7 +529,7 @@ public:
 
         auto ops = ctx->kvs->deserialize_op();
         for (auto& op : ops) {
-            // SPDK_WARNLOG("------  key: %s value: %s\n", op.key.c_str(), op.value->c_str());
+            SPDK_INFOLOG(kvlog, "------  key: %s value: %s\n", op.key.c_str(), op.value->c_str());
             ctx->kvs->apply_op(op.key, op.value);
         }
 
@@ -589,10 +589,7 @@ inline void kvstore::replay(kvstore_rw_complete cb_fn, void* arg) {
         load_checkpoint(
           [cb_fn = std::move(cb_fn), arg] (void *arg1, int kverrno) {
               if(kverrno){
-                  if(err::E_NODEV == kverrno)
-                    cb_fn(arg, 0); 
-                  else
-                    cb_fn(arg, kverrno); 
+                  cb_fn(arg, kverrno); 
                   return;
               }
               kvstore_loader* kvloader = (struct kvstore_loader*)arg1;

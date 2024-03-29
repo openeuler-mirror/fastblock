@@ -370,24 +370,23 @@ struct pm_load_context : public utils::context{
 
         //这里只处理单核的
         uint32_t shard_id = 0;
-        // for(auto &[pg_name, log_blob] : blobs.on_shard(shard_id).log_blobs){
-            // SPDK_WARNLOG("pg_name %s blob id %lu\n", pg_name.c_str(), spdk_blob_get_id(log_blob));
-        // }
         std::map<std::string, struct spdk_blob*> log_blobs = std::exchange(blobs.on_shard(shard_id).log_blobs, {});
         std::map<std::string, object_store::container> object_blobs = std::exchange(blobs.on_shard(shard_id).object_blobs, {});
         osd_load* load = new osd_load(std::move(log_blobs), std::move(object_blobs));
         
         auto load_done = [](void *arg, int lerrno){
+            oad_load_ctx* ctx = (oad_load_ctx* )arg;
             if(lerrno != 0){
                 SPDK_ERRLOG("load osd failed: %s\n", spdk_strerror(lerrno));
+                delete ctx;
                 osd_exit_code = lerrno;
                 std::raise(SIGINT);
                 return;
             }
-            // SPDK_WARNLOG("load osd done\n");
-            oad_load_ctx* ctx = (oad_load_ctx* )arg;
+            
             service_init(ctx->pm, ctx->server);
             start_monitor(ctx->server);
+            delete ctx;
         };
         oad_load_ctx* ctx = new oad_load_ctx{.server = server, .pm = pm};
         load->start_load(shard_id, std::move(load_done), ctx);
@@ -410,14 +409,6 @@ void storage_load_complete(void *arg, int rberrno){
         std::raise(SIGINT);
 		return;
 	}
-
-    // server_t *server = (server_t *)arg;
-    // auto cur_thread = spdk_get_thread();
-    // if(cur_thread != server->cur_thread){
-        // spdk_thread_send_msg(server->cur_thread, osd_service_load, arg);
-    // }else{
-        // osd_service_load(arg);
-    // }
 
     osd_service_load(arg);
 }
@@ -462,22 +453,6 @@ block_started(void *arg)
     }else{
         blobstore_load(server->bdev_disk, disk_load_complete, arg, &(server->osd_uuid));
     }
-
-    // server->cur_thread = spdk_get_thread();
-    // auto &shard = core_sharded::get_core_sharded();
-    /*
-      在spdk的函数bs_open_blob中有一个行“assert(spdk_get_thread() == bs->md_thread)”会检测当前spdk线程与blobstore的spdk线程是否相等，
-      raft在读写log核对象数据之前会先使用bs_open_blob打开blob，为了保证在debug模式下正常运行，应该让raft的spdk线程与blobstore的spdk线程
-      相同。
-    */
-    //这里先支持单核
-    // shard.invoke_on(
-    //   0,
-    //   [arg](){
-        // server_t *server = (server_t *)arg;
-        // blobstore_load(server->bdev_disk, disk_load_complete, arg, &(server->osd_uuid));
-    //   }
-    // );
 }
 
 std::string get_rdma_addr(std::string rdma_device_name){
