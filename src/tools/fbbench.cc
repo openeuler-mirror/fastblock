@@ -116,9 +116,7 @@ fbbench_started(void *arg1)
     ::spdk_cpuset cpumask{};
     ::spdk_cpuset_zero(&cpumask);
     ::spdk_cpuset_set_cpu(&cpumask, core_no, true);
-    auto opts = msg::rdma::client::make_options(
-      server->pt.get_child("msg").get_child("client"),
-      server->pt.get_child("msg").get_child("rdma"));
+    auto opts = msg::rdma::client::make_options(server->pt);
     
     client *cli = new client(server, g_bench_type, &cpumask, opts);
     auto connect_done = [cli, server](bool is_ok, std::shared_ptr<msg::rdma::client::connection> conn){

@@ -232,9 +232,7 @@ void on_thread_received_msg(void* arg) {
     ::spdk_cpuset cpumask{};
     ::spdk_cpuset_zero(&cpumask);
     ::spdk_cpuset_set_cpu(&cpumask, core_no, true);
-    auto opts = msg::rdma::client::make_options(
-      g_pt.get_child("msg").get_child("client"),
-      g_pt.get_child("msg").get_child("rdma"));
+    auto opts = msg::rdma::client::make_options(g_pt);
     ctx->blk_client = std::make_unique<::libblk_client>(
       mon_client.get(),
       &cpumask, opts);
@@ -459,21 +457,19 @@ void on_app_start(void* arg) {
     watcher_ctx->pool_id = g_pt.get_child("pool_id").get_value<int32_t>();
     watcher_ctx->pool_name = g_pt.get_child("pool_name").get_value<std::string>();
 
-    auto& monitors = g_pt.get_child("monitor");
     std::vector<monitor::client::endpoint> eps{};
-    for (auto& monitor_node : monitors) {
-        auto mon_host = monitor_node.second.get_child("host").get_value<std::string>();
-        auto mon_port = monitor_node.second.get_child("port").get_value<uint16_t>();
-        eps.emplace_back(std::move(mon_host), mon_port);
+    auto& monitors = g_pt.get_child("mon_host");
+    auto pos = monitors.begin();
+    for(; pos != monitors.end(); pos++){
+        auto mon_addr = pos->second.get_value<std::string>();
+        eps.emplace_back(std::move(mon_addr), utils::default_monitor_port);
     }
 
     auto core_no = ::spdk_env_get_current_core();
     ::spdk_cpuset cpumask{};
     ::spdk_cpuset_zero(&cpumask);
     ::spdk_cpuset_set_cpu(&cpumask, core_no, true);
-    auto opts = msg::rdma::client::make_options(
-      g_pt.get_child("msg").get_child("client"),
-      g_pt.get_child("msg").get_child("rdma"));
+    auto opts = msg::rdma::client::make_options(g_pt);
     conn_cache = std::make_shared<::connect_cache>(&cpumask, opts);
     par_mgr = std::make_shared<::partition_manager>(-1, conn_cache);
     monitor::client::on_cluster_map_initialized_type cb = [watcher_ctx] () {

@@ -698,10 +698,14 @@ func leaderCallback(whoami string, ctx context.Context, c *etcdapi.EtcdClient) {
 
 func main() {
 
-	configpath := flag.String("conf", "/etc/fastblock/monitor.toml", "path of the config file")
+	configpath := flag.String("conf", "/etc/fastblock/monitor.json", "path of the config file")
+	id := flag.String("id", "", "name of the monitor")
 	flag.Parse()
 
-	config.SetupConfig(*configpath)
+	if *id == "" {
+        panic("Missing parameter id")
+	}
+	config.SetupConfig(*configpath, *id)
 
 	// Init the only logger.
 	log.NewFileLogger(config.CONFIG.LogPath, config.CONFIG.LogLevel)

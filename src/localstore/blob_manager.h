@@ -47,10 +47,12 @@ sharded<blob_tree>& global_blob_tree();
 using bm_complete = std::function<void (void *, int)>;
 
 void
-blobstore_init(const char *bdev_name, bm_complete cb_fn, void* args);
+blobstore_init(std::string &bdev_name, const std::string& uuid, 
+        bm_complete cb_fn, void* args);
 
 void
 blobstore_fini(bm_complete cb_fn, void* args);
 
 void
-blobstore_load(const char *bdev_name, bm_complete cb_fn, void* args);
+blobstore_load(std::string &bdev_name, bm_complete cb_fn,
+        void* args, std::string *osd_uuid = nullptr);

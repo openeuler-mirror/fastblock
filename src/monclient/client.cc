@@ -74,18 +74,6 @@ void client::load_pgs(){
             pgs[info.pg_id] = std::make_unique<utils::pg_info_type>(std::move(info));
         }
     }
-
-//////////////////
-    // for(auto& [pool_id, pgs] : _pg_map.pool_pg_map){
-        // for(auto& [pg_id, pi] : pgs){
-            // std::string osds;
-            // for(auto osd_id : pi->osds){
-                // osds += std::to_string(osd_id);
-            // }
-            // SPDK_WARNLOG("pool %d pg %d osds %s\n", pool_id, pg_id, osds.c_str());
-        // }
-    // }
-///////////////
 }
 
 /*

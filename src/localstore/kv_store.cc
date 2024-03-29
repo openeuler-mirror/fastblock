@@ -73,11 +73,13 @@ static void kv_replay_done(void *arg, int kverrno){
   if (kverrno) {
       SPDK_ERRLOG("load_kvstore failed. error:%s\n", spdk_strerror(kverrno));
       ctx->cb_fn(ctx->arg, nullptr, kverrno);
+      delete ctx->kvs;
       delete ctx;
       return;
   }   
 
   ctx->cb_fn(ctx->arg, ctx->kvs, 0);
+  delete ctx;
 }
 
 static void load_kv_md_done(void *arg, int kverrno){

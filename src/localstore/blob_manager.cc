@@ -11,6 +11,8 @@
 
 #include "blob_manager.h"
 #include "object_store.h"
+#include "utils/units.h"
+#include "utils/err_num.h"
 
 #include <spdk/log.h>
 #include <spdk/string.h>
@@ -18,6 +20,9 @@
 #include <string>
 
 SPDK_LOG_REGISTER_COMPONENT(blob_log)
+
+static std::string default_blobstore_type = "fastblock";
+constexpr uint64_t blob_unit_size = 512;
 
 struct blobstore_manager {
 	struct spdk_blob_store* blobstore;
@@ -50,9 +55,121 @@ fb_event_cb(enum spdk_bdev_event_type type, struct spdk_bdev *bdev,
 
 
 struct bm_context {
+  char *uuid_buf;
+  uint32_t uuid_len;
   bm_complete cb_fn;
   void*       args;
+  std::string *osd_uuid;
+  struct spdk_blob *blob;
+  std::string bdev_name;
 };
+
+struct create_blob_ctx {
+  struct bm_context *ctx;
+  blob_type type;
+  struct spdk_blob_store *bs;
+  spdk_blob_id blobid;
+};
+
+static void close_super_done(void *cb_arg, int bserrno){
+  struct bm_context *ctx = (struct bm_context *)cb_arg;
+  if (bserrno) {
+    SPDK_ERRLOG("close super blob failed %s\n", spdk_strerror(bserrno));
+    ctx->cb_fn(ctx->args, bserrno);
+    spdk_free(ctx->uuid_buf);
+    delete ctx;
+    return;
+  }  
+
+  ctx->cb_fn(ctx->args, 0);
+  spdk_free(ctx->uuid_buf);
+  delete ctx;
+}
+
+static void write_super_complete(void *arg, int rberrno){
+  struct bm_context *ctx = (struct bm_context *)arg;
+  if (rberrno) {
+      SPDK_ERRLOG("write super blob failed:%s\n", spdk_strerror(rberrno));
+      ctx->cb_fn(ctx->args, rberrno);
+      spdk_free(ctx->uuid_buf);
+      delete ctx;
+      return;
+  }    
+
+  spdk_blob_close(ctx->blob, close_super_done, ctx);
+}
+
+void open_blob_complete(void *arg, struct spdk_blob *blob, int objerrno){
+  struct create_blob_ctx *bc = (struct create_blob_ctx*)arg;
+  struct bm_context *ctx = bc->ctx;
+  if(objerrno){
+    SPDK_ERRLOG("set super blob id of blob %lu failed: %s\n",
+        bc->blobid, spdk_strerror(objerrno));
+    bc->ctx->cb_fn(bc->ctx->args, objerrno);
+    spdk_free(bc->ctx->uuid_buf);
+    delete bc->ctx;
+    delete bc;
+    return;
+  }
+
+  ctx->blob = blob;
+  SPDK_INFOLOG(blob_log, "open super blob: %lu done, write uuid %s to super blob\n",
+          bc->blobid, bc->ctx->uuid_buf);
+  //write uuid to super blob
+  auto channel = global_io_channel();
+  spdk_blob_io_write(blob, channel, bc->ctx->uuid_buf, 0,
+    bc->ctx->uuid_len / blob_unit_size, write_super_complete, bc->ctx);
+  delete bc;
+}
+
+static void
+set_super_complete(void *cb_arg, int bserrno){
+  struct create_blob_ctx *bc = (struct create_blob_ctx*)cb_arg;
+  if(bserrno){
+    SPDK_ERRLOG("set super blob id of blob %lu failed: %s\n",
+        bc->blobid, spdk_strerror(bserrno));
+    bc->ctx->cb_fn(bc->ctx->args, bserrno);
+    spdk_free(bc->ctx->uuid_buf);
+    delete bc->ctx;
+    delete bc;
+    return;
+  }
+
+  SPDK_INFOLOG(blob_log, "set super blob: %lu done\n", bc->blobid);
+  spdk_bs_open_blob(bc->bs, bc->blobid, open_blob_complete, bc);
+}
+
+static void create_super_blob_done(void *arg, spdk_blob_id blobid, int objerrno) {
+  struct create_blob_ctx* bc = (struct create_blob_ctx*)arg;
+  struct bm_context *ctx = bc->ctx;
+
+  if (objerrno) {
+    SPDK_ERRLOG("create super blob failed:%s\n", spdk_strerror(objerrno));
+    ctx->cb_fn(ctx->args, objerrno);
+    spdk_free(bc->ctx->uuid_buf);
+    delete ctx;
+    delete bc;
+    return;
+  }
+
+  SPDK_INFOLOG(blob_log, "create super blob: %lu done\n", blobid);
+  bc->blobid = blobid;
+  spdk_bs_set_super(bc->bs, blobid, set_super_complete, bc);  
+}
+
+static void
+super_get_xattr_value(void *arg, const char *name, const void **value, size_t *value_len) {
+  struct create_blob_ctx* ctx = (struct create_blob_ctx*)arg;
+
+
+  if(!strcmp("type", name)){
+    *value = &(ctx->type);
+    *value_len = sizeof(ctx->type);    
+    return; 
+  }
+  *value = NULL;
+  *value_len = 0;
+}
 
 /**
  * spdk_bs_init：初始化blobstore
@@ -66,6 +183,7 @@ bs_init_complete(void *args, struct spdk_blob_store *bs, int bserrno)
   if (bserrno) {
     SPDK_ERRLOG("blobstore init failed: %s\n", spdk_strerror(bserrno));
     ctx->cb_fn(ctx->args, bserrno);
+    spdk_free(ctx->uuid_buf);
     delete ctx;
     return;
   }
@@ -78,25 +196,128 @@ bs_init_complete(void *args, struct spdk_blob_store *bs, int bserrno)
   free = spdk_bs_free_cluster_count(bs);
   SPDK_INFOLOG(blob_log, "blobstore has FREE clusters of %lu\n", free);
 
-  ctx->cb_fn(ctx->args, 0);
-  delete ctx;
+  struct create_blob_ctx* bc = new create_blob_ctx();
+  bc->type = blob_type::super_blob;
+  bc->ctx = ctx;
+  bc->bs = bs;
+
+  struct spdk_blob_opts opts;
+  spdk_blob_opts_init(&opts, sizeof(opts));
+  opts.num_clusters = 4_MB / spdk_bs_get_cluster_size(bs);
+  char *xattr_names[] = {"type"};
+  opts.xattrs.count = SPDK_COUNTOF(xattr_names);
+  opts.xattrs.names = xattr_names;
+  opts.xattrs.ctx = bc;
+  opts.xattrs.get_value = super_get_xattr_value; 
+  spdk_bs_create_blob_ext(bs, &opts, create_super_blob_done, bc);
 }
 
-void
-blobstore_init(const char *bdev_name, bm_complete cb_fn, void* args) {
-  struct spdk_bs_dev *bs_dev = NULL;
+static void
+bs_read_complete(void *args, struct spdk_blob_store *bs, int bserrno){
+  struct bm_context *ctx = (struct bm_context *)args;
 
-  SPDK_INFOLOG(blob_log, "create bs_dev\n");
-  int rc = spdk_bdev_create_bs_dev_ext(bdev_name, fb_event_cb, NULL, &bs_dev);
-  if (rc != 0) {
-    SPDK_ERRLOG("create bs_dev failed: %s\n", spdk_strerror(-rc));
-    spdk_app_stop(-1);
+  SPDK_INFOLOG(blob_log, "blobstore read done\n");
+  if (bserrno == 0) {
+    SPDK_INFOLOG(blob_log, "There is data on the disk.\n"); 
+
+    std::construct_at(&g_bs_mgr);
+    g_bs_mgr.blobstore = bs;
+    g_bs_mgr.channel = spdk_bs_alloc_io_channel(bs);
+    ctx->cb_fn(ctx->args, err::RAFT_ERR_DISK_NOT_EMPTY);
+    spdk_free(ctx->uuid_buf);
+    delete ctx;
     return;
   }
 
-  auto ctx = new bm_context{cb_fn, args};
+  //spdk_bs_load失败后，bs会释放，bs->dev也会释放，需要重新生成bs_dev
+  struct spdk_bs_opts opts = {};
+  spdk_bs_opts_init(&opts, sizeof(opts));
+  memset(opts.bstype.bstype, 0, sizeof(opts.bstype.bstype));
+  default_blobstore_type.copy(opts.bstype.bstype, SPDK_BLOBSTORE_TYPE_LENGTH - 1);
+
+  struct spdk_bs_dev *bs_dev = NULL;
+  int rc = spdk_bdev_create_bs_dev_ext(ctx->bdev_name.c_str(), fb_event_cb, NULL, &bs_dev);
+  if (rc != 0) {
+    SPDK_ERRLOG("create bs_dev failed: %s\n", spdk_strerror(-rc));
+    ctx->cb_fn(ctx->args, rc);
+    spdk_free(ctx->uuid_buf);
+    delete ctx;
+    return;
+  }
+  
   SPDK_INFOLOG(blob_log, "blobstore init...\n");
-  spdk_bs_init(bs_dev, NULL, bs_init_complete, ctx);
+  spdk_bs_init(bs_dev, &opts, bs_init_complete, ctx);
+}
+
+struct blobstore_context{
+  bm_complete cb_fn;
+  void *arg;
+  spdk_thread *thread;
+  int serror;
+};
+
+static void 
+_blobstore_init(bm_complete cb_fn, void* args, std::string &bdev_name, std::string &uuid){
+  struct spdk_bs_dev *bs_dev = NULL;
+  int rc = spdk_bdev_create_bs_dev_ext(bdev_name.c_str(), fb_event_cb, NULL, &bs_dev);
+  if (rc != 0) {
+    SPDK_ERRLOG("create bs_dev failed: %s\n", spdk_strerror(-rc));
+    cb_fn(args, rc);
+    return;
+  }
+
+  auto ctx = new bm_context{.cb_fn = std::move(cb_fn), .args = args, .osd_uuid = nullptr, .bdev_name = bdev_name};
+  ctx->uuid_len = 4096;
+  ctx->uuid_buf = (char*)spdk_zmalloc(ctx->uuid_len, 0x1000, NULL, SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
+  uuid.copy(ctx->uuid_buf, ctx->uuid_len - 1);
+  spdk_bs_load(bs_dev, NULL, bs_read_complete, ctx);
+}
+
+static inline void _blobstore_op_done(void *arg){
+  blobstore_context *ctx = (blobstore_context *)arg;
+  ctx->cb_fn(ctx->arg, ctx->serror);
+  delete ctx;
+}
+
+static void blobstore_op_done(blobstore_context *ctx){
+  auto cur_thread = spdk_get_thread();
+  if(cur_thread != ctx->thread){
+    spdk_thread_send_msg(ctx->thread, _blobstore_op_done, ctx);
+  }else{
+    _blobstore_op_done(ctx);
+  }
+}
+
+static void
+_blobstore_init(std::string bdev_name, std::string uuid, bm_complete cb_fn, void* args, spdk_thread *thread) {
+  SPDK_INFOLOG(blob_log, "blobstore init, thread id %lu\n", spdk_thread_get_id(spdk_get_thread()));
+  
+  blobstore_context *ctx = new blobstore_context{.cb_fn = std::move(cb_fn), .arg = args, .thread = thread};
+  _blobstore_init([](void *arg, int serror){
+    blobstore_context *ctx = (blobstore_context *)arg;
+    ctx->serror = serror;
+    SPDK_INFOLOG(blob_log, "blobstore init done.\n");
+    blobstore_op_done(ctx);
+  },
+  ctx, bdev_name, uuid);
+}
+
+void
+blobstore_init(std::string &bdev_name, const std::string& uuid, bm_complete cb_fn, void* args){
+  auto &shard = core_sharded::get_core_sharded();
+  /*
+    在spdk的函数bs_open_blob中有一个行“assert(spdk_get_thread() == bs->md_thread)”会检测当前spdk线程与blobstore的spdk线程是否相等，
+    raft在读写log核对象数据之前会先使用bs_open_blob打开blob，为了保证在debug模式下正常运行，应该让raft的spdk线程与blobstore的spdk线程
+    相同。
+  */
+  //这里先支持单核    
+  auto cur_thread = spdk_get_thread();
+  shard.invoke_on(
+    0,
+    [bdev_name = bdev_name, uuid, cb_fn, args, cur_thread](){
+      _blobstore_init(bdev_name, std::move(uuid), cb_fn, args, cur_thread);
+    }
+  );  
 }
 
 /**
@@ -262,6 +483,8 @@ void parse_open_blob_xattr(struct spdk_blob *blob, bm_complete cb_fn, void* args
     return;
   }
 
+  auto type_str = type_string(*type);
+  SPDK_INFOLOG(blob_log, "blob id %lu type: %s\n", spdk_blob_get_id(blob), type_str.c_str());
   parse_blob_ctx *ctx = new parse_blob_ctx{.cb_fn = std::move(cb_fn), .args = args, .type = *type};
   switch (*type){
   case blob_type::log:
@@ -275,7 +498,8 @@ void parse_open_blob_xattr(struct spdk_blob *blob, bm_complete cb_fn, void* args
     parse_blob_xattr(ctx, blob, 0);
     break;
   default:
-    cb_fn(args, 0);
+    ctx->cb_fn(ctx->args, 0);
+    delete ctx;
     break;
   }
 }
@@ -307,12 +531,78 @@ blob_iter_complete(void *args, struct spdk_blob *blob, int bserrno)
   parse_open_blob_xattr(
     blob,
     [blob, err_hand = std::move(err_hand)](void *args, int berrno){
+      SPDK_INFOLOG(blob_log, "parse_open_blob_xattr, berrno %d\n", berrno);
       if(berrno){
         return err_hand(args, berrno);
       }
       spdk_bs_iter_next(g_bs_mgr.blobstore, blob, blob_iter_complete, args);
     },
     args);
+}
+
+static void close_super_complete(void *cb_arg, int bserrno){
+  struct bm_context *ctx = (struct bm_context *)cb_arg;
+  if (bserrno) {
+    SPDK_ERRLOG("close super blob failed %s\n", spdk_strerror(bserrno));
+    ctx->cb_fn(ctx->args, bserrno);
+    delete ctx;
+    return;
+  }  
+
+  SPDK_INFOLOG(blob_log, "close super blob done\n");
+  // 读取每个blob的xattr，放入map中，准备还原blob运行状态
+  spdk_bs_iter_first(g_bs_mgr.blobstore, blob_iter_complete, ctx);
+}
+
+static void read_super_blob_complete(void *arg, int bserrno) {
+  struct bm_context *ctx = (struct bm_context *)arg;
+
+  if (bserrno) {
+    SPDK_ERRLOG("open super blob failed %s\n", spdk_strerror(bserrno));
+    ctx->cb_fn(ctx->args, bserrno);
+    if(ctx->uuid_buf)
+        spdk_free(ctx->uuid_buf);
+    delete ctx;
+    return;
+  }
+
+  SPDK_INFOLOG(blob_log, "read super blob done, uuid %s\n", ctx->uuid_buf);
+  if(ctx->osd_uuid)
+      *(ctx->osd_uuid) = ctx->uuid_buf;
+  spdk_free(ctx->uuid_buf);
+
+  spdk_blob_close(ctx->blob, close_super_complete, ctx);
+}
+
+static void open_super_blob_complete(void *arg, struct spdk_blob *blob, int objerrno){
+  struct bm_context *ctx = (struct bm_context *)arg;
+  if (objerrno) {
+    SPDK_ERRLOG("open super blob failed %s\n", spdk_strerror(objerrno));
+    ctx->cb_fn(ctx->args, objerrno);
+    delete ctx;
+    return;
+  }
+
+  ctx->blob = blob;
+  auto channel = global_io_channel();
+  ctx->uuid_len = 4096;
+  ctx->uuid_buf = (char*)spdk_zmalloc(ctx->uuid_len, 0x1000, NULL, SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
+  spdk_blob_io_read(blob, channel, ctx->uuid_buf, 0,
+		      ctx->uuid_len / blob_unit_size,
+		      read_super_blob_complete, ctx);
+}
+
+static void get_super_complete(void *cb_arg, spdk_blob_id blobid, int bserrno){
+  struct bm_context *ctx = (struct bm_context *)cb_arg;
+  if (bserrno) {
+    SPDK_ERRLOG("get super failed %s\n", spdk_strerror(bserrno));
+    ctx->cb_fn(ctx->args, bserrno);
+    delete ctx;
+    return;
+  }
+
+  SPDK_INFOLOG(blob_log, "get super blob: %lu done\n", blobid);
+  spdk_bs_open_blob(g_bs_mgr.blobstore, blobid, open_super_blob_complete, ctx);
 }
 
 static void
@@ -322,7 +612,7 @@ bs_load_complete(void *args, struct spdk_blob_store *bs, int bserrno)
   uint64_t free = 0;
 
   if (bserrno) {
-    SPDK_ERRLOG("blobstore load failed, do you have blobstore on this disk? %s\n", spdk_strerror(bserrno));
+    SPDK_ERRLOG("blobstore load failed, do you have blobstore on this disk? %s\n", err::string_status(bserrno));
     ctx->cb_fn(ctx->args, bserrno);
     delete ctx;
     return;
@@ -337,25 +627,53 @@ bs_load_complete(void *args, struct spdk_blob_store *bs, int bserrno)
   free = spdk_bs_free_cluster_count(bs);
   SPDK_INFOLOG(blob_log, "blobstore has FREE clusters of %lu\n", free);
 
-  // 读取每个blob的xattr，放入map中，准备还原blob运行状态
-  spdk_bs_iter_first(g_bs_mgr.blobstore, blob_iter_complete, ctx);
+  spdk_bs_get_super(g_bs_mgr.blobstore, get_super_complete, ctx);
 }
 
-void
-blobstore_load(const char *bdev_name, bm_complete cb_fn, void* args) {
+static void
+_blobstore_load(std::string &bdev_name, bm_complete cb_fn, void* args, std::string *osd_uuid) {
   struct spdk_bs_dev *bs_dev = NULL;
 
-  SPDK_INFOLOG(blob_log, "create bs_dev...\n");
-  int rc = spdk_bdev_create_bs_dev_ext(bdev_name, fb_event_cb, NULL, &bs_dev);
+  int rc = spdk_bdev_create_bs_dev_ext(bdev_name.c_str(), fb_event_cb, NULL, &bs_dev);
   if (rc != 0) {
     SPDK_ERRLOG("create bs_dev failed: %s\n", spdk_strerror(-rc));
-    spdk_app_stop(-1);
+    cb_fn(args, rc);
     return;
   }
 
-  SPDK_INFOLOG(blob_log, "blobstore load...\n");
-  auto ctx = new bm_context{cb_fn, args};
+  auto ctx = new bm_context{.cb_fn = cb_fn, .args = args, .osd_uuid = osd_uuid};
   spdk_bs_load(bs_dev, NULL, bs_load_complete, ctx);
+}
+
+static void
+_blobstore_load(std::string bdev_name, bm_complete cb_fn, void* args, std::string *osd_uuid, spdk_thread *thread){
+  SPDK_INFOLOG(blob_log, "blobstore load, thread id %lu\n", spdk_thread_get_id(spdk_get_thread()));
+
+  blobstore_context *ctx = new blobstore_context{.cb_fn = std::move(cb_fn), .arg = args, .thread = thread};
+  _blobstore_load(
+    bdev_name,
+    [](void *arg, int serror){
+      blobstore_context *ctx = (blobstore_context *)arg;
+      ctx->serror = serror;
+      SPDK_INFOLOG(blob_log, "blobstore load done.\n");
+      blobstore_op_done(ctx);
+    },
+    ctx,
+    osd_uuid
+  );
+}
+
+void
+blobstore_load(std::string &bdev_name, bm_complete cb_fn, void* args, std::string *osd_uuid){
+  auto &shard = core_sharded::get_core_sharded();
+  
+  auto cur_thread = spdk_get_thread();
+  shard.invoke_on(
+    0,
+    [bdev_name = bdev_name, osd_uuid, cb_fn, args, cur_thread](){
+      _blobstore_load(bdev_name, cb_fn, args, osd_uuid, cur_thread);
+    }
+  );    
 }
 
 /**
@@ -376,23 +694,49 @@ bs_fini_complete(void *args, int bserrno)
   SPDK_INFOLOG(blob_log, "blobstore unload success.\n");
   g_bs_mgr.blobstore = nullptr;
   g_bs_mgr.channel = nullptr;
+  g_bs_mgr.blobs.stop();
 
   ctx->cb_fn(ctx->args, 0);
   delete ctx;
 }
 
-void
-blobstore_fini(bm_complete cb_fn, void* args)
+static void
+_blobstore_fini(bm_complete cb_fn, void* args)
 {
-	SPDK_INFOLOG(blob_log, "blobstore_fini.\n");
 	if (g_bs_mgr.blobstore) {
 		if (g_bs_mgr.channel) {
       SPDK_INFOLOG(blob_log, "free io_channel\n");
 			spdk_bs_free_io_channel(g_bs_mgr.channel);
 		}
-    auto ctx = new bm_context{cb_fn, args};
+    auto ctx = new bm_context{.cb_fn = cb_fn, .args = args};
     spdk_bs_unload(g_bs_mgr.blobstore, bs_fini_complete, ctx);
 	}else{
     cb_fn(args, 0);
   }
+}
+
+static void
+_blobstore_fini(bm_complete cb_fn, void* args, spdk_thread *thread){
+  SPDK_INFOLOG(blob_log, "blobstore fini, thread id %lu\n", spdk_thread_get_id(spdk_get_thread()));
+  auto ctx = new blobstore_context{.cb_fn = std::move(cb_fn), .arg = args, .thread = thread};
+  _blobstore_fini([](void *arg, int serror){
+    blobstore_context *ctx = (blobstore_context *)arg;
+    ctx->serror = serror;
+    SPDK_INFOLOG(blob_log, "blobstore fini done.\n");
+    blobstore_op_done(ctx);
+  },
+  ctx);
+}
+
+void
+blobstore_fini(bm_complete cb_fn, void* args){
+  auto &shard = core_sharded::get_core_sharded();
+
+  auto cur_thread = spdk_get_thread();
+  shard.invoke_on(
+    0,
+    [cb_fn, args, cur_thread](){
+      _blobstore_fini(cb_fn, args, cur_thread);
+    }
+  );    
 }

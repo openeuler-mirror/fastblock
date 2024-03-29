@@ -40,13 +40,14 @@
 
 #include <endian.h>
 
+#define conf_or_client(json_conf, opts, opts_key) conf_or_s(json_conf, "msg_client_"#opts_key, opts, opts_key)
+
 namespace msg {
 namespace rdma {
 
 class client : public std::enable_shared_from_this<client> {
 
 public:
-
     void handle_connection_shutdown(connection_id conn_id, work_request_id::dispatch_id_type dis_id) {
         SPDK_NOTICELOG("erase connection with id %lu\n", conn_id.value());
         _connections.erase(conn_id);
@@ -69,35 +70,36 @@ public:
         std::chrono::system_clock::duration retry_interval{std::chrono::seconds{0}};
     };
 
-    static std::shared_ptr<options> make_options(boost::property_tree::ptree& conf, boost::property_tree::ptree& rdma_conf) {
+    static std::shared_ptr<options> make_options(boost::property_tree::ptree& conf) {
         auto opts = std::make_shared<options>();
-        conf_or_s(conf, opts, poll_cq_batch_size);
-        conf_or_s(conf, opts, metadata_memory_pool_capacity);
-        conf_or_s(conf, opts, metadata_memory_pool_element_size);
-        conf_or_s(conf, opts, data_memory_pool_capacity);
-        conf_or_s(conf, opts, data_memory_pool_element_size);
-        conf_or_s(conf, opts, per_post_recv_num);
-        conf_or_s(conf, opts, rpc_batch_size);
-        conf_or_s(conf, opts, connect_max_retry);
-        conf_or_s(conf, opts, connect_max_retry);
+        conf_or_client(conf, opts, poll_cq_batch_size);
+        conf_or_client(conf, opts, metadata_memory_pool_capacity);
+        conf_or_client(conf, opts, metadata_memory_pool_element_size);
+        conf_or_client(conf, opts, data_memory_pool_capacity);
+        conf_or_client(conf, opts, data_memory_pool_element_size);
+        conf_or_client(conf, opts, per_post_recv_num);
+        conf_or_client(conf, opts, rpc_batch_size);
+        conf_or_client(conf, opts, connect_max_retry);
+        conf_or_client(conf, opts, connect_max_retry);
 
-        if (conf.count("rpc_timeout_us") != 0) {
-            auto timeout_us = conf.get_child("rpc_timeout_us").get_value<int64_t>();
+        if (conf.count("msg_client_rpc_timeout_us") != 0) {
+            auto timeout_us = conf.get_child("msg_client_rpc_timeout_us").get_value<int64_t>();
             opts->rpc_timeout = std::chrono::milliseconds{timeout_us};
         }
-        log_conf_pair(
-          "rpc_timeout_us",
-          std::chrono::duration_cast<std::chrono::milliseconds>(opts->rpc_timeout).count());
+        // log_conf_pair(
+        //   "msg_client_rpc_timeout_us",
+        //   std::chrono::duration_cast<std::chrono::milliseconds>(opts->rpc_timeout).count());
 
-        if (conf.count("connect_retry_interval_us") != 0) {
-            auto connect_retry_interval_us = conf.get_child("connect_retry_interval_us").get_value<int64_t>();
+        if (conf.count("msg_client_connect_retry_interval_us") != 0) {
+            auto connect_retry_interval_us = conf.get_child("msg_client_connect_retry_interval_us").get_value<int64_t>();
             opts->retry_interval = std::chrono::milliseconds{connect_retry_interval_us};
         }
-        log_conf_pair(
-          "connect_retry_interval_us",
-          opts->retry_interval.count());
 
-        opts->ep = std::make_unique<endpoint>(rdma_conf);
+        // log_conf_pair(
+        //   "msg_client_connect_retry_interval_us",
+        //   opts->retry_interval.count());
+
+        opts->ep = std::make_unique<endpoint>(conf);
 
         return opts;
     }
@@ -1012,9 +1014,14 @@ public:
         }
 
         if (_thread) {
+            auto current_thread = spdk_get_thread();
             ::spdk_set_thread(_thread);
             ::spdk_thread_exit(_thread);
-            ::spdk_set_thread(nullptr);
+            if(current_thread == _thread){
+                ::spdk_set_thread(nullptr);
+            }else{
+                ::spdk_set_thread(current_thread);
+            }
 
             SPDK_NOTICELOG("SPDK thread of the rpc client has been marked as exited\n");
         }
