@@ -149,9 +149,7 @@ void start_rpc_client(void* arg) {
     auto core_no = ::spdk_env_get_first_core();
     ::spdk_cpuset_set_cpu(&g_cpumask, core_no, true);
 
-    auto opts = msg::rdma::client::make_options(
-      g_pt.get_child("msg").get_child("client"),
-      g_pt.get_child("msg").get_child("rdma"));
+    auto opts = msg::rdma::client::make_options(g_pt);
     g_iter_count = g_pt.get_child("iteration_count").get_value<size_t>();
     g_io_depth = g_pt.get_child("io_depth").get_value<size_t>();
     g_rpc_client = std::make_shared<msg::rdma::client>("rpc_cli", &g_cpumask, opts);

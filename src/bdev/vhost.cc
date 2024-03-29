@@ -63,25 +63,23 @@ vhost_parse_arg(int ch, char *arg)
 
 static void vhost_started(void *arg1)
 {
-    auto pid_path = g_pt.get_child("pid_path").get_value<std::string>();
+	std::string pid_path = "/var/tmp/vhost" + std::to_string(getpid()) + ".pid";
     save_pid(pid_path.c_str());
-    auto vhost_path = g_pt.get_child("vhost_socket_path").get_value<std::string>();
+	auto vhost_path = "/var/tmp/bdev_vhost" + std::to_string(getpid()) + ".sock";
     SPDK_NOTICELOG(
       "pid path is '%s', vhost socket path is '%s'\n",
       pid_path.c_str(), vhost_path.c_str());
     ::spdk_vhost_set_socket_path(vhost_path.c_str());
 
     std::vector<monitor::client::endpoint> mon_eps{};
-    auto& monitors = g_pt.get_child("monitor");
-    for (auto& monitor_node : monitors) {
-        auto mon_host = monitor_node.second.get_child("host").get_value<std::string>();
-        auto mon_port = monitor_node.second.get_child("port").get_value<uint16_t>();
-        mon_eps.emplace_back(std::move(mon_host), mon_port);
+    auto& monitors = g_pt.get_child("mon_host");
+    auto pos = monitors.begin();
+    for(; pos != monitors.end(); pos++){
+        auto mon_addr = pos->second.get_value<std::string>();
+        mon_eps.emplace_back(std::move(mon_addr), utils::default_monitor_port);
     }
 
-    auto opts = msg::rdma::client::make_options(
-      g_pt.get_child("msg").get_child("client"),
-      g_pt.get_child("msg").get_child("rdma"));
+    auto opts = msg::rdma::client::make_options(g_pt);
     auto core_no = ::spdk_env_get_current_core();
     ::spdk_cpuset cpumask{};
     ::spdk_cpuset_zero(&cpumask);

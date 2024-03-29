@@ -15,127 +15,84 @@ echo 32768 > /sys/devices/system/node/node1/hugepages/hugepages-2048kB/nr_hugepa
 ```
 
 ## 1.部署monitor集群并启动monitor
-monitor运行在172.31.77.144(fastblock144)上，monitor配置文件 *monitor.toml* 如下:  
-```toml
-etcd_server = ["172.31.77.144:2379"] # Your etcd servers.
-address = "172.31.77.144"
-etcd_name = "monitor1"
-etcd_initial_cluster = "monitor1=http://172.31.77.144:2380"
-etcd_advertise_client_urls = ["http://172.31.77.144:2379"]
-etcd_advertise_peer_urls = ["http://172.31.77.144:2380"]
-etcd_listen_peer_urls = ["http://172.31.77.144:2380"]
-etcd_listen_client_urls = ["http://172.31.77.144:2379"]
-data_dir = "/tmp/etcddir"
-
-election_master_key = "fastblock_monitor_election"
-hostname="monitor1"
-address="172.31.77.144"
-port=3333
-prometheus_port=3332
-log_path = "/var/log/fastblock/monitor1.log"
-log_level = "info"
+monitor运行在172.31.77.144(fastblock144)上，monitor配置文件 *monitor.json* 如下:  
+```json
+{
+  "monitors": ["monitor1"],
+  "mon_host": ["172.31.77.144"],
+  "log_path": "/var/log/fastblock/monitor1.log",
+  "log_level": "info",
+  "election_master_key": "fastblock_monitor_election"
+}
 ```
 启动monitor进程:  
 ```
-fastblock-mon -conf monitor.toml &
+fastblock-mon -conf=monitor.toml -id=monitor1 &
 ```
 因monitor需要一定的时间(10s左右)进行etcd选举，然后才会开放tcp rpc端口影响fastblock-client和fastblock-osd的请求。
 
 
 
 ## 2.配置osd并启动osd:
-osd的配置文件包含两个部分，一个是spdk bdev的配置文件，一个是osd的配置文件，两个配置文件都是json格式的.  
-nvme驱动的bdev文件形如:  
+osd的配置文件是json格式的：  
 ```json
 {
-    "subsystems": [
-      {
-        "subsystem": "bdev",
-        "config": [
-          {
-            "method": "bdev_nvme_attach_controller",
-            "params": {
-              "name": "test1",
-              "trtype": "pcie",
-              "traddr": "0000:18:00.0"
-            }
-          }
-        ]
-      }
-    ]
+    "monitors": ["monitor1"],
+    "mon_host": ["172.31.77.144"],
+    "log_path": "/var/log/fastblock/monitor1.log",
+    "log_level": "info",
+    "election_master_key": "fastblock_monitor_election",
+    "osds": {
+        "1": "0000:18:00.0",
+        "2": "0000:18:00.1"
+    },
+    "bdev_type": "nvme",
+    "rdma_device_name": "mlx5_0",
+    "msg_server_listen_backlog" : 1024,
+    "msg_server_poll_cq_batch_size": 32,
+    "msg_server_metadata_memory_pool_capacity": 16384,
+    "msg_server_metadata_memory_pool_element_size": 1024,
+    "msg_server_data_memory_pool_capacity": 16384,
+    "msg_server_data_memory_pool_element_size": 8192,
+    "msg_server_per_post_recv_num": 512,
+    "msg_server_rpc_timeout_us": 1000000,
+    "msg_client_poll_cq_batch_size": 32,
+    "msg_client_metadata_memory_pool_capacity": 16384,
+    "msg_client_metadata_memory_pool_element_size": 1024,
+    "msg_client_data_memory_pool_capacity": 16384,
+    "msg_client_data_memory_pool_element_size": 8192,
+    "msg_client_per_post_recv_num": 512,
+    "msg_client_rpc_timeout_us": 1000000,
+    "msg_client_rpc_batch_size": 1024,
+    "msg_client_connect_max_retry": 30,
+    "msg_client_connect_retry_interval_us": 1000000,
+    "msg_rdma_resolve_timeout_us": 2000,
+    "msg_rdma_poll_cm_event_timeout_us": 1000000,
+    "msg_rdma_max_send_wr": 4096,
+    "msg_rdma_max_send_sge": 128,
+    "msg_rdma_max_recv_wr": 8192,
+    "msg_rdma_max_recv_sge": 1,
+    "msg_rdma_max_inline_data": 16,
+    "msg_rdma_cq_num_entries": 1024,
+    "msg_rdma_qp_sig_all": false
 }
-```
+
+首次启动osd之前需要先初始化osd，需要加上“--mkfs”参数和“--uuid $osd_uuid”
 uuid需要向monitor进行申请，命令行为:  
 ```bash
 uuid=`uudigen`
 fastblock-client -op=fakeapplyid -uuid=$uuid -endpoint=172.31.77.144:3333
 ```
-将上面申请的uuid填充到osd的配置文件中，osd配置文件形如:    
-```json
-{
-    "current_osd_id": 1,
-    "osds": [
-        {
-            "pid_path": "/var/tmp/osd_1.pid",
-            "osd_id": 1,
-            "bdev_disk": "nvme0n1",
-            "address": "172.31.4.144",
-            "port": 9001,
-            "uuid": "$uuid",
-            "monitor": [
-                {"host": "127.0.0.1", "port": 3333},
-                {"host": "127.0.0.1", "port": 4333},
-                {"host": "127.0.0.1", "port": 5333}
-            ]
-        }
-    ],
-
-    "msg": {
-        "server": {
-            "listen_backlog": 1024,
-            "poll_cq_batch_size": 32,
-            "metadata_memory_pool_capacity": 16384,
-            "metadata_memory_pool_element_size_byte": 1024,
-            "data_memory_pool_capacity": 16384,
-            "data_memory_pool_element_size_byte": 8192,
-            "per_post_recv_num": 512,
-            "rpc_timeout_us": 1000000
-        },
-
-        "client": {
-            "poll_cq_batch_size": 32,
-            "metadata_memory_pool_capacity": 16384,
-            "metadata_memory_pool_element_size_byte": 1024,
-            "data_memory_pool_capacity": 16384,
-            "data_memory_pool_element_size_byte": 8192,
-            "per_post_recv_num": 512,
-            "rpc_timeout_us": 1000000,
-            "rpc_batch_size": 1024,
-            "connect_max_retry": 30,
-            "connect_retry_interval_us": 1000000
-        },
-
-        "rdma": {
-            "resolve_timeout_us": 2000,
-            "poll_cm_event_timeout_us": 1000000,
-            "max_send_wr": 4096,
-            "max_send_sge": 128,
-            "max_recv_wr": 8192,
-            "max_recv_sge": 1,
-            "max_inline_data": 16,
-            "cq_num_entries": 1024,
-            "qp_sig_all": false,
-            "rdma_device_name": "mlx5_0"
-        }
-    }
-}
-```
-
-然后启动osd进程(如果是首次启动osd，需要初始化本地存储，需加上-f true，后续启动osd只需指定-f false或者缺省):
 
 ```
-/root/fb/fastblock/build/src/osd/fastblock-osd -m '['1']' -c bdev_1.json -C osd1.json -f true
+/root/fb/fastblock/build/src/osd/fastblock-osd -m '['1']' -C osd1.json --mkfs --id 1 --uuid $osd_uuid
 ```
+
+然后启动osd:
+```
+/root/fb/fastblock/build/src/osd/fastblock-osd -m '['1']' -C osd1.json  --id 1 
+```
+
 按照上面的方式依次配置fastlock143,fastblock144,fastblock145三个节点上的12个osd，此时集群中便有了36个osd.
 注意，通过测试数据发现，每台服务器上的12个osd最好每6个跑在不同的numa节点上。  
 
@@ -152,39 +109,27 @@ vhost.json 作为 `fastblock-vhost` 的配置文件如下：
 
 ```json
 {
-    "pid_path": "/var/tmp/socket.bdev.sock",
-    "vhost_socket_path": "/var/tmp/bdev_vhost.sock",
-    "monitor": [
-        {"host": "127.0.0.1", "port": 3333},
-        {"host": "127.0.0.1", "port": 4333},
-        {"host": "127.0.0.1", "port": 5333}
-    ],
-    "msg": {
-        "client": {
-            "poll_cq_batch_size": 1024,
-            "metadata_memory_pool_capacity": 4096,
-            "metadata_memory_pool_element_size_byte": 1024,
-            "data_memory_pool_capacity": 4096,
-            "data_memory_pool_element_size_byte": 8192,
-            "per_post_recv_num": 512,
-            "rpc_timeout_us": 1000000,
-            "rpc_batch_size": 1024,
-            "connect_max_retry": 30,
-            "connect_retry_interval_us": 1000000
-        },
-
-        "rdma": {
-            "resolve_timeout_us": 2000,
-            "poll_cm_event_timeout_us": 1000000,
-            "max_send_wr": 1024,
-            "max_send_sge": 128,
-            "max_recv_wr": 8192,
-            "max_recv_sge": 1,
-            "max_inline_data": 16,
-            "cq_num_entries": 1024,
-            "qp_sig_all": false
-        }
-    }
+    "mon_host": ["172.31.77.144"],
+    "rdma_device_name": "mlx5_0",
+    "msg_client_poll_cq_batch_size": 1024,
+    "msg_client_metadata_memory_pool_capacity": 4096,
+    "msg_client_metadata_memory_pool_element_size": 1024,
+    "msg_client_data_memory_pool_capacity": 4096,
+    "msg_client_data_memory_pool_element_size": 8192,
+    "msg_client_per_post_recv_num": 512,
+    "msg_client_rpc_timeout_us": 1000000,
+    "msg_client_rpc_batch_size": 1024,
+    "msg_client_connect_max_retry": 30,
+    "msg_client_connect_retry_interval_us": 1000000,
+    "msg_rdma_resolve_timeout_us": 2000,
+    "msg_rdma_poll_cm_event_timeout_us": 1000000,
+    "msg_rdma_max_send_wr": 1024,
+    "msg_rdma_max_send_sge": 128,
+    "msg_rdma_max_recv_wr": 8192,
+    "msg_rdma_max_recv_sge": 1,
+    "msg_rdma_max_inline_data": 16,
+    "msg_rdma_cq_num_entries": 1024,
+    "msg_rdma_qp_sig_all": false
 }
 
 ```
@@ -308,46 +253,35 @@ block_bench是直接对接调用libfblock库的spdk app，可以直接使用多�
 {
     "io_type": "write",
     "io_size": 4096,
-    "io_count": 1,
+    "io_count": 10000,
     "io_depth": 8,
     "io_queue_size": 128,
     "io_queue_request": 4096,
     "image_name": "test_image",
-    "image_size": 2907152,
+    "image_size": 107374182400,
     "object_size": 1048576,
-    "pool_id": 1,
-    "pool_name": "test_bdev_2",
-    "monitor": [
-        {"host": "127.0.0.1", "port": 3333},
-        {"host": "127.0.0.1", "port": 4333},
-        {"host": "127.0.0.1", "port": 5333}
-    ],
-    "msg": {
-        "client": {
-            "poll_cq_batch_size": 8,
-            "metadata_memory_pool_capacity": 16384,
-            "metadata_memory_pool_element_size_byte": 1024,
-            "data_memory_pool_capacity": 16384,
-            "data_memory_pool_element_size_byte": 8192,
-            "per_post_recv_num": 512,
-            "rpc_timeout_us": 1000000,
-            "rpc_batch_size": 1024,
-            "connect_max_retry": 30,
-            "connect_retry_interval_us": 1000000
-        },
-
-        "rdma": {
-            "resolve_timeout_us": 2000,
-            "poll_cm_event_timeout_us": 1000000,
-            "max_send_wr": 4096,
-            "max_send_sge": 128,
-            "max_recv_wr": 8192,
-            "max_recv_sge": 128,
-            "max_inline_data": 16,
-            "cq_num_entries": 1024,
-            "qp_sig_all": false
-        }
-    }
+    "pool_id": 26,
+    "pool_name": "volume",
+    "mon_host": ["172.31.77.144"],
+    "msg_client_poll_cq_batch_size": 32,
+    "msg_client_metadata_memory_pool_capacity": 16384,
+    "msg_client_metadata_memory_pool_element_size": 1024,
+    "msg_client_data_memory_pool_capacity": 16384,
+    "msg_client_data_memory_pool_element_size": 8192,
+    "msg_client_per_post_recv_num": 512,
+    "msg_client_rpc_timeout_us": 1000000,
+    "msg_client_rpc_batch_size": 1024,
+    "msg_client_connect_max_retry": 30,
+    "msg_client_connect_retry_interval_us": 1000000,
+    "msg_rdma_resolve_timeout_us": 2000,
+    "msg_rdma_poll_cm_event_timeout_us": 1000000,
+    "msg_rdma_max_send_wr": 4096,
+    "msg_rdma_max_send_sge": 128,
+    "msg_rdma_max_recv_wr": 8192,
+    "msg_rdma_max_recv_sge": 1,
+    "msg_rdma_max_inline_data": 16,
+    "msg_rdma_cq_num_entries": 1024,
+    "msg_rdma_qp_sig_all": false   
 }
 ```
 使用4个物理核时，启动测试的方式为:  

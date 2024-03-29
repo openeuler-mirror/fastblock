@@ -58,6 +58,10 @@ public:
   }
 
   void stop(storage_op_complete cb_fn, void* arg) {
+    if(!_kvstore){
+        cb_fn(arg, 0);
+        return;
+    }
     _kvstore->stop(
         [this, cb_fn = std::move(cb_fn)](void *arg, int error){
             if (error) {

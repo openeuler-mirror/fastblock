@@ -1,13 +1,16 @@
 {
-    "rdma_device_name": "mlx5_0",
-    "msg_server_listen_backlog" : 1024,
-    "msg_server_poll_cq_batch_size": 32,
-    "msg_server_metadata_memory_pool_capacity": 16384,
-    "msg_server_metadata_memory_pool_element_size": 1024,
-    "msg_server_data_memory_pool_capacity": 16384,
-    "msg_server_data_memory_pool_element_size": 8192,
-    "msg_server_per_post_recv_num": 512,
-    "msg_server_rpc_timeout_us": 1000000,
+    "io_type": "write",
+    "io_size": 4096,
+    "io_count": 10000,
+    "io_depth": 8,
+    "io_queue_size": 128,
+    "io_queue_request": 4096,
+    "image_name": "test_image",
+    "image_size": 107374182400,
+    "object_size": 1048576,
+    "pool_id": 26,
+    "pool_name": "volume",
+    "mon_host": ["173.20.4.3","173.20.4.2","173.20.4.1"],
     "msg_client_poll_cq_batch_size": 32,
     "msg_client_metadata_memory_pool_capacity": 16384,
     "msg_client_metadata_memory_pool_element_size": 1024,
@@ -26,5 +29,5 @@
     "msg_rdma_max_recv_sge": 1,
     "msg_rdma_max_inline_data": 16,
     "msg_rdma_cq_num_entries": 1024,
-    "msg_rdma_qp_sig_all": false
+    "msg_rdma_qp_sig_all": false   
 }

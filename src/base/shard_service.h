@@ -41,6 +41,15 @@ public:
         }
     }
 
+    void stop(){
+        uint32_t count = _instances.size();
+        for (uint32_t shard = 0; shard < count; shard++){
+            delete _instances[shard];
+            _instances[shard] = nullptr;
+        }
+        _instances.clear();
+    }
+
     Service& local() noexcept {
         uint32_t shard = core_sharded::get_core_sharded().this_shard_id();
         return *_instances[shard];

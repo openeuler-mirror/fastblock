@@ -20,15 +20,15 @@ fastblock-client -op=watchosdmap and -op=watchpgmap can watch on events of pool 
 
 ### standalone
 
-you should have a config file in `/etc/fastblock/monitor.toml` and make sure log dir is created, config file looks like:  
+you should have a config file in `/etc/fastblock/monitor.json` and make sure log dir is created, config file looks like:  
 ```
-etcd_server = ["127.0.0.1:2379"] # Your etcd servers.
-election_master_key = "fastblock_master"
-hostname="monitor1"
-port=1111
-prometheus_port=1112
-log_path = "/var/log/fastblock/monitor1.log"
-log_level = "info"
+{
+    "monitors": ["fb41","fb42","fb43"],
+    "mon_host": ["173.20.4.3","173.20.4.2","173.20.4.1"],
+    "log_path": "/var/log/fastblock/monitor1.log",
+    "log_level": "info",
+    "election_master_key": "fastblock_monitor_election"
+}
 ```
 you don't need to start a extra etcd cluster, we start a embeded etcd server.   
 
@@ -44,58 +44,32 @@ monitor2 192.168.1.2
 monitor3 192.168.1.3
 ```
 
-#### monitor 1
-
+三个monitor的配置文件是一样的，其中“monitors”字段是monitor节点名
 ```
-etcd_server = ["192.168.1.1:2379", "192.168.1.2:2379", "192.168.1.3:3379"] # Your etcd servers.
-etcd_name = "monitor1"
-etcd_initial_cluster = "monitor1=http://192.168.1.1:2380,monitor2=http://192.168.1.2:2380,monitor3=http://192.168.1.3:2380"
-etcd_advertise_client_urls = ["http://192.168.1.1:2379"]
-etcd_advertise_peer_urls = ["http://192.168.1.1:2380"]
-etcd_listen_peer_urls = ["http://192.168.1.1:2380"]
-etcd_listen_client_urls = ["http://192.168.1.1:2379", "http://127.0.0.1:2379"]
-election_master_key = "fastblock_master"
-data_dir = "/tmp/monitor1"
-hostname="monitor1"
-port=3333
-prometheus_port=1112
-log_path = "/var/log/fastblock/monitor1.log"
-log_level = "info"
+{
+    "monitors": ["monitor1","monitor2","monitor3"],
+    "mon_host": ["192.168.1.1","192.168.1.2","192.168.1.3"],
+    "log_path": "/var/log/fastblock/monitor.log",
+    "log_level": "info",
+    "election_master_key": "fastblock_monitor_election"
+}
 ```
 
-#### monitor 2
+启动monitor时需要使用参数“-id”参数指定monitor节点名
+monitor1
+  fastblock-mon -conf=fastblock.json -id=monitor1
+monitor2
+  fastblock-mon -conf=fastblock.json -id=monitor2
+monitor3
+  fastblock-mon -conf=fastblock.json -id=monitor3
 
-```
-etcd_server = ["192.168.1.1:2379", "192.168.1.2:2379", "192.168.1.3:3379"] # Your etcd servers.
-etcd_name = "monitor1"
-etcd_initial_cluster = "monitor1=http://192.168.1.1:2380,monitor2=http://192.168.1.2:2380,monitor3=http://192.168.1.3:2380"
-etcd_advertise_client_urls = ["http://192.168.1.2:2379"]
-etcd_advertise_peer_urls = ["http://192.168.1.2:2380"]
-etcd_listen_peer_urls = ["http://192.168.1.2:2380"]
-etcd_listen_client_urls = ["http://192.168.1.2:2379", "http://127.0.0.1:2379"]
-election_master_key = "fastblock_master"
-data_dir = "/tmp/monitor1"
-hostname="monitor1"
-port=3333
-prometheus_port=1112
-log_path = "/var/log/fastblock/monitor1.log"
-log_level = "info"
-```
-#### monitor 3
 
-```
-etcd_server = ["192.168.1.1:2379", "192.168.1.2:2379", "192.168.1.3:3379"] # Your etcd servers.
-etcd_name = "monitor1"
-etcd_initial_cluster = "monitor1=http://192.168.1.1:2380,monitor2=http://192.168.1.2:2380,monitor3=http://192.168.1.3:2380"
-etcd_advertise_client_urls = ["http://192.168.1.3:2379"]
-etcd_advertise_peer_urls = ["http://192.168.1.3:2380"]
-etcd_listen_peer_urls = ["http://192.168.1.3:2380"]
-etcd_listen_client_urls = ["http://192.168.1.3:2379", "http://127.0.0.1:2379"]
-election_master_key = "fastblock_master"
-data_dir = "/tmp/monitor1"
-hostname="monitor1"
-port=3333
-prometheus_port=1112
-log_path = "/var/log/fastblock/monitor1.log"
-log_level = "info"
-```
+
+
+
+
+
+
+
+
+

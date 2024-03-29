@@ -16,7 +16,12 @@
 
 #include "spdk/env.h"
 namespace utils {
-    
+
+constexpr int32_t MIN_OSD_PORT = 9000;
+constexpr int32_t MAX_OSD_PORT = 10000;
+
+constexpr int32_t default_monitor_port = 3333;
+
 class context {
 protected:
     virtual void finish(int r) = 0;
@@ -135,6 +140,11 @@ static std::string random_string(const size_t length) {
     }
 
     return ret;
+}
+
+static int get_random_port(){
+    int port = random_int(MIN_OSD_PORT, MAX_OSD_PORT);
+    return port;
 }
 
 }

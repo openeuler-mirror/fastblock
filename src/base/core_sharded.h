@@ -90,11 +90,17 @@ public:
     }
 
     void stop() noexcept {
+        auto current_thread = spdk_get_thread();
+
         for (auto* thread : _threads) {
             if (not thread) { continue; }
             ::spdk_set_thread(thread);
             ::spdk_thread_exit(thread);
-            ::spdk_set_thread(nullptr);
+            if(current_thread == thread){
+                ::spdk_set_thread(nullptr);
+            }else{
+                ::spdk_set_thread(current_thread);
+            }
         }
     }
 
