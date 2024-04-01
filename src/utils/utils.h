@@ -15,6 +15,7 @@
 #include <string>
 
 #include "spdk/env.h"
+#include "spdk/thread.h"
 namespace utils {
 
 constexpr int32_t MIN_OSD_PORT = 9000;
@@ -145,6 +146,13 @@ static std::string random_string(const size_t length) {
 static int get_random_port(){
     int port = random_int(MIN_OSD_PORT, MAX_OSD_PORT);
     return port;
+}
+
+static uint64_t  get_spdk_thread_id(){
+    auto thread = spdk_get_thread();
+    if(thread)
+        return spdk_thread_get_id(thread);
+    return 0;
 }
 
 }

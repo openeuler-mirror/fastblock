@@ -856,12 +856,12 @@ public:
      */
 
     void handle_start() {
-        _ib_cm_event_poller.poller = SPDK_POLLER_REGISTER(ib_cm_event_poller, this, 0);
-        _cq_poller.poller = SPDK_POLLER_REGISTER(cq_poller, this, 0);
-        _cqe_poller.poller = SPDK_POLLER_REGISTER(cqe_poller, this, 0);
-        _task_poller.poller = SPDK_POLLER_REGISTER(task_poller, this, 0);
-        _task_read_poller.poller = SPDK_POLLER_REGISTER(task_read_poller, this, 0);
-        _task_reply_poller.poller = SPDK_POLLER_REGISTER(task_reply_poller, this, 0);
+        _ib_cm_event_poller.register_poller(ib_cm_event_poller, this, 0);
+        _cq_poller.register_poller(cq_poller, this, 0);
+        _cqe_poller.register_poller(cqe_poller, this, 0);
+        _task_poller.register_poller(task_poller, this, 0);
+        _task_read_poller.register_poller(task_read_poller, this, 0);
+        _task_reply_poller.register_poller(task_reply_poller, this, 0);
         SPDK_INFOLOG(msg, "Rpc server started\n");
     }
 
@@ -871,12 +871,12 @@ public:
         }
 
         _is_terminated = true;
-        _ib_cm_event_poller.unregister();
-        _cq_poller.unregister();
-        _cqe_poller.unregister();
-        _task_poller.unregister();
-        _task_read_poller.unregister();
-        _task_reply_poller.unregister();
+        _ib_cm_event_poller.unregister_poller();
+        _cq_poller.unregister_poller();
+        _cqe_poller.unregister_poller();
+        _task_poller.unregister_poller();
+        _task_read_poller.unregister_poller();
+        _task_reply_poller.unregister_poller();
 
         SPDK_NOTICELOG("Pollers of rpc server have been unregistered\n");
 

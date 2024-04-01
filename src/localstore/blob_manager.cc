@@ -13,6 +13,7 @@
 #include "object_store.h"
 #include "utils/units.h"
 #include "utils/err_num.h"
+#include "utils/utils.h"
 
 #include <spdk/log.h>
 #include <spdk/string.h>
@@ -290,7 +291,7 @@ static void blobstore_op_done(blobstore_context *ctx){
 
 static void
 _blobstore_init(std::string bdev_name, std::string uuid, bm_complete cb_fn, void* args, spdk_thread *thread) {
-  SPDK_INFOLOG(blob_log, "blobstore init, thread id %lu\n", spdk_thread_get_id(spdk_get_thread()));
+  SPDK_INFOLOG(blob_log, "blobstore init, thread id %lu\n", utils::get_spdk_thread_id());
   
   blobstore_context *ctx = new blobstore_context{.cb_fn = std::move(cb_fn), .arg = args, .thread = thread};
   _blobstore_init([](void *arg, int serror){
@@ -647,7 +648,7 @@ _blobstore_load(std::string &bdev_name, bm_complete cb_fn, void* args, std::stri
 
 static void
 _blobstore_load(std::string bdev_name, bm_complete cb_fn, void* args, std::string *osd_uuid, spdk_thread *thread){
-  SPDK_INFOLOG(blob_log, "blobstore load, thread id %lu\n", spdk_thread_get_id(spdk_get_thread()));
+  SPDK_INFOLOG(blob_log, "blobstore load, thread id %lu\n", utils::get_spdk_thread_id());
 
   blobstore_context *ctx = new blobstore_context{.cb_fn = std::move(cb_fn), .arg = args, .thread = thread};
   _blobstore_load(
@@ -717,7 +718,7 @@ _blobstore_fini(bm_complete cb_fn, void* args)
 
 static void
 _blobstore_fini(bm_complete cb_fn, void* args, spdk_thread *thread){
-  SPDK_INFOLOG(blob_log, "blobstore fini, thread id %lu\n", spdk_thread_get_id(spdk_get_thread()));
+  SPDK_INFOLOG(blob_log, "blobstore fini, thread id %lu\n", utils::get_spdk_thread_id());
   auto ctx = new blobstore_context{.cb_fn = std::move(cb_fn), .arg = args, .thread = thread};
   _blobstore_fini([](void *arg, int serror){
     blobstore_context *ctx = (blobstore_context *)arg;
