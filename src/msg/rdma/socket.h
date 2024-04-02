@@ -663,11 +663,6 @@ public:
     }
 
     void destroy_resource() noexcept {
-        if (_closed) [[unlikely]] {
-            SPDK_INFOLOG(msg, "the resource of the connection has been destroyed\n");
-            return;
-        }
-
         auto peer_addr = peer_address();
         auto local_addr = local_address();
 
@@ -675,8 +670,6 @@ public:
           msg,
           "destroy the resource of the socket(%s => %s)\n",
           local_addr.c_str(), peer_addr.c_str());
-
-        _closed = true;
 
         int ret;
         if (not _id) {
