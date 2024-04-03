@@ -75,6 +75,11 @@ public:
         }
 
         init_with_rdma(pd);
+
+        SPDK_DEBUGLOG(
+          msg,
+          "created memory pool '%s' with capacity %ld\n",
+          _name.c_str(), ::spdk_mempool_count(_pool));
     }
 
     memory_pool(const memory_pool&) = delete;
@@ -86,29 +91,7 @@ public:
     memory_pool& operator=(memory_pool&&) = delete;
 
     ~memory_pool() noexcept {
-        if (_net_contexts) {
-            auto ele_cache = std::make_unique<void*[]>(_capacity);
-            auto rc = ::spdk_mempool_get_bulk(_net_contexts, ele_cache.get(), _capacity);
-            if (not rc) {
-                for (size_t i{0}; i < _capacity; ++i) {
-                    auto* ctx = reinterpret_cast<net_context*>(ele_cache[i]);
-                    ::ibv_dereg_mr(ctx->mr);
-                }
-                ::spdk_mempool_put_bulk(_net_contexts, ele_cache.get(), _capacity);
-            } else {
-                SPDK_ERRLOG(
-                  "ERROR: Got bulk of net contexts failed, return code is %s, current pool size is %ld, capacity is %lu\n",
-                  ::spdk_strerror(rc),
-                  ::spdk_mempool_count(_net_contexts),
-                  _capacity);
-            }
-
-            ::spdk_mempool_free(_net_contexts);
-        }
-
-        if (_pool) {
-            ::spdk_mempool_free(_pool);
-        }
+        free();
     }
 
 private:
@@ -181,6 +164,41 @@ public:
         return _element_size;
     }
 
+    void free() noexcept {
+        if (_is_free) {
+            return;
+        }
+
+        _is_free = true;
+
+        SPDK_NOTICELOG("Start closing rpc memory_pool %s\n", _name.c_str());
+        if (_net_contexts) {
+            auto ele_cache = std::make_unique<void*[]>(_capacity);
+            auto rc = ::spdk_mempool_get_bulk(_net_contexts, ele_cache.get(), _capacity);
+            if (rc == 0) {
+                for (size_t i{0}; i < _capacity; ++i) {
+                    auto* ctx = reinterpret_cast<net_context*>(ele_cache[i]);
+                    ::ibv_dereg_mr(ctx->mr);
+                }
+                SPDK_NOTICELOG("Deregistered all memory region\n");
+                ::spdk_mempool_put_bulk(_net_contexts, ele_cache.get(), _capacity);
+            } else {
+                SPDK_ERRLOG(
+                  "ERROR: Got bulk of net contexts failed, return code is %s, current pool size is %ld, capacity is %lu\n",
+                  ::spdk_strerror(rc),
+                  ::spdk_mempool_count(_net_contexts),
+                  _capacity);
+            }
+
+            ::spdk_mempool_free(_net_contexts);
+        }
+
+        if (_pool) {
+            ::spdk_mempool_free(_pool);
+        }
+        SPDK_NOTICELOG("The memory pool %s has been freed\n", _name.c_str());
+    }
+
 private:
 
     size_t _capacity{0};
@@ -188,6 +206,7 @@ private:
     std::string _name{};
     ::spdk_mempool* _pool{nullptr};
     ::spdk_mempool* _net_contexts{nullptr};
+    bool _is_free{false};
 };
 
 } // namespace rdma

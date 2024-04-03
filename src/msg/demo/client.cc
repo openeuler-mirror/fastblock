@@ -116,7 +116,7 @@ void iter_on_pong(msg::rdma::rpc_controller* ctrlr, ping_pong::response* reply) 
 
     ++g_rpc_dur_count;
     g_all_rpc_dur += static_cast<double>(dur);
-    if (static_cast<size_t>(reply->id()) >= g_iter_count) {
+    if (static_cast<size_t>(reply->id()) >= g_iter_count - 1) {
         g_is_terminated = true;
         auto iops_dur = static_cast<double>((std::chrono::system_clock::now() - g_iops_start).count());
         SPDK_ERRLOG(
@@ -127,9 +127,12 @@ void iter_on_pong(msg::rdma::rpc_controller* ctrlr, ping_pong::response* reply) 
           g_rpc_dur_count / (iops_dur / 1000 / 1000 / 1000));
 
         SPDK_NOTICELOG("Stop the rpc client\n");
-        g_rpc_client->stop();
-        SPDK_NOTICELOG("Stop the demo client process\n");
-        ::spdk_app_stop(0);
+        g_rpc_client->stop([] () {
+            SPDK_NOTICELOG("Stop the demo client process\n");
+            ::spdk_app_stop(0);
+        });
+
+        return;
     }
 
     g_call_stacks.pop_front();

@@ -632,8 +632,7 @@ public:
         auto peer_addr = peer_address();
         auto local_addr = local_address();
 
-        SPDK_INFOLOG(
-          msg,
+        SPDK_NOTICELOG(
           "disconnect the connection(%s => %s)\n",
           local_addr.c_str(), peer_addr.c_str());
 
@@ -710,10 +709,6 @@ private:
     bool validate_cm_event(
       ::rdma_cm_event_type expected_event,
       ::rdma_cm_event* reaped_event) noexcept {
-        if (expected_event == reaped_event->event) {
-            return true;
-        }
-
         switch (expected_event) {
         case RDMA_CM_EVENT_ESTABLISHED: {
             /*
@@ -736,10 +731,13 @@ private:
                 _connected = true;
             }
 
-            break;
+            return true;
         }
-        default:
-            break;
+        default: {
+            if (expected_event == reaped_event->event) {
+                return true;
+            }
+        }
         }
 
         SPDK_ERRLOG(

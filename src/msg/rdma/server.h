@@ -120,6 +120,11 @@ public:
         std::unordered_map<std::string_view, method_descriptor_pointer> methods{};
     };
 
+    struct stop_context {
+        std::optional<std::function<void()>> on_stop_cb{std::nullopt};
+        server* this_server{nullptr};
+    };
+
     struct add_service_ctx {
         service::pointer service_ptr{nullptr};
         server* this_server{nullptr};
@@ -334,7 +339,7 @@ private:
         auto conn = std::make_shared<connection_record>(
           std::move(sock), dis_id,
           std::make_unique<memory_pool<::ibv_recv_wr>>(
-            pd, FMT_1("sr_%1%", utils::random_string(5)),
+            pd, FMT_1("srv_recv_%1%", utils::random_string(5)),
             _opts->per_post_recv_num,
             _opts->metadata_memory_pool_element_size, 0));
         per_post_recv(conn.get());
@@ -808,8 +813,8 @@ public:
     }
 
     static void on_stop(void* arg) {
-        auto* this_server = reinterpret_cast<server*>(arg);
-        this_server->handle_stop();
+        auto* ctx = reinterpret_cast<stop_context*>(arg);
+        ctx->this_server->handle_stop(std::unique_ptr<stop_context>{ctx});
     }
 
     static void on_add_service(void* arg) {
@@ -865,7 +870,7 @@ public:
         SPDK_INFOLOG(msg, "Rpc server started\n");
     }
 
-    void handle_stop() {
+    void handle_stop(std::unique_ptr<stop_context> ctx) {
         if (_is_terminated) {
             return;
         }
@@ -877,6 +882,9 @@ public:
         _task_poller.unregister();
         _task_read_poller.unregister();
         _task_reply_poller.unregister();
+
+        _meta_pool->free();
+        _data_pool->free();
 
         SPDK_NOTICELOG("Pollers of rpc server have been unregistered\n");
 
@@ -890,6 +898,14 @@ public:
                 ::spdk_set_thread(current_thread);
             }
             SPDK_NOTICELOG("SPDK thread of the rpc server has been marked as exited\n");
+        }
+
+        if (ctx and ctx->on_stop_cb) {
+            try {
+                (ctx->on_stop_cb.value())();
+            } catch (const std::exception& e) {
+                SPDK_ERRLOG("Caught exception when executing callback on stopping rpc server: %s\n", e.what());
+            }
         }
     }
 
@@ -945,8 +961,8 @@ public:
         auto rc = _cq->poll(_wcs.get(), _opts->poll_cq_batch_size);
         if (rc < 0) {
             SPDK_ERRLOG("ERROR: Poll cq error '%s', stop the server\n", std::strerror(errno));
-            handle_stop();
-            return SPDK_POLLER_BUSY;
+            handle_stop(nullptr);
+            return SPDK_POLLER_IDLE;
         }
 
         if (rc == 0) {
@@ -1023,12 +1039,13 @@ public:
         ::spdk_thread_send_msg(_thread, on_start, this);
     }
 
-    void stop() {
+    void stop(std::optional<std::function<void()>>&& cb = std::nullopt) {
         if (_is_terminated) {
             return;
         }
 
-        ::spdk_thread_send_msg(_thread, on_stop, this);
+        auto* ctx = new stop_context{std::move(cb), this};
+        ::spdk_thread_send_msg(_thread, on_stop, ctx);
     }
 
     void add_service(service::pointer p) {

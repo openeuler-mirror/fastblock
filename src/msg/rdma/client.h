@@ -167,11 +167,7 @@ public:
 
         connection& operator=(connection&&) = delete;
 
-        ~connection() noexcept {
-            if (_recv_ctx) {
-                _recv_pool->put_bulk(std::move(_recv_ctx), _opts->per_post_recv_num);
-            }
-        }
+        ~connection() noexcept = default;
 
     public:
 
@@ -803,7 +799,6 @@ public:
                 it->second->wr.wr_id = _dispatch_id.value();
                 it->second->wr.next = nullptr;
                 _sock->receive(&(it->second->wr));
-                SPDK_DEBUGLOG(msg, "posted 1 receive wr\n");
                 rdma_probe.receive_wr_posted();
                 _recv_ctx_map.emplace(it->second->wr.wr_id, it->second);
                 _recv_ctx_map.erase(it);
@@ -847,6 +842,12 @@ public:
                 task_pair.second->closure->Run();
             }
             _unresponsed_requests.clear();
+            _sock->close();
+
+            if (_recv_ctx) {
+                _recv_pool->put_bulk(std::move(_recv_ctx), _opts->per_post_recv_num);
+            }
+            _recv_pool->free();
         }
 
         void shutdown() {
@@ -913,6 +914,11 @@ private:
     struct start_context {
         client* this_client{nullptr};
         std::optional<std::function<void()>> on_start_cb{std::nullopt};
+    };
+
+    struct stop_context {
+        client* this_client{nullptr};
+        std::optional<std::function<void()>> on_stop_cb{std::nullopt};
     };
 
     struct emplace_connection_context {
@@ -992,8 +998,8 @@ public:
     }
 
     static void on_stop(void* arg) {
-        auto* this_client = reinterpret_cast<client*>(arg);
-        this_client->handle_stop();
+        auto* ctx = reinterpret_cast<stop_context*>(arg);
+        ctx->this_client->handle_stop(std::unique_ptr<stop_context>{ctx});
     }
 
     static void on_emplace_connection(void* arg) {
@@ -1033,7 +1039,7 @@ public:
         SPDK_INFOLOG(msg, "Rpc client started\n");
     }
 
-    void handle_stop() {
+    void handle_stop(std::unique_ptr<stop_context> ctx) {
         if (_is_terminated) {
             return;
         }
@@ -1050,13 +1056,24 @@ public:
             auto current_thread = spdk_get_thread();
             ::spdk_set_thread(_thread);
             ::spdk_thread_exit(_thread);
-            if(current_thread == _thread){
+            if (current_thread == _thread) {
                 ::spdk_set_thread(nullptr);
-            }else{
+            } else {
                 ::spdk_set_thread(current_thread);
             }
 
             SPDK_NOTICELOG("SPDK thread of the rpc client has been marked as exited\n");
+        }
+
+        _meta_pool->free();
+        _data_pool->free();
+
+        if (ctx and ctx->on_stop_cb) {
+            try {
+                (ctx->on_stop_cb.value())();
+            } catch (const std::exception& e) {
+                SPDK_ERRLOG("Caught exception when executing callback on stopping rpc client: %s\n", e.what());
+            }
         }
     }
 
@@ -1290,7 +1307,7 @@ public:
         auto rc = _cq->poll(_wcs.get(), _opts->poll_cq_batch_size);
         if (rc < 0) {
             SPDK_ERRLOG("ERROR: Poll cq error '%s', stop the server\n", std::strerror(errno));
-            handle_stop();
+            handle_stop(nullptr);
             return SPDK_POLLER_IDLE;
         }
 
@@ -1359,8 +1376,9 @@ public:
         ::spdk_thread_send_msg(_thread, on_start, ctx);
     }
 
-    void stop() {
-        ::spdk_thread_send_msg(_thread, on_stop, this);
+    void stop(std::optional<std::function<void()>>&& on_stop_cb = std::nullopt) {
+        auto* ctx = new stop_context{this, std::move(on_stop_cb)};
+        ::spdk_thread_send_msg(_thread, on_stop, ctx);
     }
 
     void emplace_connection(
