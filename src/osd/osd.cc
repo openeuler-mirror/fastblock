@@ -205,13 +205,13 @@ static void pm_init(void *arg){
 void storage_init_complete(void *arg, int rberrno){
     if(rberrno != 0){
 		SPDK_ERRLOG("Failed to initialize the storage system: %s. thread id %lu\n", 
-            spdk_strerror(rberrno), spdk_thread_get_id(spdk_get_thread()));
+            spdk_strerror(rberrno), utils::get_spdk_thread_id());
         osd_exit_code = rberrno;
         std::raise(SIGINT);
 		return;
 	}
 
-    SPDK_NOTICELOG("mkfs done, thread id %lu\n", spdk_thread_get_id(spdk_get_thread()));
+    SPDK_NOTICELOG("mkfs done, thread id %lu\n", utils::get_spdk_thread_id());
     osd_exit_code = 0;
     std::raise(SIGINT);
 }
@@ -219,14 +219,14 @@ void storage_init_complete(void *arg, int rberrno){
 void disk_init_complete(void *arg, int rberrno) {
     if(rberrno != 0){
 		SPDK_NOTICELOG("Failed to initialize the disk: %s. thread id %lu\n", 
-            err::string_status(rberrno), spdk_thread_get_id(spdk_get_thread()));
+            err::string_status(rberrno), utils::get_spdk_thread_id());
         osd_exit_code = rberrno;
         std::raise(SIGINT);
 		return;
 	}
 
     SPDK_INFOLOG(osd,  "Initialize the disk completed, thread id %lu\n", 
-        spdk_thread_get_id(spdk_get_thread()));
+        utils::get_spdk_thread_id());
 	storage_init(storage_init_complete, arg);
 }
 
@@ -405,7 +405,7 @@ static void osd_service_load(void *arg){
 }
 
 void storage_load_complete(void *arg, int rberrno){
-    SPDK_INFOLOG(osd, "storage load done, thread id %lu\n", spdk_thread_get_id(spdk_get_thread()));
+    SPDK_INFOLOG(osd, "storage load done, thread id %lu\n", utils::get_spdk_thread_id());
     if(rberrno != 0){
 		SPDK_ERRLOG("Failed to initialize the storage system: %s\n", spdk_strerror(rberrno));
         osd_exit_code = rberrno;
@@ -419,7 +419,7 @@ void storage_load_complete(void *arg, int rberrno){
 void disk_load_complete(void *arg, int rberrno){
     if(rberrno != 0){
 		SPDK_NOTICELOG("Failed to initialize the disk: %s. thread id %lu\n", 
-            err::string_status(rberrno), spdk_thread_get_id(spdk_get_thread()));
+            err::string_status(rberrno), utils::get_spdk_thread_id());
         osd_exit_code = rberrno;
         std::raise(SIGINT);
 		return;
@@ -427,7 +427,7 @@ void disk_load_complete(void *arg, int rberrno){
 
     server_t *server = (server_t *)arg;
     SPDK_INFOLOG(osd, "load blobstore done, uuid %s, thread id %lu\n", 
-        server->osd_uuid.c_str(), spdk_thread_get_id(spdk_get_thread()));
+        server->osd_uuid.c_str(), utils::get_spdk_thread_id());
 
     storage_load(storage_load_complete, arg);
 }
@@ -545,12 +545,11 @@ static void save_bdev_json(std::string& bdev_json_file, server_t& server){
     }
 }
 
-static void from_configuration(server_t* server, std::string& bdev_json_file) {
+static int from_configuration(server_t* server, std::string& bdev_json_file) {
     auto& pt = server->pt;
     if(g_mkfs && !g_uuid) {
         std::cerr << "--uuid <uuid> must be set when --mkfs is set\n";
-        std::raise(SIGINT);
-        return;        
+        return -1;        
     }
 
     if(g_mkfs){
@@ -563,8 +562,7 @@ static void from_configuration(server_t* server, std::string& bdev_json_file) {
     
     if(osds.count(current_osd_id) == 0){
         std::cerr << "The value of configuration key: " << current_osd_id << "in osds must be set\n";
-        std::raise(SIGINT);
-        return;
+        return -1;
     }
     std::string bdev_addr = osds.get_child(current_osd_id).get_value<std::string>();
     std::string bdev_type = pt.get_child("bdev_type").get_value<std::string>();
@@ -572,8 +570,7 @@ static void from_configuration(server_t* server, std::string& bdev_json_file) {
 
     if(bdev_type != "aio" &&  bdev_type != "nvme"){
         std::cerr << "the bdev_type in config file muset be 'aio' or 'nvme'" << std::endl;
-        std::raise(SIGINT);
-        return;
+        return -1;
     }
     server->bdev_disk = bdev_type + current_osd_id;
     server->osd_port = utils::get_random_port();
@@ -582,15 +579,13 @@ static void from_configuration(server_t* server, std::string& bdev_json_file) {
     
     auto ip_addr = get_rdma_addr(rdma_device_name);
     if(ip_addr.size() == 0){
-        std::raise(SIGINT);
-        return;
+        return -1;
     }
     server->osd_addr = ip_addr;
 
     if (pt.count("mon_host") == 0) {
         std::cerr << "No monitor cluster is specified" << std::endl;
-        std::raise(SIGINT);
-        return;
+        return -1;
     }
 
     auto& monitors = pt.get_child("mon_host");
@@ -602,17 +597,17 @@ static void from_configuration(server_t* server, std::string& bdev_json_file) {
 
     if (server->monitors.empty()) {
         std::cerr << "No monitor cluster is specified" << std::endl;
-        std::raise(SIGINT);
-        return;
+        return -1;
     }
 
     std::string pid_path = "/var/tmp/osd" + current_osd_id + ".pid";
     save_pid(pid_path.c_str());
+    return 0;
 }
 
 static void on_blob_unloaded([[maybe_unused]] void *cb_arg, int bserrno) {
     SPDK_NOTICELOG("The blob has been unloaded, return code is %d, thread id %lu\n", 
-            bserrno, spdk_thread_get_id(spdk_get_thread()));
+            bserrno, utils::get_spdk_thread_id());
     auto& sharded_service = core_sharded::get_core_sharded();
     SPDK_NOTICELOG("Start stopping sharded service\n");
     sharded_service.stop();
@@ -622,7 +617,7 @@ static void on_blob_unloaded([[maybe_unused]] void *cb_arg, int bserrno) {
 
 static void on_blob_closed([[maybe_unused]] void *cb_arg, int bserrno) {
     SPDK_NOTICELOG("The bdev has been closed, return code is %d, thread id %lu\n", 
-            bserrno, spdk_thread_get_id(spdk_get_thread()));
+            bserrno, utils::get_spdk_thread_id());
     SPDK_NOTICELOG("Start unloading bdev\n");
     ::blobstore_fini(on_blob_unloaded, nullptr);
 }
@@ -632,7 +627,7 @@ static void on_pm_closed([[maybe_unused]] void *cb_arg, int bserrno) {
 }
 
 static void on_osd_stop() noexcept {
-    SPDK_NOTICELOG("Stop the osd service, thread id %lu\n", spdk_thread_get_id(spdk_get_thread()));
+    SPDK_NOTICELOG("Stop the osd service, thread id %lu\n", utils::get_spdk_thread_id());
 
     if (monitor_client) {
         monitor_client->stop();
@@ -681,8 +676,7 @@ main(int argc, char *argv[])
 	}
 
     if (g_id == -1) {
-        std::cerr << "--id or -I <osd id> must be set\n";
-        std::raise(SIGINT);
+        std::cerr << "--id <osd id> or -I <osd id> must be set\n";
         return -EINVAL;
     }
 
@@ -699,7 +693,9 @@ main(int argc, char *argv[])
         block_usage();
         return -EINVAL;
     }
-    from_configuration(&osd_server, bdev_json_file);
+    if(from_configuration(&osd_server, bdev_json_file) != 0){
+        return -EINVAL;
+    }
 
     save_bdev_json(bdev_json_file, osd_server);
     opts.json_config_file = bdev_json_file.c_str();

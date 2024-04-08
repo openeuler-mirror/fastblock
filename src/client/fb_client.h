@@ -251,7 +251,7 @@ public:
         SPDK_NOTICELOG("Stop the fastblock client\n");
         _is_terminate = true;
         _rpc_client->stop();
-        _poller.unregister();
+        _poller.unregister_poller();
     }
 
     /************************************************************
@@ -288,7 +288,7 @@ public:
     void handle_start() {
         SPDK_INFOLOG(libblk, "Starting block client...\n");
         _rpc_client->start();
-        _poller.poller = SPDK_POLLER_REGISTER(do_poll, this, 0);
+        _poller.register_poller(do_poll, this, 0);
     }
 
     void handle_send_request(request_stack_type* req_stk) {

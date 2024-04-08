@@ -247,7 +247,7 @@ void monitor_client_test_on_app_start(void* arg) {
     }
 
 
-    main_poller.poller = SPDK_POLLER_REGISTER(main_poller_cb, ctx, 0);
+    main_poller.register_poller(main_poller_cb, ctx, 0);
 }
 }
 

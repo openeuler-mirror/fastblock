@@ -401,7 +401,7 @@ public:
               _opts->metadata_memory_pool_element_size, 0);
             _recv_ctx = std::make_unique<memory_pool<::ibv_recv_wr>::net_context*[]>(
               _opts->per_post_recv_num);
-            _poller.poller = SPDK_POLLER_REGISTER(connection_poller, this, 0);
+            _poller.register_poller(connection_poller, this, 0);
         }
 
         void enqueue_request(std::unique_ptr<rpc_request> req) {
@@ -816,7 +816,7 @@ public:
             }
 
             _is_terminated = true;
-            _poller.unregister();
+            _poller.unregister_poller();
             SPDK_NOTICELOG("The poller of the connection has been unregistered\n");
 
             for (auto& task : _onflight_requests) {
@@ -981,7 +981,7 @@ public:
     client& operator=(client&&) = delete;
 
     ~client() noexcept {
-        _core_poller.unregister();
+        _core_poller.unregister_poller();
     }
 
 public:
@@ -1031,7 +1031,7 @@ public:
     void handle_start(std::unique_ptr<start_context> ctx) {
         if (_is_started) { return; }
         _is_started = true;
-        _core_poller.poller = SPDK_POLLER_REGISTER(core_poller, this, 0);
+        _core_poller.register_poller(core_poller, this, 0);
 
         if (ctx->on_start_cb) {
             ctx->on_start_cb.value()();
@@ -1045,7 +1045,7 @@ public:
         }
 
         _is_terminated = true;
-        _core_poller.unregister();
+        _core_poller.unregister_poller();
         SPDK_NOTICELOG("The poller of the rpc client has been unregistered\n");
 
         for (auto& conn_pair : _connections) {

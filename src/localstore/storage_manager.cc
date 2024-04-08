@@ -10,6 +10,7 @@
  */
 
 #include "storage_manager.h"
+#include "utils/utils.h"
 
 #include <memory>
 
@@ -47,7 +48,7 @@ static void
 _storage_init(storage_op_complete cb_fn, void* arg, spdk_thread *thread) {
   struct spdk_bs_dev *bs_dev = NULL;
 
-  SPDK_INFOLOG(storage_log, "storage init, thread id %lu\n", spdk_thread_get_id(spdk_get_thread()));
+  SPDK_INFOLOG(storage_log, "storage init, thread id %lu\n", utils::get_spdk_thread_id());
   std::construct_at(&g_st_mgr);
   storage_context *ctx = new storage_context{.cb_fn = std::move(cb_fn), .arg = arg, .thread = thread};
   g_st_mgr.start(
@@ -78,7 +79,7 @@ static void
 _storage_fini(storage_op_complete cb_fn, void* arg, spdk_thread *thread) {
   struct spdk_bs_dev *bs_dev = NULL;
 
-  SPDK_INFOLOG(storage_log, "storage fini, thread id %lu\n", spdk_thread_get_id(spdk_get_thread()));
+  SPDK_INFOLOG(storage_log, "storage fini, thread id %lu\n", utils::get_spdk_thread_id());
   storage_context *ctx = new storage_context{.cb_fn = std::move(cb_fn), .arg = arg, .thread = thread};
   
   g_st_mgr.stop(
@@ -122,7 +123,7 @@ _storage_load(storage_op_complete cb_fn, void* arg, spdk_thread *thread){
   SPDK_INFOLOG(storage_log, "storage load in core %u, kv_blob_id %lu, checkpoint_blob_id %lu, \
       new_checkpoint_blob_id %lu, thread id %lu\n",
       shard_id, kv_blob_id, checkpoint_blob_id, new_checkpoint_blob_id,
-      spdk_thread_get_id(spdk_get_thread()));
+      utils::get_spdk_thread_id());
 
   std::construct_at(&g_st_mgr);
 

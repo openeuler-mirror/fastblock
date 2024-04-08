@@ -284,7 +284,7 @@ void on_app_stop() noexcept {
 
     mon_client->stop();
     SPDK_NOTICELOG("The monitor client has been stopped\n");
-    g_watcher_ctx.watch_poller_holder.unregister();
+    g_watcher_ctx.watch_poller_holder.unregister_poller();
     SPDK_NOTICELOG("The block_bench poller has been unregistered\n");
     auto n_core = ::spdk_env_get_core_count();
     for (uint32_t i{0}; i < n_core; ++i) {
@@ -507,7 +507,7 @@ void on_app_start(void* arg) {
             watcher_ctx->bench_threads[core_count] = thread;
             core_count++;
         }
-        watcher_ctx->watch_poller_holder.poller = SPDK_POLLER_REGISTER(watch_poller, watcher_ctx, 0);
+        watcher_ctx->watch_poller_holder.register_poller(watch_poller, watcher_ctx, 0);
     };
 
     mon_client = std::make_unique<monitor::client>(eps, par_mgr, std::nullopt, std::move(cb));

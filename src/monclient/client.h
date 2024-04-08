@@ -384,8 +384,8 @@ public:
 
         SPDK_NOTICELOG("Stop the monitor client\n");
         _is_terminate = true;
-        _get_cluster_map_poller.unregister();
-        _core_poller.unregister();
+        _get_cluster_map_poller.unregister_poller();
+        _core_poller.unregister_poller();
     }
 
 public:
