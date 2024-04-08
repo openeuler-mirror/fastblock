@@ -51,6 +51,11 @@ void do_start(void* arg) {
     mon_cli->handle_start();
 }
 
+void do_stop(void* arg) {
+    auto* ctx = reinterpret_cast<client::stop_context*>(arg);
+    ctx->this_client->handle_stop(std::unique_ptr<client::stop_context>{ctx});
+}
+
 void do_start_cluster_map_poller(void* arg) {
     SPDK_INFOLOG(mon, "Starting clustermap poller...\n");
     auto* mon_cli = reinterpret_cast<client*>(arg);
@@ -86,7 +91,7 @@ void client::start() {
         throw std::runtime_error{"cant get current spdk thread"};
     }
 
-    spdk_thread_send_msg(_current_thread, do_start, this);
+    ::spdk_thread_send_msg(_current_thread, do_start, this);
 }
 
 void client::handle_start() {
@@ -96,6 +101,32 @@ void client::handle_start() {
     _core_poller.poller = SPDK_POLLER_REGISTER(monitor::core_poller_handler, this, 0);
 
     _is_running = true;
+}
+
+void client::stop(std::optional<std::function<void()>>&& cb) {
+    auto* ctx = new stop_context{this, std::move(cb)};
+    ::spdk_thread_send_msg(_current_thread, do_stop, ctx);
+}
+
+void client::handle_stop(std::unique_ptr<client::stop_context> ctx) {
+    if (_is_terminate) {
+        return;
+    }
+
+    SPDK_NOTICELOG("Stop the monitor client\n");
+    _is_terminate = true;
+    _get_cluster_map_poller.unregister();
+    _core_poller.unregister();
+
+    try {
+        if (ctx->on_stop_cb.has_value()) {
+            (ctx->on_stop_cb.value())();
+        }
+    } catch (const std::exception& e) {
+        SPDK_ERRLOG(
+          "Caught exception when executing callback on stopping monitor client: %s\n",
+          e.what());
+    }
 }
 
 void client::start_cluster_map_poller() {
@@ -285,7 +316,7 @@ client::to_response_status(const msg::GetImageErrorCode e) noexcept {
 class change_membership_complete : public utils::context {
 public:
     friend client;
-    change_membership_complete(uint64_t pool_id, uint64_t pg_id, int64_t version, std::vector<int32_t> osds, client* cli) 
+    change_membership_complete(uint64_t pool_id, uint64_t pg_id, int64_t version, std::vector<int32_t> osds, client* cli)
     : _pool_id(pool_id)
     , _pg_id(pg_id)
     , _version(version)
@@ -334,7 +365,7 @@ void client::_create_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_
                 pit->osds.push_back(osd_id);
                 osd_str += std::to_string(osd_id) + ",";
             }
-            
+
             SPDK_DEBUGLOG(mon, "core [%u] pool: %d pg: %lu version: %ld  osd_list: %s\n",
               ::spdk_env_get_current_core(), pool_id, pit->pg_id, pit->version, osd_str.data());
 
@@ -348,7 +379,7 @@ void client::_create_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_
         pit->version = info.version();
         std::string osd_str;
         for (auto osd_id : info.osdid()){
-            pit->osds.push_back(osd_id); 
+            pit->osds.push_back(osd_id);
             osd_str += std::to_string(osd_id) + ",";
         }
         SPDK_DEBUGLOG(mon, "core [%u] pool: %d pg: %lu version: %ld  osd_list: %s\n",
@@ -396,7 +427,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                         SPDK_DEBUGLOG(mon, "delete pool %d success.\n", pool_id);
                     }
                 };
-                
+
                 _pg_map.set_pool_update(pool_id, pg_id, pool_version, 1);
                 _pm.lock()->delete_partition(pool_id, pg_id, std::move(delete_pg_done), nullptr);
             }
@@ -459,7 +490,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
 
             for (auto& info : info_it->second.pi()){
                 if(not _pg_map.pool_pg_map[pool_key].contains(info.pgid())){
-                    _create_pg(pool_key, pv.at(pool_key), info); 
+                    _create_pg(pool_key, pv.at(pool_key), info);
                 }
             }
             continue;
@@ -471,7 +502,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                 SPDK_DEBUGLOG(mon, "Cant find the info of pg %d\n", pool_key);
                 continue;
             }
-            
+
             SPDK_INFOLOG(mon, "pool %d version: %ld pool_version: %ld\n", pool_key, pv.at(pool_key), _pg_map.pool_version[pool_key]);
             for (auto& info : info_it->second.pi()) {
                 auto pgid = info.pgid();
@@ -491,7 +522,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                         new_osds.emplace_back(*osd_info);
                     }
 
-                    SPDK_INFOLOG(mon, "pool: %d version: %ld pg: %lu version: %ld  osd_list: %s\n", 
+                    SPDK_INFOLOG(mon, "pool: %d version: %ld pg: %lu version: %ld  osd_list: %s\n",
                             pool_key, pv.at(pool_key), pit->pg_id, info.version(), osd_str.data());
 
                     auto complete = new change_membership_complete(pool_key, pgid, info.version(), osds, this);
@@ -582,12 +613,12 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
               osds[i].isup() and osds[i].osdid() != _self_osd_id;
 
             if(should_create_connect || osds[i].osdid() == _self_osd_id){
-                SPDK_DEBUGLOG(mon, 
+                SPDK_DEBUGLOG(mon,
                   "osd %d not found, rsp osd isup %d, should_create_connect is %d\n",
                   osds[i].osdid(),
                   osds[i].isup(),
                   should_create_connect);
-    
+
                 auto osd_info = std::make_unique<utils::osd_info_t>(
                   osds[i].osdid(),
                   osds[i].isin(),
@@ -595,7 +626,7 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
                   osds[i].ispendingcreate(),
                   osds[i].port(),
                   osds[i].address());
-    
+
                 auto [it, _] = _osd_map.data.emplace(osd_info->node_id, std::move(osd_info));
                 osd_it = it;
             }else{
@@ -604,7 +635,7 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
         }
 
         auto& osd_info = *(osd_it->second);
-        SPDK_DEBUGLOG(mon, 
+        SPDK_DEBUGLOG(mon,
           "osd id %d, is up %d, port %d, address %s, rsp is up %d\n",
           osd_info.node_id,
           osd_info.isup,
@@ -653,9 +684,9 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
             }
         );
 
-        if (it != osds.end()) { 
+        if (it != osds.end()) {
             data_it++;
-            continue; 
+            continue;
         }
 
         auto node_id = data_it->first;

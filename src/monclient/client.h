@@ -88,6 +88,11 @@ public:
         on_response_callback_type cb{};
     };
 
+    struct stop_context {
+        client* this_client{nullptr};
+        std::optional<std::function<void()>> on_stop_cb{std::nullopt};
+    };
+
     struct endpoint {
         std::string host{};
         uint16_t port{};
@@ -377,22 +382,15 @@ public:
         return _is_terminate;
     }
 
-    void stop() noexcept {
-        if (_is_terminate) {
-            return;
-        }
-
-        SPDK_NOTICELOG("Stop the monitor client\n");
-        _is_terminate = true;
-        _get_cluster_map_poller.unregister();
-        _core_poller.unregister();
-    }
-
 public:
 
     void start();
-    void load_pgs();
     void handle_start();
+
+    void stop(std::optional<std::function<void()>>&& cb = std::nullopt);
+    void handle_stop(std::unique_ptr<stop_context>);
+
+    void load_pgs();
 
     void start_cluster_map_poller();
     void handle_start_cluster_map_poller();
