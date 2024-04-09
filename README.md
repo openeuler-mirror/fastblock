@@ -90,6 +90,7 @@ fastblock代码主要位于src、monitor和msg目录中:
 ```
 编译完成后，`fastblock-mon`和`fastblock-client`二进制位于`mon/`目录下，而`fastblock-osd`和`fastblock-vhost`二进制位于`build/src/osd/`目录和`build/src/bdev`目录下。
 后续osd、vhost有代码改动，则可仅在`build/`目录下编译，而monitor有改动则可仅在`mon/`目录下`make`即可。
+最简测试开发环境搭建可参考[测试开发环境搭建](https://gitee.com/openeuler/fastblock/wikis/%E6%9C%80%E7%AE%80%E5%BC%80%E5%8F%91%E7%8E%AF%E5%A2%83%E6%90%AD%E5%BB%BA%E5%8F%8A%E4%B8%8A%E6%89%8B%E6%8C%87%E5%8D%97)
 
 # 部署及性能测试
 参考[部署及测试报告](docs/performance_test_1012.md "性能测试报告"), 在我们的测试环境中，在每个osd仅适用一个核的情况下，获得了4k随机写单线程100us以下的延迟以及并发41万iops的性能。
