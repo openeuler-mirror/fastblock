@@ -52,7 +52,16 @@ public:
         if (dev_name.has_value()) {
             device_name = dev_name.value().get_value<std::string>();
         }
-        // log_conf_pair_raw("rdma_device_name", device_name.value_or("").c_str());
+
+        auto dev_port = conf.get_child_optional("rdma_device_port");
+        if (dev_port.has_value()) {
+            device_port = dev_port.value().get_value<uint8_t>();
+        }
+
+        auto gid_idx_opt = conf.get_child_optional("rdma_gid_index");
+        if (gid_idx_opt.has_value()) {
+            gid_index = gid_idx_opt.value().get_value<int>();
+        }
     }
 
     endpoint(const endpoint&) = default;
@@ -75,6 +84,8 @@ public:
     int cq_num_entries{16};
     bool qp_sig_all{false};
     std::optional<std::string> device_name{std::nullopt};
+    std::optional<uint8_t> device_port{std::nullopt};
+    std::optional<int> gid_index{std::nullopt};
 };
 } // namespace rdma
 } // namespace msg

@@ -1,9 +1,11 @@
 {
-    "server_address": "ip",
+    "server_address": "172.31.4.143",
     "server_port": 8081,
-    "io_depth": 8,
+    "io_depth": 16,
     "iteration_count": 10000,
     "rdma_device_name": "mlx5_0",
+    "rdma_device_port": 1,
+    "rdma_gid_index": 1,
     "msg_client_poll_cq_batch_size": 32,
     "msg_client_metadata_memory_pool_capacity": 16384,
     "msg_client_metadata_memory_pool_element_size": 1024,

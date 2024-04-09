@@ -43,6 +43,7 @@ public:
         uint8_t         port;
         port_attr_ptr   port_attr;
         device_attr_ptr device_attr;
+        std::unique_ptr<std::optional<::ibv_gid>[]> gids{nullptr};
     };
 
     struct ib_context {
@@ -134,6 +135,24 @@ public:
         }
     }
 
+    // 默认参数表示返回第一个 active 且有 ipv4 的
+    std::optional<std::string> query_ipv4(
+      std::optional<std::string> dev_name = std::nullopt,
+      std::optional<uint8_t> dev_port = std::nullopt,
+      std::optional<int> gid_index = std::nullopt) {
+        for (auto& ctx : _contexts) {
+            auto ctx_dev_name = device_name(ctx.device);
+            if (dev_name and ctx_dev_name != *dev_name) {
+                continue;
+            }
+
+            if (dev_port and ctx.port != *dev_port) {
+                continue;
+            }
+
+        }
+    }
+
 private:
 
     static std::string port_state_name(enum ::ibv_port_state pstate) {
@@ -147,7 +166,7 @@ private:
     }
 
     static std::string device_name(::ibv_device* device) {
-        return std::string(ibv_get_device_name(device));
+        return std::string(::ibv_get_device_name(device));
     }
 
 private:
@@ -204,13 +223,27 @@ private:
                   port, device_name(*devices).c_str(),
                   port_state_name(port_attr->state).c_str());
 
-                _contexts.emplace_back(*devices, context, port, port_attr, device_attr);
-                port_attr = std::make_shared<ibv_port_attr>();
+                auto gids = std::make_unique<std::optional<::ibv_gid>[]>(port_attr->gid_tbl_len);
+                for (int i{0}; i < port_attr->gid_tbl_len; ++i) {
+                    ::ibv_gid cur_gid{};
+                    auto rc = ::ibv_query_gid(context, port, i, &(cur_gid));
+                    if (rc != 0) {
+                        SPDK_ERRLOG(
+                          "ERROR: Query gid on device %s, port %u, index %d failed, return code %d\n",
+                          device_name(*devices), port, i, rc);
+                        continue;
+                    }
+
+                    gids[i] = cur_gid;
+                }
+
+                _contexts.emplace_back(*devices, context, port, port_attr, device_attr, std::move(gids));
+                port_attr = std::make_shared<::ibv_port_attr>();
                 should_allocate_device_attr = true;
             }
 
             if (should_allocate_device_attr) {
-                device_attr = std::make_shared<ibv_device_attr_ex>();
+                device_attr = std::make_shared<::ibv_device_attr_ex>();
                 should_allocate_device_attr = false;
             }
 
