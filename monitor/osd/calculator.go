@@ -281,7 +281,7 @@ func getUniformWeight(weight float64, totalWeight float64, pgCount int, pgSize i
 
 // RecheckPGs calculate
 func RecheckPGs(ctx context.Context, client *etcdapi.EtcdClient) {
-	recheckTick := time.NewTicker(10 * time.Second )
+	recheckTick := time.NewTicker(10 * time.Second)
 	for range recheckTick.C {
 		log.Info(ctx, "RecheckPgs enter.")
 
@@ -309,8 +309,8 @@ func RecheckPGs(ctx context.Context, client *etcdapi.EtcdClient) {
 			var oldPGs map[string]PGConfig
 			var pgRevision int64
 			if pool.PoolPgMap.PgMap != nil {
-					pgNum = len(pool.PoolPgMap.PgMap)
-					oldPGs = pool.PoolPgMap.PgMap
+				pgNum = len(pool.PoolPgMap.PgMap)
+				oldPGs = pool.PoolPgMap.PgMap
 			}
 
 			//(fixme)
@@ -320,8 +320,8 @@ func RecheckPGs(ctx context.Context, client *etcdapi.EtcdClient) {
 				PreviousPGList: oldPGs,
 			}
 
-		    if  len(*osdNodeMap) * 2  < optimizeCfg.PGSize {
-			    continue  
+			if len(*osdNodeMap)*2 < optimizeCfg.PGSize {
+				continue
 			}
 
 			optimizeCfg.OSDTree, optimizeCfg.OSDInfoMap, optimizeCfg.TotalWeight = FlattenTree(ctx, osdTreeMap, osdNodeMap, pool.PGCount, pool.PGSize, pool.FailureDomain, pool.Root, pool.Root != "")
@@ -344,14 +344,14 @@ func RecheckPGs(ctx context.Context, client *etcdapi.EtcdClient) {
 			//seems no need to change now, we respect the original distribution
 			if poolPGResult != nil {
 				log.Warn(ctx, "pool", poolID, ":", pool.Name, "result:", poolPGResult)
-				for pgid, pg := range poolPGResult.OptimizedPgMap.PgMap {
-					log.Warn(ctx, "pgid: ", pgid, pg)
+				for pgId, pg := range poolPGResult.OptimizedPgMap.PgMap {
+					log.Warn(ctx, "pgId: ", pgId, pg)
 				}
 
 				log.Warn(ctx, "------------")
 				if len(oldPGs) > 0 {
-					for pgid, pg := range oldPGs {
-						log.Warn(ctx, "pgid: ", pgid, pg)
+					for pgId, pg := range oldPGs {
+						log.Warn(ctx, "pgId: ", pgId, pg)
 					}
 				}
 
@@ -429,18 +429,18 @@ func isSamePGConfig(ctx context.Context, newPGConfig *OptimizeResult, oldPGConfi
 			if compare_arry(osdlist, oldPgCfg.OsdList) == false {
 				return false
 			}
-			
+
 			// if len(oldPgCfg.OsdList) < len(osdlist) {
-				// return false
+			// return false
 			// }
 			// for osdIndex, osdID := range oldPgCfg.OsdList {
-// 
-				// if osdIndex >= len(osdlist) {
-					// return false
-				// }
-				// if osdID != int(osdlist[osdIndex]) {
-					// return false
-				// }
+			//
+			// if osdIndex >= len(osdlist) {
+			// return false
+			// }
+			// if osdID != int(osdlist[osdIndex]) {
+			// return false
+			// }
 			// }
 		}
 	}
@@ -448,8 +448,8 @@ func isSamePGConfig(ctx context.Context, newPGConfig *OptimizeResult, oldPGConfi
 	return true
 }
 
-func  compare_arry(arr1 []int, arr2 []int) bool {
-	mp1 := make(map[int]int) 
+func compare_arry(arr1 []int, arr2 []int) bool {
+	mp1 := make(map[int]int)
 
 	if len(arr1) != len(arr2) {
 		return false
@@ -460,7 +460,7 @@ func  compare_arry(arr1 []int, arr2 []int) bool {
 	}
 
 	for _, val := range arr2 {
-		_ , ok := mp1[val]
+		_, ok := mp1[val]
 		if ok == false {
 			return false
 		}
@@ -479,10 +479,10 @@ func  compare_arry(arr1 []int, arr2 []int) bool {
  * 注释中假设pg_size为3。
  */
 func SimpleInitial(ctx context.Context, cfg *OptimizeCfg) (*OptimizeResult, error) {
-	if cfg == nil || cfg.OSDTree == nil || cfg.OSDInfoMap == nil || len(*cfg.OSDTree) == 0 || len(*cfg.OSDInfoMap) == 0 || len(*cfg.OSDTree) * 2 < cfg.PGSize {
+	if cfg == nil || cfg.OSDTree == nil || cfg.OSDInfoMap == nil || len(*cfg.OSDTree) == 0 || len(*cfg.OSDInfoMap) == 0 || len(*cfg.OSDTree)*2 < cfg.PGSize {
 		return nil, errors.New("invalid input cfg")
 	}
-	
+
 	if int(cfg.PGSize) > len(*cfg.OSDTree) {
 		// 如果pg size比host数还大，没法分
 		return nil, errors.New("PGSize > OSDTree, no enough hosts")
@@ -615,10 +615,10 @@ func SimpleInitial(ctx context.Context, cfg *OptimizeCfg) (*OptimizeResult, erro
 	}
 
 	oldPGs := cfg.PreviousPGList
-	 
+
 	for i := 0; i < pg_count; i++ {
 		var ppc PGConfig
-		
+
 		for j := 0; j < pg_size; j++ {
 			// 对于每个pg 每个位置，都从上面计算出的host中，pop一个osd出来
 			host_idx := pg_host_array[i][j]
@@ -636,20 +636,20 @@ func SimpleInitial(ctx context.Context, cfg *OptimizeCfg) (*OptimizeResult, erro
 			}
 			ppc.OsdList = append(ppc.OsdList, int((*tree_node).OSDID))
 		}
-		
+
 		oldPgCfg, ok := oldPGs[strconv.Itoa(i)]
-		if ok == false{
-            ppc.Version = 1
-		}else{
+		if ok == false {
+			ppc.Version = 1
+		} else {
 			old_osdlist := oldPgCfg.OsdList
 			equal := compare_arry(old_osdlist, ppc.OsdList)
-			if equal == true{
-                ppc.Version = oldPgCfg.Version
-			}else{
+			if equal == true {
+				ppc.Version = oldPgCfg.Version
+			} else {
 				ppc.Version = oldPgCfg.Version + 1
 			}
 		}
-        
+
 		result.OptimizedPgMap.PgMap[strconv.Itoa(i)] = ppc
 	}
 	log.Info(ctx, "Step 4 done.")
@@ -658,7 +658,7 @@ func SimpleInitial(ctx context.Context, cfg *OptimizeCfg) (*OptimizeResult, erro
 }
 
 // check whether we should respect the original pg distribution
-func SimpleChange(ctx context.Context, cfg *OptimizeCfg,  newOsdMapVersion int64) (*OptimizeResult, error) {
+func SimpleChange(ctx context.Context, cfg *OptimizeCfg, newOsdMapVersion int64) (*OptimizeResult, error) {
 	if cfg == nil || cfg.OSDTree == nil || cfg.OSDInfoMap == nil || len(*cfg.OSDTree) == 0 || len(*cfg.OSDInfoMap) == 0 {
 		return nil, errors.New("invalid input cfg")
 	}
@@ -668,7 +668,7 @@ func SimpleChange(ctx context.Context, cfg *OptimizeCfg,  newOsdMapVersion int64
 	}
 
 	if osdmapVersion >= newOsdMapVersion {
-	    return nil, nil
+		return nil, nil
 	}
 	log.Warn(ctx, "osdmapVersion: ", osdmapVersion, "AllOSDInfo.Version :", newOsdMapVersion)
 

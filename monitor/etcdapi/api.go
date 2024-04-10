@@ -41,10 +41,10 @@ func (e ErrorCode) Error() string {
 }
 
 func NewEtcdClient(endpoints []string) (*EtcdClient, error) {
-	config := clientv3.Config{
+	clientConfig := clientv3.Config{
 		Endpoints: endpoints,
 	}
-	client, err := clientv3.New(config)
+	client, err := clientv3.New(clientConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create etcd client: %v", err)
 	}
@@ -201,47 +201,47 @@ func (t *TxnBuilder) Commit(ctx context.Context) error {
 // NewServer initializes and starts a new Etcd server.
 //
 // It takes no parameters and returns an embed.Etcd instance and an error.
-func NewServer(app_cfg *config.Config) (e *embed.Etcd, err error) {
+func NewServer(appCfg *config.Config) (e *embed.Etcd, err error) {
 	cfg := embed.NewConfig()
 	cfg.Debug = false
 
-	if app_cfg.DataDir == "" {
+	if appCfg.DataDir == "" {
 		cfg.Dir = "/tmp/monitor"
 	} else {
-		cfg.Dir = app_cfg.DataDir
+		cfg.Dir = appCfg.DataDir
 	}
 
-	if app_cfg.EtcdName == "" {
+	if appCfg.EtcdName == "" {
 		cfg.Name = "monitor"
 	} else {
-		cfg.Name = app_cfg.EtcdName
+		cfg.Name = appCfg.EtcdName
 	}
 
-	if app_cfg.EtcdInitialCluster == "" {
+	if appCfg.EtcdInitialCluster == "" {
 		cfg.InitialCluster = "monitor=http://localhost:2380"
 	} else {
-		cfg.InitialCluster = app_cfg.EtcdInitialCluster
+		cfg.InitialCluster = appCfg.EtcdInitialCluster
 	}
 
-	if len(app_cfg.EtcdACUrls) > 0 {
+	if len(appCfg.EtcdACUrls) > 0 {
 		cfg.ACUrls = []url.URL{}
-		for _, item := range app_cfg.EtcdACUrls {
+		for _, item := range appCfg.EtcdACUrls {
 			parsed, _ := url.Parse(item)
 			cfg.ACUrls = append(cfg.ACUrls, *parsed)
 		}
 	}
 
-	if len(app_cfg.EtcdAPUrls) > 0 {
+	if len(appCfg.EtcdAPUrls) > 0 {
 		cfg.APUrls = []url.URL{}
-		for _, item := range app_cfg.EtcdAPUrls {
+		for _, item := range appCfg.EtcdAPUrls {
 			parsed, _ := url.Parse(item)
 			cfg.APUrls = append(cfg.APUrls, *parsed)
 		}
 	}
 
-	if len(app_cfg.EtcdLPUrls) > 0 {
+	if len(appCfg.EtcdLPUrls) > 0 {
 		cfg.LPUrls = []url.URL{}
-		for _, item := range app_cfg.EtcdLPUrls {
+		for _, item := range appCfg.EtcdLPUrls {
 			parsed, _ := url.Parse(item)
 			cfg.LPUrls = append(cfg.LPUrls, *parsed)
 		}
@@ -249,7 +249,7 @@ func NewServer(app_cfg *config.Config) (e *embed.Etcd, err error) {
 
 	if len(cfg.LCUrls) > 0 {
 		cfg.LCUrls = []url.URL{}
-		for _, item := range app_cfg.EtcdLCUrls {
+		for _, item := range appCfg.EtcdLCUrls {
 			parsed, _ := url.Parse(item)
 			cfg.LCUrls = append(cfg.LCUrls, *parsed)
 		}

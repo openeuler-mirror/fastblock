@@ -24,7 +24,7 @@ import (
 
 type OSDID int
 
-//(fixme) make it configurable
+// (fixme) make it configurable
 const (
 	heartbeatInterval = 3 * time.Second
 	//the osd should have enough time to connect and heartbeat
@@ -60,9 +60,9 @@ type OsdMap struct {
 }
 
 type HeartBeatInfo struct {
-	osdid         OSDID
-	lastHeartBeat time.Time
-	failedCounter int
+	osdid          OSDID
+	lastHeartBeat  time.Time
+	failedCounter  int
 	successCounter int
 }
 
@@ -87,7 +87,7 @@ func findUsableOsdId() int {
 func LoadOSDStateFromEtcd(ctx context.Context, client *etcdapi.EtcdClient) (err error) {
 	AllOSDInfo.Osdinfo = make(map[OSDID]*OSDInfo)
 	prefix := config.ConfigOSDMapKey
-	osdmap, getErr := client.Get(ctx, prefix)
+	osdMap, getErr := client.Get(ctx, prefix)
 	if getErr != nil {
 		log.Error(ctx, getErr)
 		if getErr == etcdapi.ErrorKeyNotFound {
@@ -97,7 +97,7 @@ func LoadOSDStateFromEtcd(ctx context.Context, client *etcdapi.EtcdClient) (err 
 		return getErr
 	}
 
-	if err := json.Unmarshal([]byte(osdmap), &AllOSDInfo); err != nil {
+	if err := json.Unmarshal([]byte(osdMap), &AllOSDInfo); err != nil {
 		log.Error(ctx, err)
 		return err
 	}
@@ -107,7 +107,7 @@ func LoadOSDStateFromEtcd(ctx context.Context, client *etcdapi.EtcdClient) (err 
 	//since all osd info is loaded, we can start heart beat
 	AllHeartBeatInfo = make(map[OSDID]*HeartBeatInfo)
 	for _, info := range AllOSDInfo.Osdinfo {
-		AllHeartBeatInfo[OSDID(info.Osdid)] = &HeartBeatInfo{osdid: OSDID((info.Osdid)), lastHeartBeat: time.Now(), failedCounter: 0, successCounter: 0}
+		AllHeartBeatInfo[OSDID(info.Osdid)] = &HeartBeatInfo{osdid: OSDID(info.Osdid), lastHeartBeat: time.Now(), failedCounter: 0, successCounter: 0}
 	}
 
 	log.Info(ctx, "heartbeat info updated")
@@ -115,7 +115,7 @@ func LoadOSDStateFromEtcd(ctx context.Context, client *etcdapi.EtcdClient) (err 
 	return nil
 }
 
-//when a new osd is applied, we append it to AllOSDInfo.Osdinfo, and put it into etcd
+// when a new osd is applied, we append it to AllOSDInfo.Osdinfo, and put it into etcd
 func ProcessApplyIDMessage(ctx context.Context, client *etcdapi.EtcdClient, uuid string) (int, error) {
 	for _, info := range AllOSDInfo.Osdinfo {
 		if uuid == info.Uuid {

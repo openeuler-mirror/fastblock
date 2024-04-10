@@ -84,7 +84,7 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 			err = proto.Unmarshal(buffer[:n], request)
 			if err != nil {
 				//discard this message
-				log.Error(ctx, "Error unmarshaling request:", err)
+				log.Error(ctx, "Error unmarshalling request:", err)
 				continue
 			}
 
@@ -99,23 +99,23 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 				fd := payload.CreatePoolRequest.GetFailuredomain()
 				root := payload.CreatePoolRequest.GetRoot()
 
-				isok := true
+				isOk := true
 				pid, err := osd.ProcessCreatePoolMessage(ctx, client, pn, int(ps), int(pc), fd, root)
 				if err != nil {
 					pid = -1
-					isok = false
+					isOk = false
 				}
 
 				response := &msg.Response{
 					Union: &msg.Response_CreatePoolResponse{
 						CreatePoolResponse: &msg.CreatePoolResponse{
 							Poolid: int32(pid),
-							Ok:     isok,
+							Ok:     isOk,
 						},
 					},
 				}
 
-				// Marshal the Apply
+				// Marshal the response
 				responseData, err := proto.Marshal(response)
 				if err != nil {
 					log.Error(ctx, "Error marshaling response:", err)
@@ -134,16 +134,16 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 				log.Info(ctx, "Received CreatePoolRequest")
 				pn := payload.DeletePoolRequest.GetName()
 
-				isok := true
+				isOk := true
 				err := osd.ProcessDeletePoolMessage(ctx, client, pn)
 				if err != nil {
-					isok = false
+					isOk = false
 				}
 
 				response := &msg.Response{
 					Union: &msg.Response_DeletePoolResponse{
 						DeletePoolResponse: &msg.DeletePoolResponse{
-							Ok: isok,
+							Ok: isOk,
 						},
 					},
 				}
@@ -173,7 +173,7 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 					},
 				}
 
-				// Marshal the Apply
+				// Marshal the response
 				responseData, err := proto.Marshal(response)
 				if err != nil {
 					log.Error(ctx, "Error marshaling response:", err)
@@ -207,7 +207,7 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 					},
 				}
 
-				// Marshal the Apply
+				// Marshal the response
 				responseData, err := proto.Marshal(response)
 				if err != nil {
 					log.Error(ctx, "Error marshaling response:", err)
@@ -233,17 +233,17 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 				addr := payload.BootRequest.GetAddress()
 				host := payload.BootRequest.GetHost()
 
-				isok := true
+				isOk := true
 				err := osd.ProcessBootMessage(ctx, client, id, uuid, size, port, host, addr)
 				if err != nil {
-					isok = false
+					isOk = false
 				}
 
 				// Create a BootResponse
 				response := &msg.Response{
 					Union: &msg.Response_BootResponse{
 						BootResponse: &msg.BootResponse{
-							Ok: isok,
+							Ok: isOk,
 						},
 					},
 				}
@@ -325,8 +325,8 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 				gpmr, err := osd.ProcessGetPgMapMessage(ctx, pv)
 
 				cv := payload.GetClusterMapRequest.GomRequest.GetCurrentversion()
-				osdid := payload.GetClusterMapRequest.GomRequest.GetOsdid()
-				odi, mapversion, rc := osd.ProcessGetOsdMapMessage(ctx, cv, osdid)
+				osdId := payload.GetClusterMapRequest.GomRequest.GetOsdid()
+				odi, mapVersion, rc := osd.ProcessGetOsdMapMessage(ctx, cv, osdId)
 
 				// Create a GetPgMapResponse
 				response := &msg.Response{
@@ -334,7 +334,7 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 						GetClusterMapResponse: &msg.GetClusterMapResponse{
 							GomResponse: &msg.GetOsdMapResponse{
 								Errorcode:     rc,
-								Osdmapversion: mapversion,
+								Osdmapversion: mapVersion,
 								Osds:          odi,
 							},
 							GpmResponse: gpmr,
@@ -357,7 +357,7 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 				}
 
 			case *msg.Request_GetPgmapRequest:
-				log.Info(ctx, "Received GetPgmapRequest:")
+				log.Info(ctx, "Received GetPgMapRequest:")
 				pv := payload.GetPgmapRequest.GetPoolVersions()
 
 				gpmr, err := osd.ProcessGetPgMapMessage(ctx, pv)
@@ -383,17 +383,17 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 					continue
 				}
 			case *msg.Request_GetOsdmapRequest:
-				log.Info(ctx, "Received GetOsdmapRequest:")
+				log.Info(ctx, "Received GetOsdMapRequest:")
 				cv := payload.GetOsdmapRequest.GetCurrentversion()
-				osdid := payload.GetOsdmapRequest.GetOsdid()
-				odi, mapversion, rc := osd.ProcessGetOsdMapMessage(ctx, cv, osdid)
+				osdId := payload.GetOsdmapRequest.GetOsdid()
+				odi, mapVersion, rc := osd.ProcessGetOsdMapMessage(ctx, cv, osdId)
 
 				// Create a GetPgMapResponse
 				response := &msg.Response{
 					Union: &msg.Response_GetOsdmapResponse{
 						GetOsdmapResponse: &msg.GetOsdMapResponse{
 							Errorcode:     rc,
-							Osdmapversion: mapversion,
+							Osdmapversion: mapVersion,
 							Osds:          odi,
 						},
 					},
@@ -415,25 +415,25 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 			case *msg.Request_CreateImageRequest:
 
 				log.Info(ctx, "Received CreateImageRequest")
-				poolname := payload.CreateImageRequest.GetPoolname()
-				imagename := payload.CreateImageRequest.GetImagename()
+				poolName := payload.CreateImageRequest.GetPoolname()
+				imageName := payload.CreateImageRequest.GetImagename()
 				size := payload.CreateImageRequest.GetSize_()
-				object_size := payload.CreateImageRequest.GetObjectSize()
+				objectSize := payload.CreateImageRequest.GetObjectSize()
 				//CreateImageRequest
 
-				create_img_rc := osd.ProcessCreateImageMessage(ctx, client, imagename, poolname, size, object_size)
+				createImgErrCode := osd.ProcessCreateImageMessage(ctx, client, imageName, poolName, size, objectSize)
 
-				var imageinfo = &msg.ImageInfo{}
-				imageinfo.Poolname = poolname
-				imageinfo.Imagename = imagename
-				imageinfo.Size_ = size
-				imageinfo.ObjectSize = object_size
+				var imageInfo = &msg.ImageInfo{}
+				imageInfo.Poolname = poolName
+				imageInfo.Imagename = imageName
+				imageInfo.Size_ = size
+				imageInfo.ObjectSize = objectSize
 
 				response := &msg.Response{
 					Union: &msg.Response_CreateImageResponse{
 						CreateImageResponse: &msg.CreateImageResponse{
-							Errorcode: create_img_rc,
-							ImageInfo: imageinfo,
+							Errorcode: createImgErrCode,
+							ImageInfo: imageInfo,
 						},
 					},
 				}
@@ -453,22 +453,22 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 
 			case *msg.Request_RemoveImageRequest:
 				log.Info(ctx, "Received RemoveImageRequest")
-				poolname := payload.RemoveImageRequest.GetPoolname()
-				imagename := payload.RemoveImageRequest.GetImagename()
+				poolName := payload.RemoveImageRequest.GetPoolname()
+				imageName := payload.RemoveImageRequest.GetImagename()
 
-				errRE, info := osd.ProcessRemoveImageMessage(ctx, client, imagename, poolname)
-				var imageinfo = &msg.ImageInfo{}
+				errRE, info := osd.ProcessRemoveImageMessage(ctx, client, imageName, poolName)
+				var imageInfo = &msg.ImageInfo{}
 				if errRE == msg.RemoveImageErrorCode_removeImageOk {
-					imageinfo.Poolname = info.Poolname
-					imageinfo.Imagename = info.Imagename
-					imageinfo.Size_ = info.Imagesize
-					imageinfo.ObjectSize = info.Objectsize
+					imageInfo.Poolname = info.Poolname
+					imageInfo.Imagename = info.Imagename
+					imageInfo.Size_ = info.Imagesize
+					imageInfo.ObjectSize = info.Objectsize
 				}
 				response := &msg.Response{
 					Union: &msg.Response_RemoveImageResponse{
 						RemoveImageResponse: &msg.RemoveImageResponse{
 							Errorcode: errRE,
-							ImageInfo: imageinfo,
+							ImageInfo: imageInfo,
 						},
 					},
 				}
@@ -489,26 +489,26 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 
 			case *msg.Request_ResizeImageRequest:
 				log.Info(ctx, "Received ResizeImageRequest")
-				poolname := payload.ResizeImageRequest.GetPoolname()
-				imagename := payload.ResizeImageRequest.GetImagename()
+				poolName := payload.ResizeImageRequest.GetPoolname()
+				imageName := payload.ResizeImageRequest.GetImagename()
 				size := payload.ResizeImageRequest.GetSize_()
 
-				var imageinfo = &msg.ImageInfo{}
-				err_code, info := osd.ProcessResizeImageMessage(ctx, client, imagename, poolname, size)
+				var imageInfo = &msg.ImageInfo{}
+				errCode, info := osd.ProcessResizeImageMessage(ctx, client, imageName, poolName, size)
 				//CreateImageRequest
-				if err_code == msg.ResizeImageErrorCode_resizeImageOk {
-					imageinfo.Poolname = info.Poolname
-					imageinfo.Imagename = info.Imagename
-					imageinfo.Size_ = info.Imagesize
-					imageinfo.ObjectSize = info.Objectsize
+				if errCode == msg.ResizeImageErrorCode_resizeImageOk {
+					imageInfo.Poolname = info.Poolname
+					imageInfo.Imagename = info.Imagename
+					imageInfo.Size_ = info.Imagesize
+					imageInfo.ObjectSize = info.Objectsize
 
 				}
 
 				response := &msg.Response{
 					Union: &msg.Response_ResizeImageResponse{
 						ResizeImageResponse: &msg.ResizeImageResponse{
-							Errorcode: err_code,
-							ImageInfo: imageinfo,
+							Errorcode: errCode,
+							ImageInfo: imageInfo,
 						},
 					},
 				}
@@ -528,24 +528,24 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 			case *msg.Request_Get_ImageInfo_Request:
 				log.Info(ctx, "Received Get_ImageInfo_Request")
 
-				poolname := payload.Get_ImageInfo_Request.GetPoolname()
-				imagename := payload.Get_ImageInfo_Request.GetImagename()
+				poolName := payload.Get_ImageInfo_Request.GetPoolname()
+				imageName := payload.Get_ImageInfo_Request.GetImagename()
 
-				var imageinfo = &msg.ImageInfo{}
-				err_code, info := osd.ProcessGetImageMessage(ctx, imagename, poolname)
+				var imageInfo = &msg.ImageInfo{}
+				errCode, info := osd.ProcessGetImageMessage(ctx, imageName, poolName)
 
-				if err_code == msg.GetImageErrorCode_getImageOk {
-					imageinfo.Poolname = info.Poolname
-					imageinfo.Imagename = info.Imagename
-					imageinfo.Size_ = info.Imagesize
-					imageinfo.ObjectSize = info.Objectsize
+				if errCode == msg.GetImageErrorCode_getImageOk {
+					imageInfo.Poolname = info.Poolname
+					imageInfo.Imagename = info.Imagename
+					imageInfo.Size_ = info.Imagesize
+					imageInfo.ObjectSize = info.Objectsize
 				}
 
 				response := &msg.Response{
 					Union: &msg.Response_GetImageInfoResponse{
 						GetImageInfoResponse: &msg.GetImageInfoResponse{
-							Errorcode: err_code,
-							ImageInfo: imageinfo,
+							Errorcode: errCode,
+							ImageInfo: imageInfo,
 						},
 					},
 				}
@@ -685,8 +685,8 @@ func startTcpServer(ctx context.Context, c *etcdapi.EtcdClient) {
 	}
 }
 
-func leaderCallback(whoami string, ctx context.Context, c *etcdapi.EtcdClient) {
-	log.Info(ctx, "i'm the leader, i'm ", whoami)
+func leaderCallback(whoAmI string, ctx context.Context, c *etcdapi.EtcdClient) {
+	log.Info(ctx, "i'm the leader, i'm ", whoAmI)
 	osd.LoadOSDStateFromEtcd(ctx, c)
 	osd.LoadPoolConfig(ctx, c)
 	osd.LoadImageConfig(ctx, c)
@@ -698,14 +698,14 @@ func leaderCallback(whoami string, ctx context.Context, c *etcdapi.EtcdClient) {
 
 func main() {
 
-	configpath := flag.String("conf", "/etc/fastblock/monitor.json", "path of the config file")
+	configPath := flag.String("conf", "/etc/fastblock/monitor.json", "path of the config file")
 	id := flag.String("id", "", "name of the monitor")
 	flag.Parse()
 
 	if *id == "" {
-        panic("Missing parameter id")
+		panic("Missing parameter id")
 	}
-	config.SetupConfig(*configpath, *id)
+	config.SetupConfig(*configPath, *id)
 
 	// Init the only logger.
 	log.NewFileLogger(config.CONFIG.LogPath, config.CONFIG.LogLevel)
@@ -713,7 +713,7 @@ func main() {
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
 
-	log.Info(ctx, "read config file: ", configpath)
+	log.Info(ctx, "read config file: ", configPath)
 	log.Info(ctx, "fastblock monitor started with config:", config.CONFIG)
 
 	e, err := etcdapi.NewServer(&config.CONFIG)
@@ -724,7 +724,7 @@ func main() {
 	defer e.Close()
 	select {
 	case <-e.Server.ReadyNotify():
-		log.Info(ctx, "embeded etcd server started, continue to start etcdclient and other services")
+		log.Info(ctx, "embeded etcd server started, continue to start etcd client and other services")
 		//try to be leader, if we are not leader, the tcp server and
 		c, err := etcdapi.NewEtcdClient(config.CONFIG.EtcdServer)
 		if err != nil {
@@ -747,7 +747,7 @@ func main() {
 		log.Error(ctx, "too long to start etcd server")
 
 	case err := <-e.Err():
-		log.Info(ctx, "failed to start etcdserver ", err)
+		log.Info(ctx, "failed to start etcd server ", err)
 
 	}
 
