@@ -2,7 +2,7 @@ include(CMakeParseArguments)
 
 set(CXX_STANDARD 20)
 set(DEFAULT_LINKOPTS ${COMMON_LINKOPTS})
-SET(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -Wformat -Wextra -Werror -Wno-missing-field-initializers")
+SET(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -Wformat -Wextra -Werror -Wno-missing-field-initializers -Wno-error=deprecated-declarations")
 
 function(compile_library)
   cmake_parse_arguments(CC_LIB
