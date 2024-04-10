@@ -42,15 +42,23 @@ if [[ -z ${CXX} ]]; then export CXX=/usr/bin/g++; fi
 
 (cd $root/src/msg/demo && ./gen.sh)
 
-(cd $root/proto && ./build.sh)
 
 if [ "$component" = "monitor" ]; then
 	echo "build fastblock(fastblock-mon、fastblock-client) Golang code"
+	export GOPROXY=https://proxy.golang.com.cn,direct
+
+	if [ ! -f "/usr/bin/protoc-gen-gogo" ];then
+		echo "we should build protoc-gen-gogo"
+		go install github.com/gogo/protobuf/protoc-gen-gogo@v1.3.2
+		cp $(go env GOPATH)/bin/protoc-gen-gogo /usr/bin/
+	fi
+	cd $root/proto && ./build.sh -t golang
 	(cd $root/monitor && make)
 	exit 0
 fi
 if [ "$component" = "osd" ]; then
 	echo "build fastblock(fastblock-osd、fastblock-vhost) C/C++ code"
+	cd $root/proto && ./build.sh -t cpp
 	cmake -DCMAKE_BUILD_TYPE=$buildtype \
 	  -B$root/build \
 	  -H$root \

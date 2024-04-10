@@ -19,6 +19,7 @@ fi
 deb_deps=(
   pkg-config
   git
+  golang
   autoconf
   automake
   pandoc
@@ -49,6 +50,7 @@ deb_deps=(
 rpm_deps=(
   pkgconfig
   git
+  golang
   autoconf
   automake
   gcc
