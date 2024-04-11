@@ -160,9 +160,6 @@ public:
             opts->rpc_timeout = std::chrono::milliseconds{timeout_us};
             opts->ep = std::make_unique<endpoint>(conf);
         }
-        // log_conf_pair(
-        //   "rpc_timeout_us",
-        //   std::chrono::duration_cast<std::chrono::milliseconds>(opts->rpc_timeout).count());
 
         return opts;
     }
@@ -189,6 +186,17 @@ public:
         _pd->value(), "srv_data",
         _opts->data_memory_pool_capacity,
         _opts->data_memory_pool_element_size, 0)} {
+        auto ipv4_address = _dev->query_ipv4(
+          _opts->ep->device_name,
+          _opts->ep->device_port,
+          _opts->ep->gid_index);
+
+        if (not ipv4_address) {
+            throw std::runtime_error{"cant query the ipv4"};
+        }
+
+        _opts->bind_address = *ipv4_address;
+        SPDK_NOTICELOG("Use ipv4 %s for listening\n", ipv4_address.value().c_str());
         endpoint ep{_opts->bind_address, _opts->port};
         ep.passive = true;
         _listener = std::make_unique<socket>(ep, *_pd, _channel.value(), false);
@@ -1051,6 +1059,10 @@ public:
     void add_service(service::pointer p) {
         auto* ctx = new add_service_ctx{p, this};
         ::spdk_thread_send_msg(_thread, on_add_service, ctx);
+    }
+
+    std::string listen_address() noexcept {
+        return _opts->bind_address;
     }
 
 public:

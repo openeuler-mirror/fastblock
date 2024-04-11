@@ -11,10 +11,12 @@
 #pragma once
 
 #include "types.h"
+#include "utils/fmt.h"
 
 #include <spdk/log.h>
 
 #include <concepts>
+#include <cstring>
 #include <functional>
 #include <numeric>
 #include <memory>
@@ -43,6 +45,7 @@ public:
         uint8_t         port;
         port_attr_ptr   port_attr;
         device_attr_ptr device_attr;
+        std::vector<::ibv_gid> gids;
     };
 
     struct ib_context {
@@ -134,6 +137,73 @@ public:
         }
     }
 
+    // 默认参数表示返回第一个 active 且有 ipv4 的
+    std::optional<std::string> query_ipv4(
+      std::optional<std::string> dev_name = std::nullopt,
+      std::optional<uint8_t> dev_port = std::nullopt,
+      std::optional<int> gid_index = std::nullopt) {
+        if (not dev_name and not dev_port and not gid_index) {
+            return _default_ipv4;
+        }
+
+        device_context* target_device{nullptr};
+        if (dev_name) {
+            auto ctx_it = std::find_if(
+              _contexts.begin(),
+              _contexts.end(),
+              [&dev_name, &dev_port] (const device_context& ctx) {
+                  if (*dev_name == std::string(::ibv_get_device_name(ctx.device))) {
+                      if (dev_port) {
+                          return ctx.port == *dev_port;
+                      } else {
+                          return true;
+                      }
+                  } else {
+                      return false;
+                  }
+              }
+            );
+
+            if (ctx_it == _contexts.end()) {
+                SPDK_ERRLOG(
+                  "ERROR: Query the ipv4 of %s on port %d failed, no such device or port\n",
+                  dev_name->c_str(), dev_port ? *dev_port : 1);
+                return std::nullopt;
+            }
+
+            target_device = &(*ctx_it);
+        } else {
+            target_device = &(_contexts[0]);
+        }
+
+        ::ibv_gid* target_gid{nullptr};
+        if (gid_index) {
+            if (static_cast<size_t>(*gid_index) > target_device->gids.size()) {
+                SPDK_ERRLOG(
+                  "ERROR: Specified gid index %d out of range, max index is %ld\n",
+                  *gid_index, target_device->gids.size() - 1);
+
+                return std::nullopt;
+            }
+
+            if (is_gid_contain_ipv4(target_device->gids[*gid_index].raw)) {
+                return ipv4_from_gid(target_device->gids[*gid_index].raw);
+            }
+
+            return std::nullopt;
+        }
+
+        for (auto& gid : target_device->gids) {
+            if (not is_gid_contain_ipv4(gid.raw)) {
+                continue;
+            }
+
+            return ipv4_from_gid(gid.raw);
+        }
+
+        return std::nullopt;
+    }
+
 private:
 
     static std::string port_state_name(enum ::ibv_port_state pstate) {
@@ -147,7 +217,32 @@ private:
     }
 
     static std::string device_name(::ibv_device* device) {
-        return std::string(ibv_get_device_name(device));
+        return std::string(::ibv_get_device_name(device));
+    }
+
+    static bool is_empty_gid(uint8_t* gid_raw) noexcept {
+        static constexpr uint8_t raw_empty_gid[_raw_gid_len]{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+        return std::memcmp(gid_raw, raw_empty_gid, _raw_gid_len) == 0;
+    }
+
+    static bool is_link_local(uint8_t* gid_raw) noexcept {
+        static constexpr uint8_t link_local_gid[_raw_gid_len]{0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+        return std::memcmp(gid_raw, link_local_gid, _raw_gid_len) == 0;
+    }
+
+    static bool is_gid_contain_ipv4(uint8_t* gid_raw) noexcept {
+        static constexpr size_t raw_gid_prefix_len{2};
+        static constexpr uint8_t tgt_gid_prefix[raw_gid_prefix_len]{0, 0};
+        return std::memcmp(gid_raw, tgt_gid_prefix, raw_gid_prefix_len) == 0;
+    }
+
+    std::string ipv4_from_gid(uint8_t* raw_gid) {
+        return FMT_4(
+          "%1%.%2%.%3%.%4%",
+          std::to_string(raw_gid[_raw_gid_ipv4_begin]),
+          std::to_string(raw_gid[_raw_gid_ipv4_begin + 1]),
+          std::to_string(raw_gid[_raw_gid_ipv4_begin + 2]),
+          std::to_string(raw_gid[_raw_gid_ipv4_begin + 3]));
     }
 
 private:
@@ -204,13 +299,37 @@ private:
                   port, device_name(*devices).c_str(),
                   port_state_name(port_attr->state).c_str());
 
-                _contexts.emplace_back(*devices, context, port, port_attr, device_attr);
-                port_attr = std::make_shared<ibv_port_attr>();
+                std::vector<::ibv_gid> gids{};
+                for (int i{0}; i < port_attr->gid_tbl_len; ++i) {
+                    ::ibv_gid cur_gid{};
+                    auto rc = ::ibv_query_gid(context, port, i, &(cur_gid));
+                    if (rc != 0) {
+                        SPDK_ERRLOG(
+                          "ERROR: Query gid on device %s, port %u, index %d failed, return code %d\n",
+                          device_name(*devices).c_str(), port, i, rc);
+                        continue;
+                    }
+
+                    if (is_empty_gid(cur_gid.raw) or is_link_local(cur_gid.raw)) {
+                        continue;
+                    }
+
+                    if (not _default_ipv4 and is_gid_contain_ipv4(cur_gid.raw)) {
+                        _default_ipv4 = ipv4_from_gid(cur_gid.raw);
+                        SPDK_DEBUGLOG(msg, "default ipv4 is %s\n", _default_ipv4->c_str());
+                    }
+
+                    gids.push_back(cur_gid);
+                }
+
+                gids.shrink_to_fit();
+                _contexts.emplace_back(*devices, context, port, port_attr, device_attr, std::move(gids));
+                port_attr = std::make_shared<::ibv_port_attr>();
                 should_allocate_device_attr = true;
             }
 
             if (should_allocate_device_attr) {
-                device_attr = std::make_shared<ibv_device_attr_ex>();
+                device_attr = std::make_shared<::ibv_device_attr_ex>();
                 should_allocate_device_attr = false;
             }
 
@@ -239,6 +358,10 @@ private:
     std::optional<std::function<void(::ibv_context*, ::ibv_async_event*)>> _on_polled_ib_evt{std::nullopt};
     std::vector<device_context> _contexts{};
     std::unique_ptr<::pollfd[]> _ib_event_pollfds{nullptr};
+    std::optional<std::string> _default_ipv4{std::nullopt};
+
+    static constexpr size_t _raw_gid_len{16};
+    static constexpr size_t _raw_gid_ipv4_begin{12};
 };
 
 }
