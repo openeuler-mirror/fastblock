@@ -42,8 +42,8 @@ type PGID uint64
 //
 // TODO: for each pool or any incremental update?
 type PoolPGsConfig struct {
-	Version int64                   `json:"version,omitempty"`
-	PgMap   map[string]PGConfig     `json:"pgmap,omitempty"`
+	Version int64               `json:"version,omitempty"`
+	PgMap   map[string]PGConfig `json:"pgmap,omitempty"`
 }
 
 // PGConfig for each pg in /config/pgmap, output.
@@ -51,8 +51,8 @@ type PoolPGsConfig struct {
 // TODO: use OSDID, not string. It requires parse change.
 // type PGConfig []int
 type PGConfig struct {
-    Version int64              `json:"version,omitempty"`
-    OsdList  []int             `json:"osdlist,omitempty"`
+	Version int64 `json:"version,omitempty"`
+	OsdList []int `json:"osdlist,omitempty"`
 }
 
 // PoolID defines pool ID.
@@ -87,10 +87,10 @@ type PoolConfig struct {
 	PoolPgMap     PoolPGsConfig `json:"poolpgmap,omitempty"`
 }
 
-//已经包含了pg的分配表
+// 已经包含了pg的分配表
 var AllPools map[PoolID]*PoolConfig
 var lastSeenPoolId int32
-var osdmapVersion  int64
+var osdmapVersion int64
 
 // findUsablePoolId finds the first available pool id
 // we don't reuse pool ids, so it always increaing
@@ -124,7 +124,7 @@ func LoadPoolConfig(ctx context.Context, client *etcdapi.EtcdClient) (err error)
 		k := string(kv.Key)
 		poolID, err := strconv.Atoi(strings.TrimPrefix(k, config.ConfigPoolsKeyPrefix))
 		if err != nil {
-			log.Info(ctx, "failed to get poolid")
+			log.Info(ctx, "failed to get poolId")
 			continue
 		}
 
@@ -249,9 +249,9 @@ func ProcessGetPgMapMessage(ctx context.Context, pvs map[int32]int64) (*msg.GetP
 					osdlist = append(osdlist, int32(oid))
 				}
 				pi := &msg.PGInfo{
-					Pgid:  int32(pgidToi),
+					Pgid:    int32(pgidToi),
 					Version: pc.Version,
-					Osdid: osdlist,
+					Osdid:   osdlist,
 				}
 				pginfos.Pi = append(pginfos.Pi, pi)
 				gpmr.Pgs[int32(pid)] = pginfos
@@ -285,9 +285,9 @@ func ProcessGetPgMapMessage(ctx context.Context, pvs map[int32]int64) (*msg.GetP
 						osdlist = append(osdlist, int32(oid))
 					}
 					pi := &msg.PGInfo{
-						Pgid:  int32(pgidToi),
+						Pgid:    int32(pgidToi),
 						Version: pc.Version,
-						Osdid: osdlist,
+						Osdid:   osdlist,
 					}
 					pginfos.Pi = append(pginfos.Pi, pi)
 					gpmr.Pgs[int32(pid)] = pginfos
@@ -302,7 +302,7 @@ func ProcessGetPgMapMessage(ctx context.Context, pvs map[int32]int64) (*msg.GetP
 	return gpmr, nil
 }
 
-func ProcessDeletePoolMessage(ctx context.Context, client *etcdapi.EtcdClient, name string) (error) {
+func ProcessDeletePoolMessage(ctx context.Context, client *etcdapi.EtcdClient, name string) error {
 	found := false
 	pid := -1
 	for _, pc := range AllPools {
@@ -330,4 +330,3 @@ func ProcessDeletePoolMessage(ctx context.Context, client *etcdapi.EtcdClient, n
 	log.Info(ctx, "successfully deleted pool from etcd", pid)
 	return nil
 }
-

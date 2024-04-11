@@ -331,16 +331,16 @@ func main() {
 		go sendHeartbeatRequest(conn, heartbeatTicker)
 	*/
 
-	pgmapChan := make(chan msg.GetPgMapResponse)
+	pgMapChan := make(chan msg.GetPgMapResponse)
 	PgMapTicker := time.NewTicker(10 * time.Second)
 	go sendGetPgMapRequest(conn, PgMapTicker)
 
-	osdmapChan := make(chan msg.GetOsdMapResponse)
+	osdMapChan := make(chan msg.GetOsdMapResponse)
 	OsdMapTicker := time.NewTicker(10 * time.Second)
 	go sendGetOsdMapRequest(conn, OsdMapTicker)
 
-	go handleMapChanges(ctx, pgmapChan, osdmapChan)
-	go handleResponses(ctx, conn, responseChan, stopChan, pgmapChan, osdmapChan)
+	go handleMapChanges(ctx, pgMapChan, osdMapChan)
+	go handleResponses(ctx, conn, responseChan, stopChan, pgMapChan, osdMapChan)
 
 	// Keep the main goroutine running
 	for {

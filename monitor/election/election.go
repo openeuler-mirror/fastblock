@@ -33,7 +33,7 @@ type LeaderElection struct {
 	leaderChangeChan chan struct{}
 }
 
-func NewLeaderElection(etcdClient *etcdapi.EtcdClient, electionKey string, candidateID string, leaderCallback func(string, context.Context, *etcdapi.EtcdClient), followerCallback func(string,context.Context)) *LeaderElection {
+func NewLeaderElection(etcdClient *etcdapi.EtcdClient, electionKey string, candidateID string, leaderCallback func(string, context.Context, *etcdapi.EtcdClient), followerCallback func(string, context.Context)) *LeaderElection {
 	return &LeaderElection{
 		etcdClient:       etcdClient,
 		electionKey:      electionKey,
@@ -80,23 +80,23 @@ func (l *LeaderElection) electLeader(ctx context.Context) {
 			return
 		default:
 			l.Mutex.Lock()
-			is_leader := l.IsLeader
+			isLeader := l.IsLeader
 			lid := l.leaseID
 			l.Mutex.Unlock()
 
 			//both follower and leader should keepalive their lease
-			//when follower has chance to win a election, make sure it's lease is still alive
+			//when follower has chance to win election, make sure it's lease is still alive
 			err := l.etcdClient.KeepAliveOnce(ctx, lid)
 			if err != nil {
 				fmt.Printf("Failed to renew lease: %v", err)
 			}
-			if !is_leader {
+			if !isLeader {
 				// Try to acquire the leader key
 				isSuccess, err := l.etcdClient.PutAndLease(ctx, l.electionKey, l.candidateID, l.leaseID)
 				if err != nil {
 					fmt.Printf("Failed to campaign for leader: %v\r\n", err)
 				} else if isSuccess {
-					log.Info(ctx, "in eleactLeader, good in put keys in ectd, become leader")
+					log.Info(ctx, "in elect Leader, good in put keys in etcd, become leader")
 					l.Mutex.Lock()
 					l.IsLeader = true
 					l.leaderChangeChan <- struct{}{}

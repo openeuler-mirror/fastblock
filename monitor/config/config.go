@@ -11,10 +11,10 @@
 package config
 
 import (
-	"io/ioutil"
-	"time"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"time"
 )
 
 const (
@@ -50,8 +50,8 @@ const (
 
 // Config types.
 type Config struct {
-	Monitors           []string  `json:"monitors"`
-	MonHost            []string   `json:"mon_host"`
+	Monitors           []string `json:"monitors"`
+	MonHost            []string `json:"mon_host"`
 	EtcdServer         []string `json:"etcd_server"`
 	EtcdName           string   `json:"etcd_name"`
 	EtcdInitialCluster string   `json:"etcd_initial_cluster"`
@@ -90,10 +90,10 @@ func marshalJsonConfig(configFilePath string, monitorId string) error {
 		}
 	}
 	var c Config
-    err = json.Unmarshal([]byte(data), &c)
+	err = json.Unmarshal([]byte(data), &c)
 	if err != nil {
 		panic("load config file error: " + err.Error())
-	}	
+	}
 
 	validate(&c)
 
@@ -113,15 +113,15 @@ func marshalJsonConfig(configFilePath string, monitorId string) error {
 
 	for i := range c.Monitors {
 		if c.Monitors[i] == monitorId {
-            c.EtcdName = c.Monitors[i]
+			c.EtcdName = c.Monitors[i]
 			c.HostName = c.Monitors[i]
 			c.EtcdInitialCluster = fmt.Sprintf("%s=http://%s:%d", c.Monitors[i], c.MonHost[i], defaultEtcdPort)
 			curl := fmt.Sprintf("http://%s:%d", c.MonHost[i], defaultEtcdServerPort)
 			c.EtcdACUrls = append(c.EtcdACUrls, curl)
-            url := fmt.Sprintf("http://%s:%d", c.MonHost[i], defaultEtcdPort)
+			url := fmt.Sprintf("http://%s:%d", c.MonHost[i], defaultEtcdPort)
 			c.EtcdAPUrls = append(c.EtcdAPUrls, url)
 			c.EtcdLPUrls = append(c.EtcdLPUrls, url)
-            
+
 			local_url := fmt.Sprintf("http://127.0.0.1:%d", defaultEtcdServerPort)
 			c.EtcdLCUrls = append(c.EtcdLCUrls, local_url)
 			c.EtcdLCUrls = append(c.EtcdLCUrls, curl)
@@ -133,7 +133,7 @@ func marshalJsonConfig(configFilePath string, monitorId string) error {
 	}
 
 	if c.Port == 0 {
-        c.Port = defaultMonitorPort
+		c.Port = defaultMonitorPort
 	}
 
 	if c.PrometheusPort == 0 {
@@ -142,7 +142,7 @@ func marshalJsonConfig(configFilePath string, monitorId string) error {
 
 	if len(c.DataDir) == 0 {
 		c.DataDir = "/tmp/mon_" + c.HostName
-	} 
+	}
 
 	CONFIG = c
 	return nil
@@ -152,7 +152,7 @@ func validate(config *Config) {
 	if len(config.Monitors) == 0 {
 		panic("Monitors invalid")
 	}
-	
+
 	if len(config.MonHost) == 0 {
 		panic("MonHost invalid")
 	}

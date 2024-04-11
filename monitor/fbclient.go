@@ -79,7 +79,7 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 			err = proto.Unmarshal(buffer[:n], resp)
 			if err != nil {
 				//discard this message
-				fmt.Println("Error unmarshaling request:", err)
+				fmt.Println("Error unmarshalling request:", err)
 				continue
 			}
 
