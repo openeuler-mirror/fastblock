@@ -1,0 +1,19 @@
+[Unit]
+Description=fastblock cluster osd daemon
+PartOf=fastblock-osd.target
+After=network-online.target time-sync.target
+Before=fastblock-osd.target
+Wants=network-online.target time-sync.target fastblock-osd.target
+
+[Service]
+ExecReload=/bin/kill -HUP $MAINPID
+ExecStart=fastblock-osd -m '[$((%i % `grep -c 'processor' /proc/cpuinfo`))]' -C /etc/fastblock/fastblock.json --id %i &
+LimitNOFILE=1048576
+LimitNPROC=1048576
+Restart=on-failure
+RestartSec=30
+StartLimitInterval=0
+TasksMax=infinity
+
+[Install]
+WantedBy=multi-user.target

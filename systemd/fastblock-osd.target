@@ -1,0 +1,8 @@
+[Unit]
+Description=fastblock target allowing to start/stop all fastblock-osd@.service instances at once
+PartOf=fastblock.target
+Before=fastblock.target
+Wants=fastblock.target
+
+[Install]
+WantedBy=multi-user.target fastblock.target

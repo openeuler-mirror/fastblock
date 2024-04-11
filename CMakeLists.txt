@@ -114,4 +114,6 @@ endif()
 
 
 include(compile_library)
+add_subdirectory(monitor)
 add_subdirectory(src)
+add_subdirectory(systemd)
