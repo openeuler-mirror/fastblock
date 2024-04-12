@@ -54,7 +54,6 @@ if [ "$component" = "monitor" ]; then
 	fi
 	cd $root/proto && ./build.sh -t golang
 	(cd $root/monitor && make)
-	exit 0
 fi
 if [ "$component" = "osd" ]; then
 	echo "build fastblock(fastblock-osd、fastblock-vhost) C/C++ code"
@@ -67,7 +66,6 @@ if [ "$component" = "osd" ]; then
 	  "$@"
 	
 	(cd $root/build && make -j `grep -c ^processor /proc/cpuinfo`)
-	exit 0
 fi
 
 
