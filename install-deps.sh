@@ -29,6 +29,7 @@ deb_deps=(
   libprotobuf23
   libprotobuf-dev
   cmake
+  make
   libnl-3-dev
   libnl-route-3-dev
   libibverbs-dev
@@ -55,9 +56,9 @@ rpm_deps=(
   automake
   gcc
   gcc-c++
-  golang
   protobuf-devel
   cmake
+  make
   libnl3-devel
   libibverbs-devel
   librdmacm-devel
