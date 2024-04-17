@@ -1,0 +1,19 @@
+[Unit]
+Description=fastblock cluster monitor daemon
+PartOf=fastblock-mon.target
+After=network-online.target time-sync.target
+Before=fastblock-mon.target
+Wants=network-online.target time-sync.target fastblock-mon.target
+
+[Service]
+ExecReload=/bin/kill -HUP $MAINPID
+ExecStart=/usr/bin/fastblock-mon -conf=/etc/fastblock/fastblock.json -id=%i &
+LimitNOFILE=1048576
+LimitNPROC=1048576
+Restart=on-failure
+RestartSec=30
+StartLimitInterval=0
+TasksMax=infinity
+
+[Install]
+WantedBy=multi-user.target
