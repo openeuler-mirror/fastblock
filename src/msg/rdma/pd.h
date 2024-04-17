@@ -28,10 +28,17 @@ class protection_domain {
 
 public:
 
-    protection_domain(std::shared_ptr<device> dev, std::optional<std::string> specify_device = std::nullopt) : _device{dev} {
-        auto fn = [this, &specify_device] (device::device_context* ctx) -> iterate_tag {
+    protection_domain(
+      std::shared_ptr<device> dev,
+      std::optional<std::string> specify_device = std::nullopt,
+      std::optional<uint8_t> specify_port = std::nullopt) : _device{dev} {
+        auto fn = [this, &specify_device, specify_port] (device::device_context* ctx) -> iterate_tag {
             std::string dev_name(::ibv_get_device_name(ctx->device));
             if (specify_device and dev_name != specify_device.value()) {
+                return iterate_tag::keep;
+            }
+
+            if (specify_port and *specify_port != ctx->port) {
                 return iterate_tag::keep;
             }
 

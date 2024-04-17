@@ -1,7 +1,8 @@
 {
-    "bind_address": "ip",
     "bind_port": 8081,
     "rdma_device_name": "mlx5_0",
+    "rdma_device_port": 1,
+    "rdma_gid_index": 2,
     "msg_server_listen_backlog" : 1024,
     "msg_server_poll_cq_batch_size": 32,
     "msg_server_metadata_memory_pool_capacity": 16384,

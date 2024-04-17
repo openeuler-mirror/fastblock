@@ -59,9 +59,7 @@ boost::property_tree::ptree g_pt{};
 }
 
 void usage() {
-    ::printf(" -H host_addr\n");
-    ::printf(" -P port\n");
-    ::printf(" -C memory pool capacity\n");
+    ::printf(" -C json conf file path\n");
 }
 
 int parse_arg(int ch, char* arg) {
@@ -78,9 +76,17 @@ int parse_arg(int ch, char* arg) {
 
 void on_server_close() {
     SPDK_NOTICELOG("Close the rpc server\n");
-    g_rpc_server->stop([] () {
+    if (g_rpc_server) {
+        g_rpc_server->stop([] () {
+            ::spdk_app_stop(0);
+        });
+    } else {
         ::spdk_app_stop(0);
-    });
+    }
+}
+
+void handle_sigint(int) {
+    on_server_close();
 }
 
 void start_rpc_server(void* arg) {
@@ -91,10 +97,14 @@ void start_rpc_server(void* arg) {
     ::spdk_cpuset_set_cpu(&g_cpumask, core_no, true);
 
     auto opts = msg::rdma::server::make_options(g_pt);
-    opts->bind_address =
-      g_pt.get_child("bind_address").get_value<std::string>();
     opts->port = g_pt.get_child("bind_port").get_value<uint16_t>();
-    g_rpc_server = std::make_shared<msg::rdma::server>(g_cpumask, opts);
+    try {
+        g_rpc_server = std::make_shared<msg::rdma::server>(g_cpumask, opts);
+    } catch (const std::exception& e) {
+        SPDK_ERRLOG("Error: Create rpc server failed, %s\n", e.what());
+        std::raise(SIGINT);
+        return;
+    }
     g_rpc_server->add_service(ctx->rpc_service);
     g_rpc_server->start();
 }
@@ -114,6 +124,8 @@ int main(int argc, char** argv) {
     opts.shutdown_cb = on_server_close;
     opts.rpc_addr = "/var/tmp/spdk_srv.sock";
     opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
+
+    std::signal(SIGINT, handle_sigint);
 
     demo_ping_pong_service rpc_service{};
     rpc_context ctx{nullptr, &rpc_service};
