@@ -649,6 +649,10 @@ main(int argc, char *argv[])
 
     save_bdev_json(bdev_json_file, osd_server);
     opts.json_config_file = bdev_json_file.c_str();
+
+    auto current_osd_id = std::to_string(g_id);
+    std::string sock_path = "/var/tmp/fastblock-osd-" + current_osd_id + ".sock";
+    opts.rpc_addr = sock_path.c_str();
 	/* Blocks until the application is exiting */
 	rc = spdk_app_start(&opts, block_started, &osd_server);
 
