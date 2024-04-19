@@ -65,27 +65,10 @@ cmake . -DCMAKE_BUILD_TYPE=Release \
 %make_build
 
 %install
-mkdir -p %{buildroot}/usr/lib/systemd/system/
+%make_install
+
 mkdir -p %{buildroot}/etc/fastblock/
-mkdir -p %{buildroot}%{_bindir}
-install -m 0644 -D systemd/fastblock.target %{buildroot}/usr/lib/systemd/system/
-install -m 0644 -D systemd/fastblock-mon.target %{buildroot}/usr/lib/systemd/system/
-install -m 0644 -D systemd/fastblock-mon@.service %{buildroot}/usr/lib/systemd/system/
-install -m 0644 -D systemd/fastblock-osd.target %{buildroot}/usr/lib/systemd/system/
-install -m 0644 -D systemd/fastblock-osd@.service %{buildroot}/usr/lib/systemd/system/
 install -m 0644 -D fastblock.json %{buildroot}/etc/fastblock
-install -m 0644 -D monitor/fastblock-mon %{buildroot}%{_bindir}
-chmod +x %{buildroot}%{_bindir}/fastblock-mon
-install -m 0644 -D monitor/fastblock-client %{buildroot}%{_bindir}
-chmod +x %{buildroot}%{_bindir}/fastblock-client
-install -m 0644 -D monitor/fastblock-fakeosd %{buildroot}%{_bindir}
-chmod +x %{buildroot}%{_bindir}/fastblock-fakeosd
-install -m 0644 -D src/osd/fastblock-osd %{buildroot}%{_bindir}
-chmod +x %{buildroot}%{_bindir}/fastblock-osd
-install -m 0644 -D src/tools/fbbench %{buildroot}%{_bindir}
-chmod +x %{buildroot}%{_bindir}/fbbench
-install -m 0644 -D src/tools/block_bench %{buildroot}%{_bindir}
-chmod +x %{buildroot}%{_bindir}/block_bench
 
 %post mon
 /usr/bin/systemctl preset fastblock-mon@.service fastblock-mon.target >/dev/null 2>&1 ||:
@@ -114,23 +97,24 @@ chmod +x %{buildroot}%{_bindir}/block_bench
 %{_unitdir}/fastblock.target
 %{_unitdir}/fastblock-mon.target
 %{_unitdir}/fastblock-mon@.service
-%{_bindir}/fastblock-mon
-%{_bindir}/fastblock-client
-%{_bindir}/fastblock-fakeosd
+%attr(0755, root, root) /usr/local/bin/fastblock-mon
+%attr(0755, root, root) /usr/local/bin/fastblock-client
+%attr(0755, root, root) /usr/local/bin/fastblock-fakeosd
+%attr(0755, root, root) /usr/local/bin/fastblock-vhost
 
 %files osd
 %{_unitdir}/fastblock-osd.target
 %{_unitdir}/fastblock-osd@.service
-%{_bindir}/fastblock-osd
-%{_bindir}/fbbench
-%{_bindir}/block_bench
+%attr(0755, root, root) /usr/local/bin/fastblock-osd
+%attr(0755, root, root) /usr/local/bin/fbbench
+%attr(0755, root, root) /usr/local/bin/block_bench
 
 %clean
 rm -rf %{buildroot}
 
 %changelog
-* Saturday April 13 2024 Tom_zc <tom_toworld@163.com>
-- openEuler Init
+* Sat Apr 20 2024 TomNewChao
+- opt the rpmbuild script
 
 * Wed Apr 10 2024 TomNewChao
 - Optimize monitor code specifications

@@ -16,6 +16,8 @@ target_link_libraries(block_bench
     fbclient
 )
 
+install(TARGETS block_bench DESTINATION bin)
+
 add_executable(fbbench
   fbbench.cc
 )
@@ -31,3 +33,5 @@ target_link_libraries(fbbench
     monclient
     fbclient
 )
+
+install(TARGETS fbbench DESTINATION bin)

@@ -3,6 +3,14 @@
 rpm_version=$1
 if [[ -z $rpm_version ]]; then rpm_version="v0.1"; fi
 
+trap 'onCtrlC' INT
+function onCtrlC () {
+    stty echo
+
+    echo 'Ctrl+C is captured'
+    exit 1
+
+}
 
 echo "1.start to install the rpm tools"
 rpm_deps=(
@@ -26,15 +34,22 @@ cd $root/src/msg/demo && ./gen.sh
 
 
 echo "3.start to pack and compression fastblock"
-git_version=$rpm_version.$(git rev-parse --short HEAD)
-commit_version=$git_version.`git log --oneline|wc -l`
+cd $root && git status >> /dev/null 2>&1
+if [[ $? -ne 0 ]]; then
+  commit_version=$rpm_version
+else
+  git_version=$rpm_version.$(git rev-parse --short HEAD)
+  commit_version=$git_version.`git log --oneline|wc -l`
+fi
 cd $root && sed "s/@VERSION@/$commit_version/g" fastblock.spec.in > fastblock.spec
 cd $root && mv fastblock.spec $(rpm --eval %{_specdir})
-cd $root/../ && tar -zcvf fastblock-$commit_version.tar.gz fastblock >/dev/null 2>&1 && mv fastblock-$commit_version.tar.gz $(rpm --eval %{_sourcedir})
+cd $root/../ && tar -zcvf fastblock-$commit_version.tar.gz fastblock >/dev/null 2>&1
+cd $root/../ && mv fastblock-$commit_version.tar.gz $(rpm --eval %{_sourcedir})
 
 
 echo "4.start to make rpm about fastblock"
-cd $(rpm --eval %{_specdir}) && yum-builddep fastblock.spec && QA_RPATHS=0x0002 rpmbuild -ba fastblock.spec
+go env -w GO111MODULE=""
+cd $(rpm --eval %{_specdir}) && yum-builddep fastblock.spec && rpmbuild -ba fastblock.spec
 if [[ $? -ne 0 ]];then
   echo "rpm build failed."
   exit -1
