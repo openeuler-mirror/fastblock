@@ -30,6 +30,7 @@ deb_deps=(
   libprotobuf-dev
   cmake
   make
+  jq
   libnl-3-dev
   libnl-route-3-dev
   libibverbs-dev
@@ -55,6 +56,7 @@ rpm_deps=(
   autoconf
   automake
   gcc
+  jq
   gcc-c++
   protobuf-devel
   cmake
