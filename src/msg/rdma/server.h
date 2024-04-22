@@ -890,23 +890,10 @@ public:
         _task_poller.unregister_poller();
         _task_read_poller.unregister_poller();
         _task_reply_poller.unregister_poller();
+        SPDK_NOTICELOG("Pollers of rpc server have been unregistered\n");
 
         _meta_pool->free();
         _data_pool->free();
-
-        SPDK_NOTICELOG("Pollers of rpc server have been unregistered\n");
-
-        if (_thread) {
-            auto current_thread = spdk_get_thread();
-            ::spdk_set_thread(_thread);
-            ::spdk_thread_exit(_thread);
-            if(current_thread == _thread){
-                ::spdk_set_thread(nullptr);
-            }else{
-                ::spdk_set_thread(current_thread);
-            }
-            SPDK_NOTICELOG("SPDK thread of the rpc server has been marked as exited\n");
-        }
 
         if (ctx and ctx->on_stop_cb) {
             try {

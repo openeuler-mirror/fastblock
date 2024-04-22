@@ -34,6 +34,14 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+enum class stop_state {
+    monitor_client = 1,
+    partition_manager,
+    connection_cache,
+    rpc_server,
+    blobstore
+};
+
 typedef struct
 {
     /* the server's node ID */
@@ -61,6 +69,7 @@ static std::shared_ptr<::partition_manager> global_pm{nullptr};
 static std::shared_ptr<monitor::client> monitor_client{nullptr};
 static server_t osd_server{};
 static int osd_exit_code{0};
+static stop_state cur_stop_state{stop_state::monitor_client};
 
 static void
 block_usage(void) {
@@ -568,43 +577,68 @@ static void on_blob_unloaded([[maybe_unused]] void *cb_arg, int bserrno) {
 }
 
 static void on_blob_closed([[maybe_unused]] void *cb_arg, int bserrno) {
-    SPDK_NOTICELOG("The bdev has been closed, return code is %d, thread id %lu\n",
-            bserrno, utils::get_spdk_thread_id());
+    SPDK_NOTICELOG(
+      "The bdev has been closed, return code is %d, thread id %lu\n",
+      bserrno, utils::get_spdk_thread_id());
     SPDK_NOTICELOG("Start unloading bdev\n");
     ::blobstore_fini(on_blob_unloaded, nullptr);
 }
 
+static void on_osd_stop() noexcept;
+
 static void on_pm_closed([[maybe_unused]] void *cb_arg, int bserrno) {
     SPDK_NOTICELOG("The partition manager has been closed, return code is %d\n", bserrno);
+    on_osd_stop();
 }
 
 static void on_osd_stop() noexcept {
     SPDK_NOTICELOG("Stop the osd service, thread id %lu\n", utils::get_spdk_thread_id());
-
-    if (monitor_client) {
-        monitor_client->stop();
+    switch (cur_stop_state) {
+    case stop_state::monitor_client: {
+        cur_stop_state = stop_state::partition_manager;
+        if (monitor_client) {
+            SPDK_NOTICELOG("Stopping the monitor client\n");
+            monitor_client->stop(on_osd_stop);
+            return;
+        }
+        [[fallthrough]];
     }
-
-    if (global_pm) {
-        global_pm->stop(on_pm_closed, nullptr);
+    case stop_state::partition_manager: {
+        cur_stop_state = stop_state::connection_cache;
+        if (global_pm) {
+            SPDK_NOTICELOG("Stopping the partition manager\n");
+            global_pm->stop(on_pm_closed, nullptr);
+            return;
+        }
+        [[fallthrough]];
     }
-
-    if (global_conn_cache) {
-        global_conn_cache->stop();
+    case stop_state::connection_cache: {
+        cur_stop_state = stop_state::rpc_server;
+        if (global_conn_cache) {
+            SPDK_NOTICELOG("Stopping the connection cache\n");
+            global_conn_cache->stop(on_osd_stop);
+            return;
+        }
+        [[fallthrough]];
     }
-
-    if (osd_server.rpc_srv) {
-        osd_server.rpc_srv->stop();
+    case stop_state::rpc_server: {
+        cur_stop_state = stop_state::blobstore;
+        if (osd_server.rpc_srv) {
+            SPDK_NOTICELOG("Stopping the rpc server\n");
+            osd_server.rpc_srv->stop(on_osd_stop);
+            return;
+        }
+        [[fallthrough]];
     }
-
-    ::storage_fini(on_blob_closed, nullptr);
+    case stop_state::blobstore: {
+        SPDK_NOTICELOG("Stopping the blobstore\n");
+        ::storage_fini(on_blob_closed, nullptr);
+        return;
+    }
+    default:
+        return;
+    }
 }
-
-static void on_osd_stop(int signo) noexcept {
-    SPDK_NOTICELOG("Catch signal %d\n", signo);
-    on_osd_stop();
-}
-
 int
 main(int argc, char *argv[])
 {
@@ -618,8 +652,6 @@ main(int argc, char *argv[])
 	opts.num_entries = 0;
     opts.shutdown_cb = on_osd_stop;
 	opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
-    std::signal(SIGINT, on_osd_stop);
-    std::signal(SIGTERM, on_osd_stop);
 
 	if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:I:U:f", g_cmdline_opts,
 				      block_parse_arg, block_usage)) !=

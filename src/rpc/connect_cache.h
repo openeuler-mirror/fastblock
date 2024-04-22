@@ -82,7 +82,7 @@ public:
             return;
         }
 
-        _transport->remove_connection(iter->second, 
+        _transport->remove_connection(iter->second,
           [this, node_id, shard_id, cb = std::move(cb), raft_cb = std::move(raft_cb)](bool is_ok){
             if(is_ok){
                 ::pthread_mutex_lock(&_mutex);
@@ -94,8 +94,8 @@ public:
           });
     }
 
-    void stop() noexcept {
-        _transport->stop();
+    void stop(auto&&... args) noexcept {
+        _transport->stop(std::forward<decltype(args)>(args)...);
     }
 
 private:

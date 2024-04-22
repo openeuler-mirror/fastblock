@@ -38,7 +38,7 @@ public:
         _transport->add_service(service);
     }
 
-    void stop() noexcept { _transport->stop(); }
+    void stop(auto&&... args) noexcept { _transport->stop(std::forward<decltype(args)>(args)...); }
 
 private:
 
