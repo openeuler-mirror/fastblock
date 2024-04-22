@@ -27,6 +27,10 @@ enum class osd_state {
     OSD_DOWN
 };
 
+namespace monitor {
+    class client;
+}
+
 using pm_complete = std::function<void (void *, int)>;
 
 class partition_manager : public std::enable_shared_from_this<partition_manager> {
@@ -44,7 +48,7 @@ public:
           }
       }
       
-    void start(utils::context *complete);
+    void start(utils::context *complete, std::shared_ptr<monitor::client> mon_client);
 
     void stop(utils::complete_fun fun, void *arg){
         if(_state == osd_state::OSD_DOWN){
@@ -152,6 +156,10 @@ public:
             return -EEXIST;
         return 0;
     }
+
+    std::shared_ptr<monitor::client> get_mon_client(){
+        return _mon_client;
+    }
 private:
     int osd_state_is_not_active();
     uint32_t get_next_shard_id(){
@@ -168,4 +176,5 @@ private:
     std::vector<uint32_t> _shard_cores;
     std::vector<std::map<std::string, std::shared_ptr<osd_stm>>> _sm_table;
     osd_state _state;
+    std::shared_ptr<monitor::client> _mon_client;
 };

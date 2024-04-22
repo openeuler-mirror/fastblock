@@ -47,59 +47,58 @@ int raft_log::log_append(std::vector<std::pair<std::shared_ptr<raft_entry_t>, ut
 }
 
 //used by leader
-int raft_log::log_append(std::shared_ptr<raft_entry_t> entry, utils::context* complete){
-    entry->set_idx(_next_idx);
+int raft_log::log_append(std::shared_ptr<raft_entry_t> entry, utils::context* complete, bool push_front){
+    if(push_front)
+        _entry_queue.emplace_front(std::make_pair(entry, complete));
+    else
+        _entry_queue.emplace_back(std::make_pair(entry, complete));
+    return 0;
+}
 
-    if(raft_entry_is_cfg_change(entry.get()) || !_config_cache.empty()){
-        if(RAFT_LOGTYPE_ADD_NONVOTING_NODE != entry->type()){
+int raft_log::entry_queue_flush(){
+    int count = 0;
+    if(_entry_queue.empty())
+        return count;
+
+    auto &ec = _entry_queue.front();
+    auto entry = ec.first;
+    if(raft_entry_is_cfg_change(entry.get())){
+        entry->set_idx(_next_idx);
+
+        auto complete = ec.second;
+        if(RAFT_LOGTYPE_ADD_NONVOTING_NODE == entry->type()){
+            _raft->set_cfg_entry_complete(entry, complete);
+        }else{
             /* 收到RAFT_LOGTYPE_ADD_NONVOTING_NODE这种configuration entry,
                会进入CFG_CATCHING_UP状态，这种entry并不会写入log，为了log index的连续性，
                这种entry并不实际占用index，因此_next_idx不需要加1
             */
             _next_idx++;    
-        }
-        _config_cache.emplace_back(std::make_pair(entry, complete));
-    }else{
-        _next_idx++;
-        _entries.add(entry, complete); 
-    } 
 
-    return 0;  
-}
-
-int raft_log::config_cache_flush(){
-    int count = 0;
-    if(_config_cache.empty())
-        return count;
-
-    auto &ec = _config_cache.front();
-    auto entry = ec.first;
-    if(raft_entry_is_cfg_change(entry.get())){
-        auto complete = ec.second;
-        if(RAFT_LOGTYPE_ADD_NONVOTING_NODE == entry->type()){
-            _raft->set_cfg_entry_complete(entry, complete);
-        }else{
             if(complete)
                 _raft->set_cfg_complete(complete);
             _raft->reset_cfg_entry();
             _entries.add(entry, nullptr);
         }
-        _config_cache.pop_front();
+        _entry_queue.pop_front();
         count++;
     }
 
-    while(!_config_cache.empty()){
-        auto &ec = _config_cache.front();
+    while(!_entry_queue.empty()){
+        auto &ec = _entry_queue.front();
         auto entry = ec.first;
         if(raft_entry_is_cfg_change(entry.get()))
             break;
 
+        entry->set_idx(_next_idx);
+        _next_idx++; 
+        
         auto complete = ec.second;
         _entries.add(entry, complete);
-        _config_cache.pop_front();
+        _entry_queue.pop_front();
         count++;
     }
-    return count;
+    return count;    
 }
 
 int raft_log::log_truncate(raft_index_t idx, log_op_complete cb_fn, void* arg)

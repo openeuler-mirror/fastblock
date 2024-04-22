@@ -18,6 +18,10 @@
 #include "base/core_sharded.h"
 #include "localstore/kv_store.h"
 
+namespace monitor {
+    class client;
+}
+
 class shard_manager
 {
 public:
@@ -115,10 +119,10 @@ public:
     }
 
     int create_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,
-                  std::vector<utils::osd_info_t> &&osds, disk_log *log);
+                  std::vector<utils::osd_info_t> &&osds, disk_log *log, std::shared_ptr<monitor::client> mon_client);
     
     void load_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,
-                disk_log *log, pg_complete cb_fn, void *arg);    
+                disk_log *log, pg_complete cb_fn, void *arg, std::shared_ptr<monitor::client> mon_client);    
 
     void delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id);
 

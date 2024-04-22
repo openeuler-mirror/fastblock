@@ -26,6 +26,7 @@ int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_
         if(_cfg_complete){
             _cfg_complete->complete(result);
         }
+        _raft->send_pg_member_change_finished_notify(result);
         reset_cfg_entry_complete();
         clear_catch_up_nodes();
         set_state(cfg_state::CFG_NONE);
@@ -101,10 +102,11 @@ int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_
     auto create_cfg_entry = [this](utils::context* complete){
         raft_configuration cfg;
 
-        auto &nodes = get_last_node_configuration().get_nodes();
+        auto &nodes = get_last_node_configuration().get_new_nodes();
         for(uint64_t i = 0; i < nodes.size(); i++){
             auto info = cfg.add_new_nodes();
             *info = nodes[i];
+            SPDK_INFOLOG_EX(pg_group, "new node %d\n", info->node_id());
         }
 
         std::string buf;
@@ -159,29 +161,29 @@ int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_
                 _raft->raft_flush();
                 return 1;
             }
-            if(find_node(node->raft_node_get_id()))
+            if(find_new_node(node->raft_node_get_id()))
                 _new_node_fail_size++;
-            if(find_old_node(node->raft_node_get_id()))
+            if(find_node(node->raft_node_get_id()))
                 _old_node_fail_size++;
-            if((_new_node_fail_size > (get_node_size() / 2))
-                    || (_old_node_fail_size > (get_old_node_size() / 2))){
+            if((_new_node_fail_size > (get_new_node_size() / 2))
+                    || (_old_node_fail_size > (get_node_size() / 2))){
                 finish_func(result);
                 _raft->raft_flush();
                 return 1;
             }
         }else{
-            if(find_node(node->raft_node_get_id()))
+            if(find_new_node(node->raft_node_get_id()))
                 _new_node_match_size++;
-            if(find_old_node(node->raft_node_get_id()))
+            if(find_node(node->raft_node_get_id()))
                 _old_node_match_size++;
         }
         SPDK_INFOLOG_EX(pg_group, "state: %d node_id: %d rsp_current_idx:%ld result: %d\n", (int)get_state(), node->raft_node_get_id(), rsp_current_idx, result);
-        if((_new_node_match_size  > get_node_size() / 2)
-                && (_old_node_match_size  > get_old_node_size() / 2)){
+        if((_new_node_match_size  > get_new_node_size() / 2)
+                && (_old_node_match_size  > get_node_size() / 2)){
             SPDK_INFOLOG_EX(pg_group, "all nodes match\n");
             int ret = create_cfg_entry(_cfg_complete);
             if(ret != 0){
-                finish_func(result);
+                finish_func(ret);
             }else{
                 set_state(cfg_state::CFG_UPDATE_NEW_CFG);
                 _configuration_index = 0;
@@ -327,15 +329,15 @@ std::pair<bool, std::string> node_configuration_manager::serialize(){
             if(!rc) return hand_end(false);                                  
         }         
 
-        auto &old_nodes = iter->get_old_nodes();
-        rc = PutFixed32(sbuf, old_nodes.size());
+        auto &new_nodes = iter->get_new_nodes();
+        rc = PutFixed32(sbuf, new_nodes.size());
         if(!rc) return hand_end(false);     
-        for(auto& old_node : old_nodes){
-            rc = PutFixed32(sbuf, old_node.node_id());
+        for(auto& new_node : new_nodes){
+            rc = PutFixed32(sbuf, new_node.node_id());
             if(!rc) return hand_end(false);   
-            rc = PutString(sbuf, old_node.addr());
+            rc = PutString(sbuf, new_node.addr());
             if(!rc) return hand_end(false);    
-            rc = PutFixed32(sbuf, old_node.port());
+            rc = PutFixed32(sbuf, new_node.port());
             if(!rc) return hand_end(false);                     
         }                        
         iter++;
@@ -369,7 +371,7 @@ bool node_configuration_manager::deserialize(std::string& data){
         node_cfg._term = term;
        
         uint32_t node_size = 0;
-        uint32_t old_node_size = 0;
+        uint32_t new_node_size = 0;
         uint32_t node_id;
         std::string addr;
         uint32_t port;
@@ -390,9 +392,9 @@ bool node_configuration_manager::deserialize(std::string& data){
             node_cfg._nodes.emplace_back(std::move(node));              
         }
 
-        rc = GetFixed32(sbuf, old_node_size);
+        rc = GetFixed32(sbuf, new_node_size);
         if(!rc) return hand_error(false); 
-        for(uint32_t j = 0; j < old_node_size; j++){
+        for(uint32_t j = 0; j < new_node_size; j++){
             raft_node_info node;
             rc = GetFixed32(sbuf, node_id);
             if(!rc) return hand_error(false);
@@ -403,7 +405,7 @@ bool node_configuration_manager::deserialize(std::string& data){
             node.set_node_id(node_id);
             node.set_addr(addr);
             node.set_port(port);
-            node_cfg._old_nodes.emplace_back(std::move(node));       
+            node_cfg._new_nodes.emplace_back(std::move(node));       
         } 
 
         _configurations.emplace_back(std::move(node_cfg));        

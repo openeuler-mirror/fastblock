@@ -66,7 +66,8 @@ static void make_log_done(void *arg, struct disk_log* dlog, int rberrno){
         partition_manager* pm = mlc->pm;
         auto sm = std::make_shared<osd_stm>();
         pm->add_osd_stm(mlc->pool_id, mlc->pg_id, mlc->shard_id, sm);
-        pm->get_pg_group().create_pg(sm, mlc->shard_id, mlc->pool_id, mlc->pg_id, std::move(mlc->osds), dlog);
+        pm->get_pg_group().create_pg(sm, mlc->shard_id, mlc->pool_id, mlc->pg_id, std::move(mlc->osds), 
+                dlog, pm->get_mon_client());
         mlc->cb_fn(mlc->arg, rberrno);
         delete mlc;
       },
@@ -109,7 +110,8 @@ void pm_start_done(void *arg){
     delete pm;
 }
 
-void partition_manager::start(utils::context *complete){
+void partition_manager::start(utils::context *complete, std::shared_ptr<monitor::client> mon_client){
+    _mon_client = mon_client;
     auto cur_thread = spdk_get_thread();
     _pgs.start(
       [this, complete, cur_thread](void *, int res){
@@ -202,7 +204,7 @@ void partition_manager::load_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg
         SPDK_INFOLOG_EX(osd, "load pg done\n");
         cb_fn(arg, lerrno);
       }, 
-      arg);
+      arg, _mon_client);
 }
 
 int partition_manager::load_partition(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob, 

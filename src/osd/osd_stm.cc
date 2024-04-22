@@ -150,11 +150,7 @@ void osd_stm::write_and_wait(
         entry_ptr->set_meta(std::move(buf));
         entry_ptr->set_data(std::move(request->data()));
 
-        auto ret = get_raft()->raft_write_entry(entry_ptr, write_complete);
-        if (ret != 0)
-        {
-            write_complete->complete(ret);
-        }
+        get_raft()->raft_write_entry(entry_ptr, write_complete);
     };
 
     lock_complete *complete = new lock_complete(std::move(write_func));
@@ -233,11 +229,7 @@ void osd_stm::delete_and_wait(
         entry_ptr->set_type(RAFT_LOGTYPE_DELETE);
         entry_ptr->set_meta(std::move(buf));
 
-        auto ret = get_raft()->raft_write_entry(entry_ptr, delete_complete);
-        if (ret != 0)
-        {
-            delete_complete->complete(ret);
-        }
+        get_raft()->raft_write_entry(entry_ptr, delete_complete);
     };
 
     lock_complete *complete = new lock_complete(std::move(delete_func));

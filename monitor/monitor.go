@@ -262,6 +262,89 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 					return
 				}
 
+			case *msg.Request_LeaderBeElectedRequest:
+				log.Warn(ctx, "Received LeaderBeElectedRequest")
+				leaderId := payload.LeaderBeElectedRequest.GetLeaderId()
+				poolId := payload.LeaderBeElectedRequest.GetPoolId()
+				pgId := payload.LeaderBeElectedRequest.GetPgId()
+				osdListM := payload.LeaderBeElectedRequest.GetOsdList()
+				newOsdListM := payload.LeaderBeElectedRequest.GetNewOsdList()
+
+				var osdList []int
+				var newOsdList []int
+				for _, val := range osdListM {
+					osdList = append(osdList, int(val))
+				}
+				for _, val := range newOsdListM {
+					newOsdList = append(newOsdList, int(val))
+				}
+				isOk := true
+				err := osd.ProcessLeaderBeElected(ctx, client, int(leaderId), poolId, pgId, osdList, newOsdList)
+				if err != nil {
+					isOk = false
+				}
+
+				response := &msg.Response{
+					Union: &msg.Response_LeaderBeElectedResponse{
+						LeaderBeElectedResponse: &msg.LeaderBeElectedResponse{
+							Ok: isOk,
+						},
+					},
+				}
+
+				// Marshal the LeaderBeElectedResponse
+				responseData, err := proto.Marshal(response)
+				if err != nil {
+					log.Error(ctx, "Error marshaling response:", err)
+					return
+				}
+
+				// Write the response data back to the client
+				_, err = conn.Write(responseData)
+				if err != nil {
+					log.Error(ctx, "Error writing response:", err)
+					return
+				}				
+			
+			case *msg.Request_PgMemberChangeFinishRequest:
+				log.Warn(ctx, "Received PgMemberChangeFinishRequest")
+				result := payload.PgMemberChangeFinishRequest.GetResult()
+				poolId := payload.PgMemberChangeFinishRequest.GetPoolId()
+				pgId := payload.PgMemberChangeFinishRequest.GetPgId()
+				osdListM := payload.PgMemberChangeFinishRequest.GetOsdList()
+				
+				var osdList []int
+				for _, val := range osdListM {
+					osdList = append(osdList, int(val))
+				}
+				isOk := true
+				err := osd.ProcessPgMemberChangeFinish(ctx, client, int(result), poolId, pgId, osdList)
+				if err != nil {
+					isOk = false
+				}	
+				
+				response := &msg.Response{
+					Union: &msg.Response_PgMemberChangeFinishResponse{
+						PgMemberChangeFinishResponse: &msg.PgMemberChangeFinishResponse{
+							Ok: isOk,
+						},
+					},
+				}
+
+				// Marshal the PgMemberChangeFinishResponse
+				responseData, err := proto.Marshal(response)
+				if err != nil {
+					log.Error(ctx, "Error marshaling response:", err)
+					return
+				}
+
+				// Write the response data back to the client
+				_, err = conn.Write(responseData)
+				if err != nil {
+					log.Error(ctx, "Error writing response:", err)
+					return
+				}				
+
 			case *msg.Request_OsdStopRequest:
 				log.Info(ctx, "Received StopRequest")
 				id := payload.OsdStopRequest.GetId()
@@ -690,14 +773,13 @@ func leaderCallback(whoAmI string, ctx context.Context, c *etcdapi.EtcdClient) {
 	osd.LoadOSDStateFromEtcd(ctx, c)
 	osd.LoadPoolConfig(ctx, c)
 	osd.LoadImageConfig(ctx, c)
-	osd.GetOSDTreeUp(ctx)
+	osd.GetOSDTree(ctx, true, false)
 	go osd.CheckOsdHeartbeat(ctx, c)
-	go osd.RecheckPGs(ctx, c)
+	go osd.OsdTaskrun(ctx, c)
 	startTcpServer(ctx, c)
 }
 
 func main() {
-
 	configPath := flag.String("conf", "/etc/fastblock/monitor.json", "path of the config file")
 	id := flag.String("id", "", "name of the monitor")
 	flag.Parse()
