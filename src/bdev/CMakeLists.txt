@@ -15,3 +15,5 @@ target_link_libraries(fastblock-vhost
     msg
     fbclient
   )
+
+install(TARGETS fastblock-vhost DESTINATION bin)

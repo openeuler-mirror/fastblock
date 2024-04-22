@@ -30,6 +30,8 @@ add_executable(fastblock-osd
   osd_stm.cc
 )
 
+install(TARGETS fastblock-osd DESTINATION bin)
+
 target_include_directories (fastblock-osd
   PUBLIC
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
