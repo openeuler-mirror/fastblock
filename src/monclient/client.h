@@ -48,6 +48,7 @@ public:
         unknown_pool_name,
         unknown_server_status,
         image_not_found,
+        image_name_too_long,
         server_error,
         fail
     };
