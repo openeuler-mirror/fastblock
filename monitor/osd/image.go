@@ -33,6 +33,8 @@ type ImageConfig struct {
 // 已经包含了pg的分配表
 var Allimages map[int32]*ImageConfig
 
+var MaxImageNameLength int32 = 512
+
 var lastImageId int32 = 0
 
 func findUsableImageId() int32 {
@@ -87,6 +89,10 @@ func LoadImageConfig(ctx context.Context, client *etcdapi.EtcdClient) (err error
 	return nil
 }
 func ProcessCreateImageMessage(ctx context.Context, client *etcdapi.EtcdClient, imagename string, poolname string, imagesize int64, objectsize int64) msg.CreateImageErrorCode {
+
+	if len(imagename) > int(MaxImageNameLength) {
+		return msg.CreateImageErrorCode_imageNameTooLong
+	}
 
 	exist := false
 	for _, pc := range AllPools {

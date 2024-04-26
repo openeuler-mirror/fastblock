@@ -266,6 +266,8 @@ client::to_response_status(const msg::CreateImageErrorCode e) noexcept {
         return client::response_status::server_put_ectd_error;
     case msg::CreateImageErrorCode::unknownPoolName:
         return client::response_status::unknown_pool_name;
+    case msg::CreateImageErrorCode::imageNameTooLong:
+        return client::response_status::image_name_too_long;
     default:
         return client::response_status::unknown_server_status;
     }

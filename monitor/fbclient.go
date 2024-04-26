@@ -275,13 +275,9 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 			case *msg.Response_CreateImageResponse:
 				ok := payload.CreateImageResponse.GetErrorcode()
 				createimageinfo := payload.CreateImageResponse.ImageInfo
-				if ok != 0 {
-					if ok == -1 {
-						fmt.Printf("imagename  %s is already created \n ", *imageName)
-					} else {
-						fmt.Printf("the pool  %s is not created \n ", *poolname)
-					}
 
+				if ok != msg.CreateImageErrorCode_createImageOk {
+					fmt.Printf("create image %s failed, %s\n", *imageName, ok.String())
 					stopChan <- struct{}{}
 					return
 				}

@@ -171,6 +171,7 @@ enum CreateImageErrorCode
     unknownPoolName = 2;
     marshalImageContextError = 3;
     putEtcdError = 4;
+    imageNameTooLong = 5;
 }
 
 message  CreateImageResponse{
