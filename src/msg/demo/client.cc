@@ -27,6 +27,7 @@
 #include <csignal>
 #include <iostream>
 
+int g_id{-1};
 namespace {
 char* g_host{nullptr};
 uint16_t g_port{0};
@@ -81,22 +82,22 @@ int parse_arg(int ch, char* arg) {
 }
 
 void signal_handler(int signo) noexcept {
-    SPDK_NOTICELOG("triger signo(%d)\n", signo);
+    SPDK_NOTICELOG_EX("triger signo(%d)\n", signo);
     ::spdk_app_stop(0);
 }
 
 void on_client_close() {
-    SPDK_NOTICELOG("Close the rpc client\n");
+    SPDK_NOTICELOG_EX("Close the rpc client\n");
     std::signal(SIGINT, signal_handler);
 }
 
 void on_pong(msg::rdma::rpc_controller* ctrlr, ping_pong::response* reply) {
     if (ctrlr->Failed()) {
-        SPDK_ERRLOG("ERROR: exec rpc failed: %s\n", ctrlr->ErrorText().c_str());
+        SPDK_ERRLOG_EX("ERROR: exec rpc failed: %s\n", ctrlr->ErrorText().c_str());
         std::raise(SIGINT);
     }
 
-    SPDK_NOTICELOG(
+    SPDK_NOTICELOG_EX(
       "received pong size: %ld, conetnt: \"%s\"\n",
       reply->pong().size(), reply->pong().c_str());
     assert((reply->pong() == demo::small_message) or (reply->pong() == demo::big_message));
@@ -104,7 +105,7 @@ void on_pong(msg::rdma::rpc_controller* ctrlr, ping_pong::response* reply) {
 
 void iter_on_pong(msg::rdma::rpc_controller* ctrlr, ping_pong::response* reply) {
     if (ctrlr->Failed()) {
-        SPDK_ERRLOG("ERROR: exec rpc failed: %s\n", ctrlr->ErrorText().c_str());
+        SPDK_ERRLOG_EX("ERROR: exec rpc failed: %s\n", ctrlr->ErrorText().c_str());
         g_is_terminated = true;
         std::raise(SIGINT);
     }
@@ -119,16 +120,16 @@ void iter_on_pong(msg::rdma::rpc_controller* ctrlr, ping_pong::response* reply) 
     if (static_cast<size_t>(reply->id()) >= g_iter_count - 1) {
         g_is_terminated = true;
         auto iops_dur = static_cast<double>((std::chrono::system_clock::now() - g_iops_start).count());
-        SPDK_ERRLOG(
+        SPDK_ERRLOG_EX(
           "client iteration done, duration count is %lu, mean duration is %lfus, total dur: %lfus, iops: %lf\n",
           g_rpc_dur_count,
           ((g_all_rpc_dur / 1000) / g_rpc_dur_count),
           (g_all_rpc_dur / 1000),
           g_rpc_dur_count / (iops_dur / 1000 / 1000 / 1000));
 
-        SPDK_NOTICELOG("Stop the rpc client\n");
+        SPDK_NOTICELOG_EX("Stop the rpc client\n");
         g_rpc_client->stop([] () {
-            SPDK_NOTICELOG("Stop the demo client process\n");
+            SPDK_NOTICELOG_EX("Stop the demo client process\n");
             ::spdk_app_stop(0);
         });
 
@@ -146,7 +147,7 @@ void iter_on_pong(msg::rdma::rpc_controller* ctrlr, ping_pong::response* reply) 
 }
 
 void start_rpc_client(void* arg) {
-    SPDK_NOTICELOG("Start the rpc client, memory pool capacity is %lu\n", g_mempool_cap);
+    SPDK_NOTICELOG_EX("Start the rpc client, memory pool capacity is %lu\n", g_mempool_cap);
 
     ::spdk_cpuset_zero(&g_cpumask);
     auto core_no = ::spdk_env_get_first_core();
@@ -170,20 +171,20 @@ void start_rpc_client(void* arg) {
           g_stub = std::make_unique<ping_pong::ping_pong_service_Stub>(g_conn.get());
 
           demo::small_message = demo::random_string(demo::small_message_size);
-          SPDK_NOTICELOG("Sending small message rpc\n");
+          SPDK_NOTICELOG_EX("Sending small message rpc\n");
           g_small_ping.set_ping(demo::small_message);
           g_small_done = google::protobuf::NewCallback(on_pong, &g_ctrlr, &g_small_pong);
           g_stub->ping_pong(&g_ctrlr, &g_small_ping, &g_small_pong, g_small_done);
 
           demo::big_message = demo::random_string(demo::big_message_size);
-          SPDK_NOTICELOG("Sending heartbeat message rpc\n");
+          SPDK_NOTICELOG_EX("Sending heartbeat message rpc\n");
           g_big_ping.set_ping(demo::big_message);
           g_big_done = google::protobuf::NewCallback(on_pong, &g_ctrlr, &g_big_pong);
           g_stub->heartbeat(&g_ctrlr, &g_big_ping, &g_big_pong, g_big_done);
 
           // iter test
 
-          SPDK_NOTICELOG("Start sending rpc request %ld times\n", g_iter_count);
+          SPDK_NOTICELOG_EX("Start sending rpc request %ld times\n", g_iter_count);
           g_iops_start = std::chrono::system_clock::now();
           for (size_t i{0}; i < g_io_depth; ++i) {
               auto rpc_stack = std::make_unique<call_stack>();
@@ -215,10 +216,10 @@ int main(int argc, char** argv) {
 
     rc = ::spdk_app_start(&opts, start_rpc_client, nullptr);
     if (rc) {
-        SPDK_ERRLOG("ERROR: Start spdk app failed\n");
+        SPDK_ERRLOG_EX("ERROR: Start spdk app failed\n");
     }
 
-    SPDK_NOTICELOG("Exiting from application\n");
+    SPDK_NOTICELOG_EX("Exiting from application\n");
     ::spdk_app_fini();
 
     return rc;

@@ -148,7 +148,7 @@ public:
     void create_connect(int node_id, std::string address, int port, auto&& conn_cb) {
         uint32_t shard_id = 0;
         for(shard_id = 0; shard_id < connect_factor() * 1; shard_id++){
-            SPDK_INFOLOG(
+            SPDK_INFOLOG_EX(
               pg_group,
               "create connect to node %d (address %s, port %d) in core %u\n",
               node_id, address.c_str(), port, _shard_cores[shard_id]);
@@ -166,7 +166,7 @@ public:
     void remove_connect(int node_id, auto&& conn_cb){
         uint32_t shard_id = 0;
         for(shard_id = 0; shard_id < _shard_cores.size(); shard_id++){
-            SPDK_INFOLOG(pg_group, "remove connect to node %d\n", node_id);
+            SPDK_INFOLOG_EX(pg_group, "remove connect to node %d\n", node_id);
             _cache->remove_connect(shard_id, node_id, std::move(conn_cb),
             [this, shard_id, node_id](){
                 auto &stub = _stubs[shard_id];

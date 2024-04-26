@@ -16,6 +16,7 @@
 #include "types.h"
 #include "utils/units.h"
 #include "utils/varint.h"
+#include "utils/log.h"
 
 #include <spdk/blob.h>
 #include <spdk/blob_bdev.h>
@@ -133,7 +134,7 @@ public:
     { }
 
     void stop() {
-      SPDK_NOTICELOG("put rblob super buffer\n");
+      SPDK_NOTICELOG_EX("put rblob super buffer\n");
       buffer_pool_put(super);
     }
 
@@ -153,7 +154,7 @@ public:
         uint64_t length = bl.bytes();
 
         if (length > available()) {
-            SPDK_ERRLOG("append no space. length:%lu available:%lu\n", length, available());
+            SPDK_ERRLOG_EX("append no space. length:%lu available:%lu\n", length, available());
             cb_fn(arg, {front.pos, length}, -ENOSPC);
             return;
         }
@@ -176,7 +177,7 @@ public:
             ctx->cb_fn = std::move(cb_fn);
             ctx->arg = arg;
 
-            SPDK_INFOLOG(blob_log, "blob append pos from:%lu (lba:%lu) len:%lu\n", ctx->start_pos, ctx->lba, ctx->len);
+            SPDK_INFOLOG_EX(blob_log, "blob append pos from:%lu (lba:%lu) len:%lu\n", ctx->start_pos, ctx->lba, ctx->len);
             inflight_rw.emplace(start_pos + length, false);
             spdk_blob_io_writev(blob, channel, ctx->iov.data(), ctx->iov.size(),
                                 ctx->lba / unit_size, ctx->len / unit_size, rw_done, ctx);
@@ -207,7 +208,7 @@ public:
         next->lba = pos_to_lba(next->start_pos);
         next->len = second_len;
 
-        SPDK_INFOLOG(blob_log, "blob append pos from:%lu (lba:%lu) len:%lu and from:%lu (lba:%lu) len:%lu\n", 
+        SPDK_INFOLOG_EX(blob_log, "blob append pos from:%lu (lba:%lu) len:%lu and from:%lu (lba:%lu) len:%lu\n", 
                        ctx->start_pos, ctx->lba, first_len, next->start_pos, next->lba, second_len);
         inflight_rw.emplace(next->start_pos + second_len, false); // 只等待第二次写的偏移
         spdk_blob_io_writev(blob, channel, ctx->iov.data(), ctx->iov.size(),
@@ -225,13 +226,13 @@ public:
         struct rblob_rw_ctx* ctx;
 
         if (start < back.pos) {
-            SPDK_ERRLOG("read invalid pos. pos:%lu < back_pos:%lu\n", start, back.pos);
+            SPDK_ERRLOG_EX("read invalid pos. pos:%lu < back_pos:%lu\n", start, back.pos);
             cb_fn(arg, {start, length}, -EINVAL);
             return;
         }
 
         if (length > used() && !is_load) {
-            SPDK_ERRLOG("read over length. length:%lu > used:%lu\n", length, used());
+            SPDK_ERRLOG_EX("read over length. length:%lu > used:%lu\n", length, used());
             cb_fn(arg, {start, length}, -ENOSPC);
             return;
         }
@@ -281,7 +282,7 @@ public:
             next->lba = pos_to_lba(next->start_pos);
             next->len = second_len;
 
-            SPDK_INFOLOG(blob_log, "blob read pos from:%lu (lba:%lu) len:%lu and from:%lu (lba:%lu) len:%lu\n", 
+            SPDK_INFOLOG_EX(blob_log, "blob read pos from:%lu (lba:%lu) len:%lu and from:%lu (lba:%lu) len:%lu\n", 
                     ctx->start_pos, ctx->lba, first_len, next->start_pos, next->lba, second_len);
             spdk_blob_io_readv(blob, channel, ctx->iov.data(), ctx->iov.size(), 
                             ctx->lba / unit_size, ctx->len / unit_size, rw_done, ctx);
@@ -297,7 +298,7 @@ public:
         ctx->cb_fn = std::move(cb_fn);
         ctx->arg = arg;
 
-        SPDK_INFOLOG(blob_log, "blob read pos from:%lu (lba:%lu) len:%lu\n", ctx->start_pos, ctx->lba, length);
+        SPDK_INFOLOG_EX(blob_log, "blob read pos from:%lu (lba:%lu) len:%lu\n", ctx->start_pos, ctx->lba, length);
         spdk_blob_io_readv(blob, channel, ctx->iov.data(), ctx->iov.size(), 
                             ctx->lba / unit_size, ctx->len / unit_size, rw_done, ctx);
         return;
@@ -305,7 +306,7 @@ public:
 
     void trim_back(uint64_t length, rblob_op_complete cb_fn, void* arg) {
         if (length > used()) {
-            SPDK_ERRLOG("trim back overflow. length:%lu used:%lu\n", length, used());
+            SPDK_ERRLOG_EX("trim back overflow. length:%lu used:%lu\n", length, used());
             cb_fn(arg, -ENOSPC);
             return;
         }
@@ -316,7 +317,7 @@ public:
 
         // 如果前方有足够的空间，直接trim
         if (!is_rolled() || length < back_to_end()) {
-            // SPDK_NOTICELOG("trim back case 1. pos from  %lu to %lu, lba from  %lu to %lu\n",
+            // SPDK_NOTICELOG_EX("trim back case 1. pos from  %lu to %lu, lba from  %lu to %lu\n",
             //     back.pos, back.pos + length,
             //     pos_to_lba(back.pos), pos_to_lba(back.pos + length));
             ctx->lba = back.lba;
@@ -353,7 +354,7 @@ public:
         back.pos += length;
         back.lba = pos_to_lba(back.pos);
 
-        // SPDK_NOTICELOG("trim back case 2. lba %lu len %lu and lba %lu len %lu, ctx:%p next:%p\n",
+        // SPDK_NOTICELOG_EX("trim back case 2. lba %lu len %lu and lba %lu len %lu, ctx:%p next:%p\n",
         //     ctx->lba, ctx->len, next->lba, next->len, ctx, next);
         spdk_blob_io_unmap(blob, channel, ctx->lba / unit_size, ctx->len / unit_size, trim_done, ctx);
         return;
@@ -361,7 +362,7 @@ public:
 
     void trim_front(uint64_t length, rblob_op_complete cb_fn, void* arg) {
         if (length > used()) {
-            SPDK_ERRLOG("trim front overflow. length:%lu used:%lu\n", length, used());
+            SPDK_ERRLOG_EX("trim front overflow. length:%lu used:%lu\n", length, used());
             cb_fn(arg, -ENOSPC);
             return;
         }
@@ -382,7 +383,7 @@ public:
             front.pos -=  length;
             front.lba = pos_to_lba(front.pos); 
 
-            SPDK_INFOLOG(blob_log, "trim front case 1. pos [%lu - %lu), lba [%lu - %lu)\n",
+            SPDK_INFOLOG_EX(blob_log, "trim front case 1. pos [%lu - %lu), lba [%lu - %lu)\n",
                     pos, front.pos, pos_to_lba(pos), pos_to_lba(front.pos));
             spdk_blob_io_unmap(blob, channel, ctx->lba / unit_size, ctx->len / unit_size, trim_done, ctx);
             return;        
@@ -409,7 +410,7 @@ public:
         front.pos -=  length;
         front.lba = pos_to_lba(front.pos); 
 
-        SPDK_INFOLOG(blob_log, "trim front case 2. first lba %lu len %lu, second lba %lu len %lu\n",
+        SPDK_INFOLOG_EX(blob_log, "trim front case 2. first lba %lu len %lu, second lba %lu len %lu\n",
                 ctx->lba, ctx->len, next->lba, next->len);
         spdk_blob_io_unmap(blob, channel, ctx->lba / unit_size, ctx->len / unit_size, trim_done, ctx);
         return;
@@ -419,7 +420,7 @@ public:
         struct rblob_rw_ctx* ctx = (struct rblob_rw_ctx*)arg;
 
         if (rberrno) {
-            SPDK_ERRLOG("rolling_blob lba:%lu len:%lu rw failed:%s\n", ctx->lba, ctx->len, spdk_strerror(rberrno));
+            SPDK_ERRLOG_EX("rolling_blob lba:%lu len:%lu rw failed:%s\n", ctx->lba, ctx->len, spdk_strerror(rberrno));
             ctx->cb_fn(ctx->arg, {ctx->start_pos, ctx->len}, rberrno);
             delete ctx;
             return;
@@ -428,7 +429,7 @@ public:
         // 如果有next指针，说明后面还有要执行的读写请求
         if (ctx->next) {
           struct rblob_rw_ctx* next = (struct rblob_rw_ctx*)ctx->next;
-          // SPDK_NOTICELOG("rw_done to next:%lu len:%lu\n", next->lba, next->len);
+          // SPDK_NOTICELOG_EX("rw_done to next:%lu len:%lu\n", next->lba, next->len);
           if (next->is_read) {
             spdk_blob_io_readv(next->blob, next->channel, next->iov.data(), next->iov.size(),
                               next->lba / unit_size, next->len / unit_size, rw_done, next);
@@ -440,7 +441,7 @@ public:
           return;
         }
 
-        // SPDK_NOTICELOG("rw_done finish:%lu len:%lu\n", ctx->lba, ctx->len);
+        // SPDK_NOTICELOG_EX("rw_done finish:%lu len:%lu\n", ctx->lba, ctx->len);
         if (!ctx->is_read) {
             // 如果是写，可能要移动一下front
             ctx->rb->maybe_advance_front(ctx->start_pos + ctx->len);
@@ -454,7 +455,7 @@ public:
         struct rblob_trim_ctx* ctx = (struct rblob_trim_ctx*)arg;
 
         if (rberrno) {
-            SPDK_ERRLOG("rolling_blob lba:%lu len:%lu trim back failed:%s\n", ctx->lba, ctx->len, spdk_strerror(rberrno));
+            SPDK_ERRLOG_EX("rolling_blob lba:%lu len:%lu trim back failed:%s\n", ctx->lba, ctx->len, spdk_strerror(rberrno));
             ctx->cb_fn(ctx->arg, rberrno);
             /// TODO(sunyifang): 这里还有些问题，如果有next，也并不会delete next。
             ///       上面rw也存在这个问题，下次统一fix。
@@ -484,7 +485,7 @@ public:
         ctx->arg = arg;
 
         serialize_super();
-        SPDK_INFOLOG(blob_log, "sync_md, back pos %lu, front pos %lu\n", back.pos, front.pos);
+        SPDK_INFOLOG_EX(blob_log, "sync_md, back pos %lu, front pos %lu\n", back.pos, front.pos);
         spdk_blob_io_write(blob, channel, super.get_buf(),
                             0, super.size() / unit_size, md_done, ctx);
     }
@@ -504,7 +505,7 @@ public:
         struct rblob_md_ctx* ctx = (struct rblob_md_ctx*)arg;
 
         if (rberrno) {
-            SPDK_ERRLOG("rolling_blob sync md failed:%s\n", spdk_strerror(rberrno));
+            SPDK_ERRLOG_EX("rolling_blob sync md failed:%s\n", spdk_strerror(rberrno));
             ctx->cb_fn(ctx->arg, rberrno);
             delete ctx;
             return;
@@ -548,7 +549,7 @@ public:
         load_rblob_ctx* ctx = (load_rblob_ctx* )arg;
 
         if (rberrno) {
-            SPDK_ERRLOG("load (rblob pos:%lu len:%lu) read failed:%s\n", 
+            SPDK_ERRLOG_EX("load (rblob pos:%lu len:%lu) read failed:%s\n", 
                         ctx->pos, ctx->length, spdk_strerror(rberrno));
             ctx->cb_fn(ctx->arg, rberrno);
             delete ctx;
@@ -561,17 +562,17 @@ public:
         auto next_unit = std::get<2>(result);
         if(next_unit > ctx->length)
             ctx->length *= 2;
-        SPDK_INFOLOG(object_store, "load rblob: check res [%d, %lu, %lu]\n", all_valid, valid_size, next_unit);
+        SPDK_INFOLOG_EX(object_store, "load rblob: check res [%d, %lu, %lu]\n", all_valid, valid_size, next_unit);
         if(all_valid && valid_size > 0){
             ctx->pos += valid_size;
             free_buffer_list(ctx->bl);
-            SPDK_INFOLOG(object_store, "load rblob: read pos %lu length %lu\n", ctx->pos, ctx->length);
+            SPDK_INFOLOG_EX(object_store, "load rblob: read pos %lu length %lu\n", ctx->pos, ctx->length);
             ctx->bl = std::move(make_buffer_list(ctx->length / 4096));
             ctx->rblob->read(ctx->pos, ctx->length, ctx->bl, &rolling_blob::load_read_done, ctx, true);
             return;
         }else{
             ctx->pos += valid_size;
-            SPDK_INFOLOG(object_store, "load rblob: read pos %lu length %lu\n", ctx->pos, ctx->length);
+            SPDK_INFOLOG_EX(object_store, "load rblob: read pos %lu length %lu\n", ctx->pos, ctx->length);
             free_buffer_list(ctx->bl);
             //读到了空的或无效的blob data,设置front
             ctx->rblob->set_front(ctx->pos);
@@ -593,7 +594,7 @@ public:
                 return;
             } 
 
-            SPDK_INFOLOG(object_store, "load rblob: after load md back_pos %lu front_pos %lu\n", back_pos(), front_pos());
+            SPDK_INFOLOG_EX(object_store, "load rblob: after load md back_pos %lu front_pos %lu\n", back_pos(), front_pos());
             uint64_t start = back_pos();  
             load_rblob_ctx* ctx = new load_rblob_ctx{.rblob = this, .cb_fn = std::move(cb_fn), .arg = arg, 
                                         .check = std::move(check), .pos = start, .length = read_unit};
@@ -614,7 +615,7 @@ public:
       struct rblob_close_ctx* ctx = (struct rblob_close_ctx*)arg;
 
       if (rberrno) {
-          SPDK_ERRLOG("rolling_blob close failed:%s\n", spdk_strerror(rberrno));
+          SPDK_ERRLOG_EX("rolling_blob close failed:%s\n", spdk_strerror(rberrno));
           ctx->cb_fn(ctx->arg, rberrno);
           delete ctx;
           return;
@@ -712,7 +713,7 @@ private:
 
         front.pos = advance;
         front.lba = pos_to_lba(front.pos);
-        // SPDK_NOTICELOG("front.pos:%lu front.lba:%lu\n", front.pos, front.lba);
+        // SPDK_NOTICELOG_EX("front.pos:%lu front.lba:%lu\n", front.pos, front.lba);
     }
 
 
@@ -755,14 +756,14 @@ make_open_done(void *arg, struct spdk_blob *blob, int rberrno) {
 
   /// TODO(sunyifang): open 失败还是应该 close 掉，以后需要修改
   if (rberrno) {
-      SPDK_ERRLOG("make_rolling_blob failed during open. error:%s\n", spdk_strerror(rberrno));
+      SPDK_ERRLOG_EX("make_rolling_blob failed during open. error:%s\n", spdk_strerror(rberrno));
       ctx->cb_fn(ctx->arg, nullptr, rberrno);
       delete ctx;
       return;
   }
 
   uint64_t blob_size = spdk_blob_get_num_clusters(blob) * spdk_bs_get_cluster_size(ctx->bs);
-  SPDK_NOTICELOG("open rblob success\n");
+  SPDK_NOTICELOG_EX("open rblob success\n");
   struct rolling_blob* rblob = new rolling_blob(blob, ctx->channel, blob_size);
   ctx->cb_fn(ctx->arg, rblob, 0);
   delete ctx;
@@ -773,12 +774,12 @@ make_create_done(void *arg, spdk_blob_id blobid, int rberrno) {
   struct make_rblob_ctx *ctx = (struct make_rblob_ctx *)arg;
 
   if (rberrno) {
-      SPDK_ERRLOG("make_rolling_blob failed during create. error:%s\n", spdk_strerror(rberrno));
+      SPDK_ERRLOG_EX("make_rolling_blob failed during create. error:%s\n", spdk_strerror(rberrno));
       ctx->cb_fn(ctx->arg, nullptr, rberrno);
       return;
   }
 
-  SPDK_NOTICELOG("create success\n");
+  SPDK_NOTICELOG_EX("create success\n");
   spdk_bs_open_blob(ctx->bs, blobid, make_open_done, ctx);
 }
 

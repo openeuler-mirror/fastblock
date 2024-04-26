@@ -32,8 +32,8 @@ struct apply_complete : public utils::context{
     , stm(_stm) {}
 
     void finish(int r) override {
-        SPDK_INFOLOG(pg_group, "in pg %lu.%lu, apply log index %ld return %d\n", 
-                stm->get_raft()->raft_get_pool_id(), stm->get_raft()->raft_get_pg_id(), idx, r);
+        SPDK_INFOLOG_EX(pg_group, "in pg %lu.%lu, apply log index %ld return %d\n",
+                           stm->get_raft()->raft_get_pool_id(), stm->get_raft()->raft_get_pg_id(), idx, r);
         if(r == err::E_SUCCESS){
             auto last_applied_idx = stm->get_last_applied_idx();
             stm->set_last_applied_idx(idx);
@@ -54,8 +54,8 @@ int state_machine::raft_apply_entry()
     auto cur_time = utils::get_time();
     if((cur_time - _last_save_time) / 1000 > 1 || _last_applied_idx - _last_save_index >= 100){
         if(_last_save_index != _last_applied_idx){
-            SPDK_INFOLOG(pg_group, "pg %lu.%lu save last_apply_index %lu  g_last_index %lu\n", 
-                    get_raft()->raft_get_pool_id(), get_raft()->raft_get_pg_id(), _last_applied_idx, _last_save_index);
+            SPDK_INFOLOG_EX(pg_group, "pg %lu.%lu save last_apply_index %lu  g_last_index %lu\n",
+                               get_raft()->raft_get_pool_id(), get_raft()->raft_get_pg_id(), _last_applied_idx, _last_save_index);
             _last_save_index = _last_applied_idx;
             _last_save_time = cur_time;
             get_raft()->save_last_apply_index(_last_applied_idx);
@@ -76,15 +76,15 @@ int state_machine::raft_apply_entry()
       log_idx,
       [this, log_idx](std::shared_ptr<raft_entry_t> ety){
         if (!ety){
-            SPDK_INFOLOG(pg_group, "pg %lu.%lu not find log %ld\n",
-                    get_raft()->raft_get_pool_id(), get_raft()->raft_get_pg_id(), log_idx);
+            SPDK_INFOLOG_EX(pg_group, "pg %lu.%lu not find log %ld\n",
+                               get_raft()->raft_get_pool_id(), get_raft()->raft_get_pg_id(), log_idx);
             set_apply_in_progress(false);
             return;
         }
-        SPDK_INFOLOG(pg_group, "pg %lu.%lu osd %d applying log: %ld, idx: %ld size: %u \n", 
-                    get_raft()->raft_get_pool_id(), get_raft()->raft_get_pg_id(), 
-                    get_raft()->raft_get_nodeid(), log_idx, ety->idx(), (uint32_t)ety->data().size());
-    
+        SPDK_INFOLOG_EX(pg_group, "pg %lu.%lu osd %d applying log: %ld, idx: %ld size: %u \n",
+                           get_raft()->raft_get_pool_id(), get_raft()->raft_get_pg_id(),
+                           get_raft()->raft_get_nodeid(), log_idx, ety->idx(), (uint32_t)ety->data().size());
+
         apply_complete *complete = new apply_complete(log_idx, this);
         apply(ety, complete);
       });

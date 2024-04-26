@@ -130,7 +130,7 @@ struct mlx5dv : public provider {
 
             ret = ::ibv_modify_qp(id->qp, &qp_attr, IBV_QP_STATE);
             if (ret) {
-                SPDK_ERRLOG("failed to modify qp state to IBV_QPS_ERR, error: %s\n", std::strerror(ret));
+                SPDK_ERRLOG_EX("failed to modify qp state to IBV_QPS_ERR, error: %s\n", std::strerror(ret));
                 errno = ret;
 
                 return ret;
@@ -139,7 +139,7 @@ struct mlx5dv : public provider {
 
         ret = ::rdma_disconnect(id);
         if (ret) {
-            SPDK_ERRLOG("rdma_disconnect() failed, error: %s\n", std::strerror(errno));
+            SPDK_ERRLOG_EX("rdma_disconnect() failed, error: %s\n", std::strerror(errno));
             return ret;
         }
 

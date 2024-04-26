@@ -12,6 +12,7 @@
 #include "spdk_buffer.h"
 #include "buffer_pool.h"
 #include "utils/itos.h"
+#include "utils/log.h"
 
 #include <string>
 #include <spdk/env.h>
@@ -32,10 +33,10 @@ void buffer_pool_init() {
 				    buffer_size,
 				    buffer_pool_size / (2 * spdk_env_get_core_count()),
 				    sockid);
-    SPDK_NOTICELOG("create buffer pool name:%s lcore:%u sockid:%u\n",
+    SPDK_NOTICELOG_EX("create buffer pool name:%s lcore:%u sockid:%u\n",
                     name.c_str(), lcore, sockid);
     if (!tls_buffer_pool) {
-		SPDK_ERRLOG("create buffer pool name:%s lcore:%u sockid:%u failed!\n",
+		SPDK_ERRLOG_EX("create buffer pool name:%s lcore:%u sockid:%u failed!\n",
                     name.c_str(), lcore, sockid);
 		return;
 	}
@@ -43,7 +44,7 @@ void buffer_pool_init() {
 
 void buffer_pool_fini() {
     if (spdk_mempool_count(tls_buffer_pool) != buffer_pool_size) {
-        SPDK_ERRLOG("buffer bufferfer pool count is %zu but should be %u\n",
+        SPDK_ERRLOG_EX("buffer bufferfer pool count is %zu but should be %u\n",
                 spdk_mempool_count(tls_buffer_pool),
                 buffer_pool_size);
     }

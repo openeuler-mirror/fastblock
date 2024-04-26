@@ -45,20 +45,20 @@ public:
             _pd = ::ibv_alloc_pd(ctx->context);
             if (not _pd) {
                 if (specify_device) {
-                    SPDK_ERRLOG(
+                    SPDK_ERRLOG_EX(
                       "failed allocating protection domain on port %d of specified device %s\n",
                       ctx->port, dev_name.c_str());
                     return iterate_tag::stop;
                 }
 
-                SPDK_ERRLOG(
+                SPDK_ERRLOG_EX(
                   "failed allocating protection domain on port %d of %s\n",
                   ctx->port, dev_name.c_str());
 
                 return iterate_tag::keep;
             }
 
-            SPDK_INFOLOG(
+            SPDK_INFOLOG_EX(
               msg,
               "allocated protection domain(%p) on port %d of %s\n",
               _pd, ctx->port, dev_name.c_str());

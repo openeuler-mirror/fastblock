@@ -13,6 +13,7 @@
 #include "msg/rdma/pd.h"
 #include "msg/rdma/work_request_id.h"
 #include "utils/fmt.h"
+#include "utils/log.h"
 #include "utils/simple_poller.h"
 
 #include <spdk/env.h>
@@ -189,7 +190,7 @@ public:
     completion_queue& operator=(completion_queue&&) = delete;
 
     ~completion_queue() noexcept {
-        SPDK_DEBUGLOG(msg, "call ~completion_queue()\n");
+        SPDK_DEBUGLOG_EX(msg, "call ~completion_queue()\n");
         destroy_cq();
     }
 
@@ -217,27 +218,27 @@ private:
         while (rc > 0) {
             rc = 0;
             rc = ::ibv_poll_cq(_cq, 1, &wc);
-            SPDK_INFOLOG(msg, "drain cq, polled %d cqe(s)\n", rc);
+            SPDK_INFOLOG_EX(msg, "drain cq, polled %d cqe(s)\n", rc);
         }
     }
 
     void destroy_cq() noexcept {
         drain_cq();
-        SPDK_INFOLOG(msg, "going to destroy cq\n");
+        SPDK_INFOLOG_EX(msg, "going to destroy cq\n");
         auto rc = ::ibv_destroy_cq(_cq);
 
         if (rc == EBUSY) {
-            SPDK_ERRLOG("destroy cq failed: %s, will drain cq and try again\n", std::strerror(rc));
+            SPDK_ERRLOG_EX("destroy cq failed: %s, will drain cq and try again\n", std::strerror(rc));
             drain_cq();
             rc = ::ibv_destroy_cq(_cq);
 
             if (rc != 0) {
-                SPDK_ERRLOG("destroy cq failed: %s\n", std::strerror(rc));
+                SPDK_ERRLOG_EX("destroy cq failed: %s\n", std::strerror(rc));
             }
         } else if (rc != 0) {
-            SPDK_ERRLOG("destroy cq failed: %s\n", std::strerror(rc));
+            SPDK_ERRLOG_EX("destroy cq failed: %s\n", std::strerror(rc));
         } else {
-            SPDK_INFOLOG(msg, "cq destroyed\n");
+            SPDK_INFOLOG_EX(msg, "cq destroyed\n");
         }
     }
 

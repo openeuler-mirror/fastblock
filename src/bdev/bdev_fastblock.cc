@@ -242,7 +242,7 @@ static void bdev_fastblock_read_callback(struct spdk_bdev_io *bdev_io, char* dat
 		    }
 	    }
 		if(length != len){
-			SPDK_ERRLOG("length: %lu len: %lu\n", length, len);
+			SPDK_ERRLOG_EX("length: %lu len: %lu\n", length, len);
 			spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
 			return;
 		}
@@ -339,7 +339,7 @@ bdev_fastblock_get_buf_cb(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_
 			len += iovs[i].iov_len;
 		}
 	}
-	SPDK_INFOLOG(libblk, "start read: offset:{%lu} iovs len:{%lu} total len:{%lu}\n", offset, len, bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen);
+	SPDK_INFOLOG_EX(libblk, "start read: offset:{%lu} iovs len:{%lu} total len:{%lu}\n", offset, len, bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen);
 
 	uint64_t read_id = future_id++;
 
@@ -460,7 +460,7 @@ bdev_fastblock_create_cb(void *io_device, void *ctx_buf)
 	ch->pfd = eventfd(0, EFD_NONBLOCK);
 	if (ch->pfd < 0)
 	{
-		SPDK_ERRLOG("Failed to get eventfd\n");
+		SPDK_ERRLOG_EX("Failed to get eventfd\n");
 		goto err;
 	}
 
@@ -473,7 +473,7 @@ bdev_fastblock_create_cb(void *io_device, void *ctx_buf)
 	ret = epoll_ctl(ch->group_ch->epoll_fd, EPOLL_CTL_ADD, ch->pfd, &event);
 	if (ret < 0)
 	{
-		SPDK_ERRLOG("Failed to add the fd of ch(%p) to the epoll group from group_ch=%p\n", ch,
+		SPDK_ERRLOG_EX("Failed to add the fd of ch(%p) to the epoll group from group_ch=%p\n", ch,
 					ch->group_ch);
 		goto err;
 	}
@@ -495,7 +495,7 @@ bdev_fastblock_destroy_cb(void *io_device, void *ctx_buf)
 				   io_channel->pfd, NULL);
 	if (rc < 0)
 	{
-		SPDK_ERRLOG("Failed to remove fd on io_channel=%p from the polling group=%p\n",
+		SPDK_ERRLOG_EX("Failed to remove fd on io_channel=%p from the polling group=%p\n",
 					io_channel, io_channel->group_ch);
 	}
 
@@ -601,11 +601,11 @@ int bdev_fastblock_create(struct spdk_bdev **bdev, const char *name,
 		return -EINVAL;
 	}
 
-	SPDK_DEBUGLOG(bdev_fastblock, "bdev_fastblock_create 11\n");
+	SPDK_DEBUGLOG_EX(bdev_fastblock, "bdev_fastblock_create 11\n");
 	fastblock = (struct bdev_fastblock *)calloc(1, sizeof(struct bdev_fastblock));
 	if (fastblock == NULL)
 	{
-		SPDK_ERRLOG("Failed to allocate bdev_fastblock struct\n");
+		SPDK_ERRLOG_EX("Failed to allocate bdev_fastblock struct\n");
 		return -ENOMEM;
 	}
 
@@ -630,17 +630,17 @@ int bdev_fastblock_create(struct spdk_bdev **bdev, const char *name,
 		bdev_fastblock_free(fastblock);
 		return -ENOMEM;
 	}
-	SPDK_NOTICELOG("image_name %s, monitor_address %s\n", fastblock->image_name, fastblock->monitor_address);
+	SPDK_NOTICELOG_EX("image_name %s, monitor_address %s\n", fastblock->image_name, fastblock->monitor_address);
 
 	ret = bdev_create_image(fastblock);
 	if (ret != 0)
 	{
 		bdev_fastblock_free(fastblock);
-		SPDK_ERRLOG("Failed to init fastblock device\n");
+		SPDK_ERRLOG_EX("Failed to init fastblock device\n");
 		return ret;
 	}
 
-	SPDK_NOTICELOG("after bdev_create_image\n");
+	SPDK_NOTICELOG_EX("after bdev_create_image\n");
 	if (name)
 	{
 		fastblock->disk.name = strdup(name);
@@ -664,7 +664,7 @@ int bdev_fastblock_create(struct spdk_bdev **bdev, const char *name,
 	fastblock->disk.fn_table = &fastblock_fn_table;
 	fastblock->disk.module = &fastblock_if;
 
-	SPDK_NOTICELOG("Add %s fastblock disk to lun\n", fastblock->disk.name);
+	SPDK_NOTICELOG_EX("Add %s fastblock disk to lun\n", fastblock->disk.name);
 
 	spdk_io_device_register(fastblock, bdev_fastblock_create_cb,
 							bdev_fastblock_destroy_cb,
@@ -711,7 +711,7 @@ int bdev_fastblock_resize(struct spdk_bdev *bdev, const uint64_t new_size_in_mb)
 	current_size_in_mb = bdev->blocklen * bdev->blockcnt / (1024 * 1024);
 	if (current_size_in_mb > new_size_in_mb)
 	{
-		SPDK_ERRLOG("The new bdev size must be lager than current bdev size.\n");
+		SPDK_ERRLOG_EX("The new bdev size must be lager than current bdev size.\n");
 		return -EINVAL;
 	}
 
@@ -724,7 +724,7 @@ int bdev_fastblock_resize(struct spdk_bdev *bdev, const uint64_t new_size_in_mb)
 	rc = spdk_bdev_notify_blockcnt_change(bdev, new_size_in_byte / bdev->blocklen);
 	if (rc != 0)
 	{
-		SPDK_ERRLOG("failed to notify block cnt change.\n");
+		SPDK_ERRLOG_EX("failed to notify block cnt change.\n");
 		return rc;
 	}
 
@@ -761,7 +761,7 @@ bdev_fastblock_group_create_cb(void *io_device, void *ctx_buf)
 	ch->epoll_fd = epoll_create1(0);
 	if (ch->epoll_fd < 0)
 	{
-		SPDK_ERRLOG("Could not create epoll fd on io device=%p\n", io_device);
+		SPDK_ERRLOG_EX("Could not create epoll fd on io device=%p\n", io_device);
 		return -1;
 	}
 

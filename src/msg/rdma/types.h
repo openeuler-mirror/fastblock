@@ -26,7 +26,7 @@
     std::unique_ptr<type, decltype(::spdk_free)*>{reinterpret_cast<type*>(ptr), ::spdk_free}
 
 #define log_conf_pair_raw(conf_key, val)     \
-    SPDK_NOTICELOG("configuration item \"%s\" value is %s\n", conf_key, val)
+    SPDK_NOTICELOG_EX("configuration item \"%s\" value is %s\n", conf_key, val)
 
 #define log_conf_pair(conf_key, val)     \
     log_conf_pair_raw(conf_key,  std::to_string(val).c_str())

@@ -127,7 +127,7 @@ int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_
     {
         if(!get_catch_up_node(node->raft_node_get_id()))
             return 0;
-        SPDK_INFOLOG(pg_group, "state: %d node_id: %d result: %d\n", (int)get_state(), node->raft_node_get_id(), result);
+        SPDK_INFOLOG_EX(pg_group, "state: %d node_id: %d result: %d\n", (int)get_state(), node->raft_node_get_id(), result);
         if(result != 0){
             finish_func(result);
             return 1;
@@ -135,7 +135,7 @@ int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_
 
         set_node_catch_up(node->raft_node_get_id());
         if(all_new_nodes_catch_up()){
-            SPDK_INFOLOG(pg_group, "all_new_nodes_catch_up\n");
+            SPDK_INFOLOG_EX(pg_group, "all_new_nodes_catch_up\n");
             int ret = 0;
             if(get_change_num(_cfg_entry) > 1){
                 //添加和删除节点之和大于1
@@ -175,10 +175,10 @@ int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_
             if(find_old_node(node->raft_node_get_id()))
                 _old_node_match_size++;
         }
-        SPDK_INFOLOG(pg_group, "state: %d node_id: %d rsp_current_idx:%ld result: %d\n", (int)get_state(), node->raft_node_get_id(), rsp_current_idx, result);
+        SPDK_INFOLOG_EX(pg_group, "state: %d node_id: %d rsp_current_idx:%ld result: %d\n", (int)get_state(), node->raft_node_get_id(), rsp_current_idx, result);
         if((_new_node_match_size  > get_node_size() / 2)
                 && (_old_node_match_size  > get_old_node_size() / 2)){
-            SPDK_INFOLOG(pg_group, "all nodes match\n");
+            SPDK_INFOLOG_EX(pg_group, "all nodes match\n");
             int ret = create_cfg_entry(_cfg_complete);
             if(ret != 0){
                 finish_func(result);
@@ -199,7 +199,7 @@ int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_
     {
         if(_configuration_index == 0 || _configuration_index != rsp_current_idx)
             return 0;
-        SPDK_INFOLOG(pg_group, "state: %d node_id: %d rsp_current_idx: %ld result: %d\n", (int)get_state(), node->raft_node_get_id(), _configuration_index, result);
+        SPDK_INFOLOG_EX(pg_group, "state: %d node_id: %d rsp_current_idx: %ld result: %d\n", (int)get_state(), node->raft_node_get_id(), _configuration_index, result);
         if(result != 0){
             if(result == err::RAFT_ERR_NOT_LEADER || result == err::RAFT_ERR_PG_DELETED){
                 finish_func(result);
@@ -218,7 +218,7 @@ int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_
                 _new_node_match_size++;
         }       
         if(_new_node_match_size > get_node_size() / 2){
-            SPDK_INFOLOG(pg_group, "all nodes match\n");
+            SPDK_INFOLOG_EX(pg_group, "all nodes match\n");
             //更新raft的_nodes_stat
             updatet_raft_nodes_stat();
             finish_func(0);
@@ -268,12 +268,12 @@ void node_configuration_manager::truncate_by_idx(raft_index_t index){
 bool node_configuration_manager::save_node_configuration(){
     auto [res, value] = serialize();
     if(!res){
-        SPDK_INFOLOG(pg_group, "serialize node_configuration failed.\n");
+        SPDK_INFOLOG_EX(pg_group, "serialize node_configuration failed.\n");
         return false;
     }
 
     if(_raft->save_node_configuration(value) != 0){
-        SPDK_INFOLOG(pg_group, "save_node_configuration failed.\n");
+        SPDK_INFOLOG_EX(pg_group, "save_node_configuration failed.\n");
         return false;
     }
     return true;        
@@ -282,7 +282,7 @@ bool node_configuration_manager::save_node_configuration(){
 bool node_configuration_manager::load_node_configuration(){
     auto val = _raft->load_node_configuration();
     if(!val.has_value()){
-        SPDK_INFOLOG(pg_group, "no find node configuration\n");
+        SPDK_INFOLOG_EX(pg_group, "no find node configuration\n");
         return false;    
     }
     return  deserialize(val.value());     

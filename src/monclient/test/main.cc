@@ -21,6 +21,7 @@
 #include <boost/test/included/unit_test.hpp>
 
 #include <memory>
+int g_id{-1};
 
 namespace {
 

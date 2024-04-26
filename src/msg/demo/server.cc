@@ -23,6 +23,7 @@
 
 #include <csignal>
 
+int g_id{-1};
 namespace {
 class demo_ping_pong_service : public ping_pong::ping_pong_service {
 public:
@@ -75,7 +76,7 @@ int parse_arg(int ch, char* arg) {
 }
 
 void on_server_close() {
-    SPDK_NOTICELOG("Close the rpc server\n");
+    SPDK_NOTICELOG_EX("Close the rpc server\n");
     if (g_rpc_server) {
         g_rpc_server->stop([] () {
             ::spdk_app_stop(0);
@@ -101,7 +102,7 @@ void start_rpc_server(void* arg) {
     try {
         g_rpc_server = std::make_shared<msg::rdma::server>(g_cpumask, opts);
     } catch (const std::exception& e) {
-        SPDK_ERRLOG("Error: Create rpc server failed, %s\n", e.what());
+        SPDK_ERRLOG_EX("Error: Create rpc server failed, %s\n", e.what());
         std::raise(SIGINT);
         return;
     }
@@ -131,10 +132,10 @@ int main(int argc, char** argv) {
     rpc_context ctx{nullptr, &rpc_service};
     rc = ::spdk_app_start(&opts, start_rpc_server, &ctx);
     if (rc) {
-        SPDK_ERRLOG("ERROR: Start spdk app failed\n");
+        SPDK_ERRLOG_EX("ERROR: Start spdk app failed\n");
     }
 
-    SPDK_NOTICELOG("Exiting from application\n");
+    SPDK_NOTICELOG_EX("Exiting from application\n");
     ::spdk_app_fini();
 
     return rc;

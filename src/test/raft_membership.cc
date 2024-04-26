@@ -23,6 +23,7 @@ int g_op_type = ADD_NODE;
 int64_t g_pool_version = 0;
 std::vector<raft_node_info> g_osd_list;
 static const char* g_json_conf{nullptr};
+int g_id{-1};
 
 static void
 fbbench_usage(void)
@@ -132,7 +133,7 @@ raft_membership(void *arg1)
 {
     server_t *server = (server_t *)arg1;
 
-    SPDK_NOTICELOG("------block start, cpu count : %u \n", spdk_env_get_core_count());
+    SPDK_NOTICELOG_EX("------block start, cpu count : %u \n", spdk_env_get_core_count());
     auto core_no = ::spdk_env_get_current_core();
     ::spdk_cpuset cpumask{};
     ::spdk_cpuset_zero(&cpumask);
@@ -142,7 +143,7 @@ raft_membership(void *arg1)
     osd_client *cli = new osd_client(server, &cpumask, opts);
     auto connect_done = [cli, server](bool is_ok, std::shared_ptr<msg::rdma::client::connection> conn){
         if (not is_ok) {
-            SPDK_ERRLOG("ERROR: Connect failed\n");
+            SPDK_ERRLOG_EX("ERROR: Connect failed\n");
             throw std::runtime_error{"connect failed"};
         }
 
@@ -209,7 +210,7 @@ int main(int argc, char *argv[])
     server.pool_id = g_pool_id;
     server.pg_id = g_pg_id;
 
-    SPDK_NOTICELOG("config file is %s\n", g_json_conf);
+    SPDK_NOTICELOG_EX("config file is %s\n", g_json_conf);
     boost::property_tree::read_json(std::string(g_json_conf), server.pt);
 
     /* Blocks until the application is exiting */

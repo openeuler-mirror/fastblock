@@ -13,6 +13,7 @@
 #include "spdk/thread.h"
 #include "spdk/env.h"
 #include "spdk/util.h"
+#include "utils/log.h"
 #include "localstore/storage_manager.h"
 
 #include <absl/container/flat_hash_map.h>
@@ -49,7 +50,7 @@ void pg_group_t::load_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_i
 }  
 
 void pg_group_t::delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id){
-    SPDK_INFOLOG(pg_group, "remove pg %lu.%lu\n", pool_id, pg_id);
+    SPDK_INFOLOG_EX(pg_group, "remove pg %lu.%lu\n", pool_id, pg_id);
     _pg_remove(shard_id, pool_id, pg_id);
 }
 
@@ -78,13 +79,13 @@ void pg_group_t::change_pg_membership(uint32_t shard_id, uint64_t pool_id, uint6
     auto name = pg_id_to_name(pool_id, pg_id);
     auto raft = _shard_mg[shard_id].get_pg(name);
     if(!raft){
-        SPDK_WARNLOG("not found pg %lu.%lu\n", pool_id, pg_id);
+        SPDK_WARNLOG_EX("not found pg %lu.%lu\n", pool_id, pg_id);
         if(complete)
             complete->complete(err::RAFT_ERR_NOT_FOUND_PG);
         return;
     }
     if(!raft->raft_is_leader()){
-        SPDK_INFOLOG(pg_group, "not leader of pg %lu.%lu\n", pool_id, pg_id);
+        SPDK_INFOLOG_EX(pg_group, "not leader of pg %lu.%lu\n", pool_id, pg_id);
         if(complete)
             complete->complete(0);
         return;        
@@ -102,7 +103,7 @@ void pg_group_t::change_pg_membership(uint32_t shard_id, uint64_t pool_id, uint6
         if(!it){
             add_count++;
             add_node = osd;
-            SPDK_INFOLOG(pg_group, "add node %d to pg %lu.%lu\n", add_node.node_id(), raft->raft_get_pool_id(), raft->raft_get_pg_id());
+            SPDK_INFOLOG_EX(pg_group, "add node %d to pg %lu.%lu\n", add_node.node_id(), raft->raft_get_pool_id(), raft->raft_get_pg_id());
         }
     }
 
@@ -110,11 +111,11 @@ void pg_group_t::change_pg_membership(uint32_t shard_id, uint64_t pool_id, uint6
         if(smp.find(node_stat.first) == smp.end()){
             remove_node = node_stat.second->raft_get_node_info();
             remove_count++;
-            SPDK_INFOLOG(pg_group, "remove node %d from pg %lu.%lu\n", remove_node.node_id(), raft->raft_get_pool_id(), raft->raft_get_pg_id());
+            SPDK_INFOLOG_EX(pg_group, "remove node %d from pg %lu.%lu\n", remove_node.node_id(), raft->raft_get_pool_id(), raft->raft_get_pg_id());
         }
     }
 
-    SPDK_INFOLOG(pg_group, "add_count %d remove_count %d\n", add_count, remove_count);
+    SPDK_INFOLOG_EX(pg_group, "add_count %d remove_count %d\n", add_count, remove_count);
     if(add_count + remove_count >= 2){
         raft->change_raft_membership(std::move(new_osds), complete);
     }else if(add_count == 1){
@@ -154,11 +155,11 @@ std::vector<shard_manager::node_heartbeat> shard_manager::get_heartbeat_requests
         auto create_heartbeat_request = [this, raft, now, &pending_beats](const std::shared_ptr<raft_node> node) mutable{
             if (raft->raft_is_self(node))
                 return;
-            SPDK_DEBUGLOG(pg_group, "node: %d pg: %lu.%lu suppress_heartbeats: %d heartbeating: %d  append_time: %lu heartbeat_timeout: %d now: %lu\n",
-                    node->raft_node_get_id(), raft->raft_get_pool_id(), raft->raft_get_pg_id(),
-                    node->raft_get_suppress_heartbeats(),
-                    node->raft_node_is_heartbeating(), node->raft_get_append_time(),
-                    raft->raft_get_heartbeat_timeout(), now);
+            SPDK_DEBUGLOG_EX(pg_group, "node: %d pg: %lu.%lu suppress_heartbeats: %d heartbeating: %d  append_time: %lu heartbeat_timeout: %d now: %lu\n",
+                                node->raft_node_get_id(), raft->raft_get_pool_id(), raft->raft_get_pg_id(),
+                                node->raft_get_suppress_heartbeats(),
+                                node->raft_node_is_heartbeating(), node->raft_get_append_time(),
+                                raft->raft_get_heartbeat_timeout(), now);
             if(node->raft_get_suppress_heartbeats())
                 return;
 
@@ -167,8 +168,8 @@ std::vector<shard_manager::node_heartbeat> shard_manager::get_heartbeat_requests
             if(node->raft_get_append_time() + raft->raft_get_heartbeat_timeout() > now)
                 return;
 
-            SPDK_DEBUGLOG(pg_group, "------ heartbeat to node: %d pg: %lu.%lu\n",
-                    node->raft_node_get_id(), raft->raft_get_pool_id(), raft->raft_get_pg_id());
+            SPDK_DEBUGLOG_EX(pg_group, "------ heartbeat to node: %d pg: %lu.%lu\n",
+                                node->raft_node_get_id(), raft->raft_get_pool_id(), raft->raft_get_pg_id());
             // node->raft_node_set_heartbeating(true);
             node->raft_set_append_time(now);
 
@@ -226,7 +227,7 @@ void pg_group_t::load_pgs_map(std::map<uint64_t, std::vector<utils::pg_info_type
             auto node_ids = pg->get_nodes_stat().get_node_ids();
             utils::pg_info_type info{.pg_id = pg_id, .version = 0, .osds = std::move(node_ids)};
 
-            SPDK_INFOLOG(pg_group, "pool %lu pg %lu osd size %ld\n", pool_id, pg_id, info.osds.size());
+            SPDK_INFOLOG_EX(pg_group, "pool %lu pg %lu osd size %ld\n", pool_id, pg_id, info.osds.size());
             auto [it, res] = pools.try_emplace(pool_id);
             it->second.emplace_back(std::move(info));
         }

@@ -80,12 +80,13 @@ fbbench_parse_arg(int ch, char *arg)
     }
     return 0;
 }
+int g_id{-1};
 
 int print_stats(void *p)
 {
     g_seconds++;
 
-    SPDK_NOTICELOG("last second processed: %d\n", g_counter - g_counter_last_value);
+    SPDK_NOTICELOG_EX("last second processed: %d\n", g_counter - g_counter_last_value);
     g_counter_last_value = g_counter;
     if (g_total_seconds && g_total_seconds <= g_seconds)
     {
@@ -111,7 +112,7 @@ fbbench_started(void *arg1)
 
     server_t *server = (server_t *)arg1;
 
-    SPDK_NOTICELOG("------block start, cpu count : %u \n", spdk_env_get_core_count());
+    SPDK_NOTICELOG_EX("------block start, cpu count : %u \n", spdk_env_get_core_count());
     auto core_no = ::spdk_env_get_current_core();
     ::spdk_cpuset cpumask{};
     ::spdk_cpuset_zero(&cpumask);
@@ -137,7 +138,7 @@ static void process_response(client *c, uint64_t id)
     {
         if (c->get_wr().state() != 0)
         {
-            SPDK_ERRLOG("write request failed, state is %d, most likely this node is not the raft leader\r\n", c->get_wr().state());
+            SPDK_ERRLOG_EX("write request failed, state is %d, most likely this node is not the raft leader\r\n", c->get_wr().state());
             exit(-1);
         }
     }
@@ -205,7 +206,7 @@ int main(int argc, char *argv[])
     server.osd_addr = g_osd_addr;
     server.osd_port = g_osd_port;
 
-    SPDK_NOTICELOG("config file is %s\n", g_json_conf);
+    SPDK_NOTICELOG_EX("config file is %s\n", g_json_conf);
     boost::property_tree::read_json(std::string(g_json_conf), server.pt);
 
     /* Blocks until the application is exiting */

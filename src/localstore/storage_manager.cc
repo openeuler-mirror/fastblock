@@ -48,14 +48,14 @@ static void
 _storage_init(storage_op_complete cb_fn, void* arg, spdk_thread *thread) {
   struct spdk_bs_dev *bs_dev = NULL;
 
-  SPDK_INFOLOG(storage_log, "storage init, thread id %lu\n", utils::get_spdk_thread_id());
+  SPDK_INFOLOG_EX(storage_log, "storage init, thread id %lu\n", utils::get_spdk_thread_id());
   std::construct_at(&g_st_mgr);
   storage_context *ctx = new storage_context{.cb_fn = std::move(cb_fn), .arg = arg, .thread = thread};
   g_st_mgr.start(
     [](void *arg, int serror){
       storage_context *ctx = (storage_context *)arg;
       ctx->serror = serror;
-      SPDK_INFOLOG(storage_log, "storage init done.\n");
+      SPDK_INFOLOG_EX(storage_log, "storage init done.\n");
       storage_op_done(ctx);
     },
     ctx
@@ -79,17 +79,17 @@ static void
 _storage_fini(storage_op_complete cb_fn, void* arg, spdk_thread *thread) {
   struct spdk_bs_dev *bs_dev = NULL;
 
-  SPDK_INFOLOG(storage_log, "storage fini, thread id %lu\n", utils::get_spdk_thread_id());
+  SPDK_INFOLOG_EX(storage_log, "storage fini, thread id %lu\n", utils::get_spdk_thread_id());
   storage_context *ctx = new storage_context{.cb_fn = std::move(cb_fn), .arg = arg, .thread = thread};
   
   g_st_mgr.stop(
     [cb_fn = std::move(cb_fn)](void *arg, int error){
         if (error) {
-            SPDK_ERRLOG("storage_fini. error:%s\n", spdk_strerror(error));
+            SPDK_ERRLOG_EX("storage_fini. error:%s\n", spdk_strerror(error));
         }
         storage_context *ctx = (storage_context *)arg;
         ctx->serror = error;
-        SPDK_INFOLOG(storage_log, "storage fini done.\n");
+        SPDK_INFOLOG_EX(storage_log, "storage fini done.\n");
         std::destroy_at(&g_st_mgr);
         storage_op_done(ctx);
         return;
@@ -120,7 +120,7 @@ _storage_load(storage_op_complete cb_fn, void* arg, spdk_thread *thread){
   spdk_blob_id checkpoint_blob_id = blobs.on_shard(shard_id).kv_checkpoint_blob;
   spdk_blob_id new_checkpoint_blob_id = blobs.on_shard(shard_id).kv_new_checkpoint_blob;
 
-  SPDK_INFOLOG(storage_log, "storage load in core %u, kv_blob_id %lu, checkpoint_blob_id %lu, \
+  SPDK_INFOLOG_EX(storage_log, "storage load in core %u, kv_blob_id %lu, checkpoint_blob_id %lu, \
       new_checkpoint_blob_id %lu, thread id %lu\n",
       shard_id, kv_blob_id, checkpoint_blob_id, new_checkpoint_blob_id,
       utils::get_spdk_thread_id());
@@ -132,7 +132,7 @@ _storage_load(storage_op_complete cb_fn, void* arg, spdk_thread *thread){
     [](void *arg, int error){
       storage_context *ctx = (storage_context *)arg;
       ctx->serror = error;
-      SPDK_INFOLOG(storage_log, "storage load done.\n");
+      SPDK_INFOLOG_EX(storage_log, "storage load done.\n");
       storage_op_done(ctx);
     }, ctx);  
 }

@@ -62,7 +62,7 @@ void osd_stm::write_obj(const std::string& obj_name, uint64_t offset, const std:
     std::map<std::string, xattr_val_type> xattr;
     xattr["type"] = blob_type::object;
     xattr["pg"] = get_pg_name();
-    SPDK_INFOLOG(osd, "write obj %s xattr type: %u pg: %s\n", obj_name.c_str(), (uint32_t)blob_type::object, get_pg_name().c_str());
+    SPDK_INFOLOG_EX(osd, "write obj %s xattr type: %u pg: %s\n", obj_name.c_str(), (uint32_t)blob_type::object, get_pg_name().c_str());
     _store.write(xattr, obj_name, offset, buf, data.size(), write_obj_done, ctx);
 }
 
@@ -99,7 +99,7 @@ struct osd_service_complete : public utils::context{
 
     void finish(int r) override {
         if(r != 0){
-            SPDK_ERRLOG("process osd service failed: %d\n", r);
+            SPDK_ERRLOG_EX("process osd service failed: %d\n", r);
             if(std::is_same_v<type, osd::write_reply>){
                 stm->unlock(obj_name, operation_type::WRITE);
             }else if(std::is_same_v<type, osd::delete_reply>){
@@ -141,7 +141,7 @@ void osd_stm::write_and_wait(
         std::string buf;
         cmd.SerializeToString(&buf);
 
-        SPDK_INFOLOG(osd, "process write_request , pool %lu pg %lu object_name %s offset %lu len %lu\n",
+        SPDK_INFOLOG_EX(osd, "process write_request , pool %lu pg %lu object_name %s offset %lu len %lu\n",
                      request->pool_id(), request->pg_id(), request->object_name().c_str(), request->offset(),
                      request->data().size());
 
@@ -190,12 +190,12 @@ void osd_stm::read_and_wait(
         //Whether to need to wait until first commit applied in the new term？ todo
 
         if(!linearization()){
-            SPDK_INFOLOG(osd, "!linearization\n");
+            SPDK_INFOLOG_EX(osd, "!linearization\n");
             read_complete->complete(err::RAFT_ERR_NOT_LEADER);
             return;
         }
 
-        SPDK_INFOLOG(osd, "process read_request , pool %lu pg %lu object_name %s offset %lu len %lu\n",
+        SPDK_INFOLOG_EX(osd, "process read_request , pool %lu pg %lu object_name %s offset %lu len %lu\n",
                      request->pool_id(), request->pg_id(), request->object_name().c_str(), request->offset(),
                      request->length());
 
@@ -226,7 +226,7 @@ void osd_stm::delete_and_wait(
         std::string buf;
         cmd.SerializeToString(&buf);
 
-        SPDK_INFOLOG(osd, "process delete_request , pool %lu pg %lu object_name %s \n",
+        SPDK_INFOLOG_EX(osd, "process delete_request , pool %lu pg %lu object_name %s \n",
                      request->pool_id(), request->pg_id(), request->object_name().c_str());
 
         auto entry_ptr = std::make_shared<raft_entry_t>();

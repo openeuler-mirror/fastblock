@@ -14,6 +14,7 @@
 
 #include "raft/state_machine.h"
 #include "rpc/osd_msg.pb.h"
+#include "utils/log.h"
 
 enum class operation_type : uint16_t {
   NONE = 0,
@@ -45,23 +46,23 @@ public:
     void operator=(const op_type_excl_lock&) = delete;
 
     void lock(const op_type type, utils::context *complete) {
-        SPDK_DEBUGLOG(osd, "enter lock type %u\n", (uint32_t)type);
+        SPDK_DEBUGLOG_EX(osd, "enter lock type %u\n", (uint32_t)type);
 
         if (try_lock(type)) {
-            SPDK_DEBUGLOG(osd, "got lock type %u\n", (uint32_t)type);
+            SPDK_DEBUGLOG_EX(osd, "got lock type %u\n", (uint32_t)type);
             _runners++;
             complete->complete(0);
             return;
         }
 
-        SPDK_DEBUGLOG(osd, "wait lock type %u\n", (uint32_t)type);
+        SPDK_DEBUGLOG_EX(osd, "wait lock type %u\n", (uint32_t)type);
 
         // Wait.
         _waiters.emplace_back(type, complete);
     }
 
     void unlock(const op_type type) {
-        SPDK_DEBUGLOG(osd, "enter unlock type %u\n", (uint32_t)type);
+        SPDK_DEBUGLOG_EX(osd, "enter unlock type %u\n", (uint32_t)type);
 
         _runners--;
 
@@ -108,7 +109,7 @@ private:
     }
 
     bool try_lock(const op_type type) noexcept {
-        SPDK_DEBUGLOG(osd, "enter try_lock type %u, current type %u\n", (uint32_t)type, (uint32_t)_lock_type);
+        SPDK_DEBUGLOG_EX(osd, "enter try_lock type %u, current type %u\n", (uint32_t)type, (uint32_t)_lock_type);
 
         // If running type is the same, and there is no waiters, just return true.
         if (is_none(_lock_type)   // The first try to get log.
@@ -126,7 +127,7 @@ private:
     }
 
     void wake() {
-        SPDK_DEBUGLOG(osd, "enter lock wake, current type %u\n", (uint32_t)_lock_type);
+        SPDK_DEBUGLOG_EX(osd, "enter lock wake, current type %u\n", (uint32_t)_lock_type);
 
         // Try to wake front waiters.
         while (!_waiters.empty()) {
@@ -137,32 +138,36 @@ private:
                 w.complete->complete(0);
                 _waiters.pop_front();
             } else {
-                SPDK_DEBUGLOG(osd, "lock wake->break type %u, current type %u\n", (uint32_t)w.type, (uint32_t)_lock_type);
+                SPDK_DEBUGLOG_EX(osd, "lock wake->break type %u, current type %u\n", (uint32_t)w.type, (uint32_t)_lock_type);
                 break;
             }
         }
 
-        SPDK_DEBUGLOG(osd, "leave lock wake, current type %u, runners %lu, _waiters size %lu\n",
-                (uint32_t)_lock_type, _runners, _waiters.size());
+        SPDK_DEBUGLOG_EX(osd, "leave lock wake, current type %u, runners %lu, _waiters size %lu\n",
+                            (uint32_t)_lock_type, _runners, _waiters.size());
     }
 };
 
-template<typename lock_type>
-class lock_manager {
+template <typename lock_type>
+class lock_manager
+{
 public:
     lock_manager(const bool disable_flag = false)
-    : _disable_flag(disable_flag) {
-        SPDK_INFOLOG(osd, "lock_manager initialized to %d\n", _disable_flag);
+        : _disable_flag(disable_flag)
+    {
+        SPDK_INFOLOG_EX(osd, "lock_manager initialized to %d\n", _disable_flag);
     }
 
-    void lock(const std::string& key, const operation_type type, utils::context *complete){
-        if (_disable_flag) {
+    void lock(const std::string &key, const operation_type type, utils::context *complete)
+    {
+        if (_disable_flag)
+        {
             complete->complete(0);
             return;
         }
 
-        SPDK_DEBUGLOG(osd, "lock object: %s, type: %u, all locks cnt before %lu\n",
-            key.c_str(), (uint32_t)type, _lock_map.size());
+        SPDK_DEBUGLOG_EX(osd, "lock object: %s, type: %u, all locks cnt before %lu\n",
+                            key.c_str(), (uint32_t)type, _lock_map.size());
 
         // Add mutex for the object if not exist.
         if (!_lock_map.contains(key)) {
@@ -178,11 +183,12 @@ public:
             return;
         }
 
-        SPDK_DEBUGLOG(osd, "unlock object: %s, type: %u, all locks cnt before %lu\n",
-            key.c_str(), (uint32_t)type, _lock_map.size());
+        SPDK_DEBUGLOG_EX(osd, "unlock object: %s, type: %u, all locks cnt before %lu\n",
+                            key.c_str(), (uint32_t)type, _lock_map.size());
 
         // Add mutex for the object if not exist.
-        if (!_lock_map.contains(key)) {
+        if (!_lock_map.contains(key))
+        {
             return;
         }
 
@@ -192,20 +198,21 @@ public:
 
         // Remove mutex if no other waiter.
         auto iter = _lock_map.find(key);
-        if (iter == _lock_map.end()) {
-            SPDK_DEBUGLOG(osd, "no lock found! done with mutex, key: %s, all mutex cnt: %lu\n",
-                key.c_str(), _lock_map.size());
+        if (iter == _lock_map.end())
+        {
+            SPDK_DEBUGLOG_EX(osd, "no lock found! done with mutex, key: %s, all mutex cnt: %lu\n",
+                                key.c_str(), _lock_map.size());
             return;
         }
 
-        SPDK_DEBUGLOG(osd, "done with lock, object: %s, all mutex cnt: %lu, file waiters: %lu\n",
-            key.c_str(), _lock_map.size(), iter->second->holders());
+        SPDK_DEBUGLOG_EX(osd, "done with lock, object: %s, all mutex cnt: %lu, file waiters: %lu\n",
+                            key.c_str(), _lock_map.size(), iter->second->holders());
 
         // Remove it from the list if no other tasks on it, otherwise the list will be too big.
         if (0 == iter->second->holders()) {
             _lock_map.erase(key);
 
-            SPDK_DEBUGLOG(osd, "no waiter on %s, erase. mutex cnt now %lu\n", key.c_str(), _lock_map.size());
+            SPDK_DEBUGLOG_EX(osd, "no waiter on %s, erase. mutex cnt now %lu\n", key.c_str(), _lock_map.size());
         }
     }
 

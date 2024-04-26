@@ -26,7 +26,7 @@ make_kvstore_sync_done(void *arg, int kverrno) {
   struct make_kvs_ctx *ctx = (struct make_kvs_ctx *)arg;
 
   if (kverrno) {
-      SPDK_ERRLOG("make_kvstore failed. error:%s\n", spdk_strerror(kverrno));
+      SPDK_ERRLOG_EX("make_kvstore failed. error:%s\n", spdk_strerror(kverrno));
       ctx->cb_fn(ctx->arg, nullptr, kverrno);
       delete ctx;
       return;
@@ -44,7 +44,7 @@ make_kvstore_blob_done(void *arg, struct rolling_blob* rblob, int kverrno) {
   uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
 
   if (kverrno) {
-      SPDK_ERRLOG("make_kvstore failed. error:%s\n", spdk_strerror(kverrno));
+      SPDK_ERRLOG_EX("make_kvstore failed. error:%s\n", spdk_strerror(kverrno));
       ctx->cb_fn(ctx->arg, nullptr, kverrno);
       delete ctx;
       return;
@@ -71,7 +71,7 @@ static void kv_replay_done(void *arg, int kverrno){
   struct make_kvs_ctx *ctx = (struct make_kvs_ctx *)arg;
 
   if (kverrno) {
-      SPDK_ERRLOG("load_kvstore failed. error:%s\n", spdk_strerror(kverrno));
+      SPDK_ERRLOG_EX("load_kvstore failed. error:%s\n", spdk_strerror(kverrno));
       ctx->cb_fn(ctx->arg, nullptr, kverrno);
       delete ctx->kvs;
       delete ctx;
@@ -86,13 +86,13 @@ static void load_kv_md_done(void *arg, int kverrno){
   struct make_kvs_ctx *ctx = (struct make_kvs_ctx *)arg;
 
   if (kverrno) {
-      SPDK_ERRLOG("load_kvstore failed. error:%s\n", spdk_strerror(kverrno));
+      SPDK_ERRLOG_EX("load_kvstore failed. error:%s\n", spdk_strerror(kverrno));
       ctx->cb_fn(ctx->arg, nullptr, kverrno);
       delete ctx;
       return;
-  }   
+  }
 
-  // SPDK_WARNLOG("load_md done.\n");
+  // SPDK_WARNLOG_EX("load_md done.\n");
   struct kvstore* kvs = new kvstore(ctx->rblob);
   ctx->kvs = kvs;
   kvs->set_checkpoint_blobid(ctx->checkpoint_blob_id, ctx->new_checkpoint_blob_id);
@@ -103,7 +103,7 @@ static void open_rolling_blob_done(void *arg, struct rolling_blob* rblob, int kv
   struct make_kvs_ctx *ctx = (struct make_kvs_ctx *)arg;
 
   if (kverrno) {
-      SPDK_ERRLOG("load_kvstore failed. error:%s\n", spdk_strerror(kverrno));
+      SPDK_ERRLOG_EX("load_kvstore failed. error:%s\n", spdk_strerror(kverrno));
       ctx->cb_fn(ctx->arg, nullptr, kverrno);
       delete ctx;
       return;

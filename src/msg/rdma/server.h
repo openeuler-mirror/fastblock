@@ -18,6 +18,7 @@
 #include "msg/rpc_controller.h"
 #include "utils/simple_poller.h"
 #include "utils/utils.h"
+#include "utils/log.h"
 
 #include <google/protobuf/descriptor.h>
 #include <google/protobuf/message.h>
@@ -89,12 +90,12 @@ public:
 
         service(pointer s, const value_descriptor_pointer d) : data{s}, descriptor{d} {
             if (not data) {
-                SPDK_ERRLOG("ERROR: null service pointer\n");
+                SPDK_ERRLOG_EX("ERROR: null service pointer\n");
                 throw std::invalid_argument{"null service pointer"};
             }
 
             if (not descriptor) {
-                SPDK_ERRLOG("ERROR: null service descriptor pointer\n");
+                SPDK_ERRLOG_EX("ERROR: null service descriptor pointer\n");
                 throw std::invalid_argument{"null service descriptor pointer"};
             }
 
@@ -196,7 +197,7 @@ public:
         }
 
         _opts->bind_address = *ipv4_address;
-        SPDK_NOTICELOG("Use ipv4 %s for listening\n", ipv4_address.value().c_str());
+        SPDK_NOTICELOG_EX("Use ipv4 %s for listening\n", ipv4_address.value().c_str());
         endpoint ep{_opts->bind_address, _opts->port};
         ep.passive = true;
         _listener = std::make_unique<socket>(ep, *_pd, _channel.value(), false);
@@ -234,12 +235,12 @@ private:
 
         if (err) {
             if (err->value() == ENOMEM) {
-                SPDK_NOTICELOG(
+                SPDK_NOTICELOG_EX(
                   "Post the reply wr of request %u return enomem\n",
                   task->id);
                 return EAGAIN;
             }
-            SPDK_ERRLOG(
+            SPDK_ERRLOG_EX(
               "ERROR: Send reply of task '%d' error '%s'\n",
               task->id, err->message().c_str());
               close_connection(task->conn.get());
@@ -269,7 +270,7 @@ private:
         auto rc = conn->sock->receive(&(recv_ctx->wr));
         conn->recv_ctx_map.emplace(recv_ctx->wr.wr_id, recv_ctx);
         conn->recv_ctx_map.erase(old_wr_id);
-        SPDK_DEBUGLOG(msg, "posted 1 receive wr\n");
+        SPDK_DEBUGLOG_EX(msg, "posted 1 receive wr\n");
 
         return rc;
     }
@@ -294,40 +295,40 @@ private:
 
         auto err = conn->sock->receive(&(conn->recv_ctx[0]->wr));
         if (err) {
-            SPDK_ERRLOG(
+            SPDK_ERRLOG_EX(
               "ERROR: post %ld receive wrs error, '%s'\n",
               _opts->per_post_recv_num,
               err->message().c_str());
             close_connection(conn);
         }
-        SPDK_DEBUGLOG(msg, "post %ld receive wrs\n", _opts->per_post_recv_num);
+        SPDK_DEBUGLOG_EX(msg, "post %ld receive wrs\n", _opts->per_post_recv_num);
     }
 
     void handle_connect_request(::rdma_cm_event* evt) {
         evt->id->pd = _pd->value();
         auto sock = std::make_unique<socket>(evt->id, _cq->cq(), *_pd);
-        SPDK_DEBUGLOG(
+        SPDK_DEBUGLOG_EX(
           msg,
           "add cm observer with id %p, current observers' size is %ld\n",
           sock->id(), _cm_records.size());
 
         auto rc = sock->accept();
         if (rc) {
-            SPDK_ERRLOG(
+            SPDK_ERRLOG_EX(
               "ERROR: Accept error on fd(id: %p): %s\n",
               sock->id(), rc->message().c_str());
 
             return;
         }
         _cm_records.emplace(sock->id(), std::move(sock));
-        SPDK_INFOLOG(msg, "acceptd on rdma cm event(id: %p)\n", evt->id);
+        SPDK_INFOLOG_EX(msg, "acceptd on rdma cm event(id: %p)\n", evt->id);
     }
 
     void handle_connection_established(::rdma_cm_event* evt) {
         auto it = _cm_records.find(evt->id);
 
         if (it == _cm_records.end()) {
-            SPDK_ERRLOG(
+            SPDK_ERRLOG_EX(
               "ERROR: Received cm event %s with id(%p) not found in cm observers\n",
               ::rdma_event_str(evt->event), evt->id);
 
@@ -335,7 +336,7 @@ private:
         }
 
         auto& sock = it->second;
-        SPDK_INFOLOG(
+        SPDK_INFOLOG_EX(
           msg,
           "connection %s => %s:%d established\n",
           sock->peer_address().c_str(),
@@ -359,7 +360,7 @@ private:
     void handle_other_cm_event(::rdma_cm_event* evt) {
         auto it = _cm_records.find(evt->id);
         if (it == _cm_records.end()) {
-            SPDK_ERRLOG(
+            SPDK_ERRLOG_EX(
               "ERROR: Received cm event %s, but the cm id can not be found in cm observers\n",
               ::rdma_event_str(evt->event));
 
@@ -369,7 +370,7 @@ private:
 
         auto conn_iter = _connections.find(it->first);
         if (conn_iter == _connections.end()) {
-            SPDK_ERRLOG(
+            SPDK_ERRLOG_EX(
               "ERROR: Received cm event %s with rdma cm id(%p) not found in connections\n",
               ::rdma_event_str(evt->event), it->first);
             _cm_records.erase(it);
@@ -378,7 +379,7 @@ private:
             return;
         }
 
-        SPDK_INFOLOG(
+        SPDK_INFOLOG_EX(
           msg,
           "received rdma cm event '%s' on rdma cm id %p\n",
           ::rdma_event_str(evt->event),
@@ -393,11 +394,11 @@ private:
             ::rdma_ack_cm_event(evt);
             evt = nullptr;
 
-            SPDK_ERRLOG(
+            SPDK_ERRLOG_EX(
               "ERROR: failed process cm event, will close the connection(rdma cm id: %p)\n",
               conn_iter->first);
 
-            SPDK_NOTICELOG("Reomve the connection(id: %p)\n", conn_iter->first);
+            SPDK_NOTICELOG_EX("Reomve the connection(id: %p)\n", conn_iter->first);
             close_connection(conn_iter->second.get());
         }
 
@@ -452,7 +453,7 @@ private:
 
     std::optional<std::error_code> send_reply(rpc_task* task) {
         auto s = task->reply_status.value();
-        SPDK_DEBUGLOG(msg, "send reply with status %s\n", string_status(s));
+        SPDK_DEBUGLOG_EX(msg, "send reply with status %s\n", string_status(s));
         auto reply_status = std::make_unique<reply_meta>(
           static_cast<std::underlying_type_t<status>>(s));
         std::optional<std::error_code> rc;
@@ -479,12 +480,12 @@ private:
 
     void on_response(rpc_task* task) {
         if (task->rpc_ctrlr->Failed()) {
-            SPDK_ERRLOG("ERROR: Exec rpc failed: %s\n", task->rpc_ctrlr->ErrorText().c_str());
+            SPDK_ERRLOG_EX("ERROR: Exec rpc failed: %s\n", task->rpc_ctrlr->ErrorText().c_str());
             task->response_data = make_response_data(task, status::server_error);
             return;
         }
 
-        SPDK_INFOLOG(
+        SPDK_INFOLOG_EX(
           msg,
           "Making rpc response body of request id %d\n",
           task->id);
@@ -496,7 +497,7 @@ private:
         std::optional<status> err_status{std::nullopt};
         auto service_it = _services.find(service_name);
         if (service_it == _services.end()) {
-            SPDK_ERRLOG(
+            SPDK_ERRLOG_EX(
               "ERROR: can not find service '%.*s'\n",
               meta->service_name_size,
               meta->service_name);
@@ -506,14 +507,14 @@ private:
         std::string_view method_name{meta->method_name, meta->method_name_size};
         auto method_it = service_it->second->methods.find(method_name);
         if (method_it == service_it->second->methods.end()) {
-            SPDK_ERRLOG(
+            SPDK_ERRLOG_EX(
               "ERROR: can not find method '%.*s'\n",
               meta->method_name_size,
               meta->method_name);
             err_status = status::method_not_found;
         }
 
-        SPDK_DEBUGLOG(
+        SPDK_DEBUGLOG_EX(
           msg,
           "found service name: '%.*s', method name: '%.*s'\n",
           meta->service_name_size,
@@ -525,7 +526,7 @@ private:
             if (is_inlined) {
                 auto rc = post_recv(task->conn.get(), task->recv_ctx);
                 if (rc) {
-                    SPDK_ERRLOG("ERROR: Post receive wr error, '%s'\n", rc->message().c_str());
+                    SPDK_ERRLOG_EX("ERROR: Post receive wr error, '%s'\n", rc->message().c_str());
                     close_connection(task->conn.get());
                     return;
                 }
@@ -541,16 +542,16 @@ private:
         if (is_inlined) {
             auto* data = transport_data::read_inlined_content(task->recv_ctx);
             auto data_size = transport_data::read_inlined_content_length(task->recv_ctx);
-            SPDK_DEBUGLOG(msg, "unserilaize inlined data, unserialized size is %d\n", data_size);
+            SPDK_DEBUGLOG_EX(msg, "unserilaize inlined data, unserialized size is %d\n", data_size);
             is_parsed = task->request_body->ParseFromArray(data + request_meta_size, data_size);
 
             auto rc = post_recv(task->conn.get(), task->recv_ctx);
             if (rc) {
-                SPDK_ERRLOG("ERROR: Post receive wr error, '%s'\n", rc->message().c_str());
+                SPDK_ERRLOG_EX("ERROR: Post receive wr error, '%s'\n", rc->message().c_str());
                 close_connection(task->conn.get());
             }
         } else {
-            SPDK_DEBUGLOG(msg, "unserilaize no inlined data\n");
+            SPDK_DEBUGLOG_EX(msg, "unserilaize no inlined data\n");
             is_parsed = task->request_data->unserialize_data(task->request_body.get(), request_meta_size);
         }
 
@@ -559,7 +560,7 @@ private:
           service_it->second->data->GetResponsePrototype(method_it->second).New()};
         task->rpc_ctrlr = std::make_unique<rpc_controller>();
         if (not is_parsed) {
-            SPDK_ERRLOG("ERROR: Unserialize request body failed\n");
+            SPDK_ERRLOG_EX("ERROR: Unserialize request body failed\n");
             task->response_data = std::make_unique<transport_data>(
               task->id, reply_meta_size,
               _meta_pool, _data_pool);
@@ -607,20 +608,20 @@ private:
         auto err = send_reply(task.get());
         if (err) {
             if (err->value() == ENOMEM) {
-                SPDK_NOTICELOG(
+                SPDK_NOTICELOG_EX(
                   "Post the reply wr of request %u return enomem\n",
                   task->id);
                 return SPDK_POLLER_IDLE;
             }
 
-            SPDK_ERRLOG(
+            SPDK_ERRLOG_EX(
              "ERROR: Send reply of task '%d' error '%s'\n",
               task->id, err->message().c_str());
             close_connection(task->conn.get());
 
             return SPDK_POLLER_BUSY;
         }
-        SPDK_INFOLOG(msg, "send reply of rpc task %d\n", task->id);
+        SPDK_INFOLOG_EX(msg, "send reply of rpc task %d\n", task->id);
         _reply_task_list.pop_front();
 
         return SPDK_POLLER_BUSY;
@@ -649,7 +650,7 @@ private:
             return SPDK_POLLER_IDLE;
         }
 
-        SPDK_DEBUGLOG(msg, "exec rpc of id %d\n", task->id);
+        SPDK_DEBUGLOG_EX(msg, "exec rpc of id %d\n", task->id);
         dispatch_method(
           task->request_data->read_request_meta(),
           task.get());
@@ -670,7 +671,7 @@ private:
 
         auto& task = _task_list.front();
         if (is_timeout(task.get())) {
-            SPDK_ERRLOG("ERROR: Timeout of task %d\n", task->id);
+            SPDK_ERRLOG_EX("ERROR: Timeout of task %d\n", task->id);
             auto rc = handle_timeout_task(task.get());
             if (rc == EAGAIN) {
                 return SPDK_POLLER_IDLE;
@@ -680,26 +681,26 @@ private:
         }
 
         if (not task->request_data->is_metadata_complete()) {
-            SPDK_DEBUGLOG(msg, "rpc task %d, metadata is not complete\n", task->id);
+            SPDK_DEBUGLOG_EX(msg, "rpc task %d, metadata is not complete\n", task->id);
             return SPDK_POLLER_IDLE;
         }
 
         if (not task->request_data->is_ready()) {
-            SPDK_DEBUGLOG(msg, "rpc task %d, transport data is not complete\n", task->id);
+            SPDK_DEBUGLOG_EX(msg, "rpc task %d, transport data is not complete\n", task->id);
             return SPDK_POLLER_IDLE;
         }
 
-        SPDK_DEBUGLOG(msg, "post read wr of task %d\n", task->id);
+        SPDK_DEBUGLOG_EX(msg, "post read wr of task %d\n", task->id);
         auto rc = send_read_request(task->conn.get(), task->request_data.get());
         if (rc and rc->value() == ENOMEM) {
-            SPDK_NOTICELOG(
+            SPDK_NOTICELOG_EX(
               "Post the read wr of request %d return enomem\n",
               task->id);
             return SPDK_POLLER_IDLE;
         }
 
         if (rc) {
-            SPDK_ERRLOG(
+            SPDK_ERRLOG_EX(
               "ERROR: Post read request of rpc task '%d' error, '%s'\n",
               task->id, rc->message().c_str());
             close_connection(task->conn.get());
@@ -728,11 +729,11 @@ private:
             auto it = conn->recv_ctx_map.find(cqe->wr_id);
             if (it == conn->recv_ctx_map.end()) {
                 for (auto kv : conn->recv_ctx_map) {
-                    SPDK_DEBUGLOG(msg, "recv_ctx_map wr_id: %lu\n", kv.first);
+                    SPDK_DEBUGLOG_EX(msg, "recv_ctx_map wr_id: %lu\n", kv.first);
                 }
 
-                SPDK_DEBUGLOG(msg, "conn->recv_ctx_map.size(): %lu\n", conn->recv_ctx_map.size());
-                SPDK_ERRLOG(
+                SPDK_DEBUGLOG_EX(msg, "conn->recv_ctx_map.size(): %lu\n", conn->recv_ctx_map.size());
+                SPDK_ERRLOG_EX(
                   "ERROR: Cant find the receive context of wr id '%s'\n",
                   work_request_id::fmt(cqe->wr_id).c_str());
                 close_connection(conn.get());
@@ -742,7 +743,7 @@ private:
             auto recv_ctx = it->second;
             auto task_id = transport_data::read_correlation_index(recv_ctx);
             bool is_no_content = transport_data::is_no_content(recv_ctx);
-            SPDK_DEBUGLOG(
+            SPDK_DEBUGLOG_EX(
               msg,
               "handle cqe of wr id %s on rdma cm id %p, is no content: %d\n",
               work_request_id::fmt(cqe->wr_id).c_str(),
@@ -751,26 +752,26 @@ private:
 
             if (is_no_content) {
                 task_id = ::be32toh(cqe->imm_data);
-                SPDK_DEBUGLOG(msg, "free message cqe on task id %d\n", task_id);
-                SPDK_INFOLOG(msg, "RPC task of id %d done\n", task_id);
+                SPDK_DEBUGLOG_EX(msg, "free message cqe on task id %d\n", task_id);
+                SPDK_INFOLOG_EX(msg, "RPC task of id %d done\n", task_id);
                 auto rc = post_recv(conn.get(), recv_ctx);
                 if (rc) {
-                    SPDK_ERRLOG("ERROR: Post receive wr error, '%s'\n", rc->message().c_str());
+                    SPDK_ERRLOG_EX("ERROR: Post receive wr error, '%s'\n", rc->message().c_str());
                     close_connection(conn.get());
                 }
                 conn->rpc_tasks.erase(task_id);
                 return true;
             }
 
-            SPDK_DEBUGLOG(msg, "cqe on task id %d\n", task_id);
+            SPDK_DEBUGLOG_EX(msg, "cqe on task id %d\n", task_id);
             auto task_it = conn->rpc_tasks.find(task_id);
             if (task_it == conn->rpc_tasks.end()) {
-                SPDK_DEBUGLOG(msg, "new rpc task with correlation index %d\n", task_id);
+                SPDK_DEBUGLOG_EX(msg, "new rpc task with correlation index %d\n", task_id);
                 auto task = std::make_shared<rpc_task>(task_id, conn);
                 if (transport_data::is_inlined(recv_ctx)) {
                     auto* inlined_data = transport_data::read_inlined_content(recv_ctx);
                     auto* meta = reinterpret_cast<request_meta*>(inlined_data);
-                    SPDK_DEBUGLOG(
+                    SPDK_DEBUGLOG_EX(
                       msg,
                       "parsed rpc meta, service name is %.*s, method name is %.*s\n",
                       meta->service_name_size,
@@ -791,12 +792,12 @@ private:
                 _task_list.push_back(task);
             }
 
-            SPDK_DEBUGLOG(msg, "handle rpc task with id %d, _task_list size is %lu\n", task_id, _task_list.size());
+            SPDK_DEBUGLOG_EX(msg, "handle rpc task with id %d, _task_list size is %lu\n", task_id, _task_list.size());
             auto* task = task_it->second.get();
             task->request_data->from_net_context(recv_ctx);
             auto rc = post_recv(conn.get(), recv_ctx);
             if (rc) {
-                SPDK_ERRLOG("ERROR: Post receive wr error, '%s'\n", rc->message().c_str());
+                SPDK_ERRLOG_EX("ERROR: Post receive wr error, '%s'\n", rc->message().c_str());
                 close_connection(conn.get());
             }
 
@@ -875,7 +876,7 @@ public:
         _task_poller.register_poller(task_poller, this, 0);
         _task_read_poller.register_poller(task_read_poller, this, 0);
         _task_reply_poller.register_poller(task_reply_poller, this, 0);
-        SPDK_INFOLOG(msg, "Rpc server started\n");
+        SPDK_INFOLOG_EX(msg, "Rpc server started\n");
     }
 
     void handle_stop(std::unique_ptr<stop_context> ctx) {
@@ -890,7 +891,7 @@ public:
         _task_poller.unregister_poller();
         _task_read_poller.unregister_poller();
         _task_reply_poller.unregister_poller();
-        SPDK_NOTICELOG("Pollers of rpc server have been unregistered\n");
+        SPDK_NOTICELOG_EX("Pollers of rpc server have been unregistered\n");
 
         _meta_pool->free();
         _data_pool->free();
@@ -899,7 +900,7 @@ public:
             try {
                 (ctx->on_stop_cb.value())();
             } catch (const std::exception& e) {
-                SPDK_ERRLOG("Caught exception when executing callback on stopping rpc server: %s\n", e.what());
+                SPDK_ERRLOG_EX("Caught exception when executing callback on stopping rpc server: %s\n", e.what());
             }
         }
     }
@@ -920,7 +921,7 @@ public:
         auto evt = _channel.poll();
         if (not evt) { return SPDK_POLLER_IDLE; }
 
-        SPDK_INFOLOG(
+        SPDK_INFOLOG_EX(
           msg,
           "receive rdma cm event: %s, cm id: %p\n",
           ::rdma_event_str(evt->event), evt->id);
@@ -955,7 +956,7 @@ public:
 
         auto rc = _cq->poll(_wcs.get(), _opts->poll_cq_batch_size);
         if (rc < 0) {
-            SPDK_ERRLOG("ERROR: Poll cq error '%s', stop the server\n", std::strerror(errno));
+            SPDK_ERRLOG_EX("ERROR: Poll cq error '%s', stop the server\n", std::strerror(errno));
             handle_stop(nullptr);
             return SPDK_POLLER_IDLE;
         }
@@ -971,7 +972,7 @@ public:
         bool is_reset_signal_flag{false};
         for (int i{0}; i < rc; ++i) {
             cqe = &(_wcs[i]);
-            SPDK_DEBUGLOG(msg, "polled cqe with opcode %s\n", completion_queue::op_name(cqe->opcode).c_str());
+            SPDK_DEBUGLOG_EX(msg, "polled cqe with opcode %s\n", completion_queue::op_name(cqe->opcode).c_str());
             if (cqe->opcode != ::IBV_WC_RECV) {
                 continue;
             }
@@ -979,7 +980,7 @@ public:
             dis_id = work_request_id::dispatch_id(cqe->wr_id);
             auto dispatch_it = _cqe_dispatch_map.find(dis_id);
             if (dispatch_it == _cqe_dispatch_map.end()) {
-                SPDK_NOTICELOG(
+                SPDK_NOTICELOG_EX(
                   "cant find the connection with dispatch id %ld, work request id %ld, cqe opcode is %s\n",
                   dis_id, cqe->wr_id, completion_queue::op_name(cqe->opcode).c_str());
                 continue;
@@ -990,7 +991,7 @@ public:
                 sock = conn->sock.get();
                 if (not sock->is_closed()) {
                     sock->update_qp_attr();
-                    SPDK_ERRLOG(
+                    SPDK_ERRLOG_EX(
                       "ERROR: Got error wc, wc.vendor_err=%u, wc.status=%s, qp.state=%s\n",
                       cqe->vendor_err,
                       socket::wc_status_name(cqe->status).c_str(),
@@ -1023,14 +1024,14 @@ public:
     void start() {
         auto ec = _listener->listen(_opts->listen_backlog);
         if (ec) {
-            SPDK_ERRLOG(
+            SPDK_ERRLOG_EX(
               "listen on %s:%d error: %s\n",
               _opts->bind_address.c_str(),
               _opts->port,
               ec->message().c_str());
             throw std::runtime_error{"server listen error"};
         }
-        SPDK_INFOLOG(msg, "Start listening...\n");
+        SPDK_INFOLOG_EX(msg, "Start listening...\n");
         ::spdk_thread_send_msg(_thread, on_start, this);
     }
 
@@ -1055,14 +1056,14 @@ public:
 public:
 
     static void process_ib_event(::ibv_context* context, ::ibv_async_event* event) {
-        SPDK_DEBUGLOG(
+        SPDK_DEBUGLOG_EX(
           msg, "received ib event(%s) on %s\n",
           ::ibv_event_type_str(event->event_type),
           ::ibv_get_device_name(context->device));
 
         switch (event->event_type) {
         case ::IBV_EVENT_QP_FATAL:
-            SPDK_ERRLOG(
+            SPDK_ERRLOG_EX(
               "received ib event(%s) on %s\n",
               ::ibv_event_type_str(event->event_type),
               ::ibv_get_device_name(context->device));
@@ -1077,7 +1078,7 @@ public:
             auto state = sock->update_qp_attr();
 
             if (state == IBV_QPS_ERR) {
-                SPDK_ERRLOG("qp error, will close connection\n");
+                SPDK_ERRLOG_EX("qp error, will close connection\n");
             }
 
             break;
@@ -1100,7 +1101,7 @@ public:
 	    case ::IBV_EVENT_SRQ_LIMIT_REACHED:
 	    case ::IBV_EVENT_CLIENT_REREGISTER:
 	    case ::IBV_EVENT_GID_CHANGE:
-            SPDK_ERRLOG(
+            SPDK_ERRLOG_EX(
               "received ib event(%s) on %s\n",
               ::ibv_event_type_str(event->event_type),
               ::ibv_get_device_name(context->device));

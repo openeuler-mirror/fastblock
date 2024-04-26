@@ -13,6 +13,7 @@
 
 #include "spdk_buffer.h"
 #include "utils/varint.h"
+#include "utils/log.h"
 
 #include <spdk/blob.h>
 #include <string>
@@ -68,7 +69,7 @@ inline void sync_md_done(void *arg, int bserrno){
     struct set_xattr_ctx *ctx = (struct set_xattr_ctx *)arg;
 
     if (bserrno) {
-        SPDK_ERRLOG("set_blob_xattr failed. error:%s\n", spdk_strerror(bserrno));
+        SPDK_ERRLOG_EX("set_blob_xattr failed. error:%s\n", spdk_strerror(bserrno));
         ctx->cb_fn(ctx->arg, bserrno);
         delete ctx;
         return;

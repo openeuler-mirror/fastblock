@@ -42,10 +42,10 @@ public:
       , _pd{pd.value()}
       , _mlx5dv_is_supported{::mlx5dv_is_supported(pd.deivce())} {
         if (_mlx5dv_is_supported) {
-            SPDK_NOTICELOG("mlx5dv is supported\n");
+            SPDK_NOTICELOG_EX("mlx5dv is supported\n");
             _provider = std::make_unique<mlx5dv>();
         } else {
-            SPDK_NOTICELOG("mlx5dv is not supported\n");
+            SPDK_NOTICELOG_EX("mlx5dv is not supported\n");
             _provider = std::make_unique<verbs>();
         }
 
@@ -63,7 +63,7 @@ public:
           &_hints, &_res);
 
         if (ret or !_res) [[unlikely]] {
-            SPDK_ERRLOG(
+            SPDK_ERRLOG_EX(
               "ERROR(%s): Attempting to get information of address: %s:%d\n",
               std::strerror(errno), _ep.addr.c_str(), _ep.port);
         }
@@ -71,7 +71,7 @@ public:
         ret = ::rdma_create_id(channel, &_id, nullptr, ::RDMA_PS_TCP);
         assert(_id->channel == channel);
         if (ret) {
-            SPDK_ERRLOG("ERROR: Create rdma cm id failed\n");
+            SPDK_ERRLOG_EX("ERROR: Create rdma cm id failed\n");
             throw std::runtime_error{"create rdma cm id failed"};
         }
         _id->context = this;
@@ -80,14 +80,14 @@ public:
         if (_ep.passive) {
             ret = ::rdma_bind_addr(_id, _res->ai_src_addr);
             if (ret) [[unlikely]] {
-                SPDK_ERRLOG(
+                SPDK_ERRLOG_EX(
                   "ERROR: rdma_bind_addr() failed to bind on %s, error: %s\n",
                   host(_res->ai_src_addr).c_str(), std::strerror(errno));
 
                 throw std::runtime_error{"rdma_bind_addr() failed"};
             }
 
-            SPDK_INFOLOG(
+            SPDK_INFOLOG_EX(
               msg,
               "bind %s:%d to rdma_cm_id %p\n",
               _ep.addr.c_str(), _ep.port, _id);
@@ -101,7 +101,7 @@ public:
           _ep.resolve_timeout_us);
 
         if (ret) [[unlikely]] {
-            SPDK_ERRLOG(
+            SPDK_ERRLOG_EX(
               "ERROR: Resolve address(src: %s, dst: %s) failed: %s\n",
               host(_res->ai_src_addr).c_str(),
               host(_res->ai_dst_addr).c_str(),
@@ -119,7 +119,7 @@ public:
               sizeof(_reuse_addr));
 
             if (ret) {
-                SPDK_ERRLOG("ERROR: Set reuse address failed\n");
+                SPDK_ERRLOG_EX("ERROR: Set reuse address failed\n");
                 throw std::runtime_error{"set reuse address failed"};
             }
         }
@@ -135,10 +135,10 @@ public:
         assert(_id && "argument 'id' must not be nullptr");
 
         if (_mlx5dv_is_supported) {
-            SPDK_NOTICELOG("mlx5dv is supported\n");
+            SPDK_NOTICELOG_EX("mlx5dv is supported\n");
             _provider = std::make_unique<mlx5dv>();
         } else {
-            SPDK_NOTICELOG("mlx5dv is not supported\n");
+            SPDK_NOTICELOG_EX("mlx5dv is not supported\n");
             _provider = std::make_unique<verbs>();
         }
 
@@ -149,7 +149,7 @@ public:
     }
 
     ~socket() noexcept {
-        SPDK_DEBUGLOG(msg, "call ~socket() of rdma cm id %p\n", _id);
+        SPDK_DEBUGLOG_EX(msg, "call ~socket() of rdma cm id %p\n", _id);
         close();
     }
 
@@ -359,7 +359,7 @@ public:
             errno = rc;
             return std::error_code{errno, std::system_category()};
         }
-        SPDK_DEBUGLOG(msg, "posted send wr with id %ld\n", wr->wr_id);
+        SPDK_DEBUGLOG_EX(msg, "posted send wr with id %ld\n", wr->wr_id);
         return std::nullopt;
     }
 
@@ -387,7 +387,7 @@ public:
             break;
 
         case RDMA_CM_EVENT_CONNECT_REQUEST: {
-            SPDK_DEBUGLOG(
+            SPDK_DEBUGLOG_EX(
               msg,
               "received connect request on name %s, deceive name %s",
               evt->id->verbs->device->name,
@@ -416,12 +416,12 @@ public:
             break;
 
         case RDMA_CM_EVENT_DISCONNECTED:
-            SPDK_ERRLOG("ERROR: Got event 'RDMA_CM_EVENT_DISCONNECTED'\n");
+            SPDK_ERRLOG_EX("ERROR: Got event 'RDMA_CM_EVENT_DISCONNECTED'\n");
             eptr = std::make_exception_ptr(std::runtime_error{"got event 'RDMA_CM_EVENT_DISCONNECTED'"});
             break;
 
         case RDMA_CM_EVENT_DEVICE_REMOVAL:
-            SPDK_ERRLOG("ERROR: Got event 'RDMA_CM_EVENT_DEVICE_REMOVAL'\n");
+            SPDK_ERRLOG_EX("ERROR: Got event 'RDMA_CM_EVENT_DEVICE_REMOVAL'\n");
             eptr = std::make_exception_ptr(std::runtime_error{"got event 'RDMA_CM_EVENT_DEVICE_REMOVAL'"});
             break;
 
@@ -431,7 +431,7 @@ public:
             break;
 
         case RDMA_CM_EVENT_ADDR_CHANGE:
-            SPDK_ERRLOG("ERROR: Got event 'RDMA_CM_EVENT_ADDR_CHANGE'\n");
+            SPDK_ERRLOG_EX("ERROR: Got event 'RDMA_CM_EVENT_ADDR_CHANGE'\n");
             eptr = std::make_exception_ptr(std::runtime_error{"got event 'RDMA_CM_EVENT_ADDR_CHANGE'"});
             break;
 
@@ -439,7 +439,7 @@ public:
             // 我们不会重用 qp
             break;
         default:
-            SPDK_ERRLOG("ERROR: Unexpected rdma cm event: %d\n", evt->event);
+            SPDK_ERRLOG_EX("ERROR: Unexpected rdma cm event: %d\n", evt->event);
             eptr = std::make_exception_ptr(std::runtime_error{"unknown event"});
             break;
         }
@@ -465,7 +465,7 @@ public:
         ret = ::rdma_get_cm_event(_id->channel, &event);
         if (ret) [[unlikely]] {
             if (errno != EAGAIN and errno != EWOULDBLOCK) {
-                SPDK_ERRLOG(
+                SPDK_ERRLOG_EX(
                   "ERROR: Poll rdma event error: %s\n",
                   std::strerror(errno));
             }
@@ -477,7 +477,7 @@ public:
     }
 
     int process_active_cm_event(::rdma_cm_event_type expected_evt, ::rdma_cm_event* evt) noexcept {
-        SPDK_DEBUGLOG(
+        SPDK_DEBUGLOG_EX(
           msg,
           "process active side event: %s(id: %p)\n",
           ::rdma_event_str(evt->event), evt->id);
@@ -507,19 +507,19 @@ public:
             _provider->complete_qp_connect(_id);
             break;
         case RDMA_CM_EVENT_DISCONNECTED:
-            SPDK_ERRLOG("ERROR: Got event 'RDMA_CM_EVENT_DISCONNECTED'\n");
+            SPDK_ERRLOG_EX("ERROR: Got event 'RDMA_CM_EVENT_DISCONNECTED'\n");
             is_bad_evt = true;
             break;
         case RDMA_CM_EVENT_DEVICE_REMOVAL:
-            SPDK_ERRLOG("ERROR: Got event 'RDMA_CM_EVENT_DEVICE_REMOVAL'\n");
+            SPDK_ERRLOG_EX("ERROR: Got event 'RDMA_CM_EVENT_DEVICE_REMOVAL'\n");
             is_bad_evt = true;
             break;
         case RDMA_CM_EVENT_ADDR_CHANGE:
-            SPDK_ERRLOG("ERROR: Got event 'RDMA_CM_EVENT_ADDR_CHANGE'\n");
+            SPDK_ERRLOG_EX("ERROR: Got event 'RDMA_CM_EVENT_ADDR_CHANGE'\n");
             is_bad_evt = true;
             break;
         default:
-            SPDK_ERRLOG("ERROR: Got unknown event '%d'\n", evt->event);
+            SPDK_ERRLOG_EX("ERROR: Got unknown event '%d'\n", evt->event);
             is_bad_evt = true;
             break;
         }
@@ -575,7 +575,7 @@ public:
     void resolve_route() {
         auto ret = ::rdma_resolve_route(_id, _ep.resolve_timeout_us);
         if (ret) [[unlikely]] {
-            SPDK_ERRLOG(
+            SPDK_ERRLOG_EX(
               "resolve route(src: %s, dst: %s) failed: %s\n",
               host(_res->ai_src_addr).c_str(),
               host(_res->ai_dst_addr).c_str(),
@@ -585,7 +585,7 @@ public:
     }
 
     void create_qp(protection_domain& pd, ::ibv_cq* cq) {
-        SPDK_DEBUGLOG(msg, "_id->pd is %p, _pd is %p, pd is %p\n", _id->pd, _pd, pd.value());
+        SPDK_DEBUGLOG_EX(msg, "_id->pd is %p, _pd is %p, pd is %p\n", _id->pd, _pd, pd.value());
         create_qp(pd, cq, this);
     }
 
@@ -603,17 +603,17 @@ public:
           _qp_init_attr.get());
 
         if (ret) [[unlikely]] {
-            SPDK_ERRLOG("ibv_query_qp() failed: %s\n", std::strerror(errno));
+            SPDK_ERRLOG_EX("ibv_query_qp() failed: %s\n", std::strerror(errno));
             return IBV_QPS_ERR + 1;
         }
 
         if (!known_qp_state()) {
-            SPDK_ERRLOG("bad qp state: %d\n", _qp_attr->qp_state);
+            SPDK_ERRLOG_EX("bad qp state: %d\n", _qp_attr->qp_state);
             return IBV_QPS_ERR + 1;
         }
 
         if (old_state != _qp_attr->qp_state) {
-            SPDK_INFOLOG(
+            SPDK_INFOLOG_EX(
               msg,
               "qp state changed, %s -> %s\n",
               qp_state_str(old_state).c_str(),
@@ -625,21 +625,21 @@ public:
 
     int disconnect() noexcept {
         if (not _connected) {
-            SPDK_INFOLOG(msg, "the connection has been disconnected.\n");
+            SPDK_INFOLOG_EX(msg, "the connection has been disconnected.\n");
             return -1;
         }
 
         auto peer_addr = peer_address();
         auto local_addr = local_address();
 
-        SPDK_NOTICELOG(
+        SPDK_NOTICELOG_EX(
           "disconnect the connection(%s => %s)\n",
           local_addr.c_str(), peer_addr.c_str());
 
         _connected = false;
 
         if (not _id) {
-            SPDK_NOTICELOG("rdma cm id is null when disconnect\n");
+            SPDK_NOTICELOG_EX("rdma cm id is null when disconnect\n");
             return -1;
         }
 
@@ -651,7 +651,7 @@ public:
 
         ret = _provider->disconnect(_id);
         if (ret) {
-            SPDK_ERRLOG(
+            SPDK_ERRLOG_EX(
               "disconnect connection(%s => %s) failed\n",
               local_addr.c_str(), peer_addr.c_str());
 
@@ -665,24 +665,24 @@ public:
         auto peer_addr = peer_address();
         auto local_addr = local_address();
 
-        SPDK_INFOLOG(
+        SPDK_INFOLOG_EX(
           msg,
           "destroy the resource of the socket(%s => %s)\n",
           local_addr.c_str(), peer_addr.c_str());
 
         int ret;
         if (not _id) {
-            SPDK_NOTICELOG("rdma cm id is null when destroy resource\n");
+            SPDK_NOTICELOG_EX("rdma cm id is null when destroy resource\n");
         } else {
             if (_id->qp) {
                 ret = ::ibv_destroy_qp(_id->qp);
                 if (ret) {
-                    SPDK_ERRLOG(
+                    SPDK_ERRLOG_EX(
                       "ERROR: Destroy qp(%s => %s)  failed, error: %s\n",
                       local_addr.c_str(), peer_addr.c_str(), strerror(errno));
                 }
             } else {
-                SPDK_NOTICELOG("qp is null when destroy resource\n");
+                SPDK_NOTICELOG_EX("qp is null when destroy resource\n");
             }
 
             ::rdma_destroy_id(_id);
@@ -711,7 +711,7 @@ private:
              */
             if (reaped_event->event == RDMA_CM_EVENT_REJECTED and
                 reaped_event->status == 10) {
-                SPDK_ERRLOG("ERROR: Stale connection");
+                SPDK_ERRLOG_EX("ERROR: Stale connection");
                 return false;
             } else if (reaped_event->event == RDMA_CM_EVENT_CONNECT_RESPONSE) {
                 /*
@@ -733,7 +733,7 @@ private:
         }
         }
 
-        SPDK_ERRLOG(
+        SPDK_ERRLOG_EX(
           "ERROR: Expected %s but received %s (%d) from cm event channel (status = %d)\n",
           ::rdma_event_str(expected_event),
           ::rdma_event_str(reaped_event->event),
@@ -750,7 +750,7 @@ private:
           _ep.cq_num_entries * 2);
         auto* cq = ::ibv_create_cq(_id->verbs, cqe, nullptr, nullptr, 0);
         if (!cq) {
-            SPDK_ERRLOG("create cq failed: %s\n", std::strerror(errno));
+            SPDK_ERRLOG_EX("create cq failed: %s\n", std::strerror(errno));
             throw std::runtime_error{"creare cq failed"};
         }
 
@@ -798,7 +798,7 @@ private:
         }
 
         if (!_id->qp) {
-            SPDK_ERRLOG("ERROR: Create qp failed\n");
+            SPDK_ERRLOG_EX("ERROR: Create qp failed\n");
             throw std::runtime_error{"create qp failed"};
         }
 

@@ -57,7 +57,7 @@ void do_stop(void* arg) {
 }
 
 void do_start_cluster_map_poller(void* arg) {
-    SPDK_INFOLOG(mon, "Starting clustermap poller...\n");
+    SPDK_INFOLOG_EX(mon, "Starting clustermap poller...\n");
     auto* mon_cli = reinterpret_cast<client*>(arg);
     mon_cli->handle_start_cluster_map_poller();
 }
@@ -68,7 +68,7 @@ void do_emplace_request(void* arg) {
 }
 
 void client::load_pgs(){
-    // SPDK_WARNLOG("load pgs\n");
+    // SPDK_WARNLOG_EX("load pgs\n");
     std::map<uint64_t, std::vector<utils::pg_info_type>> pools;
     _pm.lock()->load_pgs_map(pools);
     for(auto& [pool_id, infos] : pools){
@@ -87,7 +87,7 @@ void client::load_pgs(){
 
 void client::start() {
     if (not _current_thread) {
-        SPDK_ERRLOG("ERROR: Cant get current spdk thread\n");
+        SPDK_ERRLOG_EX("ERROR: Cant get current spdk thread\n");
         throw std::runtime_error{"cant get current spdk thread"};
     }
 
@@ -95,7 +95,7 @@ void client::start() {
 }
 
 void client::handle_start() {
-    SPDK_INFOLOG(mon, "Starting monitor client...\n");
+    SPDK_INFOLOG_EX(mon, "Starting monitor client...\n");
 
     _cluster->connect();
     _core_poller.register_poller(monitor::core_poller_handler, this, 0);
@@ -113,7 +113,7 @@ void client::handle_stop(std::unique_ptr<client::stop_context> ctx) {
         return;
     }
 
-    SPDK_NOTICELOG("Stop the monitor client\n");
+    SPDK_NOTICELOG_EX("Stop the monitor client\n");
     _is_terminate = true;
     _get_cluster_map_poller.unregister_poller();
     _core_poller.unregister_poller();
@@ -123,7 +123,7 @@ void client::handle_stop(std::unique_ptr<client::stop_context> ctx) {
             (ctx->on_stop_cb.value())();
         }
     } catch (const std::exception& e) {
-        SPDK_ERRLOG(
+        SPDK_ERRLOG_EX(
           "Caught exception when executing callback on stopping monitor client: %s\n",
           e.what());
     }
@@ -324,13 +324,13 @@ public:
     , _client(cli) {}
 
     void finish(int r) override {
-        SPDK_INFOLOG(mon, "change membership of pg %lu.%lu version: %ld finish: result %d\n", _pool_id, _pg_id, _version, r);
+        SPDK_INFOLOG_EX(mon, "change membership of pg %lu.%lu version: %ld finish: result %d\n", _pool_id, _pg_id, _version, r);
         if(r != 0 && r != err::RAFT_ERR_NOT_LEADER){
             _client->get_pg_map().set_pool_update(_pool_id, _pg_id, _version, -1);
             return;
         }
         if(!_client->get_pg_map().pool_pg_map[_pool_id].contains(_pg_id)){
-            SPDK_INFOLOG(mon, "pg %lu.%lu not in pool_pg_map", _pool_id, _pg_id);
+            SPDK_INFOLOG_EX(mon, "pg %lu.%lu not in pool_pg_map", _pool_id, _pg_id);
             return;
         }
         auto& pit = _client->get_pg_map().pool_pg_map[_pool_id][_pg_id];
@@ -352,7 +352,7 @@ void client::_create_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_
         auto new_pg_done = [this, pool_id, pool_version, pg_id = info.pgid(), pg_version = info.version(), osds = info.osdid()]
           (void *arg, int perrno){
             if(perrno != 0){
-                SPDK_ERRLOG("create pg %d.%d failed: %s\n", pool_id, pg_id, spdk_strerror(perrno));
+                SPDK_ERRLOG_EX("create pg %d.%d failed: %s\n", pool_id, pg_id, spdk_strerror(perrno));
                 _pg_map.set_pool_update(pool_id, pg_id, pool_version, -1);
                 return;
             }
@@ -366,7 +366,7 @@ void client::_create_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_
                 osd_str += std::to_string(osd_id) + ",";
             }
 
-            SPDK_DEBUGLOG(mon, "core [%u] pool: %d pg: %lu version: %ld  osd_list: %s\n",
+            SPDK_DEBUGLOG_EX(mon, "core [%u] pool: %d pg: %lu version: %ld  osd_list: %s\n",
               ::spdk_env_get_current_core(), pool_id, pit->pg_id, pit->version, osd_str.data());
 
             _pg_map.pool_pg_map[pool_id].emplace(pit->pg_id, std::move(pit));
@@ -382,7 +382,7 @@ void client::_create_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_
             pit->osds.push_back(osd_id);
             osd_str += std::to_string(osd_id) + ",";
         }
-        SPDK_DEBUGLOG(mon, "core [%u] pool: %d pg: %lu version: %ld  osd_list: %s\n",
+        SPDK_DEBUGLOG_EX(mon, "core [%u] pool: %d pg: %lu version: %ld  osd_list: %s\n",
               ::spdk_env_get_current_core(), pool_id, pit->pg_id, pit->version, osd_str.data());
         _pg_map.pool_pg_map[pool_id].emplace(pit->pg_id, std::move(pit));
     }
@@ -399,10 +399,10 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
         auto pool_id = pool_item->first;
         if(!ec.contains(pool_id)){
             if(_pg_map.pool_is_updating(pool_id)){
-                SPDK_DEBUGLOG(mon, "pool %d is updating\n", pool_id);
+                SPDK_DEBUGLOG_EX(mon, "pool %d is updating\n", pool_id);
                 continue;
             }
-            SPDK_DEBUGLOG(mon, "pool %d is deleted\n", pool_id);
+            SPDK_DEBUGLOG_EX(mon, "pool %d is deleted\n", pool_id);
             //pool被删除
 
             auto& pg_infos = pool_item->second;
@@ -414,17 +414,17 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                 auto pool_version = _pg_map.pool_version[pool_id];
                 auto delete_pg_done = [this, pool_id, pg_id, pool_version](void *arg, int perrono){
                     if(perrono != 0){
-                        SPDK_ERRLOG("delete pg %d.%d failed: %s\n", pool_id, pg_id, spdk_strerror(perrono));
+                        SPDK_ERRLOG_EX("delete pg %d.%d failed: %s\n", pool_id, pg_id, spdk_strerror(perrono));
                         _pg_map.set_pool_update(pool_id, pg_id, pool_version, -1);
                         return;
                     }
                     _pg_map.set_pool_update(pool_id, pg_id, pool_version, 0);
-                    SPDK_DEBUGLOG(mon, "delete pg %d.%d success.\n", pool_id, pg_id);
+                    SPDK_DEBUGLOG_EX(mon, "delete pg %d.%d success.\n", pool_id, pg_id);
                     _pg_map.pool_pg_map[pool_id].erase(pg_id);
                     if(_pg_map.pool_pg_map[pool_id].empty()){
                         _pg_map.pool_pg_map.erase(pool_id);
                         _pg_map.pool_version.erase(pool_id);
-                        SPDK_DEBUGLOG(mon, "delete pool %d success.\n", pool_id);
+                        SPDK_DEBUGLOG_EX(mon, "delete pool %d success.\n", pool_id);
                     }
                 };
 
@@ -437,41 +437,41 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
     }
 
     if (pv.empty()) {
-        SPDK_DEBUGLOG(mon, "Empty pg map from cluster map response\n");
+        SPDK_DEBUGLOG_EX(mon, "Empty pg map from cluster map response\n");
         return;
     }
-    SPDK_DEBUGLOG(mon, "ec count is %ld, pgs count is %ld\n", ec.size(), pgs.size());
+    SPDK_DEBUGLOG_EX(mon, "ec count is %ld, pgs count is %ld\n", ec.size(), pgs.size());
 
     std::remove_cvref_t<decltype(ec)>::key_type pool_key{};
     for (auto& pair : ec) {
         pool_key = pair.first;
-        SPDK_DEBUGLOG(mon, "pg map key is %d\n", pool_key);
+        SPDK_DEBUGLOG_EX(mon, "pg map key is %d\n", pool_key);
         if (pair.second != msg::GetPgMapErrorCode::pgMapGetOk) {
-            SPDK_ERRLOG("ERROR: get pg map(key: %d) return error: %d\n",
+            SPDK_ERRLOG_EX("ERROR: get pg map(key: %d) return error: %d\n",
               pool_key, pair.second);
             continue;
         }
 
         if (!pgs.contains(pool_key) or !pv.contains(pool_key)) {
-            SPDK_ERRLOG("pool %d has no pgmap, that is a error\n", pool_key);
+            SPDK_ERRLOG_EX("pool %d has no pgmap, that is a error\n", pool_key);
             continue;
         }
 
         if(_pg_map.pool_is_updating(pool_key)){
-            SPDK_DEBUGLOG(mon, "pool %d is updating\n", pool_key);
+            SPDK_DEBUGLOG_EX(mon, "pool %d is updating\n", pool_key);
             continue;
         }
 
-        SPDK_DEBUGLOG(mon, "going to process pg with key %d\n", pool_key);
+        SPDK_DEBUGLOG_EX(mon, "going to process pg with key %d\n", pool_key);
         if (not _pg_map.pool_pg_map.contains(pool_key)) {
             auto info_it = pgs.find(pool_key);
             if (info_it == pgs.end()) {
-                SPDK_DEBUGLOG(mon, "Cant find the info of pg %d\n", pool_key);
+                SPDK_DEBUGLOG_EX(mon, "Cant find the info of pg %d\n", pool_key);
                 continue;
             }
 
             _pg_map.pool_version.emplace(pool_key, pv.at(pool_key));
-            SPDK_DEBUGLOG(mon, "pgs size is %ld\n", pgs.size());
+            SPDK_DEBUGLOG_EX(mon, "pgs size is %ld\n", pgs.size());
 
             for (auto& info : info_it->second.pi()) {
                 _create_pg(pool_key, pv.at(pool_key), info);
@@ -484,7 +484,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
             //检查之前添加pool时，是否有pg没有添加成功
             auto info_it = pgs.find(pool_key);
             if (info_it == pgs.end()) {
-                SPDK_DEBUGLOG(mon, "Cant find the info of pg %d\n", pool_key);
+                SPDK_DEBUGLOG_EX(mon, "Cant find the info of pg %d\n", pool_key);
                 continue;
             }
 
@@ -499,11 +499,11 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
         if (_pg_map.pool_version[pool_key] < pv.at(pool_key)) {
             auto info_it = pgs.find(pool_key);
             if (info_it == pgs.end()) {
-                SPDK_DEBUGLOG(mon, "Cant find the info of pg %d\n", pool_key);
+                SPDK_DEBUGLOG_EX(mon, "Cant find the info of pg %d\n", pool_key);
                 continue;
             }
 
-            SPDK_INFOLOG(mon, "pool %d version: %ld pool_version: %ld\n", pool_key, pv.at(pool_key), _pg_map.pool_version[pool_key]);
+            SPDK_INFOLOG_EX(mon, "pool %d version: %ld pool_version: %ld\n", pool_key, pv.at(pool_key), _pg_map.pool_version[pool_key]);
             for (auto& info : info_it->second.pi()) {
                 auto pgid = info.pgid();
                 if(_pg_map.pool_pg_map[pool_key].contains(pgid)){
@@ -522,23 +522,23 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                         new_osds.emplace_back(*osd_info);
                     }
 
-                    SPDK_INFOLOG(mon, "pool: %d version: %ld pg: %lu version: %ld  osd_list: %s\n",
+                    SPDK_INFOLOG_EX(mon, "pool: %d version: %ld pg: %lu version: %ld  osd_list: %s\n",
                             pool_key, pv.at(pool_key), pit->pg_id, info.version(), osd_str.data());
 
                     auto complete = new change_membership_complete(pool_key, pgid, info.version(), osds, this);
                     if(osds.size() != pit->osds.size()){
-                        // SPDK_WARNLOG("change_pg_membership\n");
+                        // SPDK_WARNLOG_EX("change_pg_membership\n");
                         _pg_map.set_pool_update(pool_key, pgid, pv.at(pool_key), 1);
                         //pg的osd成员已经变更，处理成员变更   todo
                         _pm.lock()->change_pg_membership(pool_key, pgid, new_osds, complete);
                     }else{
-                        // SPDK_WARNLOG("change_pg_membership\n");
+                        // SPDK_WARNLOG_EX("change_pg_membership\n");
                         if(!std::is_permutation(osds.begin(), osds.end(), pit->osds.begin())){
                             _pg_map.set_pool_update(pool_key, pgid, pv.at(pool_key), 1);
                             //pg的osd成员已经变更，处理成员变更   todo
                             _pm.lock()->change_pg_membership(pool_key, pgid, new_osds, complete);
                         }else{
-                            // SPDK_WARNLOG("pg %d.%lu version %ld\n", pool_key, pit->pg_id, pit->version);
+                            // SPDK_WARNLOG_EX("pg %d.%lu version %ld\n", pool_key, pit->pg_id, pit->version);
                             pit->version = info.version();
                             delete complete;
                         }
@@ -555,7 +555,7 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
     auto& osd_map_response = response->get_cluster_map_response().gom_response();
 
     if (osd_map_response.errorcode() != msg::OsdMapErrorCode::ok) {
-        SPDK_ERRLOG(
+        SPDK_ERRLOG_EX(
             "ERROR: get osd map return error, error code is %d\n",
             osd_map_response.errorcode());
         return;
@@ -563,21 +563,21 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
 
     auto monitor_osd_map_version = osd_map_response.osdmapversion();
     if (monitor_osd_map_version < _osd_map.version) {
-        SPDK_ERRLOG(
+        SPDK_ERRLOG_EX(
             "Error: the version(%ld) of which monitor responsed is less than local ones(%ld)\n",
             monitor_osd_map_version, _osd_map.version);
         return;
     }
 
     if (monitor_osd_map_version == _osd_map.version) {
-        SPDK_INFOLOG(mon,
+        SPDK_INFOLOG_EX(mon,
           "getosdmap: osdmapversion is the same: %ld, process pg map directly\n",
           monitor_osd_map_version);
         process_pg_map(response->get_cluster_map_response().gpm_response());
         return;
     }
 
-    SPDK_DEBUGLOG(mon, "The version responing from monitor is %ld\n", monitor_osd_map_version);
+    SPDK_DEBUGLOG_EX(mon, "The version responing from monitor is %ld\n", monitor_osd_map_version);
     _osd_map.version = monitor_osd_map_version;
     auto& osds = osd_map_response.osds();
     decltype(_responses)::value_type resp_stack{};
@@ -591,7 +591,7 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
               osds[i].isup() and
               osd_it->second->node_id != _self_osd_id;
 
-            SPDK_DEBUGLOG(
+            SPDK_DEBUGLOG_EX(
               mon, "osd %d found, osd isup %d,  rsp osd isup %d, should_create_connect is %d\n",
               osd_it->second->node_id, osd_it->second->isup, osds[i].isup(), should_create_connect);
 
@@ -601,10 +601,10 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
             osd_it->second->port = osds[i].port();
             osd_it->second->address = osds[i].address();
             if(osd_it->second->isup && !osds[i].isup() && osd_it->second->node_id != _self_osd_id){
-                SPDK_DEBUGLOG(mon, "osd %d is down, remove connect to it\n", osds[i].osdid());
+                SPDK_DEBUGLOG_EX(mon, "osd %d is down, remove connect to it\n", osds[i].osdid());
                 _pm.lock()->get_pg_group().remove_connect(osds[i].osdid(),
                   [this, node_id = osds[i].osdid()](bool is_ok){
-                    SPDK_DEBUGLOG(mon, "remove the connect to osd %d\n",node_id);
+                    SPDK_DEBUGLOG_EX(mon, "remove the connect to osd %d\n",node_id);
                   });
                 osd_it->second->isup = false;
             }
@@ -613,7 +613,7 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
               osds[i].isup() and osds[i].osdid() != _self_osd_id;
 
             if(should_create_connect || osds[i].osdid() == _self_osd_id){
-                SPDK_DEBUGLOG(mon,
+                SPDK_DEBUGLOG_EX(mon,
                   "osd %d not found, rsp osd isup %d, should_create_connect is %d\n",
                   osds[i].osdid(),
                   osds[i].isup(),
@@ -635,7 +635,7 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
         }
 
         auto& osd_info = *(osd_it->second);
-        SPDK_DEBUGLOG(mon,
+        SPDK_DEBUGLOG_EX(mon,
           "osd id %d, is up %d, port %d, address %s, rsp is up %d\n",
           osd_info.node_id,
           osd_info.isup,
@@ -644,7 +644,7 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
           osds[i].isup());
 
         if (should_create_connect) {
-            SPDK_DEBUGLOG(mon,
+            SPDK_DEBUGLOG_EX(mon,
               "Connect to osd %d(%s:%d)\n",
               osd_info.node_id,
               osd_info.address.c_str(),
@@ -658,7 +658,7 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
               osd_info.node_id, osd_info.address, osd_info.port,
               [this, raw_stack = resp_stack.get(), node_id = osd_info.node_id] (bool is_ok, std::shared_ptr<msg::rdma::client::connection> conn) {
                   if (not is_ok) {
-                      SPDK_ERRLOG("ERROR: Connect failed\n");
+                      SPDK_ERRLOG_EX("ERROR: Connect failed\n");
                       auto it = _osd_map.data.find(node_id);
                       if (it != _osd_map.data.end()) {
                           it->second->isup = false;
@@ -667,7 +667,7 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
                   }
 
                   raw_stack->un_connected_count--;
-                  SPDK_DEBUGLOG(mon, "Connected, un-connected count is %ld\n",
+                  SPDK_DEBUGLOG_EX(mon, "Connected, un-connected count is %ld\n",
                   raw_stack->un_connected_count);
               }
             );
@@ -691,26 +691,26 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
 
         auto node_id = data_it->first;
         data_it++;
-        SPDK_DEBUGLOG(mon,
+        SPDK_DEBUGLOG_EX(mon,
           "The osd with id %d not found in the newer osd map\n",
           node_id);
         _pm.lock()->get_pg_group().remove_connect(node_id,
           [this, node_id](bool is_ok){
             if(is_ok){
               _osd_map.data.erase(node_id);
-              SPDK_DEBUGLOG(mon, "remove the connect to osd %d\n",node_id);
+              SPDK_DEBUGLOG_EX(mon, "remove the connect to osd %d\n",node_id);
             }
           });
     }
 
     if (not resp_stack) {
-        SPDK_DEBUGLOG(mon, "empty response stack struct\n");
+        SPDK_DEBUGLOG_EX(mon, "empty response stack struct\n");
         return;
     }
 
     auto factor = _pm.lock()->get_pg_group().get_raft_client_proto().connect_factor();
     resp_stack->un_connected_count *= factor;
-    SPDK_DEBUGLOG(
+    SPDK_DEBUGLOG_EX(
       mon, "created response_stack, un-connected size is %lu\n",
       resp_stack->un_connected_count);
     _responses.push_back(std::move(resp_stack));
@@ -720,7 +720,7 @@ void client::process_clustermap_response(std::shared_ptr<msg::Response> response
     if (not _responses.empty()) {
         auto head_it = _responses.begin();
         auto* stack_ptr = head_it->get();
-        SPDK_DEBUGLOG(mon, "head response un-connected count is %ld\n",
+        SPDK_DEBUGLOG_EX(mon, "head response un-connected count is %ld\n",
           stack_ptr->un_connected_count);
         if (stack_ptr->un_connected_count == 0) {
             auto& pg_map_resp = stack_ptr->response->get_cluster_map_response().gpm_response();
@@ -730,7 +730,7 @@ void client::process_clustermap_response(std::shared_ptr<msg::Response> response
                 try {
                     _cluster_map_init_cb.value()();
                 } catch (...) {
-                    SPDK_ERRLOG("ERRPR: invoke the callback on getting cluster map at first time\n");
+                    SPDK_ERRLOG_EX("ERRPR: invoke the callback on getting cluster map at first time\n");
                 }
                 _cluster_map_init_cb = std::nullopt;
             }
@@ -763,51 +763,51 @@ int client::send_request(msg::Request* req, bool send_directly) {
 
 void client::process_response(std::shared_ptr<msg::Response> response) {
     auto response_case = response->union_case();
-    SPDK_DEBUGLOG(mon, "Got response type %d\n", response_case);
+    SPDK_DEBUGLOG_EX(mon, "Got response type %d\n", response_case);
 
     switch (response_case) {
     case msg::Response::UnionCase::kGetClusterMapResponse:
         _last_cluster_map_at = std::chrono::system_clock::now();
-        SPDK_DEBUGLOG(mon, "received cluster map response\n");
+        SPDK_DEBUGLOG_EX(mon, "received cluster map response\n");
         process_clustermap_response(response);
         break;
     case msg::Response::UnionCase::kBootResponse: {
-        SPDK_DEBUGLOG(mon, "Received osd boot response\n");
+        SPDK_DEBUGLOG_EX(mon, "Received osd boot response\n");
 
         auto& req_ctx = _on_flight_requests.front();
         if (not response->boot_response().ok()) {
-            SPDK_ERRLOG("EREOR: monitor notifies boot failed\n");
+            SPDK_ERRLOG_EX("EREOR: monitor notifies boot failed\n");
             throw std::runtime_error{"monitor notifies boot failed"};
         }
 
         req_ctx->cb(response_status::ok, req_ctx.get());
-        SPDK_NOTICELOG("osd %d is booted\n", _self_osd_id);
+        SPDK_NOTICELOG_EX("osd %d is booted\n", _self_osd_id);
         _on_flight_requests.pop_front();
         break;
     }
     case msg::Response::UnionCase::kCreateImageResponse: {
-        SPDK_DEBUGLOG(mon, "Received create image response\n");
+        SPDK_DEBUGLOG_EX(mon, "Received create image response\n");
         process_general_response(response->create_image_response());
         break;
     }
     case msg::Response::UnionCase::kRemoveImageResponse: {
-        SPDK_DEBUGLOG(mon, "Received remove image response\n");
+        SPDK_DEBUGLOG_EX(mon, "Received remove image response\n");
         process_general_response(response->remove_image_response());
         break;
     }
     case msg::Response::UnionCase::kResizeImageResponse: {
-        SPDK_DEBUGLOG(mon, "Received resize image response\n");
+        SPDK_DEBUGLOG_EX(mon, "Received resize image response\n");
         process_general_response(response->resize_image_response());
         break;
     }
     case msg::Response::UnionCase::kGetImageInfoResponse: {
-        SPDK_DEBUGLOG(mon, "Received get image response\n");
+        SPDK_DEBUGLOG_EX(mon, "Received get image response\n");
         auto& resp = response->get_imageinfo_response();
         auto& img_info = resp.imageinfo();
         auto err_code = resp.errorcode();
         auto err_code_str = msg::GetImageErrorCode_Name(err_code);
 
-        SPDK_DEBUGLOG(
+        SPDK_DEBUGLOG_EX(
           mon,
           "Received image(%s) response, error code is %s(%d), image size is %ld, object size is %ld\n",
           img_info.imagename().c_str(), err_code_str.c_str(), err_code,
@@ -823,11 +823,11 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
         break;
     }
     case msg::Response::UnionCase::kListPoolsResponse: {
-        SPDK_DEBUGLOG(mon, "Received list pools response\n");
+        SPDK_DEBUGLOG_EX(mon, "Received list pools response\n");
         auto& response_pools = response->list_pools_response().pi();
         auto pools_size = response_pools.size();
 
-        SPDK_DEBUGLOG(mon, "List pool size is %d\n", pools_size);
+        SPDK_DEBUGLOG_EX(mon, "List pool size is %d\n", pools_size);
 
         auto pools_info = std::make_unique<pools>(pools_size, nullptr);
         pools_info->data = std::make_unique<pools::pool[]>(pools_size);
@@ -848,7 +848,7 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
         break;
     }
     default:
-        SPDK_NOTICELOG(
+        SPDK_NOTICELOG_EX(
           "Skipping monitor response with response case %d\n",
           static_cast<std::underlying_type_t<msg::Response::UnionCase>>(response_case));
     }
@@ -856,7 +856,7 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
 
 bool client::handle_response() {
     if (_pm.expired()) {
-        SPDK_ERRLOG("Error: referenced partition_manager has been destructed\n");
+        SPDK_ERRLOG_EX("Error: referenced partition_manager has been destructed\n");
         return false;
     }
 
@@ -872,7 +872,7 @@ bool client::handle_response() {
     }
 
     if (rc < 0) [[unlikely]] {
-        SPDK_ERRLOG(
+        SPDK_ERRLOG_EX(
           "ERROR: spdk_sock_recv() failed, errno %d: %s\n",
           errno, ::spdk_strerror(errno));
 
@@ -903,7 +903,7 @@ void client::consume_general_request(bool is_cached) {
     if (rc < 0) {
         _cached = client::cached_request_class::general;
         if (_log_time_check.check_and_update()) {
-            SPDK_ERRLOG("ERROR: Send request error, return code is %d\n", rc);
+            SPDK_ERRLOG_EX("ERROR: Send request error, return code is %d\n", rc);
         }
     } else {
         _cached = client::cached_request_class::none;
@@ -924,10 +924,10 @@ void client::consume_internal_request(bool is_cached) {
     if (rc < 0) {
         _cached = client::cached_request_class::internal;
         if (_log_time_check.check_and_update()) {
-            SPDK_ERRLOG("ERROR: Send request error, return code is %d\n", rc);
+            SPDK_ERRLOG_EX("ERROR: Send request error, return code is %d\n", rc);
         }
     } else {
-        SPDK_DEBUGLOG(mon, "Consumed 1 internal request\n");
+        SPDK_DEBUGLOG_EX(mon, "Consumed 1 internal request\n");
         _cached = client::cached_request_class::none;
         _internal_requests.pop_front();
     }
@@ -935,7 +935,7 @@ void client::consume_internal_request(bool is_cached) {
 
 bool client::consume_request() {
     if (_pm.expired()) {
-        SPDK_ERRLOG("Error: referenced partition_manager has been destructed\n");
+        SPDK_ERRLOG_EX("Error: referenced partition_manager has been destructed\n");
         return false;
     }
 
@@ -973,13 +973,13 @@ bool client::consume_request() {
 utils::osd_info_t* client::get_pg_first_available_osd_info(int32_t pool_id, int32_t pg_id) {
     auto it = _pg_map.pool_pg_map.find(pool_id);
     if (it == _pg_map.pool_pg_map.end()) {
-        SPDK_ERRLOG("ERROR: Cant find the pg map of pool id %d\n", pool_id);
+        SPDK_ERRLOG_EX("ERROR: Cant find the pg map of pool id %d\n", pool_id);
         return nullptr;
     }
 
     auto map_it = it->second.find(pg_id);
     if (map_it == it->second.end()) {
-        SPDK_ERRLOG("ERROR: Cant find the pg map of pg id %d\n", pg_id);
+        SPDK_ERRLOG_EX("ERROR: Cant find the pg map of pg id %d\n", pg_id);
         return nullptr;
     }
 
@@ -1001,8 +1001,8 @@ utils::osd_info_t* client::get_pg_first_available_osd_info(int32_t pool_id, int3
 int client::get_pg_num(int32_t pool_id) {
     auto it = _pg_map.pool_pg_map.find(pool_id);
     if (it == _pg_map.pool_pg_map.end()) {
-        SPDK_DEBUGLOG(mon, "_pg_map.pool_pg_map.size() is %lu\n", _pg_map.pool_pg_map.size());
-        SPDK_ERRLOG("ERROR: Cant find this pg map of pool: %d\n", pool_id);
+        SPDK_DEBUGLOG_EX(mon, "_pg_map.pool_pg_map.size() is %lu\n", _pg_map.pool_pg_map.size());
+        SPDK_ERRLOG_EX("ERROR: Cant find this pg map of pool: %d\n", pool_id);
         return -1;
     }
 
