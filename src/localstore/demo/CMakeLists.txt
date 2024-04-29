@@ -35,3 +35,10 @@ compile_demo(demo_test
   DEPS
     fastblock_localstore
 )
+
+compile_demo(blobpool_test
+  SOURCES
+    blobpool_test.cc
+  DEPS
+    fastblock_localstore
+)

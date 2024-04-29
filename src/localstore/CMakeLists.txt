@@ -9,6 +9,7 @@ compile_library(
     blob_manager.cc
     kv_store.cc
     kv_checkpoint.cc
+    blob_pool.cc
 
   DEPS
   spdk::spdk
