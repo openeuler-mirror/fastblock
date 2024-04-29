@@ -33,7 +33,8 @@ enum class blob_type : uint32_t {
   kv = 2,
   kv_checkpoint = 3,
   kv_checkpoint_new = 4,
-  super_blob = 5
+  super_blob = 5,
+  free = 6,
 };
 
 inline std::string type_string(const blob_type& type) {
@@ -50,6 +51,8 @@ inline std::string type_string(const blob_type& type) {
       return "blob_type::kv_checkpoint_new";
     case blob_type::super_blob:
       return "blob_type::super_blob";
+    case blob_type::free:
+      return "blob_type::free";
     default:
       return "blob_type::unknown";
   }
