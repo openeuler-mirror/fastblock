@@ -48,7 +48,7 @@ public:
                                     .cb_fn = std::move(cb_fn), .arg = arg, .xattr = std::move(xattr)};
       iter_start();
       auto next_name = iter_next_name();
-      // SPDK_NOTICELOG("object name:%s create recovery.\n", next_name.c_str());
+      // SPDK_NOTICELOG_EX("object name:%s create recovery.\n", next_name.c_str());
       _obs->recovery_create(ctx->xattr, next_name, recovery_create_continue, ctx);
   }
 
@@ -63,7 +63,7 @@ public:
 
       if (!ctx->recv->iter_is_end()) {
           auto next_name = ctx->recv->iter_next_name();
-          // SPDK_NOTICELOG("object name:%s create recovery.\n", next_name.c_str());
+          // SPDK_NOTICELOG_EX("object name:%s create recovery.\n", next_name.c_str());
           ctx->obs->recovery_create(ctx->xattr, next_name, recovery_create_continue, ctx);
           return;
       }
@@ -94,7 +94,7 @@ public:
           return ;
       }
       auto next_name = iter_next_name();
-      SPDK_NOTICELOG("object name:%s read.\n", next_name.c_str());
+      SPDK_NOTICELOG_EX("object name:%s read.\n", next_name.c_str());
       _obs->recovery_read(next_name, buf, std::move(cb_fn), arg);
   }
 
@@ -104,7 +104,7 @@ public:
           return;
       }
       auto next_name = iter_next_name();
-      SPDK_NOTICELOG("object name:%s read.\n", next_name.c_str());
+      SPDK_NOTICELOG_EX("object name:%s read.\n", next_name.c_str());
       _obs->recovery_read(next_name, buf, std::move(cb_fn), arg);
   }
 
@@ -116,7 +116,7 @@ public:
                                     .cb_fn = std::move(cb_fn), .arg = arg};
       iter_start();
       auto next_name = iter_next_name();
-      // SPDK_NOTICELOG("object name:%s delete.\n", next_name.c_str());
+      // SPDK_NOTICELOG_EX("object name:%s delete.\n", next_name.c_str());
       _obs->recovery_delete(next_name, recovery_delete_continue, ctx);
   }
 
@@ -131,7 +131,7 @@ public:
 
       if (!ctx->recv->iter_is_end()) {
           auto next_name = ctx->recv->iter_next_name();
-          // SPDK_NOTICELOG("object name:%s delete.\n", next_name.c_str());
+          // SPDK_NOTICELOG_EX("object name:%s delete.\n", next_name.c_str());
           ctx->obs->recovery_delete(next_name, recovery_delete_continue, ctx);
           return;
       }

@@ -43,7 +43,7 @@ public:
       make_kvstore(global_blobstore(), global_io_channel(),
         [this, cb_fn = std::move(cb_fn)](void *arg, kvstore* kvs, int error){
             if (error) {
-                SPDK_ERRLOG("storage start failed. error:%s\n", spdk_strerror(error));
+                SPDK_ERRLOG_EX("storage start failed. error:%s\n", spdk_strerror(error));
                 cb_fn(arg, error);
                 return;
             }
@@ -51,7 +51,7 @@ public:
             this->_kvstore = kvs;
             this->_started = true;
             cb_fn(arg, 0);
-            SPDK_NOTICELOG("The storage manager has been started\n");
+            SPDK_NOTICELOG_EX("The storage manager has been started\n");
             return;
         }, arg
       );
@@ -65,12 +65,12 @@ public:
     _kvstore->stop(
         [this, cb_fn = std::move(cb_fn)](void *arg, int error){
             if (error) {
-                SPDK_ERRLOG("storage stop failed. error:%s\n", spdk_strerror(error));
+                SPDK_ERRLOG_EX("storage stop failed. error:%s\n", spdk_strerror(error));
             }
 
             cb_fn(arg, error);
             delete _kvstore;
-            SPDK_NOTICELOG("The storage manager has been stopped\n");
+            SPDK_NOTICELOG_EX("The storage manager has been stopped\n");
             return;
         }, arg
     );
@@ -81,7 +81,7 @@ public:
       load_kvstore(blob_id, checkpoint_blob_id, new_checkpoint_blob_id, global_blobstore(), global_io_channel(),
         [this, cb_fn = std::move(cb_fn)](void *arg, kvstore* kvs, int error){
             if (error) {
-                SPDK_ERRLOG("load storage failed. error:%s\n", spdk_strerror(error));
+                SPDK_ERRLOG_EX("load storage failed. error:%s\n", spdk_strerror(error));
                 cb_fn(arg, error);
                 return;
             }

@@ -83,7 +83,7 @@ public:
     }
 
     void process_response(){
-        SPDK_NOTICELOG("change membership in the pg %lu.%lu result: %d\n", _request->pool_id(), _request->pg_id(), response.state());
+        SPDK_NOTICELOG_EX("change membership in the pg %lu.%lu result: %d\n", _request->pool_id(), _request->pg_id(), response.state());
         delete this;        
     }
 
@@ -104,7 +104,7 @@ public:
     }
 
     void process_response(){
-        SPDK_NOTICELOG("create pg %lu.%lu result: %d\n", _request->pool_id(), _request->pg_id(), response.state());
+        SPDK_NOTICELOG_EX("create pg %lu.%lu result: %d\n", _request->pool_id(), _request->pg_id(), response.state());
         delete this;        
     }
 
@@ -132,7 +132,7 @@ public:
         uint32_t shard_id = 0;
         for (shard_id = 0; shard_id < _shard_cores.size(); shard_id++)
         {
-            SPDK_NOTICELOG("create connect to node %d (address %s, port %d) in core %u\n",
+            SPDK_NOTICELOG_EX("create connect to node %d (address %s, port %d) in core %u\n",
                            node_id, addr.c_str(), port, _shard_cores[shard_id]);
             _cache.create_connect(0, node_id, addr, port, std::move(conn_cb), 
             [this, shard_id, node_id](msg::rdma::client::connection* connect){

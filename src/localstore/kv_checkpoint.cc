@@ -18,7 +18,7 @@ void kv_checkpoint::start_checkpoint(size_t size, checkpoint_op_complete cb_fn, 
         cb_fn(arg, -EBUSY);
         return;
     }
-    // SPDK_NOTICELOG("start_checkpoint blobstore:%p\n", _bs);
+    // SPDK_NOTICELOG_EX("start_checkpoint blobstore:%p\n", _bs);
     struct checkpoint_ctx* ctx = new checkpoint_ctx();
     ctx->kv_ckpt = this;
     ctx->bs = _bs;

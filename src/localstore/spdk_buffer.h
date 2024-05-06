@@ -263,7 +263,7 @@ public:
           //         << " remain:" << prev->remain()
           //         << " value:" << value
           //         << std::endl;
-          // SPDK_NOTICELOG("1 size:%lu used:%lu remain:%lu value:%lu \n",
+          // SPDK_NOTICELOG_EX("1 size:%lu used:%lu remain:%lu value:%lu \n",
           //     prev->size(), prev->used(), prev->remain(), value);
           _itor->inc(sizeof(uint64_t) - prev_bytes);
           prev->inc(prev_bytes);
@@ -275,7 +275,7 @@ public:
       value = decode_fixed64(_itor->get_append());
       // std::cout << "2 value:" << value
       //             << std::endl;
-      // SPDK_NOTICELOG("2 value:%lu used:%lu\n", value, _used);
+      // SPDK_NOTICELOG_EX("2 value:%lu used:%lu\n", value, _used);
       // std::string str(_itor->get_append(), 8);
       // printf("\n"); for (auto& c : str) { printf("%x ", c); } printf("\n");
       _itor->inc(sizeof(uint64_t));
@@ -291,7 +291,7 @@ public:
           size_t prev_bytes = prev->remain();
           _itor->reset();
 
-          // SPDK_NOTICELOG("1 str size:%lu used:%lu remain:%lu len:%lu \n",
+          // SPDK_NOTICELOG_EX("1 str size:%lu used:%lu remain:%lu len:%lu \n",
           //     prev->size(), prev->used(), prev->remain(), len);
           memcpy(ptr, prev->get_append(), prev_bytes);
           memcpy(ptr + prev_bytes, _itor->get_append(), len - prev_bytes);
@@ -306,7 +306,7 @@ public:
       memcpy(ptr, _itor->get_append(), len);
       // std::string str(_itor->get_append(), len);
       // std::cout << "get str:" << str.c_str() << " used:" << _used << " len:" << len << std::endl;
-      // SPDK_NOTICELOG("2 str:%s used:%lu\n", str.c_str(), _used);
+      // SPDK_NOTICELOG_EX("2 str:%s used:%lu\n", str.c_str(), _used);
       _itor->inc(len);
       _used += len;
       return true;

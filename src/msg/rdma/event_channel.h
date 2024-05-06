@@ -71,7 +71,7 @@ public:
         ret = ::rdma_get_cm_event(_channel, &event);
         if (ret) [[unlikely]] {
             if (errno != EAGAIN and errno != EWOULDBLOCK) {
-                SPDK_ERRLOG("ERROR: Poll rdma event error: %s\n", std::strerror(errno));
+                SPDK_ERRLOG_EX("ERROR: Poll rdma event error: %s\n", std::strerror(errno));
             }
 
             return nullptr;

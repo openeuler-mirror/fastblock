@@ -17,6 +17,7 @@
 #include <limits>
 
 #include "raft_cache.h"
+#include "utils/log.h"
 #include "localstore/disk_log.h"
 #include "localstore/spdk_buffer.h"
 
@@ -51,9 +52,9 @@ public:
         entry.type = raft_entry.type();
         entry.meta = raft_entry.meta();
 
-        SPDK_INFOLOG(pg_group, "entry.size:%lu \n", entry.size);
+        SPDK_INFOLOG_EX(pg_group, "entry.size:%lu \n", entry.size);
         if (entry.size % 4096 != 0) {
-            SPDK_ERRLOG("data size:%lu not align.\n", entry.size);
+            SPDK_ERRLOG_EX("data size:%lu not align.\n", entry.size);
             /// TODO: 怎么处理这个错误
             return log_entry_t{};
         }
@@ -71,7 +72,7 @@ public:
     void disk_append(raft_index_t start_idx, raft_index_t end_idx, utils::context* complete){
         std::vector<std::shared_ptr<raft_entry_t>> raft_entries;
         _entries.get_between(start_idx, end_idx, raft_entries);
-        SPDK_INFOLOG(pg_group, "start_idx:%lu end_idx:%lu.\n", start_idx, end_idx);
+        SPDK_INFOLOG_EX(pg_group, "start_idx:%lu end_idx:%lu.\n", start_idx, end_idx);
 
         if(!_log){
             complete->complete(0);
@@ -83,14 +84,15 @@ public:
             log_entries.emplace_back(raft_entry_to_log_entry(*raft_entry));
         }
 
-        SPDK_INFOLOG(pg_group, "disk_append size:%lu.\n", log_entries.size());
+        SPDK_INFOLOG_EX(pg_group, "disk_append size:%lu.\n", log_entries.size());
         _log->append(
             log_entries,
             [log_entries](void *arg, int rberrno) mutable
             {
-                SPDK_INFOLOG(pg_group, "after disk_append.\n");
+                SPDK_INFOLOG_EX(pg_group, "after disk_append.\n");
                 utils::context *ctx = (utils::context *)arg;
-                for(auto & entry : log_entries){
+                for (auto &entry : log_entries)
+                {
                     free_buffer_list(entry.data);
                 }
                 ctx->complete(rberrno);
@@ -115,25 +117,28 @@ public:
 
     using log_read_complete = std::function<void (std::vector<raft_entry_t>&&, int rberrno)>;
     void disk_read(raft_index_t start_idx, raft_index_t end_idx, log_read_complete cb_fn){
-        SPDK_INFOLOG(pg_group, "start_idx:%lu end_idx:%lu.\n", start_idx, end_idx);
+        SPDK_INFOLOG_EX(pg_group, "start_idx:%lu end_idx:%lu.\n", start_idx, end_idx);
         _log->read(
-          start_idx,
-          end_idx,
-          [this, cb_fn = std::move(cb_fn)](void *, std::vector<log_entry_t>&& entries, int rberrno){
-            SPDK_INFOLOG(pg_group, "after disk_read, rberrno: %d, entry size: %lu\n", rberrno, entries.size());
-            std::vector<raft_entry_t> raft_entries;
-            if(rberrno != 0){
-                cb_fn({}, rberrno);
-                return;
-            }
-            for(auto& entry : entries){
-                raft_entries.emplace_back(log_entry_to_raft_entry(entry));
-                free_buffer_list(entry.data);
-            }
+            start_idx,
+            end_idx,
+            [this, cb_fn = std::move(cb_fn)](void *, std::vector<log_entry_t> &&entries, int rberrno)
+            {
+                SPDK_INFOLOG_EX(pg_group, "after disk_read, rberrno: %d, entry size: %lu\n", rberrno, entries.size());
+                std::vector<raft_entry_t> raft_entries;
+                if (rberrno != 0)
+                {
+                    cb_fn({}, rberrno);
+                    return;
+                }
+                for (auto &entry : entries)
+                {
+                    raft_entries.emplace_back(log_entry_to_raft_entry(entry));
+                    free_buffer_list(entry.data);
+                }
 
-            cb_fn(std::move(raft_entries), rberrno);
-          },
-          nullptr);
+                cb_fn(std::move(raft_entries), rberrno);
+            },
+            nullptr);
     }
 
     bool disk_get_term(raft_index_t idx, raft_term_t& term){
@@ -215,17 +220,17 @@ public:
         auto first_entry_idx = first_log_in_cache();
         if(first_entry_idx > last_applied_idx + 1){
             //说明raft启动时没有加载未apply的日志到cache
-            SPDK_INFOLOG(pg_group, "first entry: %ld in cache > last_applied_idx + 1: %ld\n", 
-                    first_log_in_cache(), last_applied_idx + 1);
+            SPDK_INFOLOG_EX(pg_group, "first entry: %ld in cache > last_applied_idx + 1: %ld\n",
+                               first_log_in_cache(), last_applied_idx + 1);
             return;
         }
         uint32_t applied_num = last_applied_idx - first_entry_idx + 1;
-        SPDK_DEBUGLOG(pg_group, "apply [%ld, %ld], applied_num: %u, _max_applied_entry_num_in_cache: %u first_entry_idx: %ld\n",
-                last_applied_idx + 1, idx, applied_num, _max_applied_entry_num_in_cache, first_entry_idx);
+        SPDK_DEBUGLOG_EX(pg_group, "apply [%ld, %ld], applied_num: %u, _max_applied_entry_num_in_cache: %u first_entry_idx: %ld\n",
+                            last_applied_idx + 1, idx, applied_num, _max_applied_entry_num_in_cache, first_entry_idx);
         if(applied_num + idx - last_applied_idx > _max_applied_entry_num_in_cache){
             auto remove_size = applied_num + idx - last_applied_idx - _max_applied_entry_num_in_cache;
             auto end_remove_idx = first_entry_idx + remove_size - 1;
-            SPDK_DEBUGLOG(pg_group, "remove entry [%ld, %ld] from cache\n", first_entry_idx, end_remove_idx);
+            SPDK_DEBUGLOG_EX(pg_group, "remove entry [%ld, %ld] from cache\n", first_entry_idx, end_remove_idx);
             get_entry_cache().remove_entry_between(first_entry_idx, end_remove_idx);
         }
         set_trim_index(idx);

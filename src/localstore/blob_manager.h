@@ -29,12 +29,14 @@
  * log: 每个pg一个blob，根据 pg 查找到这个blob
  * object: 每个pg一个map，保存了这个pg里面的对象
  */
-struct blob_tree {
-  spdk_blob_id kv_blob; 
-  spdk_blob_id kv_checkpoint_blob; 
-  spdk_blob_id kv_new_checkpoint_blob;                          
-  std::map<std::string, struct spdk_blob*> log_blobs;
-  std::map<std::string, object_store::container> object_blobs;
+
+struct blob_tree
+{
+        spdk_blob_id kv_blob;
+        spdk_blob_id kv_checkpoint_blob;
+        spdk_blob_id kv_new_checkpoint_blob;
+        std::map<std::string, struct spdk_blob *> log_blobs;
+        std::map<std::string, object_store::container> object_blobs;
 };
 
 /// TODO(sunyifang): 现在都是单核的

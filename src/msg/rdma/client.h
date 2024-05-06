@@ -20,6 +20,7 @@
 #include "msg/rdma/types.h"
 #include "utils/fmt.h"
 #include "utils/utils.h"
+#include "utils/log.h"
 #include "utils/simple_poller.h"
 
 #include <spdk/env.h>
@@ -51,7 +52,7 @@ class client : public std::enable_shared_from_this<client> {
 public:
 
     void handle_connection_shutdown(::rdma_cm_id* cm_id, connection_id conn_id, work_request_id::dispatch_id_type dis_id) {
-        SPDK_NOTICELOG("erase connection with id %lu\n", conn_id.value());
+        SPDK_NOTICELOG_EX("erase connection with id %lu\n", conn_id.value());
         _cm_records.erase(cm_id);
         _connections.erase(conn_id);
         _cqe_dispatch_map.erase(dis_id);
@@ -212,7 +213,7 @@ public:
             _dispatch_id.inc_request_id();
             wr->wr_id = _dispatch_id.value();
 
-            SPDK_INFOLOG(msg, "Post finish wr of request id %d\n", req_key);
+            SPDK_INFOLOG_EX(msg, "Post finish wr of request id %d\n", req_key);
             return send_request([this, wr = wr.get()] (bool should_signal) {
                 if (should_signal) {
                     wr->send_flags |= IBV_SEND_SIGNALED;
@@ -241,14 +242,14 @@ public:
 
         int process_request_once(std::unique_ptr<rpc_request>& req) {
             if (not req->request_data->is_ready()) {
-                SPDK_DEBUGLOG(
+                SPDK_DEBUGLOG_EX(
                   msg,
                   "not enough chunks for request %d, which needs %ld bytes\n",
                   req->request_key, req->request_data->serilaized_size());
                 return -EAGAIN;
             }
 
-            SPDK_DEBUGLOG(
+            SPDK_DEBUGLOG_EX(
               msg,
               "request id is %d, request serialize size is %ld, request body size is %ld\n",
               req->request_key,
@@ -256,7 +257,7 @@ public:
               req->request->ByteSizeLong());
 
             auto* meta = reinterpret_cast<request_meta*>(req->meta.get());
-            SPDK_DEBUGLOG(
+            SPDK_DEBUGLOG_EX(
               msg,
               "service_name_size: %d, service_name: %s, method_name_size: %d, method_name: %s\n",
               meta->service_name_size, meta->service_name,
@@ -268,21 +269,21 @@ public:
               req->request);
             auto* req_ptr = req.get();
 
-            SPDK_INFOLOG(
+            SPDK_INFOLOG_EX(
               msg,
               "Send rpc request(id: %d) with body size %ld\n",
               req_ptr->request_key, req_ptr->request_data->serilaized_size());
 
             auto err = send_metadata_request(req_ptr->request_data.get());
             if (err and err->value() == ENOMEM) {
-                SPDK_NOTICELOG(
+                SPDK_NOTICELOG_EX(
                   "Post the metadata of request %d return enomem, onflight_send_wr: %d\n",
                   req_ptr->request_key, _onflight_send_wr);
                 return -EAGAIN;
             }
 
             if (err) {
-                SPDK_ERRLOG(
+                SPDK_ERRLOG_EX(
                   "ERROR: Post send work request error '%s'\n",
                   err->message().c_str());
                 shutdown();
@@ -336,7 +337,7 @@ public:
 
             auto err = _sock->receive(&(_recv_ctx[0]->wr));
             if (err) {
-                SPDK_ERRLOG(
+                SPDK_ERRLOG_EX(
                   "ERROR: post %lu receive wrs error, '%s'\n",
                   _opts->per_post_recv_num,
                   err->message().c_str());
@@ -344,7 +345,7 @@ public:
             }
             rdma_probe.receive_wr_posted(_opts->per_post_recv_num);
 
-            SPDK_DEBUGLOG(msg, "post %ld receive wrs\n", _opts->per_post_recv_num);
+            SPDK_DEBUGLOG_EX(msg, "post %ld receive wrs\n", _opts->per_post_recv_num);
         }
 #if defined(__arm__) || defined(__aarch64__)
 #pragma GCC pop_options
@@ -364,7 +365,7 @@ public:
                 if (not _busy_priority_list->empty()) {
                     auto it = _busy_priority_list->begin();
                     if (it->expired()) {
-                        SPDK_NOTICELOG("Got the heartbeat rpc task on closed connection\n");
+                        SPDK_NOTICELOG_EX("Got the heartbeat rpc task on closed connection\n");
                         _busy_priority_list->pop_front();
                     } else {
                         is_busy = it->lock()->process_priority_rpc_request(it);
@@ -374,7 +375,7 @@ public:
                 if (not _busy_list->empty()) {
                     auto it = _busy_list->begin();
                     if (it->expired()) {
-                        SPDK_NOTICELOG("Got the rpc task on closed connection\n");
+                        SPDK_NOTICELOG_EX("Got the rpc task on closed connection\n");
                         _busy_list->pop_front();
                     } else {
                         is_busy |= it->lock()->process_rpc_request(it);
@@ -423,7 +424,7 @@ public:
 
             auto& service_name = m->service()->name();
             if (service_name.size() > max_rpc_meta_string_size) {
-                SPDK_ERRLOG(
+                SPDK_ERRLOG_EX(
                   "ERROR: RPC service name's length(%ld) is beyond the max size(%d)\n",
                   service_name.size(), max_rpc_meta_string_size);
                 ctrlr->SetFailed(FMT_1("service name too long, should less than or equal to %1%", max_rpc_meta_string_size));
@@ -433,7 +434,7 @@ public:
 
             auto& method_name = m->name();
             if (method_name.size() > max_rpc_meta_string_size) {
-                SPDK_ERRLOG(
+                SPDK_ERRLOG_EX(
                   "ERROR: RPC method name's length(%ld) is beyond the max size(%d)\n",
                   method_name.size(), max_rpc_meta_string_size);
                 ctrlr->SetFailed(FMT_1( "method name is too long, should less than or equal to %1%", max_rpc_meta_string_size));
@@ -451,7 +452,7 @@ public:
             method_name.copy(meta->method_name, meta->method_name_size);
             meta->data_size = static_cast<request_meta::data_size_type>(request->ByteSizeLong());
 
-            SPDK_DEBUGLOG(
+            SPDK_DEBUGLOG_EX(
               msg,
               "service_name_size: %d, service_name: %s, method_name_size: %d, method_name: %s\n",
               meta->service_name_size, meta->service_name,
@@ -464,12 +465,12 @@ public:
             auto req = std::make_unique<rpc_request>(
               req_key, m, ctrlr, request, response, c, std::move(meta_holder), std::move(request_data));
 
-            SPDK_DEBUGLOG(
+            SPDK_DEBUGLOG_EX(
               msg,
               "transport data_size: %d, serialized_size: %ld, req_key: %d, service: %s, method: %s\n",
               meta->data_size, serialized_size, req_key, service_name.c_str(), method_name.c_str());
 
-            SPDK_INFOLOG(
+            SPDK_INFOLOG_EX(
               msg,
               "Enqueued rpc task(%s::%s) %d\n",
               meta->service_name,
@@ -499,7 +500,7 @@ public:
             }
 
             ++_onflight_rpc_task_size;
-            SPDK_DEBUGLOG(
+            SPDK_DEBUGLOG_EX(
               msg,
               "_onflight_rpc_task_size: %ld, rpc queue depth: %ld, rc is %d\n",
               _onflight_rpc_task_size,
@@ -507,13 +508,13 @@ public:
 
             auto* stack_ptr = it->get();
             if (rc == -EINVAL) {
-                SPDK_ERRLOG(
+                SPDK_ERRLOG_EX(
                   "ERROR: Timeout occured of rpc request key %d\n",
                   stack_ptr->request_key);
                 stack_ptr->ctrlr->SetFailed("timeout");
                 stack_ptr->closure->Run();
             } else if (rc != 0) {
-                SPDK_ERRLOG("ERROR: Sending rpc request failed, rc is %d\n", rc);
+                SPDK_ERRLOG_EX("ERROR: Sending rpc request failed, rc is %d\n", rc);
                 stack_ptr->ctrlr->SetFailed(FMT_1("error, rc %1%", rc));
                 stack_ptr->closure->Run();
             }
@@ -528,7 +529,7 @@ public:
                 return false;
             }
 
-            SPDK_DEBUGLOG(
+            SPDK_DEBUGLOG_EX(
               msg,
               "process %ld rpc call heartbeat()\n",
               _priority_onflight_requests.size());
@@ -545,7 +546,7 @@ public:
                 }
 
                 ++_onflight_rpc_task_size;
-                SPDK_DEBUGLOG(
+                SPDK_DEBUGLOG_EX(
                   msg,
                   "_onflight_rpc_task_size: %ld, rpc queue depth: %ld\n",
                   _onflight_rpc_task_size,
@@ -556,7 +557,7 @@ public:
                     stack_ptr->ctrlr->SetFailed("timeout");
                     stack_ptr->closure->Run();
                 } else if (rc != 0) {
-                    SPDK_ERRLOG("ERROR: Sending rpc request failed, rc is %d\n", rc);
+                    SPDK_ERRLOG_EX("ERROR: Sending rpc request failed, rc is %d\n", rc);
                     stack_ptr->ctrlr->SetFailed(FMT_1("error, rc %1%", rc));
                     stack_ptr->closure->Run();
                 }
@@ -587,13 +588,13 @@ public:
             auto err = send_finish_request(head);
             if (err) {
                 if (err->value() == ENOMEM) {
-                    SPDK_NOTICELOG(
+                    SPDK_NOTICELOG_EX(
                       "Post free wr of request %u return enomem, onflight_send_wr: %d\n",
                       head, _onflight_send_wr);
                     return false;
                 }
 
-                SPDK_ERRLOG(
+                SPDK_ERRLOG_EX(
                   "ERROR: Post send work request error '%s'\n",
                   err->message().c_str());
                 shutdown();
@@ -615,16 +616,16 @@ public:
 
             _free_server_list.push_back(stack_ptr->request_key);
             --_onflight_rpc_task_size;
-            SPDK_DEBUGLOG(msg, "_onflight_rpc_task_size: %ld\n", _onflight_rpc_task_size);
+            SPDK_DEBUGLOG_EX(msg, "_onflight_rpc_task_size: %ld\n", _onflight_rpc_task_size);
             auto is_parsed = stack_ptr->reply_data->unserialize_data(stack_ptr->response, reply_meta_size);
             if (not is_parsed) {
-                SPDK_ERRLOG(
+                SPDK_ERRLOG_EX(
                   "ERROR: Unserialize the response body of request key %d failed\n",
                   stack_ptr->request_key);
                 stack_ptr->ctrlr->SetFailed("unserialize error");
             }
 
-            SPDK_INFOLOG(
+            SPDK_INFOLOG_EX(
               msg,
               "Read the response body of request %d\n",
               stack_ptr->request_key);
@@ -646,10 +647,10 @@ public:
 
             switch (cqe->opcode) {
             case ::IBV_WC_RECV: {
-                SPDK_DEBUGLOG(msg, "handle cqe of wr id '%ld'\n", cqe->wr_id);
+                SPDK_DEBUGLOG_EX(msg, "handle cqe of wr id '%ld'\n", cqe->wr_id);
                 auto it = _recv_ctx_map.find(cqe->wr_id);
                 if (it == _recv_ctx_map.end()) {
-                    SPDK_ERRLOG("ERROR: Cant find the receive context of wr id '%ld'\n", cqe->wr_id);
+                    SPDK_ERRLOG_EX("ERROR: Cant find the receive context of wr id '%ld'\n", cqe->wr_id);
                     shutdown();
                     return true;
                 }
@@ -658,32 +659,32 @@ public:
                 auto req_key = transport_data::read_correlation_index(recv_ctx);
                 auto req_it = _unresponsed_requests.find(req_key);
                 if (req_it == _unresponsed_requests.end()) {
-                    SPDK_ERRLOG("ERROR: Cant find the request stack of key '%d'\n", req_key);
+                    SPDK_ERRLOG_EX("ERROR: Cant find the request stack of key '%d'\n", req_key);
                     shutdown();
                     return true;
                 }
 
                 if (is_timeout(req_it->second.get())) {
-                    SPDK_ERRLOG(
+                    SPDK_ERRLOG_EX(
                       "Timeout occurred on rpc request of request key %d\n",
                       req_it->second->request_key);
                     req_it->second->ctrlr->SetFailed("timeout");
                     _free_server_list.push_back(req_it->second->request_key);
                     --_onflight_rpc_task_size;
-                    SPDK_DEBUGLOG(msg, "_onflight_rpc_task_size: %ld\n", _onflight_rpc_task_size);
+                    SPDK_DEBUGLOG_EX(msg, "_onflight_rpc_task_size: %ld\n", _onflight_rpc_task_size);
                     _unresponsed_requests.erase(req_it);
                     break;
                 }
 
                 req_it->second->request_data.reset(nullptr);
                 auto reply_m = transport_data::read_reply_meta(it->second);
-                SPDK_INFOLOG(
+                SPDK_INFOLOG_EX(
                   msg,
                   "Received reply of request %d, status is %s\n",
                   req_it->second->request_key,
                   string_status(reply_m));
 
-                SPDK_DEBUGLOG(
+                SPDK_DEBUGLOG_EX(
                   msg,
                   "received reply of request %d, status is %s, elapsed: %ldus\n",
                   req_it->second->request_key,
@@ -696,7 +697,7 @@ public:
                     _free_server_list.push_back(req_it->second->request_key);
 
                     --_onflight_rpc_task_size;
-                    SPDK_DEBUGLOG(msg, "_onflight_rpc_task_size: %ld\n", _onflight_rpc_task_size);
+                    SPDK_DEBUGLOG_EX(msg, "_onflight_rpc_task_size: %ld\n", _onflight_rpc_task_size);
                     _unresponsed_requests.erase(req_it);
                     break;
                 }
@@ -706,7 +707,7 @@ public:
                     if (transport_data::is_inlined(it->second)) {
                         auto* inlined_data = transport_data::read_inlined_content(it->second);
                         auto unserialize_size = transport_data::read_inlined_content_length(it->second);
-                        SPDK_DEBUGLOG(msg, "unserilaize inlined reply, size is %d\n", unserialize_size);
+                        SPDK_DEBUGLOG_EX(msg, "unserilaize inlined reply, size is %d\n", unserialize_size);
                         is_parsed = response->ParseFromArray(
                           inlined_data + reply_meta_size,
                           transport_data::read_inlined_content_length(it->second));
@@ -717,7 +718,7 @@ public:
 
                         req_it->second->reply_data->from_net_context(it->second);
                         if (not req_it->second->reply_data->is_metadata_complete()) {
-                            SPDK_DEBUGLOG(
+                            SPDK_DEBUGLOG_EX(
                               msg,
                               "request key %d, metadata is not complete\n",
                               req_it->second->request_key);
@@ -725,7 +726,7 @@ public:
                         }
 
                         if (not req_it->second->reply_data->is_ready()) {
-                            SPDK_DEBUGLOG(
+                            SPDK_DEBUGLOG_EX(
                               msg,
                               "request key %d, transport data is not ready\n",
                               req_it->second->request_key);
@@ -735,20 +736,20 @@ public:
                         auto err = send_read_request(req_it->second->reply_data.get());
                         if (err) {
                             if (err->value() == ENOMEM) {
-                                SPDK_NOTICELOG(
+                                SPDK_NOTICELOG_EX(
                                   "nomem for post read wr of request %d, on_flight_send_wr: %d\n",
                                   req_it->first, _onflight_send_wr);
                                 return false;
                             }
 
-                            SPDK_ERRLOG(
+                            SPDK_ERRLOG_EX(
                               "ERROR: Post send work request error '%s'\n",
                               err->message().c_str());
                             shutdown();
                             return true;
                         }
 
-                        SPDK_DEBUGLOG(
+                        SPDK_DEBUGLOG_EX(
                           msg,
                           "request key of %d start rdma reading, _wait_read_requests addr is %p\n",
                           req_it->second->request_key,
@@ -760,9 +761,9 @@ public:
                     }
 
                     --_onflight_rpc_task_size;
-                    SPDK_DEBUGLOG(msg, "_onflight_rpc_task_size: %ld\n", _onflight_rpc_task_size);
+                    SPDK_DEBUGLOG_EX(msg, "_onflight_rpc_task_size: %ld\n", _onflight_rpc_task_size);
                     if (not is_parsed) {
-                        SPDK_ERRLOG(
+                        SPDK_ERRLOG_EX(
                           "ERROR: Parse response body failed of request %d\n",
                           req_it->second->request_key);
 
@@ -773,7 +774,7 @@ public:
                         break;
                     }
 
-                    SPDK_INFOLOG(
+                    SPDK_INFOLOG_EX(
                       msg,
                       "Read the response body of request %d\n",
                       req_it->second->request_key);
@@ -783,7 +784,7 @@ public:
                     break;
                 }
                 default: {
-                    SPDK_ERRLOG(
+                    SPDK_ERRLOG_EX(
                       "ERROR: RPC call failed of request %d with reply status %s\n",
                       req_it->second->request_key,
                       string_status(reply_m));
@@ -817,7 +818,7 @@ public:
 
             _is_terminated = true;
             _poller.unregister_poller();
-            SPDK_NOTICELOG("The poller of the connection has been unregistered\n");
+            SPDK_NOTICELOG_EX("The poller of the connection has been unregistered\n");
 
             for (auto& task : _onflight_requests) {
                 task->ctrlr->SetFailed("connection has been shutdown");
@@ -1036,7 +1037,7 @@ public:
         if (ctx->on_start_cb) {
             ctx->on_start_cb.value()();
         }
-        SPDK_INFOLOG(msg, "Rpc client started\n");
+        SPDK_INFOLOG_EX(msg, "Rpc client started\n");
     }
 
     void handle_stop(std::unique_ptr<stop_context> ctx) {
@@ -1046,7 +1047,7 @@ public:
 
         _is_terminated = true;
         _core_poller.unregister_poller();
-        SPDK_NOTICELOG("The poller of the rpc client has been unregistered\n");
+        SPDK_NOTICELOG_EX("The poller of the rpc client has been unregistered\n");
 
         for (auto& conn_pair : _connections) {
             conn_pair.second->shutdown_slient();
@@ -1062,7 +1063,7 @@ public:
                 ::spdk_set_thread(current_thread);
             }
 
-            SPDK_NOTICELOG("SPDK thread of the rpc client has been marked as exited\n");
+            SPDK_NOTICELOG_EX("SPDK thread of the rpc client has been marked as exited\n");
         }
 
         _meta_pool->free();
@@ -1072,7 +1073,7 @@ public:
             try {
                 (ctx->on_stop_cb.value())();
             } catch (const std::exception& e) {
-                SPDK_ERRLOG("Caught exception when executing callback on stopping rpc client: %s\n", e.what());
+                SPDK_ERRLOG_EX("Caught exception when executing callback on stopping rpc client: %s\n", e.what());
             }
         }
     }
@@ -1121,7 +1122,7 @@ public:
             task_ptr->retry_ctx->retry_times++;
             task_ptr->retry_ctx->connect_fail_at = std::chrono::system_clock::now();
             if (task_ptr->retry_ctx->retry_times > _opts->connect_max_retry) {
-                SPDK_ERRLOG(
+                SPDK_ERRLOG_EX(
                   "ERROR: Trying reconnting to %s exceed max times %lu\n",
                   task_ptr->conn->fd().peer_address().c_str(),
                   task_ptr->retry_ctx->retry_times);
@@ -1130,7 +1131,7 @@ public:
                 break;
             }
 
-            SPDK_NOTICELOG(
+            SPDK_NOTICELOG_EX(
               "Try to connect %s at the %lu times\n",
               task_ptr->conn->fd().peer_address().c_str(),
               task_ptr->retry_ctx->retry_times);
@@ -1153,13 +1154,13 @@ public:
     void process_connect_task(::rdma_cm_event* evt) {
         auto task_it = _connect_tasks.find(evt->id);
         if (task_it == _connect_tasks.end()) {
-            SPDK_ERRLOG(
+            SPDK_ERRLOG_EX(
               "ERROR: Cant find the connect task of cm id %p on event %s in connect tasks map\n",
               evt->id, ::rdma_event_str(evt->event));
 
             auto cm_rd_it = _cm_records.find(evt->id);
             if (cm_rd_it != _cm_records.end()) {
-                SPDK_ERRLOG(
+                SPDK_ERRLOG_EX(
                   "ERROR: cm id %p should not occured in cm records map on event %s\n",
                   evt->id, ::rdma_event_str(evt->event));
                 std::raise(SIGINT);
@@ -1178,7 +1179,7 @@ public:
                 fd.resolve_route();
                 task_ptr->conn_state = connect_state::wait_route_resolved;
             } else {
-                SPDK_ERRLOG(
+                SPDK_ERRLOG_EX(
                   "ERROR: resolve route failed when connecting %s\n",
                   fd.peer_address().c_str());
                 task_ptr->conn_state = connect_state::connect_failed;
@@ -1191,7 +1192,7 @@ public:
                 fd.create_qp(*_pd, _cq->cq());
                 auto rc = fd.start_connect();
                 if (rc) {
-                    SPDK_ERRLOG(
+                    SPDK_ERRLOG_EX(
                       "ERROR: Connect to %s error, '%s'\n",
                       fd.peer_address().c_str(),
                       rc->message().c_str());
@@ -1200,7 +1201,7 @@ public:
                     task_ptr->conn_state = connect_state::wait_connect_established;
                 }
             } else {
-                SPDK_ERRLOG(
+                SPDK_ERRLOG_EX(
                   "ERROR: resolve route filaed when connecting %s\n",
                   fd.peer_address().c_str());
                 task_ptr->conn_state = connect_state::connect_failed;
@@ -1216,11 +1217,11 @@ public:
                 _cqe_dispatch_map.emplace(task_ptr->conn->dispatch_id(), task_ptr->conn);
                 task_ptr->conn->start();
                 task_ptr->conn->per_post_recv();
-                SPDK_INFOLOG(msg, "Connected to %s\n", task_ptr->conn->fd().peer_address().c_str());
+                SPDK_INFOLOG_EX(msg, "Connected to %s\n", task_ptr->conn->fd().peer_address().c_str());
                 task_ptr->cb(true, task_ptr->conn);
                 _connect_tasks.erase(fd.id());
             } else {
-                SPDK_ERRLOG(
+                SPDK_ERRLOG_EX(
                   "ERROR: Wait 'RDMA_CM_EVENT_ESTABLISHED' failed when connecting %s\n",
                   fd.peer_address().c_str());
                 task_ptr->conn_state = connect_state::connect_failed;
@@ -1238,7 +1239,7 @@ public:
         auto* evt = _channel.poll();
         if (not evt) { return; }
 
-        SPDK_INFOLOG(
+        SPDK_INFOLOG_EX(
           msg,
           "receive rdma cm event: %s, cm id: %p\n",
           ::rdma_event_str(evt->event), evt->id);
@@ -1250,7 +1251,7 @@ public:
 
         auto it = _cm_records.find(evt->id);
         if (it == _cm_records.end()) {
-            SPDK_ERRLOG(
+            SPDK_ERRLOG_EX(
               "ERROR: Received cm event %s, but the cm id can not be found in cm observers\n",
               ::rdma_event_str(evt->event));
 
@@ -1260,7 +1261,7 @@ public:
 
         auto conn_it = _connections.find(it->second->id());
         if (conn_it == _connections.end()) {
-            SPDK_ERRLOG(
+            SPDK_ERRLOG_EX(
               "ERROR: Received cm event %s, but the cm id can not be found in connection map\n",
               ::rdma_event_str(evt->event));
             _cm_records.erase(it);
@@ -1269,7 +1270,7 @@ public:
             return;
         }
 
-        SPDK_INFOLOG(
+        SPDK_INFOLOG_EX(
           msg,
           "Received rdma cm event '%s' on rdma cm id %p\n",
           ::rdma_event_str(evt->event),
@@ -1284,11 +1285,11 @@ public:
             ::rdma_ack_cm_event(evt);
             evt = nullptr;
 
-            SPDK_ERRLOG(
+            SPDK_ERRLOG_EX(
               "ERROR: failed process cm event, will close the connection(rdma cm id: %p)\n",
               evt_id);
 
-            SPDK_NOTICELOG("Reomve the connection(id: %p)\n", evt_id);
+            SPDK_NOTICELOG_EX("Reomve the connection(id: %p)\n", evt_id);
             conn_it->second->shutdown();
         }
 
@@ -1306,7 +1307,7 @@ public:
 
         auto rc = _cq->poll(_wcs.get(), _opts->poll_cq_batch_size);
         if (rc < 0) {
-            SPDK_ERRLOG("ERROR: Poll cq error '%s', stop the server\n", std::strerror(errno));
+            SPDK_ERRLOG_EX("ERROR: Poll cq error '%s', stop the server\n", std::strerror(errno));
             handle_stop(nullptr);
             return SPDK_POLLER_IDLE;
         }
@@ -1323,11 +1324,11 @@ public:
 
         for (int i{0}; i < rc; ++i) {
             cqe = &(_wcs[i]);
-            SPDK_DEBUGLOG(msg, "polled cqe with opcode %s\n", completion_queue::op_name(cqe->opcode).c_str());
+            SPDK_DEBUGLOG_EX(msg, "polled cqe with opcode %s\n", completion_queue::op_name(cqe->opcode).c_str());
             dis_id = work_request_id::dispatch_id(cqe->wr_id);
             auto dispatch_it = _cqe_dispatch_map.find(dis_id);
             if (dispatch_it == _cqe_dispatch_map.end()) {
-                SPDK_NOTICELOG(
+                SPDK_NOTICELOG_EX(
                   "cant find the connection with dispatch id %ld, work request id %ld, cqe opcode is %s\n",
                   dis_id, cqe->wr_id, completion_queue::op_name(cqe->opcode).c_str());
                 continue;
@@ -1344,7 +1345,7 @@ public:
             if (cqe->status != ::IBV_WC_SUCCESS) {
                 if (not conn->is_terminated()) {
                     conn->fd().update_qp_attr();
-                    SPDK_ERRLOG(
+                    SPDK_ERRLOG_EX(
                       "ERROR: Got error wc, wc.vendor_err=%d, wc.status=%s, qp.state=%s\n",
                       cqe->vendor_err,
                       socket::wc_status_name(cqe->status).c_str(),
@@ -1371,7 +1372,7 @@ public:
      */
 
     void start(std::optional<std::function<void()>> on_start_cb = std::nullopt) {
-        SPDK_DEBUGLOG(msg, "sending rpc client start message\n");
+        SPDK_DEBUGLOG_EX(msg, "sending rpc client start message\n");
         auto* ctx = new start_context{this, std::move(on_start_cb)};
         ::spdk_thread_send_msg(_thread, on_start, ctx);
     }

@@ -12,7 +12,7 @@
 #include "osd_client.h"
 
 void get_leader_source::process_response(){
-    SPDK_NOTICELOG("leader of the pg %lu.%lu is %d\n", _request->pool_id(), _request->pg_id(), response.leader_id());
+    SPDK_NOTICELOG_EX("leader of the pg %lu.%lu is %d\n", _request->pool_id(), _request->pg_id(), response.leader_id());
     _client->set_leader_id(response.leader_id());
     if(_node_id != response.leader_id()){
         _client->create_connect(response.leader_addr(), response.leader_port(), response.leader_id(),

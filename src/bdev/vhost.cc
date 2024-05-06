@@ -23,6 +23,7 @@ static const char* g_pid_path = NULL;
 static const char* g_mon_cluster_endpoints = nullptr;
 static const char* g_conf_path{nullptr};
 boost::property_tree::ptree g_pt{};
+int g_id{-1};
 
 static void
 vhost_usage(void)
@@ -66,7 +67,7 @@ static void vhost_started(void *arg1)
 	std::string pid_path = "/var/tmp/vhost" + std::to_string(getpid()) + ".pid";
     save_pid(pid_path.c_str());
 	auto vhost_path = "/var/tmp/bdev_vhost" + std::to_string(getpid()) + ".sock";
-    SPDK_NOTICELOG(
+    SPDK_NOTICELOG_EX(
       "pid path is '%s', vhost socket path is '%s'\n",
       pid_path.c_str(), vhost_path.c_str());
     ::spdk_vhost_set_socket_path(vhost_path.c_str());
@@ -107,7 +108,6 @@ int main(int argc, char *argv[])
     ::spdk_log_set_flag("bdev_fastblock");
     ::spdk_log_set_flag("object_store");
 	::spdk_log_set_flag("libblk");
-	::spdk_log_set_flag("bdev_fastblock");
 
 	if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:", NULL,
 								  vhost_parse_arg, vhost_usage)) !=

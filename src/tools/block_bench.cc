@@ -32,6 +32,7 @@
 
 SPDK_LOG_REGISTER_COMPONENT(bbench)
 
+int g_id{-1};
 namespace {
 enum bench_io_type {
     write = 1,
@@ -90,6 +91,7 @@ static std::string sample_data{};
 static boost::property_tree::ptree g_pt{};
 static bool g_force_stop{false};
 static watcher_context g_watcher_ctx{};
+
 
 std::string random_string(const size_t length) {
     static std::string chars{
@@ -166,23 +168,23 @@ void read_once(bench_context* ctx) {
 
 void on_write_done(::spdk_bdev_io* ctx, [[maybe_unused]] int32_t res) {
     if (res != errc::success) {
-        SPDK_ERRLOG("Write object error\n");
+        SPDK_ERRLOG_EX("Write object error\n");
     }
     auto* stack_ptr = reinterpret_cast<request_stack*>(ctx);
     auto* bench_ctx = reinterpret_cast<bench_context*>(stack_ptr->ctx);
     auto* watcher_ctx = reinterpret_cast<watcher_context*>(bench_ctx->watcher_ctx);
 
     auto dur = static_cast<double>(::spdk_get_ticks() - stack_ptr->start_tick);
-    SPDK_DEBUGLOG(
+    SPDK_DEBUGLOG_EX(
       bbench,
       "write duration is %lfus/%lfms, raw value is %lf, start_tsc is %ld\n",
       tick_to_us(dur), tick_to_ms(dur), dur, stack_ptr->start_tick);
     bench_ctx->durs.push_back(dur);
-    SPDK_DEBUGLOG(bbench, "The %ldth write request done\n", stack_ptr->id);
+    SPDK_DEBUGLOG_EX(bbench, "The %ldth write request done\n", stack_ptr->id);
     bench_ctx->done_io_count++;
 
     if (stack_ptr->id % 100 == 0) {
-        SPDK_INFOLOG(
+        SPDK_INFOLOG_EX(
           bbench,
           "%ldth request done, done_io_count is %ld, io_count is %ld\n",
           stack_ptr->id, bench_ctx->done_io_count, bench_ctx->io_count);
@@ -195,7 +197,7 @@ void on_write_done(::spdk_bdev_io* ctx, [[maybe_unused]] int32_t res) {
 
 void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
     if (res != errc::success) {
-        SPDK_ERRLOG("Read object error\n");
+        SPDK_ERRLOG_EX("Read object error\n");
     }
 
     auto* stack_ptr = reinterpret_cast<request_stack*>(arg);
@@ -203,17 +205,17 @@ void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
     auto* watcher_ctx = reinterpret_cast<watcher_context*>(bench_ctx->watcher_ctx);
 
     auto dur = static_cast<double>(::spdk_get_ticks() - stack_ptr->start_tick);
-    SPDK_DEBUGLOG(
+    SPDK_DEBUGLOG_EX(
       bbench,
       "read duration is %lfus/%lfms, raw value is %lf, start_tsc is %ld\n",
       tick_to_us(dur), tick_to_ms(dur), dur, stack_ptr->start_tick);
     bench_ctx->durs.push_back(dur);
-    SPDK_DEBUGLOG(bbench, "The %ldth read request done\n", stack_ptr->id);
+    SPDK_DEBUGLOG_EX(bbench, "The %ldth read request done\n", stack_ptr->id);
     bench_ctx->on_flight_request.erase(stack_ptr->id);
     bench_ctx->done_io_count++;
 
     if (stack_ptr->id % 100 == 0) {
-        SPDK_INFOLOG(bbench, "%ldth request done\n", stack_ptr->id);
+        SPDK_INFOLOG_EX(bbench, "%ldth request done\n", stack_ptr->id);
     }
 
     if (bench_ctx->on_flight_io_count < bench_ctx->io_count) {
@@ -224,7 +226,7 @@ void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
 void on_thread_received_msg(void* arg) {
     auto* ctx = reinterpret_cast<bench_context*>(arg);
     auto* watcher_ctx = reinterpret_cast<watcher_context*>(ctx->watcher_ctx);
-    SPDK_NOTICELOG(
+    SPDK_NOTICELOG_EX(
       "Start bench request on core %d, io count is %ld\n",
       ctx->core, ctx->io_count);
     // FIXME:
@@ -236,10 +238,10 @@ void on_thread_received_msg(void* arg) {
     ctx->blk_client = std::make_unique<::libblk_client>(
       mon_client.get(),
       &cpumask, opts);
-    SPDK_DEBUGLOG(bbench, "starting block client\n");
+    SPDK_DEBUGLOG_EX(bbench, "starting block client\n");
     ctx->blk_client->start();
 
-    SPDK_DEBUGLOG(bbench, "start sending rpc\n");
+    SPDK_DEBUGLOG_EX(bbench, "start sending rpc\n");
     watcher_ctx->iops_start_at = ::spdk_get_ticks();
     for (size_t i{0}; i < watcher_ctx->io_depth; ++i) {
         switch (watcher_ctx->io_type) {
@@ -279,13 +281,13 @@ void on_thread_received_msg(void* arg) {
 }
 
 void on_app_stop() noexcept {
-    SPDK_NOTICELOG("Stop the block_bench\n");
+    SPDK_NOTICELOG_EX("Stop the block_bench\n");
     g_force_stop = true;
 
     mon_client->stop();
-    SPDK_NOTICELOG("The monitor client has been stopped\n");
+    SPDK_NOTICELOG_EX("The monitor client has been stopped\n");
     g_watcher_ctx.watch_poller_holder.unregister_poller();
-    SPDK_NOTICELOG("The block_bench poller has been unregistered\n");
+    SPDK_NOTICELOG_EX("The block_bench poller has been unregistered\n");
     auto n_core = ::spdk_env_get_core_count();
     for (uint32_t i{0}; i < n_core; ++i) {
         ::spdk_set_thread(g_watcher_ctx.bench_threads[i]);
@@ -299,7 +301,7 @@ void on_app_stop() noexcept {
         ::spdk_set_thread(nullptr);
     }
 
-    SPDK_NOTICELOG("Stop the spdk app\n");
+    SPDK_NOTICELOG_EX("Stop the spdk app\n");
     ::spdk_app_stop(0);
 }
 
@@ -345,7 +347,7 @@ int watch_poller(void* arg) {
             }
         }
 
-        SPDK_DEBUGLOG(bbench, "All requests done, durations count is %ld\n", durations.size());
+        SPDK_DEBUGLOG_EX(bbench, "All requests done, durations count is %ld\n", durations.size());
         std::sort(durations.begin(), durations.end());
 
         double mean{};
@@ -383,7 +385,7 @@ int watch_poller(void* arg) {
         for (auto lat_tag : latency_tag) {
             auto lat_at = static_cast<size_t>(lat_tag * durations.size());
 
-            SPDK_DEBUGLOG(bbench, "p%f at %ld\n", lat_tag, lat_at);
+            SPDK_DEBUGLOG_EX(bbench, "p%f at %ld\n", lat_tag, lat_at);
             auto lat = durations.at(lat_at);
             if (count == 0) {
                 fmt = boost::format("%1%p%2%: %3%us") % fmt % lat_tag % tick_to_us(lat);
@@ -419,22 +421,22 @@ int watch_poller(void* arg) {
 void on_app_start(void* arg) {
     auto* watcher_ctx = reinterpret_cast<watcher_context*>(arg);
 
-    SPDK_INFOLOG(bbench, "Going to parse json conf file %s\n", g_conf_path);
+    SPDK_INFOLOG_EX(bbench, "Going to parse json conf file %s\n", g_conf_path);
 
     boost::property_tree::read_json(std::string(g_conf_path), g_pt);
 
     auto raw_io_type = g_pt.get_child("io_type").get_value<std::string>();
     if (raw_io_type == "write") {
         watcher_ctx->io_type = bench_io_type::write;
-        SPDK_DEBUGLOG(bbench, "io_type is write\n");
+        SPDK_DEBUGLOG_EX(bbench, "io_type is write\n");
     } else if (raw_io_type == "read") {
         watcher_ctx->io_type = bench_io_type::read;
-        SPDK_DEBUGLOG(bbench, "io_type is read\n");
+        SPDK_DEBUGLOG_EX(bbench, "io_type is read\n");
     } else if (raw_io_type == "write_read") {
         watcher_ctx->io_type = bench_io_type::write_read;
-        SPDK_DEBUGLOG(bbench, "io_type is write_read\n");
+        SPDK_DEBUGLOG_EX(bbench, "io_type is write_read\n");
     } else {
-        SPDK_ERRLOG("ERROR: unknown io type: %s\n", raw_io_type.c_str());
+        SPDK_ERRLOG_EX("ERROR: unknown io type: %s\n", raw_io_type.c_str());
         exit(-EINVAL);
     }
 
@@ -520,10 +522,10 @@ void on_app_start(void* arg) {
           switch (s) {
           case monitor::client::response_status::ok:
           case monitor::client::response_status::created_image_exists:
-              SPDK_INFOLOG(bbench, "image is ready\n");
+              SPDK_INFOLOG_EX(bbench, "image is ready\n");
               break;
           default:
-              SPDK_ERRLOG("Create image error, error code is %d\n", s);
+              SPDK_ERRLOG_EX("Create image error, error code is %d\n", s);
               throw std::runtime_error{"create image error"};
           }
       }
@@ -544,7 +546,7 @@ int main(int argc, char** argv) {
     opts.shutdown_cb = on_app_stop;
     rc = ::spdk_app_start(&opts, on_app_start, &g_watcher_ctx);
     if (rc) {
-        SPDK_ERRLOG("ERROR: Start spdk app failed\n");
+        SPDK_ERRLOG_EX("ERROR: Start spdk app failed\n");
     }
 
     ::spdk_app_fini();

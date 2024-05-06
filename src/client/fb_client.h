@@ -119,7 +119,7 @@ private:
         auto stub_it = _stubs.find(conn_id);
         if (stub_it == _stubs.end()) {
             _stubs.emplace(conn_id, nullptr);
-            SPDK_DEBUGLOG(
+            SPDK_DEBUGLOG_EX(
               libblk,
               "emplaced stubs of node_id %d, current core is %d, conn id %lu, addr is '%s:%d'\n",
                ::spdk_env_get_current_core(), node_id, conn_id, addr.c_str(), port);
@@ -127,7 +127,7 @@ private:
               addr, port,
               [this, conn_id, addr, port] (bool is_connected, std::shared_ptr<msg::rdma::client::connection> conn) {
                   if (not is_connected) {
-                      SPDK_ERRLOG("ERROR: Connect to %s:%d failed\n", addr.c_str(), port);
+                      SPDK_ERRLOG_EX("ERROR: Connect to %s:%d failed\n", addr.c_str(), port);
                       throw std::runtime_error{"make connection failed\n"};
                   }
 
@@ -159,7 +159,7 @@ private:
     int enqueue_leader_request(const int32_t pool_id, const int32_t pg_id) {
         auto* first_osd = _mon_cli->get_pg_first_available_osd_info(pool_id, pg_id);
         if (not first_osd) {
-            SPDK_ERRLOG("ERROR: Cant find any available osd of pg %d, pool id %d\n", pool_id, pg_id);
+            SPDK_ERRLOG_EX("ERROR: Cant find any available osd of pg %d, pool id %d\n", pool_id, pg_id);
             return EAGAIN;
         }
 
@@ -207,7 +207,7 @@ private:
         req_stk->obj_index = obj_idx;
         req_stk->leader_osd_key = make_leader_key(pool_id, pg_id);
         req_stk->this_client = this;
-        SPDK_DEBUGLOG(
+        SPDK_DEBUGLOG_EX(
           libblk,
           "pool_id: %d, pg_id: %d, leader_osd_key: %lu\n",
           pool_id, pg_id, req_stk->leader_osd_key);
@@ -222,7 +222,7 @@ public:
       , _mon_cli{mon_cli} {}
 
     ~fblock_client() noexcept {
-        SPDK_DEBUGLOG(libblk, "call ~fblck_client()\n");
+        SPDK_DEBUGLOG_EX(libblk, "call ~fblck_client()\n");
     }
 
     bool is_terminate() noexcept {
@@ -235,11 +235,11 @@ public:
 
     void start() {
         if (not _current_thread) {
-            SPDK_ERRLOG("ERROR: Cant get current spdk thread\n");
+            SPDK_ERRLOG_EX("ERROR: Cant get current spdk thread\n");
             throw std::runtime_error{"cant get current spdk thread"};
         }
 
-        SPDK_DEBUGLOG(libblk, "sending start message\n");
+        SPDK_DEBUGLOG_EX(libblk, "sending start message\n");
         ::spdk_thread_send_msg(_current_thread, do_start, this);
     }
 
@@ -248,7 +248,7 @@ public:
             return;
         }
 
-        SPDK_NOTICELOG("Stop the fastblock client\n");
+        SPDK_NOTICELOG_EX("Stop the fastblock client\n");
         _is_terminate = true;
         _rpc_client->stop();
         _poller.unregister_poller();
@@ -286,7 +286,7 @@ public:
      ************************************************************/
 
     void handle_start() {
-        SPDK_INFOLOG(libblk, "Starting block client...\n");
+        SPDK_INFOLOG_EX(libblk, "Starting block client...\n");
         _rpc_client->start();
         _poller.register_poller(do_poll, this, 0);
     }
@@ -295,24 +295,24 @@ public:
         auto it = _leader_osd.find(req_stk->leader_osd_key);
         bool should_acquire_leader{false};
         if (it == _leader_osd.end()) {
-            SPDK_DEBUGLOG(libblk, "cant find the leader osd %ld\n", req_stk->leader_osd_key);
+            SPDK_DEBUGLOG_EX(libblk, "cant find the leader osd %ld\n", req_stk->leader_osd_key);
             should_acquire_leader = true;
         } else if (it->second->is_onflight) {
-            SPDK_DEBUGLOG(libblk, "leader osd %ld request on flight\n", req_stk->leader_osd_key);
+            SPDK_DEBUGLOG_EX(libblk, "leader osd %ld request on flight\n", req_stk->leader_osd_key);
             should_acquire_leader = false;
         } else if (not it->second->is_valid) {
-            SPDK_DEBUGLOG(libblk, "leader osd %ld is not valid\n", req_stk->leader_osd_key);
+            SPDK_DEBUGLOG_EX(libblk, "leader osd %ld is not valid\n", req_stk->leader_osd_key);
             should_acquire_leader = true;
         }
 
-        SPDK_DEBUGLOG(
+        SPDK_DEBUGLOG_EX(
           libblk,
           "leader_osd_key: %lu, should_acquire_leader: %d\n",
           req_stk->leader_osd_key, should_acquire_leader);
 
         if (should_acquire_leader) {
             _leader_osd.emplace(req_stk->leader_osd_key, std::make_unique<leader_osd_info>());
-            SPDK_DEBUGLOG(libblk, "_leader_osd emplaced %lu\n", req_stk->leader_osd_key);
+            SPDK_DEBUGLOG_EX(libblk, "_leader_osd emplaced %lu\n", req_stk->leader_osd_key);
             auto struct_key = from_leader_key(req_stk->leader_osd_key);
             enqueue_leader_request(struct_key.pool_id, struct_key.pg_id);
         } else if (it->second and not it->second->is_onflight) {
@@ -339,7 +339,7 @@ public:
         auto response_handler = utils::overload {
             [this, stack_ptr = head.get()] (std::unique_ptr<osd::write_reply>& resp) {
                 auto& req = std::get<std::unique_ptr<osd::write_request>>(stack_ptr->req);
-                SPDK_INFOLOG(
+                SPDK_INFOLOG_EX(
                   libblk,
                   "write_object pool: %lu pg: %lu object: %s offset: %lu done, state: %d\n",
                   req->pool_id(), req->pg_id(), req->object_name().c_str(),
@@ -351,7 +351,7 @@ public:
 
             [this, stack_ptr = head.get()] (std::unique_ptr<osd::read_reply>& resp) {
                 auto& req = std::get<std::unique_ptr<osd::read_request>>(stack_ptr->req);
-                SPDK_INFOLOG(
+                SPDK_INFOLOG_EX(
                  libblk,
                    "read_object pool: %lu pg:%lu object:%s offset:%lu done. state:%d data size: %lu\n",
                    req->pool_id(), req->pg_id(), req->object_name().c_str(),
@@ -363,7 +363,7 @@ public:
 
             [this, stack_ptr = head.get()] (std::unique_ptr<osd::delete_reply>& resp) {
                 auto& req = std::get<std::unique_ptr<osd::write_request>>(stack_ptr->req);
-                SPDK_INFOLOG(
+                SPDK_INFOLOG_EX(
                   libblk,
                   "delete_request pool: %lu pg:%lu object:%s done. state:%d\n",
                   req->pool_id(), req->pg_id(), req->object_name().c_str(), resp->state());
@@ -373,7 +373,7 @@ public:
             },
 
             [] ([[maybe_unused]] auto& _) {
-                SPDK_ERRLOG("ERROR: Un-allocated response\n");
+                SPDK_ERRLOG_EX("ERROR: Un-allocated response\n");
                 throw std::runtime_error{"un-allocated response"};
             }
         };
@@ -398,7 +398,7 @@ public:
                   return false;
               }
 
-              SPDK_INFOLOG(libblk, "send get_leader request for pg %lu.%lu to osd %d\n",
+              SPDK_INFOLOG_EX(libblk, "send get_leader request for pg %lu.%lu to osd %d\n",
                       stack_ptr->leader_req->pool_id(), stack_ptr->leader_req->pg_id(), stack_ptr->osd->node_id);
               auto done = google::protobuf::NewCallback(
                 this, &fblock_client::on_leader_acquired, stack_ptr.get());
@@ -428,7 +428,7 @@ public:
                 return false;
             }
 
-            SPDK_DEBUGLOG(
+            SPDK_DEBUGLOG_EX(
               libblk,
               "head->leader_osd_key: %lu, leader_id: %u, addr: '%s:%d' is_onflight: %d, is_valid: %d\n",
               head->leader_osd_key,
@@ -481,7 +481,7 @@ public:
             },
 
             [] ([[maybe_unused]] auto& _) {
-                SPDK_ERRLOG("ERROR: Un-allocated request\n");
+                SPDK_ERRLOG_EX("ERROR: Un-allocated request\n");
                 throw std::runtime_error{"un-allocated request"};
             }
         };
@@ -498,7 +498,7 @@ private:
     void on_leader_acquired(leader_request_stack_type* stack_ptr) {
         auto it = _on_flight_leader_requests.find(stack_ptr->leader_request_id);
         if (it == _on_flight_leader_requests.end()) {
-            SPDK_ERRLOG("Cant find the leader request stack of id %ld\n", stack_ptr->leader_request_id);
+            SPDK_ERRLOG_EX("Cant find the leader request stack of id %ld\n", stack_ptr->leader_request_id);
             throw std::runtime_error{"cant find the leader request stack"};
         }
 
@@ -507,27 +507,27 @@ private:
           it->second->leader_req->pg_id());
         auto info_it = _leader_osd.find(leader_key);
         if (info_it == _leader_osd.end()) {
-            SPDK_ERRLOG(
+            SPDK_ERRLOG_EX(
               "ERROR: Cant find the leader osd info record of pool id %ld, pg id %ld\n",
               it->second->leader_req->pool_id(), it->second->leader_req->pg_id());
 
             throw std::runtime_error{"Cant find the leader osd info record"};
         }
         auto* osd_info = info_it->second.get();
-        SPDK_INFOLOG(libblk, "Got leader osd %ld, leader_key is %lu\n", stack_ptr->leader_request_id, leader_key);
+        SPDK_INFOLOG_EX(libblk, "Got leader osd %ld, leader_key is %lu\n", stack_ptr->leader_request_id, leader_key);
         osd_info->is_onflight = false;
         auto* resp = it->second->leader_resp.get();
         osd_info->epoch = std::chrono::system_clock::now();
         osd_info->leader_id = resp->leader_id();
         osd_info->addr = resp->leader_addr();
         osd_info->port = resp->leader_port();
-        SPDK_DEBUGLOG(libblk, "Got leader osd of pg %lu.%lu: osd id %d osd address: '%s:%d'\n", 
+        SPDK_DEBUGLOG_EX(libblk, "Got leader osd of pg %lu.%lu: osd id %d osd address: '%s:%d'\n", 
                 it->second->leader_req->pool_id(), it->second->leader_req->pg_id(), osd_info->leader_id, 
                 osd_info->addr.c_str(), osd_info->port);
 
         update_leader_state(info_it->second.get());
         if (not info_it->second->is_valid) {
-            SPDK_NOTICELOG(
+            SPDK_NOTICELOG_EX(
               "Got a invalid leader osd(%s:%d) with id %d, will retry\n",
               resp->leader_addr().c_str(),
               resp->leader_port(),
@@ -567,7 +567,7 @@ public:
         req->set_data(buf);
         send_request(target_pool_id, target_pg, std::move(req), cb_fn, source);
 
-        SPDK_INFOLOG(
+        SPDK_INFOLOG_EX(
           libblk,
           "write_object pool: %u pg: %u object_name: %s offset: %lu length: %lu \n",
           target_pool_id, target_pg, object_name.c_str(), offset, buf.size());
@@ -585,7 +585,7 @@ public:
       uint64_t object_idx) {
         auto target_pg = calc_target(object_name, target_pool_id);
 
-        SPDK_INFOLOG(
+        SPDK_INFOLOG_EX(
           libblk,
           "read_object pool: %lu pg: %u object: %s offset: %lu length: %lu\n",
           target_pool_id, target_pg, object_name.c_str(), offset, length);
@@ -609,7 +609,7 @@ public:
       ::spdk_bdev_io *bdev_io) {
         auto target_pg = calc_target(object_name, target_pool_id);
 
-        SPDK_INFOLOG(
+        SPDK_INFOLOG_EX(
           libblk,
           "delete_object pool: %lu pg: %u object: %s\n",
           target_pool_id, target_pg, object_name.c_str());

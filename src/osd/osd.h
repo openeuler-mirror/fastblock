@@ -17,7 +17,6 @@
 
 using namespace std;
 
-
 struct spdk_ring *g_request_queue;
 class osd;
 class pg;

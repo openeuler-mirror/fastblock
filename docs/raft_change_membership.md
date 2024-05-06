@@ -121,7 +121,7 @@ void raft_server_t::process_conf_change_add_nonvoting(std::shared_ptr<raft_entry
    处理上个阶段的raft entry时，在函数process_conf_change_configuration里判断是否进入此阶段
 ```c++
 void raft_server_t::process_conf_change_configuration(std::shared_ptr<raft_entry_t> entry){
-    SPDK_INFOLOG(pg_group, "process entry type %d, index: %ld \n", entry->type(), entry->idx());
+    SPDK_INFOLOG_EX(pg_group, "process entry type %d, index: %ld \n", entry->type(), entry->idx());
     raft_configuration config;
     config.ParseFromString(entry->meta());
 

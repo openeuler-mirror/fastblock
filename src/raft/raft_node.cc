@@ -18,7 +18,7 @@
 
 #include "raft/raft_node.h"
 #include "raft/configuration_manager.h"
-#include "spdk/log.h"
+#include "utils/log.h"
 
 void raft_nodes::update_with_node_configuration(node_configuration& cfg, 
         std::vector<std::shared_ptr<raft_node>> new_add_nodes){
@@ -34,10 +34,10 @@ void raft_nodes::update_with_node_configuration(node_configuration& cfg,
             }
         }
         if(add_node){
-            SPDK_INFOLOG(pg_group, "add node %d\n", node_info.node_id());
+            SPDK_INFOLOG_EX(pg_group, "add node %d\n", node_info.node_id());
             _nodes.emplace(node_info.node_id(), add_node);
         }else{
-            SPDK_INFOLOG(pg_group, "add node %d\n", node_info.node_id());
+            SPDK_INFOLOG_EX(pg_group, "add node %d\n", node_info.node_id());
             auto node = std::make_shared<raft_node>(node_info);
             _nodes.emplace(node_info.node_id(), node);
         }
@@ -52,7 +52,7 @@ void raft_nodes::update_with_node_configuration(node_configuration& cfg,
             }
         }
         if(no_found)
-            SPDK_INFOLOG(pg_group, "remove node %d\n", p.first);
+            SPDK_INFOLOG_EX(pg_group, "remove node %d\n", p.first);
         return no_found;
     });     
 }

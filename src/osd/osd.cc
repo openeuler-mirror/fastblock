@@ -14,6 +14,7 @@
 #include "spdk/log.h"
 #include "spdk/string.h"
 
+#include "utils/log.h"
 #include "monclient/client.h"
 #include "raft/raft.h"
 #include "osd/partition_manager.h"
@@ -60,8 +61,9 @@ typedef struct
 
 static const char* g_json_conf{nullptr};
 static bool g_mkfs{false};
-static const char* g_uuid{nullptr};;
-static int  g_id{-1};
+static const char *g_uuid{nullptr};
+int g_id{-1};
+
 static std::unique_ptr<::raft_service<::partition_manager>> global_raft_service{nullptr};
 static std::unique_ptr<::osd_service> global_osd_service{nullptr};
 static std::shared_ptr<::connect_cache> global_conn_cache{nullptr};
@@ -164,7 +166,7 @@ static void service_init(partition_manager* pm, server_t *server){
           ::spdk_env_get_current_core(),
           srv_opts);
     } catch (const std::exception& e) {
-        SPDK_ERRLOG("ERROR: Create rpc server failed, %s\n", e.what());
+        SPDK_ERRLOG_EX("ERROR: Create rpc server failed, %s\n", e.what());
         std::raise(SIGINT);
         return;
     }
@@ -178,7 +180,7 @@ void start_monitor(server_t* ctx) {
     monitor::client::on_response_callback_type cb =
       [] (const monitor::client::response_status s, monitor::client::request_context* req_ctx) {
           if (s != monitor::client::response_status::ok) {
-              SPDK_ERRLOG("ERROR: OSD boot failed\n");
+              SPDK_ERRLOG_EX("ERROR: OSD boot failed\n");
               throw std::runtime_error{"OSD boot failed"};
           }
 
@@ -192,10 +194,10 @@ void start_monitor(server_t* ctx) {
 
 static void pm_init(void *arg){
 	server_t *server = (server_t *)arg;
-    SPDK_INFOLOG(osd,
-      "Block start, cpu count: %u, bdev_disk: %s\n",
-      spdk_env_get_core_count(),
-      server->bdev_disk.c_str());
+    SPDK_INFOLOG_EX(osd,
+                       "Block start, cpu count: %u, bdev_disk: %s\n",
+                       spdk_env_get_core_count(),
+                       server->bdev_disk.c_str());
 
     auto core_no = ::spdk_env_get_current_core();
     ::spdk_cpuset cpumask{};
@@ -219,30 +221,30 @@ static void pm_init(void *arg){
 
 void storage_init_complete(void *arg, int rberrno){
     if(rberrno != 0){
-		SPDK_ERRLOG("Failed to initialize the storage system: %s. thread id %lu\n",
+		SPDK_ERRLOG_EX("Failed to initialize the storage system: %s. thread id %lu\n",
             spdk_strerror(rberrno), utils::get_spdk_thread_id());
         osd_exit_code = rberrno;
         std::raise(SIGINT);
 		return;
 	}
 
-    SPDK_NOTICELOG("mkfs done, thread id %lu\n", utils::get_spdk_thread_id());
+    SPDK_NOTICELOG_EX("mkfs done, thread id %lu\n", utils::get_spdk_thread_id());
     osd_exit_code = 0;
     std::raise(SIGINT);
 }
 
 void disk_init_complete(void *arg, int rberrno) {
     if(rberrno != 0){
-		SPDK_NOTICELOG("Failed to initialize the disk: %s. thread id %lu\n",
+		SPDK_NOTICELOG_EX("Failed to initialize the disk: %s. thread id %lu\n",
             err::string_status(rberrno), utils::get_spdk_thread_id());
         osd_exit_code = rberrno;
         std::raise(SIGINT);
 		return;
 	}
 
-    SPDK_INFOLOG(osd,  "Initialize the disk completed, thread id %lu\n",
-        utils::get_spdk_thread_id());
-	storage_init(storage_init_complete, arg);
+    SPDK_INFOLOG_EX(osd, "Initialize the disk completed, thread id %lu\n",
+                       utils::get_spdk_thread_id());
+    storage_init(storage_init_complete, arg);
 }
 
 struct oad_load_ctx{
@@ -287,7 +289,7 @@ public:
         }
 
         auto blob_size = spdk_blob_get_num_clusters(blob) * spdk_bs_get_cluster_size(global_blobstore());
-        SPDK_INFOLOG(osd, "load blob, blob id %ld blob size %lu\n", spdk_blob_get_id(blob), blob_size);
+        SPDK_INFOLOG_EX(osd, "load blob, blob id %ld blob size %lu\n", spdk_blob_get_id(blob), blob_size);
         load_op_ctx *op_ctx = new load_op_ctx{.ctx = ctx, .load = this,
                                             .func = std::move(func), .shard_id = shard_id};
         ctx->pm->load_partition(shard_id, pool_id, pg_id, blob, std::move(objects), start_continue, op_ctx);
@@ -313,7 +315,7 @@ public:
                 return;
             }
 
-            SPDK_INFOLOG(osd, "pg %s\n", pg.c_str());
+            SPDK_INFOLOG_EX(osd, "pg %s\n", pg.c_str());
             object_store::container objects;
             auto it = ctx->load->_object_blobs.find(pg);
             if(it != ctx->load->_object_blobs.end()){
@@ -375,13 +377,13 @@ struct pm_load_context : public utils::context{
 
     void finish(int r) override {
 		if(r != 0){
-            SPDK_ERRLOG("load osd failed: %s\n", spdk_strerror(r));
+            SPDK_ERRLOG_EX("load osd failed: %s\n", spdk_strerror(r));
             osd_exit_code = r;
             std::raise(SIGINT);
 			return;
 		}
 
-        // SPDK_WARNLOG("pm start done\n");
+        // SPDK_WARNLOG_EX("pm start done\n");
         auto& blobs = global_blob_tree();
 
         //这里只处理单核的
@@ -393,7 +395,7 @@ struct pm_load_context : public utils::context{
         auto load_done = [load](void *arg, int lerrno){
             oad_load_ctx* ctx = (oad_load_ctx* )arg;
             if(lerrno != 0){
-                SPDK_ERRLOG("load osd failed: %s\n", spdk_strerror(lerrno));
+                SPDK_ERRLOG_EX("load osd failed: %s\n", spdk_strerror(lerrno));
                 delete ctx;
                 delete load;
                 osd_exit_code = lerrno;
@@ -420,9 +422,9 @@ static void osd_service_load(void *arg){
 }
 
 void storage_load_complete(void *arg, int rberrno){
-    SPDK_INFOLOG(osd, "storage load done, thread id %lu\n", utils::get_spdk_thread_id());
+    SPDK_INFOLOG_EX(osd, "storage load done, thread id %lu\n", utils::get_spdk_thread_id());
     if(rberrno != 0){
-		SPDK_ERRLOG("Failed to initialize the storage system: %s\n", spdk_strerror(rberrno));
+		SPDK_ERRLOG_EX("Failed to initialize the storage system: %s\n", spdk_strerror(rberrno));
         osd_exit_code = rberrno;
         std::raise(SIGINT);
 		return;
@@ -433,7 +435,7 @@ void storage_load_complete(void *arg, int rberrno){
 
 void disk_load_complete(void *arg, int rberrno){
     if(rberrno != 0){
-		SPDK_NOTICELOG("Failed to initialize the disk: %s. thread id %lu\n",
+		SPDK_NOTICELOG_EX("Failed to initialize the disk: %s. thread id %lu\n",
             err::string_status(rberrno), utils::get_spdk_thread_id());
         osd_exit_code = rberrno;
         std::raise(SIGINT);
@@ -441,8 +443,8 @@ void disk_load_complete(void *arg, int rberrno){
 	}
 
     server_t *server = (server_t *)arg;
-    SPDK_INFOLOG(osd, "load blobstore done, uuid %s, thread id %lu\n",
-        server->osd_uuid.c_str(), utils::get_spdk_thread_id());
+    SPDK_INFOLOG_EX(osd, "load blobstore done, uuid %s, thread id %lu\n",
+                       server->osd_uuid.c_str(), utils::get_spdk_thread_id());
 
     storage_load(storage_load_complete, arg);
 }
@@ -567,37 +569,37 @@ static int from_configuration(server_t* server, std::string& bdev_json_file) {
 }
 
 static void on_blob_unloaded([[maybe_unused]] void *cb_arg, int bserrno) {
-    SPDK_NOTICELOG("The blob has been unloaded, return code is %d, thread id %lu\n",
+    SPDK_NOTICELOG_EX("The blob has been unloaded, return code is %d, thread id %lu\n",
             bserrno, utils::get_spdk_thread_id());
     auto& sharded_service = core_sharded::get_core_sharded();
-    SPDK_NOTICELOG("Start stopping sharded service\n");
+    SPDK_NOTICELOG_EX("Start stopping sharded service\n");
     sharded_service.stop();
-    SPDK_NOTICELOG("Stop the spdk app\n");
+    SPDK_NOTICELOG_EX("Stop the spdk app\n");
     ::spdk_app_stop(osd_exit_code);
 }
 
 static void on_blob_closed([[maybe_unused]] void *cb_arg, int bserrno) {
-    SPDK_NOTICELOG(
+    SPDK_NOTICELOG_EX(
       "The bdev has been closed, return code is %d, thread id %lu\n",
       bserrno, utils::get_spdk_thread_id());
-    SPDK_NOTICELOG("Start unloading bdev\n");
+    SPDK_NOTICELOG_EX("Start unloading bdev\n");
     ::blobstore_fini(on_blob_unloaded, nullptr);
 }
 
 static void on_osd_stop() noexcept;
 
 static void on_pm_closed([[maybe_unused]] void *cb_arg, int bserrno) {
-    SPDK_NOTICELOG("The partition manager has been closed, return code is %d\n", bserrno);
+    SPDK_NOTICELOG_EX("The partition manager has been closed, return code is %d\n", bserrno);
     on_osd_stop();
 }
 
 static void on_osd_stop() noexcept {
-    SPDK_NOTICELOG("Stop the osd service, thread id %lu\n", utils::get_spdk_thread_id());
+    SPDK_NOTICELOG_EX("Stop the osd service, thread id %lu\n", utils::get_spdk_thread_id());
     switch (cur_stop_state) {
     case stop_state::monitor_client: {
         cur_stop_state = stop_state::partition_manager;
         if (monitor_client) {
-            SPDK_NOTICELOG("Stopping the monitor client\n");
+            SPDK_NOTICELOG_EX("Stopping the monitor client\n");
             monitor_client->stop(on_osd_stop);
             return;
         }
@@ -606,7 +608,7 @@ static void on_osd_stop() noexcept {
     case stop_state::partition_manager: {
         cur_stop_state = stop_state::connection_cache;
         if (global_pm) {
-            SPDK_NOTICELOG("Stopping the partition manager\n");
+            SPDK_NOTICELOG_EX("Stopping the partition manager\n");
             global_pm->stop(on_pm_closed, nullptr);
             return;
         }
@@ -615,7 +617,7 @@ static void on_osd_stop() noexcept {
     case stop_state::connection_cache: {
         cur_stop_state = stop_state::rpc_server;
         if (global_conn_cache) {
-            SPDK_NOTICELOG("Stopping the connection cache\n");
+            SPDK_NOTICELOG_EX("Stopping the connection cache\n");
             global_conn_cache->stop(on_osd_stop);
             return;
         }
@@ -624,14 +626,14 @@ static void on_osd_stop() noexcept {
     case stop_state::rpc_server: {
         cur_stop_state = stop_state::blobstore;
         if (osd_server.rpc_srv) {
-            SPDK_NOTICELOG("Stopping the rpc server\n");
+            SPDK_NOTICELOG_EX("Stopping the rpc server\n");
             osd_server.rpc_srv->stop(on_osd_stop);
             return;
         }
         [[fallthrough]];
     }
     case stop_state::blobstore: {
-        SPDK_NOTICELOG("Stopping the blobstore\n");
+        SPDK_NOTICELOG_EX("Stopping the blobstore\n");
         ::storage_fini(on_blob_closed, nullptr);
         return;
     }

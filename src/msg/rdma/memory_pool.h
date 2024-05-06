@@ -12,6 +12,7 @@
 
 #include "msg/rdma/pd.h"
 #include "utils/fmt.h"
+#include "utils/log.h"
 
 #include <spdk/env.h>
 #include <spdk/string.h>
@@ -76,7 +77,7 @@ public:
 
         init_with_rdma(pd);
 
-        SPDK_DEBUGLOG(
+        SPDK_DEBUGLOG_EX(
           msg,
           "created memory pool '%s' with capacity %ld\n",
           _name.c_str(), ::spdk_mempool_count(_pool));
@@ -171,7 +172,7 @@ public:
 
         _is_free = true;
 
-        SPDK_NOTICELOG("Start closing rpc memory_pool %s\n", _name.c_str());
+        SPDK_NOTICELOG_EX("Start closing rpc memory_pool %s\n", _name.c_str());
         if (_net_contexts) {
             auto ele_cache = std::make_unique<void*[]>(_capacity);
             auto rc = ::spdk_mempool_get_bulk(_net_contexts, ele_cache.get(), _capacity);
@@ -180,10 +181,10 @@ public:
                     auto* ctx = reinterpret_cast<net_context*>(ele_cache[i]);
                     ::ibv_dereg_mr(ctx->mr);
                 }
-                SPDK_NOTICELOG("Deregistered all memory region\n");
+                SPDK_NOTICELOG_EX("Deregistered all memory region\n");
                 ::spdk_mempool_put_bulk(_net_contexts, ele_cache.get(), _capacity);
             } else {
-                SPDK_ERRLOG(
+                SPDK_ERRLOG_EX(
                   "ERROR: Got bulk of net contexts failed, return code is %s, current pool size is %ld, capacity is %lu\n",
                   ::spdk_strerror(rc),
                   ::spdk_mempool_count(_net_contexts),
@@ -196,7 +197,7 @@ public:
         if (_pool) {
             ::spdk_mempool_free(_pool);
         }
-        SPDK_NOTICELOG("The memory pool %s has been freed\n", _name.c_str());
+        SPDK_NOTICELOG_EX("The memory pool %s has been freed\n", _name.c_str());
     }
 
 private:

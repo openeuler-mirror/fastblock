@@ -31,7 +31,7 @@ void libblk_client::create_image(
         object_size,
         [this](const monitor::client::response_status s, [[maybe_unused]] auto _)
         {
-            SPDK_INFOLOG(libblk, "create_image image status %d\n", s);
+            SPDK_INFOLOG_EX(libblk, "create_image image status %d\n", s);
         });
 }
 
@@ -42,7 +42,7 @@ void libblk_client::open_image(const std::string pool_name, const std::string im
         image_name,
         [this](const monitor::client::response_status s, [[maybe_unused]] auto _)
         {
-            SPDK_INFOLOG(libblk, "open image status %d\n", s);
+            SPDK_INFOLOG_EX(libblk, "open image status %d\n", s);
         });
 }
 
@@ -53,7 +53,7 @@ void libblk_client::remove_image(const std::string pool_name, const std::string 
         image_name,
         [this](const monitor::client::response_status s, [[maybe_unused]] auto _)
         {
-            SPDK_INFOLOG(libblk, "remove image status %d\n", s);
+            SPDK_INFOLOG_EX(libblk, "remove image status %d\n", s);
         });
 }
 
@@ -65,7 +65,7 @@ void libblk_client::resize_image(const std::string pool_name, const std::string 
         size,
         [this](const monitor::client::response_status s, [[maybe_unused]] auto _)
         {
-            SPDK_INFOLOG(libblk, "resize_image status %d\n", s);
+            SPDK_INFOLOG_EX(libblk, "resize_image status %d\n", s);
         });
 }
 
@@ -76,7 +76,7 @@ void libblk_client::get_image_info(const std::string pool_name, const std::strin
         image_name,
         [this](const monitor::client::response_status s, [[maybe_unused]] auto _)
         {
-            SPDK_INFOLOG(libblk, "get image info status %d\n", s);
+            SPDK_INFOLOG_EX(libblk, "get image info status %d\n", s);
         });
 }
 
@@ -102,7 +102,7 @@ int libblk_client::write(
         data.append((char *)bdev_io->u.bdev.iovs[i].iov_base, bdev_io->u.bdev.iovs[i].iov_len);
     }
 
-    SPDK_INFOLOG(libblk, "write off: %lu len: %lu size: %lu\n", offset, length, data.size());
+    SPDK_INFOLOG_EX(libblk, "write off: %lu len: %lu size: %lu\n", offset, length, data.size());
     if (data.size() > length)
     {
         data = data.substr(0, length);
@@ -156,10 +156,10 @@ struct write_source
         }
         // 如果要支持多核，这里还需要加锁
         source->obj_num--;
-        SPDK_INFOLOG(libblk, "write_done, state: %d source->obj_num: %u\n", state, source->obj_num);
+        SPDK_INFOLOG_EX(libblk, "write_done, state: %d source->obj_num: %u\n", state, source->obj_num);
         if (source->obj_num == 0)
         {
-            SPDK_INFOLOG(libblk, "write_done\n");
+            SPDK_INFOLOG_EX(libblk, "write_done\n");
             source->invoke();
             // source->cb(source->bdev_io, source->result);
             // delete source;
@@ -193,7 +193,7 @@ int libblk_client::write(const uint64_t pool_id, const std::string image_name, c
     // 建立回调函数
     write_source *source = new write_source(cb, obj_num, bdev_io);
 
-    SPDK_INFOLOG(libblk, "write pool: %lu image_name: %s offset: %lu length: %lu  obj_num: %lu \n",
+    SPDK_INFOLOG_EX(libblk, "write pool: %lu image_name: %s offset: %lu length: %lu  obj_num: %lu \n",
             pool_id, image_name.c_str(), offset, length, obj_num);
     while (write_bytes < length)
     {
@@ -284,9 +284,9 @@ struct read_source
         }
         // 如果要支持多核，这里还需要加锁
         source->obj_num--;
-        // SPDK_NOTICELOG("object_idx: %lu read_done, state: %d source->obj_num: %u data size: %lu is_zero: %d\n", object_idx, state, source->obj_num, data.size());
+        // SPDK_NOTICELOG_EX("object_idx: %lu read_done, state: %d source->obj_num: %u data size: %lu is_zero: %d\n", object_idx, state, source->obj_num, data.size());
         if(source->obj_num == 0){
-            SPDK_INFOLOG(libblk, "---- read data off: %lu length: %lu\n", source->offset, source->len);
+            SPDK_INFOLOG_EX(libblk, "---- read data off: %lu length: %lu\n", source->offset, source->len);
             source->invoke();
             // source->cb(source->bdev_io, source->buf, source->len, source->result);
             // delete source;
@@ -309,7 +309,7 @@ int libblk_client::read(const uint64_t pool_id, const std::string image_name, co
     auto obj_num = get_obj_num(offset, length);
     read_source* source = new read_source(cb, obj_num, length, bdev_io, expected_object_size, offset);
     uint64_t object_idx = 0;
-    SPDK_INFOLOG(libblk, "read pool: %lu image_name: %s offset: %lu length: %lu  obj_num: %lu\n",
+    SPDK_INFOLOG_EX(libblk, "read pool: %lu image_name: %s offset: %lu length: %lu  obj_num: %lu\n",
                  pool_id, image_name.c_str(), offset, length, obj_num);
 
     while (read_bytes < length)

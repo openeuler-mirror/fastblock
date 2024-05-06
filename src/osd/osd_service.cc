@@ -29,16 +29,16 @@ void osd_service::process_get_leader(google::protobuf::RpcController* controller
     auto pg_id = request->pg_id();
     uint32_t shard_id;
 
-    SPDK_INFOLOG(osd, "recv pg_leader_request, get the leader of pg %lu.%lu\n", request->pool_id(), request->pg_id());
+    SPDK_INFOLOG_EX(osd, "recv pg_leader_request, get the leader of pg %lu.%lu\n", request->pool_id(), request->pg_id());
     if(!_pm->get_pg_shard(pool_id, pg_id, shard_id)){
-        SPDK_WARNLOG("not find pg %lu.%lu\n", pool_id, pg_id);
+        SPDK_WARNLOG_EX("not find pg %lu.%lu\n", pool_id, pg_id);
         response->set_state(err::RAFT_ERR_NOT_FOUND_PG);
         done->Run();
         return;
     }
     auto raft = _pm->get_pg(shard_id, pool_id, pg_id);
     if(!raft){
-        SPDK_WARNLOG("not find pg %lu.%lu\n", pool_id, pg_id);
+        SPDK_WARNLOG_EX("not find pg %lu.%lu\n", pool_id, pg_id);
         response->set_state(err::RAFT_ERR_NOT_FOUND_PG);
         done->Run();
         return;
@@ -66,13 +66,13 @@ void osd_service::process_create_pg(google::protobuf::RpcController *controller,
     uint32_t shard_id;
 
     if(_pm->get_pg_shard(pool_id, pg_id, shard_id)){
-        SPDK_INFOLOG(osd, "pg %lu.%lu already exist\n", pool_id, pg_id);
+        SPDK_INFOLOG_EX(osd, "pg %lu.%lu already exist\n", pool_id, pg_id);
         response->set_state(err::E_SUCCESS);
         done->Run();
         return;        
     }else{
         std::vector<utils::osd_info_t> osds;
-        SPDK_INFOLOG(osd, "create pg %lu.%lu\n", pool_id, pg_id);
+        SPDK_INFOLOG_EX(osd, "create pg %lu.%lu\n", pool_id, pg_id);
         auto new_pg_done = [this, response, done](void *arg, int perrno){
             response->set_state(perrno);
             done->Run();
@@ -118,7 +118,7 @@ public:
     , _new_nodes(std::move(new_nodes)){}
 
     void finish(int r) override {
-        SPDK_INFOLOG(osd, "finish change  membership, r %d\n", r);
+        SPDK_INFOLOG_EX(osd, "finish change  membership, r %d\n", r);
         if(r == 0){
             for(auto node_id : _new_nodes){
                 _response->add_new_nodes(node_id);
