@@ -75,7 +75,7 @@ kv子系统用于存储raft的元数据、存储系统本身的数据，由于�
 libfastblock把用户对image的数据操作转换为对object（osd处理的基本数据单元）的操作，然后封装为Data Rpc消息发送给pg的 leader osd，并接收处理 leader osd返回的响应。
 
 
-# 代码结构及编译
+# 代码结构及编译、运行
 fastblock代码主要位于src、monitor和msg目录中:
 - src目录主要包含raft实现、rdma通信、底层存储引擎、块层API封装等功能, 详情见[src目录简介](src/README.md "src代码简介")
 - monitor目录则包含了集群元数据存储管理、monitor选举、pg分配、clustermap分发等功能, 详情见[monitor目录简介](monitor/README.md "monitor代码简介")
@@ -90,7 +90,14 @@ fastblock代码主要位于src、monitor和msg目录中:
 ```
 编译完成后，`fastblock-mon`和`fastblock-client`二进制位于`mon/`目录下，而`fastblock-osd`和`fastblock-vhost`二进制位于`build/src/osd/`目录和`build/src/bdev`目录下。
 后续osd、vhost有代码改动，则可仅在`build/`目录下编译，而monitor有改动则可仅在`mon/`目录下`make`即可。
-最简测试开发环境搭建可参考[测试开发环境搭建](https://gitee.com/openeuler/fastblock/wikis/%E6%9C%80%E7%AE%80%E5%BC%80%E5%8F%91%E7%8E%AF%E5%A2%83%E6%90%AD%E5%BB%BA%E5%8F%8A%E4%B8%8A%E6%89%8B%E6%8C%87%E5%8D%97)
+最简测试开发环境搭建可参考[测试开发环境搭建](https://gitee.com/openeuler/fastblock/wikis/%E6%9C%80%E7%AE%80%E5%BC%80%E5%8F%91%E7%8E%AF%E5%A2%83%E6%90%AD%E5%BB%BA%E5%8F%8A%E4%B8%8A%E6%89%8B%E6%8C%87%E5%8D%97)   
+另外，可通过vstart.sh脚本搭建一个测试开发环境，即使您没有RDMA网卡也没有NVMe磁盘，也可以很方便的搭建一个环境，并进行简单的性能测试:  
+```
+# 在有RDMA网卡的物理服务器上跑一个3osd、三副本的集群，使用网卡为mlx5_0, 提供三块磁盘，并在集群搭建起来之后运行benchmark
+./vstart.sh -c 3 -r 3 -m physical -n mlx5_0 -d /dev/nvme0n1,/dev/nvme1n1,/dev/nvme2n1  -b
+# 在没有RDMA网卡的虚拟机上，跑一个3osd、三副本的集群，并在集群搭建起来之后运行benchmark
+./vstart.sh -c 3 -r 3 -m vm -b
+```
 
 # 部署及性能测试
 参考[部署及测试报告](docs/performance_test_1012.md "性能测试报告"), 在我们的测试环境中，在每个osd仅适用一个核的情况下，获得了4k随机写单线程100us以下的延迟以及并发41万iops的性能。
