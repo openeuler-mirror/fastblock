@@ -155,7 +155,6 @@ private:
       if (is_working()) { return false; }
 
       if (need_alloc_blob()) {
-          SPDK_NOTICELOG("blob_pool: enter maybe_alloc_blob, pool_size:%u _blobs.size:%lu\n", min_blob_num, _blobs.size());
           uint64_t alloc_number = min_blob_num - _blobs.size() + 50;
           allocate_blob(alloc_number, [](void*, int){ }, nullptr);
           return true;
