@@ -14,6 +14,7 @@
 #include "base/core_sharded.h"
 #include "base/shard_service.h"
 #include "object_store.h"
+#include "blob_pool.h"
 
 #include <spdk/blob_bdev.h>
 #include <spdk/blob.h>
@@ -45,6 +46,8 @@ struct spdk_blob_store* global_blobstore();
 struct spdk_io_channel* global_io_channel();
 
 sharded<blob_tree>& global_blob_tree();
+
+blob_pool& global_blob_pool();
 
 using bm_complete = std::function<void (void *, int)>;
 
