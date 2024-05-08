@@ -253,6 +253,22 @@ message PgMemberChangeFinishResponse {
     bool ok = 1;
 }
 
+message OsdOutRequest {
+    int32 osdid = 1;
+}
+
+message OsdOutResponse {
+    bool ok = 1;
+}
+
+message OsdInRequest {
+    int32 osdid = 1;
+}
+
+message OsdInResponse {
+    bool ok = 1;
+}
+
 message Request {
     oneof union {
         BootRequest boot_request = 1;
@@ -271,6 +287,8 @@ message Request {
         GetImageInfoRequest get_ImageInfo_Request=14;
         LeaderBeElectedRequest leader_be_elected_request=15;
         PgMemberChangeFinishRequest pg_member_change_finish_request=16;
+        OsdOutRequest  osd_out_request=17;
+        OsdInRequest   osd_in_request=18;
     }
 }
 
@@ -292,5 +310,7 @@ message Response {
         GetImageInfoResponse get_imageInfo_response=14;
         LeaderBeElectedResponse leader_be_elected_response=15;
         PgMemberChangeFinishResponse pg_member_change_finish_response=16;
+        OsdOutResponse osd_out_response=17;
+        OsdInResponse osd_in_response=18;
     }
 }

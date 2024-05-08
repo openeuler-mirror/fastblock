@@ -645,6 +645,65 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 					log.Error(ctx, "Error writing response:", err)
 					return
 				}
+
+			case *msg.Request_OsdOutRequest:
+				log.Info(ctx, "Received OsdOutRequest")
+				osdid := payload.OsdOutRequest.GetOsdid()
+
+				ok := osd.ProcessOsdOutMessage(ctx, client, osdid)
+
+				// Create a OsdOutResponse
+				response := &msg.Response{
+					Union: &msg.Response_OsdOutResponse{
+						OsdOutResponse: &msg.OsdOutResponse{
+							Ok: ok,
+						},
+					},
+				}
+
+				// Marshal the OsdOutResponse
+				responseData, err := proto.Marshal(response)
+				if err != nil {
+					log.Error(ctx, "Error marshaling response:", err)
+					continue
+				}
+
+				// Write the response data back to the client
+				_, err = conn.Write(responseData)
+				if err != nil {
+					log.Error(ctx, "Error writing response:", err)
+					continue
+				}
+
+			case *msg.Request_OsdInRequest:
+				log.Info(ctx, "Received OsdInRequest")
+				osdid := payload.OsdInRequest.GetOsdid()
+
+				ok := osd.ProcessOsdInMessage(ctx, client, osdid)
+
+				// Create a OsdInResponse
+				response := &msg.Response{
+					Union: &msg.Response_OsdInResponse{
+						OsdInResponse: &msg.OsdInResponse{
+							Ok: ok,
+						},
+					},
+				}
+
+				// Marshal the OsdInResponse
+				responseData, err := proto.Marshal(response)
+				if err != nil {
+					log.Error(ctx, "Error marshaling response:", err)
+					continue
+				}
+
+				// Write the response data back to the client
+				_, err = conn.Write(responseData)
+				if err != nil {
+					log.Error(ctx, "Error writing response:", err)
+					continue
+				}
+
 			default:
 				log.Info(ctx, "Unknown payload type")
 			}

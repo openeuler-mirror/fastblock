@@ -341,6 +341,92 @@ func ProcessOsdStopMessage(ctx context.Context, client *etcdapi.EtcdClient, id i
 	return true
 }
 
+func ProcessOsdOutMessage(ctx context.Context, client *etcdapi.EtcdClient, osdid int32) bool {
+	log.Info(ctx, "ProcessOsdOutMessage osd ", osdid)
+	if len(AllOSDInfo.Osdinfo) == 0 {
+		log.Info(ctx, "no osd created yet")
+		return false
+	}
+
+	found := false
+	for _, osdState := range AllOSDInfo.Osdinfo {
+		if osdid == int32(osdState.Osdid) {
+			found = true
+			if !osdState.IsIn {
+				log.Info(ctx, "osd ", osdid, " is in the out state.")
+				return true
+			}
+			osdState.IsIn = false
+			break
+		}
+	}
+	if !found {
+		log.Info(ctx, "osd is not found in our database,")
+		return false
+	}	
+
+	osdTaskQueue.Enqueue(OsdTask{osdid: int(osdid), stateSwitch: InToOut})
+	log.Info(ctx, "osd ", osdid, " from in to out.")
+
+	AllOSDInfo.Version++
+	osdmap, err := json.Marshal(AllOSDInfo)
+	if err != nil {
+		log.Error(ctx, err)
+		return false
+	}
+
+	err = client.Put(ctx, config.ConfigOSDMapKey, string(osdmap))
+	if err != nil {
+		log.Error(ctx, err)
+		return false
+	}
+
+	log.Info(ctx, "successfully put to ectd for out osd ", osdid)	
+    return true
+}
+
+func ProcessOsdInMessage(ctx context.Context, client *etcdapi.EtcdClient, osdid int32) bool {
+	log.Info(ctx, "ProcessOsdInMessage osd ", osdid)
+	if len(AllOSDInfo.Osdinfo) == 0 {
+		log.Info(ctx, "no osd created yet")
+		return false
+	}
+
+	found := false
+	for _, osdState := range AllOSDInfo.Osdinfo {
+		if osdid == int32(osdState.Osdid) {
+			found = true
+			if osdState.IsIn {
+				log.Info(ctx, "osd ", osdid, " is in the in state.")
+				return true
+			}
+			osdState.IsIn = true
+			break
+		}
+	}
+	if !found {
+		log.Info(ctx, "osd is not found in our database,")
+		return false
+	}	
+
+
+	AllOSDInfo.Version++
+	osdmap, err := json.Marshal(AllOSDInfo)
+	if err != nil {
+		log.Error(ctx, err)
+		return false
+	}
+
+	err = client.Put(ctx, config.ConfigOSDMapKey, string(osdmap))
+	if err != nil {
+		log.Error(ctx, err)
+		return false
+	}
+
+	log.Info(ctx, "successfully put to ectd for in osd ", osdid)	
+    return true
+}
+
 func CheckOsdHeartbeat(ctx context.Context, client *etcdapi.EtcdClient) {
 	// we should update the osdmap according to heartbeat info
 	// if heartbeat failed up to maxFailedAttempts times, we should mark the osd down

@@ -339,6 +339,19 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 				fmt.Printf("Imagename: %s  get info imagename: %s  Poolname: %s  Size: %d   Objectsize: %d  \n", *imageName, getimageinfo.Imagename, getimageinfo.Poolname, getimageinfo.Size_, getimageinfo.ObjectSize)
 				stopChan <- struct{}{}
 				return
+
+			case *msg.Response_OsdOutResponse:
+				isok := payload.OsdOutResponse.GetOk()
+				fmt.Printf("Received OsdOutResponse, ok is %v\r\n", isok)
+				stopChan <- struct{}{}
+				return
+
+			case *msg.Response_OsdInResponse:
+				isok := payload.OsdInResponse.GetOk()
+				fmt.Printf("Received OsdInResponse, ok is %v\r\n", isok)
+				stopChan <- struct{}{}
+				return
+
 			default:
 				fmt.Printf("Unknown message type %v\r\n", payload)
 
@@ -894,11 +907,61 @@ func ClientSendGetImageRequest(conn net.Conn, stopChan chan<- struct{}) {
 	}
 }
 
+func clientSendOutOsd(conn net.Conn, osdid int) {
+	// Create a OsdOutRequest
+	request := &msg.Request{
+		Union: &msg.Request_OsdOutRequest{
+			OsdOutRequest: &msg.OsdOutRequest{
+				Osdid: int32(osdid),
+			},
+		},
+	}
+
+	// Marshal the OsdOutRequest
+	data, err := proto.Marshal(request)
+	if err != nil {
+		log.Println("Error marshaling OsdOutRequest:", err)
+		return
+	}
+
+	// Send the OsdOutRequest to the server
+	_, err = conn.Write(data)
+	if err != nil {
+		log.Println("Error sending OsdOutRequest:", err)
+		return
+	}
+}
+
+func clientSendInOsd(conn net.Conn, osdid int) {
+	// Create a OsdInRequest
+	request := &msg.Request{
+		Union: &msg.Request_OsdInRequest{
+			OsdInRequest: &msg.OsdInRequest{
+				Osdid: int32(osdid),
+			},
+		},
+	}
+
+	// Marshal the OsdInRequest
+	data, err := proto.Marshal(request)
+	if err != nil {
+		log.Println("Error marshaling OsdInRequest:", err)
+		return
+	}
+
+	// Send the OsdInRequest to the server
+	_, err = conn.Write(data)
+	if err != nil {
+		log.Println("Error sending OsdInRequest:", err)
+		return
+	}
+}
+
 func main() {
 	// (TODO)write command line args parse code
 	// Define the command line arguments
 	monitor_endpoint = flag.String("endpoint", "127.0.0.1:3333", "monitor server endpoint")
-	op = flag.String("op", "", "supported: watchclustermap, getclustermap, fakeapplyid, fakebootosd, fakestartcluster, createpool,deletepool,listpools, getosdmap, getpgmap, watchosdmap, watchpgmap, fakestoposd, createimage, removeimage, resizeimage, getimage")
+	op = flag.String("op", "", "supported: watchclustermap, getclustermap, fakeapplyid, fakebootosd, fakestartcluster, createpool, deletepool,listpools, getosdmap, getpgmap, watchosdmap, watchpgmap, fakestoposd, createimage, removeimage, resizeimage, getimage, outosd, inosd")
 
 	poolname = flag.String("poolname", "", "pool name you want to get")
 	osdid = flag.Int("osdid", 0, "osd id to boot")
@@ -919,9 +982,11 @@ func main() {
 
 	// Parse the command line arguments
 	flag.Parse()
-	if *op != "watchclustermap" && *op != "getclustermap" && *op != "createpool" && *op != "getosdmap" && *op != "getpgmap" && *op != "listpools" &&
-		*op != "fakeapplyid" && *op != "fakebootosd" && *op != "fakestartcluster" &&
-		*op != "watchosdmap" && *op != "watchpgmap" && *op != "fakestoposd" && *op != "deletepool" && *op != "createimage" && *op != "removeimage" && *op != "resizeimage" && *op != "getimage" {
+	if *op != "watchclustermap" && *op != "getclustermap" && *op != "createpool" && *op != "getosdmap" && 
+		*op != "getpgmap" && *op != "listpools" && *op != "fakeapplyid" && *op != "fakebootosd" && 
+		*op != "fakestartcluster" && *op != "watchosdmap" && *op != "watchpgmap" && *op != "fakestoposd" && 
+		*op != "deletepool" && *op != "createimage" && *op != "removeimage" && *op != "resizeimage" && 
+		*op != "getimage" && *op != "outosd" && *op != "inosd" {
 		log.Fatal("unsupported operation")
 	}
 
@@ -1032,6 +1097,16 @@ func main() {
 	case "getimage":
 		//fmt.Println("get image")
 		go ClientSendGetImageRequest(conn, stopChan)
+	case "outosd":
+		if *osdid == 0 {
+			log.Fatal("lack of osdid for outosd")
+		}
+		go clientSendOutOsd(conn, *osdid)
+	case "inosd":
+		if *osdid == 0 {
+			log.Fatal("lack of osdid for inosd")
+		}
+		go clientSendInOsd(conn, *osdid)		
 	}
 
 	go clientHandleResponses(ctx, conn, stopChan, responseChan)

@@ -1099,6 +1099,7 @@ void raft_server_t::stop_flush(int state){
     auto last_cache_idx = raft_get_last_cache_entry();
     SPDK_INFOLOG_EX(pg_group, "delete entrys [%lu, %lu]\n", _current_idx + 1, last_cache_idx);
     if(last_cache_idx <= _current_idx){
+        raft_get_log()->clear_entry_queue(state);
         return;
     }
     
