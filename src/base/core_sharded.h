@@ -116,7 +116,7 @@ private:
             spdk_cpuset_set_cpu(&cpumask, lcore, true);
             std::string thread_name = app_name + std::to_string(lcore);
 
-            struct spdk_thread *thread = spdk_thread_create(app_name.c_str(), &cpumask);
+            struct spdk_thread *thread = spdk_thread_create(thread_name.c_str(), &cpumask);
             _threads.push_back(thread);
         }
     }
