@@ -5,8 +5,7 @@
     "log_level": "info",
     "election_master_key": "fastblock_monitor_election",
     "osds": {
-        "1": "/dev/nvme10n1p1",
-        "2": "/dev/nvme10n1p2"
+        "1": "/dev/nvme9n1"
     },
     "bdev_type": "aio",
     "rdma_device_name": "mlx5_0",

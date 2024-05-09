@@ -52,7 +52,7 @@ blob_pool& global_blob_pool();
 using bm_complete = std::function<void (void *, int)>;
 
 void
-blobstore_init(std::string &bdev_name, const std::string& uuid, 
+blobstore_init(std::string &bdev_name, const std::string& uuid, bool force,
         bm_complete cb_fn, void* args);
 
 void

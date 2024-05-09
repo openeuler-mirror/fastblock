@@ -174,7 +174,7 @@ hello_start(void *arg1)
   
   buffer_pool_init();
   hello_context->buf = buffer_pool_get();
-  blobstore_init(hello_context->bdev_name, "0", init_complete, hello_context);
+  blobstore_init(hello_context->bdev_name, "0", true, init_complete, hello_context);
 }
 
 static void

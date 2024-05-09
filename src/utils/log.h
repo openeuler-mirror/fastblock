@@ -21,7 +21,7 @@ extern int g_id;
     do                                                      \
     {                                                       \
         std::string new_fmt;                                \
-        new_fmt = "daemon_id : " + std::to_string(g_id) + " ";  \
+        new_fmt = "daemon_id: " + std::to_string(g_id) + " ";  \
         new_fmt += fmt;                                     \
         SPDK_WARNLOG(new_fmt.c_str(), ##__VA_ARGS__); \
     } while (0)
@@ -30,7 +30,7 @@ extern int g_id;
     do                                                      \
     {                                                       \
         std::string new_fmt;                                \
-        new_fmt = "daemon_id : " + std::to_string(g_id) + " ";  \
+        new_fmt = "daemon_id: " + std::to_string(g_id) + " ";  \
         new_fmt += fmt;                                     \
         SPDK_ERRLOG(new_fmt.c_str(), ##__VA_ARGS__); \
     } while (0)    
@@ -40,7 +40,7 @@ extern int g_id;
     do                                                      \
     {                                                       \
         std::string new_fmt;                                \
-        new_fmt = "daemon_id : " + std::to_string(g_id) + " ";  \
+        new_fmt = "daemon_id: " + std::to_string(g_id) + " ";  \
         new_fmt += fmt;                                     \
         SPDK_NOTICELOG(new_fmt.c_str(), ##__VA_ARGS__); \
     } while (0)    
@@ -50,7 +50,7 @@ extern int g_id;
     do                                                      \
     {                                                       \
         std::string new_fmt;                                \
-        new_fmt = "daemon_id : " + std::to_string(g_id) + " ";  \
+        new_fmt = "daemon_id: " + std::to_string(g_id) + " ";  \
         new_fmt += fmt;                                     \
         SPDK_INFOLOG(FLAG, new_fmt.c_str(), ##__VA_ARGS__); \
     } while (0)
@@ -59,7 +59,7 @@ extern int g_id;
     do                                                       \
     {                                                        \
         std::string new_fmt;                                 \
-        new_fmt = "daemon_id : " + std::to_string(g_id) + " ";   \
+        new_fmt = "daemon_id: " + std::to_string(g_id) + " ";   \
         new_fmt += fmt;                                      \
         SPDK_DEBUGLOG(FLAG, new_fmt.c_str(), ##__VA_ARGS__); \
     } while (0)

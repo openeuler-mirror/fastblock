@@ -69,6 +69,7 @@ struct bm_context {
   std::string *osd_uuid;
   struct spdk_blob *blob;
   std::string bdev_name;
+  bool force;
 };
 
 struct create_blob_ctx {
@@ -243,45 +244,60 @@ bs_init_complete(void *args, struct spdk_blob_store *bs, int bserrno)
   spdk_bs_create_blob_ext(bs, &opts, create_super_blob_done, bc);
 }
 
+/**
+ * spdk_bs_init, 初始化blobstore
+ */
+static void
+bs_init(void *arg, int bserrno) {
+    struct bm_context *ctx = (struct bm_context *)arg;
+
+    //spdk_bs_load失败后，bs会释放，bs->dev也会释放，需要重新生成bs_dev
+    struct spdk_bs_opts opts = {};
+    spdk_bs_opts_init(&opts, sizeof(opts));
+    memset(opts.bstype.bstype, 0, sizeof(opts.bstype.bstype));
+    default_blobstore_type.copy(opts.bstype.bstype, SPDK_BLOBSTORE_TYPE_LENGTH - 1);
+
+    struct spdk_bs_dev *bs_dev = NULL;
+    int rc = spdk_bdev_create_bs_dev_ext(ctx->bdev_name.c_str(), fb_event_cb, NULL, &bs_dev);
+    if (rc != 0) {
+      SPDK_ERRLOG_EX("create bs_dev failed: %s\n", spdk_strerror(-rc));
+      ctx->cb_fn(ctx->args, rc);
+      spdk_free(ctx->uuid_buf);
+      delete ctx;
+      return;
+    }
+
+    SPDK_INFOLOG_EX(blob_log, "blobstore init...\n");
+    spdk_bs_init(bs_dev, &opts, bs_init_complete, ctx);
+}
+
 static void
 bs_read_complete(void *args, struct spdk_blob_store *bs, int bserrno)
 {
   struct bm_context *ctx = (struct bm_context *)args;
 
-  SPDK_INFOLOG_EX(blob_log, "blobstore read done\n");
-  if (bserrno == 0)
-  {
-    SPDK_INFOLOG_EX(blob_log, "There is data on the disk.\n");
+  SPDK_INFOLOG_EX(blob_log, "blobstore read done.\n");
+  if (bserrno == 0) {
+    SPDK_WARNLOG_EX("There is data on the disk!\n");
 
-    std::construct_at(&g_bs_mgr);
-    g_bs_mgr.blobstore = bs;
-    g_bs_mgr.channel = spdk_bs_alloc_io_channel(bs);
-    g_bs_mgr.pool.set_blobstore(global_blobstore());
-    g_bs_mgr.pool.start(blob_pool_complete, ctx);
-    // ctx->cb_fn(ctx->args, err::RAFT_ERR_DISK_NOT_EMPTY);
-    // spdk_free(ctx->uuid_buf);
-    // delete ctx;
-    return;
+    if (ctx->force) {
+        SPDK_WARNLOG_EX("\'--force\' option configured, force to mkfs!\n");
+        // 要先把已经load的 blobstore destroy掉
+        spdk_bs_destroy(bs, bs_init, ctx);
+        return;
+    } else {
+        SPDK_ERRLOG_EX("If you intend to mkfs arbitrarily, please use \'--force\' option.\n");
+        std::construct_at(&g_bs_mgr);
+        g_bs_mgr.blobstore = bs;
+        g_bs_mgr.channel = spdk_bs_alloc_io_channel(bs);
+        ctx->cb_fn(ctx->args, err::RAFT_ERR_DISK_NOT_EMPTY);
+        spdk_free(ctx->uuid_buf);
+        delete ctx;
+        return;
+    }
   }
 
-  //spdk_bs_load失败后，bs会释放，bs->dev也会释放，需要重新生成bs_dev
-  struct spdk_bs_opts opts = {};
-  spdk_bs_opts_init(&opts, sizeof(opts));
-  memset(opts.bstype.bstype, 0, sizeof(opts.bstype.bstype));
-  default_blobstore_type.copy(opts.bstype.bstype, SPDK_BLOBSTORE_TYPE_LENGTH - 1);
-
-  struct spdk_bs_dev *bs_dev = NULL;
-  int rc = spdk_bdev_create_bs_dev_ext(ctx->bdev_name.c_str(), fb_event_cb, NULL, &bs_dev);
-  if (rc != 0) {
-    SPDK_ERRLOG_EX("create bs_dev failed: %s\n", spdk_strerror(-rc));
-    ctx->cb_fn(ctx->args, rc);
-    spdk_free(ctx->uuid_buf);
-    delete ctx;
-    return;
-  }
-
-  SPDK_INFOLOG_EX(blob_log, "blobstore init...\n");
-  spdk_bs_init(bs_dev, &opts, bs_init_complete, ctx);
+  bs_init(ctx, 0);
 }
 
 struct blobstore_context{
@@ -292,7 +308,7 @@ struct blobstore_context{
 };
 
 static void 
-_blobstore_init(bm_complete cb_fn, void* args, std::string &bdev_name, std::string &uuid){
+_blobstore_init(bm_complete cb_fn, void* args, std::string &bdev_name, std::string &uuid, bool force){
   struct spdk_bs_dev *bs_dev = NULL;
   int rc = spdk_bdev_create_bs_dev_ext(bdev_name.c_str(), fb_event_cb, NULL, &bs_dev);
   if (rc != 0) {
@@ -302,7 +318,7 @@ _blobstore_init(bm_complete cb_fn, void* args, std::string &bdev_name, std::stri
   }
 
   SPDK_INFOLOG_EX(blob_log, "blobstore init...\n");
-  auto ctx = new bm_context{.cb_fn = std::move(cb_fn), .args = args, .osd_uuid = nullptr, .bdev_name = bdev_name};
+  auto ctx = new bm_context{.cb_fn = std::move(cb_fn), .args = args, .osd_uuid = nullptr, .bdev_name = bdev_name, .force = force};
   ctx->uuid_len = 4096;
   ctx->uuid_buf = (char*)spdk_zmalloc(ctx->uuid_len, 0x1000, NULL, SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
   uuid.copy(ctx->uuid_buf, ctx->uuid_len - 1);
@@ -325,7 +341,7 @@ static void blobstore_op_done(blobstore_context *ctx){
 }
 
 static void
-_blobstore_init(std::string bdev_name, std::string uuid, bm_complete cb_fn, void* args, spdk_thread *thread) {
+_blobstore_init(std::string bdev_name, std::string uuid, bool force, bm_complete cb_fn, void* args, spdk_thread *thread) {
   SPDK_INFOLOG_EX(blob_log, "blobstore init, thread id %lu\n", utils::get_spdk_thread_id());
 
   blobstore_context *ctx = new blobstore_context{.cb_fn = std::move(cb_fn), .arg = args, .thread = thread};
@@ -335,11 +351,11 @@ _blobstore_init(std::string bdev_name, std::string uuid, bm_complete cb_fn, void
     SPDK_INFOLOG_EX(blob_log, "blobstore init done.\n");
     blobstore_op_done(ctx);
   },
-  ctx, bdev_name, uuid);
+  ctx, bdev_name, uuid, force);
 }
 
 void
-blobstore_init(std::string &bdev_name, const std::string& uuid, bm_complete cb_fn, void* args){
+blobstore_init(std::string &bdev_name, const std::string& uuid, bool force, bm_complete cb_fn, void* args){
   auto &shard = core_sharded::get_core_sharded();
   /*
     在spdk的函数bs_open_blob中有一个行“assert(spdk_get_thread() == bs->md_thread)”会检测当前spdk线程与blobstore的spdk线程是否相等，
@@ -351,8 +367,8 @@ blobstore_init(std::string &bdev_name, const std::string& uuid, bm_complete cb_f
   SPDK_NOTICELOG_EX("blobstore_init, from thread id: %lu\n", utils::get_spdk_thread_id());
   shard.invoke_on(
     0,
-    [bdev_name = bdev_name, uuid, cb_fn, args, cur_thread](){
-      _blobstore_init(bdev_name, std::move(uuid), cb_fn, args, cur_thread);
+    [bdev_name = bdev_name, uuid, force, cb_fn, args, cur_thread](){
+      _blobstore_init(bdev_name, std::move(uuid), force, cb_fn, args, cur_thread);
     }
   );  
 }
@@ -738,6 +754,8 @@ bs_fini_complete(void *args, int bserrno)
   g_bs_mgr.blobstore = nullptr;
   g_bs_mgr.channel = nullptr;
   g_bs_mgr.blobs.stop();
+  ctx->cb_fn(ctx->args, 0);
+  delete ctx;
 }
 
 void pool_stop_complete(void *args, int bserrno) {
@@ -757,7 +775,7 @@ void pool_stop_complete(void *args, int bserrno) {
 static void
 _blobstore_fini(bm_complete cb_fn, void* args)
 {
-	if (g_bs_mgr.blobstore) {
+  if (g_bs_mgr.blobstore) {
 		if (g_bs_mgr.channel) {
       SPDK_INFOLOG_EX(blob_log, "free io_channel\n");
       spdk_bs_free_io_channel(g_bs_mgr.channel);
