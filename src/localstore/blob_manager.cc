@@ -244,6 +244,33 @@ bs_init_complete(void *args, struct spdk_blob_store *bs, int bserrno)
   spdk_bs_create_blob_ext(bs, &opts, create_super_blob_done, bc);
 }
 
+/**
+ * spdk_bs_init, 初始化blobstore
+ */
+static void
+bs_init(void *arg, int bserrno) {
+    struct bm_context *ctx = (struct bm_context *)arg;
+
+    //spdk_bs_load失败后，bs会释放，bs->dev也会释放，需要重新生成bs_dev
+    struct spdk_bs_opts opts = {};
+    spdk_bs_opts_init(&opts, sizeof(opts));
+    memset(opts.bstype.bstype, 0, sizeof(opts.bstype.bstype));
+    default_blobstore_type.copy(opts.bstype.bstype, SPDK_BLOBSTORE_TYPE_LENGTH - 1);
+
+    struct spdk_bs_dev *bs_dev = NULL;
+    int rc = spdk_bdev_create_bs_dev_ext(ctx->bdev_name.c_str(), fb_event_cb, NULL, &bs_dev);
+    if (rc != 0) {
+      SPDK_ERRLOG_EX("create bs_dev failed: %s\n", spdk_strerror(-rc));
+      ctx->cb_fn(ctx->args, rc);
+      spdk_free(ctx->uuid_buf);
+      delete ctx;
+      return;
+    }
+
+    SPDK_INFOLOG_EX(blob_log, "blobstore init...\n");
+    spdk_bs_init(bs_dev, &opts, bs_init_complete, ctx);
+}
+
 static void
 bs_read_complete(void *args, struct spdk_blob_store *bs, int bserrno)
 {
@@ -255,6 +282,9 @@ bs_read_complete(void *args, struct spdk_blob_store *bs, int bserrno)
 
     if (ctx->force) {
         SPDK_WARNLOG_EX("\'--force\' option configured, force to mkfs!\n");
+        // 要先把已经load的 blobstore destroy掉
+        spdk_bs_destroy(bs, bs_init, ctx);
+        return;
     } else {
         SPDK_ERRLOG_EX("If you intend to mkfs arbitrarily, please use \'--force\' option.\n");
         std::construct_at(&g_bs_mgr);
@@ -267,24 +297,7 @@ bs_read_complete(void *args, struct spdk_blob_store *bs, int bserrno)
     }
   }
 
-  //spdk_bs_load失败后，bs会释放，bs->dev也会释放，需要重新生成bs_dev
-  struct spdk_bs_opts opts = {};
-  spdk_bs_opts_init(&opts, sizeof(opts));
-  memset(opts.bstype.bstype, 0, sizeof(opts.bstype.bstype));
-  default_blobstore_type.copy(opts.bstype.bstype, SPDK_BLOBSTORE_TYPE_LENGTH - 1);
-
-  struct spdk_bs_dev *bs_dev = NULL;
-  int rc = spdk_bdev_create_bs_dev_ext(ctx->bdev_name.c_str(), fb_event_cb, NULL, &bs_dev);
-  if (rc != 0) {
-    SPDK_ERRLOG_EX("create bs_dev failed: %s\n", spdk_strerror(-rc));
-    ctx->cb_fn(ctx->args, rc);
-    spdk_free(ctx->uuid_buf);
-    delete ctx;
-    return;
-  }
-
-  SPDK_INFOLOG_EX(blob_log, "blobstore init...\n");
-  spdk_bs_init(bs_dev, &opts, bs_init_complete, ctx);
+  bs_init(ctx, 0);
 }
 
 struct blobstore_context{
@@ -741,6 +754,8 @@ bs_fini_complete(void *args, int bserrno)
   g_bs_mgr.blobstore = nullptr;
   g_bs_mgr.channel = nullptr;
   g_bs_mgr.blobs.stop();
+  ctx->cb_fn(ctx->args, 0);
+  delete ctx;
 }
 
 void pool_stop_complete(void *args, int bserrno) {
@@ -760,7 +775,7 @@ void pool_stop_complete(void *args, int bserrno) {
 static void
 _blobstore_fini(bm_complete cb_fn, void* args)
 {
-	if (g_bs_mgr.blobstore) {
+  if (g_bs_mgr.blobstore) {
 		if (g_bs_mgr.channel) {
       SPDK_INFOLOG_EX(blob_log, "free io_channel\n");
       spdk_bs_free_io_channel(g_bs_mgr.channel);
