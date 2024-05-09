@@ -61,6 +61,7 @@ typedef struct
 
 static const char* g_json_conf{nullptr};
 static bool g_mkfs{false};
+static bool g_force{false};
 static const char *g_uuid{nullptr};
 int g_id{-1};
 
@@ -77,7 +78,8 @@ static void
 block_usage(void) {
     printf("--------------- osd options --------------------\n");
     printf("-C, --conf <osd json config file> path to json config file\n");
-    printf("-f, --mkfs create new osd disk\n");
+    printf("-f, --mkfs    create new osd disk\n");
+    printf("-F, --force   force to mkfs\n");
     printf("-I, --id <osd id> the osd id\n");
     printf("-U, --uuid <uuid> the uuid of the osd\n");
 }
@@ -96,6 +98,13 @@ static struct option g_cmdline_opts[] = {
 		.has_arg = 0,
 		.flag = NULL,
 		.val = BLOCK_OPTION_MKFS,
+	},
+#define BLOCK_OPTION_FORCE 'F'
+	{
+		.name = "force",
+		.has_arg = 0,
+		.flag = NULL,
+		.val = BLOCK_OPTION_FORCE,
 	},
 #define BLOCK_OPTION_ID 'I'
 	{
@@ -140,6 +149,9 @@ block_parse_arg(int ch, char *arg)
         break;
     case BLOCK_OPTION_MKFS:
         g_mkfs = true;
+        break;
+    case BLOCK_OPTION_FORCE:
+        g_force = true;
         break;
     case BLOCK_OPTION_ID:
         g_id = atoi(arg);
@@ -467,7 +479,7 @@ block_started(void *arg)
     buffer_pool_init();
     if(g_mkfs){
         //初始化log磁盘
-        blobstore_init(server->bdev_disk, server->osd_uuid,
+        blobstore_init(server->bdev_disk, server->osd_uuid, g_force,
                 disk_init_complete, arg);
         return;
     }else{
