@@ -269,6 +269,22 @@ message OsdInResponse {
     bool ok = 1;
 }
 
+message NoReblanceRequest {
+    bool set = 1;
+}
+
+message NoReblanceResponse {
+    bool ok = 1;
+}
+
+message NoOutRequest {
+    bool set = 1;
+}
+
+message NoOutResponse {
+    bool ok = 1;
+}
+
 message Request {
     oneof union {
         BootRequest boot_request = 1;
@@ -289,6 +305,8 @@ message Request {
         PgMemberChangeFinishRequest pg_member_change_finish_request=16;
         OsdOutRequest  osd_out_request=17;
         OsdInRequest   osd_in_request=18;
+        NoReblanceRequest  no_reblance_request=19;
+        NoOutRequest   no_out_request=20;
     }
 }
 
@@ -312,5 +330,7 @@ message Response {
         PgMemberChangeFinishResponse pg_member_change_finish_response=16;
         OsdOutResponse osd_out_response=17;
         OsdInResponse osd_in_response=18;
+        NoReblanceResponse no_reblance_response=19;
+        NoOutResponse  no_out_response=20;
     }
 }

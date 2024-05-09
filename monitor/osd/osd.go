@@ -70,10 +70,14 @@ var AllHeartBeatInfo map[OSDID]*HeartBeatInfo
 
 type STATESWITCH  int
 const (
-    InToOut  STATESWITCH = iota + 1
-    DownToUp
-    UpToDown 
+	InToOut  STATESWITCH = iota + 1
+	DownToUp
+	UpToDown 
+	OutToIn
 )
+
+var NoReblance = false
+var NoOut = false
 
 type OsdTask struct {
     osdid          int
@@ -209,6 +213,7 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 	oldIsUp := oinfo.IsUp
 	log.Info(ctx, "ip address is valid?", isValidIPv4(address), address)
 
+	oldIsIn := oinfo.IsIn
 	if oinfo.IsPendingCreate {
 		if isValidIPv4(address) && isValidPort(port) {
 			//this is a newly create osd
@@ -237,6 +242,11 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 		log.Warn(ctx, "osd ", id, "from down to up.")
 		osdTaskQueue.Enqueue(OsdTask{osdid: int(id), stateSwitch: DownToUp})
 	} 
+
+	if !oldIsIn && oinfo.IsIn {
+		log.Warn(ctx, "osd ", id, "from out to in.")
+		osdTaskQueue.Enqueue(OsdTask{osdid: int(id), stateSwitch: OutToIn})
+	}
 
 	AllOSDInfo.Osdinfo[OSDID(id)] = oinfo
 	AllOSDInfo.Version++
@@ -409,7 +419,8 @@ func ProcessOsdInMessage(ctx context.Context, client *etcdapi.EtcdClient, osdid 
 		return false
 	}	
 
-
+	osdTaskQueue.Enqueue(OsdTask{osdid: int(osdid), stateSwitch: OutToIn})
+	log.Info(ctx, "osd ", osdid, " from out to in.")	
 	AllOSDInfo.Version++
 	osdmap, err := json.Marshal(AllOSDInfo)
 	if err != nil {
@@ -425,6 +436,22 @@ func ProcessOsdInMessage(ctx context.Context, client *etcdapi.EtcdClient, osdid 
 
 	log.Info(ctx, "successfully put to ectd for in osd ", osdid)	
     return true
+}
+
+func ProcessNoReblanceMessage(ctx context.Context, client *etcdapi.EtcdClient, set bool) bool {
+	log.Info(ctx, "process  NoReblanceRequest, NoReblance: ", NoReblance, ", set: ", set)
+	if NoReblance != set {
+		NoReblance = set
+	}
+	return true
+}
+
+func ProcessNoOutMessage(ctx context.Context, client *etcdapi.EtcdClient, set bool) bool {
+	log.Info(ctx, "process  NoOutRequest, NoOut: ", NoOut, ", set: ", set)
+	if NoOut != set {
+		NoOut = set
+	}
+	return true
 }
 
 func CheckOsdHeartbeat(ctx context.Context, client *etcdapi.EtcdClient) {

@@ -704,6 +704,64 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 					continue
 				}
 
+			case *msg.Request_NoReblanceRequest:
+				log.Info(ctx, "Received NoReblanceRequest")
+				set := payload.NoReblanceRequest.GetSet()
+
+				ok := osd.ProcessNoReblanceMessage(ctx, client, set)
+
+				// Create a NoReblanceResponse
+				response := &msg.Response{
+					Union: &msg.Response_NoReblanceResponse{
+						NoReblanceResponse: &msg.NoReblanceResponse{
+							Ok: ok,
+						},
+					},
+				}
+
+				// Marshal the NoReblanceResponse
+				responseData, err := proto.Marshal(response)
+				if err != nil {
+					log.Error(ctx, "Error marshaling response:", err)
+					continue
+				}
+
+				// Write the response data back to the client
+				_, err = conn.Write(responseData)
+				if err != nil {
+					log.Error(ctx, "Error writing response:", err)
+					continue
+				}
+
+			case *msg.Request_NoOutRequest:
+				log.Info(ctx, "Received NoOutRequest")
+				set := payload.NoOutRequest.GetSet()
+
+				ok := osd.ProcessNoOutMessage(ctx, client, set)
+
+				// Create a NoOutResponse
+				response := &msg.Response{
+					Union: &msg.Response_NoOutResponse{
+						NoOutResponse: &msg.NoOutResponse{
+							Ok: ok,
+						},
+					},
+				}
+
+				// Marshal the NoOutResponse
+				responseData, err := proto.Marshal(response)
+				if err != nil {
+					log.Error(ctx, "Error marshaling response:", err)
+					continue
+				}
+
+				// Write the response data back to the client
+				_, err = conn.Write(responseData)
+				if err != nil {
+					log.Error(ctx, "Error writing response:", err)
+					continue
+				}
+
 			default:
 				log.Info(ctx, "Unknown payload type")
 			}

@@ -38,6 +38,8 @@ var osdid *int
 var fakeOsdCount *int
 var fakeHostCount *int
 var version *int64
+var unset *string
+var set *string
 
 // image
 var imageName *string
@@ -349,6 +351,18 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 			case *msg.Response_OsdInResponse:
 				isok := payload.OsdInResponse.GetOk()
 				fmt.Printf("Received OsdInResponse, ok is %v\r\n", isok)
+				stopChan <- struct{}{}
+				return
+
+			case *msg.Response_NoReblanceResponse:
+				isok := payload.NoReblanceResponse.GetOk()
+				fmt.Printf("Received NoReblanceResponse, ok is %v\r\n", isok)
+				stopChan <- struct{}{}
+				return
+
+			case *msg.Response_NoOutResponse:
+				isok := payload.NoOutResponse.GetOk()
+				fmt.Printf("Received NoOutResponse, ok is %v\r\n", isok)
 				stopChan <- struct{}{}
 				return
 
@@ -957,11 +971,63 @@ func clientSendInOsd(conn net.Conn, osdid int) {
 	}
 }
 
+func clientSendNoReblance(conn net.Conn, set bool) {
+	// Create a NoReblanceRequest
+	request := &msg.Request{
+		Union: &msg.Request_NoReblanceRequest{
+			NoReblanceRequest: &msg.NoReblanceRequest{
+				Set: set,
+			},
+		},
+	}
+
+	// Marshal the NoReblanceRequest
+	data, err := proto.Marshal(request)
+	if err != nil {
+		log.Println("Error marshaling NoReblanceRequest:", err)
+		return
+	}
+
+	// Send the NoReblanceRequest to the server
+	_, err = conn.Write(data)
+	if err != nil {
+		log.Println("Error sending NoReblanceRequest:", err)
+		return
+	}
+}
+
+func clientSendNoOut(conn net.Conn, set bool) {
+	// Create a NoOutRequest
+	request := &msg.Request{
+		Union: &msg.Request_NoOutRequest{
+			NoOutRequest: &msg.NoOutRequest{
+				Set: set,
+			},
+		},
+	}
+
+	// Marshal the NoOutRequest
+	data, err := proto.Marshal(request)
+	if err != nil {
+		log.Println("Error marshaling NoOutRequest:", err)
+		return
+	}
+
+	// Send the NoOutRequest to the server
+	_, err = conn.Write(data)
+	if err != nil {
+		log.Println("Error sending NoOutRequest:", err)
+		return
+	}
+}
+
 func main() {
 	// (TODO)write command line args parse code
 	// Define the command line arguments
 	monitor_endpoint = flag.String("endpoint", "127.0.0.1:3333", "monitor server endpoint")
 	op = flag.String("op", "", "supported: watchclustermap, getclustermap, fakeapplyid, fakebootosd, fakestartcluster, createpool, deletepool,listpools, getosdmap, getpgmap, watchosdmap, watchpgmap, fakestoposd, createimage, removeimage, resizeimage, getimage, outosd, inosd")
+	set = flag.String("set", "", "supported: noReblance, noout")
+	unset = flag.String("unset", "", "supported: noReblance, noout")
 
 	poolname = flag.String("poolname", "", "pool name you want to get")
 	osdid = flag.Int("osdid", 0, "osd id to boot")
@@ -983,11 +1049,13 @@ func main() {
 	// Parse the command line arguments
 	flag.Parse()
 	if *op != "watchclustermap" && *op != "getclustermap" && *op != "createpool" && *op != "getosdmap" && 
-		*op != "getpgmap" && *op != "listpools" && *op != "fakeapplyid" && *op != "fakebootosd" && 
-		*op != "fakestartcluster" && *op != "watchosdmap" && *op != "watchpgmap" && *op != "fakestoposd" && 
-		*op != "deletepool" && *op != "createimage" && *op != "removeimage" && *op != "resizeimage" && 
-		*op != "getimage" && *op != "outosd" && *op != "inosd" {
-		log.Fatal("unsupported operation")
+			*op != "getpgmap" && *op != "listpools" && *op != "fakeapplyid" && *op != "fakebootosd" && 
+			*op != "fakestartcluster" && *op != "watchosdmap" && *op != "watchpgmap" && *op != "fakestoposd" && 
+			*op != "deletepool" && *op != "createimage" && *op != "removeimage" && *op != "resizeimage" && 
+			*op != "getimage" && *op != "outosd" && *op != "inosd" {
+		if *set != "noReblance" && *set != "noout" && *unset != "noReblance" && *unset != "noout"{
+			log.Fatal("unsupported operation")
+		}
 	}
 
 	// Connect to the monitor
@@ -1107,6 +1175,28 @@ func main() {
 			log.Fatal("lack of osdid for inosd")
 		}
 		go clientSendInOsd(conn, *osdid)		
+	}
+
+	if *op == "" {
+		switch *set {
+		case "noReblance":
+			log.Println("set noReblance")	
+			go clientSendNoReblance(conn, true)
+		case "noout":
+			log.Println("set noout")
+			go clientSendNoOut(conn, true)
+		} 
+
+		if *set == "" {
+			switch *unset {
+			case "noReblance":
+				log.Println("unset noReblance")
+				go clientSendNoReblance(conn, false)
+			case "noout":
+				log.Println("set noout")
+				go clientSendNoOut(conn, false)
+			}
+		}
 	}
 
 	go clientHandleResponses(ctx, conn, stopChan, responseChan)
