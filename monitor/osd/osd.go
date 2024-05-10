@@ -88,7 +88,11 @@ var osdTaskQueue = NewQueue()
 
 func (task *OsdTask) Process(ctx context.Context, client *etcdapi.EtcdClient) {
     log.Warn(ctx, "osd: ", task.osdid, " stateSwitch: ", task.stateSwitch)
-    CheckPgs(ctx, client, task.osdid, task.stateSwitch)
+	if task.stateSwitch == OutToIn {
+		Reblance(ctx, client)
+	} else {
+		CheckPgs(ctx, client, task.osdid, task.stateSwitch)
+	}
 }
 
 func OsdTaskrun(ctx context.Context, client *etcdapi.EtcdClient) {
@@ -238,11 +242,13 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 		log.Info(ctx, "IsPendingCreate is false, this is an update osd")
 	}
 
-	if !oldIsUp && oinfo.IsUp {
+	//osd由down变为up
+	if !oldIsUp && oinfo.IsUp && oldIsIn && oinfo.IsIn {
 		log.Warn(ctx, "osd ", id, "from down to up.")
 		osdTaskQueue.Enqueue(OsdTask{osdid: int(id), stateSwitch: DownToUp})
 	} 
 
+	//osd由out变为in
 	if !oldIsIn && oinfo.IsIn {
 		log.Warn(ctx, "osd ", id, "from out to in.")
 		osdTaskQueue.Enqueue(OsdTask{osdid: int(id), stateSwitch: OutToIn})
@@ -403,12 +409,18 @@ func ProcessOsdInMessage(ctx context.Context, client *etcdapi.EtcdClient, osdid 
 	}
 
 	found := false
+	isUp := false
 	for _, osdState := range AllOSDInfo.Osdinfo {
 		if osdid == int32(osdState.Osdid) {
 			found = true
 			if osdState.IsIn {
 				log.Info(ctx, "osd ", osdid, " is in the in state.")
 				return true
+			}
+			isUp = osdState.IsUp
+			if !isUp {
+				log.Warn(ctx, "osd ", osdid, " is down, can not set in state.")
+				return false
 			}
 			osdState.IsIn = true
 			break
@@ -419,8 +431,10 @@ func ProcessOsdInMessage(ctx context.Context, client *etcdapi.EtcdClient, osdid 
 		return false
 	}	
 
-	osdTaskQueue.Enqueue(OsdTask{osdid: int(osdid), stateSwitch: OutToIn})
-	log.Info(ctx, "osd ", osdid, " from out to in.")	
+	if isUp {
+		osdTaskQueue.Enqueue(OsdTask{osdid: int(osdid), stateSwitch: OutToIn})
+		log.Info(ctx, "osd ", osdid, " from out to in.")
+	}
 	AllOSDInfo.Version++
 	osdmap, err := json.Marshal(AllOSDInfo)
 	if err != nil {

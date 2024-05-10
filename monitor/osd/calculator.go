@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"math/rand"
 	"monitor/config"
 	"monitor/etcdapi"
@@ -356,9 +357,306 @@ func shouldChange(osdList []int, pgSize int, osdid int) bool {
     return false
 }
 
+func getDomainPg(cfg *OptimizeCfg, poolid PoolID) (*map[string]int32, *map[string][]int, *map[int]int32, *map[int][]string, *map[int]string) {
+	domainPgNum := make(map[string]int32)
+	pgOnDomainMap := make(map[string][]int)
+	pgNumPerOsd := make(map[int]int32)
+	pgDomainMap := make(map[int][]string)
+	osdDomainMap := make(map[int]string)
+
+	for _, domain := range *(cfg.OSDTree) {
+		domainPgNum[domain.DomainName] = 0
+		pgOnDomainMap[domain.DomainName] = make([]int, 0)
+		for _, osd := range domain.ChildNode {
+			osdDomainMap[int(osd.OSDID)] = domain.DomainName
+			pgNumPerOsd[int(osd.OSDID)] = 0
+		}
+	}
+
+	pgCount := AllPools[poolid].PGCount
+	for pgid := 0; pgid < pgCount; pgid++ {
+		pg := AllPools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgid)]
+		for _, osdId := range pg.OsdList {
+			domain := osdDomainMap[osdId]
+			domainPgNum[domain]++
+			pgOnDomainMap[domain] = append(pgOnDomainMap[domain], pgid)
+			pgDomainMap[pgid] = append(pgDomainMap[pgid], domain)
+			pgNumPerOsd[osdId]++
+		}
+	}
+
+    return &domainPgNum, &pgOnDomainMap, &pgNumPerOsd, &pgDomainMap, &osdDomainMap
+}
+
+//检测domain是否在pg中
+func containsDomain(pgDomainMap *map[int][]string, pgId int, domain string) bool{
+	for _, value := range (*pgDomainMap)[pgId] {
+		if value == domain {
+			return true
+		}
+	}
+	return false
+}
+
+//检测pg是否可以把domain从成员列表中移除
+func transferable(poolid PoolID, pgId int) bool {
+	pg := AllPools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgId)]
+
+	if (pg.PgState & PgRemapped) != 0  ||
+	  (pg.PgState & PgDown) != 0  ||
+	  (pg.PgState & PgCreating) != 0  ||
+	  (pg.PgState & PgUndersize) != 0 {
+		return false
+	} 
+
+	return true
+}
+
+func removeArrInt(arr []int, val int) []int {
+	left, right := 0, len(arr)-1
+	for left <= right {
+		if arr[left] == val {
+			arr[left], arr[right] = arr[right], arr[left]
+			right--
+		} else {
+			left++
+		}
+	}
+	return arr[:left]
+}
+
+func changePgDomain(pgDomainMap *map[int][]string, pgId int, srcDomain string, dstDomain string) {
+	num := len((*pgDomainMap)[pgId])
+	for i := 0; i < num; i++ {
+		if srcDomain == (*pgDomainMap)[pgId][i] {
+			(*pgDomainMap)[pgId][i] = dstDomain
+			break
+		}
+	}
+}
+
+func getMinPgOsd(cfg *OptimizeCfg, domain string, pgNumPerOsd *map[int]int32) int {
+	var minOsdPNum int32
+	minOsdPNum = math.MaxInt32
+	var minOsd int 
+	for _, domainNode := range *(cfg.OSDTree) {
+		if domainNode.DomainName != domain {
+			continue
+		}
+		for _, osd := range domainNode.ChildNode {
+			if (*pgNumPerOsd)[int(osd.OSDID)] < minOsdPNum {
+				minOsdPNum = (*pgNumPerOsd)[int(osd.OSDID)]
+				minOsd = int(osd.OSDID)
+			}
+		}
+	}
+	return minOsd
+}
+
+func transferPG(ctx context.Context, cfg *OptimizeCfg, poolid PoolID, pgId int, pgDomainMap *map[int][]string, 
+  osdDomainMap *map[int]string, maxPgDomain string, minPgDomain string, secondMinPgDomain string, 
+  thirdMinPgDomain string, domainPgNum *map[string]int32, pgOnDomainMap *map[string][]int, 
+  pgNumPerOsd *map[int]int32) bool {
+	
+
+	pg := AllPools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgId)]
+	var newOsdList []int
+	var srcOsd int
+	var dstOsd int
+	for _, osd := range pg.OsdList {
+		domain, ok := (*osdDomainMap)[osd]
+		if ok && domain == maxPgDomain {
+			srcOsd = osd
+		} else {
+			newOsdList = append(newOsdList, osd)
+		}
+	} 
+
+	if !containsDomain(pgDomainMap, pgId, minPgDomain) {
+		log.Debug(ctx, "pg:", pgId, " maxPgDomain ", maxPgDomain, " minPgDomain ", minPgDomain)
+		(*domainPgNum)[maxPgDomain]--
+		(*domainPgNum)[minPgDomain]++
+		(*pgOnDomainMap)[maxPgDomain] = removeArrInt((*pgOnDomainMap)[maxPgDomain], pgId)
+		(*pgOnDomainMap)[minPgDomain] = append((*pgOnDomainMap)[minPgDomain], pgId)
+		changePgDomain(pgDomainMap, pgId, maxPgDomain, minPgDomain)
+		dstOsd = getMinPgOsd(cfg, minPgDomain, pgNumPerOsd)
+	} else if !containsDomain(pgDomainMap, pgId, secondMinPgDomain) {
+		log.Debug(ctx, "pg:", pgId, " maxPgDomain ", maxPgDomain, " secondMinPgDomain ", secondMinPgDomain)
+		(*domainPgNum)[maxPgDomain]--
+		(*domainPgNum)[secondMinPgDomain]++		
+		(*pgOnDomainMap)[maxPgDomain] = removeArrInt((*pgOnDomainMap)[maxPgDomain], pgId)
+		(*pgOnDomainMap)[secondMinPgDomain] = append((*pgOnDomainMap)[secondMinPgDomain], pgId)
+		changePgDomain(pgDomainMap, pgId, maxPgDomain, secondMinPgDomain)
+		dstOsd = getMinPgOsd(cfg, secondMinPgDomain, pgNumPerOsd)
+	} else if !containsDomain(pgDomainMap, pgId, thirdMinPgDomain) {
+		log.Debug(ctx, "pg:", pgId, " maxPgDomain ", maxPgDomain, " thirdMinPgDomain ", thirdMinPgDomain)
+		(*domainPgNum)[maxPgDomain]--
+		(*domainPgNum)[thirdMinPgDomain]++
+		(*pgOnDomainMap)[maxPgDomain] = removeArrInt((*pgOnDomainMap)[maxPgDomain], pgId)
+		(*pgOnDomainMap)[thirdMinPgDomain] = append((*pgOnDomainMap)[thirdMinPgDomain], pgId)
+		changePgDomain(pgDomainMap, pgId, maxPgDomain, thirdMinPgDomain)
+		dstOsd = getMinPgOsd(cfg, thirdMinPgDomain, pgNumPerOsd)
+	} else {
+		return false
+	}
+	log.Warn(ctx, "+++ pool: ", poolid, " pg: ", pgId, ",  srcOsd: ", srcOsd, ", dstOsd: ", dstOsd)
+	(*pgNumPerOsd)[srcOsd]--
+	(*pgNumPerOsd)[dstOsd]++
+	newOsdList = append(newOsdList, dstOsd)
+	pg.Version++
+	pg.PgState |= PgRemapped
+	pg.NewOsdList = newOsdList
+	AllPools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgId)] = pg
+	log.Debug(ctx, "pg: ", pgId, " PgState ", pg.PgState, " osdList: ", pg.OsdList, " NewOsdList: ", pg.NewOsdList)
+
+	return true
+}
+
+func reblancePool(ctx context.Context,
+  osdTreeMap *map[Level]*map[string]*BucketTreeNode,
+  osdNodeMap *map[string]OSDTreeNode,
+  pool *PoolConfig) bool {
+	log.Warn(ctx, "reblance pool ", pool.Poolid, ":", pool.Name)
+    optimizeCfg := &OptimizeCfg{
+        PGCount:        pool.PGCount,
+        PGSize:         getEffectivePGSize(pool.PGSize, GetFailureDomainNum(osdTreeMap, pool.FailureDomain)),
+        FailureDomain:  pool.FailureDomain,
+        PreviousPGList: pool.PoolPgMap.PgMap,
+    }
+
+    optimizeCfg.OSDTree, optimizeCfg.OSDInfoMap, optimizeCfg.TotalWeight = FlattenTree(ctx, osdTreeMap, osdNodeMap, 
+	  pool.PGCount, pool.PGSize, pool.FailureDomain, pool.Root, pool.Root != "")
+
+	/* 
+	 * domain既failure domain表示pool的故障域。
+	 * domainPgNum记录每个domain上的pg数量
+	 * pgOnDomainMap记录每个domain上有哪些pg
+	 * pgNumPerOsd记录每个osd上的pg数量
+	 * pgDomainMap记录每个pg上面有哪些domain
+	 * osdDomainMap记录osd属于哪个domain
+	 */
+	domainPgNum, pgOnDomainMap, pgNumPerOsd, pgDomainMap, osdDomainMap := getDomainPg(optimizeCfg, PoolID(pool.Poolid))
+	for domainName, pgList := range *pgOnDomainMap {
+		log.Warn(ctx, "+++ pool: ", pool.Poolid, " domain: ", domainName, " pg num: ", (*domainPgNum)[domainName], ", pg list: ", pgList)
+	}
+	for osdId, pgnum := range *pgNumPerOsd {
+		log.Warn(ctx, "+++ pool: ", pool.Poolid, " osdId: ", osdId, " pg num: ", pgnum)
+	}
+	for pgid, domainList := range *pgDomainMap {
+		log.Warn(ctx, "+++ pool: ", pool.Poolid, " pgid: ", pgid, " domain list: ", domainList)
+	}
+
+
+    if len(*domainPgNum) == 0{
+        return false
+    }
+
+	domainCount := len(*domainPgNum)
+	pgPerDomain := int32(optimizeCfg.PGCount * optimizeCfg.PGSize / domainCount) // 平均值，计算每个domain上承担的pg数量，向下取整
+
+	isRemap := false
+	breakFlag := true
+	/*   
+	 *  domainPgNum是一个map， key是pool的domain名字，value为此domain上面的pg数量
+	 *  均衡pg，从pg数量最多的那个domain上迁移pg到pg数量最少的domain上
+	 *  
+	 */
+	for loop := 0; loop < pool.PGCount; loop++ {
+		maxPgDomain := getMaxValue(domainPgNum)
+		minPgDomain, secondMinPgDomain, thirdMinPgDomain := top3MinValue(domainPgNum)
+		log.Warn(ctx, "+++ pool: ", pool.Poolid, ", maxPgDomain: ", maxPgDomain, ", minPgDomain: ", minPgDomain, 
+				", secondMinPgDomain: ", secondMinPgDomain, ", thirdMinPgDomain: ", thirdMinPgDomain)
+
+		breakFlag = true
+		//domain的pg数，只能处于平均值 或 平均值+1
+		if (*domainPgNum)[minPgDomain] < pgPerDomain ||
+		  (*domainPgNum)[maxPgDomain] > pgPerDomain + 1 {
+
+			//遍历承担pg最多的那个domain上的pg
+			for i := 0; i < len((*pgOnDomainMap)[maxPgDomain]); i++ {
+				pgId := (*pgOnDomainMap)[maxPgDomain][i]
+				log.Warn(ctx, "+++ pool: ", pool.Poolid, ", maxPgDomain: ", maxPgDomain, ", pgId: ", pgId)
+				//检测maxPgDomain是否在pg中
+				if containsDomain(pgDomainMap, pgId, maxPgDomain) {
+					if !transferable(PoolID(pool.Poolid), pgId) {
+						log.Warn(ctx, "+++ pool: ", pool.Poolid, ", pg: ",  pgId, " can not transfre.")
+						continue
+					}
+
+					if transferPG(ctx, optimizeCfg, PoolID(pool.Poolid), pgId, pgDomainMap, osdDomainMap, 
+					  maxPgDomain, minPgDomain, secondMinPgDomain, thirdMinPgDomain, 
+					  domainPgNum, pgOnDomainMap, pgNumPerOsd) {
+						///////////////////////
+						for domainName, pgList := range *pgOnDomainMap {
+							log.Warn(ctx, "--- pool: ", pool.Poolid, " domain: ", domainName, " pg num: ", (*domainPgNum)[domainName], ", pg list: ", pgList)
+						}
+						for osdId, pgnum := range *pgNumPerOsd {
+							log.Warn(ctx, "--- pool: ", pool.Poolid, " osdId: ", osdId, " pg num: ", pgnum)
+						}
+						for pgid, domainList := range *pgDomainMap {
+							log.Warn(ctx, "--- pool: ", pool.Poolid, " pgid: ", pgid, " domain list: ", domainList)
+						}
+						//////////////////////
+						isRemap = true
+						breakFlag = false
+						break
+					}
+				}
+			}
+		}
+		if breakFlag {
+			break
+		}
+	}
+	if isRemap {
+		AllPools[PoolID(pool.Poolid)].PoolPgMap.Version++
+	}
+	return isRemap
+}
+
+func Reblance(ctx context.Context, client *etcdapi.EtcdClient) {
+    if AllPools == nil {
+        log.Info(ctx, "AllPoolsConfig nil!")
+        return
+    }
+
+    osdTreeMap, osdNodeMap, terr := GetOSDTree(ctx, true, true)
+    if terr != nil {
+        log.Error(ctx, "GetOSDTree failed!")
+        return
+    }		
+
+	if len(*osdNodeMap) == 0 {
+		return
+	}
+
+
+    for poolID, pool := range AllPools {
+        if pool.PoolPgMap.PgMap == nil {
+            continue
+        }	
+		
+		isRemap := reblancePool(ctx, osdTreeMap, osdNodeMap, pool)
+		if isRemap {
+			pc_buf, err := json.Marshal(AllPools[poolID])
+            if err != nil {
+                log.Error(ctx, err)
+                return
+            }
+            key := fmt.Sprintf("%s%d", config.ConfigPoolsKeyPrefix, poolID)
+            	
+            err = client.Put(ctx, key, string(pc_buf))
+            if err != nil {
+                log.Error(ctx, err)
+                return
+            }
+		}
+	}
+}
+
 func CheckPgs(ctx context.Context, client *etcdapi.EtcdClient, osdid int, stateSwitch  STATESWITCH) {
     if AllPools == nil {
-        log.Warn(ctx, "AllPoolsConfig nil!")
+        log.Info(ctx, "AllPoolsConfig nil!")
         return
     }
 
@@ -373,15 +671,15 @@ func CheckPgs(ctx context.Context, client *etcdapi.EtcdClient, osdid int, stateS
             continue
         }
 
-        log.Warn(ctx, "check pool", poolID, ":", pool.Name)
+        log.Info(ctx, "check pool", poolID, ":", pool.Name)
 
         pgSize := pool.PGSize
         oldPGs := pool.PoolPgMap.PgMap
         isRemap := false
         
         for pgID, pg := range oldPGs {
-            if pg.PgState & PgRemapped != 0 {
-                log.Warn(ctx, "pg ", poolID, ".", pgID, " is in PgRemapped state.")
+            if (pg.PgState & PgRemapped) != 0 {
+                log.Info(ctx, "pg ", poolID, ".", pgID, " is in PgRemapped state.")
                 if pg.PgState & PgDown != 0 {
                     if stateSwitch == DownToUp  && shouldChange(pg.OsdList, pgSize, osdid) {
                         PushPgTask(pgID, osdid, stateSwitch)
@@ -394,12 +692,12 @@ func CheckPgs(ctx context.Context, client *etcdapi.EtcdClient, osdid int, stateS
                 continue
             }
 
-            if pg.PgState & PgCreating != 0 {
+            if (pg.PgState & PgCreating) != 0 {
                 //pg is creating
-                if pg.PgState & PgDown != 0 {
+                if (pg.PgState & PgDown) != 0 {
                     if stateSwitch == InToOut {
                         //osd from in to out
-                        log.Warn(ctx, "pg ", poolID, ".", pgID, "in PgCreating | PgDown, osd from in to out")
+                        log.Info(ctx, "pg ", poolID, ".", pgID, "in PgCreating | PgDown, osd from in to out")
                         pgConfig, ok := redistributionPg(ctx, osdTreeMap, osdNodeMap, poolID, pgID)
                         if ok {
                             //pg处于redistributionPg && PgDown，此时有osd状态有in变为out，pg状态不会变为PgRemapped
@@ -411,19 +709,19 @@ func CheckPgs(ctx context.Context, client *etcdapi.EtcdClient, osdid int, stateS
                 } else {
                     if stateSwitch == InToOut {
                         //osd from in to out
-                        log.Warn(ctx, "pg ", poolID, ".", pgID, "in PgCreating, osd from in to out")
+                        log.Info(ctx, "pg ", poolID, ".", pgID, "in PgCreating, osd from in to out")
                         PushPgTask(pgID, osdid, stateSwitch)
                     }
                 }
                 continue
-            }else if pg.PgState & PgDown == 0 {
+            }else if (pg.PgState & PgDown) == 0 {
                 //pg is not down
                 if stateSwitch == InToOut ||  stateSwitch == DownToUp{
                     //osd from in to out
                     if stateSwitch == InToOut {
-                        log.Warn(ctx, "pg ", poolID, ".", pgID, "not in PgDown, osd from in to out")
+                        log.Info(ctx, "pg ", poolID, ".", pgID, "not in PgDown, osd from in to out")
                     } else if stateSwitch == DownToUp {
-                        log.Warn(ctx, "pg ", poolID, ".", pgID, "not in PgDown, osd from down to up")
+                        log.Info(ctx, "pg ", poolID, ".", pgID, "not in PgDown, osd from down to up")
                     }
                     
                     pgConfig, ok := redistributionPg(ctx, osdTreeMap, osdNodeMap, poolID, pgID)
@@ -433,10 +731,10 @@ func CheckPgs(ctx context.Context, client *etcdapi.EtcdClient, osdid int, stateS
                     }
                 }
                 continue
-            }else if pg.PgState & PgDown != 0 {
+            }else if (pg.PgState & PgDown) != 0 {
                 //pg is down
                 if stateSwitch == DownToUp && shouldChange(pg.OsdList, pgSize, osdid) {
-                    log.Warn(ctx, "pg ", poolID, ".", pgID, "in PgDown, osd from down to up")
+                    log.Info(ctx, "pg ", poolID, ".", pgID, "in PgDown, osd from down to up")
                     pgConfig, ok := redistributionPg(ctx, osdTreeMap, osdNodeMap, poolID, pgID)
                     if ok {
                         isRemap = true
@@ -487,7 +785,7 @@ func redistributionPg(ctx context.Context,
         PreviousPGList: AllPools[poolId].PoolPgMap.PgMap,
     }
     addNum := optimizeCfg.PGSize - len(newOsdList)
-    log.Warn(ctx, "pg: ", poolId, ".", pgId, " PGSize: ", optimizeCfg.PGSize, " osdList: ", oldOsdList, " newOsdList: ", newOsdList,
+    log.Info(ctx, "pg: ", poolId, ".", pgId, " PGSize: ", optimizeCfg.PGSize, " osdList: ", oldOsdList, " newOsdList: ", newOsdList,
             " addNum: ", addNum)
     if addNum <= 0 {
         return nil, false
@@ -496,7 +794,7 @@ func redistributionPg(ctx context.Context,
     optimizeCfg.OSDTree, optimizeCfg.OSDInfoMap, optimizeCfg.TotalWeight = FlattenTree(ctx, osdTreeMap, osdNodeMap, 
             pool.PGCount, pool.PGSize, pool.FailureDomain, pool.Root, pool.Root != "")
     addOsdList := calculatePgOsds(ctx, optimizeCfg, poolId, pgId, addNum, oldOsdList)
-    log.Warn(ctx, "pg: ", poolId, ".", pgId, " addOsdList: ", addOsdList)
+    log.Info(ctx, "pg: ", poolId, ".", pgId, " addOsdList: ", addOsdList)
     if len(addOsdList) == 0{
         return nil, false
     }
@@ -505,7 +803,7 @@ func redistributionPg(ctx context.Context,
     pgConfig.Version++
     pgConfig.PgState |= PgRemapped
     pgConfig.NewOsdList = newOsdList    
-    log.Warn(ctx, "pg: ", poolId, ".", pgId, " Version: ", pgConfig.Version, " PgState: ", pgConfig.PgState, 
+    log.Info(ctx, "pg: ", poolId, ".", pgId, " Version: ", pgConfig.Version, " PgState: ", pgConfig.PgState, 
 	        " OsdList: ", pgConfig.OsdList, " NewOsdList: ", pgConfig.NewOsdList)
     return &pgConfig, true
 }
@@ -547,6 +845,41 @@ func getMinValue(mp *map[string]int32) string {
     return minKey
 }
 
+func top3MinValue(mp *map[string]int32) (string, string, string) {
+	var minVal int32 = math.MaxInt32
+	var secondMinVal int32 = math.MaxInt32
+	var thirdMinVal int32 = math.MaxInt32
+	var minKey string
+	var secondMinKey string
+	var thirdMinKey string
+
+	for key, value := range *mp {
+		if value < minVal {
+			thirdMinVal, thirdMinKey = secondMinVal, secondMinKey
+			secondMinVal, secondMinKey = minVal, minKey
+			minVal, minKey = value, key
+		} else if value >= minVal && value < secondMinVal {
+			thirdMinVal, thirdMinKey = secondMinVal, secondMinKey
+			secondMinVal, secondMinKey = value, key
+		} else if value >= secondMinVal && value < thirdMinVal {
+			thirdMinVal, thirdMinKey = value, key
+		}
+	}
+	return minKey, secondMinKey, thirdMinKey
+}
+
+func getMaxValue(mp *map[string]int32) string {
+    var maxVal int32 = 0
+    var maxKey string
+    for key, value := range *mp {
+        if value > maxVal {
+            maxKey = key
+            maxVal = value
+        }
+    }
+    return maxKey
+}
+
 func calculatePgOsds(ctx context.Context, cfg *OptimizeCfg, poolId PoolID, pgId string, addNum int, oldOsdList []int) ([]int) {
     pgNumPerOsd := getPgNumPerOsd()
     domainPgNum := make(map[string]int32)
@@ -574,7 +907,7 @@ func calculatePgOsds(ctx context.Context, cfg *OptimizeCfg, poolId PoolID, pgId 
         }
 	}
 
-    log.Warn(ctx, "pg: ", poolId, ".", pgId, " domainPgNum: ", domainPgNum)
+    log.Info(ctx, "pg: ", poolId, ".", pgId, " domainPgNum: ", domainPgNum)
     if len(domainPgNum) == 0{
         return addOsdList
     }
@@ -582,10 +915,10 @@ func calculatePgOsds(ctx context.Context, cfg *OptimizeCfg, poolId PoolID, pgId 
     for i := 0; i < addNum; i++ {
 getMin:
         minPgDomain = getMinValue(&domainPgNum)
-        log.Warn(ctx, "pg: ", poolId, ".", pgId, " minPgDomain: ", minPgDomain)
+        log.Info(ctx, "pg: ", poolId, ".", pgId, " minPgDomain: ", minPgDomain)
         if cfg.FailureDomain == "osd" {
             id, _ := strconv.Atoi(minPgDomain)
-            log.Warn(ctx, "pg: ", poolId, ".", pgId, " id: ", id)
+            log.Info(ctx, "pg: ", poolId, ".", pgId, " id: ", id)
             addOsdList = append(addOsdList, id)
             pgNumPerOsd[id]++
         } else {
@@ -598,22 +931,22 @@ getMin:
                         }
                         pgNumPerDomainOsd[osd.OSDID.String()] = pgNumPerOsd[int(osd.OSDID)]
                     }
-                    log.Warn(ctx, "pg: ", poolId, ".", pgId, " pgNumPerDomainOsd: ", pgNumPerDomainOsd)
+                    log.Info(ctx, "pg: ", poolId, ".", pgId, " pgNumPerDomainOsd: ", pgNumPerDomainOsd)
                     if len(pgNumPerDomainOsd) == 0 {
                         delete(domainPgNum, minPgDomain)
                         goto getMin
                     }
                     minPgOsd := getMinValue(&pgNumPerDomainOsd)
                     id, _ := strconv.Atoi(minPgOsd)
-                    log.Warn(ctx, "pg: ", poolId, ".", pgId, " minPgOsd: ", minPgOsd, " id: ", id)
+                    log.Info(ctx, "pg: ", poolId, ".", pgId, " minPgOsd: ", minPgOsd, " id: ", id)
                     addOsdList = append(addOsdList, id)
                     pgNumPerOsd[id]++
                 }
             }
 		}
-        log.Warn(ctx, "pg: ", poolId, ".", pgId, " pgNumPerOsd: ", pgNumPerOsd)
+        log.Info(ctx, "pg: ", poolId, ".", pgId, " pgNumPerOsd: ", pgNumPerOsd)
         domainPgNum[minPgDomain]++
-        log.Warn(ctx, "pg: ", poolId, ".", pgId, " domainPgNum: ", domainPgNum)
+        log.Info(ctx, "pg: ", poolId, ".", pgId, " domainPgNum: ", domainPgNum)
     }
     
     return addOsdList

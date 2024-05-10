@@ -363,11 +363,11 @@ int raft_server_t::raft_process_appendentries_reply(
                                      msg_appendentries_response_t* r, bool is_heartbeat)
 {
     SPDK_INFOLOG_EX(pg_group, 
-          "received appendentries response %s res: %d from %d current_idx:%ld rsp current_idx:%ld rsp first_idx:%ld\
+          "in pg %lu.%lu from %d, received appendentries response %s res: %d current_idx:%ld rsp current_idx:%ld rsp first_idx:%ld\
            rsp lease=%ld  current_term:%ld rsp term:%ld\n",
+          _pool_id, _pg_id, r->node_id(),
           r->success() == 1 ? "SUCCESS" : "fail", 
           r->success(),
-          r->node_id(),
           raft_get_current_idx(),
           r->current_idx(),
           r->first_idx(),
@@ -603,7 +603,7 @@ int raft_server_t::raft_recv_appendentries(
 
     if (raft_is_candidate() && raft_get_current_term() == ae->term())
     {
-        SPDK_INFOLOG_EX(pg_group, "become follower\n");
+        SPDK_INFOLOG_EX(pg_group, "in pg: %lu.%lu, become follower\n", _pool_id, _pg_id);
         raft_become_follower();
     }
     else if (raft_get_current_term() < ae->term())
@@ -612,14 +612,14 @@ int raft_server_t::raft_recv_appendentries(
         if (0 != e){
             return hand_error(e);
         }
-        SPDK_INFOLOG_EX(pg_group, "become follower\n");
+        SPDK_INFOLOG_EX(pg_group, "in pg: %lu.%lu, become follower\n", _pool_id, _pg_id);
         raft_become_follower();
     }
     else if (ae->term() < raft_get_current_term())
     {
         /* 1. Reply false if term < currentTerm (§5.1) */
-        SPDK_INFOLOG_EX(pg_group, "AE from %d term %ld is less than current term %ld\n",
-              ae->node_id(), ae->term(), raft_get_current_term());
+        SPDK_INFOLOG_EX(pg_group, "in pg: %lu.%lu, AE from %d term %ld is less than current term %ld\n",
+              _pool_id, _pg_id, ae->node_id(), ae->term(), raft_get_current_term());
         return hand_error(err::E_INVAL);
     }
 
@@ -696,7 +696,7 @@ int raft_server_t::raft_recv_appendentries(
         }
         raft_index_t start_idx = ae->prev_log_idx() + 1 + i;
         raft_index_t end_idx =  start_idx + k - 1;
-        SPDK_DEBUGLOG_EX(pg_group, "start_idx: %ld  end_idx: %ld \n", start_idx, end_idx);
+        SPDK_DEBUGLOG_EX(pg_group, "in pg %lu.%lu, start_idx: %ld  end_idx: %ld \n", _pool_id, _pg_id, start_idx, end_idx);
         raft_append_entries(entrys);
         i += k;
         r->set_current_idx(ae->prev_log_idx() + i);
@@ -748,8 +748,8 @@ int raft_server_t::raft_recv_appendentries(
             if (ety_index <= raft_get_commit_idx())
             {
                 /* Should never happen; something is seriously wrong! */
-                SPDK_WARNLOG_EX("AE entry conflicts with committed entry ci:%ld comi:%ld lcomi:%ld pli:%ld \n",
-                      raft_get_current_idx(), raft_get_commit_idx(),
+                SPDK_WARNLOG_EX("in pg %lu.%lu, AE entry conflicts with committed entry ci:%ld comi:%ld lcomi:%ld pli:%ld \n",
+                      _pool_id, _pg_id, raft_get_current_idx(), raft_get_commit_idx(),
                       ae->leader_commit(), ae->prev_log_idx());
                 e = err::RAFT_ERR_SHUTDOWN;
                 r->set_success(e);
@@ -1170,14 +1170,14 @@ void raft_server_t::raft_flush(){
         /* send new entried to peers who are not recovering */
         raft_index_t next_idx = node->raft_node_get_next_idx();
         if(!node->raft_node_is_recovering()){
-            SPDK_INFOLOG_EX(pg_group, "send to node %d _next_idx: %ld  _first_idx: %lu _current_idx: %ld\n", 
-                    node->raft_node_get_id(), next_idx, _first_idx, _current_idx);
+            SPDK_INFOLOG_EX(pg_group, "in pg %lu.%lu, send to node %d _next_idx: %ld  _first_idx: %lu _current_idx: %ld\n", 
+                    _pool_id, _pg_id, node->raft_node_get_id(), next_idx, _first_idx, _current_idx);
             node->raft_set_end_idx(_current_idx);
             raft_send_appendentries(node, _first_idx, _current_idx);
         }
         else{
-            SPDK_INFOLOG_EX(pg_group, "node %d is recovering,  next_idx: %ld first_idx: %ld \n", 
-                    node->raft_node_get_id(), next_idx, _first_idx);
+            SPDK_INFOLOG_EX(pg_group, "in pg %lu.%lu, node %d is recovering,  next_idx: %ld first_idx: %ld \n", 
+                    _pool_id, _pg_id, node->raft_node_get_id(), next_idx, _first_idx);
         }             
     };
     _nodes_stat.for_all_node(std::move(send_data));
