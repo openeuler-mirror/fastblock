@@ -83,6 +83,9 @@ private:
   void readwrite(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
                      uint64_t offset, char* buf, uint64_t len,
                      object_rw_complete cb_fn, void* arg, bool is_read);
+  void create_blob(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
+                     uint64_t offset, char* buf, uint64_t len,
+                     object_rw_complete cb_fn, void* arg, bool is_read);
 
   static void blob_readwrite(struct spdk_blob *blob, struct spdk_io_channel * channel,
                        uint64_t offset, char* buf, uint64_t len,
@@ -93,6 +96,7 @@ private:
   static void create_done(void *arg, spdk_blob_id blobid, int objerrno);
   static void open_done(void *arg, struct spdk_blob *blob, int objerrno);
   static void close_done(void *arg, int objerrno);
+  static void sync_md_done(void *arg, int bserrno);
 
   static void snap_delete_complete(void *arg, int objerrno);  // 用户主动删除snapshot
   static void snap_create_complete(void *arg, spdk_blob_id snap_id, int objerrno);

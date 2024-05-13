@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+#include "blob_manager.h"
 #include "object_store.h"
 #include "base/core_sharded.h"
 #include "utils/log.h"
@@ -53,6 +54,7 @@ struct blob_create_ctx {
   uint32_t shard_id;
   std::string pg;
   blob_type type;
+  fb_blob blob;
 };
 
 struct blob_stop_ctx {
@@ -563,18 +565,48 @@ void object_store::readwrite(std::map<std::string, xattr_val_type>& xattr, std::
       blob_readwrite(it->second.origin.blob, channel, offset, buf, len, cb_fn, arg, is_read);
     } else {
       SPDK_DEBUGLOG_EX(object_store, "object %s not found\n", object_name.c_str());
-      struct blob_create_ctx *ctx = new blob_create_ctx();
-      struct spdk_blob_opts opts;
-      uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
+      create_blob(xattr, object_name, offset, buf, len, cb_fn, arg, is_read);
+    }
+}
 
-      ctx->is_read = is_read;
-      ctx->mgr = this;
-      ctx->object_name = object_name;
-      ctx->offset = offset;
-      ctx->buf = buf;
-      ctx->len = len;
-      ctx->cb_fn = cb_fn;
-      ctx->arg = arg;
+void object_store::create_blob(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
+                     uint64_t offset, char* buf, uint64_t len,
+                     object_rw_complete cb_fn, void* arg, bool is_read)
+{
+  struct blob_create_ctx *ctx = new blob_create_ctx();
+  ctx->is_read = is_read;
+  ctx->mgr = this;
+  ctx->object_name = object_name;
+  ctx->offset = offset;
+  ctx->buf = buf;
+  ctx->len = len;
+  ctx->cb_fn = cb_fn;
+  ctx->arg = arg;
+  uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
+
+  if (global_blob_pool().has_free_blob()) {
+      SPDK_DEBUGLOG_EX(object_store, "[test] object get blob from pool.\n");
+      auto blob = global_blob_pool().get();
+      auto it = xattr.begin();
+      while (it != xattr.end()) {
+          if (it->first == "type") {
+              blob_type type = std::get<blob_type>(it->second);
+              spdk_blob_set_xattr(blob.blob, "type", &type, sizeof(type));
+          } else if (it->first == "pg") {
+              std::string pg = std::get<std::string>(it->second);
+              spdk_blob_set_xattr(blob.blob, "pg", pg.c_str(), pg.size());
+          }
+          it++;
+      }
+      spdk_blob_set_xattr(blob.blob, "name", object_name.c_str(), object_name.size());
+      spdk_blob_set_xattr(blob.blob, "shard", &shard_id, sizeof(shard_id));
+
+      ctx->blob = blob;
+      spdk_blob_sync_md(blob.blob, sync_md_done, ctx);
+  } else {
+      SPDK_DEBUGLOG_EX(object_store, "[test] object get blob from create.\n");
+      struct spdk_blob_opts opts;
+
       auto it = xattr.begin();
       while (it != xattr.end())
       {
@@ -599,7 +631,20 @@ void object_store::readwrite(std::map<std::string, xattr_val_type>& xattr, std::
         opts.xattrs.get_value = object_get_xattr_value;
         SPDK_DEBUGLOG_EX(object_store, "create blob, xattr type: %u pg: %s name: %s \n", (uint32_t)ctx->type, ctx->pg.c_str(), ctx->object_name.c_str());
         spdk_bs_create_blob_ext(bs, &opts, create_done, ctx);
-    }
+  }
+}
+
+void object_store::sync_md_done(void *arg, int bserrno) {
+    struct blob_create_ctx* ctx = (struct blob_create_ctx*)arg;
+
+    // 同步完md，先把blob放进map，然后执行读写
+    struct object_store::object obj;
+    obj.origin = ctx->blob;
+    ctx->mgr->table.emplace(std::move(ctx->object_name), std::move(obj));
+
+    blob_readwrite(ctx->blob.blob, ctx->mgr->channel, ctx->offset, ctx->buf, ctx->len,
+                  ctx->cb_fn, ctx->arg, ctx->is_read);
+    delete ctx;
 }
 
 /**
@@ -737,7 +782,7 @@ void object_store::open_done(void *arg, struct spdk_blob *blob, int objerrno) {
 
   // 成功打开
   struct object_store::object obj;
-  obj.origin.blobid = ctx->blobid;
+  obj.origin.blobid = spdk_blob_get_id(blob);
   obj.origin.blob = blob;
   ctx->mgr->table.emplace(std::move(ctx->object_name), std::move(obj));
 

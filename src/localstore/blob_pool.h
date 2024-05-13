@@ -77,6 +77,7 @@ public:
   }
 
   void start(pool_create_complete cb_fn, void* arg)  {
+      SPDK_NOTICELOG_EX("blob_pool: start!\n");
       _worker_poller = SPDK_POLLER_REGISTER(worker_poll, this, poller_period_us);
       allocate_blob(init_blob_num, std::move(cb_fn), arg);
   }
@@ -178,7 +179,6 @@ private:
 
       enter_working();
       pool_create_ctx* ctx = new pool_create_ctx;
-    //   SPDK_NOTICELOG("blob_pool: allocate %lu blob!\n", number);
 
       ctx->pool = this;
       ctx->cb_fn = std::move(cb_fn);

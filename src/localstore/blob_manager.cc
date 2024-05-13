@@ -378,6 +378,22 @@ blobstore_init(std::string &bdev_name, const std::string& uuid, bool force, bm_c
 /**
  * spdk_bs_load：加载已经存在的blobstore
  */
+static void
+load_done(void *args, int bserrno) { 
+  struct bm_context *ctx = (struct bm_context *)args;
+
+  if (bserrno) {
+    SPDK_ERRLOG_EX("blob_manager load_done failed %s\n", spdk_strerror(bserrno));
+    ctx->cb_fn(ctx->args, bserrno);
+    delete ctx;
+    return;
+  }
+
+  SPDK_INFOLOG_EX(blob_log, "blob_manager load_done, call cb_fn(args, 0)\n");
+  ctx->cb_fn(ctx->args, 0);
+  delete ctx;
+}
+
 void parse_kv_xattr(struct spdk_blob *blob) {
   uint32_t *shard_id;
   size_t len;
@@ -568,8 +584,10 @@ blob_iter_complete(void *args, struct spdk_blob *blob, int bserrno)
       if (berrno == -ENOENT) {
         // ENOENT 表示迭代顺利完成.
         SPDK_INFOLOG_EX(blob_log, "blob iteration complete.\n");
-        ctx->cb_fn(ctx->args, 0);
-        delete ctx;
+        g_bs_mgr.pool.set_blobstore(global_blobstore());
+        g_bs_mgr.pool.start(load_done, ctx);
+        // ctx->cb_fn(ctx->args, 0);
+        // delete ctx;
         return;
       }
       SPDK_ERRLOG_EX("blob iteration failed: %s\n", spdk_strerror(berrno));
