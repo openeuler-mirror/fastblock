@@ -200,7 +200,9 @@ fi
 # 9.call mkfs to initiate osd's localstore
 for i in `seq 1 $osdcount`
 do
-	$ROOT/build/src/osd/fastblock-osd -m '['$i']' -C vm_fastblock.json --id $i --mkfs --uuid $i
+    # adding --force parameter means the disk's spdk blobstore  will be totally wiped out without mercy
+    # if --force is not added, mkfs will failed if you have a fastblock superblob in the disk's superblock
+    $ROOT/build/src/osd/fastblock-osd -m '['$i']' -C vm_fastblock.json --id $i --mkfs --force --uuid $i
 done
 
 
