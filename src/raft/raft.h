@@ -384,7 +384,7 @@ public:
     }
 
     void stop();
-    void raft_destroy();
+    void raft_destroy(raft_complete cb_fn, void* arg);
 
     /** Become leader
      * WARNING: this is a dangerous function call. It could lead to your cluster

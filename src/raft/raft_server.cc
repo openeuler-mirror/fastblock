@@ -1525,11 +1525,21 @@ void raft_server_t::stop(){
     _log->stop();
 }
 
-void raft_server_t::raft_destroy()
+//清理raft
+void raft_server_t::raft_destroy(raft_complete cb_fn, void* arg)
 {
-    //可能还需要其它处理 ？ todo
     stop();
-    _machine.reset();
+    _log->log_destroy(
+      global_blobstore(), 
+      [this, cb_fn = std::move(cb_fn)](void* arg, int rberrno){
+        SPDK_INFOLOG_EX(pg_group, "remove log blob done: %s\n", spdk_strerror(rberrno));
+        if(rberrno == 0){
+            _log.reset();
+            _machine.reset();
+        }
+        cb_fn(arg, rberrno);
+      }, 
+      arg);
 }
 
 std::pair<uint64_t, uint64_t> raft_server_t::raft_get_nvotes_for_me()

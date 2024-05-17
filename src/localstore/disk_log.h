@@ -166,6 +166,11 @@ public:
 
     }
 
+    //删除blob
+    void remove_blob(struct spdk_blob_store *bs, log_op_complete cb_fn, void* arg) {
+        _rblob->remove_blob(bs, std::move(cb_fn), arg);
+    }
+
     uint64_t get_term_id(uint64_t index) {
         if (auto it = _index_map.find(index); it != _index_map.end()) {
             return it->second.term_id;

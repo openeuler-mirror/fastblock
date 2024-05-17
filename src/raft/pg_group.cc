@@ -50,9 +50,9 @@ void pg_group_t::load_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_i
     raft->load(get_current_node_id(), std::move(cb_fn), arg);
 }  
 
-void pg_group_t::delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id){
+void pg_group_t::delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, pg_complete cb_fn, void *arg){
     SPDK_INFOLOG_EX(pg_group, "remove pg %lu.%lu\n", pool_id, pg_id);
-    _pg_remove(shard_id, pool_id, pg_id);
+    _pg_remove(shard_id, pool_id, pg_id, std::move(cb_fn), arg);
 }
 
 void pg_group_t::start_shard_manager(utils::complete_fun fun, void *arg)

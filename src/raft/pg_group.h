@@ -46,7 +46,7 @@ public:
         _pgs[name] = pg;
     }
 
-    void delete_pg(std::string &name)
+    void delete_pg(std::string name)
     {
         _pgs.erase(std::move(name));
     }
@@ -124,7 +124,7 @@ public:
     void load_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,
                 disk_log *log, pg_complete cb_fn, void *arg, std::shared_ptr<monitor::client> mon_client);    
 
-    void delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id);
+    void delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, pg_complete cb_fn, void *arg);
 
     std::shared_ptr<raft_server_t> get_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id)
     {
@@ -180,14 +180,24 @@ private:
         return 0;
     }
 
-    int _pg_remove(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id)
+    int _pg_remove(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, pg_complete cb_fn, void *arg)
     {
         auto name = pg_id_to_name(pool_id, pg_id);
         auto raft = _shard_mg[shard_id].get_pg(name);
-        if(!raft)
+        if(!raft){
+            cb_fn(arg, 0);
             return 0;
-        raft->raft_destroy();
-        _shard_mg[shard_id].delete_pg(name);
+        }
+
+        raft->raft_destroy(
+          [this, name, shard_id, cb_fn = std::move(cb_fn)](void* arg, int rberrno){
+            if(rberrno == 0){
+                _shard_mg[shard_id].delete_pg(name);
+            }
+            cb_fn(arg, rberrno);
+          },
+          arg
+        );
         return 0;
     }
 

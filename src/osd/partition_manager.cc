@@ -228,9 +228,34 @@ int partition_manager::load_partition(uint32_t shard_id, uint64_t pool_id, uint6
     });
 }
 
-void partition_manager::delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id){
-    _pgs.delete_pg(shard_id, pool_id, pg_id);
-    del_osd_stm(pool_id, pg_id, shard_id);
+void partition_manager::delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id, pm_complete cb_fn, void *arg){
+    _pgs.delete_pg(
+      shard_id, 
+      pool_id, 
+      pg_id, 
+      [this, cb_fn = std::move(cb_fn), pool_id, pg_id, shard_id](void *arg, int lerrno){
+        SPDK_INFOLOG_EX(osd, "delete pg %lu.%lu done, rberrno %d\n", pool_id, pg_id, lerrno);  
+        if(lerrno != 0){
+            cb_fn(arg, lerrno);
+            return;
+        }       
+
+        auto stm = get_osd_stm(shard_id, pool_id, pg_id);
+        if(!stm){
+            cb_fn(arg, 0);
+            return;
+        }
+        auto destroy_objects = [this, pool_id, pg_id, shard_id, cb_fn = std::move(cb_fn)](void* arg, int rberrno){
+            SPDK_INFOLOG_EX(osd, "delete pg %lu.%lu object done, rberrno %d\n", pool_id, pg_id, rberrno);   
+            if(rberrno == 0){
+                del_osd_stm(pool_id, pg_id, shard_id);
+            }
+            
+            cb_fn(arg, rberrno);
+        };
+        stm->destroy_objects(std::move(destroy_objects), arg);
+      },
+      arg);
 }
 
 int partition_manager::delete_partition(uint64_t pool_id, uint64_t pg_id, pm_complete&& cb_fn, void *arg){
@@ -261,8 +286,7 @@ int partition_manager::delete_partition(uint64_t pool_id, uint64_t pg_id, pm_com
       [this, pool_id, pg_id, shard_id, ctx, delete_pg_done = std::move(delete_pg_done)](){
         SPDK_INFOLOG_EX(osd, "delete pg in core %u shard_id %u pool_id %lu pg_id %lu \n",
             spdk_env_get_current_core(), shard_id, pool_id, pg_id);
-        delete_pg(pool_id, pg_id, shard_id);
-        delete_pg_done(ctx, 0);
+        delete_pg(pool_id, pg_id, shard_id, std::move(delete_pg_done), ctx);
       });
 }
 

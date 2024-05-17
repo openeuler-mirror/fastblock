@@ -31,6 +31,11 @@ public:
     , _next_idx(1)
     , _max_applied_entry_num_in_cache(500) {}
 
+    ~raft_log(){
+        delete _log;
+        _log = nullptr;
+    }
+
     void log_set_raft(raft_server_t* raft){
         _raft = raft;
     }
@@ -179,6 +184,11 @@ public:
     {
         _entries.clear();
     }
+
+    void log_destroy(struct spdk_blob_store *bs, log_op_complete cb_fn, void* arg){
+        SPDK_INFOLOG_EX(pg_group, "remove log blob\n");
+        _log->remove_blob(bs, cb_fn, arg);
+    }
   
     //截断idx（包含）之后的log entry
     int log_truncate(raft_index_t idx, log_op_complete cb_fn, void* arg);
@@ -196,8 +206,6 @@ public:
     raft_index_t get_last_cache_entry(){
         return _entries.get_last_cache_entry();
     }
-
-    void log_load_from_snapshot(raft_index_t idx, raft_term_t term);
 
     void raft_write_entry_finish(raft_index_t start_idx, raft_index_t end_idx, int result){
         _entries.complete_entry_between(start_idx, end_idx, result);
@@ -239,8 +247,6 @@ public:
     void stop(){
         if(_log){
             _log->stop([](void*, int){}, nullptr);
-            delete _log;
-            _log = nullptr;
         }
     }
 

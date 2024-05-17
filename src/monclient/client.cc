@@ -411,6 +411,28 @@ void client::_create_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_
     }
 }
 
+void client::_remove_pg(pg_map::pool_id_type pool_id, pg_map::pg_id_type pg_id, pg_map::version_type pool_version){
+    auto delete_pg_done = [this, pool_id, pg_id, pool_version](void *arg, int perrono){
+        if(perrono != 0){
+            SPDK_ERRLOG_EX("delete pg %d.%d failed: %s\n", pool_id, pg_id, spdk_strerror(perrono));
+            _pg_map.set_pool_update(pool_id, pg_id, pool_version, -1);
+            return;
+        }
+
+        _pg_map.set_pool_update(pool_id, pg_id, pool_version, 0);
+        SPDK_DEBUGLOG_EX(mon, "delete pg %d.%d success.\n", pool_id, pg_id);
+        _pg_map.pool_pg_map[pool_id].erase(pg_id);
+        if(_pg_map.pool_pg_map[pool_id].empty()){
+            _pg_map.pool_pg_map.erase(pool_id);
+            _pg_map.pool_version.erase(pool_id);
+            SPDK_DEBUGLOG_EX(mon, "delete pool %d success.\n", pool_id);
+        }
+    };
+
+    _pg_map.set_pool_update(pool_id, pg_id, pool_version, 1);
+    _pm.lock()->delete_partition(pool_id, pg_id, std::move(delete_pg_done), nullptr);
+}
+
 void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
     auto& pv = pg_map_response.poolid_pgmapversion();
 
@@ -420,42 +442,62 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
     auto pool_item = _pg_map.pool_pg_map.begin();
     while(pool_item != _pg_map.pool_pg_map.end()){
         auto pool_id = pool_item->first;
+        if(_pg_map.pool_is_updating(pool_id)){
+            SPDK_DEBUGLOG_EX(mon, "pool %d is updating\n", pool_id);
+            pool_item++;
+            continue;
+        }
+        auto pool_version = _pg_map.pool_version[pool_id];
+        auto& pg_infos = pool_item->second;
+        pool_item++;
+
         if(!ec.contains(pool_id)){
-            if(_pg_map.pool_is_updating(pool_id)){
-                SPDK_DEBUGLOG_EX(mon, "pool %d is updating\n", pool_id);
-                continue;
-            }
             SPDK_DEBUGLOG_EX(mon, "pool %d is deleted\n", pool_id);
             //pool被删除
-
-            auto& pg_infos = pool_item->second;
-            pool_item++;
             auto pg_item = pg_infos.begin();
             while(pg_item != pg_infos.end()){
                 auto pg_id = pg_item->first;
                 pg_item++;
-                auto pool_version = _pg_map.pool_version[pool_id];
-                auto delete_pg_done = [this, pool_id, pg_id, pool_version](void *arg, int perrono){
-                    if(perrono != 0){
-                        SPDK_ERRLOG_EX("delete pg %d.%d failed: %s\n", pool_id, pg_id, spdk_strerror(perrono));
-                        _pg_map.set_pool_update(pool_id, pg_id, pool_version, -1);
-                        return;
-                    }
-                    _pg_map.set_pool_update(pool_id, pg_id, pool_version, 0);
-                    SPDK_DEBUGLOG_EX(mon, "delete pg %d.%d success.\n", pool_id, pg_id);
-                    _pg_map.pool_pg_map[pool_id].erase(pg_id);
-                    if(_pg_map.pool_pg_map[pool_id].empty()){
-                        _pg_map.pool_pg_map.erase(pool_id);
-                        _pg_map.pool_version.erase(pool_id);
-                        SPDK_DEBUGLOG_EX(mon, "delete pool %d success.\n", pool_id);
-                    }
-                };
-
-                _pg_map.set_pool_update(pool_id, pg_id, pool_version, 1);
-                _pm.lock()->delete_partition(pool_id, pg_id, std::move(delete_pg_done), nullptr);
+                _remove_pg(pool_id, pg_id, pool_version);
             }
         }else{
-            pool_item++;
+            auto info_it = pgs.find(pool_id);
+            if (info_it == pgs.end()){
+                continue;
+            }
+            int current_osdid = _pm.lock()->get_current_node_id();
+            bool contain = false;
+
+            for (auto& info : info_it->second.pi()){
+                auto pgid = info.pgid();
+                auto pg_item = pg_infos.find(pgid);
+                if(pg_item == pg_infos.end()){
+                    continue;
+                }
+                for (auto osd_id : info.osdid()) {
+                    if(osd_id == current_osdid){
+                        contain = true;
+                        break;
+                    }
+                }
+                if(contain)
+                    continue;
+                
+                contain = false;
+                for(auto osd_id : pg_item->second->osds){
+                    if(osd_id == current_osdid){
+                        contain = true;
+                        break;
+                    }
+                }
+                if(!contain)
+                    continue;
+                /* 当前osd在本地pgmap中pg的osd列表中，但不在monitor的pgmap的osd列表中，说明当前osd已经从pg中
+                 * 移除（可能是osd out，monitor把它从pg中移除，但osd本地pg信息还为清除）,需要删除此osd上的pg信息。  
+                 */
+                _remove_pg(pool_id, pgid, pool_version);
+            }
+            
         }
     }
 

@@ -19,11 +19,6 @@
 #include "raft.h"
 #include "raft_log.h"
 
-void raft_log::log_load_from_snapshot(raft_index_t idx, raft_term_t term)
-{
-    log_clear();
-}
-
 std::shared_ptr<raft_log> log_new(disk_log* log)
 {
     return std::make_shared<raft_log>(log);

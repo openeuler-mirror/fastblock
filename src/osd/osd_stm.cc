@@ -235,3 +235,7 @@ void osd_stm::delete_and_wait(
     lock_complete *complete = new lock_complete(std::move(delete_func));
     _object_rw_lock.lock(request->object_name(), operation_type::DELETE, complete);
 }
+
+void osd_stm::destroy_objects(object_complete cb_fn, void *arg){
+    _store.destroy(std::move(cb_fn), arg);
+}
