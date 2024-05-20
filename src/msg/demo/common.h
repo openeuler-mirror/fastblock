@@ -18,7 +18,7 @@ namespace demo {
 static constexpr size_t small_message_size{128};
 static std::string small_message;
 
-static constexpr size_t big_message_size{8192 * 3};
+static constexpr size_t big_message_size{4 * 1024 * 1024};
 static std::string big_message;
 
 std::string random_string(const size_t length) {

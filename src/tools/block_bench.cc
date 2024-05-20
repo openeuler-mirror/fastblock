@@ -542,7 +542,7 @@ int main(int argc, char** argv) {
     }
 
     opts.name = "block bench";
-    opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
+    opts.print_level = ::spdk_log_level::SPDK_LOG_INFO;
     opts.shutdown_cb = on_app_stop;
     rc = ::spdk_app_start(&opts, on_app_start, &g_watcher_ctx);
     if (rc) {

@@ -1,5 +1,25 @@
 {
-    "bind_port": 8081,
+    "endpoints": [
+        {
+            "index": 1,
+            "list": [
+                {"host": "172.31.4.142", "port": 8081},
+                {"host": "172.31.4.142", "port": 8082},
+                {"host": "172.31.4.142", "port": 8083}
+            ]
+        },
+        {
+            "index": 2,
+            "list": [
+                {"host": "172.31.4.142", "port": 8084},
+                {"host": "172.31.4.142", "port": 8085},
+                {"host": "172.31.4.142", "port": 8086}
+            ]
+        }
+    ],
+    "server_core_count": 1,
+    "client_core_count": 1,
+    "use_different_core": true,
     "rdma_device_name": "rocep94s0f0",
     "rdma_device_port": 1,
     "rdma_gid_index": 2,

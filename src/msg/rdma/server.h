@@ -169,9 +169,9 @@ public:
 
     server() = delete;
 
-    server(::spdk_cpuset cpumask, std::shared_ptr<options> opts)
+    server(std::string& thread_name, ::spdk_cpuset cpumask, std::shared_ptr<options> opts)
       : _cpumask{cpumask}
-      , _thread{::spdk_thread_create("rpc_srv", &_cpumask)}
+      , _thread{::spdk_thread_create(thread_name.c_str(), &_cpumask)}
       , _opts{std::move(opts)}
       , _dev{std::make_shared<device>(process_ib_event)}
       , _pd{std::make_unique<protection_domain>(_dev, _opts->ep->device_name)}
@@ -230,6 +230,7 @@ private:
     }
 
     int handle_timeout_task(rpc_task* task) {
+        SPDK_ERRLOG_EX("ERROR: Timeout on task %d\n", task->id);
         task->reply_status = status::request_timeout;
         auto err = send_reply(task);
 
@@ -516,11 +517,14 @@ private:
 
         SPDK_DEBUGLOG_EX(
           msg,
-          "found service name: '%.*s', method name: '%.*s'\n",
+          "request id %d, found service name: '%.*s', method name: '%.*s', %s => %s\n",
+          task->id,
           meta->service_name_size,
           meta->service_name,
           meta->method_name_size,
-          meta->method_name);
+          meta->method_name,
+          task->conn->sock->local_address().c_str(),
+          task->conn->sock->peer_address().c_str());
 
         if (err_status) {
             if (is_inlined) {
@@ -671,7 +675,6 @@ private:
 
         auto& task = _task_list.front();
         if (is_timeout(task.get())) {
-            SPDK_ERRLOG_EX("ERROR: Timeout of task %d\n", task->id);
             auto rc = handle_timeout_task(task.get());
             if (rc == EAGAIN) {
                 return SPDK_POLLER_IDLE;
@@ -728,10 +731,6 @@ private:
         case ::IBV_WC_RECV: {
             auto it = conn->recv_ctx_map.find(cqe->wr_id);
             if (it == conn->recv_ctx_map.end()) {
-                for (auto kv : conn->recv_ctx_map) {
-                    SPDK_DEBUGLOG_EX(msg, "recv_ctx_map wr_id: %lu\n", kv.first);
-                }
-
                 SPDK_DEBUGLOG_EX(msg, "conn->recv_ctx_map.size(): %lu\n", conn->recv_ctx_map.size());
                 SPDK_ERRLOG_EX(
                   "ERROR: Cant find the receive context of wr id '%s'\n",
