@@ -38,6 +38,7 @@ struct blob_tree
         spdk_blob_id kv_new_checkpoint_blob;
         std::map<std::string, struct spdk_blob *> log_blobs;
         std::map<std::string, object_store::container> object_blobs;
+        std::vector<struct spdk_blob *> pool_blobs;
 };
 
 /// TODO(sunyifang): 现在都是单核的

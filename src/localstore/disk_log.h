@@ -14,6 +14,7 @@
 #include "rolling_blob.h"
 #include "buffer_pool.h"
 #include "log_entry.h"
+#include "base/core_sharded.h"
 #include "utils/units.h"
 #include "utils/varint.h"
 #include "utils/utils.h"
@@ -439,40 +440,8 @@ private:
 
 using make_disklog_complete = std::function<void (void *arg, struct disk_log* dlog, int rberrno)>;
 
-struct make_disklog_ctx {
-    make_disklog_complete cb_fn;
-    void* arg;
-};
+void make_disk_log(struct spdk_blob_store *bs, struct spdk_io_channel *channel,
+    std::string pg, make_disklog_complete cb_fn, void* arg);
 
-static void
-make_disk_log_done(void *arg, struct rolling_blob* rblob, int logerrno) {
-  struct make_disklog_ctx *ctx = (struct make_disklog_ctx *)arg;
-
-  if (logerrno) {
-      SPDK_ERRLOG_EX("make_disk_log failed. error:%s\n", spdk_strerror(logerrno));
-      ctx->cb_fn(ctx->arg, nullptr, logerrno);
-      delete ctx;
-      return;
-  }
-
-  struct disk_log* dlog = new disk_log(rblob);
-  ctx->cb_fn(ctx->arg, dlog, 0);
-  delete ctx;
-}
-
-inline void make_disk_log(struct spdk_blob_store *bs, struct spdk_io_channel *channel,
-                   make_disklog_complete cb_fn, void* arg)
-{
-  struct make_disklog_ctx* ctx;
-
-  ctx = new make_disklog_ctx(cb_fn, arg);
-  make_rolling_blob(bs, channel, rolling_blob::huge_blob_size, make_disk_log_done, ctx);
-}
-
-inline struct disk_log* make_disk_log(struct spdk_blob_store *bs, struct spdk_io_channel *channel,
-                    struct spdk_blob* blob){
-    
-    struct rolling_blob* rblob = make_rolling_blob(bs, channel, blob);
-    struct disk_log* dlog = new disk_log(rblob);
-    return dlog;
-}
+disk_log* make_disk_log(struct spdk_blob_store *bs, struct spdk_io_channel *channel,
+                    struct spdk_blob* blob);

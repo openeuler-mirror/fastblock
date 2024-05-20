@@ -138,11 +138,17 @@ public:
   //快照版本链表的结点。
   using container = absl::flat_hash_map<std::string, object>;
 
+  // 加载的时候把pg也加载进去
+  void set_pg(std::string pg) {
+    this->pg = std::move(pg);
+  }
+
   void load(container objects){
       table = std::move(objects);
   }
   
   using iterator = container::iterator;
+  std::string pg;
   container table;
   struct spdk_blob_store *bs;       // 我们不掌握blob_store的生命周期
   struct spdk_io_channel *channel;  // 所以不用担心这两个指针的free

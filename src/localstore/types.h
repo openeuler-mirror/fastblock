@@ -71,7 +71,7 @@ inline std::string type_string(const blob_type& type) {
 struct log_xattr {
     constexpr static char *xattr_names[] = {"type", "shard", "pg"};
     constexpr static size_t xattr_count = SPDK_COUNTOF(xattr_names);
-    static const blob_type type = blob_type::log;
+    constexpr static blob_type type = blob_type::log; // note: 如果不加constexpr，.h文件中初始化的static成员变量只声明不定义
     uint32_t shard_id;
     std::string pg;
 
@@ -109,9 +109,7 @@ struct log_xattr {
         *value_len = 0;
     }
 
-    void blob_set_xattr(struct spdk_blob *blob, const char *name, 
-        const void *value, uint16_t value_len)
-    {
+    void blob_set_xattr(struct spdk_blob *blob) {
         spdk_blob_set_xattr(blob, "type", &type, sizeof(type));
         spdk_blob_set_xattr(blob, "shard", &shard_id, sizeof(shard_id));
         spdk_blob_set_xattr(blob, "pg", pg.c_str(), pg.size());
@@ -121,7 +119,7 @@ struct log_xattr {
 struct object_xattr {
     constexpr static char *xattr_names[] = {"type", "shard", "pg", "name"};
     constexpr static size_t xattr_count = SPDK_COUNTOF(xattr_names);
-    static const blob_type type = blob_type::object;
+    constexpr static blob_type type = blob_type::object;
     uint32_t shard_id;
     std::string pg;
     std::string obj_name;
@@ -148,8 +146,8 @@ struct object_xattr {
         struct object_xattr* ctx = (struct object_xattr*)arg;
 
         if(!strcmp("type", name))  {
-            *value = &(ctx->type);
-            *value_len = sizeof(ctx->type);  
+            *value = &(object_xattr::type);
+            *value_len = sizeof(object_xattr::type);  
             return;
         } else if(!strcmp("shard", name)){
             *value = &(ctx->shard_id);
@@ -168,10 +166,8 @@ struct object_xattr {
         *value_len = 0;
     }
 
-    void blob_set_xattr(struct spdk_blob *blob, const char *name, 
-        const void *value, uint16_t value_len)
-    {
-        spdk_blob_set_xattr(blob, "type", &type, sizeof(type));
+    void blob_set_xattr(struct spdk_blob *blob) {
+        spdk_blob_set_xattr(blob, "type", &(object_xattr::type), sizeof(object_xattr::type));
         spdk_blob_set_xattr(blob, "shard", &shard_id, sizeof(shard_id));
         spdk_blob_set_xattr(blob, "pg", pg.c_str(), pg.size());
         spdk_blob_set_xattr(blob, "name", pg.c_str(), pg.size());
@@ -181,7 +177,7 @@ struct object_xattr {
 struct object_snap_xattr {
     constexpr static char *xattr_names[] = {"type", "shard", "pg", "name", "snap_name"};
     constexpr static size_t xattr_count = SPDK_COUNTOF(xattr_names);
-    static const blob_type type = blob_type::object_snap;
+    constexpr static blob_type type = blob_type::object_snap;
     uint32_t shard_id;
     std::string pg;
     std::string obj_name;
@@ -235,9 +231,7 @@ struct object_snap_xattr {
         *value_len = 0;
     }
 
-    void blob_set_xattr(struct spdk_blob *blob, const char *name, 
-        const void *value, uint16_t value_len)
-    {
+    void blob_set_xattr(struct spdk_blob *blob) {
         spdk_blob_set_xattr(blob, "type", &type, sizeof(type));
         spdk_blob_set_xattr(blob, "shard", &shard_id, sizeof(shard_id));
         spdk_blob_set_xattr(blob, "pg", pg.c_str(), pg.size());
@@ -249,7 +243,7 @@ struct object_snap_xattr {
 struct object_recover_xattr {
     constexpr static char *xattr_names[] = {"type", "shard", "pg", "name"};
     constexpr static size_t xattr_count = SPDK_COUNTOF(xattr_names);
-    static const blob_type type = blob_type::object_recover;
+    constexpr static blob_type type = blob_type::object_recover;
     uint32_t shard_id;
     std::string pg;
     std::string obj_name;
@@ -296,9 +290,7 @@ struct object_recover_xattr {
         *value_len = 0;
     }
 
-    void blob_set_xattr(struct spdk_blob *blob, const char *name, 
-        const void *value, uint16_t value_len)
-    {
+    void blob_set_xattr(struct spdk_blob *blob) {
         spdk_blob_set_xattr(blob, "type", &type, sizeof(type));
         spdk_blob_set_xattr(blob, "shard", &shard_id, sizeof(shard_id));
         spdk_blob_set_xattr(blob, "pg", pg.c_str(), pg.size());
@@ -309,7 +301,7 @@ struct object_recover_xattr {
 struct kv_xattr {
     constexpr static char *xattr_names[] = {"type", "shard"};
     constexpr static size_t xattr_count = SPDK_COUNTOF(xattr_names);
-    static const blob_type type = blob_type::kv;
+    constexpr static blob_type type = blob_type::kv;
     uint32_t shard_id;
 
     static kv_xattr parse_xattr(struct spdk_blob *blob) {
@@ -338,9 +330,7 @@ struct kv_xattr {
         *value_len = 0;
     }
 
-    void blob_set_xattr(struct spdk_blob *blob, const char *name, 
-        const void *value, uint16_t value_len)
-    {
+    void blob_set_xattr(struct spdk_blob *blob) {
         spdk_blob_set_xattr(blob, "type", &type, sizeof(type));
         spdk_blob_set_xattr(blob, "shard", &shard_id, sizeof(shard_id));
     }
@@ -349,7 +339,7 @@ struct kv_xattr {
 struct kv_checkpoint_xattr {
     constexpr static char *xattr_names[] = {"type", "shard"};
     constexpr static size_t xattr_count = SPDK_COUNTOF(xattr_names);
-    static const blob_type type = blob_type::kv_checkpoint;
+    constexpr static blob_type type = blob_type::kv_checkpoint;
     uint32_t shard_id;
 
     static kv_checkpoint_xattr parse_xattr(struct spdk_blob *blob) {
@@ -376,9 +366,7 @@ struct kv_checkpoint_xattr {
         *value_len = 0;
     }
 
-    void blob_set_xattr(struct spdk_blob *blob, const char *name, 
-        const void *value, uint16_t value_len)
-    {
+    void blob_set_xattr(struct spdk_blob *blob) {
         spdk_blob_set_xattr(blob, "type", &type, sizeof(type));
         spdk_blob_set_xattr(blob, "shard", &shard_id, sizeof(shard_id));
     }
@@ -387,7 +375,7 @@ struct kv_checkpoint_xattr {
 struct kv_checkpoint_new_xattr {
     constexpr static char *xattr_names[] = {"type", "shard"};
     constexpr static size_t xattr_count = SPDK_COUNTOF(xattr_names);
-    static const blob_type type = blob_type::kv_checkpoint_new;
+    constexpr static blob_type type = blob_type::kv_checkpoint_new;
     uint32_t shard_id;
 
     static kv_checkpoint_new_xattr parse_xattr(struct spdk_blob *blob) {
@@ -414,9 +402,7 @@ struct kv_checkpoint_new_xattr {
         *value_len = 0;
     }
 
-    void blob_set_xattr(struct spdk_blob *blob, const char *name, 
-        const void *value, uint16_t value_len)
-    {
+    void blob_set_xattr(struct spdk_blob *blob) {
         spdk_blob_set_xattr(blob, "type", &type, sizeof(type));
         spdk_blob_set_xattr(blob, "shard", &shard_id, sizeof(shard_id));
     }
@@ -425,7 +411,7 @@ struct kv_checkpoint_new_xattr {
 struct super_xattr {
     constexpr static char *xattr_names[] = {"type"};
     constexpr static size_t xattr_count = SPDK_COUNTOF(xattr_names);
-    static const blob_type type = blob_type::super_blob;
+    constexpr static blob_type type = blob_type::super_blob;
 
     static void get_xattr_value(void *arg, const char *name, const void **value, size_t *value_len) {
         struct super_xattr* ctx = (struct super_xattr*)arg;
@@ -439,9 +425,7 @@ struct super_xattr {
         *value_len = 0;
     }
 
-    void blob_set_xattr(struct spdk_blob *blob, const char *name, 
-        const void *value, uint16_t value_len)
-    {
+    void blob_set_xattr(struct spdk_blob *blob) {
         spdk_blob_set_xattr(blob, "type", &type, sizeof(type));
     }
 };
@@ -450,9 +434,9 @@ struct super_xattr {
  * free blob是给pool用的，全局只有一个pool，所以目前不需要shard_id。
 */
 struct free_xattr {
-    constexpr static char *xattr_names[] = {"type", "shard"};
+    constexpr static char *xattr_names[] = {"type"};
     constexpr static size_t xattr_count = SPDK_COUNTOF(xattr_names);
-    static const blob_type type = blob_type::free;
+    constexpr static blob_type type = blob_type::free;
 
     static void get_xattr_value(void *arg, const char *name, const void **value, size_t *value_len) {
         struct super_xattr* ctx = (struct super_xattr*)arg;
@@ -466,9 +450,7 @@ struct free_xattr {
         *value_len = 0;
     }
 
-    void blob_set_xattr(struct spdk_blob *blob, const char *name, 
-        const void *value, uint16_t value_len)
-    {
+    void blob_set_xattr(struct spdk_blob *blob) {
         spdk_blob_set_xattr(blob, "type", &type, sizeof(type));
     }
 };

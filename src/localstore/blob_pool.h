@@ -31,6 +31,7 @@ struct pool_create_ctx {
   pool_create_complete cb_fn;
   void* arg;
 
+  free_xattr xattr;
   blob_type type;
   uint64_t idx;
   uint64_t max;
@@ -186,6 +187,7 @@ private:
       ctx->type = blob_type::free;
       ctx->idx = 0;
       ctx->max = number;
+      ctx->xattr = free_xattr();
 
       create_blob(ctx);
   }
@@ -196,14 +198,10 @@ private:
       spdk_blob_opts_init(&opts, sizeof(opts));
       opts.num_clusters = 4;
       opts.thin_provision = false;
-      opts.xattrs.count = 1;
-#pragma GCC diagnostic push // TODO(sunyifang): 一个无聊的错误，暂时忽略
-#pragma GCC diagnostic ignored "-Wwrite-strings"
-      char *xattr_names[] = {"type"};
-#pragma GCC diagnostic pop
-      opts.xattrs.names = xattr_names;
-      opts.xattrs.ctx = ctx;
-      opts.xattrs.get_value = get_xattr_value;
+      opts.xattrs.names = (char**)free_xattr::xattr_names;
+      opts.xattrs.count = free_xattr::xattr_count;
+      opts.xattrs.ctx = &(ctx->xattr);
+      opts.xattrs.get_value = free_xattr::get_xattr_value;
       spdk_bs_create_blob_ext(_bs, &opts, create_blob_complete, ctx);
   }
 
@@ -248,18 +246,6 @@ private:
       ctx->cb_fn(ctx->arg, 0);
       delete ctx;
       return;
-  }
-
-  static void get_xattr_value(void *arg, const char *name, const void **value, size_t *value_len) {
-      struct pool_create_ctx* ctx = (struct pool_create_ctx*)arg;
-
-      if (!strcmp("type", name)) {
-          *value = &ctx->type;
-          *value_len = sizeof(ctx->type);
-          return;
-      }
-      *value = NULL;
-      *value_len = 0;
   }
 
 

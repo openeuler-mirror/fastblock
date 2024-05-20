@@ -24,16 +24,16 @@ void kv_checkpoint::start_checkpoint(size_t size, checkpoint_op_complete cb_fn, 
     ctx->bs = _bs;
     ctx->cb_fn = std::move(cb_fn);
     ctx->arg = arg;
-    ctx->type = blob_type::kv_checkpoint_new;
-    ctx->shard_id = core_sharded::get_core_sharded().this_shard_id();
+    uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
+    ctx->xattr = kv_checkpoint_xattr{.shard_id = shard_id};
+
     struct spdk_blob_opts opts;
     spdk_blob_opts_init(&opts, sizeof(opts));
     // 申请空间时，blob的cluster个数要向上取整
     opts.num_clusters = SPDK_CEIL_DIV(size, spdk_bs_get_cluster_size(_bs));
-    char *xattr_names[] = {"type", "shard"};
-    opts.xattrs.count = SPDK_COUNTOF(xattr_names);
-    opts.xattrs.names = xattr_names;
-    opts.xattrs.ctx = ctx;
-    opts.xattrs.get_value = kv_get_xattr_value;
+    opts.xattrs.count = kv_checkpoint_xattr::xattr_count;
+    opts.xattrs.names = (char**)kv_checkpoint_xattr::xattr_names;
+    opts.xattrs.ctx = &(ctx->xattr);
+    opts.xattrs.get_value = kv_checkpoint_xattr::get_xattr_value;
     spdk_bs_create_blob_ext(_bs, &opts, new_blob_create_complete, ctx);
 }

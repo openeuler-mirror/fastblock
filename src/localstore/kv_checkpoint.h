@@ -34,6 +34,8 @@ struct checkpoint_ctx {
   fb_blob blob;
   blob_type type;
   uint32_t shard_id;
+  kv_checkpoint_xattr xattr;
+  bool need_delete;
 
   iovecs iovs;
 
@@ -57,23 +59,6 @@ public:
   kv_checkpoint() : _bs(global_blobstore()), _channel(global_io_channel()) {}
 
 public:
-  static void
-  kv_get_xattr_value(void *arg, const char *name, const void **value, size_t *value_len){
-    struct checkpoint_ctx* ctx = (struct checkpoint_ctx*)arg;
-  
-    if(!strcmp("type", name)){
-  		*value = &(ctx->type);
-  		*value_len = sizeof(ctx->type);    
-        return; 
-  	} else if(!strcmp("shard", name)){
-  		*value = &(ctx->shard_id);
-  		*value_len = sizeof(ctx->shard_id); 
-      return;   
-    }
-  	*value = NULL;
-  	*value_len = 0;    
-  }
-
   void set_checkpoint_blobid(spdk_blob_id checkpoint_blob_id, spdk_blob_id new_checkpoint_blob_id){
     if(checkpoint_blob_id){
       _ckpt_blob.blobid = checkpoint_blob_id;
@@ -187,21 +172,13 @@ public:
       delete ctx;
   }
 
-  static void blob_close_complete(void *arg, int rberrno) {
-      struct checkpoint_ctx *ctx = (struct checkpoint_ctx *)arg;
-
-      if (rberrno) {
-          SPDK_ERRLOG_EX("checkpoint new blob_id:0x%lx close failed:%s\n", ctx->blob.blobid, spdk_strerror(rberrno));
-      }
-
-      ctx->kv_ckpt->_ckpt_blob.blob = nullptr;
-      ctx->cb_fn(ctx->arg, rberrno);
-      delete ctx;
-  }
-
 public:
   /**
-   * 结束这次checkpoint流程。删除掉老的blob。
+   * 结束这次checkpoint流程。
+   * 1. _ckpt_blob 设置为 new blob
+   * 2. new blob 设置xattr 并sync md
+   * 3. 关闭 new blob
+   * 4. 如果有老的 checkpoint blob，则删除掉
    */
   void finish_checkpoint(checkpoint_op_complete cb_fn, void* arg) {
       if (_new_blob.blobid == 0) {
@@ -213,49 +190,33 @@ public:
       struct checkpoint_ctx* ctx = new checkpoint_ctx();
       ctx->kv_ckpt = this;
       ctx->bs = _bs;
-      ctx->blob = _ckpt_blob;
       ctx->cb_fn = std::move(cb_fn);
       ctx->arg = arg;
 
-      std::map<std::string, xattr_val_type> xattr;
-      xattr["type"] = blob_type::kv_checkpoint;
-      if (_ckpt_blob.blobid == 0) {
-          // SPDK_NOTICELOG_EX("kv checkpoint first swap, old:0x%lx new:0x%lx.\n", _ckpt_blob.blobid, _new_blob.blobid);
-          _ckpt_blob = std::exchange(_new_blob, {});
-          // SPDK_NOTICELOG_EX("kv checkpoint first swap, old:0x%lx new:0x%lx.\n", _ckpt_blob.blobid, _new_blob.blobid);
+      // 如果有老的checkpoint，则finish后需要删除掉
+      ctx->need_delete = _ckpt_blob.blobid != 0 ? true : false;
+      ctx->blob = _ckpt_blob; // 先把老的 checkpoint blob 保存在ctx中
+      _ckpt_blob = std::exchange(_new_blob, {}); // 然后把 new_blob 赋值给 checkpoint blob
+      
+      uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
+      kv_checkpoint_xattr xattr{.shard_id = shard_id};
+      xattr.blob_set_xattr(_ckpt_blob.blob);
 
-          ::set_blob_xattr(
-            _ckpt_blob.blob, 
-            xattr,
-            [cb_fn = std::move(cb_fn)](void *arg, int rberrno){
-              struct checkpoint_ctx *ctx = (struct checkpoint_ctx *)arg;
-              if(rberrno){
-                SPDK_ERRLOG_EX("finish_checkpoint failed: %s\n", spdk_strerror(rberrno));
-              }
-              SPDK_WARNLOG_EX("set_blob_xattr blob:%s to %s\n",
-                                 type_string(blob_type::kv_checkpoint_new).c_str(), type_string(blob_type::kv_checkpoint).c_str());
-              spdk_blob_close(ctx->kv_ckpt->_ckpt_blob.blob, blob_close_complete, ctx);
-            },
-            ctx);
+      spdk_blob_sync_md(_ckpt_blob.blob, sync_md_done, ctx);
+      return;
+  }
+
+  static void sync_md_done(void *arg, int rberrno){
+      struct checkpoint_ctx *ctx = (struct checkpoint_ctx *)arg;
+
+      if (rberrno) {
+          SPDK_ERRLOG_EX("checkpoint new blob_id:0x%lx sync_md failed:%s!\n", ctx->kv_ckpt->_ckpt_blob.blobid, spdk_strerror(rberrno));
+          ctx->cb_fn(ctx->arg, rberrno);
+          delete ctx;
           return;
       }
-
-      // SPDK_NOTICELOG_EX("kv checkpoint swap, old:0x%lx new:0x%lx.\n", _ckpt_blob.blobid, _new_blob.blobid);
-      _ckpt_blob = std::exchange(_new_blob, {});
-      // SPDK_NOTICELOG_EX("kv checkpoint swap, old:0x%lx new:0x%lx.\n", _ckpt_blob.blobid, _new_blob.blobid);
-      ::set_blob_xattr(
-        _ckpt_blob.blob, 
-        xattr,
-        [this](void *arg, int rberrno){
-          struct checkpoint_ctx *ctx = (struct checkpoint_ctx *)arg;
-          if(rberrno){
-            SPDK_ERRLOG_EX("finish_checkpoint failed: %s\n", spdk_strerror(rberrno));
-            ctx->cb_fn(ctx->arg, rberrno);
-            return;
-          }
-          spdk_blob_close(ctx->kv_ckpt->_ckpt_blob.blob, new_blob_close_complete, ctx);
-        },
-        ctx);
+    
+      spdk_blob_close(ctx->kv_ckpt->_ckpt_blob.blob, new_blob_close_complete, ctx);  
   }
 
   static void new_blob_close_complete(void *arg, int rberrno) {
@@ -263,10 +224,19 @@ public:
 
       if (rberrno) {
           SPDK_ERRLOG_EX("checkpoint new blob_id:0x%lx close failed:%s\n", ctx->blob.blobid, spdk_strerror(rberrno));
+          ctx->cb_fn(ctx->arg, rberrno);
+          delete ctx;
+          return;
       }
 
       ctx->kv_ckpt->_ckpt_blob.blob = nullptr;
-      spdk_bs_delete_blob(ctx->bs, ctx->blob.blobid, blob_delete_complete, ctx);
+
+      if (ctx->need_delete) {
+          // 如果需要删除，就把老的checkpoint blob删除掉
+          spdk_bs_delete_blob(ctx->bs, ctx->blob.blobid, blob_delete_complete, ctx);
+          return;
+      }
+      blob_delete_complete(ctx, 0);
   }
 
   static void blob_delete_complete(void *arg, int rberrno) {
