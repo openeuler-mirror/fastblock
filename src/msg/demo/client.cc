@@ -27,6 +27,7 @@
 #include <csignal>
 #include <iostream>
 
+int g_id{-1};
 namespace {
 char* g_host{nullptr};
 uint16_t g_port{0};
@@ -155,7 +156,8 @@ void start_rpc_client(void* arg) {
     auto opts = msg::rdma::client::make_options(g_pt);
     g_iter_count = g_pt.get_child("iteration_count").get_value<size_t>();
     g_io_depth = g_pt.get_child("io_depth").get_value<size_t>();
-    g_rpc_client = std::make_shared<msg::rdma::client>("rpc_cli", &g_cpumask, opts);
+    std::string cli_name{"rpc_cli"};
+    g_rpc_client = std::make_shared<msg::rdma::client>(cli_name, &g_cpumask, opts);
     g_rpc_client->start();
     g_iter_msg = demo::random_string(4 * 1024 * 1024);
     g_rpc_client->emplace_connection(

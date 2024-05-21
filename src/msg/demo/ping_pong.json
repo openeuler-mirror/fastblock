@@ -3,22 +3,19 @@
         {
             "index": 1,
             "list": [
-                {"host": "172.31.4.142", "port": 8081},
-                {"host": "172.31.4.142", "port": 8082},
-                {"host": "172.31.4.142", "port": 8083}
+                {"host": "172.31.4.142", "port": 8081}
             ]
         },
         {
             "index": 2,
             "list": [
-                {"host": "172.31.4.142", "port": 8084},
-                {"host": "172.31.4.142", "port": 8085},
-                {"host": "172.31.4.142", "port": 8086}
+                {"host": "172.31.4.142", "port": 8084}
             ]
         }
     ],
-    "server_core_count": 1,
-    "client_core_count": 1,
+    "io_size": 4096,
+    "io_depth": 1,
+    "io_count": 128,
     "use_different_core": true,
     "rdma_device_name": "rocep94s0f0",
     "rdma_device_port": 1,
@@ -39,5 +36,7 @@
     "msg_rdma_max_recv_sge": 1,
     "msg_rdma_max_inline_data": 16,
     "msg_rdma_cq_num_entries": 1024,
-    "msg_rdma_qp_sig_all": false
+    "msg_rdma_qp_sig_all": false,
+    "msg_client_connect_max_retry": 30,
+    "msg_client_connect_retry_interval_us": 10000000
 }
