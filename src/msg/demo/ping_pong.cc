@@ -314,6 +314,9 @@ void start_ping_client() {
                 continue;
             }
 
+            SPDK_NOTICELOG(
+              "start connecting to %s:%d, with index %d\n",
+              ep_it->host.c_str(), ep_it->port, ep_it->index);
             current_cli->emplace_connection(
               ep_it->host, ep_it->port,
               [core_no] (bool is_ok, std::shared_ptr<msg::rdma::client::connection> conn) {
@@ -343,6 +346,8 @@ void start_ping_client() {
               }
             );
         }
+
+        ep_it = ctx.endpoints.begin();
     }
 }
 
