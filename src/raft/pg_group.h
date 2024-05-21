@@ -125,6 +125,7 @@ public:
                 disk_log *log, pg_complete cb_fn, void *arg, std::shared_ptr<monitor::client> mon_client);    
 
     void delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, pg_complete cb_fn, void *arg);
+    void active_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id);
 
     std::shared_ptr<raft_server_t> get_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id)
     {

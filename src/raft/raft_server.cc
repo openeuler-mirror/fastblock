@@ -311,6 +311,9 @@ void raft_server_t::task_loop(){
 
 int raft_server_t::raft_periodic()
 {
+    if(_op_state == raft_op_state::RAFT_INIT){
+        return 0;
+    }
     auto my_node = raft_get_my_node();
     raft_time_t now = utils::get_time();
 
@@ -2684,8 +2687,14 @@ void raft_server_t::load(raft_node_id_t current_node, raft_complete cb_fn, void 
                 _pool_id, _pg_id, _node_id, _current_idx, _current_term, _voted_for, _commit_idx, 
                 _machine->get_last_applied_idx(), _node_id);
         start_raft_timer();
-        raft_set_op_state(raft_op_state::RAFT_ACTIVE);
+        // raft_set_op_state(raft_op_state::RAFT_ACTIVE);
         cb_fn(arg, 0);
     };
     _log->load(std::move(log_load_done), arg);
+}
+
+void raft_server_t::active_raft(){
+    SPDK_WARNLOG_EX("active pg %lu.%lu state from %d to %d\n", _pool_id, _pg_id, _op_state, raft_op_state::RAFT_ACTIVE);
+    if(_op_state == raft_op_state::RAFT_INIT)
+        _op_state = raft_op_state::RAFT_ACTIVE;
 }

@@ -493,6 +493,7 @@ private:
 
     void _create_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_version, const msg::PGInfo &info);
     void _remove_pg(pg_map::pool_id_type pool_id, pg_map::pg_id_type pg_id, pg_map::version_type pool_version);
+    void _active_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_version, const msg::PGInfo &info);
 private:
 
     bool _is_terminate{false};

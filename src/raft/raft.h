@@ -817,6 +817,7 @@ public:
         _machine->set_last_applied_idx(idx);
         _log->set_trim_index(idx);
     }
+    void active_raft();
 public:
     enum class task_type : uint8_t{
         SNAP_CHECK_TASK = 1

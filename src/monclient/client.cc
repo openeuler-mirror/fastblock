@@ -493,7 +493,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                 if(!contain)
                     continue;
                 /* 当前osd在本地pgmap中pg的osd列表中，但不在monitor的pgmap的osd列表中，说明当前osd已经从pg中
-                 * 移除（可能是osd out，monitor把它从pg中移除，但osd本地pg信息还为清除）,需要删除此osd上的pg信息。  
+                 * 移除（可能是osd out，monitor把它从pg中移除，但osd本地pg信息还未清除）,需要删除此osd上的pg信息。  
                  */
                 _remove_pg(pool_id, pgid, pool_version);
             }
@@ -577,6 +577,10 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                     if(info.version() == pit->version)
                         continue;
                     
+                    if(pit->version == 0){
+                        //出现这种情况是当前osd刚重启，恢复处理的_pg_map中pg的版本都是0，这时需要激活pg
+                        _active_pg(pool_key, pv.at(pool_key), info);
+                    }
                     if((info.state() & PgRemapped) == 0){
                         continue;
                     }
@@ -603,6 +607,30 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
             }
         }
     }
+}
+
+void client::_active_pg(pg_map::pool_id_type pool_id, 
+        pg_map::version_type pool_version, const msg::PGInfo &info){
+    bool pg_is_remap = (info.state() & PgRemapped) != 0;
+    auto active_pg_done = [this, pool_id, pool_version, pg_id = info.pgid(), pg_version = info.version(), pg_is_remap]
+      (void *arg, int perrno){
+        if(perrno != 0){
+            SPDK_ERRLOG_EX("activate pg %d.%d failed: %s\n", pool_id, pg_id, spdk_strerror(perrno));
+            if(!pg_is_remap)
+                _pg_map.set_pool_update(pool_id, pg_id, pool_version, -1);
+            return;
+        }   
+        if(!pg_is_remap){
+            _pg_map.set_pool_update(pool_id, pg_id, pool_version, 0);  
+            _pg_map.pool_pg_map[pool_id][pg_id]->version = pg_version;
+        }
+        SPDK_INFOLOG_EX(mon, "active pg %lu.%lu done, pg_version %ld pg_is_remap %d\n", 
+                pool_id, pg_id, pg_version, pg_is_remap);
+    };
+    if(!pg_is_remap){
+        _pg_map.set_pool_update(pool_id, info.pgid(), pool_version, 1);
+    }
+    _pm.lock()->active_partition(pool_id, info.pgid(), std::move(active_pg_done), nullptr);
 }
 
 void client::process_osd_map(std::shared_ptr<msg::Response> response) {

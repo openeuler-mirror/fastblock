@@ -81,6 +81,7 @@ public:
     int delete_partition(uint64_t pool_id, uint64_t pg_id, pm_complete&& cb_fn, void *arg);
     int load_partition(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob, 
                         object_store::container objects, pm_complete&& func, void *arg);
+    int active_partition(uint64_t pool_id, uint64_t pg_id, pm_complete&& cb_fn, void *arg);
 
     bool get_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t &shard_id);
 
@@ -89,6 +90,7 @@ public:
     void create_pg(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t> osds, uint32_t shard_id, 
                         int64_t revision_id, pm_complete cb_fn, void *arg);
     void delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id, pm_complete cb_fn, void *arg);
+    void active_pg(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id, pm_complete cb_fn, void *arg);
 
     std::shared_ptr<osd_stm> get_osd_stm(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id){
         std::string name = pg_id_to_name(pool_id, pg_id);

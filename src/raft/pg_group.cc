@@ -55,6 +55,11 @@ void pg_group_t::delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, 
     _pg_remove(shard_id, pool_id, pg_id, std::move(cb_fn), arg);
 }
 
+void pg_group_t::active_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id){
+    auto raft = get_pg(shard_id, pool_id, pg_id);
+    raft->active_raft();
+}
+
 void pg_group_t::start_shard_manager(utils::complete_fun fun, void *arg)
 {
     uint32_t i = 0;
