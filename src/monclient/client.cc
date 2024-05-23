@@ -327,10 +327,10 @@ public:
 
     void finish(int r) override {
         SPDK_INFOLOG_EX(mon, "change membership of pg %lu.%lu version: %ld finish: result %d\n", _pool_id, _pg_id, _version, r);
-        if(r != 0 && r != err::RAFT_ERR_NOT_LEADER){
+        if(r != 0) {
             _client->get_pg_map().set_pool_update(_pool_id, _pg_id, _version, -1);
             return;
-        }
+        } 
         if(!_client->get_pg_map().pool_pg_map[_pool_id].contains(_pg_id)){
             SPDK_INFOLOG_EX(mon, "pg %lu.%lu not in pool_pg_map", _pool_id, _pg_id);
             return;
@@ -435,6 +435,7 @@ void client::_remove_pg(pg_map::pool_id_type pool_id, pg_map::pg_id_type pg_id, 
 
 void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
     auto& pv = pg_map_response.poolid_pgmapversion();
+    int current_osdid = _pm.lock()->get_current_node_id();
 
     auto& ec = pg_map_response.errorcode();
     auto& pgs = pg_map_response.pgs();
@@ -465,7 +466,6 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
             if (info_it == pgs.end()){
                 continue;
             }
-            int current_osdid = _pm.lock()->get_current_node_id();
             bool contain = false;
 
             for (auto& info : info_it->second.pi()){
@@ -561,12 +561,55 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
             continue;
         }
 
+        /*
+         *  下面的change_pg_membership时会检查当前osd是否是pg的leader，如果不是就相当于更新pg成员失败，如果更新成员失败，
+         *   _pg_map中pg 版本和pool版本都不会更新。当pool下的所有pg都处理成功（包含创建pg和pg更新成员）后，_pg_map中pg 版本
+         *   和pool版本都会更新。
+         *   若更新pg成员失败，下次调用process_pg_map检查到这里时，因为_pg_map中pool版本小，还是会进行下面的处理：
+         *       如果_pg_map中pg版本和monitor中pg版本相同，不需要处理。
+         *       如果_pg_map中pg版本为0，出现这种情况是当前osd刚重启，需要激活pg
+         *       如果monitor上pg还是PgRemapped，就需要继续调用change_pg_membership；
+         *       如果monitor上pg不是PgRemapped，就需要分情况了
+         *          1 当前osd不在monitor上pg的osd列表中，表示monitor的pg成员变更完成，当前osd从pg中移除，因此需要删除osd上pg。
+         *          2 当前osd在monitor上pg的osd列表中，但_pg_map中pg的osd列表与monitor上pg的osd列表不同，表示monitor的pg成员
+         *            变更完成，因此需要更新_pg_map中pg的osd列表为monitor上pg的osd列表
+         */
         if (_pg_map.pool_version[pool_key] < pv.at(pool_key)) {
             auto info_it = pgs.find(pool_key);
             if (info_it == pgs.end()) {
                 SPDK_DEBUGLOG_EX(mon, "Cant find the info of pg %d\n", pool_key);
                 continue;
             }
+
+            auto process_pg = [this, current_osdid](pg_map::pool_id_type pool_id, const msg::PGInfo& info, int64_t pool_version_in_mon){
+                auto pgid = info.pgid();
+                auto& pit = _pg_map.pool_pg_map[pool_id][pgid];
+
+                bool contain_in_monitor = false;
+                std::vector<int> osds_in_mon;
+                for (auto osd_id : info.osdid()){
+                    osds_in_mon.push_back(osd_id);
+                    if(osd_id == current_osdid){
+                        contain_in_monitor = true;
+                    }
+                }
+
+                //当前osd不在monitor上pg的osd列表中
+                if(!contain_in_monitor ){
+                    _remove_pg(pool_id, pgid, _pg_map.pool_version[pool_id]);
+                } else if(contain_in_monitor){
+                    if(osds_in_mon.size() != pit->osds.size()){
+                        _pg_map.set_pool_update(pool_id, pgid, pool_version_in_mon, 1);
+                    }else if(!std::is_permutation(osds_in_mon.begin(), osds_in_mon.end(), pit->osds.begin())){
+                        _pg_map.set_pool_update(pool_id, pgid, pool_version_in_mon, 1);
+                    }else{
+                        return;
+                    }
+                    pit->osds = osds_in_mon;
+                    pit->version = info.version();
+                    _pg_map.set_pool_update(pool_id, pgid, pool_version_in_mon, 0);
+                }
+            };
 
             SPDK_INFOLOG_EX(mon, "pool %d version: %ld pool_version: %ld\n", pool_key, pv.at(pool_key), _pg_map.pool_version[pool_key]);
             for (auto& info : info_it->second.pi()) {
@@ -582,6 +625,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                         _active_pg(pool_key, pv.at(pool_key), info);
                     }
                     if((info.state() & PgRemapped) == 0){
+                        process_pg(pool_key, info, pv.at(pool_key));
                         continue;
                     }
 
