@@ -139,7 +139,7 @@ if [ "$disks" = "" ];then
     json="{"
     for i in `seq 1 $osdcount`
     do
-    	dd if=/dev/zero of=./file"$i" bs=4M count=1024
+	truncate -s 4G ./file"$i"
         if [ $i -eq 1 ]; then
             json="$json\"$i\":\"file$i\""
         else
