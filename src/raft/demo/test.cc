@@ -112,7 +112,7 @@ static void test_disk_log_complete(void *arg, int rberrno){
 
 	SPDK_WARNLOG_EX("storage_init done\n");
 
-	make_disk_log(global_blobstore(), global_io_channel(), make_log_done, nullptr);    
+	make_disk_log(global_blobstore(), global_io_channel(), "test", make_log_done, nullptr);    
 }
 
 static void disk_init_complete(void *arg, int rberrno){

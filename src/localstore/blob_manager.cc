@@ -395,111 +395,114 @@ load_done(void *args, int bserrno) {
 }
 
 void parse_kv_xattr(struct spdk_blob *blob) {
-  uint32_t *shard_id;
-  size_t len;
-  int rc;
+  auto xattr = kv_xattr::parse_xattr(blob);
 
-  rc = spdk_blob_get_xattr_value(blob, "shard", (const void **)&shard_id, &len);
-  if (rc < 0) return;
+  SPDK_INFOLOG_EX(blob_log, "kv xattr, blob id: %lu shard_id: %u\n", spdk_blob_get_id(blob), xattr.shard_id);
+  if (xattr.shard_id > g_bs_mgr.blobs.size()) {
+      SPDK_ERRLOG_EX("kv xattr, shard_id: %u bigger than shard num: %u", xattr.shard_id, g_bs_mgr.blobs.size());
+      return;
+  }  
 
-  if (*shard_id > g_bs_mgr.blobs.size())  return;
-  SPDK_INFOLOG_EX(blob_log, "kv xattr, blob id %lu has shard_id: %u\n", spdk_blob_get_id(blob), (*shard_id));
-  g_bs_mgr.blobs.on_shard(*shard_id).kv_blob = spdk_blob_get_id(blob);
-}
-
-void parse_log_xattr(struct spdk_blob *blob) {
-  uint32_t *shard_id;
-  const char *value;
-  std::string pg;
-  size_t len;
-  int rc;
-
-  rc = spdk_blob_get_xattr_value(blob, "shard", (const void **)&shard_id, &len);
-  if (rc < 0) 
-    return;
-  // SPDK_NOTICELOG_EX("blob id %lu has shard_id: %u\n", spdk_blob_get_id(blob), (*shard_id));
-  
-
-  rc = spdk_blob_get_xattr_value(blob, "pg", (const void **)&value, &len);
-  if (rc < 0) 
-    return;
-  pg = std::string(value, len);
-  SPDK_INFOLOG_EX(blob_log, "log xattr, blob id %lu shard_id %u  pg  %s \n", spdk_blob_get_id(blob), *shard_id, pg.c_str());
-
-  if (*shard_id > g_bs_mgr.blobs.size())  return;
-  SPDK_INFOLOG_EX(blob_log, "log blob, blob id %ld blob size %lu\n", spdk_blob_get_id(blob),
-                     spdk_blob_get_num_clusters(blob) * spdk_bs_get_cluster_size(global_blobstore()));
-  g_bs_mgr.blobs.on_shard(*shard_id).log_blobs[pg] = blob;
-}
-
-void parse_object_xattr(struct spdk_blob *blob) {
-  uint32_t *shard_id;
-  const char *value;
-  std::string pg, obj_name, snap_name, recover_name;
-  size_t len;
-  int rc;
-
-  rc = spdk_blob_get_xattr_value(blob, "shard", (const void **)&shard_id, &len);
-  if (rc < 0) return;
-
-  rc = spdk_blob_get_xattr_value(blob, "pg", (const void **)&value, &len);
-  if (rc < 0) return;
-  pg = std::string(value, len);
-  
-  if (*shard_id > g_bs_mgr.blobs.size())  return;
-  auto [pg_it, _] = g_bs_mgr.blobs.on_shard(*shard_id).object_blobs.try_emplace(pg);
-
-  rc = spdk_blob_get_xattr_value(blob, "name", (const void **)&value, &len);
-  if (rc < 0) return;
-  obj_name = std::string(value, len);
-  auto [it, __] = pg_it->second.try_emplace(obj_name);
-  auto& object = it->second;
-
-  if(spdk_blob_get_xattr_value(blob, "recover", (const void **)&value, &len) == 0){
-      recover_name = std::string(value, len);
-      object.recover.blob = blob;
-      object.recover.blobid = spdk_blob_get_id(blob);
-  }else if(spdk_blob_get_xattr_value(blob, "snap", (const void **)&value, &len) == 0){
-      snap_name = std::string(value, len);
-      object_store::snap snapshot;
-      snapshot.snap_blob.blobid = spdk_blob_get_id(blob); 
-      snapshot.snap_blob.blob = blob;
-      snapshot.snap_name = snap_name;
-      object.snap_list.emplace_back(std::move(snapshot));   
-  }else{
-      object.origin.blob = blob;
-      object.origin.blobid = spdk_blob_get_id(blob);    
-  }
-
-  SPDK_INFOLOG_EX(blob_log, "blob id %lu shard_id %u pg %s obj_name %s  snap_name %s recover_name %s\n",
-                     spdk_blob_get_id(blob), *shard_id, pg.c_str(), obj_name.c_str(), snap_name.c_str(),
-                     recover_name.c_str());
+  g_bs_mgr.blobs.on_shard(xattr.shard_id).kv_blob = spdk_blob_get_id(blob);
 }
 
 void parse_kv_checkpoint_xattr(struct spdk_blob *blob) {
-  uint32_t *shard_id;
-  size_t len;
-  int rc;
+  auto xattr = kv_checkpoint_xattr::parse_xattr(blob);
 
-  rc = spdk_blob_get_xattr_value(blob, "shard", (const void **)&shard_id, &len);
-  if (rc < 0) return;
+  SPDK_INFOLOG_EX(blob_log, "kv checkpoint xattr, blob id: %lu shard_id: %u\n", spdk_blob_get_id(blob), xattr.shard_id);
+  if (xattr.shard_id > g_bs_mgr.blobs.size()) {
+      SPDK_ERRLOG_EX("kv checkpoint xattr, shard_id: %u bigger than shard num: %u", xattr.shard_id, g_bs_mgr.blobs.size());
+      return;
+  }  
 
-  if (*shard_id > g_bs_mgr.blobs.size())  return;
-  SPDK_INFOLOG_EX(blob_log, "kv_checkpoint xattr, blob id %lu has shard_id: %u\n", spdk_blob_get_id(blob), (*shard_id));
-  g_bs_mgr.blobs.on_shard(*shard_id).kv_checkpoint_blob = spdk_blob_get_id(blob);
+  g_bs_mgr.blobs.on_shard(xattr.shard_id).kv_checkpoint_blob = spdk_blob_get_id(blob);
 }
 
 void parse_kv_new_checkpoint_xattr(struct spdk_blob *blob) {
-  uint32_t *shard_id;
-  size_t len;
-  int rc;
+  auto xattr = kv_checkpoint_new_xattr::parse_xattr(blob);
 
-  rc = spdk_blob_get_xattr_value(blob, "shard", (const void **)&shard_id, &len);
-  if (rc < 0) return;
+  SPDK_INFOLOG_EX(blob_log, "kv checkpoint new xattr, blob id: %lu shard_id: %u\n", spdk_blob_get_id(blob), xattr.shard_id);
+  if (xattr.shard_id > g_bs_mgr.blobs.size()) {
+      SPDK_ERRLOG_EX("kv checkpoint new xattr, shard_id: %u bigger than shard num: %u", xattr.shard_id, g_bs_mgr.blobs.size());
+      return;
+  }  
 
-  if (*shard_id > g_bs_mgr.blobs.size())  return;
-  SPDK_INFOLOG_EX(blob_log, "kv_new_checkpoint xattr, blob id %lu has shard_id: %u\n", spdk_blob_get_id(blob), (*shard_id));
-  g_bs_mgr.blobs.on_shard(*shard_id).kv_new_checkpoint_blob = spdk_blob_get_id(blob);
+  g_bs_mgr.blobs.on_shard(xattr.shard_id).kv_checkpoint_blob = spdk_blob_get_id(blob);
+}
+
+void parse_log_xattr(struct spdk_blob *blob) {
+  auto xattr = log_xattr::parse_xattr(blob);
+
+  SPDK_INFOLOG_EX(blob_log, "log xattr, blob id: %lu shard_id: %u pg: %s blob size:%lu\n", 
+      spdk_blob_get_id(blob), xattr.shard_id, xattr.pg.c_str(), 
+      spdk_blob_get_num_clusters(blob) * spdk_bs_get_cluster_size(global_blobstore()));
+
+  if (xattr.shard_id > g_bs_mgr.blobs.size()) {
+      SPDK_ERRLOG_EX("log xattr, shard_id: %u bigger than shard num: %u", xattr.shard_id, g_bs_mgr.blobs.size());
+      return;
+  }
+
+  g_bs_mgr.blobs.on_shard(xattr.shard_id).log_blobs[xattr.pg] = blob;
+}
+
+void parse_object_xattr(struct spdk_blob *blob) {
+  auto xattr = object_xattr::parse_xattr(blob);
+
+  SPDK_INFOLOG_EX(blob_log, "object xattr, blob id: %lu shard_id: %u pg: %s obj_name: %s\n", 
+      spdk_blob_get_id(blob), xattr.shard_id, xattr.pg.c_str(), xattr.obj_name.c_str());
+
+  if (xattr.shard_id > g_bs_mgr.blobs.size()) {
+      SPDK_ERRLOG_EX("object xattr, shard_id: %u bigger than shard num: %u", xattr.shard_id, g_bs_mgr.blobs.size());
+      return;
+  }
+
+  auto [pg_it, _] = g_bs_mgr.blobs.on_shard(xattr.shard_id).object_blobs.try_emplace(xattr.pg);
+  auto [it, __] = pg_it->second.try_emplace(xattr.obj_name);
+  auto& object = it->second;
+
+  object.origin.blob = blob;
+  object.origin.blobid = spdk_blob_get_id(blob);    
+}
+
+void parse_object_snap_xattr(struct spdk_blob *blob) {
+  auto xattr = object_snap_xattr::parse_xattr(blob);
+
+  SPDK_INFOLOG_EX(blob_log, "object snap xattr, blob id: %lu shard_id: %u pg: %s obj_name: %s snap_name: %s\n", 
+      spdk_blob_get_id(blob), xattr.shard_id, xattr.pg.c_str(), xattr.obj_name.c_str(), xattr.snap_name.c_str());
+
+  if (xattr.shard_id > g_bs_mgr.blobs.size()) {
+      SPDK_ERRLOG_EX("object snap xattr, shard_id: %u bigger than shard num: %u", xattr.shard_id, g_bs_mgr.blobs.size());
+      return;
+  }
+
+  auto [pg_it, _] = g_bs_mgr.blobs.on_shard(xattr.shard_id).object_blobs.try_emplace(xattr.pg);
+  auto [it, __] = pg_it->second.try_emplace(xattr.obj_name);
+  auto& object = it->second;
+
+  object_store::snap snapshot;
+  snapshot.snap_blob.blobid = spdk_blob_get_id(blob); 
+  snapshot.snap_blob.blob = blob;
+  snapshot.snap_name = xattr.snap_name;
+  object.snap_list.emplace_back(std::move(snapshot));   
+}
+
+void parse_object_recover_xattr(struct spdk_blob *blob) {
+  auto xattr = object_recover_xattr::parse_xattr(blob);
+
+  SPDK_INFOLOG_EX(blob_log, "object recover xattr, blob id: %lu shard_id: %u pg: %s obj_name: %s\n", 
+      spdk_blob_get_id(blob), xattr.shard_id, xattr.pg.c_str(), xattr.obj_name.c_str());
+
+  if (xattr.shard_id > g_bs_mgr.blobs.size()) {
+      SPDK_ERRLOG_EX("object recover xattr, shard_id: %u bigger than shard num: %u", xattr.shard_id, g_bs_mgr.blobs.size());
+      return;
+  }
+
+  auto [pg_it, _] = g_bs_mgr.blobs.on_shard(xattr.shard_id).object_blobs.try_emplace(xattr.pg);
+  auto [it, __] = pg_it->second.try_emplace(xattr.obj_name);
+  auto& object = it->second;
+
+  object.recover.blob = blob;
+  object.recover.blobid = spdk_blob_get_id(blob);
 }
 
 struct parse_blob_ctx{
@@ -518,7 +521,7 @@ static void parse_blob_xattr(void *arg, struct spdk_blob *blob, int rberrno){
   }
 
   auto type_str = type_string(ctx->type);
-  SPDK_INFOLOG_EX(blob_log, "blob id %lu type: %s\n", spdk_blob_get_id(blob), type_str.c_str());
+  // SPDK_INFOLOG_EX(blob_log, "blob id %lu type: %s\n", spdk_blob_get_id(blob), type_str.c_str());
   switch (ctx->type) {
     case blob_type::kv:
       parse_kv_xattr(blob);
@@ -528,6 +531,12 @@ static void parse_blob_xattr(void *arg, struct spdk_blob *blob, int rberrno){
       break;
     case blob_type::object:
       parse_object_xattr(blob);
+      break;
+    case blob_type::object_snap:
+      parse_object_snap_xattr(blob);
+      break;
+    case blob_type::object_recover:
+      parse_object_recover_xattr(blob);
       break;
     case blob_type::kv_checkpoint:
       parse_kv_checkpoint_xattr(blob);
@@ -542,6 +551,7 @@ static void parse_blob_xattr(void *arg, struct spdk_blob *blob, int rberrno){
   delete ctx;  
 }
 
+
 void parse_open_blob_xattr(struct spdk_blob *blob, bm_complete cb_fn, void* args){
   //参数blob随后会在外部关闭
   blob_type *type;
@@ -555,11 +565,13 @@ void parse_open_blob_xattr(struct spdk_blob *blob, bm_complete cb_fn, void* args
   }
 
   auto type_str = type_string(*type);
-  SPDK_INFOLOG_EX(blob_log, "blob id %lu type: %s\n", spdk_blob_get_id(blob), type_str.c_str());
+  SPDK_INFOLOG_EX(blob_log, "blob id: %lu type: %s\n", spdk_blob_get_id(blob), type_str.c_str());
   parse_blob_ctx *ctx = new parse_blob_ctx{.cb_fn = std::move(cb_fn), .args = args, .type = *type};
   switch (*type){
   case blob_type::log:
   case blob_type::object:
+  case blob_type::object_snap:
+  case blob_type::object_recover:
     spdk_bs_open_blob(g_bs_mgr.blobstore, spdk_blob_get_id(blob),
 		       parse_blob_xattr, ctx);
     break;
@@ -568,7 +580,11 @@ void parse_open_blob_xattr(struct spdk_blob *blob, bm_complete cb_fn, void* args
   case blob_type::kv_checkpoint_new:
     parse_blob_xattr(ctx, blob, 0);
     break;
+  case blob_type::super_blob:
+  case blob_type::free:
+    // SPDK_WARNLOG_EX("blob id: %lu type: %s skip!\n", spdk_blob_get_id(blob), type_str.c_str());
   default:
+    SPDK_WARNLOG_EX("blob id: %lu type: %s falls into default!\n", spdk_blob_get_id(blob), type_str.c_str());
     ctx->cb_fn(ctx->args, 0);
     delete ctx;
     break;

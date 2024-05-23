@@ -1,6 +1,6 @@
 {
-    "monitors": ["fb41","fb42","fb43"],
-    "mon_host": ["173.20.4.3","173.20.4.2","173.20.4.1"],
+    "monitors": ["monitor"],
+    "mon_host": ["172.31.77.145"],
     "log_path": "/var/log/fastblock/monitor1.log",
     "log_level": "info",
     "election_master_key": "fastblock_monitor_election",

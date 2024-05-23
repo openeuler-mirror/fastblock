@@ -75,6 +75,10 @@ public:
 
     std::string get_pg_name();
 
+    void set_pg(std::string pg_name) {
+        _store.set_pg(pg_name);
+    }
+
     void load_object(object_store::container objects){
         _store.load(std::move(objects));
     }

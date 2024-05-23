@@ -48,30 +48,15 @@ static void make_log_done(void *arg, struct disk_log* dlog, int rberrno){
         return;
     }
 
-    std::map<std::string, xattr_val_type> xattr;
-    xattr["type"] = blob_type::log;
-    uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
-    xattr["shard"] = shard_id;
-    xattr["pg"] = pg_id_to_name(mlc->pool_id, mlc->pg_id);   
-    dlog->set_blob_xattr(xattr, 
-      [dlog](void *arg, int rberrno){
-        make_log_context* mlc = (make_log_context*)arg;
-        if(rberrno){
-            SPDK_ERRLOG_EX("make_disk_log failed: %s\n", spdk_strerror(rberrno));
-            mlc->cb_fn(mlc->arg, rberrno);
-            delete mlc;
-            return;
-        }
-        SPDK_INFOLOG_EX(osd, "make_log_done, rberrno %d\n", rberrno);
-        partition_manager* pm = mlc->pm;
-        auto sm = std::make_shared<osd_stm>();
-        pm->add_osd_stm(mlc->pool_id, mlc->pg_id, mlc->shard_id, sm);
-        pm->get_pg_group().create_pg(sm, mlc->shard_id, mlc->pool_id, mlc->pg_id, std::move(mlc->osds), 
-                dlog, pm->get_mon_client());
-        mlc->cb_fn(mlc->arg, rberrno);
-        delete mlc;
-      },
-      mlc);
+    partition_manager* pm = mlc->pm;
+    auto sm = std::make_shared<osd_stm>();
+    auto pg = pg_id_to_name(mlc->pool_id, mlc->pg_id);
+    sm->set_pg(pg);
+    pm->add_osd_stm(mlc->pool_id, mlc->pg_id, mlc->shard_id, sm);
+    pm->get_pg_group().create_pg(sm, mlc->shard_id, mlc->pool_id, mlc->pg_id, std::move(mlc->osds), 
+            dlog, pm->get_mon_client());
+    mlc->cb_fn(mlc->arg, rberrno);
+    delete mlc;
 }
 
 void partition_manager::create_pg(
@@ -79,7 +64,8 @@ void partition_manager::create_pg(
         uint32_t shard_id, int64_t revision_id, pm_complete cb_fn, void *arg){
     make_log_context *ctx = new make_log_context{.pool_id = pool_id, .pg_id = pg_id, .osds = std::move(osds), 
                     .shard_id = shard_id, .revision_id = revision_id, .pm = this, .cb_fn = std::move(cb_fn), .arg = arg};
-    make_disk_log(global_blobstore(), global_io_channel(), make_log_done, ctx);
+    std::string pg = pg_id_to_name(pool_id, pg_id);   
+    make_disk_log(global_blobstore(), global_io_channel(), pg, make_log_done, ctx);
 }
 
 int partition_manager::osd_state_is_not_active(){
@@ -191,6 +177,7 @@ int partition_manager::create_partition(
 void partition_manager::load_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob,
                             object_store::container objects, pm_complete cb_fn, void *arg){
     auto dlog = make_disk_log(global_blobstore(), global_io_channel(), blob);
+    // TODO:为什么要先创建osd_stm，然后再load呢？直接创建的时候构造object_store不可以吗？
     auto sm = std::make_shared<osd_stm>();
 
     get_pg_group().load_pg(sm, shard_id, pool_id, pg_id, dlog, 
@@ -199,6 +186,10 @@ void partition_manager::load_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg
             cb_fn(arg, lerrno);
             return;
         }
+        // note: 直接把pg string放进object里，后面不用再传了
+        std::string pg = pg_id_to_name(pool_id, pg_id);
+        SPDK_INFOLOG_EX(osd, "[test] create pg:%s!\n", pg.c_str());
+        sm->set_pg(pg);
         sm->load_object(std::move(objects));
         add_osd_stm(pool_id, pg_id, shard_id, sm);
         SPDK_INFOLOG_EX(osd, "load pg done\n");

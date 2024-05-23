@@ -40,8 +40,8 @@ make_kvstore_sync_done(void *arg, int kverrno) {
 void
 make_kvstore_blob_done(void *arg, struct rolling_blob* rblob, int kverrno) {
   struct make_kvs_ctx *ctx = (struct make_kvs_ctx *)arg;
-  blob_type type = blob_type::kv;
   uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
+  kv_xattr xattr{.shard_id = shard_id};
 
   if (kverrno) {
       SPDK_ERRLOG_EX("make_kvstore failed. error:%s\n", spdk_strerror(kverrno));
@@ -51,10 +51,7 @@ make_kvstore_blob_done(void *arg, struct rolling_blob* rblob, int kverrno) {
   }
 
   ctx->rblob = rblob;
-
-  spdk_blob_set_xattr(rblob->blob, "type", &type, sizeof(type));
-  spdk_blob_set_xattr(rblob->blob, "shard", &shard_id, sizeof(shard_id));
-
+  xattr.blob_set_xattr(rblob->blob);
   spdk_blob_sync_md(rblob->blob, make_kvstore_sync_done, ctx);
 }
 

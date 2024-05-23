@@ -16,6 +16,7 @@
 #include "utils/log.h"
 
 #include <spdk/blob.h>
+#include <spdk/util.h>
 #include <string>
 #include <optional>
 #include <variant>
@@ -31,11 +32,13 @@ struct fb_blob {
 enum class blob_type : uint32_t {
   log = 0,
   object = 1,
-  kv = 2,
-  kv_checkpoint = 3,
-  kv_checkpoint_new = 4,
-  super_blob = 5,
-  free = 6,
+  object_snap = 2,
+  object_recover = 3,
+  kv = 4,
+  kv_checkpoint = 5,
+  kv_checkpoint_new = 6,
+  super_blob = 7,
+  free = 8,
 };
 
 inline std::string type_string(const blob_type& type) {
@@ -44,6 +47,10 @@ inline std::string type_string(const blob_type& type) {
       return "blob_type::log";
     case blob_type::object:
       return "blob_type::object";
+    case blob_type::object_snap:
+      return "blob_type::object_snap";
+    case blob_type::object_recover:
+      return "blob_type::object_recover";
     case blob_type::kv:
       return "blob_type::kv";
     case blob_type::kv_checkpoint:
@@ -58,6 +65,396 @@ inline std::string type_string(const blob_type& type) {
       return "blob_type::unknown";
   }
 }
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wwrite-strings"
+struct log_xattr {
+    constexpr static char *xattr_names[] = {"type", "shard", "pg"};
+    constexpr static size_t xattr_count = SPDK_COUNTOF(xattr_names);
+    constexpr static blob_type type = blob_type::log; // note: 如果不加constexpr，.h文件中初始化的static成员变量只声明不定义
+    uint32_t shard_id;
+    std::string pg;
+
+    static log_xattr parse_xattr(struct spdk_blob *blob) {
+        uint32_t *shard_id;
+        const char *value;
+        std::string pg;
+        size_t len;
+        int rc;
+
+        rc = spdk_blob_get_xattr_value(blob, "shard", (const void **)&shard_id, &len);
+        rc = spdk_blob_get_xattr_value(blob, "pg", (const void **)&value, &len);
+
+        pg = std::string(value, len);
+        return log_xattr{.shard_id = *shard_id, .pg = std::move(pg)};
+    }
+
+    static void get_xattr_value(void *arg, const char *name, const void **value, size_t *value_len) {
+        struct log_xattr* ctx = (struct log_xattr*)arg;
+
+        if(!strcmp("type", name))  {
+            *value = &(ctx->type);
+            *value_len = sizeof(ctx->type);  
+            return;
+        } else if(!strcmp("shard", name)){
+            *value = &(ctx->shard_id);
+            *value_len = sizeof(ctx->shard_id); 
+            return;   
+        } else if(!strcmp("pg", name)){
+            *value = ctx->pg.c_str();
+            *value_len = ctx->pg.size();    
+            return; 
+        }
+        *value = NULL;
+        *value_len = 0;
+    }
+
+    void blob_set_xattr(struct spdk_blob *blob) {
+        spdk_blob_set_xattr(blob, "type", &type, sizeof(type));
+        spdk_blob_set_xattr(blob, "shard", &shard_id, sizeof(shard_id));
+        spdk_blob_set_xattr(blob, "pg", pg.c_str(), pg.size());
+    }
+};
+
+struct object_xattr {
+    constexpr static char *xattr_names[] = {"type", "shard", "pg", "name"};
+    constexpr static size_t xattr_count = SPDK_COUNTOF(xattr_names);
+    constexpr static blob_type type = blob_type::object;
+    uint32_t shard_id;
+    std::string pg;
+    std::string obj_name;
+
+    static object_xattr parse_xattr(struct spdk_blob *blob) {
+        uint32_t *shard_id;
+        const char *value;
+        std::string pg, obj_name;
+        size_t len;
+        int rc;
+
+        rc = spdk_blob_get_xattr_value(blob, "shard", (const void **)&shard_id, &len);
+
+        rc = spdk_blob_get_xattr_value(blob, "pg", (const void **)&value, &len);
+        pg = std::string(value, len);
+
+        rc = spdk_blob_get_xattr_value(blob, "name", (const void **)&value, &len);
+        obj_name = std::string(value, len);
+
+        return object_xattr{.shard_id = *shard_id, .pg = pg, .obj_name = obj_name}; 
+    }
+
+    static void get_xattr_value(void *arg, const char *name, const void **value, size_t *value_len) {
+        struct object_xattr* ctx = (struct object_xattr*)arg;
+
+        if(!strcmp("type", name))  {
+            *value = &(object_xattr::type);
+            *value_len = sizeof(object_xattr::type);  
+            return;
+        } else if(!strcmp("shard", name)){
+            *value = &(ctx->shard_id);
+            *value_len = sizeof(ctx->shard_id); 
+            return;   
+        } else if(!strcmp("pg", name)){
+            *value = ctx->pg.c_str();
+            *value_len = ctx->pg.size();    
+            return; 
+        } else if(!strcmp("name", name)){
+            *value = ctx->obj_name.c_str();
+            *value_len = ctx->obj_name.size(); 
+            return; 
+        }
+        *value = NULL;
+        *value_len = 0;
+    }
+
+    void blob_set_xattr(struct spdk_blob *blob) {
+        spdk_blob_set_xattr(blob, "type", &(object_xattr::type), sizeof(object_xattr::type));
+        spdk_blob_set_xattr(blob, "shard", &shard_id, sizeof(shard_id));
+        spdk_blob_set_xattr(blob, "pg", pg.c_str(), pg.size());
+        spdk_blob_set_xattr(blob, "name", pg.c_str(), pg.size());
+    }
+};
+
+struct object_snap_xattr {
+    constexpr static char *xattr_names[] = {"type", "shard", "pg", "name", "snap_name"};
+    constexpr static size_t xattr_count = SPDK_COUNTOF(xattr_names);
+    constexpr static blob_type type = blob_type::object_snap;
+    uint32_t shard_id;
+    std::string pg;
+    std::string obj_name;
+    std::string snap_name;
+
+    static object_snap_xattr parse_xattr(struct spdk_blob *blob) {
+        uint32_t *shard_id;
+        const char *value;
+        std::string pg, obj_name, snap_name;
+        size_t len;
+        int rc;
+
+        rc = spdk_blob_get_xattr_value(blob, "shard", (const void **)&shard_id, &len);
+
+        rc = spdk_blob_get_xattr_value(blob, "pg", (const void **)&value, &len);
+        pg = std::string(value, len);
+
+        rc = spdk_blob_get_xattr_value(blob, "name", (const void **)&value, &len);
+        obj_name = std::string(value, len);
+
+        rc = spdk_blob_get_xattr_value(blob, "snap_name", (const void **)&value, &len);
+        snap_name = std::string(value, len);
+        return object_snap_xattr{.shard_id = *shard_id, .pg = pg, .obj_name = obj_name, .snap_name = snap_name};
+    }
+
+    static void get_xattr_value(void *arg, const char *name, const void **value, size_t *value_len) {
+        struct object_snap_xattr* ctx = (struct object_snap_xattr*)arg;
+
+        if(!strcmp("type", name))  {
+            *value = &(ctx->type);
+            *value_len = sizeof(ctx->type);  
+            return;
+        } else if(!strcmp("shard", name)){
+            *value = &(ctx->shard_id);
+            *value_len = sizeof(ctx->shard_id); 
+            return;   
+        } else if(!strcmp("pg", name)){
+            *value = ctx->pg.c_str();
+            *value_len = ctx->pg.size();    
+            return; 
+        } else if(!strcmp("name", name)){
+            *value = ctx->obj_name.c_str();
+            *value_len = ctx->obj_name.size(); 
+            return; 
+        } else if(!strcmp("snap_name", name)){
+            *value = ctx->snap_name.c_str();
+            *value_len = ctx->snap_name.size(); 
+            return; 
+        }
+        *value = NULL;
+        *value_len = 0;
+    }
+
+    void blob_set_xattr(struct spdk_blob *blob) {
+        spdk_blob_set_xattr(blob, "type", &type, sizeof(type));
+        spdk_blob_set_xattr(blob, "shard", &shard_id, sizeof(shard_id));
+        spdk_blob_set_xattr(blob, "pg", pg.c_str(), pg.size());
+        spdk_blob_set_xattr(blob, "name", pg.c_str(), pg.size());
+        spdk_blob_set_xattr(blob, "snap_name", pg.c_str(), pg.size());
+    }
+};
+
+struct object_recover_xattr {
+    constexpr static char *xattr_names[] = {"type", "shard", "pg", "name"};
+    constexpr static size_t xattr_count = SPDK_COUNTOF(xattr_names);
+    constexpr static blob_type type = blob_type::object_recover;
+    uint32_t shard_id;
+    std::string pg;
+    std::string obj_name;
+
+    static object_recover_xattr parse_xattr(struct spdk_blob *blob) {
+        uint32_t *shard_id;
+        const char *value;
+        std::string pg, obj_name;
+        size_t len;
+        int rc;
+
+        rc = spdk_blob_get_xattr_value(blob, "shard", (const void **)&shard_id, &len);
+
+        rc = spdk_blob_get_xattr_value(blob, "pg", (const void **)&value, &len);
+        pg = std::string(value, len);
+
+        rc = spdk_blob_get_xattr_value(blob, "name", (const void **)&value, &len);
+        obj_name = std::string(value, len);
+
+        return object_recover_xattr{.shard_id = *shard_id, .pg = pg, .obj_name = obj_name}; 
+    }
+
+    static void get_xattr_value(void *arg, const char *name, const void **value, size_t *value_len) {
+        struct object_recover_xattr* ctx = (struct object_recover_xattr*)arg;
+
+        if(!strcmp("type", name))  {
+            *value = &(ctx->type);
+            *value_len = sizeof(ctx->type);  
+            return;
+        } else if(!strcmp("shard", name)){
+            *value = &(ctx->shard_id);
+            *value_len = sizeof(ctx->shard_id); 
+            return;   
+        } else if(!strcmp("pg", name)){
+            *value = ctx->pg.c_str();
+            *value_len = ctx->pg.size();    
+            return; 
+        } else if(!strcmp("name", name)){
+            *value = ctx->obj_name.c_str();
+            *value_len = ctx->obj_name.size(); 
+            return; 
+        }
+        *value = NULL;
+        *value_len = 0;
+    }
+
+    void blob_set_xattr(struct spdk_blob *blob) {
+        spdk_blob_set_xattr(blob, "type", &type, sizeof(type));
+        spdk_blob_set_xattr(blob, "shard", &shard_id, sizeof(shard_id));
+        spdk_blob_set_xattr(blob, "pg", pg.c_str(), pg.size());
+        spdk_blob_set_xattr(blob, "name", pg.c_str(), pg.size());
+    }
+};
+
+struct kv_xattr {
+    constexpr static char *xattr_names[] = {"type", "shard"};
+    constexpr static size_t xattr_count = SPDK_COUNTOF(xattr_names);
+    constexpr static blob_type type = blob_type::kv;
+    uint32_t shard_id;
+
+    static kv_xattr parse_xattr(struct spdk_blob *blob) {
+        uint32_t *shard_id;
+        size_t len;
+
+        int rc = spdk_blob_get_xattr_value(blob, "shard", (const void **)&shard_id, &len);
+        // if (rc < 0) return;
+
+        return kv_xattr{.shard_id = *shard_id};
+    }
+
+    static void get_xattr_value(void *arg, const char *name, const void **value, size_t *value_len) {
+        struct kv_xattr* ctx = (struct kv_xattr*)arg;
+
+        if(!strcmp("type", name))  {
+            *value = &(ctx->type);
+            *value_len = sizeof(ctx->type);  
+            return;
+        } else if(!strcmp("shard", name)){
+            *value = &(ctx->shard_id);
+            *value_len = sizeof(ctx->shard_id); 
+            return;   
+        }
+        *value = NULL;
+        *value_len = 0;
+    }
+
+    void blob_set_xattr(struct spdk_blob *blob) {
+        spdk_blob_set_xattr(blob, "type", &type, sizeof(type));
+        spdk_blob_set_xattr(blob, "shard", &shard_id, sizeof(shard_id));
+    }
+};
+
+struct kv_checkpoint_xattr {
+    constexpr static char *xattr_names[] = {"type", "shard"};
+    constexpr static size_t xattr_count = SPDK_COUNTOF(xattr_names);
+    constexpr static blob_type type = blob_type::kv_checkpoint;
+    uint32_t shard_id;
+
+    static kv_checkpoint_xattr parse_xattr(struct spdk_blob *blob) {
+        uint32_t *shard_id;
+        size_t len;
+
+        int rc = spdk_blob_get_xattr_value(blob, "shard", (const void **)&shard_id, &len);
+        return kv_checkpoint_xattr{.shard_id = *shard_id};
+    }
+
+    static void get_xattr_value(void *arg, const char *name, const void **value, size_t *value_len) {
+        struct kv_checkpoint_xattr* ctx = (struct kv_checkpoint_xattr*)arg;
+
+        if(!strcmp("type", name))  {
+            *value = &(ctx->type);
+            *value_len = sizeof(ctx->type);  
+            return;
+        } else if(!strcmp("shard", name)){
+            *value = &(ctx->shard_id);
+            *value_len = sizeof(ctx->shard_id); 
+            return;   
+        }
+        *value = NULL;
+        *value_len = 0;
+    }
+
+    void blob_set_xattr(struct spdk_blob *blob) {
+        spdk_blob_set_xattr(blob, "type", &type, sizeof(type));
+        spdk_blob_set_xattr(blob, "shard", &shard_id, sizeof(shard_id));
+    }
+};
+
+struct kv_checkpoint_new_xattr {
+    constexpr static char *xattr_names[] = {"type", "shard"};
+    constexpr static size_t xattr_count = SPDK_COUNTOF(xattr_names);
+    constexpr static blob_type type = blob_type::kv_checkpoint_new;
+    uint32_t shard_id;
+
+    static kv_checkpoint_new_xattr parse_xattr(struct spdk_blob *blob) {
+        uint32_t *shard_id;
+        size_t len;
+
+        int rc = spdk_blob_get_xattr_value(blob, "shard", (const void **)&shard_id, &len);
+        return kv_checkpoint_new_xattr{.shard_id = *shard_id};
+    }
+
+    static void get_xattr_value(void *arg, const char *name, const void **value, size_t *value_len) {
+        struct kv_checkpoint_new_xattr* ctx = (struct kv_checkpoint_new_xattr*)arg;
+
+        if(!strcmp("type", name))  {
+            *value = &(ctx->type);
+            *value_len = sizeof(ctx->type);  
+            return;
+        } else if(!strcmp("shard", name)){
+            *value = &(ctx->shard_id);
+            *value_len = sizeof(ctx->shard_id); 
+            return;   
+        }
+        *value = NULL;
+        *value_len = 0;
+    }
+
+    void blob_set_xattr(struct spdk_blob *blob) {
+        spdk_blob_set_xattr(blob, "type", &type, sizeof(type));
+        spdk_blob_set_xattr(blob, "shard", &shard_id, sizeof(shard_id));
+    }
+};
+
+struct super_xattr {
+    constexpr static char *xattr_names[] = {"type"};
+    constexpr static size_t xattr_count = SPDK_COUNTOF(xattr_names);
+    constexpr static blob_type type = blob_type::super_blob;
+
+    static void get_xattr_value(void *arg, const char *name, const void **value, size_t *value_len) {
+        struct super_xattr* ctx = (struct super_xattr*)arg;
+
+        if(!strcmp("type", name))  {
+            *value = &(ctx->type);
+            *value_len = sizeof(ctx->type);  
+            return;
+        }
+        *value = NULL;
+        *value_len = 0;
+    }
+
+    void blob_set_xattr(struct spdk_blob *blob) {
+        spdk_blob_set_xattr(blob, "type", &type, sizeof(type));
+    }
+};
+
+/**
+ * free blob是给pool用的，全局只有一个pool，所以目前不需要shard_id。
+*/
+struct free_xattr {
+    constexpr static char *xattr_names[] = {"type"};
+    constexpr static size_t xattr_count = SPDK_COUNTOF(xattr_names);
+    constexpr static blob_type type = blob_type::free;
+
+    static void get_xattr_value(void *arg, const char *name, const void **value, size_t *value_len) {
+        struct super_xattr* ctx = (struct super_xattr*)arg;
+
+        if(!strcmp("type", name))  {
+            *value = &(ctx->type);
+            *value_len = sizeof(ctx->type);  
+            return;
+        }
+        *value = NULL;
+        *value_len = 0;
+    }
+
+    void blob_set_xattr(struct spdk_blob *blob) {
+        spdk_blob_set_xattr(blob, "type", &type, sizeof(type));
+    }
+};
+#pragma GCC diagnostic pop
 
 using xattr_val_type = std::variant<blob_type, uint32_t, std::string>;
 

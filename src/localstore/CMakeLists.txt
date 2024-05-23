@@ -10,6 +10,7 @@ compile_library(
     kv_store.cc
     kv_checkpoint.cc
     blob_pool.cc
+    disk_log.cc
 
   DEPS
   spdk::spdk
