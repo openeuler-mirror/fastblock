@@ -48,32 +48,15 @@ static void make_log_done(void *arg, struct disk_log* dlog, int rberrno){
         return;
     }
 
-    std::map<std::string, xattr_val_type> xattr;
-    xattr["type"] = blob_type::log;
-    uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
-    xattr["shard"] = shard_id;
-    xattr["pg"] = pg_id_to_name(mlc->pool_id, mlc->pg_id);   
-    dlog->set_blob_xattr(xattr, 
-      [dlog](void *arg, int rberrno){
-        make_log_context* mlc = (make_log_context*)arg;
-        if(rberrno){
-            SPDK_ERRLOG_EX("make_disk_log failed: %s\n", spdk_strerror(rberrno));
-            mlc->cb_fn(mlc->arg, rberrno);
-            delete mlc;
-            return;
-        }
-        SPDK_INFOLOG_EX(osd, "make_log_done, rberrno %d\n", rberrno);
-        partition_manager* pm = mlc->pm;
-        auto sm = std::make_shared<osd_stm>();
-        auto pg = pg_id_to_name(mlc->pool_id, mlc->pg_id);
-        sm->set_pg(pg);
-        pm->add_osd_stm(mlc->pool_id, mlc->pg_id, mlc->shard_id, sm);
-        pm->get_pg_group().create_pg(sm, mlc->shard_id, mlc->pool_id, mlc->pg_id, std::move(mlc->osds), 
-                dlog, pm->get_mon_client());
-        mlc->cb_fn(mlc->arg, rberrno);
-        delete mlc;
-      },
-      mlc);
+    partition_manager* pm = mlc->pm;
+    auto sm = std::make_shared<osd_stm>();
+    auto pg = pg_id_to_name(mlc->pool_id, mlc->pg_id);
+    sm->set_pg(pg);
+    pm->add_osd_stm(mlc->pool_id, mlc->pg_id, mlc->shard_id, sm);
+    pm->get_pg_group().create_pg(sm, mlc->shard_id, mlc->pool_id, mlc->pg_id, std::move(mlc->osds), 
+            dlog, pm->get_mon_client());
+    mlc->cb_fn(mlc->arg, rberrno);
+    delete mlc;
 }
 
 void partition_manager::create_pg(
