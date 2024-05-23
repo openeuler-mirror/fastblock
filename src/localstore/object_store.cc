@@ -897,7 +897,7 @@ static void delete_blob_done(void *arg, int objerrno){
   ctx->blobs.pop_front();
 
   if(ctx->blobs.empty()){
-    SPDK_WARNLOG_EX("delete blobs done.\n");
+    SPDK_INFOLOG_EX(object_store, "delete blobs done.\n");
     ctx->cb_fn(ctx->arg, 0);
     return;
   }

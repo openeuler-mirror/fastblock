@@ -35,7 +35,13 @@ const (
 type PGID uint64
 
 type PGSTATE uint64
-
+/*
+ * PgCreatin: 表示pg处于创建过程中
+ * PgActive： 表示pg状态正常
+ * PgUndersize：表示pg中处于up状态的osd数量小于副本数量，但大于副本数量的一半
+ * PgDown：表示pg中处于up状态的osd数量小于等于副本数量的一半，pg不能处理读写请求
+ * PgRemapped： 表示pg重新分布,会触发osd成员变更，触发osd成员变更，到成员变更完成这一阶段处于remapped状态。
+*/
 const (
 	PgCreating  = 1 << 0
 	PgActive    = 1 << 1
@@ -110,6 +116,64 @@ type pgTask struct {
 }
 
 var pgsTaskQueue map[string]*CommonQueue
+
+/*
+ * 设置pg的状态, 参数state只能是PgCreating、PgActive、PgUndersize、PgDown和PgRemapped中的一种
+ * pg状态可以共存的几种情况：
+ *     PgCreating | PgUndersize
+ *     PgCreating | PgDown
+ *     PgUndersize | PgRemapped
+ *     PgDown | PgRemapped
+ */
+func (pg *PGConfig)SetPgState(state PGSTATE) {
+	switch state {
+	case PgCreating:
+		pg.PgState = pg.PgState &^ PgActive
+		pg.PgState = pg.PgState &^ PgRemapped
+		pg.PgState |= state
+	case PgActive:
+		pg.PgState = state
+	case PgUndersize:
+		pg.PgState = pg.PgState &^ PgActive
+		pg.PgState = pg.PgState &^ PgDown
+		pg.PgState |= state
+	case PgDown:
+		pg.PgState = pg.PgState &^ PgActive
+		pg.PgState = pg.PgState &^ PgUndersize
+		pg.PgState |= state
+	case PgRemapped:
+		pg.PgState = pg.PgState &^ PgActive
+		pg.PgState = pg.PgState &^ PgCreating
+		pg.PgState |= state
+	}
+}
+
+/*
+ * 复位pg的状态, 参数state只能是PgCreating、PgActive、PgUndersize、PgDown和PgRemapped中的一种
+ */
+func (pg *PGConfig)UnsetPgState(state PGSTATE) {
+	if state == PgCreating ||
+	  state == PgActive    ||
+	  state == PgUndersize ||
+	  state == PgDown      ||
+	  state == PgRemapped {
+		pg.PgState = pg.PgState &^ state
+	}
+}
+
+/*
+ * 检查pg是否处于参数state所示状态
+ */
+func (pg *PGConfig)PgInState(state PGSTATE) bool{
+	if state == PgCreating ||
+	  state == PgActive    ||
+	  state == PgUndersize ||
+	  state == PgDown      ||
+	  state == PgRemapped {
+		return (pg.PgState & state) != 0; 
+	}
+	return false
+}
 
 // findUsablePoolId finds the first available pool id
 // we don't reuse pool ids, so it always increaing
@@ -194,13 +258,12 @@ func ProcessOsdDown(ctx context.Context, client *etcdapi.EtcdClient, osdid int) 
 			if !contains(pg.OsdList, osdid, 0, len(pg.OsdList)) {
 				continue
 			}
-			if pg.PgState&PgUndersize == 0 && pg.PgState&PgDown == 0 {
-				pg.PgState |= PgUndersize
+			if !pg.PgInState(PgUndersize) && !pg.PgInState(PgDown) {
+				pg.SetPgState(PgUndersize)
 				isChange = true
 				log.Warn(ctx, "pg ", poolID, ".", pgID, " to PgUndersize state.")
-			} else if pg.PgState&PgUndersize != 0 {
-				pg.PgState = pg.PgState &^ PgUndersize
-				pg.PgState |= PgDown
+			} else if pg.PgInState(PgUndersize) && CheckPgState(pg.OsdList, pool.PGSize) == PgDown {
+				pg.SetPgState(PgDown)
 				isChange = true
 				log.Warn(ctx, "pg ", poolID, ".", pgID, " to PgDown state.")
 			} else {
@@ -304,26 +367,44 @@ func ProcessLeaderBeElected(ctx context.Context, client *etcdapi.EtcdClient, lea
 	pgIdStr := strconv.FormatUint(pgId, 10)
 	if poolConf, ok := AllPools[PoolID(poolId)]; ok {
 		if pgConf, gok := poolConf.PoolPgMap.PgMap[pgIdStr]; gok {
-			if (pgConf.PgState & PgCreating) != 0 {
-				pgConf.PgState = pgConf.PgState &^ PgCreating
-				pgConf.PgState |= PgActive
+			if pgConf.PgInState(PgCreating) {
+				if pgConf.PgInState(PgUndersize) || pgConf.PgInState(PgDown) {
+					pgConf.UnsetPgState(PgCreating)
+				} else {
+					pgConf.SetPgState(PgActive)
+				}
 				pgConf.Version++
 				log.Warn(ctx, "pg", poolId, ".", pgId, " in PgCreating.")
-			} else if (pgConf.PgState & PgRemapped) != 0 {
+			} else if pgConf.PgInState(PgRemapped) {
+				//pg remap过程中，leader down掉或切换，导致remap中断
 				if Compare_arry(pgConf.OsdList, osdList) {
 					outNum := getPgOsdOutNum(osdList, poolConf.PGSize)
 					log.Warn(ctx, "pg", poolId, ".", pgId, " in PgRemapped. outNum ", outNum)
 					if outNum > 0 {
 						pgConf.Version++
 					} else {
+						//pg中所有osd都是in状态，停止remap
 						pgConf.NewOsdList = pgConf.NewOsdList[:0]
-						pgConf.PgState = pgConf.PgState &^ PgRemapped
+						pgConf.UnsetPgState(PgRemapped)
+						if !pgConf.PgInState(PgUndersize) && !pgConf.PgInState(PgDown) {
+							pgConf.SetPgState(PgActive)
+						}
+
 						pgConf.Version++
 					}
-				} else if Compare_arry(pgConf.OsdList, newOsdList) {
+				} else if Compare_arry(pgConf.NewOsdList, osdList) {
 					pgConf.OsdList = pgConf.NewOsdList
 					pgConf.NewOsdList = pgConf.NewOsdList[:0]
-					pgConf.PgState = pgConf.PgState &^ PgRemapped
+					pgConf.UnsetPgState(PgRemapped)
+					state := CheckPgState(pgConf.OsdList, poolConf.PGSize)
+					if state == 0 {
+						pgConf.SetPgState(PgActive)
+					} else if state == PgUndersize {
+						pgConf.SetPgState(PgUndersize)
+					} else if state == PgDown {
+						pgConf.SetPgState(PgDown)
+					}
+
 					pgConf.Version++
 					log.Warn(ctx, "pg", poolId, ".", pgId, " in PgRemapped. pg osdList == newOsdList")
 				} else {
@@ -368,19 +449,19 @@ func ProcessPgMemberChangeFinish(ctx context.Context, client *etcdapi.EtcdClient
 	pgIdStr := strconv.FormatUint(pgId, 10)
 	if poolConf, ok := AllPools[PoolID(poolId)]; ok {
 		if pgConf, gok := poolConf.PoolPgMap.PgMap[pgIdStr]; gok {
-			if (pgConf.PgState & PgRemapped) != 0 {
+			if pgConf.PgInState(PgRemapped) {
 				log.Warn(ctx, "pg", poolId, ".", pgId, " in PgRemapped. result ", result)
 				if result == 0 {
-					pgConf.PgState = pgConf.PgState &^ PgRemapped
-					pgConf.PgState |= PgActive
-
+					pgConf.UnsetPgState(PgRemapped)
 					state := CheckPgState(pgConf.NewOsdList, poolConf.PGSize)
-					if (state & PgUndersize) == 0 {
-						pgConf.PgState = pgConf.PgState &^ PgUndersize
+					if state == 0 {
+						pgConf.SetPgState(PgActive)
+					} else if state == PgUndersize {
+						pgConf.SetPgState(PgUndersize)
+					} else if state == PgDown {
+						pgConf.SetPgState(PgDown)
 					}
-					if (state & PgDown) == 0 {
-						pgConf.PgState = pgConf.PgState &^ PgDown
-					}
+
 					pgConf.Version++
 					pgConf.OsdList = pgConf.NewOsdList
 					pgConf.NewOsdList = pgConf.NewOsdList[:0]

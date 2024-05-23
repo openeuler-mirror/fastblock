@@ -2694,7 +2694,7 @@ void raft_server_t::load(raft_node_id_t current_node, raft_complete cb_fn, void 
 }
 
 void raft_server_t::active_raft(){
-    SPDK_WARNLOG_EX("active pg %lu.%lu state from %d to %d\n", _pool_id, _pg_id, _op_state, raft_op_state::RAFT_ACTIVE);
+    SPDK_INFOLOG_EX(pg_group, "active pg %lu.%lu state from %d to %d\n", _pool_id, _pg_id, _op_state, raft_op_state::RAFT_ACTIVE);
     if(_op_state == raft_op_state::RAFT_INIT)
         _op_state = raft_op_state::RAFT_ACTIVE;
 }

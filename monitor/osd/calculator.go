@@ -319,6 +319,7 @@ func CreatePgs(ctx context.Context, client *etcdapi.EtcdClient, pool *PoolConfig
     return &poolPGResult.OptimizedPgMap.PgMap, nil
 }
 
+//pg的成员列表osdList，osdid表示的osd由down变为up，是否可以触发pg remap
 func shouldChange(osdList []int, pgSize int, osdid int) bool {
     var downNum int
     var outNum int
@@ -349,6 +350,7 @@ func shouldChange(osdList []int, pgSize int, osdid int) bool {
         //down  to  Undersize
         if outNum >= 1 {
             if outNum == 1 && osdIsDownOut {
+				//唯一的处于out状态的osd变为in
                 return false
             }
             return true
@@ -402,12 +404,12 @@ func containsDomain(pgDomainMap *map[int][]string, pgId int, domain string) bool
 func transferable(poolid PoolID, pgId int) bool {
 	pg := AllPools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgId)]
 
-	if (pg.PgState & PgRemapped) != 0  ||
-	  (pg.PgState & PgDown) != 0  ||
-	  (pg.PgState & PgCreating) != 0  ||
-	  (pg.PgState & PgUndersize) != 0 {
+	if pg.PgInState(PgRemapped) ||
+	  pg.PgInState(PgDown) ||
+	  pg.PgInState(PgCreating) ||
+	  pg.PgInState(PgUndersize) {
 		return false
-	} 
+	}
 
 	return true
 }
@@ -499,12 +501,12 @@ func transferPG(ctx context.Context, cfg *OptimizeCfg, poolid PoolID, pgId int, 
 	} else {
 		return false
 	}
-	log.Warn(ctx, "+++ pool: ", poolid, " pg: ", pgId, ",  srcOsd: ", srcOsd, ", dstOsd: ", dstOsd)
+	log.Debug(ctx, "+++ pool: ", poolid, " pg: ", pgId, ",  srcOsd: ", srcOsd, ", dstOsd: ", dstOsd)
 	(*pgNumPerOsd)[srcOsd]--
 	(*pgNumPerOsd)[dstOsd]++
 	newOsdList = append(newOsdList, dstOsd)
 	pg.Version++
-	pg.PgState |= PgRemapped
+	pg.SetPgState(PgRemapped)
 	pg.NewOsdList = newOsdList
 	AllPools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgId)] = pg
 	log.Debug(ctx, "pg: ", pgId, " PgState ", pg.PgState, " osdList: ", pg.OsdList, " NewOsdList: ", pg.NewOsdList)
@@ -537,13 +539,13 @@ func reblancePool(ctx context.Context,
 	 */
 	domainPgNum, pgOnDomainMap, pgNumPerOsd, pgDomainMap, osdDomainMap := getDomainPg(optimizeCfg, PoolID(pool.Poolid))
 	for domainName, pgList := range *pgOnDomainMap {
-		log.Warn(ctx, "+++ pool: ", pool.Poolid, " domain: ", domainName, " pg num: ", (*domainPgNum)[domainName], ", pg list: ", pgList)
+		log.Debug(ctx, "+++ pool: ", pool.Poolid, " domain: ", domainName, " pg num: ", (*domainPgNum)[domainName], ", pg list: ", pgList)
 	}
 	for osdId, pgnum := range *pgNumPerOsd {
-		log.Warn(ctx, "+++ pool: ", pool.Poolid, " osdId: ", osdId, " pg num: ", pgnum)
+		log.Debug(ctx, "+++ pool: ", pool.Poolid, " osdId: ", osdId, " pg num: ", pgnum)
 	}
 	for pgid, domainList := range *pgDomainMap {
-		log.Warn(ctx, "+++ pool: ", pool.Poolid, " pgid: ", pgid, " domain list: ", domainList)
+		log.Debug(ctx, "+++ pool: ", pool.Poolid, " pgid: ", pgid, " domain list: ", domainList)
 	}
 
 
@@ -564,7 +566,7 @@ func reblancePool(ctx context.Context,
 	for loop := 0; loop < pool.PGCount; loop++ {
 		maxPgDomain := getMaxValue(domainPgNum)
 		minPgDomain, secondMinPgDomain, thirdMinPgDomain := top3MinValue(domainPgNum)
-		log.Warn(ctx, "+++ pool: ", pool.Poolid, ", maxPgDomain: ", maxPgDomain, ", minPgDomain: ", minPgDomain, 
+		log.Debug(ctx, "+++ pool: ", pool.Poolid, ", maxPgDomain: ", maxPgDomain, ", minPgDomain: ", minPgDomain, 
 				", secondMinPgDomain: ", secondMinPgDomain, ", thirdMinPgDomain: ", thirdMinPgDomain)
 
 		breakFlag = true
@@ -575,28 +577,17 @@ func reblancePool(ctx context.Context,
 			//遍历承担pg最多的那个domain上的pg
 			for i := 0; i < len((*pgOnDomainMap)[maxPgDomain]); i++ {
 				pgId := (*pgOnDomainMap)[maxPgDomain][i]
-				log.Warn(ctx, "+++ pool: ", pool.Poolid, ", maxPgDomain: ", maxPgDomain, ", pgId: ", pgId)
+				log.Debug(ctx, "+++ pool: ", pool.Poolid, ", maxPgDomain: ", maxPgDomain, ", pgId: ", pgId)
 				//检测maxPgDomain是否在pg中
 				if containsDomain(pgDomainMap, pgId, maxPgDomain) {
 					if !transferable(PoolID(pool.Poolid), pgId) {
-						log.Warn(ctx, "+++ pool: ", pool.Poolid, ", pg: ",  pgId, " can not transfre.")
+						log.Debug(ctx, "+++ pool: ", pool.Poolid, ", pg: ",  pgId, " can not transfre.")
 						continue
 					}
 
 					if transferPG(ctx, optimizeCfg, PoolID(pool.Poolid), pgId, pgDomainMap, osdDomainMap, 
 					  maxPgDomain, minPgDomain, secondMinPgDomain, thirdMinPgDomain, 
 					  domainPgNum, pgOnDomainMap, pgNumPerOsd) {
-						///////////////////////
-						for domainName, pgList := range *pgOnDomainMap {
-							log.Warn(ctx, "--- pool: ", pool.Poolid, " domain: ", domainName, " pg num: ", (*domainPgNum)[domainName], ", pg list: ", pgList)
-						}
-						for osdId, pgnum := range *pgNumPerOsd {
-							log.Warn(ctx, "--- pool: ", pool.Poolid, " osdId: ", osdId, " pg num: ", pgnum)
-						}
-						for pgid, domainList := range *pgDomainMap {
-							log.Warn(ctx, "--- pool: ", pool.Poolid, " pgid: ", pgid, " domain list: ", domainList)
-						}
-						//////////////////////
 						isRemap = true
 						breakFlag = false
 						break
@@ -654,6 +645,7 @@ func Reblance(ctx context.Context, client *etcdapi.EtcdClient) {
 	}
 }
 
+
 func CheckPgs(ctx context.Context, client *etcdapi.EtcdClient, osdid int, stateSwitch  STATESWITCH) {
     if AllPools == nil {
         log.Info(ctx, "AllPoolsConfig nil!")
@@ -676,75 +668,102 @@ func CheckPgs(ctx context.Context, client *etcdapi.EtcdClient, osdid int, stateS
         pgSize := pool.PGSize
         oldPGs := pool.PoolPgMap.PgMap
         isRemap := false
+		isPgStateChange := false
         
         for pgID, pg := range oldPGs {
-            if (pg.PgState & PgRemapped) != 0 {
-                log.Info(ctx, "pg ", poolID, ".", pgID, " is in PgRemapped state.")
-                if pg.PgState & PgDown != 0 {
-                    if stateSwitch == DownToUp  && shouldChange(pg.OsdList, pgSize, osdid) {
-                        PushPgTask(pgID, osdid, stateSwitch)
-                    }
-                } else {
-                    if stateSwitch == InToOut {
-                        PushPgTask(pgID, osdid, stateSwitch)
-                    }
+            if pg.PgInState(PgRemapped) {
+                if !listContain(pg.OsdList, osdid) && !listContain(pg.NewOsdList, osdid) {
+                	//状态变更的osd不在pg的osd列表中
+                	continue
                 }
-                continue
-            }
-
-            if (pg.PgState & PgCreating) != 0 {
-                //pg is creating
-                if (pg.PgState & PgDown) != 0 {
+                log.Info(ctx, "pg ", poolID, ".", pgID, " is in PgRemapped state.")
+                if !pg.PgInState(PgDown) {
                     if stateSwitch == InToOut {
+                        PushPgTask(pgID, osdid, stateSwitch)
+                    }
+                } 
+                // else {  //pg处于PgDown状态
+                	// pg选出leader后会检查是否继续变更，这里不需要检查是否变更
+                    // if stateSwitch == DownToUp  && shouldChange(pg.OsdList, pgSize, osdid) {
+                        // PushPgTask(pgID, osdid, stateSwitch)
+                    // }
+                // }
+            } else {
+                if !listContain(pg.OsdList, osdid) {
+                	//状态变更的osd不在pg的osd列表中
+                	continue
+                }
+	
+                if pg.PgInState(PgCreating) {
+                    //pg is creating
+                    if pg.PgInState(PgDown) {
+                    	if stateSwitch == InToOut {
+                    	    //osd from in to out
+                    	    log.Info(ctx, "pg ", poolID, ".", pgID, "in PgCreating | PgDown, osd from in to out")
+                    	    pgConfig, ok := redistributionPg(ctx, osdTreeMap, osdNodeMap, poolID, pgID)
+                    	    if ok {
+                    	        //pg处于redistributionPg && PgDown，此时有osd状态有in变为out，pg状态不会变为PgRemapped
+                    	        pgConfig.UnsetPgState(PgRemapped)
+                    	        pgConfig.SetPgState(PgCreating)
+                    	        isRemap = true
+                    	        AllPools[poolID].PoolPgMap.PgMap[pgID] = *pgConfig
+                    	    }
+                    	}
+                    } else {
+                        if stateSwitch == InToOut {
+                            //osd from in to out
+                            log.Info(ctx, "pg ", poolID, ".", pgID, "in PgCreating, osd from in to out")
+                            PushPgTask(pgID, osdid, stateSwitch)
+                        }
+                    }
+                }else if !pg.PgInState(PgDown) {
+                    //pg is not down
+                    if stateSwitch == InToOut ||  stateSwitch == DownToUp{
                         //osd from in to out
-                        log.Info(ctx, "pg ", poolID, ".", pgID, "in PgCreating | PgDown, osd from in to out")
+                        if stateSwitch == InToOut {
+                            log.Info(ctx, "pg ", poolID, ".", pgID, "not in PgDown, osd from in to out")
+                        } else if stateSwitch == DownToUp {
+                            log.Info(ctx, "pg ", poolID, ".", pgID, "not in PgDown, osd from down to up")
+                        }
+                        
                         pgConfig, ok := redistributionPg(ctx, osdTreeMap, osdNodeMap, poolID, pgID)
                         if ok {
-                            //pg处于redistributionPg && PgDown，此时有osd状态有in变为out，pg状态不会变为PgRemapped
-                            pgConfig.PgState = pgConfig.PgState &^ PgRemapped
                             isRemap = true
                             AllPools[poolID].PoolPgMap.PgMap[pgID] = *pgConfig
                         }
                     }
-                } else {
-                    if stateSwitch == InToOut {
-                        //osd from in to out
-                        log.Info(ctx, "pg ", poolID, ".", pgID, "in PgCreating, osd from in to out")
-                        PushPgTask(pgID, osdid, stateSwitch)
+                }else if pg.PgInState(PgDown) {
+                    //pg is down
+                    if stateSwitch == DownToUp && shouldChange(pg.OsdList, pgSize, osdid) {
+                        log.Info(ctx, "pg ", poolID, ".", pgID, "in PgDown, osd from down to up")
+                        pgConfig, ok := redistributionPg(ctx, osdTreeMap, osdNodeMap, poolID, pgID)
+                        if ok {
+                            isRemap = true
+                            AllPools[poolID].PoolPgMap.PgMap[pgID] = *pgConfig
+                        }
                     }
                 }
-                continue
-            }else if (pg.PgState & PgDown) == 0 {
-                //pg is not down
-                if stateSwitch == InToOut ||  stateSwitch == DownToUp{
-                    //osd from in to out
-                    if stateSwitch == InToOut {
-                        log.Info(ctx, "pg ", poolID, ".", pgID, "not in PgDown, osd from in to out")
-                    } else if stateSwitch == DownToUp {
-                        log.Info(ctx, "pg ", poolID, ".", pgID, "not in PgDown, osd from down to up")
+            }
+            if stateSwitch == DownToUp {
+                pgConfig := AllPools[poolID].PoolPgMap.PgMap[pgID]
+                //检查pg状态是否需要变更
+                state := CheckPgState(pgConfig.OsdList, pool.PGSize)
+                if state == 0 {
+                    isPgStateChange = true
+                    pgConfig.UnsetPgState(PgUndersize)
+                    pgConfig.UnsetPgState(PgDown)
+                    if !pgConfig.PgInState(PgCreating) && !pgConfig.PgInState(PgRemapped) {
+                        pgConfig.SetPgState(PgActive)
                     }
-                    
-                    pgConfig, ok := redistributionPg(ctx, osdTreeMap, osdNodeMap, poolID, pgID)
-                    if ok {
-                        isRemap = true
-                        AllPools[poolID].PoolPgMap.PgMap[pgID] = *pgConfig
-                    }
+                    AllPools[poolID].PoolPgMap.PgMap[pgID] = pgConfig
+                } else if !pgConfig.PgInState(state) {
+                    isPgStateChange = true
+                    pgConfig.SetPgState(state)
+                    AllPools[poolID].PoolPgMap.PgMap[pgID] = pgConfig
                 }
-                continue
-            }else if (pg.PgState & PgDown) != 0 {
-                //pg is down
-                if stateSwitch == DownToUp && shouldChange(pg.OsdList, pgSize, osdid) {
-                    log.Info(ctx, "pg ", poolID, ".", pgID, "in PgDown, osd from down to up")
-                    pgConfig, ok := redistributionPg(ctx, osdTreeMap, osdNodeMap, poolID, pgID)
-                    if ok {
-                        isRemap = true
-                        AllPools[poolID].PoolPgMap.PgMap[pgID] = *pgConfig
-                    }
-                }
-                continue
             }
         }
-        if isRemap {
+        if isRemap || isPgStateChange {
             AllPools[poolID].PoolPgMap.Version++
             pc_buf, err := json.Marshal(AllPools[poolID])
             if err != nil {
@@ -801,7 +820,7 @@ func redistributionPg(ctx context.Context,
     newOsdList = append(newOsdList, addOsdList...)
     pgConfig := AllPools[poolId].PoolPgMap.PgMap[pgId]
     pgConfig.Version++
-    pgConfig.PgState |= PgRemapped
+	pgConfig.SetPgState(PgRemapped)
     pgConfig.NewOsdList = newOsdList    
     log.Info(ctx, "pg: ", poolId, ".", pgId, " Version: ", pgConfig.Version, " PgState: ", pgConfig.PgState, 
 	        " OsdList: ", pgConfig.OsdList, " NewOsdList: ", pgConfig.NewOsdList)
@@ -1322,10 +1341,10 @@ func SimpleInitial(ctx context.Context, cfg *OptimizeCfg) (*OptimizeResult, erro
 		oldPgCfg, ok := oldPGs[strconv.Itoa(i)]
 		if ok == false {
 			ppc.Version = 1
-			ppc.PgState |= PgCreating
+			ppc.SetPgState(PgCreating)
 			state := CheckPgState(ppc.OsdList, pg_size)
 			if state == PgUndersize ||  state == PgDown {
-				ppc.PgState |= state
+				ppc.SetPgState(state)
 			}
 		} else {
 			old_osdlist := oldPgCfg.OsdList
