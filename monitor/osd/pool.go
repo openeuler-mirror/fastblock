@@ -34,6 +34,22 @@ const (
 // TODO: now use string in etcd.
 type PGID uint64
 
+type PGSTATE uint64
+/*
+ * PgCreatin: 表示pg处于创建过程中
+ * PgActive： 表示pg状态正常
+ * PgUndersize：表示pg中处于up状态的osd数量小于副本数量，但大于副本数量的一半
+ * PgDown：表示pg中处于up状态的osd数量小于等于副本数量的一半，pg不能处理读写请求
+ * PgRemapped： 表示pg重新分布,会触发osd成员变更，触发osd成员变更，到成员变更完成这一阶段处于remapped状态。
+*/
+const (
+	PgCreating  = 1 << 0
+	PgActive    = 1 << 1
+	PgUndersize = 1 << 2
+	PgDown      = 1 << 3
+	PgRemapped  = 1 << 4
+)
+
 // PGsConfig 7/pools/$PGID, output.
 // put pgmap in on key/value pair so we cant version it golablly
 // Example: {"version":123,"pgmap":{"1_1":[1,2,3],"1_2":[2,3,4]}}
@@ -51,8 +67,10 @@ type PoolPGsConfig struct {
 // TODO: use OSDID, not string. It requires parse change.
 // type PGConfig []int
 type PGConfig struct {
-	Version int64 `json:"version,omitempty"`
-	OsdList []int `json:"osdlist,omitempty"`
+	Version    int64   `json:"version,omitempty"`
+	PgState    PGSTATE `json:"pgstate,omitempty"`
+	OsdList    []int   `json:"osdlist,omitempty"`
+	NewOsdList []int   `json:"newosdlist,omitempty"`
 }
 
 // PoolID defines pool ID.
@@ -92,6 +110,71 @@ var AllPools map[PoolID]*PoolConfig
 var lastSeenPoolId int32
 var osdmapVersion int64
 
+type pgTask struct {
+	osdid       int
+	stateSwitch STATESWITCH
+}
+
+var pgsTaskQueue map[string]*CommonQueue
+
+/*
+ * 设置pg的状态, 参数state只能是PgCreating、PgActive、PgUndersize、PgDown和PgRemapped中的一种
+ * pg状态可以共存的几种情况：
+ *     PgCreating | PgUndersize
+ *     PgCreating | PgDown
+ *     PgUndersize | PgRemapped
+ *     PgDown | PgRemapped
+ */
+func (pg *PGConfig)SetPgState(state PGSTATE) {
+	switch state {
+	case PgCreating:
+		pg.PgState = pg.PgState &^ PgActive
+		pg.PgState = pg.PgState &^ PgRemapped
+		pg.PgState |= state
+	case PgActive:
+		pg.PgState = state
+	case PgUndersize:
+		pg.PgState = pg.PgState &^ PgActive
+		pg.PgState = pg.PgState &^ PgDown
+		pg.PgState |= state
+	case PgDown:
+		pg.PgState = pg.PgState &^ PgActive
+		pg.PgState = pg.PgState &^ PgUndersize
+		pg.PgState |= state
+	case PgRemapped:
+		pg.PgState = pg.PgState &^ PgActive
+		pg.PgState = pg.PgState &^ PgCreating
+		pg.PgState |= state
+	}
+}
+
+/*
+ * 复位pg的状态, 参数state只能是PgCreating、PgActive、PgUndersize、PgDown和PgRemapped中的一种
+ */
+func (pg *PGConfig)UnsetPgState(state PGSTATE) {
+	if state == PgCreating ||
+	  state == PgActive    ||
+	  state == PgUndersize ||
+	  state == PgDown      ||
+	  state == PgRemapped {
+		pg.PgState = pg.PgState &^ state
+	}
+}
+
+/*
+ * 检查pg是否处于参数state所示状态
+ */
+func (pg *PGConfig)PgInState(state PGSTATE) bool{
+	if state == PgCreating ||
+	  state == PgActive    ||
+	  state == PgUndersize ||
+	  state == PgDown      ||
+	  state == PgRemapped {
+		return (pg.PgState & state) != 0; 
+	}
+	return false
+}
+
 // findUsablePoolId finds the first available pool id
 // we don't reuse pool ids, so it always increaing
 // poll deletions are rare, we are safe to use int32.
@@ -106,6 +189,7 @@ func findUsablePoolId() PoolID {
 func LoadPoolConfig(ctx context.Context, client *etcdapi.EtcdClient) (err error) {
 	lastSeenPoolId = 0
 	AllPools = make(map[PoolID]*PoolConfig)
+	pgsTaskQueue = make(map[string]*CommonQueue)
 
 	kvs, getErr := client.GetWithPrefix(ctx, config.ConfigPoolsKeyPrefix)
 	if getErr != nil {
@@ -139,6 +223,10 @@ func LoadPoolConfig(ctx context.Context, client *etcdapi.EtcdClient) (err error)
 			lastSeenPoolId = int32(poolID)
 		}
 
+		for pgid, _ := range poolConfig.PoolPgMap.PgMap {
+			pgsTaskQueue[pgid] = NewQueue()
+		}
+
 		log.Debug(ctx, "pool", poolID)
 	}
 
@@ -148,6 +236,62 @@ func LoadPoolConfig(ctx context.Context, client *etcdapi.EtcdClient) (err error)
 	}
 
 	return nil
+}
+
+func ProcessOsdDown(ctx context.Context, client *etcdapi.EtcdClient, osdid int) {
+	if AllPools == nil {
+		log.Warn(ctx, "AllPoolsConfig nil!")
+		return
+	}
+
+	var isChange bool
+	for poolID, pool := range AllPools {
+		isChange = false
+		if pool.PoolPgMap.PgMap == nil {
+			continue
+		}
+
+		log.Warn(ctx, "check pool", poolID, ":", pool.Name)
+		ppg := &pool.PoolPgMap
+
+		for pgID, pg := range ppg.PgMap {
+			if !contains(pg.OsdList, osdid, 0, len(pg.OsdList)) {
+				continue
+			}
+			if !pg.PgInState(PgUndersize) && !pg.PgInState(PgDown) {
+				pg.SetPgState(PgUndersize)
+				isChange = true
+				log.Warn(ctx, "pg ", poolID, ".", pgID, " to PgUndersize state.")
+			} else if pg.PgInState(PgUndersize) && CheckPgState(pg.OsdList, pool.PGSize) == PgDown {
+				pg.SetPgState(PgDown)
+				isChange = true
+				log.Warn(ctx, "pg ", poolID, ".", pgID, " to PgDown state.")
+			} else {
+				continue
+			}
+			pg.Version++
+			ppg.PgMap[pgID] = pg
+		}
+
+		if isChange {
+			ppg.Version++
+			AllPools[poolID].PoolPgMap = *ppg
+
+			pc_buf, err := json.Marshal(AllPools[poolID])
+			if err != nil {
+				log.Error(ctx, err)
+				continue
+			}
+
+			key := fmt.Sprintf("%s%d", config.ConfigPoolsKeyPrefix, poolID)
+			err = client.Put(ctx, key, string(pc_buf))
+			if err != nil {
+				log.Error(ctx, err)
+				continue
+			}
+		}
+	}
+	// printAllPool(ctx)
 }
 
 func ProcessCreatePoolMessage(ctx context.Context, client *etcdapi.EtcdClient, name string, size int, pc int, fd string, root string) (int32, error) {
@@ -160,7 +304,7 @@ func ProcessCreatePoolMessage(ctx context.Context, client *etcdapi.EtcdClient, n
 	pid := findUsablePoolId()
 
 	//pgs of the pool is created by RecheckPgs
-	ppgc := PoolPGsConfig{Version: 0, PgMap: make(map[string]PGConfig)}
+	ppgc := PoolPGsConfig{Version: 1, PgMap: make(map[string]PGConfig)}
 	poolConf := &PoolConfig{
 		Poolid:        int(pid),
 		Name:          name,
@@ -169,6 +313,16 @@ func ProcessCreatePoolMessage(ctx context.Context, client *etcdapi.EtcdClient, n
 		FailureDomain: fd,
 		Root:          root,
 		PoolPgMap:     ppgc,
+	}
+
+	PgMap, err := CreatePgs(ctx, client, poolConf)
+	if err != nil {
+		log.Error(ctx, err)
+		return -1, err
+	}
+	poolConf.PoolPgMap.PgMap = *PgMap
+	for pgid, _ := range poolConf.PoolPgMap.PgMap {
+		pgsTaskQueue[pgid] = NewQueue()
 	}
 
 	pc_buf, err := json.Marshal(poolConf)
@@ -192,6 +346,158 @@ func ProcessCreatePoolMessage(ctx context.Context, client *etcdapi.EtcdClient, n
 
 	log.Info(ctx, "successfully put to ectd for newly created pool", pid)
 	return int32(pid), nil
+}
+
+func getPgOsdOutNum(osdList []int, pgSize int) int {
+	var outNum int
+	for _, id := range osdList {
+		osdInfo, ok := AllOSDInfo.Osdinfo[OSDID(id)]
+		if ok == true {
+			if !osdInfo.IsIn {
+				outNum++
+			}
+		}
+	}
+	return outNum
+}
+
+func ProcessLeaderBeElected(ctx context.Context, client *etcdapi.EtcdClient, leaderId int, poolId uint64, pgId uint64,
+	osdList []int, newOsdList []int) error {
+
+	pgIdStr := strconv.FormatUint(pgId, 10)
+	if poolConf, ok := AllPools[PoolID(poolId)]; ok {
+		if pgConf, gok := poolConf.PoolPgMap.PgMap[pgIdStr]; gok {
+			if pgConf.PgInState(PgCreating) {
+				if pgConf.PgInState(PgUndersize) || pgConf.PgInState(PgDown) {
+					pgConf.UnsetPgState(PgCreating)
+				} else {
+					pgConf.SetPgState(PgActive)
+				}
+				pgConf.Version++
+				log.Warn(ctx, "pg", poolId, ".", pgId, " in PgCreating.")
+			} else if pgConf.PgInState(PgRemapped) {
+				//pg remap过程中，leader down掉或切换，导致remap中断
+				if Compare_arry(pgConf.OsdList, osdList) {
+					outNum := getPgOsdOutNum(osdList, poolConf.PGSize)
+					log.Warn(ctx, "pg", poolId, ".", pgId, " in PgRemapped. outNum ", outNum)
+					if outNum > 0 {
+						pgConf.Version++
+					} else {
+						//pg中所有osd都是in状态，停止remap
+						pgConf.NewOsdList = pgConf.NewOsdList[:0]
+						pgConf.UnsetPgState(PgRemapped)
+						if !pgConf.PgInState(PgUndersize) && !pgConf.PgInState(PgDown) {
+							pgConf.SetPgState(PgActive)
+						}
+
+						pgConf.Version++
+					}
+				} else if Compare_arry(pgConf.NewOsdList, osdList) {
+					pgConf.OsdList = pgConf.NewOsdList
+					pgConf.NewOsdList = pgConf.NewOsdList[:0]
+					pgConf.UnsetPgState(PgRemapped)
+					state := CheckPgState(pgConf.OsdList, poolConf.PGSize)
+					if state == 0 {
+						pgConf.SetPgState(PgActive)
+					} else if state == PgUndersize {
+						pgConf.SetPgState(PgUndersize)
+					} else if state == PgDown {
+						pgConf.SetPgState(PgDown)
+					}
+
+					pgConf.Version++
+					log.Warn(ctx, "pg", poolId, ".", pgId, " in PgRemapped. pg osdList == newOsdList")
+				} else {
+					return nil
+				}
+			} else {
+				return nil
+			}
+			poolConf.PoolPgMap.Version++
+			poolConf.PoolPgMap.PgMap[pgIdStr] = pgConf
+			AllPools[PoolID(poolId)] = poolConf
+			ProcessPgTask(ctx, client, strconv.FormatUint(pgId, 10))
+		} else {
+			log.Info(ctx, "not find pg ", poolId, ".", pgId)
+			return fmt.Errorf("not find pool %d.%d", poolId, pgId)
+		}
+
+		pc_buf, err := json.Marshal(poolConf)
+		if err != nil {
+			log.Error(ctx, err)
+			return nil
+		}
+
+		key := fmt.Sprintf("%s%d", config.ConfigPoolsKeyPrefix, poolId)
+
+		err = client.Put(ctx, key, string(pc_buf))
+		if err != nil {
+			log.Error(ctx, err)
+			return nil
+		}
+	} else {
+		log.Info(ctx, "not find pool ", poolId)
+		return fmt.Errorf("not find pool %d", poolId)
+	}
+
+	return nil
+}
+
+func ProcessPgMemberChangeFinish(ctx context.Context, client *etcdapi.EtcdClient, result int, poolId uint64,
+	pgId uint64, osdList []int) error {
+	isUpdate := false
+	pgIdStr := strconv.FormatUint(pgId, 10)
+	if poolConf, ok := AllPools[PoolID(poolId)]; ok {
+		if pgConf, gok := poolConf.PoolPgMap.PgMap[pgIdStr]; gok {
+			if pgConf.PgInState(PgRemapped) {
+				log.Warn(ctx, "pg", poolId, ".", pgId, " in PgRemapped. result ", result)
+				if result == 0 {
+					pgConf.UnsetPgState(PgRemapped)
+					state := CheckPgState(pgConf.NewOsdList, poolConf.PGSize)
+					if state == 0 {
+						pgConf.SetPgState(PgActive)
+					} else if state == PgUndersize {
+						pgConf.SetPgState(PgUndersize)
+					} else if state == PgDown {
+						pgConf.SetPgState(PgDown)
+					}
+
+					pgConf.Version++
+					pgConf.OsdList = pgConf.NewOsdList
+					pgConf.NewOsdList = pgConf.NewOsdList[:0]
+					isUpdate = true
+
+					poolConf.PoolPgMap.PgMap[pgIdStr] = pgConf
+					poolConf.PoolPgMap.Version++
+					AllPools[PoolID(poolId)] = poolConf
+					ProcessPgTask(ctx, client, strconv.FormatUint(pgId, 10))
+				}
+			}
+		} else {
+			log.Info(ctx, "not find pg ", poolId, ".", pgId)
+			return fmt.Errorf("not find pool %d.%d", poolId, pgId)
+		}
+		if isUpdate {
+			pc_buf, err := json.Marshal(poolConf)
+			if err != nil {
+				log.Error(ctx, err)
+				return nil
+			}
+
+			key := fmt.Sprintf("%s%d", config.ConfigPoolsKeyPrefix, poolId)
+
+			err = client.Put(ctx, key, string(pc_buf))
+			if err != nil {
+				log.Error(ctx, err)
+				return nil
+			}
+		}
+	} else {
+		log.Info(ctx, "not find pool ", poolId)
+		return fmt.Errorf("not find pool %d", poolId)
+	}
+
+	return nil
 }
 
 func ProcessListPoolsMessage(ctx context.Context) ([]*msg.Poolinfo, error) {
@@ -245,13 +551,19 @@ func ProcessGetPgMapMessage(ctx context.Context, pvs map[int32]int64) (*msg.GetP
 			for pgid, pc := range ppc.PoolPgMap.PgMap {
 				pgidToi, _ := strconv.Atoi(pgid)
 				var osdlist []int32
+				var newOsdlist []int32
 				for _, oid := range pc.OsdList {
 					osdlist = append(osdlist, int32(oid))
 				}
+				for _, oid := range pc.NewOsdList {
+					newOsdlist = append(newOsdlist, int32(oid))
+				}
 				pi := &msg.PGInfo{
-					Pgid:    int32(pgidToi),
-					Version: pc.Version,
-					Osdid:   osdlist,
+					Pgid:     int32(pgidToi),
+					Version:  pc.Version,
+					State:    int32(pc.PgState),
+					Osdid:    osdlist,
+					Newosdid: newOsdlist,
 				}
 				pginfos.Pi = append(pginfos.Pi, pi)
 				gpmr.Pgs[int32(pid)] = pginfos
@@ -281,13 +593,19 @@ func ProcessGetPgMapMessage(ctx context.Context, pvs map[int32]int64) (*msg.GetP
 				for pgid, pc := range ppc.PoolPgMap.PgMap {
 					pgidToi, _ := strconv.Atoi(pgid)
 					var osdlist []int32
+					var newOsdlist []int32
 					for _, oid := range pc.OsdList {
 						osdlist = append(osdlist, int32(oid))
 					}
+					for _, oid := range pc.NewOsdList {
+						newOsdlist = append(newOsdlist, int32(oid))
+					}
 					pi := &msg.PGInfo{
-						Pgid:    int32(pgidToi),
-						Version: pc.Version,
-						Osdid:   osdlist,
+						Pgid:     int32(pgidToi),
+						Version:  pc.Version,
+						State:    int32(pc.PgState),
+						Osdid:    osdlist,
+						Newosdid: newOsdlist,
 					}
 					pginfos.Pi = append(pginfos.Pi, pi)
 					gpmr.Pgs[int32(pid)] = pginfos
@@ -329,4 +647,31 @@ func ProcessDeletePoolMessage(ctx context.Context, client *etcdapi.EtcdClient, n
 
 	log.Info(ctx, "successfully deleted pool from etcd", pid)
 	return nil
+}
+
+func PushPgTask(pgId string, osdid int, stateSwitch STATESWITCH) {
+	queue := pgsTaskQueue[pgId]
+	queue.Enqueue(pgTask{osdid: int(osdid), stateSwitch: stateSwitch})
+}
+
+func ProcessPgTask(ctx context.Context, client *etcdapi.EtcdClient, pgId string) {
+	if queue, ok := pgsTaskQueue[pgId]; ok {
+		queueSize := queue.Size()
+		for i := 0; i < queueSize; i++ {
+			item := queue.Dequeue()
+			if task, ok := item.(pgTask); ok {
+				log.Info(ctx, "process pg task for pg ", pgId, " : osd ", task.osdid, " state ", task.stateSwitch)
+				CheckPgs(ctx, client, task.osdid, task.stateSwitch)
+			}
+		}
+	}
+}
+
+func printAllPool(ctx context.Context) {
+	for poolId, pool := range AllPools {
+		log.Warn(ctx, "---- pool ", poolId, " PGSize ", pool.PGSize, " Version ", pool.PoolPgMap.Version)
+		for pgId, pg := range pool.PoolPgMap.PgMap {
+			log.Warn(ctx, "pg ", pgId, " Version ", pg.Version, " PgState ", pg.PgState)
+		}
+	}
 }

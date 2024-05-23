@@ -31,6 +31,11 @@ public:
     , _next_idx(1)
     , _max_applied_entry_num_in_cache(500) {}
 
+    ~raft_log(){
+        delete _log;
+        _log = nullptr;
+    }
+
     void log_set_raft(raft_server_t* raft){
         _raft = raft;
     }
@@ -40,7 +45,7 @@ public:
      */
     int log_append(std::vector<std::pair<std::shared_ptr<raft_entry_t>, utils::context*>>& entries);
 
-    int log_append(std::shared_ptr<raft_entry_t>, utils::context*);
+    int log_append(std::shared_ptr<raft_entry_t>, utils::context*, bool push_front = false);
 
 
     log_entry_t raft_entry_to_log_entry(raft_entry_t& raft_entry) {
@@ -179,6 +184,11 @@ public:
     {
         _entries.clear();
     }
+
+    void log_destroy(struct spdk_blob_store *bs, log_op_complete cb_fn, void* arg){
+        SPDK_INFOLOG_EX(pg_group, "remove log blob\n");
+        _log->remove_blob(bs, cb_fn, arg);
+    }
   
     //截断idx（包含）之后的log entry
     int log_truncate(raft_index_t idx, log_op_complete cb_fn, void* arg);
@@ -196,8 +206,6 @@ public:
     raft_index_t get_last_cache_entry(){
         return _entries.get_last_cache_entry();
     }
-
-    void log_load_from_snapshot(raft_index_t idx, raft_term_t term);
 
     void raft_write_entry_finish(raft_index_t start_idx, raft_index_t end_idx, int result){
         _entries.complete_entry_between(start_idx, end_idx, result);
@@ -239,22 +247,21 @@ public:
     void stop(){
         if(_log){
             _log->stop([](void*, int){}, nullptr);
-            delete _log;
-            _log = nullptr;
         }
     }
 
-    void clear_config_cache(int state){
-        while(!_config_cache.empty()){
-            auto &ec = _config_cache.front();
+    void clear_entry_queue(int state){
+        while(!_entry_queue.empty()){
+            auto &ec = _entry_queue.front();
             auto complete = ec.second;
             if(complete)
                 complete->complete(state);
-            _config_cache.pop_front();
+            _entry_queue.pop_front();
         }
     }
 
-    int config_cache_flush();
+    // int config_cache_flush();
+    int entry_queue_flush();
 
     std::shared_ptr<raft_entry_t> get_entry(raft_index_t idx){
         return _entries.get(idx);
@@ -302,9 +309,8 @@ private:
     
     /* The maximum number of entries that have been applied in the cache */
     uint32_t _max_applied_entry_num_in_cache;
-
-    //成员变更的entry需要单独处理，此_cache是为这个目的
-    std::deque<std::pair<std::shared_ptr<raft_entry_t>, utils::context*>> _config_cache;
+    
+    std::deque<std::pair<std::shared_ptr<raft_entry_t>, utils::context*>> _entry_queue;
 };
 
 std::shared_ptr<raft_log> log_new(disk_log *log);

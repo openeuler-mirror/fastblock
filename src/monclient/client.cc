@@ -327,10 +327,10 @@ public:
 
     void finish(int r) override {
         SPDK_INFOLOG_EX(mon, "change membership of pg %lu.%lu version: %ld finish: result %d\n", _pool_id, _pg_id, _version, r);
-        if(r != 0 && r != err::RAFT_ERR_NOT_LEADER){
+        if(r != 0) {
             _client->get_pg_map().set_pool_update(_pool_id, _pg_id, _version, -1);
             return;
-        }
+        } 
         if(!_client->get_pg_map().pool_pg_map[_pool_id].contains(_pg_id)){
             SPDK_INFOLOG_EX(mon, "pg %lu.%lu not in pool_pg_map", _pool_id, _pg_id);
             return;
@@ -350,6 +350,27 @@ private:
 
 void client::_create_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_version, const msg::PGInfo &info){
     if (_new_pg_cb) {
+        int current_osdid = _pm.lock()->get_current_node_id();
+        bool in_pg = false;
+        for(auto osd_id : info.osdid()){
+            if(osd_id == current_osdid){
+                in_pg = true;
+                break;
+            }
+        }
+        if(!in_pg){
+            for(auto osd_id : info.newosdid()){
+                if(osd_id == current_osdid){
+                    in_pg = true;
+                    break;
+                }
+            }
+            if(!in_pg){
+                SPDK_INFOLOG_EX(mon, "current osd %d not in pg %d\n", current_osdid, info.pgid());
+                return;
+            }
+        }
+
         _pg_map.set_pool_update(pool_id, info.pgid(), pool_version, 1);
         auto new_pg_done = [this, pool_id, pool_version, pg_id = info.pgid(), pg_version = info.version(), osds = info.osdid()]
           (void *arg, int perrno){
@@ -390,8 +411,31 @@ void client::_create_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_
     }
 }
 
+void client::_remove_pg(pg_map::pool_id_type pool_id, pg_map::pg_id_type pg_id, pg_map::version_type pool_version){
+    auto delete_pg_done = [this, pool_id, pg_id, pool_version](void *arg, int perrono){
+        if(perrono != 0){
+            SPDK_ERRLOG_EX("delete pg %d.%d failed: %s\n", pool_id, pg_id, spdk_strerror(perrono));
+            _pg_map.set_pool_update(pool_id, pg_id, pool_version, -1);
+            return;
+        }
+
+        _pg_map.set_pool_update(pool_id, pg_id, pool_version, 0);
+        SPDK_DEBUGLOG_EX(mon, "delete pg %d.%d success.\n", pool_id, pg_id);
+        _pg_map.pool_pg_map[pool_id].erase(pg_id);
+        if(_pg_map.pool_pg_map[pool_id].empty()){
+            _pg_map.pool_pg_map.erase(pool_id);
+            _pg_map.pool_version.erase(pool_id);
+            SPDK_DEBUGLOG_EX(mon, "delete pool %d success.\n", pool_id);
+        }
+    };
+
+    _pg_map.set_pool_update(pool_id, pg_id, pool_version, 1);
+    _pm.lock()->delete_partition(pool_id, pg_id, std::move(delete_pg_done), nullptr);
+}
+
 void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
     auto& pv = pg_map_response.poolid_pgmapversion();
+    int current_osdid = _pm.lock()->get_current_node_id();
 
     auto& ec = pg_map_response.errorcode();
     auto& pgs = pg_map_response.pgs();
@@ -399,42 +443,61 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
     auto pool_item = _pg_map.pool_pg_map.begin();
     while(pool_item != _pg_map.pool_pg_map.end()){
         auto pool_id = pool_item->first;
+        if(_pg_map.pool_is_updating(pool_id)){
+            SPDK_DEBUGLOG_EX(mon, "pool %d is updating\n", pool_id);
+            pool_item++;
+            continue;
+        }
+        auto pool_version = _pg_map.pool_version[pool_id];
+        auto& pg_infos = pool_item->second;
+        pool_item++;
+
         if(!ec.contains(pool_id)){
-            if(_pg_map.pool_is_updating(pool_id)){
-                SPDK_DEBUGLOG_EX(mon, "pool %d is updating\n", pool_id);
-                continue;
-            }
             SPDK_DEBUGLOG_EX(mon, "pool %d is deleted\n", pool_id);
             //pool被删除
-
-            auto& pg_infos = pool_item->second;
-            pool_item++;
             auto pg_item = pg_infos.begin();
             while(pg_item != pg_infos.end()){
                 auto pg_id = pg_item->first;
                 pg_item++;
-                auto pool_version = _pg_map.pool_version[pool_id];
-                auto delete_pg_done = [this, pool_id, pg_id, pool_version](void *arg, int perrono){
-                    if(perrono != 0){
-                        SPDK_ERRLOG_EX("delete pg %d.%d failed: %s\n", pool_id, pg_id, spdk_strerror(perrono));
-                        _pg_map.set_pool_update(pool_id, pg_id, pool_version, -1);
-                        return;
-                    }
-                    _pg_map.set_pool_update(pool_id, pg_id, pool_version, 0);
-                    SPDK_DEBUGLOG_EX(mon, "delete pg %d.%d success.\n", pool_id, pg_id);
-                    _pg_map.pool_pg_map[pool_id].erase(pg_id);
-                    if(_pg_map.pool_pg_map[pool_id].empty()){
-                        _pg_map.pool_pg_map.erase(pool_id);
-                        _pg_map.pool_version.erase(pool_id);
-                        SPDK_DEBUGLOG_EX(mon, "delete pool %d success.\n", pool_id);
-                    }
-                };
-
-                _pg_map.set_pool_update(pool_id, pg_id, pool_version, 1);
-                _pm.lock()->delete_partition(pool_id, pg_id, std::move(delete_pg_done), nullptr);
+                _remove_pg(pool_id, pg_id, pool_version);
             }
         }else{
-            pool_item++;
+            auto info_it = pgs.find(pool_id);
+            if (info_it == pgs.end()){
+                continue;
+            }
+            bool contain = false;
+
+            for (auto& info : info_it->second.pi()){
+                auto pgid = info.pgid();
+                auto pg_item = pg_infos.find(pgid);
+                if(pg_item == pg_infos.end()){
+                    continue;
+                }
+                for (auto osd_id : info.osdid()) {
+                    if(osd_id == current_osdid){
+                        contain = true;
+                        break;
+                    }
+                }
+                if(contain)
+                    continue;
+                
+                contain = false;
+                for(auto osd_id : pg_item->second->osds){
+                    if(osd_id == current_osdid){
+                        contain = true;
+                        break;
+                    }
+                }
+                if(!contain)
+                    continue;
+                /* 当前osd在本地pgmap中pg的osd列表中，但不在monitor的pgmap的osd列表中，说明当前osd已经从pg中
+                 * 移除（可能是osd out，monitor把它从pg中移除，但osd本地pg信息还未清除）,需要删除此osd上的pg信息。  
+                 */
+                _remove_pg(pool_id, pgid, pool_version);
+            }
+            
         }
     }
 
@@ -498,12 +561,55 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
             continue;
         }
 
+        /*
+         *  下面的change_pg_membership时会检查当前osd是否是pg的leader，如果不是就相当于更新pg成员失败，如果更新成员失败，
+         *   _pg_map中pg 版本和pool版本都不会更新。当pool下的所有pg都处理成功（包含创建pg和pg更新成员）后，_pg_map中pg 版本
+         *   和pool版本都会更新。
+         *   若更新pg成员失败，下次调用process_pg_map检查到这里时，因为_pg_map中pool版本小，还是会进行下面的处理：
+         *       如果_pg_map中pg版本和monitor中pg版本相同，不需要处理。
+         *       如果_pg_map中pg版本为0，出现这种情况是当前osd刚重启，需要激活pg
+         *       如果monitor上pg还是PgRemapped，就需要继续调用change_pg_membership；
+         *       如果monitor上pg不是PgRemapped，就需要分情况了
+         *          1 当前osd不在monitor上pg的osd列表中，表示monitor的pg成员变更完成，当前osd从pg中移除，因此需要删除osd上pg。
+         *          2 当前osd在monitor上pg的osd列表中，但_pg_map中pg的osd列表与monitor上pg的osd列表不同，表示monitor的pg成员
+         *            变更完成，因此需要更新_pg_map中pg的osd列表为monitor上pg的osd列表
+         */
         if (_pg_map.pool_version[pool_key] < pv.at(pool_key)) {
             auto info_it = pgs.find(pool_key);
             if (info_it == pgs.end()) {
                 SPDK_DEBUGLOG_EX(mon, "Cant find the info of pg %d\n", pool_key);
                 continue;
             }
+
+            auto process_pg = [this, current_osdid](pg_map::pool_id_type pool_id, const msg::PGInfo& info, int64_t pool_version_in_mon){
+                auto pgid = info.pgid();
+                auto& pit = _pg_map.pool_pg_map[pool_id][pgid];
+
+                bool contain_in_monitor = false;
+                std::vector<int> osds_in_mon;
+                for (auto osd_id : info.osdid()){
+                    osds_in_mon.push_back(osd_id);
+                    if(osd_id == current_osdid){
+                        contain_in_monitor = true;
+                    }
+                }
+
+                //当前osd不在monitor上pg的osd列表中
+                if(!contain_in_monitor ){
+                    _remove_pg(pool_id, pgid, _pg_map.pool_version[pool_id]);
+                } else if(contain_in_monitor){
+                    if(osds_in_mon.size() != pit->osds.size()){
+                        _pg_map.set_pool_update(pool_id, pgid, pool_version_in_mon, 1);
+                    }else if(!std::is_permutation(osds_in_mon.begin(), osds_in_mon.end(), pit->osds.begin())){
+                        _pg_map.set_pool_update(pool_id, pgid, pool_version_in_mon, 1);
+                    }else{
+                        return;
+                    }
+                    pit->osds = osds_in_mon;
+                    pit->version = info.version();
+                    _pg_map.set_pool_update(pool_id, pgid, pool_version_in_mon, 0);
+                }
+            };
 
             SPDK_INFOLOG_EX(mon, "pool %d version: %ld pool_version: %ld\n", pool_key, pv.at(pool_key), _pg_map.pool_version[pool_key]);
             for (auto& info : info_it->second.pi()) {
@@ -513,44 +619,62 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                     auto& pit = _pg_map.pool_pg_map[pool_key][pgid];
                     if(info.version() == pit->version)
                         continue;
+                    
+                    if(pit->version == 0){
+                        //出现这种情况是当前osd刚重启，恢复处理的_pg_map中pg的版本都是0，这时需要激活pg
+                        _active_pg(pool_key, pv.at(pool_key), info);
+                    }
+                    if((info.state() & PgRemapped) == 0){
+                        process_pg(pool_key, info, pv.at(pool_key));
+                        continue;
+                    }
 
-                    std::vector<int32_t> osds;
+                    std::vector<int32_t> new_osds;
                     std::string osd_str;
-                    std::vector<utils::osd_info_t> new_osds;
-                    for (auto osd_id : info.osdid()){
-                        osds.push_back(osd_id);
+                    std::vector<utils::osd_info_t> new_osd_infos;
+
+                    for (auto osd_id : info.newosdid()){
+                        new_osds.push_back(osd_id);
                         osd_str += std::to_string(osd_id) + ",";
                         auto& osd_info = _osd_map.data[osd_id];
-                        new_osds.emplace_back(*osd_info);
+                        new_osd_infos.emplace_back(*osd_info);
                     }
 
                     SPDK_INFOLOG_EX(mon, "pool: %d version: %ld pg: %lu version: %ld  osd_list: %s\n",
                             pool_key, pv.at(pool_key), pit->pg_id, info.version(), osd_str.data());
-
-                    auto complete = new change_membership_complete(pool_key, pgid, info.version(), osds, this);
-                    if(osds.size() != pit->osds.size()){
-                        // SPDK_WARNLOG_EX("change_pg_membership\n");
-                        _pg_map.set_pool_update(pool_key, pgid, pv.at(pool_key), 1);
-                        //pg的osd成员已经变更，处理成员变更   todo
-                        _pm.lock()->change_pg_membership(pool_key, pgid, new_osds, complete);
-                    }else{
-                        // SPDK_WARNLOG_EX("change_pg_membership\n");
-                        if(!std::is_permutation(osds.begin(), osds.end(), pit->osds.begin())){
-                            _pg_map.set_pool_update(pool_key, pgid, pv.at(pool_key), 1);
-                            //pg的osd成员已经变更，处理成员变更   todo
-                            _pm.lock()->change_pg_membership(pool_key, pgid, new_osds, complete);
-                        }else{
-                            // SPDK_WARNLOG_EX("pg %d.%lu version %ld\n", pool_key, pit->pg_id, pit->version);
-                            pit->version = info.version();
-                            delete complete;
-                        }
-                    }
+                    auto complete = new change_membership_complete(pool_key, pgid, info.version(), new_osds, this);
+                    _pg_map.set_pool_update(pool_key, pgid, pv.at(pool_key), 1);
+                    _pm.lock()->change_pg_membership(pool_key, pgid, new_osd_infos, complete);
                 }else{
                     _create_pg(pool_key, pv.at(pool_key), info);
                 }
             }
         }
     }
+}
+
+void client::_active_pg(pg_map::pool_id_type pool_id, 
+        pg_map::version_type pool_version, const msg::PGInfo &info){
+    bool pg_is_remap = (info.state() & PgRemapped) != 0;
+    auto active_pg_done = [this, pool_id, pool_version, pg_id = info.pgid(), pg_version = info.version(), pg_is_remap]
+      (void *arg, int perrno){
+        if(perrno != 0){
+            SPDK_ERRLOG_EX("activate pg %d.%d failed: %s\n", pool_id, pg_id, spdk_strerror(perrno));
+            if(!pg_is_remap)
+                _pg_map.set_pool_update(pool_id, pg_id, pool_version, -1);
+            return;
+        }   
+        if(!pg_is_remap){
+            _pg_map.set_pool_update(pool_id, pg_id, pool_version, 0);  
+            _pg_map.pool_pg_map[pool_id][pg_id]->version = pg_version;
+        }
+        SPDK_INFOLOG_EX(mon, "active pg %lu.%lu done, pg_version %ld pg_is_remap %d\n", 
+                pool_id, pg_id, pg_version, pg_is_remap);
+    };
+    if(!pg_is_remap){
+        _pg_map.set_pool_update(pool_id, info.pgid(), pool_version, 1);
+    }
+    _pm.lock()->active_partition(pool_id, info.pgid(), std::move(active_pg_done), nullptr);
 }
 
 void client::process_osd_map(std::shared_ptr<msg::Response> response) {
@@ -787,6 +911,34 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
         _on_flight_requests.pop_front();
         break;
     }
+    case msg::Response::UnionCase::kLeaderBeElectedResponse: {
+        SPDK_DEBUGLOG_EX(mon, "Received leader be elected response\n");
+
+        auto& req_ctx = _on_flight_requests.front();
+        response_status status;
+        if(not response->leader_be_elected_response().ok())
+            status = response_status::fail;
+        else
+            status = response_status::ok;
+        
+        req_ctx->cb(status, req_ctx.get());
+        _on_flight_requests.pop_front();
+        break;
+    }
+    case msg::Response::UnionCase::kPgMemberChangeFinishResponse: {
+        SPDK_DEBUGLOG_EX(mon, "Received pg_member_change_finish_request response\n");
+        auto& req_ctx = _on_flight_requests.front();
+        response_status status;
+
+        if(not response->pg_member_change_finish_response().ok())
+            status = response_status::fail;
+        else
+            status = response_status::ok;
+    
+        req_ctx->cb(status, req_ctx.get());
+        _on_flight_requests.pop_front();
+        break;
+    }
     case msg::Response::UnionCase::kCreateImageResponse: {
         SPDK_DEBUGLOG_EX(mon, "Received create image response\n");
         process_general_response(response->create_image_response());
@@ -1018,6 +1170,64 @@ utils::osd_info_t* client::get_osd_info(const int32_t node_id) {
     }
 
     return it->second.get();
+}
+
+void client::send_leader_be_elected_notify_request(
+  int32_t leader_id,
+  uint64_t pool_id,
+  uint64_t pg_id,
+  std::vector<int32_t> osd_list,
+  std::vector<int32_t> new_osd_list) {
+
+    auto req = std::make_unique<msg::Request>();
+    auto* leader_req = req->mutable_leader_be_elected_request();
+    leader_req->set_leaderid(leader_id);
+    leader_req->set_poolid(pool_id);
+    leader_req->set_pgid(pg_id);
+    for(int32_t osd_id : osd_list){
+        leader_req->add_osdlist(osd_id);
+    }
+    for(int32_t new_osd_id : new_osd_list){
+        leader_req->add_newosdlist(new_osd_id);
+    }
+
+    auto leader_cb = [](const response_status status, request_context*ctx){
+        SPDK_DEBUGLOG_EX(mon, "notify monitor (the leader has been elected).\n");
+        if (status != response_status::ok) {
+            SPDK_ERRLOG_EX("notify monitor (the leader has been elected) failed\n");
+        }
+    };
+
+    auto* req_ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(leader_cb)};
+    enqueue_request(req_ctx);
+}
+
+void client::send_pg_member_change_finished_notify(
+  int result,
+  uint64_t pool_id,
+  uint64_t pg_id,
+  std::vector<int32_t> osd_list
+){
+    auto req = std::make_unique<msg::Request>();
+    auto* mem_req = req->mutable_pg_member_change_finish_request();
+    mem_req->set_result(result);
+    mem_req->set_poolid(pool_id);
+    mem_req->set_pgid(pg_id);
+    for(int32_t osd_id : osd_list){
+        mem_req->add_osdlist(osd_id);
+    }  
+
+    auto mem_cb = [](const response_status status, request_context*ctx){
+        SPDK_DEBUGLOG_EX(mon, "notify monitor (change member of pg has been finished).\n");
+        if (status != response_status::ok) {
+            SPDK_ERRLOG_EX("notify monitor (change member of pg has been finished) failed\n");
+        }
+    };
+
+    auto* req_ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(mem_cb)};
+    enqueue_request(req_ctx);      
 }
 
 }

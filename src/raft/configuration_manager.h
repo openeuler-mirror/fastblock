@@ -32,11 +32,11 @@ public:
     , _term(0) {}
 
     node_configuration(raft_index_t index, raft_term_t term, 
-            std::vector<raft_node_info> nodes, std::vector<raft_node_info> old_nodes)
+            std::vector<raft_node_info> new_nodes, std::vector<raft_node_info> nodes)
     : _index(index)
     , _term(term)
     , _nodes(std::move(nodes))
-    , _old_nodes(std::move(old_nodes)) {}
+    , _new_nodes(std::move(new_nodes)) {}
    
     void add_node(raft_node_id_t node_id, std::string& address, int port){
         raft_node_info node;
@@ -54,8 +54,8 @@ public:
         return false;
     }
 
-    bool find_old_node(raft_node_id_t node_id){
-        for(auto &node: _old_nodes){
+    bool find_new_node(raft_node_id_t node_id){
+        for(auto &node: _new_nodes){
             if(node.node_id() == node_id)
                 return true;
         }
@@ -66,8 +66,8 @@ public:
         return _nodes.size();
     }
 
-    int get_old_node_size(){
-        return _old_nodes.size();
+    int get_new_node_size(){
+        return _new_nodes.size();
     }
 
     std::vector<raft_node_id_t> get_nodes_id(){
@@ -82,8 +82,8 @@ public:
         return _nodes;
     }
 
-    const std::vector<raft_node_info>& get_old_nodes(){
-        return _old_nodes;
+    const std::vector<raft_node_info>& get_new_nodes(){
+        return _new_nodes;
     }
 
     raft_index_t get_index(){
@@ -97,7 +97,11 @@ private:
     raft_index_t _index;
     raft_term_t  _term;
     std::vector<raft_node_info>   _nodes;
-    std::vector<raft_node_info>   _old_nodes; 
+    /* 
+       raft成员变更过程中 CFG_JOINT阶段收到RAFT_LOGTYPE_CONFIGURATION类型的entry后，需要更新_new_nodes，表示新成员（既变更完成后的成员）。
+       向其它节点发送消息（包括心跳、选举、数据）时应该向_nodes和_new_nodes中的所有节点都发送
+    */    
+    std::vector<raft_node_info>   _new_nodes; 
 };
 
 enum class cfg_state {
@@ -236,16 +240,16 @@ public:
         return get_last_node_configuration().find_node(node_id);
     }
 
-    bool find_old_node(raft_node_id_t node_id){
-        return get_last_node_configuration().find_old_node(node_id);
+    bool find_new_node(raft_node_id_t node_id){
+        return get_last_node_configuration().find_new_node(node_id);
     }
 
     int get_node_size(){
         return get_last_node_configuration().get_node_size();
     }
   
-    int get_old_node_size(){
-        return get_last_node_configuration().get_old_node_size();
+    int get_new_node_size(){
+        return get_last_node_configuration().get_new_node_size();
     }
 
     void set_configuration_index(raft_index_t configuration_index){

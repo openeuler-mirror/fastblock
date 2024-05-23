@@ -63,7 +63,9 @@ message BootRequest {
 message PGInfo {
     int32 pgid = 1;
     int64 version = 2;
-    repeated int32 osdid = 3;
+    int32 state = 3;
+    repeated int32 osdid = 4;
+    repeated int32 newosdid = 5;
 }
 
 message PGInfos {
@@ -228,6 +230,61 @@ message GetImageInfoResponse{
     ImageInfo ImageInfo=2;
 }
 
+message LeaderBeElectedRequest {
+    int32 leaderId = 1;
+    uint64 poolId = 2;
+    uint64 pgId = 3;
+    repeated int32 osdList = 4;
+    repeated int32 newOsdList = 5;
+}
+
+message LeaderBeElectedResponse {
+    bool ok = 1;
+}
+
+message PgMemberChangeFinishRequest {
+    int32  result = 1;
+    uint64 poolId = 2;
+    uint64 pgId = 3;
+    repeated int32 osdList = 4;
+}
+
+message PgMemberChangeFinishResponse {
+    bool ok = 1;
+}
+
+message OsdOutRequest {
+    int32 osdid = 1;
+}
+
+message OsdOutResponse {
+    bool ok = 1;
+}
+
+message OsdInRequest {
+    int32 osdid = 1;
+}
+
+message OsdInResponse {
+    bool ok = 1;
+}
+
+message NoReblanceRequest {
+    bool set = 1;
+}
+
+message NoReblanceResponse {
+    bool ok = 1;
+}
+
+message NoOutRequest {
+    bool set = 1;
+}
+
+message NoOutResponse {
+    bool ok = 1;
+}
+
 message Request {
     oneof union {
         BootRequest boot_request = 1;
@@ -244,7 +301,12 @@ message Request {
         RemoveImageRequest remove_image_request=12;
         ResizeImageRequest resize_image_request=13;
         GetImageInfoRequest get_ImageInfo_Request=14;
-
+        LeaderBeElectedRequest leader_be_elected_request=15;
+        PgMemberChangeFinishRequest pg_member_change_finish_request=16;
+        OsdOutRequest  osd_out_request=17;
+        OsdInRequest   osd_in_request=18;
+        NoReblanceRequest  no_reblance_request=19;
+        NoOutRequest   no_out_request=20;
     }
 }
 
@@ -264,5 +326,11 @@ message Response {
         RemoveImageResponse remove_image_response=12;
         ResizeImageResponse resize_image_response=13;
         GetImageInfoResponse get_imageInfo_response=14;
+        LeaderBeElectedResponse leader_be_elected_response=15;
+        PgMemberChangeFinishResponse pg_member_change_finish_response=16;
+        OsdOutResponse osd_out_response=17;
+        OsdInResponse osd_in_response=18;
+        NoReblanceResponse no_reblance_response=19;
+        NoOutResponse  no_out_response=20;
     }
 }

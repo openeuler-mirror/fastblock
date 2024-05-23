@@ -137,11 +137,13 @@ void raft_server_t::process_conf_change_configuration(std::shared_ptr<raft_entry
 } 
 ``` 
    leader向Cold和Cnew中的所有节点发送一条包含Cold所有成员和Cnew所有成员的append entry request（类型为RAFT_LOGTYPE_CONFIGURATION），leader的这个请求需要在Cold和Cnew分别都达成多数派之后，可以提交，结束此阶段。此阶段新添加的节点可能还落后于leader，会触发recovery，追赶leader，但是落后的已经不多（上一步追赶阶段已经追赶了大部分），很快就可以追赶上。
+   在这个阶段，所有日志的同步（包含心跳、raft log）都需要发送给Cold和Cnew，在Cold和Cnew分别都达成多数派之后才可以提交。
+   此时如果leader down了，osd发起选举时就需要在它的配置中达成多数选票（如果发起选举的osd上只有Cold，则就在Cold达成多数；如果发起选举的osd上有Cold和Cnew，则就在Cold和Cnew分别都达成多数）后才能成为leader。
    进入下一阶段是通过生成一个raft entry（type为RAFT_LOGTYPE_CONFIGURATION）添加到raft entry队列中开始的。
    - **同步新配置阶段**
 
    处理上个阶段的raft entry时，在函数process_conf_change_configuration里判断是否进入此阶段
-   leader更新成员配置列表，把新的成员配置表发送给新成员配置表里的所有成员，达到多数派后，可以提交，结束此阶段。到这里起始成员配置变更已经结束，后续是一些清理操作。
+   leader更新成员配置列表，把Cnew成员配置表发送给 Cold和Cnew中的所有节点，只需要Cnew达成多数派后，就可以提交，结束此阶段。到这里起始成员配置变更已经结束，后续是一些清理操作。
    - **清理阶段**
  
    当leader已经从raft中被删除，leader会选择一个raft的新配置列表中的节点，给它发送TimeoutNow请求，此节点收到这个请求会触发一个新的选举。 leader删除时需要注意停止recovery等leader的操作。
