@@ -848,3 +848,91 @@ void object_store::close_done(void *arg, int objerrno) {
   // SPDK_NOTICELOG_EX("object_name:%s origin close.\n", ctx->it->first.c_str());
   spdk_blob_close(ctx->it->second.origin.blob, close_done, ctx);
 }
+
+struct blob_info {
+  fb_blob     fblob;
+  std::string object_name;
+};
+
+struct blob_delete_ctx {
+  object_store::container table;
+  std::list<blob_info>      blobs;
+  spdk_blob_store*        bs;
+  object_rw_complete      cb_fn;
+  void*                   arg;
+};
+
+static void delete_blob_done(void *arg, int objerrno);
+
+static void close_blob_done(void *arg, int objerrno){
+  blob_delete_ctx* ctx = (blob_delete_ctx*)arg;
+  auto fblob = ctx->blobs.front();
+
+  if (objerrno) {
+    SPDK_ERRLOG_EX("object_name:%s close blob %lu failed:%s\n",
+        fblob.object_name.c_str(), fblob.fblob.blobid, spdk_strerror(objerrno));
+    ctx->cb_fn(ctx->arg, objerrno);
+    delete ctx;
+		return;
+	}  
+
+  SPDK_INFOLOG_EX(object_store, "object_name:%s close blob %lu done\n", 
+          fblob.object_name.c_str(), fblob.fblob.blobid);
+  spdk_bs_delete_blob(ctx->bs, fblob.fblob.blobid, delete_blob_done, ctx);
+}
+
+static void delete_blob_done(void *arg, int objerrno){
+  blob_delete_ctx* ctx = (blob_delete_ctx*)arg;
+  auto &fblob = ctx->blobs.front();
+  if (objerrno) {
+    SPDK_ERRLOG_EX("object_name:%s delete blob %lu failed:%s\n",
+        fblob.object_name.c_str(), fblob.fblob.blobid, spdk_strerror(objerrno));
+    ctx->cb_fn(ctx->arg, objerrno);
+    delete ctx;
+		return;
+	}  
+
+  SPDK_INFOLOG_EX(object_store, "object_name:%s delete blob %lu done\n",
+          fblob.object_name.c_str(), fblob.fblob.blobid);
+  ctx->blobs.pop_front();
+
+  if(ctx->blobs.empty()){
+    SPDK_INFOLOG_EX(object_store, "delete blobs done.\n");
+    ctx->cb_fn(ctx->arg, 0);
+    return;
+  }
+  auto &nblob = ctx->blobs.front();
+  spdk_blob_close(nblob.fblob.blob, close_blob_done, ctx);   
+}
+
+void object_store::destroy(object_rw_complete cb_fn, void* arg){
+  if (table.empty()) {
+    cb_fn(arg, 0);
+    return;
+  }
+  struct blob_delete_ctx* ctx = new blob_delete_ctx();
+  
+  ctx->table = std::exchange(table, {});
+  for (auto& pr : ctx->table){
+    if(pr.second.origin.blob){
+      blob_info iblob{.fblob = std::move(pr.second.origin), .object_name = pr.first};
+      ctx->blobs.emplace_back(std::move(iblob));
+    }
+    if(pr.second.recover.blob){
+      blob_info iblob{.fblob = std::move(pr.second.recover), .object_name = pr.first};
+      ctx->blobs.emplace_back(std::move(iblob));
+    }
+    while(!pr.second.snap_list.empty()){
+      auto snap = pr.second.snap_list.front();
+      pr.second.snap_list.pop_front();
+      blob_info iblob{.fblob = std::move(snap.snap_blob), .object_name = pr.first};
+      ctx->blobs.emplace_back(std::move(iblob));
+    }
+  }
+  ctx->bs = bs;
+  ctx->cb_fn = cb_fn;
+  ctx->arg = arg;
+  
+  auto &fblob = ctx->blobs.front();
+  spdk_blob_close(fblob.fblob.blob, close_blob_done, ctx);
+}

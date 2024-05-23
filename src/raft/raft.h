@@ -69,12 +69,16 @@ std::string pg_id_to_name(uint64_t pool_id, uint64_t pg_id);
 
 using raft_complete = std::function<void (void *, int)>;
 
+namespace monitor {
+    class client;
+}
+
 class raft_server_t;
 
 class raft_server_t{
 public:
     raft_server_t(raft_client_protocol& client, disk_log* log, std::shared_ptr<state_machine> sm_ptr,
-                    uint64_t pool_id, uint64_t pg_id, kvstore *);
+                    uint64_t pool_id, uint64_t pg_id, kvstore *, std::shared_ptr<monitor::client>);
 
     ~raft_server_t();
 
@@ -184,15 +188,9 @@ public:
 
     /**
      * @return number of voting nodes that this server has */
-    int raft_get_num_voting_nodes()
+    std::pair<uint64_t, uint64_t> raft_get_num_voting_nodes()
     {
-        int num = 0;
-
-        for(auto &node_stat : _nodes_stat){
-            auto node = node_stat.second;
-            num++;
-        }
-        return num;
+        return std::make_pair(_nodes_stat.size(), _nodes_stat.new_node_size());
     }
 
     /** Set the current term.
@@ -266,8 +264,9 @@ public:
     std::shared_ptr<raft_node> raft_get_node(raft_node_id_t node_id)
     { 
         auto nodep = _nodes_stat.get_node(node_id);
-        if(!nodep)
-            return nullptr;
+        if(!nodep){
+            nodep = _nodes_stat.get_new_node(node_id);
+        }
         return nodep;
     }
 
@@ -289,14 +288,6 @@ public:
     void raft_set_current_leader(raft_node_id_t node_id)
     {
         _leader_id = node_id;
-    }
-
-    /** Get what this node thinks the node of the leader is.
-     * @return node of what this node thinks is the valid leader;
-     *   NULL if the leader is unknown */
-    std::shared_ptr<raft_node> raft_get_current_leader_node()
-    {
-        return raft_get_node(_leader_id);
     }
 
     bool raft_is_follower()
@@ -393,7 +384,7 @@ public:
     }
 
     void stop();
-    void raft_destroy();
+    void raft_destroy(raft_complete cb_fn, void* arg);
 
     /** Become leader
      * WARNING: this is a dangerous function call. It could lead to your cluster
@@ -488,8 +479,10 @@ public:
     int raft_send_heartbeat_all();
 
     /**
-     * @return number of votes this server has received this election */
-    int raft_get_nvotes_for_me();
+     * @return number of votes this server has received this election 
+     *  <node_vote_num, new_node_vote_num>
+     * */
+    std::pair<uint64_t, uint64_t> raft_get_nvotes_for_me();
 
     //截断idx（包含）之后的log entry
     int raft_log_truncate(raft_index_t idx, log_op_complete cb_fn, void* arg);
@@ -513,8 +506,8 @@ public:
         raft_get_log()->disk_append(start_idx, end_idx, complete);
     }
 
-    int config_cache_flush(){
-        return raft_get_log()->config_cache_flush();
+    int entry_queue_flush(){
+        return raft_get_log()->entry_queue_flush();
     }
 
     raft_index_t raft_get_last_cache_entry(){
@@ -624,12 +617,8 @@ public:
 
     void start_raft_timer();
 
-    template<typename Func>
-    void for_each_node(Func&& f)  {
-        for(auto &node_stat : _nodes_stat){
-            auto node = node_stat.second;
-            f(node);
-        }
+    void for_each_node(each_node_func&& f)  {
+        _nodes_stat.for_all_node(std::move(f));
     }
 
     uint64_t raft_get_pool_id(){
@@ -708,6 +697,10 @@ public:
                 || cfg_state == cfg_state::CFG_UPDATE_NEW_CFG){
             node = _configuration_manager.get_catch_up_node(node_id);
             return  node;
+        }else{
+            node = _nodes_stat.get_new_node(node_id);
+            if(node)
+                return node;
         }
         return nullptr;
     }
@@ -824,6 +817,7 @@ public:
         _machine->set_last_applied_idx(idx);
         _log->set_trim_index(idx);
     }
+    void active_raft();
 public:
     enum class task_type : uint8_t{
         SNAP_CHECK_TASK = 1
@@ -847,12 +841,16 @@ public:
 
     void task_loop();
     void handle_snap_check_task(task_info& task);
+
+    void raft_node_process_commit(int result, raft_index_t index, raft_node_id_t node_id);
+    void send_pg_member_change_finished_notify(int result);
 private:
     int _recovery_by_snapshot(std::shared_ptr<raft_node> node);
     bool _has_majority_leases(raft_time_t now, int with_grace);
     int _should_grant_vote(const msg_requestvote_t* vr);
     int _has_lease(std::shared_ptr<raft_node> node, raft_time_t now, int with_grace);
     void _raft_get_entries_from_idx(raft_index_t start_index, raft_index_t end_index, msg_appendentries_t* ae);
+    void _send_leader_be_elected_notify();
 
     /* the server's best guess of what the current term is
      * starts at zero */
@@ -930,9 +928,11 @@ private:
 
     object_recovery *_obr; 
     std::queue<task_info> _tasks;
+
+    std::shared_ptr<monitor::client> _mon_client;
 }; 
 
-int raft_votes_is_majority(const int nnodes, const int nvotes);
+bool raft_votes_is_majority(std::pair<uint64_t, uint64_t> &node_num_pair, std::pair<uint64_t, uint64_t> &nvotes_pair);
 
 #define RAFT_REQUESTVOTE_ERR_GRANTED          1
 #define RAFT_REQUESTVOTE_ERR_NOT_GRANTED      0
@@ -960,7 +960,8 @@ typedef enum {
  *
  * @return newly initialised Raft server */
 extern std::shared_ptr<raft_server_t> raft_new(raft_client_protocol& client,
-        disk_log* log, std::shared_ptr<state_machine> sm_ptr, uint64_t pool_id, uint64_t pg_id, kvstore*);
+        disk_log* log, std::shared_ptr<state_machine> sm_ptr, uint64_t pool_id, 
+        uint64_t pg_id, kvstore*, std::shared_ptr<monitor::client>);
 
 /** Determine if entry is voting configuration change.
  * @param[in] ety The entry to query.

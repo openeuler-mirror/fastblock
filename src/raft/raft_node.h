@@ -175,6 +175,8 @@ private:
 
 class node_configuration;
 
+using each_node_func = std::function<void (std::shared_ptr<raft_node>)>;
+
 class raft_nodes{
     using nodes_type = absl::node_hash_map<raft_node_id_t, std::shared_ptr<raft_node>>;
 public:
@@ -183,20 +185,19 @@ public:
     void update_with_node_configuration(node_configuration& cfg, 
             std::vector<std::shared_ptr<raft_node>> new_add_nodes = {});
 
+
+    /*  下面这几个函数只用于访问_nodes */
     bool contains(raft_node_id_t node_id) const {
         return _nodes.find(node_id) != _nodes.end();
     }
-
     nodes_type::iterator find(raft_node_id_t node_id) { return _nodes.find(node_id); }
     nodes_type::const_iterator find(raft_node_id_t node_id) const { return _nodes.find(node_id); }
-
     nodes_type::iterator begin() { return _nodes.begin(); }
     nodes_type::iterator end() { return _nodes.end(); }
     nodes_type::const_iterator begin() const { return _nodes.begin(); }
     nodes_type::const_iterator end() const { return _nodes.end(); }
-
     size_t size() const { return _nodes.size(); }
-
+    
     std::shared_ptr<raft_node> get_node(raft_node_id_t node_id){
         auto it = _nodes.find(node_id);
         if(it == _nodes.end())
@@ -212,6 +213,53 @@ public:
         }
         return std::move(node_ids);
     }
+public:
+    //遍历_nodes和_new_nodes中所有的node,每个node都执行f
+    void for_all_node(each_node_func&& f)  {
+        for(auto &node : _nodes){
+            auto node_ptr = node.second;
+            f(node_ptr);
+        }
+
+        for(auto &node : _new_nodes){
+            auto node_ptr = node.second;
+            f(node_ptr);
+        }
+    }
+
+    //遍历_new_nodes中所有的node,每个node都执行f
+    void for_new_nodes(each_node_func&& f)  {
+        for(auto &node : _new_nodes){
+            auto node_ptr = node.second;
+            f(node_ptr);
+        }
+    }    
+
+    std::shared_ptr<raft_node> get_new_node(raft_node_id_t node_id){
+        auto it = _new_nodes.find(node_id);
+        if(it == _new_nodes.end())
+            return nullptr;
+        return it->second;
+    }
+
+    std::vector<raft_node_id_t> get_new_node_ids(){
+        std::vector<raft_node_id_t> new_node_ids;
+
+        for(auto& [new_node_id, _] : _new_nodes){
+            new_node_ids.push_back(new_node_id);
+        }
+        return std::move(new_node_ids);        
+    }
+
+    size_t new_node_size(){
+        return _new_nodes.size();
+    }
+
 private:
-    nodes_type _nodes;
+    nodes_type _nodes; 
+    /* 
+       raft成员变更过程中 CFG_JOINT阶段收到RAFT_LOGTYPE_CONFIGURATION类型的entry后，需要更新_new_nodes，表示新成员（既变更完成后的成员）。
+       向其它节点发送消息（包括心跳、选举、数据）时应该向_nodes和_new_nodes中的所有节点都发送
+    */
+    nodes_type _new_nodes;
 };

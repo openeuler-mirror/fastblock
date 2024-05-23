@@ -27,6 +27,10 @@ enum class osd_state {
     OSD_DOWN
 };
 
+namespace monitor {
+    class client;
+}
+
 using pm_complete = std::function<void (void *, int)>;
 
 class partition_manager : public std::enable_shared_from_this<partition_manager> {
@@ -44,7 +48,7 @@ public:
           }
       }
       
-    void start(utils::context *complete);
+    void start(utils::context *complete, std::shared_ptr<monitor::client> mon_client);
 
     void stop(utils::complete_fun fun, void *arg){
         if(_state == osd_state::OSD_DOWN){
@@ -77,6 +81,7 @@ public:
     int delete_partition(uint64_t pool_id, uint64_t pg_id, pm_complete&& cb_fn, void *arg);
     int load_partition(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob, 
                         object_store::container objects, pm_complete&& func, void *arg);
+    int active_partition(uint64_t pool_id, uint64_t pg_id, pm_complete&& cb_fn, void *arg);
 
     bool get_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t &shard_id);
 
@@ -84,7 +89,8 @@ public:
                         object_store::container objects, pm_complete cb_fn, void *arg);
     void create_pg(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t> osds, uint32_t shard_id, 
                         int64_t revision_id, pm_complete cb_fn, void *arg);
-    void delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id);
+    void delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id, pm_complete cb_fn, void *arg);
+    void active_pg(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id, pm_complete cb_fn, void *arg);
 
     std::shared_ptr<osd_stm> get_osd_stm(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id){
         std::string name = pg_id_to_name(pool_id, pg_id);
@@ -152,6 +158,10 @@ public:
             return -EEXIST;
         return 0;
     }
+
+    std::shared_ptr<monitor::client> get_mon_client(){
+        return _mon_client;
+    }
 private:
     int osd_state_is_not_active();
     uint32_t get_next_shard_id(){
@@ -168,4 +178,5 @@ private:
     std::vector<uint32_t> _shard_cores;
     std::vector<std::map<std::string, std::shared_ptr<osd_stm>>> _sm_table;
     osd_state _state;
+    std::shared_ptr<monitor::client> _mon_client;
 };

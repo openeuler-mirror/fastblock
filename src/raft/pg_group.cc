@@ -28,9 +28,10 @@ std::string pg_id_to_name(uint64_t pool_id, uint64_t pg_id){
 }
 
 int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard_id, uint64_t pool_id, 
-            uint64_t pg_id, std::vector<utils::osd_info_t>&& osds, disk_log* log){
+            uint64_t pg_id, std::vector<utils::osd_info_t>&& osds, disk_log* log, 
+            std::shared_ptr<monitor::client> mon_client){
     int ret = 0;
-    auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id, global_storage().kvs());
+    auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id, global_storage().kvs(), mon_client);
 
     raft->raft_set_timer();
     _pg_add(shard_id, raft, pool_id, pg_id);
@@ -40,8 +41,8 @@ int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard
 }
 
 void pg_group_t::load_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,
-                disk_log *log, pg_complete cb_fn, void *arg){
-    auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id, global_storage().kvs()); 
+                disk_log *log, pg_complete cb_fn, void *arg, std::shared_ptr<monitor::client> mon_client){
+    auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id, global_storage().kvs(), mon_client); 
 
     raft->raft_set_timer();
     _pg_add(shard_id, raft, pool_id, pg_id);
@@ -49,9 +50,14 @@ void pg_group_t::load_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_i
     raft->load(get_current_node_id(), std::move(cb_fn), arg);
 }  
 
-void pg_group_t::delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id){
+void pg_group_t::delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, pg_complete cb_fn, void *arg){
     SPDK_INFOLOG_EX(pg_group, "remove pg %lu.%lu\n", pool_id, pg_id);
-    _pg_remove(shard_id, pool_id, pg_id);
+    _pg_remove(shard_id, pool_id, pg_id, std::move(cb_fn), arg);
+}
+
+void pg_group_t::active_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id){
+    auto raft = get_pg(shard_id, pool_id, pg_id);
+    raft->active_raft();
 }
 
 void pg_group_t::start_shard_manager(utils::complete_fun fun, void *arg)
@@ -152,7 +158,7 @@ std::vector<shard_manager::node_heartbeat> shard_manager::get_heartbeat_requests
             continue;
         }
 
-        auto create_heartbeat_request = [this, raft, now, &pending_beats](const std::shared_ptr<raft_node> node) mutable{
+        auto create_heartbeat_request = [this, raft, now, &pending_beats](std::shared_ptr<raft_node> node) mutable{
             if (raft->raft_is_self(node))
                 return;
             SPDK_DEBUGLOG_EX(pg_group, "node: %d pg: %lu.%lu suppress_heartbeats: %d heartbeating: %d  append_time: %lu heartbeat_timeout: %d now: %lu\n",

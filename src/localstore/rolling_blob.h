@@ -131,7 +131,10 @@ public:
     , front(0, super_size)
     , back(0, super_size)
     , super(buffer_pool_get())
-    { }
+    { 
+        if(blob)
+            blob_id = spdk_blob_get_id(blob);
+    }
 
     void stop() {
       SPDK_NOTICELOG_EX("put rblob super buffer\n");
@@ -611,6 +614,32 @@ public:
       spdk_blob_close(blob, close_done, ctx);
     }
 
+private:
+    struct delete_blob_ctx {
+        spdk_blob_id blobid;
+        rblob_op_complete cb_fn;
+        void* arg;
+    };
+
+    static void delete_blob_complete(void *arg, int rberrno) {
+        struct delete_blob_ctx *ctx = (struct delete_blob_ctx *)arg;
+
+        if(rberrno){
+            SPDK_ERRLOG_EX("delete blob 0x%lx failed:%s\n", ctx->blobid, spdk_strerror(rberrno));
+        }
+        ctx->cb_fn(ctx->arg, rberrno);
+        delete ctx;
+    }
+
+public:
+    void remove_blob(struct spdk_blob_store *bs, rblob_op_complete cb_fn, void* arg) {
+        struct delete_blob_ctx *ctx = new delete_blob_ctx();
+        ctx->blobid = blob_id;
+        ctx->cb_fn = std::move(cb_fn);
+        ctx->arg = arg;
+        spdk_bs_delete_blob(bs, blob_id, delete_blob_complete, ctx);
+    }
+
     static void close_done(void *arg, int rberrno) {
       struct rblob_close_ctx* ctx = (struct rblob_close_ctx*)arg;
 
@@ -724,6 +753,7 @@ private:
     };
 
     struct spdk_blob* blob;
+    spdk_blob_id blob_id;
     struct spdk_io_channel *channel;
     uint64_t blob_size;
 

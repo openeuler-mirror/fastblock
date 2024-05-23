@@ -112,8 +112,9 @@ private:
 
         for (size_t i{0}; i < _capacity; ++i) {
             std::memset(ele_cache[i], 0, _element_size);
+            auto t = ele_cache[i];
             auto* mr = ::ibv_reg_mr(
-              pd, ele_cache[i], _element_size,
+              pd, t, _element_size,
               IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ);
             ctx_cache[i]->mr = mr;
             ctx_cache[i]->sge.addr = uint64_t(mr->addr);

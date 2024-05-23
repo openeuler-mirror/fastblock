@@ -18,6 +18,9 @@ constexpr uint32_t default_parallel_apply_num = 32;
 
 static int apply_task(void *arg){
     state_machine* stm = (state_machine *)arg;
+    if(stm->get_raft()->raft_get_op_state() == raft_op_state::RAFT_INIT){
+        return 0;
+    }
     stm->raft_apply_entry();
     return 0;
 }

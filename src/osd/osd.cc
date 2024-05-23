@@ -430,7 +430,7 @@ static void osd_service_load(void *arg){
     pm_init(arg);
 
     pm_load_context *ctx = new pm_load_context{server, global_pm.get()};
-	global_pm->start(ctx);
+	global_pm->start(ctx, monitor_client);
 }
 
 void storage_load_complete(void *arg, int rberrno){

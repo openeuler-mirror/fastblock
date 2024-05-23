@@ -221,6 +221,7 @@ private:
     const bool _disable_flag;
 };
 
+using object_complete = std::function<void (void *arg, int objerrno)>;
 class osd_stm : public state_machine {
 public:
     osd_stm();
@@ -241,6 +242,8 @@ public:
     void stop(object_rw_complete cb_fn, void* arg){
         _store.stop(cb_fn, arg);
     }
+
+    void destroy_objects(object_complete cb_fn, void *arg);
 private:
     lock_manager<op_type_excl_lock<operation_type>>   _object_rw_lock;
 };

@@ -106,6 +106,14 @@ public:
         none
     };
 
+    enum pg_state {
+        PgCreating = 1 << 0,
+        PgActive = 1 << 1,
+        PgUndersize = 1 << 2,
+        PgDown = 1 << 3,
+        PgRemapped = 1 << 4
+    };
+
     struct osd_map {
         using osd_id_type = int32_t;
         using version_type = int64_t;
@@ -435,6 +443,19 @@ public:
     pg_map& get_pg_map(){
         return _pg_map;
     }
+
+    void send_leader_be_elected_notify_request(
+      int32_t leader_id,
+      uint64_t pool_id,
+      uint64_t pg_id,
+      std::vector<int32_t> osd_list,
+      std::vector<int32_t> new_osd_list);
+
+    void send_pg_member_change_finished_notify(
+      int result,
+      uint64_t pool_id,
+      uint64_t pg_id,
+      std::vector<int32_t> osd_list);
 private:
 
     template<typename ResponseType>
@@ -471,6 +492,8 @@ private:
     bool consume_request();
 
     void _create_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_version, const msg::PGInfo &info);
+    void _remove_pg(pg_map::pool_id_type pool_id, pg_map::pg_id_type pg_id, pg_map::version_type pool_version);
+    void _active_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_version, const msg::PGInfo &info);
 private:
 
     bool _is_terminate{false};

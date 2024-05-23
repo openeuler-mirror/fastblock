@@ -79,6 +79,7 @@ public:
       return it != table.end();
   }
 
+  void destroy(object_rw_complete cb_fn, void* arg);
 private:
   void readwrite(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
                      uint64_t offset, char* buf, uint64_t len,
