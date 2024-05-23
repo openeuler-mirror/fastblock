@@ -491,17 +491,20 @@ public:
         bool is_bad_evt{false};
         switch (evt->event) {
         case RDMA_CM_EVENT_ADDR_RESOLVED:
-        case RDMA_CM_EVENT_ADDR_ERROR:
         case RDMA_CM_EVENT_ROUTE_RESOLVED:
-        case RDMA_CM_EVENT_ROUTE_ERROR:
         case RDMA_CM_EVENT_CONNECT_REQUEST:
+        case RDMA_CM_EVENT_ESTABLISHED:
+        case RDMA_CM_EVENT_MULTICAST_JOIN:
+        case RDMA_CM_EVENT_TIMEWAIT_EXIT:
+            break;
+        case RDMA_CM_EVENT_ADDR_ERROR:
+        case RDMA_CM_EVENT_ROUTE_ERROR:
         case RDMA_CM_EVENT_CONNECT_ERROR:
         case RDMA_CM_EVENT_UNREACHABLE:
         case RDMA_CM_EVENT_REJECTED:
-        case RDMA_CM_EVENT_ESTABLISHED:
-        case RDMA_CM_EVENT_MULTICAST_JOIN:
         case RDMA_CM_EVENT_MULTICAST_ERROR:
-        case RDMA_CM_EVENT_TIMEWAIT_EXIT:
+            SPDK_ERRLOG_EX("ERROR: Bad event '%s'\n", ::rdma_event_str(evt->event));
+            is_bad_evt = true;
             break;
         case RDMA_CM_EVENT_CONNECT_RESPONSE:
             _provider->complete_qp_connect(_id);
