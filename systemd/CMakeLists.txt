@@ -18,7 +18,7 @@ foreach(service
     ${service}.service
     @ONLY)
   install(
-    FILES ${CMAKE_CURRENT_BINARY_DIR}/${service}.service
+    FILES ${CMAKE_CURRENT_SOURCE_DIR}/${service}.service
     DESTINATION ${SYSTEMD_SYSTEM_UNIT_DIR})
 endforeach()
 
