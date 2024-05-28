@@ -125,6 +125,8 @@ void raft_server_t::_send_leader_be_elected_notify(){
 void raft_server_t::send_pg_member_change_finished_notify(int result){
     auto osd_list = _nodes_stat.get_node_ids();
 
+    SPDK_INFOLOG_EX(pg_group, "in pg %lu.%lu, send PgMemberChangeFinishRequest to mon\n",
+            _pool_id, _pg_id);
     _mon_client->send_pg_member_change_finished_notify(
       result,
       _pool_id,
@@ -615,7 +617,7 @@ int raft_server_t::raft_recv_appendentries(
         if (0 != e){
             return hand_error(e);
         }
-        SPDK_INFOLOG_EX(pg_group, "in pg: %lu.%lu, become follower\n", _pool_id, _pg_id);
+        SPDK_INFOLOG_EX(pg_group, "in pg %lu.%lu, become follower\n", _pool_id, _pg_id);
         raft_become_follower();
     }
     else if (ae->term() < raft_get_current_term())
@@ -1328,13 +1330,13 @@ void raft_server_t::process_conf_change_configuration(std::shared_ptr<raft_entry
             return;
         raft_index_t next_idx = node->raft_node_get_next_idx();
         if(!node->raft_node_is_recovering()){
-            SPDK_INFOLOG_EX(pg_group, "send to node %d _next_idx: %ld _first_idx: %lu _current_idx: %ld index: %lu\n", 
-                    node->raft_node_get_id(), next_idx, _first_idx, _current_idx, index);
+            SPDK_INFOLOG_EX(pg_group, "in pg %lu.%lu , send to node %d _next_idx: %ld _first_idx: %lu _current_idx: %ld index: %lu\n", 
+                     _pool_id, _pg_id, node->raft_node_get_id(), next_idx, _first_idx, _current_idx, index);
             node->raft_set_end_idx(index);
             raft_send_appendentries(node, index, index);            
         }else{
-            SPDK_INFOLOG_EX(pg_group, "node %d is recovering,  next_idx: %ld first_idx: %ld current_idx: %ld index: %lu\n", 
-                    node->raft_node_get_id(), next_idx, _first_idx, _current_idx, index);            
+            SPDK_INFOLOG_EX(pg_group, "in pg %lu.%lu , node %d is recovering,  next_idx: %ld first_idx: %ld current_idx: %ld index: %lu\n", 
+                    _pool_id, _pg_id, node->raft_node_get_id(), next_idx, _first_idx, _current_idx, index);            
         }
       }
     );
@@ -1343,7 +1345,7 @@ void raft_server_t::process_conf_change_configuration(std::shared_ptr<raft_entry
 void raft_server_t::process_conf_change_add_nonvoting(std::shared_ptr<raft_entry_t> entry){
     set_configuration_state(cfg_state::CFG_CATCHING_UP);
 
-    SPDK_INFOLOG_EX(pg_group, "pg: %lu.%lu, process entry type %d, index: %ld \n", _pool_id, _pg_id, entry->type(), entry->idx());
+    SPDK_INFOLOG_EX(pg_group, "in pg %lu.%lu , process entry type %d, index: %ld \n", _pool_id, _pg_id, entry->type(), entry->idx());
     raft_configuration config;
     config.ParseFromString(entry->meta());
 
@@ -1363,7 +1365,7 @@ void raft_server_t::process_conf_change_add_nonvoting(std::shared_ptr<raft_entry
 
     _configuration_manager.for_catch_up_node([this, next_idx = entry->idx()](std::shared_ptr<raft_node> node){
         node->raft_node_set_next_idx(next_idx);
-        SPDK_INFOLOG_EX(pg_group, "pg: %lu.%lu, send appendentries to node %d next_idx: %ld\n", _pool_id, _pg_id, node->raft_get_node_info().node_id(), next_idx);
+        SPDK_INFOLOG_EX(pg_group, "in pg %lu.%lu , send appendentries to node %d next_idx: %ld\n", _pool_id, _pg_id, node->raft_get_node_info().node_id(), next_idx);
         msg_appendentries_t*ae = create_appendentries(node, next_idx);
         
         if(_client.send_appendentries(this, node->raft_node_get_id(), ae) != err::E_SUCCESS){

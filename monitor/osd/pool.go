@@ -374,12 +374,12 @@ func ProcessLeaderBeElected(ctx context.Context, client *etcdapi.EtcdClient, lea
 					pgConf.SetPgState(PgActive)
 				}
 				pgConf.Version++
-				log.Warn(ctx, "pg", poolId, ".", pgId, " in PgCreating.")
+				log.Info(ctx, "pg", poolId, ".", pgId, " in PgCreating.")
 			} else if pgConf.PgInState(PgRemapped) {
 				//pg remap过程中，leader down掉或切换，导致remap中断
 				if Compare_arry(pgConf.OsdList, osdList) {
 					outNum := getPgOsdOutNum(osdList, poolConf.PGSize)
-					log.Warn(ctx, "pg", poolId, ".", pgId, " in PgRemapped. outNum ", outNum)
+					log.Info(ctx, "pg", poolId, ".", pgId, " in PgRemapped. outNum ", outNum)
 					if outNum > 0 {
 						pgConf.Version++
 					} else {
@@ -406,7 +406,7 @@ func ProcessLeaderBeElected(ctx context.Context, client *etcdapi.EtcdClient, lea
 					}
 
 					pgConf.Version++
-					log.Warn(ctx, "pg", poolId, ".", pgId, " in PgRemapped. pg osdList == newOsdList")
+					log.Info(ctx, "pg", poolId, ".", pgId, " in PgRemapped. pg osdList == newOsdList")
 				} else {
 					return nil
 				}
@@ -450,7 +450,7 @@ func ProcessPgMemberChangeFinish(ctx context.Context, client *etcdapi.EtcdClient
 	if poolConf, ok := AllPools[PoolID(poolId)]; ok {
 		if pgConf, gok := poolConf.PoolPgMap.PgMap[pgIdStr]; gok {
 			if pgConf.PgInState(PgRemapped) {
-				log.Warn(ctx, "pg", poolId, ".", pgId, " in PgRemapped. result ", result)
+				log.Info(ctx, "PgMemberChangeFinishRequest, pg", poolId, ".", pgId, " in PgRemapped. result ", result)
 				if result == 0 {
 					pgConf.UnsetPgState(PgRemapped)
 					state := CheckPgState(pgConf.NewOsdList, poolConf.PGSize)

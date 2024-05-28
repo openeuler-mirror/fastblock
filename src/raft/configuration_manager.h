@@ -121,16 +121,7 @@ enum class cfg_state {
 
 class node_configuration_manager{
 public:
-    node_configuration_manager(raft_server_t* raft)
-    : _raft(raft) 
-    , _state(cfg_state::CFG_NONE)
-    , _cfg_entry(nullptr)
-    , _cfg_complete(nullptr)
-    , _configuration_index(0)
-    , _old_node_match_size(0)
-    , _old_node_fail_size(0)
-    , _new_node_match_size(0)
-    , _new_node_fail_size(0) {}
+    node_configuration_manager(raft_server_t* raft);
 
     void add_node_configuration(node_configuration&& node_config){
         _configurations.emplace_back(std::move(node_config));
@@ -280,6 +271,8 @@ private:
 
     //用于在CFG_UPDATE_NEW_CFG状态时标记RAFT_LOGTYPE_CONFIGURATION类型的entry的index.只用在leader中
     raft_index_t _configuration_index;
+
+    std::string _pg_name;
 
     //用于统计CFG_JOINT或CFG_UPDATE_NEW_CFG状态时，RAFT_LOGTYPE_CONFIGURATION类型entry的commit信息
     int _old_node_match_size;
