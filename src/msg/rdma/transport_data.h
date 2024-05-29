@@ -239,20 +239,22 @@ public:
         }
 
         auto* rm_infos = _rm_infos.get();
+
+        SPDK_DEBUGLOG_EX(
+          msg,
+          "[%p] _data_count: %ld, _transport_size: %ld, data->io_count: %d, "
+          "data->io_length: %d, data->is_lined: %d, data->correlation_index: %d, "
+          "data->metadata_count: %d, data->serial_no: %d, _last_rm_info_index: %ld, "
+          "_rm_infos size: %ld\n",
+          this, _data_count, _transport_size, data->io_count, data->io_length,
+          data->is_inlined, data->correlation_index, data->metadata_count,
+          data->serial_no, _last_rm_info_index, data->metadata_count * data->io_count);
+
         for (uint32_t i{0}; i < data->io_count; ++i) {
             rm_infos[_last_rm_info_index].raddr = rm_info[i].raddr;
             rm_infos[_last_rm_info_index].rkey = rm_info[i].rkey;
             ++_last_rm_info_index;
         }
-
-        SPDK_DEBUGLOG_EX(
-          msg,
-          "_data_count: %ld, _transport_size: %ld, data->io_count: %d, "
-          "data->io_length: %d, data->is_lined: %d, data->correlation_index: %d, "
-          "data->metadata_count: %d, data->serial_no: %d\n",
-          _data_count, _transport_size, data->io_count, data->io_length,
-          data->is_inlined, data->correlation_index, data->metadata_count,
-          data->serial_no);
 
         if (data->serial_no + 1 == data->metadata_count) {
             _is_metadata_complete = true;
@@ -386,8 +388,8 @@ public:
             for (size_t i{1}; i < _metas.size(); ++i) {
                 _metas[i - 1]->wr.next = &(_metas[i]->wr);
             }
-            _metas[_metas.size() - 1]->wr.next = nullptr;
         }
+        _metas[_metas.size() - 1]->wr.next = nullptr;
 
         return &(_metas[0]->wr);
     }
