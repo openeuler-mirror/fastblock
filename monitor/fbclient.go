@@ -105,8 +105,8 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 				}
 
 			case *msg.Response_BootResponse:
-				isok := payload.BootResponse.GetOk()
-				fmt.Printf("Received BootResponse, ok is %v\r\n", isok)
+				result := payload.BootResponse.GetResult()
+				fmt.Printf("Received BootResponse, result is %d\r\n", result)
 
 				if *fakeOsdCount == 0 {
 					stopChan <- struct{}{}

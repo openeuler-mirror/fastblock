@@ -871,6 +871,11 @@ int client::send_request(std::unique_ptr<msg::Request> req, bool send_directly) 
 }
 
 int client::send_request(msg::Request* req, bool send_directly) {
+    if(req->union_case() == msg::Request::UnionCase::kPgMemberChangeFinishRequest){
+        auto &pg_req = req->pg_member_change_finish_request();
+        SPDK_DEBUGLOG_EX(mon, "in pg %lu.%lu, send PgMemberChangeFinishRequest to mon result %d, send_directly %d\n",
+                pg_req.poolid(), pg_req.pgid(), pg_req.result(), send_directly);
+    }
     if (not send_directly) {
         auto serialized_size = req->ByteSizeLong();
         if (serialized_size > _last_request_serialize_size) {
@@ -883,6 +888,7 @@ int client::send_request(msg::Request* req, bool send_directly) {
     }
 
     auto rc = _cluster->writev(&_request_iov, 1);
+    SPDK_DEBUGLOG_EX(mon, "rc %d\n", rc);
     if (rc != -1) { ++_request_counter; }
     return rc;
 }
@@ -901,13 +907,16 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
         SPDK_DEBUGLOG_EX(mon, "Received osd boot response\n");
 
         auto& req_ctx = _on_flight_requests.front();
-        if (not response->boot_response().ok()) {
-            SPDK_ERRLOG_EX("EREOR: monitor notifies boot failed\n");
-            throw std::runtime_error{"monitor notifies boot failed"};
-        }
+        // if (response->boot_response().result() != 0) {
+            // SPDK_ERRLOG_EX("EREOR: monitor notifies boot failed\n");
+            // throw std::runtime_error{"monitor notifies boot failed"};
+        // }
 
-        req_ctx->cb(response_status::ok, req_ctx.get());
-        SPDK_NOTICELOG_EX("osd %d is booted\n", _self_osd_id);
+        auto result = response->boot_response().result();
+
+        req_ctx->cb(response_status(result), req_ctx.get());
+        if(result == 0)
+            SPDK_NOTICELOG_EX("osd %d is booted\n", _self_osd_id);
         _on_flight_requests.pop_front();
         break;
     }

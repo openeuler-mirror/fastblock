@@ -87,7 +87,7 @@ type OsdTask struct {
 var osdTaskQueue = NewQueue()
 
 func (task *OsdTask) Process(ctx context.Context, client *etcdapi.EtcdClient) {
-    log.Warn(ctx, "osd: ", task.osdid, " stateSwitch: ", task.stateSwitch)
+    log.Info(ctx, "osd: ", task.osdid, " stateSwitch: ", task.stateSwitch)
 	if task.stateSwitch == OutToIn {
 		Reblance(ctx, client)
 	} else {
@@ -199,7 +199,7 @@ func ProcessApplyIDMessage(ctx context.Context, client *etcdapi.EtcdClient, uuid
 	return oid, nil
 }
 
-func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int32, uuid string, size int64, port uint32, host string, address string) error {
+func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int32, uuid string, size int64, port uint32, host string, address string) ERRNUM {
 	// the uuid should not exist in the osd map
 	found := false
 	for _, info := range AllOSDInfo.Osdinfo {
@@ -209,28 +209,32 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 		}
 	}
 	if !found {
-		log.Info(ctx, "osd is not found in our database,")
-		return fmt.Errorf("not a good osd id")
+		log.Warn(ctx, "osd is not found in our database.")
+		return OSD_ERR_NOT_APPLY
 	}
 	oinfo := AllOSDInfo.Osdinfo[OSDID(id)]
 
 	oldIsUp := oinfo.IsUp
-	log.Info(ctx, "ip address is valid?", isValidIPv4(address), address)
+	if oldIsUp {
+		log.Warn(ctx, "osd is up.")
+		return OSD_ERR_ID_CONFLICT
+	}
+
+	if !isValidIPv4(address) || !isValidPort(port) {
+        log.Warn(ctx, "invalide ip or port.")
+		return OSD_ERR_ADDRESS_INVALID
+	}
 
 	oldIsIn := oinfo.IsIn
 	if oinfo.IsPendingCreate {
-		if isValidIPv4(address) && isValidPort(port) {
-			//this is a newly create osd
-			oinfo.Address = address
-			oinfo.Host = host
-			oinfo.Port = port
-			oinfo.IsPendingCreate = false
-			oinfo.IsIn = true
-			oinfo.IsUp = true
-			oinfo.Size = size
-		} else {
-			return fmt.Errorf("invalide ip or port")
-		}
+		//this is a newly create osd
+		oinfo.Address = address
+		oinfo.Host = host
+		oinfo.Port = port
+		oinfo.IsPendingCreate = false
+		oinfo.IsIn = true
+		oinfo.IsUp = true
+		oinfo.Size = size
 	} else {
 		//(todo) check whether any thing changed??
 		oinfo.Address = address
@@ -240,18 +244,6 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 		oinfo.IsUp = true
 		oinfo.Size = size
 		log.Info(ctx, "IsPendingCreate is false, this is an update osd")
-	}
-
-	//osd由down变为up
-	if !oldIsUp && oinfo.IsUp && oldIsIn && oinfo.IsIn {
-		log.Warn(ctx, "osd ", id, "from down to up.")
-		osdTaskQueue.Enqueue(OsdTask{osdid: int(id), stateSwitch: DownToUp})
-	} 
-
-	//osd由out变为in
-	if !oldIsIn && oinfo.IsIn {
-		log.Warn(ctx, "osd ", id, "from out to in.")
-		osdTaskQueue.Enqueue(OsdTask{osdid: int(id), stateSwitch: OutToIn})
 	}
 
 	AllOSDInfo.Osdinfo[OSDID(id)] = oinfo
@@ -264,18 +256,30 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 	osdmap, err := json.Marshal(AllOSDInfo)
 	if err != nil {
 		log.Error(ctx, err)
-		return err
+		return OSD_ERR_UPDATE_STATE_FAILED
 	}
 
 	err = client.Put(ctx, config.ConfigOSDMapKey, string(osdmap))
 	if err != nil {
 		log.Error(ctx, err)
-		return err
+		return OSD_ERR_UPDATE_STATE_FAILED
+	}
+
+	//osd由down变为up
+	if !oldIsUp && oinfo.IsUp && oldIsIn && oinfo.IsIn {
+		log.Info(ctx, "osd ", id, "from down to up.")
+		osdTaskQueue.Enqueue(OsdTask{osdid: int(id), stateSwitch: DownToUp})
+	} 
+
+	//osd由out变为in
+	if !oldIsIn && oinfo.IsIn {
+		log.Info(ctx, "osd ", id, "from out to in.")
+		osdTaskQueue.Enqueue(OsdTask{osdid: int(id), stateSwitch: OutToIn})
 	}
 
 	log.Info(ctx, "successfully put to ectd for newly booted osd ", id)
 	GetOSDTree(ctx, true, false)
-	return nil
+	return SUCCESS
 }
 
 func ProcessGetOsdMapMessage(ctx context.Context, cv int64, oid int32) ([]*msg.OsdDynamicInfo, int64, msg.OsdMapErrorCode) {

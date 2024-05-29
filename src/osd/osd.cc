@@ -34,6 +34,7 @@
 #include <ifaddrs.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <fcntl.h>
 
 enum class stop_state {
     monitor_client = 1,
@@ -64,6 +65,7 @@ static bool g_mkfs{false};
 static bool g_force{false};
 static const char *g_uuid{nullptr};
 int g_id{-1};
+int g_pid_fd;
 
 static std::unique_ptr<::raft_service<::partition_manager>> global_raft_service{nullptr};
 static std::unique_ptr<::osd_service> global_osd_service{nullptr};
@@ -128,16 +130,33 @@ static struct option g_cmdline_opts[] = {
 static void
 save_pid(const char *pid_path)
 {
-	FILE *pid_file;
+    int fd;
+    struct flock lock;
 
-	pid_file = fopen(pid_path, "w");
-	if (pid_file == NULL) {
-		fprintf(stderr, "Couldn't create pid file '%s': %s\n", pid_path, strerror(errno));
-		exit(EXIT_FAILURE);
-	}
+    fd = open(pid_path, O_RDWR | O_CREAT, 0666);
+    if (fd == -1){
+        fprintf(stderr, "Couldn't create pid file '%s': %s\n", pid_path, strerror(errno));
+        exit(EXIT_FAILURE);
+    }
 
-	fprintf(pid_file, "%d\n", getpid());
-	fclose(pid_file);
+    lock.l_type = F_WRLCK; 
+    lock.l_whence = SEEK_SET;
+    lock.l_start = 0;
+    lock.l_len = 0;
+
+    if(fcntl(fd, F_SETLK, &lock) == -1){
+        if (errno == EACCES || errno == EAGAIN){
+            std::cerr << "The osd " << g_id << " has been started." << std::endl;
+        } else {
+            perror("fcntl");
+        }
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
+
+    std::string pid = std::to_string(getpid());
+    write(fd, pid.c_str(), pid.size());
+    g_pid_fd = fd;
 }
 
 static int
@@ -191,9 +210,12 @@ void start_monitor(server_t* ctx) {
     monitor_client->start();
     monitor::client::on_response_callback_type cb =
       [] (const monitor::client::response_status s, monitor::client::request_context* req_ctx) {
-          if (s != monitor::client::response_status::ok) {
-              SPDK_ERRLOG_EX("ERROR: OSD boot failed\n");
-              throw std::runtime_error{"OSD boot failed"};
+          int result = s;
+          if (result != err::E_SUCCESS) {
+              SPDK_ERRLOG_EX("ERROR: OSD boot failed: %s\n", err::string_status(result));
+              osd_exit_code = result;
+              std::raise(SIGINT);
+              return;
           }
 
           req_ctx->this_client->start_cluster_map_poller();
@@ -575,9 +597,27 @@ static int from_configuration(server_t* server, std::string& bdev_json_file) {
         return -1;
     }
 
-    std::string pid_path = "/var/tmp/osd" + current_osd_id + ".pid";
-    save_pid(pid_path.c_str());
     return 0;
+}
+
+static std::string get_pid_path() {
+    auto current_osd_id = std::to_string(g_id);
+    std::string pid_path = "/var/tmp/osd" + current_osd_id + ".pid";
+    return  pid_path;   
+}
+
+static void clean_file(){
+    std::string pid_path = get_pid_path();
+
+    struct flock lock;
+    lock.l_type = F_UNLCK; 
+    lock.l_whence = SEEK_SET;
+    lock.l_start = 0;
+    lock.l_len = 0;
+
+    fcntl(g_pid_fd, F_SETLK, &lock);
+    close(g_pid_fd);
+    unlink(pid_path.c_str());
 }
 
 static void on_blob_unloaded([[maybe_unused]] void *cb_arg, int bserrno) {
@@ -586,6 +626,7 @@ static void on_blob_unloaded([[maybe_unused]] void *cb_arg, int bserrno) {
     auto& sharded_service = core_sharded::get_core_sharded();
     SPDK_NOTICELOG_EX("Start stopping sharded service\n");
     sharded_service.stop();
+    clean_file();
     SPDK_NOTICELOG_EX("Stop the spdk app\n");
     ::spdk_app_stop(osd_exit_code);
 }
@@ -692,6 +733,9 @@ main(int argc, char *argv[])
     if(from_configuration(&osd_server, bdev_json_file) != 0){
         return -EINVAL;
     }
+    
+    std::string pid_path = get_pid_path();
+    save_pid(pid_path.c_str());
 
     save_bdev_json(bdev_json_file, osd_server);
     opts.json_config_file = bdev_json_file.c_str();

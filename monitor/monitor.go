@@ -233,17 +233,13 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 				addr := payload.BootRequest.GetAddress()
 				host := payload.BootRequest.GetHost()
 
-				isOk := true
-				err := osd.ProcessBootMessage(ctx, client, id, uuid, size, port, host, addr)
-				if err != nil {
-					isOk = false
-				}
+				errnum := osd.ProcessBootMessage(ctx, client, id, uuid, size, port, host, addr)
 
 				// Create a BootResponse
 				response := &msg.Response{
 					Union: &msg.Response_BootResponse{
 						BootResponse: &msg.BootResponse{
-							Ok: isOk,
+							Result: int32(errnum),
 						},
 					},
 				}
