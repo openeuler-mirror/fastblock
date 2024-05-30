@@ -51,7 +51,11 @@ public:
         image_not_found,
         image_name_too_long,
         server_error,
-        fail
+        fail,
+        OSD_ERR_NOT_APPLY = -156,
+        OSD_ERR_ID_CONFLICT = -157,
+        OSD_ERR_ADDRESS_INVALID = -158,
+        OSD_ERR_UPDATE_STATE_FAILED = -159,
     };
 
     struct image_info {

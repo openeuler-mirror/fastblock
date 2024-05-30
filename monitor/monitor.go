@@ -233,17 +233,13 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 				addr := payload.BootRequest.GetAddress()
 				host := payload.BootRequest.GetHost()
 
-				isOk := true
-				err := osd.ProcessBootMessage(ctx, client, id, uuid, size, port, host, addr)
-				if err != nil {
-					isOk = false
-				}
+				errnum := osd.ProcessBootMessage(ctx, client, id, uuid, size, port, host, addr)
 
 				// Create a BootResponse
 				response := &msg.Response{
 					Union: &msg.Response_BootResponse{
 						BootResponse: &msg.BootResponse{
-							Ok: isOk,
+							Result: int32(errnum),
 						},
 					},
 				}
@@ -263,12 +259,12 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 				}
 
 			case *msg.Request_LeaderBeElectedRequest:
-				log.Warn(ctx, "Received LeaderBeElectedRequest")
 				leaderId := payload.LeaderBeElectedRequest.GetLeaderId()
 				poolId := payload.LeaderBeElectedRequest.GetPoolId()
 				pgId := payload.LeaderBeElectedRequest.GetPgId()
 				osdListM := payload.LeaderBeElectedRequest.GetOsdList()
 				newOsdListM := payload.LeaderBeElectedRequest.GetNewOsdList()
+				log.Info(ctx, "Received LeaderBeElectedRequest, pg ", poolId, ".", pgId)
 
 				var osdList []int
 				var newOsdList []int
@@ -307,11 +303,11 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 				}				
 			
 			case *msg.Request_PgMemberChangeFinishRequest:
-				log.Warn(ctx, "Received PgMemberChangeFinishRequest")
 				result := payload.PgMemberChangeFinishRequest.GetResult()
 				poolId := payload.PgMemberChangeFinishRequest.GetPoolId()
 				pgId := payload.PgMemberChangeFinishRequest.GetPgId()
 				osdListM := payload.PgMemberChangeFinishRequest.GetOsdList()
+				log.Info(ctx, "Received PgMemberChangeFinishRequest, pg ", poolId, ".", pgId)
 				
 				var osdList []int
 				for _, val := range osdListM {

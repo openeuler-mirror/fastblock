@@ -133,7 +133,7 @@ message GetClusterMapResponse {
 
 
 message BootResponse {
-    bool ok = 1;
+    int32 result = 1;
 }
 
 message OsdStopRequest {

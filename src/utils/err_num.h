@@ -48,6 +48,10 @@ enum {
     RAFT_ERR_MEMBERSHIP_CHANGING = -153,
     RAFT_ERR_SNAPSHOT_WAIT_APPLY = -154,
     RAFT_ERR_DISK_NOT_EMPTY = -155,
+    OSD_ERR_NOT_APPLY = -156,
+    OSD_ERR_ID_CONFLICT = -157,
+    OSD_ERR_ADDRESS_INVALID = -158,
+    OSD_ERR_UPDATE_STATE_FAILED = -159,
 
     RAFT_ERR_UNKNOWN = -199,
     RAFT_ERR_LAST = -200,
@@ -107,6 +111,14 @@ inline const char *  string_status(int raft_errno) noexcept{
         return "The snapshot is waiting for the log to apply";
     case RAFT_ERR_DISK_NOT_EMPTY:
         return "The disk is not empty";
+    case OSD_ERR_NOT_APPLY:
+        return "The osd does not exist in the osdmap of the monitor";
+    case OSD_ERR_ID_CONFLICT:
+        return "The osd has been started.";
+    case OSD_ERR_ADDRESS_INVALID:
+        return "The address of osd is invalid.";
+    case OSD_ERR_UPDATE_STATE_FAILED:
+        return "update osd state failed.";
     default:
         return "unknown errno";
     }

@@ -69,8 +69,8 @@ func handleResponses(ctx context.Context, conn net.Conn, responseChan chan<- Res
 				// Send the ResponseChanData to responseChan
 				responseChan <- ResponseChanData{uuid, osdid}
 			case *msg.Response_BootResponse:
-				isok := payload.BootResponse.GetOk()
-				fmt.Printf("Received BootResponse, ok is %v\r\n", isok)
+				result := payload.BootResponse.GetResult()
+				fmt.Printf("Received BootResponse, result is %d\r\n", result)
 				counter++
 				if counter == 36 {
 					fmt.Printf("got 36 Received BootResponses, we are done\r\n")

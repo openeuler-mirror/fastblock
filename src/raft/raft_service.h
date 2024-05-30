@@ -57,11 +57,15 @@ private:
 
 struct append_entries_complete : public utils::context{
     google::protobuf::Closure* done;
+    const msg_appendentries_t* request;
 
-    append_entries_complete(google::protobuf::Closure* _done)
-    : done(_done) {}
+    append_entries_complete(google::protobuf::Closure* _done, const msg_appendentries_t* _request)
+    : done(_done)
+    , request(_request) {}
 
     void finish(int ) override {
+        SPDK_INFOLOG_EX(pg_group, "complete the append entry of pg %lu.%lu from node %d\n",
+                request->pool_id(), request->pg_id(), request->node_id());
         done->Run();
     }
 };
@@ -104,7 +108,9 @@ void raft_service<PartitionManager>::append_entries(google::protobuf::RpcControl
             return;            
         }
 
-        append_entries_complete *complete = new append_entries_complete(done);
+        SPDK_INFOLOG_EX(pg_group, "receive append entry of pg %lu.%lu from node %d\n", 
+                request->pool_id(), request->pg_id(), request->node_id());
+        append_entries_complete *complete = new append_entries_complete(done, request);
         raft->append_entries_to_buffer(request, response, complete);
       });
 }
