@@ -42,7 +42,7 @@ static void make_log_done(void *arg, struct disk_log* dlog, int rberrno){
     make_log_context* mlc = (make_log_context*)arg;
 
     if(rberrno){
-        SPDK_ERRLOG_EX("make_disk_log failed: %s\n", spdk_strerror(rberrno));
+        SPDK_ERRLOG_EX("pg %lu.%lu make_disk_log failed: %s\n", mlc->pool_id, mlc->pg_id, spdk_strerror(rberrno));
         mlc->cb_fn(mlc->arg, rberrno);
         delete mlc;
         return;
@@ -283,6 +283,7 @@ int partition_manager::delete_partition(uint64_t pool_id, uint64_t pg_id, pm_com
 
 void partition_manager::active_pg(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id, pm_complete cb_fn, void *arg){
     _pgs.active_pg(shard_id, pool_id, pg_id);
+    cb_fn(arg, 0);
 }
 
 int partition_manager::active_partition(uint64_t pool_id, uint64_t pg_id, pm_complete&& cb_fn, void *arg) {
@@ -305,6 +306,7 @@ int partition_manager::active_partition(uint64_t pool_id, uint64_t pg_id, pm_com
     auto activate_pg_done = [cur_thread](void *arg, int perrno){
         partition_op_ctx* ctx = (partition_op_ctx *)arg;
         ctx->perrno = perrno;
+        SPDK_INFOLOG_EX(osd, "activate pg %lu.%lu done\n", ctx->pool_id, ctx->pg_id);
         spdk_thread_send_msg(cur_thread, partition_op_done, arg);
     };
 

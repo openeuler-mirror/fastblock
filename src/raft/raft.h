@@ -971,4 +971,4 @@ bool raft_entry_is_voting_cfg_change(raft_entry_t* ety);
 /** Determine if entry is configuration change.
  * @param[in] ety The entry to query.
  */
-bool raft_entry_is_cfg_change(raft_entry_t *ety);
+bool raft_entry_is_cfg_change(std::shared_ptr<raft_entry_t> ety);

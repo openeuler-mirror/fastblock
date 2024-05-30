@@ -57,7 +57,7 @@ int raft_log::entry_queue_flush(){
 
     auto &ec = _entry_queue.front();
     auto entry = ec.first;
-    if(raft_entry_is_cfg_change(entry.get())){
+    if(raft_entry_is_cfg_change(entry)){
         entry->set_idx(_next_idx);
 
         auto complete = ec.second;
@@ -82,7 +82,7 @@ int raft_log::entry_queue_flush(){
     while(!_entry_queue.empty()){
         auto &ec = _entry_queue.front();
         auto entry = ec.first;
-        if(raft_entry_is_cfg_change(entry.get()))
+        if(raft_entry_is_cfg_change(entry))
             break;
 
         entry->set_idx(_next_idx);
