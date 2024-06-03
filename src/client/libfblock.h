@@ -113,13 +113,10 @@ public:
       struct spdk_bdev_io *bdev_io,
       read_callback cb);
 
-    std::string calc_image_object_prefix(const uint64_t pool_id, const std::string &image_name);
-
     std::tuple<size_t, uint64_t, uint64_t>
     calc_first_object_position(const uint64_t offset, const uint64_t length, const size_t object_size);
 
     // TODO 添加 pg 到 master osd 的映射
-    std::string get_image_object_name(std::string &prefix, uint64_t seq);
 
 private:
 

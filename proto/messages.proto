@@ -365,6 +365,78 @@ message DataStatisticsResponse {
     bool ok = 1;
 }
 
+message CreateSnapshotRequest {
+    uint64 poolid = 1;
+    string imagename = 2;
+    string snapname = 3;
+}
+
+enum CreateSnapshotErrorCode {
+    createSnapshotOk = 0;
+    createSnapshotExisted = 1;
+    createSnapshotUnknownPoolName = 2;
+    createSnapshotUnknownImageName = 3;
+    createSnapshotIDError = 4;
+    createSnapshotPutEtcdError = 5;
+    createSnapshotGetEtcdError = 6;
+    createSnapshotDeleteEtcdError = 7;
+    createSnapshotServerError = 8;
+}
+
+message CreateSnapshotResponse {
+    CreateSnapshotErrorCode errorcode = 1;
+    int64 snapshotId = 2;
+}
+
+message ListSnapshotRequest {
+    uint64 poolid = 1;
+    string imagename = 2;
+    int64 startepoch = 3;
+    int64 limit = 4;
+}
+
+enum ListSnapshotErrorCode {
+    listSnapshotOk = 0;
+    listSnapshotServerError = 1;
+    listSnapshotUnknownPoolName = 2;
+    listSnapshotUnknownImageName = 3;
+}
+
+enum SnapshotInfoStatus {
+    snapshotCreated = 0;
+    snapshotDeleted = 1;
+}
+
+message SnapshotInfo {
+    int64 snapshotId = 1;
+    string snapshotName = 2;
+    SnapshotInfoStatus snapshotStatus = 3;
+    int64 epoch = 4;
+}
+
+message ListSnapshotResponse {
+    ListSnapshotErrorCode errorcode = 1;
+    repeated SnapshotInfo snapshots = 2;
+}
+
+message DeleteSnapshotRequest {
+    uint64 poolid = 1;
+    string imagename = 2;
+    string snapname = 3;
+}
+
+enum DeleteSnapshotErrorCode {
+    deleteSnapshotOk = 0;
+    deleteSnapshotNotFound = 1;
+    deleteSnapshotUnknownPoolName = 2;
+    deleteSnapshotUnknownImageName = 3;
+    deleteSnapshotError = 4;
+}
+
+message DeleteSnapshotResponse {
+    DeleteSnapshotErrorCode errorcode = 1;
+}
+
 message Request {
     oneof union {
         BootRequest boot_request = 1;
@@ -389,6 +461,9 @@ message Request {
         NoOutRequest   no_out_request=20;
         GetClusterStatusRequest get_cluster_status_request=21;
         DataStatisticsRequest   data_statistics_request=22;
+        CreateSnapshotRequest create_snapshot_request=23;
+        ListSnapshotRequest list_snapshot_request=24;
+        DeleteSnapshotRequest delete_snapshot_request=25;
     }
 }
 
@@ -416,5 +491,8 @@ message Response {
         NoOutResponse  no_out_response=20;
         GetClusterStatusResponse  get_cluster_status_response=21;
         DataStatisticsResponse    data_statistics_response=22;
+        CreateSnapshotResponse create_snapshot_response=23;
+        ListSnapshotResponse list_snapshot_response=24;
+        DeleteSnapshotResponse delete_snapshot_response=25;
     }
 }

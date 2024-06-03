@@ -216,12 +216,14 @@ private:
 
 using object_complete = std::function<void (void *arg, int objerrno)>;
 class osd_stm : public state_machine {
+
 public:
+
     osd_stm();
 
     void apply(std::shared_ptr<raft_entry_t> entry, utils::context *complete) override;
 
-    void write_obj(const std::string& obj_name, uint64_t offset, const std::string& data, utils::context *complete);
+    void write_obj(std::string* obj_name, uint64_t offset, std::string* data, utils::context *complete);
     void delete_obj(const std::string& obj_name, utils::context *complete);
 
     void write_and_wait(const osd::write_request* request, osd::write_reply* response, google::protobuf::Closure* done);
@@ -244,11 +246,21 @@ public:
         core_sharded::get_core_sharded().invoke_on(
           utils::default_blobstore_core,
           [this, arg, stop_done = std::move(stop_done)](){
-            _store.stop(stop_done, arg); 
+            _store.stop(stop_done, arg);
           });
     }
 
     void destroy_objects(object_complete cb_fn, void *arg);
+
+private:
+
+    void write_obj_directly(
+      std::string* obj_name,
+      uint64_t offset,
+      std::string* data,
+      utils::context *complete,
+      std::optional<std::function<void()>> snap_create_cb = std::nullopt);
+
 private:
     lock_manager<op_type_excl_lock<utils::operation_type>>   _object_rw_lock;
     uint32_t  _sockid;

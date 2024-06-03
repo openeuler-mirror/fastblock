@@ -168,6 +168,27 @@ func (c *EtcdClient) GetWithPrefix(ctx context.Context, prefix string) ([]KeyVal
 	return kvs, nil
 }
 
+func (c *EtcdClient) GetWithSortAscend(ctx context.Context, prefix string) ([]KeyValue, error) {
+	opts := []clientv3.OpOption{
+		clientv3.WithPrefix(),
+		clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend),
+	}
+	resp, err := c.client.Get(ctx, prefix, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	kvs := make([]KeyValue, len(resp.Kvs))
+	for i, kv := range resp.Kvs {
+		kvs[i] = KeyValue{
+			Key:   string(kv.Key),
+			Value: string(kv.Value),
+		}
+	}
+
+	return kvs, nil
+}
+
 func (c *EtcdClient) NewTxn() *TxnBuilder {
 	return &TxnBuilder{
 		client: c.client,
@@ -190,12 +211,13 @@ func (t *TxnBuilder) Delete(key string) *TxnBuilder {
 	return t
 }
 
-func (t *TxnBuilder) Commit(ctx context.Context) error {
-	_, err := t.client.Txn(ctx).Then(t.ops...).Commit()
-	if err != nil {
-		return fmt.Errorf("failed to execute transaction: %v", err)
-	}
-	return nil
+func (t *TxnBuilder) DeleteWithPrefix(prefix string) *TxnBuilder {
+	t.ops = append(t.ops, clientv3.OpDelete(prefix, clientv3.WithPrefix()))
+	return t
+}
+
+func (t *TxnBuilder) Commit(ctx context.Context) (*clientv3.TxnResponse, error) {
+	return t.client.Txn(ctx).Then(t.ops...).Commit()
 }
 
 // NewServer initializes and starts a new Etcd server.

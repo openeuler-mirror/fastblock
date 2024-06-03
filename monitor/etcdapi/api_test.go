@@ -17,6 +17,7 @@ import (
 	"log"
 	"testing"
 )
+
 func TestEtcdAPI(t *testing.T) {
 	ctx, _ := context.WithCancel(context.Background())
 	endpoints := []string{"localhost:2379"} // Replace with your etcd server endpoints
@@ -45,7 +46,7 @@ func TestEtcdAPI(t *testing.T) {
 
 	// Transaction example
 	txn := client.NewTxn()
-	err = txn.Put("key2", "value2").
+	_, err = txn.Put("key2", "value2").
 		Delete("key1").
 		Put("key3", "value3").
 		Commit(ctx)
@@ -78,4 +79,3 @@ func TestEtcdAPI(t *testing.T) {
 		t.Errorf("Expected value: %s, got: %s", expectedValue, value)
 	}
 }
-

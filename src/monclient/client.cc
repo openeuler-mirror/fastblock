@@ -227,6 +227,24 @@ void client::emplace_list_pool_request(on_response_callback_type&& cb) {
     enqueue_request(ctx);
 }
 
+void client::emplace_list_snapshot_request(
+  const uint64_t pool_id,
+  const std::string image_name,
+  const int64_t start_epoch,
+  const int64_t limit,
+  on_response_callback_type&& cb) {
+    auto req = std::make_unique<msg::Request>();
+    auto* real_req = req->mutable_list_snapshot_request();
+    real_req->set_poolid(pool_id);
+    real_req->set_imagename(image_name);
+    real_req->set_startepoch(start_epoch);
+    real_req->set_limit(limit);
+
+    auto* ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
+}
+
 void client::handle_emplace_request(client::request_context* ctx) {
     _requests.push_back(std::unique_ptr<request_context>{ctx});
 }
@@ -310,6 +328,22 @@ client::to_response_status(const msg::GetImageErrorCode e) noexcept {
         return client::response_status::image_not_found;
     case msg::GetImageErrorCode::getImageOk:
         return client::response_status::ok;
+    default:
+        return client::response_status::unknown_server_status;
+    }
+}
+
+client::response_status
+client::to_response_status(const msg::ListSnapshotErrorCode e) noexcept {
+    switch (e) {
+    case msg::ListSnapshotErrorCode::listSnapshotOk:
+        return client::response_status::ok;
+    case msg::ListSnapshotErrorCode::listSnapshotServerError:
+        return client::response_status::server_error;
+    case msg::ListSnapshotErrorCode::listSnapshotUnknownImageName:
+        return client::response_status::image_not_found;
+    case msg::ListSnapshotErrorCode::listSnapshotUnknownPoolName:
+        return client::response_status::unknown_pool_name;
     default:
         return client::response_status::unknown_server_status;
     }
@@ -1041,6 +1075,32 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
         _on_flight_requests.pop_front();
         break;
     }
+    case msg::Response::UnionCase::kListSnapshotResponse: {
+        SPDK_DEBUGLOG(mon, "Received list snapshots response\n");
+        auto& req_ctx = _on_flight_requests.front();
+        auto err_code = response->list_snapshot_response().errorcode();
+        if (err_code != msg::ListSnapshotErrorCode::listSnapshotOk) {
+            SPDK_ERRLOG(
+              "request for listting snapshots error, %s\n",
+              msg::ListSnapshotErrorCode_Name(err_code).c_str());
+            req_ctx->cb(to_response_status(err_code), req_ctx.get());
+            _on_flight_requests.pop_front();
+            break;
+        }
+
+        auto& response_snaps = response->list_snapshot_response().snapshots();
+        SPDK_DEBUGLOG(mon, "List snapshot size is %d\n", response_snaps.size());
+
+        auto snaps = std::make_unique<std::list<snapshot_info>>();
+        for (auto& snap : response_snaps) {
+            snaps->emplace_back(snap.snapshotid(), snap.snapshotname(), snap.snapshotstatus(), snap.epoch());
+        }
+
+        req_ctx->response_data = std::move(snaps);
+        req_ctx->cb(response_status::ok, req_ctx.get());
+        _on_flight_requests.pop_front();
+        break;
+    }
     default:
         SPDK_NOTICELOG(
           "Skipping monitor response with response case %d\n",
@@ -1067,20 +1127,20 @@ bool client::handle_response() {
     if (rc == 0) [[likely]] {
         return false;
     }
-    
+
     if (rc < 0) [[unlikely]] {
         SPDK_ERRLOG(
           "ERROR: spdk_sock_recv() failed, errno %d: %s\n",
           errno, ::spdk_strerror(errno));
 
         return false;
-    }     
+    }
 
-    _read_bytes += rc;   
+    _read_bytes += rc;
     SPDK_DEBUGLOG(mon, "_read_bytes %ld, _should_read_bytes %ld\n", _read_bytes, _should_read_bytes);
     if (_read_bytes < _should_read_bytes){
         return true;
-    } 
+    }
 
     _read_bytes = _read_bytes - _should_read_bytes;
     if(_read_bytes < 0){

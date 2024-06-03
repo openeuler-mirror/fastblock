@@ -1552,7 +1552,7 @@ void raft_server_t::raft_destroy(raft_complete cb_fn, void* arg)
           },
           arg);
     };
-    stop(std::move(stop_done), arg);
+    stop(std::move(stop_done), arg);wip)
 }
 
 std::pair<uint64_t, uint64_t> raft_server_t::raft_get_nvotes_for_me()
@@ -1720,11 +1720,7 @@ int raft_server_t::raft_recv_installsnapshot(raft_node_id_t node_id,
               request->node_id(), request->term(), raft_get_current_term());
         response->set_term(raft_get_current_term());
         auto election_timer = utils::get_time();
-        raft_set_election_timer(election_timer);
         response->set_lease(election_timer + _election_timeout);
-        return err::E_INVAL;
-    }else if(request->term() > raft_get_current_term()){
-        raft_set_current_term(request->term());
     }
     response->set_term(raft_get_current_term());
     if (!raft_is_follower())

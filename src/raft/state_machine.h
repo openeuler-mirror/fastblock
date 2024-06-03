@@ -84,9 +84,11 @@ public:
     }
 
     bool raft_is_leader();
-private:
+
+protected:
     raft_server_t* _raft;
 
+private:
     /* idx of highest log entry applied to state machine */
     raft_index_t _last_applied_idx;
     bool _apply_in_progress;

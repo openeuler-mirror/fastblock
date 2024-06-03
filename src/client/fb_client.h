@@ -14,6 +14,7 @@
 #include "monclient/client.h"
 #include "msg/rpc_controller.h"
 #include "msg/rdma/client.h"
+#include "localstore/object_name.h"
 #include "utils/overload.h"
 #include "utils/simple_poller.h"
 #include "rpc/osd_msg.pb.h"
@@ -548,9 +549,11 @@ private:
         osd_info->leader_id = resp->leader_id();
         osd_info->addr = resp->leader_addr();
         osd_info->port = resp->leader_port();
-        SPDK_DEBUGLOG(libblk, "Got leader osd of pg %lu.%lu: osd id %d osd address: '%s:%d'\n",
-                it->second->leader_req->pool_id(), it->second->leader_req->pg_id(), osd_info->leader_id,
-                osd_info->addr.c_str(), osd_info->port);
+        SPDK_DEBUGLOG(
+          libblk,
+          "Got leader osd of pg %lu.%lu: osd id %d osd address: '%s:%d'\n",
+          it->second->leader_req->pool_id(), it->second->leader_req->pg_id(),
+          osd_info->leader_id, osd_info->addr.c_str(), osd_info->port);
 
         update_leader_state(info_it->second.get());
         if (not info_it->second->is_valid) {

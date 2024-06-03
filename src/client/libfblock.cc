@@ -14,6 +14,7 @@
 #include <thread>
 
 #include "bdev/global.h"
+#include "localstore/object_name.h"
 #include "osd/partition_manager.h"
 #include "utils/utils.h"
 #include "utils/err_num.h"
@@ -185,7 +186,7 @@ int libblk_client::write(const uint64_t pool_id, const std::string image_name, c
     }
     auto length = buf.size();
 
-    auto object_prefix = calc_image_object_prefix(pool_id, image_name);
+    auto object_prefix = localstore::object_name::calc_image_object_prefix(pool_id, image_name);
     auto [expected_object_size, object_offset, object_seq] = calc_first_object_position(offset, length, default_object_size);
     size_t write_bytes = 0;
 
@@ -198,7 +199,7 @@ int libblk_client::write(const uint64_t pool_id, const std::string image_name, c
     while (write_bytes < length)
     {
 
-        auto object_name = get_image_object_name(object_prefix, object_seq);
+        auto object_name = localstore::object_name::get_image_object_name(object_prefix, object_seq);
         // 写一个对象
         std::string str = std::string(buf.c_str() + write_bytes, expected_object_size);
         // 计算对象目标pg
@@ -302,7 +303,7 @@ int libblk_client::read(const uint64_t pool_id, const std::string image_name, co
         cb(bdev_io, nullptr, 0, err::E_SUCCESS);
         return 0;
     }
-    auto object_prefix = calc_image_object_prefix(pool_id, image_name);
+    auto object_prefix = localstore::object_name::calc_image_object_prefix(pool_id, image_name);
     auto [expected_object_size, object_offset, object_seq] = calc_first_object_position(offset, length, default_object_size);
     size_t read_bytes = 0;
 
@@ -314,7 +315,7 @@ int libblk_client::read(const uint64_t pool_id, const std::string image_name, co
 
     while (read_bytes < length)
     {
-        auto object_name = get_image_object_name(object_prefix, object_seq);
+        auto object_name = localstore::object_name::get_image_object_name(object_prefix, object_seq);
         _client->read_object(object_name, object_offset, expected_object_size, pool_id, &read_source::read_done, source, object_idx);
         read_bytes += expected_object_size;
         expected_object_size = default_object_size; // 默认的对象大小
@@ -330,11 +331,6 @@ int libblk_client::read(const uint64_t pool_id, const std::string image_name, co
     return 0;
 }
 
-std::string libblk_client::calc_image_object_prefix(const uint64_t pool_id, const std::string &image_name)
-{
-    return std::to_string(pool_id) + "__blk_data___" + image_name;
-}
-
 std::tuple<size_t, uint64_t, uint64_t>
 libblk_client::calc_first_object_position(const uint64_t offset, const uint64_t length, const size_t object_size)
 {
@@ -348,12 +344,4 @@ libblk_client::calc_first_object_position(const uint64_t offset, const uint64_t 
     uint64_t object_seq = offset / uint64_t(object_size);
 
     return std::make_tuple(first_object_size, first_object_offset, object_seq);
-}
-
-std::string libblk_client::get_image_object_name(std::string &prefix, uint64_t seq)
-{
-    char ch[17];
-    snprintf(ch, 17, "%lu", seq);
-    std::string str(ch);
-    return prefix + str;
 }

@@ -66,7 +66,7 @@ func sendResponse(response  *msg.Response, ctx context.Context, conn net.Conn) e
 	if err != nil {
 		log.Error(ctx, "Error writing response:", err)
 		return err
-	}	
+	}
 	log.Debug(ctx, "write data ", len(data), " return ", rc)
 
 	return nil
@@ -582,7 +582,7 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 		if err != nil {
 			return err
 		}
-			
+
 	case *msg.Request_GetClusterStatusRequest:
 		log.Info(ctx, "Received GetClusterStatusRequest")
 
@@ -618,7 +618,55 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 		if err != nil {
 			return err
 		}
+	case *msg.Request_CreateSnapshotRequest:
+		log.Info(ctx, "Received CreateSnapshotRequest")
 
+		poolID := payload.CreateSnapshotRequest.GetPoolid()
+		imageName := payload.CreateSnapshotRequest.GetImagename()
+		snapName := payload.CreateSnapshotRequest.GetSnapname()
+		errCode, snapID := osd.ProcessCreateSnapshotMessage(ctx, client, imageName, poolID, snapName)
+
+		response := &msg.Response{
+			Union: &msg.Response_CreateSnapshotResponse{
+				CreateSnapshotResponse: &msg.CreateSnapshotResponse{
+					Errorcode:  errCode,
+					SnapshotId: snapID,
+				},
+			},
+		}
+		sendResponse(response, ctx, conn)
+	case *msg.Request_ListSnapshotRequest:
+		log.Info(ctx, "Received ListSnapshotRequest")
+		poolID := payload.ListSnapshotRequest.GetPoolid()
+		imageName := payload.ListSnapshotRequest.GetImagename()
+		startEpoch := payload.ListSnapshotRequest.GetStartepoch()
+		limit := payload.ListSnapshotRequest.GetLimit()
+		errCode, snaps := osd.ProcessListSnapshotMessage(ctx, client, imageName, poolID, startEpoch, limit)
+
+		response := &msg.Response{
+			Union: &msg.Response_ListSnapshotResponse{
+				ListSnapshotResponse: &msg.ListSnapshotResponse{
+					Errorcode: errCode,
+					Snapshots: snaps,
+				},
+			},
+		}
+		sendResponse(response, ctx, conn)
+	case *msg.Request_DeleteSnapshotRequest:
+		log.Info(ctx, "Received DeleteSnapshotRequest")
+
+		poolID := payload.DeleteSnapshotRequest.GetPoolid()
+		imageName := payload.DeleteSnapshotRequest.GetImagename()
+		snapName := payload.DeleteSnapshotRequest.GetSnapname()
+
+		response := &msg.Response{
+			Union: &msg.Response_DeleteSnapshotResponse{
+				DeleteSnapshotResponse: &msg.DeleteSnapshotResponse{
+					Errorcode: osd.ProcessDeleteSnapshotMessage(ctx, client, imageName, poolID, snapName),
+				},
+			},
+		}
+		sendResponse(response, ctx, conn)
 	default:
 		log.Info(ctx, "Unknown payload type")
 		return fmt.Errorf("Unknown payload type")
