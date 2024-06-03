@@ -30,6 +30,7 @@ std::string pg_id_to_name(uint64_t pool_id, uint64_t pg_id){
 int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard_id, uint64_t pool_id, 
             uint64_t pg_id, std::vector<utils::osd_info_t>&& osds, disk_log* log, 
             std::shared_ptr<monitor::client> mon_client){
+    SPDK_INFOLOG_EX(pg_group, "create pg %lu.%lu\n", pool_id, pg_id);
     int ret = 0;
     auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id, global_storage().kvs(), mon_client);
 

@@ -668,7 +668,7 @@ void client::_active_pg(pg_map::pool_id_type pool_id,
             _pg_map.set_pool_update(pool_id, pg_id, pool_version, 0);  
             _pg_map.pool_pg_map[pool_id][pg_id]->version = pg_version;
         }
-        SPDK_INFOLOG_EX(mon, "active pg %lu.%lu done, pg_version %ld pg_is_remap %d\n", 
+        SPDK_INFOLOG_EX(mon, "activate pg %lu.%lu done, pg_version %ld pg_is_remap %d\n", 
                 pool_id, pg_id, pg_version, pg_is_remap);
     };
     if(!pg_is_remap){

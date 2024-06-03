@@ -1068,7 +1068,6 @@ int raft_server_t::raft_write_entry(std::shared_ptr<raft_entry_t> ety,
         return rerrno;
     };
 
-    auto ety_ptr = ety.get();
     if (!raft_is_leader())
         return handle_error(err::RAFT_ERR_NOT_LEADER);
 
@@ -1078,7 +1077,7 @@ int raft_server_t::raft_write_entry(std::shared_ptr<raft_entry_t> ety,
         return handle_error(err::RAFT_ERR_PG_DELETED);
     }
 
-    if (raft_entry_is_cfg_change(ety_ptr))
+    if (raft_entry_is_cfg_change(ety))
     {
         /* Multi-threading: need to fail here because user might be
          * snapshotting membership settings. */
@@ -1141,7 +1140,9 @@ void raft_server_t::raft_flush(){
         return;
     }
 
-    if(last_cache_idx == _current_idx){
+    SPDK_DEBUGLOG_EX(pg_group, "in pg %lu.%lu last_cache_idx: %lu current_idx: %lu \n", 
+            raft_get_pool_id(), raft_get_pg_id(), last_cache_idx, _current_idx);
+    if((last_cache_idx == _current_idx) || (last_cache_idx == 0)){
         if(entry_queue_flush() == 0){
             return;
         }
@@ -1158,7 +1159,7 @@ void raft_server_t::raft_flush(){
     }
     _first_idx = _current_idx + 1;
     auto entry = raft_get_log()->get_entry(_first_idx);
-    if(raft_entry_is_cfg_change(entry.get())){
+    if(raft_entry_is_cfg_change(entry)){
         _current_idx = _first_idx;
         process_conf_change_entry(entry);
         return;
@@ -1585,7 +1586,7 @@ bool raft_entry_is_voting_cfg_change(raft_entry_t* ety)
     return RAFT_LOGTYPE_CONFIGURATION  == ety->type();
 }
 
-bool raft_entry_is_cfg_change(raft_entry_t* ety)
+bool raft_entry_is_cfg_change(std::shared_ptr<raft_entry_t> ety)
 {
     return RAFT_LOGTYPE_ADD_NONVOTING_NODE == ety->type() ||
            RAFT_LOGTYPE_CONFIGURATION  == ety->type();
@@ -2696,7 +2697,7 @@ void raft_server_t::load(raft_node_id_t current_node, raft_complete cb_fn, void 
 }
 
 void raft_server_t::active_raft(){
-    SPDK_INFOLOG_EX(pg_group, "active pg %lu.%lu state from %d to %d\n", _pool_id, _pg_id, _op_state, raft_op_state::RAFT_ACTIVE);
+    SPDK_INFOLOG_EX(pg_group, "activate pg %lu.%lu state from %d to %d\n", _pool_id, _pg_id, _op_state, raft_op_state::RAFT_ACTIVE);
     if(_op_state == raft_op_state::RAFT_INIT)
         _op_state = raft_op_state::RAFT_ACTIVE;
 }
