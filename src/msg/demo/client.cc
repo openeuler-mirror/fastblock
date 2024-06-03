@@ -66,7 +66,7 @@ boost::property_tree::ptree g_pt{};
 }
 
 void usage() {
-    ::printf(" -C json configuration file apth\n");
+    std::cout << "-C json configuration file path" << std::endl;
 }
 
 int parse_arg(int ch, char* arg) {
@@ -156,9 +156,10 @@ void start_rpc_client(void* arg) {
     auto opts = msg::rdma::client::make_options(g_pt);
     g_iter_count = g_pt.get_child("iteration_count").get_value<size_t>();
     g_io_depth = g_pt.get_child("io_depth").get_value<size_t>();
-    g_rpc_client = std::make_shared<msg::rdma::client>("rpc_cli", &g_cpumask, opts);
+    std::string cli_name{"rpc_cli"};
+    g_rpc_client = std::make_shared<msg::rdma::client>(cli_name, &g_cpumask, opts);
     g_rpc_client->start();
-    g_iter_msg = demo::random_string(4096);
+    g_iter_msg = demo::random_string(4 * 1024 * 1024);
     g_rpc_client->emplace_connection(
       g_pt.get_child("server_address").get_value<std::string>(),
       g_pt.get_child("server_port").get_value<uint16_t>(),
@@ -170,17 +171,17 @@ void start_rpc_client(void* arg) {
           g_conn = conn;
           g_stub = std::make_unique<ping_pong::ping_pong_service_Stub>(g_conn.get());
 
-          demo::small_message = demo::random_string(demo::small_message_size);
-          SPDK_NOTICELOG_EX("Sending small message rpc\n");
-          g_small_ping.set_ping(demo::small_message);
-          g_small_done = google::protobuf::NewCallback(on_pong, &g_ctrlr, &g_small_pong);
-          g_stub->ping_pong(&g_ctrlr, &g_small_ping, &g_small_pong, g_small_done);
+        //   demo::small_message = demo::random_string(demo::small_message_size);
+        //   SPDK_NOTICELOG_EX("Sending small message rpc\n");
+        //   g_small_ping.set_ping(demo::small_message);
+        //   g_small_done = google::protobuf::NewCallback(on_pong, &g_ctrlr, &g_small_pong);
+        //   g_stub->ping_pong(&g_ctrlr, &g_small_ping, &g_small_pong, g_small_done);
 
-          demo::big_message = demo::random_string(demo::big_message_size);
-          SPDK_NOTICELOG_EX("Sending heartbeat message rpc\n");
-          g_big_ping.set_ping(demo::big_message);
-          g_big_done = google::protobuf::NewCallback(on_pong, &g_ctrlr, &g_big_pong);
-          g_stub->heartbeat(&g_ctrlr, &g_big_ping, &g_big_pong, g_big_done);
+        //   demo::big_message = demo::random_string(demo::big_message_size);
+        //   SPDK_NOTICELOG_EX("Sending heartbeat message rpc\n");
+        //   g_big_ping.set_ping(demo::big_message);
+        //   g_big_done = google::protobuf::NewCallback(on_pong, &g_ctrlr, &g_big_pong);
+        //   g_stub->heartbeat(&g_ctrlr, &g_big_ping, &g_big_pong, g_big_done);
 
           // iter test
 

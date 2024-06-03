@@ -21,3 +21,14 @@ target_include_directories(client
   PUBLIC
   "$<BUILD_INTERFACE:${COMMON_INCLUDE_DIRS}>"
 )
+
+add_executable(ping_pong ping_pong.pb.cc ping_pong.cc)
+target_link_libraries(ping_pong
+  PRIVATE
+    fastblock_msg
+    ${COMMON_LINKOPTS}
+)
+target_include_directories(ping_pong
+  PUBLIC
+  "$<BUILD_INTERFACE:${COMMON_INCLUDE_DIRS}>"
+)

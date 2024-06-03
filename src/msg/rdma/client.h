@@ -90,18 +90,11 @@ public:
             auto timeout_us = conf.get_child("msg_client_rpc_timeout_us").get_value<int64_t>();
             opts->rpc_timeout = std::chrono::milliseconds{timeout_us};
         }
-        // log_conf_pair(
-        //   "msg_client_rpc_timeout_us",
-        //   std::chrono::duration_cast<std::chrono::milliseconds>(opts->rpc_timeout).count());
 
         if (conf.count("msg_client_connect_retry_interval_us") != 0) {
             auto connect_retry_interval_us = conf.get_child("msg_client_connect_retry_interval_us").get_value<int64_t>();
             opts->retry_interval = std::chrono::milliseconds{connect_retry_interval_us};
         }
-
-        // log_conf_pair(
-        //   "msg_client_connect_retry_interval_us",
-        //   opts->retry_interval.count());
 
         opts->ep = std::make_unique<endpoint>(conf);
 
@@ -271,8 +264,12 @@ public:
 
             SPDK_INFOLOG_EX(
               msg,
-              "Send rpc request(id: %d) with body size %ld\n",
-              req_ptr->request_key, req_ptr->request_data->serilaized_size());
+              "Send rpc request(id: %d, name: %s) with body size %ld, %s => %s\n",
+              req_ptr->request_key,
+              req_ptr->method->name().c_str(),
+              req_ptr->request_data->serilaized_size(),
+              _sock->local_address().c_str(),
+              _sock->peer_address().c_str());
 
             auto err = send_metadata_request(req_ptr->request_data.get());
             if (err and err->value() == ENOMEM) {
@@ -609,20 +606,18 @@ public:
                 return false;
             }
 
+            bool is_parsed{false};
             auto* stack_ptr = _wait_read_requests.begin()->get();
-            if (not stack_ptr->reply_data->is_rdma_read_complete()) {
-                return false;
+            if (is_timeout(stack_ptr)) {
+                SPDK_ERRLOG_EX(
+                  "Timeout occurred on rpc request of request key %d\n",
+                  stack_ptr->request_key);
+                stack_ptr->ctrlr->SetFailed("timeout");
+                goto read_done;
             }
 
-            _free_server_list.push_back(stack_ptr->request_key);
-            --_onflight_rpc_task_size;
-            SPDK_DEBUGLOG_EX(msg, "_onflight_rpc_task_size: %ld\n", _onflight_rpc_task_size);
-            auto is_parsed = stack_ptr->reply_data->unserialize_data(stack_ptr->response, reply_meta_size);
-            if (not is_parsed) {
-                SPDK_ERRLOG_EX(
-                  "ERROR: Unserialize the response body of request key %d failed\n",
-                  stack_ptr->request_key);
-                stack_ptr->ctrlr->SetFailed("unserialize error");
+            if (not stack_ptr->reply_data->is_rdma_read_complete()) {
+                return false;
             }
 
             SPDK_INFOLOG_EX(
@@ -630,6 +625,18 @@ public:
               "Read the response body of request %d\n",
               stack_ptr->request_key);
 
+            SPDK_DEBUGLOG_EX(msg, "_onflight_rpc_task_size: %ld\n", _onflight_rpc_task_size);
+            is_parsed = stack_ptr->reply_data->unserialize_data(stack_ptr->response, reply_meta_size);
+            if (not is_parsed) {
+                SPDK_ERRLOG_EX(
+                  "ERROR: Unserialize the response body of request key %d failed\n",
+                  stack_ptr->request_key);
+                stack_ptr->ctrlr->SetFailed("unserialize error");
+            }
+
+read_done:
+            _free_server_list.push_back(stack_ptr->request_key);
+            --_onflight_rpc_task_size;
             stack_ptr->closure->Run();
             stack_ptr->reply_data.reset(nullptr);
             _wait_read_requests.pop_front();
@@ -776,7 +783,7 @@ public:
 
                     SPDK_INFOLOG_EX(
                       msg,
-                      "Read the response body of request %d\n",
+                      "Read the inlined response body of request %d\n",
                       req_it->second->request_key);
                     req_it->second->closure->Run();
                     _free_server_list.push_back(req_it->second->request_key);
@@ -1104,8 +1111,13 @@ public:
             return;
         }
 
-        for (auto& conn_task_pair : _connect_tasks) {
-            auto* task_ptr = conn_task_pair.second.get();
+        auto conn_task_pair = _connect_tasks.begin();
+        for (; conn_task_pair != _connect_tasks.end(); ++conn_task_pair) {
+            if (not conn_task_pair->second) {
+                continue;
+            }
+
+            auto* task_ptr = conn_task_pair->second.get();
             if (task_ptr->conn_state != connect_state::connect_failed) {
                 continue;
             }
@@ -1136,7 +1148,10 @@ public:
               task_ptr->conn->fd().peer_address().c_str(),
               task_ptr->retry_ctx->retry_times);
 
+            auto old_fd_id = task_ptr->conn->fd().id();
+            auto old_conn_id = task_ptr->conn->id();
             auto sock = std::make_unique<socket>(task_ptr->conn->fd().get_endpoint(), *_pd, _channel.value());
+            auto new_fd_id = sock->id();
             task_ptr->conn = std::make_shared<connection>(
               connection_id{},
               _cq_dispatch_id++,
@@ -1147,8 +1162,24 @@ public:
               _busy_connections,
               _busy_priority_connections,
               shared_from_this());
+            // 不要调整这里的 erase 和 emplace 的顺序
+            _cm_records.emplace(new_fd_id, task_ptr->conn);
+            _cm_records.erase(old_fd_id);
+            _connections.erase(old_conn_id);
+            _connections.emplace(task_ptr->conn->id(), task_ptr->conn);
             task_ptr->conn_state = connect_state::wait_address_resolved;
+            SPDK_DEBUGLOG_EX(
+              msg,
+              "erased old cm id %p, emplaced new cm id %p; "
+              "erased old conn id %ld, emplaced new conn id %ld\n",
+              old_fd_id, task_ptr->conn->fd().id(),
+              old_conn_id, task_ptr->conn->id());
+            auto conn_task = std::move(conn_task_pair->second);
+            _connect_tasks.emplace(new_fd_id, std::move(conn_task));
         }
+        std::erase_if(_connect_tasks, [] (const auto& pair) {
+            return not pair.second;
+        });
     }
 
     void process_connect_task(::rdma_cm_event* evt) {
@@ -1262,8 +1293,8 @@ public:
         auto conn_it = _connections.find(it->second->id());
         if (conn_it == _connections.end()) {
             SPDK_ERRLOG_EX(
-              "ERROR: Received cm event %s, but the cm id can not be found in connection map\n",
-              ::rdma_event_str(evt->event));
+              "ERROR: Received cm event %s, but the connection id(%ld) can not be found in connection map\n",
+              ::rdma_event_str(evt->event), it->second->id());
             _cm_records.erase(it);
             ::rdma_ack_cm_event(evt);
 

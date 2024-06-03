@@ -26,7 +26,8 @@ public:
     connect_cache(::spdk_cpuset* cpumask, std::shared_ptr<msg::rdma::client::options> opts)
       : _mutex(PTHREAD_MUTEX_INITIALIZER)
       , _shard_cores(get_shard_cores()) {
-          _transport = std::make_shared<msg::rdma::client>("connect_cache", cpumask, opts);
+          std::string cli_name{"connect_cache"};
+          _transport = std::make_shared<msg::rdma::client>(cli_name, cpumask, opts);
           _transport->start();
 
           auto shard_num = _shard_cores.size();
