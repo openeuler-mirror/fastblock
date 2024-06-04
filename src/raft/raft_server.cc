@@ -1092,6 +1092,7 @@ int raft_server_t::raft_write_entry(std::shared_ptr<raft_entry_t> ety,
         return handle_error(e);
     }
 
+    SPDK_DEBUGLOG_EX(pg_group, "append entry to queue, _current_idx %d, _commit_idx %d\n", _current_idx, _commit_idx);
     if(_current_idx > _commit_idx){
         return 0;
     }
@@ -1774,14 +1775,12 @@ int raft_server_t::raft_process_installsnapshot_reply(installsnapshot_response *
     auto snap_end_err = [this, node](void *arg, int rerrno){
         delete _obr;
         _obr = nullptr;
-        raft_set_snapshot_in_progress(false);
         node->raft_node_set_recovering(false);
     };
 
     auto snap_end = [this, node](void *arg, int rerrno){
         delete _obr;
         _obr = nullptr;
-        raft_set_snapshot_in_progress(false);
         dispatch_recovery(node);
     };    
 
@@ -1902,8 +1901,8 @@ public:
             auto hash_val = utils::md5(ctx->buf, object_unit_size);
             object->set_data_hash(hash_val);
     
-            SPDK_DEBUGLOG_EX(pg_group, "pg: %lu.%lu, object %s data hash : %s\n", 
-                    ctx->obr->_raft->raft_get_pool_id(), ctx->obr->_raft->raft_get_pg_id(), obj_name.c_str(), hash_val.c_str());
+            SPDK_DEBUGLOG_EX(pg_group, "pg: %lu.%lu, object %s\n", 
+                    ctx->obr->_raft->raft_get_pool_id(), ctx->obr->_raft->raft_get_pg_id(), obj_name.c_str());
             memset(ctx->buf, 0, object_unit_size);
         }
 
@@ -2038,7 +2037,6 @@ public:
 
     void handle_end(){
         _raft->free_object_recovery();
-        _raft->raft_set_snapshot_in_progress(false);
         auto node = _raft->raft_get_cfg_node(_node_id);
         if(node)
             node->raft_node_set_recovering(false);
@@ -2073,9 +2071,9 @@ public:
                     object->set_obj_name(obj_name);
                     object->set_data(obj.buf, object_unit_size);
                     obj_num++;
-                    SPDK_DEBUGLOG_EX(pg_group, "pg: %lu.%lu, obj name %s , data size %lu, hash_val %s\n", 
+                    SPDK_DEBUGLOG_EX(pg_group, "pg: %lu.%lu, obj name %s , data size %lu\n", 
                         _raft->raft_get_pool_id(), _raft->raft_get_pg_id(), obj_name.c_str(), 
-                        object->data().size(), hash_val.c_str());
+                        object->data().size());
                 }
             }
         }
@@ -2192,7 +2190,6 @@ int raft_server_t::raft_process_snapshot_check_reply(snapshot_check_response *rs
     auto handle_error = [this, node](){
         delete _obr;
         _obr = nullptr;
-        raft_set_snapshot_in_progress(false);
         node->raft_node_set_recovering(false);
     };
 
@@ -2268,7 +2265,6 @@ void raft_server_t::handle_snap_check_task(task_info& task){
     auto handle_error = [this](std::shared_ptr<raft_node> node){
         delete _obr;
         _obr = nullptr;
-        raft_set_snapshot_in_progress(false);
         if(node)
             node->raft_node_set_recovering(false);
     };
@@ -2300,11 +2296,12 @@ int raft_server_t::_recovery_by_snapshot(std::shared_ptr<raft_node> node){
     auto handle_error = [this, node](){
         delete _obr;
         _obr = nullptr;
-        raft_set_snapshot_in_progress(false);
         node->raft_node_set_recovering(false);
     };
 
     auto snap_fn = [this, node, handle_error = std::move(handle_error)](void *arg, int rerrno){
+        //创建完对象的snapshot后就需要设置_snapshot_in_progress为false
+        raft_set_snapshot_in_progress(false);
         if(rerrno != 0){
             handle_error();
             SPDK_ERRLOG_EX("pg: %lu.%lu, create raft snapshot failed, rerrno: %d\n", _pool_id, _pg_id, rerrno);

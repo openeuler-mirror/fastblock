@@ -890,7 +890,8 @@ private:
 
     /* my node ID */
     raft_node_id_t _node_id;
-
+    
+    //是否正在为数据恢复而创建snapshot
     bool _snapshot_in_progress;
 
     /* grace period after each lease expiration time honored when we determine
