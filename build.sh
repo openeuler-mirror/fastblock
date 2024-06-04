@@ -41,7 +41,7 @@ if [[ -z ${CC} ]]; then export CC=/usr/bin/gcc; fi
 if [[ -z ${CXX} ]]; then export CXX=/usr/bin/g++; fi
 
 (cd $root/src/msg/demo && ./gen.sh)
-
+(cd $root/src/tools/rpc_bench && ./gen.sh)
 
 if [ "$component" = "monitor" ]; then
 	echo "build fastblock(fastblock-mon、fastblock-client) Golang code"
@@ -64,7 +64,7 @@ if [ "$component" = "osd" ]; then
 	  -DCMAKE_C_COMPILER=$CC \
 	  -DCMAKE_CXX_COMPILER=$CXX \
 	  "$@"
-	
+
 	(cd $root/build && make -j `grep -c ^processor /proc/cpuinfo`)
 fi
 

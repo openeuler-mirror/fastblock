@@ -9,14 +9,14 @@
  * See the Mulan PSL v2 for more details.
  */
 
-#include "common.h"
+#include "msg/demo/common.h"
 
 #include "msg/rpc_controller.h"
 #include "msg/rdma/client.h"
 #include "msg/rdma/server.h"
 #include "utils/duration_map.h"
 
-#include "ping_pong.pb.h"
+#include "tools/rpc_bench/rpc_bench.pb.h"
 
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
@@ -31,26 +31,16 @@
 #include <iostream>
 #include <ranges>
 
-SPDK_LOG_REGISTER_COMPONENT(ping_pong)
+SPDK_LOG_REGISTER_COMPONENT(rpc_bench)
 
 int g_id{-1};
 namespace {
-class demo_ping_pong_service : public ping_pong::ping_pong_service {
+class rpc_bench_service : public rpc_bench::rpc_bench_service {
 public:
-    void ping_pong(
+    void rpc_bench(
       google::protobuf::RpcController* controller,
-      const ::ping_pong::request* request,
-      ::ping_pong::response* response,
-      ::google::protobuf::Closure* done) override {
-        response->set_pong(request->ping());
-        response->set_id(request->id());
-        done->Run();
-    }
-
-    void heartbeat(
-      google::protobuf::RpcController* controller,
-      const ::ping_pong::request* request,
-      ::ping_pong::response* response,
+      const ::rpc_bench::request* request,
+      ::rpc_bench::response* response,
       ::google::protobuf::Closure* done) override {
         response->set_pong(request->ping());
         response->set_id(request->id());
@@ -64,9 +54,9 @@ struct endpoint {
     uint16_t port{};
 };
 
-struct ping_pong_context {
+struct rpc_bench_context {
     bool use_different_core{false};
-    demo_ping_pong_service rpc_service{};
+    rpc_bench_service rpc_service{};
     std::list<endpoint> endpoints{};
     size_t io_depth{0};
     size_t io_count{0};
@@ -75,8 +65,8 @@ struct ping_pong_context {
 };
 
 struct call_stack {
-    std::unique_ptr<ping_pong::request> req{std::make_unique<ping_pong::request>()};
-    std::unique_ptr<ping_pong::response> resp{std::make_unique<ping_pong::response>()};
+    std::unique_ptr<rpc_bench::request> req{std::make_unique<rpc_bench::request>()};
+    std::unique_ptr<rpc_bench::response> resp{std::make_unique<rpc_bench::response>()};
     std::unique_ptr<msg::rdma::rpc_controller> ctrlr{std::make_unique<msg::rdma::rpc_controller>()};
     google::protobuf::Closure* cb{nullptr};
     std::chrono::system_clock::time_point start_at{};
@@ -85,7 +75,7 @@ struct call_stack {
 
 struct connection_context {
     std::shared_ptr<msg::rdma::client::connection> conn{nullptr};
-    std::unique_ptr<ping_pong::ping_pong_service_Stub> stub{nullptr};
+    std::unique_ptr<rpc_bench::rpc_bench_service_Stub> stub{nullptr};
     size_t io_counter{0};
     std::list<std::unique_ptr<call_stack>> call_stacks{};
     int64_t call_id{0};
@@ -100,12 +90,12 @@ boost::property_tree::ptree g_pt{};
 std::string rpc_msg{};
 size_t done_counter{0};
 bool is_terminated{false};
-ping_pong_context ctx{};
+rpc_bench_context ctx{};
 std::list<std::unique_ptr<msg::rdma::server>> rpc_servers{};
 std::list<std::shared_ptr<msg::rdma::client>> rpc_clients{};
 std::list<std::unique_ptr<connection_context>> conn_ctxs{};
 
-::spdk_thread* ping_pong_thread{nullptr};
+::spdk_thread* rpc_bench_thread{nullptr};
 }
 
 void usage() {
@@ -157,7 +147,7 @@ void read_conf() {
 
     auto cpu_count = ::spdk_env_get_core_count();
     SPDK_DEBUGLOG(
-      ping_pong,
+      rpc_bench,
       "current_index: %d, server_count: %lu, client_count: %lu, core_count: %u\n",
       current_index, ctx.server_count, ctx.client_count, cpu_count);
 
@@ -189,7 +179,7 @@ void read_conf() {
  *
  * 如果 use_different_core 为 false，那么 server 使用前 server_core_count 个 核心，client 使用剩余的
 */
-void start_ping_pong_server() {
+void start_rpc_bench_server() {
     auto opts = msg::rdma::server::make_options(g_pt);
     ::spdk_cpuset cpu_mask{};
     uint32_t core_no{0};
@@ -240,7 +230,7 @@ void on_server_stopped(void* arg) {
     ++done_counter;
     if (done_counter == rpc_servers.size()) {
         SPDK_NOTICELOG("all rpc servers have been stopped\n");
-        ::spdk_thread_exit(ping_pong_thread);
+        ::spdk_thread_exit(rpc_bench_thread);
         ::spdk_app_stop(0);
     }
 }
@@ -252,7 +242,7 @@ void on_client_stopped(void* arg) {
         done_counter = 0;
         for (auto& srv : rpc_servers) {
             srv->stop([] () {
-                ::spdk_thread_send_msg(ping_pong_thread, on_server_stopped, nullptr);
+                ::spdk_thread_send_msg(rpc_bench_thread, on_server_stopped, nullptr);
             });
         }
     }
@@ -266,7 +256,7 @@ void on_client_io_done(void* arg) {
         SPDK_NOTICELOG("all rpc finished, stop the app\n");
         for (auto& cli : rpc_clients) {
             cli->stop([] () {
-                ::spdk_thread_send_msg(ping_pong_thread, on_client_stopped, nullptr);
+                ::spdk_thread_send_msg(rpc_bench_thread, on_client_stopped, nullptr);
             });
         }
     }
@@ -288,7 +278,7 @@ void on_pong(call_stack* stack_ptr) {
       stack_ptr->resp->id(), ctx.io_count - 1);
     auto dur = (std::chrono::system_clock::now() - stack_ptr->start_at).count();
     if (static_cast<size_t>(stack_ptr->resp->id()) >= ctx.io_count - 1) {
-        ::spdk_thread_send_msg(ping_pong_thread, on_client_io_done, nullptr);
+        ::spdk_thread_send_msg(rpc_bench_thread, on_client_io_done, nullptr);
         return;
     }
 
@@ -299,24 +289,24 @@ void on_pong(call_stack* stack_ptr) {
     rpc_stack->conn_context = conn_ctx;
     rpc_stack->cb = google::protobuf::NewCallback(on_pong, rpc_stack.get());
     rpc_stack->start_at = std::chrono::system_clock::now();
-    conn_ctx->stub->ping_pong(
+    conn_ctx->stub->rpc_bench(
       rpc_stack->ctrlr.get(),
       rpc_stack->req.get(),
       rpc_stack->resp.get(),
       rpc_stack->cb);
     SPDK_INFOLOG(
-      ping_pong,
+      rpc_bench,
       "[%ld] sent rpc id %ld\n",
       conn_ctx->index, conn_ctx->call_id - 1);
     conn_ctx->call_stacks.push_back(std::move(rpc_stack));
 }
 
-void on_ping_pong_close() {
-    SPDK_NOTICELOG("Close the ping_pong\n");
-    ::spdk_thread_send_msg(ping_pong_thread, on_client_stopped, nullptr);
+void on_rpc_bench_close() {
+    SPDK_NOTICELOG("Close the rpc_bench\n");
+    ::spdk_thread_send_msg(rpc_bench_thread, on_client_stopped, nullptr);
 }
 
-void start_ping_client() {
+void start_rpc_bench_client() {
     uint32_t core_no{::spdk_env_get_first_core()};
     if (ctx.use_different_core) {
         for (size_t i{0}; i < ctx.server_count - 1; ++i) {
@@ -362,7 +352,7 @@ void start_ping_client() {
               SPDK_NOTICELOG(
                 "connected to %s:%d, with index %d\n",
                 ep_it->host.c_str(), ep_it->port, ep_it->index);
-              auto stub = std::make_unique<ping_pong::ping_pong_service_Stub>(conn.get());
+              auto stub = std::make_unique<rpc_bench::rpc_bench_service_Stub>(conn.get());
               auto conn_ctx = std::make_unique<connection_context>(conn, std::move(stub));
               conn_ctx->index = ep_it->index;
               auto conn_ctx_ptr = conn_ctx.get();
@@ -374,13 +364,13 @@ void start_ping_client() {
                   rpc_stack->conn_context = conn_ctx_ptr;
                   rpc_stack->cb = google::protobuf::NewCallback(on_pong, rpc_stack.get());
                   rpc_stack->start_at = std::chrono::system_clock::now();
-                  conn_ctx_ptr->stub->ping_pong(
+                  conn_ctx_ptr->stub->rpc_bench(
                     rpc_stack->ctrlr.get(),
                     rpc_stack->req.get(),
                     rpc_stack->resp.get(),
                     rpc_stack->cb);
                   SPDK_INFOLOG(
-                    ping_pong,
+                    rpc_bench,
                     "[%d] sent rpc id %ld\n",
                     ep_it->index,
                     conn_ctx_ptr->call_id - 1);
@@ -391,17 +381,17 @@ void start_ping_client() {
     }
 }
 
-void on_ping_pong_start(void* arg) {
-    SPDK_NOTICELOG("Starting ping_pong with index %d\n", g_ep_index);
+void on_rpc_bench_start(void* arg) {
+    SPDK_NOTICELOG("Starting rpc_bench with index %d\n", g_ep_index);
     read_conf();
     uint32_t core_no{::spdk_env_get_first_core()};
     ::spdk_cpuset cpu_mask{};
     ::spdk_cpuset_zero(&cpu_mask);
     ::spdk_cpuset_set_cpu(&cpu_mask, core_no, true);
-    ping_pong_thread = ::spdk_thread_create("ping_pong", &cpu_mask);
+    rpc_bench_thread = ::spdk_thread_create("rpc_bench", &cpu_mask);
 
-    start_ping_pong_server();
-    start_ping_client();
+    start_rpc_bench_server();
+    start_rpc_bench_client();
 }
 
 int main(int argc, char** argv) {
@@ -413,16 +403,16 @@ int main(int argc, char** argv) {
         ::exit(rc);
     }
 
-    sock_path = FMT_1("/var/tmp/ping_pong_%1%.sock", g_ep_index);
+    sock_path = FMT_1("/var/tmp/rpc_bench_%1%.sock", g_ep_index);
     boost::property_tree::read_json(std::string(g_json_conf), g_pt);
     ctx.use_different_core = g_pt.get_child("use_different_core").get_value<bool>();
 
-    opts.name = "ping_pong";
-    opts.shutdown_cb = on_ping_pong_close;
+    opts.name = "rpc_bench";
+    opts.shutdown_cb = on_rpc_bench_close;
     opts.rpc_addr = sock_path.c_str();
     opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
 
-    rc = ::spdk_app_start(&opts, on_ping_pong_start, nullptr);
+    rc = ::spdk_app_start(&opts, on_rpc_bench_start, nullptr);
     if (rc) {
         SPDK_ERRLOG("ERROR: Start spdk app failed\n");
     }

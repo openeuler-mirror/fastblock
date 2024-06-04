@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package rpc_bench;
+
+option cc_generic_services = true;
+
+message request {
+    int64 id = 1;
+    string ping = 2;
+}
+
+message response {
+    int64 id = 3;
+    string pong = 4;
+}
+
+service rpc_bench_service {
+    rpc rpc_bench(request) returns (response);
+}

@@ -45,6 +45,7 @@ deb_deps=(
   libasan6
   libboost-dev
   libnuma-dev
+  python3-pip
 )
 
 # Add support for centos/rhel/openEuler/suse
@@ -75,6 +76,7 @@ rpm_deps=(
   boost-devel
   boost
   numactl-devel
+  python3-pip
 )
 
 case "$ID" in
@@ -90,3 +92,5 @@ case "$ID" in
     exit 1
     ;;
 esac
+
+pip install supervisor
