@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 import json
 import os
 import subprocess
@@ -28,7 +29,7 @@ minprocs=200                 ; min. avail process descriptors;default 200
 port=127.0.0.1:{{ supervisor.port }}
 
 [supervisorctl]
-serverurl=unix:///tmp/supervisor.sock ; use a unix:// URL  for a unix socket
+serverurl=http://127.0.0.1:{{ supervisor.port }}
 
 [rpcinterface:supervisor]
 supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
@@ -108,12 +109,20 @@ class supervisor_client:
 
     def reload_supervisor_config(self):
         try:
-            self.xml_client.supervisor.reloadConfig()
-            print("supervisor reloaded")
-        except xmlrpc.client.Fault as fault:
-            print(f"unknown xmlrpc reload error: {fault.faultString}")
-        except Exception as e:
-            print(f"unknown error: {str(e)}")
+            command = ['supervisorctl', 'update']
+            process = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+            print(f"supervisorctl update success, stdout: {process.stdout}")
+        except subprocess.CalledProcessError as e:
+            print(f"supervisorctl update failed, error no: {e.returncode}, stderr: {e.stderr}")
+
+    def start(self, name):
+        print(f'run supervisorctl start {name}')
+        try:
+            command = ['supervisorctl', 'start', name]
+            process = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+            print(f"supervisorctl start {name} success, stdout: {process.stdout}")
+        except subprocess.CalledProcessError as e:
+            print(f"supervisorctl start {name}, error no: {e.returncode}, stderr: {e.stderr}")
 
 
 def count_core_num(eps, index):
@@ -211,18 +220,20 @@ if __name__ == '__main__':
     supervisor_meta = {'port': args.supervisor_xmlrpc_port}
 
     os.makedirs(PROCESSES_LOG_HOME, exist_ok=True)
-    sup_rpc_cli = supervisor_client(f'http://localhost:{args.supervisor_xmlrpc_port}/RPC2', RPC_BENCH_SUP_CONF_PATH)
+    sup_cli = supervisor_client(f'http://localhost:{args.supervisor_xmlrpc_port}/RPC2', RPC_BENCH_SUP_CONF_PATH)
     if args.ci:
         template = Template(CI_SUP_CONF_J2)
         output = template.render(apps=apps, group=group_meta, supervisor=supervisor_meta)
         with open(CI_SUP_CONF_PATH, 'w') as f:
             f.write(output)
-        sup_rpc_cli.set_conf(CI_SUP_CONF_PATH)
+        sup_cli.set_conf(CI_SUP_CONF_PATH)
     else:
         template = Template(RPC_BENCH_SUP_J2)
         output = template.render(apps=apps, group=group_meta)
         with open(RPC_BENCH_SUP_CONF_PATH, 'w') as f:
             f.write(output)
 
-    sup_rpc_cli.maybe_start_supervisor()
-    sup_rpc_cli.reload_supervisor_config()
+    print(f'generated supervisord conf for {sup_cli.conf_path}')
+    sup_cli.maybe_start_supervisor()
+    sup_cli.reload_supervisor_config()
+    sup_cli.start(f'{group_meta["name"]}:*')
