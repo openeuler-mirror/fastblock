@@ -1,10 +1,10 @@
+#!/bin/python
+
 import argparse
 import asyncio
 import json
 import os
 import subprocess
-
-import xmlrpc.client
 
 from jinja2 import Template
 
@@ -78,9 +78,6 @@ RPC_BENCH_SUP_CONF_PATH = "/etc/supervisor/conf.d/rpc_bench.conf"
 class supervisor_client:
     def __init__(self, url, conf_path):
         self.conf_path = conf_path
-        print(f'connecting to supervisor xml rpc {url}')
-        self.xml_client = xmlrpc.client.ServerProxy(url)
-        print(f'connected to supervisor xml rpc {url}')
 
     def set_conf(self, conf_path):
         self.conf_path = conf_path
