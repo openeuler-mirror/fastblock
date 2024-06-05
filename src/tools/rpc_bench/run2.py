@@ -6,14 +6,41 @@ import json
 import os
 import subprocess
 
+
+LIST_IPV4 = """
+DEVS=$(ls /sys/class/infiniband/)
+for d in $DEVS ; do
+	for p in $(ls /sys/class/infiniband/$d/ports/) ; do
+		for g in $(ls /sys/class/infiniband/$d/ports/$p/gids/) ; do
+			gid=$(cat /sys/class/infiniband/$d/ports/$p/gids/$g);
+			if [ $gid = 0000:0000:0000:0000:0000:0000:0000:0000 ] ; then
+				continue
+			fi
+			if [ $gid = fe80:0000:0000:0000:0000:0000:0000:0000 ] ; then
+				continue
+			fi
+			_ndev=$(cat /sys/class/infiniband/$d/ports/$p/gid_attrs/ndevs/$g 2>/dev/null)
+			__type=$(cat /sys/class/infiniband/$d/ports/$p/gid_attrs/types/$g 2>/dev/null)
+			_type=$(echo $__type| grep -o "[Vv].*")
+			if [ $(echo $gid | cut -d ":" -f -1) = "0000" ] ; then
+				ipv4=$(printf "%d.%d.%d.%d" 0x${gid:30:2} 0x${gid:32:2} 0x${gid:35:2} 0x${gid:37:2})
+				echo -e "$d $p $g $ipv4"
+			fi
+		done #g (gid)
+	done #p (port)
+done #d (dev)
+"""
+
+
 def prepare_cmd_args():
     parser = argparse.ArgumentParser(description="generate supervisord conf for rpc_bench")
     parser.add_argument("--log-flags", type=str, help="spdk app log flags, like '-L msg -L osd' ...", default='')
     parser.add_argument("--start-core", type=int, help="start of cpu core number, default is 0", default=0)
     parser.add_argument("--build-path-suffix", type=str, help="for debug test, may ignore it", default=None)
-    args = parser.parse_args()
-
-    return args
+    parser.add_argument("--ci", action="store_true", help="for ci test, may ignore it", default=False)
+    parser.add_argument("--node-count", type=int, help="for ci test, specify rpc_bench proc count, at least 2", default=2)
+    parser.add_argument("--start-port", type=int, help="for ci test, start of rpc_bench used port no.", default=3000)
+    return parser.parse_args()
 
 
 def fastblock_home_path():
@@ -48,6 +75,56 @@ def count_core_num(eps, is_same_cli_core, index):
 def format_core_arg(n_core, start):
     cores = [f'{i + start}' for i in range(n_core)]
     return ','.join(cores)
+
+
+def update_rpc_conf(conf_path, rpc_bench_conf, node_num, start_port):
+    if node_num < 2:
+        print('node_num must be at least 2')
+        exit(1)
+
+    proc = subprocess.Popen(['bash', '-c', LIST_IPV4],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True)
+    stdout, stderr = proc.communicate()
+    if proc.returncode != 0:
+        print('list ipv4 failed')
+        exit(1)
+
+    if stderr:
+        print(f'list ipv4 failed: {stderr}')
+        exit(1)
+
+    for result in stdout.splitlines():
+        if result.isspace():
+            continue
+
+        splited = result.split(' ')
+        dev = splited[0]
+        port = int(splited[1])
+        index = int(splited[2])
+        ipv4 = splited[3]
+
+        print(f'dev: {dev}, port: {port}, index: {index}, ipv4: {ipv4}')
+
+        eps = []
+        for i in range(node_num):
+            node = {
+                'index': i + 1,
+                'list': [
+                    {'host': ipv4, 'port': start_port + i}
+                ]
+            }
+            eps.append(node)
+
+        rpc_bench_conf['endpoints'] = eps
+        with open(conf_path, 'w') as f:
+            json.dump(rpc_bench_conf, f, indent=4)
+
+        return rpc_bench_conf
+
+    print('list ipv4 got empty result')
+    exit(1)
 
 
 async def process_batch(batch, label):
@@ -109,14 +186,17 @@ if __name__ == '__main__':
     with open(conf_path, 'r', encoding='utf-8') as file:
         rpc_bench_conf = json.load(file)
 
+    if args.ci:
+        rpc_bench_conf = update_rpc_conf(conf_path, rpc_bench_conf, args.node_count, args.start_port)
+
     app_nums = len(rpc_bench_conf['endpoints'])
     app_base_name = 'rpc_bench'
     app_core_counter = args.start_core
     cmds = []
     for i in range(app_nums):
         n_core = count_core_num(rpc_bench_conf['endpoints'], rpc_bench_conf['rpc_client_same_core'], i)
-        # cmds.append(f'{bin_path} -C {conf_path} -I {i + 1} -m [{format_core_arg(n_core, app_core_counter)}]')
         cmds.append([bin_path, '-C', conf_path, '-I', f'{i + 1}', '-m', f'[{format_core_arg(n_core, app_core_counter)}]'])
         app_core_counter += n_core
 
-    asyncio.run(run_rpc_bench(cmds))
+    rc = asyncio.run(run_rpc_bench(cmds))
+    exit(rc)
