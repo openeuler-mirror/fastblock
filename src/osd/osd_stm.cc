@@ -98,6 +98,7 @@ struct osd_service_complete : public utils::context{
     , obj_name(std::move(_obj_name)) {}
 
     void finish(int r) override {
+        SPDK_DEBUGLOG_EX(osd, "process osd service done.\n");
         if(r != 0){
             SPDK_ERRLOG_EX("process osd service failed: %d\n", r);
             if(std::is_same_v<type, osd::write_reply>){

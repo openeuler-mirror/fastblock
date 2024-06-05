@@ -629,6 +629,9 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                         continue;
                     }
 
+                    if(!_new_pg_cb)
+                        continue;
+
                     std::vector<int32_t> new_osds;
                     std::string osd_str;
                     std::vector<utils::osd_info_t> new_osd_infos;
