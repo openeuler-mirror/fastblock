@@ -42,7 +42,7 @@ public:
       const ::rpc_bench::request* request,
       ::rpc_bench::response* response,
       ::google::protobuf::Closure* done) override {
-        response->set_pong(request->ping());
+        response->set_data(request->data());
         response->set_id(request->id());
         done->Run();
     }
@@ -55,13 +55,13 @@ struct endpoint {
 };
 
 struct rpc_bench_context {
-    bool use_different_core{false};
+    bool rpc_client_same_core{false};
     rpc_bench_service rpc_service{};
     std::list<endpoint> endpoints{};
     size_t io_depth{0};
     size_t io_count{0};
     size_t server_count{1};
-    size_t client_count{1};
+    size_t peer_count{1};
 };
 
 struct call_stack {
@@ -138,7 +138,7 @@ void read_conf() {
               list_it->second.get_child("port").get_value<uint16_t>());
         }
     }
-    ctx.client_count = ctx.endpoints.size() - ctx.server_count;
+    ctx.peer_count = ctx.endpoints.size() - ctx.server_count;
 
     if (not is_valid_index) {
         SPDK_ERRLOG("Invalid endpoint index %d\n", g_ep_index);
@@ -148,21 +148,21 @@ void read_conf() {
     auto cpu_count = ::spdk_env_get_core_count();
     SPDK_DEBUGLOG(
       rpc_bench,
-      "current_index: %d, server_count: %lu, client_count: %lu, core_count: %u\n",
-      current_index, ctx.server_count, ctx.client_count, cpu_count);
+      "current_index: %d, server_count: %lu, peer_count: %lu, core_count: %u\n",
+      current_index, ctx.server_count, ctx.peer_count, cpu_count);
 
-    if (ctx.use_different_core) {
-        if (static_cast<size_t>(cpu_count) < ctx.client_count + ctx.server_count) {
+    if (ctx.rpc_client_same_core) {
+        if (static_cast<size_t>(cpu_count) < ctx.server_count + 1) {
             SPDK_ERRLOG(
               "not enough cpu cores, available %u, at least %lu\n",
-              cpu_count, ctx.server_count + ctx.client_count);
+              cpu_count, ctx.server_count + 1);
             std::exit(-1);
         }
     } else {
-        if (static_cast<size_t>(cpu_count) < std::max(ctx.client_count, ctx.server_count)) {
+        if (static_cast<size_t>(cpu_count) < ctx.peer_count + ctx.server_count) {
             SPDK_ERRLOG(
               "not enough cpu cores, available %u, at least %lu\n",
-              ::spdk_env_get_core_count(), std::max(ctx.client_count, ctx.server_count));
+              ::spdk_env_get_core_count(), ctx.peer_count + ctx.server_count);
             std::exit(-1);
         }
     }
@@ -174,10 +174,11 @@ void read_conf() {
 }
 
 /**
- * 如果 use_different_core 为 true，那么 server 和 client 总是从第一颗核开始，
- * 分别创建 server_core_count 和 client_core_count 个 spdk_thread
+ * 如果 rpc_client_same_core 为 true，那么 client 各占一颗核，
+ * 与其他 rpc_bench 进程建立的连接都归在同一个 client 实例下。
  *
- * 如果 use_different_core 为 false，那么 server 使用前 server_core_count 个 核心，client 使用剩余的
+ * 如果 rpc_client_same_core 为 false，假如有 8 个 rpc_bench 进程，则每个 rpc_bench 进程的
+ * client 实例各占一颗核。
 */
 void start_rpc_bench_server() {
     auto opts = msg::rdma::server::make_options(g_pt);
@@ -228,6 +229,10 @@ void start_rpc_bench_server() {
 
 void on_server_stopped(void* arg) {
     ++done_counter;
+    SPDK_INFOLOG(
+      rpc_bench,
+      "done_counter is %ld, rpc_servers.size() is %ld\n",
+      done_counter, rpc_servers.size());
     if (done_counter == rpc_servers.size()) {
         SPDK_NOTICELOG("all rpc servers have been stopped\n");
         ::spdk_thread_exit(rpc_bench_thread);
@@ -237,6 +242,10 @@ void on_server_stopped(void* arg) {
 
 void on_client_stopped(void* arg) {
     ++done_counter;
+    SPDK_INFOLOG(
+      rpc_bench,
+      "done_counter is %ld, rpc_clients.size() is %ld\n",
+      done_counter, rpc_clients.size());
     if (done_counter == rpc_clients.size()) {
         SPDK_NOTICELOG("all rpc clients have been stopped\n");
         done_counter = 0;
@@ -284,7 +293,7 @@ void on_pong(call_stack* stack_ptr) {
 
     conn_ctx->call_stacks.pop_front();
     auto rpc_stack = std::make_unique<call_stack>();
-    rpc_stack->req->set_ping(rpc_msg);
+    rpc_stack->req->set_data(rpc_msg);
     rpc_stack->req->set_id(conn_ctx->call_id++);
     rpc_stack->conn_context = conn_ctx;
     rpc_stack->cb = google::protobuf::NewCallback(on_pong, rpc_stack.get());
@@ -306,12 +315,10 @@ void on_rpc_bench_close() {
     ::spdk_thread_send_msg(rpc_bench_thread, on_client_stopped, nullptr);
 }
 
-void start_rpc_bench_client() {
+void start_ping_client() {
     uint32_t core_no{::spdk_env_get_first_core()};
-    if (ctx.use_different_core) {
-        for (size_t i{0}; i < ctx.server_count - 1; ++i) {
-            core_no = ::spdk_env_get_next_core(core_no);
-        }
+    for (size_t i{0}; i < ctx.server_count - 1; ++i) {
+        core_no = ::spdk_env_get_next_core(core_no);
     }
 
     auto opts = msg::rdma::client::make_options(g_pt);
@@ -325,7 +332,7 @@ void start_rpc_bench_client() {
             continue;
         }
 
-        if (ep_it->index != last_index) {
+        if ((not current_cli) or (not ctx.rpc_client_same_core and ep_it->index != last_index)) {
             last_index = ep_it->index;
             core_no = spdk_env_get_next_core(core_no);
             ::spdk_cpuset_zero(&cpu_mask);
@@ -359,7 +366,7 @@ void start_rpc_bench_client() {
               conn_ctxs.push_back(std::move(conn_ctx));
               for (size_t i{0}; i < ctx.io_depth; ++i) {
                   auto rpc_stack = std::make_unique<call_stack>();
-                  rpc_stack->req->set_ping(rpc_msg);
+                  rpc_stack->req->set_data(rpc_msg);
                   rpc_stack->req->set_id(conn_ctx_ptr->call_id++);
                   rpc_stack->conn_context = conn_ctx_ptr;
                   rpc_stack->cb = google::protobuf::NewCallback(on_pong, rpc_stack.get());
@@ -391,7 +398,7 @@ void on_rpc_bench_start(void* arg) {
     rpc_bench_thread = ::spdk_thread_create("rpc_bench", &cpu_mask);
 
     start_rpc_bench_server();
-    start_rpc_bench_client();
+    start_ping_client();
 }
 
 int main(int argc, char** argv) {
@@ -405,7 +412,7 @@ int main(int argc, char** argv) {
 
     sock_path = FMT_1("/var/tmp/rpc_bench_%1%.sock", g_ep_index);
     boost::property_tree::read_json(std::string(g_json_conf), g_pt);
-    ctx.use_different_core = g_pt.get_child("use_different_core").get_value<bool>();
+    ctx.rpc_client_same_core = g_pt.get_child("rpc_client_same_core").get_value<bool>();
 
     opts.name = "rpc_bench";
     opts.shutdown_cb = on_rpc_bench_close;
