@@ -19,6 +19,7 @@ import (
 	"monitor/config"
 	"monitor/etcdapi"
 	"monitor/log"
+	"monitor/utils"
 	"sort"
 	"strconv"
 	"time"
@@ -404,10 +405,10 @@ func containsDomain(pgDomainMap *map[int][]string, pgId int, domain string) bool
 func transferable(poolid PoolID, pgId int) bool {
 	pg := AllPools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgId)]
 
-	if pg.PgInState(PgRemapped) ||
-	  pg.PgInState(PgDown) ||
-	  pg.PgInState(PgCreating) ||
-	  pg.PgInState(PgUndersize) {
+	if pg.PgInState(utils.PgRemapped) ||
+	  pg.PgInState(utils.PgDown) ||
+	  pg.PgInState(utils.PgCreating) ||
+	  pg.PgInState(utils.PgUndersize) {
 		return false
 	}
 
@@ -506,7 +507,7 @@ func transferPG(ctx context.Context, cfg *OptimizeCfg, poolid PoolID, pgId int, 
 	(*pgNumPerOsd)[dstOsd]++
 	newOsdList = append(newOsdList, dstOsd)
 	pg.Version++
-	pg.SetPgState(PgRemapped)
+	pg.SetPgState(utils.PgRemapped)
 	pg.NewOsdList = newOsdList
 	AllPools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgId)] = pg
 	log.Debug(ctx, "pg: ", pgId, " PgState ", pg.PgState, " osdList: ", pg.OsdList, " NewOsdList: ", pg.NewOsdList)
@@ -671,13 +672,13 @@ func CheckPgs(ctx context.Context, client *etcdapi.EtcdClient, osdid int, stateS
 		isPgStateChange := false
         
         for pgID, pg := range oldPGs {
-            if pg.PgInState(PgRemapped) {
+            if pg.PgInState(utils.PgRemapped) {
                 if !listContain(pg.OsdList, osdid) && !listContain(pg.NewOsdList, osdid) {
                 	//状态变更的osd不在pg的osd列表中
                 	continue
                 }
                 log.Info(ctx, "pg ", poolID, ".", pgID, " is in PgRemapped state.")
-                if !pg.PgInState(PgDown) {
+                if !pg.PgInState(utils.PgDown) {
                     if stateSwitch == InToOut {
                         PushPgTask(pgID, osdid, stateSwitch)
                     }
@@ -694,17 +695,17 @@ func CheckPgs(ctx context.Context, client *etcdapi.EtcdClient, osdid int, stateS
                 	continue
                 }
 	
-                if pg.PgInState(PgCreating) {
+                if pg.PgInState(utils.PgCreating) {
                     //pg is creating
-                    if pg.PgInState(PgDown) {
+                    if pg.PgInState(utils.PgDown) {
                     	if stateSwitch == InToOut {
                     	    //osd from in to out
                     	    log.Info(ctx, "pg ", poolID, ".", pgID, "in PgCreating | PgDown, osd from in to out")
                     	    pgConfig, ok := redistributionPg(ctx, osdTreeMap, osdNodeMap, poolID, pgID)
                     	    if ok {
                     	        //pg处于redistributionPg && PgDown，此时有osd状态有in变为out，pg状态不会变为PgRemapped
-                    	        pgConfig.UnsetPgState(PgRemapped)
-                    	        pgConfig.SetPgState(PgCreating)
+                    	        pgConfig.UnsetPgState(utils.PgRemapped)
+                    	        pgConfig.SetPgState(utils.PgCreating)
                     	        isRemap = true
                     	        AllPools[poolID].PoolPgMap.PgMap[pgID] = *pgConfig
                     	    }
@@ -716,7 +717,7 @@ func CheckPgs(ctx context.Context, client *etcdapi.EtcdClient, osdid int, stateS
                             PushPgTask(pgID, osdid, stateSwitch)
                         }
                     }
-                }else if !pg.PgInState(PgDown) {
+                }else if !pg.PgInState(utils.PgDown) {
                     //pg is not down
                     if stateSwitch == InToOut ||  stateSwitch == DownToUp{
                         //osd from in to out
@@ -732,7 +733,7 @@ func CheckPgs(ctx context.Context, client *etcdapi.EtcdClient, osdid int, stateS
                             AllPools[poolID].PoolPgMap.PgMap[pgID] = *pgConfig
                         }
                     }
-                }else if pg.PgInState(PgDown) {
+                }else if pg.PgInState(utils.PgDown) {
                     //pg is down
                     if stateSwitch == DownToUp && shouldChange(pg.OsdList, pgSize, osdid) {
                         log.Info(ctx, "pg ", poolID, ".", pgID, "in PgDown, osd from down to up")
@@ -750,10 +751,10 @@ func CheckPgs(ctx context.Context, client *etcdapi.EtcdClient, osdid int, stateS
                 state := CheckPgState(pgConfig.OsdList, pool.PGSize)
                 if state == 0 {
                     isPgStateChange = true
-                    pgConfig.UnsetPgState(PgUndersize)
-                    pgConfig.UnsetPgState(PgDown)
-                    if !pgConfig.PgInState(PgCreating) && !pgConfig.PgInState(PgRemapped) {
-                        pgConfig.SetPgState(PgActive)
+                    pgConfig.UnsetPgState(utils.PgUndersize)
+                    pgConfig.UnsetPgState(utils.PgDown)
+                    if !pgConfig.PgInState(utils.PgCreating) && !pgConfig.PgInState(utils.PgRemapped) {
+                        pgConfig.SetPgState(utils.PgActive)
                     }
                     AllPools[poolID].PoolPgMap.PgMap[pgID] = pgConfig
                 } else if !pgConfig.PgInState(state) {
@@ -820,7 +821,7 @@ func redistributionPg(ctx context.Context,
     newOsdList = append(newOsdList, addOsdList...)
     pgConfig := AllPools[poolId].PoolPgMap.PgMap[pgId]
     pgConfig.Version++
-	pgConfig.SetPgState(PgRemapped)
+	pgConfig.SetPgState(utils.PgRemapped)
     pgConfig.NewOsdList = newOsdList    
     log.Info(ctx, "pg: ", poolId, ".", pgId, " Version: ", pgConfig.Version, " PgState: ", pgConfig.PgState, 
 	        " OsdList: ", pgConfig.OsdList, " NewOsdList: ", pgConfig.NewOsdList)
@@ -1151,7 +1152,7 @@ func Compare_arry(arr1 []int, arr2 []int) bool {
 	return true
 }
 
-func CheckPgState(osdList []int, pgSize int) PGSTATE {
+func CheckPgState(osdList []int, pgSize int) utils.PGSTATE {
     var downNum int
     for _, id := range osdList {
         osdInfo, ok := AllOSDInfo.Osdinfo[OSDID(id)]
@@ -1162,9 +1163,9 @@ func CheckPgState(osdList []int, pgSize int) PGSTATE {
         }
     }
     if downNum >= 1 && downNum * 2 < pgSize {
-        return PgUndersize
+        return utils.PgUndersize
     } else if downNum * 2 >= pgSize {
-        return PgDown
+        return utils.PgDown
     }
     return 0
 }
@@ -1341,9 +1342,9 @@ func SimpleInitial(ctx context.Context, cfg *OptimizeCfg) (*OptimizeResult, erro
 		oldPgCfg, ok := oldPGs[strconv.Itoa(i)]
 		if ok == false {
 			ppc.Version = 1
-			ppc.SetPgState(PgCreating)
+			ppc.SetPgState(utils.PgCreating)
 			state := CheckPgState(ppc.OsdList, pg_size)
-			if state == PgUndersize ||  state == PgDown {
+			if state == utils.PgUndersize ||  state == utils.PgDown {
 				ppc.SetPgState(state)
 			}
 		} else {
