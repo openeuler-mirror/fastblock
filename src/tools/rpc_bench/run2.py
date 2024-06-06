@@ -40,7 +40,8 @@ def prepare_cmd_args():
     parser.add_argument("--ci", action="store_true", help="for ci test, may ignore it", default=False)
     parser.add_argument("--node-count", type=int, help="for ci test, specify rpc_bench proc count, at least 2", default=2)
     parser.add_argument("--start-port", type=int, help="for ci test, start of rpc_bench used port no.", default=3000)
-    parser.add_argument("--net-device", type=str, help="net device name", default=None)
+    parser.add_argument("--net-device", type=str, help="net device name, for soft roce", default=None)
+    parser.add_argument("--rdma-device", type=str, help="rdma device name, for soft roce", default='rxe0')
     return parser.parse_args()
 
 
@@ -128,7 +129,7 @@ def update_rpc_conf(conf_path, rpc_bench_conf, node_num, start_port):
     exit(1)
 
 
-def prepare_soft_roce(netdev):
+def prepare_soft_roce(netdev, rdma_dev):
     print('run "modprobe rdma_rxe"')
     try:
         subprocess.run(['modprobe', 'rdma_rxe'], check=True)
@@ -137,12 +138,31 @@ def prepare_soft_roce(netdev):
         print(f'modprobe rdma_rxe failed: {e}')
         exit(1)
 
-    print(f'run "rdma link add rxe0 type rxe netdev {netdev}"')
+    print(f'run "rdma link show {rdma_dev}"')
+    proc = subprocess.Popen(['rdma', 'link', 'show', rdma_dev],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True)
+    stdout, stderr = proc.communicate()
+    if proc.returncode != 0:
+        if stderr != 'Wrong device name':
+            print(f'rdma link show {rdma_dev} failed: {e}')
+            exit(1)
+        else:
+            try:
+                print(f'run "rdma link del {rdma_dev}"')
+                subprocess.run(['rdma', 'link', 'del', rdma_dev], check=True)
+                print(f'"rdma link del {rdma_dev}" success')
+            except:
+                print(f'"rdma link del {rdma_dev}" failed: {e}')
+                exit(1)
+
+    print(f'run "rdma link add {rdma_dev} type rxe netdev {netdev}"')
     try:
-        subprocess.run(['rdma', 'link', 'add', 'rxe0', 'type', 'rxe', 'netdev', netdev], check=True)
-        print(f'"rdma link add rxe0 type rxe netdev {netdev}" success')
+        subprocess.run(['rdma', 'link', 'add', rdma_dev, 'type', 'rxe', 'netdev', netdev], check=True)
+        print(f'"rdma link add {rdma_dev} type rxe netdev {netdev}" success')
     except subprocess.CalledProcessError as e:
-        print(f'"rdma link add rxe0 type rxe netdev {netdev}" failed: {e}')
+        print(f'"rdma link add {rdma_dev} type rxe netdev {netdev}" failed: {e}')
         exit(1)
 
 
