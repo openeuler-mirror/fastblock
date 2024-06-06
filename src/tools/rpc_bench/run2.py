@@ -230,7 +230,7 @@ if __name__ == '__main__':
             print('--net-device is required for ci test')
             exit(1)
 
-        prepare_soft_roce(args.net_device)
+        prepare_soft_roce(args.net_device, args.rdma_device)
         rpc_bench_conf = update_rpc_conf(conf_path, rpc_bench_conf, args.node_count, args.start_port)
 
     app_nums = len(rpc_bench_conf['endpoints'])
