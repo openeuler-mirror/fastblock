@@ -116,6 +116,13 @@ private:
             auto* mr = ::ibv_reg_mr(
               pd, t, _element_size,
               IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ);
+
+            if (not mr) {
+                SPDK_ERRLOG_EX(
+                  "ERROR: Call ibv_reg_mr() failed, errno is %d(%s)\n"
+                  errno, std::strerror(errno));
+            }
+
             ctx_cache[i]->mr = mr;
             ctx_cache[i]->sge.addr = uint64_t(mr->addr);
             ctx_cache[i]->sge.length = mr->length;

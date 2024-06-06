@@ -101,6 +101,7 @@ def update_rpc_conf(conf_path, rpc_bench_conf, node_num, start_port):
         if result.isspace():
             continue
 
+        print(result)
         splited = result.split(' ')
         dev = splited[0]
         port = int(splited[1])
@@ -120,6 +121,13 @@ def update_rpc_conf(conf_path, rpc_bench_conf, node_num, start_port):
             eps.append(node)
 
         rpc_bench_conf['endpoints'] = eps
+        rpc_bench_conf['rdma_device_name'] = dev
+        rpc_bench_conf['rdma_device_port'] = port
+        rpc_bench_conf['rdma_gid_index'] = index
+        rpc_bench_conf['msg_server_metadata_memory_pool_capacity'] = 1024
+        rpc_bench_conf['msg_server_data_memory_pool_capacity'] = 1024
+        rpc_bench_conf['io_size'] = 4096
+        rpc_bench_conf['io_count'] = 1024
         with open(conf_path, 'w') as f:
             json.dump(rpc_bench_conf, f, indent=4)
 
@@ -145,15 +153,15 @@ def prepare_soft_roce(netdev, rdma_dev):
                             text=True)
     stdout, stderr = proc.communicate()
     if proc.returncode != 0:
-        if stderr != 'Wrong device name':
-            print(f'rdma link show {rdma_dev} failed: {e}')
+        if not stderr.startswith('Wrong device name'):
+            print(f'rdma link show {rdma_dev} failed: {stderr}')
             exit(1)
         else:
+            print(f'run "rdma link del {rdma_dev}"')
             try:
-                print(f'run "rdma link del {rdma_dev}"')
                 subprocess.run(['rdma', 'link', 'del', rdma_dev], check=True)
                 print(f'"rdma link del {rdma_dev}" success')
-            except:
+            except subprocess.CalledProcessError as e:
                 print(f'"rdma link del {rdma_dev}" failed: {e}')
                 exit(1)
 
