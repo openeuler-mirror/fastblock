@@ -40,6 +40,7 @@ def prepare_cmd_args():
     parser.add_argument("--ci", action="store_true", help="for ci test, may ignore it", default=False)
     parser.add_argument("--node-count", type=int, help="for ci test, specify rpc_bench proc count, at least 2", default=2)
     parser.add_argument("--start-port", type=int, help="for ci test, start of rpc_bench used port no.", default=3000)
+    parser.add_argument("--net-device", type=str, help="net device name", default=None)
     return parser.parse_args()
 
 
@@ -127,6 +128,24 @@ def update_rpc_conf(conf_path, rpc_bench_conf, node_num, start_port):
     exit(1)
 
 
+def prepare_soft_roce(netdev):
+    print('run "modprobe rdma_rxe"')
+    try:
+        subprocess.run(['modprobe', 'rdma_rxe'], check=True)
+        print('modprobe rdma_rxe success')
+    except subprocess.CalledProcessError as e:
+        print(f'modprobe rdma_rxe failed: {e}')
+        exit(1)
+
+    print(f'run "rdma link add rxe0 type rxe netdev {netdev}"')
+    try:
+        subprocess.run(['rdma', 'link', 'add', 'rxe0', 'type', 'rxe', 'netdev', netdev], check=True)
+        print(f'"rdma link add rxe0 type rxe netdev {netdev}" success')
+    except subprocess.CalledProcessError as e:
+        print(f'"rdma link add rxe0 type rxe netdev {netdev}" failed: {e}')
+        exit(1)
+
+
 async def process_batch(batch, label):
     print(f"{label}:")
     for line in batch:
@@ -187,6 +206,11 @@ if __name__ == '__main__':
         rpc_bench_conf = json.load(file)
 
     if args.ci:
+        if args.net_device is None:
+            print('--net-device is required for ci test')
+            exit(1)
+
+        prepare_soft_roce(args.net_device)
         rpc_bench_conf = update_rpc_conf(conf_path, rpc_bench_conf, args.node_count, args.start_port)
 
     app_nums = len(rpc_bench_conf['endpoints'])

@@ -100,6 +100,7 @@ std::list<std::unique_ptr<connection_context>> conn_ctxs{};
 
 void usage() {
     std::cout << "-C json configuration file path" << std::endl;
+    std::cout << "-I endpoint index" << std::endl;
 }
 
 int parse_arg(int ch, char* arg) {
@@ -286,7 +287,7 @@ void on_pong(call_stack* stack_ptr) {
       conn_ctx->index,
       stack_ptr->resp->id(), ctx.io_count - 1);
     auto dur = (std::chrono::system_clock::now() - stack_ptr->start_at).count();
-    if (static_cast<size_t>(stack_ptr->resp->id()) >= ctx.io_count - 1) {
+    if (static_cast<size_t>(stack_ptr->resp->id()) >= ctx.io_count - 1 and conn_ctx->call_stacks.empty()) {
         ::spdk_thread_send_msg(rpc_bench_thread, on_client_io_done, nullptr);
         return;
     }

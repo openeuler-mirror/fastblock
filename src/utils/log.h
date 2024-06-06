@@ -33,7 +33,7 @@ extern int g_id;
         new_fmt = "daemon_id: " + std::to_string(g_id) + " ";  \
         new_fmt += fmt;                                     \
         SPDK_ERRLOG(new_fmt.c_str(), ##__VA_ARGS__); \
-    } while (0)    
+    } while (0)
 
 
 #define SPDK_NOTICELOG_EX(fmt, ...)                  \
@@ -43,7 +43,7 @@ extern int g_id;
         new_fmt = "daemon_id: " + std::to_string(g_id) + " ";  \
         new_fmt += fmt;                                     \
         SPDK_NOTICELOG(new_fmt.c_str(), ##__VA_ARGS__); \
-    } while (0)    
+    } while (0)
 
 
 #define SPDK_INFOLOG_EX(FLAG, fmt, ...)                  \
