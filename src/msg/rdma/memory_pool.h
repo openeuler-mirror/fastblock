@@ -119,7 +119,7 @@ private:
 
             if (not mr) {
                 SPDK_ERRLOG_EX(
-                  "ERROR: Call ibv_reg_mr() failed, errno is %d(%s)\n"
+                  "ERROR: Call ibv_reg_mr() failed, errno is %d(%s)\n",
                   errno, std::strerror(errno));
             }
 
