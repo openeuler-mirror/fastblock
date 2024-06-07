@@ -78,11 +78,11 @@ public:
     int resolve_timeout_us{2000};
     int poll_cm_event_timeout_us{1000000}; // 1s
 
-    uint32_t max_send_wr{1024};
-    uint32_t max_recv_wr{1024};
-    uint32_t max_send_sge{64};
-    uint32_t max_recv_sge{64};
-    uint32_t max_inline_data{64};
+    uint32_t max_send_wr{4096};
+    uint32_t max_recv_wr{8192};
+    uint32_t max_send_sge{128};
+    uint32_t max_recv_sge{128};
+    uint32_t max_inline_data{16};
 
     int cq_num_entries{16};
     bool qp_sig_all{false};

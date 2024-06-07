@@ -62,15 +62,15 @@ public:
 
     struct options {
         size_t poll_cq_batch_size{128};
-        size_t metadata_memory_pool_capacity{4096};
+        size_t metadata_memory_pool_capacity{16384};
         size_t metadata_memory_pool_element_size{1024};
-        size_t data_memory_pool_capacity{4096};
+        size_t data_memory_pool_capacity{16384};
         size_t data_memory_pool_element_size{8192};
         size_t per_post_recv_num{512};
         std::chrono::system_clock::duration rpc_timeout{std::chrono::seconds{30}};
-        int64_t rpc_batch_size{1023};
+        int64_t rpc_batch_size{1024};
         std::unique_ptr<endpoint> ep{nullptr};
-        size_t connect_max_retry{0};
+        size_t connect_max_retry{10};
         std::chrono::system_clock::duration retry_interval{std::chrono::seconds{0}};
     };
 

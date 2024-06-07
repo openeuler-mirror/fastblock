@@ -138,12 +138,12 @@ public:
         uint16_t port{};
         int listen_backlog{1024};
         size_t poll_cq_batch_size{128};
-        size_t metadata_memory_pool_capacity{4096};
+        size_t metadata_memory_pool_capacity{16384};
         size_t metadata_memory_pool_element_size{1024};
-        size_t data_memory_pool_capacity{4096};
+        size_t data_memory_pool_capacity{16384};
         size_t data_memory_pool_element_size{8192};
         size_t per_post_recv_num{512};
-        std::chrono::system_clock::duration rpc_timeout{std::chrono::seconds{1}};
+        std::chrono::system_clock::duration rpc_timeout{std::chrono::seconds{5}};
         std::unique_ptr<endpoint> ep{nullptr};
     };
 
@@ -159,8 +159,8 @@ public:
         if (conf.count("msg_server_rpc_timeout_us") != 0) {
             auto timeout_us = conf.get_child("msg_server_rpc_timeout_us").get_value<int64_t>();
             opts->rpc_timeout = std::chrono::milliseconds{timeout_us};
-            opts->ep = std::make_unique<endpoint>(conf);
         }
+        opts->ep = std::make_unique<endpoint>(conf);
 
         return opts;
     }
