@@ -282,17 +282,21 @@ void on_pong(call_stack* stack_ptr) {
     if (is_terminated) { return; }
 
     auto* conn_ctx = reinterpret_cast<connection_context*>(stack_ptr->conn_context);
+    auto index = conn_ctx->index;
+    auto resp_id = stack_ptr->resp->id();
     SPDK_NOTICELOG(
       "[%ld] received pong id %ld, total %ld\n",
-      conn_ctx->index,
-      stack_ptr->resp->id(), ctx.io_count - 1);
+      index,
+      resp_id, ctx.io_count - 1);
     auto dur = (std::chrono::system_clock::now() - stack_ptr->start_at).count();
-    if (static_cast<size_t>(stack_ptr->resp->id()) >= ctx.io_count - 1 and conn_ctx->call_stacks.empty()) {
+    auto* call_stacks = &(conn_ctx->call_stacks);
+    conn_ctx->call_stacks.pop_front();
+    if (static_cast<size_t>(resp_id) >= ctx.io_count - 1 and call_stacks->empty()) {
+        SPDK_NOTICELOG("[%ld] all rpc finished\n", index);
         ::spdk_thread_send_msg(rpc_bench_thread, on_client_io_done, nullptr);
         return;
     }
 
-    conn_ctx->call_stacks.pop_front();
     auto rpc_stack = std::make_unique<call_stack>();
     rpc_stack->req->set_data(rpc_msg);
     rpc_stack->req->set_id(conn_ctx->call_id++);

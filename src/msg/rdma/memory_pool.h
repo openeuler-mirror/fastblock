@@ -17,6 +17,7 @@
 #include <spdk/env.h>
 #include <spdk/string.h>
 
+#include <csignal>
 #include <memory>
 #include <string>
 #include <unordered_set>
@@ -121,6 +122,7 @@ private:
                 SPDK_ERRLOG_EX(
                   "ERROR: Call ibv_reg_mr() failed, errno is %d(%s)\n",
                   errno, std::strerror(errno));
+                std::raise(SIGABRT);
             }
 
             ctx_cache[i]->mr = mr;

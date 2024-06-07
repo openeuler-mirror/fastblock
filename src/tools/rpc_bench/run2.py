@@ -128,6 +128,7 @@ def update_rpc_conf(conf_path, rpc_bench_conf, node_num, start_port):
         rpc_bench_conf['msg_server_data_memory_pool_capacity'] = 1024
         rpc_bench_conf['io_size'] = 4096
         rpc_bench_conf['io_count'] = 1024
+        rpc_bench_conf['rpc_client_same_core'] = True
         with open(conf_path, 'w') as f:
             json.dump(rpc_bench_conf, f, indent=4)
 

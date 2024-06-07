@@ -200,7 +200,7 @@ if __name__ == '__main__':
     for i in range(app_nums):
         n_core = count_core_num(rpc_bench_conf['endpoints'], i)
         rpc_bench_meta = {
-            'name': format_app_name(app_base_name, args.build_path_suffix, i + 1),
+            'name': format_app_name(app_base_name, args.build_path_suffix, i),
             'command': f'{app_bin_path} -C {app_conf_path} -I {i + 1} -m [{format_core_arg(n_core, app_core_counter)}] {app_log_mod}',
             'autostart': False,
             'autorestart': False,
@@ -233,4 +233,4 @@ if __name__ == '__main__':
     print(f'generated supervisord conf for {sup_cli.conf_path}')
     sup_cli.maybe_start_supervisor()
     sup_cli.reload_supervisor_config()
-    sup_cli.start(f'{group_meta["name"]}:*')
+    # sup_cli.start(f'{group_meta["name"]}:*')

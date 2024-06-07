@@ -26,11 +26,38 @@
                     "port": 3002
                 }
             ]
+        },
+        {
+            "index": 4,
+            "list": [
+                {
+                    "host": "172.31.4.143",
+                    "port": 3003
+                }
+            ]
+        },
+        {
+            "index": 5,
+            "list": [
+                {
+                    "host": "172.31.4.143",
+                    "port": 3004
+                }
+            ]
+        },
+        {
+            "index": 6,
+            "list": [
+                {
+                    "host": "172.31.4.143",
+                    "port": 3005
+                }
+            ]
         }
     ],
-    "io_size": 4194304,
+    "io_size": 4096,
     "io_depth": 1,
-    "io_count": 10000,
+    "io_count": 1000,
     "rpc_client_same_core": true,
     "rdma_device_name": "mlx5_0",
     "rdma_device_port": 1,
