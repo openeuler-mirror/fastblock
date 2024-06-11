@@ -310,7 +310,7 @@ func CreatePgs(ctx context.Context, client *etcdapi.EtcdClient, pool *PoolConfig
     optimizeCfg.OSDTree, optimizeCfg.OSDInfoMap, optimizeCfg.TotalWeight = FlattenTree(ctx, osdTreeMap, osdNodeMap, 
             pool.PGCount, pool.PGSize, pool.FailureDomain, pool.Root, pool.Root != "")
     
-    poolPGResult, oerr := SimpleInitial(ctx, optimizeCfg)
+    poolPGResult, oerr := SimpleInitial(ctx, optimizeCfg, pool.PGSize)
     if oerr != nil {
         log.Error(ctx, oerr, "create pg failed.")
         return nil, errors.New("create pg failed.")
@@ -456,6 +456,57 @@ func getMinPgOsd(cfg *OptimizeCfg, domain string, pgNumPerOsd *map[int]int32) in
 	return minOsd
 }
 
+func addPgOsd(ctx context.Context, cfg *OptimizeCfg, poolid PoolID, pgId int, pgDomainMap *map[int][]string,
+  minPgDomain string, secondMinPgDomain string, thirdMinPgDomain string, domainPgNum *map[string]int32, 
+  pgOnDomainMap *map[string][]int, pgNumPerOsd *map[int]int32) bool {
+
+	pg := AllPools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgId)]
+	var addOsdNum = cfg.PGSize - len(pg.OsdList)
+	newOsdList := pg.OsdList
+	var addOsd int
+	isRemap := false
+	pgSize := AllPools[poolid].PGSize
+
+	for i := 0; i < addOsdNum; i++ {
+		if !containsDomain(pgDomainMap, pgId, minPgDomain) {
+			log.Debug(ctx, "pg:", pgId, " minPgDomain ", minPgDomain)
+			(*domainPgNum)[minPgDomain]++
+			(*pgOnDomainMap)[minPgDomain] = append((*pgOnDomainMap)[minPgDomain], pgId)
+			(*pgDomainMap)[pgId] = append((*pgDomainMap)[pgId], minPgDomain)
+			addOsd = getMinPgOsd(cfg, minPgDomain, pgNumPerOsd)
+		} else if !containsDomain(pgDomainMap, pgId, secondMinPgDomain) {
+			log.Debug(ctx, "pg:", pgId, " secondMinPgDomain ", secondMinPgDomain)
+			(*domainPgNum)[secondMinPgDomain]++
+			(*pgOnDomainMap)[secondMinPgDomain] = append((*pgOnDomainMap)[secondMinPgDomain], pgId)
+			(*pgDomainMap)[pgId] = append((*pgDomainMap)[pgId], secondMinPgDomain)
+			addOsd = getMinPgOsd(cfg, secondMinPgDomain, pgNumPerOsd)
+		} else if !containsDomain(pgDomainMap, pgId, thirdMinPgDomain) {
+			log.Debug(ctx, "pg:", pgId, " thirdMinPgDomain ", thirdMinPgDomain)
+			(*domainPgNum)[thirdMinPgDomain]++
+			(*pgOnDomainMap)[thirdMinPgDomain] = append((*pgOnDomainMap)[thirdMinPgDomain], pgId)
+			(*pgDomainMap)[pgId] = append((*pgDomainMap)[pgId], thirdMinPgDomain)
+			addOsd = getMinPgOsd(cfg, thirdMinPgDomain, pgNumPerOsd)
+		} else {
+			continue
+		}
+
+		isRemap = true
+		(*pgNumPerOsd)[addOsd]++
+		newOsdList = append(newOsdList, addOsd)
+	}
+	if isRemap {
+		pg.Version++
+		pg.SetPgState(utils.PgRemapped)
+		if len(newOsdList) == pgSize {
+			pg.PgState = pg.PgState &^ utils.PgUndersize
+		}
+		pg.NewOsdList = newOsdList
+		AllPools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgId)] = pg
+		log.Info(ctx, "pg: ", pgId, " PgState ", pg.PgState, " osdList: ", pg.OsdList, " NewOsdList: ", pg.NewOsdList)	
+	}
+	return 	isRemap
+}
+
 func transferPG(ctx context.Context, cfg *OptimizeCfg, poolid PoolID, pgId int, pgDomainMap *map[int][]string, 
   osdDomainMap *map[int]string, maxPgDomain string, minPgDomain string, secondMinPgDomain string, 
   thirdMinPgDomain string, domainPgNum *map[string]int32, pgOnDomainMap *map[string][]int, 
@@ -519,7 +570,7 @@ func reblancePool(ctx context.Context,
   osdTreeMap *map[Level]*map[string]*BucketTreeNode,
   osdNodeMap *map[string]OSDTreeNode,
   pool *PoolConfig) bool {
-	log.Warn(ctx, "reblance pool ", pool.Poolid, ":", pool.Name)
+	log.Info(ctx, "reblance pool ", pool.Poolid, ":", pool.Name)
     optimizeCfg := &OptimizeCfg{
         PGCount:        pool.PGCount,
         PGSize:         getEffectivePGSize(pool.PGSize, GetFailureDomainNum(osdTreeMap, pool.FailureDomain)),
@@ -559,6 +610,28 @@ func reblancePool(ctx context.Context,
 
 	isRemap := false
 	breakFlag := true
+
+    /*
+	 * 检查pg种osd数量是否少于pool的pgsize,如果是就需要向pg里增加osd
+	 */
+	for pgIdStr, pgConfig := range pool.PoolPgMap.PgMap {
+		if pgConfig.PgInState(utils.PgRemapped) || pgConfig.PgInState(utils.PgDown) {
+            continue
+		}
+		if len(pgConfig.OsdList) == optimizeCfg.PGSize {
+			continue
+		}
+
+        minPgDomain, secondMinPgDomain, thirdMinPgDomain := top3MinValue(domainPgNum)
+		pgId, _ := strconv.Atoi(pgIdStr)
+
+		if addPgOsd(ctx, optimizeCfg, PoolID(pool.Poolid), pgId, pgDomainMap,
+		  minPgDomain, secondMinPgDomain, thirdMinPgDomain, 
+		  domainPgNum, pgOnDomainMap, pgNumPerOsd) {
+			isRemap = true
+		}  
+	}
+
 	/*   
 	 *  domainPgNum是一个map， key是pool的domain名字，value为此domain上面的pg数量
 	 *  均衡pg，从pg数量最多的那个domain上迁移pg到pg数量最少的domain上
@@ -972,106 +1045,6 @@ getMin:
     return addOsdList
 }
 
-
-// RecheckPGs calculate
-func RecheckPGs(ctx context.Context, client *etcdapi.EtcdClient) {
-	recheckTick := time.NewTicker(10 * time.Second)
-	for range recheckTick.C {
-		log.Info(ctx, "RecheckPgs enter.")
-
-		if AllPools == nil {
-			log.Warn(ctx, "AllPoolsConfig nil!")
-			return
-		}
-		log.Info(ctx, "All pools config:", AllPools)
-
-		newOsdMapVersion := AllOSDInfo.Version
-		// A new pool or a pool config/pgs changed.
-		changed := false
-
-		// TODO: osd revision can be in smaller granular.
-		osdTreeMap, osdNodeMap, terr := GetOSDTree(ctx, true, false)
-		if terr != nil {
-			log.Error(ctx, "GetOSDTree failed!")
-			return
-		}
-
-		// If a pool is deleted, then the result won't contain its PG configs.
-		// TODO: hash for each root and pool, and recheck only certain pools.
-		for poolID, pool := range AllPools {
-			pgNum := 0
-			var oldPGs map[string]PGConfig
-			var pgRevision int64
-			if pool.PoolPgMap.PgMap != nil {
-				pgNum = len(pool.PoolPgMap.PgMap)
-				oldPGs = pool.PoolPgMap.PgMap
-			}
-
-			//(fixme)
-			optimizeCfg := &OptimizeCfg{
-				PGCount:        pool.PGCount,
-				PGSize:         getEffectivePGSize(pool.PGSize, GetFailureDomainNum(osdTreeMap, pool.FailureDomain)),
-				PreviousPGList: oldPGs,
-			}
-
-			if len(*osdNodeMap)*2 < optimizeCfg.PGSize {
-				continue
-			}
-
-			optimizeCfg.OSDTree, optimizeCfg.OSDInfoMap, optimizeCfg.TotalWeight = FlattenTree(ctx, osdTreeMap, osdNodeMap, pool.PGCount, pool.PGSize, pool.FailureDomain, pool.Root, pool.Root != "")
-
-			var poolPGResult *OptimizeResult
-			var oerr error
-			if pgNum == 0 {
-				poolPGResult, oerr = SimpleInitial(ctx, optimizeCfg)
-			} else {
-				//(fixme)we respect the orginal pg distribution for now
-				poolPGResult, oerr = SimpleChange(ctx, optimizeCfg, newOsdMapVersion)
-			}
-
-			// Something wrong, so just keep old PG configs.
-			if oerr != nil {
-				log.Error(ctx, oerr, "input:", *optimizeCfg)
-				continue
-			}
-
-			//seems no need to change now, we respect the original distribution
-			if poolPGResult != nil {
-				log.Warn(ctx, "pool", poolID, ":", pool.Name, "result:", poolPGResult)
-				for pgId, pg := range poolPGResult.OptimizedPgMap.PgMap {
-					log.Warn(ctx, "pgId: ", pgId, pg)
-				}
-
-				log.Warn(ctx, "------------")
-				if len(oldPGs) > 0 {
-					for pgId, pg := range oldPGs {
-						log.Warn(ctx, "pgId: ", pgId, pg)
-					}
-				}
-
-				poolPGResult.PoolID = poolID
-				if !isSamePGConfig(ctx, poolPGResult, &oldPGs, pgRevision) {
-					changed = true
-					log.Warn(ctx, "PG map is changed!")
-					AllPools[poolID].PoolPgMap.PgMap = poolPGResult.OptimizedPgMap.PgMap
-					AllPools[poolID].PoolPgMap.Version++
-					if err := saveNewPGsTxn(ctx, client, poolID); err != nil {
-						log.Error(ctx, err)
-					}
-				}
-			}
-
-			//if !(changed || deleted) consider deleted pool
-			if !(changed) {
-				log.Warn(ctx, "PG map not changed!")
-			}
-		}
-
-		osdmapVersion = newOsdMapVersion
-	}
-
-}
-
 // saveNewPGsTxn save all to /config/pgmap/poolID, output.
 func saveNewPGsTxn(ctx context.Context, client *etcdapi.EtcdClient, pid PoolID) error {
 	log.Info(ctx, "saveNewPGsTxn")
@@ -1153,18 +1126,18 @@ func Compare_arry(arr1 []int, arr2 []int) bool {
 }
 
 func CheckPgState(osdList []int, pgSize int) utils.PGSTATE {
-    var downNum int
+    var upNum int
     for _, id := range osdList {
         osdInfo, ok := AllOSDInfo.Osdinfo[OSDID(id)]
         if ok == true {
-            if !osdInfo.IsUp {
-                downNum++
+            if osdInfo.IsUp {
+                upNum++
             }
         }
     }
-    if downNum >= 1 && downNum * 2 < pgSize {
+	if upNum > pgSize / 2  &&  upNum < pgSize {
         return utils.PgUndersize
-    } else if downNum * 2 >= pgSize {
+    } else if upNum <= pgSize / 2 {
         return utils.PgDown
     }
     return 0
@@ -1180,7 +1153,7 @@ func CheckPgState(osdList []int, pgSize int) utils.PGSTATE {
  * 为了方便描述，下面注释把OSDTree的key都统称为host，表示failure domain为host。
  * 注释中假设pg_size为3。
  */
-func SimpleInitial(ctx context.Context, cfg *OptimizeCfg) (*OptimizeResult, error) {
+func SimpleInitial(ctx context.Context, cfg *OptimizeCfg, poolPgSize int) (*OptimizeResult, error) {
 	if cfg == nil || cfg.OSDTree == nil || cfg.OSDInfoMap == nil || len(*cfg.OSDTree) == 0 || len(*cfg.OSDInfoMap) == 0 || len(*cfg.OSDTree)*2 < cfg.PGSize {
 		return nil, errors.New("invalid input cfg")
 	}
@@ -1343,7 +1316,7 @@ func SimpleInitial(ctx context.Context, cfg *OptimizeCfg) (*OptimizeResult, erro
 		if ok == false {
 			ppc.Version = 1
 			ppc.SetPgState(utils.PgCreating)
-			state := CheckPgState(ppc.OsdList, pg_size)
+			state := CheckPgState(ppc.OsdList, poolPgSize)
 			if state == utils.PgUndersize ||  state == utils.PgDown {
 				ppc.SetPgState(state)
 			}
@@ -1362,25 +1335,6 @@ func SimpleInitial(ctx context.Context, cfg *OptimizeCfg) (*OptimizeResult, erro
 	log.Info(ctx, "Step 4 done.")
 
 	return &result, nil
-}
-
-// check whether we should respect the original pg distribution
-func SimpleChange(ctx context.Context, cfg *OptimizeCfg, newOsdMapVersion int64) (*OptimizeResult, error) {
-	if cfg == nil || cfg.OSDTree == nil || cfg.OSDInfoMap == nil || len(*cfg.OSDTree) == 0 || len(*cfg.OSDInfoMap) == 0 {
-		return nil, errors.New("invalid input cfg")
-	}
-	if int(cfg.PGSize) > len(*cfg.OSDTree) { // 如果pg size比host数还大，没法分
-		log.Error(ctx, "PGSize: ", cfg.PGSize, " > OSDTree !", len(*cfg.OSDTree))
-		return nil, errors.New("PGSize > OSDTree")
-	}
-
-	if osdmapVersion >= newOsdMapVersion {
-		return nil, nil
-	}
-	log.Warn(ctx, "osdmapVersion: ", osdmapVersion, "AllOSDInfo.Version :", newOsdMapVersion)
-
-	log.Warn(ctx, "SimpleChange cfg:", *cfg)
-	return SimpleInitial(ctx, cfg)
 }
 
 /**
