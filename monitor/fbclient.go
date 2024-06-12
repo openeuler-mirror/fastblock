@@ -106,7 +106,7 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 				// Access the fields of the ApplyIdResponse
 				osdid := payload.ApplyIdResponse.GetId()
 				uuid := payload.ApplyIdResponse.GetUuid()
-				fmt.Printf("Received ApplyIdResponse, id is %d, uuid is %s\r\n", osdid, uuid)
+				fmt.Printf("%d\n", osdid)
 
 				// in this case we can stop
 				if *fakeOsdCount == 0 {

@@ -30,7 +30,8 @@ add_executable(fastblock-osd
   osd_stm.cc
 )
 
-install(TARGETS fastblock-osd DESTINATION bin)
+install(TARGETS fastblock-osd DESTINATION bin PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
+                    GROUP_EXECUTE GROUP_READ WORLD_READ WORLD_EXECUTE)
 
 target_include_directories (fastblock-osd
   PUBLIC

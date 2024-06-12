@@ -7,7 +7,7 @@ Wants=network-online.target time-sync.target fastblock-mon.target
 
 [Service]
 ExecReload=/bin/kill -HUP $MAINPID
-ExecStart=fastblock-mon -conf=/etc/fastblock/fastblock.json -id=%i &
+ExecStart=/usr/local/bin/fastblock-mon -conf=/etc/fastblock/fastblock.json -id=%i
 LimitNOFILE=1048576
 LimitNPROC=1048576
 Restart=on-failure

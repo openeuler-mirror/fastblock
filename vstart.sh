@@ -1,29 +1,49 @@
 #!/bin/bash
 set -x
-# this script can start a fastblock cluster, and can start a randwrite benchmark
-# NOTICE:
-# fastblock-osd/block_bench are spdk apps, performance will badly degraded if you run multiple daemons in the same core
-# if you want to use nvme bdevtype, your nvme disks should be held by spdk, disks are like 0000:d9:00.0(check docs/ dir for details)
-# this script will always create a new cluster, original data will be wiped if any
-# this script doesn't do much sanity checks
+# this script can deploy a fastblock cluster
+# IMPORTANT NOTICE:
+# 1. fastblock-osd/block_bench are spdk apps, performance will badly degraded if you run multiple daemons in the same core
+# 2. if you want to use nvme bdevtype, your nvme disks should be held by spdk, disks are like 0000:d9:00.0(check docs/ dir for details)
+# 3. you should run `make install` in build dir to install required binaries and systemctl service files
+# 4. there are two modes of deployment, dev and pro:
+#   4.1 dev mode is for development, will deploy a whole new cluster in localhost, mainly for testing/debugging
+#   4.2 in dev mode, monitor ip address and osd disks are not required, will use local file as backend of osd
+#   4.3 in dev mode, a default pool will be created after cluster is deployed
+#   4.4 pro mode is for production, you may run this script multiple times to add multiple osds in different machines
+#   4.5 in pro mode, you should provide monitor ip address or disks for osds
+#   4.6 in pro mode, since using a virtual rdma nic doesn't make any sense, you should provide a rdma nic name
+# 5. ssh passwordless login should be configured between machines to add remote osds
+# 6. if rdma nic is not provided, we will use a virutal rdma nic(by kernel module rdma_rxe) 
+# 7. if some osds failed to start because of lacking of hugepage, you should apply enough hugepage before running this script
 
-osdcount=3
+osdcount=0
+pgcount=8
 replica=3
-mt="vm"
+mode="dev"
 nic=""
 disks=""
 bdevtype="aio"
-runBenchmark=false
+remoteIp=""
+defaultConfigFile="/etc/fastblock/fastblock.json"
+
+
+installPrefix="/usr/local/bin"
+osdBinary=$installPrefix"/fastblock-osd"
+monBinary=$installPrefix"/fastblock-mon"
+benchBinary=$installPrefix"/block_bench"
+
 usage() {
     echo "Usage: $0 [options]"
     echo "Options:"
-    echo "  -c, --count: osd count, default=3"
+    echo "  -M, --Mon: create monitor with provided monitor ip address"
+    echo "  -c, --osdcount: osd count, default=0"
+    echo "  -p, --pgcount: pg count of the default pool in dev mode, default=8"
+    echo "  -i, --ip: host ip address of the disk"
     echo "  -r, --replica: replica count, default=3"
-    echo "  -m, --machine: machine type, can be physical or vm, default to vm"
-    echo "  -n, --nic: rdma nic name, must be provided in physical machine type"
+    echo "  -n, --nic: rdma nic name"
     echo "  -d, --disks: disks separated by comma(,)"
     echo "  -t, --bdevtype: type of bdev, can be nvme or aio, default to aio"
-    echo "  -b, --benchmark: whether run a benchmark after"
+    echo "  -m, --mode: deployment mode, can be dev or pro, default to dev"
     exit 1
 }
 
@@ -38,13 +58,13 @@ while [ "$#" -gt 0 ]; do
 	    shift
             osdcount="$1"
             ;;
+        -p|--pgcount)
+	    shift
+            pgcount="$1"
+            ;;
         -r|--replica)
 	    shift
             replica="$1"
-            ;;
-        -m|--machine)
-	    shift
-            mt="$1"
             ;;
         -n|--nic)
 	    shift
@@ -58,9 +78,17 @@ while [ "$#" -gt 0 ]; do
 	    shift
             bdevtype="$1"
             ;;
-        -b|--benchmark)
+        -i|--ip)
 	    shift
-            runBenchmark=true
+            remoteIp="$1"
+            ;;
+        -m|--mode)
+	    shift
+            mode=$1
+            ;;
+        -M|--Mon)
+	    shift
+            monString=$1
             ;;
         *)
             echo "Unknown argument: $1"
@@ -70,174 +98,342 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 
-# check parameters, we have following rules:
-# 1.machine type can only be physical and vm;
-# 2.physical machine should provide a rdma nic;
-# 3.physical machine should have ofed driver installed;
-# 4.vm usually don't have disks, so we will create tmp files as their bdev backend just to run a cluster;
-# 5.physical machine may have disks, you can config there bdev type(aio/nvme);
-
-if [ "$mt" != "physical" ] && [ "$mt" != "vm" ];then
-    echo "machine type should be either pyhical or vm"
-    exit 1
-fi
-
-if [ "$mt" = "physical" ] && [ "$nic" = "" ];then
-    if [ "$nic" = "" ];then
-        echo "in physical machine, you should provide you rdma nic"	
-		exit 1
-    fi
+function isOfedInstaled() {
     if [ ! -f /usr/bin/ofed_info ]; then
-        echo "in physical machine, you should have ofed driver instaled"	
-		exit 1
+        echo "false"
     fi
-    exit 1
-fi
+}
 
-if [ "$mt" = "physical" ] && [ "$nic" = "" ];then
-    if [ "$nic" = "" ];then
-        echo "in physical machine, you should provide you rdma nic"	
-		exit 1
+# 9.check system memory, if memory is enough, we don't need to modify rdma message parameters
+function isSmallMemory() {
+    total_memory=$(free -g | awk '/^Mem:/{print $2}')
+    if [ "$total_memory" -lt 64 ]; then
+        echo "true"
     fi
-    if [ ! -f /usr/bin/ofed_info ]; then
-        echo "in physical machine, you should have ofed driver instaled"	
-		exit 1
+}
+
+# 2.generate a new config file for monitor
+function generateConfigAndStartMonitor() {
+    _mons=$1
+    mkdir -p /var/log/fastblock
+    mkdir -p /etc/fastblock
+    tmpConfFile=$(mktemp)
+    echo '{}' | jq '.' > $tmpConfFile
+    #echo '{
+    #    "msg_server_listen_backlog": 1024,
+    #    "msg_server_poll_cq_batch_size": 32,
+    #    "msg_server_metadata_memory_pool_capacity": 16384,
+    #    "msg_server_metadata_memory_pool_element_size": 1024,
+    #    "msg_server_data_memory_pool_capacity": 16384,
+    #    "msg_server_data_memory_pool_element_size": 8192,
+    #    "msg_server_per_post_recv_num": 512,
+    #    "msg_server_rpc_timeout_us": 1000000,
+    #    "msg_client_poll_cq_batch_size": 32,
+    #    "msg_client_metadata_memory_pool_capacity": 16384,
+    #    "msg_client_metadata_memory_pool_element_size": 1024,
+    #    "msg_client_data_memory_pool_capacity": 16384,
+    #    "msg_client_data_memory_pool_element_size": 8192,
+    #    "msg_client_per_post_recv_num": 512,
+    #    "msg_client_rpc_timeout_us": 1000000,
+    #    "msg_client_rpc_batch_size": 1024,
+    #    "msg_client_connect_max_retry": 30,
+    #    "msg_client_connect_retry_interval_us": 1000000,
+    #    "msg_rdma_resolve_timeout_us": 2000,
+    #    "msg_rdma_poll_cm_event_timeout_us": 1000000,
+    #    "msg_rdma_max_send_wr": 4096,
+    #    "msg_rdma_max_send_sge": 128,
+    #    "msg_rdma_max_recv_wr": 8192,
+    #    "msg_rdma_max_recv_sge": 1,
+    #    "msg_rdma_max_inline_data": 16,
+    #    "msg_rdma_cq_num_entries": 1024,
+    #    "msg_rdma_qp_sig_all": false
+    #}' | jq '.' > $tmpConfFile
+
+    rm -rf /var/lib/fastblock/mon_"$_mons"
+    jq '.monitors |= ['\"$_mons\"']' $tmpConfFile > tmp_file.json && mv tmp_file.json $tmpConfFile
+    jq '.mon_host |= ['\"$_mons\"']' $tmpConfFile > tmp_file.json && mv tmp_file.json $tmpConfFile
+    jq '.mon_rpc_address |= '\"$_mons\"'' $tmpConfFile > tmp_file.json && mv tmp_file.json $tmpConfFile
+    jq '.mon_rpc_port |= 3333' $tmpConfFile > tmp_file.json && mv tmp_file.json $tmpConfFile
+    jq '.log_path |= "/var/log/fastblock/monitor.log"' $tmpConfFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
+
+    mv $tmpConfFile /etc/fastblock
+    echo "moving config file to /etc/fastblock!"
+
+    # stop any existing monitor service and start monitor service
+    systemctl stop fastblock-mon.target
+    systemctl start fastblock-mon@"$_mons".service
+    echo "monitor started!"
+    
+    # wait until monitor's 3333 port is ready
+    while ! nc -z $_mons 3333; do
+        sleep 1
+    done
+    sleep 5
+}
+
+
+function createNewDevCluster() {
+    if [ $monString = "" ] ;then
+        monString="127.0.0.1"
     fi
-    exit 1
-fi
-
-
-ROOT=$(pwd)
-killall -9 $ROOT/monitor/fastblock-mon
-killall -9 $ROOT/build/src/osd/fastblock-osd
-
-# 1.monitor data will be located in /tmp dir by default
-rm /tmp/mon* -r
-
-# 2.generate a nice config file for monitor
-hostname=$(hostname -s)
-cp fastblock.json vm_fastblock.json
-jq '.monitors |= ['\"$hostname\"']' vm_fastblock.json > tmp_file.json && mv tmp_file.json vm_fastblock.json
-jq '.mon_host |= ["127.0.0.1"]' vm_fastblock.json > tmp_file.json && mv tmp_file.json vm_fastblock.json
-jq '.log_path |= "./monitor.log"' vm_fastblock.json > tmp_file.json && mv tmp_file.json vm_fastblock.json
-
-# 3.start a monitor
-$ROOT/monitor/fastblock-mon -conf=./vm_fastblock.json -id=$hostname &
-
-# 4.wait a slow peroid for monitor to start tcp monitor service
-sleep 10
-
-# 5.apply id for osd
-for i in `seq 1 $osdcount`
-do
-	$ROOT/monitor/fastblock-client -op=fakeapplyid -uuid=$i -endpoint=127.0.0.1:3333
-done
-
-# 6.prepare empty file for each osd, this file will be the backend of a spdk bdev device
-# because raft log used 1GB space(for now, will optimized in the future), so the file should not be too small
-if [ "$disks" = "" ];then
-    json="{"
+    generateConfigAndStartMonitor $monString
+    generateNicConfig
     for i in `seq 1 $osdcount`
     do
-	truncate -s 4G ./file"$i"
-        if [ $i -eq 1 ]; then
-            json="$json\"$i\":\"file$i\""
-        else
-            json="$json,\"$i\":\"file$i\""
-        fi
+        # according to the definition of addNewOsd, the parameters are:
+        #_disk_path=$1
+        #_osdid=$2
+        #_uuid=$3
+        #_bdev_type=$4
+        #_remote_ip=$5
+        # in a dev cluster, all osds are local, disk_path is the osd work dir 
+       
+        uuid=`uuidgen`
+        /usr/local/bin/fastblock-client -op=fakeapplyid -uuid=$uuid -endpoint="$monString":3333
+        addNewOsd "" $i $uuid $bdevtype ""
+        sleep 10
     done
-    json="$json}"
-    jq ".osds = $json" vm_fastblock.json > tmp_file.json && mv tmp_file.json vm_fastblock.json
-else
-    # in this case, machine type must be physical
-    IFS=',' read -r -a device_array <<< "$disks"
-    if [ ${#device_array[@]} -ne $osdcount ]; then
-        echo "disk number doesn't match osd count"
+    echo "all osds started!"
+
+    echo "create default pool fb"
+    sleep 20
+    /usr/local/bin/fastblock-client -op=createpool -poolname=fb -pgcount=$pgcount -pgsize=$replica -endpoint="$monString":3333
+}
+
+
+function processProCluster() {
+    if [ "$monString" = "" ] && [ ! -f $defaultConfigFile ];then
+        echo "create osd need a existing created /etc/fastblock/fastblock.json"
+    fi
+
+    if [ "$monString" != "" ];then
+        generateConfigAndStartMonitor $monString
+    else 
+        ms=$(jq '.mon_host[0]' $defaultConfigFile)
+        if [ "$?" != "0" ]; then
+            echo "failed to parse monitor ip address from /etc/fastblock/fastblock.json"
+            exit 1
+        fi
+        ms=$(echo $ms | sed 's/^"//; s/"$//')
+
+        echo "monitor ip address is $ms"
+
+        # each host can have different nic name
+        ssh $remoteIp "jq '.rdma_device_name = \"$nic\"' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile"
+        IFS=',' read -r -a device_array <<< "$disks"
+
+        for ((i=0; i<${#device_array[@]}; i++)); do
+            _uuid=`uuidgen`
+            id=$(/usr/local/bin/fastblock-client -op=fakeapplyid -uuid=$_uuid -endpoint="$ms":3333)
+            addNewOsd "${device_array[$i]}" $id $_uuid $bdevtype $remoteIp
+        done
+    fi
+}
+
+
+
+function generateNicConfig() {
+    if [ "$nic" = "" ];then
+        nic=$(ip link show | grep UP | grep -v lo | awk -F': ' '{print $2}')
+        rdma link add rdmanic type rxe netdev $nic
+        jq '.rdma_device_name |= "rdmanic"' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
+    else
+        jq '.rdma_device_name |= '\"$nic\"'' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
+    fi
+    isSm=$(isSmallMemory)
+    echo $isSm
+    if [ "$isSm" = "true" ];then
+        echo "small memory, need modify memory pool capacity"
+        jq '.msg_server_metadata_memory_pool_capacity |= 16' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
+        jq '.msg_server_data_memory_pool_capacity |= 16' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
+        jq '.msg_client_metadata_memory_pool_capacity |= 16' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
+        jq '.msg_client_data_memory_pool_capacity |= 16' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
+    fi
+}
+
+
+function parametersCheck(){
+    if [ ! -f $osdBinary ] || [ ! -f $monBinary ] || [ ! -f $benchBinary ]; then
+        echo "fastblock binaries are not installed, please run make install in build dir"
         exit 1
     fi
-    json="{"
-    for ((i=0; i<${#device_array[@]}; i++)); do
-        id=$((i+1))
-        json="$json\"$id\":\"${device_array[$i]}\""
-        if [ $i -lt $((${#device_array[@]}-1)) ]; then
-            json="$json,"
+
+    if [ "$mode" != "dev" ] && [ "$mode" != "pro" ];then
+        echo "mode should be dev or pro"
+        exit 1
+    fi
+
+    if [ "$nic" != "" ];then
+        if [ "$remoteIp" == "" ];then
+            nic_count=`rdma link | grep $nic | grep LINK_UP | wc -l`
+            if [ "$?" != 0 ] || [ "$nic_count" != 1 ];then
+                echo "no nic or nic is not up"
+                exit 1
+            fi
+        else
+            nic_count=$(ssh $remoteIp "rdma link | grep $nic | grep LINK_UP | wc -l")
+            if [ "$?" != 0 ] || [ "$nic_count" != 1 ];then
+                echo "remote no nic or nic is not up"
+                exit 1
+            fi
+
         fi
-        if [ $bdevtype != "nvme" ];then
-		    dd if=/dev/zero of="${device_array[$i]}" bs=4M count=1024
-		fi
-    done
-    json="$json}"
-
-
-    jq ".osds = $json" vm_fastblock.json > tmp_file.json && mv tmp_file.json vm_fastblock.json
-    if [ $bdevtype = "nvme" ];then
-         jq '.bdev_type = "nvme"' vm_fastblock.json > tmp_file.json && mv tmp_file.json vm_fastblock.json
     fi
-fi
 
-# 7.apply enough huge page to run osd
-echo 4096 > /sys/devices/system/node/node0/hugepages/hugepages-2048kB/nr_hugepages
+    # in dev mode, we only accept monString, osdcount, pgcount, replica
+    # bdevtype, nic, disks, remote_ip are not allowed, because:
+    # 1. bdevtype is always aio in dev mode because it's enough to run a dev osd;
+    # 2. nic is not required in dev mode, we will use a virtual rdma nic;
+    # 3. disks is not required in dev mode, we will use local file as backend of osd;
+    # 4. remote_ip is not required in dev mode because all osds are local;
+    if [ "$mode" = "dev" ]; then
+        if [ "$disks" != "" ];then
+            echo "in dev mode, disks should not be provided"
+            exit -1
+        fi
 
-# 8.use a non-lo as rdma nic and config osds nic
-# notice: if you started ofed service, modprobe rdma_rxe will fail
-if [ "$mt" = vm ];then
-    echo "i'm a vm"
-    modprobe rdma_rxe
-    nic=$(ip link show | grep UP | grep -v lo | awk -F': ' '{print $2}')
-    rdma link add rdmanic type rxe netdev $nic
-    jq '.rdma_device_name |= "rdmanic"' vm_fastblock.json > tmp_file.json && mv tmp_file.json vm_fastblock.json
+        if [ "$bdevtype" != "aio" ];then
+            echo "in dev mode, bdevtype should be aio"
+            exit -1
+        fi
 
-    # a virtual machine should use less rmda memory, so we change *_capacity to 16
-    jq '.msg_server_metadata_memory_pool_capacity |= 16' vm_fastblock.json > tmp_file.json && mv tmp_file.json vm_fastblock.json
-    jq '.msg_server_data_memory_pool_capacity |= 16' vm_fastblock.json > tmp_file.json && mv tmp_file.json vm_fastblock.json
-    jq '.msg_client_metadata_memory_pool_capacity |= 16' vm_fastblock.json > tmp_file.json && mv tmp_file.json vm_fastblock.json
-    jq '.msg_client_data_memory_pool_capacity |= 16' vm_fastblock.json > tmp_file.json && mv tmp_file.json vm_fastblock.json
+        if [ "$remoteIp" != "" ];then
+            echo "in dev mode, remoteIp should not be provided"
+            exit -1
+        fi
+
+        if [ "$osdcount" = 0 ];then
+            echo "in dev mode, osdcount should not be 0"
+            exit -1
+        fi
+
+        # when no nic provided, we will use a virtual rdma nic, so we need to check if rdma_rxe can be loaded
+        # note that in a physical machine, rdma_rxe may not be loaded when you already have ofed installed and service started
+        # in a physical machine with rdma nic, ofed must be installed and service started
+        if [ "$nic" = "" ];then
+            modprobe rdma_rxe
+            if [ "$?" != "0" ]; then
+                echo "modprobe rdma_rxe failed, specify a rdma nic or check if ofed is installed correctly"
+                exit 1
+            fi
+        fi
+    else
+        if [ "$osdcount" != 0 ];then
+            echo "in pro mode, osdcount should not be be provided"
+            exit -1
+        fi
+
+
+        # either create monitor or osd in a single run, in this case, we do monitor creation only
+        if [ "$monString" != "" ] && [ "$disks" != "" ]; then
+            echo "can't create monitor and osd in the same run, please create monitor first, the run vstart.sh without monString specified"
+            exit -1
+        fi
+
+        if [ "$disks" != "" ] && [ "$remoteIp" = "" ]; then
+            echo "must specify IP address of the host when create osd(s)"
+            exit -1
+        fi
+
+
+        if [ "$monString" != "" ];then
+            echo "going to create monitor $monString"
+        else
+            # parse defaultConfigFile to get monitor ip address
+            ms=$(jq '.mon_host[0]' $defaultConfigFile)
+            if [ "$?" != "0" ]; then
+                echo "monitor is not running on $ms , please start monitor first"
+                exit 1
+            fi
+            ms=$(echo $ms | sed 's/^"//; s/"$//')
+
+            # ssh to the monString and check whether monitor is running
+            ssh $ms "systemctl status fastblock-mon@$ms.service"
+
+
+            # check whether monitor's 3333 port is ready
+            while ! nc -z $ms 3333; do
+                sleep 1
+            done
+
+            sleep 5
+
+            if [ "$disks" = "" ];then
+                echo "in pro mode, disks must be provided to create osd" 
+                exit 1
+            fi
+
+            if [ "$nic" = "" ];then
+                echo "in pro mode, nic must be provided"
+                exit 1
+            fi
+
+            if [ "$bdevtype" != "nvme" ] && [ "$bdevtype" != "aio" ];then
+                echo "in bdev mode, bdevtype should be nvme or aio"
+                exit 1
+            fi
+        fi
+    fi
+}
+
+# disk(bdev) config path
+# 6.prepare empty file for each osd, this file will be the backend of a spdk bdev device
+# because raft log used 1GB space(for now, will optimized in the future), so the file should not be too small
+
+function addNewOsd() {
+    _disk_path=$1
+    _osdid=$2
+    _uuid=$3
+    _bdev_type=$4
+    _remote_ip=$5
+
+    if [ "$_remote_ip" = "" ];then
+        rm -rf /var/lib/fastblock/osd-"$_osdid"
+        mkdir -p /var/lib/fastblock/osd-"$_osdid"
+        bdev_type_path=/var/lib/fastblock/osd-"$_osdid"/bdev_type
+        disk_path=/var/lib/fastblock/osd-"$_osdid"/disk
+        echo $_bdev_type > $bdev_type_path
+
+        if [ "$_disk_path" = "" ];then
+            rm -f /var/lib/fastblock/osd-"$_osdid"/file
+            truncate -s 100G /var/lib/fastblock/osd-"$_osdid"/file
+            echo /var/lib/fastblock/osd-"$_osdid"/file > $disk_path
+        else
+            echo $_disk_path > $disk_path
+        fi
+
+        echo intializing localstore of osd-"$_osdid"
+        /usr/local/bin/fastblock-osd -m '[1]' -C $defaultConfigFile --id $_osdid --mkfs --force --uuid $_uuid
+
+        echo "starting osd-$_osdid"
+        systemctl start fastblock-osd@"$_osdid".service
+    else
+        echo "starting remote osd-" $_osdid "on" $_remote_ip
+        ssh $_remote_ip "rm -rf /var/lib/fastblock/osd-$_osdid"
+        ssh $_remote_ip "mkdir -p /var/lib/fastblock/osd-$_osdid"
+        ssh $_remote_ip "echo $_bdev_type > /var/lib/fastblock/osd-$_osdid/bdev_type"
+        ssh $_remote_ip "echo $_disk_path > /var/lib/fastblock/osd-$_osdid/disk"
+
+        if [ "$_disk_path" = "" ];then
+            ssh $_remote_ip "rm -f /var/lib/fastblock/osd-$_osdid/file"
+            ssh $_remote_ip "truncate -s 100G /var/lib/fastblock/osd-$_osdid/file"
+            ssh $_remote_ip "echo /var/lib/fastblock/osd-$_osdid/file > /var/lib/fastblock/osd-$_osdid/disk"
+        else
+            ssh $_remote_ip "echo $_disk_path > /var/lib/fastblock/osd-$_osdid/disk"
+        fi
+
+        echo intializing localstore of osd-"$_osdid" "on" $_remote_ip
+        ssh $_remote_ip "/usr/local/bin/fastblock-osd -m '[1]' -C $defaultConfigFile --id $_osdid --mkfs --force --uuid $_uuid"
+        echo "starting osd-$_osdid on $_remote_ip"
+        ssh $_remote_ip "systemctl start fastblock-osd@$_osdid.service"
+    fi
+}
+
+# do sanity check first
+parametersCheck
+
+if [ "$mode" = "dev" ];then
+    createNewDevCluster
 else
-    echo "i'm a physical machine"
-    jq '.rdma_device_name |= '\"$nic\"'' vm_fastblock.json > tmp_file.json && mv tmp_file.json vm_fastblock.json
-fi
-
-# 9.call mkfs to initiate osd's localstore
-for i in `seq 1 $osdcount`
-do
-    # adding --force parameter means the disk's spdk blobstore  will be totally wiped out without mercy
-    # if --force is not added, mkfs will failed if you have a fastblock superblob in the disk's superblock
-    $ROOT/build/src/osd/fastblock-osd -m '['$i']' -C vm_fastblock.json --id $i --mkfs --force --uuid $i
-done
-
-
-# 10.start osd
-for i in `seq 1 $osdcount`
-do
-	$ROOT/build/src/osd/fastblock-osd -m '['$i']' -C vm_fastblock.json --id $i &
-    sleep 20
-done
-    
-
-# you may check osd state from etcd
-# osd topology is stored in etcd by monitor in plain text
-#ETCDCTL_API=3 etcdctl get --prefix "" --endpoints=127.0.0.1:2379
-
-if [ $runBenchmark = true ]; then
-    # 11.create pool and image
-    size=$((1024*1024*1024))
-    $ROOT/monitor/fastblock-client -op=createpool -poolname=fb -pgcount=1 -pgsize=$replica -endpoint=127.0.0.1:3333
-    $ROOT/monitor/fastblock-client -op=createimage -imagesize=$size  -imagename=fbimage -poolname=fb -endpoint=127.0.0.1:3333
-    
-    sleep 20
-    # now cluster is created and pool/image is ready, we can run block_bench with a edited blockbench.json
-    cp $ROOT/src/tools/block_bench.json vm_blockbench.json
-    jq '.mon_host |= ["127.0.0.1"]' vm_blockbench.json > tmp_file.json && mv tmp_file.json vm_blockbench.json
-    jq '.image_name |= "fbimage"' vm_blockbench.json > tmp_file.json && mv tmp_file.json vm_blockbench.json
-    jq '.pool_name |= "fb"' vm_blockbench.json > tmp_file.json && mv tmp_file.json vm_blockbench.json
-    jq '.pool_id |= 1' vm_blockbench.json > tmp_file.json && mv tmp_file.json vm_blockbench.json
-    jq '.object_size |= 4194304' vm_blockbench.json > tmp_file.json && mv tmp_file.json vm_blockbench.json
-    jq '.image_size |= '\"$size\"'' vm_blockbench.json > tmp_file.json && mv tmp_file.json vm_blockbench.json
-    
-    if [ "$mt" = vm ];then
-        jq '.msg_client_metadata_memory_pool_capacity |= 16' vm_blockbench.json > tmp_file.json && mv tmp_file.json vm_blockbench.json
-        jq '.msg_client_data_memory_pool_capacity |= 16' vm_blockbench.json > tmp_file.json && mv tmp_file.json vm_blockbench.json
-    fi
-    
-    $ROOT/build/src/tools/block_bench -m '[4]'  -C vm_blockbench.json
+    processProCluster
 fi

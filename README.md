@@ -75,7 +75,7 @@ kv子系统用于存储raft的元数据、存储系统本身的数据，由于�
 libfastblock把用户对image的数据操作转换为对object（osd处理的基本数据单元）的操作，然后封装为Data Rpc消息发送给pg的 leader osd，并接收处理 leader osd返回的响应。
 
 
-# 代码结构及编译、运行
+# 代码结构及编译、安装、运行
 fastblock代码主要位于src、monitor和msg目录中:
 - src目录主要包含raft实现、rdma通信、底层存储引擎、块层API封装等功能, 详情见[src目录简介](src/README.md "src代码简介")
 - monitor目录则包含了集群元数据存储管理、monitor选举、pg分配、clustermap分发等功能, 详情见[monitor目录简介](monitor/README.md "monitor代码简介")
@@ -89,16 +89,26 @@ fastblock代码主要位于src、monitor和msg目录中:
 ./build.sh -t Release -c osd
 ```
 编译完成后，`fastblock-mon`和`fastblock-client`二进制位于`mon/`目录下，而`fastblock-osd`和`fastblock-vhost`二进制位于`build/src/osd/`目录和`build/src/bdev`目录下。
-后续osd、vhost有代码改动，则可仅在`build/`目录下编译，而monitor有改动则可仅在`mon/`目录下`make`即可。
-最简测试开发环境搭建可参考[测试开发环境搭建](https://gitee.com/openeuler/fastblock/wikis/%E6%9C%80%E7%AE%80%E5%BC%80%E5%8F%91%E7%8E%AF%E5%A2%83%E6%90%AD%E5%BB%BA%E5%8F%8A%E4%B8%8A%E6%89%8B%E6%8C%87%E5%8D%97)   
-另外，可通过vstart.sh脚本搭建一个测试开发环境，即使您没有RDMA网卡也没有NVMe磁盘，也可以很方便的搭建一个环境，并进行简单的性能测试:  
+后续osd、vhost有代码改动，则可仅在`build/`目录下编译，而monitor有改动则可仅在`mon/`目录下`make`即可。  
+可通过以下命令行将编译生成的二进制以及systemctl unit文件安装到系统目录: 
 ```
-# 在有RDMA网卡的物理服务器上跑一个3osd、三副本的集群，使用网卡为mlx5_0, 提供三块磁盘，并在集群搭建起来之后运行benchmark
-./vstart.sh -t aio -c 3 -r 3 -m physical -n mlx5_0 -d /dev/sda,/dev/sdb,/dev/sdc -b
-# 在有RDMA网卡的物理服务器上跑一个3osd、三副本的集群，使用网卡为mlx5_0, 提供三块nvme磁盘并使用nvme bdev，并在集群搭建起来之后运行benchmark
-./vstart.sh -t nvme -c 3 -r 3 -m physical -n mlx5_0 -d 0000:b1:00.0,0000:b2:00.0,0000:b0:00.0 -b
-# 在没有RDMA网卡的虚拟机上，跑一个3osd、三副本的集群，并在集群搭建起来之后运行benchmark
-./vstart.sh -c 3 -r 3 -m vm -b
+cd build
+make install
+```
+最简测试开发环境搭建可参考[测试开发环境搭建](https://gitee.com/openeuler/fastblock/wikis/%E6%9C%80%E7%AE%80%E5%BC%80%E5%8F%91%E7%8E%AF%E5%A2%83%E6%90%AD%E5%BB%BA%E5%8F%8A%E4%B8%8A%E6%89%8B%E6%8C%87%E5%8D%97)   
+另外，可通过vstart.sh脚本搭建一个测试开发环境，即使您没有RDMA网卡也没有NVMe磁盘，也可以很方便的搭建一个环境(以下命令行都需要make install将二进制安装到系统目录):  
+```
+# 搭建一个测试开发环境，有3osd, 跑三副本，使用网卡为mlx5_0, 提供三块磁盘
+./vstart.sh -m dev -t aio -c 3 -r 3 -n mlx5_0 -d /dev/sda,/dev/sdb,/dev/sdc
+# 搭建一个测试开发环境，有3osd, 跑三副本，使用网卡为mlx5_0, 提供三块nvme磁盘并使用nvme bdev
+./vstart.sh -m dev -t nvme -c 3 -r 3 -n mlx5_0 -d 0000:b1:00.0,0000:b2:00.0,0000:b0:00.0
+# 在没有RDMA网卡的虚拟机上，跑一个3osd、三副本的集群
+./vstart.sh -m dev -c 3 -r 3
+# 在172.31.4.144，172.31.4.145，172.31.4.146三台物理服务器上跑一个生产环境，提供三块nvme磁盘并使用nvme bdev(运行下面四个命令行):
+./vstart.sh -m pro -M 172.31.4.144
+./vstart.sh -m pro -n mlx5_3 -t nvme -d 0000:b0:00.0,0000:da:00.0,0000:19:00.0 -i 172.31.4.144
+./vstart.sh -m pro -n mlx5_3 -t nvme -d 0000:b0:00.0,0000:da:00.0,0000:19:00.0 -i 172.31.4.145
+./vstart.sh -m pro -n mlx5_3 -t nvme -d 0000:b0:00.0,0000:da:00.0,0000:19:00.0 -i 172.31.4.146
 ```
 
 # 部署及性能测试
