@@ -217,6 +217,19 @@ private:
         }
     }
 
+    static const char* link_layer_str(uint8_t link_layer) {
+        switch (link_layer) {
+        case IBV_LINK_LAYER_UNSPECIFIED:
+            return "Unspecified";
+        case IBV_LINK_LAYER_INFINIBAND:
+            return "InfiniBand";
+        case IBV_LINK_LAYER_ETHERNET:
+            return "Ethernet";
+        default:
+            return "Unknown";
+        }
+    }
+
     static std::string device_name(::ibv_device* device) {
         return std::string(::ibv_get_device_name(device));
     }
@@ -294,11 +307,11 @@ private:
                     continue;
                 }
 
-                SPDK_DEBUGLOG_EX(
-                  msg,
-                  "port %u of %s is %s\n",
+                SPDK_NOTICELOG_EX(
+                  "port %u of %s is %s, link layer is %s\n",
                   port, device_name(*devices).c_str(),
-                  port_state_name(port_attr->state).c_str());
+                  port_state_name(port_attr->state).c_str(),
+                  link_layer_str(port_attr->link_layer));
 
                 std::vector<::ibv_gid> gids{};
                 for (int i{0}; i < port_attr->gid_tbl_len; ++i) {

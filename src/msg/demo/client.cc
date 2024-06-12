@@ -27,6 +27,8 @@
 #include <csignal>
 #include <iostream>
 
+SPDK_LOG_REGISTER_COMPONENT(client)
+
 int g_id{-1};
 namespace {
 char* g_host{nullptr};
@@ -117,6 +119,7 @@ void iter_on_pong(msg::rdma::rpc_controller* ctrlr, ping_pong::response* reply) 
 
     ++g_rpc_dur_count;
     g_all_rpc_dur += static_cast<double>(dur);
+    SPDK_INFOLOG_EX(client, "received reply %ld\n", reply->id());
     if (static_cast<size_t>(reply->id()) >= g_iter_count - 1) {
         g_is_terminated = true;
         auto iops_dur = static_cast<double>((std::chrono::system_clock::now() - g_iops_start).count());
@@ -159,7 +162,7 @@ void start_rpc_client(void* arg) {
     std::string cli_name{"rpc_cli"};
     g_rpc_client = std::make_shared<msg::rdma::client>(cli_name, &g_cpumask, opts);
     g_rpc_client->start();
-    g_iter_msg = demo::random_string(4 * 1024 * 1024);
+    g_iter_msg = demo::random_string(4096);
     g_rpc_client->emplace_connection(
       g_pt.get_child("server_address").get_value<std::string>(),
       g_pt.get_child("server_port").get_value<uint16_t>(),

@@ -147,6 +147,44 @@ public:
         std::unique_ptr<endpoint> ep{nullptr};
     };
 
+    static std::string get_listen_address(boost::property_tree::ptree& conf) {
+        if (conf.count("msg_server_listen_address") != 0) {
+            return conf.get<std::string>("msg_server_listen_address");
+        }
+    }
+
+/*
+int rdma_cm_get_rdma_address(struct perftest_parameters *user_param,
+		struct rdma_addrinfo *hints, struct rdma_addrinfo **rai)
+{
+	int rc;
+	char port[6] = "", error_message[ERROR_MSG_SIZE] = "";
+
+	sprintf(port, "%d", user_param->port);
+	hints->ai_family = user_param->ai_family;
+	// if we have servername specified, it is a client, we should use server name
+	// if it is not specified, we should use explicit source_ip if possible
+	if ((NULL != user_param->servername) || (!user_param->has_source_ip)) {
+		rc = rdma_getaddrinfo(user_param->servername, port, hints, rai);
+	}
+	else {
+		rc = rdma_getaddrinfo(user_param->source_ip, port, hints, rai);
+	}
+
+	if (rc) {
+		sprintf(error_message,
+			"Failed to get RDMA CM address info - Error: %s",
+			gai_strerror(rc));
+		goto error;
+	}
+
+	return rc;
+
+error:
+	return error_handler(error_message);
+}
+*/
+
     static std::shared_ptr<options> make_options(boost::property_tree::ptree& conf) {
         auto opts = std::make_shared<options>();
         conf_or_server(conf, opts, listen_backlog);
