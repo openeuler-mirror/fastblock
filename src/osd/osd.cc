@@ -35,6 +35,11 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <filesystem>
+#include <optional>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <regex>
 
 enum class stop_state {
     monitor_client = 1,
@@ -64,6 +69,7 @@ static const char* g_json_conf{nullptr};
 static bool g_mkfs{false};
 static bool g_force{false};
 static const char *g_uuid{nullptr};
+static std::string g_bdev_type;
 int g_id{-1};
 int g_pid_fd;
 
@@ -76,6 +82,8 @@ static server_t osd_server{};
 static int osd_exit_code{0};
 static stop_state cur_stop_state{stop_state::monitor_client};
 
+static std::string g_conf_path = "/var/lib/fastblock";
+
 static void
 block_usage(void) {
     printf("--------------- osd options --------------------\n");
@@ -83,7 +91,7 @@ block_usage(void) {
     printf("-f, --mkfs    create new osd disk\n");
     printf("-F, --force   force to mkfs\n");
     printf("-I, --id <osd id> the osd id\n");
-    printf("-U, --uuid <uuid> the uuid of the osd\n");
+    printf("-U, --uuid <uuid> the uuid of the osd, used with --mkfs\n");
 }
 
 static struct option g_cmdline_opts[] = {
@@ -483,18 +491,57 @@ void disk_load_complete(void *arg, int rberrno){
     storage_load(storage_load_complete, arg);
 }
 
-static std::string get_bdev_json_file_name(){
+static inline std::string get_bdev_json_file_name(){
     std::string file_name = "/var/tmp/osd_bdev_" + std::to_string(getpid()) + ".json";
     return file_name;
+}
+
+static inline std::string get_bdev_disk_addr_file() {
+    //部署集群时创建此文件，并把磁盘地址写入
+    std::string file_name = g_conf_path + "/osd-" + std::to_string(g_id) + "/disk";
+    return  file_name;   
+}
+
+static inline std::string get_bdev_type_file() {
+    //部署集群时创建此文件，并把磁盘地址写入
+    std::string file_name = g_conf_path + "/osd-" + std::to_string(g_id) + "/bdev_type";
+    return  file_name;   
+}
+
+
+static std::optional<std::string> get_file_data(std::string &file_name){
+    if(!std::filesystem::exists(file_name)){
+        return std::nullopt;
+    }
+    std::ifstream ifs(file_name);
+
+    if(!ifs.is_open()){
+        return std::nullopt;
+    }
+
+    std::string data;
+    if(!getline(ifs, data)){
+        ifs.close();
+        return std::nullopt;
+    }
+
+    ifs.close();
+    return data;
+}
+
+static void remove_bdev_json_file(){
+    std::string bdev_json_file = get_bdev_json_file_name();
+    if(std::filesystem::exists(bdev_json_file)){
+        remove(bdev_json_file.c_str());
+    }
 }
 
 static void
 block_started(void *arg)
 {
     server_t *server = (server_t *)arg;
-    std::string bdev_json_file = get_bdev_json_file_name();
-    remove(bdev_json_file.c_str());
 
+    remove_bdev_json_file();
     if(server->bdev_type == "nvme")
         server->bdev_disk = server->bdev_disk + "n1";
 
@@ -548,12 +595,8 @@ static void save_bdev_json(std::string& bdev_json_file, server_t& server){
     }
 }
 
-static int from_configuration(server_t* server, std::string& bdev_json_file) {
+static int from_configuration(server_t* server) {
     auto& pt = server->pt;
-    if(g_mkfs && !g_uuid) {
-        std::cerr << "--uuid <uuid> must be set when --mkfs is set\n";
-        return -1;
-    }
 
     if(g_mkfs){
         server->osd_uuid = g_uuid;
@@ -561,24 +604,11 @@ static int from_configuration(server_t* server, std::string& bdev_json_file) {
     auto current_osd_id = std::to_string(g_id);
     server->node_id = g_id;
 
-    auto& osds = pt.get_child("osds");
-
-    if(osds.count(current_osd_id) == 0){
-        std::cerr << "The value of configuration key: " << current_osd_id << "in osds must be set\n";
-        return -1;
-    }
-    std::string bdev_addr = osds.get_child(current_osd_id).get_value<std::string>();
-    std::string bdev_type = pt.get_child("bdev_type").get_value<std::string>();
     std::string rdma_device_name = pt.get_child("rdma_device_name").get_value<std::string>();
 
-    if(bdev_type != "aio" &&  bdev_type != "nvme"){
-        std::cerr << "the bdev_type in config file muset be 'aio' or 'nvme'" << std::endl;
-        return -1;
-    }
-    server->bdev_disk = bdev_type + current_osd_id;
+    server->bdev_disk = g_bdev_type + current_osd_id;
     server->osd_port = utils::get_random_port();
-    server->bdev_addr = bdev_addr;
-    server->bdev_type = bdev_type;
+    server->bdev_type = g_bdev_type;
 
     if (pt.count("mon_host") == 0) {
         std::cerr << "No monitor cluster is specified" << std::endl;
@@ -694,6 +724,33 @@ static void on_osd_stop() noexcept {
         return;
     }
 }
+
+static bool check_disk_addr_valid(std::string type, std::string addr){
+    if(type == "aio"){
+         std::regex pattern("^/.+");
+         if(!std::regex_match(addr, pattern)){
+             std::cerr << "disk path: " << addr << " is not absolute path" << std::endl;
+             return false;
+         }
+         struct stat fstat;
+         if(stat(addr.c_str(), &fstat) != 0){
+             std::cerr << "disk path: " << addr << " is not exist" << std::endl;
+             return false;
+         }
+         if(!S_ISBLK(fstat.st_mode) && !S_ISREG(fstat.st_mode)){
+             std::cerr << "disk path: " << addr << " is not a block device or file" << std::endl;
+             return false;
+         }
+    }else{
+        std::regex pattern("^[a-z0-9]{4}:[a-z0-9]{2}:[a-z0-9]{2}\\.[a-z0-9]{1}$");
+        if(!std::regex_match(addr, pattern)){
+             std::cerr << "disk BDF " << addr << " is invalid" << std::endl;
+             return false;
+        }
+    }
+    return true;
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -708,7 +765,7 @@ main(int argc, char *argv[])
     opts.shutdown_cb = on_osd_stop;
 	opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
 
-	if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:I:U:f", g_cmdline_opts,
+	if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:I:U:fF", g_cmdline_opts,
 				      block_parse_arg, block_usage)) !=
 	    SPDK_APP_PARSE_ARGS_SUCCESS) {
 		exit(rc);
@@ -719,9 +776,41 @@ main(int argc, char *argv[])
         return -EINVAL;
     }
 
+    if (g_mkfs){
+        if(!g_uuid) {
+            std::cerr << "--uuid <uuid> must be set when --mkfs is set\n";
+            return -EINVAL;
+        }
+    }
+
+    auto disk_addr_file = get_bdev_disk_addr_file();
+    auto disk_addr = get_file_data(disk_addr_file);
+    if(!disk_addr){
+        std::cerr << "Can not get disk addr from file " << disk_addr_file << std::endl;
+        return -EINVAL;
+    }
+
+    auto bdev_type_file = get_bdev_type_file();
+    auto bdev_type = get_file_data(bdev_type_file);
+    if(!bdev_type){
+        std::cerr << "Can not get bdev type from file " << bdev_type_file << std::endl;
+        return -EINVAL;
+    }  
+
+    g_bdev_type =  bdev_type.value();
+    if((g_bdev_type != "aio") &&  (g_bdev_type != "nvme")){
+        std::cerr << "the type muset be 'aio' or 'nvme'" << std::endl;
+        return -EINVAL;
+    }
+
+    if(!check_disk_addr_valid(g_bdev_type, disk_addr.value())){
+        return -EINVAL;
+    }
+
     std::string bdev_json_file = get_bdev_json_file_name();
 
-    std::cout << "Osd config file is " << std::string(g_json_conf) << std::endl;
+    osd_server.bdev_addr = disk_addr.value();
+
     try {
         boost::property_tree::read_json(std::string(g_json_conf), osd_server.pt);
     } catch (const std::logic_error& e) {
@@ -730,14 +819,17 @@ main(int argc, char *argv[])
         block_usage();
         return -EINVAL;
     }
-    if(from_configuration(&osd_server, bdev_json_file) != 0){
+
+    if(from_configuration(&osd_server) != 0){
         return -EINVAL;
     }
     
     std::string pid_path = get_pid_path();
     save_pid(pid_path.c_str());
 
+    remove_bdev_json_file();
     save_bdev_json(bdev_json_file, osd_server);
+    
     opts.json_config_file = bdev_json_file.c_str();
 
     auto current_osd_id = std::to_string(g_id);
@@ -745,6 +837,12 @@ main(int argc, char *argv[])
     opts.rpc_addr = sock_path.c_str();
 	/* Blocks until the application is exiting */
 	rc = spdk_app_start(&opts, block_started, &osd_server);
+    if(rc == err::E_INVAL){
+        std::cerr << "the disk " << osd_server.bdev_addr << " is probably invalid" << std::endl;
+    }
+
+    if(rc != 0)
+        remove_bdev_json_file();
 
 	spdk_app_fini();
 	buffer_pool_fini();
