@@ -19,6 +19,7 @@ import (
 	"net"
 	"strconv"
 	"time"
+	"monitor/utils"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/google/uuid"
@@ -58,6 +59,19 @@ type ResponseChanData struct {
 	uuid  string
 	osdid int32
 }
+
+func arrayToStr(array []int32) string {
+    str := "["
+	for i := 0; i < len(array); i++ {
+		if i != 0 {
+			str += "," + strconv.FormatInt(int64(array[i]), 10)
+		} else {
+			str += strconv.FormatInt(int64(array[i]), 10)
+		}
+	}
+	str += "]"
+	return str
+} 
 
 func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- struct{}, responseChan chan<- ResponseChanData) {
 	appliedOsdCounter := 0
@@ -193,9 +207,17 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 				if *op == "watchpgmap" {
 					continue
 				} else {
-					for pid, pgs := range mypgmap {
-						for _, pg := range pgs.Pi {
-							fmt.Printf("pool is %d, pg is %d, osds are %v \r\n", pid, pg.GetPgid(), pg.GetOsdid())
+					if len(mypgmap) > 0 {
+						fmt.Printf("%-10v   %-10v   %-25v    %-25v   \r\n", "PGID", "STATE", "OSDLIST", "NEWOSDLIST")
+						for pid, pgs := range mypgmap {
+							for _, pg := range pgs.Pi {
+								pgid := strconv.FormatInt(int64(pid), 10)  + "." + strconv.FormatInt(int64(pg.GetPgid()), 10)
+								osdlist := arrayToStr(pg.GetOsdid())
+								newosdlist := arrayToStr(pg.GetNewosdid())
+	
+								fmt.Printf("%-10v   %-10v   %-25v    %-25v   \r\n", pgid, utils.PgStateStr(utils.PGSTATE(pg.GetState())), 
+										osdlist, newosdlist)
+							}
 						}
 					}
 				}
@@ -218,8 +240,18 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 					// we don't quit
 					continue
 				} else {
+					fmt.Printf("%-10v   %-20v   %-10v    %-10v   %-10v \r\n", "OSDID", "ADDRESS", "PORT", "STATUS-UP", "STATUS-IN")
 					for _, osd := range myosdmap {
-						fmt.Printf("osd info %v\r\n", osd)
+						state1 := "up"
+						if !osd.GetIsup() {
+							state1 = "down"
+						}
+						state2 := "in"
+						if !osd.GetIsin() {
+							state2 = "out"
+						}
+						fmt.Printf("%-10v   %-20v   %-10v    %-10v   %-10v \r\n", osd.GetOsdid(), osd.GetAddress(), osd.GetPort(), 
+						        state1, state2)
 					}
 				}
 
@@ -1025,7 +1057,10 @@ func main() {
 	// (TODO)write command line args parse code
 	// Define the command line arguments
 	monitor_endpoint = flag.String("endpoint", "127.0.0.1:3333", "monitor server endpoint")
-	op = flag.String("op", "", "supported: watchclustermap, getclustermap, fakeapplyid, fakebootosd, fakestartcluster, createpool, deletepool,listpools, getosdmap, getpgmap, watchosdmap, watchpgmap, fakestoposd, createimage, removeimage, resizeimage, getimage, outosd, inosd")
+	supported_op := "supported: watchclustermap, getclustermap, fakeapplyid, fakebootosd, fakestartcluster, " + 
+	        "createpool, deletepool, listpools, getosdmap, getpgmap, watchosdmap, watchpgmap, fakestoposd, " +
+	        "createimage, removeimage, resizeimage, getimage, outosd, inosd"
+	op = flag.String("op", "", supported_op)
 	set = flag.String("set", "", "supported: noReblance, noout")
 	unset = flag.String("unset", "", "supported: noReblance, noout")
 
