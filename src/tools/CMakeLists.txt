@@ -16,7 +16,8 @@ target_link_libraries(block_bench
     fbclient
 )
 
-install(TARGETS block_bench DESTINATION bin)
+install(TARGETS block_bench DESTINATION bin PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
+                    GROUP_EXECUTE GROUP_READ WORLD_READ WORLD_EXECUTE)
 
 add_executable(fbbench
   fbbench.cc
@@ -34,4 +35,5 @@ target_link_libraries(fbbench
     fbclient
 )
 
-install(TARGETS fbbench DESTINATION bin)
+install(TARGETS fbbench DESTINATION bin PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
+                    GROUP_EXECUTE GROUP_READ WORLD_READ WORLD_EXECUTE)

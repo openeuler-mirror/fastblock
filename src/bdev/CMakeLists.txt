@@ -16,4 +16,5 @@ target_link_libraries(fastblock-vhost
     fbclient
   )
 
-install(TARGETS fastblock-vhost DESTINATION bin)
+install(TARGETS fastblock-vhost DESTINATION bin PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
+                    GROUP_EXECUTE GROUP_READ WORLD_READ WORLD_EXECUTE)

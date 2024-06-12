@@ -66,6 +66,7 @@ rpm_deps=(
   librdmacm-devel
   meson
   python3-pyelftools
+  nc
   libuuid-devel
   openssl-devel
   libaio-devel

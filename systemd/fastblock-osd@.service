@@ -7,7 +7,9 @@ Wants=network-online.target time-sync.target fastblock-osd.target
 
 [Service]
 ExecReload=/bin/kill -HUP $MAINPID
-ExecStart=fastblock-osd -m '[$((%i % `grep -c 'processor' /proc/cpuinfo`))]' -C /etc/fastblock/fastblock.json --id %i &
+ExecStart=/bin/bash -c 'CPU_COUNT=$(nproc); CORE=$((%i % CPU_COUNT)); export CORE; /usr/local/bin/fastblock-osd -C /etc/fastblock/fastblock.json --id %i --cpumask $CORE'
+StandardOutput=append:/var/log/fastblock/osd%i.log
+StandardError=append:/var/log/fastblock/osd%i.log
 LimitNOFILE=1048576
 LimitNPROC=1048576
 Restart=on-failure

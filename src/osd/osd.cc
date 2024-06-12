@@ -163,7 +163,13 @@ save_pid(const char *pid_path)
     }
 
     std::string pid = std::to_string(getpid());
-    write(fd, pid.c_str(), pid.size());
+    ssize_t bytes_written = write(fd, pid.c_str(), pid.size());
+    if (bytes_written == -1)
+    {
+        std::cerr << "failed to write pid file" << std::endl;
+        close(fd);
+        exit(EXIT_FAILURE);
+    }
     g_pid_fd = fd;
 }
 

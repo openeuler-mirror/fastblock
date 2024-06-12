@@ -68,9 +68,9 @@ type Config struct {
 	LogPath                 string `json:"log_path"`
 	LogLevel                string `json:"log_level"` // "info", "warn", "error"
 	HostName                string `json:"hostname"`
-	Address                 string `json:"address"`
+	Address                 string `json:"mon_rpc_address"`
 	DataDir                 string `json:"data_dir"`
-	Port                    int    `json:"port"`
+	Port                    int    `json:"mon_rpc_port"`
 	PrometheusPort          int    `json:"prometheus_port"`
 }
 
@@ -141,7 +141,11 @@ func marshalJsonConfig(configFilePath string, monitorId string) error {
 	}
 
 	if len(c.DataDir) == 0 {
-		c.DataDir = "/tmp/mon_" + c.HostName
+		c.DataDir = "/var/lib/fastblock/mon_" + c.HostName
+	}
+
+	if len(c.ElectionMasterKey) == 0 {
+		c.ElectionMasterKey = "fastblock_monitor_election"
 	}
 
 	CONFIG = c
@@ -159,10 +163,6 @@ func validate(config *Config) {
 
 	if len(config.Monitors) != len(config.MonHost) {
 		panic("Monitors and MonHost invalid")
-	}
-
-	if len(config.ElectionMasterKey) == 0 {
-		panic("EtcdMasterID invalid")
 	}
 }
 

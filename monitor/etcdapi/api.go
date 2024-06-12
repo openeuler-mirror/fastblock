@@ -206,7 +206,7 @@ func NewServer(appCfg *config.Config) (e *embed.Etcd, err error) {
 	cfg.Debug = false
 
 	if appCfg.DataDir == "" {
-		cfg.Dir = "/tmp/monitor"
+		cfg.Dir = "/var/lib/fastblock/monitor"
 	} else {
 		cfg.Dir = appCfg.DataDir
 	}
