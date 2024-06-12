@@ -236,7 +236,7 @@ func ProcessOsdDown(ctx context.Context, client *etcdapi.EtcdClient, osdid int) 
 			continue
 		}
 
-		log.Warn(ctx, "check pool", poolID, ":", pool.Name)
+		log.Info(ctx, "check pool", poolID, ":", pool.Name)
 		ppg := &pool.PoolPgMap
 
 		for pgID, pg := range ppg.PgMap {
@@ -246,11 +246,11 @@ func ProcessOsdDown(ctx context.Context, client *etcdapi.EtcdClient, osdid int) 
 			if !pg.PgInState(utils.PgUndersize) && !pg.PgInState(utils.PgDown) {
 				pg.SetPgState(utils.PgUndersize)
 				isChange = true
-				log.Warn(ctx, "pg ", poolID, ".", pgID, " to PgUndersize state.")
+				log.Info(ctx, "pg ", poolID, ".", pgID, " to PgUndersize state.")
 			} else if pg.PgInState(utils.PgUndersize) && CheckPgState(pg.OsdList, pool.PGSize) == utils.PgDown {
 				pg.SetPgState(utils.PgDown)
 				isChange = true
-				log.Warn(ctx, "pg ", poolID, ".", pgID, " to PgDown state.")
+				log.Info(ctx, "pg ", poolID, ".", pgID, " to PgDown state.")
 			} else {
 				continue
 			}
