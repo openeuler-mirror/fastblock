@@ -11,7 +11,6 @@
     // 其他配置内容
     "rdma_device_name": "mlx5_0",
     "rdma_device_port": 1,
-    "rdma_gid_index": 2,
     "msg_server_listen_backlog" : 1024,
     "msg_server_poll_cq_batch_size": 32,
     "msg_server_metadata_memory_pool_capacity": 16384,
@@ -74,8 +73,6 @@
     指定了 *RDMA* 网卡的设备名，如果是空字符串或者未指定，则默认使用网卡列表中第一个 *active* 的。可以参考 [`show_gids`](https://enterprise-support.nvidia.com/s/article/understanding-show-gids-script) 命令配置  
 - *rdma_device_port*  
     指定网卡端口名，可以参考 [`show_gids`](https://enterprise-support.nvidia.com/s/article/understanding-show-gids-script) 命令配置  
-- *rdma_gid_index*  
-    指定 *gid* 索引，可以参考 [`show_gids`](https://enterprise-support.nvidia.com/s/article/understanding-show-gids-script) 命令配置  
 - *connect_max_retry*  
     指定 *RPC* 重连最大尝试次数  
 - *connect_retry_interval_us*  

@@ -52,20 +52,34 @@ public:
         std::memset(&_hints, 0, sizeof(_hints));
         _hints.ai_port_space = RDMA_PS_TCP;
         _hints.ai_qp_type = ::IBV_QPT_RC;
+        _hints.ai_family = AF_INET;
 
         if (_ep.passive) {
             _hints.ai_flags = RAI_PASSIVE;
         }
 
-        int ret = rdma_getaddrinfo(
-          _ep.addr.c_str(),
-          std::to_string(_ep.port).c_str(),
-          &_hints, &_res);
+        int ret{0};
+        if (_ep.addr) {
+            ret = ::rdma_getaddrinfo(
+              _ep.addr->c_str(),
+              std::to_string(_ep.port).c_str(),
+              &_hints, &_res);
+        } else {
+            ret = ::rdma_getaddrinfo(
+              nullptr,
+              std::to_string(_ep.port).c_str(),
+              &_hints, &_res);
+        }
+
+        auto ep_addr = host(_res->ai_src_addr);
+        SPDK_NOTICELOG_EX(
+          "Get address info, address is %s, port is %d\n",
+          ep_addr.c_str(), _ep.port);
 
         if (ret or !_res) [[unlikely]] {
             SPDK_ERRLOG_EX(
               "ERROR(%s): Attempting to get information of address: %s:%d\n",
-              std::strerror(errno), _ep.addr.c_str(), _ep.port);
+              std::strerror(errno), ep_addr.c_str(), _ep.port);
         }
 
         ret = ::rdma_create_id(channel, &_id, nullptr, ::RDMA_PS_TCP);
@@ -90,7 +104,7 @@ public:
             SPDK_INFOLOG_EX(
               msg,
               "bind %s:%d to rdma_cm_id %p\n",
-              _ep.addr.c_str(), _ep.port, _id);
+              ep_addr.c_str(), _ep.port, _id);
             return;
         }
 

@@ -34,6 +34,10 @@ public:
       : addr{host}
       , port{port} {}
 
+    endpoint(std::optional<std::string> host, uint16_t port)
+      : addr{host}
+      , port{port} {}
+
     endpoint(std::string_view host, uint16_t port)
       : addr{host}
       , port{port} {}
@@ -60,18 +64,13 @@ public:
         if (dev_port.has_value()) {
             device_port = dev_port.value().get_value<uint8_t>();
         }
-
-        auto gid_idx_opt = conf.get_child_optional("rdma_gid_index");
-        if (gid_idx_opt.has_value()) {
-            gid_index = gid_idx_opt.value().get_value<int>();
-        }
     }
 
     endpoint(const endpoint&) = default;
 
 public:
 
-    std::string addr{""};
+    std::optional<std::string> addr{""};
     uint16_t port{0};
     bool passive{false};
     int backlog{1024};
@@ -88,7 +87,6 @@ public:
     bool qp_sig_all{false};
     std::optional<std::string> device_name{std::nullopt};
     std::optional<uint8_t> device_port{std::nullopt};
-    std::optional<int> gid_index{std::nullopt};
 };
 } // namespace rdma
 } // namespace msg

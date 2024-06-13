@@ -1355,7 +1355,12 @@ public:
 
         for (int i{0}; i < rc; ++i) {
             cqe = &(_wcs[i]);
-            SPDK_DEBUGLOG_EX(msg, "polled cqe with opcode %s\n", completion_queue::op_name(cqe->opcode).c_str());
+            SPDK_DEBUGLOG_EX(
+              msg,
+              "polled cqe with opcode %s, rc is %d, status is %s, wr_id is %s\n",
+              completion_queue::op_name(cqe->opcode).c_str(), rc,
+              socket::wc_status_name(cqe->status).c_str(),
+              work_request_id::fmt(cqe->wr_id).c_str());
             dis_id = work_request_id::dispatch_id(cqe->wr_id);
             auto dispatch_it = _cqe_dispatch_map.find(dis_id);
             if (dispatch_it == _cqe_dispatch_map.end()) {

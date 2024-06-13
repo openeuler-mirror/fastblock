@@ -134,7 +134,7 @@ public:
 public:
 
     struct options {
-        std::string bind_address{};
+        std::optional<std::string> bind_address{std::nullopt};
         uint16_t port{};
         int listen_backlog{1024};
         size_t poll_cq_batch_size{128};
@@ -147,45 +147,7 @@ public:
         std::unique_ptr<endpoint> ep{nullptr};
     };
 
-    static std::string get_listen_address(boost::property_tree::ptree& conf) {
-        if (conf.count("msg_server_listen_address") != 0) {
-            return conf.get<std::string>("msg_server_listen_address");
-        }
-    }
-
-/*
-int rdma_cm_get_rdma_address(struct perftest_parameters *user_param,
-		struct rdma_addrinfo *hints, struct rdma_addrinfo **rai)
-{
-	int rc;
-	char port[6] = "", error_message[ERROR_MSG_SIZE] = "";
-
-	sprintf(port, "%d", user_param->port);
-	hints->ai_family = user_param->ai_family;
-	// if we have servername specified, it is a client, we should use server name
-	// if it is not specified, we should use explicit source_ip if possible
-	if ((NULL != user_param->servername) || (!user_param->has_source_ip)) {
-		rc = rdma_getaddrinfo(user_param->servername, port, hints, rai);
-	}
-	else {
-		rc = rdma_getaddrinfo(user_param->source_ip, port, hints, rai);
-	}
-
-	if (rc) {
-		sprintf(error_message,
-			"Failed to get RDMA CM address info - Error: %s",
-			gai_strerror(rc));
-		goto error;
-	}
-
-	return rc;
-
-error:
-	return error_handler(error_message);
-}
-*/
-
-    static std::shared_ptr<options> make_options(boost::property_tree::ptree& conf) {
+    static std::shared_ptr<options> make_options(boost::property_tree::ptree& conf, std::optional<std::string> listen_addr = std::nullopt) {
         auto opts = std::make_shared<options>();
         conf_or_server(conf, opts, listen_backlog);
         conf_or_server(conf, opts, metadata_memory_pool_capacity);
@@ -198,6 +160,14 @@ error:
             auto timeout_us = conf.get_child("msg_server_rpc_timeout_us").get_value<int64_t>();
             opts->rpc_timeout = std::chrono::milliseconds{timeout_us};
             opts->ep = std::make_unique<endpoint>(conf);
+        }
+
+        if (conf.count("msg_server_rpc_bind_address") != 0) {
+            opts->bind_address = conf.get_child("msg_server_rpc_bind_address").get_value<std::string>();
+        }
+
+        if (listen_addr) {
+            opts->bind_address = listen_addr;
         }
 
         return opts;
@@ -225,17 +195,6 @@ public:
         _pd->value(), "srv_data",
         _opts->data_memory_pool_capacity,
         _opts->data_memory_pool_element_size, 0)} {
-        auto ipv4_address = _dev->query_ipv4(
-          _opts->ep->device_name,
-          _opts->ep->device_port,
-          _opts->ep->gid_index);
-
-        if (not ipv4_address) {
-            throw std::runtime_error{"cant query the ipv4"};
-        }
-
-        _opts->bind_address = *ipv4_address;
-        SPDK_NOTICELOG_EX("Use ipv4 %s for listening\n", ipv4_address.value().c_str());
         endpoint ep{_opts->bind_address, _opts->port};
         ep.passive = true;
         _listener = std::make_unique<socket>(ep, *_pd, _channel.value(), false);
@@ -379,7 +338,7 @@ private:
           msg,
           "connection %s => %s:%d established\n",
           sock->peer_address().c_str(),
-          _opts->bind_address.c_str(),
+          _opts->bind_address->c_str(),
           _opts->port);
 
         auto* pd = sock->pd();
@@ -1063,7 +1022,7 @@ public:
         if (ec) {
             SPDK_ERRLOG_EX(
               "listen on %s:%d error: %s\n",
-              _opts->bind_address.c_str(),
+              _opts->bind_address->c_str(),
               _opts->port,
               ec->message().c_str());
             throw std::runtime_error{"server listen error"};
@@ -1087,7 +1046,7 @@ public:
     }
 
     std::string listen_address() noexcept {
-        return _opts->bind_address;
+        return _opts->bind_address.value_or("<un-specified>");
     }
 
 public:

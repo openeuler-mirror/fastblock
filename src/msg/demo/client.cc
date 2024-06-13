@@ -26,6 +26,7 @@
 #include <cassert>
 #include <csignal>
 #include <iostream>
+#include <thread>
 
 SPDK_LOG_REGISTER_COMPONENT(client)
 
@@ -189,6 +190,7 @@ void start_rpc_client(void* arg) {
           // iter test
 
           SPDK_NOTICELOG_EX("Start sending rpc request %ld times\n", g_iter_count);
+          std::this_thread::sleep_for(std::chrono::seconds(5));
           g_iops_start = std::chrono::system_clock::now();
           for (size_t i{0}; i < g_io_depth; ++i) {
               auto rpc_stack = std::make_unique<call_stack>();

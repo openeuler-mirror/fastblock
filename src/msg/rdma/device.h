@@ -138,73 +138,6 @@ public:
         }
     }
 
-    // 默认参数表示返回第一个 active 且有 ipv4 的
-    std::optional<std::string> query_ipv4(
-      std::optional<std::string> dev_name = std::nullopt,
-      std::optional<uint8_t> dev_port = std::nullopt,
-      std::optional<int> gid_index = std::nullopt) {
-        if (not dev_name and not dev_port and not gid_index) {
-            return _default_ipv4;
-        }
-
-        device_context* target_device{nullptr};
-        if (dev_name) {
-            auto ctx_it = std::find_if(
-              _contexts.begin(),
-              _contexts.end(),
-              [&dev_name, &dev_port] (const device_context& ctx) {
-                  if (*dev_name == std::string(::ibv_get_device_name(ctx.device))) {
-                      if (dev_port) {
-                          return ctx.port == *dev_port;
-                      } else {
-                          return true;
-                      }
-                  } else {
-                      return false;
-                  }
-              }
-            );
-
-            if (ctx_it == _contexts.end()) {
-                SPDK_ERRLOG_EX(
-                  "ERROR: Query the ipv4 of %s on port %d failed, no such device or port\n",
-                  dev_name->c_str(), dev_port ? *dev_port : 1);
-                return std::nullopt;
-            }
-
-            target_device = &(*ctx_it);
-        } else {
-            target_device = &(_contexts[0]);
-        }
-
-        ::ibv_gid* target_gid{nullptr};
-        if (gid_index) {
-            if (static_cast<size_t>(*gid_index) > target_device->gids.size()) {
-                SPDK_ERRLOG_EX(
-                  "ERROR: Specified gid index %d out of range, max index is %ld\n",
-                  *gid_index, target_device->gids.size() - 1);
-
-                return std::nullopt;
-            }
-
-            if (is_gid_contain_ipv4(target_device->gids[*gid_index].raw)) {
-                return ipv4_from_gid(target_device->gids[*gid_index].raw);
-            }
-
-            return std::nullopt;
-        }
-
-        for (auto& gid : target_device->gids) {
-            if (not is_gid_contain_ipv4(gid.raw)) {
-                continue;
-            }
-
-            return ipv4_from_gid(gid.raw);
-        }
-
-        return std::nullopt;
-    }
-
 private:
 
     static std::string port_state_name(enum ::ibv_port_state pstate) {
@@ -219,14 +152,10 @@ private:
 
     static const char* link_layer_str(uint8_t link_layer) {
         switch (link_layer) {
-        case IBV_LINK_LAYER_UNSPECIFIED:
-            return "Unspecified";
-        case IBV_LINK_LAYER_INFINIBAND:
-            return "InfiniBand";
-        case IBV_LINK_LAYER_ETHERNET:
-            return "Ethernet";
-        default:
-            return "Unknown";
+        case IBV_LINK_LAYER_UNSPECIFIED: return "Unspecified";
+        case IBV_LINK_LAYER_INFINIBAND: return "InfiniBand";
+        case IBV_LINK_LAYER_ETHERNET: return "Ethernet";
+        default: return "Unknown";
         }
     }
 
