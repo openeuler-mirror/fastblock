@@ -932,9 +932,12 @@ func startTcpServer(ctx context.Context, c *etcdapi.EtcdClient) {
 
 func leaderCallback(whoAmI string, ctx context.Context, c *etcdapi.EtcdClient) {
 	log.Info(ctx, "i'm the leader, i'm ", whoAmI)
-	osd.LoadOSDStateFromEtcd(ctx, c)
+	osd.LoadOSDMapFromEtcd(ctx, c)
 	osd.LoadPoolConfig(ctx, c)
 	osd.LoadImageConfig(ctx, c)
+	//这里一定要先LoadClusterStates,再LoadClusterUnprocessedEvent
+	osd.LoadClusterStates(ctx, c)
+	osd.LoadClusterUnprocessedEvent(ctx, c)
 	osd.GetOSDTree(ctx, true, false)
 	go osd.CheckOsdHeartbeat(ctx, c)
 	go osd.OsdTaskrun(ctx, c)

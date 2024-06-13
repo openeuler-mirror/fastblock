@@ -40,12 +40,14 @@ const (
 	// Input
 	ConfigPoolsKeyPrefix    = "/config/pools/"
 	ConfigImagesKeyPrefix   = "/config/images/"
-	ConfigOSDStatsKeySuffix = "/osd/stats/"
+	ConfigClusterStatesKeySuffix = "/cluster/states/"
 	ConfigOSDMapKey         = "/osd/osdmap"
 	ConfigTopologyKeyPrefix = "/config/topology/"
 	ConfigHostsPrefix       = ConfigTopologyKeyPrefix + "hosts/"
 	ConfigRacksPrefix       = ConfigTopologyKeyPrefix + "racks/"
 	ConfigRootsPrefix       = ConfigTopologyKeyPrefix + "roots/"
+	ConfigStateKey          = ConfigClusterStatesKeySuffix + "state"
+	ClusterUnprocessedEvKey = "/cluster/unprocessedev"
 )
 
 // Config types.
