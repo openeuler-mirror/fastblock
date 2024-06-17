@@ -16,10 +16,10 @@ import (
 	"fmt"
 	"log"
 	"monitor/msg"
+	"monitor/utils"
 	"net"
 	"strconv"
 	"time"
-	"monitor/utils"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/google/uuid"
@@ -33,6 +33,7 @@ var size *int
 var pgsize *int
 var pgcount *int
 var address *string
+var failure_domain *string
 var hostname *string
 var uid *string
 var osdid *int
@@ -144,9 +145,22 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 			case *msg.Response_CreatePoolResponse:
 				// Access the fields of the ApplyIdResponse
 				pid := payload.CreatePoolResponse.GetPoolid()
-				ok := payload.CreatePoolResponse.GetOk()
-				if ok {
+				cperr := payload.CreatePoolResponse.GetErrorcode()
+				if cperr == msg.CreatePoolErrorCode_createPoolOk {
 					fmt.Printf("pool %s created, pool is %d\r\n", *poolname, pid)
+				} else {
+					errmsg := "unknown error"
+					if cperr == msg.CreatePoolErrorCode_poolNameExists {
+						errmsg = "pool already exists"
+					} else if cperr == msg.CreatePoolErrorCode_failureDomainNeedNotSatisfied {
+						errmsg = "failure domain need not satisfied"
+					} else if cperr == msg.CreatePoolErrorCode_internalError {
+						errmsg = "internal error"
+					} else if cperr == msg.CreatePoolErrorCode_noEnoughOsd {
+						errmsg = "no enough osd to create pool(form quorum)"
+					}
+
+					fmt.Printf("pool %s creation failed, error is %s\r\n", *poolname, errmsg)
 				}
 				//in client, after received a message, we can quit
 				stopChan <- struct{}{}
@@ -436,8 +450,7 @@ func sendCreatePoolRequest(conn net.Conn) {
 				Name:    *poolname,
 				Pgsize:  int32(*pgsize),
 				Pgcount: int32(*pgcount),
-				//(fixme) make it configurable
-				Failuredomain: "osd",
+				Failuredomain: *failure_domain,
 				Root:          "defaultroot",
 			},
 		},
@@ -1070,6 +1083,7 @@ func main() {
 	pgcount = flag.Int("pgcount", 0, "pgcount of this pool")
 	hostname = flag.String("hostname", "localhost", "hostname of this osd")
 	address = flag.String("address", "127.0.0.1", "address of this osd")
+	failure_domain = flag.String("failure_domain", "osd", "failure domain of this pool")
 	size = flag.Int("size", 0, "size of this osd")
 	pgsize = flag.Int("pgsize", 3, "pg size of this pool")
 	uid = flag.String("uuid", "", "uuid of this osd")

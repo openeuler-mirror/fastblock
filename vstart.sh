@@ -55,39 +55,39 @@ fi
 while [ "$#" -gt 0 ]; do
     case "$1" in
         -c|--count)
-	    shift
+        shift
             osdcount="$1"
             ;;
         -p|--pgcount)
-	    shift
+        shift
             pgcount="$1"
             ;;
         -r|--replica)
-	    shift
+        shift
             replica="$1"
             ;;
         -n|--nic)
-	    shift
+        shift
             nic="$1"
             ;;
         -d|--disks)
-	    shift
+        shift
             disks="$1"
             ;;
         -t|--bdevtype)
-	    shift
+        shift
             bdevtype="$1"
             ;;
         -i|--ip)
-	    shift
+        shift
             remoteIp="$1"
             ;;
         -m|--mode)
-	    shift
+        shift
             mode=$1
             ;;
         -M|--Mon)
-	    shift
+        shift
             monString=$1
             ;;
         *)
@@ -119,35 +119,6 @@ function generateConfigAndStartMonitor() {
     mkdir -p /etc/fastblock
     tmpConfFile=$(mktemp)
     echo '{}' | jq '.' > $tmpConfFile
-    #echo '{
-    #    "msg_server_listen_backlog": 1024,
-    #    "msg_server_poll_cq_batch_size": 32,
-    #    "msg_server_metadata_memory_pool_capacity": 16384,
-    #    "msg_server_metadata_memory_pool_element_size": 1024,
-    #    "msg_server_data_memory_pool_capacity": 16384,
-    #    "msg_server_data_memory_pool_element_size": 8192,
-    #    "msg_server_per_post_recv_num": 512,
-    #    "msg_server_rpc_timeout_us": 1000000,
-    #    "msg_client_poll_cq_batch_size": 32,
-    #    "msg_client_metadata_memory_pool_capacity": 16384,
-    #    "msg_client_metadata_memory_pool_element_size": 1024,
-    #    "msg_client_data_memory_pool_capacity": 16384,
-    #    "msg_client_data_memory_pool_element_size": 8192,
-    #    "msg_client_per_post_recv_num": 512,
-    #    "msg_client_rpc_timeout_us": 1000000,
-    #    "msg_client_rpc_batch_size": 1024,
-    #    "msg_client_connect_max_retry": 30,
-    #    "msg_client_connect_retry_interval_us": 1000000,
-    #    "msg_rdma_resolve_timeout_us": 2000,
-    #    "msg_rdma_poll_cm_event_timeout_us": 1000000,
-    #    "msg_rdma_max_send_wr": 4096,
-    #    "msg_rdma_max_send_sge": 128,
-    #    "msg_rdma_max_recv_wr": 8192,
-    #    "msg_rdma_max_recv_sge": 1,
-    #    "msg_rdma_max_inline_data": 16,
-    #    "msg_rdma_cq_num_entries": 1024,
-    #    "msg_rdma_qp_sig_all": false
-    #}' | jq '.' > $tmpConfFile
 
     rm -rf /var/lib/fastblock/mon_"$_mons"
     jq '.monitors |= ['\"$_mons\"']' $tmpConfFile > tmp_file.json && mv tmp_file.json $tmpConfFile
@@ -178,6 +149,7 @@ function createNewDevCluster() {
     fi
     generateConfigAndStartMonitor $monString
     generateNicConfig
+
     for i in `seq 1 $osdcount`
     do
         # according to the definition of addNewOsd, the parameters are:
@@ -189,9 +161,9 @@ function createNewDevCluster() {
         # in a dev cluster, all osds are local, disk_path is the osd work dir 
        
         uuid=`uuidgen`
-        /usr/local/bin/fastblock-client -op=fakeapplyid -uuid=$uuid -endpoint="$monString":3333
-        addNewOsd "" $i $uuid $bdevtype ""
-        sleep 10
+        id=$(/usr/local/bin/fastblock-client -op=fakeapplyid -uuid=$uuid -endpoint="$monString":3333)
+        addNewOsd "" $id $uuid $bdevtype ""
+        sleep 30
     done
     echo "all osds started!"
 
@@ -215,6 +187,11 @@ function processProCluster() {
             exit 1
         fi
         ms=$(echo $ms | sed 's/^"//; s/"$//')
+        configExist=$(ssh $remoteIp '[ -f /etc/fastblock/fastblock.json ] && echo true')
+        if [ "$configExist" != "true" ];then
+            cp $defaultConfigFile /tmp/fastblock.json
+            scp /tmp/fastblock.json $remoteIp:$defaultConfigFile
+        fi
 
         echo "monitor ip address is $ms"
 
@@ -420,6 +397,10 @@ function addNewOsd() {
             ssh $_remote_ip "echo /var/lib/fastblock/osd-$_osdid/file > /var/lib/fastblock/osd-$_osdid/disk"
         else
             ssh $_remote_ip "echo $_disk_path > /var/lib/fastblock/osd-$_osdid/disk"
+        fi
+
+        if [ "$_bdev_type" = "nvme" ] ;then
+            ssh $_remote_ip "rm -f /var/tmp/spdk_pci_lock_$_disk_path"
         fi
 
         echo intializing localstore of osd-"$_osdid" "on" $_remote_ip

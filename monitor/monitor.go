@@ -99,18 +99,26 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 				fd := payload.CreatePoolRequest.GetFailuredomain()
 				root := payload.CreatePoolRequest.GetRoot()
 
-				isOk := true
+				cperr := msg.CreatePoolErrorCode_createPoolOk
+
 				pid, err := osd.ProcessCreatePoolMessage(ctx, client, pn, int(ps), int(pc), fd, root)
 				if err != nil {
-					pid = -1
-					isOk = false
+					if err == osd.EPoolAlreadyExists {
+						cperr = msg.CreatePoolErrorCode_poolNameExists
+					} else if err == osd.EFailureDomainNeedNotSatisfied {
+						cperr = msg.CreatePoolErrorCode_failureDomainNeedNotSatisfied
+					} else if err == osd.ENoEnoughOsd {
+						cperr = msg.CreatePoolErrorCode_noEnoughOsd
+					} else if err == osd.EInternalError {
+						cperr = msg.CreatePoolErrorCode_internalError
+					}
 				}
 
 				response := &msg.Response{
 					Union: &msg.Response_CreatePoolResponse{
 						CreatePoolResponse: &msg.CreatePoolResponse{
 							Poolid: int32(pid),
-							Ok:     isOk,
+							Errorcode: cperr,
 						},
 					},
 				}

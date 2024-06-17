@@ -13,7 +13,6 @@ package osd
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"monitor/config"
 	"monitor/etcdapi"
 	"monitor/log"
@@ -157,7 +156,7 @@ func LoadOSDStateFromEtcd(ctx context.Context, client *etcdapi.EtcdClient) (err 
 func ProcessApplyIDMessage(ctx context.Context, client *etcdapi.EtcdClient, uuid string) (int, error) {
 	for _, info := range AllOSDInfo.Osdinfo {
 		if uuid == info.Uuid {
-			return -1, fmt.Errorf("the uuid already occupied by other osds")
+			return -1, EUuidAlreadyExists
 		}
 	}
 
