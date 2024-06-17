@@ -330,7 +330,7 @@ public:
         if(r != 0) {
             _client->get_pg_map().set_pool_update(_pool_id, _pg_id, _version, -1);
             return;
-        } 
+        }
         if(!_client->get_pg_map().pool_pg_map[_pool_id].contains(_pg_id)){
             SPDK_INFOLOG_EX(mon, "pg %lu.%lu not in pool_pg_map", _pool_id, _pg_id);
             return;
@@ -482,7 +482,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                 }
                 if(contain)
                     continue;
-                
+
                 contain = false;
                 for(auto osd_id : pg_item->second->osds){
                     if(osd_id == current_osdid){
@@ -493,11 +493,11 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                 if(!contain)
                     continue;
                 /* 当前osd在本地pgmap中pg的osd列表中，但不在monitor的pgmap的osd列表中，说明当前osd已经从pg中
-                 * 移除（可能是osd out，monitor把它从pg中移除，但osd本地pg信息还未清除）,需要删除此osd上的pg信息。  
+                 * 移除（可能是osd out，monitor把它从pg中移除，但osd本地pg信息还未清除）,需要删除此osd上的pg信息。
                  */
                 _remove_pg(pool_id, pgid, pool_version);
             }
-            
+
         }
     }
 
@@ -619,7 +619,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                     auto& pit = _pg_map.pool_pg_map[pool_key][pgid];
                     if(info.version() == pit->version)
                         continue;
-                    
+
                     if(pit->version == 0){
                         //出现这种情况是当前osd刚重启，恢复处理的_pg_map中pg的版本都是0，这时需要激活pg
                         _active_pg(pool_key, pv.at(pool_key), info);
@@ -656,7 +656,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
     }
 }
 
-void client::_active_pg(pg_map::pool_id_type pool_id, 
+void client::_active_pg(pg_map::pool_id_type pool_id,
         pg_map::version_type pool_version, const msg::PGInfo &info){
     bool pg_is_remap = (info.state() & PgRemapped) != 0;
     auto active_pg_done = [this, pool_id, pool_version, pg_id = info.pgid(), pg_version = info.version(), pg_is_remap]
@@ -666,12 +666,12 @@ void client::_active_pg(pg_map::pool_id_type pool_id,
             if(!pg_is_remap)
                 _pg_map.set_pool_update(pool_id, pg_id, pool_version, -1);
             return;
-        }   
+        }
         if(!pg_is_remap){
-            _pg_map.set_pool_update(pool_id, pg_id, pool_version, 0);  
+            _pg_map.set_pool_update(pool_id, pg_id, pool_version, 0);
             _pg_map.pool_pg_map[pool_id][pg_id]->version = pg_version;
         }
-        SPDK_INFOLOG_EX(mon, "activate pg %lu.%lu done, pg_version %ld pg_is_remap %d\n", 
+        SPDK_INFOLOG_EX(mon, "activate pg %lu.%lu done, pg_version %ld pg_is_remap %d\n",
                 pool_id, pg_id, pg_version, pg_is_remap);
     };
     if(!pg_is_remap){
@@ -773,7 +773,7 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
           osds[i].isup());
 
         if (should_create_connect) {
-            SPDK_DEBUGLOG_EX(mon,
+            SPDK_NOTICELOG_EX(
               "Connect to osd %d(%s:%d)\n",
               osd_info.node_id,
               osd_info.address.c_str(),
@@ -877,17 +877,24 @@ int client::send_request(msg::Request* req, bool send_directly) {
     if(req->union_case() == msg::Request::UnionCase::kPgMemberChangeFinishRequest){
         auto &pg_req = req->pg_member_change_finish_request();
         SPDK_DEBUGLOG_EX(mon, "in pg %lu.%lu, send PgMemberChangeFinishRequest to mon result %d, send_directly %d\n",
-                pg_req.poolid(), pg_req.pgid(), pg_req.result(), send_directly);
+          pg_req.poolid(), pg_req.pgid(), pg_req.result(), send_directly);
     }
+
     if (not send_directly) {
-        auto serialized_size = req->ByteSizeLong();
+        auto message_size = req->ByteSizeLong();
+        auto serialized_size = message_size + _meta_length;
         if (serialized_size > _last_request_serialize_size) {
             _last_request_serialize_size = serialized_size;
             _request_serialize_buf = std::make_unique<char[]>(_last_request_serialize_size);
         }
-        req->SerializeToArray(_request_serialize_buf.get(), serialized_size);
+        std::memcpy(_request_serialize_buf.get(), &message_size, _meta_length);
+        req->SerializeToArray(_request_serialize_buf.get() + _meta_length, serialized_size);
         _request_iov.iov_base = _request_serialize_buf.get();
         _request_iov.iov_len = serialized_size;
+        SPDK_DEBUGLOG_EX(
+          mon,
+          "union_case is %ld, message_size is %ld, serialized_size is %ld\n",
+          req->union_case(), message_size, serialized_size);
     }
 
     auto rc = _cluster->writev(&_request_iov, 1);
@@ -910,10 +917,9 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
         SPDK_DEBUGLOG_EX(mon, "Received osd boot response\n");
 
         auto& req_ctx = _on_flight_requests.front();
-        // if (response->boot_response().result() != 0) {
-            // SPDK_ERRLOG_EX("EREOR: monitor notifies boot failed\n");
-            // throw std::runtime_error{"monitor notifies boot failed"};
-        // }
+        if (response->boot_response().result() != 0) {
+            SPDK_ERRLOG_EX("EREOR: monitor notifies boot failed\n");
+        }
 
         auto result = response->boot_response().result();
 
@@ -932,7 +938,7 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
             status = response_status::fail;
         else
             status = response_status::ok;
-        
+
         req_ctx->cb(status, req_ctx.get());
         _on_flight_requests.pop_front();
         break;
@@ -946,7 +952,7 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
             status = response_status::fail;
         else
             status = response_status::ok;
-    
+
         req_ctx->cb(status, req_ctx.get());
         _on_flight_requests.pop_front();
         break;
@@ -1219,8 +1225,7 @@ void client::send_pg_member_change_finished_notify(
   int result,
   uint64_t pool_id,
   uint64_t pg_id,
-  std::vector<int32_t> osd_list
-){
+  std::vector<int32_t> osd_list) {
     auto req = std::make_unique<msg::Request>();
     auto* mem_req = req->mutable_pg_member_change_finish_request();
     mem_req->set_result(result);
@@ -1228,7 +1233,7 @@ void client::send_pg_member_change_finished_notify(
     mem_req->set_pgid(pg_id);
     for(int32_t osd_id : osd_list){
         mem_req->add_osdlist(osd_id);
-    }  
+    }
 
     auto mem_cb = [](const response_status status, request_context*ctx){
         SPDK_DEBUGLOG_EX(mon, "notify monitor (change member of pg has been finished).\n");
@@ -1239,7 +1244,7 @@ void client::send_pg_member_change_finished_notify(
 
     auto* req_ctx = new client::request_context{
       this, std::move(req), std::monostate{}, std::move(mem_cb)};
-    enqueue_request(req_ctx);      
+    enqueue_request(req_ctx);
 }
 
 }

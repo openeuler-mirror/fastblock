@@ -28,7 +28,7 @@ const (
 	heartbeatInterval = 3 * time.Second
 	// min hearbeats before we mark it up
 	minSuccessAttempts = 1
-	osdDownInterval = 10 * time.Second
+	osdDownInterval    = 10 * time.Second
 	osdDownOutInterval = 30 * time.Second
 )
 
@@ -67,11 +67,12 @@ type HeartBeatInfo struct {
 var AllOSDInfo OsdMap
 var AllHeartBeatInfo map[OSDID]*HeartBeatInfo
 
-type STATESWITCH  int
+type STATESWITCH int
+
 const (
-	InToOut  STATESWITCH = iota + 1
+	InToOut STATESWITCH = iota + 1
 	DownToUp
-	UpToDown 
+	UpToDown
 	OutToIn
 )
 
@@ -79,14 +80,14 @@ var NoReblance = false
 var NoOut = false
 
 type OsdTask struct {
-    osdid          int
-    stateSwitch    STATESWITCH
+	osdid       int
+	stateSwitch STATESWITCH
 }
 
 var osdTaskQueue = NewQueue()
 
 func (task *OsdTask) Process(ctx context.Context, client *etcdapi.EtcdClient) {
-    log.Info(ctx, "osd: ", task.osdid, " stateSwitch: ", task.stateSwitch)
+	log.Info(ctx, "osd: ", task.osdid, " stateSwitch: ", task.stateSwitch)
 	if task.stateSwitch == OutToIn {
 		Reblance(ctx, client)
 	} else {
@@ -95,15 +96,15 @@ func (task *OsdTask) Process(ctx context.Context, client *etcdapi.EtcdClient) {
 }
 
 func OsdTaskrun(ctx context.Context, client *etcdapi.EtcdClient) {
-    taskTick := time.NewTicker(1 * time.Second)
-    for range taskTick.C {
-        for !osdTaskQueue.IsEmpty() {
-            item := osdTaskQueue.Dequeue()
-            if task, ok := item.(OsdTask); ok {
-                task.Process(ctx, client)
-            }
-        }
-    }
+	taskTick := time.NewTicker(1 * time.Second)
+	for range taskTick.C {
+		for !osdTaskQueue.IsEmpty() {
+			item := osdTaskQueue.Dequeue()
+			if task, ok := item.(OsdTask); ok {
+				task.Process(ctx, client)
+			}
+		}
+	}
 }
 
 // findUsableOsdId finds the first available OSD ID that does not exist in AllOSDInfo.
@@ -220,7 +221,7 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 	}
 
 	if !isValidIPv4(address) || !isValidPort(port) {
-        log.Warn(ctx, "invalide ip or port.")
+		log.Warn(ctx, "invalide ip or port.")
 		return OSD_ERR_ADDRESS_INVALID
 	}
 
@@ -268,7 +269,7 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 	if !oldIsUp && oinfo.IsUp && oldIsIn && oinfo.IsIn {
 		log.Info(ctx, "osd ", id, "from down to up.")
 		osdTaskQueue.Enqueue(OsdTask{osdid: int(id), stateSwitch: DownToUp})
-	} 
+	}
 
 	//osd由out变为in
 	if !oldIsIn && oinfo.IsIn {
@@ -382,7 +383,7 @@ func ProcessOsdOutMessage(ctx context.Context, client *etcdapi.EtcdClient, osdid
 	if !found {
 		log.Info(ctx, "osd is not found in our database,")
 		return false
-	}	
+	}
 
 	osdTaskQueue.Enqueue(OsdTask{osdid: int(osdid), stateSwitch: InToOut})
 	log.Info(ctx, "osd ", osdid, " from in to out.")
@@ -400,8 +401,8 @@ func ProcessOsdOutMessage(ctx context.Context, client *etcdapi.EtcdClient, osdid
 		return false
 	}
 
-	log.Info(ctx, "successfully put to ectd for out osd ", osdid)	
-    return true
+	log.Info(ctx, "successfully put to ectd for out osd ", osdid)
+	return true
 }
 
 func ProcessOsdInMessage(ctx context.Context, client *etcdapi.EtcdClient, osdid int32) bool {
@@ -432,7 +433,7 @@ func ProcessOsdInMessage(ctx context.Context, client *etcdapi.EtcdClient, osdid 
 	if !found {
 		log.Info(ctx, "osd is not found in our database,")
 		return false
-	}	
+	}
 
 	if isUp {
 		osdTaskQueue.Enqueue(OsdTask{osdid: int(osdid), stateSwitch: OutToIn})
@@ -451,8 +452,8 @@ func ProcessOsdInMessage(ctx context.Context, client *etcdapi.EtcdClient, osdid 
 		return false
 	}
 
-	log.Info(ctx, "successfully put to ectd for in osd ", osdid)	
-    return true
+	log.Info(ctx, "successfully put to ectd for in osd ", osdid)
+	return true
 }
 
 func ProcessNoReblanceMessage(ctx context.Context, client *etcdapi.EtcdClient, set bool) bool {
@@ -492,7 +493,7 @@ func CheckOsdHeartbeat(ctx context.Context, client *etcdapi.EtcdClient) {
 						log.Warn(ctx, "osd ", info.Osdid, " from down to up.")
 					}
 				}
-				if hi.lastHeartBeat.Add(osdDownInterval + osdDownOutInterval).Before(time.Now()) && info.IsIn {
+				if hi.lastHeartBeat.Add(osdDownInterval+osdDownOutInterval).Before(time.Now()) && info.IsIn {
 					info.IsIn = false
 					isChange = true
 					osdTaskQueue.Enqueue(OsdTask{osdid: info.Osdid, stateSwitch: InToOut})

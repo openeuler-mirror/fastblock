@@ -12,6 +12,7 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"log"
@@ -56,13 +57,15 @@ var imagemap map[string]*msg.ImageInfo = make(map[string]*msg.ImageInfo)
 
 var poolpgmapversion map[int32]int64
 
+const msg_len_size uint64 = 8
+
 type ResponseChanData struct {
 	uuid  string
 	osdid int32
 }
 
 func arrayToStr(array []int32) string {
-    str := "["
+	str := "["
 	for i := 0; i < len(array); i++ {
 		if i != 0 {
 			str += "," + strconv.FormatInt(int64(array[i]), 10)
@@ -72,7 +75,27 @@ func arrayToStr(array []int32) string {
 	}
 	str += "]"
 	return str
-} 
+}
+
+func sendClientReqeust(request *msg.Request, conn net.Conn) error {
+	msg_data, err := proto.Marshal(request)
+	if err != nil {
+		log.Println("Error marshaling GetOsdMapRequest:", err)
+		return err
+	}
+
+	data := make([]byte, msg_len_size+uint64(len(msg_data)))
+	binary.LittleEndian.PutUint64(data[:msg_len_size], uint64(len(msg_data)))
+	copy(data[msg_len_size:], msg_data)
+
+	_, err = conn.Write(data)
+	if err != nil {
+		log.Println("Error sending GetOsdMapRequest:", err)
+		return err
+	}
+
+	return nil
+}
 
 func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- struct{}, responseChan chan<- ResponseChanData) {
 	appliedOsdCounter := 0
@@ -225,12 +248,12 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 						fmt.Printf("%-10v   %-10v   %-25v    %-25v   \r\n", "PGID", "STATE", "OSDLIST", "NEWOSDLIST")
 						for pid, pgs := range mypgmap {
 							for _, pg := range pgs.Pi {
-								pgid := strconv.FormatInt(int64(pid), 10)  + "." + strconv.FormatInt(int64(pg.GetPgid()), 10)
+								pgid := strconv.FormatInt(int64(pid), 10) + "." + strconv.FormatInt(int64(pg.GetPgid()), 10)
 								osdlist := arrayToStr(pg.GetOsdid())
 								newosdlist := arrayToStr(pg.GetNewosdid())
-	
-								fmt.Printf("%-10v   %-10v   %-25v    %-25v   \r\n", pgid, utils.PgStateStr(utils.PGSTATE(pg.GetState())), 
-										osdlist, newosdlist)
+
+								fmt.Printf("%-10v   %-10v   %-25v    %-25v   \r\n", pgid, utils.PgStateStr(utils.PGSTATE(pg.GetState())),
+									osdlist, newosdlist)
 							}
 						}
 					}
@@ -264,8 +287,8 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 						if !osd.GetIsin() {
 							state2 = "out"
 						}
-						fmt.Printf("%-10v   %-20v   %-10v    %-10v   %-10v \r\n", osd.GetOsdid(), osd.GetAddress(), osd.GetPort(), 
-						        state1, state2)
+						fmt.Printf("%-10v   %-20v   %-10v    %-10v   %-10v \r\n", osd.GetOsdid(), osd.GetAddress(), osd.GetPort(),
+							state1, state2)
 					}
 				}
 
@@ -456,19 +479,7 @@ func sendCreatePoolRequest(conn net.Conn) {
 		},
 	}
 
-	// Marshal the CreatePoolRequest
-	data, err := proto.Marshal(request)
-	if err != nil {
-		log.Println("Error marshaling CreatePoolRequest:", err)
-		return
-	}
-
-	// Send the CreatePoolRequest to the server
-	_, err = conn.Write(data)
-	if err != nil {
-		log.Println("Error sending CreatePoolRequest:", err)
-		return
-	}
+	sendClientReqeust(request, conn)
 
 }
 
@@ -482,20 +493,7 @@ func sendDeletePoolRequest(conn net.Conn) {
 		},
 	}
 
-	// Marshal the DeletePoolRequest
-	data, err := proto.Marshal(request)
-	if err != nil {
-		log.Println("Error marshaling DeletePoolRequest:", err)
-		return
-	}
-
-	// Send the DeletePoolRequest to the server
-	_, err = conn.Write(data)
-	if err != nil {
-		log.Println("Error sending CreatePoolRequest:", err)
-		return
-	}
-
+	sendClientReqeust(request, conn)
 }
 
 func clientSendGetPgMapRequest(conn net.Conn) {
@@ -507,19 +505,7 @@ func clientSendGetPgMapRequest(conn net.Conn) {
 		},
 	}
 
-	data, err := proto.Marshal(request)
-	if err != nil {
-		log.Println("Error marshaling GetPgMapRequest:", err)
-		return
-	}
-
-	// Send the CreatePGRequest to the server
-	_, err = conn.Write(data)
-	if err != nil {
-		log.Println("Error sending GetPgMapRequest:", err)
-		return
-	}
-
+	sendClientReqeust(request, conn)
 }
 
 func clientSendGetOsdMapRequest(conn net.Conn, version int64) {
@@ -532,19 +518,7 @@ func clientSendGetOsdMapRequest(conn net.Conn, version int64) {
 		},
 	}
 
-	// Marshal the GetOsdMapRequest
-	data, err := proto.Marshal(request)
-	if err != nil {
-		log.Println("Error marshaling GetOsdMapRequest:", err)
-		return
-	}
-
-	// Send the CreatePGRequest to the server
-	_, err = conn.Write(data)
-	if err != nil {
-		log.Println("Error sending GetOsdMapRequest:", err)
-		return
-	}
+	sendClientReqeust(request, conn)
 }
 
 func clientSendGetClusterMapRequest(conn net.Conn, isWatch bool) {
@@ -569,17 +543,8 @@ func clientSendGetClusterMapRequest(conn net.Conn, isWatch bool) {
 			},
 		}
 
-		// Marshal the GetClusterMapRequest
-		data, err := proto.Marshal(request)
+		err := sendClientReqeust(request, conn)
 		if err != nil {
-			log.Println("Error marshaling GetClusterMapRequest:", err)
-			return
-		}
-
-		// Send the CreatePGRequest to the server
-		_, err = conn.Write(data)
-		if err != nil {
-			log.Println("Error sending GetClusterMapRequest:", err)
 			return
 		}
 		if !isWatch {
@@ -600,19 +565,7 @@ func clientWatchOsdMapRequest(conn net.Conn) {
 			},
 		}
 
-		// Marshal the GetOsdMapRequest
-		data, err := proto.Marshal(request)
-		if err != nil {
-			log.Println("Error marshaling GetOsdMapRequest:", err)
-			return
-		}
-
-		// Send the CreatePGRequest to the server
-		_, err = conn.Write(data)
-		if err != nil {
-			log.Println("Error sending GetOsdMapRequest:", err)
-			return
-		}
+		sendClientReqeust(request, conn)
 	}
 }
 
@@ -627,19 +580,7 @@ func clientWatchPgMapRequest(conn net.Conn) {
 			},
 		}
 
-		// Marshal the GetOsdMapRequest
-		data, err := proto.Marshal(request)
-		if err != nil {
-			log.Println("Error marshaling GetOsdMapRequest:", err)
-			return
-		}
-
-		// Send the CreatePGRequest to the server
-		_, err = conn.Write(data)
-		if err != nil {
-			log.Println("Error sending GetOsdMapRequest:", err)
-			return
-		}
+		sendClientReqeust(request, conn)
 	}
 }
 
@@ -650,19 +591,7 @@ func sendListPoolsRequest(conn net.Conn) {
 		},
 	}
 
-	// Marshal the GetOsdMapRequest
-	data, err := proto.Marshal(request)
-	if err != nil {
-		log.Println("Error marshaling ListPoolsRequest:", err)
-		return
-	}
-
-	// Send the CreatePGRequest to the server
-	_, err = conn.Write(data)
-	if err != nil {
-		log.Println("Error sending ListPoolsRequest:", err)
-		return
-	}
+	sendClientReqeust(request, conn)
 }
 
 func clientSendApplyIDRequest(conn net.Conn, uuidstring string, counter int) {
@@ -681,19 +610,7 @@ func clientSendApplyIDRequest(conn net.Conn, uuidstring string, counter int) {
 			},
 		}
 
-		// Marshal the ApplyIdRequest
-		data, err := proto.Marshal(request)
-		if err != nil {
-			log.Println("Error marshaling ApplyIDRequest:", err)
-			return
-		}
-
-		// Send the ApplyIDRequest to the server
-		_, err = conn.Write(data)
-		if err != nil {
-			log.Println("Error sending ApplyIDRequest:", err)
-			return
-		}
+		sendClientReqeust(request, conn)
 		// sleep for one second because we are not busy
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -709,19 +626,7 @@ func clientSendStopRequest(conn net.Conn) {
 		},
 	}
 
-	// Marshal the OsdStopRequest
-	data, err := proto.Marshal(request)
-	if err != nil {
-		log.Println("Error marshaling OsdStopRequest:", err)
-		return
-	}
-
-	// Send the OsdStopRequest to the server
-	_, err = conn.Write(data)
-	if err != nil {
-		log.Println("Error sending OsdStopRequest:", err)
-		return
-	}
+	sendClientReqeust(request, conn)
 }
 
 func clientSendBootRequest(conn net.Conn, hosts int, responseChan chan ResponseChanData) {
@@ -739,20 +644,7 @@ func clientSendBootRequest(conn net.Conn, hosts int, responseChan chan ResponseC
 				},
 			},
 		}
-
-		// Marshal the BootRequest
-		data, err := proto.Marshal(request)
-		if err != nil {
-			log.Println("Error marshaling BootRequest:", err)
-			return
-		}
-
-		// Send the BootRequest to the server
-		_, err = conn.Write(data)
-		if err != nil {
-			log.Println("Error sending BootRequest:", err)
-			return
-		}
+		sendClientReqeust(request, conn)
 		return
 	} else {
 		for {
@@ -776,20 +668,7 @@ func clientSendBootRequest(conn net.Conn, hosts int, responseChan chan ResponseC
 						},
 					},
 				}
-
-				// Marshal the BootRequest
-				data, err := proto.Marshal(request)
-				if err != nil {
-					log.Println("Error marshaling BootRequest:", err)
-					return
-				}
-
-				// Send the BootRequest to the server
-				_, err = conn.Write(data)
-				if err != nil {
-					log.Println("Error sending BootRequest:", err)
-					return
-				}
+				sendClientReqeust(request, conn)
 			}
 		}
 	}
@@ -828,19 +707,7 @@ func ClientSendCreateImageRequest(conn net.Conn, stopChan chan<- struct{}) {
 		},
 	}
 
-	// Marshal the GetOsdMapRequest
-	data, err := proto.Marshal(request)
-	if err != nil {
-		log.Println("Error marshaling GetOsdMapRequest:", err)
-		return
-	}
-
-	// Send the CreatePGRequest to the server
-	_, err = conn.Write(data)
-	if err != nil {
-		log.Println("Error sending GetOsdMapRequest:", err)
-		return
-	}
+	sendClientReqeust(request, conn)
 	//fmt.Printf("send create image requset  success: poolid:%d  imagename:%s  imagesize:%d  object_size: %d  \n\n",*poolid,*imageName,*imagesize,*object_size)
 }
 
@@ -865,19 +732,7 @@ func ClientSendRemoveImageRequest(conn net.Conn, stopChan chan<- struct{}) {
 		},
 	}
 
-	// Marshal the GetOsdMapRequest
-	data, err := proto.Marshal(request)
-	if err != nil {
-		log.Println("Error marshaling GetOsdMapRequest:", err)
-		return
-	}
-
-	// Send the CreatePGRequest to the server
-	_, err = conn.Write(data)
-	if err != nil {
-		log.Println("Error sending GetOsdMapRequest:", err)
-		return
-	}
+	sendClientReqeust(request, conn)
 }
 
 func ClientSendResizeImageRequest(conn net.Conn, stopChan chan<- struct{}) {
@@ -915,19 +770,7 @@ func ClientSendResizeImageRequest(conn net.Conn, stopChan chan<- struct{}) {
 		},
 	}
 
-	// Marshal the GetOsdMapRequest
-	data, err := proto.Marshal(request)
-	if err != nil {
-		log.Println("Error marshaling GetOsdMapRequest:", err)
-		return
-	}
-
-	// Send the CreatePGRequest to the server
-	_, err = conn.Write(data)
-	if err != nil {
-		log.Println("Error sending GetOsdMapRequest:", err)
-		return
-	}
+	sendClientReqeust(request, conn)
 }
 
 func ClientSendGetImageRequest(conn net.Conn, stopChan chan<- struct{}) {
@@ -951,19 +794,7 @@ func ClientSendGetImageRequest(conn net.Conn, stopChan chan<- struct{}) {
 		},
 	}
 
-	// Marshal the GetOsdMapRequest
-	data, err := proto.Marshal(request)
-	if err != nil {
-		log.Println("Error marshaling GetOsdMapRequest:", err)
-		return
-	}
-
-	// Send the CreatePGRequest to the server
-	_, err = conn.Write(data)
-	if err != nil {
-		log.Println("Error sending GetOsdMapRequest:", err)
-		return
-	}
+	sendClientReqeust(request, conn)
 }
 
 func clientSendOutOsd(conn net.Conn, osdid int) {
@@ -976,19 +807,7 @@ func clientSendOutOsd(conn net.Conn, osdid int) {
 		},
 	}
 
-	// Marshal the OsdOutRequest
-	data, err := proto.Marshal(request)
-	if err != nil {
-		log.Println("Error marshaling OsdOutRequest:", err)
-		return
-	}
-
-	// Send the OsdOutRequest to the server
-	_, err = conn.Write(data)
-	if err != nil {
-		log.Println("Error sending OsdOutRequest:", err)
-		return
-	}
+	sendClientReqeust(request, conn)
 }
 
 func clientSendInOsd(conn net.Conn, osdid int) {
@@ -1001,19 +820,7 @@ func clientSendInOsd(conn net.Conn, osdid int) {
 		},
 	}
 
-	// Marshal the OsdInRequest
-	data, err := proto.Marshal(request)
-	if err != nil {
-		log.Println("Error marshaling OsdInRequest:", err)
-		return
-	}
-
-	// Send the OsdInRequest to the server
-	_, err = conn.Write(data)
-	if err != nil {
-		log.Println("Error sending OsdInRequest:", err)
-		return
-	}
+	sendClientReqeust(request, conn)
 }
 
 func clientSendNoReblance(conn net.Conn, set bool) {
@@ -1026,19 +833,7 @@ func clientSendNoReblance(conn net.Conn, set bool) {
 		},
 	}
 
-	// Marshal the NoReblanceRequest
-	data, err := proto.Marshal(request)
-	if err != nil {
-		log.Println("Error marshaling NoReblanceRequest:", err)
-		return
-	}
-
-	// Send the NoReblanceRequest to the server
-	_, err = conn.Write(data)
-	if err != nil {
-		log.Println("Error sending NoReblanceRequest:", err)
-		return
-	}
+	sendClientReqeust(request, conn)
 }
 
 func clientSendNoOut(conn net.Conn, set bool) {
@@ -1051,28 +846,16 @@ func clientSendNoOut(conn net.Conn, set bool) {
 		},
 	}
 
-	// Marshal the NoOutRequest
-	data, err := proto.Marshal(request)
-	if err != nil {
-		log.Println("Error marshaling NoOutRequest:", err)
-		return
-	}
-
-	// Send the NoOutRequest to the server
-	_, err = conn.Write(data)
-	if err != nil {
-		log.Println("Error sending NoOutRequest:", err)
-		return
-	}
+	sendClientReqeust(request, conn)
 }
 
 func main() {
 	// (TODO)write command line args parse code
 	// Define the command line arguments
 	monitor_endpoint = flag.String("endpoint", "127.0.0.1:3333", "monitor server endpoint")
-	supported_op := "supported: watchclustermap, getclustermap, fakeapplyid, fakebootosd, fakestartcluster, " + 
-	        "createpool, deletepool, listpools, getosdmap, getpgmap, watchosdmap, watchpgmap, fakestoposd, " +
-	        "createimage, removeimage, resizeimage, getimage, outosd, inosd"
+	supported_op := "supported: watchclustermap, getclustermap, fakeapplyid, fakebootosd, fakestartcluster, " +
+		"createpool, deletepool, listpools, getosdmap, getpgmap, watchosdmap, watchpgmap, fakestoposd, " +
+		"createimage, removeimage, resizeimage, getimage, outosd, inosd"
 	op = flag.String("op", "", supported_op)
 	set = flag.String("set", "", "supported: noReblance, noout")
 	unset = flag.String("unset", "", "supported: noReblance, noout")
@@ -1097,12 +880,12 @@ func main() {
 
 	// Parse the command line arguments
 	flag.Parse()
-	if *op != "watchclustermap" && *op != "getclustermap" && *op != "createpool" && *op != "getosdmap" && 
-			*op != "getpgmap" && *op != "listpools" && *op != "fakeapplyid" && *op != "fakebootosd" && 
-			*op != "fakestartcluster" && *op != "watchosdmap" && *op != "watchpgmap" && *op != "fakestoposd" && 
-			*op != "deletepool" && *op != "createimage" && *op != "removeimage" && *op != "resizeimage" && 
-			*op != "getimage" && *op != "outosd" && *op != "inosd" {
-		if *set != "noReblance" && *set != "noout" && *unset != "noReblance" && *unset != "noout"{
+	if *op != "watchclustermap" && *op != "getclustermap" && *op != "createpool" && *op != "getosdmap" &&
+		*op != "getpgmap" && *op != "listpools" && *op != "fakeapplyid" && *op != "fakebootosd" &&
+		*op != "fakestartcluster" && *op != "watchosdmap" && *op != "watchpgmap" && *op != "fakestoposd" &&
+		*op != "deletepool" && *op != "createimage" && *op != "removeimage" && *op != "resizeimage" &&
+		*op != "getimage" && *op != "outosd" && *op != "inosd" {
+		if *set != "noReblance" && *set != "noout" && *unset != "noReblance" && *unset != "noout" {
 			log.Fatal("unsupported operation")
 		}
 	}
@@ -1223,18 +1006,18 @@ func main() {
 		if *osdid == 0 {
 			log.Fatal("lack of osdid for inosd")
 		}
-		go clientSendInOsd(conn, *osdid)		
+		go clientSendInOsd(conn, *osdid)
 	}
 
 	if *op == "" {
 		switch *set {
 		case "noReblance":
-			log.Println("set noReblance")	
+			log.Println("set noReblance")
 			go clientSendNoReblance(conn, true)
 		case "noout":
 			log.Println("set noout")
 			go clientSendNoOut(conn, true)
-		} 
+		}
 
 		if *set == "" {
 			switch *unset {
