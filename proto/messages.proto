@@ -11,17 +11,27 @@ message CreatePoolRequest{
     string root = 5;
 }
 
+
+enum CreatePoolErrorCode
+{
+    createPoolOk = 0;
+    poolNameExists = 1;
+    failureDomainNeedNotSatisfied = 2;
+    noEnoughOsd = 3;
+    internalError = 4;
+}
+
 message CreatePoolResponse{
-    bool ok = 1;
+    CreatePoolErrorCode errorcode = 1;
     int32 poolid = 2;
 }
+
 
 message ListPoolsRequest{
 }
 
 message poolinfo{
-    int32
-    poolid = 1;
+    int32 poolid = 1;
     string name = 2;
     int32 pgsize = 3;
     int32 pgcount = 4;

@@ -282,7 +282,7 @@ func ProcessOsdDown(ctx context.Context, client *etcdapi.EtcdClient, osdid int) 
 func ProcessCreatePoolMessage(ctx context.Context, client *etcdapi.EtcdClient, name string, size int, pc int, fd string, root string) (int32, error) {
 	for _, pc := range AllPools {
 		if name == pc.Name {
-			return -1, fmt.Errorf("the pool name is already occupied by other pools")
+			return -1, EPoolAlreadyExists
 		}
 	}
 
@@ -313,7 +313,7 @@ func ProcessCreatePoolMessage(ctx context.Context, client *etcdapi.EtcdClient, n
 	pc_buf, err := json.Marshal(poolConf)
 	if err != nil {
 		log.Error(ctx, err)
-		return -1, err
+		return -1, EInternalError
 	}
 
 	key := fmt.Sprintf("%s%d", config.ConfigPoolsKeyPrefix, pid)
@@ -321,7 +321,7 @@ func ProcessCreatePoolMessage(ctx context.Context, client *etcdapi.EtcdClient, n
 	err = client.Put(ctx, key, string(pc_buf))
 	if err != nil {
 		log.Error(ctx, err)
-		return -1, err
+		return -1, EInternalError
 	}
 
 	if lastSeenPoolId < int32(pid) {
@@ -616,7 +616,7 @@ func ProcessDeletePoolMessage(ctx context.Context, client *etcdapi.EtcdClient, n
 		}
 	}
 	if !found {
-		return fmt.Errorf("the pool is not found")
+		return EPoolNotExist
 	}
 
 	key := fmt.Sprintf("%s%d", config.ConfigPoolsKeyPrefix, pid)
@@ -624,7 +624,7 @@ func ProcessDeletePoolMessage(ctx context.Context, client *etcdapi.EtcdClient, n
 	err := client.Delete(ctx, key)
 	if err != nil {
 		log.Error(ctx, err)
-		return err
+		return EInternalError
 	}
 
 	// remove the pool id from the map

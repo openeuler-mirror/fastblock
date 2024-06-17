@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"math/rand"
 	"monitor/config"
@@ -23,7 +24,6 @@ import (
 	"sort"
 	"strconv"
 	"time"
-	"fmt"
 )
 
 // OptimizeCfg to pass params.
@@ -286,13 +286,13 @@ func getUniformWeight(weight float64, totalWeight float64, pgCount int, pgSize i
 func CreatePgs(ctx context.Context, client *etcdapi.EtcdClient, pool *PoolConfig) (*map[string]PGConfig, error) {
     if pool == nil {
         log.Warn(ctx, "pool nil!")
-        return nil, errors.New("pool is nil.")
+        return nil, EPoolNotInstance
     }
     
     osdTreeMap, osdNodeMap, terr := GetOSDTree(ctx, false, true)
     if terr != nil {
         log.Error(ctx, "GetOSDTree failed!")
-        return nil, errors.New("GetOSDTree failed.")
+        return nil, EOsdTreeNotExist
     }
 
     optimizeCfg := &OptimizeCfg{
@@ -302,9 +302,9 @@ func CreatePgs(ctx context.Context, client *etcdapi.EtcdClient, pool *PoolConfig
     }
 
     log.Info(ctx, "osdNodeMap size:", len(*osdNodeMap), ", PGSize:", optimizeCfg.PGSize)
-    if len(*osdNodeMap) < optimizeCfg.PGSize || optimizeCfg.PGSize == 0{
+    if len(*osdNodeMap) < (optimizeCfg.PGSize / 2 + 1) || optimizeCfg.PGSize == 0{
         log.Error(ctx, "Too few osd nodes.")
-        return nil, errors.New("Too few osd nodes.")
+        return nil, ENoEnoughOsd
     }
 
     optimizeCfg.OSDTree, optimizeCfg.OSDInfoMap, optimizeCfg.TotalWeight = FlattenTree(ctx, osdTreeMap, osdNodeMap, 
@@ -313,7 +313,7 @@ func CreatePgs(ctx context.Context, client *etcdapi.EtcdClient, pool *PoolConfig
     poolPGResult, oerr := SimpleInitial(ctx, optimizeCfg, pool.PGSize)
     if oerr != nil {
         log.Error(ctx, oerr, "create pg failed.")
-        return nil, errors.New("create pg failed.")
+        return nil, EPgDistributionError
     }
 
 	// log.Warn(ctx, "pool", pool.Poolid, ":", pool.Name, "result:", poolPGResult)
