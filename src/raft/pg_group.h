@@ -87,14 +87,25 @@ private:
 
 using pg_complete = std::function<void (void *, int)>;
 
+
+constexpr int32_t DEFAULT_HEARTBEAT_TIMER_PERIOD_MSEC = 1000;   //毫秒
+constexpr int32_t DEFAULT_ELECTION_TIMER_PERIOD_MSEC = 2000; //毫秒
+constexpr int32_t DEFAULT_LEASE_MAINTENANCE_GRACE = 2000;   //毫秒
+
 class pg_group_t
 {
 public:
-    pg_group_t(int current_node_id, std::shared_ptr<connect_cache> conn_cache)
+    pg_group_t(int current_node_id, std::shared_ptr<connect_cache> conn_cache, 
+            int raft_heartbeat_period_time_msec = DEFAULT_HEARTBEAT_TIMER_PERIOD_MSEC,
+            int raft_lease_time_msec = DEFAULT_LEASE_MAINTENANCE_GRACE,
+            int raft_election_timeout_msec = DEFAULT_ELECTION_TIMER_PERIOD_MSEC)
       : _shard_cores(get_shard_cores())
       , _current_node_id(current_node_id)
       , _client{conn_cache}
-      , _shard(core_sharded::get_core_sharded()) {
+      , _shard(core_sharded::get_core_sharded())
+      , _raft_heartbeat_period_time_msec(raft_heartbeat_period_time_msec)
+      , _raft_lease_time_msec(raft_lease_time_msec)
+      , _raft_election_timeout_msec(raft_election_timeout_msec) {
         uint32_t i = 0;
         auto shard_num = _shard_cores.size();
         for (i = 0; i < shard_num; i++)
@@ -208,4 +219,10 @@ private:
     int _current_node_id;
     raft_client_protocol _client;
     core_sharded &_shard;
+    //心跳发送间隔时间，单位毫秒
+    int  _raft_heartbeat_period_time_msec;
+    //lease time，单位毫秒
+    int  _raft_lease_time_msec;
+    //选举超时时间，单位毫秒
+    int  _raft_election_timeout_msec;
 };

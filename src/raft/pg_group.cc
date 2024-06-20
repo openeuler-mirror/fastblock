@@ -37,7 +37,8 @@ int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard
     raft->raft_set_timer();
     _pg_add(shard_id, raft, pool_id, pg_id);
 
-    raft->init(std::move(osds), get_current_node_id());
+    raft->init(std::move(osds), get_current_node_id(), 
+      _raft_heartbeat_period_time_msec, _raft_lease_time_msec, _raft_election_timeout_msec);
     return 0;
 }
 
@@ -48,7 +49,8 @@ void pg_group_t::load_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_i
     raft->raft_set_timer();
     _pg_add(shard_id, raft, pool_id, pg_id);
 
-    raft->load(get_current_node_id(), std::move(cb_fn), arg);
+    raft->load(get_current_node_id(), std::move(cb_fn), arg, 
+      _raft_heartbeat_period_time_msec, _raft_lease_time_msec, _raft_election_timeout_msec);
 }  
 
 void pg_group_t::delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, pg_complete cb_fn, void *arg){

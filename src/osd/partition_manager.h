@@ -35,8 +35,14 @@ using pm_complete = std::function<void (void *, int)>;
 
 class partition_manager : public std::enable_shared_from_this<partition_manager> {
 public:
-    partition_manager(int node_id, std::shared_ptr<connect_cache> conn_cache)
-      : _pgs(node_id, conn_cache)
+    partition_manager(int node_id, std::shared_ptr<connect_cache> conn_cache,
+            int raft_heartbeat_period_time_msec = DEFAULT_HEARTBEAT_TIMER_PERIOD_MSEC,
+            int raft_lease_time_msec = DEFAULT_LEASE_MAINTENANCE_GRACE,
+            int raft_election_timeout_msec = DEFAULT_ELECTION_TIMER_PERIOD_MSEC)
+      : _pgs(node_id, conn_cache, 
+        raft_heartbeat_period_time_msec == 0 ? DEFAULT_HEARTBEAT_TIMER_PERIOD_MSEC : raft_heartbeat_period_time_msec, 
+        raft_lease_time_msec == 0 ? DEFAULT_LEASE_MAINTENANCE_GRACE : raft_lease_time_msec, 
+        raft_election_timeout_msec == 0 ? DEFAULT_ELECTION_TIMER_PERIOD_MSEC : raft_election_timeout_msec)
       , _next_shard(0)
       , _shard(core_sharded::get_core_sharded())
       , _shard_cores(get_shard_cores())

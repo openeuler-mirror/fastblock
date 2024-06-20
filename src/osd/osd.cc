@@ -63,6 +63,9 @@ typedef struct
     spdk_thread *cur_thread;
     std::string bdev_addr;
     std::string bdev_type;
+    int raft_heartbeat_period_time_msec;
+    int raft_lease_time_msec;
+    int raft_election_timeout_msec;
 } server_t;
 
 static const char* g_json_conf{nullptr};
@@ -253,7 +256,8 @@ static void pm_init(void *arg){
     ::spdk_cpuset_set_cpu(&cpumask, core_no, true);
     auto opts = msg::rdma::client::make_options(server->pt);
     global_conn_cache = std::make_shared<::connect_cache>(&cpumask, opts);
-    global_pm = std::make_shared<partition_manager>(server->node_id, global_conn_cache);
+    global_pm = std::make_shared<partition_manager>(server->node_id, global_conn_cache, 
+      server->raft_heartbeat_period_time_msec, server->raft_lease_time_msec, server->raft_election_timeout_msec);
     monitor::client::on_new_pg_callback_type pg_map_cb =
       [pm = global_pm] (const msg::PGInfo& pg_info, const monitor::client::pg_map::pool_id_type pool_id, const monitor::client::osd_map& osd_map,
         monitor::client::pg_op_complete&& cb_fn, void *arg) {
@@ -824,6 +828,36 @@ main(int argc, char *argv[])
         std::cerr << "ERROR: Parse json configuration file error, reason is " << err_reason << std::endl;
         block_usage();
         return -EINVAL;
+    }
+
+    static int min_raft_time_msec = 500;
+    static int max_raft_time_msec = 30000;
+    if(osd_server.pt.count("raft_heartbeat_period_time_msec") > 0){
+        int value = osd_server.pt.get_child("raft_heartbeat_period_time_msec").get_value<int>();
+        if(value < min_raft_time_msec || value > max_raft_time_msec){
+            std::cerr << "raft_heartbeat_period_time_msec must be in [" << 
+              min_raft_time_msec << "," <<  max_raft_time_msec << "], which is measured in milliseconds" << std::endl;
+            return -EINVAL;
+        }
+        osd_server.raft_heartbeat_period_time_msec = value;
+    }
+    if(osd_server.pt.count("raft_lease_time_msec") > 0){
+        int value = osd_server.pt.get_child("raft_lease_time_msec").get_value<int>();
+        if(value < min_raft_time_msec || value > max_raft_time_msec){
+            std::cerr << "raft_lease_time_msec must be in [" <<
+              min_raft_time_msec << "," <<  max_raft_time_msec << "], which is measured in milliseconds" << std::endl;
+            return -EINVAL;
+        }
+        osd_server.raft_lease_time_msec = value;
+    }
+    if(osd_server.pt.count("raft_election_timeout_msec") > 0){
+        int value = osd_server.pt.get_child("raft_election_timeout_msec").get_value<int>();
+        if(value < min_raft_time_msec || value > max_raft_time_msec){
+            std::cerr << "raft_election_timeout_msec must be in [" <<
+              min_raft_time_msec << "," <<  max_raft_time_msec << "], which is measured in milliseconds" << std::endl;
+            return -EINVAL;
+        }
+        osd_server.raft_election_timeout_msec = value;
     }
 
     if(from_configuration(&osd_server) != 0){
