@@ -903,11 +903,13 @@ func leaderCallback(whoAmI string, ctx context.Context, c *etcdapi.EtcdClient) {
 func main() {
 	configPath := flag.String("conf", "/etc/fastblock/monitor.json", "path of the config file")
 	id := flag.String("id", "", "name of the monitor")
+	max_core := flag.Int("max-core", 1, "max cpu core can be used")
 	flag.Parse()
 
 	if *id == "" {
 		panic("Missing parameter id")
 	}
+	runtime.GOMAXPROCS(*max_core)
 	config.SetupConfig(*configPath, *id)
 
 	// Init the only logger.
