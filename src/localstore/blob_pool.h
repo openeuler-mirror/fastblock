@@ -20,6 +20,7 @@
 #include <spdk/thread.h>
 #include <functional>
 #include <vector>
+#include <utility>
 
 using pool_create_complete = std::function<void (void *arg, int objerrno)>;
 
@@ -65,7 +66,7 @@ public:
         SPDK_ERRLOG("blob_pool: illegal call get. pool have no free blob!\n");
         return {};
       }
-      
+
       fb_blob ret = _blobs.back();
       _blobs.pop_back();
     //   SPDK_NOTICELOG("blob_pool: have %lu blob!\n", _blobs.size());
@@ -137,7 +138,7 @@ private:
         spdk_blob_close(ctx->blob.blob, blob_close_complete, ctx);
         return;
       }
-      
+
       SPDK_NOTICELOG("blob_pool: delete all success!\n");
       ctx->cb_fn(ctx->arg, 0);
       delete ctx;
@@ -167,9 +168,9 @@ private:
   bool need_alloc_blob() { return _blobs.size() < min_blob_num; }
 
   void allocate_blob(uint64_t number, pool_create_complete cb_fn, void* arg) {
-      if (is_working()) { 
+      if (is_working()) {
           cb_fn(arg, -EBUSY);
-          return; 
+          return;
       }
 
       if (number == 0) {
@@ -239,8 +240,8 @@ private:
           ctx->pool->create_blob(ctx);
           return;
       }
-      
-    //   SPDK_NOTICELOG("blob_pool: alloc all success. idx:%lu max:%lu pool size:%lu\n", 
+
+    //   SPDK_NOTICELOG("blob_pool: alloc all success. idx:%lu max:%lu pool size:%lu\n",
     //                   ctx->idx, ctx->max, ctx->pool->_blobs.size());
       ctx->pool->exit_working();
       ctx->cb_fn(ctx->arg, 0);
@@ -258,6 +259,6 @@ private:
   struct spdk_blob_store* _bs;
   std::vector<fb_blob>    _blobs;
 
-  struct spdk_poller *_worker_poller; 
+  struct spdk_poller *_worker_poller;
   bool                _working = false;
 };
