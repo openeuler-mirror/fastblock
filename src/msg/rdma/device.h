@@ -120,6 +120,8 @@ public:
         ::ibv_async_event evt{};
         for (size_t i{0}; i < _contexts.size(); ++i) {
             ret = ::ibv_get_async_event(_contexts[i].context, &evt);
+            // In non-blocking mode: -1 means there isn't any async event to read
+            if (ret == -1) { continue; }
             if (ret) {
                 SPDK_ERRLOG_EX("ERROR: ibv_get_async_event() on '%s' return %d\n",
                   device_name(_contexts[i].device).c_str(), ret);

@@ -280,7 +280,7 @@ public:
         if (working) { return false; }
 
         if (need_checkpoint()) {
-            SPDK_DEBUGLOG_EX(kvlog, "need_checkpoint. op_length:%lu rblob->remain:%lu\n", 
+            SPDK_DEBUGLOG_EX(kvlog, "need_checkpoint. op_length:%lu rblob->remain:%lu\n",
                         op_length, rblob->remain());
             // save checkpoint之后commit
             save_checkpoint(
@@ -291,7 +291,7 @@ public:
               this);
             return true;
         } else if (need_commit()) {
-            SPDK_DEBUGLOG_EX(kvlog, "need_commit. op_length:%lu op_size:%lu rblob->remain:%lu\n", 
+            SPDK_DEBUGLOG_EX(kvlog, "need_commit. op_length:%lu op_size:%lu rblob->remain:%lu\n",
                         op_length, op_log.size(), rblob->remain());
             // 如果不需要save checkpoint，就判断是否需要commit
             commit([](void *, int){ }, nullptr);
@@ -505,7 +505,7 @@ public:
 
     static void replay_one_batch_done(void* arg, rblob_rw_result, int rberrno) {
         struct kvstore_read_ctx* ctx = (struct kvstore_read_ctx*)arg;
-        uint64_t data_size;
+        uint64_t data_size{0};
 
         if (rberrno) {
             SPDK_ERRLOG_EX("kv replay_one_batch fail. start:%lu len:%lu error:%s\n", ctx->start_pos, ctx->len, spdk_strerror(rberrno));
@@ -538,7 +538,7 @@ public:
         // 如果还没有 replay 到终点，就继续 replay
         auto replayed_pos = ctx->start_pos + ctx->len;
         // bool finished = replayed_pos >= ctx->kvloader->end;
-        // SPDK_DEBUGLOG_EX(kvlog, "kv table size:%lu. replayed_pos:%lu end:%lu finish?%d.\n", 
+        // SPDK_DEBUGLOG_EX(kvlog, "kv table size:%lu. replayed_pos:%lu end:%lu finish?%d.\n",
         //         ctx->kvs->table.size(), replayed_pos, ctx->kvloader->end, finished);
         if (!finished) {
             ctx->start_pos = replayed_pos;
@@ -572,7 +572,7 @@ public:
  * 先load_checkpoint，然后replay所有的op。
  */
 inline void kvstore::replay(kvstore_rw_complete cb_fn, void* arg) {
-    /* 
+    /*
      * 删除kv_checkpoint的_new_blob。
      * 当save_checkpoint没有结束时遇到osd掉线，会导致kv_checkpoint的_new_blob是不完整的，因此需要删除，
      * 之后会重新触发save_checkpoint
@@ -580,8 +580,8 @@ inline void kvstore::replay(kvstore_rw_complete cb_fn, void* arg) {
     checkpoint.delete_new_blob(
       [this, cb_fn = std::move(cb_fn)](void *arg, int kverrno){
         if(kverrno){
-          cb_fn(arg, kverrno); 
-          return; 
+          cb_fn(arg, kverrno);
+          return;
         }
 
         auto kvloader = new kvstore_loader(this);
@@ -590,13 +590,13 @@ inline void kvstore::replay(kvstore_rw_complete cb_fn, void* arg) {
           [cb_fn = std::move(cb_fn), arg] (void *arg1, int kverrno) {
               kvstore_loader* kvloader = (struct kvstore_loader*)arg1;
               if(kverrno){
-                  cb_fn(arg, kverrno); 
+                  cb_fn(arg, kverrno);
                   delete kvloader;
                   return;
               }
               kvloader->replay_one_batch(std::move(cb_fn), arg);
-          }, 
-          kvloader); 
+          },
+          kvloader);
 
       },
       arg);
@@ -610,6 +610,6 @@ void make_kvstore(struct spdk_blob_store *bs,
                   make_kvs_complete cb_fn, void* arg);
 
 void load_kvstore(spdk_blob_id blob_id, spdk_blob_id checkpoint_blob_id,
-                  spdk_blob_id new_checkpoint_blob_id, struct spdk_blob_store *bs, 
+                  spdk_blob_id new_checkpoint_blob_id, struct spdk_blob_store *bs,
                   struct spdk_io_channel *channel,
                   make_kvs_complete cb_fn, void* arg);

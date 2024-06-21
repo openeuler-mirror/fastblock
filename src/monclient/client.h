@@ -543,6 +543,7 @@ private:
 
     static constexpr size_t _buffer_size{65535};
     static constexpr uint64_t _poll_period_us{3000000};
+    static constexpr uint64_t _meta_length{sizeof(uint64_t)};
 };
 
 }
