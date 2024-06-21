@@ -1600,11 +1600,12 @@ static int periodic_func(void* arg){
     return 0;
 }
 
-void raft_server_t::start_raft_timer(){
+void raft_server_t::start_raft_timer(int raft_heartbeat_period_time_msec, 
+  int  raft_lease_time_msec, int  raft_election_timeout_msec){
     _raft_timer = SPDK_POLLER_REGISTER(periodic_func, this, TIMER_PERIOD_MSEC * 1000);
-	raft_set_election_timeout(ELECTION_TIMER_PERIOD_MSEC);
-    raft_set_lease_maintenance_grace(LEASE_MAINTENANCE_GRACE);
-    raft_set_heartbeat_timeout(HEARTBEAT_TIMER_PERIOD_MSEC);
+    raft_set_election_timeout(raft_election_timeout_msec);
+    raft_set_lease_maintenance_grace(raft_lease_time_msec);
+    raft_set_heartbeat_timeout(raft_heartbeat_period_time_msec); 
     start_timed_task();
 }
 
@@ -2471,7 +2472,8 @@ raft_server_t::~raft_server_t()
 {
 }
 
-void raft_server_t::init(std::vector<utils::osd_info_t>&& node_list, raft_node_id_t current_node){
+void raft_server_t::init(std::vector<utils::osd_info_t>&& node_list, raft_node_id_t current_node,
+  int raft_heartbeat_period_time_msec, int  raft_lease_time_msec, int  raft_election_timeout_msec){
     //这里需要加载log 和 kv
 
     raft_set_nodeid(current_node);
@@ -2483,7 +2485,7 @@ void raft_server_t::init(std::vector<utils::osd_info_t>&& node_list, raft_node_i
     }
     _configuration_manager.add_node_configuration(std::move(configuration));
     _nodes_stat.update_with_node_configuration(_configuration_manager.get_last_node_configuration());
-    start_raft_timer();
+    start_raft_timer(raft_heartbeat_period_time_msec, raft_lease_time_msec, raft_election_timeout_msec);
     raft_set_op_state(raft_op_state::RAFT_ACTIVE);
 }
 
@@ -2651,8 +2653,11 @@ void raft_server_t::raft_step_down(raft_index_t commit_index){
     raft_send_timeout_now(next_candidate_id);
 }
 
-void raft_server_t::load(raft_node_id_t current_node, raft_complete cb_fn, void *arg){
-    auto log_load_done = [this, current_node, cb_fn = std::move(cb_fn)](void *arg, int rerrno){
+void raft_server_t::load(raft_node_id_t current_node, raft_complete cb_fn, void *arg,
+  int raft_heartbeat_period_time_msec, int  raft_lease_time_msec, int  raft_election_timeout_msec){
+
+    auto log_load_done = [this, current_node, cb_fn = std::move(cb_fn), 
+      raft_heartbeat_period_time_msec, raft_lease_time_msec, raft_election_timeout_msec](void *arg, int rerrno){
         if(rerrno != 0){
             cb_fn(arg, rerrno);
             return;
@@ -2686,7 +2691,7 @@ void raft_server_t::load(raft_node_id_t current_node, raft_complete cb_fn, void 
                 _commit_idx %lu _last_applied_idx %ld _node_id %d\n", 
                 _pool_id, _pg_id, _node_id, _current_idx, _current_term, _voted_for, _commit_idx, 
                 _machine->get_last_applied_idx(), _node_id);
-        start_raft_timer();
+        start_raft_timer(raft_heartbeat_period_time_msec, raft_lease_time_msec, raft_election_timeout_msec);
         // raft_set_op_state(raft_op_state::RAFT_ACTIVE);
         cb_fn(arg, 0);
     };

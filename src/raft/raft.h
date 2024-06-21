@@ -35,9 +35,6 @@
 
 constexpr int32_t TIMER_PERIOD_MSEC = 500;    //毫秒
 constexpr int32_t HEARTBEAT_TIMER_INTERVAL_MSEC = 500;   //毫秒
-constexpr int32_t HEARTBEAT_TIMER_PERIOD_MSEC = 2 * HEARTBEAT_TIMER_INTERVAL_MSEC;   //毫秒
-constexpr int32_t ELECTION_TIMER_PERIOD_MSEC = 2 * HEARTBEAT_TIMER_PERIOD_MSEC; //毫秒
-constexpr int32_t LEASE_MAINTENANCE_GRACE = HEARTBEAT_TIMER_PERIOD_MSEC;   //毫秒
 
 constexpr int32_t SNAPSHOT_MAX_CHUNK = 1;
 constexpr int32_t SNAPSHOT_MAX_CONCURRENT = 1;
@@ -615,7 +612,7 @@ public:
     }
 
 
-    void start_raft_timer();
+    void start_raft_timer(int raft_heartbeat_period_time_msec, int  raft_lease_time_msec, int  raft_election_timeout_msec);
 
     void for_each_node(each_node_func&& f)  {
         _nodes_stat.for_all_node(std::move(f));
@@ -649,7 +646,8 @@ public:
         return _op_state;
     }
 
-    void init(std::vector<utils::osd_info_t>&& node_list, raft_node_id_t current_node);
+    void init(std::vector<utils::osd_info_t>&& node_list, raft_node_id_t current_node, 
+      int raft_heartbeat_period_time_msec, int  raft_lease_time_msec, int  raft_election_timeout_msec);
 
     //添加单个成员
     void add_raft_membership(const raft_node_info& node, utils::context* complete);
@@ -812,7 +810,8 @@ public:
         return _configuration_manager;
     }
 
-    void load(raft_node_id_t current_node, raft_complete cb_fn, void *arg);
+    void load(raft_node_id_t current_node, raft_complete cb_fn, void *arg, 
+      int raft_heartbeat_period_time_msec, int  raft_lease_time_msec, int  raft_election_timeout_msec);
     void set_last_applied_idx_after_load(raft_index_t idx){
         _machine->set_last_applied_idx(idx);
         _log->set_trim_index(idx);
