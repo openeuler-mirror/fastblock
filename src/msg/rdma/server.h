@@ -1061,11 +1061,20 @@ public:
           ::ibv_get_device_name(context->device));
 
         switch (event->event_type) {
+        case ::IBV_EVENT_CQ_ERR:
+            SPDK_ERRLOG_EX(
+              "ERROR: Received ib event(IBV_EVENT_QP_FATAL: %s) on %s, cq is %p, "
+              "may the opts 'msg_rdma_cq_num_entries' is too small",
+              ::ibv_event_type_str(event->event_type),
+              ::ibv_get_device_name(context->device),
+              event->element.cq);
+            break;
         case ::IBV_EVENT_QP_FATAL:
             SPDK_ERRLOG_EX(
-              "received ib event(%s) on %s\n",
+              "ERROR: Received ib event(IBV_EVENT_QP_FATAL: %s) on %s, qp is %p\n",
               ::ibv_event_type_str(event->event_type),
-              ::ibv_get_device_name(context->device));
+              ::ibv_get_device_name(context->device),
+              event->element.qp);
             break;
         case ::IBV_EVENT_QP_LAST_WQE_REACHED:
             // 在 SRQ 上才会有的事件，我们暂时没用到
@@ -1089,7 +1098,6 @@ public:
 	    case ::IBV_EVENT_PATH_MIG:
 	    case ::IBV_EVENT_PATH_MIG_ERR:
         case ::IBV_EVENT_WQ_FATAL:
-        case ::IBV_EVENT_CQ_ERR:
 	    case ::IBV_EVENT_DEVICE_FATAL:
 	    case ::IBV_EVENT_PORT_ACTIVE:
 	    case ::IBV_EVENT_PORT_ERR:
