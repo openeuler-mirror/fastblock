@@ -118,7 +118,9 @@ function generateConfigAndStartMonitor() {
     mkdir -p /var/log/fastblock
     mkdir -p /etc/fastblock
     tmpConfFile=$(mktemp)
-    echo '{}' | jq '.' > $tmpConfFile
+
+    # default msg_rdma_cq_num_entries is 16, make it larger if you encounter CQ errors
+    echo '{"msg_rdma_cq_num_entries": 1024}' | jq '.' > $tmpConfFile
 
     rm -rf /var/lib/fastblock/mon_"$_mons"
     jq '.monitors |= ['\"$_mons\"']' $tmpConfFile > tmp_file.json && mv tmp_file.json $tmpConfFile
