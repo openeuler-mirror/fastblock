@@ -23,6 +23,7 @@
 #include "rpc/server.h"
 #include "localstore/blob_manager.h"
 #include "localstore/storage_manager.h"
+#include "data_statistics.h"
 
 #include <spdk/string.h>
 
@@ -203,6 +204,7 @@ block_parse_arg(int ch, char *arg)
 }
 
 static void service_init(partition_manager* pm, server_t *server){
+    g_data_statistics = std::make_shared<data_statistics>();
 	global_raft_service = std::make_unique<::raft_service<::partition_manager>>(global_pm.get());
     global_osd_service = std::make_unique<::osd_service>(global_pm.get(), monitor_client);
 
@@ -229,15 +231,16 @@ void start_monitor(server_t* ctx) {
     monitor_client->start();
     monitor::client::on_response_callback_type cb =
       [] (const monitor::client::response_status s, monitor::client::request_context* req_ctx) {
-          int result = s;
-          if (result != err::E_SUCCESS) {
-              SPDK_ERRLOG_EX("ERROR: OSD boot failed: %s\n", err::string_status(result));
-              osd_exit_code = result;
-              std::raise(SIGINT);
-              return;
-          }
+            int result = s;
+            if (result != err::E_SUCCESS) {
+                SPDK_ERRLOG_EX("ERROR: OSD boot failed: %s\n", err::string_status(result));
+                osd_exit_code = result;
+                std::raise(SIGINT);
+                return;
+            }
 
-          req_ctx->this_client->start_cluster_map_poller();
+            req_ctx->this_client->start_cluster_map_poller();
+            g_data_statistics->set_mon_client(monitor_client);
       };
 
     monitor_client->emplace_osd_boot_request(

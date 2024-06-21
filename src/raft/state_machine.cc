@@ -103,6 +103,10 @@ bool state_machine::linearization() {
     return false;
 }
 
-std::string state_machine::get_pg_name(){
+std::string &state_machine::get_pg_name(){
     return _raft->raft_get_pg_name();
+}
+
+bool state_machine::raft_is_leader(){
+    return _raft->raft_is_leader();
 }

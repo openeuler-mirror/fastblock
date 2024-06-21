@@ -16,13 +16,6 @@
 #include "rpc/osd_msg.pb.h"
 #include "utils/log.h"
 
-enum class operation_type : uint16_t {
-  NONE = 0,
-  READ,
-  WRITE,
-  DELETE
-};
-
 // Allows READ-READ, or WRITE-WRITE.
 // But exclusive on different op_type, like READ-WRITE or WRITE-READ.
 // Thus, two or more WRITE can be replicated without blocking.
@@ -158,7 +151,7 @@ public:
         SPDK_INFOLOG_EX(osd, "lock_manager initialized to %d\n", _disable_flag);
     }
 
-    void lock(const std::string &key, const operation_type type, utils::context *complete)
+    void lock(const std::string &key, const utils::operation_type type, utils::context *complete)
     {
         if (_disable_flag)
         {
@@ -178,7 +171,7 @@ public:
         lock_ptr->lock(type, complete);
     }
 
-    auto unlock(const std::string& key, const operation_type type) {
+    auto unlock(const std::string& key, const utils::operation_type type) {
         if (_disable_flag) {
             return;
         }
@@ -235,7 +228,7 @@ public:
     void read_and_wait(const osd::read_request* request, osd::read_reply* response, google::protobuf::Closure* done);
     void delete_and_wait(const osd::delete_request* request, osd::delete_reply* response, google::protobuf::Closure* done);
 
-    auto unlock(const std::string& key, const operation_type type){
+    auto unlock(const std::string& key, const utils::operation_type type){
         return _object_rw_lock.unlock(key, type);
     }
 
@@ -245,5 +238,5 @@ public:
 
     void destroy_objects(object_complete cb_fn, void *arg);
 private:
-    lock_manager<op_type_excl_lock<operation_type>>   _object_rw_lock;
+    lock_manager<op_type_excl_lock<utils::operation_type>>   _object_rw_lock;
 };

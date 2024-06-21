@@ -10,6 +10,7 @@
  */
 
 #include "osd_stm.h"
+#include "data_statistics.h"
 #include "raft/raft.h"
 #include "rpc/osd_msg.pb.h"
 #include "utils/utils.h"
@@ -48,7 +49,7 @@ struct write_obj_ctx{
 
 void write_obj_done(void *arg, int obj_errno){
     write_obj_ctx * ctx = (write_obj_ctx *)arg;
-    ctx->stm->unlock(ctx->obj_name, operation_type::WRITE);
+    ctx->stm->unlock(ctx->obj_name, utils::operation_type::WRITE);
     ctx->complete->complete(obj_errno);
     spdk_free(ctx->buf);
     delete ctx;
@@ -69,7 +70,7 @@ void osd_stm::write_obj(const std::string& obj_name, uint64_t offset, const std:
 void osd_stm::delete_obj(const std::string& obj_name, utils::context *complete){
     //delete object
 
-    _object_rw_lock.unlock(obj_name, operation_type::DELETE);
+    _object_rw_lock.unlock(obj_name, utils::operation_type::DELETE);
     complete->complete(err::E_SUCCESS);
 }
 
@@ -90,25 +91,33 @@ struct osd_service_complete : public utils::context{
     google::protobuf::Closure* done;
     osd_stm* stm;
     std::string obj_name;
+    uint64_t length;
 
-    osd_service_complete(osd_stm* _stm, std::string _obj_name, rsp_type* _response, google::protobuf::Closure* _done)
+    osd_service_complete(osd_stm* _stm, std::string _obj_name, 
+            uint64_t _length, rsp_type* _response, google::protobuf::Closure* _done)
     : response(_response)
     , done(_done)
     , stm(_stm)
-    , obj_name(std::move(_obj_name)) {}
+    , obj_name(std::move(_obj_name))
+    , length(_length){}
 
     void finish(int r) override {
         SPDK_DEBUGLOG_EX(osd, "process osd service done.\n");
         if(r != 0){
             SPDK_ERRLOG_EX("process osd service failed: %d\n", r);
             if(std::is_same_v<type, osd::write_reply>){
-                stm->unlock(obj_name, operation_type::WRITE);
+                stm->unlock(obj_name, utils::operation_type::WRITE);
             }else if(std::is_same_v<type, osd::delete_reply>){
-                stm->unlock(obj_name, operation_type::DELETE);
+                stm->unlock(obj_name, utils::operation_type::DELETE);
             }
         }
         if(std::is_same_v<type, osd::read_reply>){
-            stm->unlock(obj_name, operation_type::READ);
+            stm->unlock(obj_name, utils::operation_type::READ);
+            if(r == 0 && stm->raft_is_leader())
+                g_data_statistics->add_data(utils::operation_type::READ, stm->get_pg_name(), length);
+        } else if(std::is_same_v<type, osd::write_reply>){
+            if(r == 0 && stm->raft_is_leader())
+                g_data_statistics->add_data(utils::operation_type::WRITE, stm->get_pg_name(), length);
         }
         response->set_state(r);
         done->Run();
@@ -133,7 +142,8 @@ void osd_stm::write_and_wait(
             google::protobuf::Closure* done){
 
     osd_service_complete<osd::write_reply> *write_complete =
-                    new osd_service_complete<osd::write_reply>(this, request->object_name(), response, done);
+      new osd_service_complete<osd::write_reply>(this, request->object_name(), 
+        request->data().size(), response, done);
 
     auto write_func = [this, request, write_complete](){
         osd::write_cmd cmd;
@@ -155,7 +165,7 @@ void osd_stm::write_and_wait(
     };
 
     lock_complete *complete = new lock_complete(std::move(write_func));
-    _object_rw_lock.lock(request->object_name(), operation_type::WRITE, complete);
+    _object_rw_lock.lock(request->object_name(), utils::operation_type::WRITE, complete);
 }
 
 struct read_obj_ctx{
@@ -181,7 +191,8 @@ void osd_stm::read_and_wait(
             google::protobuf::Closure* done){
 
     osd_service_complete<osd::read_reply> *read_complete =
-                    new osd_service_complete<osd::read_reply>(this, request->object_name(), response, done);
+      new osd_service_complete<osd::read_reply>(this, request->object_name(), 
+        request->length(), response, done);
 
     auto read_func = [this, request, response, read_complete](){
         //Whether to need to wait until first commit applied in the new term？ todo
@@ -207,7 +218,7 @@ void osd_stm::read_and_wait(
     };
 
     lock_complete *complete = new lock_complete(std::move(read_func));
-    _object_rw_lock.lock(request->object_name(), operation_type::READ, complete);
+    _object_rw_lock.lock(request->object_name(), utils::operation_type::READ, complete);
 }
 
 void osd_stm::delete_and_wait(
@@ -215,7 +226,8 @@ void osd_stm::delete_and_wait(
             osd::delete_reply* response,
             google::protobuf::Closure* done){
     osd_service_complete<osd::delete_reply> *delete_complete =
-                    new osd_service_complete<osd::delete_reply>(this, request->object_name(), response, done);
+      new osd_service_complete<osd::delete_reply>(this, request->object_name(), 0, 
+        response, done);
 
     auto delete_func = [this, request, delete_complete](){
         osd::delete_cmd cmd;
@@ -234,7 +246,7 @@ void osd_stm::delete_and_wait(
     };
 
     lock_complete *complete = new lock_complete(std::move(delete_func));
-    _object_rw_lock.lock(request->object_name(), operation_type::DELETE, complete);
+    _object_rw_lock.lock(request->object_name(), utils::operation_type::DELETE, complete);
 }
 
 void osd_stm::destroy_objects(object_complete cb_fn, void *arg){

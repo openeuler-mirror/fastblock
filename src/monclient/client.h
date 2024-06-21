@@ -460,6 +460,9 @@ public:
       uint64_t pool_id,
       uint64_t pg_id,
       std::vector<int32_t> osd_list);
+
+    void send_data_statistics_request(
+      std::map<std::string, utils::cluster_io> &ios);
 private:
 
     template<typename ResponseType>

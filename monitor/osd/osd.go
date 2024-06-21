@@ -19,6 +19,7 @@ import (
 	"monitor/msg"
 	"net"
 	"time"
+	"sync"
 )
 
 type OSDID int
@@ -82,6 +83,18 @@ type ClusterState struct {
 	NoOut      bool   `json:"noOut"`
 }
 var  CState ClusterState
+
+type clusterIos struct {
+	mutex       sync.Mutex
+	read_ios    uint64
+	read_bytes  uint64
+	write_ios   uint64
+	write_bytes uint64
+	objects     int64
+	start       time.Time
+} 
+
+var csIos clusterIos
 
 type UnprocessedEvent struct {
 	//在设置NoReblance期间是否有osd由out转为in
@@ -652,4 +665,89 @@ func CheckOsdHeartbeat(ctx context.Context, client *etcdapi.EtcdClient) {
 			log.Info(ctx, "successfully update osdmap after heartbeat change")
 		}
 	}
+}
+
+func getOsdNums() (int32, int32, int32){
+	osdNum := 0
+	osdUpNum := 0
+	osdInNum := 0
+
+	osdNum = len(AllOSDInfo.Osdinfo)
+	for _, osd := range AllOSDInfo.Osdinfo {
+		if osd.IsUp {
+			osdUpNum++
+		}
+		if osd.IsIn {
+			osdInNum++
+		}
+	}
+	return int32(osdNum), int32(osdUpNum), int32(osdInNum)
+}
+
+func PorcessGetClusterStatusMessage(ctx context.Context, client *etcdapi.EtcdClient) (*msg.GetClusterStatusResponse) {
+	cluster := &msg.GetClusterStatusResponse{}
+	states := &msg.ClusterStates{
+		NoReblance: CState.NoReblance,
+		NoOut: CState.NoOut,
+	}
+	cluster.ClusterState = states
+	for i := 0; i < len(config.CONFIG.Monitors); i++ {
+		cluster.MonName = append(cluster.MonName, config.CONFIG.Monitors[i])
+	}
+
+	cluster.OsdNum, cluster.UpOsdNum, cluster.InOsdNum = getOsdNums()
+	poolnum, pgnum, pgstat := GetPoolPgNum()
+	cluster.PoolNum = poolnum 
+	cluster.PgNum = pgnum
+	cluster.PgState = pgstat
+
+	csIos.mutex.Lock()
+	cur := time.Now()
+	ms := uint64(cur.Sub(csIos.start).Milliseconds())
+
+	// log.Warn(ctx, "ms ", ms)
+	cluster.ObjectNum = 0
+	if ms == 0 {
+		cluster.CliReadSpeed = 0
+		cluster.CliWriteSpeed = 0
+		cluster.CliReadIops = 0
+		cluster.CliWriteIops = 0
+	} else {
+		cluster.CliReadSpeed = csIos.read_bytes * 1000 / ms
+		cluster.CliWriteSpeed = csIos.write_bytes * 1000 / ms
+		cluster.CliReadIops = csIos.read_ios * 1000 / ms
+		cluster.CliWriteIops = csIos.write_ios * 1000 / ms		
+	}
+	cluster.RecoverySpeed = 0
+	cluster.RecoveryObjPs = 0
+	csIos.mutex.Unlock()
+	return cluster
+}
+
+func UpdateClusterIos(ctx context.Context, client *etcdapi.EtcdClient) {
+	clusterInterval := 2 * time.Second
+	clusterTicker := time.NewTicker(clusterInterval)
+	for range clusterTicker.C {
+		csIos.mutex.Lock()
+		csIos.read_ios    = 0
+		csIos.read_bytes  = 0
+		csIos.write_ios   = 0
+		csIos.write_bytes = 0
+		csIos.start = time.Now()
+
+		csIos.mutex.Unlock()
+	}
+}
+
+func PorcessDataStatisticsMessage(ctx context.Context, client *etcdapi.EtcdClient, data *map[string]*msg.DataStatistics) bool {
+	csIos.mutex.Lock()
+	for _, statistics := range *data {
+		csIos.read_ios     += statistics.GetReadIos()
+		csIos.read_bytes   += statistics.GetReadBytes()
+		csIos.write_ios    += statistics.GetWriteIos()
+		csIos.write_bytes  += statistics.GetWriteBytes()
+		csIos.objects      += statistics.GetObjects()
+	}
+	csIos.mutex.Unlock()
+	return true
 }

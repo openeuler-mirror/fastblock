@@ -13,6 +13,7 @@
 
 #include <random>
 #include <string>
+#include <functional>
 
 #include "spdk/env.h"
 #include "spdk/thread.h"
@@ -154,5 +155,20 @@ static uint64_t  get_spdk_thread_id(){
         return spdk_thread_get_id(thread);
     return 0;
 }
+
+enum class operation_type : uint16_t {
+  NONE = 0,
+  READ,
+  WRITE,
+  DELETE
+};
+
+struct cluster_io{
+    uint64_t read_ios;
+    uint64_t read_bytes;
+    uint64_t write_ios;
+    uint64_t write_bytes;  
+    int64_t  objects;  
+};
 
 }
