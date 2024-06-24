@@ -256,9 +256,10 @@ static void pm_init(void *arg){
     ::spdk_cpuset cpumask{};
     ::spdk_cpuset_zero(&cpumask);
     ::spdk_cpuset_set_cpu(&cpumask, core_no, true);
+    auto sockid = ::spdk_env_get_socket_id(core_no);
     auto opts = msg::rdma::client::make_options(server->pt);
     SPDK_NOTICELOG_EX("Start rpc client on core %d\n", core_no);
-    global_conn_cache = std::make_shared<::connect_cache>(&cpumask, opts);
+    global_conn_cache = std::make_shared<::connect_cache>(&cpumask, opts, sockid);
     global_pm = std::make_shared<partition_manager>(server->node_id, global_conn_cache,
       server->raft_heartbeat_period_time_msec, server->raft_lease_time_msec, server->raft_election_timeout_msec);
     monitor::client::on_new_pg_callback_type pg_map_cb =
@@ -552,8 +553,8 @@ static void remove_bdev_json_file(){
 static void
 block_started(void *arg)
 {
-    if (::spdk_env_get_core_count() < 2) {
-        SPDK_ERRLOG_EX("ERROR: At least 2 cores are required for the osd\n");
+    if (::spdk_env_get_core_count() != 2) {
+        SPDK_ERRLOG_EX("ERROR: 2 cores are required for the osd\n");
         ::exit(-1);
     }
 

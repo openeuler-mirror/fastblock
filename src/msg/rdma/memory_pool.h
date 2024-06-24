@@ -45,7 +45,8 @@ public:
       std::string name,
       const size_t capacity,
       const size_t element_size,
-      const size_t cache_size = SPDK_MEMPOOL_DEFAULT_CACHE_SIZE)
+      const size_t cache_size = SPDK_MEMPOOL_DEFAULT_CACHE_SIZE,
+      const int sock_id = SPDK_ENV_SOCKET_ID_ANY)
       : _capacity{capacity}
       , _element_size{element_size}
       , _name{name} {
@@ -54,7 +55,7 @@ public:
           _capacity,
           _element_size,
           cache_size,
-          SPDK_ENV_SOCKET_ID_ANY);
+          sock_id);
 
         if (not _pool) {
             throw std::runtime_error{FMT_3(
@@ -67,7 +68,7 @@ public:
           _capacity,
           sizeof(net_context),
           cache_size,
-          SPDK_ENV_SOCKET_ID_ANY);
+          sock_id);
 
         if (not _net_contexts) {
             throw std::runtime_error{FMT_3(

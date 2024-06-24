@@ -24,7 +24,11 @@ public:
         ::spdk_cpuset cpumask{};
         ::spdk_cpuset_zero(&cpumask);
         ::spdk_cpuset_set_cpu(&cpumask, core_no, true);
-        _transport = std::make_shared<msg::rdma::server>(FMT_1("rpc_srv_%1%", utils::random_string(3)), cpumask, srv_opts);
+        auto sockid = ::spdk_env_get_socket_id(core_no);
+        _transport = std::make_shared<msg::rdma::server>(
+          FMT_1("rpc_srv_%1%",
+          utils::random_string(3)),
+          cpumask, srv_opts, sockid);
         _transport->start();
     }
 

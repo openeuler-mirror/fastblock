@@ -53,7 +53,7 @@ private:
         std::unique_ptr<memory_pool<::ibv_recv_wr>> recv_pool{nullptr};
         std::unique_ptr<memory_pool<::ibv_recv_wr>::net_context*[]> recv_ctx{nullptr};
         std::unordered_map<work_request_id::value_type, memory_pool<::ibv_recv_wr>::net_context*> recv_ctx_map{};
-        std::unordered_map<transport_data::correlation_index_type, std::shared_ptr<rpc_task>> rpc_tasks{};
+        std::unordered_map<transport_data::correlation_index_type, rpc_task*> rpc_tasks{};
         std::list<std::unique_ptr<::ibv_wc>> cqe_list{};
         bool should_signal{false};
         int32_t onflight_send_wr{0};
@@ -73,6 +73,7 @@ private:
         memory_pool<::ibv_recv_wr>::net_context* recv_ctx{nullptr};
         std::optional<status> reply_status{};
         std::chrono::system_clock::time_point start_at{std::chrono::system_clock::now()};
+        server* this_server{nullptr};
     };
 
 public:
@@ -169,7 +170,7 @@ public:
 
     server() = delete;
 
-    server(std::string thread_name, ::spdk_cpuset cpumask, std::shared_ptr<options> opts)
+    server(std::string thread_name, ::spdk_cpuset cpumask, std::shared_ptr<options> opts, int sock_id = SPDK_ENV_SOCKET_ID_ANY)
       : _cpumask{cpumask}
       , _thread{::spdk_thread_create(thread_name.c_str(), &_cpumask)}
       , _opts{std::move(opts)}
@@ -178,15 +179,16 @@ public:
       , _cq{std::make_shared<completion_queue>(_opts->ep->cq_num_entries, *_pd)}
       , _listener{nullptr}
       , _wcs{std::make_unique<::ibv_wc[]>(_opts->poll_cq_batch_size)}
+      , _sock_id{sock_id}
       , _meta_pool{
         std::make_shared<memory_pool<::ibv_send_wr>>(
         _pd->value(), "srv_meta",
         _opts->metadata_memory_pool_capacity,
-        _opts->metadata_memory_pool_element_size, 0)}
+        _opts->metadata_memory_pool_element_size, 0, _sock_id)}
       , _data_pool{std::make_shared<memory_pool<::ibv_send_wr>>(
         _pd->value(), "srv_data",
         _opts->data_memory_pool_capacity,
-        _opts->data_memory_pool_element_size, 0)} {
+        _opts->data_memory_pool_element_size, 0, _sock_id)} {
         auto ipv4_address = _dev->query_ipv4(
           _opts->ep->device_name,
           _opts->ep->device_port,
@@ -351,7 +353,7 @@ private:
           std::make_unique<memory_pool<::ibv_recv_wr>>(
             pd, FMT_1("srv_recv_%1%", utils::random_string(5)),
             _opts->per_post_recv_num,
-            _opts->metadata_memory_pool_element_size, 0));
+            _opts->metadata_memory_pool_element_size, 0, _sock_id));
         per_post_recv(conn.get());
 
         _connections.emplace(conn->sock->id(), conn);
@@ -470,30 +472,41 @@ private:
     std::unique_ptr<transport_data> make_response_data(rpc_task* task, status s) {
         task->reply_status = s;
         if (s != status::success) {
+            SPDK_DEBUGLOG(msg, "task id is %d, status is not success\n", task->id);
             return std::make_unique<transport_data>(
               task->id, reply_meta_size, _meta_pool, _data_pool);
         }
 
         auto response_size = reply_meta_size + task->response_body->ByteSizeLong();
+        SPDK_DEBUGLOG(msg, "task id is %d, status is success\n", task->id);
         return std::make_unique<transport_data>(
           task->id, response_size, _meta_pool, _data_pool);
     }
 
     void on_response(rpc_task* task) {
-        if (task->rpc_ctrlr->Failed()) {
-            SPDK_ERRLOG_EX("ERROR: Exec rpc failed: %s\n", task->rpc_ctrlr->ErrorText().c_str());
-            task->response_data = make_response_data(task, status::server_error);
-            return;
+        auto rc = ::spdk_thread_send_msg(_thread, on_rpc_done, task);
+        if (rc != 0) {
+            SPDK_ERRLOG_EX("send msg failed, rc is %d, task id is %d\n", rc, task->id);
+            throw std::runtime_error{"send msg failed"};
         }
 
-        SPDK_INFOLOG_EX(
-          msg,
-          "Making rpc response body of request id %d\n",
-          task->id);
-        task->response_data = make_response_data(task, status::success);
+        // if (task->rpc_ctrlr->Failed()) {
+        //     SPDK_ERRLOG_EX("ERROR: Exec rpc failed: %s\n", task->rpc_ctrlr->ErrorText().c_str());
+        //     task->response_data = make_response_data(task, status::server_error);
+        //     return;
+        // }
+
+        // SPDK_INFOLOG_EX(
+        //   msg,
+        //   "Making rpc response body of request id %d\n",
+        //   task->id);
+        // task->response_data = make_response_data(task, status::success);
+        // if (not task->request_data.get()) {
+        //     SPDK_ERRLOG("make_response_data() failed, task id is %d\n", task->id);
+        // }
     }
 
-    void dispatch_method(request_meta* meta, rpc_task* task, bool is_inlined = false) {
+    void dispatch_method(request_meta* meta, std::unique_ptr<rpc_task> task, bool is_inlined = false) {
         std::string_view service_name{meta->service_name, meta->service_name_size};
         std::optional<status> err_status{std::nullopt};
         auto service_it = _services.find(service_name);
@@ -536,7 +549,8 @@ private:
                 }
             }
             task->request_data.reset(nullptr);
-            task->response_data = make_response_data(task, *err_status);
+            task->response_data = make_response_data(task.get(), *err_status);
+            _reply_task_list.push_back(std::move(task));
             return;
         }
 
@@ -565,21 +579,21 @@ private:
         task->rpc_ctrlr = std::make_unique<rpc_controller>();
         if (not is_parsed) {
             SPDK_ERRLOG_EX("ERROR: Unserialize request body failed\n");
-            task->response_data = std::make_unique<transport_data>(
-              task->id, reply_meta_size,
-              _meta_pool, _data_pool);
-            task->response_data = make_response_data(task, status::bad_request_body);
+            task->response_data = make_response_data(task.get(), status::bad_request_body);
+            _reply_task_list.push_back(std::move(task));
 
             return;
         }
 
-        task->done = google::protobuf::NewCallback(this, &server::on_response, task);
+        auto* task_ptr = task.get();
+        task->done = google::protobuf::NewCallback(this, &server::on_response, task_ptr);
+        _on_fligh_tasks.emplace(task_ptr->id, std::move(task));
         service_it->second->data->CallMethod(
           method_it->second,
-          task->rpc_ctrlr.get(),
-          task->request_body.get(),
-          task->response_body.get(),
-          task->done);
+          task_ptr->rpc_ctrlr.get(),
+          task_ptr->request_body.get(),
+          task_ptr->response_body.get(),
+          task_ptr->done);
     }
 
     int handle_rpc_reply() {
@@ -605,6 +619,7 @@ private:
             return SPDK_POLLER_IDLE;
         }
 
+        SPDK_DEBUGLOG(msg, "task id is %d, task->response_data addr is %p\n", task->id, task->response_data.get());
         if (not task->response_data->is_ready()) {
             return SPDK_POLLER_IDLE;
         }
@@ -640,7 +655,7 @@ private:
             return SPDK_POLLER_IDLE;
         }
 
-        auto task = _read_task_list.front();
+        auto& task = _read_task_list.front();
         if (is_timeout(task.get())) {
             auto rc = handle_timeout_task(task.get());
             if (rc == EAGAIN) {
@@ -655,10 +670,9 @@ private:
         }
 
         SPDK_DEBUGLOG_EX(msg, "exec rpc of id %d\n", task->id);
-        dispatch_method(
-          task->request_data->read_request_meta(),
-          task.get());
-        _reply_task_list.push_back(task);
+        auto* req_meta = task->request_data->read_request_meta();
+        dispatch_method(req_meta, std::move(task));
+        // _reply_task_list.push_back(std::move(task));
         _read_task_list.pop_front();
 
         return SPDK_POLLER_BUSY;
@@ -708,7 +722,7 @@ private:
               task->id, rc->message().c_str());
             close_connection(task->conn.get());
         }
-        _read_task_list.push_back(task);
+        _read_task_list.push_back(std::move(task));
         _task_list.pop_front();
         return SPDK_POLLER_BUSY;
     }
@@ -766,33 +780,36 @@ private:
             auto task_it = conn->rpc_tasks.find(task_id);
             if (task_it == conn->rpc_tasks.end()) {
                 SPDK_DEBUGLOG_EX(msg, "new rpc task with correlation index %d\n", task_id);
-                auto task = std::make_shared<rpc_task>(task_id, conn);
+                auto task = std::make_unique<rpc_task>(task_id, conn);
+                task->this_server = this; // FIXME: 这里 this 指向的 server 可能已经析构了，在访问时。
                 if (transport_data::is_inlined(recv_ctx)) {
                     auto* inlined_data = transport_data::read_inlined_content(recv_ctx);
                     auto* meta = reinterpret_cast<request_meta*>(inlined_data);
                     SPDK_DEBUGLOG_EX(
                       msg,
-                      "parsed rpc meta, service name is %.*s, method name is %.*s\n",
+                      "[%d] parsed rpc meta, task id is %d, service name is %.*s, method name is %.*s\n",
+                      ::spdk_env_get_current_core(),
+                      task->id,
                       meta->service_name_size,
                       meta->service_name,
                       meta->method_name_size,
                       meta->method_name);
                     task->recv_ctx = recv_ctx;
-                    conn->rpc_tasks.emplace(task_id, task);
-                    _reply_task_list.push_back(task);
-                    dispatch_method(meta, task.get(), true);
+                    conn->rpc_tasks.emplace(task_id, task.get());
+                    // _reply_task_list.push_back(std::move(task));
+                    dispatch_method(meta, std::move(task), true);
 
                     return true;
                 }
 
                 task->request_data = std::make_unique<transport_data>(_data_pool);
-                auto [it, _] = conn->rpc_tasks.emplace(task_id, task);
+                auto [it, _] = conn->rpc_tasks.emplace(task_id, task.get());
                 task_it = it;
-                _task_list.push_back(task);
+                _task_list.push_back(std::move(task));
             }
 
             SPDK_DEBUGLOG_EX(msg, "handle rpc task with id %d, _task_list size is %lu\n", task_id, _task_list.size());
-            auto* task = task_it->second.get();
+            auto* task = task_it->second;
             task->request_data->from_net_context(recv_ctx);
             auto rc = post_recv(conn.get(), recv_ctx);
             if (rc) {
@@ -828,6 +845,11 @@ public:
     static void on_add_service(void* arg) {
         auto* ctx = reinterpret_cast<add_service_ctx*>(arg);
         ctx->this_server->handle_add_service(std::unique_ptr<add_service_ctx>{ctx});
+    }
+
+    static void on_rpc_done(void* arg) {
+        auto* task = reinterpret_cast<rpc_task*>(arg);
+        task->this_server->handle_rpc_done(task);
     }
 
     static int ib_cm_event_poller(void* arg) {
@@ -909,6 +931,28 @@ public:
         auto descriptor = const_cast<google::protobuf::ServiceDescriptor*>(p->GetDescriptor());
         auto service_val = std::make_shared<service>(p, descriptor);
         _services.emplace(service_val->descriptor->name(), service_val);
+    }
+
+    void handle_rpc_done(rpc_task* task) {
+        auto it = _on_fligh_tasks.find(task->id);
+        if (it == _on_fligh_tasks.end()) {
+            SPDK_ERRLOG_EX("ERROR: Cant find the task record of id %d\n", task->id);
+            return;
+        }
+
+        if (task->rpc_ctrlr->Failed()) {
+            SPDK_ERRLOG_EX("ERROR: Exec rpc failed: %s\n", task->rpc_ctrlr->ErrorText().c_str());
+            task->response_data = make_response_data(task, status::server_error);
+        } else {
+            SPDK_INFOLOG_EX(
+              msg,
+              "Making rpc response body of request id %d\n",
+              task->id);
+            task->response_data = make_response_data(task, status::success);
+        }
+
+        _reply_task_list.push_back(std::move(it->second));
+        _on_fligh_tasks.erase(it);
     }
 
     int handle_ib_cm_event_poll() {
@@ -1140,12 +1184,14 @@ private:
     std::unique_ptr<::ibv_wc[]> _wcs{nullptr};
     std::unordered_map<std::string_view, std::shared_ptr<service>> _services{};
 
+    int _sock_id{SPDK_ENV_SOCKET_ID_ANY};
     std::shared_ptr<memory_pool<::ibv_send_wr>> _meta_pool{nullptr};
     std::shared_ptr<memory_pool<::ibv_send_wr>> _data_pool{nullptr};
     std::shared_ptr<memory_pool<::ibv_recv_wr>> _recv_pool{nullptr};
-    std::list<std::shared_ptr<rpc_task>> _task_list{};
-    std::list<std::shared_ptr<rpc_task>> _read_task_list{};
-    std::list<std::shared_ptr<rpc_task>> _reply_task_list{};
+    std::list<std::unique_ptr<rpc_task>> _task_list{};
+    std::list<std::unique_ptr<rpc_task>> _read_task_list{};
+    std::unordered_map<decltype(rpc_task::id), std::unique_ptr<rpc_task>> _on_fligh_tasks{};
+    std::list<std::unique_ptr<rpc_task>> _reply_task_list{};
     std::list<std::shared_ptr<connection_record>> _cqe_conn_list{};
 
     event_channel _channel{};
