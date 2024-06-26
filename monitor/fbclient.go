@@ -21,6 +21,7 @@ import (
 	"net"
 	"strconv"
 	"time"
+	"sort"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/google/uuid"
@@ -179,6 +180,18 @@ func sendClientReqeust(request *msg.Request, conn net.Conn) error {
 	return nil
 }
 
+func byOsdid(osds []*msg.OsdDynamicInfo)  func(int, int) bool {
+    return func(i, j int) bool {
+        return osds[i].GetOsdid() < osds[j].GetOsdid()
+    }	
+}
+
+func byPgid(pgs []*msg.PGInfo)  func(int, int) bool {
+    return func(i, j int) bool {
+        return pgs[i].GetPgid() < pgs[j].GetPgid()
+    }	
+}
+
 func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- struct{}, responseChan chan<- ResponseChanData) {
 	appliedOsdCounter := 0
 	bootedOsdCounter := 0
@@ -312,10 +325,9 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 					ec := pgmap.GetErrorcode()
 					for pool, errcode := range ec {
 						if errcode == msg.GetPgMapErrorCode_pgMapGetOk {
-							for _, pgs := range pgmap.GetPgs() {
-								mypgmap[pool] = pgs
-								poolpgmapversion[pool] = pgmap.PoolidPgmapversion[pool]
-							}
+							pgs := pgmap.GetPgs()[pool]
+							mypgmap[pool] = pgs
+							poolpgmapversion[pool] = pgmap.PoolidPgmapversion[pool]
 						} else if errcode == msg.GetPgMapErrorCode_PgMapSameVersion {
 							//we only update the poolpgmapversion and mypgmap when there is a update
 						} else {
@@ -327,8 +339,17 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 					continue
 				} else {
 					if len(mypgmap) > 0 {
+						var poolIds []int32
+						for k := range mypgmap {
+							poolIds = append(poolIds, k)
+						}
+						sort.Slice(poolIds, func(i, j int) bool {
+							return poolIds[i] < poolIds[j]
+						})
 						fmt.Printf("%-10v   %-10v   %-25v    %-25v   \r\n", "PGID", "STATE", "OSDLIST", "NEWOSDLIST")
-						for pid, pgs := range mypgmap {
+						for _, pid := range poolIds {
+							pgs := mypgmap[pid]
+							sort.Slice(pgs.Pi, byPgid(pgs.Pi))
 							for _, pg := range pgs.Pi {
 								pgid := strconv.FormatInt(int64(pid), 10) + "." + strconv.FormatInt(int64(pg.GetPgid()), 10)
 								osdlist := arrayToStr(pg.GetOsdid())
@@ -359,6 +380,7 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 					// we don't quit
 					continue
 				} else {
+					sort.Slice(myosdmap, byOsdid(myosdmap))
 					fmt.Printf("%-10v   %-20v   %-10v    %-10v   %-10v \r\n", "OSDID", "ADDRESS", "PORT", "STATUS-UP", "STATUS-IN")
 					for _, osd := range myosdmap {
 						state1 := "up"
