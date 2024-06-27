@@ -388,7 +388,8 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 	}
 
 	//osd由down变为up
-	if !oldIsUp && oinfo.IsUp && oldIsIn && oinfo.IsIn {
+	// if !oldIsUp && oinfo.IsUp && oldIsIn && oinfo.IsIn {
+	if !oldIsUp && oinfo.IsUp {
 		log.Info(ctx, "osd ", id, "from down to up.")
 		osdTaskQueue.Enqueue(OsdTask{osdid: int(id), stateSwitch: DownToUp})
 	}
