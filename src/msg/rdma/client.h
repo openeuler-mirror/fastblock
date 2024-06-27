@@ -140,7 +140,8 @@ public:
           std::shared_ptr<memory_pool<::ibv_send_wr>> data_pool,
           std::shared_ptr<std::list<std::weak_ptr<connection>>> busy_list,
           std::shared_ptr<std::list<std::weak_ptr<connection>>> busy_priority_list,
-          std::shared_ptr<client> master)
+          std::shared_ptr<client> master,
+          int sock_id)
           : _id{id}
           , _dispatch_id{dis_id}
           , _sock{std::move(sock)}
@@ -151,7 +152,8 @@ public:
           , _recv_ctx{nullptr}
           , _busy_list{busy_list}
           , _busy_priority_list{busy_priority_list}
-          , _master{master} {}
+          , _master{master}
+          , _sock_id{sock_id} {}
 
         connection(const connection&) = delete;
 
@@ -396,7 +398,7 @@ public:
             _recv_pool = std::make_unique<memory_pool<::ibv_recv_wr>>(
               _sock->pd(), FMT_1("crv_%1%", utils::random_string(5)),
               _opts->per_post_recv_num,
-              _opts->metadata_memory_pool_element_size, 0);
+              _opts->metadata_memory_pool_element_size, 0, _sock_id);
             _recv_ctx = std::make_unique<memory_pool<::ibv_recv_wr>::net_context*[]>(
               _opts->per_post_recv_num);
             _poller.register_poller(connection_poller, this, 0);
@@ -910,6 +912,7 @@ read_done:
         // bool _should_signal{false};
         int32_t _onflight_send_wr{0};
         int64_t _onflight_rpc_task_size{0};
+        int _sock_id{SPDK_ENV_SOCKET_ID_ANY};
 
     public:
 
@@ -964,21 +967,22 @@ public:
 
     client() = delete;
 
-    client(std::string name, ::spdk_cpuset* cpumask, std::shared_ptr<options> opts)
+    client(std::string name, ::spdk_cpuset* cpumask, std::shared_ptr<options> opts, int sock_id = SPDK_ENV_SOCKET_ID_ANY)
       : _opts{opts}
       , _dev{std::make_shared<device>()}
       , _pd{std::make_unique<protection_domain>(_dev, _opts->ep->device_name)}
       , _cq{std::make_shared<completion_queue>(_opts->ep->cq_num_entries, *_pd)}
       , _wcs{std::make_unique<::ibv_wc[]>(_opts->poll_cq_batch_size)}
       , _thread{::spdk_thread_create(name.c_str(), cpumask)}
+      , _sock_id{sock_id}
       , _meta_pool{std::make_shared<memory_pool<::ibv_send_wr>>(
         _pd->value(), FMT_1("%1%_m", name),
         _opts->metadata_memory_pool_capacity,
-        _opts->metadata_memory_pool_element_size, 0)}
+        _opts->metadata_memory_pool_element_size, 0, _sock_id)}
       , _data_pool{std::make_shared<memory_pool<::ibv_send_wr>>(
         _pd->value(), FMT_1("%1%_d", name),
         _opts->data_memory_pool_capacity,
-        _opts->data_memory_pool_element_size, 0)} {}
+        _opts->data_memory_pool_element_size, 0, _sock_id)} {}
 
     client(const client&) = delete;
 
@@ -1101,7 +1105,8 @@ public:
           _data_pool,
           _busy_connections,
           _busy_priority_connections,
-          shared_from_this());
+          shared_from_this(),
+          _sock_id);
         auto conn_task = std::make_unique<connect_task>(conn, std::move(ctx->cb));
         _connect_tasks.emplace(cm_id, std::move(conn_task));
     }
@@ -1161,7 +1166,8 @@ public:
               _data_pool,
               _busy_connections,
               _busy_priority_connections,
-              shared_from_this());
+              shared_from_this(),
+              _sock_id);
             // 不要调整这里的 erase 和 emplace 的顺序
             _cm_records.emplace(new_fd_id, task_ptr->conn);
             _cm_records.erase(old_fd_id);
@@ -1453,6 +1459,7 @@ private:
     std::unordered_map<connection_id, std::shared_ptr<connection>> _connections{};
     std::unordered_map<::rdma_cm_id*, std::shared_ptr<connection>> _cm_records{};
     std::unordered_map<::rdma_cm_id*, std::unique_ptr<connect_task>> _connect_tasks{};
+    int _sock_id{SPDK_ENV_SOCKET_ID_ANY};
     std::shared_ptr<memory_pool<::ibv_send_wr>> _meta_pool{nullptr};
     std::shared_ptr<memory_pool<::ibv_send_wr>> _data_pool{nullptr};
 

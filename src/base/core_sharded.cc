@@ -13,10 +13,15 @@
 
 std::vector<uint32_t> get_shard_cores(){
     std::vector<uint32_t> shard_cores;
-    uint32_t lcore;
+    auto lcore = ::spdk_env_get_first_core();
+    auto last_core = ::spdk_env_get_last_core();
 
-    SPDK_ENV_FOREACH_CORE(lcore){
+    while (true) {
+        if (lcore == last_core) {
+            break;
+        }
         shard_cores.push_back(lcore);
+        lcore = ::spdk_env_get_next_core(lcore);
     }
     return shard_cores;
 }

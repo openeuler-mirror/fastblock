@@ -150,7 +150,7 @@ save_pid(const char *pid_path)
         exit(EXIT_FAILURE);
     }
 
-    lock.l_type = F_WRLCK; 
+    lock.l_type = F_WRLCK;
     lock.l_whence = SEEK_SET;
     lock.l_start = 0;
     lock.l_len = 0;
@@ -210,8 +210,10 @@ static void service_init(partition_manager* pm, server_t *server){
     auto srv_opts = msg::rdma::server::make_options(server->pt);
     srv_opts->port = server->osd_port;
     try {
+        auto core_no = ::spdk_env_get_last_core();
+        SPDK_NOTICELOG_EX("Start rpc server on core %d\n", core_no);
         server->rpc_srv = std::make_unique<rpc_server>(
-          ::spdk_env_get_current_core(),
+          core_no,
           srv_opts);
     } catch (const std::exception& e) {
         SPDK_ERRLOG_EX("ERROR: Create rpc server failed, %s\n", e.what());
@@ -250,13 +252,15 @@ static void pm_init(void *arg){
                        spdk_env_get_core_count(),
                        server->bdev_disk.c_str());
 
-    auto core_no = ::spdk_env_get_current_core();
+    auto core_no = ::spdk_env_get_last_core();
     ::spdk_cpuset cpumask{};
     ::spdk_cpuset_zero(&cpumask);
     ::spdk_cpuset_set_cpu(&cpumask, core_no, true);
+    auto sockid = ::spdk_env_get_socket_id(core_no);
     auto opts = msg::rdma::client::make_options(server->pt);
-    global_conn_cache = std::make_shared<::connect_cache>(&cpumask, opts);
-    global_pm = std::make_shared<partition_manager>(server->node_id, global_conn_cache, 
+    SPDK_NOTICELOG_EX("Start rpc client on core %d\n", core_no);
+    global_conn_cache = std::make_shared<::connect_cache>(&cpumask, opts, sockid);
+    global_pm = std::make_shared<partition_manager>(server->node_id, global_conn_cache,
       server->raft_heartbeat_period_time_msec, server->raft_lease_time_msec, server->raft_election_timeout_msec);
     monitor::client::on_new_pg_callback_type pg_map_cb =
       [pm = global_pm] (const msg::PGInfo& pg_info, const monitor::client::pg_map::pool_id_type pool_id, const monitor::client::osd_map& osd_map,
@@ -509,13 +513,13 @@ static inline std::string get_bdev_json_file_name(){
 static inline std::string get_bdev_disk_addr_file() {
     //部署集群时创建此文件，并把磁盘地址写入
     std::string file_name = g_conf_path + "/osd-" + std::to_string(g_id) + "/disk";
-    return  file_name;   
+    return  file_name;
 }
 
 static inline std::string get_bdev_type_file() {
     //部署集群时创建此文件，并把磁盘地址写入
     std::string file_name = g_conf_path + "/osd-" + std::to_string(g_id) + "/bdev_type";
-    return  file_name;   
+    return  file_name;
 }
 
 
@@ -549,6 +553,11 @@ static void remove_bdev_json_file(){
 static void
 block_started(void *arg)
 {
+    if (::spdk_env_get_core_count() < 2) {
+        SPDK_ERRLOG_EX("ERROR: 2 cores are required for the osd\n");
+        ::exit(-1);
+    }
+
     server_t *server = (server_t *)arg;
 
     remove_bdev_json_file();
@@ -643,14 +652,14 @@ static int from_configuration(server_t* server) {
 static std::string get_pid_path() {
     auto current_osd_id = std::to_string(g_id);
     std::string pid_path = "/var/tmp/osd" + current_osd_id + ".pid";
-    return  pid_path;   
+    return  pid_path;
 }
 
 static void clean_file(){
     std::string pid_path = get_pid_path();
 
     struct flock lock;
-    lock.l_type = F_UNLCK; 
+    lock.l_type = F_UNLCK;
     lock.l_whence = SEEK_SET;
     lock.l_start = 0;
     lock.l_len = 0;
@@ -786,7 +795,7 @@ main(int argc, char *argv[])
         return -EINVAL;
     }
 
-    if (g_mkfs){
+    if (g_mkfs) {
         if(!g_uuid) {
             std::cerr << "--uuid <uuid> must be set when --mkfs is set\n";
             return -EINVAL;
@@ -805,7 +814,7 @@ main(int argc, char *argv[])
     if(!bdev_type){
         std::cerr << "Can not get bdev type from file " << bdev_type_file << std::endl;
         return -EINVAL;
-    }  
+    }
 
     g_bdev_type =  bdev_type.value();
     if((g_bdev_type != "aio") &&  (g_bdev_type != "nvme")){
@@ -835,7 +844,7 @@ main(int argc, char *argv[])
     if(osd_server.pt.count("raft_heartbeat_period_time_msec") > 0){
         int value = osd_server.pt.get_child("raft_heartbeat_period_time_msec").get_value<int>();
         if(value < min_raft_time_msec || value > max_raft_time_msec){
-            std::cerr << "raft_heartbeat_period_time_msec must be in [" << 
+            std::cerr << "raft_heartbeat_period_time_msec must be in [" <<
               min_raft_time_msec << "," <<  max_raft_time_msec << "], which is measured in milliseconds" << std::endl;
             return -EINVAL;
         }
@@ -863,13 +872,13 @@ main(int argc, char *argv[])
     if(from_configuration(&osd_server) != 0){
         return -EINVAL;
     }
-    
+
     std::string pid_path = get_pid_path();
     save_pid(pid_path.c_str());
 
     remove_bdev_json_file();
     save_bdev_json(bdev_json_file, osd_server);
-    
+
     opts.json_config_file = bdev_json_file.c_str();
 
     auto current_osd_id = std::to_string(g_id);

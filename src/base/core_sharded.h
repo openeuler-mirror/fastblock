@@ -10,6 +10,9 @@
  */
 
 #pragma once
+
+#include <utils/log.h>
+
 #include <vector>
 #include <string>
 #include <tuple>
@@ -106,18 +109,23 @@ public:
 
 private:
     core_sharded(std::string app_name = "osd"){
-        uint32_t lcore;
-        struct spdk_cpuset cpumask;
+        auto lcore = ::spdk_env_get_first_core();
+        auto last_core = ::spdk_env_get_last_core();
+        ::spdk_cpuset cpumask{};
 
-        SPDK_ENV_FOREACH_CORE(lcore){
+        while (true) {
+            if (lcore == last_core) {
+                break;
+            }
+
             _shard_cores.push_back(lcore);
-
-            spdk_cpuset_zero(&cpumask);
-            spdk_cpuset_set_cpu(&cpumask, lcore, true);
+            ::spdk_cpuset_zero(&cpumask);
+            ::spdk_cpuset_set_cpu(&cpumask, lcore, true);
             std::string thread_name = app_name + std::to_string(lcore);
-
-            struct spdk_thread *thread = spdk_thread_create(thread_name.c_str(), &cpumask);
+            ::spdk_thread *thread = ::spdk_thread_create(thread_name.c_str(), &cpumask);
             _threads.push_back(thread);
+            SPDK_NOTICELOG_EX("Created public spdk thread on core %d\n", lcore);
+            lcore = ::spdk_env_get_next_core(lcore);
         }
     }
     std::vector<uint32_t> _shard_cores;
