@@ -185,6 +185,8 @@ func GetPoolPgNum() (int32, int32, *msg.PgStateInfo) {
 				pgstat.UndersizeNum += 1
 			} else if pg.PgInState(utils.PgDown) {
 				pgstat.DownNum += 1
+			} else if pg.PgInState(utils.PgRemapped) {
+				pgstat.RemapNum += 1
 			}
 		}
 	}

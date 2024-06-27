@@ -346,7 +346,7 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 						sort.Slice(poolIds, func(i, j int) bool {
 							return poolIds[i] < poolIds[j]
 						})
-						fmt.Printf("%-10v   %-10v   %-25v    %-25v   \r\n", "PGID", "STATE", "OSDLIST", "NEWOSDLIST")
+						fmt.Printf("%-10v   %-25v   %-25v    %-25v   \r\n", "PGID", "STATE", "OSDLIST", "NEWOSDLIST")
 						for _, pid := range poolIds {
 							pgs := mypgmap[pid]
 							sort.Slice(pgs.Pi, byPgid(pgs.Pi))
@@ -355,7 +355,7 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 								osdlist := arrayToStr(pg.GetOsdid())
 								newosdlist := arrayToStr(pg.GetNewosdid())
 
-								fmt.Printf("%-10v   %-10v   %-25v    %-25v   \r\n", pgid, utils.PgStateStr(utils.PGSTATE(pg.GetState())),
+								fmt.Printf("%-10v   %-25v   %-25v    %-25v   \r\n", pgid, utils.PgStateStr(utils.PGSTATE(pg.GetState())),
 									osdlist, newosdlist)
 							}
 						}
