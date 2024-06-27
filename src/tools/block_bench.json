@@ -10,6 +10,7 @@
     "object_size": 1048576,
     "pool_id": 26,
     "pool_name": "volume",
+    "deferred_time": 10,
     "mon_host": ["173.20.4.3","173.20.4.2","173.20.4.1"],
     "msg_client_poll_cq_batch_size": 32,
     "msg_client_metadata_memory_pool_capacity": 16384,

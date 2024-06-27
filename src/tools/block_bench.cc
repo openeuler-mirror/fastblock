@@ -55,6 +55,7 @@ struct bench_context {
     size_t on_flight_io_count{0};
     size_t io_count{0};
     size_t done_io_count{0};
+    size_t deferred_count{0};
     std::unordered_map<size_t, std::unique_ptr<request_stack>> on_flight_request{};
     std::vector<double> durs{};
     std::unique_ptr<::libblk_client> blk_client{};
@@ -81,6 +82,7 @@ struct watcher_context {
     ::read_callback read_done_cb{};
     ::write_callback write_done_cb{};
     uint64_t iops_start_at{};
+    uint64_t deferred_time{}; 
 };
 
 static char* g_conf_path{nullptr};
@@ -174,14 +176,24 @@ void on_write_done(::spdk_bdev_io* ctx, [[maybe_unused]] int32_t res) {
     auto* bench_ctx = reinterpret_cast<bench_context*>(stack_ptr->ctx);
     auto* watcher_ctx = reinterpret_cast<watcher_context*>(bench_ctx->watcher_ctx);
 
-    auto dur = static_cast<double>(::spdk_get_ticks() - stack_ptr->start_tick);
+    auto tick = ::spdk_get_ticks();
+    auto dur = static_cast<double>(tick - stack_ptr->start_tick);
     SPDK_DEBUGLOG_EX(
       bbench,
       "write duration is %lfus/%lfms, raw value is %lf, start_tsc is %ld\n",
       tick_to_us(dur), tick_to_ms(dur), dur, stack_ptr->start_tick);
-    bench_ctx->durs.push_back(dur);
+    if(tick >= watcher_ctx->iops_start_at)
+        bench_ctx->durs.push_back(dur);
+    else 
+        bench_ctx->deferred_count++;
     SPDK_DEBUGLOG_EX(bbench, "The %ldth write request done\n", stack_ptr->id);
     bench_ctx->done_io_count++;
+    if(bench_ctx->done_io_count % 100 == 0){
+        SPDK_INFOLOG_EX(
+          bbench,
+          "%ldth request done, done_io_count is %ld, io_count is %ld deferred_count %ld\n",
+          stack_ptr->id, bench_ctx->done_io_count, bench_ctx->io_count, bench_ctx->deferred_count);        
+    }
 
     if (stack_ptr->id % 100 == 0) {
         SPDK_INFOLOG_EX(
@@ -204,12 +216,16 @@ void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
     auto* bench_ctx = reinterpret_cast<bench_context*>(stack_ptr->ctx);
     auto* watcher_ctx = reinterpret_cast<watcher_context*>(bench_ctx->watcher_ctx);
 
-    auto dur = static_cast<double>(::spdk_get_ticks() - stack_ptr->start_tick);
+    auto tick = ::spdk_get_ticks();
+    auto dur = static_cast<double>(tick - stack_ptr->start_tick);
     SPDK_DEBUGLOG_EX(
       bbench,
       "read duration is %lfus/%lfms, raw value is %lf, start_tsc is %ld\n",
       tick_to_us(dur), tick_to_ms(dur), dur, stack_ptr->start_tick);
-    bench_ctx->durs.push_back(dur);
+    if(tick >= watcher_ctx->iops_start_at)
+        bench_ctx->durs.push_back(dur);
+    else
+        bench_ctx->deferred_count++;
     SPDK_DEBUGLOG_EX(bbench, "The %ldth read request done\n", stack_ptr->id);
     bench_ctx->on_flight_request.erase(stack_ptr->id);
     bench_ctx->done_io_count++;
@@ -242,7 +258,8 @@ void on_thread_received_msg(void* arg) {
     ctx->blk_client->start();
 
     SPDK_DEBUGLOG_EX(bbench, "start sending rpc\n");
-    watcher_ctx->iops_start_at = ::spdk_get_ticks();
+    SPDK_INFOLOG_EX(bbench, "deferred_time %ld\n", watcher_ctx->deferred_time);
+    watcher_ctx->iops_start_at = ::spdk_get_ticks() + watcher_ctx->deferred_time * ::spdk_get_ticks_hz();
     for (size_t i{0}; i < watcher_ctx->io_depth; ++i) {
         switch (watcher_ctx->io_type) {
         case bench_io_type::write:
@@ -336,8 +353,10 @@ int watch_poller(void* arg) {
             break;
         }
 
+        size_t deferred_count = 0;
         std::vector<double> durations{};
         for (decltype(n_core) i{0}; i < n_core; ++i) {
+            deferred_count += core_ctxs[i].deferred_count;
             durations.insert(durations.end(), core_ctxs[i].durs.begin(), core_ctxs[i].durs.end());
             if (ctx->io_type == bench_io_type::write_read and core_ctxs[i].current_io_type == bench_io_type::write) {
                 core_ctxs[i].current_io_type = bench_io_type::read;
@@ -399,7 +418,7 @@ int watch_poller(void* arg) {
         auto max = durations.at(durations.size() - 1);
 
         auto iops_dur_sec = static_cast<double>(iops_dur) / ::spdk_get_ticks_hz();
-        auto iops_val = ctx->total_io_count / iops_dur_sec;
+        auto iops_val = (ctx->total_io_count - deferred_count) / iops_dur_sec;
 
         fmt = boost::format("%1%, mean: %2%us, min: %3%us, max: %4%us, biased stdv: %5%, iops: %6%, iops_dur_sec: %7%, total_io_count: %8%")
           % fmt % tick_to_us(mean) % tick_to_us(min)
@@ -458,6 +477,11 @@ void on_app_start(void* arg) {
     watcher_ctx->io_queue_request = g_pt.get_child("io_queue_request").get_value<int32_t>();
     watcher_ctx->pool_id = g_pt.get_child("pool_id").get_value<int32_t>();
     watcher_ctx->pool_name = g_pt.get_child("pool_name").get_value<std::string>();
+    if(g_pt.count("deferred_time") > 0){
+        watcher_ctx->deferred_time = g_pt.get_child("deferred_time").get_value<uint64_t>();
+    } else {
+        watcher_ctx->deferred_time = 10;
+    }
 
     std::vector<monitor::client::endpoint> eps{};
     auto& monitors = g_pt.get_child("mon_host");
@@ -542,7 +566,7 @@ int main(int argc, char** argv) {
     }
 
     opts.name = "block bench";
-    opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
+    opts.print_level = ::spdk_log_level::SPDK_LOG_INFO;
     opts.shutdown_cb = on_app_stop;
     rc = ::spdk_app_start(&opts, on_app_start, &g_watcher_ctx);
     if (rc) {
