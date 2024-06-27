@@ -182,17 +182,28 @@ void on_write_done(::spdk_bdev_io* ctx, [[maybe_unused]] int32_t res) {
       bbench,
       "write duration is %lfus/%lfms, raw value is %lf, start_tsc is %ld\n",
       tick_to_us(dur), tick_to_ms(dur), dur, stack_ptr->start_tick);
-    if(tick >= watcher_ctx->iops_start_at)
+    if(tick >= watcher_ctx->iops_start_at){
         bench_ctx->durs.push_back(dur);
-    else 
+        if(bench_ctx->deferred_count != 0){
+            //到达计时点（既延期到期）
+            bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
+            bench_ctx->deferred_count = 0;
+        }
+        bench_ctx->done_io_count++;
+    }else{
         bench_ctx->deferred_count++;
+        if(bench_ctx->on_flight_io_count == bench_ctx->io_count){
+            //延期时间还没到，此核上的所有io已经完成
+            bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
+            bench_ctx->deferred_count = 0;
+        }
+    }
     SPDK_DEBUGLOG_EX(bbench, "The %ldth write request done\n", stack_ptr->id);
-    bench_ctx->done_io_count++;
     if(bench_ctx->done_io_count % 100 == 0){
         SPDK_INFOLOG_EX(
           bbench,
-          "%ldth request done, done_io_count is %ld, io_count is %ld deferred_count %ld\n",
-          stack_ptr->id, bench_ctx->done_io_count, bench_ctx->io_count, bench_ctx->deferred_count);        
+          "%ldth request done, done_io_count is %ld, io_count is %ld deferred_count %ld on_flight_io_count %ld\n",
+          stack_ptr->id, bench_ctx->done_io_count, bench_ctx->io_count, bench_ctx->deferred_count, bench_ctx->on_flight_io_count);        
     }
 
     if (stack_ptr->id % 100 == 0) {
@@ -222,13 +233,24 @@ void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
       bbench,
       "read duration is %lfus/%lfms, raw value is %lf, start_tsc is %ld\n",
       tick_to_us(dur), tick_to_ms(dur), dur, stack_ptr->start_tick);
-    if(tick >= watcher_ctx->iops_start_at)
+    if(tick >= watcher_ctx->iops_start_at){
         bench_ctx->durs.push_back(dur);
-    else
+        if(bench_ctx->deferred_count != 0){
+            //到达计时点（既延时到期）
+            bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
+            bench_ctx->deferred_count = 0;
+        }
+        bench_ctx->done_io_count++;
+    }else{
         bench_ctx->deferred_count++;
+        if(bench_ctx->on_flight_io_count == bench_ctx->io_count){
+            //延期时间还没到，此核上的所有io已经完成
+            bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
+            bench_ctx->deferred_count = 0;
+        }
+    }
     SPDK_DEBUGLOG_EX(bbench, "The %ldth read request done\n", stack_ptr->id);
     bench_ctx->on_flight_request.erase(stack_ptr->id);
-    bench_ctx->done_io_count++;
 
     if (stack_ptr->id % 100 == 0) {
         SPDK_INFOLOG_EX(bbench, "%ldth request done\n", stack_ptr->id);
@@ -353,10 +375,8 @@ int watch_poller(void* arg) {
             break;
         }
 
-        size_t deferred_count = 0;
         std::vector<double> durations{};
         for (decltype(n_core) i{0}; i < n_core; ++i) {
-            deferred_count += core_ctxs[i].deferred_count;
             durations.insert(durations.end(), core_ctxs[i].durs.begin(), core_ctxs[i].durs.end());
             if (ctx->io_type == bench_io_type::write_read and core_ctxs[i].current_io_type == bench_io_type::write) {
                 core_ctxs[i].current_io_type = bench_io_type::read;
@@ -418,7 +438,7 @@ int watch_poller(void* arg) {
         auto max = durations.at(durations.size() - 1);
 
         auto iops_dur_sec = static_cast<double>(iops_dur) / ::spdk_get_ticks_hz();
-        auto iops_val = (ctx->total_io_count - deferred_count) / iops_dur_sec;
+        auto iops_val = ctx->total_io_count / iops_dur_sec;
 
         fmt = boost::format("%1%, mean: %2%us, min: %3%us, max: %4%us, biased stdv: %5%, iops: %6%, iops_dur_sec: %7%, total_io_count: %8%")
           % fmt % tick_to_us(mean) % tick_to_us(min)
