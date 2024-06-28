@@ -615,35 +615,9 @@ func reblancePool(ctx context.Context,
 	 * 检查pg种osd数量是否少于pool的pgsize,如果是就需要向pg里增加osd
 	 */
 	for pgIdStr, pgConfig := range pool.PoolPgMap.PgMap {
-		if pgConfig.PgInState(utils.PgRemapped) {
-            continue
+		if pgConfig.PgInState(utils.PgRemapped) || pgConfig.PgInState(utils.PgDown){
+			continue
 		} 
-		pgIsdown := false
-		if pgConfig.PgInState(utils.PgDown) {
-			pgIsdown = true
-		}
-		if pgConfig.PgInState(utils.PgDown) || pgConfig.PgInState(utils.PgUndersize) {
-			//pg处于down or undersize 状态，osd由out变为in可能伴随着由down变为up，因此需要检查pg状态是否可变更
-			// state := CheckPgState(pgConfig.OsdList, pool.PGSize)
-			// if state == 0 {
-				// isRemap = true
-				// pgConfig.UnsetPgState(utils.PgUndersize)
-				// pgConfig.UnsetPgState(utils.PgDown)
-				// if !pgConfig.PgInState(utils.PgCreating) && !pgConfig.PgInState(utils.PgRemapped) {
-				    // pgConfig.SetPgState(utils.PgActive)
-				// }
-				// AllPools[PoolID(pool.Poolid)].PoolPgMap.PgMap[pgIdStr] = pgConfig
-				// log.Info(ctx, "+++ pool: ", pool.Poolid, ", pg: ",  pgIdStr, " update state.")
-			// } else if !pgConfig.PgInState(state) {
-				// isRemap = true
-				// pgConfig.SetPgState(state)
-				// AllPools[PoolID(pool.Poolid)].PoolPgMap.PgMap[pgIdStr] = pgConfig
-				// log.Info(ctx, "+++ pool: ", pool.Poolid, ", pg: ",  pgIdStr, " update state.")
-			// }
-			if pgIsdown {
-				continue
-			}
-		}
 		if len(pgConfig.OsdList) == optimizeCfg.PGSize {
 			continue
 		}

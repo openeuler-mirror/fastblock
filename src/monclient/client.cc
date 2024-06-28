@@ -737,30 +737,27 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
                   });
                 osd_it->second->isup = false;
             }
+            osd_it->second->isup = osds[i].isup();
         } else {
             should_create_connect =
               osds[i].isup() and osds[i].osdid() != _self_osd_id;
 
-            if(should_create_connect || osds[i].osdid() == _self_osd_id){
-                SPDK_DEBUGLOG_EX(mon,
-                  "osd %d not found, rsp osd isup %d, should_create_connect is %d\n",
-                  osds[i].osdid(),
-                  osds[i].isup(),
-                  should_create_connect);
+            SPDK_DEBUGLOG_EX(mon,
+              "osd %d not found, rsp osd isup %d, should_create_connect is %d\n",
+              osds[i].osdid(),
+              osds[i].isup(),
+              should_create_connect);
 
-                auto osd_info = std::make_unique<utils::osd_info_t>(
-                  osds[i].osdid(),
-                  osds[i].isin(),
-                  osds[i].isup(),
-                  osds[i].ispendingcreate(),
-                  osds[i].port(),
-                  osds[i].address());
+            auto osd_info = std::make_unique<utils::osd_info_t>(
+              osds[i].osdid(),
+              osds[i].isin(),
+              osds[i].isup(),
+              osds[i].ispendingcreate(),
+              osds[i].port(),
+              osds[i].address());
 
-                auto [it, _] = _osd_map.data.emplace(osd_info->node_id, std::move(osd_info));
-                osd_it = it;
-            }else{
-                continue;
-            }
+            auto [it, _] = _osd_map.data.emplace(osd_info->node_id, std::move(osd_info));
+            osd_it = it;
         }
 
         auto& osd_info = *(osd_it->second);
