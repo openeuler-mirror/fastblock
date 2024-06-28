@@ -458,6 +458,12 @@ int watch_poller(void* arg) {
 }
 
 void on_app_start(void* arg) {
+    auto core_begin = core_sharded::system::begin();
+    auto n_core = std::max(
+      core_sharded::system::size_type{1},
+      core_sharded::system::capacity() - 1);
+    core_sharded::construct(core_begin, n_core, "block_bench");
+
     auto* watcher_ctx = reinterpret_cast<watcher_context*>(arg);
 
     SPDK_INFOLOG_EX(bbench, "Going to parse json conf file %s\n", g_conf_path);

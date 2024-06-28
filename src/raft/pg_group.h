@@ -95,11 +95,11 @@ constexpr int32_t DEFAULT_LEASE_MAINTENANCE_GRACE = 2000;   //毫秒
 class pg_group_t
 {
 public:
-    pg_group_t(int current_node_id, std::shared_ptr<connect_cache> conn_cache, 
+    pg_group_t(int current_node_id, std::shared_ptr<connect_cache> conn_cache,
             int raft_heartbeat_period_time_msec = DEFAULT_HEARTBEAT_TIMER_PERIOD_MSEC,
             int raft_lease_time_msec = DEFAULT_LEASE_MAINTENANCE_GRACE,
             int raft_election_timeout_msec = DEFAULT_ELECTION_TIMER_PERIOD_MSEC)
-      : _shard_cores(get_shard_cores())
+      : _shard_cores(core_sharded::get_shard_cores())
       , _current_node_id(current_node_id)
       , _client{conn_cache}
       , _shard(core_sharded::get_core_sharded())
@@ -131,9 +131,9 @@ public:
 
     int create_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,
                   std::vector<utils::osd_info_t> &&osds, disk_log *log, std::shared_ptr<monitor::client> mon_client);
-    
+
     void load_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,
-                disk_log *log, pg_complete cb_fn, void *arg, std::shared_ptr<monitor::client> mon_client);    
+                disk_log *log, pg_complete cb_fn, void *arg, std::shared_ptr<monitor::client> mon_client);
 
     void delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, pg_complete cb_fn, void *arg);
     void active_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id);

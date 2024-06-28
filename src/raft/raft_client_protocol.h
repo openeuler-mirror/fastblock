@@ -40,7 +40,7 @@ concept msg_type_valid = (
   (std::is_same_v<req_type, msg_appendentries_t> && std::is_same_v<rsp_type, msg_appendentries_response_t>)
   || (std::is_same_v<req_type, msg_requestvote_t> && std::is_same_v<rsp_type, msg_requestvote_response_t>)
   || (std::is_same_v<req_type, timeout_now_request> && std::is_same_v<rsp_type, timeout_now_response>)
-  || (std::is_same_v<req_type, snapshot_check_request> && std::is_same_v<rsp_type, snapshot_check_response>) 
+  || (std::is_same_v<req_type, snapshot_check_request> && std::is_same_v<rsp_type, snapshot_check_response>)
   || (std::is_same_v<req_type, installsnapshot_request> && std::is_same_v<rsp_type, installsnapshot_response>)
 );
 
@@ -66,19 +66,19 @@ public:
 
     void process_msg_response(msg_appendentries_response_t* response, msg::rdma::rpc_controller *clr){
         process_appendentries_response(_raft, response, clr, _target_node_id, _rcp, _shard_id);
-    }  
+    }
     void process_msg_response(msg_requestvote_response_t* response, msg::rdma::rpc_controller *clr){
         process_requestvote_response(_raft, response, clr, _target_node_id, _rcp, _shard_id);
-    }    
+    }
     void process_msg_response(timeout_now_response* response, msg::rdma::rpc_controller *clr){
         process_timeout_now_response(_raft, response, clr, _target_node_id, _rcp, _shard_id);
-    }  
+    }
     void process_msg_response(snapshot_check_response* response, msg::rdma::rpc_controller *clr){
         process_snapshot_check_response(_raft, response, clr, _target_node_id, _rcp, _shard_id);
     }
     void process_msg_response(installsnapshot_response* response, msg::rdma::rpc_controller *clr){
         process_installsnapshot_response(_raft, response, clr, _target_node_id, _rcp, _shard_id);
-    }  
+    }
 
     void process_response(){
         auto& core_shard = core_sharded::get_core_sharded();
@@ -87,7 +87,7 @@ public:
           [this](){
             process_msg_response(&response, &ctrlr);
             delete this;
-          }  
+          }
         );
     }
 
@@ -95,8 +95,8 @@ public:
     response_type response;
 private:
     request_type* _request;
-    raft_server_t *_raft;   
-    int32_t _target_node_id; 
+    raft_server_t *_raft;
+    int32_t _target_node_id;
     uint32_t _shard_id;
     raft_client_protocol* _rcp;
 };
@@ -104,12 +104,12 @@ private:
 class pg_group_t;
 class heartbeat_source{
 public:
-    heartbeat_source(heartbeat_request* request, pg_group_t* group, uint32_t shard_id, 
+    heartbeat_source(heartbeat_request* request, pg_group_t* group, uint32_t shard_id,
             int32_t target_node_id, raft_client_protocol* rcp)
     : _request(request)
     , _group(group)
     , _shard_id(shard_id)
-    , _target_node_id(target_node_id) 
+    , _target_node_id(target_node_id)
     , _rcp(rcp){}
 
     ~heartbeat_source(){
@@ -125,7 +125,7 @@ private:
     heartbeat_request* _request;
     pg_group_t *_group;
     uint32_t _shard_id;
-    int32_t _target_node_id; 
+    int32_t _target_node_id;
     raft_client_protocol* _rcp;
 };
 
@@ -133,7 +133,7 @@ class raft_client_protocol{
 public:
     raft_client_protocol(std::shared_ptr<connect_cache> conn_cache)
     : _cache(conn_cache)
-    , _shard_cores(get_shard_cores()) {
+    , _shard_cores(core_sharded::get_shard_cores()) {
         uint32_t i = 0;
         auto shard_num = _shard_cores.size();
         for(i = 0; i < shard_num; i++){
