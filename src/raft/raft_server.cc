@@ -2450,6 +2450,7 @@ raft_server_t::raft_server_t(raft_client_protocol& client, disk_log* log,
     , _machine(sm_ptr)
     , _pool_id(pool_id)
     , _pg_id(pg_id)
+    , _pg_name(pg_id_to_name(pool_id, pg_id))
     , _first_idx(0)
     , _current_idx(0)
     , _client(client)

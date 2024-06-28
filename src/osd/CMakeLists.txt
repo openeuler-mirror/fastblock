@@ -3,6 +3,7 @@ compile_library(
   SRCS
     partition_manager.cc
     osd_stm.cc
+    data_statistics.cc
   DEPS
     spdk::spdk
     raft_msg
@@ -28,6 +29,7 @@ add_executable(fastblock-osd
   osd_service.cc
   partition_manager.cc
   osd_stm.cc
+  data_statistics.cc
 )
 
 install(TARGETS fastblock-osd DESTINATION bin PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ

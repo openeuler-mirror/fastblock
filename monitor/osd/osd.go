@@ -19,6 +19,7 @@ import (
 	"monitor/msg"
 	"net"
 	"time"
+	"sync"
 )
 
 type OSDID int
@@ -76,8 +77,30 @@ const (
 	OutToIn
 )
 
-var NoReblance = false
-var NoOut = false
+type ClusterState struct {
+	NoReblance bool   `json:"noReblance"`
+	//是否允许down掉的osd经过一段时间自动out
+	NoOut      bool   `json:"noOut"`
+}
+var  CState ClusterState
+
+type clusterIos struct {
+	mutex       sync.Mutex
+	read_ios    uint64
+	read_bytes  uint64
+	write_ios   uint64
+	write_bytes uint64
+	objects     int64
+	start       time.Time
+} 
+
+var csIos clusterIos
+
+type UnprocessedEvent struct {
+	//在设置NoReblance期间是否有osd由out转为in
+	OutToIn    bool     `json:"outToIn"`
+}
+var CSUnprocessedEvent  UnprocessedEvent
 
 type OsdTask struct {
 	osdid       int
@@ -122,16 +145,16 @@ func findUsableOsdId() int {
 // load OSD state from etcd.
 // Example: /osd/info/1 {"address": "10.0.0.1",  "host": "IPSSC004.TMP06.GUIGU-A", "port": 35311, "isup": true}
 // should  also load pending create osds
-func LoadOSDStateFromEtcd(ctx context.Context, client *etcdapi.EtcdClient) (err error) {
+func LoadOSDMapFromEtcd(ctx context.Context, client *etcdapi.EtcdClient) (err error) {
 	AllOSDInfo.Osdinfo = make(map[OSDID]*OSDInfo)
 	prefix := config.ConfigOSDMapKey
 	osdMap, getErr := client.Get(ctx, prefix)
 	if getErr != nil {
-		log.Error(ctx, getErr)
 		if getErr == etcdapi.ErrorKeyNotFound {
 			AllOSDInfo.Version = 0
 			return nil
 		}
+		log.Error(ctx, getErr)
 		return getErr
 	}
 
@@ -151,6 +174,105 @@ func LoadOSDStateFromEtcd(ctx context.Context, client *etcdapi.EtcdClient) (err 
 	log.Info(ctx, "heartbeat info updated")
 
 	return nil
+}
+
+func LoadClusterStates(ctx context.Context, client *etcdapi.EtcdClient) (err error) {
+	key := config.ConfigStateKey
+	data, getErr := client.Get(ctx, key)
+	if getErr != nil {
+		if getErr == etcdapi.ErrorKeyNotFound {
+			return nil
+		}
+		log.Error(ctx, getErr)
+		return getErr
+	}
+	
+    var clusterState ClusterState
+	if jerr := json.Unmarshal([]byte(data), &clusterState); jerr != nil {
+		log.Error(ctx, jerr, string(data))
+		return jerr
+	}
+
+	CState = clusterState
+	log.Info(ctx, "load cluster state done. noReblance ", CState.NoReblance, " noOut ", CState.NoOut)
+	return nil
+}
+
+func saveClusterStates(ctx context.Context, client *etcdapi.EtcdClient) (err error) {
+	pc_buf, err := json.Marshal(CState)
+	if err != nil {
+		log.Error(ctx, err)
+		return err
+	}
+
+	key := config.ConfigStateKey
+
+	err = client.Put(ctx, key, string(pc_buf))
+	if err != nil {
+		log.Error(ctx, err)
+		return err
+	}
+	return nil
+}
+
+func saveClusterUnprocessedEvent(ctx context.Context, client *etcdapi.EtcdClient) (err error) {
+	pc_buf, err := json.Marshal(CSUnprocessedEvent)
+	if err != nil {
+		log.Error(ctx, err)
+		return err
+	}
+
+	key := config.ClusterUnprocessedEvKey
+
+	err = client.Put(ctx, key, string(pc_buf))
+	if err != nil {
+		log.Error(ctx, err)
+		return err
+	}
+	return nil
+}
+
+func LoadClusterUnprocessedEvent(ctx context.Context, client *etcdapi.EtcdClient) (err error) {
+	key := config.ClusterUnprocessedEvKey
+	data, getErr := client.Get(ctx, key)
+	if getErr != nil {
+		if getErr == etcdapi.ErrorKeyNotFound {
+			return nil
+		}
+		log.Error(ctx, getErr)
+		return getErr
+	}	
+
+	var unprocessedEvent  UnprocessedEvent
+	if jerr := json.Unmarshal([]byte(data), &unprocessedEvent); jerr != nil {
+		log.Error(ctx, jerr, string(data))
+		return jerr
+	}	
+
+	CSUnprocessedEvent = unprocessedEvent
+	log.Info(ctx, "load unprocessed event of cluster done. OutToIn ", CSUnprocessedEvent.OutToIn)
+	if !CState.NoReblance && CSUnprocessedEvent.OutToIn {
+		CSUnprocessedEvent.OutToIn = false
+		saveClusterUnprocessedEvent(ctx, client)
+	}
+	
+	return nil
+}
+
+func outToInHandler(ctx context.Context, client *etcdapi.EtcdClient, osdId int) {
+	if CState.NoReblance {
+		if !CSUnprocessedEvent.OutToIn {
+			CSUnprocessedEvent.OutToIn = true
+			err := saveClusterUnprocessedEvent(ctx, client)
+			if err != nil {
+				log.Error(ctx, "save unprocessed event to etcd failed.")
+				CSUnprocessedEvent.OutToIn = false
+				osdTaskQueue.Enqueue(OsdTask{osdid: osdId, stateSwitch: OutToIn})
+			}
+		}
+	} else {
+		osdTaskQueue.Enqueue(OsdTask{osdid: osdId, stateSwitch: OutToIn})
+	}
 }
 
 // when a new osd is applied, we append it to AllOSDInfo.Osdinfo, and put it into etcd
@@ -266,7 +388,8 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 	}
 
 	//osd由down变为up
-	if !oldIsUp && oinfo.IsUp && oldIsIn && oinfo.IsIn {
+	// if !oldIsUp && oinfo.IsUp && oldIsIn && oinfo.IsIn {
+	if !oldIsUp && oinfo.IsUp {
 		log.Info(ctx, "osd ", id, "from down to up.")
 		osdTaskQueue.Enqueue(OsdTask{osdid: int(id), stateSwitch: DownToUp})
 	}
@@ -274,7 +397,7 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 	//osd由out变为in
 	if !oldIsIn && oinfo.IsIn {
 		log.Info(ctx, "osd ", id, "from out to in.")
-		osdTaskQueue.Enqueue(OsdTask{osdid: int(id), stateSwitch: OutToIn})
+		outToInHandler(ctx, client, int(id))
 	}
 
 	log.Info(ctx, "successfully put to ectd for newly booted osd ", id)
@@ -436,8 +559,8 @@ func ProcessOsdInMessage(ctx context.Context, client *etcdapi.EtcdClient, osdid 
 	}
 
 	if isUp {
-		osdTaskQueue.Enqueue(OsdTask{osdid: int(osdid), stateSwitch: OutToIn})
 		log.Info(ctx, "osd ", osdid, " from out to in.")
+		outToInHandler(ctx, client, int(osdid))
 	}
 	AllOSDInfo.Version++
 	osdmap, err := json.Marshal(AllOSDInfo)
@@ -457,17 +580,34 @@ func ProcessOsdInMessage(ctx context.Context, client *etcdapi.EtcdClient, osdid 
 }
 
 func ProcessNoReblanceMessage(ctx context.Context, client *etcdapi.EtcdClient, set bool) bool {
-	log.Info(ctx, "process  NoReblanceRequest, NoReblance: ", NoReblance, ", set: ", set)
-	if NoReblance != set {
-		NoReblance = set
+	log.Info(ctx, "process  NoReblanceRequest, NoReblance: ", CState.NoReblance, ", set: ", set)
+	if CState.NoReblance != set {
+		CState.NoReblance = set
+		err := saveClusterStates(ctx, client)
+		if err != nil {
+			CState.NoReblance = !set 
+			return false
+		}
+		
+		if !set && CSUnprocessedEvent.OutToIn{
+			//复位NoReblance，且设置NoReblance期间有outToIN事件
+			CSUnprocessedEvent.OutToIn = false
+			saveClusterUnprocessedEvent(ctx, client)
+			osdTaskQueue.Enqueue(OsdTask{osdid: 0, stateSwitch: OutToIn})
+		}
 	}
 	return true
 }
 
 func ProcessNoOutMessage(ctx context.Context, client *etcdapi.EtcdClient, set bool) bool {
-	log.Info(ctx, "process  NoOutRequest, NoOut: ", NoOut, ", set: ", set)
-	if NoOut != set {
-		NoOut = set
+	log.Info(ctx, "process  NoOutRequest, NoOut: ", CState.NoOut, ", set: ", set)
+	if CState.NoOut != set {
+		CState.NoOut = set
+		err := saveClusterStates(ctx, client)
+		if err != nil {
+			CState.NoOut = !set 
+			return false
+		}		
 	}
 	return true
 }
@@ -493,11 +633,13 @@ func CheckOsdHeartbeat(ctx context.Context, client *etcdapi.EtcdClient) {
 						log.Warn(ctx, "osd ", info.Osdid, " from down to up.")
 					}
 				}
-				if hi.lastHeartBeat.Add(osdDownInterval+osdDownOutInterval).Before(time.Now()) && info.IsIn {
-					info.IsIn = false
-					isChange = true
-					osdTaskQueue.Enqueue(OsdTask{osdid: info.Osdid, stateSwitch: InToOut})
-					log.Warn(ctx, "osd ", info.Osdid, " from in to out.")
+				if hi.lastHeartBeat.Add(osdDownInterval + osdDownOutInterval).Before(time.Now()) && info.IsIn {
+					if !CState.NoOut {
+						info.IsIn = false
+						isChange = true
+						osdTaskQueue.Enqueue(OsdTask{osdid: info.Osdid, stateSwitch: InToOut})
+						log.Warn(ctx, "osd ", info.Osdid, " from in to out.")
+					}
 				}
 			} else {
 				hi := AllHeartBeatInfo[OSDID(info.Osdid)]
@@ -524,4 +666,89 @@ func CheckOsdHeartbeat(ctx context.Context, client *etcdapi.EtcdClient) {
 			log.Info(ctx, "successfully update osdmap after heartbeat change")
 		}
 	}
+}
+
+func getOsdNums() (int32, int32, int32){
+	osdNum := 0
+	osdUpNum := 0
+	osdInNum := 0
+
+	osdNum = len(AllOSDInfo.Osdinfo)
+	for _, osd := range AllOSDInfo.Osdinfo {
+		if osd.IsUp {
+			osdUpNum++
+		}
+		if osd.IsIn {
+			osdInNum++
+		}
+	}
+	return int32(osdNum), int32(osdUpNum), int32(osdInNum)
+}
+
+func PorcessGetClusterStatusMessage(ctx context.Context, client *etcdapi.EtcdClient) (*msg.GetClusterStatusResponse) {
+	cluster := &msg.GetClusterStatusResponse{}
+	states := &msg.ClusterStates{
+		NoReblance: CState.NoReblance,
+		NoOut: CState.NoOut,
+	}
+	cluster.ClusterState = states
+	for i := 0; i < len(config.CONFIG.Monitors); i++ {
+		cluster.MonName = append(cluster.MonName, config.CONFIG.Monitors[i])
+	}
+
+	cluster.OsdNum, cluster.UpOsdNum, cluster.InOsdNum = getOsdNums()
+	poolnum, pgnum, pgstat := GetPoolPgNum()
+	cluster.PoolNum = poolnum 
+	cluster.PgNum = pgnum
+	cluster.PgState = pgstat
+
+	csIos.mutex.Lock()
+	cur := time.Now()
+	ms := uint64(cur.Sub(csIos.start).Milliseconds())
+
+	// log.Warn(ctx, "ms ", ms)
+	cluster.ObjectNum = 0
+	if ms == 0 {
+		cluster.CliReadSpeed = 0
+		cluster.CliWriteSpeed = 0
+		cluster.CliReadIops = 0
+		cluster.CliWriteIops = 0
+	} else {
+		cluster.CliReadSpeed = csIos.read_bytes * 1000 / ms
+		cluster.CliWriteSpeed = csIos.write_bytes * 1000 / ms
+		cluster.CliReadIops = csIos.read_ios * 1000 / ms
+		cluster.CliWriteIops = csIos.write_ios * 1000 / ms		
+	}
+	cluster.RecoverySpeed = 0
+	cluster.RecoveryObjPs = 0
+	csIos.mutex.Unlock()
+	return cluster
+}
+
+func UpdateClusterIos(ctx context.Context, client *etcdapi.EtcdClient) {
+	clusterInterval := 2 * time.Second
+	clusterTicker := time.NewTicker(clusterInterval)
+	for range clusterTicker.C {
+		csIos.mutex.Lock()
+		csIos.read_ios    = 0
+		csIos.read_bytes  = 0
+		csIos.write_ios   = 0
+		csIos.write_bytes = 0
+		csIos.start = time.Now()
+
+		csIos.mutex.Unlock()
+	}
+}
+
+func PorcessDataStatisticsMessage(ctx context.Context, client *etcdapi.EtcdClient, data *map[string]*msg.DataStatistics) bool {
+	csIos.mutex.Lock()
+	for _, statistics := range *data {
+		csIos.read_ios     += statistics.GetReadIos()
+		csIos.read_bytes   += statistics.GetReadBytes()
+		csIos.write_ios    += statistics.GetWriteIos()
+		csIos.write_bytes  += statistics.GetWriteBytes()
+		csIos.objects      += statistics.GetObjects()
+	}
+	csIos.mutex.Unlock()
+	return true
 }

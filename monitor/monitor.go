@@ -725,6 +725,60 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			log.Error(ctx, "Error writing response:", err)
 			return err
 		}
+			
+	case *msg.Request_GetClusterStatusRequest:
+		log.Info(ctx, "Received GetClusterStatusRequest")
+
+		status := osd.PorcessGetClusterStatusMessage(ctx, client)
+
+		response := &msg.Response{
+			Union: &msg.Response_GetClusterStatusResponse{
+				GetClusterStatusResponse: status,
+			},
+		}
+
+		// Marshal the GetClusterStatusResponse
+		responseData, err := proto.Marshal(response)
+		if err != nil {
+			log.Error(ctx, "Error marshaling response:", err)
+			return err
+		}
+
+		// Write the response data back to the client
+		_, err = conn.Write(responseData)
+		if err != nil {
+			log.Error(ctx, "Error writing response:", err)
+			return err
+		}
+
+	case *msg.Request_DataStatisticsRequest:
+		log.Info(ctx, "Received DataStatisticsRequest")
+
+		data := payload.DataStatisticsRequest.GetData();
+
+		ok := osd.PorcessDataStatisticsMessage(ctx, client, &data)
+
+		response := &msg.Response{
+			Union: &msg.Response_DataStatisticsResponse{
+				DataStatisticsResponse: &msg.DataStatisticsResponse {
+					Ok: ok,
+				},
+			},
+		}
+
+		// Marshal the DataStatisticsResponse
+		responseData, err := proto.Marshal(response)
+		if err != nil {
+			log.Error(ctx, "Error marshaling response:", err)
+			return err
+		}
+
+		// Write the response data back to the client
+		_, err = conn.Write(responseData)
+		if err != nil {
+			log.Error(ctx, "Error writing response:", err)
+			return err
+		}
 
 	default:
 		log.Info(ctx, "Unknown payload type")
@@ -932,12 +986,16 @@ func startTcpServer(ctx context.Context, c *etcdapi.EtcdClient) {
 
 func leaderCallback(whoAmI string, ctx context.Context, c *etcdapi.EtcdClient) {
 	log.Info(ctx, "i'm the leader, i'm ", whoAmI)
-	osd.LoadOSDStateFromEtcd(ctx, c)
+	osd.LoadOSDMapFromEtcd(ctx, c)
 	osd.LoadPoolConfig(ctx, c)
 	osd.LoadImageConfig(ctx, c)
+	//这里一定要先LoadClusterStates,再LoadClusterUnprocessedEvent
+	osd.LoadClusterStates(ctx, c)
+	osd.LoadClusterUnprocessedEvent(ctx, c)
 	osd.GetOSDTree(ctx, true, false)
 	go osd.CheckOsdHeartbeat(ctx, c)
 	go osd.OsdTaskrun(ctx, c)
+	go osd.UpdateClusterIos(ctx, c)
 	startTcpServer(ctx, c)
 }
 

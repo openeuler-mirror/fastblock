@@ -626,8 +626,8 @@ public:
         return _pg_id;
     }
 
-    std::string raft_get_pg_name(){
-        return pg_id_to_name(_pool_id, _pg_id);
+    std::string &raft_get_pg_name(){
+        return _pg_name;
     }
 
     bool is_lease_valid(){
@@ -904,6 +904,7 @@ private:
 
     uint64_t _pool_id;
     uint64_t _pg_id;
+    std::string _pg_name;
 
     raft_index_t _first_idx;     //当前正在处理的一批log中第一个的idx(只用在leader中)
     raft_index_t _current_idx;   //leader中是当前正在处理的一批log中最后一个的idx，follower中是已经处理的最新的idx

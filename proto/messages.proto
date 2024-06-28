@@ -295,6 +295,67 @@ message NoOutResponse {
     bool ok = 1;
 }
 
+message ClusterStates {
+    bool    noReblance = 1;
+    bool    noOut      = 2;
+}
+
+message PgStateInfo {
+    int32   creatingNum          = 1;
+    int32   activeNum            = 2;
+    int32   undersizeNum         = 3;
+    int32   downNum              = 4;
+    int32   remapNum             = 5;
+    int32   creatingUndersizeNum = 6;
+    int32   creatingDownNum      = 7;
+    int32   undersizeRemapNum    = 8;
+    int32   downRemapNum         = 9;
+}
+
+message GetClusterStatusRequest {
+}
+
+message GetClusterStatusResponse {
+    ClusterStates  clusterState = 1;
+    repeated string monName     = 2;
+    int32          osdNum       = 3;
+    int32          upOsdNum     = 4;
+    int32          inOsdNum     = 5;
+    int32          poolNum      = 6;
+    int32          pgNum        = 7;
+    int32          objectNum    = 8;
+    PgStateInfo    pgState      = 9;
+    //单位字节每秒
+    uint64        cliReadSpeed   = 10;
+    uint64        cliWriteSpeed  = 11;
+
+    uint64        cliReadIops   = 12;
+    uint64        cliWriteIops  = 13;
+
+    //单位字节每秒
+    uint64        recoverySpeed = 14;
+    //recovery时每秒恢复多少个object
+    uint64        recoveryObjPs = 15;
+}
+
+message DataStatistics {
+    uint64     read_ios         = 1;
+    uint64     read_bytes       = 2;
+    uint64     write_ios        = 3;
+    uint64     write_bytes      = 4;
+    int64      objects          = 5;
+    uint64     recovery_bytes   = 6;
+    uint64     recovery_obs     = 7;
+}
+
+message DataStatisticsRequest {
+    map<string, DataStatistics>  data = 1;
+}
+
+message DataStatisticsResponse {
+    bool ok = 1;
+}
+
 message Request {
     oneof union {
         BootRequest boot_request = 1;
@@ -317,6 +378,8 @@ message Request {
         OsdInRequest   osd_in_request=18;
         NoReblanceRequest  no_reblance_request=19;
         NoOutRequest   no_out_request=20;
+        GetClusterStatusRequest get_cluster_status_request=21;
+        DataStatisticsRequest   data_statistics_request=22;
     }
 }
 
@@ -342,5 +405,7 @@ message Response {
         OsdInResponse osd_in_response=18;
         NoReblanceResponse no_reblance_response=19;
         NoOutResponse  no_out_response=20;
+        GetClusterStatusResponse  get_cluster_status_response=21;
+        DataStatisticsResponse    data_statistics_response=22;
     }
 }

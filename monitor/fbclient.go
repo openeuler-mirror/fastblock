@@ -21,6 +21,7 @@ import (
 	"net"
 	"strconv"
 	"time"
+	"sort"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/google/uuid"
@@ -75,6 +76,88 @@ func arrayToStr(array []int32) string {
 	}
 	str += "]"
 	return str
+} 
+
+func  speedToString(speedValue uint64) string {
+	units := [...]string{" B/s", " kB/s", " MB/s", " GB/s", " TB/s"}
+	var speed string
+
+	for i := 0; i < len(units); i++ {
+		if speedValue < 1024 {
+			speed = strconv.FormatUint(speedValue, 10) + units[i]
+			break
+		} else {
+			speedValue /= 1024
+		}
+	}
+	return speed
+}
+
+func printClient(cliReadSpeed uint64, cliWriteSpeed uint64, cliReadIops uint64, cliWriteIops uint64, recoverySpeed uint64, recoveryObjPs uint64){
+	client := make(map[string]string)
+	recovery := make(map[string]string)
+	rd  :=   "rd"
+	wr  :=   "wr"
+	ord :=   "op/s rd"
+	owr :=   "op/s wr"
+	speed := "speed"
+	ops := "ops"
+	order := [...]string{rd, wr, ord, owr}
+	recoveryOrder := [...]string{speed, ops}
+	if cliReadSpeed != 0 {
+		client[rd] = speedToString(cliReadSpeed)
+	}
+	if cliWriteSpeed != 0 {
+		client[wr] = speedToString(cliWriteSpeed)
+	}
+	if cliReadIops != 0 {
+		client[ord] = strconv.FormatUint(cliReadIops, 10)
+	}
+	if cliWriteIops != 0 {
+		client[owr] = strconv.FormatUint(cliWriteIops, 10)
+	}
+	if recoverySpeed != 0 {
+		recovery["speed"] = speedToString(recoverySpeed)
+	}
+	if recoveryObjPs != 0 {
+		recovery["ops"] = strconv.FormatUint(recoveryObjPs, 10) + " objects/s"
+	}
+
+	if len(client) != 0 || len(recovery) != 0 {
+		fmt.Printf("  io: \r\n")
+		if len(client) != 0 {
+			fmt.Printf("    client   : ")
+			i := 0
+			for _, units := range order {
+				data, ok := client[units]
+				if ok {
+					if i != 0 {
+						fmt.Printf(",  ")
+					}
+					fmt.Printf("%v %v", data, units)
+					i += 1
+				}
+			}
+			fmt.Printf("\n")
+		}
+
+		if len(recovery) != 0 {
+			fmt.Printf("    recovery : ")
+			i := 0
+			for _, val := range recoveryOrder {
+				data, ok := recovery[val]
+				if ok {
+					if i != 0 {
+						fmt.Printf(",  ")
+					}
+					fmt.Printf("%v", data)
+					i += 1
+				}
+			}
+			fmt.Printf("\n")
+		}
+	}
+
 }
 
 func sendClientReqeust(request *msg.Request, conn net.Conn) error {
@@ -95,6 +178,18 @@ func sendClientReqeust(request *msg.Request, conn net.Conn) error {
 	}
 
 	return nil
+}
+
+func byOsdid(osds []*msg.OsdDynamicInfo)  func(int, int) bool {
+    return func(i, j int) bool {
+        return osds[i].GetOsdid() < osds[j].GetOsdid()
+    }	
+}
+
+func byPgid(pgs []*msg.PGInfo)  func(int, int) bool {
+    return func(i, j int) bool {
+        return pgs[i].GetPgid() < pgs[j].GetPgid()
+    }	
 }
 
 func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- struct{}, responseChan chan<- ResponseChanData) {
@@ -230,10 +325,9 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 					ec := pgmap.GetErrorcode()
 					for pool, errcode := range ec {
 						if errcode == msg.GetPgMapErrorCode_pgMapGetOk {
-							for _, pgs := range pgmap.GetPgs() {
-								mypgmap[pool] = pgs
-								poolpgmapversion[pool] = pgmap.PoolidPgmapversion[pool]
-							}
+							pgs := pgmap.GetPgs()[pool]
+							mypgmap[pool] = pgs
+							poolpgmapversion[pool] = pgmap.PoolidPgmapversion[pool]
 						} else if errcode == msg.GetPgMapErrorCode_PgMapSameVersion {
 							//we only update the poolpgmapversion and mypgmap when there is a update
 						} else {
@@ -245,14 +339,23 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 					continue
 				} else {
 					if len(mypgmap) > 0 {
-						fmt.Printf("%-10v   %-10v   %-25v    %-25v   \r\n", "PGID", "STATE", "OSDLIST", "NEWOSDLIST")
-						for pid, pgs := range mypgmap {
+						var poolIds []int32
+						for k := range mypgmap {
+							poolIds = append(poolIds, k)
+						}
+						sort.Slice(poolIds, func(i, j int) bool {
+							return poolIds[i] < poolIds[j]
+						})
+						fmt.Printf("%-10v   %-25v   %-25v    %-25v   \r\n", "PGID", "STATE", "OSDLIST", "NEWOSDLIST")
+						for _, pid := range poolIds {
+							pgs := mypgmap[pid]
+							sort.Slice(pgs.Pi, byPgid(pgs.Pi))
 							for _, pg := range pgs.Pi {
 								pgid := strconv.FormatInt(int64(pid), 10) + "." + strconv.FormatInt(int64(pg.GetPgid()), 10)
 								osdlist := arrayToStr(pg.GetOsdid())
 								newosdlist := arrayToStr(pg.GetNewosdid())
 
-								fmt.Printf("%-10v   %-10v   %-25v    %-25v   \r\n", pgid, utils.PgStateStr(utils.PGSTATE(pg.GetState())),
+								fmt.Printf("%-10v   %-25v   %-25v    %-25v   \r\n", pgid, utils.PgStateStr(utils.PGSTATE(pg.GetState())),
 									osdlist, newosdlist)
 							}
 						}
@@ -277,6 +380,7 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 					// we don't quit
 					continue
 				} else {
+					sort.Slice(myosdmap, byOsdid(myosdmap))
 					fmt.Printf("%-10v   %-20v   %-10v    %-10v   %-10v \r\n", "OSDID", "ADDRESS", "PORT", "STATUS-UP", "STATUS-IN")
 					for _, osd := range myosdmap {
 						state1 := "up"
@@ -432,6 +536,94 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 			case *msg.Response_NoOutResponse:
 				isok := payload.NoOutResponse.GetOk()
 				fmt.Printf("Received NoOutResponse, ok is %v\r\n", isok)
+				stopChan <- struct{}{}
+				return
+			
+			case *msg.Response_GetClusterStatusResponse:
+				clusterState := payload.GetClusterStatusResponse.GetClusterState()
+				monNames := payload.GetClusterStatusResponse.GetMonName()
+				osdNum := payload.GetClusterStatusResponse.GetOsdNum()
+				upOsdNum := payload.GetClusterStatusResponse.GetUpOsdNum()
+				inOsdNum := payload.GetClusterStatusResponse.GetInOsdNum()
+				poolNum := payload.GetClusterStatusResponse.GetPoolNum()
+				pgNum := payload.GetClusterStatusResponse.GetPgNum()
+				objectNum := payload.GetClusterStatusResponse.GetObjectNum()
+				pgState := payload.GetClusterStatusResponse.GetPgState()
+				cliReadSpeed := payload.GetClusterStatusResponse.GetCliReadSpeed()
+				cliWriteSpeed := payload.GetClusterStatusResponse.GetCliWriteSpeed()
+				cliReadIops := payload.GetClusterStatusResponse.GetCliReadIops()
+				cliWriteIops := payload.GetClusterStatusResponse.GetCliWriteIops()
+				recoverySpeed := payload.GetClusterStatusResponse.GetRecoverySpeed()
+				recoveryObjPs := payload.GetClusterStatusResponse.GetRecoveryObjPs()
+
+				fmt.Printf("  cluster:\r\n")
+				var flags string
+				flagNum := 0
+				if clusterState.NoReblance {
+					flags += "noReblance"
+					flagNum += 1
+				}
+				if clusterState.NoOut {
+					if flagNum >= 1 {
+						flags += ","
+					}
+					flags += "noOut "
+					flagNum += 1
+				}
+				if flagNum >= 1 {
+					fmt.Printf("    %v flags set \r\n", flags)
+				}
+				fmt.Printf("\n")
+
+				fmt.Printf("  services:\r\n")
+				var mons string
+				for i := 0; i < len(monNames); i++ {
+					if i > 0 {
+						mons += ","
+					}
+					mons += monNames[i]
+				}
+				fmt.Printf("    mon: %d mons, %v\r\n", len(monNames), mons)
+				fmt.Printf("    osd: %d osds: %d up, %d in \r\n", osdNum, upOsdNum, inOsdNum)
+				fmt.Printf("\n")
+
+				fmt.Printf("  data:\r\n")
+				fmt.Printf("    pools  : %d pools, %d pgs\n", poolNum, pgNum)
+				fmt.Printf("    objects: %d objects \n", objectNum)
+				if pgNum > 0 {
+					fmt.Printf("    pgs    : \n")
+					if pgState.CreatingNum > 0 {
+						fmt.Printf("      %d  creating\n", pgState.CreatingNum)
+					}
+					if pgState.ActiveNum > 0 {
+						fmt.Printf("      %d  active\n", pgState.ActiveNum)
+					}
+					if pgState.UndersizeNum > 0 {
+						fmt.Printf("      %d  undersize\n", pgState.UndersizeNum)
+					}
+					if pgState.DownNum > 0 {
+						fmt.Printf("      %d  down\n", pgState.DownNum)
+					}
+					if pgState.RemapNum > 0 {
+						fmt.Printf("      %d  remap\n", pgState.RemapNum)
+					}
+					if pgState.CreatingUndersizeNum > 0 {
+						fmt.Printf("      %d  creating + undersize\n", pgState.CreatingUndersizeNum)
+					}
+					if  pgState.CreatingDownNum > 0 {
+						fmt.Printf("      %d  creating + down\n", pgState.CreatingDownNum)
+					}
+					if pgState.UndersizeRemapNum > 0 {
+						fmt.Printf("      %d  undersize + remap\n", pgState.UndersizeRemapNum)
+					}
+					if pgState.DownRemapNum > 0 {
+						fmt.Printf("      %d  down + remap\n", pgState.DownRemapNum)
+					}
+				}
+				fmt.Printf("\n")
+
+				printClient(cliReadSpeed, cliWriteSpeed, cliReadIops, cliWriteIops, recoverySpeed, recoveryObjPs)
+
 				stopChan <- struct{}{}
 				return
 
@@ -849,13 +1041,33 @@ func clientSendNoOut(conn net.Conn, set bool) {
 	sendClientReqeust(request, conn)
 }
 
+func clientSendStatus(conn net.Conn) {
+	request := &msg.Request{
+		Union: &msg.Request_GetClusterStatusRequest{
+			GetClusterStatusRequest: &msg.GetClusterStatusRequest{
+			},
+		},
+	}
+
+	sendClientReqeust(request, conn)
+}
+
 func main() {
 	// (TODO)write command line args parse code
 	// Define the command line arguments
 	monitor_endpoint = flag.String("endpoint", "127.0.0.1:3333", "monitor server endpoint")
-	supported_op := "supported: watchclustermap, getclustermap, fakeapplyid, fakebootosd, fakestartcluster, " +
-		"createpool, deletepool, listpools, getosdmap, getpgmap, watchosdmap, watchpgmap, fakestoposd, " +
-		"createimage, removeimage, resizeimage, getimage, outosd, inosd"
+	ops := [...]string{"watchclustermap", "getclustermap", "fakeapplyid", "fakebootosd", "fakestartcluster",
+	  "createpool", "deletepool", "listpools", "getosdmap", "getpgmap", "watchosdmap", "watchpgmap", "fakestoposd", 
+	  "createimage", "removeimage", "resizeimage", "getimage", "outosd", "inosd", "status"} 
+	supported_op := "supported: "
+	for i := 0; i < len(ops); i++ {
+		if i == 0 {
+			supported_op += ops[i]
+		} else {
+			supported_op += ", " + ops[i]
+		}
+	}
+
 	op = flag.String("op", "", supported_op)
 	set = flag.String("set", "", "supported: noReblance, noout")
 	unset = flag.String("unset", "", "supported: noReblance, noout")
@@ -880,11 +1092,14 @@ func main() {
 
 	// Parse the command line arguments
 	flag.Parse()
-	if *op != "watchclustermap" && *op != "getclustermap" && *op != "createpool" && *op != "getosdmap" &&
-		*op != "getpgmap" && *op != "listpools" && *op != "fakeapplyid" && *op != "fakebootosd" &&
-		*op != "fakestartcluster" && *op != "watchosdmap" && *op != "watchpgmap" && *op != "fakestoposd" &&
-		*op != "deletepool" && *op != "createimage" && *op != "removeimage" && *op != "resizeimage" &&
-		*op != "getimage" && *op != "outosd" && *op != "inosd" {
+	findOp := false
+	for i := 0; i < len(ops); i++ {
+		if *op == ops[i] {
+			findOp = true
+			break
+		}
+	}
+	if !findOp {
 		if *set != "noReblance" && *set != "noout" && *unset != "noReblance" && *unset != "noout" {
 			log.Fatal("unsupported operation")
 		}
@@ -1007,6 +1222,8 @@ func main() {
 			log.Fatal("lack of osdid for inosd")
 		}
 		go clientSendInOsd(conn, *osdid)
+	case "status":
+		go clientSendStatus(conn)		
 	}
 
 	if *op == "" {

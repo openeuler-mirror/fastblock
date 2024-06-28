@@ -1019,6 +1019,20 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
         _on_flight_requests.pop_front();
         break;
     }
+    case msg::Response::UnionCase::kDataStatisticsResponse: {
+        SPDK_DEBUGLOG_EX(mon, "Received data statistics response\n");
+
+        auto& req_ctx = _on_flight_requests.front();
+        response_status status;
+        if(not response->data_statistics_response().ok())
+            status = response_status::fail;
+        else
+            status = response_status::ok;
+
+        req_ctx->cb(status, req_ctx.get());
+        _on_flight_requests.pop_front();
+        break;
+    }
     default:
         SPDK_NOTICELOG_EX(
           "Skipping monitor response with response case %d\n",
@@ -1244,6 +1258,33 @@ void client::send_pg_member_change_finished_notify(
 
     auto* req_ctx = new client::request_context{
       this, std::move(req), std::monostate{}, std::move(mem_cb)};
+    enqueue_request(req_ctx);
+}
+
+void client::send_data_statistics_request(
+  std::map<std::string, utils::cluster_io> &ios) {
+    auto req = std::make_unique<msg::Request>();
+    auto data_req = req->mutable_data_statistics_request();
+    auto data = data_req->mutable_data();
+    for (auto &[pg_name, io] : ios) {
+        msg::DataStatistics ds;
+        ds.set_read_ios(io.read_ios);
+        ds.set_read_bytes(io.read_bytes);
+        ds.set_write_ios(io.write_ios);  
+        ds.set_write_bytes(io.write_bytes);
+        ds.set_objects(io.objects);
+        (*data)[pg_name] = std::move(ds);
+    }
+
+    auto cb = [](const response_status status, request_context*ctx){
+        SPDK_DEBUGLOG_EX(mon, "send data_statistics finish.\n");
+        if (status != response_status::ok) {
+            SPDK_ERRLOG_EX("send data_statistics finish failed\n");
+        }
+    };
+
+    auto* req_ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
     enqueue_request(req_ctx);
 }
 

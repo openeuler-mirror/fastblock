@@ -73,7 +73,7 @@ public:
         return &_store;
     }
 
-    std::string get_pg_name();
+    std::string &get_pg_name();
 
     void set_pg(std::string pg_name) {
         _store.set_pg(pg_name);
@@ -82,6 +82,8 @@ public:
     void load_object(object_store::container objects){
         _store.load(std::move(objects));
     }
+
+    bool raft_is_leader();
 private:
     raft_server_t* _raft;
 

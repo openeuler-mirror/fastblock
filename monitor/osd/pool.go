@@ -160,6 +160,39 @@ func (pg *PGConfig)PgInState(state utils.PGSTATE) bool{
 	return false
 }
 
+func GetPoolPgNum() (int32, int32, *msg.PgStateInfo) {
+	poolNum := 0
+	pgNUm := 0
+	pgstat := &msg.PgStateInfo{}
+
+	poolNum = len(AllPools)
+	for _, pool := range AllPools {
+		pgNUm += len(pool.PoolPgMap.PgMap)
+		for _, pg := range pool.PoolPgMap.PgMap {
+			if pg.PgInState(utils.PgCreating) && pg.PgInState(utils.PgUndersize) {
+				pgstat.CreatingUndersizeNum += 1
+			} else if pg.PgInState(utils.PgCreating) && pg.PgInState(utils.PgDown) {
+				pgstat.CreatingDownNum += 1
+			} else if pg.PgInState(utils.PgUndersize) && pg.PgInState(utils.PgRemapped) {
+				pgstat.UndersizeRemapNum += 1
+			} else if pg.PgInState(utils.PgDown) && pg.PgInState(utils.PgRemapped) {
+				pgstat.DownRemapNum += 1
+			} else if pg.PgInState(utils.PgCreating) {
+				pgstat.CreatingNum += 1
+			} else if pg.PgInState(utils.PgActive) {
+				pgstat.ActiveNum += 1
+			} else if pg.PgInState(utils.PgUndersize) {
+				pgstat.UndersizeNum += 1
+			} else if pg.PgInState(utils.PgDown) {
+				pgstat.DownNum += 1
+			} else if pg.PgInState(utils.PgRemapped) {
+				pgstat.RemapNum += 1
+			}
+		}
+	}
+	return int32(poolNum), int32(pgNUm), pgstat
+}
+
 // findUsablePoolId finds the first available pool id
 // we don't reuse pool ids, so it always increaing
 // poll deletions are rare, we are safe to use int32.
