@@ -6,6 +6,7 @@ build
 *.pb.go
 tmp
 build.rel
+build.reldbg
 build.debug
 monitor/fastblock-mon
 monitor/fastblock-client

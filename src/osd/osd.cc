@@ -212,11 +212,9 @@ static void service_init(partition_manager* pm, server_t *server){
     auto srv_opts = msg::rdma::server::make_options(server->pt);
     srv_opts->port = server->osd_port;
     try {
-        auto core_no = ::spdk_env_get_last_core();
+        auto core_no = core_sharded::system::last_core();
         SPDK_NOTICELOG_EX("Start rpc server on core %d\n", core_no);
-        server->rpc_srv = std::make_unique<rpc_server>(
-          core_no,
-          srv_opts);
+        server->rpc_srv = std::make_unique<rpc_server>(core_no, srv_opts);
     } catch (const std::exception& e) {
         SPDK_ERRLOG_EX("ERROR: Create rpc server failed, %s\n", e.what());
         std::raise(SIGINT);
@@ -255,14 +253,13 @@ static void pm_init(void *arg){
                        spdk_env_get_core_count(),
                        server->bdev_disk.c_str());
 
-    auto core_no = ::spdk_env_get_last_core();
-    ::spdk_cpuset cpumask{};
-    ::spdk_cpuset_zero(&cpumask);
-    ::spdk_cpuset_set_cpu(&cpumask, core_no, true);
+    auto core_no = core_sharded::system::last_core();
+    auto cpumask = core_sharded::make_cpumake(core_no);
     auto sockid = ::spdk_env_get_socket_id(core_no);
     auto opts = msg::rdma::client::make_options(server->pt);
+
     SPDK_NOTICELOG_EX("Start rpc client on core %d\n", core_no);
-    global_conn_cache = std::make_shared<::connect_cache>(&cpumask, opts, sockid);
+    global_conn_cache = std::make_shared<::connect_cache>(cpumask.get(), opts, sockid);
     global_pm = std::make_shared<partition_manager>(server->node_id, global_conn_cache,
       server->raft_heartbeat_period_time_msec, server->raft_lease_time_msec, server->raft_election_timeout_msec);
     monitor::client::on_new_pg_callback_type pg_map_cb =
@@ -553,29 +550,31 @@ static void remove_bdev_json_file(){
     }
 }
 
-static void
-block_started(void *arg)
-{
-    if (::spdk_env_get_core_count() < 2) {
-        SPDK_ERRLOG_EX("ERROR: 2 cores are required for the osd\n");
-        ::exit(-1);
-    }
-
-    server_t *server = (server_t *)arg;
-
+static void block_started(server_t *server) {
     remove_bdev_json_file();
     if(server->bdev_type == "nvme")
         server->bdev_disk = server->bdev_disk + "n1";
 
     buffer_pool_init();
-    if(g_mkfs){
+    if (g_mkfs) {
         //初始化log磁盘
         blobstore_init(server->bdev_disk, server->osd_uuid, g_force,
-                disk_init_complete, arg);
+                disk_init_complete, server);
         return;
-    }else{
-        blobstore_load(server->bdev_disk, disk_load_complete, arg, &(server->osd_uuid));
     }
+
+    blobstore_load(server->bdev_disk, disk_load_complete, server, &(server->osd_uuid));
+}
+
+static void on_app_started(void* arg) {
+    auto core_begin = core_sharded::system::begin();
+    auto n_core = std::max(
+      core_sharded::system::size_type{1},
+      core_sharded::system::capacity() - 1);
+    core_sharded::construct(core_begin, n_core, "osd");
+
+    auto* server = reinterpret_cast<server_t*>(arg);
+    block_started(server);
 }
 
 static void save_bdev_json(std::string& bdev_json_file, server_t& server){
@@ -888,7 +887,7 @@ main(int argc, char *argv[])
     std::string sock_path = "/var/tmp/fastblock-osd-" + current_osd_id + ".sock";
     opts.rpc_addr = sock_path.c_str();
 	/* Blocks until the application is exiting */
-	rc = spdk_app_start(&opts, block_started, &osd_server);
+	rc = spdk_app_start(&opts, on_app_started, &osd_server);
     if(rc == err::E_INVAL){
         std::cerr << "the disk " << osd_server.bdev_addr << " is probably invalid" << std::endl;
     }

@@ -84,7 +84,7 @@ public:
 
     void process_response(){
         SPDK_NOTICELOG_EX("change membership in the pg %lu.%lu result: %d\n", _request->pool_id(), _request->pg_id(), response.state());
-        delete this;        
+        delete this;
     }
 
     msg::rdma::rpc_controller ctrlr;
@@ -105,7 +105,7 @@ public:
 
     void process_response(){
         SPDK_NOTICELOG_EX("create pg %lu.%lu result: %d\n", _request->pool_id(), _request->pg_id(), response.state());
-        delete this;        
+        delete this;
     }
 
     msg::rdma::rpc_controller ctrlr;
@@ -117,7 +117,7 @@ private:
 class osd_client {
 public:
     osd_client(server_t *s, ::spdk_cpuset* cpumask, std::shared_ptr<msg::rdma::client::options> opts)
-        : _cache(cpumask, opts), _shard_cores(get_shard_cores()), _s(s)
+        : _cache(cpumask, opts), _shard_cores(core_sharded::get_shard_cores()), _s(s)
     {
         uint32_t i = 0;
         auto shard_num = _shard_cores.size();
@@ -134,7 +134,7 @@ public:
         {
             SPDK_NOTICELOG_EX("create connection to node %d (address %s, port %d) in core %u\n",
                            node_id, addr.c_str(), port, _shard_cores[shard_id]);
-            _cache.create_connect(0, node_id, addr, port, std::move(conn_cb), 
+            _cache.create_connect(0, node_id, addr, port, std::move(conn_cb),
             [this, shard_id, node_id](msg::rdma::client::connection* connect){
               auto &stub = _stubs[shard_id];
               stub[node_id] = std::make_shared<osd::rpc_service_osd_Stub>(connect);
@@ -153,7 +153,7 @@ public:
         auto stub = _get_stub(shard_id, target_node_id);
         if(!stub){
             return  err::RAFT_ERR_NO_CONNECTED;
-        }        
+        }
         stub->process_get_leader(&source->ctrlr, request, &source->response, done);
         return err::E_SUCCESS;
     }
@@ -169,14 +169,14 @@ public:
         info->set_port(port);
         auto * source = new change_membership_source<osd::add_node_request, osd::add_node_response>(request);
 
-        auto done = google::protobuf::NewCallback(source, 
+        auto done = google::protobuf::NewCallback(source,
                 &change_membership_source<osd::add_node_request, osd::add_node_response>::process_response);
         auto stub = _get_stub(shard_id, _leader_id);
         if(!stub){
             return  err::RAFT_ERR_NO_CONNECTED;
-        }        
+        }
         stub->process_add_node(&source->ctrlr, request, &source->response, done);
-        return err::E_SUCCESS;        
+        return err::E_SUCCESS;
     }
 
     int remove_node(uint64_t pool_id, uint64_t pg_id, int32_t node_id, const std::string& addr, int32_t port){
@@ -190,14 +190,14 @@ public:
         info->set_port(port);
         auto * source = new change_membership_source<osd::remove_node_request, osd::remove_node_response>(request);
 
-        auto done = google::protobuf::NewCallback(source, 
+        auto done = google::protobuf::NewCallback(source,
                 &change_membership_source<osd::remove_node_request, osd::remove_node_response>::process_response);
         auto stub = _get_stub(shard_id, _leader_id);
         if(!stub){
             return  err::RAFT_ERR_NO_CONNECTED;
-        }        
+        }
         stub->process_remove_node(&source->ctrlr, request, &source->response, done);
-        return err::E_SUCCESS;                
+        return err::E_SUCCESS;
     }
 
     int change_nodes(uint64_t pool_id, uint64_t pg_id, std::vector<raft_node_info> node_infos){
@@ -211,32 +211,32 @@ public:
         }
         auto * source = new change_membership_source<osd::change_nodes_request, osd::change_nodes_response>(request);
 
-        auto done = google::protobuf::NewCallback(source, 
+        auto done = google::protobuf::NewCallback(source,
                 &change_membership_source<osd::change_nodes_request, osd::change_nodes_response>::process_response);
         auto stub = _get_stub(shard_id, _leader_id);
         if(!stub){
             return  err::RAFT_ERR_NO_CONNECTED;
-        }        
+        }
         stub->process_change_nodes(&source->ctrlr, request, &source->response, done);
-        return err::E_SUCCESS;                
+        return err::E_SUCCESS;
     }
 
     int create_pg(int32_t target_node_id, uint64_t pool_id, uint64_t pg_id, int64_t pool_version){
         auto shard_id = 0;
-        osd::create_pg_request* request = new osd::create_pg_request(); 
+        osd::create_pg_request* request = new osd::create_pg_request();
         request->set_pool_id(pool_id);
         request->set_pg_id(pg_id);
-        request->set_vision_id(pool_version);     
+        request->set_vision_id(pool_version);
 
         auto * source = new create_pg_source(request);
         auto done = google::protobuf::NewCallback(source, &create_pg_source::process_response);
         auto stub = _get_stub(shard_id, target_node_id);
         if(!stub){
             return  err::RAFT_ERR_NO_CONNECTED;
-        }        
+        }
 
         stub->process_create_pg(&source->ctrlr, request, &source->response, done);
-        return err::E_SUCCESS;                                
+        return err::E_SUCCESS;
     }
 
     void set_leader_id(int32_t leader_id){

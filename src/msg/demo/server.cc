@@ -101,7 +101,7 @@ void start_rpc_server(void* arg) {
     opts->port = g_pt.get_child("bind_port").get_value<uint16_t>();
     std::string srv_name{"rpc_srv"};
     try {
-        g_rpc_server = std::make_shared<msg::rdma::server>(srv_name, g_cpumask, opts);
+        g_rpc_server = std::make_shared<msg::rdma::server>(srv_name, &g_cpumask, opts);
     } catch (const std::exception& e) {
         SPDK_ERRLOG_EX("Error: Create rpc server failed, %s\n", e.what());
         std::raise(SIGINT);

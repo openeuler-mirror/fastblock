@@ -221,7 +221,7 @@ void start_ping_pong_server() {
               opts->bind_address.c_str(),
               opts->port,
               ep_begin_it->index);
-            auto srv = std::make_unique<msg::rdma::server>(srv_name, cpu_mask, opts);
+            auto srv = std::make_unique<msg::rdma::server>(srv_name, &cpu_mask, opts);
             current_srv = srv.get();
             rpc_servers.push_back(std::move(srv));
         } catch (const std::exception& e) {

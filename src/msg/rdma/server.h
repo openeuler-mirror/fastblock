@@ -171,8 +171,8 @@ public:
 
     server() = delete;
 
-    server(std::string thread_name, ::spdk_cpuset cpumask, std::shared_ptr<options> opts, int sock_id = SPDK_ENV_SOCKET_ID_ANY)
-      : _cpumask{cpumask}
+    server(std::string thread_name, ::spdk_cpuset* cpumask, std::shared_ptr<options> opts, int sock_id = SPDK_ENV_SOCKET_ID_ANY)
+      : _cpumask{*cpumask}
       , _thread{::spdk_thread_create(thread_name.c_str(), &_cpumask)}
       , _opts{std::move(opts)}
       , _dev{std::make_shared<device>(process_ib_event)}

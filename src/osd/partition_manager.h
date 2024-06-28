@@ -22,8 +22,8 @@ struct shard_revision {
 };
 
 enum class osd_state {
-    OSD_STARTING, 
-    OSD_ACTIVE, 
+    OSD_STARTING,
+    OSD_ACTIVE,
     OSD_DOWN
 };
 
@@ -39,13 +39,13 @@ public:
             int raft_heartbeat_period_time_msec = DEFAULT_HEARTBEAT_TIMER_PERIOD_MSEC,
             int raft_lease_time_msec = DEFAULT_LEASE_MAINTENANCE_GRACE,
             int raft_election_timeout_msec = DEFAULT_ELECTION_TIMER_PERIOD_MSEC)
-      : _pgs(node_id, conn_cache, 
-        raft_heartbeat_period_time_msec == 0 ? DEFAULT_HEARTBEAT_TIMER_PERIOD_MSEC : raft_heartbeat_period_time_msec, 
-        raft_lease_time_msec == 0 ? DEFAULT_LEASE_MAINTENANCE_GRACE : raft_lease_time_msec, 
+      : _pgs(node_id, conn_cache,
+        raft_heartbeat_period_time_msec == 0 ? DEFAULT_HEARTBEAT_TIMER_PERIOD_MSEC : raft_heartbeat_period_time_msec,
+        raft_lease_time_msec == 0 ? DEFAULT_LEASE_MAINTENANCE_GRACE : raft_lease_time_msec,
         raft_election_timeout_msec == 0 ? DEFAULT_ELECTION_TIMER_PERIOD_MSEC : raft_election_timeout_msec)
       , _next_shard(0)
       , _shard(core_sharded::get_core_sharded())
-      , _shard_cores(get_shard_cores())
+      , _shard_cores(core_sharded::get_shard_cores())
       , _state(osd_state::OSD_STARTING) {
           uint32_t i = 0;
           auto shard_num = _shard_cores.size();
@@ -53,14 +53,14 @@ public:
               _sm_table.push_back(std::map<std::string, std::shared_ptr<osd_stm>>());
           }
       }
-      
+
     void start(utils::context *complete, std::shared_ptr<monitor::client> mon_client);
 
     void stop(utils::complete_fun fun, void *arg){
         if(_state == osd_state::OSD_DOWN){
             return;
-        }  
-        _state = osd_state::OSD_DOWN;  
+        }
+        _state = osd_state::OSD_DOWN;
 
         uint64_t shard_id = 0;
         auto shard_num = _sm_table.size();
@@ -74,7 +74,7 @@ public:
 
                 for(auto& [name, stm] : _sm_table[shard_id]){
                     stm->stop(
-                      [](void *, int){}, 
+                      [](void *, int){},
                       nullptr);
                 }
                 complete->complete(0);
@@ -82,18 +82,18 @@ public:
         }
     }
 
-    int create_partition(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t>&& osds, 
+    int create_partition(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t>&& osds,
                         int64_t revision_id, pm_complete&& cb_fn, void *arg);
     int delete_partition(uint64_t pool_id, uint64_t pg_id, pm_complete&& cb_fn, void *arg);
-    int load_partition(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob, 
+    int load_partition(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob,
                         object_store::container objects, pm_complete&& func, void *arg);
     int active_partition(uint64_t pool_id, uint64_t pg_id, pm_complete&& cb_fn, void *arg);
 
     bool get_pg_shard(uint64_t pool_id, uint64_t pg_id, uint32_t &shard_id);
 
-    void load_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob, 
+    void load_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob,
                         object_store::container objects, pm_complete cb_fn, void *arg);
-    void create_pg(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t> osds, uint32_t shard_id, 
+    void create_pg(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t> osds, uint32_t shard_id,
                         int64_t revision_id, pm_complete cb_fn, void *arg);
     void delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id, pm_complete cb_fn, void *arg);
     void active_pg(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id, pm_complete cb_fn, void *arg);
@@ -131,10 +131,10 @@ public:
         auto stm = iter->second;
         stm->stop(
           [this, shard_id, name](void *, int){
-            _sm_table[shard_id].erase(name);   
+            _sm_table[shard_id].erase(name);
           },
           nullptr
-        );     
+        );
     }
 
     int get_current_node_id(){

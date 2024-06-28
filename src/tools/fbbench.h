@@ -89,7 +89,7 @@ class client
 {
 public:
     client(server_t *s, int type, ::spdk_cpuset* cpumask, std::shared_ptr<msg::rdma::client::options> opts)
-        : _cache(cpumask, opts), _shard_cores(get_shard_cores()), _s(s), _type(type)
+        : _cache(cpumask, opts), _shard_cores(core_sharded::get_shard_cores()), _s(s), _type(type)
     {
         uint32_t i = 0;
         auto shard_num = _shard_cores.size();
