@@ -16,6 +16,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"monitor/config"
 	"monitor/msg"
 	"monitor/utils"
 	"net"
@@ -27,7 +28,6 @@ import (
 	"github.com/google/uuid"
 )
 
-var monitor_endpoint *string
 var poolname *string
 var op *string
 var port *int
@@ -1053,9 +1053,6 @@ func clientSendStatus(conn net.Conn) {
 }
 
 func main() {
-	// (TODO)write command line args parse code
-	// Define the command line arguments
-	monitor_endpoint = flag.String("endpoint", "127.0.0.1:3333", "monitor server endpoint")
 	ops := [...]string{"watchclustermap", "getclustermap", "fakeapplyid", "fakebootosd", "fakestartcluster",
 	  "createpool", "deletepool", "listpools", "getosdmap", "getpgmap", "watchosdmap", "watchpgmap", "fakestoposd", 
 	  "createimage", "removeimage", "resizeimage", "getimage", "outosd", "inosd", "status"} 
@@ -1090,8 +1087,9 @@ func main() {
 	imagesize = flag.Int("imagesize", 0, "image size")
 	object_size = flag.Int("objectsize", 4194304, "object size")
 
-	// Parse the command line arguments
+	configPath := flag.String("conf", "/etc/fastblock/fastblock.json", "path of the config file")
 	flag.Parse()
+	config.SetupConfig(*configPath, "fbclient")
 	findOp := false
 	for i := 0; i < len(ops); i++ {
 		if *op == ops[i] {
@@ -1105,8 +1103,10 @@ func main() {
 		}
 	}
 
+	monitor_endpoint := config.CONFIG.Address + ":" + strconv.Itoa(config.CONFIG.Port)
+
 	// Connect to the monitor
-	conn, err := net.Dial("tcp", *monitor_endpoint)
+	conn, err := net.Dial("tcp", monitor_endpoint)
 
 	if err != nil {
 		log.Fatal("Error connecting to server:", err)
