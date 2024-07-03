@@ -66,13 +66,13 @@ endif()
 
 ExternalProject_Add(spdk
   GIT_REPOSITORY https://gitee.com/wuxingyi/spdk.git
-  GIT_TAG v22.05.x
+  GIT_TAG v24.05.x
   UPDATE_COMMAND ""
   BUILD_IN_SOURCE ON
   INSTALL_DIR    @FASTBLOCK_DEPS_INSTALL_DIR@
   CONFIGURE_COMMAND
-    <SOURCE_DIR>/configure --without-isal
-      --disable-tests --disable-unit-tests --disable-examples --disable-apps --with-rdma
+    <SOURCE_DIR>/configure  --without-nvme-cuse --without-crypto
+      --disable-tests --disable-unit-tests --disable-examples --disable-apps --without-rdma
       --prefix=<INSTALL_DIR>
       ${spdk_debug} ${spdk_asan} ${spdk_ubsan}
   BUILD_COMMAND

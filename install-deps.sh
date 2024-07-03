@@ -26,7 +26,6 @@ deb_deps=(
   libboost-all-dev
   build-essential
   protobuf-compiler
-  libprotobuf23
   libprotobuf-dev
   cmake
   make
@@ -45,6 +44,9 @@ deb_deps=(
   libasan6
   libboost-dev
   libnuma-dev
+  patchelf
+  python3-pip
+  libtool
 )
 
 # Add support for centos/rhel/openEuler/suse
@@ -55,6 +57,7 @@ rpm_deps=(
   golang
   autoconf
   automake
+  libtool
   gcc
   jq
   gcc-c++
@@ -76,6 +79,8 @@ rpm_deps=(
   boost-devel
   boost
   numactl-devel
+  patchelf
+  python3-pip
 )
 
 case "$ID" in

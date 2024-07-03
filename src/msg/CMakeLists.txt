@@ -8,6 +8,8 @@ compile_library (
     mlx5
     spdk::spdk
     protobuf
+    ibverbs
+    rdmacm
 )
 
 add_subdirectory(demo)

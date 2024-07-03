@@ -19,7 +19,6 @@
 
 #include "global.h"
 
-static const char* g_pid_path = NULL;
 static const char* g_mon_cluster_endpoints = nullptr;
 static const char* g_conf_path{nullptr};
 boost::property_tree::ptree g_pt{};
@@ -64,28 +63,21 @@ vhost_parse_arg(int ch, char *arg)
 
 static void vhost_started(void *arg1)
 {
-	std::string pid_path = "/var/tmp/vhost" + std::to_string(getpid()) + ".pid";
-    save_pid(pid_path.c_str());
-	auto vhost_path = "/var/tmp/bdev_vhost" + std::to_string(getpid()) + ".sock";
-    SPDK_NOTICELOG_EX(
-      "pid path is '%s', vhost socket path is '%s'\n",
-      pid_path.c_str(), vhost_path.c_str());
-    ::spdk_vhost_set_socket_path(vhost_path.c_str());
+	std::vector<monitor::client::endpoint> mon_eps{};
+	auto &monitors = g_pt.get_child("mon_host");
+	auto pos = monitors.begin();
+	for (; pos != monitors.end(); pos++)
+	{
+		auto mon_addr = pos->second.get_value<std::string>();
+		mon_eps.emplace_back(std::move(mon_addr), utils::default_monitor_port);
+	}
 
-    std::vector<monitor::client::endpoint> mon_eps{};
-    auto& monitors = g_pt.get_child("mon_host");
-    auto pos = monitors.begin();
-    for(; pos != monitors.end(); pos++){
-        auto mon_addr = pos->second.get_value<std::string>();
-        mon_eps.emplace_back(std::move(mon_addr), utils::default_monitor_port);
-    }
-
-    auto opts = msg::rdma::client::make_options(g_pt);
-    auto core_no = ::spdk_env_get_current_core();
-    ::spdk_cpuset cpumask{};
-    ::spdk_cpuset_zero(&cpumask);
-    ::spdk_cpuset_set_cpu(&cpumask, core_no, true);
-    global::conn_cache = std::make_shared<::connect_cache>(&cpumask, opts);
+	auto opts = msg::rdma::client::make_options(g_pt);
+	auto core_no = ::spdk_env_get_current_core();
+	::spdk_cpuset cpumask{};
+	::spdk_cpuset_zero(&cpumask);
+	::spdk_cpuset_set_cpu(&cpumask, core_no, true);
+	global::conn_cache = std::make_shared<::connect_cache>(&cpumask, opts);
     global::par_mgr = std::make_shared<::partition_manager>(-1, global::conn_cache);
     global::mon_client = std::make_unique<monitor::client>(mon_eps, global::par_mgr);
     global::mon_client->start();
@@ -118,10 +110,13 @@ int main(int argc, char *argv[])
 
     boost::property_tree::read_json(std::string(g_conf_path), g_pt);
 
-	if (g_pid_path)
-	{
-		save_pid(g_pid_path);
-	}
+	std::string pid_path = "/var/tmp/vhost" + std::to_string(getpid()) + ".pid";
+	save_pid(pid_path.c_str());
+	auto vhost_path = "bdev_vhost_" + std::to_string(getpid()) + ".sock";
+	SPDK_NOTICELOG_EX(
+		"pid path is '%s', vhost socket path is '%s'\n",
+		pid_path.c_str(), vhost_path.c_str());
+	::spdk_vhost_set_socket_path(vhost_path.c_str());
 
 	rc = spdk_app_start(&opts, vhost_started, NULL);
 	spdk_app_fini();
