@@ -32,7 +32,7 @@ int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard
             std::shared_ptr<monitor::client> mon_client){
     SPDK_INFOLOG_EX(pg_group, "create pg %lu.%lu\n", pool_id, pg_id);
     int ret = 0;
-    auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id, global_storage().kvs(), mon_client);
+    auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id, global_storage(shard_id).kvs(), mon_client);
 
     raft->raft_set_timer();
     _pg_add(shard_id, raft, pool_id, pg_id);
@@ -44,7 +44,7 @@ int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard
 
 void pg_group_t::load_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,
                 disk_log *log, pg_complete cb_fn, void *arg, std::shared_ptr<monitor::client> mon_client){
-    auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id, global_storage().kvs(), mon_client); 
+    auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id, global_storage(shard_id).kvs(), mon_client); 
 
     raft->raft_set_timer();
     _pg_add(shard_id, raft, pool_id, pg_id);
@@ -67,7 +67,7 @@ void pg_group_t::start_shard_manager(utils::complete_fun fun, void *arg)
 {
     uint32_t i = 0;
     auto shard_num = _shard_mg.size();
-    utils::multi_complete *complete = new utils::multi_complete(shard_num, fun, arg);
+    utils::multi_complete *complete = new utils::multi_complete(shard_num, core_sharded::get_core_sharded().count(), fun, arg);
 
     for (i = 0; i < shard_num; i++)
     {
@@ -148,6 +148,14 @@ void shard_manager::start(){
     _heartbeat_timer = SPDK_POLLER_REGISTER(&heartbeat_task, this, HEARTBEAT_TIMER_INTERVAL_MSEC * 1000);
 }
 
+void shard_manager::stop(utils::complete_fun fun, void *arg)
+{
+    spdk_poller_unregister(&_heartbeat_timer);
+    utils::multi_complete *complete = new utils::multi_complete(_pgs.size(), 1, fun, arg);
+    for(auto &[name, raft] : _pgs){
+        raft->stop(utils::complete_done, complete);
+    }
+}
 
 std::vector<shard_manager::node_heartbeat> shard_manager::get_heartbeat_requests(){
     absl::flat_hash_map<

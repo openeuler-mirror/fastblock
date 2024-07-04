@@ -56,7 +56,7 @@ struct checkpoint_ctx {
  */
 class kv_checkpoint {
 public:
-  kv_checkpoint() : _bs(global_blobstore()), _channel(global_io_channel()) {}
+  kv_checkpoint(uint32_t shard_id) : _bs(global_blobstore()), _channel(global_io_channel(shard_id)) {}
 
 public:
   void set_checkpoint_blobid(spdk_blob_id checkpoint_blob_id, spdk_blob_id new_checkpoint_blob_id){
@@ -180,7 +180,7 @@ public:
    * 3. 关闭 new blob
    * 4. 如果有老的 checkpoint blob，则删除掉
    */
-  void finish_checkpoint(checkpoint_op_complete cb_fn, void* arg) {
+  void finish_checkpoint(uint32_t shard_id, checkpoint_op_complete cb_fn, void* arg) {
       if (_new_blob.blobid == 0) {
           SPDK_ERRLOG_EX("kv checkpoint finish on null blobid.\n");
           cb_fn(arg, -EINVAL);
@@ -198,7 +198,7 @@ public:
       ctx->blob = _ckpt_blob; // 先把老的 checkpoint blob 保存在ctx中
       _ckpt_blob = std::exchange(_new_blob, {}); // 然后把 new_blob 赋值给 checkpoint blob
       
-      uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
+      // uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
       kv_checkpoint_xattr xattr{.shard_id = shard_id};
       xattr.blob_set_xattr(_ckpt_blob.blob);
 

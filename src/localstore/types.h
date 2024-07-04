@@ -170,7 +170,7 @@ struct object_xattr {
         spdk_blob_set_xattr(blob, "type", &(object_xattr::type), sizeof(object_xattr::type));
         spdk_blob_set_xattr(blob, "shard", &shard_id, sizeof(shard_id));
         spdk_blob_set_xattr(blob, "pg", pg.c_str(), pg.size());
-        spdk_blob_set_xattr(blob, "name", pg.c_str(), pg.size());
+        spdk_blob_set_xattr(blob, "name", obj_name.c_str(), obj_name.size());
     }
 };
 

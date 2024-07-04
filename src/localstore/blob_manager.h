@@ -44,7 +44,7 @@ struct blob_tree
 /// TODO(sunyifang): 现在都是单核的
 struct spdk_blob_store* global_blobstore();
 
-struct spdk_io_channel* global_io_channel();
+struct spdk_io_channel* global_io_channel(uint32_t shard_id);
 
 sharded<blob_tree>& global_blob_tree();
 

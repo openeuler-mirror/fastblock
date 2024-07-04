@@ -10,6 +10,7 @@
  */
 
 #include "kv_store.h"
+#include "utils/utils.h"
 
 struct make_kvs_ctx {
     rolling_blob* rblob;
@@ -19,6 +20,8 @@ struct make_kvs_ctx {
     spdk_blob_id checkpoint_blob_id;
     spdk_blob_id new_checkpoint_blob_id;
     struct kvstore* kvs;
+
+    uint32_t shard_id;
 };
 
 static void
@@ -32,7 +35,7 @@ make_kvstore_sync_done(void *arg, int kverrno) {
       return;
   }
 
-  struct kvstore* kvs = new kvstore(ctx->rblob);
+  struct kvstore* kvs = new kvstore(ctx->rblob, ctx->shard_id);
   ctx->cb_fn(ctx->arg, kvs, 0);
   delete ctx;
 }
@@ -40,8 +43,8 @@ make_kvstore_sync_done(void *arg, int kverrno) {
 void
 make_kvstore_blob_done(void *arg, struct rolling_blob* rblob, int kverrno) {
   struct make_kvs_ctx *ctx = (struct make_kvs_ctx *)arg;
-  uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
-  kv_xattr xattr{.shard_id = shard_id};
+  // uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
+  kv_xattr xattr{.shard_id = ctx->shard_id};
 
   if (kverrno) {
       SPDK_ERRLOG_EX("make_kvstore failed. error:%s\n", spdk_strerror(kverrno));
@@ -58,10 +61,27 @@ make_kvstore_blob_done(void *arg, struct rolling_blob* rblob, int kverrno) {
 void make_kvstore(struct spdk_blob_store *bs, struct spdk_io_channel *channel,
                    make_kvs_complete cb_fn, void* arg)
 {
-  struct make_kvs_ctx* ctx;
+  uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
+  auto make_done = [shard_id, cb_fn = std::move(cb_fn)](void *arg, struct kvstore* kvs, int kverrno){
+      core_sharded::get_core_sharded().invoke_on(
+        shard_id,
+        [cb_fn = std::move(cb_fn), arg, kvs, kverrno](){
+          SPDK_INFOLOG_EX(kvlog, "make kvstore done in core %u, thread %lu\n", 
+              core_sharded::get_core_sharded().this_shard_id(), utils::get_spdk_thread_id());
+          if(kverrno == 0 && kvs){
+            //注意：kvstore的start方法里回注册一个poller，这个poller需要在这个kv所属的core里注册
+            kvs->start();
+          }
+          cb_fn(arg, kvs, kverrno);
+        });
+  };  
 
-  ctx = new make_kvs_ctx{.cb_fn = std::move(cb_fn), .arg = arg};
-  make_rolling_blob(bs, channel, 4_MB, make_kvstore_blob_done, ctx);
+  struct make_kvs_ctx* ctx = new make_kvs_ctx{.cb_fn = std::move(make_done), .arg = arg, .shard_id = shard_id};
+  core_sharded::get_core_sharded().invoke_on(
+    utils::default_blobstore_core,
+    [bs, channel, ctx](){
+      make_rolling_blob(bs, channel, 4_MB, make_kvstore_blob_done, ctx);
+    });
 }
 
 static void kv_replay_done(void *arg, int kverrno){
@@ -90,7 +110,7 @@ static void load_kv_md_done(void *arg, int kverrno){
   }
 
   // SPDK_WARNLOG_EX("load_md done.\n");
-  struct kvstore* kvs = new kvstore(ctx->rblob);
+  struct kvstore* kvs = new kvstore(ctx->rblob, ctx->shard_id);
   ctx->kvs = kvs;
   kvs->set_checkpoint_blobid(ctx->checkpoint_blob_id, ctx->new_checkpoint_blob_id);
   kvs->replay(kv_replay_done, ctx);
@@ -114,11 +134,29 @@ void load_kvstore(spdk_blob_id blob_id, spdk_blob_id checkpoint_blob_id,
                   spdk_blob_id new_checkpoint_blob_id, struct spdk_blob_store *bs, 
                   struct spdk_io_channel *channel,
                   make_kvs_complete cb_fn, void* arg){
+  uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
+  auto make_done = [shard_id, cb_fn = std::move(cb_fn)](void *arg, struct kvstore* kvs, int kverrno){
+      core_sharded::get_core_sharded().invoke_on(
+        shard_id,
+        [cb_fn = std::move(cb_fn), arg, kvs, kverrno](){
+          SPDK_INFOLOG_EX(kvlog, "load kvstore done in core %u\n", core_sharded::get_core_sharded().this_shard_id());
+          if(kverrno == 0 && kvs){
+            //注意：kvstore的start方法里回注册一个poller，这个poller需要在这个kv所属的core里注册
+            kvs->start();
+          }
+          cb_fn(arg, kvs, kverrno);
+        });
+  };  
+
   struct make_kvs_ctx* ctx = new make_kvs_ctx{
-                                  .cb_fn = std::move(cb_fn), 
+                                  .cb_fn = std::move(make_done), 
                                   .arg = arg,
                                   .checkpoint_blob_id = checkpoint_blob_id,
-                                  .new_checkpoint_blob_id = new_checkpoint_blob_id};
-
-  open_rolling_blob(blob_id, bs, channel, open_rolling_blob_done, ctx);
+                                  .new_checkpoint_blob_id = new_checkpoint_blob_id,
+                                  .shard_id = shard_id};
+  core_sharded::get_core_sharded().invoke_on(
+    utils::default_blobstore_core,
+    [blob_id, bs, channel, ctx](){
+      open_rolling_blob(blob_id, bs, channel, open_rolling_blob_done, ctx);
+    });
 }

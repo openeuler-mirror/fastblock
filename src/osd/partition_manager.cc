@@ -48,6 +48,8 @@ static void make_log_done(void *arg, struct disk_log* dlog, int rberrno){
         return;
     }
 
+    SPDK_INFOLOG_EX(osd, "make_disk_log succcess  for pg %lu.%lu shard_id %u \n",
+            mlc->pool_id, mlc->pg_id,  mlc->shard_id);
     partition_manager* pm = mlc->pm;
     auto sm = std::make_shared<osd_stm>();
     auto pg = pg_id_to_name(mlc->pool_id, mlc->pg_id);
@@ -65,7 +67,7 @@ void partition_manager::create_pg(
     make_log_context *ctx = new make_log_context{.pool_id = pool_id, .pg_id = pg_id, .osds = std::move(osds), 
                     .shard_id = shard_id, .revision_id = revision_id, .pm = this, .cb_fn = std::move(cb_fn), .arg = arg};
     std::string pg = pg_id_to_name(pool_id, pg_id);   
-    make_disk_log(global_blobstore(), global_io_channel(), pg, make_log_done, ctx);
+    make_disk_log(global_blobstore(), global_io_channel(shard_id), pg, make_log_done, ctx, shard_id);
 }
 
 int partition_manager::osd_state_is_not_active(){
@@ -112,6 +114,42 @@ void partition_manager::start(utils::context *complete, std::shared_ptr<monitor:
       },
       nullptr
     );
+}
+
+void partition_manager::stop_stm(uint64_t shard_id, utils::complete_fun fun, void *arg) {
+    utils::multi_complete *complete = new utils::multi_complete(_sm_table[shard_id].size(), 1, fun, arg);
+    for(auto& [_, stm] : _sm_table[shard_id]){
+        stm->stop(utils::complete_done, complete);
+    }
+}
+
+void partition_manager::stop(utils::complete_fun fun, void *arg){
+    if(_state == osd_state::OSD_DOWN){
+        return;
+    }
+    _state = osd_state::OSD_DOWN;
+    uint64_t shard_id = 0;
+    auto shard_num = _sm_table.size();
+    utils::multi_complete *complete = new utils::multi_complete(shard_num, _shard_cores.size(), fun, arg);
+    for(shard_id = 0; shard_id < shard_num; shard_id++){
+        _shard.invoke_on(
+          shard_id,
+          [this, shard_id, complete](){
+
+            _pgs.stop(
+              shard_id,
+              [this, shard_id](void *arg, int serrno){
+                utils::multi_complete *complete = (utils::multi_complete *)arg;
+                if(serrno != 0){
+                    complete->complete(serrno);
+                    return;
+                }  
+
+                stop_stm(shard_id, utils::complete_done, complete);
+              },
+              complete);
+          });
+    }
 }
 
 struct partition_op_ctx{
@@ -162,7 +200,10 @@ int partition_manager::create_partition(
     auto create_pg_done = [cur_thread](void *arg, int perrno){
         partition_op_ctx* ctx = (partition_op_ctx *)arg;
         ctx->perrno = perrno;
-        spdk_thread_send_msg(cur_thread, partition_op_done, arg);
+        if(spdk_get_thread() != cur_thread)
+            spdk_thread_send_msg(cur_thread, partition_op_done, arg);
+        else 
+            partition_op_done(arg);
     };
 
     return _shard.invoke_on(
@@ -176,7 +217,7 @@ int partition_manager::create_partition(
 
 void partition_manager::load_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob,
                             object_store::container objects, pm_complete cb_fn, void *arg){
-    auto dlog = make_disk_log(global_blobstore(), global_io_channel(), blob);
+    auto dlog = make_disk_log(global_blobstore(), global_io_channel(shard_id), blob);
     // TODO:为什么要先创建osd_stm，然后再load呢？直接创建的时候构造object_store不可以吗？
     auto sm = std::make_shared<osd_stm>();
 
@@ -207,7 +248,10 @@ int partition_manager::load_partition(uint32_t shard_id, uint64_t pool_id, uint6
     auto load_pg_done = [cur_thread](void *arg, int perrno){
         partition_op_ctx* ctx = (partition_op_ctx *)arg;
         ctx->perrno = perrno;
-        spdk_thread_send_msg(cur_thread, partition_op_done, arg);
+        if(spdk_get_thread() != cur_thread)
+            spdk_thread_send_msg(cur_thread, partition_op_done, arg);
+        else
+            partition_op_done(arg);
     };
 
     return _shard.invoke_on(
@@ -269,7 +313,10 @@ int partition_manager::delete_partition(uint64_t pool_id, uint64_t pg_id, pm_com
     auto delete_pg_done = [cur_thread](void *arg, int perrno){
         partition_op_ctx* ctx = (partition_op_ctx *)arg;
         ctx->perrno = perrno;
-        spdk_thread_send_msg(cur_thread, partition_op_done, arg);
+        if(spdk_get_thread() != cur_thread)
+            spdk_thread_send_msg(cur_thread, partition_op_done, arg);
+        else
+            partition_op_done(arg);
     };
 
     return _shard.invoke_on(
@@ -307,7 +354,10 @@ int partition_manager::active_partition(uint64_t pool_id, uint64_t pg_id, pm_com
         partition_op_ctx* ctx = (partition_op_ctx *)arg;
         ctx->perrno = perrno;
         SPDK_INFOLOG_EX(osd, "activate pg %lu.%lu done\n", ctx->pool_id, ctx->pg_id);
-        spdk_thread_send_msg(cur_thread, partition_op_done, arg);
+        if(spdk_get_thread() != cur_thread)
+            spdk_thread_send_msg(cur_thread, partition_op_done, arg);
+        else
+            partition_op_done(arg);
     };
 
     return _shard.invoke_on(

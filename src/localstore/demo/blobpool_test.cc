@@ -131,7 +131,7 @@ void blobpool_test_open_done(void *arg, struct spdk_blob *blob, int rberrno) {
   hello_context->blob.blob = blob;
 
   SPDK_NOTICELOG("blob_pool write running on thread: %lu\n", utils::get_spdk_thread_id());
-  spdk_blob_io_write(blob, global_io_channel(), hello_context->buf.get_buf(), 0, 8, blobpool_test_write_done, hello_context);
+  spdk_blob_io_write(blob, global_io_channel(core_sharded::get_core_sharded().this_shard_id()), hello_context->buf.get_buf(), 0, 8, blobpool_test_write_done, hello_context);
 }
 
 void blobpool_test(void *arg, int rberrno) {

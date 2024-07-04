@@ -68,12 +68,15 @@ class disk_log {
     static constexpr uint64_t header_size = 4_KB;
 
 public:
-    disk_log(rolling_blob* rblob) : _rblob(rblob) {
-      _trim_poller = SPDK_POLLER_REGISTER(trim_poller, this, 5000);
-    }
+    disk_log(rolling_blob* rblob) : _rblob(rblob) {}
+    
     ~disk_log() {
       delete _rblob;
       spdk_poller_unregister(&_trim_poller);
+    }
+
+    void start(){
+      _trim_poller = SPDK_POLLER_REGISTER(trim_poller, this, 5000);
     }
 
     void append(std::vector<log_entry_t>& entries, log_op_complete cb_fn, void* arg) {
@@ -198,7 +201,7 @@ private:
 
         // 保存每个index到pos和size的映射
         for (auto [idx, pos, size, term_id] : ctx->idx_pos) {
-            SPDK_INFOLOG_EX(object_store, "++++ disk log append: index %lu pos %lu term_id %lu size %lu\n", idx, pos, term_id, size);
+            SPDK_INFOLOG_EX(disk_log, "++++ disk log append: index %lu pos %lu term_id %lu size %lu\n", idx, pos, term_id, size);
             ctx->log->maybe_index(idx, log_position{pos, size, term_id});
         }
 
@@ -379,7 +382,7 @@ public:
 
                 /* 任期不能为0. 任期为0，表示这条log为空，或者是错误的 */
                 if(entry.term_id == 0){
-                    SPDK_INFOLOG_EX(object_store, "invalid log entry, pos %lu\n", pos);
+                    SPDK_INFOLOG_EX(disk_log, "invalid log entry, pos %lu\n", pos);
                     return std::make_tuple(false, i, 0);  
                 }
 
@@ -388,13 +391,13 @@ public:
                  *  
                  */
                 if(entry.size > bytes - i - 4_KB){
-                    SPDK_INFOLOG_EX(object_store, "incomplete log entry, pos %lu\n", pos);
+                    SPDK_INFOLOG_EX(disk_log, "incomplete log entry, pos %lu\n", pos);
                     //剩余大小不足以解析出data
                     return std::make_tuple(true, i, entry.size + 4_KB);
                 }
                 bl.pop_front_list(entry.size / 4096);
                 log_position log_pos{.pos = pos, .size = entry.size + 4_KB, .term_id = entry.term_id};
-                SPDK_INFOLOG_EX(object_store, "--- disk log load: index %lu pos %lu term_id %lu size %lu\n", entry.index, pos, log_pos.term_id, log_pos.size);
+                SPDK_INFOLOG_EX(disk_log, "--- disk log load: index %lu pos %lu term_id %lu size %lu\n", entry.index, pos, log_pos.term_id, log_pos.size);
                 maybe_index(entry.index, std::move(log_pos));
                 pos += entry.size + 4_KB;
                 i += entry.size + 4_KB;
@@ -407,7 +410,7 @@ public:
             if(it != _index_map.end()){
                 _lowest_index = it->first;
             }
-            SPDK_INFOLOG_EX(object_store, "disk log load done, _lowest_index %lu _highest_index %lu\n", _lowest_index, _highest_index);
+            SPDK_INFOLOG_EX(disk_log, "disk log load done, _lowest_index %lu _highest_index %lu\n", _lowest_index, _highest_index);
 
             if(rberrno != 0){
                 SPDK_ERRLOG_EX("disk log load failed:%s\n", spdk_strerror(rberrno)); 
@@ -417,7 +420,7 @@ public:
             cb_fn(arg, 0);
         };
 
-        SPDK_INFOLOG_EX(object_store, "in disk log load, _lowest_index %lu _highest_index %lu\n", _lowest_index, _highest_index);
+        SPDK_INFOLOG_EX(disk_log, "in disk log load, _lowest_index %lu _highest_index %lu\n", _lowest_index, _highest_index);
         _rblob->load(std::move(load_done), arg, std::move(check_data));
     }
 private:
@@ -446,7 +449,7 @@ private:
 using make_disklog_complete = std::function<void (void *arg, struct disk_log* dlog, int rberrno)>;
 
 void make_disk_log(struct spdk_blob_store *bs, struct spdk_io_channel *channel,
-    std::string pg, make_disklog_complete cb_fn, void* arg);
+    std::string pg, make_disklog_complete cb_fn, void* arg, uint32_t shard_id);
 
 disk_log* make_disk_log(struct spdk_blob_store *bs, struct spdk_io_channel *channel,
                     struct spdk_blob* blob);

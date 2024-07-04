@@ -303,16 +303,17 @@ void disk_init_complete(void *arg, int rberrno) {
     storage_init(storage_init_complete, arg);
 }
 
-struct oad_load_ctx{
+class osd_load;
+struct osd_load_ctx{
     server_t *server;
     partition_manager* pm;
+    sharded<osd_load>  loads;
 };
 
-class osd_load;
 struct load_op_ctx{
-    oad_load_ctx* ctx;
+    osd_load_ctx* ctx;
     osd_load* load;
-    pm_complete func;
+    utils::context* complete;
     uint32_t shard_id;
 };
 
@@ -323,10 +324,18 @@ public:
     : _log_blobs(std::move(log_blobs))
     , _object_blobs(std::move(object_blobs)) {}
 
-    void start_load(uint32_t shard_id, pm_complete func, oad_load_ctx* ctx){
+    osd_load() {}
+
+    void set_blobs(std::map<std::string, struct spdk_blob*>&& log_blobs,
+            std::map<std::string, object_store::container>&& object_blobs) {
+        _log_blobs = std::move(log_blobs);
+        _object_blobs = std::move(object_blobs);
+    }
+
+    void start_load(uint32_t shard_id, utils::context* complete, osd_load_ctx* ctx){
         iter_start();
         if(iter_is_end()){
-            func(ctx, 0);
+            complete->complete(0);
             return;
         }
         auto pg = iter->first;
@@ -334,7 +343,7 @@ public:
         uint64_t pool_id;
         uint64_t pg_id;
         if(!pg_to_id(pg, pool_id, pg_id)){
-            func(ctx, err::E_INVAL);
+            complete->complete(err::E_INVAL);
             return;
         }
 
@@ -347,14 +356,14 @@ public:
         auto blob_size = spdk_blob_get_num_clusters(blob) * spdk_bs_get_cluster_size(global_blobstore());
         SPDK_INFOLOG_EX(osd, "load blob, blob id %ld blob size %lu\n", spdk_blob_get_id(blob), blob_size);
         load_op_ctx *op_ctx = new load_op_ctx{.ctx = ctx, .load = this,
-                                            .func = std::move(func), .shard_id = shard_id};
+                                            .complete = complete, .shard_id = shard_id};
         ctx->pm->load_partition(shard_id, pool_id, pg_id, blob, std::move(objects), start_continue, op_ctx);
     }
 
     static void start_continue(void *arg, int lerrno){
         load_op_ctx* ctx = (load_op_ctx *)arg;
         if(lerrno){
-            ctx->func(ctx->ctx, lerrno);
+            ctx->complete->complete(lerrno);
             delete ctx;
             return;
         }
@@ -366,7 +375,7 @@ public:
             uint64_t pool_id;
             uint64_t pg_id;
             if(!ctx->load->pg_to_id(pg, pool_id, pg_id)){
-                ctx->func(ctx->ctx, err::E_INVAL);
+                ctx->complete->complete(err::E_INVAL);
                 delete ctx;
                 return;
             }
@@ -382,7 +391,7 @@ public:
             return;
         }
 
-        ctx->func(ctx->ctx, 0);
+        ctx->complete->complete(0);
         delete ctx;
     }
 
@@ -431,6 +440,13 @@ struct pm_load_context : public utils::context{
     : server(_server)
     , pm(_pm) {}
 
+    static void osd_load_done(void *arg){
+        osd_load_ctx* ctx = (osd_load_ctx* )arg;
+        service_init(ctx->pm, ctx->server);
+        start_monitor(ctx->server);
+        delete ctx;
+    };
+
     void finish(int r) override {
 		if(r != 0){
             SPDK_ERRLOG_EX("load osd failed: %s\n", spdk_strerror(r));
@@ -441,31 +457,43 @@ struct pm_load_context : public utils::context{
 
         // SPDK_WARNLOG_EX("pm start done\n");
         auto& blobs = global_blob_tree();
-
-        //这里只处理单核的
+        osd_load_ctx* ctx = new osd_load_ctx{.server = server, .pm = pm};
+        ctx->loads.start();
         uint32_t shard_id = 0;
-        std::map<std::string, struct spdk_blob*> log_blobs = std::exchange(blobs.on_shard(shard_id).log_blobs, {});
-        std::map<std::string, object_store::container> object_blobs = std::exchange(blobs.on_shard(shard_id).object_blobs, {});
-        osd_load* load = new osd_load(std::move(log_blobs), std::move(object_blobs));
 
-        auto load_done = [load](void *arg, int lerrno){
-            oad_load_ctx* ctx = (oad_load_ctx* )arg;
+        auto cur_thread = spdk_get_thread();
+        auto load_done = [this, cur_thread](void *arg, int lerrno){
+            osd_load_ctx* ctx = (osd_load_ctx* )arg;
+
+            ctx->loads.stop();
+            SPDK_INFOLOG_EX(osd, "osd load done.\n");
             if(lerrno != 0){
                 SPDK_ERRLOG_EX("load osd failed: %s\n", spdk_strerror(lerrno));
                 delete ctx;
-                delete load;
                 osd_exit_code = lerrno;
                 std::raise(SIGINT);
                 return;
             }
-
-            service_init(ctx->pm, ctx->server);
-            start_monitor(ctx->server);
-            delete ctx;
-            delete load;
+            if(spdk_get_thread() != cur_thread){
+                spdk_thread_send_msg(cur_thread, osd_load_done, arg);
+            } else {
+                osd_load_done(arg);
+            }
         };
-        oad_load_ctx* ctx = new oad_load_ctx{.server = server, .pm = pm};
-        load->start_load(shard_id, std::move(load_done), ctx);
+        utils::multi_complete *complete = new utils::multi_complete(blobs.size(), blobs.size(), load_done, ctx);
+
+        auto &shard = core_sharded::get_core_sharded();
+        for(shard_id = 0; shard_id < blobs.size(); shard_id++){
+            shard.invoke_on(
+              shard_id,
+              [this, &blobs, shard_id, ctx, complete](){
+                std::map<std::string, struct spdk_blob*> log_blobs = std::exchange(blobs.on_shard(shard_id).log_blobs, {});
+                std::map<std::string, object_store::container> object_blobs = std::exchange(blobs.on_shard(shard_id).object_blobs, {});
+                ctx->loads.on_shard(shard_id).set_blobs(std::move(log_blobs), std::move(object_blobs)); 
+                 
+                ctx->loads.on_shard(shard_id).start_load(shard_id, complete, ctx);
+              });
+        }
     }
 };
 

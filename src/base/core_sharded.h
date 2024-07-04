@@ -193,7 +193,7 @@ public:
         return *g_core_sharded;
     }
 
-    static core_container_type get_shard_cores() {
+    static core_container_type &get_shard_cores() {
         return g_core_sharded->shard_cores();
     }
 
@@ -248,7 +248,7 @@ public:
         }
     }
 
-    core_container_type shard_cores() noexcept {
+    core_container_type &shard_cores() noexcept {
         return _shard_cores;
     }
 

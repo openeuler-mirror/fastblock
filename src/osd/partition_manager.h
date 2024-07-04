@@ -56,31 +56,8 @@ public:
 
     void start(utils::context *complete, std::shared_ptr<monitor::client> mon_client);
 
-    void stop(utils::complete_fun fun, void *arg){
-        if(_state == osd_state::OSD_DOWN){
-            return;
-        }
-        _state = osd_state::OSD_DOWN;
-
-        uint64_t shard_id = 0;
-        auto shard_num = _sm_table.size();
-        utils::multi_complete *complete = new utils::multi_complete(shard_num, fun, arg);
-
-        for(shard_id = 0; shard_id < shard_num; shard_id++){
-            _shard.invoke_on(
-              shard_id,
-              [this, shard_id, complete](){
-                _pgs.stop(shard_id);
-
-                for(auto& [name, stm] : _sm_table[shard_id]){
-                    stm->stop(
-                      [](void *, int){},
-                      nullptr);
-                }
-                complete->complete(0);
-              });
-        }
-    }
+    void stop(utils::complete_fun fun, void *arg);
+    void stop_stm(uint64_t shard_id, utils::complete_fun fun, void *arg);
 
     int create_partition(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t>&& osds,
                         int64_t revision_id, pm_complete&& cb_fn, void *arg);

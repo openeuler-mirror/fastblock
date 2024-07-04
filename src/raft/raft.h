@@ -380,7 +380,7 @@ public:
         );
     }
 
-    void stop();
+    void stop(raft_complete cb_fn, void* arg);
     void raft_destroy(raft_complete cb_fn, void* arg);
 
     /** Become leader
@@ -850,6 +850,7 @@ private:
     int _has_lease(std::shared_ptr<raft_node> node, raft_time_t now, int with_grace);
     void _raft_get_entries_from_idx(raft_index_t start_index, raft_index_t end_index, msg_appendentries_t* ae);
     void _send_leader_be_elected_notify();
+    void _recovery_delete(recovery_op_complete cb_fn, void* arg);
 
     /* the server's best guess of what the current term is
      * starts at zero */
