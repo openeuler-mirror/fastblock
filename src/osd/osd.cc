@@ -267,6 +267,11 @@ static void pm_init(void *arg){
         monitor::client::pg_op_complete&& cb_fn, void *arg) {
           std::vector<utils::osd_info_t> osds{};
           for (auto osd_id : pg_info.osdid()) {
+              if(osd_map.data.find(osd_id) == osd_map.data.end()){
+                  SPDK_WARNLOG_EX("not find osd %d in osdmap\n", osd_id);
+                  cb_fn(arg, -err::E_NODEV);  
+                  return;  
+              }
               osds.push_back(*(osd_map.data.at(osd_id)));
           }
           pm->create_partition(pool_id, pg_info.pgid(), std::move(osds), 0, std::move(cb_fn), arg);
