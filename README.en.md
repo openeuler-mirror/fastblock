@@ -96,7 +96,7 @@ You can compile the Release versions of `monitor` and `osd` by running the follo
 After compilation, the binaries for `fastblock-mon` and `fastblock-client` will be located in the `mon/` directory, while `fastblock-osd` and `fastblock-vhost` binaries will be found in the `build/src/osd/` and `build/src/bdev` directories, respectively. For subsequent modifications, if there are code changes in the OSD or vhost, recompilation can be done directly in the `build/` directory. Similarly, for any updates to the monitor, a simple `make` command in the `mon/` directory suffices.
 
 ### Deploy and Test
-According to the [Deployment and Performance Test Report](docs/performance_test_1012.md), in our test environment, with each OSD utilizing only one core, we achieved a latency of less than 100 microseconds for 4K random writes in a single thread, along with concurrent performance of 410,000 IOPS.
+please refer to [Deployment and Performance Test Report](docs/performance_failover_test_0628.md).
 
 ### Future Works
 * **Volume snapshot and snapshot group features implementation.**
