@@ -163,7 +163,7 @@ function createNewDevCluster() {
         # in a dev cluster, all osds are local, disk_path is the osd work dir 
        
         uuid=`uuidgen`
-        id=$(/usr/local/bin/fastblock-client -op=fakeapplyid -uuid=$uuid -endpoint="$monString":3333)
+        id=$(/usr/local/bin/fastblock-client -op=fakeapplyid -uuid=$uuid)
         addNewOsd "" $id $uuid $bdevtype ""
         sleep 30
     done
@@ -171,7 +171,7 @@ function createNewDevCluster() {
 
     echo "create default pool fb"
     sleep 20
-    /usr/local/bin/fastblock-client -op=createpool -poolname=fb -pgcount=$pgcount -pgsize=$replica -endpoint="$monString":3333
+    /usr/local/bin/fastblock-client -op=createpool -poolname=fb -pgcount=$pgcount -pgsize=$replica
 }
 
 
@@ -203,7 +203,7 @@ function processProCluster() {
 
         for ((i=0; i<${#device_array[@]}; i++)); do
             _uuid=`uuidgen`
-            id=$(/usr/local/bin/fastblock-client -op=fakeapplyid -uuid=$_uuid -endpoint="$ms":3333)
+            id=$(/usr/local/bin/fastblock-client -op=fakeapplyid -uuid=$_uuid)
             addNewOsd "${device_array[$i]}" $id $_uuid $bdevtype $remoteIp
         done
     fi

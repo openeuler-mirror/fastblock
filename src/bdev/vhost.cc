@@ -72,18 +72,25 @@ static void vhost_started(void *arg1)
 		mon_eps.emplace_back(std::move(mon_addr), utils::default_monitor_port);
 	}
 
+
+    	auto core_begin = core_sharded::system::begin();
+    	auto n_core = std::max(
+    	  core_sharded::system::size_type{1},
+    	  core_sharded::system::capacity() - 1);
+    	core_sharded::construct(core_begin, n_core, "vhost");
+
 	auto opts = msg::rdma::client::make_options(g_pt);
 	auto core_no = ::spdk_env_get_current_core();
 	::spdk_cpuset cpumask{};
 	::spdk_cpuset_zero(&cpumask);
 	::spdk_cpuset_set_cpu(&cpumask, core_no, true);
 	global::conn_cache = std::make_shared<::connect_cache>(&cpumask, opts);
-    global::par_mgr = std::make_shared<::partition_manager>(-1, global::conn_cache);
-    global::mon_client = std::make_unique<monitor::client>(mon_eps, global::par_mgr);
-    global::mon_client->start();
-    global::mon_client->start_cluster_map_poller();
-    global::blk_client = std::make_shared<::libblk_client>(global::mon_client.get(), &cpumask, opts);
-    global::blk_client->start();
+    	global::par_mgr = std::make_shared<::partition_manager>(-1, global::conn_cache);
+    	global::mon_client = std::make_unique<monitor::client>(mon_eps, global::par_mgr);
+    	global::mon_client->start();
+    	global::mon_client->start_cluster_map_poller();
+    	global::blk_client = std::make_shared<::libblk_client>(global::mon_client.get(), &cpumask, opts);
+    	global::blk_client->start();
 }
 
 int main(int argc, char *argv[])
@@ -96,9 +103,9 @@ int main(int argc, char *argv[])
 	opts.num_entries = 0;
 	opts.name = "vhost";
 	opts.print_level = ::spdk_log_level::SPDK_LOG_WARN;
-    ::spdk_log_set_flag("libblk");
-    ::spdk_log_set_flag("bdev_fastblock");
-    ::spdk_log_set_flag("object_store");
+    	::spdk_log_set_flag("libblk");
+    	::spdk_log_set_flag("bdev_fastblock");
+    	::spdk_log_set_flag("object_store");
 	::spdk_log_set_flag("libblk");
 
 	if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:", NULL,
@@ -108,16 +115,16 @@ int main(int argc, char *argv[])
 		exit(rc);
 	}
 
-    boost::property_tree::read_json(std::string(g_conf_path), g_pt);
+    	boost::property_tree::read_json(std::string(g_conf_path), g_pt);
 
 	std::string pid_path = "/var/tmp/vhost" + std::to_string(getpid()) + ".pid";
 	save_pid(pid_path.c_str());
-	auto vhost_path = "bdev_vhost_" + std::to_string(getpid()) + ".sock";
+	auto vhost_path = "/var/tmp/bdev_vhost_" + std::to_string(getpid()) + ".sock";
 	SPDK_NOTICELOG_EX(
 		"pid path is '%s', vhost socket path is '%s'\n",
 		pid_path.c_str(), vhost_path.c_str());
-	::spdk_vhost_set_socket_path(vhost_path.c_str());
 
+	opts.rpc_addr = vhost_path.c_str();
 	rc = spdk_app_start(&opts, vhost_started, NULL);
 	spdk_app_fini();
 	return rc;

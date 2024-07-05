@@ -40,17 +40,17 @@ done
 
 创建测试所需的pool和卷:
 ```
-/usr/local/bin/fastblock-client -op=createpool -poolname=latencytest -failure_domain=host  -pgcount=1 -pgsize=3 -endpoint=192.168.80.83:3333
-/usr/local/bin/fastblock-client -op=createpool -poolname=iopstest -failure_domain=host  -pgcount=4 -pgsize=3 -endpoint=192.168.80.83:3333
-/usr/local/bin/fastblock-client -op=createpool -poolname=singlecopy -failure_domain=host  -pgcount=1 -pgsize=1 -endpoint=192.168.80.83:3333
-/usr/local/bin/fastblock-client -op=createimage -imagesize=$((1024*1024*1024))  -imagename=latencyimage -poolname=latencytest  -endpoint=192.168.80.83:3333
-/usr/local/bin/fastblock-client -op=createimage -imagesize=$((1024*1024*1024))  -imagename=iopsimage -poolname=iopstest -endpoint=192.168.80.83:3333
-/usr/local/bin/fastblock-client -op=createimage -imagesize=$((1024*1024*1024))  -imagename=singlecopyimage -poolname=singlecopy -endpoint=192.168.80.83:3333
+/usr/local/bin/fastblock-client -op=createpool -poolname=latencytest -failure_domain=host  -pgcount=1 -pgsize=3
+/usr/local/bin/fastblock-client -op=createpool -poolname=iopstest -failure_domain=host  -pgcount=4 -pgsize=3
+/usr/local/bin/fastblock-client -op=createpool -poolname=singlecopy -failure_domain=host  -pgcount=1 -pgsize=1
+/usr/local/bin/fastblock-client -op=createimage -imagesize=$((1024*1024*1024))  -imagename=latencyimage -poolname=latencytest 
+/usr/local/bin/fastblock-client -op=createimage -imagesize=$((1024*1024*1024))  -imagename=iopsimage -poolname=iopstest
+/usr/local/bin/fastblock-client -op=createimage -imagesize=$((1024*1024*1024))  -imagename=singlecopyimage -poolname=singlecopy
 ```
 
 集群部署成功后，可以通过命令行看到集群运行状态和osdmap及pgmap:  
 ```
-[root@server3 fastblock]# fastblock-client -op=status -endpoint=192.168.80.83:3333
+[root@server3 fastblock]# fastblock-client -op=status
   cluster:
 
   services:
@@ -72,7 +72,7 @@ done
   "io_type": "write",
   "io_size": 4096,
   "io_count": 100000,
-  "io_depth": 1,
+  "io_depth": 16,
   "io_queue_size": 32,
   "io_queue_request": 128,
   "image_name": "singlecopyimage",
