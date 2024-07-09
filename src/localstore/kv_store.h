@@ -93,7 +93,7 @@ public:
 
     void start() {
         _worker_poller = SPDK_POLLER_REGISTER(worker_poll, this, 100000); // 10ms写一次
-        SPDK_INFOLOG_EX(kvlog, "start kvstore in core %u, thread  %lu\n", 
+        SPDK_INFOLOG(kvlog, "start kvstore in core %u, thread  %lu\n", 
             core_sharded::get_core_sharded().this_shard_id(), utils::get_spdk_thread_id());
     }
 
@@ -108,7 +108,7 @@ public:
 
     void stop(kvstore_rw_complete cb_fn, void* arg) {
         uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
-        SPDK_INFOLOG_EX(kvlog, "stop kvstore in core %u, thread %lu \n", 
+        SPDK_INFOLOG(kvlog, "stop kvstore in core %u, thread %lu \n", 
             shard_id, utils::get_spdk_thread_id());
         if (_worker_poller) {
             /* 注意：注册、注销poller要在一个thread里，一个cpu core有一个thread，因此注册、注销poller要在一个cpu core里
@@ -121,7 +121,7 @@ public:
             core_sharded::get_core_sharded().invoke_on(
               shard_id,
               [cb_fn = std::move(cb_fn), arg, kverrno](){
-                SPDK_INFOLOG_EX(kvlog, "close rblob done in core %u\n", 
+                SPDK_INFOLOG(kvlog, "close rblob done in core %u\n", 
                     core_sharded::get_core_sharded().this_shard_id());
                 cb_fn(arg, kverrno);
               });
@@ -132,7 +132,7 @@ public:
           [this, arg, stop_done= std::move(stop_done)](){
             rblob->close(
               [cb_fn = std::move(stop_done), this](void* arg, int rberrno){
-                SPDK_NOTICELOG_EX("kvstore stop\n");
+                SPDK_NOTICELOG("kvstore stop\n");
                 rblob->stop();
                 delete rblob; // rblob指针由kvstore负责delete
                 checkpoint.stop(
@@ -176,7 +176,7 @@ public:
                 table.emplace(std::move(key), std::move(*value));   // 插入
             } else {
                 // 非法操作，删除一个不存在的值
-                SPDK_DEBUGLOG_EX(kvlog, "error deleting non existent key: %s", key.c_str());
+                SPDK_DEBUGLOG(kvlog, "error deleting non existent key: %s", key.c_str());
             }
         }
     }
@@ -211,7 +211,7 @@ public:
 
         buffer_list bl;
         auto buf = spdk_buffer(write_buf.get_buf(), SPDK_ALIGN_CEIL(write_buf.used(), 4096));
-        SPDK_DEBUGLOG_EX(kvlog, "op size:%lu op_length:%lu op used:%lu commit used:%lu aligned size:%lu\n",
+        SPDK_DEBUGLOG(kvlog, "op size:%lu op_length:%lu op used:%lu commit used:%lu aligned size:%lu\n",
                 ctx->ops.size(), ctx->op_length, write_buf.used()-sizeof(uint64_t)*2, write_buf.used(), buf.size());
         bl.append_buffer(buf);
         rblob->append(bl, commit_done, ctx);
@@ -221,7 +221,7 @@ public:
         struct kvstore_write_ctx* ctx = (kvstore_write_ctx*)arg;
 
         if (rberrno) {
-            SPDK_ERRLOG_EX("kvstore commit failed:%s\n", spdk_strerror(rberrno));
+            SPDK_ERRLOG("kvstore commit failed:%s\n", spdk_strerror(rberrno));
             ctx->kvs->op_log.insert(ctx->kvs->op_log.begin(), ctx->ops.begin(), ctx->ops.end());
             ctx->kvs->op_length += ctx->op_length;
             ctx->cb_fn(ctx->arg, rberrno);
@@ -233,9 +233,9 @@ public:
             ctx->kvs->apply_op(op.key, op.value);
         }
 
-        SPDK_DEBUGLOG_EX(kvlog, "commit result start_pos:%lu len:%lu, used:%lu size:%lu remain:%lu\n",
+        SPDK_DEBUGLOG(kvlog, "commit result start_pos:%lu len:%lu, used:%lu size:%lu remain:%lu\n",
                 result.start_pos, result.len, ctx->kvs->rblob->used(), ctx->kvs->rblob->size(), ctx->kvs->rblob->remain());
-        SPDK_DEBUGLOG_EX(kvlog, "commit_done, rblob back pos %lu  front pos %lu\n", ctx->kvs->rblob->back_pos(), ctx->kvs->rblob->front_pos());
+        SPDK_DEBUGLOG(kvlog, "commit_done, rblob back pos %lu  front pos %lu\n", ctx->kvs->rblob->back_pos(), ctx->kvs->rblob->front_pos());
         ctx->kvs->working = false;
         ctx->cb_fn(ctx->arg, 0);
         delete ctx;
@@ -254,7 +254,7 @@ public:
         PutFixed64(write_buf, ops.size());
 
         for (auto& op : ops) {
-            SPDK_DEBUGLOG_EX(kvlog, "++++++  key: %s value: %s\n", op.key.c_str(), op.value->c_str());
+            SPDK_DEBUGLOG(kvlog, "++++++  key: %s value: %s\n", op.key.c_str(), op.value->c_str());
             PutString(write_buf, op.key);
             PutOptString(write_buf, op.value);
         }
@@ -302,12 +302,12 @@ public:
     }
 
     bool maybe_work() {
-        // SPDK_NOTICELOG_EX("maybe_work working:%d need_checkpoint:%d need_commit():%d\n",
+        // SPDK_NOTICELOG("maybe_work working:%d need_checkpoint:%d need_commit():%d\n",
         //                 working, need_checkpoint(), need_commit());
         if (working) { return false; }
 
         if (need_checkpoint()) {
-            SPDK_DEBUGLOG_EX(kvlog, "need_checkpoint. op_length:%lu rblob->remain:%lu\n",
+            SPDK_DEBUGLOG(kvlog, "need_checkpoint. op_length:%lu rblob->remain:%lu\n",
                         op_length, rblob->remain());
             // save checkpoint之后commit
             save_checkpoint(
@@ -318,7 +318,7 @@ public:
               this);
             return true;
         } else if (need_commit()) {
-            SPDK_DEBUGLOG_EX(kvlog, "need_commit. op_length:%lu op_size:%lu rblob->remain:%lu\n",
+            SPDK_DEBUGLOG(kvlog, "need_commit. op_length:%lu op_size:%lu rblob->remain:%lu\n",
                         op_length, op_log.size(), rblob->remain());
             // 如果不需要save checkpoint，就判断是否需要commit
             commit([](void *, int){ }, nullptr);
@@ -364,7 +364,7 @@ public:
         }
         ctx->bl = std::move(bl);
 
-        SPDK_DEBUGLOG_EX(kvlog, "table serialized. map size:%lu buffer_list size:%lu in core %u\n", 
+        SPDK_DEBUGLOG(kvlog, "table serialized. map size:%lu buffer_list size:%lu in core %u\n", 
             table.size(), ctx->bl.bytes(), core_sharded::get_core_sharded().this_shard_id());
         checkpoint.start_checkpoint(ctx->bl.bytes(), checkpoint_start_complete, ctx);
     }
@@ -373,7 +373,7 @@ public:
     static void checkpoint_start_complete(void *arg, int ckerror) {
         struct kvstore_ckpt_ctx* ctx = (kvstore_ckpt_ctx*)arg;
 
-        // SPDK_WARNLOG_EX("checkpoint_start_complete\n");
+        // SPDK_WARNLOG("checkpoint_start_complete\n");
         ctx->kv_ckpt->write_checkpoint(ctx->bl, checkpoint_write_complete, ctx);
     }
 
@@ -381,7 +381,7 @@ public:
     static void checkpoint_write_complete(void *arg, int ckerror) {
         struct kvstore_ckpt_ctx* ctx = (kvstore_ckpt_ctx*)arg;
 
-        SPDK_DEBUGLOG_EX(kvlog, "checkpoint_write_complete in core %u\n", core_sharded::get_core_sharded().this_shard_id());
+        SPDK_DEBUGLOG(kvlog, "checkpoint_write_complete in core %u\n", core_sharded::get_core_sharded().this_shard_id());
         auto stop_done = [shard_id = core_sharded::get_core_sharded().this_shard_id()](void *arg, int kverrno){
             core_sharded::get_core_sharded().invoke_on(
               shard_id,
@@ -401,7 +401,7 @@ public:
     static void checkpoint_finish_complete(void *arg, int ckerror) {
         struct kvstore_ckpt_ctx* ctx = (kvstore_ckpt_ctx*)arg;
 
-        // SPDK_WARNLOG_EX("checkpoint_finish_complete\n");
+        // SPDK_WARNLOG("checkpoint_finish_complete\n");
         ctx->kvs->rblob->trim_back(ctx->kvs->rblob->used(), checkpoint_trim_complete, ctx);
     }
 
@@ -409,7 +409,7 @@ public:
     static void checkpoint_trim_complete(void *arg, int ckerror) {
         struct kvstore_ckpt_ctx* ctx = (kvstore_ckpt_ctx*)arg;
 
-        SPDK_DEBUGLOG_EX(kvlog, "checkpoint_trim_complete in core %u\n", core_sharded::get_core_sharded().this_shard_id());
+        SPDK_DEBUGLOG(kvlog, "checkpoint_trim_complete in core %u\n", core_sharded::get_core_sharded().this_shard_id());
         free_buffer_list(ctx->bl);
         ctx->kvs->working = false;
         ctx->cb_fn(ctx->arg, ckerror);
@@ -435,13 +435,13 @@ public:
         struct kvstore_ckpt_ctx* ctx = (kvstore_ckpt_ctx*)arg;
 
         if(err::E_NODEV == ckerror){
-            SPDK_INFOLOG_EX(kvlog, "checkpoint open failed:%s\n", err::string_status(ckerror));
+            SPDK_INFOLOG(kvlog, "checkpoint open failed:%s\n", err::string_status(ckerror));
             ctx->cb_fn(ctx->arg, 0);
             delete ctx;
             return;
         }
         if (ckerror) {
-            SPDK_ERRLOG_EX("checkpoint open failed:%s\n", spdk_strerror(ckerror));
+            SPDK_ERRLOG("checkpoint open failed:%s\n", spdk_strerror(ckerror));
             ctx->cb_fn(ctx->arg, ckerror);
             delete ctx;
             return;
@@ -449,7 +449,7 @@ public:
 
         auto size = ctx->kv_ckpt->checkpoint_size();
         ctx->bl = make_buffer_list(size / 4096);
-        // SPDK_WARNLOG_EX("checkpoint_open_complete, size:%lu.\n", size);
+        // SPDK_WARNLOG("checkpoint_open_complete, size:%lu.\n", size);
         ctx->kv_ckpt->read_checkpoint(ctx->bl, checkpoint_read_complete, ctx);
     }
 
@@ -463,14 +463,14 @@ public:
         bool rc = true;
 
         if (ckerror) {
-            SPDK_ERRLOG_EX("checkpoint read failed:%s\n", spdk_strerror(ckerror));
+            SPDK_ERRLOG("checkpoint read failed:%s\n", spdk_strerror(ckerror));
             goto complete;
         }
 
         rc = bl_encoder.get(table_size);
         if (!rc) { goto complete; }
 
-        // SPDK_DEBUGLOG_EX(kvlog, "table_size:%lu.\n", table_size);
+        // SPDK_DEBUGLOG(kvlog, "table_size:%lu.\n", table_size);
         for (uint64_t i = 0; i < table_size; i++) {
             std::string key, value;
             rc = bl_encoder.get(key);
@@ -479,14 +479,14 @@ public:
             rc = bl_encoder.get(value);
             if (!rc) { goto complete; }
 
-            // SPDK_WARNLOG_EX("-- key %s value %s\n", key.c_str(), value.c_str());
+            // SPDK_WARNLOG("-- key %s value %s\n", key.c_str(), value.c_str());
             ctx->kvs->table.emplace(std::move(key), std::move(value));
         }
-        // SPDK_WARNLOG_EX("after read checkpoint, table size:%lu.\n", ctx->kvs->table.size());
+        // SPDK_WARNLOG("after read checkpoint, table size:%lu.\n", ctx->kvs->table.size());
 
       complete:
         if (!rc) {
-            SPDK_ERRLOG_EX("bl_encoder get failed.\n");
+            SPDK_ERRLOG("bl_encoder get failed.\n");
         }
         free_buffer_list(ctx->bl);
         ctx->cb_fn(ctx->arg, ckerror);
@@ -539,7 +539,7 @@ public:
 
         read_buf.reset();
         auto buf = spdk_buffer(read_buf.get_buf(), 4096);
-        // SPDK_WARNLOG_EX("kv replay_one_batch read start:%lu len:%lu\n", ctx->start_pos, ctx->len);
+        // SPDK_WARNLOG("kv replay_one_batch read start:%lu len:%lu\n", ctx->start_pos, ctx->len);
         rblob->read(ctx->start_pos, 4096, buf, replay_one_batch_done, ctx, true);
     }
 
@@ -548,7 +548,7 @@ public:
         uint64_t data_size{0};
 
         if (rberrno) {
-            SPDK_ERRLOG_EX("kv replay_one_batch fail. start:%lu len:%lu error:%s\n", ctx->start_pos, ctx->len, spdk_strerror(rberrno));
+            SPDK_ERRLOG("kv replay_one_batch fail. start:%lu len:%lu error:%s\n", ctx->start_pos, ctx->len, spdk_strerror(rberrno));
             ctx->cb_fn(ctx->arg, rberrno);
             delete ctx->kvloader;
             delete ctx;
@@ -561,7 +561,7 @@ public:
         if (data_size > ctx->len) {
             ctx->len = SPDK_ALIGN_CEIL(data_size, 4096);
             auto buf = spdk_buffer(ctx->read_buf.get_buf() + 4096, ctx->len - 4096);
-            // SPDK_WARNLOG_EX("kv replay_one_batch continue. start:%lu len:%lu\n",
+            // SPDK_WARNLOG("kv replay_one_batch continue. start:%lu len:%lu\n",
             // ctx->start_pos + 4096, ctx->len - 4096);
             ctx->rblob->read(ctx->start_pos + 4096, ctx->len - 4096, buf, replay_one_batch_done, ctx, true);
             return;
@@ -569,7 +569,7 @@ public:
 
         auto ops = ctx->kvs->deserialize_op();
         for (auto& op : ops) {
-            SPDK_INFOLOG_EX(kvlog, "------  key: %s value: %s\n", op.key.c_str(), op.value->c_str());
+            SPDK_INFOLOG(kvlog, "------  key: %s value: %s\n", op.key.c_str(), op.value->c_str());
             ctx->kvs->apply_op(op.key, op.value);
         }
 
@@ -578,7 +578,7 @@ public:
         // 如果还没有 replay 到终点，就继续 replay
         auto replayed_pos = ctx->start_pos + ctx->len;
         // bool finished = replayed_pos >= ctx->kvloader->end;
-        // SPDK_DEBUGLOG_EX(kvlog, "kv table size:%lu. replayed_pos:%lu end:%lu finish?%d.\n",
+        // SPDK_DEBUGLOG(kvlog, "kv table size:%lu. replayed_pos:%lu end:%lu finish?%d.\n",
         //         ctx->kvs->table.size(), replayed_pos, ctx->kvloader->end, finished);
         if (!finished) {
             ctx->start_pos = replayed_pos;
@@ -586,12 +586,12 @@ public:
 
             ctx->read_buf.reset();
             auto buf = spdk_buffer(ctx->read_buf.get_buf(), 4096);
-            // SPDK_NOTICELOG_EX("kv replay next batch. start:%lu len:%lu\n", ctx->start_pos, ctx->len);
+            // SPDK_NOTICELOG("kv replay next batch. start:%lu len:%lu\n", ctx->start_pos, ctx->len);
             ctx->rblob->read(ctx->start_pos, 4096, buf, replay_one_batch_done, ctx, true);
             return;
         }
         ctx->rblob->set_front(ctx->start_pos);
-        SPDK_DEBUGLOG_EX(kvlog, "rblob back pos %lu  front pos %lu\n", ctx->rblob->back_pos(), ctx->rblob->front_pos());
+        SPDK_DEBUGLOG(kvlog, "rblob back pos %lu  front pos %lu\n", ctx->rblob->back_pos(), ctx->rblob->front_pos());
 
         // 到这里说明replay完成了，到达终点
         ctx->cb_fn(ctx->arg, rberrno);
@@ -625,7 +625,7 @@ inline void kvstore::replay(kvstore_rw_complete cb_fn, void* arg) {
         }
 
         auto kvloader = new kvstore_loader(this);
-        SPDK_DEBUGLOG_EX(kvlog, "rblob back pos %lu  front pos %lu\n", kvloader->rblob->back_pos(), kvloader->rblob->front_pos());
+        SPDK_DEBUGLOG(kvlog, "rblob back pos %lu  front pos %lu\n", kvloader->rblob->back_pos(), kvloader->rblob->front_pos());
         load_checkpoint(
           [cb_fn = std::move(cb_fn), arg] (void *arg1, int kverrno) {
               kvstore_loader* kvloader = (struct kvstore_loader*)arg1;

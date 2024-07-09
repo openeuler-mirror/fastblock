@@ -16,9 +16,10 @@
 
 #include <assert.h>
 
-#include "raft/raft_node.h"
 #include "raft/configuration_manager.h"
-#include "utils/log.h"
+#include "raft/raft_node.h"
+#include "raft/pg_group.h"
+
 
 void raft_nodes::update_with_node_configuration(node_configuration& cfg, 
         std::vector<std::shared_ptr<raft_node>> new_add_nodes){
@@ -43,7 +44,7 @@ void raft_nodes::update_with_node_configuration(node_configuration& cfg,
                 }
             }
             if(!is_find){
-                SPDK_DEBUGLOG_EX(pg_group, "no find node %d in nodes and new_add_nodes\n", node_info.node_id());
+                SPDK_DEBUGLOG(pg_group, "no find node %d in nodes and new_add_nodes\n", node_info.node_id());
                 node = std::make_shared<raft_node>(node_info);
             }
         }
@@ -53,13 +54,13 @@ void raft_nodes::update_with_node_configuration(node_configuration& cfg,
     for(auto& node_info : node_infos){
         auto add_node = get_raft_node(node_info);
         _nodes.emplace(node_info.node_id(), add_node);
-        SPDK_DEBUGLOG_EX(pg_group, "_nodes: osd id %d\n", node_info.node_id());
+        SPDK_DEBUGLOG(pg_group, "_nodes: osd id %d\n", node_info.node_id());
     }
 
     for(auto& new_node_info : new_node_infos){
        auto add_new_node = get_raft_node(new_node_info);
        _new_nodes.emplace(new_node_info.node_id(), add_new_node);
-       SPDK_DEBUGLOG_EX(pg_group, "_new_nodes: osd id %d\n", new_node_info.node_id());
+       SPDK_DEBUGLOG(pg_group, "_new_nodes: osd id %d\n", new_node_info.node_id());
     }
 }
 

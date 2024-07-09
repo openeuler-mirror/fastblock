@@ -28,7 +28,6 @@
 #include "utils/itos.h"
 #include "utils/utils.h"
 
-int g_id{-1};
 static const char *g_bdev_name = NULL;
 
 struct hello_context_t {

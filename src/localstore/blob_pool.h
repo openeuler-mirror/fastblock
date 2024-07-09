@@ -79,7 +79,7 @@ public:
   }
 
   void start(pool_create_complete cb_fn, void* arg)  {
-      SPDK_NOTICELOG_EX("blob_pool: start!\n");
+      SPDK_NOTICELOG("blob_pool: start!\n");
       _worker_poller = SPDK_POLLER_REGISTER(worker_poll, this, poller_period_us);
       allocate_blob(init_blob_num, std::move(cb_fn), arg);
   }

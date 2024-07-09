@@ -13,7 +13,7 @@
 
 #include "monclient/messages.pb.h"
 #include "utils/utils.h"
-#include "utils/log.h"
+
 #include "utils/simple_poller.h"
 #include "utils/time_check.h"
 
@@ -232,9 +232,9 @@ public:
             if (_sock) {
                 auto rc = ::spdk_sock_close(&_sock);
                 if (rc == 0) {
-                    SPDK_INFOLOG_EX(mon, "Closed the connection to the monitor server\n");
+                    SPDK_INFOLOG(mon, "Closed the connection to the monitor server\n");
                 } else {
-                    SPDK_ERRLOG_EX("ERROR: Close the connection to the monitor server error\n");
+                    SPDK_ERRLOG("ERROR: Close the connection to the monitor server error\n");
                 }
             }
         }
@@ -245,7 +245,7 @@ public:
 
         void connect() {
             if (_sock or (_current_ep and _current_ep->fail_count < _max_fail)) {
-                SPDK_NOTICELOG_EX("Connecting to monitor while old one is still keep connected\n");
+                SPDK_NOTICELOG("Connecting to monitor while old one is still keep connected\n");
                 ::spdk_sock_close(&_sock);
             }
 
@@ -259,14 +259,14 @@ public:
                     ep.fail_count = 0;
                     _current_ep = &ep;
                     _is_connected = true;
-                    SPDK_INFOLOG_EX(mon, "Connected to %s:%u\n", ep.ep.host.c_str(), ep.ep.port);
+                    SPDK_INFOLOG(mon, "Connected to %s:%u\n", ep.ep.host.c_str(), ep.ep.port);
                     break;
                 }
             }
 
             if (not _sock) {
                 if (_log_time_check.check_and_update()) {
-                    SPDK_ERRLOG_EX("ERROR: Connect to monitor cluster fail\n");
+                    SPDK_ERRLOG("ERROR: Connect to monitor cluster fail\n");
                 }
                 _is_connected = false;
             }
@@ -281,7 +281,7 @@ public:
 
             if (_current_ep->fail_count >= _max_fail) {
                 if (_log_time_check.check_and_update()) {
-                    SPDK_NOTICELOG_EX(
+                    SPDK_NOTICELOG(
                       "Current connection to monitor(%s:%u) has exceed max fail count(%lu)\n",
                       _current_ep->ep.host.c_str(), _current_ep->ep.port, _max_fail);
                 }
@@ -470,7 +470,7 @@ private:
         auto& img_info = resp.imageinfo();
         auto err_code = resp.errorcode();
 
-        SPDK_DEBUGLOG_EX(
+        SPDK_DEBUGLOG(
           mon,
           "Received image(%s) response, error code is %d\n",
           img_info.imagename().c_str(), err_code);

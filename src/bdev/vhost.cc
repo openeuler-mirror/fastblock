@@ -22,7 +22,6 @@
 static const char* g_mon_cluster_endpoints = nullptr;
 static const char* g_conf_path{nullptr};
 boost::property_tree::ptree g_pt{};
-int g_id{-1};
 
 static void
 vhost_usage(void)
@@ -120,7 +119,7 @@ int main(int argc, char *argv[])
 	std::string pid_path = "/var/tmp/vhost" + std::to_string(getpid()) + ".pid";
 	save_pid(pid_path.c_str());
 	auto vhost_path = "/var/tmp/bdev_vhost_" + std::to_string(getpid()) + ".sock";
-	SPDK_NOTICELOG_EX(
+	SPDK_NOTICELOG(
 		"pid path is '%s', vhost socket path is '%s'\n",
 		pid_path.c_str(), vhost_path.c_str());
 

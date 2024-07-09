@@ -10,7 +10,7 @@
  */
 
 #include "disk_log.h"
-#include "utils/log.h"
+
 
 SPDK_LOG_REGISTER_COMPONENT(disk_log)
 
@@ -29,13 +29,13 @@ make_disklog_sync_done(void *arg, int logerrno) {
   struct make_disklog_ctx *ctx = (struct make_disklog_ctx *)arg;
 
   if (logerrno) {
-      SPDK_ERRLOG_EX("make_disklog failed. error:%s\n", spdk_strerror(logerrno));
+      SPDK_ERRLOG("make_disklog failed. error:%s\n", spdk_strerror(logerrno));
       ctx->cb_fn(ctx->arg, nullptr, logerrno);
       delete ctx;
       return;
   }
 
-  SPDK_INFOLOG_EX(disk_log, "make_disklog pg:%s trim_back, in core %u thread %lu .\n", ctx->pg.c_str(),
+  SPDK_INFOLOG(disk_log, "make_disklog pg:%s trim_back, in core %u thread %lu .\n", ctx->pg.c_str(),
       core_sharded::get_core_sharded().this_shard_id(), utils::get_spdk_thread_id());
   struct disk_log* dlog = new disk_log(ctx->rblob);
   ctx->cb_fn(ctx->arg, dlog, 0);
@@ -49,7 +49,7 @@ make_disklog_blob_done(void *arg, struct rolling_blob* rblob, int logerrno) {
   log_xattr xattr{.shard_id = ctx->shard_id, .pg = ctx->pg};
 
   if (logerrno) {
-      SPDK_ERRLOG_EX("make_disk_log failed. error:%s\n", spdk_strerror(logerrno));
+      SPDK_ERRLOG("make_disk_log failed. error:%s\n", spdk_strerror(logerrno));
       ctx->cb_fn(ctx->arg, nullptr, logerrno);
       delete ctx;
       return;
@@ -68,7 +68,7 @@ void make_disk_log(struct spdk_blob_store *bs, struct spdk_io_channel *channel,
         shard_id,
         [cb_fn = std::move(cb_fn), arg, rerrno, dlog, pg = std::move(pg)](){
           if(rerrno == 0 && dlog) {
-            SPDK_INFOLOG_EX(disk_log, "start disklog pg:%s , in core %u thread %lu .\n", pg.c_str(),
+            SPDK_INFOLOG(disk_log, "start disklog pg:%s , in core %u thread %lu .\n", pg.c_str(),
                 core_sharded::get_core_sharded().this_shard_id(), utils::get_spdk_thread_id());  
             dlog->start();          
           }

@@ -42,13 +42,13 @@ static void make_log_done(void *arg, struct disk_log* dlog, int rberrno){
     make_log_context* mlc = (make_log_context*)arg;
 
     if(rberrno){
-        SPDK_ERRLOG_EX("pg %lu.%lu make_disk_log failed: %s\n", mlc->pool_id, mlc->pg_id, spdk_strerror(rberrno));
+        SPDK_ERRLOG("pg %lu.%lu make_disk_log failed: %s\n", mlc->pool_id, mlc->pg_id, spdk_strerror(rberrno));
         mlc->cb_fn(mlc->arg, rberrno);
         delete mlc;
         return;
     }
 
-    SPDK_INFOLOG_EX(osd, "make_disk_log succcess  for pg %lu.%lu shard_id %u \n",
+    SPDK_INFOLOG(osd, "make_disk_log succcess  for pg %lu.%lu shard_id %u \n",
             mlc->pool_id, mlc->pg_id,  mlc->shard_id);
     partition_manager* pm = mlc->pm;
     auto sm = std::make_shared<osd_stm>();
@@ -73,15 +73,15 @@ void partition_manager::create_pg(
 int partition_manager::osd_state_is_not_active(){
     switch (_state) {
     case osd_state::OSD_STARTING:
-        SPDK_WARNLOG_EX("%s.\n", err::string_status(err::OSD_STARTING));
+        SPDK_WARNLOG("%s.\n", err::string_status(err::OSD_STARTING));
         return err::OSD_STARTING;
     case osd_state::OSD_ACTIVE:
         return 0;
     case osd_state::OSD_DOWN:
-        SPDK_WARNLOG_EX("%s.\n", err::string_status(err::OSD_DOWN));
+        SPDK_WARNLOG("%s.\n", err::string_status(err::OSD_DOWN));
         return err::OSD_DOWN;
     default:
-        SPDK_WARNLOG_EX("unknown osd state.\n");
+        SPDK_WARNLOG("unknown osd state.\n");
         return err::RAFT_ERR_UNKNOWN;
     }
     return  0;
@@ -170,7 +170,7 @@ struct partition_op_ctx{
 
 static void partition_op_done(void* arg){
     partition_op_ctx* ctx = (partition_op_ctx *)arg;
-    SPDK_INFOLOG_EX(osd, "partition_op_done, ctx->perrno %d pg %lu.%lu shard_id %u op %d\n", ctx->perrno, 
+    SPDK_INFOLOG(osd, "partition_op_done, ctx->perrno %d pg %lu.%lu shard_id %u op %d\n", ctx->perrno, 
             ctx->pool_id, ctx->pg_id, ctx->shard_id, ctx->op);
     if(ctx->perrno == 0){
         if(ctx->op == 0)
@@ -209,7 +209,7 @@ int partition_manager::create_partition(
     return _shard.invoke_on(
       shard_id,
       [this, pool_id, pg_id, osds = std::move(osds), revision_id, shard_id, ctx, create_pg_done = std::move(create_pg_done)](){
-        SPDK_INFOLOG_EX(osd, "create pg in core %u  shard_id %u pool_id %lu pg_id %lu \n",
+        SPDK_INFOLOG(osd, "create pg in core %u  shard_id %u pool_id %lu pg_id %lu \n",
             spdk_env_get_current_core(), shard_id, pool_id, pg_id);
         create_pg(pool_id, pg_id, std::move(osds), shard_id, revision_id, std::move(create_pg_done), ctx);
       });
@@ -229,11 +229,11 @@ void partition_manager::load_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg
         }
         // note: 直接把pg string放进object里，后面不用再传了
         std::string pg = pg_id_to_name(pool_id, pg_id);
-        SPDK_INFOLOG_EX(osd, "[test] create pg:%s!\n", pg.c_str());
+        SPDK_INFOLOG(osd, "[test] create pg:%s!\n", pg.c_str());
         sm->set_pg(pg);
         sm->load_object(std::move(objects));
         add_osd_stm(pool_id, pg_id, shard_id, sm);
-        SPDK_INFOLOG_EX(osd, "load pg done\n");
+        SPDK_INFOLOG(osd, "load pg done\n");
         cb_fn(arg, lerrno);
       }, 
       arg, _mon_client);
@@ -257,7 +257,7 @@ int partition_manager::load_partition(uint32_t shard_id, uint64_t pool_id, uint6
     return _shard.invoke_on(
       shard_id,
       [this, pool_id, pg_id, blob, shard_id, ctx, load_pg_done = std::move(load_pg_done), objects = std::move(objects)](){
-        SPDK_INFOLOG_EX(osd, "load pg in core %u  shard_id %u pg %lu.%lu \n", 
+        SPDK_INFOLOG(osd, "load pg in core %u  shard_id %u pg %lu.%lu \n", 
             spdk_env_get_current_core(), shard_id, pool_id, pg_id);
         load_pg(shard_id, pool_id, pg_id, blob, std::move(objects), std::move(load_pg_done), ctx);        
     });
@@ -269,7 +269,7 @@ void partition_manager::delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t sha
       pool_id, 
       pg_id, 
       [this, cb_fn = std::move(cb_fn), pool_id, pg_id, shard_id](void *arg, int lerrno){
-        SPDK_INFOLOG_EX(osd, "delete pg %lu.%lu done, rberrno %d\n", pool_id, pg_id, lerrno);  
+        SPDK_INFOLOG(osd, "delete pg %lu.%lu done, rberrno %d\n", pool_id, pg_id, lerrno);  
         if(lerrno != 0){
             cb_fn(arg, lerrno);
             return;
@@ -281,7 +281,7 @@ void partition_manager::delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t sha
             return;
         }
         auto destroy_objects = [this, pool_id, pg_id, shard_id, cb_fn = std::move(cb_fn)](void* arg, int rberrno){
-            SPDK_INFOLOG_EX(osd, "delete pg %lu.%lu object done, rberrno %d\n", pool_id, pg_id, rberrno);   
+            SPDK_INFOLOG(osd, "delete pg %lu.%lu object done, rberrno %d\n", pool_id, pg_id, rberrno);   
             if(rberrno == 0){
                 del_osd_stm(pool_id, pg_id, shard_id);
             }
@@ -322,7 +322,7 @@ int partition_manager::delete_partition(uint64_t pool_id, uint64_t pg_id, pm_com
     return _shard.invoke_on(
       shard_id,
       [this, pool_id, pg_id, shard_id, ctx, delete_pg_done = std::move(delete_pg_done)](){
-        SPDK_INFOLOG_EX(osd, "delete pg in core %u shard_id %u pool_id %lu pg_id %lu \n",
+        SPDK_INFOLOG(osd, "delete pg in core %u shard_id %u pool_id %lu pg_id %lu \n",
             spdk_env_get_current_core(), shard_id, pool_id, pg_id);
         delete_pg(pool_id, pg_id, shard_id, std::move(delete_pg_done), ctx);
       });
@@ -353,7 +353,7 @@ int partition_manager::active_partition(uint64_t pool_id, uint64_t pg_id, pm_com
     auto activate_pg_done = [cur_thread](void *arg, int perrno){
         partition_op_ctx* ctx = (partition_op_ctx *)arg;
         ctx->perrno = perrno;
-        SPDK_INFOLOG_EX(osd, "activate pg %lu.%lu done\n", ctx->pool_id, ctx->pg_id);
+        SPDK_INFOLOG(osd, "activate pg %lu.%lu done\n", ctx->pool_id, ctx->pg_id);
         if(spdk_get_thread() != cur_thread)
             spdk_thread_send_msg(cur_thread, partition_op_done, arg);
         else
@@ -363,7 +363,7 @@ int partition_manager::active_partition(uint64_t pool_id, uint64_t pg_id, pm_com
     return _shard.invoke_on(
       shard_id,
       [this, pool_id, pg_id, shard_id, ctx, activate_pg_done = std::move(activate_pg_done)](){
-        SPDK_INFOLOG_EX(osd, "activate pg in core %u shard_id %u pool_id %lu pg_id %lu \n",
+        SPDK_INFOLOG(osd, "activate pg in core %u shard_id %u pool_id %lu pg_id %lu \n",
             spdk_env_get_current_core(), shard_id, pool_id, pg_id);
         active_pg(pool_id, pg_id, shard_id, std::move(activate_pg_done), ctx);
       });
@@ -380,7 +380,7 @@ int partition_manager::change_pg_membership(uint64_t pool_id, uint64_t pg_id, st
     }
 
     if(!get_pg_shard(pool_id, pg_id, shard_id)){
-        SPDK_INFOLOG_EX(osd, "not found pg %lu.%lu\n", pool_id, pg_id);
+        SPDK_INFOLOG(osd, "not found pg %lu.%lu\n", pool_id, pg_id);
         if(complete)
             complete->complete(err::RAFT_ERR_NOT_FOUND_PG);
         return err::RAFT_ERR_NOT_FOUND_PG;
@@ -389,7 +389,7 @@ int partition_manager::change_pg_membership(uint64_t pool_id, uint64_t pg_id, st
     return _shard.invoke_on(
       shard_id, 
       [this, pool_id, pg_id, shard_id, new_osds = std::move(new_osds), complete]() mutable{
-        SPDK_INFOLOG_EX(osd, "change pg membership in core %u shard_id %u pool_id %lu pg_id %lu \n", 
+        SPDK_INFOLOG(osd, "change pg membership in core %u shard_id %u pool_id %lu pg_id %lu \n", 
             spdk_env_get_current_core(), shard_id, pool_id, pg_id);
         std::vector<raft_node_info> osd_infos;
         for(auto& new_osd : new_osds){

@@ -13,7 +13,6 @@
 
 #include "utils/fmt.h"
 
-#include <utils/log.h>
 
 #include <memory>
 #include <vector>
@@ -166,7 +165,7 @@ public:
             auto thread_name = FMT_2("%1%%2%", app_name, *begin);
             thread = ::spdk_thread_create(thread_name.c_str(), &cpumask);
             _threads.push_back(thread);
-            SPDK_NOTICELOG_EX("Created public spdk thread on core %d\n", *begin);
+            SPDK_NOTICELOG("Created public spdk thread on core %d\n", *begin);
 
             ++counter;
             ++begin;

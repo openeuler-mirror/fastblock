@@ -13,7 +13,7 @@
 #include "types.h"
 #include "object_store.h"
 #include "base/core_sharded.h"
-#include "utils/log.h"
+
 #include "utils/utils.h"
 
 #include <spdk/log.h>
@@ -135,7 +135,7 @@ void object_store::snap_create(std::map<std::string, xattr_val_type>& xattr, std
   struct snap_create_ctx* ctx;
   auto it = table.find(object_name);
   if (it == table.end()) {
-    SPDK_ERRLOG_EX("object_name:%s doesn't exist.\n", object_name.c_str());
+    SPDK_ERRLOG("object_name:%s doesn't exist.\n", object_name.c_str());
     cb_fn(arg, -EINVAL);
     return;
   }
@@ -158,14 +158,14 @@ void object_store::snap_create(std::map<std::string, xattr_val_type>& xattr, std
   snapshot_xattrs.ctx = &(ctx->xattr);
   snapshot_xattrs.get_value = object_snap_xattr::get_xattr_value;
 
-  // SPDK_NOTICELOG_EX("object:%s snap:%s create\n", object_name.c_str(), snap_name.c_str());
+  // SPDK_NOTICELOG("object:%s snap:%s create\n", object_name.c_str(), snap_name.c_str());
   spdk_bs_create_snapshot(bs, it->second.origin.blobid, &snapshot_xattrs, snap_create_complete, ctx);
 }
 
 void object_store::snap_create_complete(void *arg, spdk_blob_id snap_id, int objerrno) {
   struct snap_create_ctx *ctx = (struct snap_create_ctx*)arg;
   if (objerrno) {
-    SPDK_ERRLOG_EX("object_name:%s snap_name:%s create failed:%s\n", ctx->object_name.c_str(), ctx->snap_name.c_str(), spdk_strerror(objerrno));
+    SPDK_ERRLOG("object_name:%s snap_name:%s create failed:%s\n", ctx->object_name.c_str(), ctx->snap_name.c_str(), spdk_strerror(objerrno));
     ctx->cb_fn(ctx->arg, objerrno);
     delete ctx;
     return;
@@ -173,7 +173,7 @@ void object_store::snap_create_complete(void *arg, spdk_blob_id snap_id, int obj
 
   auto it = ctx->hashtable->find(ctx->object_name);
   if (it == ctx->hashtable->end()) {
-    SPDK_ERRLOG_EX("object_name:%s doesn't exist.\n", ctx->object_name.c_str());
+    SPDK_ERRLOG("object_name:%s doesn't exist.\n", ctx->object_name.c_str());
     ctx->cb_fn(ctx->arg, -EINVAL);
     delete ctx;
     return;
@@ -183,10 +183,10 @@ void object_store::snap_create_complete(void *arg, spdk_blob_id snap_id, int obj
   ctx->snap.snap_blob.blob = nullptr;
   ctx->snap.snap_name = ctx->snap_name;
   it->second.snap_list.emplace_back(std::move(ctx->snap));
-  // SPDK_NOTICELOG_EX("object:%s snap:%s added, snap size:%lu\n",
+  // SPDK_NOTICELOG("object:%s snap:%s added, snap size:%lu\n",
   //     ctx->object_name.c_str(), ctx->snap_name.c_str(), it->second.snap_list.size());
 
-  SPDK_DEBUGLOG_EX(object_store, "object_name:%s snap_name:%s snapshot added.\n", ctx->object_name.c_str(), ctx->snap_name.c_str());
+  SPDK_DEBUGLOG(object_store, "object_name:%s snap_name:%s snapshot added.\n", ctx->object_name.c_str(), ctx->snap_name.c_str());
   ctx->cb_fn(ctx->arg, 0);
   delete ctx;
   return;
@@ -197,7 +197,7 @@ void object_store::snap_delete(std::string object_name, std::string snap_name, o
   spdk_blob_id del_blobid = 0;
   auto it = table.find(object_name);
   if (it == table.end()) {
-    SPDK_ERRLOG_EX("object_name:%s doesn't exist.\n", object_name.c_str());
+    SPDK_ERRLOG("object_name:%s doesn't exist.\n", object_name.c_str());
     cb_fn(arg, -EINVAL);
     return;
   }
@@ -214,7 +214,7 @@ void object_store::snap_delete(std::string object_name, std::string snap_name, o
     }
   }
   if (!del_blobid) {
-      SPDK_ERRLOG_EX("object_name:%s snap_name:%s not found.\n", object_name.c_str(), snap_name.c_str());
+      SPDK_ERRLOG("object_name:%s snap_name:%s not found.\n", object_name.c_str(), snap_name.c_str());
       cb_fn(arg, -EINVAL);
       return;
   }
@@ -228,20 +228,20 @@ void object_store::snap_delete(std::string object_name, std::string snap_name, o
   ctx->blob_id = del_blobid;
   // snap默认是关闭的，直接delete即可
 
-  // SPDK_NOTICELOG_EX("object:%s snap:%s delete blob_id:%lu\n", object_name.c_str(), snap_name.c_str(), del_blobid);
+  // SPDK_NOTICELOG("object:%s snap:%s delete blob_id:%lu\n", object_name.c_str(), snap_name.c_str(), del_blobid);
   spdk_bs_delete_blob(bs, ctx->blob_id, snap_delete_complete, ctx);
 }
 
 void object_store::snap_delete_complete(void *arg, int objerrno) {
   struct snap_delete_ctx* ctx = (struct snap_delete_ctx*)arg;
   if (objerrno) {
-    SPDK_ERRLOG_EX("object_name:%s snap_name:%s delete failed:%s\n", ctx->object_name.c_str(), ctx->snap_name.c_str(), spdk_strerror(objerrno));
+    SPDK_ERRLOG("object_name:%s snap_name:%s delete failed:%s\n", ctx->object_name.c_str(), ctx->snap_name.c_str(), spdk_strerror(objerrno));
     ctx->cb_fn(ctx->arg, objerrno);
     delete ctx;
     return ;
   }
 
-  SPDK_DEBUGLOG_EX(object_store, "object_name:%s snap_name:%s deleted.\n", ctx->object_name.c_str(), ctx->snap_name.c_str());
+  SPDK_DEBUGLOG(object_store, "object_name:%s snap_name:%s deleted.\n", ctx->object_name.c_str(), ctx->snap_name.c_str());
   ctx->cb_fn(ctx->arg, 0);
   delete ctx;
   return;
@@ -251,7 +251,7 @@ void object_store::recovery_create(std::map<std::string, xattr_val_type>& xattr,
   struct recover_create_ctx* ctx;
   auto it = table.find(object_name);
   if (it == table.end()) {
-    SPDK_ERRLOG_EX("object_name:%s doesn't exist.\n", object_name.c_str());
+    SPDK_ERRLOG("object_name:%s doesn't exist.\n", object_name.c_str());
     cb_fn(arg, -EINVAL);
     return;
   }
@@ -270,14 +270,14 @@ void object_store::recovery_create(std::map<std::string, xattr_val_type>& xattr,
   recovery_xattrs.count = object_recover_xattr::xattr_count;
   recovery_xattrs.ctx = &(ctx->xattr);
   recovery_xattrs.get_value = object_recover_xattr::get_xattr_value;
-  // SPDK_NOTICELOG_EX("object:%s recovery create, origin id:%lx\n", ctx->object_name.c_str(), it->second.origin.blobid);
+  // SPDK_NOTICELOG("object:%s recovery create, origin id:%lx\n", ctx->object_name.c_str(), it->second.origin.blobid);
   spdk_bs_create_snapshot(bs, it->second.origin.blobid, &recovery_xattrs, recovery_create_complete, ctx);
 }
 
 void object_store::recovery_create_complete(void *arg, spdk_blob_id blob_id, int objerrno) {
   struct recover_create_ctx *ctx = (struct recover_create_ctx*)arg;
   if (objerrno) {
-    SPDK_ERRLOG_EX("object_name:%s recovery snapshot create failed:%s\n", ctx->object_name.c_str(), spdk_strerror(objerrno));
+    SPDK_ERRLOG("object_name:%s recovery snapshot create failed:%s\n", ctx->object_name.c_str(), spdk_strerror(objerrno));
     ctx->cb_fn(ctx->arg, objerrno);
     delete ctx;
     return;
@@ -285,7 +285,7 @@ void object_store::recovery_create_complete(void *arg, spdk_blob_id blob_id, int
 
   auto it = ctx->hashtable->find(ctx->object_name);
   if (it == ctx->hashtable->end()) {
-    SPDK_ERRLOG_EX("object_name:%s doesn't exist.\n", ctx->object_name.c_str());
+    SPDK_ERRLOG("object_name:%s doesn't exist.\n", ctx->object_name.c_str());
     ctx->cb_fn(ctx->arg, -EINVAL);
     delete ctx;
     return;
@@ -294,15 +294,15 @@ void object_store::recovery_create_complete(void *arg, spdk_blob_id blob_id, int
   auto &object = it->second;
   object.recover.blob = nullptr;
   object.recover.blobid = blob_id;
-  // SPDK_NOTICELOG_EX("object:%s recovery open, blob_id:%lx\n", ctx->object_name.c_str(), blob_id);
-  SPDK_DEBUGLOG_EX(object_store, "object_name:%s recovery snapshot created.\n", ctx->object_name.c_str());
+  // SPDK_NOTICELOG("object:%s recovery open, blob_id:%lx\n", ctx->object_name.c_str(), blob_id);
+  SPDK_DEBUGLOG(object_store, "object_name:%s recovery snapshot created.\n", ctx->object_name.c_str());
   spdk_bs_open_blob(ctx->bs, object.recover.blobid, recovery_open_complete, ctx);;
 }
 
 void object_store::recovery_open_complete(void *arg, struct spdk_blob *blob, int objerrno) {
   struct recover_create_ctx *ctx = (struct recover_create_ctx*)arg;
   if (objerrno) {
-    SPDK_ERRLOG_EX("object_name:%s recovery snapshot open failed:%s\n", ctx->object_name.c_str(), spdk_strerror(objerrno));
+    SPDK_ERRLOG("object_name:%s recovery snapshot open failed:%s\n", ctx->object_name.c_str(), spdk_strerror(objerrno));
     ctx->cb_fn(ctx->arg, objerrno);
     delete ctx;
     return;
@@ -310,7 +310,7 @@ void object_store::recovery_open_complete(void *arg, struct spdk_blob *blob, int
 
   auto it = ctx->hashtable->find(ctx->object_name);
   if (it == ctx->hashtable->end()) {
-    SPDK_ERRLOG_EX("object_name:%s doesn't exist.\n", ctx->object_name.c_str());
+    SPDK_ERRLOG("object_name:%s doesn't exist.\n", ctx->object_name.c_str());
     ctx->cb_fn(ctx->arg, -EINVAL);
     delete ctx;
     return;
@@ -318,8 +318,8 @@ void object_store::recovery_open_complete(void *arg, struct spdk_blob *blob, int
 
   auto &object = it->second;
   object.recover.blob = blob;
-  // SPDK_NOTICELOG_EX("object_name:%s, blob_id:%lx blob:%p.\n", ctx->object_name.c_str(), object.recover.blobid, object.recover.blob);
-  SPDK_DEBUGLOG_EX(object_store, "object_name:%s recovery snapshot opened.\n", ctx->object_name.c_str());
+  // SPDK_NOTICELOG("object_name:%s, blob_id:%lx blob:%p.\n", ctx->object_name.c_str(), object.recover.blobid, object.recover.blob);
+  SPDK_DEBUGLOG(object_store, "object_name:%s recovery snapshot opened.\n", ctx->object_name.c_str());
   ctx->cb_fn(ctx->arg, 0);
   delete ctx;
 }
@@ -330,7 +330,7 @@ void object_store::recovery_delete(std::string object_name, object_rw_complete c
   struct recover_delete_ctx* ctx;
   auto it = table.find(object_name);
   if (it == table.end()) {
-    SPDK_ERRLOG_EX("object_name:%s doesn't exist.\n", object_name.c_str());
+    SPDK_ERRLOG("object_name:%s doesn't exist.\n", object_name.c_str());
     cb_fn(arg, -EINVAL);
     return;
   }
@@ -348,7 +348,7 @@ void object_store::recovery_delete(std::string object_name, object_rw_complete c
 void object_store::recovery_close_complete(void *arg, int objerrno) {
   struct recover_delete_ctx* ctx = (struct recover_delete_ctx*)arg;
   if (objerrno) {
-    SPDK_ERRLOG_EX("object_name:%s recovery snapshot close failed:%s\n", ctx->object_name.c_str(), spdk_strerror(objerrno));
+    SPDK_ERRLOG("object_name:%s recovery snapshot close failed:%s\n", ctx->object_name.c_str(), spdk_strerror(objerrno));
     ctx->cb_fn(ctx->arg, objerrno);
     delete ctx;
     return;
@@ -356,21 +356,21 @@ void object_store::recovery_close_complete(void *arg, int objerrno) {
 
   auto it = ctx->hashtable->find(ctx->object_name);
   if (it == ctx->hashtable->end()) {
-    SPDK_ERRLOG_EX("object_name:%s doesn't exist.\n", ctx->object_name.c_str());
+    SPDK_ERRLOG("object_name:%s doesn't exist.\n", ctx->object_name.c_str());
     ctx->cb_fn(ctx->arg, -EINVAL);
     delete ctx;
     return;
   }
 
   it->second.recover.blob = nullptr;
-  // SPDK_NOTICELOG_EX("object:%s recovery closed.\n", ctx->object_name.c_str());
+  // SPDK_NOTICELOG("object:%s recovery closed.\n", ctx->object_name.c_str());
   spdk_bs_delete_blob(ctx->bs, ctx->blob.blobid, recovery_delete_complete, ctx);
 }
 
 void object_store::recovery_delete_complete(void *arg, int objerrno) {
   struct recover_delete_ctx* ctx = (struct recover_delete_ctx*)arg;
   if (objerrno) {
-    SPDK_ERRLOG_EX("object_name:%s recovery snapshot delete failed:%s\n", ctx->object_name.c_str(), spdk_strerror(objerrno));
+    SPDK_ERRLOG("object_name:%s recovery snapshot delete failed:%s\n", ctx->object_name.c_str(), spdk_strerror(objerrno));
     ctx->cb_fn(ctx->arg, objerrno);
     delete ctx;
     return;
@@ -378,15 +378,15 @@ void object_store::recovery_delete_complete(void *arg, int objerrno) {
 
   auto it = ctx->hashtable->find(ctx->object_name);
   if (it == ctx->hashtable->end()) {
-    SPDK_ERRLOG_EX("object_name:%s doesn't exist.\n", ctx->object_name.c_str());
+    SPDK_ERRLOG("object_name:%s doesn't exist.\n", ctx->object_name.c_str());
     ctx->cb_fn(ctx->arg, -EINVAL);
     delete ctx;
     return;
   }
 
   it->second.recover.blobid = 0;
-  // SPDK_NOTICELOG_EX("object:%s recovery deleted.\n", ctx->object_name.c_str());
-  SPDK_DEBUGLOG_EX(object_store, "object_name:%s recovery snapshot opened.\n", ctx->object_name.c_str());
+  // SPDK_NOTICELOG("object:%s recovery deleted.\n", ctx->object_name.c_str());
+  SPDK_DEBUGLOG(object_store, "object_name:%s recovery snapshot opened.\n", ctx->object_name.c_str());
   ctx->cb_fn(ctx->arg, 0);
   delete ctx;
 }
@@ -397,14 +397,14 @@ void object_store::recovery_read(std::string object_name, char *buf, object_rw_c
   struct recover_read_ctx* ctx;
   auto it = table.find(object_name);
   if (it == table.end()) {
-    SPDK_ERRLOG_EX("object_name:%s doesn't exist.\n", object_name.c_str());
+    SPDK_ERRLOG("object_name:%s doesn't exist.\n", object_name.c_str());
     cb_fn(arg, -EINVAL);
     return;
   }
 
   auto& recovery_snap = it->second.recover;
   if (recovery_snap.blobid == 0 || recovery_snap.blob == nullptr) {
-    SPDK_ERRLOG_EX("object_name:%s invalid recovery snapshot. blob_id:%lu blob:%p.\n",
+    SPDK_ERRLOG("object_name:%s invalid recovery snapshot. blob_id:%lu blob:%p.\n",
         object_name.c_str(), recovery_snap.blobid, recovery_snap.blob);
     cb_fn(arg, -EINVAL);
     return;
@@ -414,14 +414,14 @@ void object_store::recovery_read(std::string object_name, char *buf, object_rw_c
   ctx->cb_fn = cb_fn;
   ctx->arg = arg;
   ctx->object_name = object_name;
-  // SPDK_NOTICELOG_EX("object_name:%s blob_id:%lx blob:%p.\n", object_name.c_str(), recovery_snap.blobid, recovery_snap.blob);
+  // SPDK_NOTICELOG("object_name:%s blob_id:%lx blob:%p.\n", object_name.c_str(), recovery_snap.blobid, recovery_snap.blob);
   spdk_blob_io_read(recovery_snap.blob, channel, buf, 0, object_store::blob_size / object_store::unit_size, recovery_read_complete, ctx);
 }
 
 void object_store::recovery_read_complete(void *arg, int objerrno) {
   struct recover_read_ctx* ctx = (struct recover_read_ctx*)arg;
   if (objerrno) {
-    SPDK_ERRLOG_EX("object_name:%s recovery snapshot read failed:%s\n", ctx->object_name.c_str(), spdk_strerror(objerrno));
+    SPDK_ERRLOG("object_name:%s recovery snapshot read failed:%s\n", ctx->object_name.c_str(), spdk_strerror(objerrno));
     ctx->cb_fn(ctx->arg, objerrno);
     delete ctx;
     return;
@@ -435,20 +435,20 @@ void object_store::readwrite(std::map<std::string, xattr_val_type>& xattr, std::
                      uint64_t offset, char* buf, uint64_t len,
                      object_rw_complete cb_fn, void* arg, bool is_read)
 {
-  SPDK_DEBUGLOG_EX(object_store, "object %s offset:%lu len:%lu\n", object_name.c_str(), offset, len);
+  SPDK_DEBUGLOG(object_store, "object %s offset:%lu len:%lu\n", object_name.c_str(), offset, len);
   if (offset + len > blob_size)
   {
-    SPDK_DEBUGLOG_EX(object_store, "object %s offset:%lu len:%lu beyond blob size %u\n",
+    SPDK_DEBUGLOG(object_store, "object %s offset:%lu len:%lu beyond blob size %u\n",
                         object_name.c_str(), offset, len, blob_size);
     len = blob_size - offset;
   }
 
     auto it = table.find(object_name);
     if (it != table.end()) {
-      SPDK_DEBUGLOG_EX(object_store, "object %s found, blob id:%" PRIu64 "\n", object_name.c_str(), it->second.origin.blobid);
+      SPDK_DEBUGLOG(object_store, "object %s found, blob id:%" PRIu64 "\n", object_name.c_str(), it->second.origin.blobid);
       blob_readwrite(it->second.origin.blob, channel, offset, buf, len, cb_fn, arg, is_read);
     } else {
-      SPDK_DEBUGLOG_EX(object_store, "object %s not found\n", object_name.c_str());
+      SPDK_DEBUGLOG(object_store, "object %s not found\n", object_name.c_str());
       create_blob(xattr, object_name, offset, buf, len, cb_fn, arg, is_read);
     }
 }
@@ -474,14 +474,14 @@ void object_store::create_blob(std::map<std::string, xattr_val_type>& xattr, std
       utils::default_blobstore_core,
       [this, ctx](){
         if (global_blob_pool().has_free_blob()) {
-            SPDK_DEBUGLOG_EX(object_store, "[test] object get blob from pool.\n");
+            SPDK_DEBUGLOG(object_store, "[test] object get blob from pool.\n");
             auto blob = global_blob_pool().get();
       
             ctx->xattr.blob_set_xattr(blob.blob); // 同步操作，直接设置xattr
             ctx->blob = blob;
             spdk_blob_sync_md(blob.blob, sync_md_done, ctx);
         } else {
-            SPDK_DEBUGLOG_EX(object_store, "[test] object get blob from create. type:%s pg:%s name:%s\n", 
+            SPDK_DEBUGLOG(object_store, "[test] object get blob from create. type:%s pg:%s name:%s\n", 
                 type_string(ctx->xattr.type).c_str(), ctx->xattr.pg.c_str(), ctx->xattr.obj_name.c_str());
             struct spdk_blob_opts opts;
       
@@ -503,13 +503,13 @@ void object_store::sync_md_done(void *arg, int bserrno) {
         ctx->shard_id,
         [ctx, bserrno](){
             if (bserrno) {
-                SPDK_ERRLOG_EX("sync md failed:%s\n", spdk_strerror(bserrno));
+                SPDK_ERRLOG("sync md failed:%s\n", spdk_strerror(bserrno));
                 ctx->cb_fn(ctx->arg, bserrno);
                 delete ctx;
                 return;
             }
         
-            SPDK_DEBUGLOG_EX(object_store, "sync md in core %u\n", ctx->shard_id);
+            SPDK_DEBUGLOG(object_store, "sync md in core %u\n", ctx->shard_id);
             // 同步完md，先把blob放进map，然后执行读写
             struct object_store::object obj;
             obj.origin = ctx->blob;
@@ -547,7 +547,7 @@ void object_store::blob_readwrite(struct spdk_blob *blob, struct spdk_io_channel
   pin_buf_length = num_lba * lba_size;
 
   if (is_lba_aligned(offset, len)) {
-    SPDK_DEBUGLOG_EX(object_store, "aligned offset:%lu len:%lu\n", offset, len);
+    SPDK_DEBUGLOG(object_store, "aligned offset:%lu len:%lu\n", offset, len);
     ctx->is_aligned = true;
     if (!is_read)
     {
@@ -558,7 +558,7 @@ void object_store::blob_readwrite(struct spdk_blob *blob, struct spdk_io_channel
       spdk_blob_io_read(blob, channel, buf, start_lba, num_lba, rw_done, ctx);
     }
   } else {
-    SPDK_DEBUGLOG_EX(object_store, "not aligned offset:%lu len:%lu\n", offset, len);
+    SPDK_DEBUGLOG(object_store, "not aligned offset:%lu len:%lu\n", offset, len);
     ctx->is_aligned = false;
     ctx->blob = blob;
     ctx->channel = channel;
@@ -580,9 +580,9 @@ void object_store::rw_done(void *arg, int objerrno) {
 
   if (objerrno) {
     if (ctx->is_read) {
-		  SPDK_ERRLOG_EX("read offset:%lu len:%lu failed:%s\n", ctx->offset, ctx->len, spdk_strerror(objerrno));
+		  SPDK_ERRLOG("read offset:%lu len:%lu failed:%s\n", ctx->offset, ctx->len, spdk_strerror(objerrno));
     } else {
-      SPDK_ERRLOG_EX("write offset:%lu len:%lu failed:%s\n", ctx->offset, ctx->len, spdk_strerror(objerrno));
+      SPDK_ERRLOG("write offset:%lu len:%lu failed:%s\n", ctx->offset, ctx->len, spdk_strerror(objerrno));
     }
     ctx->cb_fn(ctx->arg, objerrno);
     delete ctx;
@@ -592,7 +592,7 @@ void object_store::rw_done(void *arg, int objerrno) {
   // object层的处理代码，可以写在这里
 
   if (ctx->pin_buf) {
-    SPDK_DEBUGLOG_EX(object_store, "free pin_buf: %p\n", ctx->pin_buf);
+    SPDK_DEBUGLOG(object_store, "free pin_buf: %p\n", ctx->pin_buf);
     spdk_free(ctx->pin_buf);
   }
   //最后执行用户的回调
@@ -607,7 +607,7 @@ void object_store::read_done(void *arg, int objerrno) {
   char*  pin_buf;
 
   if (objerrno) {
-    SPDK_ERRLOG_EX("prior read offset:%lu len:%lu start_lba:%lu num_lba:%lu failed:%s\n",
+    SPDK_ERRLOG("prior read offset:%lu len:%lu start_lba:%lu num_lba:%lu failed:%s\n",
         ctx->offset, ctx->len, ctx->start_lba, ctx->num_lba, spdk_strerror(objerrno));
     ctx->cb_fn(ctx->arg, objerrno);
     delete ctx;
@@ -629,7 +629,7 @@ void object_store::read_done(void *arg, int objerrno) {
 void object_store::create_done(void *arg, spdk_blob_id blobid, int objerrno) {
   struct blob_create_ctx* ctx = (struct blob_create_ctx*)arg;
   if (objerrno) {
-    SPDK_ERRLOG_EX("name:%s blobid:%" PRIu64 " create failed:%s\n",
+    SPDK_ERRLOG("name:%s blobid:%" PRIu64 " create failed:%s\n",
         ctx->object_name.c_str(), blobid, spdk_strerror(objerrno));
     ctx->cb_fn(ctx->arg, objerrno);
     delete ctx;
@@ -648,13 +648,13 @@ void object_store::open_done(void *arg, struct spdk_blob *blob, int objerrno) {
       ctx->shard_id,
       [ctx, objerrno, blob](){
         if (objerrno) {
-          SPDK_ERRLOG_EX("name:%s blobid:%" PRIu64 " open failed:%s\n",
+          SPDK_ERRLOG("name:%s blobid:%" PRIu64 " open failed:%s\n",
               ctx->object_name.c_str(), ctx->blobid, spdk_strerror(objerrno));
           ctx->cb_fn(ctx->arg, objerrno);
           delete ctx;
       		return;
       	}
-        SPDK_DEBUGLOG_EX(object_store, "name:%s blobid:%" PRIu64 " opened in core %u\n", 
+        SPDK_DEBUGLOG(object_store, "name:%s blobid:%" PRIu64 " opened in core %u\n", 
             ctx->object_name.c_str(), ctx->blobid, ctx->shard_id);
       
         // 成功打开
@@ -689,7 +689,7 @@ void object_store::stop(object_rw_complete cb_fn, void* arg) {
   ctx->cb_fn = cb_fn;
   ctx->arg = arg;
 
-  // SPDK_NOTICELOG_EX("object_name:%s origin close.\n", ctx->it->first.c_str());
+  // SPDK_NOTICELOG("object_name:%s origin close.\n", ctx->it->first.c_str());
   spdk_blob_close(ctx->it->second.origin.blob, close_done, ctx);
 }
 
@@ -697,7 +697,7 @@ void object_store::close_done(void *arg, int objerrno) {
   struct blob_stop_ctx* ctx = (struct blob_stop_ctx*)arg;
 
   if (objerrno) {
-    SPDK_ERRLOG_EX("object_name:%s delete failed:%s\n",
+    SPDK_ERRLOG("object_name:%s delete failed:%s\n",
         ctx->it->first.c_str(), spdk_strerror(objerrno));
     ctx->cb_fn(ctx->arg, objerrno);
     delete ctx;
@@ -708,7 +708,7 @@ void object_store::close_done(void *arg, int objerrno) {
   // if there is snapshot
   if (!object.snap_list.empty()) {
       auto del_snap = object.snap_list.front();
-      // SPDK_NOTICELOG_EX("object_name:%s snap_name:%s delete.\n", ctx->it->first.c_str(), del_snap.snap_name.c_str());
+      // SPDK_NOTICELOG("object_name:%s snap_name:%s delete.\n", ctx->it->first.c_str(), del_snap.snap_name.c_str());
       object.snap_list.pop_front();
       spdk_bs_delete_blob(ctx->bs, del_snap.snap_blob.blobid, close_done, ctx);
       return;
@@ -723,7 +723,7 @@ void object_store::close_done(void *arg, int objerrno) {
   }
 
   // delete next object
-  // SPDK_NOTICELOG_EX("object_name:%s origin close.\n", ctx->it->first.c_str());
+  // SPDK_NOTICELOG("object_name:%s origin close.\n", ctx->it->first.c_str());
   spdk_blob_close(ctx->it->second.origin.blob, close_done, ctx);
 }
 
@@ -747,14 +747,14 @@ static void close_blob_done(void *arg, int objerrno){
   auto fblob = ctx->blobs.front();
 
   if (objerrno) {
-    SPDK_ERRLOG_EX("object_name:%s close blob %lu failed:%s\n",
+    SPDK_ERRLOG("object_name:%s close blob %lu failed:%s\n",
         fblob.object_name.c_str(), fblob.fblob.blobid, spdk_strerror(objerrno));
     ctx->cb_fn(ctx->arg, objerrno);
     delete ctx;
 		return;
 	}  
 
-  SPDK_INFOLOG_EX(object_store, "object_name:%s close blob %lu done\n", 
+  SPDK_INFOLOG(object_store, "object_name:%s close blob %lu done\n", 
           fblob.object_name.c_str(), fblob.fblob.blobid);
   spdk_bs_delete_blob(ctx->bs, fblob.fblob.blobid, delete_blob_done, ctx);
 }
@@ -763,19 +763,19 @@ static void delete_blob_done(void *arg, int objerrno){
   blob_delete_ctx* ctx = (blob_delete_ctx*)arg;
   auto &fblob = ctx->blobs.front();
   if (objerrno) {
-    SPDK_ERRLOG_EX("object_name:%s delete blob %lu failed:%s\n",
+    SPDK_ERRLOG("object_name:%s delete blob %lu failed:%s\n",
         fblob.object_name.c_str(), fblob.fblob.blobid, spdk_strerror(objerrno));
     ctx->cb_fn(ctx->arg, objerrno);
     delete ctx;
 		return;
 	}  
 
-  SPDK_INFOLOG_EX(object_store, "object_name:%s delete blob %lu done\n",
+  SPDK_INFOLOG(object_store, "object_name:%s delete blob %lu done\n",
           fblob.object_name.c_str(), fblob.fblob.blobid);
   ctx->blobs.pop_front();
 
   if(ctx->blobs.empty()){
-    SPDK_INFOLOG_EX(object_store, "delete blobs done.\n");
+    SPDK_INFOLOG(object_store, "delete blobs done.\n");
     ctx->cb_fn(ctx->arg, 0);
     return;
   }
