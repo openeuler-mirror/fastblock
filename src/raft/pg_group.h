@@ -60,13 +60,7 @@ public:
 
     void start();
 
-    void stop()
-    {
-        spdk_poller_unregister(&_heartbeat_timer);
-        for(auto &[name, raft] : _pgs){
-            raft->stop();
-        }
-    }
+    void stop(utils::complete_fun fun, void *arg);
 
     uint32_t get_shard_id()
     {
@@ -86,7 +80,6 @@ private:
 };
 
 using pg_complete = std::function<void (void *, int)>;
-
 
 constexpr int32_t DEFAULT_HEARTBEAT_TIMER_PERIOD_MSEC = 1000;   //毫秒
 constexpr int32_t DEFAULT_ELECTION_TIMER_PERIOD_MSEC = 2000; //毫秒
@@ -156,27 +149,29 @@ public:
 
     void start(utils::complete_fun fun, void *arg);
 
-    void stop(){
-        stop_shard_manager();
+    void stop(utils::complete_fun fun, void *arg){
+        stop_shard_manager(std::move(fun), arg);
     }
 
-    void stop(uint64_t shard_id){
-        _shard_mg[shard_id].stop();
+    void stop(uint64_t shard_id, utils::complete_fun fun, void *arg){
+        _shard_mg[shard_id].stop(std::move(fun), arg);
     }
 
     void start_shard_manager(utils::complete_fun fun, void *arg);
 
-    void stop_shard_manager()
+    void stop_shard_manager(utils::complete_fun fun, void *arg)
     {
         uint32_t i = 0;
         auto shard_num = _shard_mg.size();
+        utils::multi_complete *complete = new utils::multi_complete(shard_num, _shard_cores.size(), std::move(fun), arg);
+
         for (i = 0; i < shard_num; i++)
         {
             _shard.invoke_on(
                 i,
-                [this, shard_id = i]()
+                [this, shard_id = i, complete]()
                 {
-                    _shard_mg[shard_id].stop();
+                    _shard_mg[shard_id].stop(utils::complete_done, complete);
                 });
         }
     }

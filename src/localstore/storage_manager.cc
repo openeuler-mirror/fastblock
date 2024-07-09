@@ -11,15 +11,17 @@
 
 #include "storage_manager.h"
 #include "utils/utils.h"
+#include "base/shard_service.h"
 
 #include <memory>
 
 SPDK_LOG_REGISTER_COMPONENT(storage_log)
 
-static storage_manager g_st_mgr;
+//记录多个核上的storage_manager
+static sharded<storage_manager> g_st_mgr;
 
-storage_manager& global_storage() {
-    return g_st_mgr;
+storage_manager& global_storage(uint32_t shard_id) {
+    return g_st_mgr.on_shard(shard_id);
 }
 
 struct storage_context{
@@ -29,14 +31,16 @@ struct storage_context{
   int serror;
 };
 
-static inline void _storage_op_done(void *arg){
+static inline void _storage_op_done(void* arg){
   storage_context *ctx = (storage_context *)arg;
   ctx->cb_fn(ctx->arg, ctx->serror);
   delete ctx;
 }
 
-static void storage_op_done(storage_context *ctx){
+static void storage_op_done(void *arg, int rerrno){
+  storage_context *ctx = (storage_context *)arg;
   auto cur_thread = spdk_get_thread();
+  ctx->serror = rerrno;
   if(cur_thread != ctx->thread){
     spdk_thread_send_msg(ctx->thread, _storage_op_done, ctx);
   }else{
@@ -45,18 +49,18 @@ static void storage_op_done(storage_context *ctx){
 }
 
 static void
-_storage_init(storage_op_complete cb_fn, void* arg, spdk_thread *thread) {
+_storage_init(storage_op_complete cb_fn, void* arg) {
   struct spdk_bs_dev *bs_dev = NULL;
-
-  SPDK_INFOLOG_EX(storage_log, "storage init, thread id %lu\n", utils::get_spdk_thread_id());
-  std::construct_at(&g_st_mgr);
-  storage_context *ctx = new storage_context{.cb_fn = std::move(cb_fn), .arg = arg, .thread = thread};
-  g_st_mgr.start(
+  auto shard_id = core_sharded::get_core_sharded().this_shard_id();
+  SPDK_INFOLOG_EX(storage_log, "storage init, thread id %lu, core %u\n", utils::get_spdk_thread_id(),
+      shard_id);
+  storage_context *ctx = new storage_context{.cb_fn = std::move(cb_fn), .arg = arg};
+  g_st_mgr.on_shard(shard_id).start(
     [](void *arg, int serror){
       storage_context *ctx = (storage_context *)arg;
-      ctx->serror = serror;
-      SPDK_INFOLOG_EX(storage_log, "storage init done.\n");
-      storage_op_done(ctx);
+      SPDK_NOTICELOG_EX("storage init done in core %u.\n", core_sharded::get_core_sharded().this_shard_id());
+      ctx->cb_fn(ctx->arg, serror);
+      delete ctx;
     },
     ctx
   );
@@ -67,31 +71,42 @@ storage_init(storage_op_complete cb_fn, void* arg){
   auto &shard = core_sharded::get_core_sharded();
   auto cur_thread = spdk_get_thread();
 
-  shard.invoke_on(
-    0,
-    [cb_fn, arg, cur_thread](){
-      _storage_init(cb_fn, arg, cur_thread);
-    }
-  );      
+  storage_context *ctx = new storage_context{.cb_fn = std::move(cb_fn), .arg = arg, .thread = cur_thread};
+  
+  auto shard_num = core_sharded::get_core_sharded().count();
+  utils::multi_complete *complete = new utils::multi_complete(shard_num, shard_num, storage_op_done, ctx);
+  // std::construct_at(&g_st_mgr);
+  g_st_mgr.start();
+  
+  SPDK_INFOLOG_EX(storage_log, "storage init in thread id: %lu, shard_num %u\n", 
+      utils::get_spdk_thread_id(), shard_num);
+  for(uint32_t shard_id = 0; shard_id < shard_num; shard_id++){
+    shard.invoke_on(
+      shard_id,
+      [complete](){
+        _storage_init(utils::complete_done, complete);
+      }
+    );      
+  }
 }
 
 static void
-_storage_fini(storage_op_complete cb_fn, void* arg, spdk_thread *thread) {
+_storage_fini(storage_op_complete cb_fn, void* arg) {
   struct spdk_bs_dev *bs_dev = NULL;
-
-  SPDK_INFOLOG_EX(storage_log, "storage fini, thread id %lu\n", utils::get_spdk_thread_id());
-  storage_context *ctx = new storage_context{.cb_fn = std::move(cb_fn), .arg = arg, .thread = thread};
+  auto shard_id = core_sharded::get_core_sharded().this_shard_id();
+  SPDK_INFOLOG_EX(storage_log, "storage fini, thread id %lu, core %u\n", 
+      utils::get_spdk_thread_id(), shard_id);
+  storage_context *ctx = new storage_context{.cb_fn = std::move(cb_fn), .arg = arg};
   
-  g_st_mgr.stop(
-    [cb_fn = std::move(cb_fn)](void *arg, int error){
+  g_st_mgr.on_shard(shard_id).stop(
+    [](void *arg, int error){
         if (error) {
             SPDK_ERRLOG_EX("storage_fini. error:%s\n", spdk_strerror(error));
         }
         storage_context *ctx = (storage_context *)arg;
-        ctx->serror = error;
         SPDK_INFOLOG_EX(storage_log, "storage fini done.\n");
-        std::destroy_at(&g_st_mgr);
-        storage_op_done(ctx);
+        ctx->cb_fn(ctx->arg, error);
+        delete ctx;
         return;
     }, ctx
   );
@@ -102,17 +117,28 @@ void
 storage_fini(storage_op_complete cb_fn, void* arg){
   auto &shard = core_sharded::get_core_sharded();
   auto cur_thread = spdk_get_thread();
+  
+  auto fini_done = [cb_fn = std::move(cb_fn)](void *arg, int rerrno){
+    g_st_mgr.stop();
+    cb_fn(arg, rerrno);
+  };
 
-  shard.invoke_on(
-    0,
-    [cb_fn, arg, cur_thread](){
-      _storage_fini(cb_fn, arg, cur_thread);
-    }
-  );       
+  storage_context *ctx = new storage_context{.cb_fn = std::move(fini_done), .arg = arg, .thread = cur_thread};
+  auto shard_num = core_sharded::get_core_sharded().count();
+  utils::multi_complete *complete = new utils::multi_complete(shard_num, shard_num, storage_op_done, ctx);
+
+  for(uint32_t shard_id = 0; shard_id < shard_num; shard_id++){
+    shard.invoke_on(
+      shard_id,
+      [complete](){
+        _storage_fini(utils::complete_done, complete);
+      }
+    );    
+  }   
 }
 
 static void 
-_storage_load(storage_op_complete cb_fn, void* arg, spdk_thread *thread){
+_storage_load(storage_op_complete cb_fn, void* arg){
   uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
 
   auto &blobs = global_blob_tree();
@@ -125,15 +151,13 @@ _storage_load(storage_op_complete cb_fn, void* arg, spdk_thread *thread){
       shard_id, kv_blob_id, checkpoint_blob_id, new_checkpoint_blob_id,
       utils::get_spdk_thread_id());
 
-  std::construct_at(&g_st_mgr);
-
-  storage_context *ctx = new storage_context{.cb_fn = std::move(cb_fn), .arg = arg, .thread = thread};
-  g_st_mgr.load(kv_blob_id, checkpoint_blob_id, new_checkpoint_blob_id, 
+  storage_context *ctx = new storage_context{.cb_fn = std::move(cb_fn), .arg = arg};
+  g_st_mgr.on_shard(shard_id).load(kv_blob_id, checkpoint_blob_id, new_checkpoint_blob_id, 
     [](void *arg, int error){
       storage_context *ctx = (storage_context *)arg;
-      ctx->serror = error;
       SPDK_INFOLOG_EX(storage_log, "storage load done.\n");
-      storage_op_done(ctx);
+      ctx->cb_fn(ctx->arg, error);
+      delete ctx;
     }, ctx);  
 }
 
@@ -141,10 +165,20 @@ void storage_load(storage_op_complete cb_fn, void* arg){
   auto &shard = core_sharded::get_core_sharded();
   auto cur_thread = spdk_get_thread();
 
-  shard.invoke_on(
-    0,
-    [cb_fn, arg, cur_thread](){
-      _storage_load(cb_fn, arg, cur_thread);
-    }
-  );       
+  storage_context *ctx = new storage_context{.cb_fn = std::move(cb_fn), .arg = arg, .thread = cur_thread};
+
+  auto shard_num = core_sharded::get_core_sharded().count();
+  utils::multi_complete *complete = new utils::multi_complete(shard_num, shard_num, storage_op_done, ctx);
+  
+  // std::construct_at(&g_st_mgr);
+  g_st_mgr.start();
+
+  for(uint32_t shard_id = 0; shard_id < shard_num; shard_id++){
+    shard.invoke_on(
+      shard_id,
+      [complete](){
+        _storage_load(utils::complete_done, complete);
+      }
+    );       
+  }
 }

@@ -26,6 +26,8 @@ static int apply_task(void *arg){
 }
 
 void state_machine::start(){
+    SPDK_INFOLOG_EX(pg_group, "pg %lu.%lu in shard %u\n", 
+      get_raft()->raft_get_pool_id(), get_raft()->raft_get_pg_id(), core_sharded::get_core_sharded().this_shard_id());
     _timer = SPDK_POLLER_REGISTER(&apply_task, this, 0);
 }
 

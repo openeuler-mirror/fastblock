@@ -920,7 +920,7 @@ public:
     void handle_rpc_done(rpc_task* task) {
         auto it = _on_fligh_tasks.find(task->server_id);
         if (it == _on_fligh_tasks.end()) {
-            SPDK_ERRLOG_EX("ERROR: Cant find the task record of server id %d\n", task->server_id);
+            SPDK_ERRLOG_EX("ERROR: Cant find the task record of server id %ld\n", task->server_id);
             return;
         }
 

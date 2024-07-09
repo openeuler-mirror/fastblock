@@ -1517,7 +1517,7 @@ int raft_server_t::raft_send_heartbeat_all()
     return 0;
 }
 
-void raft_server_t::stop(){
+void raft_server_t::stop(raft_complete cb_fn, void* arg){
     raft_set_op_state(raft_op_state::RAFT_DOWN);
     SPDK_INFOLOG_EX(pg_group, "stop pg %lu.%lu\n", _pool_id, _pg_id);
     spdk_poller_unregister(&_raft_timer);
@@ -1529,24 +1529,30 @@ void raft_server_t::stop(){
     */
     stop_processing_entrys(err::RAFT_ERR_PG_SHUTDOWN);
     stop_flush(err::RAFT_ERR_PG_SHUTDOWN);
-    _log->stop();
+    _log->stop(std::move(cb_fn), arg);
 }
 
 //清理raft
 void raft_server_t::raft_destroy(raft_complete cb_fn, void* arg)
 {
-    stop();
-    _log->log_destroy(
-      global_blobstore(), 
-      [this, cb_fn = std::move(cb_fn)](void* arg, int rberrno){
-        SPDK_INFOLOG_EX(pg_group, "remove log blob done: %s\n", spdk_strerror(rberrno));
-        if(rberrno == 0){
-            _log.reset();
-            _machine.reset();
+    auto stop_done = [this, cb_fn = std::move(cb_fn)](void *arg, int serrno){
+        if(serrno != 0){
+            cb_fn(arg, serrno);
+            return;
         }
-        cb_fn(arg, rberrno);
-      }, 
-      arg);
+        _log->log_destroy(
+          global_blobstore(), 
+          [this, cb_fn = std::move(cb_fn)](void* arg, int rberrno){
+            SPDK_INFOLOG_EX(pg_group, "remove log blob done: %s\n", spdk_strerror(rberrno));
+            if(rberrno == 0){
+                _log.reset();
+                _machine.reset();
+            }
+            cb_fn(arg, rberrno);
+          }, 
+          arg);
+    };
+    stop(std::move(stop_done), arg);
 }
 
 std::pair<uint64_t, uint64_t> raft_server_t::raft_get_nvotes_for_me()
@@ -1764,6 +1770,23 @@ int raft_server_t::raft_recv_installsnapshot(raft_node_id_t node_id,
     return 0;
 }
 
+void raft_server_t::_recovery_delete(recovery_op_complete cb_fn, void* arg){
+    uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
+    auto delete_done = [shard_id, cb_fn = std::move(cb_fn)](void *arg, int rerrno){
+        core_sharded::get_core_sharded().invoke_on(
+          shard_id,
+          [cb_fn = std::move(cb_fn), arg, rerrno](){
+            cb_fn(arg, rerrno);
+          });
+    };
+
+    core_sharded::get_core_sharded().invoke_on(
+      utils::default_blobstore_core,
+      [this, arg, delete_done = std::move(delete_done)](){
+        _obr->recovery_delete(std::move(delete_done), arg);
+      });
+}
+
 int raft_server_t::raft_process_installsnapshot_reply(installsnapshot_response *rsp){
     SPDK_INFOLOG_EX(pg_group, "recvd installsnapshot_response in pg: %lu.%lu from node %d term: %ld current_term: %ld success: %d\n",
              _pool_id, _pg_id, rsp->node_id(), rsp->term(), raft_get_current_term(), rsp->success());
@@ -1786,7 +1809,7 @@ int raft_server_t::raft_process_installsnapshot_reply(installsnapshot_response *
     };    
 
     if (!raft_is_leader()){
-        _obr->recovery_delete(snap_end_err, nullptr);
+        _recovery_delete(snap_end_err, nullptr);
         return err::RAFT_ERR_NOT_LEADER;
     }
 
@@ -1796,16 +1819,16 @@ int raft_server_t::raft_process_installsnapshot_reply(installsnapshot_response *
         raft_set_current_leader(-1);
         SPDK_ERRLOG_EX("node %d change from leader to follow: node id %d term %ld\n", 
                 raft_get_nodeid(), node->raft_node_get_id(), rsp->term());
-        _obr->recovery_delete(snap_end_err, nullptr);
+        _recovery_delete(snap_end_err, nullptr);
         return err::RAFT_ERR_NOT_LEADER;
     }
     else if (raft_get_current_term() != rsp->term()){
-        _obr->recovery_delete(snap_end_err, nullptr);
+        _recovery_delete(snap_end_err, nullptr);
         return 1;
     }    
 
     if(rsp->success() != 1){
-        _obr->recovery_delete(snap_end_err, nullptr);
+        _recovery_delete(snap_end_err, nullptr);
         return 1;
     }
 
@@ -1814,11 +1837,11 @@ int raft_server_t::raft_process_installsnapshot_reply(installsnapshot_response *
         SPDK_DEBUGLOG_EX(pg_group, "pg %lu.%lu, snapshot is end.\n", _pool_id, _pg_id);
         node->raft_node_set_next_idx(_snapshot_index + 1);
         node->raft_node_set_match_idx(_snapshot_index);
-        _obr->recovery_delete(snap_end, nullptr);
+        _recovery_delete(snap_end, nullptr);
     }else{
         int res = raft_send_snapshot_check(node);
         if(res != err::E_SUCCESS){
-            _obr->recovery_delete(snap_end_err, nullptr);
+            _recovery_delete(snap_end_err, nullptr);
             SPDK_ERRLOG_EX("pg: %lu.%lu, send snapshot_check_request failed, rerrno: %d\n", _pool_id, _pg_id, res);
             return 1;
         }        
@@ -2300,35 +2323,45 @@ int raft_server_t::_recovery_by_snapshot(std::shared_ptr<raft_node> node){
         node->raft_node_set_recovering(false);
     };
 
-    auto snap_fn = [this, node, handle_error = std::move(handle_error)](void *arg, int rerrno){
-        //创建完对象的snapshot后就需要设置_snapshot_in_progress为false
-        raft_set_snapshot_in_progress(false);
-        if(rerrno != 0){
-            handle_error();
-            SPDK_ERRLOG_EX("pg: %lu.%lu, create raft snapshot failed, rerrno: %d\n", _pool_id, _pg_id, rerrno);
-            return;
-        }
-        _snapshot_index = _machine->get_last_applied_idx();
-        raft_term_t term;
-        if(!raft_get_entry_term(_snapshot_index, term)){
-            handle_error();
-            return;
-        }
-        _snapshot_term = term;
-        SPDK_DEBUGLOG_EX(pg_group, "pg: %lu.%lu, _snapshot_index %ld _snapshot_term %ld\n", 
-                _pool_id, _pg_id, _snapshot_index, _snapshot_term);
-        _obr->iter_start();
-        int res = raft_send_snapshot_check(node);
-        if(res != err::E_SUCCESS){
-            handle_error();
-            SPDK_ERRLOG_EX("pg: %lu.%lu, send snapshot_check_request failed, rerrno: %d\n", _pool_id, _pg_id, res);
-            return;
-        }
+    uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
+    auto snap_fn = [this, node, shard_id, handle_error = std::move(handle_error)](void *arg, int rerrno){
+        core_sharded::get_core_sharded().invoke_on(
+          shard_id,
+          [this, rerrno, node, handle_error = std::move(handle_error)](){
+            //创建完对象的snapshot后就需要设置_snapshot_in_progress为false
+            raft_set_snapshot_in_progress(false);
+            if(rerrno != 0){
+                handle_error();
+                SPDK_ERRLOG_EX("pg: %lu.%lu, create raft snapshot failed, rerrno: %d\n", _pool_id, _pg_id, rerrno);
+                return;
+            }
+            _snapshot_index = _machine->get_last_applied_idx();
+            raft_term_t term;
+            if(!raft_get_entry_term(_snapshot_index, term)){
+                handle_error();
+                return;
+            }
+            _snapshot_term = term;
+            SPDK_DEBUGLOG_EX(pg_group, "pg: %lu.%lu, _snapshot_index %ld _snapshot_term %ld\n", 
+                    _pool_id, _pg_id, _snapshot_index, _snapshot_term);
+            _obr->iter_start();
+            int res = raft_send_snapshot_check(node);
+            if(res != err::E_SUCCESS){
+                handle_error();
+                SPDK_ERRLOG_EX("pg: %lu.%lu, send snapshot_check_request failed, rerrno: %d\n", _pool_id, _pg_id, res);
+                return;
+            }
+          });
     };
-    std::map<std::string, xattr_val_type> xattr;
-    xattr["type"] = blob_type::object;
-    xattr["pg"] = raft_get_pg_name();
-    _obr->recovery_create(std::move(xattr), snap_fn, nullptr);
+
+    core_sharded::get_core_sharded().invoke_on(
+      utils::default_blobstore_core,
+      [this, snap_fn = std::move(snap_fn)](){
+        std::map<std::string, xattr_val_type> xattr;
+        xattr["type"] = blob_type::object;
+        xattr["pg"] = raft_get_pg_name();
+        _obr->recovery_create(std::move(xattr), std::move(snap_fn), nullptr);
+      });
     return 0;
 }
 
@@ -2700,7 +2733,7 @@ void raft_server_t::load(raft_node_id_t current_node, raft_complete cb_fn, void 
 }
 
 void raft_server_t::active_raft(){
-    SPDK_INFOLOG_EX(pg_group, "activate pg %lu.%lu state from %d to %d\n", _pool_id, _pg_id, _op_state, raft_op_state::RAFT_ACTIVE);
+    SPDK_INFOLOG_EX(pg_group, "activate pg %lu.%lu state from %d to %d\n", _pool_id, _pg_id, int(_op_state), int(raft_op_state::RAFT_ACTIVE));
     if(_op_state == raft_op_state::RAFT_INIT)
         _op_state = raft_op_state::RAFT_ACTIVE;
 }

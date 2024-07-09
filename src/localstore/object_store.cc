@@ -14,6 +14,7 @@
 #include "object_store.h"
 #include "base/core_sharded.h"
 #include "utils/log.h"
+#include "utils/utils.h"
 
 #include <spdk/log.h>
 #include <functional>
@@ -466,48 +467,58 @@ void object_store::create_blob(std::map<std::string, xattr_val_type>& xattr, std
   ctx->cb_fn = cb_fn;
   ctx->arg = arg;
   uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
+  ctx->shard_id = shard_id;
   ctx->xattr = object_xattr{.shard_id = shard_id, .pg = pg, .obj_name = object_name};
 
-  if (global_blob_pool().has_free_blob()) {
-      SPDK_DEBUGLOG_EX(object_store, "[test] object get blob from pool.\n");
-      auto blob = global_blob_pool().get();
-
-      ctx->xattr.blob_set_xattr(blob.blob); // 同步操作，直接设置xattr
-      ctx->blob = blob;
-      spdk_blob_sync_md(blob.blob, sync_md_done, ctx);
-  } else {
-      SPDK_DEBUGLOG_EX(object_store, "[test] object get blob from create. type:%s pg:%s name:%s\n", 
-          type_string(ctx->xattr.type).c_str(), ctx->xattr.pg.c_str(), ctx->xattr.obj_name.c_str());
-      struct spdk_blob_opts opts;
-
-      spdk_blob_opts_init(&opts, sizeof(opts));
-      opts.num_clusters = object_store::blob_cluster;
-      opts.xattrs.count = object_xattr::xattr_count;
-      opts.xattrs.names = (char**)object_xattr::xattr_names;
-      opts.xattrs.ctx = &(ctx->xattr);
-      opts.xattrs.get_value = object_xattr::get_xattr_value; // 异步操作，create结束后自动 set xattr
-      spdk_bs_create_blob_ext(bs, &opts, create_done, ctx);
-  }
+  core_sharded::get_core_sharded().invoke_on(
+      utils::default_blobstore_core,
+      [this, ctx](){
+        if (global_blob_pool().has_free_blob()) {
+            SPDK_DEBUGLOG_EX(object_store, "[test] object get blob from pool.\n");
+            auto blob = global_blob_pool().get();
+      
+            ctx->xattr.blob_set_xattr(blob.blob); // 同步操作，直接设置xattr
+            ctx->blob = blob;
+            spdk_blob_sync_md(blob.blob, sync_md_done, ctx);
+        } else {
+            SPDK_DEBUGLOG_EX(object_store, "[test] object get blob from create. type:%s pg:%s name:%s\n", 
+                type_string(ctx->xattr.type).c_str(), ctx->xattr.pg.c_str(), ctx->xattr.obj_name.c_str());
+            struct spdk_blob_opts opts;
+      
+            spdk_blob_opts_init(&opts, sizeof(opts));
+            opts.num_clusters = object_store::blob_cluster;
+            opts.xattrs.count = object_xattr::xattr_count;
+            opts.xattrs.names = (char**)object_xattr::xattr_names;
+            opts.xattrs.ctx = &(ctx->xattr);
+            opts.xattrs.get_value = object_xattr::get_xattr_value; // 异步操作，create结束后自动 set xattr
+            spdk_bs_create_blob_ext(bs, &opts, create_done, ctx);
+        }
+      });
 }
 
 void object_store::sync_md_done(void *arg, int bserrno) {
     struct blob_create_ctx* ctx = (struct blob_create_ctx*)arg;
 
-    if (bserrno) {
-        SPDK_ERRLOG_EX("sync md failed:%s\n", spdk_strerror(bserrno));
-        ctx->cb_fn(ctx->arg, bserrno);
-        delete ctx;
-        return;
-    }
-
-    // 同步完md，先把blob放进map，然后执行读写
-    struct object_store::object obj;
-    obj.origin = ctx->blob;
-    ctx->mgr->table.emplace(std::move(ctx->object_name), std::move(obj));
-
-    blob_readwrite(ctx->blob.blob, ctx->mgr->channel, ctx->offset, ctx->buf, ctx->len,
-                  ctx->cb_fn, ctx->arg, ctx->is_read);
-    delete ctx;
+    core_sharded::get_core_sharded().invoke_on(
+        ctx->shard_id,
+        [ctx, bserrno](){
+            if (bserrno) {
+                SPDK_ERRLOG_EX("sync md failed:%s\n", spdk_strerror(bserrno));
+                ctx->cb_fn(ctx->arg, bserrno);
+                delete ctx;
+                return;
+            }
+        
+            SPDK_DEBUGLOG_EX(object_store, "sync md in core %u\n", ctx->shard_id);
+            // 同步完md，先把blob放进map，然后执行读写
+            struct object_store::object obj;
+            obj.origin = ctx->blob;
+            ctx->mgr->table.emplace(std::move(ctx->object_name), std::move(obj));
+        
+            blob_readwrite(ctx->blob.blob, ctx->mgr->channel, ctx->offset, ctx->buf, ctx->len,
+                          ctx->cb_fn, ctx->arg, ctx->is_read);
+            delete ctx;
+    });
 }
 
 /**
@@ -617,7 +628,6 @@ void object_store::read_done(void *arg, int objerrno) {
 
 void object_store::create_done(void *arg, spdk_blob_id blobid, int objerrno) {
   struct blob_create_ctx* ctx = (struct blob_create_ctx*)arg;
-
   if (objerrno) {
     SPDK_ERRLOG_EX("name:%s blobid:%" PRIu64 " create failed:%s\n",
         ctx->object_name.c_str(), blobid, spdk_strerror(objerrno));
@@ -634,24 +644,29 @@ void object_store::create_done(void *arg, spdk_blob_id blobid, int objerrno) {
 void object_store::open_done(void *arg, struct spdk_blob *blob, int objerrno) {
   struct blob_create_ctx* ctx = (struct blob_create_ctx*)arg;
 
-  if (objerrno) {
-    SPDK_ERRLOG_EX("name:%s blobid:%" PRIu64 " open failed:%s\n",
-        ctx->object_name.c_str(), ctx->blobid, spdk_strerror(objerrno));
-    ctx->cb_fn(ctx->arg, objerrno);
-    delete ctx;
-		return;
-	}
-  SPDK_DEBUGLOG_EX(object_store, "name:%s blobid:%" PRIu64 " opened\n", ctx->object_name.c_str(), ctx->blobid);
-
-  // 成功打开
-  struct object_store::object obj;
-  obj.origin.blobid = spdk_blob_get_id(blob);
-  obj.origin.blob = blob;
-  ctx->mgr->table.emplace(std::move(ctx->object_name), std::move(obj));
-
-  blob_readwrite(blob, ctx->mgr->channel, ctx->offset, ctx->buf, ctx->len,
-                 ctx->cb_fn, ctx->arg, ctx->is_read);
-  delete ctx;
+  core_sharded::get_core_sharded().invoke_on(
+      ctx->shard_id,
+      [ctx, objerrno, blob](){
+        if (objerrno) {
+          SPDK_ERRLOG_EX("name:%s blobid:%" PRIu64 " open failed:%s\n",
+              ctx->object_name.c_str(), ctx->blobid, spdk_strerror(objerrno));
+          ctx->cb_fn(ctx->arg, objerrno);
+          delete ctx;
+      		return;
+      	}
+        SPDK_DEBUGLOG_EX(object_store, "name:%s blobid:%" PRIu64 " opened in core %u\n", 
+            ctx->object_name.c_str(), ctx->blobid, ctx->shard_id);
+      
+        // 成功打开
+        struct object_store::object obj;
+        obj.origin.blobid = spdk_blob_get_id(blob);
+        obj.origin.blob = blob;
+        ctx->mgr->table.emplace(std::move(ctx->object_name), std::move(obj));
+      
+        blob_readwrite(blob, ctx->mgr->channel, ctx->offset, ctx->buf, ctx->len,
+                       ctx->cb_fn, ctx->arg, ctx->is_read);
+        delete ctx;        
+      });
 }
 
 /**

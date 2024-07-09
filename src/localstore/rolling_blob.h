@@ -17,6 +17,7 @@
 #include "utils/units.h"
 #include "utils/varint.h"
 #include "utils/log.h"
+#include "base/core_sharded.h"
 
 #include <spdk/blob.h>
 #include <spdk/blob_bdev.h>
@@ -565,17 +566,17 @@ public:
         auto next_unit = std::get<2>(result);
         if(next_unit > ctx->length)
             ctx->length *= 2;
-        SPDK_INFOLOG_EX(object_store, "load rblob: check res [%d, %lu, %lu]\n", all_valid, valid_size, next_unit);
+        SPDK_INFOLOG_EX(blob_log, "load rblob: check res [%d, %lu, %lu]\n", all_valid, valid_size, next_unit);
         if(all_valid && valid_size > 0){
             ctx->pos += valid_size;
             free_buffer_list(ctx->bl);
-            SPDK_INFOLOG_EX(object_store, "load rblob: read pos %lu length %lu\n", ctx->pos, ctx->length);
+            SPDK_INFOLOG_EX(blob_log, "load rblob: read pos %lu length %lu\n", ctx->pos, ctx->length);
             ctx->bl = std::move(make_buffer_list(ctx->length / 4096));
             ctx->rblob->read(ctx->pos, ctx->length, ctx->bl, &rolling_blob::load_read_done, ctx, true);
             return;
         }else{
             ctx->pos += valid_size;
-            SPDK_INFOLOG_EX(object_store, "load rblob: read pos %lu length %lu\n", ctx->pos, ctx->length);
+            SPDK_INFOLOG_EX(blob_log, "load rblob: read pos %lu length %lu\n", ctx->pos, ctx->length);
             free_buffer_list(ctx->bl);
             //读到了空的或无效的blob data,设置front
             ctx->rblob->set_front(ctx->pos);
@@ -597,7 +598,7 @@ public:
                 return;
             } 
 
-            SPDK_INFOLOG_EX(object_store, "load rblob: after load md back_pos %lu front_pos %lu\n", back_pos(), front_pos());
+            SPDK_INFOLOG_EX(blob_log, "load rblob: after load md back_pos %lu front_pos %lu\n", back_pos(), front_pos());
             uint64_t start = back_pos();  
             load_rblob_ctx* ctx = new load_rblob_ctx{.rblob = this, .cb_fn = std::move(cb_fn), .arg = arg, 
                                         .check = std::move(check), .pos = start, .length = read_unit};
@@ -611,6 +612,7 @@ public:
     void close(rblob_op_complete cb_fn, void* arg) {
       struct rblob_close_ctx *ctx = new rblob_close_ctx(cb_fn, arg);
 
+      SPDK_DEBUGLOG_EX(blob_log, "close rolling blob in core %u\n", core_sharded::get_core_sharded().this_shard_id());
       spdk_blob_close(blob, close_done, ctx);
     }
 
@@ -819,6 +821,7 @@ inline void make_rolling_blob(struct spdk_blob_store *bs, struct spdk_io_channel
   struct make_rblob_ctx* ctx;
   struct spdk_blob_opts opts;
   
+  SPDK_DEBUGLOG_EX(blob_log, "create rolling blob in core %u\n", core_sharded::get_core_sharded().this_shard_id());
   ctx = new make_rblob_ctx(bs, channel, cb_fn, arg);
   spdk_blob_opts_init(&opts, sizeof(opts));
   opts.num_clusters = size / spdk_bs_get_cluster_size(bs);
@@ -828,7 +831,8 @@ inline void make_rolling_blob(struct spdk_blob_store *bs, struct spdk_io_channel
 inline void open_rolling_blob(spdk_blob_id blob_id, struct spdk_blob_store *bs, struct spdk_io_channel *channel,
                         make_rblob_complete cb_fn, void* arg){
   struct make_rblob_ctx* ctx = new make_rblob_ctx(bs, channel, cb_fn, arg);
-
+  
+  SPDK_DEBUGLOG_EX(blob_log, "open rolling blob in core %u\n", core_sharded::get_core_sharded().this_shard_id());
   spdk_bs_open_blob(bs, blob_id, make_open_done, ctx);
 }
 

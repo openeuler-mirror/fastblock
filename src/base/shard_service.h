@@ -41,7 +41,7 @@ public:
         }
     }
 
-    void stop(){
+    void stop() {
         uint32_t count = _instances.size();
         for (uint32_t shard = 0; shard < count; shard++){
             delete _instances[shard];
@@ -63,6 +63,6 @@ public:
 
     size_t size() { return _instances.size(); }
 
-private:
+protected:
     std::vector<Service*> _instances;
 };

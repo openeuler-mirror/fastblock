@@ -233,7 +233,19 @@ public:
     }
 
     void stop(object_rw_complete cb_fn, void* arg){
-        _store.stop(cb_fn, arg);
+        uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
+        auto stop_done = [cb_fn = std::move(cb_fn), shard_id](void *arg, int objerrno){
+            core_sharded::get_core_sharded().invoke_on(
+              shard_id,
+              [cb_fn = std::move(cb_fn), arg, objerrno](){
+                cb_fn(arg, objerrno);
+              });
+        };
+        core_sharded::get_core_sharded().invoke_on(
+          utils::default_blobstore_core,
+          [this, arg, stop_done = std::move(stop_done)](){
+            _store.stop(stop_done, arg); 
+          });
     }
 
     void destroy_objects(object_complete cb_fn, void *arg);

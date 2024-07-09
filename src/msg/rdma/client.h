@@ -1300,7 +1300,7 @@ public:
         if (conn_it == _connections.end()) {
             SPDK_ERRLOG_EX(
               "ERROR: Received cm event %s, but the connection id(%ld) can not be found in connection map\n",
-              ::rdma_event_str(evt->event), it->second->id());
+              ::rdma_event_str(evt->event), it->second->id().value());
             _cm_records.erase(it);
             ::rdma_ack_cm_event(evt);
 
