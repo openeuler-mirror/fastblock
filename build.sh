@@ -28,6 +28,7 @@ while [ "$#" -gt 0 ]; do
         *)
             echo "Unknown argument: $1"
             usage
+            exit 1
             ;;
     esac
     shift
@@ -42,7 +43,6 @@ if [[ -z ${CXX} ]]; then export CXX=/usr/bin/g++; fi
 
 (cd $root/src/msg/demo && ./gen.sh)
 
-
 if [ "$component" = "monitor" ]; then
 	echo "build fastblock(fastblock-mon、fastblock-client) Golang code"
 	export GOPROXY=https://proxy.golang.com.cn,direct
@@ -53,7 +53,8 @@ if [ "$component" = "monitor" ]; then
 		cp $(go env GOPATH)/bin/protoc-gen-gogo /usr/bin/
 	fi
 	cd $root/proto && ./build.sh -t golang
-	(cd $root/monitor && make)
+	cd $root/monitor && make
+	exit $?
 fi
 if [ "$component" = "osd" ]; then
 	echo "build fastblock(fastblock-osd、fastblock-vhost) C/C++ code"
@@ -65,7 +66,8 @@ if [ "$component" = "osd" ]; then
 	  -DCMAKE_CXX_COMPILER=$CXX \
 	  "$@"
 	
-	(cd $root/build && make -j `grep -c ^processor /proc/cpuinfo`)
+	cd $root/build  && make -j `grep -c ^processor /proc/cpuinfo`
+	exit $?
 fi
 
 
