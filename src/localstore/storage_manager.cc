@@ -78,7 +78,7 @@ storage_init(storage_op_complete cb_fn, void* arg){
   // std::construct_at(&g_st_mgr);
   g_st_mgr.start();
   
-  SPDK_INFOLOG_EX(storage_log, "storage init in thread id: %lu, shard_num %ld\n", 
+  SPDK_INFOLOG_EX(storage_log, "storage init in thread id: %lu, shard_num %u\n", 
       utils::get_spdk_thread_id(), shard_num);
   for(uint32_t shard_id = 0; shard_id < shard_num; shard_id++){
     shard.invoke_on(

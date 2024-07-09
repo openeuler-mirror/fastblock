@@ -157,7 +157,7 @@ void osd_stm::write_and_wait(
         std::string buf;
         cmd.SerializeToString(&buf);
 
-        SPDK_INFOLOG_EX(osd, "process write_request , pool %lu pg %lu object_name %s offset %lu len %lu\n",
+        SPDK_INFOLOG_EX(osd, "process write_request , pg %lu.%lu object_name %s offset %lu len %lu\n",
                      request->pool_id(), request->pg_id(), request->object_name().c_str(), request->offset(),
                      request->data().size());
 

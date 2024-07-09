@@ -456,7 +456,7 @@ void parse_kv_xattr(struct spdk_blob *blob) {
 
   SPDK_INFOLOG_EX(blob_log, "kv xattr, blob id: %lu shard_id: %u\n", spdk_blob_get_id(blob), xattr.shard_id);
   if (xattr.shard_id > g_bs_mgr.blobs.size()) {
-      SPDK_ERRLOG_EX("kv xattr, shard_id: %u bigger than shard num: %u", xattr.shard_id, g_bs_mgr.blobs.size());
+      SPDK_ERRLOG_EX("kv xattr, shard_id: %u bigger than shard num: %lu", xattr.shard_id, g_bs_mgr.blobs.size());
       return;
   }  
 
@@ -468,7 +468,7 @@ void parse_kv_checkpoint_xattr(struct spdk_blob *blob) {
 
   SPDK_INFOLOG_EX(blob_log, "kv checkpoint xattr, blob id: %lu shard_id: %u\n", spdk_blob_get_id(blob), xattr.shard_id);
   if (xattr.shard_id > g_bs_mgr.blobs.size()) {
-      SPDK_ERRLOG_EX("kv checkpoint xattr, shard_id: %u bigger than shard num: %u", xattr.shard_id, g_bs_mgr.blobs.size());
+      SPDK_ERRLOG_EX("kv checkpoint xattr, shard_id: %u bigger than shard num: %lu", xattr.shard_id, g_bs_mgr.blobs.size());
       return;
   }  
 
@@ -480,7 +480,7 @@ void parse_kv_new_checkpoint_xattr(struct spdk_blob *blob) {
 
   SPDK_INFOLOG_EX(blob_log, "kv checkpoint new xattr, blob id: %lu shard_id: %u\n", spdk_blob_get_id(blob), xattr.shard_id);
   if (xattr.shard_id > g_bs_mgr.blobs.size()) {
-      SPDK_ERRLOG_EX("kv checkpoint new xattr, shard_id: %u bigger than shard num: %u", xattr.shard_id, g_bs_mgr.blobs.size());
+      SPDK_ERRLOG_EX("kv checkpoint new xattr, shard_id: %u bigger than shard num: %lu", xattr.shard_id, g_bs_mgr.blobs.size());
       return;
   }  
 
@@ -495,7 +495,7 @@ void parse_log_xattr(struct spdk_blob *blob) {
       spdk_blob_get_num_clusters(blob) * spdk_bs_get_cluster_size(global_blobstore()));
 
   if (xattr.shard_id > g_bs_mgr.blobs.size()) {
-      SPDK_ERRLOG_EX("log xattr, shard_id: %u bigger than shard num: %u", xattr.shard_id, g_bs_mgr.blobs.size());
+      SPDK_ERRLOG_EX("log xattr, shard_id: %u bigger than shard num: %lu", xattr.shard_id, g_bs_mgr.blobs.size());
       return;
   }
 
@@ -509,7 +509,7 @@ void parse_object_xattr(struct spdk_blob *blob) {
       spdk_blob_get_id(blob), xattr.shard_id, xattr.pg.c_str(), xattr.obj_name.c_str());
 
   if (xattr.shard_id > g_bs_mgr.blobs.size()) {
-      SPDK_ERRLOG_EX("object xattr, shard_id: %u bigger than shard num: %u", xattr.shard_id, g_bs_mgr.blobs.size());
+      SPDK_ERRLOG_EX("object xattr, shard_id: %u bigger than shard num: %lu", xattr.shard_id, g_bs_mgr.blobs.size());
       return;
   }
 
@@ -528,7 +528,7 @@ void parse_object_snap_xattr(struct spdk_blob *blob) {
       spdk_blob_get_id(blob), xattr.shard_id, xattr.pg.c_str(), xattr.obj_name.c_str(), xattr.snap_name.c_str());
 
   if (xattr.shard_id > g_bs_mgr.blobs.size()) {
-      SPDK_ERRLOG_EX("object snap xattr, shard_id: %u bigger than shard num: %u", xattr.shard_id, g_bs_mgr.blobs.size());
+      SPDK_ERRLOG_EX("object snap xattr, shard_id: %u bigger than shard num: %lu", xattr.shard_id, g_bs_mgr.blobs.size());
       return;
   }
 
@@ -550,7 +550,7 @@ void parse_object_recover_xattr(struct spdk_blob *blob) {
       spdk_blob_get_id(blob), xattr.shard_id, xattr.pg.c_str(), xattr.obj_name.c_str());
 
   if (xattr.shard_id > g_bs_mgr.blobs.size()) {
-      SPDK_ERRLOG_EX("object recover xattr, shard_id: %u bigger than shard num: %u", xattr.shard_id, g_bs_mgr.blobs.size());
+      SPDK_ERRLOG_EX("object recover xattr, shard_id: %u bigger than shard num: %lu", xattr.shard_id, g_bs_mgr.blobs.size());
       return;
   }
 
