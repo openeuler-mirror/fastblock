@@ -251,4 +251,5 @@ public:
     void destroy_objects(object_complete cb_fn, void *arg);
 private:
     lock_manager<op_type_excl_lock<utils::operation_type>>   _object_rw_lock;
+    uint32_t  _sockid;
 };

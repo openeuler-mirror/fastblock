@@ -565,8 +565,10 @@ void object_store::blob_readwrite(struct spdk_blob *blob, struct spdk_io_channel
 
     ctx->start_lba = start_lba;
     ctx->num_lba = num_lba;
+    uint32_t lcore = spdk_env_get_current_core();
+    uint32_t sockid = spdk_env_get_socket_id(lcore);
     ctx->pin_buf = (char *)spdk_malloc(pin_buf_length, lba_size, NULL,
-                                       SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
+                                       sockid, SPDK_MALLOC_DMA);
     ctx->blocklen = lba_size;
 
     spdk_blob_io_read(blob, channel, ctx->pin_buf, start_lba, num_lba,
