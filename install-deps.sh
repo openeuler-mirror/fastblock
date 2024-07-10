@@ -87,9 +87,11 @@ case "$ID" in
   ubuntu | debian)
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y "${deb_deps[@]}"
+    exit $?
     ;;
   centos | rhel | openEuler | suse | culinux)
     yum install -y "${rpm_deps[@]}"
+    exit $?
     ;;
   *)
     echo "Please help us make the script better by sending patches with your OS $ID"
