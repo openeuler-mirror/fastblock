@@ -23,5 +23,9 @@ std::vector<uint32_t> get_shard_cores(){
         shard_cores.push_back(lcore);
         lcore = ::spdk_env_get_next_core(lcore);
     }
+
+    // SPDK_ENV_FOREACH_CORE(lcore){
+    //     shard_cores.push_back(lcore);
+    // }
     return shard_cores;
 }

@@ -114,6 +114,7 @@ void iter_on_pong(msg::rdma::rpc_controller* ctrlr, ping_pong::response* reply) 
     auto* stack_ptr = g_call_stacks.front().get();
     auto dur = (std::chrono::system_clock::now() - stack_ptr->start_at).count();
 
+    SPDK_NOTICELOG("received reply id %ld\n", reply->id());
     ++g_rpc_dur_count;
     g_all_rpc_dur += static_cast<double>(dur);
     if (static_cast<size_t>(reply->id()) >= g_iter_count - 1) {
@@ -132,6 +133,10 @@ void iter_on_pong(msg::rdma::rpc_controller* ctrlr, ping_pong::response* reply) 
             ::spdk_app_stop(0);
         });
 
+        return;
+    }
+
+    if (static_cast<size_t>(reply->id()) >= g_iter_count - 1) {
         return;
     }
 
@@ -158,7 +163,7 @@ void start_rpc_client(void* arg) {
     std::string cli_name{"rpc_cli"};
     g_rpc_client = std::make_shared<msg::rdma::client>(cli_name, &g_cpumask, opts);
     g_rpc_client->start();
-    g_iter_msg = demo::random_string(4 * 1024 * 1024);
+    g_iter_msg = demo::random_string(4096);
     g_rpc_client->emplace_connection(
       g_pt.get_child("server_address").get_value<std::string>(),
       g_pt.get_child("server_port").get_value<uint16_t>(),
@@ -212,7 +217,7 @@ int main(int argc, char** argv) {
     opts.name = "demo_client";
     opts.shutdown_cb = on_client_close;
     opts.rpc_addr = "/var/tmp/msg_demo_cli.sock";
-    opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
+    opts.print_level = ::spdk_log_level::SPDK_LOG_ERROR;
 
     rc = ::spdk_app_start(&opts, start_rpc_client, nullptr);
     if (rc) {

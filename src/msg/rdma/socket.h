@@ -668,8 +668,7 @@ public:
         auto peer_addr = peer_address();
         auto local_addr = local_address();
 
-        SPDK_INFOLOG(
-          msg,
+        SPDK_NOTICELOG(
           "destroy the resource of the socket(%s => %s)\n",
           local_addr.c_str(), peer_addr.c_str());
 
@@ -684,11 +683,17 @@ public:
                       "ERROR: Destroy qp(%s => %s)  failed, error: %s\n",
                       local_addr.c_str(), peer_addr.c_str(), strerror(errno));
                 }
+                SPDK_NOTICELOG(
+                  "destroy qp(%s => %s) success\n",
+                  local_addr.c_str(), peer_addr.c_str());
             } else {
                 SPDK_NOTICELOG("qp is null when destroy resource\n");
             }
 
             ::rdma_destroy_id(_id);
+            SPDK_NOTICELOG(
+              "destroy rdma cm id(%s => %s) success\n",
+              local_addr.c_str(), peer_addr.c_str());
             _id = nullptr;
         }
 

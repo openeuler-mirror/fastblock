@@ -890,7 +890,7 @@ int client::send_request(msg::Request* req, bool send_directly) {
         _request_iov.iov_len = serialized_size;
         SPDK_DEBUGLOG(
           mon,
-          "union_case is %ld, message_size is %ld, serialized_size is %ld\n",
+          "union_case is %d, message_size is %ld, serialized_size is %ld\n",
           req->union_case(), message_size, serialized_size);
     }
 
@@ -1267,7 +1267,7 @@ void client::send_data_statistics_request(
         msg::DataStatistics ds;
         ds.set_read_ios(io.read_ios);
         ds.set_read_bytes(io.read_bytes);
-        ds.set_write_ios(io.write_ios);  
+        ds.set_write_ios(io.write_ios);
         ds.set_write_bytes(io.write_bytes);
         ds.set_objects(io.objects);
         (*data)[pg_name] = std::move(ds);

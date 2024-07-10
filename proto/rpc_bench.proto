@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package rpc_bench;
+
+option cc_generic_services = true;
+
+message request {
+    int64 id = 1;
+    string data = 2;
+}
+
+message response {
+    int64 id = 3;
+    string data = 4;
+}
+
+message stop_request {}
+
+message stop_response {
+    bool ok = 6;
+}
+
+service rpc_bench_service {
+    rpc rpc_bench(request) returns (response);
+    rpc can_i_stop(stop_request) returns (stop_response);
+}
