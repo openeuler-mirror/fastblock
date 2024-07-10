@@ -43,14 +43,14 @@ public:
       make_kvstore(global_blobstore(), global_io_channel(core_sharded::get_core_sharded().this_shard_id()),
         [this, cb_fn = std::move(cb_fn)](void *arg, kvstore* kvs, int error){
             if (error) {
-                SPDK_ERRLOG_EX("storage start failed. error:%s\n", spdk_strerror(error));
+                SPDK_ERRLOG("storage start failed. error:%s\n", spdk_strerror(error));
                 cb_fn(arg, error);
                 return;
             }
 
             this->_kvstore = kvs;
             this->_started = true;
-            SPDK_INFOLOG_EX(storage_log, "The storage manager has been started\n");
+            SPDK_INFOLOG(storage_log, "The storage manager has been started\n");
             cb_fn(arg, 0);
             return;
         }, arg
@@ -65,10 +65,10 @@ public:
     _kvstore->stop(
         [this, cb_fn = std::move(cb_fn)](void *arg, int error){
             if (error) {
-                SPDK_ERRLOG_EX("storage stop failed. error:%s\n", spdk_strerror(error));
+                SPDK_ERRLOG("storage stop failed. error:%s\n", spdk_strerror(error));
             }
             
-            SPDK_INFOLOG_EX(storage_log, "The storage manager has been stopped\n");
+            SPDK_INFOLOG(storage_log, "The storage manager has been stopped\n");
             /* 注意：kvstore的析构函数里会注销poller,需要在这个kv所属的core里注销
              *（注册、注销poller要在一个thread里，一个cpu core有一个thread，因此注册、注销poller要在一个cpu core里）、
              */
@@ -85,7 +85,7 @@ public:
         global_io_channel(core_sharded::get_core_sharded().this_shard_id()),
         [this, cb_fn = std::move(cb_fn)](void *arg, kvstore* kvs, int error){
             if (error) {
-                SPDK_ERRLOG_EX("load storage failed. error:%s\n", spdk_strerror(error));
+                SPDK_ERRLOG("load storage failed. error:%s\n", spdk_strerror(error));
                 cb_fn(arg, error);
                 return;
             }

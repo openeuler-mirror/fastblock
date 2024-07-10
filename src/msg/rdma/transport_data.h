@@ -111,7 +111,7 @@ public:
             _data_pool->put(mr);
         }
 
-        SPDK_DEBUGLOG_EX(
+        SPDK_DEBUGLOG(
           msg,
           "data pool size: %lu, meta pool size: %ld\n",
           _data_pool->size(),
@@ -181,7 +181,7 @@ public:
         }
 
         if (not has_enough_memory()) {
-            SPDK_DEBUGLOG_EX(
+            SPDK_DEBUGLOG(
               msg,
               "no enough memory, _data_count: %ld, _data_pool size: %ld, _meta_count: %ld, _meta_pool size: %ld\n",
               _data_count, _data_pool->size(), _meta_count,
@@ -240,7 +240,7 @@ public:
 
         auto* rm_infos = _rm_infos.get();
 
-        SPDK_DEBUGLOG_EX(
+        SPDK_DEBUGLOG(
           msg,
           "[%p] _data_count: %ld, _transport_size: %ld, data->io_count: %d, "
           "data->io_length: %d, data->is_lined: %d, data->correlation_index: %d, "
@@ -280,7 +280,7 @@ public:
             }
             request->SerializeToArray(content + off, ser_size);
             data->io_length = static_cast<uint32_t>(ser_size);
-            SPDK_DEBUGLOG_EX(msg, "serialized size is %lu + %d\n", meta_size, data->io_length);
+            SPDK_DEBUGLOG(msg, "serialized size is %lu + %d\n", meta_size, data->io_length);
 
             return;
         }
@@ -436,7 +436,7 @@ private:
         if (_data_count == 1) {
             _tail_tag = _head_tag + _serialized_size + _rdma_read_tag_length;
 
-            SPDK_DEBUGLOG_EX(
+            SPDK_DEBUGLOG(
               msg,
               "_head_tag: %p, _data_head: %p, _tail_tag: %p, _serialized_size: %lu\n",
               _head_tag, _data_head, _tail_tag, _serialized_size);
@@ -446,7 +446,7 @@ private:
               _serialized_size + _rdma_read_tag_length - (_data_count - 1) * _data_pool->element_size(); // _rdma_read_tag_length for head_tag
             _tail_tag = reinterpret_cast<rdma_read_tag_type*>(last_chunk_addr + last_chunk_need_size);
 
-            SPDK_DEBUGLOG_EX(
+            SPDK_DEBUGLOG(
               msg,
               "_head_tag: %p, _data_head: %p, _tail_tag: %p, last_chunk_need_size: %lu, _serialized_size: %lu\n",
               _head_tag, _data_head, _tail_tag, last_chunk_need_size, _serialized_size);
@@ -473,7 +473,7 @@ private:
         m->correlation_index = corr_idx;
         m->serial_no = serial_no;
         m->metadata_count = _meta_count;
-        SPDK_DEBUGLOG_EX(
+        SPDK_DEBUGLOG(
           msg,
           "io_count: %d, io_length: %d, corr_idx: %d, serial_no: %d\n",
           io_count, io_length, corr_idx, serial_no);
@@ -494,7 +494,7 @@ private:
         }
         set_rdma_read_tag();
         fill_rdma_read_tag(&_un_complete_tag);
-        SPDK_DEBUGLOG_EX(msg, "_head_tag is %p, _tail_tag is %p\n", _head_tag, _tail_tag);
+        SPDK_DEBUGLOG(msg, "_head_tag is %p, _tail_tag is %p\n", _head_tag, _tail_tag);
     }
 
     void alloc_request_data() {
@@ -518,7 +518,7 @@ private:
 
         set_rdma_read_tag();
         fill_rdma_read_tag(&_un_complete_tag);
-        SPDK_DEBUGLOG_EX(msg, "_head_tag is %p, _tail_tag is %p\n", _head_tag, _tail_tag);
+        SPDK_DEBUGLOG(msg, "_head_tag is %p, _tail_tag is %p\n", _head_tag, _tail_tag);
 
         if (_meta_count == 1) {
             auto* meta_ptr = reinterpret_cast<metadata*>(_metas[0]->mr->addr);
@@ -552,7 +552,7 @@ private:
                   max_rm_info * _data_chunk_size,
                   _correlation_index, meta_counter);
 
-                SPDK_DEBUGLOG_EX(
+                SPDK_DEBUGLOG(
                   msg,
                   "correlation index: %d, metadata{io_count: %d, io_length: %d, rm_info_counter: %ld, serial_no: %d}, "
                   "max_rm_info: %ld, _metas.size(): %ld, meta_counter: %ld\n",
@@ -577,11 +577,11 @@ private:
               _correlation_index,
               _meta_count - 1);
 
-            SPDK_DEBUGLOG_EX(
+            SPDK_DEBUGLOG(
               msg,
               "_transport_size: %ld, _meta_count: %ld, _data_count: %ld, data_counter: %ld\n",
               _transport_size, _meta_count, _data_count, data_counter);
-            SPDK_DEBUGLOG_EX(
+            SPDK_DEBUGLOG(
               msg,
               "correlation index: %d, metadata{io_count: %d, io_length: %d, rm_info_counter: %ld, serial_no: %d}, "
               "max_rm_info: %ld, _metas.size(): %ld, meta_counter: %ld\n",
@@ -594,7 +594,7 @@ private:
         if (_transport_size <= max_inline_size()) {
             _meta_count = 1;
             _is_inlined = true;
-            SPDK_DEBUGLOG_EX(msg, "created inlined transport\n");
+            SPDK_DEBUGLOG(msg, "created inlined transport\n");
         } else {
             if (_transport_size <= _data_chunk_size) {
                 _data_count = 1;
@@ -605,7 +605,7 @@ private:
                 _data_count = static_cast<size_t>(io_count_f);
                 double num_meta_f = static_cast<double>(metadata_size()) / _meta_pool->element_size();
 
-                SPDK_DEBUGLOG_EX(
+                SPDK_DEBUGLOG(
                   msg,
                   "metadata_size(): %ld, _data_count: %ld, num_meta_f: %f\n",
                   metadata_size(), _data_count, num_meta_f);
@@ -618,13 +618,13 @@ private:
             }
         }
 
-        SPDK_DEBUGLOG_EX(
+        SPDK_DEBUGLOG(
           msg,
           "transport size: %ld, _is_inlined: %d, _meta_count: %ld, _data_count: %ld\n",
           _transport_size, _is_inlined, _meta_count, _data_count);
 
         if (not has_enough_memory()) {
-            SPDK_NOTICELOG_EX(
+            SPDK_NOTICELOG(
               "Not enough memory for transport, need meta element is %ld, but has %ld; need data element is %ld, but has %ld\n",
               _meta_count, _meta_pool->size(), _data_count, _data_pool->size());
             return;

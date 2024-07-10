@@ -1,5 +1,5 @@
 #include "data_statistics.h"
-#include "utils/log.h"
+
 #include "monclient/client.h"
 
 std::shared_ptr<data_statistics> g_data_statistics{nullptr};

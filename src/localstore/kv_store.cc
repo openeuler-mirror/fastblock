@@ -29,7 +29,7 @@ make_kvstore_sync_done(void *arg, int kverrno) {
   struct make_kvs_ctx *ctx = (struct make_kvs_ctx *)arg;
 
   if (kverrno) {
-      SPDK_ERRLOG_EX("make_kvstore failed. error:%s\n", spdk_strerror(kverrno));
+      SPDK_ERRLOG("make_kvstore failed. error:%s\n", spdk_strerror(kverrno));
       ctx->cb_fn(ctx->arg, nullptr, kverrno);
       delete ctx;
       return;
@@ -47,7 +47,7 @@ make_kvstore_blob_done(void *arg, struct rolling_blob* rblob, int kverrno) {
   kv_xattr xattr{.shard_id = ctx->shard_id};
 
   if (kverrno) {
-      SPDK_ERRLOG_EX("make_kvstore failed. error:%s\n", spdk_strerror(kverrno));
+      SPDK_ERRLOG("make_kvstore failed. error:%s\n", spdk_strerror(kverrno));
       ctx->cb_fn(ctx->arg, nullptr, kverrno);
       delete ctx;
       return;
@@ -66,7 +66,7 @@ void make_kvstore(struct spdk_blob_store *bs, struct spdk_io_channel *channel,
       core_sharded::get_core_sharded().invoke_on(
         shard_id,
         [cb_fn = std::move(cb_fn), arg, kvs, kverrno](){
-          SPDK_INFOLOG_EX(kvlog, "make kvstore done in core %u, thread %lu\n", 
+          SPDK_INFOLOG(kvlog, "make kvstore done in core %u, thread %lu\n", 
               core_sharded::get_core_sharded().this_shard_id(), utils::get_spdk_thread_id());
           if(kverrno == 0 && kvs){
             //注意：kvstore的start方法里回注册一个poller，这个poller需要在这个kv所属的core里注册
@@ -88,7 +88,7 @@ static void kv_replay_done(void *arg, int kverrno){
   struct make_kvs_ctx *ctx = (struct make_kvs_ctx *)arg;
 
   if (kverrno) {
-      SPDK_ERRLOG_EX("load_kvstore failed. error:%s\n", spdk_strerror(kverrno));
+      SPDK_ERRLOG("load_kvstore failed. error:%s\n", spdk_strerror(kverrno));
       ctx->cb_fn(ctx->arg, nullptr, kverrno);
       delete ctx->kvs;
       delete ctx;
@@ -103,13 +103,13 @@ static void load_kv_md_done(void *arg, int kverrno){
   struct make_kvs_ctx *ctx = (struct make_kvs_ctx *)arg;
 
   if (kverrno) {
-      SPDK_ERRLOG_EX("load_kvstore failed. error:%s\n", spdk_strerror(kverrno));
+      SPDK_ERRLOG("load_kvstore failed. error:%s\n", spdk_strerror(kverrno));
       ctx->cb_fn(ctx->arg, nullptr, kverrno);
       delete ctx;
       return;
   }
 
-  // SPDK_WARNLOG_EX("load_md done.\n");
+  // SPDK_WARNLOG("load_md done.\n");
   struct kvstore* kvs = new kvstore(ctx->rblob, ctx->shard_id);
   ctx->kvs = kvs;
   kvs->set_checkpoint_blobid(ctx->checkpoint_blob_id, ctx->new_checkpoint_blob_id);
@@ -120,7 +120,7 @@ static void open_rolling_blob_done(void *arg, struct rolling_blob* rblob, int kv
   struct make_kvs_ctx *ctx = (struct make_kvs_ctx *)arg;
 
   if (kverrno) {
-      SPDK_ERRLOG_EX("load_kvstore failed. error:%s\n", spdk_strerror(kverrno));
+      SPDK_ERRLOG("load_kvstore failed. error:%s\n", spdk_strerror(kverrno));
       ctx->cb_fn(ctx->arg, nullptr, kverrno);
       delete ctx;
       return;
@@ -139,7 +139,7 @@ void load_kvstore(spdk_blob_id blob_id, spdk_blob_id checkpoint_blob_id,
       core_sharded::get_core_sharded().invoke_on(
         shard_id,
         [cb_fn = std::move(cb_fn), arg, kvs, kverrno](){
-          SPDK_INFOLOG_EX(kvlog, "load kvstore done in core %u\n", core_sharded::get_core_sharded().this_shard_id());
+          SPDK_INFOLOG(kvlog, "load kvstore done in core %u\n", core_sharded::get_core_sharded().this_shard_id());
           if(kverrno == 0 && kvs){
             //注意：kvstore的start方法里回注册一个poller，这个poller需要在这个kv所属的core里注册
             kvs->start();

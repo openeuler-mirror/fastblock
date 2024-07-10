@@ -33,7 +33,6 @@
 
 SPDK_LOG_REGISTER_COMPONENT(ping_pong)
 
-int g_id{-1};
 namespace {
 class demo_ping_pong_service : public ping_pong::ping_pong_service {
 public:

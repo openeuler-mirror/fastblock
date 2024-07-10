@@ -12,7 +12,7 @@
 
 #include "types.h"
 #include "utils/fmt.h"
-#include "utils/log.h"
+
 
 #include <spdk/log.h>
 
@@ -61,7 +61,7 @@ public:
         ::ibv_device** dev_list = ::ibv_get_device_list(nullptr);
 
         if (not dev_list) {
-            SPDK_ERRLOG_EX("get device list failed\n");
+            SPDK_ERRLOG("get device list failed\n");
             throw std::runtime_error{"get device list failed"};
         }
 
@@ -123,7 +123,7 @@ public:
             // In non-blocking mode: -1 means there isn't any async event to read
             if (ret == -1) { continue; }
             if (ret) {
-                SPDK_ERRLOG_EX("ERROR: ibv_get_async_event() on '%s' return %d\n",
+                SPDK_ERRLOG("ERROR: ibv_get_async_event() on '%s' return %d\n",
                   device_name(_contexts[i].device).c_str(), ret);
                 continue;
             }
@@ -168,7 +168,7 @@ public:
             );
 
             if (ctx_it == _contexts.end()) {
-                SPDK_ERRLOG_EX(
+                SPDK_ERRLOG(
                   "ERROR: Query the ipv4 of %s on port %d failed, no such device or port\n",
                   dev_name->c_str(), dev_port ? *dev_port : 1);
                 return std::nullopt;
@@ -182,7 +182,7 @@ public:
         ::ibv_gid* target_gid{nullptr};
         if (gid_index) {
             if (static_cast<size_t>(*gid_index) > target_device->gids.size()) {
-                SPDK_ERRLOG_EX(
+                SPDK_ERRLOG(
                   "ERROR: Specified gid index %d out of range, max index is %ld\n",
                   *gid_index, target_device->gids.size() - 1);
 
@@ -259,7 +259,7 @@ private:
         while (*devices) {
             context = ::ibv_open_device(*devices);
             if (!context) {
-                SPDK_ERRLOG_EX(
+                SPDK_ERRLOG(
                   "open device '%s' failed, will skip this device\n",
                   device_name(*devices).c_str());
 
@@ -267,7 +267,7 @@ private:
             }
 
             if (::ibv_query_device_ex(context, nullptr, device_attr.get())) {
-                SPDK_ERRLOG_EX(
+                SPDK_ERRLOG(
                   "query rdma device %s failed, will skip this device\n",
                   device_name(*devices).c_str());
 
@@ -279,7 +279,7 @@ private:
                  port <= device_attr->orig_attr.phys_port_cnt;
                  ++port) {
                 if (::ibv_query_port(context, port, port_attr.get())) {
-                    SPDK_ERRLOG_EX(
+                    SPDK_ERRLOG(
                       "query port %u of %s failed, will skip this port",
                       port, device_name(*devices).c_str());
 
@@ -287,7 +287,7 @@ private:
                 }
 
                 if (port_attr->state != IBV_PORT_ACTIVE) {
-                    SPDK_INFOLOG_EX(
+                    SPDK_INFOLOG(
                       msg,
                       "port %u of %s is %s, will skip this port\n",
                       port, device_name(*devices).c_str(),
@@ -296,7 +296,7 @@ private:
                     continue;
                 }
 
-                SPDK_DEBUGLOG_EX(
+                SPDK_DEBUGLOG(
                   msg,
                   "port %u of %s is %s\n",
                   port, device_name(*devices).c_str(),
@@ -307,7 +307,7 @@ private:
                     ::ibv_gid cur_gid{};
                     auto rc = ::ibv_query_gid(context, port, i, &(cur_gid));
                     if (rc != 0) {
-                        SPDK_ERRLOG_EX(
+                        SPDK_ERRLOG(
                           "ERROR: Query gid on device %s, port %u, index %d failed, return code %d\n",
                           device_name(*devices).c_str(), port, i, rc);
                         continue;
@@ -319,7 +319,7 @@ private:
 
                     if (not _default_ipv4 and is_gid_contain_ipv4(cur_gid.raw)) {
                         _default_ipv4 = ipv4_from_gid(cur_gid.raw);
-                        SPDK_DEBUGLOG_EX(msg, "default ipv4 is %s\n", _default_ipv4->c_str());
+                        SPDK_DEBUGLOG(msg, "default ipv4 is %s\n", _default_ipv4->c_str());
                     }
 
                     gids.push_back(cur_gid);
@@ -340,7 +340,7 @@ private:
         }
 
         if (_contexts.empty()) {
-            SPDK_ERRLOG_EX("no active port\n");
+            SPDK_ERRLOG("no active port\n");
             throw std::runtime_error{"no active port"};
         }
 

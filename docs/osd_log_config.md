@@ -1,17 +1,12 @@
-osd和vhost日志配置
+osd日志配置
 # 背景
-因为fastblock-osd和fastblock-vhost都是一个spdk app，这两个进程的日志都是将不同等级的日志写到rsyslog，然后由用户通过过滤、匹配rsyslog的内容，将日志写到对应的文件中. 
-# rsyslog的配置
-可以在/etc/rsyslog/conf.d中添加一个名为88-fastblock.conf的文件, 内容为:
+因为fastblock-osd是一个spdk app，这两个进程的日志都是将不同等级的日志写到rsyslog，当前版本中，我们使用systemctl重定向日志文件。
+# systemctl service的配置
 ```
-if $msg contains "daemon_id : " then {
-    :msg, contains, "daemon_id : 1" -/var/log/fastblock/osd1.log
-    :msg, contains, "daemon_id : 2" -/var/log/fastblock/osd2.log
-    :msg, contains, "daemon_id : 3" -/var/log/fastblock/osd3.log
-    stop
-}
+StandardOutput=append:/var/log/fastblock/osd%i.log
+StandardError=append:/var/log/fastblock/osd%i.log
 ```
-其中匹配daemon_id是在osd和vhost代码中嵌入的标记id的关键词，不同的osd在初始化时就有不同的daemon_id, vhost则直接是-1. 
+通过在fastblock-osd@.service中添加以下配置，可重定向日志文件。
 
 # 配置osd和vhost进程的日志等级
 因为这两个进程都是spdk app，意味着可以通过spdk/scripts/rpc.py来配置日志等级，其中:
