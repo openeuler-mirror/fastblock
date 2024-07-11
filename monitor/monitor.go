@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+    "errors"
 	"flag"
 	"fmt"
 	"monitor/config"
@@ -31,6 +32,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+    "regexp"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/prometheus/client_golang/prometheus"
@@ -159,6 +161,11 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 		// Access the fields of the ApplyIdRequest
 		log.Info(ctx, "Received ApplyIdRequest")
 		uuid := payload.ApplyIdRequest.GetUuid()
+        uuidRegex := regexp.MustCompile("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+        if(!uuidRegex.MatchString(uuid)) {
+            log.Error(ctx, "Error received ApplyIdRequest, error uuid:", uuid)
+            return errors.New("Error received ApplyIdRequest, error uuid:" + uuid)
+        }
 
 		oid, err := osd.ProcessApplyIDMessage(ctx, client, uuid)
 		if err != nil {

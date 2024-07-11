@@ -14,6 +14,7 @@
 #include <random>
 #include <string>
 #include <functional>
+#include <boost/regex.hpp>
 
 #include "spdk/env.h"
 #include "spdk/thread.h"
@@ -167,6 +168,14 @@ static uint64_t  get_spdk_thread_id(){
     if(thread)
         return spdk_thread_get_id(thread);
     return 0;
+}
+
+static bool is_valid_uuid(const std::string& uuid){
+    static std::string uuidPattern{
+            "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    };
+    boost::regex rgx(uuidPattern);
+    return boost::regex_match(uuid, rgx);
 }
 
 enum class operation_type : uint16_t {
