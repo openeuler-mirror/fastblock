@@ -10,23 +10,35 @@
  */
 #pragma once
 
+#include <spdk/log.h>
 #include <spdk/thread.h>
 
 #include <utility>
 
 namespace utils {
 
-struct simple_poller {
+class simple_poller {
 
-    simple_poller() = default;
+public:
 
-    // simple_poller(::spdk_poller* p) : poller{p} {}
+    struct register_context {
+        simple_poller* this_poller{nullptr};
+        ::spdk_poller_fn fn{nullptr};
+        void* arg{nullptr};
+        uint64_t period_microseconds{0};
+    };
+
+public:
+
+    simple_poller() : _thread{::spdk_get_thread()} {}
+
+    simple_poller(::spdk_thread* thread) : _thread{thread} {}
 
     simple_poller(const simple_poller&) = delete;
 
-    simple_poller(simple_poller&& r)  
-    : _poller{std::exchange(r._poller, nullptr)}
-    , _thread_id{std::exchange(r._thread_id, 0)} {}
+    simple_poller(simple_poller&& r)
+      : _poller{std::exchange(r._poller, nullptr)}
+      , _thread{std::exchange(r._thread, nullptr)} {}
 
     simple_poller& operator=(const simple_poller&) = delete;
 
@@ -40,37 +52,43 @@ struct simple_poller {
         unregister_poller();
     }
 
-    static void unregister_poller(void *ctx){
-        simple_poller* sp = (simple_poller *)ctx;
-        ::spdk_poller_unregister(&sp->_poller);
-        sp->_poller = nullptr;
-        sp->_thread_id = 0;
+public:
+
+    static void handle_unregister(void *ctx) noexcept {
+        auto* this_poller = reinterpret_cast<simple_poller*>(ctx);
+        ::spdk_poller_unregister(&(this_poller->_poller));
+        this_poller->_poller = nullptr;
+        SPDK_NOTICELOG("unregistered the poller\n");
     }
 
-    void unregister_poller() noexcept {
-        if (not _poller || _thread_id == 0) {
-            return;
-        }
-
-        auto thread = spdk_get_thread();
-        auto poller_thread = spdk_thread_get_by_id(_thread_id);
-        if(!poller_thread)
-            return;
-        if(thread == poller_thread){
-            unregister_poller(this);
-        }else{
-            spdk_thread_send_msg(poller_thread, simple_poller::unregister_poller, this);
-        }
+    static void handle_register(void* arg) noexcept {
+        auto* ctx = reinterpret_cast<register_context*>(arg);
+        ctx->this_poller->_poller = SPDK_POLLER_REGISTER(ctx->fn, ctx->arg, ctx->period_microseconds);
+        delete ctx;
     }
 
-    void register_poller(spdk_poller_fn fn, void *arg, uint64_t period_microseconds) {
-        _poller = SPDK_POLLER_REGISTER(fn, arg, period_microseconds);
-        _thread_id = spdk_thread_get_id(spdk_get_thread());
+public:
+
+    int unregister_poller() noexcept {
+        if (not _poller) {
+            return 0;
+        }
+
+        return ::spdk_thread_send_msg(_thread, simple_poller::handle_unregister, this);
+    }
+
+    int register_poller(::spdk_poller_fn fn, void *arg, uint64_t period_microseconds) {
+        auto* ctx = new register_context{this, fn, arg, period_microseconds};
+        return ::spdk_thread_send_msg(_thread, simple_poller::handle_register, ctx);
+    }
+
+    void set_thread(::spdk_thread* thread) noexcept {
+        _thread = thread;
     }
 
 private:
     ::spdk_poller* _poller{nullptr};
-    uint64_t _thread_id;
+    ::spdk_thread* _thread{nullptr};
 };
 
 }

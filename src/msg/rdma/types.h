@@ -60,6 +60,7 @@ enum class status : uint8_t {
     request_timeout,
     bad_request_body,
     bad_response_body,
+    terminating,
     server_error
 };
 

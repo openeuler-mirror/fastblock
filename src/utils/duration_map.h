@@ -18,6 +18,27 @@
 #include <memory>
 #include <vector>
 
+// #define FASTBLOCK_DUR_MAP_CREATE(key_type, var, name) fastblock::utils::duration_map<key_type> var{name}
+// #define FASTBLOCK_DUR_MAP_EMPLACE_START(var, k) var.emplace_start(k)
+// #define FASTBLOCK_DUR_MAP_EMPLACE_END(var, k) var.emplace_end(k)
+// #define FASTBLOCK_DUR_MAP_EMPLACE_END_LAST(var) var.emplace_end()
+// #define FASTBLOCK_DUR_MAP_PRINT(var) var.print_result()
+
+#ifdef FASTBLOCK_COLLECT_DURATION
+#define FASTBLOCK_DUR_MAP_CREATE(key_type, var, name) fastblock::utils::duration_map<key_type> var{name}
+#define FASTBLOCK_DUR_MAP_EMPLACE_START(var, k) var.emplace_start(k)
+#define FASTBLOCK_DUR_MAP_EMPLACE_END(var, k) var.emplace_end(k)
+#define FASTBLOCK_DUR_MAP_EMPLACE_END_LAST(var) var.emplace_end()
+#define FASTBLOCK_DUR_MAP_PRINT(var) var.print_result()
+#else
+#define FASTBLOCK_DUR_MAP_CREATE(key_type, var, name)
+#define FASTBLOCK_DUR_MAP_EMPLACE_START(var, k)
+#define FASTBLOCK_DUR_MAP_EMPLACE_END(var, k)
+#define FASTBLOCK_DUR_MAP_EMPLACE_END_LAST(var)
+#define FASTBLOCK_DUR_MAP_PRINT(var)
+#endif
+
+namespace fastblock {
 namespace utils {
 
 template <typename key_type>
@@ -25,88 +46,99 @@ class duration_map {
 
 public:
 
-    struct dur_element {
-        std::string desc{""};
-        std::chrono::system_clock::duration dur{};
+    struct dur_pair {
+        std::chrono::system_clock::time_point start_at{std::chrono::system_clock::now()};
+        std::chrono::system_clock::time_point end_at{};
     };
 
 public:
 
     duration_map() = default;
 
+    duration_map(std::string name) : _name{name} {};
+
     duration_map(const duration_map&) = delete;
 
     duration_map(duration_map&&) = delete;
 
-    duration_map& operator=(const dur_element&) = delete;
+    duration_map& operator=(const duration_map&) = delete;
 
-    duration_map& operator=(dur_element&&) = delete;
+    duration_map& operator=(duration_map&&) = delete;
 
     ~duration_map() noexcept = default;
 
 public:
 
-    void add_instance(const key_type& k) {
-        _durs.emplace(k, std::vector<std::unique_ptr<dur_element>>{});
+    [[gnu::always_inline]] void emplace_start(key_type k) {
+        _last_key = k;
+        _durs.emplace(k, dur_pair{});
     }
 
-    void emplace(const key_type& k, const std::string&& desc, const std::chrono::system_clock::duration dur) {
-        auto dur_it = _durs.find(k);
-        if (dur_it == _durs.end()) {
-            throw std::runtime_error{"cant find duration key"};
-        }
-
-        auto e = std::make_unique<dur_element>(desc, dur);
-        dur_it->second.push_back(std::move(e));
+    [[gnu::always_inline]] void emplace_end() {
+        emplace_end(_last_key);
     }
 
-    void emplace(const key_type& k, const std::string&& desc, const std::chrono::system_clock::time_point at) {
-        auto dur = std::chrono::system_clock::now() - at;
-        auto dur_it = _durs.find(k);
-        if (dur_it == _durs.end()) {
-            throw std::runtime_error{"cant find duration key"};
-        }
-
-        auto e = std::make_unique<dur_element>(desc, dur);
-        dur_it->second.push_back(std::move(e));
+    [[gnu::always_inline]] void emplace_end(key_type k) {
+        auto it = _durs.find(k);
+        it->second.end_at = std::chrono::system_clock::now();
     }
 
-    std::string fmt(const key_type&& k) {
-        auto dur_it = _durs.find(k);
-        if (dur_it == _durs.end()) {
-            throw std::runtime_error{"cant find duration key"};
-        }
-
-        auto& durs = dur_it->second;
-        auto ret_fmt = boost::format();
-        for (auto& dur_ptr : durs) {
-            ret_fmt = RFMT_3(
-              "%1%{%2%: %3%us}",
-              ret_fmt, dur_ptr->desc,
-              (dur_ptr->dur.count() / 1000));
-        }
-
-        return ret_fmt.str();
-    }
-
-    std::string fmt_all() {
-        auto ret_fmt = boost::format("\n");
+    void print_result() {
+        std::vector<double> durations{};
+        std::chrono::system_clock::duration dur{};
         for (auto& kv : _durs) {
-            for (auto& dur_ptr : kv.second) {
-                ret_fmt = RFMT_4(
-                  "%1%{[%2%]%3%: %4%us}",
-                  ret_fmt, kv.first, dur_ptr->desc,
-                  (dur_ptr->dur.count() / 1000));
-            }
-            ret_fmt = RFMT_1("%1%\n", ret_fmt);
+            dur = kv.second.end_at - kv.second.start_at;
+            durations.emplace_back(static_cast<double>(dur.count()));
         }
-        return ret_fmt.str();
+
+        double mean{0.0};
+        for (double dur : durations) {
+            mean += dur;
+        }
+        mean /= durations.size();
+
+        double accum{0.0};
+        std::for_each(
+            durations.begin(), durations.end(),
+            [&accum, mean] (const double v) {
+                accum += (v - mean) * (v - mean);
+            }
+        );
+        auto biased_stdv = std::sqrt(accum / (durations.size()));
+
+        std::sort(durations.begin(), durations.end());
+        static constexpr size_t lat_tag_count{6};
+        static constexpr std::array<double, lat_tag_count> latency_tag = {0.1, 0.5, 0.9, 0.95, 0.99, 0.999};
+
+        auto fmt = RFMT_1("\n[%1%] ", _name);
+        size_t count{0};
+        for (auto lat_tag : latency_tag) {
+            auto lat_at = static_cast<size_t>(lat_tag * durations.size());
+
+            auto lat = durations.at(lat_at) / 1000;
+            if (count == 0) {
+                fmt = boost::format("%1%p%2%: %3%us") % fmt % lat_tag % lat;
+            } else {
+                fmt = boost::format("%1%, p%2%: %3%us") % fmt % lat_tag % lat;
+            }
+            ++count;
+        }
+
+        auto min = durations.front() / 1000;
+        auto max = durations.back() / 1000;
+
+        fmt = boost::format("%1%, mean: %2%us, min: %3%us, max: %4%us, biased stdv: %5%, total_count: %6%")
+          % fmt % (mean / 1000) % min % max % (biased_stdv / 1000) % durations.size();
+
+        SPDK_ERRLOG("%s\n", fmt.str().c_str());
     }
 
 private:
 
-    std::unordered_map<key_type, std::vector<std::unique_ptr<dur_element>>> _durs{};
+    std::string _name{""};
+    std::unordered_map<key_type, dur_pair> _durs{};
+    key_type _last_key{};
 };
 
 } // namespace utils
-
+} // namespace fastblock

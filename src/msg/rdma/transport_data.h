@@ -194,27 +194,27 @@ public:
         return true;
     }
 
-    inline char* serialized_buf() noexcept {
+    [[gnu::always_inline]] char* serialized_buf() noexcept {
         return _serialized_buf.get();
     }
 
-    inline size_t serilaized_size() noexcept {
+    [[gnu::always_inline]] size_t serilaized_size() noexcept {
         return _transport_size;
     }
 
-    inline auto correlation_index() noexcept {
+    [[gnu::always_inline]] auto correlation_index() noexcept {
         return _correlation_index;
     }
 
-    inline auto meatdata_capacity() noexcept {
+    [[gnu::always_inline]] auto meatdata_capacity() noexcept {
         return _meta_count;
     }
 
-    inline auto data_capacity() noexcept {
+    [[gnu::always_inline]] auto data_capacity() noexcept {
         return _data_count;
     }
 
-    inline bool is_metadata_complete() noexcept {
+    [[gnu::always_inline]] bool is_metadata_complete() noexcept {
         return _is_metadata_complete;
     }
 
@@ -244,8 +244,8 @@ public:
           msg,
           "[%p] _data_count: %ld, _transport_size: %ld, data->io_count: %d, "
           "data->io_length: %d, data->is_lined: %d, data->correlation_index: %d, "
-          "data->metadata_count: %d, data->serial_no: %d, _last_rm_info_index: %ld, "
-          "_rm_infos size: %ld\n",
+          "data->metadata_count: %d, data->serial_no: %d, _last_rm_info_index: %d, "
+          "_rm_infos size: %d\n",
           this, _data_count, _transport_size, data->io_count, data->io_length,
           data->is_inlined, data->correlation_index, data->metadata_count,
           data->serial_no, _last_rm_info_index, data->metadata_count * data->io_count);
@@ -396,18 +396,18 @@ public:
 
 private:
 
-    size_t max_inline_size() noexcept {
+    [[gnu::always_inline]] size_t max_inline_size() noexcept {
         return _meta_pool->element_size() - inline_data_header_size;
     }
 
-    size_t max_remote_info_size() noexcept {
+    [[gnu::always_inline]] size_t max_remote_info_size() noexcept {
         auto rm_info_size = _meta_pool->element_size() - metadata_header_size;
         auto size_f = static_cast<double>(rm_info_size) / sizeof(remote_info);
 
         return static_cast<size_t>(std::floor(size_f));
     }
 
-    size_t metadata_size() noexcept {
+    [[gnu::always_inline]] size_t metadata_size() noexcept {
         return sizeof(remote_info) * _data_count + metadata_header_size;
     }
 
@@ -424,7 +424,7 @@ private:
         return _meta_count <= _meta_pool->size();
     }
 
-    void fill_rdma_read_tag(const rdma_read_tag_type* tag_val) noexcept {
+    [[gnu::always_inline]] void fill_rdma_read_tag(const rdma_read_tag_type* tag_val) noexcept {
         *_head_tag = *tag_val;
         *_tail_tag = *tag_val;
     }
@@ -461,7 +461,7 @@ private:
         m->correlation_index = _correlation_index;
     }
 
-    inline void init_metadata(
+    [[gnu::always_inline]] void init_metadata(
       metadata* m,
       const uint32_t io_count,
       const uint32_t io_length,
@@ -479,7 +479,7 @@ private:
           io_count, io_length, corr_idx, serial_no);
     }
 
-    inline void init_metadata(metadata* m) noexcept {
+    [[gnu::always_inline]] void init_metadata(metadata* m) noexcept {
         init_metadata(
           m,
           static_cast<uint32_t>(_data_count),

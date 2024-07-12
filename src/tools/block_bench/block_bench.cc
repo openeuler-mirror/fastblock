@@ -81,7 +81,7 @@ struct watcher_context {
     ::read_callback read_done_cb{};
     ::write_callback write_done_cb{};
     uint64_t iops_start_at{};
-    uint64_t deferred_time{}; 
+    uint64_t deferred_time{};
 };
 
 static char* g_conf_path{nullptr};
@@ -202,7 +202,7 @@ void on_write_done(::spdk_bdev_io* ctx, [[maybe_unused]] int32_t res) {
         SPDK_INFOLOG(
           bbench,
           "%ldth request done, done_io_count is %ld, io_count is %ld deferred_count %ld on_flight_io_count %ld\n",
-          stack_ptr->id, bench_ctx->done_io_count, bench_ctx->io_count, bench_ctx->deferred_count, bench_ctx->on_flight_io_count);        
+          stack_ptr->id, bench_ctx->done_io_count, bench_ctx->io_count, bench_ctx->deferred_count, bench_ctx->on_flight_io_count);
     }
 
     if (stack_ptr->id % 100 == 0) {
@@ -558,6 +558,7 @@ void on_app_start(void* arg) {
             watcher_ctx->bench_threads[core_count] = thread;
             core_count++;
         }
+        watcher_ctx->watch_poller_holder.set_thread(watcher_ctx->bench_threads[0]);
         watcher_ctx->watch_poller_holder.register_poller(watch_poller, watcher_ctx, 0);
     };
 

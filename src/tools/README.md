@@ -91,3 +91,113 @@ $ ./block_bench -m '[31]' -C /etc/fastblock/block_bench.json
 [2023-10-09 07:22:33.752306] /data/sdb/code/custorage/transfer/fastblock/tools/block_bench.cc: 291:watch_poller: *NOTICE*:  p0.1: 91199us p0.5: 92617us p0.9: 136487us p0.95: 137968us p0.99: 139579us p0.999: 139605us mean 107187us
 [2023-10-09 07:22:33.752320] /data/sdb/code/custorage/transfer/fastblock/tools/block_bench.cc: 297:watch_poller: *NOTICE*: ======================================================================================
 ```
+
+## RPC bench tool
+
+假设有三个节点：
+
+```
+192.168.0.1
+192.168.0.2
+192.168.0.3
+```
+
+对应的配置文件如下：
+
+```json
+{
+    "endpoints": [
+        {
+            "index": 1,
+            "list": [
+                {
+                    "host": "192.168.0.1",
+                    "port": 3000
+                }
+            ]
+        },
+        {
+            "index": 2,
+            "list": [
+                {
+                    "host": "192.168.0.2",
+                    "port": 3000
+                }
+            ]
+        },
+        {
+            "index": 3,
+            "list": [
+                {
+                    "host": "192.168.0.3",
+                    "port": 3000
+                }
+            ]
+        }
+    ],
+    "io_size": 4096,
+    "io_depth": 128,
+    "io_count": 200000,
+    "rpc_client_same_core": true,
+    "rdma_device_name": "mlx5_1",
+    "rdma_device_port": 1,
+    "rdma_gid_index": 4,
+    "msg_server_listen_backlog": 1024,
+    "msg_server_poll_cq_batch_size": 128,
+    "msg_server_metadata_memory_pool_capacity": 16384,
+    "msg_server_metadata_memory_pool_element_size": 1024,
+    "msg_server_data_memory_pool_capacity": 16384,
+    "msg_server_data_memory_pool_element_size": 8192,
+    "msg_server_per_post_recv_num": 512,
+    "msg_server_rpc_timeout_us": 30000000,
+    "msg_rdma_resolve_timeout_us": 2000,
+    "msg_rdma_poll_cm_event_timeout_us": 1000000,
+    "msg_rdma_max_send_wr": 4096,
+    "msg_rdma_max_send_sge": 128,
+    "msg_rdma_max_recv_wr": 8192,
+    "msg_rdma_max_recv_sge": 1,
+    "msg_rdma_max_inline_data": 16,
+    "msg_rdma_cq_num_entries": 1024,
+    "msg_rdma_qp_sig_all": false,
+    "msg_client_connect_max_retry": 30,
+    "msg_client_connect_retry_interval_us": 1000,
+    "msg_client_shutdown_timeout_us": 60000000
+}
+
+```
+
+下面以 `192.168.0.1` 的视角进行说明，其余节点类似。
+
+*rpc_bench* 启动后会监听 `192.168.0.1:3000`，然后根据配置文件连接 `192.168.0.2:3000` 和 `192.168.0.3:3000`。
+
+一个 *rpc_bench* 会启动一个 *rpc server* 对象，占用一个核，启动两个 *rpc client* 对象管理与 `192.168.0.2:3000` 和 `192.168.0.3:3000` 建立的连接，各占用一个核，所以总共占用三个核。
+
+然后给 `192.168.0.2:3000` 和 `192.168.0.3:3000` 分别发送 `io_count` 个 *rpc* 请求，每个 *rpc* 请求大小为 `io_size` 个字节。
+
+运行命令如下：
+
+```bash
+# 192.168.0.1
+./rpc_bench -C rpc_bench.json -I 1 -m [0,1,2]
+
+# 192.168.0.2
+./rpc_bench -C rpc_bench.json -I 2 -m [0,1,2]
+
+# 192.168.0.3
+./rpc_bench -C rpc_bench.json -I 3 -m [0,1,2]
+```
+
+命令行参数 `-C` 用于指定配置文件路径，`-I` 与指定配置文件中 `endpoints` 中的 `index` 相对应。
+
+### 使用 supervisord 管理 rpc_bench
+
+在 `rpc_bench` 目录下，提供了 *python* 脚本，会根据 *src/tools/rpc_bench/rpc_bench.json* 的内容生成对应的 *supervisord* 配置文件，配置文件位于 `/etc/supervisor/conf.d/rpc_bench.conf`。
+
+命令如下
+
+```bash
+mkdir -p /var/log/supervisor/ # create log dir
+python3 run.py
+```
+
+在每个节点上，使用 `supervisorctl restart rpc_bench:*` 启动 *rpc_bench*。

@@ -77,6 +77,16 @@ if [ $buildtype = "cpp" ]; then
             mv /tmp/messages.pb.cc ../src/monclient/messages.pb.cc
         fi
     fi
+
+    if [ ! -f ../src/tools/rpc_bench/rpc_bench.pb.h ] || [ ! -f ../src/tools/rpc_bench/rpc_bench.pb.cc ]; then
+        protoc --cpp_out=../src/tools/rpc_bench rpc_bench.proto
+    else
+        protoc --cpp_out=/tmp rpc_bench.proto
+        if ! cmp -s ../src/tools/rpc_bench/rpc_bench.pb.h /tmp/rpc_bench.pb.h || ! cmp -s ../src/tools/rpc_bench/rpc_bench.pb.cc /tmp/rpc_bench.pb.cc; then
+            mv /tmp/rpc_bench.pb.h ../src/tools/rpc_bench/rpc_bench.pb.h
+            mv /tmp/rpc_bench.pb.cc ../src/tools/rpc_bench/rpc_bench.pb.cc
+        fi
+    fi
 else
     mkdir -p ../monitor/msg
     if [ ! -f ../monitor/msg/messages.pb.go ]; then

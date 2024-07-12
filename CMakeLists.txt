@@ -19,6 +19,10 @@ else ()
   set(FASTBLOCK_DEPS_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/deps_install CACHE STRING "Managed dependencies install directory")
 endif()
 
+if (FASTBLOCK_COLLECT_DURATION)
+    add_compile_definitions(FASTBLOCK_COLLECT_DURATION)
+endif()
+
 message("deps will install to ${FASTBLOCK_DEPS_INSTALL_DIR}")
 
 list(APPEND BASE_LD_FLAGS_LIST

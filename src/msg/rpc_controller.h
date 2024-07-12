@@ -42,6 +42,10 @@ public:
         /*TODO:*/
     }
 
+    bool is_peer_terminating() noexcept {
+        return _failed and _error_reason == "terminating";
+    }
+
 private:
     bool _failed{false};
     std::string _error_reason{""};

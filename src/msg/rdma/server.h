@@ -124,8 +124,9 @@ public:
     };
 
     struct stop_context {
-        std::optional<std::function<void()>> on_stop_cb{std::nullopt};
         server* this_server{nullptr};
+        std::optional<std::function<void()>> on_stop_cb{std::nullopt};
+        std::chrono::system_clock::time_point timeout_at{std::chrono::system_clock::now()};
     };
 
     struct add_service_ctx {
@@ -146,6 +147,7 @@ public:
         size_t data_memory_pool_element_size{8192};
         size_t per_post_recv_num{512};
         std::chrono::system_clock::duration rpc_timeout{std::chrono::seconds{5}};
+        std::chrono::system_clock::duration shutdown_timeout{std::chrono::microseconds{0}};
         std::unique_ptr<endpoint> ep{nullptr};
     };
 
@@ -160,8 +162,14 @@ public:
 
         if (conf.count("msg_server_rpc_timeout_us") != 0) {
             auto timeout_us = conf.get_child("msg_server_rpc_timeout_us").get_value<int64_t>();
-            opts->rpc_timeout = std::chrono::milliseconds{timeout_us};
+            opts->rpc_timeout = std::chrono::microseconds{timeout_us};
         }
+
+        if (conf.count("msg_client_shutdown_timeout_us") != 0) {
+            auto shutdown_timeout_us = conf.get_child("msg_client_shutdown_timeout_us").get_value<int64_t>();
+            opts->shutdown_timeout = std::chrono::microseconds{shutdown_timeout_us};
+        }
+
         opts->ep = std::make_unique<endpoint>(conf);
 
         return opts;
@@ -174,6 +182,13 @@ public:
     server(std::string thread_name, ::spdk_cpuset* cpumask, std::shared_ptr<options> opts, int sock_id = SPDK_ENV_SOCKET_ID_ANY)
       : _cpumask{*cpumask}
       , _thread{::spdk_thread_create(thread_name.c_str(), &_cpumask)}
+      , _ib_cm_event_poller{_thread}
+      , _cq_poller{_thread}
+      , _cqe_poller{_thread}
+      , _task_poller{_thread}
+      , _task_read_poller{_thread}
+      , _task_reply_poller{_thread}
+      , _stop_poller{_thread}
       , _opts{std::move(opts)}
       , _dev{std::make_shared<device>(process_ib_event)}
       , _pd{std::make_unique<protection_domain>(_dev, _opts->ep->device_name)}
@@ -228,8 +243,15 @@ private:
      * =======================================================================
      */
 
-    bool is_timeout(const rpc_task* task) {
+    bool is_timeout(const rpc_task* task) noexcept {
         return task->start_at + _opts->rpc_timeout < std::chrono::system_clock::now();
+    }
+
+    bool is_all_tasks_done() noexcept {
+        return _task_list.empty() and
+               _read_task_list.empty() and
+               _on_fligh_tasks.empty() and
+               _reply_task_list.empty();
     }
 
     int handle_timeout_task(rpc_task* task) {
@@ -470,17 +492,18 @@ private:
         return send_metadata_request(task->conn.get(), task->response_data.get());;
     }
 
-    std::unique_ptr<transport_data> make_response_data(rpc_task* task, status s) {
+    void make_response_data(rpc_task* task, status s) {
         task->reply_status = s;
         if (s != status::success) {
             SPDK_DEBUGLOG(msg, "task id is %d, status is not success\n", task->id);
-            return std::make_unique<transport_data>(
+            task->response_data = std::make_unique<transport_data>(
               task->id, reply_meta_size, _meta_pool, _data_pool);
+            return;
         }
 
         auto response_size = reply_meta_size + task->response_body->ByteSizeLong();
         SPDK_DEBUGLOG(msg, "task id is %d, status is success\n", task->id);
-        return std::make_unique<transport_data>(
+        task->response_data = std::make_unique<transport_data>(
           task->id, response_size, _meta_pool, _data_pool);
     }
 
@@ -535,7 +558,7 @@ private:
                 }
             }
             task->request_data.reset(nullptr);
-            task->response_data = make_response_data(task.get(), *err_status);
+            make_response_data(task.get(), *err_status);
             _reply_task_list.push_back(std::move(task));
             return;
         }
@@ -565,7 +588,7 @@ private:
         task->rpc_ctrlr = std::make_unique<rpc_controller>();
         if (not is_parsed) {
             SPDK_ERRLOG("ERROR: Unserialize request body failed\n");
-            task->response_data = make_response_data(task.get(), status::bad_request_body);
+            make_response_data(task.get(), status::bad_request_body);
             _reply_task_list.push_back(std::move(task));
 
             return;
@@ -583,10 +606,6 @@ private:
     }
 
     int handle_rpc_reply() {
-        if (_is_terminated) {
-            return SPDK_POLLER_IDLE;
-        }
-
         if (_reply_task_list.empty()) {
             return SPDK_POLLER_IDLE;
         }
@@ -763,10 +782,18 @@ private:
 
             SPDK_DEBUGLOG(msg, "cqe on task id %d\n", task_id);
             auto task_it = conn->rpc_tasks.find(task_id);
+
             if (task_it == conn->rpc_tasks.end()) {
                 SPDK_DEBUGLOG(msg, "new rpc task with correlation index %d\n", task_id);
                 auto task = std::make_unique<rpc_task>(_task_id_gen++, task_id, conn);
                 task->this_server = this; // FIXME: 这里 this 指向的 server 可能已经析构了，在访问时。
+
+                if (_is_terminated) {
+                    make_response_data(task.get(), status::terminating);
+                    _reply_task_list.push_back(std::move(task));
+                    return true;
+                }
+
                 if (transport_data::is_inlined(recv_ctx)) {
                     auto* inlined_data = transport_data::read_inlined_content(recv_ctx);
                     auto* meta = reinterpret_cast<request_meta*>(inlined_data);
@@ -806,6 +833,38 @@ private:
         default:
             return true;
         }
+    }
+
+    int handle_stop_timeout() {
+        if (not is_all_tasks_done()) {
+            if (_stop_ctx->timeout_at <= std::chrono::system_clock::now()) {
+                return SPDK_POLLER_IDLE;
+            }
+        }
+
+        _ib_cm_event_poller.unregister_poller();
+        _cq_poller.unregister_poller();
+        _cqe_poller.unregister_poller();
+        _task_poller.unregister_poller();
+        _task_read_poller.unregister_poller();
+        _task_reply_poller.unregister_poller();
+        _stop_poller.unregister_poller();
+        SPDK_NOTICELOG("Pollers of rpc server have been unregistered\n");
+
+        _meta_pool->free();
+        _data_pool->free();
+
+        if (_stop_ctx->on_stop_cb) {
+            try {
+                (_stop_ctx->on_stop_cb.value())();
+            } catch (const std::exception& e) {
+                SPDK_ERRLOG("Caught exception when executing callback on stopping rpc server: %s\n", e.what());
+            }
+        }
+
+        ::spdk_thread_exit(_thread);
+
+        return SPDK_POLLER_IDLE;
     }
 
 public:
@@ -855,7 +914,6 @@ public:
         auto* this_server = reinterpret_cast<server*>(arg);
         return this_server->handle_rpc_task();
     }
-
     static int task_read_poller(void* arg) {
         auto* this_server = reinterpret_cast<server*>(arg);
         return this_server->handle_rdma_read_task();
@@ -864,6 +922,11 @@ public:
     static int task_reply_poller(void* arg) {
         auto* this_server = reinterpret_cast<server*>(arg);
         return this_server->handle_rpc_reply();
+    }
+
+    static int stop_timeout_poller(void* arg) {
+        auto* this_server = reinterpret_cast<server*>(arg);
+        return this_server->handle_stop_timeout();
     }
 
 public:
@@ -885,29 +948,11 @@ public:
     }
 
     void handle_stop(std::unique_ptr<stop_context> ctx) {
-        if (_is_terminated) {
-            return;
-        }
-
+        _stop_ctx = std::move(ctx);
+        _stop_ctx->timeout_at = std::chrono::system_clock::now() + _opts->shutdown_timeout;
         _is_terminated = true;
-        _ib_cm_event_poller.unregister_poller();
-        _cq_poller.unregister_poller();
-        _cqe_poller.unregister_poller();
-        _task_poller.unregister_poller();
-        _task_read_poller.unregister_poller();
-        _task_reply_poller.unregister_poller();
-        SPDK_NOTICELOG("Pollers of rpc server have been unregistered\n");
-
-        _meta_pool->free();
-        _data_pool->free();
-
-        if (ctx and ctx->on_stop_cb) {
-            try {
-                (ctx->on_stop_cb.value())();
-            } catch (const std::exception& e) {
-                SPDK_ERRLOG("Caught exception when executing callback on stopping rpc server: %s\n", e.what());
-            }
-        }
+        SPDK_NOTICELOG("Start stop the rpc server\n");
+        _stop_poller.register_poller(stop_timeout_poller, this, 0);
     }
 
     void handle_add_service(std::unique_ptr<add_service_ctx> ctx) {
@@ -926,13 +971,13 @@ public:
 
         if (task->rpc_ctrlr->Failed()) {
             SPDK_ERRLOG("ERROR: Exec rpc failed: %s\n", task->rpc_ctrlr->ErrorText().c_str());
-            task->response_data = make_response_data(task, status::server_error);
+            make_response_data(task, status::server_error);
         } else {
             SPDK_INFOLOG(
               msg,
               "Making rpc response body of request id %d\n",
               task->id);
-            task->response_data = make_response_data(task, status::success);
+            make_response_data(task, status::success);
         }
 
         _reply_task_list.push_back(std::move(it->second));
@@ -941,10 +986,6 @@ public:
     }
 
     int handle_ib_cm_event_poll() {
-        if (_is_terminated) {
-            return SPDK_POLLER_IDLE;
-        }
-
         _dev->process_ib_event();
         auto evt = _channel.poll();
         if (not evt) { return SPDK_POLLER_IDLE; }
@@ -980,8 +1021,6 @@ public:
     }
 
     int handle_cq_poll() {
-        if (_is_terminated) { return SPDK_POLLER_IDLE; }
-
         auto rc = _cq->poll(_wcs.get(), _opts->poll_cq_batch_size);
         if (rc < 0) {
             SPDK_ERRLOG("ERROR: Poll cq error '%s', stop the server\n", std::strerror(errno));
@@ -1060,7 +1099,11 @@ public:
             throw std::runtime_error{"server listen error"};
         }
         SPDK_INFOLOG(msg, "Start listening...\n");
-        ::spdk_thread_send_msg(_thread, on_start, this);
+        auto rc = ::spdk_thread_send_msg(_thread, on_start, this);
+        if (rc != 0) {
+            SPDK_ERRLOG("ERROR: Send msg to thread error, %s\n", ::spdk_strerror(rc));
+            throw std::runtime_error{"start rpc server failed"};
+        }
     }
 
     void stop(std::optional<std::function<void()>>&& cb = std::nullopt) {
@@ -1068,13 +1111,21 @@ public:
             return;
         }
 
-        auto* ctx = new stop_context{std::move(cb), this};
-        ::spdk_thread_send_msg(_thread, on_stop, ctx);
+        stop_context* ctx = new stop_context{this, std::move(cb)};
+        auto rc = ::spdk_thread_send_msg(_thread, on_stop, ctx);
+        if (rc != 0) {
+            SPDK_ERRLOG("ERROR: Send msg to thread error, %s\n", ::spdk_strerror(rc));
+            throw std::runtime_error{"stop rpc server failed"};
+        }
     }
 
     void add_service(service::pointer p) {
         auto* ctx = new add_service_ctx{p, this};
-        ::spdk_thread_send_msg(_thread, on_add_service, ctx);
+        auto rc = ::spdk_thread_send_msg(_thread, on_add_service, ctx);
+        if (rc != 0) {
+            SPDK_ERRLOG("ERROR: Send msg to thread error, %s\n", ::spdk_strerror(rc));
+            throw std::runtime_error{"add service failed"};
+        }
     }
 
     std::string listen_address() noexcept {
@@ -1161,6 +1212,7 @@ private:
     utils::simple_poller _task_poller{};
     utils::simple_poller _task_read_poller{};
     utils::simple_poller _task_reply_poller{};
+    utils::simple_poller _stop_poller{};
     std::unordered_map<::rdma_cm_id*, std::unique_ptr<socket>> _cm_records{};
     connection_id::serial_type _serial{0};
     work_request_id::connection_id_type _cq_dispatch_id{1};
@@ -1181,6 +1233,7 @@ private:
 
     event_channel _channel{};
     rpc_task::server_id_type _task_id_gen{0};
+    std::unique_ptr<stop_context> _stop_ctx{nullptr};
 };
 
 } // namespace rdma

@@ -18,6 +18,7 @@
 #include "msg/rdma/socket.h"
 #include "msg/rdma/transport_data.h"
 #include "msg/rdma/types.h"
+#include "utils/duration_map.h"
 #include "utils/fmt.h"
 #include "utils/utils.h"
 
@@ -51,15 +52,6 @@ class client : public std::enable_shared_from_this<client> {
 
 public:
 
-    void handle_connection_shutdown(::rdma_cm_id* cm_id, connection_id conn_id, work_request_id::dispatch_id_type dis_id) {
-        SPDK_NOTICELOG("erase connection with id %lu\n", conn_id.value());
-        _cm_records.erase(cm_id);
-        _connections.erase(conn_id);
-        _cqe_dispatch_map.erase(dis_id);
-    }
-
-public:
-
     struct options {
         size_t poll_cq_batch_size{128};
         size_t metadata_memory_pool_capacity{16384};
@@ -72,6 +64,7 @@ public:
         std::unique_ptr<endpoint> ep{nullptr};
         size_t connect_max_retry{10};
         std::chrono::system_clock::duration retry_interval{std::chrono::seconds{0}};
+        std::chrono::system_clock::duration shutdown_timeout{std::chrono::microseconds{0}};
     };
 
     static std::shared_ptr<options> make_options(boost::property_tree::ptree& conf) {
@@ -88,18 +81,36 @@ public:
 
         if (conf.count("msg_client_rpc_timeout_us") != 0) {
             auto timeout_us = conf.get_child("msg_client_rpc_timeout_us").get_value<int64_t>();
-            opts->rpc_timeout = std::chrono::milliseconds{timeout_us};
+            opts->rpc_timeout = std::chrono::microseconds{timeout_us};
         }
 
         if (conf.count("msg_client_connect_retry_interval_us") != 0) {
             auto connect_retry_interval_us = conf.get_child("msg_client_connect_retry_interval_us").get_value<int64_t>();
-            opts->retry_interval = std::chrono::milliseconds{connect_retry_interval_us};
+            opts->retry_interval = std::chrono::microseconds{connect_retry_interval_us};
+        }
+
+        if (conf.count("msg_client_shutdown_timeout_us") != 0) {
+            auto shutdown_timeout_us = conf.get_child("msg_client_shutdown_timeout_us").get_value<int64_t>();
+            opts->shutdown_timeout = std::chrono::microseconds{shutdown_timeout_us};
         }
 
         opts->ep = std::make_unique<endpoint>(conf);
 
         return opts;
     }
+
+public:
+
+    void handle_connection_shutdown(::rdma_cm_id* cm_id, connection_id conn_id, work_request_id::dispatch_id_type dis_id) {
+        SPDK_NOTICELOG("erase connection with id %lu\n", conn_id.value());
+        _cm_records.erase(cm_id);
+        _connections.erase(conn_id);
+        _cqe_dispatch_map.erase(dis_id);
+    }
+
+    options* get_options() noexcept { return _opts.get(); }
+
+public:
 
     class connection : public std::enable_shared_from_this<connection>, public google::protobuf::RpcChannel {
 
@@ -118,6 +129,23 @@ public:
             std::unique_ptr<transport_data> request_data{nullptr};
             std::unique_ptr<transport_data> reply_data{nullptr};
             std::chrono::system_clock::time_point start_at{std::chrono::system_clock::now()};
+        };
+
+        enum class state {
+            running,
+            peer_terminate,
+            bad_event,
+            shutdown,
+            termianted
+        };
+
+        struct control_operation {
+            state change_state{state::running};
+        };
+
+        struct shutdown_context {
+            connection* this_conn{nullptr};
+            state shutdown_state{};
         };
 
     private:
@@ -153,6 +181,7 @@ public:
           , _busy_list{busy_list}
           , _busy_priority_list{busy_priority_list}
           , _master{master}
+          , _poller{_master->get_thread()}
           , _sock_id{sock_id} {}
 
         connection(const connection&) = delete;
@@ -177,6 +206,26 @@ public:
 
         bool is_reach_max_send_wr(const size_t send_count) noexcept {
             return _onflight_send_wr + send_count >= _sock->max_slient_wr() - 1;
+        }
+
+        void set_failed_msg(google::protobuf::RpcController* ctrlr) {
+            switch (_state) {
+            case state::peer_terminate:
+                ctrlr->SetFailed("peer terminating");
+                break;
+            case state::shutdown:
+                ctrlr->SetFailed("connection terminated");
+                break;
+            case state::bad_event:
+                ctrlr->SetFailed("bad ib/cm event");
+            default:
+                break;
+            }
+        }
+
+        void process_terminating_request(rpc_request* stack_ptr) {
+            set_failed_msg(stack_ptr->ctrlr);
+            _free_server_list.push_back(stack_ptr->request_key);
         }
 
         auto send_request(std::function<::ibv_send_wr*(bool)> make_wr, const size_t n_wrs) {
@@ -236,6 +285,8 @@ public:
         }
 
         int process_request_once(std::unique_ptr<rpc_request>& req) {
+            if (_state != state::running) { return -ENOLINK; }
+
             if (not req->request_data->is_ready()) {
                 SPDK_DEBUGLOG(
                   msg,
@@ -285,7 +336,7 @@ public:
                 SPDK_ERRLOG(
                   "ERROR: Post send work request error '%s'\n",
                   err->message().c_str());
-                shutdown();
+                _ctrl_ops.push_back(std::make_unique<control_operation>(state::shutdown));
                 return err->value();
             }
 
@@ -298,6 +349,7 @@ public:
         }
 
         void enqueue_request(std::unique_ptr<rpc_request> req, bool priority_req) {
+            FASTBLOCK_DUR_MAP_EMPLACE_END(_enqueue_dur_map, req->request_key);
             if (priority_req) {
                 if (_priority_onflight_requests.empty()) {
                     _busy_priority_list->push_back(shared_from_this());
@@ -315,10 +367,6 @@ public:
 
     public:
 
-#if defined(__arm__) || defined(__aarch64__)
-#pragma GCC push_options
-#pragma GCC optimize ("O0")
-#endif
         void per_post_recv() {
             _recv_ctx = _recv_pool->get_bulk(_opts->per_post_recv_num);
             for (size_t i{0}; i < _opts->per_post_recv_num - 1; ++i) {
@@ -340,26 +388,25 @@ public:
                   "ERROR: post %lu receive wrs error, '%s'\n",
                   _opts->per_post_recv_num,
                   err->message().c_str());
-                shutdown();
+                _ctrl_ops.push_back(std::make_unique<control_operation>(state::shutdown));
             }
             rdma_probe.receive_wr_posted(_opts->per_post_recv_num);
 
             SPDK_DEBUGLOG(msg, "post %ld receive wrs\n", _opts->per_post_recv_num);
         }
-#if defined(__arm__) || defined(__aarch64__)
-#pragma GCC pop_options
-#endif
 
         void generate_id(const connection_id::serial_type serial_no) {
             _id.update(_sock->guid(), serial_no);
         }
 
         int handle_poll() {
-            if (_is_terminated) {
+            if (_state == state::termianted) {
                 return SPDK_POLLER_IDLE;
             }
 
-            bool is_busy{false};
+            auto is_busy = process_control_op();
+            is_busy |= process_shutdown();
+
             if (_onflight_rpc_task_size <= _opts->rpc_batch_size) {
                 if (not _busy_priority_list->empty()) {
                     auto it = _busy_priority_list->begin();
@@ -415,8 +462,8 @@ public:
           const google::protobuf::Message* request,
           google::protobuf::Message* response,
           google::protobuf::Closure* c) override {
-            if (_is_terminated) {
-                ctrlr->SetFailed("connection has been shutdown");
+            if (_state != state::running) {
+                set_failed_msg(ctrlr);
                 c->Run();
                 return;
             }
@@ -441,6 +488,8 @@ public:
                 return;
             }
 
+            auto req_key = _unresponsed_request_key_gen++;
+            FASTBLOCK_DUR_MAP_EMPLACE_START(_enqueue_dur_map, req_key);
             auto meta_holder = std::make_unique<char[]>(request_meta_size);
             auto* meta = reinterpret_cast<request_meta*>(meta_holder.get());
             meta->service_name_size =
@@ -458,7 +507,6 @@ public:
               meta->method_name_size, meta->method_name);
 
             auto serialized_size = request->ByteSizeLong() + request_meta_size;
-            auto req_key = _unresponsed_request_key_gen++;
             auto request_data = std::make_unique<transport_data>(
               req_key, serialized_size, _meta_pool, _data_pool);
             auto req = std::make_unique<rpc_request>(
@@ -492,6 +540,7 @@ public:
 
             auto it = _onflight_requests.begin();
             auto* task_ptr = it->get();
+            FASTBLOCK_DUR_MAP_EMPLACE_START(_proc_rpc_map, task_ptr->request_key);
             auto rc = process_request_once(*it);
 
             if (rc == -EAGAIN) {
@@ -512,12 +561,16 @@ public:
                   stack_ptr->request_key);
                 stack_ptr->ctrlr->SetFailed("timeout");
                 stack_ptr->closure->Run();
+            } else if (rc == -ENOLINK) {
+                process_terminating_request(stack_ptr);
+                stack_ptr->closure->Run();
             } else if (rc != 0) {
                 SPDK_ERRLOG("ERROR: Sending rpc request failed, rc is %d\n", rc);
                 stack_ptr->ctrlr->SetFailed(FMT_1("error, rc %1%", rc));
                 stack_ptr->closure->Run();
             }
 
+            FASTBLOCK_DUR_MAP_EMPLACE_END_LAST(_proc_rpc_map);
             _onflight_requests.erase(it);
             _busy_list->erase(busy_it);
             return true;
@@ -555,6 +608,9 @@ public:
                 if (rc == -EINVAL) {
                     stack_ptr->ctrlr->SetFailed("timeout");
                     stack_ptr->closure->Run();
+                } else if (rc == -ENOLINK) {
+                    process_terminating_request(stack_ptr);
+                    stack_ptr->closure->Run();
                 } else if (rc != 0) {
                     SPDK_ERRLOG("ERROR: Sending rpc request failed, rc is %d\n", rc);
                     stack_ptr->ctrlr->SetFailed(FMT_1("error, rc %1%", rc));
@@ -583,6 +639,10 @@ public:
                 return false;
             }
 
+            if (_state != state::running) {
+                return false;
+            }
+
             auto head = _free_server_list.front();
             auto err = send_finish_request(head);
             if (err) {
@@ -596,7 +656,7 @@ public:
                 SPDK_ERRLOG(
                   "ERROR: Post send work request error '%s'\n",
                   err->message().c_str());
-                shutdown();
+                _ctrl_ops.push_back(std::make_unique<control_operation>(state::shutdown));
             }
 
             _free_server_list.pop_front();
@@ -660,7 +720,7 @@ read_done:
                 auto it = _recv_ctx_map.find(cqe->wr_id);
                 if (it == _recv_ctx_map.end()) {
                     SPDK_ERRLOG("ERROR: Cant find the receive context of wr id '%ld'\n", cqe->wr_id);
-                    shutdown();
+                    _ctrl_ops.push_back(std::make_unique<control_operation>(state::shutdown));
                     return true;
                 }
 
@@ -669,7 +729,7 @@ read_done:
                 auto req_it = _unresponsed_requests.find(req_key);
                 if (req_it == _unresponsed_requests.end()) {
                     SPDK_ERRLOG("ERROR: Cant find the request stack of key '%d'\n", req_key);
-                    shutdown();
+                    _ctrl_ops.push_back(std::make_unique<control_operation>(state::shutdown));
                     return true;
                 }
 
@@ -707,6 +767,14 @@ read_done:
 
                     --_onflight_rpc_task_size;
                     SPDK_DEBUGLOG(msg, "_onflight_rpc_task_size: %ld\n", _onflight_rpc_task_size);
+                    _unresponsed_requests.erase(req_it);
+                    break;
+                }
+                case status::terminating: {
+                    req_it->second->ctrlr->SetFailed("server terminating");
+                    _ctrl_ops.push_back(std::make_unique<control_operation>(state::peer_terminate));
+                    req_it->second->closure->Run();
+                    --_onflight_rpc_task_size;
                     _unresponsed_requests.erase(req_it);
                     break;
                 }
@@ -754,7 +822,7 @@ read_done:
                             SPDK_ERRLOG(
                               "ERROR: Post send work request error '%s'\n",
                               err->message().c_str());
-                            shutdown();
+                            _ctrl_ops.push_back(std::make_unique<control_operation>(state::shutdown));
                             return true;
                         }
 
@@ -820,35 +888,79 @@ read_done:
             return true;
         }
 
-        void shutdown_slient() {
-            if (_is_terminated) {
-                return;
+        bool process_control_op() {
+            if (_ctrl_ops.empty()) {
+                return false;
             }
 
-            _is_terminated = true;
+            auto op = std::move(_ctrl_ops.front());
+            _ctrl_ops.pop_front();
+
+            switch (_state) {
+            case state::termianted:
+                return false;
+            case state::running:
+                _state = op->change_state;
+                break;
+            default:
+                _state = op->change_state;
+                return true;
+            }
+
+            switch (_state) {
+            case state::bad_event:
+            case state::peer_terminate:
+            case state::shutdown: {
+                auto* opts = _master->get_options();
+                _shutdown_timeout = std::chrono::system_clock::now() + _opts->shutdown_timeout;
+                break;
+            }
+            default:
+                break;
+            }
+
+            return true;
+        }
+
+        bool process_shutdown() {
+            if (_state == state::running or _state == state::termianted) {
+                return false;
+            }
+
+            if (_shutdown_timeout < std::chrono::system_clock::now() or task_queue_empty()) {
+                free_resources();
+                _master->handle_connection_shutdown(_sock->id(), _id, _dispatch_id.dispatch_id());
+                _state = state::termianted;
+                return false;
+            }
+
+            return false;
+        }
+
+        void free_resources() {
             _poller.unregister_poller();
             SPDK_NOTICELOG("The poller of the connection has been unregistered\n");
 
             for (auto& task : _onflight_requests) {
-                task->ctrlr->SetFailed("connection has been shutdown");
+                set_failed_msg(task->ctrlr);
                 task->closure->Run();
             }
             _onflight_requests.clear();
 
             for (auto& task : _priority_onflight_requests) {
-                task->ctrlr->SetFailed("connection has been shutdown");
+                set_failed_msg(task->ctrlr);
                 task->closure->Run();
             }
             _priority_onflight_requests.clear();
 
             for (auto& task : _wait_read_requests) {
-                task->ctrlr->SetFailed("connection has been shutdown");
+                set_failed_msg(task->ctrlr);
                 task->closure->Run();
             }
             _wait_read_requests.clear();
 
             for (auto& task_pair : _unresponsed_requests) {
-                task_pair.second->ctrlr->SetFailed("connection has been shutdown");
+                set_failed_msg(task_pair.second->ctrlr);
                 task_pair.second->closure->Run();
             }
             _unresponsed_requests.clear();
@@ -860,9 +972,24 @@ read_done:
             _recv_pool->free();
         }
 
-        void shutdown() {
-            shutdown_slient();
-            _master->handle_connection_shutdown(_sock->id(), _id, _dispatch_id.dispatch_id());
+        auto async_shutdown(const state shutdown_state = state::shutdown) {
+            auto* thread = _master->get_thread();
+            auto* ctx = new shutdown_context{this, shutdown_state};
+            return ::spdk_thread_send_msg(thread, on_async_shutdown, ctx);
+        }
+
+    public:
+
+        void handle_async_shutdown(const state shutdown_state) {
+            FASTBLOCK_DUR_MAP_PRINT(_enqueue_dur_map);
+            FASTBLOCK_DUR_MAP_PRINT(_proc_rpc_map);
+            _ctrl_ops.push_back(std::make_unique<control_operation>(shutdown_state));
+        }
+
+        static void on_async_shutdown(void* arg) {
+            auto* ctx = reinterpret_cast<shutdown_context*>(arg);
+            ctx->this_conn->handle_async_shutdown(ctx->shutdown_state);
+            delete ctx;
         }
 
     public:
@@ -880,12 +1007,16 @@ read_done:
         }
 
         bool is_terminated() noexcept {
-            return _is_terminated;
+            return _state == state::termianted;
+        }
+
+        bool task_queue_empty() {
+            return _unresponsed_requests.empty() and _wait_read_requests.empty();
         }
 
     private:
 
-        bool _is_terminated{false};
+        state _state{state::running};
         connection_id _id{};
         work_request_id _dispatch_id;
         std::unique_ptr<socket> _sock{nullptr};
@@ -897,12 +1028,13 @@ read_done:
         std::unique_ptr<memory_pool<::ibv_recv_wr>::net_context*[]> _recv_ctx{nullptr};
         std::unordered_map<work_request_id::value_type, memory_pool<::ibv_recv_wr>::net_context*> _recv_ctx_map{};
 
-        rpc_request::key_type _unresponsed_request_key_gen{0};
+        rpc_request::key_type _unresponsed_request_key_gen{1};
         std::list<std::unique_ptr<rpc_request>> _onflight_requests{};
         std::list<std::unique_ptr<rpc_request>> _priority_onflight_requests{};
         std::list<rpc_request::key_type> _free_server_list{};
         std::unordered_map<rpc_request::key_type, std::unique_ptr<rpc_request>> _unresponsed_requests{};
         std::list<std::unique_ptr<rpc_request>> _wait_read_requests{};
+        std::list<std::unique_ptr<control_operation>> _ctrl_ops{};
 
         std::shared_ptr<std::list<std::weak_ptr<connection>>> _busy_list{};
         std::shared_ptr<std::list<std::weak_ptr<connection>>> _busy_priority_list{};
@@ -913,6 +1045,10 @@ read_done:
         int32_t _onflight_send_wr{0};
         int64_t _onflight_rpc_task_size{0};
         int _sock_id{SPDK_ENV_SOCKET_ID_ANY};
+        std::chrono::system_clock::time_point _shutdown_timeout{};
+
+        FASTBLOCK_DUR_MAP_CREATE(rpc_request::key_type, _enqueue_dur_map, "enqueue_request");
+        FASTBLOCK_DUR_MAP_CREATE(rpc_request::key_type, _proc_rpc_map, "process_rpc_request");
 
     public:
 
@@ -974,6 +1110,8 @@ public:
       , _cq{std::make_shared<completion_queue>(_opts->ep->cq_num_entries, *_pd)}
       , _wcs{std::make_unique<::ibv_wc[]>(_opts->poll_cq_batch_size)}
       , _thread{::spdk_thread_create(name.c_str(), cpumask)}
+      , _core_poller{_thread}
+      , _stop_poller{_thread}
       , _sock_id{sock_id}
       , _meta_pool{std::make_shared<memory_pool<::ibv_send_wr>>(
         _pd->value(), FMT_1("%1%_m", name),
@@ -992,8 +1130,42 @@ public:
 
     client& operator=(client&&) = delete;
 
-    ~client() noexcept {
+    ~client() noexcept = default;
+
+private:
+
+    /*
+     * =======================================================================
+     * private methods
+     * =======================================================================
+     */
+
+    bool all_connection_termianted() {
+        return std::all_of(_connections.begin(), _connections.end(), [] (auto& conn) {
+            return conn.second->is_terminated();
+        });
+    }
+
+    void free_resources() {
         _core_poller.unregister_poller();
+        _stop_poller.unregister_poller();
+        SPDK_NOTICELOG("The poller of the rpc client has been unregistered\n");
+
+        if (_thread) {
+            ::spdk_thread_exit(_thread);
+            SPDK_NOTICELOG("SPDK thread of the rpc client has been marked as exited\n");
+        }
+
+        _meta_pool->free();
+        _data_pool->free();
+
+        if (_stop_ctx and _stop_ctx->on_stop_cb) {
+            try {
+                (_stop_ctx->on_stop_cb.value())();
+            } catch (const std::exception& e) {
+                SPDK_ERRLOG("Caught exception when executing callback on stopping rpc client: %s\n", e.what());
+            }
+        }
     }
 
 public:
@@ -1022,7 +1194,7 @@ public:
 
     static void on_remove_connection(void* arg){
         auto* ctx = reinterpret_cast<remove_connection_context*>(arg);
-        ctx->conn->shutdown();
+        ctx->conn->async_shutdown();
         ctx->cb(true);
         delete ctx;
     }
@@ -1030,6 +1202,11 @@ public:
     static int core_poller(void* arg) {
         auto* this_client = reinterpret_cast<client*>(arg);
         return this_client->handle_core_poll();
+    }
+
+    static int stop_poller(void* arg) {
+        auto* this_client = reinterpret_cast<client*>(arg);
+        return this_client->handle_stop_poll();
     }
 
 public:
@@ -1056,37 +1233,14 @@ public:
             return;
         }
 
-        _is_terminated = true;
-        _core_poller.unregister_poller();
-        SPDK_NOTICELOG("The poller of the rpc client has been unregistered\n");
-
         for (auto& conn_pair : _connections) {
-            conn_pair.second->shutdown_slient();
+            conn_pair.second->async_shutdown();
         }
 
-        if (_thread) {
-            auto current_thread = spdk_get_thread();
-            ::spdk_set_thread(_thread);
-            ::spdk_thread_exit(_thread);
-            if (current_thread == _thread) {
-                ::spdk_set_thread(nullptr);
-            } else {
-                ::spdk_set_thread(current_thread);
-            }
-
-            SPDK_NOTICELOG("SPDK thread of the rpc client has been marked as exited\n");
-        }
-
-        _meta_pool->free();
-        _data_pool->free();
-
-        if (ctx and ctx->on_stop_cb) {
-            try {
-                (ctx->on_stop_cb.value())();
-            } catch (const std::exception& e) {
-                SPDK_ERRLOG("Caught exception when executing callback on stopping rpc client: %s\n", e.what());
-            }
-        }
+        _is_terminated = true;
+        _stop_ctx = std::move(ctx);
+        _stop_timeout_at = std::chrono::system_clock::now() + _opts->shutdown_timeout;
+        _stop_poller.register_poller(stop_poller, this, 0);
     }
 
     void handle_emplace_eonnection(std::unique_ptr<emplace_connection_context> ctx) {
@@ -1179,7 +1333,7 @@ public:
               "erased old cm id %p, emplaced new cm id %p; "
               "erased old conn id %ld, emplaced new conn id %ld\n",
               old_fd_id, task_ptr->conn->fd().id(),
-              old_conn_id, task_ptr->conn->id());
+              old_conn_id.value(), task_ptr->conn->id().value());
             auto conn_task = std::move(conn_task_pair->second);
             _connect_tasks.emplace(new_fd_id, std::move(conn_task));
         }
@@ -1299,7 +1453,7 @@ public:
         auto conn_it = _connections.find(it->second->id());
         if (conn_it == _connections.end()) {
             SPDK_ERRLOG(
-              "ERROR: Received cm event %s, but the connection id(%ld) can not be found in connection map\n",
+              "ERROR: Received cm event %s, but the connection id(%lu) can not be found in connection map\n",
               ::rdma_event_str(evt->event), it->second->id().value());
             _cm_records.erase(it);
             ::rdma_ack_cm_event(evt);
@@ -1327,7 +1481,7 @@ public:
               evt_id);
 
             SPDK_NOTICELOG("Reomve the connection(id: %p)\n", evt_id);
-            conn_it->second->shutdown();
+            conn_it->second->async_shutdown(connection::state::bad_event);
         }
 
         if (evt) {
@@ -1336,10 +1490,6 @@ public:
     }
 
     int handle_core_poll() {
-        if (_is_terminated) {
-            return SPDK_POLLER_IDLE;
-        }
-
         handle_cm_event();
 
         auto rc = _cq->poll(_wcs.get(), _opts->poll_cq_batch_size);
@@ -1387,7 +1537,7 @@ public:
                       cqe->vendor_err,
                       socket::wc_status_name(cqe->status).c_str(),
                       conn->fd().qp_state_str().c_str());
-                    conn->shutdown();
+                    conn->async_shutdown(connection::state::bad_event);
                 }
 
                 continue;
@@ -1398,6 +1548,14 @@ public:
         }
 
         return SPDK_POLLER_BUSY;
+    }
+
+    int handle_stop_poll() {
+        if (_stop_timeout_at < std::chrono::system_clock::now() or all_connection_termianted()) {
+            free_resources();
+        }
+
+        return SPDK_POLLER_IDLE;
     }
 
 public:
@@ -1451,9 +1609,10 @@ private:
     std::shared_ptr<device> _dev{nullptr};
     std::unique_ptr<protection_domain> _pd{nullptr};
     std::shared_ptr<completion_queue> _cq{nullptr};
-    utils::simple_poller _core_poller{};
-    std::unique_ptr<::ibv_wc[]> _wcs{nullptr};
     ::spdk_thread* _thread{nullptr};
+    utils::simple_poller _core_poller{};
+    utils::simple_poller _stop_poller{};
+    std::unique_ptr<::ibv_wc[]> _wcs{nullptr};
 
     std::unordered_map<work_request_id::dispatch_id_type, std::shared_ptr<connection>> _cqe_dispatch_map{};
     std::unordered_map<connection_id, std::shared_ptr<connection>> _connections{};
@@ -1469,6 +1628,8 @@ private:
       std::make_shared<std::list<std::weak_ptr<connection>>>()};
 
     event_channel _channel{};
+    std::chrono::system_clock::time_point _stop_timeout_at{};
+    std::unique_ptr<stop_context> _stop_ctx{nullptr};
 };
 
 } // namespace rdma
