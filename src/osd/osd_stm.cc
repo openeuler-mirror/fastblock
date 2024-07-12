@@ -23,8 +23,10 @@
 
 osd_stm::osd_stm()
 : state_machine()
-, _object_rw_lock()
-{}
+, _object_rw_lock(){
+    uint32_t lcore = spdk_env_get_current_core();
+    _sockid = spdk_env_get_socket_id(lcore);
+}
 
 void osd_stm::apply(std::shared_ptr<raft_entry_t> entry, utils::context *complete){
     if(entry->type() == RAFT_LOGTYPE_WRITE){
@@ -60,7 +62,7 @@ void write_obj_done(void *arg, int obj_errno){
 
 void osd_stm::write_obj(const std::string& obj_name, uint64_t offset, const std::string& data, utils::context *complete){
     uint64_t len = utils::align_up<uint64_t>(data.size(), 512 * BLOCK_UNITS);
-    char* buf = (char*)spdk_zmalloc(len, 0x1000, NULL, SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
+    char* buf = (char*)spdk_zmalloc(len, 0x1000, NULL, _sockid, SPDK_MALLOC_DMA);
     memcpy(buf, data.c_str(), data.size());
     write_obj_ctx * ctx = new write_obj_ctx{this, obj_name, buf, complete};
     std::map<std::string, xattr_val_type> xattr;
@@ -213,7 +215,7 @@ void osd_stm::read_and_wait(
                      request->length());
 
         uint64_t len = utils::align_up<uint64_t>(request->length(), 512 * BLOCK_UNITS);
-        char* buf = (char*)spdk_zmalloc(len, 0x1000, NULL, SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
+        char* buf = (char*)spdk_zmalloc(len, 0x1000, NULL, _sockid, SPDK_MALLOC_DMA);
         read_obj_ctx * ctx = new read_obj_ctx{buf, read_complete, response, request->length()};
 
         std::map<std::string, xattr_val_type> xattr;

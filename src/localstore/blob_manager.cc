@@ -26,30 +26,6 @@ SPDK_LOG_REGISTER_COMPONENT(blob_log)
 static std::string default_blobstore_type = "fastblock";
 constexpr uint64_t blob_unit_size = 512;
 
-struct switch_core_context{
-  utils::complete_fun cb_fn;
-  void *arg;
-  spdk_thread *thread;
-  int serror;
-};
-
-static inline void _switch_core_func(void *arg){
-  switch_core_context *ctx = (switch_core_context *)arg;
-  ctx->cb_fn(ctx->arg, ctx->serror);
-  delete ctx;
-}
-
-static void switch_core_func(void *arg, int rerrno){
-  switch_core_context *ctx = (switch_core_context *)arg;
-  auto cur_thread = spdk_get_thread();
-  ctx->serror = rerrno;
-  if(cur_thread != ctx->thread){
-    spdk_thread_send_msg(ctx->thread, _switch_core_func, ctx);
-  }else{
-    _switch_core_func(ctx);
-  }
-}
-
 class channel_sharded : public sharded<spdk_io_channel> {
 public:
   void start(struct spdk_blob_store *bs, utils::complete_fun cb_fn, void *arg){
@@ -57,8 +33,8 @@ public:
     uint32_t this_shard_id = core_sharded::get_core_sharded().this_shard_id();
     _instances.resize(count);
 
-    switch_core_context* ctx = new switch_core_context{.cb_fn = std::move(cb_fn), .arg = arg, .thread = spdk_get_thread(), .serror = 0};
-    utils::multi_complete *complete = new utils::multi_complete(count, count, switch_core_func, ctx);
+    utils::switch_core_context* ctx = new utils::switch_core_context{.cb_fn = std::move(cb_fn), .arg = arg, .thread = spdk_get_thread(), .serror = 0};
+    utils::multi_complete *complete = new utils::multi_complete(count, count, utils::switch_core_func, ctx);
     for (uint32_t shard = 0; shard < count; shard++) {
       if (shard == this_shard_id){
         _instances[shard] = spdk_bs_alloc_io_channel(bs);
@@ -78,8 +54,8 @@ public:
     uint32_t count = core_sharded::get_core_sharded().count();
     uint32_t this_shard_id = core_sharded::get_core_sharded().this_shard_id();
 
-    switch_core_context* ctx = new switch_core_context{.cb_fn = std::move(cb_fn), .arg = arg, .thread = spdk_get_thread(), .serror = 0};
-    utils::multi_complete *complete = new utils::multi_complete(count, count, switch_core_func, ctx);
+    utils::switch_core_context* ctx = new utils::switch_core_context{.cb_fn = std::move(cb_fn), .arg = arg, .thread = spdk_get_thread(), .serror = 0};
+    utils::multi_complete *complete = new utils::multi_complete(count, count, utils::switch_core_func, ctx);
     for (uint32_t shard = 0; shard < count; shard++) {
       if (shard == this_shard_id){
         spdk_bs_free_io_channel(_instances[shard]);
@@ -407,11 +383,11 @@ _blobstore_init(std::string bdev_name, std::string uuid, bool force, bm_complete
   SPDK_INFOLOG(blob_log, "blobstore init, thread id %lu, core %u\n", utils::get_spdk_thread_id(),
       core_sharded::get_core_sharded().this_shard_id());
 
-  switch_core_context *ctx = new switch_core_context{.cb_fn = std::move(cb_fn), .arg = args, .thread = thread};
+  utils::switch_core_context *ctx = new utils::switch_core_context{.cb_fn = std::move(cb_fn), .arg = args, .thread = thread};
   _blobstore_init([](void *arg, int serror){
-    switch_core_context *ctx = (switch_core_context *)arg;
+    utils::switch_core_context *ctx = (utils::switch_core_context *)arg;
     SPDK_INFOLOG(blob_log, "blobstore init done.\n");
-    switch_core_func(ctx, serror);
+    utils::switch_core_func(ctx, serror);
   },
   ctx, bdev_name, uuid, force);
 }
@@ -805,13 +781,13 @@ _blobstore_load(std::string bdev_name, bm_complete cb_fn, void* args, std::strin
   SPDK_INFOLOG(blob_log, "blobstore load, thread id %lu, core %u\n", utils::get_spdk_thread_id(), 
       core_sharded::get_core_sharded().this_shard_id());
 
-  switch_core_context *ctx = new switch_core_context{.cb_fn = std::move(cb_fn), .arg = args, .thread = thread};
+  utils::switch_core_context *ctx = new utils::switch_core_context{.cb_fn = std::move(cb_fn), .arg = args, .thread = thread};
   _blobstore_load(
     bdev_name,
     [](void *arg, int serror){
-      switch_core_context *ctx = (switch_core_context *)arg;
+      utils::switch_core_context *ctx = (utils::switch_core_context *)arg;
       SPDK_INFOLOG(blob_log, "blobstore load done.\n");
-      switch_core_func(ctx, serror);
+      utils::switch_core_func(ctx, serror);
     },
     ctx,
     osd_uuid
@@ -891,11 +867,11 @@ static void
 _blobstore_fini(bm_complete cb_fn, void* args, spdk_thread *thread){
   SPDK_INFOLOG(blob_log, "blobstore fini, thread id %lu, core %u\n", 
       utils::get_spdk_thread_id(), core_sharded::get_core_sharded().this_shard_id());
-  auto ctx = new switch_core_context{.cb_fn = std::move(cb_fn), .arg = args, .thread = thread};
+  auto ctx = new utils::switch_core_context{.cb_fn = std::move(cb_fn), .arg = args, .thread = thread};
   _blobstore_fini([](void *arg, int serror){
-    switch_core_context *ctx = (switch_core_context *)arg;
+    utils::switch_core_context *ctx = (utils::switch_core_context *)arg;
     SPDK_INFOLOG(blob_log, "blobstore fini done.\n");
-    switch_core_func(ctx, serror);
+    utils::switch_core_func(ctx, serror);
   },
   ctx);
 }

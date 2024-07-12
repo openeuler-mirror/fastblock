@@ -109,11 +109,25 @@ static void load_kv_md_done(void *arg, int kverrno){
       return;
   }
 
-  // SPDK_WARNLOG("load_md done.\n");
-  struct kvstore* kvs = new kvstore(ctx->rblob, ctx->shard_id);
-  ctx->kvs = kvs;
-  kvs->set_checkpoint_blobid(ctx->checkpoint_blob_id, ctx->new_checkpoint_blob_id);
-  kvs->replay(kv_replay_done, ctx);
+  auto &shard = core_sharded::get_core_sharded();
+  auto cur_thread = spdk_get_thread();
+  auto kvs_done =  [](void *arg, int){
+    struct make_kvs_ctx * ctx = (struct make_kvs_ctx *)arg;
+    ctx->kvs->replay(kv_replay_done, ctx);
+  };
+  auto core_ctx = new utils::switch_core_context{.cb_fn = std::move(kvs_done), .arg = ctx, .thread = cur_thread};
+  
+  shard.invoke_on(
+    ctx->shard_id,
+    [core_ctx](){
+      struct make_kvs_ctx * ctx = (struct make_kvs_ctx *)core_ctx->arg;
+      //在ctx->shard_id指定的核上创建kvstore
+      struct kvstore* kvs = new kvstore(ctx->rblob, ctx->shard_id);
+      ctx->kvs = kvs;
+      kvs->set_checkpoint_blobid(ctx->checkpoint_blob_id, ctx->new_checkpoint_blob_id);
+      core_ctx->cb_fn(ctx, 0);
+      delete core_ctx;
+    });
 }
 
 static void open_rolling_blob_done(void *arg, struct rolling_blob* rblob, int kverrno){

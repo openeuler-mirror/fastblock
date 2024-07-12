@@ -73,11 +73,13 @@ public:
     kvstore(rolling_blob* rblob, uint32_t shard_id)  
       : rblob(rblob)
       , checkpoint(shard_id){
+        uint32_t lcore = spdk_env_get_current_core();
+        uint32_t sockid = spdk_env_get_socket_id(lcore);
         char* wbuf = (char*)spdk_malloc(32_MB,
-                        0x1000, NULL, SPDK_ENV_LCORE_ID_ANY,
+                        0x1000, NULL, sockid,
                         SPDK_MALLOC_DMA);
         char* rbuf = (char*)spdk_malloc(32_MB,
-                        0x1000, NULL, SPDK_ENV_LCORE_ID_ANY,
+                        0x1000, NULL, sockid,
                         SPDK_MALLOC_DMA);
         write_buf = spdk_buffer(wbuf, 32_MB);
         read_buf = spdk_buffer(rbuf, 32_MB);

@@ -184,4 +184,28 @@ struct cluster_io{
     int64_t  objects;  
 };
 
+struct switch_core_context{
+  utils::complete_fun cb_fn;
+  void *arg;
+  spdk_thread *thread;
+  int serror;
+};
+
+static inline void _switch_core_func(void *arg){
+  switch_core_context *ctx = (switch_core_context *)arg;
+  ctx->cb_fn(ctx->arg, ctx->serror);
+  delete ctx;
+}
+
+static void switch_core_func(void *arg, int rerrno){
+  switch_core_context *ctx = (switch_core_context *)arg;
+  auto cur_thread = spdk_get_thread();
+  ctx->serror = rerrno;
+  if(cur_thread != ctx->thread){
+    spdk_thread_send_msg(ctx->thread, _switch_core_func, ctx);
+  }else{
+    _switch_core_func(ctx);
+  }
+}
+
 }
