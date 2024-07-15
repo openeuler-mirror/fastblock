@@ -18,6 +18,7 @@
 #include <spdk/string.h>
 
 #include <csignal>
+#include <list>
 #include <memory>
 #include <string>
 #include <unordered_set>
@@ -51,38 +52,54 @@ public:
       : _capacity{capacity}
       , _element_size{element_size}
       , _name{name} {
-        _pool = ::spdk_mempool_create(
-          _name.c_str(),
-          _capacity,
-          _element_size,
-          cache_size,
-          sock_id);
+        size_t i{0};
+        _data_ptr = ::spdk_zmalloc(
+          _element_size * _capacity,
+          0x1000,
+          nullptr,
+          SPDK_ENV_LCORE_ID_ANY,
+          SPDK_MALLOC_DMA);
 
-        if (not _pool) {
-            throw std::runtime_error{FMT_3(
-              "create memory pool failed, name is %1%, capacity is %2%, element size is %3%",
-              _name.c_str(), _capacity, _element_size)};
+        if (not _data_ptr) {
+            throw std::runtime_error{"allocate data mem failed"};
         }
 
-        _net_contexts = ::spdk_mempool_create(
-          FMT_1("%1%_n", _name).c_str(),
-          _capacity,
-          sizeof(net_context),
-          cache_size,
-          sock_id);
+        _net_ctx_ptr = (net_context*)::spdk_zmalloc(
+          sizeof(net_context) * _capacity,
+          0x1000,
+          nullptr,
+          SPDK_ENV_LCORE_ID_ANY,
+          SPDK_MALLOC_DMA);
 
-        if (not _net_contexts) {
-            throw std::runtime_error{FMT_3(
-              "create net context memory pool failed, name is %1%, capacity is %2%, element size is %3%",
-              FMT_1("%1%_n", _name).c_str(), _capacity, sizeof(net_context))};
+        if (not _net_ctx_ptr) {
+            throw std::runtime_error{"allocate net_context mem failed"};
         }
 
-        init_with_rdma(pd);
+        auto* data_byte_ptr = reinterpret_cast<uint8_t*>(_data_ptr);
+        net_context* ctx_ptr{nullptr};
+        for (i = 0; i < _capacity; ++i) {
+            auto* mr = ::ibv_reg_mr(
+              pd, data_byte_ptr, _element_size,
+              IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ);
+            data_byte_ptr += _element_size;
 
-        SPDK_DEBUGLOG(
-          msg,
-          "created memory pool '%s' with capacity %ld\n",
-          _name.c_str(), ::spdk_mempool_count(_pool));
+            if (not mr) {
+                SPDK_ERRLOG(
+                  "ERROR: Call ibv_reg_mr() failed, errno is %d(%s)\n",
+                  errno, std::strerror(errno));
+                std::raise(SIGABRT);
+            }
+
+            ctx_ptr = &(_net_ctx_ptr[i]);
+            ctx_ptr->mr = mr;
+            ctx_ptr->sge.addr = uint64_t(mr->addr);
+            ctx_ptr->sge.length = mr->length;
+            ctx_ptr->sge.lkey = mr->lkey;
+            ctx_ptr->wr.num_sge = 1;
+            ctx_ptr->wr.sg_list = &(ctx_ptr->sge);
+
+            _net_context_list.push_back(ctx_ptr);
+        }
     }
 
     memory_pool(const memory_pool&) = delete;
@@ -97,58 +114,20 @@ public:
         free();
     }
 
-private:
-
-    void init_with_rdma(::ibv_pd* pd) {
-        auto ele_cache = std::make_unique<void*[]>(_capacity);
-        auto rc = ::spdk_mempool_get_bulk(_pool, ele_cache.get(), _capacity);
-        if (rc) {
-            throw std::runtime_error{FMT_1("get mempool all elements error: %1%", rc)};
-        }
-
-        auto ctx_cache = std::make_unique<net_context*[]>(_capacity);
-        rc = ::spdk_mempool_get_bulk(_net_contexts, reinterpret_cast<void**>(ctx_cache.get()), _capacity);
-        if (rc) {
-            throw std::runtime_error{FMT_1("get net context mempool all elements error: %1%", rc)};
-        }
-
-        for (size_t i{0}; i < _capacity; ++i) {
-            std::memset(ele_cache[i], 0, _element_size);
-            auto t = ele_cache[i];
-            auto* mr = ::ibv_reg_mr(
-              pd, t, _element_size,
-              IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ);
-
-            if (not mr) {
-                SPDK_ERRLOG(
-                  "ERROR: Call ibv_reg_mr() failed, errno is %d(%s)\n",
-                  errno, std::strerror(errno));
-                std::raise(SIGABRT);
-            }
-
-            ctx_cache[i]->mr = mr;
-            ctx_cache[i]->sge.addr = uint64_t(mr->addr);
-            ctx_cache[i]->sge.length = mr->length;
-            ctx_cache[i]->sge.lkey = mr->lkey;
-            ctx_cache[i]->wr.num_sge = 1;
-            ctx_cache[i]->wr.sg_list = &(ctx_cache[i]->sge);
-        }
-        ::spdk_mempool_put_bulk(_pool, ele_cache.get(), _capacity);
-        ::spdk_mempool_put_bulk(_net_contexts, reinterpret_cast<void**>(ctx_cache.get()), _capacity);
-    }
-
 public:
 
     net_context* get() noexcept {
-        if (::spdk_mempool_count(_net_contexts) == 0) {
+        if (_net_context_list.empty()) {
             return nullptr;
         }
 
-        return reinterpret_cast<net_context*>(::spdk_mempool_get(_net_contexts));
+        auto* ret = _net_context_list.front();
+        _net_context_list.pop_front();
+        return ret;
     }
 
     void put(net_context* ctx) noexcept {
-        ::spdk_mempool_put(_net_contexts, ctx);
+        _net_context_list.push_back(ctx);
     }
 
     std::unique_ptr<net_context*[]> get_bulk(const size_t n) noexcept {
@@ -157,19 +136,21 @@ public:
         }
 
         auto ctxs = std::make_unique<net_context*[]>(n);
-        auto rc = ::spdk_mempool_get_bulk(_net_contexts, reinterpret_cast<void**>(ctxs.get()), n);
-        if (rc) {
-            return nullptr;
+        auto it = _net_context_list.begin();
+        for (size_t i{0}; i < _net_context_list.size(); ++i) {
+            ctxs[i] = *it;
+            ++it;
         }
+
         return ctxs;
     }
 
     void put_bulk(std::unique_ptr<net_context*[]> ctxs, const size_t n) noexcept {
-        ::spdk_mempool_put_bulk(_net_contexts, reinterpret_cast<void**>(ctxs.get()), n);
+        return;
     }
 
     size_t size() noexcept {
-        return ::spdk_mempool_count(_net_contexts);
+        return _net_context_list.size();
     }
 
     [[gnu::always_inline]] size_t element_size() noexcept {
@@ -184,29 +165,16 @@ public:
         _is_free = true;
 
         SPDK_NOTICELOG("Start closing rpc memory_pool %s\n", _name.c_str());
-        if (_net_contexts) {
-            auto ele_cache = std::make_unique<void*[]>(_capacity);
-            auto rc = ::spdk_mempool_get_bulk(_net_contexts, ele_cache.get(), _capacity);
-            if (rc == 0) {
-                for (size_t i{0}; i < _capacity; ++i) {
-                    auto* ctx = reinterpret_cast<net_context*>(ele_cache[i]);
-                    ::ibv_dereg_mr(ctx->mr);
-                }
-                SPDK_NOTICELOG("Deregistered all memory region\n");
-                ::spdk_mempool_put_bulk(_net_contexts, ele_cache.get(), _capacity);
-            } else {
-                SPDK_ERRLOG(
-                  "ERROR: Got bulk of net contexts failed, return code is %s, current pool size is %ld, capacity is %lu\n",
-                  ::spdk_strerror(rc),
-                  ::spdk_mempool_count(_net_contexts),
-                  _capacity);
+        if (this->_net_ctx_ptr) {
+            for (auto* ctx : _net_context_list) {
+                ::ibv_dereg_mr(ctx->mr);
             }
-
-            ::spdk_mempool_free(_net_contexts);
+            SPDK_NOTICELOG("Deregistered all memory region\n");
+            ::spdk_free(_net_ctx_ptr);
         }
 
-        if (_pool) {
-            ::spdk_mempool_free(_pool);
+        if (_data_ptr) {
+            ::spdk_free(_data_ptr);
         }
         SPDK_NOTICELOG("The memory pool %s has been freed\n", _name.c_str());
     }
@@ -216,9 +184,10 @@ private:
     size_t _capacity{0};
     size_t _element_size{0};
     std::string _name{};
-    ::spdk_mempool* _pool{nullptr};
-    ::spdk_mempool* _net_contexts{nullptr};
     bool _is_free{false};
+    void* _data_ptr{nullptr};
+    net_context* _net_ctx_ptr{nullptr};
+    std::list<net_context*> _net_context_list{};
 };
 
 } // namespace rdma
