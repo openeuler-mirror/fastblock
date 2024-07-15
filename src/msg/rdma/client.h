@@ -229,24 +229,18 @@ public:
         }
 
         auto send_request(std::function<::ibv_send_wr*(bool)> make_wr, const size_t n_wrs) {
-            // _should_signal = is_reach_max_send_wr(n_wrs);
+            ::ibv_send_wr* head_wr{nullptr};
+            if (_opts->ep->qp_sig_all) {
+                head_wr = make_wr(true);
+            } else {
+                _should_signal = is_reach_max_send_wr(n_wrs);
 
-            auto* head_wr = make_wr(true);
-            // if (_should_signal) {
-            //     _should_signal = false;
-            //     _onflight_send_wr = n_wrs;
-            // } else {
-            //     _onflight_send_wr += n_wrs;
-            // }
+                head_wr = make_wr(_should_signal);
+                _onflight_send_wr += n_wrs;
 
-            // auto* head_wr = make_wr(true);
-            auto err = _sock->send(head_wr);
-            if (not err) {
-                rdma_probe.send_wr_posted(n_wrs);
-                // _onflight_send_wr += n_wrs;
             }
 
-            return err;
+            return _sock->send(head_wr);
         }
 
         auto send_finish_request(const uint32_t req_key) {
@@ -590,7 +584,6 @@ public:
             auto erase_it_end = _priority_onflight_requests.begin();
             rpc_request* stack_ptr;
             for (auto it = _priority_onflight_requests.begin(); it != _priority_onflight_requests.end(); ++it) {
-                auto* task_ptr = it->get();
                 rc = process_request_once(*it);
                 if (rc == -EAGAIN) {
                     erase_it_end = it;
@@ -715,6 +708,14 @@ read_done:
             cqe_list.pop_front();
 
             switch (cqe->opcode) {
+            case ::IBV_WC_SEND: {
+                auto max_wr = _sock->max_slient_wr();
+                _onflight_send_wr -= max_wr;
+                if (static_cast<uint32_t>(_onflight_send_wr) < max_wr) {
+                    _should_signal = false;
+                }
+                break;
+            }
             case ::IBV_WC_RECV: {
                 SPDK_DEBUGLOG(msg, "handle cqe of wr id '%ld'\n", cqe->wr_id);
                 auto it = _recv_ctx_map.find(cqe->wr_id);
@@ -1041,7 +1042,7 @@ read_done:
         std::shared_ptr<client> _master{};
         utils::simple_poller _poller{};
 
-        // bool _should_signal{false};
+        bool _should_signal{false};
         int32_t _onflight_send_wr{0};
         int64_t _onflight_rpc_task_size{0};
         int _sock_id{SPDK_ENV_SOCKET_ID_ANY};

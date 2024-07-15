@@ -439,24 +439,16 @@ private:
     }
 
     auto send_request(std::function<::ibv_send_wr*(bool)> make_wr, connection_record* conn, const size_t n_wrs) {
-        // conn->should_signal = is_reach_max_send_wr(conn, n_wrs);
+        ::ibv_send_wr* head_wr{nullptr};
+        if (_opts->ep->qp_sig_all) {
+            head_wr = make_wr(true);
+        } else {
+            conn->should_signal = is_reach_max_send_wr(conn, n_wrs);
+            head_wr = make_wr(conn->should_signal);
+            conn->onflight_send_wr += n_wrs;
+        }
 
-        auto* head_wr = make_wr(true);
         return conn->sock->send(head_wr);
-        // if (conn->should_signal) {
-        //     conn->should_signal = false;
-        //     conn->onflight_send_wr = n_wrs;
-        // } else {
-        //     conn->onflight_send_wr += n_wrs;
-        // }
-        // auto* head_wr = make_wr(true);
-
-        // auto err = conn->sock->send(head_wr);
-        // if (not err) {
-        //     conn->onflight_send_wr += n_wrs;
-        // }
-
-        // return err;
     }
 
     auto send_metadata_request(connection_record* conn, transport_data* request_data) {
@@ -746,6 +738,14 @@ private:
         conn->cqe_list.pop_front();
 
         switch (cqe->opcode) {
+        case ::IBV_WC_SEND: {
+            auto max_wr = conn->sock->max_slient_wr();
+            conn->onflight_send_wr -= max_wr;
+            if (static_cast<uint32_t>(conn->onflight_send_wr) < max_wr) {
+                conn->should_signal = false;
+            }
+            return false;
+        }
         case ::IBV_WC_RECV: {
             auto it = conn->recv_ctx_map.find(cqe->wr_id);
             if (it == conn->recv_ctx_map.end()) {
@@ -813,6 +813,7 @@ private:
                     return true;
                 }
 
+                SPDK_DEBUGLOG(msg, "created request_data for task id %d\n", task->id);
                 task->request_data = std::make_unique<transport_data>(_data_pool);
                 auto [it, _] = conn->rpc_tasks.emplace(task_id, task.get());
                 task_it = it;
