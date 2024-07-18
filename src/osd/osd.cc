@@ -220,6 +220,21 @@ static void service_init(partition_manager* pm, server_t *server){
         std::raise(SIGINT);
         return;
     }
+
+    while(1){
+        try {
+            server->rpc_srv->start(server->osd_port);
+        } catch (const msg::rdma::bindException& ) {
+            //端口绑定失败
+            server->osd_port = utils::get_random_port();
+            continue;
+        } catch (const std::exception& e) {
+            SPDK_ERRLOG("ERROR: Create rpc server failed, %s\n", e.what());
+            std::raise(SIGINT);
+            return;
+        } 
+        break;
+    }
     server->osd_addr = srv_opts->bind_address;
 	server->rpc_srv->register_service(global_raft_service.get());
 	server->rpc_srv->register_service(global_osd_service.get());

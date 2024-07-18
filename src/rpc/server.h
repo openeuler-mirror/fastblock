@@ -27,7 +27,6 @@ public:
           FMT_1("rpc_srv_%1%",
           utils::random_string(3)),
           mask.get(), srv_opts, sockid);
-        _transport->start();
     }
 
     rpc_server& operator=(const rpc_server&) = delete;
@@ -36,6 +35,10 @@ public:
 
 public:
 
+    void start(uint16_t port) {
+        _transport->create_listener(port);
+        _transport->start();
+    }
     void register_service(google::protobuf::Service* service){
         _transport->add_service(service);
     }

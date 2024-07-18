@@ -201,9 +201,6 @@ public:
 
         _opts->bind_address = *ipv4_address;
         SPDK_NOTICELOG("Use ipv4 %s for listening\n", ipv4_address.value().c_str());
-        endpoint ep{_opts->bind_address, _opts->port};
-        ep.passive = true;
-        _listener = std::make_unique<socket>(ep, *_pd, _channel.value(), false);
     }
 
     server(const server&) = delete;
@@ -1049,6 +1046,12 @@ public:
      * =======================================================================
      */
 
+    void create_listener(uint16_t port) {
+        _opts->port = port;
+        endpoint ep{_opts->bind_address, _opts->port};
+        ep.passive = true;
+        _listener = std::make_unique<socket>(ep, *_pd, _channel.value(), false);
+    }
     void start() {
         auto ec = _listener->listen(_opts->listen_backlog);
         if (ec) {
