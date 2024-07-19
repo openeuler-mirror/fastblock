@@ -665,6 +665,11 @@ static void save_bdev_json(std::string& bdev_json_file, server_t& server){
 }
 
 static int from_configuration(server_t* server) {
+    if (!utils::is_valid_uuid(g_uuid)) {
+        std::cerr << "--uuid <uuid> must be set legal uuid\n";
+        return -1;
+    }
+
     auto& pt = server->pt;
 
     if(g_mkfs){
