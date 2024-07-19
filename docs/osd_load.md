@@ -12,7 +12,7 @@ osd的初始化流程：
  buffer_pool_init函数用于创建一个spdk内存池（内部实际调用的是spdk_mempool_create），内存池大小为512MB，都是4K的内存块。
  spdk提供的读写blob的接口中存储数据的内存都必须是spdk创建的内存，为了提供内存使用效率，因此创建了个spdk内存池。
  - **初始化bdev设备**
- osd的本地存储都是基于spdk blobstrore进行存储。
+ osd的本地存储都是基于spdk blobstore进行存储。
  从bdev设备创建一个spdk blobstore块设备并初始化，这个过程是在blobstore_init函数中实现。
  这一步会创建一个super blob，用于存储osd的uuid。
  在storage_init函数里创建kv类型的blob。
@@ -25,7 +25,7 @@ osd的启动流程：
   buffer_pool_init函数用于创建一个spdk内存池（内部实际调用的是spdk_mempool_create），内存池大小为512MB，都是4K的内存块。
 spdk提供的读写blob的接口中存储数据的内存都必须是spdk创建的内存，为了提供内存使用效率，因此创建了个spdk内存池。
 - **加载bdev设备**
-osd的本地存储都是基于spdk blobstrore进行存储。
+osd的本地存储都是基于spdk blobstore进行存储。
 osd的本地存储主要有raft log存储、对象存储和kv存储，都是通过spdk的blob进行存储，blob的扩展属性“type”里存储blob类型。
    raft log存储：存储raft log，每个pg(对应一个raft组)有一个spdk blob，blob类型为blob_type::log。
    对象存储：存储对象数据，每个对象有一个spdk blob，blob类型为blob_type::object。
