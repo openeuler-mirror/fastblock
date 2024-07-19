@@ -91,8 +91,12 @@ static std::unique_ptr<monitor::client> mon_client;
 static std::string sample_data{};
 static boost::property_tree::ptree g_pt{};
 static bool g_force_stop{false};
+static int64_t g_conf_io_sample_count{1000};
 static watcher_context g_watcher_ctx{};
-
+static std::vector<uint64_t> g_sample_iops{};
+static int64_t g_previous_sample_io_count{0};
+static int64_t g_sample_io_count{0};
+static std::unique_ptr<utils::simple_poller> g_sample_iops_poller{nullptr};
 
 std::string random_string(const size_t length) {
     static std::string chars{
@@ -132,6 +136,15 @@ static int parse_arg(int ch, char* arg) {
     }
 
     return 0;
+}
+
+int sample_iops_poll(void* arg) {
+    if (g_sample_io_count - g_previous_sample_io_count >= g_conf_io_sample_count) {
+        g_previous_sample_io_count = g_sample_io_count;
+        g_sample_iops.push_back(::spdk_get_ticks());
+    }
+
+    return SPDK_POLLER_BUSY;
 }
 
 void write_once(bench_context* ctx) {
@@ -177,39 +190,22 @@ void on_write_done(::spdk_bdev_io* ctx, [[maybe_unused]] int32_t res) {
 
     auto tick = ::spdk_get_ticks();
     auto dur = static_cast<double>(tick - stack_ptr->start_tick);
-    SPDK_DEBUGLOG(
-      bbench,
-      "write duration is %lfus/%lfms, raw value is %lf, start_tsc is %ld\n",
-      tick_to_us(dur), tick_to_ms(dur), dur, stack_ptr->start_tick);
-    if(tick >= watcher_ctx->iops_start_at){
+    if (tick >= watcher_ctx->iops_start_at) {
         bench_ctx->durs.push_back(dur);
+        ++g_sample_io_count;
         if(bench_ctx->deferred_count != 0){
             //到达计时点（既延期到期）
             bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
             bench_ctx->deferred_count = 0;
         }
         bench_ctx->done_io_count++;
-    }else{
+    } else {
         bench_ctx->deferred_count++;
         if(bench_ctx->on_flight_io_count == bench_ctx->io_count){
             //延期时间还没到，此核上的所有io已经完成
             bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
             bench_ctx->deferred_count = 0;
         }
-    }
-    SPDK_DEBUGLOG(bbench, "The %ldth write request done\n", stack_ptr->id);
-    if(bench_ctx->done_io_count % 100 == 0){
-        SPDK_INFOLOG(
-          bbench,
-          "%ldth request done, done_io_count is %ld, io_count is %ld deferred_count %ld on_flight_io_count %ld\n",
-          stack_ptr->id, bench_ctx->done_io_count, bench_ctx->io_count, bench_ctx->deferred_count, bench_ctx->on_flight_io_count);
-    }
-
-    if (stack_ptr->id % 100 == 0) {
-        SPDK_INFOLOG(
-          bbench,
-          "%ldth request done, done_io_count is %ld, io_count is %ld\n",
-          stack_ptr->id, bench_ctx->done_io_count, bench_ctx->io_count);
     }
 
     if (bench_ctx->on_flight_io_count < bench_ctx->io_count) {
@@ -228,19 +224,16 @@ void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
 
     auto tick = ::spdk_get_ticks();
     auto dur = static_cast<double>(tick - stack_ptr->start_tick);
-    SPDK_DEBUGLOG(
-      bbench,
-      "read duration is %lfus/%lfms, raw value is %lf, start_tsc is %ld\n",
-      tick_to_us(dur), tick_to_ms(dur), dur, stack_ptr->start_tick);
-    if(tick >= watcher_ctx->iops_start_at){
+    if (tick >= watcher_ctx->iops_start_at) {
         bench_ctx->durs.push_back(dur);
+        ++g_sample_io_count;
         if(bench_ctx->deferred_count != 0){
             //到达计时点（既延时到期）
             bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
             bench_ctx->deferred_count = 0;
         }
         bench_ctx->done_io_count++;
-    }else{
+    } else {
         bench_ctx->deferred_count++;
         if(bench_ctx->on_flight_io_count == bench_ctx->io_count){
             //延期时间还没到，此核上的所有io已经完成
@@ -248,12 +241,7 @@ void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
             bench_ctx->deferred_count = 0;
         }
     }
-    SPDK_DEBUGLOG(bbench, "The %ldth read request done\n", stack_ptr->id);
     bench_ctx->on_flight_request.erase(stack_ptr->id);
-
-    if (stack_ptr->id % 100 == 0) {
-        SPDK_INFOLOG(bbench, "%ldth request done\n", stack_ptr->id);
-    }
 
     if (bench_ctx->on_flight_io_count < bench_ctx->io_count) {
         read_once(bench_ctx);
@@ -343,6 +331,51 @@ void on_app_stop() noexcept {
     ::spdk_app_stop(0);
 }
 
+void print_io_result(std::vector<double>::iterator begin, std::vector<double>::iterator end, uint64_t iops_dur) {
+    auto size = end - begin;
+    double mean{0.0};
+    for (decltype(begin) it = begin; it != end; ++it) {
+        mean += *it;
+    }
+
+    mean /= size;
+
+    double accum{0.0};
+    std::for_each(begin, end, [&accum, mean] (const double v) {
+        accum += (v - mean) * (v - mean);
+    });
+    auto biased_stdv = std::sqrt(accum / size);
+
+    static constexpr size_t lat_tag_count{6};
+    static constexpr std::array<double, lat_tag_count> latency_tag = {0.1, 0.5, 0.9, 0.95, 0.99, 0.999};
+
+    auto fmt = boost::format("");
+    std::sort(begin, end);
+    auto min = *begin;
+    auto max = *(end - 1);
+    size_t count{0};
+    for (auto lat_tag : latency_tag) {
+        auto lat_at = static_cast<size_t>(lat_tag * size);
+        auto lat = *(begin + lat_at);
+        if (count == 0) {
+            fmt = boost::format("%1%p%2%: %3%us") % fmt % lat_tag % tick_to_us(lat);
+        } else {
+            fmt = boost::format("%1%, p%2%: %3%us") % fmt % lat_tag % tick_to_us(lat);
+        }
+        ++count;
+    }
+
+    auto iops_dur_sec = static_cast<double>(iops_dur) / ::spdk_get_ticks_hz();
+    auto iops_val = size / iops_dur_sec;
+
+    fmt = boost::format("%1%, mean: %2%us, min: %3%us, max: %4%us, biased stdv: %5%, iops: %6%, iops_dur_sec: %7%s, total_io_count: %8%")
+      % fmt % tick_to_us(mean) % tick_to_us(min)
+      % tick_to_us(max) % tick_to_us(biased_stdv)
+      % iops_val % iops_dur_sec % size;
+
+    std::cout << fmt.str() << "\n";
+}
+
 int watch_poller(void* arg) {
     if (g_force_stop) {
         return SPDK_POLLER_IDLE;
@@ -360,6 +393,7 @@ int watch_poller(void* arg) {
     }
 
     if (is_all_done) {
+        g_sample_iops_poller->unregister_poller();
         auto iops_dur = ::spdk_get_ticks() - ctx->iops_start_at;
         bool should_exit{true};
         switch (ctx->io_type) {
@@ -386,25 +420,6 @@ int watch_poller(void* arg) {
         }
 
         SPDK_DEBUGLOG(bbench, "All requests done, durations count is %ld\n", durations.size());
-        std::sort(durations.begin(), durations.end());
-
-        double mean{};
-        for (auto& dur : durations) {
-            mean += dur;
-        }
-        mean /= durations.size();
-
-        double accum{0.0};
-        std::for_each(
-          durations.begin(), durations.end(),
-          [&accum, mean] (const double v) {
-              accum += (v - mean) * (v - mean);
-          }
-        );
-        auto biased_stdv = std::sqrt(accum / (durations.size()));
-
-        static constexpr size_t lat_tag_count{6};
-        static constexpr std::array<double, lat_tag_count> latency_tag = {0.1, 0.5, 0.9, 0.95, 0.99, 0.999};
 
         switch (ctx->current_bench_type) {
         case bench_io_type::write:
@@ -417,34 +432,35 @@ int watch_poller(void* arg) {
             break;
         }
 
-        auto fmt = boost::format("");
+        auto it = durations.begin();
+        auto ticks_it = g_sample_iops.begin();
+        uint64_t prev_tick{ctx->iops_start_at};
+        int64_t un_processed{static_cast<int64_t>(durations.size())};
 
-        size_t count{0};
-        for (auto lat_tag : latency_tag) {
-            auto lat_at = static_cast<size_t>(lat_tag * durations.size());
-
-            SPDK_DEBUGLOG(bbench, "p%f at %ld\n", lat_tag, lat_at);
-            auto lat = durations.at(lat_at);
-            if (count == 0) {
-                fmt = boost::format("%1%p%2%: %3%us") % fmt % lat_tag % tick_to_us(lat);
-            } else {
-                fmt = boost::format("%1%, p%2%: %3%us") % fmt % lat_tag % tick_to_us(lat);
+        while (un_processed > 0) {
+            if (ticks_it == g_sample_iops.end()) {
+                break;
             }
-            ++count;
+
+            auto sample_iops_dur = *ticks_it - prev_tick;
+            prev_tick = *ticks_it;
+            auto step = g_conf_io_sample_count;
+            if (un_processed < g_conf_io_sample_count) {
+                step = un_processed;
+            }
+            auto end_it = it + step;
+            if (end_it == durations.end()) {
+                end_it = durations.end();
+            }
+
+            print_io_result(it, end_it, sample_iops_dur);
+            ++ticks_it;
+            it += step;
+            un_processed -= step;
         }
 
-        auto min = durations.at(0);
-        auto max = durations.at(durations.size() - 1);
-
-        auto iops_dur_sec = static_cast<double>(iops_dur) / ::spdk_get_ticks_hz();
-        auto iops_val = ctx->total_io_count / iops_dur_sec;
-
-        fmt = boost::format("%1%, mean: %2%us, min: %3%us, max: %4%us, biased stdv: %5%, iops: %6%, iops_dur_sec: %7%, total_io_count: %8%")
-          % fmt % tick_to_us(mean) % tick_to_us(min)
-          % tick_to_us(max) % tick_to_us(biased_stdv)
-          % iops_val % iops_dur_sec % (ctx->total_io_count);
-
-        std::cout << fmt.str() << "\n";
+        std::cout << "===============================[total latency]========================================\n";
+        print_io_result(durations.begin(), durations.end(), iops_dur);
         std::cout << "======================================================================================\n";
 
         if (should_exit) {
@@ -484,9 +500,18 @@ void on_app_start(void* arg) {
         exit(-EINVAL);
     }
 
+    g_conf_io_sample_count = g_pt.get_child("io_smaple_count").get_value<int64_t>();
     watcher_ctx->io_size = g_pt.get_child("io_size").get_value<size_t>();
     sample_data = std::string(watcher_ctx->io_size, 0x55);
     watcher_ctx->total_io_count = g_pt.get_child("io_count").get_value<size_t>();
+
+    if (g_conf_io_sample_count > static_cast<int64_t>(watcher_ctx->total_io_count)) {
+        g_conf_io_sample_count = static_cast<int64_t>(watcher_ctx->total_io_count);
+    }
+    SPDK_DEBUGLOG(
+      bbench,
+      "io_smaple_count is %ld, total io count is %ld\n",
+      g_conf_io_sample_count, watcher_ctx->total_io_count);
     watcher_ctx->io_depth = g_pt.get_child("io_depth").get_value<size_t>();
     watcher_ctx->image_name = g_pt.get_child("image_name").get_value<std::string>();
     watcher_ctx->image_size = g_pt.get_child("image_size").get_value<size_t>();
@@ -520,6 +545,7 @@ void on_app_start(void* arg) {
     ::spdk_cpuset cpumask{};
     ::spdk_cpuset_zero(&cpumask);
     ::spdk_cpuset_set_cpu(&cpumask, core_no, true);
+
     auto opts = msg::rdma::client::make_options(g_pt);
     conn_cache = std::make_shared<::connect_cache>(&cpumask, opts);
     par_mgr = std::make_shared<::partition_manager>(-1, conn_cache);
@@ -558,6 +584,8 @@ void on_app_start(void* arg) {
             watcher_ctx->bench_threads[core_count] = thread;
             core_count++;
         }
+        g_sample_iops_poller = std::make_unique<utils::simple_poller>(watcher_ctx->bench_threads[0]);
+        g_sample_iops_poller->register_poller(sample_iops_poll, watcher_ctx, 0);
         watcher_ctx->watch_poller_holder.set_thread(watcher_ctx->bench_threads[0]);
         watcher_ctx->watch_poller_holder.register_poller(watch_poller, watcher_ctx, 0);
     };
@@ -592,7 +620,7 @@ int main(int argc, char** argv) {
     }
 
     opts.name = "block bench";
-    opts.print_level = ::spdk_log_level::SPDK_LOG_INFO;
+    opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
     opts.shutdown_cb = on_app_stop;
     rc = ::spdk_app_start(&opts, on_app_start, &g_watcher_ctx);
     if (rc) {

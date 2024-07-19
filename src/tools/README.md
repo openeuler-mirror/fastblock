@@ -6,6 +6,7 @@
 
 ```json
 {
+    "io_sample_count": 100,
     "io_type": "write",
     "io_size": 4096,
     "io_count": 10000,
@@ -41,6 +42,10 @@
 ```
 
 压测工具的配置包含两部分，其中一部分是关于 *RDMA RPC* 的配置，这部分说明可以参考 `src/msg/README.md`。
+
+### io_sample_count
+
+假如该值为 *100*，则将所有 *rpc* 延时数组分为每 *100* 个一组，分别打印这些分组的延时信息。
 
 ### io_type
 
