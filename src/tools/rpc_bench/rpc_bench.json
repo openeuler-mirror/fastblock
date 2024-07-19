@@ -5,7 +5,7 @@
             "list": [
                 {
                     "host": "192.168.80.84",
-                    "port": 3000
+                    "port": 8322
                 }
             ]
         },
@@ -14,23 +14,24 @@
             "list": [
                 {
                     "host": "192.168.80.84",
-                    "port": 3001
+                    "port": 2006
                 }
             ]
         }
     ],
     "io_size": 4096,
-    "io_depth": 128,
-    "io_count": 200000,
+    "io_depth": 8,
+    "io_count": 500000,
     "rpc_client_same_core": true,
+    "rpc_single_client": true,
     "rdma_device_name": "mlx5_1",
     "rdma_device_port": 1,
     "rdma_gid_index": 4,
     "msg_server_listen_backlog": 1024,
-    "msg_server_poll_cq_batch_size": 128,
-    "msg_server_metadata_memory_pool_capacity": 16384,
+    "msg_server_poll_cq_batch_size": 32,
+    "msg_server_metadata_memory_pool_capacity": 512,
     "msg_server_metadata_memory_pool_element_size": 1024,
-    "msg_server_data_memory_pool_capacity": 16384,
+    "msg_server_data_memory_pool_capacity": 512,
     "msg_server_data_memory_pool_element_size": 8192,
     "msg_server_per_post_recv_num": 512,
     "msg_server_rpc_timeout_us": 30000000,
@@ -43,7 +44,7 @@
     "msg_rdma_max_inline_data": 16,
     "msg_rdma_cq_num_entries": 1024,
     "msg_rdma_qp_sig_all": false,
-    "msg_client_connect_max_retry": 30,
-    "msg_client_connect_retry_interval_us": 1000,
+    "msg_client_connect_max_retry": 120,
+    "msg_client_connect_retry_interval_us": 10000000,
     "msg_client_shutdown_timeout_us": 60000000
 }
