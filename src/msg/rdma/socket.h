@@ -31,6 +31,15 @@
 namespace msg {
 namespace rdma {
 
+class bindException : public std::exception {
+public:
+
+    bindException() noexcept = default;
+    const char* what() const throw() override {
+        return "bind addr and port failed";
+    }
+};
+
 class socket {
 
 public:
@@ -84,7 +93,7 @@ public:
                   "ERROR: rdma_bind_addr() failed to bind on %s, error: %s\n",
                   host(_res->ai_src_addr).c_str(), std::strerror(errno));
 
-                throw std::runtime_error{"rdma_bind_addr() failed"};
+                throw bindException();
             }
 
             SPDK_INFOLOG(
