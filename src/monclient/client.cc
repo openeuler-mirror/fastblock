@@ -895,7 +895,7 @@ int client::send_request(msg::Request* req, bool send_directly) {
     }
 
     auto rc = _cluster->writev(&_request_iov, 1);
-    SPDK_DEBUGLOG(mon, "rc %d\n", rc);
+    SPDK_DEBUGLOG(mon, "rc %ld\n", rc);
     if (rc != -1) { ++_request_counter; }
     return rc;
 }

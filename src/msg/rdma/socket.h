@@ -51,10 +51,10 @@ public:
       , _pd{pd.value()}
       , _mlx5dv_is_supported{::mlx5dv_is_supported(pd.deivce())} {
         if (_mlx5dv_is_supported) {
-            SPDK_NOTICELOG("mlx5dv is supported\n");
+            SPDK_INFOLOG(msg, "mlx5dv is supported\n");
             _provider = std::make_unique<mlx5dv>();
         } else {
-            SPDK_NOTICELOG("mlx5dv is not supported\n");
+            SPDK_INFOLOG(msg, "mlx5dv is not supported\n");
             _provider = std::make_unique<verbs>();
         }
 
@@ -144,10 +144,10 @@ public:
         assert(_id && "argument 'id' must not be nullptr");
 
         if (_mlx5dv_is_supported) {
-            SPDK_NOTICELOG("mlx5dv is supported\n");
+            SPDK_INFOLOG(msg, "mlx5dv is supported\n");
             _provider = std::make_unique<mlx5dv>();
         } else {
-            SPDK_NOTICELOG("mlx5dv is not supported\n");
+            SPDK_INFOLOG(msg, "mlx5dv is not supported\n");
             _provider = std::make_unique<verbs>();
         }
 

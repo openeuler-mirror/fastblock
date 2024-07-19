@@ -1,4 +1,5 @@
 {
+    "io_sample_count": 100,
     "io_type": "write",
     "io_size": 4096,
     "io_count": 10000,
@@ -30,5 +31,5 @@
     "msg_rdma_max_recv_sge": 1,
     "msg_rdma_max_inline_data": 16,
     "msg_rdma_cq_num_entries": 1024,
-    "msg_rdma_qp_sig_all": false   
+    "msg_rdma_qp_sig_all": false
 }
