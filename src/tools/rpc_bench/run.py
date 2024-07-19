@@ -1,10 +1,10 @@
 #!/bin/python
 
 import argparse
-import asyncio
 import json
 import os
 import subprocess
+import random
 
 from jinja2 import Template
 
@@ -48,7 +48,6 @@ redirect_stderr=true
 stdout_logfile_maxbytes = 1GB
 stdout_logfile={{ app.log_home }}/{{ app.name }}.log
 stderr_logfile={{ app.log_home }}/{{ app.name }}_err.log
-pre-start = /bin/bash -c ">{{ app.log_home }}/{{ app.name }}.log;>{{ app.log_home }}/{{ app.name }}_err.log"
 {% endfor %}
 """
 CI_SUP_CONF_PATH = "/etc/supervisor.con"
@@ -69,7 +68,6 @@ redirect_stderr=true
 stdout_logfile_maxbytes = 1GB
 stdout_logfile={{ app.log_home }}/{{ app.name }}.log
 stderr_logfile={{ app.log_home }}/{{ app.name }}_err.log
-pre-start = /bin/bash -c ">{{ app.log_home }}/{{ app.name }}.log;>{{ app.log_home }}/{{ app.name }}_err.log"
 {% endfor %}
 """
 RPC_BENCH_SUP_CONF_PATH = "/etc/supervisor/conf.d/rpc_bench.conf"
@@ -122,12 +120,18 @@ class supervisor_client:
             print(f"supervisorctl start {name}, error no: {e.returncode}, stderr: {e.stderr}")
 
 
-def count_core_num(eps, index):
+def count_core_num(eps, index, is_rpc_single_client, is_rpc_client_same_core):
     count = len(eps[index]['list']) # server core count
-    for i in range(len(eps)):
-        if i + 1 == eps[index]['index']:
-            continue
-        count += len(eps[i]['list'])
+
+    if is_rpc_single_client:
+        count += 1
+    elif is_rpc_client_same_core:
+        count += len(eps) - 1 # -1 for skipping self
+    else:
+        for i in range(len(eps)):
+            if i + 1 == eps[index]['index']:
+                continue
+            count += len(eps[i]['list'])
 
     print(f'rpc_bench_{index + 1} needs core size is {count}')
     return count
@@ -171,6 +175,34 @@ def format_app_name(base_name, build_suffix, index):
         return f'{base_name}_{build_suffix}_{index + 1}'
 
 
+def maybe_gen_endpoints(ip_list, instance_per_node, conf_json, conf_path):
+    if len(ip_list) == 0:
+        print('ip list is empty, do nothing')
+        return
+
+    conf_json['endpoints'] = []
+    index = 1
+    ep_list = []
+    ports = set()
+    port = random.randint(2000, 10000)
+
+    for ip in ip_list:
+        ep_list = []
+        for _ in range(instance_per_node):
+            while (port in ports):
+                port = random.randint(2000, 10000)
+            ports.add(port)
+            ep_list.append({'host': ip, 'port': port})
+        conf_json['endpoints'].append({
+            'index': index,
+            'list': ep_list
+        })
+        index += 1
+
+    with open(conf_path, 'w', encoding='utf-8') as f:
+        json.dump(conf_json, f, ensure_ascii=False, indent=4)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="generate supervisord conf for rpc_bench")
     parser.add_argument("--log-flags", type=str, help="spdk app log flags, like '-L msg -L osd' ...", default='')
@@ -178,6 +210,8 @@ if __name__ == '__main__':
     parser.add_argument("--build-path-suffix", type=str, help="for debug test, may ignore it", default='')
     parser.add_argument("--ci", action='store_true', help="for ci test, may ignore it")
     parser.add_argument("--supervisor-xmlrpc-port", type=int, help="for ci test, set supervisor xml rpc port, may ignore it", default=5371)
+    parser.add_argument('--ip-list', help='node ip list', default=['192.168.80.84'], nargs='+')
+    parser.add_argument("--instance-per-node", type=int, help="instance per node", default=1)
     args = parser.parse_args()
 
     fastblock_home = fastblock_home_path()
@@ -191,6 +225,7 @@ if __name__ == '__main__':
     with open(conf_path, 'r', encoding='utf-8') as file:
         rpc_bench_conf = json.load(file)
 
+    maybe_gen_endpoints(args.ip_list, args.instance_per_node, rpc_bench_conf, conf_path)
     app_nums = len(rpc_bench_conf['endpoints'])
     app_base_name = 'rpc_bench'
     app_bin_path = bin_path
@@ -202,7 +237,7 @@ if __name__ == '__main__':
 
     apps = []
     for i in range(app_nums):
-        n_core = count_core_num(rpc_bench_conf['endpoints'], i)
+        n_core = count_core_num(rpc_bench_conf['endpoints'], i, rpc_bench_conf['rpc_single_client'], rpc_bench_conf['rpc_client_same_core'])
         rpc_bench_meta = {
             'name': format_app_name(app_base_name, args.build_path_suffix, i),
             'command': f'{app_bin_path} -C {app_conf_path} -I {i + 1} -m [{format_core_arg(n_core, app_core_counter)}] {app_log_mod}',
