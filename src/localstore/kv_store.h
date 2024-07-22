@@ -70,7 +70,7 @@ struct kvstore_ckpt_ctx {
 
 class kvstore {
 public:
-    kvstore(rolling_blob* rblob, uint32_t shard_id)  
+    kvstore(rolling_blob* rblob, uint32_t shard_id)
       : rblob(rblob)
       , checkpoint(shard_id){
         uint32_t lcore = spdk_env_get_current_core();
@@ -95,7 +95,7 @@ public:
 
     void start() {
         _worker_poller = SPDK_POLLER_REGISTER(worker_poll, this, 100000); // 10ms写一次
-        SPDK_INFOLOG(kvlog, "start kvstore in core %u, thread  %lu\n", 
+        SPDK_INFOLOG(kvlog, "start kvstore in core %u, thread  %lu\n",
             core_sharded::get_core_sharded().this_shard_id(), utils::get_spdk_thread_id());
     }
 
@@ -110,7 +110,7 @@ public:
 
     void stop(kvstore_rw_complete cb_fn, void* arg) {
         uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
-        SPDK_INFOLOG(kvlog, "stop kvstore in core %u, thread %lu \n", 
+        SPDK_INFOLOG(kvlog, "stop kvstore in core %u, thread %lu \n",
             shard_id, utils::get_spdk_thread_id());
         if (_worker_poller) {
             /* 注意：注册、注销poller要在一个thread里，一个cpu core有一个thread，因此注册、注销poller要在一个cpu core里
@@ -123,11 +123,11 @@ public:
             core_sharded::get_core_sharded().invoke_on(
               shard_id,
               [cb_fn = std::move(cb_fn), arg, kverrno](){
-                SPDK_INFOLOG(kvlog, "close rblob done in core %u\n", 
+                SPDK_INFOLOG(kvlog, "close rblob done in core %u\n",
                     core_sharded::get_core_sharded().this_shard_id());
                 cb_fn(arg, kverrno);
               });
-        };  
+        };
 
         core_sharded::get_core_sharded().invoke_on(
           utils::default_blobstore_core,
@@ -366,7 +366,7 @@ public:
         }
         ctx->bl = std::move(bl);
 
-        SPDK_DEBUGLOG(kvlog, "table serialized. map size:%lu buffer_list size:%lu in core %u\n", 
+        SPDK_DEBUGLOG(kvlog, "table serialized. map size:%lu buffer_list size:%lu in core %u\n",
             table.size(), ctx->bl.bytes(), core_sharded::get_core_sharded().this_shard_id());
         checkpoint.start_checkpoint(ctx->bl.bytes(), checkpoint_start_complete, ctx);
     }
@@ -390,10 +390,10 @@ public:
               [arg, kverrno](){
                 kvstore::checkpoint_finish_complete(arg, kverrno);
               });
-        };  
-        
+        };
+
         core_sharded::get_core_sharded().invoke_on(
-          utils::default_blobstore_core, 
+          utils::default_blobstore_core,
           [ctx, stop_done = std::move(stop_done), shard_id = core_sharded::get_core_sharded().this_shard_id()](){
               ctx->kv_ckpt->finish_checkpoint(shard_id, stop_done, ctx);
           });
@@ -571,7 +571,7 @@ public:
 
         auto ops = ctx->kvs->deserialize_op();
         for (auto& op : ops) {
-            SPDK_INFOLOG(kvlog, "------  key: %s value: %s\n", op.key.c_str(), op.value->c_str());
+            SPDK_INFOLOG(kvlog, "------  key: %s value: %s\n", op.key.c_str(), op.value.value_or("nullopt").c_str());
             ctx->kvs->apply_op(op.key, op.value);
         }
 
