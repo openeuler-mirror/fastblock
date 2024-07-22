@@ -75,6 +75,7 @@ struct watcher_context {
     size_t object_size{0};
     bool is_exit{false};
     bench_io_type current_bench_type{bench_io_type::write};
+    size_t core_context_size{0};
     std::unique_ptr<::bench_context[]> core_ctxs{nullptr};
     std::unique_ptr<::spdk_thread*[]> bench_threads{nullptr};
     utils::simple_poller watch_poller_holder{};
@@ -84,6 +85,178 @@ struct watcher_context {
     uint64_t deferred_time{};
 };
 
+static watcher_context g_watcher_ctx{};
+
+inline double tick_to_us(const double tick) noexcept {
+    return tick * 1000 * 1000 / ::spdk_get_ticks_hz();
+}
+
+inline double tick_to_ms(const double tick) noexcept {
+    return tick * 1000 / ::spdk_get_ticks_hz();
+}
+
+inline double tick_to_s(const double tick) noexcept {
+    return tick / ::spdk_get_ticks_hz();
+}
+
+struct print_stats_context {
+
+public:
+
+    static double print_stats(std::vector<double>::iterator begin, const size_t size, std::optional<uint64_t> iops_dur_opt = std::nullopt) {
+        auto end = begin + size;
+        double mean{0.0};
+        for (decltype(begin) it = begin; it != end; ++it) {
+            mean += *it;
+        }
+
+        mean /= size;
+
+        double accum{0.0};
+        std::for_each(begin, end, [&accum, mean] (const double v) {
+            accum += (v - mean) * (v - mean);
+        });
+        auto biased_stdv = std::sqrt(accum / size);
+
+        static constexpr size_t lat_tag_count{6};
+        static constexpr std::array<double, lat_tag_count> latency_tag = {0.1, 0.5, 0.9, 0.95, 0.99, 0.999};
+
+        std::sort(begin, end);
+        auto min = *begin;
+        auto max = *(end - 1);
+
+        if (not iops_dur_opt) {
+            auto fmt = boost::format("mean: %1%, min: %2%, max: %3%, biased stdv: %4%, total_io_count: %5%")
+              % mean % min % max % biased_stdv % size;
+
+            std::cout << fmt.str() << "\n";
+            return 0.0;
+        }
+
+        auto fmt = boost::format("");
+        size_t count{0};
+        for (auto lat_tag : latency_tag) {
+            auto lat_at = static_cast<size_t>(lat_tag * size);
+            auto lat = *(begin + lat_at);
+            if (count == 0) {
+                fmt = boost::format("%1%p%2%: %3%us") % fmt % lat_tag % tick_to_us(lat);
+            } else {
+                fmt = boost::format("%1%, p%2%: %3%us") % fmt % lat_tag % tick_to_us(lat);
+            }
+            ++count;
+        }
+
+        auto iops_dur = iops_dur_opt.value();
+        auto iops_dur_sec = static_cast<double>(iops_dur) / ::spdk_get_ticks_hz();
+        auto iops_val = size / iops_dur_sec;
+
+        fmt = boost::format("%1%, mean: %2%us, min: %3%us, max: %4%us, biased stdv: %5%, iops: %6%, iops_dur_sec: %7%s, total_io_count: %8%")
+          % fmt % tick_to_us(mean) % tick_to_us(min)
+          % tick_to_us(max) % tick_to_us(biased_stdv)
+          % iops_val % iops_dur_sec % size;
+
+        std::cout << fmt.str() << "\n";
+        return iops_val;
+    }
+
+    static int print_poll(void* arg) {
+        auto this_ctx = reinterpret_cast<print_stats_context*>(arg);
+        this_ctx->print_stats(g_watcher_ctx.core_ctxs.get(), g_watcher_ctx.core_context_size);
+        return SPDK_POLLER_BUSY;
+    }
+
+public:
+
+    void from_conf(boost::property_tree::ptree& pt) {
+        if (pt.count("io_print_stats_enable") == 1) {
+            enable_print = pt.get_child("io_print_stats_enable").get_value<bool>();
+        }
+
+        if (not enable_print) {
+            SPDK_NOTICELOG("printint stats is not enabled\n");
+            return;
+        }
+
+        if (pt.count("io_print_stats_interval_ms") == 1) {
+            interval_us = pt.get_child("io_print_stats_interval_ms").get_value<int64_t>() * 1000;
+        }
+
+        if (pt.count("io_print_stats_acc") == 1) {
+            acc_print = pt.get_child("io_print_stats_acc").get_value<bool>();
+        }
+
+        SPDK_NOTICELOG(
+          "block_bench will print stats every %ldus in '%s' mode\n",
+          interval_us, acc_print ? "acc" : "part");
+    }
+
+    void print_stats(bench_context* ctxs, size_t ctx_size) noexcept {
+        if (last_print_at == 0) {
+            last_print_at = g_watcher_ctx.iops_start_at;
+        }
+
+        uint64_t iops_dur{::spdk_get_ticks() - last_print_at};
+
+        if (not acc_print) {
+            last_print_at = ::spdk_get_ticks();
+        }
+
+        size_t durations_size{0};
+        bool should_print{false};
+        for (size_t i{0}; i < ctx_size; ++i) {
+            if (ctxs[i].durs.empty()) {
+                continue;
+            }
+
+            auto dur_size = ctxs[i].durs.size();
+            if (dur_size <= prev_print_at[i]) {
+                continue;
+            }
+
+            should_print = true;
+            auto begin_it = ctxs[i].durs.begin() + prev_print_at[i];
+            if (acc_print) {
+                ticks.insert(ticks.end(), begin_it, ctxs[i].durs.end());
+            } else {
+                ticks.insert(ticks.begin(), begin_it, ctxs[i].durs.end());
+                durations_size += ctxs[i].durs.end() - begin_it;
+            }
+            prev_print_at[i] = dur_size;
+        }
+
+        if (not should_print) {
+            return;
+        }
+
+        if (acc_print) {
+            durations_size = ticks.size();
+        }
+
+        if (ticks.empty()) {
+            return;
+        }
+
+        auto iops_val = print_stats(ticks.begin(), durations_size, iops_dur);
+        all_iops.push_back(iops_val);
+    }
+
+    void print_all_iops_ststs() {
+        std::cout << "===============================[all iops stats]========================================\n";
+        print_stats(all_iops.begin(), all_iops.size());
+    }
+
+public:
+
+    bool enable_print{true};
+    bool acc_print{false};
+    int64_t last_print_at{0};
+    int64_t interval_us{1000};
+    std::unique_ptr<utils::simple_poller> print_poller{nullptr};
+    std::vector<double> ticks{};
+    std::unique_ptr<size_t[]> prev_print_at{nullptr};
+    std::vector<double> all_iops{};
+};
+
 static char* g_conf_path{nullptr};
 static std::shared_ptr<::connect_cache> conn_cache;
 static std::shared_ptr<::partition_manager> par_mgr;
@@ -91,12 +264,7 @@ static std::unique_ptr<monitor::client> mon_client;
 static std::string sample_data{};
 static boost::property_tree::ptree g_pt{};
 static bool g_force_stop{false};
-static int64_t g_conf_io_sample_count{1000};
-static watcher_context g_watcher_ctx{};
-static std::vector<uint64_t> g_sample_iops{};
-static int64_t g_previous_sample_io_count{0};
-static int64_t g_sample_io_count{0};
-static std::unique_ptr<utils::simple_poller> g_sample_iops_poller{nullptr};
+static print_stats_context g_print_ctx{};
 
 std::string random_string(const size_t length) {
     static std::string chars{
@@ -114,14 +282,6 @@ std::string random_string(const size_t length) {
 }
 }
 
-inline double tick_to_us(const double tick) noexcept {
-    return tick * 1000 * 1000 / ::spdk_get_ticks_hz();
-}
-
-inline double tick_to_ms(const double tick) noexcept {
-    return tick * 1000 / ::spdk_get_ticks_hz();
-}
-
 static void usage() {
     ::printf("-C <path>             path to bench json config file\n");
 }
@@ -136,15 +296,6 @@ static int parse_arg(int ch, char* arg) {
     }
 
     return 0;
-}
-
-int sample_iops_poll(void* arg) {
-    if (g_sample_io_count - g_previous_sample_io_count >= g_conf_io_sample_count) {
-        g_previous_sample_io_count = g_sample_io_count;
-        g_sample_iops.push_back(::spdk_get_ticks());
-    }
-
-    return SPDK_POLLER_BUSY;
 }
 
 void write_once(bench_context* ctx) {
@@ -192,7 +343,6 @@ void on_write_done(::spdk_bdev_io* ctx, [[maybe_unused]] int32_t res) {
     auto dur = static_cast<double>(tick - stack_ptr->start_tick);
     if (tick >= watcher_ctx->iops_start_at) {
         bench_ctx->durs.push_back(dur);
-        ++g_sample_io_count;
         if(bench_ctx->deferred_count != 0){
             //到达计时点（既延期到期）
             bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
@@ -226,7 +376,6 @@ void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
     auto dur = static_cast<double>(tick - stack_ptr->start_tick);
     if (tick >= watcher_ctx->iops_start_at) {
         bench_ctx->durs.push_back(dur);
-        ++g_sample_io_count;
         if(bench_ctx->deferred_count != 0){
             //到达计时点（既延时到期）
             bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
@@ -331,51 +480,6 @@ void on_app_stop() noexcept {
     ::spdk_app_stop(0);
 }
 
-void print_io_result(std::vector<double>::iterator begin, std::vector<double>::iterator end, uint64_t iops_dur) {
-    auto size = end - begin;
-    double mean{0.0};
-    for (decltype(begin) it = begin; it != end; ++it) {
-        mean += *it;
-    }
-
-    mean /= size;
-
-    double accum{0.0};
-    std::for_each(begin, end, [&accum, mean] (const double v) {
-        accum += (v - mean) * (v - mean);
-    });
-    auto biased_stdv = std::sqrt(accum / size);
-
-    static constexpr size_t lat_tag_count{6};
-    static constexpr std::array<double, lat_tag_count> latency_tag = {0.1, 0.5, 0.9, 0.95, 0.99, 0.999};
-
-    auto fmt = boost::format("");
-    std::sort(begin, end);
-    auto min = *begin;
-    auto max = *(end - 1);
-    size_t count{0};
-    for (auto lat_tag : latency_tag) {
-        auto lat_at = static_cast<size_t>(lat_tag * size);
-        auto lat = *(begin + lat_at);
-        if (count == 0) {
-            fmt = boost::format("%1%p%2%: %3%us") % fmt % lat_tag % tick_to_us(lat);
-        } else {
-            fmt = boost::format("%1%, p%2%: %3%us") % fmt % lat_tag % tick_to_us(lat);
-        }
-        ++count;
-    }
-
-    auto iops_dur_sec = static_cast<double>(iops_dur) / ::spdk_get_ticks_hz();
-    auto iops_val = size / iops_dur_sec;
-
-    fmt = boost::format("%1%, mean: %2%us, min: %3%us, max: %4%us, biased stdv: %5%, iops: %6%, iops_dur_sec: %7%s, total_io_count: %8%")
-      % fmt % tick_to_us(mean) % tick_to_us(min)
-      % tick_to_us(max) % tick_to_us(biased_stdv)
-      % iops_val % iops_dur_sec % size;
-
-    std::cout << fmt.str() << "\n";
-}
-
 int watch_poller(void* arg) {
     if (g_force_stop) {
         return SPDK_POLLER_IDLE;
@@ -393,8 +497,11 @@ int watch_poller(void* arg) {
     }
 
     if (is_all_done) {
-        g_sample_iops_poller->unregister_poller();
         auto iops_dur = ::spdk_get_ticks() - ctx->iops_start_at;
+        if (g_print_ctx.enable_print) {
+            g_print_ctx.print_poller->unregister_poller();
+            g_print_ctx.print_all_iops_ststs();
+        }
         bool should_exit{true};
         switch (ctx->io_type) {
         case bench_io_type::write_read:
@@ -432,35 +539,7 @@ int watch_poller(void* arg) {
             break;
         }
 
-        auto it = durations.begin();
-        auto ticks_it = g_sample_iops.begin();
-        uint64_t prev_tick{ctx->iops_start_at};
-        int64_t un_processed{static_cast<int64_t>(durations.size())};
-
-        while (un_processed > 0) {
-            if (ticks_it == g_sample_iops.end()) {
-                break;
-            }
-
-            auto sample_iops_dur = *ticks_it - prev_tick;
-            prev_tick = *ticks_it;
-            auto step = g_conf_io_sample_count;
-            if (un_processed < g_conf_io_sample_count) {
-                step = un_processed;
-            }
-            auto end_it = it + step;
-            if (end_it == durations.end()) {
-                end_it = durations.end();
-            }
-
-            print_io_result(it, end_it, sample_iops_dur);
-            ++ticks_it;
-            it += step;
-            un_processed -= step;
-        }
-
-        std::cout << "===============================[total latency]========================================\n";
-        print_io_result(durations.begin(), durations.end(), iops_dur);
+        print_stats_context::print_stats(durations.begin(), durations.size(), iops_dur);
         std::cout << "======================================================================================\n";
 
         if (should_exit) {
@@ -500,18 +579,9 @@ void on_app_start(void* arg) {
         exit(-EINVAL);
     }
 
-    g_conf_io_sample_count = g_pt.get_child("io_smaple_count").get_value<int64_t>();
     watcher_ctx->io_size = g_pt.get_child("io_size").get_value<size_t>();
     sample_data = std::string(watcher_ctx->io_size, 0x55);
     watcher_ctx->total_io_count = g_pt.get_child("io_count").get_value<size_t>();
-
-    if (g_conf_io_sample_count > static_cast<int64_t>(watcher_ctx->total_io_count)) {
-        g_conf_io_sample_count = static_cast<int64_t>(watcher_ctx->total_io_count);
-    }
-    SPDK_DEBUGLOG(
-      bbench,
-      "io_smaple_count is %ld, total io count is %ld\n",
-      g_conf_io_sample_count, watcher_ctx->total_io_count);
     watcher_ctx->io_depth = g_pt.get_child("io_depth").get_value<size_t>();
     watcher_ctx->image_name = g_pt.get_child("image_name").get_value<std::string>();
     watcher_ctx->image_size = g_pt.get_child("image_size").get_value<size_t>();
@@ -519,6 +589,8 @@ void on_app_start(void* arg) {
     if (watcher_ctx->image_size <= watcher_ctx->object_size) {
         throw std::invalid_argument{"image size should be greater than object size"};
     }
+
+    g_print_ctx.from_conf(g_pt);
 
     if (watcher_ctx->image_name.empty()) {
         watcher_ctx->image_name = random_string(32);
@@ -551,17 +623,21 @@ void on_app_start(void* arg) {
     par_mgr = std::make_shared<::partition_manager>(-1, conn_cache);
     monitor::client::on_cluster_map_initialized_type cb = [watcher_ctx] () {
         auto n_core = ::spdk_env_get_core_count();
-        watcher_ctx->core_ctxs = std::make_unique<bench_context[]>(n_core);
+        watcher_ctx->core_context_size = n_core;
+        watcher_ctx->core_ctxs = std::make_unique<bench_context[]>(watcher_ctx->core_context_size);
+        g_print_ctx.prev_print_at = std::make_unique<size_t[]>(watcher_ctx->core_context_size);
+        std::memset(g_print_ctx.prev_print_at.get(), 0, sizeof(size_t) * watcher_ctx->core_context_size);
+
         watcher_ctx->read_done_cb = on_read_done;
         watcher_ctx->write_done_cb = on_write_done;
-        watcher_ctx->bench_threads = std::make_unique<::spdk_thread*[]>(n_core);
+        watcher_ctx->bench_threads = std::make_unique<::spdk_thread*[]>(watcher_ctx->core_context_size);
 
         ::spdk_cpuset tmp_cpumask{};
         uint32_t core_no{0};
         ::spdk_thread* thread{};
         uint32_t core_count{0};
         auto total_io_count = watcher_ctx->total_io_count;
-        auto io_count_per_core = total_io_count / static_cast<size_t>(n_core);
+        auto io_count_per_core = total_io_count / static_cast<size_t>(watcher_ctx->core_context_size);
         SPDK_ENV_FOREACH_CORE(core_no) {
             auto& ctx = watcher_ctx->core_ctxs[core_count];
             if (core_count == n_core - 1) {
@@ -584,8 +660,10 @@ void on_app_start(void* arg) {
             watcher_ctx->bench_threads[core_count] = thread;
             core_count++;
         }
-        g_sample_iops_poller = std::make_unique<utils::simple_poller>(watcher_ctx->bench_threads[0]);
-        g_sample_iops_poller->register_poller(sample_iops_poll, watcher_ctx, 0);
+        if (g_print_ctx.enable_print) {
+            g_print_ctx.print_poller = std::make_unique<utils::simple_poller>();
+            g_print_ctx.print_poller->register_poller(print_stats_context::print_poll, &g_print_ctx, g_print_ctx.interval_us);
+        }
         watcher_ctx->watch_poller_holder.set_thread(watcher_ctx->bench_threads[0]);
         watcher_ctx->watch_poller_holder.register_poller(watch_poller, watcher_ctx, 0);
     };
