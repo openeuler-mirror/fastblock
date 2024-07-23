@@ -480,6 +480,10 @@ private:
         _on_flight_requests.pop_front();
     }
 
+    [[gnu::always_inline]] bool valid_osd_address(const std::string& host, const int port) {
+        return not (host.empty() and port == 0);
+    }
+
 private:
 
     inline response_status to_response_status(const msg::CreateImageErrorCode) noexcept;
