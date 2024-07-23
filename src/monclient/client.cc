@@ -713,6 +713,16 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
     bool should_create_connect{false};
 
     for (int i{0}; i < osds.size(); ++i) {
+        auto is_valid_addr = valid_osd_address(osds[i].address(), osds[i].port());
+        if (not is_valid_addr) {
+            SPDK_INFOLOG(
+              mon,
+              "skip osd %d due to invalid address, ispendingcreate: %d\n",
+              osds[i].osdid(),
+              osds[i].ispendingcreate());
+            continue;
+        }
+
         auto osd_it = _osd_map.data.find(osds[i].osdid());
         if (osd_it != _osd_map.data.end()) {
             should_create_connect =
@@ -721,7 +731,8 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
               osd_it->second->node_id != _self_osd_id;
 
             SPDK_DEBUGLOG(
-              mon, "osd %d found, osd isup %d,  rsp osd isup %d, should_create_connect is %d\n",
+              mon,
+              "osd %d found, osd isup %d,  rsp osd isup %d, should_create_connect is %d\n",
               osd_it->second->node_id, osd_it->second->isup, osds[i].isup(), should_create_connect);
 
             osd_it->second->node_id = osds[i].osdid();
