@@ -1,5 +1,7 @@
 {
-    "io_sample_count": 100,
+    "io_print_stats_enable": true,
+    "io_print_stats_interval_ms": 1000,
+    "io_print_stats_acc": false,
     "io_type": "write",
     "io_size": 4096,
     "io_count": 10000,

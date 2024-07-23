@@ -6,7 +6,9 @@
 
 ```json
 {
-    "io_sample_count": 100,
+    "io_print_stats_enable": true,
+    "io_print_stats_interval_ms": 1000,
+    "io_print_stats_acc": false,
     "io_type": "write",
     "io_size": 4096,
     "io_count": 10000,
@@ -43,9 +45,13 @@
 
 压测工具的配置包含两部分，其中一部分是关于 *RDMA RPC* 的配置，这部分说明可以参考 `src/msg/README.md`。
 
-### io_sample_count
+### io_print_stats_enable 和 io_print_stats_interval_ms
 
-假如该值为 *100*，则将所有 *rpc* 延时数组分为每 *100* 个一组，分别打印这些分组的延时信息。
+如果为 `true`， 则会每过 *io_print_stats_interval_ms* 毫秒打印一次延时统计值
+
+### io_print_stats_acc
+
+如果为 `false`，则每次打印的延时统计值都是 *[0, io_print_stats_interval_ms]* 区间内的延时；如果为 `true`，则打印的延时数据，包含的是从压测开始时，到当前的延时数据。
 
 ### io_type
 
