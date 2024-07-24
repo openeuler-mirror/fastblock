@@ -13,6 +13,7 @@
 #include "spdk/event.h"
 #include "spdk/log.h"
 #include "spdk/string.h"
+#include "spdk/uuid.h"
 
 
 #include "monclient/client.h"
@@ -669,7 +670,8 @@ static int from_configuration(server_t* server) {
     auto& pt = server->pt;
 
     if(g_mkfs){
-        if (!utils::is_valid_uuid(g_uuid)) {
+        spdk_uuid su;
+        if (spdk_uuid_parse(&su, g_uuid)) {
             std::cerr << "--uuid <uuid> must be set legal uuid\n";
             return -1;
         }

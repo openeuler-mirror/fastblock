@@ -56,9 +56,18 @@ message ApplyIDRequest{
     string uuid = 1;
 }
 
+enum ApplyIDErrorCode
+{
+    ApplyIdOk = 0;
+    UuidAlreadyExists = 1;
+    InvalidUUid = 2;
+    InternalError = 3;
+}
+
 message ApplyIDResponse{
     string uuid = 1;
     int32 id = 2;
+    ApplyIDErrorCode errorcode = 3;
 }
 
 message BootRequest {
