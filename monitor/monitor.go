@@ -50,6 +50,29 @@ var (
 	totalRPS    prometheus.Gauge
 )
 
+func sendResponse(response  *msg.Response, ctx context.Context, conn net.Conn) error {
+	responseData, err := proto.Marshal(response)
+	if err != nil {
+		log.Error(ctx, "Error marshaling response:", err)
+		return err
+	}
+
+	var msg_len_size uint64 = 8
+	data := make([]byte, msg_len_size+uint64(len(responseData)))
+	binary.LittleEndian.PutUint64(data[:msg_len_size], uint64(len(responseData)))
+	copy(data[msg_len_size:], responseData)
+
+	// Write the response data back to the client
+	rc, err := conn.Write(data)
+	if err != nil {
+		log.Error(ctx, "Error writing response:", err)
+		return err
+	}	
+	log.Debug(ctx, "write data ", len(data), " return ", rc)
+
+	return nil
+}
+
 func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, client *etcdapi.EtcdClient) error {
 	switch payload := request.Union.(type) {
 	case *msg.Request_CreatePoolRequest:
@@ -85,17 +108,8 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			},
 		}
 
-		// Marshal the response
-		responseData, err := proto.Marshal(response)
+		err = sendResponse(response, ctx, conn)
 		if err != nil {
-			log.Error(ctx, "Error marshaling response:", err)
-			return err
-		}
-
-		// Write the response data back to the client
-		_, err = conn.Write(responseData)
-		if err != nil {
-			log.Error(ctx, "Error writing response:", err)
 			return err
 		}
 
@@ -118,16 +132,8 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			},
 		}
 
-		responseData, err := proto.Marshal(response)
+		err = sendResponse(response, ctx, conn)
 		if err != nil {
-			log.Error(ctx, "Error marshaling response:", err)
-			return err
-		}
-
-		// Write the response data back to the client
-		_, err = conn.Write(responseData)
-		if err != nil {
-			log.Error(ctx, "Error writing response:", err)
 			return err
 		}
 
@@ -143,17 +149,8 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			},
 		}
 
-		// Marshal the response
-		responseData, err := proto.Marshal(response)
+		err := sendResponse(response, ctx, conn)
 		if err != nil {
-			log.Error(ctx, "Error marshaling response:", err)
-			return err
-		}
-
-		// Write the response data back to the client
-		_, err = conn.Write(responseData)
-		if err != nil {
-			log.Error(ctx, "Error writing response:", err)
 			return err
 		}
 
@@ -182,23 +179,13 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			},
 		}
 
-		// Marshal the response
-		responseData, err := proto.Marshal(response)
+		err = sendResponse(response, ctx, conn)
 		if err != nil {
-			log.Error(ctx, "Error marshaling response:", err)
-			return err
-		}
-
-		// Write the response data back to the client
-		_, err = conn.Write(responseData)
-		if err != nil {
-			log.Error(ctx, "Error writing response:", err)
 			return err
 		}
 
 	case *msg.Request_BootRequest:
 		// Access the fields of the BootRequest
-		log.Info(ctx, "Received BootRequest")
 		id := payload.BootRequest.GetOsdId()
 		uuid := payload.BootRequest.GetUuid()
 
@@ -207,6 +194,7 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 		port := payload.BootRequest.GetPort()
 		addr := payload.BootRequest.GetAddress()
 		host := payload.BootRequest.GetHost()
+		log.Info(ctx, "Received BootRequest from osd ", id, " address ", addr)
 
 		errnum := osd.ProcessBootMessage(ctx, client, id, uuid, size, port, host, addr)
 
@@ -219,17 +207,8 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			},
 		}
 
-		// Marshal the BootResponse
-		responseData, err := proto.Marshal(response)
+		err := sendResponse(response, ctx, conn)
 		if err != nil {
-			log.Error(ctx, "Error marshaling response:", err)
-			return err
-		}
-
-		// Write the response data back to the client
-		_, err = conn.Write(responseData)
-		if err != nil {
-			log.Error(ctx, "Error writing response:", err)
 			return err
 		}
 
@@ -263,17 +242,8 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			},
 		}
 
-		// Marshal the LeaderBeElectedResponse
-		responseData, err := proto.Marshal(response)
+		err = sendResponse(response, ctx, conn)
 		if err != nil {
-			log.Error(ctx, "Error marshaling response:", err)
-			return err
-		}
-
-		// Write the response data back to the client
-		_, err = conn.Write(responseData)
-		if err != nil {
-			log.Error(ctx, "Error writing response:", err)
 			return err
 		}
 
@@ -302,17 +272,8 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			},
 		}
 
-		// Marshal the PgMemberChangeFinishResponse
-		responseData, err := proto.Marshal(response)
+		err = sendResponse(response, ctx, conn)
 		if err != nil {
-			log.Error(ctx, "Error marshaling response:", err)
-			return err
-		}
-
-		// Write the response data back to the client
-		_, err = conn.Write(responseData)
-		if err != nil {
-			log.Error(ctx, "Error writing response:", err)
 			return err
 		}
 
@@ -331,17 +292,8 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			},
 		}
 
-		// Marshal the OsdStopResponse
-		responseData, err := proto.Marshal(response)
+		err := sendResponse(response, ctx, conn)
 		if err != nil {
-			log.Error(ctx, "Error marshaling response:", err)
-			return err
-		}
-
-		// Write the response data back to the client
-		_, err = conn.Write(responseData)
-		if err != nil {
-			log.Error(ctx, "Error writing response:", err)
 			return err
 		}
 
@@ -358,22 +310,12 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			},
 		}
 
-		// Marshal the HeartbeatResponse
-		responseData, err := proto.Marshal(response)
+		err := sendResponse(response, ctx, conn)
 		if err != nil {
-			log.Error(ctx, "Error marshaling response:", err)
-			return err
-		}
-
-		// Write the response data back to the client
-		_, err = conn.Write(responseData)
-		if err != nil {
-			log.Error(ctx, "Error writing response:", err)
 			return err
 		}
 
 	case *msg.Request_GetClusterMapRequest:
-		log.Info(ctx, "Received GetClusterMapRequest:")
 		pv := payload.GetClusterMapRequest.GpmRequest.GetPoolVersions()
 
 		gpmr, err := osd.ProcessGetPgMapMessage(ctx, pv)
@@ -381,6 +323,7 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 		cv := payload.GetClusterMapRequest.GomRequest.GetCurrentversion()
 		osdId := payload.GetClusterMapRequest.GomRequest.GetOsdid()
 		odi, mapVersion, rc := osd.ProcessGetOsdMapMessage(ctx, cv, osdId)
+		log.Info(ctx, "Received GetClusterMapRequest from osd ", osdId)
 
 		// Create a GetPgMapResponse
 		response := &msg.Response{
@@ -396,17 +339,8 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			},
 		}
 
-		// Marshal the GetPgMapResponse
-		responseData, err := proto.Marshal(response)
+		err = sendResponse(response, ctx, conn)
 		if err != nil {
-			log.Error(ctx, "Error marshaling response:", err)
-			return err
-		}
-
-		// Write the response data back to the client
-		_, err = conn.Write(responseData)
-		if err != nil {
-			log.Error(ctx, "Error writing response:", err)
 			return err
 		}
 
@@ -423,19 +357,11 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			},
 		}
 
-		// Marshal the GetPgMapResponse
-		responseData, err := proto.Marshal(response)
+		err = sendResponse(response, ctx, conn)
 		if err != nil {
-			log.Error(ctx, "Error marshaling response:", err)
 			return err
 		}
 
-		// Write the response data back to the client
-		_, err = conn.Write(responseData)
-		if err != nil {
-			log.Error(ctx, "Error writing response:", err)
-			return err
-		}
 	case *msg.Request_GetOsdmapRequest:
 		log.Info(ctx, "Received GetOsdMapRequest:")
 		cv := payload.GetOsdmapRequest.GetCurrentversion()
@@ -453,19 +379,11 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			},
 		}
 
-		// Marshal the GetPgMapResponse
-		responseData, err := proto.Marshal(response)
+		err := sendResponse(response, ctx, conn)
 		if err != nil {
-			log.Error(ctx, "Error marshaling response:", err)
 			return err
 		}
 
-		// Write the response data back to the client
-		_, err = conn.Write(responseData)
-		if err != nil {
-			log.Error(ctx, "Error writing response:", err)
-			return err
-		}
 	case *msg.Request_CreateImageRequest:
 
 		log.Info(ctx, "Received CreateImageRequest")
@@ -491,17 +409,9 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 				},
 			},
 		}
-		// Marshal the BootResponse
-		responseData, err := proto.Marshal(response)
-		if err != nil {
-			log.Error(ctx, "Error marshaling response:", err)
-			return err
-		}
 
-		// Write the response data back to the client
-		_, err = conn.Write(responseData)
+		err := sendResponse(response, ctx, conn)
 		if err != nil {
-			log.Error(ctx, "Error writing response:", err)
 			return err
 		}
 
@@ -527,17 +437,8 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			},
 		}
 
-		// Marshal the BootResponse
-		responseData, err := proto.Marshal(response)
+		err := sendResponse(response, ctx, conn)
 		if err != nil {
-			log.Error(ctx, "Error marshaling response:", err)
-			return err
-		}
-
-		// Write the response data back to the client
-		_, err = conn.Write(responseData)
-		if err != nil {
-			log.Error(ctx, "Error writing response:", err)
 			return err
 		}
 
@@ -566,19 +467,12 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 				},
 			},
 		}
-		// Marshal the BootResponse
-		responseData, err := proto.Marshal(response)
+
+		err := sendResponse(response, ctx, conn)
 		if err != nil {
-			log.Error(ctx, "Error marshaling response:", err)
 			return err
 		}
 
-		// Write the response data back to the client
-		_, err = conn.Write(responseData)
-		if err != nil {
-			log.Error(ctx, "Error writing response:", err)
-			return err
-		}
 	case *msg.Request_Get_ImageInfo_Request:
 		log.Info(ctx, "Received Get_ImageInfo_Request")
 
@@ -603,17 +497,9 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 				},
 			},
 		}
-		// Marshal the BootResponse
-		responseData, err := proto.Marshal(response)
-		if err != nil {
-			log.Error(ctx, "Error marshaling response:", err)
-			return err
-		}
 
-		// Write the response data back to the client
-		_, err = conn.Write(responseData)
+		err := sendResponse(response, ctx, conn)
 		if err != nil {
-			log.Error(ctx, "Error writing response:", err)
 			return err
 		}
 
@@ -632,17 +518,8 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			},
 		}
 
-		// Marshal the OsdOutResponse
-		responseData, err := proto.Marshal(response)
+		err := sendResponse(response, ctx, conn)
 		if err != nil {
-			log.Error(ctx, "Error marshaling response:", err)
-			return err
-		}
-
-		// Write the response data back to the client
-		_, err = conn.Write(responseData)
-		if err != nil {
-			log.Error(ctx, "Error writing response:", err)
 			return err
 		}
 
@@ -661,19 +538,11 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			},
 		}
 
-		// Marshal the OsdInResponse
-		responseData, err := proto.Marshal(response)
+		err := sendResponse(response, ctx, conn)
 		if err != nil {
-			log.Error(ctx, "Error marshaling response:", err)
 			return err
 		}
 
-		// Write the response data back to the client
-		_, err = conn.Write(responseData)
-		if err != nil {
-			log.Error(ctx, "Error writing response:", err)
-			return err
-		}
 
 	case *msg.Request_NoReblanceRequest:
 		log.Info(ctx, "Received NoReblanceRequest")
@@ -690,17 +559,8 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			},
 		}
 
-		// Marshal the NoReblanceResponse
-		responseData, err := proto.Marshal(response)
+		err := sendResponse(response, ctx, conn)
 		if err != nil {
-			log.Error(ctx, "Error marshaling response:", err)
-			return err
-		}
-
-		// Write the response data back to the client
-		_, err = conn.Write(responseData)
-		if err != nil {
-			log.Error(ctx, "Error writing response:", err)
 			return err
 		}
 
@@ -719,17 +579,8 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			},
 		}
 
-		// Marshal the NoOutResponse
-		responseData, err := proto.Marshal(response)
+		err := sendResponse(response, ctx, conn)
 		if err != nil {
-			log.Error(ctx, "Error marshaling response:", err)
-			return err
-		}
-
-		// Write the response data back to the client
-		_, err = conn.Write(responseData)
-		if err != nil {
-			log.Error(ctx, "Error writing response:", err)
 			return err
 		}
 			
@@ -744,17 +595,8 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			},
 		}
 
-		// Marshal the GetClusterStatusResponse
-		responseData, err := proto.Marshal(response)
+		err := sendResponse(response, ctx, conn)
 		if err != nil {
-			log.Error(ctx, "Error marshaling response:", err)
-			return err
-		}
-
-		// Write the response data back to the client
-		_, err = conn.Write(responseData)
-		if err != nil {
-			log.Error(ctx, "Error writing response:", err)
 			return err
 		}
 
@@ -773,17 +615,8 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			},
 		}
 
-		// Marshal the DataStatisticsResponse
-		responseData, err := proto.Marshal(response)
+		err := sendResponse(response, ctx, conn)
 		if err != nil {
-			log.Error(ctx, "Error marshaling response:", err)
-			return err
-		}
-
-		// Write the response data back to the client
-		_, err = conn.Write(responseData)
-		if err != nil {
-			log.Error(ctx, "Error writing response:", err)
 			return err
 		}
 

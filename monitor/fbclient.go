@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"time"
 	"sort"
+	"bytes"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/google/uuid"
@@ -195,26 +196,60 @@ func byPgid(pgs []*msg.PGInfo)  func(int, int) bool {
 func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- struct{}, responseChan chan<- ResponseChanData) {
 	appliedOsdCounter := 0
 	bootedOsdCounter := 0
+
+	const msg_len_size uint64 = 8
+	var msg_len uint64
+	bufferSize := int64(65535)
+	buffer := make([]byte, bufferSize)
+
+	read_bytes := int64(0)
+	should_read_bytes := int64(msg_len_size)
+	is_read_len := true
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 
 		default:
-			// Read data from the connection
-			buffer := make([]byte, 65536)
-			n, err := conn.Read(buffer)
+			n, err := conn.Read(buffer[read_bytes:should_read_bytes])
 			if err != nil {
-				fmt.Println("Error reading from connection:", err)
+				fmt.Printf("Error reading from connection: %v, close this conn\n", err)
 				return
 			}
 
-			// Unmarshal the received data into a Request message
+			read_bytes += int64(n)
+			if read_bytes < should_read_bytes {
+				continue
+			}
+
+			read_bytes = read_bytes - should_read_bytes
+			if read_bytes < 0 {
+				fmt.Printf("read_bytes is %v, should_read_bytes is %v, close this conn\n", read_bytes, should_read_bytes)
+				return
+			}
+			if is_read_len {
+				is_read_len = !is_read_len
+				reader := bytes.NewReader(buffer[:msg_len_size])
+				err := binary.Read(reader, binary.LittleEndian, &msg_len)
+				if err != nil {
+					fmt.Printf("Error parsing message length: %v, close this conn\n", err)
+					return
+				}
+				should_read_bytes = int64(msg_len)
+				if(should_read_bytes > bufferSize) {
+					buffer = make([]byte, should_read_bytes)
+				}
+				continue
+			}
+			is_read_len = !is_read_len
+
 			resp := &msg.Response{}
-			err = proto.Unmarshal(buffer[:n], resp)
+			err = proto.Unmarshal(buffer[:should_read_bytes], resp)
+			should_read_bytes = int64(msg_len_size)
 			if err != nil {
-				//discard this message
-				fmt.Println("Error unmarshalling request:", err)
+				// discard this message
+				fmt.Println("Error unmarshalling request: %v\n", err)
 				continue
 			}
 
