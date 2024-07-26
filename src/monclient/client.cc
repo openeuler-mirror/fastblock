@@ -1060,23 +1060,52 @@ bool client::handle_response() {
         return false;
     }
 
-    auto rc = _cluster->recv(_response_buffer.get(), _buffer_size - 1);
+    uint64_t msg_len = 0;
+    ssize_t rc = 0;
+
+    rc = _cluster->recv(_response_buffer.get() + _read_bytes, _should_read_bytes - _read_bytes);
     if (rc == 0) [[likely]] {
         return false;
     }
-
+    
     if (rc < 0) [[unlikely]] {
         SPDK_ERRLOG(
           "ERROR: spdk_sock_recv() failed, errno %d: %s\n",
           errno, ::spdk_strerror(errno));
 
         return false;
+    }     
+
+    _read_bytes += rc;   
+    SPDK_DEBUGLOG(mon, "_read_bytes %ld, _should_read_bytes %ld\n", _read_bytes, _should_read_bytes);
+    if (_read_bytes < _should_read_bytes){
+        return true;
+    } 
+
+    _read_bytes = _read_bytes - _should_read_bytes;
+    if(_read_bytes < 0){
+        SPDK_ERRLOG("read error, _read_bytes is %ld, _should_read_bytes is %ld\n", _read_bytes, _should_read_bytes);
+        return false;
     }
+
+    if(_is_read_len) {
+        _is_read_len = !_is_read_len;
+
+        std::memcpy(&msg_len, _response_buffer.get(), _msg_len_size);
+        _should_read_bytes = msg_len;
+        if(msg_len > _buffer_size) {
+            _response_buffer = std::make_unique<char[]>(msg_len);
+        }
+        return true;
+    }
+    _is_read_len = !_is_read_len;
 
     --_request_counter;
     auto response = std::make_shared<msg::Response>();
-    response->ParseFromArray(_response_buffer.get(), rc);
+    response->ParseFromArray(_response_buffer.get(), _should_read_bytes);
     process_response(response);
+    _should_read_bytes = _msg_len_size;
+    _read_bytes = 0;
 
     return true;
 }

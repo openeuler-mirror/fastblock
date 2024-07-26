@@ -546,6 +546,10 @@ private:
     std::chrono::system_clock::time_point _last_cluster_map_at{};
     std::optional<on_cluster_map_initialized_type> _cluster_map_init_cb{std::nullopt};
 
+    uint64_t _msg_len_size = 8;
+    int64_t _should_read_bytes = 8;
+    int64_t _read_bytes = 0;
+    bool _is_read_len = true;
 private:
 
     static constexpr size_t _buffer_size{65535};
