@@ -98,6 +98,12 @@ _storage_fini(storage_op_complete cb_fn, void* arg) {
       utils::get_spdk_thread_id(), shard_id);
   storage_context *ctx = new storage_context{.cb_fn = std::move(cb_fn), .arg = arg};
   
+  if(!g_st_mgr.shard_is_started(shard_id)){
+    storage_context *ctx = (storage_context *)arg;
+    ctx->cb_fn(ctx->arg, 0);
+    delete ctx;
+    return;
+  }
   g_st_mgr.on_shard(shard_id).stop(
     [](void *arg, int error){
         if (error) {

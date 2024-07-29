@@ -61,6 +61,14 @@ public:
         return *_instances[shard];
     }
 
+    bool shard_is_started(uint32_t shard) noexcept {
+        if(_instances.size() <= shard)
+            return false;
+        if(_instances[shard]) 
+            return true;
+        return false;
+    }
+
     size_t size() { return _instances.size(); }
 
 protected:
