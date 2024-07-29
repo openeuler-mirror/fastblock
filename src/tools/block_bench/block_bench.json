@@ -1,5 +1,8 @@
 {
-    "io_print_stats_enable": true,
+    "io_dump_enable": true,
+    "io_dump_csv_path": "block_bench_iops.csv",
+    "io_print_stats_enable": false,
+    "io_print_stats_take_single_core": true,
     "io_print_stats_interval_ms": 1000,
     "io_print_stats_acc": false,
     "io_type": "write",
