@@ -39,7 +39,7 @@ public:
     connect_cache(const connect_cache&) = delete;
     connect_cache& operator=(const connect_cache&) = delete;
 
-    void create_connect(uint32_t shard_id, int node_id, std::string addr, uint16_t port, auto&& cb, auto&& raft_cb) {
+void create_connect(uint32_t shard_id, int node_id, std::string addr, uint16_t port, auto&& cb, auto&& raft_cb) {
         _transport->emplace_connection(
           addr, port,
           [this, shard_id, node_id, cb = std::move(cb), raft_cb = std::move(raft_cb)]

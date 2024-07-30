@@ -320,17 +320,20 @@ public:
         file.close();
     }
 
-    void release() {
+    void stop_poll() {
         if (print_poller) {
             print_poller->unregister_poller();
+            SPDK_NOTICELOG("the print poller has been stopped\n");
         }
+    }
 
+    void exit_thread() {
         if (take_single_core and print_thread) {
-            auto* cur_thread = ::spdk_get_thread();
             ::spdk_set_thread(print_thread);
             ::spdk_thread_exit(print_thread);
             print_thread = nullptr;
-            ::spdk_set_thread(cur_thread);
+            ::spdk_set_thread(nullptr);
+            SPDK_NOTICELOG("the print thread has been exited\n");
         }
     }
 
@@ -349,6 +352,19 @@ public:
     ::spdk_thread* print_thread{nullptr};
 };
 
+struct stop_context {
+    enum class state {
+        running = 1,
+        monitor_stopped,
+        connect_cache_stopped,
+        stopping_block_clients,
+        stopping_spdk_threads
+    };
+
+    state current_state{state::running};
+    int64_t counter{0};
+};
+
 static char* g_conf_path{nullptr};
 static std::shared_ptr<::connect_cache> conn_cache;
 static std::shared_ptr<::partition_manager> par_mgr;
@@ -357,6 +373,7 @@ static std::string sample_data{};
 static boost::property_tree::ptree g_pt{};
 static bool g_force_stop{false};
 static print_stats_context g_print_ctx{};
+static stop_context g_stop_ctx{};
 
 std::string random_string(const size_t length) {
     static std::string chars{
@@ -548,28 +565,79 @@ void on_thread_received_msg(void* arg) {
     }
 }
 
+void general_stop_callback() {
+    switch (g_stop_ctx.current_state) {
+    case stop_context::state::monitor_stopped: {
+        SPDK_NOTICELOG("start stopping connect_cache\n");
+        conn_cache->stop([] () {
+            SPDK_NOTICELOG("The connect_cache has been stopped\n");
+            g_stop_ctx.current_state = stop_context::state::connect_cache_stopped;
+            general_stop_callback();
+        });
+        return;
+    }
+    case stop_context::state::connect_cache_stopped: {
+        SPDK_NOTICELOG("start stopping watch_context's poller\n");
+        g_watcher_ctx.watch_poller_holder.unregister_poller([] () mutable {
+            SPDK_NOTICELOG("The block_bench watcher poller has been unregistered\n");
+            g_stop_ctx.current_state = stop_context::state::stopping_block_clients;
+            return general_stop_callback();
+        });
+        return;
+    }
+    case stop_context::state::stopping_block_clients: {
+        if (g_stop_ctx.counter == static_cast<int64_t>(g_watcher_ctx.core_context_size)) {
+            g_stop_ctx.counter = 0;
+            g_stop_ctx.current_state = stop_context::state::stopping_spdk_threads;
+            SPDK_NOTICELOG("all block_bench pollers have been stopped\n");
+            return general_stop_callback();
+        }
+
+        auto index = g_stop_ctx.counter++;
+        SPDK_NOTICELOG("start stopping the %ldth block client\n", index + 1);
+        g_watcher_ctx.core_ctxs[index].blk_client->stop([index] () mutable {
+            SPDK_NOTICELOG(
+              "the %ldth block_bench poller has been stopped, all %ld\n",
+              index + 1, g_watcher_ctx.core_context_size);
+            g_stop_ctx.current_state = stop_context::state::stopping_block_clients;
+            general_stop_callback();
+        });
+        return;
+    }
+    case stop_context::state::stopping_spdk_threads: {
+        SPDK_NOTICELOG("start stopping all spdk threads\n");
+        for (uint32_t i{0}; i < g_watcher_ctx.core_context_size; ++i) {
+            ::spdk_set_thread(g_watcher_ctx.bench_threads[i]);
+            ::spdk_thread_exit(g_watcher_ctx.bench_threads[i]);
+            ::spdk_set_thread(nullptr);
+            SPDK_NOTICELOG("the %dth block_bench thread has been stopped\n", i + 1);
+        }
+        g_print_ctx.exit_thread();
+        core_sharded::stop_all();
+        SPDK_NOTICELOG("all spdk threads have been stopped, stop the spdk app\n");
+        ::spdk_app_stop(0);
+        return;
+    }
+    default:
+        break;
+    }
+}
+
 void on_app_stop() noexcept {
+    if (g_force_stop) { return; }
     SPDK_NOTICELOG("Stop the block_bench\n");
     g_force_stop = true;
 
-    mon_client->stop();
-    SPDK_NOTICELOG("The monitor client has been stopped\n");
-    g_watcher_ctx.watch_poller_holder.unregister_poller();
-    SPDK_NOTICELOG("The block_bench poller has been unregistered\n");
-    for (uint32_t i{0}; i < g_watcher_ctx.core_context_size; ++i) {
-        ::spdk_set_thread(g_watcher_ctx.bench_threads[i]);
-        g_watcher_ctx.core_ctxs[i].blk_client->stop();
-        ::spdk_set_thread(nullptr);
+    if (g_print_ctx.enable_print) {
+        g_print_ctx.print_all_iops_ststs(g_watcher_ctx.dump_csv_enable, g_watcher_ctx.dump_csv_path);
+        g_print_ctx.stop_poll();
     }
 
-    for (uint32_t i{0}; i < g_watcher_ctx.core_context_size; ++i) {
-        ::spdk_set_thread(g_watcher_ctx.bench_threads[i]);
-        ::spdk_thread_exit(g_watcher_ctx.bench_threads[i]);
-        ::spdk_set_thread(nullptr);
-    }
-
-    SPDK_NOTICELOG("Stop the spdk app\n");
-    ::spdk_app_stop(0);
+    mon_client->stop([] () mutable {
+        g_stop_ctx.current_state = stop_context::state::monitor_stopped;
+        SPDK_NOTICELOG("The monitor client has been stopped\n");
+        general_stop_callback();
+    });
 }
 
 int watch_poller(void* arg) {
@@ -582,9 +650,8 @@ int watch_poller(void* arg) {
     }
 
     bool is_all_done{true};
-    auto n_core = ::spdk_env_get_core_count();
     auto& core_ctxs = ctx->core_ctxs;
-    for (decltype(n_core) i{0}; i < n_core; ++i) {
+    for (size_t i{0}; i < ctx->core_context_size; ++i) {
         is_all_done = is_all_done && (core_ctxs[i].done_io_count == core_ctxs[i].io_count);
     }
 
@@ -592,7 +659,7 @@ int watch_poller(void* arg) {
         auto iops_dur = ::spdk_get_ticks() - ctx->iops_start_at;
         if (g_print_ctx.enable_print) {
             g_print_ctx.print_all_iops_ststs(ctx->dump_csv_enable, ctx->dump_csv_path);
-            g_print_ctx.release();
+            g_print_ctx.stop_poll();
         }
         bool should_exit{true};
         switch (ctx->io_type) {
@@ -608,7 +675,7 @@ int watch_poller(void* arg) {
         }
 
         std::vector<double> durations{};
-        for (decltype(n_core) i{0}; i < n_core; ++i) {
+        for (size_t i{0}; i < ctx->core_context_size; ++i) {
             durations.insert(durations.end(), core_ctxs[i].durs.begin(), core_ctxs[i].durs.end());
             if (ctx->io_type == bench_io_type::write_read and core_ctxs[i].current_io_type == bench_io_type::write) {
                 core_ctxs[i].current_io_type = bench_io_type::read;
@@ -719,6 +786,9 @@ void on_app_start(void* arg) {
     par_mgr = std::make_shared<::partition_manager>(-1, conn_cache);
     monitor::client::on_cluster_map_initialized_type cb = [watcher_ctx] () {
         auto n_core = ::spdk_env_get_core_count();
+        if (g_print_ctx.enable_print and g_print_ctx.take_single_core) {
+            n_core--;
+        }
         watcher_ctx->core_context_size = n_core;
         watcher_ctx->core_ctxs = std::make_unique<bench_context[]>(watcher_ctx->core_context_size);
         g_print_ctx.prev_print_at = std::make_unique<size_t[]>(watcher_ctx->core_context_size);

@@ -33,66 +33,70 @@ typedef void (*write_object_callback)(void *src, int32_t state);
 
 class fblock_client {
 private:
+    using request_type = std::variant<
+    std::monostate,
+    std::unique_ptr<osd::write_request>,
+    std::unique_ptr<osd::read_request>,
+    std::unique_ptr<osd::delete_request>>;
 
-using request_type = std::variant<
-  std::monostate,
-  std::unique_ptr<osd::write_request>,
-  std::unique_ptr<osd::read_request>,
-  std::unique_ptr<osd::delete_request>>;
+    using response_type = std::variant<
+    std::monostate,
+    std::unique_ptr<osd::write_reply>,
+    std::unique_ptr<osd::read_reply>,
+    std::unique_ptr<osd::delete_reply>>;
 
-using response_type = std::variant<
-  std::monostate,
-  std::unique_ptr<osd::write_reply>,
-  std::unique_ptr<osd::read_reply>,
-  std::unique_ptr<osd::delete_reply>>;
+    using response_callback_type = std::variant<
+    std::monostate,
+    write_object_callback,
+    read_object_callback,
+    delete_callback
+    >;
 
-using response_callback_type = std::variant<
-  std::monostate,
-  write_object_callback,
-  read_object_callback,
-  delete_callback
->;
+    struct leader_request_stack_type {
+        osd::rpc_service_osd_Stub* stub{nullptr};
+        std::unique_ptr<osd::pg_leader_request> leader_req{nullptr};
+        std::unique_ptr<osd::pg_leader_response> leader_resp{nullptr};
+        utils::osd_info_t* osd{nullptr};
+        uint64_t leader_request_id{};
+        fblock_client* this_client{nullptr};
+    };
 
-struct leader_request_stack_type {
-    osd::rpc_service_osd_Stub* stub{nullptr};
-    std::unique_ptr<osd::pg_leader_request> leader_req{nullptr};
-    std::unique_ptr<osd::pg_leader_response> leader_resp{nullptr};
-    utils::osd_info_t* osd{nullptr};
-    uint64_t leader_request_id{};
-    fblock_client* this_client{nullptr};
-};
+    struct request_stack_type {
+        osd::rpc_service_osd_Stub* stub{nullptr};
+        request_type req{std::monostate{}};
+        response_type resp{std::monostate{}};
+        response_callback_type resp_cb{std::monostate{}};
+        uint64_t obj_index{0};
+        void* ctx{nullptr};
+        bool is_responsed{false};
+        uint64_t leader_osd_key{};
+        fblock_client* this_client{nullptr};
+        bool is_connecting{false};
+    };
 
-struct request_stack_type {
-    osd::rpc_service_osd_Stub* stub{nullptr};
-    request_type req{std::monostate{}};
-    response_type resp{std::monostate{}};
-    response_callback_type resp_cb{std::monostate{}};
-    uint64_t obj_index{0};
-    void* ctx{nullptr};
-    bool is_responsed{false};
-    uint64_t leader_osd_key{};
-    fblock_client* this_client{nullptr};
-    bool is_connecting{false};
-};
+    struct leader_key_type {
+        int32_t pool_id;
+        int32_t pg_id;
+    };
 
-struct leader_key_type {
-    int32_t pool_id;
-    int32_t pg_id;
-};
+    struct leader_osd_info {
+        int32_t leader_id{-1};
+        std::string addr{};
+        int32_t port{};
+        std::chrono::system_clock::time_point epoch{};
+        bool is_valid{false};
+        bool is_onflight{true};
+    };
 
-struct leader_osd_info {
-    int32_t leader_id{-1};
-    std::string addr{};
-    int32_t port{};
-    std::chrono::system_clock::time_point epoch{};
-    bool is_valid{false};
-    bool is_onflight{true};
-};
+    struct connection_id {
+        int32_t node_id;
+        uint32_t core_no;
+    };
 
-struct connection_id {
-    int32_t node_id;
-    uint32_t core_no;
-};
+    struct stop_context {
+        fblock_client* this_client{nullptr};
+        std::optional<std::function<void()>> cb{std::nullopt};
+    };
 
 private:
 
@@ -243,15 +247,13 @@ public:
         ::spdk_thread_send_msg(_current_thread, do_start, this);
     }
 
-    void stop() noexcept {
+    void stop(std::optional<std::function<void()>>&& cb = std::nullopt) noexcept {
         if (_is_terminate) {
             return;
         }
 
-        SPDK_NOTICELOG("Stop the fastblock client\n");
-        _is_terminate = true;
-        _rpc_client->stop();
-        _poller.unregister_poller();
+        auto* ctx = new stop_context{this, std::move(cb)};
+        ::spdk_thread_send_msg(_current_thread, do_stop, ctx);
     }
 
     /************************************************************
@@ -281,6 +283,11 @@ public:
         stack_ptr->this_client->handle_send_request(stack_ptr);
     }
 
+    static void do_stop(void* arg) {
+        auto* ctx = reinterpret_cast<stop_context*>(arg);
+        ctx->this_client->handle_stop(ctx);
+    }
+
     /************************************************************
      * spdk_thread_send_msg callbacks' callbacks
      ************************************************************/
@@ -289,6 +296,26 @@ public:
         SPDK_INFOLOG(libblk, "Starting block client...\n");
         _rpc_client->start();
         _poller.register_poller(do_poll, this, 0);
+    }
+
+    void handle_stop(stop_context* ctx) {
+        SPDK_NOTICELOG("Stop the fastblock client\n");
+        _is_terminate = true;
+
+        _rpc_client->stop([this, ctx = ctx] () mutable {
+            SPDK_NOTICELOG("rpc client has been stopped\n");
+            _poller.unregister_poller([this, ctx = ctx] () mutable {
+                SPDK_NOTICELOG("fb_client's poller has been stopped\n");
+                if (ctx->cb) {
+                    try {
+                        (ctx->cb.value())();
+                    } catch (const std::exception& e) {
+                        SPDK_ERRLOG("stop the fb_client error: %s\n", e.what());
+                    }
+                }
+                delete ctx;
+            });
+        });
     }
 
     void handle_send_request(request_stack_type* req_stk) {
@@ -521,8 +548,8 @@ private:
         osd_info->leader_id = resp->leader_id();
         osd_info->addr = resp->leader_addr();
         osd_info->port = resp->leader_port();
-        SPDK_DEBUGLOG(libblk, "Got leader osd of pg %lu.%lu: osd id %d osd address: '%s:%d'\n", 
-                it->second->leader_req->pool_id(), it->second->leader_req->pg_id(), osd_info->leader_id, 
+        SPDK_DEBUGLOG(libblk, "Got leader osd of pg %lu.%lu: osd id %d osd address: '%s:%d'\n",
+                it->second->leader_req->pool_id(), it->second->leader_req->pg_id(), osd_info->leader_id,
                 osd_info->addr.c_str(), osd_info->port);
 
         update_leader_state(info_it->second.get());

@@ -28,6 +28,11 @@ public:
         uint64_t period_microseconds{0};
     };
 
+    struct unregister_context {
+        simple_poller* this_poller{nullptr};
+        std::optional<std::function<void()>> cb{std::nullopt};
+    };
+
 public:
 
     simple_poller() : _thread{::spdk_get_thread()} {}
@@ -54,11 +59,20 @@ public:
 
 public:
 
-    static void handle_unregister(void *ctx) noexcept {
-        auto* this_poller = reinterpret_cast<simple_poller*>(ctx);
-        ::spdk_poller_unregister(&(this_poller->_poller));
-        this_poller->_poller = nullptr;
+    static void handle_unregister(void *arg) noexcept {
+        auto* ctx = reinterpret_cast<unregister_context*>(arg);
+        ::spdk_poller_unregister(&(ctx->this_poller->_poller));
+        ctx->this_poller->_poller = nullptr;
         SPDK_NOTICELOG("unregistered the poller\n");
+        if (ctx->cb) {
+            try {
+                (ctx->cb.value())();
+            } catch (const std::exception& e) {
+                SPDK_ERRLOG("unregister_poller call user callbck error: %s\n", e.what());
+            }
+        }
+
+        delete ctx;
     }
 
     static void handle_register(void* arg) noexcept {
@@ -69,12 +83,13 @@ public:
 
 public:
 
-    int unregister_poller() noexcept {
+    int unregister_poller(std::optional<std::function<void()>>&& cb = std::nullopt) noexcept {
         if (not _poller) {
             return 0;
         }
 
-        return ::spdk_thread_send_msg(_thread, simple_poller::handle_unregister, this);
+        auto* ctx = new unregister_context{this, std::move(cb)};
+        return ::spdk_thread_send_msg(_thread, simple_poller::handle_unregister, ctx);
     }
 
     int register_poller(::spdk_poller_fn fn, void *arg, uint64_t period_microseconds) {
