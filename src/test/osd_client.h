@@ -117,7 +117,10 @@ private:
 class osd_client {
 public:
     osd_client(server_t *s, ::spdk_cpuset* cpumask, std::shared_ptr<msg::rdma::client::options> opts)
-        : _cache(cpumask, opts), _shard_cores(core_sharded::get_shard_cores()), _s(s)
+        : _cache(cpumask, opts)
+        , _shard_cores(core_sharded::get_shard_cores())
+        , _s(s)
+        , _shard(core_sharded::get_core_sharded())
     {
         uint32_t i = 0;
         auto shard_num = _shard_cores.size();
@@ -129,16 +132,28 @@ public:
 
     void create_connect(const std::string &addr, int port, int node_id, auto&& conn_cb)
     {
+        auto shard_num = _shard_cores.size();
+        utils::multi_complete *complete = new utils::multi_complete(shard_num, shard_num, std::move(conn_cb), nullptr);
         uint32_t shard_id = 0;
-        for (shard_id = 0; shard_id < _shard_cores.size(); shard_id++)
+
+        for (shard_id = 0; shard_id < shard_num; shard_id++)
         {
-            SPDK_NOTICELOG("create connection to node %d (address %s, port %d) in core %u\n",
-                           node_id, addr.c_str(), port, _shard_cores[shard_id]);
-            _cache.create_connect(0, node_id, addr, port, std::move(conn_cb),
-            [this, shard_id, node_id](msg::rdma::client::connection* connect){
-              auto &stub = _stubs[shard_id];
-              stub[node_id] = std::make_shared<osd::rpc_service_osd_Stub>(connect);
-            });
+            _shard.invoke_on(
+              shard_id,
+              [this, node_id, addr, port, shard_id, complete]()
+              {
+                SPDK_NOTICELOG(
+                  "create connect to node %d (address %s, port %d) in core %u\n",
+                  node_id, addr.c_str(), port, _shard_cores[shard_id]);
+
+                  _cache.create_connect(
+                    shard_id, node_id, addr, port, complete,
+                    [this, shard_id, node_id] (msg::rdma::client::connection* conn) {
+                        auto &stub = _stubs[shard_id];
+                        stub[node_id] = std::make_shared<osd::rpc_service_osd_Stub>(conn);
+                    }
+                  );                  
+              });
         }
     }
 
@@ -255,4 +270,5 @@ private:
 
     // 每个cpu核上有一个map
     std::vector<std::map<int, std::shared_ptr<osd::rpc_service_osd_Stub>>> _stubs;
+    core_sharded &_shard;
 };

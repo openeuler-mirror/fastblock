@@ -140,8 +140,8 @@ raft_membership(void *arg1)
     auto opts = msg::rdma::client::make_options(server->pt);
 
     osd_client *cli = new osd_client(server, &cpumask, opts);
-    auto connect_done = [cli, server](bool is_ok, std::shared_ptr<msg::rdma::client::connection> conn){
-        if (not is_ok) {
+    auto connect_done = [cli, server](void *, int res){
+        if (res != err::E_SUCCESS) {
             SPDK_ERRLOG("ERROR: Connect failed\n");
             throw std::runtime_error{"connect failed"};
         }

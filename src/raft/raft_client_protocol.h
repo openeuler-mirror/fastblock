@@ -18,6 +18,7 @@
 #include "msg/rpc_controller.h"
 #include "utils/err_num.h"
 #include "base/core_sharded.h"
+#include "utils/utils.h"
 
 class raft_server_t;
 class raft_client_protocol;
@@ -133,7 +134,8 @@ class raft_client_protocol{
 public:
     raft_client_protocol(std::shared_ptr<connect_cache> conn_cache)
     : _cache(conn_cache)
-    , _shard_cores(core_sharded::get_shard_cores()) {
+    , _shard_cores(core_sharded::get_shard_cores())
+    , _shard(core_sharded::get_core_sharded()) {
         uint32_t i = 0;
         auto shard_num = _shard_cores.size();
         for(i = 0; i < shard_num; i++){
@@ -145,34 +147,82 @@ public:
         return _shard_cores.size();
     }
 
-    void create_connect(int node_id, std::string address, int port, auto&& conn_cb) {
-        uint32_t shard_id = 0;
-        for(shard_id = 0; shard_id < connect_factor() * 1; shard_id++){
-            SPDK_INFOLOG(
-              pg_group,
-              "create connect to node %d (address %s, port %d) in core %u\n",
-              node_id, address.c_str(), port, _shard_cores[shard_id]);
+    void create_connect(int node_id, std::string address, int port, utils::complete_fun&& conn_cb) {
+        auto shard_num = _shard_cores.size();
 
-            _cache->create_connect(
-              shard_id, node_id, address, port, std::move(conn_cb),
-              [this, shard_id, node_id] (msg::rdma::client::connection* conn) {
-                  auto &stub = _stubs[shard_id];
-                  stub[node_id] = std::make_shared<rpc_service_raft_Stub>(conn);
-              }
-            );
+        auto ctx = new utils::switch_core_context{.cb_fn = std::move(conn_cb), .arg = nullptr, .thread = spdk_get_thread(), .serror = 0};
+        utils::multi_complete *complete = new utils::multi_complete(shard_num, shard_num, utils::switch_core_func, ctx);
+        uint32_t shard_id = 0;
+
+        for (shard_id = 0; shard_id < shard_num; shard_id++)
+        {
+            _shard.invoke_on(
+              shard_id,
+              [this, node_id, address, port, shard_id, complete]()
+              {
+                SPDK_INFOLOG(
+                  pg_group,
+                  "create connect to node %d (address %s, port %d) in core %u\n",
+                  node_id, address.c_str(), port, _shard_cores[shard_id]);
+
+                _cache->create_connect(
+                  shard_id, node_id, address, port, complete,
+                  [this, shard_id, node_id] (msg::rdma::client::connection* conn) {
+                      auto &stub = _stubs[shard_id];
+                      stub[node_id] = std::make_shared<rpc_service_raft_Stub>(conn);
+                  }
+                );                  
+              });
         }
     }
 
-    void remove_connect(int node_id, auto&& conn_cb){
+    void remove_connect(int node_id, utils::complete_fun&& conn_cb){
+        auto shard_num = _shard_cores.size();
+        auto ctx = new utils::switch_core_context{.cb_fn = std::move(conn_cb), .arg = nullptr, .thread = spdk_get_thread(), .serror = 0};
+        utils::multi_complete *complete = new utils::multi_complete(shard_num, shard_num, utils::switch_core_func, ctx);
         uint32_t shard_id = 0;
-        for(shard_id = 0; shard_id < _shard_cores.size(); shard_id++){
-            SPDK_INFOLOG(pg_group, "remove connect to node %d\n", node_id);
-            _cache->remove_connect(shard_id, node_id, std::move(conn_cb),
-            [this, shard_id, node_id](){
-                auto &stub = _stubs[shard_id];
-                stub.erase(node_id);
-            });
+
+        for (shard_id = 0; shard_id < shard_num; shard_id++)
+        {
+            _shard.invoke_on(
+              shard_id,
+              [this, node_id, shard_id, complete]()
+              {
+                SPDK_INFOLOG(pg_group, "remove connect to node %d\n", node_id);
+
+                _cache->remove_connect(
+                  shard_id, node_id, complete,
+                  [this, shard_id, node_id] () {
+                      auto &stub = _stubs[shard_id];
+                      stub.erase(node_id);
+                  }
+                );                  
+              });
         }
+    }
+
+    void remove_connect(uint32_t shard_id, int node_id, utils::complete_fun&& conn_cb) {
+        if(shard_id >= _shard_cores.size()){
+            conn_cb(nullptr, 0);
+            return;
+        }
+
+        auto ctx = new utils::switch_core_context{.cb_fn = std::move(conn_cb), .arg = nullptr, .thread = spdk_get_thread(), .serror = 0};
+        utils::multi_complete *complete = new utils::multi_complete(1, 1, utils::switch_core_func, ctx);
+        _shard.invoke_on(
+          shard_id,
+          [this, node_id, shard_id, complete]()
+          {
+            SPDK_INFOLOG(pg_group, "remove connect to node %d in shard %u\n", node_id, shard_id);
+
+            _cache->remove_connect(
+              shard_id, node_id, complete,
+              [this, shard_id, node_id] () {
+                  auto &stub = _stubs[shard_id];
+                  stub.erase(node_id);
+              }
+            );                  
+          });       
     }
 
     int send_appendentries(raft_server_t *raft, int32_t target_node_id, msg_appendentries_t* request);
@@ -207,4 +257,5 @@ private:
     std::vector<uint32_t> _shard_cores;
     //每个cpu核上有一个map
     std::vector<std::map<int, std::shared_ptr<rpc_service_raft_Stub>>> _stubs;
+    core_sharded &_shard;
 };

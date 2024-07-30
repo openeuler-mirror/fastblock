@@ -17,19 +17,32 @@ void heartbeat_source::process_response(){
     core_shard.invoke_on(
       _shard_id,
       [this](){
+        auto beat_num = _request->heartbeats_size();
         if (ctrlr.Failed()){
             SPDK_INFOLOG(pg_group, "the network connection to %d is disconnected\n", _target_node_id);
-            //remove_connect
+            for(int i = 0; i < beat_num; i++){
+                const heartbeat_metadata& meta = _request->heartbeats(i);
+                auto raft = _group->get_pg(_shard_id, meta.pool_id(), meta.pg_id());
+                auto node = raft->raft_get_node(_target_node_id);
+                if(node){
+                    node->raft_set_suppress_heartbeats(false);
+                }
+            }
+            _rcp->remove_connect(_shard_id, _target_node_id, [](void *, int ){});
             return;
         }
-        auto beat_num = _request->heartbeats_size();
+        
+        if(response.meta_size() == 0){
+            SPDK_INFOLOG(pg_group, "response meta size %d from node: %d\n", response.meta_size(), _target_node_id);
+            delete this;
+            return;
+        }
         for(int i = 0; i < beat_num; i++){
             const heartbeat_metadata& meta = _request->heartbeats(i);
             auto raft = _group->get_pg(_shard_id, meta.pool_id(), meta.pg_id());
             SPDK_DEBUGLOG(pg_group, "heartbeat response from node: %d pg %lu.%lu\n", meta.target_node_id(), meta.pool_id(), meta.pg_id());
-    
             msg_appendentries_response_t *rsp = response.mutable_meta(i);
-            auto node = raft->raft_get_node(rsp->node_id());
+            // auto node = raft->raft_get_node(rsp->node_id());
             // node->raft_node_set_heartbeating(false);
     
             raft->raft_process_appendentries_reply(rsp, true);
@@ -42,7 +55,7 @@ void heartbeat_source::process_response(){
 void process_disconnect_rpc(raft_client_protocol* rcp, raft_server_t *raft, uint32_t shard_id, int32_t target_node_id){
     SPDK_INFOLOG(pg_group, "pg %lu.%lu in node %d, the network connection to %d is disconnected\n",
                        raft->raft_get_pool_id(), raft->raft_get_pg_id(), raft->raft_get_nodeid(), target_node_id);
-    //remove_connect
+    rcp->remove_connect(shard_id, target_node_id, [](void *, int ){});
 }
 
 void process_appendentries_response(raft_server_t *raft, msg_appendentries_response_t* response, 
