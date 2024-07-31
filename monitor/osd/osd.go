@@ -276,10 +276,10 @@ func outToInHandler(ctx context.Context, client *etcdapi.EtcdClient, osdId int) 
 }
 
 // when a new osd is applied, we append it to AllOSDInfo.Osdinfo, and put it into etcd
-func ProcessApplyIDMessage(ctx context.Context, client *etcdapi.EtcdClient, uuid string) (int, error) {
+func ProcessApplyIDMessage(ctx context.Context, client *etcdapi.EtcdClient, uuid string) (int, msg.ApplyIDErrorCode) {
 	for _, info := range AllOSDInfo.Osdinfo {
 		if uuid == info.Uuid {
-			return -1, EUuidAlreadyExists
+			return -1, msg.ApplyIDErrorCode_UuidAlreadyExists
 		}
 	}
 
@@ -308,17 +308,17 @@ func ProcessApplyIDMessage(ctx context.Context, client *etcdapi.EtcdClient, uuid
 	osdMap, err := json.Marshal(AllOSDInfo)
 	if err != nil {
 		log.Error(ctx, err)
-		return -1, err
+		return -1, msg.ApplyIDErrorCode_InternalError
 	}
 
 	err = client.Put(ctx, config.ConfigOSDMapKey, string(osdMap))
 	if err != nil {
 		log.Error(ctx, err)
-		return -1, err
+		return -1, msg.ApplyIDErrorCode_InternalError
 	}
 
 	log.Info(ctx, "successfully update osdmap after newly apply")
-	return oid, nil
+	return oid, msg.ApplyIDErrorCode_ApplyIdOk
 }
 
 func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int32, uuid string, size int64, port uint32, host string, address string) ERRNUM {

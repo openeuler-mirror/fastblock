@@ -14,7 +14,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-    "errors"
 	"flag"
 	"fmt"
 	"monitor/config"
@@ -32,9 +31,9 @@ import (
 	"sync"
 	"syscall"
 	"time"
-    "regexp"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -157,24 +156,24 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 	case *msg.Request_ApplyIdRequest:
 		// Access the fields of the ApplyIdRequest
 		log.Info(ctx, "Received ApplyIdRequest")
-		uuid := payload.ApplyIdRequest.GetUuid()
-        uuidRegex := regexp.MustCompile("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
-        if(!uuidRegex.MatchString(uuid)) {
-            log.Error(ctx, "Error received ApplyIdRequest, error uuid:", uuid)
-            return errors.New("Error received ApplyIdRequest, error uuid:" + uuid)
-        }
-
-		oid, err := osd.ProcessApplyIDMessage(ctx, client, uuid)
+		_uuid := payload.ApplyIdRequest.GetUuid()
+		rc := msg.ApplyIDErrorCode_ApplyIdOk
+		oid := -1
+		_, err := uuid.Parse(_uuid)
 		if err != nil {
-			oid = -1
+			log.Error(ctx, "Error received ApplyIdRequest, error uuid:", _uuid)
+			rc = msg.ApplyIDErrorCode_InvalidUUid
+		} else {
+			oid, rc = osd.ProcessApplyIDMessage(ctx, client, _uuid)
 		}
 
-		// Create a BootResponse
+		// Create a ApplyIdResponse
 		response := &msg.Response{
 			Union: &msg.Response_ApplyIdResponse{
 				ApplyIdResponse: &msg.ApplyIDResponse{
 					Id:   int32(oid),
-					Uuid: uuid, //we should send the uuid back for redundancy
+					Uuid: _uuid, //we should send the uuid back for redundancy
+					Errorcode: rc,
 				},
 			},
 		}

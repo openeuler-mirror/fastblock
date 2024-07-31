@@ -259,8 +259,22 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 			case *msg.Response_ApplyIdResponse:
 				// Access the fields of the ApplyIdResponse
 				osdid := payload.ApplyIdResponse.GetId()
-				uuid := payload.ApplyIdResponse.GetUuid()
-				fmt.Printf("%d\n", osdid)
+				uuid_ := payload.ApplyIdResponse.GetUuid()
+				rc := payload.ApplyIdResponse.GetErrorcode()
+
+				if rc != msg.ApplyIDErrorCode_ApplyIdOk {
+					errmsg := ""
+					if rc == msg.ApplyIDErrorCode_InternalError {
+						errmsg = "internal error"
+					} else if rc == msg.ApplyIDErrorCode_InvalidUUid {
+						errmsg = "uuid is not valid"
+					} else if rc == msg.ApplyIDErrorCode_UuidAlreadyExists {
+						errmsg = "uuid already exists"
+					} 
+					fmt.Printf("uuid %s apply osd id failed, error is %s\r\n", uuid_, errmsg)
+				} else {
+					fmt.Printf("%d\n", osdid)
+				}
 
 				// in this case we can stop
 				if *fakeOsdCount == 0 {
@@ -269,7 +283,7 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 				} else {
 					appliedOsdCounter++
 					// Send the ResponseChanData to responseChan
-					responseChan <- ResponseChanData{uuid, osdid}
+					responseChan <- ResponseChanData{uuid_, osdid}
 				}
 
 			case *msg.Response_BootResponse:
@@ -1170,6 +1184,11 @@ func main() {
 
 		if *uid == "" {
 			log.Fatal("uuid must not be empty for applyid")
+		}
+
+		_, err := uuid.Parse(*uid)
+		if err != nil {
+		    log.Fatal("Invalid uuid")
 		}
 
 		if *fakeOsdCount != 0 {
