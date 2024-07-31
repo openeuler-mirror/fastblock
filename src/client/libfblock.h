@@ -74,8 +74,8 @@ public:
         _client->start();
     }
 
-    void stop() {
-        _client->stop();
+    void stop(std::optional<std::function<void()>>&& cb = std::nullopt) {
+        _client->stop(std::move(cb));
     }
 
     void create_image(

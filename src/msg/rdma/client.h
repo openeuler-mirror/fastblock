@@ -344,6 +344,10 @@ public:
 
         void enqueue_request(std::unique_ptr<rpc_request> req, bool priority_req) {
             FASTBLOCK_DUR_MAP_EMPLACE_END(_enqueue_dur_map, req->request_key);
+            req->request_data = std::make_unique<transport_data>(
+              req->request_key,
+              req->request->ByteSizeLong() + request_meta_size,
+              _meta_pool, _data_pool);
             if (priority_req) {
                 if (_priority_onflight_requests.empty()) {
                     _busy_priority_list->push_back(shared_from_this());
@@ -399,7 +403,10 @@ public:
             }
 
             auto is_busy = process_control_op();
-            is_busy |= process_shutdown();
+            auto is_shutdown = process_shutdown();
+            if (is_shutdown) {
+                return SPDK_POLLER_IDLE;
+            }
 
             if (_onflight_rpc_task_size <= _opts->rpc_batch_size) {
                 if (not _busy_priority_list->empty()) {
@@ -500,16 +507,14 @@ public:
               meta->service_name_size, meta->service_name,
               meta->method_name_size, meta->method_name);
 
-            auto serialized_size = request->ByteSizeLong() + request_meta_size;
-            auto request_data = std::make_unique<transport_data>(
-              req_key, serialized_size, _meta_pool, _data_pool);
             auto req = std::make_unique<rpc_request>(
-              req_key, m, ctrlr, request, response, c, std::move(meta_holder), std::move(request_data));
+              req_key, m, ctrlr, request, response, c, std::move(meta_holder));
 
             SPDK_DEBUGLOG(
               msg,
               "transport data_size: %d, serialized_size: %ld, req_key: %d, service: %s, method: %s\n",
-              meta->data_size, serialized_size, req_key, service_name.c_str(), method_name.c_str());
+              meta->data_size, request->ByteSizeLong() + request_meta_size,
+              req_key, service_name.c_str(), method_name.c_str());
 
             SPDK_INFOLOG(
               msg,
@@ -932,7 +937,7 @@ read_done:
                 free_resources();
                 _master->handle_connection_shutdown(_sock->id(), _id, _dispatch_id.dispatch_id());
                 _state = state::termianted;
-                return false;
+                return true;
             }
 
             return false;

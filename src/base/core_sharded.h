@@ -180,13 +180,15 @@ public:
 
     core_sharded& operator=(core_sharded&&) = delete;
 
-    ~core_sharded() noexcept = default;
+    ~core_sharded() noexcept { stop(); }
 
 public:
 
     static void construct(auto&&... args) {
         g_core_sharded = std::make_unique<core_sharded>(std::forward<decltype(args)>(args)...);
     }
+
+    static void stop_all() { g_core_sharded->stop(); }
 
     [[gnu::optimize("O0")]] static core_sharded& get_core_sharded() noexcept {
         return *g_core_sharded;

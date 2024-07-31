@@ -251,26 +251,11 @@ private:
                _reply_task_list.empty();
     }
 
-    int handle_timeout_task(rpc_task* task) {
+    void handle_timeout_task(std::unique_ptr<rpc_task> task) {
         SPDK_ERRLOG("ERROR: Timeout on task %d\n", task->id);
         task->reply_status = status::request_timeout;
-        auto err = send_reply(task);
-
-        if (err) {
-            if (err->value() == ENOMEM) {
-                SPDK_NOTICELOG(
-                  "Post the reply wr of request %u return enomem\n",
-                  task->id);
-                return EAGAIN;
-            }
-            SPDK_ERRLOG(
-              "ERROR: Send reply of task '%d' error '%s'\n",
-              task->id, err->message().c_str());
-              close_connection(task->conn.get());
-            return err->value();
-        }
-
-        return 0;
+        make_response_data(task.get(), task->reply_status.value());
+         _reply_task_list.push_back(std::move(task));
     }
 
     void close_connection(connection_record* conn) {
@@ -601,10 +586,7 @@ private:
 
         auto& task = _reply_task_list.front();
         if (is_timeout(task.get())) {
-            auto rc = handle_timeout_task(task.get());
-            if (rc == EAGAIN) {
-                return SPDK_POLLER_IDLE;
-            }
+            handle_timeout_task(std::move(task));
             _task_list.pop_front();
             return SPDK_POLLER_BUSY;
         }
@@ -651,10 +633,7 @@ private:
 
         auto& task = _read_task_list.front();
         if (is_timeout(task.get())) {
-            auto rc = handle_timeout_task(task.get());
-            if (rc == EAGAIN) {
-                return SPDK_POLLER_IDLE;
-            }
+            handle_timeout_task(std::move(task));
             _read_task_list.pop_front();
             return SPDK_POLLER_BUSY;
         }
@@ -682,10 +661,7 @@ private:
 
         auto& task = _task_list.front();
         if (is_timeout(task.get())) {
-            auto rc = handle_timeout_task(task.get());
-            if (rc == EAGAIN) {
-                return SPDK_POLLER_IDLE;
-            }
+            handle_timeout_task(std::move(task));
             _task_list.pop_front();
             return SPDK_POLLER_BUSY;
         }

@@ -9,6 +9,7 @@
     "io_print_stats_enable": true,
     "io_print_stats_interval_ms": 1000,
     "io_print_stats_acc": false,
+    "io_print_stats_take_single_core": true,
     "io_type": "write",
     "io_size": 4096,
     "io_count": 10000,
@@ -39,7 +40,7 @@
     "msg_rdma_max_recv_sge": 1,
     "msg_rdma_max_inline_data": 16,
     "msg_rdma_cq_num_entries": 1024,
-    "msg_rdma_qp_sig_all": false   
+    "msg_rdma_qp_sig_all": false
 }
 ```
 
@@ -52,6 +53,10 @@
 ### io_print_stats_acc
 
 如果为 `false`，则每次打印的延时统计值都是 *[0, io_print_stats_interval_ms]* 区间内的延时；如果为 `true`，则打印的延时数据，包含的是从压测开始时，到当前的延时数据。
+
+### io_print_stats_take_single_core
+
+由于实时打印在终端打印 *iops* 统计数值对吞吐影响较大，因此在有多核可用的情况下，允许 *block_bench* 单独占用一个核用于实时打印。该配置项如果为 `true`，则使用第一个核作为管理核，该核上不跑 *block io*。
 
 ### io_type
 
