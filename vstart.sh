@@ -98,7 +98,7 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 
-function isOfedInstaled() {
+function isOfedInstalled() {
     if [ ! -f /usr/bin/ofed_info ]; then
         echo "false"
     fi
