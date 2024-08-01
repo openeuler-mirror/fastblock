@@ -42,6 +42,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <regex>
+#include <sys/sysinfo.h>
 
 enum class stop_state {
     monitor_client = 1,
@@ -89,6 +90,10 @@ static stop_state cur_stop_state{stop_state::monitor_client};
 
 static std::string g_conf_path = "/var/lib/fastblock";
 
+#define MAX_CPU_CORES				128
+static int g_core_num = 2;
+static std::map<int, int> g_core_locks;
+
 static void
 block_usage(void) {
     printf("--------------- osd options --------------------\n");
@@ -97,6 +102,7 @@ block_usage(void) {
     printf("-F, --force   force to mkfs\n");
     printf("-I, --id <osd id> the osd id\n");
     printf("-U, --uuid <uuid> the uuid of the osd, used with --mkfs\n");
+    printf("-S, --core-num <num> the number of cpu core\n");
 }
 
 static struct option g_cmdline_opts[] = {
@@ -134,6 +140,13 @@ static struct option g_cmdline_opts[] = {
 		.has_arg = 1,
 		.flag = NULL,
 		.val = BLOCK_OPTION_UUID,
+	},
+#define BLOCK_OPTION_CORE_NUM 'S'
+	{
+		.name = "core-num",
+		.has_arg = 1,
+		.flag = NULL,
+		.val = BLOCK_OPTION_CORE_NUM,
 	},
 	{
 		.name = NULL
@@ -196,6 +209,9 @@ block_parse_arg(int ch, char *arg)
         break;
     case BLOCK_OPTION_UUID:
         g_uuid = arg;
+        break;
+    case BLOCK_OPTION_CORE_NUM:
+        g_core_num = atoi(arg);
         break;
 	default:
         block_usage();
@@ -827,6 +843,123 @@ static bool check_disk_addr_valid(std::string type, std::string addr){
     return true;
 }
 
+std::vector<int> get_free_core(int num){
+    std::vector<int> cores;
+    auto core_count = std::min(get_nprocs(), MAX_CPU_CORES);
+    int c = 0;
+    char core_name[40];
+    int core_fd;
+
+	struct flock core_lock = {
+		.l_type = F_WRLCK,
+		.l_whence = SEEK_SET,
+		.l_start = 0,
+		.l_len = 0,
+	};
+
+    for(int core = 0; core < core_count; core++){
+        if(c >= num)
+            break;
+        snprintf(core_name, sizeof(core_name), "/var/tmp/spdk_core_lock_%03d", core);
+        core_fd = open(core_name, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
+        if (core_fd == -1){
+            std::cerr << "could not open " << core_name << " : " << strerror(errno) << std::endl;
+            return cores;
+        }
+
+        if (fcntl(core_fd, F_SETLK, &core_lock) != 0) {
+            close(core_fd);
+            continue;
+        }
+        g_core_locks[core] = core_fd;
+        cores.push_back(core);
+        c++;
+    }
+    return std::move(cores);
+}
+
+std::optional<std::string> get_core_mask(uint64_t num) {
+    std::vector<int> cores = get_free_core(num);
+    if(cores.size() != num){
+        std::cerr << "could not get valid core" << std::endl;
+        return std::nullopt;
+    }
+
+    std::string core_mask = "[";
+    for(uint64_t i = 0; i < cores.size(); i++) {
+        if(i != 0)
+            core_mask += ",";
+        core_mask += std::to_string(cores[i]);
+    }
+    core_mask += "]"; 
+    return   core_mask; 
+}
+
+
+inline std::string core_size_path() {
+    std::string file_name = g_conf_path + "/osd-" + std::to_string(g_id) + "/core_size";
+    return file_name;
+}
+
+int save_core_size(int core_num) {
+    std::string  core_size = std::to_string(core_num);
+    std::string path = core_size_path();
+    std::ofstream ofs(path, std::ios_base::trunc);
+    if(!ofs.is_open()){
+        std::cerr << "save core maks to file " << path << "failed." << std::endl;
+        return -1;
+    }
+    ofs << core_size << std::endl;
+    ofs.close();
+    return 0;
+}
+std::optional<int> get_core_size(){
+    std::string path = core_size_path();
+    if(!std::filesystem::exists(path)){
+        std::cerr << "get core maks from file " << path << "failed: File does not exist" << std::endl;
+        return std::nullopt;
+    }
+    std::ifstream ifs(path);
+
+    if(!ifs.is_open()){
+        std::cerr << "get core maks from file " << path << "failed: File can not be opened." << std::endl;
+        return std::nullopt;
+    }
+
+    std::string data;
+    if(!getline(ifs, data)){
+        ifs.close();
+        return std::nullopt;
+    }
+
+    ifs.close();
+    int core_size;
+    try {
+        //第一次启动时osd配置文件core_mask里面保存的时mkfs时绑定的核数
+        core_size = std::stoi(data);
+    } catch (const std::invalid_argument& ) {
+        std::cerr << "date in file core_size is invalid" << std::endl;
+        return std::nullopt;
+    } catch (const std::out_of_range& ) {
+        std::cerr << "date in file core_size is invalid" << std::endl;
+        return std::nullopt;
+    }
+    return core_size;
+}
+
+void unclaim_cores() {
+    char core_name[40];
+    for (auto [core, core_fd] : g_core_locks) {
+        if(core_fd != -1) {
+			snprintf(core_name, sizeof(core_name), "/var/tmp/spdk_core_lock_%03d", core);
+			close(core_fd);
+
+			g_core_locks[core] = -1;
+			unlink(core_name);
+		}
+	}
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -841,7 +974,7 @@ main(int argc, char *argv[])
     opts.shutdown_cb = on_osd_stop;
 	opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
 
-	if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:I:U:fF", g_cmdline_opts,
+	if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:I:U:fFS:", g_cmdline_opts,
 				      block_parse_arg, block_usage)) !=
 	    SPDK_APP_PARSE_ARGS_SUCCESS) {
 		exit(rc);
@@ -855,6 +988,11 @@ main(int argc, char *argv[])
     if (g_mkfs) {
         if(!g_uuid) {
             std::cerr << "--uuid <uuid> must be set when --mkfs is set\n";
+            return -EINVAL;
+        }
+        auto core_count = std::min(get_nprocs(), MAX_CPU_CORES);
+        if(g_core_num <= 0 || g_core_num > core_count){
+            std::cerr << "--core-num <num> must be in (0, " << core_count << "]" << std::endl;
             return -EINVAL;
         }
     }
@@ -933,6 +1071,34 @@ main(int argc, char *argv[])
     std::string pid_path = get_pid_path();
     save_pid(pid_path.c_str());
 
+    std::string reactor_mask;
+    if (g_mkfs) {
+        auto core_mask = get_core_mask(g_core_num);
+        if(!core_mask){
+            return -EINVAL;
+        }
+        
+        //mkfs时保存cpu核数，启动osd时读出核数，分配cpu核
+        if(save_core_size(g_core_num) != 0){
+            return -EINVAL;
+        }
+        reactor_mask = core_mask.value();
+    } else {
+        auto opt = get_core_size();
+        if(!opt) {
+            return -EINVAL;
+        }
+
+        int core_size = opt.value();
+        auto core_mask = get_core_mask(core_size);
+        if(!core_mask){
+            return -EINVAL;
+        }
+        reactor_mask = core_mask.value();
+    }
+
+    opts.reactor_mask = reactor_mask.c_str();
+
     remove_bdev_json_file();
     save_bdev_json(bdev_json_file, osd_server);
 
@@ -952,6 +1118,9 @@ main(int argc, char *argv[])
 
 	spdk_app_fini();
 	buffer_pool_fini();
+    if (g_mkfs) {
+        unclaim_cores();
+    }
 
 	return rc;
 }
