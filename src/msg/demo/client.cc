@@ -27,6 +27,9 @@
 #include <cassert>
 #include <csignal>
 #include <iostream>
+#include <thread>
+
+SPDK_LOG_REGISTER_COMPONENT(client)
 
 SPDK_LOG_REGISTER_COMPONENT(demo_cli)
 
