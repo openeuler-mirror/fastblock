@@ -295,6 +295,7 @@ public:
               stats_pair.second.size(),
               std::nullopt,
               std::to_string(stats_pair.first));
+            std::cout << "======================================================================================\n";
         }
 
         if (not should_dump_csv) {
