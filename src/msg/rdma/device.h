@@ -18,12 +18,21 @@
 
 #include <concepts>
 #include <cstring>
+#include <filesystem>
 #include <functional>
 #include <numeric>
 #include <memory>
 #include <vector>
 #include <string>
 
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/ioctl.h>
+#include <netinet/in.h>
+#include <net/if.h>
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <infiniband/verbs.h>
 #include <poll.h>
 
@@ -58,6 +67,7 @@ public:
 
     device(std::optional<std::function<void(::ibv_context*, ::ibv_async_event*)>>&& on_polled_ib_evt = std::nullopt)
       : _on_polled_ib_evt{std::move(on_polled_ib_evt)} {
+        construct_dev_ip_map();
         ::ibv_device** dev_list = ::ibv_get_device_list(nullptr);
 
         if (not dev_list) {
@@ -140,71 +150,17 @@ public:
         }
     }
 
-    // 默认参数表示返回第一个 active 且有 ipv4 的
-    std::optional<std::string> query_ipv4(
-      std::optional<std::string> dev_name = std::nullopt,
-      std::optional<uint8_t> dev_port = std::nullopt,
-      std::optional<int> gid_index = std::nullopt) {
-        if (not dev_name and not dev_port and not gid_index) {
+    std::optional<std::string> get_ipv4(const std::optional<std::string>& dev) {
+        if (not dev) {
             return _default_ipv4;
         }
 
-        device_context* target_device{nullptr};
-        if (dev_name) {
-            auto ctx_it = std::find_if(
-              _contexts.begin(),
-              _contexts.end(),
-              [&dev_name, &dev_port] (const device_context& ctx) {
-                  if (*dev_name == std::string(::ibv_get_device_name(ctx.device))) {
-                      if (dev_port) {
-                          return ctx.port == *dev_port;
-                      } else {
-                          return true;
-                      }
-                  } else {
-                      return false;
-                  }
-              }
-            );
-
-            if (ctx_it == _contexts.end()) {
-                SPDK_ERRLOG(
-                  "ERROR: Query the ipv4 of %s on port %d failed, no such device or port\n",
-                  dev_name->c_str(), dev_port ? *dev_port : 1);
-                return std::nullopt;
-            }
-
-            target_device = &(*ctx_it);
-        } else {
-            target_device = &(_contexts[0]);
+        auto it = _dev_ipv4_map.find(*dev);
+        if (it == _dev_ipv4_map.end()) {
+            return _default_ipv4;
         }
 
-        ::ibv_gid* target_gid{nullptr};
-        if (gid_index) {
-            if (static_cast<size_t>(*gid_index) > target_device->gids.size()) {
-                SPDK_ERRLOG(
-                  "ERROR: Specified gid index %d out of range, max index is %ld\n",
-                  *gid_index, target_device->gids.size() - 1);
-
-                return std::nullopt;
-            }
-
-            if (is_gid_contain_ipv4(target_device->gids[*gid_index].raw)) {
-                return ipv4_from_gid(target_device->gids[*gid_index].raw);
-            }
-
-            return std::nullopt;
-        }
-
-        for (auto& gid : target_device->gids) {
-            if (not is_gid_contain_ipv4(gid.raw)) {
-                continue;
-            }
-
-            return ipv4_from_gid(gid.raw);
-        }
-
-        return std::nullopt;
+        return it->second;
     }
 
 private:
@@ -216,6 +172,15 @@ private:
         case IBV_PORT_ARMED:  return "PORT_ARMED";
         case IBV_PORT_ACTIVE: return "PORT_ACTIVE";
         default:              return "invalid state";
+        }
+    }
+
+    static const char* link_layer_str(uint8_t link_layer) {
+        switch (link_layer) {
+        case IBV_LINK_LAYER_UNSPECIFIED: return "Unspecified";
+        case IBV_LINK_LAYER_INFINIBAND: return "InfiniBand";
+        case IBV_LINK_LAYER_ETHERNET: return "Ethernet";
+        default: return "Unknown";
         }
     }
 
@@ -250,6 +215,46 @@ private:
 
 private:
 
+    void construct_dev_ip_map() {
+        static constexpr char ib_dev_home[]{"/sys/class/infiniband"};
+        static constexpr char interface_home[]{"/sys/class/net"};
+        static constexpr int pci_addr_index{5};
+
+        namespace fs = std::filesystem;
+        fs::path ib_dev_path{ib_dev_home};
+        fs::path interface_path{interface_home};
+        for (const auto& entry : fs::directory_iterator(ib_dev_path)) {
+            auto dev_name = entry.path().filename();
+            auto ib_pci_path = fs::relative(entry.path(), ib_dev_path).parent_path().parent_path();
+            SPDK_DEBUGLOG(
+              msg,
+              "device name: %s, pci path: %s\n",
+              dev_name.c_str(), ib_pci_path.c_str());
+
+            for (const auto& interface : fs::directory_iterator(interface_path)) {
+                auto ipci_path = fs::relative(interface.path(), interface_path).parent_path().parent_path();
+                SPDK_DEBUGLOG(
+                  msg,
+                  "interface name: %s, ipci path: %s\n",
+                  interface.path().filename().c_str(),
+                  ipci_path.c_str());
+
+                if (ipci_path != ib_pci_path) { continue; }
+
+                ::ifreq ifr{};
+                auto fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+                ifr.ifr_addr.sa_family = AF_INET;
+                ::sprintf(ifr.ifr_name, "%s", interface.path().filename().c_str());
+                ::ioctl(fd, SIOCGIFADDR, &ifr);
+                auto* sock_in = reinterpret_cast<::sockaddr_in*>(&ifr.ifr_addr);
+                auto ipv4 = ::inet_ntoa(sock_in->sin_addr);
+                SPDK_INFOLOG(msg, "device %s ipv4: %s\n", dev_name.c_str(), ipv4);
+                _dev_ipv4_map.emplace(dev_name.string(), ipv4);
+                ::close(fd);
+            }
+        }
+    }
+
     void filter_active_port(::ibv_device** devices) {
         bool should_allocate_device_attr = false;
         auto port_attr = std::make_shared<::ibv_port_attr>();
@@ -258,10 +263,11 @@ private:
 
         while (*devices) {
             context = ::ibv_open_device(*devices);
+            auto dev_name = device_name(*devices);
             if (!context) {
                 SPDK_ERRLOG(
                   "open device '%s' failed, will skip this device\n",
-                  device_name(*devices).c_str());
+                  dev_name.c_str());
 
                 continue;
             }
@@ -269,7 +275,7 @@ private:
             if (::ibv_query_device_ex(context, nullptr, device_attr.get())) {
                 SPDK_ERRLOG(
                   "query rdma device %s failed, will skip this device\n",
-                  device_name(*devices).c_str());
+                  dev_name.c_str());
 
                 ::ibv_close_device(context);
                 continue;
@@ -281,7 +287,7 @@ private:
                 if (::ibv_query_port(context, port, port_attr.get())) {
                     SPDK_ERRLOG(
                       "query port %u of %s failed, will skip this port",
-                      port, device_name(*devices).c_str());
+                      port, dev_name.c_str());
 
                     continue;
                 }
@@ -290,17 +296,17 @@ private:
                     SPDK_INFOLOG(
                       msg,
                       "port %u of %s is %s, will skip this port\n",
-                      port, device_name(*devices).c_str(),
+                      port, dev_name.c_str(),
                       port_state_name(port_attr->state).c_str());
 
                     continue;
                 }
 
-                SPDK_DEBUGLOG(
-                  msg,
-                  "port %u of %s is %s\n",
-                  port, device_name(*devices).c_str(),
-                  port_state_name(port_attr->state).c_str());
+                SPDK_NOTICELOG(
+                  "port %u of %s is %s, link layer is %s\n",
+                  port, dev_name.c_str(),
+                  port_state_name(port_attr->state).c_str(),
+                  link_layer_str(port_attr->link_layer));
 
                 std::vector<::ibv_gid> gids{};
                 for (int i{0}; i < port_attr->gid_tbl_len; ++i) {
@@ -309,17 +315,21 @@ private:
                     if (rc != 0) {
                         SPDK_ERRLOG(
                           "ERROR: Query gid on device %s, port %u, index %d failed, return code %d\n",
-                          device_name(*devices).c_str(), port, i, rc);
+                          dev_name.c_str(), port, i, rc);
                         continue;
                     }
 
-                    if (is_empty_gid(cur_gid.raw) or is_link_local(cur_gid.raw)) {
+                    if (port_attr->link_layer == IBV_LINK_LAYER_ETHERNET and is_empty_gid(cur_gid.raw) or is_link_local(cur_gid.raw)) {
                         continue;
                     }
 
-                    if (not _default_ipv4 and is_gid_contain_ipv4(cur_gid.raw)) {
-                        _default_ipv4 = ipv4_from_gid(cur_gid.raw);
-                        SPDK_DEBUGLOG(msg, "default ipv4 is %s\n", _default_ipv4->c_str());
+                    auto dev_ip_it = _dev_ipv4_map.find(dev_name);
+                    if (not _default_device and dev_ip_it != _dev_ipv4_map.end()) {
+                        _default_device = dev_name;
+                        _default_ipv4 = dev_ip_it->second;
+                        SPDK_NOTICELOG(
+                          "default rdma device is %s, default ip address is %s\n",
+                          _default_device->c_str(), dev_ip_it->second.c_str());
                     }
 
                     gids.push_back(cur_gid);
@@ -362,6 +372,8 @@ private:
     std::vector<device_context> _contexts{};
     std::unique_ptr<::pollfd[]> _ib_event_pollfds{nullptr};
     std::optional<std::string> _default_ipv4{std::nullopt};
+    std::optional<std::string> _default_device{std::nullopt};
+    std::unordered_map<std::string, std::string> _dev_ipv4_map{};
 
     static constexpr size_t _raw_gid_len{16};
     static constexpr size_t _raw_gid_ipv4_begin{12};

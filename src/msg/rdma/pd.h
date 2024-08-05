@@ -58,8 +58,7 @@ public:
                 return iterate_tag::keep;
             }
 
-            SPDK_INFOLOG(
-              msg,
+            SPDK_NOTICELOG(
               "allocated protection domain(%p) on port %d of %s\n",
               _pd, ctx->port, dev_name.c_str());
 

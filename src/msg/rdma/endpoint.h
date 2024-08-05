@@ -34,6 +34,10 @@ public:
       : addr{host}
       , port{port} {}
 
+    endpoint(std::optional<std::string> host, uint16_t port)
+      : addr{host}
+      , port{port} {}
+
     endpoint(std::string_view host, uint16_t port)
       : addr{host}
       , port{port} {}
@@ -48,22 +52,12 @@ public:
         ep_conf_or(cq_num_entries);
         ep_conf_or(qp_sig_all);
 
-        auto dev_name = conf.get_child_optional("rdma_device_name");
-        if (dev_name.has_value()) {
-            auto dev_name_str = dev_name.value().get_value<std::string>();
-            if (not dev_name_str.empty()) {
-                device_name = dev_name_str;
-            }
+        if (conf.count("rdma_device_name") != 0) {
+            device_name = conf.get_child("rdma_device_name").get_value<std::string>();
         }
 
-        auto dev_port = conf.get_child_optional("rdma_device_port");
-        if (dev_port.has_value()) {
-            device_port = dev_port.value().get_value<uint8_t>();
-        }
-
-        auto gid_idx_opt = conf.get_child_optional("rdma_gid_index");
-        if (gid_idx_opt.has_value()) {
-            gid_index = gid_idx_opt.value().get_value<int>();
+        if (conf.count("rdma_device_port") != 0) {
+            device_port = conf.get_child("rdma_device_port").get_value<uint8_t>();
         }
     }
 
@@ -71,7 +65,7 @@ public:
 
 public:
 
-    std::string addr{""};
+    std::optional<std::string> addr{std::nullopt};
     uint16_t port{0};
     bool passive{false};
     int backlog{1024};
@@ -88,7 +82,6 @@ public:
     bool qp_sig_all{false};
     std::optional<std::string> device_name{std::nullopt};
     std::optional<uint8_t> device_port{std::nullopt};
-    std::optional<int> gid_index{std::nullopt};
 };
 } // namespace rdma
 } // namespace msg

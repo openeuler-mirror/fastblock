@@ -798,8 +798,6 @@ static int from_configuration(server_t* server) {
     auto current_osd_id = std::to_string(g_id);
     server->node_id = g_id;
 
-    std::string rdma_device_name = pt.get_child("rdma_device_name").get_value<std::string>();
-
     server->bdev_disk = g_bdev_type + current_osd_id;
     server->bdev_type = g_bdev_type;
 
@@ -932,7 +930,7 @@ static void osd_stop(void *arg) noexcept {
                         rpc_srv->stop([complete](){
                             complete->complete(err::E_SUCCESS);
                         });
-                      }  
+                      }
                     );
                 }
                 return;

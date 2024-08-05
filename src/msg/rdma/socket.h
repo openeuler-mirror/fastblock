@@ -68,20 +68,41 @@ public:
         std::memset(&_hints, 0, sizeof(_hints));
         _hints.ai_port_space = RDMA_PS_TCP;
         _hints.ai_qp_type = ::IBV_QPT_RC;
+        _hints.ai_family = AF_INET;
 
         if (_ep.passive) {
             _hints.ai_flags = RAI_PASSIVE;
         }
 
-        int ret = rdma_getaddrinfo(
-          _ep.addr.c_str(),
-          std::to_string(_ep.port).c_str(),
-          &_hints, &_res);
+        SPDK_DEBUGLOG(
+          msg,
+          "_ep.addr is %s, _ep.port is %d\n",
+          _ep.addr.value_or("nullopt").c_str(), _ep.port);
+
+        int ret{0};
+        if (_ep.addr) {
+            ret = ::rdma_getaddrinfo(
+              _ep.addr->c_str(),
+              std::to_string(_ep.port).c_str(),
+              &_hints, &_res);
+        } else {
+            ret = ::rdma_getaddrinfo(
+              nullptr,
+              std::to_string(_ep.port).c_str(),
+              &_hints, &_res);
+        }
+
+        auto ep_addr = host(_res->ai_src_addr);
+        auto dst_addr = host(_res->ai_dst_addr);
+        SPDK_INFOLOG(
+          msg,
+          "Get address info, src address is %s, dst address is %s, port is %d\n",
+          ep_addr.c_str(), dst_addr.c_str(), _ep.port);
 
         if (ret or !_res) [[unlikely]] {
             SPDK_ERRLOG(
               "ERROR(%s): Attempting to get information of address: %s:%d\n",
-              std::strerror(errno), _ep.addr.c_str(), _ep.port);
+              std::strerror(errno), ep_addr.c_str(), _ep.port);
         }
 
         ret = ::rdma_create_id(channel, &_id, nullptr, ::RDMA_PS_TCP);
@@ -106,7 +127,7 @@ public:
             SPDK_INFOLOG(
               msg,
               "bind %s:%d to rdma_cm_id %p\n",
-              _ep.addr.c_str(), _ep.port, _id);
+              ep_addr.c_str(), _ep.port, _id);
             return;
         }
 
@@ -146,7 +167,7 @@ public:
     socket(rdma_cm_id* id, ibv_cq* cq, protection_domain& pd)
       : _ep{host(id), ::rdma_get_dst_port(id)}
       , _id{id}
-      , _pd{_id->pd}
+      , _pd{pd.value()}
       , _mlx5dv_is_supported{::mlx5dv_is_supported(pd.deivce())} {
         assert(_id && "argument 'id' must not be nullptr");
 
@@ -158,6 +179,7 @@ public:
             _provider = std::make_unique<verbs>();
         }
 
+        _id->pd = _pd;
         _id->verbs = _pd->context;
         create_qp(cq, reinterpret_cast<void*>(this));
         _id->context = reinterpret_cast<void*>(this);
@@ -701,9 +723,7 @@ public:
                       "ERROR: Destroy qp(%s => %s)  failed, error: %s\n",
                       local_addr.c_str(), peer_addr.c_str(), strerror(errno));
                 }
-                SPDK_NOTICELOG(
-                  "destroy qp(%s => %s) success\n",
-                  local_addr.c_str(), peer_addr.c_str());
+                SPDK_NOTICELOG("destroyed qp(%s => %s)\n", local_addr.c_str(), peer_addr.c_str());
             } else {
                 SPDK_NOTICELOG("qp is null when destroy resource\n");
             }
@@ -713,14 +733,27 @@ public:
               "destroy rdma cm id(%s => %s) success\n",
               local_addr.c_str(), peer_addr.c_str());
             _id = nullptr;
+            SPDK_INFOLOG(
+              msg,
+              "destroyed rdma cm id(%s => %s)\n",
+              local_addr.c_str(), peer_addr.c_str());
         }
 
         if (_res) {
             ::rdma_freeaddrinfo(_res);
             _res = nullptr;
+            SPDK_INFOLOG(
+              msg,
+              "freed rdma cm address info(%s => %s)\n",
+              local_addr.c_str(), peer_addr.c_str());
         }
 
         _pd = nullptr;
+
+        SPDK_INFOLOG(
+          msg,
+          "destroyed the resource of the socket(%s => %s)\n",
+          local_addr.c_str(), peer_addr.c_str());
     }
 
 private:

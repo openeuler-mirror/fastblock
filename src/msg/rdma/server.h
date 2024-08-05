@@ -137,7 +137,6 @@ public:
 public:
 
     struct options {
-        std::string bind_address{};
         uint16_t port{};
         int listen_backlog{1024};
         size_t poll_cq_batch_size{128};
@@ -151,7 +150,7 @@ public:
         std::unique_ptr<endpoint> ep{nullptr};
     };
 
-    static std::shared_ptr<options> make_options(boost::property_tree::ptree& conf) {
+    static std::shared_ptr<options> make_options(boost::property_tree::ptree& conf, std::optional<std::string> listen_addr = std::nullopt) {
         auto opts = std::make_shared<options>();
         conf_or_server(conf, opts, listen_backlog);
         conf_or_server(conf, opts, metadata_memory_pool_capacity);
@@ -171,6 +170,15 @@ public:
         }
 
         opts->ep = std::make_unique<endpoint>(conf);
+        opts->ep->passive = true;
+        if (conf.count("msg_server_listen_address") != 0) {
+            opts->ep->addr = conf.get_child("msg_server_listen_address").get_value<std::string>();
+        }
+
+        if (listen_addr) {
+            opts->ep->addr = listen_addr;
+        }
+        SPDK_DEBUGLOG(msg, "listen address is %s\n", opts->ep->addr ? opts->ep->addr->c_str() : "<un-specified>");
 
         return opts;
     }
@@ -203,18 +211,8 @@ public:
       , _data_pool{std::make_shared<memory_pool<::ibv_send_wr>>(
         _pd->value(), "srv_data",
         _opts->data_memory_pool_capacity,
-        _opts->data_memory_pool_element_size, 0, _sock_id)} {
-        auto ipv4_address = _dev->query_ipv4(
-          _opts->ep->device_name,
-          _opts->ep->device_port,
-          _opts->ep->gid_index);
-
-        if (not ipv4_address) {
-            throw std::runtime_error{"cant query the ipv4"};
-        }
-
-        _opts->bind_address = *ipv4_address;
-        SPDK_NOTICELOG("Use ipv4 %s for listening\n", ipv4_address.value().c_str());
+        _opts->data_memory_pool_element_size, 0)} {
+        _opts->ep->port = _opts->port;
     }
 
     server(std::string thread_name, ::spdk_cpuset* cpumask, std::shared_ptr<options> opts, int sock_id = SPDK_ENV_SOCKET_ID_ANY)
@@ -351,7 +349,7 @@ private:
           msg,
           "connection %s => %s:%d established\n",
           sock->peer_address().c_str(),
-          _opts->bind_address.c_str(),
+          _opts->ep->addr ? _opts->ep->addr->c_str() : "<un-specified>",
           _opts->port);
 
         auto* pd = sock->pd();
@@ -1092,23 +1090,32 @@ public:
      */
 
     void create_listener(uint16_t port) {
-        _opts->port = port;
-        endpoint ep{_opts->bind_address, _opts->port};
-        SPDK_INFOLOG(msg, "start listening on %s:%d\n", _opts->bind_address.c_str(), _opts->port);
-        ep.passive = true;
-        _listener = std::make_unique<socket>(ep, *_pd, _channel.value(), false);
+        _opts->ep->port = port;
+        auto ipv4 = _dev->get_ipv4(_opts->ep->device_name);
+        if (not ipv4) {
+            SPDK_ERRLOG(
+              "ERROR: Cant get ipv4 address of device %s\n",
+              _opts->ep->device_name.value_or("un-specified").c_str());
+            throw std::runtime_error{"cant get ipv4 address of device"};
+        }
+        _opts->ep->addr = *ipv4;
+        _listener = std::make_unique<socket>(*(_opts->ep), *_pd, _channel.value(), false);
     }
     void start() {
         auto ec = _listener->listen(_opts->listen_backlog);
         if (ec) {
             SPDK_ERRLOG(
               "listen on %s:%d error: %s\n",
-              _opts->bind_address.c_str(),
+              _opts->ep->addr ? _opts->ep->addr.value().c_str() : "<un-specified>",
               _opts->port,
               ec->message().c_str());
             throw std::runtime_error{"server listen error"};
         }
-        SPDK_INFOLOG(msg, "Start listening...\n");
+        SPDK_INFOLOG(
+          msg,
+          "Start listening on %s:%d...\n",
+          _opts->ep->addr ? _opts->ep->addr.value().c_str() : "<un-specified>",
+          _opts->port);
         auto rc = ::spdk_thread_send_msg(_thread, on_start, this);
         if (rc != 0) {
             SPDK_ERRLOG("ERROR: Send msg to thread error, %s\n", ::spdk_strerror(rc));
@@ -1139,7 +1146,7 @@ public:
     }
 
     std::string listen_address() noexcept {
-        return _opts->bind_address;
+        return _opts->ep->addr.value_or("<un-specified>");
     }
 
     uint16_t listen_port() noexcept {

@@ -288,11 +288,11 @@ void start_rpc_bench_server() {
         auto sockid = ::spdk_env_get_socket_id(core_no);
         std::string srv_name{FMT_1("rpc_srv_%1%", core_no)};
         opts->port = ep_begin_it->port;
-        opts->bind_address = ep_begin_it->host;
+        opts->ep->addr = ep_begin_it->host;
         try {
             SPDK_NOTICELOG(
               "Starting rpc server on %s:%d with index %d\n",
-              opts->bind_address.c_str(),
+              opts->ep->addr->c_str(),
               opts->port,
               ep_begin_it->index);
             auto srv = std::make_unique<msg::rdma::server>(srv_name, &cpu_mask, opts, sockid);
