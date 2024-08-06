@@ -11,6 +11,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"flag"
@@ -20,16 +21,16 @@ import (
 	"monitor/msg"
 	"monitor/utils"
 	"net"
+	"sort"
 	"strconv"
 	"time"
-	"sort"
-	"bytes"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/google/uuid"
 )
 
 var poolname *string
+var poolid *uint64
 var op *string
 var port *int
 var size *int
@@ -83,7 +84,7 @@ func arrayToStr(array []int32) string {
 	return str
 }
 
-func  speedToString(speedValue uint64) string {
+func speedToString(speedValue uint64) string {
 	units := [...]string{" B/s", " kB/s", " MB/s", " GB/s", " TB/s"}
 	var speed string
 
@@ -98,13 +99,13 @@ func  speedToString(speedValue uint64) string {
 	return speed
 }
 
-func printClient(cliReadSpeed uint64, cliWriteSpeed uint64, cliReadIops uint64, cliWriteIops uint64, recoverySpeed uint64, recoveryObjPs uint64){
+func printClient(cliReadSpeed uint64, cliWriteSpeed uint64, cliReadIops uint64, cliWriteIops uint64, recoverySpeed uint64, recoveryObjPs uint64) {
 	client := make(map[string]string)
 	recovery := make(map[string]string)
-	rd  :=   "rd"
-	wr  :=   "wr"
-	ord :=   "op/s rd"
-	owr :=   "op/s wr"
+	rd := "rd"
+	wr := "wr"
+	ord := "op/s rd"
+	owr := "op/s wr"
 	speed := "speed"
 	ops := "ops"
 	order := [...]string{rd, wr, ord, owr}
@@ -185,16 +186,16 @@ func sendClientReqeust(request *msg.Request, conn net.Conn) error {
 	return nil
 }
 
-func byOsdid(osds []*msg.OsdDynamicInfo)  func(int, int) bool {
-    return func(i, j int) bool {
-        return osds[i].GetOsdid() < osds[j].GetOsdid()
-    }
+func byOsdid(osds []*msg.OsdDynamicInfo) func(int, int) bool {
+	return func(i, j int) bool {
+		return osds[i].GetOsdid() < osds[j].GetOsdid()
+	}
 }
 
-func byPgid(pgs []*msg.PGInfo)  func(int, int) bool {
-    return func(i, j int) bool {
-        return pgs[i].GetPgid() < pgs[j].GetPgid()
-    }
+func byPgid(pgs []*msg.PGInfo) func(int, int) bool {
+	return func(i, j int) bool {
+		return pgs[i].GetPgid() < pgs[j].GetPgid()
+	}
 }
 
 func sendClientRequest(request *msg.Request, conn net.Conn) {
@@ -254,7 +255,7 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 					return
 				}
 				should_read_bytes = int64(msg_len)
-				if(should_read_bytes > bufferSize) {
+				if should_read_bytes > bufferSize {
 					buffer = make([]byte, should_read_bytes)
 				}
 				continue
@@ -676,7 +677,7 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 					if pgState.CreatingUndersizeNum > 0 {
 						fmt.Printf("      %d  creating + undersize\n", pgState.CreatingUndersizeNum)
 					}
-					if  pgState.CreatingDownNum > 0 {
+					if pgState.CreatingDownNum > 0 {
 						fmt.Printf("      %d  creating + down\n", pgState.CreatingDownNum)
 					}
 					if pgState.UndersizeRemapNum > 0 {
@@ -764,9 +765,9 @@ func sendCreatePoolRequest(conn net.Conn) {
 	request := &msg.Request{
 		Union: &msg.Request_CreatePoolRequest{
 			CreatePoolRequest: &msg.CreatePoolRequest{
-				Name:    *poolname,
-				Pgsize:  int32(*pgsize),
-				Pgcount: int32(*pgcount),
+				Name:          *poolname,
+				Pgsize:        int32(*pgsize),
+				Pgcount:       int32(*pgcount),
 				Failuredomain: *failure_domain,
 				Root:          "defaultroot",
 			},
@@ -1146,8 +1147,7 @@ func clientSendNoOut(conn net.Conn, set bool) {
 func clientSendStatus(conn net.Conn) {
 	request := &msg.Request{
 		Union: &msg.Request_GetClusterStatusRequest{
-			GetClusterStatusRequest: &msg.GetClusterStatusRequest{
-			},
+			GetClusterStatusRequest: &msg.GetClusterStatusRequest{},
 		},
 	}
 
@@ -1175,7 +1175,7 @@ func ClientSendCreateSnapshotRequest(conn net.Conn, stopChan chan<- struct{}) {
 	request := &msg.Request{
 		Union: &msg.Request_CreateSnapshotRequest{
 			CreateSnapshotRequest: &msg.CreateSnapshotRequest{
-				Poolname:  *poolname,
+				Poolid:    *poolid,
 				Imagename: *imageName,
 				Snapname:  *snap_name,
 			},
@@ -1205,7 +1205,7 @@ func ClientSendListSnapshotRequest(conn net.Conn, stopChan chan<- struct{}) {
 	request := &msg.Request{
 		Union: &msg.Request_ListSnapshotRequest{
 			ListSnapshotRequest: &msg.ListSnapshotRequest{
-				Poolname:   *poolname,
+				Poolid:     *poolid,
 				Imagename:  *imageName,
 				Startepoch: *snap_list_start_epoch,
 				Limit:      *snap_list_limit,
@@ -1236,7 +1236,7 @@ func ClientSendDeleteSnapshotRequest(conn net.Conn, stopChan chan<- struct{}) {
 	request := &msg.Request{
 		Union: &msg.Request_DeleteSnapshotRequest{
 			DeleteSnapshotRequest: &msg.DeleteSnapshotRequest{
-				Poolname:  *poolname,
+				Poolid:    *poolid,
 				Imagename: *imageName,
 				Snapname:  *snap_name,
 			},
@@ -1247,8 +1247,8 @@ func ClientSendDeleteSnapshotRequest(conn net.Conn, stopChan chan<- struct{}) {
 
 func main() {
 	ops := [...]string{"watchclustermap", "getclustermap", "fakeapplyid", "fakebootosd", "fakestartcluster",
-	  "createpool", "deletepool", "listpools", "getosdmap", "getpgmap", "watchosdmap", "watchpgmap", "fakestoposd",
-	  "createimage", "removeimage", "resizeimage", "getimage", "outosd", "inosd", "status", "createsnapshot", "listsnapshot", "deletesnapshot"}
+		"createpool", "deletepool", "listpools", "getosdmap", "getpgmap", "watchosdmap", "watchpgmap", "fakestoposd",
+		"createimage", "removeimage", "resizeimage", "getimage", "outosd", "inosd", "status", "createsnapshot", "listsnapshot", "deletesnapshot"}
 	supported_op := "supported: "
 	for i := 0; i < len(ops); i++ {
 		if i == 0 {
@@ -1263,6 +1263,7 @@ func main() {
 	unset = flag.String("unset", "", "supported: noReblance, noout")
 
 	poolname = flag.String("poolname", "", "pool name you want to get")
+	poolid = flag.Uint64("poolid", 0, "pool id you want to get")
 	osdid = flag.Int("osdid", 0, "osd id to boot")
 	port = flag.Int("port", 0, "port of this osd")
 	pgcount = flag.Int("pgcount", 0, "pgcount of this pool")
@@ -1276,7 +1277,7 @@ func main() {
 	fakeHostCount = flag.Int("hostcount", 0, "count of hosts in the cluster")
 	version = flag.Int64("version", -1, "our current version ")
 	imageName = flag.String("imagename", "", "image name you want get")
-	//poolname = flag.String("poolname", 0, "pool id you want operate")
+	// poolname = flag.String("poolname", 0, "pool id you want operate")
 	imagesize = flag.Int("imagesize", 0, "image size")
 	object_size = flag.Int("objectsize", 4194304, "object size")
 	snap_name = flag.String("snapname", "", "snapshot name")
@@ -1335,7 +1336,7 @@ func main() {
 
 		_, err := uuid.Parse(*uid)
 		if err != nil {
-		    log.Fatal("Invalid uuid")
+			log.Fatal("Invalid uuid")
 		}
 
 		if *fakeOsdCount != 0 {
@@ -1425,6 +1426,12 @@ func main() {
 		go clientSendInOsd(conn, *osdid)
 	case "status":
 		go clientSendStatus(conn)
+	case "createsnapshot":
+		go ClientSendCreateSnapshotRequest(conn, stopChan)
+	case "listsnapshot":
+		go ClientSendListSnapshotRequest(conn, stopChan)
+	case "deletesnapshot":
+		go ClientSendDeleteSnapshotRequest(conn, stopChan)
 	}
 
 	if *op == "" {
@@ -1447,12 +1454,6 @@ func main() {
 				go clientSendNoOut(conn, false)
 			}
 		}
-	case "createsnapshot":
-		go ClientSendCreateSnapshotRequest(conn, stopChan)
-	case "listsnapshot":
-		go ClientSendListSnapshotRequest(conn, stopChan)
-	case "deletesnapshot":
-		go ClientSendDeleteSnapshotRequest(conn, stopChan)
 	}
 
 	go clientHandleResponses(ctx, conn, stopChan, responseChan)
