@@ -14,6 +14,8 @@
 #include "utils/utils.h"
 #include "utils/err_num.h"
 
+SPDK_LOG_REGISTER_COMPONENT(entry_buffer)
+
 constexpr int32_t TIMER_APPEND_ENTRIER_BUFFER_USEC = 0;    //微秒
 
 struct flush_complete : public utils::context{
@@ -35,6 +37,8 @@ void append_entries_buffer::enqueue(const msg_appendentries_t* request,
             utils::context* complete){
     item_type item{request, response, complete};
     _request.push(std::move(item));
+    SPDK_DEBUGLOG(entry_buffer, "append to buffer, pg %s, prev_log_idx %ld, buffer count %ld\n",
+            _raft->raft_get_pg_name().c_str(), request->prev_log_idx(), _request.size());
 }
 
 void append_entries_buffer::start(){
@@ -70,6 +74,8 @@ void append_entries_buffer::do_flush(){
     auto comp = item.complete;
 
     flush_complete* complete = new flush_complete(comp, this);
+    SPDK_DEBUGLOG(entry_buffer, "handle the append entry, pg %s, prev_log_idx %ld, buffer count %ld\n",
+            _raft->raft_get_pg_name().c_str(), request->prev_log_idx(), _request.size());
 
     int ret = _raft->raft_recv_appendentries(request->node_id(), request, response, complete);
     // if(ret != 0){

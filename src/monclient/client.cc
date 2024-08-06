@@ -743,7 +743,7 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
             if(osd_it->second->isup && !osds[i].isup() && osd_it->second->node_id != _self_osd_id){
                 SPDK_DEBUGLOG(mon, "osd %d is down, remove connect to it\n", osds[i].osdid());
                 _pm.lock()->get_pg_group().remove_connect(osds[i].osdid(),
-                  [this, node_id = osds[i].osdid()](bool is_ok){
+                  [this, node_id = osds[i].osdid()](void *, int ){
                     SPDK_DEBUGLOG(mon, "remove the connect to osd %d\n",node_id);
                   });
                 osd_it->second->isup = false;
@@ -793,8 +793,8 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
 
             _pm.lock()->get_pg_group().create_connect(
               osd_info.node_id, osd_info.address, osd_info.port,
-              [this, raw_stack = resp_stack.get(), node_id = osd_info.node_id] (bool is_ok, std::shared_ptr<msg::rdma::client::connection> conn) {
-                  if (not is_ok) {
+              [this, raw_stack = resp_stack.get(), node_id = osd_info.node_id] (void *, int res) {
+                  if (res != err::E_SUCCESS) {
                       SPDK_ERRLOG("ERROR: Connect failed\n");
                       auto it = _osd_map.data.find(node_id);
                       if (it != _osd_map.data.end()) {
@@ -832,8 +832,8 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
           "The osd with id %d not found in the newer osd map\n",
           node_id);
         _pm.lock()->get_pg_group().remove_connect(node_id,
-          [this, node_id](bool is_ok){
-            if(is_ok){
+          [this, node_id](void *, int res){
+            if(res == err::E_SUCCESS){
               _osd_map.data.erase(node_id);
               SPDK_DEBUGLOG(mon, "remove the connect to osd %d\n",node_id);
             }
@@ -845,8 +845,8 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
         return;
     }
 
-    auto factor = _pm.lock()->get_pg_group().get_raft_client_proto().connect_factor();
-    resp_stack->un_connected_count *= factor;
+    // auto factor = _pm.lock()->get_pg_group().get_raft_client_proto().connect_factor();
+    // resp_stack->un_connected_count *= factor;
     SPDK_DEBUGLOG(
       mon, "created response_stack, un-connected size is %lu\n",
       resp_stack->un_connected_count);

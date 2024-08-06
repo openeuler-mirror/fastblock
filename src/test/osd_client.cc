@@ -16,7 +16,7 @@ void get_leader_source::process_response(){
     _client->set_leader_id(response.leader_id());
     if(_node_id != response.leader_id()){
         _client->create_connect(response.leader_addr(), response.leader_port(), response.leader_id(),
-        [this](bool is_ok, std::shared_ptr<msg::rdma::client::connection> conn){
+        [this](void *, int ){
           _fun();
           delete this;  
         });
