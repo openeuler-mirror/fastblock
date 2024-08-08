@@ -255,6 +255,7 @@ private:
         SPDK_ERRLOG("ERROR: Timeout on task %d\n", task->id);
         task->reply_status = status::request_timeout;
         make_response_data(task.get(), task->reply_status.value());
+        task->conn->rpc_tasks.erase(task->id);
          _reply_task_list.push_back(std::move(task));
     }
 
@@ -585,12 +586,6 @@ private:
         }
 
         auto& task = _reply_task_list.front();
-        if (is_timeout(task.get())) {
-            handle_timeout_task(std::move(task));
-            _task_list.pop_front();
-            return SPDK_POLLER_BUSY;
-        }
-
         if (not task->reply_status) {
             return SPDK_POLLER_IDLE;
         }
