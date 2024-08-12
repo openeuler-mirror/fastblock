@@ -430,6 +430,7 @@ public:
                 }
             }
 
+            is_busy |= process_send_read_wr();
             is_busy |= process_read_complete();
             is_busy |= handle_cqe();
             is_busy |= process_free_server();
@@ -661,6 +662,39 @@ public:
             return true;
         }
 
+        bool process_send_read_wr() {
+            if (_send_read_requests.empty()) {
+                return false;
+            }
+
+            auto& req = _send_read_requests.front();
+            auto err = send_read_request(req->reply_data.get());
+            if (err) {
+                if (err->value() == ENOMEM) {
+                    SPDK_NOTICELOG(
+                      "nomem for post read wr of request %d, on_flight_send_wr: %d\n",
+                      req->request_key, _onflight_send_wr);
+                    return true;
+                }
+
+                SPDK_ERRLOG(
+                  "ERROR: Post send work request error '%s'\n",
+                  err->message().c_str());
+                _ctrl_ops.push_back(std::make_unique<control_operation>(state::shutdown));
+                return true;
+            }
+
+            SPDK_DEBUGLOG(
+              msg,
+              "request key of %d start rdma reading, _wait_read_requests addr is %p\n",
+              req->request_key,
+              &_wait_read_requests);
+            _wait_read_requests.push_back(std::move(req));
+            _send_read_requests.pop_front();
+
+            return true;
+        }
+
         bool process_read_complete() {
             if (_wait_read_requests.empty()) {
                 return false;
@@ -816,28 +850,7 @@ read_done:
                             break;
                         }
 
-                        auto err = send_read_request(req_it->second->reply_data.get());
-                        if (err) {
-                            if (err->value() == ENOMEM) {
-                                SPDK_NOTICELOG(
-                                  "nomem for post read wr of request %d, on_flight_send_wr: %d\n",
-                                  req_it->first, _onflight_send_wr);
-                                return false;
-                            }
-
-                            SPDK_ERRLOG(
-                              "ERROR: Post send work request error '%s'\n",
-                              err->message().c_str());
-                            _ctrl_ops.push_back(std::make_unique<control_operation>(state::shutdown));
-                            return true;
-                        }
-
-                        SPDK_DEBUGLOG(
-                          msg,
-                          "request key of %d start rdma reading, _wait_read_requests addr is %p\n",
-                          req_it->second->request_key,
-                          &_wait_read_requests);
-                        _wait_read_requests.push_back(std::move(req_it->second));
+                        _send_read_requests.push_back(std::move(req_it->second));
                         _unresponsed_requests.erase(req_it);
 
                         break;
@@ -1039,6 +1052,7 @@ read_done:
         std::list<std::unique_ptr<rpc_request>> _priority_onflight_requests{};
         std::list<rpc_request::key_type> _free_server_list{};
         std::unordered_map<rpc_request::key_type, std::unique_ptr<rpc_request>> _unresponsed_requests{};
+        std::list<std::unique_ptr<rpc_request>> _send_read_requests{};
         std::list<std::unique_ptr<rpc_request>> _wait_read_requests{};
         std::list<std::unique_ptr<control_operation>> _ctrl_ops{};
 
