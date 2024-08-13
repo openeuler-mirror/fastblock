@@ -663,6 +663,22 @@ public:
 
     uint64_t used() { return front.pos - back.pos; }
 
+    /*
+     * 判断是否需要trim 
+     * 空间使用率超过percent时需要trim
+     */
+    bool  should_trim(float percent) {
+        return used() > 0 && used() >= size() * percent;
+    }
+
+    /*
+     *  获取trim到的位置
+     *  一次trim掉总空间比例为percent
+     */
+    uint64_t get_trim_pos(float percent){
+        return back.pos + (size() * percent);
+    }
+
     // 前面4k是super block，用户是不能用的
     uint64_t size() { return blob_size - super_size; }
 
