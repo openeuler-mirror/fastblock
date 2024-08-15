@@ -18,16 +18,39 @@
 #include <boost/property_tree/json_parser.hpp>
 
 #include "global.h"
+#include "utils/get_core.h"
 
 static const char* g_mon_cluster_endpoints = nullptr;
 static const char* g_conf_path{nullptr};
 boost::property_tree::ptree g_pt{};
 
+static int g_core_num = 1;
 static void
 vhost_usage(void)
 {
-    ::printf(" -C <path>    json configuration file path\n");
+    printf("-C, --conf <path>    json configuration file path\n");
+    printf("-N, --numa-node <id> the id of numa node\n");
 }
+
+static struct option g_cmdline_opts[] = {
+#define BLOCK_OPTION_CONF 'C'
+	{
+		.name = "conf",
+		.has_arg = 1,
+		.flag = NULL,
+		.val = BLOCK_OPTION_CONF,
+	},
+#define BLOCK_OPTION_NUMA_NODE 'N'
+	{
+		.name = "numa-node",
+		.has_arg = 1,
+		.flag = NULL,
+		.val = BLOCK_OPTION_NUMA_NODE,
+	},
+	{
+		.name = NULL
+	}
+};
 
 static void
 save_pid(const char *pid_path)
@@ -45,16 +68,24 @@ save_pid(const char *pid_path)
 	fclose(pid_file);
 }
 
+static inline void clean_pid_file(const char *pid_path){
+	unlink(pid_path);
+}
+
 static int
 vhost_parse_arg(int ch, char *arg)
 {
 	switch (ch)
 	{
 
-    case 'C':
+    case BLOCK_OPTION_CONF:
         g_conf_path = arg;
         break;
+    case BLOCK_OPTION_NUMA_NODE:
+        utils::g_numa_node = atoi(arg);
+        break;
 	default:
+	    vhost_usage();
 		return -EINVAL;
 	}
 	return 0;
@@ -107,14 +138,29 @@ int main(int argc, char *argv[])
     	::spdk_log_set_flag("object_store");
 	::spdk_log_set_flag("libblk");
 
-	if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:", NULL,
+	if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:N:", g_cmdline_opts,
 								  vhost_parse_arg, vhost_usage)) !=
 		SPDK_APP_PARSE_ARGS_SUCCESS)
 	{
 		exit(rc);
 	}
 
-    	boost::property_tree::read_json(std::string(g_conf_path), g_pt);
+	if(utils::g_numa_node >= 0){
+	    int max_node = utils::get_numa_node();
+	    if(utils::g_numa_node > max_node){
+	        std::cerr << "invalid --numa-node " << utils::g_numa_node << ": valid range [0, " << max_node << "]" << std::endl;
+	        return -EINVAL;
+	    }
+	}
+
+	auto core_mask = utils::get_core_mask(g_core_num);
+	if(!core_mask){
+	    return -EINVAL;
+	}
+	std::string reactor_mask = core_mask.value();
+	opts.reactor_mask = reactor_mask.c_str();
+
+	boost::property_tree::read_json(std::string(g_conf_path), g_pt);
 
 	std::string pid_path = "/var/tmp/vhost" + std::to_string(getpid()) + ".pid";
 	save_pid(pid_path.c_str());
@@ -126,5 +172,7 @@ int main(int argc, char *argv[])
 	opts.rpc_addr = vhost_path.c_str();
 	rc = spdk_app_start(&opts, vhost_started, NULL);
 	spdk_app_fini();
+	utils::unclaim_cores();
+	clean_pid_file(pid_path.c_str());
 	return rc;
 }
