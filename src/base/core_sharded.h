@@ -64,6 +64,7 @@ private:
   std::tuple<Args...> args;
 };
 
+
 class core_sharded{
 
 public:
@@ -165,7 +166,7 @@ public:
             auto thread_name = FMT_2("%1%%2%", app_name, *begin);
             thread = ::spdk_thread_create(thread_name.c_str(), &cpumask);
             _threads.push_back(thread);
-            SPDK_NOTICELOG("Created public spdk thread on core %d\n", *begin);
+            SPDK_NOTICELOG("Created public spdk thread %s on core %d\n", thread_name.c_str(), *begin);
 
             ++counter;
             ++begin;
@@ -247,6 +248,7 @@ public:
                 ::spdk_set_thread(current_thread);
             }
         }
+        _threads.clear();
     }
 
     core_container_type &shard_cores() noexcept {
