@@ -44,6 +44,13 @@ class socket {
 
 public:
 
+    struct post_send_result {
+        std::error_code err{};
+        ::ibv_send_wr* bad_wr{nullptr};
+    };
+
+public:
+
     socket() = delete;
 
     socket(endpoint ep, protection_domain& pd, ::rdma_event_channel* channel, bool reuseaddr = true)
@@ -360,16 +367,18 @@ public:
         _closed = true;
     }
 
-    std::optional<std::error_code> send(::ibv_send_wr* wr) noexcept {
-        ibv_send_wr *bad;
+    std::unique_ptr<post_send_result> send(::ibv_send_wr* wr) noexcept {
+        ::ibv_send_wr* bad;
         auto rc = ::ibv_post_send(_id->qp, wr, &bad);
 
         if (rc) [[unlikely]] {
             errno = rc;
-            return std::error_code{errno, std::system_category()};
+            return std::make_unique<post_send_result>(
+              std::error_code{errno, std::system_category()},
+              bad);
         }
-        SPDK_DEBUGLOG(msg, "posted send wr with id %ld\n", wr->wr_id);
-        return std::nullopt;
+
+        return nullptr;
     }
 
     std::optional<std::error_code> receive(::ibv_recv_wr* wr) noexcept {

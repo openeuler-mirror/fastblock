@@ -64,7 +64,7 @@ public:
         uint32_t io_count;
     };
 
-    static constexpr size_t metadata_header_size{sizeof(metadata)};
+    static constexpr size_t metadata_header_size{sizeof(metadata)}; // 24
 
 public:
 
@@ -363,7 +363,31 @@ public:
         return m->ParseFromArray(_serialized_buf.get(), _serialized_size - start_off);
     }
 
+    bool mark_bad_read(::ibv_send_wr* bad) noexcept {
+        return mark_bad_post(
+          bad,
+          _data_start_offset,
+          &(_datas[_data_start_offset]->wr),
+          _datas.size());
+    }
+
+    bool mark_bad_send(::ibv_send_wr* bad) noexcept {
+        return mark_bad_post(
+          bad,
+          _meta_start_offset,
+          &(_metas[_meta_start_offset]->wr),
+          _metas.size());
+    }
+
     ::ibv_send_wr* make_read_request(std::function<uint64_t()> wr_id_gen, const bool should_signal = false) noexcept {
+        SPDK_DEBUGLOG(msg,
+          "_data_start_offset: %ld, wrs_length: %ld\n",
+          _data_start_offset, _data_count);
+
+        if (_data_start_offset != 0) {
+            return &(_datas[_data_start_offset]->wr);
+        }
+
         auto* rm_infos = _rm_infos.get();
         decltype(_transport_size) tmp_sge_len{_transport_size};
         for (size_t i{0}; i < _data_count; ++i) {
@@ -389,6 +413,14 @@ public:
     }
 
     ::ibv_send_wr* make_send_request(std::function<uint64_t()> wr_id_gen, const bool should_signal = false) noexcept {
+        SPDK_DEBUGLOG(msg,
+          "_meta_start_offset: %ld, wrs_length: %ld\n",
+          _meta_start_offset, _meta_count);
+
+        if (_meta_start_offset != 0) {
+            return &(_metas[_meta_start_offset]->wr);
+        }
+
         for (auto* m : _metas) {
             m->wr.wr_id = wr_id_gen();
             m->wr.opcode = IBV_WR_SEND;
@@ -410,6 +442,32 @@ public:
     }
 
 private:
+
+    bool mark_bad_post(::ibv_send_wr* bad, size_t& offset_marker, ::ibv_send_wr* wrs, const size_t wrs_length) noexcept {
+        if (wrs_length == 1) {
+            return true;
+        }
+
+        if (offset_marker == wrs_length - 1) {
+            return true;
+        }
+
+        auto* curr_wr = wrs;
+        while (true) {
+            if (curr_wr == bad) {
+                return true;
+            }
+
+            if (not curr_wr) {
+                return false;
+            }
+
+            curr_wr = curr_wr->next;
+            ++offset_marker;
+        }
+
+        return false;
+    }
 
     [[gnu::always_inline]] size_t max_inline_size() noexcept {
         return _meta_pool->element_size() - inline_data_header_size;
@@ -596,6 +654,7 @@ private:
               msg,
               "_transport_size: %ld, _meta_count: %ld, _data_count: %ld, data_counter: %ld\n",
               _transport_size, _meta_count, _data_count, data_counter);
+
             SPDK_DEBUGLOG(
               msg,
               "correlation index: %d, metadata{io_count: %d, io_length: %d, rm_info_counter: %ld, serial_no: %d}, "
@@ -618,7 +677,8 @@ private:
                 auto trans_size_f = static_cast<double>(_transport_size);
                 auto io_count_f = std::ceil(trans_size_f / _data_chunk_size);
                 _data_count = static_cast<size_t>(io_count_f);
-                double num_meta_f = static_cast<double>(metadata_size()) / _meta_pool->element_size();
+                auto max_rm_info = static_cast<double>(max_remote_info_size());
+                auto num_meta_f = static_cast<double>(_data_count) / max_rm_info;
 
                 SPDK_DEBUGLOG(
                   msg,
@@ -671,6 +731,8 @@ private:
     rdma_read_tag_type* _head_tag{nullptr};
     rdma_read_tag_type* _tail_tag{nullptr};
     char* _data_head{nullptr};
+    size_t _meta_start_offset{0};
+    size_t _data_start_offset{0};
 
     static constexpr uint32_t _magic_no{0xffff};
 };
