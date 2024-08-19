@@ -14,6 +14,7 @@ target_link_libraries(fastblock-vhost
     osd_msg
     msg
     fbclient
+    get_core
   )
 
 install(TARGETS fastblock-vhost DESTINATION bin PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ

@@ -25,6 +25,7 @@
 #include "localstore/blob_manager.h"
 #include "localstore/storage_manager.h"
 #include "data_statistics.h"
+#include "utils/get_core.h"
 
 #include <spdk/string.h>
 
@@ -77,7 +78,7 @@ static bool g_force{false};
 static const char *g_uuid{nullptr};
 static std::string g_bdev_type;
 int g_id{-1};
-int g_pid_fd;
+int g_pid_fd = -1;
 
 static std::unique_ptr<::raft_service<::partition_manager>> global_raft_service{nullptr};
 static std::unique_ptr<::osd_service> global_osd_service{nullptr};
@@ -89,10 +90,7 @@ static int osd_exit_code{0};
 static stop_state cur_stop_state{stop_state::monitor_client};
 
 static std::string g_conf_path = "/var/lib/fastblock";
-
-#define MAX_CPU_CORES				128
 static int g_core_num = 2;
-static std::map<int, int> g_core_locks;
 
 static void
 block_usage(void) {
@@ -103,6 +101,7 @@ block_usage(void) {
     printf("-I, --id <osd id> the osd id\n");
     printf("-U, --uuid <uuid> the uuid of the osd, used with --mkfs\n");
     printf("-S, --core-num <num> the number of cpu core\n");
+    printf("-N, --numa-node <id> the id of numa node\n");
 }
 
 static struct option g_cmdline_opts[] = {
@@ -148,6 +147,13 @@ static struct option g_cmdline_opts[] = {
 		.flag = NULL,
 		.val = BLOCK_OPTION_CORE_NUM,
 	},
+#define BLOCK_OPTION_NUMA_NODE 'N'
+	{
+		.name = "numa-node",
+		.has_arg = 1,
+		.flag = NULL,
+		.val = BLOCK_OPTION_NUMA_NODE,
+	},
 	{
 		.name = NULL
 	}
@@ -163,6 +169,7 @@ save_pid(const char *pid_path)
     if (fd == -1){
         fprintf(stderr, "Couldn't create pid file '%s': %s\n", pid_path, strerror(errno));
         exit(EXIT_FAILURE);
+        return;
     }
 
     lock.l_type = F_WRLCK;
@@ -178,6 +185,7 @@ save_pid(const char *pid_path)
         }
         close(fd);
         exit(EXIT_FAILURE);
+        return;
     }
 
     std::string pid = std::to_string(getpid());
@@ -187,6 +195,7 @@ save_pid(const char *pid_path)
         std::cerr << "failed to write pid file" << std::endl;
         close(fd);
         exit(EXIT_FAILURE);
+        return;
     }
     g_pid_fd = fd;
 }
@@ -212,6 +221,9 @@ block_parse_arg(int ch, char *arg)
         break;
     case BLOCK_OPTION_CORE_NUM:
         g_core_num = atoi(arg);
+        break;
+    case BLOCK_OPTION_NUMA_NODE:
+        utils::g_numa_node = atoi(arg);
         break;
 	default:
         block_usage();
@@ -737,8 +749,10 @@ static void clean_file(){
     lock.l_start = 0;
     lock.l_len = 0;
 
-    fcntl(g_pid_fd, F_SETLK, &lock);
-    close(g_pid_fd);
+    if(g_pid_fd != -1){
+       fcntl(g_pid_fd, F_SETLK, &lock);
+       close(g_pid_fd);
+    }
     unlink(pid_path.c_str());
 }
 
@@ -843,59 +857,6 @@ static bool check_disk_addr_valid(std::string type, std::string addr){
     return true;
 }
 
-std::vector<int> get_free_core(int num){
-    std::vector<int> cores;
-    auto core_count = std::min(get_nprocs(), MAX_CPU_CORES);
-    int c = 0;
-    char core_name[40];
-    int core_fd;
-
-	struct flock core_lock = {
-		.l_type = F_WRLCK,
-		.l_whence = SEEK_SET,
-		.l_start = 0,
-		.l_len = 0,
-	};
-
-    for(int core = 0; core < core_count; core++){
-        if(c >= num)
-            break;
-        snprintf(core_name, sizeof(core_name), "/var/tmp/spdk_core_lock_%03d", core);
-        core_fd = open(core_name, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
-        if (core_fd == -1){
-            std::cerr << "could not open " << core_name << " : " << strerror(errno) << std::endl;
-            return cores;
-        }
-
-        if (fcntl(core_fd, F_SETLK, &core_lock) != 0) {
-            close(core_fd);
-            continue;
-        }
-        g_core_locks[core] = core_fd;
-        cores.push_back(core);
-        c++;
-    }
-    return std::move(cores);
-}
-
-std::optional<std::string> get_core_mask(uint64_t num) {
-    std::vector<int> cores = get_free_core(num);
-    if(cores.size() != num){
-        std::cerr << "could not get valid core" << std::endl;
-        return std::nullopt;
-    }
-
-    std::string core_mask = "[";
-    for(uint64_t i = 0; i < cores.size(); i++) {
-        if(i != 0)
-            core_mask += ",";
-        core_mask += std::to_string(cores[i]);
-    }
-    core_mask += "]"; 
-    return   core_mask; 
-}
-
-
 inline std::string core_size_path() {
     std::string file_name = g_conf_path + "/osd-" + std::to_string(g_id) + "/core_size";
     return file_name;
@@ -947,19 +908,6 @@ std::optional<int> get_core_size(){
     return core_size;
 }
 
-void unclaim_cores() {
-    char core_name[40];
-    for (auto [core, core_fd] : g_core_locks) {
-        if(core_fd != -1) {
-			snprintf(core_name, sizeof(core_name), "/var/tmp/spdk_core_lock_%03d", core);
-			close(core_fd);
-
-			g_core_locks[core] = -1;
-			unlink(core_name);
-		}
-	}
-}
-
 int
 main(int argc, char *argv[])
 {
@@ -974,7 +922,7 @@ main(int argc, char *argv[])
     opts.shutdown_cb = on_osd_stop;
 	opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
 
-	if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:I:U:fFS:", g_cmdline_opts,
+	if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:I:U:fFS:N:", g_cmdline_opts,
 				      block_parse_arg, block_usage)) !=
 	    SPDK_APP_PARSE_ARGS_SUCCESS) {
 		exit(rc);
@@ -990,9 +938,17 @@ main(int argc, char *argv[])
             std::cerr << "--uuid <uuid> must be set when --mkfs is set\n";
             return -EINVAL;
         }
-        auto core_count = std::min(get_nprocs(), MAX_CPU_CORES);
+        auto core_count = std::min(get_nprocs(), utils::MAX_CPU_CORES);
         if(g_core_num <= 0 || g_core_num > core_count){
             std::cerr << "--core-num <num> must be in (0, " << core_count << "]" << std::endl;
+            return -EINVAL;
+        }
+    }
+
+    if(utils::g_numa_node >= 0){
+        int max_node = utils::get_numa_node();
+        if(utils::g_numa_node > max_node){
+            std::cerr << "invalid --numa-node " << utils::g_numa_node << ": valid range [0, " << max_node << "]" << std::endl;
             return -EINVAL;
         }
     }
@@ -1073,7 +1029,7 @@ main(int argc, char *argv[])
 
     std::string reactor_mask;
     if (g_mkfs) {
-        auto core_mask = get_core_mask(g_core_num);
+        auto core_mask = utils::get_core_mask(g_core_num);
         if(!core_mask){
             return -EINVAL;
         }
@@ -1090,7 +1046,7 @@ main(int argc, char *argv[])
         }
 
         int core_size = opt.value();
-        auto core_mask = get_core_mask(core_size);
+        auto core_mask = utils::get_core_mask(core_size);
         if(!core_mask){
             return -EINVAL;
         }
@@ -1118,9 +1074,7 @@ main(int argc, char *argv[])
 
 	spdk_app_fini();
 	buffer_pool_fini();
-    if (g_mkfs) {
-        unclaim_cores();
-    }
+    utils::unclaim_cores();
 
 	return rc;
 }
