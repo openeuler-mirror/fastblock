@@ -25,6 +25,7 @@ disks=""
 bdevtype="aio"
 remoteIp=""
 defaultConfigFile="/etc/fastblock/fastblock.json"
+cores=2
 
 
 installPrefix="/usr/local/bin"
@@ -44,6 +45,8 @@ usage() {
     echo "  -d, --disks: disks separated by comma(,)"
     echo "  -t, --bdevtype: type of bdev, can be nvme or aio, default to aio"
     echo "  -m, --mode: deployment mode, can be dev or pro, default to dev"
+    echo "  -C, --cores: cores for the osd, determined when mkfs, the osd will always use $cores cores"
+
     exit 1
 }
 
@@ -57,6 +60,10 @@ while [ "$#" -gt 0 ]; do
         -c|--count)
         shift
             osdcount="$1"
+            ;;
+        -C|--cores)
+        shift
+            cores="$1"
             ;;
         -p|--pgcount)
         shift
@@ -382,7 +389,7 @@ function addNewOsd() {
         fi
 
         echo intializing localstore of osd-"$_osdid"
-        /usr/local/bin/fastblock-osd -m '[1]' -C $defaultConfigFile --id $_osdid --mkfs --force --uuid $_uuid
+        /usr/local/bin/fastblock-osd -C $defaultConfigFile --id $_osdid --mkfs --force --uuid $_uuid -S $cores
 
         echo "starting osd-$_osdid"
         systemctl start fastblock-osd@"$_osdid".service
@@ -406,7 +413,7 @@ function addNewOsd() {
         fi
 
         echo intializing localstore of osd-"$_osdid" "on" $_remote_ip
-        ssh $_remote_ip "/usr/local/bin/fastblock-osd -m '[1]' -C $defaultConfigFile --id $_osdid --mkfs --force --uuid $_uuid"
+        ssh $_remote_ip "/usr/local/bin/fastblock-osd -C $defaultConfigFile --id $_osdid --mkfs --force --uuid $_uuid -S $cores"
         echo "starting osd-$_osdid on $_remote_ip"
         ssh $_remote_ip "systemctl start fastblock-osd@$_osdid.service"
     fi

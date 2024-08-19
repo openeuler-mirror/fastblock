@@ -98,21 +98,22 @@ make install
 最简测试开发环境搭建可参考[测试开发环境搭建](https://gitee.com/openeuler/fastblock/wikis/%E6%9C%80%E7%AE%80%E5%BC%80%E5%8F%91%E7%8E%AF%E5%A2%83%E6%90%AD%E5%BB%BA%E5%8F%8A%E4%B8%8A%E6%89%8B%E6%8C%87%E5%8D%97)   
 另外，可通过vstart.sh脚本搭建一个测试开发环境，即使您没有RDMA网卡也没有NVMe磁盘，也可以很方便的搭建一个环境(以下命令行都需要make install将二进制安装到系统目录):  
 ```
-# 搭建一个测试开发环境，有3osd, 跑三副本，使用网卡为mlx5_0, 提供三块磁盘
-./vstart.sh -m dev -t aio -c 3 -r 3 -n mlx5_0 -d /dev/sda,/dev/sdb,/dev/sdc
-# 搭建一个测试开发环境，有3osd, 跑三副本，使用网卡为mlx5_0, 提供三块nvme磁盘并使用nvme bdev
-./vstart.sh -m dev -t nvme -c 3 -r 3 -n mlx5_0 -d 0000:b1:00.0,0000:b2:00.0,0000:b0:00.0
-# 在没有RDMA网卡的虚拟机上，跑一个3osd、三副本的集群
-./vstart.sh -m dev -c 3 -r 3
+# 注意当前版本中，指定了osd占用的cpu个数(通过-C参数)之后，便不可更改，osd后续都会使用创建集群时指定的cpu个数
+# 搭建一个测试开发环境，有3osd, 跑三副本，使用网卡为mlx5_0, 提供三块磁盘, 每个osd占用2个核
+./vstart.sh -m dev -t aio -c 3 -r 3 -n mlx5_0 -d /dev/sda,/dev/sdb,/dev/sdc -C 2
+# 搭建一个测试开发环境，有3osd, 跑三副本，使用网卡为mlx5_0, 提供三块nvme磁盘并使用nvme bdev, 每个osd占用2个核
+./vstart.sh -m dev -t nvme -c 3 -r 3 -n mlx5_0 -d 0000:b1:00.0,0000:b2:00.0,0000:b0:00.0 -C 2
+# 在没有RDMA网卡的虚拟机上，跑一个3osd、三副本的集群, 每个osd占用2个核
+./vstart.sh -m dev -c 3 -r 3 -C 2
 # 在172.31.4.144，172.31.4.145，172.31.4.146三台物理服务器上跑一个生产环境，提供三块nvme磁盘并使用nvme bdev(运行下面四个命令行):
 ./vstart.sh -m pro -M 172.31.4.144
-./vstart.sh -m pro -n mlx5_3 -t nvme -d 0000:b0:00.0,0000:da:00.0,0000:19:00.0 -i 172.31.4.144
-./vstart.sh -m pro -n mlx5_3 -t nvme -d 0000:b0:00.0,0000:da:00.0,0000:19:00.0 -i 172.31.4.145
-./vstart.sh -m pro -n mlx5_3 -t nvme -d 0000:b0:00.0,0000:da:00.0,0000:19:00.0 -i 172.31.4.146
+./vstart.sh -m pro -n mlx5_3 -t nvme -d 0000:b0:00.0,0000:da:00.0,0000:19:00.0 -i 172.31.4.144 -C 2
+./vstart.sh -m pro -n mlx5_3 -t nvme -d 0000:b0:00.0,0000:da:00.0,0000:19:00.0 -i 172.31.4.145 -C 2
+./vstart.sh -m pro -n mlx5_3 -t nvme -d 0000:b0:00.0,0000:da:00.0,0000:19:00.0 -i 172.31.4.146 -C 2
 ```
 
 # 部署、性能测试及故障恢复测试
-参考[部署、性能测试和故障恢复测试报告](docs/performance_failover_test_0628.md "性能测试报告").
+参考[部署、性能测试和故障恢复测试报告](docs/performance_failover_test_0628.md "性能测试报告"), 最新版本性能测试报告见[最新测试报告](docs/performance_test_240731.md).
 
 # future works
 - 实现卷快照、快照组等功能
