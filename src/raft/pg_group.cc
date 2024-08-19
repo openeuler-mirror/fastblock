@@ -151,6 +151,10 @@ void shard_manager::start(){
 void shard_manager::stop(utils::complete_fun fun, void *arg)
 {
     spdk_poller_unregister(&_heartbeat_timer);
+    if(_pgs.size() == 0){
+        fun(arg, 0);
+        return;
+    }
     utils::multi_complete *complete = new utils::multi_complete(_pgs.size(), 1, fun, arg);
     for(auto &[name, raft] : _pgs){
         raft->stop(utils::complete_done, complete);
