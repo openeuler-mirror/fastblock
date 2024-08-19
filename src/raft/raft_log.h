@@ -77,7 +77,6 @@ public:
     void disk_append(raft_index_t start_idx, raft_index_t end_idx, utils::context* complete){
         std::vector<std::shared_ptr<raft_entry_t>> raft_entries;
         _entries.get_between(start_idx, end_idx, raft_entries);
-        SPDK_INFOLOG(pg_group, "start_idx:%lu end_idx:%lu.\n", start_idx, end_idx);
 
         if(!_log){
             complete->complete(0);
@@ -89,12 +88,12 @@ public:
             log_entries.emplace_back(raft_entry_to_log_entry(*raft_entry));
         }
 
-        SPDK_INFOLOG(pg_group, "disk_append size:%lu.\n", log_entries.size());
+        SPDK_INFOLOG(pg_group, "disk_append [%ld, %ld] size:%lu.\n", start_idx, end_idx, log_entries.size());
         _log->append(
             log_entries,
-            [log_entries](void *arg, int rberrno) mutable
+            [log_entries, start_idx, end_idx](void *arg, int rberrno) mutable
             {
-                SPDK_INFOLOG(pg_group, "after disk_append.\n");
+                SPDK_INFOLOG(pg_group, "after disk_append [%ld, %ld]\n", start_idx, end_idx);
                 utils::context *ctx = (utils::context *)arg;
                 for (auto &entry : log_entries)
                 {

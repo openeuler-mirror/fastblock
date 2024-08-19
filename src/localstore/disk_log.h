@@ -38,6 +38,11 @@ class disk_log;
 using log_op_complete = std::function<void (void *arg, int rberrno)>;
 using log_op_with_entry_complete = std::function<void (void *arg, std::vector<log_entry_t>&&, int rberrno)>;
 
+//blob使用空间率超过此值，会触发trim
+constexpr float  TRIM_TRIGGER_PERCENTAGE  =  0.5;
+//此值为一次trim掉blob总空间的比例
+constexpr float  TRIM_PERCENTAGE  =  0.2;
+
 struct log_append_ctx {
   std::vector<std::tuple<uint64_t,uint64_t,uint64_t,uint64_t>> idx_pos;
   std::vector<spdk_buffer> headers;
@@ -256,9 +261,19 @@ public:
           // trim前： lowest_index: 100  apply_index: 1700
           //   trim:  从 100 到 700
           // trim后： lowest_index: 701  apply_index: 1700 (一共保留1000条)
+          SPDK_INFOLOG(disk_log, "do trim [%lu, %lu]\n", _lowest_index, _trim_index - 1000);
           trim_back(_lowest_index, _trim_index - 1000, [](void *, int){}, nullptr);
           _trims_count++;
           return true;
+      } else if(_rblob->should_trim(TRIM_TRIGGER_PERCENTAGE)) {
+          auto trim_pos = _rblob->get_trim_pos(TRIM_PERCENTAGE);
+          auto index = get_near_up_index(trim_pos);
+          if(index > _trim_index)
+              index = _trim_index;
+          if(index != 0){
+              SPDK_INFOLOG(disk_log, "do trim [%lu, %lu]\n", _lowest_index, index);
+              trim_back(_lowest_index, index, [](void *, int){}, nullptr);
+          }
       }
       return false;
     }
@@ -443,6 +458,24 @@ private:
     void maybe_index(uint64_t index, log_position&& log_pos) {
         _highest_index = std::max(_highest_index, index);
         _index_map.emplace(index, std::move(log_pos));
+    }
+
+    //获取最接近且大于等于pos位置的index
+    uint64_t get_near_up_index(uint64_t pos){
+        auto it =  _index_map.begin();
+        while(it != _index_map.end()){
+            if(it->second.pos >= pos){
+                break;
+            }
+            it++;
+        }
+        if(it == _index_map.end() && !_index_map.empty()){
+            it--;
+        }
+        if(it != _index_map.end()){
+            return it->first;
+        }
+        return 0;
     }
 };
 
