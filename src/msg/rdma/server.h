@@ -435,29 +435,36 @@ private:
     }
 
     auto send_metadata_request(connection_record* conn, transport_data* request_data) {
-        return send_request([this, conn, request_data] (bool should_signal) {
+        auto ret = send_request([this, conn, request_data] (bool should_signal) {
             return request_data->make_send_request([this, conn] () noexcept {
                 conn->dispatch_id.inc_request_id();
                 return conn->dispatch_id.value();
             }, should_signal);
         }, conn, request_data->meatdata_capacity());
+
+        if (ret) { request_data->mark_bad_send(ret->bad_wr); }
+
+        return ret;
     }
 
     auto send_read_request(connection_record* conn, transport_data* request_data) {
-        return send_request([this, conn, request_data] (bool should_signal) {
+        auto ret = send_request([this, conn, request_data] (bool should_signal) {
             return request_data->make_read_request([this, conn] () noexcept {
                 conn->dispatch_id.inc_request_id();
                 return conn->dispatch_id.value();
             }, should_signal);
         }, conn, request_data->data_capacity());
+
+        if (ret) { request_data->mark_bad_read(ret->bad_wr); }
+
+        return ret;
     }
 
-    std::optional<std::error_code> send_reply(rpc_task* task) {
+    auto send_reply(rpc_task* task) {
         auto s = task->reply_status.value();
         SPDK_DEBUGLOG(msg, "send reply with status %s\n", string_status(s));
         auto reply_status = std::make_unique<reply_meta>(
           static_cast<std::underlying_type_t<status>>(s));
-        std::optional<std::error_code> rc;
         if (s != status::success) {
             task->response_data->serialize_data(reply_status.get());
         } else {
@@ -597,7 +604,7 @@ private:
 
         auto err = send_reply(task.get());
         if (err) {
-            if (err->value() == ENOMEM) {
+            if (err->err.value() == ENOMEM) {
                 SPDK_NOTICELOG(
                   "Post the reply wr of request %u return enomem\n",
                   task->id);
@@ -606,7 +613,7 @@ private:
 
             SPDK_ERRLOG(
              "ERROR: Send reply of task '%d' error '%s'\n",
-              task->id, err->message().c_str());
+              task->id, err->err.message().c_str());
             close_connection(task->conn.get());
 
             return SPDK_POLLER_BUSY;
@@ -673,7 +680,7 @@ private:
 
         SPDK_DEBUGLOG(msg, "post read wr of task %d\n", task->id);
         auto rc = send_read_request(task->conn.get(), task->request_data.get());
-        if (rc and rc->value() == ENOMEM) {
+        if (rc and rc->err.value() == ENOMEM) {
             SPDK_NOTICELOG(
               "Post the read wr of request %d return enomem\n",
               task->id);
@@ -683,7 +690,7 @@ private:
         if (rc) {
             SPDK_ERRLOG(
               "ERROR: Post read request of rpc task '%d' error, '%s'\n",
-              task->id, rc->message().c_str());
+              task->id, rc->err.message().c_str());
             close_connection(task->conn.get());
         }
         _read_task_list.push_back(std::move(task));
@@ -791,6 +798,13 @@ private:
                 _task_list.push_back(std::move(task));
             } else if (task_it == conn->rpc_tasks.end()) {
                 SPDK_NOTICELOG("rpc task with id %d has been set to timeout state, going to skip this transfered data\n", task_id);
+                auto rc = post_recv(conn.get(), recv_ctx);
+                if (rc) {
+                    SPDK_ERRLOG("ERROR: Post receive wr error, '%s'\n", rc->message().c_str());
+                    close_connection(conn.get());
+                }
+
+                return true;
             }
 
             SPDK_DEBUGLOG(msg, "handle rpc task with id %d, _task_list size is %lu\n", task_id, _task_list.size());

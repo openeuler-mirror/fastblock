@@ -261,21 +261,29 @@ public:
         }
 
         auto send_metadata_request(transport_data* trans_data) {
-            return send_request([this, trans_data] (bool should_signal) {
+            auto ret = send_request([this, trans_data] (bool should_signal) {
                 return trans_data->make_send_request([this] () noexcept {
                     _dispatch_id.inc_request_id();
                     return _dispatch_id.value();
                 }, should_signal);
             }, trans_data->meatdata_capacity());
+
+            if (ret) { trans_data->mark_bad_send(ret->bad_wr); }
+
+            return ret;
         }
 
         auto send_read_request(transport_data* trans_data) {
-            return send_request([this, trans_data] (bool should_signal) {
+            auto ret = send_request([this, trans_data] (bool should_signal) {
                 return trans_data->make_read_request([this] () noexcept {
                     _dispatch_id.inc_request_id();
                     return _dispatch_id.value();
                 }, should_signal);
             }, trans_data->data_capacity());
+
+            if (ret) { trans_data->mark_bad_read(ret->bad_wr); }
+
+            return ret;
         }
 
         int process_request_once(std::unique_ptr<rpc_request>& req) {
@@ -319,7 +327,7 @@ public:
               _sock->peer_address().c_str());
 
             auto err = send_metadata_request(req_ptr->request_data.get());
-            if (err and err->value() == ENOMEM) {
+            if (err and err->err.value() == ENOMEM) {
                 SPDK_NOTICELOG(
                   "Post the metadata of request %d return enomem, onflight_send_wr: %d\n",
                   req_ptr->request_key, _onflight_send_wr);
@@ -329,9 +337,9 @@ public:
             if (err) {
                 SPDK_ERRLOG(
                   "ERROR: Post send work request error '%s'\n",
-                  err->message().c_str());
+                  err->err.message().c_str());
                 _ctrl_ops.push_back(std::make_unique<control_operation>(state::shutdown));
-                return err->value();
+                return err->err.value();
             }
 
             _unresponsed_requests.emplace(req_ptr->request_key, std::move(req));
@@ -645,7 +653,7 @@ public:
             auto head = _free_server_list.front();
             auto err = send_finish_request(head);
             if (err) {
-                if (err->value() == ENOMEM) {
+                if (err->err.value() == ENOMEM) {
                     SPDK_NOTICELOG(
                       "Post free wr of request %u return enomem, onflight_send_wr: %d\n",
                       head, _onflight_send_wr);
@@ -654,7 +662,7 @@ public:
 
                 SPDK_ERRLOG(
                   "ERROR: Post send work request error '%s'\n",
-                  err->message().c_str());
+                  err->err.message().c_str());
                 _ctrl_ops.push_back(std::make_unique<control_operation>(state::shutdown));
             }
 
@@ -670,16 +678,16 @@ public:
             auto& req = _send_read_requests.front();
             auto err = send_read_request(req->reply_data.get());
             if (err) {
-                if (err->value() == ENOMEM) {
+                if (err->err.value() == ENOMEM) {
                     SPDK_NOTICELOG(
-                      "nomem for post read wr of request %d, on_flight_send_wr: %d\n",
+                      "enomem for post read wr of request %d, on_flight_send_wr: %d\n",
                       req->request_key, _onflight_send_wr);
                     return true;
                 }
 
                 SPDK_ERRLOG(
                   "ERROR: Post send work request error '%s'\n",
-                  err->message().c_str());
+                  err->err.message().c_str());
                 _ctrl_ops.push_back(std::make_unique<control_operation>(state::shutdown));
                 return true;
             }
