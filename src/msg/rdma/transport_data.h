@@ -120,9 +120,24 @@ public:
 
 public:
 
+    static auto read_metacount(memory_pool<::ibv_recv_wr>::net_context* ctx) noexcept {
+        auto* data = reinterpret_cast<metadata*>(ctx->mr->addr);
+        return data->metadata_count;
+    }
+
+    static auto read_serial_no(memory_pool<::ibv_recv_wr>::net_context* ctx) noexcept {
+        auto* data = reinterpret_cast<metadata*>(ctx->mr->addr);
+        return data->serial_no;
+    }
+
     static bool is_inlined(memory_pool<::ibv_recv_wr>::net_context* ctx) noexcept {
         auto* data = reinterpret_cast<inline_data*>(ctx->mr->addr);
         return static_cast<bool>(data->is_inlined);
+    }
+
+    static bool is_new(memory_pool<::ibv_recv_wr>::net_context* ctx) noexcept {
+        auto* data = reinterpret_cast<metadata*>(ctx->mr->addr);
+        return data->serial_no == 0;
     }
 
     static status read_reply_meta(memory_pool<::ibv_recv_wr>::net_context* ctx) noexcept {

@@ -255,7 +255,8 @@ private:
         SPDK_ERRLOG("ERROR: Timeout on task %d\n", task->id);
         task->reply_status = status::request_timeout;
         make_response_data(task.get(), task->reply_status.value());
-         _reply_task_list.push_back(std::move(task));
+        task->conn->rpc_tasks.erase(task->id);
+        _reply_task_list.push_back(std::move(task));
     }
 
     void close_connection(connection_record* conn) {
@@ -585,12 +586,6 @@ private:
         }
 
         auto& task = _reply_task_list.front();
-        if (is_timeout(task.get())) {
-            handle_timeout_task(std::move(task));
-            _task_list.pop_front();
-            return SPDK_POLLER_BUSY;
-        }
-
         if (not task->reply_status) {
             return SPDK_POLLER_IDLE;
         }
@@ -732,13 +727,16 @@ private:
 
             auto recv_ctx = it->second;
             auto task_id = transport_data::read_correlation_index(recv_ctx);
+            bool is_new_task = transport_data::is_new(recv_ctx);
+            bool is_inlined = transport_data::is_inlined(recv_ctx);
             bool is_no_content = transport_data::is_no_content(recv_ctx);
             SPDK_DEBUGLOG(
               msg,
-              "handle cqe of wr id %s on rdma cm id %p, is no content: %d\n",
-              work_request_id::fmt(cqe->wr_id).c_str(),
-              conn->sock->id(),
-              transport_data::is_no_content(recv_ctx));
+              "handle cqe of wr id %s on rdma cm id %p, is no content: %d, "
+              "is new task: %d, is inlined: %d, serial_no: %d, metadata_count: %d\n",
+              work_request_id::fmt(cqe->wr_id).c_str(), conn->sock->id(), is_no_content,
+              is_new_task, is_inlined, transport_data::read_serial_no(recv_ctx),
+              transport_data::read_metacount(recv_ctx));
 
             if (is_no_content) {
                 task_id = ::be32toh(cqe->imm_data);
@@ -756,7 +754,7 @@ private:
             SPDK_DEBUGLOG(msg, "cqe on task id %d\n", task_id);
             auto task_it = conn->rpc_tasks.find(task_id);
 
-            if (task_it == conn->rpc_tasks.end()) {
+            if (is_new_task or is_inlined) {
                 SPDK_DEBUGLOG(msg, "new rpc task with correlation index %d\n", task_id);
                 auto task = std::make_unique<rpc_task>(_task_id_gen++, task_id, conn);
                 task->this_server = this; // FIXME: 这里 this 指向的 server 可能已经析构了，在访问时。
@@ -767,7 +765,7 @@ private:
                     return true;
                 }
 
-                if (transport_data::is_inlined(recv_ctx)) {
+                if (is_inlined) {
                     auto* inlined_data = transport_data::read_inlined_content(recv_ctx);
                     auto* meta = reinterpret_cast<request_meta*>(inlined_data);
                     SPDK_DEBUGLOG(
@@ -791,11 +789,14 @@ private:
                 auto [it, _] = conn->rpc_tasks.emplace(task_id, task.get());
                 task_it = it;
                 _task_list.push_back(std::move(task));
+            } else if (task_it == conn->rpc_tasks.end()) {
+                SPDK_NOTICELOG("rpc task with id %d has been set to timeout state, going to skip this transfered data\n", task_id);
             }
 
             SPDK_DEBUGLOG(msg, "handle rpc task with id %d, _task_list size is %lu\n", task_id, _task_list.size());
             auto* task = task_it->second;
             task->request_data->from_net_context(recv_ctx);
+
             auto rc = post_recv(conn.get(), recv_ctx);
             if (rc) {
                 SPDK_ERRLOG("ERROR: Post receive wr error, '%s'\n", rc->message().c_str());
