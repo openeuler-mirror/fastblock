@@ -46,7 +46,8 @@
 #include <sys/sysinfo.h>
 
 enum class stop_state {
-    monitor_client = 1,
+    data_statistics = 1,
+    monitor_client,
     partition_manager,
     connection_cache,
     rpc_server,
@@ -87,7 +88,7 @@ static std::shared_ptr<::partition_manager> global_pm{nullptr};
 static std::shared_ptr<monitor::client> monitor_client{nullptr};
 static server_t osd_server{};
 static int osd_exit_code{0};
-static stop_state cur_stop_state{stop_state::monitor_client};
+static stop_state cur_stop_state{stop_state::data_statistics};
 
 static std::string g_conf_path = "/var/lib/fastblock";
 static int g_core_num = 2;
@@ -782,9 +783,18 @@ static void on_pm_closed([[maybe_unused]] void *cb_arg, int bserrno) {
     on_osd_stop();
 }
 
-static void on_osd_stop() noexcept {
+static void osd_stop(void *arg) noexcept {
     SPDK_NOTICELOG("Stop the osd service, thread id %lu\n", utils::get_spdk_thread_id());
     switch (cur_stop_state) {
+    case stop_state::data_statistics: {
+        cur_stop_state = stop_state::monitor_client;
+        if(g_data_statistics){
+            SPDK_NOTICELOG("Stopping the data statistics\n");
+            g_data_statistics->stop(on_osd_stop);
+            return;
+        }
+        [[fallthrough]];
+    }
     case stop_state::monitor_client: {
         cur_stop_state = stop_state::partition_manager;
         if (monitor_client) {
@@ -828,6 +838,16 @@ static void on_osd_stop() noexcept {
     }
     default:
         return;
+    }
+}
+
+static void on_osd_stop() noexcept {
+    auto app_thread = spdk_thread_get_app_thread();
+    auto cur_thread = spdk_get_thread();
+    if(cur_thread == app_thread){
+        osd_stop(nullptr);
+    } else {
+        spdk_thread_send_msg(app_thread, osd_stop, nullptr);
     }
 }
 

@@ -117,6 +117,10 @@ void partition_manager::start(utils::context *complete, std::shared_ptr<monitor:
 }
 
 void partition_manager::stop_stm(uint64_t shard_id, utils::complete_fun fun, void *arg) {
+    if(_sm_table[shard_id].size() == 0){
+        fun(arg, 0);
+        return;
+    }
     utils::multi_complete *complete = new utils::multi_complete(_sm_table[shard_id].size(), 1, fun, arg);
     for(auto& [_, stm] : _sm_table[shard_id]){
         stm->stop(utils::complete_done, complete);
@@ -130,6 +134,10 @@ void partition_manager::stop(utils::complete_fun fun, void *arg){
     _state = osd_state::OSD_DOWN;
     uint64_t shard_id = 0;
     auto shard_num = _sm_table.size();
+    if(shard_num == 0){
+        fun(arg, 0);
+        return;
+    }
     utils::multi_complete *complete = new utils::multi_complete(shard_num, _shard_cores.size(), fun, arg);
     for(shard_id = 0; shard_id < shard_num; shard_id++){
         _shard.invoke_on(
@@ -139,6 +147,7 @@ void partition_manager::stop(utils::complete_fun fun, void *arg){
             _pgs.stop(
               shard_id,
               [this, shard_id](void *arg, int serrno){
+                SPDK_INFOLOG(osd, "stop pg in shard %lu, serrno %d\n", shard_id, serrno);
                 utils::multi_complete *complete = (utils::multi_complete *)arg;
                 if(serrno != 0){
                     complete->complete(serrno);

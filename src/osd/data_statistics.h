@@ -13,6 +13,7 @@
 #include <spdk/thread.h>
 #include <memory>
 #include <map>
+#include <optional>
 
 #include "utils/utils.h"
 
@@ -24,8 +25,10 @@ class data_statistics{
 public:
     data_statistics();
 
-    void stop() {
+    void stop(std::optional<std::function<void()>>&& cb) {
         spdk_poller_unregister(&_timer);
+        _ios.clear();
+        (cb.value())();
     }
 
     void set_mon_client(std::shared_ptr<monitor::client> mon_client){
