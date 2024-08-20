@@ -131,12 +131,6 @@ public:
         using pg_id_type = int32_t;
         using version_type = int64_t;
 
-        // struct pg_info {
-            // pg_id_type pg_id{0};
-            // int64_t   version{0};
-            // std::vector<osd_map::osd_id_type> osds{};
-        // };
-
         struct pool_update_info{
             version_type pool_version{0};
             /* key为pg_id
@@ -215,9 +209,11 @@ public:
         cluster(
           const std::vector<endpoint>& eps,
           const size_t max_fail,
-          const std::chrono::system_clock::duration dur,
+          const std::chrono::system_clock::duration reconnect_interval,
           const bool auto_reconnect = true)
-          : _auto_reconnect{auto_reconnect}, _max_fail{max_fail}, _log_time_check{dur} {
+          : _auto_reconnect{auto_reconnect}
+          , _max_fail{max_fail}
+          , _reconnect_interval{reconnect_interval} {
             for (auto& ep : eps) {
                 _eps.emplace_back(ep, 0);
             }
@@ -259,38 +255,45 @@ public:
                     ep.fail_count = 0;
                     _current_ep = &ep;
                     _is_connected = true;
-                    SPDK_INFOLOG(mon, "Connected to %s:%u\n", ep.ep.host.c_str(), ep.ep.port);
-                    break;
+                    SPDK_NOTICELOG("Connected to montior server %s:%u\n", ep.ep.host.c_str(), ep.ep.port);
+                    return;
                 }
             }
 
             if (not _sock) {
-                if (_log_time_check.check_and_update()) {
-                    SPDK_ERRLOG("ERROR: Connect to monitor cluster fail\n");
-                }
+                SPDK_ERRLOG("ERROR: Connect to monitor cluster fail\n");
                 _is_connected = false;
             }
         }
 
-        void inc_fail() noexcept {
-            if (not _current_ep and _auto_reconnect) {
-                connect();
+        void reconnect() {
+            _is_connected = false;
+            if (not _auto_reconnect) {
                 return;
             }
-            ++_current_ep->fail_count;
 
-            if (_current_ep->fail_count >= _max_fail) {
-                if (_log_time_check.check_and_update()) {
-                    SPDK_NOTICELOG(
-                      "Current connection to monitor(%s:%u) has exceed max fail count(%lu)\n",
-                      _current_ep->ep.host.c_str(), _current_ep->ep.port, _max_fail);
-                }
-                _is_connected = false;
-
-                if (_auto_reconnect) {
-                    connect();
-                }
+            if (_current_ep and _current_ep->fail_count >= _max_fail) {
+                SPDK_ERRLOG(
+                  "Current connection to monitor(%s:%u) has exceed max fail count(%lu)\n",
+                  _current_ep->ep.host.c_str(), _current_ep->ep.port, _max_fail);
+                throw std::runtime_error{"Fail to connect to monitor cluster"};
             }
+
+            if (not _reconnect_at) {
+                _reconnect_at = std::chrono::system_clock::now() + _reconnect_interval;
+                _reconnect_interval *= 2;
+
+                return;
+            }
+
+            if (std::chrono::system_clock::now() >= *_reconnect_at) {
+                _reconnect_at = std::nullopt;
+            } else {
+                return;
+            }
+
+            connect();
+            ++_current_ep->fail_count;
         }
 
         uint16_t current_node_port() noexcept {
@@ -301,29 +304,33 @@ public:
             return _current_ep->ep.port;
         }
 
-        auto writev(::iovec* iov, int iov_cnt) noexcept {
-            if (not _sock) { inc_fail(); }
+        auto writev(::iovec* iov, int iov_cnt) {
+            if (not _sock) {
+                reconnect();
+                return ssize_t{0};
+            }
 
             auto rc = ::spdk_sock_writev(_sock, iov, iov_cnt);
             if (rc == -1) {
-                inc_fail();
+                reconnect();
             }
 
             return rc;
         }
 
-        auto recv(void* buf, size_t len) noexcept {
-            if (not _sock) { inc_fail(); }
+        auto recv(void* buf, size_t len) {
+            if (not _sock) {
+                reconnect();
+                return ssize_t{0};
+            }
 
             auto rc = ::spdk_sock_recv(_sock, buf, len);
             if (rc == -1) {
                 if (errno == EAGAIN or errno == EWOULDBLOCK) {
-                    return decltype(rc){0};
+                    return ssize_t{0};
                 }
-
-                inc_fail();
+                reconnect();
             }
-
             return rc;
         }
 
@@ -336,7 +343,8 @@ public:
         count_endpoint* _current_ep{nullptr};
         ::spdk_sock_opts _opts{};
         ::spdk_sock* _sock{nullptr};
-        utils::time_check _log_time_check;
+        std::optional<std::chrono::system_clock::time_point> _reconnect_at{std::nullopt};
+        std::chrono::system_clock::duration _reconnect_interval{};
 
         static constexpr char* _impl_name = (char*)"posix";
     };
@@ -351,15 +359,14 @@ public:
       std::optional<on_new_pg_callback_type>&& new_pg_cb = std::nullopt,
       std::optional<on_cluster_map_initialized_type>&& cluster_map_init_cb = std::nullopt,
       int osd_id = -1,
-      const size_t max_fail = 5,
-      const bool auto_reconnect = true,
-      const std::chrono::system_clock::duration dur = std::chrono::seconds{10})
-      : _cluster{std::make_unique<cluster>(endpoints, max_fail, dur, auto_reconnect)}
+      const size_t max_fail = 10,
+      const std::chrono::system_clock::duration reconn_interval = std::chrono::seconds{1},
+      const bool auto_reconnect = true)
+      : _cluster{std::make_unique<cluster>(endpoints, max_fail, reconn_interval, auto_reconnect)}
       , _self_osd_id{osd_id}
       , _pm{std::move(pm)}
       , _current_thread{::spdk_get_thread()}
       , _current_core{::spdk_env_get_current_core()}
-      , _log_time_check{dur}
       , _new_pg_cb{std::move(new_pg_cb)}
       , _cluster_map_init_cb{std::move(cluster_map_init_cb)} {}
 
@@ -525,7 +532,7 @@ private:
     pg_map _pg_map{};
 
     std::unique_ptr<char[]> _response_buffer{
-      std::make_unique<char[]>(_buffer_size)};
+    std::make_unique<char[]>(_buffer_size)};
 
     ::iovec _request_iov{};
     size_t _last_request_serialize_size{0};
@@ -539,8 +546,6 @@ private:
     std::list<std::unique_ptr<msg::Request>> _internal_requests{};
 
     size_t _request_counter{0};
-
-    utils::time_check _log_time_check;
 
     std::optional<on_new_pg_callback_type> _new_pg_cb{std::nullopt};
     std::chrono::system_clock::time_point _last_cluster_map_at{};

@@ -250,7 +250,12 @@ void client::send_cluster_map_request() {
 }
 
 bool client::core_poller_handler() {
-    return handle_response() | consume_request();
+    auto is_busy = handle_response() | consume_request();
+    if (not _cluster->is_connected()) {
+        _cluster->reconnect();
+        return true;
+    }
+    return is_busy;
 }
 
 client::response_status
@@ -882,12 +887,6 @@ int client::send_request(std::unique_ptr<msg::Request> req, bool send_directly) 
 }
 
 int client::send_request(msg::Request* req, bool send_directly) {
-    if(req->union_case() == msg::Request::UnionCase::kPgMemberChangeFinishRequest){
-        auto &pg_req = req->pg_member_change_finish_request();
-        SPDK_DEBUGLOG(mon, "in pg %lu.%lu, send PgMemberChangeFinishRequest to mon result %d, send_directly %d\n",
-          pg_req.poolid(), pg_req.pgid(), pg_req.result(), send_directly);
-    }
-
     if (not send_directly) {
         auto message_size = req->ByteSizeLong();
         auto serialized_size = message_size + _meta_length;
@@ -1067,20 +1066,20 @@ bool client::handle_response() {
     if (rc == 0) [[likely]] {
         return false;
     }
-    
+
     if (rc < 0) [[unlikely]] {
         SPDK_ERRLOG(
-          "ERROR: spdk_sock_recv() failed, errno %d: %s\n",
-          errno, ::spdk_strerror(errno));
+          "ERROR: spdk_sock_recv() failed, rc is %ld, errno %d: %s\n",
+          rc, errno, ::spdk_strerror(errno));
 
         return false;
-    }     
+    }
 
-    _read_bytes += rc;   
+    _read_bytes += rc;
     SPDK_DEBUGLOG(mon, "_read_bytes %ld, _should_read_bytes %ld\n", _read_bytes, _should_read_bytes);
     if (_read_bytes < _should_read_bytes){
         return true;
-    } 
+    }
 
     _read_bytes = _read_bytes - _should_read_bytes;
     if(_read_bytes < 0){
@@ -1120,14 +1119,16 @@ void client::enqueue_request(client::request_context* ctx) {
 }
 
 void client::consume_general_request(bool is_cached) {
+    if (not _cluster->is_connected()) {
+        return;
+    }
+
     auto& head_req = _requests.front();
     auto rc = send_request(head_req->req.get(), is_cached);
 
     if (rc < 0) {
         _cached = client::cached_request_class::general;
-        if (_log_time_check.check_and_update()) {
-            SPDK_ERRLOG("ERROR: Send request error, return code is %d\n", rc);
-        }
+        SPDK_ERRLOG("ERROR: Send request error, return code is %d\n", rc);
     } else {
         _cached = client::cached_request_class::none;
         _on_flight_requests.push_back(std::move(head_req));
@@ -1136,6 +1137,10 @@ void client::consume_general_request(bool is_cached) {
 }
 
 void client::consume_internal_request(bool is_cached) {
+    if (not _cluster->is_connected()) {
+        return;
+    }
+
     int rc{0};
     if (is_cached) {
         rc = send_request(nullptr, is_cached);
@@ -1146,9 +1151,7 @@ void client::consume_internal_request(bool is_cached) {
 
     if (rc < 0) {
         _cached = client::cached_request_class::internal;
-        if (_log_time_check.check_and_update()) {
-            SPDK_ERRLOG("ERROR: Send request error, return code is %d\n", rc);
-        }
+        SPDK_ERRLOG("ERROR: Send request error, return code is %d\n", rc);
     } else {
         SPDK_DEBUGLOG(mon, "Consumed 1 internal request\n");
         _cached = client::cached_request_class::none;
