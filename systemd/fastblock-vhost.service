@@ -1,0 +1,21 @@
+[Unit]
+Description=fastblock vhost daemon
+PartOf=fastblock-vhost.target
+After=network-online.target time-sync.target
+Before=fastblock-osd.target
+Wants=network-online.target time-sync.target fastblock-vhost.target
+
+[Service]
+ExecReload=/bin/kill -HUP $MAINPID
+ExecStart=/usr/local/bin/fastblock-vhost -C /etc/fastblock/vhost.json
+StandardOutput=append:/var/log/fastblock/vhost.log
+StandardError=append:/var/log/fastblock/vhost.log
+LimitNOFILE=1048576
+LimitNPROC=1048576
+Restart=on-failure
+RestartSec=30
+StartLimitInterval=0
+TasksMax=infinity
+
+[Install]
+WantedBy=multi-user.target
