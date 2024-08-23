@@ -13,7 +13,8 @@ set(FAST_BLOCK_SYSTEMD_ENV_DIR "/etc/sysconfig"
   CACHE PATH "Location for systemd service environmental variable settings files")
 foreach(service
     fastblock-mon@
-    fastblock-osd@)
+    fastblock-osd@
+    fastblock-vhost)
   configure_file(
     ${service}.service
     @ONLY)
@@ -26,4 +27,5 @@ install(FILES
   fastblock.target
   fastblock-mon.target
   fastblock-osd.target
+  fastblock-vhost.target
   DESTINATION ${SYSTEMD_SYSTEM_UNIT_DIR})

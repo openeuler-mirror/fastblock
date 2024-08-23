@@ -1,5 +1,9 @@
 在鲲鹏920 + openeuler系统上使用虚拟机对接fastblock的vhost
 
+# 0 注意
+本文采用手动部署的方式部署集群及vhost服务, 如需快速部署，集群部署可以采用vstart.sh部署，vhost则可以使用fastblock-vhost.service快速启动.  
+配置和启动fastblock-vhost.service见3.2.
+
 # 1 环境
 cpu:  Kunpeng-920   128核
 系统： openEuler 22.03 (LTS-SP2)
@@ -92,6 +96,7 @@ fastblock-client -op=createpool -poolname=fb -pgcount=6 -pgsize=3 -failure_domai
 fastblock-client -op=createimage -imagesize=$((100*1024*1024*1024))  -imagename=fbimage -poolname=fb
 ```
 # 3 启动vhost
+## 3.1 使用命令行启动vhost
 vhost的配置文件vhost.json：
 ```json
 {
@@ -124,7 +129,40 @@ vhost的配置文件vhost.json：
 ```
 nohup fastblock/build/src/bdev/fastblock-vhost -m '[8]' -L libblk -C vhost.json >> /var/log/fastblock/bdev.log  2>&1 &
 ```
+## 3.2 使用systemctl启动fastblock-vhost.service
+配置文件/etc/fastblock/vhost.json如下:
+```json
+{
+    "mon_host": ["175.5.24.252"],
+    "mon_rpc_address": "175.5.24.252",
+    "mon_rpc_port": 3333,
+    "rdma_device_name": "rocep125s0f0",
+    "msg_client_poll_cq_batch_size": 1024,
+    "msg_client_metadata_memory_pool_capacity": 4096,
+    "msg_client_metadata_memory_pool_element_size": 1024,
+    "msg_client_data_memory_pool_capacity": 4096,
+    "msg_client_data_memory_pool_element_size": 8192,
+    "msg_client_per_post_recv_num": 512,
+    "msg_client_rpc_timeout_us": 1000000,
+    "msg_client_rpc_batch_size": 1024,
+    "msg_client_connect_max_retry": 30,
+    "msg_client_connect_retry_interval_us": 1000000,
+    "msg_rdma_resolve_timeout_us": 2000,
+    "msg_rdma_poll_cm_event_timeout_us": 1000000,
+    "msg_rdma_max_send_wr": 1024,
+    "msg_rdma_max_send_sge": 128,
+    "msg_rdma_max_recv_wr": 8192,
+    "msg_rdma_max_recv_sge": 1,
+    "msg_rdma_max_inline_data": 16,
+    "msg_rdma_cq_num_entries": 1024,
+    "msg_rdma_qp_sig_all": false
+```
+启动fastblock-vhost.service:
+```
+systemctl start fastblock-vhost.service 
+```
 
+## 3.3 使用rpc.py创建bdev设备及vhost controler
 创建bdev设备
 ```
 fastblock/build/deps_build/spdk-prefix/src/spdk/scripts/rpc.py -s /var/tmp/bdev_vhost_192944.sock  bdev_fastblock_create -P 1 -p fb -i fbimage -k 4096 -I 100G -m "175.5.24.252:3333" -b fbdev
@@ -133,11 +171,9 @@ fastblock/build/deps_build/spdk-prefix/src/spdk/scripts/rpc.py -s /var/tmp/bdev_
 
 创建设备controller
 ```
-fastblock/build/deps_build/spdk-prefix/src/spdk/scripts/rpc.py -s /var/tmp/bdev_vhost_192944.sock vhost_create_blk_controller --cpumask 0x100 vhost.1 fbdev
+fastblock/build/deps_build/spdk-prefix/src/spdk/scripts/rpc.py -s /var/tmp/bdev_vhost_192944.sock vhost_create_blk_controller /var/tmp/vhost.1 fbdev
 ```
-注意：如果--cpumask的值写错，会返回错误（"Invalid argument"），并且在vhost日志中会报错并且给出正确的cpumask。
-
-创建完成后，会在当前目录下生成一个“vhost.1”文件，在启动qemu时会用到
+创建完成后，会在/var/tmp下生成一个“vhost.1”文件，在启动qemu时会用到
 
 # 4 启动qemu
 ## 4.1 安装qemu相关软件
@@ -181,7 +217,7 @@ taskset -c 36,37,38,39 qemu-system-aarch64 \
         -bios /usr/share/edk2/aarch64/QEMU_EFI.fd \
         -device usb-ehci,id=usb \
         -device usb-tablet,bus=usb.0 \
-        -chardev socket,id=spdk_vhost_blk0,path=/home/liuhongquan/vhost.1 \
+        -chardev socket,id=spdk_vhost_blk0,path=/var/tmp/vhost.1 \
         -device vhost-user-blk-pci,chardev=spdk_vhost_blk0,num-queues=2 \
         -device virtio-net-pci,netdev=mynet0 \
         -netdev user,id=mynet0,hostfwd=tcp::10022-:22 \
