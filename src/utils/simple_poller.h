@@ -12,6 +12,7 @@
 
 #include <spdk/log.h>
 #include <spdk/thread.h>
+#include <optional>
 
 #include <utility>
 
