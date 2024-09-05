@@ -1,0 +1,4 @@
+# These are Python requirements needed to run fastblock-deploy
+ansible-core>=2.15,<2.17,!=2.9.10
+netaddr
+six

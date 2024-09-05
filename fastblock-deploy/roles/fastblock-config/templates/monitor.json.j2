@@ -1,0 +1,15 @@
+{
+    "monitors": [
+        {% for name in _monitor_addresses.keys() %}
+        "{{ name }}"{% if not loop.last %}, {% endif %}
+        {% endfor %}
+    ],
+    "mon_host": [
+        {% for addr in _monitor_addresses.values() %}
+        "{{ addr }}"{% if not loop.last %}, {% endif %}
+        {% endfor %}
+    ],
+    "log_path": "/var/log/fastblock/{{ inventory_hostname }}.log",
+    "log_level": "info",
+    "election_master_key": "fastblock_monitor_election"
+}

@@ -1,0 +1,37 @@
+- name: Split disks string into disks_list
+  ansible.builtin.set_fact:
+    disks_list: "{{ disks | split(',') }}"
+  when: disks is defined and disks != ""
+
+- name: Set disks_list if not defined
+  ansible.builtin.set_fact:
+    disks_list: []
+  when: disks_list is undefined
+
+- name: Set fact to disks_list containing an empty string if disks_list list is empty
+  ansible.builtin.set_fact:
+    disks_list: "{{ disks_list + [''] }}"
+  when: disks_list | length == 0
+
+- name: Get osd ids
+  ansible.builtin.shell: ls /var/lib/fastblock/ | grep '^osd-' | sed 's/.*-//'
+  args:
+    executable: /bin/bash
+  changed_when: false
+  failed_when: false
+  register: osd_ids
+
+- name: Store the osd ids as a fact
+  ansible.builtin.set_fact:
+    osd_ids: "{{ osd_ids.stdout_lines  }}"
+
+- name: Include_tasks common.yml
+  ansible.builtin.include_tasks: common.yml
+
+- name: Include_tasks add_osds.yml
+  ansible.builtin.include_tasks: add_osds.yml
+  when: add_osd | bool
+  loop: "{{ disks_list }}"
+
+- name: Include_tasks start_osds.yml
+  ansible.builtin.include_tasks: start_osds.yml

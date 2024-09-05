@@ -1,0 +1,32 @@
+- name: Create fastblock conf directory
+  ansible.builtin.file:
+    path: "{{ fastblock_conf_directory }}"
+    state: directory
+    mode: "{{ fastblock_directories_mode }}"
+
+- name: Generate monitor config file
+  when: inventory_hostname in groups.get(mon_group_name, [])
+  openstack.config_template.config_template:
+    src: "monitor.json.j2"
+    dest: "{{ fastblock_conf_directory }}/fastblock.json"
+    mode: "0644"
+    config_overrides: "{{ fastblock_conf_overrides }}"
+    config_type: json
+
+- name: Generate fastblock config file
+  when: inventory_hostname in groups.get(osd_group_name, [])
+  openstack.config_template.config_template:
+    src: "fastblock.json.j2"
+    dest: "{{ fastblock_conf_directory }}/fastblock.json"
+    mode: "0644"
+    config_overrides: "{{ fastblock_conf_overrides }}"
+    config_type: json
+
+- name: Generate client config file
+  when: inventory_hostname in groups.get(client_group_name, [])
+  openstack.config_template.config_template:
+    src: "client.json.j2"
+    dest: "{{ fastblock_conf_directory }}/fastblock.json"
+    mode: "0644"
+    config_overrides: "{{ fastblock_conf_overrides }}"
+    config_type: json

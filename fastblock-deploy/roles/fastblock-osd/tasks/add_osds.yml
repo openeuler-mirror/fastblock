@@ -1,0 +1,59 @@
+---
+- name: Generate a UUID
+  ansible.builtin.shell: uuidgen
+  args:
+    executable: /bin/bash
+  changed_when: false
+  failed_when: false
+  register: osd_uuid
+
+- name: Store the UUID as a fact
+  ansible.builtin.set_fact:
+    osd_uuid: "{{ osd_uuid.stdout }}"
+
+- name: Get osd id
+  ansible.builtin.shell: /usr/local/bin/fastblock-client -op=fakeapplyid -uuid={{ osd_uuid }}
+  args:
+    executable: /bin/bash
+  changed_when: false
+  failed_when: false
+  register: osd_id
+  delegate_to: "{{ hostvars[groups.get(client_group_name, [])[0]]['ansible_host'] }}"
+
+- name: Store the osd id as a fact
+  ansible.builtin.set_fact:
+    osd_id: "{{ osd_id.stdout }}"
+  
+- name: Add the osd id to osd_ids
+  set_fact:
+    osd_ids: "{{ ([osd_id] | default([])) | union(osd_ids | default([])) }}"
+  
+- name: Create /var/lib/fastblock/osd-{{ osd_id }}
+  ansible.builtin.file:
+    path: "/var/lib/fastblock/osd-{{ osd_id }}"
+    state: directory
+    mode: "{{ fastblock_directories_mode }}"
+
+- name: Set bdev_type
+  ansible.builtin.shell: echo {{ _bdev_type }} > /var/lib/fastblock/osd-{{ osd_id }}/bdev_type
+  changed_when: false
+  failed_when: false
+
+- name: Prepare disk file for default file
+  ansible.builtin.shell: truncate -s {{ osd_empty_file_space }} /var/lib/fastblock/osd-{{ osd_id }}/file
+  when:  item | string == ""
+
+- name: Set disk path for {{ item }}
+  ansible.builtin.shell: echo {{ item }} > /var/lib/fastblock/osd-{{ osd_id }}/disk
+  changed_when: false
+  failed_when: false
+  when:  item | string != ""
+
+- name: Set disk path for default file
+  ansible.builtin.shell: echo /var/lib/fastblock/osd-{{ osd_id }}/file > /var/lib/fastblock/osd-{{ osd_id }}/disk
+  changed_when: false
+  failed_when: false
+  when:  item | string == ""
+
+- name: Mkfs
+  ansible.builtin.shell: /usr/local/bin/fastblock-osd -C {{ fastblock_osd_conf_file }} --id {{ osd_id }} --mkfs --force --uuid {{ osd_uuid }} -S {{ fastblock_osd_cores }}

@@ -1,0 +1,14 @@
+{
+  "monitors": [
+      {% for name in _monitor_addresses.keys() %}
+      "{{ name }}"{% if not loop.last %}, {% endif %}
+      {% endfor %}
+  ],
+  "mon_host": [
+      {% for addr in _monitor_addresses.values() %}
+      "{{ addr }}"{% if not loop.last %}, {% endif %}
+      {% endfor %}
+  ],
+  "mon_rpc_address": "{{ _monitor_addresses[groups.get(mon_group_name, [])[0]] }}",
+  "mon_rpc_port": 3333
+}

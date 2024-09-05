@@ -1,0 +1,14 @@
+---
+- name: Create osd directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "{{ fastblock_directories_mode }}"
+  with_items:
+    - /var/lib/fastblock
+    - /var/log/fastblock
+
+- name: Set hugepages
+  ansible.builtin.shell: echo {{ nr_hugepages_num }} > {{ nr_hugepages_path }}
+  changed_when: false
+  failed_when: false

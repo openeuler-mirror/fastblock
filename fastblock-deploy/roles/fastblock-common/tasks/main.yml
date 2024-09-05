@@ -1,0 +1,79 @@
+---
+- name: Include installs/install_redhat_packages.yml
+  ansible.builtin.include_tasks: installs/install_redhat_packages.yml
+  when: ansible_facts['os_family'] == 'RedHat'
+  tags: package-install
+
+- name: Include installs/install_on_debian.yml
+  ansible.builtin.include_tasks: installs/install_on_debian.yml
+  when: ansible_facts['os_family'] == 'Debian'
+  tags: package-install
+
+- name: Copy Monitor RPM package to remote host's temporary directory
+  when: inventory_hostname in groups.get(mon_group_name, []) + groups.get(client_group_name, [])
+  ansible.builtin.copy:
+    src: files/{{ fastblock_monitor_rpm_package }}
+    dest: /tmp/
+    mode: '0644'
+  register: monitor_rpm_file
+
+- name: Install Monitor RPM package
+  when: inventory_hostname in groups.get(mon_group_name, []) + groups.get(client_group_name, [])
+  ansible.builtin.yum:
+    name: "{{ monitor_rpm_file.dest }}"
+    state: present
+    disable_gpg_check: true
+
+- name: Clean up monitor temporary file
+  when: 
+    - inventory_hostname in groups.get(mon_group_name, []) + groups.get(client_group_name, [])
+    - monitor_rpm_file is defined
+  ansible.builtin.file:
+    path: "{{ monitor_rpm_file.dest }}"
+    state: absent
+
+- name: Copy osd RPM package to remote host's temporary directory
+  when: inventory_hostname in groups.get(osd_group_name, []) + groups.get(client_group_name, [])
+  ansible.builtin.copy:
+    src: files/{{ fastblock_osd_rpm_package }}
+    dest: /tmp/
+    mode: '0644'
+  register: osd_rpm_file
+
+- name: Install osd RPM package
+  when: inventory_hostname in groups.get(osd_group_name, []) + groups.get(client_group_name, [])
+  ansible.builtin.yum:
+    name: "{{ osd_rpm_file.dest }}"
+    state: present
+    disable_gpg_check: true
+
+- name: Clean up osd temporary file
+  when: 
+    - inventory_hostname in groups.get(osd_group_name, []) + groups.get(client_group_name, [])
+    - osd_rpm_file is defined
+  ansible.builtin.file:
+    path: "{{ osd_rpm_file.dest }}"
+    state: absent
+
+- name: Copy client RPM package to remote host's temporary directory
+  when: inventory_hostname in groups.get(client_group_name, [])
+  ansible.builtin.copy:
+    src: files/{{ fastblock_client_rpm_package }}
+    dest: /tmp/
+    mode: '0644'
+  register: client_rpm_file
+
+- name: Install client RPM package
+  when: inventory_hostname in groups.get(client_group_name, [])
+  ansible.builtin.yum:
+    name: "{{ client_rpm_file.dest }}"
+    state: present
+    disable_gpg_check: true
+
+- name: Clean up client temporary file
+  when: 
+    - inventory_hostname in groups.get(client_group_name, [])
+    - client_rpm_file is defined
+  ansible.builtin.file:
+    path: "{{ client_rpm_file.dest }}"
+    state: absent

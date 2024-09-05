@@ -1,0 +1,25 @@
+- name: Ensure systemd service override directory exists
+  ansible.builtin.file:
+    state: directory
+    path: "/etc/systemd/system/fastblock-osd@.service.d/"
+    mode: "0755"
+  when:
+    - fastblock_osd_systemd_overrides is defined
+
+- name: Add fastblock-osd systemd service overrides
+  openstack.config_template.config_template:
+    src: "fastblock-osd.service.d-overrides.j2"
+    dest: "/etc/systemd/system/fastblock-osd@.service.d/fastblock-osd-systemd-overrides.conf"
+    config_overrides: "{{ fastblock_osd_systemd_overrides | default({}) }}"
+    config_type: "ini"
+  when:
+    - fastblock_osd_systemd_overrides is defined
+
+- name: Systemd start osd
+  ansible.builtin.systemd:
+    name: fastblock-osd@{{ item }}
+    state: started
+    enabled: true
+    masked: false
+    daemon_reload: true
+  with_items: "{{ osd_ids | default([]) }}"

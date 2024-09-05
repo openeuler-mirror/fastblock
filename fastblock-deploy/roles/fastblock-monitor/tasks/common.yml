@@ -1,0 +1,6 @@
+---
+- name: Create monitor log directories
+  ansible.builtin.file:
+    path: /var/log/fastblock
+    state: directory
+    mode: "{{ fastblock_directories_mode }}"
