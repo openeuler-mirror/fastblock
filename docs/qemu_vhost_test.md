@@ -1,4 +1,4 @@
-在鲲鹏920 + openeuler系统上使用虚拟机对接fastblock的vhost
+qemu对接fastblock-vhost以及虚拟机内部的数据一致性测试
 
 # 0 注意
 本文采用手动部署的方式部署集群及vhost服务, 如需快速部署，集群部署可以采用vstart.sh部署，vhost则可以使用fastblock-vhost.service快速启动.  
@@ -230,3 +230,173 @@ taskset -c 36,37,38,39 qemu-system-aarch64 \
     -drive file 指定虚拟机镜像
     -bios  指定UEFI固件
     -chardev socket,id=spdk_vhost_blk0,path=/home/liuhongquan/vhost.1  中vhost.1就是上面创建设备controller生成的
+
+# 5 虚拟机内进行数据一致性测试
+## 5.1 mkfs并挂载
+```
+mkfs.xfs /dev/vda
+mount /dev/vda /mnt
+```
+
+## 5.2 在/mnt目录下生成文件
+使用python脚本file_genertator.py在/mnt目录下生成1个目录，里面有100个子目录，每个子目录下100个不同大小的文件:
+```
+import os
+import random
+import string
+import hashlib
+from concurrent.futures import ThreadPoolExecutor
+import argparse
+
+def generate_file(file_num, folder_path, file_size):
+    # Generate random content for the file
+    content = os.urandom(file_size)
+
+    # Calculate the file's md5 hash
+    file_md5 = hashlib.md5(content).hexdigest()
+
+    # Generate the file name as a decimal number with 16 digits
+    file_name = f"{file_num:016d}"
+
+    # Write the content to the file
+    file_path = os.path.join(folder_path, file_name)
+    with open(file_path, "wb") as f:
+        f.write(content)
+
+    # Return the file path and its md5 hash
+    return file_path, file_md5, file_size
+
+def generate_files_in_folder(folder_num, num_files, file_sizes, file_size_probs, num_threads, folder_name):
+    # Create the folder if it doesn't exist
+    folder_path = os.path.join(folder_name, f"folder_{folder_num}")
+    os.makedirs(folder_path, exist_ok=True)
+
+    # Generate the files in parallel using threads
+    with ThreadPoolExecutor(max_workers=num_threads) as executor:
+        file_args = []
+        for i in range(num_files):
+            # Calculate the file number as a combination of the folder number and the file index
+            file_num = folder_num * num_files + i
+            # Choose the file size randomly based on the probabilities
+            file_size = random.choices(file_sizes, weights=file_size_probs)[0]
+            file_args.append((file_num, folder_path, file_size))
+        # Generate the files in parallel and collect their results
+        results = list(executor.map(lambda args: generate_file(*args), file_args))
+
+    # Check the md5 of each file and print any files that have incorrect md5s
+    incorrect_md5s = []
+    for file_path, file_md5, file_size in results:
+        with open(file_path, "rb") as f:
+            if hashlib.md5(f.read()).hexdigest() != file_md5:
+                correct_md5 = hashlib.md5(os.urandom(file_size)).hexdigest()
+                incorrect_md5s.append((file_path, correct_md5, file_md5))
+    if incorrect_md5s:
+        print(f"Files with incorrect md5s in folder {folder_num}:")
+        for file_path, correct_md5, incorrect_md5 in incorrect_md5s:
+            print(f"File: {file_path}, Correct md5: {correct_md5}, Incorrect md5: {incorrect_md5}")
+
+def generate_random_files(num_files, num_folders):
+    # Generate a random folder name
+    folder_name = ''.join(random.choices(string.ascii_lowercase, k=10))
+    print(f"working dir is {folder_name}")
+
+    # Create the base folder
+    os.makedirs(folder_name, exist_ok=True)
+
+    # Define the file sizes and their corresponding probabilities
+    file_sizes = [2**i for i in range(12, 22)] # From 4KiB to 4MiB
+    file_size_probs = [2**(-i+22) for i in range(12, 22)] # Smaller sizes have larger proportion
+
+    # Define the number of threads to use for parallel file generation
+    num_threads = num_folders
+
+    # Generate the files in each folder in parallel
+    for folder_num in range(num_folders):
+        generate_files_in_folder(folder_num, num_files, file_sizes, file_size_probs, num_threads, folder_name)
+
+if __name__ == "__main__":
+    # Define the command line arguments
+    generate_random_files(100,100)
+```
+
+通过以下目录生成:
+```
+$ python3 file_generator.py
+working dir is rmwbhsjsll
+```
+
+## 5.3 拷贝目录并通过md5进行数据一致性验证
+python脚本copy_and_compare.py如下
+```
+import os
+import hashlib
+import shutil
+import argparse
+import multiprocessing
+import random
+import string
+
+def compute_md5(file_path):
+    with open(file_path, 'rb') as f:
+        return hashlib.md5(f.read()).hexdigest()
+
+def compare_files(src_path, dest_path):
+    src_md5 = compute_md5(src_path)
+    if os.path.exists(dest_path):
+        dest_md5 = compute_md5(dest_path)
+    else:
+        dest_md5 = None
+    return (src_path, dest_path, src_md5, dest_md5)
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Compare MD5 hashes of all files in a source folder with their corresponding files in a randomly named destination folder.')
+    parser.add_argument('src_folder', metavar='src_folder', type=str, help='path to the source folder')
+    parser.add_argument('-p', '--processes', type=int, default=4, help='number of processes to use')
+
+    args = parser.parse_args()
+
+    src_folder = args.src_folder
+    dest_folder = os.path.join(os.getcwd(), ''.join(random.choices(string.ascii_letters, k=10)))
+
+    print(f'Destination folder: {dest_folder}')
+
+    # Copy the source folder to the destination folder
+    shutil.copytree(src_folder, dest_folder)
+
+    print(f'directory copied')
+
+    pool = multiprocessing.Pool(args.processes)
+
+    results = []
+    for root, dirs, files in os.walk(src_folder):
+        for file in files:
+            src_path = os.path.join(root, file)
+            dest_path = os.path.join(dest_folder, os.path.relpath(src_path, src_folder))
+            results.append(pool.apply_async(compare_files, args=(src_path, dest_path)))
+
+    pool.close()
+    pool.join()
+
+    mismatch = False
+
+    for result in results:
+        src_path, dest_path, src_md5, dest_md5 = result.get()
+        if src_md5 != dest_md5:
+            print(f'{os.path.abspath(src_path)} ({src_md5}) does not match {os.path.abspath(dest_path)} ({dest_md5})')
+            mismatch = True
+
+    # If there were no mismatches, print a message indicating that all files matched
+    if not mismatch:
+        print('All files matched!')
+
+    # If there was a mismatch, print a warning message
+    else:
+        print('WARNING: There were files with non-matching MD5 hashes.')
+```
+通过以下命令行拷贝目录并进行前后的md5验证:
+```
+$ python3 copy_and_compare.py rmwbhsjsll
+Destination folder: /mnt/hVLLIjzcOT
+directory copied
+All files matched!
+```
