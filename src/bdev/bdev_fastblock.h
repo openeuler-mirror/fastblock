@@ -13,18 +13,21 @@
 #include <spdk/stdinc.h>
 #include <spdk/bdev.h>
 
+#include <functional>
+
 void bdev_fastblock_free_config(char **config);
 
 typedef void (*spdk_delete_fastblock_complete)(void *cb_arg, int bdeverrno);
 
-int bdev_fastblock_create(struct spdk_bdev **bdev, const char *name,
+int bdev_fastblock_create(const char *name,
 						  uint64_t pool_id,
 						  const char *pool_name,
 						  const char *image_name,
 						  uint64_t image_size,
 						  uint32_t block_size,
 						  uint64_t object_size,
-						  const char *monitor_address);
+						  const char *monitor_address,
+                          std::function<void(int, ::spdk_bdev*)> cb);
 
 /**
  * Delete fastblock bdev.
@@ -42,7 +45,7 @@ void bdev_fastblock_delete(struct spdk_bdev *bdev, spdk_delete_fastblock_complet
  * \param bdev Pointer to fastblock bdev.
  * \param new_size_in_mb The new size in MiB for this bdev.
  */
-int bdev_fastblock_resize(struct spdk_bdev *bdev, const uint64_t new_size_in_mb);
+void bdev_fastblock_resize(struct spdk_bdev *bdev, const uint64_t new_size_in_mb, std::function<void(int)> cb);
 
 extern struct spdk_bdev_module fastblock_if;
 

@@ -11,9 +11,21 @@
 
 #include "global.h"
 
+// namespace global {
+// std::shared_ptr<connect_cache> conn_cache;
+// std::shared_ptr<::partition_manager> par_mgr;
+// std::unique_ptr<monitor::client> mon_client;
+// std::shared_ptr<::libblk_client> blk_client;
+// }
+
+namespace fastblock {
 namespace global {
 std::shared_ptr<connect_cache> conn_cache;
 std::shared_ptr<::partition_manager> par_mgr;
 std::unique_ptr<monitor::client> mon_client;
-std::shared_ptr<::libblk_client> blk_client;
+std::unique_ptr<client::pg_client> pg_cli;
+std::unique_ptr<client::connection_pool> conn_pool;
+std::unique_ptr<client::bdev_block_client> bdev_blk_cli;
+std::unique_ptr<client::block_client_pool> blk_cli_pool;
+}
 }

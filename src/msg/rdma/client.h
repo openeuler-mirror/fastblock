@@ -1291,6 +1291,7 @@ public:
           _sock_id);
         auto conn_task = std::make_unique<connect_task>(conn, std::move(ctx->cb));
         _connect_tasks.emplace(cm_id, std::move(conn_task));
+        SPDK_DEBUGLOG(msg, "enqueue connect task to %s:%d\n", ep.addr.c_str(), ep.port);
     }
 
     void process_connect_retry() {
@@ -1397,6 +1398,7 @@ public:
             if (ret == 0) {
                 fd.resolve_route();
                 task_ptr->conn_state = connect_state::wait_route_resolved;
+                SPDK_DEBUGLOG(msg, "resolve address done for %s\n", fd.peer_address().c_str());
             } else {
                 SPDK_ERRLOG(
                   "ERROR: resolve route failed when connecting %s\n",
@@ -1417,6 +1419,7 @@ public:
                       rc->message().c_str());
                     task_ptr->conn_state = connect_state::connect_failed;
                 } else {
+                    SPDK_DEBUGLOG(msg, "resolve route done for %s\n", fd.peer_address().c_str());
                     task_ptr->conn_state = connect_state::wait_connect_established;
                 }
             } else {

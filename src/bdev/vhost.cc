@@ -20,6 +20,8 @@
 #include "global.h"
 #include "utils/get_core.h"
 
+#include <csignal>
+
 static const char* g_mon_cluster_endpoints = nullptr;
 static const char* g_conf_path{nullptr};
 boost::property_tree::ptree g_pt{};
@@ -34,49 +36,56 @@ vhost_usage(void)
 
 static struct option g_cmdline_opts[] = {
 #define BLOCK_OPTION_CONF 'C'
-	{
-		.name = "conf",
-		.has_arg = 1,
-		.flag = NULL,
-		.val = BLOCK_OPTION_CONF,
-	},
+    {
+        .name = "conf",
+        .has_arg = 1,
+        .flag = NULL,
+        .val = BLOCK_OPTION_CONF,
+    },
 #define BLOCK_OPTION_NUMA_NODE 'N'
+    {
+        .name = "numa-node",
+        .has_arg = 1,
+        .flag = NULL,
+        .val = BLOCK_OPTION_NUMA_NODE,
+    },
+#define BLOCK_OPTION_CORE_NUM 'S'
 	{
-		.name = "numa-node",
+		.name = "core-num",
 		.has_arg = 1,
 		.flag = NULL,
-		.val = BLOCK_OPTION_NUMA_NODE,
+		.val = BLOCK_OPTION_CORE_NUM,
 	},
-	{
-		.name = NULL
-	}
+    {
+        .name = NULL
+    }
 };
 
 static void
 save_pid(const char *pid_path)
 {
-	FILE *pid_file;
+    FILE *pid_file;
 
-	pid_file = fopen(pid_path, "w");
-	if (pid_file == NULL)
-	{
-		fprintf(stderr, "Couldn't create pid file '%s': %s\n", pid_path, strerror(errno));
-		exit(EXIT_FAILURE);
-	}
+    pid_file = fopen(pid_path, "w");
+    if (pid_file == NULL)
+    {
+        fprintf(stderr, "Couldn't create pid file '%s': %s\n", pid_path, strerror(errno));
+        exit(EXIT_FAILURE);
+    }
 
-	fprintf(pid_file, "%d\n", getpid());
-	fclose(pid_file);
+    fprintf(pid_file, "%d\n", getpid());
+    fclose(pid_file);
 }
 
 static inline void clean_pid_file(const char *pid_path){
-	unlink(pid_path);
+    unlink(pid_path);
 }
 
 static int
 vhost_parse_arg(int ch, char *arg)
 {
-	switch (ch)
-	{
+    switch (ch)
+    {
 
     case BLOCK_OPTION_CONF:
         g_conf_path = arg;
@@ -84,95 +93,136 @@ vhost_parse_arg(int ch, char *arg)
     case BLOCK_OPTION_NUMA_NODE:
         utils::g_numa_node = atoi(arg);
         break;
-	default:
-	    vhost_usage();
-		return -EINVAL;
-	}
-	return 0;
+    case BLOCK_OPTION_CORE_NUM:
+        g_core_num = atoi(arg);
+        break;
+    default:
+        vhost_usage();
+        return -EINVAL;
+    }
+    return 0;
 }
 
 static void vhost_started(void *arg1)
 {
-	std::vector<monitor::client::endpoint> mon_eps{};
-	auto &monitors = g_pt.get_child("mon_host");
-	auto pos = monitors.begin();
-	for (; pos != monitors.end(); pos++)
-	{
-		auto mon_addr = pos->second.get_value<std::string>();
-		mon_eps.emplace_back(std::move(mon_addr), utils::default_monitor_port);
-	}
+    std::vector<monitor::client::endpoint> mon_eps{};
+    auto &monitors = g_pt.get_child("mon_host");
+    auto pos = monitors.begin();
+    for (; pos != monitors.end(); pos++)
+    {
+        auto mon_addr = pos->second.get_value<std::string>();
+        mon_eps.emplace_back(std::move(mon_addr), utils::default_monitor_port);
+    }
 
 
-    	auto core_begin = core_sharded::system::begin();
-    	auto n_core = std::max(
-    	  core_sharded::system::size_type{1},
-    	  core_sharded::system::capacity() - 1);
-    	core_sharded::construct(core_begin, n_core, "vhost");
+        auto core_begin = core_sharded::system::begin();
+        auto n_core = std::max(
+          core_sharded::system::size_type{1},
+          core_sharded::system::capacity() - 1);
+        core_sharded::construct(core_begin, n_core, "vhost");
 
-	auto opts = msg::rdma::client::make_options(g_pt);
-	auto core_no = ::spdk_env_get_current_core();
-	::spdk_cpuset cpumask{};
-	::spdk_cpuset_zero(&cpumask);
-	::spdk_cpuset_set_cpu(&cpumask, core_no, true);
-	global::conn_cache = std::make_shared<::connect_cache>(&cpumask, opts);
-    	global::par_mgr = std::make_shared<::partition_manager>(-1, global::conn_cache);
-    	global::mon_client = std::make_unique<monitor::client>(mon_eps, global::par_mgr);
-    	global::mon_client->start();
-    	global::mon_client->start_cluster_map_poller();
-    	global::blk_client = std::make_shared<::libblk_client>(global::mon_client.get(), &cpumask, opts);
-    	global::blk_client->start();
+    auto opts = msg::rdma::client::make_options(g_pt);
+    auto core_no = ::spdk_env_get_current_core();
+    ::spdk_cpuset cpumask{};
+    ::spdk_cpuset_zero(&cpumask);
+    ::spdk_cpuset_set_cpu(&cpumask, core_no, true);
+    fastblock::global::conn_cache = std::make_shared<::connect_cache>(&cpumask, opts);
+    fastblock::global::par_mgr = std::make_shared<::partition_manager>(-1, fastblock::global::conn_cache);
+    fastblock::global::mon_client = std::make_unique<monitor::client>(mon_eps, fastblock::global::par_mgr);
+    fastblock::global::mon_client->start();
+    fastblock::global::mon_client->start_cluster_map_poller();
+    SPDK_NOTICELOG("monitor client started\n");
+
+    fastblock::global::pg_cli = std::make_unique<fastblock::client::pg_client>(
+      ::spdk_get_thread(),
+      fastblock::global::mon_client.get());
+    fastblock::global::pg_cli->start([]{});
+    SPDK_NOTICELOG("pg client started\n");
+
+    core_sharded::core_container_type workers_core = core_sharded::get_shard_cores();
+    if (workers_core.size() > 1) {
+        std::erase_if(workers_core, [x_core = ::spdk_env_get_current_core()] (auto& core) -> bool {
+            return x_core == core;
+        });
+    }
+
+    fastblock::global::conn_pool = std::make_unique<fastblock::client::connection_pool>(
+      workers_core.size(),
+      workers_core,
+      opts,
+      fastblock::global::mon_client.get(),
+      fastblock::global::pg_cli.get());
+    fastblock::global::conn_pool->start([workers_core] (bool success) mutable {
+        if (not success) {
+            SPDK_ERRLOG("the connection pool starts error\n");
+            std::raise(SIGINT);
+            return;
+        }
+
+        SPDK_NOTICELOG("the connection started\n");
+
+        fastblock::global::blk_cli_pool = std::make_unique<fastblock::client::block_client_pool>(
+          ::spdk_get_thread(),
+          fastblock::global::mon_client.get(),
+          fastblock::global::pg_cli.get(),
+          fastblock::global::conn_pool.get(),
+          workers_core.size(),
+          workers_core);
+
+        fastblock::global::bdev_blk_cli = std::make_unique<fastblock::client::bdev_block_client>(
+          ::spdk_get_thread(),
+          fastblock::global::blk_cli_pool.get());
+
+        SPDK_NOTICELOG("vhost started\n");
+    });
 }
 
 int main(int argc, char *argv[])
 {
-	struct spdk_app_opts opts = {};
-	int rc;
+    struct spdk_app_opts opts = {};
+    int rc;
 
-	spdk_app_opts_init(&opts, sizeof(opts));
-	// disable tracing because it's memory consuming
-	opts.num_entries = 0;
-	opts.name = "vhost";
-	opts.print_level = ::spdk_log_level::SPDK_LOG_WARN;
-    	::spdk_log_set_flag("libblk");
-    	::spdk_log_set_flag("bdev_fastblock");
-    	::spdk_log_set_flag("object_store");
-	::spdk_log_set_flag("libblk");
+    spdk_app_opts_init(&opts, sizeof(opts));
+    // disable tracing because it's memory consuming
+    opts.num_entries = 0;
+    opts.name = "vhost";
+    opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
 
-	if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:N:", g_cmdline_opts,
-								  vhost_parse_arg, vhost_usage)) !=
-		SPDK_APP_PARSE_ARGS_SUCCESS)
-	{
-		exit(rc);
-	}
+    if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:N:S:", g_cmdline_opts,
+                                  vhost_parse_arg, vhost_usage)) !=
+        SPDK_APP_PARSE_ARGS_SUCCESS)
+    {
+        exit(rc);
+    }
 
-	if(utils::g_numa_node >= 0){
-	    int max_node = utils::get_numa_node();
-	    if(utils::g_numa_node > max_node){
-	        std::cerr << "invalid --numa-node " << utils::g_numa_node << ": valid range [0, " << max_node << "]" << std::endl;
-	        return -EINVAL;
-	    }
-	}
+    if(utils::g_numa_node >= 0){
+        int max_node = utils::get_numa_node();
+        if(utils::g_numa_node > max_node){
+            std::cerr << "invalid --numa-node " << utils::g_numa_node << ": valid range [0, " << max_node << "]" << std::endl;
+            return -EINVAL;
+        }
+    }
 
-	auto core_mask = utils::get_core_mask(g_core_num);
-	if(!core_mask){
-	    return -EINVAL;
-	}
-	std::string reactor_mask = core_mask.value();
-	opts.reactor_mask = reactor_mask.c_str();
+    auto core_mask = utils::get_core_mask(g_core_num);
+    if(!core_mask){
+        return -EINVAL;
+    }
+    std::string reactor_mask = core_mask.value();
+    opts.reactor_mask = reactor_mask.c_str();
 
-	boost::property_tree::read_json(std::string(g_conf_path), g_pt);
+    boost::property_tree::read_json(std::string(g_conf_path), g_pt);
 
-	std::string pid_path = "/var/tmp/vhost" + std::to_string(getpid()) + ".pid";
-	save_pid(pid_path.c_str());
-	auto vhost_path = "/var/tmp/bdev_vhost_" + std::to_string(getpid()) + ".sock";
-	SPDK_NOTICELOG(
-		"pid path is '%s', vhost socket path is '%s'\n",
-		pid_path.c_str(), vhost_path.c_str());
+    std::string pid_path = "/var/tmp/vhost" + std::to_string(getpid()) + ".pid";
+    save_pid(pid_path.c_str());
+    auto vhost_path = "/var/tmp/bdev_vhost_" + std::to_string(getpid()) + ".sock";
+    SPDK_NOTICELOG(
+        "pid path is '%s', vhost socket path is '%s'\n",
+        pid_path.c_str(), vhost_path.c_str());
 
-	opts.rpc_addr = vhost_path.c_str();
-	rc = spdk_app_start(&opts, vhost_started, NULL);
-	spdk_app_fini();
-	utils::unclaim_cores();
-	clean_pid_file(pid_path.c_str());
-	return rc;
+    opts.rpc_addr = vhost_path.c_str();
+    rc = spdk_app_start(&opts, vhost_started, NULL);
+    spdk_app_fini();
+    utils::unclaim_cores();
+    clean_pid_file(pid_path.c_str());
+    return rc;
 }

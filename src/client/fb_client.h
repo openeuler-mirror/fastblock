@@ -146,7 +146,7 @@ private:
         return stub_it->second.get();
     }
 
-    uint64_t make_leader_key(const int32_t pool_id, const int32_t pg_id) noexcept {
+    uint64_t get_leader_key(const int32_t pool_id, const int32_t pg_id) noexcept {
         uint64_t leader_osd_key{};
         auto* struct_key = reinterpret_cast<leader_key_type*>(&leader_osd_key);
         struct_key->pg_id = pg_id;
@@ -155,7 +155,7 @@ private:
         return leader_osd_key;
     }
 
-    leader_key_type from_leader_key(uint64_t key_val) noexcept {
+    leader_key_type de_leader_key(uint64_t key_val) noexcept {
         auto* struct_key = reinterpret_cast<leader_key_type*>(&key_val);
         return { struct_key->pool_id, struct_key->pg_id };
     }
@@ -209,7 +209,7 @@ private:
         req_stk->resp_cb = cb;
         req_stk->ctx = ctx;
         req_stk->obj_index = obj_idx;
-        req_stk->leader_osd_key = make_leader_key(pool_id, pg_id);
+        req_stk->leader_osd_key = get_leader_key(pool_id, pg_id);
         req_stk->this_client = this;
         SPDK_DEBUGLOG(
           libblk,
@@ -340,7 +340,7 @@ public:
         if (should_acquire_leader) {
             _leader_osd.emplace(req_stk->leader_osd_key, std::make_unique<leader_osd_info>());
             SPDK_DEBUGLOG(libblk, "_leader_osd emplaced %lu\n", req_stk->leader_osd_key);
-            auto struct_key = from_leader_key(req_stk->leader_osd_key);
+            auto struct_key = de_leader_key(req_stk->leader_osd_key);
             enqueue_leader_request(struct_key.pool_id, struct_key.pg_id);
         } else if (it->second and not it->second->is_onflight) {
             req_stk->stub = get_stub(it->second->leader_id, it->second->addr, it->second->port);
@@ -529,7 +529,7 @@ private:
             throw std::runtime_error{"cant find the leader request stack"};
         }
 
-        auto leader_key = make_leader_key(
+        auto leader_key = get_leader_key(
           it->second->leader_req->pool_id(),
           it->second->leader_req->pg_id());
         auto info_it = _leader_osd.find(leader_key);

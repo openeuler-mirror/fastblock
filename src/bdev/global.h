@@ -11,13 +11,27 @@
 
 #pragma once
 
-#include "client/libfblock.h"
 #include "monclient/client.h"
 #include "osd/partition_manager.h"
+#include "client/pg_client.h"
+#include "client/bdev_block_client.h"
+#include "client/fb_client.h"
 
+// namespace global {
+// extern std::shared_ptr<connect_cache> conn_cache;
+// extern std::shared_ptr<::partition_manager> par_mgr;
+// extern std::unique_ptr<monitor::client> mon_client;
+// extern std::shared_ptr<::libblk_client> blk_client;
+// }
+
+namespace fastblock {
 namespace global {
 extern std::shared_ptr<connect_cache> conn_cache;
 extern std::shared_ptr<::partition_manager> par_mgr;
 extern std::unique_ptr<monitor::client> mon_client;
-extern std::shared_ptr<::libblk_client> blk_client;
+extern std::unique_ptr<client::pg_client> pg_cli;
+extern std::unique_ptr<client::connection_pool> conn_pool;
+extern std::unique_ptr<client::bdev_block_client> bdev_blk_cli;
+extern std::unique_ptr<client::block_client_pool> blk_cli_pool;
+}
 }

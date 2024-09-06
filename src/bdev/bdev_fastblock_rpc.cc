@@ -14,6 +14,10 @@
 #include <spdk/util.h>
 #include <spdk/string.h>
 #include <spdk/log.h>
+#include <spdk/thread.h>
+
+#include <memory>
+#include <tuple>
 
 struct rpc_create_fastblock
 {
@@ -95,39 +99,47 @@ static void
 rpc_bdev_fastblock_create(struct spdk_jsonrpc_request *request,
 						  const struct spdk_json_val *params)
 {
-	struct rpc_create_fastblock req = {};
-	struct spdk_json_write_ctx *w;
-	struct spdk_bdev *bdev;
-	int rc = 0;
+    auto req = std::make_shared<rpc_create_fastblock>();
 
 	SPDK_DEBUGLOG(bdev_fastblock, "rpc_bdev_fastblock_create\n");
 	if (spdk_json_decode_object(params, rpc_create_fastblock_decoders,
 								SPDK_COUNTOF(rpc_create_fastblock_decoders),
-								&req))
+								req.get()))
 	{
 		SPDK_DEBUGLOG(bdev_fastblock, "spdk_json_decode_object failed\n");
 		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
 										 "spdk_json_decode_object failed");
-		goto cleanup;
+		free_rpc_create_fastblock(req.get());
+        return;
 	}
 
-	rc = bdev_fastblock_create(&bdev, req.name, req.pool_id, req.pool_name,
-							   req.image_name,
-							   req.image_size,
-							   req.block_size,
-							   req.object_size,
-							   req.monitor_address);
-	if (rc)
-	{
-		spdk_jsonrpc_send_error_response(request, rc, spdk_strerror(-rc));
-		goto cleanup;
-	}
-	w = spdk_jsonrpc_begin_result(request);
-	spdk_json_write_string(w, spdk_bdev_get_name(bdev));
-	spdk_jsonrpc_end_result(request, w);
+    auto on_bdev_created = [req, request] (int rc, ::spdk_bdev* bdev) {
+        if (rc) {
+            spdk_jsonrpc_send_error_response(request, rc, spdk_strerror(-rc));
+            free_rpc_create_fastblock(req.get());
+            return;
+        }
 
-cleanup:
-	free_rpc_create_fastblock(&req);
+        auto* w = ::spdk_jsonrpc_begin_result(request);
+        ::spdk_json_write_string(w, ::spdk_bdev_get_name(bdev));
+        ::spdk_jsonrpc_end_result(request, w);
+    };
+
+	auto rc = bdev_fastblock_create(
+      req->name,
+      req->pool_id,
+      req->pool_name,
+      req->image_name,
+      req->image_size,
+      req->block_size,
+      req->object_size,
+      req->monitor_address,
+      on_bdev_created);
+
+    if (rc) {
+        spdk_jsonrpc_send_error_response(request, rc, spdk_strerror(-rc));
+        free_rpc_create_fastblock(req.get());
+    }
 }
 
 SPDK_RPC_REGISTER("bdev_fastblock_create", rpc_bdev_fastblock_create, SPDK_RPC_RUNTIME)
@@ -207,13 +219,29 @@ free_rpc_bdev_fastblock_resize(struct rpc_bdev_fastblock_resize *req)
 	free(req->name);
 }
 
+static void rpc_bdev_fastblock_on_resized(void* arg) {
+    auto* ctx = reinterpret_cast<std::tuple<::spdk_jsonrpc_request*, struct rpc_bdev_fastblock_resize, int>*>(arg);
+    auto [request, req, rc] = *ctx;
+    delete ctx;
+
+    if (rc) {
+        ::spdk_jsonrpc_send_error_response(request, rc, ::spdk_strerror(-rc));
+        free_rpc_bdev_fastblock_resize(&req);
+        return;
+    }
+
+    auto* w = ::spdk_jsonrpc_begin_result(request);
+    ::spdk_json_write_bool(w, true);
+    ::spdk_jsonrpc_end_result(request, w);
+    free_rpc_bdev_fastblock_resize(&req);
+}
+
 static void
 rpc_bdev_fastblock_resize(struct spdk_jsonrpc_request *request,
 						  const struct spdk_json_val *params)
 {
 	struct rpc_bdev_fastblock_resize req = {};
 	struct spdk_bdev *bdev;
-	struct spdk_json_write_ctx *w;
 	int rc;
 
 	if (spdk_json_decode_object(params, rpc_bdev_fastblock_resize_decoders,
@@ -222,28 +250,22 @@ rpc_bdev_fastblock_resize(struct spdk_jsonrpc_request *request,
 	{
 		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
 										 "spdk_json_decode_object failed");
-		goto cleanup;
+		free_rpc_bdev_fastblock_resize(&req);
+        return;
 	}
 
 	bdev = spdk_bdev_get_by_name(req.name);
 	if (bdev == NULL)
 	{
 		spdk_jsonrpc_send_error_response(request, -ENODEV, spdk_strerror(ENODEV));
-		goto cleanup;
+		free_rpc_bdev_fastblock_resize(&req);
+        return;
 	}
 
-	rc = bdev_fastblock_resize(bdev, req.new_size);
-	if (rc)
-	{
-		spdk_jsonrpc_send_error_response(request, rc, spdk_strerror(-rc));
-		goto cleanup;
-	}
-
-	w = spdk_jsonrpc_begin_result(request);
-	spdk_json_write_bool(w, true);
-	spdk_jsonrpc_end_result(request, w);
-cleanup:
-	free_rpc_bdev_fastblock_resize(&req);
+	bdev_fastblock_resize(bdev, req.new_size, [request, req, thd = ::spdk_get_thread()] (int rc) {
+        auto* ctx = new std::tuple<::spdk_jsonrpc_request*, struct rpc_bdev_fastblock_resize, int>{request, req, rc};
+        ::spdk_thread_send_msg(thd, rpc_bdev_fastblock_on_resized, ctx);
+    });
 }
 
 SPDK_RPC_REGISTER("bdev_fastblock_resize", rpc_bdev_fastblock_resize, SPDK_RPC_RUNTIME)

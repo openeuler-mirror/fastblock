@@ -30,7 +30,7 @@ int g_numa_node = -1;
 static std::map<int, int> g_core_locks;
 static std::vector<int> get_all_cores() {
     auto core_count = std::min(get_nprocs(), MAX_CPU_CORES);
-    
+
     std::vector<int> cores;
     if(g_numa_node >= 0){
         if(numa_available() < 0){
@@ -101,8 +101,8 @@ std::optional<std::string> get_core_mask(uint64_t num) {
             core_mask += ",";
         core_mask += std::to_string(cores[i]);
     }
-    core_mask += "]"; 
-    return   core_mask; 
+    core_mask += "]";
+    return   core_mask;
 }
 
 void unclaim_cores() {

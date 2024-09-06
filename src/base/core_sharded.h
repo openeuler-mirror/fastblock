@@ -13,7 +13,6 @@
 
 #include "utils/fmt.h"
 
-
 #include <memory>
 #include <vector>
 #include <string>
@@ -199,7 +198,7 @@ public:
         return g_core_sharded->shard_cores();
     }
 
-    static auto make_cpumake(const core_id_type core) noexcept {
+    static auto make_cpumask(const core_id_type core) noexcept {
         auto cpumask = std::make_unique<::spdk_cpuset>();
         ::spdk_cpuset_zero(cpumask.get());
         ::spdk_cpuset_set_cpu(cpumask.get(), core, true);

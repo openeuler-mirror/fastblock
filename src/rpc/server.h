@@ -21,7 +21,7 @@ public:
     rpc_server(const rpc_server&) = delete;
 
     rpc_server(const core_sharded::core_id_type core_no, std::shared_ptr<msg::rdma::server::options> srv_opts) {
-        auto mask = core_sharded::make_cpumake(core_no);
+        auto mask = core_sharded::make_cpumask(core_no);
         auto sockid = ::spdk_env_get_socket_id(core_no);
         _transport = std::make_shared<msg::rdma::server>(
           FMT_1("rpc_srv_%1%",

@@ -14,6 +14,7 @@
 #include <spdk/thread.h>
 
 #include <utility>
+#include <optional>
 
 namespace utils {
 

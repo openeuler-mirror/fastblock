@@ -262,7 +262,7 @@ static void service_init(partition_manager* pm, server_t *server){
             SPDK_ERRLOG("ERROR: Create rpc server failed, %s\n", e.what());
             std::raise(SIGINT);
             return;
-        } 
+        }
         break;
     }
     server->osd_addr = srv_opts->bind_address;
@@ -299,7 +299,7 @@ static void pm_init(void *arg){
                        server->bdev_disk.c_str());
 
     auto core_no = core_sharded::system::last_core();
-    auto cpumask = core_sharded::make_cpumake(core_no);
+    auto cpumask = core_sharded::make_cpumask(core_no);
     auto sockid = ::spdk_env_get_socket_id(core_no);
     auto opts = msg::rdma::client::make_options(server->pt);
 
@@ -314,8 +314,8 @@ static void pm_init(void *arg){
           for (auto osd_id : pg_info.osdid()) {
               if(osd_map.data.find(osd_id) == osd_map.data.end()){
                   SPDK_WARNLOG("not find osd %d in osdmap\n", osd_id);
-                  cb_fn(arg, -err::E_NODEV);  
-                  return;  
+                  cb_fn(arg, -err::E_NODEV);
+                  return;
               }
               osds.push_back(*(osd_map.data.at(osd_id)));
           }
@@ -539,8 +539,8 @@ struct pm_load_context : public utils::context{
               [this, &blobs, shard_id, ctx, complete](){
                 std::map<std::string, struct spdk_blob*> log_blobs = std::exchange(blobs.on_shard(shard_id).log_blobs, {});
                 std::map<std::string, object_store::container> object_blobs = std::exchange(blobs.on_shard(shard_id).object_blobs, {});
-                ctx->loads.on_shard(shard_id).set_blobs(std::move(log_blobs), std::move(object_blobs)); 
-                 
+                ctx->loads.on_shard(shard_id).set_blobs(std::move(log_blobs), std::move(object_blobs));
+
                 ctx->loads.on_shard(shard_id).start_load(shard_id, complete, ctx);
               });
         }
@@ -1053,7 +1053,7 @@ main(int argc, char *argv[])
         if(!core_mask){
             return -EINVAL;
         }
-        
+
         //mkfs时保存cpu核数，启动osd时读出核数，分配cpu核
         if(save_core_size(g_core_num) != 0){
             return -EINVAL;

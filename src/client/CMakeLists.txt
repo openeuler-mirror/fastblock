@@ -3,6 +3,7 @@ compile_library(
   SRCS
     libfblock.cc
     fb_client.cc
+    log_components.cc
 
   DEPS
     spdk::spdk

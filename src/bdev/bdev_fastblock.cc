@@ -24,7 +24,6 @@
 #include <spdk/log.h>
 
 #include "bdev_fastblock.h"
-#include "client/libfblock.h"
 #include "global.h"
 
 #define SPDK_FASTBLOCK_QUEUE_DEPTH 128
@@ -132,40 +131,6 @@ bdev_fastblock_dup_config(const char *const *config)
 	return copy;
 }
 
-static int
-bdev_create_image(struct bdev_fastblock *fastblock)
-{
-	if (fastblock->object_size > 0)
-    {
-        global::blk_client->create_image(
-          fastblock->pool_name,
-          fastblock->image_name,
-		  fastblock->image_size,
-          fastblock->object_size);
-    }
-	else
-    {
-        global::blk_client->create_image(
-          fastblock->pool_name,
-          fastblock->image_name,
-		  fastblock->image_size);
-
-    }
-
-	return 0;
-}
-
-static void
-bdev_delete_image(struct bdev_fastblock *fastblock)
-{
-	global::blk_client->remove_image(fastblock->pool_name, fastblock->image_name);
-}
-
-void bdev_resize_image(struct bdev_fastblock *fastblock, uint64_t new_size_in_byte)
-{
-	global::blk_client->resize_image(fastblock->pool_name, std::string(fastblock->image_name), new_size_in_byte);
-}
-
 static int bdev_fastblock_library_init(void);
 
 static void bdev_fastblock_library_fini(void);
@@ -221,17 +186,31 @@ bdev_fastblock_destruct(void *ctx)
 /*
  * read 回调函数
  */
-static void bdev_fastblock_read_callback(struct spdk_bdev_io *bdev_io, char* data, uint64_t len, int32_t res)
+
+struct bdev_fastblock_read_context {
+    ::spdk_bdev_io *bdev_io;
+    std::unique_ptr<char[]> data;
+    uint64_t len;
+    int32_t res;
+    std::function<void()> notifier{};
+};
+
+static void bdev_fastblock_read_callback(void* arg)
 {
-	if (res == errc::success)
+    auto* ctx = reinterpret_cast<struct bdev_fastblock_read_context*>(arg);
+    auto& [bdev_io, data, len, res, notifier] = *ctx;
+    auto safe_ctx = std::unique_ptr<bdev_fastblock_read_context>{ctx};
+
+	if (res == 0)
 	{
 		if(!data){
 			spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_SUCCESS);
+            notifier();
 			return;
 		}
 	    struct iovec *iovs = bdev_io->u.bdev.iovs;
 	    int iovcnt = bdev_io->u.bdev.iovcnt;
-		char *ptr = data;
+		char *ptr = data.get();
         uint64_t length = 0;
 		if (iovcnt == 1){
 		    length = bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen;
@@ -244,6 +223,7 @@ static void bdev_fastblock_read_callback(struct spdk_bdev_io *bdev_io, char* dat
 		if(length != len){
 			SPDK_ERRLOG("length: %lu len: %lu\n", length, len);
 			spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+            notifier();
 			return;
 		}
 
@@ -258,15 +238,26 @@ static void bdev_fastblock_read_callback(struct spdk_bdev_io *bdev_io, char* dat
 	{
 		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
 	};
+    notifier();
 	return;
 }
 
 /*
  * write 回调函数
  */
-static void bdev_fastblock_write_callback(struct spdk_bdev_io *bdev_io, int32_t res)
+
+struct bdev_fastblock_write_context {
+    spdk_bdev_io* bdev_io{};
+    int32_t res{};
+    std::function<void()> notifier{};
+};
+
+static void bdev_fastblock_write_callback(void* args)
 {
-	if (res == errc::success)
+    auto* ctx = reinterpret_cast<bdev_fastblock_write_context*>(args);
+    auto [bdev_io, res, notifier] = *ctx;
+
+	if (res == 0)
 	{
 		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_SUCCESS);
 	}
@@ -274,6 +265,8 @@ static void bdev_fastblock_write_callback(struct spdk_bdev_io *bdev_io, int32_t 
 	{
 		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
 	};
+    notifier();
+    delete ctx;
 	return;
 }
 
@@ -290,21 +283,32 @@ bdev_fastblock_write(struct spdk_bdev_io *bdev_io,
 					 size_t len)
 {
 
-	uint64_t read_id = future_id++;
 	struct bdev_fastblock *fastblock = (struct bdev_fastblock *)bdev_io->bdev->ctxt;
 
-	size_t total_len = 0;
-	for (int i = 0; i < iovcnt; i++)
-	{
-		total_len += iovs[i].iov_len;
-	}
-	bool aligned = !(total_len % 4096);
-	global::blk_client->write(fastblock->pool_id,
-								   std::string(fastblock->image_name),
-								   bdev_io->u.bdev.offset_blocks * bdev_io->bdev->blocklen,
-								   bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen,
-								   bdev_io,
-								   bdev_fastblock_write_callback);
+    SPDK_DEBUGLOG(
+      bdev_fastblock,
+      "bdev_io->u.bdev.iovs is %p, bdev_io->u.bdev.iovcnt is %d, image name is %s, offset is %ld, length is %ld\n",
+      bdev_io->u.bdev.iovs, bdev_io->u.bdev.iovcnt, fastblock->image_name,
+      bdev_io->u.bdev.offset_blocks * bdev_io->bdev->blocklen,
+      bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen);
+
+    if (not bdev_io->u.bdev.iovs or bdev_io->u.bdev.iovs == 0) {
+        SPDK_DEBUGLOG(bdev_fastblock, "write empty iovec for image %s\n", fastblock->image_name);
+        spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_SUCCESS);
+        return;
+    }
+
+    fastblock::global::bdev_blk_cli->write(
+      fastblock->pool_id,
+      fastblock->image_name,
+      bdev_io->u.bdev.offset_blocks * bdev_io->bdev->blocklen,
+      bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen,
+      bdev_io,
+      [thd = ::spdk_get_thread()]
+      (struct spdk_bdev_io *bdev_io, int32_t res, std::function<void()> notifier) mutable {
+          auto* ctx = new bdev_fastblock_write_context{bdev_io, res, notifier};
+          ::spdk_thread_send_msg(thd, bdev_fastblock_write_callback, ctx);
+      });
 }
 
 /*
@@ -323,8 +327,16 @@ bdev_fastblock_get_buf_cb(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_
 
 	struct iovec *iovs = bdev_io->u.bdev.iovs;
 	int iovcnt = bdev_io->u.bdev.iovcnt;
-
 	struct bdev_fastblock *fastblock = (struct bdev_fastblock *)bdev_io->bdev->ctxt;
+
+    if (not iovs or iovcnt == 0) {
+        SPDK_DEBUGLOG(
+          bdev_fastblock,
+          "read empty iovec for image %s\n",
+          fastblock->image_name);
+        spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_SUCCESS);
+        return;
+    }
 
 	uint64_t offset = bdev_io->u.bdev.offset_blocks * bdev_io->bdev->blocklen;
 	uint64_t len = 0;
@@ -339,13 +351,20 @@ bdev_fastblock_get_buf_cb(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_
 			len += iovs[i].iov_len;
 		}
 	}
-	SPDK_INFOLOG(libblk, "start read: offset:{%lu} iovs len:{%lu} total len:{%lu}\n", offset, len, bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen);
+	SPDK_INFOLOG(
+      libblk,
+      "start read: offset:{%lu} iovs len:{%lu} total len:{%lu}\n",
+      offset, len, bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen);
 
-	uint64_t read_id = future_id++;
-
-	return (void)global::blk_client->read(fastblock->pool_id,
-								  std::string(fastblock->image_name),
-								  offset, len, bdev_io, bdev_fastblock_read_callback);
+    fastblock::global::bdev_blk_cli->read(
+      fastblock->pool_id,
+      fastblock->image_name,
+      offset, len, bdev_io,
+      [thd = ::spdk_get_thread()]
+      (struct spdk_bdev_io *bdev_io, std::unique_ptr<char[]> data, uint64_t len, int32_t res, std::function<void()> notifier) {
+          auto* ctx = new bdev_fastblock_read_context{bdev_io, std::move(data), len, res, notifier};
+          ::spdk_thread_send_msg(thd, bdev_fastblock_read_callback, ctx);
+      });
 }
 
 /*
@@ -585,15 +604,80 @@ static const struct spdk_bdev_fn_table fastblock_fn_table = {
 	.write_config_json = bdev_fastblock_write_config_json,
 };
 
-int bdev_fastblock_create(struct spdk_bdev **bdev, const char *name,
+struct bdev_fastblock_create_context {
+    const char *name{};
+    const char *image_name{};
+    uint32_t block_size{};
+    ::bdev_fastblock* fastblock{};
+     std::function<void(int, ::spdk_bdev*)> cb{};
+     monitor::client::response_status create_image_status{};
+};
+
+static void bdev_fastblock_create_on_image_created(void* msg) {
+    auto raw_args = reinterpret_cast<bdev_fastblock_create_context*>(msg);
+    std::unique_ptr<bdev_fastblock_create_context> args{raw_args};
+
+    switch (args->create_image_status) {
+    case monitor::client::response_status::ok:
+    case monitor::client::response_status::created_image_exists:
+        break;
+    default:
+        bdev_fastblock_free(args->fastblock);
+        SPDK_ERRLOG("Failed to init fastblock device\n");
+        args->cb(args->create_image_status, nullptr);
+        return;
+    }
+
+    SPDK_NOTICELOG("after bdev_create_image\n");
+    if (args->name) {
+        args->fastblock->disk.name = ::strdup(args->name);
+    } else {
+        args->fastblock->disk.name = ::spdk_sprintf_alloc("Fastblock%d", bdev_fastblock_count);
+    }
+
+    if (not args->fastblock->disk.name) {
+        bdev_fastblock_free(args->fastblock);
+        args->cb(-ENOMEM, nullptr);
+        return;
+    }
+
+    args->fastblock->disk.product_name = (char*)"Fastblock Disk";
+    bdev_fastblock_count++;
+
+	args->fastblock->disk.write_cache = 0;
+	args->fastblock->disk.blocklen = args->block_size;
+	args->fastblock->disk.blockcnt = args->fastblock->image_size / args->fastblock->disk.blocklen;
+	args->fastblock->disk.ctxt = args->fastblock;
+	args->fastblock->disk.fn_table = &fastblock_fn_table;
+	args->fastblock->disk.module = &fastblock_if;
+
+    SPDK_NOTICELOG("Add %s fastblock disk to lun\n", args->fastblock->disk.name);
+    spdk_io_device_register(
+      args->fastblock,
+      bdev_fastblock_create_cb,
+      bdev_fastblock_destroy_cb,
+      sizeof(bdev_fastblock_io_channel),
+      args->image_name);
+    auto ret = spdk_bdev_register(&args->fastblock->disk);
+    if (ret) {
+        spdk_io_device_unregister(args->fastblock, nullptr);
+        bdev_fastblock_free(args->fastblock);
+        args->cb(ret, nullptr);
+        return;
+    }
+
+    args->cb(ret, &(args->fastblock->disk));
+}
+
+int bdev_fastblock_create(const char *name,
 						  uint64_t pool_id,
 						  const char *pool_name,
 						  const char *image_name,
 						  uint64_t image_size,
 						  uint32_t block_size,
 						  uint64_t object_size,
-						  const char *monitor_address)
-{
+						  const char *monitor_address,
+                          std::function<void(int, ::spdk_bdev*)> cb) {
 	struct bdev_fastblock *fastblock = NULL;
 	int ret;
 	if (image_name == NULL)
@@ -620,7 +704,7 @@ int bdev_fastblock_create(struct spdk_bdev **bdev, const char *name,
     fastblock->pool_name = ::strdup(pool_name);
 	fastblock->block_size = block_size;
 	if (object_size == 0)
-		fastblock->object_size = default_object_size;
+		fastblock->object_size = fastblock::client::bdev_block_client::default_object_size();
 	else
 		fastblock->object_size = object_size;
 
@@ -632,55 +716,25 @@ int bdev_fastblock_create(struct spdk_bdev **bdev, const char *name,
 	}
 	SPDK_NOTICELOG("image_name %s, monitor_address %s\n", fastblock->image_name, fastblock->monitor_address);
 
-	ret = bdev_create_image(fastblock);
-	if (ret != 0)
-	{
-		bdev_fastblock_free(fastblock);
-		SPDK_ERRLOG("Failed to init fastblock device\n");
-		return ret;
-	}
+    auto* ctx = new bdev_fastblock_create_context{
+      name,
+      image_name,
+      block_size,
+      fastblock,
+      cb};
+    fastblock::global::mon_client->emplace_create_image_request(
+      fastblock->pool_name,
+      fastblock->image_name,
+      fastblock->image_size,
+      fastblock->object_size,
+      [ctx, thd = ::spdk_get_thread()]
+      (const monitor::client::response_status s, [[maybe_unused]] auto* _) {
+          ctx->create_image_status = s;
+          ::spdk_thread_send_msg(thd, bdev_fastblock_create_on_image_created, ctx);
+      }
+    );
 
-	SPDK_NOTICELOG("after bdev_create_image\n");
-	if (name)
-	{
-		fastblock->disk.name = strdup(name);
-	}
-	else
-	{
-		fastblock->disk.name = spdk_sprintf_alloc("Fastblock%d", bdev_fastblock_count);
-	}
-	if (!fastblock->disk.name)
-	{
-		bdev_fastblock_free(fastblock);
-		return -ENOMEM;
-	}
-	fastblock->disk.product_name = (char*)"Fastblock Disk";
-	bdev_fastblock_count++;
-
-	fastblock->disk.write_cache = 0;
-	fastblock->disk.blocklen = block_size;
-	fastblock->disk.blockcnt = fastblock->image_size / fastblock->disk.blocklen;
-	fastblock->disk.ctxt = fastblock;
-	fastblock->disk.fn_table = &fastblock_fn_table;
-	fastblock->disk.module = &fastblock_if;
-
-	SPDK_NOTICELOG("Add %s fastblock disk to lun\n", fastblock->disk.name);
-
-	spdk_io_device_register(fastblock, bdev_fastblock_create_cb,
-							bdev_fastblock_destroy_cb,
-							sizeof(struct bdev_fastblock_io_channel),
-							image_name);
-	ret = spdk_bdev_register(&fastblock->disk);
-	if (ret)
-	{
-		spdk_io_device_unregister(fastblock, NULL);
-		bdev_fastblock_free(fastblock);
-		return ret;
-	}
-
-	*bdev = &(fastblock->disk);
-
-	return ret;
+    return 0;
 }
 
 void bdev_fastblock_delete(struct spdk_bdev *bdev, spdk_delete_fastblock_complete cb_fn, void *cb_arg)
@@ -691,11 +745,34 @@ void bdev_fastblock_delete(struct spdk_bdev *bdev, spdk_delete_fastblock_complet
 		return;
 	}
 
-	bdev_delete_image((struct bdev_fastblock *)bdev->ctxt);
-	spdk_bdev_unregister(bdev, cb_fn, cb_arg);
+    auto* fastblock = reinterpret_cast<bdev_fastblock*>(bdev->ctxt);
+    fastblock::global::mon_client->emplace_remove_image_request(
+      fastblock->pool_name,
+      fastblock->image_name,
+      [bdev, cb_fn, cb_arg]
+      (const monitor::client::response_status s, [[maybe_unused]] auto* _) {
+          spdk_bdev_unregister(bdev, cb_fn, cb_arg);
+      }
+    );
 }
 
-int bdev_fastblock_resize(struct spdk_bdev *bdev, const uint64_t new_size_in_mb)
+struct bdev_fastblock_resize_context {
+    ::spdk_bdev* bdev;
+    const uint64_t new_size_in_byte;
+    std::function<void(int)> cb;
+};
+
+static void bdev_fastblock_on_resized(void* args) {
+    auto* ctx = reinterpret_cast<bdev_fastblock_resize_context*>(args);
+    auto rc = ::spdk_bdev_notify_blockcnt_change(ctx->bdev, ctx->new_size_in_byte);
+    if (rc != 0) {
+        SPDK_ERRLOG("failed to notify block cnt change.\n");
+    }
+    ctx->cb(rc);
+    delete ctx;
+}
+
+void bdev_fastblock_resize(struct spdk_bdev *bdev, const uint64_t new_size_in_mb, std::function<void(int)> cb)
 {
 	struct spdk_io_channel *ch;
 	struct bdev_fastblock_io_channel *fastblock_io_ch;
@@ -705,30 +782,31 @@ int bdev_fastblock_resize(struct spdk_bdev *bdev, const uint64_t new_size_in_mb)
 
 	if (bdev->module != &fastblock_if)
 	{
-		return -EINVAL;
+        cb(-EINVAL);
+        return;
 	}
 
 	current_size_in_mb = bdev->blocklen * bdev->blockcnt / (1024 * 1024);
 	if (current_size_in_mb > new_size_in_mb)
 	{
 		SPDK_ERRLOG("The new bdev size must be lager than current bdev size.\n");
-		return -EINVAL;
+		cb(-EINVAL);
+        return;
 	}
 
 	ch = bdev_fastblock_get_io_channel(bdev);
 	fastblock_io_ch = (struct bdev_fastblock_io_channel *)spdk_io_channel_get_ctx(ch);
 	new_size_in_byte = new_size_in_mb * 1024 * 1024;
 
-	bdev_resize_image(fastblock_io_ch->disk, new_size_in_byte);
-
-	rc = spdk_bdev_notify_blockcnt_change(bdev, new_size_in_byte / bdev->blocklen);
-	if (rc != 0)
-	{
-		SPDK_ERRLOG("failed to notify block cnt change.\n");
-		return rc;
-	}
-
-	return rc;
+    auto* ctx = new bdev_fastblock_resize_context{bdev, new_size_in_byte, std::move(cb)};
+    fastblock::global::mon_client->emplace_resize_image_request(
+      fastblock_io_ch->disk->pool_name,
+      std::string(fastblock_io_ch->disk->image_name),
+      new_size_in_byte,
+      [thd = ::spdk_get_thread(), ctx = ctx]
+      (const monitor::client::response_status, monitor::client::request_context* _) {
+          ::spdk_thread_send_msg(thd, bdev_fastblock_on_resized, ctx);
+      });
 }
 
 static int
