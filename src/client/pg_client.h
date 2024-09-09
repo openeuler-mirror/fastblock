@@ -96,8 +96,8 @@ public:
                   SPDK_DEBUGLOG(blkcli, "cant find the leader osd %ld\n", stack_ptr->leader_osd_key);
                   should_acquire_leader = true;
               } else if (it->second->is_onflight) {
-                  SPDK_DEBUGLOG(blkcli, "leader osd %ld request on flight\n", stack_ptr->leader_osd_key);
-                  should_acquire_leader = false;
+                  return false;
+                  // should_acquire_leader = false;
               } else if (not it->second->is_valid) {
                   SPDK_DEBUGLOG(blkcli, "leader osd %ld is not valid\n", stack_ptr->leader_osd_key);
                   should_acquire_leader = true;
@@ -105,11 +105,17 @@ public:
 
               SPDK_DEBUGLOG(
                 blkcli,
-                "leader_osd_key: %lu, should_acquire_leader: %d\n",
-                stack_ptr->leader_osd_key, should_acquire_leader);
+                "leader_osd_key: %lu, should_acquire_leader: %d, pool id %d, pg id %d\n",
+                stack_ptr->leader_osd_key, should_acquire_leader,
+                it == _leader_osd.end() ? -1 : it->second->pool_id,
+                it == _leader_osd.end() ? -1 : it->second->pg_id);
 
               if (not should_acquire_leader) {
                   try {
+                      SPDK_DEBUGLOG(
+                        blkcli,
+                        "cached leader osd, call cb, pool id %d, pg id%d\n",
+                        it->second->pool_id, it->second->pg_id);
                       stack_ptr->cb(it->second.get());
                   } catch (const std::exception& e) {
                       SPDK_ERRLOG("query leader callback error: %s\n", e.what());
@@ -215,13 +221,13 @@ private:
     void on_leader_acquired(leader_request_stack_type* stack_ptr) {
         auto it = _on_flight_leader_requests.find(stack_ptr->leader_request_id);
         if (it == _on_flight_leader_requests.end()) {
-            SPDK_ERRLOG("Cant find the leader request stack of id %ld\n", stack_ptr->leader_request_id);
+            SPDK_ERRLOG(
+              "Cant find the leader request stack of id %ld, pool id %d, pg id %d\n",
+              stack_ptr->leader_request_id, stack_ptr->pool_id, stack_ptr->pg_id);
             throw std::runtime_error{"cant find the leader request stack"};
         }
 
-        auto leader_key = make_leader_key(
-          it->second->leader_req->pool_id(),
-          it->second->leader_req->pg_id());
+        auto leader_key = make_leader_key(stack_ptr->pool_id, stack_ptr->pg_id);
         auto info_it = _leader_osd.find(leader_key);
         if (info_it == _leader_osd.end()) {
             SPDK_ERRLOG(
@@ -231,7 +237,12 @@ private:
             throw std::runtime_error{"Cant find the leader osd info record"};
         }
         auto* osd_info = info_it->second.get();
-        SPDK_INFOLOG(blkcli, "Got leader osd %ld, leader_key is %lu\n", stack_ptr->leader_request_id, leader_key);
+        SPDK_INFOLOG(
+          blkcli,
+          "Got leader osd %ld, pool id %d, pg id %d\n",
+          stack_ptr->leader_request_id,
+          stack_ptr->pool_id,
+          stack_ptr->pg_id);
         osd_info->is_onflight = false;
         auto* resp = it->second->leader_resp.get();
         osd_info->epoch = std::chrono::system_clock::now();
@@ -243,9 +254,9 @@ private:
 
         SPDK_DEBUGLOG(
           blkcli,
-          "Got leader osd of pg %lu.%lu: osd id %d osd address: '%s:%d'\n",
-          it->second->leader_req->pool_id(),
-          it->second->leader_req->pg_id(),
+          "Got leader osd of pool id %d, pg id %d, osd id %d osd address: '%s:%d'\n",
+          osd_info->pool_id,
+          osd_info->pg_id,
           osd_info->leader_id,
           osd_info->addr.c_str(),
           osd_info->port);
@@ -253,10 +264,12 @@ private:
         update_leader_state(info_it->second.get());
         if (not info_it->second->is_valid) {
             SPDK_NOTICELOG(
-              "Got a invalid leader osd(%s:%d) with id %d, will retry\n",
+              "Got a invalid leader osd(%s:%d) with id %d, pool id %ld, pg id %ld, will retry\n",
               resp->leader_addr().c_str(),
               resp->leader_port(),
-              resp->leader_id());
+              resp->leader_id(),
+              stack_ptr->leader_req->pool_id(),
+              stack_ptr->leader_req->pg_id());
 
             auto done = google::protobuf::NewCallback(
               this, &pg_client::on_leader_acquired, stack_ptr);
@@ -267,6 +280,10 @@ private:
         }
 
         try {
+            SPDK_DEBUGLOG(
+              blkcli,
+              "call cb of leader req, pool id %d, pg id %d, osd addr %s:%d\n",
+              osd_info->pool_id, osd_info->pg_id, osd_info->addr.c_str(), osd_info->port);
             stack_ptr->cb(osd_info);
         } catch (const std::exception& e) {
             SPDK_ERRLOG("error when calling leader callback: %s\n", e.what());
@@ -304,6 +321,10 @@ public:
       const int32_t pg_id,
       osd::rpc_service_osd_Stub* stub,
       std::function<void(leader_osd_info*)>&& cb) {
+        SPDK_DEBUGLOG(
+          blkcli,
+          "query leader osd for pool id %d, pg id %d\n",
+          pool_id, pg_id);
         auto* req = new leader_request_stack_type{};
         req->pool_id = pool_id;
         req->pg_id = pg_id;

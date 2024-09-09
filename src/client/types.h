@@ -25,10 +25,10 @@ struct leader_key_type {
 
 struct leader_osd_info {
     int32_t leader_id{-1};
-    int32_t pool_id{};
-    int32_t pg_id{};
+    int32_t pool_id{-1};
+    int32_t pg_id{-1};
     std::string addr{};
-    int32_t port{};
+    int32_t port{-1};
     std::chrono::system_clock::time_point epoch{};
     bool is_valid{false};
     bool is_onflight{true};

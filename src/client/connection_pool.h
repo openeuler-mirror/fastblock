@@ -185,7 +185,7 @@ public:
             auto cbs_it = ctx->thd_ctx->onflight_leader_stub_cbs.find(leader_key);
             if (cbs_it == ctx->thd_ctx->onflight_leader_stub_cbs.end()) {
                 SPDK_ERRLOG(
-                  "Cant find the get leader osd callback list of pool %d, pg %d\n",
+                  "Cant find the get leader osd callback list of pool id %d, pg id %d\n",
                   ctx->pool_id, ctx->pg_id);
                 return;
             }
@@ -200,6 +200,12 @@ public:
     void handle_emplace_leader_stub(std::unique_ptr<emplace_leader_stub_context> ctx) {
         auto* osd_info = ctx->osd_info;
         auto* thd_ctx = ctx->thd_ctx;
+        SPDK_DEBUGLOG(
+          blkcli,
+          "emplace connection to pool id %d, pg id %d, addr %s:%d, is_valid %d, is_onflight %d\n",
+          osd_info->pool_id, osd_info->pg_id, osd_info->addr.c_str(),
+          osd_info->port, osd_info->is_valid, osd_info->is_onflight);
+
         thd_ctx->rpc_client->emplace_connection(
           osd_info->addr,
           osd_info->port,
@@ -211,7 +217,7 @@ public:
                   throw std::runtime_error{"make connection failed\n"};
               }
               SPDK_NOTICELOG(
-                "Connected to leader osd(%s:%d) of pool %d, pg %d\n",
+                "Connected to leader osd(%s:%d) of pool id %d, pg id %d\n",
                 osd_info->addr.c_str(), osd_info->port, osd_info->pool_id, osd_info->pg_id);
               auto stub = std::make_unique<osd::rpc_service_osd_Stub>(conn.get());
               auto stub_ptr = stub.get();
@@ -292,31 +298,41 @@ public:
     }
 
     void handle_get_leader_stub(get_leader_stub_context* ctx) {
-        SPDK_DEBUGLOG(blkcli, "handle_get_leader_stub(): pool id is %d\n", ctx->pool_id);
+        SPDK_DEBUGLOG(
+          blkcli,
+          "handle_get_leader_stub(): pool id %d, pg id %d\n",
+          ctx->pool_id, ctx->pg_id);
         auto stub_key = make_leader_key(ctx->pool_id, ctx->pg_id);
         auto* thd_ctx = ctx->thd_ctx;
         auto onflight_it = thd_ctx->onflight_leader_stub_cbs.find(stub_key);
         if (onflight_it != thd_ctx->onflight_leader_stub_cbs.end()) {
             onflight_it->second.emplace_back(std::move(ctx->cb));
-            SPDK_DEBUGLOG(blkcli, "get leader request for pool %d has been submitted, skip this request\n", ctx->pool_id);
+            SPDK_DEBUGLOG(
+              blkcli,
+              "get leader request for pool id %d, pg id %d, has been submitted, skip this request\n",
+              ctx->pool_id, ctx->pg_id);
             return;
         }
 
         auto stub_it = ctx->thd_ctx->stubs.find(stub_key);
         if (stub_it != ctx->thd_ctx->stubs.end() and stub_it->second->osd_info) {
             if (pg_client::is_leader_changed(stub_it->second->osd_info)) {
-                SPDK_NOTICELOG("leader changed of pool %d, pg %d\n", ctx->pool_id, ctx->pg_id);
+                SPDK_NOTICELOG("leader changed of pool id %d, pg id %d\n", ctx->pool_id, ctx->pg_id);
                 ctx->thd_ctx->stubs.erase(stub_it);
                 stub_it = ctx->thd_ctx->stubs.end();
             }
-            SPDK_DEBUGLOG(blkcli, "pg leader is not changed for pool %d\n", ctx->pool_id);
+            SPDK_DEBUGLOG(
+              blkcli,
+              "pg leader is not changed for pool id %d, pg id %d\n",
+              ctx->pool_id, ctx->pg_id);
         }
 
         auto on_leader_acquired = [this, thd_ctx = ctx->thd_ctx] (leader_osd_info* info) {
             SPDK_INFOLOG(
               blkcli,
-              "acquired leader of %d, addr %s:%d\n",
-              info->leader_id, info->addr.c_str(), info->port);
+              "acquired leader of %d, addr %s:%d, pool id %d, pg id %d\n",
+              info->leader_id, info->addr.c_str(), info->port,
+              info->pool_id, info->pg_id);
             auto* ctx = new emplace_leader_stub_context{info, thd_ctx, this};
             ::spdk_thread_send_msg(thd_ctx->thread, on_emplace_leader_stub, ctx);
         };
@@ -328,7 +344,7 @@ public:
             it->second.emplace_back(std::move(ctx->cb));
             SPDK_DEBUGLOG(
               blkcli,
-              "new get leader callback list, pool %d, pg %d\n",
+              "new get leader callback list, pool id %d, pg id %d\n",
               ctx->pool_id, ctx->pg_id);
 
             auto* first_osd = _mon_cli->get_pg_first_available_osd_info(ctx->pool_id, ctx->pg_id);
@@ -339,7 +355,11 @@ public:
                 ctx->cb(nullptr);
                 return;
             }
-            SPDK_DEBUGLOG(blkcli, "first osd addr is %s:%d\n", first_osd->address.c_str(), first_osd->port);
+            SPDK_DEBUGLOG(
+              blkcli,
+              "first osd addr is %s:%d\n",
+              first_osd->address.c_str(),
+              first_osd->port);
 
             thd_ctx->rpc_client->emplace_connection(
               first_osd->address,
@@ -348,8 +368,12 @@ public:
               (bool is_connected, std::shared_ptr<msg::rdma::client::connection> conn) {
                   SPDK_DEBUGLOG(
                     blkcli,
-                    "emplaced stubs of node_id %d, addr is '%s:%d'\n",
-                    ::spdk_env_get_current_core(), first_osd->address.c_str(), first_osd->port);
+                    "emplaced stubs of node_id %d, addr is '%s:%d', pool id %d, pg id %d\n",
+                    ::spdk_env_get_current_core(),
+                    first_osd->address.c_str(),
+                    first_osd->port,
+                    raw_ctx->pool_id,
+                    raw_ctx->pg_id);
 
                   auto ctx = std::unique_ptr<get_leader_stub_context>{raw_ctx};
                   if (not is_connected) {
@@ -385,7 +409,7 @@ public:
 
         SPDK_DEBUGLOG(
           blkcli,
-          "leader_osd_info is still valid, pool %d, pg %d\n",
+          "leader_osd_info is still valid, pool id %d, pg id %d\n",
           ctx->pool_id, ctx->pg_id);
         ctx->cb(stub_it->second->stub.get());
     }

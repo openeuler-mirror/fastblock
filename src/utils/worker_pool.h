@@ -83,11 +83,6 @@ public:
      * spdk_thread_send_msg callbacks' callbacks
      ************************************************************/
 
-    // static void on_start(void* arg) {
-    //     auto* worker = reinterpret_cast<worker_state*>(arg);
-    //     worker->this_pool->handle_start(worker);
-    // }
-
     static void on_stop(void* arg) {
         auto* worker = reinterpret_cast<worker_state*>(arg);
         worker->this_pool->handle_stop(worker);
@@ -95,46 +90,22 @@ public:
 
     static void on_message(void* arg) {
         auto* ctx = reinterpret_cast<msg_context*>(arg);
-        ctx->worker->handler(ctx->msg, &ctx->worker->user_state);
-        // ctx->worker->msg_queue.emplace_back(std::move(ctx->msg));
+        try {
+            ctx->worker->handler(ctx->msg, &ctx->worker->user_state);
+        } catch (const std::exception& e) {
+            SPDK_ERRLOG("Errror in handling worker message: %s\n", e.what());
+            std::rethrow_exception(std::current_exception());
+        }
         delete ctx;
-    }
-
-    static int message_poller(void* arg) {
-        auto* worker = reinterpret_cast<worker_state*>(arg);
-        return worker->this_pool->handle_message(worker);
     }
 
     /************************************************************
      * spdk_thread_send_msg callbacks
      ************************************************************/
 
-    // void handle_start(worker_state* worker) {
-    //     // worker->poller = std::make_unique<::utils::simple_poller>(worker->thread);
-    //     // worker->poller->register_poller(message_poller, worker);
-    //     SPDK_NOTICELOG("worker %s started\n", worker->name.c_str());
-    // }
-
     void handle_stop(worker_state* worker) {
-        // worker->poller->unregister_poller();
         ::spdk_thread_exit(worker->thread);
         SPDK_NOTICELOG("worker %s stopped\n", worker->name.c_str());
-    }
-
-    int handle_message(worker_state* worker) {
-        if (_is_termianted or worker->msg_queue.empty()) {
-            return SPDK_POLLER_IDLE;
-        }
-
-        auto& msg = worker->msg_queue.front();
-        try {
-            worker->handler(std::move(msg), &worker->user_state);
-        } catch (const std::exception& e) {
-            SPDK_ERRLOG("Errror in handling worker message: %s\n", e.what());
-        }
-        worker->msg_queue.pop_front();
-
-        return SPDK_POLLER_BUSY;
     }
 
 public:
@@ -149,17 +120,9 @@ public:
         }
     }
 
-    // void start() {
-    //     if (_is_started) { return; }
-    //     _is_started = true;
-    //     for (auto& worker : _workers) {
-    //         ::spdk_thread_send_msg(worker.thread, on_start, &worker);
-    //     }
-    // }
-
-    void register_handler(message_handler_type&& handler) {
+    void register_handler(message_handler_type handler) {
         for (auto& worker : _workers) {
-            worker.handler = std::move(handler);
+            worker.handler = handler;
         }
     }
 
@@ -185,7 +148,6 @@ public:
 
 private:
 
-    // bool _is_started{false};
     bool _is_termianted{false};
     std::vector<worker_state> _workers{};
 };
