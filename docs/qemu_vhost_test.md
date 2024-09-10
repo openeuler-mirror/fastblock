@@ -207,8 +207,9 @@ virt-customize -a CentOS-Stream-GenericCloud-8-20240520.0.aarch64.qcow2 --root-p
 ```
 taskset -c 36,37,38,39 qemu-system-aarch64 \
         -M virt \
-        -cpu cortex-a57   \
+	-cpu host -machine gic-version=host \
         -smp 4 \
+	-enable-kvm \
         -m 8G  \
         -object memory-backend-file,id=mem0,size=8G,mem-path=/dev/hugepages,share=on -numa node,memdev=mem0 \
         -drive file=/home/liuhongquan/CentOS-Stream-GenericCloud-8-20240520.0.aarch64.qcow2,id=hd0,if=none  \
