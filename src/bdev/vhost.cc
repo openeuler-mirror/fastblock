@@ -32,6 +32,7 @@ vhost_usage(void)
 {
     printf("-C, --conf <path>    json configuration file path\n");
     printf("-N, --numa-node <id> the id of numa node\n");
+    printf("-S, --core-num <num> the number of cpu core\n");
 }
 
 static struct option g_cmdline_opts[] = {
