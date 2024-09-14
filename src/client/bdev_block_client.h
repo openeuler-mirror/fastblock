@@ -79,8 +79,8 @@ public:
 
     bdev_block_client() = delete;
 
-    bdev_block_client(::spdk_thread* thread, block_client_pool* blk_pool)
-      : _current_thread{thread}
+    bdev_block_client(uint32_t worker_core, block_client_pool* blk_pool)
+      : _worker_core{worker_core}
       , _blk_pool{blk_pool} {}
 
     bdev_block_client(const bdev_block_client&) = delete;
@@ -136,7 +136,7 @@ public:
         return _default_object_size;
     }
 
-    int write(
+    void write(
       const int32_t pool_id,
       char* image_name,
       const uint64_t offset,
@@ -149,14 +149,15 @@ public:
               "bdev write to pool %d, offset %ld, image %s with length 0, return directly\n",
               pool_id, offset, image_name);
             cb(bdev_io, ::err::E_SUCCESS, [](){});
-            return 0;
+            return;
         }
 
         auto* args = new write_args{pool_id, offset, image_name, length, bdev_io, std::move(cb), this};
-        return ::spdk_thread_send_msg(_current_thread, handle_write_args, args);
+        auto* evt = ::spdk_event_allocate(_worker_core, handle_write_args, args, nullptr);
+        ::spdk_event_call(evt);
     }
 
-    int read(
+    void read(
       const int32_t pool_id,
       char* image_name,
       const uint64_t offset,
@@ -165,7 +166,7 @@ public:
       read_callback_type cb) {
         if (length == 0) {
             cb(bdev_io, nullptr, 0, ::err::E_SUCCESS, [](){});
-            return 0;
+            return;
         }
 
         SPDK_DEBUGLOG(blkcli, "read(): cb address is %p\n", &cb);
@@ -177,7 +178,8 @@ public:
           bdev_io,
           std::move(cb),
           this};
-        return ::spdk_thread_send_msg(_current_thread, handle_read_args, args);
+        auto* evt = ::spdk_event_allocate(_worker_core, handle_read_args, args, nullptr);
+        ::spdk_event_call(evt);
     }
 
 public:
@@ -186,7 +188,7 @@ public:
      * spdk callbacks
      ************************************************************/
 
-    static void handle_object_write_done(void* msg) {
+    static void handle_object_write_done(void* msg, void* arg) {
         auto* raw_ctx = reinterpret_cast<write_done_context*>(msg);
         auto ctx = std::unique_ptr<write_done_context>{raw_ctx};
         if (ctx->err_code != ::err::E_SUCCESS) {
@@ -205,7 +207,7 @@ public:
         ctx->this_client->_requests.erase(ctx->request->id);
     }
 
-    static void handle_object_read_done(void* msg) {
+    static void handle_object_read_done(void* msg, void* arg) {
         auto* raw_ctx = reinterpret_cast<read_done_context*>(msg);
         auto ctx = std::unique_ptr<read_done_context>{raw_ctx};
         if (ctx->err_code != ::err::E_SUCCESS) {
@@ -230,7 +232,7 @@ public:
         ctx->this_client->_requests.erase(ctx->request->id);
     }
 
-    static void handle_write_args(void* msg) {
+    static void handle_write_args(void* msg, void* arg) {
         auto* raw_args = reinterpret_cast<write_args*>(msg);
         std::unique_ptr<write_args> args{raw_args};
         auto object_prefix = calc_image_object_prefix(args->pool_id, args->image_name);
@@ -272,7 +274,8 @@ public:
               args->pool_id,
               [this_cli = args->this_client, req = req.get()] (int32_t status, std::function<void()> notifier) {
                   auto* ctx = new write_done_context{this_cli, req, notifier, status};
-                  ::spdk_thread_send_msg(this_cli->_current_thread, handle_object_write_done, ctx);
+                  auto* evt = ::spdk_event_allocate(this_cli->_worker_core, handle_object_write_done, ctx, nullptr);
+                  ::spdk_event_call(evt);
               });
 
             iov_written_size = 0;
@@ -315,7 +318,7 @@ public:
         args->this_client->_requests.emplace(req->id, std::move(req));
     }
 
-    static void handle_read_args(void* msg) {
+    static void handle_read_args(void* msg, void* arg) {
         auto* raw_args = reinterpret_cast<read_args*>(msg);
         auto args = std::unique_ptr<read_args>{raw_args};
         auto object_prefix = calc_image_object_prefix(args->pool_id, args->image_name);
@@ -360,7 +363,8 @@ public:
                   }
 
                   auto* ctx = new read_done_context{this_cli, req, notifier, status};
-                  ::spdk_thread_send_msg(this_cli->_current_thread, handle_object_read_done, ctx);
+                  auto* evt = ::spdk_event_allocate(this_cli->_worker_core, handle_object_read_done, ctx, nullptr);
+                  ::spdk_event_call(evt);
               });
 
             buf_offset += expected_object_size;
@@ -380,7 +384,7 @@ public:
 
 private:
 
-    ::spdk_thread* _current_thread{};
+    uint32_t _worker_core{0};
     block_client_pool* _blk_pool{nullptr};
     int64_t _id_gen{0};
     std::unordered_map<int64_t, std::unique_ptr<request_type>> _requests{};

@@ -146,10 +146,8 @@ public:
       : _mon_cli{mon_cli}
       , _pg_client{pg_cli}
       , _workers{"blkcli", n_workers, cores}
-      , _conn_pool{conn_pool}
-      , _mgr{thread} {
-        worker_state s{this};
-        _workers.set_state(std::move(s));
+      , _conn_pool{conn_pool} {
+        _workers.init_state(this);
         _workers.register_handler(handle_worker_message);
     }
 
@@ -164,11 +162,6 @@ public:
     ~block_client_pool() noexcept = default;
 
 public:
-
-    /************************************************************
-     * spdk_thread_send_msg callbacks' callbacks
-     ************************************************************/
-
 
     /************************************************************
      * worker message handler
@@ -194,11 +187,6 @@ public:
         }
         }
     }
-
-    /************************************************************
-     * spdk_thread_send_msg callbacks
-     ************************************************************/
-
 
 private:
 
@@ -467,8 +455,10 @@ public:
       uint64_t offset,
       int32_t target_pool_id,
       write_callback_type&& cb) {
-        auto name_hash = std::hash<std::string>{}(object_name);
-        auto worker_id = name_hash % _workers.size();
+        // auto name_hash = std::hash<std::string>{}(object_name);
+        // auto worker_id = name_hash % _workers.size();
+
+        auto worker_id = _counter++ % _workers.size();
         auto args = std::make_unique<write_args_type>(
           std::move(object_name),
           offset,
@@ -494,8 +484,10 @@ public:
             SPDK_ERRLOG("iovec_data::iovs is nullptr\n");
             throw std::invalid_argument{"null iove"};
         }
-        auto name_hash = std::hash<std::string>{}(object_name);
-        auto worker_id = name_hash % _workers.size();
+        // auto name_hash = std::hash<std::string>{}(object_name);
+        // auto worker_id = name_hash % _workers.size();
+
+        auto worker_id = _counter++ % _workers.size();
         auto iov_args = std::make_unique<iovec_data>(iovs, iov_index, size, iov_offset);
         auto args = std::make_unique<write_args_type>(
           std::move(object_name),
@@ -515,8 +507,10 @@ public:
       uint64_t length,
       int32_t target_pool_id,
       read_callback_type&& cb) {
-        auto name_hash = std::hash<std::string>{}(object_name);
-        auto worker_id = name_hash % _workers.size();
+        // auto name_hash = std::hash<std::string>{}(object_name);
+        // auto worker_id = name_hash % _workers.size();
+
+        auto worker_id = _counter++ % _workers.size();
         auto args = std::make_unique<read_args_type>(
           std::move(object_name),
           offset,
@@ -532,8 +526,10 @@ public:
       std::string object_name,
       int32_t target_pool_id,
       delete_callback_type&& cb) {
-        auto name_hash = std::hash<std::string>{}(object_name);
-        auto worker_id = name_hash % _workers.size();
+        // auto name_hash = std::hash<std::string>{}(object_name);
+        // auto worker_id = name_hash % _workers.size();
+
+        auto worker_id = _counter++ % _workers.size();
         auto args = std::make_unique<delete_args_type>(
           std::move(object_name),
           target_pool_id,
@@ -551,9 +547,9 @@ private:
     pg_client* _pg_client{nullptr};
     fastblock::utils::worker_pool<worker_message*, worker_state> _workers;
     connection_pool* _conn_pool{nullptr};
-    ::spdk_thread* _mgr{nullptr};
-    std::unique_ptr<::utils::simple_poller> _poller{nullptr};
     msg::rdma::rpc_controller _ctrlr{};
+
+    uint64_t _counter{0};
 };
 
 } // namespace client

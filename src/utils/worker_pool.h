@@ -12,9 +12,8 @@
 #pragma once
 
 #include "base/core_sharded.h"
-#include "utils/simple_poller.h"
 
-#include <spdk/thread.h>
+#include <spdk/event.h>
 
 #include <concepts>
 #include <list>
@@ -32,10 +31,7 @@ public:
 private:
 
     struct worker_state {
-        ::spdk_thread* thread{nullptr};
-        std::string name{""};
-        std::unique_ptr<::utils::simple_poller> poller{nullptr};
-        std::list<MsgType> msg_queue{};
+        uint32_t core{0};
         State user_state{};
         message_handler_type handler{};
         worker_pool* this_pool{nullptr};
@@ -50,17 +46,14 @@ public:
 
     worker_pool() = delete;
 
-    worker_pool(std::string name, const size_t n_threads, std::vector<core_sharded::core_id_type>& cores) {
+    worker_pool(std::string name, const size_t n_workers, std::vector<core_sharded::core_id_type>& cores) {
         auto core_it = cores.begin();
-        for (size_t i = 0; i < n_threads; ++i) {
-            auto mask = core_sharded::make_cpumask(*core_it);
-            auto thd_name = FMT_2("%1%_%2%", name, i);
-            auto* thread = ::spdk_thread_create(thd_name.c_str(), mask.get());
-            auto& w = _workers.emplace_back(thread, std::move(thd_name));
+        for (size_t i = 0; i < n_workers; ++i) {
+            if (core_it == cores.end()) { core_it = cores.begin(); }
+            auto& w = _workers.emplace_back(*core_it);
             w.this_pool = this;
 
             ++core_it;
-            if (core_it == cores.end()) { core_it = cores.begin(); }
         }
         _workers.shrink_to_fit();
     }
@@ -75,21 +68,14 @@ public:
 
     ~worker_pool() noexcept = default;
 
-    ::spdk_thread* operator[](size_t i) { return _workers[i].thread; }
-
 public:
 
     /************************************************************
      * spdk_thread_send_msg callbacks' callbacks
      ************************************************************/
 
-    static void on_stop(void* arg) {
-        auto* worker = reinterpret_cast<worker_state*>(arg);
-        worker->this_pool->handle_stop(worker);
-    }
-
-    static void on_message(void* arg) {
-        auto* ctx = reinterpret_cast<msg_context*>(arg);
+    static void on_message(void* arg1, void* arg2) {
+        auto* ctx = reinterpret_cast<msg_context*>(arg1);
         try {
             ctx->worker->handler(ctx->msg, &ctx->worker->user_state);
         } catch (const std::exception& e) {
@@ -112,34 +98,23 @@ public:
 
     size_t size() { return _workers.size(); }
 
-    void stop() {
-        if (_is_termianted) { return; }
-        _is_termianted = true;
-        for (auto& worker : _workers) {
-            ::spdk_thread_send_msg(worker.thread, on_stop, &worker);
-        }
-    }
-
     void register_handler(message_handler_type handler) {
         for (auto& worker : _workers) {
             worker.handler = handler;
         }
     }
 
-    void set_state(State s) {
+    void init_state(auto&&... args) {
         for (auto& worker : _workers) {
-            worker.user_state = std::move(s);
+            worker.user_state = State{std::forward<decltype(args)>(args)...};
         }
     }
 
-    auto send_message(const size_t index, MsgType msg) {
-        auto* ctx = new msg_context{msg, &_workers[index]};
-        return ::spdk_thread_send_msg(ctx->worker->thread, on_message, ctx);
-    }
-
-    auto send_message(const size_t index, MsgType&& msg) {
+    auto send_message(const size_t index, MsgType& msg) {
+        auto core = _workers[index].core;
         auto* ctx = new msg_context{std::move(msg), &_workers[index]};
-        return ::spdk_thread_send_msg(ctx->worker->thread, on_message, ctx);
+        auto* evt = ::spdk_event_allocate(core, on_message, ctx, nullptr);
+        ::spdk_event_call(evt);
     }
 
     State* get_state(const size_t index) noexcept {

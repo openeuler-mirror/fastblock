@@ -18,6 +18,8 @@
 #include "msg/rdma/client.h"
 #include "rpc/osd_msg.pb.h"
 
+#include <spdk/queue.h>
+
 namespace fastblock {
 namespace client {
 
@@ -30,12 +32,18 @@ private:
         leader_osd_info* osd_info{nullptr};
     };
 
+    struct get_leader_stub_context;
+
     struct thread_context {
         ::spdk_thread* thread{nullptr};
         uint32_t core_id{0};
         std::shared_ptr<msg::rdma::client> rpc_client{nullptr};
         std::unordered_map<uint64_t, std::unique_ptr<osd_stub>> stubs{};
         std::unordered_map<uint64_t, std::list<std::function<void(osd::rpc_service_osd_Stub*)>>> onflight_leader_stub_cbs{};
+
+
+        std::list<std::unique_ptr<get_leader_stub_context>> leader_request{};
+        std::unique_ptr<::utils::simple_poller> poller{nullptr};
     };
 
     struct start_context {
@@ -82,6 +90,9 @@ public:
       std::vector<core_sharded::core_id_type>& cores,
       std::shared_ptr<msg::rdma::client::options> opts,
       monitor::client* mon, pg_client* pg_cli) : _mon_cli{mon}, _pg_cli{pg_cli} {
+        _core_index_offset = *(std::min_element(cores.begin(), cores.end()));
+        SPDK_NOTICELOG("_core_index_offset is %d\n", _core_index_offset);
+
         auto core_it = cores.begin();
         for (size_t i = 0; i < n_worker; ++i) {
             auto mask = core_sharded::make_cpumask(*core_it);
@@ -144,7 +155,17 @@ public:
         ctx->this_pool->handle_get_leader_stub(ctx);
     }
 
+    static void on_get_leader_stub(void* arg1, void* arg2) {
+        auto ctx = reinterpret_cast<get_leader_stub_context*>(arg1);
+        ctx->this_pool->handle_get_leader_stub(ctx);
+    }
+
     static void on_emplace_stub(void* arg) {
+        auto* ctx = reinterpret_cast<emplace_stub_context*>(arg);
+        ctx->this_pool->handle_emplace_stub(std::unique_ptr<emplace_stub_context>(ctx));
+    }
+
+    static void on_emplace_stub(void* arg, void* _) {
         auto* ctx = reinterpret_cast<emplace_stub_context*>(arg);
         ctx->this_pool->handle_emplace_stub(std::unique_ptr<emplace_stub_context>(ctx));
     }
@@ -152,6 +173,24 @@ public:
     static void on_emplace_leader_stub(void* arg) {
         auto* ctx = reinterpret_cast<emplace_leader_stub_context*>(arg);
         ctx->this_pool->handle_emplace_leader_stub(std::unique_ptr<emplace_leader_stub_context>(ctx));
+    }
+
+    static void on_emplace_leader_stub(void* arg, void* _) {
+        auto* ctx = reinterpret_cast<emplace_leader_stub_context*>(arg);
+        ctx->this_pool->handle_emplace_leader_stub(std::unique_ptr<emplace_leader_stub_context>(ctx));
+    }
+
+    static int handle_thread_poll(void* arg) {
+        auto* thd_ctx = reinterpret_cast<thread_context*>(arg);
+        if (thd_ctx->leader_request.empty()) {
+            return SPDK_POLLER_IDLE;
+        }
+
+        auto& front = thd_ctx->leader_request.front();
+        front->cb(nullptr);
+        thd_ctx->leader_request.pop_front();
+
+        return SPDK_POLLER_BUSY;
     }
 
     /************************************************************
@@ -228,7 +267,10 @@ public:
                 std::move(stub),
                 thd_ctx,
                 this};
-              ::spdk_thread_send_msg(thd_ctx->thread, on_emplace_stub, emplace_ctx);
+              // ::spdk_thread_send_msg(thd_ctx->thread, on_emplace_stub, emplace_ctx);
+
+              auto* evt = ::spdk_event_allocate(thd_ctx->core_id, on_emplace_stub, emplace_ctx, nullptr);
+              ::spdk_event_call(evt);
           }
         );
     }
@@ -238,6 +280,13 @@ public:
         ctx->start_count = _ctxs.size();
 
         for (size_t i{0}; i < _ctxs.size(); ++i) {
+
+
+            _ctxs[i].poller = std::make_unique<::utils::simple_poller>(_ctxs[i].thread);
+            _ctxs[i].poller->register_poller(handle_thread_poll, &(_ctxs[i]), 0);
+            SPDK_NOTICELOG("register thread poller on core %d\n", _ctxs[i].core_id);
+
+
             _ctxs[i].rpc_client->start([this, ctx] () mutable {
                 ::spdk_thread_send_msg(_mgr, on_rpc_client_started, ctx);
             });
@@ -251,7 +300,7 @@ public:
             return;
         }
 
-        SPDK_INFOLOG(blkcli, "all block client connection started\n");
+        SPDK_NOTICELOG("the %ldth rcp client started\n", _ctxs.size() - ctx->start_count);
         try {
             (ctx->cb)(true);
         } catch (const std::exception& e) {
@@ -334,7 +383,10 @@ public:
               info->leader_id, info->addr.c_str(), info->port,
               info->pool_id, info->pg_id);
             auto* ctx = new emplace_leader_stub_context{info, thd_ctx, this};
-            ::spdk_thread_send_msg(thd_ctx->thread, on_emplace_leader_stub, ctx);
+            // ::spdk_thread_send_msg(thd_ctx->thread, on_emplace_leader_stub, ctx);
+
+            auto* evt = ::spdk_event_allocate(thd_ctx->core_id, on_emplace_leader_stub, ctx, nullptr);
+            ::spdk_event_call(evt);
         };
 
         if (stub_it == ctx->thd_ctx->stubs.end()) {
@@ -396,7 +448,9 @@ public:
                     std::move(stub),
                     ctx->thd_ctx,
                     this};
-                  ::spdk_thread_send_msg(ctx->thd_ctx->thread, on_emplace_stub, emplace_ctx);
+                  // ::spdk_thread_send_msg(ctx->thd_ctx->thread, on_emplace_stub, emplace_ctx);
+                  auto* evt = ::spdk_event_allocate(ctx->thd_ctx->core_id, on_emplace_stub, emplace_ctx, nullptr);
+                  ::spdk_event_call(evt);
                   _pg_cli->query_leader(
                     ctx->pool_id,
                     ctx->pg_id,
@@ -440,11 +494,25 @@ public:
       const int32_t pg_id,
       const std::string& object_name,
       std::function<void(osd::rpc_service_osd_Stub*)>&& cb) {
-        auto obj_hash = std::hash<std::string>{}(object_name);
-        auto& thd_ctx = _ctxs.at(obj_hash % _ctxs.size());
-        auto* ctx = new get_leader_stub_context{this, pool_id, pg_id, std::move(cb), &thd_ctx};
+        // auto obj_hash = std::hash<std::string>{}(object_name);
+        // auto& thd_ctx = _ctxs.at(obj_hash % _ctxs.size());
+
+
+        // auto ctx_no = _counter++ % _ctxs.size();
+        // auto& thd_ctx = _ctxs.at(ctx_no);
+        // auto* ctx = new get_leader_stub_context{this, pool_id, pg_id, std::move(cb), &thd_ctx};
+
         SPDK_DEBUGLOG(blkcli, "get leader message sent\n");
-        return ::spdk_thread_send_msg(thd_ctx.thread, on_get_leader_stub, ctx);
+
+        // ::spdk_thread_send_msg(thd_ctx.thread, on_get_leader_stub, ctx);
+
+        // auto* evt = ::spdk_event_allocate(thd_ctx.core_id, on_get_leader_stub, ctx, nullptr);
+        // ::spdk_event_call(evt);
+
+
+        auto& thd_ctx = _ctxs.at(::spdk_env_get_current_core() - _core_index_offset);
+        auto ctx = std::make_unique<get_leader_stub_context>(this, pool_id, pg_id, std::move(cb), &thd_ctx);
+        thd_ctx.leader_request.push_back(std::move(ctx)); // leader_request is std::list<T>
     }
 
 private:
@@ -455,6 +523,9 @@ private:
     ::spdk_thread* _thread{nullptr};
     std::vector<thread_context> _ctxs{};
     ::spdk_thread* _mgr{};
+
+    uint64_t _counter{0};
+    int _core_index_offset{0};
 };
 } // namespace client
 } // namespace fastblock

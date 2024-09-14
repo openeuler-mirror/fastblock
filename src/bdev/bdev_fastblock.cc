@@ -282,7 +282,6 @@ bdev_fastblock_write(struct spdk_bdev_io *bdev_io,
 					 uint64_t offset,
 					 size_t len)
 {
-
 	struct bdev_fastblock *fastblock = (struct bdev_fastblock *)bdev_io->bdev->ctxt;
 
     SPDK_DEBUGLOG(

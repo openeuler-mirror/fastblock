@@ -22,6 +22,7 @@
 #include <google/protobuf/stubs/callback.h>
 
 #include <spdk/env.h>
+#include <spdk/event.h>
 #include <spdk/log.h>
 #include <spdk/thread.h>
 
@@ -60,8 +61,9 @@ private:
 
 public:
 
-    pg_client(::spdk_thread* work_thread, monitor::client* mon)
-      : _thread{work_thread}
+    pg_client(uint32_t worke_core, ::spdk_thread* work_thread, monitor::client* mon)
+      : _worker_core{worke_core}
+      , _thread{work_thread}
       , _mon_cli{mon} {}
 
     pg_client(const pg_client&) = delete;
@@ -158,11 +160,6 @@ public:
         SPDK_NOTICELOG("pg_client started\n");
     }
 
-    void handle_query_leader(std::unique_ptr<leader_request_stack_type> req) {
-        req->leader_request_id = _leader_req_id_gen++;
-        _leader_requests.emplace(req->leader_request_id, std::move(req));
-    }
-
     /************************************************************
      * spdk_thread_send_msg callbacks
      ************************************************************/
@@ -177,10 +174,12 @@ public:
         ctx->this_cli->handle_start(std::move(ctx->cb));
         delete ctx;
     }
-
-    static void on_query_leader(void* arg) {
-        auto* ctx = reinterpret_cast<leader_request_stack_type*>(arg);
-        ctx->this_client->handle_query_leader(std::unique_ptr<leader_request_stack_type>{ctx});
+    static void on_query_leader(void* arg1, void* arg2) {
+        auto* ctx = reinterpret_cast<leader_request_stack_type*>(arg1);
+        ctx->leader_request_id = ctx->this_client->_leader_req_id_gen++;
+        ctx->this_client->_leader_requests.emplace(
+          ctx->leader_request_id,
+          std::unique_ptr<leader_request_stack_type>{ctx});
     }
 
 private:
@@ -325,6 +324,13 @@ public:
           blkcli,
           "query leader osd for pool id %d, pg id %d\n",
           pool_id, pg_id);
+
+        auto leader_key = make_leader_key(pool_id, pg_id);
+        auto it = _leader_osd.find(leader_key);
+        if (it != _leader_osd.end()) {
+            if (is_leader_changed(it->second.get())) {}
+        }
+
         auto* req = new leader_request_stack_type{};
         req->pool_id = pool_id;
         req->pg_id = pg_id;
@@ -332,7 +338,9 @@ public:
         req->cb = std::move(cb);
         req->stub = stub;
         req->leader_osd_key = make_leader_key(pool_id, pg_id);
-        ::spdk_thread_send_msg(_thread, on_query_leader, req);
+
+        auto* evt = ::spdk_event_allocate(_worker_core, on_query_leader, req, nullptr);
+        ::spdk_event_call(evt);
     }
 
     /************************************************************
@@ -346,6 +354,7 @@ private:
 
     bool _is_started{false};
     bool _is_terminated{false};
+    uint32_t _worker_core{0};
     ::spdk_thread* _thread{nullptr};
     monitor::client* _mon_cli{nullptr};
     uint64_t _leader_req_id_gen{0};

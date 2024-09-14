@@ -22,11 +22,27 @@
 
 #include <csignal>
 
+#include <vector>
+#include <chrono>
+
 static const char* g_mon_cluster_endpoints = nullptr;
 static const char* g_conf_path{nullptr};
 boost::property_tree::ptree g_pt{};
 
 static int g_core_num = 1;
+
+/********************************** test **********************************************/
+static int iops_count = 0;
+static int evt_count = 0;
+bool g_start_is_init{false};
+std::chrono::system_clock::time_point g_iops_start_at;
+bool g_is_rpc_done{false};
+std::chrono::system_clock::time_point g_iops_without_rpc_start_at;
+std::string g_obj_name = "test";
+std::vector<uint64_t> g_call_count{};
+std::vector<std::unique_ptr<utils::simple_poller>> g_pollers{};
+bool g_is_all_iops_print{false};
+/********************************** test **********************************************/
 static void
 vhost_usage(void)
 {
@@ -104,6 +120,135 @@ vhost_parse_arg(int ch, char *arg)
     return 0;
 }
 
+static int bench_poll(void* arg) {
+    static __thread uint32_t count_index = spdk_env_get_current_core() - spdk_env_get_first_core();
+
+    if (fastblock::global::mon_client->is_pg_map_empty()) {
+        return SPDK_POLLER_IDLE;
+    }
+
+    if (not g_start_is_init) {
+        g_start_is_init = true;
+        SPDK_NOTICELOG("start bench_fn\n");
+        g_iops_start_at = std::chrono::system_clock::now();
+    }
+
+    auto dur = std::chrono::system_clock::now() - g_iops_start_at;
+    if (g_call_count[count_index] == 5000000) {
+        auto iops_sec = static_cast<double>(dur.count()) / 1000 / 1000 / 1000;
+        auto iops = g_call_count[count_index]  / iops_sec;
+        SPDK_ERRLOG(
+          "*************************** iops: %lf, iops_count: %ld, core_id: %d ***************************\n",
+          iops, g_call_count[count_index] , spdk_env_get_current_core());
+        SPDK_ERRLOG(
+          "*************************** duration: %ldus/%lfs ***************************\n\n",
+          dur.count() / 1000, iops_sec);
+
+        if (not g_is_all_iops_print) {
+            g_is_all_iops_print = true;
+
+            for (auto it = std::begin(g_call_count); it != std::end(g_call_count); ++it) {
+                iops_count += *it;
+            }
+
+            auto iops_sec = static_cast<double>(dur.count()) / 1000 / 1000 / 1000;
+            auto iops = iops_count  / iops_sec;
+
+            SPDK_ERRLOG(
+              "=========================== total iops: %lf, iops_count: %d, core_count: %d ===========================\n",
+              iops, iops_count, core_sharded::system::capacity());
+            SPDK_ERRLOG(
+              "=========================== duration: %ldus/%lfs ===========================\n\n",
+              dur.count() / 1000, iops_sec);
+        }
+
+        for (auto it = g_pollers.begin(); it != g_pollers.end(); ++it) {
+            it->get()->unregister_poller();
+            spdk_set_thread(it->get()->get_thread());
+            spdk_thread_exit(it->get()->get_thread());
+            spdk_set_thread(nullptr);
+        }
+
+        return SPDK_POLLER_IDLE;
+    }
+
+    fastblock::global::conn_pool->get_leader_stub(
+      1, 0, g_obj_name,
+      [idx = count_index] (osd::rpc_service_osd_Stub* _) {
+          g_call_count[idx]++;
+      }
+    );
+
+    return SPDK_POLLER_BUSY;
+}
+
+static void poller_bench_fn(std::vector<uint32_t> cores) {
+    for (auto it = cores.begin(); it != cores.end(); ++it) {
+        auto mask = core_sharded::make_cpumask(*it);
+        auto* thread = spdk_thread_create(FMT_1("poller_bench_%1%", *it).c_str(), mask.get());
+        auto poller = std::make_unique<utils::simple_poller>(thread);
+        poller->register_poller(bench_poll, nullptr, 0);
+        g_pollers.push_back(std::move(poller));
+    }
+}
+
+static void bench_fn(void* arg1, void* arg2) {
+    if (fastblock::global::mon_client->is_pg_map_empty()) {
+        auto* evt = ::spdk_event_allocate(::spdk_env_get_first_core(), bench_fn, nullptr, nullptr);
+        ::spdk_event_call(evt);
+        return;
+    }
+
+    if (not g_start_is_init) {
+        g_start_is_init = true;
+        SPDK_NOTICELOG("start bench_fn\n");
+        g_iops_start_at = std::chrono::system_clock::now();
+    }
+
+    static __thread uint32_t next_lcore = UINT32_MAX;
+    static __thread uint32_t count_index = spdk_env_get_current_core() - spdk_env_get_first_core();
+    if (next_lcore == UINT32_MAX) {
+        next_lcore = spdk_env_get_next_core(spdk_env_get_current_core());
+        if (next_lcore == UINT32_MAX) {
+            next_lcore = spdk_env_get_first_core();
+        }
+    }
+
+    if (g_call_count[0] != 2500000) {
+        fastblock::global::conn_pool->get_leader_stub(
+            1, 0, g_obj_name,
+            [next = next_lcore, idx = count_index] (osd::rpc_service_osd_Stub* _) {
+                g_call_count[idx]++;
+                auto* evt = ::spdk_event_allocate(next, bench_fn, nullptr, nullptr);
+                ::spdk_event_call(evt);
+           }
+        );
+        return;
+    }
+
+    for (auto it = std::begin(g_call_count); it != std::end(g_call_count); ++it) {
+        iops_count += *it;
+    }
+
+    auto dur = std::chrono::system_clock::now() - g_iops_start_at;
+    auto iops_sec = static_cast<double>(dur.count()) / 1000 / 1000 / 1000;
+    auto iops = iops_count / iops_sec;
+    SPDK_ERRLOG(
+      "*************************** iops: %lf, iops_count: %d, core_count: %d ***************************\n",
+      iops, iops_count, g_core_num);
+    SPDK_ERRLOG(
+      "*************************** duration: %ldus/%lfs ***************************\n",
+      dur.count() / 1000, iops_sec);
+
+    auto without_rpc_dur = std::chrono::system_clock::now() - g_iops_start_at;
+    auto without_rpc_iops_sec = (static_cast<double>(dur.count()) - 25346000.0) / 1000 / 1000 / 1000;
+    auto without_rpc_iops = (iops_count - 1) / without_rpc_iops_sec;
+    SPDK_ERRLOG("*************************** without_rpc_iops: %lf ***************************\n", without_rpc_iops);
+    SPDK_ERRLOG(
+      "*************************** without_rpc_duration: %ldus/%lfs ***************************\n",
+      without_rpc_dur.count() / 1000, without_rpc_iops_sec);
+}
+
 static void vhost_started(void *arg1)
 {
     std::vector<monitor::client::endpoint> mon_eps{};
@@ -134,19 +279,30 @@ static void vhost_started(void *arg1)
     fastblock::global::mon_client->start_cluster_map_poller();
     SPDK_NOTICELOG("monitor client started\n");
 
+    std::vector<core_sharded::core_id_type> workers_core{};
+    if (core_sharded::system::capacity() == 1) {
+        workers_core.push_back(core_sharded::system::first_core());
+    } else {
+        auto app_core = core_sharded::system::current_core();
+        auto core_it = core_sharded::system::begin();
+        for (; core_it != core_sharded::system::end(); ++core_it) {
+            // if (*core_it == app_core) {
+            //     continue;
+            // }
+            workers_core.push_back(*core_it);
+        }
+    }
+
     fastblock::global::pg_cli = std::make_unique<fastblock::client::pg_client>(
+      workers_core.front(),
       ::spdk_get_thread(),
       fastblock::global::mon_client.get());
     fastblock::global::pg_cli->start([]{});
     SPDK_NOTICELOG("pg client started\n");
 
-    core_sharded::core_container_type workers_core = core_sharded::get_shard_cores();
-    if (workers_core.size() > 1) {
-        std::erase_if(workers_core, [x_core = ::spdk_env_get_current_core()] (auto& core) -> bool {
-            return x_core == core;
-        });
-    }
-
+    SPDK_NOTICELOG(
+      "vhost workers core size is %ld, system available cores size is %d\n",
+      workers_core.size(), core_sharded::system::capacity());
     fastblock::global::conn_pool = std::make_unique<fastblock::client::connection_pool>(
       workers_core.size(),
       workers_core,
@@ -171,10 +327,20 @@ static void vhost_started(void *arg1)
           workers_core);
 
         fastblock::global::bdev_blk_cli = std::make_unique<fastblock::client::bdev_block_client>(
-          ::spdk_get_thread(),
+          workers_core.front(),
           fastblock::global::blk_cli_pool.get());
 
         SPDK_NOTICELOG("vhost started\n");
+
+        SPDK_ERRLOG("start sending leader query request...\n");
+        if (g_core_num % 2 == 0) {
+            g_call_count.resize(g_core_num);
+            for (auto i = 0; i < g_core_num; i++) {
+                g_call_count[i] = 0;
+            }
+            // bench_fn(nullptr, nullptr);
+            poller_bench_fn(workers_core);
+        }
     });
 }
 

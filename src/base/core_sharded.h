@@ -89,6 +89,10 @@ public:
             return ::spdk_env_get_last_core();
         }
 
+        static core_id_type current_core() noexcept {
+            return ::spdk_env_get_current_core();
+        }
+
         static size_type capacity() noexcept {
             return ::spdk_env_get_core_count();
         }

@@ -25,6 +25,9 @@ public:
                        osd::write_reply *response,
                        google::protobuf::Closure *done) override
     {
+        response->set_state(err::E_SUCCESS);
+        done->Run();
+        return;
         process<osd::write_request, osd::write_reply>(request, response, done);
     }
 
@@ -33,6 +36,9 @@ public:
                       osd::read_reply *response,
                       google::protobuf::Closure *done) override
     {
+        response->set_state(err::E_SUCCESS);
+        done->Run();
+        return;
         process<osd::read_request, osd::read_reply>(request, response, done);
     }
 
@@ -56,7 +62,7 @@ public:
     void process_create_pg(google::protobuf::RpcController *controller,
                             const osd::create_pg_request *request,
                             osd::create_pg_response *response,
-                            google::protobuf::Closure *done) override;    
+                            google::protobuf::Closure *done) override;
 
     void process_add_node(google::protobuf::RpcController* controller,
                          const osd::add_node_request* request,
@@ -100,20 +106,20 @@ public:
 
     void process(
         std::shared_ptr<osd_stm> osd_stm_p,
-        const osd::add_node_request* request, 
-        osd::add_node_response* response, 
+        const osd::add_node_request* request,
+        osd::add_node_response* response,
         google::protobuf::Closure* done);
 
     void process(
         std::shared_ptr<osd_stm> osd_stm_p,
-        const osd::remove_node_request* request, 
-        osd::remove_node_response* response, 
+        const osd::remove_node_request* request,
+        osd::remove_node_response* response,
         google::protobuf::Closure* done);
 
     void process(
         std::shared_ptr<osd_stm> osd_stm_p,
-        const osd::change_nodes_request* request, 
-        osd::change_nodes_response* response, 
+        const osd::change_nodes_request* request,
+        osd::change_nodes_response* response,
         google::protobuf::Closure* done);
 
 private:
@@ -121,7 +127,7 @@ private:
     std::shared_ptr<monitor::client> _monitor_client{nullptr};
 };
 
-template<typename request_type, typename reply_type> 
+template<typename request_type, typename reply_type>
 void osd_service::process(const request_type* request, reply_type* response, google::protobuf::Closure* done){
     auto pool_id = request->pool_id();
     auto pg_id = request->pg_id();
@@ -132,8 +138,8 @@ void osd_service::process(const request_type* request, reply_type* response, goo
         response->set_state(err::RAFT_ERR_NOT_FOUND_PG);
         done->Run();
         return;
-    }  
-    
+    }
+
     _pm->get_shard().invoke_on(
       shard_id,
       [this, request, response, done, shard_id](){
@@ -158,7 +164,7 @@ void osd_service::process(const request_type* request, reply_type* response, goo
                                request->pool_id(), request->pg_id(), raft->raft_get_nodeid(), err::string_status(err_num));
             response->set_state(err_num);
             done->Run();
-            return;                        
+            return;
         }
 
         auto osd_stm_p = _pm->get_osd_stm(shard_id, request->pool_id(), request->pg_id());
@@ -169,5 +175,5 @@ void osd_service::process(const request_type* request, reply_type* response, goo
             return;
         }
         process(osd_stm_p, request, response, done);
-      });    
+      });
 }

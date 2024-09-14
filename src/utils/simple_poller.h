@@ -102,6 +102,10 @@ public:
         _thread = thread;
     }
 
+    auto* get_thread() const noexcept {
+        return _thread;
+    }
+
 private:
     ::spdk_poller* _poller{nullptr};
     ::spdk_thread* _thread{nullptr};
