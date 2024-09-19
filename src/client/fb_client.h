@@ -98,6 +98,11 @@ private:
         std::optional<std::function<void()>> cb{std::nullopt};
     };
 
+    struct start_context {
+        fblock_client* this_client{nullptr};
+        std::function<void()> cb{};
+    };
+
 private:
 
     static uint64_t to_connection_id(const int32_t node_id, const uint32_t core_no) {
@@ -221,9 +226,10 @@ private:
 
 public:
 
-    fblock_client(monitor::client* mon_cli, ::spdk_cpuset* cpumask, std::shared_ptr<msg::rdma::client::options> opts)
-      : _rpc_client{std::make_shared<msg::rdma::client>(FMT_1("fblock_%1%", utils::random_string(3)), cpumask, opts)}
-      , _mon_cli{mon_cli} {}
+    fblock_client(monitor::client* mon_cli, ::spdk_thread* thd, std::shared_ptr<msg::rdma::client::options> opts)
+      : _rpc_client{std::make_shared<msg::rdma::client>(FMT_1("fblock_%1%", utils::random_string(3)), thd, opts)}
+      , _mon_cli{mon_cli}
+      , _current_thread{thd} { _poller.set_thread(thd); }
 
     ~fblock_client() noexcept {
         SPDK_DEBUGLOG(libblk, "call ~fblck_client()\n");
@@ -237,14 +243,15 @@ public:
         return _rpc_client->is_start();
     }
 
-    void start() {
+    void start(std::function<void()> cb) {
         if (not _current_thread) {
             SPDK_ERRLOG("ERROR: Cant get current spdk thread\n");
             throw std::runtime_error{"cant get current spdk thread"};
         }
 
         SPDK_DEBUGLOG(libblk, "sending start message\n");
-        ::spdk_thread_send_msg(_current_thread, do_start, this);
+        auto* ctx = new start_context{this, std::move(cb)};
+        ::spdk_thread_send_msg(_current_thread, do_start, ctx);
     }
 
     void stop(std::optional<std::function<void()>>&& cb = std::nullopt) noexcept {
@@ -261,8 +268,9 @@ public:
      ************************************************************/
 
     static void do_start(void* arg) {
-        auto* arg_this = reinterpret_cast<fblock_client*>(arg);
-        arg_this->handle_start();
+        auto* ctx = reinterpret_cast<start_context*>(arg);
+        ctx->this_client->handle_start(ctx->cb);
+        delete ctx;
     }
 
     static int do_poll(void* arg) {
@@ -292,10 +300,11 @@ public:
      * spdk_thread_send_msg callbacks' callbacks
      ************************************************************/
 
-    void handle_start() {
+    void handle_start(std::function<void()> cb) {
         SPDK_INFOLOG(libblk, "Starting block client...\n");
         _rpc_client->start();
         _poller.register_poller(do_poll, this, 0);
+        cb();
     }
 
     void handle_stop(stop_context* ctx) {
@@ -672,8 +681,7 @@ private:
     std::list<std::unique_ptr<request_stack_type>> _on_flight_requests{};
     msg::rdma::rpc_controller _ctrlr{};
 
-    ::spdk_thread* _current_thread{::spdk_get_thread()};
-    uint32_t _current_core{::spdk_env_get_current_core()};
+    ::spdk_thread* _current_thread{};
 
     std::unordered_map<uint64_t, std::unique_ptr<leader_osd_info>> _leader_osd{};
 
