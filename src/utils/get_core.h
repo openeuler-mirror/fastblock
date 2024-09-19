@@ -10,6 +10,8 @@
  */
 #pragma once
 
+#include <cstdint>
+
 namespace utils {
 
 extern int g_numa_node;

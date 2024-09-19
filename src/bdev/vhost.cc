@@ -22,6 +22,7 @@
 
 static const char* g_mon_cluster_endpoints = nullptr;
 static const char* g_conf_path{nullptr};
+std::shared_ptr<msg::rdma::client::options> g_rdma_opts{nullptr};
 boost::property_tree::ptree g_pt{};
 
 static int g_core_num = 1;
@@ -30,6 +31,7 @@ vhost_usage(void)
 {
     printf("-C, --conf <path>    json configuration file path\n");
     printf("-N, --numa-node <id> the id of numa node\n");
+    printf("-S, --core-num <num> the number of cpu core\n");
 }
 
 static struct option g_cmdline_opts[] = {
@@ -46,6 +48,13 @@ static struct option g_cmdline_opts[] = {
 		.has_arg = 1,
 		.flag = NULL,
 		.val = BLOCK_OPTION_NUMA_NODE,
+	},
+    #define BLOCK_OPTION_CORE_NUM 'S'
+	{
+		.name = "core-num",
+		.has_arg = 1,
+		.flag = NULL,
+		.val = BLOCK_OPTION_CORE_NUM,
 	},
 	{
 		.name = NULL
@@ -84,11 +93,29 @@ vhost_parse_arg(int ch, char *arg)
     case BLOCK_OPTION_NUMA_NODE:
         utils::g_numa_node = atoi(arg);
         break;
+    case BLOCK_OPTION_CORE_NUM:
+        g_core_num = atoi(arg);
+        break;
 	default:
 	    vhost_usage();
 		return -EINVAL;
 	}
 	return 0;
+}
+
+static void start_block_clients(void* arg1, void* arg2) {
+    auto core_no = ::spdk_env_get_current_core();
+    auto mask = core_sharded::make_cpumake(core_no);
+    auto* thd = ::spdk_thread_create(FMT_1("vhost_worker_%1%", core_no).c_str(), mask.get());
+    auto hold_index = core_no - spdk_env_get_first_core();
+    SPDK_NOTICELOG("start block client on core %d, hold index is %d\n", core_no, hold_index);
+    global::vhost_worker_threads.at(hold_index) = thd;
+    auto blk_cli = std::make_unique<::libblk_client>(global::mon_client.get(), thd, g_rdma_opts);
+    auto* blk_cli_ptr = blk_cli.get();
+    global::blk_clients.at(hold_index) = std::move(blk_cli);
+    blk_cli_ptr->start([] () {
+        SPDK_NOTICELOG("block client has been started on core %d\n", ::spdk_env_get_current_core());
+    });
 }
 
 static void vhost_started(void *arg1)
@@ -109,18 +136,24 @@ static void vhost_started(void *arg1)
     	  core_sharded::system::capacity() - 1);
     	core_sharded::construct(core_begin, n_core, "vhost");
 
-	auto opts = msg::rdma::client::make_options(g_pt);
+	g_rdma_opts = msg::rdma::client::make_options(g_pt);
 	auto core_no = ::spdk_env_get_current_core();
 	::spdk_cpuset cpumask{};
 	::spdk_cpuset_zero(&cpumask);
 	::spdk_cpuset_set_cpu(&cpumask, core_no, true);
-	global::conn_cache = std::make_shared<::connect_cache>(&cpumask, opts);
-    	global::par_mgr = std::make_shared<::partition_manager>(-1, global::conn_cache);
-    	global::mon_client = std::make_unique<monitor::client>(mon_eps, global::par_mgr);
-    	global::mon_client->start();
-    	global::mon_client->start_cluster_map_poller();
-    	global::blk_client = std::make_shared<::libblk_client>(global::mon_client.get(), &cpumask, opts);
-    	global::blk_client->start();
+	global::conn_cache = std::make_shared<::connect_cache>(&cpumask, g_rdma_opts);
+
+    global::par_mgr = std::make_shared<::partition_manager>(-1, global::conn_cache);
+    global::mon_client = std::make_unique<monitor::client>(mon_eps, global::par_mgr);
+    global::mon_client->start();
+    global::mon_client->start_cluster_map_poller();
+
+    global::blk_clients.resize(core_sharded::system::capacity());
+    global::vhost_worker_threads.resize(core_sharded::system::capacity());
+    for (auto core_it = core_sharded::system::begin(); core_it != core_sharded::system::end(); core_it++) {
+        auto* evt = ::spdk_event_allocate(*core_it, start_block_clients, nullptr, nullptr);
+        ::spdk_event_call(evt);
+    }
 }
 
 int main(int argc, char *argv[])
@@ -132,13 +165,9 @@ int main(int argc, char *argv[])
 	// disable tracing because it's memory consuming
 	opts.num_entries = 0;
 	opts.name = "vhost";
-	opts.print_level = ::spdk_log_level::SPDK_LOG_WARN;
-    	::spdk_log_set_flag("libblk");
-    	::spdk_log_set_flag("bdev_fastblock");
-    	::spdk_log_set_flag("object_store");
-	::spdk_log_set_flag("libblk");
+	opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
 
-	if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:N:", g_cmdline_opts,
+	if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:N:S:", g_cmdline_opts,
 								  vhost_parse_arg, vhost_usage)) !=
 		SPDK_APP_PARSE_ARGS_SUCCESS)
 	{
@@ -157,6 +186,7 @@ int main(int argc, char *argv[])
 	if(!core_mask){
 	    return -EINVAL;
 	}
+    std::cout << "run vhost with cpumask " << core_mask.value() << std::endl;
 	std::string reactor_mask = core_mask.value();
 	opts.reactor_mask = reactor_mask.c_str();
 

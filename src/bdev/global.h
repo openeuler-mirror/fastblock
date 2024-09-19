@@ -20,4 +20,6 @@ extern std::shared_ptr<connect_cache> conn_cache;
 extern std::shared_ptr<::partition_manager> par_mgr;
 extern std::unique_ptr<monitor::client> mon_client;
 extern std::shared_ptr<::libblk_client> blk_client;
+extern std::vector<std::unique_ptr<::libblk_client>> blk_clients;
+extern std::vector<::spdk_thread*> vhost_worker_threads;
 }

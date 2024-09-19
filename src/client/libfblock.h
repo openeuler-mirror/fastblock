@@ -70,8 +70,8 @@ public:
 
 public:
 
-    void start() {
-        _client->start();
+    void start(auto&&... args) {
+        _client->start(std::forward<decltype(args)>(args)...);
     }
 
     void stop(std::optional<std::function<void()>>&& cb = std::nullopt) {

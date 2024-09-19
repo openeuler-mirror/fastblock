@@ -137,18 +137,27 @@ bdev_create_image(struct bdev_fastblock *fastblock)
 {
 	if (fastblock->object_size > 0)
     {
-        global::blk_client->create_image(
+        global::mon_client->emplace_create_image_request(
           fastblock->pool_name,
           fastblock->image_name,
-		  fastblock->image_size,
-          fastblock->object_size);
+          fastblock->image_size,
+          fastblock->object_size,
+          [] (const monitor::client::response_status s, [[maybe_unused]] auto _) {
+              SPDK_INFOLOG(libblk, "create_image image status %d\n", s);
+          }
+        );
     }
 	else
     {
-        global::blk_client->create_image(
+        global::mon_client->emplace_create_image_request(
           fastblock->pool_name,
           fastblock->image_name,
-		  fastblock->image_size);
+          fastblock->image_size,
+          4194304,
+          [] (const monitor::client::response_status s, [[maybe_unused]] auto _) {
+              SPDK_INFOLOG(libblk, "create_image image status %d\n", s);
+          }
+        );
 
     }
 
@@ -158,12 +167,25 @@ bdev_create_image(struct bdev_fastblock *fastblock)
 static void
 bdev_delete_image(struct bdev_fastblock *fastblock)
 {
-	global::blk_client->remove_image(fastblock->pool_name, fastblock->image_name);
+    global::mon_client->emplace_remove_image_request(
+      fastblock->pool_name,
+      fastblock->image_name,
+      [] (const monitor::client::response_status s, [[maybe_unused]] auto _) {
+          SPDK_INFOLOG(libblk, "remove_image image status %d\n", s);
+      }
+    );
 }
 
 void bdev_resize_image(struct bdev_fastblock *fastblock, uint64_t new_size_in_byte)
 {
-	global::blk_client->resize_image(fastblock->pool_name, std::string(fastblock->image_name), new_size_in_byte);
+    global::mon_client->emplace_resize_image_request(
+      fastblock->pool_name,
+      fastblock->image_name,
+      new_size_in_byte,
+      [] (const monitor::client::response_status s, [[maybe_unused]] auto _) {
+          SPDK_INFOLOG(libblk, "resize_image image status %d\n", s);
+      }
+    );
 }
 
 static int bdev_fastblock_library_init(void);
@@ -299,12 +321,18 @@ bdev_fastblock_write(struct spdk_bdev_io *bdev_io,
 		total_len += iovs[i].iov_len;
 	}
 	bool aligned = !(total_len % 4096);
-	global::blk_client->write(fastblock->pool_id,
-								   std::string(fastblock->image_name),
-								   bdev_io->u.bdev.offset_blocks * bdev_io->bdev->blocklen,
-								   bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen,
-								   bdev_io,
-								   bdev_fastblock_write_callback);
+
+    auto worker_index = ::spdk_env_get_current_core() - ::spdk_env_get_first_core();
+    SPDK_DEBUGLOG(libblk, "worker index: %d\n", worker_index);
+    auto& blk_cli = global::blk_clients.at(worker_index);
+
+	blk_cli->write(
+      fastblock->pool_id,
+      std::string(fastblock->image_name),
+      bdev_io->u.bdev.offset_blocks * bdev_io->bdev->blocklen,
+      bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen,
+      bdev_io,
+      bdev_fastblock_write_callback);
 }
 
 /*
@@ -343,9 +371,14 @@ bdev_fastblock_get_buf_cb(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_
 
 	uint64_t read_id = future_id++;
 
-	return (void)global::blk_client->read(fastblock->pool_id,
-								  std::string(fastblock->image_name),
-								  offset, len, bdev_io, bdev_fastblock_read_callback);
+    auto worker_index = ::spdk_env_get_current_core() - ::spdk_env_get_first_core();
+    SPDK_DEBUGLOG(libblk, "worker index: %d\n", worker_index);
+    auto& blk_cli = global::blk_clients.at(worker_index);
+
+	blk_cli->read(
+      fastblock->pool_id,
+      std::string(fastblock->image_name),
+      offset, len, bdev_io, bdev_fastblock_read_callback);
 }
 
 /*
@@ -601,7 +634,7 @@ int bdev_fastblock_create(struct spdk_bdev **bdev, const char *name,
 		return -EINVAL;
 	}
 
-	SPDK_DEBUGLOG(bdev_fastblock, "bdev_fastblock_create 11\n");
+	SPDK_NOTICELOG("create fastblock bdev on core %d\n", spdk_env_get_current_core());
 	fastblock = (struct bdev_fastblock *)calloc(1, sizeof(struct bdev_fastblock));
 	if (fastblock == NULL)
 	{
