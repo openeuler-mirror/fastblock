@@ -772,7 +772,7 @@ int bdev_fastblock_resize(struct spdk_bdev *bdev, const uint64_t new_size_in_mb)
 	rc = spdk_bdev_notify_blockcnt_change(bdev, new_size_in_byte / bdev->blocklen);
 	if (rc != 0)
 	{
-		SPDK_ERRLOG("failed to notify block cnt change.\n");
+		SPDK_ERRLOG("Failed to notify block cnt change.\n");
 		return rc;
 	}
 
