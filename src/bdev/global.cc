@@ -12,6 +12,7 @@
 #include "global.h"
 
 namespace global {
+std::shared_ptr<msg::rdma::client::options> rpc_cli_opts;
 std::shared_ptr<connect_cache> conn_cache;
 std::shared_ptr<::partition_manager> par_mgr;
 std::unique_ptr<monitor::client> mon_client;

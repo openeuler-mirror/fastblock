@@ -16,6 +16,7 @@
 #include "osd/partition_manager.h"
 
 namespace global {
+extern std::shared_ptr<msg::rdma::client::options> rpc_cli_opts;
 extern std::shared_ptr<connect_cache> conn_cache;
 extern std::shared_ptr<::partition_manager> par_mgr;
 extern std::unique_ptr<monitor::client> mon_client;
