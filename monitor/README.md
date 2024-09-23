@@ -10,8 +10,8 @@ monitor is used to store cluster metadata(to etcd) and distribute them(osdmap,pg
 fbclient can fetch osdmap and pgmap, also can create osds and fake boot them.  
 fakeosd is a fake osd to communicate with monitor.  
 ## how it works
-monitor module store osdmap and pgmap to etcd, we use embeded etcd server so we don't need to start extra etcd clusters.  
-only one leader monitor can work, others are standby, they are eletcted leader by using etcd api.  
+monitor module stores osdmap and pgmap to etcd, we use embedded etcd server so we don't need to start extra etcd clusters.  
+only one leader monitor can work, others are standby, they are elected leader by using etcd api.  
 client should implement a timer to fetch osdmap and pgmap to have full knowledge of the cluster state.  
 
 ## how to use it
@@ -30,7 +30,7 @@ you should have a config file in `/etc/fastblock/monitor.json` and make sure log
     "election_master_key": "fastblock_monitor_election"
 }
 ```
-you don't need to start a extra etcd cluster, we start a embeded etcd server.   
+you don't need to start an extra etcd cluster, we start an embeded etcd server.   
 
 ### cluster
 
