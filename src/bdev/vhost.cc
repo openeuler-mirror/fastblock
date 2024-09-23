@@ -22,7 +22,6 @@
 
 static const char* g_mon_cluster_endpoints = nullptr;
 static const char* g_conf_path{nullptr};
-std::shared_ptr<msg::rdma::client::options> g_rdma_opts{nullptr};
 boost::property_tree::ptree g_pt{};
 
 static int g_core_num = 1;
@@ -103,21 +102,6 @@ vhost_parse_arg(int ch, char *arg)
 	return 0;
 }
 
-static void start_block_clients(void* arg1, void* arg2) {
-    auto core_no = ::spdk_env_get_current_core();
-    auto mask = core_sharded::make_cpumake(core_no);
-    auto* thd = ::spdk_thread_create(FMT_1("vhost_worker_%1%", core_no).c_str(), mask.get());
-    auto hold_index = core_no - spdk_env_get_first_core();
-    SPDK_NOTICELOG("start block client on core %d, hold index is %d\n", core_no, hold_index);
-    global::vhost_worker_threads.at(hold_index) = thd;
-    auto blk_cli = std::make_unique<::libblk_client>(global::mon_client.get(), thd, g_rdma_opts);
-    auto* blk_cli_ptr = blk_cli.get();
-    global::blk_clients.at(hold_index) = std::move(blk_cli);
-    blk_cli_ptr->start([] () {
-        SPDK_NOTICELOG("block client has been started on core %d\n", ::spdk_env_get_current_core());
-    });
-}
-
 static void vhost_started(void *arg1)
 {
 	std::vector<monitor::client::endpoint> mon_eps{};
@@ -136,12 +120,12 @@ static void vhost_started(void *arg1)
     	  core_sharded::system::capacity() - 1);
     	core_sharded::construct(core_begin, n_core, "vhost");
 
-	g_rdma_opts = msg::rdma::client::make_options(g_pt);
+	global::rpc_cli_opts = msg::rdma::client::make_options(g_pt);
 	auto core_no = ::spdk_env_get_current_core();
 	::spdk_cpuset cpumask{};
 	::spdk_cpuset_zero(&cpumask);
 	::spdk_cpuset_set_cpu(&cpumask, core_no, true);
-	global::conn_cache = std::make_shared<::connect_cache>(&cpumask, g_rdma_opts);
+	global::conn_cache = std::make_shared<::connect_cache>(&cpumask, global::rpc_cli_opts);
 
     global::par_mgr = std::make_shared<::partition_manager>(-1, global::conn_cache);
     global::mon_client = std::make_unique<monitor::client>(mon_eps, global::par_mgr);
@@ -150,10 +134,6 @@ static void vhost_started(void *arg1)
 
     global::blk_clients.resize(core_sharded::system::capacity());
     global::vhost_worker_threads.resize(core_sharded::system::capacity());
-    for (auto core_it = core_sharded::system::begin(); core_it != core_sharded::system::end(); core_it++) {
-        auto* evt = ::spdk_event_allocate(*core_it, start_block_clients, nullptr, nullptr);
-        ::spdk_event_call(evt);
-    }
 }
 
 int main(int argc, char *argv[])

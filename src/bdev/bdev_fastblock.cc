@@ -487,14 +487,16 @@ bdev_fastblock_create_cb(void *io_device, void *ctx_buf)
 
 	if (spdk_call_unaffinitized(bdev_fastblock_handle, ch) == NULL)
 	{
-		goto err;
+		bdev_fastblock_free_channel(ch);
+    	return -1;
 	}
 
 	ch->pfd = eventfd(0, EFD_NONBLOCK);
 	if (ch->pfd < 0)
 	{
 		SPDK_ERRLOG("Failed to get eventfd\n");
-		goto err;
+		bdev_fastblock_free_channel(ch);
+	    return -1;
 	}
 
 	ch->group_ch = (struct bdev_fastblock_group_channel *)spdk_io_channel_get_ctx(spdk_get_io_channel(&fastblock_if));
@@ -508,14 +510,27 @@ bdev_fastblock_create_cb(void *io_device, void *ctx_buf)
 	{
 		SPDK_ERRLOG("Failed to add the fd of ch(%p) to the epoll group from group_ch=%p\n", ch,
 					ch->group_ch);
-		goto err;
+		bdev_fastblock_free_channel(ch);
+	    return -1;
 	}
 
-	return 0;
+    auto core_no = ::spdk_env_get_current_core();
+    auto hold_index = core_no - ::spdk_env_get_first_core();
+    if (global::blk_clients[hold_index]) {
+        return 0;
+    }
 
-err:
-	bdev_fastblock_free_channel(ch);
-	return -1;
+    auto* bdev_thd = ::spdk_get_thread();
+    SPDK_NOTICELOG("start block client on core %d, hold index is %d\n", core_no, hold_index);
+    global::vhost_worker_threads.at(hold_index) = bdev_thd;
+    auto blk_cli = std::make_unique<::libblk_client>(global::mon_client.get(), bdev_thd, global::rpc_cli_opts);
+    auto* blk_cli_ptr = blk_cli.get();
+    global::blk_clients.at(hold_index) = std::move(blk_cli);
+    blk_cli_ptr->start([] () {
+        SPDK_NOTICELOG("block client has been started on core %d\n", ::spdk_env_get_current_core());
+    });
+
+	return 0;
 }
 
 static void
