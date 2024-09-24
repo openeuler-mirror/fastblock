@@ -54,6 +54,8 @@ static constexpr uint8_t max_rpc_meta_string_size{31};
 
 enum class status : uint8_t {
     success = 1,
+    handoff_connection_success,
+    handoff_connection_error,
     no_content,
     method_not_found,
     service_not_found,
@@ -64,8 +66,15 @@ enum class status : uint8_t {
     server_error
 };
 
+enum class transport_type : uint8_t {
+    rpc = 1,
+    connection_handoff
+};
+
 namespace {
 static char* success_string = (char*)"success";
+static char* handoff_connection_success_string = (char*)"success";
+static char* handoff_connection_error_string = (char*)"success";
 static char* no_content_string = (char*)"no_content";
 static char* method_not_found_string = (char*)"method_not_found";
 static char* service_not_found_string = (char*)"service_not_found";
@@ -74,12 +83,17 @@ static char* bad_request_string = (char*)"bad_request_body";
 static char* bad_response_string = (char*)"bad_response_body";
 static char* server_string = (char*)"server_found";
 static char* unknown_status_string = (char*)"unknown status";
+
+static char* transport_type_rpc_string = (char*)"rpc";
+static char* transport_type_connection_handoff_string = (char*)"connection_handoff";
+static char* transport_type_unknown_string = (char*)"unknown transport type";
 }
 
 struct request_meta {
     using name_size_type = uint8_t;
     using data_size_type = uint32_t;
 
+    const transport_type trans_type{transport_type::rpc};
     char service_name[max_rpc_meta_string_size + 1];
     name_size_type service_name_size;
     char method_name[max_rpc_meta_string_size + 1];
@@ -88,7 +102,14 @@ struct request_meta {
 };
 static constexpr size_t request_meta_size{sizeof(request_meta)};
 
+struct handoff_connection_meta {
+    const transport_type trans_type{transport_type::connection_handoff};
+    uint32_t core_no;
+};
+static constexpr size_t handoff_connection_meta_size{sizeof(handoff_connection_meta)};
+
 struct reply_meta {
+    transport_type trans_type{transport_type::connection_handoff};
     std::underlying_type_t<status> reply_status;
 };
 static constexpr size_t reply_meta_size{sizeof(reply_meta)};
@@ -97,6 +118,10 @@ inline char* string_status(const status s) noexcept {
     switch (s) {
     case status::success:
         return success_string;
+    case status::handoff_connection_success:
+        return handoff_connection_success_string;
+    case status::handoff_connection_error:
+        return handoff_connection_error_string;
     case status::no_content:
         return no_content_string;
     case status::method_not_found:
@@ -118,6 +143,17 @@ inline char* string_status(const status s) noexcept {
 
 inline char*  string_status(const std::underlying_type_t<status> s) noexcept {
     return string_status(static_cast<status>(s));
+}
+
+inline char* string_transport_type(const transport_type t) noexcept {
+    switch (t) {
+    case transport_type::rpc:
+        return transport_type_rpc_string;
+    case transport_type::connection_handoff:
+        return transport_type_connection_handoff_string;
+    default:
+        return transport_type_unknown_string;
+    }
 }
 
 } // namespace rdma

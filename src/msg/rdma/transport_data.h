@@ -32,8 +32,8 @@ private:
 
     using rdma_read_tag_type = uint8_t;
 
-    static constexpr uint8_t _inline_tag{1};
-    static constexpr uint8_t _no_inline_tag{0};
+    static constexpr uint8_t _inline_tag{0b10101011};
+    static constexpr uint8_t _no_inline_tag{0b01010100};
     static constexpr size_t _rdma_read_tag_length{sizeof(rdma_read_tag_type)};
     static constexpr rdma_read_tag_type _un_complete_tag{0b10101010};   // 170
     static constexpr rdma_read_tag_type _complete_tag{0b01010101};      // 85
@@ -119,6 +119,11 @@ public:
     }
 
 public:
+
+    static bool is_transport_metadata(memory_pool<::ibv_recv_wr>::net_context* ctx) noexcept {
+        auto* data = reinterpret_cast<metadata*>(ctx->mr->addr);
+        return data->is_inlined == _inline_tag or data->is_inlined == _no_inline_tag;
+    }
 
     static auto read_metacount(memory_pool<::ibv_recv_wr>::net_context* ctx) noexcept {
         auto* data = reinterpret_cast<metadata*>(ctx->mr->addr);

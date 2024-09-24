@@ -77,6 +77,10 @@ private:
         server* this_server{nullptr};
     };
 
+    struct handoff_connection_context {
+        std::shared_ptr<connection_record> conn{nullptr};
+    };
+
 public:
 
     class service {
@@ -333,6 +337,20 @@ private:
         SPDK_INFOLOG(msg, "acceptd on rdma cm event(id: %p)\n", evt->id);
     }
 
+    static void handle_handoff_connection(void* arg1, void* arg2) {
+        auto* ctx = reinterpret_cast<handoff_connection_context*>(arg1);
+        auto conn = ctx->conn;
+        delete ctx;
+
+        auto* srv = reinterpret_cast<server*>(arg2);
+        auto conn_it = srv->_connections.find(conn->sock->id());
+        if (conn_it != srv->_connections.end()) {
+            SPDK_ERRLOG(
+              "ERROR: connection %p already exists on core %d\n",
+              conn->sock->id(), ::spdk_env_get_current_core());
+        }
+    }
+
     void handle_connection_established(::rdma_cm_event* evt) {
         auto it = _cm_records.find(evt->id);
 
@@ -460,10 +478,40 @@ private:
         return ret;
     }
 
+    ::ibv_mr* send_reply_directly(status s, connection_record* conn) {
+        SPDK_DEBUGLOG(msg, "send reply with status %s\n", string_status(s));
+        auto reply_status = std::make_unique<reply_meta>(
+          transport_type::connection_handoff,
+          static_cast<std::underlying_type_t<status>>(s));
+        auto* mr = ::ibv_reg_mr(
+          _pd->value(),
+          reply_status.get(),
+          reply_meta_size,
+          IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ);
+        ::ibv_send_wr wr{};
+        wr.next = nullptr;
+        wr.send_flags = IBV_SEND_SIGNALED;
+        conn->dispatch_id.inc_request_id();
+        wr.wr_id = conn->dispatch_id.value();
+        auto rc = conn->sock->send(&wr);
+        if (rc) {
+            SPDK_ERRLOG("ERROR: failed to send reply, error %s\n", rc->err.message().c_str());
+            auto dereg_rc = ::ibv_dereg_mr(mr);
+            if (dereg_rc) {
+                SPDK_ERRLOG("ERROR: Failed to deregister mr, '%s'\n", std::strerror(dereg_rc));
+            }
+
+            return nullptr;
+        }
+
+        return mr;
+    }
+
     auto send_reply(rpc_task* task) {
         auto s = task->reply_status.value();
         SPDK_DEBUGLOG(msg, "send reply with status %s\n", string_status(s));
         auto reply_status = std::make_unique<reply_meta>(
+          transport_type::rpc,
           static_cast<std::underlying_type_t<status>>(s));
         if (s != status::success) {
             task->response_data->serialize_data(reply_status.get());
@@ -471,7 +519,7 @@ private:
             task->response_data->serialize_data(reply_status.get(), reply_meta_size, task->response_body.get());
         }
 
-        return send_metadata_request(task->conn.get(), task->response_data.get());;
+        return send_metadata_request(task->conn.get(), task->response_data.get());
     }
 
     void make_response_data(rpc_task* task, status s) {
@@ -646,6 +694,7 @@ private:
 
         SPDK_DEBUGLOG(msg, "exec rpc of id %d\n", task->id);
         auto* req_meta = task->request_data->read_request_meta();
+        assert(req_meta->trans_type == transport_type::rpc);
         dispatch_method(req_meta, std::move(task));
         _read_task_list.pop_front();
 
@@ -733,6 +782,43 @@ private:
             }
 
             auto recv_ctx = it->second;
+            if (not transport_data::is_transport_metadata(recv_ctx)) {
+                auto* trans_meta = reinterpret_cast<transport_type*>(recv_ctx->mr->addr);
+                SPDK_DEBUGLOG(msg, "transport type is %s\n", string_transport_type(*trans_meta));
+                switch (*trans_meta) {
+                case transport_type::connection_handoff: {
+                    auto* handoff_meta = reinterpret_cast<handoff_connection_meta*>(recv_ctx->mr->addr);
+                    auto target_core = ::spdk_env_get_current_core() + handoff_meta->core_no;
+                    SPDK_NOTICELOG(
+                      "handoff connection request received(core %d => core %d\n",
+                      ::spdk_env_get_current_core(), target_core);
+                    auto* ctx = new handoff_connection_context{conn};
+                    _connections.erase(conn->sock->id());
+                    _cqe_dispatch_map.erase(conn->dispatch_id.dispatch_id());
+                    auto* evt = ::spdk_event_allocate(
+                    target_core,
+                    handle_handoff_connection,
+                    ctx, _server_core_map.at(handoff_meta->core_no));
+                    ::spdk_event_call(evt);
+                    auto rc = post_recv(conn.get(), recv_ctx);
+                    if (rc) {
+                        SPDK_ERRLOG("ERROR: Post receive wr error, '%s'\n", rc->message().c_str());
+                        close_connection(conn.get());
+                    }
+                    return true;
+                }
+                case transport_type::rpc: {
+                    SPDK_ERRLOG("ill format transport metadata with transport type rpc\n");
+                    close_connection(conn.get());
+                    return true;
+                }
+                default:
+                    SPDK_ERRLOG("Unknown transport type %d\n", *trans_meta);
+                    close_connection(conn.get());
+                    return true;
+                }
+            }
+
             auto task_id = transport_data::read_correlation_index(recv_ctx);
             bool is_new_task = transport_data::is_new(recv_ctx);
             bool is_inlined = transport_data::is_inlined(recv_ctx);
@@ -775,6 +861,7 @@ private:
                 if (is_inlined) {
                     auto* inlined_data = transport_data::read_inlined_content(recv_ctx);
                     auto* meta = reinterpret_cast<request_meta*>(inlined_data);
+                    assert(meta->trans_type == transport_type::rpc);
                     SPDK_DEBUGLOG(
                       msg,
                       "[%d] parsed rpc meta, task id is %d, service name is %.*s, method name is %.*s\n",
@@ -1077,6 +1164,10 @@ public:
      * =======================================================================
      */
 
+    void set_core_server_map(std::vector<server*> map) {
+        _server_core_map = map;
+    }
+
     void create_listener(uint16_t port) {
         _opts->port = port;
         endpoint ep{_opts->bind_address, _opts->port};
@@ -1229,6 +1320,7 @@ private:
     event_channel _channel{};
     rpc_task::server_id_type _task_id_gen{0};
     std::unique_ptr<stop_context> _stop_ctx{nullptr};
+    std::vector<server*> _server_core_map{};
 };
 
 } // namespace rdma

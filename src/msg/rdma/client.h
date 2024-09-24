@@ -155,6 +155,13 @@ public:
             connection* this_conn{nullptr};
         };
 
+        struct handoff_connection_context {
+            uint64_t id{0};
+            ::ibv_mr* mr{nullptr};
+            std::unique_ptr<char[]> handoff_meta_raw{nullptr};
+            std::function<void(const status)> cb{};
+        };
+
     public:
 
         connection() = delete;
@@ -169,7 +176,8 @@ public:
           std::shared_ptr<std::list<std::weak_ptr<connection>>> busy_list,
           std::shared_ptr<std::list<std::weak_ptr<connection>>> busy_priority_list,
           std::shared_ptr<client> master,
-          int sock_id)
+          int sock_id,
+          ::ibv_pd* pd)
           : _id{id}
           , _dispatch_id{dis_id}
           , _sock{std::move(sock)}
@@ -182,7 +190,8 @@ public:
           , _busy_priority_list{busy_priority_list}
           , _master{master}
           , _poller{_master->get_thread()}
-          , _sock_id{sock_id} {}
+          , _sock_id{sock_id}
+          , _pd{pd} {}
 
         connection(const connection&) = delete;
 
@@ -464,6 +473,48 @@ public:
         void enqueue_request(std::unique_ptr<rpc_request> req) {
             auto is_pri_req = is_priority_request(req->method);
             enqueue_request(std::move(req), is_pri_req);
+        }
+
+        void handoff_connection_peer(uint32_t core_no, std::function<void(const status)> cb) {
+            auto handoff_meta_raw = std::make_unique<char[]>(handoff_connection_meta_size);
+            auto* mr = ::ibv_reg_mr(
+              _pd, handoff_meta_raw.get(),
+              handoff_connection_meta_size,
+              IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ);
+
+            if (not mr) {
+                SPDK_ERRLOG("ERROR: Failed to register memory for handoff connection\n");
+                cb(status::handoff_connection_error);
+                return;
+            }
+
+            auto* handoff_meta = reinterpret_cast<handoff_connection_meta*>(handoff_meta_raw.get());
+            handoff_meta->core_no = core_no;
+            ::ibv_send_wr wr{};
+            wr.next = nullptr;
+            wr.opcode = IBV_WR_SEND;
+            wr.send_flags = IBV_SEND_SIGNALED;
+            _dispatch_id.inc_request_id();
+            wr.wr_id = _dispatch_id.value();
+            auto rc = _sock->send(&wr);
+            if (rc) {
+                SPDK_ERRLOG("ERROR: Failed to send handoff connection wr, '%s'\n", rc->err.message().c_str());
+                auto dereg_rc = ::ibv_dereg_mr(mr);
+                if (dereg_rc) {
+                    SPDK_ERRLOG("ERROR: Failed to deregister mr, '%s'\n", std::strerror(dereg_rc));
+                }
+                cb(status::handoff_connection_error);
+                return;
+            }
+
+            auto id = _trans_id_gen++;
+            auto ctx = std::make_unique<handoff_connection_context>(id, mr, std::move(handoff_meta_raw), std::move(cb));
+            _handoff_conn_list.push_back(std::move(ctx));
+
+            SPDK_DEBUGLOG(
+              msg,
+              "successfully send handoff connection wr, local core %d => peer core %d, request id %ld\n",
+              ::spdk_env_get_current_core(), core_no, id);
         }
 
         virtual void CallMethod(
@@ -1064,6 +1115,9 @@ read_done:
         std::list<std::unique_ptr<rpc_request>> _wait_read_requests{};
         std::list<std::unique_ptr<control_operation>> _ctrl_ops{};
 
+        uint64_t _trans_id_gen{0};
+        std::list<std::unique_ptr<handoff_connection_context>> _handoff_conn_list{};
+
         std::shared_ptr<std::list<std::weak_ptr<connection>>> _busy_list{};
         std::shared_ptr<std::list<std::weak_ptr<connection>>> _busy_priority_list{};
         std::shared_ptr<client> _master{};
@@ -1073,6 +1127,7 @@ read_done:
         int32_t _onflight_send_wr{0};
         int64_t _onflight_rpc_task_size{0};
         int _sock_id{SPDK_ENV_SOCKET_ID_ANY};
+        ::ibv_pd* _pd{nullptr};
         std::chrono::system_clock::time_point _shutdown_timeout{};
 
         FASTBLOCK_DUR_MAP_CREATE(rpc_request::key_type, _enqueue_dur_map, "enqueue_request");
@@ -1291,7 +1346,8 @@ public:
           _busy_connections,
           _busy_priority_connections,
           shared_from_this(),
-          _sock_id);
+          _sock_id,
+          _pd.get());
         auto conn_task = std::make_unique<connect_task>(conn, std::move(ctx->cb));
         _connect_tasks.emplace(cm_id, std::move(conn_task));
     }
