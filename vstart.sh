@@ -13,7 +13,7 @@ set -x
 #   4.5 in pro mode, you should provide monitor ip address or disks for osds
 #   4.6 in pro mode, since using a virtual rdma nic doesn't make any sense, you should provide a rdma nic name
 # 5. ssh passwordless login should be configured between machines to add remote osds
-# 6. if rdma nic is not provided, we will use a virutal rdma nic(by kernel module rdma_rxe) 
+# 6. if rdma nic is not provided, we will use a virtual rdma nic(by kernel module rdma_rxe) 
 # 7. if some osds failed to start because of lacking of hugepage, you should apply enough hugepage before running this script
 
 osdcount=0
