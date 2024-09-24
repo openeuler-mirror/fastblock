@@ -305,7 +305,7 @@ function parametersCheck(){
         fi
     else
         if [ "$osdcount" != 0 ];then
-            echo "in pro mode, osdcount should not be be provided"
+            echo "in pro mode, osdcount should not be provided"
             exit -1
         fi
 
