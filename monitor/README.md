@@ -30,7 +30,7 @@ you should have a config file in `/etc/fastblock/monitor.json` and make sure log
     "election_master_key": "fastblock_monitor_election"
 }
 ```
-you don't need to start an extra etcd cluster, we start an embeded etcd server.   
+you don't need to start an extra etcd cluster, we start an embedded etcd server.   
 
 ### cluster
 
