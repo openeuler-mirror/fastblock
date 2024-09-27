@@ -64,7 +64,7 @@ struct multi_complete : public context{
     , num(0)
     , mutex(PTHREAD_MUTEX_INITIALIZER)
     , fun(_fun)
-    , arg(_arg) 
+    , arg(_arg)
     , core_num(_core_num)
     , merrno(0) {}
 
@@ -91,13 +91,18 @@ private:
         if(count > 1 && core_num > 1)
             return true;
         return false;
-    }    
+    }
 };
 
 inline void complete_done(void *arg, int serrno) {
     utils::multi_complete *complete = (utils::multi_complete *)arg;
-    complete->complete(serrno);    
+    complete->complete(serrno);
 }
+
+struct core_shard_map {
+    uint32_t port;
+    uint32_t core_id;
+};
 
 struct osd_info_t
 {
@@ -105,7 +110,7 @@ struct osd_info_t
 	bool isin;
 	bool isup;
 	bool ispendingcreate;
-	int port;
+    std::map<uint32_t, core_shard_map> sharded_ports;
 	std::string address;
 };
 
@@ -181,8 +186,8 @@ struct cluster_io{
     uint64_t read_ios;
     uint64_t read_bytes;
     uint64_t write_ios;
-    uint64_t write_bytes;  
-    int64_t  objects;  
+    uint64_t write_bytes;
+    int64_t  objects;
 };
 
 struct switch_core_context{

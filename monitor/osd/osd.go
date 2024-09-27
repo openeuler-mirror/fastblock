@@ -18,8 +18,8 @@ import (
 	"monitor/log"
 	"monitor/msg"
 	"net"
-	"time"
 	"sync"
+	"time"
 )
 
 type OSDID int
@@ -43,16 +43,16 @@ func isValidPort(port uint32) bool {
 
 // when osd restarts, following information is changed(host may not)
 type OSDInfo struct {
-	Osdid           int    `json:"osdid"`
-	Address         string `json:"address"`
-	Uuid            string `json:"uuid"`
-	Host            string `json:"host"`
-	Port            uint32 `json:"port"`
-	Size            int64  `json:"size"`
-	IsIn            bool   `json:"isin"`
-	IsUp            bool   `json:"isup"`
-	IsPendingCreate bool   `json:"ispendingcreate"`
-	CoreNum         uint32 `json:"corenum"`
+	Osdid           int               `json:"osdid"`
+	Address         string            `json:"address"`
+	Uuid            string            `json:"uuid"`
+	Host            string            `json:"host"`
+	ShardedPorts    map[uint32]uint32 `json:"sharded_ports"`
+	Size            int64             `json:"size"`
+	IsIn            bool              `json:"isin"`
+	IsUp            bool              `json:"isup"`
+	IsPendingCreate bool              `json:"ispendingcreate"`
+	CoreNum         uint32            `json:"corenum"`
 }
 
 type OsdMap struct {
@@ -80,11 +80,12 @@ const (
 )
 
 type ClusterState struct {
-	NoReblance bool   `json:"noReblance"`
+	NoReblance bool `json:"noReblance"`
 	//是否允许down掉的osd经过一段时间自动out
-	NoOut      bool   `json:"noOut"`
+	NoOut bool `json:"noOut"`
 }
-var  CState ClusterState
+
+var CState ClusterState
 
 type clusterIos struct {
 	mutex       sync.Mutex
@@ -94,15 +95,16 @@ type clusterIos struct {
 	write_bytes uint64
 	objects     int64
 	start       time.Time
-} 
+}
 
 var csIos clusterIos
 
 type UnprocessedEvent struct {
 	//在设置NoReblance期间是否有osd由out转为in
-	OutToIn    bool     `json:"outToIn"`
+	OutToIn bool `json:"outToIn"`
 }
-var CSUnprocessedEvent  UnprocessedEvent
+
+var CSUnprocessedEvent UnprocessedEvent
 
 type OsdTask struct {
 	osdid       int
@@ -191,8 +193,8 @@ func LoadClusterStates(ctx context.Context, client *etcdapi.EtcdClient) (err err
 		log.Error(ctx, getErr)
 		return getErr
 	}
-	
-    var clusterState ClusterState
+
+	var clusterState ClusterState
 	if jerr := json.Unmarshal([]byte(data), &clusterState); jerr != nil {
 		log.Error(ctx, jerr, string(data))
 		return jerr
@@ -246,13 +248,13 @@ func LoadClusterUnprocessedEvent(ctx context.Context, client *etcdapi.EtcdClient
 		}
 		log.Error(ctx, getErr)
 		return getErr
-	}	
+	}
 
-	var unprocessedEvent  UnprocessedEvent
+	var unprocessedEvent UnprocessedEvent
 	if jerr := json.Unmarshal([]byte(data), &unprocessedEvent); jerr != nil {
 		log.Error(ctx, jerr, string(data))
 		return jerr
-	}	
+	}
 
 	CSUnprocessedEvent = unprocessedEvent
 	log.Info(ctx, "load unprocessed event of cluster done. OutToIn ", CSUnprocessedEvent.OutToIn)
@@ -260,7 +262,7 @@ func LoadClusterUnprocessedEvent(ctx context.Context, client *etcdapi.EtcdClient
 		CSUnprocessedEvent.OutToIn = false
 		saveClusterUnprocessedEvent(ctx, client)
 	}
-	
+
 	return nil
 }
 
@@ -298,7 +300,7 @@ func ProcessApplyIDMessage(ctx context.Context, client *etcdapi.EtcdClient, uuid
 		IsUp:            false,
 		Address:         "",
 		Host:            "",
-		Port:            0,
+		ShardedPorts:    map[uint32]uint32{},
 		Size:            0,
 	}
 
@@ -326,7 +328,7 @@ func ProcessApplyIDMessage(ctx context.Context, client *etcdapi.EtcdClient, uuid
 	return oid, msg.ApplyIDErrorCode_ApplyIdOk
 }
 
-func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int32, uuid string, size int64, port uint32, host string, 
+func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int32, uuid string, size int64, sharded_ports map[uint32]uint32, host string, 
 	    address string, core_num uint32) ERRNUM {
 	// the uuid should not exist in the osd map
 	found := false
@@ -348,8 +350,15 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 		return OSD_ERR_ID_CONFLICT
 	}
 
-	if !isValidIPv4(address) || !isValidPort(port) {
-		log.Warn(ctx, "invalid ip or port.")
+	for _, port := range sharded_ports {
+		if !isValidPort(port) {
+			log.Warn(ctx, "invalide port: ", port)
+			return OSD_ERR_ADDRESS_INVALID
+		}
+	}
+
+	if !isValidIPv4(address) {
+		log.Warn(ctx, "invalide ip or port.", address)
 		return OSD_ERR_ADDRESS_INVALID
 	}
 
@@ -365,7 +374,7 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 		//this is a newly create osd
 		oinfo.Address = address
 		oinfo.Host = host
-		oinfo.Port = port
+		oinfo.ShardedPorts = sharded_ports
 		oinfo.IsPendingCreate = false
 		oinfo.IsIn = true
 		oinfo.IsUp = true
@@ -375,7 +384,7 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 		//(todo) check whether any thing changed??
 		oinfo.Address = address
 		oinfo.Host = host
-		oinfo.Port = port
+		oinfo.ShardedPorts = sharded_ports
 		oinfo.IsIn = true
 		oinfo.IsUp = true
 		oinfo.Size = size
@@ -451,7 +460,7 @@ func ProcessGetOsdMapMessage(ctx context.Context, cv int64, oid int32) ([]*msg.O
 		var info msg.OsdDynamicInfo
 		info.Osdid = int32(osdState.Osdid)
 		info.Address = osdState.Address
-		info.Port = int32(osdState.Port)
+		info.ShardedPorts = osdState.ShardedPorts
 		info.Isin = osdState.IsIn
 		info.Isup = osdState.IsUp
 		odi = append(odi, &info)
@@ -600,11 +609,11 @@ func ProcessNoReblanceMessage(ctx context.Context, client *etcdapi.EtcdClient, s
 		CState.NoReblance = set
 		err := saveClusterStates(ctx, client)
 		if err != nil {
-			CState.NoReblance = !set 
+			CState.NoReblance = !set
 			return false
 		}
-		
-		if !set && CSUnprocessedEvent.OutToIn{
+
+		if !set && CSUnprocessedEvent.OutToIn {
 			//复位NoReblance，且设置NoReblance期间有outToIN事件
 			CSUnprocessedEvent.OutToIn = false
 			saveClusterUnprocessedEvent(ctx, client)
@@ -620,9 +629,9 @@ func ProcessNoOutMessage(ctx context.Context, client *etcdapi.EtcdClient, set bo
 		CState.NoOut = set
 		err := saveClusterStates(ctx, client)
 		if err != nil {
-			CState.NoOut = !set 
+			CState.NoOut = !set
 			return false
-		}		
+		}
 	}
 	return true
 }
@@ -648,7 +657,7 @@ func CheckOsdHeartbeat(ctx context.Context, client *etcdapi.EtcdClient) {
 						log.Warn(ctx, "osd ", info.Osdid, " from down to up.")
 					}
 				}
-				if hi.lastHeartBeat.Add(osdDownInterval + osdDownOutInterval).Before(time.Now()) && info.IsIn {
+				if hi.lastHeartBeat.Add(osdDownInterval+osdDownOutInterval).Before(time.Now()) && info.IsIn {
 					if !CState.NoOut {
 						info.IsIn = false
 						isChange = true
@@ -683,7 +692,7 @@ func CheckOsdHeartbeat(ctx context.Context, client *etcdapi.EtcdClient) {
 	}
 }
 
-func getOsdNums() (int32, int32, int32){
+func getOsdNums() (int32, int32, int32) {
 	osdNum := 0
 	osdUpNum := 0
 	osdInNum := 0
@@ -700,11 +709,11 @@ func getOsdNums() (int32, int32, int32){
 	return int32(osdNum), int32(osdUpNum), int32(osdInNum)
 }
 
-func PorcessGetClusterStatusMessage(ctx context.Context, client *etcdapi.EtcdClient) (*msg.GetClusterStatusResponse) {
+func PorcessGetClusterStatusMessage(ctx context.Context, client *etcdapi.EtcdClient) *msg.GetClusterStatusResponse {
 	cluster := &msg.GetClusterStatusResponse{}
 	states := &msg.ClusterStates{
 		NoReblance: CState.NoReblance,
-		NoOut: CState.NoOut,
+		NoOut:      CState.NoOut,
 	}
 	cluster.ClusterState = states
 	for i := 0; i < len(config.CONFIG.Monitors); i++ {
@@ -713,7 +722,7 @@ func PorcessGetClusterStatusMessage(ctx context.Context, client *etcdapi.EtcdCli
 
 	cluster.OsdNum, cluster.UpOsdNum, cluster.InOsdNum = getOsdNums()
 	poolnum, pgnum, pgstat := GetPoolPgNum()
-	cluster.PoolNum = poolnum 
+	cluster.PoolNum = poolnum
 	cluster.PgNum = pgnum
 	cluster.PgState = pgstat
 
@@ -732,7 +741,7 @@ func PorcessGetClusterStatusMessage(ctx context.Context, client *etcdapi.EtcdCli
 		cluster.CliReadSpeed = csIos.read_bytes * 1000 / ms
 		cluster.CliWriteSpeed = csIos.write_bytes * 1000 / ms
 		cluster.CliReadIops = csIos.read_ios * 1000 / ms
-		cluster.CliWriteIops = csIos.write_ios * 1000 / ms		
+		cluster.CliWriteIops = csIos.write_ios * 1000 / ms
 	}
 	cluster.RecoverySpeed = 0
 	cluster.RecoveryObjPs = 0
@@ -745,9 +754,9 @@ func UpdateClusterIos(ctx context.Context, client *etcdapi.EtcdClient) {
 	clusterTicker := time.NewTicker(clusterInterval)
 	for range clusterTicker.C {
 		csIos.mutex.Lock()
-		csIos.read_ios    = 0
-		csIos.read_bytes  = 0
-		csIos.write_ios   = 0
+		csIos.read_ios = 0
+		csIos.read_bytes = 0
+		csIos.write_ios = 0
 		csIos.write_bytes = 0
 		csIos.start = time.Now()
 
@@ -758,11 +767,11 @@ func UpdateClusterIos(ctx context.Context, client *etcdapi.EtcdClient) {
 func PorcessDataStatisticsMessage(ctx context.Context, client *etcdapi.EtcdClient, data *map[string]*msg.DataStatistics) bool {
 	csIos.mutex.Lock()
 	for _, statistics := range *data {
-		csIos.read_ios     += statistics.GetReadIos()
-		csIos.read_bytes   += statistics.GetReadBytes()
-		csIos.write_ios    += statistics.GetWriteIos()
-		csIos.write_bytes  += statistics.GetWriteBytes()
-		csIos.objects      += statistics.GetObjects()
+		csIos.read_ios += statistics.GetReadIos()
+		csIos.read_bytes += statistics.GetReadBytes()
+		csIos.write_ios += statistics.GetWriteIos()
+		csIos.write_bytes += statistics.GetWriteBytes()
+		csIos.objects += statistics.GetObjects()
 	}
 	csIos.mutex.Unlock()
 	return true

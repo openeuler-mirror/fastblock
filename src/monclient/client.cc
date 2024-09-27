@@ -141,7 +141,7 @@ void client::handle_start_cluster_map_poller() {
 void client::emplace_osd_boot_request(
   const int osd_id,
   const std::string& osd_addr,
-  const int osd_port,
+  const std::map<uint32_t, uint32_t>& sharded_ports,
   const std::string& osd_uuid,
   const int64_t size,
   const uint32_t core_num,
@@ -151,7 +151,10 @@ void client::emplace_osd_boot_request(
     boot_req->set_osd_id(osd_id);
     boot_req->set_uuid(osd_uuid.c_str());
     boot_req->set_address(osd_addr.c_str());
-    boot_req->set_port(osd_port);
+    auto* proto_sharded_ports = boot_req->mutable_sharded_ports();
+    for (auto it = sharded_ports.begin(); it != sharded_ports.end(); ++it) {
+        proto_sharded_ports->insert({it->first, it->second});
+    }
     boot_req->set_size(size);
     boot_req->set_core_num(core_num);
     char hostname[1024];
@@ -715,7 +718,18 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
     bool should_create_connect{false};
 
     for (int i{0}; i < osds.size(); ++i) {
-        auto is_valid_addr = valid_osd_address(osds[i].address(), osds[i].port());
+        bool is_valid_addr{true};
+        for (auto it = osds[i].sharded_ports().begin(); it != osds[i].sharded_ports().end(); ++it) {
+            if (not valid_osd_address(osds[i].address(), it->second)) {
+                SPDK_NOTICELOG(
+                  "osd %d address %s:%d is invalid, skip it\n",
+                  osds[i].osdid(),
+                  osds[i].address().c_str(),
+                  it->second);
+                is_valid_addr = false;
+                break;
+            }
+        }
         if (not is_valid_addr) {
             SPDK_INFOLOG(
               mon,
@@ -740,7 +754,9 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
             osd_it->second->node_id = osds[i].osdid();
             osd_it->second->isin = osds[i].isin();
             osd_it->second->ispendingcreate = osds[i].ispendingcreate();
-            osd_it->second->port = osds[i].port();
+            auto& sharded_ports = osds[i].sharded_ports();
+            osd_it->second->sharded_ports.clear();
+            make_sharded_ports(sharded_ports, osd_it->second->sharded_ports);
             osd_it->second->address = osds[i].address();
             if(osd_it->second->isup && !osds[i].isup() && osd_it->second->node_id != _self_osd_id){
                 SPDK_DEBUGLOG(mon, "osd %d is down, remove connect to it\n", osds[i].osdid());
@@ -766,51 +782,67 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
               osds[i].isin(),
               osds[i].isup(),
               osds[i].ispendingcreate(),
-              osds[i].port(),
+              std::map<uint32_t, utils::core_shard_map>{},
               osds[i].address());
+            auto& proto_shard_ports = osds[i].sharded_ports();
+            make_sharded_ports(proto_shard_ports, osd_info->sharded_ports);
 
             auto [it, _] = _osd_map.data.emplace(osd_info->node_id, std::move(osd_info));
             osd_it = it;
         }
 
         auto& osd_info = *(osd_it->second);
-        SPDK_DEBUGLOG(mon,
-          "osd id %d, is up %d, port %d, address %s, rsp is up %d\n",
-          osd_info.node_id,
-          osd_info.isup,
-          osd_info.port,
-          osd_info.address.c_str(),
-          osds[i].isup());
-
         if (should_create_connect) {
-            SPDK_NOTICELOG(
-              "Connect to osd %d(%s:%d)\n",
-              osd_info.node_id,
-              osd_info.address.c_str(),
-              osd_info.port);
-
             if (not resp_stack) {
                 resp_stack = std::make_unique<response_stack>(response, 0);
             }
 
-            _pm.lock()->get_pg_group().create_connect(
-              osd_info.node_id, osd_info.address, osd_info.port,
-              [this, raw_stack = resp_stack.get(), node_id = osd_info.node_id] (void *, int res) {
-                  if (res != err::E_SUCCESS) {
-                      SPDK_ERRLOG("ERROR: Connect failed\n");
-                      auto it = _osd_map.data.find(node_id);
-                      if (it != _osd_map.data.end()) {
-                          it->second->isup = false;
-                      }
-                    //   throw std::runtime_error{"connect failed"};
-                  }
+            for (auto it = osd_info.sharded_ports.begin(); it != osd_info.sharded_ports.end(); ++it) {
+                auto shard = it->first;
+                auto core_port = it->second;
 
-                  raw_stack->un_connected_count--;
-                  SPDK_DEBUGLOG(mon, "Connected, un-connected count is %ld\n",
-                  raw_stack->un_connected_count);
-              }
-            );
-            resp_stack->un_connected_count++;
+                SPDK_NOTICELOG(
+                  "Starting connect to osd %s:%d, shard %d, core %d\n",
+                  osd_info.address.c_str(), core_port.port, shard, core_port.core_id);
+
+                _pm.lock()->get_pg_group().create_connect(
+                  osd_info.node_id,
+                  osd_info.address,
+                  core_port.port,
+                  [this, node_id = osd_info.node_id, shard, raw_stack = resp_stack.get()] (void *, int res) {
+                      if (res != err::E_SUCCESS) {
+                          SPDK_ERRLOG("ERROR: Connect failed\n");
+                          auto it = _osd_map.data.find(node_id);
+                          if (it != _osd_map.data.end()) {
+                              it->second->isup = false;
+                          }
+                      }
+
+                      raw_stack->un_connected_count--;
+                      SPDK_DEBUGLOG(mon, "Connected, un-connected count is %ld\n",
+                        raw_stack->un_connected_count);
+                  }
+                );
+                resp_stack->un_connected_count++;
+            }
+
+            // _pm.lock()->get_pg_group().create_connect(
+            //   osd_info.node_id, osd_info.address, osd_info.port,
+            //   [this, raw_stack = resp_stack.get(), node_id = osd_info.node_id] (void *, int res) {
+            //       if (res != err::E_SUCCESS) {
+            //           SPDK_ERRLOG("ERROR: Connect failed\n");
+            //           auto it = _osd_map.data.find(node_id);
+            //           if (it != _osd_map.data.end()) {
+            //               it->second->isup = false;
+            //           }
+            //         //   throw std::runtime_error{"connect failed"};
+            //       }
+
+            //       raw_stack->un_connected_count--;
+            //       SPDK_DEBUGLOG(mon, "Connected, un-connected count is %ld\n",
+            //       raw_stack->un_connected_count);
+            //   }
+            // );
         }
     }
 
@@ -1069,20 +1101,20 @@ bool client::handle_response() {
     if (rc == 0) [[likely]] {
         return false;
     }
-    
+
     if (rc < 0) [[unlikely]] {
         SPDK_ERRLOG(
           "ERROR: spdk_sock_recv() failed, errno %d: %s\n",
           errno, ::spdk_strerror(errno));
 
         return false;
-    }     
+    }
 
-    _read_bytes += rc;   
+    _read_bytes += rc;
     SPDK_DEBUGLOG(mon, "_read_bytes %ld, _should_read_bytes %ld\n", _read_bytes, _should_read_bytes);
     if (_read_bytes < _should_read_bytes){
         return true;
-    } 
+    }
 
     _read_bytes = _read_bytes - _should_read_bytes;
     if(_read_bytes < 0){

@@ -49,7 +49,7 @@ var (
 	totalRPS    prometheus.Gauge
 )
 
-func sendResponse(response  *msg.Response, ctx context.Context, conn net.Conn) error {
+func sendResponse(response *msg.Response, ctx context.Context, conn net.Conn) error {
 	responseData, err := proto.Marshal(response)
 	if err != nil {
 		log.Error(ctx, "Error marshaling response:", err)
@@ -66,7 +66,7 @@ func sendResponse(response  *msg.Response, ctx context.Context, conn net.Conn) e
 	if err != nil {
 		log.Error(ctx, "Error writing response:", err)
 		return err
-	}	
+	}
 	log.Debug(ctx, "write data ", len(data), " return ", rc)
 
 	return nil
@@ -171,8 +171,8 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 		response := &msg.Response{
 			Union: &msg.Response_ApplyIdResponse{
 				ApplyIdResponse: &msg.ApplyIDResponse{
-					Id:   int32(oid),
-					Uuid: _uuid, //we should send the uuid back for redundancy
+					Id:        int32(oid),
+					Uuid:      _uuid, //we should send the uuid back for redundancy
 					Errorcode: rc,
 				},
 			},
@@ -190,13 +190,13 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 
 		//protoc-gen-gogo seems different name here
 		size := payload.BootRequest.GetSize_()
-		port := payload.BootRequest.GetPort()
+		sharded_ports := payload.BootRequest.GetShardedPorts()
 		addr := payload.BootRequest.GetAddress()
 		host := payload.BootRequest.GetHost()
 		core_num := payload.BootRequest.GetCoreNum()
 		log.Info(ctx, "Received BootRequest from osd ", id, " address ", addr)
 
-		errnum := osd.ProcessBootMessage(ctx, client, id, uuid, size, port, host, addr, core_num)
+		errnum := osd.ProcessBootMessage(ctx, client, id, uuid, size, sharded_ports, host, addr, core_num)
 
 		// Create a BootResponse
 		response := &msg.Response{
@@ -543,7 +543,6 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			return err
 		}
 
-
 	case *msg.Request_NoReblanceRequest:
 		log.Info(ctx, "Received NoReblanceRequest")
 		set := payload.NoReblanceRequest.GetSet()
@@ -583,7 +582,7 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 		if err != nil {
 			return err
 		}
-			
+
 	case *msg.Request_GetClusterStatusRequest:
 		log.Info(ctx, "Received GetClusterStatusRequest")
 
@@ -603,13 +602,13 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 	case *msg.Request_DataStatisticsRequest:
 		log.Info(ctx, "Received DataStatisticsRequest")
 
-		data := payload.DataStatisticsRequest.GetData();
+		data := payload.DataStatisticsRequest.GetData()
 
 		ok := osd.PorcessDataStatisticsMessage(ctx, client, &data)
 
 		response := &msg.Response{
 			Union: &msg.Response_DataStatisticsResponse{
-				DataStatisticsResponse: &msg.DataStatisticsResponse {
+				DataStatisticsResponse: &msg.DataStatisticsResponse{
 					Ok: ok,
 				},
 			},

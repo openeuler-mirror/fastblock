@@ -115,7 +115,8 @@ private:
     }
 
     auto get_stub(utils::osd_info_t *osdinfo) {
-        return get_stub(osdinfo->node_id, osdinfo->address, osdinfo->port);
+        auto shard_id = ::spdk_env_get_current_core() - ::spdk_env_get_first_core();
+        return get_stub(osdinfo->node_id, osdinfo->address, osdinfo->sharded_ports.at(shard_id).port);
     }
 
     auto get_stub(leader_osd_info* info) {
