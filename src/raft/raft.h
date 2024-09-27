@@ -54,9 +54,9 @@ typedef enum {
 } raft_identity;
 
 enum class raft_op_state {
-    RAFT_INIT, 
-    RAFT_ACTIVE, 
-    RAFT_DOWN, 
+    RAFT_INIT,
+    RAFT_ACTIVE,
+    RAFT_DOWN,
     RAFT_DELETE
 };
 
@@ -86,7 +86,7 @@ public:
 
     int raft_get_election_timeout_rand(){
         return _election_timeout_rand;
-    }    
+    }
 
     /** Set election timeout.
      * The amount of time that needs to elapse before we assume the leader is down
@@ -259,7 +259,7 @@ public:
      * @param[in] node_id The node's ID
      * @return node pointed to by node ID */
     std::shared_ptr<raft_node> raft_get_node(raft_node_id_t node_id)
-    { 
+    {
         auto nodep = _nodes_stat.get_node(node_id);
         if(!nodep){
             nodep = _nodes_stat.get_new_node(node_id);
@@ -373,10 +373,10 @@ public:
           [cb_fn = std::move(cb_fn)](std::vector<raft_entry_t>&& entries, int rberrno){
              if(rberrno != 0 || entries.size() == 0){
                cb_fn(nullptr);
-               return; 
+               return;
              }
              cb_fn(std::make_shared<raft_entry_t>(entries[0]));
-          }  
+          }
         );
     }
 
@@ -476,7 +476,7 @@ public:
     int raft_send_heartbeat_all();
 
     /**
-     * @return number of votes this server has received this election 
+     * @return number of votes this server has received this election
      *  <node_vote_num, new_node_vote_num>
      * */
     std::pair<uint64_t, uint64_t> raft_get_nvotes_for_me();
@@ -593,7 +593,7 @@ public:
     int save_last_apply_index(raft_index_t last_applied_idx){
         std::string key = std::to_string(_pool_id) + "." + std::to_string(_pg_id) + ".lapply_idx";
         _kv->put(key, std::to_string(last_applied_idx));
-        return 0;        
+        return 0;
     }
 
     std::optional<raft_index_t> load_last_apply_index(){
@@ -601,14 +601,14 @@ public:
         auto val = _kv->get(key);
         if(!val.has_value())
             return std::nullopt;
-        auto last_applied_idx = atol(val.value().c_str());  
-        return last_applied_idx;      
+        auto last_applied_idx = atol(val.value().c_str());
+        return last_applied_idx;
     }
 
     std::optional<std::string> load_node_configuration(){
         std::string key = std::to_string(_pool_id) + "." + std::to_string(_pg_id) + ".node_cfg";
         auto val = _kv->get(key);
-        return val;       
+        return val;
     }
 
 
@@ -646,8 +646,8 @@ public:
         return _op_state;
     }
 
-    void init(std::vector<utils::osd_info_t>&& node_list, raft_node_id_t current_node, 
-      int raft_heartbeat_period_time_msec, int  raft_lease_time_msec, int  raft_election_timeout_msec);
+    void init(std::vector<utils::osd_info_t>&& node_list, raft_node_id_t current_node,
+      int raft_heartbeat_period_time_msec, int  raft_lease_time_msec, int  raft_election_timeout_msec, uint32_t shard_id);
 
     //添加单个成员
     void add_raft_membership(const raft_node_info& node, utils::context* complete);
@@ -657,7 +657,7 @@ public:
     void change_raft_membership(std::vector<raft_node_info>&& new_nodes, utils::context* complete);
 
     int raft_configuration_entry(std::shared_ptr<raft_entry_t> ety, utils::context *complete);
-    
+
     std::vector<raft_node_id_t> raft_get_nodes_id(){
         return _configuration_manager.get_last_node_configuration().get_nodes_id();
     }
@@ -678,19 +678,19 @@ public:
     }
 
     bool conf_change_catch_up_leader(std::shared_ptr<raft_node> node){
-        return (raft_get_commit_idx() < (CATCH_UP_NUM + node->raft_node_get_match_idx())); 
+        return (raft_get_commit_idx() < (CATCH_UP_NUM + node->raft_node_get_match_idx()));
     }
 
     /**
      * @param[in] node_id The node's ID
      * @return node pointed to by node ID */
     std::shared_ptr<raft_node> raft_get_cfg_node(raft_node_id_t node_id)
-    { 
+    {
         auto node = _nodes_stat.get_node(node_id);
         if(node)
             return node;
         auto cfg_state = get_configuration_state();
-        if(cfg_state == cfg_state::CFG_CATCHING_UP 
+        if(cfg_state == cfg_state::CFG_CATCHING_UP
                 || cfg_state == cfg_state::CFG_JOINT
                 || cfg_state == cfg_state::CFG_UPDATE_NEW_CFG){
             node = _configuration_manager.get_catch_up_node(node_id);
@@ -739,13 +739,13 @@ public:
 
     void check_and_set_configuration(std::shared_ptr<raft_entry_t> entry);
 
-    void update_nodes_stat(node_configuration& cfg, 
+    void update_nodes_stat(node_configuration& cfg,
             std::vector<std::shared_ptr<raft_node>>& new_add_nodes){
-        _nodes_stat.update_with_node_configuration(cfg, new_add_nodes);   
+        _nodes_stat.update_with_node_configuration(cfg, new_add_nodes);
     }
 
     void update_nodes_stat(node_configuration& cfg){
-        _nodes_stat.update_with_node_configuration(cfg, {}); 
+        _nodes_stat.update_with_node_configuration(cfg, {});
     }
 
     raft_nodes&  get_nodes_stat(){
@@ -810,7 +810,7 @@ public:
         return _configuration_manager;
     }
 
-    void load(raft_node_id_t current_node, raft_complete cb_fn, void *arg, 
+    void load(raft_node_id_t current_node, raft_complete cb_fn, void *arg,
       int raft_heartbeat_period_time_msec, int  raft_lease_time_msec, int  raft_election_timeout_msec);
     void set_last_applied_idx_after_load(raft_index_t idx){
         _machine->set_last_applied_idx(idx);
@@ -821,7 +821,7 @@ public:
     enum class task_type : uint8_t{
         SNAP_CHECK_TASK = 1
     };
-    
+
     struct task_info{
         task_info(task_type type, raft_node_id_t node_id)
         : type(type)
@@ -830,7 +830,7 @@ public:
         }
 
         task_type type;
-        raft_node_id_t node_id; 
+        raft_node_id_t node_id;
     };
 
     void push_task(task_type type, raft_node_id_t node_id){
@@ -861,7 +861,7 @@ private:
     raft_node_id_t _voted_for;
 
     /* the log which is replicated */
-    std::shared_ptr<raft_log> _log; 
+    std::shared_ptr<raft_log> _log;
 
     /* Volatile state: */
 
@@ -890,7 +890,7 @@ private:
 
     /* my node ID */
     raft_node_id_t _node_id;
-    
+
     //是否正在为数据恢复而创建snapshot
     bool _snapshot_in_progress;
 
@@ -914,10 +914,10 @@ private:
     append_entries_buffer _append_entries_buffer;
 
     kvstore *_kv;
-   
+
     struct spdk_poller * _raft_timer;
     raft_op_state _op_state;
-    
+
     raft_index_t _last_index_before_become_leader;
 
     raft_nodes  _nodes_stat;  //配置更新后，这个需要更新为最新的
@@ -928,11 +928,11 @@ private:
     /* term of the snapshot base */
     raft_term_t _snapshot_term;
 
-    object_recovery *_obr; 
+    object_recovery *_obr;
     std::queue<task_info> _tasks;
 
     std::shared_ptr<monitor::client> _mon_client;
-}; 
+};
 
 bool raft_votes_is_majority(std::pair<uint64_t, uint64_t> &node_num_pair, std::pair<uint64_t, uint64_t> &nvotes_pair);
 
@@ -947,7 +947,7 @@ typedef enum {
      */
     RAFT_LOGTYPE_WRITE,
     RAFT_LOGTYPE_DELETE,
-    
+
     /**
      * Membership change.
      * Non-voting nodes can't cast votes or start elections.
@@ -962,7 +962,7 @@ typedef enum {
  *
  * @return newly initialised Raft server */
 extern std::shared_ptr<raft_server_t> raft_new(raft_client_protocol& client,
-        disk_log* log, std::shared_ptr<state_machine> sm_ptr, uint64_t pool_id, 
+        disk_log* log, std::shared_ptr<state_machine> sm_ptr, uint64_t pool_id,
         uint64_t pg_id, kvstore*, std::shared_ptr<monitor::client>);
 
 /** Determine if entry is voting configuration change.

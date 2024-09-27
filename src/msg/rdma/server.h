@@ -179,9 +179,8 @@ public:
 
     server() = delete;
 
-    server(std::string thread_name, ::spdk_cpuset* cpumask, std::shared_ptr<options> opts, int sock_id = SPDK_ENV_SOCKET_ID_ANY)
-      : _cpumask{*cpumask}
-      , _thread{::spdk_thread_create(thread_name.c_str(), &_cpumask)}
+    server(::spdk_thread* thread, std::shared_ptr<options> opts, int sock_id = SPDK_ENV_SOCKET_ID_ANY)
+      : _thread{thread}
       , _ib_cm_event_poller{_thread}
       , _cq_poller{_thread}
       , _cqe_poller{_thread}
@@ -217,6 +216,9 @@ public:
         _opts->bind_address = *ipv4_address;
         SPDK_NOTICELOG("Use ipv4 %s for listening\n", ipv4_address.value().c_str());
     }
+
+    server(std::string thread_name, ::spdk_cpuset* cpumask, std::shared_ptr<options> opts, int sock_id = SPDK_ENV_SOCKET_ID_ANY)
+      : server{::spdk_thread_create(thread_name.c_str(), cpumask), opts, sock_id} {}
 
     server(const server&) = delete;
 
@@ -1080,6 +1082,7 @@ public:
     void create_listener(uint16_t port) {
         _opts->port = port;
         endpoint ep{_opts->bind_address, _opts->port};
+        SPDK_INFOLOG(msg, "start listening on %s:%d\n", _opts->bind_address.c_str(), _opts->port);
         ep.passive = true;
         _listener = std::make_unique<socket>(ep, *_pd, _channel.value(), false);
     }
@@ -1125,6 +1128,10 @@ public:
 
     std::string listen_address() noexcept {
         return _opts->bind_address;
+    }
+
+    uint16_t listen_port() noexcept {
+        return _opts->port;
     }
 
 public:

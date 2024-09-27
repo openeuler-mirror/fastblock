@@ -27,8 +27,8 @@ std::string pg_id_to_name(uint64_t pool_id, uint64_t pg_id){
     return name;
 }
 
-int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard_id, uint64_t pool_id, 
-            uint64_t pg_id, std::vector<utils::osd_info_t>&& osds, disk_log* log, 
+int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard_id, uint64_t pool_id,
+            uint64_t pg_id, std::vector<utils::osd_info_t>&& osds, disk_log* log,
             std::shared_ptr<monitor::client> mon_client){
     SPDK_INFOLOG(pg_group, "create pg %lu.%lu\n", pool_id, pg_id);
     int ret = 0;
@@ -37,21 +37,21 @@ int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard
     raft->raft_set_timer();
     _pg_add(shard_id, raft, pool_id, pg_id);
 
-    raft->init(std::move(osds), get_current_node_id(), 
-      _raft_heartbeat_period_time_msec, _raft_lease_time_msec, _raft_election_timeout_msec);
+    raft->init(std::move(osds), get_current_node_id(),
+      _raft_heartbeat_period_time_msec, _raft_lease_time_msec, _raft_election_timeout_msec, shard_id);
     return 0;
 }
 
 void pg_group_t::load_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,
                 disk_log *log, pg_complete cb_fn, void *arg, std::shared_ptr<monitor::client> mon_client){
-    auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id, global_storage(shard_id).kvs(), mon_client); 
+    auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id, global_storage(shard_id).kvs(), mon_client);
 
     raft->raft_set_timer();
     _pg_add(shard_id, raft, pool_id, pg_id);
 
-    raft->load(get_current_node_id(), std::move(cb_fn), arg, 
+    raft->load(get_current_node_id(), std::move(cb_fn), arg,
       _raft_heartbeat_period_time_msec, _raft_lease_time_msec, _raft_election_timeout_msec);
-}  
+}
 
 void pg_group_t::delete_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, pg_complete cb_fn, void *arg){
     SPDK_INFOLOG(pg_group, "remove pg %lu.%lu\n", pool_id, pg_id);
@@ -71,9 +71,11 @@ void pg_group_t::start_shard_manager(utils::complete_fun fun, void *arg)
 
     for (i = 0; i < shard_num; i++)
     {
+        SPDK_NOTICELOG("starting shard manager on shard %d\n", i);
         _shard.invoke_on(
             i,
             [this, shard_id = i, complete](){
+                SPDK_NOTICELOG("started shard manager on shard %d\n", shard_id);
                 _shard_mg[shard_id].start();
                 complete->complete(0);
             });
@@ -97,7 +99,7 @@ void pg_group_t::change_pg_membership(uint32_t shard_id, uint64_t pool_id, uint6
         SPDK_INFOLOG(pg_group, "not leader of pg %lu.%lu\n", pool_id, pg_id);
         if(complete)
             complete->complete(0);
-        return;        
+        return;
     }
 
     std::map<raft_node_id_t, int> smp;
@@ -133,7 +135,7 @@ void pg_group_t::change_pg_membership(uint32_t shard_id, uint64_t pool_id, uint6
         raft->remove_raft_membership(remove_node, complete);
     }else{
         if(complete)
-            complete->complete(0);        
+            complete->complete(0);
     }
 }
 

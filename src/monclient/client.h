@@ -379,13 +379,13 @@ public:
 
     auto is_pg_map_empty() noexcept { return _pg_map.pool_pg_map.empty(); }
 
-    std::pair<std::string, int> get_osd_addr(int osd_id) {
+    std::pair<std::string, int> get_osd_addr(int osd_id, uint32_t shard_id) {
         auto it = _osd_map.data.find(osd_id);
         if (it == _osd_map.data.end()) {
             return std::make_pair<std::string, int>("", 0);
         }
 
-        return std::pair<std::string, int>{it->second->address, it->second->port};
+        return std::pair<std::string, int>{it->second->address, it->second->sharded_ports.at(shard_id).port};
     }
 
     auto last_cluster_map_at() noexcept {
@@ -412,7 +412,7 @@ public:
     void emplace_osd_boot_request(
       const int,
       const std::string&,
-      const int,
+      const std::map<uint32_t, uint32_t>&,
       const std::string&,
       const int64_t,
       on_response_callback_type&&);
@@ -482,6 +482,21 @@ private:
 
     [[gnu::always_inline]] bool valid_osd_address(const std::string& host, const int port) {
         return not (host.empty() and port == 0);
+    }
+
+    void make_sharded_ports(
+      const google::protobuf::Map<google::protobuf::uint32, google::protobuf::uint32>& proto_shard_ports,
+      std::map<uint32_t, utils::core_shard_map>& osd_sharded_ports) {
+        uint32_t min_core{0};
+        for (auto it = proto_shard_ports.begin(); it != proto_shard_ports.end(); ++it) {
+            if (min_core > it->first) {
+                min_core = it->first;
+            }
+        }
+
+        for (auto it = proto_shard_ports.begin(); it != proto_shard_ports.end(); ++it) {
+            osd_sharded_ports.emplace(it->first - min_core, utils::core_shard_map{it->second, it->first});
+        }
     }
 
 private:

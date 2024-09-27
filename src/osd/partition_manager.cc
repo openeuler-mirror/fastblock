@@ -31,7 +31,7 @@ struct make_log_context{
     uint64_t pool_id;
     uint64_t pg_id;
     std::vector<utils::osd_info_t> osds;
-    uint32_t shard_id; 
+    uint32_t shard_id;
     int64_t revision_id;
     partition_manager* pm;
     pm_complete cb_fn;
@@ -55,18 +55,18 @@ static void make_log_done(void *arg, struct disk_log* dlog, int rberrno){
     auto pg = pg_id_to_name(mlc->pool_id, mlc->pg_id);
     sm->set_pg(pg);
     pm->add_osd_stm(mlc->pool_id, mlc->pg_id, mlc->shard_id, sm);
-    pm->get_pg_group().create_pg(sm, mlc->shard_id, mlc->pool_id, mlc->pg_id, std::move(mlc->osds), 
+    pm->get_pg_group().create_pg(sm, mlc->shard_id, mlc->pool_id, mlc->pg_id, std::move(mlc->osds),
             dlog, pm->get_mon_client());
     mlc->cb_fn(mlc->arg, rberrno);
     delete mlc;
 }
 
 void partition_manager::create_pg(
-        uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t> osds, 
+        uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t> osds,
         uint32_t shard_id, int64_t revision_id, pm_complete cb_fn, void *arg){
-    make_log_context *ctx = new make_log_context{.pool_id = pool_id, .pg_id = pg_id, .osds = std::move(osds), 
+    make_log_context *ctx = new make_log_context{.pool_id = pool_id, .pg_id = pg_id, .osds = std::move(osds),
                     .shard_id = shard_id, .revision_id = revision_id, .pm = this, .cb_fn = std::move(cb_fn), .arg = arg};
-    std::string pg = pg_id_to_name(pool_id, pg_id);   
+    std::string pg = pg_id_to_name(pool_id, pg_id);
     make_disk_log(global_blobstore(), global_io_channel(shard_id), pg, make_log_done, ctx, shard_id);
 }
 
@@ -101,8 +101,10 @@ void pm_start_done(void *arg){
 void partition_manager::start(utils::context *complete, std::shared_ptr<monitor::client> mon_client){
     _mon_client = mon_client;
     auto cur_thread = spdk_get_thread();
+    SPDK_NOTICELOG("partition manager starting...\n");
     _pgs.start(
       [this, complete, cur_thread](void *, int res){
+        SPDK_NOTICELOG("partition manager start done, res %d\n", res);
         set_osd_state(osd_state::OSD_ACTIVE);
         auto c_thread = spdk_get_thread();
         if(cur_thread != c_thread){
@@ -152,7 +154,7 @@ void partition_manager::stop(utils::complete_fun fun, void *arg){
                 if(serrno != 0){
                     complete->complete(serrno);
                     return;
-                }  
+                }
 
                 stop_stm(shard_id, utils::complete_done, complete);
               },
@@ -170,7 +172,7 @@ struct partition_op_ctx{
     uint32_t shard_id;
     int64_t revision_id;
     partition_manager* pm;
-    /* 
+    /*
      1 表示要创建pg
      0 表示要删除pg
     */
@@ -179,12 +181,12 @@ struct partition_op_ctx{
 
 static void partition_op_done(void* arg){
     partition_op_ctx* ctx = (partition_op_ctx *)arg;
-    SPDK_INFOLOG(osd, "partition_op_done, ctx->perrno %d pg %lu.%lu shard_id %u op %d\n", ctx->perrno, 
+    SPDK_INFOLOG(osd, "partition_op_done, ctx->perrno %d pg %lu.%lu shard_id %u op %d\n", ctx->perrno,
             ctx->pool_id, ctx->pg_id, ctx->shard_id, ctx->op);
     if(ctx->perrno == 0){
         if(ctx->op == 0)
             ctx->pm->remove_pg_shard(ctx->pool_id, ctx->pg_id);
-        else 
+        else
             ctx->pm->add_pg_shard(ctx->pool_id, ctx->pg_id, ctx->shard_id, ctx->revision_id);
     }
     ctx->cb_fn(ctx->arg, ctx->perrno);
@@ -192,7 +194,7 @@ static void partition_op_done(void* arg){
 }
 
 int partition_manager::create_partition(
-        uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t>&& osds, 
+        uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t>&& osds,
         int64_t revision_id, pm_complete&& cb_fn, void *arg){
     int state = osd_state_is_not_active();
     if(state != 0){
@@ -211,7 +213,7 @@ int partition_manager::create_partition(
         ctx->perrno = perrno;
         if(spdk_get_thread() != cur_thread)
             spdk_thread_send_msg(cur_thread, partition_op_done, arg);
-        else 
+        else
             partition_op_done(arg);
     };
 
@@ -230,7 +232,7 @@ void partition_manager::load_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg
     // TODO:为什么要先创建osd_stm，然后再load呢？直接创建的时候构造object_store不可以吗？
     auto sm = std::make_shared<osd_stm>();
 
-    get_pg_group().load_pg(sm, shard_id, pool_id, pg_id, dlog, 
+    get_pg_group().load_pg(sm, shard_id, pool_id, pg_id, dlog,
       [this, cb_fn = std::move(cb_fn), objects = std::move(objects), sm, pool_id, pg_id, shard_id](void *arg, int lerrno){
         if(lerrno != 0){
             cb_fn(arg, lerrno);
@@ -244,14 +246,14 @@ void partition_manager::load_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg
         add_osd_stm(pool_id, pg_id, shard_id, sm);
         SPDK_INFOLOG(osd, "load pg done\n");
         cb_fn(arg, lerrno);
-      }, 
+      },
       arg, _mon_client);
 }
 
-int partition_manager::load_partition(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob, 
+int partition_manager::load_partition(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob,
                             object_store::container objects, pm_complete&& cb_fn, void *arg){
     auto cur_thread = spdk_get_thread();
-    partition_op_ctx* ctx = new partition_op_ctx{.cb_fn = std::move(cb_fn), .arg = arg, .pool_id = pool_id, 
+    partition_op_ctx* ctx = new partition_op_ctx{.cb_fn = std::move(cb_fn), .arg = arg, .pool_id = pool_id,
                     .pg_id = pg_id, .shard_id = shard_id, .revision_id = 0, .pm = this, .op = 1};
 
     auto load_pg_done = [cur_thread](void *arg, int perrno){
@@ -266,23 +268,23 @@ int partition_manager::load_partition(uint32_t shard_id, uint64_t pool_id, uint6
     return _shard.invoke_on(
       shard_id,
       [this, pool_id, pg_id, blob, shard_id, ctx, load_pg_done = std::move(load_pg_done), objects = std::move(objects)](){
-        SPDK_INFOLOG(osd, "load pg in core %u  shard_id %u pg %lu.%lu \n", 
+        SPDK_INFOLOG(osd, "load pg in core %u  shard_id %u pg %lu.%lu \n",
             spdk_env_get_current_core(), shard_id, pool_id, pg_id);
-        load_pg(shard_id, pool_id, pg_id, blob, std::move(objects), std::move(load_pg_done), ctx);        
+        load_pg(shard_id, pool_id, pg_id, blob, std::move(objects), std::move(load_pg_done), ctx);
     });
 }
 
 void partition_manager::delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t shard_id, pm_complete cb_fn, void *arg){
     _pgs.delete_pg(
-      shard_id, 
-      pool_id, 
-      pg_id, 
+      shard_id,
+      pool_id,
+      pg_id,
       [this, cb_fn = std::move(cb_fn), pool_id, pg_id, shard_id](void *arg, int lerrno){
-        SPDK_INFOLOG(osd, "delete pg %lu.%lu done, rberrno %d\n", pool_id, pg_id, lerrno);  
+        SPDK_INFOLOG(osd, "delete pg %lu.%lu done, rberrno %d\n", pool_id, pg_id, lerrno);
         if(lerrno != 0){
             cb_fn(arg, lerrno);
             return;
-        }       
+        }
 
         auto stm = get_osd_stm(shard_id, pool_id, pg_id);
         if(!stm){
@@ -290,11 +292,11 @@ void partition_manager::delete_pg(uint64_t pool_id, uint64_t pg_id, uint32_t sha
             return;
         }
         auto destroy_objects = [this, pool_id, pg_id, shard_id, cb_fn = std::move(cb_fn)](void* arg, int rberrno){
-            SPDK_INFOLOG(osd, "delete pg %lu.%lu object done, rberrno %d\n", pool_id, pg_id, rberrno);   
+            SPDK_INFOLOG(osd, "delete pg %lu.%lu object done, rberrno %d\n", pool_id, pg_id, rberrno);
             if(rberrno == 0){
                 del_osd_stm(pool_id, pg_id, shard_id);
             }
-            
+
             cb_fn(arg, rberrno);
         };
         stm->destroy_objects(std::move(destroy_objects), arg);
@@ -353,7 +355,7 @@ int partition_manager::active_partition(uint64_t pool_id, uint64_t pg_id, pm_com
     if(!get_pg_shard(pool_id, pg_id, shard_id)){
         cb_fn(arg, 0);
         return 0;
-    }    
+    }
 
     auto cur_thread = spdk_get_thread();
     partition_op_ctx* ctx = new partition_op_ctx{.cb_fn = std::move(cb_fn), .arg = arg, .pool_id = pool_id,
@@ -396,19 +398,19 @@ int partition_manager::change_pg_membership(uint64_t pool_id, uint64_t pg_id, st
     }
 
     return _shard.invoke_on(
-      shard_id, 
+      shard_id,
       [this, pool_id, pg_id, shard_id, new_osds = std::move(new_osds), complete]() mutable{
-        SPDK_INFOLOG(osd, "change pg membership in core %u shard_id %u pool_id %lu pg_id %lu \n", 
+        SPDK_INFOLOG(osd, "change pg membership in core %u shard_id %u pool_id %lu pg_id %lu \n",
             spdk_env_get_current_core(), shard_id, pool_id, pg_id);
         std::vector<raft_node_info> osd_infos;
         for(auto& new_osd : new_osds){
             raft_node_info osd_info;
             osd_info.set_node_id(new_osd.node_id);
             osd_info.set_addr(new_osd.address);
-            osd_info.set_port(new_osd.port);
+            osd_info.set_port(new_osd.sharded_ports.at(shard_id).port);
             osd_infos.emplace_back(std::move(osd_info));
         }
-        get_pg_group().change_pg_membership(shard_id, pool_id, pg_id, std::move(osd_infos), complete);                  
-      });    
+        get_pg_group().change_pg_membership(shard_id, pool_id, pg_id, std::move(osd_infos), complete);
+      });
 
 }

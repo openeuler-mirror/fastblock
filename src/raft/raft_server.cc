@@ -2506,8 +2506,13 @@ raft_server_t::~raft_server_t()
 {
 }
 
-void raft_server_t::init(std::vector<utils::osd_info_t>&& node_list, raft_node_id_t current_node,
-  int raft_heartbeat_period_time_msec, int  raft_lease_time_msec, int  raft_election_timeout_msec){
+void raft_server_t::init(
+  std::vector<utils::osd_info_t>&& node_list,
+  raft_node_id_t current_node,
+  int raft_heartbeat_period_time_msec,
+  int raft_lease_time_msec,
+  int raft_election_timeout_msec,
+  uint32_t shard_id) {
     //这里需要加载log 和 kv
 
     raft_set_nodeid(current_node);
@@ -2515,7 +2520,7 @@ void raft_server_t::init(std::vector<utils::osd_info_t>&& node_list, raft_node_i
     for(auto& node : node_list){
         if(configuration.find_node(node.node_id))
             continue;
-        configuration.add_node(node.node_id, node.address, node.port);
+        configuration.add_node(node.node_id, node.address, node.sharded_ports.at(shard_id).port);
     }
     _configuration_manager.add_node_configuration(std::move(configuration));
     _nodes_stat.update_with_node_configuration(_configuration_manager.get_last_node_configuration());

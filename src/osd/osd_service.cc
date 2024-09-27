@@ -44,7 +44,7 @@ void osd_service::process_get_leader(google::protobuf::RpcController* controller
         return;
     }
     auto leader_id = raft->raft_get_current_leader();
-    auto res = _monitor_client->get_osd_addr(leader_id);
+    auto res = _monitor_client->get_osd_addr(leader_id, shard_id);
     if(res.first.size() == 0){
         response->set_state(err::RAFT_ERR_NOT_FOUND_LEADER);
     }else{
@@ -69,7 +69,7 @@ void osd_service::process_create_pg(google::protobuf::RpcController *controller,
         SPDK_INFOLOG(osd, "pg %lu.%lu already exist\n", pool_id, pg_id);
         response->set_state(err::E_SUCCESS);
         done->Run();
-        return;        
+        return;
     }else{
         std::vector<utils::osd_info_t> osds;
         SPDK_INFOLOG(osd, "create pg %lu.%lu\n", pool_id, pg_id);
@@ -78,8 +78,8 @@ void osd_service::process_create_pg(google::protobuf::RpcController *controller,
             done->Run();
         };
         _pm->create_partition(pool_id, pg_id, std::move(osds), pool_version, std::move(new_pg_done), nullptr);
-    }    
-}   
+    }
+}
 
 void osd_service::process(
         std::shared_ptr<osd_stm> osd_stm_p,
@@ -110,9 +110,9 @@ template<typename response_type>
 class membership_complete : public utils::context {
 public:
     membership_complete(
-            response_type* response, 
-            google::protobuf::Closure* done, 
-            std::vector<int32_t> new_nodes) 
+            response_type* response,
+            google::protobuf::Closure* done,
+            std::vector<int32_t> new_nodes)
     : _response(response)
     , _done(done)
     , _new_nodes(std::move(new_nodes)){}
@@ -135,8 +135,8 @@ private:
 
 void osd_service::process(
         std::shared_ptr<osd_stm> osd_stm_p,
-        const osd::add_node_request* request, 
-        osd::add_node_response* response, 
+        const osd::add_node_request* request,
+        osd::add_node_response* response,
         google::protobuf::Closure* done){
     auto raft = osd_stm_p->get_raft();
     std::vector<raft_node_id_t> new_nodes = raft->raft_get_nodes_id();
@@ -147,8 +147,8 @@ void osd_service::process(
 
 void osd_service::process(
         std::shared_ptr<osd_stm> osd_stm_p,
-        const osd::remove_node_request* request, 
-        osd::remove_node_response* response, 
+        const osd::remove_node_request* request,
+        osd::remove_node_response* response,
         google::protobuf::Closure* done){
     auto raft = osd_stm_p->get_raft();
     std::vector<raft_node_id_t> new_nodes = raft->raft_get_nodes_id();
@@ -158,7 +158,7 @@ void osd_service::process(
         if(*it == request->node().node_id()){
             found = true;
             it = new_nodes.erase(it);
-        }else 
+        }else
             it++;
     }
 
@@ -174,8 +174,8 @@ void osd_service::process(
 
 void osd_service::process(
         std::shared_ptr<osd_stm> osd_stm_p,
-        const osd::change_nodes_request* request, 
-        osd::change_nodes_response* response, 
+        const osd::change_nodes_request* request,
+        osd::change_nodes_response* response,
         google::protobuf::Closure* done){
     auto raft = osd_stm_p->get_raft();
     std::vector<int32_t> new_nodes;
