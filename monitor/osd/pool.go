@@ -54,7 +54,9 @@ type PoolPGsConfig struct {
 type PGConfig struct {
 	Version    int64   `json:"version,omitempty"`
 	PgState    utils.PGSTATE `json:"pgstate,omitempty"`
+	CoreIndex  uint32  `json:"coreindex,omitempty"` 
 	OsdList    []int   `json:"osdlist,omitempty"`
+	NewCoreIndex  uint32  `json:"newcoreindex,omitempty"` 
 	NewOsdList []int   `json:"newosdlist,omitempty"`
 }
 
@@ -333,7 +335,7 @@ func ProcessCreatePoolMessage(ctx context.Context, client *etcdapi.EtcdClient, n
 		PoolPgMap:     ppgc,
 	}
 
-	PgMap, err := CreatePgs(ctx, client, poolConf)
+	PgMap, err := CreatePgs(ctx, client, poolConf, OSDCoreNum)
 	if err != nil {
 		log.Error(ctx, err)
 		return -1, err
@@ -580,7 +582,9 @@ func ProcessGetPgMapMessage(ctx context.Context, pvs map[int32]int64) (*msg.GetP
 					Pgid:     int32(pgidToi),
 					Version:  pc.Version,
 					State:    int32(pc.PgState),
+					Coreindex:  pc.CoreIndex,
 					Osdid:    osdlist,
+					Newcoreindex: pc.NewCoreIndex,
 					Newosdid: newOsdlist,
 				}
 				pginfos.Pi = append(pginfos.Pi, pi)
@@ -622,7 +626,9 @@ func ProcessGetPgMapMessage(ctx context.Context, pvs map[int32]int64) (*msg.GetP
 						Pgid:     int32(pgidToi),
 						Version:  pc.Version,
 						State:    int32(pc.PgState),
+						Coreindex:  pc.CoreIndex,
 						Osdid:    osdlist,
+						Newcoreindex: pc.NewCoreIndex,
 						Newosdid: newOsdlist,
 					}
 					pginfos.Pi = append(pginfos.Pi, pi)

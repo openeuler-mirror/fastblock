@@ -77,7 +77,7 @@ void osd_service::process_create_pg(google::protobuf::RpcController *controller,
             response->set_state(perrno);
             done->Run();
         };
-        _pm->create_partition(pool_id, pg_id, std::move(osds), pool_version, std::move(new_pg_done), nullptr);
+        _pm->create_partition(pool_id, pg_id, 0, std::move(osds), pool_version, std::move(new_pg_done), nullptr);
     }    
 }   
 

@@ -52,6 +52,7 @@ enum {
     OSD_ERR_ID_CONFLICT = -157,
     OSD_ERR_ADDRESS_INVALID = -158,
     OSD_ERR_UPDATE_STATE_FAILED = -159,
+    OSD_ERR_CORE_NUM = -160,
 
     RAFT_ERR_UNKNOWN = -199,
     RAFT_ERR_LAST = -200,
@@ -119,6 +120,8 @@ inline const char *  string_status(int raft_errno) noexcept{
         return "The address of osd is invalid.";
     case OSD_ERR_UPDATE_STATE_FAILED:
         return "update osd state failed.";
+    case OSD_ERR_CORE_NUM:
+        return "wrong core number.";
     default:
         return "unknown errno";
     }

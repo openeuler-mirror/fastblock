@@ -192,7 +192,7 @@ static void partition_op_done(void* arg){
 }
 
 int partition_manager::create_partition(
-        uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t>&& osds, 
+        uint64_t pool_id, uint64_t pg_id, uint32_t core_index, std::vector<utils::osd_info_t>&& osds, 
         int64_t revision_id, pm_complete&& cb_fn, void *arg){
     int state = osd_state_is_not_active();
     if(state != 0){
@@ -200,7 +200,7 @@ int partition_manager::create_partition(
         return state;
     }
 
-    auto shard_id = get_next_shard_id();
+    auto shard_id = core_index;
 
     auto cur_thread = spdk_get_thread();
     partition_op_ctx* ctx = new partition_op_ctx{.cb_fn = std::move(cb_fn), .arg = arg, .pool_id = pool_id,

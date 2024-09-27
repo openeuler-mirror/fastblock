@@ -193,9 +193,10 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 		port := payload.BootRequest.GetPort()
 		addr := payload.BootRequest.GetAddress()
 		host := payload.BootRequest.GetHost()
+		core_num := payload.BootRequest.GetCoreNum()
 		log.Info(ctx, "Received BootRequest from osd ", id, " address ", addr)
 
-		errnum := osd.ProcessBootMessage(ctx, client, id, uuid, size, port, host, addr)
+		errnum := osd.ProcessBootMessage(ctx, client, id, uuid, size, port, host, addr, core_num)
 
 		// Create a BootResponse
 		response := &msg.Response{

@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strconv"
 	"time"
+	"container/list"
 )
 
 // OptimizeCfg to pass params.
@@ -47,6 +48,7 @@ type TreeNode struct {
 	OSDID         OSDID // osd id, like 1, 2, 3, ...
 	Weight        float64
 	UniformWeight float64
+	CoreNUm       uint32
 }
 
 // DomainNode for failure domain.
@@ -211,7 +213,7 @@ treeHasGot:
 	// TODO: how to handle host1: [1,4], host2: [2], host3: [3]?
 	for _, osd := range osdInfoMap {
 		osd.UniformWeight = getUniformWeight(osd.Weight, weight, pgCount, pgSize)
-		log.Debug(ctx, "osd", osd.OSDID, "weight:", osd.Weight, osd.UniformWeight, weight, "pg:", pgCount, pgSize)
+		log.Debug(ctx, "osd", osd.OSDID, "weight:", osd.Weight, osd.UniformWeight, weight, " core_num:", osd.CoreNUm, "pg:", pgCount, pgSize)
 	}
 
 	// Order doesn't matter in fact, but keep order here for easier debug.
@@ -266,6 +268,7 @@ func addOSDNode(root *BucketTreeNode, osdNodeMap *map[string]OSDTreeNode,
 		treeNode := &TreeNode{
 			OSDID:  osd.OSDID,
 			Weight: osd.Weight,
+			CoreNUm: osd.CoreNUm,
 		}
 		*osdList = append(*osdList, treeNode)
 		(*osdInfoMap)[osd.OSDID] = treeNode
@@ -283,7 +286,7 @@ func getUniformWeight(weight float64, totalWeight float64, pgCount int, pgSize i
 	return weight * float64(pgCount*pgSize) / totalWeight
 }
 
-func CreatePgs(ctx context.Context, client *etcdapi.EtcdClient, pool *PoolConfig) (*map[string]PGConfig, error) {
+func CreatePgs(ctx context.Context, client *etcdapi.EtcdClient, pool *PoolConfig, coreNum uint32) (*map[string]PGConfig, error) {
     if pool == nil {
         log.Warn(ctx, "pool nil!")
         return nil, EPoolNotInstance
@@ -310,7 +313,7 @@ func CreatePgs(ctx context.Context, client *etcdapi.EtcdClient, pool *PoolConfig
     optimizeCfg.OSDTree, optimizeCfg.OSDInfoMap, optimizeCfg.TotalWeight = FlattenTree(ctx, osdTreeMap, osdNodeMap, 
             pool.PGCount, pool.PGSize, pool.FailureDomain, pool.Root, pool.Root != "")
     
-    poolPGResult, oerr := SimpleInitial(ctx, optimizeCfg, pool.PGSize)
+    poolPGResult, oerr := SimpleInitial(ctx, optimizeCfg, pool.PGSize, coreNum)
     if oerr != nil {
         log.Error(ctx, oerr, "create pg failed.")
         return nil, EPgDistributionError
@@ -1145,6 +1148,42 @@ func CheckPgState(osdList []int, pgSize int) utils.PGSTATE {
     return 0
 }
 
+type osdCore struct {
+    osdid           int
+	coreid          uint32
+	pgnum           int
+}
+
+func searchMinCore(lst *list.List, coreid uint32) *list.Element {
+	for e := lst.Front(); e != nil; e = e.Next() {
+		osd := e.Value.(*osdCore)
+		if(osd.coreid == coreid){
+			return e
+		}
+	}
+	return nil
+}
+
+func sortOsdList(lst *list.List, ele *list.Element) {
+	osd := ele.Value.(*osdCore)
+	var e *list.Element
+	for e = ele.Next(); e != nil; e = e.Next() {
+		o := e.Value.(*osdCore)
+		if(osd.pgnum < o.pgnum){
+			break
+		}
+	}
+	if e == nil {
+		if ele.Next() != nil {
+			lst.MoveToBack(ele)
+		}
+	} else {
+		if e != ele.Next() {
+			lst.MoveBefore(ele, e)
+		}
+	}
+}
+
 /**
  * 参数中cfg.OSDTree来自FlattenTree的domainTree，见 crush.go:99
  *    其中每个元素表示一个osd数组，其定义如下：
@@ -1155,7 +1194,7 @@ func CheckPgState(osdList []int, pgSize int) utils.PGSTATE {
  * 为了方便描述，下面注释把OSDTree的key都统称为host，表示failure domain为host。
  * 注释中假设pg_size为3。
  */
-func SimpleInitial(ctx context.Context, cfg *OptimizeCfg, poolPgSize int) (*OptimizeResult, error) {
+func SimpleInitial(ctx context.Context, cfg *OptimizeCfg, poolPgSize int, coreNum uint32) (*OptimizeResult, error) {
 	if cfg == nil || cfg.OSDTree == nil || cfg.OSDInfoMap == nil || len(*cfg.OSDTree) == 0 || len(*cfg.OSDInfoMap) == 0 || len(*cfg.OSDTree)*2 < cfg.PGSize {
 		return nil, errors.New("invalid input cfg")
 	}
@@ -1266,21 +1305,33 @@ func SimpleInitial(ctx context.Context, cfg *OptimizeCfg, poolPgSize int) (*Opti
 	log.Info(ctx, "Step 2 done. pg_num_on_host:", pg_num_on_host)
 
 	/**
-	 *  Step 3: 从host分配osd。如果failure domain是osd，那么每个host下只有一个osd，即索引都为0
+	 *  Step 3: 从host分配osd和cpu核。如果failure domain是osd，那么每个host下只有一个osd
 	 */
-	host_queue := make([]Queue, host_count) // 每个host一个queue，用来弹出osd
+    host_map := make([]*list.List , host_count)
 	for i := 0; i < host_count; i++ {
+        host_map[i] = list.New()
+
 		domain_node := (*cfg.OSDTree)[i]
 		if domain_node == nil {
 			return nil, errors.New("domain_node pointer invalid")
 		}
 		osd_size := len((*domain_node).ChildNode) // 这个host下有几个osd
-		// 这个host需要几个pg，即需要从host中弹出几个osd。先算出随机的osd索引，然后放进queue里面
-		pg_on_host := pg_num_on_host[i]
-		rand_osd_idx := getRandIndex(osd_size, pg_on_host)
-		for _, osd_idx := range rand_osd_idx {
-			host_queue[i].Push(osd_idx)
-		}
+		var c uint32
+		for c = 0; c < coreNum; c++ {
+		    for j := 0; j < osd_size; j++ {
+		    	// 找到这个osd对应的TreeNode
+		    	tree_node := (*domain_node).ChildNode[j]
+		    	if tree_node == nil {
+		    		return nil, errors.New("domain_node pointer invalid")
+		    	}
+		    	if coreNum == (*tree_node).CoreNUm {
+					osdid := int((*tree_node).OSDID)
+		    	
+					oc := &osdCore{osdid: osdid, coreid: c, pgnum: 0}
+					host_map[i].PushBack(oc)
+				}
+		    }
+	    }
 	}
 	log.Info(ctx, "Step 3 done.")
 
@@ -1296,23 +1347,39 @@ func SimpleInitial(ctx context.Context, cfg *OptimizeCfg, poolPgSize int) (*Opti
 	for i := 0; i < pg_count; i++ {
 		var ppc PGConfig
 
+		var min_pg_num int = math.MaxInt
+		var index int = 0
+		var core_id uint32 = 0
+		//寻找pg所在的pg_size个host上的有最少pg数量的osd
 		for j := 0; j < pg_size; j++ {
-			// 对于每个pg 每个位置，都从上面计算出的host中，pop一个osd出来
 			host_idx := pg_host_array[i][j]
-			osd_idx := host_queue[host_idx].Pop()
-
-			domain_node := (*cfg.OSDTree)[host_idx]
-			if domain_node == nil {
-				return nil, errors.New("domain_node pointer invalid")
+			osdEle := host_map[host_idx].Front().Value.(*osdCore)
+			if osdEle.pgnum < min_pg_num {
+				min_pg_num = osdEle.pgnum
+				index = j
+				core_id = osdEle.coreid
 			}
-
-			// 找到这个osd对应的TreeNode
-			tree_node := (*domain_node).ChildNode[osd_idx]
-			if tree_node == nil {
-				return nil, errors.New("tree_node pointer invalid")
-			}
-			ppc.OsdList = append(ppc.OsdList, int((*tree_node).OSDID))
 		}
+
+		for j := 0; j < pg_size; j++ {
+			host_idx := pg_host_array[i][j]
+			var osdEle *list.Element
+			if j == index {
+				osdEle = host_map[host_idx].Front()
+				osd := osdEle.Value.(*osdCore)
+				//pg成员列表
+				ppc.CoreIndex = osd.coreid
+				ppc.OsdList = append(ppc.OsdList, osd.osdid)
+				osd.pgnum++
+			} else {
+				osdEle = searchMinCore(host_map[host_idx], core_id)
+				osd := osdEle.Value.(*osdCore)
+				ppc.OsdList = append(ppc.OsdList, osd.osdid)
+				osd.pgnum++
+			}
+			sortOsdList(host_map[host_idx], osdEle)
+		}
+		log.Info(ctx, "pg id ", i, " core id: ", core_id, ppc.CoreIndex)
 
 		oldPgCfg, ok := oldPGs[strconv.Itoa(i)]
 		if ok == false {
@@ -1334,6 +1401,7 @@ func SimpleInitial(ctx context.Context, cfg *OptimizeCfg, poolPgSize int) (*Opti
 
 		result.OptimizedPgMap.PgMap[strconv.Itoa(i)] = ppc
 	}
+
 	log.Info(ctx, "Step 4 done.")
 
 	return &result, nil

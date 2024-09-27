@@ -8,6 +8,7 @@ const (
 	OSD_ERR_ID_CONFLICT                = -157
 	OSD_ERR_ADDRESS_INVALID            = -158
 	OSD_ERR_UPDATE_STATE_FAILED        = -159
+	OSD_ERR_CORE_NUM                   = -160
 )
 
 type ErrorCode int
