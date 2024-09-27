@@ -144,6 +144,7 @@ void client::emplace_osd_boot_request(
   const int osd_port,
   const std::string& osd_uuid,
   const int64_t size,
+  const uint32_t core_num,
   on_response_callback_type&& cb) {
     auto req = std::make_unique<msg::Request>();
     auto* boot_req = req->mutable_boot_request();
@@ -152,6 +153,7 @@ void client::emplace_osd_boot_request(
     boot_req->set_address(osd_addr.c_str());
     boot_req->set_port(osd_port);
     boot_req->set_size(size);
+    boot_req->set_core_num(core_num);
     char hostname[1024];
     ::gethostname(hostname, sizeof(hostname));
     boot_req->set_host(hostname);

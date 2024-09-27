@@ -56,6 +56,7 @@ public:
         OSD_ERR_ID_CONFLICT = -157,
         OSD_ERR_ADDRESS_INVALID = -158,
         OSD_ERR_UPDATE_STATE_FAILED = -159,
+        OSD_ERR_CORE_NUM            = -160,
     };
 
     struct image_info {
@@ -415,6 +416,7 @@ public:
       const int,
       const std::string&,
       const int64_t,
+      const uint32_t,
       on_response_callback_type&&);
 
     void emplace_create_image_request(

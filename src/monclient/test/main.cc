@@ -224,7 +224,7 @@ void monitor_client_test_on_app_start(void* arg) {
           for (auto osd_id : pg_info.osdid()) {
               osds.push_back(*(osd_map.data.at(osd_id)));
           }
-          pm->create_partition(pool_id, pg_info.pgid(), std::move(osds), 0, std::move(cb_fn), arg);
+          pm->create_partition(pool_id, pg_info.pgid(), 0, std::move(osds), 0, std::move(cb_fn), arg);
       };
 
     ctx->mon_cli = std::make_unique<monitor::client>(eps, ctx->pm, std::move(pg_map_cb));
@@ -234,8 +234,9 @@ void monitor_client_test_on_app_start(void* arg) {
         ctx->test_state = monitor_client_test_state::booted;
         ctx->mon_cli->start_cluster_map_poller();
     } else {
+        uint32_t core_num = core_sharded::system::capacity();
         ctx->mon_cli->emplace_osd_boot_request(
-          osd_id, osd_host, osd_port, osd_uuid, 1024 * 1024,
+          osd_id, osd_host, osd_port, osd_uuid, 1024 * 1024, core_num,
           [app_ctx = ctx](const monitor::client::response_status s, monitor::client::request_context *ctx)
           {
               BOOST_ASSERT(s == monitor::client::response_status::ok);

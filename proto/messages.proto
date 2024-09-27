@@ -77,14 +77,17 @@ message BootRequest {
     uint32 port = 4;
     string address = 5;
     string host = 6;
+    uint32 core_num = 7;
 }
 
 message PGInfo {
     int32 pgid = 1;
     int64 version = 2;
     int32 state = 3;
-    repeated int32 osdid = 4;
-    repeated int32 newosdid = 5;
+    uint32 coreindex = 4;
+    repeated int32 osdid = 5;
+    uint32 newcoreindex = 6;
+    repeated int32 newosdid = 7;
 }
 
 message PGInfos {

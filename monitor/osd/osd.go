@@ -52,6 +52,7 @@ type OSDInfo struct {
 	IsIn            bool   `json:"isin"`
 	IsUp            bool   `json:"isup"`
 	IsPendingCreate bool   `json:"ispendingcreate"`
+	CoreNum         uint32 `json:"corenum"`
 }
 
 type OsdMap struct {
@@ -67,6 +68,7 @@ type HeartBeatInfo struct {
 
 var AllOSDInfo OsdMap
 var AllHeartBeatInfo map[OSDID]*HeartBeatInfo
+var OSDCoreNum uint32 = 0
 
 type STATESWITCH int
 
@@ -168,6 +170,9 @@ func LoadOSDMapFromEtcd(ctx context.Context, client *etcdapi.EtcdClient) (err er
 	//since all osd info is loaded, we can start heart beat
 	AllHeartBeatInfo = make(map[OSDID]*HeartBeatInfo)
 	for _, info := range AllOSDInfo.Osdinfo {
+		if OSDCoreNum == 0 {
+			OSDCoreNum = info.CoreNum
+		}
 		AllHeartBeatInfo[OSDID(info.Osdid)] = &HeartBeatInfo{osdid: OSDID(info.Osdid), successCounter: 0}
 	}
 
@@ -321,7 +326,8 @@ func ProcessApplyIDMessage(ctx context.Context, client *etcdapi.EtcdClient, uuid
 	return oid, msg.ApplyIDErrorCode_ApplyIdOk
 }
 
-func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int32, uuid string, size int64, port uint32, host string, address string) ERRNUM {
+func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int32, uuid string, size int64, port uint32, host string, 
+	    address string, core_num uint32) ERRNUM {
 	// the uuid should not exist in the osd map
 	found := false
 	for _, info := range AllOSDInfo.Osdinfo {
@@ -347,6 +353,13 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 		return OSD_ERR_ADDRESS_INVALID
 	}
 
+	if OSDCoreNum == 0 {
+		OSDCoreNum = core_num
+	} else if(OSDCoreNum != core_num){
+		log.Warn(ctx, "wrong core number, should be ", OSDCoreNum)
+		return OSD_ERR_CORE_NUM
+	}
+
 	oldIsIn := oinfo.IsIn
 	if oinfo.IsPendingCreate {
 		//this is a newly create osd
@@ -357,6 +370,7 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 		oinfo.IsIn = true
 		oinfo.IsUp = true
 		oinfo.Size = size
+		oinfo.CoreNum = core_num
 	} else {
 		//(todo) check whether any thing changed??
 		oinfo.Address = address
@@ -365,6 +379,7 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 		oinfo.IsIn = true
 		oinfo.IsUp = true
 		oinfo.Size = size
+		oinfo.CoreNum = core_num
 		log.Info(ctx, "IsPendingCreate is false, this is an update osd")
 	}
 

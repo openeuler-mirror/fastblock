@@ -122,6 +122,7 @@ type OSDTreeNode struct {
 	OSDID
 	Level
 	Weight float64
+	CoreNUm uint32
 }
 
 // GetOSDTree return  osd, level and osd tree. It won't update data from etcd.
@@ -251,6 +252,7 @@ func addOSDToHostTree(ctx context.Context,
 		Level:  "osd",
 		Weight: float64(osdState.Size) / GiB,
 		// Weight: float64(osdStats.Size) / GiB * osdStats.Reweight,
+		CoreNUm: osdState.CoreNum,
 	}
 }
 

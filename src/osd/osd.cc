@@ -288,7 +288,7 @@ void start_monitor(server_t* ctx) {
 
     monitor_client->emplace_osd_boot_request(
       ctx->node_id, ctx->osd_addr, ctx->osd_port, ctx->osd_uuid,
-      1024 * 1024, std::move(cb));
+      1024 * 1024, core_sharded::get_core_sharded().count(), std::move(cb));
 }
 
 static void pm_init(void *arg){
@@ -319,7 +319,7 @@ static void pm_init(void *arg){
               }
               osds.push_back(*(osd_map.data.at(osd_id)));
           }
-          pm->create_partition(pool_id, pg_info.pgid(), std::move(osds), 0, std::move(cb_fn), arg);
+          pm->create_partition(pool_id, pg_info.pgid(), pg_info.coreindex() ,std::move(osds), 0, std::move(cb_fn), arg);
       };
     monitor_client = std::make_shared<monitor::client>(
       server->monitors, global_pm, std::move(pg_map_cb), std::nullopt, server->node_id);

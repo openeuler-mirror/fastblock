@@ -43,7 +43,6 @@ public:
         raft_heartbeat_period_time_msec == 0 ? DEFAULT_HEARTBEAT_TIMER_PERIOD_MSEC : raft_heartbeat_period_time_msec,
         raft_lease_time_msec == 0 ? DEFAULT_LEASE_MAINTENANCE_GRACE : raft_lease_time_msec,
         raft_election_timeout_msec == 0 ? DEFAULT_ELECTION_TIMER_PERIOD_MSEC : raft_election_timeout_msec)
-      , _next_shard(0)
       , _shard(core_sharded::get_core_sharded())
       , _shard_cores(core_sharded::get_shard_cores())
       , _state(osd_state::OSD_STARTING) {
@@ -59,7 +58,7 @@ public:
     void stop(utils::complete_fun fun, void *arg);
     void stop_stm(uint64_t shard_id, utils::complete_fun fun, void *arg);
 
-    int create_partition(uint64_t pool_id, uint64_t pg_id, std::vector<utils::osd_info_t>&& osds,
+    int create_partition(uint64_t pool_id, uint64_t pg_id, uint32_t core_index, std::vector<utils::osd_info_t>&& osds,
                         int64_t revision_id, pm_complete&& cb_fn, void *arg);
     int delete_partition(uint64_t pool_id, uint64_t pg_id, pm_complete&& cb_fn, void *arg);
     int load_partition(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob,
@@ -147,16 +146,10 @@ public:
     }
 private:
     int osd_state_is_not_active();
-    uint32_t get_next_shard_id(){
-        uint32_t shard_id = _next_shard;
-        _next_shard = (_next_shard + 1) % _shard_cores.size();
-        return shard_id;
-    }
 
     pg_group_t _pgs;
     //记录pg到cpu核的对应关系
     std::map<std::string, shard_revision> _shard_table;
-    uint32_t _next_shard;
     core_sharded&  _shard;
     std::vector<uint32_t> _shard_cores;
     std::vector<std::map<std::string, std::shared_ptr<osd_stm>>> _sm_table;
