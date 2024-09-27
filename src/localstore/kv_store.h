@@ -244,7 +244,6 @@ public:
     }
 
     void serialize_op(std::vector<op>& ops) {
-        bool rc;
         write_buf.reset();
 
         // 1.保存本次写的 total_size (uint64_t)：
