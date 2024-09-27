@@ -195,6 +195,10 @@ public:
         return *g_core_sharded;
     }
 
+    [[gnu::optimize("O0")]] static ::spdk_thread* get_thread(const core_id_type core) noexcept {
+        return g_core_sharded->_threads.at(core);
+    }
+
     static core_container_type &get_shard_cores() {
         return g_core_sharded->shard_cores();
     }

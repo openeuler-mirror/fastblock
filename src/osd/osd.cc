@@ -60,10 +60,12 @@ typedef struct
     int node_id;
 	std::string bdev_disk;
 	std::string osd_addr;
-	int osd_port;
 	std::string osd_uuid;
     std::vector<monitor::client::endpoint> monitors{};
-    std::unique_ptr<rpc_server> rpc_srv{nullptr};
+    std::vector<std::unique_ptr<msg::rdma::server>> rpc_servers{};
+    std::function<void(bool)> rpc_servers_started_cb{};
+    bool is_server_error{false};
+    size_t server_control_counter{0};
     boost::property_tree::ptree pt{};
     spdk_thread *cur_thread;
     std::string bdev_addr;
@@ -233,41 +235,86 @@ block_parse_arg(int ch, char *arg)
 	return 0;
 }
 
-static void service_init(partition_manager* pm, server_t *server){
+static void on_rpc_server_started(void* arg1, void* arg2) {
+    bool is_ok = !!arg1;
+    auto* server = reinterpret_cast<server_t*>(arg2);
+    if (server->is_server_error) {
+        return;
+    }
+
+    if (not is_ok) {
+        server->is_server_error = true;
+        server->rpc_servers_started_cb(false);
+        return;
+    }
+
+    ++(server->server_control_counter);
+    if (server->server_control_counter == core_sharded::system::capacity()) {
+        server->rpc_servers_started_cb(true);
+    }
+}
+
+static void create_rpc_server(void* arg1, void* arg2) {
+    auto* server = reinterpret_cast<server_t*>(arg1);
+    auto shard_id = ::spdk_env_get_current_core() - ::spdk_env_get_first_core();
+    auto opts = msg::rdma::server::make_options(server->pt);
+    opts->port = utils::get_random_port();
+    SPDK_NOTICELOG(
+      "Starting rpc server on core %d, shard id %d, listen port is %d\n",
+      ::spdk_env_get_current_core(), shard_id, opts->port);
+
+    msg::rdma::server* rpc_srv{nullptr};
+    bool is_ok = false;
+    try {
+        server->rpc_servers.at(shard_id) = std::make_unique<msg::rdma::server>(core_sharded::get_thread(shard_id), opts);
+        rpc_srv = server->rpc_servers.at(shard_id).get();
+        SPDK_NOTICELOG("Created rpc server on core %d\n", shard_id);
+    } catch (const std::exception& e) {
+        SPDK_ERRLOG("ERROR: Create rpc server on core %d failed, %s\n", ::spdk_env_get_current_core(), e.what());
+        goto run_cb;
+    }
+
+    while (1) {
+        try {
+            rpc_srv->create_listener(opts->port);
+            rpc_srv->start();
+            SPDK_NOTICELOG("Started rpc server on core %d\n", shard_id);
+            break;
+        } catch (const msg::rdma::bindException& ) {
+            //端口绑定失败
+            opts->port = utils::get_random_port();
+            continue;
+        } catch (const std::exception& e) {
+            SPDK_ERRLOG("ERROR: Create rpc server failed, %s\n", e.what());
+            goto run_cb;
+        }
+    }
+
+    is_ok = true;
+    server->osd_addr = opts->bind_address;
+    server->rpc_servers.at(shard_id)->add_service(global_raft_service.get());
+    server->rpc_servers.at(shard_id)->add_service(global_osd_service.get());
+
+run_cb:
+    auto* evt = ::spdk_event_allocate(
+      core_sharded::system::first_core(),
+      on_rpc_server_started,
+      is_ok ? &is_ok : nullptr,
+      server);
+    ::spdk_event_call(evt);
+}
+
+static void service_init(partition_manager* pm, server_t *server, std::function<void(bool)> cb) {
     g_data_statistics = std::make_shared<data_statistics>();
 	global_raft_service = std::make_unique<::raft_service<::partition_manager>>(global_pm.get());
     global_osd_service = std::make_unique<::osd_service>(global_pm.get(), monitor_client);
 
-    // FIXME: options from json configuration file
-    auto srv_opts = msg::rdma::server::make_options(server->pt);
-    srv_opts->port = server->osd_port;
-    try {
-        auto core_no = core_sharded::system::last_core();
-        SPDK_NOTICELOG("Start rpc server on core %d\n", core_no);
-        server->rpc_srv = std::make_unique<rpc_server>(core_no, srv_opts);
-    } catch (const std::exception& e) {
-        SPDK_ERRLOG("ERROR: Create rpc server failed, %s\n", e.what());
-        std::raise(SIGINT);
-        return;
+    server->rpc_servers.resize(core_sharded::system::capacity());
+    server->rpc_servers_started_cb = cb;
+    for (auto it = core_sharded::system::begin(); it != core_sharded::system::end(); ++it) {
+        auto* evt = ::spdk_event_allocate(*it, create_rpc_server, server, nullptr);
+        ::spdk_event_call(evt);
     }
-
-    while(1){
-        try {
-            server->rpc_srv->start(server->osd_port);
-        } catch (const msg::rdma::bindException& ) {
-            //端口绑定失败
-            server->osd_port = utils::get_random_port();
-            continue;
-        } catch (const std::exception& e) {
-            SPDK_ERRLOG("ERROR: Create rpc server failed, %s\n", e.what());
-            std::raise(SIGINT);
-            return;
-        } 
-        break;
-    }
-    server->osd_addr = srv_opts->bind_address;
-	server->rpc_srv->register_service(global_raft_service.get());
-	server->rpc_srv->register_service(global_osd_service.get());
 }
 
 void start_monitor(server_t* ctx) {
@@ -286,9 +333,20 @@ void start_monitor(server_t* ctx) {
             g_data_statistics->set_mon_client(monitor_client);
       };
 
+    std::map<uint32_t, uint32_t> sharded_ports{};
+    uint32_t counter{0};
+    for (auto srv_it = ctx->rpc_servers.begin(); srv_it != ctx->rpc_servers.end(); ++srv_it) {
+        sharded_ports.insert({::spdk_env_get_first_core() + counter, srv_it->get()->listen_port()});
+        counter++;
+    }
     monitor_client->emplace_osd_boot_request(
-      ctx->node_id, ctx->osd_addr, ctx->osd_port, ctx->osd_uuid,
-      1024 * 1024, core_sharded::get_core_sharded().count(), std::move(cb));
+      ctx->node_id,
+      ctx->osd_addr,
+      sharded_ports,
+      ctx->osd_uuid,
+      1024 * 1024,
+      core_sharded::get_core_sharded().count(),
+      std::move(cb));
 }
 
 static void pm_init(void *arg){
@@ -314,8 +372,8 @@ static void pm_init(void *arg){
           for (auto osd_id : pg_info.osdid()) {
               if(osd_map.data.find(osd_id) == osd_map.data.end()){
                   SPDK_WARNLOG("not find osd %d in osdmap\n", osd_id);
-                  cb_fn(arg, -err::E_NODEV);  
-                  return;  
+                  cb_fn(arg, -err::E_NODEV);
+                  return;
               }
               osds.push_back(*(osd_map.data.at(osd_id)));
           }
@@ -492,9 +550,17 @@ struct pm_load_context : public utils::context{
 
     static void osd_load_done(void *arg){
         osd_load_ctx* ctx = (osd_load_ctx* )arg;
-        service_init(ctx->pm, ctx->server);
-        start_monitor(ctx->server);
-        delete ctx;
+        service_init(ctx->pm, ctx->server, [ctx] (bool is_ok) {
+            if (not is_ok) {
+                SPDK_ERRLOG("service init failed\n");
+                osd_exit_code = err::E_INVAL;
+                delete ctx;
+                std::raise(SIGINT);
+            }
+
+            start_monitor(ctx->server);
+            delete ctx;
+        });
     };
 
     void finish(int r) override {
@@ -504,6 +570,18 @@ struct pm_load_context : public utils::context{
             std::raise(SIGINT);
 			return;
 		}
+
+// #ifdef DEBUG
+//         if (not g_mkfs) {
+//             SPDK_NOTICELOG("partation manager load done\n");
+//             osd_load_ctx* xctx = new osd_load_ctx{.server = server, .pm = pm};
+//             osd_load_done(xctx);
+//             return;
+//         }
+// #endif
+
+
+
 
         // SPDK_WARNLOG("pm start done\n");
         auto& blobs = global_blob_tree();
@@ -539,8 +617,8 @@ struct pm_load_context : public utils::context{
               [this, &blobs, shard_id, ctx, complete](){
                 std::map<std::string, struct spdk_blob*> log_blobs = std::exchange(blobs.on_shard(shard_id).log_blobs, {});
                 std::map<std::string, object_store::container> object_blobs = std::exchange(blobs.on_shard(shard_id).object_blobs, {});
-                ctx->loads.on_shard(shard_id).set_blobs(std::move(log_blobs), std::move(object_blobs)); 
-                 
+                ctx->loads.on_shard(shard_id).set_blobs(std::move(log_blobs), std::move(object_blobs));
+
                 ctx->loads.on_shard(shard_id).start_load(shard_id, complete, ctx);
               });
         }
@@ -634,25 +712,32 @@ static void block_started(server_t *server) {
         server->bdev_disk = server->bdev_disk + "n1";
 
     buffer_pool_init();
+    SPDK_INFOLOG(osd, "buffer_pool_init done, current g_mkfs is %d\n", g_mkfs);
     if (g_mkfs) {
         //初始化log磁盘
+        SPDK_INFOLOG(osd, "start calling blobstore_init\n");
         blobstore_init(server->bdev_disk, server->osd_uuid, g_force,
                 disk_init_complete, server);
         return;
     }
 
+    SPDK_INFOLOG(osd, "start calling blobstore_load\n");
     blobstore_load(server->bdev_disk, disk_load_complete, server, &(server->osd_uuid));
 }
 
 static void on_app_started(void* arg) {
     auto core_begin = core_sharded::system::begin();
-    auto n_core = std::max(
-      core_sharded::system::size_type{1},
-      core_sharded::system::capacity() - 1);
-    core_sharded::construct(core_begin, n_core, "osd");
-
+    core_sharded::construct(core_begin, core_sharded::system::capacity(), "osd");
     auto* server = reinterpret_cast<server_t*>(arg);
     block_started(server);
+// #ifndef DEBUG
+// #else
+//     if (g_mkfs) {
+//         block_started(server);
+//     } else {
+//         storage_load_complete(server, 0);
+//     }
+// #endif
 }
 
 static void save_bdev_json(std::string& bdev_json_file, server_t& server){
@@ -712,7 +797,6 @@ static int from_configuration(server_t* server) {
     std::string rdma_device_name = pt.get_child("rdma_device_name").get_value<std::string>();
 
     server->bdev_disk = g_bdev_type + current_osd_id;
-    server->osd_port = utils::get_random_port();
     server->bdev_type = g_bdev_type;
 
     if (pt.count("mon_host") == 0) {
@@ -823,12 +907,21 @@ static void osd_stop(void *arg) noexcept {
         [[fallthrough]];
     }
     case stop_state::rpc_server: {
-        cur_stop_state = stop_state::blobstore;
-        if (osd_server.rpc_srv) {
-            SPDK_NOTICELOG("Stopping the rpc server\n");
-            osd_server.rpc_srv->stop(on_osd_stop);
-            return;
+        if (osd_server.rpc_servers.empty()) {
+            cur_stop_state = stop_state::blobstore;
+        } else {
+            ++(osd_server.server_control_counter);
+            if (osd_server.server_control_counter == core_sharded::system::capacity()) {
+                cur_stop_state = stop_state::blobstore;
+                SPDK_NOTICELOG("all rpc servers stopped\n");
+            } else {
+                auto& rpc_srv = osd_server.rpc_servers.at(osd_server.server_control_counter);
+                SPDK_NOTICELOG("Stopping the %ldth rpc server\n", osd_server.server_control_counter + 1);
+                rpc_srv->stop(on_osd_stop);
+                return;
+            }
         }
+
         [[fallthrough]];
     }
     case stop_state::blobstore: {
@@ -844,6 +937,7 @@ static void osd_stop(void *arg) noexcept {
 static void on_osd_stop() noexcept {
     auto app_thread = spdk_thread_get_app_thread();
     auto cur_thread = spdk_get_thread();
+    osd_server.server_control_counter = 0;
     if(cur_thread == app_thread){
         osd_stop(nullptr);
     } else {
@@ -1053,7 +1147,7 @@ main(int argc, char *argv[])
         if(!core_mask){
             return -EINVAL;
         }
-        
+
         //mkfs时保存cpu核数，启动osd时读出核数，分配cpu核
         if(save_core_size(g_core_num) != 0){
             return -EINVAL;
