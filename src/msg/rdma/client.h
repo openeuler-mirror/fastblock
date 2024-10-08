@@ -532,14 +532,14 @@ public:
               meta->method_name,
               req->request_key);
 
-            auto* ctx = (enqueue_request_context*)::spdk_zmalloc(
-              sizeof(enqueue_request_context),
-              0, nullptr, SPDK_ENV_LCORE_ID_ANY,
-              SPDK_MALLOC_DMA);
-            ctx->req = std::move(req);
-            ctx->this_conn = this;
-            ::spdk_thread_send_msg(_master->get_thread(), on_enqueue_request, ctx);
-            // enqueue_request(std::move(req));
+            // auto* ctx = (enqueue_request_context*)::spdk_zmalloc(
+            //   sizeof(enqueue_request_context),
+            //   0, nullptr, SPDK_ENV_LCORE_ID_ANY,
+            //   SPDK_MALLOC_DMA);
+            // ctx->req = std::move(req);
+            // ctx->this_conn = this;
+            // ::spdk_thread_send_msg(_master->get_thread(), on_enqueue_request, ctx);
+            enqueue_request(std::move(req));
         }
 
         bool process_rpc_request(std::list<std::weak_ptr<connection>>::iterator busy_it) {
