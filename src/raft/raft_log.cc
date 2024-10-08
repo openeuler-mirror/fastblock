@@ -96,6 +96,34 @@ int raft_log::entry_queue_flush(){
     return count;    
 }
 
+void raft_log::disk_append(raft_index_t start_idx, raft_index_t end_idx, utils::context* complete){
+    std::vector<std::shared_ptr<raft_entry_t>> raft_entries;
+    _entries.get_between(start_idx, end_idx, raft_entries);
+    if(!_log){
+        complete->complete(0);
+        return;
+    }
+    std::vector<log_entry_t> log_entries;
+    for (auto& raft_entry : raft_entries) {
+        log_entries.emplace_back(raft_entry_to_log_entry(*raft_entry));
+    }
+    SPDK_INFOLOG(pg_group, "in pg %lu.%lu, disk_append [%ld, %ld] size:%lu.\n", 
+            _raft->raft_get_pool_id(), _raft->raft_get_pg_id(), start_idx, end_idx, log_entries.size());
+    _log->append(
+        log_entries,
+        [log_entries, start_idx, end_idx, pool_id = _raft->raft_get_pool_id(), pg_id = _raft->raft_get_pg_id()](void *arg, int rberrno) mutable
+        {
+            SPDK_INFOLOG(pg_group, "in pg %lu.%lu, after disk_append [%ld, %ld]\n", pool_id, pg_id, start_idx, end_idx);
+            utils::context *ctx = (utils::context *)arg;
+            for (auto &entry : log_entries)
+            {
+                free_buffer_list(entry.data);
+            }
+            ctx->complete(rberrno);
+        },
+        complete);
+}
+
 int raft_log::log_truncate(raft_index_t idx, log_op_complete cb_fn, void* arg)
 {
     auto last_cache_idx = get_last_cache_entry();

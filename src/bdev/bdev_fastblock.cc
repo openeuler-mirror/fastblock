@@ -322,7 +322,7 @@ bdev_fastblock_write(struct spdk_bdev_io *bdev_io,
 	}
 	bool aligned = !(total_len % 4096);
 
-    auto worker_index = ::spdk_env_get_current_core() - ::spdk_env_get_first_core();
+	auto worker_index = utils::get_current_shard_id();
     SPDK_DEBUGLOG(libblk, "worker index: %d\n", worker_index);
     auto& blk_cli = global::blk_clients.at(worker_index);
 
@@ -371,7 +371,7 @@ bdev_fastblock_get_buf_cb(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_
 
 	uint64_t read_id = future_id++;
 
-    auto worker_index = ::spdk_env_get_current_core() - ::spdk_env_get_first_core();
+	auto worker_index = utils::get_current_shard_id();
     SPDK_DEBUGLOG(libblk, "worker index: %d\n", worker_index);
     auto& blk_cli = global::blk_clients.at(worker_index);
 
@@ -515,7 +515,7 @@ bdev_fastblock_create_cb(void *io_device, void *ctx_buf)
 	}
 
     auto core_no = ::spdk_env_get_current_core();
-    auto hold_index = core_no - ::spdk_env_get_first_core();
+	auto hold_index = utils::get_current_shard_id();
     if (global::blk_clients[hold_index]) {
         return 0;
     }

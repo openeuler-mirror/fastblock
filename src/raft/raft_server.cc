@@ -554,8 +554,8 @@ struct follow_disk_append_complete : public utils::context{
     , rsp(_rsp) {}
 
     void finish(int r) override {
-        SPDK_INFOLOG(pg_group, "follow_disk_append_complete finish, start_idx: %ld end_idx: %ld commit_idx %ld result: %d.\n",
-                start_idx, end_idx, commit_idx, r);
+        SPDK_INFOLOG(pg_group, "follow_disk_append_complete finish, in pg %lu.%lu, start_idx: %ld end_idx: %ld commit_idx %ld result: %d.\n",
+                raft->raft_get_pool_id(), raft->raft_get_pg_id(), start_idx, end_idx, commit_idx, r);
         if(r != 0){
             SPDK_ERRLOG("follow_disk_append_complete, result: %d\n", r);
             rsp->set_success(r);
@@ -1044,8 +1044,8 @@ struct disk_append_complete : public utils::context{
     , raft(_raft) {}
 
     void finish(int r) override {
-        SPDK_INFOLOG(pg_group, "disk_append_complete, start_idx: %ld end_idx: %ld result: %d\n",
-                start_idx, end_idx, r);
+        SPDK_INFOLOG(pg_group, "disk_append_complete, in pg %lu.%lu, start_idx: %ld end_idx: %ld result: %d\n",
+                raft->raft_get_pool_id(), raft->raft_get_pg_id(), start_idx, end_idx, r);
         if(r != 0)
             SPDK_ERRLOG("disk_append_complete, result: %d\n", r);
         raft->raft_disk_append_finish(start_idx, end_idx, r);
@@ -2520,7 +2520,7 @@ void raft_server_t::init(
     for(auto& node : node_list){
         if(configuration.find_node(node.node_id))
             continue;
-        configuration.add_node(node.node_id, node.address, node.sharded_ports.at(shard_id).port);
+        configuration.add_node(node.node_id, node.address, 0);
     }
     _configuration_manager.add_node_configuration(std::move(configuration));
     _nodes_stat.update_with_node_configuration(_configuration_manager.get_last_node_configuration());

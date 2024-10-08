@@ -466,11 +466,17 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 						}
 
 						sharded_ports := osd.GetShardedPorts()
-						min_core := findMinKey(sharded_ports)
-						for core_id, port := range sharded_ports {
+						var keys []int
+						for shard_id := range sharded_ports {
+							keys = append(keys, int(shard_id))
+						}
+						sort.Ints(keys)
+						for key := range keys {
+							shard_id := uint32(key)
+							port := sharded_ports[shard_id]
 							fmt.Printf(
 								"%-10v   %-20v   %-10v    %-10v   %-10v   %-10v   %-10v \r\n",
-								osd.GetOsdid(), osd.GetAddress(), core_id, core_id-min_core, port, state1, state2)
+								osd.GetOsdid(), osd.GetAddress(), port.Coreid, shard_id, port.Port, state1, state2)
 						}
 					}
 				}
@@ -910,7 +916,7 @@ func clientSendBootRequest(conn net.Conn, hosts int, responseChan chan ResponseC
 					Uuid:         *uid,
 					Size_:        int64(*size),
 					Address:      *address,
-					ShardedPorts: map[uint32]uint32{0: uint32(*port)},
+					ShardedPorts: map[uint32]*msg.ShardCore{},
 					Host:         *hostname,
 				},
 			},
@@ -925,7 +931,7 @@ func clientSendBootRequest(conn net.Conn, hosts int, responseChan chan ResponseC
 				fmt.Printf("using osdid %d to boot a osd\r\n", rc.osdid)
 				suffix := strconv.Itoa(int(rc.osdid)%(hosts) + 1)
 				hostname := "fbhost" + suffix
-				port := 12345 + rc.osdid
+				// port := 12345 + rc.osdid
 				addr := "192.168.1." + suffix
 				request := &msg.Request{
 					Union: &msg.Request_BootRequest{
@@ -934,7 +940,7 @@ func clientSendBootRequest(conn net.Conn, hosts int, responseChan chan ResponseC
 							Uuid:         rc.uuid,
 							Size_:        1024,
 							Address:      addr,
-							ShardedPorts: map[uint32]uint32{0: uint32(port)},
+							ShardedPorts: map[uint32]*msg.ShardCore{},
 							Host:         hostname,
 						},
 					},

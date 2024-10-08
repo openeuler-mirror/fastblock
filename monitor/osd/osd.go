@@ -39,6 +39,11 @@ func isValidIPv4(address string) bool {
 
 func isValidPort(port uint32) bool {
 	return port <= 65535
+} 
+
+type ShardPort struct {
+	Coreid           uint32               `json:"shardid"`
+	Port              uint32               `json:"port"`
 }
 
 // when osd restarts, following information is changed(host may not)
@@ -47,7 +52,7 @@ type OSDInfo struct {
 	Address         string            `json:"address"`
 	Uuid            string            `json:"uuid"`
 	Host            string            `json:"host"`
-	ShardedPorts    map[uint32]uint32 `json:"sharded_ports"`
+	ShardedPorts    map[uint32]ShardPort `json:"sharded_ports"`
 	Size            int64             `json:"size"`
 	IsIn            bool              `json:"isin"`
 	IsUp            bool              `json:"isup"`
@@ -300,7 +305,7 @@ func ProcessApplyIDMessage(ctx context.Context, client *etcdapi.EtcdClient, uuid
 		IsUp:            false,
 		Address:         "",
 		Host:            "",
-		ShardedPorts:    map[uint32]uint32{},
+		ShardedPorts:    map[uint32]ShardPort{},
 		Size:            0,
 	}
 
@@ -328,7 +333,7 @@ func ProcessApplyIDMessage(ctx context.Context, client *etcdapi.EtcdClient, uuid
 	return oid, msg.ApplyIDErrorCode_ApplyIdOk
 }
 
-func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int32, uuid string, size int64, sharded_ports map[uint32]uint32, host string, 
+func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int32, uuid string, size int64, sharded_ports map[uint32]*msg.ShardCore, host string, 
 	    address string, core_num uint32) ERRNUM {
 	// the uuid should not exist in the osd map
 	found := false
@@ -350,7 +355,8 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 		return OSD_ERR_ID_CONFLICT
 	}
 
-	for _, port := range sharded_ports {
+	for _, shard_port := range sharded_ports {
+		port := shard_port.Port
 		if !isValidPort(port) {
 			log.Warn(ctx, "invalide port: ", port)
 			return OSD_ERR_ADDRESS_INVALID
@@ -370,11 +376,19 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 	}
 
 	oldIsIn := oinfo.IsIn
+	shard_port_m := make(map[uint32]ShardPort)
+	for shard_id , shard_port := range sharded_ports {
+		shardPort := ShardPort{
+			Coreid: shard_port.Coreid,
+			Port: shard_port.Port,
+		}
+		shard_port_m[shard_id] = shardPort
+	}
 	if oinfo.IsPendingCreate {
 		//this is a newly create osd
 		oinfo.Address = address
 		oinfo.Host = host
-		oinfo.ShardedPorts = sharded_ports
+		oinfo.ShardedPorts = shard_port_m
 		oinfo.IsPendingCreate = false
 		oinfo.IsIn = true
 		oinfo.IsUp = true
@@ -384,7 +398,7 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 		//(todo) check whether any thing changed??
 		oinfo.Address = address
 		oinfo.Host = host
-		oinfo.ShardedPorts = sharded_ports
+		oinfo.ShardedPorts = shard_port_m
 		oinfo.IsIn = true
 		oinfo.IsUp = true
 		oinfo.Size = size
@@ -458,9 +472,16 @@ func ProcessGetOsdMapMessage(ctx context.Context, cv int64, oid int32) ([]*msg.O
 	// osd/state/N reported OSD up.
 	for _, osdState := range AllOSDInfo.Osdinfo {
 		var info msg.OsdDynamicInfo
+		info.ShardedPorts = make(map[uint32]*msg.ShardCore)
 		info.Osdid = int32(osdState.Osdid)
 		info.Address = osdState.Address
-		info.ShardedPorts = osdState.ShardedPorts
+		for shard_id, shard_port := range osdState.ShardedPorts {
+			var shard_core msg.ShardCore
+			shard_core.Coreid = shard_port.Coreid
+			shard_core.Port = shard_port.Port
+			info.ShardedPorts[shard_id] = &shard_core
+		}
+		// info.ShardedPorts = osdState.ShardedPorts
 		info.Isin = osdState.IsIn
 		info.Isup = osdState.IsUp
 		odi = append(odi, &info)

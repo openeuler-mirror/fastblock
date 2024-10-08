@@ -102,6 +102,7 @@ inline void complete_done(void *arg, int serrno) {
 struct core_shard_map {
     uint32_t port;
     uint32_t core_id;
+    uint32_t shard_id;
 };
 
 struct osd_info_t
@@ -212,6 +213,18 @@ static void switch_core_func(void *arg, int rerrno){
   }else{
     _switch_core_func(ctx);
   }
+}
+
+static uint32_t get_current_shard_id(){
+    uint32_t shard_id = 0;
+    uint32_t core_id = 0;
+    SPDK_ENV_FOREACH_CORE(core_id) {
+        if(core_id == spdk_env_get_current_core()){
+            break;
+        }
+        shard_id++;
+    } 
+    return  shard_id;
 }
 
 }

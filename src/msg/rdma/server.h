@@ -497,6 +497,7 @@ private:
             SPDK_ERRLOG("send msg failed, rc is %d, task id is %d\n", rc, task->id);
             throw std::runtime_error{"send msg failed"};
         }
+        // handle_rpc_done(task);
     }
 
     void dispatch_method(request_meta* meta, std::unique_ptr<rpc_task> task, bool is_inlined = false) {

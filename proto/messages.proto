@@ -70,11 +70,16 @@ message ApplyIDResponse{
     ApplyIDErrorCode errorcode = 3;
 }
 
+message ShardCore{
+    uint32 coreid = 1;
+    uint32 port = 2;
+}
+
 message BootRequest {
     int32 osd_id = 1;
     string uuid = 2;
     int64 size = 3;
-    map<uint32, uint32> sharded_ports = 4;
+    map<uint32, ShardCore> sharded_ports = 4;
     string address = 5;
     string host = 6;
     uint32 core_num = 7;
@@ -110,7 +115,7 @@ message GetPgMapRequest{
 message OsdDynamicInfo{
 	int32 osdid = 1;
 	string address =2;
-    map<uint32, uint32> sharded_ports = 3;
+    map<uint32, ShardCore> sharded_ports = 3;
 	bool isin    = 4;
 	bool isup     = 5;
     bool ispendingcreate = 6;
