@@ -413,7 +413,7 @@ public:
     void emplace_osd_boot_request(
       const int,
       const std::string&,
-      const std::map<uint32_t, uint32_t>&,
+      const std::map<uint32_t, std::pair<uint32_t, uint32_t>>&,
       const std::string&,
       const int64_t,
       const uint32_t,
@@ -487,17 +487,10 @@ private:
     }
 
     void make_sharded_ports(
-      const google::protobuf::Map<google::protobuf::uint32, google::protobuf::uint32>& proto_shard_ports,
+      const google::protobuf::Map<google::protobuf::uint32, msg::ShardCore>& proto_shard_ports,
       std::map<uint32_t, utils::core_shard_map>& osd_sharded_ports) {
-        uint32_t min_core{0};
-        for (auto it = proto_shard_ports.begin(); it != proto_shard_ports.end(); ++it) {
-            if (min_core > it->first) {
-                min_core = it->first;
-            }
-        }
-
-        for (auto it = proto_shard_ports.begin(); it != proto_shard_ports.end(); ++it) {
-            osd_sharded_ports.emplace(it->first - min_core, utils::core_shard_map{it->second, it->first});
+        for (auto it = proto_shard_ports.begin(); it != proto_shard_ports.end(); ++it){
+            osd_sharded_ports.emplace(it->first, utils::core_shard_map{it->second.port(), it->second.coreid(), it->first});
         }
     }
 

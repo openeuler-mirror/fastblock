@@ -114,8 +114,18 @@ private:
         return ret;
     }
 
+    void print_osd(utils::osd_info_t *osdinfo){
+        SPDK_DEBUGLOG(libblk, "osd id: %d\n", osdinfo->node_id);
+        for(auto &[_, shard_port] : osdinfo->sharded_ports){
+            SPDK_DEBUGLOG(libblk, "  core: %u shard: %u, port: %u\n", shard_port.core_id, shard_port.shard_id, shard_port.port);
+        }
+    }
+
     auto get_stub(utils::osd_info_t *osdinfo) {
-        auto shard_id = ::spdk_env_get_current_core() - ::spdk_env_get_first_core();
+        auto shard_id = utils::get_current_shard_id();
+        SPDK_DEBUGLOG(libblk, "currentcore: %u, first core: %u, shard_id: %u\n", ::spdk_env_get_current_core(), 
+                ::spdk_env_get_first_core(), shard_id);
+        // print_osd(osdinfo);
         return get_stub(osdinfo->node_id, osdinfo->address, osdinfo->sharded_ports.at(shard_id).port);
     }
 
@@ -172,6 +182,7 @@ private:
             SPDK_ERRLOG("ERROR: Cant find any available osd of pg %d, pool id %d\n", pool_id, pg_id);
             return EAGAIN;
         }
+        // print_osd(first_osd);
 
         auto req = std::make_unique<leader_request_stack_type>();
         req->leader_resp = std::make_unique<osd::pg_leader_response>();

@@ -256,7 +256,7 @@ static void on_rpc_server_started(void* arg1, void* arg2) {
 
 static void create_rpc_server(void* arg1, void* arg2) {
     auto* server = reinterpret_cast<server_t*>(arg1);
-    auto shard_id = ::spdk_env_get_current_core() - ::spdk_env_get_first_core();
+    auto shard_id = core_sharded::get_core_sharded().this_shard_id();
     auto opts = msg::rdma::server::make_options(server->pt);
     opts->port = utils::get_random_port();
     SPDK_NOTICELOG(
@@ -333,11 +333,15 @@ void start_monitor(server_t* ctx) {
             g_data_statistics->set_mon_client(monitor_client);
       };
 
-    std::map<uint32_t, uint32_t> sharded_ports{};
-    uint32_t counter{0};
-    for (auto srv_it = ctx->rpc_servers.begin(); srv_it != ctx->rpc_servers.end(); ++srv_it) {
-        sharded_ports.insert({::spdk_env_get_first_core() + counter, srv_it->get()->listen_port()});
-        counter++;
+    std::map<uint32_t, std::pair<uint32_t, uint32_t>> sharded_ports{};
+    uint32_t index = 0;
+    uint32_t core_id = 0;
+    uint32_t port = 0;
+    SPDK_ENV_FOREACH_CORE(core_id){
+        port = ctx->rpc_servers[index]->listen_port();
+        SPDK_DEBUGLOG(osd, "core id : %u, shard_id: %u, port: %u\n", core_id, index, port);
+        sharded_ports[index] = std::make_pair(core_id, port);
+        index++;
     }
     monitor_client->emplace_osd_boot_request(
       ctx->node_id,

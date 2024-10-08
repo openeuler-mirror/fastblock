@@ -138,10 +138,13 @@ void client::handle_start_cluster_map_poller() {
       monitor::send_cluster_map_request, this, _poll_period_us);
 }
 
+/*
+   sharded_ports  <shard_id, <core_id, port>>>
+*/
 void client::emplace_osd_boot_request(
   const int osd_id,
   const std::string& osd_addr,
-  const std::map<uint32_t, uint32_t>& sharded_ports,
+  const std::map<uint32_t, std::pair<uint32_t, uint32_t>>& sharded_ports,
   const std::string& osd_uuid,
   const int64_t size,
   const uint32_t core_num,
@@ -153,7 +156,10 @@ void client::emplace_osd_boot_request(
     boot_req->set_address(osd_addr.c_str());
     auto* proto_sharded_ports = boot_req->mutable_sharded_ports();
     for (auto it = sharded_ports.begin(); it != sharded_ports.end(); ++it) {
-        proto_sharded_ports->insert({it->first, it->second});
+        msg::ShardCore shard_core;
+        shard_core.set_coreid(it->second.first);
+        shard_core.set_port(it->second.second); 
+        proto_sharded_ports->insert({it->first, std::move(shard_core)});
     }
     boot_req->set_size(size);
     boot_req->set_core_num(core_num);
@@ -720,12 +726,13 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
     for (int i{0}; i < osds.size(); ++i) {
         bool is_valid_addr{true};
         for (auto it = osds[i].sharded_ports().begin(); it != osds[i].sharded_ports().end(); ++it) {
-            if (not valid_osd_address(osds[i].address(), it->second)) {
+            auto port = it->second.port();
+            if (not valid_osd_address(osds[i].address(), port)) {
                 SPDK_NOTICELOG(
                   "osd %d address %s:%d is invalid, skip it\n",
                   osds[i].osdid(),
                   osds[i].address().c_str(),
-                  it->second);
+                  port);
                 is_valid_addr = false;
                 break;
             }
@@ -798,18 +805,18 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
             }
 
             for (auto it = osd_info.sharded_ports.begin(); it != osd_info.sharded_ports.end(); ++it) {
-                auto shard = it->first;
+                auto shard_id = it->first;
                 auto core_port = it->second;
 
                 SPDK_NOTICELOG(
                   "Starting connect to osd %s:%d, shard %d, core %d\n",
-                  osd_info.address.c_str(), core_port.port, shard, core_port.core_id);
+                  osd_info.address.c_str(), core_port.port, shard_id, core_port.core_id);
 
                 _pm.lock()->get_pg_group().create_connect(
                   osd_info.node_id,
                   osd_info.address,
                   core_port.port,
-                  [this, node_id = osd_info.node_id, shard, raw_stack = resp_stack.get()] (void *, int res) {
+                  [this, node_id = osd_info.node_id, raw_stack = resp_stack.get()] (void *, int res) {
                       if (res != err::E_SUCCESS) {
                           SPDK_ERRLOG("ERROR: Connect failed\n");
                           auto it = _osd_map.data.find(node_id);

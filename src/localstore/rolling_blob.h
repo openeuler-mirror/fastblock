@@ -423,6 +423,11 @@ public:
     static void rw_done(void *arg, int rberrno) {
         struct rblob_rw_ctx* ctx = (struct rblob_rw_ctx*)arg;
 
+        if(ctx->is_read)
+            SPDK_INFOLOG(blob_log, "blob read pos done from:%lu (lba:%lu) len:%lu\n", ctx->start_pos, ctx->lba, ctx->len);
+        else
+            SPDK_INFOLOG(blob_log, "blob append done pos from:%lu (lba:%lu) len:%lu\n", ctx->start_pos, ctx->lba, ctx->len);
+
         if (rberrno) {
             SPDK_ERRLOG("rolling_blob lba:%lu len:%lu rw failed:%s\n", ctx->lba, ctx->len, spdk_strerror(rberrno));
             ctx->cb_fn(ctx->arg, {ctx->start_pos, ctx->len}, rberrno);

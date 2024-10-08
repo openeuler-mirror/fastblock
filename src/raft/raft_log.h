@@ -74,35 +74,7 @@ public:
         return entry;
     }
 
-    void disk_append(raft_index_t start_idx, raft_index_t end_idx, utils::context* complete){
-        std::vector<std::shared_ptr<raft_entry_t>> raft_entries;
-        _entries.get_between(start_idx, end_idx, raft_entries);
-
-        if(!_log){
-            complete->complete(0);
-            return;
-        }
-
-        std::vector<log_entry_t> log_entries;
-        for (auto& raft_entry : raft_entries) {
-            log_entries.emplace_back(raft_entry_to_log_entry(*raft_entry));
-        }
-
-        SPDK_INFOLOG(pg_group, "disk_append [%ld, %ld] size:%lu.\n", start_idx, end_idx, log_entries.size());
-        _log->append(
-            log_entries,
-            [log_entries, start_idx, end_idx](void *arg, int rberrno) mutable
-            {
-                SPDK_INFOLOG(pg_group, "after disk_append [%ld, %ld]\n", start_idx, end_idx);
-                utils::context *ctx = (utils::context *)arg;
-                for (auto &entry : log_entries)
-                {
-                    free_buffer_list(entry.data);
-                }
-                ctx->complete(rberrno);
-            },
-            complete);
-    }
+    void disk_append(raft_index_t start_idx, raft_index_t end_idx, utils::context* complete);
 
     raft_entry_t log_entry_to_raft_entry(log_entry_t& log_entry){
         raft_entry_t raft_entry;
