@@ -492,12 +492,18 @@ private:
     }
 
     void on_response(rpc_task* task) {
-        auto rc = ::spdk_thread_send_msg(_thread, on_rpc_done, task);
-        if (rc != 0) {
-            SPDK_ERRLOG("send msg failed, rc is %d, task id is %d\n", rc, task->id);
-            throw std::runtime_error{"send msg failed"};
+        auto cur_thread = spdk_get_thread();
+        if(_thread != cur_thread){
+            // SPDK_WARNLOG("------ current thread %lu, thread %lu\n", spdk_thread_get_id(cur_thread), spdk_thread_get_id(_thread));
+            auto rc = ::spdk_thread_send_msg(_thread, on_rpc_done, task);
+            if (rc != 0) {
+                SPDK_ERRLOG("send msg failed, rc is %d, task id is %d\n", rc, task->id);
+                throw std::runtime_error{"send msg failed"};
+            }
+        } else {
+            // SPDK_WARNLOG("---- current thread %lu\n", spdk_thread_get_id(cur_thread));
+            handle_rpc_done(task);
         }
-        // handle_rpc_done(task);
     }
 
     void dispatch_method(request_meta* meta, std::unique_ptr<rpc_task> task, bool is_inlined = false) {

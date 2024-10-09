@@ -90,7 +90,7 @@ private:
 
     struct connection_id {
         int32_t node_id;
-        uint32_t core_no;
+        uint32_t port;
     };
 
     struct stop_context {
@@ -105,11 +105,11 @@ private:
 
 private:
 
-    static uint64_t to_connection_id(const int32_t node_id, const uint32_t core_no) {
+    static uint64_t to_connection_id(const int32_t node_id, const int port) {
         uint64_t ret{};
         auto* conn_id = reinterpret_cast<connection_id*>(&ret);
         conn_id->node_id = node_id;
-        conn_id->core_no = core_no;
+        conn_id->port = port;
 
         return ret;
     }
@@ -122,8 +122,8 @@ private:
     }
 
     auto get_stub(utils::osd_info_t *osdinfo) {
-        auto shard_id = utils::get_current_shard_id();
-        SPDK_DEBUGLOG(libblk, "currentcore: %u, first core: %u, shard_id: %u\n", ::spdk_env_get_current_core(), 
+        auto shard_id = utils::get_current_shard_id() % osdinfo->sharded_ports.size();
+        SPDK_DEBUGLOG(libblk, "currentcore: %u, first core: %u, shard_id: %lu\n", ::spdk_env_get_current_core(), 
                 ::spdk_env_get_first_core(), shard_id);
         // print_osd(osdinfo);
         return get_stub(osdinfo->node_id, osdinfo->address, osdinfo->sharded_ports.at(shard_id).port);
@@ -135,7 +135,7 @@ private:
 
     osd::rpc_service_osd_Stub*
     get_stub(const int node_id, std::string addr, const int port) {
-        auto conn_id = to_connection_id(node_id, ::spdk_env_get_current_core());
+        auto conn_id = to_connection_id(node_id, port);
         auto stub_it = _stubs.find(conn_id);
         if (stub_it == _stubs.end()) {
             _stubs.emplace(conn_id, nullptr);
@@ -232,7 +232,11 @@ private:
           libblk,
           "pool_id: %d, pg_id: %d, leader_osd_key: %lu\n",
           pool_id, pg_id, req_stk->leader_osd_key);
-        ::spdk_thread_send_msg(_current_thread, fblock_client::do_send_request, req_stk);
+        if(spdk_get_thread() == _current_thread){
+            fblock_client::do_send_request(req_stk);
+        } else {
+            ::spdk_thread_send_msg(_current_thread, fblock_client::do_send_request, req_stk);
+        }
         return 0;
 }
 
