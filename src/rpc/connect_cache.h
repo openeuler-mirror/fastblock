@@ -27,12 +27,12 @@ public:
     connect_cache(::spdk_cpuset* cpumask, std::shared_ptr<msg::rdma::client::options> opts, int sock_id = SPDK_ENV_SOCKET_ID_ANY)
       : _mutex(PTHREAD_MUTEX_INITIALIZER)
       , _shard_cores(core_sharded::get_shard_cores()) {
-          std::string cli_name{"connect_cache"};
-          _transport = std::make_shared<msg::rdma::client>(cli_name, cpumask, opts, sock_id);
-          _transport->start();
-
           auto shard_num = _shard_cores.size();
           for(uint32_t i = 0; i < shard_num; i++){
+              std::string cli_name = "connect_cache" + std::to_string(i);
+              auto _transport = std::make_shared<msg::rdma::client>(cli_name, core_sharded::get_thread(i), opts, sock_id);
+              _transports.push_back(_transport);
+              _transport->start();
               _cache.push_back(std::map<int, connect_ptr>());
           }
       }
@@ -46,7 +46,7 @@ public:
       std::string addr,
       uint16_t port,
       std::function<void(bool, msg::rdma::client::connection*)> raft_cb) {
-        _transport->emplace_connection(
+        _transports[shard_id]->emplace_connection(
           addr, port,
           [this, shard_id, node_id, raft_cb = std::move(raft_cb)]
           (bool is_ok, std::shared_ptr<msg::rdma::client::connection> conn) {
@@ -59,7 +59,7 @@ public:
     }
 
     void create_connect(uint32_t shard_id, int node_id, std::string addr, uint16_t port, utils::context* ctx, auto&& raft_cb) {
-        _transport->emplace_connection(
+        _transports[shard_id]->emplace_connection(
           addr, port,
           [this, shard_id, node_id, ctx, raft_cb = std::move(raft_cb)]
           (bool is_ok, std::shared_ptr<msg::rdma::client::connection> conn) {
@@ -104,7 +104,7 @@ public:
             return;
         }
 
-        _transport->remove_connection(iter->second,
+        _transports[shard_id]->remove_connection(iter->second,
           [this, node_id, shard_id, ctx, raft_cb = std::move(raft_cb)](bool is_ok){
             if(is_ok){
                 // ::pthread_mutex_lock(&_mutex);
@@ -118,15 +118,54 @@ public:
           });
     }
 
-    void stop(auto&&... args) noexcept {
-        _transport->stop(std::forward<decltype(args)>(args)...);
+private:
+    struct stop_context{
+        std::function<void()> cb_fn;
+    };   
+
+public:
+    void stop(std::optional<std::function<void()>>&& on_stop = std::nullopt) noexcept {
+        auto ctx = new stop_context{};
+        if(on_stop.has_value()){
+            ctx->cb_fn = on_stop.value();
+        }else {
+            ctx->cb_fn = [](){};
+        }
+        auto thread = spdk_get_thread();
+        auto func = [thread, ctx](void *, int ){
+            auto cur_thread = spdk_get_thread();
+            if(thread != cur_thread){
+                spdk_thread_send_msg(thread, _stop_done, ctx);
+            } else {
+                _stop_done(ctx);
+            }
+        };
+        auto shard_num = _shard_cores.size();
+        utils::multi_complete *complete = new utils::multi_complete(shard_num, shard_num, func, nullptr);
+        for (uint32_t shard_id = 0; shard_id < shard_num; shard_id++){
+            core_sharded::get_core_sharded().invoke_on(
+              shard_id,
+              [this, shard_id, complete](){
+                _transports[shard_id]->stop([complete, shard_id](){
+                  complete->complete(0);
+                });
+              }  
+            );
+        }
     }
 
 private:
+    static void _stop_done(void *arg){
+        struct stop_context *ctx = (struct stop_context *)arg;
+        if(ctx){
+            ctx->cb_fn();
+            delete ctx;
+        }
+    }
 
     pthread_mutex_t _mutex;
     //每个连接都需要一个id
-    transport_client_ptr  _transport;
+    std::vector<transport_client_ptr>  _transports;
     std::vector<uint32_t> _shard_cores;
     //每个cpu核上有一个map
     std::vector<std::map<int, connect_ptr>> _cache;
