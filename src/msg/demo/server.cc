@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+#include "base/core_sharded.h"
 #include "common.h"
 
 #include "msg/rdma/server.h"
@@ -21,6 +22,7 @@
 #include <spdk/event.h>
 #include <spdk/string.h>
 
+#include <chrono>
 #include <csignal>
 
 namespace {
@@ -31,7 +33,6 @@ public:
       const ::ping_pong::request* request,
       ::ping_pong::response* response,
       ::google::protobuf::Closure* done) override {
-        response->set_pong(request->ping());
         response->set_id(request->id());
         done->Run();
     }
@@ -41,21 +42,20 @@ public:
       const ::ping_pong::request* request,
       ::ping_pong::response* response,
       ::google::protobuf::Closure* done) override {
-        response->set_pong(request->ping());
         response->set_id(request->id());
         done->Run();
     }
 };
 
-struct rpc_context {
-    std::shared_ptr<msg::rdma::server> server{nullptr};
-    demo_ping_pong_service* rpc_service{nullptr};
-};
-
 ::spdk_cpuset g_cpumask{};
 char* g_json_conf{nullptr};
+
 std::shared_ptr<msg::rdma::server> g_rpc_server{nullptr};
+
+demo_ping_pong_service g_rpc_service{};
+std::vector<std::unique_ptr<msg::rdma::server>> g_rpc_servers{};
 boost::property_tree::ptree g_pt{};
+size_t g_rpc_srv_close_counter{0};
 }
 
 void usage() {
@@ -74,14 +74,21 @@ int parse_arg(int ch, char* arg) {
     return 0;
 }
 
+void on_server_closed(void* arg1, void* arg2) {
+    ++g_rpc_srv_close_counter;
+    if (g_rpc_srv_close_counter == g_rpc_servers.size()) {
+        SPDK_NOTICELOG("All rpc servers closed\n");
+        ::spdk_app_stop(0);
+    }
+}
+
 void on_server_close() {
     SPDK_NOTICELOG("Close the rpc server\n");
-    if (g_rpc_server) {
-        g_rpc_server->stop([] () {
-            ::spdk_app_stop(0);
+    for (auto it = g_rpc_servers.begin(); it != g_rpc_servers.end(); ++it) {
+        it->get()->stop([] () {
+            auto* evt = ::spdk_event_allocate(::spdk_env_get_first_core(), on_server_closed, nullptr, nullptr);
+            ::spdk_event_call(evt);
         });
-    } else {
-        ::spdk_app_stop(0);
     }
 }
 
@@ -90,24 +97,37 @@ void handle_sigint(int) {
 }
 
 void start_rpc_server(void* arg) {
-    auto ctx = reinterpret_cast<rpc_context*>(arg);
-
-    ::spdk_cpuset_zero(&g_cpumask);
-    auto core_no = ::spdk_env_get_first_core();
-    ::spdk_cpuset_set_cpu(&g_cpumask, core_no, true);
-
-    auto opts = msg::rdma::server::make_options(g_pt);
-    opts->port = g_pt.get_child("bind_port").get_value<uint16_t>();
-    std::string srv_name{"rpc_srv"};
-    try {
-        g_rpc_server = std::make_shared<msg::rdma::server>(srv_name, &g_cpumask, opts);
-    } catch (const std::exception& e) {
-        SPDK_ERRLOG("Error: Create rpc server failed, %s\n", e.what());
-        std::raise(SIGINT);
-        return;
+    std::vector<uint16_t> ports;
+    for (auto& port : g_pt.get_child("bind_ports")) {
+        ports.push_back(port.second.get_value<uint16_t>());
     }
-    g_rpc_server->add_service(ctx->rpc_service);
-    g_rpc_server->start();
+
+    if (static_cast<size_t>(::spdk_env_get_core_count()) < ports.size()) {
+        SPDK_ERRLOG("The number of bind ports should be equal to the number of cores\n");
+        std::raise(SIGINT);
+    }
+
+    g_rpc_servers.resize(ports.size());
+    auto counter{0};
+    for (auto it = core_sharded::system::begin(); it != core_sharded::system::end(); ++it) {
+        auto cpumask = core_sharded::make_cpumake(*it);
+        auto opts = msg::rdma::server::make_options(g_pt);
+        opts->port = ports.at(counter);
+        try {
+            auto rpc_srv = std::make_unique<msg::rdma::server>(
+              FMT_1("rpc_srv_%1%", *it), cpumask.get(), opts);
+            rpc_srv->add_service(&g_rpc_service);
+            rpc_srv->create_listener(opts->port);
+            rpc_srv->start();
+            g_rpc_servers.at(counter) = std::move(rpc_srv);
+            counter++;
+            SPDK_NOTICELOG("rpc server on core %d, port %d started\n", *it, opts->port);
+        } catch (const std::exception& e) {
+            SPDK_ERRLOG("Error: Create rpc server failed on core %d, %s\n", *it, e.what());
+            std::raise(SIGINT);
+            return;
+        }
+    }
 }
 
 int main(int argc, char** argv) {
@@ -124,13 +144,11 @@ int main(int argc, char** argv) {
     opts.name = "demo_server";
     opts.shutdown_cb = on_server_close;
     opts.rpc_addr = "/var/tmp/spdk_srv.sock";
-    opts.print_level = ::spdk_log_level::SPDK_LOG_ERROR;
+    opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
 
     std::signal(SIGINT, handle_sigint);
 
-    demo_ping_pong_service rpc_service{};
-    rpc_context ctx{nullptr, &rpc_service};
-    rc = ::spdk_app_start(&opts, start_rpc_server, &ctx);
+    rc = ::spdk_app_start(&opts, start_rpc_server, nullptr);
     if (rc) {
         SPDK_ERRLOG("ERROR: Start spdk app failed\n");
     }
