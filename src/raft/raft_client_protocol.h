@@ -153,22 +153,25 @@ public:
       std::string address,
       int port,
       std::function<void(void*, int)> cb) {
-        _shard.invoke_on(shard_id, [this, cb, node_id, address, port, shard_id] () {
+        auto ctx = new utils::switch_core_context{.cb_fn = std::move(cb), .arg = nullptr, .thread = spdk_get_thread(), .serror = 0};
+        _shard.invoke_on(shard_id, [this, node_id, address, port, shard_id, ctx] () {
             SPDK_INFOLOG(
               pg_group,
-              "create connect to node %d (address %s, port %d) in core %u\n",
-              node_id, address.c_str(), port, _shard_cores[shard_id]);
+              "create connect to node %d (address %s, port %d) in core %u, shard %u\n",
+              node_id, address.c_str(), port, _shard_cores[shard_id], shard_id);
             _cache->create_connect(
               shard_id, node_id, address, port,
-              [this, shard_id, node_id, address, port, cb] (bool is_ok, msg::rdma::client::connection* conn) {
+              [this, shard_id, node_id, address, port, ctx] (bool is_ok, msg::rdma::client::connection* conn) {
                   if (not is_ok) {
                       SPDK_ERRLOG(
                         "create connect to node %d (address %s, port %d) in core %u failed\n",
                         node_id, address.c_str(), port, _shard_cores[shard_id]);
-                      cb(nullptr, err::RAFT_ERR_UNKNOWN);
+                      
+                    utils::switch_core_func(ctx, err::RAFT_ERR_UNKNOWN);
                   }
-                  _stubs.at(shard_id).at(node_id) = std::make_shared<rpc_service_raft_Stub>(conn);
-                  cb(nullptr, err::E_SUCCESS);
+                  auto &stub = _stubs[shard_id];
+                  stub[node_id] = std::make_shared<rpc_service_raft_Stub>(conn);
+                  utils::switch_core_func(ctx, err::E_SUCCESS);
               });
         });
     }
@@ -210,6 +213,10 @@ public:
 
         for (shard_id = 0; shard_id < shard_num; shard_id++)
         {
+            if(!_get_stub(shard_id, node_id)){
+                complete->complete(err::E_SUCCESS);
+                continue;
+            }
             _shard.invoke_on(
               shard_id,
               [this, node_id, shard_id, complete]()

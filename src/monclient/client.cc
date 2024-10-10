@@ -814,6 +814,7 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
 
                 _pm.lock()->get_pg_group().create_connect(
                   osd_info.node_id,
+                  shard_id,
                   osd_info.address,
                   core_port.port,
                   [this, node_id = osd_info.node_id, raw_stack = resp_stack.get()] (void *, int res) {
