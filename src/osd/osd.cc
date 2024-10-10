@@ -871,6 +871,12 @@ static void on_pm_closed([[maybe_unused]] void *cb_arg, int bserrno) {
     on_osd_stop();
 }
 
+static void rpc_server_stoped([[maybe_unused]] void *cb_arg, int bserrno) {
+    SPDK_NOTICELOG("The rpc servers have been stop, return code is %d\n", bserrno);
+    cur_stop_state = stop_state::blobstore;
+    on_osd_stop();
+}
+
 static void osd_stop(void *arg) noexcept {
     SPDK_NOTICELOG("Stop the osd service, thread id %lu\n", utils::get_spdk_thread_id());
     switch (cur_stop_state) {
@@ -914,14 +920,21 @@ static void osd_stop(void *arg) noexcept {
         if (osd_server.rpc_servers.empty()) {
             cur_stop_state = stop_state::blobstore;
         } else {
-            ++(osd_server.server_control_counter);
-            if (osd_server.server_control_counter == core_sharded::system::capacity()) {
-                cur_stop_state = stop_state::blobstore;
-                SPDK_NOTICELOG("all rpc servers stopped\n");
-            } else {
-                auto& rpc_srv = osd_server.rpc_servers.at(osd_server.server_control_counter);
-                SPDK_NOTICELOG("Stopping the %ldth rpc server\n", osd_server.server_control_counter + 1);
-                rpc_srv->stop(on_osd_stop);
+            auto shard_num = core_sharded::system::capacity();
+            if(shard_num > 0){
+                utils::multi_complete *complete = new utils::multi_complete(shard_num, shard_num, rpc_server_stoped, nullptr);
+                for (uint32_t shard_id = 0; shard_id < shard_num; shard_id++) {
+                    core_sharded::get_core_sharded().invoke_on(
+                      shard_id,
+                      [shard_id, complete](){
+                        auto& rpc_srv = osd_server.rpc_servers.at(shard_id);
+                        SPDK_NOTICELOG("Stopping rpc server, shard id %u\n", shard_id);
+                        rpc_srv->stop([complete](){
+                            complete->complete(err::E_SUCCESS);
+                        });
+                      }  
+                    );
+                }
                 return;
             }
         }

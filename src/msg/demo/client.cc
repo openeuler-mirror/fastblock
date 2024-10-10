@@ -113,11 +113,6 @@ void on_pong(msg::rdma::rpc_controller* ctrlr, ping_pong::response* reply) {
         SPDK_ERRLOG("ERROR: exec rpc failed: %s\n", ctrlr->ErrorText().c_str());
         std::raise(SIGINT);
     }
-
-    SPDK_NOTICELOG(
-      "received pong size: %ld, conetnt: \"%s\"\n",
-      reply->pong().size(), reply->pong().c_str());
-    assert((reply->pong() == demo::small_message) or (reply->pong() == demo::big_message));
 }
 
 void on_rpc_client_closed(void* arg1, void* arg2) {
