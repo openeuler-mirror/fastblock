@@ -492,12 +492,7 @@ private:
     }
 
     void on_response(rpc_task* task) {
-        auto rc = ::spdk_thread_send_msg(_thread, on_rpc_done, task);
-        if (rc != 0) {
-            SPDK_ERRLOG("send msg failed, rc is %d, task id is %d\n", rc, task->id);
-            throw std::runtime_error{"send msg failed"};
-        }
-        // handle_rpc_done(task);
+        handle_rpc_done(task);
     }
 
     void dispatch_method(request_meta* meta, std::unique_ptr<rpc_task> task, bool is_inlined = false) {
@@ -581,6 +576,10 @@ private:
 
         auto* task_ptr = task.get();
         task->done = google::protobuf::NewCallback(this, &server::on_response, task_ptr);
+        SPDK_DEBUGLOG(
+          msg,
+          "emplace task of server id %ld to _on_fligh_tasks, core id %d\n",
+          task_ptr->server_id, ::spdk_env_get_current_core());
         _on_fligh_tasks.emplace(task_ptr->server_id, std::move(task));
         service_it->second->data->CallMethod(
           method_it->second,
@@ -957,7 +956,9 @@ public:
     void handle_rpc_done(rpc_task* task) {
         auto it = _on_fligh_tasks.find(task->server_id);
         if (it == _on_fligh_tasks.end()) {
-            SPDK_ERRLOG("ERROR: Cant find the task record of server id %ld\n", task->server_id);
+            SPDK_ERRLOG(
+              "ERROR: Cant find the task record of server id %ld, core id %d\n",
+              task->server_id, ::spdk_env_get_current_core());
             return;
         }
 

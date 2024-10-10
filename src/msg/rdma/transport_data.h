@@ -400,6 +400,16 @@ public:
             tmp_sge_len -= _data_pool->element_size();
         }
 
+        static constexpr uint32_t aling_up{1024};
+        if (_datas.back()->sge.length % aling_up != 0) {
+            uint32_t n = _datas.back()->sge.length / aling_up;
+            SPDK_DEBUGLOG(
+              msg,
+              "_datas.back()->sge.length %d, n %d, new _datas.back()->sge.length %d\n",
+              _datas.back()->sge.length, n, aling_up * (n + 1));
+            _datas.back()->sge.length = aling_up * (n + 1);
+        }
+
         for (size_t i{0}; i < _data_count - 1; ++i) {
             _datas[i]->wr.next = &(_datas[i + 1]->wr);
         }
