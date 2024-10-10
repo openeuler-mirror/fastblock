@@ -146,7 +146,7 @@ public:
             core_sharded::get_core_sharded().invoke_on(
               shard_id,
               [this, shard_id, complete](){
-                _transports[shard_id]->stop([complete, shard_id](){
+                _transports[shard_id]->stop([complete](){
                   complete->complete(0);
                 });
               }  
