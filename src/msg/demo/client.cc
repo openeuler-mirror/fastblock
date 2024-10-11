@@ -220,6 +220,10 @@ void start_rpc_client(void* arg) {
     size_t counter{0};
     g_rpc_clients.resize(ports.size());
     for (auto core_it = core_sharded::system::begin(); core_it != core_sharded::system::end(); ++core_it) {
+        if (counter >= ports.size()) {
+            return;
+        }
+
         auto& ctx = g_rpc_clients.at(counter);
         ctx.total_iter_size = g_pt.get_child("iteration_count").get_value<int64_t>();
 
