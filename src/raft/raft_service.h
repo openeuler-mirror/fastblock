@@ -86,9 +86,15 @@ void raft_service<PartitionManager>::append_entries(google::protobuf::RpcControl
         return;
     }
 
+    auto thread = spdk_get_thread();
     _pm->get_shard().invoke_on(
       shard_id,
-      [this, shard_id, done, request, response](){
+      [this, shard_id, done, request, response, thread](){
+        auto cur_thread = spdk_get_thread();
+        if(thread != cur_thread){
+            SPDK_DEBUGLOG(pg_group, "current thread %lu, thread %lu\n", 
+                    spdk_thread_get_id(cur_thread), spdk_thread_get_id(thread));
+        }
         auto raft = _pm->get_pg(shard_id, request->pool_id(), request->pg_id());
         if(!raft){
             SPDK_WARNLOG("not find pg %lu.%lu\n", request->pool_id(), request->pg_id());
