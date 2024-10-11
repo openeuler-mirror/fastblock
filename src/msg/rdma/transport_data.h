@@ -400,7 +400,7 @@ public:
             tmp_sge_len -= _data_pool->element_size();
         }
 
-        static constexpr uint32_t aling_up{1024};
+        static constexpr uint32_t aling_up{512};
         if (_datas.back()->sge.length % aling_up != 0) {
             uint32_t n = _datas.back()->sge.length / aling_up;
             SPDK_DEBUGLOG(
