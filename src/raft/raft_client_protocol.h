@@ -153,6 +153,10 @@ public:
       std::string address,
       int port,
       std::function<void(void*, int)> cb) {
+        if(shard_id >= _shard_cores.size()){
+            cb(nullptr, err::E_SUCCESS);
+            return;
+        }
         auto ctx = new utils::switch_core_context{.cb_fn = std::move(cb), .arg = nullptr, .thread = spdk_get_thread(), .serror = 0};
         _shard.invoke_on(shard_id, [this, node_id, address, port, shard_id, ctx] () {
             SPDK_INFOLOG(
