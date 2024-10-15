@@ -50,7 +50,7 @@ stdout_logfile={{ app.log_home }}/{{ app.name }}.log
 stderr_logfile={{ app.log_home }}/{{ app.name }}_err.log
 {% endfor %}
 """
-CI_SUP_CONF_PATH = "/etc/supervisor.con"
+CI_SUP_CONF_PATH = "/etc/supervisor.conf"
 
 
 RPC_BENCH_SUP_J2 = """
