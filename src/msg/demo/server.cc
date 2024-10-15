@@ -33,7 +33,7 @@ public:
       const ::ping_pong::request* request,
       ::ping_pong::response* response,
       ::google::protobuf::Closure* done) override {
-        response->set_id(request->id());
+        // response->set_id(request->id());
         done->Run();
     }
 
@@ -42,7 +42,7 @@ public:
       const ::ping_pong::request* request,
       ::ping_pong::response* response,
       ::google::protobuf::Closure* done) override {
-        response->set_id(request->id());
+        // response->set_id(request->id());
         done->Run();
     }
 };
