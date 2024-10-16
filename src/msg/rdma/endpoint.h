@@ -20,6 +20,8 @@
 #include <infiniband/verbs.h>
 #include <rdma/rdma_cma.h>
 
+#include "msg/rdma/types.h"
+
 #define ep_conf_or(key_name) conf_or_s(conf, "msg_rdma_"#key_name, this, key_name)
 
 namespace msg {
@@ -56,6 +58,12 @@ public:
             device_name = conf.get_child("rdma_device_name").get_value<std::string>();
         }
 
+        if (conf.count("rdma_devices") != 0) {
+            for (auto& name : conf.get_child("rdma_devices")) {
+                device_names.push_back(name.second.get_value<std::string>());
+            }
+        }
+
         if (conf.count("rdma_device_port") != 0) {
             device_port = conf.get_child("rdma_device_port").get_value<uint8_t>();
         }
@@ -81,6 +89,7 @@ public:
     int cq_num_entries{16};
     bool qp_sig_all{false};
     std::optional<std::string> device_name{std::nullopt};
+    std::vector<std::string> device_names{};
     std::optional<uint8_t> device_port{std::nullopt};
 };
 } // namespace rdma

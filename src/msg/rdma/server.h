@@ -187,7 +187,11 @@ public:
 
     server() = delete;
 
-    server(::spdk_thread* thread, std::shared_ptr<options> opts, int sock_id = SPDK_ENV_SOCKET_ID_ANY)
+    server(
+      ::spdk_thread* thread,
+      std::shared_ptr<options> opts,
+      std::optional<std::string> dev_name = std::nullopt,
+      int sock_id = SPDK_ENV_SOCKET_ID_ANY)
       : _thread{thread}
       , _ib_cm_event_poller{_thread}
       , _cq_poller{_thread}
@@ -198,7 +202,7 @@ public:
       , _stop_poller{_thread}
       , _opts{std::move(opts)}
       , _dev{std::make_shared<device>(process_ib_event)}
-      , _pd{std::make_unique<protection_domain>(_dev, _opts->ep->device_name)}
+      , _pd{std::make_unique<protection_domain>(_dev, dev_name ? dev_name : _dev->default_device())}
       , _cq{std::make_shared<completion_queue>(_opts->ep->cq_num_entries, *_pd)}
       , _listener{nullptr}
       , _wcs{std::make_unique<::ibv_wc[]>(_opts->poll_cq_batch_size)}
@@ -212,11 +216,17 @@ public:
         _pd->value(), "srv_data",
         _opts->data_memory_pool_capacity,
         _opts->data_memory_pool_element_size, 0)} {
+        _device_name = dev_name.value_or(_dev->default_device().value());
         _opts->ep->port = _opts->port;
     }
 
-    server(std::string thread_name, ::spdk_cpuset* cpumask, std::shared_ptr<options> opts, int sock_id = SPDK_ENV_SOCKET_ID_ANY)
-      : server{::spdk_thread_create(thread_name.c_str(), cpumask), opts, sock_id} {}
+    server(
+      std::string thread_name,
+      ::spdk_cpuset* cpumask,
+      std::shared_ptr<options> opts,
+      std::optional<std::string> dev_name = std::nullopt,
+      int sock_id = SPDK_ENV_SOCKET_ID_ANY)
+      : server{::spdk_thread_create(thread_name.c_str(), cpumask), opts, dev_name, sock_id} {}
 
     server(const server&) = delete;
 
@@ -1091,7 +1101,7 @@ public:
 
     void create_listener(uint16_t port) {
         _opts->ep->port = port;
-        auto ipv4 = _dev->get_ipv4(_opts->ep->device_name);
+        auto ipv4 = _dev->get_ipv4(_device_name);
         if (not ipv4) {
             SPDK_ERRLOG(
               "ERROR: Cant get ipv4 address of device %s\n",
@@ -1100,6 +1110,7 @@ public:
         }
         _opts->ep->addr = *ipv4;
         _listener = std::make_unique<socket>(*(_opts->ep), *_pd, _channel.value(), false);
+        SPDK_NOTICELOG("Create listener on %s:%d, with rdma device %s\n", ipv4->c_str(), port, _device_name.c_str());
     }
     void start() {
         auto ec = _listener->listen(_opts->listen_backlog);
@@ -1255,6 +1266,8 @@ private:
     event_channel _channel{};
     rpc_task::server_id_type _task_id_gen{0};
     std::unique_ptr<stop_context> _stop_ctx{nullptr};
+
+    std::string _device_name{""};
 };
 
 } // namespace rdma

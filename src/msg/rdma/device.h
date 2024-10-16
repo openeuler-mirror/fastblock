@@ -36,6 +36,8 @@
 #include <infiniband/verbs.h>
 #include <poll.h>
 
+namespace fs = std::filesystem;
+
 namespace msg {
 namespace rdma {
 
@@ -150,6 +152,14 @@ public:
         }
     }
 
+    auto default_device() noexcept {
+        return _default_device;
+    }
+
+    std::optional<std::string> get_ipv4() noexcept {
+        return _default_ipv4;
+    }
+
     std::optional<std::string> get_ipv4(const std::optional<std::string>& dev) {
         if (not dev) {
             return _default_ipv4;
@@ -198,22 +208,34 @@ private:
         return std::memcmp(gid_raw, link_local_gid, _raw_gid_len) == 0;
     }
 
-    static bool is_gid_contain_ipv4(uint8_t* gid_raw) noexcept {
-        static constexpr size_t raw_gid_prefix_len{2};
-        static constexpr uint8_t tgt_gid_prefix[raw_gid_prefix_len]{0, 0};
-        return std::memcmp(gid_raw, tgt_gid_prefix, raw_gid_prefix_len) == 0;
-    }
-
-    std::string ipv4_from_gid(uint8_t* raw_gid) {
-        return FMT_4(
-          "%1%.%2%.%3%.%4%",
-          std::to_string(raw_gid[_raw_gid_ipv4_begin]),
-          std::to_string(raw_gid[_raw_gid_ipv4_begin + 1]),
-          std::to_string(raw_gid[_raw_gid_ipv4_begin + 2]),
-          std::to_string(raw_gid[_raw_gid_ipv4_begin + 3]));
-    }
-
 private:
+
+    std::string read_ipv4(const fs::path& home_path, const fs::path& rel_dev_path, fs::path ifr_path) {
+
+        auto ifr_abs_path = home_path / rel_dev_path / "net" / ifr_path;
+        auto ifr_soft_master_path = ifr_abs_path / "master";
+        bool is_bridge = fs::exists(ifr_soft_master_path);
+
+        if (is_bridge) {
+            auto bridge_abs_path = fs::read_symlink(ifr_soft_master_path);
+            ifr_path = bridge_abs_path.filename();
+            SPDK_DEBUGLOG(
+              msg,
+              "bridge path: %s, target ifr is: %s\n",
+              bridge_abs_path.c_str(), ifr_path.c_str());
+        }
+
+        ::ifreq ifr{};
+        auto fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+        ifr.ifr_addr.sa_family = AF_INET;
+        ::sprintf(ifr.ifr_name, "%s", ifr_path.c_str());
+        ::ioctl(fd, SIOCGIFADDR, &ifr);
+        auto* sock_in = reinterpret_cast<::sockaddr_in*>(&ifr.ifr_addr);
+        auto ipv4 = ::inet_ntoa(sock_in->sin_addr);
+        ::close(fd);
+
+        return ipv4;
+    }
 
     void construct_dev_ip_map() {
         static constexpr char ib_dev_home[]{"/sys/class/infiniband"};
@@ -240,17 +262,9 @@ private:
                   ipci_path.c_str());
 
                 if (ipci_path != ib_pci_path) { continue; }
-
-                ::ifreq ifr{};
-                auto fd = ::socket(AF_INET, SOCK_DGRAM, 0);
-                ifr.ifr_addr.sa_family = AF_INET;
-                ::sprintf(ifr.ifr_name, "%s", interface.path().filename().c_str());
-                ::ioctl(fd, SIOCGIFADDR, &ifr);
-                auto* sock_in = reinterpret_cast<::sockaddr_in*>(&ifr.ifr_addr);
-                auto ipv4 = ::inet_ntoa(sock_in->sin_addr);
-                SPDK_INFOLOG(msg, "device %s ipv4: %s\n", dev_name.c_str(), ipv4);
+                auto ipv4 = read_ipv4(ib_dev_path, ib_pci_path, interface.path().filename());
+                SPDK_INFOLOG(msg, "device %s ipv4: %s\n", dev_name.c_str(), ipv4.c_str());
                 _dev_ipv4_map.emplace(dev_name.string(), ipv4);
-                ::close(fd);
             }
         }
     }

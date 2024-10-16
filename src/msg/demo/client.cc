@@ -220,10 +220,12 @@ void start_rpc_client(void* arg) {
 
     g_io_depth = g_pt.get_child("io_depth").get_value<size_t>();
     g_iter_msg = demo::random_string(4096);
-    auto srv_addr = g_pt.get_child("server_address").get_value<std::string>();
 
     size_t counter{0};
+    std::vector<std::string>* dev_names{nullptr};
+    size_t dev_counter{0};
     g_rpc_clients.resize(ports.size());
+
     for (auto core_it = core_sharded::system::begin(); core_it != core_sharded::system::end(); ++core_it) {
         if (counter >= ports.size()) {
             return;
@@ -233,12 +235,20 @@ void start_rpc_client(void* arg) {
         ctx.total_iter_size = g_pt.get_child("iteration_count").get_value<int64_t>();
 
         auto opts = msg::rdma::client::make_options(g_pt);
+        if (not dev_names) {
+            dev_names = &(opts->ep->device_names);
+        }
         auto mask = core_sharded::make_cpumake(*core_it);
         ctx.client = std::make_shared<msg::rdma::client>(
-          FMT_1("rpc_cli_%d", ::spdk_env_get_current_core()), mask.get(), opts);
+          FMT_1("rpc_cli_%d", ::spdk_env_get_current_core()), mask.get(), opts, dev_names->at(dev_counter));
+        auto* dev = ctx.client->get_device();
+        auto addr = dev->get_ipv4(dev_names->at(dev_counter));
+        SPDK_NOTICELOG("connect to %s on %s\n", addr->c_str(), dev_names->at(dev_counter).c_str());
+        ++dev_counter;
+
         ctx.client->start();
         ctx.client->emplace_connection(
-          srv_addr, ports.at(counter),
+          *addr, ports.at(counter),
           [ctx = &ctx] (bool is_ok, std::shared_ptr<msg::rdma::client::connection> conn) {
               if (not is_ok) {
                   throw std::runtime_error{"create connection failed"};
@@ -264,43 +274,11 @@ void start_rpc_client(void* arg) {
         );
 
         counter++;
+
+        if (dev_counter == dev_names->size()) {
+            dev_counter = 0;
+        }
     }
-
-
-    // ::spdk_cpuset_zero(&g_cpumask);
-    // auto core_no = ::spdk_env_get_first_core();
-    // ::spdk_cpuset_set_cpu(&g_cpumask, core_no, true);
-
-    // auto opts = msg::rdma::client::make_options(g_pt);
-    // g_iter_count = g_pt.get_child("iteration_count").get_value<size_t>();
-    // g_io_depth = g_pt.get_child("io_depth").get_value<size_t>();
-    // std::string cli_name{"rpc_cli"};
-    // g_rpc_client = std::make_shared<msg::rdma::client>(cli_name, &g_cpumask, opts);
-    // g_rpc_client->start();
-    // g_iter_msg = demo::random_string(4096);
-    // g_rpc_client->emplace_connection(
-    //   g_pt.get_child("server_address").get_value<std::string>(),
-    //   g_pt.get_child("server_port").get_value<uint16_t>(),
-    //   [] (bool is_ok, std::shared_ptr<msg::rdma::client::connection> conn) {
-    //       if (not is_ok) {
-    //           throw std::runtime_error{"create connection failed"};
-    //       }
-
-    //       g_conn = conn;
-    //       g_stub = std::make_unique<ping_pong::ping_pong_service_Stub>(g_conn.get());
-
-    //       SPDK_NOTICELOG("Start sending rpc request %ld times\n", g_iter_count);
-    //       g_iops_start = std::chrono::system_clock::now();
-    //       for (size_t i{0}; i < g_io_depth; ++i) {
-    //           auto rpc_stack = std::make_unique<call_stack>();
-    //           rpc_stack->cb = google::protobuf::NewCallback(iter_on_pong, &g_ctrlr, rpc_stack->resp.get());
-    //           rpc_stack->req->set_ping(g_iter_msg);
-    //           rpc_stack->req->set_id(g_current_send_rpc++);
-    //           rpc_stack->start_at = std::chrono::system_clock::now();
-    //           g_stub->ping_pong(&g_ctrlr, rpc_stack->req.get(), rpc_stack->resp.get(), rpc_stack->cb);
-    //           g_call_stacks.push_back(std::move(rpc_stack));
-    //       }
-    //  });
 }
 
 int main(int argc, char** argv) {

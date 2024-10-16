@@ -109,6 +109,9 @@ void start_rpc_server(void* arg) {
 
     g_rpc_servers.resize(ports.size());
     size_t counter{0};
+    std::vector<std::string>* dev_names{nullptr};
+    size_t dev_counter{0};
+
     for (auto it = core_sharded::system::begin(); it != core_sharded::system::end(); ++it) {
         if (counter >= ports.size()) {
             return;
@@ -117,9 +120,13 @@ void start_rpc_server(void* arg) {
         auto cpumask = core_sharded::make_cpumake(*it);
         auto opts = msg::rdma::server::make_options(g_pt);
         opts->port = ports.at(counter);
+        if (not dev_names) {
+            dev_names = &(opts->ep->device_names);
+        }
+
         try {
             auto rpc_srv = std::make_unique<msg::rdma::server>(
-              FMT_1("rpc_srv_%1%", *it), cpumask.get(), opts);
+              FMT_1("rpc_srv_%1%", *it), cpumask.get(), opts, dev_names->at(dev_counter));
             rpc_srv->add_service(&g_rpc_service);
             rpc_srv->create_listener(opts->port);
             rpc_srv->start();
@@ -130,6 +137,11 @@ void start_rpc_server(void* arg) {
             SPDK_ERRLOG("Error: Create rpc server failed on core %d, %s\n", *it, e.what());
             std::raise(SIGINT);
             return;
+        }
+
+        ++dev_counter;
+        if (dev_counter == dev_names->size()) {
+            dev_counter = 0;
         }
     }
 }

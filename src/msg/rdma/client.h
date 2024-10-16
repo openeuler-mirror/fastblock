@@ -1137,13 +1137,23 @@ public:
 
     client() = delete;
 
-    client(std::string name, ::spdk_cpuset* cpumask, std::shared_ptr<options> opts, int sock_id = SPDK_ENV_SOCKET_ID_ANY)
-      : client{name, ::spdk_thread_create(name.c_str(), cpumask), opts, sock_id} {}
+    client(
+      std::string name,
+      ::spdk_cpuset* cpumask,
+      std::shared_ptr<options> opts,
+      std::optional<std::string> dev_name = std::nullopt,
+      int sock_id = SPDK_ENV_SOCKET_ID_ANY)
+      : client{name, ::spdk_thread_create(name.c_str(), cpumask), opts, dev_name, sock_id} {}
 
-    client(std::string name, ::spdk_thread* thread, std::shared_ptr<options> opts, int sock_id = SPDK_ENV_SOCKET_ID_ANY)
+    client(
+      std::string name,
+      ::spdk_thread* thread,
+      std::shared_ptr<options> opts,
+      std::optional<std::string> dev_name = std::nullopt,
+      int sock_id = SPDK_ENV_SOCKET_ID_ANY)
       : _opts{opts}
       , _dev{std::make_shared<device>()}
-      , _pd{std::make_unique<protection_domain>(_dev, _opts->ep->device_name)}
+      , _pd{std::make_unique<protection_domain>(_dev, dev_name ? dev_name : _dev->default_device())}
       , _cq{std::make_shared<completion_queue>(_opts->ep->cq_num_entries, *_pd)}
       , _wcs{std::make_unique<::ibv_wc[]>(_opts->poll_cq_batch_size)}
       , _thread{thread}
@@ -1641,6 +1651,10 @@ public:
 
     bool is_start() noexcept {
         return _is_started;
+    }
+
+    device* get_device() noexcept {
+        return _dev.get();
     }
 
 private:
