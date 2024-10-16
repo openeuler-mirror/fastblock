@@ -218,7 +218,7 @@ static void
 block_usage(void)
 {
 	printf(" -C <osd json config file> path to json config file\n");
-	printf(" -f <mkfs> create new disk [ture, false]\n");
+	printf(" -f <mkfs> create new disk [true, false]\n");
 }
 
 static bool mkfs_arg(char *arg){

@@ -48,7 +48,7 @@ static void make_log_done(void *arg, struct disk_log* dlog, int rberrno){
         return;
     }
 
-    SPDK_INFOLOG(osd, "make_disk_log succcess  for pg %lu.%lu shard_id %u \n",
+    SPDK_INFOLOG(osd, "make_disk_log success  for pg %lu.%lu shard_id %u \n",
             mlc->pool_id, mlc->pg_id,  mlc->shard_id);
     partition_manager* pm = mlc->pm;
     auto sm = std::make_shared<osd_stm>();
