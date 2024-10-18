@@ -194,7 +194,7 @@ func GetPoolPgNum() (int32, int32, *msg.PgStateInfo) {
 }
 
 // findUsablePoolId finds the first available pool id
-// we don't reuse pool ids, so it always increaing
+// we don't reuse pool ids, so it always increasing
 // poll deletions are rare, we are safe to use int32.
 func findUsablePoolId() PoolID {
 	return PoolID(lastSeenPoolId + 1)
@@ -202,7 +202,7 @@ func findUsablePoolId() PoolID {
 
 // Example: /config/pools/pool/1 '{"poolid": 1, "name":"testpool","pg_size":3, "pg_count":256,"failure_domain":"host"}'
 // Example: /config/pools/pool/2 '{"poolid": 2, "name":"testpool2","pg_size":3, "pg_count":256,"failure_domain":"host"}'
-// poolid is somewhat redudant?
+// poolid is somewhat redundant?
 // call it on start
 func LoadPoolConfig(ctx context.Context, client *etcdapi.EtcdClient) (err error) {
 	lastSeenPoolId = 0
