@@ -69,7 +69,7 @@ public:
             try {
                 (ctx->cb.value())();
             } catch (const std::exception& e) {
-                SPDK_ERRLOG("unregister_poller call user callbck error: %s\n", e.what());
+                SPDK_ERRLOG("unregister_poller call user callback error: %s\n", e.what());
             }
         }
 

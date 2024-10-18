@@ -949,7 +949,7 @@ func ClientSendCreateImageRequest(conn net.Conn, stopChan chan<- struct{}) {
 	}
 
 	sendClientReqeust(request, conn)
-	//fmt.Printf("send create image requset  success: poolid:%d  imagename:%s  imagesize:%d  object_size: %d  \n\n",*poolid,*imageName,*imagesize,*object_size)
+	//fmt.Printf("send create image request  success: poolid:%d  imagename:%s  imagesize:%d  object_size: %d  \n\n",*poolid,*imageName,*imagesize,*object_size)
 }
 
 func ClientSendRemoveImageRequest(conn net.Conn, stopChan chan<- struct{}) {
