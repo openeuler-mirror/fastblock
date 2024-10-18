@@ -108,8 +108,12 @@ void start_rpc_server(void* arg) {
     }
 
     g_rpc_servers.resize(ports.size());
-    auto counter{0};
+    size_t counter{0};
     for (auto it = core_sharded::system::begin(); it != core_sharded::system::end(); ++it) {
+        if (counter >= ports.size()) {
+            return;
+        }
+
         auto cpumask = core_sharded::make_cpumake(*it);
         auto opts = msg::rdma::server::make_options(g_pt);
         opts->port = ports.at(counter);
