@@ -798,6 +798,7 @@ using make_rblob_complete = std::function<void (void *arg, struct rolling_blob* 
 struct make_rblob_ctx {
     struct spdk_blob_store *bs;
     struct spdk_io_channel *channel;
+    uint32_t shard_id;
 
     make_rblob_complete cb_fn;
     void* arg;
@@ -809,14 +810,14 @@ make_open_done(void *arg, struct spdk_blob *blob, int rberrno) {
 
   /// TODO(sunyifang): open 失败还是应该 close 掉，以后需要修改
   if (rberrno) {
-      SPDK_ERRLOG("make_rolling_blob failed during open. error:%s\n", spdk_strerror(rberrno));
+      SPDK_ERRLOG("make_rolling_blob failed during open in shard %u. error:%s\n", ctx->shard_id , spdk_strerror(rberrno));
       ctx->cb_fn(ctx->arg, nullptr, rberrno);
       delete ctx;
       return;
   }
 
   uint64_t blob_size = spdk_blob_get_num_clusters(blob) * spdk_bs_get_cluster_size(ctx->bs);
-  SPDK_NOTICELOG("open rblob success\n");
+  SPDK_NOTICELOG("open rblob success in shard %u\n", ctx->shard_id);
   struct rolling_blob* rblob = new rolling_blob(blob, ctx->channel, blob_size);
   ctx->cb_fn(ctx->arg, rblob, 0);
   delete ctx;
@@ -827,12 +828,12 @@ make_create_done(void *arg, spdk_blob_id blobid, int rberrno) {
   struct make_rblob_ctx *ctx = (struct make_rblob_ctx *)arg;
 
   if (rberrno) {
-      SPDK_ERRLOG("make_rolling_blob failed during create. error:%s\n", spdk_strerror(rberrno));
+      SPDK_ERRLOG("make_rolling_blob failed during create in shard %u, error:%s\n", ctx->shard_id, spdk_strerror(rberrno));
       ctx->cb_fn(ctx->arg, nullptr, rberrno);
       return;
   }
 
-  SPDK_NOTICELOG("create success\n");
+  SPDK_NOTICELOG("create success in shard %u\n", ctx->shard_id);
   spdk_bs_open_blob(ctx->bs, blobid, make_open_done, ctx);
 }
 
@@ -841,9 +842,10 @@ inline void make_rolling_blob(struct spdk_blob_store *bs, struct spdk_io_channel
 {
   struct make_rblob_ctx* ctx;
   struct spdk_blob_opts opts;
+  auto shard_id = core_sharded::get_core_sharded().this_shard_id();
   
-  SPDK_DEBUGLOG(blob_log, "create rolling blob in core %u\n", core_sharded::get_core_sharded().this_shard_id());
-  ctx = new make_rblob_ctx(bs, channel, cb_fn, arg);
+  SPDK_DEBUGLOG(blob_log, "create rolling blob in shard %u\n", shard_id);
+  ctx = new make_rblob_ctx(bs, channel, shard_id, cb_fn, arg);
   spdk_blob_opts_init(&opts, sizeof(opts));
   opts.num_clusters = size / spdk_bs_get_cluster_size(bs);
   spdk_bs_create_blob_ext(bs, &opts, make_create_done, ctx);
@@ -851,9 +853,10 @@ inline void make_rolling_blob(struct spdk_blob_store *bs, struct spdk_io_channel
 
 inline void open_rolling_blob(spdk_blob_id blob_id, struct spdk_blob_store *bs, struct spdk_io_channel *channel,
                         make_rblob_complete cb_fn, void* arg){
-  struct make_rblob_ctx* ctx = new make_rblob_ctx(bs, channel, cb_fn, arg);
+  auto shard_id = core_sharded::get_core_sharded().this_shard_id();
+  struct make_rblob_ctx* ctx = new make_rblob_ctx(bs, channel, shard_id, cb_fn, arg);
   
-  SPDK_DEBUGLOG(blob_log, "open rolling blob in core %u\n", core_sharded::get_core_sharded().this_shard_id());
+  SPDK_DEBUGLOG(blob_log, "open rolling blob in shard %u\n", shard_id);
   spdk_bs_open_blob(bs, blob_id, make_open_done, ctx);
 }
 

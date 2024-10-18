@@ -41,14 +41,15 @@ struct blob_tree
         std::vector<struct spdk_blob *> pool_blobs;
 };
 
-/// TODO(sunyifang): 现在都是单核的
-struct spdk_blob_store* global_blobstore();
+struct spdk_blob_store* global_blobstore(uint32_t shard_id);
 
 struct spdk_io_channel* global_io_channel(uint32_t shard_id);
 
-sharded<blob_tree>& global_blob_tree();
+blob_tree& global_blob_tree(uint32_t shard_id);
 
-blob_pool& global_blob_pool();
+blob_pool& global_blob_pool(uint32_t shard_id);
+
+extern std::vector<std::pair<uint64_t, uint64_t>> g_bs_space;
 
 using bm_complete = std::function<void (void *, int)>;
 

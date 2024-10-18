@@ -56,7 +56,7 @@ struct checkpoint_ctx {
  */
 class kv_checkpoint {
 public:
-  kv_checkpoint(uint32_t shard_id) : _bs(global_blobstore()), _channel(global_io_channel(shard_id)) {}
+  kv_checkpoint(uint32_t shard_id) : _bs(global_blobstore(shard_id)), _channel(global_io_channel(shard_id)) {}
 
 public:
   void set_checkpoint_blobid(spdk_blob_id checkpoint_blob_id, spdk_blob_id new_checkpoint_blob_id){

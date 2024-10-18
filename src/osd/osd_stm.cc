@@ -257,18 +257,5 @@ void osd_stm::delete_and_wait(
 }
 
 void osd_stm::destroy_objects(object_complete cb_fn, void *arg){
-    uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
-    auto destroy_done = [cb_fn = std::move(cb_fn), shard_id](void *arg, int objerrno){
-        core_sharded::get_core_sharded().invoke_on(
-          shard_id,
-          [cb_fn = std::move(cb_fn), arg, objerrno](){
-            cb_fn(arg, objerrno);
-          });
-    };
-    
-    core_sharded::get_core_sharded().invoke_on(
-      utils::default_blobstore_core,
-      [this, destroy_done = std::move(destroy_done), arg](){
-        _store.destroy(std::move(destroy_done), arg);
-      });
+    _store.destroy(std::move(cb_fn), arg);
 }

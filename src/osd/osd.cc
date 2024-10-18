@@ -44,6 +44,7 @@
 #include <sys/types.h>
 #include <regex>
 #include <sys/sysinfo.h>
+#include <string.h>
 
 enum class stop_state {
     data_statistics = 1,
@@ -401,6 +402,67 @@ void storage_init_complete(void *arg, int rberrno){
     std::raise(SIGINT);
 }
 
+static inline std::string get_bdev_disk_addr_file();
+
+static bool save_bs_disk_space(){
+    auto path = get_bdev_disk_addr_file();
+    if(!std::filesystem::exists(path)){
+        SPDK_ERRLOG("path %s is not exist.\n", path.c_str());
+        return false;
+    }    
+
+    std::ofstream ofs(path, std::ios::app);
+    if(ofs.is_open()){
+        for(uint32_t index = 0; index < g_bs_space.size(); index++){
+            ofs << g_bs_space[index].first << " " << g_bs_space[index].second << "\n";
+        }
+        ofs.close();
+    } else {
+        SPDK_ERRLOG("path %s can not be opened.\n", path.c_str());
+        return false;
+    }
+    return true;
+}
+
+static void get_bs_disk_space(uint32_t core_size){
+    auto path = get_bdev_disk_addr_file();
+    if(!std::filesystem::exists(path)){
+        std::cerr << "path " << path << " is not exist" << std::endl;
+        return;
+    }  
+
+    std::ifstream ifs(path);
+
+    if(!ifs.is_open()){
+        return ;
+    }    
+
+    std::string data;
+    if(!getline(ifs, data)){
+        ifs.close();
+        return;
+    }
+    for(uint32_t index = 0; index < core_size; index++){
+        std::string data;
+        char *save_ctx = nullptr;
+        if(!getline(ifs, data)){
+            break;
+        }
+        
+        auto r = spdk_strarray_from_string(data.c_str(), " ");
+        if((r[0] == "" || r[0] == nullptr) || (r[1] == "" || r[1] == nullptr)){
+            spdk_strarray_free(r);
+            break;
+        }
+        uint64_t start_offset = spdk_strtoll(r[0], 10);
+        uint64_t len = spdk_strtoll(r[1], 10);
+        g_bs_space.push_back(std::make_pair(start_offset, len));
+        spdk_strarray_free(r);
+    }
+
+    ifs.close();
+}
+
 void disk_init_complete(void *arg, int rberrno) {
     if(rberrno != 0){
 		SPDK_NOTICELOG("Failed to initialize the disk: %s. thread id %lu\n",
@@ -409,6 +471,13 @@ void disk_init_complete(void *arg, int rberrno) {
         std::raise(SIGINT);
 		return;
 	}
+
+    if(!save_bs_disk_space()){
+        SPDK_ERRLOG("save the disk space of the blobstore failed.\n");
+        osd_exit_code = -EINVAL;
+        std::raise(SIGINT);
+        return;
+    }
 
     SPDK_INFOLOG(osd, "Initialize the disk completed, thread id %lu\n",
                        utils::get_spdk_thread_id());
@@ -465,7 +534,7 @@ public:
             objects = std::move(iter->second);
         }
 
-        auto blob_size = spdk_blob_get_num_clusters(blob) * spdk_bs_get_cluster_size(global_blobstore());
+        auto blob_size = spdk_blob_get_num_clusters(blob) * spdk_bs_get_cluster_size(global_blobstore(shard_id));
         SPDK_INFOLOG(osd, "load blob, blob id %ld blob size %lu\n", spdk_blob_get_id(blob), blob_size);
         load_op_ctx *op_ctx = new load_op_ctx{.ctx = ctx, .load = this,
                                             .complete = complete, .shard_id = shard_id};
@@ -588,7 +657,6 @@ struct pm_load_context : public utils::context{
 
 
         // SPDK_WARNLOG("pm start done\n");
-        auto& blobs = global_blob_tree();
         osd_load_ctx* ctx = new osd_load_ctx{.server = server, .pm = pm};
         ctx->loads.start();
         uint32_t shard_id = 0;
@@ -612,15 +680,17 @@ struct pm_load_context : public utils::context{
                 osd_load_done(arg);
             }
         };
-        utils::multi_complete *complete = new utils::multi_complete(blobs.size(), blobs.size(), load_done, ctx);
+        auto shard_num = core_sharded::get_core_sharded().count();
+        utils::multi_complete *complete = new utils::multi_complete(shard_num, shard_num, load_done, ctx);
 
         auto &shard = core_sharded::get_core_sharded();
-        for(shard_id = 0; shard_id < blobs.size(); shard_id++){
+        for(shard_id = 0; shard_id < shard_num; shard_id++){
             shard.invoke_on(
               shard_id,
-              [this, &blobs, shard_id, ctx, complete](){
-                std::map<std::string, struct spdk_blob*> log_blobs = std::exchange(blobs.on_shard(shard_id).log_blobs, {});
-                std::map<std::string, object_store::container> object_blobs = std::exchange(blobs.on_shard(shard_id).object_blobs, {});
+              [this, shard_id, ctx, complete](){
+                auto &blobs = global_blob_tree(shard_id);
+                std::map<std::string, struct spdk_blob*> log_blobs = std::exchange(blobs.log_blobs, {});
+                std::map<std::string, object_store::container> object_blobs = std::exchange(blobs.object_blobs, {});
                 ctx->loads.on_shard(shard_id).set_blobs(std::move(log_blobs), std::move(object_blobs));
 
                 ctx->loads.on_shard(shard_id).start_load(shard_id, complete, ctx);
@@ -1182,6 +1252,7 @@ main(int argc, char *argv[])
             return -EINVAL;
         }
         reactor_mask = core_mask.value();
+        get_bs_disk_space(core_size);
     }
 
     opts.reactor_mask = reactor_mask.c_str();

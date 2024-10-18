@@ -63,25 +63,17 @@ void make_kvstore(struct spdk_blob_store *bs, struct spdk_io_channel *channel,
 {
   uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
   auto make_done = [shard_id, cb_fn = std::move(cb_fn)](void *arg, struct kvstore* kvs, int kverrno){
-      core_sharded::get_core_sharded().invoke_on(
-        shard_id,
-        [cb_fn = std::move(cb_fn), arg, kvs, kverrno](){
-          SPDK_INFOLOG(kvlog, "make kvstore done in core %u, thread %lu\n", 
-              core_sharded::get_core_sharded().this_shard_id(), utils::get_spdk_thread_id());
-          if(kverrno == 0 && kvs){
-            //注意：kvstore的start方法里回注册一个poller，这个poller需要在这个kv所属的core里注册
-            kvs->start();
-          }
-          cb_fn(arg, kvs, kverrno);
-        });
+    SPDK_INFOLOG(kvlog, "make kvstore done in shard %u, thread %lu\n", 
+        shard_id, utils::get_spdk_thread_id());
+    if(kverrno == 0 && kvs){
+      //注意：kvstore的start方法里回注册一个poller，这个poller需要在这个kv所属的core里注册
+      kvs->start();
+    }
+    cb_fn(arg, kvs, kverrno);    
   };  
 
   struct make_kvs_ctx* ctx = new make_kvs_ctx{.cb_fn = std::move(make_done), .arg = arg, .shard_id = shard_id};
-  core_sharded::get_core_sharded().invoke_on(
-    utils::default_blobstore_core,
-    [bs, channel, ctx](){
-      make_rolling_blob(bs, channel, 4_MB, make_kvstore_blob_done, ctx);
-    });
+  make_rolling_blob(bs, channel, 4_MB, make_kvstore_blob_done, ctx);
 }
 
 static void kv_replay_done(void *arg, int kverrno){
@@ -108,26 +100,12 @@ static void load_kv_md_done(void *arg, int kverrno){
       delete ctx;
       return;
   }
-
-  auto &shard = core_sharded::get_core_sharded();
-  auto cur_thread = spdk_get_thread();
-  auto kvs_done =  [](void *arg, int){
-    struct make_kvs_ctx * ctx = (struct make_kvs_ctx *)arg;
-    ctx->kvs->replay(kv_replay_done, ctx);
-  };
-  auto core_ctx = new utils::switch_core_context{.cb_fn = std::move(kvs_done), .arg = ctx, .thread = cur_thread};
   
-  shard.invoke_on(
-    ctx->shard_id,
-    [core_ctx](){
-      struct make_kvs_ctx * ctx = (struct make_kvs_ctx *)core_ctx->arg;
-      //在ctx->shard_id指定的核上创建kvstore
-      struct kvstore* kvs = new kvstore(ctx->rblob, ctx->shard_id);
-      ctx->kvs = kvs;
-      kvs->set_checkpoint_blobid(ctx->checkpoint_blob_id, ctx->new_checkpoint_blob_id);
-      core_ctx->cb_fn(ctx, 0);
-      delete core_ctx;
-    });
+  struct kvstore* kvs = new kvstore(ctx->rblob, ctx->shard_id);
+  ctx->kvs = kvs;
+  kvs->set_checkpoint_blobid(ctx->checkpoint_blob_id, ctx->new_checkpoint_blob_id);
+
+  ctx->kvs->replay(kv_replay_done, ctx);
 }
 
 static void open_rolling_blob_done(void *arg, struct rolling_blob* rblob, int kverrno){
@@ -150,16 +128,12 @@ void load_kvstore(spdk_blob_id blob_id, spdk_blob_id checkpoint_blob_id,
                   make_kvs_complete cb_fn, void* arg){
   uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
   auto make_done = [shard_id, cb_fn = std::move(cb_fn)](void *arg, struct kvstore* kvs, int kverrno){
-      core_sharded::get_core_sharded().invoke_on(
-        shard_id,
-        [cb_fn = std::move(cb_fn), arg, kvs, kverrno](){
-          SPDK_INFOLOG(kvlog, "load kvstore done in core %u\n", core_sharded::get_core_sharded().this_shard_id());
-          if(kverrno == 0 && kvs){
-            //注意：kvstore的start方法里回注册一个poller，这个poller需要在这个kv所属的core里注册
-            kvs->start();
-          }
-          cb_fn(arg, kvs, kverrno);
-        });
+    SPDK_INFOLOG(kvlog, "load kvstore done in core %u\n", shard_id);
+    if(kverrno == 0 && kvs){
+      //注意：kvstore的start方法里回注册一个poller，这个poller需要在这个kv所属的core里注册
+      kvs->start();
+    }
+    cb_fn(arg, kvs, kverrno);
   };  
 
   struct make_kvs_ctx* ctx = new make_kvs_ctx{
@@ -168,9 +142,5 @@ void load_kvstore(spdk_blob_id blob_id, spdk_blob_id checkpoint_blob_id,
                                   .checkpoint_blob_id = checkpoint_blob_id,
                                   .new_checkpoint_blob_id = new_checkpoint_blob_id,
                                   .shard_id = shard_id};
-  core_sharded::get_core_sharded().invoke_on(
-    utils::default_blobstore_core,
-    [blob_id, bs, channel, ctx](){
-      open_rolling_blob(blob_id, bs, channel, open_rolling_blob_done, ctx);
-    });
+  open_rolling_blob(blob_id, bs, channel, open_rolling_blob_done, ctx);
 }
