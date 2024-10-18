@@ -153,6 +153,6 @@ public:
   container table;
   struct spdk_blob_store *bs;       // 我们不掌握blob_store的生命周期
   struct spdk_io_channel *channel;  // 所以不用担心这两个指针的free
-                            //obiect_store是管理所有块的类
+                            //object_store是管理所有块的类
   //std::map<std::string,std::list<snap_Node*>> snap_hashlist;//这个hash表时存储快照的链式hash。
 };
