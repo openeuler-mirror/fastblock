@@ -39,8 +39,8 @@ class storage_manager {
 public:
   storage_manager() { }
 
-  void start(storage_op_complete cb_fn, void* arg) {
-      make_kvstore(global_blobstore(), global_io_channel(core_sharded::get_core_sharded().this_shard_id()),
+  void start(uint32_t shard_id, storage_op_complete cb_fn, void* arg) {
+      make_kvstore(global_blobstore(shard_id), global_io_channel(shard_id),
         [this, cb_fn = std::move(cb_fn)](void *arg, kvstore* kvs, int error){
             if (error) {
                 SPDK_ERRLOG("storage start failed. error:%s\n", spdk_strerror(error));
@@ -79,10 +79,14 @@ public:
     );
   }
 
-  void load(spdk_blob_id blob_id, spdk_blob_id checkpoint_blob_id, spdk_blob_id new_checkpoint_blob_id, 
+  void load(uint32_t shard_id, spdk_blob_id blob_id, spdk_blob_id checkpoint_blob_id, spdk_blob_id new_checkpoint_blob_id, 
           storage_op_complete cb_fn, void* arg){
-      load_kvstore(blob_id, checkpoint_blob_id, new_checkpoint_blob_id, global_blobstore(), 
-        global_io_channel(core_sharded::get_core_sharded().this_shard_id()),
+      load_kvstore(
+        blob_id, 
+        checkpoint_blob_id, 
+        new_checkpoint_blob_id, 
+        global_blobstore(shard_id), 
+        global_io_channel(shard_id),
         [this, cb_fn = std::move(cb_fn)](void *arg, kvstore* kvs, int error){
             if (error) {
                 SPDK_ERRLOG("load storage failed. error:%s\n", spdk_strerror(error));
@@ -95,7 +99,7 @@ public:
             cb_fn(arg, 0);
             return;
         }, 
-      arg);
+        arg);
   }
 
   kvstore* kvs() {

@@ -112,7 +112,7 @@ static void test_disk_log_complete(void *arg, int rberrno){
 	SPDK_WARNLOG("storage_init done\n");
     
 	auto shard_id = core_sharded::get_core_sharded().this_shard_id();
-	make_disk_log(global_blobstore(), global_io_channel(core_sharded::get_core_sharded().this_shard_id()), "test", make_log_done, nullptr, shard_id);    
+	make_disk_log(global_blobstore(shard_id), global_io_channel(shard_id), "test", make_log_done, nullptr, shard_id);    
 }
 
 static void disk_init_complete(void *arg, int rberrno){

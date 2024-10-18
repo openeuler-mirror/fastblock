@@ -26,6 +26,7 @@ constexpr int32_t MAX_OSD_PORT = 10000;
 constexpr int32_t default_monitor_port = 3333;
 
 constexpr uint32_t default_blobstore_core = 0;
+constexpr uint32_t default_blobstore_cluster_size = (1024 * 1024);
 
 class context {
 protected:

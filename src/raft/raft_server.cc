@@ -1540,8 +1540,9 @@ void raft_server_t::raft_destroy(raft_complete cb_fn, void* arg)
             cb_fn(arg, serrno);
             return;
         }
+        auto shard_id = core_sharded::get_core_sharded().this_shard_id();
         _log->log_destroy(
-          global_blobstore(),
+          global_blobstore(shard_id),
           [this, cb_fn = std::move(cb_fn)](void* arg, int rberrno){
             SPDK_INFOLOG(pg_group, "remove log blob done: %s\n", spdk_strerror(rberrno));
             if(rberrno == 0){
@@ -1771,20 +1772,7 @@ int raft_server_t::raft_recv_installsnapshot(raft_node_id_t node_id,
 }
 
 void raft_server_t::_recovery_delete(recovery_op_complete cb_fn, void* arg){
-    uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
-    auto delete_done = [shard_id, cb_fn = std::move(cb_fn)](void *arg, int rerrno){
-        core_sharded::get_core_sharded().invoke_on(
-          shard_id,
-          [cb_fn = std::move(cb_fn), arg, rerrno](){
-            cb_fn(arg, rerrno);
-          });
-    };
-
-    core_sharded::get_core_sharded().invoke_on(
-      utils::default_blobstore_core,
-      [this, arg, delete_done = std::move(delete_done)](){
-        _obr->recovery_delete(std::move(delete_done), arg);
-      });
+    _obr->recovery_delete(std::move(cb_fn), arg);
 }
 
 int raft_server_t::raft_process_installsnapshot_reply(installsnapshot_response *rsp){
@@ -2325,43 +2313,35 @@ int raft_server_t::_recovery_by_snapshot(std::shared_ptr<raft_node> node){
 
     uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
     auto snap_fn = [this, node, shard_id, handle_error = std::move(handle_error)](void *arg, int rerrno){
-        core_sharded::get_core_sharded().invoke_on(
-          shard_id,
-          [this, rerrno, node, handle_error = std::move(handle_error)](){
-            //创建完对象的snapshot后就需要设置_snapshot_in_progress为false
-            raft_set_snapshot_in_progress(false);
-            if(rerrno != 0){
-                handle_error();
-                SPDK_ERRLOG("pg: %lu.%lu, create raft snapshot failed, rerrno: %d\n", _pool_id, _pg_id, rerrno);
-                return;
-            }
-            _snapshot_index = _machine->get_last_applied_idx();
-            raft_term_t term;
-            if(!raft_get_entry_term(_snapshot_index, term)){
-                handle_error();
-                return;
-            }
-            _snapshot_term = term;
-            SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, _snapshot_index %ld _snapshot_term %ld\n",
-                    _pool_id, _pg_id, _snapshot_index, _snapshot_term);
-            _obr->iter_start();
-            int res = raft_send_snapshot_check(node);
-            if(res != err::E_SUCCESS){
-                handle_error();
-                SPDK_ERRLOG("pg: %lu.%lu, send snapshot_check_request failed, rerrno: %d\n", _pool_id, _pg_id, res);
-                return;
-            }
-          });
+        //创建完对象的snapshot后就需要设置_snapshot_in_progress为false
+        raft_set_snapshot_in_progress(false);
+        if(rerrno != 0){
+            handle_error();
+            SPDK_ERRLOG("pg: %lu.%lu, create raft snapshot failed, rerrno: %d\n", _pool_id, _pg_id, rerrno);
+            return;
+        }
+        _snapshot_index = _machine->get_last_applied_idx();
+        raft_term_t term;
+        if(!raft_get_entry_term(_snapshot_index, term)){
+            handle_error();
+            return;
+        }
+        _snapshot_term = term;
+        SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, _snapshot_index %ld _snapshot_term %ld\n",
+                _pool_id, _pg_id, _snapshot_index, _snapshot_term);
+        _obr->iter_start();
+        int res = raft_send_snapshot_check(node);
+        if(res != err::E_SUCCESS){
+            handle_error();
+            SPDK_ERRLOG("pg: %lu.%lu, send snapshot_check_request failed, rerrno: %d\n", _pool_id, _pg_id, res);
+            return;
+        }
     };
 
-    core_sharded::get_core_sharded().invoke_on(
-      utils::default_blobstore_core,
-      [this, snap_fn = std::move(snap_fn)](){
-        std::map<std::string, xattr_val_type> xattr;
-        xattr["type"] = blob_type::object;
-        xattr["pg"] = raft_get_pg_name();
-        _obr->recovery_create(std::move(xattr), std::move(snap_fn), nullptr);
-      });
+    std::map<std::string, xattr_val_type> xattr;
+    xattr["type"] = blob_type::object;
+    xattr["pg"] = raft_get_pg_name();
+    _obr->recovery_create(std::move(xattr), std::move(snap_fn), nullptr);
     return 0;
 }
 

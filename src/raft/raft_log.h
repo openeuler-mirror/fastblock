@@ -158,20 +158,8 @@ public:
 
     void log_destroy(struct spdk_blob_store *bs, log_op_complete cb_fn, void* arg){
         SPDK_INFOLOG(pg_group, "remove log blob\n");
-        uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
-        auto remove_blob_done = [shard_id, cb_fn = std::move(cb_fn)](void *arg, int rberror){
-            core_sharded::get_core_sharded().invoke_on(
-              shard_id,
-              [cb_fn = std::move(cb_fn), arg, rberror](){
-                cb_fn(arg, rberror);
-              });
-        };
-        auto &shard = core_sharded::get_core_sharded();
-        shard.invoke_on(
-          utils::default_blobstore_core,
-          [this, bs, arg, remove_blob_done = std::move(remove_blob_done)](){
-            _log->remove_blob(bs, std::move(remove_blob_done), arg);
-          });
+
+        _log->remove_blob(bs, std::move(cb_fn), arg);
     }
   
     //截断idx（包含）之后的log entry
@@ -230,21 +218,7 @@ public:
 
     void stop(log_op_complete cb_fn, void* arg){
         if(_log){
-            auto &shard = core_sharded::get_core_sharded();
-            uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
-            auto stop_done = [cb_fn = std::move(cb_fn), shard_id](void *arg, int objerrno){
-                core_sharded::get_core_sharded().invoke_on(
-                  shard_id,
-                  [cb_fn = std::move(cb_fn), arg, objerrno](){
-                    cb_fn(arg, objerrno);
-                  });
-            };
-
-            shard.invoke_on(
-              utils::default_blobstore_core,
-              [this, arg, stop_done = std::move(stop_done)](){
-                _log->stop(stop_done, arg);
-              });
+            _log->stop(std::move(cb_fn), arg);
         }
     }
 

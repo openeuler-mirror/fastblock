@@ -67,7 +67,7 @@ void partition_manager::create_pg(
     make_log_context *ctx = new make_log_context{.pool_id = pool_id, .pg_id = pg_id, .osds = std::move(osds),
                     .shard_id = shard_id, .revision_id = revision_id, .pm = this, .cb_fn = std::move(cb_fn), .arg = arg};
     std::string pg = pg_id_to_name(pool_id, pg_id);
-    make_disk_log(global_blobstore(), global_io_channel(shard_id), pg, make_log_done, ctx, shard_id);
+    make_disk_log(global_blobstore(shard_id), global_io_channel(shard_id), pg, make_log_done, ctx, shard_id);
 }
 
 int partition_manager::osd_state_is_not_active(){
@@ -228,7 +228,7 @@ int partition_manager::create_partition(
 
 void partition_manager::load_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob,
                             object_store::container objects, pm_complete cb_fn, void *arg){
-    auto dlog = make_disk_log(global_blobstore(), global_io_channel(shard_id), blob);
+    auto dlog = make_disk_log(global_blobstore(shard_id), global_io_channel(shard_id), blob);
     // TODO:为什么要先创建osd_stm，然后再load呢？直接创建的时候构造object_store不可以吗？
     auto sm = std::make_shared<osd_stm>();
 
