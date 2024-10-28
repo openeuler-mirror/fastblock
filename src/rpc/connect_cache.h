@@ -24,13 +24,16 @@ public:
     using connect_ptr = std::shared_ptr<msg::rdma::client::connection>;
     using transport_client_ptr = std::shared_ptr<msg::rdma::client>;
 
-    connect_cache(::spdk_cpuset* cpumask, std::shared_ptr<msg::rdma::client::options> opts, int sock_id = SPDK_ENV_SOCKET_ID_ANY)
+    connect_cache(::spdk_cpuset* cpumask, auto&&... args)
       : _mutex(PTHREAD_MUTEX_INITIALIZER)
       , _shard_cores(core_sharded::get_shard_cores()) {
           auto shard_num = _shard_cores.size();
           for(uint32_t i = 0; i < shard_num; i++){
               std::string cli_name = "connect_cache" + std::to_string(i);
-              auto _transport = std::make_shared<msg::rdma::client>(cli_name, core_sharded::get_thread(i), opts, sock_id);
+              auto _transport = std::make_shared<msg::rdma::client>(
+                cli_name,
+                core_sharded::get_thread(i),
+                std::forward<decltype(args)>(args)...);
               _transports.push_back(_transport);
               _transport->start();
               _cache.push_back(std::map<int, connect_ptr>());
@@ -121,7 +124,7 @@ public:
 private:
     struct stop_context{
         std::function<void()> cb_fn;
-    };   
+    };
 
 public:
     void stop(std::optional<std::function<void()>>&& on_stop = std::nullopt) noexcept {
@@ -149,7 +152,7 @@ public:
                 _transports[shard_id]->stop([complete](){
                   complete->complete(0);
                 });
-              }  
+              }
             );
         }
     }

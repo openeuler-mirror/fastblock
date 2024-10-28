@@ -173,6 +173,26 @@ public:
         return it->second;
     }
 
+    bool is_local(const std::string& ipv4) {
+        for (const auto& pair : _dev_ipv4_map) {
+            if (pair.second == ipv4) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    std::optional<std::string> query_ipv4_device(std::string& ipv4) {
+        for (const auto& pair : _dev_ipv4_map) {
+            if (pair.second == ipv4) {
+                return pair.first;
+            }
+        }
+
+        return std::nullopt;
+    }
+
 private:
 
     static std::string port_state_name(enum ::ibv_port_state pstate) {
@@ -216,6 +236,21 @@ private:
         auto ifr_soft_master_path = ifr_abs_path / "master";
         bool is_bridge = fs::exists(ifr_soft_master_path);
 
+        ::ifreq ifr{};
+        auto fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+        ifr.ifr_addr.sa_family = AF_INET;
+        ::sprintf(ifr.ifr_name, "%s", ifr_path.c_str());
+        ::ioctl(fd, SIOCGIFADDR, &ifr);
+        auto* sock_in = reinterpret_cast<::sockaddr_in*>(&ifr.ifr_addr);
+        auto ipv4 = ::inet_ntoa(sock_in->sin_addr);
+        ::close(fd);
+
+        SPDK_DEBUGLOG(msg, "ifr: %s, ipv4: %s, is_bridge: %d\n", ifr_path.c_str(), ipv4, is_bridge);
+        if (std::strcmp(ipv4, "0.0.0.0") != 0 and is_bridge) {
+            SPDK_DEBUGLOG(msg, "[0] device %s ipv4: %s\n", ifr_path.c_str(), ipv4);
+            return ipv4;
+        }
+
         if (is_bridge) {
             auto bridge_abs_path = fs::read_symlink(ifr_soft_master_path);
             ifr_path = bridge_abs_path.filename();
@@ -225,14 +260,15 @@ private:
               bridge_abs_path.c_str(), ifr_path.c_str());
         }
 
-        ::ifreq ifr{};
-        auto fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+        std::memset(&ifr, 0, sizeof(ifr));
+        fd = ::socket(AF_INET, SOCK_DGRAM, 0);
         ifr.ifr_addr.sa_family = AF_INET;
         ::sprintf(ifr.ifr_name, "%s", ifr_path.c_str());
         ::ioctl(fd, SIOCGIFADDR, &ifr);
-        auto* sock_in = reinterpret_cast<::sockaddr_in*>(&ifr.ifr_addr);
-        auto ipv4 = ::inet_ntoa(sock_in->sin_addr);
+        sock_in = reinterpret_cast<::sockaddr_in*>(&ifr.ifr_addr);
+        ipv4 = ::inet_ntoa(sock_in->sin_addr);
         ::close(fd);
+        SPDK_DEBUGLOG(msg, "[1] device %s ipv4: %s\n", ifr_path.c_str(), ipv4);
 
         return ipv4;
     }
@@ -255,12 +291,6 @@ private:
 
             for (const auto& interface : fs::directory_iterator(interface_path)) {
                 auto ipci_path = fs::relative(interface.path(), interface_path).parent_path().parent_path();
-                SPDK_DEBUGLOG(
-                  msg,
-                  "interface name: %s, ipci path: %s\n",
-                  interface.path().filename().c_str(),
-                  ipci_path.c_str());
-
                 if (ipci_path != ib_pci_path) { continue; }
                 auto ipv4 = read_ipv4(ib_dev_path, ib_pci_path, interface.path().filename());
                 SPDK_INFOLOG(msg, "device %s ipv4: %s\n", dev_name.c_str(), ipv4.c_str());

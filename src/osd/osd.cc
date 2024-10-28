@@ -17,11 +17,11 @@
 
 
 #include "monclient/client.h"
+#include "msg/rdma/server.h"
 #include "raft/raft.h"
 #include "osd/partition_manager.h"
 #include "raft/raft_service.h"
 #include "osd/osd_service.h"
-#include "rpc/server.h"
 #include "localstore/blob_manager.h"
 #include "localstore/storage_manager.h"
 #include "data_statistics.h"
@@ -73,7 +73,14 @@ typedef struct
     int raft_heartbeat_period_time_msec;
     int raft_lease_time_msec;
     int raft_election_timeout_msec;
+    size_t device_counter{0};
 } server_t;
+
+struct rdma_device_context {
+    std::vector<std::string>* devices{nullptr};
+    size_t rpc_server_counter{0};
+    size_t rpc_client_counter{0};
+};
 
 static const char* g_json_conf{nullptr};
 static bool g_mkfs{false};
@@ -94,6 +101,7 @@ static stop_state cur_stop_state{stop_state::data_statistics};
 
 static std::string g_conf_path = "/var/lib/fastblock";
 static int g_core_num = 2;
+static rdma_device_context g_rdma_device_context{};
 
 static void
 block_usage(void) {
@@ -254,6 +262,21 @@ static void on_rpc_server_started(void* arg1, void* arg2) {
     }
 }
 
+static std::optional<std::string> get_next_device(std::vector<std::string>& devices, size_t* counter) {
+    if (devices.empty()) {
+        return std::nullopt;
+    }
+
+    if (not g_rdma_device_context.devices) {
+        g_rdma_device_context.devices = &devices;
+    }
+    auto dev_name = g_rdma_device_context.devices->at(*(counter)++);
+    if (*counter == g_rdma_device_context.devices->size()) {
+        *counter = 0;
+    }
+    return dev_name;
+}
+
 static void create_rpc_server(void* arg1, void* arg2) {
     auto* server = reinterpret_cast<server_t*>(arg1);
     auto shard_id = core_sharded::get_core_sharded().this_shard_id();
@@ -266,7 +289,8 @@ static void create_rpc_server(void* arg1, void* arg2) {
     msg::rdma::server* rpc_srv{nullptr};
     bool is_ok = false;
     try {
-        server->rpc_servers.at(shard_id) = std::make_unique<msg::rdma::server>(core_sharded::get_thread(shard_id), opts);
+        auto dev = get_next_device(opts->ep->device_names, &g_rdma_device_context.rpc_server_counter);
+        server->rpc_servers.at(shard_id) = std::make_unique<msg::rdma::server>(core_sharded::get_thread(shard_id), opts, dev);
         rpc_srv = server->rpc_servers.at(shard_id).get();
         SPDK_NOTICELOG("Created rpc server on core %d\n", shard_id);
     } catch (const std::exception& e) {
@@ -291,7 +315,6 @@ static void create_rpc_server(void* arg1, void* arg2) {
     }
 
     is_ok = true;
-    server->osd_addr = opts->bind_address;
     server->rpc_servers.at(shard_id)->add_service(global_raft_service.get());
     server->rpc_servers.at(shard_id)->add_service(global_osd_service.get());
 
@@ -355,18 +378,20 @@ void start_monitor(server_t* ctx) {
 
 static void pm_init(void *arg){
 	server_t *server = (server_t *)arg;
-    SPDK_INFOLOG(osd,
-                       "Block start, cpu count: %u, bdev_disk: %s\n",
-                       spdk_env_get_core_count(),
-                       server->bdev_disk.c_str());
+    SPDK_INFOLOG(
+      osd,
+      "Block start, cpu count: %u, bdev_disk: %s\n",
+      spdk_env_get_core_count(),
+      server->bdev_disk.c_str());
 
     auto core_no = core_sharded::system::last_core();
     auto cpumask = core_sharded::make_cpumake(core_no);
     auto sockid = ::spdk_env_get_socket_id(core_no);
     auto opts = msg::rdma::client::make_options(server->pt);
+    auto dev = get_next_device(opts->ep->device_names, &g_rdma_device_context.rpc_client_counter);
 
     SPDK_NOTICELOG("Start rpc client on core %d\n", core_no);
-    global_conn_cache = std::make_shared<::connect_cache>(cpumask.get(), opts, sockid);
+    global_conn_cache = std::make_shared<::connect_cache>(cpumask.get(), opts, dev);
     global_pm = std::make_shared<partition_manager>(server->node_id, global_conn_cache,
       server->raft_heartbeat_period_time_msec, server->raft_lease_time_msec, server->raft_election_timeout_msec);
     monitor::client::on_new_pg_callback_type pg_map_cb =

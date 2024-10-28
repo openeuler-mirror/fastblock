@@ -26,6 +26,90 @@ namespace rdma {
 
 struct mlx5dv : public provider {
 
+    static inline int ipv6_addr_v4mapped(const struct in6_addr *a) {
+        return ((a->s6_addr32[0] | a->s6_addr32[1]) |
+                (a->s6_addr32[2] ^ htonl(0x0000ffff))) == 0UL ||
+                /* IPv4 encoded multicast addresses */
+                (a->s6_addr32[0] == htonl(0xff0e0000) &&
+                ((a->s6_addr32[1] |
+                (a->s6_addr32[2] ^ htonl(0x0000ffff))) == 0UL));
+    }
+
+    static void get_best_gid_index (::ibv_context* ctx, ::ibv_qp_attr* qp_attr, int port = 1) {
+        int gid_index = 3, i;
+        union ::ibv_gid temp_gid, temp_gid_rival;
+        int is_ipv4, is_ipv4_rival;
+
+        ibv_query_gid(ctx, port, gid_index, &temp_gid);
+
+        SPDK_DEBUGLOG(msg, "best gid index is %d\n", gid_index);
+        std::memcpy(qp_attr->ah_attr.grh.dgid.raw, temp_gid.raw, 16);
+        qp_attr->ah_attr.grh.sgid_index = gid_index;
+
+        return;
+
+
+        ::ibv_port_attr attr{};
+        ::ibv_query_port(ctx, port, &attr);
+
+        for (i = 1; i < attr.gid_tbl_len; i++) {
+            if (ibv_query_gid(ctx, port, gid_index, &temp_gid)) {
+                return;
+            }
+
+            if (ibv_query_gid(ctx, port, i, &temp_gid_rival)) {
+                return;
+            }
+
+            is_ipv4 = ipv6_addr_v4mapped((::in6_addr *)temp_gid.raw);
+            is_ipv4_rival = ipv6_addr_v4mapped((::in6_addr *)temp_gid_rival.raw);
+
+            if (is_ipv4_rival && !is_ipv4)
+                gid_index = i;
+            else if (!is_ipv4_rival && is_ipv4)
+                gid_index = i;
+
+            if (gid_index == 3) {
+                break;
+            }
+#ifdef HAVE_GID_TYPE
+            else {
+#ifdef HAVE_GID_TYPE_DECLARED
+                struct ibv_gid_entry roce_version, roce_version_rival;
+
+                if (ibv_query_gid_ex(ctx->context, port, gid_index, &roce_version, 0))
+                    continue;
+
+                if (ibv_query_gid_ex(ctx->context, port, i, &roce_version_rival, 0))
+                    continue;
+
+                //coverity[uninit_use_in_call]
+                if (check_better_roce_version(roce_version.gid_type, roce_version_rival.gid_type) == RIGHT_IS_BETTER) {
+                    gid_index = i;
+                }
+
+#else
+                enum ibv_gid_type roce_version, roce_version_rival;
+
+                if (ibv_query_gid_type(ctx->context, port, gid_index, &roce_version))
+                    continue;
+
+                if (ibv_query_gid_type(ctx->context, port, i, &roce_version_rival))
+                    continue;
+
+                if (check_better_roce_version(roce_version, roce_version_rival) == RIGHT_IS_BETTER) {
+                    gid_index = i;
+                }
+#endif
+            }
+#endif
+        }
+
+        SPDK_DEBUGLOG(msg, "best gid index is %d\n", gid_index);
+        std::memcpy(qp_attr->ah_attr.grh.dgid.raw, temp_gid.raw, 16);
+        qp_attr->ah_attr.grh.sgid_index = gid_index;
+    }
+
     static void init_qp(::rdma_cm_id* id) {
         ::ibv_qp_attr qp_attr{};
         qp_attr.qp_state = IBV_QPS_INIT;
@@ -114,11 +198,9 @@ struct mlx5dv : public provider {
 
     }
 
-    void accept(::rdma_cm_id* id, ::rdma_conn_param* param) final {
+    int accept(::rdma_cm_id* id, ::rdma_conn_param* param) final {
         init_qp(id);
-        if (auto rc = ::rdma_accept(id, param); rc != 0) {
-            throw std::runtime_error{"accept error"};
-        }
+        return ::rdma_accept(id, param);
     }
 
     int disconnect(::rdma_cm_id* id) noexcept final {

@@ -54,10 +54,6 @@ public:
         ep_conf_or(cq_num_entries);
         ep_conf_or(qp_sig_all);
 
-        if (conf.count("rdma_device_name") != 0) {
-            device_name = conf.get_child("rdma_device_name").get_value<std::string>();
-        }
-
         if (conf.count("rdma_devices") != 0) {
             for (auto& name : conf.get_child("rdma_devices")) {
                 device_names.push_back(name.second.get_value<std::string>());
@@ -88,7 +84,6 @@ public:
 
     int cq_num_entries{16};
     bool qp_sig_all{false};
-    std::optional<std::string> device_name{std::nullopt};
     std::vector<std::string> device_names{};
     std::optional<uint8_t> device_port{std::nullopt};
 };

@@ -1,5 +1,3 @@
-find_package(mlx5 REQUIRED)
-
 add_executable(rpc_bench rpc_bench.pb.cc rpc_bench.cc)
 target_link_libraries(rpc_bench
   PRIVATE

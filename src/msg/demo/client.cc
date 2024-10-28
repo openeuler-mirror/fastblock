@@ -243,12 +243,12 @@ void start_rpc_client(void* arg) {
           FMT_1("rpc_cli_%d", ::spdk_env_get_current_core()), mask.get(), opts, dev_names->at(dev_counter));
         auto* dev = ctx.client->get_device();
         auto addr = dev->get_ipv4(dev_names->at(dev_counter));
-        SPDK_NOTICELOG("connect to %s on %s\n", addr->c_str(), dev_names->at(dev_counter).c_str());
+        SPDK_NOTICELOG("connect to %s:%d on %s\n", addr->c_str(), ports.at(counter), dev_names->at(dev_counter).c_str());
         ++dev_counter;
 
         ctx.client->start();
         ctx.client->emplace_connection(
-          *addr, ports.at(counter),
+          "172.31.4.143", ports.at(counter),
           [ctx = &ctx] (bool is_ok, std::shared_ptr<msg::rdma::client::connection> conn) {
               if (not is_ok) {
                   throw std::runtime_error{"create connection failed"};

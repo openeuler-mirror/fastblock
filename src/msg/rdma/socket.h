@@ -133,7 +133,8 @@ public:
 
         ret = ::rdma_resolve_addr(
           _id,
-          _res->ai_src_addr,
+          // _res->ai_src_addr,
+          nullptr,
           _res->ai_dst_addr,
           _ep.resolve_timeout_us);
 
@@ -179,8 +180,8 @@ public:
             _provider = std::make_unique<verbs>();
         }
 
-        _id->pd = _pd;
-        _id->verbs = _pd->context;
+        // _id->pd = _pd;
+        // _id->verbs = _pd->context;
         create_qp(cq, reinterpret_cast<void*>(this));
         _id->context = reinterpret_cast<void*>(this);
         _connected = true;
@@ -543,7 +544,9 @@ public:
         case RDMA_CM_EVENT_UNREACHABLE:
         case RDMA_CM_EVENT_REJECTED:
         case RDMA_CM_EVENT_MULTICAST_ERROR:
-            SPDK_ERRLOG("ERROR: Bad event '%s'\n", ::rdma_event_str(evt->event));
+            SPDK_ERRLOG(
+              "ERROR: Bad event '%s', status %d, errno %d, reason %s\n",
+              ::rdma_event_str(evt->event), evt->status, errno, std::strerror(errno));
             is_bad_evt = true;
             break;
         case RDMA_CM_EVENT_CONNECT_RESPONSE:
@@ -572,12 +575,11 @@ public:
     }
 
     std::optional<std::error_code> accept() noexcept {
-        int ret = ::rdma_accept(_id, nullptr);
-
-        if (ret) [[unlikely]] {
+        // auto ret = _provider->accept(_id, nullptr);
+        auto ret = ::rdma_accept(_id, nullptr);
+        if (ret) {
             return std::make_error_code(static_cast<std::errc>(errno));
         }
-
         return std::nullopt;
     }
 
@@ -600,14 +602,20 @@ public:
     }
 
     auto is_resolve_address_done(::rdma_cm_event* evt) {
-        _id->pd = _pd;
-        _id->verbs = _pd->context;
+        SPDK_DEBUGLOG(
+          msg,
+          "is_resolve_address_done(): _id->pd is %p, _id->verbs is %p, _pd is %p, _pd->context is %p\n",
+          _id->pd, _id->verbs, _pd, _pd->context);
+        // _id->pd = _pd;
+        // _id->verbs = _pd->context;
         return process_active_cm_event(::RDMA_CM_EVENT_ADDR_RESOLVED, evt);
     }
 
     auto is_resolve_route_done(::rdma_cm_event* evt) {
-        _id->pd = _pd;
-        _id->verbs = _pd->context;
+        SPDK_DEBUGLOG(
+          msg,
+          "is_resolve_route_done(): _id->pd is %p, _id->verbs is %p, _pd is %p, _pd->context is %p\n",
+          _id->pd, _id->verbs, _pd, _pd->context);
         return process_active_cm_event(::RDMA_CM_EVENT_ROUTE_RESOLVED, evt);
     }
 
@@ -836,10 +844,11 @@ private:
           dev_attr,
           offsetof(::ibv_device_attr, max_qp_wr),
           _ep.max_recv_wr);
-        _qp_init_attr->cap.max_send_sge = cap_from_attr(
-          dev_attr,
-          offsetof(::ibv_device_attr, max_sge),
-          _ep.max_send_sge);
+        // _qp_init_attr->cap.max_send_sge = cap_from_attr(
+        //   dev_attr,
+        //   offsetof(::ibv_device_attr, max_sge),
+        //   _ep.max_send_sge);
+        _qp_init_attr->cap.max_send_sge = 2;
         _qp_init_attr->cap.max_recv_sge = cap_from_attr(
           dev_attr,
           offsetof(::ibv_device_attr, max_sge),
@@ -849,6 +858,13 @@ private:
         _qp_init_attr->sq_sig_all = _ep.qp_sig_all;
         _qp_init_attr->qp_type = ::IBV_QPT_RC;
         _qp_init_attr->qp_context = reinterpret_cast<void*>(ctx);
+
+
+        // auto rc = ::rdma_create_qp(_id, pd, _qp_init_attr.get());
+        // if (rc) {
+        //     SPDK_ERRLOG("ERROR: Create qp failed: %s\n", strerror(errno));
+        //     throw std::runtime_error{"create qp failed"};
+        // }
 
         if (_mlx5dv_is_supported) {
             _id->qp = _provider->create_qp(pd->context, pd, _qp_init_attr.get());
@@ -860,6 +876,8 @@ private:
             SPDK_ERRLOG("ERROR: Create qp failed\n");
             throw std::runtime_error{"create qp failed"};
         }
+
+        SPDK_DEBUGLOG(msg, "QP Created\n");
 
         [[maybe_unused]] auto _ = update_qp_attr();
     }

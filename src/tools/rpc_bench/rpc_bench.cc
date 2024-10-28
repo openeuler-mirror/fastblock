@@ -295,7 +295,7 @@ void start_rpc_bench_server() {
               opts->ep->addr->c_str(),
               opts->port,
               ep_begin_it->index);
-            auto srv = std::make_unique<msg::rdma::server>(srv_name, &cpu_mask, opts, sockid);
+            auto srv = std::make_unique<msg::rdma::server>(srv_name, &cpu_mask, opts, std::nullopt, sockid);
             current_srv = srv.get();
             rpc_servers.push_back(std::move(srv));
         } catch (const std::exception& e) {
@@ -488,7 +488,7 @@ void start_ping_client() {
             ::spdk_cpuset_set_cpu(&cpu_mask, core_no, true);
             auto rpc_cli_name = FMT_1("rpc_cli_%1%", core_no);
             auto sockid = ::spdk_env_get_socket_id(core_no);
-            auto rpc_cli = std::make_shared<msg::rdma::client>(rpc_cli_name, &cpu_mask, opts, sockid);
+            auto rpc_cli = std::make_shared<msg::rdma::client>(rpc_cli_name, &cpu_mask, opts, std::nullopt, sockid);
             current_cli = rpc_cli.get();
             rpc_clients.push_back(rpc_cli);
 

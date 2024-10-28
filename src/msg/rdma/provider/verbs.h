@@ -103,11 +103,9 @@ struct verbs : public provider {
 
     }
 
-    void accept(::rdma_cm_id* id, ::rdma_conn_param* param) final {
+    int accept(::rdma_cm_id* id, ::rdma_conn_param* param) final {
         init_qp(id);
-        if (auto rc = ::rdma_accept(id, param); rc != 0) {
-            throw std::runtime_error{"accept error"};
-        }
+        return ::rdma_accept(id, param);
     }
 
     int disconnect(::rdma_cm_id* id) noexcept final {

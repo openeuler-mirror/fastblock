@@ -355,12 +355,13 @@ private:
         }
 
         auto& sock = it->second;
+        sock->update_qp_attr();
         SPDK_INFOLOG(
           msg,
-          "connection %s => %s:%d established\n",
+          "connection %s => %s:%d established, qp state is %s\n",
           sock->peer_address().c_str(),
           _opts->ep->addr ? _opts->ep->addr->c_str() : "<un-specified>",
-          _opts->port);
+          _opts->port, sock->qp_state_str().c_str());
 
         auto* pd = sock->pd();
         work_request_id dis_id{_cq_dispatch_id++};
@@ -380,8 +381,8 @@ private:
         auto it = _cm_records.find(evt->id);
         if (it == _cm_records.end()) {
             SPDK_ERRLOG(
-              "ERROR: Received cm event %s, but the cm id can not be found in cm observers\n",
-              ::rdma_event_str(evt->event));
+              "ERROR: Received cm event %s(status: %d, error: %s), but the cm id can not be found in cm observers\n",
+              ::rdma_event_str(evt->event), evt->status, std::strerror(evt->status));
 
             ::rdma_ack_cm_event(evt);
             return;
@@ -390,8 +391,8 @@ private:
         auto conn_iter = _connections.find(it->first);
         if (conn_iter == _connections.end()) {
             SPDK_ERRLOG(
-              "ERROR: Received cm event %s with rdma cm id(%p) not found in connections\n",
-              ::rdma_event_str(evt->event), it->first);
+              "ERROR: Received cm event %s(status: %d, error: %s) with rdma cm id(%p) not found in connections\n",
+              ::rdma_event_str(evt->event), evt->status, std::strerror(evt->status), it->first);
             _cm_records.erase(it);
             ::rdma_ack_cm_event(evt);
 
@@ -411,11 +412,13 @@ private:
         } catch (...) {
             auto evt_id = evt->id;
             ::rdma_ack_cm_event(evt);
-            evt = nullptr;
 
             SPDK_ERRLOG(
-              "ERROR: failed process cm event, will close the connection(rdma cm id: %p)\n",
+              "ERROR: failed process cm event(name: %s, status: %d), will close the connection(rdma cm id: %p)\n",
+              ::rdma_event_str(evt->event),
+              evt->status,
               conn_iter->first);
+            evt = nullptr;
 
             SPDK_NOTICELOG("Reomve the connection(id: %p)\n", conn_iter->first);
             close_connection(conn_iter->second.get());
@@ -613,6 +616,9 @@ private:
         }
 
         auto& task = _reply_task_list.front();
+        if (task->conn->sock->is_closed()) {
+            return SPDK_POLLER_IDLE;
+        }
         if (not task->reply_status) {
             return SPDK_POLLER_IDLE;
         }
@@ -1104,8 +1110,8 @@ public:
         auto ipv4 = _dev->get_ipv4(_device_name);
         if (not ipv4) {
             SPDK_ERRLOG(
-              "ERROR: Cant get ipv4 address of device %s\n",
-              _opts->ep->device_name.value_or("un-specified").c_str());
+              "ERROR: Cant get ipv4 address of device '%s'\n",
+              _device_name.c_str());
             throw std::runtime_error{"cant get ipv4 address of device"};
         }
         _opts->ep->addr = *ipv4;
@@ -1162,6 +1168,10 @@ public:
 
     uint16_t listen_port() noexcept {
         return _opts->port;
+    }
+
+    device* get_device() noexcept {
+        return _dev.get();
     }
 
 public:

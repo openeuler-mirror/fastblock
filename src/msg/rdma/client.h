@@ -1457,7 +1457,11 @@ public:
                 _cqe_dispatch_map.emplace(task_ptr->conn->dispatch_id(), task_ptr->conn);
                 task_ptr->conn->start();
                 task_ptr->conn->per_post_recv();
-                SPDK_INFOLOG(msg, "Connected to %s\n", task_ptr->conn->fd().peer_address().c_str());
+                SPDK_INFOLOG(
+                  msg,
+                  "Connected to %s, current qp state is %s\n",
+                  task_ptr->conn->fd().peer_address().c_str(),
+                  task_ptr->conn->fd().qp_state_str().c_str());
                 task_ptr->cb(true, task_ptr->conn);
                 _connect_tasks.erase(fd.id());
             } else {
@@ -1579,8 +1583,18 @@ public:
             switch (cqe->opcode) {
             case ::IBV_WC_RECV:
                 break;
-            default:
+            default: {
+                if (cqe->status != ::IBV_WC_SUCCESS and not conn->is_terminated()) {
+                    conn->fd().update_qp_attr();
+                    SPDK_ERRLOG(
+                      "ERROR: Got error wc, wc.vendor_err=%d, wc.status=%s, qp.state=%s\n",
+                      cqe->vendor_err,
+                      socket::wc_status_name(cqe->status).c_str(),
+                      conn->fd().qp_state_str().c_str());
+                    conn->async_shutdown(connection::state::bad_event);
+                }
                 continue;
+            }
             }
 
             if (cqe->status != ::IBV_WC_SUCCESS) {
