@@ -35,6 +35,7 @@
 
 constexpr int32_t TIMER_PERIOD_MSEC = 500;    //毫秒
 constexpr int32_t HEARTBEAT_TIMER_INTERVAL_MSEC = 500;   //毫秒
+constexpr int32_t RAFT_TASK_TIMER_USEC = 100;  //微秒
 
 constexpr int32_t SNAPSHOT_MAX_CHUNK = 1;
 constexpr int32_t SNAPSHOT_MAX_CONCURRENT = 1;
@@ -934,6 +935,7 @@ private:
     std::queue<task_info> _tasks;
 
     std::shared_ptr<monitor::client> _mon_client;
+    struct spdk_poller *_task_timer;
 
     uint64_t  _disk_io_num;
     uint64_t  _merger_tow_num; 
@@ -941,6 +943,7 @@ private:
     uint64_t  _merger_ten_num;
     uint64_t  _merger_twenty_num;
     uint64_t  _merger_fifty_num;
+    uint64_t  _merger_hundred_num;
 };
 
 bool raft_votes_is_majority(std::pair<uint64_t, uint64_t> &node_num_pair, std::pair<uint64_t, uint64_t> &nvotes_pair);

@@ -170,7 +170,7 @@ int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_
         if(result != 0){
             if(result == err::RAFT_ERR_NOT_LEADER || result == err::RAFT_ERR_PG_DELETED){
                 finish_func(result);
-                _raft->raft_flush();
+                // _raft->raft_flush();
                 return 1;
             }
             if(find_new_node(node->raft_node_get_id()))
@@ -180,7 +180,7 @@ int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_
             if((_new_node_fail_size > (get_new_node_size() / 2))
                     || (_old_node_fail_size > (get_node_size() / 2))){
                 finish_func(result);
-                _raft->raft_flush();
+                // _raft->raft_flush();
                 return 1;
             }
         }else{
@@ -206,7 +206,7 @@ int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_
                 _new_node_fail_size = 0;
                 _raft->raft_set_commit_idx(rsp_current_idx);
             }
-            _raft->raft_flush();
+            // _raft->raft_flush();
         }
         break;
     }   
@@ -219,14 +219,14 @@ int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_
         if(result != 0){
             if(result == err::RAFT_ERR_NOT_LEADER || result == err::RAFT_ERR_PG_DELETED){
                 finish_func(result);
-                _raft->raft_flush();
+                // _raft->raft_flush();
                 return 1;
             }
             if(find_node(node->raft_node_get_id()))
                 _new_node_fail_size++;
             if(_new_node_fail_size > (get_node_size() / 2)){
                 finish_func(result);
-                _raft->raft_flush();
+                // _raft->raft_flush();
                 return 1;
             }
         }else{
@@ -244,7 +244,7 @@ int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_
                 //The leader node is not in the new membership list
                 _raft->raft_step_down(rsp_current_idx);
             }
-            _raft->raft_flush();            
+            // _raft->raft_flush();            
         } 
         break;
     }
