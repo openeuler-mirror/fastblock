@@ -843,6 +843,7 @@ public:
 
     void raft_node_process_commit(int result, raft_index_t index, raft_node_id_t node_id);
     void send_pg_member_change_finished_notify(int result);
+
 private:
     int _recovery_by_snapshot(std::shared_ptr<raft_node> node);
     bool _has_majority_leases(raft_time_t now, int with_grace);
@@ -851,6 +852,7 @@ private:
     void _raft_get_entries_from_idx(raft_index_t start_index, raft_index_t end_index, msg_appendentries_t* ae);
     void _send_leader_be_elected_notify();
     void _recovery_delete(recovery_op_complete cb_fn, void* arg);
+    void _static_merger_info(int64_t merger_num, raft_index_t current_idx);
 
     /* the server's best guess of what the current term is
      * starts at zero */
@@ -932,6 +934,13 @@ private:
     std::queue<task_info> _tasks;
 
     std::shared_ptr<monitor::client> _mon_client;
+
+    uint64_t  _disk_io_num;
+    uint64_t  _merger_tow_num; 
+    uint64_t  _merger_five_num;
+    uint64_t  _merger_ten_num;
+    uint64_t  _merger_twenty_num;
+    uint64_t  _merger_fifty_num;
 };
 
 bool raft_votes_is_majority(std::pair<uint64_t, uint64_t> &node_num_pair, std::pair<uint64_t, uint64_t> &nvotes_pair);
