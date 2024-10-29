@@ -973,7 +973,7 @@ void raft_server_t::raft_write_entry_finish(raft_index_t start_idx, raft_index_t
     SPDK_INFOLOG(pg_group, "raft_write_entry_finish, [%ld-%ld] commit: %ld result: %d\n",
             start_idx, end_idx, raft_get_commit_idx(), result);
     raft_get_log()->raft_write_entry_finish(start_idx, end_idx, result);
-    raft_flush();
+    // raft_flush();
 }
 
 void raft_server_t::follow_raft_write_entry_finish(raft_index_t start_idx, raft_index_t end_idx, int result){
@@ -1028,7 +1028,7 @@ void raft_server_t::raft_node_process_commit(int result, raft_index_t index, raf
             raft_set_commit_idx(index);
             SPDK_DEBUGLOG(pg_group, "in pg %lu.%lu, _node_id %d _commit_idx %lu\n", raft_get_pool_id(),
                    raft_get_pg_id(), _node_id, raft_get_commit_idx());
-            raft_flush();
+            // raft_flush();
         }
     }
 }
@@ -1093,10 +1093,10 @@ int raft_server_t::raft_write_entry(std::shared_ptr<raft_entry_t> ety,
     }
 
     SPDK_DEBUGLOG(pg_group, "append entry to queue, _current_idx %ld, _commit_idx %ld\n", _current_idx, _commit_idx);
-    if(_current_idx > _commit_idx){
-        return 0;
-    }
-    raft_flush();
+    // if(_current_idx > _commit_idx){
+        // return 0;
+    // }
+    // raft_flush();
     return 0;
 }
 
@@ -1123,6 +1123,8 @@ void raft_server_t::stop_processing_entrys(int state){
 
 void raft_server_t::_static_merger_info(int64_t merger_num, raft_index_t current_idx){
     _disk_io_num++;
+    if(merger_num >= 100)
+        _merger_hundred_num++;
     if(merger_num >= 50)
         _merger_fifty_num++;
     else if(merger_num >= 20)
@@ -1134,10 +1136,23 @@ void raft_server_t::_static_merger_info(int64_t merger_num, raft_index_t current
     else if(merger_num >= 2)
         _merger_tow_num++;
     if(current_idx % 10000 == 0){
-        SPDK_INFOLOG(pg_group, "pg %lu.%lu, io num: %ld, disk io num: %ld, merger 2: %ld, merger 5: %ld, merger 10: %ld, merfer 20: %ld, merger 50: %ld\n",
+        SPDK_WARNLOG("pg %lu.%lu, io num: %ld, disk io num: %ld, merger 2: %ld, merger 5: %ld, merger 10: %ld, merfer 20: %ld, merger 50: %ld, merger 100: %ld\n",
                 raft_get_pool_id(), raft_get_pg_id(), current_idx, _disk_io_num, _merger_tow_num, _merger_five_num, 
-                _merger_ten_num, _merger_twenty_num, _merger_fifty_num);
+                _merger_ten_num, _merger_twenty_num, _merger_fifty_num, _merger_hundred_num);
     }
+}
+
+static int raft_task_func(void* arg){
+    raft_server_t* raft = (raft_server_t*)arg;
+    if(!raft->raft_is_leader()){
+        return 0;
+    }
+    if(raft->raft_get_current_idx() > raft->raft_get_commit_idx()){
+        //上一批还没处理完
+        return 0;
+    }
+    raft->raft_flush();
+    return 0;
 }
 
 void raft_server_t::raft_flush(){
@@ -1256,7 +1271,7 @@ void raft_server_t::process_conf_change_entry(std::shared_ptr<raft_entry_t> entr
     case RAFT_LOGTYPE_ADD_NONVOTING_NODE:
     {
         process_conf_change_add_nonvoting(entry);
-        raft_flush();
+        // raft_flush();
         break;
     }
     case RAFT_LOGTYPE_CONFIGURATION:
@@ -1541,6 +1556,7 @@ void raft_server_t::stop(raft_complete cb_fn, void* arg){
     raft_set_op_state(raft_op_state::RAFT_DOWN);
     SPDK_INFOLOG(pg_group, "stop pg %lu.%lu\n", _pool_id, _pg_id);
     spdk_poller_unregister(&_raft_timer);
+    spdk_poller_unregister(&_task_timer);
     stop_timed_task();
     /*
        上面停了状态机停，正在处理entry的就不能给客户端响应了，因此需要结束正在处理的，给客户端响应。
@@ -1630,6 +1646,7 @@ static int periodic_func(void* arg){
 void raft_server_t::start_raft_timer(int raft_heartbeat_period_time_msec,
   int  raft_lease_time_msec, int  raft_election_timeout_msec){
     _raft_timer = SPDK_POLLER_REGISTER(periodic_func, this, TIMER_PERIOD_MSEC * 1000);
+    _task_timer = SPDK_POLLER_REGISTER(raft_task_func, this, RAFT_TASK_TIMER_USEC);
     raft_set_election_timeout(raft_election_timeout_msec);
     raft_set_lease_maintenance_grace(raft_lease_time_msec);
     raft_set_heartbeat_timeout(raft_heartbeat_period_time_msec);
@@ -2502,6 +2519,7 @@ raft_server_t::raft_server_t(raft_client_protocol& client, disk_log* log,
     , _merger_ten_num(0)
     , _merger_twenty_num(0)
     , _merger_fifty_num(0)
+    , _merger_hundred_num(0)
 {
         raft_randomize_election_timeout();
         _log = log_new(std::move(log));
