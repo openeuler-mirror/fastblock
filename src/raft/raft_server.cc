@@ -1121,6 +1121,25 @@ void raft_server_t::stop_processing_entrys(int state){
     raft_get_log()->remove_entry_between(_first_idx, _current_idx);
 }
 
+void raft_server_t::_static_merger_info(int64_t merger_num, raft_index_t current_idx){
+    _disk_io_num++;
+    if(merger_num >= 50)
+        _merger_fifty_num++;
+    else if(merger_num >= 20)
+        _merger_twenty_num++;
+    else if(merger_num >= 10)
+        _merger_ten_num++;
+    else if(merger_num >= 5)
+        _merger_five_num++;
+    else if(merger_num >= 2)
+        _merger_tow_num++;
+    if(current_idx % 10000 == 0){
+        SPDK_INFOLOG(pg_group, "pg %lu.%lu, io num: %ld, disk io num: %ld, merger 2: %ld, merger 5: %ld, merger 10: %ld, merfer 20: %ld, merger 50: %ld\n",
+                raft_get_pool_id(), raft_get_pg_id(), current_idx, _disk_io_num, _merger_tow_num, _merger_five_num, 
+                _merger_ten_num, _merger_twenty_num, _merger_fifty_num);
+    }
+}
+
 void raft_server_t::raft_flush(){
     //上一次的log已经commit了
     auto last_cache_idx = raft_get_last_cache_entry();
@@ -1170,6 +1189,7 @@ void raft_server_t::raft_flush(){
     SPDK_INFOLOG(pg_group, "in pg %lu.%lu first_idx: %lu current_idx: %lu _commit_idx: %lu\n",
             raft_get_pool_id(), raft_get_pg_id(), _first_idx, _current_idx, _commit_idx);
 
+    _static_merger_info(_current_idx - _first_idx + 1, _current_idx);
     auto send_data = [this](std::shared_ptr<raft_node> node){
         if (!node || raft_is_self(node))
             return;
@@ -2476,6 +2496,12 @@ raft_server_t::raft_server_t(raft_client_protocol& client, disk_log* log,
     , _snapshot_index(0)
     , _snapshot_term(0)
     , _mon_client(mon_client)
+    , _disk_io_num(0)
+    , _merger_tow_num(0)
+    , _merger_five_num(0)
+    , _merger_ten_num(0)
+    , _merger_twenty_num(0)
+    , _merger_fifty_num(0)
 {
         raft_randomize_election_timeout();
         _log = log_new(std::move(log));
