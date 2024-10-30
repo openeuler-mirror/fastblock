@@ -89,7 +89,7 @@ case "$ID" in
     DEBIAN_FRONTEND=noninteractive apt-get install -y "${deb_deps[@]}"
     exit $?
     ;;
-  centos | rhel | openEuler | suse | culinux)
+  centos | rhel | fedora | openEuler | suse | culinux)
     yum install -y "${rpm_deps[@]}"
     exit $?
     ;;
