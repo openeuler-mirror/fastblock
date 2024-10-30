@@ -43,7 +43,11 @@
 
 #include <endian.h>
 
-#define conf_or_client(json_conf, opts, opts_key) conf_or_s(json_conf, "msg_client_"#opts_key, opts, opts_key)
+#define fb_rpc_client_key(k) "msg_client_"#k
+#define conf_or_client(json_conf, opts, opts_key) conf_or_s(json_conf, fb_rpc_client_key(opts_key), opts, opts_key)
+#define fb_rpc_client_printv(k, v, os) os << fb_rpc_client_key(k) << ": " << v << "\n"
+#define fb_rpc_client_print_suf(k, v, suf, os) os << fb_rpc_client_key(k) << ": " << v << suf << "\n"
+#define fb_rpc_client_print(k, o, os) fb_rpc_client_printv(k, o.k, os)
 
 namespace msg {
 namespace rdma {
@@ -54,9 +58,9 @@ public:
 
     struct options {
         size_t poll_cq_batch_size{128};
-        size_t metadata_memory_pool_capacity{16384};
+        size_t metadata_memory_pool_capacity{1024};
         size_t metadata_memory_pool_element_size{1024};
-        size_t data_memory_pool_capacity{16384};
+        size_t data_memory_pool_capacity{1024};
         size_t data_memory_pool_element_size{8192};
         size_t per_post_recv_num{512};
         std::chrono::system_clock::duration rpc_timeout{std::chrono::seconds{30}};
@@ -65,6 +69,31 @@ public:
         size_t connect_max_retry{10};
         std::chrono::system_clock::duration retry_interval{std::chrono::seconds{0}};
         std::chrono::system_clock::duration shutdown_timeout{std::chrono::microseconds{0}};
+
+        friend std::ostream& operator<<(std::ostream& os, const options& o) {
+            os << "[client]\n";
+            fb_rpc_client_print(poll_cq_batch_size, o, os);
+            fb_rpc_client_print(metadata_memory_pool_capacity, o, os);
+            fb_rpc_client_print(metadata_memory_pool_element_size, o, os);
+            fb_rpc_client_print(data_memory_pool_capacity, o, os);
+            fb_rpc_client_print(data_memory_pool_element_size, o, os);
+            fb_rpc_client_print(per_post_recv_num, o, os);
+            fb_rpc_client_print(rpc_batch_size, o, os);
+            fb_rpc_client_print(connect_max_retry, o, os);
+
+            auto rpc_timeout_interval = std::chrono::duration_cast<std::chrono::microseconds>(o.rpc_timeout).count();
+            fb_rpc_client_print_suf(rpc_timeout_us, rpc_timeout_interval, "us", os);
+
+            auto retry_us_count = std::chrono::duration_cast<std::chrono::microseconds>(o.retry_interval).count();
+            fb_rpc_client_print_suf(connect_retry_interval_us, retry_us_count, "us", os);
+
+            auto shutdown_us = std::chrono::duration_cast<std::chrono::microseconds>(o.shutdown_timeout).count();
+            fb_rpc_client_print_suf(shutdown_timeout_us, shutdown_us, "us", os);
+
+            os << *(o.ep);
+
+            return os;
+        }
     };
 
     static std::shared_ptr<options> make_options(boost::property_tree::ptree& conf) {
@@ -76,7 +105,6 @@ public:
         conf_or_client(conf, opts, data_memory_pool_element_size);
         conf_or_client(conf, opts, per_post_recv_num);
         conf_or_client(conf, opts, rpc_batch_size);
-        conf_or_client(conf, opts, connect_max_retry);
         conf_or_client(conf, opts, connect_max_retry);
 
         if (conf.count("msg_client_rpc_timeout_us") != 0) {

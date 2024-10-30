@@ -148,17 +148,19 @@ void client::emplace_osd_boot_request(
   const std::string& osd_uuid,
   const int64_t size,
   const uint32_t core_num,
+  const std::string& config,
   on_response_callback_type&& cb) {
     auto req = std::make_unique<msg::Request>();
     auto* boot_req = req->mutable_boot_request();
     boot_req->set_osd_id(osd_id);
     boot_req->set_uuid(osd_uuid.c_str());
     boot_req->set_address(osd_addr.c_str());
+    boot_req->set_config(config);
     auto* proto_sharded_ports = boot_req->mutable_sharded_ports();
     for (auto it = sharded_ports.begin(); it != sharded_ports.end(); ++it) {
         msg::ShardCore shard_core;
         shard_core.set_coreid(it->second.first);
-        shard_core.set_port(it->second.second); 
+        shard_core.set_port(it->second.second);
         proto_sharded_ports->insert({it->first, std::move(shard_core)});
     }
     boot_req->set_size(size);
@@ -833,24 +835,6 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
                 );
                 resp_stack->un_connected_count++;
             }
-
-            // _pm.lock()->get_pg_group().create_connect(
-            //   osd_info.node_id, osd_info.address, osd_info.port,
-            //   [this, raw_stack = resp_stack.get(), node_id = osd_info.node_id] (void *, int res) {
-            //       if (res != err::E_SUCCESS) {
-            //           SPDK_ERRLOG("ERROR: Connect failed\n");
-            //           auto it = _osd_map.data.find(node_id);
-            //           if (it != _osd_map.data.end()) {
-            //               it->second->isup = false;
-            //           }
-            //         //   throw std::runtime_error{"connect failed"};
-            //       }
-
-            //       raw_stack->un_connected_count--;
-            //       SPDK_DEBUGLOG(mon, "Connected, un-connected count is %ld\n",
-            //       raw_stack->un_connected_count);
-            //   }
-            // );
         }
     }
 

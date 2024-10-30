@@ -32,7 +32,11 @@
 
 #include <endian.h>
 
-#define conf_or_server(json_conf, opts, opts_key) conf_or_s(json_conf, "msg_server_"#opts_key, opts, opts_key)
+#define fb_rpc_server_key(k) "msg_server_"#k
+#define conf_or_server(json_conf, opts, opts_key) conf_or_s(json_conf, fb_rpc_server_key(opts_key), opts, opts_key)
+#define fb_rpc_server_printv(k, v, os) os << fb_rpc_server_key(k) << ": " << v << "\n"
+#define fb_rpc_server_print_suf(k, v, suf, os) os << fb_rpc_server_key(k) << ": " << v << suf << "\n"
+#define fb_rpc_server_print(k, o, os) fb_rpc_server_printv(k, o.k, os)
 namespace msg {
 namespace rdma {
 
@@ -149,11 +153,32 @@ public:
         std::chrono::system_clock::duration rpc_timeout{std::chrono::seconds{5}};
         std::chrono::system_clock::duration shutdown_timeout{std::chrono::microseconds{0}};
         std::unique_ptr<endpoint> ep{nullptr};
+
+        friend std::ostream& operator<<(std::ostream& os, const options& o) {
+            os << "[server]\n";
+            fb_rpc_server_print(poll_cq_batch_size, o, os);
+            fb_rpc_server_print(metadata_memory_pool_capacity, o, os);
+            fb_rpc_server_print(metadata_memory_pool_element_size, o, os);
+            fb_rpc_server_print(data_memory_pool_capacity, o, os);
+            fb_rpc_server_print(data_memory_pool_element_size, o, os);
+            fb_rpc_server_print(per_post_recv_num, o, os);
+
+            auto rpc_timeout_interval = std::chrono::duration_cast<std::chrono::microseconds>(o.rpc_timeout).count();
+            fb_rpc_server_print_suf(rpc_timeout_us, rpc_timeout_interval, "us", os);
+
+            auto shutdown_us = std::chrono::duration_cast<std::chrono::microseconds>(o.shutdown_timeout).count();
+            fb_rpc_server_print_suf(shutdown_timeout_us, shutdown_us, "us", os);
+
+            os << *(o.ep);
+
+            return os;
+        }
     };
 
     static std::shared_ptr<options> make_options(boost::property_tree::ptree& conf) {
         auto opts = std::make_shared<options>();
         conf_or_server(conf, opts, listen_backlog);
+        conf_or_server(conf, opts, poll_cq_batch_size);
         conf_or_server(conf, opts, metadata_memory_pool_capacity);
         conf_or_server(conf, opts, metadata_memory_pool_element_size);
         conf_or_server(conf, opts, data_memory_pool_capacity);

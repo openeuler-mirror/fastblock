@@ -83,6 +83,7 @@ message BootRequest {
     string address = 5;
     string host = 6;
     uint32 core_num = 7;
+    string config = 8;
 }
 
 message PGInfo {
@@ -373,6 +374,14 @@ message DataStatisticsResponse {
     bool ok = 1;
 }
 
+message OsdConfigRequest {
+    int32 osdid = 1;
+}
+
+message OsdConfigResponse {
+    string config = 1;
+}
+
 message Request {
     oneof union {
         BootRequest boot_request = 1;
@@ -397,6 +406,7 @@ message Request {
         NoOutRequest   no_out_request=20;
         GetClusterStatusRequest get_cluster_status_request=21;
         DataStatisticsRequest   data_statistics_request=22;
+        OsdConfigRequest osd_config_request=23;
     }
 }
 
@@ -424,5 +434,6 @@ message Response {
         NoOutResponse  no_out_response=20;
         GetClusterStatusResponse  get_cluster_status_response=21;
         DataStatisticsResponse    data_statistics_response=22;
+        OsdConfigResponse osd_config_response=23;
     }
 }
