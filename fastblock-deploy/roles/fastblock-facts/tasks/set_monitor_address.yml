@@ -1,0 +1,15 @@
+---
+- name: Set_fact _monitor_addresses - ipv4
+  ansible.builtin.set_fact:
+    _monitor_addresses: "{{ _monitor_addresses | default({}) | combine({item: hostvars[item]['ansible_facts']['all_ipv4_addresses'] | first}) }}"
+  with_items: "{{ groups.get(mon_group_name, []) }}"
+  when:
+    - ip_version == 'ipv4'
+
+
+- name: Set_fact _monitor_addresses - ipv6
+  ansible.builtin.set_fact:
+    _monitor_addresses: "{{ _monitor_addresses | default({}) | combine({item: hostvars[item]['ansible_facts']['all_ipv6_addresses'] | last | ansible.utils.ipwrap}) }}"
+  with_items: "{{ groups.get(mon_group_name, []) }}"
+  when:
+    - ip_version == 'ipv6'

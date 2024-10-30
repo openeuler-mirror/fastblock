@@ -1,0 +1,9 @@
+---
+- name: Start the monitor service
+  ansible.builtin.systemd:
+    name: fastblock-mon@{{ inventory_hostname }}
+    state: started
+    enabled: true
+    masked: false
+    daemon_reload: true
+

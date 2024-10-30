@@ -1,0 +1,6 @@
+---
+- name: Include_tasks common.yml
+  ansible.builtin.include_tasks: common.yml
+
+- name: Include deploy_monitors.yml
+  ansible.builtin.include_tasks: deploy_monitors.yml

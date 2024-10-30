@@ -1,0 +1,4 @@
+---
+- name: Import_tasks set_monitor_address.yml
+  ansible.builtin.import_tasks: set_monitor_address.yml
+  when: groups.get(mon_group_name, []) | length > 0

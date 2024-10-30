@@ -1,0 +1,8 @@
+- name: Install dependencies
+  ansible.builtin.apt:
+    name: "{{ debian_package_dependencies }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  register: result
+  until: result is succeeded

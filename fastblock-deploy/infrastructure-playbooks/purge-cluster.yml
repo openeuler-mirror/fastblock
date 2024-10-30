@@ -1,0 +1,246 @@
+---
+# This playbook purges fastblock
+# It removes: packages, configuration files and ALL THE DATA
+#
+# Use it like this:
+# ansible-playbook purge-cluster.yml
+#     Prompts for confirmation to purge, defaults to no and
+#     doesn't purge the cluster. yes purges the cluster.
+#
+# ansible-playbook -e ireallymeanit=yes|no purge-cluster.yml
+#     Overrides the prompt using -e option. Can be used in
+#     automation scripts to avoid interactive prompt.
+
+- name: Confirm whether user really meant to purge the cluster
+  hosts: localhost
+  gather_facts: false
+  vars_prompt:
+    - name: ireallymeanit  # noqa: name[casing]
+      prompt: Are you sure you want to purge the cluster?
+      default: 'no'
+      private: false
+  tasks:
+    - name: Exit playbook, if user did not mean to purge cluster
+      ansible.builtin.fail:
+        msg: >
+          "Exiting purge-cluster playbook, cluster was NOT purged.
+           To purge the cluster, either say 'yes' on the prompt or
+           or use `-e ireallymeanit=yes` on the command line when
+           invoking the playbook"
+      when: ireallymeanit != 'yes'
+
+
+- name: Gather facts on all hosts
+  hosts:
+    - monitors
+    - osds
+    - clients
+  become: true
+  tasks:
+    - name: Gather facts on all fastblock hosts for following reference
+      ansible.builtin.debug:
+        msg: "gather facts on all fastblock hosts for following reference"
+
+
+- name: Purge fastblock osd cluster
+  vars:
+    reboot_osd_node: false
+  hosts: osds
+  gather_facts: false # Already gathered previously
+  become: true
+  handlers:
+    - name: Restart machine  # noqa: ignore-errors
+      ansible.builtin.shell: sleep 2 && shutdown -r now "Ansible updates triggered"
+      async: 1
+      poll: 0
+      ignore_errors: true
+      changed_when: false
+
+    - name: Wait for server to boot
+      become: false
+      ansible.builtin.wait_for:
+        port: 22
+        host: "{{ hostvars[inventory_hostname]['ansible_facts']['default_ipv4']['address'] }}"
+        state: started
+        delay: 10
+        timeout: 500
+        delegate_to: localhost
+
+    - name: Remove data
+      ansible.builtin.shell: rm -rf /var/lib/fastblock/*  # noqa no-free-form
+      changed_when: false
+  tasks:
+    - name: Import fastblock-defaults role
+      ansible.builtin.import_role:
+        name: fastblock-defaults
+
+    - name: Get osd numbers
+      ansible.builtin.shell: if [ -d /var/lib/fastblock/ ] ; then ls /var/lib/fastblock/ | sed 's/.*-//' ; fi  # noqa risky-shell-pipe
+      register: osd_ids
+      changed_when: false
+
+    - name: Stop fastblock-osd
+      ansible.builtin.service:
+        name: fastblock-osd.target
+        state: stopped
+        enabled: false
+
+    - name: Drop all cache
+      ansible.builtin.shell: "sync && sleep 1 && echo 3 > /proc/sys/vm/drop_caches"
+      changed_when: false
+
+    - name: Remove osd /var/lib/fastblock/
+      ansible.builtin.file:
+        path: /var/lib/fastblock/
+        state: absent
+      register: remove_osd_data
+      ignore_errors: true
+
+    - name: Is reboot needed
+      ansible.builtin.command: echo requesting reboot
+      delegate_to: localhost
+      become: false
+      notify:
+        - Restart machine
+        - Wait for server to boot
+        - Remove data
+      changed_when: false
+      when:
+        - reboot_osd_node | bool
+        - remove_osd_data.failed is defined
+
+    - name: Remove fastblock osd service
+      ansible.builtin.file:
+        path: /etc/systemd/system/fastblock-osd{{ item }}
+        state: absent
+      loop:
+        - '@.service'
+        - '.target'
+
+- name: Purge fastblock mon cluster
+  hosts: monitors
+  gather_facts: false # already gathered previously
+  become: true
+  tasks:
+    - name: Stop fastblock mons with systemd
+      ansible.builtin.service:
+        name: "fastblock-mon.target"
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Remove monitor /var/lib/fastblock
+      ansible.builtin.file:
+        path: /var/lib/fastblock
+        state: absent
+
+    - name: Remove fastblock mon service
+      ansible.builtin.file:
+        path: "/etc/systemd/system/fastblock-mon{{ item }}"
+        state: absent
+      loop:
+        - '@.service'
+        - '.target'
+
+- name: Final cleanup - check any running fastblock, purge fastblock packages, purge config and remove data
+  vars:
+    # When set to true both groups of packages are purged.
+    # This can cause problem with qemu-kvm
+    purge_all_packages: true
+    fastblock_packages:
+      - fastblock-mon
+      - fastblock-osd
+      - fastblock
+  hosts:
+    - monitors
+    - osds
+    - clients
+  gather_facts: false # Already gathered previously
+  become: true
+  handlers:
+    - name: Remove data
+      ansible.builtin.shell: rm -rf /var/lib/fastblock/*  # noqa no-free-form
+      changed_when: false
+      listen: "Remove data"
+  tasks:
+    - name: Import fastblock-defaults role
+      ansible.builtin.import_role:
+        name: fastblock-defaults
+
+    - name: Purge fastblock packages with yum
+      ansible.builtin.yum:
+        name: "{{ fastblock_packages }}"
+        state: absent
+      when: ansible_facts['pkg_mgr'] == 'yum'
+
+    - name: Purge fastblock packages with dnf
+      ansible.builtin.dnf:
+        name: "{{ fastblock_packages }}"
+        state: absent
+      when: ansible_facts['pkg_mgr'] == 'dnf'
+
+    - name: Purge fastblock packages with apt
+      ansible.builtin.apt:
+        name: "{{ fastblock_packages }}"
+        state: absent
+        purge: true
+      when: ansible_facts['pkg_mgr'] == 'apt'
+
+    - name: Remove config left
+      ansible.builtin.file:
+        path: /etc/fastblock
+        state: absent
+
+    - name: Remove logs
+      ansible.builtin.file:
+        path: /var/log/fastblock
+        state: absent
+
+    - name: Request data removal
+      ansible.builtin.command: echo requesting data removal  # noqa no-changed-when
+      become: false
+      delegate_to: localhost
+      notify: Remove data
+
+    - name: Purge dnf cache
+      ansible.builtin.command: dnf clean all
+      changed_when: false
+      when: ansible_facts['pkg_mgr'] == 'dnf'
+
+    - name: Clean apt
+      ansible.builtin.command: apt-get clean  # noqa command-instead-of-module
+      changed_when: false
+      when: ansible_facts['pkg_mgr'] == 'apt'
+
+    - name: Find fastblock systemd unit files to remove
+      ansible.builtin.find:
+        paths: "/etc/systemd/system"
+        pattern: "fastblock*"
+        recurse: true
+        file_type: any
+      register: systemd_files
+
+    - name: Remove fastblock systemd unit files
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      with_items: "{{ systemd_files.files }}"
+
+    - name: Set hugepages zero
+      ansible.builtin.shell: echo 0 > /sys/devices/system/node/node0/hugepages/hugepages-2048kB/nr_hugepages
+      changed_when: false
+      failed_when: false
+
+- name: Purge fetch directory
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Set fetch_directory value if not set
+      ansible.builtin.set_fact:
+        fetch_directory: "fetch/"
+      when: fetch_directory is not defined
+
+    - name: Purge fetch directory for localhost
+      ansible.builtin.file:
+        path: "{{ fetch_directory | default('fetch/') }}"
+        state: absent

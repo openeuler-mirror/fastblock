@@ -1,0 +1,8 @@
+[monitors]
+monitor ansible_host=monitor_ip
+
+[osds]
+osd ansible_host=osd_ip disks=osd_disks nic=osd_nic
+
+[clients]
+client ansible_host=client_ip

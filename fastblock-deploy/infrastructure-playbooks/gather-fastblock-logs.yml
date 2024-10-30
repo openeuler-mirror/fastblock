@@ -1,0 +1,34 @@
+---
+- name: Gather fastblock logs
+  hosts:
+    - monitors
+    - osds
+    - clients
+
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Create a temp directory
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: fastblock_deploy
+      run_once: true
+      register: localtempfile
+      become: false
+      delegate_to: localhost
+
+    - name: Set_fact lookup_fastblock_config - lookup conf and logs
+      ansible.builtin.find:
+        paths:
+          - /etc/fastblock
+          - /var/log/fastblock
+      register: fastblock_collect
+
+    - name: Collect fastblock logs and config on the machine running ansible
+      ansible.builtin.fetch:
+        src: "{{ item.path }}"
+        dest: "{{ localtempfile.path }}"
+        fail_on_missing: false
+        flat: false
+      with_items: "{{ fastblock_collect.files }}"

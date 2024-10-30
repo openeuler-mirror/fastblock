@@ -1,0 +1,124 @@
+---
+# You can override vars by using host or group vars
+
+###########
+# GENERAL #
+###########
+
+# Inventory host group variables
+mon_group_name: monitors
+osd_group_name: osds
+client_group_name: clients
+
+############
+# PACKAGES #
+############
+debian_package_dependencies:
+  - pkg-config
+  - git
+  - golang
+  - autoconf
+  - automake
+  - pandoc
+  - libboost-all-dev
+  - build-essential
+  - protobuf-compiler
+  - libprotobuf-dev
+  - cmake
+  - make
+  - jq
+  - libnl-3-dev
+  - libnl-route-3-dev
+  - libibverbs-dev
+  - librdmacm-dev
+  - meson
+  - python3-pyelftools
+  - uuid-dev
+  - libssl-dev
+  - libaio-dev
+  - ninja-build
+  - libubsan1
+  - libasan6
+  - libboost-dev
+  - libnuma-dev
+  - patchelf
+  - python3-pip
+  - libtool
+
+openEuler_package_dependencies:
+  - pkgconfig
+  - git
+  - golang
+  - autoconf
+  - automake
+  - libtool
+  - gcc
+  - jq
+  - gcc-c++
+  - protobuf-devel
+  - cmake
+  - make
+  - libnl3-devel
+  - libibverbs-devel
+  - librdmacm-devel
+  - meson
+  - python3-pyelftools
+  - nc
+  - libuuid-devel
+  - openssl-devel
+  - libaio-devel
+  - ninja-build
+  - libubsan
+  - libasan
+  - boost-devel
+  - boost
+  - numactl-devel
+  - patchelf
+  - python3-pip
+
+centos_package_dependencies: []
+
+redhat_package_dependencies: []
+
+suse_package_dependencies: []
+
+fastblock_monitor_rpm_package: "fastblock-mon.rpm"
+fastblock_osd_rpm_package: "fastblock-osd.rpm"
+fastblock_client_rpm_package: "fastblock.rpm"
+
+fastblock_directories_mode: "0755"
+
+###########################
+# FASTBLOCK CONFIGURATION #
+###########################
+
+## fastblock options
+
+fastblock_conf_directory: /etc/fastblock
+
+## Monitor options
+#
+fastblock_monitor_conf_file: /etc/fastblock/monitor.json
+monitor_max_core: 2
+
+# set to either ipv4 or ipv6, whichever your network is using
+ip_version: ipv4
+
+## Osd options
+#
+add_osd: true
+fastblock_osd_conf_file: /etc/fastblock/fastblock.json
+
+nr_hugepages_num: 3072
+nr_hugepages_path: /sys/devices/system/node/node0/hugepages/hugepages-2048kB/nr_hugepages
+
+_bdev_type: aio
+
+osd_empty_file_space: 5G
+
+fastblock_osd_cores: 2
+###################
+# CONFIG OVERRIDE #
+###################
+
+fastblock_conf_overrides: {}
