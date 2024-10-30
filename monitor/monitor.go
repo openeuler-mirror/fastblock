@@ -194,9 +194,10 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 		addr := payload.BootRequest.GetAddress()
 		host := payload.BootRequest.GetHost()
 		core_num := payload.BootRequest.GetCoreNum()
+		osd_config := payload.BootRequest.GetConfig()
 		log.Info(ctx, "Received BootRequest from osd ", id, " address ", addr)
 
-		errnum := osd.ProcessBootMessage(ctx, client, id, uuid, size, sharded_ports, host, addr, core_num)
+		errnum := osd.ProcessBootMessage(ctx, client, id, uuid, size, sharded_ports, host, addr, core_num, osd_config)
 
 		// Create a BootResponse
 		response := &msg.Response{
@@ -610,6 +611,22 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			Union: &msg.Response_DataStatisticsResponse{
 				DataStatisticsResponse: &msg.DataStatisticsResponse{
 					Ok: ok,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_OsdConfigRequest:
+		log.Info(ctx, "Received OsdConfigRequest")
+		osd_id := payload.OsdConfigRequest.GetOsdid()
+		response := &msg.Response{
+			Union: &msg.Response_OsdConfigResponse{
+				OsdConfigResponse: &msg.OsdConfigResponse{
+					Config: osd.ProcessOsdConfigMessage(ctx, client, osd_id),
 				},
 			},
 		}

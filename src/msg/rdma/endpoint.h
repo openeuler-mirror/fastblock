@@ -13,6 +13,7 @@
 #include <boost/format.hpp>
 #include <boost/property_tree/ptree.hpp>
 
+#include <iostream>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -89,6 +90,24 @@ public:
     std::optional<std::string> device_name{std::nullopt};
     std::optional<uint8_t> device_port{std::nullopt};
     std::optional<int> gid_index{std::nullopt};
+
+public:
+
+    friend std::ostream& operator<<(std::ostream& os, const endpoint& p) {
+        os << "msg_server_listen_backlog: " << p.backlog << "\n"
+           << "msg_rdma_resolve_timeout_us: " << p.resolve_timeout_us << "\n"
+           << "msg_rdma_poll_cm_event_timeout_us: " << p.poll_cm_event_timeout_us << "\n"
+           << "msg_rdma_max_send_wr: " << p.max_send_wr << "\n"
+           << "msg_rdma_max_send_sge: " << p.max_send_sge << "\n"
+           << "msg_rdma_max_recv_wr: " << p.max_recv_wr << "\n"
+           << "msg_rdma_max_recv_sge: " << p.max_recv_sge << "\n"
+           << "msg_rdma_max_inline_data: " << p.max_inline_data << "\n"
+           << "msg_rdma_cq_num_entries: " << p.cq_num_entries << "\n"
+           << "msg_rdma_qp_sig_all: " << std::boolalpha << p.qp_sig_all << "\n"
+           << "rdma_device_name: " << p.device_name.value_or("<un-specified>") << "\n";
+
+        return os;
+    }
 };
 } // namespace rdma
 } // namespace msg

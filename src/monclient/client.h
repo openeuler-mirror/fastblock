@@ -417,6 +417,7 @@ public:
       const std::string&,
       const int64_t,
       const uint32_t,
+      const std::string&,
       on_response_callback_type&&);
 
     void emplace_create_image_request(

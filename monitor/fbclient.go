@@ -712,6 +712,11 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 				stopChan <- struct{}{}
 				return
 
+			case *msg.Response_OsdConfigResponse:
+				fmt.Println(payload.OsdConfigResponse.GetConfig())
+				stopChan <- struct{}{}
+				return
+
 			default:
 				fmt.Printf("Unknown message type %v\r\n", payload)
 
@@ -1136,10 +1141,20 @@ func clientSendStatus(conn net.Conn) {
 	sendClientReqeust(request, conn)
 }
 
+func clientSendOsdConfig(conn net.Conn) {
+	request := &msg.Request{
+		Union: &msg.Request_OsdConfigRequest{
+			OsdConfigRequest: &msg.OsdConfigRequest{Osdid: int32(*osdid)},
+		},
+	}
+
+	sendClientReqeust(request, conn)
+}
+
 func main() {
 	ops := [...]string{"watchclustermap", "getclustermap", "fakeapplyid", "fakebootosd", "fakestartcluster",
 		"createpool", "deletepool", "listpools", "getosdmap", "getpgmap", "watchosdmap", "watchpgmap", "fakestoposd",
-		"createimage", "removeimage", "resizeimage", "getimage", "outosd", "inosd", "status"}
+		"createimage", "removeimage", "resizeimage", "getimage", "outosd", "inosd", "status", "showconfig"}
 	supported_op := "supported: "
 	for i := 0; i < len(ops); i++ {
 		if i == 0 {
@@ -1313,6 +1328,8 @@ func main() {
 		go clientSendInOsd(conn, *osdid)
 	case "status":
 		go clientSendStatus(conn)
+	case "showconfig":
+		go clientSendOsdConfig(conn)
 	}
 
 	if *op == "" {

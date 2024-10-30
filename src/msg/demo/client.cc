@@ -46,6 +46,7 @@ struct rpc_client_context {
     std::list<std::unique_ptr<call_stack>> call_stacks{};
     double acc_duration{0.0};
     int64_t count{0};
+    int64_t done_count{0};
     int64_t total_iter_size{0};
     std::chrono::system_clock::time_point iops_start_at{};
     bool done{false};
@@ -178,13 +179,14 @@ void iter_on_pong(rpc_client_context* ctx) {
     auto* stack_ptr = ctx->call_stacks.front().get();
     auto dur = (std::chrono::system_clock::now() - stack_ptr->start_at).count();
     ctx->acc_duration += static_cast<double>(dur);
+    ctx->done_count += 1;
 
     SPDK_DEBUGLOG(
       demo_cli,
       "received reply id %ld on core %d\n",
       stack_ptr->resp->id(), ::spdk_env_get_current_core());
     g_all_rpc_dur += static_cast<double>(dur);
-    if (static_cast<int64_t>(stack_ptr->resp->id()) >= ctx->total_iter_size - 1) {
+    if (ctx->done_count >= ctx->total_iter_size - 1) {
         ctx->done = true;
         auto* evt = ::spdk_event_allocate(::spdk_env_get_first_core(), on_core_iter_done, nullptr, nullptr);
         ::spdk_event_call(evt);

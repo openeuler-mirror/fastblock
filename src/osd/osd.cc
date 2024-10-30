@@ -344,6 +344,12 @@ void start_monitor(server_t* ctx) {
         sharded_ports[index] = std::make_pair(core_id, port);
         index++;
     }
+
+    std::stringstream ss{};
+    auto srv_opt = msg::rdma::server::make_options(ctx->pt);
+    auto cli_opt = msg::rdma::client::make_options(ctx->pt);
+    ss << *srv_opt << *cli_opt;
+
     monitor_client->emplace_osd_boot_request(
       ctx->node_id,
       ctx->osd_addr,
@@ -351,6 +357,7 @@ void start_monitor(server_t* ctx) {
       ctx->osd_uuid,
       1024 * 1024,
       core_sharded::get_core_sharded().count(),
+      ss.str(),
       std::move(cb));
 }
 
@@ -409,7 +416,7 @@ static bool save_bs_disk_space(){
     if(!std::filesystem::exists(path)){
         SPDK_ERRLOG("path %s is not exist.\n", path.c_str());
         return false;
-    }    
+    }
 
     std::ofstream ofs(path, std::ios::app);
     if(ofs.is_open()){
@@ -429,13 +436,13 @@ static void get_bs_disk_space(uint32_t core_size){
     if(!std::filesystem::exists(path)){
         std::cerr << "path " << path << " is not exist" << std::endl;
         return;
-    }  
+    }
 
     std::ifstream ifs(path);
 
     if(!ifs.is_open()){
         return ;
-    }    
+    }
 
     std::string data;
     if(!getline(ifs, data)){
@@ -448,7 +455,7 @@ static void get_bs_disk_space(uint32_t core_size){
         if(!getline(ifs, data)){
             break;
         }
-        
+
         auto r = spdk_strarray_from_string(data.c_str(), " ");
         if((r[0] == "" || r[0] == nullptr) || (r[1] == "" || r[1] == nullptr)){
             spdk_strarray_free(r);
@@ -644,19 +651,6 @@ struct pm_load_context : public utils::context{
 			return;
 		}
 
-// #ifdef DEBUG
-//         if (not g_mkfs) {
-//             SPDK_NOTICELOG("partation manager load done\n");
-//             osd_load_ctx* xctx = new osd_load_ctx{.server = server, .pm = pm};
-//             osd_load_done(xctx);
-//             return;
-//         }
-// #endif
-
-
-
-
-        // SPDK_WARNLOG("pm start done\n");
         osd_load_ctx* ctx = new osd_load_ctx{.server = server, .pm = pm};
         ctx->loads.start();
         uint32_t shard_id = 0;
@@ -1002,7 +996,7 @@ static void osd_stop(void *arg) noexcept {
                         rpc_srv->stop([complete](){
                             complete->complete(err::E_SUCCESS);
                         });
-                      }  
+                      }
                     );
                 }
                 return;
