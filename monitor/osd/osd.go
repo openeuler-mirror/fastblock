@@ -27,7 +27,7 @@ type OSDID int
 // (fixme) make it configurable
 const (
 	heartbeatInterval = 3 * time.Second
-	// min hearbeats before we mark it up
+	// min heartbeats before we mark it up
 	minSuccessAttempts = 1
 	osdDownInterval    = 10 * time.Second
 	osdDownOutInterval = 30 * time.Second
@@ -41,7 +41,7 @@ func isValidPort(port uint32) bool {
 	return port <= 65535
 }
 
-// when osd restarts, following infomation is changed(host may not)
+// when osd restarts, following information is changed(host may not)
 type OSDInfo struct {
 	Osdid           int    `json:"osdid"`
 	Address         string `json:"address"`
@@ -343,7 +343,7 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 	}
 
 	if !isValidIPv4(address) || !isValidPort(port) {
-		log.Warn(ctx, "invalide ip or port.")
+		log.Warn(ctx, "invalid ip or port.")
 		return OSD_ERR_ADDRESS_INVALID
 	}
 
