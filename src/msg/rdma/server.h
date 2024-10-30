@@ -229,10 +229,7 @@ public:
         _pd->value(), "srv_data",
         _opts->data_memory_pool_capacity,
         _opts->data_memory_pool_element_size, 0, _sock_id)} {
-        auto ipv4_address = _dev->query_ipv4(
-          _opts->ep->device_name,
-          _opts->ep->device_port,
-          _opts->ep->gid_index);
+        auto ipv4_address = _dev->get_ipv4(_opts->ep->device_name);
 
         if (not ipv4_address) {
             throw std::runtime_error{"cant query the ipv4"};
