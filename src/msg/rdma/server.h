@@ -961,12 +961,12 @@ public:
      */
 
     void handle_start() {
-        _ib_cm_event_poller.register_poller(ib_cm_event_poller, this, 0);
-        _cq_poller.register_poller(cq_poller, this, 0);
-        _cqe_poller.register_poller(cqe_poller, this, 0);
-        _task_poller.register_poller(task_poller, this, 0);
-        _task_read_poller.register_poller(task_read_poller, this, 0);
-        _task_reply_poller.register_poller(task_reply_poller, this, 0);
+        _ib_cm_event_poller.register_poller(ib_cm_event_poller, this, 0, "rpc_srv_ib_evt");
+        _cq_poller.register_poller(cq_poller, this, 0, "rpc_srv_cq");
+        _cqe_poller.register_poller(cqe_poller, this, 0, "rpc_srv_cqe");
+        _task_poller.register_poller(task_poller, this, 0, "rpc_srv_task");
+        _task_read_poller.register_poller(task_read_poller, this, 0, "rpc_srv_rdma_read");
+        _task_reply_poller.register_poller(task_reply_poller, this, 0, "rpc_srv_reply");
         SPDK_INFOLOG(msg, "Rpc server started\n");
     }
 
@@ -975,7 +975,7 @@ public:
         _stop_ctx->timeout_at = std::chrono::system_clock::now() + _opts->shutdown_timeout;
         _is_terminated = true;
         SPDK_NOTICELOG("Start stop the rpc server\n");
-        _stop_poller.register_poller(stop_timeout_poller, this, 0);
+        _stop_poller.register_poller(stop_timeout_poller, this, 0, "rpc_srv_stop");
     }
 
     void handle_add_service(std::unique_ptr<add_service_ctx> ctx) {

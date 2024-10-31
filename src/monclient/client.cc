@@ -98,7 +98,7 @@ void client::handle_start() {
     SPDK_INFOLOG(mon, "Starting monitor client...\n");
 
     _cluster->connect();
-    _core_poller.register_poller(monitor::core_poller_handler, this, 0);
+    _core_poller.register_poller(monitor::core_poller_handler, this, 0, "mon_core");
 
     _is_running = true;
 }
@@ -135,7 +135,7 @@ void client::start_cluster_map_poller() {
 
 void client::handle_start_cluster_map_poller() {
     _get_cluster_map_poller.register_poller(
-      monitor::send_cluster_map_request, this, _poll_period_us);
+      monitor::send_cluster_map_request, this, _poll_period_us, "cluster_map");
 }
 
 /*

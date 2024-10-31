@@ -486,7 +486,7 @@ public:
               _opts->metadata_memory_pool_element_size, 0, _sock_id);
             _recv_ctx = std::make_unique<memory_pool<::ibv_recv_wr>::net_context*[]>(
               _opts->per_post_recv_num);
-            _poller.register_poller(connection_poller, this, 0);
+            _poller.register_poller(connection_poller, this, 0, "rpc_cli_conn");
         }
 
         void enqueue_request(std::unique_ptr<rpc_request> req) {
@@ -1285,7 +1285,7 @@ public:
     void handle_start(std::unique_ptr<start_context> ctx) {
         if (_is_started) { return; }
         _is_started = true;
-        _core_poller.register_poller(core_poller, this, 0);
+        _core_poller.register_poller(core_poller, this, 0, "rpc_cli_core");
 
         if (ctx->on_start_cb) {
             ctx->on_start_cb.value()();
@@ -1305,7 +1305,7 @@ public:
         _is_terminated = true;
         _stop_ctx = std::move(ctx);
         _stop_timeout_at = std::chrono::system_clock::now() + _opts->shutdown_timeout;
-        _stop_poller.register_poller(stop_poller, this, 0);
+        _stop_poller.register_poller(stop_poller, this, 0, "rpc_cli_stop");
     }
 
     void handle_emplace_eonnection(std::unique_ptr<emplace_connection_context> ctx) {
