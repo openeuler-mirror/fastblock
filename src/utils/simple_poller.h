@@ -27,6 +27,7 @@ public:
         ::spdk_poller_fn fn{nullptr};
         void* arg{nullptr};
         uint64_t period_microseconds{0};
+        std::optional<std::string> name{std::nullopt};
     };
 
     struct unregister_context {
@@ -78,7 +79,12 @@ public:
 
     static void handle_register(void* arg) noexcept {
         auto* ctx = reinterpret_cast<register_context*>(arg);
-        ctx->this_poller->_poller = SPDK_POLLER_REGISTER(ctx->fn, ctx->arg, ctx->period_microseconds);
+        if (ctx->name) {
+            ctx->this_poller->_poller =
+              ::spdk_poller_register_named(ctx->fn, ctx->arg, ctx->period_microseconds, ctx->name.value().c_str());
+        } else {
+            ctx->this_poller->_poller = SPDK_POLLER_REGISTER(ctx->fn, ctx->arg, ctx->period_microseconds);
+        }
         delete ctx;
     }
 
@@ -93,8 +99,8 @@ public:
         return ::spdk_thread_send_msg(_thread, simple_poller::handle_unregister, ctx);
     }
 
-    int register_poller(::spdk_poller_fn fn, void *arg, uint64_t period_microseconds) {
-        auto* ctx = new register_context{this, fn, arg, period_microseconds};
+    int register_poller(::spdk_poller_fn fn, void *arg, uint64_t period_microseconds, std::optional<std::string> name = std::nullopt) {
+        auto* ctx = new register_context{this, fn, arg, period_microseconds, name};
         return ::spdk_thread_send_msg(_thread, simple_poller::handle_register, ctx);
     }
 

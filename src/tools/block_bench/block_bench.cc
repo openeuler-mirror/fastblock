@@ -847,13 +847,17 @@ void on_app_start(void* arg) {
 
             g_print_ctx.print_poller = std::make_unique<utils::simple_poller>();
             g_print_ctx.print_poller->set_thread(mgr_thread);
-            g_print_ctx.print_poller->register_poller(print_stats_context::print_poll, &g_print_ctx, g_print_ctx.interval_us);
+            g_print_ctx.print_poller->register_poller(
+              print_stats_context::print_poll,
+              &g_print_ctx,
+              g_print_ctx.interval_us,
+              "blk_bench_print");
             watcher_ctx->watch_poller_holder.set_thread(mgr_thread);
         } else {
             watcher_ctx->watch_poller_holder.set_thread(mgr_thread);
         }
 
-        watcher_ctx->watch_poller_holder.register_poller(watch_poller, watcher_ctx, 0);
+        watcher_ctx->watch_poller_holder.register_poller(watch_poller, watcher_ctx, 0, "blk_bench_watch");
     };
 
     mon_client = std::make_unique<monitor::client>(eps, par_mgr, std::nullopt, std::move(cb));

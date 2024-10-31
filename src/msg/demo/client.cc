@@ -101,6 +101,7 @@ int parse_arg(int ch, char* arg) {
 
 void signal_handler(int signo) noexcept {
     SPDK_NOTICELOG("triger signo(%d)\n", signo);
+    g_is_terminated = true;
     ::spdk_app_stop(0);
 }
 
@@ -168,6 +169,10 @@ void on_core_iter_done(void* arg1, void* arg2) {
 }
 
 void iter_on_pong(rpc_client_context* ctx) {
+    if (g_is_terminated) {
+        return;
+    }
+
     if (g_ctrlr.Failed()) {
         SPDK_ERRLOG("ERROR: exec rpc failed: %s\n", g_ctrlr.ErrorText().c_str());
         g_is_terminated = true;

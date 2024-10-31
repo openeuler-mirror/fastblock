@@ -123,7 +123,7 @@ private:
 
     auto get_stub(utils::osd_info_t *osdinfo) {
         auto shard_id = utils::get_current_shard_id() % osdinfo->sharded_ports.size();
-        SPDK_DEBUGLOG(libblk, "currentcore: %u, first core: %u, shard_id: %lu\n", ::spdk_env_get_current_core(), 
+        SPDK_DEBUGLOG(libblk, "currentcore: %u, first core: %u, shard_id: %lu\n", ::spdk_env_get_current_core(),
                 ::spdk_env_get_first_core(), shard_id);
         // print_osd(osdinfo);
         return get_stub(osdinfo->node_id, osdinfo->address, osdinfo->sharded_ports.at(shard_id).port);
@@ -319,7 +319,7 @@ public:
     void handle_start(std::function<void()> cb) {
         SPDK_INFOLOG(libblk, "Starting block client...\n");
         _rpc_client->start();
-        _poller.register_poller(do_poll, this, 0);
+        _poller.register_poller(do_poll, this, 0, "fb_client");
         cb();
     }
 

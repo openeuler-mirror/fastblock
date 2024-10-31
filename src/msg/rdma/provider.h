@@ -21,6 +21,7 @@ struct provider {
     virtual void complete_qp_connect(::rdma_cm_id*) = 0;
     virtual void accept(::rdma_cm_id*, rdma_conn_param*) = 0;
     virtual int disconnect(::rdma_cm_id*) noexcept = 0;
+    virtual ~provider() noexcept = default;
 };
 
 } // namespace msg

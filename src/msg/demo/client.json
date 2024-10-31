@@ -1,9 +1,9 @@
 {
-    "server_address": "172.31.77.143",
+    "server_address": "172.31.4.143",
     "server_ports": [8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087],
     "io_depth": 32,
-    "iteration_count": 25000000,
-    "rdma_device_name": "rocep135s0f1",
+    "iteration_count": 128,
+    "rdma_device_name": "rocep94s0f0",
     "msg_client_poll_cq_batch_size": 32,
     "msg_client_metadata_memory_pool_capacity": 512,
     "msg_client_metadata_memory_pool_element_size": 512,
