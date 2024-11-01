@@ -14,7 +14,8 @@ set(FAST_BLOCK_SYSTEMD_ENV_DIR "/etc/sysconfig"
 foreach(service
     fastblock-mon@
     fastblock-osd@
-    fastblock-vhost)
+    fastblock-vhost
+    fastblock-nvmf-tgt)
   configure_file(
     ${service}.service
     @ONLY)
@@ -28,4 +29,5 @@ install(FILES
   fastblock-mon.target
   fastblock-osd.target
   fastblock-vhost.target
+  fastblock-nvmf-tgt.target
   DESTINATION ${SYSTEMD_SYSTEM_UNIT_DIR})

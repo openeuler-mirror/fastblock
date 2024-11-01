@@ -24,7 +24,9 @@ set(spdk_FIND_COMPONENTS
   lvol
   nvme
   thread
-  vhost)
+  vhost
+  nvmf
+  event_nvmf)
 
 set(spdk_FIND_SYSLIBS_COMPONENT syslibs)
 

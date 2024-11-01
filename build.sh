@@ -57,7 +57,7 @@ if [ "$component" = "monitor" ]; then
 	exit $?
 fi
 if [ "$component" = "osd" ]; then
-	echo "build fastblock(fastblock-osd、fastblock-vhost) C/C++ code"
+	echo "build fastblock(fastblock-osd、fastblock-vhost fastblock-nvmf-tgt) C/C++ code"
 	cd $root/proto && ./build.sh -t cpp
 	cmake -DCMAKE_BUILD_TYPE=$buildtype \
 	  -B$root/build \
