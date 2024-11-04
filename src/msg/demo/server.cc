@@ -117,12 +117,6 @@ void start_rpc_server(void* arg) {
         auto cpumask = core_sharded::make_cpumake(*it);
         auto opts = msg::rdma::server::make_options(g_pt);
         opts->port = ports.at(counter);
-
-        std::stringstream ss{};
-        ss << *opts;
-        std::cout << "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n";
-        std::cout << ss.str() << "\n";
-        std::cout << "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n";
         try {
             auto rpc_srv = std::make_unique<msg::rdma::server>(
               FMT_1("rpc_srv_%1%", *it), cpumask.get(), opts);
