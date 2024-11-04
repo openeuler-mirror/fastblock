@@ -19,14 +19,13 @@ constexpr uint32_t default_parallel_apply_num = 32;
 static int apply_task(void *arg){
     state_machine* stm = (state_machine *)arg;
     if(stm->get_raft()->raft_get_op_state() == raft_op_state::RAFT_INIT){
-        return 0;
+        return SPDK_POLLER_IDLE;
     }
-    stm->raft_apply_entry();
-    return 0;
+    return stm->raft_apply_entry();
 }
 
 void state_machine::start(){
-    SPDK_INFOLOG(pg_group, "pg %lu.%lu in shard %u\n", 
+    SPDK_INFOLOG(pg_group, "pg %lu.%lu in shard %u\n",
       get_raft()->raft_get_pool_id(), get_raft()->raft_get_pg_id(), core_sharded::get_core_sharded().this_shard_id());
     _timer = SPDK_POLLER_REGISTER(&apply_task, this, 0);
 }
@@ -54,7 +53,7 @@ struct apply_complete : public utils::context{
 int state_machine::raft_apply_entry()
 {
     if (_raft->raft_get_snapshot_in_progress())
-        return -1;
+        return SPDK_POLLER_IDLE;
 
     auto cur_time = utils::get_time();
     if((cur_time - _last_save_time) / 1000 > 1 || _last_applied_idx - _last_save_index >= 100){
@@ -69,10 +68,10 @@ int state_machine::raft_apply_entry()
 
     /* Don't apply after the commit_idx */
     if (_last_applied_idx == _raft->raft_get_commit_idx())
-        return -1;
+        return SPDK_POLLER_IDLE;
 
     if(get_apply_in_progress())
-        return 0;
+        return SPDK_POLLER_IDLE;
     set_apply_in_progress(true);
 
     raft_index_t log_idx = _last_applied_idx + 1;
@@ -93,7 +92,7 @@ int state_machine::raft_apply_entry()
         apply_complete *complete = new apply_complete(log_idx, this);
         apply(ety, complete);
       });
-    return 0;
+    return SPDK_POLLER_BUSY;
 }
 
 bool state_machine::linearization() {
