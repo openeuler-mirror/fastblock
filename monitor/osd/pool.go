@@ -202,7 +202,7 @@ func findUsablePoolId() PoolID {
 
 // Example: /config/pools/pool/1 '{"poolid": 1, "name":"testpool","pg_size":3, "pg_count":256,"failure_domain":"host"}'
 // Example: /config/pools/pool/2 '{"poolid": 2, "name":"testpool2","pg_size":3, "pg_count":256,"failure_domain":"host"}'
-// poolid is somewhat redundant?
+// poolid is somewhat redunant?
 // call it on start
 func LoadPoolConfig(ctx context.Context, client *etcdapi.EtcdClient) (err error) {
 	lastSeenPoolId = 0

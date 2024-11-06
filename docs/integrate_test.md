@@ -44,7 +44,7 @@ modprobe rdma_rxe
 rdma link add rxe1 type rxe netdev eth0
 ```
 
-## 3.配置启动osd所需的huge page： 
+## 3.配置启动osd所需的hugepage： 
 内存请量力而行
 ```
 echo 1024 > /sys/devices/system/node/node0/hugepages/hugepages-2048kB/nr_hugepages

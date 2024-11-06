@@ -68,7 +68,7 @@ func (c *EtcdClient) Put(ctx context.Context, key string, value string) error {
 	return nil
 }
 
-// Delete a key-value pair to the Etcd database.
+// Delete removes a key-value pair from the Etcd database.
 //
 // ctx is the context for the operation.
 // key is the key to be written.

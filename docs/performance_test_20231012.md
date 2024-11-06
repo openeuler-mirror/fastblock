@@ -93,7 +93,7 @@ fastblock-client -op=fakeapplyid -uuid=$uuid -endpoint=172.31.77.144:3333
 /root/fb/fastblock/build/src/osd/fastblock-osd -m '['1']' -C osd1.json  --id 1 
 ```
 
-按照上面的方式依次配置fastlock143,fastblock144,fastblock145三个节点上的12个osd，此时集群中便有了36个osd.
+按照上面的方式依次配置fastblock143,fastblock144,fastblock145三个节点上的12个osd，此时集群中便有了36个osd。
 注意，通过测试数据发现，每台服务器上的12个osd最好每6个跑在不同的numa节点上。  
 
 ## 3.创建pool和image：
