@@ -13,7 +13,7 @@
 #include "msg/rpc_controller.h"
 #include "rpc/osd_msg.pb.h"
 #include "rpc/connect_cache.h"
-#include "fb_client.h"
+#include "client/fb_client.h"
 #include "monclient/client.h"
 
 #include <google/protobuf/stubs/callback.h>
