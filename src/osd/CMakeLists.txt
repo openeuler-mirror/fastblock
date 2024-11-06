@@ -9,6 +9,7 @@ compile_library(
     spdk::spdk
     raft_msg
     osd_msg
+    monclient
 )
 
 compile_library (
@@ -39,6 +40,7 @@ add_executable(fastblock-osd
 target_link_libraries(fastblock-osd 
   PUBLIC
     get_core
+    bdev_json
 )
 
 install(TARGETS fastblock-osd DESTINATION bin PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ

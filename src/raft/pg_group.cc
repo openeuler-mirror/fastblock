@@ -42,6 +42,15 @@ int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard
     return 0;
 }
 
+int pg_group_t::create_pg(std::shared_ptr<state_machine> sm_ptr,  uint32_t shard_id, uint64_t pool_id,
+            uint64_t pg_id, std::vector<utils::osd_info_t>&& osds, disk_log* log){
+    create_pg(sm_ptr, shard_id, pool_id, pg_id, std::move(osds), log, nullptr);
+    auto raft = get_pg(shard_id, pool_id, pg_id);
+    raft->raft_set_current_term(raft->raft_get_current_term() + 1);
+    raft->raft_become_leader();
+    return 0;
+}
+
 void pg_group_t::load_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,
                 disk_log *log, pg_complete cb_fn, void *arg, std::shared_ptr<monitor::client> mon_client){
     auto raft = raft_new(_client, log, sm_ptr, pool_id, pg_id, global_storage(shard_id).kvs(), mon_client);
@@ -71,11 +80,10 @@ void pg_group_t::start_shard_manager(utils::complete_fun fun, void *arg)
 
     for (i = 0; i < shard_num; i++)
     {
-        SPDK_NOTICELOG("starting shard manager on shard %d\n", i);
         _shard.invoke_on(
             i,
             [this, shard_id = i, complete](){
-                SPDK_NOTICELOG("started shard manager on shard %d\n", shard_id);
+                SPDK_INFOLOG(pg_group, "started shard manager on shard %d\n", shard_id);
                 _shard_mg[shard_id].start();
                 complete->complete(0);
             });

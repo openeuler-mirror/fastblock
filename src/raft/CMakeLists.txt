@@ -15,6 +15,7 @@ compile_library(
     msg
     base
     localstore
+    monclient
 )
 
 # add_subdirectory(demo)

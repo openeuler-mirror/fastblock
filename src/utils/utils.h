@@ -18,6 +18,7 @@
 #include "spdk/env.h"
 #include "spdk/uuid.h"
 #include "spdk/thread.h"
+#include "spdk/log.h"
 namespace utils {
 
 constexpr int32_t MIN_OSD_PORT = 9000;

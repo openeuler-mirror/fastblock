@@ -26,6 +26,7 @@
 #include "localstore/storage_manager.h"
 #include "data_statistics.h"
 #include "utils/get_core.h"
+#include "utils/bdev_json.h"
 
 #include <spdk/string.h>
 
@@ -729,10 +730,7 @@ void disk_load_complete(void *arg, int rberrno){
     storage_load(storage_load_complete, arg);
 }
 
-static inline std::string get_bdev_json_file_name(){
-    std::string file_name = "/var/tmp/osd_bdev_" + std::to_string(getpid()) + ".json";
-    return file_name;
-}
+
 
 static inline std::string get_bdev_disk_addr_file() {
     //部署集群时创建此文件，并把磁盘地址写入
@@ -767,15 +765,8 @@ static std::optional<std::string> get_file_data(std::string &file_name){
     return data;
 }
 
-static void remove_bdev_json_file(){
-    std::string bdev_json_file = get_bdev_json_file_name();
-    if(std::filesystem::exists(bdev_json_file)){
-        remove(bdev_json_file.c_str());
-    }
-}
-
 static void block_started(server_t *server) {
-    remove_bdev_json_file();
+    utils::remove_bdev_json_file();
     if(server->bdev_type == "nvme")
         server->bdev_disk = server->bdev_disk + "n1";
 
@@ -806,45 +797,6 @@ static void on_app_started(void* arg) {
 //         storage_load_complete(server, 0);
 //     }
 // #endif
-}
-
-static void save_bdev_json(std::string& bdev_json_file, server_t& server){
-    std::ofstream ofs(bdev_json_file);
-
-    if(ofs.is_open()){
-        ofs << "{\n";
-        ofs << "    \"subsystems\": [\n";
-        ofs << "       {\n";
-        ofs << "         \"subsystem\": \"bdev\",\n";
-        ofs << "         \"config\": [\n";
-        ofs << "             {\n";
-      if(server.bdev_type == "nvme"){
-        ofs << "               \"method\": \"bdev_nvme_attach_controller\",\n";
-        ofs << "               \"params\": {\n";
-        ofs << "                  \"name\": \"";
-        ofs << server.bdev_disk;
-        ofs << "\",\n";
-        ofs << "                  \"trtype\": \"pcie\",\n";
-        ofs << "                  \"traddr\": \"";
-      }else{
-        ofs << "               \"method\": \"bdev_aio_create\",\n";
-        ofs << "               \"params\": {\n";
-        ofs << "                  \"name\": \"";
-        ofs << server.bdev_disk;
-        ofs << "\",\n";
-        ofs << "                  \"block_size\": 512,\n";
-        ofs << "                  \"filename\": \"";
-      }
-        ofs << server.bdev_addr;
-        ofs << "\"\n";
-        ofs << "               }\n";
-        ofs << "             }\n";
-        ofs << "         ]\n";
-        ofs << "       }\n";
-        ofs << "    ]\n";
-        ofs << "}\n";
-        ofs.close();
-    }
 }
 
 static int from_configuration(server_t* server) {
@@ -1172,7 +1124,7 @@ main(int argc, char *argv[])
         return -EINVAL;
     }
 
-    std::string bdev_json_file = get_bdev_json_file_name();
+    std::string bdev_json_file = utils::get_bdev_json_file_name();
 
     osd_server.bdev_addr = disk_addr.value();
 
@@ -1251,8 +1203,8 @@ main(int argc, char *argv[])
 
     opts.reactor_mask = reactor_mask.c_str();
 
-    remove_bdev_json_file();
-    save_bdev_json(bdev_json_file, osd_server);
+    utils::remove_bdev_json_file();
+    utils::save_bdev_json(bdev_json_file, osd_server.bdev_type, osd_server.bdev_disk, osd_server.bdev_addr);
 
     opts.json_config_file = bdev_json_file.c_str();
 
@@ -1266,7 +1218,7 @@ main(int argc, char *argv[])
     }
 
     if(rc != 0)
-        remove_bdev_json_file();
+        utils::remove_bdev_json_file();
 
 	spdk_app_fini();
 	buffer_pool_fini();

@@ -1,2 +1,3 @@
 add_subdirectory(block_bench)
 add_subdirectory(rpc_bench)
+add_subdirectory(raft_bench)

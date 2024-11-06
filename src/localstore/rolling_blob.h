@@ -817,7 +817,7 @@ make_open_done(void *arg, struct spdk_blob *blob, int rberrno) {
   }
 
   uint64_t blob_size = spdk_blob_get_num_clusters(blob) * spdk_bs_get_cluster_size(ctx->bs);
-  SPDK_NOTICELOG("open rblob success in shard %u\n", ctx->shard_id);
+  SPDK_INFOLOG(blob_log, "open rblob success in shard %u\n", ctx->shard_id);
   struct rolling_blob* rblob = new rolling_blob(blob, ctx->channel, blob_size);
   ctx->cb_fn(ctx->arg, rblob, 0);
   delete ctx;
@@ -833,7 +833,7 @@ make_create_done(void *arg, spdk_blob_id blobid, int rberrno) {
       return;
   }
 
-  SPDK_NOTICELOG("create success in shard %u\n", ctx->shard_id);
+  SPDK_INFOLOG(blob_log, "create success in shard %u\n", ctx->shard_id);
   spdk_bs_open_blob(ctx->bs, blobid, make_open_done, ctx);
 }
 

@@ -111,6 +111,9 @@ void raft_server_t::raft_become_leader()
 }
 
 void raft_server_t::_send_leader_be_elected_notify(){
+    if(!_mon_client)
+        return;
+    
     auto osd_list = _nodes_stat.get_node_ids();
     auto new_osd_list = _nodes_stat.get_new_node_ids();
 
@@ -1136,7 +1139,7 @@ void raft_server_t::_static_merger_info(int64_t merger_num, raft_index_t current
     else if(merger_num >= 2)
         _merger_tow_num++;
     if(current_idx % 10000 == 0){
-        SPDK_WARNLOG("pg %lu.%lu, io num: %ld, disk io num: %ld, merger 2: %ld, merger 5: %ld, merger 10: %ld, merfer 20: %ld, merger 50: %ld, merger 100: %ld\n",
+        SPDK_INFOLOG(pg_group, "pg %lu.%lu, io num: %ld, disk io num: %ld, merger 2: %ld, merger 5: %ld, merger 10: %ld, merfer 20: %ld, merger 50: %ld, merger 100: %ld\n",
                 raft_get_pool_id(), raft_get_pg_id(), current_idx, _disk_io_num, _merger_tow_num, _merger_five_num, 
                 _merger_ten_num, _merger_twenty_num, _merger_fifty_num, _merger_hundred_num);
     }

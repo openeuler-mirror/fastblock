@@ -228,6 +228,8 @@ public:
     void read_and_wait(const osd::read_request* request, osd::read_reply* response, google::protobuf::Closure* done);
     void delete_and_wait(const osd::delete_request* request, osd::delete_reply* response, google::protobuf::Closure* done);
 
+    void write_and_wait(std::string& obj_name, uint64_t offset, std::string& data, utils::context *complete);
+
     auto unlock(const std::string& key, const utils::operation_type type){
         return _object_rw_lock.unlock(key, type);
     }

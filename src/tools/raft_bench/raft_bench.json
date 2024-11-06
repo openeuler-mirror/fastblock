@@ -1,0 +1,10 @@
+{
+    "io_type": "write",
+    "io_size": 4096,
+    "io_count": 10000,
+    "io_depth": 8,
+    "bdev_type": "aio",
+    "bdev_addr": "/dev/nvme3n1",
+    "pool_id": 26,
+    "pg_num": 10
+}

@@ -175,6 +175,31 @@ void osd_stm::write_and_wait(
     _object_rw_lock.lock(request->object_name(), utils::operation_type::WRITE, complete);
 }
 
+void osd_stm::write_and_wait(std::string& obj_name, uint64_t offset, std::string& data, utils::context *write_complete){
+
+    auto write_func = [this, obj_name, offset, data, write_complete](){
+        osd::write_cmd cmd;
+        cmd.set_object_name(obj_name);
+        cmd.set_offset(offset);
+        std::string buf;
+        cmd.SerializeToString(&buf);
+
+        // SPDK_WARNLOG("process write_request , pg %s object_name %s offset %lu len %lu\n",
+                    //  get_pg_name().c_str(), obj_name.c_str(), offset,
+                    //  data.size());
+
+        auto entry_ptr = std::make_shared<raft_entry_t>();
+        entry_ptr->set_type(RAFT_LOGTYPE_WRITE);
+        entry_ptr->set_meta(std::move(buf));
+        entry_ptr->set_data(std::move(data));
+
+        get_raft()->raft_write_entry(entry_ptr, write_complete);
+    };
+    
+    lock_complete *complete = new lock_complete(std::move(write_func));
+    _object_rw_lock.lock(obj_name, utils::operation_type::WRITE, complete);
+}
+
 struct read_obj_ctx{
     char* buf;
     utils::context *complete;

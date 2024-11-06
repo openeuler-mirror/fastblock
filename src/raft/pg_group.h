@@ -70,6 +70,14 @@ public:
     void dispatch_heartbeats();
     std::vector<node_heartbeat> get_heartbeat_requests();
 
+    std::vector<std::string> get_pgs_name(){
+        std::vector<std::string> pgs;
+        for(auto &[pg, _] : _pgs){
+            pgs.push_back(pg);
+        }
+        return std::move(pgs);
+    }
+
 private:
     uint32_t _shard_id; // cpu shard id
     pg_group_t *_group;
@@ -125,6 +133,9 @@ public:
     int create_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,
                   std::vector<utils::osd_info_t> &&osds, disk_log *log, std::shared_ptr<monitor::client> mon_client);
 
+    int create_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,
+                  std::vector<utils::osd_info_t> &&osds, disk_log *log);
+
     void load_pg(std::shared_ptr<state_machine> sm_ptr, uint32_t shard_id, uint64_t pool_id, uint64_t pg_id,
                 disk_log *log, pg_complete cb_fn, void *arg, std::shared_ptr<monitor::client> mon_client);
 
@@ -179,6 +190,9 @@ public:
     void change_pg_membership(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, std::vector<raft_node_info>&& new_osds, utils::context* complete);
     void load_pgs_map(std::map<uint64_t, std::vector<utils::pg_info_type>> &pools);
 
+    std::vector<std::string> get_pgs_name(uint32_t shard_id){
+        return _shard_mg[shard_id].get_pgs_name();
+    }
 private:
     int _pg_add(uint32_t shard_id, std::shared_ptr<raft_server_t> raft, uint64_t pool_id, uint64_t pg_id)
     {
