@@ -88,6 +88,7 @@ struct watcher_context {
     uint64_t deferred_time{};
     bool dump_csv_enable{false};
     std::string dump_csv_path{""};
+    bool infinity{false};
 };
 
 static watcher_context g_watcher_ctx{};
@@ -231,28 +232,27 @@ public:
 
         size_t durations_size{0};
         bool should_print{false};
-        for (size_t i{0}; i < ctx_size; ++i) {
-            if (ctxs[i].durs.empty()) {
-                continue;
-            }
 
-            auto dur_size = ctxs[i].durs.size();
-            if (dur_size <= prev_print_at[i]) {
+        for (size_t i{0}; i < ctx_size; ++i) {
+            auto dur_end_idx = ctxs[i].done_io_count;
+            if (dur_end_idx <=  prev_print_at[i]) {
                 continue;
             }
 
             should_print = true;
+            auto core_dur_size = dur_end_idx - prev_print_at[i];
             auto begin_it = ctxs[i].durs.begin() + prev_print_at[i];
-            durations_size += ctxs[i].durs.end() - begin_it;
+            auto end_it = begin_it + core_dur_size;
+            durations_size += core_dur_size;
+            auto ticks_insert_begin = ticks.begin();
             if (acc_print) {
-                ticks.insert(ticks.end(), begin_it, ctxs[i].durs.end());
-            } else {
-                ticks.insert(ticks.begin(), begin_it, ctxs[i].durs.end());
+                ticks_insert_begin = ticks.end();
             }
-            prev_print_at[i] = dur_size;
+            ticks.insert(ticks_insert_begin, begin_it, end_it);
+            prev_print_at[i] = dur_end_idx;
             stats_iops_per_core.emplace_back(
               ctxs[i].core,
-              (ctxs[i].durs.end() - begin_it) / (static_cast<double>(iops_dur) / ::spdk_get_ticks_hz()));
+              core_dur_size / (static_cast<double>(iops_dur) / ::spdk_get_ticks_hz()));
         }
 
         if (not should_print) {
@@ -272,6 +272,11 @@ public:
     }
 
     void print_all_iops_ststs(bool should_dump_csv, std::string& path) {
+        if (all_iops.empty()) {
+            SPDK_NOTICELOG("empty iops stats data\n");
+            return;
+        }
+
         std::cout << "===============================[all iops stats]========================================\n";
         print_stats(all_iops.begin(), all_iops.size(), std::nullopt, "all iops stats");
 
@@ -285,6 +290,7 @@ public:
             it->second.emplace_back(stats.iops_val);
         }
 
+        std::cout << "===============================[iops stats per core]========================================\n";
         for (auto& stats_pair : iops_core_map) {
             if (stats_pair.second.empty()) {
                 SPDK_NOTICELOG("stats vector on core %d is empty\n", stats_pair.first);
@@ -296,6 +302,8 @@ public:
               std::nullopt,
               std::to_string(stats_pair.first));
         }
+
+        std::cout << "============================================================================================\n";
 
         if (not should_dump_csv) {
             return;
@@ -339,7 +347,7 @@ public:
 
 public:
 
-    bool enable_print{true};
+    bool enable_print{false};
     bool acc_print{false};
     bool take_single_core{true};
     int64_t last_print_at{0};
@@ -452,7 +460,10 @@ void on_write_done(::spdk_bdev_io* ctx, [[maybe_unused]] int32_t res) {
     auto tick = ::spdk_get_ticks();
     auto dur = static_cast<double>(tick - stack_ptr->start_tick);
     if (tick >= watcher_ctx->iops_start_at) {
-        bench_ctx->durs.push_back(dur);
+        if (not watcher_ctx->infinity) {
+            bench_ctx->durs.at(stack_ptr->id) = dur;
+        }
+
         if(bench_ctx->deferred_count != 0){
             //到达计时点（既延期到期）
             bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
@@ -461,14 +472,14 @@ void on_write_done(::spdk_bdev_io* ctx, [[maybe_unused]] int32_t res) {
         bench_ctx->done_io_count++;
     } else {
         bench_ctx->deferred_count++;
-        if(bench_ctx->on_flight_io_count == bench_ctx->io_count){
+        if (not watcher_ctx->infinity and bench_ctx->on_flight_io_count == bench_ctx->io_count) {
             //延期时间还没到，此核上的所有io已经完成
             bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
             bench_ctx->deferred_count = 0;
         }
     }
 
-    if (bench_ctx->on_flight_io_count < bench_ctx->io_count) {
+    if (watcher_ctx->infinity or bench_ctx->on_flight_io_count < bench_ctx->io_count) {
         write_once(bench_ctx);
     }
 }
@@ -485,7 +496,9 @@ void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
     auto tick = ::spdk_get_ticks();
     auto dur = static_cast<double>(tick - stack_ptr->start_tick);
     if (tick >= watcher_ctx->iops_start_at) {
-        bench_ctx->durs.push_back(dur);
+        if (not watcher_ctx->infinity) {
+            bench_ctx->durs.at(stack_ptr->id) = dur;
+        }
         if(bench_ctx->deferred_count != 0){
             //到达计时点（既延时到期）
             bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
@@ -494,7 +507,7 @@ void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
         bench_ctx->done_io_count++;
     } else {
         bench_ctx->deferred_count++;
-        if(bench_ctx->on_flight_io_count == bench_ctx->io_count){
+        if (not watcher_ctx->infinity and bench_ctx->on_flight_io_count == bench_ctx->io_count) {
             //延期时间还没到，此核上的所有io已经完成
             bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
             bench_ctx->deferred_count = 0;
@@ -502,7 +515,7 @@ void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
     }
     bench_ctx->on_flight_request.erase(stack_ptr->id);
 
-    if (bench_ctx->on_flight_io_count < bench_ctx->io_count) {
+    if (watcher_ctx->infinity or bench_ctx->on_flight_io_count < bench_ctx->io_count) {
         read_once(bench_ctx);
     }
 }
@@ -513,6 +526,7 @@ void on_thread_received_msg(void* arg) {
     SPDK_NOTICELOG(
       "Start bench request on core %d, io count is %ld\n",
       ctx->core, ctx->io_count);
+    ctx->durs.resize(ctx->io_count);
     // FIXME:
     auto core_no = ::spdk_env_get_current_core();
     ::spdk_cpuset cpumask{};
@@ -741,6 +755,10 @@ void on_app_start(void* arg) {
         exit(-EINVAL);
     }
 
+    if (g_pt.count("infinity") != 0) {
+        watcher_ctx->infinity = g_pt.get_child("infinity").get_value<bool>();
+    }
+
     watcher_ctx->io_size = g_pt.get_child("io_size").get_value<size_t>();
     sample_data = std::string(watcher_ctx->io_size, 0x55);
     watcher_ctx->total_io_count = g_pt.get_child("io_count").get_value<size_t>();
@@ -752,7 +770,9 @@ void on_app_start(void* arg) {
         throw std::invalid_argument{"image size should be greater than object size"};
     }
 
-    g_print_ctx.from_conf(g_pt);
+    if (not watcher_ctx->infinity) {
+        g_print_ctx.from_conf(g_pt);
+    }
 
     if (watcher_ctx->image_name.empty()) {
         watcher_ctx->image_name = random_string(32);
@@ -813,16 +833,18 @@ void on_app_start(void* arg) {
         auto io_count_per_core = total_io_count / static_cast<size_t>(watcher_ctx->core_context_size);
         for (; core_no < UINT32_MAX; core_no = ::spdk_env_get_next_core(core_no)) {
             auto& ctx = watcher_ctx->core_ctxs[core_count];
-            if (core_count == watcher_ctx->core_context_size - 1) {
-                ctx.io_count = total_io_count;
-                auto min_io_count = std::min(total_io_count, io_count_per_core);
-                watcher_ctx->io_depth = std::min(watcher_ctx->io_depth, min_io_count);
-            } else {
-                ctx.io_count = io_count_per_core;
-            }
-            total_io_count -= io_count_per_core;
             ctx.watcher_ctx = watcher_ctx;
             ctx.core = core_no;
+            if (not watcher_ctx->infinity) {
+                if (core_count == watcher_ctx->core_context_size - 1) {
+                    ctx.io_count = total_io_count;
+                    auto min_io_count = std::min(total_io_count, io_count_per_core);
+                    watcher_ctx->io_depth = std::min(watcher_ctx->io_depth, min_io_count);
+                } else {
+                    ctx.io_count = io_count_per_core;
+                }
+                total_io_count -= io_count_per_core;
+            }
 
             ::spdk_cpuset_zero(&tmp_cpumask);
             ::spdk_cpuset_set_cpu(&tmp_cpumask, core_no, true);
@@ -852,12 +874,14 @@ void on_app_start(void* arg) {
               &g_print_ctx,
               g_print_ctx.interval_us,
               "blk_bench_print");
-            watcher_ctx->watch_poller_holder.set_thread(mgr_thread);
-        } else {
-            watcher_ctx->watch_poller_holder.set_thread(mgr_thread);
         }
 
-        watcher_ctx->watch_poller_holder.register_poller(watch_poller, watcher_ctx, 0, "blk_bench_watch");
+        if(not watcher_ctx->infinity) {
+            watcher_ctx->watch_poller_holder.set_thread(mgr_thread);
+            watcher_ctx->watch_poller_holder.register_poller(watch_poller, watcher_ctx, 0, "blk_bench_watch");
+        } else {
+            SPDK_NOTICELOG("run block bench in infinity mode\n");
+        }
     };
 
     mon_client = std::make_unique<monitor::client>(eps, par_mgr, std::nullopt, std::move(cb));
