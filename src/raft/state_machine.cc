@@ -31,23 +31,42 @@ void state_machine::start(){
 }
 
 struct apply_complete : public utils::context{
-    apply_complete(raft_index_t _idx, state_machine* _stm)
-    : idx(_idx)
-    , stm(_stm) {}
+    apply_complete(raft_index_t start_idx, raft_index_t end_idx, state_machine* stm)
+    : utils::context(false)
+    , _start_idx(start_idx)
+    , _end_idx(end_idx)
+    , _stm(stm)
+    , _count(end_idx - start_idx + 1)
+    , _index(0)
+    , _result(0) {}
 
-    void finish(int r) override {
-        SPDK_INFOLOG(pg_group, "in pg %lu.%lu, apply log index %ld return %d\n",
-                           stm->get_raft()->raft_get_pool_id(), stm->get_raft()->raft_get_pg_id(), idx, r);
-        if(r == err::E_SUCCESS){
-            auto last_applied_idx = stm->get_last_applied_idx();
-            stm->set_last_applied_idx(idx);
-            stm->get_raft()->raft_get_log()->raft_write_entry_finish(idx, idx, r);
-            stm->get_raft()->raft_get_log()->set_applied_index(last_applied_idx, idx);
+    void finish_del(int r) override {
+        _index++;
+        if(r != err::E_SUCCESS){
+            SPDK_ERRLOG("apply log failed: %s\n", spdk_strerror(r));
+            _result = r;
         }
-        stm->set_apply_in_progress(false);
+        if(_index == _count){
+            if(_result == 0){
+                SPDK_INFOLOG(pg_group, "in pg %lu.%lu, apply log [%ld, %ld]\n",
+                       _stm->get_raft()->raft_get_pool_id(), _stm->get_raft()->raft_get_pg_id(), _start_idx, _end_idx);
+                auto last_applied_idx = _stm->get_last_applied_idx();
+                _stm->set_last_applied_idx(_end_idx);
+                _stm->get_raft()->raft_get_log()->raft_write_entry_finish(_start_idx, _end_idx, r);
+                _stm->get_raft()->raft_get_log()->set_applied_index(last_applied_idx, _end_idx);
+            }
+            _stm->set_apply_in_progress(false);
+        }
     }
-    raft_index_t idx;
-    state_machine* stm;
+
+    void finish(int ) override {}
+private:
+    raft_index_t _start_idx;
+    raft_index_t _end_idx;
+    state_machine* _stm;
+    int64_t     _count;
+    int64_t     _index;
+    int         _result;
 };
 
 int state_machine::raft_apply_entry()
@@ -74,23 +93,31 @@ int state_machine::raft_apply_entry()
         return SPDK_POLLER_IDLE;
     set_apply_in_progress(true);
 
-    raft_index_t log_idx = _last_applied_idx + 1;
+    uint32_t  apply_num = std::min(uint32_t(_raft->raft_get_commit_idx() - _last_applied_idx), default_parallel_apply_num);
+
+    raft_index_t start_idx = _last_applied_idx + 1;
+    raft_index_t end_idx = _last_applied_idx + apply_num;
 
     _raft->raft_get_entry_by_idx(
-      log_idx,
-      [this, log_idx](std::shared_ptr<raft_entry_t> ety){
-        if (!ety){
-            SPDK_INFOLOG(pg_group, "pg %lu.%lu not find log %ld\n",
-                               get_raft()->raft_get_pool_id(), get_raft()->raft_get_pg_id(), log_idx);
+      start_idx,
+      end_idx,
+      [this, start_idx, end_idx](std::vector<std::shared_ptr<raft_entry_t>> entries){
+        if (entries.size() == 0){
+            SPDK_WARNLOG("pg %lu.%lu not find log %ld\n",
+                               get_raft()->raft_get_pool_id(), get_raft()->raft_get_pg_id(), start_idx);
             set_apply_in_progress(false);
             return;
         }
-        SPDK_INFOLOG(pg_group, "pg %lu.%lu osd %d applying log: %ld, idx: %ld size: %u \n",
+        SPDK_INFOLOG(pg_group, "pg %lu.%lu osd %d applying log: [%ld, %ld], size: %ld \n",
                            get_raft()->raft_get_pool_id(), get_raft()->raft_get_pg_id(),
-                           get_raft()->raft_get_nodeid(), log_idx, ety->idx(), (uint32_t)ety->data().size());
-
-        apply_complete *complete = new apply_complete(log_idx, this);
-        apply(ety, complete);
+                           get_raft()->raft_get_nodeid(), start_idx, end_idx, entries.size());
+        
+        raft_index_t end_index = start_idx + entries.size() - 1;
+        apply_complete *complete = new apply_complete(start_idx, end_index, this);
+        for(size_t i = 0; i < entries.size(); i++){
+            auto &ety = entries[i];
+            apply(ety, complete);
+        }
       });
     return SPDK_POLLER_BUSY;
 }

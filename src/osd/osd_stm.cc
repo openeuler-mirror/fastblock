@@ -175,9 +175,35 @@ void osd_stm::write_and_wait(
     _object_rw_lock.lock(request->object_name(), utils::operation_type::WRITE, complete);
 }
 
-void osd_stm::write_and_wait(std::string& obj_name, uint64_t offset, std::string& data, utils::context *write_complete){
+struct service_complete : public utils::context{
+    service_complete(osd_stm* stm, std::string& obj_name, utils::operation_type io_type, utils::context *ctx)
+    : _stm(stm)
+    , _obj_name(obj_name)
+    , _io_type(io_type)
+    , _ctx(ctx) {}
 
-    auto write_func = [this, obj_name, offset, data, write_complete](){
+    void finish(int r) override {
+        SPDK_DEBUGLOG(osd, "process osd service done, r: %d\n", r);
+        if(!r){
+            _stm->unlock(_obj_name, _io_type);
+        } else {
+            if(_io_type ==  utils::operation_type::READ){
+                _stm->unlock(_obj_name, _io_type);
+            }
+        }
+        _ctx->complete(r);
+    }
+private:
+    osd_stm* _stm;
+    std::string _obj_name;
+    utils::operation_type _io_type;
+    utils::context *_ctx;
+};
+
+void osd_stm::write_and_wait(std::string& obj_name, uint64_t offset, std::string& data, utils::context *write_complete){
+    service_complete *ctx = new service_complete(this, obj_name, utils::operation_type::WRITE, write_complete);
+
+    auto write_func = [this, obj_name, offset, data, ctx](){
         osd::write_cmd cmd;
         cmd.set_object_name(obj_name);
         cmd.set_offset(offset);
@@ -193,7 +219,7 @@ void osd_stm::write_and_wait(std::string& obj_name, uint64_t offset, std::string
         entry_ptr->set_meta(std::move(buf));
         entry_ptr->set_data(std::move(data));
 
-        get_raft()->raft_write_entry(entry_ptr, write_complete);
+        get_raft()->raft_write_entry(entry_ptr, ctx);
     };
     
     lock_complete *complete = new lock_complete(std::move(write_func));

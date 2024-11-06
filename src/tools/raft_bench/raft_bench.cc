@@ -249,6 +249,7 @@ static void _run_task(uint32_t shard_id, task_context *task_ctx){
 
     uint64_t bs_size = spdk_bs_get_cluster_size(bs) * spdk_bs_free_cluster_count(bs);
     uint64_t obj_count = (bs_size - rolling_blob::huge_blob_size * task_ctx->pgs.size() - 4_MB * 2) / default_obj_size;
+    obj_count = obj_count / 10;
 
     task_ctx->start_tick = spdk_get_ticks();
     

@@ -356,27 +356,33 @@ public:
         _prevote = prevote;
     }
 
-    using get_entry_complete = std::function<void (std::shared_ptr<raft_entry_t>)>;
+    using get_entry_complete = std::function<void (std::vector<std::shared_ptr<raft_entry_t>> )>;
     /**
      * @param[in] idx The entry's index
      **/
-    void raft_get_entry_by_idx(raft_index_t idx, get_entry_complete cb_fn)
+    void raft_get_entry_by_idx(raft_index_t start_idx, raft_index_t end_idx, get_entry_complete cb_fn)
     {
-        auto ety = raft_get_log()->log_get_at_idx(idx);
-        if(ety){
-            cb_fn(ety);
+        std::vector<std::shared_ptr<raft_entry_t>> entries;
+        int num = end_idx - start_idx + 1;
+        raft_get_log()->log_get_from_idx(start_idx, num, entries);
+        if((size_t)num == entries.size()){
+            cb_fn(std::move(entries));
             return;
         }
 
+        raft_index_t start_index = start_idx + entries.size();
         raft_get_log()->disk_read(
-          idx,
-          idx,
-          [cb_fn = std::move(cb_fn)](std::vector<raft_entry_t>&& entries, int rberrno){
+          start_index,
+          end_idx,
+          [cb_fn = std::move(cb_fn), entries_ptr = std::move(entries)](std::vector<raft_entry_t>&& entries, int rberrno) mutable {
              if(rberrno != 0 || entries.size() == 0){
-               cb_fn(nullptr);
+               cb_fn(std::move(entries_ptr));
                return;
              }
-             cb_fn(std::make_shared<raft_entry_t>(entries[0]));
+             for(size_t i = 0; i < entries.size(); i++){
+                 entries_ptr.push_back(std::make_shared<raft_entry_t>(std::move(entries[i])));
+             }
+             cb_fn(std::move(entries_ptr));
           }
         );
     }
