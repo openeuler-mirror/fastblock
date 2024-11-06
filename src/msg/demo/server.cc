@@ -147,7 +147,7 @@ int main(int argc, char** argv) {
 
     opts.name = "demo_server";
     opts.shutdown_cb = on_server_close;
-    opts.rpc_addr = "/var/tmp/spdk_srv.sock";
+    opts.rpc_addr = "/var/tmp/demo_srv.sock";
     opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
 
     std::signal(SIGINT, handle_sigint);

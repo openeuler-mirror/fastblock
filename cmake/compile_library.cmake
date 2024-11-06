@@ -31,7 +31,11 @@ function(compile_library)
     target_include_directories(${_NAME}
       PUBLIC
       "$<BUILD_INTERFACE:${COMMON_INCLUDE_DIRS}>"
-      )
+    )
+    target_include_directories(${_NAME}
+      PUBLIC
+      "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
+    )
     target_compile_options(${_NAME}
       PRIVATE ${CC_LIB_COPTS})
     target_link_libraries(${_NAME}
@@ -56,7 +60,11 @@ function(compile_library)
     target_include_directories(${_NAME}
       INTERFACE
       "$<BUILD_INTERFACE:${COMMON_INCLUDE_DIRS}>"
-      )
+    )
+    target_include_directories(${_NAME}
+      PUBLIC
+      "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
+    )
     target_link_libraries(${_NAME}
       INTERFACE
       ${CC_LIB_DEPS}
