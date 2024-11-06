@@ -318,6 +318,7 @@ int main(int argc, char** argv) {
 
     opts.name = "demo_client";
     opts.shutdown_cb = on_client_close;
+    opts.rpc_addr = "/var/tmp/demo_cli.sock";
     opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
 
     rc = ::spdk_app_start(&opts, start_rpc_client, nullptr);
