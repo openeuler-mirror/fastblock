@@ -230,7 +230,8 @@ public:
             // SPDK_WARNLOG("obj_index %lu, obj_name %s\n", obj_index, obj_name.c_str());
 
             auto osd_stm = g_pm->get_osd_stm(_shard_id, pg_name);
-            uint64_t offset = rand() % (default_obj_size - _task_ctx->io_size);
+            uint64_t offset = rand() % ((default_obj_size - _task_ctx->io_size) / 4096);
+            offset *= 4096;
             osd_stm->write_and_wait(obj_name, offset, _task_ctx->data, this); 
         }     
     }
@@ -249,7 +250,7 @@ static void _run_task(uint32_t shard_id, task_context *task_ctx){
 
     uint64_t bs_size = spdk_bs_get_cluster_size(bs) * spdk_bs_free_cluster_count(bs);
     uint64_t obj_count = (bs_size - rolling_blob::huge_blob_size * task_ctx->pgs.size() - 4_MB * 2) / default_obj_size;
-    obj_count = obj_count / 10;
+    obj_count = obj_count / 20;
 
     task_ctx->start_tick = spdk_get_ticks();
     
@@ -266,7 +267,8 @@ static void _run_task(uint32_t shard_id, task_context *task_ctx){
         // SPDK_WARNLOG("obj_index %lu, obj_name %s\n", obj_index, obj_name.c_str());
 
         auto osd_stm = g_pm->get_osd_stm(shard_id, pg_name);
-        uint64_t offset = rand() % (default_obj_size - task_ctx->io_size);
+        uint64_t offset = rand() % ((default_obj_size - task_ctx->io_size) / 4096);
+        offset *= 4096;
         task_ctx->run_io_count++;
         osd_stm->write_and_wait(obj_name, offset, task_ctx->data, write_ctx);
     }

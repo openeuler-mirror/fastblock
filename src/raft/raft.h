@@ -35,7 +35,7 @@
 
 constexpr int32_t TIMER_PERIOD_MSEC = 500;    //毫秒
 constexpr int32_t HEARTBEAT_TIMER_INTERVAL_MSEC = 500;   //毫秒
-constexpr int32_t RAFT_TASK_TIMER_USEC = 50;  //微秒
+constexpr int32_t RAFT_TASK_TIMER_USEC = 100;  //微秒
 
 constexpr int32_t SNAPSHOT_MAX_CHUNK = 1;
 constexpr int32_t SNAPSHOT_MAX_CONCURRENT = 1;

@@ -219,10 +219,11 @@ class osd_stm : public state_machine {
 public:
     osd_stm();
 
-    void apply(std::shared_ptr<raft_entry_t> entry, utils::context *complete) override;
+    void apply(std::shared_ptr<raft_entry_t> entry, apply_complete func, void *arg) override;
 
-    void write_obj(const std::string& obj_name, uint64_t offset, const std::string& data, utils::context *complete);
-    void delete_obj(const std::string& obj_name, utils::context *complete);
+    void write_obj(raft_index_t index, const std::string& obj_name, uint64_t offset, const std::string& data, 
+            apply_complete func, void *arg);
+    void delete_obj(raft_index_t index, const std::string& obj_name, apply_complete func, void *arg);
 
     void write_and_wait(const osd::write_request* request, osd::write_reply* response, google::protobuf::Closure* done);
     void read_and_wait(const osd::read_request* request, osd::read_reply* response, google::protobuf::Closure* done);

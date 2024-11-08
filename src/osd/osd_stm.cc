@@ -28,17 +28,17 @@ osd_stm::osd_stm()
     _sockid = spdk_env_get_socket_id(lcore);
 }
 
-void osd_stm::apply(std::shared_ptr<raft_entry_t> entry, utils::context *complete){
+void osd_stm::apply(std::shared_ptr<raft_entry_t> entry, apply_complete func, void *arg){
     if(entry->type() == RAFT_LOGTYPE_WRITE){
         osd::write_cmd write;
         write.ParseFromString(entry->meta());
-        write_obj(write.object_name(), write.offset(), entry->data(), complete);
+        write_obj(entry->idx(), write.object_name(), write.offset(), entry->data(), std::move(func), arg);
     }else if(entry->type() == RAFT_LOGTYPE_DELETE){
         osd::delete_cmd del;
         del.ParseFromString(entry->meta());
-        delete_obj(del.object_name(), complete);
+        delete_obj(entry->idx(), del.object_name(), std::move(func), arg);
     }else{
-        complete->complete(err::E_SUCCESS);
+        func(arg, entry->idx(), err::E_SUCCESS);
     }
 }
 
@@ -46,7 +46,9 @@ struct write_obj_ctx{
     osd_stm* stm;
     std::string obj_name;
     char* buf;
-    utils::context *complete;
+    raft_index_t index;
+    apply_complete func;
+    void *arg;
 };
 
 void write_obj_done(void *arg, int obj_errno){
@@ -55,16 +57,17 @@ void write_obj_done(void *arg, int obj_errno){
         ctx->obj_name.c_str(), ctx->stm->get_pg_name().c_str(),
         core_sharded::get_core_sharded().this_shard_id());
     ctx->stm->unlock(ctx->obj_name, utils::operation_type::WRITE);
-    ctx->complete->complete(obj_errno);
+    ctx->func(ctx->arg, ctx->index, obj_errno);
     spdk_free(ctx->buf);
     delete ctx;
 }
 
-void osd_stm::write_obj(const std::string& obj_name, uint64_t offset, const std::string& data, utils::context *complete){
+void osd_stm::write_obj(raft_index_t index, const std::string& obj_name, uint64_t offset, 
+        const std::string& data, apply_complete func, void *arg){
     uint64_t len = utils::align_up<uint64_t>(data.size(), 512 * BLOCK_UNITS);
     char* buf = (char*)spdk_zmalloc(len, 0x1000, NULL, _sockid, SPDK_MALLOC_DMA);
     memcpy(buf, data.c_str(), data.size());
-    write_obj_ctx * ctx = new write_obj_ctx{this, obj_name, buf, complete};
+    write_obj_ctx * ctx = new write_obj_ctx{this, obj_name, buf, index, std::move(func), arg};
     std::map<std::string, xattr_val_type> xattr;
     xattr["type"] = blob_type::object;
     xattr["pg"] = get_pg_name();
@@ -74,11 +77,11 @@ void osd_stm::write_obj(const std::string& obj_name, uint64_t offset, const std:
     _store.write(xattr, obj_name, offset, buf, data.size(), write_obj_done, ctx);
 }
 
-void osd_stm::delete_obj(const std::string& obj_name, utils::context *complete){
+void osd_stm::delete_obj(raft_index_t index, const std::string& obj_name, apply_complete func, void *arg){
     //delete object
 
     _object_rw_lock.unlock(obj_name, utils::operation_type::DELETE);
-    complete->complete(err::E_SUCCESS);
+    func(arg, index, err::E_SUCCESS);
 }
 
 

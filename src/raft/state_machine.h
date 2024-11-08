@@ -18,6 +18,7 @@
 
 class raft_server_t;
 
+using apply_complete = std::function<void (void *arg, int64_t index, int objerrno)>;
 using stm_complete = std::function<void (void *, int)>;
 
 class state_machine{
@@ -54,7 +55,7 @@ public:
 
     int raft_apply_entries();
 
-    virtual void apply(std::shared_ptr<raft_entry_t> entry, utils::context *complete) = 0;
+    virtual void apply(std::shared_ptr<raft_entry_t> entry, apply_complete func, void *arg) = 0;
     raft_server_t* get_raft(){
         return _raft;
     }
