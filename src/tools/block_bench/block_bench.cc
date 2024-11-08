@@ -461,7 +461,9 @@ void on_write_done(::spdk_bdev_io* ctx, [[maybe_unused]] int32_t res) {
     auto dur = static_cast<double>(tick - stack_ptr->start_tick);
     if (tick >= watcher_ctx->iops_start_at) {
         if (not watcher_ctx->infinity) {
-            bench_ctx->durs.at(stack_ptr->id) = dur;
+            if (stack_ptr->id < bench_ctx->durs.size()) {
+                bench_ctx->durs.at(stack_ptr->id) = dur;
+            }
         }
 
         if(bench_ctx->deferred_count != 0){
@@ -497,8 +499,11 @@ void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
     auto dur = static_cast<double>(tick - stack_ptr->start_tick);
     if (tick >= watcher_ctx->iops_start_at) {
         if (not watcher_ctx->infinity) {
-            bench_ctx->durs.at(stack_ptr->id) = dur;
+            if (stack_ptr->id < bench_ctx->durs.size()) {
+                bench_ctx->durs.at(stack_ptr->id) = dur;
+            }
         }
+
         if(bench_ctx->deferred_count != 0){
             //到达计时点（既延时到期）
             bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
