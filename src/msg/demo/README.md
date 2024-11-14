@@ -8,109 +8,80 @@ $ make -j client server
 
 **服务端**
 
+*json* 配置文件如下：
+
+```json
+{
+    "bind_ports": [8012, 8013, 8014, 8015],
+    "rdma_device_name": <rdma device name>,
+    "msg_server_listen_backlog" : 1024,
+    "msg_server_poll_cq_batch_size": 32,
+    "msg_server_metadata_memory_pool_capacity": 64,
+    "msg_server_metadata_memory_pool_element_size": 512,
+    "msg_server_data_memory_pool_capacity": 64,
+    "msg_server_data_memory_pool_element_size": 5120,
+    "msg_server_per_post_recv_num": 64,
+    "msg_server_rpc_timeout_us": 1000000,
+    "msg_rdma_resolve_timeout_us": 2000,
+    "msg_rdma_poll_cm_event_timeout_us": 1000000,
+    "msg_rdma_max_send_wr": 4096,
+    "msg_rdma_max_send_sge": 128,
+    "msg_rdma_max_recv_wr": 8192,
+    "msg_rdma_max_recv_sge": 1,
+    "msg_rdma_max_inline_data": 16,
+    "msg_rdma_cq_num_entries": 1024,
+    "msg_rdma_qp_sig_all": false
+}
 ```
-$ src/msg/demo/server -C <json conf path>
+
+未在本文档做额外说明的配置见 [*src/msg/README.md*](../README.md)。
+
+配置中的 `bind_ports` 是服务端 *listen* 的端口，可以配置多个端口，但是需要保证分配给 *demo server* 的 *cpu* 数量要大于等于 `bind_ports` 的数量。
+
+```
+$ src/msg/demo/server -C <json conf path> -m '[0,1,2,3]'
 ```
 
 **客户端**
 
-```
-$ src/msg/demo/client -C <json conf path>
-```
-
-## 2 ping_pong
-
-该代码为 *rpc* 端的压测代码，配置文件为同目录下的 *ping_pong.json*，其中，需要说明的部分如下：
+*json* 配置文件如下：
 
 ```json
-"endpoints": [
-    {
-        "index": 1,
-        "list": [
-            {"host": "172.31.4.143", "port": 8081}
-        ]
-    },
-    {
-        "index": 2,
-        "list": [
-            {"host": "172.31.4.143", "port": 8082}
-        ]
-    },
-    {
-        "index": 3,
-        "list": [
-            {"host": "172.31.4.143", "port": 8083}
-        ]
-    }
-]
+{
+    "server_address": "<server ip>",
+    "server_ports": [8012, 8013, 8014, 8015],
+    "io_depth": 32,
+    "iteration_count": 50000000,
+    "rdma_device_name": <rdma device name>,
+    "msg_client_poll_cq_batch_size": 32,
+    "msg_client_metadata_memory_pool_capacity": 64,
+    "msg_client_metadata_memory_pool_element_size": 512,
+    "msg_client_data_memory_pool_capacity": 64,
+    "msg_client_data_memory_pool_element_size": 5120,
+    "msg_client_per_post_recv_num": 64,
+    "msg_client_rpc_timeout_us": 30000000,
+    "msg_client_rpc_batch_size": 1024,
+    "msg_client_connect_max_retry": 30,
+    "msg_client_connect_retry_interval_us": 1000000,
+    "msg_rdma_resolve_timeout_us": 2000,
+    "msg_rdma_poll_cm_event_timeout_us": 1000000,
+    "msg_rdma_max_send_wr": 4096,
+    "msg_rdma_max_send_sge": 128,
+    "msg_rdma_max_recv_wr": 8192,
+    "msg_rdma_max_recv_sge": 1,
+    "msg_rdma_max_inline_data": 16,
+    "msg_rdma_cq_num_entries": 1024,
+    "msg_rdma_qp_sig_all": false
+}
 ```
 
-这里有 *3* 个节点，需要启动 *3* 个 *ping_pong* 进程，每个进程需要 *3* 颗核，一颗核给 *rpc server*，另外两颗给 *rpc client*，去连除自己以外的其他进程。连接建立后，每个客户端都会发送 *io_count* 个 *rpc* 请求。
+未在本文档做额外说明的配置见 [*src/msg/README.md*](../README.md)。
 
-运行命令为：
-
-```
-$ src/msg/demo/ping_pong -C src/msg/demo/ping_pong.json -I 1 -m [10,11] -L ping_pong -L msg
-$ src/msg/demo/ping_pong -C src/msg/demo/ping_pong.json -I 2 -m [12,13] -L ping_pong -L msg
-$ src/msg/demo/ping_pong -C src/msg/demo/ping_pong.json -I 3 -m [14,15] -L ping_pong -L msg
-```
-
-*-I* 用于指定 *json* 中的 *index* 字段。
-
-### 3 使用 supervisord 托管 ping_pong
-
-在 *scripts* 目录下，有段 *python* 代码可以生成 *supervisord* 使用的配置，命令如下：
+- `server_address` 用来指定 *demo server* 的 *listen address*。
+- `server_ports` 用来指定 *demo server* 的 *listen ports*，其内容可以是 *demo server* 配置中 `bind_ports` 的子集，需要保证分配给 *demo client* 的 *cpu* 数量要大于等于 `server_ports` 的数量。
+- `io_depth` 指定客户端 *RDMA RPC* 的 *io depth*，即同时发起的 *RPC* 请求数量。
+- `iteration_count` 指定客户端 *RDMA RPC* 的发送请求的次数，**这里的次数是每个核上都会发送 `iteration_count` 次**
 
 ```
-$ python3 scripts/pp_sup_gen.py <conf_path>/src/msg/demo/ping_pong.json <bin_path>/src/msg/demo/ping_pong
-```
-
-生成的配置文件为 `/etc/supervisor/conf.d/ping_pong.conf`，如下:
-
-```bash
-[group:ping_pong_debug]
-programs=ping_pong_debug_1,ping_pong_debug_2
-
-
-[program:ping_pong_debug_1]
-command=<bin_path>/src/msg/demo/ping_pong -C <conf_path>/src/msg/demo/ping_pong.json -I 1 -m [10,11] -L ping_pong -L msg
-autostart=false
-autorestart=false
-startsecs=5
-startretries=3
-redirect_stderr=true
-stdout_logfile_maxbytes = 1GB
-stdout_logfile=/var/log/ping_pong/ping_pong_debug_1.log
-stderr_logfile=/var/log/ping_pong/ping_pong_debug_1_err.log
-pre-start = /bin/bash -c ">/var/log/ping_pong/ping_pong_debug_1.log;>/var/log/ping_pong/ping_pong_debug_1_err.log"
-
-[program:ping_pong_debug_2]
-command=<bin_path>/src/msg/demo/ping_pong -C <conf_path>/src/msg/demo/ping_pong.json -I 2 -m [12,13] -L ping_pong -L msg
-autostart=false
-autorestart=false
-startsecs=5
-startretries=3
-redirect_stderr=true
-stdout_logfile_maxbytes = 1GB
-stdout_logfile=/var/log/ping_pong/ping_pong_debug_2.log
-stderr_logfile=/var/log/ping_pong/ping_pong_debug_2_err.log
-pre-start = /bin/bash -c ">/var/log/ping_pong/ping_pong_debug_2.log;>/var/log/ping_pong/ping_pong_debug_2_err.log"
-
-[program:ping_pong_debug_3]
-command=<bin_path>/src/msg/demo/ping_pong -C <conf_path>/src/msg/demo/ping_pong.json -I 3 -m [16,17,18] -L ping_pong -L msg
-autostart=false
-autorestart=false
-startsecs=5
-startretries=3
-redirect_stderr=true
-stdout_logfile_maxbytes = 1GB
-stdout_logfile=/var/log/ping_pong/ping_pong_debug_3.log
-stderr_logfile=/var/log/ping_pong/ping_pong_debug_3_err.log
-pre-start = /bin/bash -c ">/var/log/ping_pong/ping_pong_debug_3.log;>/var/log/ping_pong/ping_pong_debug_3_err.log"
-```
-
-然后使用 `supervisorctl` 启动：
-
-```
-$ supervisorctl start ping_pong_debug:*
+$ src/msg/demo/client -C <json conf path> -m '[4,5,6,7]'
 ```
