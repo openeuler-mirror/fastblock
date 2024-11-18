@@ -53,6 +53,9 @@ void buffer_pool_fini() {
 
 spdk_buffer buffer_pool_get() {
     char* c = (char*)spdk_mempool_get(tls_buffer_pool);
+    if(!c){
+        SPDK_ERRLOG("spdk_mempool_get failed.\n");
+    }
     return spdk_buffer(c, buffer_size);
 }
 

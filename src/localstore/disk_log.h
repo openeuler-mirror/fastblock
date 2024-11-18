@@ -89,18 +89,20 @@ public:
 
         uint64_t pos = _rblob->front_pos();
         for (auto& entry : entries) {
-            auto sbuf = buffer_pool_get();
-            EncodeLogHeader(sbuf, entry);
+            // auto sbuf = buffer_pool_get();
+            // EncodeLogHeader(sbuf, entry);
 
             // 注意：append时，entry.data是从外面传进来的，而header是在本函数中申请的。
             //      所以在回调函数中回收这些，并不回收后面的buffer_list
-            ctx->headers.emplace_back(sbuf);
-            ctx->bl.append_buffer(sbuf);
+            // ctx->headers.emplace_back(sbuf);
+            // ctx->bl.append_buffer(sbuf);
             ctx->bl.append_buffer(entry.data);
             /// NOTE: 这个vector是写完之后要往map里保存的，从raft_index到rblob中pos和size的映射，
             ///    为了方便读取，这里保存的size，是包括了header长度(4_KB)和数据长度的。
-            ctx->idx_pos.emplace_back(entry.index, pos, entry.size + 4_KB, entry.term_id);
-            pos += (entry.size + 4_KB);
+            // ctx->idx_pos.emplace_back(entry.index, pos, entry.size + 4_KB, entry.term_id);
+            // pos += (entry.size + 4_KB);
+            ctx->idx_pos.emplace_back(entry.index, pos, entry.size, entry.term_id);
+            pos += (entry.size);
         }
 
         _rblob->append(ctx->bl, log_append_done, ctx);
@@ -200,9 +202,9 @@ private:
         }
 
         // 回收header
-        for (auto header : ctx->headers) {
-            buffer_pool_put(header);
-        }
+        // for (auto header : ctx->headers) {
+            // buffer_pool_put(header);
+        // }
 
         // 保存每个index到pos和size的映射
         for (auto [idx, pos, size, term_id] : ctx->idx_pos) {
