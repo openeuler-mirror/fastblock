@@ -168,7 +168,7 @@ private:
     int enqueue_leader_request(const int32_t pool_id, const int32_t pg_id) {
         auto* first_osd = _mon_cli->get_pg_first_available_osd_info(pool_id, pg_id);
         if (not first_osd) {
-            SPDK_ERRLOG("ERROR: Cant find any available osd of pg %d, pool id %d\n", pool_id, pg_id);
+            SPDK_ERRLOG("ERROR: Cant find any available osd for pool id %d, pg id %d\n", pool_id, pg_id);
             return EAGAIN;
         }
 
