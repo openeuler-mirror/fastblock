@@ -69,6 +69,7 @@ public:
         size_t connect_max_retry{10};
         std::chrono::system_clock::duration retry_interval{std::chrono::seconds{0}};
         std::chrono::system_clock::duration shutdown_timeout{std::chrono::microseconds{0}};
+        std::chrono::system_clock::duration slow_rpc_warn{std::chrono::seconds{1}};
 
         friend std::ostream& operator<<(std::ostream& os, const options& o) {
             os << "[client]\n";
@@ -89,6 +90,9 @@ public:
 
             auto shutdown_us = std::chrono::duration_cast<std::chrono::microseconds>(o.shutdown_timeout).count();
             fb_rpc_client_print_suf(shutdown_timeout_us, shutdown_us, "us", os);
+
+            auto slow_rpc_warn_us = std::chrono::duration_cast<std::chrono::microseconds>(o.slow_rpc_warn).count();
+            fb_rpc_client_print_suf(slow_rpc_warn_us, slow_rpc_warn_us, "us", os);
 
             os << *(o.ep);
 
@@ -120,6 +124,11 @@ public:
         if (conf.count("msg_client_shutdown_timeout_us") != 0) {
             auto shutdown_timeout_us = conf.get_child("msg_client_shutdown_timeout_us").get_value<int64_t>();
             opts->shutdown_timeout = std::chrono::microseconds{shutdown_timeout_us};
+        }
+
+        if (conf.count("msg_client_slow_rpc_warn_us") != 0) {
+            auto slow_rpc_warn_us = conf.get_child("msg_client_slow_rpc_warn_us").get_value<int64_t>();
+            opts->slow_rpc_warn = std::chrono::microseconds{slow_rpc_warn_us};
         }
 
         opts->ep = std::make_unique<endpoint>(conf);
@@ -777,6 +786,13 @@ read_done:
             stack_ptr->reply_data.reset(nullptr);
             _wait_read_requests.pop_front();
 
+            auto rpc_dur = std::chrono::system_clock::now() - stack_ptr->start_at;
+            if (rpc_dur >= _opts->slow_rpc_warn) {
+                SPDK_WARNLOG(
+                  "slow rpc decteed, request id %d, rpc duration %ldms\n",
+                  stack_ptr->request_key, rpc_dur.count() / 1000 / 1000);
+            }
+
             return true;
         }
 
@@ -802,7 +818,6 @@ read_done:
                 auto it = _recv_ctx_map.find(cqe->wr_id);
                 if (it == _recv_ctx_map.end()) {
                     SPDK_ERRLOG("ERROR: Cant find the receive context of wr id '%ld'\n", cqe->wr_id);
-                    _ctrl_ops.push_back(std::make_unique<control_operation>(state::shutdown));
                     return true;
                 }
 
