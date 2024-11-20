@@ -152,6 +152,7 @@ public:
         size_t per_post_recv_num{512};
         std::chrono::system_clock::duration rpc_timeout{std::chrono::seconds{5}};
         std::chrono::system_clock::duration shutdown_timeout{std::chrono::microseconds{0}};
+        std::chrono::system_clock::duration slow_method{std::chrono::seconds{1}};
         std::unique_ptr<endpoint> ep{nullptr};
 
         friend std::ostream& operator<<(std::ostream& os, const options& o) {
@@ -168,6 +169,9 @@ public:
 
             auto shutdown_us = std::chrono::duration_cast<std::chrono::microseconds>(o.shutdown_timeout).count();
             fb_rpc_server_print_suf(shutdown_timeout_us, shutdown_us, "us", os);
+
+            auto slow_method_interval = std::chrono::duration_cast<std::chrono::microseconds>(o.slow_method).count();
+            fb_rpc_server_print_suf(slow_method_us, slow_method_interval, "us", os);
 
             os << *(o.ep);
 
@@ -193,6 +197,11 @@ public:
         if (conf.count("msg_client_shutdown_timeout_us") != 0) {
             auto shutdown_timeout_us = conf.get_child("msg_client_shutdown_timeout_us").get_value<int64_t>();
             opts->shutdown_timeout = std::chrono::microseconds{shutdown_timeout_us};
+        }
+
+        if (conf.count("msg_server_slow_method_us") != 0) {
+            auto slow_method_us = conf.get_child("msg_server_slow_method_us").get_value<int64_t>();
+            opts->slow_method = std::chrono::microseconds{slow_method_us};
         }
 
         opts->ep = std::make_unique<endpoint>(conf);
@@ -514,6 +523,13 @@ private:
     }
 
     void on_response(rpc_task* task) {
+        auto dur = std::chrono::system_clock::now() - task->start_at;
+        if (dur >= _opts->slow_method) {
+            SPDK_WARNLOG(
+              "slow rpc method dected, task id is %d, dur is %ldms\n",
+              task->id, dur.count() / 1000 / 1000);
+        }
+
         auto cur_thread = spdk_get_thread();
         if(_thread != cur_thread){
             SPDK_DEBUGLOG(msg, "current thread %lu, thread %lu\n", spdk_thread_get_id(cur_thread), spdk_thread_get_id(_thread));
