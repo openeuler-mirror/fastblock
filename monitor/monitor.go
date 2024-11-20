@@ -636,6 +636,23 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			return err
 		}
 
+	case *msg.Request_PgOsdInfoRequest:
+		log.Warn(ctx, "Received GetPgOsdInfoRequest")
+		poolIds := payload.PgOsdInfoRequest.GetPoolIds()
+
+		gpo, err := osd.ProcessGetPgOsdInfoMessage(ctx, poolIds)
+
+		response := &msg.Response{
+			Union: &msg.Response_PgOsdInfoResponse{
+				PgOsdInfoResponse: gpo,
+			},
+		}
+
+		err = sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
 	default:
 		log.Info(ctx, "Unknown payload type")
 		return fmt.Errorf("Unknown payload type")

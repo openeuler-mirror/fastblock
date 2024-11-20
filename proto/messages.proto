@@ -382,6 +382,24 @@ message OsdConfigResponse {
     string config = 1;
 }
 
+message GetPgOsdInfoRequest {
+    repeated int32 poolIds = 1;
+}
+
+message PgOsdInfo {
+    int32 pgid = 1;
+    uint32 coreindex = 2;
+    repeated int32 osdid = 3;
+}
+
+message PgOsdInfos {
+    repeated PgOsdInfo pgs = 1;
+}
+
+message GetPgOsdInfoResponse {
+    map<int32, PgOsdInfos> pools = 1; 
+}
+
 message Request {
     oneof union {
         BootRequest boot_request = 1;
@@ -407,6 +425,7 @@ message Request {
         GetClusterStatusRequest get_cluster_status_request=21;
         DataStatisticsRequest   data_statistics_request=22;
         OsdConfigRequest osd_config_request=23;
+        GetPgOsdInfoRequest  pg_osd_info_request=24;
     }
 }
 
@@ -435,5 +454,6 @@ message Response {
         GetClusterStatusResponse  get_cluster_status_response=21;
         DataStatisticsResponse    data_statistics_response=22;
         OsdConfigResponse osd_config_response=23;
+        GetPgOsdInfoResponse  pg_osd_info_response=24;
     }
 }

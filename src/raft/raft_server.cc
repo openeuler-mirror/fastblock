@@ -1306,7 +1306,7 @@ struct disk_configuration_complete : public utils::context{
 };
 
 void raft_server_t::process_conf_change_configuration(std::shared_ptr<raft_entry_t> entry){
-    SPDK_INFOLOG(pg_group, "process entry type %d, index: %ld \n", entry->type(), entry->idx());
+    SPDK_INFOLOG(pg_group, "in pg %lu.%lu , process entry type %d, index: %ld \n", _pool_id, _pg_id, entry->type(), entry->idx());
     raft_configuration config;
     config.ParseFromString(entry->meta());
 

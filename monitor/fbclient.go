@@ -215,6 +215,46 @@ func byPgid(pgs []*msg.PGInfo) func(int, int) bool {
 	}
 }
 
+func printPgOsdInfo(pools *map[int32]*msg.PgOsdInfos) {
+	osdCoreNum := make(map[int32]map[uint32]int)
+	for _, pgOsdInfos := range *pools {
+		for _, pgInfo := range pgOsdInfos.Pgs {
+			for _, osdid := range pgInfo.GetOsdid() {
+				coreId := pgInfo.GetCoreindex()
+				if _, ok := osdCoreNum[osdid]; ok {
+					if _, ok = osdCoreNum[osdid][coreId]; ok {
+						osdCoreNum[osdid][coreId] += 1
+					} else {
+						osdCoreNum[osdid][coreId] = 1
+					}
+				} else {
+					osdCoreNum[osdid] = make(map[uint32]int)
+					osdCoreNum[osdid][coreId] = 1
+				}
+			}
+		}
+	}
+	var osdids []int32
+	for osdid := range osdCoreNum {
+		osdids = append(osdids, osdid)
+	}
+	sort.Slice(osdids, func(i, j int) bool {
+		return osdids[i] < osdids[j]
+	})
+
+	fmt.Printf("%-10v   %-10v   %-10v    \r\n", "OSDID", "CORE", "PGNUM")
+	for _, osdid := range osdids {
+		osdCore := osdCoreNum[osdid]
+		coreNum := uint32(len(osdCore))
+		var coreid uint32
+		for coreid = 0; coreid < coreNum; coreid++ {
+			num := osdCore[coreid]
+			fmt.Printf("%-10v   %-10v   %-10v    \r\n", osdid, coreid, num)
+		}
+	}
+
+}
+
 func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- struct{}, responseChan chan<- ResponseChanData) {
 	appliedOsdCounter := 0
 	bootedOsdCounter := 0
@@ -417,7 +457,7 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 						sort.Slice(poolIds, func(i, j int) bool {
 							return poolIds[i] < poolIds[j]
 						})
-						fmt.Printf("%-10v   %-25v   %-25v    %-25v   \r\n", "PGID", "STATE", "OSDLIST", "NEWOSDLIST")
+						fmt.Printf("%-10v   %-25v   %-10v   %-25v    %-10v   %-25v   \r\n", "PGID", "STATE", "CORE", "OSDLIST", "NEWCORE", "NEWOSDLIST")
 						for _, pid := range poolIds {
 							pgs := mypgmap[pid]
 							sort.Slice(pgs.Pi, byPgid(pgs.Pi))
@@ -425,9 +465,14 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 								pgid := strconv.FormatInt(int64(pid), 10) + "." + strconv.FormatInt(int64(pg.GetPgid()), 10)
 								osdlist := arrayToStr(pg.GetOsdid())
 								newosdlist := arrayToStr(pg.GetNewosdid())
+								newCoreIndex := ""
+								if pg.GetNewcoreindex() < math.MaxUint32 {
+									newCoreIndex = strconv.FormatInt(int64(pg.GetNewcoreindex()), 10)
+								}
 
-								fmt.Printf("%-10v   %-25v   %-25v    %-25v   \r\n", pgid, utils.PgStateStr(utils.PGSTATE(pg.GetState())),
-									osdlist, newosdlist)
+								fmt.Printf("%-10v   %-25v   %-10v   %-25v    %-10v   %-25v   \r\n", pgid, 
+									utils.PgStateStr(utils.PGSTATE(pg.GetState())),
+									pg.GetCoreindex(), osdlist, newCoreIndex, newosdlist)
 							}
 						}
 					}
@@ -717,6 +762,15 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 				stopChan <- struct{}{}
 				return
 
+			case *msg.Response_PgOsdInfoResponse:
+				poolmap := *payload.PgOsdInfoResponse
+				if len(poolmap.Pools) != 0 {
+					printPgOsdInfo(&(poolmap.Pools));
+				}
+
+				stopChan <- struct{}{}
+				return
+
 			default:
 				fmt.Printf("Unknown message type %v\r\n", payload)
 
@@ -724,6 +778,7 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 		}
 	}
 }
+
 func printOsdMap() {
 	t := time.NewTicker(5 * time.Second)
 	for range t.C {
@@ -1151,10 +1206,26 @@ func clientSendOsdConfig(conn net.Conn) {
 	sendClientReqeust(request, conn)
 }
 
+func clientSendGetPgOsds(conn net.Conn, poolid int) {
+	pginfos := &msg.GetPgOsdInfoRequest {
+		PoolIds: make([]int32, 0),
+	}
+	if poolid != 0 {
+	    pginfos.PoolIds = append(pginfos.PoolIds, int32(poolid))
+	}
+	request := &msg.Request{
+		Union: &msg.Request_PgOsdInfoRequest{
+			PgOsdInfoRequest: pginfos,
+		},
+	}
+
+	sendClientReqeust(request, conn)	
+}
+
 func main() {
 	ops := [...]string{"watchclustermap", "getclustermap", "fakeapplyid", "fakebootosd", "fakestartcluster",
 		"createpool", "deletepool", "listpools", "getosdmap", "getpgmap", "watchosdmap", "watchpgmap", "fakestoposd",
-		"createimage", "removeimage", "resizeimage", "getimage", "outosd", "inosd", "status", "showconfig"}
+		"createimage", "removeimage", "resizeimage", "getimage", "outosd", "inosd", "status", "showconfig", "getpgosds"}
 	supported_op := "supported: "
 	for i := 0; i < len(ops); i++ {
 		if i == 0 {
@@ -1169,6 +1240,7 @@ func main() {
 	unset = flag.String("unset", "", "supported: noReblance, noout")
 
 	poolname = flag.String("poolname", "", "pool name you want to get")
+	poolid := flag.Int("poolid", 0, "pool id you want to get")
 	osdid = flag.Int("osdid", 0, "osd id to boot")
 	port = flag.Int("port", 0, "port of this osd")
 	pgcount = flag.Int("pgcount", 0, "pgcount of this pool")
@@ -1330,6 +1402,8 @@ func main() {
 		go clientSendStatus(conn)
 	case "showconfig":
 		go clientSendOsdConfig(conn)
+	case "getpgosds":
+		go clientSendGetPgOsds(conn, *poolid)
 	}
 
 	if *op == "" {

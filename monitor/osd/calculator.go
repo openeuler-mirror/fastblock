@@ -504,6 +504,7 @@ func addPgOsd(ctx context.Context, cfg *OptimizeCfg, poolid PoolID, pgId int, pg
 			pg.PgState = pg.PgState &^ utils.PgUndersize
 		}
 		pg.NewOsdList = newOsdList
+		pg.NewCoreIndex = pg.CoreIndex
 		AllPools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgId)] = pg
 		log.Info(ctx, "pg: ", pgId, " PgState ", pg.PgState, " osdList: ", pg.OsdList, " NewOsdList: ", pg.NewOsdList)	
 	}
@@ -563,6 +564,7 @@ func transferPG(ctx context.Context, cfg *OptimizeCfg, poolid PoolID, pgId int, 
 	pg.Version++
 	pg.SetPgState(utils.PgRemapped)
 	pg.NewOsdList = newOsdList
+	pg.NewCoreIndex = pg.CoreIndex
 	AllPools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgId)] = pg
 	log.Info(ctx, "pg: ", pgId, " PgState ", pg.PgState, " osdList: ", pg.OsdList, " NewOsdList: ", pg.NewOsdList)
 
@@ -899,8 +901,9 @@ func redistributionPg(ctx context.Context,
     newOsdList = append(newOsdList, addOsdList...)
     pgConfig := AllPools[poolId].PoolPgMap.PgMap[pgId]
     pgConfig.Version++
-	pgConfig.SetPgState(utils.PgRemapped)
-    pgConfig.NewOsdList = newOsdList    
+    pgConfig.SetPgState(utils.PgRemapped)
+    pgConfig.NewOsdList = newOsdList 
+    pgConfig.NewCoreIndex =  pgConfig.CoreIndex  
     log.Info(ctx, "pg: ", poolId, ".", pgId, " Version: ", pgConfig.Version, " PgState: ", pgConfig.PgState, 
 	        " OsdList: ", pgConfig.OsdList, " NewOsdList: ", pgConfig.NewOsdList)
     return &pgConfig, true
@@ -1369,6 +1372,7 @@ func SimpleInitial(ctx context.Context, cfg *OptimizeCfg, poolPgSize int, coreNu
 				osd := osdEle.Value.(*osdCore)
 				//pg成员列表
 				ppc.CoreIndex = osd.coreid
+				ppc.NewCoreIndex = math.MaxUint32
 				ppc.OsdList = append(ppc.OsdList, osd.osdid)
 				osd.pgnum++
 			} else {
