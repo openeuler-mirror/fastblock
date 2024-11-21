@@ -13,6 +13,7 @@
 #include "raft.h"
 #include "spdk/log.h"
 #include "utils/err_num.h"
+#include "rpc/osd_msg.pb.h"
 
 constexpr uint32_t default_parallel_apply_num = 32;
 
@@ -163,6 +164,7 @@ int state_machine::raft_apply_entry()
         
         raft_index_t end_index = start_idx + entries.size() - 1;
         apply_context *complete = new apply_context(start_idx, end_index, this);
+        
         for(size_t i = 0; i < entries.size(); i++){
             auto &ety = entries[i];
             apply(ety, apply_done, complete);
@@ -170,6 +172,32 @@ int state_machine::raft_apply_entry()
       });
     return SPDK_POLLER_BUSY;
 }
+
+struct obj_meta{
+    uint64_t len;
+    size_t  idx;
+};
+
+// void state_machine::merge_apply(std::vector<std::shared_ptr<raft_entry_t>> &entries, raft_index_t start_idx) {
+    // raft_index_t end_index = start_idx + entries.size() - 1;
+    // apply_context *complete = new apply_context(start_idx, end_index, this);
+// 
+    // std::map<std::string, std::map<uint64_t, obj_meta>> objs;
+    // 记录需要合并的raft_entry的index
+    // std::map<raft_index_t, std::vector<raft_index_t>> index_map;
+// 
+    // for(size_t i = 0; i < entries.size(); i++){
+        // auto &entry = entries[i];
+        // osd::write_cmd write;
+        // write.ParseFromString(entry->meta());
+// 
+        // if(objs.find(write.object_name()) == objs.end()){
+// 
+        // } else {
+// 
+        // }
+    // }
+// }
 
 bool state_machine::linearization() {
     // 在租期不会发生选举，确保 Leader 不会变。

@@ -55,6 +55,7 @@ public:
 
     int raft_apply_entries();
 
+    // void merge_apply(std::vector<std::shared_ptr<raft_entry_t>> &entries, raft_index_t start_idx);
     virtual void apply(std::shared_ptr<raft_entry_t> entry, apply_complete func, void *arg) = 0;
     raft_server_t* get_raft(){
         return _raft;
