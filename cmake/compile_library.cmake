@@ -34,7 +34,7 @@ function(compile_library)
     )
     target_include_directories(${_NAME}
       PUBLIC
-      "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
+      "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/src/include>"
     )
     target_compile_options(${_NAME}
       PRIVATE ${CC_LIB_COPTS})
@@ -63,7 +63,7 @@ function(compile_library)
     )
     target_include_directories(${_NAME}
       PUBLIC
-      "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
+      "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/src/include>"
     )
     target_link_libraries(${_NAME}
       INTERFACE
