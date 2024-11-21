@@ -182,7 +182,6 @@ private:
             SPDK_ERRLOG("ERROR: Cant find any available osd of pg %d, pool id %d\n", pool_id, pg_id);
             return EAGAIN;
         }
-        // print_osd(first_osd);
 
         auto req = std::make_unique<leader_request_stack_type>();
         req->leader_resp = std::make_unique<osd::pg_leader_response>();
@@ -245,7 +244,11 @@ public:
     fblock_client(monitor::client* mon_cli, ::spdk_thread* thd, std::shared_ptr<msg::rdma::client::options> opts)
       : _rpc_client{std::make_shared<msg::rdma::client>(FMT_1("fblock_%1%", utils::random_string(3)), thd, opts)}
       , _mon_cli{mon_cli}
-      , _current_thread{thd} { _poller.set_thread(thd); }
+      , _current_thread{thd} {
+        _leader_poller.set_thread(_current_thread);
+        _request_poller.set_thread(_current_thread);
+        _response_poller.set_thread(_current_thread);
+    }
 
     ~fblock_client() noexcept {
         SPDK_DEBUGLOG(libblk, "call ~fblck_client()\n");
@@ -289,7 +292,7 @@ public:
         delete ctx;
     }
 
-    static int do_poll(void* arg) {
+    static int poll_leader(void* arg) {
         auto* arg_this = reinterpret_cast<fblock_client*>(arg);
         if (arg_this->is_terminate()) {
             return SPDK_POLLER_IDLE;
@@ -297,9 +300,31 @@ public:
         if (not arg_this->is_ready()) {
             return SPDK_POLLER_IDLE;
         }
-        auto is_busy = arg_this->process_leader_request() | arg_this->process_request() | arg_this->process_response();
 
-        return is_busy ? SPDK_POLLER_BUSY : SPDK_POLLER_IDLE;
+        return arg_this->process_leader_request();
+    }
+
+    static int poll_request(void* arg) {
+        auto* arg_this = reinterpret_cast<fblock_client*>(arg);
+        if (arg_this->is_terminate()) {
+            return SPDK_POLLER_IDLE;
+        }
+        if (not arg_this->is_ready()) {
+            return SPDK_POLLER_IDLE;
+        }
+
+        return arg_this->process_request();
+    }
+
+    static int poll_response(void* arg) {
+        auto* arg_this = reinterpret_cast<fblock_client*>(arg);
+        if (arg_this->is_terminate()) {
+            return SPDK_POLLER_IDLE;
+        }
+        if (not arg_this->is_ready()) {
+            return SPDK_POLLER_IDLE;
+        }
+        return arg_this->process_response();
     }
 
     static void do_send_request(void* arg) {
@@ -319,7 +344,9 @@ public:
     void handle_start(std::function<void()> cb) {
         SPDK_INFOLOG(libblk, "Starting block client...\n");
         _rpc_client->start();
-        _poller.register_poller(do_poll, this, 0, "fb_client");
+        _leader_poller.register_poller(poll_leader, this, 0, "fbcli_leader");
+        _request_poller.register_poller(poll_request, this, 0, "fbcli_request");
+        _response_poller.register_poller(poll_response, this, 0, "fbcli_response");
         cb();
     }
 
@@ -329,16 +356,22 @@ public:
 
         _rpc_client->stop([this, ctx = ctx] () mutable {
             SPDK_NOTICELOG("rpc client has been stopped\n");
-            _poller.unregister_poller([this, ctx = ctx] () mutable {
-                SPDK_NOTICELOG("fb_client's poller has been stopped\n");
-                if (ctx->cb) {
-                    try {
-                        (ctx->cb.value())();
-                    } catch (const std::exception& e) {
-                        SPDK_ERRLOG("stop the fb_client error: %s\n", e.what());
-                    }
-                }
-                delete ctx;
+            _leader_poller.unregister_poller([this, ctx = ctx] () mutable {
+                SPDK_NOTICELOG("leader poller has been stopped\n");
+                _request_poller.unregister_poller([this, ctx = ctx] () mutable {
+                    SPDK_NOTICELOG("request poller has been stopped\n");
+                    _response_poller.unregister_poller([this, ctx = ctx] () mutable {
+                        SPDK_NOTICELOG("response poller has been stopped\n");
+                        if (ctx->cb) {
+                            try {
+                                (ctx->cb.value())();
+                            } catch (const std::exception& e) {
+                                SPDK_ERRLOG("stop the fb_client error: %s\n", e.what());
+                            }
+                        }
+                        delete ctx;
+                    });
+                });
             });
         });
     }
@@ -378,14 +411,14 @@ public:
      * poller fns
      ************************************************************/
 
-    bool process_response() {
+    int process_response() {
         if (_on_flight_requests.empty()) {
-            return false;
+            return SPDK_POLLER_IDLE;
         }
 
         auto& head = _on_flight_requests.front();
         if (not head->is_responsed) {
-            return false;
+            return SPDK_POLLER_IDLE;
         }
 
         auto response_handler = utils::overload {
@@ -433,12 +466,12 @@ public:
         std::visit(response_handler, head->resp);
         _on_flight_requests.pop_front();
 
-        return true;
+        return SPDK_POLLER_BUSY;
     }
 
-    bool process_leader_request() {
+    int process_leader_request() {
         if (_leader_requests.empty()) {
-            return false;
+            return SPDK_POLLER_IDLE;
         }
 
         auto n = std::erase_if(
@@ -447,7 +480,7 @@ public:
               auto& [_, stack_ptr] = kv;
               stack_ptr->stub = get_stub(stack_ptr->osd);
               if (not stack_ptr->stub) {
-                  return false;
+                  return SPDK_POLLER_IDLE;
               }
 
               SPDK_INFOLOG(libblk, "send get_leader request for pg %lu.%lu to osd %d\n",
@@ -457,27 +490,27 @@ public:
               stack_ptr->stub->process_get_leader(
                 &_ctrlr, stack_ptr->leader_req.get(), stack_ptr->leader_resp.get(), done);
               _on_flight_leader_requests.insert(std::move(kv));
-              return true;
+              return SPDK_POLLER_BUSY;
           }
         );
 
-        return true;
+        return SPDK_POLLER_BUSY;
     }
 
-    bool process_request() {
+    int process_request() {
         if (_requests.empty()) {
-            return false;
+            return SPDK_POLLER_IDLE;
         }
 
         auto& head = _requests.front();
         auto osd_info_it = _leader_osd.find(head->leader_osd_key);
         if (osd_info_it == _leader_osd.end()) {
-            return false;
+            return SPDK_POLLER_IDLE;
         }
 
         if (not head->stub) {
             if (osd_info_it->second->is_onflight) {
-                return false;
+                return SPDK_POLLER_IDLE;
             }
 
             SPDK_DEBUGLOG(
@@ -495,7 +528,7 @@ public:
               osd_info_it->second->addr,
               osd_info_it->second->port);
             if (not head->stub) {
-                return false;
+                return SPDK_POLLER_IDLE;
             }
         }
 
@@ -504,7 +537,7 @@ public:
             auto* struct_key = reinterpret_cast<leader_key_type*>(&(head->leader_osd_key));
             enqueue_leader_request(struct_key->pool_id, struct_key->pg_id);
 
-            return true;
+            return SPDK_POLLER_BUSY;
         }
 
         auto request_handler = utils::overload {
@@ -542,7 +575,7 @@ public:
         _on_flight_requests.push_back(std::move(head));
         _requests.pop_front();
 
-        return true;
+        return SPDK_POLLER_BUSY;
     }
 
 private:
@@ -688,7 +721,9 @@ private:
     monitor::client* _mon_cli{nullptr};
     uint32_t _pg_mask;
     uint32_t _pg_num;
-    utils::simple_poller _poller{};
+    utils::simple_poller _leader_poller{};
+    utils::simple_poller _request_poller{};
+    utils::simple_poller _response_poller{};
 
     uint64_t _leader_req_id_gen{0};
     std::unordered_map<uint64_t, std::unique_ptr<leader_request_stack_type>> _leader_requests{}; // leader 请求可以不考虑保序性
