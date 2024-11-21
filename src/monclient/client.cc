@@ -68,6 +68,8 @@ void do_emplace_request(void* arg) {
 }
 
 void client::load_pgs(){
+    if(_user_idty != user_identity::USER_OSD)
+        return;
     // SPDK_WARNLOG("load pgs\n");
     std::map<uint64_t, std::vector<utils::pg_info_type>> pools;
     _pm.lock()->load_pgs_map(pools);
@@ -443,7 +445,11 @@ void client::_remove_pg(pg_map::pool_id_type pool_id, pg_map::pg_id_type pg_id, 
     };
 
     _pg_map.set_pool_update(pool_id, pg_id, pool_version, 1);
-    _pm.lock()->delete_partition(pool_id, pg_id, std::move(delete_pg_done), nullptr);
+    if(_user_idty == user_identity::USER_OSD){
+        _pm.lock()->delete_partition(pool_id, pg_id, std::move(delete_pg_done), nullptr);
+    } else {
+        delete_pg_done(nullptr, 0);
+    }
 }
 
 void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
@@ -466,7 +472,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
         pool_item++;
 
         if(!ec.contains(pool_id)){
-            SPDK_DEBUGLOG(mon, "pool %d is deleted\n", pool_id);
+            SPDK_WARNLOG("pool %d is deleted\n", pool_id);
             //pool被删除
             auto pg_item = pg_infos.begin();
             while(pg_item != pg_infos.end()){
@@ -475,6 +481,9 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                 _remove_pg(pool_id, pg_id, pool_version);
             }
         }else{
+            if(_user_idty == user_identity::USER_CLIENT){
+                continue;
+            }
             auto info_it = pgs.find(pool_id);
             if (info_it == pgs.end()){
                 continue;
@@ -607,6 +616,9 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                     }
                 }
 
+                if(_user_idty == user_identity::USER_CLIENT)
+                    contain_in_monitor = true;
+
                 //当前osd不在monitor上pg的osd列表中
                 if(!contain_in_monitor ){
                     _remove_pg(pool_id, pgid, _pg_map.pool_version[pool_id]);
@@ -642,7 +654,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                         continue;
                     }
 
-                    if(!_new_pg_cb)
+                    if(!_new_pg_cb || _user_idty != user_identity::USER_OSD)
                         continue;
 
                     std::vector<int32_t> new_osds;
@@ -690,7 +702,10 @@ void client::_active_pg(pg_map::pool_id_type pool_id,
     if(!pg_is_remap){
         _pg_map.set_pool_update(pool_id, info.pgid(), pool_version, 1);
     }
-    _pm.lock()->active_partition(pool_id, info.pgid(), std::move(active_pg_done), nullptr);
+    if(_user_idty == user_identity::USER_OSD)
+        _pm.lock()->active_partition(pool_id, info.pgid(), std::move(active_pg_done), nullptr);
+    else
+        active_pg_done(nullptr, 0);
 }
 
 void client::process_osd_map(std::shared_ptr<msg::Response> response) {

@@ -392,7 +392,7 @@ static void pm_init(void *arg){
           pm->create_partition(pool_id, pg_info.pgid(), pg_info.coreindex() ,std::move(osds), 0, std::move(cb_fn), arg);
       };
     monitor_client = std::make_shared<monitor::client>(
-      server->monitors, global_pm, std::move(pg_map_cb), std::nullopt, server->node_id);
+      server->monitors, global_pm, std::move(pg_map_cb), std::nullopt, server->node_id, 5, true, std::chrono::seconds{10}, monitor::user_identity::USER_OSD);
 }
 
 void storage_init_complete(void *arg, int rberrno){

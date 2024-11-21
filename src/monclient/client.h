@@ -37,6 +37,12 @@ class partition_manager;
 
 namespace monitor {
 
+enum class user_identity {
+    USER_CLIENT = 0, 
+    USER_OSD
+};
+
+
 class client {
 
 public:
@@ -354,7 +360,8 @@ public:
       int osd_id = -1,
       const size_t max_fail = 5,
       const bool auto_reconnect = true,
-      const std::chrono::system_clock::duration dur = std::chrono::seconds{10})
+      const std::chrono::system_clock::duration dur = std::chrono::seconds{10},
+      user_identity user_idty = user_identity::USER_CLIENT)
       : _cluster{std::make_unique<cluster>(endpoints, max_fail, dur, auto_reconnect)}
       , _self_osd_id{osd_id}
       , _pm{std::move(pm)}
@@ -362,7 +369,8 @@ public:
       , _current_core{::spdk_env_get_current_core()}
       , _log_time_check{dur}
       , _new_pg_cb{std::move(new_pg_cb)}
-      , _cluster_map_init_cb{std::move(cluster_map_init_cb)} {}
+      , _cluster_map_init_cb{std::move(cluster_map_init_cb)}
+      , _user_idty(user_idty) {}
 
     client(const client&) = delete;
 
@@ -561,6 +569,7 @@ private:
     int64_t _should_read_bytes = 8;
     int64_t _read_bytes = 0;
     bool _is_read_len = true;
+    user_identity _user_idty;
 private:
 
     static constexpr size_t _buffer_size{65535};
