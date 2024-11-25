@@ -480,6 +480,7 @@ void on_write_done(::spdk_bdev_io* ctx, [[maybe_unused]] int32_t res) {
             bench_ctx->deferred_count = 0;
         }
     }
+    bench_ctx->on_flight_request.erase(stack_ptr->id);
 
     if (watcher_ctx->infinity or bench_ctx->on_flight_io_count < bench_ctx->io_count) {
         write_once(bench_ctx);
