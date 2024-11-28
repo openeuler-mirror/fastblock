@@ -16,16 +16,18 @@ msg_client_metadata_memory_pool_element_size 为512
 msg_client_data_memory_pool_element_size 为5120
 
 # 1 mkfs创建文件系统
-在fastblock的image中建立一个bdev，然后作为虚拟机的磁盘启动虚拟机，对此磁盘建立文件系统（mkfs.ext4、mkfs.xfs）时，当*_memory_pool_capacity小于1024时，会报下面的日志
+在fastblock的image中建立一个bdev，然后作为虚拟机的磁盘启动虚拟机，对此磁盘建立文件系统（mkfs.ext4、mkfs.xfs）时，
+当vhost绑定单个cpu核，*_memory_pool_capacity小于1024时，会报下面的日志
+当vhost绑定多个cpu核，*_memory_pool_capacity小于2048时，会报下面的日志
 ![alt text](png/rpc_memory_parameter.png)
 并且mkfs.ext4、mkfs.xfs命令卡住，vhost进程也会卡住，rpc数据发送不出去。
 
-*_memory_pool_capacity值调整为1024时，mkfs.ext4和mkfs.xfs才能正常运行
+*_memory_pool_capacity值调整为2048时，mkfs.ext4和mkfs.xfs才能正常运行
 ```
-    "msg_server_metadata_memory_pool_capacity": 1024,
-    "msg_server_data_memory_pool_capacity": 1024,
-    "msg_client_metadata_memory_pool_capacity": 1024,
-    "msg_client_data_memory_pool_capacity": 1024,
+    "msg_server_metadata_memory_pool_capacity": 2048,
+    "msg_server_data_memory_pool_capacity": 2048,
+    "msg_client_metadata_memory_pool_capacity": 2048,
+    "msg_client_data_memory_pool_capacity": 2048,
 ```
 
 # 2 fio写4M数据
