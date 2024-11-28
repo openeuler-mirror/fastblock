@@ -115,10 +115,7 @@ static void vhost_started(void *arg1)
 
 
     	auto core_begin = core_sharded::system::begin();
-    	auto n_core = std::max(
-    	  core_sharded::system::size_type{1},
-    	  core_sharded::system::capacity() - 1);
-    	core_sharded::construct(core_begin, n_core, "vhost");
+    	core_sharded::construct(core_begin, core_sharded::system::capacity(), "vhost");
 
 	global::rpc_cli_opts = msg::rdma::client::make_options(g_pt);
 	auto core_no = ::spdk_env_get_current_core();
