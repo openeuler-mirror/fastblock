@@ -784,9 +784,9 @@ read_done:
             --_onflight_rpc_task_size;
             stack_ptr->closure->Run();
             stack_ptr->reply_data.reset(nullptr);
+            auto rpc_dur = std::chrono::system_clock::now() - stack_ptr->start_at;
             _wait_read_requests.pop_front();
 
-            auto rpc_dur = std::chrono::system_clock::now() - stack_ptr->start_at;
             if (rpc_dur >= _opts->slow_rpc_warn) {
                 SPDK_WARNLOG(
                   "slow rpc decteed, request id %d, rpc duration %ldms\n",
