@@ -103,7 +103,9 @@ void start_rpc_server(void* arg) {
     }
 
     if (static_cast<size_t>(::spdk_env_get_core_count()) < ports.size()) {
-        SPDK_ERRLOG("The number of bind ports should be equal to the number of cores\n");
+        SPDK_ERRLOG(
+          "The number of bind ports(%ld) should be equal to the number of cores(%d)\n",
+          ports.size(), ::spdk_env_get_core_count());
         std::raise(SIGINT);
     }
 
@@ -147,7 +149,6 @@ int main(int argc, char** argv) {
 
     opts.name = "demo_server";
     opts.shutdown_cb = on_server_close;
-    opts.rpc_addr = "/var/tmp/demo_srv.sock";
     opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
 
     std::signal(SIGINT, handle_sigint);
