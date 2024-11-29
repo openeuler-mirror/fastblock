@@ -783,13 +783,12 @@ read_done:
             _free_server_list.push_back(stack_ptr->request_key);
             --_onflight_rpc_task_size;
             stack_ptr->closure->Run();
-            stack_ptr->reply_data.reset(nullptr);
             auto rpc_dur = std::chrono::system_clock::now() - stack_ptr->start_at;
             _wait_read_requests.pop_front();
 
             if (rpc_dur >= _opts->slow_rpc_warn) {
                 SPDK_WARNLOG(
-                  "slow rpc decteed, request id %d, rpc duration %ldms\n",
+                  "slow rpc detected, request id %d, rpc duration %ldms\n",
                   stack_ptr->request_key, rpc_dur.count() / 1000 / 1000);
             }
 

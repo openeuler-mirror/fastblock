@@ -526,7 +526,7 @@ private:
         auto dur = std::chrono::system_clock::now() - task->start_at;
         if (dur >= _opts->slow_method) {
             SPDK_WARNLOG(
-              "slow rpc method dected, task id is %d, dur is %ldms\n",
+              "slow rpc method detected, task id is %d, dur is %ldms\n",
               task->id, dur.count() / 1000 / 1000);
         }
 
