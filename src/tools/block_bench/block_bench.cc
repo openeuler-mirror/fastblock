@@ -177,7 +177,7 @@ public:
           % tick_to_us(max) % tick_to_us(biased_stdv)
           % iops_val % iops_dur_sec % size;
 
-        std::cout << fmt.str() << "\n";
+        std::cout << fmt.str() << std::endl;
     }
 
     static int print_poll(void* arg) {
@@ -221,27 +221,30 @@ public:
 
         uint64_t iops_dur{::spdk_get_ticks() - last_print_at};
         last_print_at = ::spdk_get_ticks();
-        size_t durations_size{0};
-        bool should_print{false};
-
         auto tick_it = ticks.begin();
         size_t acc_size{0};
         size_t dur_size_per_core{0};
+
         locked = true;
+        for (size_t i{0}; i < ctx_size; ++i) {
+            acc_size += (ctxs[i].dur_it - ctxs[i].durs.begin());
+        }
+
+        if (ticks.size() < acc_size) {
+            ticks.resize(acc_size);
+            tick_it = ticks.begin();
+        }
+
         for (size_t i{0}; i < ctx_size; ++i) {
             if (ctxs[i].durs.begin() == ctxs[i].dur_it) {
                 continue;
             }
 
-            ticks.insert(tick_it, ctxs[i].durs.begin(), ctxs[i].dur_it);
+            std::copy(ctxs[i].durs.begin(), ctxs[i].dur_it, tick_it);
             dur_size_per_core = ctxs[i].dur_it - ctxs[i].durs.begin();
             ctxs[i].dur_it = ctxs[i].durs.begin();
             ctxs[i].acc_dur += dur_size_per_core;
-            acc_size += dur_size_per_core;
-            tick_it = ticks.begin() + acc_size;
-            stats_iops_per_core.emplace_back(
-              ctxs[i].core,
-              dur_size_per_core / (static_cast<double>(iops_dur) / ::spdk_get_ticks_hz()));
+            tick_it += dur_size_per_core;
         }
         locked = false;
 
@@ -283,7 +286,6 @@ public:
     std::unique_ptr<utils::simple_poller> print_poller{nullptr};
     std::vector<double> ticks{};
     std::unique_ptr<size_t[]> prev_print_at{nullptr};
-    std::vector<stats_iops> stats_iops_per_core{};
     ::spdk_thread* print_thread{nullptr};
     std::unique_ptr<std::vector<double>[]> dur_per_core{nullptr};
     std::unique_ptr<decltype(dur_per_core)::element_type::iterator[]> dur_end_it_per_core{nullptr};
