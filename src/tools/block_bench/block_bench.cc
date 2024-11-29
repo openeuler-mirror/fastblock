@@ -390,15 +390,13 @@ void on_write_done(::spdk_bdev_io* ctx, [[maybe_unused]] int32_t res) {
     auto tick = ::spdk_get_ticks();
     auto dur = static_cast<double>(tick - stack_ptr->start_tick);
     if (tick >= watcher_ctx->iops_start_at) {
-        if (not watcher_ctx->infinity) {
-            if (not g_print_ctx.locked) {
-                if (bench_ctx->dur_it == bench_ctx->durs.end()) {
-                    bench_ctx->durs.push_back(dur);
-                    bench_ctx->dur_it = bench_ctx->durs.end();
-                } else {
-                    *(bench_ctx->dur_it) = dur;
-                    bench_ctx->dur_it++;
-                }
+        if (not g_print_ctx.locked) {
+            if (bench_ctx->dur_it == bench_ctx->durs.end()) {
+                bench_ctx->durs.push_back(dur);
+                bench_ctx->dur_it = bench_ctx->durs.end();
+            } else {
+                *(bench_ctx->dur_it) = dur;
+                bench_ctx->dur_it++;
             }
         }
 
@@ -410,7 +408,7 @@ void on_write_done(::spdk_bdev_io* ctx, [[maybe_unused]] int32_t res) {
         bench_ctx->done_io_count++;
     } else {
         bench_ctx->deferred_count++;
-        if (not watcher_ctx->infinity and bench_ctx->on_flight_io_count == bench_ctx->io_count) {
+        if (bench_ctx->on_flight_io_count == bench_ctx->io_count) {
             //延期时间还没到，此核上的所有io已经完成
             bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
             bench_ctx->deferred_count = 0;
@@ -435,15 +433,13 @@ void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
     auto tick = ::spdk_get_ticks();
     auto dur = static_cast<double>(tick - stack_ptr->start_tick);
     if (tick >= watcher_ctx->iops_start_at) {
-        if (not watcher_ctx->infinity) {
-            if (not g_print_ctx.locked) {
-                if (bench_ctx->dur_it == bench_ctx->durs.end()) {
-                    bench_ctx->durs.push_back(dur);
-                    bench_ctx->dur_it = bench_ctx->durs.end();
-                } else {
-                    bench_ctx->dur_it++;
-                    *(bench_ctx->dur_it) = dur;
-                }
+        if (not g_print_ctx.locked) {
+            if (bench_ctx->dur_it == bench_ctx->durs.end()) {
+                bench_ctx->durs.push_back(dur);
+                bench_ctx->dur_it = bench_ctx->durs.end();
+            } else {
+                bench_ctx->dur_it++;
+                *(bench_ctx->dur_it) = dur;
             }
         }
 
@@ -455,7 +451,7 @@ void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
         bench_ctx->done_io_count++;
     } else {
         bench_ctx->deferred_count++;
-        if (not watcher_ctx->infinity and bench_ctx->on_flight_io_count == bench_ctx->io_count) {
+        if (bench_ctx->on_flight_io_count == bench_ctx->io_count) {
             //延期时间还没到，此核上的所有io已经完成
             bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
             bench_ctx->deferred_count = 0;
@@ -709,10 +705,7 @@ void on_app_start(void* arg) {
     if (watcher_ctx->image_size <= watcher_ctx->object_size) {
         throw std::invalid_argument{"image size should be greater than object size"};
     }
-
-    if (not watcher_ctx->infinity) {
-        g_print_ctx.from_conf(g_pt);
-    }
+    g_print_ctx.from_conf(g_pt);
 
     if (watcher_ctx->image_name.empty()) {
         watcher_ctx->image_name = random_string(32);
