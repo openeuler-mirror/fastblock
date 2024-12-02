@@ -344,14 +344,14 @@ message GetClusterStatusResponse {
     int32          objectNum    = 8;
     PgStateInfo    pgState      = 9;
     //单位字节每秒
-    uint64        cliReadSpeed   = 10;
-    uint64        cliWriteSpeed  = 11;
+    uint64        cliReadBytes = 10;
+    uint64        cliWriteBytes = 11;
 
     uint64        cliReadIops   = 12;
     uint64        cliWriteIops  = 13;
 
     //单位字节每秒
-    uint64        recoverySpeed = 14;
+    uint64        recoveryBytes = 14;
     //recovery时每秒恢复多少个object
     uint64        recoveryObjPs = 15;
 }
