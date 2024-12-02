@@ -1,0 +1,21 @@
+[Unit]
+Description=fastblock nvmf-tgt daemon
+PartOf=fastblock-nvmf-tgt.target
+After=network-online.target time-sync.target
+Before=fastblock-osd.target
+Wants=network-online.target time-sync.target fastblock-nvmf-tgt.target
+
+[Service]
+ExecReload=/bin/kill -HUP $MAINPID
+ExecStart=/usr/local/bin/fastblock-nvmf-tgt -C /etc/fastblock/vhost.json
+StandardOutput=append:/var/log/fastblock/fastblock-nvmf-tgt.log
+StandardError=append:/var/log/fastblock/fastblock-nvmf-tgt.log
+LimitNOFILE=1048576
+LimitNPROC=1048576
+Restart=on-failure
+RestartSec=30
+StartLimitInterval=0
+TasksMax=infinity
+
+[Install]
+WantedBy=multi-user.target

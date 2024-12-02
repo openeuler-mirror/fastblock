@@ -105,6 +105,7 @@ mkdir -p %{buildroot}/etc/fastblock/
 %attr(0755, root, root) /usr/local/bin/fbbench
 %attr(0755, root, root) /usr/local/bin/block_bench
 %attr(0755, root, root) /usr/local/bin/fastblock-vhost
+%attr(0755, root, root) /usr/local/bin/fastblock-nvmf-tgt
 
 %clean
 rm -rf %{buildroot}

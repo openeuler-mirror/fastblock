@@ -8,8 +8,9 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
-
+#include <spdk/env.h>
 #include <iostream>
+
 #include "common.h"
 
 int main(int argc, char *argv[])
@@ -20,7 +21,7 @@ int main(int argc, char *argv[])
 	spdk_app_opts_init(&opts, sizeof(opts));
 	// disable tracing because it's memory consuming
 	opts.num_entries = 0;
-	opts.name = "vhost";
+	opts.name = "nvmf_tgt";
 	opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
 
 	if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:N:S:", g_cmdline_opts,
@@ -42,24 +43,29 @@ int main(int argc, char *argv[])
 	if(!core_mask){
 	    return -EINVAL;
 	}
-    std::cout << "run vhost with cpumask " << core_mask.value() << std::endl;
+    std::cout << "run nvmf_tgt with cpumask " << core_mask.value() << std::endl;
 	std::string reactor_mask = core_mask.value();
 	opts.reactor_mask = reactor_mask.c_str();
 
 	boost::property_tree::read_json(std::string(g_conf_path), g_pt);
 
-	std::string pid_path = "/var/tmp/vhost" + std::to_string(getpid()) + ".pid";
+	std::string pid_path = "/var/tmp/fastblock_nvmf_tgt" + std::to_string(getpid()) + ".pid";
 	save_pid(pid_path.c_str());
-	auto vhost_path = "/var/tmp/bdev_vhost_" + std::to_string(getpid()) + ".sock";
+	auto nvmf_tgt_path = "/var/tmp/fastblock_nvmf_tgt" + std::to_string(getpid()) + ".sock";
 	SPDK_NOTICELOG(
-		"pid path is '%s', vhost socket path is '%s'\n",
-		pid_path.c_str(), vhost_path.c_str());
+		"pid path is '%s', fastblock_nvmf_tgt socket path is '%s'\n",
+		pid_path.c_str(), nvmf_tgt_path.c_str());
 
-	opts.rpc_addr = vhost_path.c_str();
-	g_app_name = "vhost";
+	opts.rpc_addr = nvmf_tgt_path.c_str();
+    g_app_name = "nvmf_tgt";
 	rc = spdk_app_start(&opts, app_run, NULL);
 	spdk_app_fini();
 	utils::unclaim_cores();
 	clean_pid_file(pid_path.c_str());
 	return rc;
 }
+
+
+
+
+

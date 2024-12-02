@@ -72,7 +72,7 @@ ExternalProject_Add(spdk
   INSTALL_DIR    @FASTBLOCK_DEPS_INSTALL_DIR@
   CONFIGURE_COMMAND
     <SOURCE_DIR>/configure  --without-nvme-cuse --without-crypto
-      --disable-tests --disable-unit-tests --disable-examples --disable-apps --without-rdma
+      --disable-tests --disable-unit-tests --disable-examples --disable-apps --with-rdma
       --prefix=<INSTALL_DIR>
       ${spdk_debug} ${spdk_asan} ${spdk_ubsan}
   BUILD_COMMAND
