@@ -24,8 +24,8 @@
 #include <spdk/log.h>
 
 #include "bdev_fastblock.h"
-#include "client/libfblock.h"
-#include "bdev/global.h"
+#include "fastblock/client/libfblock.h"
+#include "fastblock/bdev/global.h"
 
 #define SPDK_FASTBLOCK_QUEUE_DEPTH 128
 #define MAX_EVENTS_PER_POLL 128

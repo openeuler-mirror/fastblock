@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-#include "client/libfblock.h"
+#include "fastblock/client/libfblock.h"
 #include "utils/units.h"
 #include "utils/simple_poller.h"
 #include "osd/partition_manager.h"
@@ -816,7 +816,7 @@ void on_app_start(void* arg) {
         }
     };
 
-    mon_client = std::make_unique<monitor::client>(eps, par_mgr, std::nullopt, std::move(cb));
+    mon_client = std::make_unique<monitor::client>(eps, reinterpret_cast<void*>(par_mgr.get()), std::nullopt, std::move(cb));
     mon_client->start();
     mon_client->start_cluster_map_poller();
     mon_client->emplace_create_image_request(

@@ -12,7 +12,7 @@
 #include "base/core_sharded.h"
 #include "common.h"
 
-#include "msg/rdma/server.h"
+#include "fastblock/msg/rdma/server.h"
 
 #include "ping_pong.pb.h"
 

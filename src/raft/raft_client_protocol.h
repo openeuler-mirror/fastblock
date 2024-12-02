@@ -15,7 +15,7 @@
 
 #include "rpc/connect_cache.h"
 #include "rpc/raft_msg.pb.h"
-#include "msg/rpc_controller.h"
+#include "fastblock/msg/rpc_controller.h"
 #include "utils/err_num.h"
 #include "base/core_sharded.h"
 #include "utils/utils.h"
@@ -170,7 +170,7 @@ public:
                       SPDK_ERRLOG(
                         "create connect to node %d (address %s, port %d) in core %u failed\n",
                         node_id, address.c_str(), port, _shard_cores[shard_id]);
-                      
+
                     utils::switch_core_func(ctx, err::RAFT_ERR_UNKNOWN);
                   }
                   auto &stub = _stubs[shard_id];

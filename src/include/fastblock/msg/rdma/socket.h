@@ -10,12 +10,12 @@
  */
 #pragma once
 
-#include "msg/rdma/endpoint.h"
-#include "msg/rdma/event_channel.h"
-#include "msg/rdma/provider/mlx5dv.h"
-#include "msg/rdma/provider/verbs.h"
-#include "msg/rdma/pd.h"
-#include "msg/rdma/provider.h"
+#include "fastblock/msg/rdma/endpoint.h"
+#include "fastblock/msg/rdma/event_channel.h"
+#include "fastblock/msg/rdma/provider/mlx5dv.h"
+#include "fastblock/msg/rdma/provider/verbs.h"
+#include "fastblock/msg/rdma/pd.h"
+#include "fastblock/msg/rdma/provider.h"
 #include "utils/fmt.h"
 
 #include <functional>
