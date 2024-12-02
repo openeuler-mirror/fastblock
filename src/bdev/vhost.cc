@@ -8,10 +8,9 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
+
 #include <iostream>
-
 #include "common.h"
-
 
 int main(int argc, char *argv[])
 {
@@ -57,6 +56,7 @@ int main(int argc, char *argv[])
 		pid_path.c_str(), vhost_path.c_str());
 
 	opts.rpc_addr = vhost_path.c_str();
+	g_app_name = "vhost";
 	rc = spdk_app_start(&opts, app_run, NULL);
 	spdk_app_fini();
 	utils::unclaim_cores();

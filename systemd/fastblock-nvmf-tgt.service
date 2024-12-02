@@ -7,7 +7,7 @@ Wants=network-online.target time-sync.target fastblock-nvmf-tgt.target
 
 [Service]
 ExecReload=/bin/kill -HUP $MAINPID
-ExecStart=/usr/local/bin/fastblock-nvmf-tgt -C /etc/fastblock/vhost.json
+ExecStart=/usr/local/bin/fastblock-nvmf-tgt -C /etc/fastblock/nvmf_tgt.json
 StandardOutput=append:/var/log/fastblock/fastblock-nvmf-tgt.log
 StandardError=append:/var/log/fastblock/fastblock-nvmf-tgt.log
 LimitNOFILE=1048576

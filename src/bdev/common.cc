@@ -10,7 +10,7 @@
  */
 
 #include <optional>
-#include "global.h"
+#include "fastblock/bdev/global.h"
 #include "common.h"
 
 
@@ -18,6 +18,7 @@ const char* g_mon_cluster_endpoints = nullptr;
 const char* g_conf_path{nullptr};
 boost::property_tree::ptree g_pt{};
 int g_core_num = 1;
+std::string  g_app_name;
 
 void
 app_usage(void)
@@ -106,11 +107,8 @@ void app_run(void *arg1)
 	}
 
 
-    	auto core_begin = core_sharded::system::begin();
-    	auto n_core = std::max(
-    	  core_sharded::system::size_type{1},
-    	  core_sharded::system::capacity() - 1);
-    	core_sharded::construct(core_begin, n_core, "vhost");
+    auto core_begin = core_sharded::system::begin();
+    core_sharded::construct(core_begin, core_sharded::system::capacity(), g_app_name);
 
 	global::rpc_cli_opts = msg::rdma::client::make_options(g_pt);
 	auto core_no = ::spdk_env_get_current_core();
@@ -119,8 +117,7 @@ void app_run(void *arg1)
 	::spdk_cpuset_set_cpu(&cpumask, core_no, true);
 	global::conn_cache = std::make_shared<::connect_cache>(&cpumask, global::rpc_cli_opts);
 
-    global::par_mgr = std::make_shared<::partition_manager>(-1, global::conn_cache);
-    global::mon_client = std::make_unique<monitor::client>(mon_eps, global::par_mgr);
+    global::mon_client = std::make_unique<monitor::client>(mon_eps, nullptr);
     global::mon_client->start();
     global::mon_client->start_cluster_map_poller();
 

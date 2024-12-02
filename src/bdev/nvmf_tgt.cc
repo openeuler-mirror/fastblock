@@ -57,6 +57,7 @@ int main(int argc, char *argv[])
 		pid_path.c_str(), nvmf_tgt_path.c_str());
 
 	opts.rpc_addr = nvmf_tgt_path.c_str();
+    g_app_name = "nvmf_tgt";
 	rc = spdk_app_start(&opts, app_run, NULL);
 	spdk_app_fini();
 	utils::unclaim_cores();
