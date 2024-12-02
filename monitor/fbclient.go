@@ -81,21 +81,6 @@ func arrayToStr(array []int32) string {
 	return str
 }
 
-func speedToString(speedValue uint64) string {
-	units := [...]string{" B/s", " kB/s", " MB/s", " GB/s", " TB/s"}
-	var speed string
-
-	for i := 0; i < len(units); i++ {
-		if speedValue < 1024 {
-			speed = strconv.FormatUint(speedValue, 10) + units[i]
-			break
-		} else {
-			speedValue /= 1024
-		}
-	}
-	return speed
-}
-
 func findMinKey(m map[uint32]uint32) uint32 {
 	if len(m) == 0 {
 		return math.MaxUint32
@@ -115,73 +100,6 @@ func findMinKey(m map[uint32]uint32) uint32 {
 	}
 
 	return minKey
-}
-
-func printClient(cliReadSpeed uint64, cliWriteSpeed uint64, cliReadIops uint64, cliWriteIops uint64, recoverySpeed uint64, recoveryObjPs uint64) {
-	client := make(map[string]string)
-	recovery := make(map[string]string)
-	rd := "rd"
-	wr := "wr"
-	ord := "op/s rd"
-	owr := "op/s wr"
-	speed := "speed"
-	ops := "ops"
-	order := [...]string{rd, wr, ord, owr}
-	recoveryOrder := [...]string{speed, ops}
-	if cliReadSpeed != 0 {
-		client[rd] = speedToString(cliReadSpeed)
-	}
-	if cliWriteSpeed != 0 {
-		client[wr] = speedToString(cliWriteSpeed)
-	}
-	if cliReadIops != 0 {
-		client[ord] = strconv.FormatUint(cliReadIops, 10)
-	}
-	if cliWriteIops != 0 {
-		client[owr] = strconv.FormatUint(cliWriteIops, 10)
-	}
-	if recoverySpeed != 0 {
-		recovery["speed"] = speedToString(recoverySpeed)
-	}
-	if recoveryObjPs != 0 {
-		recovery["ops"] = strconv.FormatUint(recoveryObjPs, 10) + " objects/s"
-	}
-
-	if len(client) != 0 || len(recovery) != 0 {
-		fmt.Printf("  io: \r\n")
-		if len(client) != 0 {
-			fmt.Printf("    client   : ")
-			i := 0
-			for _, units := range order {
-				data, ok := client[units]
-				if ok {
-					if i != 0 {
-						fmt.Printf(",  ")
-					}
-					fmt.Printf("%v %v", data, units)
-					i += 1
-				}
-			}
-			fmt.Printf("\n")
-		}
-
-		if len(recovery) != 0 {
-			fmt.Printf("    recovery : ")
-			i := 0
-			for _, val := range recoveryOrder {
-				data, ok := recovery[val]
-				if ok {
-					if i != 0 {
-						fmt.Printf(",  ")
-					}
-					fmt.Printf("%v", data)
-					i += 1
-				}
-			}
-			fmt.Printf("\n")
-		}
-	}
-
 }
 
 func sendClientReqeust(request *msg.Request, conn net.Conn) error {
@@ -447,34 +365,33 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 						}
 					}
 				}
+
 				if *op == "watchpgmap" {
 					continue
 				} else {
-					if len(mypgmap) > 0 {
-						var poolIds []int32
-						for k := range mypgmap {
-							poolIds = append(poolIds, k)
-						}
-						sort.Slice(poolIds, func(i, j int) bool {
-							return poolIds[i] < poolIds[j]
-						})
-						fmt.Printf("%-10v   %-25v   %-10v   %-25v    %-10v   %-25v   \r\n", "PGID", "STATE", "CORE", "OSDLIST", "NEWCORE", "NEWOSDLIST")
-						for _, pid := range poolIds {
-							pgs := mypgmap[pid]
-							sort.Slice(pgs.Pi, byPgid(pgs.Pi))
-							for _, pg := range pgs.Pi {
-								pgid := strconv.FormatInt(int64(pid), 10) + "." + strconv.FormatInt(int64(pg.GetPgid()), 10)
-								osdlist := arrayToStr(pg.GetOsdid())
-								newosdlist := arrayToStr(pg.GetNewosdid())
-								newCoreIndex := ""
-								if pg.GetNewcoreindex() < math.MaxUint32 {
-									newCoreIndex = strconv.FormatInt(int64(pg.GetNewcoreindex()), 10)
-								}
-
-								fmt.Printf("%-10v   %-25v   %-10v   %-25v    %-10v   %-25v   \r\n", pgid,
-									utils.PgStateStr(utils.PGSTATE(pg.GetState())),
-									pg.GetCoreindex(), osdlist, newCoreIndex, newosdlist)
+					var poolIds []int32
+					for k := range mypgmap {
+						poolIds = append(poolIds, k)
+					}
+					sort.Slice(poolIds, func(i, j int) bool {
+						return poolIds[i] < poolIds[j]
+					})
+					fmt.Printf("%-10v   %-25v   %-10v   %-25v    %-10v   %-25v   \r\n", "PGID", "STATE", "CORE", "OSDLIST", "NEWCORE", "NEWOSDLIST")
+					for _, pid := range poolIds {
+						pgs := mypgmap[pid]
+						sort.Slice(pgs.Pi, byPgid(pgs.Pi))
+						for _, pg := range pgs.Pi {
+							pgid := strconv.FormatInt(int64(pid), 10) + "." + strconv.FormatInt(int64(pg.GetPgid()), 10)
+							osdlist := arrayToStr(pg.GetOsdid())
+							newosdlist := arrayToStr(pg.GetNewosdid())
+							newCoreIndex := ""
+							if pg.GetNewcoreindex() < math.MaxUint32 {
+								newCoreIndex = strconv.FormatInt(int64(pg.GetNewcoreindex()), 10)
 							}
+
+							fmt.Printf("%-10v   %-25v   %-10v   %-25v    %-10v   %-25v   \r\n", pgid,
+								utils.PgStateStr(utils.PGSTATE(pg.GetState())),
+								pg.GetCoreindex(), osdlist, newCoreIndex, newosdlist)
 						}
 					}
 				}
@@ -547,6 +464,7 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 
 				stopChan <- struct{}{}
 				return
+
 			case *msg.Response_GetClusterMapResponse:
 				om := *payload.GetClusterMapResponse.GetGomResponse()
 				pgmapVersion := payload.GetClusterMapResponse.GpmResponse.GetPoolidPgmapversion()
@@ -658,7 +576,7 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 					imagemap[getimageinfo.Imagename].Poolname = getimageinfo.Poolname
 					imagemap[getimageinfo.Imagename].ObjectSize = getimageinfo.ObjectSize
 				} else {
-					imagemap[getimageinfo.Imagename] = getimageinfo
+					imagemap[getimageinfo.GetImagename()] = getimageinfo
 				}
 				fmt.Printf("Imagename: %s  get info imagename: %s  Poolname: %s  Size: %d   Objectsize: %d  \n", *imageName, getimageinfo.Imagename, getimageinfo.Poolname, getimageinfo.Size_, getimageinfo.ObjectSize)
 				stopChan <- struct{}{}
@@ -698,11 +616,11 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 				pgNum := payload.GetClusterStatusResponse.GetPgNum()
 				objectNum := payload.GetClusterStatusResponse.GetObjectNum()
 				pgState := payload.GetClusterStatusResponse.GetPgState()
-				cliReadSpeed := payload.GetClusterStatusResponse.GetCliReadSpeed()
-				cliWriteSpeed := payload.GetClusterStatusResponse.GetCliWriteSpeed()
+				cliReadBytes := payload.GetClusterStatusResponse.GetCliReadBytes()
+				cliWriteBytes := payload.GetClusterStatusResponse.GetCliWriteBytes()
 				cliReadIops := payload.GetClusterStatusResponse.GetCliReadIops()
 				cliWriteIops := payload.GetClusterStatusResponse.GetCliWriteIops()
-				recoverySpeed := payload.GetClusterStatusResponse.GetRecoverySpeed()
+				recoveryBytes := payload.GetClusterStatusResponse.GetRecoveryBytes()
 				recoveryObjPs := payload.GetClusterStatusResponse.GetRecoveryObjPs()
 
 				fmt.Printf("  cluster:\r\n")
@@ -771,7 +689,8 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 				}
 				fmt.Printf("\n")
 
-				printClient(cliReadSpeed, cliWriteSpeed, cliReadIops, cliWriteIops, recoverySpeed, recoveryObjPs)
+				output := utils.PrintStatus(cliReadBytes, cliWriteBytes, cliReadIops, cliWriteIops, recoveryBytes, recoveryObjPs)
+				fmt.Print(output)
 
 				stopChan <- struct{}{}
 				return

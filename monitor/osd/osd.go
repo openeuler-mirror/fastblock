@@ -17,6 +17,7 @@ import (
 	"monitor/etcdapi"
 	"monitor/log"
 	"monitor/msg"
+	"monitor/utils"
 	"net"
 	"sync"
 	"time"
@@ -126,6 +127,14 @@ func (task *OsdTask) Process(ctx context.Context, client *etcdapi.EtcdClient) {
 	} else {
 		CheckPgs(ctx, client, task.osdid, task.stateSwitch)
 	}
+}
+
+// export the cluster status to prometheus, called by monitor
+// should return value, not string
+func ExportClusterStatus() (read_bytes uint64, write_bytes uint64, read_ios uint64, write_ios uint64) {
+	csIos.mutex.Lock()
+	defer csIos.mutex.Unlock()
+	return csIos.read_bytes, csIos.write_bytes, csIos.read_ios, csIos.write_ios
 }
 
 func OsdTaskrun(ctx context.Context, client *etcdapi.EtcdClient) {
@@ -755,26 +764,28 @@ func PorcessGetClusterStatusMessage(ctx context.Context, client *etcdapi.EtcdCli
 	// log.Warn(ctx, "ms ", ms)
 	cluster.ObjectNum = 0
 	if ms == 0 {
-		cluster.CliReadSpeed = 0
-		cluster.CliWriteSpeed = 0
+		cluster.CliReadBytes = 0
+		cluster.CliWriteBytes = 0
 		cluster.CliReadIops = 0
 		cluster.CliWriteIops = 0
 	} else {
-		cluster.CliReadSpeed = csIos.read_bytes * 1000 / ms
-		cluster.CliWriteSpeed = csIos.write_bytes * 1000 / ms
+		cluster.CliReadBytes = csIos.read_bytes * 1000 / ms
+		cluster.CliWriteBytes = csIos.write_bytes * 1000 / ms
 		cluster.CliReadIops = csIos.read_ios * 1000 / ms
 		cluster.CliWriteIops = csIos.write_ios * 1000 / ms
 	}
-	cluster.RecoverySpeed = 0
+	cluster.RecoveryBytes = 0
 	cluster.RecoveryObjPs = 0
 	csIos.mutex.Unlock()
 	return cluster
 }
 
 func UpdateClusterIos(ctx context.Context, client *etcdapi.EtcdClient) {
-	clusterInterval := 2 * time.Second
+	clusterInterval := 1 * time.Second
 	clusterTicker := time.NewTicker(clusterInterval)
 	for range clusterTicker.C {
+		status := utils.PrintStatus(csIos.read_bytes, csIos.write_bytes, csIos.read_ios, csIos.write_ios, 0, 0)
+		log.Info(ctx, "cluster status: ", status)
 		csIos.mutex.Lock()
 		csIos.read_ios = 0
 		csIos.read_bytes = 0
