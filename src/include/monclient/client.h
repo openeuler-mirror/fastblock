@@ -38,7 +38,7 @@ class partition_manager;
 namespace monitor {
 
 enum class user_identity {
-    USER_CLIENT = 0, 
+    USER_CLIENT = 0,
     USER_OSD
 };
 
@@ -137,12 +137,6 @@ public:
         using pool_id_type = int32_t;
         using pg_id_type = int32_t;
         using version_type = int64_t;
-
-        // struct pg_info {
-            // pg_id_type pg_id{0};
-            // int64_t   version{0};
-            // std::vector<osd_map::osd_id_type> osds{};
-        // };
 
         struct pool_update_info{
             version_type pool_version{0};
@@ -354,7 +348,7 @@ public:
 
     client(
       const std::vector<endpoint>& endpoints,
-      std::weak_ptr<::partition_manager> pm,
+      void* pm_ctx = nullptr,
       std::optional<on_new_pg_callback_type>&& new_pg_cb = std::nullopt,
       std::optional<on_cluster_map_initialized_type>&& cluster_map_init_cb = std::nullopt,
       int osd_id = -1,
@@ -364,7 +358,7 @@ public:
       user_identity user_idty = user_identity::USER_CLIENT)
       : _cluster{std::make_unique<cluster>(endpoints, max_fail, dur, auto_reconnect)}
       , _self_osd_id{osd_id}
-      , _pm{std::move(pm)}
+      , _pm_ctx{pm_ctx}
       , _current_thread{::spdk_get_thread()}
       , _current_core{::spdk_env_get_current_core()}
       , _log_time_check{dur}
@@ -533,7 +527,7 @@ private:
 
     bool _is_running{false};
 
-    std::weak_ptr<::partition_manager> _pm{};
+    void* _pm_ctx{nullptr}; // TODO: better impl
 
     utils::simple_poller _get_cluster_map_poller{};
     utils::simple_poller _core_poller{};

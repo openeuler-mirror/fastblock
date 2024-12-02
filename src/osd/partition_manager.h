@@ -144,6 +144,10 @@ public:
     std::shared_ptr<monitor::client> get_mon_client(){
         return _mon_client;
     }
+
+    bool is_terminated() {
+        return _is_terminated;
+    }
 private:
     int osd_state_is_not_active();
 
@@ -155,4 +159,5 @@ private:
     std::vector<std::map<std::string, std::shared_ptr<osd_stm>>> _sm_table;
     osd_state _state;
     std::shared_ptr<monitor::client> _mon_client;
+    bool _is_terminated{false};
 };

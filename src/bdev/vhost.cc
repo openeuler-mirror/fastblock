@@ -17,7 +17,7 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
 
-#include "global.h"
+#include "bdev/global.h"
 #include "utils/get_core.h"
 
 static const char* g_mon_cluster_endpoints = nullptr;
@@ -124,8 +124,7 @@ static void vhost_started(void *arg1)
 	::spdk_cpuset_set_cpu(&cpumask, core_no, true);
 	global::conn_cache = std::make_shared<::connect_cache>(&cpumask, global::rpc_cli_opts);
 
-    global::par_mgr = std::make_shared<::partition_manager>(-1, global::conn_cache);
-    global::mon_client = std::make_unique<monitor::client>(mon_eps, global::par_mgr);
+    global::mon_client = std::make_unique<monitor::client>(mon_eps, nullptr);
     global::mon_client->start();
     global::mon_client->start_cluster_map_poller();
 

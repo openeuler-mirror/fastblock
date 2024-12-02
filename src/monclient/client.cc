@@ -72,7 +72,10 @@ void client::load_pgs(){
         return;
     // SPDK_WARNLOG("load pgs\n");
     std::map<uint64_t, std::vector<utils::pg_info_type>> pools;
-    _pm.lock()->load_pgs_map(pools);
+    if (not _pm_ctx) {
+        auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+        _pm->load_pgs_map(pools);
+    }
     for(auto& [pool_id, infos] : pools){
         _pg_map.pool_version[pool_id] = 0;
         auto [it, _] = _pg_map.pool_pg_map.try_emplace(pool_id);
@@ -365,7 +368,8 @@ private:
 
 void client::_create_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_version, const msg::PGInfo &info){
     if (_new_pg_cb) {
-        int current_osdid = _pm.lock()->get_current_node_id();
+        auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+        int current_osdid = _pm->get_current_node_id();
         bool in_pg = false;
         for(auto osd_id : info.osdid()){
             if(osd_id == current_osdid){
@@ -446,7 +450,8 @@ void client::_remove_pg(pg_map::pool_id_type pool_id, pg_map::pg_id_type pg_id, 
 
     _pg_map.set_pool_update(pool_id, pg_id, pool_version, 1);
     if(_user_idty == user_identity::USER_OSD){
-        _pm.lock()->delete_partition(pool_id, pg_id, std::move(delete_pg_done), nullptr);
+        auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+        _pm->delete_partition(pool_id, pg_id, std::move(delete_pg_done), nullptr);
     } else {
         delete_pg_done(nullptr, 0);
     }
@@ -454,7 +459,8 @@ void client::_remove_pg(pg_map::pool_id_type pool_id, pg_map::pg_id_type pg_id, 
 
 void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
     auto& pv = pg_map_response.poolid_pgmapversion();
-    int current_osdid = _pm.lock()->get_current_node_id();
+    auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+    int current_osdid = _pm->get_current_node_id();
 
     auto& ec = pg_map_response.errorcode();
     auto& pgs = pg_map_response.pgs();
@@ -672,7 +678,8 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                             pool_key, pv.at(pool_key), pit->pg_id, info.version(), osd_str.data());
                     auto complete = new change_membership_complete(pool_key, pgid, info.version(), new_osds, this);
                     _pg_map.set_pool_update(pool_key, pgid, pv.at(pool_key), 1);
-                    _pm.lock()->change_pg_membership(pool_key, pgid, new_osd_infos, complete);
+                    auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+                    _pm->change_pg_membership(pool_key, pgid, new_osd_infos, complete);
                 }else{
                     _create_pg(pool_key, pv.at(pool_key), info);
                 }
@@ -702,10 +709,12 @@ void client::_active_pg(pg_map::pool_id_type pool_id,
     if(!pg_is_remap){
         _pg_map.set_pool_update(pool_id, info.pgid(), pool_version, 1);
     }
-    if(_user_idty == user_identity::USER_OSD)
-        _pm.lock()->active_partition(pool_id, info.pgid(), std::move(active_pg_done), nullptr);
-    else
+    if(_user_idty == user_identity::USER_OSD) {
+        auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+        _pm->active_partition(pool_id, info.pgid(), std::move(active_pg_done), nullptr);
+    } else {
         active_pg_done(nullptr, 0);
+    }
 }
 
 void client::process_osd_map(std::shared_ptr<msg::Response> response) {
@@ -784,7 +793,8 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
             osd_it->second->address = osds[i].address();
             if(osd_it->second->isup && !osds[i].isup() && osd_it->second->node_id != _self_osd_id){
                 SPDK_DEBUGLOG(mon, "osd %d is down, remove connect to it\n", osds[i].osdid());
-                _pm.lock()->get_pg_group().remove_connect(osds[i].osdid(),
+                auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+                _pm->get_pg_group().remove_connect(osds[i].osdid(),
                   [this, node_id = osds[i].osdid()](void *, int ){
                     SPDK_DEBUGLOG(mon, "remove the connect to osd %d\n",node_id);
                   });
@@ -829,7 +839,8 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
                   "Starting connect to osd %s:%d, shard %d, core %d\n",
                   osd_info.address.c_str(), core_port.port, shard_id, core_port.core_id);
 
-                _pm.lock()->get_pg_group().create_connect(
+                auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+                _pm->get_pg_group().create_connect(
                   osd_info.node_id,
                   shard_id,
                   osd_info.address,
@@ -872,7 +883,8 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
         SPDK_DEBUGLOG(mon,
           "The osd with id %d not found in the newer osd map\n",
           node_id);
-        _pm.lock()->get_pg_group().remove_connect(node_id,
+        auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+        _pm->get_pg_group().remove_connect(node_id,
           [this, node_id](void *, int res){
             if(res == err::E_SUCCESS){
               _osd_map.data.erase(node_id);
@@ -886,8 +898,6 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
         return;
     }
 
-    // auto factor = _pm.lock()->get_pg_group().get_raft_client_proto().connect_factor();
-    // resp_stack->un_connected_count *= factor;
     SPDK_DEBUGLOG(
       mon, "created response_stack, un-connected size is %lu\n",
       resp_stack->un_connected_count);
@@ -1090,11 +1100,12 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
 }
 
 bool client::handle_response() {
-    if (_pm.expired()) {
-        SPDK_ERRLOG("Error: referenced partition_manager has been destructed\n");
-        return false;
+    if (_pm_ctx) {
+        auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+        if (_pm->is_terminated()) {
+            return SPDK_POLLER_IDLE;
+        }
     }
-
     if (_request_counter == 0) { return false; }
 
     if (not _cluster->is_connected()) {
@@ -1198,9 +1209,11 @@ void client::consume_internal_request(bool is_cached) {
 }
 
 bool client::consume_request() {
-    if (_pm.expired()) {
-        SPDK_ERRLOG("Error: referenced partition_manager has been destructed\n");
-        return false;
+    if (_pm_ctx) {
+        auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+        if (_pm->is_terminated()) {
+            return false;
+        }
     }
 
     bool ret{false};
