@@ -19,7 +19,7 @@
 
 #include "rpc/connect_cache.h"
 #include "rpc/osd_msg.pb.h"
-#include "msg/rpc_controller.h"
+#include "fastblock/msg/rpc_controller.h"
 #include "utils/err_num.h"
 #include <google/protobuf/stubs/callback.h>
 
@@ -152,7 +152,7 @@ public:
                         auto &stub = _stubs[shard_id];
                         stub[node_id] = std::make_shared<osd::rpc_service_osd_Stub>(conn);
                     }
-                  );                  
+                  );
               });
         }
     }

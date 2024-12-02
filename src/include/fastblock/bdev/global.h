@@ -11,8 +11,8 @@
 
 #pragma once
 
-#include "client/libfblock.h"
-#include "monclient/client.h"
+#include "fastblock/client/libfblock.h"
+#include "fastblock/monclient/client.h"
 
 namespace global {
 extern std::shared_ptr<msg::rdma::client::options> rpc_cli_opts;

@@ -10,7 +10,7 @@
  */
 #pragma once
 
-#include "msg/rdma/provider.h"
+#include "fastblock/msg/rdma/provider.h"
 #include "utils/fmt.h"
 
 #include <cstring>
@@ -24,7 +24,7 @@
 namespace msg {
 namespace rdma {
 
-struct mlx5dv : public provider {
+struct verbs : public provider {
 
     static void init_qp(::rdma_cm_id* id) {
         ::ibv_qp_attr qp_attr{};
@@ -78,27 +78,16 @@ struct mlx5dv : public provider {
         assert(pd && "null pd");
         assert(attr && "null qp init attr");
 
-        auto* ibv_ctx = reinterpret_cast<::ibv_context*>(ctx);
-        ::ibv_qp_init_attr_ex dv_qp_attr = {
-            .qp_context = attr->qp_context,
-            .send_cq = attr->send_cq,
-            .recv_cq = attr->recv_cq,
-            .srq = attr->srq,
-            .cap = attr->cap,
-            .qp_type = attr->qp_type,
-            .comp_mask = IBV_QP_INIT_ATTR_PD | IBV_QP_INIT_ATTR_SEND_OPS_FLAGS,
-            .pd = pd
-        };
+        auto* cm_id = reinterpret_cast<::rdma_cm_id*>(ctx);
+        assert(cm_id->pd == pd && "error pd");
+        auto rc = ::rdma_create_qp(cm_id, pd, attr);
 
-        auto* qp = ::mlx5dv_create_qp(ibv_ctx, &dv_qp_attr, nullptr);
-
-        if (!qp) {
+        if (rc) {
+            SPDK_ERRLOG("ERROR: Create qp failed: %s\n", std::strerror(errno));
             return nullptr;
         }
 
-        attr->cap = dv_qp_attr.cap;
-
-        return qp;
+        return cm_id->qp;
     }
 
     void complete_qp_connect(::rdma_cm_id* id) final {
@@ -149,3 +138,4 @@ struct mlx5dv : public provider {
 
 } // namespace rdma
 } // namespace msg
+

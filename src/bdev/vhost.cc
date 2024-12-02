@@ -17,7 +17,7 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
 
-#include "bdev/global.h"
+#include "fastblock/bdev/global.h"
 #include "utils/get_core.h"
 
 static const char* g_mon_cluster_endpoints = nullptr;

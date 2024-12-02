@@ -10,8 +10,8 @@
  */
 #pragma once
 
-#include "msg/rdma/memory_pool.h"
-#include "msg/rdma/types.h"
+#include "fastblock/msg/rdma/memory_pool.h"
+#include "fastblock/msg/rdma/types.h"
 
 #include <google/protobuf/message.h>
 

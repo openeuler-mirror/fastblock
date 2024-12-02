@@ -10,8 +10,8 @@
  */
 #pragma once
 
-#include "msg/rdma/pd.h"
-#include "msg/rdma/work_request_id.h"
+#include "fastblock/msg/rdma/pd.h"
+#include "fastblock/msg/rdma/work_request_id.h"
 #include "utils/fmt.h"
 
 #include "utils/simple_poller.h"

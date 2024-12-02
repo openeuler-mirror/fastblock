@@ -12,7 +12,7 @@
 #include <google/protobuf/service.h>
 
 #include "base/core_sharded.h"
-#include "msg/rdma/server.h"
+#include "fastblock/msg/rdma/server.h"
 
 class rpc_server{
 public:

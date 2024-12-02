@@ -11,9 +11,9 @@
 
 #pragma once
 
-#include "monclient/client.h"
-#include "msg/rpc_controller.h"
-#include "msg/rdma/client.h"
+#include "fastblock/monclient/client.h"
+#include "fastblock/msg/rpc_controller.h"
+#include "fastblock/msg/rdma/client.h"
 #include "utils/overload.h"
 #include "utils/simple_poller.h"
 #include "rpc/osd_msg.pb.h"

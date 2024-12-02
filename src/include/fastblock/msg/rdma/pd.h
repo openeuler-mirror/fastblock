@@ -10,7 +10,7 @@
  */
 #pragma once
 
-#include "device.h"
+#include "fastblock/msg/rdma/device.h"
 
 #include <spdk/log.h>
 

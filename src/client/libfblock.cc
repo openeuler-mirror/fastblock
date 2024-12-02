@@ -9,11 +9,11 @@
  * See the Mulan PSL v2 for more details.
  */
 
-#include "client/libfblock.h"
+#include "fastblock/client/libfblock.h"
 #include <spdk/bdev_module.h>
 #include <thread>
 
-#include "bdev/global.h"
+#include "fastblock/bdev/global.h"
 #include "osd/partition_manager.h"
 #include "utils/utils.h"
 #include "utils/err_num.h"

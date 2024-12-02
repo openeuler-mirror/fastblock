@@ -15,7 +15,7 @@
 #include <pthread.h>
 #include <vector>
 #include <cstdint>
-#include "msg/rdma/client.h"
+#include "fastblock/msg/rdma/client.h"
 #include "base/core_sharded.h"
 #include "utils/err_num.h"
 
@@ -121,7 +121,7 @@ public:
 private:
     struct stop_context{
         std::function<void()> cb_fn;
-    };   
+    };
 
 public:
     void stop(std::optional<std::function<void()>>&& on_stop = std::nullopt) noexcept {
@@ -149,7 +149,7 @@ public:
                 _transports[shard_id]->stop([complete](){
                   complete->complete(0);
                 });
-              }  
+              }
             );
         }
     }

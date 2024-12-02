@@ -11,7 +11,7 @@
 
 #define BOOST_TEST_MODULE Monitor Client
 
-#include "monclient/client.h"
+#include "fastblock/monclient/client.h"
 #include "osd/partition_manager.h"
 #include "utils/utils.h"
 

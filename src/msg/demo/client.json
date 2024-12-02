@@ -1,10 +1,10 @@
 {
-    "server_address": "192.168.80.83",
-    "server_ports": [8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088, 8089, 8010, 8011, 8012, 8013, 8014, 8015],
-    "server_portsx": [8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087],
+    "server_address": "172.31.4.143",
+    "server_ports": [8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087],
+    "server_portsx": [8080],
     "io_depth": 32,
-    "iteration_count": 50000000,
-    "rdma_device_name": "mlx5_1",
+    "iteration_count": 20000000,
+    "rdma_device_name": "rocep94s0f0",
     "msg_client_poll_cq_batch_size": 32,
     "msg_client_metadata_memory_pool_capacity": 64,
     "msg_client_metadata_memory_pool_element_size": 512,
@@ -23,5 +23,7 @@
     "msg_rdma_max_recv_sge": 1,
     "msg_rdma_max_inline_data": 16,
     "msg_rdma_cq_num_entries": 1024,
-    "msg_rdma_qp_sig_all": false
+    "msg_rdma_qp_sig_all": false,
+    "infinity": true,
+    "random_size": [4096, 1073741824]
 }

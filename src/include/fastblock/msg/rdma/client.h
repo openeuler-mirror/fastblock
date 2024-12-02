@@ -10,14 +10,14 @@
  */
 #pragma once
 
-#include "msg/rdma/connection_id.h"
-#include "msg/rdma/cq.h"
-#include "msg/rdma/memory_pool.h"
-#include "msg/rdma/probe.h"
-#include "msg/rdma/work_request_id.h"
-#include "msg/rdma/socket.h"
-#include "msg/rdma/transport_data.h"
-#include "msg/rdma/types.h"
+#include "fastblock/msg/rdma/connection_id.h"
+#include "fastblock/msg/rdma/cq.h"
+#include "fastblock/msg/rdma/memory_pool.h"
+#include "fastblock/msg/rdma/probe.h"
+#include "fastblock/msg/rdma/work_request_id.h"
+#include "fastblock/msg/rdma/socket.h"
+#include "fastblock/msg/rdma/transport_data.h"
+#include "fastblock/msg/rdma/types.h"
 #include "utils/duration_map.h"
 #include "utils/fmt.h"
 #include "utils/utils.h"

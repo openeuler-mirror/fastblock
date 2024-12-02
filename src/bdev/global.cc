@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-#include "bdev/global.h"
+#include "fastblock/bdev/global.h"
 
 namespace global {
 std::shared_ptr<msg::rdma::client::options> rpc_cli_opts;
