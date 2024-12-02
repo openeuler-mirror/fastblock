@@ -45,8 +45,11 @@ type Connection struct {
 }
 
 var (
-	connections sync.Map
-	totalRPS    prometheus.Gauge
+	connections   sync.Map
+	cliWriteBytes prometheus.Gauge
+	cliReadBytes  prometheus.Gauge
+	cliWriteIops  prometheus.Gauge
+	cliReadIops   prometheus.Gauge
 )
 
 func sendResponse(response *msg.Response, ctx context.Context, conn net.Conn) error {
@@ -741,29 +744,24 @@ func handleConnection(ctx context.Context, conn net.Conn, client *etcdapi.EtcdCl
 	}
 }
 
-func measureRPS(ctx context.Context) {
+func measureExporters(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			// Context canceled, stop measuring RPS
 			return
 		case <-ticker.C:
-			totalRPS.Set(0.0)
+			// update cluster status
+			// Get cluster status
+			crs, cws, criops, cwiops := osd.ExportClusterStatus()
 
-			connections.Range(func(key, value interface{}) bool {
-				connection := value.(*Connection)
-
-				elapsed := time.Since(connection.lastUpdatedAt)
-				rps := float64(connection.requestCount) / elapsed.Seconds()
-
-				totalRPS.Add(rps)
-				connection.requestCount = 0
-
-				return true
-			})
+			// Update cluster metrics
+			cliWriteBytes.Set(float64(cws))
+			cliReadBytes.Set(float64(crs))
+			cliWriteIops.Set(float64(cwiops))
+			cliReadIops.Set(float64(criops))
 		}
 	}
 }
@@ -801,14 +799,34 @@ func waitForShutdownSignal(ctx context.Context, cancel context.CancelFunc) {
 
 func startTcpServer(ctx context.Context, c *etcdapi.EtcdClient) {
 
-	// Create a Prometheus gauge for total RPS
-	totalRPS = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "total_rps",
-		Help: "Total requests per second across all connections",
+	// register the write speed
+	cliWriteBytes = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "fastblock_cli_write_bytes",
+		Help: "Client write bytes",
 	})
+	prometheus.MustRegister(cliWriteBytes)
 
-	// Register the gauge with the Prometheus default registry
-	prometheus.MustRegister(totalRPS)
+	// register the read speed
+	cliReadBytes = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "fastblock_cli_read_bytes",
+		Help: "Client read bytes",
+	})
+	prometheus.MustRegister(cliReadBytes)
+
+	// register the read iops
+	cliReadIops = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "fastblock_cli_read_iops",
+		Help: "Client read iops",
+	})
+	prometheus.MustRegister(cliReadIops)
+
+	// register the write iops
+	cliWriteIops = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "fastblock_cli_write_iops",
+		Help: "Client write iops",
+	})
+	prometheus.MustRegister(cliWriteIops)
+
 	hp := fmt.Sprintf("%s:%d", config.CONFIG.Address, config.CONFIG.Port)
 
 	// Start the TCP server
@@ -819,13 +837,13 @@ func startTcpServer(ctx context.Context, c *etcdapi.EtcdClient) {
 
 	log.Info(ctx, "TCP server started. Listening on ", hp)
 
-	// Start measuring requests per second
-	go measureRPS(ctx)
+	// Start measuring exporters
+	go measureExporters(ctx)
 
 	// Start the Prometheus exporter
 	go func() {
 		http.Handle("/metrics", promhttp.Handler())
-		l := fmt.Sprintf("localhost:%d", config.CONFIG.PrometheusPort)
+		l := fmt.Sprintf(":%d", config.CONFIG.PrometheusPort)
 		http.ListenAndServe(l, nil)
 	}()
 
