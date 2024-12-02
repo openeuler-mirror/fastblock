@@ -130,6 +130,9 @@ void partition_manager::stop_stm(uint64_t shard_id, utils::complete_fun fun, voi
 }
 
 void partition_manager::stop(utils::complete_fun fun, void *arg){
+    if (_is_terminated) {
+        return;
+    }
     if(_state == osd_state::OSD_DOWN){
         return;
     }
@@ -194,7 +197,7 @@ static void partition_op_done(void* arg){
 }
 
 int partition_manager::create_partition(
-        uint64_t pool_id, uint64_t pg_id, uint32_t core_index, std::vector<utils::osd_info_t>&& osds, 
+        uint64_t pool_id, uint64_t pg_id, uint32_t core_index, std::vector<utils::osd_info_t>&& osds,
         int64_t revision_id, pm_complete&& cb_fn, void *arg){
     int state = osd_state_is_not_active();
     if(state != 0){
