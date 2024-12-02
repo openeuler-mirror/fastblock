@@ -46,6 +46,7 @@ var fakeHostCount *int
 var version *int64
 var unset *string
 var set *string
+var detail *bool
 
 // image
 var imageName *string
@@ -470,7 +471,7 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 									newCoreIndex = strconv.FormatInt(int64(pg.GetNewcoreindex()), 10)
 								}
 
-								fmt.Printf("%-10v   %-25v   %-10v   %-25v    %-10v   %-25v   \r\n", pgid, 
+								fmt.Printf("%-10v   %-25v   %-10v   %-25v    %-10v   %-25v   \r\n", pgid,
 									utils.PgStateStr(utils.PGSTATE(pg.GetState())),
 									pg.GetCoreindex(), osdlist, newCoreIndex, newosdlist)
 							}
@@ -497,33 +498,51 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 					continue
 				} else {
 					sort.Slice(myosdmap, byOsdid(myosdmap))
-					fmt.Printf(
-						"%-10v   %-20v   %-10v    %-10v   %-10v   %-10v   %-10v \r\n",
-						"OSDID", "ADDRESS", "CORE", "SHARD_ID", "Port", "STATUS-UP", "STATUS-IN")
-					for _, osd := range myosdmap {
-						state1 := "up"
-						if !osd.GetIsup() {
-							state1 = "down"
-						}
-						state2 := "in"
-						if !osd.GetIsin() {
-							state2 = "out"
-						}
+					if *detail {
+						fmt.Printf(
+							"%-10v   %-20v   %-10v    %-10v   %-10v   %-10v   %-10v \r\n",
+							"OSDID", "ADDRESS", "CORE", "SHARD_ID", "Port", "STATUS-UP", "STATUS-IN")
+						for _, osd := range myosdmap {
+							state1 := "up"
+							if !osd.GetIsup() {
+								state1 = "down"
+							}
+							state2 := "in"
+							if !osd.GetIsin() {
+								state2 = "out"
+							}
 
-						sharded_ports := osd.GetShardedPorts()
-						var keys []int
-						for shard_id := range sharded_ports {
-							keys = append(keys, int(shard_id))
+							sharded_ports := osd.GetShardedPorts()
+							var keys []int
+							for shard_id := range sharded_ports {
+								keys = append(keys, int(shard_id))
+							}
+							sort.Ints(keys)
+							for key := range keys {
+								shard_id := uint32(key)
+								port := sharded_ports[shard_id]
+								fmt.Printf(
+									"%-10v   %-20v   %-10v    %-10v   %-10v   %-10v   %-10v \r\n",
+									osd.GetOsdid(), osd.GetAddress(), port.Coreid, shard_id, port.Port, state1, state2)
+							}
 						}
-						sort.Ints(keys)
-						for key := range keys {
-							shard_id := uint32(key)
-							port := sharded_ports[shard_id]
-							fmt.Printf(
-								"%-10v   %-20v   %-10v    %-10v   %-10v   %-10v   %-10v \r\n",
-								osd.GetOsdid(), osd.GetAddress(), port.Coreid, shard_id, port.Port, state1, state2)
+					} else {
+						fmt.Printf(
+							"%-10v   %-20v   %-10v    %-10v \r\n",
+							"OSDID", "ADDRESS", "STATUS-UP", "STATUS-IN")
+						for _, osd := range myosdmap {
+							state1 := "up"
+							if !osd.GetIsup() {
+								state1 = "down"
+							}
+							state2 := "in"
+							if !osd.GetIsin() {
+								state2 = "out"
+							}
+							fmt.Printf("%-10v   %-20v   %-10v    %-10v \r\n", osd.GetOsdid(), osd.GetAddress(), state1, state2)
 						}
 					}
+
 				}
 
 				stopChan <- struct{}{}
@@ -765,7 +784,7 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 			case *msg.Response_PgOsdInfoResponse:
 				poolmap := *payload.PgOsdInfoResponse
 				if len(poolmap.Pools) != 0 {
-					printPgOsdInfo(&(poolmap.Pools));
+					printPgOsdInfo(&(poolmap.Pools))
 				}
 
 				stopChan <- struct{}{}
@@ -1207,11 +1226,11 @@ func clientSendOsdConfig(conn net.Conn) {
 }
 
 func clientSendGetPgOsds(conn net.Conn, poolid int) {
-	pginfos := &msg.GetPgOsdInfoRequest {
+	pginfos := &msg.GetPgOsdInfoRequest{
 		PoolIds: make([]int32, 0),
 	}
 	if poolid != 0 {
-	    pginfos.PoolIds = append(pginfos.PoolIds, int32(poolid))
+		pginfos.PoolIds = append(pginfos.PoolIds, int32(poolid))
 	}
 	request := &msg.Request{
 		Union: &msg.Request_PgOsdInfoRequest{
@@ -1219,7 +1238,7 @@ func clientSendGetPgOsds(conn net.Conn, poolid int) {
 		},
 	}
 
-	sendClientReqeust(request, conn)	
+	sendClientReqeust(request, conn)
 }
 
 func main() {
@@ -1257,7 +1276,7 @@ func main() {
 	//poolname = flag.String("poolname", 0, "pool id you want operate")
 	imagesize = flag.Int("imagesize", 0, "image size")
 	object_size = flag.Int("objectsize", 4194304, "object size")
-
+	detail = flag.Bool("detail", false, "print detail information")
 	configPath := flag.String("conf", "/etc/fastblock/fastblock.json", "path of the config file")
 	flag.Parse()
 	config.SetupConfig(*configPath, "fbclient")
