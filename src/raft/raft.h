@@ -26,7 +26,7 @@
 #include "raft_log.h"
 #include "state_machine.h"
 #include "rpc/raft_msg.pb.h"
-#include "utils/utils.h"
+#include "fastblock/utils/utils.h"
 #include "raft/raft_client_protocol.h"
 #include "raft/append_entry_buffer.h"
 #include "localstore/kv_store.h"
@@ -938,7 +938,7 @@ private:
     struct spdk_poller *_task_timer;
 
     uint64_t  _disk_io_num;
-    uint64_t  _merger_tow_num; 
+    uint64_t  _merger_tow_num;
     uint64_t  _merger_five_num;
     uint64_t  _merger_ten_num;
     uint64_t  _merger_twenty_num;

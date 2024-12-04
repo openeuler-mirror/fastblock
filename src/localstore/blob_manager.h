@@ -11,7 +11,7 @@
 
 #pragma once
 
-#include "base/core_sharded.h"
+#include "fastblock/base/core_sharded.h"
 #include "base/shard_service.h"
 #include "object_store.h"
 #include "blob_pool.h"

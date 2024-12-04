@@ -11,7 +11,7 @@
 #pragma once
 #include "raft/pg_group.h"
 #include "osd/osd_stm.h"
-#include "base/core_sharded.h"
+#include "fastblock/base/core_sharded.h"
 #include "raft/pg_group.h"
 
 #include <memory>

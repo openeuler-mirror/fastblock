@@ -19,7 +19,7 @@
 #include "raft/raft_types.h"
 #include "rpc/raft_msg.pb.h"
 #include "raft/raft_node.h"
-#include "utils/utils.h"
+#include "fastblock/utils/utils.h"
 
 class raft_server_t;
 
@@ -31,13 +31,13 @@ public:
     : _index(0)
     , _term(0) {}
 
-    node_configuration(raft_index_t index, raft_term_t term, 
+    node_configuration(raft_index_t index, raft_term_t term,
             std::vector<raft_node_info> new_nodes, std::vector<raft_node_info> nodes)
     : _index(index)
     , _term(term)
     , _nodes(std::move(nodes))
     , _new_nodes(std::move(new_nodes)) {}
-   
+
     void add_node(raft_node_id_t node_id, std::string& address, int port){
         raft_node_info node;
         node.set_node_id(node_id);
@@ -59,7 +59,7 @@ public:
             if(node.node_id() == node_id)
                 return true;
         }
-        return false;        
+        return false;
     }
 
     int get_node_size(){
@@ -97,11 +97,11 @@ private:
     raft_index_t _index;
     raft_term_t  _term;
     std::vector<raft_node_info>   _nodes;
-    /* 
+    /*
        raft成员变更过程中 CFG_JOINT阶段收到RAFT_LOGTYPE_CONFIGURATION类型的entry后，需要更新_new_nodes，表示新成员（既变更完成后的成员）。
        向其它节点发送消息（包括心跳、选举、数据）时应该向_nodes和_new_nodes中的所有节点都发送
-    */    
-    std::vector<raft_node_info>   _new_nodes; 
+    */
+    std::vector<raft_node_info>   _new_nodes;
 };
 
 enum class cfg_state {
@@ -113,7 +113,7 @@ enum class cfg_state {
     CFG_CATCHING_UP,
     /* 联合一致阶段 */
     CFG_JOINT,
-    /* 
+    /*
      * 更新配置阶段，把新的成员配置表发送给新成员配置表里的所有成员，达到多数派后，变更结束。
      * */
     CFG_UPDATE_NEW_CFG
@@ -158,11 +158,11 @@ public:
 
     void reset_cfg_entry_complete(){
         _cfg_entry = nullptr;
-        _cfg_complete = nullptr;        
+        _cfg_complete = nullptr;
     }
 
     void reset_cfg_entry(){
-        _cfg_entry = nullptr;        
+        _cfg_entry = nullptr;
     }
 
     void set_cfg_complete(utils::context* cfg_complete){
@@ -176,7 +176,7 @@ public:
     int cfg_change_process(int result, raft_index_t rsp_current_idx, std::shared_ptr<raft_node> node);
 
     void add_catch_up_node(const raft_node_info& node_info);
-        
+
     template<typename _Function>
     void for_catch_up_node(_Function fun){
         for(auto &[node_id, cnode] : _catch_up_nodes){
@@ -238,7 +238,7 @@ public:
     int get_node_size(){
         return get_last_node_configuration().get_node_size();
     }
-  
+
     int get_new_node_size(){
         return get_last_node_configuration().get_new_node_size();
     }
@@ -276,7 +276,7 @@ private:
 
     //用于统计CFG_JOINT或CFG_UPDATE_NEW_CFG状态时，RAFT_LOGTYPE_CONFIGURATION类型entry的commit信息
     int _old_node_match_size;
-    int _old_node_fail_size; 
+    int _old_node_fail_size;
     int _new_node_match_size;
-    int _new_node_fail_size;     
+    int _new_node_fail_size;
 };

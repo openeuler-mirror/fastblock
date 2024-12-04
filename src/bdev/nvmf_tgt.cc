@@ -64,8 +64,3 @@ int main(int argc, char *argv[])
 	clean_pid_file(pid_path.c_str());
 	return rc;
 }
-
-
-
-
-

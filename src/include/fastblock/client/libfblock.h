@@ -11,12 +11,9 @@
 #pragma once
 
 #include "fastblock/msg/rpc_controller.h"
-#include "rpc/osd_msg.pb.h"
-#include "rpc/connect_cache.h"
+#include "fastblock/rpc/connect_cache.h"
 #include "fastblock/client/fb_client.h"
 #include "fastblock/monclient/client.h"
-
-#include <google/protobuf/stubs/callback.h>
 
 #include <vector>
 

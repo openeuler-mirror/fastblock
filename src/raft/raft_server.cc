@@ -24,7 +24,7 @@
 #include "raft_log.h"
 #include "spdk/log.h"
 #include "spdk/env.h"
-#include "utils/err_num.h"
+#include "fastblock/utils/err_num.h"
 #include "localstore/kv_store.h"
 #include "utils/md5.h"
 

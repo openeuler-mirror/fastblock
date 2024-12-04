@@ -10,7 +10,7 @@
  */
 #pragma once
 
-#include "utils/fmt.h"
+#include "fastblock/utils/fmt.h"
 
 #include <chrono>
 #include <unordered_map>
@@ -110,7 +110,7 @@ public:
         static constexpr size_t lat_tag_count{6};
         static constexpr std::array<double, lat_tag_count> latency_tag = {0.1, 0.5, 0.9, 0.95, 0.99, 0.999};
 
-        auto fmt = RFMT_1("\n[%1%] ", _name);
+        auto fmt = FB_RFMT_1("\n[%1%] ", _name);
         size_t count{0};
         for (auto lat_tag : latency_tag) {
             auto lat_at = static_cast<size_t>(lat_tag * durations.size());

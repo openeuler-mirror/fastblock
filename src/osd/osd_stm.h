@@ -13,7 +13,7 @@
 #include <string>
 
 #include "raft/state_machine.h"
-#include "rpc/osd_msg.pb.h"
+#include "fastblock/rpc/osd_msg.pb.h"
 
 
 // Allows READ-READ, or WRITE-WRITE.
@@ -233,7 +233,7 @@ public:
     }
 
     void stop(object_rw_complete cb_fn, void* arg){
-        _store.stop(cb_fn, arg); 
+        _store.stop(cb_fn, arg);
     }
 
     void destroy_objects(object_complete cb_fn, void *arg);

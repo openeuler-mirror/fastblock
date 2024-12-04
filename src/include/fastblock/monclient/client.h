@@ -11,11 +11,10 @@
 
 #pragma once
 
-#include "monclient/messages.pb.h"
-#include "utils/utils.h"
-
-#include "utils/simple_poller.h"
-#include "utils/time_check.h"
+#include "fastblock/monclient/messages.pb.h"
+#include "fastblock/utils/utils.h"
+#include "fastblock/utils/simple_poller.h"
+#include "fastblock/utils/time_check.h"
 
 #include <spdk/env.h>
 #include <spdk/event.h>
@@ -487,14 +486,6 @@ private:
 
     [[gnu::always_inline]] bool valid_osd_address(const std::string& host, const int port) {
         return not (host.empty() and port == 0);
-    }
-
-    void make_sharded_ports(
-      const google::protobuf::Map<google::protobuf::uint32, msg::ShardCore>& proto_shard_ports,
-      std::map<uint32_t, utils::core_shard_map>& osd_sharded_ports) {
-        for (auto it = proto_shard_ports.begin(); it != proto_shard_ports.end(); ++it){
-            osd_sharded_ports.emplace(it->first, utils::core_shard_map{it->second.port(), it->second.coreid(), it->first});
-        }
     }
 
 private:

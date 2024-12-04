@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-#include "base/core_sharded.h"
+#include "fastblock/base/core_sharded.h"
 #include "common.h"
 #include "fastblock/msg/rpc_controller.h"
 #include "fastblock/msg/rdma/client.h"
@@ -243,7 +243,7 @@ void start_rpc_client(void* arg) {
         auto opts = msg::rdma::client::make_options(g_pt);
         auto mask = core_sharded::make_cpumake(*core_it);
         ctx.client = std::make_shared<msg::rdma::client>(
-          FMT_1("rpc_cli_%d", ::spdk_env_get_current_core()), mask.get(), opts);
+          FB_FMT_1("rpc_cli_%d", ::spdk_env_get_current_core()), mask.get(), opts);
         ctx.client->start();
         ctx.client->emplace_connection(
           srv_addr, ports.at(counter),

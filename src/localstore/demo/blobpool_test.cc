@@ -26,7 +26,7 @@
 #include "localstore/spdk_buffer.h"
 #include "localstore/kv_store.h"
 #include "utils/itos.h"
-#include "utils/utils.h"
+#include "fastblock/utils/utils.h"
 
 static const char *g_bdev_name = NULL;
 
@@ -157,21 +157,21 @@ init_complete(void *arg, int rberrno)
   struct hello_context_t *hello_context = (struct hello_context_t *)arg;
 
   SPDK_NOTICELOG("init_complete\n");
-  
+
   auto &shard = core_sharded::get_core_sharded();
   shard.invoke_on(
     0,
     [hello_context](){
       blobpool_test(hello_context, 0);
     }
-  );   
+  );
 }
 
 static void
 hello_start(void *arg1)
 {
   struct hello_context_t *hello_context = (struct hello_context_t *)arg1;
-  
+
   buffer_pool_init();
   hello_context->buf = buffer_pool_get();
   blobstore_init(hello_context->bdev_name, "0", true, init_complete, hello_context);
@@ -220,7 +220,7 @@ main(int argc, char **argv)
   if (hello_context == nullptr) {
     SPDK_NOTICELOG("hello_context is null!\n");
   }
-  
+
   srand(time(0));
   rc = spdk_app_start(&opts, hello_start, hello_context);
 

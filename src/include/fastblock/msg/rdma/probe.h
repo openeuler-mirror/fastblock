@@ -12,7 +12,7 @@
 
 #include <cstdint>
 
-#include "utils/fmt.h"
+#include "fastblock/utils/fmt.h"
 
 namespace msg {
 namespace rdma {
@@ -55,7 +55,7 @@ public:
     }
 
     std::string fmt() {
-        return FMT_6(
+        return FB_FMT_6(
           "{posted_send_wr: %1%, posted_receive_wr: %2%, send_queue_depth: %3%, receive_queue_depth: %4%, received_cqe: %5%, received_sent_wc: %6%}",
           posted_send_wr, posted_receive_wr, send_queue_depth, receive_queue_depth, received_cqe, received_sent_wc);
     }

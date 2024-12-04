@@ -11,7 +11,7 @@
 #pragma once
 #include "raft_types.h"
 #include "rpc/raft_msg.pb.h"
-#include "utils/utils.h"
+#include "fastblock/utils/utils.h"
 #include "spdk/thread.h"
 #include "localstore/object_store.h"
 #include "localstore/blob_manager.h"

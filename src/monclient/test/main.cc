@@ -13,7 +13,7 @@
 
 #include "fastblock/monclient/client.h"
 #include "osd/partition_manager.h"
-#include "utils/utils.h"
+#include "fastblock/utils/utils.h"
 
 #include <spdk/event.h>
 
