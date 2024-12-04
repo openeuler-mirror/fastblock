@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-#include "base/core_sharded.h"
+#include "fastblock/base/core_sharded.h"
 #include "common.h"
 
 #include "fastblock/msg/rdma/server.h"
@@ -121,7 +121,7 @@ void start_rpc_server(void* arg) {
         opts->port = ports.at(counter);
         try {
             auto rpc_srv = std::make_unique<msg::rdma::server>(
-              FMT_1("rpc_srv_%1%", *it), cpumask.get(), opts);
+              FB_FMT_1("rpc_srv_%1%", *it), cpumask.get(), opts);
             rpc_srv->add_service(&g_rpc_service);
             rpc_srv->create_listener(opts->port);
             rpc_srv->start();

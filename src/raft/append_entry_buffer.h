@@ -12,7 +12,7 @@
 
 #include <queue>
 #include "rpc/raft_msg.pb.h"
-#include "utils/utils.h"
+#include "fastblock/utils/utils.h"
 
 class raft_server_t;
 

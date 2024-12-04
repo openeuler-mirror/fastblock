@@ -9,8 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 #include "osd_service.h"
-#include "utils/utils.h"
-#include "utils/err_num.h"
+#include "fastblock/utils/utils.h"
+#include "fastblock/utils/err_num.h"
 
 void osd_service::process_rpc_bench(google::protobuf::RpcController *controller,
                                     const osd::bench_request *request,
@@ -78,8 +78,8 @@ void osd_service::process_create_pg(google::protobuf::RpcController *controller,
             done->Run();
         };
         _pm->create_partition(pool_id, pg_id, 0, std::move(osds), pool_version, std::move(new_pg_done), nullptr);
-    }    
-}   
+    }
+}
 
 void osd_service::process(
         std::shared_ptr<osd_stm> osd_stm_p,

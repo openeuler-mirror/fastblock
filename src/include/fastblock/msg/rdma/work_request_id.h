@@ -15,7 +15,7 @@
 #include <bit>
 #include <chrono>
 
-#include "utils/fmt.h"
+#include "fastblock/utils/fmt.h"
 
 namespace msg {
 namespace rdma {
@@ -180,7 +180,7 @@ public:
     }
 
     static std::string fmt(value_type id) {
-        return FMT_5(
+        return FB_FMT_5(
           "{value: %1%, shard id: %2%, connection id: %3%, dispatch id: %4% request id: %5%}",
           id, shard_id(id), connection_id(id), dispatch_id(id), request_id(id));
     }

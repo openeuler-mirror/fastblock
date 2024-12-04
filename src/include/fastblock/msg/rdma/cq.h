@@ -12,9 +12,9 @@
 
 #include "fastblock/msg/rdma/pd.h"
 #include "fastblock/msg/rdma/work_request_id.h"
-#include "utils/fmt.h"
+#include "fastblock/utils/fmt.h"
 
-#include "utils/simple_poller.h"
+#include "fastblock/utils/simple_poller.h"
 
 #include <spdk/env.h>
 #include <spdk/log.h>

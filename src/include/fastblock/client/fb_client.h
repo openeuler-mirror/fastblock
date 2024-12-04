@@ -14,9 +14,10 @@
 #include "fastblock/monclient/client.h"
 #include "fastblock/msg/rpc_controller.h"
 #include "fastblock/msg/rdma/client.h"
-#include "utils/overload.h"
-#include "utils/simple_poller.h"
-#include "rpc/osd_msg.pb.h"
+#include "fastblock/utils/overload.h"
+#include "fastblock/utils/simple_poller.h"
+
+#include "fastblock/rpc/osd_msg.pb.h"
 
 #include <google/protobuf/stubs/callback.h>
 
@@ -242,7 +243,7 @@ private:
 public:
 
     fblock_client(monitor::client* mon_cli, ::spdk_thread* thd, std::shared_ptr<msg::rdma::client::options> opts)
-      : _rpc_client{std::make_shared<msg::rdma::client>(FMT_1("fblock_%1%", utils::random_string(3)), thd, opts)}
+      : _rpc_client{std::make_shared<msg::rdma::client>(FB_FMT_1("fblock_%1%", utils::random_string(3)), thd, opts)}
       , _mon_cli{mon_cli}
       , _current_thread{thd} {
         _leader_poller.set_thread(_current_thread);

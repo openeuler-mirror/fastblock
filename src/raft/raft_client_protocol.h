@@ -13,12 +13,12 @@
 #include <google/protobuf/stubs/callback.h>
 #include <concepts>
 
-#include "rpc/connect_cache.h"
+#include "fastblock/rpc/connect_cache.h"
 #include "rpc/raft_msg.pb.h"
 #include "fastblock/msg/rpc_controller.h"
-#include "utils/err_num.h"
-#include "base/core_sharded.h"
-#include "utils/utils.h"
+#include "fastblock/utils/err_num.h"
+#include "fastblock/base/core_sharded.h"
+#include "fastblock/utils/utils.h"
 
 class raft_server_t;
 class raft_client_protocol;

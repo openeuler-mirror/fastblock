@@ -12,10 +12,10 @@
 #pragma once
 #include <pthread.h>
 #include "rpc/raft_msg.pb.h"
-#include "utils/utils.h"
-#include "utils/err_num.h"
+#include "fastblock/utils/utils.h"
+#include "fastblock/utils/err_num.h"
 #include "raft/raft.h"
-#include "base/core_sharded.h"
+#include "fastblock/base/core_sharded.h"
 
 template<class PartitionManager>
 class raft_service : public rpc_service_raft{
@@ -50,7 +50,7 @@ public:
     void install_snapshot(google::protobuf::RpcController* controller,
                        const installsnapshot_request* request,
                        installsnapshot_response* response,
-                       google::protobuf::Closure* done) override;    
+                       google::protobuf::Closure* done) override;
 private:
     PartitionManager* _pm;
 };
@@ -92,7 +92,7 @@ void raft_service<PartitionManager>::append_entries(google::protobuf::RpcControl
       [this, shard_id, done, request, response, thread](){
         auto cur_thread = spdk_get_thread();
         if(thread != cur_thread){
-            SPDK_DEBUGLOG(pg_group, "current thread %lu, thread %lu\n", 
+            SPDK_DEBUGLOG(pg_group, "current thread %lu, thread %lu\n",
                     spdk_thread_get_id(cur_thread), spdk_thread_get_id(thread));
         }
         auto raft = _pm->get_pg(shard_id, request->pool_id(), request->pg_id());
@@ -111,10 +111,10 @@ void raft_service<PartitionManager>::append_entries(google::protobuf::RpcControl
             response->set_node_id(_pm->get_current_node_id());
             response->set_success(err_num);
             done->Run();
-            return;            
+            return;
         }
 
-        SPDK_INFOLOG(pg_group, "receive append entry of pg %lu.%lu from node %d\n", 
+        SPDK_INFOLOG(pg_group, "receive append entry of pg %lu.%lu from node %d\n",
                 request->pool_id(), request->pg_id(), request->node_id());
         append_entries_complete *complete = new append_entries_complete(done, request);
         raft->append_entries_to_buffer(request, response, complete);
@@ -183,17 +183,17 @@ void raft_service<PartitionManager>::snapshot_check(google::protobuf::RpcControl
     if(!_pm->get_pg_shard(pool_id, pg_id, shard_id)){
         SPDK_WARNLOG("not find pg %lu.%lu\n", pool_id, pg_id);
         done->Run();
-        return;        
+        return;
     }
 
     _pm->get_shard().invoke_on(
-      shard_id, 
+      shard_id,
       [this, shard_id, done, request, response](){
         auto raft = _pm->get_pg(shard_id, request->pool_id(), request->pg_id());
         if(!raft){
             SPDK_WARNLOG("not find pg %lu.%lu\n", request->pool_id(), request->pg_id());
             done->Run();
-            return; 
+            return;
         }
 
         auto err_num = raft_state_to_errno(raft->raft_get_op_state());
@@ -201,7 +201,7 @@ void raft_service<PartitionManager>::snapshot_check(google::protobuf::RpcControl
             SPDK_WARNLOG("handle install_snapshot request of pg %lu.%lu failed: %s\n",
                                request->pool_id(), request->pg_id(), err::string_status(err_num));
             done->Run();
-            return;            
+            return;
         }
 
         snapshot_complete* complete = new snapshot_complete(done);
@@ -238,7 +238,7 @@ void raft_service<PartitionManager>::install_snapshot(google::protobuf::RpcContr
             SPDK_WARNLOG("handle install_snapshot request of pg %lu.%lu failed: %s\n",
                                request->pool_id(), request->pg_id(), err::string_status(err_num));
             done->Run();
-            return;            
+            return;
         }
 
         snapshot_complete* complete = new snapshot_complete(done);
@@ -338,7 +338,7 @@ void raft_service<PartitionManager>::heartbeat(google::protobuf::RpcController* 
                 rsp->set_node_id(_pm->get_current_node_id());
                 rsp->set_success(err_num);
                 complete->complete(err_num);
-                return;            
+                return;
             }
 
             req->set_node_id(meta.node_id());
@@ -372,7 +372,7 @@ void raft_service<PartitionManager>::timeout_now(google::protobuf::RpcController
     }
 
     _pm->get_shard().invoke_on(
-      shard_id, 
+      shard_id,
       [this, shard_id, done, request, response](){
         auto raft = _pm->get_pg(shard_id, request->pool_id(), request->pg_id());
         if(!raft){
@@ -390,7 +390,7 @@ void raft_service<PartitionManager>::timeout_now(google::protobuf::RpcController
             response->set_node_id(_pm->get_current_node_id());
             response->set_success(err_num);
             done->Run();
-            return;            
+            return;
         }
 
         SPDK_DEBUGLOG(pg_group, "recv timeout_now request from node %d\n", request->node_id());
@@ -398,6 +398,6 @@ void raft_service<PartitionManager>::timeout_now(google::protobuf::RpcController
         raft->raft_election_start();
         response->set_node_id(_pm->get_current_node_id());
         response->set_success(err_num);
-        done->Run();        
-      });    
+        done->Run();
+      });
 }

@@ -11,7 +11,7 @@
 #pragma once
 
 #include "fastblock/msg/rdma/provider.h"
-#include "utils/fmt.h"
+#include "fastblock/utils/fmt.h"
 
 #include <cstring>
 #include <exception>
@@ -36,39 +36,39 @@ struct mlx5dv : public provider {
         ret = ::rdma_init_qp_attr(id, &qp_attr, &qp_attr_mask);
         if (ret) {
             throw std::runtime_error{
-              FMT_1("failed to init attr IBV_QPS_INIT, error: %1%", std::strerror(errno))};
+              FB_FMT_1("failed to init attr IBV_QPS_INIT, error: %1%", std::strerror(errno))};
         }
 
         ret = ::ibv_modify_qp(id->qp, &qp_attr, qp_attr_mask);
         if (ret) {
             throw std::runtime_error{
-              FMT_1("failed to modify qp state to IBV_QPS_INIT, error: %1%", std::strerror(ret))};
+              FB_FMT_1("failed to modify qp state to IBV_QPS_INIT, error: %1%", std::strerror(ret))};
         }
 
         qp_attr.qp_state = IBV_QPS_RTR;
         ret = ::rdma_init_qp_attr(id, &qp_attr, &qp_attr_mask);
         if (ret) {
             throw std::runtime_error{
-              FMT_1("failed to init attr IBV_QPS_RTR, error: %1%", std::strerror(errno))};
+              FB_FMT_1("failed to init attr IBV_QPS_RTR, error: %1%", std::strerror(errno))};
         }
 
         ret = ::ibv_modify_qp(id->qp, &qp_attr, qp_attr_mask);
         if (ret) {
             throw std::runtime_error{
-              FMT_1("failed to modify qp state to IBV_QPS_RTR, error: %1%", std::strerror(ret))};
+              FB_FMT_1("failed to modify qp state to IBV_QPS_RTR, error: %1%", std::strerror(ret))};
         }
 
         qp_attr.qp_state = IBV_QPS_RTS;
         ret = ::rdma_init_qp_attr(id, &qp_attr, &qp_attr_mask);
         if (ret) {
             throw std::runtime_error{
-              FMT_1("failed to init attr IBV_QPS_RTS, error: %1%", std::strerror(errno))};
+              FB_FMT_1("failed to init attr IBV_QPS_RTS, error: %1%", std::strerror(errno))};
         }
 
         ret = ::ibv_modify_qp(id->qp, &qp_attr, qp_attr_mask);
         if (ret) {
             throw std::runtime_error{
-              FMT_1("failed to modify qp state to IBV_QPS_RTS, error: %1%", std::strerror(ret))};
+              FB_FMT_1("failed to modify qp state to IBV_QPS_RTS, error: %1%", std::strerror(ret))};
         }
     }
 

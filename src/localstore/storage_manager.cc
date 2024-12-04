@@ -10,7 +10,7 @@
  */
 
 #include "storage_manager.h"
-#include "utils/utils.h"
+#include "fastblock/utils/utils.h"
 #include "base/shard_service.h"
 
 #include <memory>
@@ -46,10 +46,10 @@ storage_init(storage_op_complete cb_fn, void* arg){
 
   auto shard_num = core_sharded::get_core_sharded().count();
   auto ctx = new utils::switch_core_context{.cb_fn = std::move(cb_fn), .arg = arg, .thread = cur_thread, .serror = 0};
-  utils::multi_complete *complete = new utils::multi_complete(shard_num, shard_num, utils::switch_core_func, ctx);  
+  utils::multi_complete *complete = new utils::multi_complete(shard_num, shard_num, utils::switch_core_func, ctx);
   g_st_mgr.start();
-  
-  SPDK_INFOLOG(storage_log, "storage init in thread id: %lu, shard_num %u\n", 
+
+  SPDK_INFOLOG(storage_log, "storage init in thread id: %lu, shard_num %u\n",
       utils::get_spdk_thread_id(), shard_num);
 
   for(uint32_t shard_id = 0; shard_id < shard_num; shard_id++){
@@ -58,15 +58,15 @@ storage_init(storage_op_complete cb_fn, void* arg){
       [complete, shard_id](){
         _storage_init(complete, shard_id);
       }
-    );      
+    );
   }
 }
 
 static void
 _storage_fini(utils::context *ctx, uint32_t shard_id) {
-  SPDK_INFOLOG(storage_log, "storage fini, thread id %lu, shard %u\n", 
+  SPDK_INFOLOG(storage_log, "storage fini, thread id %lu, shard %u\n",
       utils::get_spdk_thread_id(), shard_id);
-  
+
   if(!g_st_mgr.shard_is_started(shard_id)){
     ctx->complete(0);
     return;
@@ -80,7 +80,7 @@ _storage_fini(utils::context *ctx, uint32_t shard_id) {
         SPDK_INFOLOG(storage_log, "storage fini done in shard %u.\n", shard_id);
         ctx->complete(error);
         return;
-    }, 
+    },
     ctx
   );
 }
@@ -90,15 +90,15 @@ void
 storage_fini(storage_op_complete cb_fn, void* arg){
   auto &shard = core_sharded::get_core_sharded();
   auto cur_thread = spdk_get_thread();
-  
+
   auto fini_done = [cb_fn = std::move(cb_fn)](void *arg, int rerrno){
     g_st_mgr.stop();
     cb_fn(arg, rerrno);
   };
-  
+
   auto shard_num = core_sharded::get_core_sharded().count();
   auto ctx = new utils::switch_core_context{.cb_fn = std::move(fini_done), .arg = arg, .thread = cur_thread, .serror = 0};
-  utils::multi_complete *complete = new utils::multi_complete(shard_num, shard_num, utils::switch_core_func, ctx);  
+  utils::multi_complete *complete = new utils::multi_complete(shard_num, shard_num, utils::switch_core_func, ctx);
 
   for(uint32_t shard_id = 0; shard_id < shard_num; shard_id++){
     shard.invoke_on(
@@ -106,11 +106,11 @@ storage_fini(storage_op_complete cb_fn, void* arg){
       [complete, shard_id](){
         _storage_fini(complete, shard_id);
       }
-    );    
-  }   
+    );
+  }
 }
 
-static void 
+static void
 _storage_load(utils::context *ctx, uint32_t shard_id){
   auto &blobs = global_blob_tree(shard_id);
   spdk_blob_id kv_blob_id = blobs.kv_blob;
@@ -123,16 +123,16 @@ _storage_load(utils::context *ctx, uint32_t shard_id){
       utils::get_spdk_thread_id());
 
   g_st_mgr.on_shard(shard_id).load(
-    shard_id, 
-    kv_blob_id, 
-    checkpoint_blob_id, 
-    new_checkpoint_blob_id, 
+    shard_id,
+    kv_blob_id,
+    checkpoint_blob_id,
+    new_checkpoint_blob_id,
     [shard_id](void *arg, int error){
       utils::context *ctx = (utils::context *)arg;
       SPDK_INFOLOG(storage_log, "storage load done in shard %u.\n", shard_id);
       ctx->complete(error);
-    }, 
-    ctx);  
+    },
+    ctx);
 }
 
 void storage_load(storage_op_complete cb_fn, void* arg){
@@ -142,7 +142,7 @@ void storage_load(storage_op_complete cb_fn, void* arg){
   auto shard_num = core_sharded::get_core_sharded().count();
   auto ctx = new utils::switch_core_context{.cb_fn = std::move(cb_fn), .arg = arg, .thread = cur_thread, .serror = 0};
   utils::multi_complete *complete = new utils::multi_complete(shard_num, shard_num, utils::switch_core_func, ctx);
-  
+
   g_st_mgr.start();
 
   for(uint32_t shard_id = 0; shard_id < shard_num; shard_id++){
@@ -151,6 +151,6 @@ void storage_load(storage_op_complete cb_fn, void* arg){
       [complete, shard_id](){
         _storage_load(complete, shard_id);
       }
-    );       
+    );
   }
 }

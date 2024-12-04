@@ -10,7 +10,19 @@
  */
 
 #include "fastblock/monclient/client.h"
+#include "fastblock/monclient/messages.pb.h"
 #include "osd/partition_manager.h"
+
+namespace {
+static void make_sharded_ports(
+    const google::protobuf::Map<google::protobuf::uint32, msg::ShardCore>& proto_shard_ports,
+    std::map<uint32_t, utils::core_shard_map>& osd_sharded_ports) {
+    for (auto it = proto_shard_ports.begin(); it != proto_shard_ports.end(); ++it) {
+        osd_sharded_ports.emplace(
+          it->first, utils::core_shard_map{it->second.port(), it->second.coreid(), it->first});
+    }
+}
+}
 
 namespace monitor {
 
@@ -458,10 +470,13 @@ void client::_remove_pg(pg_map::pool_id_type pool_id, pg_map::pg_id_type pg_id, 
 }
 
 void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
-    auto& pv = pg_map_response.poolid_pgmapversion();
-    auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
-    int current_osdid = _pm->get_current_node_id();
+    int current_osdid{-1};
+    if (_pm_ctx) {
+        auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+        current_osdid = _pm->get_current_node_id();
+    }
 
+    auto& pv = pg_map_response.poolid_pgmapversion();
     auto& ec = pg_map_response.errorcode();
     auto& pgs = pg_map_response.pgs();
 
@@ -826,7 +841,7 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
         }
 
         auto& osd_info = *(osd_it->second);
-        if (should_create_connect) {
+        if (should_create_connect and _pm_ctx) {
             if (not resp_stack) {
                 resp_stack = std::make_unique<response_stack>(response, 0);
             }
@@ -883,14 +898,17 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
         SPDK_DEBUGLOG(mon,
           "The osd with id %d not found in the newer osd map\n",
           node_id);
-        auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
-        _pm->get_pg_group().remove_connect(node_id,
-          [this, node_id](void *, int res){
-            if(res == err::E_SUCCESS){
-              _osd_map.data.erase(node_id);
-              SPDK_DEBUGLOG(mon, "remove the connect to osd %d\n",node_id);
-            }
-          });
+        if (_pm_ctx) {
+            auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+            _pm->get_pg_group().remove_connect(node_id,
+              [this, node_id](void *, int res){
+                if(res == err::E_SUCCESS){
+                  _osd_map.data.erase(node_id);
+                  SPDK_DEBUGLOG(mon, "remove the connect to osd %d\n",node_id);
+                }
+              }
+            );
+        }
     }
 
     if (not resp_stack) {

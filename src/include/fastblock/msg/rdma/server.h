@@ -16,8 +16,8 @@
 #include "fastblock/msg/rdma/transport_data.h"
 #include "fastblock/msg/rdma/work_request_id.h"
 #include "fastblock/msg/rpc_controller.h"
-#include "utils/simple_poller.h"
-#include "utils/utils.h"
+#include "fastblock/utils/simple_poller.h"
+#include "fastblock/utils/utils.h"
 
 #include <google/protobuf/descriptor.h>
 #include <google/protobuf/message.h>
@@ -389,7 +389,7 @@ private:
         auto conn = std::make_shared<connection_record>(
           std::move(sock), dis_id,
           std::make_unique<memory_pool<::ibv_recv_wr>>(
-            pd, FMT_1("srv_recv_%1%", utils::random_string(5)),
+            pd, FB_FMT_1("srv_recv_%1%", utils::random_string(5)),
             _opts->per_post_recv_num,
             _opts->metadata_memory_pool_element_size, 0, _sock_id));
         per_post_recv(conn.get());

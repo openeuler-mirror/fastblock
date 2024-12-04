@@ -16,7 +16,7 @@
 #include "fastblock/msg/rdma/provider/verbs.h"
 #include "fastblock/msg/rdma/pd.h"
 #include "fastblock/msg/rdma/provider.h"
-#include "utils/fmt.h"
+#include "fastblock/utils/fmt.h"
 
 #include <functional>
 #include <memory>
@@ -198,7 +198,7 @@ public:
         case ibv_qp_state::IBV_QPS_UNKNOWN:
             return "IBV_QPS_UNKNOWN";
         default:
-            return FMT_1("error state(%1%)", s);
+            return FB_FMT_1("error state(%1%)", s);
         }
     }
 
@@ -253,7 +253,7 @@ public:
         case ibv_wc_status::IBV_WC_TM_RNDV_INCOMPLETE:
             return "IBV_WC_TM_RNDV_INCOMPLETE";
         default:
-            return FMT_1("error status(%1%)", s);
+            return FB_FMT_1("error status(%1%)", s);
         }
     }
 
@@ -337,14 +337,14 @@ public:
     }
 
     std::string peer_address() noexcept {
-        return FMT_2(
+        return FB_FMT_2(
           "%1%:%2%",
           host(::rdma_get_peer_addr(_id)),
           ::rdma_get_dst_port(_id));
     }
 
     std::string local_address() noexcept {
-        return FMT_2(
+        return FB_FMT_2(
           "%1%:%2%",
           host(::rdma_get_local_addr(_id)),
           ::rdma_get_src_port(_id));
