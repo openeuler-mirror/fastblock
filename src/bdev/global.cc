@@ -16,6 +16,6 @@ std::shared_ptr<msg::rdma::client::options> rpc_cli_opts;
 std::shared_ptr<connect_cache> conn_cache;
 std::unique_ptr<monitor::client> mon_client;
 std::shared_ptr<::libblk_client> blk_client;
-std::vector<std::unique_ptr<::libblk_client>> blk_clients;
+std::vector<std::shared_ptr<::libblk_client>> blk_clients;
 std::vector<::spdk_thread*> vhost_worker_threads;
 }
