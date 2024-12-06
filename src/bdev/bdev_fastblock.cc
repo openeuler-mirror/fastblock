@@ -515,19 +515,23 @@ bdev_fastblock_create_cb(void *io_device, void *ctx_buf)
 	}
 
     auto core_no = ::spdk_env_get_current_core();
-	auto hold_index = utils::get_current_shard_id();
+    auto hold_index = utils::get_current_shard_id();
+    auto* bdev_thd = ::spdk_get_thread();
+    SPDK_NOTICELOG("start block client on core %d, hold index is %d, thread id %lu\n", core_no, hold_index, spdk_thread_get_id(bdev_thd));
+
     if (global::blk_clients[hold_index]) {
-        return 0;
+        auto blk_cli = std::move(global::blk_clients[hold_index]);
+        blk_cli->stop(
+          [blk_cli](){}
+        );
     }
 
-    auto* bdev_thd = ::spdk_get_thread();
-    SPDK_NOTICELOG("start block client on core %d, hold index is %d\n", core_no, hold_index);
     global::vhost_worker_threads.at(hold_index) = bdev_thd;
-    auto blk_cli = std::make_unique<::libblk_client>(global::mon_client.get(), bdev_thd, global::rpc_cli_opts);
+    auto blk_cli = std::make_shared<::libblk_client>(global::mon_client.get(), bdev_thd, global::rpc_cli_opts);
     auto* blk_cli_ptr = blk_cli.get();
     global::blk_clients.at(hold_index) = std::move(blk_cli);
     blk_cli_ptr->start([] () {
-        SPDK_NOTICELOG("block client has been started on core %d\n", ::spdk_env_get_current_core());
+        SPDK_NOTICELOG("block client has been started on core %d, thread id %lu\n", ::spdk_env_get_current_core(), ::spdk_thread_get_id(::spdk_get_thread()));
     });
 
 	return 0;
