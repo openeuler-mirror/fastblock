@@ -10,7 +10,7 @@
  */
 #pragma once
 
-#include "rpc/osd_msg.pb.h"
+#include "fastblock/rpc/osd_msg.pb.h"
 #include "partition_manager.h"
 #include "fastblock/monclient/client.h"
 

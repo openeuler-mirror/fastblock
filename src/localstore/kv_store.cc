@@ -10,7 +10,7 @@
  */
 
 #include "kv_store.h"
-#include "utils/utils.h"
+#include "fastblock/utils/utils.h"
 
 struct make_kvs_ctx {
     rolling_blob* rblob;
@@ -63,14 +63,14 @@ void make_kvstore(struct spdk_blob_store *bs, struct spdk_io_channel *channel,
 {
   uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
   auto make_done = [shard_id, cb_fn = std::move(cb_fn)](void *arg, struct kvstore* kvs, int kverrno){
-    SPDK_INFOLOG(kvlog, "make kvstore done in shard %u, thread %lu\n", 
+    SPDK_INFOLOG(kvlog, "make kvstore done in shard %u, thread %lu\n",
         shard_id, utils::get_spdk_thread_id());
     if(kverrno == 0 && kvs){
       //注意：kvstore的start方法里回注册一个poller，这个poller需要在这个kv所属的core里注册
       kvs->start();
     }
-    cb_fn(arg, kvs, kverrno);    
-  };  
+    cb_fn(arg, kvs, kverrno);
+  };
 
   struct make_kvs_ctx* ctx = new make_kvs_ctx{.cb_fn = std::move(make_done), .arg = arg, .shard_id = shard_id};
   make_rolling_blob(bs, channel, 4_MB, make_kvstore_blob_done, ctx);
@@ -85,7 +85,7 @@ static void kv_replay_done(void *arg, int kverrno){
       delete ctx->kvs;
       delete ctx;
       return;
-  }   
+  }
 
   ctx->cb_fn(ctx->arg, ctx->kvs, 0);
   delete ctx;
@@ -100,7 +100,7 @@ static void load_kv_md_done(void *arg, int kverrno){
       delete ctx;
       return;
   }
-  
+
   struct kvstore* kvs = new kvstore(ctx->rblob, ctx->shard_id);
   ctx->kvs = kvs;
   kvs->set_checkpoint_blobid(ctx->checkpoint_blob_id, ctx->new_checkpoint_blob_id);
@@ -116,14 +116,14 @@ static void open_rolling_blob_done(void *arg, struct rolling_blob* rblob, int kv
       ctx->cb_fn(ctx->arg, nullptr, kverrno);
       delete ctx;
       return;
-  } 
+  }
   ctx->rblob = rblob;
-  
+
   rblob->load_md(load_kv_md_done, ctx);
 }
 
-void load_kvstore(spdk_blob_id blob_id, spdk_blob_id checkpoint_blob_id, 
-                  spdk_blob_id new_checkpoint_blob_id, struct spdk_blob_store *bs, 
+void load_kvstore(spdk_blob_id blob_id, spdk_blob_id checkpoint_blob_id,
+                  spdk_blob_id new_checkpoint_blob_id, struct spdk_blob_store *bs,
                   struct spdk_io_channel *channel,
                   make_kvs_complete cb_fn, void* arg){
   uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
@@ -134,10 +134,10 @@ void load_kvstore(spdk_blob_id blob_id, spdk_blob_id checkpoint_blob_id,
       kvs->start();
     }
     cb_fn(arg, kvs, kverrno);
-  };  
+  };
 
   struct make_kvs_ctx* ctx = new make_kvs_ctx{
-                                  .cb_fn = std::move(make_done), 
+                                  .cb_fn = std::move(make_done),
                                   .arg = arg,
                                   .checkpoint_blob_id = checkpoint_blob_id,
                                   .new_checkpoint_blob_id = new_checkpoint_blob_id,

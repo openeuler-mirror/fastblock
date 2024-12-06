@@ -14,7 +14,7 @@
 #include "types.h"
 #include "spdk_buffer.h"
 #include "blob_manager.h"
-#include "utils/err_num.h"
+#include "fastblock/utils/err_num.h"
 
 
 #include <spdk/log.h>
@@ -197,7 +197,7 @@ public:
       ctx->need_delete = _ckpt_blob.blobid != 0 ? true : false;
       ctx->blob = _ckpt_blob; // 先把老的 checkpoint blob 保存在ctx中
       _ckpt_blob = std::exchange(_new_blob, {}); // 然后把 new_blob 赋值给 checkpoint blob
-      
+
       // uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
       kv_checkpoint_xattr xattr{.shard_id = shard_id};
       xattr.blob_set_xattr(_ckpt_blob.blob);
@@ -215,8 +215,8 @@ public:
           delete ctx;
           return;
       }
-    
-      spdk_blob_close(ctx->kv_ckpt->_ckpt_blob.blob, new_blob_close_complete, ctx);  
+
+      spdk_blob_close(ctx->kv_ckpt->_ckpt_blob.blob, new_blob_close_complete, ctx);
   }
 
   static void new_blob_close_complete(void *arg, int rberrno) {
@@ -245,7 +245,7 @@ public:
       if (rberrno) {
           SPDK_ERRLOG("checkpoint old blob_id:0x%lx delete failed:%s\n", ctx->blob.blobid, spdk_strerror(rberrno));
       }
-      
+
       ctx->cb_fn(ctx->arg, rberrno);
       delete ctx;
   }
@@ -399,7 +399,7 @@ public:
           SPDK_ERRLOG("checkpoint old blob_id:0x%lx delete failed:%s\n", ctx->blob.blobid, spdk_strerror(rberrno));
       }else{
           kv_checkpoint* kv_ckpt = ctx->kv_ckpt;
-          
+
       }
 
       ctx->cb_fn(ctx->arg, rberrno);
@@ -408,7 +408,7 @@ public:
 
   void reset_new_blob(){
     _new_blob.blobid = 0;
-    _new_blob.blob = nullptr; 
+    _new_blob.blob = nullptr;
   }
 
   void delete_new_blob(checkpoint_op_complete cb_fn, void* arg){
@@ -420,7 +420,7 @@ public:
     struct checkpoint_ctx* ctx = new checkpoint_ctx();
     ctx->kv_ckpt = this;
     ctx->cb_fn = std::move(cb_fn);
-    ctx->arg = arg;    
+    ctx->arg = arg;
     spdk_bs_delete_blob(_bs, _new_blob.blobid, delete_new_blob_complete, ctx);
   }
 private:

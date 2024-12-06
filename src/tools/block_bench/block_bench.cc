@@ -11,7 +11,7 @@
 
 #include "fastblock/client/libfblock.h"
 #include "utils/units.h"
-#include "utils/simple_poller.h"
+#include "fastblock/utils/simple_poller.h"
 #include "osd/partition_manager.h"
 
 #include <spdk/event.h>
@@ -477,7 +477,7 @@ void on_thread_received_msg(void* arg) {
     ::spdk_cpuset cpumask{};
     ::spdk_cpuset_zero(&cpumask);
     ::spdk_cpuset_set_cpu(&cpumask, core_no, true);
-    auto* thd = ::spdk_thread_create(FMT_1("blkbench_%1%", ::spdk_env_get_current_core()).c_str(), &cpumask);
+    auto* thd = ::spdk_thread_create(FB_FMT_1("blkbench_%1%", ::spdk_env_get_current_core()).c_str(), &cpumask);
     auto opts = msg::rdma::client::make_options(g_pt);
     ctx->blk_client = std::make_unique<::libblk_client>(
       mon_client.get(),

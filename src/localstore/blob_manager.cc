@@ -12,8 +12,8 @@
 #include "blob_manager.h"
 #include "object_store.h"
 #include "utils/units.h"
-#include "utils/err_num.h"
-#include "utils/utils.h"
+#include "fastblock/utils/err_num.h"
+#include "fastblock/utils/utils.h"
 
 #include <spdk/log.h>
 #include <spdk/string.h>
@@ -63,10 +63,10 @@ public:
     auto &pool = _bs_mgrs[index].pool;
     auto bs = _bs_mgrs[index].blobstore;
     if(!bs){
-      cb_fn(arg, err::OSD_BLOBSTORE_NO_INIT);  
+      cb_fn(arg, err::OSD_BLOBSTORE_NO_INIT);
       return;
     }
-    pool.set_blobstore(bs); 
+    pool.set_blobstore(bs);
     pool.start(cb_fn, arg);
   }
 
@@ -160,7 +160,7 @@ static void blob_pool_complete(void *cb_arg, int bserrno) {
     spdk_free(ctx->uuid_buf);
     delete ctx;
     return;
-  }  
+  }
 
   ctx->cb_fn(ctx->args, err::E_SUCCESS);
   spdk_free(ctx->uuid_buf);
@@ -190,7 +190,7 @@ static void write_super_complete(void *arg, int rberrno){
       spdk_free(ctx->uuid_buf);
       delete ctx;
       return;
-  }    
+  }
 
   SPDK_INFOLOG(blob_log, "write uuid to super blob done, in shard: %u\n", ctx->shard_id);
   spdk_blob_close(ctx->blob, close_super_done, ctx);
@@ -294,14 +294,14 @@ bs_init_complete(void *args, struct spdk_blob_store *bs, int bserrno)
   g_bs_mgr->create_channel(ctx->shard_id, bs);
 
   uint64_t free = spdk_bs_free_cluster_count(bs);
-  SPDK_INFOLOG(blob_log, "blobstore has FREE clusters of %lu, in thread %lu, in shard %u\n", 
+  SPDK_INFOLOG(blob_log, "blobstore has FREE clusters of %lu, in thread %lu, in shard %u\n",
       free, utils::get_spdk_thread_id(), core_sharded::get_core_sharded().this_shard_id());
 
   struct create_blob_ctx *bc = new create_blob_ctx();
   bc->type = blob_type::super_blob;
   bc->ctx = ctx;
   bc->bs = bs;
-      
+
   struct spdk_blob_opts opts;
   spdk_blob_opts_init(&opts, sizeof(opts));
   opts.num_clusters = 4_MB / spdk_bs_get_cluster_size(bs);
@@ -327,7 +327,7 @@ bs_init(void *arg, int bserrno) {
     default_blobstore_type.copy(opts.bstype.bstype, SPDK_BLOBSTORE_TYPE_LENGTH - 1);
     opts.cluster_sz = utils::default_blobstore_cluster_size;
     opts.start_offset = ctx->bs_start_offset;
-	  opts.length = ctx->bs_length;    
+	  opts.length = ctx->bs_length;
 
     struct spdk_bs_dev *bs_dev = NULL;
     int rc = spdk_bdev_create_bs_dev_ext(ctx->bdev_name.c_str(), fb_event_cb, NULL, &bs_dev);
@@ -371,7 +371,7 @@ bs_read_complete(void *args, struct spdk_blob_store *bs, int bserrno)
   bs_init(ctx, 0);
 }
 
-static void 
+static void
 _blobstore_init(bm_complete cb_fn, void* args, std::string &bdev_name, std::string &uuid, bool force, uint32_t shard_id){
   struct spdk_bs_dev *bs_dev = NULL;
   int rc = spdk_bdev_create_bs_dev_ext(bdev_name.c_str(), fb_event_cb, NULL, &bs_dev);
@@ -389,12 +389,12 @@ _blobstore_init(bm_complete cb_fn, void* args, std::string &bdev_name, std::stri
   uint64_t bs_length = cluster_count_per_core * utils::default_blobstore_cluster_size;
 
   g_bs_space[shard_id] = std::make_pair(bs_start_offset, bs_length);
-  SPDK_INFOLOG(blob_log, "shard_id %u, cluster_count %lu, core_count %u, cluster_count_per_core %lu, start_cluster %lu, bs_start_offset %lu, bs_length %lu\n", 
+  SPDK_INFOLOG(blob_log, "shard_id %u, cluster_count %lu, core_count %u, cluster_count_per_core %lu, start_cluster %lu, bs_start_offset %lu, bs_length %lu\n",
       shard_id, cluster_count, core_count, cluster_count_per_core, start_cluster, bs_start_offset, bs_length);
 
 
   SPDK_INFOLOG(blob_log, "blobstore init in shard %u ...\n", shard_id);
-  auto ctx = new bm_context{.cb_fn = std::move(cb_fn), .args = args, .osd_uuid = nullptr, .bdev_name = bdev_name, 
+  auto ctx = new bm_context{.cb_fn = std::move(cb_fn), .args = args, .osd_uuid = nullptr, .bdev_name = bdev_name,
           .force = force, .bs_start_offset = bs_start_offset, .bs_length = bs_length, .shard_id = shard_id};
   ctx->uuid_len = 4096;
   ctx->uuid_buf = (char*)spdk_zmalloc(ctx->uuid_len, 0x1000, NULL, SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
@@ -441,7 +441,7 @@ blobstore_init(std::string &bdev_name, const std::string& uuid, bool force, bm_c
       [bdev_name = bdev_name, uuid, force, complete, shard_id](){
         _blobstore_init(bdev_name, std::move(uuid), force, complete, shard_id);
       }
-    );  
+    );
   }
 }
 /*************** End of blobstore_init ****************/
@@ -451,7 +451,7 @@ blobstore_init(std::string &bdev_name, const std::string& uuid, bool force, bm_c
  * spdk_bs_load：加载已经存在的blobstore
  */
 static void
-load_done(void *args, int bserrno) { 
+load_done(void *args, int bserrno) {
   struct bm_context *ctx = (struct bm_context *)args;
 
   if (bserrno) {
@@ -473,7 +473,7 @@ void parse_kv_xattr(struct spdk_blob *blob) {
   if (xattr.shard_id > g_bs_mgr->size()) {
       SPDK_ERRLOG("kv xattr, shard_id: %u bigger than shard num: %u", xattr.shard_id, g_bs_mgr->size());
       return;
-  }  
+  }
 
   g_bs_mgr->get_blob_tree(xattr.shard_id).kv_blob = spdk_blob_get_id(blob);
 }
@@ -485,7 +485,7 @@ void parse_kv_checkpoint_xattr(struct spdk_blob *blob) {
   if (xattr.shard_id > g_bs_mgr->size()) {
       SPDK_ERRLOG("kv checkpoint xattr, shard_id: %u bigger than shard num: %u", xattr.shard_id, g_bs_mgr->size());
       return;
-  }  
+  }
 
   auto &blobs = g_bs_mgr->get_blob_tree(xattr.shard_id);
   blobs.kv_checkpoint_blob = spdk_blob_get_id(blob);
@@ -498,7 +498,7 @@ void parse_kv_new_checkpoint_xattr(struct spdk_blob *blob) {
   if (xattr.shard_id > g_bs_mgr->size()) {
       SPDK_ERRLOG("kv checkpoint new xattr, shard_id: %u bigger than shard num: %u", xattr.shard_id, g_bs_mgr->size());
       return;
-  }  
+  }
 
   auto &blobs = g_bs_mgr->get_blob_tree(xattr.shard_id);
   blobs.kv_checkpoint_blob = spdk_blob_get_id(blob);
@@ -512,8 +512,8 @@ void parse_log_xattr(struct spdk_blob *blob) {
       return;
   }
 
-  SPDK_INFOLOG(blob_log, "log xattr, blob id: %lu shard_id: %u pg: %s blob size:%lu\n", 
-      spdk_blob_get_id(blob), xattr.shard_id, xattr.pg.c_str(), 
+  SPDK_INFOLOG(blob_log, "log xattr, blob id: %lu shard_id: %u pg: %s blob size:%lu\n",
+      spdk_blob_get_id(blob), xattr.shard_id, xattr.pg.c_str(),
       spdk_blob_get_num_clusters(blob) * spdk_bs_get_cluster_size(g_bs_mgr->get_blobstore(xattr.shard_id)));
 
   g_bs_mgr->get_blob_tree(xattr.shard_id).log_blobs[xattr.pg] = blob;
@@ -522,7 +522,7 @@ void parse_log_xattr(struct spdk_blob *blob) {
 void parse_object_xattr(struct spdk_blob *blob) {
   auto xattr = object_xattr::parse_xattr(blob);
 
-  SPDK_INFOLOG(blob_log, "object xattr, blob id: %lu shard_id: %u pg: %s obj_name: %s\n", 
+  SPDK_INFOLOG(blob_log, "object xattr, blob id: %lu shard_id: %u pg: %s obj_name: %s\n",
       spdk_blob_get_id(blob), xattr.shard_id, xattr.pg.c_str(), xattr.obj_name.c_str());
 
   if (xattr.shard_id > g_bs_mgr->size()) {
@@ -536,13 +536,13 @@ void parse_object_xattr(struct spdk_blob *blob) {
   auto& object = it->second;
 
   object.origin.blob = blob;
-  object.origin.blobid = spdk_blob_get_id(blob);    
+  object.origin.blobid = spdk_blob_get_id(blob);
 }
 
 void parse_object_snap_xattr(struct spdk_blob *blob) {
   auto xattr = object_snap_xattr::parse_xattr(blob);
 
-  SPDK_INFOLOG(blob_log, "object snap xattr, blob id: %lu shard_id: %u pg: %s obj_name: %s snap_name: %s\n", 
+  SPDK_INFOLOG(blob_log, "object snap xattr, blob id: %lu shard_id: %u pg: %s obj_name: %s snap_name: %s\n",
       spdk_blob_get_id(blob), xattr.shard_id, xattr.pg.c_str(), xattr.obj_name.c_str(), xattr.snap_name.c_str());
 
   if (xattr.shard_id > g_bs_mgr->size()) {
@@ -556,16 +556,16 @@ void parse_object_snap_xattr(struct spdk_blob *blob) {
   auto& object = it->second;
 
   object_store::snap snapshot;
-  snapshot.snap_blob.blobid = spdk_blob_get_id(blob); 
+  snapshot.snap_blob.blobid = spdk_blob_get_id(blob);
   snapshot.snap_blob.blob = blob;
   snapshot.snap_name = xattr.snap_name;
-  object.snap_list.emplace_back(std::move(snapshot));   
+  object.snap_list.emplace_back(std::move(snapshot));
 }
 
 void parse_object_recover_xattr(struct spdk_blob *blob) {
   auto xattr = object_recover_xattr::parse_xattr(blob);
 
-  SPDK_INFOLOG(blob_log, "object recover xattr, blob id: %lu shard_id: %u pg: %s obj_name: %s\n", 
+  SPDK_INFOLOG(blob_log, "object recover xattr, blob id: %lu shard_id: %u pg: %s obj_name: %s\n",
       spdk_blob_get_id(blob), xattr.shard_id, xattr.pg.c_str(), xattr.obj_name.c_str());
 
   if (xattr.shard_id > g_bs_mgr->size()) {
@@ -623,9 +623,9 @@ static void parse_blob_xattr(void *arg, struct spdk_blob *blob, int rberrno){
       break;
     default:
       break;
-  }  
+  }
   ctx->cb_fn(ctx->args, 0);
-  delete ctx;  
+  delete ctx;
 }
 
 
@@ -671,7 +671,7 @@ void parse_open_blob_xattr(struct spdk_blob *blob, uint32_t shard_id, bm_complet
 
 static void
 blob_iter_complete(void *args, struct spdk_blob *blob, int bserrno)
-{ 
+{
   struct bm_context *ctx = (struct bm_context *)args;
   auto err_hand = [](void *arg, int berrno){
     if (berrno) {
@@ -780,7 +780,7 @@ static void get_super_complete(void *cb_arg, spdk_blob_id blobid, int bserrno){
 
 static void
 bs_load_complete(void *args, struct spdk_blob_store *bs, int bserrno)
-{ 
+{
   struct bm_context *ctx = (struct bm_context *)args;
 
   if (bserrno) {
@@ -795,7 +795,7 @@ bs_load_complete(void *args, struct spdk_blob_store *bs, int bserrno)
   g_bs_mgr->create_channel(ctx->shard_id, bs);
 
   uint64_t free = spdk_bs_free_cluster_count(bs);
-  SPDK_INFOLOG(blob_log, "blobstore has FREE clusters of %lu, in thread %lu, shard %u\n", 
+  SPDK_INFOLOG(blob_log, "blobstore has FREE clusters of %lu, in thread %lu, shard %u\n",
       free, utils::get_spdk_thread_id(), core_sharded::get_core_sharded().this_shard_id());
   spdk_bs_get_super(bs, get_super_complete, ctx);
 }
@@ -814,7 +814,7 @@ _blobstore_load(std::string &bdev_name, bm_complete cb_fn, void* args, std::stri
   if(shard_id >= g_bs_space.size()){
     SPDK_ERRLOG("The blobstore space scope has not been configured, in shard %u\n", shard_id);
     cb_fn(args, err::E_INVAL);
-    return;    
+    return;
   }
   uint64_t bs_start_offset = g_bs_space[shard_id].first;
   uint64_t bs_length = g_bs_space[shard_id].second;
@@ -831,7 +831,7 @@ _blobstore_load(std::string &bdev_name, bm_complete cb_fn, void* args, std::stri
 
 static void
 _blobstore_load(std::string bdev_name, std::string *osd_uuid, utils::context *ctx, uint32_t shard_id){
-  SPDK_INFOLOG(blob_log, "blobstore load, thread id %lu, shard %u\n", utils::get_spdk_thread_id(), 
+  SPDK_INFOLOG(blob_log, "blobstore load, thread id %lu, shard %u\n", utils::get_spdk_thread_id(),
       core_sharded::get_core_sharded().this_shard_id());
 
   _blobstore_load(
@@ -850,7 +850,7 @@ _blobstore_load(std::string bdev_name, std::string *osd_uuid, utils::context *ct
 void
 blobstore_load(std::string &bdev_name, bm_complete cb_fn, void* args, std::string *osd_uuid){
   auto &shard = core_sharded::get_core_sharded();
-  
+
   auto shard_num = core_sharded::get_core_sharded().count();
   if(g_bs_space.size() != shard_num){
     cb_fn(args, err::E_INVAL);
@@ -860,7 +860,7 @@ blobstore_load(std::string &bdev_name, bm_complete cb_fn, void* args, std::strin
 
   auto cur_thread = spdk_get_thread();
   auto ctx = new utils::switch_core_context{.cb_fn = std::move(cb_fn), .arg = args, .thread = cur_thread, .serror = 0};
-  utils::multi_complete *complete = new utils::multi_complete(shard_num, shard_num, utils::switch_core_func, ctx);  
+  utils::multi_complete *complete = new utils::multi_complete(shard_num, shard_num, utils::switch_core_func, ctx);
 
   for (uint32_t shard_id = 0; shard_id < shard_num; shard_id++){
     shard.invoke_on(
@@ -870,10 +870,10 @@ blobstore_load(std::string &bdev_name, bm_complete cb_fn, void* args, std::strin
         if(shard_id == 0)
           _blobstore_load(bdev_name, osd_uuid, complete, shard_id);
         else
-          _blobstore_load(bdev_name, nullptr, complete, shard_id);  
+          _blobstore_load(bdev_name, nullptr, complete, shard_id);
       }
-    );   
-  } 
+    );
+  }
 }
 /*************** End of blobstore_load ****************/
 
@@ -883,7 +883,7 @@ blobstore_load(std::string &bdev_name, bm_complete cb_fn, void* args, std::strin
  */
 static void
 bs_fini_complete(void *args, int bserrno)
-{ 
+{
   struct bm_context *ctx = (struct bm_context *)args;
 
   if (bserrno) {
@@ -921,7 +921,7 @@ _blobstore_fini(bm_complete cb_fn, void* args, uint32_t shard_id)
     auto ctx = new bm_context{.cb_fn = cb_fn, .args = args, .shard_id = shard_id};
     g_bs_mgr->free_channel(shard_id);
     SPDK_INFOLOG(blob_log, "blobpool stop in thread %lu, shard %u\n",
-        utils::get_spdk_thread_id(), shard_id);    
+        utils::get_spdk_thread_id(), shard_id);
     g_bs_mgr->stop_blob_pool(shard_id, pool_stop_complete, ctx);
 	}else{
     cb_fn(args, 0);
@@ -930,9 +930,9 @@ _blobstore_fini(bm_complete cb_fn, void* args, uint32_t shard_id)
 
 static void
 _blobstore_fini(utils::context *ctx, uint32_t shard_id){
-  SPDK_INFOLOG(blob_log, "blobstore fini, thread id %lu, shard %u\n", 
+  SPDK_INFOLOG(blob_log, "blobstore fini, thread id %lu, shard %u\n",
       utils::get_spdk_thread_id(), core_sharded::get_core_sharded().this_shard_id());
-  
+
   _blobstore_fini([shard_id](void *arg, int serror){
     utils::context *ctx = (utils::context *)arg;
     SPDK_INFOLOG(blob_log, "blobstore fini done in shard %u\n", shard_id);
@@ -949,15 +949,15 @@ blobstore_fini(bm_complete cb_fn, void* args){
   auto shard_num = core_sharded::get_core_sharded().count();
 
   auto ctx = new utils::switch_core_context{.cb_fn = std::move(cb_fn), .arg = args, .thread = cur_thread, .serror = 0};
-  utils::multi_complete *complete = new utils::multi_complete(shard_num, shard_num, utils::switch_core_func, ctx); 
+  utils::multi_complete *complete = new utils::multi_complete(shard_num, shard_num, utils::switch_core_func, ctx);
 
-  for (uint32_t shard_id = 0; shard_id < shard_num; shard_id++){ 
+  for (uint32_t shard_id = 0; shard_id < shard_num; shard_id++){
     shard.invoke_on(
       shard_id,
       [complete, shard_id](){
         _blobstore_fini(complete, shard_id);
       }
-    );  
-  }  
+    );
+  }
 }
 /*************** End of blobstore_fini ****************/

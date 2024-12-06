@@ -12,7 +12,7 @@
 #include "state_machine.h"
 #include "raft.h"
 #include "spdk/log.h"
-#include "utils/err_num.h"
+#include "fastblock/utils/err_num.h"
 
 constexpr uint32_t default_parallel_apply_num = 32;
 

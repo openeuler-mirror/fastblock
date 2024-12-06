@@ -14,8 +14,8 @@
 
 #include "raft/raft.h"
 #include "spdk/env.h"
-#include "utils/utils.h"
-#include "base/core_sharded.h"
+#include "fastblock/utils/utils.h"
+#include "fastblock/base/core_sharded.h"
 #include "localstore/kv_store.h"
 
 namespace monitor {

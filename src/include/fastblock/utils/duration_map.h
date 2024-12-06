@@ -10,7 +10,8 @@
  */
 #pragma once
 
-#include "utils/fmt.h"
+#ifdef FASTBLOCK_COLLECT_DURATION
+#include "fastblock/utils/fmt.h"
 
 #include <chrono>
 #include <unordered_map>
@@ -18,13 +19,6 @@
 #include <memory>
 #include <vector>
 
-// #define FASTBLOCK_DUR_MAP_CREATE(key_type, var, name) fastblock::utils::duration_map<key_type> var{name}
-// #define FASTBLOCK_DUR_MAP_EMPLACE_START(var, k) var.emplace_start(k)
-// #define FASTBLOCK_DUR_MAP_EMPLACE_END(var, k) var.emplace_end(k)
-// #define FASTBLOCK_DUR_MAP_EMPLACE_END_LAST(var) var.emplace_end()
-// #define FASTBLOCK_DUR_MAP_PRINT(var) var.print_result()
-
-#ifdef FASTBLOCK_COLLECT_DURATION
 #define FASTBLOCK_DUR_MAP_CREATE(key_type, var, name) fastblock::utils::duration_map<key_type> var{name}
 #define FASTBLOCK_DUR_MAP_EMPLACE_START(var, k) var.emplace_start(k)
 #define FASTBLOCK_DUR_MAP_EMPLACE_END(var, k) var.emplace_end(k)
@@ -110,7 +104,7 @@ public:
         static constexpr size_t lat_tag_count{6};
         static constexpr std::array<double, lat_tag_count> latency_tag = {0.1, 0.5, 0.9, 0.95, 0.99, 0.999};
 
-        auto fmt = RFMT_1("\n[%1%] ", _name);
+        auto fmt = FB_RFMT_1("\n[%1%] ", _name);
         size_t count{0};
         for (auto lat_tag : latency_tag) {
             auto lat_at = static_cast<size_t>(lat_tag * durations.size());

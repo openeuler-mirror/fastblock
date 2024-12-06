@@ -16,7 +16,7 @@
 #include "types.h"
 #include "rolling_blob.h"
 #include "kv_checkpoint.h"
-#include "utils/utils.h"
+#include "fastblock/utils/utils.h"
 
 #include <spdk/env.h>
 #include <spdk/util.h>

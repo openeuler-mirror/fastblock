@@ -17,7 +17,7 @@
 
 #include "rpc/raft_msg.pb.h"
 #include "raft_types.h"
-#include "utils/utils.h"
+#include "fastblock/utils/utils.h"
 
 typedef void (*func_handle_entry_f)(void *arg, raft_index_t idx, std::shared_ptr<raft_entry_t> entry);
 

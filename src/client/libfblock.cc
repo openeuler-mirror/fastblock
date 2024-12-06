@@ -15,8 +15,8 @@
 
 #include "fastblock/bdev/global.h"
 #include "osd/partition_manager.h"
-#include "utils/utils.h"
-#include "utils/err_num.h"
+#include "fastblock/utils/utils.h"
+#include "fastblock/utils/err_num.h"
 
 void libblk_client::create_image(
   const std::string pool_name,

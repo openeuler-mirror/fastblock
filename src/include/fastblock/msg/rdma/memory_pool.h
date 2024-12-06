@@ -11,7 +11,7 @@
 #pragma once
 
 #include "fastblock/msg/rdma/pd.h"
-#include "utils/fmt.h"
+#include "fastblock/utils/fmt.h"
 
 
 #include <spdk/env.h>

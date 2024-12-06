@@ -17,10 +17,10 @@
 #include "spdk/string.h"
 #include "spdk/thread.h"
 
-#include "rpc/connect_cache.h"
-#include "rpc/osd_msg.pb.h"
+#include "fastblock/rpc/connect_cache.h"
+#include "fastblock/rpc/osd_msg.pb.h"
 #include "fastblock/msg/rpc_controller.h"
-#include "utils/err_num.h"
+#include "fastblock/utils/err_num.h"
 #include <google/protobuf/stubs/callback.h>
 
 #include <boost/property_tree/ptree.hpp>

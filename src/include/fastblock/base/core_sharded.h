@@ -11,8 +11,7 @@
 
 #pragma once
 
-#include "utils/fmt.h"
-
+#include "fastblock/utils/fmt.h"
 
 #include <memory>
 #include <vector>
@@ -163,7 +162,7 @@ public:
             _shard_cores.push_back(*begin);
             ::spdk_cpuset_zero(&cpumask);
             ::spdk_cpuset_set_cpu(&cpumask, *begin, true);
-            auto thread_name = FMT_2("%1%%2%", app_name, *begin);
+            auto thread_name = FB_FMT_2("%1%%2%", app_name, *begin);
             thread = ::spdk_thread_create(thread_name.c_str(), &cpumask);
             _threads.push_back(thread);
             SPDK_NOTICELOG("Created public spdk thread %s on core %d\n", thread_name.c_str(), *begin);

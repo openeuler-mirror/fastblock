@@ -13,7 +13,7 @@
 #include "fastblock/msg/rpc_controller.h"
 #include "fastblock/msg/rdma/client.h"
 #include "fastblock/msg/rdma/server.h"
-#include "utils/duration_map.h"
+#include "fastblock/utils/duration_map.h"
 
 #include "tools/rpc_bench/rpc_bench.pb.h"
 
@@ -285,7 +285,7 @@ void start_rpc_bench_server() {
         ::spdk_cpuset_zero(&cpu_mask);
         ::spdk_cpuset_set_cpu(&cpu_mask, core_no, true);
         auto sockid = ::spdk_env_get_socket_id(core_no);
-        std::string srv_name{FMT_1("rpc_srv_%1%", core_no)};
+        std::string srv_name{FB_FMT_1("rpc_srv_%1%", core_no)};
         opts->port = ep_begin_it->port;
         opts->bind_address = ep_begin_it->host;
         try {
@@ -485,7 +485,7 @@ void start_ping_client() {
             core_no = spdk_env_get_next_core(core_no);
             ::spdk_cpuset_zero(&cpu_mask);
             ::spdk_cpuset_set_cpu(&cpu_mask, core_no, true);
-            auto rpc_cli_name = FMT_1("rpc_cli_%1%", core_no);
+            auto rpc_cli_name = FB_FMT_1("rpc_cli_%1%", core_no);
             auto sockid = ::spdk_env_get_socket_id(core_no);
             auto rpc_cli = std::make_shared<msg::rdma::client>(rpc_cli_name, &cpu_mask, opts, sockid);
             current_cli = rpc_cli.get();
@@ -564,7 +564,7 @@ int main(int argc, char** argv) {
         ::exit(rc);
     }
 
-    sock_path = FMT_1("/var/tmp/rpc_bench_%1%.sock", g_ep_index);
+    sock_path = FB_FMT_1("/var/tmp/rpc_bench_%1%.sock", g_ep_index);
     boost::property_tree::read_json(std::string(g_json_conf), g_pt);
     ctx.rpc_client_same_core = g_pt.get_child("rpc_client_same_core").get_value<bool>();
 

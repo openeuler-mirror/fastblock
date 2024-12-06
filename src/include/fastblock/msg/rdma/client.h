@@ -18,11 +18,11 @@
 #include "fastblock/msg/rdma/socket.h"
 #include "fastblock/msg/rdma/transport_data.h"
 #include "fastblock/msg/rdma/types.h"
-#include "utils/duration_map.h"
-#include "utils/fmt.h"
-#include "utils/utils.h"
+#include "fastblock/utils/duration_map.h"
+#include "fastblock/utils/fmt.h"
+#include "fastblock/utils/utils.h"
 
-#include "utils/simple_poller.h"
+#include "fastblock/utils/simple_poller.h"
 
 #include <spdk/env.h>
 #include <spdk/log.h>
@@ -490,7 +490,7 @@ public:
 
         void start() {
             _recv_pool = std::make_unique<memory_pool<::ibv_recv_wr>>(
-              _sock->pd(), FMT_1("crv_%1%", utils::random_string(5)),
+              _sock->pd(), FB_FMT_1("crv_%1%", utils::random_string(5)),
               _opts->per_post_recv_num,
               _opts->metadata_memory_pool_element_size, 0, _sock_id);
             _recv_ctx = std::make_unique<memory_pool<::ibv_recv_wr>::net_context*[]>(
@@ -520,7 +520,7 @@ public:
                 SPDK_ERRLOG(
                   "ERROR: RPC service name's length(%ld) is beyond the max size(%d)\n",
                   service_name.size(), max_rpc_meta_string_size);
-                ctrlr->SetFailed(FMT_1("service name too long, should less than or equal to %1%", max_rpc_meta_string_size));
+                ctrlr->SetFailed(FB_FMT_1("service name too long, should less than or equal to %1%", max_rpc_meta_string_size));
                 c->Run();
                 return;
             }
@@ -530,7 +530,7 @@ public:
                 SPDK_ERRLOG(
                   "ERROR: RPC method name's length(%ld) is beyond the max size(%d)\n",
                   method_name.size(), max_rpc_meta_string_size);
-                ctrlr->SetFailed(FMT_1( "method name is too long, should less than or equal to %1%", max_rpc_meta_string_size));
+                ctrlr->SetFailed(FB_FMT_1( "method name is too long, should less than or equal to %1%", max_rpc_meta_string_size));
                 c->Run();
                 return;
             }
@@ -617,7 +617,7 @@ public:
                 stack_ptr->closure->Run();
             } else if (rc != 0) {
                 SPDK_ERRLOG("ERROR: Sending rpc request failed, rc is %d\n", rc);
-                stack_ptr->ctrlr->SetFailed(FMT_1("error, rc %1%", rc));
+                stack_ptr->ctrlr->SetFailed(FB_FMT_1("error, rc %1%", rc));
                 stack_ptr->closure->Run();
             }
 
@@ -663,7 +663,7 @@ public:
                     stack_ptr->closure->Run();
                 } else if (rc != 0) {
                     SPDK_ERRLOG("ERROR: Sending rpc request failed, rc is %d\n", rc);
-                    stack_ptr->ctrlr->SetFailed(FMT_1("error, rc %1%", rc));
+                    stack_ptr->ctrlr->SetFailed(FB_FMT_1("error, rc %1%", rc));
                     stack_ptr->closure->Run();
                 }
 
@@ -941,7 +941,7 @@ read_done:
                       req_it->second->request_key,
                       string_status(reply_m));
                     req_it->second->ctrlr->SetFailed(
-                      FMT_1("rpc call failed with reply status %1%", string_status(reply_m)));
+                      FB_FMT_1("rpc call failed with reply status %1%", string_status(reply_m)));
                     _free_server_list.push_back(req_it->second->request_key);
                     _unresponsed_requests.erase(req_it);
                     break;
@@ -1193,11 +1193,11 @@ public:
       , _stop_poller{_thread}
       , _sock_id{sock_id}
       , _meta_pool{std::make_shared<memory_pool<::ibv_send_wr>>(
-        _pd->value(), FMT_1("%1%_m", name),
+        _pd->value(), FB_FMT_1("%1%_m", name),
         _opts->metadata_memory_pool_capacity,
         _opts->metadata_memory_pool_element_size, 0, _sock_id)}
       , _data_pool{std::make_shared<memory_pool<::ibv_send_wr>>(
-        _pd->value(), FMT_1("%1%_d", name),
+        _pd->value(), FB_FMT_1("%1%_d", name),
         _opts->data_memory_pool_capacity,
         _opts->data_memory_pool_element_size, 0, _sock_id)} {}
 

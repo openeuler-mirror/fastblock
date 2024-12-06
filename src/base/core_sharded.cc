@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-#include "core_sharded.h"
+#include "fastblock/base/core_sharded.h"
 
 std::vector<uint32_t> get_shard_cores(){
     std::vector<uint32_t> shard_cores;
