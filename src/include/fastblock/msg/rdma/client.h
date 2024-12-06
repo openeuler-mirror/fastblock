@@ -18,7 +18,7 @@
 #include "fastblock/msg/rdma/socket.h"
 #include "fastblock/msg/rdma/transport_data.h"
 #include "fastblock/msg/rdma/types.h"
-#include "utils/duration_map.h"
+#include "fastblock/utils/duration_map.h"
 #include "fastblock/utils/fmt.h"
 #include "fastblock/utils/utils.h"
 

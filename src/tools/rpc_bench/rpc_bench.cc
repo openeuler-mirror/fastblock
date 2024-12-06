@@ -13,7 +13,7 @@
 #include "fastblock/msg/rpc_controller.h"
 #include "fastblock/msg/rdma/client.h"
 #include "fastblock/msg/rdma/server.h"
-#include "utils/duration_map.h"
+#include "fastblock/utils/duration_map.h"
 
 #include "tools/rpc_bench/rpc_bench.pb.h"
 

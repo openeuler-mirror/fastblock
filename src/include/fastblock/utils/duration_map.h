@@ -10,6 +10,7 @@
  */
 #pragma once
 
+#ifdef FASTBLOCK_COLLECT_DURATION
 #include "fastblock/utils/fmt.h"
 
 #include <chrono>
@@ -18,13 +19,6 @@
 #include <memory>
 #include <vector>
 
-// #define FASTBLOCK_DUR_MAP_CREATE(key_type, var, name) fastblock::utils::duration_map<key_type> var{name}
-// #define FASTBLOCK_DUR_MAP_EMPLACE_START(var, k) var.emplace_start(k)
-// #define FASTBLOCK_DUR_MAP_EMPLACE_END(var, k) var.emplace_end(k)
-// #define FASTBLOCK_DUR_MAP_EMPLACE_END_LAST(var) var.emplace_end()
-// #define FASTBLOCK_DUR_MAP_PRINT(var) var.print_result()
-
-#ifdef FASTBLOCK_COLLECT_DURATION
 #define FASTBLOCK_DUR_MAP_CREATE(key_type, var, name) fastblock::utils::duration_map<key_type> var{name}
 #define FASTBLOCK_DUR_MAP_EMPLACE_START(var, k) var.emplace_start(k)
 #define FASTBLOCK_DUR_MAP_EMPLACE_END(var, k) var.emplace_end(k)
