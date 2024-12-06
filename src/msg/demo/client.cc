@@ -13,7 +13,7 @@
 #include "common.h"
 #include "fastblock/msg/rpc_controller.h"
 #include "fastblock/msg/rdma/client.h"
-#include "utils/duration_map.h"
+#include "fastblock/utils/duration_map.h"
 
 #include "ping_pong.pb.h"
 
