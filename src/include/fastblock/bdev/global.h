@@ -21,4 +21,5 @@ extern std::unique_ptr<monitor::client> mon_client;
 extern std::shared_ptr<::libblk_client> blk_client;
 extern std::vector<std::shared_ptr<::libblk_client>> blk_clients;
 extern std::vector<::spdk_thread*> vhost_worker_threads;
+extern uint32_t  app_thread_shard_id;
 }

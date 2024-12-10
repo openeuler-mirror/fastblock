@@ -18,4 +18,5 @@ std::unique_ptr<monitor::client> mon_client;
 std::shared_ptr<::libblk_client> blk_client;
 std::vector<std::shared_ptr<::libblk_client>> blk_clients;
 std::vector<::spdk_thread*> vhost_worker_threads;
+uint32_t  app_thread_shard_id;
 }
