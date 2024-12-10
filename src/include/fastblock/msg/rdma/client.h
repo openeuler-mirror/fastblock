@@ -1232,7 +1232,7 @@ private:
 
         if (_thread) {
             ::spdk_thread_exit(_thread);
-            SPDK_NOTICELOG("SPDK thread of the rpc client has been marked as exited\n");
+            SPDK_NOTICELOG("SPDK thread (%s) of the rpc client has been marked as exited\n", spdk_thread_get_name(_thread));
         }
 
         _meta_pool->free();

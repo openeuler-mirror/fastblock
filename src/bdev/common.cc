@@ -121,7 +121,8 @@ void app_run(void *arg1)
     global::mon_client->start();
     global::mon_client->start_cluster_map_poller();
 
-    global::blk_clients.resize(core_sharded::system::capacity());
-    global::vhost_worker_threads.resize(core_sharded::system::capacity());
+    global::blk_clients.resize(core_sharded::system::capacity() + 1);
+    global::app_thread_shard_id = core_sharded::system::capacity();
+    global::vhost_worker_threads.resize(core_sharded::system::capacity() + 1);
 }
 
