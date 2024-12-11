@@ -14,9 +14,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
-	"math"
+	"sync"
 
 	"monitor/config"
 	"monitor/etcdapi"
@@ -53,12 +54,12 @@ type PoolPGsConfig struct {
 // TODO: use OSDID, not string. It requires parse change.
 // type PGConfig []int
 type PGConfig struct {
-	Version    int64   `json:"version,omitempty"`
-	PgState    utils.PGSTATE `json:"pgstate,omitempty"`
-	CoreIndex  uint32  `json:"coreindex,omitempty"` 
-	OsdList    []int   `json:"osdlist,omitempty"`
-	NewCoreIndex  uint32  `json:"newcoreindex,omitempty"` 
-	NewOsdList []int   `json:"newosdlist,omitempty"`
+	Version      int64         `json:"version,omitempty"`
+	PgState      utils.PGSTATE `json:"pgstate,omitempty"`
+	CoreIndex    uint32        `json:"coreindex,omitempty"`
+	OsdList      []int         `json:"osdlist,omitempty"`
+	NewCoreIndex uint32        `json:"newcoreindex,omitempty"`
+	NewOsdList   []int         `json:"newosdlist,omitempty"`
 }
 
 // PoolID defines pool ID.
@@ -94,9 +95,12 @@ type PoolConfig struct {
 }
 
 // 已经包含了pg的分配表
-var AllPools map[PoolID]*PoolConfig
-var lastSeenPoolId int32
-var osdmapVersion int64
+var (
+	AllPools       map[PoolID]*PoolConfig
+	allPoolsMutex  sync.RWMutex // Protects access to AllPools
+	lastSeenPoolId int32
+	osdmapVersion  int64
+)
 
 type pgTask struct {
 	osdid       int
@@ -113,7 +117,7 @@ var pgsTaskQueue map[string]*CommonQueue
  *     PgUndersize | PgRemapped
  *     PgDown | PgRemapped
  */
-func (pg *PGConfig)SetPgState(state utils.PGSTATE) {
+func (pg *PGConfig) SetPgState(state utils.PGSTATE) {
 	switch state {
 	case utils.PgCreating:
 		pg.PgState = pg.PgState &^ utils.PgActive
@@ -139,12 +143,12 @@ func (pg *PGConfig)SetPgState(state utils.PGSTATE) {
 /*
  * 复位pg的状态, 参数state只能是PgCreating、PgActive、PgUndersize、PgDown和PgRemapped中的一种
  */
-func (pg *PGConfig)UnsetPgState(state utils.PGSTATE) {
+func (pg *PGConfig) UnsetPgState(state utils.PGSTATE) {
 	if state == utils.PgCreating ||
-	  state == utils.PgActive    ||
-	  state == utils.PgUndersize ||
-	  state == utils.PgDown      ||
-	  state == utils.PgRemapped {
+		state == utils.PgActive ||
+		state == utils.PgUndersize ||
+		state == utils.PgDown ||
+		state == utils.PgRemapped {
 		pg.PgState = pg.PgState &^ state
 	}
 }
@@ -152,24 +156,28 @@ func (pg *PGConfig)UnsetPgState(state utils.PGSTATE) {
 /*
  * 检查pg是否处于参数state所示状态
  */
-func (pg *PGConfig)PgInState(state utils.PGSTATE) bool{
+func (pg *PGConfig) PgInState(state utils.PGSTATE) bool {
 	if state == utils.PgCreating ||
-	  state == utils.PgActive    ||
-	  state == utils.PgUndersize ||
-	  state == utils.PgDown      ||
-	  state == utils.PgRemapped {
-		return (pg.PgState & state) != 0; 
+		state == utils.PgActive ||
+		state == utils.PgUndersize ||
+		state == utils.PgDown ||
+		state == utils.PgRemapped {
+		return (pg.PgState & state) != 0
 	}
 	return false
 }
 
 func GetPoolPgNum() (int32, int32, *msg.PgStateInfo) {
+
+	allPoolsMutex.RLock()
+	defer allPoolsMutex.RUnlock()
+
 	poolNum := 0
 	pgNUm := 0
 	pgstat := &msg.PgStateInfo{}
 
-	poolNum = len(AllPools)
 	for _, pool := range AllPools {
+		poolNum += 1
 		pgNUm += len(pool.PoolPgMap.PgMap)
 		for _, pg := range pool.PoolPgMap.PgMap {
 			if pg.PgInState(utils.PgCreating) && pg.PgInState(utils.PgUndersize) {
@@ -208,6 +216,9 @@ func findUsablePoolId() PoolID {
 // poolid is somewhat redudant?
 // call it on start
 func LoadPoolConfig(ctx context.Context, client *etcdapi.EtcdClient) (err error) {
+	allPoolsMutex.Lock()
+	defer allPoolsMutex.Unlock()
+
 	lastSeenPoolId = 0
 	AllPools = make(map[PoolID]*PoolConfig)
 	pgsTaskQueue = make(map[string]*CommonQueue)
@@ -260,6 +271,9 @@ func LoadPoolConfig(ctx context.Context, client *etcdapi.EtcdClient) (err error)
 }
 
 func ProcessOsdDown(ctx context.Context, client *etcdapi.EtcdClient, osdid int) {
+	allPoolsMutex.Lock()
+	defer allPoolsMutex.Unlock()
+
 	if AllPools == nil {
 		log.Warn(ctx, "AllPoolsConfig nil!")
 		return
@@ -316,6 +330,9 @@ func ProcessOsdDown(ctx context.Context, client *etcdapi.EtcdClient, osdid int) 
 }
 
 func ProcessCreatePoolMessage(ctx context.Context, client *etcdapi.EtcdClient, name string, size int, pc int, fd string, root string) (int32, error) {
+	allPoolsMutex.Lock()
+	defer allPoolsMutex.Unlock()
+
 	for _, pc := range AllPools {
 		if name == pc.Name {
 			return -1, EPoolAlreadyExists
@@ -384,6 +401,9 @@ func getPgOsdOutNum(osdList []int, pgSize int) int {
 
 func ProcessLeaderBeElected(ctx context.Context, client *etcdapi.EtcdClient, leaderId int, poolId uint64, pgId uint64,
 	osdList []int, newOsdList []int) error {
+
+	allPoolsMutex.RLock()
+	defer allPoolsMutex.RUnlock()
 
 	pgIdStr := strconv.FormatUint(pgId, 10)
 	if poolConf, ok := AllPools[PoolID(poolId)]; ok {
@@ -469,6 +489,10 @@ func ProcessLeaderBeElected(ctx context.Context, client *etcdapi.EtcdClient, lea
 
 func ProcessPgMemberChangeFinish(ctx context.Context, client *etcdapi.EtcdClient, result int, poolId uint64,
 	pgId uint64, osdList []int) error {
+
+	allPoolsMutex.Lock()
+	defer allPoolsMutex.Unlock()
+
 	isUpdate := false
 	pgIdStr := strconv.FormatUint(pgId, 10)
 	if poolConf, ok := AllPools[PoolID(poolId)]; ok {
@@ -527,6 +551,9 @@ func ProcessPgMemberChangeFinish(ctx context.Context, client *etcdapi.EtcdClient
 }
 
 func ProcessListPoolsMessage(ctx context.Context) ([]*msg.Poolinfo, error) {
+	allPoolsMutex.RLock()
+	defer allPoolsMutex.RUnlock()
+
 	pis := make([]*msg.Poolinfo, 0)
 	if len(AllPools) == 0 {
 		return nil, nil
@@ -548,6 +575,9 @@ func ProcessListPoolsMessage(ctx context.Context) ([]*msg.Poolinfo, error) {
 
 func ProcessGetPgMapMessage(ctx context.Context, pvs map[int32]int64) (*msg.GetPgMapResponse, error) {
 	log.Info(ctx, "ProcessGetPgMapMessage", pvs)
+
+	allPoolsMutex.RLock()
+	defer allPoolsMutex.RUnlock()
 
 	if len(AllPools) == 0 {
 		log.Info(ctx, "no pool created yet")
@@ -585,13 +615,13 @@ func ProcessGetPgMapMessage(ctx context.Context, pvs map[int32]int64) (*msg.GetP
 					newOsdlist = append(newOsdlist, int32(oid))
 				}
 				pi := &msg.PGInfo{
-					Pgid:     int32(pgidToi),
-					Version:  pc.Version,
-					State:    int32(pc.PgState),
-					Coreindex:  pc.CoreIndex,
-					Osdid:    osdlist,
+					Pgid:         int32(pgidToi),
+					Version:      pc.Version,
+					State:        int32(pc.PgState),
+					Coreindex:    pc.CoreIndex,
+					Osdid:        osdlist,
 					Newcoreindex: pc.NewCoreIndex,
-					Newosdid: newOsdlist,
+					Newosdid:     newOsdlist,
 				}
 				pginfos.Pi = append(pginfos.Pi, pi)
 				gpmr.Pgs[int32(pid)] = pginfos
@@ -629,13 +659,13 @@ func ProcessGetPgMapMessage(ctx context.Context, pvs map[int32]int64) (*msg.GetP
 						newOsdlist = append(newOsdlist, int32(oid))
 					}
 					pi := &msg.PGInfo{
-						Pgid:     int32(pgidToi),
-						Version:  pc.Version,
-						State:    int32(pc.PgState),
-						Coreindex:  pc.CoreIndex,
-						Osdid:    osdlist,
+						Pgid:         int32(pgidToi),
+						Version:      pc.Version,
+						State:        int32(pc.PgState),
+						Coreindex:    pc.CoreIndex,
+						Osdid:        osdlist,
 						Newcoreindex: pc.NewCoreIndex,
-						Newosdid: newOsdlist,
+						Newosdid:     newOsdlist,
 					}
 					pginfos.Pi = append(pginfos.Pi, pi)
 					gpmr.Pgs[int32(pid)] = pginfos
@@ -651,6 +681,9 @@ func ProcessGetPgMapMessage(ctx context.Context, pvs map[int32]int64) (*msg.GetP
 }
 
 func ProcessDeletePoolMessage(ctx context.Context, client *etcdapi.EtcdClient, name string) error {
+	allPoolsMutex.Lock()
+	defer allPoolsMutex.Unlock()
+
 	found := false
 	pid := -1
 	for _, pc := range AllPools {
@@ -698,6 +731,9 @@ func ProcessPgTask(ctx context.Context, client *etcdapi.EtcdClient, pgId string)
 }
 
 func printAllPool(ctx context.Context) {
+	allPoolsMutex.RLock()
+	defer allPoolsMutex.RUnlock()
+
 	for poolId, pool := range AllPools {
 		log.Warn(ctx, "---- pool ", poolId, " PGSize ", pool.PGSize, " Version ", pool.PoolPgMap.Version)
 		for pgId, pg := range pool.PoolPgMap.PgMap {
@@ -707,6 +743,9 @@ func printAllPool(ctx context.Context) {
 }
 
 func generatePgOsdInfoRsp(ppc *PoolConfig, gpo *msg.GetPgOsdInfoResponse) {
+	allPoolsMutex.RLock()
+	defer allPoolsMutex.RUnlock()
+
 	pgOsdInfos := &msg.PgOsdInfos{
 		Pgs: make([]*msg.PgOsdInfo, 0),
 	}
@@ -719,9 +758,9 @@ func generatePgOsdInfoRsp(ppc *PoolConfig, gpo *msg.GetPgOsdInfoResponse) {
 			osdlist = append(osdlist, int32(oid))
 		}
 		poi := &msg.PgOsdInfo{
-			Pgid:     int32(pgidToi),
-			Coreindex:  pc.CoreIndex,
-			Osdid:    osdlist,
+			Pgid:      int32(pgidToi),
+			Coreindex: pc.CoreIndex,
+			Osdid:     osdlist,
 		}
 		pgOsdInfos.Pgs = append(pgOsdInfos.Pgs, poi)
 	}
@@ -729,13 +768,16 @@ func generatePgOsdInfoRsp(ppc *PoolConfig, gpo *msg.GetPgOsdInfoResponse) {
 }
 
 func ProcessGetPgOsdInfoMessage(ctx context.Context, poolIds []int32) (*msg.GetPgOsdInfoResponse, error) {
+	allPoolsMutex.RLock()
+	defer allPoolsMutex.RUnlock()
+
 	if len(AllPools) == 0 {
 		log.Info(ctx, "no pool created yet")
 		return nil, fmt.Errorf("no pool created yet")
 	}
-	
+
 	gpo := &msg.GetPgOsdInfoResponse{
-		Pools:                make(map[int32]*msg.PgOsdInfos),
+		Pools: make(map[int32]*msg.PgOsdInfos),
 	}
 
 	if len(poolIds) == 0 {

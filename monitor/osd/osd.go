@@ -73,8 +73,13 @@ type HeartBeatInfo struct {
 	successCounter int
 }
 
-var AllOSDInfo OsdMap
-var AllHeartBeatInfo map[OSDID]*HeartBeatInfo
+var (
+	AllOSDInfo        OsdMap
+	AllOSDInfoMutex   sync.RWMutex
+	AllHeartBeatInfo  map[OSDID]*HeartBeatInfo
+	AllHeartBeatMutex sync.RWMutex
+)
+
 var OSDCoreNum uint32 = 0
 
 type STATESWITCH int
