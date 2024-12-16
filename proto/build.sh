@@ -51,12 +51,13 @@ if [ $buildtype = "cpp" ]; then
 
     if [ ! -f ../src/rpc/raft_msg.pb.h ] || [ ! -f ../src/rpc/raft_msg.pb.cc ]; then
         protoc --cpp_out=../src/rpc raft_msg.proto
-
+        sed -i 's|#include "common_msg.pb.h"|#include "fastblock/rpc/common_msg.pb.h"|' ../src/rpc/raft_msg.pb.h
     else
         protoc --cpp_out=/tmp raft_msg.proto
         if ! cmp -s ../src/rpc/raft_msg.pb.h /tmp/raft_msg.pb.h || ! cmp -s ../src/rpc/raft_msg.pb.cc /tmp/raft_msg.pb.cc; then
             mv /tmp/raft_msg.pb.h ../src/rpc/raft_msg.pb.h
             mv /tmp/raft_msg.pb.cc ../src/rpc/raft_msg.pb.cc
+            sed -i 's|#include "common_msg.pb.h"|#include "fastblock/rpc/common_msg.pb.h"|' ../src/rpc/raft_msg.pb.h
         fi
     fi
 
