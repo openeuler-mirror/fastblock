@@ -59,7 +59,7 @@ int send_cluster_map_request(void* arg) {
 
 void do_start(void* arg) {
     auto* mon_cli = reinterpret_cast<client*>(arg);
-    mon_cli->load_pgs();
+    // mon_cli->load_pgs();
     mon_cli->handle_start();
 }
 
@@ -82,7 +82,6 @@ void do_emplace_request(void* arg) {
 void client::load_pgs(){
     if(_user_idty != user_identity::USER_OSD)
         return;
-    // SPDK_WARNLOG("load pgs\n");
     std::map<uint64_t, std::vector<utils::pg_info_type>> pools;
     if (not _pm_ctx) {
         auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
@@ -114,6 +113,8 @@ void client::start() {
 void client::handle_start() {
     SPDK_INFOLOG(mon, "Starting monitor client...\n");
 
+    _pm_event_q->push_back(event::start);
+    load_pgs();
     _cluster->connect();
     _core_poller.register_poller(monitor::core_poller_handler, this, 0, "mon_core");
 

@@ -185,6 +185,10 @@ public:
 public:
 
     static void construct(auto&&... args) {
+        if (g_core_sharded) {
+            return;
+        }
+
         g_core_sharded = std::make_unique<core_sharded>(std::forward<decltype(args)>(args)...);
     }
 

@@ -788,7 +788,7 @@ read_done:
 
             if (rpc_dur >= _opts->slow_rpc_warn) {
                 SPDK_WARNLOG(
-                  "slow rpc detected, request id %d, rpc duration %ldms\n",
+                  "slow rpc detected, request id %u, rpc duration %ldms\n",
                   stack_ptr->request_key, rpc_dur.count() / 1000 / 1000);
             }
 

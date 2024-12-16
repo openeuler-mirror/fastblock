@@ -12,6 +12,7 @@
 #pragma once
 
 #include "fastblock/monclient/messages.pb.h"
+#include "fastblock/monclient/types.h"
 #include "fastblock/utils/utils.h"
 #include "fastblock/utils/simple_poller.h"
 #include "fastblock/utils/time_check.h"
@@ -467,6 +468,13 @@ public:
 
     void send_data_statistics_request(
       std::map<std::string, utils::cluster_io> &ios);
+
+    void add_event_oberver(std::shared_ptr<event_queue_type> observer) {
+        _event_observers.push_back(observer);
+    }
+
+    void ack_event() {}
+
 private:
 
     template<typename ResponseType>
@@ -486,6 +494,12 @@ private:
 
     [[gnu::always_inline]] bool valid_osd_address(const std::string& host, const int port) {
         return not (host.empty() and port == 0);
+    }
+
+    void publish_event(event evt) {
+        for (auto& observer : _event_observers) {
+            observer->push_back(evt);
+        }
     }
 
 private:
@@ -555,6 +569,9 @@ private:
     int64_t _read_bytes = 0;
     bool _is_read_len = true;
     user_identity _user_idty;
+
+    std::vector<std::shared_ptr<event_queue_type>> _event_observers{};
+
 private:
 
     static constexpr size_t _buffer_size{65535};

@@ -12,6 +12,7 @@
 #include "raft/pg_group.h"
 #include "osd/osd_stm.h"
 #include "fastblock/base/core_sharded.h"
+#include "fastblock/monclient/types.h"
 #include "raft/pg_group.h"
 
 #include <memory>
@@ -160,4 +161,5 @@ private:
     osd_state _state;
     std::shared_ptr<monitor::client> _mon_client;
     bool _is_terminated{false};
+    std::shared_ptr<monitor::event_queue_type> _mon_event_queue{std::make_shared<monitor::event_queue_type>()};
 };

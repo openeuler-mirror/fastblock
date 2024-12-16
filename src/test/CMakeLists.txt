@@ -10,6 +10,7 @@ target_include_directories (raft_membership
 
 target_link_libraries(raft_membership
   PUBLIC
+    spdk::spdk
     base
     osd_msg
     msg

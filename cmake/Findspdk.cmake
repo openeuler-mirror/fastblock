@@ -36,7 +36,7 @@ set (tmp_spdk_static_link_opts)
 set (spdk_static_link_opts)
 set (spdk_lib_vars)
 
-function(find_spdk_component component)
+function(find_spdk_component component set_include)
   pkg_check_modules (spdk_${component} spdk_${component}) # QUIET
   set (prefix spdk_${component}_STATIC)
   list (APPEND spdk_lib_vars ${prefix}_LIBRARIES)
@@ -63,13 +63,21 @@ function(find_spdk_component component)
     endforeach ()
   endforeach ()
 
-  set_target_properties (spdk::${component}
-    PROPERTIES
-      INTERFACE_COMPILE_OPTIONS ${${prefix}_CFLAGS}
-      INTERFACE_INCLUDE_DIRECTORIES ${${prefix}_INCLUDE_DIRS}
-      INTERFACE_LINK_OPTIONS "-Wl,--whole-archive;${${prefix}_LDFLAGS};-Wl,--no-whole-archive"
-      INTERFACE_LINK_LIBRARIES "${${prefix}_LIBRARIES}"
-      INTERFACE_LINK_DIRECTORIES "${${prefix}_LIBRARY_DIRS}")
+  if (${set_include})
+    set_target_properties (spdk::${component}
+      PROPERTIES
+        INTERFACE_COMPILE_OPTIONS ${${prefix}_CFLAGS}
+        INTERFACE_INCLUDE_DIRECTORIES ${${prefix}_INCLUDE_DIRS}
+        INTERFACE_LINK_OPTIONS "-Wl,--whole-archive;${${prefix}_LDFLAGS};-Wl,--no-whole-archive"
+        INTERFACE_LINK_LIBRARIES "${${prefix}_LIBRARIES}"
+        INTERFACE_LINK_DIRECTORIES "${${prefix}_LIBRARY_DIRS}")
+  else()
+    set_target_properties (spdk::${component}
+      PROPERTIES
+        INTERFACE_LINK_OPTIONS "-Wl,--whole-archive;${${prefix}_LDFLAGS};-Wl,--no-whole-archive"
+        INTERFACE_LINK_LIBRARIES "${${prefix}_LIBRARIES}"
+        INTERFACE_LINK_DIRECTORIES "${${prefix}_LIBRARY_DIRS}")
+  endif()
 
   message(STATUS ${prefix} "_CFLAGS: " ${${prefix}_CFLAGS})
   message(STATUS ${prefix} "_INCLUDE_DIRS: " ${${prefix}_INCLUDE_DIRS})
@@ -82,12 +90,12 @@ function(find_spdk_component component)
 endfunction()
 
 # FIXME: keep this calling sort or error
-find_spdk_component(${spdk_FIND_SYSLIBS_COMPONENT})
+find_spdk_component(${spdk_FIND_SYSLIBS_COMPONENT} 0)
 set(spdk_syslibs_link_opts ${tmp_spdk_static_link_opts})
 
 set (tmp_spdk_static_link_opts "")
 foreach (component ${spdk_FIND_COMPONENTS})
-  find_spdk_component(${component})
+  find_spdk_component(${component} 1)
   list (APPEND spdk_static_link_opts ${tmp_spdk_static_link_opts})
 endforeach ()
 

@@ -10,8 +10,9 @@
  */
 
 #include <optional>
-#include "fastblock/bdev/global.h"
 #include "common.h"
+#include "fastblock/base/core_sharded.h"
+#include "fastblock/client/libfblock.h"
 
 
 const char* g_mon_cluster_endpoints = nullptr;
@@ -83,7 +84,7 @@ app_parse_arg(int ch, char *arg)
         break;
     case BLOCK_OPTION_NUMA_NODE:
         utils::g_numa_node = atoi(arg);
-        break;
+    break;
     case BLOCK_OPTION_CORE_NUM:
         g_core_num = atoi(arg);
         break;
@@ -97,31 +98,5 @@ app_parse_arg(int ch, char *arg)
 
 void app_run(void *arg1)
 {
-	std::vector<monitor::client::endpoint> mon_eps{};
-	auto &monitors = g_pt.get_child("mon_host");
-	auto pos = monitors.begin();
-	for (; pos != monitors.end(); pos++)
-	{
-		auto mon_addr = pos->second.get_value<std::string>();
-		mon_eps.emplace_back(std::move(mon_addr), utils::default_monitor_port);
-	}
-
-
-    auto core_begin = core_sharded::system::begin();
-    core_sharded::construct(core_begin, core_sharded::system::capacity(), g_app_name);
-
-	global::rpc_cli_opts = msg::rdma::client::make_options(g_pt);
-	auto core_no = ::spdk_env_get_current_core();
-	::spdk_cpuset cpumask{};
-	::spdk_cpuset_zero(&cpumask);
-	::spdk_cpuset_set_cpu(&cpumask, core_no, true);
-	global::conn_cache = std::make_shared<::connect_cache>(&cpumask, global::rpc_cli_opts);
-
-    global::mon_client = std::make_unique<monitor::client>(mon_eps, nullptr);
-    global::mon_client->start();
-    global::mon_client->start_cluster_map_poller();
-
-    global::blk_clients.resize(core_sharded::system::capacity());
-    global::vhost_worker_threads.resize(core_sharded::system::capacity());
+    libblk_client_create_context(g_pt);
 }
-

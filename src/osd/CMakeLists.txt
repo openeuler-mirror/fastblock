@@ -6,7 +6,6 @@ compile_library(
     osd_stm.cc
     data_statistics.cc
   DEPS
-    spdk::spdk
     raft_msg
     osd_msg
 )
@@ -36,9 +35,11 @@ add_executable(fastblock-osd
 )
 
 # target_link_libraries(fastblock-osd ${numa_LIBRARIES})
-target_link_libraries(fastblock-osd 
+target_link_libraries(fastblock-osd
   PUBLIC
     get_core
+    spdk::spdk
+    fastblock_raft
 )
 
 install(TARGETS fastblock-osd DESTINATION bin PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
