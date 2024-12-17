@@ -10,8 +10,8 @@
  */
 #pragma once
 
-#include "fastblock/msg/rpc_controller.h"
 #include "fastblock/rpc/connect_cache.h"
+#include "fastblock/msg/rpc_controller.h"
 #include "fastblock/client/fb_client.h"
 #include "fastblock/monclient/client.h"
 
@@ -43,6 +43,51 @@ enum errc
     invalid_write_data_size
 };
 
+class libblk_client;
+
+struct libblk_client_context {
+    std::shared_ptr<msg::rdma::client::options> rpc_cli_opts{nullptr};
+    std::shared_ptr<connect_cache> conn_cache{};
+    std::unique_ptr<monitor::client> mon_client{};
+    std::vector<std::shared_ptr<::libblk_client>> blk_clients{};
+    std::vector<::spdk_thread*> vhost_worker_threads{};
+};
+
+namespace {
+    libblk_client_context g_libblk_client_ctx{};
+}
+
+static libblk_client_context* libblk_client_get_context() noexcept {
+    return &g_libblk_client_ctx;
+}
+
+static void libblk_client_create_context(boost::property_tree::ptree& conf) {
+    if (g_libblk_client_ctx.rpc_cli_opts) {
+        return;
+    }
+
+    auto core_begin = core_sharded::system::begin();
+    core_sharded::construct(core_begin, core_sharded::system::capacity(), "fastblock");
+
+    g_libblk_client_ctx.rpc_cli_opts = msg::rdma::client::make_options(conf);
+    auto mask = core_sharded::make_cpumake(::spdk_env_get_current_core());
+    g_libblk_client_ctx.conn_cache = std::make_shared<connect_cache>(mask.get(), g_libblk_client_ctx.rpc_cli_opts);
+
+    std::vector<monitor::client::endpoint> mon_eps{};
+    auto &monitors = conf.get_child("mon_host");
+    auto pos = monitors.begin();
+    for (; pos != monitors.end(); pos++) {
+        auto mon_addr = pos->second.get_value<std::string>();
+        mon_eps.emplace_back(std::move(mon_addr), utils::default_monitor_port);
+    }
+    g_libblk_client_ctx.mon_client = std::make_unique<monitor::client>(mon_eps, nullptr);
+    g_libblk_client_ctx.mon_client->start();
+    g_libblk_client_ctx.mon_client->start_cluster_map_poller();
+
+    g_libblk_client_ctx.blk_clients.resize(core_sharded::system::capacity());
+    g_libblk_client_ctx.vhost_worker_threads.resize(core_sharded::system::capacity());
+}
+
 static monitor::client::endpoint parse_endpoint(const char *address)
 {
     auto add_str = std::string(address);
@@ -53,8 +98,8 @@ static monitor::client::endpoint parse_endpoint(const char *address)
     return ep;
 }
 
-class libblk_client
-{
+class libblk_client {
+
 public:
 
     libblk_client(monitor::client* cli, auto&&... args)
