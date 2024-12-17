@@ -11,8 +11,8 @@
 #include "raft/append_entry_buffer.h"
 #include "spdk/thread.h"
 #include "raft/raft.h"
-#include "utils/utils.h"
-#include "utils/err_num.h"
+#include "fastblock/utils/utils.h"
+#include "fastblock/utils/err_num.h"
 
 SPDK_LOG_REGISTER_COMPONENT(entry_buffer)
 
@@ -80,6 +80,6 @@ void append_entries_buffer::do_flush(){
     int ret = _raft->raft_recv_appendentries(request->node_id(), request, response, complete);
     // if(ret != 0){
         // complete->complete(ret);
-    // }                        
+    // }
 }
 

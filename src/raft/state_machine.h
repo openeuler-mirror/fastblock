@@ -11,7 +11,7 @@
 #pragma once
 #include "raft_types.h"
 #include "rpc/raft_msg.pb.h"
-#include "utils/utils.h"
+#include "fastblock/utils/utils.h"
 #include "spdk/thread.h"
 #include "localstore/object_store.h"
 #include "localstore/blob_manager.h"
@@ -26,7 +26,7 @@ public:
     : _raft(nullptr)
     , _last_applied_idx(0)
     , _apply_in_progress(false)
-    , _store(global_blobstore(), global_io_channel(core_sharded::get_core_sharded().this_shard_id())) {}
+    , _store(global_blobstore(core_sharded::get_core_sharded().this_shard_id()), global_io_channel(core_sharded::get_core_sharded().this_shard_id())) {}
 
     void set_raft(raft_server_t* raft){
         _raft = raft;

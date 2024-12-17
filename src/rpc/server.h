@@ -11,8 +11,8 @@
 #pragma once
 #include <google/protobuf/service.h>
 
-#include "base/core_sharded.h"
-#include "msg/rdma/server.h"
+#include "fastblock/base/core_sharded.h"
+#include "fastblock/msg/rdma/server.h"
 
 class rpc_server{
 public:
@@ -24,7 +24,7 @@ public:
         auto mask = core_sharded::make_cpumake(core_no);
         auto sockid = ::spdk_env_get_socket_id(core_no);
         _transport = std::make_shared<msg::rdma::server>(
-          FMT_1("rpc_srv_%1%",
+          FB_FMT_1("rpc_srv_%1%",
           utils::random_string(3)),
           mask.get(), srv_opts, sockid);
     }

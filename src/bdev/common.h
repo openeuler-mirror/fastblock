@@ -25,6 +25,7 @@ extern const char* g_mon_cluster_endpoints ;
 extern const char* g_conf_path;
 extern boost::property_tree::ptree g_pt;
 extern int g_core_num ;
+extern std::string  g_app_name;
 
 void
 app_usage(void);

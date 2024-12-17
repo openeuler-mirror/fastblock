@@ -1,6 +1,6 @@
 #include "data_statistics.h"
 
-#include "monclient/client.h"
+#include "fastblock/monclient/client.h"
 
 std::shared_ptr<data_statistics> g_data_statistics{nullptr};
 
@@ -21,7 +21,7 @@ void data_statistics::send_data_to_mon() {
 
 data_statistics::data_statistics()
 : _thread(spdk_get_thread()){
-    _timer = SPDK_POLLER_REGISTER(&hand_data, this, 1 * 1000 * 1000);  //1秒
+    _timer = SPDK_POLLER_REGISTER(&hand_data, this, 1 * 500 * 1000);  //1秒
 }
 
 struct thread_context {

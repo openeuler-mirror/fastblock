@@ -17,10 +17,10 @@
 #include "spdk/string.h"
 #include "spdk/thread.h"
 
-#include "rpc/connect_cache.h"
-#include "rpc/osd_msg.pb.h"
-#include "msg/rpc_controller.h"
-#include "utils/err_num.h"
+#include "fastblock/rpc/connect_cache.h"
+#include "fastblock/rpc/osd_msg.pb.h"
+#include "fastblock/msg/rpc_controller.h"
+#include "fastblock/utils/err_num.h"
 #include <google/protobuf/stubs/callback.h>
 
 #include <boost/property_tree/ptree.hpp>
@@ -152,7 +152,7 @@ public:
                         auto &stub = _stubs[shard_id];
                         stub[node_id] = std::make_shared<osd::rpc_service_osd_Stub>(conn);
                     }
-                  );                  
+                  );
               });
         }
     }

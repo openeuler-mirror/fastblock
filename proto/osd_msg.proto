@@ -9,7 +9,7 @@ message write_request
     uint64 pg_id = 2;
     bytes object_name = 3;
     uint64 offset = 4;
-    bytes data = 5;    
+    bytes data = 5;
 }
 
 message write_reply
@@ -17,7 +17,7 @@ message write_reply
     int32 state = 1;
 }
 
-message read_request 
+message read_request
 {
     uint64 pool_id = 1;
     uint64 pg_id = 2;
@@ -26,39 +26,39 @@ message read_request
     uint64 length = 5;
 }
 
-message read_reply 
+message read_reply
 {
     int32 state = 1;
     bytes data = 2;
 }
 
-message delete_request 
+message delete_request
 {
     uint64 pool_id = 1;
     uint64 pg_id = 2;
     bytes object_name = 3;
 }
 
-message delete_reply 
+message delete_reply
 {
     int32 state = 1;
-    bytes  str = 2; 
+    bytes  str = 2;
 }
 
-message write_cmd 
+message write_cmd
 {
     bytes object_name = 1;
     uint64 offset = 2;
 }
 
-message read_cmd 
+message read_cmd
 {
     bytes object_name = 1;
     uint64 offset = 2;
     uint64 length = 3;
 }
 
-message delete_cmd 
+message delete_cmd
 {
     bytes object_name = 1;
 }
@@ -70,13 +70,13 @@ message bench_request
 
 message bench_response
 {
-    bytes resp = 1; 
+    bytes resp = 1;
 }
 
 message pg_leader_request
 {
     uint64 pool_id = 1;
-    uint64 pg_id = 2;    
+    uint64 pg_id = 2;
 }
 
 message pg_leader_response
@@ -90,8 +90,8 @@ message pg_leader_response
 message create_pg_request
 {
     uint64 pool_id = 1;
-    uint64 pg_id = 2;    
-    int64  vision_id = 3;   
+    uint64 pg_id = 2;
+    int64  vision_id = 3;
 }
 
 message create_pg_response
@@ -101,7 +101,7 @@ message create_pg_response
 
 message add_node_request {
     uint64 pool_id = 1;
-    uint64 pg_id = 2;  
+    uint64 pg_id = 2;
     raft_node_info node = 3;
 }
 
@@ -112,7 +112,7 @@ message add_node_response {
 
 message remove_node_request {
     uint64 pool_id = 1;
-    uint64 pg_id = 2;  
+    uint64 pg_id = 2;
     raft_node_info node = 3;
 }
 
@@ -123,7 +123,7 @@ message remove_node_response {
 
 message change_nodes_request {
     uint64 pool_id = 1;
-    uint64 pg_id = 2;  
+    uint64 pg_id = 2;
     repeated raft_node_info new_nodes = 3;
 }
 

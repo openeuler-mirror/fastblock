@@ -9,8 +9,20 @@
  * See the Mulan PSL v2 for more details.
  */
 
-#include "monclient/client.h"
+#include "fastblock/monclient/client.h"
+#include "fastblock/monclient/messages.pb.h"
 #include "osd/partition_manager.h"
+
+namespace {
+static void make_sharded_ports(
+    const google::protobuf::Map<google::protobuf::uint32, msg::ShardCore>& proto_shard_ports,
+    std::map<uint32_t, utils::core_shard_map>& osd_sharded_ports) {
+    for (auto it = proto_shard_ports.begin(); it != proto_shard_ports.end(); ++it) {
+        osd_sharded_ports.emplace(
+          it->first, utils::core_shard_map{it->second.port(), it->second.coreid(), it->first});
+    }
+}
+}
 
 namespace monitor {
 
@@ -68,9 +80,14 @@ void do_emplace_request(void* arg) {
 }
 
 void client::load_pgs(){
+    if(_user_idty != user_identity::USER_OSD)
+        return;
     // SPDK_WARNLOG("load pgs\n");
     std::map<uint64_t, std::vector<utils::pg_info_type>> pools;
-    _pm.lock()->load_pgs_map(pools);
+    if (not _pm_ctx) {
+        auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+        _pm->load_pgs_map(pools);
+    }
     for(auto& [pool_id, infos] : pools){
         _pg_map.pool_version[pool_id] = 0;
         auto [it, _] = _pg_map.pool_pg_map.try_emplace(pool_id);
@@ -98,7 +115,7 @@ void client::handle_start() {
     SPDK_INFOLOG(mon, "Starting monitor client...\n");
 
     _cluster->connect();
-    _core_poller.register_poller(monitor::core_poller_handler, this, 0);
+    _core_poller.register_poller(monitor::core_poller_handler, this, 0, "mon_core");
 
     _is_running = true;
 }
@@ -135,23 +152,36 @@ void client::start_cluster_map_poller() {
 
 void client::handle_start_cluster_map_poller() {
     _get_cluster_map_poller.register_poller(
-      monitor::send_cluster_map_request, this, _poll_period_us);
+      monitor::send_cluster_map_request, this, _poll_period_us, "cluster_map");
 }
 
+/*
+   sharded_ports  <shard_id, <core_id, port>>>
+*/
 void client::emplace_osd_boot_request(
   const int osd_id,
   const std::string& osd_addr,
-  const int osd_port,
+  const std::map<uint32_t, std::pair<uint32_t, uint32_t>>& sharded_ports,
   const std::string& osd_uuid,
   const int64_t size,
+  const uint32_t core_num,
+  const std::string& config,
   on_response_callback_type&& cb) {
     auto req = std::make_unique<msg::Request>();
     auto* boot_req = req->mutable_boot_request();
     boot_req->set_osd_id(osd_id);
     boot_req->set_uuid(osd_uuid.c_str());
     boot_req->set_address(osd_addr.c_str());
-    boot_req->set_port(osd_port);
+    boot_req->set_config(config);
+    auto* proto_sharded_ports = boot_req->mutable_sharded_ports();
+    for (auto it = sharded_ports.begin(); it != sharded_ports.end(); ++it) {
+        msg::ShardCore shard_core;
+        shard_core.set_coreid(it->second.first);
+        shard_core.set_port(it->second.second);
+        proto_sharded_ports->insert({it->first, std::move(shard_core)});
+    }
     boot_req->set_size(size);
+    boot_req->set_core_num(core_num);
     char hostname[1024];
     ::gethostname(hostname, sizeof(hostname));
     boot_req->set_host(hostname);
@@ -350,7 +380,8 @@ private:
 
 void client::_create_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_version, const msg::PGInfo &info){
     if (_new_pg_cb) {
-        int current_osdid = _pm.lock()->get_current_node_id();
+        auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+        int current_osdid = _pm->get_current_node_id();
         bool in_pg = false;
         for(auto osd_id : info.osdid()){
             if(osd_id == current_osdid){
@@ -430,13 +461,22 @@ void client::_remove_pg(pg_map::pool_id_type pool_id, pg_map::pg_id_type pg_id, 
     };
 
     _pg_map.set_pool_update(pool_id, pg_id, pool_version, 1);
-    _pm.lock()->delete_partition(pool_id, pg_id, std::move(delete_pg_done), nullptr);
+    if(_user_idty == user_identity::USER_OSD){
+        auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+        _pm->delete_partition(pool_id, pg_id, std::move(delete_pg_done), nullptr);
+    } else {
+        delete_pg_done(nullptr, 0);
+    }
 }
 
 void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
-    auto& pv = pg_map_response.poolid_pgmapversion();
-    int current_osdid = _pm.lock()->get_current_node_id();
+    int current_osdid{-1};
+    if (_pm_ctx) {
+        auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+        current_osdid = _pm->get_current_node_id();
+    }
 
+    auto& pv = pg_map_response.poolid_pgmapversion();
     auto& ec = pg_map_response.errorcode();
     auto& pgs = pg_map_response.pgs();
 
@@ -453,7 +493,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
         pool_item++;
 
         if(!ec.contains(pool_id)){
-            SPDK_DEBUGLOG(mon, "pool %d is deleted\n", pool_id);
+            SPDK_WARNLOG("pool %d is deleted\n", pool_id);
             //pool被删除
             auto pg_item = pg_infos.begin();
             while(pg_item != pg_infos.end()){
@@ -462,6 +502,9 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                 _remove_pg(pool_id, pg_id, pool_version);
             }
         }else{
+            if(_user_idty == user_identity::USER_CLIENT){
+                continue;
+            }
             auto info_it = pgs.find(pool_id);
             if (info_it == pgs.end()){
                 continue;
@@ -594,6 +637,9 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                     }
                 }
 
+                if(_user_idty == user_identity::USER_CLIENT)
+                    contain_in_monitor = true;
+
                 //当前osd不在monitor上pg的osd列表中
                 if(!contain_in_monitor ){
                     _remove_pg(pool_id, pgid, _pg_map.pool_version[pool_id]);
@@ -629,7 +675,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                         continue;
                     }
 
-                    if(!_new_pg_cb)
+                    if(!_new_pg_cb || _user_idty != user_identity::USER_OSD)
                         continue;
 
                     std::vector<int32_t> new_osds;
@@ -647,7 +693,8 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                             pool_key, pv.at(pool_key), pit->pg_id, info.version(), osd_str.data());
                     auto complete = new change_membership_complete(pool_key, pgid, info.version(), new_osds, this);
                     _pg_map.set_pool_update(pool_key, pgid, pv.at(pool_key), 1);
-                    _pm.lock()->change_pg_membership(pool_key, pgid, new_osd_infos, complete);
+                    auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+                    _pm->change_pg_membership(pool_key, pgid, new_osd_infos, complete);
                 }else{
                     _create_pg(pool_key, pv.at(pool_key), info);
                 }
@@ -677,7 +724,12 @@ void client::_active_pg(pg_map::pool_id_type pool_id,
     if(!pg_is_remap){
         _pg_map.set_pool_update(pool_id, info.pgid(), pool_version, 1);
     }
-    _pm.lock()->active_partition(pool_id, info.pgid(), std::move(active_pg_done), nullptr);
+    if(_user_idty == user_identity::USER_OSD) {
+        auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+        _pm->active_partition(pool_id, info.pgid(), std::move(active_pg_done), nullptr);
+    } else {
+        active_pg_done(nullptr, 0);
+    }
 }
 
 void client::process_osd_map(std::shared_ptr<msg::Response> response) {
@@ -713,7 +765,19 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
     bool should_create_connect{false};
 
     for (int i{0}; i < osds.size(); ++i) {
-        auto is_valid_addr = valid_osd_address(osds[i].address(), osds[i].port());
+        bool is_valid_addr{true};
+        for (auto it = osds[i].sharded_ports().begin(); it != osds[i].sharded_ports().end(); ++it) {
+            auto port = it->second.port();
+            if (not valid_osd_address(osds[i].address(), port)) {
+                SPDK_NOTICELOG(
+                  "osd %d address %s:%d is invalid, skip it\n",
+                  osds[i].osdid(),
+                  osds[i].address().c_str(),
+                  port);
+                is_valid_addr = false;
+                break;
+            }
+        }
         if (not is_valid_addr) {
             SPDK_INFOLOG(
               mon,
@@ -738,11 +802,14 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
             osd_it->second->node_id = osds[i].osdid();
             osd_it->second->isin = osds[i].isin();
             osd_it->second->ispendingcreate = osds[i].ispendingcreate();
-            osd_it->second->port = osds[i].port();
+            auto& sharded_ports = osds[i].sharded_ports();
+            osd_it->second->sharded_ports.clear();
+            make_sharded_ports(sharded_ports, osd_it->second->sharded_ports);
             osd_it->second->address = osds[i].address();
             if(osd_it->second->isup && !osds[i].isup() && osd_it->second->node_id != _self_osd_id){
                 SPDK_DEBUGLOG(mon, "osd %d is down, remove connect to it\n", osds[i].osdid());
-                _pm.lock()->get_pg_group().remove_connect(osds[i].osdid(),
+                auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+                _pm->get_pg_group().remove_connect(osds[i].osdid(),
                   [this, node_id = osds[i].osdid()](void *, int ){
                     SPDK_DEBUGLOG(mon, "remove the connect to osd %d\n",node_id);
                   });
@@ -764,51 +831,51 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
               osds[i].isin(),
               osds[i].isup(),
               osds[i].ispendingcreate(),
-              osds[i].port(),
+              std::map<uint32_t, utils::core_shard_map>{},
               osds[i].address());
+            auto& proto_shard_ports = osds[i].sharded_ports();
+            make_sharded_ports(proto_shard_ports, osd_info->sharded_ports);
 
             auto [it, _] = _osd_map.data.emplace(osd_info->node_id, std::move(osd_info));
             osd_it = it;
         }
 
         auto& osd_info = *(osd_it->second);
-        SPDK_DEBUGLOG(mon,
-          "osd id %d, is up %d, port %d, address %s, rsp is up %d\n",
-          osd_info.node_id,
-          osd_info.isup,
-          osd_info.port,
-          osd_info.address.c_str(),
-          osds[i].isup());
-
-        if (should_create_connect) {
-            SPDK_NOTICELOG(
-              "Connect to osd %d(%s:%d)\n",
-              osd_info.node_id,
-              osd_info.address.c_str(),
-              osd_info.port);
-
+        if (should_create_connect and _pm_ctx) {
             if (not resp_stack) {
                 resp_stack = std::make_unique<response_stack>(response, 0);
             }
 
-            _pm.lock()->get_pg_group().create_connect(
-              osd_info.node_id, osd_info.address, osd_info.port,
-              [this, raw_stack = resp_stack.get(), node_id = osd_info.node_id] (void *, int res) {
-                  if (res != err::E_SUCCESS) {
-                      SPDK_ERRLOG("ERROR: Connect failed\n");
-                      auto it = _osd_map.data.find(node_id);
-                      if (it != _osd_map.data.end()) {
-                          it->second->isup = false;
-                      }
-                    //   throw std::runtime_error{"connect failed"};
-                  }
+            for (auto it = osd_info.sharded_ports.begin(); it != osd_info.sharded_ports.end(); ++it) {
+                auto shard_id = it->first;
+                auto core_port = it->second;
 
-                  raw_stack->un_connected_count--;
-                  SPDK_DEBUGLOG(mon, "Connected, un-connected count is %ld\n",
-                  raw_stack->un_connected_count);
-              }
-            );
-            resp_stack->un_connected_count++;
+                SPDK_NOTICELOG(
+                  "Starting connect to osd %s:%d, shard %d, core %d\n",
+                  osd_info.address.c_str(), core_port.port, shard_id, core_port.core_id);
+
+                auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+                _pm->get_pg_group().create_connect(
+                  osd_info.node_id,
+                  shard_id,
+                  osd_info.address,
+                  core_port.port,
+                  [this, node_id = osd_info.node_id, raw_stack = resp_stack.get()] (void *, int res) {
+                      if (res != err::E_SUCCESS) {
+                          SPDK_ERRLOG("ERROR: Connect failed\n");
+                          auto it = _osd_map.data.find(node_id);
+                          if (it != _osd_map.data.end()) {
+                              it->second->isup = false;
+                          }
+                      }
+
+                      raw_stack->un_connected_count--;
+                      SPDK_DEBUGLOG(mon, "Connected, un-connected count is %ld\n",
+                        raw_stack->un_connected_count);
+                  }
+                );
+                resp_stack->un_connected_count++;
+            }
         }
     }
 
@@ -831,13 +898,17 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
         SPDK_DEBUGLOG(mon,
           "The osd with id %d not found in the newer osd map\n",
           node_id);
-        _pm.lock()->get_pg_group().remove_connect(node_id,
-          [this, node_id](void *, int res){
-            if(res == err::E_SUCCESS){
-              _osd_map.data.erase(node_id);
-              SPDK_DEBUGLOG(mon, "remove the connect to osd %d\n",node_id);
-            }
-          });
+        if (_pm_ctx) {
+            auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+            _pm->get_pg_group().remove_connect(node_id,
+              [this, node_id](void *, int res){
+                if(res == err::E_SUCCESS){
+                  _osd_map.data.erase(node_id);
+                  SPDK_DEBUGLOG(mon, "remove the connect to osd %d\n",node_id);
+                }
+              }
+            );
+        }
     }
 
     if (not resp_stack) {
@@ -845,8 +916,6 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
         return;
     }
 
-    // auto factor = _pm.lock()->get_pg_group().get_raft_client_proto().connect_factor();
-    // resp_stack->un_connected_count *= factor;
     SPDK_DEBUGLOG(
       mon, "created response_stack, un-connected size is %lu\n",
       resp_stack->un_connected_count);
@@ -1049,11 +1118,12 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
 }
 
 bool client::handle_response() {
-    if (_pm.expired()) {
-        SPDK_ERRLOG("Error: referenced partition_manager has been destructed\n");
-        return false;
+    if (_pm_ctx) {
+        auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+        if (_pm->is_terminated()) {
+            return SPDK_POLLER_IDLE;
+        }
     }
-
     if (_request_counter == 0) { return false; }
 
     if (not _cluster->is_connected()) {
@@ -1067,20 +1137,20 @@ bool client::handle_response() {
     if (rc == 0) [[likely]] {
         return false;
     }
-    
+
     if (rc < 0) [[unlikely]] {
         SPDK_ERRLOG(
           "ERROR: spdk_sock_recv() failed, errno %d: %s\n",
           errno, ::spdk_strerror(errno));
 
         return false;
-    }     
+    }
 
-    _read_bytes += rc;   
+    _read_bytes += rc;
     SPDK_DEBUGLOG(mon, "_read_bytes %ld, _should_read_bytes %ld\n", _read_bytes, _should_read_bytes);
     if (_read_bytes < _should_read_bytes){
         return true;
-    } 
+    }
 
     _read_bytes = _read_bytes - _should_read_bytes;
     if(_read_bytes < 0){
@@ -1157,9 +1227,11 @@ void client::consume_internal_request(bool is_cached) {
 }
 
 bool client::consume_request() {
-    if (_pm.expired()) {
-        SPDK_ERRLOG("Error: referenced partition_manager has been destructed\n");
-        return false;
+    if (_pm_ctx) {
+        auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
+        if (_pm->is_terminated()) {
+            return false;
+        }
     }
 
     bool ret{false};

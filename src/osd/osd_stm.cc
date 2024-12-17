@@ -12,9 +12,9 @@
 #include "osd_stm.h"
 #include "data_statistics.h"
 #include "raft/raft.h"
-#include "rpc/osd_msg.pb.h"
-#include "utils/utils.h"
-#include "utils/err_num.h"
+#include "fastblock/rpc/osd_msg.pb.h"
+#include "fastblock/utils/utils.h"
+#include "fastblock/utils/err_num.h"
 #include <errno.h>
 #include <concepts>
 
@@ -51,7 +51,7 @@ struct write_obj_ctx{
 
 void write_obj_done(void *arg, int obj_errno){
     write_obj_ctx * ctx = (write_obj_ctx *)arg;
-    SPDK_INFOLOG(osd, "write obj %s pg: %s done in core: %u\n", 
+    SPDK_INFOLOG(osd, "write obj %s pg: %s done in core: %u\n",
         ctx->obj_name.c_str(), ctx->stm->get_pg_name().c_str(),
         core_sharded::get_core_sharded().this_shard_id());
     ctx->stm->unlock(ctx->obj_name, utils::operation_type::WRITE);
@@ -68,7 +68,7 @@ void osd_stm::write_obj(const std::string& obj_name, uint64_t offset, const std:
     std::map<std::string, xattr_val_type> xattr;
     xattr["type"] = blob_type::object;
     xattr["pg"] = get_pg_name();
-    SPDK_INFOLOG(osd, "write obj %s xattr type: %u pg: %s in core: %u\n", 
+    SPDK_INFOLOG(osd, "write obj %s xattr type: %u pg: %s in core: %u\n",
         obj_name.c_str(), (uint32_t)blob_type::object, get_pg_name().c_str(),
         core_sharded::get_core_sharded().this_shard_id());
     _store.write(xattr, obj_name, offset, buf, data.size(), write_obj_done, ctx);
@@ -100,7 +100,7 @@ struct osd_service_complete : public utils::context{
     std::string obj_name;
     uint64_t length;
 
-    osd_service_complete(osd_stm* _stm, std::string _obj_name, 
+    osd_service_complete(osd_stm* _stm, std::string _obj_name,
             uint64_t _length, rsp_type* _response, google::protobuf::Closure* _done)
     : response(_response)
     , done(_done)
@@ -149,7 +149,7 @@ void osd_stm::write_and_wait(
             google::protobuf::Closure* done){
 
     osd_service_complete<osd::write_reply> *write_complete =
-      new osd_service_complete<osd::write_reply>(this, request->object_name(), 
+      new osd_service_complete<osd::write_reply>(this, request->object_name(),
         request->data().size(), response, done);
 
     auto write_func = [this, request, write_complete](){
@@ -198,7 +198,7 @@ void osd_stm::read_and_wait(
             google::protobuf::Closure* done){
 
     osd_service_complete<osd::read_reply> *read_complete =
-      new osd_service_complete<osd::read_reply>(this, request->object_name(), 
+      new osd_service_complete<osd::read_reply>(this, request->object_name(),
         request->length(), response, done);
 
     auto read_func = [this, request, response, read_complete](){
@@ -233,7 +233,7 @@ void osd_stm::delete_and_wait(
             osd::delete_reply* response,
             google::protobuf::Closure* done){
     osd_service_complete<osd::delete_reply> *delete_complete =
-      new osd_service_complete<osd::delete_reply>(this, request->object_name(), 0, 
+      new osd_service_complete<osd::delete_reply>(this, request->object_name(), 0,
         response, done);
 
     auto delete_func = [this, request, delete_complete](){
@@ -257,18 +257,5 @@ void osd_stm::delete_and_wait(
 }
 
 void osd_stm::destroy_objects(object_complete cb_fn, void *arg){
-    uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
-    auto destroy_done = [cb_fn = std::move(cb_fn), shard_id](void *arg, int objerrno){
-        core_sharded::get_core_sharded().invoke_on(
-          shard_id,
-          [cb_fn = std::move(cb_fn), arg, objerrno](){
-            cb_fn(arg, objerrno);
-          });
-    };
-    
-    core_sharded::get_core_sharded().invoke_on(
-      utils::default_blobstore_core,
-      [this, destroy_done = std::move(destroy_done), arg](){
-        _store.destroy(std::move(destroy_done), arg);
-      });
+    _store.destroy(std::move(cb_fn), arg);
 }

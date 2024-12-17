@@ -74,35 +74,7 @@ public:
         return entry;
     }
 
-    void disk_append(raft_index_t start_idx, raft_index_t end_idx, utils::context* complete){
-        std::vector<std::shared_ptr<raft_entry_t>> raft_entries;
-        _entries.get_between(start_idx, end_idx, raft_entries);
-
-        if(!_log){
-            complete->complete(0);
-            return;
-        }
-
-        std::vector<log_entry_t> log_entries;
-        for (auto& raft_entry : raft_entries) {
-            log_entries.emplace_back(raft_entry_to_log_entry(*raft_entry));
-        }
-
-        SPDK_INFOLOG(pg_group, "disk_append [%ld, %ld] size:%lu.\n", start_idx, end_idx, log_entries.size());
-        _log->append(
-            log_entries,
-            [log_entries, start_idx, end_idx](void *arg, int rberrno) mutable
-            {
-                SPDK_INFOLOG(pg_group, "after disk_append [%ld, %ld]\n", start_idx, end_idx);
-                utils::context *ctx = (utils::context *)arg;
-                for (auto &entry : log_entries)
-                {
-                    free_buffer_list(entry.data);
-                }
-                ctx->complete(rberrno);
-            },
-            complete);
-    }
+    void disk_append(raft_index_t start_idx, raft_index_t end_idx, utils::context* complete);
 
     raft_entry_t log_entry_to_raft_entry(log_entry_t& log_entry){
         raft_entry_t raft_entry;
@@ -186,20 +158,8 @@ public:
 
     void log_destroy(struct spdk_blob_store *bs, log_op_complete cb_fn, void* arg){
         SPDK_INFOLOG(pg_group, "remove log blob\n");
-        uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
-        auto remove_blob_done = [shard_id, cb_fn = std::move(cb_fn)](void *arg, int rberror){
-            core_sharded::get_core_sharded().invoke_on(
-              shard_id,
-              [cb_fn = std::move(cb_fn), arg, rberror](){
-                cb_fn(arg, rberror);
-              });
-        };
-        auto &shard = core_sharded::get_core_sharded();
-        shard.invoke_on(
-          utils::default_blobstore_core,
-          [this, bs, arg, remove_blob_done = std::move(remove_blob_done)](){
-            _log->remove_blob(bs, std::move(remove_blob_done), arg);
-          });
+
+        _log->remove_blob(bs, std::move(cb_fn), arg);
     }
   
     //截断idx（包含）之后的log entry
@@ -258,21 +218,7 @@ public:
 
     void stop(log_op_complete cb_fn, void* arg){
         if(_log){
-            auto &shard = core_sharded::get_core_sharded();
-            uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
-            auto stop_done = [cb_fn = std::move(cb_fn), shard_id](void *arg, int objerrno){
-                core_sharded::get_core_sharded().invoke_on(
-                  shard_id,
-                  [cb_fn = std::move(cb_fn), arg, objerrno](){
-                    cb_fn(arg, objerrno);
-                  });
-            };
-
-            shard.invoke_on(
-              utils::default_blobstore_core,
-              [this, arg, stop_done = std::move(stop_done)](){
-                _log->stop(stop_done, arg);
-              });
+            _log->stop(std::move(cb_fn), arg);
         }
     }
 

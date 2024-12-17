@@ -26,7 +26,7 @@
 #include "localstore/spdk_buffer.h"
 #include "localstore/kv_store.h"
 #include "utils/itos.h"
-#include "utils/utils.h"
+#include "fastblock/utils/utils.h"
 
 static const char *g_bdev_name = NULL;
 
@@ -134,20 +134,21 @@ void blobpool_test_open_done(void *arg, struct spdk_blob *blob, int rberrno) {
 }
 
 void blobpool_test(void *arg, int rberrno) {
+    auto shard_id = utils::get_current_shard_id();
     SPDK_NOTICELOG("blob_pool_test running on thread: %lu\n", utils::get_spdk_thread_id());
 
-    if (global_blob_pool().has_free_blob()) {
+    if (global_blob_pool(shard_id).has_free_blob()) {
         SPDK_NOTICELOG("has free blob\n");
     } else {
         SPDK_NOTICELOG("no free blob\n");
     }
 
-    SPDK_NOTICELOG("blob_pool size: %lu\n", global_blob_pool().size());
-    auto blob = global_blob_pool().get();
-    SPDK_NOTICELOG("blob_pool size: %lu\n", global_blob_pool().size());
+    SPDK_NOTICELOG("blob_pool size: %lu\n", global_blob_pool(shard_id).size());
+    auto blob = global_blob_pool(shard_id).get();
+    SPDK_NOTICELOG("blob_pool size: %lu\n", global_blob_pool(shard_id).size());
 
     SPDK_NOTICELOG("blob_pool open running on thread: %lu\n", utils::get_spdk_thread_id());
-    spdk_bs_open_blob(global_blobstore(), blob.blobid, blobpool_test_open_done, arg);
+    spdk_bs_open_blob(global_blobstore(shard_id), blob.blobid, blobpool_test_open_done, arg);
 }
 
 static void
@@ -156,21 +157,21 @@ init_complete(void *arg, int rberrno)
   struct hello_context_t *hello_context = (struct hello_context_t *)arg;
 
   SPDK_NOTICELOG("init_complete\n");
-  
+
   auto &shard = core_sharded::get_core_sharded();
   shard.invoke_on(
     0,
     [hello_context](){
       blobpool_test(hello_context, 0);
     }
-  );   
+  );
 }
 
 static void
 hello_start(void *arg1)
 {
   struct hello_context_t *hello_context = (struct hello_context_t *)arg1;
-  
+
   buffer_pool_init();
   hello_context->buf = buffer_pool_get();
   blobstore_init(hello_context->bdev_name, "0", true, init_complete, hello_context);
@@ -219,7 +220,7 @@ main(int argc, char **argv)
   if (hello_context == nullptr) {
     SPDK_NOTICELOG("hello_context is null!\n");
   }
-  
+
   srand(time(0));
   rc = spdk_app_start(&opts, hello_start, hello_context);
 

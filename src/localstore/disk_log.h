@@ -14,10 +14,10 @@
 #include "rolling_blob.h"
 #include "buffer_pool.h"
 #include "log_entry.h"
-#include "base/core_sharded.h"
+#include "fastblock/base/core_sharded.h"
 #include "utils/units.h"
 #include "utils/varint.h"
-#include "utils/utils.h"
+#include "fastblock/utils/utils.h"
 
 #include <spdk/blob.h>
 #include <spdk/blob_bdev.h>
@@ -74,7 +74,7 @@ class disk_log {
 
 public:
     disk_log(rolling_blob* rblob) : _rblob(rblob) {}
-    
+
     ~disk_log() {
       delete _rblob;
       spdk_poller_unregister(&_trim_poller);
@@ -378,7 +378,7 @@ public:
             trim_back(_lowest_index, _highest_index, std::move(trim_done), arg);
         }
     }
-    
+
     void set_blob_xattr(std::map<std::string, xattr_val_type>& xattr, log_op_complete&& cb_fn, void* arg){
         _rblob->set_blob_xattr(xattr, std::move(cb_fn), arg);
     }
@@ -398,12 +398,12 @@ public:
                 /* 任期不能为0. 任期为0，表示这条log为空，或者是错误的 */
                 if(entry.term_id == 0){
                     SPDK_INFOLOG(disk_log, "invalid log entry, pos %lu\n", pos);
-                    return std::make_tuple(false, i, 0);  
+                    return std::make_tuple(false, i, 0);
                 }
 
                 /*
                  *  header固定大小是4096
-                 *  
+                 *
                  */
                 if(entry.size > bytes - i - 4_KB){
                     SPDK_INFOLOG(disk_log, "incomplete log entry, pos %lu\n", pos);
@@ -428,9 +428,9 @@ public:
             SPDK_INFOLOG(disk_log, "disk log load done, _lowest_index %lu _highest_index %lu\n", _lowest_index, _highest_index);
 
             if(rberrno != 0){
-                SPDK_ERRLOG("disk log load failed:%s\n", spdk_strerror(rberrno)); 
-                cb_fn(arg, rberrno); 
-                return;              
+                SPDK_ERRLOG("disk log load failed:%s\n", spdk_strerror(rberrno));
+                cb_fn(arg, rberrno);
+                return;
             }
             cb_fn(arg, 0);
         };

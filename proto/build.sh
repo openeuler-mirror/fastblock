@@ -36,45 +36,55 @@ if [ $buildtype != "cpp" ] && [ $buildtype != "golang" ];then
 fi
 
 if [ $buildtype = "cpp" ]; then
-    if [ ! -f ../src/rpc/common_msg.pb.h ] || [ ! -f ../src/rpc/common_msg.pb.cc ]; then
-        protoc --cpp_out=../src/rpc common_msg.proto
+    if [ ! -f ../src/include/fastblock/rpc/common_msg.pb.h ] || [ ! -f ../src/rpc/common_msg.pb.cc ]; then
+        protoc --cpp_out=../src/include/fastblock/rpc common_msg.proto
+        mv ../src/include/fastblock/rpc/common_msg.pb.cc ../src/rpc/common_msg.pb.cc
+        sed -i 's|#include "common_msg.pb.h"|#include "fastblock/rpc/common_msg.pb.h"|' ../src/rpc/common_msg.pb.cc
     else
         protoc --cpp_out=/tmp common_msg.proto
-        if ! cmp -s ../src/rpc/common_msg.pb.h /tmp/common_msg.pb.h || ! cmp -s ../src/rpc/common_msg.pb.cc /tmp/common_msg.pb.cc; then
-            mv /tmp/common_msg.pb.h ../src/rpc/common_msg.pb.h
+        if ! cmp -s ../src/include/fastblock/rpc/common_msg.pb.h /tmp/common_msg.pb.h || ! cmp -s ../src/rpc/common_msg.pb.cc /tmp/common_msg.pb.cc; then
+            mv /tmp/common_msg.pb.h ../src/include/fastblock/rpc/common_msg.pb.h
             mv /tmp/common_msg.pb.cc ../src/rpc/common_msg.pb.cc
+            sed -i 's|#include "common_msg.pb.h"|#include "fastblock/rpc/common_msg.pb.h"|' ../src/rpc/common_msg.pb.cc
         fi
     fi
 
     if [ ! -f ../src/rpc/raft_msg.pb.h ] || [ ! -f ../src/rpc/raft_msg.pb.cc ]; then
         protoc --cpp_out=../src/rpc raft_msg.proto
-
+        sed -i 's|#include "common_msg.pb.h"|#include "fastblock/rpc/common_msg.pb.h"|' ../src/rpc/raft_msg.pb.h
     else
         protoc --cpp_out=/tmp raft_msg.proto
         if ! cmp -s ../src/rpc/raft_msg.pb.h /tmp/raft_msg.pb.h || ! cmp -s ../src/rpc/raft_msg.pb.cc /tmp/raft_msg.pb.cc; then
             mv /tmp/raft_msg.pb.h ../src/rpc/raft_msg.pb.h
             mv /tmp/raft_msg.pb.cc ../src/rpc/raft_msg.pb.cc
+            sed -i 's|#include "common_msg.pb.h"|#include "fastblock/rpc/common_msg.pb.h"|' ../src/rpc/raft_msg.pb.h
         fi
     fi
 
 
-    if [ ! -f ../src/rpc/osd_msg.pb.h ] || [ ! -f ../src/rpc/osd_msg.pb.cc ]; then
-        protoc --cpp_out=../src/rpc osd_msg.proto
+    if [ ! -f ../src/include/fastblock/rpc/osd_msg.pb.h ] || [ ! -f ../src/rpc/osd_msg.pb.cc ]; then
+        protoc --cpp_out=../src/include/fastblock/rpc osd_msg.proto
+        mv ../src/include/fastblock/rpc/osd_msg.pb.cc ../src/rpc/osd_msg.pb.cc
+        sed -i 's|#include "osd_msg.pb.h"|#include "fastblock/rpc/osd_msg.pb.h"|' ../src/rpc/osd_msg.pb.cc
     else
         protoc --cpp_out=/tmp osd_msg.proto
-        if ! cmp -s ../src/rpc/osd_msg.pb.h /tmp/osd_msg.pb.h || ! cmp -s ../src/rpc/osd_msg.pb.cc /tmp/osd_msg.pb.cc; then
-            mv /tmp/osd_msg.pb.h ../src/rpc/osd_msg.pb.h
+        if ! cmp -s ../src/include/fastblock/rpc/osd_msg.pb.h /tmp/osd_msg.pb.h || ! cmp -s ../src/rpc/osd_msg.pb.cc /tmp/osd_msg.pb.cc; then
+            mv /tmp/osd_msg.pb.h ../src/include/fastblock/rpc/osd_msg.pb.h
             mv /tmp/osd_msg.pb.cc ../src/rpc/osd_msg.pb.cc
+            sed -i 's|#include "osd_msg.pb.h"|#include "fastblock/rpc/osd_msg.pb.h"|' ../src/rpc/osd_msg.pb.cc
         fi
     fi
 
-    if [ ! -f ../src/monclient/messages.pb.h ] || [ ! -f ../src/monclient/messages.pb.cc ]; then
-        protoc --cpp_out=../src/monclient messages.proto
+    if [ ! -f ../src/include/fastblock/monclient/messages.pb.h ] || [ ! -f ../src/monclient/messages.pb.cc ]; then
+        protoc --cpp_out=../src/include/fastblock/monclient messages.proto
+        mv ../src/include/fastblock/monclient/messages.pb.cc ../src/monclient/messages.pb.cc
+        sed -i 's|#include "messages.pb.h"|#include "fastblock/monclient/messages.pb.h"|' ../src/monclient/messages.pb.cc
     else
         protoc --cpp_out=/tmp messages.proto
-        if ! cmp -s ../src/monclient/messages.pb.h /tmp/messages.pb.h || ! cmp -s ../src/monclient/messages.pb.cc /tmp/messages.pb.cc; then
-            mv /tmp/messages.pb.h ../src/monclient/messages.pb.h
+        if ! cmp -s ../src/include/fastblock/monclient/messages.pb.h /tmp/messages.pb.h || ! cmp -s ../src/monclient/messages.pb.cc /tmp/messages.pb.cc; then
+            mv /tmp/messages.pb.h ../src/include/fastblock/monclient/messages.pb.h
             mv /tmp/messages.pb.cc ../src/monclient/messages.pb.cc
+            sed -i 's|#include "messages.pb.h"|#include "fastblock/monclient/messages.pb.h"|' ../src/monclient/messages.pb.cc
         fi
     fi
 

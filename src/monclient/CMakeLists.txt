@@ -12,4 +12,4 @@ compile_library (
     fastblock_raft
 )
 
-add_subdirectory(test)
+# add_subdirectory(test)

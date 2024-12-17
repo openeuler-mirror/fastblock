@@ -11,7 +11,7 @@
 
 #pragma once
 
-#include "core_sharded.h"
+#include "fastblock/base/core_sharded.h"
 
 #include <spdk/util.h>
 #include <vector>
@@ -33,7 +33,7 @@ public:
                 _instances[shard] = new Service(std::forward<Args>(args)...);
                 continue;
             }
-            core_sharded::get_core_sharded().invoke_on(shard, 
+            core_sharded::get_core_sharded().invoke_on(shard,
               [this, shard](Args... args){
                   _instances[shard] = new Service(std::forward<Args>(args)...);
               },
@@ -64,7 +64,7 @@ public:
     bool shard_is_started(uint32_t shard) noexcept {
         if(_instances.size() <= shard)
             return false;
-        if(_instances[shard]) 
+        if(_instances[shard])
             return true;
         return false;
     }

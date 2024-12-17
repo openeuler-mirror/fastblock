@@ -70,21 +70,30 @@ message ApplyIDResponse{
     ApplyIDErrorCode errorcode = 3;
 }
 
+message ShardCore{
+    uint32 coreid = 1;
+    uint32 port = 2;
+}
+
 message BootRequest {
     int32 osd_id = 1;
     string uuid = 2;
     int64 size = 3;
-    uint32 port = 4;
+    map<uint32, ShardCore> sharded_ports = 4;
     string address = 5;
     string host = 6;
+    uint32 core_num = 7;
+    string config = 8;
 }
 
 message PGInfo {
     int32 pgid = 1;
     int64 version = 2;
     int32 state = 3;
-    repeated int32 osdid = 4;
-    repeated int32 newosdid = 5;
+    uint32 coreindex = 4;
+    repeated int32 osdid = 5;
+    uint32 newcoreindex = 6;
+    repeated int32 newosdid = 7;
 }
 
 message PGInfos {
@@ -107,7 +116,7 @@ message GetPgMapRequest{
 message OsdDynamicInfo{
 	int32 osdid = 1;
 	string address =2;
-	int32 port  =3;
+    map<uint32, ShardCore> sharded_ports = 3;
 	bool isin    = 4;
 	bool isup     = 5;
     bool ispendingcreate = 6;
@@ -335,14 +344,14 @@ message GetClusterStatusResponse {
     int32          objectNum    = 8;
     PgStateInfo    pgState      = 9;
     //单位字节每秒
-    uint64        cliReadSpeed   = 10;
-    uint64        cliWriteSpeed  = 11;
+    uint64        cliReadBytes = 10;
+    uint64        cliWriteBytes = 11;
 
     uint64        cliReadIops   = 12;
     uint64        cliWriteIops  = 13;
 
     //单位字节每秒
-    uint64        recoverySpeed = 14;
+    uint64        recoveryBytes = 14;
     //recovery时每秒恢复多少个object
     uint64        recoveryObjPs = 15;
 }
@@ -363,6 +372,32 @@ message DataStatisticsRequest {
 
 message DataStatisticsResponse {
     bool ok = 1;
+}
+
+message OsdConfigRequest {
+    int32 osdid = 1;
+}
+
+message OsdConfigResponse {
+    string config = 1;
+}
+
+message GetPgOsdInfoRequest {
+    repeated int32 poolIds = 1;
+}
+
+message PgOsdInfo {
+    int32 pgid = 1;
+    uint32 coreindex = 2;
+    repeated int32 osdid = 3;
+}
+
+message PgOsdInfos {
+    repeated PgOsdInfo pgs = 1;
+}
+
+message GetPgOsdInfoResponse {
+    map<int32, PgOsdInfos> pools = 1; 
 }
 
 message Request {
@@ -389,6 +424,8 @@ message Request {
         NoOutRequest   no_out_request=20;
         GetClusterStatusRequest get_cluster_status_request=21;
         DataStatisticsRequest   data_statistics_request=22;
+        OsdConfigRequest osd_config_request=23;
+        GetPgOsdInfoRequest  pg_osd_info_request=24;
     }
 }
 
@@ -416,5 +453,7 @@ message Response {
         NoOutResponse  no_out_response=20;
         GetClusterStatusResponse  get_cluster_status_response=21;
         DataStatisticsResponse    data_statistics_response=22;
+        OsdConfigResponse osd_config_response=23;
+        GetPgOsdInfoResponse  pg_osd_info_response=24;
     }
 }

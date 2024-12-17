@@ -13,12 +13,12 @@
 #include <google/protobuf/stubs/callback.h>
 #include <concepts>
 
-#include "rpc/connect_cache.h"
+#include "fastblock/rpc/connect_cache.h"
 #include "rpc/raft_msg.pb.h"
-#include "msg/rpc_controller.h"
-#include "utils/err_num.h"
-#include "base/core_sharded.h"
-#include "utils/utils.h"
+#include "fastblock/msg/rpc_controller.h"
+#include "fastblock/utils/err_num.h"
+#include "fastblock/base/core_sharded.h"
+#include "fastblock/utils/utils.h"
 
 class raft_server_t;
 class raft_client_protocol;
@@ -147,6 +147,39 @@ public:
         return _shard_cores.size();
     }
 
+    void create_connect(
+      int node_id,
+      uint32_t shard_id,
+      std::string address,
+      int port,
+      std::function<void(void*, int)> cb) {
+        if(shard_id >= _shard_cores.size()){
+            cb(nullptr, err::E_SUCCESS);
+            return;
+        }
+        auto ctx = new utils::switch_core_context{.cb_fn = std::move(cb), .arg = nullptr, .thread = spdk_get_thread(), .serror = 0};
+        _shard.invoke_on(shard_id, [this, node_id, address, port, shard_id, ctx] () {
+            SPDK_INFOLOG(
+              pg_group,
+              "create connect to node %d (address %s, port %d) in core %u, shard %u\n",
+              node_id, address.c_str(), port, _shard_cores[shard_id], shard_id);
+            _cache->create_connect(
+              shard_id, node_id, address, port,
+              [this, shard_id, node_id, address, port, ctx] (bool is_ok, msg::rdma::client::connection* conn) {
+                  if (not is_ok) {
+                      SPDK_ERRLOG(
+                        "create connect to node %d (address %s, port %d) in core %u failed\n",
+                        node_id, address.c_str(), port, _shard_cores[shard_id]);
+
+                    utils::switch_core_func(ctx, err::RAFT_ERR_UNKNOWN);
+                  }
+                  auto &stub = _stubs[shard_id];
+                  stub[node_id] = std::make_shared<rpc_service_raft_Stub>(conn);
+                  utils::switch_core_func(ctx, err::E_SUCCESS);
+              });
+        });
+    }
+
     void create_connect(int node_id, std::string address, int port, utils::complete_fun&& conn_cb) {
         auto shard_num = _shard_cores.size();
 
@@ -171,7 +204,7 @@ public:
                       auto &stub = _stubs[shard_id];
                       stub[node_id] = std::make_shared<rpc_service_raft_Stub>(conn);
                   }
-                );                  
+                );
               });
         }
     }
@@ -184,6 +217,10 @@ public:
 
         for (shard_id = 0; shard_id < shard_num; shard_id++)
         {
+            if(!_get_stub(shard_id, node_id)){
+                complete->complete(err::E_SUCCESS);
+                continue;
+            }
             _shard.invoke_on(
               shard_id,
               [this, node_id, shard_id, complete]()
@@ -196,7 +233,7 @@ public:
                       auto &stub = _stubs[shard_id];
                       stub.erase(node_id);
                   }
-                );                  
+                );
               });
         }
     }
@@ -221,8 +258,8 @@ public:
                   auto &stub = _stubs[shard_id];
                   stub.erase(node_id);
               }
-            );                  
-          });       
+            );
+          });
     }
 
     int send_appendentries(raft_server_t *raft, int32_t target_node_id, msg_appendentries_t* request);

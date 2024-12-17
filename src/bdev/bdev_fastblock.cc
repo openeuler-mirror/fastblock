@@ -22,10 +22,11 @@
 #include <spdk/likely.h>
 #include <spdk/bdev_module.h>
 #include <spdk/log.h>
+#include <cstring>
 
 #include "bdev_fastblock.h"
-#include "client/libfblock.h"
-#include "global.h"
+#include "fastblock/client/libfblock.h"
+#include "fastblock/bdev/global.h"
 
 #define SPDK_FASTBLOCK_QUEUE_DEPTH 128
 #define MAX_EVENTS_PER_POLL 128
@@ -322,9 +323,12 @@ bdev_fastblock_write(struct spdk_bdev_io *bdev_io,
 	}
 	bool aligned = !(total_len % 4096);
 
-    auto worker_index = ::spdk_env_get_current_core() - ::spdk_env_get_first_core();
-    SPDK_DEBUGLOG(libblk, "worker index: %d\n", worker_index);
-    auto& blk_cli = global::blk_clients.at(worker_index);
+	auto worker_index = utils::get_current_shard_id();
+	SPDK_DEBUGLOG(libblk, "worker index: %d\n", worker_index);
+	auto blk_cli = global::blk_clients.at(worker_index);
+	if(!blk_cli && strcmp("app_thread", spdk_thread_get_name(spdk_get_thread())) == 0){
+		blk_cli = global::blk_clients.at(global::app_thread_shard_id);
+	}
 
 	blk_cli->write(
       fastblock->pool_id,
@@ -371,9 +375,12 @@ bdev_fastblock_get_buf_cb(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_
 
 	uint64_t read_id = future_id++;
 
-    auto worker_index = ::spdk_env_get_current_core() - ::spdk_env_get_first_core();
-    SPDK_DEBUGLOG(libblk, "worker index: %d\n", worker_index);
-    auto& blk_cli = global::blk_clients.at(worker_index);
+	auto worker_index = utils::get_current_shard_id();
+	SPDK_DEBUGLOG(libblk, "worker index: %d\n", worker_index);
+	auto blk_cli = global::blk_clients.at(worker_index);
+	if(!blk_cli && strcmp("app_thread", spdk_thread_get_name(spdk_get_thread())) == 0){
+		blk_cli = global::blk_clients.at(global::app_thread_shard_id);
+	}
 
 	blk_cli->read(
       fastblock->pool_id,
@@ -514,20 +521,32 @@ bdev_fastblock_create_cb(void *io_device, void *ctx_buf)
 	    return -1;
 	}
 
-    auto core_no = ::spdk_env_get_current_core();
-    auto hold_index = core_no - ::spdk_env_get_first_core();
+	auto* bdev_thd = ::spdk_get_thread();
+	auto hold_index = utils::get_current_shard_id();
+	/*
+	 *  在fastblock-vhost和fastblock-nvmf-tgt中，创建的第一个spdk thread是“app thread”，随后又为每个核
+	 *  创建一个spdk thread,在创建每个核的spdk thread之前，获取bdev的信息都是在“app thread”中进行。
+	 */
+	if(strcmp("app_thread", spdk_thread_get_name(bdev_thd)) == 0){
+		hold_index = global::app_thread_shard_id;
+	}
+	auto core_no = ::spdk_env_get_current_core();
+	SPDK_NOTICELOG("start block client on core %d, hold index is %d, thread id %lu, thread %s\n", 
+	        core_no, hold_index, spdk_thread_get_id(bdev_thd), spdk_thread_get_name(bdev_thd));
+
     if (global::blk_clients[hold_index]) {
-        return 0;
+        auto blk_cli = std::move(global::blk_clients[hold_index]);
+        blk_cli->stop(
+          [blk_cli](){}
+        );
     }
 
-    auto* bdev_thd = ::spdk_get_thread();
-    SPDK_NOTICELOG("start block client on core %d, hold index is %d\n", core_no, hold_index);
     global::vhost_worker_threads.at(hold_index) = bdev_thd;
-    auto blk_cli = std::make_unique<::libblk_client>(global::mon_client.get(), bdev_thd, global::rpc_cli_opts);
+    auto blk_cli = std::make_shared<::libblk_client>(global::mon_client.get(), bdev_thd, global::rpc_cli_opts);
     auto* blk_cli_ptr = blk_cli.get();
     global::blk_clients.at(hold_index) = std::move(blk_cli);
     blk_cli_ptr->start([] () {
-        SPDK_NOTICELOG("block client has been started on core %d\n", ::spdk_env_get_current_core());
+        SPDK_NOTICELOG("block client has been started on core %d, thread id %lu\n", ::spdk_env_get_current_core(), ::spdk_thread_get_id(::spdk_get_thread()));
     });
 
 	return 0;

@@ -10,7 +10,7 @@
  */
 
 #include "kv_checkpoint.h"
-#include "utils/utils.h"
+#include "fastblock/utils/utils.h"
 
 SPDK_LOG_REGISTER_COMPONENT(kvlog)
 
@@ -36,18 +36,6 @@ void kv_checkpoint::start_checkpoint(size_t size, checkpoint_op_complete cb_fn, 
     opts.xattrs.ctx = &(ctx->xattr);
     opts.xattrs.get_value = kv_checkpoint_xattr::get_xattr_value;
 
-    auto make_done = [shard_id, cb_fn = std::move(cb_fn)](void *arg, int kverrno){
-        core_sharded::get_core_sharded().invoke_on(
-          shard_id,
-          [cb_fn = std::move(cb_fn), arg, kverrno](){
-            cb_fn(arg, kverrno);
-          });
-    }; 
-    ctx->cb_fn = std::move(make_done);   
-
-    core_sharded::get_core_sharded().invoke_on(
-      utils::default_blobstore_core, 
-      [this, ctx, opts = std::move(opts)](){
-        spdk_bs_create_blob_ext(_bs, &opts, new_blob_create_complete, ctx);
-      }); 
+    ctx->cb_fn = std::move(cb_fn);
+    spdk_bs_create_blob_ext(_bs, &opts, new_blob_create_complete, ctx);
 }

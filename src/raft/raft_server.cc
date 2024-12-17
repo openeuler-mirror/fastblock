@@ -24,11 +24,11 @@
 #include "raft_log.h"
 #include "spdk/log.h"
 #include "spdk/env.h"
-#include "utils/err_num.h"
+#include "fastblock/utils/err_num.h"
 #include "localstore/kv_store.h"
 #include "utils/md5.h"
 
-#include "monclient/client.h"
+#include "fastblock/monclient/client.h"
 
 constexpr long recovery_max_entry_num = 100;
 
@@ -554,8 +554,8 @@ struct follow_disk_append_complete : public utils::context{
     , rsp(_rsp) {}
 
     void finish(int r) override {
-        SPDK_INFOLOG(pg_group, "follow_disk_append_complete finish, start_idx: %ld end_idx: %ld commit_idx %ld result: %d.\n",
-                start_idx, end_idx, commit_idx, r);
+        SPDK_INFOLOG(pg_group, "follow_disk_append_complete finish, in pg %lu.%lu, start_idx: %ld end_idx: %ld commit_idx %ld result: %d.\n",
+                raft->raft_get_pool_id(), raft->raft_get_pg_id(), start_idx, end_idx, commit_idx, r);
         if(r != 0){
             SPDK_ERRLOG("follow_disk_append_complete, result: %d\n", r);
             rsp->set_success(r);
@@ -973,7 +973,7 @@ void raft_server_t::raft_write_entry_finish(raft_index_t start_idx, raft_index_t
     SPDK_INFOLOG(pg_group, "raft_write_entry_finish, [%ld-%ld] commit: %ld result: %d\n",
             start_idx, end_idx, raft_get_commit_idx(), result);
     raft_get_log()->raft_write_entry_finish(start_idx, end_idx, result);
-    raft_flush();
+    // raft_flush();
 }
 
 void raft_server_t::follow_raft_write_entry_finish(raft_index_t start_idx, raft_index_t end_idx, int result){
@@ -1028,7 +1028,7 @@ void raft_server_t::raft_node_process_commit(int result, raft_index_t index, raf
             raft_set_commit_idx(index);
             SPDK_DEBUGLOG(pg_group, "in pg %lu.%lu, _node_id %d _commit_idx %lu\n", raft_get_pool_id(),
                    raft_get_pg_id(), _node_id, raft_get_commit_idx());
-            raft_flush();
+            // raft_flush();
         }
     }
 }
@@ -1044,8 +1044,8 @@ struct disk_append_complete : public utils::context{
     , raft(_raft) {}
 
     void finish(int r) override {
-        SPDK_INFOLOG(pg_group, "disk_append_complete, start_idx: %ld end_idx: %ld result: %d\n",
-                start_idx, end_idx, r);
+        SPDK_INFOLOG(pg_group, "disk_append_complete, in pg %lu.%lu, start_idx: %ld end_idx: %ld result: %d\n",
+                raft->raft_get_pool_id(), raft->raft_get_pg_id(), start_idx, end_idx, r);
         if(r != 0)
             SPDK_ERRLOG("disk_append_complete, result: %d\n", r);
         raft->raft_disk_append_finish(start_idx, end_idx, r);
@@ -1093,10 +1093,10 @@ int raft_server_t::raft_write_entry(std::shared_ptr<raft_entry_t> ety,
     }
 
     SPDK_DEBUGLOG(pg_group, "append entry to queue, _current_idx %ld, _commit_idx %ld\n", _current_idx, _commit_idx);
-    if(_current_idx > _commit_idx){
-        return 0;
-    }
-    raft_flush();
+    // if(_current_idx > _commit_idx){
+        // return 0;
+    // }
+    // raft_flush();
     return 0;
 }
 
@@ -1119,6 +1119,40 @@ void raft_server_t::stop_processing_entrys(int state){
 
     raft_get_log()->raft_write_entry_finish(_first_idx, _current_idx, state);
     raft_get_log()->remove_entry_between(_first_idx, _current_idx);
+}
+
+void raft_server_t::_static_merger_info(int64_t merger_num, raft_index_t current_idx){
+    _disk_io_num++;
+    if(merger_num >= 100)
+        _merger_hundred_num++;
+    if(merger_num >= 50)
+        _merger_fifty_num++;
+    else if(merger_num >= 20)
+        _merger_twenty_num++;
+    else if(merger_num >= 10)
+        _merger_ten_num++;
+    else if(merger_num >= 5)
+        _merger_five_num++;
+    else if(merger_num >= 2)
+        _merger_tow_num++;
+    if(current_idx % 10000 == 0){
+        SPDK_WARNLOG("pg %lu.%lu, io num: %ld, disk io num: %ld, merger 2: %ld, merger 5: %ld, merger 10: %ld, merfer 20: %ld, merger 50: %ld, merger 100: %ld\n",
+                raft_get_pool_id(), raft_get_pg_id(), current_idx, _disk_io_num, _merger_tow_num, _merger_five_num,
+                _merger_ten_num, _merger_twenty_num, _merger_fifty_num, _merger_hundred_num);
+    }
+}
+
+static int raft_task_func(void* arg){
+    raft_server_t* raft = (raft_server_t*)arg;
+    if(!raft->raft_is_leader()){
+        return 0;
+    }
+    if(raft->raft_get_current_idx() > raft->raft_get_commit_idx()){
+        //上一批还没处理完
+        return 0;
+    }
+    raft->raft_flush();
+    return 0;
 }
 
 void raft_server_t::raft_flush(){
@@ -1170,6 +1204,7 @@ void raft_server_t::raft_flush(){
     SPDK_INFOLOG(pg_group, "in pg %lu.%lu first_idx: %lu current_idx: %lu _commit_idx: %lu\n",
             raft_get_pool_id(), raft_get_pg_id(), _first_idx, _current_idx, _commit_idx);
 
+    _static_merger_info(_current_idx - _first_idx + 1, _current_idx);
     auto send_data = [this](std::shared_ptr<raft_node> node){
         if (!node || raft_is_self(node))
             return;
@@ -1236,7 +1271,7 @@ void raft_server_t::process_conf_change_entry(std::shared_ptr<raft_entry_t> entr
     case RAFT_LOGTYPE_ADD_NONVOTING_NODE:
     {
         process_conf_change_add_nonvoting(entry);
-        raft_flush();
+        // raft_flush();
         break;
     }
     case RAFT_LOGTYPE_CONFIGURATION:
@@ -1271,7 +1306,7 @@ struct disk_configuration_complete : public utils::context{
 };
 
 void raft_server_t::process_conf_change_configuration(std::shared_ptr<raft_entry_t> entry){
-    SPDK_INFOLOG(pg_group, "process entry type %d, index: %ld \n", entry->type(), entry->idx());
+    SPDK_INFOLOG(pg_group, "in pg %lu.%lu , process entry type %d, index: %ld \n", _pool_id, _pg_id, entry->type(), entry->idx());
     raft_configuration config;
     config.ParseFromString(entry->meta());
 
@@ -1521,6 +1556,7 @@ void raft_server_t::stop(raft_complete cb_fn, void* arg){
     raft_set_op_state(raft_op_state::RAFT_DOWN);
     SPDK_INFOLOG(pg_group, "stop pg %lu.%lu\n", _pool_id, _pg_id);
     spdk_poller_unregister(&_raft_timer);
+    spdk_poller_unregister(&_task_timer);
     stop_timed_task();
     /*
        上面停了状态机停，正在处理entry的就不能给客户端响应了，因此需要结束正在处理的，给客户端响应。
@@ -1540,8 +1576,9 @@ void raft_server_t::raft_destroy(raft_complete cb_fn, void* arg)
             cb_fn(arg, serrno);
             return;
         }
+        auto shard_id = core_sharded::get_core_sharded().this_shard_id();
         _log->log_destroy(
-          global_blobstore(),
+          global_blobstore(shard_id),
           [this, cb_fn = std::move(cb_fn)](void* arg, int rberrno){
             SPDK_INFOLOG(pg_group, "remove log blob done: %s\n", spdk_strerror(rberrno));
             if(rberrno == 0){
@@ -1609,6 +1646,7 @@ static int periodic_func(void* arg){
 void raft_server_t::start_raft_timer(int raft_heartbeat_period_time_msec,
   int  raft_lease_time_msec, int  raft_election_timeout_msec){
     _raft_timer = SPDK_POLLER_REGISTER(periodic_func, this, TIMER_PERIOD_MSEC * 1000);
+    _task_timer = SPDK_POLLER_REGISTER(raft_task_func, this, RAFT_TASK_TIMER_USEC);
     raft_set_election_timeout(raft_election_timeout_msec);
     raft_set_lease_maintenance_grace(raft_lease_time_msec);
     raft_set_heartbeat_timeout(raft_heartbeat_period_time_msec);
@@ -1771,20 +1809,7 @@ int raft_server_t::raft_recv_installsnapshot(raft_node_id_t node_id,
 }
 
 void raft_server_t::_recovery_delete(recovery_op_complete cb_fn, void* arg){
-    uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
-    auto delete_done = [shard_id, cb_fn = std::move(cb_fn)](void *arg, int rerrno){
-        core_sharded::get_core_sharded().invoke_on(
-          shard_id,
-          [cb_fn = std::move(cb_fn), arg, rerrno](){
-            cb_fn(arg, rerrno);
-          });
-    };
-
-    core_sharded::get_core_sharded().invoke_on(
-      utils::default_blobstore_core,
-      [this, arg, delete_done = std::move(delete_done)](){
-        _obr->recovery_delete(std::move(delete_done), arg);
-      });
+    _obr->recovery_delete(std::move(cb_fn), arg);
 }
 
 int raft_server_t::raft_process_installsnapshot_reply(installsnapshot_response *rsp){
@@ -2325,43 +2350,35 @@ int raft_server_t::_recovery_by_snapshot(std::shared_ptr<raft_node> node){
 
     uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
     auto snap_fn = [this, node, shard_id, handle_error = std::move(handle_error)](void *arg, int rerrno){
-        core_sharded::get_core_sharded().invoke_on(
-          shard_id,
-          [this, rerrno, node, handle_error = std::move(handle_error)](){
-            //创建完对象的snapshot后就需要设置_snapshot_in_progress为false
-            raft_set_snapshot_in_progress(false);
-            if(rerrno != 0){
-                handle_error();
-                SPDK_ERRLOG("pg: %lu.%lu, create raft snapshot failed, rerrno: %d\n", _pool_id, _pg_id, rerrno);
-                return;
-            }
-            _snapshot_index = _machine->get_last_applied_idx();
-            raft_term_t term;
-            if(!raft_get_entry_term(_snapshot_index, term)){
-                handle_error();
-                return;
-            }
-            _snapshot_term = term;
-            SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, _snapshot_index %ld _snapshot_term %ld\n",
-                    _pool_id, _pg_id, _snapshot_index, _snapshot_term);
-            _obr->iter_start();
-            int res = raft_send_snapshot_check(node);
-            if(res != err::E_SUCCESS){
-                handle_error();
-                SPDK_ERRLOG("pg: %lu.%lu, send snapshot_check_request failed, rerrno: %d\n", _pool_id, _pg_id, res);
-                return;
-            }
-          });
+        //创建完对象的snapshot后就需要设置_snapshot_in_progress为false
+        raft_set_snapshot_in_progress(false);
+        if(rerrno != 0){
+            handle_error();
+            SPDK_ERRLOG("pg: %lu.%lu, create raft snapshot failed, rerrno: %d\n", _pool_id, _pg_id, rerrno);
+            return;
+        }
+        _snapshot_index = _machine->get_last_applied_idx();
+        raft_term_t term;
+        if(!raft_get_entry_term(_snapshot_index, term)){
+            handle_error();
+            return;
+        }
+        _snapshot_term = term;
+        SPDK_DEBUGLOG(pg_group, "pg: %lu.%lu, _snapshot_index %ld _snapshot_term %ld\n",
+                _pool_id, _pg_id, _snapshot_index, _snapshot_term);
+        _obr->iter_start();
+        int res = raft_send_snapshot_check(node);
+        if(res != err::E_SUCCESS){
+            handle_error();
+            SPDK_ERRLOG("pg: %lu.%lu, send snapshot_check_request failed, rerrno: %d\n", _pool_id, _pg_id, res);
+            return;
+        }
     };
 
-    core_sharded::get_core_sharded().invoke_on(
-      utils::default_blobstore_core,
-      [this, snap_fn = std::move(snap_fn)](){
-        std::map<std::string, xattr_val_type> xattr;
-        xattr["type"] = blob_type::object;
-        xattr["pg"] = raft_get_pg_name();
-        _obr->recovery_create(std::move(xattr), std::move(snap_fn), nullptr);
-      });
+    std::map<std::string, xattr_val_type> xattr;
+    xattr["type"] = blob_type::object;
+    xattr["pg"] = raft_get_pg_name();
+    _obr->recovery_create(std::move(xattr), std::move(snap_fn), nullptr);
     return 0;
 }
 
@@ -2496,6 +2513,13 @@ raft_server_t::raft_server_t(raft_client_protocol& client, disk_log* log,
     , _snapshot_index(0)
     , _snapshot_term(0)
     , _mon_client(mon_client)
+    , _disk_io_num(0)
+    , _merger_tow_num(0)
+    , _merger_five_num(0)
+    , _merger_ten_num(0)
+    , _merger_twenty_num(0)
+    , _merger_fifty_num(0)
+    , _merger_hundred_num(0)
 {
         raft_randomize_election_timeout();
         _log = log_new(std::move(log));
@@ -2506,8 +2530,13 @@ raft_server_t::~raft_server_t()
 {
 }
 
-void raft_server_t::init(std::vector<utils::osd_info_t>&& node_list, raft_node_id_t current_node,
-  int raft_heartbeat_period_time_msec, int  raft_lease_time_msec, int  raft_election_timeout_msec){
+void raft_server_t::init(
+  std::vector<utils::osd_info_t>&& node_list,
+  raft_node_id_t current_node,
+  int raft_heartbeat_period_time_msec,
+  int raft_lease_time_msec,
+  int raft_election_timeout_msec,
+  uint32_t shard_id) {
     //这里需要加载log 和 kv
 
     raft_set_nodeid(current_node);
@@ -2515,7 +2544,7 @@ void raft_server_t::init(std::vector<utils::osd_info_t>&& node_list, raft_node_i
     for(auto& node : node_list){
         if(configuration.find_node(node.node_id))
             continue;
-        configuration.add_node(node.node_id, node.address, node.port);
+        configuration.add_node(node.node_id, node.address, 0);
     }
     _configuration_manager.add_node_configuration(std::move(configuration));
     _nodes_stat.update_with_node_configuration(_configuration_manager.get_last_node_configuration());

@@ -1,0 +1,22 @@
+{
+    "bind_portsx": [8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088, 8089, 8010, 8011, 8012, 8013, 8014, 8015],
+    "bind_ports": [8012, 8013, 8014, 8015],
+    "rdma_device_name": "mlx5_0",
+    "msg_server_listen_backlog" : 1024,
+    "msg_server_poll_cq_batch_size": 32,
+    "msg_server_metadata_memory_pool_capacity": 64,
+    "msg_server_metadata_memory_pool_element_size": 512,
+    "msg_server_data_memory_pool_capacity": 64,
+    "msg_server_data_memory_pool_element_size": 5120,
+    "msg_server_per_post_recv_num": 64,
+    "msg_server_rpc_timeout_us": 1000000,
+    "msg_rdma_resolve_timeout_us": 2000,
+    "msg_rdma_poll_cm_event_timeout_us": 1000000,
+    "msg_rdma_max_send_wr": 4096,
+    "msg_rdma_max_send_sge": 128,
+    "msg_rdma_max_recv_wr": 8192,
+    "msg_rdma_max_recv_sge": 1,
+    "msg_rdma_max_inline_data": 16,
+    "msg_rdma_cq_num_entries": 1024,
+    "msg_rdma_qp_sig_all": false
+}

@@ -16,7 +16,7 @@
 #include "types.h"
 #include "rolling_blob.h"
 #include "kv_checkpoint.h"
-#include "utils/utils.h"
+#include "fastblock/utils/utils.h"
 
 #include <spdk/env.h>
 #include <spdk/util.h>
@@ -95,7 +95,7 @@ public:
 
     void start() {
         _worker_poller = SPDK_POLLER_REGISTER(worker_poll, this, 100000); // 10ms写一次
-        SPDK_INFOLOG(kvlog, "start kvstore in core %u, thread  %lu\n",
+        SPDK_INFOLOG(kvlog, "start kvstore in shard %u, thread  %lu\n",
             core_sharded::get_core_sharded().this_shard_id(), utils::get_spdk_thread_id());
     }
 
@@ -110,7 +110,7 @@ public:
 
     void stop(kvstore_rw_complete cb_fn, void* arg) {
         uint32_t shard_id = core_sharded::get_core_sharded().this_shard_id();
-        SPDK_INFOLOG(kvlog, "stop kvstore in core %u, thread %lu \n",
+        SPDK_INFOLOG(kvlog, "stop kvstore in shard %u, thread %lu \n",
             shard_id, utils::get_spdk_thread_id());
         if (_worker_poller) {
             /* 注意：注册、注销poller要在一个thread里，一个cpu core有一个thread，因此注册、注销poller要在一个cpu core里
@@ -119,32 +119,18 @@ public:
             _worker_poller = nullptr;
         }
 
-        auto stop_done = [shard_id, cb_fn = std::move(cb_fn)](void *arg, int kverrno){
-            core_sharded::get_core_sharded().invoke_on(
-              shard_id,
-              [cb_fn = std::move(cb_fn), arg, kverrno](){
-                SPDK_INFOLOG(kvlog, "close rblob done in core %u\n",
-                    core_sharded::get_core_sharded().this_shard_id());
-                cb_fn(arg, kverrno);
-              });
-        };
-
-        core_sharded::get_core_sharded().invoke_on(
-          utils::default_blobstore_core,
-          [this, arg, stop_done= std::move(stop_done)](){
-            rblob->close(
-              [cb_fn = std::move(stop_done), this](void* arg, int rberrno){
-                SPDK_NOTICELOG("kvstore stop\n");
-                rblob->stop();
-                delete rblob; // rblob指针由kvstore负责delete
-                checkpoint.stop(
-                  [cb_fn = std::move(cb_fn), this](void* arg, int rberrno){
-                      cb_fn(arg, rberrno);
-                  },
-                  arg);
+        rblob->close(
+          [cb_fn = std::move(cb_fn), this](void* arg, int rberrno){
+            SPDK_NOTICELOG("kvstore stop\n");
+            rblob->stop();
+            delete rblob; // rblob指针由kvstore负责delete
+            checkpoint.stop(
+              [cb_fn = std::move(cb_fn), this](void* arg, int rberrno){
+                  cb_fn(arg, rberrno);
               },
               arg);
-          });
+          },
+          arg);
     }
 
     void put(std::string key, std::optional<std::string> value) {
@@ -381,21 +367,16 @@ public:
     // 写完就finish
     static void checkpoint_write_complete(void *arg, int ckerror) {
         struct kvstore_ckpt_ctx* ctx = (kvstore_ckpt_ctx*)arg;
+        auto shard_id = core_sharded::get_core_sharded().this_shard_id();
 
-        SPDK_DEBUGLOG(kvlog, "checkpoint_write_complete in core %u\n", core_sharded::get_core_sharded().this_shard_id());
-        auto stop_done = [shard_id = core_sharded::get_core_sharded().this_shard_id()](void *arg, int kverrno){
-            core_sharded::get_core_sharded().invoke_on(
-              shard_id,
-              [arg, kverrno](){
-                kvstore::checkpoint_finish_complete(arg, kverrno);
-              });
-        };
+        SPDK_DEBUGLOG(kvlog, "checkpoint_write_complete in shard %u\n", shard_id);
 
-        core_sharded::get_core_sharded().invoke_on(
-          utils::default_blobstore_core,
-          [ctx, stop_done = std::move(stop_done), shard_id = core_sharded::get_core_sharded().this_shard_id()](){
-              ctx->kv_ckpt->finish_checkpoint(shard_id, stop_done, ctx);
-          });
+
+//        auto stop_done = [shard_id](void *arg, int kverrno){
+//            kvstore::checkpoint_finish_complete(arg, kverrno);
+//        };
+
+        ctx->kv_ckpt->finish_checkpoint(shard_id, kvstore::checkpoint_finish_complete, ctx);
     }
 
     // finish之后trim

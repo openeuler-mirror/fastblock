@@ -11,19 +11,20 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"monitor/config"
 	"monitor/msg"
 	"monitor/utils"
 	"net"
+	"sort"
 	"strconv"
 	"time"
-	"sort"
-	"bytes"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/google/uuid"
@@ -45,6 +46,7 @@ var fakeHostCount *int
 var version *int64
 var unset *string
 var set *string
+var detail *bool
 
 // image
 var imageName *string
@@ -77,88 +79,27 @@ func arrayToStr(array []int32) string {
 	}
 	str += "]"
 	return str
-} 
-
-func  speedToString(speedValue uint64) string {
-	units := [...]string{" B/s", " kB/s", " MB/s", " GB/s", " TB/s"}
-	var speed string
-
-	for i := 0; i < len(units); i++ {
-		if speedValue < 1024 {
-			speed = strconv.FormatUint(speedValue, 10) + units[i]
-			break
-		} else {
-			speedValue /= 1024
-		}
-	}
-	return speed
 }
 
-func printClient(cliReadSpeed uint64, cliWriteSpeed uint64, cliReadIops uint64, cliWriteIops uint64, recoverySpeed uint64, recoveryObjPs uint64){
-	client := make(map[string]string)
-	recovery := make(map[string]string)
-	rd  :=   "rd"
-	wr  :=   "wr"
-	ord :=   "op/s rd"
-	owr :=   "op/s wr"
-	speed := "speed"
-	ops := "ops"
-	order := [...]string{rd, wr, ord, owr}
-	recoveryOrder := [...]string{speed, ops}
-	if cliReadSpeed != 0 {
-		client[rd] = speedToString(cliReadSpeed)
-	}
-	if cliWriteSpeed != 0 {
-		client[wr] = speedToString(cliWriteSpeed)
-	}
-	if cliReadIops != 0 {
-		client[ord] = strconv.FormatUint(cliReadIops, 10)
-	}
-	if cliWriteIops != 0 {
-		client[owr] = strconv.FormatUint(cliWriteIops, 10)
-	}
-	if recoverySpeed != 0 {
-		recovery["speed"] = speedToString(recoverySpeed)
-	}
-	if recoveryObjPs != 0 {
-		recovery["ops"] = strconv.FormatUint(recoveryObjPs, 10) + " objects/s"
+func findMinKey(m map[uint32]uint32) uint32 {
+	if len(m) == 0 {
+		return math.MaxUint32
 	}
 
-	if len(client) != 0 || len(recovery) != 0 {
-		fmt.Printf("  io: \r\n")
-		if len(client) != 0 {
-			fmt.Printf("    client   : ")
-			i := 0
-			for _, units := range order {
-				data, ok := client[units]
-				if ok {
-					if i != 0 {
-						fmt.Printf(",  ")
-					}
-					fmt.Printf("%v %v", data, units)
-					i += 1
-				}
-			}
-			fmt.Printf("\n")
-		}
+	var minKey uint32
+	for key := range m {
+		minKey = key
+		break
+	}
 
-		if len(recovery) != 0 {
-			fmt.Printf("    recovery : ")
-			i := 0
-			for _, val := range recoveryOrder {
-				data, ok := recovery[val]
-				if ok {
-					if i != 0 {
-						fmt.Printf(",  ")
-					}
-					fmt.Printf("%v", data)
-					i += 1
-				}
-			}
-			fmt.Printf("\n")
+	// 遍历 map，更新最小的 key
+	for key := range m {
+		if key < minKey {
+			minKey = key
 		}
 	}
 
+	return minKey
 }
 
 func sendClientReqeust(request *msg.Request, conn net.Conn) error {
@@ -181,16 +122,56 @@ func sendClientReqeust(request *msg.Request, conn net.Conn) error {
 	return nil
 }
 
-func byOsdid(osds []*msg.OsdDynamicInfo)  func(int, int) bool {
-    return func(i, j int) bool {
-        return osds[i].GetOsdid() < osds[j].GetOsdid()
-    }	
+func byOsdid(osds []*msg.OsdDynamicInfo) func(int, int) bool {
+	return func(i, j int) bool {
+		return osds[i].GetOsdid() < osds[j].GetOsdid()
+	}
 }
 
-func byPgid(pgs []*msg.PGInfo)  func(int, int) bool {
-    return func(i, j int) bool {
-        return pgs[i].GetPgid() < pgs[j].GetPgid()
-    }	
+func byPgid(pgs []*msg.PGInfo) func(int, int) bool {
+	return func(i, j int) bool {
+		return pgs[i].GetPgid() < pgs[j].GetPgid()
+	}
+}
+
+func printPgOsdInfo(pools *map[int32]*msg.PgOsdInfos) {
+	osdCoreNum := make(map[int32]map[uint32]int)
+	for _, pgOsdInfos := range *pools {
+		for _, pgInfo := range pgOsdInfos.Pgs {
+			for _, osdid := range pgInfo.GetOsdid() {
+				coreId := pgInfo.GetCoreindex()
+				if _, ok := osdCoreNum[osdid]; ok {
+					if _, ok = osdCoreNum[osdid][coreId]; ok {
+						osdCoreNum[osdid][coreId] += 1
+					} else {
+						osdCoreNum[osdid][coreId] = 1
+					}
+				} else {
+					osdCoreNum[osdid] = make(map[uint32]int)
+					osdCoreNum[osdid][coreId] = 1
+				}
+			}
+		}
+	}
+	var osdids []int32
+	for osdid := range osdCoreNum {
+		osdids = append(osdids, osdid)
+	}
+	sort.Slice(osdids, func(i, j int) bool {
+		return osdids[i] < osdids[j]
+	})
+
+	fmt.Printf("%-10v   %-10v   %-10v    \r\n", "OSDID", "CORE", "PGNUM")
+	for _, osdid := range osdids {
+		osdCore := osdCoreNum[osdid]
+		coreNum := uint32(len(osdCore))
+		var coreid uint32
+		for coreid = 0; coreid < coreNum; coreid++ {
+			num := osdCore[coreid]
+			fmt.Printf("%-10v   %-10v   %-10v    \r\n", osdid, coreid, num)
+		}
+	}
+
 }
 
 func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- struct{}, responseChan chan<- ResponseChanData) {
@@ -237,7 +218,7 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 					return
 				}
 				should_read_bytes = int64(msg_len)
-				if(should_read_bytes > bufferSize) {
+				if should_read_bytes > bufferSize {
 					buffer = make([]byte, should_read_bytes)
 				}
 				continue
@@ -270,7 +251,7 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 						errmsg = "uuid is not valid"
 					} else if rc == msg.ApplyIDErrorCode_UuidAlreadyExists {
 						errmsg = "uuid already exists"
-					} 
+					}
 					fmt.Printf("uuid %s apply osd id failed, error is %s\r\n", uuid_, errmsg)
 				} else {
 					fmt.Printf("%d\n", osdid)
@@ -384,29 +365,33 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 						}
 					}
 				}
+
 				if *op == "watchpgmap" {
 					continue
 				} else {
-					if len(mypgmap) > 0 {
-						var poolIds []int32
-						for k := range mypgmap {
-							poolIds = append(poolIds, k)
-						}
-						sort.Slice(poolIds, func(i, j int) bool {
-							return poolIds[i] < poolIds[j]
-						})
-						fmt.Printf("%-10v   %-25v   %-25v    %-25v   \r\n", "PGID", "STATE", "OSDLIST", "NEWOSDLIST")
-						for _, pid := range poolIds {
-							pgs := mypgmap[pid]
-							sort.Slice(pgs.Pi, byPgid(pgs.Pi))
-							for _, pg := range pgs.Pi {
-								pgid := strconv.FormatInt(int64(pid), 10) + "." + strconv.FormatInt(int64(pg.GetPgid()), 10)
-								osdlist := arrayToStr(pg.GetOsdid())
-								newosdlist := arrayToStr(pg.GetNewosdid())
-
-								fmt.Printf("%-10v   %-25v   %-25v    %-25v   \r\n", pgid, utils.PgStateStr(utils.PGSTATE(pg.GetState())),
-									osdlist, newosdlist)
+					var poolIds []int32
+					for k := range mypgmap {
+						poolIds = append(poolIds, k)
+					}
+					sort.Slice(poolIds, func(i, j int) bool {
+						return poolIds[i] < poolIds[j]
+					})
+					fmt.Printf("%-10v   %-25v   %-10v   %-25v    %-10v   %-25v   \r\n", "PGID", "STATE", "CORE", "OSDLIST", "NEWCORE", "NEWOSDLIST")
+					for _, pid := range poolIds {
+						pgs := mypgmap[pid]
+						sort.Slice(pgs.Pi, byPgid(pgs.Pi))
+						for _, pg := range pgs.Pi {
+							pgid := strconv.FormatInt(int64(pid), 10) + "." + strconv.FormatInt(int64(pg.GetPgid()), 10)
+							osdlist := arrayToStr(pg.GetOsdid())
+							newosdlist := arrayToStr(pg.GetNewosdid())
+							newCoreIndex := ""
+							if pg.GetNewcoreindex() < math.MaxUint32 {
+								newCoreIndex = strconv.FormatInt(int64(pg.GetNewcoreindex()), 10)
 							}
+
+							fmt.Printf("%-10v   %-25v   %-10v   %-25v    %-10v   %-25v   \r\n", pgid,
+								utils.PgStateStr(utils.PGSTATE(pg.GetState())),
+								pg.GetCoreindex(), osdlist, newCoreIndex, newosdlist)
 						}
 					}
 				}
@@ -430,23 +415,56 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 					continue
 				} else {
 					sort.Slice(myosdmap, byOsdid(myosdmap))
-					fmt.Printf("%-10v   %-20v   %-10v    %-10v   %-10v \r\n", "OSDID", "ADDRESS", "PORT", "STATUS-UP", "STATUS-IN")
-					for _, osd := range myosdmap {
-						state1 := "up"
-						if !osd.GetIsup() {
-							state1 = "down"
+					if *detail {
+						fmt.Printf(
+							"%-10v   %-20v   %-10v    %-10v   %-10v   %-10v   %-10v \r\n",
+							"OSDID", "ADDRESS", "CORE", "SHARD_ID", "Port", "STATUS-UP", "STATUS-IN")
+						for _, osd := range myosdmap {
+							state1 := "up"
+							if !osd.GetIsup() {
+								state1 = "down"
+							}
+							state2 := "in"
+							if !osd.GetIsin() {
+								state2 = "out"
+							}
+
+							sharded_ports := osd.GetShardedPorts()
+							var keys []int
+							for shard_id := range sharded_ports {
+								keys = append(keys, int(shard_id))
+							}
+							sort.Ints(keys)
+							for key := range keys {
+								shard_id := uint32(key)
+								port := sharded_ports[shard_id]
+								fmt.Printf(
+									"%-10v   %-20v   %-10v    %-10v   %-10v   %-10v   %-10v \r\n",
+									osd.GetOsdid(), osd.GetAddress(), port.Coreid, shard_id, port.Port, state1, state2)
+							}
 						}
-						state2 := "in"
-						if !osd.GetIsin() {
-							state2 = "out"
+					} else {
+						fmt.Printf(
+							"%-10v   %-20v   %-10v    %-10v \r\n",
+							"OSDID", "ADDRESS", "STATUS-UP", "STATUS-IN")
+						for _, osd := range myosdmap {
+							state1 := "up"
+							if !osd.GetIsup() {
+								state1 = "down"
+							}
+							state2 := "in"
+							if !osd.GetIsin() {
+								state2 = "out"
+							}
+							fmt.Printf("%-10v   %-20v   %-10v    %-10v \r\n", osd.GetOsdid(), osd.GetAddress(), state1, state2)
 						}
-						fmt.Printf("%-10v   %-20v   %-10v    %-10v   %-10v \r\n", osd.GetOsdid(), osd.GetAddress(), osd.GetPort(),
-							state1, state2)
 					}
+
 				}
 
 				stopChan <- struct{}{}
 				return
+
 			case *msg.Response_GetClusterMapResponse:
 				om := *payload.GetClusterMapResponse.GetGomResponse()
 				pgmapVersion := payload.GetClusterMapResponse.GpmResponse.GetPoolidPgmapversion()
@@ -558,7 +576,7 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 					imagemap[getimageinfo.Imagename].Poolname = getimageinfo.Poolname
 					imagemap[getimageinfo.Imagename].ObjectSize = getimageinfo.ObjectSize
 				} else {
-					imagemap[getimageinfo.Imagename] = getimageinfo
+					imagemap[getimageinfo.GetImagename()] = getimageinfo
 				}
 				fmt.Printf("Imagename: %s  get info imagename: %s  Poolname: %s  Size: %d   Objectsize: %d  \n", *imageName, getimageinfo.Imagename, getimageinfo.Poolname, getimageinfo.Size_, getimageinfo.ObjectSize)
 				stopChan <- struct{}{}
@@ -587,7 +605,7 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 				fmt.Printf("Received NoOutResponse, ok is %v\r\n", isok)
 				stopChan <- struct{}{}
 				return
-			
+
 			case *msg.Response_GetClusterStatusResponse:
 				clusterState := payload.GetClusterStatusResponse.GetClusterState()
 				monNames := payload.GetClusterStatusResponse.GetMonName()
@@ -598,11 +616,11 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 				pgNum := payload.GetClusterStatusResponse.GetPgNum()
 				objectNum := payload.GetClusterStatusResponse.GetObjectNum()
 				pgState := payload.GetClusterStatusResponse.GetPgState()
-				cliReadSpeed := payload.GetClusterStatusResponse.GetCliReadSpeed()
-				cliWriteSpeed := payload.GetClusterStatusResponse.GetCliWriteSpeed()
+				cliReadBytes := payload.GetClusterStatusResponse.GetCliReadBytes()
+				cliWriteBytes := payload.GetClusterStatusResponse.GetCliWriteBytes()
 				cliReadIops := payload.GetClusterStatusResponse.GetCliReadIops()
 				cliWriteIops := payload.GetClusterStatusResponse.GetCliWriteIops()
-				recoverySpeed := payload.GetClusterStatusResponse.GetRecoverySpeed()
+				recoveryBytes := payload.GetClusterStatusResponse.GetRecoveryBytes()
 				recoveryObjPs := payload.GetClusterStatusResponse.GetRecoveryObjPs()
 
 				fmt.Printf("  cluster:\r\n")
@@ -659,7 +677,7 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 					if pgState.CreatingUndersizeNum > 0 {
 						fmt.Printf("      %d  creating + undersize\n", pgState.CreatingUndersizeNum)
 					}
-					if  pgState.CreatingDownNum > 0 {
+					if pgState.CreatingDownNum > 0 {
 						fmt.Printf("      %d  creating + down\n", pgState.CreatingDownNum)
 					}
 					if pgState.UndersizeRemapNum > 0 {
@@ -671,7 +689,22 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 				}
 				fmt.Printf("\n")
 
-				printClient(cliReadSpeed, cliWriteSpeed, cliReadIops, cliWriteIops, recoverySpeed, recoveryObjPs)
+				output := utils.PrintStatus(cliReadBytes, cliWriteBytes, cliReadIops, cliWriteIops, recoveryBytes, recoveryObjPs)
+				fmt.Print(output)
+
+				stopChan <- struct{}{}
+				return
+
+			case *msg.Response_OsdConfigResponse:
+				fmt.Println(payload.OsdConfigResponse.GetConfig())
+				stopChan <- struct{}{}
+				return
+
+			case *msg.Response_PgOsdInfoResponse:
+				poolmap := *payload.PgOsdInfoResponse
+				if len(poolmap.Pools) != 0 {
+					printPgOsdInfo(&(poolmap.Pools))
+				}
 
 				stopChan <- struct{}{}
 				return
@@ -683,6 +716,7 @@ func clientHandleResponses(ctx context.Context, conn net.Conn, stopChan chan<- s
 		}
 	}
 }
+
 func printOsdMap() {
 	t := time.NewTicker(5 * time.Second)
 	for range t.C {
@@ -711,9 +745,9 @@ func sendCreatePoolRequest(conn net.Conn) {
 	request := &msg.Request{
 		Union: &msg.Request_CreatePoolRequest{
 			CreatePoolRequest: &msg.CreatePoolRequest{
-				Name:    *poolname,
-				Pgsize:  int32(*pgsize),
-				Pgcount: int32(*pgcount),
+				Name:          *poolname,
+				Pgsize:        int32(*pgsize),
+				Pgcount:       int32(*pgcount),
 				Failuredomain: *failure_domain,
 				Root:          "defaultroot",
 			},
@@ -876,12 +910,12 @@ func clientSendBootRequest(conn net.Conn, hosts int, responseChan chan ResponseC
 		request := &msg.Request{
 			Union: &msg.Request_BootRequest{
 				BootRequest: &msg.BootRequest{
-					OsdId:   int32(*osdid),
-					Uuid:    *uid,
-					Size_:   int64(*size),
-					Address: *address,
-					Port:    uint32(*port),
-					Host:    *hostname,
+					OsdId:        int32(*osdid),
+					Uuid:         *uid,
+					Size_:        int64(*size),
+					Address:      *address,
+					ShardedPorts: map[uint32]*msg.ShardCore{},
+					Host:         *hostname,
 				},
 			},
 		}
@@ -895,17 +929,17 @@ func clientSendBootRequest(conn net.Conn, hosts int, responseChan chan ResponseC
 				fmt.Printf("using osdid %d to boot a osd\r\n", rc.osdid)
 				suffix := strconv.Itoa(int(rc.osdid)%(hosts) + 1)
 				hostname := "fbhost" + suffix
-				port := 12345 + rc.osdid
+				// port := 12345 + rc.osdid
 				addr := "192.168.1." + suffix
 				request := &msg.Request{
 					Union: &msg.Request_BootRequest{
 						BootRequest: &msg.BootRequest{
-							OsdId:   rc.osdid,
-							Uuid:    rc.uuid,
-							Size_:   1024,
-							Address: addr,
-							Port:    uint32(port),
-							Host:    hostname,
+							OsdId:        rc.osdid,
+							Uuid:         rc.uuid,
+							Size_:        1024,
+							Address:      addr,
+							ShardedPorts: map[uint32]*msg.ShardCore{},
+							Host:         hostname,
 						},
 					},
 				}
@@ -1093,8 +1127,33 @@ func clientSendNoOut(conn net.Conn, set bool) {
 func clientSendStatus(conn net.Conn) {
 	request := &msg.Request{
 		Union: &msg.Request_GetClusterStatusRequest{
-			GetClusterStatusRequest: &msg.GetClusterStatusRequest{
-			},
+			GetClusterStatusRequest: &msg.GetClusterStatusRequest{},
+		},
+	}
+
+	sendClientReqeust(request, conn)
+}
+
+func clientSendOsdConfig(conn net.Conn) {
+	request := &msg.Request{
+		Union: &msg.Request_OsdConfigRequest{
+			OsdConfigRequest: &msg.OsdConfigRequest{Osdid: int32(*osdid)},
+		},
+	}
+
+	sendClientReqeust(request, conn)
+}
+
+func clientSendGetPgOsds(conn net.Conn, poolid int) {
+	pginfos := &msg.GetPgOsdInfoRequest{
+		PoolIds: make([]int32, 0),
+	}
+	if poolid != 0 {
+		pginfos.PoolIds = append(pginfos.PoolIds, int32(poolid))
+	}
+	request := &msg.Request{
+		Union: &msg.Request_PgOsdInfoRequest{
+			PgOsdInfoRequest: pginfos,
 		},
 	}
 
@@ -1103,8 +1162,8 @@ func clientSendStatus(conn net.Conn) {
 
 func main() {
 	ops := [...]string{"watchclustermap", "getclustermap", "fakeapplyid", "fakebootosd", "fakestartcluster",
-	  "createpool", "deletepool", "listpools", "getosdmap", "getpgmap", "watchosdmap", "watchpgmap", "fakestoposd", 
-	  "createimage", "removeimage", "resizeimage", "getimage", "outosd", "inosd", "status"} 
+		"createpool", "deletepool", "listpools", "getosdmap", "getpgmap", "watchosdmap", "watchpgmap", "fakestoposd",
+		"createimage", "removeimage", "resizeimage", "getimage", "outosd", "inosd", "status", "showconfig", "getpgosds"}
 	supported_op := "supported: "
 	for i := 0; i < len(ops); i++ {
 		if i == 0 {
@@ -1119,6 +1178,7 @@ func main() {
 	unset = flag.String("unset", "", "supported: noReblance, noout")
 
 	poolname = flag.String("poolname", "", "pool name you want to get")
+	poolid := flag.Int("poolid", 0, "pool id you want to get")
 	osdid = flag.Int("osdid", 0, "osd id to boot")
 	port = flag.Int("port", 0, "port of this osd")
 	pgcount = flag.Int("pgcount", 0, "pgcount of this pool")
@@ -1135,7 +1195,7 @@ func main() {
 	//poolname = flag.String("poolname", 0, "pool id you want operate")
 	imagesize = flag.Int("imagesize", 0, "image size")
 	object_size = flag.Int("objectsize", 4194304, "object size")
-
+	detail = flag.Bool("detail", false, "print detail information")
 	configPath := flag.String("conf", "/etc/fastblock/fastblock.json", "path of the config file")
 	flag.Parse()
 	config.SetupConfig(*configPath, "fbclient")
@@ -1188,7 +1248,7 @@ func main() {
 
 		_, err := uuid.Parse(*uid)
 		if err != nil {
-		    log.Fatal("Invalid uuid")
+			log.Fatal("Invalid uuid")
 		}
 
 		if *fakeOsdCount != 0 {
@@ -1277,7 +1337,11 @@ func main() {
 		}
 		go clientSendInOsd(conn, *osdid)
 	case "status":
-		go clientSendStatus(conn)		
+		go clientSendStatus(conn)
+	case "showconfig":
+		go clientSendOsdConfig(conn)
+	case "getpgosds":
+		go clientSendGetPgOsds(conn, *poolid)
 	}
 
 	if *op == "" {

@@ -64,24 +64,16 @@ void make_disk_log(struct spdk_blob_store *bs, struct spdk_io_channel *channel,
     std::string pg, make_disklog_complete cb_fn, void* arg, uint32_t shard_id)
 {
   auto make_done = [shard_id, cb_fn = std::move(cb_fn), pg](void *arg, struct disk_log* dlog, int rerrno){
-      core_sharded::get_core_sharded().invoke_on(
-        shard_id,
-        [cb_fn = std::move(cb_fn), arg, rerrno, dlog, pg = std::move(pg)](){
-          if(rerrno == 0 && dlog) {
-            SPDK_INFOLOG(disk_log, "start disklog pg:%s , in core %u thread %lu .\n", pg.c_str(),
-                core_sharded::get_core_sharded().this_shard_id(), utils::get_spdk_thread_id());  
-            dlog->start();          
-          }
-          cb_fn(arg, dlog, rerrno);
-        });
+    if(rerrno == 0 && dlog) {
+      SPDK_INFOLOG(disk_log, "start disklog pg:%s , in shard %u thread %lu .\n", pg.c_str(),
+          shard_id, utils::get_spdk_thread_id());  
+      dlog->start();          
+    }
+    cb_fn(arg, dlog, rerrno);
   };  
 
   struct make_disklog_ctx* ctx = new make_disklog_ctx{.pg = pg, .cb_fn = std::move(make_done), .arg = arg, .shard_id = shard_id};
-  core_sharded::get_core_sharded().invoke_on(
-    utils::default_blobstore_core,
-    [bs, channel, ctx](){
-      make_rolling_blob(bs, channel, rolling_blob::huge_blob_size, make_disklog_blob_done, ctx);
-    });
+  make_rolling_blob(bs, channel, rolling_blob::huge_blob_size, make_disklog_blob_done, ctx);
 }
 
 disk_log* make_disk_log(struct spdk_blob_store *bs, struct spdk_io_channel *channel,

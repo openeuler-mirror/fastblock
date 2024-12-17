@@ -9,8 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
-#include "fb_client.h"
-#include "spdk/log.h"
+#include "fastblock/client/fb_client.h"
+
+#include <spdk/log.h>
 
 #include <tuple>
 

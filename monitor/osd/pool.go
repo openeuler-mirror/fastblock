@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"math"
 
 	"monitor/config"
 	"monitor/etcdapi"
@@ -54,7 +55,9 @@ type PoolPGsConfig struct {
 type PGConfig struct {
 	Version    int64   `json:"version,omitempty"`
 	PgState    utils.PGSTATE `json:"pgstate,omitempty"`
+	CoreIndex  uint32  `json:"coreindex,omitempty"` 
 	OsdList    []int   `json:"osdlist,omitempty"`
+	NewCoreIndex  uint32  `json:"newcoreindex,omitempty"` 
 	NewOsdList []int   `json:"newosdlist,omitempty"`
 }
 
@@ -333,7 +336,7 @@ func ProcessCreatePoolMessage(ctx context.Context, client *etcdapi.EtcdClient, n
 		PoolPgMap:     ppgc,
 	}
 
-	PgMap, err := CreatePgs(ctx, client, poolConf)
+	PgMap, err := CreatePgs(ctx, client, poolConf, OSDCoreNum)
 	if err != nil {
 		log.Error(ctx, err)
 		return -1, err
@@ -407,12 +410,15 @@ func ProcessLeaderBeElected(ctx context.Context, client *etcdapi.EtcdClient, lea
 						if !pgConf.PgInState(utils.PgUndersize) && !pgConf.PgInState(utils.PgDown) {
 							pgConf.SetPgState(utils.PgActive)
 						}
+						pgConf.NewCoreIndex = math.MaxUint32
 
 						pgConf.Version++
 					}
 				} else if Compare_arry(pgConf.NewOsdList, osdList) {
 					pgConf.OsdList = pgConf.NewOsdList
 					pgConf.NewOsdList = pgConf.NewOsdList[:0]
+					pgConf.CoreIndex = pgConf.NewCoreIndex
+					pgConf.NewCoreIndex = math.MaxUint32
 					pgConf.UnsetPgState(utils.PgRemapped)
 					state := CheckPgState(pgConf.OsdList, poolConf.PGSize)
 					if state == 0 {
@@ -483,6 +489,8 @@ func ProcessPgMemberChangeFinish(ctx context.Context, client *etcdapi.EtcdClient
 					pgConf.Version++
 					pgConf.OsdList = pgConf.NewOsdList
 					pgConf.NewOsdList = pgConf.NewOsdList[:0]
+					pgConf.CoreIndex = pgConf.NewCoreIndex
+					pgConf.NewCoreIndex = math.MaxUint32
 					isUpdate = true
 
 					poolConf.PoolPgMap.PgMap[pgIdStr] = pgConf
@@ -580,7 +588,9 @@ func ProcessGetPgMapMessage(ctx context.Context, pvs map[int32]int64) (*msg.GetP
 					Pgid:     int32(pgidToi),
 					Version:  pc.Version,
 					State:    int32(pc.PgState),
+					Coreindex:  pc.CoreIndex,
 					Osdid:    osdlist,
+					Newcoreindex: pc.NewCoreIndex,
 					Newosdid: newOsdlist,
 				}
 				pginfos.Pi = append(pginfos.Pi, pi)
@@ -622,7 +632,9 @@ func ProcessGetPgMapMessage(ctx context.Context, pvs map[int32]int64) (*msg.GetP
 						Pgid:     int32(pgidToi),
 						Version:  pc.Version,
 						State:    int32(pc.PgState),
+						Coreindex:  pc.CoreIndex,
 						Osdid:    osdlist,
+						Newcoreindex: pc.NewCoreIndex,
 						Newosdid: newOsdlist,
 					}
 					pginfos.Pi = append(pginfos.Pi, pi)
@@ -692,4 +704,49 @@ func printAllPool(ctx context.Context) {
 			log.Warn(ctx, "pg ", pgId, " Version ", pg.Version, " PgState ", pg.PgState)
 		}
 	}
+}
+
+func generatePgOsdInfoRsp(ppc *PoolConfig, gpo *msg.GetPgOsdInfoResponse) {
+	pgOsdInfos := &msg.PgOsdInfos{
+		Pgs: make([]*msg.PgOsdInfo, 0),
+	}
+
+	for pgid, pc := range ppc.PoolPgMap.PgMap {
+		pgidToi, _ := strconv.Atoi(pgid)
+		var osdlist []int32
+
+		for _, oid := range pc.OsdList {
+			osdlist = append(osdlist, int32(oid))
+		}
+		poi := &msg.PgOsdInfo{
+			Pgid:     int32(pgidToi),
+			Coreindex:  pc.CoreIndex,
+			Osdid:    osdlist,
+		}
+		pgOsdInfos.Pgs = append(pgOsdInfos.Pgs, poi)
+	}
+	gpo.Pools[int32(ppc.Poolid)] = pgOsdInfos
+}
+
+func ProcessGetPgOsdInfoMessage(ctx context.Context, poolIds []int32) (*msg.GetPgOsdInfoResponse, error) {
+	if len(AllPools) == 0 {
+		log.Info(ctx, "no pool created yet")
+		return nil, fmt.Errorf("no pool created yet")
+	}
+	
+	gpo := &msg.GetPgOsdInfoResponse{
+		Pools:                make(map[int32]*msg.PgOsdInfos),
+	}
+
+	if len(poolIds) == 0 {
+		for _, ppc := range AllPools {
+			generatePgOsdInfoRsp(ppc, gpo)
+		}
+	} else {
+		for _, poolid := range poolIds {
+			generatePgOsdInfoRsp(AllPools[PoolID(poolid)], gpo)
+		}
+	}
+	log.Info(ctx, "ProcessGetPgOsdInfoMessage done")
+	return gpo, nil
 }
