@@ -1,11 +1,16 @@
 compile_library(
-  NAME fbclient
+  NAME
+    client
+  ENABLE_INSTALL 1
+  SHARED 1
   SRCS
     libfblock.cc
+    libfblock_c.cc
     fb_client.cc
-
   DEPS
-    spdk::spdk
+    spdk::env_dpdk
+    spdk_log
+    # spdk_thread
     monclient
     raft_msg
     msg
@@ -13,4 +18,4 @@ compile_library(
     osd_msg
   COPTS
     -Wno-error=format=
-    )
+)

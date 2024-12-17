@@ -1,16 +1,10 @@
 add_executable(fastblock-vhost
-  global.cc
   common.cc
-  bdev_fastblock.cc
-  bdev_fastblock_rpc.cc
   vhost.cc
   )
 
 add_executable(fastblock-nvmf-tgt
-  global.cc
   common.cc
-  bdev_fastblock.cc
-  bdev_fastblock_rpc.cc
   nvmf_tgt.cc
   )
 
@@ -22,8 +16,10 @@ target_link_libraries(fastblock-vhost
     spdk::spdk
     osd_msg
     msg
-    fbclient
     get_core
+    client
+    fastblock_raft
+    par_mgr
   )
 
 target_include_directories (fastblock-nvmf-tgt
@@ -34,9 +30,23 @@ target_link_libraries(fastblock-nvmf-tgt
     spdk::spdk
     osd_msg
     msg
-    fbclient
     get_core
+    client
+    fastblock_raft
+    par_mgr
   )
 
-install(TARGETS fastblock-vhost fastblock-nvmf-tgt DESTINATION bin PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
-                    GROUP_EXECUTE GROUP_READ WORLD_READ WORLD_EXECUTE)
+install(
+  TARGETS
+    fastblock-vhost
+    fastblock-nvmf-tgt
+  DESTINATION
+    bin
+  PERMISSIONS
+    OWNER_EXECUTE
+    OWNER_WRITE
+    OWNER_READ
+    GROUP_EXECUTE
+    GROUP_READ
+    WORLD_READ
+    WORLD_EXECUTE)

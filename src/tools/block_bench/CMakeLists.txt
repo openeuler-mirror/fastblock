@@ -9,11 +9,12 @@ target_include_directories (block_bench
 
 target_link_libraries(block_bench
   PUBLIC
+    spdk::spdk
     base
     osd_msg
     msg
     monclient
-    fbclient
+    client
 )
 
 install(TARGETS block_bench DESTINATION bin)

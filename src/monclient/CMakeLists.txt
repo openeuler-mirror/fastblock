@@ -1,15 +1,15 @@
 compile_library (
-  NAME
-    monclient
+  NAME monclient
+  ENABLE_INSTALL 1
+  SHARED 1
   SRCS
     log_components.cc
     messages.pb.cc
     client.cc
   DEPS
-    spdk::spdk
+    spdk_log
+    spdk_sock
+    spdk_sock_posix
     protobuf
     par_mgr
-    fastblock_raft
 )
-
-# add_subdirectory(test)

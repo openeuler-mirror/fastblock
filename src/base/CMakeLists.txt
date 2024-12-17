@@ -1,7 +1,7 @@
 compile_library (
   NAME base
-  DEPS
-    spdk::spdk
+  ENABLE_INSTALL 1
+  SHARED 1
   SRCS
     core_sharded.cc
   COPTS

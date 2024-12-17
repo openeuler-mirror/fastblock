@@ -12,6 +12,7 @@
 #pragma once
 
 #include "fastblock/monclient/messages.pb.h"
+#include "fastblock/monclient/types.h"
 #include "fastblock/utils/utils.h"
 #include "fastblock/utils/simple_poller.h"
 #include "fastblock/utils/time_check.h"

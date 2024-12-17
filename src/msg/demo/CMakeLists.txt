@@ -4,6 +4,8 @@ add_executable(server ping_pong.pb.cc server.cc)
 target_link_libraries(server
   PRIVATE
       fastblock_msg
+      spdk::syslibs
+      spdk::event
     ${COMMON_LINKOPTS}
 )
 target_include_directories(server
@@ -15,6 +17,8 @@ add_executable(client ping_pong.pb.cc client.cc)
 target_link_libraries(client
   PRIVATE
     fastblock_msg
+    spdk::syslibs
+    spdk::event
     ${COMMON_LINKOPTS}
 )
 target_include_directories(client

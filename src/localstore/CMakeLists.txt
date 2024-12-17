@@ -13,9 +13,13 @@ compile_library(
     disk_log.cc
 
   DEPS
-  spdk::spdk
-  absl::flat_hash_map
-  fastblock_base
+    spdk_blob
+    spdk_thread
+    spdk_log
+    spdk_env_dpdk
+    spdk::bdev
+    absl::flat_hash_map
+    fastblock_base
 
   COPTS
   -Wno-error=unused-variable

@@ -10,7 +10,6 @@ compile_library(
     append_entry_buffer.cc
     configuration_manager.cc
   DEPS
-    spdk::spdk
     raft_msg
     msg
     base
