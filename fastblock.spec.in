@@ -37,6 +37,7 @@ BuildRequires:      boost
 BuildRequires:      numactl-devel
 BuildRequires:      make
 
+
 %description
 A distributed block storage system that uses mature Raft protocol and is designed for all-flash scenarios.
 
@@ -52,6 +53,13 @@ Summary:            fastblock osd
 %description osd
 fastblock-osd is the object storage daemon for the distributed file system.
 It is responsible for storing objects on a local file system and providing access to them over the network.
+
+%package devel
+Summary:            Development files for fastblock
+Requires:           %{name} = %{version}-%{release}
+
+%description devel
+This package contains the development headers for fastblock.
 
 %prep
 %autosetup -p1 -n %{name}
@@ -81,13 +89,21 @@ mkdir -p %{buildroot}/etc/fastblock/
 
 %post osd
 /usr/bin/systemctl preset fastblock-osd@.service fastblock-osd.target >/dev/null 2>&1 ||:
+/usr/bin/systemctl preset fastblock-vhost.service fastblock-vhost.target >/dev/null 2>&1 ||:
+/usr/bin/systemctl preset fastblock-nvmf-tgt.service fastblock-nvmf-tgt.target >/dev/null 2>&1 ||:
 %systemd_post fastblock-osd@.service fastblock-osd.target
+%systemd_post fastblock-vhost.service fastblock-vhost.target
+%systemd_post fastblock-nvmf-tgt.service fastblock-nvmf-tgt.target
 
 %preun osd
 %systemd_preun fastblock-osd@.service fastblock-osd.target
+%systemd_preun fastblock-vhost.service fastblock-vhost.target
+%systemd_preun fastblock-nvmf-tgt.service fastblock-nvmf-tgt.target
 
 %postun osd
 %systemd_postun fastblock-osd@.service fastblock-osd.target
+%systemd_postun fastblock-vhost.service fastblock-vhost.target
+%systemd_postun fastblock-nvmf-tgt.service fastblock-nvmf-tgt.target
 
 %files
 
@@ -101,8 +117,11 @@ mkdir -p %{buildroot}/etc/fastblock/
 %files osd
 %{_unitdir}/fastblock-osd.target
 %{_unitdir}/fastblock-osd@.service
+%{_unitdir}/fastblock-vhost.service
+%{_unitdir}/fastblock-vhost.target
+%{_unitdir}/fastblock-nvmf-tgt.service
+%{_unitdir}/fastblock-nvmf-tgt.target
 %attr(0755, root, root) /usr/local/bin/fastblock-osd
-%attr(0755, root, root) /usr/local/bin/fbbench
 %attr(0755, root, root) /usr/local/bin/block_bench
 %attr(0755, root, root) /usr/local/bin/fastblock-vhost
 %attr(0755, root, root) /usr/local/bin/fastblock-nvmf-tgt

@@ -5,6 +5,8 @@
 - fastblock-vhost对接qemu的功能测试可以参考[vhost对接qemu测试](qemu_vhost_test.md)
 - nvmf测试可以参考[内核initiator连接nvmf-tgt导出磁盘](nvmf_tgt.md)
 - block_bench测试可以参考[性能测试](performance_test_20240731.md)
+- 请注意参考[rpc系统参数配置](rpc_memory_parameter.md)进行fastblock.json、vhost.json和nvmf.json的配置，相关参数在osd侧和客户端侧必须一直，否则将无法通信  
+
 因为受限于硬件设备不够，只有一台测试服务器，3副本需要在一台服务器上测试
 
 # 3 环境

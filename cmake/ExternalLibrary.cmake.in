@@ -65,8 +65,8 @@ else()
 endif()
 
 ExternalProject_Add(spdk
-  GIT_REPOSITORY https://gitee.com/liuhq189/spdk.git
-  GIT_TAG multi_blobstore_per_bdev
+  GIT_REPOSITORY https://gitee.com/wuxingyi/spdk.git
+  GIT_TAG v24.05.x
   UPDATE_COMMAND ""
   BUILD_IN_SOURCE ON
   INSTALL_DIR    @FASTBLOCK_DEPS_INSTALL_DIR@

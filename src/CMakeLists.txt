@@ -1,7 +1,6 @@
 find_package(spdk REQUIRED)
 find_package(absl REQUIRED)
 
-add_subdirectory(include)
 add_subdirectory(base)
 add_subdirectory(msg)
 add_subdirectory(rpc)
