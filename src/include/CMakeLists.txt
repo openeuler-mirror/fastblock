@@ -1,1 +1,0 @@
-install(DIRECTORY fastblock DESTINATION include FILES_MATCHING PATTERN "*.h")

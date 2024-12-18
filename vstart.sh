@@ -127,7 +127,18 @@ function generateConfigAndStartMonitor() {
     tmpConfFile=$(mktemp)
 
     # default msg_rdma_cq_num_entries is 16, make it larger if you encounter CQ errors
-    echo '{"msg_rdma_cq_num_entries": 1024}' | jq '.' > $tmpConfFile
+    echo '{"msg_rdma_cq_num_entries": 1024,
+           "msg_server_metadata_memory_pool_capacity": 4096,
+           "msg_server_data_memory_pool_capacity": 4096,
+           "msg_client_metadata_memory_pool_capacity": 4096,
+           "msg_client_data_memory_pool_capacity": 4096,
+           "msg_server_metadata_memory_pool_element_size": 512,
+           "msg_server_data_memory_pool_element_size": 5120,
+           "msg_client_metadata_memory_pool_element_size": 512,
+           "msg_client_data_memory_pool_element_size": 5120,
+           "msg_client_per_post_recv_num": 64,
+           "msg_server_per_post_recv_num": 64
+    }' | jq '.' > $tmpConfFile
 
     rm -rf /var/lib/fastblock/mon_"$_mons"
     jq '.monitors |= ['\"$_mons\"']' $tmpConfFile > tmp_file.json && mv tmp_file.json $tmpConfFile
