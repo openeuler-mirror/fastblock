@@ -12,7 +12,7 @@
 #include <optional>
 #include "fastblock/bdev/global.h"
 #include "common.h"
-
+#include "osd/partition_manager.h"
 
 const char* g_mon_cluster_endpoints = nullptr;
 const char* g_conf_path{nullptr};
@@ -94,8 +94,9 @@ app_parse_arg(int ch, char *arg)
 	return 0;
 }
 
+static std::shared_ptr<::partition_manager> g_par_mgr = nullptr;
 
-void app_run(void *arg1)
+void fb_client_init(std::optional<std::function<void()>> &&cb, bool should_create_pm) 
 {
 	std::vector<monitor::client::endpoint> mon_eps{};
 	auto &monitors = g_pt.get_child("mon_host");
@@ -105,7 +106,6 @@ void app_run(void *arg1)
 		auto mon_addr = pos->second.get_value<std::string>();
 		mon_eps.emplace_back(std::move(mon_addr), utils::default_monitor_port);
 	}
-
 
     auto core_begin = core_sharded::system::begin();
     core_sharded::construct(core_begin, core_sharded::system::capacity(), g_app_name);
@@ -117,12 +117,22 @@ void app_run(void *arg1)
 	::spdk_cpuset_set_cpu(&cpumask, core_no, true);
 	global::conn_cache = std::make_shared<::connect_cache>(&cpumask, global::rpc_cli_opts);
 
-    global::mon_client = std::make_unique<monitor::client>(mon_eps, nullptr);
+	if(should_create_pm){
+		g_par_mgr = std::make_shared<::partition_manager>(-1, global::conn_cache);
+		global::mon_client = std::make_unique<monitor::client>(mon_eps, reinterpret_cast<void*>(g_par_mgr.get()), std::nullopt, std::move(cb));
+	} else {
+		global::mon_client = std::make_unique<monitor::client>(mon_eps, nullptr, std::nullopt, std::move(cb));
+	}
     global::mon_client->start();
     global::mon_client->start_cluster_map_poller();
 
     global::blk_clients.resize(core_sharded::system::capacity() + 1);
     global::app_thread_shard_id = core_sharded::system::capacity();
     global::vhost_worker_threads.resize(core_sharded::system::capacity() + 1);
+}
+
+void app_run(void *)
+{
+	fb_client_init(std::nullopt);
 }
 
