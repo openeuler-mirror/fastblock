@@ -14,11 +14,29 @@
 #include "common.h"
 #include "osd/partition_manager.h"
 
+SPDK_LOG_REGISTER_COMPONENT(common)
+
 const char* g_mon_cluster_endpoints = nullptr;
 const char* g_conf_path{nullptr};
 boost::property_tree::ptree g_pt{};
 int g_core_num = 1;
 std::string  g_app_name;
+bool g_app_stop{false};
+
+struct app_stop_context {
+    enum class state {
+        running = 1,
+        monitor_stopped,
+        connect_cache_stopped,
+        stopping_block_clients,
+        stopping_spdk_threads
+    };
+
+    state current_state{state::running};
+	int64_t counter{0};
+};
+
+static app_stop_context g_app_stop_ctx{};
 
 void
 app_usage(void)
@@ -134,5 +152,70 @@ void fb_client_init(std::optional<std::function<void()>> &&cb, bool should_creat
 void app_run(void *)
 {
 	fb_client_init(std::nullopt);
+}
+
+static void general_stop(){
+    switch (g_app_stop_ctx.current_state) {
+    case app_stop_context::state::monitor_stopped: {
+        global::conn_cache->stop([]() mutable {
+			SPDK_INFOLOG(common, "The connect_cache has been stopped\n");
+			g_app_stop_ctx.current_state = app_stop_context::state::connect_cache_stopped;
+			general_stop();
+		});
+		return;
+	}
+	case app_stop_context::state::connect_cache_stopped: {
+        if(g_app_stop_ctx.counter == static_cast<int64_t>(global::blk_clients.size())){
+            g_app_stop_ctx.counter = 0;
+			g_app_stop_ctx.current_state = app_stop_context::state::stopping_spdk_threads;
+			SPDK_INFOLOG(common, "The block_bench has been stopped\n");
+			return general_stop();
+		}
+
+		auto index = g_app_stop_ctx.counter++;
+		SPDK_INFOLOG(common, "start stopping the %ldth block client\n", index);
+		if(global::blk_clients[index]){
+			auto blk_thread = global::blk_clients[index]->get_blk_thread();
+			global::blk_clients[index]->stop([index, blk_thread]() mutable {
+				SPDK_INFOLOG(common, 
+				        "the %ldth block_bench poller has been stopped, all %lu\n",
+				        index, global::blk_clients.size());
+				if(blk_thread != spdk_thread_get_app_thread()){
+					spdk_thread_exit(blk_thread);
+				}
+				g_app_stop_ctx.current_state = app_stop_context::state::connect_cache_stopped;  
+				general_stop();   
+			});
+		} else {
+			SPDK_INFOLOG(common, 
+                    "the %ldth block_bench poller has been stopped, all %lu\n",
+                    index, global::blk_clients.size());
+			g_app_stop_ctx.current_state = app_stop_context::state::connect_cache_stopped;  
+			general_stop();
+		}
+		return;
+	}
+	case app_stop_context::state::stopping_spdk_threads: {
+		SPDK_INFOLOG(common, "start stopping spdk threads\n");
+		core_sharded::stop_all();
+		
+		spdk_app_stop(0);
+		return;
+	}
+	default:
+	    break;
+	}
+}
+
+void app_stop(){
+    if(g_app_stop)
+	    return;
+	SPDK_INFOLOG(common, "stop the app.\n");
+	g_app_stop = true;
+	global::mon_client->stop([](){
+        g_app_stop_ctx.current_state = app_stop_context::state::monitor_stopped;
+		SPDK_INFOLOG(common, "The monitor client has been stopped\n");
+		general_stop();
+	});
 }
 

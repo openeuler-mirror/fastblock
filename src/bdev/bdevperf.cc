@@ -746,10 +746,11 @@ clean:
 	if (g_request && !g_shutdown) {
 		rpc_perform_tests_cb();
 		if (rc != 0) {
-			spdk_app_stop(rc);
+			app_stop();
 		}
-	} else {
-		spdk_app_stop(rc);
+	} 
+	else {
+		app_stop();
 	}
 }
 
@@ -2660,6 +2661,7 @@ spdk_bdevperf_shutdown_cb(void)
 	TAILQ_FOREACH_SAFE(job, &g_bdevperf.jobs, link, tmp) {
 		spdk_thread_send_msg(job->thread, _bdevperf_job_drain, job);
 	}
+	app_stop();
 }
 
 static int

@@ -22,6 +22,7 @@ int main(int argc, char *argv[])
 	opts.num_entries = 0;
 	opts.name = "vhost";
 	opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
+	opts.shutdown_cb = app_stop;
 
 	if ((rc = spdk_app_parse_args(argc, argv, &opts, "C:N:S:", g_cmdline_opts,
 								  app_parse_arg, app_usage)) !=

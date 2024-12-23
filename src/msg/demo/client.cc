@@ -161,7 +161,8 @@ void on_core_iter_done(void* arg1, void* arg2) {
 
         g_done_counter = 0;
         for  (auto it = g_rpc_clients.begin(); it != g_rpc_clients.end(); ++it) {
-            it->client->stop([] () {
+            it->client->stop([thread = it->client->get_thread()] () {
+                ::spdk_thread_exit(thread);
                 auto* evt = ::spdk_event_allocate(::spdk_env_get_first_core(), on_rpc_client_closed, nullptr, nullptr);
                 ::spdk_event_call(evt);
             });
@@ -242,8 +243,10 @@ void start_rpc_client(void* arg) {
 
         auto opts = msg::rdma::client::make_options(g_pt);
         auto mask = core_sharded::make_cpumake(*core_it);
+        auto name = FB_FMT_1("rpc_cli_%d", ::spdk_env_get_current_core());
+        auto thread = ::spdk_thread_create(name.c_str(), mask.get());
         ctx.client = std::make_shared<msg::rdma::client>(
-          FB_FMT_1("rpc_cli_%d", ::spdk_env_get_current_core()), mask.get(), opts);
+          name, thread, opts);
         ctx.client->start();
         ctx.client->emplace_connection(
           srv_addr, ports.at(counter),

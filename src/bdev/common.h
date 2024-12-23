@@ -26,6 +26,7 @@ extern const char* g_conf_path;
 extern boost::property_tree::ptree g_pt;
 extern int g_core_num ;
 extern std::string  g_app_name;
+extern bool g_app_stop;
 
 void
 app_usage(void);
@@ -45,3 +46,4 @@ app_parse_arg(int ch, char *arg);
 void fb_client_init(std::optional<std::function<void()>> &&cb, bool should_create_pm = false);
 void app_run(void *arg1);
 
+void app_stop();

@@ -1179,9 +1179,7 @@ public:
 
     client() = delete;
 
-    client(std::string name, ::spdk_cpuset* cpumask, std::shared_ptr<options> opts, int sock_id = SPDK_ENV_SOCKET_ID_ANY)
-      : client{name, ::spdk_thread_create(name.c_str(), cpumask), opts, sock_id} {}
-
+    //thread有调用者传入，需要有调用者释放
     client(std::string name, ::spdk_thread* thread, std::shared_ptr<options> opts, int sock_id = SPDK_ENV_SOCKET_ID_ANY)
       : _opts{opts}
       , _dev{std::make_shared<device>()}
@@ -1229,11 +1227,6 @@ private:
         _core_poller.unregister_poller();
         _stop_poller.unregister_poller();
         SPDK_NOTICELOG("The poller of the rpc client has been unregistered\n");
-
-        if (_thread) {
-            ::spdk_thread_exit(_thread);
-            SPDK_NOTICELOG("SPDK thread (%s) of the rpc client has been marked as exited\n", spdk_thread_get_name(_thread));
-        }
 
         _meta_pool->free();
         _data_pool->free();

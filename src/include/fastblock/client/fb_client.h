@@ -710,6 +710,9 @@ public:
         return 0;
     }
 
+    spdk_thread* get_current_thread() {
+        return _current_thread;
+    }
 private:
     // 计算对象的地址
     unsigned calc_target(const std::string &sstr, int32_t target_pool_id);
