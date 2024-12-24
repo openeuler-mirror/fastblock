@@ -346,7 +346,7 @@ private:
                     continue;
                 }
 
-                SPDK_NOTICELOG(
+                SPDK_INFOLOG(msg, 
                   "port %u of %s is %s, link layer is %s\n",
                   port, dev_name.c_str(),
                   port_state_name(port_attr->state).c_str(),
@@ -371,7 +371,7 @@ private:
                     if (not _default_device and dev_ip_it != _dev_ipv4_map.end()) {
                         _default_device = dev_name;
                         _default_ipv4 = dev_ip_it->second;
-                        SPDK_NOTICELOG(
+                        SPDK_INFOLOG(msg,
                           "default rdma device is %s, default ip address is %s\n",
                           _default_device->c_str(), dev_ip_it->second.c_str());
                     }

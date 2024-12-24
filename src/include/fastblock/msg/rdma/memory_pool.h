@@ -164,19 +164,19 @@ public:
 
         _is_free = true;
 
-        SPDK_NOTICELOG("Start closing rpc memory_pool %s\n", _name.c_str());
+        SPDK_INFOLOG(msg, "Start closing rpc memory_pool %s\n", _name.c_str());
         if (this->_net_ctx_ptr) {
             for (auto* ctx : _net_context_list) {
                 ::ibv_dereg_mr(ctx->mr);
             }
-            SPDK_NOTICELOG("Deregistered all memory region\n");
+            SPDK_INFOLOG(msg, "Deregistered all memory region\n");
             ::spdk_free(_net_ctx_ptr);
         }
 
         if (_data_ptr) {
             ::spdk_free(_data_ptr);
         }
-        SPDK_NOTICELOG("The memory pool %s has been freed\n", _name.c_str());
+        SPDK_INFOLOG(msg, "The memory pool %s has been freed\n", _name.c_str());
     }
 
 private:

@@ -244,7 +244,7 @@ public:
         }
 
         _opts->bind_address = *ipv4_address;
-        SPDK_NOTICELOG("Use ipv4 %s for listening\n", ipv4_address.value().c_str());
+        SPDK_INFOLOG(msg, "Use ipv4 %s for listening\n", ipv4_address.value().c_str());
     }
 
     server(std::string thread_name, ::spdk_cpuset* cpumask, std::shared_ptr<options> opts, int sock_id = SPDK_ENV_SOCKET_ID_ANY)

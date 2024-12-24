@@ -139,7 +139,7 @@ public:
 public:
 
     void handle_connection_shutdown(::rdma_cm_id* cm_id, connection_id conn_id, work_request_id::dispatch_id_type dis_id) {
-        SPDK_NOTICELOG("erase connection with id %lu\n", conn_id.value());
+        SPDK_INFOLOG(msg, "erase connection with id %lu\n", conn_id.value());
         _cm_records.erase(cm_id);
         _connections.erase(conn_id);
         _cqe_dispatch_map.erase(dis_id);
@@ -1014,7 +1014,7 @@ read_done:
 
         void free_resources() {
             _poller.unregister_poller();
-            SPDK_NOTICELOG("The poller of the connection has been unregistered\n");
+            SPDK_INFOLOG(msg, "The poller of the connection has been unregistered\n");
 
             for (auto& task : _onflight_requests) {
                 set_failed_msg(task->ctrlr);
@@ -1226,7 +1226,7 @@ private:
     void free_resources() {
         _core_poller.unregister_poller();
         _stop_poller.unregister_poller();
-        SPDK_NOTICELOG("The poller of the rpc client has been unregistered\n");
+        SPDK_INFOLOG(msg, "The poller of the rpc client has been unregistered\n");
 
         _meta_pool->free();
         _data_pool->free();
@@ -1374,7 +1374,7 @@ public:
                 break;
             }
 
-            SPDK_NOTICELOG(
+            SPDK_INFOLOG(msg, 
               "Try to connect %s at the %lu times\n",
               task_ptr->conn->fd().peer_address().c_str(),
               task_ptr->retry_ctx->retry_times);
@@ -1552,7 +1552,7 @@ public:
               "ERROR: failed process cm event, will close the connection(rdma cm id: %p)\n",
               evt_id);
 
-            SPDK_NOTICELOG("Reomve the connection(id: %p)\n", evt_id);
+            SPDK_INFOLOG(msg, "Reomve the connection(id: %p)\n", evt_id);
             conn_it->second->async_shutdown(connection::state::bad_event);
         }
 

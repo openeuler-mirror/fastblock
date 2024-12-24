@@ -662,7 +662,7 @@ void parse_open_blob_xattr(struct spdk_blob *blob, uint32_t shard_id, bm_complet
   case blob_type::free:
     // SPDK_WARNLOG("blob id: %lu type: %s skip!\n", spdk_blob_get_id(blob), type_str.c_str());
   default:
-    SPDK_WARNLOG("blob id: %lu type: %s shard: %u falls into default!\n", spdk_blob_get_id(blob), type_str.c_str(), shard_id);
+    SPDK_INFOLOG(blob_log, "blob id: %lu type: %s shard: %u falls into default!\n", spdk_blob_get_id(blob), type_str.c_str(), shard_id);
     ctx->cb_fn(ctx->args, 0);
     delete ctx;
     break;

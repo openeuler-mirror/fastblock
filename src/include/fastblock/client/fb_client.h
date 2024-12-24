@@ -352,17 +352,17 @@ public:
     }
 
     void handle_stop(stop_context* ctx) {
-        SPDK_NOTICELOG("Stop the fastblock client\n");
+        SPDK_INFOLOG(libblk, "Stop the fastblock client\n");
         _is_terminate = true;
 
         _rpc_client->stop([this, ctx = ctx] () mutable {
-            SPDK_NOTICELOG("rpc client has been stopped\n");
+            SPDK_INFOLOG(libblk, "rpc client has been stopped\n");
             _leader_poller.unregister_poller([this, ctx = ctx] () mutable {
-                SPDK_NOTICELOG("leader poller has been stopped\n");
+                SPDK_INFOLOG(libblk, "leader poller has been stopped\n");
                 _request_poller.unregister_poller([this, ctx = ctx] () mutable {
-                    SPDK_NOTICELOG("request poller has been stopped\n");
+                    SPDK_INFOLOG(libblk, "request poller has been stopped\n");
                     _response_poller.unregister_poller([this, ctx = ctx] () mutable {
-                        SPDK_NOTICELOG("response poller has been stopped\n");
+                        SPDK_INFOLOG(libblk, "response poller has been stopped\n");
                         if (ctx->cb) {
                             try {
                                 (ctx->cb.value())();

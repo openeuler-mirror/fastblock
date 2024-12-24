@@ -101,10 +101,10 @@ void pm_start_done(void *arg){
 void partition_manager::start(utils::context *complete, std::shared_ptr<monitor::client> mon_client){
     _mon_client = mon_client;
     auto cur_thread = spdk_get_thread();
-    SPDK_NOTICELOG("partition manager starting...\n");
+    SPDK_INFOLOG(osd, "partition manager starting...\n");
     _pgs.start(
       [this, complete, cur_thread](void *, int res){
-        SPDK_NOTICELOG("partition manager start done, res %d\n", res);
+        SPDK_INFOLOG(osd, "partition manager start done, res %d\n", res);
         set_osd_state(osd_state::OSD_ACTIVE);
         auto c_thread = spdk_get_thread();
         if(cur_thread != c_thread){

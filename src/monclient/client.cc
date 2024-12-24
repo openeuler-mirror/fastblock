@@ -130,7 +130,7 @@ void client::handle_stop(std::unique_ptr<client::stop_context> ctx) {
         return;
     }
 
-    SPDK_NOTICELOG("Stop the monitor client\n");
+    SPDK_INFOLOG(mon, "Stop the monitor client\n");
     _is_terminate = true;
     _get_cluster_map_poller.unregister_poller();
     _core_poller.unregister_poller();
@@ -850,7 +850,7 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
                 auto shard_id = it->first;
                 auto core_port = it->second;
 
-                SPDK_NOTICELOG(
+                 SPDK_INFOLOG(mon, 
                   "Starting connect to osd %s:%d, shard %d, core %d\n",
                   osd_info.address.c_str(), core_port.port, shard_id, core_port.core_id);
 
