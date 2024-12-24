@@ -626,6 +626,14 @@ print_bucket(void *ctx, uint64_t start, uint64_t end, uint64_t count,
 	       so_far_pct, count);
 }
 
+static void bdevperf_stop(int rc){
+	if(g_use_fastblock_bdev){
+		app_stop();
+	} else {
+		spdk_app_stop(rc);
+	}
+}
+
 static void
 bdevperf_test_done(void *ctx)
 {
@@ -746,11 +754,11 @@ clean:
 	if (g_request && !g_shutdown) {
 		rpc_perform_tests_cb();
 		if (rc != 0) {
-			app_stop();
+			bdevperf_stop(rc);
 		}
 	} 
 	else {
-		app_stop();
+		bdevperf_stop(rc);
 	}
 }
 
@@ -2661,7 +2669,6 @@ spdk_bdevperf_shutdown_cb(void)
 	TAILQ_FOREACH_SAFE(job, &g_bdevperf.jobs, link, tmp) {
 		spdk_thread_send_msg(job->thread, _bdevperf_job_drain, job);
 	}
-	app_stop();
 }
 
 static int

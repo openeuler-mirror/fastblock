@@ -14,6 +14,7 @@
 #include <random>
 #include <string>
 #include <functional>
+#include <map>
 
 #include "spdk/env.h"
 #include "spdk/uuid.h"
