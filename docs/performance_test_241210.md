@@ -18,6 +18,17 @@ cpu:  Kunpeng-920   96核
 # 4 部署集群,并创建所需的pool和image
 部署fastblock集群和创建pool和image的方法参考[vhost对接qemu测试](qemu_vhost_test.md)
 
+rpc参数配置
+```
+"msg_server_metadata_memory_pool_capacity": 2048,
+"msg_server_metadata_memory_pool_element_size": 512,
+"msg_server_data_memory_pool_capacity": 2048,
+"msg_server_data_memory_pool_element_size": 5120,
+"msg_client_metadata_memory_pool_capacity": 2048,
+"msg_client_metadata_memory_pool_element_size": 512,
+"msg_client_data_memory_pool_capacity": 2048,
+"msg_client_data_memory_pool_element_size": 5120,
+```
 
 # 5 单个osd、单副本场景测试
 启动一个osd，创建一个单副本pool，方法参考[vhost对接qemu测试](qemu_vhost_test.md)
@@ -242,6 +253,27 @@ iops:
 
 iops为13.4万，相对于block_bench的35.8万，损耗太大，损耗在于与nvmf_tgt之间的TCP通信、它经过内核、需要内核态和用户态切换。
 
+
+## 5.6 fastblock的bdevperf测试
+为fastblock添加了一个bdevperf测试工具，在src/bdev中，配置文件类似于src/bdev/bdev_perf.json
+```
+bdevperf -b -N bdev_perf.json -m '[80,81,82,83,84,85,86,87]' -C -E -T fbdev -t 240 -o 4096 -q 32 -M 0 -w randwrite
+```
+
+结果
+网卡监控信息：
+![alt text](png/performance_test_241210_net44.jpg)
+![alt text](png/performance_test_241210_net45.jpg)
+![alt text](png/performance_test_241210_net46.jpg)
+
+磁盘io：
+![alt text](png/performance_test_241210_disk46.jpg)
+
+iops:
+![alt text](png/performance_test_241210_12.jpg)
+
+iops为35.7万，相对于block_bench的35.8万,基本一致。
+
 # 6 4个osd，单副本场景测试
 启动4个osd，创建一个单副本pool，方法参考[vhost对接qemu测试](qemu_vhost_test.md)
 
@@ -389,6 +421,28 @@ iops:
 ![alt text](png/performance_test_241210_6.jpg)
 
 iops为13.4万，相对于block_bench的81.6万，相差太大，有待优化。
+
+
+## 6.6 fastblock的bdevperf测试
+```
+bdevperf -b -N bdev_perf.json -m '[80,81,82,83,84,85,86,87,88,89,90,91]' -C -E -T fbdev -t 240 -o 4096 -q 32 -M 0 -w randwrite
+```
+结果  
+网卡监控信息：
+![alt text](png/performance_test_241210_net47.jpg) 
+![alt text](png/performance_test_241210_net48.jpg) 
+![alt text](png/performance_test_241210_net49.jpg) 
+
+磁盘io：  
+![alt text](png/performance_test_241210_disk47.jpg) 
+![alt text](png/performance_test_241210_disk48.jpg) 
+![alt text](png/performance_test_241210_disk49.jpg) 
+![alt text](png/performance_test_241210_disk50.jpg) 
+
+iops:
+![alt text](png/performance_test_241210_13.jpg)
+
+iops为78.4万，相对于block_bench的81.6万，相差非常小。
 
 # 7 4个osd，三副本场景测试
 启动4个osd，创建一个三副本pool，方法参考[vhost对接qemu测试](qemu_vhost_test.md)
@@ -538,13 +592,35 @@ iops:
 
 iops为10.6万，相对于block_bench的35万，差得更大了，这部分开销是它经过内核，需要内核态和用户态切换，同时需要通过TCP网络把数据发送给nvmf_tgt。
 
+## 7.6 fastblock的bdevperf测试
+```
+bdevperf -b -N bdev_perf.json -m '[80,81,82,83,84,85,86,87]' -C -E -T fbdev -t 240 -o 4096 -q 64 -M 0 -w randwrite
+```
+
+结果    
+网卡监控信息： 
+![alt text](png/performance_test_241210_net50.jpg) 
+![alt text](png/performance_test_241210_net51.jpg) 
+![alt text](png/performance_test_241210_net52.jpg)
+
+磁盘io：
+![alt text](png/performance_test_241210_disk51.jpg) 
+![alt text](png/performance_test_241210_disk52.jpg) 
+![alt text](png/performance_test_241210_disk53.jpg) 
+![alt text](png/performance_test_241210_disk54.jpg) 
+
+iops:
+![alt text](png/performance_test_241210_14.jpg) 
+
+iops为34.8万，相对于block_bench的35万，相差非常小。
+
 # 8 测试结果汇总
 
-| 测试场景\测试方法  | block_bench |  虚拟机 fio | 内核initiator导出磁盘 fio | spdk_nvmf_perf TCP | spdk_nvmf_perf RDMA  | 
-|------------------ |------------|-------------|--------------------------|--------------------|----------------------|
-| 1个osd、1副本池    |  358235    |   321k      |           134K           |      183133        |      331685          |
-| 4个osd、1副本池    |  816261    |   439K      |           134K           |      199865        |      641753          |
-| 4个osd、3副本池    |  349668    |   312K      |           106K           |      203781        |      273759          |
+| 测试场景\测试方法  | block_bench |  虚拟机 fio | 内核initiator导出磁盘 fio | spdk_nvmf_perf TCP | spdk_nvmf_perf RDMA  | fastblock bdevperf|
+|------------------ |------------|-------------|--------------------------|--------------------|----------------------|-------------------|
+| 1个osd、1副本池    |  358235    |   321k      |           134K           |      183133        |      331685          |    357062         |    
+| 4个osd、1副本池    |  816261    |   439K      |           134K           |      199865        |      641753          |    783744         |
+| 4个osd、3副本池    |  349668    |   312K      |           106K           |      203781        |      273759          |    347690         |
 
 
 从整体结果分析：
