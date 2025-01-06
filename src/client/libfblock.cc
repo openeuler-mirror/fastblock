@@ -14,7 +14,6 @@
 #include <thread>
 
 #include "fastblock/bdev/global.h"
-#include "osd/partition_manager.h"
 #include "fastblock/utils/utils.h"
 #include "fastblock/utils/err_num.h"
 

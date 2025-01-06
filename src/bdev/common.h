@@ -43,7 +43,7 @@ inline void clean_pid_file(const char *pid_path){
 int
 app_parse_arg(int ch, char *arg);
 
-void fb_client_init(std::optional<std::function<void()>> &&cb, bool should_create_pm = false);
+void fb_client_init(std::optional<std::function<void()>> &&cb);
 void app_run(void *arg1);
 
 void app_stop();

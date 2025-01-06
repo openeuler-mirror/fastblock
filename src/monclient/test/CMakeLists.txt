@@ -3,7 +3,6 @@ target_link_libraries(mon_client_test
   PUBLIC
 
     spdk::spdk
-    fastblock_osd_lib
   PRIVATE
     ${COMMON_LINKOPTS}
 )

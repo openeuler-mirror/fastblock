@@ -12,12 +12,12 @@
 
 #include "fastblock/rpc/osd_msg.pb.h"
 #include "partition_manager.h"
-#include "fastblock/monclient/client.h"
+#include "mon_client.h"
 
 class osd_service : public osd::rpc_service_osd
 {
 public:
-    osd_service(partition_manager *pm, std::shared_ptr<monitor::client> mon_cli)
+    osd_service(partition_manager *pm, std::shared_ptr<monitor_client> mon_cli)
         : _pm(pm), _monitor_client{mon_cli} {}
 
     void process_write(google::protobuf::RpcController *controller,
@@ -118,7 +118,7 @@ public:
 
 private:
     partition_manager *_pm;
-    std::shared_ptr<monitor::client> _monitor_client{nullptr};
+    std::shared_ptr<monitor_client> _monitor_client{nullptr};
 };
 
 template<typename request_type, typename reply_type>

@@ -12,7 +12,6 @@
 #include "fastblock/client/libfblock.h"
 #include "utils/units.h"
 #include "fastblock/utils/simple_poller.h"
-#include "osd/partition_manager.h"
 
 #include <spdk/event.h>
 #include <spdk/string.h>
@@ -307,7 +306,6 @@ struct stop_context {
 
 static char* g_conf_path{nullptr};
 static std::shared_ptr<::connect_cache> conn_cache;
-static std::shared_ptr<::partition_manager> par_mgr;
 static std::unique_ptr<monitor::client> mon_client;
 static std::string sample_data{};
 static boost::property_tree::ptree g_pt{};
@@ -739,7 +737,6 @@ void on_app_start(void* arg) {
 
     auto opts = msg::rdma::client::make_options(g_pt);
     conn_cache = std::make_shared<::connect_cache>(&cpumask, opts);
-    par_mgr = std::make_shared<::partition_manager>(-1, conn_cache);
     monitor::client::on_cluster_map_initialized_type cb = [watcher_ctx] () {
         auto n_core = ::spdk_env_get_core_count();
         if (g_print_ctx.take_single_core) {
@@ -818,7 +815,7 @@ void on_app_start(void* arg) {
         }
     };
 
-    mon_client = std::make_unique<monitor::client>(eps, reinterpret_cast<void*>(par_mgr.get()), std::nullopt, std::move(cb));
+    mon_client = std::make_unique<monitor::client>(eps, std::move(cb));
     mon_client->start();
     mon_client->start_cluster_map_poller();
     mon_client->emplace_create_image_request(

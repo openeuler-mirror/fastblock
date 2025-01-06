@@ -12,7 +12,6 @@
 #define BOOST_TEST_MODULE Monitor Client
 
 #include "fastblock/monclient/client.h"
-#include "osd/partition_manager.h"
 #include "fastblock/utils/utils.h"
 
 #include <spdk/event.h>
@@ -36,7 +35,7 @@ enum monitor_client_test_state {
 
 struct monitor_client_test_context {
     std::shared_ptr<::connect_cache> conn_cache{nullptr};
-    std::shared_ptr<::partition_manager> pm{nullptr};
+    // std::shared_ptr<::partition_manager> pm{nullptr};
     std::unique_ptr<monitor::client> mon_cli{nullptr};
     std::string image_name{};
     int64_t image_size{};
@@ -206,7 +205,7 @@ void monitor_client_test_on_app_start(void* arg) {
     auto opts = std::make_shared<msg::rdma::client::options>();
     opts->ep = std::make_unique<msg::rdma::endpoint>();
     ctx->conn_cache = std::make_shared<::connect_cache>(&cpumask, opts);
-    ctx->pm = std::make_shared<::partition_manager>(osd_id, ctx->conn_cache);
+    // ctx->pm = std::make_shared<::partition_manager>(osd_id, ctx->conn_cache);
     std::vector<monitor::client::endpoint> eps{};
     eps.emplace_back(monitor1_host, monitor1_port);
 
@@ -215,19 +214,20 @@ void monitor_client_test_on_app_start(void* arg) {
         eps.emplace_back(monitor3_host, monitor3_port);
     }
 
-    monitor::client::on_new_pg_callback_type pg_map_cb =
-      [pm = ctx->pm] (const msg::PGInfo& pg_info, const int32_t pool_id, const monitor::client::osd_map& osd_map,
-        monitor::client::pg_op_complete&& cb_fn, void *arg) {
-          BOOST_TEST_MESSAGE("call pg_map_cb()");
-
-          std::vector<utils::osd_info_t> osds{};
-          for (auto osd_id : pg_info.osdid()) {
-              osds.push_back(*(osd_map.data.at(osd_id)));
-          }
-          pm->create_partition(pool_id, pg_info.pgid(), 0, std::move(osds), 0, std::move(cb_fn), arg);
-      };
-
-    ctx->mon_cli = std::make_unique<monitor::client>(eps, ctx->pm, std::move(pg_map_cb));
+    // monitor::client::on_new_pg_callback_type pg_map_cb =
+    //   [pm = ctx->pm] (const msg::PGInfo& pg_info, const int32_t pool_id, const monitor::client::osd_map& osd_map,
+        // monitor::client::pg_op_complete&& cb_fn, void *arg) {
+        //   BOOST_TEST_MESSAGE("call pg_map_cb()");
+// 
+        //   std::vector<utils::osd_info_t> osds{};
+        //   for (auto osd_id : pg_info.osdid()) {
+            //   osds.push_back(*(osd_map.data.at(osd_id)));
+        //   }
+        //   pm->create_partition(pool_id, pg_info.pgid(), 0, std::move(osds), 0, std::move(cb_fn), arg);
+    //   };
+// 
+    // ctx->mon_cli = std::make_unique<monitor::client>(eps, ctx->pm, std::move(pg_map_cb));
+    ctx->mon_cli = std::make_unique<monitor::client>(eps);
     ctx->mon_cli->start();
 
     if (osd_id == -1) {

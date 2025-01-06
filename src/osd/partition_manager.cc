@@ -15,6 +15,7 @@
 #include "localstore/blob_manager.h"
 #include "localstore/disk_log.h"
 #include "raft/pg_group.h"
+#include "mon_client.h"
 
 SPDK_LOG_REGISTER_COMPONENT(osd)
 
@@ -98,7 +99,7 @@ void pm_start_done(void *arg){
     delete pm;
 }
 
-void partition_manager::start(utils::context *complete, std::shared_ptr<monitor::client> mon_client){
+void partition_manager::start(utils::context *complete, std::shared_ptr<monitor_client> mon_client){
     _mon_client = mon_client;
     auto cur_thread = spdk_get_thread();
     SPDK_INFOLOG(osd, "partition manager starting...\n");
