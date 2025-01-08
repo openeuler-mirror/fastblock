@@ -118,6 +118,9 @@ public:
     // TODO 添加 pg 到 master osd 的映射
     std::string get_image_object_name(std::string &prefix, uint64_t seq);
 
+    spdk_thread* get_blk_thread() {
+      return _client->get_current_thread();
+    }
 private:
 
     monitor::client* _mon_cli{nullptr};

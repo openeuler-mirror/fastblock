@@ -557,7 +557,9 @@ void general_stop_callback() {
 
         auto index = g_stop_ctx.counter++;
         SPDK_NOTICELOG("start stopping the %ldth block client\n", index + 1);
-        g_watcher_ctx.core_ctxs[index].blk_client->stop([index] () mutable {
+        auto blk_thread = g_watcher_ctx.core_ctxs[index].blk_client->get_blk_thread();
+        g_watcher_ctx.core_ctxs[index].blk_client->stop([index, blk_thread] () mutable {
+            ::spdk_thread_exit(blk_thread);
             SPDK_NOTICELOG(
               "the %ldth block_bench poller has been stopped, all %ld\n",
               index + 1, g_watcher_ctx.core_context_size);

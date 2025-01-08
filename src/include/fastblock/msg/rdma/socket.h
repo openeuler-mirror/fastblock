@@ -653,7 +653,7 @@ public:
         auto peer_addr = peer_address();
         auto local_addr = local_address();
 
-        SPDK_NOTICELOG(
+        SPDK_INFOLOG(msg, 
           "disconnect the connection(%s => %s)\n",
           local_addr.c_str(), peer_addr.c_str());
 
@@ -686,13 +686,13 @@ public:
         auto peer_addr = peer_address();
         auto local_addr = local_address();
 
-        SPDK_NOTICELOG(
+        SPDK_INFOLOG(msg, 
           "destroy the resource of the socket(%s => %s)\n",
           local_addr.c_str(), peer_addr.c_str());
 
         int ret;
         if (not _id) {
-            SPDK_NOTICELOG("rdma cm id is null when destroy resource\n");
+            SPDK_INFOLOG(msg, "rdma cm id is null when destroy resource\n");
         } else {
             if (_id->qp) {
                 ret = ::ibv_destroy_qp(_id->qp);
@@ -701,15 +701,15 @@ public:
                       "ERROR: Destroy qp(%s => %s)  failed, error: %s\n",
                       local_addr.c_str(), peer_addr.c_str(), strerror(errno));
                 }
-                SPDK_NOTICELOG(
+                SPDK_INFOLOG(msg, 
                   "destroy qp(%s => %s) success\n",
                   local_addr.c_str(), peer_addr.c_str());
             } else {
-                SPDK_NOTICELOG("qp is null when destroy resource\n");
+                SPDK_INFOLOG(msg, "qp is null when destroy resource\n");
             }
 
             ::rdma_destroy_id(_id);
-            SPDK_NOTICELOG(
+            SPDK_INFOLOG(msg, 
               "destroy rdma cm id(%s => %s) success\n",
               local_addr.c_str(), peer_addr.c_str());
             _id = nullptr;

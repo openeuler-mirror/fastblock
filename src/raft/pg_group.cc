@@ -71,11 +71,11 @@ void pg_group_t::start_shard_manager(utils::complete_fun fun, void *arg)
 
     for (i = 0; i < shard_num; i++)
     {
-        SPDK_NOTICELOG("starting shard manager on shard %d\n", i);
+        SPDK_INFOLOG(pg_group, "starting shard manager on shard %d\n", i);
         _shard.invoke_on(
             i,
             [this, shard_id = i, complete](){
-                SPDK_NOTICELOG("started shard manager on shard %d\n", shard_id);
+                SPDK_INFOLOG(pg_group, "started shard manager on shard %d\n", shard_id);
                 _shard_mg[shard_id].start();
                 complete->complete(0);
             });

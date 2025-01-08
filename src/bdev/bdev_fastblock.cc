@@ -527,17 +527,20 @@ bdev_fastblock_create_cb(void *io_device, void *ctx_buf)
 	 *  在fastblock-vhost和fastblock-nvmf-tgt中，创建的第一个spdk thread是“app thread”，随后又为每个核
 	 *  创建一个spdk thread,在创建每个核的spdk thread之前，获取bdev的信息都是在“app thread”中进行。
 	 */
-	if(strcmp("app_thread", spdk_thread_get_name(bdev_thd)) == 0){
+	if(bdev_thd == spdk_thread_get_app_thread()){
 		hold_index = global::app_thread_shard_id;
 	}
 	auto core_no = ::spdk_env_get_current_core();
-	SPDK_NOTICELOG("start block client on core %d, hold index is %d, thread id %lu, thread %s\n", 
+	SPDK_INFOLOG(bdev_fastblock, "start block client on core %d, hold index is %d, thread id %lu, thread %s\n", 
 	        core_no, hold_index, spdk_thread_get_id(bdev_thd), spdk_thread_get_name(bdev_thd));
 
     if (global::blk_clients[hold_index]) {
         auto blk_cli = std::move(global::blk_clients[hold_index]);
+        auto blk_thread = blk_cli->get_blk_thread();
         blk_cli->stop(
-          [blk_cli](){}
+          [blk_cli, blk_thread](){
+            spdk_thread_exit(blk_thread);
+          }
         );
     }
 
@@ -546,7 +549,7 @@ bdev_fastblock_create_cb(void *io_device, void *ctx_buf)
     auto* blk_cli_ptr = blk_cli.get();
     global::blk_clients.at(hold_index) = std::move(blk_cli);
     blk_cli_ptr->start([] () {
-        SPDK_NOTICELOG("block client has been started on core %d, thread id %lu\n", ::spdk_env_get_current_core(), ::spdk_thread_get_id(::spdk_get_thread()));
+        SPDK_INFOLOG(bdev_fastblock, "block client has been started on core %d, thread id %lu\n", ::spdk_env_get_current_core(), ::spdk_thread_get_id(::spdk_get_thread()));
     });
 
 	return 0;
@@ -567,6 +570,25 @@ bdev_fastblock_destroy_cb(void *io_device, void *ctx_buf)
 	}
 
 	bdev_fastblock_free_channel(io_channel);
+
+	auto* bdev_thd = ::spdk_get_thread();
+	auto hold_index = utils::get_current_shard_id();
+
+	if(bdev_thd == spdk_thread_get_app_thread()){
+		hold_index = global::app_thread_shard_id;
+	}
+
+	auto core_no = ::spdk_env_get_current_core();
+	SPDK_INFOLOG(bdev_fastblock, "stop block client on core %d, hold index is %d, thread id %lu, thread %s\n", 
+	        core_no, hold_index, spdk_thread_get_id(bdev_thd), spdk_thread_get_name(bdev_thd));	
+
+    if (global::blk_clients[hold_index]) {
+        auto blk_cli = std::move(global::blk_clients[hold_index]);
+        blk_cli->stop(
+          [blk_cli](){}
+        );
+		global::blk_clients[hold_index] = nullptr;
+    }
 }
 
 static struct spdk_io_channel *
@@ -668,7 +690,7 @@ int bdev_fastblock_create(struct spdk_bdev **bdev, const char *name,
 		return -EINVAL;
 	}
 
-	SPDK_NOTICELOG("create fastblock bdev on core %d\n", spdk_env_get_current_core());
+	SPDK_INFOLOG(bdev_fastblock, "create fastblock bdev on core %d\n", spdk_env_get_current_core());
 	fastblock = (struct bdev_fastblock *)calloc(1, sizeof(struct bdev_fastblock));
 	if (fastblock == NULL)
 	{
@@ -697,7 +719,7 @@ int bdev_fastblock_create(struct spdk_bdev **bdev, const char *name,
 		bdev_fastblock_free(fastblock);
 		return -ENOMEM;
 	}
-	SPDK_NOTICELOG("image_name %s, monitor_address %s\n", fastblock->image_name, fastblock->monitor_address);
+	SPDK_INFOLOG(bdev_fastblock, "image_name %s, monitor_address %s\n", fastblock->image_name, fastblock->monitor_address);
 
 	ret = bdev_create_image(fastblock);
 	if (ret != 0)
@@ -707,7 +729,7 @@ int bdev_fastblock_create(struct spdk_bdev **bdev, const char *name,
 		return ret;
 	}
 
-	SPDK_NOTICELOG("after bdev_create_image\n");
+	SPDK_INFOLOG(bdev_fastblock, "after bdev_create_image\n");
 	if (name)
 	{
 		fastblock->disk.name = strdup(name);
@@ -731,7 +753,7 @@ int bdev_fastblock_create(struct spdk_bdev **bdev, const char *name,
 	fastblock->disk.fn_table = &fastblock_fn_table;
 	fastblock->disk.module = &fastblock_if;
 
-	SPDK_NOTICELOG("Add %s fastblock disk to lun\n", fastblock->disk.name);
+	SPDK_INFOLOG(bdev_fastblock, "Add %s fastblock disk to lun\n", fastblock->disk.name);
 
 	spdk_io_device_register(fastblock, bdev_fastblock_create_cb,
 							bdev_fastblock_destroy_cb,

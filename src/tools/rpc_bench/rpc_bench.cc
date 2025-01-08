@@ -377,7 +377,8 @@ static int request_stop_poll(void* arg) {
         is_terminated = true;
         request_stop_poller->unregister_poller();
         for (auto& cli : rpc_clients) {
-            cli->stop([] () {
+            cli->stop([thread = cli->get_thread()] () {
+                ::spdk_thread_exit(thread);
                 ::spdk_thread_send_msg(rpc_bench_thread, on_client_stopped, nullptr);
             });
         }
@@ -487,7 +488,8 @@ void start_ping_client() {
             ::spdk_cpuset_set_cpu(&cpu_mask, core_no, true);
             auto rpc_cli_name = FB_FMT_1("rpc_cli_%1%", core_no);
             auto sockid = ::spdk_env_get_socket_id(core_no);
-            auto rpc_cli = std::make_shared<msg::rdma::client>(rpc_cli_name, &cpu_mask, opts, sockid);
+            auto thread = ::spdk_thread_create(rpc_cli_name.c_str(), &cpu_mask);
+            auto rpc_cli = std::make_shared<msg::rdma::client>(rpc_cli_name, thread, opts, sockid);
             current_cli = rpc_cli.get();
             rpc_clients.push_back(rpc_cli);
 

@@ -65,7 +65,7 @@ public:
         auto* ctx = reinterpret_cast<unregister_context*>(arg);
         ::spdk_poller_unregister(&(ctx->this_poller->_poller));
         ctx->this_poller->_poller = nullptr;
-        SPDK_NOTICELOG("unregistered the poller\n");
+        // SPDK_NOTICELOG("unregistered the poller\n");
         if (ctx->cb) {
             try {
                 (ctx->cb.value())();

@@ -14,6 +14,14 @@ add_executable(fastblock-nvmf-tgt
   nvmf_tgt.cc
   )
 
+add_executable(bdevperf
+  global.cc
+  common.cc
+  bdev_fastblock.cc
+  bdev_fastblock_rpc.cc
+  bdevperf.cc
+  )
+
 target_include_directories (fastblock-vhost
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -30,6 +38,18 @@ target_include_directories (fastblock-nvmf-tgt
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(fastblock-nvmf-tgt
+  PUBLIC
+    spdk::spdk
+    osd_msg
+    msg
+    fbclient
+    get_core
+  )
+
+  target_include_directories (bdevperf
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(bdevperf
   PUBLIC
     spdk::spdk
     osd_msg
