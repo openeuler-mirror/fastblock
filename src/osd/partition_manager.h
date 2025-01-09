@@ -27,9 +27,7 @@ enum class osd_state {
     OSD_DOWN
 };
 
-namespace monitor {
-    class client;
-}
+class monitor_client;
 
 using pm_complete = std::function<void (void *, int)>;
 
@@ -53,7 +51,7 @@ public:
           }
       }
 
-    void start(utils::context *complete, std::shared_ptr<monitor::client> mon_client);
+    void start(utils::context *complete, std::shared_ptr<monitor_client> mon_client);
 
     void stop(utils::complete_fun fun, void *arg);
     void stop_stm(uint64_t shard_id, utils::complete_fun fun, void *arg);
@@ -141,7 +139,7 @@ public:
         return 0;
     }
 
-    std::shared_ptr<monitor::client> get_mon_client(){
+    std::shared_ptr<monitor_client> get_mon_client(){
         return _mon_client;
     }
 
@@ -158,6 +156,6 @@ private:
     std::vector<uint32_t> _shard_cores;
     std::vector<std::map<std::string, std::shared_ptr<osd_stm>>> _sm_table;
     osd_state _state;
-    std::shared_ptr<monitor::client> _mon_client;
+    std::shared_ptr<monitor_client> _mon_client;
     bool _is_terminated{false};
 };

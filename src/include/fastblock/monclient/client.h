@@ -32,14 +32,7 @@
 #include <vector>
 #include <list>
 
-class partition_manager;
-
 namespace monitor {
-
-enum class user_identity {
-    USER_CLIENT = 0,
-    USER_OSD
-};
 
 
 class client {
@@ -347,23 +340,17 @@ public:
 
     client(
       const std::vector<endpoint>& endpoints,
-      void* pm_ctx = nullptr,
-      std::optional<on_new_pg_callback_type>&& new_pg_cb = std::nullopt,
       std::optional<on_cluster_map_initialized_type>&& cluster_map_init_cb = std::nullopt,
       int osd_id = -1,
       const size_t max_fail = 5,
       const bool auto_reconnect = true,
-      const std::chrono::system_clock::duration dur = std::chrono::seconds{10},
-      user_identity user_idty = user_identity::USER_CLIENT)
+      const std::chrono::system_clock::duration dur = std::chrono::seconds{10})
       : _cluster{std::make_unique<cluster>(endpoints, max_fail, dur, auto_reconnect)}
       , _self_osd_id{osd_id}
-      , _pm_ctx{pm_ctx}
       , _current_thread{::spdk_get_thread()}
       , _current_core{::spdk_env_get_current_core()}
       , _log_time_check{dur}
-      , _new_pg_cb{std::move(new_pg_cb)}
-      , _cluster_map_init_cb{std::move(cluster_map_init_cb)}
-      , _user_idty(user_idty) {}
+      , _cluster_map_init_cb{std::move(cluster_map_init_cb)} {}
 
     client(const client&) = delete;
 
@@ -394,7 +381,7 @@ public:
         return _last_cluster_map_at;
     }
 
-    auto is_terminate() noexcept {
+    virtual bool is_terminate() noexcept {
         return _is_terminate;
     }
 
@@ -406,20 +393,10 @@ public:
     void stop(std::optional<std::function<void()>>&& cb = std::nullopt);
     void handle_stop(std::unique_ptr<stop_context>);
 
-    void load_pgs();
+    virtual void load_pgs() {};
 
     void start_cluster_map_poller();
     void handle_start_cluster_map_poller();
-
-    void emplace_osd_boot_request(
-      const int,
-      const std::string&,
-      const std::map<uint32_t, std::pair<uint32_t, uint32_t>>&,
-      const std::string&,
-      const int64_t,
-      const uint32_t,
-      const std::string&,
-      on_response_callback_type&&);
 
     void emplace_create_image_request(
       const std::string,
@@ -452,21 +429,19 @@ public:
         return _pg_map;
     }
 
-    void send_leader_be_elected_notify_request(
-      int32_t leader_id,
-      uint64_t pool_id,
-      uint64_t pg_id,
-      std::vector<int32_t> osd_list,
-      std::vector<int32_t> new_osd_list);
+    void enqueue_request(request_context*);
+    virtual void connect_osd(std::unique_ptr<response_stack> &, utils::osd_info_t &, std::shared_ptr<msg::Response>);
+    virtual void remove_osd_connect(int , utils::complete_fun&& conn_cb) {
+        conn_cb(nullptr, 0);
+    };
 
-    void send_pg_member_change_finished_notify(
-      int result,
-      uint64_t pool_id,
-      uint64_t pg_id,
-      std::vector<int32_t> osd_list);
+    virtual void delete_pg_from_osd(const google::protobuf::Map<google::protobuf::int32, msg::PGInfos> &, uint64_t, 
+                std::unordered_map<monitor::client::pg_map::pg_id_type, std::unique_ptr<utils::pg_info_type>> &) {};
 
-    void send_data_statistics_request(
-      std::map<std::string, utils::cluster_io> &ios);
+    virtual void change_pg_membership(const msg::PGInfo &, 
+                        pg_map::pool_id_type,
+                        pg_map::version_type,
+                        pg_map::pg_id_type) {};
 private:
 
     template<typename ResponseType>
@@ -501,32 +476,48 @@ private:
     int send_request(std::unique_ptr<msg::Request>, bool);
     void process_response(std::shared_ptr<msg::Response> response);
     bool handle_response();
-    void enqueue_request(request_context*);
     void consume_general_request(bool);
     void consume_internal_request(bool);
     bool consume_request();
 
-    void _create_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_version, const msg::PGInfo &info);
-    void _remove_pg(pg_map::pool_id_type pool_id, pg_map::pg_id_type pg_id, pg_map::version_type pool_version);
-    void _active_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_version, const msg::PGInfo &info);
-private:
+public:
+    virtual void create_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_version, const msg::PGInfo &info);
+    virtual void remove_pg(pg_map::pool_id_type pool_id, pg_map::pg_id_type pg_id, pg_map::version_type pool_version);
+    virtual void check_and_active_pg(pg_map::pool_id_type pool_id, pg_map::pg_id_type pg_id, 
+                               pg_map::version_type pool_version, const msg::PGInfo &info) {};
+    void send_leader_be_elected_notify_request(
+                               int32_t leader_id,
+                               uint64_t pool_id,
+                               uint64_t pg_id,
+                               std::vector<int32_t> osd_list,
+                               std::vector<int32_t> new_osd_list);
 
+    void send_pg_member_change_finished_notify(
+                               int result,
+                               uint64_t pool_id,
+                               uint64_t pg_id,
+                               std::vector<int32_t> osd_list);
+
+    virtual bool in_monitor_list(const msg::PGInfo &) {
+        return true;
+    }
+protected:
+    pg_map _pg_map{};
+    osd_map _osd_map{};
     bool _is_terminate{false};
+     
+private:
     std::unique_ptr<cluster> _cluster{nullptr};
 
     int _self_osd_id{-1};
 
     bool _is_running{false};
 
-    void* _pm_ctx{nullptr}; // TODO: better impl
-
     utils::simple_poller _get_cluster_map_poller{};
     utils::simple_poller _core_poller{};
     ::spdk_thread* _current_thread{nullptr};
     uint32_t _current_core{0};
 
-    osd_map _osd_map{};
-    pg_map _pg_map{};
 
     std::unique_ptr<char[]> _response_buffer{
       std::make_unique<char[]>(_buffer_size)};
@@ -546,7 +537,6 @@ private:
 
     utils::time_check _log_time_check;
 
-    std::optional<on_new_pg_callback_type> _new_pg_cb{std::nullopt};
     std::chrono::system_clock::time_point _last_cluster_map_at{};
     std::optional<on_cluster_map_initialized_type> _cluster_map_init_cb{std::nullopt};
 
@@ -554,12 +544,20 @@ private:
     int64_t _should_read_bytes = 8;
     int64_t _read_bytes = 0;
     bool _is_read_len = true;
-    user_identity _user_idty;
 private:
 
     static constexpr size_t _buffer_size{65535};
     static constexpr uint64_t _poll_period_us{3000000};
     static constexpr uint64_t _meta_length{sizeof(uint64_t)};
 };
+
+struct delete_pg_context {
+    client *cli;
+    client::pg_map::pool_id_type pool_id;
+    client::pg_map::pg_id_type pg_id;
+    client::pg_map::version_type pool_version;
+};
+
+void delete_pg_done(void *arg, int perrono);
 
 }

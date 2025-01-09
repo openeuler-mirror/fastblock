@@ -17,9 +17,7 @@
 
 #include "fastblock/utils/utils.h"
 
-namespace monitor{
-    class client;
-}
+class monitor_client;
 
 class data_statistics{
 public:
@@ -31,7 +29,7 @@ public:
         (cb.value())();
     }
 
-    void set_mon_client(std::shared_ptr<monitor::client> mon_client){
+    void set_mon_client(std::shared_ptr<monitor_client> mon_client){
         _mon_client = mon_client;
     }
 
@@ -59,7 +57,7 @@ public:
     void send_data_to_mon();
 private:
     struct spdk_thread * _thread;
-    std::shared_ptr<monitor::client> _mon_client;
+    std::shared_ptr<monitor_client> _mon_client;
     std::map<std::string, utils::cluster_io> _ios;
     struct spdk_poller * _timer;
 };

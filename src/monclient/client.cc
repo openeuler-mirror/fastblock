@@ -11,7 +11,7 @@
 
 #include "fastblock/monclient/client.h"
 #include "fastblock/monclient/messages.pb.h"
-#include "osd/partition_manager.h"
+#include "fastblock/utils/err_num.h"
 
 namespace {
 static void make_sharded_ports(
@@ -79,25 +79,6 @@ void do_emplace_request(void* arg) {
     ctx->this_client->handle_emplace_request(ctx);
 }
 
-void client::load_pgs(){
-    if(_user_idty != user_identity::USER_OSD)
-        return;
-    // SPDK_WARNLOG("load pgs\n");
-    std::map<uint64_t, std::vector<utils::pg_info_type>> pools;
-    if (not _pm_ctx) {
-        auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
-        _pm->load_pgs_map(pools);
-    }
-    for(auto& [pool_id, infos] : pools){
-        _pg_map.pool_version[pool_id] = 0;
-        auto [it, _] = _pg_map.pool_pg_map.try_emplace(pool_id);
-        auto& pgs = it->second;
-        for(auto& info : infos){
-            pgs[info.pg_id] = std::make_unique<utils::pg_info_type>(std::move(info));
-        }
-    }
-}
-
 /*
  * methods
  */
@@ -153,42 +134,6 @@ void client::start_cluster_map_poller() {
 void client::handle_start_cluster_map_poller() {
     _get_cluster_map_poller.register_poller(
       monitor::send_cluster_map_request, this, _poll_period_us, "cluster_map");
-}
-
-/*
-   sharded_ports  <shard_id, <core_id, port>>>
-*/
-void client::emplace_osd_boot_request(
-  const int osd_id,
-  const std::string& osd_addr,
-  const std::map<uint32_t, std::pair<uint32_t, uint32_t>>& sharded_ports,
-  const std::string& osd_uuid,
-  const int64_t size,
-  const uint32_t core_num,
-  const std::string& config,
-  on_response_callback_type&& cb) {
-    auto req = std::make_unique<msg::Request>();
-    auto* boot_req = req->mutable_boot_request();
-    boot_req->set_osd_id(osd_id);
-    boot_req->set_uuid(osd_uuid.c_str());
-    boot_req->set_address(osd_addr.c_str());
-    boot_req->set_config(config);
-    auto* proto_sharded_ports = boot_req->mutable_sharded_ports();
-    for (auto it = sharded_ports.begin(); it != sharded_ports.end(); ++it) {
-        msg::ShardCore shard_core;
-        shard_core.set_coreid(it->second.first);
-        shard_core.set_port(it->second.second);
-        proto_sharded_ports->insert({it->first, std::move(shard_core)});
-    }
-    boot_req->set_size(size);
-    boot_req->set_core_num(core_num);
-    char hostname[1024];
-    ::gethostname(hostname, sizeof(hostname));
-    boot_req->set_host(hostname);
-
-    auto* req_ctx = new client::request_context{
-      this, std::move(req), std::monostate{}, std::move(cb)};
-    enqueue_request(req_ctx);
 }
 
 void client::emplace_create_image_request(
@@ -345,136 +290,53 @@ client::to_response_status(const msg::GetImageErrorCode e) noexcept {
     }
 }
 
-class change_membership_complete : public utils::context {
-public:
-    friend client;
-    change_membership_complete(uint64_t pool_id, uint64_t pg_id, int64_t version, std::vector<int32_t> osds, client* cli)
-    : _pool_id(pool_id)
-    , _pg_id(pg_id)
-    , _version(version)
-    , _osds(std::move(osds))
-    , _client(cli) {}
-
-    void finish(int r) override {
-        SPDK_INFOLOG(mon, "change membership of pg %lu.%lu version: %ld finish: result %d\n", _pool_id, _pg_id, _version, r);
-        if(r != 0) {
-            _client->get_pg_map().set_pool_update(_pool_id, _pg_id, _version, -1);
-            return;
-        }
-        if(!_client->get_pg_map().pool_pg_map[_pool_id].contains(_pg_id)){
-            SPDK_INFOLOG(mon, "pg %lu.%lu not in pool_pg_map", _pool_id, _pg_id);
-            return;
-        }
-        auto& pit = _client->get_pg_map().pool_pg_map[_pool_id][_pg_id];
-        pit->version = _version;
-        pit->osds = std::exchange(_osds, {});
-        _client->get_pg_map().set_pool_update(_pool_id, _pg_id, _version, 0);
+void client::create_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_version, const msg::PGInfo &info){
+    auto pit = std::make_unique<utils::pg_info_type>();
+    pit->pg_id = info.pgid();
+    pit->version = info.version();
+    std::string osd_str;
+    for (auto osd_id : info.osdid()){
+        pit->osds.push_back(osd_id);
+        osd_str += std::to_string(osd_id) + ",";
     }
-private:
-    uint64_t _pool_id;
-    uint64_t _pg_id;
-    int64_t _version;
-    std::vector<int32_t> _osds;
-    client* _client;
-};
-
-void client::_create_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_version, const msg::PGInfo &info){
-    if (_new_pg_cb) {
-        auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
-        int current_osdid = _pm->get_current_node_id();
-        bool in_pg = false;
-        for(auto osd_id : info.osdid()){
-            if(osd_id == current_osdid){
-                in_pg = true;
-                break;
-            }
-        }
-        if(!in_pg){
-            for(auto osd_id : info.newosdid()){
-                if(osd_id == current_osdid){
-                    in_pg = true;
-                    break;
-                }
-            }
-            if(!in_pg){
-                SPDK_INFOLOG(mon, "current osd %d not in pg %d\n", current_osdid, info.pgid());
-                return;
-            }
-        }
-
-        _pg_map.set_pool_update(pool_id, info.pgid(), pool_version, 1);
-        auto new_pg_done = [this, pool_id, pool_version, pg_id = info.pgid(), pg_version = info.version(), osds = info.osdid()]
-          (void *arg, int perrno){
-            if(perrno != 0){
-                SPDK_ERRLOG("create pg %d.%d failed: %s\n", pool_id, pg_id, spdk_strerror(perrno));
-                _pg_map.set_pool_update(pool_id, pg_id, pool_version, -1);
-                return;
-            }
-
-            auto pit = std::make_unique<utils::pg_info_type>();
-            pit->pg_id = pg_id;
-            pit->version = pg_version;
-            std::string osd_str;
-            for (auto osd_id : osds) {
-                pit->osds.push_back(osd_id);
-                osd_str += std::to_string(osd_id) + ",";
-            }
-
-            SPDK_DEBUGLOG(mon, "core [%u] pool: %d pg: %lu version: %ld  osd_list: %s\n",
-              ::spdk_env_get_current_core(), pool_id, pit->pg_id, pit->version, osd_str.data());
-
-            _pg_map.pool_pg_map[pool_id].emplace(pit->pg_id, std::move(pit));
-            _pg_map.set_pool_update(pool_id, pg_id, pool_version, 0);
-        };
-        _new_pg_cb.value()(info, pool_id, _osd_map, std::move(new_pg_done), nullptr);
-    }else{
-        auto pit = std::make_unique<utils::pg_info_type>();
-        pit->pg_id = info.pgid();
-        pit->version = info.version();
-        std::string osd_str;
-        for (auto osd_id : info.osdid()){
-            pit->osds.push_back(osd_id);
-            osd_str += std::to_string(osd_id) + ",";
-        }
-        SPDK_DEBUGLOG(mon, "core [%u] pool: %d pg: %lu version: %ld  osd_list: %s\n",
-              ::spdk_env_get_current_core(), pool_id, pit->pg_id, pit->version, osd_str.data());
-        _pg_map.pool_pg_map[pool_id].emplace(pit->pg_id, std::move(pit));
-    }
+    SPDK_DEBUGLOG(mon, "core [%u] pool: %d pg: %lu version: %ld  osd_list: %s\n",
+          ::spdk_env_get_current_core(), pool_id, pit->pg_id, pit->version, osd_str.data());
+    _pg_map.pool_pg_map[pool_id].emplace(pit->pg_id, std::move(pit));
 }
 
-void client::_remove_pg(pg_map::pool_id_type pool_id, pg_map::pg_id_type pg_id, pg_map::version_type pool_version){
-    auto delete_pg_done = [this, pool_id, pg_id, pool_version](void *arg, int perrono){
-        if(perrono != 0){
-            SPDK_ERRLOG("delete pg %d.%d failed: %s\n", pool_id, pg_id, spdk_strerror(perrono));
-            _pg_map.set_pool_update(pool_id, pg_id, pool_version, -1);
-            return;
-        }
+void delete_pg_done(void *arg, int perrono) {
+    auto ctx = (delete_pg_context *)arg;
+    auto pool_id = ctx->pool_id;
+    auto pg_id = ctx->pg_id;
+    auto pool_version = ctx->pool_version;
+    auto client = ctx->cli;
 
-        _pg_map.set_pool_update(pool_id, pg_id, pool_version, 0);
-        SPDK_DEBUGLOG(mon, "delete pg %d.%d success.\n", pool_id, pg_id);
-        _pg_map.pool_pg_map[pool_id].erase(pg_id);
-        if(_pg_map.pool_pg_map[pool_id].empty()){
-            _pg_map.pool_pg_map.erase(pool_id);
-            _pg_map.pool_version.erase(pool_id);
-            SPDK_DEBUGLOG(mon, "delete pool %d success.\n", pool_id);
-        }
-    };
+    auto &pg_map = client->get_pg_map();
+    if(perrono != 0){
+        SPDK_ERRLOG("delete pg %d.%d failed: %s\n", pool_id, pg_id, spdk_strerror(perrono));
+        pg_map.set_pool_update(pool_id, pg_id, pool_version, -1);
+        return;
+    }
+
+    pg_map.set_pool_update(pool_id, pg_id, pool_version, 0);
+    SPDK_DEBUGLOG(mon, "delete pg %d.%d success.\n", pool_id, pg_id);
+    pg_map.pool_pg_map[pool_id].erase(pg_id);
+    if(pg_map.pool_pg_map[pool_id].empty()){
+        pg_map.pool_pg_map.erase(pool_id);
+        pg_map.pool_version.erase(pool_id);
+        SPDK_DEBUGLOG(mon, "delete pool %d success.\n", pool_id);
+    }
+    delete ctx;
+}
+
+void client::remove_pg(pg_map::pool_id_type pool_id, pg_map::pg_id_type pg_id, pg_map::version_type pool_version){
+    auto ctx = new delete_pg_context{.cli = this, .pool_id = pool_id, .pg_id = pg_id, .pool_version = pool_version};
 
     _pg_map.set_pool_update(pool_id, pg_id, pool_version, 1);
-    if(_user_idty == user_identity::USER_OSD){
-        auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
-        _pm->delete_partition(pool_id, pg_id, std::move(delete_pg_done), nullptr);
-    } else {
-        delete_pg_done(nullptr, 0);
-    }
+    delete_pg_done(ctx, 0);
 }
 
 void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
-    int current_osdid{-1};
-    if (_pm_ctx) {
-        auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
-        current_osdid = _pm->get_current_node_id();
-    }
 
     auto& pv = pg_map_response.poolid_pgmapversion();
     auto& ec = pg_map_response.errorcode();
@@ -499,48 +361,10 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
             while(pg_item != pg_infos.end()){
                 auto pg_id = pg_item->first;
                 pg_item++;
-                _remove_pg(pool_id, pg_id, pool_version);
+                remove_pg(pool_id, pg_id, pool_version);
             }
         }else{
-            if(_user_idty == user_identity::USER_CLIENT){
-                continue;
-            }
-            auto info_it = pgs.find(pool_id);
-            if (info_it == pgs.end()){
-                continue;
-            }
-            bool contain = false;
-
-            for (auto& info : info_it->second.pi()){
-                auto pgid = info.pgid();
-                auto pg_item = pg_infos.find(pgid);
-                if(pg_item == pg_infos.end()){
-                    continue;
-                }
-                for (auto osd_id : info.osdid()) {
-                    if(osd_id == current_osdid){
-                        contain = true;
-                        break;
-                    }
-                }
-                if(contain)
-                    continue;
-
-                contain = false;
-                for(auto osd_id : pg_item->second->osds){
-                    if(osd_id == current_osdid){
-                        contain = true;
-                        break;
-                    }
-                }
-                if(!contain)
-                    continue;
-                /* 当前osd在本地pgmap中pg的osd列表中，但不在monitor的pgmap的osd列表中，说明当前osd已经从pg中
-                 * 移除（可能是osd out，monitor把它从pg中移除，但osd本地pg信息还未清除）,需要删除此osd上的pg信息。
-                 */
-                _remove_pg(pool_id, pgid, pool_version);
-            }
-
+            delete_pg_from_osd(pgs, pool_id, pg_infos); 
         }
     }
 
@@ -582,7 +406,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
             SPDK_DEBUGLOG(mon, "pgs size is %ld\n", pgs.size());
 
             for (auto& info : info_it->second.pi()) {
-                _create_pg(pool_key, pv.at(pool_key), info);
+                create_pg(pool_key, pv.at(pool_key), info);
             }
 
             continue;
@@ -598,7 +422,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
 
             for (auto& info : info_it->second.pi()){
                 if(not _pg_map.pool_pg_map[pool_key].contains(info.pgid())){
-                    _create_pg(pool_key, pv.at(pool_key), info);
+                    create_pg(pool_key, pv.at(pool_key), info);
                 }
             }
             continue;
@@ -624,25 +448,19 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                 continue;
             }
 
-            auto process_pg = [this, current_osdid](pg_map::pool_id_type pool_id, const msg::PGInfo& info, int64_t pool_version_in_mon){
+            auto process_pg = [this](pg_map::pool_id_type pool_id, const msg::PGInfo& info, int64_t pool_version_in_mon){
                 auto pgid = info.pgid();
                 auto& pit = _pg_map.pool_pg_map[pool_id][pgid];
 
-                bool contain_in_monitor = false;
                 std::vector<int> osds_in_mon;
                 for (auto osd_id : info.osdid()){
                     osds_in_mon.push_back(osd_id);
-                    if(osd_id == current_osdid){
-                        contain_in_monitor = true;
-                    }
                 }
+                bool contain_in_monitor = in_monitor_list(info);
 
-                if(_user_idty == user_identity::USER_CLIENT)
-                    contain_in_monitor = true;
-
-                //当前osd不在monitor上pg的osd列表中
+                //当前node不在monitor上pg的osd列表中
                 if(!contain_in_monitor ){
-                    _remove_pg(pool_id, pgid, _pg_map.pool_version[pool_id]);
+                    remove_pg(pool_id, pgid, _pg_map.pool_version[pool_id]);
                 } else if(contain_in_monitor){
                     if(osds_in_mon.size() != pit->osds.size()){
                         _pg_map.set_pool_update(pool_id, pgid, pool_version_in_mon, 1);
@@ -661,75 +479,32 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
             for (auto& info : info_it->second.pi()) {
                 auto pgid = info.pgid();
                 if(_pg_map.pool_pg_map[pool_key].contains(pgid)){
-                    //检查pg的osd成员是否变更
                     auto& pit = _pg_map.pool_pg_map[pool_key][pgid];
                     if(info.version() == pit->version)
                         continue;
 
-                    if(pit->version == 0){
-                        //出现这种情况是当前osd刚重启，恢复处理的_pg_map中pg的版本都是0，这时需要激活pg
-                        _active_pg(pool_key, pv.at(pool_key), info);
-                    }
+                    check_and_active_pg(pool_key, pgid, pv.at(pool_key), info);
+                    
                     if((info.state() & PgRemapped) == 0){
                         process_pg(pool_key, info, pv.at(pool_key));
                         continue;
                     }
-
-                    if(!_new_pg_cb || _user_idty != user_identity::USER_OSD)
-                        continue;
-
-                    std::vector<int32_t> new_osds;
-                    std::string osd_str;
-                    std::vector<utils::osd_info_t> new_osd_infos;
-
-                    for (auto osd_id : info.newosdid()){
-                        new_osds.push_back(osd_id);
-                        osd_str += std::to_string(osd_id) + ",";
-                        auto& osd_info = _osd_map.data[osd_id];
-                        new_osd_infos.emplace_back(*osd_info);
-                    }
-
-                    SPDK_INFOLOG(mon, "pool: %d version: %ld pg: %lu version: %ld  osd_list: %s\n",
-                            pool_key, pv.at(pool_key), pit->pg_id, info.version(), osd_str.data());
-                    auto complete = new change_membership_complete(pool_key, pgid, info.version(), new_osds, this);
-                    _pg_map.set_pool_update(pool_key, pgid, pv.at(pool_key), 1);
-                    auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
-                    _pm->change_pg_membership(pool_key, pgid, new_osd_infos, complete);
+                    
+                    change_pg_membership(info, pool_key, pv.at(pool_key), pgid);
                 }else{
-                    _create_pg(pool_key, pv.at(pool_key), info);
+                    create_pg(pool_key, pv.at(pool_key), info);
                 }
             }
         }
     }
 }
 
-void client::_active_pg(pg_map::pool_id_type pool_id,
-        pg_map::version_type pool_version, const msg::PGInfo &info){
-    bool pg_is_remap = (info.state() & PgRemapped) != 0;
-    auto active_pg_done = [this, pool_id, pool_version, pg_id = info.pgid(), pg_version = info.version(), pg_is_remap]
-      (void *arg, int perrno){
-        if(perrno != 0){
-            SPDK_ERRLOG("activate pg %d.%d failed: %s\n", pool_id, pg_id, spdk_strerror(perrno));
-            if(!pg_is_remap)
-                _pg_map.set_pool_update(pool_id, pg_id, pool_version, -1);
-            return;
-        }
-        if(!pg_is_remap){
-            _pg_map.set_pool_update(pool_id, pg_id, pool_version, 0);
-            _pg_map.pool_pg_map[pool_id][pg_id]->version = pg_version;
-        }
-        SPDK_INFOLOG(mon, "activate pg %d.%d done, pg_version %ld pg_is_remap %d\n",
-                pool_id, pg_id, pg_version, pg_is_remap);
-    };
-    if(!pg_is_remap){
-        _pg_map.set_pool_update(pool_id, info.pgid(), pool_version, 1);
-    }
-    if(_user_idty == user_identity::USER_OSD) {
-        auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
-        _pm->active_partition(pool_id, info.pgid(), std::move(active_pg_done), nullptr);
-    } else {
-        active_pg_done(nullptr, 0);
-    }
+void client::connect_osd(std::unique_ptr<response_stack> &resp_stack, 
+                        utils::osd_info_t &, 
+                        std::shared_ptr<msg::Response> response) {
+    if (not resp_stack) {
+        resp_stack = std::make_unique<response_stack>(response, 0);
+    }    
 }
 
 void client::process_osd_map(std::shared_ptr<msg::Response> response) {
@@ -808,11 +583,12 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
             osd_it->second->address = osds[i].address();
             if(osd_it->second->isup && !osds[i].isup() && osd_it->second->node_id != _self_osd_id){
                 SPDK_DEBUGLOG(mon, "osd %d is down, remove connect to it\n", osds[i].osdid());
-                auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
-                _pm->get_pg_group().remove_connect(osds[i].osdid(),
+
+                remove_osd_connect(osds[i].osdid(),
                   [this, node_id = osds[i].osdid()](void *, int ){
                     SPDK_DEBUGLOG(mon, "remove the connect to osd %d\n",node_id);
-                  });
+                  }
+                );
                 osd_it->second->isup = false;
             }
             osd_it->second->isup = osds[i].isup();
@@ -841,41 +617,8 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
         }
 
         auto& osd_info = *(osd_it->second);
-        if (should_create_connect and _pm_ctx) {
-            if (not resp_stack) {
-                resp_stack = std::make_unique<response_stack>(response, 0);
-            }
-
-            for (auto it = osd_info.sharded_ports.begin(); it != osd_info.sharded_ports.end(); ++it) {
-                auto shard_id = it->first;
-                auto core_port = it->second;
-
-                 SPDK_INFOLOG(mon, 
-                  "Starting connect to osd %s:%d, shard %d, core %d\n",
-                  osd_info.address.c_str(), core_port.port, shard_id, core_port.core_id);
-
-                auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
-                _pm->get_pg_group().create_connect(
-                  osd_info.node_id,
-                  shard_id,
-                  osd_info.address,
-                  core_port.port,
-                  [this, node_id = osd_info.node_id, raw_stack = resp_stack.get()] (void *, int res) {
-                      if (res != err::E_SUCCESS) {
-                          SPDK_ERRLOG("ERROR: Connect failed\n");
-                          auto it = _osd_map.data.find(node_id);
-                          if (it != _osd_map.data.end()) {
-                              it->second->isup = false;
-                          }
-                      }
-
-                      raw_stack->un_connected_count--;
-                      SPDK_DEBUGLOG(mon, "Connected, un-connected count is %ld\n",
-                        raw_stack->un_connected_count);
-                  }
-                );
-                resp_stack->un_connected_count++;
-            }
+        if (should_create_connect) {
+            connect_osd(resp_stack, osd_info, response);
         }
     }
 
@@ -898,17 +641,15 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
         SPDK_DEBUGLOG(mon,
           "The osd with id %d not found in the newer osd map\n",
           node_id);
-        if (_pm_ctx) {
-            auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
-            _pm->get_pg_group().remove_connect(node_id,
-              [this, node_id](void *, int res){
-                if(res == err::E_SUCCESS){
-                  _osd_map.data.erase(node_id);
-                  SPDK_DEBUGLOG(mon, "remove the connect to osd %d\n",node_id);
-                }
-              }
-            );
-        }
+        
+        remove_osd_connect(node_id,
+          [this, node_id](void *, int res){
+            if(res == err::E_SUCCESS){
+              _osd_map.data.erase(node_id);
+              SPDK_INFOLOG(mon, "remove the connect to osd %d\n",node_id);
+            }
+          }        
+        );
     }
 
     if (not resp_stack) {
@@ -1118,12 +859,9 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
 }
 
 bool client::handle_response() {
-    if (_pm_ctx) {
-        auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
-        if (_pm->is_terminated()) {
-            return SPDK_POLLER_IDLE;
-        }
-    }
+    if(is_terminate())
+        return false;   
+    
     if (_request_counter == 0) { return false; }
 
     if (not _cluster->is_connected()) {
@@ -1227,12 +965,8 @@ void client::consume_internal_request(bool is_cached) {
 }
 
 bool client::consume_request() {
-    if (_pm_ctx) {
-        auto* _pm = reinterpret_cast<::partition_manager*>(_pm_ctx);
-        if (_pm->is_terminated()) {
-            return false;
-        }
-    }
+    if(is_terminate())
+        return false;        
 
     bool ret{false};
 
@@ -1370,31 +1104,5 @@ void client::send_pg_member_change_finished_notify(
     enqueue_request(req_ctx);
 }
 
-void client::send_data_statistics_request(
-  std::map<std::string, utils::cluster_io> &ios) {
-    auto req = std::make_unique<msg::Request>();
-    auto data_req = req->mutable_data_statistics_request();
-    auto data = data_req->mutable_data();
-    for (auto &[pg_name, io] : ios) {
-        msg::DataStatistics ds;
-        ds.set_read_ios(io.read_ios);
-        ds.set_read_bytes(io.read_bytes);
-        ds.set_write_ios(io.write_ios);
-        ds.set_write_bytes(io.write_bytes);
-        ds.set_objects(io.objects);
-        (*data)[pg_name] = std::move(ds);
-    }
-
-    auto cb = [](const response_status status, request_context*ctx){
-        SPDK_DEBUGLOG(mon, "send data_statistics finish.\n");
-        if (status != response_status::ok) {
-            SPDK_ERRLOG("send data_statistics finish failed\n");
-        }
-    };
-
-    auto* req_ctx = new client::request_context{
-      this, std::move(req), std::monostate{}, std::move(cb)};
-    enqueue_request(req_ctx);
-}
 
 }

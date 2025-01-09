@@ -1,30 +1,4 @@
 
-compile_library(
-  NAME par_mgr
-  SRCS
-    partition_manager.cc
-    osd_stm.cc
-    data_statistics.cc
-  DEPS
-    spdk::spdk
-    raft_msg
-    osd_msg
-)
-
-compile_library (
-  NAME osd_lib
-  SRCS
-    osd_service.cc
-  DEPS
-    par_mgr
-    monclient
-    spdk::spdk
-    raft
-    osd_msg
-    msg
-    localstore
-)
-
 # include_directories(${numa_INCLUDE_DIRS})
 
 add_executable(fastblock-osd
@@ -33,12 +7,20 @@ add_executable(fastblock-osd
   partition_manager.cc
   osd_stm.cc
   data_statistics.cc
+  mon_client.cc
 )
 
 # target_link_libraries(fastblock-osd ${numa_LIBRARIES})
 target_link_libraries(fastblock-osd 
   PUBLIC
     get_core
+    monclient
+    spdk::spdk
+    raft_msg
+    osd_msg
+    raft
+    msg
+    localstore
 )
 
 install(TARGETS fastblock-osd DESTINATION bin PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
@@ -47,8 +29,3 @@ install(TARGETS fastblock-osd DESTINATION bin PERMISSIONS OWNER_EXECUTE OWNER_WR
 target_include_directories (fastblock-osd
   PUBLIC
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-target_link_libraries(fastblock-osd
-  PUBLIC
-    fastblock_osd_lib
-)

@@ -15,8 +15,6 @@
 #include "spdk/string.h"
 #include "spdk/uuid.h"
 
-
-#include "fastblock/monclient/client.h"
 #include "raft/raft.h"
 #include "osd/partition_manager.h"
 #include "raft/raft_service.h"
@@ -26,6 +24,7 @@
 #include "localstore/storage_manager.h"
 #include "data_statistics.h"
 #include "utils/get_core.h"
+#include "mon_client.h"
 
 #include <spdk/string.h>
 
@@ -88,7 +87,7 @@ static std::unique_ptr<::raft_service<::partition_manager>> global_raft_service{
 static std::unique_ptr<::osd_service> global_osd_service{nullptr};
 static std::shared_ptr<::connect_cache> global_conn_cache{nullptr};
 static std::shared_ptr<::partition_manager> global_pm{nullptr};
-static std::shared_ptr<monitor::client> monitor_client{nullptr};
+static std::shared_ptr<monitor_client> g_monitor_client{nullptr};
 static server_t osd_server{};
 static int osd_exit_code{0};
 static stop_state cur_stop_state{stop_state::data_statistics};
@@ -308,7 +307,7 @@ run_cb:
 static void service_init(partition_manager* pm, server_t *server, std::function<void(bool)> cb) {
     g_data_statistics = std::make_shared<data_statistics>();
 	global_raft_service = std::make_unique<::raft_service<::partition_manager>>(global_pm.get());
-    global_osd_service = std::make_unique<::osd_service>(global_pm.get(), monitor_client);
+    global_osd_service = std::make_unique<::osd_service>(global_pm.get(), g_monitor_client);
 
     server->rpc_servers.resize(core_sharded::system::capacity());
     server->rpc_servers_started_cb = cb;
@@ -319,7 +318,7 @@ static void service_init(partition_manager* pm, server_t *server, std::function<
 }
 
 void start_monitor(server_t* ctx) {
-    monitor_client->start();
+    g_monitor_client->start();
     monitor::client::on_response_callback_type cb =
       [] (const monitor::client::response_status s, monitor::client::request_context* req_ctx) {
             int result = s;
@@ -331,7 +330,7 @@ void start_monitor(server_t* ctx) {
             }
 
             req_ctx->this_client->start_cluster_map_poller();
-            g_data_statistics->set_mon_client(monitor_client);
+            g_data_statistics->set_mon_client(g_monitor_client);
       };
 
     std::map<uint32_t, std::pair<uint32_t, uint32_t>> sharded_ports{};
@@ -350,7 +349,7 @@ void start_monitor(server_t* ctx) {
     auto cli_opt = msg::rdma::client::make_options(ctx->pt);
     ss << *srv_opt << *cli_opt;
 
-    monitor_client->emplace_osd_boot_request(
+    g_monitor_client->emplace_osd_boot_request(
       ctx->node_id,
       ctx->osd_addr,
       sharded_ports,
@@ -377,30 +376,15 @@ static void pm_init(void *arg){
     global_conn_cache = std::make_shared<::connect_cache>(cpumask.get(), opts, sockid);
     global_pm = std::make_shared<partition_manager>(server->node_id, global_conn_cache,
       server->raft_heartbeat_period_time_msec, server->raft_lease_time_msec, server->raft_election_timeout_msec);
-    monitor::client::on_new_pg_callback_type pg_map_cb =
-      [pm = global_pm] (const msg::PGInfo& pg_info, const monitor::client::pg_map::pool_id_type pool_id, const monitor::client::osd_map& osd_map,
-        monitor::client::pg_op_complete&& cb_fn, void *arg) {
-          std::vector<utils::osd_info_t> osds{};
-          for (auto osd_id : pg_info.osdid()) {
-              if(osd_map.data.find(osd_id) == osd_map.data.end()){
-                  SPDK_WARNLOG("not find osd %d in osdmap\n", osd_id);
-                  cb_fn(arg, -err::E_NODEV);
-                  return;
-              }
-              osds.push_back(*(osd_map.data.at(osd_id)));
-          }
-          pm->create_partition(pool_id, pg_info.pgid(), pg_info.coreindex() ,std::move(osds), 0, std::move(cb_fn), arg);
-      };
-    monitor_client = std::make_shared<monitor::client>(
+      
+    g_monitor_client = std::make_shared<monitor_client>(
       server->monitors,
-      reinterpret_cast<void*>(global_pm.get()),
-      std::move(pg_map_cb),
-      std::nullopt,
+      global_pm,
       server->node_id,
       5,
       true,
-      std::chrono::seconds{10},
-      monitor::user_identity::USER_OSD);
+      std::chrono::seconds{10}
+    );
 }
 
 void storage_init_complete(void *arg, int rberrno){
@@ -706,7 +690,7 @@ static void osd_service_load(void *arg){
     pm_init(arg);
 
     pm_load_context *ctx = new pm_load_context{server, global_pm.get()};
-	global_pm->start(ctx, monitor_client);
+	global_pm->start(ctx, g_monitor_client);
 }
 
 void storage_load_complete(void *arg, int rberrno){
@@ -963,9 +947,9 @@ static void osd_stop(void *arg) noexcept {
     }
     case stop_state::monitor_client: {
         cur_stop_state = stop_state::partition_manager;
-        if (monitor_client) {
+        if (g_monitor_client) {
             SPDK_NOTICELOG("Stopping the monitor client\n");
-            monitor_client->stop(on_osd_stop);
+            g_monitor_client->stop(on_osd_stop);
             return;
         }
         [[fallthrough]];

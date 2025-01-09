@@ -2498,7 +2498,7 @@ bdevperf_run(void *arg1)
 			}
 			bdevperf_construct_job_configs();
 		};
-		fb_client_init(std::move(cb), true);
+		fb_client_init(std::move(cb));
 		return;
 	}
 

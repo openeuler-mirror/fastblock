@@ -8,8 +8,6 @@ compile_library (
   DEPS
     spdk::spdk
     protobuf
-    par_mgr
-    fastblock_raft
 )
 
 # add_subdirectory(test)

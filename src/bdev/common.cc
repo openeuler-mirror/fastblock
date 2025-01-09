@@ -12,7 +12,6 @@
 #include <optional>
 #include "fastblock/bdev/global.h"
 #include "common.h"
-#include "osd/partition_manager.h"
 
 SPDK_LOG_REGISTER_COMPONENT(common)
 
@@ -112,9 +111,7 @@ app_parse_arg(int ch, char *arg)
 	return 0;
 }
 
-static std::shared_ptr<::partition_manager> g_par_mgr = nullptr;
-
-void fb_client_init(std::optional<std::function<void()>> &&cb, bool should_create_pm) 
+void fb_client_init(std::optional<std::function<void()>> &&cb) 
 {
 	std::vector<monitor::client::endpoint> mon_eps{};
 	auto &monitors = g_pt.get_child("mon_host");
@@ -135,12 +132,7 @@ void fb_client_init(std::optional<std::function<void()>> &&cb, bool should_creat
 	::spdk_cpuset_set_cpu(&cpumask, core_no, true);
 	global::conn_cache = std::make_shared<::connect_cache>(&cpumask, global::rpc_cli_opts);
 
-	if(should_create_pm){
-		g_par_mgr = std::make_shared<::partition_manager>(-1, global::conn_cache);
-		global::mon_client = std::make_unique<monitor::client>(mon_eps, reinterpret_cast<void*>(g_par_mgr.get()), std::nullopt, std::move(cb));
-	} else {
-		global::mon_client = std::make_unique<monitor::client>(mon_eps, nullptr, std::nullopt, std::move(cb));
-	}
+	global::mon_client = std::make_unique<monitor::client>(mon_eps, std::move(cb));
     global::mon_client->start();
     global::mon_client->start_cluster_map_poller();
 
