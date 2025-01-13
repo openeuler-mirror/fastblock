@@ -324,15 +324,17 @@ func CreatePgs(ctx context.Context, client *etcdapi.EtcdClient, pool *PoolConfig
 }
 
 //pg的成员列表osdList，osdid表示的osd由down变为up，是否可以触发pg remap
-func shouldChange(osdList []int, pgSize int, osdid int) bool {
+func shouldChange(ctx context.Context, osdList []int, pgSize int, osdid int) bool {
     var downNum int
     var outNum int
     var downOutNum int
 
     osdIsDownOut := false
+    AllOSDInfo.RwMutex.RLock()
     for _, id := range osdList {
         osdInfo, ok := AllOSDInfo.Osdinfo[OSDID(id)]
         if ok == true {
+            osdInfo.RwMutex.RLock()
             isDown := false
             if !osdInfo.IsUp {
                 downNum++
@@ -347,8 +349,10 @@ func shouldChange(osdList []int, pgSize int, osdid int) bool {
                     }
                 }
             }
+            osdInfo.RwMutex.RUnlock()
         }
     }	
+    AllOSDInfo.RwMutex.RUnlock()
 
 	if downNum >= 1 && downNum * 2 < pgSize && (downNum + 1) * 2 >= pgSize {
         //由于一个osd由down变up导致此pg从down变为undersize
@@ -379,9 +383,9 @@ func getDomainPg(cfg *OptimizeCfg, poolid PoolID) (*map[string]int32, *map[strin
 		}
 	}
 
-	pgCount := AllPools[poolid].PGCount
+	pgCount := AllPools.pools[poolid].PGCount
 	for pgid := 0; pgid < pgCount; pgid++ {
-		pg := AllPools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgid)]
+		pg := AllPools.pools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgid)]
 		for _, osdId := range pg.OsdList {
 			domain := osdDomainMap[osdId]
 			domainPgNum[domain]++
@@ -406,7 +410,7 @@ func containsDomain(pgDomainMap *map[int][]string, pgId int, domain string) bool
 
 //检测pg是否可以把domain从成员列表中移除
 func transferable(poolid PoolID, pgId int) bool {
-	pg := AllPools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgId)]
+	pg := AllPools.pools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgId)]
 
 	if pg.PgInState(utils.PgRemapped) ||
 	  pg.PgInState(utils.PgDown) ||
@@ -463,12 +467,12 @@ func addPgOsd(ctx context.Context, cfg *OptimizeCfg, poolid PoolID, pgId int, pg
   minPgDomain string, secondMinPgDomain string, thirdMinPgDomain string, domainPgNum *map[string]int32, 
   pgOnDomainMap *map[string][]int, pgNumPerOsd *map[int]int32) bool {
 
-	pg := AllPools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgId)]
+	pg := AllPools.pools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgId)]
 	var addOsdNum = cfg.PGSize - len(pg.OsdList)
 	newOsdList := pg.OsdList
 	var addOsd int
 	isRemap := false
-	pgSize := AllPools[poolid].PGSize
+	pgSize := AllPools.pools[poolid].PGSize
 
 	for i := 0; i < addOsdNum; i++ {
 		if !containsDomain(pgDomainMap, pgId, minPgDomain) {
@@ -505,7 +509,7 @@ func addPgOsd(ctx context.Context, cfg *OptimizeCfg, poolid PoolID, pgId int, pg
 		}
 		pg.NewOsdList = newOsdList
 		pg.NewCoreIndex = pg.CoreIndex
-		AllPools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgId)] = pg
+		AllPools.pools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgId)] = pg
 		log.Info(ctx, "pg: ", pgId, " PgState ", pg.PgState, " osdList: ", pg.OsdList, " NewOsdList: ", pg.NewOsdList)	
 	}
 	return 	isRemap
@@ -517,7 +521,7 @@ func transferPG(ctx context.Context, cfg *OptimizeCfg, poolid PoolID, pgId int, 
   pgNumPerOsd *map[int]int32) bool {
 	
 
-	pg := AllPools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgId)]
+	pg := AllPools.pools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgId)]
 	var newOsdList []int
 	var srcOsd int
 	var dstOsd int
@@ -565,7 +569,7 @@ func transferPG(ctx context.Context, cfg *OptimizeCfg, poolid PoolID, pgId int, 
 	pg.SetPgState(utils.PgRemapped)
 	pg.NewOsdList = newOsdList
 	pg.NewCoreIndex = pg.CoreIndex
-	AllPools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgId)] = pg
+	AllPools.pools[poolid].PoolPgMap.PgMap[strconv.Itoa(pgId)] = pg
 	log.Info(ctx, "pg: ", pgId, " PgState ", pg.PgState, " osdList: ", pg.OsdList, " NewOsdList: ", pg.NewOsdList)
 
 	return true
@@ -679,13 +683,13 @@ func reblancePool(ctx context.Context,
 		}
 	}
 	if isRemap {
-		AllPools[PoolID(pool.Poolid)].PoolPgMap.Version++
+		AllPools.pools[PoolID(pool.Poolid)].PoolPgMap.Version++
 	}
 	return isRemap
 }
 
 func Reblance(ctx context.Context, client *etcdapi.EtcdClient) {
-    if AllPools == nil {
+    if AllPools.pools == nil {
         log.Info(ctx, "AllPoolsConfig nil!")
         return
     }
@@ -700,15 +704,32 @@ func Reblance(ctx context.Context, client *etcdapi.EtcdClient) {
 		return
 	}
 
+	var pool_array []PoolID
+	AllPools.RwMutex.RLock()
+	for poolID := range AllPools.pools {
+		pool_array = append(pool_array, poolID)
+	}
+	AllPools.RwMutex.RUnlock()
 
-    for poolID, pool := range AllPools {
-        if pool.PoolPgMap.PgMap == nil {
-            continue
-        }	
-		
+	for _, poolID := range pool_array {
+		AllPools.RwMutex.RLock()
+		pool, ok := AllPools.pools[poolID]
+		if !ok {
+			AllPools.RwMutex.RUnlock()
+			continue
+		}
+		pool.RwMutex.Lock()
+		AllPools.RwMutex.RUnlock()
+
+		if pool.PoolPgMap.PgMap == nil {
+			pool.RwMutex.Unlock()
+			continue
+		}
+
 		isRemap := reblancePool(ctx, osdTreeMap, osdNodeMap, pool)
 		if isRemap {
-			pc_buf, err := json.Marshal(AllPools[poolID])
+			pc_buf, err := json.Marshal(pool)
+			pool.RwMutex.Unlock()
             if err != nil {
                 log.Error(ctx, err)
                 return
@@ -720,13 +741,15 @@ func Reblance(ctx context.Context, client *etcdapi.EtcdClient) {
                 log.Error(ctx, err)
                 return
             }
+		} else {
+			pool.RwMutex.Unlock()
 		}
 	}
 }
 
 
 func CheckPgs(ctx context.Context, client *etcdapi.EtcdClient, osdid int, stateSwitch  STATESWITCH) {
-    if AllPools == nil {
+    if AllPools.pools == nil {
         log.Info(ctx, "AllPoolsConfig nil!")
         return
     }
@@ -737,8 +760,25 @@ func CheckPgs(ctx context.Context, client *etcdapi.EtcdClient, osdid int, stateS
         return
     }	
 
-    for poolID, pool := range AllPools {
+    var pool_array []PoolID
+    AllPools.RwMutex.RLock()
+    for poolID := range AllPools.pools {
+        pool_array = append(pool_array, poolID)
+    }
+    AllPools.RwMutex.RUnlock()
+
+    for _, poolID := range pool_array {
+        AllPools.RwMutex.RLock()
+        pool, ok := AllPools.pools[poolID]
+        if !ok {
+            AllPools.RwMutex.RUnlock()
+            continue
+        }
+        pool.RwMutex.Lock()
+        AllPools.RwMutex.RUnlock()
+
         if pool.PoolPgMap.PgMap == nil {
+            pool.RwMutex.Unlock()
             continue
         }
 
@@ -785,7 +825,7 @@ func CheckPgs(ctx context.Context, client *etcdapi.EtcdClient, osdid int, stateS
                     	        pgConfig.UnsetPgState(utils.PgRemapped)
                     	        pgConfig.SetPgState(utils.PgCreating)
                     	        isRemap = true
-                    	        AllPools[poolID].PoolPgMap.PgMap[pgID] = *pgConfig
+                    	        AllPools.pools[poolID].PoolPgMap.PgMap[pgID] = *pgConfig
                     	    }
                     	}
                     } else {
@@ -808,25 +848,25 @@ func CheckPgs(ctx context.Context, client *etcdapi.EtcdClient, osdid int, stateS
                         pgConfig, ok := redistributionPg(ctx, osdTreeMap, osdNodeMap, poolID, pgID)
                         if ok {
                             isRemap = true
-                            AllPools[poolID].PoolPgMap.PgMap[pgID] = *pgConfig
+                            AllPools.pools[poolID].PoolPgMap.PgMap[pgID] = *pgConfig
                         }
                     }
                 }else if pg.PgInState(utils.PgDown) {
                     //pg is down
-                    if stateSwitch == DownToUp && shouldChange(pg.OsdList, pgSize, osdid) {
+                    if stateSwitch == DownToUp && shouldChange(ctx, pg.OsdList, pgSize, osdid) {
                         log.Info(ctx, "pg ", poolID, ".", pgID, "in PgDown, osd from down to up")
                         pgConfig, ok := redistributionPg(ctx, osdTreeMap, osdNodeMap, poolID, pgID)
                         if ok {
                             isRemap = true
-                            AllPools[poolID].PoolPgMap.PgMap[pgID] = *pgConfig
+                            AllPools.pools[poolID].PoolPgMap.PgMap[pgID] = *pgConfig
                         }
                     }
                 }
             }
             if stateSwitch == DownToUp {
-                pgConfig := AllPools[poolID].PoolPgMap.PgMap[pgID]
+                pgConfig := AllPools.pools[poolID].PoolPgMap.PgMap[pgID]
                 //检查pg状态是否需要变更
-                state := CheckPgState(pgConfig.OsdList, pool.PGSize)
+                state := CheckPgState(ctx, pgConfig.OsdList, pool.PGSize)
 				log.Info(ctx, "pg ", poolID, ".", pgID, " state ", state)
                 if state == 0 {
                     isPgStateChange = true
@@ -835,18 +875,19 @@ func CheckPgs(ctx context.Context, client *etcdapi.EtcdClient, osdid int, stateS
                     if !pgConfig.PgInState(utils.PgCreating) && !pgConfig.PgInState(utils.PgRemapped) {
                         pgConfig.SetPgState(utils.PgActive)
                     }
-                    AllPools[poolID].PoolPgMap.PgMap[pgID] = pgConfig
+                    AllPools.pools[poolID].PoolPgMap.PgMap[pgID] = pgConfig
                 } else if !pgConfig.PgInState(state) {
                     isPgStateChange = true
                     pgConfig.SetPgState(state)
-                    AllPools[poolID].PoolPgMap.PgMap[pgID] = pgConfig
+                    AllPools.pools[poolID].PoolPgMap.PgMap[pgID] = pgConfig
                 }
 				log.Info(ctx, "pg ", poolID, ".", pgID, " pgstate ", pgConfig.PgState)
             }
         }
         if isRemap || isPgStateChange {
-            AllPools[poolID].PoolPgMap.Version++
-            pc_buf, err := json.Marshal(AllPools[poolID])
+            AllPools.pools[poolID].PoolPgMap.Version++
+            pc_buf, err := json.Marshal(AllPools.pools[poolID])
+            pool.RwMutex.Unlock()
             if err != nil {
                 log.Error(ctx, err)
                 return
@@ -858,6 +899,8 @@ func CheckPgs(ctx context.Context, client *etcdapi.EtcdClient, osdid int, stateS
                 log.Error(ctx, err)
                 return
             }
+        } else {
+            pool.RwMutex.Unlock()
         }
 	}
 }
@@ -866,23 +909,28 @@ func redistributionPg(ctx context.Context,
   osdTreeMap *map[Level]*map[string]*BucketTreeNode, 
   osdNodeMap *map[string]OSDTreeNode,
   poolId PoolID, pgId string) (*PGConfig, bool){
-    oldOsdList := AllPools[poolId].PoolPgMap.PgMap[pgId].OsdList
+    oldOsdList := AllPools.pools[poolId].PoolPgMap.PgMap[pgId].OsdList
     var newOsdList []int
+
+    AllOSDInfo.RwMutex.RLock()
     for _, id := range oldOsdList {
         osdInfo, ok := AllOSDInfo.Osdinfo[OSDID(id)]
         if ok == true {
+            osdInfo.RwMutex.RLock()
             if osdInfo.IsIn {
                 newOsdList = append(newOsdList, id)
             }
+            osdInfo.RwMutex.RUnlock()
         }
     }
+    AllOSDInfo.RwMutex.RUnlock()
 
-    pool := AllPools[poolId]
+    pool := AllPools.pools[poolId]
     optimizeCfg := &OptimizeCfg{
         PGCount:        pool.PGCount,
         PGSize:         getEffectivePGSize(pool.PGSize, GetFailureDomainNum(osdTreeMap, pool.FailureDomain)),
         FailureDomain:  pool.FailureDomain,
-        PreviousPGList: AllPools[poolId].PoolPgMap.PgMap,
+        PreviousPGList: AllPools.pools[poolId].PoolPgMap.PgMap,
     }
     addNum := optimizeCfg.PGSize - len(newOsdList)
     log.Info(ctx, "pg: ", poolId, ".", pgId, " PGSize: ", optimizeCfg.PGSize, " osdList: ", oldOsdList, " newOsdList: ", newOsdList,
@@ -899,7 +947,7 @@ func redistributionPg(ctx context.Context,
         return nil, false
     }
     newOsdList = append(newOsdList, addOsdList...)
-    pgConfig := AllPools[poolId].PoolPgMap.PgMap[pgId]
+    pgConfig := AllPools.pools[poolId].PoolPgMap.PgMap[pgId]
     pgConfig.Version++
     pgConfig.SetPgState(utils.PgRemapped)
     pgConfig.NewOsdList = newOsdList 
@@ -911,7 +959,7 @@ func redistributionPg(ctx context.Context,
 
 func getPgNumPerOsd() map[int]int32 {
     pgNumPerOsd := make(map[int]int32)
-    for _, pool := range AllPools {
+    for _, pool := range AllPools.pools {
         for _, pg := range pool.PoolPgMap.PgMap {
             for _, osdId := range pg.OsdList {
                 pgNumPerOsd[osdId]++
@@ -987,7 +1035,7 @@ func calculatePgOsds(ctx context.Context, cfg *OptimizeCfg, poolId PoolID, pgId 
     var addOsdList []int
     var minPgDomain string
 
-    log.Warn(ctx, "pg: ", poolId, ".", pgId, " pgNumPerOsd: ", pgNumPerOsd)
+    log.Info(ctx, "pg: ", poolId, ".", pgId, " pgNumPerOsd: ", pgNumPerOsd)
     for _, domain := range *cfg.OSDTree {
         var pgNum int32
         noContain := false
@@ -1057,7 +1105,7 @@ getMin:
 func saveNewPGsTxn(ctx context.Context, client *etcdapi.EtcdClient, pid PoolID) error {
 	log.Info(ctx, "saveNewPGsTxn")
 
-	configPGBuffer, err := json.Marshal(AllPools[pid])
+	configPGBuffer, err := json.Marshal(AllPools.pools[pid])
 	if err != nil {
 		log.Error(ctx, err)
 		return err
@@ -1133,16 +1181,22 @@ func Compare_arry(arr1 []int, arr2 []int) bool {
 	return true
 }
 
-func CheckPgState(osdList []int, pgSize int) utils.PGSTATE {
+func CheckPgState(ctx context.Context, osdList []int, pgSize int) utils.PGSTATE {
     var upNum int
+
+    AllOSDInfo.RwMutex.RLock()
     for _, id := range osdList {
         osdInfo, ok := AllOSDInfo.Osdinfo[OSDID(id)]
         if ok == true {
+            osdInfo.RwMutex.RLock()
             if osdInfo.IsUp {
                 upNum++
             }
+            osdInfo.RwMutex.RUnlock()
         }
     }
+    AllOSDInfo.RwMutex.RUnlock()
+
 	if upNum > pgSize / 2  &&  upNum < pgSize {
         return utils.PgUndersize
     } else if upNum <= pgSize / 2 {
@@ -1389,7 +1443,7 @@ func SimpleInitial(ctx context.Context, cfg *OptimizeCfg, poolPgSize int, coreNu
 		if ok == false {
 			ppc.Version = 1
 			ppc.SetPgState(utils.PgCreating)
-			state := CheckPgState(ppc.OsdList, poolPgSize)
+			state := CheckPgState(ctx, ppc.OsdList, poolPgSize)
 			if state == utils.PgUndersize ||  state == utils.PgDown {
 				ppc.SetPgState(state)
 			}
