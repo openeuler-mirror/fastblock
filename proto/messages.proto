@@ -126,6 +126,7 @@ message GetPgMapResponse {
     map<int32, GetPgMapErrorCode> errorcode = 1;
     map<int32, int64> poolid_pgmapversion = 2;
     map<int32, PGInfos> pgs = 3;
+    map<int32, string> pools = 4;
 }
 
 message GetOsdMapRequest{

@@ -558,6 +558,7 @@ func ProcessGetPgMapMessage(ctx context.Context, pvs map[int32]int64) (*msg.GetP
 		Errorcode:          make(map[int32]msg.GetPgMapErrorCode),
 		PoolidPgmapversion: make(map[int32]int64),
 		Pgs:                make(map[int32]*msg.PGInfos),
+		Pools:              make(map[int32]string),
 	}
 
 	addAll := false
@@ -574,6 +575,7 @@ func ProcessGetPgMapMessage(ctx context.Context, pvs map[int32]int64) (*msg.GetP
 			pginfos := &msg.PGInfos{
 				Pi: make([]*msg.PGInfo, 0),
 			}
+			gpmr.Pools[int32(pid)] = ppc.Name
 			for pgid, pc := range ppc.PoolPgMap.PgMap {
 				pgidToi, _ := strconv.Atoi(pgid)
 				var osdlist []int32
@@ -618,6 +620,7 @@ func ProcessGetPgMapMessage(ctx context.Context, pvs map[int32]int64) (*msg.GetP
 				pginfos := &msg.PGInfos{
 					Pi: make([]*msg.PGInfo, 0),
 				}
+				gpmr.Pools[int32(pid)] = ppc.Name
 				for pgid, pc := range ppc.PoolPgMap.PgMap {
 					pgidToi, _ := strconv.Atoi(pgid)
 					var osdlist []int32

@@ -675,7 +675,6 @@ static const struct spdk_bdev_fn_table fastblock_fn_table = {
 };
 
 int bdev_fastblock_create(struct spdk_bdev **bdev, const char *name,
-						  uint64_t pool_id,
 						  const char *pool_name,
 						  const char *image_name,
 						  uint64_t image_size,
@@ -689,6 +688,14 @@ int bdev_fastblock_create(struct spdk_bdev **bdev, const char *name,
 	{
 		return -EINVAL;
 	}
+
+	monitor::client::pg_map::pool_id_type pool_id;
+	std::string pool_name_str = pool_name;
+	if(!global::mon_client->get_pool_id(pool_name_str, pool_id)){
+		SPDK_ERRLOG("pool %s does not exist.\n", pool_name);
+		return -EINVAL;
+	}
+	SPDK_INFOLOG(bdev_fastblock, "pool name %s, pool id %d\n", pool_name, pool_id);
 
 	SPDK_INFOLOG(bdev_fastblock, "create fastblock bdev on core %d\n", spdk_env_get_current_core());
 	fastblock = (struct bdev_fastblock *)calloc(1, sizeof(struct bdev_fastblock));

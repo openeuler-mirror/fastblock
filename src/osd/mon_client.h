@@ -51,6 +51,7 @@ public:
             std::unordered_map<monitor::client::pg_map::pg_id_type, std::unique_ptr<utils::pg_info_type>> &) override;
 
     void create_pg(monitor::client::pg_map::pool_id_type pool_id, 
+                  std::string& pool_name,
                   monitor::client::pg_map::version_type pool_version,
                   const msg::PGInfo &info) override;
 

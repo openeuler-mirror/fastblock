@@ -92,6 +92,9 @@ public:
 
     int unregister_poller(std::optional<std::function<void()>>&& cb = std::nullopt) noexcept {
         if (not _poller) {
+            if(cb){
+                (cb.value())();
+            }
             return 0;
         }
 

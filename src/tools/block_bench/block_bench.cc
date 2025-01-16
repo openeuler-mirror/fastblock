@@ -714,7 +714,6 @@ void on_app_start(void* arg) {
     }
     watcher_ctx->io_queue_size = g_pt.get_child("io_queue_size").get_value<int32_t>();
     watcher_ctx->io_queue_request = g_pt.get_child("io_queue_request").get_value<int32_t>();
-    watcher_ctx->pool_id = g_pt.get_child("pool_id").get_value<int32_t>();
     watcher_ctx->pool_name = g_pt.get_child("pool_name").get_value<std::string>();
     if(g_pt.count("deferred_time") > 0){
         watcher_ctx->deferred_time = g_pt.get_child("deferred_time").get_value<uint64_t>();
@@ -738,6 +737,15 @@ void on_app_start(void* arg) {
     auto opts = msg::rdma::client::make_options(g_pt);
     conn_cache = std::make_shared<::connect_cache>(&cpumask, opts);
     monitor::client::on_cluster_map_initialized_type cb = [watcher_ctx] () {
+        int32_t pool_id;
+        if(!mon_client->get_pool_id(watcher_ctx->pool_name, pool_id)){
+            SPDK_ERRLOG("pool %s does not exist.\n", watcher_ctx->pool_name.c_str());
+            std::raise(SIGINT);
+            return;
+        }
+        SPDK_INFOLOG(bbench, "pool name %s, pool id %d\n", watcher_ctx->pool_name.c_str(), pool_id);
+        watcher_ctx->pool_id = pool_id;
+
         auto n_core = ::spdk_env_get_core_count();
         if (g_print_ctx.take_single_core) {
             n_core--;
@@ -826,6 +834,10 @@ void on_app_start(void* arg) {
           case monitor::client::response_status::ok:
           case monitor::client::response_status::created_image_exists:
               SPDK_INFOLOG(bbench, "image is ready\n");
+              break;
+          case monitor::client::response_status::unknown_pool_name:
+              SPDK_ERRLOG("Create image error: pool %s does not exist.\n", watcher_ctx->pool_name.c_str());
+              std::raise(SIGINT);
               break;
           default:
               SPDK_ERRLOG("Create image error, error code is %d\n", s);
