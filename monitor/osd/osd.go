@@ -49,6 +49,7 @@ type ShardPort struct {
 
 // when osd restarts, following information is changed(host may not)
 type OSDInfo struct {
+	RwMutex         sync.RWMutex
 	Osdid           int                  `json:"osdid"`
 	Address         string               `json:"address"`
 	Uuid            string               `json:"uuid"`
@@ -63,6 +64,7 @@ type OSDInfo struct {
 }
 
 type OsdMap struct {
+	RwMutex sync.RWMutex 
 	Version int64              `json:"version"`
 	Osdinfo map[OSDID]*OSDInfo `json:"osdinfo"`
 }
@@ -165,19 +167,23 @@ func findUsableOsdId() int {
 // Example: /osd/info/1 {"address": "10.0.0.1",  "host": "IPSSC004.TMP06.GUIGU-A", "port": 35311, "isup": true}
 // should  also load pending create osds
 func LoadOSDMapFromEtcd(ctx context.Context, client *etcdapi.EtcdClient) (err error) {
+	AllOSDInfo.RwMutex.Lock()
 	AllOSDInfo.Osdinfo = make(map[OSDID]*OSDInfo)
 	prefix := config.ConfigOSDMapKey
 	osdMap, getErr := client.Get(ctx, prefix)
 	if getErr != nil {
 		if getErr == etcdapi.ErrorKeyNotFound {
 			AllOSDInfo.Version = 0
+			AllOSDInfo.RwMutex.Unlock()
 			return nil
 		}
+		AllOSDInfo.RwMutex.Unlock()
 		log.Error(ctx, getErr)
 		return getErr
 	}
 
 	if err := json.Unmarshal([]byte(osdMap), &AllOSDInfo); err != nil {
+		AllOSDInfo.RwMutex.Unlock()
 		log.Error(ctx, err)
 		return err
 	}
@@ -192,6 +198,7 @@ func LoadOSDMapFromEtcd(ctx context.Context, client *etcdapi.EtcdClient) (err er
 		}
 		AllHeartBeatInfo[OSDID(info.Osdid)] = &HeartBeatInfo{osdid: OSDID(info.Osdid), successCounter: 0}
 	}
+	AllOSDInfo.RwMutex.Unlock()
 
 	log.Info(ctx, "heartbeat info updated")
 
@@ -299,8 +306,11 @@ func outToInHandler(ctx context.Context, client *etcdapi.EtcdClient, osdId int) 
 
 // when a new osd is applied, we append it to AllOSDInfo.Osdinfo, and put it into etcd
 func ProcessApplyIDMessage(ctx context.Context, client *etcdapi.EtcdClient, uuid string) (int, msg.ApplyIDErrorCode) {
+
+	AllOSDInfo.RwMutex.Lock()
 	for _, info := range AllOSDInfo.Osdinfo {
 		if uuid == info.Uuid {
+			AllOSDInfo.RwMutex.Unlock()
 			return -1, msg.ApplyIDErrorCode_UuidAlreadyExists
 		}
 	}
@@ -328,6 +338,8 @@ func ProcessApplyIDMessage(ctx context.Context, client *etcdapi.EtcdClient, uuid
 	AllHeartBeatInfo[OSDID(oid)] = &HeartBeatInfo{osdid: OSDID((oid)), successCounter: 0}
 
 	osdMap, err := json.Marshal(AllOSDInfo)
+	AllOSDInfo.RwMutex.Unlock()
+
 	if err != nil {
 		log.Error(ctx, err)
 		return -1, msg.ApplyIDErrorCode_InternalError
@@ -345,24 +357,10 @@ func ProcessApplyIDMessage(ctx context.Context, client *etcdapi.EtcdClient, uuid
 
 func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int32, uuid string, size int64, sharded_ports map[uint32]*msg.ShardCore, host string, address string, core_num uint32, osd_config string) ERRNUM {
 	// the uuid should not exist in the osd map
-	found := false
-	for _, info := range AllOSDInfo.Osdinfo {
-		if id == int32(info.Osdid) {
-			found = true
-			break
-		}
-	}
-	if !found {
-		log.Warn(ctx, "osd is not found in our database.")
-		return OSD_ERR_NOT_APPLY
-	}
-	oinfo := AllOSDInfo.Osdinfo[OSDID(id)]
-	oinfo.Config = osd_config
 
-	oldIsUp := oinfo.IsUp
-	if oldIsUp {
-		log.Warn(ctx, "osd is up.")
-		return OSD_ERR_ID_CONFLICT
+	if !isValidIPv4(address) {
+		log.Warn(ctx, "invalide ip or port.", address)
+		return OSD_ERR_ADDRESS_INVALID
 	}
 
 	for _, shard_port := range sharded_ports {
@@ -373,11 +371,6 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 		}
 	}
 
-	if !isValidIPv4(address) {
-		log.Warn(ctx, "invalide ip or port.", address)
-		return OSD_ERR_ADDRESS_INVALID
-	}
-
 	if OSDCoreNum == 0 {
 		OSDCoreNum = core_num
 	} else if OSDCoreNum != core_num {
@@ -385,7 +378,6 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 		return OSD_ERR_CORE_NUM
 	}
 
-	oldIsIn := oinfo.IsIn
 	shard_port_m := make(map[uint32]ShardPort)
 	for shard_id, shard_port := range sharded_ports {
 		shardPort := ShardPort{
@@ -394,6 +386,27 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 		}
 		shard_port_m[shard_id] = shardPort
 	}
+
+	AllOSDInfo.RwMutex.Lock()
+	oinfo, ok := AllOSDInfo.Osdinfo[OSDID(id)]
+	if !ok {
+		AllOSDInfo.RwMutex.Unlock()
+		log.Warn(ctx, "osd is not found in our database.")
+		return OSD_ERR_NOT_APPLY
+	}
+
+	oinfo.RwMutex.Lock()
+
+	oldIsUp := oinfo.IsUp
+	if oldIsUp {
+		oinfo.RwMutex.Unlock()
+		AllOSDInfo.RwMutex.Unlock()
+		log.Warn(ctx, "osd is up.")
+		return OSD_ERR_ID_CONFLICT
+	}
+	oinfo.Config = osd_config
+
+	oldIsIn := oinfo.IsIn
 	if oinfo.IsPendingCreate {
 		//this is a newly create osd
 		oinfo.Address = address
@@ -417,6 +430,11 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 	}
 
 	AllOSDInfo.Osdinfo[OSDID(id)] = oinfo
+	newIsUp := oinfo.IsUp
+	newIsIn := oinfo.IsIn
+
+	oinfo.RwMutex.Unlock()
+
 	AllOSDInfo.Version++
 
 	if _, ok := AllOSDInfo.Osdinfo[OSDID(id)]; ok {
@@ -424,6 +442,8 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 	}
 
 	osdmap, err := json.Marshal(AllOSDInfo)
+	AllOSDInfo.RwMutex.Unlock()
+
 	if err != nil {
 		log.Error(ctx, err)
 		return OSD_ERR_UPDATE_STATE_FAILED
@@ -436,26 +456,28 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 	}
 
 	//osd由down变为up
-	// if !oldIsUp && oinfo.IsUp && oldIsIn && oinfo.IsIn {
-	if !oldIsUp && oinfo.IsUp {
+	if !oldIsUp && newIsUp {
 		log.Info(ctx, "osd ", id, "from down to up.")
 		osdTaskQueue.Enqueue(OsdTask{osdid: int(id), stateSwitch: DownToUp})
 	}
 
 	//osd由out变为in
-	if !oldIsIn && oinfo.IsIn {
+	if !oldIsIn && newIsIn {
 		log.Info(ctx, "osd ", id, "from out to in.")
 		outToInHandler(ctx, client, int(id))
 	}
 
 	log.Info(ctx, "successfully put to ectd for newly booted osd ", id)
-	GetOSDTree(ctx, true, false)
+	// GetOSDTree(ctx, true, false)
 	return SUCCESS
 }
 
 func ProcessGetOsdMapMessage(ctx context.Context, cv int64, oid int32) ([]*msg.OsdDynamicInfo, int64, msg.OsdMapErrorCode) {
 	log.Info(ctx, "ProcessGetOsdMapMessage")
+
+	AllOSDInfo.RwMutex.RLock()
 	if len(AllOSDInfo.Osdinfo) == 0 {
+		AllOSDInfo.RwMutex.RUnlock()
 		log.Info(ctx, "no osd created yet")
 		return nil, -1, msg.OsdMapErrorCode_noOsdsExist
 	}
@@ -470,10 +492,12 @@ func ProcessGetOsdMapMessage(ctx context.Context, cv int64, oid int32) ([]*msg.O
 	}
 
 	if cv > AllOSDInfo.Version {
+		AllOSDInfo.RwMutex.RUnlock()
 		log.Info(ctx, "client have higher version, maybe i'm not leader any more")
 		return nil, -1, msg.OsdMapErrorCode_clientVersionHigher
 	}
 	if cv == AllOSDInfo.Version {
+		AllOSDInfo.RwMutex.RUnlock()
 		log.Info(ctx, "client have equal version, maybe i'm not leader any more")
 		return nil, cv, msg.OsdMapErrorCode_ok
 	}
@@ -481,6 +505,7 @@ func ProcessGetOsdMapMessage(ctx context.Context, cv int64, oid int32) ([]*msg.O
 	var odi []*msg.OsdDynamicInfo
 	// osd/state/N reported OSD up.
 	for _, osdState := range AllOSDInfo.Osdinfo {
+		osdState.RwMutex.RLock()
 		var info msg.OsdDynamicInfo
 		info.ShardedPorts = make(map[uint32]*msg.ShardCore)
 		info.Osdid = int32(osdState.Osdid)
@@ -494,35 +519,45 @@ func ProcessGetOsdMapMessage(ctx context.Context, cv int64, oid int32) ([]*msg.O
 		// info.ShardedPorts = osdState.ShardedPorts
 		info.Isin = osdState.IsIn
 		info.Isup = osdState.IsUp
+		osdState.RwMutex.RUnlock()
 		odi = append(odi, &info)
 	}
+	AllOSDInfo.RwMutex.RUnlock()
 
 	log.Info(ctx, "ProcessGetOsdMapMessage done", odi)
 	return odi, AllOSDInfo.Version, msg.OsdMapErrorCode_ok
 }
 
 func ProcessOsdStopMessage(ctx context.Context, client *etcdapi.EtcdClient, id int32) bool {
-	log.Info(ctx, "ProcessOsdStopMessage")
+	log.Info(ctx, "ProcessOsdStopMessage osd ", id)
+
+	AllOSDInfo.RwMutex.Lock()
 	if len(AllOSDInfo.Osdinfo) == 0 {
+		AllOSDInfo.RwMutex.Unlock()
 		log.Info(ctx, "no osd created yet")
 		return false
 	}
 
-	found := false
-	for _, osdState := range AllOSDInfo.Osdinfo {
-		if id == int32(osdState.Osdid) {
-			found = true
-			osdState.IsUp = false
-			break
-		}
-	}
-	if !found {
+	osdState, ok := AllOSDInfo.Osdinfo[OSDID(id)]
+	if !ok {
+		AllOSDInfo.RwMutex.Unlock()
 		log.Info(ctx, "osd is not found in our database,")
 		return false
 	}
+	osdState.RwMutex.Lock()
+	if !osdState.IsUp {
+		osdState.RwMutex.Unlock()
+		AllOSDInfo.RwMutex.Unlock()
+		return true
+	}
+
+	osdState.IsUp = false
+	osdState.RwMutex.Unlock()
 
 	AllOSDInfo.Version++
 	osdmap, err := json.Marshal(AllOSDInfo)
+	AllOSDInfo.RwMutex.Unlock()
+
 	if err != nil {
 		log.Error(ctx, err)
 		return false
@@ -535,39 +570,43 @@ func ProcessOsdStopMessage(ctx context.Context, client *etcdapi.EtcdClient, id i
 	}
 
 	log.Info(ctx, "successfully put to ectd for newly booted osd ", id)
-	GetOSDTree(ctx, true, false)
+	// GetOSDTree(ctx, true, false)
 	return true
 }
 
 func ProcessOsdOutMessage(ctx context.Context, client *etcdapi.EtcdClient, osdid int32) bool {
 	log.Info(ctx, "ProcessOsdOutMessage osd ", osdid)
+
+	AllOSDInfo.RwMutex.Lock()
 	if len(AllOSDInfo.Osdinfo) == 0 {
+		AllOSDInfo.RwMutex.Unlock()
 		log.Info(ctx, "no osd created yet")
 		return false
 	}
 
-	found := false
-	for _, osdState := range AllOSDInfo.Osdinfo {
-		if osdid == int32(osdState.Osdid) {
-			found = true
-			if !osdState.IsIn {
-				log.Info(ctx, "osd ", osdid, " is in the out state.")
-				return true
-			}
-			osdState.IsIn = false
-			break
-		}
-	}
-	if !found {
+	osdState, ok := AllOSDInfo.Osdinfo[OSDID(osdid)]
+	if !ok {
+		AllOSDInfo.RwMutex.Unlock()
 		log.Info(ctx, "osd is not found in our database,")
 		return false
 	}
+	osdState.RwMutex.Lock()
+	if !osdState.IsIn {
+		osdState.RwMutex.Unlock()
+		AllOSDInfo.RwMutex.Unlock()
+		log.Info(ctx, "osd ", osdid, " is in the out state.")
+		return true
+	}	
+	osdState.IsIn = false
+	osdState.RwMutex.Unlock()
 
 	osdTaskQueue.Enqueue(OsdTask{osdid: int(osdid), stateSwitch: InToOut})
 	log.Info(ctx, "osd ", osdid, " from in to out.")
 
 	AllOSDInfo.Version++
 	osdmap, err := json.Marshal(AllOSDInfo)
+	AllOSDInfo.RwMutex.Unlock()
+
 	if err != nil {
 		log.Error(ctx, err)
 		return false
@@ -585,33 +624,37 @@ func ProcessOsdOutMessage(ctx context.Context, client *etcdapi.EtcdClient, osdid
 
 func ProcessOsdInMessage(ctx context.Context, client *etcdapi.EtcdClient, osdid int32) bool {
 	log.Info(ctx, "ProcessOsdInMessage osd ", osdid)
+
+	AllOSDInfo.RwMutex.Lock()
 	if len(AllOSDInfo.Osdinfo) == 0 {
+		AllOSDInfo.RwMutex.Unlock()
 		log.Info(ctx, "no osd created yet")
 		return false
 	}
 
-	found := false
-	isUp := false
-	for _, osdState := range AllOSDInfo.Osdinfo {
-		if osdid == int32(osdState.Osdid) {
-			found = true
-			if osdState.IsIn {
-				log.Info(ctx, "osd ", osdid, " is in the in state.")
-				return true
-			}
-			isUp = osdState.IsUp
-			if !isUp {
-				log.Warn(ctx, "osd ", osdid, " is down, can not set in state.")
-				return false
-			}
-			osdState.IsIn = true
-			break
-		}
-	}
-	if !found {
+	osdState, ok := AllOSDInfo.Osdinfo[OSDID(osdid)]
+	if !ok {
+		AllOSDInfo.RwMutex.Unlock()
 		log.Info(ctx, "osd is not found in our database,")
 		return false
 	}
+
+	osdState.RwMutex.Lock()
+	if osdState.IsIn {
+		osdState.RwMutex.Unlock()
+		AllOSDInfo.RwMutex.Unlock()		
+		log.Info(ctx, "osd ", osdid, " is in the in state.")
+		return true
+	}
+	isUp := osdState.IsUp
+	if !isUp {
+		osdState.RwMutex.Unlock()
+		AllOSDInfo.RwMutex.Unlock()		
+		log.Warn(ctx, "osd ", osdid, " is down, can not set in state.")
+		return false
+	}	
+	osdState.IsIn = true
+	osdState.RwMutex.Unlock()
 
 	if isUp {
 		log.Info(ctx, "osd ", osdid, " from out to in.")
@@ -619,6 +662,8 @@ func ProcessOsdInMessage(ctx context.Context, client *etcdapi.EtcdClient, osdid 
 	}
 	AllOSDInfo.Version++
 	osdmap, err := json.Marshal(AllOSDInfo)
+	AllOSDInfo.RwMutex.Unlock()
+
 	if err != nil {
 		log.Error(ctx, err)
 		return false
@@ -674,6 +719,7 @@ func CheckOsdHeartbeat(ctx context.Context, client *etcdapi.EtcdClient) {
 	heartbeatTicker := time.NewTicker(heartbeatInterval)
 	for range heartbeatTicker.C {
 		isChange := false
+		AllOSDInfo.RwMutex.Lock()
 		for _, info := range AllOSDInfo.Osdinfo {
 			if !info.IsUp {
 				//this osd is previously down, but now we received a heartbeat from it
@@ -709,6 +755,7 @@ func CheckOsdHeartbeat(ctx context.Context, client *etcdapi.EtcdClient) {
 		if isChange {
 			AllOSDInfo.Version++
 			osdMap, err := json.Marshal(AllOSDInfo)
+			AllOSDInfo.RwMutex.Unlock()
 			if err != nil {
 				log.Error(ctx, err)
 			}
@@ -719,24 +766,30 @@ func CheckOsdHeartbeat(ctx context.Context, client *etcdapi.EtcdClient) {
 			}
 
 			log.Info(ctx, "successfully update osdmap after heartbeat change")
+		} else {
+			AllOSDInfo.RwMutex.Unlock()
 		}
 	}
 }
 
-func getOsdNums() (int32, int32, int32) {
+func getOsdNums(ctx context.Context) (int32, int32, int32) {
 	osdNum := 0
 	osdUpNum := 0
 	osdInNum := 0
 
+	AllOSDInfo.RwMutex.RLock()
 	osdNum = len(AllOSDInfo.Osdinfo)
 	for _, osd := range AllOSDInfo.Osdinfo {
+		osd.RwMutex.RLock()
 		if osd.IsUp {
 			osdUpNum++
 		}
 		if osd.IsIn {
 			osdInNum++
 		}
+		osd.RwMutex.RUnlock()
 	}
+	AllOSDInfo.RwMutex.RUnlock()
 	return int32(osdNum), int32(osdUpNum), int32(osdInNum)
 }
 
@@ -751,7 +804,7 @@ func PorcessGetClusterStatusMessage(ctx context.Context, client *etcdapi.EtcdCli
 		cluster.MonName = append(cluster.MonName, config.CONFIG.Monitors[i])
 	}
 
-	cluster.OsdNum, cluster.UpOsdNum, cluster.InOsdNum = getOsdNums()
+	cluster.OsdNum, cluster.UpOsdNum, cluster.InOsdNum = getOsdNums(ctx)
 	poolnum, pgnum, pgstat := GetPoolPgNum()
 	cluster.PoolNum = poolnum
 	cluster.PgNum = pgnum
@@ -810,12 +863,17 @@ func PorcessDataStatisticsMessage(ctx context.Context, client *etcdapi.EtcdClien
 	return true
 }
 
-func ProcessOsdConfigMessage(ctx context.Context, client *etcdapi.EtcdClient, osd_id int32) string {
-	for _, info := range AllOSDInfo.Osdinfo {
-		if osd_id == int32(info.Osdid) {
-			return info.Config
-		}
-	}
+func ProcessOsdConfigMessage(ctx context.Context, client *etcdapi.EtcdClient, osdid int32) string {
+	var config string = ""
 
-	return ""
+	AllOSDInfo.RwMutex.RLock()
+	info, ok := AllOSDInfo.Osdinfo[OSDID(osdid)]
+	if ok {
+		info.RwMutex.RLock()
+		config = info.Config
+		info.RwMutex.RUnlock()
+	}
+	AllOSDInfo.RwMutex.RUnlock()
+
+	return config
 }

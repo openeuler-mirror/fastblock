@@ -128,8 +128,10 @@ type OSDTreeNode struct {
 // GetOSDTree return  osd, level and osd tree. It won't update data from etcd.
 // If a bucket contains no up child, it won't be returned.
 func GetOSDTree(ctx context.Context, onlyUp bool, onlyIn bool) (treeMap *map[Level]*map[string]*BucketTreeNode,
-	osdNodeMap *map[string]OSDTreeNode, err error) {
+		osdNodeMap *map[string]OSDTreeNode, err error) {
+	AllOSDInfo.RwMutex.RLock()
 	if AllOSDInfo.Osdinfo == nil {
+		AllOSDInfo.RwMutex.RUnlock()
 		return nil, nil, errors.New("no OSD state")
 	}
 
@@ -140,18 +142,23 @@ func GetOSDTree(ctx context.Context, onlyUp bool, onlyIn bool) (treeMap *map[Lev
 
 	// osd/state/N reported OSD up.
 	for osdID, osdState := range AllOSDInfo.Osdinfo {
+		osdState.RwMutex.RLock()
 		if !osdState.IsUp && onlyUp {
+			osdState.RwMutex.RUnlock()
 			log.Info(ctx, "osd state not up!", osdID)
 			continue
 		}
 
 		if !osdState.IsIn && onlyIn {
+			osdState.RwMutex.RUnlock()
 			log.Info(ctx, "osd state not in!", osdID)
 			continue
 		}
 
 		addOSDToHostTree(ctx, osdID, osdState, &hostTreeMap, &osdTreeMap, &allOSDNodeMap)
+		osdState.RwMutex.RUnlock()
 	}
+	AllOSDInfo.RwMutex.RUnlock()
 
 	allTreeMap[Level("host")] = &hostTreeMap
 	allTreeMap[Level("osd")] = &osdTreeMap

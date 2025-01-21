@@ -82,9 +82,9 @@ func LoadImageConfig(ctx context.Context, client *etcdapi.EtcdClient) (err error
 	}
 
 	log.Info(ctx, "loadPoolConfig done")
-	for k, v := range AllPools {
-		log.Info(ctx, k, v)
-	}
+	// for k, v := range AllPools {
+		// log.Info(ctx, k, v)
+	// }
 
 	return nil
 }
@@ -95,11 +95,13 @@ func ProcessCreateImageMessage(ctx context.Context, client *etcdapi.EtcdClient, 
 	}
 
 	exist := false
-	for _, pc := range AllPools {
+	AllPools.RwMutex.RLock()
+	for _, pc := range AllPools.pools {
 		if poolname == pc.Name {
 			exist = true
 		}
 	}
+	AllPools.RwMutex.RUnlock()
 	if !exist {
 		return msg.CreateImageErrorCode_unknownPoolName
 	}
