@@ -14,12 +14,20 @@ add_executable(fastblock-nvmf-tgt
   nvmf_tgt.cc
   )
 
-add_executable(bdevperf
+add_executable(fastblock-bdevperf
   global.cc
   common.cc
   bdev_fastblock.cc
   bdev_fastblock_rpc.cc
   bdevperf.cc
+  )
+
+add_executable(fastblock-iscsi-tgt
+  global.cc
+  common.cc
+  bdev_fastblock.cc
+  bdev_fastblock_rpc.cc
+  iscsi_tgt.cc
   )
 
 target_include_directories (fastblock-vhost
@@ -46,10 +54,10 @@ target_link_libraries(fastblock-nvmf-tgt
     get_core
   )
 
-  target_include_directories (bdevperf
+target_include_directories (fastblock-bdevperf
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-target_link_libraries(bdevperf
+target_link_libraries(fastblock-bdevperf
   PUBLIC
     spdk::spdk
     osd_msg
@@ -58,5 +66,17 @@ target_link_libraries(bdevperf
     get_core
   )
 
-install(TARGETS fastblock-vhost fastblock-nvmf-tgt DESTINATION bin PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
+target_include_directories (fastblock-iscsi-tgt
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(fastblock-iscsi-tgt
+  PUBLIC
+    spdk::spdk
+    osd_msg
+    msg
+    fbclient
+    get_core
+  )
+
+install(TARGETS fastblock-vhost fastblock-nvmf-tgt fastblock-iscsi-tgt fastblock-bdevperf DESTINATION bin PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
                     GROUP_EXECUTE GROUP_READ WORLD_READ WORLD_EXECUTE)

@@ -26,7 +26,8 @@ set(spdk_FIND_COMPONENTS
   thread
   vhost
   nvmf
-  event_nvmf)
+  event_nvmf
+  event_iscsi)
 
 set(spdk_FIND_SYSLIBS_COMPONENT syslibs)
 

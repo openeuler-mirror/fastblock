@@ -53,7 +53,7 @@ fastblock-nvmf-tgt -C nvmf-tgt.json -S 1
 spdk/scripts/rpc.py -s /var/tmp/fastblock_nvmf_tgt3217499.sock  bdev_fastblock_create -P  1 -p fb -i fbimage -k 4096 -I 100G -m "175.5.24.252:3333" -b fbdev
 ```
 参数说明：
-  -s /var/tmp/fastblock_nvmf_tgt3217499.sock： 是/var/tmp目录下fastblock_nvmf_tgt${vhost进程id}.sock
+  -s /var/tmp/fastblock_nvmf_tgt3217499.sock： 是/var/tmp目录下fastblock_nvmf_tgt${fastblock-nvmf-tgt进程id}.sock
   -P ： pool id
   -p ： pool名字
   -i ： image名字
