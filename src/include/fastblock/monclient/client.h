@@ -204,6 +204,12 @@ public:
             return false;
         }
 
+        bool pool_is_exist(pool_id_type pool_id){
+            if(pools.contains(pool_id))
+                return true;
+            return false;
+        }
+
         std::unordered_map<pool_id_type, std::unordered_map<pg_id_type, std::unique_ptr<utils::pg_info_type>>> pool_pg_map{};
         std::unordered_map<pool_id_type, version_type> pool_version{};
         std::unordered_map<pool_id_type, pool_update_info> pool_update{};
@@ -528,6 +534,10 @@ public:
 
     bool get_pool_id(std::string &pool_name, pg_map::pool_id_type& pool_id) {
         return _pg_map.get_pool_id(pool_name, pool_id);
+    }
+
+    bool pool_is_exist(pg_map::pool_id_type pool_id){
+        return _pg_map.pool_is_exist(pool_id);
     }
 protected:
     pg_map _pg_map{};
