@@ -181,9 +181,39 @@ public:
             pool_update.erase(pool_id);
         }
 
+        void delete_pool(pool_id_type pool_id){
+            pool_pg_map.erase(pool_id);
+            pool_version.erase(pool_id);
+            pools.erase(pool_id);
+        }
+
+        void add_pools(pool_id_type pool_id, const std::string& pool_name){
+            if(not pools.contains(pool_id)){
+                pools[pool_id] = pool_name;
+            }
+        }
+
+        //根据pool_name找对应的pool_id
+        bool get_pool_id(std::string &pool_name, pool_id_type& pool_id){
+            for(auto &[id, name] : pools){
+                if(pool_name == name){
+                    pool_id = id;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        bool pool_is_exist(pool_id_type pool_id){
+            if(pools.contains(pool_id))
+                return true;
+            return false;
+        }
+
         std::unordered_map<pool_id_type, std::unordered_map<pg_id_type, std::unique_ptr<utils::pg_info_type>>> pool_pg_map{};
         std::unordered_map<pool_id_type, version_type> pool_version{};
         std::unordered_map<pool_id_type, pool_update_info> pool_update{};
+        std::unordered_map<pool_id_type, std::string> pools;
     };
 
     using pg_op_complete = std::function<void (void *, int)>;
@@ -481,7 +511,7 @@ private:
     bool consume_request();
 
 public:
-    virtual void create_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_version, const msg::PGInfo &info);
+    virtual void create_pg(pg_map::pool_id_type pool_id, std::string& pool_name, pg_map::version_type pool_version, const msg::PGInfo &info);
     virtual void remove_pg(pg_map::pool_id_type pool_id, pg_map::pg_id_type pg_id, pg_map::version_type pool_version);
     virtual void check_and_active_pg(pg_map::pool_id_type pool_id, pg_map::pg_id_type pg_id, 
                                pg_map::version_type pool_version, const msg::PGInfo &info) {};
@@ -500,6 +530,14 @@ public:
 
     virtual bool in_monitor_list(const msg::PGInfo &) {
         return true;
+    }
+
+    bool get_pool_id(std::string &pool_name, pg_map::pool_id_type& pool_id) {
+        return _pg_map.get_pool_id(pool_name, pool_id);
+    }
+
+    bool pool_is_exist(pg_map::pool_id_type pool_id){
+        return _pg_map.pool_is_exist(pool_id);
     }
 protected:
     pg_map _pg_map{};

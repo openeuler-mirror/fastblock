@@ -14,7 +14,6 @@
     "image_name": "testimage",
     "image_size": 53687091200,
     "object_size": 4194304,
-    "pool_id": 1,
     "pool_name": "fb",
     "deferred_time": 10,
     "mon_host": ["172.31.77.144"],

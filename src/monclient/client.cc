@@ -290,7 +290,7 @@ client::to_response_status(const msg::GetImageErrorCode e) noexcept {
     }
 }
 
-void client::create_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_version, const msg::PGInfo &info){
+void client::create_pg(pg_map::pool_id_type pool_id, std::string& pool_name, pg_map::version_type pool_version, const msg::PGInfo &info){
     auto pit = std::make_unique<utils::pg_info_type>();
     pit->pg_id = info.pgid();
     pit->version = info.version();
@@ -302,6 +302,7 @@ void client::create_pg(pg_map::pool_id_type pool_id, pg_map::version_type pool_v
     SPDK_DEBUGLOG(mon, "core [%u] pool: %d pg: %lu version: %ld  osd_list: %s\n",
           ::spdk_env_get_current_core(), pool_id, pit->pg_id, pit->version, osd_str.data());
     _pg_map.pool_pg_map[pool_id].emplace(pit->pg_id, std::move(pit));
+    _pg_map.add_pools(pool_id, pool_name);
 }
 
 void delete_pg_done(void *arg, int perrono) {
@@ -322,8 +323,7 @@ void delete_pg_done(void *arg, int perrono) {
     SPDK_DEBUGLOG(mon, "delete pg %d.%d success.\n", pool_id, pg_id);
     pg_map.pool_pg_map[pool_id].erase(pg_id);
     if(pg_map.pool_pg_map[pool_id].empty()){
-        pg_map.pool_pg_map.erase(pool_id);
-        pg_map.pool_version.erase(pool_id);
+        pg_map.delete_pool(pool_id);
         SPDK_DEBUGLOG(mon, "delete pool %d success.\n", pool_id);
     }
     delete ctx;
@@ -341,6 +341,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
     auto& pv = pg_map_response.poolid_pgmapversion();
     auto& ec = pg_map_response.errorcode();
     auto& pgs = pg_map_response.pgs();
+    auto& pool_ids = pg_map_response.pools();
 
     auto pool_item = _pg_map.pool_pg_map.begin();
     while(pool_item != _pg_map.pool_pg_map.end()){
@@ -384,11 +385,13 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
             continue;
         }
 
-        if (!pgs.contains(pool_key) or !pv.contains(pool_key)) {
+        if (!pgs.contains(pool_key) or !pv.contains(pool_key) or !pool_ids.contains(pool_key)) {
             SPDK_ERRLOG("pool %d has no pgmap, that is a error\n", pool_key);
             continue;
         }
 
+        auto pools_it = pool_ids.find(pool_key);
+        auto pool_name = pools_it->second;
         if(_pg_map.pool_is_updating(pool_key)){
             SPDK_DEBUGLOG(mon, "pool %d is updating\n", pool_key);
             continue;
@@ -406,7 +409,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
             SPDK_DEBUGLOG(mon, "pgs size is %ld\n", pgs.size());
 
             for (auto& info : info_it->second.pi()) {
-                create_pg(pool_key, pv.at(pool_key), info);
+                create_pg(pool_key, pool_name, pv.at(pool_key), info);
             }
 
             continue;
@@ -422,7 +425,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
 
             for (auto& info : info_it->second.pi()){
                 if(not _pg_map.pool_pg_map[pool_key].contains(info.pgid())){
-                    create_pg(pool_key, pv.at(pool_key), info);
+                    create_pg(pool_key, pool_name, pv.at(pool_key), info);
                 }
             }
             continue;
@@ -492,7 +495,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                     
                     change_pg_membership(info, pool_key, pv.at(pool_key), pgid);
                 }else{
-                    create_pg(pool_key, pv.at(pool_key), info);
+                    create_pg(pool_key, pool_name, pv.at(pool_key), info);
                 }
             }
         }

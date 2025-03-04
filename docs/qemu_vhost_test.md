@@ -165,7 +165,7 @@ systemctl start fastblock-vhost.service
 ## 3.3 使用rpc.py创建bdev设备及vhost controler
 创建bdev设备
 ```
-fastblock/build/deps_build/spdk-prefix/src/spdk/scripts/rpc.py -s /var/tmp/bdev_vhost_192944.sock  bdev_fastblock_create -P 1 -p fb -i fbimage -k 4096 -I 100G -m "175.5.24.252:3333" -b fbdev
+fastblock/build/deps_build/spdk-prefix/src/spdk/scripts/rpc.py -s /var/tmp/bdev_vhost_192944.sock  bdev_fastblock_create -p fb -i fbimage -k 4096 -I 100G -m "175.5.24.252:3333" -b fbdev
 ```
 其中：-s /var/tmp/bdev_vhost_192944.sock 是/var/tmp目录下bdev_vhost_${vhost进程id}.sock
 

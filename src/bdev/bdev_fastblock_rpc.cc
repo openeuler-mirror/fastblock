@@ -83,7 +83,6 @@ bdev_fastblock_decode_config(const struct spdk_json_val *values, void *out)
 
 static const struct spdk_json_object_decoder rpc_create_fastblock_decoders[] = {
 	{"name", offsetof(struct rpc_create_fastblock, name), spdk_json_decode_string, true},
-	{"pool_id", offsetof(struct rpc_create_fastblock, pool_id), spdk_json_decode_uint64},
 	{"pool_name", offsetof(struct rpc_create_fastblock, pool_name), spdk_json_decode_string},
 	{"image_name", offsetof(struct rpc_create_fastblock, image_name), spdk_json_decode_string},
 	{"image_size", offsetof(struct rpc_create_fastblock, image_size), spdk_json_decode_uint64},
@@ -111,7 +110,7 @@ rpc_bdev_fastblock_create(struct spdk_jsonrpc_request *request,
 		goto cleanup;
 	}
 
-	rc = bdev_fastblock_create(&bdev, req.name, req.pool_id, req.pool_name,
+	rc = bdev_fastblock_create(&bdev, req.name, req.pool_name,
 							   req.image_name,
 							   req.image_size,
 							   req.block_size,

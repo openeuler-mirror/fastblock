@@ -18,7 +18,6 @@ void bdev_fastblock_free_config(char **config);
 typedef void (*spdk_delete_fastblock_complete)(void *cb_arg, int bdeverrno);
 
 int bdev_fastblock_create(struct spdk_bdev **bdev, const char *name,
-						  uint64_t pool_id,
 						  const char *pool_name,
 						  const char *image_name,
 						  uint64_t image_size,

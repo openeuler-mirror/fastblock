@@ -54,6 +54,7 @@ enum {
     OSD_ERR_UPDATE_STATE_FAILED = -159,
     OSD_ERR_CORE_NUM = -160,
     OSD_BLOBSTORE_NO_INIT = -161,
+    ERR_NOT_FOUND_POOL  = -162,
 
     RAFT_ERR_UNKNOWN = -199,
     RAFT_ERR_LAST = -200,
@@ -125,6 +126,8 @@ inline const char *  string_status(int raft_errno) noexcept{
         return "wrong core number.";
     case OSD_BLOBSTORE_NO_INIT:
         return "blobstore has not been initialized";
+    case ERR_NOT_FOUND_POOL:
+        return "pool does not exist."; 
     default:
         return "unknown errno";
     }

@@ -16,6 +16,7 @@
 #include "fastblock/msg/rdma/client.h"
 #include "fastblock/utils/overload.h"
 #include "fastblock/utils/simple_poller.h"
+#include "fastblock/utils/err_num.h"
 
 #include "fastblock/rpc/osd_msg.pb.h"
 
@@ -180,6 +181,9 @@ private:
     int enqueue_leader_request(const int32_t pool_id, const int32_t pg_id) {
         auto* first_osd = _mon_cli->get_pg_first_available_osd_info(pool_id, pg_id);
         if (not first_osd) {
+            if(!_mon_cli->pool_is_exist(pool_id)){
+                return err::ERR_NOT_FOUND_POOL;
+            }
             SPDK_ERRLOG("ERROR: Cant find any available osd of pg %d, pool id %d\n", pool_id, pg_id);
             return EAGAIN;
         }
@@ -400,7 +404,35 @@ public:
             _leader_osd.emplace(req_stk->leader_osd_key, std::make_unique<leader_osd_info>());
             SPDK_DEBUGLOG(libblk, "_leader_osd emplaced %lu\n", req_stk->leader_osd_key);
             auto struct_key = from_leader_key(req_stk->leader_osd_key);
-            enqueue_leader_request(struct_key.pool_id, struct_key.pg_id);
+            if(enqueue_leader_request(struct_key.pool_id, struct_key.pg_id) == err::ERR_NOT_FOUND_POOL){
+                SPDK_ERRLOG("pool %d does not exist.\n", struct_key.pool_id);
+
+                auto cb_handler = utils::overload {
+                    [this, req_stk] (write_object_callback &cb) {
+                        cb(req_stk->ctx, err::ERR_NOT_FOUND_POOL);
+                    },
+
+                    [this, req_stk] (read_object_callback &cb) {
+                        cb(req_stk->ctx, req_stk->obj_index, std::string{}, err::ERR_NOT_FOUND_POOL);
+                    },
+
+                    [this, req_stk] (delete_callback &cb) {
+                        auto* bdev_io = reinterpret_cast<::spdk_bdev_io*>(req_stk->ctx);
+                        cb(bdev_io, err::ERR_NOT_FOUND_POOL);
+                    },
+
+                    [] ([[maybe_unused]] auto& _) {
+                        SPDK_ERRLOG("ERROR: Un-allocated response\n");
+                        throw std::runtime_error{"un-allocated response"};
+                    }                    
+                };
+                std::visit(cb_handler, req_stk->resp_cb);
+
+                // req_stk->resp_cb(req_stk->ctx, err::ERR_NOT_FOUND_POOL);
+                _leader_osd.erase(req_stk->leader_osd_key);
+                delete req_stk;
+                return;
+            }
         } else if (it->second and not it->second->is_onflight) {
             req_stk->stub = get_stub(it->second->leader_id, it->second->addr, it->second->port);
         }
@@ -536,7 +568,31 @@ public:
         update_leader_state(osd_info_it->second.get());
         if (not osd_info_it->second->is_valid or osd_info_it->second->is_onflight) {
             auto* struct_key = reinterpret_cast<leader_key_type*>(&(head->leader_osd_key));
-            enqueue_leader_request(struct_key->pool_id, struct_key->pg_id);
+            if(enqueue_leader_request(struct_key->pool_id, struct_key->pg_id) == err::ERR_NOT_FOUND_POOL){
+                SPDK_ERRLOG("pool %d does not exist.\n", struct_key->pool_id);
+
+                auto cb_handler = utils::overload {
+                    [this, stack_ptr = head.get()] (write_object_callback &cb) {
+                        cb(stack_ptr->ctx, err::ERR_NOT_FOUND_POOL);
+                    },
+
+                    [this, stack_ptr = head.get()] (read_object_callback &cb) {
+                        cb(stack_ptr->ctx, stack_ptr->obj_index, std::string{}, err::ERR_NOT_FOUND_POOL);
+                    },
+
+                    [this, stack_ptr = head.get()] (delete_callback &cb) {
+                        auto* bdev_io = reinterpret_cast<::spdk_bdev_io*>(stack_ptr->ctx);
+                        cb(bdev_io, err::ERR_NOT_FOUND_POOL);
+                    },
+
+                    [] ([[maybe_unused]] auto& _) {
+                        SPDK_ERRLOG("ERROR: Un-allocated response\n");
+                        throw std::runtime_error{"un-allocated response"};
+                    }                    
+                };
+                std::visit(cb_handler, head->resp_cb);
+                _requests.pop_front();
+            }
 
             return SPDK_POLLER_BUSY;
         }

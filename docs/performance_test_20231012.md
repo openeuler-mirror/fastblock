@@ -136,7 +136,7 @@ vhost.json 作为 `fastblock-vhost` 的配置文件如下：
 
 ```shell
 /root/fastblock/build/src/bdev/fastblock-vhost -m ['8'] -C vhost.json &
-/root/spdk/scripts/rpc.py -s /var/tmp/socket.bdev.sock  bdev_fastblock_create -P 1 -p fb -i fbimage -k 4096 -I 100G -m "127.0.0.1:3333" -b fbdev
+/root/spdk/scripts/rpc.py -s /var/tmp/socket.bdev.sock  bdev_fastblock_create -p fb -i fbimage -k 4096 -I 100G -m "127.0.0.1:3333" -b fbdev
 /root/spdk/scripts/rpc.py -s /var/tmp/socket.bdev.sock  vhost_create_blk_controller --cpumask 0x8 vhost.1 fbdev
 ```
 注意, fastblock-vhost也是一个spdk app，也是需要绑核的，且第三条命令行中绑定的cpumask要跟fastblock-vhost进程绑定的核一致。

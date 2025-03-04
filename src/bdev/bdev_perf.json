@@ -1,7 +1,6 @@
 {
     "bdev_name": "fbdev",
     "object_size": 4194304,
-    "pool_id": 1,
     "pool_name": "fb",
     "image_name": "fbimage",
     "block_size": 4096,

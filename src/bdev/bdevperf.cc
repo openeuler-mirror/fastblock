@@ -40,7 +40,6 @@ SPDK_LOG_REGISTER_COMPONENT(perf)
 struct fastblock_bdev_info {
     std::string bdev_name;
 	uint64_t  object_size = 4194304;
-	uint64_t  pool_id;
 	std::string pool_name;
 	std::string image_name;
 	uint64_t image_size;
@@ -2484,7 +2483,6 @@ bdevperf_run(void *arg1)
             struct spdk_bdev *bdev;
 			int ret = bdev_fastblock_create(&bdev, 
 			        g_fb_info.bdev_name.c_str(),
-					g_fb_info.pool_id,
 					g_fb_info.pool_name.c_str(),
 					g_fb_info.image_name.c_str(),
 					g_fb_info.image_size,
@@ -2918,12 +2916,6 @@ static int get_fastblock_bdev_info(){
 	}
 	if(g_pt.count("object_size") > 0){
         g_fb_info.object_size = g_pt.get_child("object_size").get_value<uint64_t>();
-	} 
-	if(g_pt.count("pool_id") > 0){
-        g_fb_info.pool_id = g_pt.get_child("pool_id").get_value<uint64_t>();
-	} else {
-		std::cerr << "pool id is not specified" << std::endl;
-		return -EINVAL;
 	}
 	if(g_pt.count("pool_name") > 0){
         g_fb_info.pool_name = g_pt.get_child("pool_name").get_value<std::string>();
