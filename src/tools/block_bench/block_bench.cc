@@ -379,13 +379,18 @@ void read_once(bench_context* ctx) {
 }
 
 void on_write_done(::spdk_bdev_io* ctx, [[maybe_unused]] int32_t res) {
-    if (res != errc::success) {
-        SPDK_ERRLOG("Write object error\n");
-    }
-
     auto* stack_ptr = reinterpret_cast<request_stack*>(ctx);
     auto* bench_ctx = reinterpret_cast<bench_context*>(stack_ptr->ctx);
     auto* watcher_ctx = reinterpret_cast<watcher_context*>(bench_ctx->watcher_ctx);
+
+    if (res != errc::success) {
+        SPDK_ERRLOG("Write object error, res %d\n", res);
+        if (res != err::ERR_NOT_FOUND_POOL) {
+            SPDK_ERRLOG("pool %s does not exist\n", watcher_ctx->pool_name.c_str());
+            std::raise(SIGINT);
+            return;
+        }
+    }
 
     auto tick = ::spdk_get_ticks();
     auto dur = static_cast<double>(tick - stack_ptr->start_tick);
@@ -422,13 +427,18 @@ void on_write_done(::spdk_bdev_io* ctx, [[maybe_unused]] int32_t res) {
 }
 
 void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
-    if (res != errc::success) {
-        SPDK_ERRLOG("Read object error\n");
-    }
-
     auto* stack_ptr = reinterpret_cast<request_stack*>(arg);
     auto* bench_ctx = reinterpret_cast<bench_context*>(stack_ptr->ctx);
     auto* watcher_ctx = reinterpret_cast<watcher_context*>(bench_ctx->watcher_ctx);
+
+    if (res != errc::success) {
+        SPDK_ERRLOG("Read object error, res %d\n", res);
+        if (res != err::ERR_NOT_FOUND_POOL) {
+            SPDK_ERRLOG("pool %s does not exist\n", watcher_ctx->pool_name.c_str());
+            std::raise(SIGINT);
+            return;
+        }
+    }
 
     auto tick = ::spdk_get_ticks();
     auto dur = static_cast<double>(tick - stack_ptr->start_tick);
