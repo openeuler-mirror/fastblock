@@ -204,10 +204,8 @@ public:
             return false;
         }
 
-        bool pool_is_exist(pool_id_type pool_id){
-            if(pools.contains(pool_id))
-                return true;
-            return false;
+        bool pool_is_exist(const pool_id_type pool_id) const {
+            return pools.contains(pool_id);
         }
 
         std::unordered_map<pool_id_type, std::unordered_map<pg_id_type, std::unique_ptr<utils::pg_info_type>>> pool_pg_map{};
@@ -465,10 +463,10 @@ public:
         conn_cb(nullptr, 0);
     };
 
-    virtual void delete_pg_from_osd(const google::protobuf::Map<google::protobuf::int32, msg::PGInfos> &, uint64_t, 
+    virtual void delete_pg_from_osd(const google::protobuf::Map<google::protobuf::int32, msg::PGInfos> &, uint64_t,
                 std::unordered_map<monitor::client::pg_map::pg_id_type, std::unique_ptr<utils::pg_info_type>> &) {};
 
-    virtual void change_pg_membership(const msg::PGInfo &, 
+    virtual void change_pg_membership(const msg::PGInfo &,
                         pg_map::pool_id_type,
                         pg_map::version_type,
                         pg_map::pg_id_type) {};
@@ -513,7 +511,7 @@ private:
 public:
     virtual void create_pg(pg_map::pool_id_type pool_id, std::string& pool_name, pg_map::version_type pool_version, const msg::PGInfo &info);
     virtual void remove_pg(pg_map::pool_id_type pool_id, pg_map::pg_id_type pg_id, pg_map::version_type pool_version);
-    virtual void check_and_active_pg(pg_map::pool_id_type pool_id, pg_map::pg_id_type pg_id, 
+    virtual void check_and_active_pg(pg_map::pool_id_type pool_id, pg_map::pg_id_type pg_id,
                                pg_map::version_type pool_version, const msg::PGInfo &info) {};
     void send_leader_be_elected_notify_request(
                                int32_t leader_id,
@@ -536,7 +534,7 @@ public:
         return _pg_map.get_pool_id(pool_name, pool_id);
     }
 
-    bool pool_is_exist(pg_map::pool_id_type pool_id){
+    bool pool_is_exist(const pg_map::pool_id_type pool_id) const {
         return _pg_map.pool_is_exist(pool_id);
     }
 protected:
