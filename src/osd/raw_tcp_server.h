@@ -12,6 +12,8 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -35,13 +37,22 @@ private:
         std::thread worker{};
     };
 
+    struct connection_context {
+        int fd{-1};
+        std::atomic<bool> done{false};
+        std::thread worker{};
+    };
+
     bool start_listener(uint32_t shard_id);
+    void cleanup_finished_connections() noexcept;
     void run_listener(uint32_t shard_id) noexcept;
-    void handle_connection(int client_fd, uint32_t shard_id) noexcept;
+    void handle_connection(connection_context *conn, uint32_t shard_id) noexcept;
 
 private:
     osd_service* _service{nullptr};
     std::atomic<bool> _running{false};
     std::string _bind_address{};
     std::vector<listener_context> _listeners{};
+    std::mutex _connections_mutex{};
+    std::vector<std::unique_ptr<connection_context>> _connections{};
 };

@@ -421,6 +421,16 @@ bool osd_raw_tcp_server::start(const std::string& bind_address, const uint32_t s
 
 void osd_raw_tcp_server::stop() noexcept {
     const auto was_running = _running.exchange(false, std::memory_order_acq_rel);
+    {
+        std::lock_guard<std::mutex> lk(_connections_mutex);
+        for (auto& conn : _connections) {
+            if (conn->fd >= 0) {
+                ::shutdown(conn->fd, SHUT_RDWR);
+                ::close(conn->fd);
+                conn->fd = -1;
+            }
+        }
+    }
     for (auto& listener : _listeners) {
         if (listener.fd >= 0) {
             ::shutdown(listener.fd, SHUT_RDWR);
@@ -437,6 +447,16 @@ void osd_raw_tcp_server::stop() noexcept {
         }
         listener.fd = -1;
         listener.port = 0;
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(_connections_mutex);
+        for (auto& conn : _connections) {
+            if (conn->worker.joinable()) {
+                conn->worker.join();
+            }
+        }
+        _connections.clear();
     }
 }
 
@@ -482,12 +502,30 @@ bool osd_raw_tcp_server::start_listener(const uint32_t shard_id) {
     return true;
 }
 
+void osd_raw_tcp_server::cleanup_finished_connections() noexcept {
+    std::lock_guard<std::mutex> lk(_connections_mutex);
+
+    for (auto it = _connections.begin(); it != _connections.end();) {
+        if (!(*it)->done.load(std::memory_order_acquire)) {
+            ++it;
+            continue;
+        }
+
+        if ((*it)->worker.joinable()) {
+            (*it)->worker.join();
+        }
+        it = _connections.erase(it);
+    }
+}
+
 void osd_raw_tcp_server::run_listener(const uint32_t shard_id) noexcept {
     auto& listener = _listeners.at(shard_id);
     while (_running.load(std::memory_order_acquire)) {
         if (!wait_for_fd(listener.fd, POLLIN, _running)) {
             continue;
         }
+
+        cleanup_finished_connections();
 
         ::sockaddr_in peer_addr{};
         ::socklen_t peer_len = sizeof(peer_addr);
@@ -507,11 +545,41 @@ void osd_raw_tcp_server::run_listener(const uint32_t shard_id) noexcept {
             continue;
         }
 
-        handle_connection(client_fd, shard_id);
+        auto conn = std::make_unique<connection_context>();
+        conn->fd = client_fd;
+        try {
+            conn->worker = std::thread([this, shard_id, ctx = conn.get()]() {
+                handle_connection(ctx, shard_id);
+            });
+        } catch (const std::exception& e) {
+            SPDK_ERRLOG(
+              "ERROR: create raw TCP connection worker on shard %u failed: %s\n",
+              shard_id,
+              e.what());
+            ::shutdown(client_fd, SHUT_RDWR);
+            ::close(client_fd);
+            continue;
+        }
+
+        {
+            std::lock_guard<std::mutex> lk(_connections_mutex);
+            _connections.push_back(std::move(conn));
+        }
     }
+
+    cleanup_finished_connections();
 }
 
-void osd_raw_tcp_server::handle_connection(const int client_fd, const uint32_t shard_id) noexcept {
+void osd_raw_tcp_server::handle_connection(connection_context *conn, const uint32_t shard_id) noexcept {
+    auto client_fd = conn ? conn->fd : -1;
+
+    if (client_fd < 0) {
+        if (conn) {
+            conn->done.store(true, std::memory_order_release);
+        }
+        return;
+    }
+
     while (_running.load(std::memory_order_acquire)) {
         raw_header req_hdr{};
         if (!recv_all(client_fd, &req_hdr, sizeof(req_hdr), _running)) {
@@ -755,5 +823,9 @@ void osd_raw_tcp_server::handle_connection(const int client_fd, const uint32_t s
 
     ::shutdown(client_fd, SHUT_RDWR);
     ::close(client_fd);
+    if (conn) {
+        conn->fd = -1;
+        conn->done.store(true, std::memory_order_release);
+    }
     SPDK_NOTICELOG("Closed raw TCP connection on shard %u\n", shard_id);
 }
