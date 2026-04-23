@@ -1,0 +1,24 @@
+#ifndef KFASTBLOCK_CONTROL_H
+#define KFASTBLOCK_CONTROL_H
+
+#include <linux/device.h>
+#include <linux/types.h>
+
+struct kfastblock_attach_spec {
+	char *monitor_addr;
+	char *pool_name;
+	char *image_name;
+	char *token;
+	char *snapshot_name;
+	bool read_only;
+	u64 debug_size_bytes;
+	u32 debug_object_size;
+};
+
+int kfastblock_control_attach(const char *args, size_t count, int major,
+			      struct bus_type *bus, struct device *parent_dev);
+int kfastblock_control_detach(const char *args, size_t count);
+void kfastblock_control_cleanup_attach_spec(struct kfastblock_attach_spec *spec);
+const char *kfastblock_control_last_error(void);
+
+#endif
