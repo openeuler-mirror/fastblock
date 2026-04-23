@@ -145,6 +145,7 @@ static void kfastblock_volume_refresh_workfn(struct work_struct *work)
 		if (old_read_only != vol->view.image.read_only)
 			set_disk_ro(vol->disk, vol->view.image.read_only);
 	} else if (ret) {
+		kfastblock_volume_close_cached_sockets(vol);
 		vol->view.sync_state = KFASTBLOCK_META_SYNC_STALE;
 	}
 	mutex_unlock(&vol->inflight_lock);
@@ -369,6 +370,10 @@ static blk_status_t kfastblock_queue_rq(struct blk_mq_hw_ctx *hctx,
 	blk_mq_start_request(rq);
 
 	if (!vol || !atomic_read(&vol->ready)) {
+		blk_mq_end_request(rq, BLK_STS_RESOURCE);
+		return BLK_STS_RESOURCE;
+	}
+	if (!kfastblock_meta_io_ready(&vol->view)) {
 		blk_mq_end_request(rq, BLK_STS_RESOURCE);
 		return BLK_STS_RESOURCE;
 	}

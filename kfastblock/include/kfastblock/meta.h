@@ -88,6 +88,7 @@ int kfastblock_meta_replace_cluster_map(struct kfastblock_cluster_view *view,
 					u32 route_count,
 					struct kfastblock_pg_route *routes);
 bool kfastblock_meta_ready(const struct kfastblock_cluster_view *view);
+bool kfastblock_meta_io_ready(const struct kfastblock_cluster_view *view);
 const struct kfastblock_osd_endpoint *
 kfastblock_meta_find_osd(const struct kfastblock_cluster_view *view, u32 osd_id);
 const struct kfastblock_osd_shard *
