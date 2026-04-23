@@ -893,7 +893,7 @@ static int kfastblock_transport_submit_object_io(
 	}
 
 	for (attempt = 0; attempt < 2; ++attempt) {
-		ret = kfastblock_transport_get_pg_leader(view, view->image.pool_id,
+		ret = kfastblock_transport_get_pg_leader(vol, view->image.pool_id,
 						 extent->pg_id, &leader);
 		if (ret)
 			goto out;
@@ -1068,17 +1068,19 @@ int kfastblock_transport_fetch_cluster_view(struct kfastblock_cluster_view *view
 	return first_err;
 }
 
-int kfastblock_transport_get_pg_leader(struct kfastblock_cluster_view *view,
+int kfastblock_transport_get_pg_leader(struct kfastblock_volume *vol,
 				       u32 pool_id, u32 pg_id,
 				       struct kfastblock_leader_info *leader)
 {
+	struct kfastblock_cluster_view *view;
 	const struct kfastblock_pg_route *route;
 	u32 i;
 	int first_err = -ENOENT;
 	int ret;
 
-	if (!view || !leader)
+	if (!vol || !leader)
 		return -EINVAL;
+	view = &vol->view;
 
 	ret = kfastblock_meta_get_pg_leader(view, pool_id, pg_id, leader);
 	if (!ret)
@@ -1092,7 +1094,9 @@ int kfastblock_transport_get_pg_leader(struct kfastblock_cluster_view *view,
 		const struct kfastblock_pg_route *resolved_route;
 		const struct kfastblock_osd_endpoint *osd;
 		const struct kfastblock_osd_shard *shard;
+		struct kfastblock_cached_socket *cached = NULL;
 		struct socket *sock = NULL;
+		struct kfastblock_leader_info target = {};
 
 		ret = kfastblock_meta_resolve_pg_target(view, pool_id, pg_id,
 						 route->osd_ids[i],
@@ -1110,12 +1114,29 @@ int kfastblock_transport_get_pg_leader(struct kfastblock_cluster_view *view,
 			continue;
 		}
 
-		ret = kfastblock_transport_try_connect_host(osd->address,
-						     shard->port,
-						     &sock);
-		if (ret) {
-			first_err = ret;
-			continue;
+		target.osd_id = osd->osd_id;
+		target.port = shard->port;
+		strscpy(target.address, osd->address, sizeof(target.address));
+		cached = kfastblock_transport_find_cached_socket(vol, &target);
+		if (cached) {
+			sock = cached->sock;
+		} else {
+			cached = kfastblock_transport_get_socket_slot(vol);
+			if (!cached)
+				return -ENOMEM;
+			kfastblock_transport_close_cached_socket(cached);
+			ret = kfastblock_transport_try_connect_host(osd->address,
+							     shard->port,
+							     &sock);
+			if (ret) {
+				first_err = ret;
+				continue;
+			}
+			cached->sock = sock;
+			cached->osd_id = target.osd_id;
+			cached->port = target.port;
+			strscpy(cached->address, target.address,
+				sizeof(cached->address));
 		}
 
 		ret = kfastblock_transport_fetch_pg_leader_from_osd(sock,
@@ -1123,13 +1144,14 @@ int kfastblock_transport_get_pg_leader(struct kfastblock_cluster_view *view,
 						    resolved_route->pg_id,
 						    1,
 						    leader);
-		sock_release(sock);
 		if (!ret) {
 			ret = kfastblock_meta_set_pg_leader(view, pool_id, pg_id,
 						 leader);
 			return ret ? ret : 0;
 		}
 
+		if (cached)
+			kfastblock_transport_close_cached_socket(cached);
 		kfastblock_meta_invalidate_pg_leader(view, pool_id, pg_id);
 		first_err = ret;
 	}
