@@ -32,6 +32,9 @@ int kfastblock_meta_bootstrap(struct kfastblock_cluster_view *view,
 	view->image.object_size = spec->debug_object_size ?
 		spec->debug_object_size : KFASTBLOCK_DEFAULT_OBJECT_SIZE;
 	view->image.size_bytes = spec->debug_size_bytes;
+	view->image.pool_id = spec->debug_pool_id;
+	view->image.pg_count = spec->debug_pg_count ? spec->debug_pg_count : 1;
+	view->image.read_only = spec->read_only;
 	view->last_refresh_jiffies = jiffies;
 	view->sync_state = KFASTBLOCK_META_SYNC_NEW;
 
@@ -70,5 +73,5 @@ int kfastblock_meta_refresh(struct kfastblock_cluster_view *view,
 bool kfastblock_meta_ready(const struct kfastblock_cluster_view *view)
 {
 	return view && view->image.size_bytes && view->image.object_size &&
-		view->image.block_size;
+		view->image.block_size && view->image.pg_count;
 }
