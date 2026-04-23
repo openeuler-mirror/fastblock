@@ -99,6 +99,21 @@ static int kfastblock_transport_status_to_errno(const u32 status)
 	}
 }
 
+static bool kfastblock_transport_should_retry_object_io(const int ret)
+{
+	switch (ret) {
+	case -ENOLINK:
+	case -EAGAIN:
+	case -EHOSTDOWN:
+	case -ETIMEDOUT:
+	case -ECONNRESET:
+	case -EPIPE:
+		return true;
+	default:
+		return false;
+	}
+}
+
 static int kfastblock_transport_send_all(struct socket *sock,
 					 const void *buf,
 					 size_t len)
@@ -944,7 +959,7 @@ static int kfastblock_transport_submit_object_io(
 			ret = kfastblock_transport_delete_object(sock,
 							view->image.pool_id,
 							extent, 1);
-		if (ret == -ENOLINK) {
+		if (kfastblock_transport_should_retry_object_io(ret)) {
 invalidate:
 			kfastblock_transport_close_cached_socket(cached);
 			sock = NULL;
