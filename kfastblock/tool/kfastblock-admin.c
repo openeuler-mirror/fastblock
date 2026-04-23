@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <ctype.h>
 #include <fcntl.h>
 #include <getopt.h>
@@ -106,7 +107,7 @@ static void print_usage(const char *prog_name)
 	fprintf(stderr, "Usage: %s <attach|detach> [options]\n", prog_name);
 	fprintf(stderr, "Options:\n");
 	fprintf(stderr, "  -c, --conf <file>\n");
-	fprintf(stderr, "  --monitor-addr <addr>\n");
+	fprintf(stderr, "  --monitor-addr <addr[,addr...]>\n");
 	fprintf(stderr, "  --pool-name <name>\n");
 	fprintf(stderr, "  --image-name <name>\n");
 	fprintf(stderr, "  --token <token>\n");

@@ -39,6 +39,72 @@ static int kfastblock_dup_field(char **dst, const char *value)
 	return *dst ? 0 : -ENOMEM;
 }
 
+static int kfastblock_parse_monitor_addr(struct kfastblock_attach_spec *spec,
+					const char *value)
+{
+	char *scratch;
+	char *cursor;
+	char *token;
+	int ret = 0;
+
+	if (!spec || !value || !*value)
+		return -EINVAL;
+
+	scratch = kstrdup(value, GFP_KERNEL);
+	if (!scratch)
+		return -ENOMEM;
+
+	spec->nr_monitors = 0;
+	cursor = scratch;
+	while ((token = strsep(&cursor, ",")) != NULL) {
+		char *port_str;
+		char *sep;
+		u32 port;
+		struct kfastblock_monitor_endpoint *endpoint;
+
+		if (!*token)
+			continue;
+		if (spec->nr_monitors >= KFASTBLOCK_MAX_MONITORS) {
+			ret = -E2BIG;
+			goto out;
+		}
+
+		endpoint = &spec->monitors[spec->nr_monitors];
+		memset(endpoint, 0, sizeof(*endpoint));
+		sep = strrchr(token, ':');
+		if (sep && strchr(sep + 1, ':') == NULL) {
+			*sep = '\0';
+			port_str = sep + 1;
+			ret = kstrtou32(port_str, 10, &port);
+			if (ret)
+				goto out;
+			if (!port || port > U16_MAX) {
+				ret = -EINVAL;
+				goto out;
+			}
+			endpoint->port = (u16)port;
+		} else {
+			endpoint->port = KFASTBLOCK_DEFAULT_MONITOR_PORT;
+		}
+
+		strim(token);
+		if (!*token) {
+			ret = -EINVAL;
+			goto out;
+		}
+
+		strscpy(endpoint->host, token, sizeof(endpoint->host));
+		++spec->nr_monitors;
+	}
+
+	if (!spec->nr_monitors)
+		ret = -EINVAL;
+
+out:
+	kfree(scratch);
+	return ret;
+}
+
 static int kfastblock_parse_attach_spec(const char *args, size_t count,
 					struct kfastblock_attach_spec *spec)
 {
@@ -73,6 +139,9 @@ static int kfastblock_parse_attach_spec(const char *args, size_t count,
 
 		if (!strcmp(key, "monitor_addr")) {
 			ret = kfastblock_dup_field(&spec->monitor_addr, value);
+			if (ret)
+				goto out;
+			ret = kfastblock_parse_monitor_addr(spec, value);
 		} else if (!strcmp(key, "pool_name")) {
 			ret = kfastblock_dup_field(&spec->pool_name, value);
 		} else if (!strcmp(key, "image_name")) {
@@ -104,7 +173,8 @@ static int kfastblock_parse_attach_spec(const char *args, size_t count,
 			goto out;
 	}
 
-	if (!spec->monitor_addr || !spec->pool_name || !spec->image_name) {
+	if (!spec->monitor_addr || !spec->pool_name || !spec->image_name ||
+	    !spec->nr_monitors) {
 		ret = -EINVAL;
 		goto out;
 	}
@@ -119,47 +189,59 @@ out:
 int kfastblock_control_attach(const char *args, size_t count, int major,
 			      struct bus_type *bus, struct device *parent_dev)
 {
-	struct kfastblock_attach_spec spec;
+	struct kfastblock_attach_spec *spec;
 	int ret;
 
-	ret = kfastblock_parse_attach_spec(args, count, &spec);
+	spec = kzalloc(sizeof(*spec), GFP_KERNEL);
+	if (!spec)
+		return -ENOMEM;
+
+	ret = kfastblock_parse_attach_spec(args, count, spec);
 	if (ret) {
 		kfastblock_set_last_error("invalid attach arguments");
-		return ret;
+		goto out;
 	}
 
-	ret = kfastblock_volume_attach(&spec, major, bus, parent_dev);
+	ret = kfastblock_volume_attach(spec, major, bus, parent_dev);
 	if (ret == -EOPNOTSUPP) {
-		kfastblock_set_last_error("monitor bootstrap and data transport are not implemented yet");
+		kfastblock_set_last_error("monitor bootstrap protocol is not implemented yet");
 	} else if (ret) {
 		kfastblock_set_last_error("failed to attach volume");
 	} else {
 		kfastblock_set_last_error("ok");
 	}
 
-	kfastblock_control_cleanup_attach_spec(&spec);
+out:
+	kfastblock_control_cleanup_attach_spec(spec);
+	kfree(spec);
 	return ret;
 }
 
 int kfastblock_control_detach(const char *args, size_t count)
 {
-	struct kfastblock_attach_spec spec;
+	struct kfastblock_attach_spec *spec;
 	int ret;
 
-	ret = kfastblock_parse_attach_spec(args, count, &spec);
+	spec = kzalloc(sizeof(*spec), GFP_KERNEL);
+	if (!spec)
+		return -ENOMEM;
+
+	ret = kfastblock_parse_attach_spec(args, count, spec);
 	if (ret) {
 		kfastblock_set_last_error("invalid detach arguments");
-		return ret;
+		goto out;
 	}
 
-	ret = kfastblock_volume_detach(&spec);
+	ret = kfastblock_volume_detach(spec);
 	if (ret) {
 		kfastblock_set_last_error("failed to detach volume");
 	} else {
 		kfastblock_set_last_error("ok");
 	}
 
-	kfastblock_control_cleanup_attach_spec(&spec);
+out:
+	kfastblock_control_cleanup_attach_spec(spec);
+	kfree(spec);
 	return ret;
 }
 
