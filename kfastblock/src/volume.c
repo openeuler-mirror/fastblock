@@ -3,6 +3,7 @@
 #include <linux/errno.h>
 #include <linux/fs.h>
 #include <linux/idr.h>
+#include <linux/jiffies.h>
 #include <linux/limits.h>
 #include <linux/list.h>
 #include <linux/module.h>
@@ -20,6 +21,110 @@
 static LIST_HEAD(g_kfastblock_volumes);
 static DEFINE_MUTEX(g_kfastblock_volumes_lock);
 static DEFINE_IDA(g_kfastblock_dev_ida);
+
+static unsigned long kfastblock_volume_refresh_interval(void)
+{
+	return msecs_to_jiffies(3000);
+}
+
+static void kfastblock_volume_schedule_refresh(struct kfastblock_volume *vol)
+{
+	if (!vol || !atomic_read(&vol->ready))
+		return;
+
+	schedule_delayed_work(&vol->refresh_work,
+			      kfastblock_volume_refresh_interval());
+}
+
+static int kfastblock_volume_copy_attach_spec(struct kfastblock_attach_spec *dst,
+					      const struct kfastblock_attach_spec *src)
+{
+	if (!dst || !src)
+		return -EINVAL;
+
+	memset(dst, 0, sizeof(*dst));
+	if (src->monitor_addr) {
+		dst->monitor_addr = kstrdup(src->monitor_addr, GFP_KERNEL);
+		if (!dst->monitor_addr)
+			goto nomem;
+	}
+	if (src->pool_name) {
+		dst->pool_name = kstrdup(src->pool_name, GFP_KERNEL);
+		if (!dst->pool_name)
+			goto nomem;
+	}
+	if (src->image_name) {
+		dst->image_name = kstrdup(src->image_name, GFP_KERNEL);
+		if (!dst->image_name)
+			goto nomem;
+	}
+
+	dst->read_only = src->read_only;
+	dst->debug_size_bytes = src->debug_size_bytes;
+	dst->debug_object_size = src->debug_object_size;
+	dst->debug_pool_id = src->debug_pool_id;
+	dst->debug_pg_count = src->debug_pg_count;
+	dst->nr_monitors = src->nr_monitors;
+	memcpy(dst->monitors, src->monitors, sizeof(dst->monitors));
+	return 0;
+
+nomem:
+	kfastblock_control_cleanup_attach_spec(dst);
+	return -ENOMEM;
+}
+
+static void kfastblock_volume_refresh_workfn(struct work_struct *work)
+{
+	struct delayed_work *delayed_work = to_delayed_work(work);
+	struct kfastblock_volume *vol = container_of(delayed_work,
+					      struct kfastblock_volume,
+					      refresh_work);
+	u64 old_size;
+	u32 old_block_size;
+	u32 old_object_size;
+	bool old_read_only;
+	int ret;
+
+	if (!atomic_read(&vol->ready))
+		return;
+
+	mutex_lock(&vol->inflight_lock);
+	if (!atomic_read(&vol->ready)) {
+		mutex_unlock(&vol->inflight_lock);
+		return;
+	}
+
+	old_size = vol->view.image.size_bytes;
+	old_block_size = vol->view.image.block_size;
+	old_object_size = vol->view.image.object_size;
+	old_read_only = vol->view.image.read_only;
+	ret = kfastblock_meta_refresh(&vol->view, &vol->spec);
+	if (!ret && vol->disk) {
+		if (old_size != vol->view.image.size_bytes)
+			set_capacity_and_notify(vol->disk,
+						vol->view.image.size_bytes >>
+						SECTOR_SHIFT);
+		if (old_block_size != vol->view.image.block_size &&
+		    vol->view.image.block_size)
+			blk_queue_logical_block_size(vol->disk->queue,
+					     vol->view.image.block_size);
+		if (old_object_size != vol->view.image.object_size &&
+		    vol->view.image.object_size) {
+			blk_queue_io_opt(vol->disk->queue,
+					 vol->view.image.object_size);
+			blk_queue_chunk_sectors(vol->disk->queue,
+					vol->view.image.object_size >>
+					SECTOR_SHIFT);
+		}
+		if (old_read_only != vol->view.image.read_only)
+			set_disk_ro(vol->disk, vol->view.image.read_only);
+	} else if (ret) {
+		vol->view.sync_state = KFASTBLOCK_META_SYNC_STALE;
+	}
+	mutex_unlock(&vol->inflight_lock);
+
+	kfastblock_volume_schedule_refresh(vol);
+}
 
 static ssize_t pool_name_show(struct device *dev,
 			      struct device_attribute *attr, char *buf)
@@ -282,6 +387,7 @@ static void kfastblock_volume_free(struct kfastblock_volume *vol)
 		return;
 
 	atomic_set(&vol->ready, 0);
+	cancel_delayed_work_sync(&vol->refresh_work);
 
 	mutex_lock(&g_kfastblock_volumes_lock);
 	if (!list_empty(&vol->node))
@@ -305,6 +411,7 @@ static void kfastblock_volume_free(struct kfastblock_volume *vol)
 		sock_release(vol->socket_cache[i].sock);
 		vol->socket_cache[i].sock = NULL;
 	}
+	kfastblock_control_cleanup_attach_spec(&vol->spec);
 	kfastblock_meta_cleanup_view(&vol->view);
 	kfree(vol);
 	module_put(THIS_MODULE);
@@ -421,7 +528,12 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	atomic_set(&vol->open_count, 0);
 	atomic_set(&vol->ready, 0);
 	mutex_init(&vol->inflight_lock);
+	INIT_DELAYED_WORK(&vol->refresh_work, kfastblock_volume_refresh_workfn);
 	INIT_LIST_HEAD(&vol->node);
+
+	ret = kfastblock_volume_copy_attach_spec(&vol->spec, spec);
+	if (ret)
+		goto err_free;
 
 	ret = kfastblock_meta_bootstrap(&vol->view, spec);
 	if (ret)
@@ -441,9 +553,12 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	mutex_unlock(&g_kfastblock_volumes_lock);
 
 	atomic_set(&vol->ready, 1);
+	kfastblock_volume_schedule_refresh(vol);
 	return 0;
 
 err_free:
+	cancel_delayed_work_sync(&vol->refresh_work);
+	kfastblock_control_cleanup_attach_spec(&vol->spec);
 	kfastblock_meta_cleanup_view(&vol->view);
 	kfree(vol);
 	return ret;
@@ -472,6 +587,7 @@ int kfastblock_volume_detach(const struct kfastblock_attach_spec *spec)
 		return -ENOENT;
 
 	atomic_set(&found->ready, 0);
+	cancel_delayed_work_sync(&found->refresh_work);
 	if (found->disk) {
 		del_gendisk(found->disk);
 		put_disk(found->disk);
@@ -496,6 +612,7 @@ void kfastblock_volume_exit(void)
 	list_for_each_entry_safe(vol, tmp, &g_kfastblock_volumes, node) {
 		list_del_init(&vol->node);
 		atomic_set(&vol->ready, 0);
+		cancel_delayed_work_sync(&vol->refresh_work);
 		if (vol->disk) {
 			del_gendisk(vol->disk);
 			put_disk(vol->disk);
