@@ -27,6 +27,25 @@ static unsigned long kfastblock_volume_refresh_interval(void)
 	return msecs_to_jiffies(3000);
 }
 
+static void kfastblock_volume_close_cached_sockets(struct kfastblock_volume *vol)
+{
+	int i;
+
+	if (!vol)
+		return;
+
+	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i) {
+		if (!vol->socket_cache[i].sock)
+			continue;
+		sock_release(vol->socket_cache[i].sock);
+		vol->socket_cache[i].sock = NULL;
+		memset(vol->socket_cache[i].address, 0,
+		       sizeof(vol->socket_cache[i].address));
+		vol->socket_cache[i].osd_id = 0;
+		vol->socket_cache[i].port = 0;
+	}
+}
+
 static void kfastblock_volume_schedule_refresh(struct kfastblock_volume *vol)
 {
 	if (!vol || !atomic_read(&vol->ready))
@@ -80,6 +99,8 @@ static void kfastblock_volume_refresh_workfn(struct work_struct *work)
 					      struct kfastblock_volume,
 					      refresh_work);
 	u64 old_size;
+	u64 old_osdmap_epoch;
+	u64 old_pgmap_epoch;
 	u32 old_block_size;
 	u32 old_object_size;
 	bool old_read_only;
@@ -95,11 +116,16 @@ static void kfastblock_volume_refresh_workfn(struct work_struct *work)
 	}
 
 	old_size = vol->view.image.size_bytes;
+	old_osdmap_epoch = vol->view.osdmap_epoch;
+	old_pgmap_epoch = vol->view.pgmap_epoch;
 	old_block_size = vol->view.image.block_size;
 	old_object_size = vol->view.image.object_size;
 	old_read_only = vol->view.image.read_only;
 	ret = kfastblock_meta_refresh(&vol->view, &vol->spec);
 	if (!ret && vol->disk) {
+		if (old_osdmap_epoch != vol->view.osdmap_epoch ||
+		    old_pgmap_epoch != vol->view.pgmap_epoch)
+			kfastblock_volume_close_cached_sockets(vol);
 		if (old_size != vol->view.image.size_bytes)
 			set_capacity_and_notify(vol->disk,
 						vol->view.image.size_bytes >>
@@ -381,8 +407,6 @@ static const struct blk_mq_ops kfastblock_mq_ops = {
 
 static void kfastblock_volume_free(struct kfastblock_volume *vol)
 {
-	int i;
-
 	if (!vol)
 		return;
 
@@ -405,12 +429,7 @@ static void kfastblock_volume_free(struct kfastblock_volume *vol)
 	if (vol->dev_id >= 0)
 		ida_free(&g_kfastblock_dev_ida, vol->dev_id);
 
-	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i) {
-		if (!vol->socket_cache[i].sock)
-			continue;
-		sock_release(vol->socket_cache[i].sock);
-		vol->socket_cache[i].sock = NULL;
-	}
+	kfastblock_volume_close_cached_sockets(vol);
 	kfastblock_control_cleanup_attach_spec(&vol->spec);
 	kfastblock_meta_cleanup_view(&vol->view);
 	kfree(vol);
