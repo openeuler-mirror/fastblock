@@ -28,12 +28,12 @@ void monitor_client::load_pgs() {
 }
 
 /*
-   sharded_ports  <shard_id, <core_id, port>>>
+   sharded_ports  <shard_id, <core_id, rdma_port, raw_port>>>
 */
 void monitor_client::emplace_osd_boot_request(
   const int osd_id,
   const std::string& osd_addr,
-  const std::map<uint32_t, std::pair<uint32_t, uint32_t>>& sharded_ports,
+  const std::map<uint32_t, utils::core_shard_map>& sharded_ports,
   const std::string& osd_uuid,
   const int64_t size,
   const uint32_t core_num,
@@ -48,8 +48,9 @@ void monitor_client::emplace_osd_boot_request(
     auto* proto_sharded_ports = boot_req->mutable_sharded_ports();
     for (auto it = sharded_ports.begin(); it != sharded_ports.end(); ++it) {
         msg::ShardCore shard_core;
-        shard_core.set_coreid(it->second.first);
-        shard_core.set_port(it->second.second);
+        shard_core.set_coreid(it->second.core_id);
+        shard_core.set_port(it->second.port);
+        shard_core.set_raw_port(it->second.raw_port);
         proto_sharded_ports->insert({it->first, std::move(shard_core)});
     }
     boot_req->set_size(size);

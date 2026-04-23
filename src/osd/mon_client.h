@@ -29,7 +29,7 @@ public:
     void emplace_osd_boot_request(
       const int,
       const std::string&,
-      const std::map<uint32_t, std::pair<uint32_t, uint32_t>>&,
+      const std::map<uint32_t, utils::core_shard_map>&,
       const std::string&,
       const int64_t,
       const uint32_t,
@@ -71,4 +71,3 @@ public:
 private:
     std::shared_ptr<partition_manager> _pm;
 };
-

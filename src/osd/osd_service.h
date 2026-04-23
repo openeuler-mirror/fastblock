@@ -29,6 +29,13 @@ struct ibv_pd;
 class osd_service : public osd::rpc_service_osd
 {
 public:
+    struct leader_endpoint {
+        int state{0};
+        int32_t leader_id{-1};
+        std::string leader_addr{};
+        int32_t leader_port{0};
+    };
+
     struct write_ring_slot {
         void* data{nullptr};
         ::ibv_mr* mr{nullptr};
@@ -89,6 +96,9 @@ public:
                            const osd::bench_request *request,
                            osd::bench_response *response,
                            google::protobuf::Closure *done) override;
+    leader_endpoint resolve_pg_leader(uint64_t pool_id,
+                                      uint64_t pg_id,
+                                      bool use_raw_port) const;
     void process_get_leader(google::protobuf::RpcController *controller,
                             const osd::pg_leader_request *request,
                             osd::pg_leader_response *response,

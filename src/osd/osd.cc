@@ -25,6 +25,7 @@
 #include "data_statistics.h"
 #include "utils/get_core.h"
 #include "mon_client.h"
+#include "raw_tcp_server.h"
 
 #include <spdk/string.h>
 
@@ -47,6 +48,7 @@
 
 enum class stop_state {
     data_statistics = 1,
+    raw_server,
     monitor_client,
     partition_manager,
     connection_cache,
@@ -85,6 +87,7 @@ int g_pid_fd = -1;
 
 static std::unique_ptr<::raft_service<::partition_manager>> global_raft_service{nullptr};
 static std::unique_ptr<::osd_service> global_osd_service{nullptr};
+static std::unique_ptr<osd_raw_tcp_server> global_raw_tcp_server{nullptr};
 static std::shared_ptr<::connect_cache> global_conn_cache{nullptr};
 static std::shared_ptr<::partition_manager> global_pm{nullptr};
 static std::shared_ptr<monitor_client> g_monitor_client{nullptr};
@@ -313,6 +316,7 @@ static void service_init(partition_manager* pm, server_t *server, std::function<
     g_data_statistics = std::make_shared<data_statistics>();
 	global_raft_service = std::make_unique<::raft_service<::partition_manager>>(global_pm.get());
     global_osd_service = std::make_unique<::osd_service>(global_pm.get(), g_monitor_client);
+    global_raw_tcp_server = std::make_unique<osd_raw_tcp_server>(global_osd_service.get());
 
     server->rpc_servers.resize(core_sharded::system::capacity());
     server->rpc_servers_started_cb = cb;
@@ -338,14 +342,26 @@ void start_monitor(server_t* ctx) {
             g_data_statistics->set_mon_client(g_monitor_client);
       };
 
-    std::map<uint32_t, std::pair<uint32_t, uint32_t>> sharded_ports{};
+    std::map<uint32_t, utils::core_shard_map> sharded_ports{};
     uint32_t index = 0;
     uint32_t core_id = 0;
     uint32_t port = 0;
+    uint32_t raw_port = 0;
     SPDK_ENV_FOREACH_CORE(core_id){
         port = ctx->rpc_servers[index]->listen_port();
-        SPDK_DEBUGLOG(osd, "core id : %u, shard_id: %u, port: %u\n", core_id, index, port);
-        sharded_ports[index] = std::make_pair(core_id, port);
+        raw_port = global_raw_tcp_server ? global_raw_tcp_server->listen_port(index) : 0;
+        SPDK_DEBUGLOG(
+          osd,
+          "core id : %u, shard_id: %u, rdma port: %u, raw tcp port: %u\n",
+          core_id,
+          index,
+          port,
+          raw_port);
+        sharded_ports[index] = utils::core_shard_map{
+          port,
+          raw_port,
+          core_id,
+          index};
         index++;
     }
 
@@ -625,6 +641,15 @@ struct pm_load_context : public utils::context{
     : server(_server)
     , pm(_pm) {}
 
+    static bool start_raw_service(server_t* server) {
+        if (!global_raw_tcp_server) {
+            return false;
+        }
+
+        auto shard_count = core_sharded::system::capacity();
+        return global_raw_tcp_server->start(server->osd_addr, shard_count);
+    }
+
     static void osd_load_done(void *arg){
         osd_load_ctx* ctx = (osd_load_ctx* )arg;
         service_init(ctx->pm, ctx->server, [ctx] (bool is_ok) {
@@ -633,6 +658,14 @@ struct pm_load_context : public utils::context{
                 osd_exit_code = err::E_INVAL;
                 delete ctx;
                 std::raise(SIGINT);
+            }
+
+            if (!start_raw_service(ctx->server)) {
+                SPDK_ERRLOG("start raw tcp server failed\n");
+                osd_exit_code = err::E_INVAL;
+                delete ctx;
+                std::raise(SIGINT);
+                return;
             }
 
             start_monitor(ctx->server);
@@ -942,11 +975,20 @@ static void osd_stop(void *arg) noexcept {
     SPDK_NOTICELOG("Stop the osd service, thread id %lu\n", utils::get_spdk_thread_id());
     switch (cur_stop_state) {
     case stop_state::data_statistics: {
-        cur_stop_state = stop_state::monitor_client;
+        cur_stop_state = stop_state::raw_server;
         if(g_data_statistics){
             SPDK_NOTICELOG("Stopping the data statistics\n");
             g_data_statistics->stop(on_osd_stop);
             return;
+        }
+        [[fallthrough]];
+    }
+    case stop_state::raw_server: {
+        cur_stop_state = stop_state::monitor_client;
+        if (global_raw_tcp_server) {
+            SPDK_NOTICELOG("Stopping the raw tcp server\n");
+            global_raw_tcp_server->stop();
+            global_raw_tcp_server.reset();
         }
         [[fallthrough]];
     }
@@ -1007,6 +1049,7 @@ static void osd_stop(void *arg) noexcept {
         if (global_osd_service) {
             global_osd_service->stop();
         }
+        global_raw_tcp_server.reset();
         ::storage_fini(on_blob_closed, nullptr);
         return;
     }

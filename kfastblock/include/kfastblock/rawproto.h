@@ -8,9 +8,12 @@
 #define KFASTBLOCK_RAW_VERSION_MINOR 0U
 
 #define KFASTBLOCK_RAW_SERVICE_MONITOR 1U
+#define KFASTBLOCK_RAW_SERVICE_OSD 2U
 
 #define KFASTBLOCK_RAW_OP_GET_IMAGE_INFO 1U
 #define KFASTBLOCK_RAW_OP_GET_CLUSTER_MAP 2U
+
+#define KFASTBLOCK_RAW_OSD_OP_GET_LEADER 1U
 
 #define KFASTBLOCK_RAW_FLAG_RESPONSE (1U << 0)
 
@@ -85,6 +88,17 @@ struct kfastblock_raw_pg_entry_hdr {
 	__le32 state;
 	__le32 primary_shard;
 	__le32 replica_count;
+} __packed;
+
+struct kfastblock_raw_get_leader_req {
+	__le32 pool_id;
+	__le32 pg_id;
+} __packed;
+
+struct kfastblock_raw_get_leader_rsp {
+	__le32 leader_id;
+	__le16 leader_port;
+	__le16 address_len;
 } __packed;
 
 #endif

@@ -103,6 +103,7 @@ inline void complete_done(void *arg, int serrno) {
 
 struct core_shard_map {
     uint32_t port;
+    uint32_t raw_port;
     uint32_t core_id;
     uint32_t shard_id;
 };

@@ -73,6 +73,7 @@ message ApplyIDResponse{
 message ShardCore{
     uint32 coreid = 1;
     uint32 port = 2;
+    uint32 raw_port = 3;
 }
 
 message BootRequest {

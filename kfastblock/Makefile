@@ -1,6 +1,18 @@
 obj-m := kfastblock.o
 
 KFASTBLOCK_ROOT := $(PWD)
+UNAME_R := $(shell uname -r)
+HOSTBUILD_KDIR := /root/kernel/.hostbuild
+HOSTBUILD_READY := $(shell \
+	if [ -f "$(HOSTBUILD_KDIR)/include/config/auto.conf" ]; then \
+		printf '%s' y; \
+	fi)
+
+ifeq ($(HOSTBUILD_READY),y)
+DEFAULT_KDIR := $(HOSTBUILD_KDIR)
+else
+DEFAULT_KDIR := /lib/modules/$(UNAME_R)/build
+endif
 
 kfastblock-objs := \
 	src/main.o \
@@ -12,7 +24,7 @@ kfastblock-objs := \
 
 ccflags-y := -I$(src)/include
 
-KDIR ?= /lib/modules/$(shell uname -r)/build
+KDIR ?= $(DEFAULT_KDIR)
 PWD := $(shell pwd)
 
 all: modules kfastblock-admin

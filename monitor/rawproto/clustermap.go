@@ -118,9 +118,13 @@ func encodeOSDEntry(body *bytes.Buffer, osdInfo *msg.OsdDynamicInfo) error {
 	}
 	for _, shardID := range shardIDs {
 		core := shards[shardID]
+		port := core.GetRawPort()
+		if port == 0 {
+			port = core.GetPort()
+		}
 		entry := osdShardEntry{
 			ShardID: shardID,
-			Port:    uint16(core.GetPort()),
+			Port:    uint16(port),
 			CoreID:  uint16(core.GetCoreid()),
 		}
 		if err := binary.Write(body, binary.LittleEndian, &entry); err != nil {
