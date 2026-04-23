@@ -19,8 +19,6 @@ struct config {
 	char *monitor_addr;
 	char *pool_name;
 	char *image_name;
-	char *token;
-	char *snapshot_name;
 	char *conf_file;
 	char *read_only;
 	char *debug_size_bytes;
@@ -82,10 +80,6 @@ static void parse_config_file(const char *filename, struct config *cfg)
 			maybe_set(&cfg->pool_name, value);
 		} else if (strcmp(key, "image_name") == 0) {
 			maybe_set(&cfg->image_name, value);
-		} else if (strcmp(key, "token") == 0) {
-			maybe_set(&cfg->token, value);
-		} else if (strcmp(key, "snapshot_name") == 0) {
-			maybe_set(&cfg->snapshot_name, value);
 		} else if (strcmp(key, "read_only") == 0) {
 			maybe_set(&cfg->read_only, value);
 		} else if (strcmp(key, "debug_size_bytes") == 0) {
@@ -110,8 +104,6 @@ static void print_usage(const char *prog_name)
 	fprintf(stderr, "  --monitor-addr <addr[,addr...]>\n");
 	fprintf(stderr, "  --pool-name <name>\n");
 	fprintf(stderr, "  --image-name <name>\n");
-	fprintf(stderr, "  --token <token>\n");
-	fprintf(stderr, "  --snapshot-name <name>\n");
 	fprintf(stderr, "  --read-only <true|false>\n");
 	fprintf(stderr, "  --debug-size-bytes <bytes>\n");
 	fprintf(stderr, "  --debug-object-size <bytes>\n");
@@ -148,8 +140,6 @@ int main(int argc, char *argv[])
 		{"monitor-addr", required_argument, 0, 0},
 		{"pool-name", required_argument, 0, 0},
 		{"image-name", required_argument, 0, 0},
-		{"token", required_argument, 0, 0},
-		{"snapshot-name", required_argument, 0, 0},
 		{"read-only", required_argument, 0, 0},
 		{"debug-size-bytes", required_argument, 0, 0},
 		{"debug-object-size", required_argument, 0, 0},
@@ -181,12 +171,6 @@ int main(int argc, char *argv[])
 			} else if (strcmp(long_options[option_index].name,
 					  "image-name") == 0) {
 				maybe_set(&cfg.image_name, optarg);
-			} else if (strcmp(long_options[option_index].name,
-					  "token") == 0) {
-				maybe_set(&cfg.token, optarg);
-			} else if (strcmp(long_options[option_index].name,
-					  "snapshot-name") == 0) {
-				maybe_set(&cfg.snapshot_name, optarg);
 			} else if (strcmp(long_options[option_index].name,
 					  "read-only") == 0) {
 				maybe_set(&cfg.read_only, optarg);
@@ -227,9 +211,6 @@ int main(int argc, char *argv[])
 		  cfg.pool_name);
 	append_kv(command_str, sizeof(command_str), "image_name",
 		  cfg.image_name);
-	append_kv(command_str, sizeof(command_str), "token", cfg.token);
-	append_kv(command_str, sizeof(command_str), "snapshot_name",
-		  cfg.snapshot_name);
 	append_kv(command_str, sizeof(command_str), "read_only",
 		  cfg.read_only);
 	append_kv(command_str, sizeof(command_str), "debug_size_bytes",
@@ -273,8 +254,6 @@ int main(int argc, char *argv[])
 	free(cfg.monitor_addr);
 	free(cfg.pool_name);
 	free(cfg.image_name);
-	free(cfg.token);
-	free(cfg.snapshot_name);
 	free(cfg.conf_file);
 	free(cfg.read_only);
 	free(cfg.debug_size_bytes);

@@ -69,9 +69,6 @@
 - resize:
   刷新 image info
   更新 capacity
-- snapshot:
-  只读 attach
-  snapshot 名字或版本绑定
 
 ## P2: 故障和一致性
 

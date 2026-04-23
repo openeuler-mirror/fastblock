@@ -15,8 +15,6 @@ struct kfastblock_attach_spec {
 	char *monitor_addr;
 	char *pool_name;
 	char *image_name;
-	char *token;
-	char *snapshot_name;
 	bool read_only;
 	u64 debug_size_bytes;
 	u32 debug_object_size;
