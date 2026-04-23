@@ -14,6 +14,9 @@
 #define KFASTBLOCK_RAW_OP_GET_CLUSTER_MAP 2U
 
 #define KFASTBLOCK_RAW_OSD_OP_GET_LEADER 1U
+#define KFASTBLOCK_RAW_OSD_OP_READ_OBJECT 2U
+#define KFASTBLOCK_RAW_OSD_OP_WRITE_OBJECT 3U
+#define KFASTBLOCK_RAW_OSD_OP_DELETE_OBJECT 4U
 
 #define KFASTBLOCK_RAW_FLAG_RESPONSE (1U << 0)
 
@@ -99,6 +102,36 @@ struct kfastblock_raw_get_leader_rsp {
 	__le32 leader_id;
 	__le16 leader_port;
 	__le16 address_len;
+} __packed;
+
+struct kfastblock_raw_read_object_req {
+	__le32 pool_id;
+	__le32 pg_id;
+	__le64 offset;
+	__le32 length;
+	__le16 object_name_len;
+	__le16 reserved;
+} __packed;
+
+struct kfastblock_raw_read_object_rsp {
+	__le32 data_len;
+	__le32 reserved;
+} __packed;
+
+struct kfastblock_raw_write_object_req {
+	__le32 pool_id;
+	__le32 pg_id;
+	__le64 offset;
+	__le32 data_len;
+	__le16 object_name_len;
+	__le16 reserved;
+} __packed;
+
+struct kfastblock_raw_delete_object_req {
+	__le32 pool_id;
+	__le32 pg_id;
+	__le16 object_name_len;
+	__le16 reserved;
 } __packed;
 
 #endif

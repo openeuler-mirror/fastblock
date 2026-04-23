@@ -169,6 +169,7 @@ int kfastblock_request_split(struct kfastblock_request *kf_req)
 		object_len = min_t(u32, remaining, object_size - object_offset);
 
 		extent->object_seq = object_seq;
+		extent->request_offset = kf_req->byte_length - remaining;
 		extent->object_offset = object_offset;
 		extent->length = object_len;
 		kfastblock_request_build_object_name(extent->object_name,

@@ -11,6 +11,7 @@ struct kfastblock_volume;
 
 struct kfastblock_object_extent {
 	u64 object_seq;
+	u32 request_offset;
 	u32 object_offset;
 	u32 length;
 	u32 pg_id;
