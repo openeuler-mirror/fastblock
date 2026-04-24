@@ -70,6 +70,12 @@ kfastblock_volume_event_type_name(const enum kfastblock_volume_event_type type)
 		return "health_change";
 	case KFASTBLOCK_VOLUME_EVENT_SOCKET_BACKOFF:
 		return "socket_backoff";
+	case KFASTBLOCK_VOLUME_EVENT_MANUAL_REFRESH:
+		return "manual_refresh";
+	case KFASTBLOCK_VOLUME_EVENT_MANUAL_RESET_BACKOFF:
+		return "manual_reset_backoff";
+	case KFASTBLOCK_VOLUME_EVENT_MANUAL_DROP_TRANSPORT:
+		return "manual_drop_transport";
 	default:
 		return "unknown";
 	}
@@ -252,6 +258,9 @@ void kfastblock_volume_stats_init(struct kfastblock_volume *vol)
 	atomic64_set(&vol->stats.monitor_socket_drops, 0);
 	atomic64_set(&vol->stats.osd_backoff_hits, 0);
 	atomic64_set(&vol->stats.monitor_backoff_hits, 0);
+	atomic64_set(&vol->stats.manual_refreshes, 0);
+	atomic64_set(&vol->stats.manual_reset_backoffs, 0);
+	atomic64_set(&vol->stats.manual_transport_drops, 0);
 	spin_lock_init(&vol->event_log.lock);
 	vol->event_log.next_index = 0;
 	vol->event_log.count = 0;
@@ -1012,30 +1021,125 @@ nomem:
 	return -ENOMEM;
 }
 
-static void kfastblock_volume_refresh_workfn(struct work_struct *work)
+enum kfastblock_volume_manual_refresh_scope {
+	KFASTBLOCK_VOLUME_REFRESH_ALL = 0,
+	KFASTBLOCK_VOLUME_REFRESH_CLUSTER = 1,
+	KFASTBLOCK_VOLUME_REFRESH_IMAGE = 2,
+};
+
+enum kfastblock_volume_manual_transport_scope {
+	KFASTBLOCK_VOLUME_TRANSPORT_ALL = 0,
+	KFASTBLOCK_VOLUME_TRANSPORT_OSD = 1,
+	KFASTBLOCK_VOLUME_TRANSPORT_MONITOR = 2,
+};
+
+static int kfastblock_volume_parse_refresh_scope(const char *buf, size_t count,
+				 enum kfastblock_volume_manual_refresh_scope *scope)
 {
-	struct delayed_work *delayed_work = to_delayed_work(work);
-	struct kfastblock_volume *vol = container_of(delayed_work,
-					      struct kfastblock_volume,
-					      refresh_work);
+	char *scratch;
+	char *value;
+	int ret = 0;
+
+	if (!scope)
+		return -EINVAL;
+
+	scratch = kmemdup_nul(buf, count, GFP_KERNEL);
+	if (!scratch)
+		return -ENOMEM;
+	value = strim(scratch);
+	if (!*value || sysfs_streq(value, "1") || sysfs_streq(value, "all"))
+		*scope = KFASTBLOCK_VOLUME_REFRESH_ALL;
+	else if (sysfs_streq(value, "cluster"))
+		*scope = KFASTBLOCK_VOLUME_REFRESH_CLUSTER;
+	else if (sysfs_streq(value, "image"))
+		*scope = KFASTBLOCK_VOLUME_REFRESH_IMAGE;
+	else
+		ret = -EINVAL;
+	kfree(scratch);
+	return ret;
+}
+
+static int kfastblock_volume_parse_transport_scope(const char *buf, size_t count,
+				   enum kfastblock_volume_manual_transport_scope *scope)
+{
+	char *scratch;
+	char *value;
+	int ret = 0;
+
+	if (!scope)
+		return -EINVAL;
+
+	scratch = kmemdup_nul(buf, count, GFP_KERNEL);
+	if (!scratch)
+		return -ENOMEM;
+	value = strim(scratch);
+	if (!*value || sysfs_streq(value, "1") || sysfs_streq(value, "all"))
+		*scope = KFASTBLOCK_VOLUME_TRANSPORT_ALL;
+	else if (sysfs_streq(value, "osd"))
+		*scope = KFASTBLOCK_VOLUME_TRANSPORT_OSD;
+	else if (sysfs_streq(value, "monitor"))
+		*scope = KFASTBLOCK_VOLUME_TRANSPORT_MONITOR;
+	else
+		ret = -EINVAL;
+	kfree(scratch);
+	return ret;
+}
+
+static void kfastblock_volume_reset_osd_backoff(struct kfastblock_volume *vol)
+{
+	int i;
+
+	if (!vol)
+		return;
+
+	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i) {
+		struct kfastblock_cached_socket *cached = &vol->socket_cache[i];
+
+		mutex_lock(&cached->lock);
+		cached->fail_streak = 0;
+		cached->last_error = 0;
+		cached->last_failure_jiffies = 0;
+		cached->backoff_until_jiffies = 0;
+		mutex_unlock(&cached->lock);
+	}
+}
+
+static void kfastblock_volume_reset_monitor_backoff(struct kfastblock_volume *vol)
+{
+	int i;
+
+	if (!vol)
+		return;
+
+	for (i = 0; i < KFASTBLOCK_MAX_MONITORS; ++i) {
+		struct kfastblock_cached_monitor_socket *cached =
+			&vol->monitor_cache[i];
+
+		mutex_lock(&cached->lock);
+		cached->fail_streak = 0;
+		cached->last_error = 0;
+		cached->last_failure_jiffies = 0;
+		cached->backoff_until_jiffies = 0;
+		mutex_unlock(&cached->lock);
+	}
+}
+
+static int kfastblock_volume_refresh_locked(struct kfastblock_volume *vol,
+				   bool refresh_cluster,
+				   bool refresh_image,
+				   bool warn_image_fail)
+{
 	u64 old_size;
 	u64 old_osdmap_epoch;
 	u64 old_pgmap_epoch;
 	u32 old_block_size;
 	u32 old_object_size;
 	bool old_read_only;
-	bool refresh_image;
-	int ret;
-	int image_ret;
+	int ret = 0;
+	int image_ret = 0;
 
-	if (!atomic_read(&vol->ready))
-		return;
-
-	down_write(&vol->state_lock);
-	if (!atomic_read(&vol->ready)) {
-		up_write(&vol->state_lock);
-		return;
-	}
+	if (!vol)
+		return -EINVAL;
 
 	old_size = vol->view.image.size_bytes;
 	old_osdmap_epoch = vol->view.osdmap_epoch;
@@ -1043,22 +1147,20 @@ static void kfastblock_volume_refresh_workfn(struct work_struct *work)
 	old_block_size = vol->view.image.block_size;
 	old_object_size = vol->view.image.object_size;
 	old_read_only = vol->view.image.read_only;
-	refresh_image = time_after_eq(
-		jiffies,
-		vol->view.last_image_refresh_jiffies +
-		kfastblock_volume_image_refresh_interval());
-	ret = kfastblock_transport_refresh_cluster_map_volume(vol);
+
+	if (refresh_cluster)
+		ret = kfastblock_transport_refresh_cluster_map_volume(vol);
+	if (!ret && refresh_image)
+		image_ret = kfastblock_transport_refresh_image_volume(vol);
+
 	if (!ret && vol->disk) {
-		image_ret = 0;
-		if (refresh_image)
-			image_ret = kfastblock_transport_refresh_image_volume(vol);
-		if (old_osdmap_epoch != vol->view.osdmap_epoch ||
-		    old_pgmap_epoch != vol->view.pgmap_epoch)
+		if (refresh_cluster &&
+		    (old_osdmap_epoch != vol->view.osdmap_epoch ||
+		     old_pgmap_epoch != vol->view.pgmap_epoch))
 			kfastblock_volume_close_osd_cached_sockets(vol);
 		if (old_size != vol->view.image.size_bytes)
 			set_capacity_and_notify(vol->disk,
-						vol->view.image.size_bytes >>
-						SECTOR_SHIFT);
+					vol->view.image.size_bytes >> SECTOR_SHIFT);
 		if (old_block_size != vol->view.image.block_size &&
 		    vol->view.image.block_size)
 			blk_queue_logical_block_size(vol->disk->queue,
@@ -1069,28 +1171,151 @@ static void kfastblock_volume_refresh_workfn(struct work_struct *work)
 		     vol->view.image.object_size)) {
 			u32 max_io_bytes = kfastblock_volume_effective_max_io_bytes(vol);
 
-			blk_queue_io_opt(vol->disk->queue,
-					 vol->view.image.object_size);
+			blk_queue_io_opt(vol->disk->queue, vol->view.image.object_size);
 			blk_queue_chunk_sectors(vol->disk->queue,
-					vol->view.image.object_size >>
-					SECTOR_SHIFT);
+					 vol->view.image.object_size >> SECTOR_SHIFT);
 			blk_queue_max_hw_sectors(vol->disk->queue,
 					 max_io_bytes >> SECTOR_SHIFT);
 			blk_queue_max_segment_size(vol->disk->queue, max_io_bytes);
 		}
 		if (old_read_only != vol->view.image.read_only)
 			set_disk_ro(vol->disk, vol->view.image.read_only);
-		if (image_ret)
-			dev_warn(&vol->dev,
-				 "image metadata refresh failed: %d\n",
-				 image_ret);
+		if (image_ret && warn_image_fail)
+			dev_warn(&vol->dev, "image metadata refresh failed: %d\n", image_ret);
 	} else if (ret) {
 		kfastblock_volume_close_osd_cached_sockets(vol);
 		kfastblock_volume_close_monitor_cached_sockets(vol);
 		vol->view.sync_state = KFASTBLOCK_META_SYNC_STALE;
 		kfastblock_volume_account_metadata_stale(vol);
 	}
+
 	kfastblock_volume_update_queue_gate(vol);
+	if (ret)
+		return ret;
+	return image_ret;
+}
+
+static void kfastblock_volume_record_manual_op(struct kfastblock_volume *vol,
+				      enum kfastblock_volume_event_type type,
+				      u32 scope, int ret)
+{
+	if (!vol)
+		return;
+
+	kfastblock_volume_record_event(vol, type, ret, REQ_OP_FLUSH, 0, 0, scope, 0);
+}
+
+static ssize_t force_refresh_store(struct device *dev,
+			   struct device_attribute *attr,
+			   const char *buf, size_t count)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	enum kfastblock_volume_manual_refresh_scope scope;
+	bool refresh_cluster;
+	bool refresh_image;
+	int ret;
+
+	if (!vol)
+		return -ENODEV;
+	ret = kfastblock_volume_parse_refresh_scope(buf, count, &scope);
+	if (ret)
+		return ret;
+
+	refresh_cluster = scope != KFASTBLOCK_VOLUME_REFRESH_IMAGE;
+	refresh_image = scope != KFASTBLOCK_VOLUME_REFRESH_CLUSTER;
+	cancel_delayed_work_sync(&vol->refresh_work);
+	down_write(&vol->state_lock);
+	if (!atomic_read(&vol->ready)) {
+		up_write(&vol->state_lock);
+		return -ENODEV;
+	}
+	ret = kfastblock_volume_refresh_locked(vol, refresh_cluster, refresh_image, false);
+	if (!ret)
+		atomic64_inc(&vol->stats.manual_refreshes);
+	kfastblock_volume_record_manual_op(vol, KFASTBLOCK_VOLUME_EVENT_MANUAL_REFRESH,
+				      scope, ret);
+	up_write(&vol->state_lock);
+	if (atomic_read(&vol->ready))
+		kfastblock_volume_schedule_refresh(vol);
+	return ret ? ret : (ssize_t)count;
+}
+
+static ssize_t reset_backoff_store(struct device *dev,
+			     struct device_attribute *attr,
+			     const char *buf, size_t count)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	enum kfastblock_volume_manual_transport_scope scope;
+	int ret;
+
+	if (!vol)
+		return -ENODEV;
+	ret = kfastblock_volume_parse_transport_scope(buf, count, &scope);
+	if (ret)
+		return ret;
+
+	down_write(&vol->state_lock);
+	if (scope != KFASTBLOCK_VOLUME_TRANSPORT_MONITOR)
+		kfastblock_volume_reset_osd_backoff(vol);
+	if (scope != KFASTBLOCK_VOLUME_TRANSPORT_OSD)
+		kfastblock_volume_reset_monitor_backoff(vol);
+	atomic64_inc(&vol->stats.manual_reset_backoffs);
+	kfastblock_volume_record_manual_op(vol,
+				      KFASTBLOCK_VOLUME_EVENT_MANUAL_RESET_BACKOFF,
+				      scope, 0);
+	up_write(&vol->state_lock);
+	return count;
+}
+
+static ssize_t drop_transport_store(struct device *dev,
+			      struct device_attribute *attr,
+			      const char *buf, size_t count)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	enum kfastblock_volume_manual_transport_scope scope;
+	int ret;
+
+	if (!vol)
+		return -ENODEV;
+	ret = kfastblock_volume_parse_transport_scope(buf, count, &scope);
+	if (ret)
+		return ret;
+
+	down_write(&vol->state_lock);
+	if (scope != KFASTBLOCK_VOLUME_TRANSPORT_MONITOR)
+		kfastblock_volume_close_osd_cached_sockets(vol);
+	if (scope != KFASTBLOCK_VOLUME_TRANSPORT_OSD)
+		kfastblock_volume_close_monitor_cached_sockets(vol);
+	atomic64_inc(&vol->stats.manual_transport_drops);
+	kfastblock_volume_record_manual_op(vol,
+				      KFASTBLOCK_VOLUME_EVENT_MANUAL_DROP_TRANSPORT,
+				      scope, 0);
+	up_write(&vol->state_lock);
+	return count;
+}
+
+static void kfastblock_volume_refresh_workfn(struct work_struct *work)
+{
+	struct delayed_work *delayed_work = to_delayed_work(work);
+	struct kfastblock_volume *vol = container_of(delayed_work,
+					      struct kfastblock_volume,
+					      refresh_work);
+	bool refresh_image;
+
+	if (!atomic_read(&vol->ready))
+		return;
+
+	down_write(&vol->state_lock);
+	if (!atomic_read(&vol->ready)) {
+		up_write(&vol->state_lock);
+		return;
+	}
+
+	refresh_image = time_after_eq(
+		jiffies,
+		vol->view.last_image_refresh_jiffies +
+		kfastblock_volume_image_refresh_interval());
+	(void)kfastblock_volume_refresh_locked(vol, true, refresh_image, true);
 	up_write(&vol->state_lock);
 
 	kfastblock_volume_schedule_refresh(vol);
@@ -1521,6 +1746,42 @@ static ssize_t monitor_backoff_hits_show(struct device *dev,
 			 atomic64_read(&vol->stats.monitor_backoff_hits));
 }
 
+static ssize_t manual_refreshes_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.manual_refreshes));
+}
+
+static ssize_t manual_reset_backoffs_show(struct device *dev,
+				  struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.manual_reset_backoffs));
+}
+
+static ssize_t manual_transport_drops_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.manual_transport_drops));
+}
+
 static DEVICE_ATTR_RO(pool_name);
 static DEVICE_ATTR_RO(image_name);
 static DEVICE_ATTR_RO(size_bytes);
@@ -1558,6 +1819,12 @@ static DEVICE_ATTR_RO(osd_socket_drops);
 static DEVICE_ATTR_RO(monitor_socket_drops);
 static DEVICE_ATTR_RO(osd_backoff_hits);
 static DEVICE_ATTR_RO(monitor_backoff_hits);
+static DEVICE_ATTR_RO(manual_refreshes);
+static DEVICE_ATTR_RO(manual_reset_backoffs);
+static DEVICE_ATTR_RO(manual_transport_drops);
+static DEVICE_ATTR_WO(force_refresh);
+static DEVICE_ATTR_WO(reset_backoff);
+static DEVICE_ATTR_WO(drop_transport);
 
 static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_pool_name.attr,
@@ -1597,6 +1864,12 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_monitor_socket_drops.attr,
 	&dev_attr_osd_backoff_hits.attr,
 	&dev_attr_monitor_backoff_hits.attr,
+	&dev_attr_manual_refreshes.attr,
+	&dev_attr_manual_reset_backoffs.attr,
+	&dev_attr_manual_transport_drops.attr,
+	&dev_attr_force_refresh.attr,
+	&dev_attr_reset_backoff.attr,
+	&dev_attr_drop_transport.attr,
 	NULL,
 };
 

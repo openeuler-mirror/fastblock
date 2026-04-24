@@ -38,6 +38,9 @@ enum kfastblock_volume_event_type {
 	KFASTBLOCK_VOLUME_EVENT_MONITOR_SOCKET_DROP,
 	KFASTBLOCK_VOLUME_EVENT_HEALTH_CHANGE,
 	KFASTBLOCK_VOLUME_EVENT_SOCKET_BACKOFF,
+	KFASTBLOCK_VOLUME_EVENT_MANUAL_REFRESH,
+	KFASTBLOCK_VOLUME_EVENT_MANUAL_RESET_BACKOFF,
+	KFASTBLOCK_VOLUME_EVENT_MANUAL_DROP_TRANSPORT,
 };
 
 enum kfastblock_volume_health_state {
@@ -113,6 +116,9 @@ struct kfastblock_volume_stats {
 	atomic64_t monitor_socket_drops;
 	atomic64_t osd_backoff_hits;
 	atomic64_t monitor_backoff_hits;
+	atomic64_t manual_refreshes;
+	atomic64_t manual_reset_backoffs;
+	atomic64_t manual_transport_drops;
 };
 
 struct kfastblock_volume_health {
