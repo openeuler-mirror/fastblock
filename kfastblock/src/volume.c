@@ -500,6 +500,7 @@ static int kfastblock_volume_summary_show(struct seq_file *m, void *v)
 	seq_printf(m, "last_failure_jiffies=%lu\n", vol->health.last_failure_jiffies);
 	seq_printf(m, "last_success_jiffies=%lu\n", vol->health.last_success_jiffies);
 	seq_printf(m, "open_count=%d\n", atomic_read(&vol->open_count));
+	seq_printf(m, "inflight_ios=%d\n", atomic_read(&vol->inflight_ios));
 	seq_printf(m, "pool_name=%s\n", vol->view.image.pool_name);
 	seq_printf(m, "image_name=%s\n", vol->view.image.image_name);
 	seq_printf(m, "size_bytes=%llu\n", vol->view.image.size_bytes);
@@ -894,6 +895,70 @@ void kfastblock_volume_kick_refresh(struct kfastblock_volume *vol)
 	mod_delayed_work(system_wq, &vol->refresh_work, 0);
 }
 
+void kfastblock_volume_get_io(struct kfastblock_volume *vol)
+{
+	if (!vol)
+		return;
+
+	atomic_inc(&vol->inflight_ios);
+}
+
+void kfastblock_volume_put_io(struct kfastblock_volume *vol)
+{
+	if (!vol)
+		return;
+
+	if (atomic_dec_and_test(&vol->inflight_ios))
+		wake_up_all(&vol->inflight_wq);
+}
+
+int kfastblock_volume_drain_io(struct kfastblock_volume *vol,
+			     unsigned long timeout_jiffies)
+{
+	long remaining;
+
+	if (!vol)
+		return -EINVAL;
+	if (!atomic_read(&vol->inflight_ios))
+		return 0;
+
+	remaining = wait_event_timeout(
+		vol->inflight_wq,
+		atomic_read(&vol->inflight_ios) == 0,
+		timeout_jiffies);
+	if (remaining || !atomic_read(&vol->inflight_ios))
+		return 0;
+
+	return -ETIMEDOUT;
+}
+
+static int kfastblock_volume_begin_stop(struct kfastblock_volume *vol,
+				 bool rollback_on_timeout)
+{
+	int ret;
+
+	if (!vol)
+		return -EINVAL;
+
+	atomic_set(&vol->ready, 0);
+	cancel_delayed_work_sync(&vol->refresh_work);
+	if (vol->disk) {
+		vol->queue_paused = true;
+		blk_mq_quiesce_queue(vol->disk->queue);
+	}
+
+	ret = kfastblock_volume_drain_io(vol, msecs_to_jiffies(5000));
+	if (!ret)
+		return 0;
+
+	if (rollback_on_timeout) {
+		atomic_set(&vol->ready, 1);
+		kfastblock_volume_update_queue_gate(vol);
+		kfastblock_volume_schedule_refresh(vol);
+	}
+	return ret;
+}
+
 static int kfastblock_volume_copy_attach_spec(struct kfastblock_attach_spec *dst,
 					      const struct kfastblock_attach_spec *src)
 {
@@ -1193,6 +1258,17 @@ static ssize_t queue_paused_show(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%u\n", vol->queue_paused ? 1 : 0);
 }
 
+static ssize_t inflight_ios_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", atomic_read(&vol->inflight_ios));
+}
+
 static ssize_t health_state_show(struct device *dev,
 			      struct device_attribute *attr, char *buf)
 {
@@ -1445,6 +1521,7 @@ static DEVICE_ATTR_RO(last_image_refresh);
 static DEVICE_ATTR_RO(read_only);
 static DEVICE_ATTR_RO(sync_state);
 static DEVICE_ATTR_RO(queue_paused);
+static DEVICE_ATTR_RO(inflight_ios);
 static DEVICE_ATTR_RO(health_state);
 static DEVICE_ATTR_RO(health_since);
 static DEVICE_ATTR_RO(last_failure_errno);
@@ -1483,6 +1560,7 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_read_only.attr,
 	&dev_attr_sync_state.attr,
 	&dev_attr_queue_paused.attr,
+	&dev_attr_inflight_ios.attr,
 	&dev_attr_health_state.attr,
 	&dev_attr_health_since.attr,
 	&dev_attr_last_failure_errno.attr,
@@ -1763,9 +1841,11 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	vol->major = major;
 	atomic_set(&vol->open_count, 0);
 	atomic_set(&vol->ready, 0);
+	atomic_set(&vol->inflight_ios, 0);
 	vol->queue_paused = false;
 	kfastblock_volume_stats_init(vol);
 	mutex_init(&vol->inflight_lock);
+	init_waitqueue_head(&vol->inflight_wq);
 	init_rwsem(&vol->state_lock);
 	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i)
 		mutex_init(&vol->socket_cache[i].lock);
@@ -1816,6 +1896,7 @@ int kfastblock_volume_detach(const struct kfastblock_attach_spec *spec)
 {
 	struct kfastblock_volume *vol;
 	struct kfastblock_volume *found = NULL;
+	int ret;
 
 	if (!spec)
 		return -EINVAL;
@@ -1834,11 +1915,10 @@ int kfastblock_volume_detach(const struct kfastblock_attach_spec *spec)
 	if (!found)
 		return -ENOENT;
 
-	atomic_set(&found->ready, 0);
-	cancel_delayed_work_sync(&found->refresh_work);
+	ret = kfastblock_volume_begin_stop(found, true);
+	if (ret)
+		return ret;
 	if (found->disk) {
-		found->queue_paused = true;
-		blk_mq_quiesce_queue(found->disk->queue);
 		del_gendisk(found->disk);
 		put_disk(found->disk);
 		found->disk = NULL;
@@ -1857,13 +1937,19 @@ int kfastblock_volume_init(void)
 void kfastblock_volume_exit(void)
 {
 	struct kfastblock_volume *vol;
-	struct kfastblock_volume *tmp;
 
-	mutex_lock(&g_kfastblock_volumes_lock);
-	list_for_each_entry_safe(vol, tmp, &g_kfastblock_volumes, node) {
+	for (;;) {
+		mutex_lock(&g_kfastblock_volumes_lock);
+		if (list_empty(&g_kfastblock_volumes)) {
+			mutex_unlock(&g_kfastblock_volumes_lock);
+			break;
+		}
+		vol = list_first_entry(&g_kfastblock_volumes,
+					 struct kfastblock_volume, node);
 		list_del_init(&vol->node);
-		atomic_set(&vol->ready, 0);
-		cancel_delayed_work_sync(&vol->refresh_work);
+		mutex_unlock(&g_kfastblock_volumes_lock);
+
+		(void)kfastblock_volume_begin_stop(vol, false);
 		if (vol->disk) {
 			del_gendisk(vol->disk);
 			put_disk(vol->disk);
@@ -1871,7 +1957,6 @@ void kfastblock_volume_exit(void)
 		}
 		device_unregister(&vol->dev);
 	}
-	mutex_unlock(&g_kfastblock_volumes_lock);
 
 	debugfs_remove_recursive(g_kfastblock_debugfs_root);
 	g_kfastblock_debugfs_root = NULL;

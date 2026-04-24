@@ -1789,6 +1789,7 @@ static void kfastblock_transport_complete_request(struct kfastblock_request *kf_
 			kfastblock_transport_errno_to_blk_status(kf_req->status);
 		kfastblock_volume_account_io_complete(kf_req->vol, kf_req->status);
 		blk_mq_end_request(kf_req->rq, status);
+		kfastblock_volume_put_io(kf_req->vol);
 		put_device(&kf_req->vol->dev);
 	}
 }
@@ -1818,8 +1819,10 @@ int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 	if (!kf_req || !kf_req->rq || !kf_req->vol)
 		return -EINVAL;
 
+	kfastblock_volume_get_io(kf_req->vol);
 	if (!kf_req->nr_objects) {
 		blk_mq_end_request(kf_req->rq, BLK_STS_OK);
+		kfastblock_volume_put_io(kf_req->vol);
 		return 0;
 	}
 
