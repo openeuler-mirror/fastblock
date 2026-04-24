@@ -1815,6 +1815,102 @@ static ssize_t io_failed_show(struct device *dev,
 			 atomic64_read(&vol->stats.io_failed));
 }
 
+static ssize_t read_requests_show(struct device *dev,
+			    struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.read_requests));
+}
+
+static ssize_t write_requests_show(struct device *dev,
+			     struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.write_requests));
+}
+
+static ssize_t discard_requests_show(struct device *dev,
+			       struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.discard_requests));
+}
+
+static ssize_t write_zeroes_requests_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.write_zeroes_requests));
+}
+
+static ssize_t flush_requests_show(struct device *dev,
+			     struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.flush_requests));
+}
+
+static ssize_t read_bytes_show(struct device *dev,
+			 struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.read_bytes));
+}
+
+static ssize_t write_bytes_show(struct device *dev,
+			  struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.write_bytes));
+}
+
+static ssize_t discard_bytes_show(struct device *dev,
+			    struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.discard_bytes));
+}
+
 static ssize_t object_io_retries_show(struct device *dev,
 			      struct device_attribute *attr, char *buf)
 {
@@ -1825,6 +1921,18 @@ static ssize_t object_io_retries_show(struct device *dev,
 
 	return scnprintf(buf, PAGE_SIZE, "%lld\n",
 			 atomic64_read(&vol->stats.object_io_retries));
+}
+
+static ssize_t object_io_errors_show(struct device *dev,
+			     struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.object_io_errors));
 }
 
 static ssize_t metadata_stale_events_show(struct device *dev,
@@ -2083,7 +2191,16 @@ static DEVICE_ATTR_RO(last_success_jiffies);
 static DEVICE_ATTR_RO(io_submitted);
 static DEVICE_ATTR_RO(io_completed);
 static DEVICE_ATTR_RO(io_failed);
+static DEVICE_ATTR_RO(read_requests);
+static DEVICE_ATTR_RO(write_requests);
+static DEVICE_ATTR_RO(discard_requests);
+static DEVICE_ATTR_RO(write_zeroes_requests);
+static DEVICE_ATTR_RO(flush_requests);
+static DEVICE_ATTR_RO(read_bytes);
+static DEVICE_ATTR_RO(write_bytes);
+static DEVICE_ATTR_RO(discard_bytes);
 static DEVICE_ATTR_RO(object_io_retries);
+static DEVICE_ATTR_RO(object_io_errors);
 static DEVICE_ATTR_RO(metadata_stale_events);
 static DEVICE_ATTR_RO(cluster_refresh_ok);
 static DEVICE_ATTR_RO(cluster_refresh_fail);
@@ -2137,7 +2254,16 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_io_submitted.attr,
 	&dev_attr_io_completed.attr,
 	&dev_attr_io_failed.attr,
+	&dev_attr_read_requests.attr,
+	&dev_attr_write_requests.attr,
+	&dev_attr_discard_requests.attr,
+	&dev_attr_write_zeroes_requests.attr,
+	&dev_attr_flush_requests.attr,
+	&dev_attr_read_bytes.attr,
+	&dev_attr_write_bytes.attr,
+	&dev_attr_discard_bytes.attr,
 	&dev_attr_object_io_retries.attr,
+	&dev_attr_object_io_errors.attr,
 	&dev_attr_metadata_stale_events.attr,
 	&dev_attr_cluster_refresh_ok.attr,
 	&dev_attr_cluster_refresh_fail.attr,
