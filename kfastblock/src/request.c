@@ -106,6 +106,24 @@ static u32 kfastblock_jenkins_hash(const char *str)
 	return c;
 }
 
+static void kfastblock_request_track_unique_pg(struct kfastblock_request *kf_req,
+					       u32 pg_id)
+{
+	unsigned int i;
+
+	if (!kf_req)
+		return;
+
+	for (i = 0; i < kf_req->nr_unique_pgs; ++i) {
+		if (kf_req->unique_pgs[i] == pg_id)
+			return;
+	}
+	if (kf_req->nr_unique_pgs >= KFASTBLOCK_MAX_OBJECT_EXTENTS)
+		return;
+
+	kf_req->unique_pgs[kf_req->nr_unique_pgs++] = pg_id;
+}
+
 void kfastblock_request_init(struct kfastblock_request *kf_req,
 			     struct kfastblock_volume *vol,
 			     struct request *rq)
@@ -198,6 +216,7 @@ int kfastblock_request_split(struct kfastblock_request *kf_req)
 						    object_seq);
 		extent->pg_id = kfastblock_request_calc_pg(extent->object_name,
 						  view->image.pg_count);
+		kfastblock_request_track_unique_pg(kf_req, extent->pg_id);
 
 		remaining -= object_len;
 		current_offset += object_len;

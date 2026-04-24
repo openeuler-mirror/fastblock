@@ -2022,6 +2022,29 @@ static int kfastblock_transport_submit_object(struct kfastblock_request *kf_req,
 		op);
 }
 
+static int kfastblock_transport_prefetch_request_leaders(
+	struct kfastblock_request *kf_req)
+{
+	unsigned int i;
+	int ret;
+
+	if (!kf_req || !kf_req->vol)
+		return -EINVAL;
+
+	for (i = 0; i < kf_req->nr_unique_pgs; ++i) {
+		struct kfastblock_leader_info leader;
+
+		ret = kfastblock_transport_get_pg_leader(kf_req->vol,
+					kf_req->request_pool_id,
+					kf_req->unique_pgs[i],
+					&leader);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
 static void kfastblock_transport_complete_request(struct kfastblock_request *kf_req,
 						  int ret)
 {
@@ -2119,6 +2142,15 @@ int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 
 	if (!kf_req->nr_objects) {
 		blk_mq_end_request(kf_req->rq, BLK_STS_OK);
+		kfastblock_volume_put_io(kf_req->vol);
+		return 0;
+	}
+
+	ret = kfastblock_transport_prefetch_request_leaders(kf_req);
+	if (ret) {
+		kfastblock_volume_account_io_complete(kf_req->vol, ret);
+		blk_mq_end_request(kf_req->rq,
+			kfastblock_transport_errno_to_blk_status(ret));
 		kfastblock_volume_put_io(kf_req->vol);
 		return 0;
 	}
