@@ -6,6 +6,8 @@
 #include "kfastblock/common.h"
 #include "kfastblock/control.h"
 
+struct kfastblock_volume;
+
 enum kfastblock_meta_sync_state {
 	KFASTBLOCK_META_SYNC_NEW = 0,
 	KFASTBLOCK_META_SYNC_STALE = 1,
@@ -78,6 +80,7 @@ void kfastblock_meta_exit(void);
 void kfastblock_meta_cleanup_view(struct kfastblock_cluster_view *view);
 int kfastblock_meta_bootstrap(struct kfastblock_cluster_view *view,
 			      const struct kfastblock_attach_spec *spec);
+int kfastblock_meta_bootstrap_volume(struct kfastblock_volume *vol);
 int kfastblock_meta_refresh(struct kfastblock_cluster_view *view,
 			    const struct kfastblock_attach_spec *spec);
 int kfastblock_meta_refresh_cluster_map(struct kfastblock_cluster_view *view,

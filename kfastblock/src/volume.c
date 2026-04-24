@@ -2399,7 +2399,7 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	if (ret)
 		goto err_free;
 
-	ret = kfastblock_meta_bootstrap(&vol->view, spec);
+	ret = kfastblock_meta_bootstrap_volume(vol);
 	if (ret)
 		goto err_free;
 
