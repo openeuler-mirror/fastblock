@@ -1051,7 +1051,7 @@ int kfastblock_transport_init(void)
 	g_kfastblock_transport_wq = alloc_workqueue(
 		"kfastblock-transport",
 		WQ_UNBOUND | WQ_MEM_RECLAIM,
-		0);
+		KFASTBLOCK_DEFAULT_TRANSPORT_MAX_ACTIVE);
 	return g_kfastblock_transport_wq ? 0 : -ENOMEM;
 }
 
