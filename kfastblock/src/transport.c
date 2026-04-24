@@ -114,6 +114,26 @@ static bool kfastblock_transport_should_retry_object_io(const int ret)
 	}
 }
 
+static blk_status_t kfastblock_transport_errno_to_blk_status(const int ret)
+{
+	switch (ret) {
+	case 0:
+		return BLK_STS_OK;
+	case -EAGAIN:
+	case -ESTALE:
+	case -EBUSY:
+		return BLK_STS_RESOURCE;
+	case -EHOSTDOWN:
+	case -ENOLINK:
+	case -ETIMEDOUT:
+	case -ECONNRESET:
+	case -EPIPE:
+		return BLK_STS_TRANSPORT;
+	default:
+		return BLK_STS_IOERR;
+	}
+}
+
 static int kfastblock_transport_send_all(struct socket *sock,
 					 const void *buf,
 					 size_t len)
@@ -1195,7 +1215,7 @@ int kfastblock_transport_get_pg_leader(struct kfastblock_volume *vol,
 	return first_err;
 }
 
-int kfastblock_transport_submit(struct kfastblock_request *kf_req)
+static int kfastblock_transport_submit_sync(struct kfastblock_request *kf_req)
 {
 	struct request *rq;
 	enum req_op op;
@@ -1209,7 +1229,6 @@ int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 	op = req_op(rq);
 	switch (op) {
 	case REQ_OP_FLUSH:
-		blk_mq_end_request(rq, BLK_STS_OK);
 		return 0;
 	case REQ_OP_READ:
 	case REQ_OP_WRITE:
@@ -1240,6 +1259,36 @@ int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 	}
 	mutex_unlock(&kf_req->vol->inflight_lock);
 
-	blk_mq_end_request(rq, BLK_STS_OK);
+	return 0;
+}
+
+static void kfastblock_transport_request_work(struct work_struct *work)
+{
+	struct kfastblock_request *kf_req = container_of(work,
+						struct kfastblock_request,
+						work);
+	blk_status_t status;
+
+	if (!kf_req || !kf_req->rq || !kf_req->vol)
+		return;
+
+	status = kfastblock_transport_errno_to_blk_status(
+		kfastblock_transport_submit_sync(kf_req));
+	blk_mq_end_request(kf_req->rq, status);
+	put_device(&kf_req->vol->dev);
+}
+
+int kfastblock_transport_submit(struct kfastblock_request *kf_req)
+{
+	if (!kf_req || !kf_req->rq || !kf_req->vol)
+		return -EINVAL;
+
+	INIT_WORK(&kf_req->work, kfastblock_transport_request_work);
+	get_device(&kf_req->vol->dev);
+	if (!schedule_work(&kf_req->work)) {
+		put_device(&kf_req->vol->dev);
+		return -EBUSY;
+	}
+
 	return 0;
 }
