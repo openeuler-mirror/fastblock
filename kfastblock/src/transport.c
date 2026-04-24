@@ -23,6 +23,11 @@ static int kfastblock_transport_try_connect_host(const char *host,
 						 u16 port,
 						 struct socket **sock);
 static void kfastblock_transport_object_work(struct work_struct *work);
+static int kfastblock_transport_check_osd_backoff(
+	struct kfastblock_volume *vol,
+	const struct kfastblock_leader_info *leader);
+static struct kfastblock_cached_socket *
+kfastblock_transport_reserve_osd_slot(struct kfastblock_volume *vol);
 static struct workqueue_struct *g_kfastblock_transport_wq;
 
 static bool kfastblock_transport_should_retry_monitor(const int ret);
@@ -372,6 +377,75 @@ kfastblock_transport_find_cached_socket(struct kfastblock_volume *vol,
 		mutex_unlock(&cached->lock);
 		if (match)
 			return cached;
+	}
+
+	return NULL;
+}
+
+static void kfastblock_transport_release_osd_socket(
+	struct kfastblock_cached_socket *cached)
+{
+	if (cached)
+		mutex_unlock(&cached->lock);
+}
+
+static int kfastblock_transport_acquire_osd_socket(
+	struct kfastblock_volume *vol,
+	const struct kfastblock_leader_info *leader,
+	struct kfastblock_cached_socket **cached_out,
+	struct socket **sock_out)
+{
+	struct kfastblock_cached_socket *cached = NULL;
+	struct socket *sock = NULL;
+	int ret;
+
+	if (!vol || !leader || !cached_out || !sock_out)
+		return -EINVAL;
+
+	*cached_out = NULL;
+	*sock_out = NULL;
+	cached = kfastblock_transport_find_cached_socket(vol, leader);
+	if (cached) {
+		mutex_lock(&cached->lock);
+		if (kfastblock_transport_cached_socket_matches_locked(cached, leader)) {
+			*cached_out = cached;
+			*sock_out = cached->sock;
+			return 0;
+		}
+		mutex_unlock(&cached->lock);
+		cached = NULL;
+	}
+
+	ret = kfastblock_transport_check_osd_backoff(vol, leader);
+	if (ret)
+		return ret;
+
+	cached = kfastblock_transport_reserve_osd_slot(vol);
+	if (!cached)
+		return -EBUSY;
+
+	ret = kfastblock_transport_connect_osd_cached_locked(vol, cached, leader,
+						    &sock);
+	if (ret)
+		return ret;
+
+	*cached_out = cached;
+	*sock_out = sock;
+	return 0;
+}
+
+static struct kfastblock_request_pg_hint *
+kfastblock_transport_find_request_pg_hint(struct kfastblock_request *kf_req,
+					  u32 pg_id)
+{
+	unsigned int i;
+
+	if (!kf_req)
+		return NULL;
+
+	for (i = 0; i < kf_req->nr_unique_pgs; ++i) {
+		if (kf_req->pg_hints[i].pg_id == pg_id)
+			return &kf_req->pg_hints[i];
 	}
 
 	return NULL;
@@ -1539,6 +1613,7 @@ static int kfastblock_transport_submit_object_io(
 	struct request *rq;
 	struct kfastblock_cluster_view *view;
 	struct kfastblock_leader_info leader = {};
+	struct kfastblock_request_pg_hint *hint;
 	struct kfastblock_cached_socket *cached = NULL;
 	struct socket *sock = NULL;
 	void *buf = NULL;
@@ -1551,6 +1626,7 @@ static int kfastblock_transport_submit_object_io(
 	vol = kf_req->vol;
 	rq = kf_req->rq;
 	view = &vol->view;
+	hint = kfastblock_transport_find_request_pg_hint(kf_req, extent->pg_id);
 
 	ret = kfastblock_transport_request_view_stale(kf_req);
 	if (ret) {
@@ -1579,56 +1655,33 @@ static int kfastblock_transport_submit_object_io(
 	}
 
 	for (attempt = 0; attempt < 2; ++attempt) {
-		ret = kfastblock_transport_get_pg_leader(vol, view->image.pool_id,
-						 extent->pg_id, &leader);
+		if (attempt == 0 && hint && hint->leader_valid) {
+			leader = hint->leader;
+			ret = 0;
+		} else {
+			ret = kfastblock_transport_get_pg_leader(vol,
+						view->image.pool_id,
+						extent->pg_id, &leader);
+		}
 		if (ret)
 			goto out;
 
-		cached = kfastblock_transport_find_cached_socket(vol, &leader);
-		if (cached) {
-			mutex_lock(&cached->lock);
-			if (!kfastblock_transport_cached_socket_matches_locked(cached, &leader)) {
-				mutex_unlock(&cached->lock);
-				cached = NULL;
-			} else {
-				sock = cached->sock;
-			}
-		}
-		if (!cached) {
-			ret = kfastblock_transport_check_osd_backoff(vol, &leader);
-			if (ret)
-				goto out;
-			cached = kfastblock_transport_reserve_osd_slot(vol);
-			if (!cached) {
-				ret = -EBUSY;
-				goto out;
-			}
-			ret = kfastblock_transport_connect_osd_cached_locked(vol, cached, &leader,
-							      &sock);
-			if (ret) {
-				unsigned int actions =
-					kfastblock_transport_classify_object_failure(ret);
+		ret = kfastblock_transport_acquire_osd_socket(vol, &leader,
+						      &cached, &sock);
+		if (ret) {
+			unsigned int actions =
+				kfastblock_transport_classify_object_failure(ret);
 
-				if (actions) {
-					kfastblock_transport_apply_object_failure(
-						vol, view, extent, op, &leader, cached, ret, actions);
-					sock = NULL;
-					if (actions & KFASTBLOCK_TRANSPORT_FAILURE_RETRY)
-						continue;
-				}
-				goto out;
+			if (actions) {
+				kfastblock_transport_apply_object_failure(
+					vol, view, extent, op, &leader, cached, ret, actions);
+				sock = NULL;
+				if (actions & KFASTBLOCK_TRANSPORT_FAILURE_RETRY)
+					continue;
 			}
+			goto out;
 		}
 
-		if (!sock) {
-			mutex_lock(&cached->lock);
-			if (!kfastblock_transport_cached_socket_matches_locked(cached, &leader)) {
-				mutex_unlock(&cached->lock);
-				ret = -EAGAIN;
-				continue;
-			}
-			sock = cached->sock;
-		}
 		seq = kfastblock_transport_next_seq(cached);
 		if (op == REQ_OP_WRITE || op == REQ_OP_WRITE_ZEROES)
 			ret = kfastblock_transport_write_object(sock, view->image.pool_id,
@@ -1640,7 +1693,8 @@ static int kfastblock_transport_submit_object_io(
 			ret = kfastblock_transport_delete_object(sock,
 							view->image.pool_id,
 							extent, seq);
-		mutex_unlock(&cached->lock);
+		kfastblock_transport_release_osd_socket(cached);
+		cached = NULL;
 		if (ret == -ENOENT && op == REQ_OP_READ) {
 			memset(buf, 0, extent->length);
 			ret = 0;
@@ -1663,6 +1717,9 @@ static int kfastblock_transport_submit_object_io(
 				kfastblock_transport_close_cached_socket(cached);
 				sock = NULL;
 			}
+		} else if (hint) {
+			hint->leader = leader;
+			hint->leader_valid = true;
 		}
 		if (!ret && op == REQ_OP_READ)
 			ret = kfastblock_transport_copy_request_data(
@@ -1674,6 +1731,8 @@ static int kfastblock_transport_submit_object_io(
 	}
 
 out:
+	if (cached)
+		kfastblock_transport_release_osd_socket(cached);
 	if (ret)
 		kfastblock_volume_account_object_error(
 			vol, op, extent->pg_id, leader.osd_id, extent->length, ret);
@@ -1926,47 +1985,14 @@ int kfastblock_transport_get_pg_leader(struct kfastblock_volume *vol,
 		target.osd_id = osd->osd_id;
 		target.port = shard->port;
 		strscpy(target.address, osd->address, sizeof(target.address));
-		cached = kfastblock_transport_find_cached_socket(vol, &target);
-		if (cached) {
-			mutex_lock(&cached->lock);
-			if (!kfastblock_transport_cached_socket_matches_locked(cached, &target)) {
-				mutex_unlock(&cached->lock);
-				cached = NULL;
-			} else {
-				sock = cached->sock;
-			}
-		}
-		if (!cached) {
-			ret = kfastblock_transport_check_osd_backoff(vol, &target);
-			if (ret) {
-				first_err = ret;
-				continue;
-			}
-			cached = kfastblock_transport_reserve_osd_slot(vol);
-			if (!cached)
-				return -ENOMEM;
-			ret = kfastblock_transport_connect_osd_cached_locked(vol, cached, &target,
-							      &sock);
-			if (ret) {
-				kfastblock_transport_apply_leader_failure(
-					vol, view, pool_id, pg_id, &target, cached, ret,
-					kfastblock_transport_classify_leader_failure(ret));
-				first_err = ret;
-				continue;
-			}
-		}
-
-		if (!sock) {
-			mutex_lock(&cached->lock);
-			if (!kfastblock_transport_cached_socket_matches_locked(cached, &target)) {
-				mutex_unlock(&cached->lock);
-				kfastblock_transport_apply_leader_failure(
-					vol, view, pool_id, pg_id, &target, cached, -EAGAIN,
-					kfastblock_transport_classify_leader_failure(-EAGAIN));
-				first_err = -EAGAIN;
-				continue;
-			}
-			sock = cached->sock;
+		ret = kfastblock_transport_acquire_osd_socket(vol, &target,
+						      &cached, &sock);
+		if (ret) {
+			kfastblock_transport_apply_leader_failure(
+				vol, view, pool_id, pg_id, &target, cached, ret,
+				kfastblock_transport_classify_leader_failure(ret));
+			first_err = ret;
+			continue;
 		}
 		seq = kfastblock_transport_next_seq(cached);
 		ret = kfastblock_transport_fetch_pg_leader_from_osd(sock,
@@ -1974,7 +2000,8 @@ int kfastblock_transport_get_pg_leader(struct kfastblock_volume *vol,
 						    resolved_route->pg_id,
 						    seq,
 						    leader);
-		mutex_unlock(&cached->lock);
+		kfastblock_transport_release_osd_socket(cached);
+		cached = NULL;
 		kfastblock_volume_account_leader_query(
 			vol, resolved_route->pg_id, target.osd_id, ret);
 		if (!ret) {
@@ -2033,6 +2060,8 @@ static int kfastblock_transport_prefetch_request_leaders(
 
 	for (i = 0; i < kf_req->nr_unique_pgs; ++i) {
 		struct kfastblock_leader_info leader;
+		struct kfastblock_cached_socket *cached = NULL;
+		struct socket *sock = NULL;
 
 		ret = kfastblock_transport_get_pg_leader(kf_req->vol,
 					kf_req->request_pool_id,
@@ -2040,6 +2069,19 @@ static int kfastblock_transport_prefetch_request_leaders(
 					&leader);
 		if (ret)
 			return ret;
+		kf_req->pg_hints[i].leader = leader;
+		kf_req->pg_hints[i].leader_valid = true;
+		ret = kfastblock_transport_acquire_osd_socket(
+			kf_req->vol, &leader, &cached, &sock);
+		if (!ret) {
+			kfastblock_transport_release_osd_socket(cached);
+		} else if (cached) {
+			kfastblock_transport_apply_leader_failure(
+				kf_req->vol, &kf_req->vol->view,
+				kf_req->request_pool_id, kf_req->unique_pgs[i],
+				&leader, cached, ret,
+				kfastblock_transport_classify_leader_failure(ret));
+		}
 	}
 
 	return 0;

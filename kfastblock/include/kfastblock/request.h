@@ -7,6 +7,8 @@
 #include <linux/types.h>
 #include <linux/workqueue.h>
 
+#include "kfastblock/meta.h"
+
 struct kfastblock_volume;
 
 #define KFASTBLOCK_MAX_OBJECT_EXTENTS 128
@@ -29,6 +31,12 @@ struct kfastblock_object_work {
 	unsigned int object_index;
 };
 
+struct kfastblock_request_pg_hint {
+	u32 pg_id;
+	bool leader_valid;
+	struct kfastblock_leader_info leader;
+};
+
 struct kfastblock_request {
 	struct request *rq;
 	struct kfastblock_volume *vol;
@@ -47,6 +55,7 @@ struct kfastblock_request {
 	spinlock_t status_lock;
 	struct mutex dispatch_lock;
 	u32 unique_pgs[KFASTBLOCK_MAX_OBJECT_EXTENTS];
+	struct kfastblock_request_pg_hint pg_hints[KFASTBLOCK_MAX_OBJECT_EXTENTS];
 	struct kfastblock_object_extent objects[KFASTBLOCK_MAX_OBJECT_EXTENTS];
 	struct kfastblock_object_work object_works[KFASTBLOCK_MAX_OBJECT_EXTENTS];
 };
