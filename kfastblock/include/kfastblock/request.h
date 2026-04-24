@@ -2,6 +2,7 @@
 #define KFASTBLOCK_REQUEST_H
 
 #include <linux/blkdev.h>
+#include <linux/spinlock.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
 
@@ -9,6 +10,8 @@ struct kfastblock_volume;
 
 #define KFASTBLOCK_MAX_OBJECT_EXTENTS 128
 #define KFASTBLOCK_MAX_OBJECT_NAME_LEN 192
+
+struct kfastblock_request;
 
 struct kfastblock_object_extent {
 	u64 object_seq;
@@ -19,6 +22,12 @@ struct kfastblock_object_extent {
 	char object_name[KFASTBLOCK_MAX_OBJECT_NAME_LEN];
 };
 
+struct kfastblock_object_work {
+	struct work_struct work;
+	struct kfastblock_request *parent;
+	unsigned int object_index;
+};
+
 struct kfastblock_request {
 	struct request *rq;
 	struct kfastblock_volume *vol;
@@ -26,8 +35,10 @@ struct kfastblock_request {
 	u32 byte_length;
 	unsigned int nr_objects;
 	int status;
-	struct work_struct work;
+	atomic_t pending_objects;
+	spinlock_t status_lock;
 	struct kfastblock_object_extent objects[KFASTBLOCK_MAX_OBJECT_EXTENTS];
+	struct kfastblock_object_work object_works[KFASTBLOCK_MAX_OBJECT_EXTENTS];
 };
 
 void kfastblock_request_init(struct kfastblock_request *kf_req,
