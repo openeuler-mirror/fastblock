@@ -19,6 +19,8 @@ struct kfastblock_cached_socket {
 	u16 port;
 	char address[KFASTBLOCK_MAX_ADDR_LEN];
 	struct socket *sock;
+	struct mutex lock;
+	u64 next_seq;
 };
 
 struct kfastblock_volume {

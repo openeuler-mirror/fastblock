@@ -34,7 +34,20 @@ static void kfastblock_transport_close_cached_socket(
 		sock_release(cached->sock);
 		cached->sock = NULL;
 	}
-	memset(cached, 0, sizeof(*cached));
+	cached->osd_id = 0;
+	cached->port = 0;
+	cached->next_seq = 0;
+	memset(cached->address, 0, sizeof(cached->address));
+}
+
+static u64 kfastblock_transport_next_seq(struct kfastblock_cached_socket *cached)
+{
+	if (!cached)
+		return 1;
+
+	if (!cached->next_seq)
+		cached->next_seq = 1;
+	return cached->next_seq++;
 }
 
 static struct kfastblock_cached_socket *
@@ -922,6 +935,7 @@ static int kfastblock_transport_submit_object_io(
 	void *buf = NULL;
 	int ret;
 	int attempt;
+	u64 seq;
 
 	if (!vol || !rq || !extent)
 		return -EINVAL;
@@ -968,20 +982,24 @@ static int kfastblock_transport_submit_object_io(
 			cached->sock = sock;
 			cached->osd_id = leader.osd_id;
 			cached->port = leader.port;
+			cached->next_seq = 1;
 			strscpy(cached->address, leader.address,
 				sizeof(cached->address));
 		}
 
+		mutex_lock(&cached->lock);
+		seq = kfastblock_transport_next_seq(cached);
 		if (op == REQ_OP_WRITE || op == REQ_OP_WRITE_ZEROES)
 			ret = kfastblock_transport_write_object(sock, view->image.pool_id,
-						 extent, buf, 1);
+						 extent, buf, seq);
 		else if (op == REQ_OP_READ)
 			ret = kfastblock_transport_read_object(sock, view->image.pool_id,
-						extent, buf, 1);
+						extent, buf, seq);
 		else
 			ret = kfastblock_transport_delete_object(sock,
 							view->image.pool_id,
-							extent, 1);
+							extent, seq);
+		mutex_unlock(&cached->lock);
 		if (kfastblock_transport_should_retry_object_io(ret)) {
 invalidate:
 			kfastblock_transport_close_cached_socket(cached);
@@ -1230,6 +1248,7 @@ int kfastblock_transport_get_pg_leader(struct kfastblock_volume *vol,
 		struct kfastblock_cached_socket *cached = NULL;
 		struct socket *sock = NULL;
 		struct kfastblock_leader_info target = {};
+		u64 seq;
 
 		ret = kfastblock_meta_resolve_pg_target(view, pool_id, pg_id,
 						 route->osd_ids[i],
@@ -1268,15 +1287,19 @@ int kfastblock_transport_get_pg_leader(struct kfastblock_volume *vol,
 			cached->sock = sock;
 			cached->osd_id = target.osd_id;
 			cached->port = target.port;
+			cached->next_seq = 1;
 			strscpy(cached->address, target.address,
 				sizeof(cached->address));
 		}
 
+		mutex_lock(&cached->lock);
+		seq = kfastblock_transport_next_seq(cached);
 		ret = kfastblock_transport_fetch_pg_leader_from_osd(sock,
 						    resolved_route->pool_id,
 						    resolved_route->pg_id,
-						    1,
+						    seq,
 						    leader);
+		mutex_unlock(&cached->lock);
 		if (!ret) {
 			ret = kfastblock_meta_set_pg_leader(view, pool_id, pg_id,
 						 leader);
