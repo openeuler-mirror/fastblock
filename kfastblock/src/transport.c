@@ -1040,7 +1040,7 @@ static int kfastblock_transport_submit_object_io(
 	enum req_op op)
 {
 	struct kfastblock_cluster_view *view;
-	struct kfastblock_leader_info leader;
+	struct kfastblock_leader_info leader = {};
 	struct kfastblock_cached_socket *cached = NULL;
 	struct socket *sock = NULL;
 	void *buf = NULL;
@@ -1113,7 +1113,8 @@ static int kfastblock_transport_submit_object_io(
 		mutex_unlock(&cached->lock);
 		if (kfastblock_transport_should_retry_object_io(ret)) {
 invalidate:
-			kfastblock_volume_account_object_retry(vol);
+			kfastblock_volume_account_object_retry(
+				vol, op, extent->pg_id, leader.osd_id, extent->length, ret);
 			kfastblock_transport_close_cached_socket(cached);
 			sock = NULL;
 			kfastblock_meta_invalidate_pg_leader(view, view->image.pool_id,
@@ -1133,7 +1134,8 @@ invalidate:
 
 out:
 	if (ret)
-		kfastblock_volume_account_object_error(vol);
+		kfastblock_volume_account_object_error(
+			vol, op, extent->pg_id, leader.osd_id, extent->length, ret);
 	kfree(buf);
 	return ret;
 }
@@ -1414,7 +1416,8 @@ int kfastblock_transport_get_pg_leader(struct kfastblock_volume *vol,
 						    seq,
 						    leader);
 		mutex_unlock(&cached->lock);
-		kfastblock_volume_account_leader_query(vol, ret);
+		kfastblock_volume_account_leader_query(
+			vol, resolved_route->pg_id, target.osd_id, ret);
 		if (!ret) {
 			ret = kfastblock_meta_set_pg_leader(view, pool_id, pg_id,
 						 leader);

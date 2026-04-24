@@ -9,6 +9,7 @@
 #include <linux/mutex.h>
 #include <linux/rwsem.h>
 #include <linux/socket.h>
+#include <linux/spinlock.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
 
@@ -18,6 +19,19 @@ struct dentry;
 #include "kfastblock/meta.h"
 
 #define KFASTBLOCK_MAX_SOCKET_CACHE 16
+#define KFASTBLOCK_MAX_VOLUME_EVENTS 128
+
+enum kfastblock_volume_event_type {
+	KFASTBLOCK_VOLUME_EVENT_ATTACH_READY = 1,
+	KFASTBLOCK_VOLUME_EVENT_QUEUE_PAUSE,
+	KFASTBLOCK_VOLUME_EVENT_QUEUE_RESUME,
+	KFASTBLOCK_VOLUME_EVENT_METADATA_STALE,
+	KFASTBLOCK_VOLUME_EVENT_CLUSTER_REFRESH_FAIL,
+	KFASTBLOCK_VOLUME_EVENT_IMAGE_REFRESH_FAIL,
+	KFASTBLOCK_VOLUME_EVENT_LEADER_QUERY_FAIL,
+	KFASTBLOCK_VOLUME_EVENT_OBJECT_RETRY,
+	KFASTBLOCK_VOLUME_EVENT_OBJECT_ERROR,
+};
 
 struct kfastblock_cached_socket {
 	u32 osd_id;
@@ -61,6 +75,25 @@ struct kfastblock_volume_stats {
 	atomic64_t object_io_errors;
 };
 
+struct kfastblock_volume_event {
+	u64 jiffies;
+	s32 ret;
+	u32 type;
+	u32 pg_id;
+	u32 osd_id;
+	u32 arg0;
+	u32 arg1;
+	u8 op;
+	u8 reserved[3];
+};
+
+struct kfastblock_volume_event_log {
+	spinlock_t lock;
+	u32 next_index;
+	u32 count;
+	struct kfastblock_volume_event entries[KFASTBLOCK_MAX_VOLUME_EVENTS];
+};
+
 struct kfastblock_volume {
 	int dev_id;
 	int major;
@@ -75,6 +108,7 @@ struct kfastblock_volume {
 	struct kfastblock_attach_spec spec;
 	struct kfastblock_cluster_view view;
 	struct kfastblock_volume_stats stats;
+	struct kfastblock_volume_event_log event_log;
 
 	struct list_head node;
 	struct device dev;
@@ -97,9 +131,14 @@ void kfastblock_volume_stats_init(struct kfastblock_volume *vol);
 void kfastblock_volume_account_io_submit(struct kfastblock_volume *vol,
 				       enum req_op op, u32 bytes);
 void kfastblock_volume_account_io_complete(struct kfastblock_volume *vol, int ret);
-void kfastblock_volume_account_object_retry(struct kfastblock_volume *vol);
-void kfastblock_volume_account_object_error(struct kfastblock_volume *vol);
-void kfastblock_volume_account_leader_query(struct kfastblock_volume *vol, int ret);
+void kfastblock_volume_account_object_retry(struct kfastblock_volume *vol,
+				      enum req_op op, u32 pg_id,
+				      u32 osd_id, u32 length, int ret);
+void kfastblock_volume_account_object_error(struct kfastblock_volume *vol,
+				     enum req_op op, u32 pg_id,
+				     u32 osd_id, u32 length, int ret);
+void kfastblock_volume_account_leader_query(struct kfastblock_volume *vol,
+				     u32 pg_id, u32 osd_id, int ret);
 void kfastblock_volume_account_cluster_refresh(struct kfastblock_volume *vol,
 				       int ret);
 void kfastblock_volume_account_image_refresh(struct kfastblock_volume *vol,
