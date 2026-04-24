@@ -1,5 +1,7 @@
 #define _GNU_SOURCE
 #include <ctype.h>
+#include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
 #include <stdio.h>
@@ -105,7 +107,7 @@ static void parse_config_file(const char *filename, struct config *cfg)
 static void print_usage(const char *prog_name)
 {
 	fprintf(stderr,
-		"Usage: %s <attach|detach|force-refresh|reset-backoff|drop-transport|reset-leaders> [options]\n",
+		"Usage: %s <attach|detach|force-refresh|reset-backoff|drop-transport|reset-leaders|list|show> [options]\n",
 		prog_name);
 	fprintf(stderr, "Options:\n");
 	fprintf(stderr, "  -c, --conf <file>\n");
@@ -118,6 +120,9 @@ static void print_usage(const char *prog_name)
 	fprintf(stderr, "  --debug-pool-id <id>\n");
 	fprintf(stderr, "  --debug-pg-count <count>\n");
 	fprintf(stderr, "  --scope <all|cluster|image|osd|monitor>\n");
+	fprintf(stderr, "\nExamples:\n");
+	fprintf(stderr, "  %s list\n", prog_name);
+	fprintf(stderr, "  %s show --pool-name <pool> --image-name <image>\n", prog_name);
 }
 
 static void append_kv(char *buf, size_t buf_len, const char *key,
@@ -153,6 +158,38 @@ static int write_sysfs_file(const char *path, const char *value)
 	return 0;
 }
 
+static int read_text_file(const char *path, char *buf, size_t buf_len)
+{
+	int fd;
+	ssize_t bytes_read;
+
+	if (!path || !buf || !buf_len)
+		return -1;
+
+	fd = open(path, O_RDONLY);
+	if (fd < 0)
+		return -1;
+
+	bytes_read = read(fd, buf, buf_len - 1);
+	close(fd);
+	if (bytes_read < 0)
+		return -1;
+
+	buf[bytes_read] = '\0';
+	trim(buf);
+	return 0;
+}
+
+static void print_driver_last_error(void)
+{
+	char error_buf[256] = {0};
+
+	if (read_text_file(SYSFS_PATH_LAST_ERROR, error_buf, sizeof(error_buf)) == 0 &&
+	    error_buf[0] != '\0') {
+		fprintf(stderr, "Driver error: %s\n", error_buf);
+	}
+}
+
 static int build_volume_sysfs_path(char *buf, size_t buf_len,
 				  const struct config *cfg,
 				  const char *attr)
@@ -174,6 +211,12 @@ static int op_is_volume_level(const char *operation)
 		strcmp(operation, "reset-backoff") == 0 ||
 		strcmp(operation, "drop-transport") == 0 ||
 		strcmp(operation, "reset-leaders") == 0;
+}
+
+static int op_is_read_only(const char *operation)
+{
+	return strcmp(operation, "list") == 0 ||
+		strcmp(operation, "show") == 0;
 }
 
 static const char *volume_attr_for_operation(const char *operation)
@@ -205,6 +248,149 @@ static void free_config(struct config *cfg)
 	free(cfg->scope);
 }
 
+static int build_volume_root_path(char *buf, size_t buf_len,
+				  const struct config *cfg)
+{
+	if (!cfg || !cfg->pool_name || !cfg->image_name)
+		return -1;
+
+	if (snprintf(buf, buf_len, "%s/%s%s-%s",
+		     SYSFS_DEVICE_ROOT, SYSFS_DEVICE_PREFIX,
+		     cfg->pool_name, cfg->image_name) >= (int)buf_len)
+		return -1;
+
+	return 0;
+}
+
+static int print_volume_attr(const char *root_path, const char *attr)
+{
+	char path[MAX_SYSFS_PATH];
+	char value[MAX_LINE_LEN];
+
+	if (!root_path || !attr)
+		return -1;
+	if (snprintf(path, sizeof(path), "%s/%s", root_path, attr) >= (int)sizeof(path))
+		return -1;
+	if (read_text_file(path, value, sizeof(value)) < 0)
+		return -1;
+
+	printf("%s=%s\n", attr, value);
+	return 0;
+}
+
+static int do_list_volumes(void)
+{
+	static const char *attrs[] = {
+		"health_state",
+		"sync_state",
+		"queue_paused",
+		"open_count",
+	};
+	DIR *dir;
+	struct dirent *de;
+	char path[MAX_SYSFS_PATH];
+	char pool[MAX_LINE_LEN];
+	char image[MAX_LINE_LEN];
+	char value[MAX_LINE_LEN];
+	size_t i;
+
+	dir = opendir(SYSFS_DEVICE_ROOT);
+	if (!dir) {
+		perror("Failed to open kfastblock device root");
+		return -1;
+	}
+
+	while ((de = readdir(dir)) != NULL) {
+		if (de->d_name[0] == '.')
+			continue;
+		if (strncmp(de->d_name, SYSFS_DEVICE_PREFIX,
+			    strlen(SYSFS_DEVICE_PREFIX)) != 0)
+			continue;
+
+		if (snprintf(path, sizeof(path), "%s/%s", SYSFS_DEVICE_ROOT,
+			     de->d_name) >= (int)sizeof(path))
+			continue;
+		if (snprintf(value, sizeof(value), "%s/pool_name", path) >= (int)sizeof(value))
+			continue;
+		if (read_text_file(value, pool, sizeof(pool)) < 0)
+			strcpy(pool, "?");
+		if (snprintf(value, sizeof(value), "%s/image_name", path) >= (int)sizeof(value))
+			continue;
+		if (read_text_file(value, image, sizeof(image)) < 0)
+			strcpy(image, "?");
+
+		printf("%s pool=%s image=%s", de->d_name, pool, image);
+		for (i = 0; i < sizeof(attrs) / sizeof(attrs[0]); ++i) {
+			if (snprintf(value, sizeof(value), "%s/%s", path, attrs[i]) >= (int)sizeof(value))
+				continue;
+			if (read_text_file(value, pool, sizeof(pool)) == 0)
+				printf(" %s=%s", attrs[i], pool);
+		}
+		putchar('\n');
+	}
+
+	closedir(dir);
+	return 0;
+}
+
+static int do_show_volume(const struct config *cfg)
+{
+	static const char *attrs[] = {
+		"pool_name",
+		"image_name",
+		"size_bytes",
+		"object_size",
+		"pool_id",
+		"pg_count",
+		"osd_count",
+		"route_count",
+		"osdmap_epoch",
+		"pgmap_epoch",
+		"leader_epoch",
+		"last_refresh",
+		"last_image_refresh",
+		"read_only",
+		"open_count",
+		"sync_state",
+		"queue_paused",
+		"flush_in_progress",
+		"inflight_ios",
+		"health_state",
+		"health_since",
+		"last_failure_errno",
+		"last_failure_source",
+		"last_failure_jiffies",
+		"last_success_jiffies",
+		"io_submitted",
+		"io_completed",
+		"io_failed",
+		"object_io_completed",
+		"object_io_retries",
+		"object_io_errors",
+		"cluster_refresh_ok",
+		"cluster_refresh_fail",
+		"image_refresh_ok",
+		"image_refresh_fail",
+		"leader_query_ok",
+		"leader_query_fail",
+		"refresh_kicks",
+		"leader_invalidations",
+		"osd_socket_drops",
+		"monitor_socket_drops",
+	};
+	char root_path[MAX_SYSFS_PATH];
+	size_t i;
+
+	if (build_volume_root_path(root_path, sizeof(root_path), cfg) != 0) {
+		fprintf(stderr, "pool-name and image-name are required for show\n");
+		return -1;
+	}
+
+	for (i = 0; i < sizeof(attrs) / sizeof(attrs[0]); ++i)
+		print_volume_attr(root_path, attrs[i]);
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	const char *operation;
@@ -212,7 +398,6 @@ int main(int argc, char *argv[])
 	struct config cfg = {0};
 	char command_str[MAX_CMD_LEN] = {0};
 	char sysfs_path_buf[MAX_SYSFS_PATH] = {0};
-	char error_buf[256] = {0};
 	int fd;
 	int opt;
 	int option_index = 0;
@@ -243,7 +428,9 @@ int main(int argc, char *argv[])
 	    strcmp(operation, "force-refresh") != 0 &&
 	    strcmp(operation, "reset-backoff") != 0 &&
 	    strcmp(operation, "drop-transport") != 0 &&
-	    strcmp(operation, "reset-leaders") != 0) {
+	    strcmp(operation, "reset-leaders") != 0 &&
+	    strcmp(operation, "list") != 0 &&
+	    strcmp(operation, "show") != 0) {
 		print_usage(argv[0]);
 		return EXIT_FAILURE;
 	}
@@ -297,6 +484,15 @@ int main(int argc, char *argv[])
 
 	if (cfg.conf_file)
 		parse_config_file(cfg.conf_file, &cfg);
+
+	if (op_is_read_only(operation)) {
+		int ret;
+
+		ret = strcmp(operation, "list") == 0 ?
+			do_list_volumes() : do_show_volume(&cfg);
+		free_config(&cfg);
+		return ret == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+	}
 
 	if (!cfg.pool_name || !cfg.image_name) {
 		fprintf(stderr, "pool-name and image-name are required\n");
@@ -353,17 +549,7 @@ int main(int argc, char *argv[])
 
 	if (write_sysfs_file(sysfs_path, command_str) < 0) {
 		perror("Failed to write to sysfs file");
-		if (!volume_level) {
-			int error_fd = open(SYSFS_PATH_LAST_ERROR, O_RDONLY);
-
-			if (error_fd >= 0) {
-				ssize_t bytes_read = read(error_fd, error_buf,
-							 sizeof(error_buf) - 1);
-				if (bytes_read > 0)
-					fprintf(stderr, "Driver error: %s\n", error_buf);
-				close(error_fd);
-			}
-		}
+		print_driver_last_error();
 		free_config(&cfg);
 		return EXIT_FAILURE;
 	}
