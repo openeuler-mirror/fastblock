@@ -1566,6 +1566,17 @@ static ssize_t sync_state_show(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%u\n", vol->view.sync_state);
 }
 
+static ssize_t open_count_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", atomic_read(&vol->open_count));
+}
+
 static ssize_t queue_paused_show(struct device *dev,
 			      struct device_attribute *attr, char *buf)
 {
@@ -1885,6 +1896,7 @@ static DEVICE_ATTR_RO(leader_epoch);
 static DEVICE_ATTR_RO(last_refresh);
 static DEVICE_ATTR_RO(last_image_refresh);
 static DEVICE_ATTR_RO(read_only);
+static DEVICE_ATTR_RO(open_count);
 static DEVICE_ATTR_RO(sync_state);
 static DEVICE_ATTR_RO(queue_paused);
 static DEVICE_ATTR_RO(flush_in_progress);
@@ -1931,6 +1943,7 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_last_refresh.attr,
 	&dev_attr_last_image_refresh.attr,
 	&dev_attr_read_only.attr,
+	&dev_attr_open_count.attr,
 	&dev_attr_sync_state.attr,
 	&dev_attr_queue_paused.attr,
 	&dev_attr_flush_in_progress.attr,
@@ -2290,6 +2303,8 @@ int kfastblock_volume_detach(const struct kfastblock_attach_spec *spec)
 
 	if (!found)
 		return -ENOENT;
+	if (atomic_read(&found->open_count) > 0)
+		return -EBUSY;
 
 	ret = kfastblock_volume_begin_stop(found, true);
 	if (ret)

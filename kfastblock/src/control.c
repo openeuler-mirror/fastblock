@@ -233,7 +233,9 @@ int kfastblock_control_detach(const char *args, size_t count)
 	}
 
 	ret = kfastblock_volume_detach(spec);
-	if (ret) {
+	if (ret == -EBUSY) {
+		kfastblock_set_last_error("volume is still open");
+	} else if (ret) {
 		kfastblock_set_last_error("failed to detach volume");
 	} else {
 		kfastblock_set_last_error("ok");
