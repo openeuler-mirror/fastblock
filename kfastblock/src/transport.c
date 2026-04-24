@@ -1564,6 +1564,12 @@ static int kfastblock_transport_submit_object_io(
 							view->image.pool_id,
 							extent, seq);
 		mutex_unlock(&cached->lock);
+		if (ret == -ENOENT && op == REQ_OP_READ) {
+			memset(buf, 0, extent->length);
+			ret = 0;
+		} else if (ret == -ENOENT && op == REQ_OP_DISCARD) {
+			ret = 0;
+		}
 		if (ret) {
 			unsigned int actions =
 				kfastblock_transport_classify_object_failure(ret);
