@@ -786,14 +786,22 @@ static void kfastblock_volume_close_osd_cached_sockets(struct kfastblock_volume 
 		return;
 
 	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i) {
-		if (!vol->socket_cache[i].sock)
-			continue;
-		sock_release(vol->socket_cache[i].sock);
-		vol->socket_cache[i].sock = NULL;
-		memset(vol->socket_cache[i].address, 0,
-		       sizeof(vol->socket_cache[i].address));
-		vol->socket_cache[i].osd_id = 0;
-		vol->socket_cache[i].port = 0;
+		struct kfastblock_cached_socket *cached = &vol->socket_cache[i];
+
+		mutex_lock(&cached->lock);
+		if (cached->sock) {
+			sock_release(cached->sock);
+			cached->sock = NULL;
+		}
+		memset(cached->address, 0, sizeof(cached->address));
+		cached->osd_id = 0;
+		cached->port = 0;
+		cached->next_seq = 0;
+		cached->fail_streak = 0;
+		cached->last_error = 0;
+		cached->last_failure_jiffies = 0;
+		cached->backoff_until_jiffies = 0;
+		mutex_unlock(&cached->lock);
 	}
 }
 
@@ -805,14 +813,22 @@ static void kfastblock_volume_close_monitor_cached_sockets(struct kfastblock_vol
 		return;
 
 	for (i = 0; i < KFASTBLOCK_MAX_MONITORS; ++i) {
-		if (!vol->monitor_cache[i].sock)
-			continue;
-		sock_release(vol->monitor_cache[i].sock);
-		vol->monitor_cache[i].sock = NULL;
-		memset(vol->monitor_cache[i].address, 0,
-		       sizeof(vol->monitor_cache[i].address));
-		vol->monitor_cache[i].port = 0;
-		vol->monitor_cache[i].next_seq = 0;
+		struct kfastblock_cached_monitor_socket *cached =
+			&vol->monitor_cache[i];
+
+		mutex_lock(&cached->lock);
+		if (cached->sock) {
+			sock_release(cached->sock);
+			cached->sock = NULL;
+		}
+		memset(cached->address, 0, sizeof(cached->address));
+		cached->port = 0;
+		cached->next_seq = 0;
+		cached->fail_streak = 0;
+		cached->last_error = 0;
+		cached->last_failure_jiffies = 0;
+		cached->backoff_until_jiffies = 0;
+		mutex_unlock(&cached->lock);
 	}
 }
 
