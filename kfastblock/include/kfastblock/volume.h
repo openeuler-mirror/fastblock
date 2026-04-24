@@ -184,6 +184,9 @@ struct kfastblock_volume {
 	struct delayed_work refresh_work;
 	struct dentry *debugfs_dir;
 	bool queue_paused;
+	u32 dispatch_window;
+	u32 refresh_interval_ms;
+	u32 image_refresh_interval_ms;
 	struct kfastblock_cached_socket socket_cache[KFASTBLOCK_MAX_SOCKET_CACHE];
 	struct kfastblock_cached_monitor_socket monitor_cache[KFASTBLOCK_MAX_MONITORS];
 };

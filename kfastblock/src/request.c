@@ -121,7 +121,11 @@ void kfastblock_request_init(struct kfastblock_request *kf_req,
 	kf_req->request_object_size = vol->view.image.object_size;
 	kf_req->request_osdmap_epoch = vol->view.osdmap_epoch;
 	kf_req->request_pgmap_epoch = vol->view.pgmap_epoch;
-	kf_req->dispatch_window = KFASTBLOCK_DEFAULT_OBJECT_DISPATCH_WINDOW;
+	kf_req->dispatch_window = clamp_t(u32,
+					  vol->dispatch_window ?
+					  vol->dispatch_window : 1,
+					  1,
+					  KFASTBLOCK_MAX_OBJECT_EXTENTS);
 	kf_req->next_object_to_queue = 0;
 	atomic_set(&kf_req->pending_objects, 0);
 	spin_lock_init(&kf_req->status_lock);
