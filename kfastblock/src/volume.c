@@ -60,6 +60,14 @@ static void kfastblock_volume_schedule_refresh(struct kfastblock_volume *vol)
 			      kfastblock_volume_refresh_interval());
 }
 
+void kfastblock_volume_kick_refresh(struct kfastblock_volume *vol)
+{
+	if (!vol || !atomic_read(&vol->ready))
+		return;
+
+	mod_delayed_work(system_wq, &vol->refresh_work, 0);
+}
+
 static int kfastblock_volume_copy_attach_spec(struct kfastblock_attach_spec *dst,
 					      const struct kfastblock_attach_spec *src)
 {
@@ -407,6 +415,7 @@ static blk_status_t kfastblock_queue_rq(struct blk_mq_hw_ctx *hctx,
 		return BLK_STS_RESOURCE;
 	}
 	if (!kfastblock_meta_io_ready(&vol->view)) {
+		kfastblock_volume_kick_refresh(vol);
 		blk_mq_end_request(rq, BLK_STS_RESOURCE);
 		return BLK_STS_RESOURCE;
 	}

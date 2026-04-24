@@ -988,6 +988,7 @@ invalidate:
 			sock = NULL;
 			kfastblock_meta_invalidate_pg_leader(view, view->image.pool_id,
 						      extent->pg_id);
+			kfastblock_volume_kick_refresh(vol);
 			continue;
 		}
 		if (ret && cached) {

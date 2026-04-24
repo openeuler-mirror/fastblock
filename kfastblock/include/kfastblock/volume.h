@@ -47,5 +47,6 @@ void kfastblock_volume_exit(void);
 int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int major,
 			     struct bus_type *bus, struct device *parent_dev);
 int kfastblock_volume_detach(const struct kfastblock_attach_spec *spec);
+void kfastblock_volume_kick_refresh(struct kfastblock_volume *vol);
 
 #endif
