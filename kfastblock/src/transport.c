@@ -11,6 +11,7 @@
 #include <linux/socket.h>
 #include <linux/string.h>
 #include <linux/uio.h>
+#include <linux/workqueue.h>
 #include <net/sock.h>
 
 #include "kfastblock/common.h"
@@ -21,6 +22,7 @@
 static int kfastblock_transport_try_connect_host(const char *host,
 						 u16 port,
 						 struct socket **sock);
+static struct workqueue_struct *g_kfastblock_transport_wq;
 
 static void kfastblock_transport_close_cached_socket(
 	struct kfastblock_cached_socket *cached)
@@ -1004,11 +1006,21 @@ out:
 
 int kfastblock_transport_init(void)
 {
-	return 0;
+	g_kfastblock_transport_wq = alloc_workqueue(
+		"kfastblock-transport",
+		WQ_UNBOUND | WQ_MEM_RECLAIM,
+		0);
+	return g_kfastblock_transport_wq ? 0 : -ENOMEM;
 }
 
 void kfastblock_transport_exit(void)
 {
+	if (!g_kfastblock_transport_wq)
+		return;
+
+	drain_workqueue(g_kfastblock_transport_wq);
+	destroy_workqueue(g_kfastblock_transport_wq);
+	g_kfastblock_transport_wq = NULL;
 }
 
 static int kfastblock_transport_sockaddr_from_host_port(const char *host,
@@ -1285,7 +1297,8 @@ int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 
 	INIT_WORK(&kf_req->work, kfastblock_transport_request_work);
 	get_device(&kf_req->vol->dev);
-	if (!schedule_work(&kf_req->work)) {
+	if (!g_kfastblock_transport_wq ||
+	    !queue_work(g_kfastblock_transport_wq, &kf_req->work)) {
 		put_device(&kf_req->vol->dev);
 		return -EBUSY;
 	}
