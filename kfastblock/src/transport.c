@@ -197,7 +197,15 @@ static int kfastblock_transport_status_to_errno(const u32 status)
 	}
 }
 
-static bool kfastblock_transport_should_retry_object_io(const int ret)
+enum kfastblock_transport_failure_action {
+	KFASTBLOCK_TRANSPORT_FAILURE_DROP_SOCKET = 1U << 0,
+	KFASTBLOCK_TRANSPORT_FAILURE_INVALIDATE_LEADER = 1U << 1,
+	KFASTBLOCK_TRANSPORT_FAILURE_KICK_REFRESH = 1U << 2,
+	KFASTBLOCK_TRANSPORT_FAILURE_RETRY = 1U << 3,
+};
+
+static unsigned int
+kfastblock_transport_classify_object_failure(const int ret)
 {
 	switch (ret) {
 	case -ENOLINK:
@@ -206,9 +214,129 @@ static bool kfastblock_transport_should_retry_object_io(const int ret)
 	case -ETIMEDOUT:
 	case -ECONNRESET:
 	case -EPIPE:
-		return true;
+		return KFASTBLOCK_TRANSPORT_FAILURE_DROP_SOCKET |
+			KFASTBLOCK_TRANSPORT_FAILURE_INVALIDATE_LEADER |
+			KFASTBLOCK_TRANSPORT_FAILURE_KICK_REFRESH |
+			KFASTBLOCK_TRANSPORT_FAILURE_RETRY;
+	case -EPROTO:
+		return KFASTBLOCK_TRANSPORT_FAILURE_DROP_SOCKET |
+			KFASTBLOCK_TRANSPORT_FAILURE_INVALIDATE_LEADER |
+			KFASTBLOCK_TRANSPORT_FAILURE_KICK_REFRESH;
+	case -EIO:
+		return KFASTBLOCK_TRANSPORT_FAILURE_DROP_SOCKET |
+			KFASTBLOCK_TRANSPORT_FAILURE_KICK_REFRESH;
 	default:
-		return false;
+		return 0;
+	}
+}
+
+static unsigned int
+kfastblock_transport_classify_leader_failure(const int ret)
+{
+	switch (ret) {
+	case -ENOLINK:
+	case -EAGAIN:
+	case -EHOSTDOWN:
+	case -ETIMEDOUT:
+	case -ECONNRESET:
+	case -EPIPE:
+	case -EPROTO:
+	case -EIO:
+		return KFASTBLOCK_TRANSPORT_FAILURE_DROP_SOCKET |
+			KFASTBLOCK_TRANSPORT_FAILURE_INVALIDATE_LEADER |
+			KFASTBLOCK_TRANSPORT_FAILURE_KICK_REFRESH;
+	default:
+		return KFASTBLOCK_TRANSPORT_FAILURE_INVALIDATE_LEADER;
+	}
+}
+
+static unsigned int
+kfastblock_transport_classify_monitor_failure(const int ret)
+{
+	if (kfastblock_transport_should_retry_monitor(ret))
+		return KFASTBLOCK_TRANSPORT_FAILURE_DROP_SOCKET;
+
+	return 0;
+}
+
+static void kfastblock_transport_apply_object_failure(
+	struct kfastblock_volume *vol,
+	struct kfastblock_cluster_view *view,
+	const struct kfastblock_object_extent *extent,
+	const enum req_op op,
+	const struct kfastblock_leader_info *leader,
+	struct kfastblock_cached_socket *cached,
+	const int ret,
+	const unsigned int actions)
+{
+	if (!vol || !view || !extent || !actions)
+		return;
+
+	if (actions & KFASTBLOCK_TRANSPORT_FAILURE_DROP_SOCKET) {
+		if (leader)
+			kfastblock_volume_account_socket_drop(
+				vol, false, leader->osd_id, leader->port, ret);
+		if (cached)
+			kfastblock_transport_close_cached_socket(cached);
+	}
+	if (actions & KFASTBLOCK_TRANSPORT_FAILURE_INVALIDATE_LEADER) {
+		kfastblock_volume_account_leader_invalidate(vol, extent->pg_id, ret);
+		kfastblock_meta_invalidate_pg_leader(view, view->image.pool_id,
+				      extent->pg_id);
+	}
+	if (actions & KFASTBLOCK_TRANSPORT_FAILURE_KICK_REFRESH) {
+		kfastblock_volume_account_refresh_kick(vol, extent->pg_id, ret);
+		kfastblock_volume_kick_refresh(vol);
+	}
+	if (actions & KFASTBLOCK_TRANSPORT_FAILURE_RETRY)
+		kfastblock_volume_account_object_retry(vol, op, extent->pg_id,
+				   leader ? leader->osd_id : 0, extent->length, ret);
+}
+
+static void kfastblock_transport_apply_leader_failure(
+	struct kfastblock_volume *vol,
+	struct kfastblock_cluster_view *view,
+	const u32 pool_id,
+	const u32 pg_id,
+	const struct kfastblock_leader_info *target,
+	struct kfastblock_cached_socket *cached,
+	const int ret,
+	const unsigned int actions)
+{
+	if (!vol || !view || !actions)
+		return;
+
+	if (actions & KFASTBLOCK_TRANSPORT_FAILURE_DROP_SOCKET) {
+		kfastblock_volume_account_socket_drop(vol, false,
+				target ? target->osd_id : 0,
+				target ? target->port : 0, ret);
+		if (cached)
+			kfastblock_transport_close_cached_socket(cached);
+	}
+	if (actions & KFASTBLOCK_TRANSPORT_FAILURE_INVALIDATE_LEADER) {
+		kfastblock_volume_account_leader_invalidate(vol, pg_id, ret);
+		kfastblock_meta_invalidate_pg_leader(view, pool_id, pg_id);
+	}
+	if (actions & KFASTBLOCK_TRANSPORT_FAILURE_KICK_REFRESH) {
+		kfastblock_volume_account_refresh_kick(vol, pg_id, ret);
+		kfastblock_volume_kick_refresh(vol);
+	}
+}
+
+static void kfastblock_transport_apply_monitor_failure(
+	struct kfastblock_volume *vol,
+	struct kfastblock_cached_monitor_socket *cached,
+	const int ret,
+	const unsigned int actions)
+{
+	if (!vol || !actions)
+		return;
+
+	if (actions & KFASTBLOCK_TRANSPORT_FAILURE_DROP_SOCKET) {
+		kfastblock_volume_account_socket_drop(vol, true, 0,
+				cached ? cached->port : 0, ret);
+		if (cached)
+			kfastblock_transport_close_cached_monitor_socket(cached);
 	}
 }
 
@@ -1088,8 +1216,19 @@ static int kfastblock_transport_submit_object_io(
 			kfastblock_transport_close_cached_socket(cached);
 			ret = kfastblock_transport_try_connect_host(leader.address,
 							     leader.port, &sock);
-			if (ret)
-				goto invalidate;
+			if (ret) {
+				unsigned int actions =
+					kfastblock_transport_classify_object_failure(ret);
+
+				if (actions) {
+					kfastblock_transport_apply_object_failure(
+						vol, view, extent, op, &leader, cached, ret, actions);
+					sock = NULL;
+					if (actions & KFASTBLOCK_TRANSPORT_FAILURE_RETRY)
+						continue;
+				}
+				goto out;
+			}
 			cached->sock = sock;
 			cached->osd_id = leader.osd_id;
 			cached->port = leader.port;
@@ -1111,20 +1250,22 @@ static int kfastblock_transport_submit_object_io(
 							view->image.pool_id,
 							extent, seq);
 		mutex_unlock(&cached->lock);
-		if (kfastblock_transport_should_retry_object_io(ret)) {
-invalidate:
-			kfastblock_volume_account_object_retry(
-				vol, op, extent->pg_id, leader.osd_id, extent->length, ret);
-			kfastblock_transport_close_cached_socket(cached);
-			sock = NULL;
-			kfastblock_meta_invalidate_pg_leader(view, view->image.pool_id,
-						      extent->pg_id);
-			kfastblock_volume_kick_refresh(vol);
-			continue;
-		}
-		if (ret && cached) {
-			kfastblock_transport_close_cached_socket(cached);
-			sock = NULL;
+		if (ret) {
+			unsigned int actions =
+				kfastblock_transport_classify_object_failure(ret);
+
+			if (actions) {
+				kfastblock_transport_apply_object_failure(
+					vol, view, extent, op, &leader, cached, ret, actions);
+				sock = NULL;
+				if (actions & KFASTBLOCK_TRANSPORT_FAILURE_RETRY)
+					continue;
+			} else if (cached) {
+				kfastblock_volume_account_socket_drop(vol, false,
+					leader.osd_id, leader.port, ret);
+				kfastblock_transport_close_cached_socket(cached);
+				sock = NULL;
+			}
 		}
 		if (!ret && op == REQ_OP_READ)
 			ret = kfastblock_transport_copy_request_data(
@@ -1424,9 +1565,9 @@ int kfastblock_transport_get_pg_leader(struct kfastblock_volume *vol,
 			return ret ? ret : 0;
 		}
 
-		if (cached)
-			kfastblock_transport_close_cached_socket(cached);
-		kfastblock_meta_invalidate_pg_leader(view, pool_id, pg_id);
+		kfastblock_transport_apply_leader_failure(
+			vol, view, pool_id, pg_id, &target, cached, ret,
+			kfastblock_transport_classify_leader_failure(ret));
 		first_err = ret;
 	}
 
@@ -1559,8 +1700,9 @@ int kfastblock_transport_refresh_image_volume(struct kfastblock_volume *vol)
 			kfastblock_volume_account_image_refresh(vol, 0);
 			return 0;
 		}
-		if (kfastblock_transport_should_retry_monitor(ret))
-			kfastblock_transport_close_cached_monitor_socket(cached);
+		kfastblock_transport_apply_monitor_failure(
+			vol, cached, ret,
+			kfastblock_transport_classify_monitor_failure(ret));
 		first_err = ret;
 	}
 
@@ -1598,8 +1740,9 @@ int kfastblock_transport_refresh_cluster_map_volume(struct kfastblock_volume *vo
 			kfastblock_volume_account_cluster_refresh(vol, 0);
 			return 0;
 		}
-		if (kfastblock_transport_should_retry_monitor(ret))
-			kfastblock_transport_close_cached_monitor_socket(cached);
+		kfastblock_transport_apply_monitor_failure(
+			vol, cached, ret,
+			kfastblock_transport_classify_monitor_failure(ret));
 		first_err = ret;
 	}
 

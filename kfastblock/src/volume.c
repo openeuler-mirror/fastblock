@@ -48,6 +48,14 @@ kfastblock_volume_event_type_name(const enum kfastblock_volume_event_type type)
 		return "object_retry";
 	case KFASTBLOCK_VOLUME_EVENT_OBJECT_ERROR:
 		return "object_error";
+	case KFASTBLOCK_VOLUME_EVENT_REFRESH_KICK:
+		return "refresh_kick";
+	case KFASTBLOCK_VOLUME_EVENT_LEADER_INVALIDATE:
+		return "leader_invalidate";
+	case KFASTBLOCK_VOLUME_EVENT_OSD_SOCKET_DROP:
+		return "osd_socket_drop";
+	case KFASTBLOCK_VOLUME_EVENT_MONITOR_SOCKET_DROP:
+		return "monitor_socket_drop";
 	default:
 		return "unknown";
 	}
@@ -145,6 +153,10 @@ void kfastblock_volume_stats_init(struct kfastblock_volume *vol)
 	atomic64_set(&vol->stats.leader_query_fail, 0);
 	atomic64_set(&vol->stats.object_io_retries, 0);
 	atomic64_set(&vol->stats.object_io_errors, 0);
+	atomic64_set(&vol->stats.refresh_kicks, 0);
+	atomic64_set(&vol->stats.leader_invalidations, 0);
+	atomic64_set(&vol->stats.osd_socket_drops, 0);
+	atomic64_set(&vol->stats.monitor_socket_drops, 0);
 	spin_lock_init(&vol->event_log.lock);
 	vol->event_log.next_index = 0;
 	vol->event_log.count = 0;
@@ -278,6 +290,50 @@ void kfastblock_volume_account_metadata_stale(struct kfastblock_volume *vol)
 				      -ESTALE, REQ_OP_FLUSH, 0, 0,
 				      vol->view.sync_state,
 				      (u32)vol->view.pgmap_epoch);
+}
+
+void kfastblock_volume_account_refresh_kick(struct kfastblock_volume *vol,
+				      u32 pg_id, int ret)
+{
+	if (!vol)
+		return;
+
+	atomic64_inc(&vol->stats.refresh_kicks);
+	kfastblock_volume_record_event(vol, KFASTBLOCK_VOLUME_EVENT_REFRESH_KICK,
+				      ret, REQ_OP_FLUSH, pg_id, 0,
+				      vol->view.sync_state, (u32)vol->view.pgmap_epoch);
+}
+
+void kfastblock_volume_account_leader_invalidate(struct kfastblock_volume *vol,
+				       u32 pg_id, int ret)
+{
+	if (!vol)
+		return;
+
+	atomic64_inc(&vol->stats.leader_invalidations);
+	kfastblock_volume_record_event(
+		vol, KFASTBLOCK_VOLUME_EVENT_LEADER_INVALIDATE, ret, REQ_OP_FLUSH,
+		pg_id, 0, (u32)vol->view.leader_epoch, (u32)vol->view.osdmap_epoch);
+}
+
+void kfastblock_volume_account_socket_drop(struct kfastblock_volume *vol,
+				    bool monitor_socket, u32 osd_id,
+				    u16 port, int ret)
+{
+	if (!vol)
+		return;
+
+	if (monitor_socket) {
+		atomic64_inc(&vol->stats.monitor_socket_drops);
+		kfastblock_volume_record_event(
+			vol, KFASTBLOCK_VOLUME_EVENT_MONITOR_SOCKET_DROP, ret,
+			REQ_OP_FLUSH, 0, 0, port, 0);
+	} else {
+		atomic64_inc(&vol->stats.osd_socket_drops);
+		kfastblock_volume_record_event(
+			vol, KFASTBLOCK_VOLUME_EVENT_OSD_SOCKET_DROP, ret,
+			REQ_OP_FLUSH, 0, osd_id, port, 0);
+	}
 }
 
 static int kfastblock_volume_summary_show(struct seq_file *m, void *v)
@@ -458,6 +514,14 @@ static int kfastblock_volume_stats_show(struct seq_file *m, void *v)
 		   atomic64_read(&vol->stats.object_io_retries));
 	seq_printf(m, "object_io_errors=%lld\n",
 		   atomic64_read(&vol->stats.object_io_errors));
+	seq_printf(m, "refresh_kicks=%lld\n",
+		   atomic64_read(&vol->stats.refresh_kicks));
+	seq_printf(m, "leader_invalidations=%lld\n",
+		   atomic64_read(&vol->stats.leader_invalidations));
+	seq_printf(m, "osd_socket_drops=%lld\n",
+		   atomic64_read(&vol->stats.osd_socket_drops));
+	seq_printf(m, "monitor_socket_drops=%lld\n",
+		   atomic64_read(&vol->stats.monitor_socket_drops));
 	return 0;
 }
 DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_stats);
@@ -1063,6 +1127,54 @@ static ssize_t leader_query_fail_show(struct device *dev,
 			 atomic64_read(&vol->stats.leader_query_fail));
 }
 
+static ssize_t refresh_kicks_show(struct device *dev,
+			   struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.refresh_kicks));
+}
+
+static ssize_t leader_invalidations_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.leader_invalidations));
+}
+
+static ssize_t osd_socket_drops_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.osd_socket_drops));
+}
+
+static ssize_t monitor_socket_drops_show(struct device *dev,
+				  struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.monitor_socket_drops));
+}
+
 static DEVICE_ATTR_RO(pool_name);
 static DEVICE_ATTR_RO(image_name);
 static DEVICE_ATTR_RO(size_bytes);
@@ -1087,6 +1199,10 @@ static DEVICE_ATTR_RO(metadata_stale_events);
 static DEVICE_ATTR_RO(cluster_refresh_fail);
 static DEVICE_ATTR_RO(image_refresh_fail);
 static DEVICE_ATTR_RO(leader_query_fail);
+static DEVICE_ATTR_RO(refresh_kicks);
+static DEVICE_ATTR_RO(leader_invalidations);
+static DEVICE_ATTR_RO(osd_socket_drops);
+static DEVICE_ATTR_RO(monitor_socket_drops);
 
 static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_pool_name.attr,
@@ -1113,6 +1229,10 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_cluster_refresh_fail.attr,
 	&dev_attr_image_refresh_fail.attr,
 	&dev_attr_leader_query_fail.attr,
+	&dev_attr_refresh_kicks.attr,
+	&dev_attr_leader_invalidations.attr,
+	&dev_attr_osd_socket_drops.attr,
+	&dev_attr_monitor_socket_drops.attr,
 	NULL,
 };
 
@@ -1183,6 +1303,7 @@ static blk_status_t kfastblock_queue_rq(struct blk_mq_hw_ctx *hctx,
 	down_read(&vol->state_lock);
 	if (!kfastblock_meta_io_ready(&vol->view)) {
 		up_read(&vol->state_lock);
+		kfastblock_volume_account_refresh_kick(vol, 0, -ESTALE);
 		kfastblock_volume_kick_refresh(vol);
 		blk_mq_end_request(rq, BLK_STS_RESOURCE);
 		return BLK_STS_RESOURCE;
