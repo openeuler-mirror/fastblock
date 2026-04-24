@@ -61,6 +61,8 @@ struct kfastblock_raw_get_image_info_rsp {
 
 struct kfastblock_raw_get_cluster_map_req {
 	__le64 osdmap_epoch;
+	__le32 pool_id;
+	__le32 reserved;
 	__le64 pgmap_epoch;
 } __packed;
 

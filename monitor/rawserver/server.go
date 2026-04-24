@@ -139,11 +139,23 @@ func handleGetClusterMap(ctx context.Context, conn net.Conn, hdr *rawproto.Heade
 	if err != nil {
 		return rawproto.WriteErrorResponse(conn, hdr, rawproto.StatusInvalidRequest)
 	}
-	pgResp, err := osd.ProcessGetPgMapMessage(ctx, map[int32]int64{})
+	if req.PoolID == 0 {
+		return rawproto.WriteErrorResponse(conn, hdr, rawproto.StatusInvalidRequest)
+	}
+	currentOSDMapVersion := osd.GetOSDMapVersion()
+	currentPGMapVersion, ok := osd.GetPoolPGMapVersion(int32(req.PoolID))
+	if !ok {
+		return rawproto.WriteErrorResponse(conn, hdr, rawproto.StatusNotFound)
+	}
+	if int64(req.OSDMapEpoch) == currentOSDMapVersion &&
+		int64(req.PGMapEpoch) == currentPGMapVersion {
+		return rawproto.WriteErrorResponse(conn, hdr, rawproto.StatusStaleEpoch)
+	}
+	pgResp, err := osd.ProcessGetPgMapMessage(ctx, map[int32]int64{int32(req.PoolID): -1})
 	if err != nil {
 		return rawproto.WriteErrorResponse(conn, hdr, rawproto.StatusInternalError)
 	}
-	osds, osdMapVersion, rc := osd.ProcessGetOsdMapMessage(ctx, int64(req.OSDMapEpoch), 0)
+	osds, osdMapVersion, rc := osd.ProcessGetOsdMapMessage(ctx, -1, 0)
 	status := rawproto.StatusOK
 	if rc != msg.OsdMapErrorCode_ok && rc != msg.OsdMapErrorCode_noOsdsExist {
 		status = rawproto.StatusInternalError

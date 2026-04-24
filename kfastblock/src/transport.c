@@ -539,6 +539,8 @@ static int kfastblock_transport_fetch_cluster_map_from_monitor(
 {
 	struct kfastblock_raw_get_cluster_map_req req = {
 		.osdmap_epoch = cpu_to_le64(view->osdmap_epoch),
+		.pool_id = cpu_to_le32(view->image.pool_id),
+		.reserved = cpu_to_le32(0),
 		.pgmap_epoch = cpu_to_le64(view->pgmap_epoch),
 	};
 	struct kfastblock_raw_cluster_map_rsp_hdr rsp;
@@ -565,6 +567,8 @@ static int kfastblock_transport_fetch_cluster_map_from_monitor(
 					 seq,
 					 &rsp_hdr,
 					 &body);
+	if (ret == -ESTALE)
+		return 0;
 	if (ret) {
 		kfree(body);
 		return ret;

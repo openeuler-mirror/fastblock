@@ -889,3 +889,9 @@ func ProcessOsdConfigMessage(ctx context.Context, client *etcdapi.EtcdClient, os
 
 	return config
 }
+
+func GetOSDMapVersion() int64 {
+	AllOSDInfo.RwMutex.RLock()
+	defer AllOSDInfo.RwMutex.RUnlock()
+	return AllOSDInfo.Version
+}
