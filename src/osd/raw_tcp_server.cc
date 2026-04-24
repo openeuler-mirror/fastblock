@@ -61,7 +61,7 @@ constexpr int raw_backlog = 128;
 constexpr int raw_poll_timeout_ms = 1000;
 constexpr uint16_t min_raw_port = 10001U;
 constexpr uint16_t max_raw_port = 19999U;
-constexpr size_t max_raw_body_len = 4096;
+constexpr size_t max_raw_body_len = (4U * 1024U * 1024U) + 1024U;
 
 struct raw_header {
     uint32_t magic;
