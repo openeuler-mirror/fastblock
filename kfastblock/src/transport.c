@@ -36,6 +36,7 @@ static void kfastblock_transport_close_cached_socket_locked(
 		sock_release(cached->sock);
 		cached->sock = NULL;
 	}
+	cached->connecting = false;
 	cached->next_seq = 0;
 }
 
@@ -56,7 +57,7 @@ static bool kfastblock_transport_cached_socket_matches_locked(
 	const struct kfastblock_cached_socket *cached,
 	const struct kfastblock_leader_info *leader)
 {
-	if (!cached || !leader || !cached->sock)
+	if (!cached || !leader || !cached->sock || cached->connecting)
 		return false;
 	return cached->osd_id == leader->osd_id &&
 		cached->port == leader->port &&
@@ -254,7 +255,7 @@ static void kfastblock_transport_mark_monitor_socket_success(
 	kfastblock_transport_reset_monitor_socket_backoff(cached);
 }
 
-static int kfastblock_transport_connect_osd_cached(
+static int kfastblock_transport_connect_osd_cached_locked(
 	struct kfastblock_volume *vol,
 	struct kfastblock_cached_socket *cached,
 	const struct kfastblock_leader_info *leader,
@@ -265,25 +266,19 @@ static int kfastblock_transport_connect_osd_cached(
 	if (!cached || !leader || !sock_out)
 		return -EINVAL;
 
-	ret = kfastblock_transport_osd_backoff_active(cached, leader);
-	if (ret) {
-		unsigned long remaining = time_after(cached->backoff_until_jiffies, jiffies) ?
-			cached->backoff_until_jiffies - jiffies : 0;
-		kfastblock_volume_account_socket_backoff_wait(vol, false,
-			leader->osd_id, leader->port, remaining, ret);
-		return ret;
-	}
-
-	kfastblock_transport_close_cached_socket(cached);
+	kfastblock_transport_close_cached_socket_locked(cached);
 	ret = kfastblock_transport_try_connect_host(leader->address, leader->port,
 					 sock_out);
 	if (ret) {
 		kfastblock_transport_mark_osd_socket_failure(vol, cached, leader, ret);
+		cached->connecting = false;
+		mutex_unlock(&cached->lock);
 		return ret;
 	}
 
 	cached->sock = *sock_out;
 	cached->next_seq = 1;
+	cached->connecting = false;
 	kfastblock_transport_mark_osd_socket_success(cached, leader);
 	return 0;
 }
@@ -381,8 +376,39 @@ kfastblock_transport_find_cached_socket(struct kfastblock_volume *vol,
 	return NULL;
 }
 
+static int kfastblock_transport_check_osd_backoff(
+	struct kfastblock_volume *vol,
+	const struct kfastblock_leader_info *leader)
+{
+	int i;
+
+	if (!vol || !leader)
+		return -EINVAL;
+
+	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i) {
+		struct kfastblock_cached_socket *cached = &vol->socket_cache[i];
+		int ret;
+		unsigned long remaining;
+
+		mutex_lock(&cached->lock);
+		ret = kfastblock_transport_osd_backoff_active(cached, leader);
+		if (!ret) {
+			mutex_unlock(&cached->lock);
+			continue;
+		}
+		remaining = time_after(cached->backoff_until_jiffies, jiffies) ?
+			cached->backoff_until_jiffies - jiffies : 0;
+		mutex_unlock(&cached->lock);
+		kfastblock_volume_account_socket_backoff_wait(vol, false,
+			leader->osd_id, leader->port, remaining, ret);
+		return ret;
+	}
+
+	return 0;
+}
+
 static struct kfastblock_cached_socket *
-kfastblock_transport_get_socket_slot(struct kfastblock_volume *vol)
+kfastblock_transport_reserve_osd_slot(struct kfastblock_volume *vol)
 {
 	int i;
 
@@ -390,11 +416,19 @@ kfastblock_transport_get_socket_slot(struct kfastblock_volume *vol)
 		return NULL;
 
 	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i) {
-		if (!vol->socket_cache[i].sock)
-			return &vol->socket_cache[i];
+		struct kfastblock_cached_socket *cached = &vol->socket_cache[i];
+
+		if (!mutex_trylock(&cached->lock))
+			continue;
+		if (cached->sock || cached->connecting) {
+			mutex_unlock(&cached->lock);
+			continue;
+		}
+		cached->connecting = true;
+		return cached;
 	}
 
-	return &vol->socket_cache[0];
+	return NULL;
 }
 
 static int kfastblock_transport_status_to_errno(const u32 status)
@@ -1449,12 +1483,15 @@ static int kfastblock_transport_submit_object_io(
 			}
 		}
 		if (!cached) {
-			cached = kfastblock_transport_get_socket_slot(vol);
+			ret = kfastblock_transport_check_osd_backoff(vol, &leader);
+			if (ret)
+				goto out;
+			cached = kfastblock_transport_reserve_osd_slot(vol);
 			if (!cached) {
-				ret = -ENOMEM;
+				ret = -EBUSY;
 				goto out;
 			}
-			ret = kfastblock_transport_connect_osd_cached(vol, cached, &leader,
+			ret = kfastblock_transport_connect_osd_cached_locked(vol, cached, &leader,
 							      &sock);
 			if (ret) {
 				unsigned int actions =
@@ -1779,10 +1816,15 @@ int kfastblock_transport_get_pg_leader(struct kfastblock_volume *vol,
 			}
 		}
 		if (!cached) {
-			cached = kfastblock_transport_get_socket_slot(vol);
+			ret = kfastblock_transport_check_osd_backoff(vol, &target);
+			if (ret) {
+				first_err = ret;
+				continue;
+			}
+			cached = kfastblock_transport_reserve_osd_slot(vol);
 			if (!cached)
 				return -ENOMEM;
-			ret = kfastblock_transport_connect_osd_cached(vol, cached, &target,
+			ret = kfastblock_transport_connect_osd_cached_locked(vol, cached, &target,
 							      &sock);
 			if (ret) {
 				kfastblock_transport_apply_leader_failure(

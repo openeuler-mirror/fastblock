@@ -70,6 +70,7 @@ struct kfastblock_cached_socket {
 	char address[KFASTBLOCK_MAX_ADDR_LEN];
 	struct socket *sock;
 	struct mutex lock;
+	bool connecting;
 	u64 next_seq;
 	u32 fail_streak;
 	s32 last_error;
