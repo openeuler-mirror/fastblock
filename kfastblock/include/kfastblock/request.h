@@ -2,6 +2,7 @@
 #define KFASTBLOCK_REQUEST_H
 
 #include <linux/blkdev.h>
+#include <linux/mutex.h>
 #include <linux/spinlock.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
@@ -38,9 +39,12 @@ struct kfastblock_request {
 	u32 request_pool_id;
 	u32 request_object_size;
 	unsigned int nr_objects;
+	unsigned int next_object_to_queue;
+	unsigned int dispatch_window;
 	int status;
 	atomic_t pending_objects;
 	spinlock_t status_lock;
+	struct mutex dispatch_lock;
 	struct kfastblock_object_extent objects[KFASTBLOCK_MAX_OBJECT_EXTENTS];
 	struct kfastblock_object_work object_works[KFASTBLOCK_MAX_OBJECT_EXTENTS];
 };
