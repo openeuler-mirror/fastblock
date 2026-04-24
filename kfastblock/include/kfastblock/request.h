@@ -32,7 +32,11 @@ struct kfastblock_request {
 	struct request *rq;
 	struct kfastblock_volume *vol;
 	u64 byte_offset;
+	u64 request_osdmap_epoch;
+	u64 request_pgmap_epoch;
 	u32 byte_length;
+	u32 request_pool_id;
+	u32 request_object_size;
 	unsigned int nr_objects;
 	int status;
 	atomic_t pending_objects;
