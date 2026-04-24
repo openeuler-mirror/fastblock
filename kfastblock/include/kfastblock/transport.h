@@ -13,6 +13,10 @@ int kfastblock_transport_init(void);
 void kfastblock_transport_exit(void);
 int kfastblock_transport_fetch_cluster_view(struct kfastblock_cluster_view *view,
 				    const struct kfastblock_attach_spec *spec);
+int kfastblock_transport_fetch_image(struct kfastblock_cluster_view *view,
+				     const struct kfastblock_attach_spec *spec);
+int kfastblock_transport_fetch_cluster_map(struct kfastblock_cluster_view *view,
+					   const struct kfastblock_attach_spec *spec);
 int kfastblock_transport_get_pg_leader(struct kfastblock_volume *vol,
 				       u32 pool_id, u32 pg_id,
 				       struct kfastblock_leader_info *leader);

@@ -67,6 +67,7 @@ struct kfastblock_cluster_view {
 	u32 osd_count;
 	u32 route_count;
 	unsigned long last_refresh_jiffies;
+	unsigned long last_image_refresh_jiffies;
 	enum kfastblock_meta_sync_state sync_state;
 	struct kfastblock_osd_endpoint *osds;
 	struct kfastblock_pg_route *routes;
@@ -79,6 +80,10 @@ int kfastblock_meta_bootstrap(struct kfastblock_cluster_view *view,
 			      const struct kfastblock_attach_spec *spec);
 int kfastblock_meta_refresh(struct kfastblock_cluster_view *view,
 			    const struct kfastblock_attach_spec *spec);
+int kfastblock_meta_refresh_cluster_map(struct kfastblock_cluster_view *view,
+					const struct kfastblock_attach_spec *spec);
+int kfastblock_meta_refresh_image(struct kfastblock_cluster_view *view,
+				  const struct kfastblock_attach_spec *spec);
 int kfastblock_meta_replace_cluster_map(struct kfastblock_cluster_view *view,
 					u64 osdmap_epoch,
 					u64 pgmap_epoch,

@@ -27,6 +27,11 @@ static unsigned long kfastblock_volume_refresh_interval(void)
 	return msecs_to_jiffies(3000);
 }
 
+static unsigned long kfastblock_volume_image_refresh_interval(void)
+{
+	return msecs_to_jiffies(30000);
+}
+
 static void kfastblock_volume_close_cached_sockets(struct kfastblock_volume *vol)
 {
 	int i;
@@ -104,7 +109,9 @@ static void kfastblock_volume_refresh_workfn(struct work_struct *work)
 	u32 old_block_size;
 	u32 old_object_size;
 	bool old_read_only;
+	bool refresh_image;
 	int ret;
+	int image_ret;
 
 	if (!atomic_read(&vol->ready))
 		return;
@@ -121,8 +128,16 @@ static void kfastblock_volume_refresh_workfn(struct work_struct *work)
 	old_block_size = vol->view.image.block_size;
 	old_object_size = vol->view.image.object_size;
 	old_read_only = vol->view.image.read_only;
-	ret = kfastblock_meta_refresh(&vol->view, &vol->spec);
+	refresh_image = time_after_eq(
+		jiffies,
+		vol->view.last_image_refresh_jiffies +
+		kfastblock_volume_image_refresh_interval());
+	ret = kfastblock_meta_refresh_cluster_map(&vol->view, &vol->spec);
 	if (!ret && vol->disk) {
+		image_ret = 0;
+		if (refresh_image)
+			image_ret = kfastblock_meta_refresh_image(&vol->view,
+							 &vol->spec);
 		if (old_osdmap_epoch != vol->view.osdmap_epoch ||
 		    old_pgmap_epoch != vol->view.pgmap_epoch)
 			kfastblock_volume_close_cached_sockets(vol);
@@ -144,6 +159,10 @@ static void kfastblock_volume_refresh_workfn(struct work_struct *work)
 		}
 		if (old_read_only != vol->view.image.read_only)
 			set_disk_ro(vol->disk, vol->view.image.read_only);
+		if (image_ret)
+			dev_warn(&vol->dev,
+				 "image metadata refresh failed: %d\n",
+				 image_ret);
 	} else if (ret) {
 		kfastblock_volume_close_cached_sockets(vol);
 		vol->view.sync_state = KFASTBLOCK_META_SYNC_STALE;
