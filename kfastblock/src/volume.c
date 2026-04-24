@@ -26,6 +26,16 @@ static DEFINE_MUTEX(g_kfastblock_volumes_lock);
 static DEFINE_IDA(g_kfastblock_dev_ida);
 static struct dentry *g_kfastblock_debugfs_root;
 
+static void kfastblock_volume_record_event(
+	struct kfastblock_volume *vol,
+	enum kfastblock_volume_event_type type,
+	int ret,
+	enum req_op op,
+	u32 pg_id,
+	u32 osd_id,
+	u32 arg0,
+	u32 arg1);
+
 static const char *
 kfastblock_volume_event_type_name(const enum kfastblock_volume_event_type type)
 {
@@ -56,6 +66,10 @@ kfastblock_volume_event_type_name(const enum kfastblock_volume_event_type type)
 		return "osd_socket_drop";
 	case KFASTBLOCK_VOLUME_EVENT_MONITOR_SOCKET_DROP:
 		return "monitor_socket_drop";
+	case KFASTBLOCK_VOLUME_EVENT_HEALTH_CHANGE:
+		return "health_change";
+	case KFASTBLOCK_VOLUME_EVENT_SOCKET_BACKOFF:
+		return "socket_backoff";
 	default:
 		return "unknown";
 	}
@@ -77,6 +91,85 @@ static const char *kfastblock_volume_req_op_name(const u8 op)
 	default:
 		return "other";
 	}
+}
+
+static const char *kfastblock_volume_health_state_name(const u32 state)
+{
+	switch (state) {
+	case KFASTBLOCK_VOLUME_HEALTH_READY:
+		return "ready";
+	case KFASTBLOCK_VOLUME_HEALTH_DEGRADED:
+		return "degraded";
+	case KFASTBLOCK_VOLUME_HEALTH_STALE:
+		return "stale";
+	default:
+		return "unknown";
+	}
+}
+
+static const char *kfastblock_volume_failure_source_name(const u32 source)
+{
+	switch (source) {
+	case KFASTBLOCK_VOLUME_SOURCE_ATTACH:
+		return "attach";
+	case KFASTBLOCK_VOLUME_SOURCE_QUEUE_GATE:
+		return "queue_gate";
+	case KFASTBLOCK_VOLUME_SOURCE_CLUSTER_REFRESH:
+		return "cluster_refresh";
+	case KFASTBLOCK_VOLUME_SOURCE_IMAGE_REFRESH:
+		return "image_refresh";
+	case KFASTBLOCK_VOLUME_SOURCE_LEADER_QUERY:
+		return "leader_query";
+	case KFASTBLOCK_VOLUME_SOURCE_OBJECT_IO:
+		return "object_io";
+	case KFASTBLOCK_VOLUME_SOURCE_MONITOR_SOCKET:
+		return "monitor_socket";
+	case KFASTBLOCK_VOLUME_SOURCE_OSD_SOCKET:
+		return "osd_socket";
+	default:
+		return "none";
+	}
+}
+
+void kfastblock_volume_update_health(struct kfastblock_volume *vol,
+				     u32 new_state, u32 source, int ret)
+{
+	u32 old_state;
+
+	if (!vol)
+		return;
+
+	old_state = vol->health.state;
+	if (ret) {
+		vol->health.last_errno = ret;
+		vol->health.last_failure_source = source;
+		vol->health.last_failure_jiffies = jiffies;
+	}
+	if (new_state == old_state)
+		return;
+
+	vol->health.state = new_state;
+	vol->health.state_since_jiffies = jiffies;
+	kfastblock_volume_record_event(vol, KFASTBLOCK_VOLUME_EVENT_HEALTH_CHANGE,
+				      ret, REQ_OP_FLUSH, 0, 0, old_state, new_state);
+}
+
+void kfastblock_volume_mark_success(struct kfastblock_volume *vol, u32 source)
+{
+	if (!vol)
+		return;
+
+	vol->health.last_success_jiffies = jiffies;
+	if (!atomic_read(&vol->ready))
+		return;
+	if (!kfastblock_meta_io_ready(&vol->view) || vol->queue_paused) {
+		kfastblock_volume_update_health(vol, KFASTBLOCK_VOLUME_HEALTH_STALE,
+				      source ? source : KFASTBLOCK_VOLUME_SOURCE_QUEUE_GATE,
+				      -ESTALE);
+		return;
+	}
+	kfastblock_volume_update_health(vol, KFASTBLOCK_VOLUME_HEALTH_READY,
+				      source, 0);
 }
 
 static u32 kfastblock_volume_events_count(struct kfastblock_volume *vol)
@@ -157,10 +250,18 @@ void kfastblock_volume_stats_init(struct kfastblock_volume *vol)
 	atomic64_set(&vol->stats.leader_invalidations, 0);
 	atomic64_set(&vol->stats.osd_socket_drops, 0);
 	atomic64_set(&vol->stats.monitor_socket_drops, 0);
+	atomic64_set(&vol->stats.osd_backoff_hits, 0);
+	atomic64_set(&vol->stats.monitor_backoff_hits, 0);
 	spin_lock_init(&vol->event_log.lock);
 	vol->event_log.next_index = 0;
 	vol->event_log.count = 0;
 	memset(vol->event_log.entries, 0, sizeof(vol->event_log.entries));
+	vol->health.state = KFASTBLOCK_VOLUME_HEALTH_UNKNOWN;
+	vol->health.last_failure_source = KFASTBLOCK_VOLUME_SOURCE_NONE;
+	vol->health.last_errno = 0;
+	vol->health.state_since_jiffies = jiffies;
+	vol->health.last_failure_jiffies = 0;
+	vol->health.last_success_jiffies = 0;
 }
 
 void kfastblock_volume_account_io_submit(struct kfastblock_volume *vol,
@@ -216,6 +317,8 @@ void kfastblock_volume_account_object_retry(struct kfastblock_volume *vol,
 	atomic64_inc(&vol->stats.object_io_retries);
 	kfastblock_volume_record_event(vol, KFASTBLOCK_VOLUME_EVENT_OBJECT_RETRY,
 				      ret, op, pg_id, osd_id, length, 0);
+	kfastblock_volume_update_health(vol, KFASTBLOCK_VOLUME_HEALTH_DEGRADED,
+				      KFASTBLOCK_VOLUME_SOURCE_OBJECT_IO, ret);
 }
 
 void kfastblock_volume_account_object_error(struct kfastblock_volume *vol,
@@ -228,6 +331,8 @@ void kfastblock_volume_account_object_error(struct kfastblock_volume *vol,
 	atomic64_inc(&vol->stats.object_io_errors);
 	kfastblock_volume_record_event(vol, KFASTBLOCK_VOLUME_EVENT_OBJECT_ERROR,
 				      ret, op, pg_id, osd_id, length, 0);
+	kfastblock_volume_update_health(vol, KFASTBLOCK_VOLUME_HEALTH_DEGRADED,
+				      KFASTBLOCK_VOLUME_SOURCE_OBJECT_IO, ret);
 }
 
 void kfastblock_volume_account_leader_query(struct kfastblock_volume *vol,
@@ -241,8 +346,11 @@ void kfastblock_volume_account_leader_query(struct kfastblock_volume *vol,
 		kfastblock_volume_record_event(
 			vol, KFASTBLOCK_VOLUME_EVENT_LEADER_QUERY_FAIL, ret,
 			REQ_OP_FLUSH, pg_id, osd_id, (u32)vol->view.leader_epoch, 0);
+		kfastblock_volume_update_health(vol, KFASTBLOCK_VOLUME_HEALTH_DEGRADED,
+				      KFASTBLOCK_VOLUME_SOURCE_LEADER_QUERY, ret);
 	} else {
 		atomic64_inc(&vol->stats.leader_query_ok);
+		kfastblock_volume_mark_success(vol, KFASTBLOCK_VOLUME_SOURCE_LEADER_QUERY);
 	}
 }
 
@@ -258,8 +366,11 @@ void kfastblock_volume_account_cluster_refresh(struct kfastblock_volume *vol,
 			vol, KFASTBLOCK_VOLUME_EVENT_CLUSTER_REFRESH_FAIL, ret,
 			REQ_OP_FLUSH, 0, 0, (u32)vol->view.osdmap_epoch,
 			(u32)vol->view.pgmap_epoch);
+		kfastblock_volume_update_health(vol, KFASTBLOCK_VOLUME_HEALTH_DEGRADED,
+				      KFASTBLOCK_VOLUME_SOURCE_CLUSTER_REFRESH, ret);
 	} else {
 		atomic64_inc(&vol->stats.cluster_refresh_ok);
+		kfastblock_volume_mark_success(vol, KFASTBLOCK_VOLUME_SOURCE_CLUSTER_REFRESH);
 	}
 }
 
@@ -275,8 +386,11 @@ void kfastblock_volume_account_image_refresh(struct kfastblock_volume *vol,
 			vol, KFASTBLOCK_VOLUME_EVENT_IMAGE_REFRESH_FAIL, ret,
 			REQ_OP_FLUSH, 0, 0, (u32)vol->view.image_epoch,
 			vol->view.image.object_size);
+		kfastblock_volume_update_health(vol, KFASTBLOCK_VOLUME_HEALTH_DEGRADED,
+				      KFASTBLOCK_VOLUME_SOURCE_IMAGE_REFRESH, ret);
 	} else {
 		atomic64_inc(&vol->stats.image_refresh_ok);
+		kfastblock_volume_mark_success(vol, KFASTBLOCK_VOLUME_SOURCE_IMAGE_REFRESH);
 	}
 }
 
@@ -290,6 +404,8 @@ void kfastblock_volume_account_metadata_stale(struct kfastblock_volume *vol)
 				      -ESTALE, REQ_OP_FLUSH, 0, 0,
 				      vol->view.sync_state,
 				      (u32)vol->view.pgmap_epoch);
+	kfastblock_volume_update_health(vol, KFASTBLOCK_VOLUME_HEALTH_STALE,
+				      KFASTBLOCK_VOLUME_SOURCE_CLUSTER_REFRESH, -ESTALE);
 }
 
 void kfastblock_volume_account_refresh_kick(struct kfastblock_volume *vol,
@@ -302,6 +418,8 @@ void kfastblock_volume_account_refresh_kick(struct kfastblock_volume *vol,
 	kfastblock_volume_record_event(vol, KFASTBLOCK_VOLUME_EVENT_REFRESH_KICK,
 				      ret, REQ_OP_FLUSH, pg_id, 0,
 				      vol->view.sync_state, (u32)vol->view.pgmap_epoch);
+	kfastblock_volume_update_health(vol, KFASTBLOCK_VOLUME_HEALTH_DEGRADED,
+				      KFASTBLOCK_VOLUME_SOURCE_QUEUE_GATE, ret);
 }
 
 void kfastblock_volume_account_leader_invalidate(struct kfastblock_volume *vol,
@@ -314,6 +432,8 @@ void kfastblock_volume_account_leader_invalidate(struct kfastblock_volume *vol,
 	kfastblock_volume_record_event(
 		vol, KFASTBLOCK_VOLUME_EVENT_LEADER_INVALIDATE, ret, REQ_OP_FLUSH,
 		pg_id, 0, (u32)vol->view.leader_epoch, (u32)vol->view.osdmap_epoch);
+	kfastblock_volume_update_health(vol, KFASTBLOCK_VOLUME_HEALTH_DEGRADED,
+				      KFASTBLOCK_VOLUME_SOURCE_LEADER_QUERY, ret);
 }
 
 void kfastblock_volume_account_socket_drop(struct kfastblock_volume *vol,
@@ -328,12 +448,36 @@ void kfastblock_volume_account_socket_drop(struct kfastblock_volume *vol,
 		kfastblock_volume_record_event(
 			vol, KFASTBLOCK_VOLUME_EVENT_MONITOR_SOCKET_DROP, ret,
 			REQ_OP_FLUSH, 0, 0, port, 0);
+		kfastblock_volume_update_health(vol, KFASTBLOCK_VOLUME_HEALTH_DEGRADED,
+				      KFASTBLOCK_VOLUME_SOURCE_MONITOR_SOCKET, ret);
 	} else {
 		atomic64_inc(&vol->stats.osd_socket_drops);
 		kfastblock_volume_record_event(
 			vol, KFASTBLOCK_VOLUME_EVENT_OSD_SOCKET_DROP, ret,
 			REQ_OP_FLUSH, 0, osd_id, port, 0);
+		kfastblock_volume_update_health(vol, KFASTBLOCK_VOLUME_HEALTH_DEGRADED,
+				      KFASTBLOCK_VOLUME_SOURCE_OSD_SOCKET, ret);
 	}
+}
+
+void kfastblock_volume_account_socket_backoff(struct kfastblock_volume *vol,
+				       bool monitor_socket, u32 osd_id,
+				       u16 port, u32 fail_streak,
+				       unsigned long backoff_jiffies, int ret)
+{
+	if (!vol)
+		return;
+
+	if (monitor_socket)
+		atomic64_inc(&vol->stats.monitor_backoff_hits);
+	else
+		atomic64_inc(&vol->stats.osd_backoff_hits);
+	kfastblock_volume_record_event(vol, KFASTBLOCK_VOLUME_EVENT_SOCKET_BACKOFF,
+				      ret, REQ_OP_FLUSH, fail_streak, osd_id,
+				      port, jiffies_to_msecs(backoff_jiffies));
+	kfastblock_volume_update_health(vol, KFASTBLOCK_VOLUME_HEALTH_DEGRADED,
+				      monitor_socket ? KFASTBLOCK_VOLUME_SOURCE_MONITOR_SOCKET :
+				      KFASTBLOCK_VOLUME_SOURCE_OSD_SOCKET, ret);
 }
 
 static int kfastblock_volume_summary_show(struct seq_file *m, void *v)
@@ -347,6 +491,14 @@ static int kfastblock_volume_summary_show(struct seq_file *m, void *v)
 	seq_printf(m, "disk=%s\n", vol->disk ? vol->disk->disk_name : "");
 	seq_printf(m, "ready=%d\n", atomic_read(&vol->ready));
 	seq_printf(m, "queue_paused=%d\n", vol->queue_paused ? 1 : 0);
+	seq_printf(m, "health_state=%s\n",
+		   kfastblock_volume_health_state_name(vol->health.state));
+	seq_printf(m, "health_since_jiffies=%lu\n", vol->health.state_since_jiffies);
+	seq_printf(m, "last_failure_errno=%d\n", vol->health.last_errno);
+	seq_printf(m, "last_failure_source=%s\n",
+		   kfastblock_volume_failure_source_name(vol->health.last_failure_source));
+	seq_printf(m, "last_failure_jiffies=%lu\n", vol->health.last_failure_jiffies);
+	seq_printf(m, "last_success_jiffies=%lu\n", vol->health.last_success_jiffies);
 	seq_printf(m, "open_count=%d\n", atomic_read(&vol->open_count));
 	seq_printf(m, "pool_name=%s\n", vol->view.image.pool_name);
 	seq_printf(m, "image_name=%s\n", vol->view.image.image_name);
@@ -446,18 +598,21 @@ static int kfastblock_volume_sockets_show(struct seq_file *m, void *v)
 		const struct kfastblock_cached_socket *cached = &vol->socket_cache[i];
 
 		seq_printf(m,
-			   "osd_cache[%d] active=%u osd_id=%u address=%s port=%u next_seq=%llu\n",
+			   "osd_cache[%d] active=%u osd_id=%u address=%s port=%u next_seq=%llu fail_streak=%u last_error=%d last_failure_jiffies=%lu backoff_until_jiffies=%lu\n",
 			   i, cached->sock ? 1 : 0, cached->osd_id, cached->address,
-			   cached->port, cached->next_seq);
+			   cached->port, cached->next_seq, cached->fail_streak,
+			   cached->last_error, cached->last_failure_jiffies,
+			   cached->backoff_until_jiffies);
 	}
 	for (i = 0; i < KFASTBLOCK_MAX_MONITORS; ++i) {
 		const struct kfastblock_cached_monitor_socket *cached =
 			&vol->monitor_cache[i];
 
 		seq_printf(m,
-			   "monitor_cache[%d] active=%u address=%s port=%u next_seq=%llu\n",
+			   "monitor_cache[%d] active=%u address=%s port=%u next_seq=%llu fail_streak=%u last_error=%d last_failure_jiffies=%lu backoff_until_jiffies=%lu\n",
 			   i, cached->sock ? 1 : 0, cached->address, cached->port,
-			   cached->next_seq);
+			   cached->next_seq, cached->fail_streak, cached->last_error,
+			   cached->last_failure_jiffies, cached->backoff_until_jiffies);
 	}
 	return 0;
 }
@@ -522,6 +677,10 @@ static int kfastblock_volume_stats_show(struct seq_file *m, void *v)
 		   atomic64_read(&vol->stats.osd_socket_drops));
 	seq_printf(m, "monitor_socket_drops=%lld\n",
 		   atomic64_read(&vol->stats.monitor_socket_drops));
+	seq_printf(m, "osd_backoff_hits=%lld\n",
+		   atomic64_read(&vol->stats.osd_backoff_hits));
+	seq_printf(m, "monitor_backoff_hits=%lld\n",
+		   atomic64_read(&vol->stats.monitor_backoff_hits));
 	return 0;
 }
 DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_stats);
@@ -688,6 +847,8 @@ static void kfastblock_volume_update_queue_gate(struct kfastblock_volume *vol)
 		kfastblock_volume_record_event(
 			vol, KFASTBLOCK_VOLUME_EVENT_QUEUE_PAUSE, 0, REQ_OP_FLUSH,
 			0, 0, vol->view.sync_state, atomic_read(&vol->ready));
+		kfastblock_volume_update_health(vol, KFASTBLOCK_VOLUME_HEALTH_STALE,
+				      KFASTBLOCK_VOLUME_SOURCE_QUEUE_GATE, -ESTALE);
 	} else {
 		blk_mq_unquiesce_queue(vol->disk->queue);
 		vol->queue_paused = false;
@@ -695,6 +856,7 @@ static void kfastblock_volume_update_queue_gate(struct kfastblock_volume *vol)
 		kfastblock_volume_record_event(
 			vol, KFASTBLOCK_VOLUME_EVENT_QUEUE_RESUME, 0, REQ_OP_FLUSH,
 			0, 0, vol->view.sync_state, atomic_read(&vol->ready));
+		kfastblock_volume_mark_success(vol, KFASTBLOCK_VOLUME_SOURCE_QUEUE_GATE);
 	}
 }
 
@@ -1031,6 +1193,74 @@ static ssize_t queue_paused_show(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%u\n", vol->queue_paused ? 1 : 0);
 }
 
+static ssize_t health_state_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%s\n",
+			 kfastblock_volume_health_state_name(vol->health.state));
+}
+
+static ssize_t health_since_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lu\n", vol->health.state_since_jiffies);
+}
+
+static ssize_t last_failure_errno_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", vol->health.last_errno);
+}
+
+static ssize_t last_failure_source_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%s\n",
+			 kfastblock_volume_failure_source_name(vol->health.last_failure_source));
+}
+
+static ssize_t last_failure_jiffies_show(struct device *dev,
+				     struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lu\n", vol->health.last_failure_jiffies);
+}
+
+static ssize_t last_success_jiffies_show(struct device *dev,
+				     struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lu\n", vol->health.last_success_jiffies);
+}
+
 static ssize_t io_submitted_show(struct device *dev,
 			       struct device_attribute *attr, char *buf)
 {
@@ -1175,6 +1405,30 @@ static ssize_t monitor_socket_drops_show(struct device *dev,
 			 atomic64_read(&vol->stats.monitor_socket_drops));
 }
 
+static ssize_t osd_backoff_hits_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.osd_backoff_hits));
+}
+
+static ssize_t monitor_backoff_hits_show(struct device *dev,
+				  struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.monitor_backoff_hits));
+}
+
 static DEVICE_ATTR_RO(pool_name);
 static DEVICE_ATTR_RO(image_name);
 static DEVICE_ATTR_RO(size_bytes);
@@ -1191,6 +1445,12 @@ static DEVICE_ATTR_RO(last_image_refresh);
 static DEVICE_ATTR_RO(read_only);
 static DEVICE_ATTR_RO(sync_state);
 static DEVICE_ATTR_RO(queue_paused);
+static DEVICE_ATTR_RO(health_state);
+static DEVICE_ATTR_RO(health_since);
+static DEVICE_ATTR_RO(last_failure_errno);
+static DEVICE_ATTR_RO(last_failure_source);
+static DEVICE_ATTR_RO(last_failure_jiffies);
+static DEVICE_ATTR_RO(last_success_jiffies);
 static DEVICE_ATTR_RO(io_submitted);
 static DEVICE_ATTR_RO(io_completed);
 static DEVICE_ATTR_RO(io_failed);
@@ -1203,6 +1463,8 @@ static DEVICE_ATTR_RO(refresh_kicks);
 static DEVICE_ATTR_RO(leader_invalidations);
 static DEVICE_ATTR_RO(osd_socket_drops);
 static DEVICE_ATTR_RO(monitor_socket_drops);
+static DEVICE_ATTR_RO(osd_backoff_hits);
+static DEVICE_ATTR_RO(monitor_backoff_hits);
 
 static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_pool_name.attr,
@@ -1221,6 +1483,12 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_read_only.attr,
 	&dev_attr_sync_state.attr,
 	&dev_attr_queue_paused.attr,
+	&dev_attr_health_state.attr,
+	&dev_attr_health_since.attr,
+	&dev_attr_last_failure_errno.attr,
+	&dev_attr_last_failure_source.attr,
+	&dev_attr_last_failure_jiffies.attr,
+	&dev_attr_last_success_jiffies.attr,
 	&dev_attr_io_submitted.attr,
 	&dev_attr_io_completed.attr,
 	&dev_attr_io_failed.attr,
@@ -1233,6 +1501,8 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_leader_invalidations.attr,
 	&dev_attr_osd_socket_drops.attr,
 	&dev_attr_monitor_socket_drops.attr,
+	&dev_attr_osd_backoff_hits.attr,
+	&dev_attr_monitor_backoff_hits.attr,
 	NULL,
 };
 
@@ -1529,6 +1799,7 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	kfastblock_volume_record_event(
 		vol, KFASTBLOCK_VOLUME_EVENT_ATTACH_READY, 0, REQ_OP_FLUSH,
 		0, 0, vol->view.image.pool_id, vol->view.image.pg_count);
+	kfastblock_volume_mark_success(vol, KFASTBLOCK_VOLUME_SOURCE_ATTACH);
 	kfastblock_volume_update_queue_gate(vol);
 	kfastblock_volume_schedule_refresh(vol);
 	return 0;
