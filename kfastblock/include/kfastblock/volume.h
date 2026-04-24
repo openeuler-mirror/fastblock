@@ -30,6 +30,7 @@ enum kfastblock_volume_event_type {
 	KFASTBLOCK_VOLUME_EVENT_CLUSTER_REFRESH_FAIL,
 	KFASTBLOCK_VOLUME_EVENT_IMAGE_REFRESH_FAIL,
 	KFASTBLOCK_VOLUME_EVENT_LEADER_QUERY_FAIL,
+	KFASTBLOCK_VOLUME_EVENT_OBJECT_DONE,
 	KFASTBLOCK_VOLUME_EVENT_OBJECT_RETRY,
 	KFASTBLOCK_VOLUME_EVENT_OBJECT_ERROR,
 	KFASTBLOCK_VOLUME_EVENT_REFRESH_KICK,
@@ -111,6 +112,7 @@ struct kfastblock_volume_stats {
 	atomic64_t image_refresh_fail;
 	atomic64_t leader_query_ok;
 	atomic64_t leader_query_fail;
+	atomic64_t object_io_completed;
 	atomic64_t object_io_retries;
 	atomic64_t object_io_errors;
 	atomic64_t refresh_kicks;
@@ -200,6 +202,9 @@ void kfastblock_volume_stats_init(struct kfastblock_volume *vol);
 void kfastblock_volume_account_io_submit(struct kfastblock_volume *vol,
 				       enum req_op op, u32 bytes);
 void kfastblock_volume_account_io_complete(struct kfastblock_volume *vol, int ret);
+void kfastblock_volume_account_object_success(struct kfastblock_volume *vol,
+				      enum req_op op, u32 pg_id,
+				      u32 osd_id, u32 length);
 void kfastblock_volume_account_object_retry(struct kfastblock_volume *vol,
 				      enum req_op op, u32 pg_id,
 				      u32 osd_id, u32 length, int ret);

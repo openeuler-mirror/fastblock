@@ -1590,6 +1590,9 @@ static int kfastblock_transport_submit_object_io(
 		if (!ret && op == REQ_OP_READ)
 			ret = kfastblock_transport_copy_request_data(
 				rq, extent->request_offset, buf, extent->length, true);
+		if (!ret)
+			kfastblock_volume_account_object_success(
+				vol, op, extent->pg_id, leader.osd_id, extent->length);
 		goto out;
 	}
 
