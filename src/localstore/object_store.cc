@@ -150,7 +150,7 @@ void object_store::delete_object(std::string object_name,
 
   if (it == table.end() || it->second.origin.blobid == 0 ||
       it->second.origin.blob == nullptr) {
-    cb_fn(arg, -ENOENT);
+    cb_fn(arg, 0);
     return;
   }
 
