@@ -266,8 +266,13 @@ static int kfastblock_transport_connect_osd_cached(
 		return -EINVAL;
 
 	ret = kfastblock_transport_osd_backoff_active(cached, leader);
-	if (ret)
+	if (ret) {
+		unsigned long remaining = time_after(cached->backoff_until_jiffies, jiffies) ?
+			cached->backoff_until_jiffies - jiffies : 0;
+		kfastblock_volume_account_socket_backoff_wait(vol, false,
+			leader->osd_id, leader->port, remaining, ret);
 		return ret;
+	}
 
 	kfastblock_transport_close_cached_socket(cached);
 	ret = kfastblock_transport_try_connect_host(leader->address, leader->port,
@@ -311,6 +316,10 @@ static int kfastblock_transport_get_monitor_socket(
 	}
 	ret = kfastblock_transport_monitor_backoff_active(cached, endpoint);
 	if (ret) {
+		unsigned long remaining = time_after(cached->backoff_until_jiffies, jiffies) ?
+			cached->backoff_until_jiffies - jiffies : 0;
+		kfastblock_volume_account_socket_backoff_wait(vol, true, 0,
+			endpoint->port, remaining, ret);
 		mutex_unlock(&cached->lock);
 		return ret;
 	}
@@ -1867,6 +1876,9 @@ static void kfastblock_transport_complete_request(struct kfastblock_request *kf_
 		blk_status_t status =
 			kfastblock_transport_errno_to_blk_status(kf_req->status);
 		kfastblock_volume_account_io_complete(kf_req->vol, kf_req->status);
+		if (!kf_req->status)
+			kfastblock_volume_mark_success(kf_req->vol,
+					      KFASTBLOCK_VOLUME_SOURCE_OBJECT_IO);
 		blk_mq_end_request(kf_req->rq, status);
 		kfastblock_volume_put_io(kf_req->vol);
 		put_device(&kf_req->vol->dev);

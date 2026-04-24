@@ -78,6 +78,8 @@ kfastblock_volume_event_type_name(const enum kfastblock_volume_event_type type)
 		return "manual_drop_transport";
 	case KFASTBLOCK_VOLUME_EVENT_MANUAL_RESET_LEADERS:
 		return "manual_reset_leaders";
+	case KFASTBLOCK_VOLUME_EVENT_SOCKET_BACKOFF_WAIT:
+		return "socket_backoff_wait";
 	default:
 		return "unknown";
 	}
@@ -260,6 +262,8 @@ void kfastblock_volume_stats_init(struct kfastblock_volume *vol)
 	atomic64_set(&vol->stats.monitor_socket_drops, 0);
 	atomic64_set(&vol->stats.osd_backoff_hits, 0);
 	atomic64_set(&vol->stats.monitor_backoff_hits, 0);
+	atomic64_set(&vol->stats.osd_backoff_waits, 0);
+	atomic64_set(&vol->stats.monitor_backoff_waits, 0);
 	atomic64_set(&vol->stats.manual_refreshes, 0);
 	atomic64_set(&vol->stats.manual_reset_backoffs, 0);
 	atomic64_set(&vol->stats.manual_transport_drops, 0);
@@ -487,6 +491,28 @@ void kfastblock_volume_account_socket_backoff(struct kfastblock_volume *vol,
 	kfastblock_volume_record_event(vol, KFASTBLOCK_VOLUME_EVENT_SOCKET_BACKOFF,
 				      ret, REQ_OP_FLUSH, fail_streak, osd_id,
 				      port, jiffies_to_msecs(backoff_jiffies));
+	kfastblock_volume_update_health(vol, KFASTBLOCK_VOLUME_HEALTH_DEGRADED,
+				      monitor_socket ? KFASTBLOCK_VOLUME_SOURCE_MONITOR_SOCKET :
+				      KFASTBLOCK_VOLUME_SOURCE_OSD_SOCKET, ret);
+}
+
+void kfastblock_volume_account_socket_backoff_wait(struct kfastblock_volume *vol,
+					 bool monitor_socket, u32 osd_id,
+					 u16 port,
+					 unsigned long remaining_jiffies,
+					 int ret)
+{
+	if (!vol)
+		return;
+
+	if (monitor_socket)
+		atomic64_inc(&vol->stats.monitor_backoff_waits);
+	else
+		atomic64_inc(&vol->stats.osd_backoff_waits);
+	kfastblock_volume_record_event(vol,
+				      KFASTBLOCK_VOLUME_EVENT_SOCKET_BACKOFF_WAIT,
+				      ret, REQ_OP_FLUSH, 0, osd_id,
+				      port, jiffies_to_msecs(remaining_jiffies));
 	kfastblock_volume_update_health(vol, KFASTBLOCK_VOLUME_HEALTH_DEGRADED,
 				      monitor_socket ? KFASTBLOCK_VOLUME_SOURCE_MONITOR_SOCKET :
 				      KFASTBLOCK_VOLUME_SOURCE_OSD_SOCKET, ret);
@@ -1023,8 +1049,12 @@ static blk_status_t kfastblock_volume_handle_flush(struct kfastblock_volume *vol
 		return BLK_STS_RESOURCE;
 	}
 
+	kfastblock_volume_account_io_submit(vol, REQ_OP_FLUSH, 0);
 	ret = kfastblock_volume_drain_io(vol, msecs_to_jiffies(5000));
 	kfastblock_volume_end_flush(vol);
+	kfastblock_volume_account_io_complete(vol, ret);
+	if (!ret)
+		kfastblock_volume_mark_success(vol, KFASTBLOCK_VOLUME_SOURCE_OBJECT_IO);
 	status = ret ? BLK_STS_RESOURCE : BLK_STS_OK;
 	blk_mq_end_request(rq, status);
 	return status;
@@ -1881,6 +1911,30 @@ static ssize_t monitor_backoff_hits_show(struct device *dev,
 			 atomic64_read(&vol->stats.monitor_backoff_hits));
 }
 
+static ssize_t osd_backoff_waits_show(struct device *dev,
+				  struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.osd_backoff_waits));
+}
+
+static ssize_t monitor_backoff_waits_show(struct device *dev,
+				      struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.monitor_backoff_waits));
+}
+
 static ssize_t manual_refreshes_show(struct device *dev,
 			      struct device_attribute *attr, char *buf)
 {
@@ -1968,6 +2022,8 @@ static DEVICE_ATTR_RO(osd_socket_drops);
 static DEVICE_ATTR_RO(monitor_socket_drops);
 static DEVICE_ATTR_RO(osd_backoff_hits);
 static DEVICE_ATTR_RO(monitor_backoff_hits);
+static DEVICE_ATTR_RO(osd_backoff_waits);
+static DEVICE_ATTR_RO(monitor_backoff_waits);
 static DEVICE_ATTR_RO(manual_refreshes);
 static DEVICE_ATTR_RO(manual_reset_backoffs);
 static DEVICE_ATTR_RO(manual_transport_drops);
@@ -2017,6 +2073,8 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_monitor_socket_drops.attr,
 	&dev_attr_osd_backoff_hits.attr,
 	&dev_attr_monitor_backoff_hits.attr,
+	&dev_attr_osd_backoff_waits.attr,
+	&dev_attr_monitor_backoff_waits.attr,
 	&dev_attr_manual_refreshes.attr,
 	&dev_attr_manual_reset_backoffs.attr,
 	&dev_attr_manual_transport_drops.attr,
