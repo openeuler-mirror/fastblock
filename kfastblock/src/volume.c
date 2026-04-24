@@ -26,6 +26,25 @@ static DEFINE_MUTEX(g_kfastblock_volumes_lock);
 static DEFINE_IDA(g_kfastblock_dev_ida);
 static struct dentry *g_kfastblock_debugfs_root;
 
+static struct kfastblock_volume *
+kfastblock_volume_find_locked(const char *pool_name, const char *image_name)
+{
+	struct kfastblock_volume *vol;
+
+	if (!pool_name || !image_name)
+		return NULL;
+
+	list_for_each_entry(vol, &g_kfastblock_volumes, node) {
+		if (strcmp(vol->view.image.pool_name, pool_name))
+			continue;
+		if (strcmp(vol->view.image.image_name, image_name))
+			continue;
+		return vol;
+	}
+
+	return NULL;
+}
+
 static void kfastblock_volume_record_event(
 	struct kfastblock_volume *vol,
 	enum kfastblock_volume_event_type type,
@@ -2330,6 +2349,13 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	if (!spec || !bus || !parent_dev)
 		return -EINVAL;
 
+	mutex_lock(&g_kfastblock_volumes_lock);
+	if (kfastblock_volume_find_locked(spec->pool_name, spec->image_name)) {
+		mutex_unlock(&g_kfastblock_volumes_lock);
+		return -EEXIST;
+	}
+	mutex_unlock(&g_kfastblock_volumes_lock);
+
 	vol = kzalloc(sizeof(*vol), GFP_KERNEL);
 	if (!vol)
 		return -ENOMEM;
@@ -2370,6 +2396,12 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 		goto err_free;
 
 	mutex_lock(&g_kfastblock_volumes_lock);
+	if (kfastblock_volume_find_locked(vol->view.image.pool_name,
+					 vol->view.image.image_name)) {
+		mutex_unlock(&g_kfastblock_volumes_lock);
+		ret = -EEXIST;
+		goto err_unregister_disk;
+	}
 	list_add_tail(&vol->node, &g_kfastblock_volumes);
 	mutex_unlock(&g_kfastblock_volumes_lock);
 
@@ -2382,8 +2414,20 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	kfastblock_volume_schedule_refresh(vol);
 	return 0;
 
+err_unregister_disk:
+	if (vol->disk) {
+		del_gendisk(vol->disk);
+		put_disk(vol->disk);
+		vol->disk = NULL;
+	}
+	device_del(&vol->dev);
 err_free:
 	cancel_delayed_work_sync(&vol->refresh_work);
+	if (vol->tag_set.tags)
+		blk_mq_free_tag_set(&vol->tag_set);
+	if (vol->dev_id >= 0)
+		ida_free(&g_kfastblock_dev_ida, vol->dev_id);
+	kfastblock_volume_close_cached_sockets(vol);
 	kfastblock_control_cleanup_attach_spec(&vol->spec);
 	kfastblock_meta_cleanup_view(&vol->view);
 	kfree(vol);
