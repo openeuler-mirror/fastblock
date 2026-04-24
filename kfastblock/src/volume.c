@@ -937,6 +937,56 @@ void kfastblock_volume_put_io(struct kfastblock_volume *vol)
 		wake_up_all(&vol->inflight_wq);
 }
 
+static int kfastblock_volume_begin_flush(struct kfastblock_volume *vol)
+{
+	int ret = 0;
+
+	if (!vol)
+		return -EINVAL;
+
+	mutex_lock(&vol->inflight_lock);
+	if (vol->flush_in_progress)
+		ret = -EBUSY;
+	else
+		vol->flush_in_progress = true;
+	mutex_unlock(&vol->inflight_lock);
+	return ret;
+}
+
+static void kfastblock_volume_end_flush(struct kfastblock_volume *vol)
+{
+	if (!vol)
+		return;
+
+	mutex_lock(&vol->inflight_lock);
+	vol->flush_in_progress = false;
+	mutex_unlock(&vol->inflight_lock);
+}
+
+static blk_status_t kfastblock_volume_handle_flush(struct kfastblock_volume *vol,
+					     struct request *rq)
+{
+	int ret;
+	blk_status_t status;
+
+	if (!vol || !rq) {
+		blk_mq_end_request(rq, BLK_STS_IOERR);
+		return BLK_STS_IOERR;
+	}
+
+	ret = kfastblock_volume_begin_flush(vol);
+	if (ret) {
+		blk_mq_end_request(rq, BLK_STS_RESOURCE);
+		return BLK_STS_RESOURCE;
+	}
+
+	ret = kfastblock_volume_drain_io(vol, msecs_to_jiffies(5000));
+	kfastblock_volume_end_flush(vol);
+	status = ret ? BLK_STS_RESOURCE : BLK_STS_OK;
+	blk_mq_end_request(rq, status);
+	return status;
+}
+
 int kfastblock_volume_drain_io(struct kfastblock_volume *vol,
 			     unsigned long timeout_jiffies)
 {
@@ -1499,6 +1549,17 @@ static ssize_t queue_paused_show(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%u\n", vol->queue_paused ? 1 : 0);
 }
 
+static ssize_t flush_in_progress_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n", vol->flush_in_progress ? 1 : 0);
+}
+
 static ssize_t inflight_ios_show(struct device *dev,
 			      struct device_attribute *attr, char *buf)
 {
@@ -1798,6 +1859,7 @@ static DEVICE_ATTR_RO(last_image_refresh);
 static DEVICE_ATTR_RO(read_only);
 static DEVICE_ATTR_RO(sync_state);
 static DEVICE_ATTR_RO(queue_paused);
+static DEVICE_ATTR_RO(flush_in_progress);
 static DEVICE_ATTR_RO(inflight_ios);
 static DEVICE_ATTR_RO(health_state);
 static DEVICE_ATTR_RO(health_since);
@@ -1843,6 +1905,7 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_read_only.attr,
 	&dev_attr_sync_state.attr,
 	&dev_attr_queue_paused.attr,
+	&dev_attr_flush_in_progress.attr,
 	&dev_attr_inflight_ios.attr,
 	&dev_attr_health_state.attr,
 	&dev_attr_health_since.attr,
@@ -1924,6 +1987,8 @@ static blk_status_t kfastblock_queue_rq(struct blk_mq_hw_ctx *hctx,
 		blk_mq_end_request(rq, BLK_STS_IOERR);
 		return BLK_STS_IOERR;
 	}
+	if (req_op(rq) == REQ_OP_FLUSH)
+		return kfastblock_volume_handle_flush(vol, rq);
 	if (vol->view.image.read_only) {
 		switch (req_op(rq)) {
 		case REQ_OP_WRITE:
@@ -1945,10 +2010,20 @@ static blk_status_t kfastblock_queue_rq(struct blk_mq_hw_ctx *hctx,
 		blk_mq_end_request(rq, BLK_STS_RESOURCE);
 		return BLK_STS_RESOURCE;
 	}
+	mutex_lock(&vol->inflight_lock);
+	if (vol->flush_in_progress) {
+		mutex_unlock(&vol->inflight_lock);
+		up_read(&vol->state_lock);
+		blk_mq_end_request(rq, BLK_STS_RESOURCE);
+		return BLK_STS_RESOURCE;
+	}
+	kfastblock_volume_get_io(vol);
+	mutex_unlock(&vol->inflight_lock);
 	kfastblock_request_init(kf_req, vol, rq);
 	ret = kfastblock_request_split(kf_req);
 	up_read(&vol->state_lock);
 	if (ret) {
+		kfastblock_volume_put_io(vol);
 		blk_mq_end_request(rq, BLK_STS_IOERR);
 		return BLK_STS_IOERR;
 	}
@@ -1957,6 +2032,7 @@ static blk_status_t kfastblock_queue_rq(struct blk_mq_hw_ctx *hctx,
 	ret = kfastblock_transport_submit(kf_req);
 	if (ret) {
 		kfastblock_volume_account_io_complete(vol, ret);
+		kfastblock_volume_put_io(vol);
 		blk_mq_end_request(rq, BLK_STS_IOERR);
 		return BLK_STS_IOERR;
 	}
@@ -2132,6 +2208,7 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	atomic_set(&vol->ready, 0);
 	atomic_set(&vol->inflight_ios, 0);
 	vol->queue_paused = false;
+	vol->flush_in_progress = false;
 	kfastblock_volume_stats_init(vol);
 	mutex_init(&vol->inflight_lock);
 	init_waitqueue_head(&vol->inflight_wq);
