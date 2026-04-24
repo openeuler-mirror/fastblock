@@ -628,6 +628,12 @@ static blk_status_t kfastblock_transport_errno_to_blk_status(const int ret)
 	}
 }
 
+static bool kfastblock_transport_request_failed(
+	const struct kfastblock_request *kf_req)
+{
+	return kf_req && READ_ONCE(kf_req->status) != 0;
+}
+
 static enum req_op kfastblock_transport_object_op(
 	const struct kfastblock_request *kf_req,
 	const unsigned int object_index)
@@ -1937,8 +1943,17 @@ static void kfastblock_transport_object_work(struct work_struct *work)
 
 	if (!kf_req || !kf_req->rq || !kf_req->vol)
 		return;
+	if (kfastblock_transport_request_failed(kf_req)) {
+		kfastblock_transport_complete_request(kf_req, 0);
+		return;
+	}
 
 	down_read(&kf_req->vol->state_lock);
+	if (kfastblock_transport_request_failed(kf_req)) {
+		up_read(&kf_req->vol->state_lock);
+		kfastblock_transport_complete_request(kf_req, 0);
+		return;
+	}
 	ret = kfastblock_transport_submit_object(kf_req,
 					       obj_work->object_index);
 	up_read(&kf_req->vol->state_lock);
