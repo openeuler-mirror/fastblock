@@ -106,7 +106,8 @@ out:
 }
 
 static int kfastblock_parse_attach_spec(const char *args, size_t count,
-					struct kfastblock_attach_spec *spec)
+					struct kfastblock_attach_spec *spec,
+					bool require_monitor)
 {
 	char *cursor;
 	char *scratch;
@@ -169,8 +170,11 @@ static int kfastblock_parse_attach_spec(const char *args, size_t count,
 			goto out;
 	}
 
-	if (!spec->monitor_addr || !spec->pool_name || !spec->image_name ||
-	    !spec->nr_monitors) {
+	if (!spec->pool_name || !spec->image_name) {
+		ret = -EINVAL;
+		goto out;
+	}
+	if (require_monitor && (!spec->monitor_addr || !spec->nr_monitors)) {
 		ret = -EINVAL;
 		goto out;
 	}
@@ -192,7 +196,7 @@ int kfastblock_control_attach(const char *args, size_t count, int major,
 	if (!spec)
 		return -ENOMEM;
 
-	ret = kfastblock_parse_attach_spec(args, count, spec);
+	ret = kfastblock_parse_attach_spec(args, count, spec, true);
 	if (ret) {
 		kfastblock_set_last_error("invalid attach arguments");
 		goto out;
@@ -222,7 +226,7 @@ int kfastblock_control_detach(const char *args, size_t count)
 	if (!spec)
 		return -ENOMEM;
 
-	ret = kfastblock_parse_attach_spec(args, count, spec);
+	ret = kfastblock_parse_attach_spec(args, count, spec, false);
 	if (ret) {
 		kfastblock_set_last_error("invalid detach arguments");
 		goto out;
