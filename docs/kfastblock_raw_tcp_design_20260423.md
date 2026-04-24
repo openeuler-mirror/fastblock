@@ -219,7 +219,7 @@ struct fbraw_get_image_info_req {
 
 - `image_epoch`
   客户端当前看到的 image epoch
-  第一版可先传 0
+  当 image 的 `ImageID/Imagesize/Objectsize` 未变化时，服务端可直接返回 `STALE_EPOCH`，不再回传全量 body
 
 #### 响应
 

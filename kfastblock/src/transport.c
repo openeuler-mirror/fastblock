@@ -347,6 +347,8 @@ static int kfastblock_transport_fetch_image_info(struct socket *sock,
 					 seq,
 					 &rsp_hdr,
 					 &body);
+	if (ret == -ESTALE)
+		return 0;
 	if (ret) {
 		kfree(body);
 		return ret;
