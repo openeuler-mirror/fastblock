@@ -1339,7 +1339,6 @@ static int kfastblock_transport_submit_sync(struct kfastblock_request *kf_req)
 		return -EOPNOTSUPP;
 	}
 
-	mutex_lock(&kf_req->vol->inflight_lock);
 	for (i = 0; i < kf_req->nr_objects; ++i) {
 		enum req_op object_op = op;
 
@@ -1352,12 +1351,9 @@ static int kfastblock_transport_submit_sync(struct kfastblock_request *kf_req)
 			rq,
 			&kf_req->objects[i],
 			object_op);
-		if (ret) {
-			mutex_unlock(&kf_req->vol->inflight_lock);
+		if (ret)
 			return ret;
-		}
 	}
-	mutex_unlock(&kf_req->vol->inflight_lock);
 
 	return 0;
 }
@@ -1368,12 +1364,15 @@ static void kfastblock_transport_request_work(struct work_struct *work)
 						struct kfastblock_request,
 						work);
 	blk_status_t status;
+	int ret;
 
 	if (!kf_req || !kf_req->rq || !kf_req->vol)
 		return;
 
-	status = kfastblock_transport_errno_to_blk_status(
-		kfastblock_transport_submit_sync(kf_req));
+	down_read(&kf_req->vol->state_lock);
+	ret = kfastblock_transport_submit_sync(kf_req);
+	up_read(&kf_req->vol->state_lock);
+	status = kfastblock_transport_errno_to_blk_status(ret);
 	blk_mq_end_request(kf_req->rq, status);
 	put_device(&kf_req->vol->dev);
 }
