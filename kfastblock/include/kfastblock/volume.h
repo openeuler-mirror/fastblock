@@ -41,6 +41,7 @@ enum kfastblock_volume_event_type {
 	KFASTBLOCK_VOLUME_EVENT_MANUAL_REFRESH,
 	KFASTBLOCK_VOLUME_EVENT_MANUAL_RESET_BACKOFF,
 	KFASTBLOCK_VOLUME_EVENT_MANUAL_DROP_TRANSPORT,
+	KFASTBLOCK_VOLUME_EVENT_MANUAL_RESET_LEADERS,
 };
 
 enum kfastblock_volume_health_state {
@@ -119,6 +120,7 @@ struct kfastblock_volume_stats {
 	atomic64_t manual_refreshes;
 	atomic64_t manual_reset_backoffs;
 	atomic64_t manual_transport_drops;
+	atomic64_t manual_leader_resets;
 };
 
 struct kfastblock_volume_health {

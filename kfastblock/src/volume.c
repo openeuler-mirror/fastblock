@@ -76,6 +76,8 @@ kfastblock_volume_event_type_name(const enum kfastblock_volume_event_type type)
 		return "manual_reset_backoff";
 	case KFASTBLOCK_VOLUME_EVENT_MANUAL_DROP_TRANSPORT:
 		return "manual_drop_transport";
+	case KFASTBLOCK_VOLUME_EVENT_MANUAL_RESET_LEADERS:
+		return "manual_reset_leaders";
 	default:
 		return "unknown";
 	}
@@ -261,6 +263,7 @@ void kfastblock_volume_stats_init(struct kfastblock_volume *vol)
 	atomic64_set(&vol->stats.manual_refreshes, 0);
 	atomic64_set(&vol->stats.manual_reset_backoffs, 0);
 	atomic64_set(&vol->stats.manual_transport_drops, 0);
+	atomic64_set(&vol->stats.manual_leader_resets, 0);
 	spin_lock_init(&vol->event_log.lock);
 	vol->event_log.next_index = 0;
 	vol->event_log.count = 0;
@@ -1372,6 +1375,38 @@ static ssize_t drop_transport_store(struct device *dev,
 	return count;
 }
 
+static ssize_t reset_leaders_store(struct device *dev,
+			     struct device_attribute *attr,
+			     const char *buf, size_t count)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	int ret = 0;
+
+	if (!vol)
+		return -ENODEV;
+	if (buf && count) {
+		char *scratch = kmemdup_nul(buf, count, GFP_KERNEL);
+
+		if (!scratch)
+			return -ENOMEM;
+		if (*strim(scratch) && !sysfs_streq(strim(scratch), "1") &&
+		    !sysfs_streq(strim(scratch), "all"))
+			ret = -EINVAL;
+		kfree(scratch);
+		if (ret)
+			return ret;
+	}
+
+	down_write(&vol->state_lock);
+	kfastblock_meta_invalidate_all_pg_leaders(&vol->view);
+	atomic64_inc(&vol->stats.manual_leader_resets);
+	kfastblock_volume_record_manual_op(vol,
+				      KFASTBLOCK_VOLUME_EVENT_MANUAL_RESET_LEADERS,
+				      0, 0);
+	up_write(&vol->state_lock);
+	return count;
+}
+
 static void kfastblock_volume_refresh_workfn(struct work_struct *work)
 {
 	struct delayed_work *delayed_work = to_delayed_work(work);
@@ -1882,6 +1917,18 @@ static ssize_t manual_transport_drops_show(struct device *dev,
 			 atomic64_read(&vol->stats.manual_transport_drops));
 }
 
+static ssize_t manual_leader_resets_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.manual_leader_resets));
+}
+
 static DEVICE_ATTR_RO(pool_name);
 static DEVICE_ATTR_RO(image_name);
 static DEVICE_ATTR_RO(size_bytes);
@@ -1924,9 +1971,11 @@ static DEVICE_ATTR_RO(monitor_backoff_hits);
 static DEVICE_ATTR_RO(manual_refreshes);
 static DEVICE_ATTR_RO(manual_reset_backoffs);
 static DEVICE_ATTR_RO(manual_transport_drops);
+static DEVICE_ATTR_RO(manual_leader_resets);
 static DEVICE_ATTR_WO(force_refresh);
 static DEVICE_ATTR_WO(reset_backoff);
 static DEVICE_ATTR_WO(drop_transport);
+static DEVICE_ATTR_WO(reset_leaders);
 
 static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_pool_name.attr,
@@ -1971,9 +2020,11 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_manual_refreshes.attr,
 	&dev_attr_manual_reset_backoffs.attr,
 	&dev_attr_manual_transport_drops.attr,
+	&dev_attr_manual_leader_resets.attr,
 	&dev_attr_force_refresh.attr,
 	&dev_attr_reset_backoff.attr,
 	&dev_attr_drop_transport.attr,
+	&dev_attr_reset_leaders.attr,
 	NULL,
 };
 
