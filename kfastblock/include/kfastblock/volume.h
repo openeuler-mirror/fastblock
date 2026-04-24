@@ -1,6 +1,8 @@
 #ifndef KFASTBLOCK_VOLUME_H
 #define KFASTBLOCK_VOLUME_H
 
+#include <linux/atomic.h>
+#include <linux/blkdev.h>
 #include <linux/blk-mq.h>
 #include <linux/device.h>
 #include <linux/list.h>
@@ -9,6 +11,8 @@
 #include <linux/socket.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
+
+struct dentry;
 
 #include "kfastblock/control.h"
 #include "kfastblock/meta.h"
@@ -32,6 +36,31 @@ struct kfastblock_cached_monitor_socket {
 	u64 next_seq;
 };
 
+struct kfastblock_volume_stats {
+	atomic64_t io_submitted;
+	atomic64_t io_completed;
+	atomic64_t io_failed;
+	atomic64_t read_requests;
+	atomic64_t write_requests;
+	atomic64_t discard_requests;
+	atomic64_t flush_requests;
+	atomic64_t write_zeroes_requests;
+	atomic64_t read_bytes;
+	atomic64_t write_bytes;
+	atomic64_t discard_bytes;
+	atomic64_t queue_pause_events;
+	atomic64_t queue_resume_events;
+	atomic64_t metadata_stale_events;
+	atomic64_t cluster_refresh_ok;
+	atomic64_t cluster_refresh_fail;
+	atomic64_t image_refresh_ok;
+	atomic64_t image_refresh_fail;
+	atomic64_t leader_query_ok;
+	atomic64_t leader_query_fail;
+	atomic64_t object_io_retries;
+	atomic64_t object_io_errors;
+};
+
 struct kfastblock_volume {
 	int dev_id;
 	int major;
@@ -45,12 +74,14 @@ struct kfastblock_volume {
 
 	struct kfastblock_attach_spec spec;
 	struct kfastblock_cluster_view view;
+	struct kfastblock_volume_stats stats;
 
 	struct list_head node;
 	struct device dev;
 	struct mutex inflight_lock;
 	struct rw_semaphore state_lock;
 	struct delayed_work refresh_work;
+	struct dentry *debugfs_dir;
 	bool queue_paused;
 	struct kfastblock_cached_socket socket_cache[KFASTBLOCK_MAX_SOCKET_CACHE];
 	struct kfastblock_cached_monitor_socket monitor_cache[KFASTBLOCK_MAX_MONITORS];
@@ -62,5 +93,17 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 			     struct bus_type *bus, struct device *parent_dev);
 int kfastblock_volume_detach(const struct kfastblock_attach_spec *spec);
 void kfastblock_volume_kick_refresh(struct kfastblock_volume *vol);
+void kfastblock_volume_stats_init(struct kfastblock_volume *vol);
+void kfastblock_volume_account_io_submit(struct kfastblock_volume *vol,
+				       enum req_op op, u32 bytes);
+void kfastblock_volume_account_io_complete(struct kfastblock_volume *vol, int ret);
+void kfastblock_volume_account_object_retry(struct kfastblock_volume *vol);
+void kfastblock_volume_account_object_error(struct kfastblock_volume *vol);
+void kfastblock_volume_account_leader_query(struct kfastblock_volume *vol, int ret);
+void kfastblock_volume_account_cluster_refresh(struct kfastblock_volume *vol,
+				       int ret);
+void kfastblock_volume_account_image_refresh(struct kfastblock_volume *vol,
+				     int ret);
+void kfastblock_volume_account_metadata_stale(struct kfastblock_volume *vol);
 
 #endif
