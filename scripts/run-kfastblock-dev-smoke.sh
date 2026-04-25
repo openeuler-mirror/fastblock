@@ -16,14 +16,22 @@ device_path=""
 detach_needed=0
 
 cleanup() {
+    kfastblock_release_test_lock
     if [ "$detach_needed" = "1" ]; then
         kfastblock_detach_volume "$repo_root" "$pool_name" "$image_name" >/dev/null 2>&1 || true
     fi
     rm -f "$payload_file" "$readback_file"
 }
+
+on_error() {
+    kfastblock_capture_failure_snapshot "$repo_root" "$run_dir" "$pool_name" "$image_name"
+}
+
+trap on_error ERR
 trap cleanup EXIT
 
 kfastblock_require_root
+kfastblock_acquire_test_lock "$repo_root"
 kfastblock_start_logging "$log_file"
 echo "artifact_dir=$run_dir"
 

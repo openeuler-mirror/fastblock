@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+KFASTBLOCK_TEST_LOCK_FD=""
+
 kfastblock_repo_root() {
     cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd
 }
@@ -28,6 +30,160 @@ kfastblock_start_logging() {
 
     mkdir -p "$(dirname "$log_file")"
     exec > >(tee -a "$log_file") 2>&1
+}
+
+kfastblock_local_state_root() {
+    local repo_root="$1"
+
+    printf '%s\n' "${FASTBLOCK_VSTART_STATE_ROOT:-$repo_root/.vstart}"
+}
+
+kfastblock_local_config_file() {
+    local repo_root="$1"
+
+    printf '%s/etc/fastblock/fastblock.json\n' "$(kfastblock_local_state_root "$repo_root")"
+}
+
+kfastblock_local_run_dir() {
+    local repo_root="$1"
+
+    printf '%s/run\n' "$(kfastblock_local_state_root "$repo_root")"
+}
+
+kfastblock_local_log_dir() {
+    local repo_root="$1"
+
+    printf '%s/var/log/fastblock\n' "$(kfastblock_local_state_root "$repo_root")"
+}
+
+kfastblock_wait_for_pid_exit() {
+    local pid="$1"
+    local timeout_sec="${2:-20}"
+    local deadline=$((SECONDS + timeout_sec))
+
+    while kill -0 "$pid" >/dev/null 2>&1; do
+        if [ "$SECONDS" -ge "$deadline" ]; then
+            kill -9 "$pid" >/dev/null 2>&1 || true
+            break
+        fi
+        sleep 1
+    done
+}
+
+kfastblock_stop_local_process() {
+    local pid_file="$1"
+
+    if [ ! -f "$pid_file" ]; then
+        return 0
+    fi
+
+    local pid
+    pid="$(cat "$pid_file" 2>/dev/null || true)"
+    if [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1; then
+        kill "$pid" >/dev/null 2>&1 || true
+        kfastblock_wait_for_pid_exit "$pid"
+    fi
+    rm -f "$pid_file"
+}
+
+kfastblock_start_local_process() {
+    local pid_file="$1"
+    local log_file="$2"
+    shift 2
+
+    mkdir -p "$(dirname "$pid_file")" "$(dirname "$log_file")"
+    rm -f "$pid_file"
+    setsid -f /bin/bash -lc '
+        _pid_file=$1
+        _log_file=$2
+        shift 2
+        echo $$ > "$_pid_file"
+        exec "$@" < /dev/null >> "$_log_file" 2>&1
+    ' bash "$pid_file" "$log_file" "$@"
+
+    local attempt
+    for attempt in $(seq 1 10); do
+        if [ -f "$pid_file" ]; then
+            local pid
+            pid="$(cat "$pid_file" 2>/dev/null || true)"
+            if [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1; then
+                return 0
+            fi
+        fi
+        sleep 1
+    done
+
+    echo "failed to start local process: $*" >&2
+    return 1
+}
+
+kfastblock_stop_local_osd() {
+    local repo_root="$1"
+    local osd_id="$2"
+    local pid_file
+
+    pid_file="$(kfastblock_local_run_dir "$repo_root")/osd-${osd_id}.pid"
+    kfastblock_stop_local_process "$pid_file"
+}
+
+kfastblock_start_local_osd() {
+    local repo_root="$1"
+    local osd_id="$2"
+    local config_file
+    local pid_file
+    local log_file
+    local osd_binary
+
+    config_file="$(kfastblock_local_config_file "$repo_root")"
+    pid_file="$(kfastblock_local_run_dir "$repo_root")/osd-${osd_id}.pid"
+    log_file="$(kfastblock_local_log_dir "$repo_root")/osd${osd_id}.log"
+    osd_binary="$repo_root/build/src/osd/fastblock-osd"
+
+    kfastblock_stop_local_osd "$repo_root" "$osd_id"
+    kfastblock_start_local_process "$pid_file" "$log_file" \
+        "$osd_binary" -C "$config_file" --id "$osd_id" -N 0
+}
+
+kfastblock_restart_local_osd() {
+    local repo_root="$1"
+    local osd_id="$2"
+    local down_sleep="${3:-2}"
+
+    kfastblock_stop_local_osd "$repo_root" "$osd_id"
+    sleep "$down_sleep"
+    kfastblock_start_local_osd "$repo_root" "$osd_id"
+}
+
+kfastblock_capture_failure_snapshot() {
+    local repo_root="$1"
+    local run_dir="$2"
+    local pool_name="${3:-}"
+    local image_name="${4:-}"
+    local config_file
+    local log_dir
+    local admin="$repo_root/kfastblock/tool/kfastblock-admin"
+
+    config_file="$(kfastblock_local_config_file "$repo_root")"
+    log_dir="$(kfastblock_local_log_dir "$repo_root")"
+
+    "$admin" list > "$run_dir/admin-list.txt" 2>&1 || true
+    if [ -n "$pool_name" ] && [ -n "$image_name" ]; then
+        "$admin" show --pool-name "$pool_name" --image-name "$image_name" \
+            > "$run_dir/admin-show.txt" 2>&1 || true
+    fi
+    if [ -f "$config_file" ]; then
+        cp "$config_file" "$run_dir/fastblock.failure.json" 2>/dev/null || true
+    fi
+    if command -v dmesg >/dev/null 2>&1; then
+        dmesg | tail -n 200 > "$run_dir/dmesg.tail" 2>/dev/null || true
+    fi
+    if [ -d "$log_dir" ]; then
+        for log_file in monitor.log osd1.log osd2.log osd3.log; do
+            if [ -f "$log_dir/$log_file" ]; then
+                tail -n 200 "$log_dir/$log_file" > "$run_dir/$log_file.tail" || true
+            fi
+        done
+    fi
 }
 
 kfastblock_detach_all_volumes() {
@@ -187,5 +343,27 @@ kfastblock_capture_context() {
     uname -a > "$run_dir/uname.txt"
     if [ -r "/boot/config-$(uname -r)" ]; then
         cp "/boot/config-$(uname -r)" "$run_dir/kernel-config"
+    fi
+}
+
+kfastblock_acquire_test_lock() {
+    local repo_root="$1"
+    local lock_file
+
+    if [ "${KFASTBLOCK_TEST_NO_LOCK:-0}" = "1" ]; then
+        return 0
+    fi
+
+    lock_file="$(kfastblock_local_state_root "$repo_root")/kfastblock-test.lock"
+    mkdir -p "$(dirname "$lock_file")"
+    exec {KFASTBLOCK_TEST_LOCK_FD}> "$lock_file"
+    flock "$KFASTBLOCK_TEST_LOCK_FD"
+}
+
+kfastblock_release_test_lock() {
+    if [ -n "$KFASTBLOCK_TEST_LOCK_FD" ]; then
+        flock -u "$KFASTBLOCK_TEST_LOCK_FD" || true
+        eval "exec ${KFASTBLOCK_TEST_LOCK_FD}>&-"
+        KFASTBLOCK_TEST_LOCK_FD=""
     fi
 }
