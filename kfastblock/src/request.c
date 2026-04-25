@@ -124,7 +124,10 @@ static void kfastblock_request_track_unique_pg(struct kfastblock_request *kf_req
 
 	kf_req->unique_pgs[kf_req->nr_unique_pgs++] = pg_id;
 	kf_req->pg_hints[kf_req->nr_unique_pgs - 1].pg_id = pg_id;
+	kf_req->pg_hints[kf_req->nr_unique_pgs - 1].nr_targets = 0;
 	kf_req->pg_hints[kf_req->nr_unique_pgs - 1].leader_valid = false;
+	kfree(kf_req->pg_hints[kf_req->nr_unique_pgs - 1].targets);
+	kf_req->pg_hints[kf_req->nr_unique_pgs - 1].targets = NULL;
 }
 
 static unsigned int
@@ -193,12 +196,88 @@ err_free_unique:
 	return -ENOMEM;
 }
 
+static void kfastblock_request_free_pg_hint_targets(struct kfastblock_request *kf_req)
+{
+	unsigned int i;
+
+	if (!kf_req || !kf_req->pg_hints)
+		return;
+
+	for (i = 0; i < kf_req->max_object_extents; ++i) {
+		kfree(kf_req->pg_hints[i].targets);
+		kf_req->pg_hints[i].targets = NULL;
+		kf_req->pg_hints[i].nr_targets = 0;
+		kf_req->pg_hints[i].leader_valid = false;
+		memset(&kf_req->pg_hints[i].leader, 0,
+		       sizeof(kf_req->pg_hints[i].leader));
+	}
+}
+
+static int kfastblock_request_snapshot_pg_hints(
+	struct kfastblock_request *kf_req,
+	const struct kfastblock_cluster_view *view)
+{
+	unsigned int i;
+
+	if (!kf_req || !view)
+		return -EINVAL;
+
+	for (i = 0; i < kf_req->nr_unique_pgs; ++i) {
+		struct kfastblock_request_pg_hint *hint = &kf_req->pg_hints[i];
+		const struct kfastblock_pg_route *route;
+		u32 replica_idx;
+
+		route = kfastblock_meta_find_pg_route(view, kf_req->request_pool_id,
+						      hint->pg_id);
+		if (!route || !route->replica_count)
+			return -ENOENT;
+
+		hint->nr_targets = route->replica_count;
+		hint->leader_valid = route->leader_valid;
+		if (route->leader_valid)
+			hint->leader = route->leader;
+		else
+			memset(&hint->leader, 0, sizeof(hint->leader));
+
+		hint->targets = kcalloc(route->replica_count, sizeof(*hint->targets),
+					 GFP_NOIO);
+		if (!hint->targets)
+			return -ENOMEM;
+
+		for (replica_idx = 0; replica_idx < route->replica_count; ++replica_idx) {
+			const struct kfastblock_pg_route *resolved_route;
+			const struct kfastblock_osd_endpoint *osd;
+			const struct kfastblock_osd_shard *shard;
+			int ret;
+
+			ret = kfastblock_meta_resolve_pg_target(view,
+					kf_req->request_pool_id,
+					hint->pg_id,
+					route->osd_ids[replica_idx],
+					&resolved_route,
+					&osd,
+					&shard);
+			if (ret)
+				return ret;
+
+			hint->targets[replica_idx].osd_id = osd->osd_id;
+			hint->targets[replica_idx].flags = osd->flags;
+			hint->targets[replica_idx].port = shard->port;
+			strscpy(hint->targets[replica_idx].address, osd->address,
+				sizeof(hint->targets[replica_idx].address));
+		}
+	}
+
+	return 0;
+}
+
 void kfastblock_request_cleanup(struct kfastblock_request *kf_req)
 {
 	if (!kf_req)
 		return;
 
 	kvfree(kf_req->unique_pgs);
+	kfastblock_request_free_pg_hint_targets(kf_req);
 	kvfree(kf_req->pg_hints);
 	kvfree(kf_req->objects);
 	kvfree(kf_req->object_works);
@@ -245,8 +324,11 @@ int kfastblock_request_init(struct kfastblock_request *kf_req,
 	for (i = 0; i < kf_req->max_object_extents; ++i) {
 		kf_req->object_works[i].parent = kf_req;
 		kf_req->object_works[i].object_index = i;
+		spin_lock_init(&kf_req->pg_hints[i].lock);
 		kf_req->pg_hints[i].pg_id = 0;
+		kf_req->pg_hints[i].nr_targets = 0;
 		kf_req->pg_hints[i].leader_valid = false;
+		kf_req->pg_hints[i].targets = NULL;
 	}
 
 	return 0;
@@ -317,9 +399,58 @@ int kfastblock_request_split(struct kfastblock_request *kf_req)
 		kfastblock_request_track_unique_pg(kf_req, extent->pg_id);
 
 		remaining -= object_len;
-		current_offset += object_len;
-		++kf_req->nr_objects;
-	}
+			current_offset += object_len;
+			++kf_req->nr_objects;
+		}
 
-	return 0;
+	return kfastblock_request_snapshot_pg_hints(kf_req, view);
+}
+
+int kfastblock_request_get_pg_hint_leader(
+	struct kfastblock_request_pg_hint *hint,
+	struct kfastblock_leader_info *leader)
+{
+	unsigned long flags;
+	int ret = 0;
+
+	if (!hint || !leader)
+		return -EINVAL;
+
+	spin_lock_irqsave(&hint->lock, flags);
+	if (!hint->leader_valid) {
+		ret = -ENOENT;
+	} else {
+		*leader = hint->leader;
+	}
+	spin_unlock_irqrestore(&hint->lock, flags);
+	return ret;
+}
+
+void kfastblock_request_set_pg_hint_leader(
+	struct kfastblock_request_pg_hint *hint,
+	const struct kfastblock_leader_info *leader)
+{
+	unsigned long flags;
+
+	if (!hint || !leader)
+		return;
+
+	spin_lock_irqsave(&hint->lock, flags);
+	hint->leader = *leader;
+	hint->leader_valid = true;
+	spin_unlock_irqrestore(&hint->lock, flags);
+}
+
+void kfastblock_request_invalidate_pg_hint_leader(
+	struct kfastblock_request_pg_hint *hint)
+{
+	unsigned long flags;
+
+	if (!hint)
+		return;
+
+	spin_lock_irqsave(&hint->lock, flags);
+	hint->leader_valid = false;
+	memset(&hint->leader, 0, sizeof(hint->leader));
+	spin_unlock_irqrestore(&hint->lock, flags);
 }
