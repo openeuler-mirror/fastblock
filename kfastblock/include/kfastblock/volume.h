@@ -43,6 +43,8 @@ enum kfastblock_volume_event_type {
 	KFASTBLOCK_VOLUME_EVENT_MANUAL_RESET_BACKOFF,
 	KFASTBLOCK_VOLUME_EVENT_MANUAL_DROP_TRANSPORT,
 	KFASTBLOCK_VOLUME_EVENT_MANUAL_RESET_LEADERS,
+	KFASTBLOCK_VOLUME_EVENT_MANUAL_QUEUE_PAUSE,
+	KFASTBLOCK_VOLUME_EVENT_MANUAL_QUEUE_RESUME,
 	KFASTBLOCK_VOLUME_EVENT_SOCKET_BACKOFF_WAIT,
 };
 
@@ -127,6 +129,8 @@ struct kfastblock_volume_stats {
 	atomic64_t manual_reset_backoffs;
 	atomic64_t manual_transport_drops;
 	atomic64_t manual_leader_resets;
+	atomic64_t manual_queue_pauses;
+	atomic64_t manual_queue_resumes;
 };
 
 struct kfastblock_volume_health {
@@ -184,6 +188,7 @@ struct kfastblock_volume {
 	struct delayed_work refresh_work;
 	struct dentry *debugfs_dir;
 	bool queue_paused;
+	bool manual_queue_pause;
 	u32 dispatch_window;
 	u32 refresh_interval_ms;
 	u32 image_refresh_interval_ms;

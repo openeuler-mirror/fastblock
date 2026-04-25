@@ -99,6 +99,10 @@ kfastblock_volume_event_type_name(const enum kfastblock_volume_event_type type)
 		return "manual_drop_transport";
 	case KFASTBLOCK_VOLUME_EVENT_MANUAL_RESET_LEADERS:
 		return "manual_reset_leaders";
+	case KFASTBLOCK_VOLUME_EVENT_MANUAL_QUEUE_PAUSE:
+		return "manual_queue_pause";
+	case KFASTBLOCK_VOLUME_EVENT_MANUAL_QUEUE_RESUME:
+		return "manual_queue_resume";
 	case KFASTBLOCK_VOLUME_EVENT_SOCKET_BACKOFF_WAIT:
 		return "socket_backoff_wait";
 	default:
@@ -290,6 +294,8 @@ void kfastblock_volume_stats_init(struct kfastblock_volume *vol)
 	atomic64_set(&vol->stats.manual_reset_backoffs, 0);
 	atomic64_set(&vol->stats.manual_transport_drops, 0);
 	atomic64_set(&vol->stats.manual_leader_resets, 0);
+	atomic64_set(&vol->stats.manual_queue_pauses, 0);
+	atomic64_set(&vol->stats.manual_queue_resumes, 0);
 	spin_lock_init(&vol->event_log.lock);
 	vol->event_log.next_index = 0;
 	vol->event_log.count = 0;
@@ -563,6 +569,7 @@ static int kfastblock_volume_summary_show(struct seq_file *m, void *v)
 	seq_printf(m, "disk=%s\n", vol->disk ? vol->disk->disk_name : "");
 	seq_printf(m, "ready=%d\n", atomic_read(&vol->ready));
 	seq_printf(m, "queue_paused=%d\n", vol->queue_paused ? 1 : 0);
+	seq_printf(m, "manual_queue_pause=%d\n", vol->manual_queue_pause ? 1 : 0);
 	seq_printf(m, "health_state=%s\n",
 		   kfastblock_volume_health_state_name(vol->health.state));
 	seq_printf(m, "health_since_jiffies=%lu\n", vol->health.state_since_jiffies);
@@ -929,7 +936,27 @@ static bool kfastblock_volume_should_pause_queue(const struct kfastblock_volume 
 	if (!vol || !atomic_read(&vol->ready))
 		return true;
 
-	return !kfastblock_meta_io_ready(&vol->view);
+	return vol->manual_queue_pause || !kfastblock_meta_io_ready(&vol->view);
+}
+
+static void kfastblock_volume_set_manual_queue_pause_locked(
+	struct kfastblock_volume *vol, bool pause)
+{
+	if (!vol || vol->manual_queue_pause == pause)
+		return;
+
+	vol->manual_queue_pause = pause;
+	if (pause) {
+		atomic64_inc(&vol->stats.manual_queue_pauses);
+		kfastblock_volume_record_event(
+			vol, KFASTBLOCK_VOLUME_EVENT_MANUAL_QUEUE_PAUSE, 0,
+			REQ_OP_FLUSH, 0, 0, vol->view.sync_state, 0);
+	} else {
+		atomic64_inc(&vol->stats.manual_queue_resumes);
+		kfastblock_volume_record_event(
+			vol, KFASTBLOCK_VOLUME_EVENT_MANUAL_QUEUE_RESUME, 0,
+			REQ_OP_FLUSH, 0, 0, vol->view.sync_state, 0);
+	}
 }
 
 static void kfastblock_volume_update_queue_gate(struct kfastblock_volume *vol)
@@ -1280,6 +1307,25 @@ static int kfastblock_volume_parse_transport_scope(const char *buf, size_t count
 	return ret;
 }
 
+static int kfastblock_volume_parse_manual_trigger(const char *buf, size_t count)
+{
+	char *scratch;
+	char *value;
+	int ret = 0;
+
+	if (!buf || !count)
+		return 0;
+
+	scratch = kmemdup_nul(buf, count, GFP_KERNEL);
+	if (!scratch)
+		return -ENOMEM;
+	value = strim(scratch);
+	if (*value && !sysfs_streq(value, "1") && !sysfs_streq(value, "all"))
+		ret = -EINVAL;
+	kfree(scratch);
+	return ret;
+}
+
 static void kfastblock_volume_reset_osd_backoff(struct kfastblock_volume *vol)
 {
 	int i;
@@ -1498,22 +1544,13 @@ static ssize_t reset_leaders_store(struct device *dev,
 			     const char *buf, size_t count)
 {
 	struct kfastblock_volume *vol = dev_get_drvdata(dev);
-	int ret = 0;
+	int ret;
 
 	if (!vol)
 		return -ENODEV;
-	if (buf && count) {
-		char *scratch = kmemdup_nul(buf, count, GFP_KERNEL);
-
-		if (!scratch)
-			return -ENOMEM;
-		if (*strim(scratch) && !sysfs_streq(strim(scratch), "1") &&
-		    !sysfs_streq(strim(scratch), "all"))
-			ret = -EINVAL;
-		kfree(scratch);
-		if (ret)
-			return ret;
-	}
+	ret = kfastblock_volume_parse_manual_trigger(buf, count);
+	if (ret)
+		return ret;
 
 	down_write(&vol->state_lock);
 	kfastblock_meta_invalidate_all_pg_leaders(&vol->view);
@@ -1521,6 +1558,46 @@ static ssize_t reset_leaders_store(struct device *dev,
 	kfastblock_volume_record_manual_op(vol,
 				      KFASTBLOCK_VOLUME_EVENT_MANUAL_RESET_LEADERS,
 				      0, 0);
+	up_write(&vol->state_lock);
+	return count;
+}
+
+static ssize_t pause_queue_store(struct device *dev,
+				 struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	int ret;
+
+	if (!vol)
+		return -ENODEV;
+	ret = kfastblock_volume_parse_manual_trigger(buf, count);
+	if (ret)
+		return ret;
+
+	down_write(&vol->state_lock);
+	kfastblock_volume_set_manual_queue_pause_locked(vol, true);
+	kfastblock_volume_update_queue_gate(vol);
+	up_write(&vol->state_lock);
+	return count;
+}
+
+static ssize_t resume_queue_store(struct device *dev,
+				  struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	int ret;
+
+	if (!vol)
+		return -ENODEV;
+	ret = kfastblock_volume_parse_manual_trigger(buf, count);
+	if (ret)
+		return ret;
+
+	down_write(&vol->state_lock);
+	kfastblock_volume_set_manual_queue_pause_locked(vol, false);
+	kfastblock_volume_update_queue_gate(vol);
 	up_write(&vol->state_lock);
 	return count;
 }
@@ -1844,6 +1921,18 @@ static ssize_t queue_paused_show(struct device *dev,
 		return -ENODEV;
 
 	return scnprintf(buf, PAGE_SIZE, "%u\n", vol->queue_paused ? 1 : 0);
+}
+
+static ssize_t manual_queue_pause_show(struct device *dev,
+				       struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 vol->manual_queue_pause ? 1 : 0);
 }
 
 static ssize_t flush_in_progress_show(struct device *dev,
@@ -2332,6 +2421,32 @@ static ssize_t manual_leader_resets_show(struct device *dev,
 			 atomic64_read(&vol->stats.manual_leader_resets));
 }
 
+static ssize_t manual_queue_pauses_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.manual_queue_pauses));
+}
+
+static ssize_t manual_queue_resumes_show(struct device *dev,
+					 struct device_attribute *attr,
+					 char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.manual_queue_resumes));
+}
+
 static DEVICE_ATTR_RO(pool_name);
 static DEVICE_ATTR_RO(image_name);
 static DEVICE_ATTR_RO(size_bytes);
@@ -2352,6 +2467,7 @@ static DEVICE_ATTR_RO(read_only);
 static DEVICE_ATTR_RO(open_count);
 static DEVICE_ATTR_RO(sync_state);
 static DEVICE_ATTR_RO(queue_paused);
+static DEVICE_ATTR_RO(manual_queue_pause);
 static DEVICE_ATTR_RO(flush_in_progress);
 static DEVICE_ATTR_RO(inflight_ios);
 static DEVICE_ATTR_RO(health_state);
@@ -2393,10 +2509,14 @@ static DEVICE_ATTR_RO(manual_refreshes);
 static DEVICE_ATTR_RO(manual_reset_backoffs);
 static DEVICE_ATTR_RO(manual_transport_drops);
 static DEVICE_ATTR_RO(manual_leader_resets);
+static DEVICE_ATTR_RO(manual_queue_pauses);
+static DEVICE_ATTR_RO(manual_queue_resumes);
 static DEVICE_ATTR_WO(force_refresh);
 static DEVICE_ATTR_WO(reset_backoff);
 static DEVICE_ATTR_WO(drop_transport);
 static DEVICE_ATTR_WO(reset_leaders);
+static DEVICE_ATTR_WO(pause_queue);
+static DEVICE_ATTR_WO(resume_queue);
 
 static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_pool_name.attr,
@@ -2419,6 +2539,7 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_open_count.attr,
 	&dev_attr_sync_state.attr,
 	&dev_attr_queue_paused.attr,
+	&dev_attr_manual_queue_pause.attr,
 	&dev_attr_flush_in_progress.attr,
 	&dev_attr_inflight_ios.attr,
 	&dev_attr_health_state.attr,
@@ -2460,10 +2581,14 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_manual_reset_backoffs.attr,
 	&dev_attr_manual_transport_drops.attr,
 	&dev_attr_manual_leader_resets.attr,
+	&dev_attr_manual_queue_pauses.attr,
+	&dev_attr_manual_queue_resumes.attr,
 	&dev_attr_force_refresh.attr,
 	&dev_attr_reset_backoff.attr,
 	&dev_attr_drop_transport.attr,
 	&dev_attr_reset_leaders.attr,
+	&dev_attr_pause_queue.attr,
+	&dev_attr_resume_queue.attr,
 	NULL,
 };
 
@@ -2728,6 +2853,7 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	atomic_set(&vol->ready, 0);
 	atomic_set(&vol->inflight_ios, 0);
 	vol->queue_paused = false;
+	vol->manual_queue_pause = false;
 	vol->flush_in_progress = false;
 	vol->dispatch_window = KFASTBLOCK_DEFAULT_OBJECT_DISPATCH_WINDOW;
 	vol->refresh_interval_ms = KFASTBLOCK_DEFAULT_REFRESH_INTERVAL_MS;
