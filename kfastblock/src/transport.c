@@ -718,6 +718,20 @@ static void kfastblock_transport_apply_monitor_failure(
 	}
 }
 
+static bool kfastblock_transport_prefetch_should_fail_request(int ret)
+{
+	switch (ret) {
+	case -EINVAL:
+	case -ENOMEM:
+	case -E2BIG:
+	case -EOPNOTSUPP:
+	case -ENOENT:
+		return true;
+	default:
+		return false;
+	}
+}
+
 static blk_status_t kfastblock_transport_errno_to_blk_status(const int ret)
 {
 	switch (ret) {
@@ -2103,8 +2117,12 @@ static int kfastblock_transport_prefetch_request_leaders(
 			ret = kfastblock_transport_query_pg_leader(kf_req, hint, &leader);
 		else
 			ret = 0;
-		if (ret)
-			return ret;
+		if (ret) {
+			kfastblock_request_invalidate_pg_hint_leader(hint);
+			if (kfastblock_transport_prefetch_should_fail_request(ret))
+				return ret;
+			continue;
+		}
 		kfastblock_request_set_pg_hint_leader(hint, &leader);
 		ret = kfastblock_transport_acquire_osd_socket(
 			kf_req->vol, &leader, &cached, &sock);
