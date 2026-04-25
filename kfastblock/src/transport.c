@@ -2115,6 +2115,7 @@ static void kfastblock_transport_complete_request(struct kfastblock_request *kf_
 		if (!kf_req->status)
 			kfastblock_volume_mark_success(kf_req->vol,
 					      KFASTBLOCK_VOLUME_SOURCE_OBJECT_IO);
+		kfastblock_request_cleanup(kf_req);
 		blk_mq_end_request(kf_req->rq, status);
 		kfastblock_volume_put_io(kf_req->vol);
 		put_device(&kf_req->vol->dev);
@@ -2140,6 +2141,7 @@ static void kfastblock_transport_abort_request(struct kfastblock_request *kf_req
 		blk_status_t status =
 			kfastblock_transport_errno_to_blk_status(kf_req->status);
 		kfastblock_volume_account_io_complete(kf_req->vol, kf_req->status);
+		kfastblock_request_cleanup(kf_req);
 		blk_mq_end_request(kf_req->rq, status);
 		kfastblock_volume_put_io(kf_req->vol);
 		put_device(&kf_req->vol->dev);
@@ -2183,6 +2185,7 @@ int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 		return -EINVAL;
 
 	if (!kf_req->nr_objects) {
+		kfastblock_request_cleanup(kf_req);
 		blk_mq_end_request(kf_req->rq, BLK_STS_OK);
 		kfastblock_volume_put_io(kf_req->vol);
 		return 0;
@@ -2190,6 +2193,7 @@ int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 
 	ret = kfastblock_transport_prefetch_request_leaders(kf_req);
 	if (ret) {
+		kfastblock_request_cleanup(kf_req);
 		kfastblock_volume_account_io_complete(kf_req->vol, ret);
 		blk_mq_end_request(kf_req->rq,
 			kfastblock_transport_errno_to_blk_status(ret));

@@ -196,6 +196,34 @@ function stopLocalProcess() {
     rm -f "$_pid_file"
 }
 
+function startDetachedLocalProcess() {
+    _pid_file=$1
+    _log_file=$2
+    shift 2
+
+    rm -f "$_pid_file"
+    setsid -f /bin/bash -lc '
+        _pid_file=$1
+        _log_file=$2
+        shift 2
+        echo $$ > "$_pid_file"
+        exec "$@" < /dev/null >> "$_log_file" 2>&1
+    ' bash "$_pid_file" "$_log_file" "$@"
+
+    for _attempt in $(seq 1 10); do
+        if [ -f "$_pid_file" ]; then
+            _pid=$(cat "$_pid_file")
+            if kill -0 "$_pid" 2>/dev/null; then
+                return 0
+            fi
+        fi
+        sleep 1
+    done
+
+    echo "failed to start local process: $*" >&2
+    return 1
+}
+
 function stopAllLocalOsds() {
     if [ ! -d "$localRunDir" ]; then
         return
@@ -220,16 +248,25 @@ function startLocalMonitor() {
     _mons=$1
     ensureLocalDevDirs
     stopLocalProcess "$localRunDir/monitor.pid"
-    nohup "$monBinary" -conf="$defaultConfigFile" -id="$_mons" > "$logDir/monitor.log" 2>&1 &
-    echo $! > "$localRunDir/monitor.pid"
+    startDetachedLocalProcess \
+        "$localRunDir/monitor.pid" \
+        "$logDir/monitor.log" \
+        "$monBinary" \
+        -conf="$defaultConfigFile" \
+        -id="$_mons"
 }
 
 function startLocalOsd() {
     _osdid=$1
     ensureLocalDevDirs
     stopLocalProcess "$localRunDir/osd-$_osdid.pid"
-    nohup "$osdBinary" -C "$defaultConfigFile" --id "$_osdid" -N 0 > "$logDir/osd$_osdid.log" 2>&1 &
-    echo $! > "$localRunDir/osd-$_osdid.pid"
+    startDetachedLocalProcess \
+        "$localRunDir/osd-$_osdid.pid" \
+        "$logDir/osd$_osdid.log" \
+        "$osdBinary" \
+        -C "$defaultConfigFile" \
+        --id "$_osdid" \
+        -N 0
 }
 
 function allocateOsdId() {

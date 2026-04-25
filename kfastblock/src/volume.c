@@ -2675,10 +2675,17 @@ static blk_status_t kfastblock_queue_rq(struct blk_mq_hw_ctx *hctx,
 	}
 	kfastblock_volume_get_io(vol);
 	mutex_unlock(&vol->inflight_lock);
-	kfastblock_request_init(kf_req, vol, rq);
+	ret = kfastblock_request_init(kf_req, vol, rq);
+	if (ret) {
+		up_read(&vol->state_lock);
+		kfastblock_volume_put_io(vol);
+		blk_mq_end_request(rq, BLK_STS_IOERR);
+		return BLK_STS_IOERR;
+	}
 	ret = kfastblock_request_split(kf_req);
 	up_read(&vol->state_lock);
 	if (ret) {
+		kfastblock_request_cleanup(kf_req);
 		kfastblock_volume_put_io(vol);
 		blk_mq_end_request(rq, BLK_STS_IOERR);
 		return BLK_STS_IOERR;
@@ -2687,6 +2694,7 @@ static blk_status_t kfastblock_queue_rq(struct blk_mq_hw_ctx *hctx,
 	kfastblock_volume_account_io_submit(vol, req_op(rq), blk_rq_bytes(rq));
 	ret = kfastblock_transport_submit(kf_req);
 	if (ret) {
+		kfastblock_request_cleanup(kf_req);
 		kfastblock_volume_account_io_complete(vol, ret);
 		kfastblock_volume_put_io(vol);
 		blk_mq_end_request(rq, BLK_STS_IOERR);
@@ -2696,6 +2704,26 @@ static blk_status_t kfastblock_queue_rq(struct blk_mq_hw_ctx *hctx,
 	return BLK_STS_OK;
 }
 
+static int kfastblock_mq_init_request(struct blk_mq_tag_set *set,
+				      struct request *rq,
+				      unsigned int hctx_idx,
+				      unsigned int numa_node)
+{
+	struct kfastblock_request *kf_req = blk_mq_rq_to_pdu(rq);
+
+	memset(kf_req, 0, sizeof(*kf_req));
+	return 0;
+}
+
+static void kfastblock_mq_exit_request(struct blk_mq_tag_set *set,
+				       struct request *rq,
+				       unsigned int hctx_idx)
+{
+	struct kfastblock_request *kf_req = blk_mq_rq_to_pdu(rq);
+
+	kfastblock_request_cleanup(kf_req);
+}
+
 static const struct block_device_operations kfastblock_bd_ops = {
 	.owner = THIS_MODULE,
 	.open = kfastblock_blk_open,
@@ -2703,6 +2731,8 @@ static const struct block_device_operations kfastblock_bd_ops = {
 };
 
 static const struct blk_mq_ops kfastblock_mq_ops = {
+	.init_request = kfastblock_mq_init_request,
+	.exit_request = kfastblock_mq_exit_request,
 	.queue_rq = kfastblock_queue_rq,
 };
 
