@@ -1,120 +1,43 @@
 #!/bin/bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/kfastblock-test-common.sh"
+
+repo_root="$(kfastblock_repo_root)"
 config_file="$repo_root/.vstart/etc/fastblock/fastblock.json"
-monitor_addr=""
+pool_name="${KFASTBLOCK_SMOKE_POOL:-fb}"
 image_name="${KFASTBLOCK_SMOKE_IMAGE:-kfb-smoke-$(date +%s)}"
-payload_file="$(mktemp /tmp/kfb-smoke-payload.XXXXXX)"
-readback_file="$(mktemp /tmp/kfb-smoke-readback.XXXXXX)"
+run_dir="$(kfastblock_artifact_dir "$repo_root" smoke)"
+log_file="$run_dir/smoke.log"
+payload_file="$run_dir/payload.bin"
+readback_file="$run_dir/readback.bin"
+monitor_addr=""
 device_path=""
 detach_needed=0
 
 cleanup() {
     if [ "$detach_needed" = "1" ]; then
-        "$repo_root/kfastblock/tool/kfastblock-admin" detach \
-            --pool-name fb \
-            --image-name "$image_name" >/dev/null 2>&1 || true
+        kfastblock_detach_volume "$repo_root" "$pool_name" "$image_name" >/dev/null 2>&1 || true
     fi
     rm -f "$payload_file" "$readback_file"
 }
 trap cleanup EXIT
 
-if [ "$(id -u)" -ne 0 ]; then
-    echo "run as root" >&2
-    exit 1
-fi
+kfastblock_require_root
+kfastblock_start_logging "$log_file"
+echo "artifact_dir=$run_dir"
 
-detach_all_kfastblock_volumes() {
-    local line pool image
+kfastblock_prepare_dev_cluster "$repo_root" "$config_file"
+kfastblock_capture_context "$config_file" "$run_dir"
+monitor_addr="$(kfastblock_resolve_monitor_addr "$config_file")"
 
-    while IFS= read -r line; do
-        [ -z "$line" ] && continue
-        pool="$(printf '%s\n' "$line" | sed -n 's/.*pool=\([^ ]*\).*/\1/p')"
-        image="$(printf '%s\n' "$line" | sed -n 's/.*image=\([^ ]*\).*/\1/p')"
-        [ -z "$pool" ] && continue
-        [ -z "$image" ] && continue
-        "$repo_root/kfastblock/tool/kfastblock-admin" detach \
-            --pool-name "$pool" \
-            --image-name "$image" >/dev/null 2>&1 || true
-    done < <("$repo_root/kfastblock/tool/kfastblock-admin" list 2>/dev/null || true)
-}
-
-wait_cluster_active() {
-    local attempt status_output
-
-    for attempt in $(seq 1 30); do
-        status_output="$("$repo_root/monitor/fastblock-client" \
-            -conf="$config_file" \
-            -op=status 2>/dev/null || true)"
-        if printf '%s\n' "$status_output" | grep -q "3 osds: 3 up, 3 in" &&
-           printf '%s\n' "$status_output" | grep -q "8  active"; then
-            return 0
-        fi
-        sleep 2
-    done
-
-    echo "cluster did not reach 3 up / 3 in / 8 active" >&2
-    printf '%s\n' "$status_output" >&2
-    return 1
-}
-
-resolve_monitor_addr() {
-    monitor_addr="$(jq -r '.mon_rpc_address' "$config_file")"
-    if [ -z "$monitor_addr" ] || [ "$monitor_addr" = "null" ]; then
-        echo "failed to resolve monitor address from $config_file" >&2
-        exit 1
-    fi
-}
-
-resolve_kfb_device() {
-    device_path="$(ls -1 /dev/kfb* 2>/dev/null | sort | head -n 1 || true)"
-    if [ -z "$device_path" ]; then
-        echo "kfastblock device not found" >&2
-        exit 1
-    fi
-}
-
-detach_all_kfastblock_volumes
-
-if ! rdma link show | grep -q '^link rdmanic/'; then
-    "$repo_root/scripts/create-rdma-rxe.sh" -n rdmanic
-fi
-
-"$repo_root/vstart.sh" -m dev -c 3 -r 3 -C 1 -n rdmanic
-wait_cluster_active
-resolve_monitor_addr
-
-"$repo_root/monitor/fastblock-client" \
-    -conf="$config_file" \
-    -op=createimage \
-    -poolname=fb \
-    -imagename="$image_name" \
-    -imagesize=67108864 >/dev/null
-
-"$repo_root/kfastblock/tool/kfastblock-rawctl" \
-    get-image-info \
-    --addr "${monitor_addr}:3334" \
-    --pool-name fb \
-    --image-name "$image_name" >/dev/null
-
-"$repo_root/kfastblock/tool/kfastblock-rawctl" \
-    get-cluster-map \
-    --addr "${monitor_addr}:3334" \
-    --pool-id 1 >/dev/null
-
-make -C "$repo_root/kfastblock" all >/dev/null
-if ! lsmod | awk '$1 == "kfastblock" { found = 1 } END { exit(found ? 0 : 1) }'; then
-    insmod "$repo_root/kfastblock/kfastblock.ko"
-fi
-
-"$repo_root/kfastblock/tool/kfastblock-admin" attach \
-    --monitor-addr "${monitor_addr}:3334" \
-    --pool-name fb \
-    --image-name "$image_name"
+kfastblock_create_image "$repo_root" "$config_file" "$pool_name" "$image_name"
+kfastblock_run_rawctl_checks "$repo_root" "$monitor_addr" "$pool_name" "$image_name"
+kfastblock_build_and_load_module "$repo_root"
+kfastblock_attach_volume "$repo_root" "$monitor_addr" "$pool_name" "$image_name"
 detach_needed=1
 
-resolve_kfb_device
+device_path="$(kfastblock_resolve_device)"
 
 printf 'KFASTBLOCK_SMOKE_%s' "$image_name" | dd \
     of="$payload_file" \
