@@ -34,7 +34,7 @@ ccflags-y := -I$(src)/include
 KDIR ?= $(DEFAULT_KDIR)
 PWD := $(shell pwd)
 
-all: modules kfastblock-admin
+all: modules kfastblock-admin kfastblock-rawctl
 
 modules:
 	@if [ "$(KDIR)" = "$(HOSTBUILD_KDIR)" ] && \
@@ -50,8 +50,11 @@ modules:
 kfastblock-admin:
 	$(CC) $(CFLAGS) -o tool/kfastblock-admin tool/kfastblock-admin.c
 
+kfastblock-rawctl:
+	$(CC) $(CFLAGS) -o tool/kfastblock-rawctl tool/kfastblock-rawctl.c
+
 clean:
 	$(MAKE) -C $(KDIR) M=$(PWD) clean
-	rm -f tool/kfastblock-admin
+	rm -f tool/kfastblock-admin tool/kfastblock-rawctl
 
-.PHONY: all modules clean kfastblock-admin
+.PHONY: all modules clean kfastblock-admin kfastblock-rawctl
