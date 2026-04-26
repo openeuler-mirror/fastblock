@@ -16,6 +16,7 @@
 
 #include "kfastblock/common.h"
 #include "kfastblock/buffer.h"
+#include "kfastblock/connpool.h"
 #include "kfastblock/rawproto.h"
 #include "kfastblock/scheduler.h"
 #include "kfastblock/transport.h"
@@ -77,59 +78,25 @@ static bool kfastblock_transport_should_retry_monitor(const int ret);
 static void kfastblock_transport_close_cached_socket_locked(
 	struct kfastblock_cached_socket *cached)
 {
-	if (!cached)
-		return;
-
-	if (cached->sock) {
-		sock_release(cached->sock);
-		cached->sock = NULL;
-	}
-	cached->connecting = false;
-	cached->next_seq = 0;
+	kfastblock_osd_conn_slot_close_locked(cached);
 }
 
 static void kfastblock_transport_close_cached_monitor_socket_locked(
 	struct kfastblock_cached_monitor_socket *cached)
 {
-	if (!cached)
-		return;
-
-	if (cached->sock) {
-		sock_release(cached->sock);
-		cached->sock = NULL;
-	}
-	cached->next_seq = 0;
-}
-
-static bool kfastblock_transport_cached_socket_matches_locked(
-	const struct kfastblock_cached_socket *cached,
-	const struct kfastblock_leader_info *leader)
-{
-	if (!cached || !leader || !cached->sock || cached->connecting)
-		return false;
-	return cached->osd_id == leader->osd_id &&
-		cached->port == leader->port &&
-		strcmp(cached->address, leader->address) == 0;
+	kfastblock_monitor_conn_slot_close_locked(cached);
 }
 
 static bool kfastblock_transport_monitor_socket_matches_locked(
 	const struct kfastblock_cached_monitor_socket *cached,
 	const struct kfastblock_monitor_endpoint *endpoint)
 {
-	if (!cached || !endpoint || !cached->sock)
-		return false;
-	return cached->port == endpoint->port &&
-		strcmp(cached->address, endpoint->host) == 0;
+	return kfastblock_monitor_conn_slot_matches_locked(cached, endpoint);
 }
 
 static u64 kfastblock_transport_next_seq(struct kfastblock_cached_socket *cached)
 {
-	if (!cached)
-		return 1;
-
-	if (!cached->next_seq)
-		cached->next_seq = 1;
-	return cached->next_seq++;
+	return kfastblock_osd_conn_slot_next_seq_locked(cached);
 }
 
 static void kfastblock_transport_close_cached_monitor_socket(
@@ -146,80 +113,7 @@ static void kfastblock_transport_close_cached_monitor_socket(
 static u64 kfastblock_transport_next_monitor_seq(
 	struct kfastblock_cached_monitor_socket *cached)
 {
-	if (!cached)
-		return 1;
-
-	if (!cached->next_seq)
-		cached->next_seq = 1;
-	return cached->next_seq++;
-}
-
-static unsigned long
-kfastblock_transport_backoff_interval(const u32 fail_streak)
-{
-	unsigned long delay_ms = 100;
-	u32 shifts = 0;
-
-	if (fail_streak > 1)
-		shifts = min_t(u32, fail_streak - 1, 5);
-	delay_ms <<= shifts;
-	if (delay_ms > 3000)
-		delay_ms = 3000;
-	return msecs_to_jiffies(delay_ms);
-}
-
-static void
-kfastblock_transport_reset_osd_socket_backoff(struct kfastblock_cached_socket *cached)
-{
-	if (!cached)
-		return;
-
-	cached->fail_streak = 0;
-	cached->last_error = 0;
-	cached->last_failure_jiffies = 0;
-	cached->backoff_until_jiffies = 0;
-}
-
-static void kfastblock_transport_reset_monitor_socket_backoff(
-	struct kfastblock_cached_monitor_socket *cached)
-{
-	if (!cached)
-		return;
-
-	cached->fail_streak = 0;
-	cached->last_error = 0;
-	cached->last_failure_jiffies = 0;
-	cached->backoff_until_jiffies = 0;
-}
-
-static int kfastblock_transport_osd_backoff_active(
-	const struct kfastblock_cached_socket *cached,
-	const struct kfastblock_leader_info *leader)
-{
-	if (!cached || !leader || cached->sock || !cached->backoff_until_jiffies)
-		return 0;
-	if (cached->osd_id != leader->osd_id || cached->port != leader->port)
-		return 0;
-	if (strcmp(cached->address, leader->address))
-		return 0;
-	if (time_before(jiffies, cached->backoff_until_jiffies))
-		return -EAGAIN;
-	return 0;
-}
-
-static int kfastblock_transport_monitor_backoff_active(
-	const struct kfastblock_cached_monitor_socket *cached,
-	const struct kfastblock_monitor_endpoint *endpoint)
-{
-	if (!cached || !endpoint || cached->sock || !cached->backoff_until_jiffies)
-		return 0;
-	if (cached->port != endpoint->port)
-		return 0;
-	if (strcmp(cached->address, endpoint->host))
-		return 0;
-	if (time_before(jiffies, cached->backoff_until_jiffies))
-		return -EAGAIN;
-	return 0;
+	return kfastblock_monitor_conn_slot_next_seq_locked(cached);
 }
 
 static void kfastblock_transport_mark_osd_socket_failure(
@@ -233,14 +127,8 @@ static void kfastblock_transport_mark_osd_socket_failure(
 	if (!cached || !leader)
 		return;
 
-	cached->osd_id = leader->osd_id;
-	cached->port = leader->port;
-	strscpy(cached->address, leader->address, sizeof(cached->address));
-	cached->fail_streak = min_t(u32, cached->fail_streak + 1, 8);
-	cached->last_error = ret;
-	cached->last_failure_jiffies = jiffies;
-	backoff_jiffies = kfastblock_transport_backoff_interval(cached->fail_streak);
-	cached->backoff_until_jiffies = jiffies + backoff_jiffies;
+	backoff_jiffies = kfastblock_osd_conn_slot_mark_failure_locked(cached,
+							       leader, ret);
 	kfastblock_volume_account_socket_backoff(vol, false, leader->osd_id,
 				leader->port, cached->fail_streak, backoff_jiffies, ret);
 }
@@ -256,13 +144,8 @@ static void kfastblock_transport_mark_monitor_socket_failure(
 	if (!cached || !endpoint)
 		return;
 
-	cached->port = endpoint->port;
-	strscpy(cached->address, endpoint->host, sizeof(cached->address));
-	cached->fail_streak = min_t(u32, cached->fail_streak + 1, 8);
-	cached->last_error = ret;
-	cached->last_failure_jiffies = jiffies;
-	backoff_jiffies = kfastblock_transport_backoff_interval(cached->fail_streak);
-	cached->backoff_until_jiffies = jiffies + backoff_jiffies;
+	backoff_jiffies = kfastblock_monitor_conn_slot_mark_failure_locked(
+		cached, endpoint, ret);
 	kfastblock_volume_account_socket_backoff(vol, true, 0, endpoint->port,
 				cached->fail_streak, backoff_jiffies, ret);
 }
@@ -271,25 +154,14 @@ static void kfastblock_transport_mark_osd_socket_success(
 	struct kfastblock_cached_socket *cached,
 	const struct kfastblock_leader_info *leader)
 {
-	if (!cached || !leader)
-		return;
-
-	cached->osd_id = leader->osd_id;
-	cached->port = leader->port;
-	strscpy(cached->address, leader->address, sizeof(cached->address));
-	kfastblock_transport_reset_osd_socket_backoff(cached);
+	kfastblock_osd_conn_slot_mark_success_locked(cached, leader);
 }
 
 static void kfastblock_transport_mark_monitor_socket_success(
 	struct kfastblock_cached_monitor_socket *cached,
 	const struct kfastblock_monitor_endpoint *endpoint)
 {
-	if (!cached || !endpoint)
-		return;
-
-	cached->port = endpoint->port;
-	strscpy(cached->address, endpoint->host, sizeof(cached->address));
-	kfastblock_transport_reset_monitor_socket_backoff(cached);
+	kfastblock_monitor_conn_slot_mark_success_locked(cached, endpoint);
 }
 
 static int kfastblock_transport_connect_osd_cached_locked(
@@ -343,10 +215,12 @@ static int kfastblock_transport_get_monitor_socket(
 
 	mutex_lock(&cached->lock);
 	if (kfastblock_transport_monitor_socket_matches_locked(cached, endpoint)) {
+		kfastblock_monitor_conn_slot_note_reuse_locked(cached);
 		mutex_unlock(&cached->lock);
 		return 0;
 	}
-	ret = kfastblock_transport_monitor_backoff_active(cached, endpoint);
+	ret = kfastblock_monitor_conn_slot_backoff_active_locked(cached, endpoint,
+							       NULL);
 	if (ret) {
 		unsigned long remaining = time_after(cached->backoff_until_jiffies, jiffies) ?
 			cached->backoff_until_jiffies - jiffies : 0;
@@ -357,6 +231,7 @@ static int kfastblock_transport_get_monitor_socket(
 	}
 
 	kfastblock_transport_close_cached_monitor_socket_locked(cached);
+	kfastblock_monitor_conn_slot_begin_connect_locked(cached);
 	ret = kfastblock_transport_try_connect_monitor(endpoint, sock_out);
 	if (ret) {
 		kfastblock_transport_mark_monitor_socket_failure(vol, cached, endpoint, ret);
@@ -390,29 +265,6 @@ static bool kfastblock_transport_should_retry_monitor(const int ret)
 	}
 }
 
-static struct kfastblock_cached_socket *
-kfastblock_transport_find_cached_socket(struct kfastblock_volume *vol,
-					const struct kfastblock_leader_info *leader)
-{
-	int i;
-
-	if (!vol || !leader)
-		return NULL;
-
-	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i) {
-		struct kfastblock_cached_socket *cached = &vol->socket_cache[i];
-		bool match;
-
-		mutex_lock(&cached->lock);
-		match = kfastblock_transport_cached_socket_matches_locked(cached, leader);
-		mutex_unlock(&cached->lock);
-		if (match)
-			return cached;
-	}
-
-	return NULL;
-}
-
 static void kfastblock_transport_release_osd_socket(
 	struct kfastblock_cached_socket *cached)
 {
@@ -435,16 +287,13 @@ static int kfastblock_transport_acquire_osd_socket(
 
 	*cached_out = NULL;
 	*sock_out = NULL;
-	cached = kfastblock_transport_find_cached_socket(vol, leader);
+	cached = kfastblock_osd_conn_pool_acquire_match(vol->socket_cache,
+							KFASTBLOCK_MAX_SOCKET_CACHE,
+							leader, &sock);
 	if (cached) {
-		mutex_lock(&cached->lock);
-		if (kfastblock_transport_cached_socket_matches_locked(cached, leader)) {
-			*cached_out = cached;
-			*sock_out = cached->sock;
-			return 0;
-		}
-		mutex_unlock(&cached->lock);
-		cached = NULL;
+		*cached_out = cached;
+		*sock_out = sock;
+		return 0;
 	}
 
 	ret = kfastblock_transport_check_osd_backoff(vol, leader);
@@ -486,25 +335,16 @@ static int kfastblock_transport_check_osd_backoff(
 	struct kfastblock_volume *vol,
 	const struct kfastblock_leader_info *leader)
 {
-	int i;
+	int ret;
+	unsigned long remaining = 0;
 
 	if (!vol || !leader)
 		return -EINVAL;
 
-	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i) {
-		struct kfastblock_cached_socket *cached = &vol->socket_cache[i];
-		int ret;
-		unsigned long remaining;
-
-		mutex_lock(&cached->lock);
-		ret = kfastblock_transport_osd_backoff_active(cached, leader);
-		if (!ret) {
-			mutex_unlock(&cached->lock);
-			continue;
-		}
-		remaining = time_after(cached->backoff_until_jiffies, jiffies) ?
-			cached->backoff_until_jiffies - jiffies : 0;
-		mutex_unlock(&cached->lock);
+	ret = kfastblock_osd_conn_pool_check_backoff(vol->socket_cache,
+						     KFASTBLOCK_MAX_SOCKET_CACHE,
+						     leader, &remaining);
+	if (ret) {
 		kfastblock_volume_account_socket_backoff_wait(vol, false,
 			leader->osd_id, leader->port, remaining, ret);
 		return ret;
@@ -516,25 +356,11 @@ static int kfastblock_transport_check_osd_backoff(
 static struct kfastblock_cached_socket *
 kfastblock_transport_reserve_osd_slot(struct kfastblock_volume *vol)
 {
-	int i;
-
 	if (!vol)
 		return NULL;
 
-	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i) {
-		struct kfastblock_cached_socket *cached = &vol->socket_cache[i];
-
-		if (!mutex_trylock(&cached->lock))
-			continue;
-		if (cached->sock || cached->connecting) {
-			mutex_unlock(&cached->lock);
-			continue;
-		}
-		cached->connecting = true;
-		return cached;
-	}
-
-	return NULL;
+	return kfastblock_osd_conn_pool_reserve(vol->socket_cache,
+						KFASTBLOCK_MAX_SOCKET_CACHE);
 }
 
 static int kfastblock_transport_status_to_errno(const u32 status)

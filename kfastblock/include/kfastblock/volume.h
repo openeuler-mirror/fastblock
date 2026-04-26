@@ -8,7 +8,6 @@
 #include <linux/list.h>
 #include <linux/mutex.h>
 #include <linux/rwsem.h>
-#include <linux/socket.h>
 #include <linux/spinlock.h>
 #include <linux/types.h>
 #include <linux/wait.h>
@@ -18,6 +17,7 @@ struct dentry;
 
 #include "kfastblock/control.h"
 #include "kfastblock/buffer.h"
+#include "kfastblock/connpool.h"
 #include "kfastblock/meta.h"
 #include "kfastblock/scheduler.h"
 
@@ -67,32 +67,6 @@ enum kfastblock_volume_failure_source {
 	KFASTBLOCK_VOLUME_SOURCE_OBJECT_IO = 6,
 	KFASTBLOCK_VOLUME_SOURCE_MONITOR_SOCKET = 7,
 	KFASTBLOCK_VOLUME_SOURCE_OSD_SOCKET = 8,
-};
-
-struct kfastblock_cached_socket {
-	u32 osd_id;
-	u16 port;
-	char address[KFASTBLOCK_MAX_ADDR_LEN];
-	struct socket *sock;
-	struct mutex lock;
-	bool connecting;
-	u64 next_seq;
-	u32 fail_streak;
-	s32 last_error;
-	unsigned long last_failure_jiffies;
-	unsigned long backoff_until_jiffies;
-};
-
-struct kfastblock_cached_monitor_socket {
-	u16 port;
-	char address[KFASTBLOCK_MAX_ADDR_LEN];
-	struct socket *sock;
-	struct mutex lock;
-	u64 next_seq;
-	u32 fail_streak;
-	s32 last_error;
-	unsigned long last_failure_jiffies;
-	unsigned long backoff_until_jiffies;
 };
 
 struct kfastblock_volume_stats {
