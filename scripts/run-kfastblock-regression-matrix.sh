@@ -7,6 +7,8 @@ run_dir="$matrix_root/matrix-$(date +%Y%m%d-%H%M%S)"
 log_file="$run_dir/matrix.log"
 run_sanitizer="${KFASTBLOCK_MATRIX_RUN_SANITIZER:-1}"
 profile="${KFASTBLOCK_MATRIX_PROFILE:-default}"
+case_filter="${KFASTBLOCK_MATRIX_CASES:-}"
+reuse_cluster="${KFASTBLOCK_MATRIX_REUSE_CLUSTER:-0}"
 refresh_duration="${KFASTBLOCK_MATRIX_REFRESH_DURATION_SEC:-8}"
 lifecycle_duration="${KFASTBLOCK_MATRIX_LIFECYCLE_DURATION_SEC:-8}"
 lifecycle_cycles="${KFASTBLOCK_MATRIX_LIFECYCLE_ATTACH_CYCLES:-1}"
@@ -46,6 +48,13 @@ while [ "$#" -gt 0 ]; do
             shift
             profile="$1"
             ;;
+        --cases)
+            shift
+            case_filter="$1"
+            ;;
+        --reuse-cluster)
+            reuse_cluster=1
+            ;;
         *)
             echo "unknown argument: $1" >&2
             exit 1
@@ -83,28 +92,65 @@ run_case() {
     fi
 }
 
+case_enabled() {
+    local case_name="$1"
+    local item
+
+    if [ -z "$case_filter" ]; then
+        return 0
+    fi
+
+    IFS=',' read -r -a _matrix_cases <<< "$case_filter"
+    for item in "${_matrix_cases[@]}"; do
+        if [ "$item" = "$case_name" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+run_case_if_enabled() {
+    local case_name="$1"
+    shift
+
+    if case_enabled "$case_name"; then
+        run_case "$case_name" "$@"
+    else
+        echo "[matrix] skip $case_name (filtered)"
+        printf '%s skipped\n' "$case_name" >> "$run_dir/summary.txt"
+        printf '%s\t%s\t%s\n' "$case_name" "skipped" "" >> "$run_dir/summary.tsv"
+    fi
+}
+
 echo "artifact_dir=$run_dir"
 
-run_case smoke "$repo_root/scripts/run-kfastblock-dev-smoke.sh"
-run_case concurrency-refresh env \
+run_case_if_enabled smoke env \
+    KFASTBLOCK_TEST_REUSE_CLUSTER="$reuse_cluster" \
+    "$repo_root/scripts/run-kfastblock-dev-smoke.sh"
+run_case_if_enabled concurrency-refresh env \
+    KFASTBLOCK_TEST_REUSE_CLUSTER=1 \
     KFASTBLOCK_CONCURRENCY_DURATION_SEC="$refresh_duration" \
     KFASTBLOCK_CONCURRENCY_ATTACH_CYCLES=0 \
     KFASTBLOCK_CONCURRENCY_IO_WORKERS=2 \
     KFASTBLOCK_CONCURRENCY_OPEN_WORKERS=0 \
     "$repo_root/scripts/run-kfastblock-concurrency.sh"
-run_case concurrency-lifecycle env \
+run_case_if_enabled concurrency-lifecycle env \
+    KFASTBLOCK_TEST_REUSE_CLUSTER=1 \
     KFASTBLOCK_CONCURRENCY_DURATION_SEC="$lifecycle_duration" \
     KFASTBLOCK_CONCURRENCY_ATTACH_CYCLES="$lifecycle_cycles" \
     KFASTBLOCK_CONCURRENCY_IO_WORKERS=1 \
     KFASTBLOCK_CONCURRENCY_OPEN_WORKERS=1 \
     "$repo_root/scripts/run-kfastblock-concurrency.sh"
-run_case fault-injection env \
+run_case_if_enabled fault-injection env \
+    KFASTBLOCK_TEST_REUSE_CLUSTER=1 \
     KFASTBLOCK_FAULT_IO_DURATION_SEC="$fault_duration" \
     KFASTBLOCK_FAULT_DOWN_SEC="$fault_down_sec" \
     "$repo_root/scripts/run-kfastblock-fault-injection.sh"
 
 if [ "$run_sanitizer" = "1" ]; then
-    run_case sanitizer "$repo_root/scripts/run-kfastblock-sanitizer.sh"
+    run_case_if_enabled sanitizer env \
+        KFASTBLOCK_TEST_REUSE_CLUSTER=1 \
+        "$repo_root/scripts/run-kfastblock-sanitizer.sh"
 else
     echo "[matrix] skip sanitizer"
     printf '%s skipped\n' "sanitizer" >> "$run_dir/summary.txt"

@@ -35,7 +35,7 @@ kfastblock_acquire_test_lock "$repo_root"
 kfastblock_start_logging "$log_file"
 echo "artifact_dir=$run_dir"
 
-kfastblock_prepare_dev_cluster "$repo_root" "$config_file"
+kfastblock_prepare_or_reuse_dev_cluster "$repo_root" "$config_file"
 kfastblock_capture_context "$config_file" "$run_dir"
 monitor_addr="$(kfastblock_resolve_monitor_addr "$config_file")"
 

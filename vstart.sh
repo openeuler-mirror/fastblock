@@ -206,6 +206,9 @@ function startDetachedLocalProcess() {
         _pid_file=$1
         _log_file=$2
         shift 2
+        if [ -n "${KFASTBLOCK_TEST_LOCK_FD:-}" ]; then
+            eval "exec ${KFASTBLOCK_TEST_LOCK_FD}>&-"
+        fi
         echo $$ > "$_pid_file"
         exec "$@" < /dev/null >> "$_log_file" 2>&1
     ' bash "$_pid_file" "$_log_file" "$@"
