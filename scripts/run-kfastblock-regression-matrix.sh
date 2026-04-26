@@ -22,7 +22,7 @@ apply_profile() {
     case "$profile" in
         quick)
             refresh_duration=4
-            lifecycle_duration=4
+            lifecycle_duration=6
             lifecycle_cycles=1
             fault_duration=8
             fault_down_sec=2
@@ -131,6 +131,12 @@ collect_case_notes() {
                     notes="${notes} "
                 fi
                 notes="${notes}$(tr '\n' ';' < "$artifact_path/refresh.summary")"
+            fi
+            if ls "$artifact_path"/open-*.summary >/dev/null 2>&1; then
+                if [ -n "$notes" ]; then
+                    notes="${notes} "
+                fi
+                notes="${notes}$(cat "$artifact_path"/open-*.summary | tr '\n' ';')"
             fi
             ;;
         fault-injection)
