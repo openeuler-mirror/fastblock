@@ -29,6 +29,13 @@ apply_profile() {
             ;;
         default)
             ;;
+        stress)
+            refresh_duration=12
+            lifecycle_duration=12
+            lifecycle_cycles=2
+            fault_duration=16
+            fault_down_sec=3
+            ;;
         *)
             echo "unknown profile: $profile" >&2
             exit 1
@@ -55,6 +62,14 @@ while [ "$#" -gt 0 ]; do
         --reuse-cluster)
             reuse_cluster=1
             ;;
+        --list-cases)
+            echo "smoke"
+            echo "concurrency-refresh"
+            echo "concurrency-lifecycle"
+            echo "fault-injection"
+            echo "sanitizer"
+            exit 0
+            ;;
         *)
             echo "unknown argument: $1" >&2
             exit 1
@@ -65,7 +80,7 @@ done
 
 apply_profile
 
-printf 'case\tstatus\tartifact_dir\n' > "$run_dir/summary.tsv"
+printf 'case\tstatus\tartifact_dir\tnotes\n' > "$run_dir/summary.tsv"
 
 run_case() {
     local case_name="$1"
@@ -73,6 +88,7 @@ run_case() {
     local case_log="$run_dir/${case_name}.log"
     local case_status="ok"
     local artifact_path=""
+    local notes=""
 
     echo "[matrix] start $case_name"
     if ! (env KFASTBLOCK_TEST_ARTIFACT_ROOT="$run_dir" "$@" 2>&1 | tee "$case_log"); then
@@ -81,15 +97,55 @@ run_case() {
     fi
 
     artifact_path="$(sed -n 's/^artifact_dir=//p' "$case_log" | tail -n 1)"
-    printf '%s\t%s\t%s\n' "$case_name" "$case_status" "$artifact_path" >> "$run_dir/summary.tsv"
+    if [ -n "$artifact_path" ]; then
+        notes="$(collect_case_notes "$case_name" "$artifact_path")"
+    fi
+    printf '%s\t%s\t%s\t%s\n' "$case_name" "$case_status" "$artifact_path" "$notes" >> "$run_dir/summary.tsv"
 
     if [ "$case_status" = "ok" ]; then
-        echo "[matrix] ok $case_name artifact=${artifact_path:-unknown}"
+        echo "[matrix] ok $case_name artifact=${artifact_path:-unknown} notes=${notes:-none}"
         printf '%s ok\n' "$case_name" >> "$run_dir/summary.txt"
     else
         printf '%s fail\n' "$case_name" >> "$run_dir/summary.txt"
         return 1
     fi
+}
+
+collect_case_notes() {
+    local case_name="$1"
+    local artifact_path="$2"
+    local notes=""
+
+    case "$case_name" in
+        smoke)
+            if [ -f "$artifact_path/smoke.log" ]; then
+                notes="$(tail -n 1 "$artifact_path/smoke.log" 2>/dev/null || true)"
+            fi
+            ;;
+        concurrency-refresh|concurrency-lifecycle)
+            if [ -f "$artifact_path/attach-detach.summary" ]; then
+                notes="$(tr '\n' ';' < "$artifact_path/attach-detach.summary")"
+            fi
+            if [ -f "$artifact_path/refresh.summary" ]; then
+                if [ -n "$notes" ]; then
+                    notes="${notes} "
+                fi
+                notes="${notes}$(tr '\n' ';' < "$artifact_path/refresh.summary")"
+            fi
+            ;;
+        fault-injection)
+            if [ -f "$artifact_path/fault-io.summary" ]; then
+                notes="$(tr '\n' ';' < "$artifact_path/fault-io.summary")"
+            fi
+            ;;
+        sanitizer)
+            if [ -f "$artifact_path/sanitizer.log" ]; then
+                notes="$(tail -n 2 "$artifact_path/sanitizer.log" | tr '\n' ';' 2>/dev/null || true)"
+            fi
+            ;;
+    esac
+
+    printf '%s\n' "$notes"
 }
 
 case_enabled() {
@@ -118,7 +174,7 @@ run_case_if_enabled() {
     else
         echo "[matrix] skip $case_name (filtered)"
         printf '%s skipped\n' "$case_name" >> "$run_dir/summary.txt"
-        printf '%s\t%s\t%s\n' "$case_name" "skipped" "" >> "$run_dir/summary.tsv"
+        printf '%s\t%s\t%s\t%s\n' "$case_name" "skipped" "" "" >> "$run_dir/summary.tsv"
     fi
 }
 
@@ -154,7 +210,7 @@ if [ "$run_sanitizer" = "1" ]; then
 else
     echo "[matrix] skip sanitizer"
     printf '%s skipped\n' "sanitizer" >> "$run_dir/summary.txt"
-    printf '%s\t%s\t%s\n' "sanitizer" "skipped" "" >> "$run_dir/summary.tsv"
+    printf '%s\t%s\t%s\t%s\n' "sanitizer" "skipped" "" "" >> "$run_dir/summary.tsv"
 fi
 
 echo "[matrix] all cases complete"
