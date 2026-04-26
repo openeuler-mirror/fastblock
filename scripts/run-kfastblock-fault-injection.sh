@@ -10,6 +10,7 @@ image_name="${KFASTBLOCK_FAULT_IMAGE:-kfb-fault-$(date +%s)}"
 target_osd="${KFASTBLOCK_FAULT_TARGET_OSD:-1}"
 down_sleep_sec="${KFASTBLOCK_FAULT_DOWN_SEC:-3}"
 io_duration_sec="${KFASTBLOCK_FAULT_IO_DURATION_SEC:-18}"
+dispatch_window="${KFASTBLOCK_FAULT_DISPATCH_WINDOW:-}"
 run_dir="$(kfastblock_artifact_dir "$repo_root" fault-injection)"
 log_file="$run_dir/fault.log"
 payload_file="$run_dir/payload.bin"
@@ -127,6 +128,7 @@ kfastblock_acquire_test_lock "$repo_root"
 kfastblock_start_logging "$log_file"
 echo "artifact_dir=$run_dir"
 echo "target_osd=$target_osd down_sleep_sec=$down_sleep_sec io_duration_sec=$io_duration_sec"
+echo "dispatch_window=${dispatch_window:-default}"
 
 kfastblock_prepare_or_reuse_dev_cluster "$repo_root" "$config_file"
 kfastblock_capture_context "$config_file" "$run_dir"
@@ -137,7 +139,14 @@ kfastblock_run_rawctl_checks "$repo_root" "$monitor_addr" "$pool_name" "$image_n
 kfastblock_build_and_load_module "$repo_root"
 kfastblock_attach_volume "$repo_root" "$monitor_addr" "$pool_name" "$image_name"
 detach_needed=1
+if [ -n "$dispatch_window" ]; then
+    kfastblock_set_dispatch_window "$repo_root" "$pool_name" "$image_name" \
+        "$dispatch_window"
+fi
 device_path="$(kfastblock_resolve_device)"
+
+kfastblock_show_volume "$repo_root" "$pool_name" "$image_name" \
+    > "$run_dir/admin-before.txt"
 
 "$repo_root/kfastblock/tool/kfastblock-admin" force-refresh \
     --pool-name "$pool_name" \
@@ -147,10 +156,6 @@ device_path="$(kfastblock_resolve_device)"
     --pool-name "$pool_name" \
     --image-name "$image_name" >/dev/null
 sleep 2
-
-"$repo_root/kfastblock/tool/kfastblock-admin" show \
-    --pool-name "$pool_name" \
-    --image-name "$image_name" > "$run_dir/admin-before.txt"
 
 write_verify_block 0 baseline
 
@@ -178,8 +183,7 @@ worker_pid=""
 wait_for_recovery_io 1 recovery-a
 wait_for_recovery_io 2 recovery-b
 
-"$repo_root/kfastblock/tool/kfastblock-admin" show \
-    --pool-name "$pool_name" \
-    --image-name "$image_name" > "$run_dir/admin-after.txt"
+kfastblock_show_volume "$repo_root" "$pool_name" "$image_name" \
+    > "$run_dir/admin-after.txt"
 
 echo "fault injection ok: image=$image_name target_osd=$target_osd"

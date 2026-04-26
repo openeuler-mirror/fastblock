@@ -12,6 +12,7 @@ io_workers="${KFASTBLOCK_CONCURRENCY_IO_WORKERS:-4}"
 open_workers="${KFASTBLOCK_CONCURRENCY_OPEN_WORKERS:-2}"
 attach_cycles="${KFASTBLOCK_CONCURRENCY_ATTACH_CYCLES:-8}"
 refresh_interval_sec="${KFASTBLOCK_CONCURRENCY_REFRESH_INTERVAL_SEC:-1}"
+dispatch_window="${KFASTBLOCK_CONCURRENCY_DISPATCH_WINDOW:-}"
 run_dir="$(kfastblock_artifact_dir "$repo_root" concurrency)"
 log_file="$run_dir/concurrency.log"
 monitor_addr=""
@@ -55,6 +56,10 @@ attach_and_publish_device() {
     local device_path
 
     kfastblock_attach_volume "$repo_root" "$monitor_addr" "$pool_name" "$image_name" >/dev/null
+    if [ -n "$dispatch_window" ]; then
+        kfastblock_set_dispatch_window "$repo_root" "$pool_name" "$image_name" \
+            "$dispatch_window"
+    fi
     device_path="$(kfastblock_resolve_device)"
     write_current_device "$device_path"
     detach_needed=1
@@ -214,6 +219,7 @@ kfastblock_acquire_test_lock "$repo_root"
 kfastblock_start_logging "$log_file"
 echo "artifact_dir=$run_dir"
 echo "duration_sec=$duration_sec io_workers=$io_workers open_workers=$open_workers attach_cycles=$attach_cycles"
+echo "dispatch_window=${dispatch_window:-default}"
 
 kfastblock_prepare_or_reuse_dev_cluster "$repo_root" "$config_file"
 kfastblock_capture_context "$config_file" "$run_dir"
@@ -223,6 +229,8 @@ kfastblock_create_image "$repo_root" "$config_file" "$pool_name" "$image_name"
 kfastblock_run_rawctl_checks "$repo_root" "$monitor_addr" "$pool_name" "$image_name"
 kfastblock_build_and_load_module "$repo_root"
 attach_and_publish_device >/dev/null
+kfastblock_show_volume "$repo_root" "$pool_name" "$image_name" \
+    > "$run_dir/admin-before.txt"
 
 deadline=$((SECONDS + duration_sec))
 refresh_worker "$deadline" &
@@ -257,5 +265,8 @@ for pid in "${bg_pids[@]}"; do
     fi
 done
 bg_pids=()
+
+kfastblock_show_volume "$repo_root" "$pool_name" "$image_name" \
+    > "$run_dir/admin-after.txt"
 
 echo "concurrency ok: image=$image_name device=$(read_current_device)"
