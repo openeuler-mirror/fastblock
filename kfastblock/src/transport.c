@@ -34,6 +34,37 @@ static struct kfastblock_cached_socket *
 kfastblock_transport_reserve_osd_slot(struct kfastblock_volume *vol);
 static struct workqueue_struct *g_kfastblock_transport_wq;
 
+enum kfastblock_transport_buffer_flags {
+	KFASTBLOCK_TRANSPORT_BUFFER_ZERO = 1U << 0,
+	KFASTBLOCK_TRANSPORT_BUFFER_LARGE = 1U << 1,
+};
+
+static void *kfastblock_transport_alloc_buffer(size_t size, gfp_t gfp,
+					       unsigned int flags)
+{
+	if (!size)
+		return NULL;
+	if (flags & KFASTBLOCK_TRANSPORT_BUFFER_LARGE) {
+		if (flags & KFASTBLOCK_TRANSPORT_BUFFER_ZERO)
+			return kvzalloc(size, gfp);
+		return kvmalloc(size, gfp);
+	}
+	if (flags & KFASTBLOCK_TRANSPORT_BUFFER_ZERO)
+		return kzalloc(size, gfp);
+	return kmalloc(size, gfp);
+}
+
+static void kfastblock_transport_free_buffer(void *buf, unsigned int flags)
+{
+	if (!buf)
+		return;
+	if (flags & KFASTBLOCK_TRANSPORT_BUFFER_LARGE) {
+		kvfree(buf);
+		return;
+	}
+	kfree(buf);
+}
+
 static bool kfastblock_transport_should_retry_monitor(const int ret);
 
 static void kfastblock_transport_close_cached_socket_locked(
@@ -997,12 +1028,14 @@ static int kfastblock_transport_recv_response(struct socket *sock,
 	if (!body_len)
 		return kfastblock_transport_status_to_errno(le32_to_cpu(hdr->status));
 
-	*body = kvmalloc(body_len, GFP_KERNEL);
+	*body = kfastblock_transport_alloc_buffer(body_len, GFP_KERNEL,
+				       KFASTBLOCK_TRANSPORT_BUFFER_LARGE);
 	if (!*body)
 		return -ENOMEM;
 	ret = kfastblock_transport_recv_all(sock, *body, body_len);
 	if (ret) {
-		kvfree(*body);
+		kfastblock_transport_free_buffer(*body,
+				       KFASTBLOCK_TRANSPORT_BUFFER_LARGE);
 		*body = NULL;
 		return ret;
 	}
@@ -1451,7 +1484,8 @@ static int kfastblock_transport_write_object(struct socket *sock,
 	req.reserved = 0;
 
 	body_len = sizeof(req) + object_name_len + data_len;
-	req_body = kvmalloc(body_len, GFP_KERNEL);
+	req_body = kfastblock_transport_alloc_buffer(body_len, GFP_KERNEL,
+					     KFASTBLOCK_TRANSPORT_BUFFER_LARGE);
 	if (!req_body)
 		return -ENOMEM;
 
@@ -1466,7 +1500,8 @@ static int kfastblock_transport_write_object(struct socket *sock,
 					seq,
 					req_body,
 					body_len);
-	kvfree(req_body);
+	kfastblock_transport_free_buffer(req_body,
+				       KFASTBLOCK_TRANSPORT_BUFFER_LARGE);
 	if (ret)
 		return ret;
 
@@ -1508,7 +1543,7 @@ static int kfastblock_transport_read_object(struct socket *sock,
 
 	object_name_len = strlen(extent->object_name);
 	body_len = sizeof(req) + object_name_len;
-	req_body = kmalloc(body_len, GFP_KERNEL);
+	req_body = kfastblock_transport_alloc_buffer(body_len, GFP_KERNEL, 0);
 	if (!req_body)
 		return -ENOMEM;
 
@@ -1521,7 +1556,7 @@ static int kfastblock_transport_read_object(struct socket *sock,
 					seq,
 					req_body,
 					body_len);
-	kfree(req_body);
+	kfastblock_transport_free_buffer(req_body, 0);
 	if (ret)
 		return ret;
 
@@ -1687,7 +1722,9 @@ static int kfastblock_transport_submit_object_io(
 	}
 
 	if (op == REQ_OP_WRITE) {
-			buf = kvmalloc(extent->length, GFP_KERNEL);
+			buf = kfastblock_transport_alloc_buffer(
+				extent->length, GFP_KERNEL,
+				KFASTBLOCK_TRANSPORT_BUFFER_LARGE);
 			if (!buf)
 				return -ENOMEM;
 		ret = kfastblock_transport_copy_request_data(
@@ -1695,14 +1732,19 @@ static int kfastblock_transport_submit_object_io(
 		if (ret)
 			goto out;
 	} else if (op == REQ_OP_WRITE_ZEROES) {
-			buf = kvzalloc(extent->length, GFP_KERNEL);
+			buf = kfastblock_transport_alloc_buffer(
+				extent->length, GFP_KERNEL,
+				KFASTBLOCK_TRANSPORT_BUFFER_LARGE |
+				KFASTBLOCK_TRANSPORT_BUFFER_ZERO);
 			if (!buf)
 				return -ENOMEM;
-		} else if (op == REQ_OP_READ) {
-			buf = kvmalloc(extent->length, GFP_KERNEL);
+			} else if (op == REQ_OP_READ) {
+			buf = kfastblock_transport_alloc_buffer(
+				extent->length, GFP_KERNEL,
+				KFASTBLOCK_TRANSPORT_BUFFER_LARGE);
 			if (!buf)
 				return -ENOMEM;
-		}
+			}
 
 	for (attempt = 0; attempt < 2; ++attempt) {
 		if (attempt == 0 && hint &&
@@ -1783,7 +1825,8 @@ out:
 	if (ret)
 		kfastblock_volume_account_object_error(
 			vol, op, extent->pg_id, leader.osd_id, extent->length, ret);
-	kvfree(buf);
+	kfastblock_transport_free_buffer(buf,
+				       KFASTBLOCK_TRANSPORT_BUFFER_LARGE);
 	return ret;
 }
 
