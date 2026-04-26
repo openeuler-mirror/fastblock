@@ -15,6 +15,7 @@ enum kfastblock_selfcheck_flag {
 	KFASTBLOCK_SELFCHECK_OSD_CONN_POOL = 1U << 4,
 	KFASTBLOCK_SELFCHECK_MON_CONN_POOL = 1U << 5,
 	KFASTBLOCK_SELFCHECK_QUEUE_GATE = 1U << 6,
+	KFASTBLOCK_SELFCHECK_FAULT_INJECTION = 1U << 7,
 };
 
 struct kfastblock_selfcheck_report {

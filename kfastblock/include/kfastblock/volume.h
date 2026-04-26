@@ -18,6 +18,7 @@ struct dentry;
 #include "kfastblock/control.h"
 #include "kfastblock/buffer.h"
 #include "kfastblock/connpool.h"
+#include "kfastblock/fault.h"
 #include "kfastblock/meta.h"
 #include "kfastblock/scheduler.h"
 #include "kfastblock/selfcheck.h"
@@ -49,6 +50,9 @@ enum kfastblock_volume_event_type {
 	KFASTBLOCK_VOLUME_EVENT_MANUAL_QUEUE_PAUSE,
 	KFASTBLOCK_VOLUME_EVENT_MANUAL_QUEUE_RESUME,
 	KFASTBLOCK_VOLUME_EVENT_SOCKET_BACKOFF_WAIT,
+	KFASTBLOCK_VOLUME_EVENT_MANUAL_FAULT_INJECTION_ARM,
+	KFASTBLOCK_VOLUME_EVENT_MANUAL_FAULT_INJECTION_RESET,
+	KFASTBLOCK_VOLUME_EVENT_FAULT_INJECTION_TRIGGER,
 };
 
 enum kfastblock_volume_health_state {
@@ -156,6 +160,7 @@ struct kfastblock_volume {
 	struct kfastblock_volume_health health;
 	struct kfastblock_volume_event_log event_log;
 	struct kfastblock_selfcheck_state selfcheck;
+	struct kfastblock_fault_injection_state fault_injection;
 
 	struct list_head node;
 	struct device dev;
@@ -223,6 +228,8 @@ void kfastblock_volume_account_socket_backoff_wait(struct kfastblock_volume *vol
 					 u16 port,
 					 unsigned long remaining_jiffies,
 					 int ret);
+void kfastblock_volume_account_fault_injection(struct kfastblock_volume *vol,
+					 u32 site, int ret);
 void kfastblock_volume_update_health(struct kfastblock_volume *vol,
 				     u32 new_state, u32 source, int ret);
 void kfastblock_volume_mark_success(struct kfastblock_volume *vol, u32 source);

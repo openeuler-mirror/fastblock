@@ -17,6 +17,7 @@
 #include "kfastblock/common.h"
 #include "kfastblock/buffer.h"
 #include "kfastblock/connpool.h"
+#include "kfastblock/fault.h"
 #include "kfastblock/rawproto.h"
 #include "kfastblock/scheduler.h"
 #include "kfastblock/transport.h"
@@ -46,6 +47,22 @@ struct kfastblock_transport_body_part {
 	const void *buf;
 	u32 len;
 };
+
+static int kfastblock_transport_maybe_inject_fault(
+	struct kfastblock_volume *vol,
+	u32 site)
+{
+	int ret = 0;
+
+	if (!vol)
+		return 0;
+	if (!kfastblock_fault_injection_should_fail(&vol->fault_injection,
+						    site, &ret))
+		return 0;
+
+	kfastblock_volume_account_fault_injection(vol, site, ret);
+	return ret ? ret : -EIO;
+}
 
 static void *kfastblock_transport_alloc_buffer(size_t size, gfp_t gfp,
 					       unsigned int flags)
@@ -176,6 +193,14 @@ static int kfastblock_transport_connect_osd_cached_locked(
 		return -EINVAL;
 
 	kfastblock_transport_close_cached_socket_locked(cached);
+	ret = kfastblock_transport_maybe_inject_fault(
+		vol, KFASTBLOCK_FAULT_OSD_CONNECT);
+	if (ret) {
+		kfastblock_transport_mark_osd_socket_failure(vol, cached, leader, ret);
+		cached->connecting = false;
+		mutex_unlock(&cached->lock);
+		return ret;
+	}
 	ret = kfastblock_transport_try_connect_host(leader->address, leader->port,
 					 sock_out);
 	if (ret) {
@@ -241,6 +266,14 @@ static int kfastblock_transport_get_monitor_socket(
 	}
 	kfastblock_transport_close_cached_monitor_socket_locked(cached);
 	kfastblock_monitor_conn_slot_begin_connect_locked(cached);
+	ret = kfastblock_transport_maybe_inject_fault(
+		vol, KFASTBLOCK_FAULT_MONITOR_CONNECT);
+	if (ret) {
+		kfastblock_transport_mark_monitor_socket_failure(vol, cached,
+								 endpoint, ret);
+		mutex_unlock(&cached->lock);
+		return ret;
+	}
 	ret = kfastblock_transport_try_connect_monitor(endpoint, sock_out);
 	if (ret) {
 		kfastblock_transport_mark_monitor_socket_failure(vol, cached, endpoint, ret);
@@ -1637,6 +1670,25 @@ static int kfastblock_transport_submit_object_io(
 		}
 
 		seq = kfastblock_transport_next_seq(cached);
+		ret = kfastblock_transport_maybe_inject_fault(
+			vol, KFASTBLOCK_FAULT_OBJECT_IO);
+		if (ret) {
+			actions = kfastblock_transport_classify_object_failure(ret);
+			kfastblock_transport_finalize_osd_socket(vol, cached, &leader, ret,
+								 actions);
+			cached = NULL;
+			if (actions) {
+				kfastblock_transport_apply_object_failure(
+					vol, kf_req->request_pool_id, extent, op, &leader,
+					ret, actions);
+				if (hint &&
+				    (actions & KFASTBLOCK_TRANSPORT_FAILURE_INVALIDATE_LEADER))
+					kfastblock_request_invalidate_pg_hint_leader(hint);
+				if (actions & KFASTBLOCK_TRANSPORT_FAILURE_RETRY)
+					continue;
+			}
+			goto out;
+		}
 		if (op == REQ_OP_WRITE || op == REQ_OP_WRITE_ZEROES)
 			ret = kfastblock_transport_write_object(sock, kf_req->request_pool_id,
 						 extent, buf, seq);
@@ -1902,6 +1954,15 @@ static int kfastblock_transport_query_pg_leader(
 	vol = kf_req->vol;
 	if (!hint->nr_targets || !hint->targets)
 		return -ENOENT;
+
+	ret = kfastblock_transport_maybe_inject_fault(
+		vol, KFASTBLOCK_FAULT_LEADER_QUERY);
+	if (ret) {
+		kfastblock_transport_apply_leader_failure(
+			vol, kf_req->request_pool_id, hint->pg_id, ret,
+			kfastblock_transport_classify_leader_failure(ret));
+		return ret;
+	}
 
 	ret = kfastblock_transport_request_view_stale(kf_req);
 	if (ret) {
@@ -2195,6 +2256,16 @@ int kfastblock_transport_refresh_image_volume(struct kfastblock_volume *vol)
 		}
 		sock = cached->sock;
 		seq = kfastblock_transport_next_monitor_seq(cached);
+		ret = kfastblock_transport_maybe_inject_fault(
+			vol, KFASTBLOCK_FAULT_MONITOR_FETCH_IMAGE);
+		if (ret) {
+			mutex_unlock(&cached->lock);
+			kfastblock_transport_apply_monitor_failure(
+				vol, cached, ret,
+				kfastblock_transport_classify_monitor_failure(ret));
+			first_err = ret;
+			continue;
+		}
 		ret = kfastblock_transport_fetch_image_info(sock, &vol->view, seq);
 		mutex_unlock(&cached->lock);
 		if (!ret || ret == -ESTALE) {
@@ -2239,6 +2310,16 @@ int kfastblock_transport_refresh_cluster_map_volume(struct kfastblock_volume *vo
 		}
 		sock = cached->sock;
 		seq = kfastblock_transport_next_monitor_seq(cached);
+		ret = kfastblock_transport_maybe_inject_fault(
+			vol, KFASTBLOCK_FAULT_MONITOR_FETCH_CLUSTER);
+		if (ret) {
+			mutex_unlock(&cached->lock);
+			kfastblock_transport_apply_monitor_failure(
+				vol, cached, ret,
+				kfastblock_transport_classify_monitor_failure(ret));
+			first_err = ret;
+			continue;
+		}
 		ret = kfastblock_transport_fetch_cluster_map_from_monitor(sock,
 					      &vol->view, seq);
 		mutex_unlock(&cached->lock);
