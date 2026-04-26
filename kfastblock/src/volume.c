@@ -629,10 +629,18 @@ void kfastblock_volume_account_socket_backoff_wait(struct kfastblock_volume *vol
 static int kfastblock_volume_summary_show(struct seq_file *m, void *v)
 {
 	struct kfastblock_volume *vol = m->private;
+	struct kfastblock_conn_pool_snapshot osd_conn = {};
+	struct kfastblock_conn_pool_snapshot monitor_conn = {};
 
 	if (!vol)
 		return -ENODEV;
 
+	kfastblock_osd_conn_pool_snapshot(vol->socket_cache,
+					  KFASTBLOCK_MAX_SOCKET_CACHE,
+					  &osd_conn);
+	kfastblock_monitor_conn_pool_snapshot(vol->monitor_cache,
+					      KFASTBLOCK_MAX_MONITORS,
+					      &monitor_conn);
 	down_read(&vol->state_lock);
 	seq_printf(m, "disk=%s\n", vol->disk ? vol->disk->disk_name : "");
 	seq_printf(m, "ready=%d\n", atomic_read(&vol->ready));
@@ -696,6 +704,41 @@ static int kfastblock_volume_summary_show(struct seq_file *m, void *v)
 		   kfastblock_volume_scheduler_last_sample_pressure_window(vol));
 	seq_printf(m, "dispatch_last_sample_effective_window=%u\n",
 		   kfastblock_volume_scheduler_last_sample_effective_window(vol));
+	seq_printf(m, "osd_conn_ready_slots=%u\n", osd_conn.ready_slots);
+	seq_printf(m, "osd_conn_backoff_slots=%u\n", osd_conn.backoff_slots);
+	seq_printf(m, "osd_conn_connecting_slots=%u\n", osd_conn.connecting_slots);
+	seq_printf(m, "osd_conn_empty_slots=%u\n", osd_conn.empty_slots);
+	seq_printf(m, "osd_conn_active_sockets=%u\n", osd_conn.active_sockets);
+	seq_printf(m, "osd_conn_connect_attempts=%llu\n",
+		   osd_conn.connect_attempts);
+	seq_printf(m, "osd_conn_reuse_hits=%llu\n", osd_conn.reuse_hits);
+	seq_printf(m, "osd_conn_success_count=%llu\n", osd_conn.success_count);
+	seq_printf(m, "osd_conn_failure_count=%llu\n", osd_conn.failure_count);
+	seq_printf(m, "osd_conn_health_min=%u\n", osd_conn.min_health_score);
+	seq_printf(m, "osd_conn_health_max=%u\n", osd_conn.max_health_score);
+	seq_printf(m, "osd_conn_health_avg=%u\n", osd_conn.avg_health_score);
+	seq_printf(m, "monitor_conn_ready_slots=%u\n", monitor_conn.ready_slots);
+	seq_printf(m, "monitor_conn_backoff_slots=%u\n",
+		   monitor_conn.backoff_slots);
+	seq_printf(m, "monitor_conn_connecting_slots=%u\n",
+		   monitor_conn.connecting_slots);
+	seq_printf(m, "monitor_conn_empty_slots=%u\n", monitor_conn.empty_slots);
+	seq_printf(m, "monitor_conn_active_sockets=%u\n",
+		   monitor_conn.active_sockets);
+	seq_printf(m, "monitor_conn_connect_attempts=%llu\n",
+		   monitor_conn.connect_attempts);
+	seq_printf(m, "monitor_conn_reuse_hits=%llu\n",
+		   monitor_conn.reuse_hits);
+	seq_printf(m, "monitor_conn_success_count=%llu\n",
+		   monitor_conn.success_count);
+	seq_printf(m, "monitor_conn_failure_count=%llu\n",
+		   monitor_conn.failure_count);
+	seq_printf(m, "monitor_conn_health_min=%u\n",
+		   monitor_conn.min_health_score);
+	seq_printf(m, "monitor_conn_health_max=%u\n",
+		   monitor_conn.max_health_score);
+	seq_printf(m, "monitor_conn_health_avg=%u\n",
+		   monitor_conn.avg_health_score);
 	seq_printf(m, "object_buffer_cached=%u\n",
 		   kfastblock_volume_object_buffer_cached(vol));
 	seq_printf(m, "object_buffer_cache_limit=%u\n",
@@ -829,10 +872,18 @@ DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_sockets);
 static int kfastblock_volume_stats_show(struct seq_file *m, void *v)
 {
 	struct kfastblock_volume *vol = m->private;
+	struct kfastblock_conn_pool_snapshot osd_conn = {};
+	struct kfastblock_conn_pool_snapshot monitor_conn = {};
 
 	if (!vol)
 		return -ENODEV;
 
+	kfastblock_osd_conn_pool_snapshot(vol->socket_cache,
+					  KFASTBLOCK_MAX_SOCKET_CACHE,
+					  &osd_conn);
+	kfastblock_monitor_conn_pool_snapshot(vol->monitor_cache,
+					      KFASTBLOCK_MAX_MONITORS,
+					      &monitor_conn);
 	seq_printf(m, "io_submitted=%lld\n",
 		   atomic64_read(&vol->stats.io_submitted));
 	seq_printf(m, "io_completed=%lld\n",
@@ -943,6 +994,41 @@ static int kfastblock_volume_stats_show(struct seq_file *m, void *v)
 		   kfastblock_volume_scheduler_last_sample_pressure_window(vol));
 	seq_printf(m, "dispatch_last_sample_effective_window=%u\n",
 		   kfastblock_volume_scheduler_last_sample_effective_window(vol));
+	seq_printf(m, "osd_conn_ready_slots=%u\n", osd_conn.ready_slots);
+	seq_printf(m, "osd_conn_backoff_slots=%u\n", osd_conn.backoff_slots);
+	seq_printf(m, "osd_conn_connecting_slots=%u\n", osd_conn.connecting_slots);
+	seq_printf(m, "osd_conn_empty_slots=%u\n", osd_conn.empty_slots);
+	seq_printf(m, "osd_conn_active_sockets=%u\n", osd_conn.active_sockets);
+	seq_printf(m, "osd_conn_connect_attempts=%llu\n",
+		   osd_conn.connect_attempts);
+	seq_printf(m, "osd_conn_reuse_hits=%llu\n", osd_conn.reuse_hits);
+	seq_printf(m, "osd_conn_success_count=%llu\n", osd_conn.success_count);
+	seq_printf(m, "osd_conn_failure_count=%llu\n", osd_conn.failure_count);
+	seq_printf(m, "osd_conn_health_min=%u\n", osd_conn.min_health_score);
+	seq_printf(m, "osd_conn_health_max=%u\n", osd_conn.max_health_score);
+	seq_printf(m, "osd_conn_health_avg=%u\n", osd_conn.avg_health_score);
+	seq_printf(m, "monitor_conn_ready_slots=%u\n", monitor_conn.ready_slots);
+	seq_printf(m, "monitor_conn_backoff_slots=%u\n",
+		   monitor_conn.backoff_slots);
+	seq_printf(m, "monitor_conn_connecting_slots=%u\n",
+		   monitor_conn.connecting_slots);
+	seq_printf(m, "monitor_conn_empty_slots=%u\n", monitor_conn.empty_slots);
+	seq_printf(m, "monitor_conn_active_sockets=%u\n",
+		   monitor_conn.active_sockets);
+	seq_printf(m, "monitor_conn_connect_attempts=%llu\n",
+		   monitor_conn.connect_attempts);
+	seq_printf(m, "monitor_conn_reuse_hits=%llu\n",
+		   monitor_conn.reuse_hits);
+	seq_printf(m, "monitor_conn_success_count=%llu\n",
+		   monitor_conn.success_count);
+	seq_printf(m, "monitor_conn_failure_count=%llu\n",
+		   monitor_conn.failure_count);
+	seq_printf(m, "monitor_conn_health_min=%u\n",
+		   monitor_conn.min_health_score);
+	seq_printf(m, "monitor_conn_health_max=%u\n",
+		   monitor_conn.max_health_score);
+	seq_printf(m, "monitor_conn_health_avg=%u\n",
+		   monitor_conn.avg_health_score);
 	return 0;
 }
 DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_stats);
