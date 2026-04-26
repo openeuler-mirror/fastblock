@@ -80,7 +80,7 @@ void kfastblock_scheduler_set_dynamic_enabled(
 	spin_unlock_irqrestore(&controller->lock, flags);
 }
 
-u32 kfastblock_scheduler_snapshot_window(
+u32 kfastblock_scheduler_sample_window(
 	struct kfastblock_scheduler_controller *controller)
 {
 	unsigned long flags;

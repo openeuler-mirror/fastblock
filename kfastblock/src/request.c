@@ -214,7 +214,7 @@ static void kfastblock_request_free_pg_hint_targets(struct kfastblock_request *k
 	}
 }
 
-static int kfastblock_request_snapshot_pg_hints(
+static int kfastblock_request_capture_pg_hints(
 	struct kfastblock_request *kf_req,
 	const struct kfastblock_cluster_view *view)
 {
@@ -313,7 +313,7 @@ int kfastblock_request_init(struct kfastblock_request *kf_req,
 	if (ret)
 		return ret;
 	kf_req->dispatch_window = clamp_t(u32,
-					  kfastblock_scheduler_snapshot_window(
+					  kfastblock_scheduler_sample_window(
 						  &vol->scheduler),
 					  1,
 					  kf_req->max_object_extents ?
@@ -404,7 +404,7 @@ int kfastblock_request_split(struct kfastblock_request *kf_req)
 			++kf_req->nr_objects;
 		}
 
-	return kfastblock_request_snapshot_pg_hints(kf_req, view);
+	return kfastblock_request_capture_pg_hints(kf_req, view);
 }
 
 int kfastblock_request_get_pg_hint_leader(
