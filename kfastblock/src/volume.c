@@ -16,6 +16,7 @@
 #include <linux/sysfs.h>
 
 #include "kfastblock/common.h"
+#include "kfastblock/buffer.h"
 #include "kfastblock/meta.h"
 #include "kfastblock/request.h"
 #include "kfastblock/transport.h"
@@ -60,6 +61,16 @@ static u32 kfastblock_volume_object_buffer_cache_limit(
 	const struct kfastblock_volume *vol);
 static u32 kfastblock_volume_object_buffer_cached(
 	struct kfastblock_volume *vol);
+static u64 kfastblock_volume_object_buffer_hits(
+	const struct kfastblock_volume *vol);
+static u64 kfastblock_volume_object_buffer_misses(
+	const struct kfastblock_volume *vol);
+static u64 kfastblock_volume_object_buffer_returns(
+	const struct kfastblock_volume *vol);
+static u64 kfastblock_volume_object_buffer_evictions(
+	const struct kfastblock_volume *vol);
+static u64 kfastblock_volume_object_buffer_direct_allocs(
+	const struct kfastblock_volume *vol);
 
 static void kfastblock_volume_record_event(
 	struct kfastblock_volume *vol,
@@ -616,6 +627,16 @@ static int kfastblock_volume_summary_show(struct seq_file *m, void *v)
 		   kfastblock_volume_object_buffer_cached(vol));
 	seq_printf(m, "object_buffer_cache_limit=%u\n",
 		   kfastblock_volume_object_buffer_cache_limit(vol));
+	seq_printf(m, "object_buffer_hits=%llu\n",
+		   kfastblock_volume_object_buffer_hits(vol));
+	seq_printf(m, "object_buffer_misses=%llu\n",
+		   kfastblock_volume_object_buffer_misses(vol));
+	seq_printf(m, "object_buffer_returns=%llu\n",
+		   kfastblock_volume_object_buffer_returns(vol));
+	seq_printf(m, "object_buffer_evictions=%llu\n",
+		   kfastblock_volume_object_buffer_evictions(vol));
+	seq_printf(m, "object_buffer_direct_allocs=%llu\n",
+		   kfastblock_volume_object_buffer_direct_allocs(vol));
 	seq_printf(m, "refresh_interval_ms=%u\n", vol->refresh_interval_ms);
 	seq_printf(m, "image_refresh_interval_ms=%u\n",
 		   vol->image_refresh_interval_ms);
@@ -789,6 +810,16 @@ static int kfastblock_volume_stats_show(struct seq_file *m, void *v)
 		   kfastblock_volume_object_buffer_cached(vol));
 	seq_printf(m, "object_buffer_cache_limit=%u\n",
 		   kfastblock_volume_object_buffer_cache_limit(vol));
+	seq_printf(m, "object_buffer_hits=%llu\n",
+		   kfastblock_volume_object_buffer_hits(vol));
+	seq_printf(m, "object_buffer_misses=%llu\n",
+		   kfastblock_volume_object_buffer_misses(vol));
+	seq_printf(m, "object_buffer_returns=%llu\n",
+		   kfastblock_volume_object_buffer_returns(vol));
+	seq_printf(m, "object_buffer_evictions=%llu\n",
+		   kfastblock_volume_object_buffer_evictions(vol));
+	seq_printf(m, "object_buffer_direct_allocs=%llu\n",
+		   kfastblock_volume_object_buffer_direct_allocs(vol));
 	return 0;
 }
 DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_stats);
@@ -1767,6 +1798,67 @@ static ssize_t object_buffer_cache_limit_show(struct device *dev,
 			 kfastblock_volume_object_buffer_cache_limit(vol));
 }
 
+static ssize_t object_buffer_hits_show(struct device *dev,
+				       struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%llu\n",
+			 kfastblock_volume_object_buffer_hits(vol));
+}
+
+static ssize_t object_buffer_misses_show(struct device *dev,
+					 struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%llu\n",
+			 kfastblock_volume_object_buffer_misses(vol));
+}
+
+static ssize_t object_buffer_returns_show(struct device *dev,
+					  struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%llu\n",
+			 kfastblock_volume_object_buffer_returns(vol));
+}
+
+static ssize_t object_buffer_evictions_show(struct device *dev,
+					    struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%llu\n",
+			 kfastblock_volume_object_buffer_evictions(vol));
+}
+
+static ssize_t object_buffer_direct_allocs_show(struct device *dev,
+						struct device_attribute *attr,
+						char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%llu\n",
+			 kfastblock_volume_object_buffer_direct_allocs(vol));
+}
+
 static ssize_t dispatch_window_store(struct device *dev,
 				     struct device_attribute *attr,
 				     const char *buf, size_t count)
@@ -1787,6 +1879,7 @@ static ssize_t dispatch_window_store(struct device *dev,
 	down_write(&vol->state_lock);
 	vol->dispatch_window = value;
 	up_write(&vol->state_lock);
+	kfastblock_buffer_pool_set_limit(&vol->object_buffer_pool, value);
 	return count;
 }
 
@@ -2537,6 +2630,11 @@ static DEVICE_ATTR_RO(object_size);
 static DEVICE_ATTR_RW(dispatch_window);
 static DEVICE_ATTR_RO(object_buffer_cached);
 static DEVICE_ATTR_RO(object_buffer_cache_limit);
+static DEVICE_ATTR_RO(object_buffer_hits);
+static DEVICE_ATTR_RO(object_buffer_misses);
+static DEVICE_ATTR_RO(object_buffer_returns);
+static DEVICE_ATTR_RO(object_buffer_evictions);
+static DEVICE_ATTR_RO(object_buffer_direct_allocs);
 static DEVICE_ATTR_RW(refresh_interval_ms);
 static DEVICE_ATTR_RW(image_refresh_interval_ms);
 static DEVICE_ATTR_RO(pool_id);
@@ -2611,6 +2709,11 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_dispatch_window.attr,
 	&dev_attr_object_buffer_cached.attr,
 	&dev_attr_object_buffer_cache_limit.attr,
+	&dev_attr_object_buffer_hits.attr,
+	&dev_attr_object_buffer_misses.attr,
+	&dev_attr_object_buffer_returns.attr,
+	&dev_attr_object_buffer_evictions.attr,
+	&dev_attr_object_buffer_direct_allocs.attr,
 	&dev_attr_refresh_interval_ms.attr,
 	&dev_attr_image_refresh_interval_ms.attr,
 	&dev_attr_pool_id.attr,
@@ -2830,49 +2933,57 @@ static const struct blk_mq_ops kfastblock_mq_ops = {
 	.queue_rq = kfastblock_queue_rq,
 };
 
-struct kfastblock_object_buffer_entry {
-	struct list_head node;
-};
-
 static void kfastblock_volume_free_object_buffers(struct kfastblock_volume *vol)
 {
-	if (!vol)
-		return;
-
-	mutex_lock(&vol->object_buffer_lock);
-	while (!list_empty(&vol->object_buffer_free)) {
-		struct kfastblock_object_buffer_entry *entry =
-			list_first_entry(&vol->object_buffer_free,
-					 struct kfastblock_object_buffer_entry,
-					 node);
-
-		list_del(&entry->node);
-		kvfree(entry);
-	}
-	vol->object_buffer_cached = 0;
-	mutex_unlock(&vol->object_buffer_lock);
+	kfastblock_buffer_pool_cleanup(vol ? &vol->object_buffer_pool : NULL);
 }
 
 static u32 kfastblock_volume_object_buffer_cache_limit(
 	const struct kfastblock_volume *vol)
 {
-	if (!vol || !vol->dispatch_window)
-		return 1;
-	return vol->dispatch_window;
+	return kfastblock_buffer_pool_limit(
+		vol ? &((struct kfastblock_volume *)vol)->object_buffer_pool : NULL);
 }
 
 static u32 kfastblock_volume_object_buffer_cached(
 	struct kfastblock_volume *vol)
 {
-	u32 cached;
+	return kfastblock_buffer_pool_cached(vol ? &vol->object_buffer_pool : NULL);
+}
 
-	if (!vol)
-		return 0;
+static u64 kfastblock_volume_object_buffer_hits(
+	const struct kfastblock_volume *vol)
+{
+	return kfastblock_buffer_pool_hits(
+		vol ? &((struct kfastblock_volume *)vol)->object_buffer_pool : NULL);
+}
 
-	mutex_lock(&vol->object_buffer_lock);
-	cached = vol->object_buffer_cached;
-	mutex_unlock(&vol->object_buffer_lock);
-	return cached;
+static u64 kfastblock_volume_object_buffer_misses(
+	const struct kfastblock_volume *vol)
+{
+	return kfastblock_buffer_pool_misses(
+		vol ? &((struct kfastblock_volume *)vol)->object_buffer_pool : NULL);
+}
+
+static u64 kfastblock_volume_object_buffer_returns(
+	const struct kfastblock_volume *vol)
+{
+	return kfastblock_buffer_pool_returns(
+		vol ? &((struct kfastblock_volume *)vol)->object_buffer_pool : NULL);
+}
+
+static u64 kfastblock_volume_object_buffer_evictions(
+	const struct kfastblock_volume *vol)
+{
+	return kfastblock_buffer_pool_evictions(
+		vol ? &((struct kfastblock_volume *)vol)->object_buffer_pool : NULL);
+}
+
+static u64 kfastblock_volume_object_buffer_direct_allocs(
+	const struct kfastblock_volume *vol)
+{
+	return kfastblock_buffer_pool_direct_allocs(
+		vol ? &((struct kfastblock_volume *)vol)->object_buffer_pool : NULL);
 }
 
 static void kfastblock_volume_free(struct kfastblock_volume *vol)
@@ -3032,9 +3143,9 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	kfastblock_volume_stats_init(vol);
 	mutex_init(&vol->lifecycle_lock);
 	mutex_init(&vol->inflight_lock);
-	mutex_init(&vol->object_buffer_lock);
-	INIT_LIST_HEAD(&vol->object_buffer_free);
-	vol->object_buffer_cached = 0;
+	kfastblock_buffer_pool_init(&vol->object_buffer_pool,
+				    KFASTBLOCK_MAX_IO_BYTES,
+				    vol->dispatch_window);
 	init_waitqueue_head(&vol->inflight_wq);
 	init_rwsem(&vol->state_lock);
 	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i)
