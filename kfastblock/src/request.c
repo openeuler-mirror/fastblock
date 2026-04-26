@@ -4,6 +4,7 @@
 #include <linux/string.h>
 
 #include "kfastblock/request.h"
+#include "kfastblock/scheduler.h"
 #include "kfastblock/volume.h"
 
 #define KFASTBLOCK_JHASH_GOLDEN_RATIO 0x9e3779b9U
@@ -312,8 +313,8 @@ int kfastblock_request_init(struct kfastblock_request *kf_req,
 	if (ret)
 		return ret;
 	kf_req->dispatch_window = clamp_t(u32,
-					  vol->dispatch_window ?
-					  vol->dispatch_window : 1,
+					  kfastblock_scheduler_snapshot_window(
+						  &vol->scheduler),
 					  1,
 					  kf_req->max_object_extents ?
 					  kf_req->max_object_extents : 1);

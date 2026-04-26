@@ -19,6 +19,7 @@
 #include "kfastblock/buffer.h"
 #include "kfastblock/meta.h"
 #include "kfastblock/request.h"
+#include "kfastblock/scheduler.h"
 #include "kfastblock/transport.h"
 #include "kfastblock/volume.h"
 
@@ -71,6 +72,18 @@ static u64 kfastblock_volume_object_buffer_evictions(
 	const struct kfastblock_volume *vol);
 static u64 kfastblock_volume_object_buffer_direct_allocs(
 	const struct kfastblock_volume *vol);
+static u32 kfastblock_volume_scheduler_current_window(
+	struct kfastblock_volume *vol);
+static bool kfastblock_volume_scheduler_dynamic_enabled(
+	struct kfastblock_volume *vol);
+static u32 kfastblock_volume_scheduler_grow_events(
+	struct kfastblock_volume *vol);
+static u32 kfastblock_volume_scheduler_shrink_events(
+	struct kfastblock_volume *vol);
+static u32 kfastblock_volume_scheduler_retry_events(
+	struct kfastblock_volume *vol);
+static u32 kfastblock_volume_scheduler_dispatch_failures(
+	struct kfastblock_volume *vol);
 
 static void kfastblock_volume_record_event(
 	struct kfastblock_volume *vol,
@@ -623,6 +636,10 @@ static int kfastblock_volume_summary_show(struct seq_file *m, void *v)
 	seq_printf(m, "osd_count=%u\n", vol->view.osd_count);
 	seq_printf(m, "route_count=%u\n", vol->view.route_count);
 	seq_printf(m, "dispatch_window=%u\n", vol->dispatch_window);
+	seq_printf(m, "dispatch_window_current=%u\n",
+		   kfastblock_volume_scheduler_current_window(vol));
+	seq_printf(m, "dispatch_window_dynamic=%u\n",
+		   kfastblock_volume_scheduler_dynamic_enabled(vol) ? 1 : 0);
 	seq_printf(m, "object_buffer_cached=%u\n",
 		   kfastblock_volume_object_buffer_cached(vol));
 	seq_printf(m, "object_buffer_cache_limit=%u\n",
@@ -820,6 +837,18 @@ static int kfastblock_volume_stats_show(struct seq_file *m, void *v)
 		   kfastblock_volume_object_buffer_evictions(vol));
 	seq_printf(m, "object_buffer_direct_allocs=%llu\n",
 		   kfastblock_volume_object_buffer_direct_allocs(vol));
+	seq_printf(m, "dispatch_window_current=%u\n",
+		   kfastblock_volume_scheduler_current_window(vol));
+	seq_printf(m, "dispatch_window_dynamic=%u\n",
+		   kfastblock_volume_scheduler_dynamic_enabled(vol) ? 1 : 0);
+	seq_printf(m, "dispatch_window_grow_events=%u\n",
+		   kfastblock_volume_scheduler_grow_events(vol));
+	seq_printf(m, "dispatch_window_shrink_events=%u\n",
+		   kfastblock_volume_scheduler_shrink_events(vol));
+	seq_printf(m, "dispatch_window_retry_events=%u\n",
+		   kfastblock_volume_scheduler_retry_events(vol));
+	seq_printf(m, "dispatch_window_dispatch_failures=%u\n",
+		   kfastblock_volume_scheduler_dispatch_failures(vol));
 	return 0;
 }
 DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_stats);
@@ -1773,6 +1802,53 @@ static ssize_t dispatch_window_show(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%u\n", vol->dispatch_window);
 }
 
+static ssize_t dispatch_window_current_show(struct device *dev,
+					    struct device_attribute *attr,
+					    char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_volume_scheduler_current_window(vol));
+}
+
+static ssize_t dispatch_window_dynamic_show(struct device *dev,
+					    struct device_attribute *attr,
+					    char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_volume_scheduler_dynamic_enabled(vol) ? 1 : 0);
+}
+
+static ssize_t dispatch_window_dynamic_store(struct device *dev,
+					     struct device_attribute *attr,
+					     const char *buf, size_t count)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	bool enabled;
+
+	if (!vol)
+		return -ENODEV;
+
+	if (sysfs_streq(buf, "1") || sysfs_streq(buf, "true") || sysfs_streq(buf, "yes"))
+		enabled = true;
+	else if (sysfs_streq(buf, "0") || sysfs_streq(buf, "false") || sysfs_streq(buf, "no"))
+		enabled = false;
+	else
+		return -EINVAL;
+
+	kfastblock_scheduler_set_dynamic_enabled(&vol->scheduler, enabled);
+	return count;
+}
+
 static ssize_t object_buffer_cached_show(struct device *dev,
 					 struct device_attribute *attr, char *buf)
 {
@@ -1859,6 +1935,59 @@ static ssize_t object_buffer_direct_allocs_show(struct device *dev,
 			 kfastblock_volume_object_buffer_direct_allocs(vol));
 }
 
+static ssize_t dispatch_window_grow_events_show(struct device *dev,
+						struct device_attribute *attr,
+						char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_volume_scheduler_grow_events(vol));
+}
+
+static ssize_t dispatch_window_shrink_events_show(struct device *dev,
+						  struct device_attribute *attr,
+						  char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_volume_scheduler_shrink_events(vol));
+}
+
+static ssize_t dispatch_window_retry_events_show(struct device *dev,
+						 struct device_attribute *attr,
+						 char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_volume_scheduler_retry_events(vol));
+}
+
+static ssize_t dispatch_window_dispatch_failures_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_volume_scheduler_dispatch_failures(vol));
+}
+
 static ssize_t dispatch_window_store(struct device *dev,
 				     struct device_attribute *attr,
 				     const char *buf, size_t count)
@@ -1880,6 +2009,7 @@ static ssize_t dispatch_window_store(struct device *dev,
 	vol->dispatch_window = value;
 	up_write(&vol->state_lock);
 	kfastblock_buffer_pool_set_limit(&vol->object_buffer_pool, value);
+	kfastblock_scheduler_set_base_window(&vol->scheduler, value);
 	return count;
 }
 
@@ -2628,6 +2758,12 @@ static DEVICE_ATTR_RO(image_name);
 static DEVICE_ATTR_RO(size_bytes);
 static DEVICE_ATTR_RO(object_size);
 static DEVICE_ATTR_RW(dispatch_window);
+static DEVICE_ATTR_RO(dispatch_window_current);
+static DEVICE_ATTR_RW(dispatch_window_dynamic);
+static DEVICE_ATTR_RO(dispatch_window_grow_events);
+static DEVICE_ATTR_RO(dispatch_window_shrink_events);
+static DEVICE_ATTR_RO(dispatch_window_retry_events);
+static DEVICE_ATTR_RO(dispatch_window_dispatch_failures);
 static DEVICE_ATTR_RO(object_buffer_cached);
 static DEVICE_ATTR_RO(object_buffer_cache_limit);
 static DEVICE_ATTR_RO(object_buffer_hits);
@@ -2707,6 +2843,12 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_size_bytes.attr,
 	&dev_attr_object_size.attr,
 	&dev_attr_dispatch_window.attr,
+	&dev_attr_dispatch_window_current.attr,
+	&dev_attr_dispatch_window_dynamic.attr,
+	&dev_attr_dispatch_window_grow_events.attr,
+	&dev_attr_dispatch_window_shrink_events.attr,
+	&dev_attr_dispatch_window_retry_events.attr,
+	&dev_attr_dispatch_window_dispatch_failures.attr,
 	&dev_attr_object_buffer_cached.attr,
 	&dev_attr_object_buffer_cache_limit.attr,
 	&dev_attr_object_buffer_hits.attr,
@@ -2986,6 +3128,43 @@ static u64 kfastblock_volume_object_buffer_direct_allocs(
 		vol ? &((struct kfastblock_volume *)vol)->object_buffer_pool : NULL);
 }
 
+static u32 kfastblock_volume_scheduler_current_window(
+	struct kfastblock_volume *vol)
+{
+	return kfastblock_scheduler_current_window(vol ? &vol->scheduler : NULL);
+}
+
+static bool kfastblock_volume_scheduler_dynamic_enabled(
+	struct kfastblock_volume *vol)
+{
+	return kfastblock_scheduler_dynamic_enabled(vol ? &vol->scheduler : NULL);
+}
+
+static u32 kfastblock_volume_scheduler_grow_events(
+	struct kfastblock_volume *vol)
+{
+	return kfastblock_scheduler_grow_events(vol ? &vol->scheduler : NULL);
+}
+
+static u32 kfastblock_volume_scheduler_shrink_events(
+	struct kfastblock_volume *vol)
+{
+	return kfastblock_scheduler_shrink_events(vol ? &vol->scheduler : NULL);
+}
+
+static u32 kfastblock_volume_scheduler_retry_events(
+	struct kfastblock_volume *vol)
+{
+	return kfastblock_scheduler_retry_events(vol ? &vol->scheduler : NULL);
+}
+
+static u32 kfastblock_volume_scheduler_dispatch_failures(
+	struct kfastblock_volume *vol)
+{
+	return kfastblock_scheduler_dispatch_failures(
+		vol ? &vol->scheduler : NULL);
+}
+
 static void kfastblock_volume_free(struct kfastblock_volume *vol)
 {
 	if (!vol)
@@ -3146,6 +3325,10 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	kfastblock_buffer_pool_init(&vol->object_buffer_pool,
 				    KFASTBLOCK_MAX_IO_BYTES,
 				    vol->dispatch_window);
+	kfastblock_scheduler_init(&vol->scheduler,
+				  vol->dispatch_window,
+				  1,
+				  KFASTBLOCK_MAX_OBJECT_EXTENTS);
 	init_waitqueue_head(&vol->inflight_wq);
 	init_rwsem(&vol->state_lock);
 	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i)
