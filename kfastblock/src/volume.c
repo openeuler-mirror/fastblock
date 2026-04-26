@@ -76,6 +76,16 @@ static u32 kfastblock_volume_scheduler_current_window(
 	struct kfastblock_volume *vol);
 static bool kfastblock_volume_scheduler_dynamic_enabled(
 	struct kfastblock_volume *vol);
+static const char *kfastblock_volume_scheduler_policy_name(
+	struct kfastblock_volume *vol);
+static u32 kfastblock_volume_scheduler_pressure_inflight_limit(
+	struct kfastblock_volume *vol);
+static u32 kfastblock_volume_scheduler_cooldown_ms(
+	struct kfastblock_volume *vol);
+static bool kfastblock_volume_scheduler_cooldown_active(
+	struct kfastblock_volume *vol);
+static u32 kfastblock_volume_scheduler_cooldown_remaining_ms(
+	struct kfastblock_volume *vol);
 static u32 kfastblock_volume_scheduler_grow_events(
 	struct kfastblock_volume *vol);
 static u32 kfastblock_volume_scheduler_shrink_events(
@@ -83,6 +93,24 @@ static u32 kfastblock_volume_scheduler_shrink_events(
 static u32 kfastblock_volume_scheduler_retry_events(
 	struct kfastblock_volume *vol);
 static u32 kfastblock_volume_scheduler_dispatch_failures(
+	struct kfastblock_volume *vol);
+static u32 kfastblock_volume_scheduler_sample_events(
+	struct kfastblock_volume *vol);
+static u32 kfastblock_volume_scheduler_pressure_limited_samples(
+	struct kfastblock_volume *vol);
+static u32 kfastblock_volume_scheduler_cooldown_limited_samples(
+	struct kfastblock_volume *vol);
+static u32 kfastblock_volume_scheduler_cooldown_events(
+	struct kfastblock_volume *vol);
+static u32 kfastblock_volume_scheduler_last_sample_inflight_ios(
+	struct kfastblock_volume *vol);
+static u32 kfastblock_volume_scheduler_last_sample_request_objects(
+	struct kfastblock_volume *vol);
+static u32 kfastblock_volume_scheduler_last_sample_controller_window(
+	struct kfastblock_volume *vol);
+static u32 kfastblock_volume_scheduler_last_sample_pressure_window(
+	struct kfastblock_volume *vol);
+static u32 kfastblock_volume_scheduler_last_sample_effective_window(
 	struct kfastblock_volume *vol);
 
 static void kfastblock_volume_record_event(
@@ -640,6 +668,34 @@ static int kfastblock_volume_summary_show(struct seq_file *m, void *v)
 		   kfastblock_volume_scheduler_current_window(vol));
 	seq_printf(m, "dispatch_window_dynamic=%u\n",
 		   kfastblock_volume_scheduler_dynamic_enabled(vol) ? 1 : 0);
+	seq_printf(m, "dispatch_policy=%s\n",
+		   kfastblock_volume_scheduler_policy_name(vol));
+	seq_printf(m, "dispatch_pressure_inflight_limit=%u\n",
+		   kfastblock_volume_scheduler_pressure_inflight_limit(vol));
+	seq_printf(m, "dispatch_cooldown_ms=%u\n",
+		   kfastblock_volume_scheduler_cooldown_ms(vol));
+	seq_printf(m, "dispatch_cooldown_active=%u\n",
+		   kfastblock_volume_scheduler_cooldown_active(vol) ? 1 : 0);
+	seq_printf(m, "dispatch_cooldown_remaining_ms=%u\n",
+		   kfastblock_volume_scheduler_cooldown_remaining_ms(vol));
+	seq_printf(m, "dispatch_sample_events=%u\n",
+		   kfastblock_volume_scheduler_sample_events(vol));
+	seq_printf(m, "dispatch_pressure_limited_samples=%u\n",
+		   kfastblock_volume_scheduler_pressure_limited_samples(vol));
+	seq_printf(m, "dispatch_cooldown_limited_samples=%u\n",
+		   kfastblock_volume_scheduler_cooldown_limited_samples(vol));
+	seq_printf(m, "dispatch_cooldown_events=%u\n",
+		   kfastblock_volume_scheduler_cooldown_events(vol));
+	seq_printf(m, "dispatch_last_sample_inflight_ios=%u\n",
+		   kfastblock_volume_scheduler_last_sample_inflight_ios(vol));
+	seq_printf(m, "dispatch_last_sample_request_objects=%u\n",
+		   kfastblock_volume_scheduler_last_sample_request_objects(vol));
+	seq_printf(m, "dispatch_last_sample_controller_window=%u\n",
+		   kfastblock_volume_scheduler_last_sample_controller_window(vol));
+	seq_printf(m, "dispatch_last_sample_pressure_window=%u\n",
+		   kfastblock_volume_scheduler_last_sample_pressure_window(vol));
+	seq_printf(m, "dispatch_last_sample_effective_window=%u\n",
+		   kfastblock_volume_scheduler_last_sample_effective_window(vol));
 	seq_printf(m, "object_buffer_cached=%u\n",
 		   kfastblock_volume_object_buffer_cached(vol));
 	seq_printf(m, "object_buffer_cache_limit=%u\n",
@@ -841,6 +897,16 @@ static int kfastblock_volume_stats_show(struct seq_file *m, void *v)
 		   kfastblock_volume_scheduler_current_window(vol));
 	seq_printf(m, "dispatch_window_dynamic=%u\n",
 		   kfastblock_volume_scheduler_dynamic_enabled(vol) ? 1 : 0);
+	seq_printf(m, "dispatch_policy=%s\n",
+		   kfastblock_volume_scheduler_policy_name(vol));
+	seq_printf(m, "dispatch_pressure_inflight_limit=%u\n",
+		   kfastblock_volume_scheduler_pressure_inflight_limit(vol));
+	seq_printf(m, "dispatch_cooldown_ms=%u\n",
+		   kfastblock_volume_scheduler_cooldown_ms(vol));
+	seq_printf(m, "dispatch_cooldown_active=%u\n",
+		   kfastblock_volume_scheduler_cooldown_active(vol) ? 1 : 0);
+	seq_printf(m, "dispatch_cooldown_remaining_ms=%u\n",
+		   kfastblock_volume_scheduler_cooldown_remaining_ms(vol));
 	seq_printf(m, "dispatch_window_grow_events=%u\n",
 		   kfastblock_volume_scheduler_grow_events(vol));
 	seq_printf(m, "dispatch_window_shrink_events=%u\n",
@@ -849,6 +915,24 @@ static int kfastblock_volume_stats_show(struct seq_file *m, void *v)
 		   kfastblock_volume_scheduler_retry_events(vol));
 	seq_printf(m, "dispatch_window_dispatch_failures=%u\n",
 		   kfastblock_volume_scheduler_dispatch_failures(vol));
+	seq_printf(m, "dispatch_sample_events=%u\n",
+		   kfastblock_volume_scheduler_sample_events(vol));
+	seq_printf(m, "dispatch_pressure_limited_samples=%u\n",
+		   kfastblock_volume_scheduler_pressure_limited_samples(vol));
+	seq_printf(m, "dispatch_cooldown_limited_samples=%u\n",
+		   kfastblock_volume_scheduler_cooldown_limited_samples(vol));
+	seq_printf(m, "dispatch_cooldown_events=%u\n",
+		   kfastblock_volume_scheduler_cooldown_events(vol));
+	seq_printf(m, "dispatch_last_sample_inflight_ios=%u\n",
+		   kfastblock_volume_scheduler_last_sample_inflight_ios(vol));
+	seq_printf(m, "dispatch_last_sample_request_objects=%u\n",
+		   kfastblock_volume_scheduler_last_sample_request_objects(vol));
+	seq_printf(m, "dispatch_last_sample_controller_window=%u\n",
+		   kfastblock_volume_scheduler_last_sample_controller_window(vol));
+	seq_printf(m, "dispatch_last_sample_pressure_window=%u\n",
+		   kfastblock_volume_scheduler_last_sample_pressure_window(vol));
+	seq_printf(m, "dispatch_last_sample_effective_window=%u\n",
+		   kfastblock_volume_scheduler_last_sample_effective_window(vol));
 	return 0;
 }
 DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_stats);
@@ -1849,6 +1933,134 @@ static ssize_t dispatch_window_dynamic_store(struct device *dev,
 	return count;
 }
 
+static ssize_t dispatch_policy_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%s\n",
+			 kfastblock_volume_scheduler_policy_name(vol));
+}
+
+static ssize_t dispatch_policy_store(struct device *dev,
+				     struct device_attribute *attr,
+				     const char *buf, size_t count)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	enum kfastblock_scheduler_policy policy;
+
+	if (!vol)
+		return -ENODEV;
+
+	if (sysfs_streq(buf, "static") || sysfs_streq(buf, "0"))
+		policy = KFASTBLOCK_SCHED_POLICY_STATIC;
+	else if (sysfs_streq(buf, "adaptive") || sysfs_streq(buf, "1"))
+		policy = KFASTBLOCK_SCHED_POLICY_ADAPTIVE;
+	else if (sysfs_streq(buf, "pressure") || sysfs_streq(buf, "2"))
+		policy = KFASTBLOCK_SCHED_POLICY_PRESSURE;
+	else
+		return -EINVAL;
+
+	kfastblock_scheduler_set_policy(&vol->scheduler, policy);
+	return count;
+}
+
+static ssize_t dispatch_pressure_inflight_limit_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_volume_scheduler_pressure_inflight_limit(vol));
+}
+
+static ssize_t dispatch_pressure_inflight_limit_store(
+	struct device *dev,
+	struct device_attribute *attr,
+	const char *buf, size_t count)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	u32 value;
+	int ret;
+
+	if (!vol)
+		return -ENODEV;
+
+	ret = kfastblock_volume_parse_u32_value(buf, count, &value);
+	if (ret)
+		return ret;
+
+	kfastblock_scheduler_set_pressure_inflight_limit(&vol->scheduler, value);
+	return count;
+}
+
+static ssize_t dispatch_cooldown_ms_show(struct device *dev,
+					 struct device_attribute *attr,
+					 char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_volume_scheduler_cooldown_ms(vol));
+}
+
+static ssize_t dispatch_cooldown_ms_store(struct device *dev,
+					  struct device_attribute *attr,
+					  const char *buf, size_t count)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	u32 value;
+	int ret;
+
+	if (!vol)
+		return -ENODEV;
+
+	ret = kfastblock_volume_parse_u32_value(buf, count, &value);
+	if (ret)
+		return ret;
+
+	kfastblock_scheduler_set_cooldown_ms(&vol->scheduler, value);
+	return count;
+}
+
+static ssize_t dispatch_cooldown_active_show(struct device *dev,
+					     struct device_attribute *attr,
+					     char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_volume_scheduler_cooldown_active(vol) ? 1 : 0);
+}
+
+static ssize_t dispatch_cooldown_remaining_ms_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_volume_scheduler_cooldown_remaining_ms(vol));
+}
+
 static ssize_t object_buffer_cached_show(struct device *dev,
 					 struct device_attribute *attr, char *buf)
 {
@@ -1986,6 +2198,130 @@ static ssize_t dispatch_window_dispatch_failures_show(
 
 	return scnprintf(buf, PAGE_SIZE, "%u\n",
 			 kfastblock_volume_scheduler_dispatch_failures(vol));
+}
+
+static ssize_t dispatch_sample_events_show(struct device *dev,
+					   struct device_attribute *attr,
+					   char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_volume_scheduler_sample_events(vol));
+}
+
+static ssize_t dispatch_pressure_limited_samples_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_volume_scheduler_pressure_limited_samples(vol));
+}
+
+static ssize_t dispatch_cooldown_limited_samples_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_volume_scheduler_cooldown_limited_samples(vol));
+}
+
+static ssize_t dispatch_cooldown_events_show(struct device *dev,
+					     struct device_attribute *attr,
+					     char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_volume_scheduler_cooldown_events(vol));
+}
+
+static ssize_t dispatch_last_sample_inflight_ios_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_volume_scheduler_last_sample_inflight_ios(vol));
+}
+
+static ssize_t dispatch_last_sample_request_objects_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_volume_scheduler_last_sample_request_objects(vol));
+}
+
+static ssize_t dispatch_last_sample_controller_window_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_volume_scheduler_last_sample_controller_window(vol));
+}
+
+static ssize_t dispatch_last_sample_pressure_window_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_volume_scheduler_last_sample_pressure_window(vol));
+}
+
+static ssize_t dispatch_last_sample_effective_window_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_volume_scheduler_last_sample_effective_window(vol));
 }
 
 static ssize_t dispatch_window_store(struct device *dev,
@@ -2760,10 +3096,24 @@ static DEVICE_ATTR_RO(object_size);
 static DEVICE_ATTR_RW(dispatch_window);
 static DEVICE_ATTR_RO(dispatch_window_current);
 static DEVICE_ATTR_RW(dispatch_window_dynamic);
+static DEVICE_ATTR_RW(dispatch_policy);
+static DEVICE_ATTR_RW(dispatch_pressure_inflight_limit);
+static DEVICE_ATTR_RW(dispatch_cooldown_ms);
+static DEVICE_ATTR_RO(dispatch_cooldown_active);
+static DEVICE_ATTR_RO(dispatch_cooldown_remaining_ms);
 static DEVICE_ATTR_RO(dispatch_window_grow_events);
 static DEVICE_ATTR_RO(dispatch_window_shrink_events);
 static DEVICE_ATTR_RO(dispatch_window_retry_events);
 static DEVICE_ATTR_RO(dispatch_window_dispatch_failures);
+static DEVICE_ATTR_RO(dispatch_sample_events);
+static DEVICE_ATTR_RO(dispatch_pressure_limited_samples);
+static DEVICE_ATTR_RO(dispatch_cooldown_limited_samples);
+static DEVICE_ATTR_RO(dispatch_cooldown_events);
+static DEVICE_ATTR_RO(dispatch_last_sample_inflight_ios);
+static DEVICE_ATTR_RO(dispatch_last_sample_request_objects);
+static DEVICE_ATTR_RO(dispatch_last_sample_controller_window);
+static DEVICE_ATTR_RO(dispatch_last_sample_pressure_window);
+static DEVICE_ATTR_RO(dispatch_last_sample_effective_window);
 static DEVICE_ATTR_RO(object_buffer_cached);
 static DEVICE_ATTR_RO(object_buffer_cache_limit);
 static DEVICE_ATTR_RO(object_buffer_hits);
@@ -2845,10 +3195,24 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_dispatch_window.attr,
 	&dev_attr_dispatch_window_current.attr,
 	&dev_attr_dispatch_window_dynamic.attr,
+	&dev_attr_dispatch_policy.attr,
+	&dev_attr_dispatch_pressure_inflight_limit.attr,
+	&dev_attr_dispatch_cooldown_ms.attr,
+	&dev_attr_dispatch_cooldown_active.attr,
+	&dev_attr_dispatch_cooldown_remaining_ms.attr,
 	&dev_attr_dispatch_window_grow_events.attr,
 	&dev_attr_dispatch_window_shrink_events.attr,
 	&dev_attr_dispatch_window_retry_events.attr,
 	&dev_attr_dispatch_window_dispatch_failures.attr,
+	&dev_attr_dispatch_sample_events.attr,
+	&dev_attr_dispatch_pressure_limited_samples.attr,
+	&dev_attr_dispatch_cooldown_limited_samples.attr,
+	&dev_attr_dispatch_cooldown_events.attr,
+	&dev_attr_dispatch_last_sample_inflight_ios.attr,
+	&dev_attr_dispatch_last_sample_request_objects.attr,
+	&dev_attr_dispatch_last_sample_controller_window.attr,
+	&dev_attr_dispatch_last_sample_pressure_window.attr,
+	&dev_attr_dispatch_last_sample_effective_window.attr,
 	&dev_attr_object_buffer_cached.attr,
 	&dev_attr_object_buffer_cache_limit.attr,
 	&dev_attr_object_buffer_hits.attr,
@@ -3140,6 +3504,40 @@ static bool kfastblock_volume_scheduler_dynamic_enabled(
 	return kfastblock_scheduler_dynamic_enabled(vol ? &vol->scheduler : NULL);
 }
 
+static const char *kfastblock_volume_scheduler_policy_name(
+	struct kfastblock_volume *vol)
+{
+	return kfastblock_scheduler_policy_name(
+		kfastblock_scheduler_policy(vol ? &vol->scheduler : NULL));
+}
+
+static u32 kfastblock_volume_scheduler_pressure_inflight_limit(
+	struct kfastblock_volume *vol)
+{
+	return kfastblock_scheduler_pressure_inflight_limit(
+		vol ? &vol->scheduler : NULL);
+}
+
+static u32 kfastblock_volume_scheduler_cooldown_ms(
+	struct kfastblock_volume *vol)
+{
+	return kfastblock_scheduler_cooldown_ms(vol ? &vol->scheduler : NULL);
+}
+
+static bool kfastblock_volume_scheduler_cooldown_active(
+	struct kfastblock_volume *vol)
+{
+	return kfastblock_scheduler_cooldown_active(
+		vol ? &vol->scheduler : NULL);
+}
+
+static u32 kfastblock_volume_scheduler_cooldown_remaining_ms(
+	struct kfastblock_volume *vol)
+{
+	return kfastblock_scheduler_cooldown_remaining_ms(
+		vol ? &vol->scheduler : NULL);
+}
+
 static u32 kfastblock_volume_scheduler_grow_events(
 	struct kfastblock_volume *vol)
 {
@@ -3162,6 +3560,68 @@ static u32 kfastblock_volume_scheduler_dispatch_failures(
 	struct kfastblock_volume *vol)
 {
 	return kfastblock_scheduler_dispatch_failures(
+		vol ? &vol->scheduler : NULL);
+}
+
+static u32 kfastblock_volume_scheduler_sample_events(
+	struct kfastblock_volume *vol)
+{
+	return kfastblock_scheduler_sample_events(vol ? &vol->scheduler : NULL);
+}
+
+static u32 kfastblock_volume_scheduler_pressure_limited_samples(
+	struct kfastblock_volume *vol)
+{
+	return kfastblock_scheduler_pressure_limited_samples(
+		vol ? &vol->scheduler : NULL);
+}
+
+static u32 kfastblock_volume_scheduler_cooldown_limited_samples(
+	struct kfastblock_volume *vol)
+{
+	return kfastblock_scheduler_cooldown_limited_samples(
+		vol ? &vol->scheduler : NULL);
+}
+
+static u32 kfastblock_volume_scheduler_cooldown_events(
+	struct kfastblock_volume *vol)
+{
+	return kfastblock_scheduler_cooldown_events(
+		vol ? &vol->scheduler : NULL);
+}
+
+static u32 kfastblock_volume_scheduler_last_sample_inflight_ios(
+	struct kfastblock_volume *vol)
+{
+	return kfastblock_scheduler_last_sample_inflight_ios(
+		vol ? &vol->scheduler : NULL);
+}
+
+static u32 kfastblock_volume_scheduler_last_sample_request_objects(
+	struct kfastblock_volume *vol)
+{
+	return kfastblock_scheduler_last_sample_request_objects(
+		vol ? &vol->scheduler : NULL);
+}
+
+static u32 kfastblock_volume_scheduler_last_sample_controller_window(
+	struct kfastblock_volume *vol)
+{
+	return kfastblock_scheduler_last_sample_controller_window(
+		vol ? &vol->scheduler : NULL);
+}
+
+static u32 kfastblock_volume_scheduler_last_sample_pressure_window(
+	struct kfastblock_volume *vol)
+{
+	return kfastblock_scheduler_last_sample_pressure_window(
+		vol ? &vol->scheduler : NULL);
+}
+
+static u32 kfastblock_volume_scheduler_last_sample_effective_window(
+	struct kfastblock_volume *vol)
+{
+	return kfastblock_scheduler_last_sample_effective_window(
 		vol ? &vol->scheduler : NULL);
 }
 
