@@ -34,6 +34,12 @@ static struct kfastblock_cached_socket *
 kfastblock_transport_reserve_osd_slot(struct kfastblock_volume *vol);
 static struct workqueue_struct *g_kfastblock_transport_wq;
 
+struct kfastblock_object_io_buffer_entry {
+	struct list_head node;
+	size_t capacity;
+	bool pooled;
+};
+
 enum kfastblock_transport_buffer_flags {
 	KFASTBLOCK_TRANSPORT_BUFFER_ZERO = 1U << 0,
 	KFASTBLOCK_TRANSPORT_BUFFER_LARGE = 1U << 1,
@@ -63,6 +69,79 @@ static void kfastblock_transport_free_buffer(void *buf, unsigned int flags)
 		return;
 	}
 	kfree(buf);
+}
+
+static void *kfastblock_transport_alloc_object_io_buffer(
+	struct kfastblock_volume *vol,
+	size_t size,
+	gfp_t gfp,
+	unsigned int flags)
+{
+	struct kfastblock_object_io_buffer_entry *entry = NULL;
+	size_t capacity = size;
+	bool pooled = false;
+
+	if (!size)
+		return NULL;
+	if (vol && size <= KFASTBLOCK_MAX_IO_BYTES) {
+		mutex_lock(&vol->object_buffer_lock);
+		if (!list_empty(&vol->object_buffer_free)) {
+			entry = list_first_entry(&vol->object_buffer_free,
+					struct kfastblock_object_io_buffer_entry, node);
+			list_del(&entry->node);
+			vol->object_buffer_cached--;
+		}
+		mutex_unlock(&vol->object_buffer_lock);
+		if (entry) {
+			if (flags & KFASTBLOCK_TRANSPORT_BUFFER_ZERO)
+				memset(entry + 1, 0, size);
+			return entry + 1;
+		}
+		capacity = KFASTBLOCK_MAX_IO_BYTES;
+		pooled = true;
+	}
+
+	entry = kfastblock_transport_alloc_buffer(sizeof(*entry) + capacity,
+						  gfp,
+						  KFASTBLOCK_TRANSPORT_BUFFER_LARGE |
+						  ((flags & KFASTBLOCK_TRANSPORT_BUFFER_ZERO) ?
+						   KFASTBLOCK_TRANSPORT_BUFFER_ZERO : 0));
+	if (!entry)
+		return NULL;
+
+	INIT_LIST_HEAD(&entry->node);
+	entry->capacity = capacity;
+	entry->pooled = pooled;
+	return entry + 1;
+}
+
+static void kfastblock_transport_free_object_io_buffer(struct kfastblock_volume *vol,
+						       void *buf)
+{
+	struct kfastblock_object_io_buffer_entry *entry;
+	u32 cache_limit;
+
+	if (!buf)
+		return;
+
+	entry = ((struct kfastblock_object_io_buffer_entry *)buf) - 1;
+	if (!vol || !entry->pooled || entry->capacity != KFASTBLOCK_MAX_IO_BYTES) {
+		kfastblock_transport_free_buffer(entry,
+				       KFASTBLOCK_TRANSPORT_BUFFER_LARGE);
+		return;
+	}
+
+	cache_limit = vol->dispatch_window ? vol->dispatch_window : 1;
+	mutex_lock(&vol->object_buffer_lock);
+	if (vol->object_buffer_cached >= cache_limit) {
+		mutex_unlock(&vol->object_buffer_lock);
+		kfastblock_transport_free_buffer(entry,
+				       KFASTBLOCK_TRANSPORT_BUFFER_LARGE);
+		return;
+	}
+	list_add(&entry->node, &vol->object_buffer_free);
+	vol->object_buffer_cached++;
+	mutex_unlock(&vol->object_buffer_lock);
 }
 
 static bool kfastblock_transport_should_retry_monitor(const int ret);
@@ -1722,7 +1801,8 @@ static int kfastblock_transport_submit_object_io(
 	}
 
 	if (op == REQ_OP_WRITE) {
-			buf = kfastblock_transport_alloc_buffer(
+			buf = kfastblock_transport_alloc_object_io_buffer(
+				vol,
 				extent->length, GFP_KERNEL,
 				KFASTBLOCK_TRANSPORT_BUFFER_LARGE);
 			if (!buf)
@@ -1732,14 +1812,16 @@ static int kfastblock_transport_submit_object_io(
 		if (ret)
 			goto out;
 	} else if (op == REQ_OP_WRITE_ZEROES) {
-			buf = kfastblock_transport_alloc_buffer(
+			buf = kfastblock_transport_alloc_object_io_buffer(
+				vol,
 				extent->length, GFP_KERNEL,
 				KFASTBLOCK_TRANSPORT_BUFFER_LARGE |
 				KFASTBLOCK_TRANSPORT_BUFFER_ZERO);
 			if (!buf)
 				return -ENOMEM;
-			} else if (op == REQ_OP_READ) {
-			buf = kfastblock_transport_alloc_buffer(
+		} else if (op == REQ_OP_READ) {
+			buf = kfastblock_transport_alloc_object_io_buffer(
+				vol,
 				extent->length, GFP_KERNEL,
 				KFASTBLOCK_TRANSPORT_BUFFER_LARGE);
 			if (!buf)
@@ -1825,8 +1907,7 @@ out:
 	if (ret)
 		kfastblock_volume_account_object_error(
 			vol, op, extent->pg_id, leader.osd_id, extent->length, ret);
-	kfastblock_transport_free_buffer(buf,
-				       KFASTBLOCK_TRANSPORT_BUFFER_LARGE);
+	kfastblock_transport_free_object_io_buffer(vol, buf);
 	return ret;
 }
 

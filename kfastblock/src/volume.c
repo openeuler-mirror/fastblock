@@ -2788,6 +2788,29 @@ static const struct blk_mq_ops kfastblock_mq_ops = {
 	.queue_rq = kfastblock_queue_rq,
 };
 
+struct kfastblock_object_buffer_entry {
+	struct list_head node;
+};
+
+static void kfastblock_volume_free_object_buffers(struct kfastblock_volume *vol)
+{
+	if (!vol)
+		return;
+
+	mutex_lock(&vol->object_buffer_lock);
+	while (!list_empty(&vol->object_buffer_free)) {
+		struct kfastblock_object_buffer_entry *entry =
+			list_first_entry(&vol->object_buffer_free,
+					 struct kfastblock_object_buffer_entry,
+					 node);
+
+		list_del(&entry->node);
+		kvfree(entry);
+	}
+	vol->object_buffer_cached = 0;
+	mutex_unlock(&vol->object_buffer_lock);
+}
+
 static void kfastblock_volume_free(struct kfastblock_volume *vol)
 {
 	if (!vol)
@@ -2815,6 +2838,7 @@ static void kfastblock_volume_free(struct kfastblock_volume *vol)
 	if (vol->dev_id >= 0)
 		ida_free(&g_kfastblock_dev_ida, vol->dev_id);
 
+	kfastblock_volume_free_object_buffers(vol);
 	kfastblock_volume_close_cached_sockets(vol);
 	kfastblock_control_cleanup_attach_spec(&vol->spec);
 	kfastblock_meta_cleanup_view(&vol->view);
@@ -2944,6 +2968,9 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	kfastblock_volume_stats_init(vol);
 	mutex_init(&vol->lifecycle_lock);
 	mutex_init(&vol->inflight_lock);
+	mutex_init(&vol->object_buffer_lock);
+	INIT_LIST_HEAD(&vol->object_buffer_free);
+	vol->object_buffer_cached = 0;
 	init_waitqueue_head(&vol->inflight_wq);
 	init_rwsem(&vol->state_lock);
 	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i)
