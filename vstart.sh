@@ -288,6 +288,8 @@ function generateLocalBenchConfig() {
   "msg_client_data_memory_pool_element_size": 5120,
   "msg_client_per_post_recv_num": 64,
   "msg_server_per_post_recv_num": 64,
+  "msg_client_rpc_timeout_us": 600000000,
+  "msg_server_rpc_timeout_us": 600000000,
   "osd_no_huge": true,
   "osd_mem_size_mb": 1024,
   "osd_iobuf_small_pool_count": 1024,
@@ -329,7 +331,9 @@ function generateConfigAndStartMonitor() {
            "msg_client_metadata_memory_pool_element_size": 512,
            "msg_client_data_memory_pool_element_size": 5120,
            "msg_client_per_post_recv_num": 64,
-           "msg_server_per_post_recv_num": 64
+           "msg_server_per_post_recv_num": 64,
+           "msg_client_rpc_timeout_us": 600000000,
+           "msg_server_rpc_timeout_us": 600000000
     }' | jq '.' > $tmpConfFile
 
     rm -rf "$dataDir"/mon_"$_mons"
@@ -471,9 +475,9 @@ function generateNicConfig() {
     if [ "$isSm" = "true" ];then
         echo "small memory, need modify memory pool capacity"
         jq '.msg_server_metadata_memory_pool_capacity |= 256' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
-        jq '.msg_server_data_memory_pool_capacity |= 256' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
+        jq '.msg_server_data_memory_pool_capacity |= 2048' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
         jq '.msg_client_metadata_memory_pool_capacity |= 256' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
-        jq '.msg_client_data_memory_pool_capacity |= 256' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
+        jq '.msg_client_data_memory_pool_capacity |= 2048' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
     fi
 }
 
