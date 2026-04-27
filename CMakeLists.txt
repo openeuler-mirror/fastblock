@@ -64,6 +64,13 @@ string(JOIN ":" PKG_CONFIG_PATH ${PKG_CONFIG_PATH_LIST})
 
 
 find_package(PkgConfig REQUIRED)
+pkg_check_modules(PROTOBUF REQUIRED IMPORTED_TARGET protobuf)
+
+if(NOT TARGET protobuf)
+  add_library(protobuf INTERFACE IMPORTED)
+  target_link_libraries(protobuf INTERFACE PkgConfig::PROTOBUF)
+endif()
+
 set(ENV{PKG_CONFIG_PATH}  "${PKG_CONFIG_PATH}")
 set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} ${BASE_CXX_FLAGS}")
 if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")

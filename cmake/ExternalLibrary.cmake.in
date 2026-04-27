@@ -1,10 +1,12 @@
 cmake_minimum_required(VERSION 3.12.0)
-project(build-deps NONE)
+project(build-deps LANGUAGES CXX)
 cmake_host_system_information(
   RESULT build_concurrency_factor
   QUERY NUMBER_OF_LOGICAL_CORES)
 set(info_dir --infodir=@FASTBLOCK_DEPS_INSTALL_DIR@/share/info)
 include(ExternalProject)
+
+find_package(absl QUIET CONFIG)
 
 message("COMPILE_spdk")
 
@@ -67,11 +69,22 @@ endif()
 ExternalProject_Add(spdk
   GIT_REPOSITORY https://gitee.com/wuxingyi/spdk.git
   GIT_TAG v24.05.x
+  # Keep submodule fetches aligned with the SPDK features we actually build.
+  GIT_SUBMODULES
+    dpdk
+    isa-l
+    isa-l-crypto
+  GIT_SUBMODULES_RECURSE OFF
   UPDATE_COMMAND ""
   BUILD_IN_SOURCE ON
   INSTALL_DIR    @FASTBLOCK_DEPS_INSTALL_DIR@
   CONFIGURE_COMMAND
-    <SOURCE_DIR>/configure  --without-nvme-cuse --without-crypto
+    <SOURCE_DIR>/configure
+      --without-nvme-cuse
+      --without-crypto
+      --without-vfio-user
+      --without-xnvme
+      --without-ocf
       --disable-tests --disable-unit-tests --disable-examples --disable-apps --with-rdma
       --prefix=<INSTALL_DIR>
       ${spdk_debug} ${spdk_asan} ${spdk_ubsan}
@@ -81,15 +94,19 @@ ExternalProject_Add(spdk
     make install
   )
 
-ExternalProject_Add(abseil
-  GIT_REPOSITORY  https://gitee.com/wuxingyi/abseil-cpp
-  GIT_TAG lts_2022_06_23
-  UPDATE_COMMAND ""
-  INSTALL_DIR    @FASTBLOCK_DEPS_INSTALL_DIR@
-  BUILD_IN_SOURCE ON
-  CMAKE_COMMAND
-    ${CMAKE_COMMAND} -E env ${build_env} ${CMAKE_COMMAND}
-  DEPENDS ${default_depends}
-  CMAKE_ARGS
-    ${common_cmake_args}
-    -DABSL_ENABLE_INSTALL=ON)
+if (absl_FOUND)
+  message("Using system absl from ${absl_DIR}")
+else ()
+  ExternalProject_Add(abseil
+    GIT_REPOSITORY  https://gitee.com/wuxingyi/abseil-cpp
+    GIT_TAG lts_2024_07_22
+    UPDATE_COMMAND ""
+    INSTALL_DIR    @FASTBLOCK_DEPS_INSTALL_DIR@
+    BUILD_IN_SOURCE ON
+    CMAKE_COMMAND
+      ${CMAKE_COMMAND} -E env ${build_env} ${CMAKE_COMMAND}
+    DEPENDS ${default_depends}
+    CMAKE_ARGS
+      ${common_cmake_args}
+      -DABSL_ENABLE_INSTALL=ON)
+endif ()
