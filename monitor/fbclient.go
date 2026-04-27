@@ -1192,7 +1192,6 @@ func main() {
 	fakeHostCount = flag.Int("hostcount", 0, "count of hosts in the cluster")
 	version = flag.Int64("version", -1, "our current version ")
 	imageName = flag.String("imagename", "", "image name you want get")
-	//poolname = flag.String("poolname", 0, "pool id you want operate")
 	imagesize = flag.Int("imagesize", 0, "image size")
 	object_size = flag.Int("objectsize", 4194304, "object size")
 	detail = flag.Bool("detail", false, "print detail information")

@@ -184,7 +184,7 @@ private:
             if(!_mon_cli->pool_is_exist(pool_id)){
                 return err::ERR_NOT_FOUND_POOL;
             }
-            SPDK_ERRLOG("ERROR: Cant find any available osd of pg %d, pool id %d\n", pool_id, pg_id);
+            SPDK_ERRLOG("ERROR: Cant find any available osd of pool_id:%d, pg_id: %d\n", pool_id, pg_id);
             return EAGAIN;
         }
 
