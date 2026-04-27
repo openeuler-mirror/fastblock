@@ -149,6 +149,7 @@ private:
         uint32_t port{0};
         std::string addr{};
         std::chrono::steady_clock::time_point next_connect_retry_at{};
+        std::chrono::steady_clock::time_point lease_deadline{};
         std::vector<write_ring_slot_info> slots{};
     };
 
@@ -228,10 +229,37 @@ private:
         state.next_slot = 0;
         state.is_ready = false;
         state.is_onflight = false;
+        state.lease_deadline = {};
         state.slots.clear();
         if (!keep_connection) {
             state.conn.reset();
         }
+    }
+
+    static void refresh_local_write_ring_deadline(write_ring_state& state) noexcept {
+        if (state.lease_us == 0) {
+            state.lease_deadline = {};
+            return;
+        }
+
+        auto lease = std::chrono::microseconds{state.lease_us};
+        auto guard = lease / 5;
+        if (guard < std::chrono::milliseconds{500}) {
+            guard = std::chrono::milliseconds{500};
+        }
+        if (guard > std::chrono::seconds{5}) {
+            guard = std::chrono::seconds{5};
+        }
+        if (guard >= lease) {
+            guard = lease / 2;
+        }
+
+        state.lease_deadline = std::chrono::steady_clock::now() + lease - guard;
+    }
+
+    static bool should_refresh_write_ring_lease(const std::shared_ptr<write_ring_state>& state) noexcept {
+        return state && state->is_ready && state->lease_deadline != std::chrono::steady_clock::time_point{} &&
+               std::chrono::steady_clock::now() >= state->lease_deadline;
     }
 
     static bool has_live_connection(const std::shared_ptr<write_ring_state>& state) {
@@ -347,12 +375,11 @@ private:
             return;
         }
 
-        SPDK_NOTICELOG("connected to %s:%u, reacquiring write ring\n", state->addr.c_str(), state->port);
+        SPDK_NOTICELOG("connected to %s:%u\n", state->addr.c_str(), state->port);
         state->conn = std::move(conn);
         state->next_connect_retry_at = std::chrono::steady_clock::now();
         reset_write_ring_state(*state, true);
         _stubs[conn_id] = std::make_unique<osd::rpc_service_osd_Stub>(state->conn.get());
-        acquire_write_ring_async(conn_id, _stubs.at(conn_id).get(), state);
     }
 
     void ensure_connection(
@@ -419,6 +446,7 @@ private:
             });
         }
         state->is_ready = !state->slots.empty();
+        refresh_local_write_ring_deadline(*state);
         state->ctrlr->Reset();
         SPDK_INFOLOG(
           libblk,
@@ -921,9 +949,14 @@ public:
                 auto& req = std::get<std::unique_ptr<osd::write_request>>(stack_ptr->req);
                 auto state = stack_ptr->ctrlr->Failed() ? -ENOLINK : resp->state();
                 if (stack_ptr->ring_ctx && stack_ptr->ring_ctx->ring_state) {
+                    if (state == err::E_SUCCESS) {
+                        refresh_local_write_ring_deadline(*stack_ptr->ring_ctx->ring_state);
+                    }
                     if (state == -ENOLINK || state == -ENOENT || state == -EINVAL) {
                         stack_ptr->ring_ctx->ring_state->is_ready = false;
                         stack_ptr->ring_ctx->ring_state->queue_id = 0;
+                        stack_ptr->ring_ctx->ring_state->lease_us = 0;
+                        stack_ptr->ring_ctx->ring_state->lease_deadline = {};
                         stack_ptr->ring_ctx->ring_state->slots.clear();
                     }
                     auto slot_idx = stack_ptr->ring_ctx->slot_index;
@@ -1095,7 +1128,11 @@ public:
         }
 
         auto request_handler = utils::overload {
-            [this, stack_ptr = head.get(), leader_id = osd_info_it->second->leader_id, leader_port = osd_info_it->second->port] (std::unique_ptr<osd::write_request>& req) {
+            [this,
+             stack_ptr = head.get(),
+             leader_id = osd_info_it->second->leader_id,
+             leader_port = osd_info_it->second->port,
+             leader_addr = osd_info_it->second->addr] (std::unique_ptr<osd::write_request>& req) {
                 if (should_use_write_ring()) {
                     auto conn_id = to_connection_id(
                       static_cast<int32_t>(leader_id),
@@ -1103,6 +1140,13 @@ public:
                     auto ring_state = get_write_ring_state(
                       static_cast<int32_t>(leader_id),
                       leader_port);
+                    if (should_refresh_write_ring_lease(ring_state)) {
+                        SPDK_NOTICELOG(
+                          "write ring lease expired or is expiring for %s:%u, reacquiring\n",
+                          leader_addr.c_str(),
+                          leader_port);
+                        reset_write_ring_state(*ring_state, true);
+                    }
                     if (ring_state && !ring_state->is_ready && !ring_state->is_onflight) {
                         acquire_write_ring_async(conn_id, stack_ptr->stub, ring_state);
                     }
