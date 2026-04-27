@@ -20,6 +20,16 @@
 
 #include "fastblock/rpc/osd_msg.pb.h"
 
+#include <infiniband/verbs.h>
+
+#include <spdk/env.h>
+
+#include <cstdlib>
+#include <cerrno>
+#include <memory>
+#include <optional>
+#include <unordered_map>
+#include <vector>
 #include <google/protobuf/stubs/callback.h>
 
 #include <variant>
@@ -63,7 +73,26 @@ private:
         fblock_client* this_client{nullptr};
     };
 
+    struct write_ring_state;
+
     struct request_stack_type {
+        struct ring_write_context {
+            std::shared_ptr<write_ring_state> ring_state{nullptr};
+            std::unique_ptr<osd::commit_ring_write_request> commit_req{nullptr};
+            uint32_t slot_index{0};
+            void* data{nullptr};
+            ::ibv_mr* mr{nullptr};
+
+            ~ring_write_context() noexcept {
+                if (mr) {
+                    ::ibv_dereg_mr(mr);
+                }
+                if (data) {
+                    ::spdk_free(data);
+                }
+            }
+        };
+
         osd::rpc_service_osd_Stub* stub{nullptr};
         request_type req{std::monostate{}};
         response_type resp{std::monostate{}};
@@ -74,6 +103,7 @@ private:
         uint64_t leader_osd_key{};
         fblock_client* this_client{nullptr};
         bool is_connecting{false};
+        std::unique_ptr<ring_write_context> ring_ctx{nullptr};
     };
 
     struct leader_key_type {
@@ -93,6 +123,26 @@ private:
     struct connection_id {
         int32_t node_id;
         uint32_t port;
+    };
+
+    struct write_ring_slot_info {
+        uint64_t remote_addr{0};
+        uint32_t remote_key{0};
+        uint32_t slot_size{0};
+        bool busy{false};
+    };
+
+    struct write_ring_state {
+        std::shared_ptr<msg::rdma::client::connection> conn{nullptr};
+        std::unique_ptr<msg::rdma::rpc_controller> ctrlr{std::make_unique<msg::rdma::rpc_controller>()};
+        std::unique_ptr<osd::acquire_write_ring_request> req{nullptr};
+        std::unique_ptr<osd::acquire_write_ring_response> resp{nullptr};
+        uint64_t queue_id{0};
+        uint64_t lease_us{0};
+        uint32_t next_slot{0};
+        bool is_ready{false};
+        bool is_onflight{false};
+        std::vector<write_ring_slot_info> slots{};
     };
 
     struct stop_context {
@@ -135,6 +185,192 @@ private:
         return get_stub(info->leader_id, info->addr, info->port);
     }
 
+    static constexpr uint32_t default_write_ring_slot_count{16};
+    static constexpr uint32_t default_write_ring_slot_size{256 * 1024};
+
+    static bool should_use_write_ring() noexcept {
+        auto* disable = std::getenv("FASTBLOCK_DISABLE_RING_WRITE");
+        return !(disable && disable[0] != '\0' && disable[0] != '0');
+    }
+
+    std::shared_ptr<write_ring_state> get_write_ring_state(const int node_id, const int port) {
+        auto conn_id = to_connection_id(node_id, port);
+        auto it = _write_rings.find(conn_id);
+        if (it == _write_rings.end()) {
+            return nullptr;
+        }
+
+        return it->second;
+    }
+
+    void on_write_ring_ready(const uint64_t conn_id) {
+        auto it = _write_rings.find(conn_id);
+        if (it == _write_rings.end()) {
+            return;
+        }
+
+        auto& state = it->second;
+        state->is_onflight = false;
+        if (state->resp->state() != err::E_SUCCESS) {
+            SPDK_ERRLOG("acquire write ring failed, state %d\n", state->resp->state());
+            return;
+        }
+
+        state->queue_id = state->resp->queue_id();
+        state->lease_us = state->resp->lease_us();
+        state->slots.clear();
+        state->slots.reserve(state->resp->slots_size());
+        for (int i = 0; i < state->resp->slots_size(); ++i) {
+            auto& slot = state->resp->slots(i);
+            state->slots.push_back(write_ring_slot_info{
+              .remote_addr = slot.remote_addr(),
+              .remote_key = slot.remote_key(),
+              .slot_size = slot.slot_size(),
+              .busy = false,
+            });
+        }
+        state->is_ready = !state->slots.empty();
+        SPDK_INFOLOG(
+          libblk,
+          "write ring ready, conn id %lu, queue id %lu, slot count %lu\n",
+          conn_id, state->queue_id, state->slots.size());
+    }
+
+    void acquire_write_ring_async(
+      const uint64_t conn_id,
+      osd::rpc_service_osd_Stub* stub,
+      std::shared_ptr<write_ring_state> ring_state) {
+        if (ring_state->is_ready || ring_state->is_onflight || not stub) {
+            return;
+        }
+
+        ring_state->req = std::make_unique<osd::acquire_write_ring_request>();
+        ring_state->resp = std::make_unique<osd::acquire_write_ring_response>();
+        ring_state->req->set_slot_count(default_write_ring_slot_count);
+        ring_state->req->set_slot_size(default_write_ring_slot_size);
+        ring_state->req->set_lease_us(30ULL * 1000ULL * 1000ULL);
+        ring_state->is_onflight = true;
+        stub->process_acquire_write_ring(
+          ring_state->ctrlr.get(),
+          ring_state->req.get(),
+          ring_state->resp.get(),
+          google::protobuf::NewCallback(this, &fblock_client::on_write_ring_ready, conn_id));
+    }
+
+    std::optional<uint32_t> acquire_write_ring_slot(write_ring_state* state) {
+        if (!state || !state->is_ready || state->slots.empty()) {
+            return std::nullopt;
+        }
+
+        for (size_t i = 0; i < state->slots.size(); ++i) {
+            auto idx = (state->next_slot + i) % state->slots.size();
+            if (!state->slots[idx].busy) {
+                state->slots[idx].busy = true;
+                state->next_slot = static_cast<uint32_t>((idx + 1) % state->slots.size());
+                return static_cast<uint32_t>(idx);
+            }
+        }
+
+        return std::nullopt;
+    }
+
+    bool post_ring_write(
+      request_stack_type* stack_ptr,
+      std::shared_ptr<write_ring_state> ring_state,
+      osd::write_request* write_req) {
+        if (!ring_state || !ring_state->is_ready || !ring_state->conn) {
+            return false;
+        }
+
+        auto slot_idx = acquire_write_ring_slot(ring_state.get());
+        if (!slot_idx.has_value()) {
+            return false;
+        }
+
+        const auto serialized_size = write_req->ByteSizeLong();
+        auto& remote_slot = ring_state->slots[*slot_idx];
+        if (serialized_size > remote_slot.slot_size) {
+            remote_slot.busy = false;
+            return false;
+        }
+
+        auto alloc_size = utils::align_up<uint64_t>(serialized_size, 4096);
+        auto* data = ::spdk_zmalloc(
+          alloc_size, 0x1000, nullptr, SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
+        if (!data) {
+            remote_slot.busy = false;
+            return false;
+        }
+
+        if (!write_req->SerializeToArray(data, serialized_size)) {
+            remote_slot.busy = false;
+            ::spdk_free(data);
+            return false;
+        }
+
+        auto* mr = ::ibv_reg_mr(
+          ring_state->conn->fd().pd(),
+          data,
+          alloc_size,
+          IBV_ACCESS_LOCAL_WRITE);
+        if (!mr) {
+            remote_slot.busy = false;
+            ::spdk_free(data);
+            return false;
+        }
+
+        auto ring_ctx = std::make_unique<request_stack_type::ring_write_context>();
+        ring_ctx->ring_state = ring_state;
+        ring_ctx->slot_index = *slot_idx;
+        ring_ctx->data = data;
+        ring_ctx->mr = mr;
+        ring_ctx->commit_req = std::make_unique<osd::commit_ring_write_request>();
+        ring_ctx->commit_req->set_queue_id(ring_state->queue_id);
+        ring_ctx->commit_req->set_slot_index(*slot_idx);
+        ring_ctx->commit_req->set_serialized_size(static_cast<uint32_t>(serialized_size));
+
+        ::ibv_sge sge{};
+        sge.addr = reinterpret_cast<uint64_t>(mr->addr);
+        sge.length = static_cast<uint32_t>(serialized_size);
+        sge.lkey = mr->lkey;
+
+        ::ibv_send_wr wr{};
+        wr.opcode = IBV_WR_RDMA_WRITE;
+        wr.sg_list = &sge;
+        wr.num_sge = 1;
+        wr.wr.rdma.remote_addr = remote_slot.remote_addr;
+        wr.wr.rdma.rkey = remote_slot.remote_key;
+        SPDK_NOTICELOG(
+          "posting ring rdma write, queue id %lu, slot %u, bytes %lu, remote addr 0x%lx, rkey %u\n",
+          ring_state->queue_id,
+          *slot_idx,
+          serialized_size,
+          remote_slot.remote_addr,
+          remote_slot.remote_key);
+        auto reply = std::make_unique<osd::write_reply>();
+        stack_ptr->ring_ctx = std::move(ring_ctx);
+        stack_ptr->resp = std::move(reply);
+
+        auto err = ring_state->conn->post_external_send_wr(
+          &wr,
+          [this, stack_ptr]() {
+              auto& reply_ref = std::get<std::unique_ptr<osd::write_reply>>(stack_ptr->resp);
+              stack_ptr->stub->process_commit_ring_write(
+                &_ctrlr,
+                stack_ptr->ring_ctx->commit_req.get(),
+                reply_ref.get(),
+                google::protobuf::NewCallback(this, &fblock_client::on_response, stack_ptr));
+          });
+        if (err) {
+            SPDK_ERRLOG("post rdma write failed: %s\n", err->err.message().c_str());
+            remote_slot.busy = false;
+            stack_ptr->ring_ctx.reset();
+            stack_ptr->resp = std::monostate{};
+            return false;
+        }
+        return true;
+    }
+
     osd::rpc_service_osd_Stub*
     get_stub(const int node_id, std::string addr, const int port) {
         auto conn_id = to_connection_id(node_id, port);
@@ -155,6 +391,10 @@ private:
 
                   auto stub = std::make_unique<osd::rpc_service_osd_Stub>(conn.get());
                   _stubs.at(conn_id) = std::move(stub);
+                  auto ring_state = std::make_shared<write_ring_state>();
+                  ring_state->conn = std::move(conn);
+                  _write_rings[conn_id] = ring_state;
+                  acquire_write_ring_async(conn_id, _stubs.at(conn_id).get(), ring_state);
               }
             );
 
@@ -457,6 +697,16 @@ public:
         auto response_handler = utils::overload {
             [this, stack_ptr = head.get()] (std::unique_ptr<osd::write_reply>& resp) {
                 auto& req = std::get<std::unique_ptr<osd::write_request>>(stack_ptr->req);
+                if (stack_ptr->ring_ctx && stack_ptr->ring_ctx->ring_state) {
+                    if (resp->state() == -ENOENT || resp->state() == -EINVAL) {
+                        stack_ptr->ring_ctx->ring_state->is_ready = false;
+                        stack_ptr->ring_ctx->ring_state->queue_id = 0;
+                    }
+                    auto slot_idx = stack_ptr->ring_ctx->slot_index;
+                    if (slot_idx < stack_ptr->ring_ctx->ring_state->slots.size()) {
+                        stack_ptr->ring_ctx->ring_state->slots[slot_idx].busy = false;
+                    }
+                }
                 SPDK_INFOLOG(
                   libblk,
                   "write_object pool: %lu pg: %lu object: %s offset: %lu done, state: %d\n",
@@ -598,7 +848,22 @@ public:
         }
 
         auto request_handler = utils::overload {
-            [this, stack_ptr = head.get()] (std::unique_ptr<osd::write_request>& req) {
+            [this, stack_ptr = head.get(), leader_id = osd_info_it->second->leader_id, leader_port = osd_info_it->second->port] (std::unique_ptr<osd::write_request>& req) {
+                if (should_use_write_ring()) {
+                    auto conn_id = to_connection_id(
+                      static_cast<int32_t>(leader_id),
+                      leader_port);
+                    auto ring_state = get_write_ring_state(
+                      static_cast<int32_t>(leader_id),
+                      leader_port);
+                    if (ring_state && !ring_state->is_ready && !ring_state->is_onflight) {
+                        acquire_write_ring_async(conn_id, stack_ptr->stub, ring_state);
+                    }
+                    if (ring_state && ring_state->is_ready && post_ring_write(stack_ptr, ring_state, req.get())) {
+                        return;
+                    }
+                }
+
                 auto reply = std::make_unique<osd::write_reply>();
                 stack_ptr->stub->process_write(
                   &_ctrlr, req.get(), reply.get(),
@@ -778,6 +1043,7 @@ private:
 private:
     std::shared_ptr<msg::rdma::client> _rpc_client{nullptr};
     std::unordered_map<uint64_t, std::unique_ptr<osd::rpc_service_osd_Stub>> _stubs{};
+    std::unordered_map<uint64_t, std::shared_ptr<write_ring_state>> _write_rings{};
     monitor::client* _mon_cli{nullptr};
     uint32_t _pg_mask;
     uint32_t _pg_num;
