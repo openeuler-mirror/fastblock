@@ -356,6 +356,10 @@ static int parse_arg(int ch, char* arg) {
 
 void write_once(bench_context* ctx) {
     auto* watcher_ctx = reinterpret_cast<watcher_context*>(ctx->watcher_ctx);
+    if (!watcher_ctx->infinity &&
+        ctx->done_io_count + ctx->on_flight_io_count >= ctx->io_count) {
+        return;
+    }
     ++(ctx->on_flight_io_count);
     auto offset = [&]() -> size_t {
         if (watcher_ctx->sequential_offsets) {
@@ -379,6 +383,10 @@ void write_once(bench_context* ctx) {
 
 void read_once(bench_context* ctx) {
     auto* watcher_ctx = reinterpret_cast<watcher_context*>(ctx->watcher_ctx);
+    if (!watcher_ctx->infinity &&
+        ctx->done_io_count + ctx->on_flight_io_count >= ctx->io_count) {
+        return;
+    }
     ++(ctx->on_flight_io_count);
     auto offset = [&]() -> size_t {
         if (watcher_ctx->sequential_offsets) {
@@ -408,15 +416,20 @@ void on_write_done(::spdk_bdev_io* ctx, [[maybe_unused]] int32_t res) {
 
     if (res != errc::success) {
         SPDK_ERRLOG("Write object error, res %d\n", res);
-        if (res != err::ERR_NOT_FOUND_POOL) {
+        if (res == err::ERR_NOT_FOUND_POOL) {
             SPDK_ERRLOG("pool %s does not exist\n", watcher_ctx->pool_name.c_str());
             std::raise(SIGINT);
             return;
         }
+        std::raise(SIGINT);
+        return;
     }
 
     auto tick = ::spdk_get_ticks();
     auto dur = static_cast<double>(tick - stack_ptr->start_tick);
+    if (bench_ctx->on_flight_io_count != 0) {
+        bench_ctx->on_flight_io_count--;
+    }
     if (tick >= watcher_ctx->iops_start_at) {
         if (not g_print_ctx.locked) {
             if (bench_ctx->dur_it == bench_ctx->durs.end()) {
@@ -428,23 +441,14 @@ void on_write_done(::spdk_bdev_io* ctx, [[maybe_unused]] int32_t res) {
             }
         }
 
-        if(bench_ctx->deferred_count != 0){
-            //到达计时点（既延期到期）
-            bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
-            bench_ctx->deferred_count = 0;
-        }
         bench_ctx->done_io_count++;
     } else {
         bench_ctx->deferred_count++;
-        if (bench_ctx->on_flight_io_count == bench_ctx->io_count) {
-            //延期时间还没到，此核上的所有io已经完成
-            bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
-            bench_ctx->deferred_count = 0;
-        }
     }
     bench_ctx->on_flight_request.erase(stack_ptr->id);
 
-    if (watcher_ctx->infinity or bench_ctx->on_flight_io_count < bench_ctx->io_count) {
+    if (watcher_ctx->infinity ||
+        bench_ctx->done_io_count + bench_ctx->on_flight_io_count < bench_ctx->io_count) {
         write_once(bench_ctx);
     }
 }
@@ -456,11 +460,13 @@ void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
 
     if (res != errc::success) {
         SPDK_ERRLOG("Read object error, res %d\n", res);
-        if (res != err::ERR_NOT_FOUND_POOL) {
+        if (res == err::ERR_NOT_FOUND_POOL) {
             SPDK_ERRLOG("pool %s does not exist\n", watcher_ctx->pool_name.c_str());
             std::raise(SIGINT);
             return;
         }
+        std::raise(SIGINT);
+        return;
     }
 
     if (watcher_ctx->verify_read_data) {
@@ -485,6 +491,9 @@ void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
 
     auto tick = ::spdk_get_ticks();
     auto dur = static_cast<double>(tick - stack_ptr->start_tick);
+    if (bench_ctx->on_flight_io_count != 0) {
+        bench_ctx->on_flight_io_count--;
+    }
     if (tick >= watcher_ctx->iops_start_at) {
         if (not g_print_ctx.locked) {
             if (bench_ctx->dur_it == bench_ctx->durs.end()) {
@@ -496,23 +505,14 @@ void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
             }
         }
 
-        if(bench_ctx->deferred_count != 0){
-            //到达计时点（既延时到期）
-            bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
-            bench_ctx->deferred_count = 0;
-        }
         bench_ctx->done_io_count++;
     } else {
         bench_ctx->deferred_count++;
-        if (bench_ctx->on_flight_io_count == bench_ctx->io_count) {
-            //延期时间还没到，此核上的所有io已经完成
-            bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
-            bench_ctx->deferred_count = 0;
-        }
     }
     bench_ctx->on_flight_request.erase(stack_ptr->id);
 
-    if (watcher_ctx->infinity or bench_ctx->on_flight_io_count < bench_ctx->io_count) {
+    if (watcher_ctx->infinity ||
+        bench_ctx->done_io_count + bench_ctx->on_flight_io_count < bench_ctx->io_count) {
         read_once(bench_ctx);
     }
 }

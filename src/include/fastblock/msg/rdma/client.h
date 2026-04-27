@@ -1025,6 +1025,10 @@ read_done:
         }
 
         void free_resources() {
+            if (_resources_freed) {
+                return;
+            }
+            _resources_freed = true;
             _poller.unregister_poller();
             SPDK_INFOLOG(msg, "The poller of the connection has been unregistered\n");
 
@@ -1046,17 +1050,43 @@ read_done:
             }
             _wait_read_requests.clear();
 
+            for (auto& task : _send_read_requests) {
+                set_failed_msg(task->ctrlr);
+                task->closure->Run();
+            }
+            _send_read_requests.clear();
+
             for (auto& task_pair : _unresponsed_requests) {
                 set_failed_msg(task_pair.second->ctrlr);
                 task_pair.second->closure->Run();
             }
             _unresponsed_requests.clear();
-            _sock->close();
 
-            if (_recv_ctx) {
+            if (_sock) {
+                _sock->close();
+            }
+
+            if (_recv_ctx and _recv_pool) {
                 _recv_pool->put_bulk(std::move(_recv_ctx), _opts->per_post_recv_num);
             }
-            _recv_pool->free();
+            if (_recv_pool) {
+                _recv_pool->free();
+                _recv_pool.reset();
+            }
+
+            _recv_ctx_map.clear();
+            _free_server_list.clear();
+            _ctrl_ops.clear();
+            _external_send_ctx.clear();
+            cqe_list.clear();
+
+            _sock.reset();
+            _busy_list.reset();
+            _busy_priority_list.reset();
+            _master.reset();
+            _meta_pool.reset();
+            _data_pool.reset();
+            _opts.reset();
         }
 
         auto async_shutdown(const state shutdown_state = state::shutdown) {
@@ -1121,6 +1151,11 @@ read_done:
             return _state == state::termianted;
         }
 
+        void shutdown_now() {
+            free_resources();
+            _state = state::termianted;
+        }
+
         bool task_queue_empty() {
             return _unresponsed_requests.empty() and _wait_read_requests.empty();
         }
@@ -1159,6 +1194,7 @@ read_done:
         int _sock_id{SPDK_ENV_SOCKET_ID_ANY};
         std::chrono::system_clock::time_point _shutdown_timeout{};
         std::unordered_map<uint64_t, external_send_context> _external_send_ctx{};
+        bool _resources_freed{false};
 
         FASTBLOCK_DUR_MAP_CREATE(rpc_request::key_type, _enqueue_dur_map, "enqueue_request");
         FASTBLOCK_DUR_MAP_CREATE(rpc_request::key_type, _proc_rpc_map, "process_rpc_request");
@@ -1261,12 +1297,46 @@ private:
     }
 
     void free_resources() {
+        if (_resources_freed) {
+            return;
+        }
+        _resources_freed = true;
         _core_poller.unregister_poller();
         _stop_poller.unregister_poller();
         SPDK_INFOLOG(msg, "The poller of the rpc client has been unregistered\n");
 
-        _meta_pool->free();
-        _data_pool->free();
+        for (auto& [_, conn] : _connections) {
+            if (conn) {
+                conn->shutdown_now();
+            }
+        }
+        for (auto& [_, task] : _connect_tasks) {
+            if (task and task->conn) {
+                task->conn->shutdown_now();
+            }
+        }
+
+        _connections.clear();
+        _cm_records.clear();
+        _cqe_dispatch_map.clear();
+        _connect_tasks.clear();
+        _busy_connections->clear();
+        _busy_priority_connections->clear();
+
+        if (_meta_pool) {
+            _meta_pool->free();
+            _meta_pool.reset();
+        }
+        if (_data_pool) {
+            _data_pool->free();
+            _data_pool.reset();
+        }
+        _wcs.reset();
+        _cq.reset();
+        _pd.reset();
+        _dev.reset();
+        _opts.reset();
+        _channel.close();
 
         if (_stop_ctx and _stop_ctx->on_stop_cb) {
             try {
@@ -1733,6 +1803,7 @@ private:
     event_channel _channel{};
     std::chrono::system_clock::time_point _stop_timeout_at{};
     std::unique_ptr<stop_context> _stop_ctx{nullptr};
+    bool _resources_freed{false};
 };
 
 } // namespace rdma

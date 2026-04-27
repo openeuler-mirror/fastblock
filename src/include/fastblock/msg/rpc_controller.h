@@ -27,7 +27,12 @@ public:
 
 public:
 
-    virtual void Reset() override { /*TODO:*/ };
+    virtual void Reset() override {
+        _failed = false;
+        _error_reason.clear();
+        _pd = nullptr;
+        _peer_address.clear();
+    };
 
     virtual bool Failed() const override { return _failed; }
 
