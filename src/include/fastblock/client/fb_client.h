@@ -66,6 +66,7 @@ private:
 
     struct leader_request_stack_type {
         osd::rpc_service_osd_Stub* stub{nullptr};
+        std::unique_ptr<msg::rdma::rpc_controller> ctrlr{std::make_unique<msg::rdma::rpc_controller>()};
         std::unique_ptr<osd::pg_leader_request> leader_req{nullptr};
         std::unique_ptr<osd::pg_leader_response> leader_resp{nullptr};
         utils::osd_info_t* osd{nullptr};
@@ -94,6 +95,7 @@ private:
         };
 
         osd::rpc_service_osd_Stub* stub{nullptr};
+        std::unique_ptr<msg::rdma::rpc_controller> ctrlr{std::make_unique<msg::rdma::rpc_controller>()};
         request_type req{std::monostate{}};
         response_type resp{std::monostate{}};
         response_callback_type resp_cb{std::monostate{}};
@@ -142,6 +144,11 @@ private:
         uint32_t next_slot{0};
         bool is_ready{false};
         bool is_onflight{false};
+        bool is_connecting{false};
+        int32_t node_id{-1};
+        uint32_t port{0};
+        std::string addr{};
+        std::chrono::steady_clock::time_point next_connect_retry_at{};
         std::vector<write_ring_slot_info> slots{};
     };
 
@@ -187,10 +194,64 @@ private:
 
     static constexpr uint32_t default_write_ring_slot_count{16};
     static constexpr uint32_t default_write_ring_slot_size{256 * 1024};
+    static constexpr auto default_connection_retry_interval{std::chrono::seconds{1}};
 
     static bool should_use_write_ring() noexcept {
         auto* disable = std::getenv("FASTBLOCK_DISABLE_RING_WRITE");
         return !(disable && disable[0] != '\0' && disable[0] != '0');
+    }
+
+    static bool should_retry_request(const int32_t state) noexcept {
+        switch (state) {
+        case -ENOLINK:
+        case -ENOENT:
+        case -EINVAL:
+        case err::RAFT_ERR_NOT_LEADER:
+        case err::RAFT_ERR_NOT_FOUND_PG:
+        case err::RAFT_ERR_PG_SHUTDOWN:
+        case err::RAFT_ERR_NO_CONNECTED:
+        case err::OSD_DOWN:
+        case err::OSD_STARTING:
+        case err::RAFT_ERR_PG_INITIALIZING:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    static void reset_write_ring_state(write_ring_state& state, const bool keep_connection = false) {
+        state.ctrlr->Reset();
+        state.req.reset();
+        state.resp.reset();
+        state.queue_id = 0;
+        state.lease_us = 0;
+        state.next_slot = 0;
+        state.is_ready = false;
+        state.is_onflight = false;
+        state.slots.clear();
+        if (!keep_connection) {
+            state.conn.reset();
+        }
+    }
+
+    static bool has_live_connection(const std::shared_ptr<write_ring_state>& state) {
+        return state && state->conn && !state->conn->is_terminated();
+    }
+
+    std::shared_ptr<write_ring_state> get_or_create_write_ring_state(
+      const int32_t node_id,
+      const std::string& addr,
+      const int port) {
+        auto conn_id = to_connection_id(node_id, port);
+        auto [it, inserted] = _write_rings.try_emplace(conn_id, std::make_shared<write_ring_state>());
+        auto& state = it->second;
+        state->node_id = node_id;
+        state->addr = addr;
+        state->port = static_cast<uint32_t>(port);
+        if (inserted) {
+            state->next_connect_retry_at = std::chrono::steady_clock::now();
+        }
+        return state;
     }
 
     std::shared_ptr<write_ring_state> get_write_ring_state(const int node_id, const int port) {
@@ -203,6 +264,123 @@ private:
         return it->second;
     }
 
+    leader_osd_info* get_leader_state(const uint64_t leader_osd_key) {
+        auto it = _leader_osd.find(leader_osd_key);
+        if (it == _leader_osd.end()) {
+            return nullptr;
+        }
+
+        return it->second.get();
+    }
+
+    void invalidate_connection(const uint64_t conn_id) {
+        _stubs.erase(conn_id);
+        auto it = _write_rings.find(conn_id);
+        if (it == _write_rings.end()) {
+            return;
+        }
+
+        auto& state = it->second;
+        state->is_connecting = false;
+        reset_write_ring_state(*state, false);
+        state->next_connect_retry_at = std::chrono::steady_clock::now();
+    }
+
+    void invalidate_leader_transport(const uint64_t leader_osd_key) {
+        auto* leader = get_leader_state(leader_osd_key);
+        if (!leader || leader->leader_id == -1 || leader->port == 0) {
+            return;
+        }
+
+        invalidate_connection(to_connection_id(leader->leader_id, leader->port));
+    }
+
+    void retry_request(std::unique_ptr<request_stack_type> stack_ptr, const int32_t state) {
+        auto* leader = get_leader_state(stack_ptr->leader_osd_key);
+        if (leader) {
+            leader->is_valid = false;
+            leader->is_onflight = false;
+        }
+        invalidate_leader_transport(stack_ptr->leader_osd_key);
+
+        if (stack_ptr->ring_ctx && stack_ptr->ring_ctx->ring_state) {
+            auto& ring_state = stack_ptr->ring_ctx->ring_state;
+            ring_state->is_ready = false;
+            ring_state->queue_id = 0;
+            ring_state->slots.clear();
+        }
+
+        stack_ptr->stub = nullptr;
+        stack_ptr->is_responsed = false;
+        stack_ptr->ctrlr->Reset();
+        stack_ptr->resp = std::monostate{};
+        stack_ptr->ring_ctx.reset();
+        _requests.push_front(std::move(stack_ptr));
+        SPDK_NOTICELOG("retry request after transient state %d\n", state);
+    }
+
+    void on_connection_ready(
+      const uint64_t conn_id,
+      const bool is_connected,
+      std::shared_ptr<msg::rdma::client::connection> conn) {
+        auto it = _write_rings.find(conn_id);
+        if (it == _write_rings.end()) {
+            return;
+        }
+
+        auto& state = it->second;
+        if (is_connected && conn && has_live_connection(state) && state->conn.get() != conn.get()) {
+            SPDK_NOTICELOG(
+              "drop stale reconnected transport to %s:%u\n",
+              state->addr.c_str(),
+              state->port);
+            conn->async_shutdown();
+            return;
+        }
+
+        state->is_connecting = false;
+        if (!is_connected || !conn) {
+            SPDK_NOTICELOG("connect to %s:%u failed, will retry later\n", state->addr.c_str(), state->port);
+            reset_write_ring_state(*state, false);
+            state->next_connect_retry_at = std::chrono::steady_clock::now() + default_connection_retry_interval;
+            _stubs.erase(conn_id);
+            return;
+        }
+
+        SPDK_NOTICELOG("connected to %s:%u, reacquiring write ring\n", state->addr.c_str(), state->port);
+        state->conn = std::move(conn);
+        state->next_connect_retry_at = std::chrono::steady_clock::now();
+        reset_write_ring_state(*state, true);
+        _stubs[conn_id] = std::make_unique<osd::rpc_service_osd_Stub>(state->conn.get());
+        acquire_write_ring_async(conn_id, _stubs.at(conn_id).get(), state);
+    }
+
+    void ensure_connection(
+      const uint64_t conn_id,
+      const int32_t node_id,
+      const std::string& addr,
+      const int port) {
+        auto state = get_or_create_write_ring_state(node_id, addr, port);
+        if (has_live_connection(state) || state->is_connecting) {
+            return;
+        }
+
+        auto now = std::chrono::steady_clock::now();
+        if (state->next_connect_retry_at > now) {
+            return;
+        }
+
+        state->is_connecting = true;
+        reset_write_ring_state(*state, false);
+        _stubs.erase(conn_id);
+        _rpc_client->emplace_connection(
+          addr,
+          static_cast<uint16_t>(port),
+          [this, conn_id](bool is_connected, std::shared_ptr<msg::rdma::client::connection> conn) {
+              on_connection_ready(conn_id, is_connected, std::move(conn));
+          });
+    }
+
     void on_write_ring_ready(const uint64_t conn_id) {
         auto it = _write_rings.find(conn_id);
         if (it == _write_rings.end()) {
@@ -211,8 +389,19 @@ private:
 
         auto& state = it->second;
         state->is_onflight = false;
+        if (state->ctrlr->Failed()) {
+            SPDK_NOTICELOG(
+              "acquire write ring transport failed for %s:%u, error: %s\n",
+              state->addr.c_str(),
+              state->port,
+              state->ctrlr->ErrorText().c_str());
+            reset_write_ring_state(*state, true);
+            state->ctrlr->Reset();
+            return;
+        }
         if (state->resp->state() != err::E_SUCCESS) {
             SPDK_ERRLOG("acquire write ring failed, state %d\n", state->resp->state());
+            state->ctrlr->Reset();
             return;
         }
 
@@ -230,6 +419,7 @@ private:
             });
         }
         state->is_ready = !state->slots.empty();
+        state->ctrlr->Reset();
         SPDK_INFOLOG(
           libblk,
           "write ring ready, conn id %lu, queue id %lu, slot count %lu\n",
@@ -249,6 +439,7 @@ private:
         ring_state->req->set_slot_count(default_write_ring_slot_count);
         ring_state->req->set_slot_size(default_write_ring_slot_size);
         ring_state->req->set_lease_us(30ULL * 1000ULL * 1000ULL);
+        ring_state->ctrlr->Reset();
         ring_state->is_onflight = true;
         stub->process_acquire_write_ring(
           ring_state->ctrlr.get(),
@@ -340,23 +531,17 @@ private:
         wr.num_sge = 1;
         wr.wr.rdma.remote_addr = remote_slot.remote_addr;
         wr.wr.rdma.rkey = remote_slot.remote_key;
-        SPDK_NOTICELOG(
-          "posting ring rdma write, queue id %lu, slot %u, bytes %lu, remote addr 0x%lx, rkey %u\n",
-          ring_state->queue_id,
-          *slot_idx,
-          serialized_size,
-          remote_slot.remote_addr,
-          remote_slot.remote_key);
         auto reply = std::make_unique<osd::write_reply>();
         stack_ptr->ring_ctx = std::move(ring_ctx);
         stack_ptr->resp = std::move(reply);
+        stack_ptr->ctrlr->Reset();
 
         auto err = ring_state->conn->post_external_send_wr(
           &wr,
           [this, stack_ptr]() {
               auto& reply_ref = std::get<std::unique_ptr<osd::write_reply>>(stack_ptr->resp);
               stack_ptr->stub->process_commit_ring_write(
-                &_ctrlr,
+                stack_ptr->ctrlr.get(),
                 stack_ptr->ring_ctx->commit_req.get(),
                 reply_ref.get(),
                 google::protobuf::NewCallback(this, &fblock_client::on_response, stack_ptr));
@@ -374,34 +559,25 @@ private:
     osd::rpc_service_osd_Stub*
     get_stub(const int node_id, std::string addr, const int port) {
         auto conn_id = to_connection_id(node_id, port);
-        auto stub_it = _stubs.find(conn_id);
-        if (stub_it == _stubs.end()) {
-            _stubs.emplace(conn_id, nullptr);
-            SPDK_DEBUGLOG(
-              libblk,
-              "emplaced stubs of node_id %d, current core is %d, conn id %lu, addr is '%s:%d'\n",
-               ::spdk_env_get_current_core(), node_id, conn_id, addr.c_str(), port);
-            _rpc_client->emplace_connection(
-              addr, port,
-              [this, conn_id, addr, port] (bool is_connected, std::shared_ptr<msg::rdma::client::connection> conn) {
-                  if (not is_connected) {
-                      SPDK_ERRLOG("ERROR: Connect to %s:%d failed\n", addr.c_str(), port);
-                      throw std::runtime_error{"make connection failed\n"};
-                  }
-
-                  auto stub = std::make_unique<osd::rpc_service_osd_Stub>(conn.get());
-                  _stubs.at(conn_id) = std::move(stub);
-                  auto ring_state = std::make_shared<write_ring_state>();
-                  ring_state->conn = std::move(conn);
-                  _write_rings[conn_id] = ring_state;
-                  acquire_write_ring_async(conn_id, _stubs.at(conn_id).get(), ring_state);
-              }
-            );
-
+        auto ring_state = get_or_create_write_ring_state(node_id, addr, port);
+        if (ring_state->is_connecting) {
             return nullptr;
         }
 
-        return stub_it->second.get();
+        if (!has_live_connection(ring_state)) {
+            if (ring_state->conn || _stubs.contains(conn_id)) {
+                invalidate_connection(conn_id);
+            }
+            ensure_connection(conn_id, node_id, addr, port);
+            return nullptr;
+        }
+
+        auto stub_it = _stubs.find(conn_id);
+        if (stub_it == _stubs.end() || !stub_it->second) {
+            _stubs[conn_id] = std::make_unique<osd::rpc_service_osd_Stub>(ring_state->conn.get());
+        }
+
+        return _stubs.at(conn_id).get();
     }
 
     uint64_t make_leader_key(const int32_t pool_id, const int32_t pg_id) noexcept {
@@ -459,6 +635,47 @@ private:
         }
 
         info->is_valid = false;
+    }
+
+    void refresh_leader_transport_from_cluster_map(leader_osd_info* info) {
+        if (!info || info->leader_id == -1) {
+            return;
+        }
+
+        auto* mon_osd_info = _mon_cli->get_osd_info(info->leader_id);
+        if (!mon_osd_info || !mon_osd_info->isin || !mon_osd_info->isup ||
+            mon_osd_info->sharded_ports.empty()) {
+            return;
+        }
+
+        const auto shard_id = utils::get_current_shard_id() % mon_osd_info->sharded_ports.size();
+        const auto shard_it = mon_osd_info->sharded_ports.find(shard_id);
+        if (shard_it == mon_osd_info->sharded_ports.end()) {
+            return;
+        }
+
+        const auto new_addr = mon_osd_info->address;
+        const auto new_port = static_cast<int32_t>(shard_it->second.port);
+        if (info->addr == new_addr && info->port == new_port) {
+            return;
+        }
+
+        if (info->port != 0) {
+            const auto old_conn_id = to_connection_id(info->leader_id, info->port);
+            invalidate_connection(old_conn_id);
+        }
+
+        SPDK_NOTICELOG(
+          "refresh leader transport for osd %d from %s:%d to %s:%d\n",
+          info->leader_id,
+          info->addr.c_str(),
+          info->port,
+          new_addr.c_str(),
+          new_port);
+        info->addr = new_addr;
+        info->port = new_port;
+        info->epoch = _mon_cli->last_cluster_map_at();
+        info->is_valid = true;
     }
 
     int send_request(
@@ -689,18 +906,25 @@ public:
             return SPDK_POLLER_IDLE;
         }
 
-        auto& head = _on_flight_requests.front();
+        auto& head_ref = _on_flight_requests.front();
+        auto* head = head_ref.get();
         if (not head->is_responsed) {
             return SPDK_POLLER_IDLE;
         }
 
+        auto finish_request = [this](std::unique_ptr<request_stack_type> stack_ptr) {
+            stack_ptr->ctrlr->Reset();
+        };
+
         auto response_handler = utils::overload {
-            [this, stack_ptr = head.get()] (std::unique_ptr<osd::write_reply>& resp) {
+            [this, stack_ptr = head] (std::unique_ptr<osd::write_reply>& resp) {
                 auto& req = std::get<std::unique_ptr<osd::write_request>>(stack_ptr->req);
+                auto state = stack_ptr->ctrlr->Failed() ? -ENOLINK : resp->state();
                 if (stack_ptr->ring_ctx && stack_ptr->ring_ctx->ring_state) {
-                    if (resp->state() == -ENOENT || resp->state() == -EINVAL) {
+                    if (state == -ENOLINK || state == -ENOENT || state == -EINVAL) {
                         stack_ptr->ring_ctx->ring_state->is_ready = false;
                         stack_ptr->ring_ctx->ring_state->queue_id = 0;
+                        stack_ptr->ring_ctx->ring_state->slots.clear();
                     }
                     auto slot_idx = stack_ptr->ring_ctx->slot_index;
                     if (slot_idx < stack_ptr->ring_ctx->ring_state->slots.size()) {
@@ -711,43 +935,65 @@ public:
                   libblk,
                   "write_object pool: %lu pg: %lu object: %s offset: %lu done, state: %d\n",
                   req->pool_id(), req->pg_id(), req->object_name().c_str(),
-                  req->offset(), resp->state());
+                  req->offset(), state);
 
+                if (should_retry_request(state)) {
+                    return std::optional<int32_t>{state};
+                }
                 auto cb = std::get<write_object_callback>(stack_ptr->resp_cb);
-                cb(stack_ptr->ctx, resp->state());
+                cb(stack_ptr->ctx, state);
+                return std::optional<int32_t>{};
             },
 
-            [this, stack_ptr = head.get()] (std::unique_ptr<osd::read_reply>& resp) {
+            [this, stack_ptr = head] (std::unique_ptr<osd::read_reply>& resp) {
                 auto& req = std::get<std::unique_ptr<osd::read_request>>(stack_ptr->req);
+                auto state = stack_ptr->ctrlr->Failed() ? -ENOLINK : resp->state();
+                auto data = stack_ptr->ctrlr->Failed() ? std::string{} : resp->data();
                 SPDK_INFOLOG(
                  libblk,
                    "read_object pool: %lu pg:%lu object:%s offset:%lu done. state:%d data size: %lu\n",
                    req->pool_id(), req->pg_id(), req->object_name().c_str(),
-                   req->offset(), resp->state(), resp->data().size());
+                   req->offset(), state, data.size());
 
+                if (should_retry_request(state)) {
+                    return std::optional<int32_t>{state};
+                }
                 auto cb = std::get<read_object_callback>(stack_ptr->resp_cb);
-                cb(stack_ptr->ctx, stack_ptr->obj_index, resp->data(), resp->state());
+                cb(stack_ptr->ctx, stack_ptr->obj_index, data, state);
+                return std::optional<int32_t>{};
             },
 
-            [this, stack_ptr = head.get()] (std::unique_ptr<osd::delete_reply>& resp) {
-                auto& req = std::get<std::unique_ptr<osd::write_request>>(stack_ptr->req);
+            [this, stack_ptr = head] (std::unique_ptr<osd::delete_reply>& resp) {
+                auto& req = std::get<std::unique_ptr<osd::delete_request>>(stack_ptr->req);
+                auto state = stack_ptr->ctrlr->Failed() ? -ENOLINK : resp->state();
                 SPDK_INFOLOG(
                   libblk,
                   "delete_request pool: %lu pg:%lu object:%s done. state:%d\n",
-                  req->pool_id(), req->pg_id(), req->object_name().c_str(), resp->state());
+                  req->pool_id(), req->pg_id(), req->object_name().c_str(), state);
+                if (should_retry_request(state)) {
+                    return std::optional<int32_t>{state};
+                }
                 auto* bdev_io = reinterpret_cast<::spdk_bdev_io*>(stack_ptr->ctx);
                 auto cb = std::get<delete_callback>(stack_ptr->resp_cb);
-                cb(bdev_io, resp->state());
+                cb(bdev_io, state);
+                return std::optional<int32_t>{};
             },
 
-            [] ([[maybe_unused]] auto& _) {
+            [] ([[maybe_unused]] auto& _) -> std::optional<int32_t> {
                 SPDK_ERRLOG("ERROR: Un-allocated response\n");
                 throw std::runtime_error{"un-allocated response"};
             }
         };
 
-        std::visit(response_handler, head->resp);
+        auto retry_state = std::visit(response_handler, head->resp);
+        auto stack_ptr = std::move(_on_flight_requests.front());
         _on_flight_requests.pop_front();
+        if (retry_state.has_value()) {
+            retry_request(std::move(stack_ptr), retry_state.value());
+            return SPDK_POLLER_BUSY;
+        }
+
+        finish_request(std::move(stack_ptr));
 
         return SPDK_POLLER_BUSY;
     }
@@ -770,8 +1016,9 @@ public:
                       stack_ptr->leader_req->pool_id(), stack_ptr->leader_req->pg_id(), stack_ptr->osd->node_id);
               auto done = google::protobuf::NewCallback(
                 this, &fblock_client::on_leader_acquired, stack_ptr.get());
+              stack_ptr->ctrlr->Reset();
               stack_ptr->stub->process_get_leader(
-                &_ctrlr, stack_ptr->leader_req.get(), stack_ptr->leader_resp.get(), done);
+                stack_ptr->ctrlr.get(), stack_ptr->leader_req.get(), stack_ptr->leader_resp.get(), done);
               _on_flight_leader_requests.insert(std::move(kv));
               return SPDK_POLLER_BUSY;
           }
@@ -791,28 +1038,28 @@ public:
             return SPDK_POLLER_IDLE;
         }
 
+        if (osd_info_it->second->is_onflight) {
+            return SPDK_POLLER_IDLE;
+        }
+
+        SPDK_DEBUGLOG(
+          libblk,
+          "head->leader_osd_key: %lu, leader_id: %u, addr: '%s:%d' is_onflight: %d, is_valid: %d\n",
+          head->leader_osd_key,
+          osd_info_it->second->leader_id,
+          osd_info_it->second->addr.c_str(),
+          osd_info_it->second->port,
+          osd_info_it->second->is_onflight,
+          osd_info_it->second->port);
+
+        refresh_leader_transport_from_cluster_map(osd_info_it->second.get());
+
+        head->stub = get_stub(
+          osd_info_it->second->leader_id,
+          osd_info_it->second->addr,
+          osd_info_it->second->port);
         if (not head->stub) {
-            if (osd_info_it->second->is_onflight) {
-                return SPDK_POLLER_IDLE;
-            }
-
-            SPDK_DEBUGLOG(
-              libblk,
-              "head->leader_osd_key: %lu, leader_id: %u, addr: '%s:%d' is_onflight: %d, is_valid: %d\n",
-              head->leader_osd_key,
-              osd_info_it->second->leader_id,
-              osd_info_it->second->addr.c_str(),
-              osd_info_it->second->port,
-              osd_info_it->second->is_onflight,
-              osd_info_it->second->port);
-
-            head->stub = get_stub(
-              osd_info_it->second->leader_id,
-              osd_info_it->second->addr,
-              osd_info_it->second->port);
-            if (not head->stub) {
-                return SPDK_POLLER_IDLE;
-            }
+            return SPDK_POLLER_IDLE;
         }
 
         update_leader_state(osd_info_it->second.get());
@@ -864,25 +1111,28 @@ public:
                     }
                 }
 
+                stack_ptr->ctrlr->Reset();
                 auto reply = std::make_unique<osd::write_reply>();
                 stack_ptr->stub->process_write(
-                  &_ctrlr, req.get(), reply.get(),
+                  stack_ptr->ctrlr.get(), req.get(), reply.get(),
                   google::protobuf::NewCallback(this, &fblock_client::on_response, stack_ptr));
                 stack_ptr->resp = std::move(reply);
             },
 
             [this, stack_ptr = head.get()] (std::unique_ptr<osd::read_request>& req) {
+                stack_ptr->ctrlr->Reset();
                 auto reply = std::make_unique<osd::read_reply>();
                 stack_ptr->stub->process_read(
-                  &_ctrlr, req.get(), reply.get(),
+                  stack_ptr->ctrlr.get(), req.get(), reply.get(),
                   google::protobuf::NewCallback(this, &fblock_client::on_response, stack_ptr));
                 stack_ptr->resp = std::move(reply);
             },
 
             [this, stack_ptr = head.get()] (std::unique_ptr<osd::delete_request>& req) {
+                stack_ptr->ctrlr->Reset();
                 auto reply = std::make_unique<osd::delete_reply>();
                 stack_ptr->stub->process_delete(
-                  &_ctrlr, req.get(), reply.get(),
+                  stack_ptr->ctrlr.get(), req.get(), reply.get(),
                   google::protobuf::NewCallback(this, &fblock_client::on_response, stack_ptr));
                 stack_ptr->resp = std::move(reply);
             },
@@ -923,6 +1173,17 @@ private:
         auto* osd_info = info_it->second.get();
         SPDK_INFOLOG(libblk, "Got leader osd %ld, leader_key is %lu\n", stack_ptr->leader_request_id, leader_key);
         osd_info->is_onflight = false;
+        if (it->second->ctrlr->Failed()) {
+            osd_info->is_valid = false;
+            SPDK_NOTICELOG(
+              "get leader transport failed for pg %lu.%lu: %s\n",
+              it->second->leader_req->pool_id(),
+              it->second->leader_req->pg_id(),
+              it->second->ctrlr->ErrorText().c_str());
+            it->second->ctrlr->Reset();
+            _on_flight_leader_requests.erase(it);
+            return;
+        }
         auto* resp = it->second->leader_resp.get();
         osd_info->epoch = std::chrono::system_clock::now();
         osd_info->leader_id = resp->leader_id();
@@ -942,12 +1203,14 @@ private:
 
             auto done = google::protobuf::NewCallback(
               this, &fblock_client::on_leader_acquired, stack_ptr);
+            stack_ptr->ctrlr->Reset();
             stack_ptr->stub->process_get_leader(
-              &_ctrlr, stack_ptr->leader_req.get(), stack_ptr->leader_resp.get(), done);
+              stack_ptr->ctrlr.get(), stack_ptr->leader_req.get(), stack_ptr->leader_resp.get(), done);
 
             return;
         }
 
+        it->second->ctrlr->Reset();
         _on_flight_leader_requests.erase(it);
     }
 
@@ -1056,8 +1319,6 @@ private:
     std::unordered_map<uint64_t, std::unique_ptr<leader_request_stack_type>> _on_flight_leader_requests{};
     std::list<std::unique_ptr<request_stack_type>> _requests{};
     std::list<std::unique_ptr<request_stack_type>> _on_flight_requests{};
-    msg::rdma::rpc_controller _ctrlr{};
-
     ::spdk_thread* _current_thread{};
 
     std::unordered_map<uint64_t, std::unique_ptr<leader_osd_info>> _leader_osd{};
