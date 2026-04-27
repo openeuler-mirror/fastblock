@@ -220,6 +220,8 @@ kfastblock_start_logging "$log_file"
 echo "artifact_dir=$run_dir"
 echo "duration_sec=$duration_sec io_workers=$io_workers open_workers=$open_workers attach_cycles=$attach_cycles"
 echo "dispatch_window=${dispatch_window:-default}"
+echo "module_params=${KFASTBLOCK_MODULE_PARAMS:-<default>}"
+echo "force_reload_module=${KFASTBLOCK_FORCE_RELOAD_MODULE:-0}"
 
 kfastblock_prepare_or_reuse_dev_cluster "$repo_root" "$config_file"
 kfastblock_capture_context "$config_file" "$run_dir"

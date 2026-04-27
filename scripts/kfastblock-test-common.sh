@@ -309,9 +309,23 @@ kfastblock_run_rawctl_checks() {
 
 kfastblock_build_and_load_module() {
     local repo_root="$1"
+    local module_params="${KFASTBLOCK_MODULE_PARAMS:-}"
+    local force_reload="${KFASTBLOCK_FORCE_RELOAD_MODULE:-0}"
 
     make -C "$repo_root/kfastblock" all >/dev/null
-    if ! lsmod | awk '$1 == "kfastblock" { found = 1 } END { exit(found ? 0 : 1) }'; then
+    if lsmod | awk '$1 == "kfastblock" { found = 1 } END { exit(found ? 0 : 1) }'; then
+        if [ "$force_reload" = "1" ]; then
+            kfastblock_detach_all_volumes "$repo_root"
+            rmmod kfastblock
+        else
+            return 0
+        fi
+    fi
+
+    if [ -n "$module_params" ]; then
+        # shellcheck disable=SC2086
+        insmod "$repo_root/kfastblock/kfastblock.ko" $module_params
+    else
         insmod "$repo_root/kfastblock/kfastblock.ko"
     fi
 }
