@@ -19,6 +19,14 @@ device_path=""
 detach_needed=0
 probe_status=0
 
+stage_marker() {
+    local phase="$1"
+    local name="$2"
+
+    printf '[%s] staged-probe %s %s\n' \
+        "$(date '+%Y-%m-%d %H:%M:%S %Z')" "$phase" "$name"
+}
+
 cleanup() {
     kfastblock_release_test_lock
     if [ "$detach_needed" = "1" ]; then
@@ -53,36 +61,50 @@ monitor_addr="$(kfastblock_resolve_monitor_addr "$config_file")"
 
 case "$stage" in
     cluster)
+        stage_marker "begin" "cluster-status"
         "$repo_root/monitor/fastblock-client" -conf="$config_file" -op=status
+        stage_marker "end" "cluster-status"
         ;;
     image|rawctl|module|attach|open|io)
+        stage_marker "begin" "create-image"
         kfastblock_create_image "$repo_root" "$config_file" "$pool_name" "$image_name"
+        stage_marker "end" "create-image"
         if [ "$stage" = "image" ]; then
             exit 0
         fi
+
+        stage_marker "begin" "rawctl-checks"
         kfastblock_run_rawctl_checks "$repo_root" "$monitor_addr" "$pool_name" "$image_name"
+        stage_marker "end" "rawctl-checks"
         if [ "$stage" = "rawctl" ]; then
             exit 0
         fi
 
+        stage_marker "begin" "load-module"
         kfastblock_build_and_load_module "$repo_root"
+        stage_marker "end" "load-module"
         if [ "$stage" = "module" ]; then
             exit 0
         fi
 
+        stage_marker "begin" "attach-volume"
         kfastblock_attach_volume "$repo_root" "$monitor_addr" "$pool_name" "$image_name"
         detach_needed=1
         device_path="$(kfastblock_resolve_device)"
+        stage_marker "end" "attach-volume"
         if [ "$stage" = "attach" ]; then
             exit 0
         fi
 
         if [ "$stage" = "open" ]; then
+            stage_marker "begin" "open-device"
             exec {fd}<>"$device_path"
             exec {fd}>&-
+            stage_marker "end" "open-device"
             exit 0
         fi
 
+        stage_marker "begin" "io-verify"
         printf 'KFASTBLOCK_STAGE_%s' "$image_name" | dd \
             of="$payload_file" bs=4096 count=1 conv=sync status=none
         dd if="$payload_file" of="$device_path" \
@@ -90,6 +112,7 @@ case "$stage" in
         dd if="$device_path" of="$readback_file" \
             bs=4096 count=1 iflag=direct status=none
         cmp -n 4096 "$payload_file" "$readback_file"
+        stage_marker "end" "io-verify"
         ;;
     *)
         echo "unsupported stage: $stage" >&2
