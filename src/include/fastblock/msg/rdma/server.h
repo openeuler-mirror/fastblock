@@ -203,6 +203,10 @@ public:
             opts->slow_method = std::chrono::microseconds{slow_method_us};
         }
 
+        if (conf.count("msg_server_bind_address") != 0) {
+            opts->bind_address = conf.get_child("msg_server_bind_address").get_value<std::string>();
+        }
+
         opts->ep = std::make_unique<endpoint>(conf);
 
         return opts;
@@ -237,14 +241,18 @@ public:
         _pd->value(), "srv_data",
         _opts->data_memory_pool_capacity,
         _opts->data_memory_pool_element_size, 0, _sock_id)} {
-        auto ipv4_address = _dev->get_ipv4(_opts->ep->device_name);
+        if (_opts->bind_address.empty()) {
+            auto ipv4_address = _dev->get_ipv4(_opts->ep->device_name);
 
-        if (not ipv4_address) {
-            throw std::runtime_error{"cant query the ipv4"};
+            if (not ipv4_address) {
+                throw std::runtime_error{"cant query the ipv4"};
+            }
+
+            _opts->bind_address = *ipv4_address;
+            SPDK_INFOLOG(msg, "Use ipv4 %s for listening\n", ipv4_address.value().c_str());
+        } else {
+            SPDK_INFOLOG(msg, "Use configured ipv4 %s for listening\n", _opts->bind_address.c_str());
         }
-
-        _opts->bind_address = *ipv4_address;
-        SPDK_INFOLOG(msg, "Use ipv4 %s for listening\n", ipv4_address.value().c_str());
     }
 
     server(std::string thread_name, ::spdk_cpuset* cpumask, std::shared_ptr<options> opts, int sock_id = SPDK_ENV_SOCKET_ID_ANY)
@@ -542,36 +550,44 @@ private:
         }
     }
 
-    void dispatch_method(request_meta* meta, std::unique_ptr<rpc_task> task, bool is_inlined = false) {
-        std::string_view service_name{meta->service_name, meta->service_name_size};
+    void dispatch_method(const request_meta& meta, std::unique_ptr<rpc_task> task, bool is_inlined = false) {
+        std::string_view service_name{meta.service_name, meta.service_name_size};
         std::optional<status> err_status{std::nullopt};
         auto service_it = _services.find(service_name);
         if (service_it == _services.end()) {
             SPDK_ERRLOG(
               "ERROR: can not find service '%.*s'\n",
-              meta->service_name_size,
-              meta->service_name);
+              meta.service_name_size,
+              meta.service_name);
             err_status = status::service_not_found;
         }
 
-        std::string_view method_name{meta->method_name, meta->method_name_size};
-        auto method_it = service_it->second->methods.find(method_name);
-        if (method_it == service_it->second->methods.end()) {
+        std::string_view method_name{meta.method_name, meta.method_name_size};
+        service::method_descriptor_pointer method{nullptr};
+        if (!err_status) {
+            auto method_it = service_it->second->methods.find(method_name);
+            if (method_it != service_it->second->methods.end()) {
+                method = method_it->second;
+            }
+        }
+        if (!method) {
             SPDK_ERRLOG(
               "ERROR: can not find method '%.*s'\n",
-              meta->method_name_size,
-              meta->method_name);
-            err_status = status::method_not_found;
+              meta.method_name_size,
+              meta.method_name);
+            if (!err_status) {
+                err_status = status::method_not_found;
+            }
         }
 
         SPDK_DEBUGLOG(
           msg,
           "request id %d, found service name: '%.*s', method name: '%.*s', %s => %s\n",
           task->id,
-          meta->service_name_size,
-          meta->service_name,
-          meta->method_name_size,
-          meta->method_name,
+          meta.service_name_size,
+          meta.service_name,
+          meta.method_name_size,
+          meta.method_name,
           task->conn->sock->local_address().c_str(),
           task->conn->sock->peer_address().c_str());
 
@@ -591,7 +607,7 @@ private:
         }
 
         task->request_body = std::unique_ptr<google::protobuf::Message>{
-          service_it->second->data->GetRequestPrototype(method_it->second).New()};
+          service_it->second->data->GetRequestPrototype(method).New()};
         bool is_parsed{false};
         if (is_inlined) {
             auto* data = transport_data::read_inlined_content(task->recv_ctx);
@@ -611,8 +627,10 @@ private:
 
         task->request_data.reset(nullptr);
         task->response_body = std::unique_ptr<google::protobuf::Message>{
-          service_it->second->data->GetResponsePrototype(method_it->second).New()};
+          service_it->second->data->GetResponsePrototype(method).New()};
         task->rpc_ctrlr = std::make_unique<rpc_controller>();
+        task->rpc_ctrlr->attach_pd(task->conn->sock->pd());
+        task->rpc_ctrlr->attach_peer_address(task->conn->sock->peer_address());
         if (not is_parsed) {
             SPDK_ERRLOG("ERROR: Unserialize request body failed\n");
             make_response_data(task.get(), status::bad_request_body);
@@ -629,7 +647,7 @@ private:
           task_ptr->server_id, ::spdk_env_get_current_core());
         _on_fligh_tasks.emplace(task_ptr->server_id, std::move(task));
         service_it->second->data->CallMethod(
-          method_it->second,
+          method,
           task_ptr->rpc_ctrlr.get(),
           task_ptr->request_body.get(),
           task_ptr->response_body.get(),
@@ -694,7 +712,7 @@ private:
         }
 
         SPDK_DEBUGLOG(msg, "exec rpc of id %d\n", task->id);
-        auto* req_meta = task->request_data->read_request_meta();
+        auto req_meta = task->request_data->read_request_meta();
         dispatch_method(req_meta, std::move(task));
         _read_task_list.pop_front();
 
@@ -823,16 +841,16 @@ private:
 
                 if (is_inlined) {
                     auto* inlined_data = transport_data::read_inlined_content(recv_ctx);
-                    auto* meta = reinterpret_cast<request_meta*>(inlined_data);
+                    auto meta = load_request_meta(inlined_data);
                     SPDK_DEBUGLOG(
                       msg,
                       "[%d] parsed rpc meta, task id is %d, service name is %.*s, method name is %.*s\n",
                       ::spdk_env_get_current_core(),
                       task->id,
-                      meta->service_name_size,
-                      meta->service_name,
-                      meta->method_name_size,
-                      meta->method_name);
+                      meta.service_name_size,
+                      meta.service_name,
+                      meta.method_name_size,
+                      meta.method_name);
                     task->recv_ctx = recv_ctx;
                     conn->rpc_tasks.emplace(task_id, task.get());
                     dispatch_method(meta, std::move(task), true);

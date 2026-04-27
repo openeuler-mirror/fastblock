@@ -94,6 +94,11 @@ static stop_state cur_stop_state{stop_state::data_statistics};
 
 static std::string g_conf_path = "/var/lib/fastblock";
 static int g_core_num = 2;
+static constexpr const char *k_osd_data_dir_key = "osd_data_dir";
+static constexpr const char *k_osd_no_huge_key = "osd_no_huge";
+static constexpr const char *k_osd_mem_size_mb_key = "osd_mem_size_mb";
+static constexpr const char *k_osd_iobuf_small_pool_count_key = "osd_iobuf_small_pool_count";
+static constexpr const char *k_osd_iobuf_large_pool_count_key = "osd_iobuf_large_pool_count";
 
 static void
 block_usage(void) {
@@ -1103,6 +1108,7 @@ main(int argc, char *argv[])
 
 	spdk_app_opts_init(&opts, sizeof(opts));
 	opts.name = "block";
+    opts.iova_mode = "va";
 
 	// disable tracing because it's memory consuming
 	opts.num_entries = 0;
@@ -1140,6 +1146,50 @@ main(int argc, char *argv[])
         }
     }
 
+    try {
+        boost::property_tree::read_json(std::string(g_json_conf), osd_server.pt);
+    } catch (const std::logic_error& e) {
+        std::string err_reason{e.what()};
+        std::cerr << "ERROR: Parse json configuration file error, reason is " << err_reason << std::endl;
+        block_usage();
+        return -EINVAL;
+    }
+
+    if (osd_server.pt.count(k_osd_data_dir_key) > 0) {
+        g_conf_path = osd_server.pt.get<std::string>(k_osd_data_dir_key);
+    }
+
+    if (osd_server.pt.count(k_osd_no_huge_key) > 0) {
+        opts.no_huge = osd_server.pt.get<bool>(k_osd_no_huge_key);
+    }
+
+    if (osd_server.pt.count(k_osd_mem_size_mb_key) > 0) {
+        opts.mem_size = osd_server.pt.get<int>(k_osd_mem_size_mb_key);
+    } else if (opts.no_huge) {
+        opts.mem_size = 1024;
+    }
+
+    if (opts.no_huge || osd_server.pt.count(k_osd_iobuf_small_pool_count_key) > 0 ||
+        osd_server.pt.count(k_osd_iobuf_large_pool_count_key) > 0) {
+        spdk_iobuf_opts iobuf_opts = {};
+        spdk_iobuf_get_opts(&iobuf_opts, sizeof(iobuf_opts));
+        iobuf_opts.opts_size = sizeof(iobuf_opts);
+        if (opts.no_huge) {
+            iobuf_opts.small_pool_count = 1024;
+            iobuf_opts.large_pool_count = 64;
+        }
+        if (osd_server.pt.count(k_osd_iobuf_small_pool_count_key) > 0) {
+            iobuf_opts.small_pool_count = osd_server.pt.get<uint64_t>(k_osd_iobuf_small_pool_count_key);
+        }
+        if (osd_server.pt.count(k_osd_iobuf_large_pool_count_key) > 0) {
+            iobuf_opts.large_pool_count = osd_server.pt.get<uint64_t>(k_osd_iobuf_large_pool_count_key);
+        }
+        if (spdk_iobuf_set_opts(&iobuf_opts) != 0) {
+            std::cerr << "failed to configure spdk iobuf options" << std::endl;
+            return -EINVAL;
+        }
+    }
+
     auto disk_addr_file = get_bdev_disk_addr_file();
     auto disk_addr = get_file_data(disk_addr_file);
     if(!disk_addr){
@@ -1167,15 +1217,6 @@ main(int argc, char *argv[])
     std::string bdev_json_file = get_bdev_json_file_name();
 
     osd_server.bdev_addr = disk_addr.value();
-
-    try {
-        boost::property_tree::read_json(std::string(g_json_conf), osd_server.pt);
-    } catch (const std::logic_error& e) {
-        std::string err_reason{e.what()};
-        std::cerr << "ERROR: Parse json configuration file error, reason is " << err_reason << std::endl;
-        block_usage();
-        return -EINVAL;
-    }
 
     static int min_raft_time_msec = 500;
     static int max_raft_time_msec = 30000;

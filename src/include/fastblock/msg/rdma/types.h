@@ -10,7 +10,10 @@
  */
 #pragma once
 
+#include <algorithm>
+#include <cstring>
 #include <string>
+#include <string_view>
 #include <type_traits>
 
 #include <spdk/env.h>
@@ -87,6 +90,32 @@ struct request_meta {
     data_size_type data_size;
 };
 static constexpr size_t request_meta_size{sizeof(request_meta)};
+static_assert(std::is_trivially_copyable_v<request_meta>);
+
+inline request_meta make_request_meta(
+  std::string_view service_name,
+  std::string_view method_name,
+  request_meta::data_size_type data_size) noexcept {
+    request_meta meta{};
+    auto service_size = std::min(service_name.size(), static_cast<size_t>(max_rpc_meta_string_size));
+    auto method_size = std::min(method_name.size(), static_cast<size_t>(max_rpc_meta_string_size));
+    meta.service_name_size = static_cast<request_meta::name_size_type>(service_size);
+    meta.method_name_size = static_cast<request_meta::name_size_type>(method_size);
+    std::memcpy(meta.service_name, service_name.data(), service_size);
+    std::memcpy(meta.method_name, method_name.data(), method_size);
+    meta.data_size = data_size;
+    return meta;
+}
+
+inline request_meta load_request_meta(const void* raw) noexcept {
+    request_meta meta{};
+    std::memcpy(&meta, raw, sizeof(meta));
+    return meta;
+}
+
+inline void store_request_meta(void* raw, const request_meta& meta) noexcept {
+    std::memcpy(raw, &meta, sizeof(meta));
+}
 
 struct reply_meta {
     std::underlying_type_t<status> reply_status;
