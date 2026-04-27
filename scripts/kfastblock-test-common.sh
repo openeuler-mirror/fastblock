@@ -307,6 +307,31 @@ kfastblock_run_rawctl_checks() {
         --pool-id "$pool_id" >/dev/null
 }
 
+kfastblock_apply_module_params() {
+    local module_params="$1"
+    local param_entry
+    local name
+    local value
+    local param_path
+
+    [ -z "$module_params" ] && return 0
+
+    for param_entry in $module_params; do
+        name="${param_entry%%=*}"
+        value="${param_entry#*=}"
+        if [ -z "$name" ] || [ "$name" = "$param_entry" ]; then
+            echo "invalid module param entry: $param_entry" >&2
+            return 1
+        fi
+        param_path="/sys/module/kfastblock/parameters/$name"
+        if [ ! -w "$param_path" ]; then
+            echo "module parameter is not writable: $param_path" >&2
+            return 1
+        fi
+        printf '%s\n' "$value" > "$param_path"
+    done
+}
+
 kfastblock_build_and_load_module() {
     local repo_root="$1"
     local module_params="${KFASTBLOCK_MODULE_PARAMS:-}"
@@ -318,6 +343,7 @@ kfastblock_build_and_load_module() {
             kfastblock_detach_all_volumes "$repo_root"
             rmmod kfastblock
         else
+            kfastblock_apply_module_params "$module_params"
             return 0
         fi
     fi
