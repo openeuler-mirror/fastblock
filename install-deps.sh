@@ -93,6 +93,11 @@ case "$ID" in
     yum install -y "${rpm_deps[@]}"
     exit $?
     ;;
+  rocky)
+    dnf config-manager --set-enabled crb && dnf install -y epel-release
+    dnf install -y "${rpm_deps[@]}"
+    exit $?
+    ;;
   *)
     echo "Please help us make the script better by sending patches with your OS $ID"
     exit 1
