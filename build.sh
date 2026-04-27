@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 buildtype="Release"
 component="osd"
@@ -37,20 +38,20 @@ done
 echo $buildtype
 echo $component
 
-root="$(cd $(dirname ${BASH_SOURCE[0]}) && pwd)"
-if [[ -z ${CC} ]]; then export CC=/usr/bin/gcc; fi
-if [[ -z ${CXX} ]]; then export CXX=/usr/bin/g++; fi
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -z ${CC:-} ]]; then export CC=/usr/bin/gcc; fi
+if [[ -z ${CXX:-} ]]; then export CXX=/usr/bin/g++; fi
 
 (cd $root/src/msg/demo && ./gen.sh)
 
 if [ "$component" = "monitor" ]; then
 	echo "build fastblock(fastblock-mon、fastblock-client) Golang code"
-	export GOPROXY=https://proxy.golang.com.cn,direct
+	export GOPROXY="${GOPROXY:-https://goproxy.cn|https://goproxy.io|direct}"
 
 	if [ ! -f "/usr/bin/protoc-gen-gogo" ];then
 		echo "we should build protoc-gen-gogo"
 		go install github.com/gogo/protobuf/protoc-gen-gogo@v1.3.2
-		cp $(go env GOPATH)/bin/protoc-gen-gogo /usr/bin/
+		cp "$(go env GOPATH)"/bin/protoc-gen-gogo /usr/bin/
 	fi
 	cd $root/proto && ./build.sh -t golang
 	cd $root/monitor && make
@@ -69,5 +70,3 @@ if [ "$component" = "osd" ]; then
 	cd $root/build  && make -j `grep -c ^processor /proc/cpuinfo`
 	exit $?
 fi
-
-
