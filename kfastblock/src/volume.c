@@ -1196,6 +1196,21 @@ static int kfastblock_volume_diagnostics_show(struct seq_file *m, void *v)
 }
 DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_diagnostics);
 
+static int kfastblock_volume_diagnostics_baseline_show(struct seq_file *m,
+						       void *v)
+{
+	struct kfastblock_volume *vol = m->private;
+	struct kfastblock_diag_snapshot snapshot = {};
+
+	if (!vol)
+		return -ENODEV;
+
+	kfastblock_diag_collect(vol, &snapshot);
+	return kfastblock_diag_dump_baseline_seq(m, &vol->diag_baseline,
+						 &snapshot);
+}
+DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_diagnostics_baseline);
+
 static int kfastblock_volume_events_show(struct seq_file *m, void *v)
 {
 	struct kfastblock_volume *vol = m->private;
@@ -1271,6 +1286,8 @@ static void kfastblock_volume_debugfs_init(struct kfastblock_volume *vol)
 			    &kfastblock_volume_selfcheck_fops);
 	debugfs_create_file("diagnostics", 0444, vol->debugfs_dir, vol,
 			    &kfastblock_volume_diagnostics_fops);
+	debugfs_create_file("diagnostics_baseline", 0444, vol->debugfs_dir, vol,
+			    &kfastblock_volume_diagnostics_baseline_fops);
 }
 
 static void kfastblock_volume_debugfs_exit(struct kfastblock_volume *vol)
@@ -3597,6 +3614,173 @@ static ssize_t diagnostic_status_show(struct device *dev,
 			 kfastblock_diag_anomaly_status(snapshot.anomaly_score));
 }
 
+static ssize_t diagnostic_baseline_valid_show(struct device *dev,
+					      struct device_attribute *attr,
+					      char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_diag_baseline_valid(&vol->diag_baseline) ? 1 : 0);
+}
+
+static ssize_t diagnostic_baseline_capture_count_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_diag_baseline_capture_count(
+				 &vol->diag_baseline));
+}
+
+static ssize_t diagnostic_baseline_reset_count_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_diag_baseline_reset_count(
+				 &vol->diag_baseline));
+}
+
+static ssize_t diagnostic_baseline_last_capture_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lu\n",
+			 kfastblock_diag_baseline_last_capture_jiffies(
+				 &vol->diag_baseline));
+}
+
+static ssize_t diagnostic_baseline_last_reset_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lu\n",
+			 kfastblock_diag_baseline_last_reset_jiffies(
+				 &vol->diag_baseline));
+}
+
+static ssize_t diagnostic_drift_score_show(struct device *dev,
+					   struct device_attribute *attr,
+					   char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	struct kfastblock_diag_snapshot snapshot = {};
+	u32 drift_score = 0;
+	u32 drift_flags = 0;
+	bool valid = false;
+
+	if (!vol)
+		return -ENODEV;
+
+	kfastblock_diag_collect(vol, &snapshot);
+	kfastblock_diag_compare_baseline(&vol->diag_baseline, &snapshot,
+					 &drift_score, &drift_flags, &valid);
+	return scnprintf(buf, PAGE_SIZE, "%u\n", drift_score);
+}
+
+static ssize_t diagnostic_drift_flags_show(struct device *dev,
+					   struct device_attribute *attr,
+					   char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	struct kfastblock_diag_snapshot snapshot = {};
+	u32 drift_score = 0;
+	u32 drift_flags = 0;
+	bool valid = false;
+
+	if (!vol)
+		return -ENODEV;
+
+	kfastblock_diag_collect(vol, &snapshot);
+	kfastblock_diag_compare_baseline(&vol->diag_baseline, &snapshot,
+					 &drift_score, &drift_flags, &valid);
+	return scnprintf(buf, PAGE_SIZE, "0x%x\n", drift_flags);
+}
+
+static ssize_t diagnostic_drift_status_show(struct device *dev,
+					    struct device_attribute *attr,
+					    char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	struct kfastblock_diag_snapshot snapshot = {};
+	u32 drift_score = 0;
+	u32 drift_flags = 0;
+	bool valid = false;
+
+	if (!vol)
+		return -ENODEV;
+
+	kfastblock_diag_collect(vol, &snapshot);
+	kfastblock_diag_compare_baseline(&vol->diag_baseline, &snapshot,
+					 &drift_score, &drift_flags, &valid);
+	return scnprintf(buf, PAGE_SIZE, "%s\n",
+			 kfastblock_diag_drift_status(valid, drift_score));
+}
+
+static ssize_t capture_diagnostic_baseline_store(
+	struct device *dev,
+	struct device_attribute *attr,
+	const char *buf, size_t count)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	struct kfastblock_diag_snapshot snapshot = {};
+
+	if (!vol)
+		return -ENODEV;
+	if (!sysfs_streq(buf, "1") && !sysfs_streq(buf, "true") &&
+	    !sysfs_streq(buf, "yes") && !sysfs_streq(buf, "capture"))
+		return -EINVAL;
+
+	kfastblock_diag_collect(vol, &snapshot);
+	kfastblock_diag_baseline_capture(&vol->diag_baseline, &snapshot);
+	return count;
+}
+
+static ssize_t reset_diagnostic_baseline_store(
+	struct device *dev,
+	struct device_attribute *attr,
+	const char *buf, size_t count)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+	if (!sysfs_streq(buf, "1") && !sysfs_streq(buf, "true") &&
+	    !sysfs_streq(buf, "yes") && !sysfs_streq(buf, "reset"))
+		return -EINVAL;
+
+	kfastblock_diag_baseline_reset(&vol->diag_baseline);
+	return count;
+}
+
 static ssize_t selfcheck_runs_show(struct device *dev,
 				   struct device_attribute *attr, char *buf)
 {
@@ -3835,6 +4019,14 @@ static DEVICE_ATTR_RO(fault_injection_last_trigger);
 static DEVICE_ATTR_RO(diagnostic_score);
 static DEVICE_ATTR_RO(diagnostic_flags);
 static DEVICE_ATTR_RO(diagnostic_status);
+static DEVICE_ATTR_RO(diagnostic_baseline_valid);
+static DEVICE_ATTR_RO(diagnostic_baseline_capture_count);
+static DEVICE_ATTR_RO(diagnostic_baseline_reset_count);
+static DEVICE_ATTR_RO(diagnostic_baseline_last_capture);
+static DEVICE_ATTR_RO(diagnostic_baseline_last_reset);
+static DEVICE_ATTR_RO(diagnostic_drift_score);
+static DEVICE_ATTR_RO(diagnostic_drift_flags);
+static DEVICE_ATTR_RO(diagnostic_drift_status);
 static DEVICE_ATTR_RO(selfcheck_runs);
 static DEVICE_ATTR_RO(selfcheck_failure_runs);
 static DEVICE_ATTR_RO(selfcheck_warning_runs);
@@ -3851,6 +4043,8 @@ static DEVICE_ATTR_WO(pause_queue);
 static DEVICE_ATTR_WO(resume_queue);
 static DEVICE_ATTR_WO(reset_fault_injection);
 static DEVICE_ATTR_WO(run_selfcheck);
+static DEVICE_ATTR_WO(capture_diagnostic_baseline);
+static DEVICE_ATTR_WO(reset_diagnostic_baseline);
 
 static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_pool_name.attr,
@@ -3958,6 +4152,14 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_diagnostic_score.attr,
 	&dev_attr_diagnostic_flags.attr,
 	&dev_attr_diagnostic_status.attr,
+	&dev_attr_diagnostic_baseline_valid.attr,
+	&dev_attr_diagnostic_baseline_capture_count.attr,
+	&dev_attr_diagnostic_baseline_reset_count.attr,
+	&dev_attr_diagnostic_baseline_last_capture.attr,
+	&dev_attr_diagnostic_baseline_last_reset.attr,
+	&dev_attr_diagnostic_drift_score.attr,
+	&dev_attr_diagnostic_drift_flags.attr,
+	&dev_attr_diagnostic_drift_status.attr,
 	&dev_attr_selfcheck_runs.attr,
 	&dev_attr_selfcheck_failure_runs.attr,
 	&dev_attr_selfcheck_warning_runs.attr,
@@ -3974,6 +4176,8 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_resume_queue.attr,
 	&dev_attr_reset_fault_injection.attr,
 	&dev_attr_run_selfcheck.attr,
+	&dev_attr_capture_diagnostic_baseline.attr,
+	&dev_attr_reset_diagnostic_baseline.attr,
 	NULL,
 };
 
@@ -4470,6 +4674,7 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	kfastblock_volume_stats_init(vol);
 	kfastblock_selfcheck_state_init(&vol->selfcheck);
 	kfastblock_fault_injection_init(&vol->fault_injection);
+	kfastblock_diag_baseline_init(&vol->diag_baseline);
 	mutex_init(&vol->lifecycle_lock);
 	mutex_init(&vol->inflight_lock);
 	kfastblock_buffer_pool_init(&vol->object_buffer_pool,

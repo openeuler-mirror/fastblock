@@ -18,6 +18,7 @@ struct dentry;
 #include "kfastblock/control.h"
 #include "kfastblock/buffer.h"
 #include "kfastblock/connpool.h"
+#include "kfastblock/diag.h"
 #include "kfastblock/fault.h"
 #include "kfastblock/meta.h"
 #include "kfastblock/scheduler.h"
@@ -161,6 +162,7 @@ struct kfastblock_volume {
 	struct kfastblock_volume_event_log event_log;
 	struct kfastblock_selfcheck_state selfcheck;
 	struct kfastblock_fault_injection_state fault_injection;
+	struct kfastblock_diag_baseline_state diag_baseline;
 
 	struct list_head node;
 	struct device dev;
