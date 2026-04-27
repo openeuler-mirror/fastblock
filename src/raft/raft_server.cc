@@ -693,6 +693,9 @@ int raft_server_t::raft_recv_appendentries(
             const raft_entry_t& ety = ae->entries(j);
 
             std::shared_ptr<raft_entry_t> ety_ptr = std::make_shared<raft_entry_t>(std::move(ety));
+            // Followers need to update their local membership view as soon as a
+            // configuration entry is appended so removed nodes stop campaigning.
+            check_and_set_configuration(ety_ptr);
             if(j == entries_num - 1){
                 entrys.emplace_back(std::make_pair(std::move(ety_ptr), complete));
             }else{
@@ -1402,11 +1405,43 @@ void raft_server_t::process_conf_change_add_nonvoting(std::shared_ptr<raft_entry
 
     _configuration_manager.for_catch_up_node([this, next_idx = entry->idx()](std::shared_ptr<raft_node> node){
         node->raft_node_set_next_idx(next_idx);
-        SPDK_INFOLOG(pg_group, "in pg %lu.%lu , send appendentries to node %d next_idx: %ld\n", _pool_id, _pg_id, node->raft_get_node_info().node_id(), next_idx);
-        msg_appendentries_t*ae = create_appendentries(node, next_idx);
 
-        if(_client.send_appendentries(this, node->raft_node_get_id(), ae) != err::E_SUCCESS){
-            node->raft_set_suppress_heartbeats(false);
+        auto send_appendentries = [this, node, next_idx]() mutable {
+            SPDK_INFOLOG(pg_group, "in pg %lu.%lu , send appendentries to node %d next_idx: %ld\n",
+              _pool_id, _pg_id, node->raft_get_node_info().node_id(), next_idx);
+            msg_appendentries_t* ae = create_appendentries(node, next_idx);
+
+            auto ret = _client.send_appendentries(this, node->raft_node_get_id(), ae);
+            if(ret != err::E_SUCCESS){
+                delete ae;
+                node->raft_set_suppress_heartbeats(false);
+                node->raft_node_set_recovering(false);
+                cfg_change_process(ret, next_idx, node);
+            }
+        };
+
+        SPDK_INFOLOG(pg_group, "in pg %lu.%lu , create pg on node %d before catch-up\n",
+          _pool_id, _pg_id, node->raft_node_get_id());
+        auto ret = _client.send_create_pg(
+          node->raft_node_get_id(),
+          _pool_id,
+          _pg_id,
+          0,
+          [this, node, next_idx, send_appendentries = std::move(send_appendentries)](int result) mutable {
+            if(result != err::E_SUCCESS){
+                SPDK_ERRLOG("create pg %lu.%lu on node %d failed: %s\n",
+                  _pool_id, _pg_id, node->raft_node_get_id(), err::string_status(result));
+                node->raft_node_set_recovering(false);
+                cfg_change_process(result, next_idx, node);
+                return;
+            }
+            send_appendentries();
+          });
+        if(ret != err::E_SUCCESS){
+            SPDK_ERRLOG("create pg %lu.%lu on node %d failed to start: %s\n",
+              _pool_id, _pg_id, node->raft_node_get_id(), err::string_status(ret));
+            node->raft_node_set_recovering(false);
+            cfg_change_process(ret, next_idx, node);
         }
     });
 }
