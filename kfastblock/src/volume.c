@@ -114,6 +114,46 @@ static u32 kfastblock_volume_scheduler_last_sample_pressure_window(
 static u32 kfastblock_volume_scheduler_last_sample_effective_window(
 	struct kfastblock_volume *vol);
 
+/*
+ * Keep the volume alive for the lifetime of an opened debugfs file so
+ * detach cannot free m->private while seq_file readers are still active.
+ */
+#define KFASTBLOCK_DEFINE_DEBUGFS_SHOW_ATTRIBUTE(__name)			\
+static int __name ## _open(struct inode *inode, struct file *file)	\
+{									\
+	struct kfastblock_volume *vol = inode->i_private;		\
+	int ret;							\
+									\
+	if (!vol)							\
+		return -ENODEV;						\
+	if (!get_device(&vol->dev))					\
+		return -ENODEV;						\
+	ret = single_open(file, __name ## _show, vol);			\
+	if (ret)							\
+		put_device(&vol->dev);					\
+	return ret;							\
+}									\
+									\
+static int __name ## _release(struct inode *inode, struct file *file)	\
+{									\
+	struct seq_file *m = file->private_data;			\
+	struct kfastblock_volume *vol = m ? m->private : inode->i_private; \
+	int ret;							\
+									\
+	ret = single_release(inode, file);				\
+	if (vol)							\
+		put_device(&vol->dev);					\
+	return ret;							\
+}									\
+									\
+static const struct file_operations __name ## _fops = {		\
+	.owner		= THIS_MODULE,					\
+	.open		= __name ## _open,				\
+	.read		= seq_read,					\
+	.llseek		= seq_lseek,					\
+	.release	= __name ## _release,				\
+}
+
 static void kfastblock_volume_record_event(
 	struct kfastblock_volume *vol,
 	enum kfastblock_volume_event_type type,
@@ -853,7 +893,7 @@ static int kfastblock_volume_summary_show(struct seq_file *m, void *v)
 	up_read(&vol->state_lock);
 	return 0;
 }
-DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_summary);
+KFASTBLOCK_DEFINE_DEBUGFS_SHOW_ATTRIBUTE(kfastblock_volume_summary);
 
 static int kfastblock_volume_osds_show(struct seq_file *m, void *v)
 {
@@ -881,7 +921,7 @@ static int kfastblock_volume_osds_show(struct seq_file *m, void *v)
 	up_read(&vol->state_lock);
 	return 0;
 }
-DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_osds);
+KFASTBLOCK_DEFINE_DEBUGFS_SHOW_ATTRIBUTE(kfastblock_volume_osds);
 
 static int kfastblock_volume_routes_show(struct seq_file *m, void *v)
 {
@@ -914,7 +954,7 @@ static int kfastblock_volume_routes_show(struct seq_file *m, void *v)
 	up_read(&vol->state_lock);
 	return 0;
 }
-DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_routes);
+KFASTBLOCK_DEFINE_DEBUGFS_SHOW_ATTRIBUTE(kfastblock_volume_routes);
 
 static int kfastblock_volume_sockets_show(struct seq_file *m, void *v)
 {
@@ -956,7 +996,7 @@ static int kfastblock_volume_sockets_show(struct seq_file *m, void *v)
 	}
 	return 0;
 }
-DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_sockets);
+KFASTBLOCK_DEFINE_DEBUGFS_SHOW_ATTRIBUTE(kfastblock_volume_sockets);
 
 static int kfastblock_volume_stats_show(struct seq_file *m, void *v)
 {
@@ -1170,7 +1210,7 @@ static int kfastblock_volume_stats_show(struct seq_file *m, void *v)
 		   kfastblock_selfcheck_last_run_jiffies(&vol->selfcheck));
 	return 0;
 }
-DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_stats);
+KFASTBLOCK_DEFINE_DEBUGFS_SHOW_ATTRIBUTE(kfastblock_volume_stats);
 
 static int kfastblock_volume_selfcheck_show(struct seq_file *m, void *v)
 {
@@ -1181,7 +1221,7 @@ static int kfastblock_volume_selfcheck_show(struct seq_file *m, void *v)
 
 	return kfastblock_selfcheck_run(vol, NULL, m);
 }
-DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_selfcheck);
+KFASTBLOCK_DEFINE_DEBUGFS_SHOW_ATTRIBUTE(kfastblock_volume_selfcheck);
 
 static int kfastblock_volume_diagnostics_show(struct seq_file *m, void *v)
 {
@@ -1194,7 +1234,7 @@ static int kfastblock_volume_diagnostics_show(struct seq_file *m, void *v)
 	kfastblock_diag_collect(vol, &snapshot);
 	return kfastblock_diag_dump_seq(m, &snapshot);
 }
-DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_diagnostics);
+KFASTBLOCK_DEFINE_DEBUGFS_SHOW_ATTRIBUTE(kfastblock_volume_diagnostics);
 
 static int kfastblock_volume_diagnostics_baseline_show(struct seq_file *m,
 						       void *v)
@@ -1209,7 +1249,7 @@ static int kfastblock_volume_diagnostics_baseline_show(struct seq_file *m,
 	return kfastblock_diag_dump_baseline_seq(m, &vol->diag_baseline,
 						 &snapshot);
 }
-DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_diagnostics_baseline);
+KFASTBLOCK_DEFINE_DEBUGFS_SHOW_ATTRIBUTE(kfastblock_volume_diagnostics_baseline);
 
 static int kfastblock_volume_events_show(struct seq_file *m, void *v)
 {
@@ -1256,7 +1296,7 @@ static int kfastblock_volume_events_show(struct seq_file *m, void *v)
 	kfree(snapshot);
 	return 0;
 }
-DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_events);
+KFASTBLOCK_DEFINE_DEBUGFS_SHOW_ATTRIBUTE(kfastblock_volume_events);
 
 static void kfastblock_volume_debugfs_init(struct kfastblock_volume *vol)
 {
