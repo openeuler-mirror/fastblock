@@ -164,9 +164,9 @@ void shard_manager::stop(utils::complete_fun fun, void *arg)
 }
 
 std::vector<shard_manager::node_heartbeat> shard_manager::get_heartbeat_requests(){
-    absl::flat_hash_map<
+    std::map<
       raft_node_id_t,
-      heartbeat_request*> pending_beats;
+      std::unique_ptr<heartbeat_request>> pending_beats;
 
     raft_time_t now = utils::get_time();
     for(auto& p : _pgs){
@@ -205,14 +205,10 @@ std::vector<shard_manager::node_heartbeat> shard_manager::get_heartbeat_requests
                 return;
             }
 
-            heartbeat_request* req = nullptr;
-            if(pending_beats.contains(node->raft_node_get_id())){
-                req = pending_beats[node->raft_node_get_id()];
-            }else{
-                req = new heartbeat_request();
-                pending_beats[node->raft_node_get_id()] = req;
-            }
-            auto meta_ptr = req->add_heartbeats();
+            auto [it, inserted] = pending_beats.try_emplace(
+              node->raft_node_get_id(),
+              std::make_unique<heartbeat_request>());
+            auto meta_ptr = it->second->add_heartbeats();
             meta_ptr->set_node_id(raft->raft_get_nodeid());
             meta_ptr->set_target_node_id(node->raft_node_get_id());
             meta_ptr->set_pool_id(raft->raft_get_pool_id());
@@ -228,7 +224,7 @@ std::vector<shard_manager::node_heartbeat> shard_manager::get_heartbeat_requests
 
     std::vector<shard_manager::node_heartbeat> reqs;
     for (auto& p : pending_beats) {
-        shard_manager::node_heartbeat req(p.first, p.second);
+        shard_manager::node_heartbeat req(p.first, p.second.release());
         reqs.push_back(std::move(req));
     }
     return reqs;

@@ -1015,8 +1015,14 @@ read_done:
             }
 
             if (_shutdown_timeout < std::chrono::system_clock::now() or task_queue_empty()) {
+                auto master = _master;
+                auto* cm_id = _sock ? _sock->id() : nullptr;
+                auto conn_id = _id;
+                auto dispatch_id = _dispatch_id.dispatch_id();
                 free_resources();
-                _master->handle_connection_shutdown(_sock->id(), _id, _dispatch_id.dispatch_id());
+                if (master && cm_id) {
+                    master->handle_connection_shutdown(cm_id, conn_id, dispatch_id);
+                }
                 _state = state::termianted;
                 return true;
             }
@@ -1373,7 +1379,9 @@ public:
 
     static void on_remove_connection(void* arg){
         auto* ctx = reinterpret_cast<remove_connection_context*>(arg);
-        ctx->conn->async_shutdown();
+        if (ctx->conn && not ctx->conn->is_terminated()) {
+            ctx->conn->async_shutdown();
+        }
         ctx->cb(true);
         delete ctx;
     }
