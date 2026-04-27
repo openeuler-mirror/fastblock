@@ -36,7 +36,7 @@ struct apply_complete : public utils::context{
     , stm(_stm) {}
 
     void finish(int r) override {
-        SPDK_INFOLOG(pg_group, "in pg %lu.%lu, apply log index %ld return %d\n",
+        SPDK_DEBUGLOG(pg_group, "in pg %lu.%lu, apply log index %ld return %d\n",
                            stm->get_raft()->raft_get_pool_id(), stm->get_raft()->raft_get_pg_id(), idx, r);
         if(r == err::E_SUCCESS){
             auto last_applied_idx = stm->get_last_applied_idx();
@@ -85,7 +85,7 @@ int state_machine::raft_apply_entry()
             set_apply_in_progress(false);
             return;
         }
-        SPDK_INFOLOG(pg_group, "pg %lu.%lu osd %d applying log: %ld, idx: %ld size: %u \n",
+        SPDK_DEBUGLOG(pg_group, "pg %lu.%lu osd %d applying log: %ld, idx: %ld size: %u \n",
                            get_raft()->raft_get_pool_id(), get_raft()->raft_get_pg_id(),
                            get_raft()->raft_get_nodeid(), log_idx, ety->idx(), (uint32_t)ety->data().size());
 

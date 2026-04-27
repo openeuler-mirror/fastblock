@@ -1004,6 +1004,9 @@ static void osd_stop(void *arg) noexcept {
     }
     case stop_state::blobstore: {
         SPDK_NOTICELOG("Stopping the blobstore\n");
+        if (global_osd_service) {
+            global_osd_service->stop();
+        }
         ::storage_fini(on_blob_closed, nullptr);
         return;
     }

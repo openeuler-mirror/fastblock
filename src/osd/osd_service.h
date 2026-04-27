@@ -11,6 +11,7 @@
 #pragma once
 
 #include "fastblock/rpc/osd_msg.pb.h"
+#include "fastblock/utils/simple_poller.h"
 #include "partition_manager.h"
 #include "mon_client.h"
 
@@ -51,7 +52,14 @@ public:
     };
 
     osd_service(partition_manager *pm, std::shared_ptr<monitor_client> mon_cli)
-        : _pm(pm), _monitor_client{mon_cli} {}
+        : _pm(pm), _monitor_client{mon_cli}, _write_ring_gc_poller{::spdk_get_thread()} {
+        _write_ring_gc_poller.register_poller(
+          poll_expired_write_rings, this, 1000ULL * 1000ULL, "osd_write_ring_gc");
+    }
+
+    void stop() noexcept {
+        _write_ring_gc_poller.unregister_poller();
+    }
 
     void process_write(google::protobuf::RpcController *controller,
                        const osd::write_request *request,
@@ -181,9 +189,13 @@ private:
       uint32_t slot_size,
       uint64_t lease_us);
 
+    static int poll_expired_write_rings(void* arg);
+    int cleanup_expired_write_rings();
+
 private:
     partition_manager *_pm;
     std::shared_ptr<monitor_client> _monitor_client{nullptr};
+    utils::simple_poller _write_ring_gc_poller{};
     std::mutex _write_ring_mutex{};
     std::unordered_map<uint64_t, std::shared_ptr<write_ring_queue>> _write_rings{};
     std::unordered_map<std::string, uint64_t> _write_ring_owners{};

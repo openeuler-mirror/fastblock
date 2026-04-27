@@ -105,6 +105,41 @@ std::shared_ptr<osd_service::write_ring_queue> osd_service::create_write_ring(
     return queue;
 }
 
+int osd_service::poll_expired_write_rings(void* arg) {
+    auto* service = reinterpret_cast<osd_service*>(arg);
+    return service->cleanup_expired_write_rings();
+}
+
+int osd_service::cleanup_expired_write_rings() {
+    std::vector<uint64_t> expired_queue_ids{};
+    auto now = std::chrono::steady_clock::now();
+    {
+        std::scoped_lock lk(_write_ring_mutex);
+        for (auto it = _write_rings.begin(); it != _write_rings.end();) {
+            if (it->second->lease_deadline > now) {
+                ++it;
+                continue;
+            }
+
+            if (!it->second->peer_address.empty()) {
+                auto owner_it = _write_ring_owners.find(it->second->peer_address);
+                if (owner_it != _write_ring_owners.end() && owner_it->second == it->first) {
+                    _write_ring_owners.erase(owner_it);
+                }
+            }
+
+            expired_queue_ids.push_back(it->first);
+            it = _write_rings.erase(it);
+        }
+    }
+
+    for (auto queue_id : expired_queue_ids) {
+        SPDK_NOTICELOG("destroy expired write ring queue %lu\n", queue_id);
+    }
+
+    return expired_queue_ids.empty() ? SPDK_POLLER_IDLE : SPDK_POLLER_BUSY;
+}
+
 std::shared_ptr<osd_service::write_ring_queue> osd_service::get_write_ring(const uint64_t queue_id) {
     std::scoped_lock lk(_write_ring_mutex);
     auto it = _write_rings.find(queue_id);
@@ -361,12 +396,6 @@ void osd_service::process_commit_ring_write(
   osd::write_reply* response,
   google::protobuf::Closure* done) {
     (void)controller;
-
-    SPDK_NOTICELOG(
-      "process commit ring write, queue id %lu, slot %u, serialized bytes %u\n",
-      request->queue_id(),
-      request->slot_index(),
-      request->serialized_size());
 
     auto queue = get_write_ring(request->queue_id());
     if (!queue) {
