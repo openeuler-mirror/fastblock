@@ -147,6 +147,11 @@ public:
             core_sharded::get_core_sharded().invoke_on(
               shard_id,
               [this, shard_id, complete](){
+                auto cached_conn_num = _cache[shard_id].size();
+                SPDK_NOTICELOG(
+                  "Stopping connect cache shard %u, cached connections=%zu\n",
+                  shard_id, cached_conn_num);
+                _cache[shard_id].clear();
                 _transports[shard_id]->stop([complete](){
                   complete->complete(0);
                 });
