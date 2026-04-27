@@ -17,6 +17,7 @@
 #include "fastblock/utils/utils.h"
 
 #include <spdk/log.h>
+#include <spdk/env.h>
 #include <functional>
 
 SPDK_LOG_REGISTER_COMPONENT(object_store)
@@ -31,6 +32,7 @@ struct blob_rw_ctx {
   uint64_t offset;
   char*    buf;
   uint64_t len;
+  uint64_t submit_tick;
   object_rw_complete cb_fn;
   void*    arg;
 
@@ -446,7 +448,7 @@ void object_store::readwrite(std::map<std::string, xattr_val_type>& xattr, std::
     auto it = table.find(object_name);
     if (it != table.end()) {
       SPDK_DEBUGLOG(object_store, "object %s found, blob id:%" PRIu64 "\n", object_name.c_str(), it->second.origin.blobid);
-      blob_readwrite(it->second.origin.blob, channel, offset, buf, len, cb_fn, arg, is_read);
+      blob_readwrite(it->second.origin.blob, channel, object_name, offset, buf, len, cb_fn, arg, is_read);
     } else {
       SPDK_DEBUGLOG(object_store, "object %s not found\n", object_name.c_str());
       create_blob(xattr, object_name, offset, buf, len, cb_fn, arg, is_read);
@@ -470,7 +472,10 @@ void object_store::create_blob(std::map<std::string, xattr_val_type>& xattr, std
   ctx->shard_id = shard_id;
   ctx->xattr = object_xattr{.shard_id = shard_id, .pg = pg, .obj_name = object_name};
 
-  if (global_blob_pool(shard_id).has_free_blob()) {
+  // Reusing precreated free blobs currently corrupts blobstore replay across
+  // restart in the prototype path. Create object blobs directly until the
+  // restart path is stabilized.
+  if (false && global_blob_pool(shard_id).has_free_blob()) {
       SPDK_DEBUGLOG(object_store, "[test] object get blob from pool.\n");
       auto blob = global_blob_pool(shard_id).get();
 
@@ -484,6 +489,8 @@ void object_store::create_blob(std::map<std::string, xattr_val_type>& xattr, std
 
       spdk_blob_opts_init(&opts, sizeof(opts));
       opts.num_clusters = object_store::blob_cluster;
+      opts.thin_provision = false;
+      opts.use_extent_table = false;
       opts.xattrs.count = object_xattr::xattr_count;
       opts.xattrs.names = (char**)object_xattr::xattr_names;
       opts.xattrs.ctx = &(ctx->xattr);
@@ -508,7 +515,7 @@ void object_store::sync_md_done(void *arg, int bserrno) {
     obj.origin = ctx->blob;
     ctx->mgr->table.emplace(std::move(ctx->object_name), std::move(obj));
 
-    blob_readwrite(ctx->blob.blob, ctx->mgr->channel, ctx->offset, ctx->buf, ctx->len,
+    blob_readwrite(ctx->blob.blob, ctx->mgr->channel, ctx->object_name, ctx->offset, ctx->buf, ctx->len,
                   ctx->cb_fn, ctx->arg, ctx->is_read);
     delete ctx;
 }
@@ -518,7 +525,7 @@ void object_store::sync_md_done(void *arg, int bserrno) {
  * 要传递给c语言的函数指针，需要写为static成员函数，或者非成员函数
  */
 void object_store::blob_readwrite(struct spdk_blob *blob, struct spdk_io_channel * channel,
-                       uint64_t offset, char* buf, uint64_t len,
+                       std::string object_name, uint64_t offset, char* buf, uint64_t len,
                        object_rw_complete cb_fn, void* arg, bool is_read)
 {
   struct blob_rw_ctx* ctx;
@@ -529,9 +536,11 @@ void object_store::blob_readwrite(struct spdk_blob *blob, struct spdk_io_channel
   ctx->pin_buf = nullptr;
   ctx->is_read = is_read;
 
+  ctx->object_name = std::move(object_name);
   ctx->offset = offset;
   ctx->buf = buf;
   ctx->len = len;
+  ctx->submit_tick = spdk_get_ticks();
   ctx->cb_fn = cb_fn;
   ctx->arg = arg;
 
@@ -541,6 +550,15 @@ void object_store::blob_readwrite(struct spdk_blob *blob, struct spdk_io_channel
   if (is_lba_aligned(offset, len)) {
     SPDK_DEBUGLOG(object_store, "aligned offset:%lu len:%lu\n", offset, len);
     ctx->is_aligned = true;
+    SPDK_DEBUGLOG(object_store,
+      "object_store submit %s object %s offset %lu len %lu lba %lu num_lba %lu core %u\n",
+      is_read ? "read" : "write",
+      ctx->object_name.c_str(),
+      offset,
+      len,
+      start_lba,
+      num_lba,
+      core_sharded::get_core_sharded().this_shard_id());
     if (!is_read)
     {
       spdk_blob_io_write(blob, channel, buf, start_lba, num_lba, rw_done, ctx);
@@ -562,6 +580,15 @@ void object_store::blob_readwrite(struct spdk_blob *blob, struct spdk_io_channel
     ctx->pin_buf = (char *)spdk_malloc(pin_buf_length, lba_size, NULL,
                                        sockid, SPDK_MALLOC_DMA);
     ctx->blocklen = lba_size;
+    SPDK_DEBUGLOG(object_store,
+      "object_store submit staged %s object %s offset %lu len %lu lba %lu num_lba %lu core %u\n",
+      is_read ? "read" : "write",
+      ctx->object_name.c_str(),
+      offset,
+      len,
+      start_lba,
+      num_lba,
+      core_sharded::get_core_sharded().this_shard_id());
 
     spdk_blob_io_read(blob, channel, ctx->pin_buf, start_lba, num_lba,
                       read_done, ctx);
@@ -571,6 +598,8 @@ void object_store::blob_readwrite(struct spdk_blob *blob, struct spdk_io_channel
 // 所有读写最终都会进入这个回调。
 void object_store::rw_done(void *arg, int objerrno) {
   struct blob_rw_ctx* ctx = (struct blob_rw_ctx*)arg;
+  auto dur_ticks = spdk_get_ticks() - ctx->submit_tick;
+  auto dur_us = spdk_get_ticks_hz() == 0 ? 0 : (dur_ticks * SPDK_SEC_TO_USEC) / spdk_get_ticks_hz();
 
   if (objerrno) {
     if (ctx->is_read) {
@@ -583,7 +612,25 @@ void object_store::rw_done(void *arg, int objerrno) {
 		return;
 	}
 
-  // object层的处理代码，可以写在这里
+  if (dur_us >= slow_io_warn_us) {
+    SPDK_WARNLOG(
+      "slow object_store %s object %s offset %lu len %lu dur %lluus core %u\n",
+      ctx->is_read ? "read" : "write",
+      ctx->object_name.c_str(),
+      ctx->offset,
+      ctx->len,
+      dur_us,
+      core_sharded::get_core_sharded().this_shard_id());
+  } else {
+    SPDK_DEBUGLOG(object_store,
+      "object_store done %s object %s offset %lu len %lu dur %lluus core %u\n",
+      ctx->is_read ? "read" : "write",
+      ctx->object_name.c_str(),
+      ctx->offset,
+      ctx->len,
+      dur_us,
+      core_sharded::get_core_sharded().this_shard_id());
+  }
 
   if (ctx->pin_buf) {
     SPDK_DEBUGLOG(object_store, "free pin_buf: %p\n", ctx->pin_buf);
@@ -654,7 +701,7 @@ void object_store::open_done(void *arg, struct spdk_blob *blob, int objerrno) {
   obj.origin.blob = blob;
   ctx->mgr->table.emplace(std::move(ctx->object_name), std::move(obj));
 
-  blob_readwrite(blob, ctx->mgr->channel, ctx->offset, ctx->buf, ctx->len,
+  blob_readwrite(blob, ctx->mgr->channel, ctx->object_name, ctx->offset, ctx->buf, ctx->len,
                  ctx->cb_fn, ctx->arg, ctx->is_read);
   delete ctx;
 }

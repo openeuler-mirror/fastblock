@@ -31,6 +31,8 @@ void kv_checkpoint::start_checkpoint(size_t size, checkpoint_op_complete cb_fn, 
     spdk_blob_opts_init(&opts, sizeof(opts));
     // 申请空间时，blob的cluster个数要向上取整
     opts.num_clusters = SPDK_CEIL_DIV(size, spdk_bs_get_cluster_size(_bs));
+    opts.thin_provision = false;
+    opts.use_extent_table = false;
     opts.xattrs.count = kv_checkpoint_xattr::xattr_count;
     opts.xattrs.names = (char**)kv_checkpoint_xattr::xattr_names;
     opts.xattrs.ctx = &(ctx->xattr);

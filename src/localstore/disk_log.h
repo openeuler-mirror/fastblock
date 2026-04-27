@@ -76,8 +76,10 @@ public:
     disk_log(rolling_blob* rblob) : _rblob(rblob) {}
 
     ~disk_log() {
+      if (_trim_poller) {
+          spdk_poller_unregister(&_trim_poller);
+      }
       delete _rblob;
-      spdk_poller_unregister(&_trim_poller);
     }
 
     void start(){
@@ -163,6 +165,9 @@ public:
     // TODO(sunyifang): 不应该这样free。
     // 但现在rblob是在外面用户new出来，然后传进来的。
     void stop(log_op_complete cb_fn, void* arg) {
+        if (_trim_poller) {
+            spdk_poller_unregister(&_trim_poller);
+        }
         // 始终记住cb_fn是上面一层传入的函数，我们传入的lambda会在close之后调用
         // 调用时，里面会把arg传进lambda的第一个参数
         _rblob->close(
@@ -194,6 +199,9 @@ private:
 
         if (rberrno) {
             SPDK_ERRLOG("log append fail. start:%lu len:%lu error:%s\n", result.start_pos, result.len, spdk_strerror(rberrno));
+            for (auto header : ctx->headers) {
+                buffer_pool_put(header);
+            }
             ctx->cb_fn(ctx->arg, rberrno);
             delete ctx;
             return;
@@ -220,6 +228,7 @@ private:
         if (rberrno) {
             SPDK_ERRLOG("log append start_index:%lu end_index:%lu (rblob pos:%lu len:%lu) read failed:%s\n",
                         ctx->start_index, ctx->end_index, result.start_pos, result.len, spdk_strerror(rberrno));
+            free_buffer_list(ctx->bl);
             ctx->cb_fn(ctx->arg, {}, rberrno);
             delete ctx;
             return;
@@ -410,7 +419,8 @@ public:
                     //剩余大小不足以解析出data
                     return std::make_tuple(true, i, entry.size + 4_KB);
                 }
-                bl.pop_front_list(entry.size / 4096);
+                auto data_bl = bl.pop_front_list(entry.size / 4096);
+                free_buffer_list(data_bl);
                 log_position log_pos{.pos = pos, .size = entry.size + 4_KB, .term_id = entry.term_id};
                 SPDK_INFOLOG(disk_log, "--- disk log load: index %lu pos %lu term_id %lu size %lu\n", entry.index, pos, log_pos.term_id, log_pos.size);
                 maybe_index(entry.index, std::move(log_pos));
@@ -440,7 +450,7 @@ public:
     }
 private:
     rolling_blob* _rblob;
-    struct spdk_poller *_trim_poller;
+    struct spdk_poller *_trim_poller{nullptr};
     uint64_t _polls_count = 0;
     uint64_t _trims_count = 0;
 

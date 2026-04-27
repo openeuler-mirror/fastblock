@@ -38,7 +38,7 @@ struct blob_tree
         spdk_blob_id kv_new_checkpoint_blob;
         std::map<std::string, struct spdk_blob *> log_blobs;
         std::map<std::string, object_store::container> object_blobs;
-        std::vector<struct spdk_blob *> pool_blobs;
+        std::vector<fb_blob> pool_blobs;
 };
 
 struct spdk_blob_store* global_blobstore(uint32_t shard_id);

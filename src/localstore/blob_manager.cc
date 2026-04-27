@@ -67,6 +67,10 @@ public:
       return;
     }
     pool.set_blobstore(bs);
+    for (auto &blob : _bs_mgrs[index].blobs.pool_blobs) {
+      pool.load_existing(std::move(blob));
+    }
+    _bs_mgrs[index].blobs.pool_blobs.clear();
     pool.start(cb_fn, arg);
   }
 
@@ -305,6 +309,8 @@ bs_init_complete(void *args, struct spdk_blob_store *bs, int bserrno)
   struct spdk_blob_opts opts;
   spdk_blob_opts_init(&opts, sizeof(opts));
   opts.num_clusters = 4_MB / spdk_bs_get_cluster_size(bs);
+  opts.thin_provision = false;
+  opts.use_extent_table = false;
   char *xattr_names[] = {"type"};
   opts.xattrs.count = SPDK_COUNTOF(xattr_names);
   opts.xattrs.names = xattr_names;
@@ -628,6 +634,15 @@ static void parse_blob_xattr(void *arg, struct spdk_blob *blob, int rberrno){
   delete ctx;
 }
 
+static void close_free_blob_complete(void *arg, int bserrno) {
+  parse_blob_ctx *ctx = (parse_blob_ctx *)arg;
+  if (bserrno) {
+    SPDK_ERRLOG("close free blob failed: %s\n", spdk_strerror(bserrno));
+  }
+  ctx->cb_fn(ctx->args, bserrno);
+  delete ctx;
+}
+
 
 void parse_open_blob_xattr(struct spdk_blob *blob, uint32_t shard_id, bm_complete cb_fn, void* args){
   //参数blob随后会在外部关闭
@@ -659,8 +674,14 @@ void parse_open_blob_xattr(struct spdk_blob *blob, uint32_t shard_id, bm_complet
     parse_blob_xattr(ctx, blob, 0);
     break;
   case blob_type::super_blob:
+    SPDK_INFOLOG(blob_log, "blob id: %lu type: %s shard: %u falls into default!\n", spdk_blob_get_id(blob), type_str.c_str(), shard_id);
+    ctx->cb_fn(ctx->args, 0);
+    delete ctx;
+    break;
   case blob_type::free:
-    // SPDK_WARNLOG("blob id: %lu type: %s skip!\n", spdk_blob_get_id(blob), type_str.c_str());
+    SPDK_INFOLOG(blob_log, "skip free blob id %lu in shard %u during restart\n", spdk_blob_get_id(blob), shard_id);
+    spdk_blob_close(blob, close_free_blob_complete, ctx);
+    break;
   default:
     SPDK_INFOLOG(blob_log, "blob id: %lu type: %s shard: %u falls into default!\n", spdk_blob_get_id(blob), type_str.c_str(), shard_id);
     ctx->cb_fn(ctx->args, 0);

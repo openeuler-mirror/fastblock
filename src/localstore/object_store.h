@@ -32,6 +32,7 @@ class object_store {
   static constexpr uint32_t cluster_size = 1024 * 1024;
   static constexpr uint32_t blob_size = blob_cluster * cluster_size;
   static constexpr uint32_t unit_size = 512;
+  static constexpr uint64_t slow_io_warn_us = 100000;
 
 public:
   // 此处有坑，channel 必须从外部传进 object_store 才可以。
@@ -89,7 +90,7 @@ private:
                      object_rw_complete cb_fn, void* arg, bool is_read);
 
   static void blob_readwrite(struct spdk_blob *blob, struct spdk_io_channel * channel,
-                       uint64_t offset, char* buf, uint64_t len,
+                       std::string object_name, uint64_t offset, char* buf, uint64_t len,
                        object_rw_complete cb_fn, void* arg, bool is_read);
   // 下面都是一些回调函数
   static void rw_done(void *arg, int objerrno);
