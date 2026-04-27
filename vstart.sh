@@ -27,11 +27,28 @@ remoteIp=""
 defaultConfigFile="/etc/fastblock/fastblock.json"
 cores=2
 
-
+scriptRoot="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 installPrefix="/usr/local/bin"
+localStateRoot="${FASTBLOCK_VSTART_STATE_ROOT:-$scriptRoot/.vstart}"
+localConfigDir="$localStateRoot/etc/fastblock"
+localDataDir="$localStateRoot/var/lib/fastblock"
+localLogDir="$localStateRoot/var/log/fastblock"
+localRunDir="$localStateRoot/run"
+
 osdBinary=$installPrefix"/fastblock-osd"
 monBinary=$installPrefix"/fastblock-mon"
+clientBinary=$installPrefix"/fastblock-client"
 benchBinary=$installPrefix"/block_bench"
+
+localOsdBinary="$scriptRoot/build/src/osd/fastblock-osd"
+localMonBinary="$scriptRoot/monitor/fastblock-mon"
+localClientBinary="$scriptRoot/monitor/fastblock-client"
+localBenchBinary="$scriptRoot/build/src/tools/block_bench/block_bench"
+
+useLocalDevLaunch="false"
+configDir="/etc/fastblock"
+dataDir="/var/lib/fastblock"
+logDir="/var/log/fastblock"
 
 usage() {
     echo "Usage: $0 [options]"
@@ -105,6 +122,127 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 
+if [ "$mode" = "dev" ] && [ -f "$localOsdBinary" ] && [ -f "$localMonBinary" ] \
+    && [ -f "$localClientBinary" ] && [ -f "$localBenchBinary" ]; then
+    useLocalDevLaunch="true"
+    defaultConfigFile="$localConfigDir/fastblock.json"
+    configDir="$localConfigDir"
+    dataDir="$localDataDir"
+    logDir="$localLogDir"
+    osdBinary="$localOsdBinary"
+    monBinary="$localMonBinary"
+    clientBinary="$localClientBinary"
+    benchBinary="$localBenchBinary"
+fi
+
+function ensureLocalDevDirs() {
+    mkdir -p "$configDir" "$dataDir" "$logDir" "$localRunDir"
+}
+
+function waitPortReady() {
+    _host=$1
+    _port=$2
+    while ! nc -z "$_host" "$_port"; do
+        sleep 1
+    done
+}
+
+function stopLocalProcess() {
+    _pid_file=$1
+    if [ ! -f "$_pid_file" ]; then
+        return
+    fi
+
+    _pid=$(cat "$_pid_file")
+    if kill -0 "$_pid" 2>/dev/null; then
+        kill "$_pid"
+        while kill -0 "$_pid" 2>/dev/null; do
+            sleep 1
+        done
+    fi
+    rm -f "$_pid_file"
+}
+
+function stopAllLocalOsds() {
+    if [ ! -d "$localRunDir" ]; then
+        return
+    fi
+
+    for pid_file in "$localRunDir"/osd-*.pid; do
+        if [ -e "$pid_file" ]; then
+            stopLocalProcess "$pid_file"
+        fi
+    done
+}
+
+function getFirstRdmaDevice() {
+    rdma link show | awk '/^link / {split($2, a, "/"); print a[1]; exit}'
+}
+
+function getPrimaryHostIp() {
+    ip -4 -o addr show up scope global | awk '{print $4}' | cut -d/ -f1 | head -n1
+}
+
+function startLocalMonitor() {
+    _mons=$1
+    ensureLocalDevDirs
+    stopLocalProcess "$localRunDir/monitor.pid"
+    nohup "$monBinary" -conf="$defaultConfigFile" -id="$_mons" > "$logDir/monitor.log" 2>&1 &
+    echo $! > "$localRunDir/monitor.pid"
+}
+
+function startLocalOsd() {
+    _osdid=$1
+    ensureLocalDevDirs
+    stopLocalProcess "$localRunDir/osd-$_osdid.pid"
+    nohup "$osdBinary" -C "$defaultConfigFile" --id "$_osdid" -N 0 > "$logDir/osd$_osdid.log" 2>&1 &
+    echo $! > "$localRunDir/osd-$_osdid.pid"
+}
+
+function generateLocalBenchConfig() {
+    _mons=$1
+    _nic=$2
+    ensureLocalDevDirs
+    cat > "$configDir/block_bench.dev.json" <<EOF
+{
+  "io_dump_enable": false,
+  "io_print_stats_enable": true,
+  "io_print_stats_take_single_core": true,
+  "io_print_stats_interval_ms": 1000,
+  "io_type": "write",
+  "io_size": 4096,
+  "io_count": 64,
+  "io_depth": 4,
+  "image_name": "dev-image",
+  "image_size": 16777216,
+  "object_size": 4194304,
+  "pool_name": "fb",
+  "deferred_time": 10,
+  "io_queue_size": 64,
+  "io_queue_request": 128,
+  "mon_host": [
+    "$_mons"
+  ],
+  "rdma_device_name": "$_nic",
+  "msg_rdma_cq_num_entries": 1024,
+  "msg_server_metadata_memory_pool_capacity": 16,
+  "msg_server_data_memory_pool_capacity": 16,
+  "msg_client_metadata_memory_pool_capacity": 16,
+  "msg_client_data_memory_pool_capacity": 16,
+  "msg_server_metadata_memory_pool_element_size": 512,
+  "msg_server_data_memory_pool_element_size": 5120,
+  "msg_client_metadata_memory_pool_element_size": 512,
+  "msg_client_data_memory_pool_element_size": 5120,
+  "msg_client_per_post_recv_num": 64,
+  "msg_server_per_post_recv_num": 64,
+  "osd_no_huge": true,
+  "osd_mem_size_mb": 1024,
+  "osd_iobuf_small_pool_count": 1024,
+  "osd_iobuf_large_pool_count": 64
+}
+EOF
+}
+
 function isOfedInstalled() {
     if [ ! -f /usr/bin/ofed_info ]; then
         echo "false"
@@ -122,8 +260,9 @@ function isSmallMemory() {
 # 2.generate a new config file for monitor
 function generateConfigAndStartMonitor() {
     _mons=$1
-    mkdir -p /var/log/fastblock
-    mkdir -p /etc/fastblock
+    mkdir -p "$logDir"
+    mkdir -p "$configDir"
+    mkdir -p "$dataDir"
     tmpConfFile=$(mktemp)
 
     # default msg_rdma_cq_num_entries is 16, make it larger if you encounter CQ errors
@@ -140,35 +279,57 @@ function generateConfigAndStartMonitor() {
            "msg_server_per_post_recv_num": 64
     }' | jq '.' > $tmpConfFile
 
-    rm -rf /var/lib/fastblock/mon_"$_mons"
+    rm -rf "$dataDir"/mon_"$_mons"
     jq '.monitors |= ['\"$_mons\"']' $tmpConfFile > tmp_file.json && mv tmp_file.json $tmpConfFile
     jq '.mon_host |= ['\"$_mons\"']' $tmpConfFile > tmp_file.json && mv tmp_file.json $tmpConfFile
     jq '.mon_rpc_address |= '\"$_mons\"'' $tmpConfFile > tmp_file.json && mv tmp_file.json $tmpConfFile
     jq '.mon_rpc_port |= 3333' $tmpConfFile > tmp_file.json && mv tmp_file.json $tmpConfFile
-    jq '.log_path |= "/var/log/fastblock/monitor.log"' $tmpConfFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
+    jq '.data_dir |= '\"$dataDir/mon_$_mons\"'' $tmpConfFile > tmp_file.json && mv tmp_file.json $tmpConfFile
+    jq '.osd_data_dir |= '\"$dataDir\"'' $tmpConfFile > tmp_file.json && mv tmp_file.json $tmpConfFile
+    jq '.osd_no_huge |= true' $tmpConfFile > tmp_file.json && mv tmp_file.json $tmpConfFile
+    if [ "$mode" = "dev" ]; then
+        jq '.msg_server_bind_address |= '\"$_mons\"'' $tmpConfFile > tmp_file.json && mv tmp_file.json $tmpConfFile
+    fi
+    jq '.osd_mem_size_mb |= 1024' $tmpConfFile > tmp_file.json && mv tmp_file.json $tmpConfFile
+    jq '.osd_iobuf_small_pool_count |= 1024' $tmpConfFile > tmp_file.json && mv tmp_file.json $tmpConfFile
+    jq '.osd_iobuf_large_pool_count |= 64' $tmpConfFile > tmp_file.json && mv tmp_file.json $tmpConfFile
+    jq '.log_path |= '\"$logDir/monitor.log\"'' $tmpConfFile > tmp_file.json && mv tmp_file.json "$defaultConfigFile"
 
-    mv $tmpConfFile /etc/fastblock
-    echo "moving config file to /etc/fastblock!"
+    rm -f "$tmpConfFile"
+    echo "config file is $defaultConfigFile"
 
     # stop any existing monitor service and start monitor service
-    systemctl stop fastblock-mon.target
-    systemctl start fastblock-mon@"$_mons".service
+    if [ "$useLocalDevLaunch" = "true" ]; then
+        startLocalMonitor "$_mons"
+    else
+        systemctl stop fastblock-mon.target
+        systemctl start fastblock-mon@"$_mons".service
+    fi
     echo "monitor started!"
     
     # wait until monitor's 3333 port is ready
-    while ! nc -z $_mons 3333; do
-        sleep 1
-    done
+    waitPortReady "$_mons" 3333
     sleep 5
 }
 
 
 function createNewDevCluster() {
-    if [ $monString = "" ] ;then
-        monString="127.0.0.1"
+    if [ -z "$monString" ] ;then
+        monString=$(getPrimaryHostIp)
+        if [ -z "$monString" ]; then
+            echo "failed to detect a usable non-loopback IPv4 address for dev cluster"
+            exit 1
+        fi
+    fi
+    if [ "$useLocalDevLaunch" = "true" ]; then
+        ensureLocalDevDirs
+        stopAllLocalOsds
     fi
     generateConfigAndStartMonitor $monString
     generateNicConfig
+    if [ "$useLocalDevLaunch" = "true" ]; then
+        generateLocalBenchConfig "$monString" "$nic"
+    fi
 
     for i in `seq 1 $osdcount`
     do
@@ -181,7 +342,7 @@ function createNewDevCluster() {
         # in a dev cluster, all osds are local, disk_path is the osd work dir 
        
         uuid=`uuidgen`
-        id=$(/usr/local/bin/fastblock-client -op=fakeapplyid -uuid=$uuid)
+        id=$("$clientBinary" -conf="$defaultConfigFile" -op=fakeapplyid -uuid=$uuid)
         addNewOsd "" $id $uuid $bdevtype ""
         sleep 30
     done
@@ -189,7 +350,7 @@ function createNewDevCluster() {
 
     echo "create default pool fb"
     sleep 20
-    /usr/local/bin/fastblock-client -op=createpool -poolname=fb -pgcount=$pgcount -pgsize=$replica
+    "$clientBinary" -conf="$defaultConfigFile" -op=createpool -poolname=fb -pgcount=$pgcount -pgsize=$replica
 }
 
 
@@ -221,7 +382,7 @@ function processProCluster() {
 
         for ((i=0; i<${#device_array[@]}; i++)); do
             _uuid=`uuidgen`
-            id=$(/usr/local/bin/fastblock-client -op=fakeapplyid -uuid=$_uuid)
+            id=$("$clientBinary" -conf="$defaultConfigFile" -op=fakeapplyid -uuid=$_uuid)
             addNewOsd "${device_array[$i]}" $id $_uuid $bdevtype $remoteIp
         done
     fi
@@ -231,9 +392,24 @@ function processProCluster() {
 
 function generateNicConfig() {
     if [ "$nic" = "" ];then
-        nic=$(ip link show | grep UP | grep -v lo | awk -F': ' '{print $2}')
-        rdma link add rdmanic type rxe netdev $nic
-        jq '.rdma_device_name |= "rdmanic"' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
+        nic=$(getFirstRdmaDevice)
+        if [ -z "$nic" ]; then
+            _netdev=$(ip -o link show up | awk -F': ' '$2 != "lo" {print $2; exit}' | cut -d@ -f1)
+            if [ -z "$_netdev" ]; then
+                echo "failed to detect a usable netdev for rdma_rxe"
+                exit 1
+            fi
+            if ! rdma link show | grep -q '^link rdmanic/'; then
+                rdma link add rdmanic type rxe netdev "$_netdev"
+                if [ "$?" != "0" ]; then
+                    echo "failed to create rxe device rdmanic on netdev $_netdev"
+                    echo "provide an existing rdma nic with -n, or pre-create rdmanic with sufficient privileges"
+                    exit 1
+                fi
+            fi
+            nic="rdmanic"
+        fi
+        jq '.rdma_device_name |= '\"$nic\"'' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
     else
         jq '.rdma_device_name |= '\"$nic\"'' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
     fi
@@ -250,8 +426,12 @@ function generateNicConfig() {
 
 
 function parametersCheck(){
-    if [ ! -f $osdBinary ] || [ ! -f $monBinary ] || [ ! -f $benchBinary ]; then
-        echo "fastblock binaries are not installed, please run make install in build dir"
+    if [ ! -f "$osdBinary" ] || [ ! -f "$monBinary" ] || [ ! -f "$benchBinary" ] || [ ! -f "$clientBinary" ]; then
+        echo "fastblock binaries are missing"
+        echo "osd: $osdBinary"
+        echo "monitor: $monBinary"
+        echo "client: $clientBinary"
+        echo "bench: $benchBinary"
         exit 1
     fi
 
@@ -308,10 +488,13 @@ function parametersCheck(){
         # note that in a physical machine, rdma_rxe may not be loaded when you already have ofed installed and service started
         # in a physical machine with rdma nic, ofed must be installed and service started
         if [ "$nic" = "" ];then
-            modprobe rdma_rxe
-            if [ "$?" != "0" ]; then
-                echo "modprobe rdma_rxe failed, specify a rdma nic or check if ofed is installed correctly"
-                exit 1
+            nic=$(getFirstRdmaDevice)
+            if [ -z "$nic" ] && ! lsmod | grep -q '^rdma_rxe '; then
+                modprobe rdma_rxe
+                if [ "$?" != "0" ]; then
+                    echo "modprobe rdma_rxe failed, specify a rdma nic or check if ofed is installed correctly"
+                    exit 1
+                fi
             fi
         fi
     else
@@ -385,25 +568,29 @@ function addNewOsd() {
     _remote_ip=$5
 
     if [ "$_remote_ip" = "" ];then
-        rm -rf /var/lib/fastblock/osd-"$_osdid"
-        mkdir -p /var/lib/fastblock/osd-"$_osdid"
-        bdev_type_path=/var/lib/fastblock/osd-"$_osdid"/bdev_type
-        disk_path=/var/lib/fastblock/osd-"$_osdid"/disk
+        rm -rf "$dataDir"/osd-"$_osdid"
+        mkdir -p "$dataDir"/osd-"$_osdid"
+        bdev_type_path="$dataDir"/osd-"$_osdid"/bdev_type
+        disk_path="$dataDir"/osd-"$_osdid"/disk
         echo $_bdev_type > $bdev_type_path
 
         if [ "$_disk_path" = "" ];then
-            rm -f /var/lib/fastblock/osd-"$_osdid"/file
-            truncate -s 100G /var/lib/fastblock/osd-"$_osdid"/file
-            echo /var/lib/fastblock/osd-"$_osdid"/file > $disk_path
+            rm -f "$dataDir"/osd-"$_osdid"/file
+            truncate -s 100G "$dataDir"/osd-"$_osdid"/file
+            echo "$dataDir"/osd-"$_osdid"/file > $disk_path
         else
             echo $_disk_path > $disk_path
         fi
 
         echo intializing localstore of osd-"$_osdid"
-        /usr/local/bin/fastblock-osd -C $defaultConfigFile --id $_osdid --mkfs --force --uuid $_uuid -S $cores
+        "$osdBinary" -C "$defaultConfigFile" --id "$_osdid" --mkfs --force --uuid "$_uuid" -S "$cores"
 
         echo "starting osd-$_osdid"
-        systemctl start fastblock-osd@"$_osdid".service
+        if [ "$useLocalDevLaunch" = "true" ]; then
+            startLocalOsd "$_osdid"
+        else
+            systemctl start fastblock-osd@"$_osdid".service
+        fi
     else
         echo "starting remote osd-" $_osdid "on" $_remote_ip
         ssh $_remote_ip "rm -rf /var/lib/fastblock/osd-$_osdid"
