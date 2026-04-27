@@ -225,6 +225,25 @@ void client::send_cluster_map_request() {
 }
 
 bool client::core_poller_handler() {
+    auto now = std::chrono::system_clock::now();
+    constexpr auto stale_cluster_map_timeout = std::chrono::microseconds(_poll_period_us * 3);
+    if (_last_cluster_map_at != std::chrono::system_clock::time_point{}
+        && _on_flight_requests.empty()
+        && _request_counter > 0
+        && now - _last_cluster_map_at > stale_cluster_map_timeout) {
+        SPDK_WARNLOG(
+          "monitor client of osd %d has not received cluster map responses for %ld us, reconnecting\n",
+          _self_osd_id,
+          std::chrono::duration_cast<std::chrono::microseconds>(now - _last_cluster_map_at).count());
+        _cluster->connect();
+        _request_counter = 0;
+        _read_bytes = 0;
+        _should_read_bytes = _msg_len_size;
+        _is_read_len = true;
+        _cached = client::cached_request_class::none;
+        _responses.clear();
+        _internal_requests.clear();
+    }
     return handle_response() | consume_request();
 }
 

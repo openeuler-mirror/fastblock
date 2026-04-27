@@ -555,43 +555,69 @@ func ProcessPgMemberChangeFinish(ctx context.Context, client *etcdapi.EtcdClient
 		poolConf.RwMutex.Lock()
 		AllPools.RwMutex.RUnlock()
 
-		if pgConf, gok := poolConf.PoolPgMap.PgMap[pgIdStr]; gok {
-			if pgConf.PgInState(utils.PgRemapped) {
-				log.Info(ctx, "PgMemberChangeFinishRequest, pg", poolId, ".", pgId, " in PgRemapped. result ", result)
-				if result == 0 {
-					pgConf.UnsetPgState(utils.PgRemapped)
-					state := CheckPgState(ctx, pgConf.NewOsdList, poolConf.PGSize)
-					if state == 0 {
-						pgConf.SetPgState(utils.PgActive)
-					} else if state == utils.PgUndersize {
-						pgConf.SetPgState(utils.PgUndersize)
-					} else if state == utils.PgDown {
-						pgConf.SetPgState(utils.PgDown)
-					}
-
-					pgConf.Version++
-					pgConf.OsdList = pgConf.NewOsdList
-					pgConf.NewOsdList = pgConf.NewOsdList[:0]
-					pgConf.CoreIndex = pgConf.NewCoreIndex
-					pgConf.NewCoreIndex = math.MaxUint32
-					isUpdate = true
-
-					poolConf.PoolPgMap.PgMap[pgIdStr] = pgConf
-					poolConf.PoolPgMap.Version++
-					AllPools.pools[PoolID(poolId)] = poolConf
-					poolConf.RwMutex.Unlock()
-
-					ProcessPgTask(ctx, client, strconv.FormatUint(pgId, 10))
-				} else {
-					poolConf.RwMutex.Unlock()
-				}
+		locked := true
+		unlockPool := func() {
+			if locked {
+				poolConf.RwMutex.Unlock()
+				locked = false
 			}
+		}
+		defer unlockPool()
+
+		if pgConf, gok := poolConf.PoolPgMap.PgMap[pgIdStr]; gok {
+			if result != 0 {
+				if pgConf.PgInState(utils.PgRemapped) {
+					log.Info(ctx, "PgMemberChangeFinishRequest, pg", poolId, ".", pgId, " in PgRemapped. result ", result)
+				}
+				return nil
+			}
+
+			shouldFinalize := pgConf.PgInState(utils.PgRemapped) ||
+				!Compare_arry(pgConf.OsdList, osdList) ||
+				len(pgConf.NewOsdList) > 0
+			if !shouldFinalize {
+				return nil
+			}
+
+			log.Info(ctx, "Finalize pg member change, pg", poolId, ".", pgId,
+				" old osdList ", pgConf.OsdList, " new osdList ", osdList,
+				" remapped ", pgConf.PgInState(utils.PgRemapped))
+
+			pgConf.UnsetPgState(utils.PgCreating)
+			pgConf.UnsetPgState(utils.PgActive)
+			pgConf.UnsetPgState(utils.PgUndersize)
+			pgConf.UnsetPgState(utils.PgDown)
+			pgConf.UnsetPgState(utils.PgRemapped)
+
+			state := CheckPgState(ctx, osdList, poolConf.PGSize)
+			if state == 0 {
+				pgConf.SetPgState(utils.PgActive)
+			} else if state == utils.PgUndersize {
+				pgConf.SetPgState(utils.PgUndersize)
+			} else if state == utils.PgDown {
+				pgConf.SetPgState(utils.PgDown)
+			}
+
+			pgConf.Version++
+			pgConf.OsdList = append([]int{}, osdList...)
+			pgConf.NewOsdList = pgConf.NewOsdList[:0]
+			if pgConf.NewCoreIndex != math.MaxUint32 {
+				pgConf.CoreIndex = pgConf.NewCoreIndex
+			}
+			pgConf.NewCoreIndex = math.MaxUint32
+			isUpdate = true
+
+			poolConf.PoolPgMap.PgMap[pgIdStr] = pgConf
+			poolConf.PoolPgMap.Version++
+			AllPools.pools[PoolID(poolId)] = poolConf
 		} else {
-			poolConf.RwMutex.Unlock()
 			log.Info(ctx, "not find pg ", poolId, ".", pgId)
 			return fmt.Errorf("not find pool %d.%d", poolId, pgId)
 		}
 		if isUpdate {
+			unlockPool()
+			ProcessPgTask(ctx, client, strconv.FormatUint(pgId, 10))
+
 			pc_buf, err := json.Marshal(poolConf)
 			if err != nil {
 				log.Error(ctx, err)
