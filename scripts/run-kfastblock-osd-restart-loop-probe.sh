@@ -17,6 +17,13 @@ log_file="$run_dir/osd-restart-loop.log"
 status_file="$run_dir/status-samples.txt"
 probe_status=0
 
+mark_osd_stopped() {
+    "$repo_root/monitor/fastblock-client" \
+        -conf="$config_file" \
+        -op=fakestoposd \
+        -osdid="$target_osd" >/dev/null
+}
+
 collect_report_on_exit() {
     if [ "$collect_report" != "1" ]; then
         return 0
@@ -50,6 +57,7 @@ for cycle in $(seq 1 "$restart_cycles"); do
     echo | tee -a "$status_file"
 
     echo "restart osd-$target_osd cycle=$cycle"
+    mark_osd_stopped
     kfastblock_restart_local_osd "$repo_root" "$target_osd" "$down_sleep_sec"
     sleep "$stabilize_sleep_sec"
     kfastblock_wait_cluster_active "$repo_root" "$config_file"
