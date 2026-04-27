@@ -243,7 +243,7 @@ kfastblock_wait_osd_not_up() {
         map_output="$("$repo_root/monitor/fastblock-client" \
             -conf="$config_file" \
             -op=getosdmap \
-            -osdid="$osd_id" 2>/dev/null || true)"
+            -osdid=0 2>/dev/null || true)"
         osd_line="$(printf '%s\n' "$map_output" | awk -v osd_id="$osd_id" '$1 == osd_id { print; exit }')"
         if [ -n "$osd_line" ]; then
             status_up="$(printf '%s\n' "$osd_line" | awk '{print $3}')"
