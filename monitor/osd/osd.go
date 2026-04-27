@@ -719,6 +719,7 @@ func CheckOsdHeartbeat(ctx context.Context, client *etcdapi.EtcdClient) {
 	heartbeatTicker := time.NewTicker(heartbeatInterval)
 	for range heartbeatTicker.C {
 		isChange := false
+		var downOsds []int
 		AllOSDInfo.RwMutex.Lock()
 		for _, info := range AllOSDInfo.Osdinfo {
 			if !info.IsUp {
@@ -747,7 +748,7 @@ func CheckOsdHeartbeat(ctx context.Context, client *etcdapi.EtcdClient) {
 				if hi.lastHeartBeat.Add(osdDownInterval).Before(time.Now()) {
 					info.IsUp = false
 					isChange = true
-					ProcessOsdDown(ctx, client, info.Osdid)
+					downOsds = append(downOsds, info.Osdid)
 					log.Warn(ctx, "osd ", info.Osdid, " from up to down.")
 				}
 			}
@@ -768,6 +769,10 @@ func CheckOsdHeartbeat(ctx context.Context, client *etcdapi.EtcdClient) {
 			log.Info(ctx, "successfully update osdmap after heartbeat change")
 		} else {
 			AllOSDInfo.RwMutex.Unlock()
+		}
+
+		for _, osdID := range downOsds {
+			ProcessOsdDown(ctx, client, osdID)
 		}
 	}
 }

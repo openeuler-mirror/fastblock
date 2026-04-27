@@ -25,7 +25,7 @@ disks=""
 bdevtype="aio"
 remoteIp=""
 defaultConfigFile="/etc/fastblock/fastblock.json"
-cores=2
+cores=1
 
 scriptRoot="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 installPrefix="/usr/local/bin"
@@ -49,6 +49,8 @@ useLocalDevLaunch="false"
 configDir="/etc/fastblock"
 dataDir="/var/lib/fastblock"
 logDir="/var/log/fastblock"
+aioFileSize="${FASTBLOCK_VSTART_AIO_FILE_SIZE:-100G}"
+aioPreallocate="${FASTBLOCK_VSTART_AIO_PREALLOCATE:-0}"
 
 usage() {
     echo "Usage: $0 [options]"
@@ -65,6 +67,37 @@ usage() {
     echo "  -C, --cores: cores for the osd, determined when mkfs, the osd will always use $cores cores"
 
     exit 1
+}
+
+prepareAioBackingFile() {
+    _file_path=$1
+    rm -f "$_file_path"
+
+    if [ "$aioPreallocate" = "1" ]; then
+        if fallocate -l "$aioFileSize" "$_file_path"; then
+            echo "preallocated aio backing file $_file_path size $aioFileSize"
+            return 0
+        fi
+        echo "fallocate failed for $_file_path, fallback to sparse truncate"
+    fi
+
+    truncate -s "$aioFileSize" "$_file_path"
+}
+
+remotePrepareAioBackingFile() {
+    _remote_ip=$1
+    _file_path=$2
+
+    ssh $_remote_ip "rm -f $_file_path"
+    if [ "$aioPreallocate" = "1" ]; then
+        if ssh $_remote_ip "fallocate -l $aioFileSize $_file_path"; then
+            echo "preallocated remote aio backing file $_file_path size $aioFileSize on $_remote_ip"
+            return 0
+        fi
+        echo "remote fallocate failed for $_file_path on $_remote_ip, fallback to sparse truncate"
+    fi
+
+    ssh $_remote_ip "truncate -s $aioFileSize $_file_path"
 }
 
 if [ "$#" -eq 0 ] || [ "$1" = "--help" ]; then
@@ -197,6 +230,26 @@ function startLocalOsd() {
     stopLocalProcess "$localRunDir/osd-$_osdid.pid"
     nohup "$osdBinary" -C "$defaultConfigFile" --id "$_osdid" -N 0 > "$logDir/osd$_osdid.log" 2>&1 &
     echo $! > "$localRunDir/osd-$_osdid.pid"
+}
+
+function allocateOsdId() {
+    _uuid=$1
+    _max_retry=${2:-10}
+    _retry=0
+    _id=""
+
+    while [ "$_retry" -lt "$_max_retry" ]; do
+        _id=$("$clientBinary" -conf="$defaultConfigFile" -op=fakeapplyid -uuid="$_uuid" 2>/dev/null || true)
+        if [ -n "$_id" ]; then
+            echo "$_id"
+            return 0
+        fi
+        _retry=$((_retry + 1))
+        sleep 1
+    done
+
+    echo "failed to allocate osd id for uuid $_uuid after $_max_retry retries" >&2
+    return 1
 }
 
 function generateLocalBenchConfig() {
@@ -342,7 +395,7 @@ function createNewDevCluster() {
         # in a dev cluster, all osds are local, disk_path is the osd work dir 
        
         uuid=`uuidgen`
-        id=$("$clientBinary" -conf="$defaultConfigFile" -op=fakeapplyid -uuid=$uuid)
+        id=$(allocateOsdId "$uuid")
         addNewOsd "" $id $uuid $bdevtype ""
         sleep 30
     done
@@ -382,7 +435,7 @@ function processProCluster() {
 
         for ((i=0; i<${#device_array[@]}; i++)); do
             _uuid=`uuidgen`
-            id=$("$clientBinary" -conf="$defaultConfigFile" -op=fakeapplyid -uuid=$_uuid)
+            id=$(allocateOsdId "$_uuid")
             addNewOsd "${device_array[$i]}" $id $_uuid $bdevtype $remoteIp
         done
     fi
@@ -575,8 +628,7 @@ function addNewOsd() {
         echo $_bdev_type > $bdev_type_path
 
         if [ "$_disk_path" = "" ];then
-            rm -f "$dataDir"/osd-"$_osdid"/file
-            truncate -s 100G "$dataDir"/osd-"$_osdid"/file
+            prepareAioBackingFile "$dataDir"/osd-"$_osdid"/file
             echo "$dataDir"/osd-"$_osdid"/file > $disk_path
         else
             echo $_disk_path > $disk_path
@@ -599,8 +651,7 @@ function addNewOsd() {
         ssh $_remote_ip "echo $_disk_path > /var/lib/fastblock/osd-$_osdid/disk"
 
         if [ "$_disk_path" = "" ];then
-            ssh $_remote_ip "rm -f /var/lib/fastblock/osd-$_osdid/file"
-            ssh $_remote_ip "truncate -s 100G /var/lib/fastblock/osd-$_osdid/file"
+            remotePrepareAioBackingFile $_remote_ip /var/lib/fastblock/osd-$_osdid/file
             ssh $_remote_ip "echo /var/lib/fastblock/osd-$_osdid/file > /var/lib/fastblock/osd-$_osdid/disk"
         else
             ssh $_remote_ip "echo $_disk_path > /var/lib/fastblock/osd-$_osdid/disk"
