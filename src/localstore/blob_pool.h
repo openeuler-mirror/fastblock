@@ -53,11 +53,18 @@ struct pool_delete_ctx {
 class blob_pool {
   static constexpr uint32_t cluster_size = 1_MB;
   static constexpr uint32_t blob_size = cluster_size * 4;
-  static constexpr uint32_t init_blob_num = 1_GB / blob_size; // 初始256个blob
-  static constexpr uint32_t min_blob_num = 100;
+  static constexpr bool enabled = false;
+  // Keep the dev free-blob pool small enough that mkfs/restart validation
+  // does not spend minutes provisioning and replaying unused blobs.
+  static constexpr uint32_t init_blob_num = 16;
+  static constexpr uint32_t min_blob_num = 8;
   static constexpr uint64_t poller_period_us = 5000; // 每隔 5ms poll一次
 public:
   void set_blobstore(struct spdk_blob_store* bs) { _bs = bs; }
+
+  void load_existing(fb_blob blob) {
+      _blobs.push_back(blob);
+  }
 
   bool has_free_blob() { return _blobs.size(); }
 
@@ -79,39 +86,56 @@ public:
   }
 
   void start(pool_create_complete cb_fn, void* arg)  {
+      if (!enabled) {
+          cb_fn(arg, 0);
+          return;
+      }
       SPDK_INFOLOG(blob_log, "blob_pool: start!\n");
       _worker_poller = SPDK_POLLER_REGISTER(worker_poll, this, poller_period_us);
-      allocate_blob(init_blob_num, std::move(cb_fn), arg);
+      if (size() == 0) {
+          allocate_blob(init_blob_num, std::move(cb_fn), arg);
+          return;
+      }
+
+      if (need_alloc_blob()) {
+          allocate_blob(min_blob_num - _blobs.size() + 50, std::move(cb_fn), arg);
+          return;
+      }
+
+      cb_fn(arg, 0);
   }
 
   void stop(pool_create_complete cb_fn, void* arg) {
-      spdk_poller_unregister(&_worker_poller);
-      deallocate_blob(std::move(cb_fn), arg);
+      if (_worker_poller) {
+          spdk_poller_unregister(&_worker_poller);
+      }
+      if (!enabled) {
+          cb_fn(arg, 0);
+          return;
+      }
+      close_blob(std::move(cb_fn), arg);
   }
 
   size_t size() { return _blobs.size(); }
 
 private:
-  /**
-   * deallocate和allocate的不同之处在于：allocate每次poller都会调用，而deallocate只有在pool停止时调用一次
-   */
-  void deallocate_blob(pool_create_complete cb_fn, void* arg) {
+  void close_blob(pool_create_complete cb_fn, void* arg) {
       if (size() == 0) {
           cb_fn(arg, 0);
           return;
       }
 
-      pool_create_ctx* ctx = new pool_create_ctx;
+      pool_delete_ctx* ctx = new pool_delete_ctx;
       ctx->pool = this;
       ctx->cb_fn = std::move(cb_fn);
       ctx->arg = arg;
       ctx->blob = get();
 
-      spdk_blob_close(ctx->blob.blob, blob_close_complete, ctx);
+      spdk_blob_close(ctx->blob.blob, blob_close_only_complete, ctx);
   }
 
-  static void blob_close_complete(void *arg, int bperrno) {
-      pool_create_ctx *ctx = (struct pool_create_ctx *)arg;
+  static void blob_close_only_complete(void *arg, int bperrno) {
+      pool_delete_ctx *ctx = (struct pool_delete_ctx *)arg;
 
       if (bperrno) {
           SPDK_ERRLOG("blob_pool: close failed:%s\n", spdk_strerror(bperrno));
@@ -120,26 +144,13 @@ private:
           return;
       }
 
-      spdk_bs_delete_blob(ctx->pool->_bs, ctx->blob.blobid, blob_delete_complete, ctx);
-  }
-
-  static void blob_delete_complete(void *arg, int bperrno) {
-      pool_create_ctx *ctx = (struct pool_create_ctx *)arg;
-
-      if (bperrno) {
-          SPDK_ERRLOG("blob_pool: delete failed:%s\n", spdk_strerror(bperrno));
-          ctx->cb_fn(ctx->arg, bperrno);
-          delete ctx;
-          return;
-      }
-
       if (ctx->pool->size()) {
         ctx->blob = ctx->pool->get();
-        spdk_blob_close(ctx->blob.blob, blob_close_complete, ctx);
+        spdk_blob_close(ctx->blob.blob, blob_close_only_complete, ctx);
         return;
       }
 
-      SPDK_NOTICELOG("blob_pool: delete all success!\n");
+      SPDK_NOTICELOG("blob_pool: close all success, keep free blobs for restart\n");
       ctx->cb_fn(ctx->arg, 0);
       delete ctx;
       return;
@@ -151,6 +162,9 @@ private:
    */
   static int worker_poll(void *arg) {
       blob_pool* ctx = (blob_pool*)arg;
+      if (!enabled) {
+          return SPDK_POLLER_IDLE;
+      }
       return ctx->maybe_alloc_blob() ? SPDK_POLLER_BUSY : SPDK_POLLER_IDLE;
   }
 
@@ -199,6 +213,7 @@ private:
       spdk_blob_opts_init(&opts, sizeof(opts));
       opts.num_clusters = 4;
       opts.thin_provision = false;
+      opts.use_extent_table = false;
       opts.xattrs.names = (char**)free_xattr::xattr_names;
       opts.xattrs.count = free_xattr::xattr_count;
       opts.xattrs.ctx = &(ctx->xattr);
