@@ -43,12 +43,16 @@ void buffer_pool_init() {
 }
 
 void buffer_pool_fini() {
+    if (!tls_buffer_pool) {
+        return;
+    }
     if (spdk_mempool_count(tls_buffer_pool) != buffer_pool_size) {
         SPDK_ERRLOG("buffer bufferfer pool count is %zu but should be %u\n",
                 spdk_mempool_count(tls_buffer_pool),
                 buffer_pool_size);
     }
     spdk_mempool_free(tls_buffer_pool);
+    tls_buffer_pool = nullptr;
 }
 
 spdk_buffer buffer_pool_get() {
@@ -60,4 +64,3 @@ void buffer_pool_put(spdk_buffer& sbuf) {
     char* c = sbuf.get_buf();
     spdk_mempool_put(tls_buffer_pool, c);
 }
-
