@@ -716,6 +716,10 @@ public:
         _configuration_manager.reset_cfg_entry();
     }
 
+    void reset_cfg_entry_complete(){
+        _configuration_manager.reset_cfg_entry_complete();
+    }
+
     auto get_cfg_entry_complete(){
         return _configuration_manager.get_cfg_entry_complete();
     }
@@ -843,7 +847,7 @@ public:
     void handle_snap_check_task(task_info& task);
 
     void raft_node_process_commit(int result, raft_index_t index, raft_node_id_t node_id);
-    void send_pg_member_change_finished_notify(int result);
+    void send_pg_member_change_finished_notify(int result, std::function<void(bool)> cb = {});
 
 private:
     int _recovery_by_snapshot(std::shared_ptr<raft_node> node);

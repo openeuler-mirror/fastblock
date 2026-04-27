@@ -62,7 +62,10 @@ int raft_log::entry_queue_flush(){
 
         auto complete = ec.second;
         if(RAFT_LOGTYPE_ADD_NONVOTING_NODE == entry->type()){
-            _raft->set_cfg_entry_complete(entry, complete);
+            auto current_cfg = _raft->get_cfg_entry_complete();
+            if (complete || !current_cfg.first) {
+                _raft->set_cfg_entry_complete(entry, complete);
+            }
         }else{
             /* 收到RAFT_LOGTYPE_ADD_NONVOTING_NODE这种configuration entry,
                会进入CFG_CATCHING_UP状态，这种entry并不会写入log，为了log index的连续性，

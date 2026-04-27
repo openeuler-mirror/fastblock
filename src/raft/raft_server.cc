@@ -122,7 +122,7 @@ void raft_server_t::_send_leader_be_elected_notify(){
       std::move(new_osd_list));
 }
 
-void raft_server_t::send_pg_member_change_finished_notify(int result){
+void raft_server_t::send_pg_member_change_finished_notify(int result, std::function<void(bool)> cb){
     auto osd_list = _nodes_stat.get_node_ids();
 
     SPDK_INFOLOG(pg_group, "in pg %lu.%lu, send PgMemberChangeFinishRequest to mon\n",
@@ -131,7 +131,12 @@ void raft_server_t::send_pg_member_change_finished_notify(int result){
       result,
       _pool_id,
       _pg_id,
-      std::move(osd_list));
+      std::move(osd_list),
+      [cb = std::move(cb)](monitor::client::response_status status, monitor::client::request_context*) mutable {
+          if (cb) {
+              cb(status == monitor::client::response_status::ok);
+          }
+      });
 }
 
 int raft_server_t::raft_count_votes()
@@ -2563,6 +2568,9 @@ raft_server_t::raft_server_t(raft_client_protocol& client, disk_log* log,
 
 raft_server_t::~raft_server_t()
 {
+    if (_machine) {
+        _machine->clear_raft();
+    }
 }
 
 void raft_server_t::init(
@@ -2705,11 +2713,22 @@ int raft_server_t::raft_configuration_entry(std::shared_ptr<raft_entry_t> ety, u
         auto err_num = err::RAFT_ERR_MEMBERSHIP_CHANGING;
         SPDK_INFOLOG(pg_group, "change the membership of the pg %lu.%lu failed: %s\n",
                 raft_get_pool_id(), raft_get_pg_id(), err::string_status(err_num));
-
+        if (complete) {
+            complete->complete(err_num);
+        }
         return err_num;
     }
+
+    set_cfg_entry_complete(ety, complete);
     set_configuration_state(cfg_state::CFG_CATCHING_START);
-    return raft_write_entry(ety, complete);
+    auto ret = raft_write_entry(ety, nullptr);
+    if (ret != 0) {
+        reset_cfg_entry_complete();
+        if (complete) {
+            complete->complete(ret);
+        }
+    }
+    return ret;
 }
 
 int raft_server_t::raft_send_timeout_now(raft_node_id_t target_node_id){

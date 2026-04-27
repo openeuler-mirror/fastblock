@@ -1104,7 +1104,8 @@ void client::send_pg_member_change_finished_notify(
   int result,
   uint64_t pool_id,
   uint64_t pg_id,
-  std::vector<int32_t> osd_list) {
+  std::vector<int32_t> osd_list,
+  on_response_callback_type&& cb) {
     auto req = std::make_unique<msg::Request>();
     auto* mem_req = req->mutable_pg_member_change_finish_request();
     mem_req->set_result(result);
@@ -1114,12 +1115,15 @@ void client::send_pg_member_change_finished_notify(
         mem_req->add_osdlist(osd_id);
     }
 
-    auto mem_cb = [](const response_status status, request_context*ctx){
-        SPDK_DEBUGLOG(mon, "notify monitor (change member of pg has been finished).\n");
-        if (status != response_status::ok) {
-            SPDK_ERRLOG("notify monitor (change member of pg has been finished) failed\n");
-        }
-    };
+    auto mem_cb = std::move(cb);
+    if (!mem_cb) {
+        mem_cb = [](const response_status status, request_context*ctx){
+            SPDK_DEBUGLOG(mon, "notify monitor (change member of pg has been finished).\n");
+            if (status != response_status::ok) {
+                SPDK_ERRLOG("notify monitor (change member of pg has been finished) failed\n");
+            }
+        };
+    }
 
     auto* req_ctx = new client::request_context{
       this, std::move(req), std::monostate{}, std::move(mem_cb)};

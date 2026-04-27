@@ -13,6 +13,7 @@
 #include "raft/raft_node.h"
 #include "raft/raft.h"
 #include "localstore/types.h"
+#include "fastblock/monclient/client.h"
 
 node_configuration_manager::node_configuration_manager(raft_server_t* raft)
   : _raft(raft) 
@@ -34,10 +35,15 @@ void node_configuration_manager::add_catch_up_node(const raft_node_info& node_in
 
 int node_configuration_manager::cfg_change_process(int result, raft_index_t rsp_current_idx, std::shared_ptr<raft_node> node){
     auto finish_func = [this](int result){
-        if(_cfg_complete){
-            _cfg_complete->complete(result);
-        }
-        _raft->send_pg_member_change_finished_notify(result);
+        auto* cfg_complete = _cfg_complete;
+        auto final_result = result;
+        _raft->send_pg_member_change_finished_notify(
+          result,
+          [cfg_complete, final_result](bool ok) mutable {
+              if (cfg_complete) {
+                  cfg_complete->complete(ok ? final_result : err::RAFT_ERR_NO_CONNECTED);
+              }
+          });
         reset_cfg_entry_complete();
         clear_catch_up_nodes();
         set_state(cfg_state::CFG_NONE);
