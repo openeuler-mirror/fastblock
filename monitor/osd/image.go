@@ -141,7 +141,7 @@ func ProcessCreateImageMessage(ctx context.Context, client *etcdapi.EtcdClient, 
 	}
 
 	Allimages[imageID] = imageConf
-	log.Info(ctx, "successfully put to ectd for newly image,name :%s ", imagename)
+	log.Info(ctx, "successfully put to etcd for newly image, name :%s ", imagename)
 	return msg.CreateImageErrorCode_createImageOk
 }
 

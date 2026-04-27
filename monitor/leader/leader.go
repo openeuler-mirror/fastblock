@@ -17,7 +17,7 @@ import (
 )
 
 func LeaderCallback(whoami string, ctx context.Context) {
-	log.Info(ctx, "i'm the leader, i'm %s", whoami)
+	log.Info(ctx, "I'm the leader, I'm %s", whoami)
 }
 
 func LeaderProcessBootMessage(id int32, uuid string, size int64) {

@@ -47,7 +47,7 @@
 - *poll_cq_batch_size*  
     用于指定函数 [`ibv_poll_cq()`](https://man7.org/linux/man-pages/man3/ibv_poll_cq.3.html) 一次 *poll CQE* 的数量  
 - *metadata_memory_pool_capacity*  
-    指定 *RPC* 层用于传递元信息的内池持大小  
+    指定 *RPC* 层用于传递元信息的内存池大小  
 - *metadata_memory_pool_element_size_byte*  
     指定元信息内存池中内存块的大小，该内存块用于 *RDMA Send* 发送消息  
 - *data_memory_pool_capacity*  
