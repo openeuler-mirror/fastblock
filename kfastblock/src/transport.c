@@ -12,6 +12,7 @@
 #include <linux/string.h>
 #include <linux/uio.h>
 #include <linux/workqueue.h>
+#include <linux/moduleparam.h>
 #include <net/sock.h>
 
 #include "kfastblock/common.h"
@@ -38,8 +39,13 @@ static int kfastblock_transport_check_osd_backoff(
 static struct kfastblock_cached_socket *
 kfastblock_transport_reserve_osd_slot(struct kfastblock_volume *vol);
 static struct workqueue_struct *g_kfastblock_transport_wq;
+static unsigned int g_kfastblock_osd_endpoint_parallel_limit = 1;
 
-#define KFASTBLOCK_TRANSPORT_OSD_ENDPOINT_PARALLEL_LIMIT 1U
+module_param_named(osd_endpoint_parallel_limit,
+		   g_kfastblock_osd_endpoint_parallel_limit,
+		   uint, 0644);
+MODULE_PARM_DESC(osd_endpoint_parallel_limit,
+		 "maximum active raw TCP sockets allowed per OSD endpoint");
 
 enum kfastblock_transport_buffer_flags {
 	KFASTBLOCK_TRANSPORT_BUFFER_ZERO = 1U << 0,
@@ -295,6 +301,7 @@ static int kfastblock_transport_acquire_osd_socket(
 	struct kfastblock_cached_socket *cached = NULL;
 	struct socket *sock = NULL;
 	u32 active_count;
+	u32 endpoint_parallel_limit;
 	int ret;
 
 	if (!vol || !leader || !cached_out || !sock_out)
@@ -316,9 +323,11 @@ static int kfastblock_transport_acquire_osd_socket(
 	if (ret)
 		return ret;
 
+	endpoint_parallel_limit =
+		max_t(u32, READ_ONCE(g_kfastblock_osd_endpoint_parallel_limit), 1);
 	active_count = kfastblock_osd_conn_pool_endpoint_active_count(
 		vol->socket_cache, KFASTBLOCK_MAX_SOCKET_CACHE, leader);
-	if (active_count >= KFASTBLOCK_TRANSPORT_OSD_ENDPOINT_PARALLEL_LIMIT)
+	if (active_count >= endpoint_parallel_limit)
 		goto fallback_wait_match;
 
 	cached = kfastblock_transport_reserve_osd_slot(vol);
