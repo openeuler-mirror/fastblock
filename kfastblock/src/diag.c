@@ -51,6 +51,75 @@ static const char *kfastblock_diag_failure_source_name(u32 source)
 	}
 }
 
+static const char *kfastblock_diag_event_type_name(u32 type)
+{
+	switch (type) {
+	case KFASTBLOCK_VOLUME_EVENT_ATTACH_READY:
+		return "attach_ready";
+	case KFASTBLOCK_VOLUME_EVENT_QUEUE_PAUSE:
+		return "queue_pause";
+	case KFASTBLOCK_VOLUME_EVENT_QUEUE_RESUME:
+		return "queue_resume";
+	case KFASTBLOCK_VOLUME_EVENT_METADATA_STALE:
+		return "metadata_stale";
+	case KFASTBLOCK_VOLUME_EVENT_CLUSTER_REFRESH_FAIL:
+		return "cluster_refresh_fail";
+	case KFASTBLOCK_VOLUME_EVENT_IMAGE_REFRESH_FAIL:
+		return "image_refresh_fail";
+	case KFASTBLOCK_VOLUME_EVENT_LEADER_QUERY_FAIL:
+		return "leader_query_fail";
+	case KFASTBLOCK_VOLUME_EVENT_OBJECT_DONE:
+		return "object_done";
+	case KFASTBLOCK_VOLUME_EVENT_OBJECT_RETRY:
+		return "object_retry";
+	case KFASTBLOCK_VOLUME_EVENT_OBJECT_ERROR:
+		return "object_error";
+	case KFASTBLOCK_VOLUME_EVENT_REFRESH_KICK:
+		return "refresh_kick";
+	case KFASTBLOCK_VOLUME_EVENT_LEADER_INVALIDATE:
+		return "leader_invalidate";
+	case KFASTBLOCK_VOLUME_EVENT_OSD_SOCKET_DROP:
+		return "osd_socket_drop";
+	case KFASTBLOCK_VOLUME_EVENT_MONITOR_SOCKET_DROP:
+		return "monitor_socket_drop";
+	case KFASTBLOCK_VOLUME_EVENT_HEALTH_CHANGE:
+		return "health_change";
+	case KFASTBLOCK_VOLUME_EVENT_SOCKET_BACKOFF:
+		return "socket_backoff";
+	case KFASTBLOCK_VOLUME_EVENT_MANUAL_REFRESH:
+		return "manual_refresh";
+	case KFASTBLOCK_VOLUME_EVENT_MANUAL_RESET_BACKOFF:
+		return "manual_reset_backoff";
+	case KFASTBLOCK_VOLUME_EVENT_MANUAL_DROP_TRANSPORT:
+		return "manual_drop_transport";
+	case KFASTBLOCK_VOLUME_EVENT_MANUAL_RESET_LEADERS:
+		return "manual_reset_leaders";
+	case KFASTBLOCK_VOLUME_EVENT_MANUAL_QUEUE_PAUSE:
+		return "manual_queue_pause";
+	case KFASTBLOCK_VOLUME_EVENT_MANUAL_QUEUE_RESUME:
+		return "manual_queue_resume";
+	case KFASTBLOCK_VOLUME_EVENT_SOCKET_BACKOFF_WAIT:
+		return "socket_backoff_wait";
+	case KFASTBLOCK_VOLUME_EVENT_MANUAL_FAULT_INJECTION_ARM:
+		return "manual_fault_injection_arm";
+	case KFASTBLOCK_VOLUME_EVENT_MANUAL_FAULT_INJECTION_RESET:
+		return "manual_fault_injection_reset";
+	case KFASTBLOCK_VOLUME_EVENT_FAULT_INJECTION_TRIGGER:
+		return "fault_injection_trigger";
+	default:
+		return "unknown";
+	}
+}
+
+const char *kfastblock_diag_anomaly_status(u32 score)
+{
+	if (score >= 60)
+		return "critical";
+	if (score >= 25)
+		return "warn";
+	return "ok";
+}
+
 static void kfastblock_diag_collect_volume(struct kfastblock_volume *vol,
 					   struct kfastblock_diag_snapshot *snapshot)
 {
@@ -255,6 +324,174 @@ static void kfastblock_diag_collect_fault(struct kfastblock_volume *vol,
 		sizeof(snapshot->fault.last_site_text));
 }
 
+static void kfastblock_diag_collect_events(struct kfastblock_volume *vol,
+					   struct kfastblock_diag_snapshot *snapshot)
+{
+	unsigned long flags;
+	u32 count;
+	u32 start;
+	u32 i;
+
+	if (!vol || !snapshot)
+		return;
+
+	spin_lock_irqsave(&vol->event_log.lock, flags);
+	count = vol->event_log.count;
+	start = (vol->event_log.next_index + KFASTBLOCK_MAX_VOLUME_EVENTS - count) %
+		KFASTBLOCK_MAX_VOLUME_EVENTS;
+	snapshot->events.total_events = count;
+	for (i = 0; i < count; ++i) {
+		const struct kfastblock_volume_event *event =
+			&vol->event_log.entries[(start + i) %
+						KFASTBLOCK_MAX_VOLUME_EVENTS];
+
+		if (!snapshot->events.oldest_jiffies ||
+		    event->jiffies < snapshot->events.oldest_jiffies)
+			snapshot->events.oldest_jiffies = event->jiffies;
+		if (event->jiffies >= snapshot->events.newest_jiffies) {
+			snapshot->events.newest_jiffies = event->jiffies;
+			snapshot->events.last_type = event->type;
+			snapshot->events.last_errno = event->ret;
+		}
+
+		switch (event->type) {
+		case KFASTBLOCK_VOLUME_EVENT_HEALTH_CHANGE:
+			snapshot->events.health_change_events++;
+			break;
+		case KFASTBLOCK_VOLUME_EVENT_METADATA_STALE:
+			snapshot->events.metadata_stale_events++;
+			break;
+		case KFASTBLOCK_VOLUME_EVENT_CLUSTER_REFRESH_FAIL:
+			snapshot->events.cluster_refresh_fail_events++;
+			break;
+		case KFASTBLOCK_VOLUME_EVENT_IMAGE_REFRESH_FAIL:
+			snapshot->events.image_refresh_fail_events++;
+			break;
+		case KFASTBLOCK_VOLUME_EVENT_LEADER_QUERY_FAIL:
+			snapshot->events.leader_query_fail_events++;
+			break;
+		case KFASTBLOCK_VOLUME_EVENT_OBJECT_RETRY:
+			snapshot->events.object_retry_events++;
+			break;
+		case KFASTBLOCK_VOLUME_EVENT_OBJECT_ERROR:
+			snapshot->events.object_error_events++;
+			break;
+		case KFASTBLOCK_VOLUME_EVENT_OSD_SOCKET_DROP:
+		case KFASTBLOCK_VOLUME_EVENT_MONITOR_SOCKET_DROP:
+			snapshot->events.socket_drop_events++;
+			break;
+		case KFASTBLOCK_VOLUME_EVENT_SOCKET_BACKOFF:
+			snapshot->events.socket_backoff_events++;
+			break;
+		case KFASTBLOCK_VOLUME_EVENT_SOCKET_BACKOFF_WAIT:
+			snapshot->events.socket_backoff_wait_events++;
+			break;
+		case KFASTBLOCK_VOLUME_EVENT_FAULT_INJECTION_TRIGGER:
+			snapshot->events.fault_events++;
+			break;
+		case KFASTBLOCK_VOLUME_EVENT_MANUAL_REFRESH:
+		case KFASTBLOCK_VOLUME_EVENT_MANUAL_RESET_BACKOFF:
+		case KFASTBLOCK_VOLUME_EVENT_MANUAL_DROP_TRANSPORT:
+		case KFASTBLOCK_VOLUME_EVENT_MANUAL_RESET_LEADERS:
+		case KFASTBLOCK_VOLUME_EVENT_MANUAL_QUEUE_PAUSE:
+		case KFASTBLOCK_VOLUME_EVENT_MANUAL_QUEUE_RESUME:
+		case KFASTBLOCK_VOLUME_EVENT_MANUAL_FAULT_INJECTION_ARM:
+		case KFASTBLOCK_VOLUME_EVENT_MANUAL_FAULT_INJECTION_RESET:
+			snapshot->events.manual_events++;
+			break;
+		default:
+			break;
+		}
+	}
+	spin_unlock_irqrestore(&vol->event_log.lock, flags);
+
+	strscpy(snapshot->events.last_type_text,
+		kfastblock_diag_event_type_name(snapshot->events.last_type),
+		sizeof(snapshot->events.last_type_text));
+}
+
+static void kfastblock_diag_compute_anomaly(struct kfastblock_diag_snapshot *snapshot)
+{
+	u32 score = 0;
+	u32 flags = 0;
+	u32 refresh_fail_events;
+	u32 socket_events;
+
+	if (!snapshot)
+		return;
+
+	refresh_fail_events = snapshot->events.cluster_refresh_fail_events +
+		snapshot->events.image_refresh_fail_events +
+		snapshot->events.leader_query_fail_events;
+	socket_events = snapshot->events.socket_drop_events +
+		snapshot->events.socket_backoff_events +
+		snapshot->events.socket_backoff_wait_events;
+
+	if (snapshot->volume.queue_paused && !snapshot->volume.manual_queue_pause) {
+		flags |= KFASTBLOCK_DIAG_ANOMALY_QUEUE_PAUSED;
+		score += 15;
+	}
+	if (snapshot->volume.health_state == KFASTBLOCK_VOLUME_HEALTH_DEGRADED) {
+		flags |= KFASTBLOCK_DIAG_ANOMALY_HEALTH_DEGRADED;
+		score += 15;
+	} else if (snapshot->volume.health_state == KFASTBLOCK_VOLUME_HEALTH_STALE) {
+		flags |= KFASTBLOCK_DIAG_ANOMALY_HEALTH_DEGRADED |
+			 KFASTBLOCK_DIAG_ANOMALY_META_STALE;
+		score += 30;
+	}
+	if (snapshot->events.metadata_stale_events) {
+		flags |= KFASTBLOCK_DIAG_ANOMALY_META_STALE;
+		score += min_t(u32, 20, snapshot->events.metadata_stale_events * 5);
+	}
+	if (snapshot->buffer.cache_limit &&
+	    snapshot->buffer.cached >= snapshot->buffer.cache_limit) {
+		flags |= KFASTBLOCK_DIAG_ANOMALY_BUFFER_PRESSURE;
+		score += 8;
+	}
+	if (snapshot->scheduler.current_window < snapshot->scheduler.base_window) {
+		flags |= KFASTBLOCK_DIAG_ANOMALY_SCHEDULER_SHRUNK;
+		score += 6;
+	}
+	if (snapshot->osd_conn.backoff_slots || snapshot->osd_conn.failure_count) {
+		flags |= KFASTBLOCK_DIAG_ANOMALY_OSD_CONN_UNSTABLE;
+		score += min_t(u32, 12,
+			       snapshot->osd_conn.backoff_slots * 4 +
+			       (u32)min_t(u64, snapshot->osd_conn.failure_count, 4));
+	}
+	if (snapshot->monitor_conn.backoff_slots ||
+	    snapshot->monitor_conn.failure_count) {
+		flags |= KFASTBLOCK_DIAG_ANOMALY_MONITOR_CONN_UNSTABLE;
+		score += min_t(u32, 12,
+			       snapshot->monitor_conn.backoff_slots * 4 +
+			       (u32)min_t(u64, snapshot->monitor_conn.failure_count, 4));
+	}
+	if (snapshot->selfcheck.failure_runs ||
+	    snapshot->selfcheck.last_failed_checks) {
+		flags |= KFASTBLOCK_DIAG_ANOMALY_SELFCHECK_FAILING;
+		score += 18;
+	}
+	if (snapshot->selfcheck.warning_runs ||
+	    snapshot->selfcheck.last_warning_checks) {
+		flags |= KFASTBLOCK_DIAG_ANOMALY_SELFCHECK_WARNING;
+		score += 6;
+	}
+	if (snapshot->fault.enabled) {
+		flags |= KFASTBLOCK_DIAG_ANOMALY_FAULT_ARMED;
+		score += 8;
+	}
+	if (snapshot->events.object_error_events || refresh_fail_events ||
+	    socket_events) {
+		flags |= KFASTBLOCK_DIAG_ANOMALY_EVENT_ERROR_SPIKE;
+		score += min_t(u32, 20,
+			       snapshot->events.object_error_events * 4 +
+			       refresh_fail_events * 3 +
+			       socket_events * 2);
+	}
+
+	snapshot->anomaly_flags = flags;
+	snapshot->anomaly_score = min_t(u32, score, 100);
+}
+
 void kfastblock_diag_collect(struct kfastblock_volume *vol,
 			     struct kfastblock_diag_snapshot *snapshot)
 {
@@ -276,6 +513,8 @@ void kfastblock_diag_collect(struct kfastblock_volume *vol,
 					      &snapshot->monitor_conn);
 	kfastblock_diag_collect_selfcheck(vol, snapshot);
 	kfastblock_diag_collect_fault(vol, snapshot);
+	kfastblock_diag_collect_events(vol, snapshot);
+	kfastblock_diag_compute_anomaly(snapshot);
 }
 
 int kfastblock_diag_dump_seq(struct seq_file *m,
@@ -485,5 +724,42 @@ int kfastblock_diag_dump_seq(struct seq_file *m,
 		   snapshot->fault.last_reset_jiffies);
 	seq_printf(m, "fault.last_trigger_jiffies=%lu\n",
 		   snapshot->fault.last_trigger_jiffies);
+	seq_printf(m, "events.total=%u\n", snapshot->events.total_events);
+	seq_printf(m, "events.health_change=%u\n",
+		   snapshot->events.health_change_events);
+	seq_printf(m, "events.metadata_stale=%u\n",
+		   snapshot->events.metadata_stale_events);
+	seq_printf(m, "events.cluster_refresh_fail=%u\n",
+		   snapshot->events.cluster_refresh_fail_events);
+	seq_printf(m, "events.image_refresh_fail=%u\n",
+		   snapshot->events.image_refresh_fail_events);
+	seq_printf(m, "events.leader_query_fail=%u\n",
+		   snapshot->events.leader_query_fail_events);
+	seq_printf(m, "events.object_retry=%u\n",
+		   snapshot->events.object_retry_events);
+	seq_printf(m, "events.object_error=%u\n",
+		   snapshot->events.object_error_events);
+	seq_printf(m, "events.socket_drop=%u\n",
+		   snapshot->events.socket_drop_events);
+	seq_printf(m, "events.socket_backoff=%u\n",
+		   snapshot->events.socket_backoff_events);
+	seq_printf(m, "events.socket_backoff_wait=%u\n",
+		   snapshot->events.socket_backoff_wait_events);
+	seq_printf(m, "events.fault=%u\n", snapshot->events.fault_events);
+	seq_printf(m, "events.manual=%u\n", snapshot->events.manual_events);
+	seq_printf(m, "events.last_type=%s\n",
+		   snapshot->events.last_type_text);
+	seq_printf(m, "events.last_errno=%d\n",
+		   snapshot->events.last_errno);
+	seq_printf(m, "events.oldest_jiffies=%lu\n",
+		   snapshot->events.oldest_jiffies);
+	seq_printf(m, "events.newest_jiffies=%lu\n",
+		   snapshot->events.newest_jiffies);
+	seq_printf(m, "diagnostics.anomaly_score=%u\n",
+		   snapshot->anomaly_score);
+	seq_printf(m, "diagnostics.anomaly_status=%s\n",
+		   kfastblock_diag_anomaly_status(snapshot->anomaly_score));
+	seq_printf(m, "diagnostics.anomaly_flags=0x%x\n",
+		   snapshot->anomaly_flags);
 	return 0;
 }

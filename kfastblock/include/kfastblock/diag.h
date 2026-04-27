@@ -9,6 +9,20 @@
 struct kfastblock_volume;
 struct seq_file;
 
+enum kfastblock_diag_anomaly_flag {
+	KFASTBLOCK_DIAG_ANOMALY_QUEUE_PAUSED = 1U << 0,
+	KFASTBLOCK_DIAG_ANOMALY_HEALTH_DEGRADED = 1U << 1,
+	KFASTBLOCK_DIAG_ANOMALY_META_STALE = 1U << 2,
+	KFASTBLOCK_DIAG_ANOMALY_BUFFER_PRESSURE = 1U << 3,
+	KFASTBLOCK_DIAG_ANOMALY_SCHEDULER_SHRUNK = 1U << 4,
+	KFASTBLOCK_DIAG_ANOMALY_OSD_CONN_UNSTABLE = 1U << 5,
+	KFASTBLOCK_DIAG_ANOMALY_MONITOR_CONN_UNSTABLE = 1U << 6,
+	KFASTBLOCK_DIAG_ANOMALY_SELFCHECK_FAILING = 1U << 7,
+	KFASTBLOCK_DIAG_ANOMALY_SELFCHECK_WARNING = 1U << 8,
+	KFASTBLOCK_DIAG_ANOMALY_FAULT_ARMED = 1U << 9,
+	KFASTBLOCK_DIAG_ANOMALY_EVENT_ERROR_SPIKE = 1U << 10,
+};
+
 struct kfastblock_diag_volume_snapshot {
 	char disk_name[DISK_NAME_LEN];
 	char pool_name[KFASTBLOCK_MAX_NAME_LEN];
@@ -111,6 +125,27 @@ struct kfastblock_diag_fault_snapshot {
 	char last_site_text[48];
 };
 
+struct kfastblock_diag_event_snapshot {
+	u32 total_events;
+	u32 health_change_events;
+	u32 metadata_stale_events;
+	u32 cluster_refresh_fail_events;
+	u32 image_refresh_fail_events;
+	u32 leader_query_fail_events;
+	u32 object_retry_events;
+	u32 object_error_events;
+	u32 socket_drop_events;
+	u32 socket_backoff_events;
+	u32 socket_backoff_wait_events;
+	u32 fault_events;
+	u32 manual_events;
+	u32 last_type;
+	s32 last_errno;
+	unsigned long oldest_jiffies;
+	unsigned long newest_jiffies;
+	char last_type_text[48];
+};
+
 struct kfastblock_diag_snapshot {
 	struct kfastblock_diag_volume_snapshot volume;
 	struct kfastblock_diag_buffer_snapshot buffer;
@@ -119,8 +154,12 @@ struct kfastblock_diag_snapshot {
 	struct kfastblock_conn_pool_snapshot monitor_conn;
 	struct kfastblock_diag_selfcheck_snapshot selfcheck;
 	struct kfastblock_diag_fault_snapshot fault;
+	struct kfastblock_diag_event_snapshot events;
+	u32 anomaly_score;
+	u32 anomaly_flags;
 };
 
+const char *kfastblock_diag_anomaly_status(u32 score);
 void kfastblock_diag_collect(struct kfastblock_volume *vol,
 			     struct kfastblock_diag_snapshot *snapshot);
 int kfastblock_diag_dump_seq(struct seq_file *m,

@@ -3554,6 +3554,49 @@ static ssize_t reset_fault_injection_store(struct device *dev,
 	return count;
 }
 
+static ssize_t diagnostic_score_show(struct device *dev,
+				     struct device_attribute *attr,
+				     char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	struct kfastblock_diag_snapshot snapshot = {};
+
+	if (!vol)
+		return -ENODEV;
+
+	kfastblock_diag_collect(vol, &snapshot);
+	return scnprintf(buf, PAGE_SIZE, "%u\n", snapshot.anomaly_score);
+}
+
+static ssize_t diagnostic_flags_show(struct device *dev,
+				     struct device_attribute *attr,
+				     char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	struct kfastblock_diag_snapshot snapshot = {};
+
+	if (!vol)
+		return -ENODEV;
+
+	kfastblock_diag_collect(vol, &snapshot);
+	return scnprintf(buf, PAGE_SIZE, "0x%x\n", snapshot.anomaly_flags);
+}
+
+static ssize_t diagnostic_status_show(struct device *dev,
+				      struct device_attribute *attr,
+				      char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	struct kfastblock_diag_snapshot snapshot = {};
+
+	if (!vol)
+		return -ENODEV;
+
+	kfastblock_diag_collect(vol, &snapshot);
+	return scnprintf(buf, PAGE_SIZE, "%s\n",
+			 kfastblock_diag_anomaly_status(snapshot.anomaly_score));
+}
+
 static ssize_t selfcheck_runs_show(struct device *dev,
 				   struct device_attribute *attr, char *buf)
 {
@@ -3789,6 +3832,9 @@ static DEVICE_ATTR_RO(fault_injection_skip_count);
 static DEVICE_ATTR_RO(fault_injection_last_site);
 static DEVICE_ATTR_RO(fault_injection_last_errno);
 static DEVICE_ATTR_RO(fault_injection_last_trigger);
+static DEVICE_ATTR_RO(diagnostic_score);
+static DEVICE_ATTR_RO(diagnostic_flags);
+static DEVICE_ATTR_RO(diagnostic_status);
 static DEVICE_ATTR_RO(selfcheck_runs);
 static DEVICE_ATTR_RO(selfcheck_failure_runs);
 static DEVICE_ATTR_RO(selfcheck_warning_runs);
@@ -3909,6 +3955,9 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_fault_injection_last_site.attr,
 	&dev_attr_fault_injection_last_errno.attr,
 	&dev_attr_fault_injection_last_trigger.attr,
+	&dev_attr_diagnostic_score.attr,
+	&dev_attr_diagnostic_flags.attr,
+	&dev_attr_diagnostic_status.attr,
 	&dev_attr_selfcheck_runs.attr,
 	&dev_attr_selfcheck_failure_runs.attr,
 	&dev_attr_selfcheck_warning_runs.attr,
