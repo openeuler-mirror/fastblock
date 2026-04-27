@@ -54,10 +54,14 @@ kfastblock_start_logging "$log_file"
 echo "artifact_dir=$run_dir"
 echo "stage=$stage pool_name=$pool_name image_name=$image_name reuse_cluster=$reuse_cluster collect_report=$collect_report"
 
+stage_marker "begin" "cluster-prepare"
 KFASTBLOCK_TEST_REUSE_CLUSTER="$reuse_cluster" \
     kfastblock_prepare_or_reuse_dev_cluster "$repo_root" "$config_file"
+stage_marker "end" "cluster-prepare"
 kfastblock_capture_context "$config_file" "$run_dir"
+stage_marker "begin" "resolve-monitor"
 monitor_addr="$(kfastblock_resolve_monitor_addr "$config_file")"
+stage_marker "end" "resolve-monitor"
 
 case "$stage" in
     cluster)
