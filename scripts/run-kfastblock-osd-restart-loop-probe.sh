@@ -58,6 +58,7 @@ for cycle in $(seq 1 "$restart_cycles"); do
 
     echo "restart osd-$target_osd cycle=$cycle"
     mark_osd_stopped
+    kfastblock_wait_osd_not_up "$repo_root" "$config_file" "$target_osd"
     kfastblock_restart_local_osd "$repo_root" "$target_osd" "$down_sleep_sec"
     sleep "$stabilize_sleep_sec"
     kfastblock_wait_cluster_active "$repo_root" "$config_file"
