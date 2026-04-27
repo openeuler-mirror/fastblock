@@ -29,6 +29,7 @@ kfastblock-objs := \
 	src/diag.o \
 	src/fault.o \
 	src/meta.o \
+	src/recovery.o \
 	src/request.o \
 	src/scheduler.o \
 	src/selfcheck.o \
