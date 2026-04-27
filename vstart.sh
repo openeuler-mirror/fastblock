@@ -278,10 +278,10 @@ function generateLocalBenchConfig() {
   ],
   "rdma_device_name": "$_nic",
   "msg_rdma_cq_num_entries": 1024,
-  "msg_server_metadata_memory_pool_capacity": 16,
-  "msg_server_data_memory_pool_capacity": 16,
-  "msg_client_metadata_memory_pool_capacity": 16,
-  "msg_client_data_memory_pool_capacity": 16,
+  "msg_server_metadata_memory_pool_capacity": 256,
+  "msg_server_data_memory_pool_capacity": 256,
+  "msg_client_metadata_memory_pool_capacity": 256,
+  "msg_client_data_memory_pool_capacity": 256,
   "msg_server_metadata_memory_pool_element_size": 512,
   "msg_server_data_memory_pool_element_size": 5120,
   "msg_client_metadata_memory_pool_element_size": 512,
@@ -470,10 +470,10 @@ function generateNicConfig() {
     echo $isSm
     if [ "$isSm" = "true" ];then
         echo "small memory, need modify memory pool capacity"
-        jq '.msg_server_metadata_memory_pool_capacity |= 16' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
-        jq '.msg_server_data_memory_pool_capacity |= 16' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
-        jq '.msg_client_metadata_memory_pool_capacity |= 16' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
-        jq '.msg_client_data_memory_pool_capacity |= 16' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
+        jq '.msg_server_metadata_memory_pool_capacity |= 256' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
+        jq '.msg_server_data_memory_pool_capacity |= 256' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
+        jq '.msg_client_metadata_memory_pool_capacity |= 256' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
+        jq '.msg_client_data_memory_pool_capacity |= 256' $defaultConfigFile > tmp_file.json && mv tmp_file.json $defaultConfigFile
     fi
 }
 

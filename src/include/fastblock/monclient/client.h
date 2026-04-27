@@ -524,7 +524,8 @@ public:
                                int result,
                                uint64_t pool_id,
                                uint64_t pg_id,
-                               std::vector<int32_t> osd_list);
+                               std::vector<int32_t> osd_list,
+                               on_response_callback_type&& cb = {});
 
     virtual bool in_monitor_list(const msg::PGInfo &) {
         return true;

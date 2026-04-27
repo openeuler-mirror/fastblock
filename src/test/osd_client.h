@@ -83,7 +83,14 @@ public:
     }
 
     void process_response(){
-        SPDK_NOTICELOG("change membership in the pg %lu.%lu result: %d\n", _request->pool_id(), _request->pg_id(), response.state());
+        if (ctrlr.Failed()) {
+            response.set_state(err::RAFT_ERR_NO_CONNECTED);
+            SPDK_ERRLOG("change membership in the pg %lu.%lu rpc failed: %s\n",
+              _request->pool_id(), _request->pg_id(), ctrlr.ErrorText().c_str());
+        } else {
+            SPDK_NOTICELOG("change membership in the pg %lu.%lu result: %d\n",
+              _request->pool_id(), _request->pg_id(), response.state());
+        }
         delete this;
     }
 
@@ -104,7 +111,14 @@ public:
     }
 
     void process_response(){
-        SPDK_NOTICELOG("create pg %lu.%lu result: %d\n", _request->pool_id(), _request->pg_id(), response.state());
+        if (ctrlr.Failed()) {
+            response.set_state(err::RAFT_ERR_NO_CONNECTED);
+            SPDK_ERRLOG("create pg %lu.%lu rpc failed: %s\n",
+              _request->pool_id(), _request->pg_id(), ctrlr.ErrorText().c_str());
+        } else {
+            SPDK_NOTICELOG("create pg %lu.%lu result: %d\n",
+              _request->pool_id(), _request->pg_id(), response.state());
+        }
         delete this;
     }
 

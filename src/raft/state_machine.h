@@ -28,8 +28,17 @@ public:
     , _apply_in_progress(false)
     , _store(global_blobstore(core_sharded::get_core_sharded().this_shard_id()), global_io_channel(core_sharded::get_core_sharded().this_shard_id())) {}
 
+    virtual ~state_machine() {
+        stop();
+        _raft = nullptr;
+    }
+
     void set_raft(raft_server_t* raft){
         _raft = raft;
+    }
+
+    void clear_raft() {
+        _raft = nullptr;
     }
 
     void set_last_applied_idx(raft_index_t idx)
@@ -38,7 +47,12 @@ public:
     }
 
     void start();
-    void stop() { spdk_poller_unregister(&_timer); }
+    void stop() {
+        if (_timer) {
+            spdk_poller_unregister(&_timer);
+            _timer = nullptr;
+        }
+    }
 
     /**
      * @return index of last applied entry */
