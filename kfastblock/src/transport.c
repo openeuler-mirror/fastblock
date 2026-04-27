@@ -39,6 +39,8 @@ static struct kfastblock_cached_socket *
 kfastblock_transport_reserve_osd_slot(struct kfastblock_volume *vol);
 static struct workqueue_struct *g_kfastblock_transport_wq;
 
+#define KFASTBLOCK_TRANSPORT_OSD_ENDPOINT_PARALLEL_LIMIT 1U
+
 enum kfastblock_transport_buffer_flags {
 	KFASTBLOCK_TRANSPORT_BUFFER_ZERO = 1U << 0,
 	KFASTBLOCK_TRANSPORT_BUFFER_LARGE = 1U << 1,
@@ -292,6 +294,7 @@ static int kfastblock_transport_acquire_osd_socket(
 {
 	struct kfastblock_cached_socket *cached = NULL;
 	struct socket *sock = NULL;
+	u32 active_count;
 	int ret;
 
 	if (!vol || !leader || !cached_out || !sock_out)
@@ -299,9 +302,10 @@ static int kfastblock_transport_acquire_osd_socket(
 
 	*cached_out = NULL;
 	*sock_out = NULL;
-	cached = kfastblock_osd_conn_pool_acquire_match(vol->socket_cache,
-							KFASTBLOCK_MAX_SOCKET_CACHE,
-							leader, &sock);
+	cached = kfastblock_osd_conn_pool_try_acquire_match(
+		vol->socket_cache,
+		KFASTBLOCK_MAX_SOCKET_CACHE,
+		leader, &sock);
 	if (cached) {
 		*cached_out = cached;
 		*sock_out = sock;
@@ -312,14 +316,33 @@ static int kfastblock_transport_acquire_osd_socket(
 	if (ret)
 		return ret;
 
+	active_count = kfastblock_osd_conn_pool_endpoint_active_count(
+		vol->socket_cache, KFASTBLOCK_MAX_SOCKET_CACHE, leader);
+	if (active_count >= KFASTBLOCK_TRANSPORT_OSD_ENDPOINT_PARALLEL_LIMIT)
+		goto fallback_wait_match;
+
 	cached = kfastblock_transport_reserve_osd_slot(vol);
 	if (!cached)
-		return -EBUSY;
+		goto fallback_wait_match;
 
+	cached->osd_id = leader->osd_id;
+	cached->port = leader->port;
+	strscpy(cached->address, leader->address, sizeof(cached->address));
 	ret = kfastblock_transport_connect_osd_cached_locked(vol, cached, leader,
 						    &sock);
 	if (ret)
 		return ret;
+
+	*cached_out = cached;
+	*sock_out = sock;
+	return 0;
+
+fallback_wait_match:
+	cached = kfastblock_osd_conn_pool_acquire_match(vol->socket_cache,
+							KFASTBLOCK_MAX_SOCKET_CACHE,
+							leader, &sock);
+	if (!cached)
+		return -EBUSY;
 
 	*cached_out = cached;
 	*sock_out = sock;
