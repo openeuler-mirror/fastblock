@@ -725,7 +725,7 @@ static int kfastblock_volume_summary_show(struct seq_file *m, void *v)
 		kfastblock_fault_injection_mask(&vol->fault_injection),
 		fault_mask, sizeof(fault_mask));
 	down_read(&vol->state_lock);
-	seq_printf(m, "disk=%s\n", vol->disk ? vol->disk->disk_name : "");
+	seq_printf(m, "disk=%s\n", vol->disk_name);
 	seq_printf(m, "ready=%d\n", atomic_read(&vol->ready));
 	seq_printf(m, "queue_paused=%d\n", vol->queue_paused ? 1 : 0);
 	seq_printf(m, "manual_queue_pause=%d\n", vol->manual_queue_pause ? 1 : 0);
@@ -1303,7 +1303,7 @@ static void kfastblock_volume_debugfs_init(struct kfastblock_volume *vol)
 	if (IS_ERR_OR_NULL(g_kfastblock_debugfs_root) || !vol || !vol->disk)
 		return;
 
-	vol->debugfs_dir = debugfs_create_dir(vol->disk->disk_name,
+	vol->debugfs_dir = debugfs_create_dir(vol->disk_name,
 				      g_kfastblock_debugfs_root);
 	if (IS_ERR_OR_NULL(vol->debugfs_dir)) {
 		vol->debugfs_dir = NULL;
@@ -4643,8 +4643,10 @@ static int kfastblock_volume_add_disk(struct kfastblock_volume *vol,
 	vol->disk->first_minor = vol->minor;
 	vol->disk->fops = &kfastblock_bd_ops;
 	vol->disk->minors = 1 << KFASTBLOCK_DEVICE_PART_SHIFT;
-	snprintf(vol->disk->disk_name, sizeof(vol->disk->disk_name), "%s%d",
+	snprintf(vol->disk_name, sizeof(vol->disk_name), "%s%d",
 		 KFASTBLOCK_DRV_NAME_PREFIX, vol->dev_id);
+	strscpy(vol->disk->disk_name, vol->disk_name,
+		sizeof(vol->disk->disk_name));
 	set_capacity(vol->disk, vol->view.image.size_bytes >> SECTOR_SHIFT);
 	if (vol->view.image.read_only)
 		set_disk_ro(vol->disk, true);

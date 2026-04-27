@@ -149,6 +149,7 @@ struct kfastblock_volume {
 	int minor;
 
 	struct gendisk *disk;
+	char disk_name[DISK_NAME_LEN];
 	struct blk_mq_tag_set tag_set;
 
 	atomic_t open_count;

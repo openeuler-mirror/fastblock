@@ -141,7 +141,7 @@ static void kfastblock_diag_collect_volume(struct kfastblock_volume *vol,
 
 	down_read(&vol->state_lock);
 	strscpy(snapshot->volume.disk_name,
-		vol->disk ? vol->disk->disk_name : "",
+		vol->disk_name,
 		sizeof(snapshot->volume.disk_name));
 	strscpy(snapshot->volume.pool_name, vol->view.image.pool_name,
 		sizeof(snapshot->volume.pool_name));
