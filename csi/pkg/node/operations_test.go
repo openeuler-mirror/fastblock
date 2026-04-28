@@ -6,6 +6,7 @@ import (
 
 	"fastblock-csi/pkg/backend"
 	"fastblock-csi/pkg/driver"
+	"fastblock-csi/pkg/mount"
 )
 
 type stubBackend struct {
@@ -14,6 +15,25 @@ type stubBackend struct {
 	unstageID string
 	getID     string
 	readyID   string
+}
+
+type stubPublisher struct {
+	devicePath string
+	stagePath  string
+	targetPath string
+	unpublish  string
+}
+
+func (p *stubPublisher) PublishBlockDevice(_ context.Context, devicePath, stagePath, targetPath string) error {
+	p.devicePath = devicePath
+	p.stagePath = stagePath
+	p.targetPath = targetPath
+	return nil
+}
+
+func (p *stubPublisher) UnpublishBlockDevice(_ context.Context, targetPath string) error {
+	p.unpublish = targetPath
+	return nil
 }
 
 func (b *stubBackend) Stage(_ context.Context, volumeID string, volumeCtx backend.VolumeContext) (string, error) {
@@ -142,5 +162,40 @@ func TestPublishContextHelpers(t *testing.T) {
 	}
 	if device != "/dev/nvme0n1" || !ready {
 		t.Fatalf("unexpected helper results: device=%s ready=%v", device, ready)
+	}
+}
+
+func TestPublishAndUnpublishVolume(t *testing.T) {
+	publisher := &stubPublisher{}
+	service := &Service{
+		opts:      driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/node.sock", NodeID: "node-a"},
+		backend:   &stubBackend{},
+		publisher: publisher,
+	}
+	stagePath := t.TempDir()
+	if err := mount.WriteStageState(stagePath, mount.StageState{
+		VolumeID:   "fbvolname:fb:img-a",
+		DevicePath: "/dev/nvme0n1",
+	}); err != nil {
+		t.Fatalf("write stage state failed: %v", err)
+	}
+	if err := service.PublishVolume(context.Background(), PublishVolumeRequest{
+		VolumeID:          "fbvolname:fb:img-a",
+		StagingTargetPath: stagePath,
+		TargetPath:        "/var/lib/kubelet/pods/pod/volumeDevices/publish",
+	}); err != nil {
+		t.Fatalf("publish volume failed: %v", err)
+	}
+	if publisher.devicePath != "/dev/nvme0n1" || publisher.stagePath != stagePath {
+		t.Fatalf("unexpected publish call: %+v", publisher)
+	}
+	if err := service.UnpublishVolume(context.Background(), UnpublishVolumeRequest{
+		VolumeID:   "fbvolname:fb:img-a",
+		TargetPath: "/var/lib/kubelet/pods/pod/volumeDevices/publish",
+	}); err != nil {
+		t.Fatalf("unpublish volume failed: %v", err)
+	}
+	if publisher.unpublish != "/var/lib/kubelet/pods/pod/volumeDevices/publish" {
+		t.Fatalf("unexpected unpublish call: %+v", publisher)
 	}
 }
