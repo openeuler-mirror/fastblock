@@ -102,6 +102,7 @@ struct kfastblock_transport_object_io_ctx {
 
 struct kfastblock_transport_submit_ctx {
 	struct kfastblock_request *kf_req;
+	struct kfastblock_request_dispatch_batch batch;
 	unsigned int initial_dispatch;
 	int ret;
 	bool finished;
@@ -2512,29 +2513,31 @@ static int kfastblock_transport_prefetch_pg_leader(
 	return ret;
 }
 
-static int kfastblock_transport_prefetch_request_leaders(
-	struct kfastblock_request *kf_req)
+static void kfastblock_transport_prefetch_submit_leaders(
+	struct kfastblock_transport_submit_ctx *ctx)
 {
 	unsigned int i;
-	int ret;
 
-	if (!kf_req || !kf_req->vol)
-		return -EINVAL;
-	ret = kfastblock_transport_request_view_stale(kf_req);
-	if (ret) {
-		kfastblock_volume_account_refresh_kick(kf_req->vol, 0, ret);
-		kfastblock_volume_kick_refresh(kf_req->vol);
-		return ret;
+	if (!ctx || !ctx->kf_req)
+		return;
+
+	ctx->ret = kfastblock_transport_request_view_stale(ctx->kf_req);
+	if (ctx->ret) {
+		kfastblock_volume_account_refresh_kick(ctx->kf_req->vol, 0,
+						       ctx->ret);
+		kfastblock_volume_kick_refresh(ctx->kf_req->vol);
+		return;
 	}
 
-	for (i = 0; i < kf_req->nr_unique_pgs; ++i) {
-		ret = kfastblock_transport_prefetch_pg_leader(kf_req,
-							      &kf_req->pg_hints[i]);
-		if (ret && kfastblock_recovery_prefetch_should_fail_request(ret))
-			return ret;
+	for (i = 0; i < ctx->kf_req->nr_unique_pgs; ++i) {
+		ctx->ret = kfastblock_transport_prefetch_pg_leader(
+			ctx->kf_req, &ctx->kf_req->pg_hints[i]);
+		if (ctx->ret &&
+		    kfastblock_recovery_prefetch_should_fail_request(ctx->ret))
+			return;
 	}
 
-	return 0;
+	ctx->ret = 0;
 }
 
 static void kfastblock_transport_finish_request_now(
@@ -2704,6 +2707,7 @@ static int kfastblock_transport_submit_ctx_init(
 
 	memset(ctx, 0, sizeof(*ctx));
 	ctx->kf_req = kf_req;
+	kfastblock_request_dispatch_batch_reset(&ctx->batch);
 	return 0;
 }
 
@@ -2726,30 +2730,28 @@ static void kfastblock_transport_prepare_request_submit(
 				      ctx->kf_req->dispatch_window ?
 				      ctx->kf_req->dispatch_window :
 				      1);
-	ctx->ret = kfastblock_transport_prefetch_request_leaders(ctx->kf_req);
+	kfastblock_transport_prefetch_submit_leaders(ctx);
 }
 
 static int kfastblock_transport_kick_initial_dispatch(
 	struct kfastblock_transport_submit_ctx *ctx)
 {
-	struct kfastblock_request_dispatch_batch batch;
-	int ret;
-
 	if (!ctx || !ctx->kf_req)
 		return -EINVAL;
 
-	kfastblock_request_dispatch_batch_reset(&batch);
-	ret = kfastblock_request_pick_dispatch_batch(
-		ctx->kf_req, &batch, ctx->initial_dispatch);
-	if (ret < 0) {
-		kfastblock_transport_abort_request(ctx->kf_req, ret);
+	kfastblock_request_dispatch_batch_reset(&ctx->batch);
+	ctx->ret = kfastblock_request_pick_dispatch_batch(
+		ctx->kf_req, &ctx->batch, ctx->initial_dispatch);
+	if (ctx->ret < 0) {
+		kfastblock_transport_abort_request(ctx->kf_req, ctx->ret);
 		return 0;
 	}
 
 	get_device(&ctx->kf_req->vol->dev);
-	ret = kfastblock_transport_queue_dispatch_batch(ctx->kf_req, &batch);
-	if (ret)
-		kfastblock_transport_abort_request(ctx->kf_req, ret);
+	ctx->ret = kfastblock_transport_queue_dispatch_batch(
+		ctx->kf_req, &ctx->batch);
+	if (ctx->ret)
+		kfastblock_transport_abort_request(ctx->kf_req, ctx->ret);
 
 	return 0;
 }
