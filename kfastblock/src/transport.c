@@ -1083,25 +1083,20 @@ static bool kfastblock_transport_retry_requested(unsigned int actions)
 }
 
 static bool kfastblock_transport_handle_object_failure(
-	struct kfastblock_request *kf_req,
-	const struct kfastblock_object_extent *extent,
-	enum req_op op,
-	struct kfastblock_request_pg_hint *hint,
-	const struct kfastblock_leader_info *leader,
-	unsigned int object_index,
-	int ret,
-	unsigned int actions)
+	struct kfastblock_transport_object_io_ctx *ctx)
 {
-	if (!kf_req || !extent || !actions)
+	if (!ctx || !ctx->kf_req || !ctx->extent || !ctx->actions)
 		return false;
 
 	kfastblock_recovery_apply_object_failure(
-		kf_req->vol, kf_req->request_pool_id, extent, op, leader, ret,
-		actions);
-	if (hint && (actions & KFASTBLOCK_RECOVERY_INVALIDATE_LEADER))
-		kfastblock_request_invalidate_pg_hint_leader(hint);
-	if (kfastblock_transport_retry_requested(actions)) {
-		kfastblock_request_requeue_object(kf_req, object_index, ret);
+		ctx->kf_req->vol, ctx->kf_req->request_pool_id, ctx->extent,
+		ctx->op, &ctx->leader, ctx->ret, ctx->actions);
+	if (ctx->hint &&
+	    (ctx->actions & KFASTBLOCK_RECOVERY_INVALIDATE_LEADER))
+		kfastblock_request_invalidate_pg_hint_leader(ctx->hint);
+	if (kfastblock_transport_retry_requested(ctx->actions)) {
+		kfastblock_request_requeue_object(
+			ctx->kf_req, ctx->object_index, ctx->ret);
 		return true;
 	}
 
@@ -1882,9 +1877,7 @@ static bool kfastblock_transport_retry_object_after_failure(
 	if (!ctx || !ctx->actions)
 		return false;
 
-	return kfastblock_transport_handle_object_failure(
-		ctx->kf_req, ctx->extent, ctx->op, ctx->hint, &ctx->leader,
-		ctx->object_index, ctx->ret, ctx->actions);
+	return kfastblock_transport_handle_object_failure(ctx);
 }
 
 static void kfastblock_transport_note_object_leader_success(
@@ -1943,10 +1936,9 @@ static int kfastblock_transport_reject_stale_object_request(
 
 	ret = kfastblock_transport_request_view_stale(ctx->kf_req);
 	if (ret) {
-		kfastblock_transport_handle_object_failure(
-			ctx->kf_req, ctx->extent, ctx->op, ctx->hint, NULL,
-			ctx->object_index, ret,
-			kfastblock_recovery_classify_object_failure(ret));
+		ctx->ret = ret;
+		ctx->actions = kfastblock_recovery_classify_object_failure(ret);
+		kfastblock_transport_handle_object_failure(ctx);
 	}
 
 	return ret;
