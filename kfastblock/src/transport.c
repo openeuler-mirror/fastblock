@@ -2212,6 +2212,19 @@ static int kfastblock_transport_submit_prepared_object_io(
 	return ret;
 }
 
+static int kfastblock_transport_run_object_io_ctx(
+	struct kfastblock_transport_object_io_ctx *ctx)
+{
+	int ret;
+
+	if (!ctx)
+		return -EINVAL;
+
+	ret = kfastblock_transport_submit_prepared_object_io(ctx);
+	kfastblock_transport_cleanup_object_io(ctx, ret);
+	return ret;
+}
+
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
@@ -2226,10 +2239,7 @@ static int kfastblock_transport_submit_object_io(
 	if (ret)
 		return ret;
 
-	ret = kfastblock_transport_submit_prepared_object_io(&ctx);
-
-	kfastblock_transport_cleanup_object_io(&ctx, ret);
-	return ret;
+	return kfastblock_transport_run_object_io_ctx(&ctx);
 }
 
 int kfastblock_transport_init(void)
