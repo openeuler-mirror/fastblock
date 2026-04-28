@@ -152,6 +152,14 @@ void kfastblock_request_note_object_retry(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
 	int ret);
+int kfastblock_request_lookup_object_by_seq(
+	struct kfastblock_request *kf_req,
+	u64 seq,
+	unsigned int *object_index);
+int kfastblock_request_complete_object_by_seq(
+	struct kfastblock_request *kf_req,
+	u64 seq,
+	int ret);
 int kfastblock_request_cancel_unqueued(struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_dispatch_credits(
 	const struct kfastblock_request *kf_req);

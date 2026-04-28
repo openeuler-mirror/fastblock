@@ -103,6 +103,28 @@ struct kfastblock_pipeline_entry *kfastblock_pipeline_find_locked(
 	return NULL;
 }
 
+bool kfastblock_pipeline_lookup(struct kfastblock_pipeline_state *state,
+				u64 seq,
+				struct kfastblock_pipeline_entry *snapshot)
+{
+	struct kfastblock_pipeline_entry *entry;
+	unsigned long flags;
+	bool found = false;
+
+	if (!state || !seq || !snapshot)
+		return false;
+
+	spin_lock_irqsave(&state->lock, flags);
+	entry = kfastblock_pipeline_find_locked(state, seq);
+	if (entry) {
+		*snapshot = *entry;
+		found = true;
+	}
+	spin_unlock_irqrestore(&state->lock, flags);
+
+	return found;
+}
+
 struct kfastblock_pipeline_entry *kfastblock_pipeline_enqueue(
 	struct kfastblock_pipeline_state *state,
 	u64 seq,
