@@ -91,7 +91,7 @@ func TestCreateVolumeAndPublish(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create volume failed: %v", err)
 	}
-	export, err := svc.PublishVolume(context.Background(), PublishVolumeRequest{
+	result, err := svc.PublishVolume(context.Background(), PublishVolumeRequest{
 		Volume:    volume,
 		BlockSize: 4096,
 		Transport: "rdma",
@@ -106,8 +106,8 @@ func TestCreateVolumeAndPublish(t *testing.T) {
 	if exporter.createReq.ImageName != "img-a" || exporter.allowID != "exp-1" {
 		t.Fatalf("unexpected exporter state: %+v", exporter)
 	}
-	if export.ID != "exp-1" {
-		t.Fatalf("unexpected export: %+v", export)
+	if result.Export.ID != "exp-1" || result.PublishContext["nqn"] == "" {
+		t.Fatalf("unexpected publish result: %+v", result)
 	}
 }
 
