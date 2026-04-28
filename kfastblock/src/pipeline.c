@@ -159,6 +159,24 @@ bool kfastblock_pipeline_has_free_entries(
 	return kfastblock_pipeline_free_entries(state) > 0;
 }
 
+u64 kfastblock_pipeline_oldest_inflight_seq(
+	struct kfastblock_pipeline_state *state)
+{
+	struct kfastblock_pipeline_snapshot snapshot = {};
+
+	kfastblock_pipeline_snapshot(state, &snapshot);
+	return snapshot.oldest_inflight_seq;
+}
+
+u64 kfastblock_pipeline_newest_inflight_seq(
+	struct kfastblock_pipeline_state *state)
+{
+	struct kfastblock_pipeline_snapshot snapshot = {};
+
+	kfastblock_pipeline_snapshot(state, &snapshot);
+	return snapshot.newest_inflight_seq;
+}
+
 struct kfastblock_pipeline_entry *kfastblock_pipeline_enqueue(
 	struct kfastblock_pipeline_state *state,
 	u64 seq,
