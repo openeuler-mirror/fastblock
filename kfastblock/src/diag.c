@@ -271,16 +271,17 @@ static void kfastblock_diag_collect_pipeline(
 	struct kfastblock_volume *vol,
 	struct kfastblock_diag_snapshot *snapshot)
 {
-	struct kfastblock_pipeline_snapshot pipe_snapshot = {};
-
 	if (!vol || !snapshot)
 		return;
 
-	kfastblock_volume_get_pipeline_snapshot(vol, &pipe_snapshot);
-	snapshot->pipeline.capacity = pipe_snapshot.capacity;
-	snapshot->pipeline.inflight = pipe_snapshot.inflight;
-	snapshot->pipeline.peak_inflight = pipe_snapshot.peak_inflight;
-	snapshot->pipeline.free_entries = pipe_snapshot.free_entries;
+	snapshot->pipeline.capacity =
+		kfastblock_volume_pipeline_capacity(vol);
+	snapshot->pipeline.inflight =
+		kfastblock_volume_pipeline_inflight_entries(vol);
+	snapshot->pipeline.peak_inflight =
+		kfastblock_volume_pipeline_peak_inflight(vol);
+	snapshot->pipeline.free_entries =
+		kfastblock_volume_pipeline_free_entries(vol);
 	snapshot->pipeline.utilization_pct =
 		kfastblock_volume_pipeline_utilization_pct(vol);
 	snapshot->pipeline.oldest_inflight_seq =
