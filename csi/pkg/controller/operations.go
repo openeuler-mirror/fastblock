@@ -32,6 +32,15 @@ type PublishVolumeResult struct {
 	PublishContext map[string]string
 }
 
+func ResolveHostNQN(nodeID string, secrets map[string]string) string {
+	if secrets != nil {
+		if hostNQN := strings.TrimSpace(secrets["hostNQN"]); hostNQN != "" {
+			return hostNQN
+		}
+	}
+	return strings.TrimSpace(nodeID)
+}
+
 type DeleteVolumeRequest struct {
 	Volume monitorclient.VolumeRef
 }
