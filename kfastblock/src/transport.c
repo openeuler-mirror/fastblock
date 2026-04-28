@@ -1919,6 +1919,28 @@ static void kfastblock_transport_abort_object_exchange(
 	kfastblock_transport_finish_exchange(exchange, ret, NULL);
 }
 
+static int kfastblock_transport_run_object_exchange(
+	struct socket *sock,
+	struct kfastblock_request *kf_req,
+	const struct kfastblock_object_extent *extent,
+	enum req_op op,
+	void *buf,
+	struct kfastblock_transport_exchange_ctx *exchange,
+	struct kfastblock_transport_response_ctx *response)
+{
+	int ret;
+
+	ret = kfastblock_transport_execute_object_opcode(
+		sock, kf_req->request_pool_id, extent, op, buf, exchange->seq,
+		response);
+	ret = kfastblock_transport_normalize_object_ret(op, extent, buf, ret);
+	if (!ret)
+		ret = kfastblock_transport_match_exchange_response(exchange);
+	kfastblock_transport_release_response_and_exchange(exchange, response,
+							&ret);
+	return ret;
+}
+
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
@@ -1989,16 +2011,8 @@ static int kfastblock_transport_submit_object_io(
 				continue;
 			goto out;
 		}
-		ret = kfastblock_transport_execute_object_opcode(
-			sock, kf_req->request_pool_id, extent, op, buf,
-			exchange.seq,
-			&response);
-		ret = kfastblock_transport_normalize_object_ret(op, extent, buf,
-								ret);
-		if (!ret)
-			ret = kfastblock_transport_match_exchange_response(&exchange);
-		kfastblock_transport_release_response_and_exchange(&exchange,
-							      &response, &ret);
+		ret = kfastblock_transport_run_object_exchange(
+			sock, kf_req, extent, op, buf, &exchange, &response);
 		actions = ret ? kfastblock_recovery_classify_object_failure(ret) : 0;
 		kfastblock_transport_finalize_object_socket(
 			vol, &cached, &leader, ret, actions);
