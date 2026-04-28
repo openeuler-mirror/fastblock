@@ -1906,6 +1906,19 @@ static void kfastblock_transport_finalize_object_socket(
 	*cached = NULL;
 }
 
+static void kfastblock_transport_abort_object_exchange(
+	struct kfastblock_volume *vol,
+	struct kfastblock_cached_socket **cached,
+	const struct kfastblock_leader_info *leader,
+	struct kfastblock_transport_exchange_ctx *exchange,
+	int ret,
+	unsigned int actions)
+{
+	kfastblock_transport_finalize_object_socket(vol, cached, leader, ret,
+						     actions);
+	kfastblock_transport_finish_exchange(exchange, ret, NULL);
+}
+
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
@@ -1968,9 +1981,8 @@ static int kfastblock_transport_submit_object_io(
 			vol, KFASTBLOCK_FAULT_OBJECT_IO);
 		if (ret) {
 			actions = kfastblock_recovery_classify_object_failure(ret);
-			kfastblock_transport_finalize_object_socket(
-				vol, &cached, &leader, ret, actions);
-			kfastblock_transport_finish_exchange(&exchange, ret, NULL);
+			kfastblock_transport_abort_object_exchange(
+				vol, &cached, &leader, &exchange, ret, actions);
 			if (kfastblock_transport_retry_object_after_failure(
 				    kf_req, extent, op, hint, &leader,
 				    object_index, ret, actions))
