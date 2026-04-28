@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -56,5 +57,27 @@ func TestDeleteAndHostACL(t *testing.T) {
 	}
 	if len(paths) != 3 {
 		t.Fatalf("unexpected request count: %d", len(paths))
+	}
+}
+
+func TestHTTPErrorResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "bad request"})
+	}))
+	defer server.Close()
+
+	client := NewHTTP(server.URL)
+	_, err := client.CreateExport(context.Background(), CreateExportRequest{
+		VolumeID:      "fbvol:cluster:1:2",
+		PoolName:      "fb",
+		ImageName:     "img-2",
+		CapacityBytes: 1 << 20,
+		ObjectSize:    4 << 20,
+		BlockSize:     4096,
+		Transport:     "rdma",
+	})
+	if err == nil || !strings.Contains(err.Error(), "bad request") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
