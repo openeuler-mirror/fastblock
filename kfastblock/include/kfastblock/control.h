@@ -13,6 +13,8 @@ struct kfastblock_attach_spec {
 	bool read_only;
 	u64 debug_size_bytes;
 	u32 debug_object_size;
+	u32 debug_pool_id;
+	u32 debug_pg_count;
 };
 
 int kfastblock_control_attach(const char *args, size_t count, int major,

@@ -24,6 +24,8 @@ struct config {
 	char *read_only;
 	char *debug_size_bytes;
 	char *debug_object_size;
+	char *debug_pool_id;
+	char *debug_pg_count;
 };
 
 static void trim(char *str)
@@ -89,6 +91,10 @@ static void parse_config_file(const char *filename, struct config *cfg)
 			maybe_set(&cfg->debug_size_bytes, value);
 		} else if (strcmp(key, "debug_object_size") == 0) {
 			maybe_set(&cfg->debug_object_size, value);
+		} else if (strcmp(key, "debug_pool_id") == 0) {
+			maybe_set(&cfg->debug_pool_id, value);
+		} else if (strcmp(key, "debug_pg_count") == 0) {
+			maybe_set(&cfg->debug_pg_count, value);
 		}
 	}
 
@@ -108,6 +114,8 @@ static void print_usage(const char *prog_name)
 	fprintf(stderr, "  --read-only <true|false>\n");
 	fprintf(stderr, "  --debug-size-bytes <bytes>\n");
 	fprintf(stderr, "  --debug-object-size <bytes>\n");
+	fprintf(stderr, "  --debug-pool-id <id>\n");
+	fprintf(stderr, "  --debug-pg-count <count>\n");
 }
 
 static void append_kv(char *buf, size_t buf_len, const char *key,
@@ -144,6 +152,8 @@ int main(int argc, char *argv[])
 		{"read-only", required_argument, 0, 0},
 		{"debug-size-bytes", required_argument, 0, 0},
 		{"debug-object-size", required_argument, 0, 0},
+		{"debug-pool-id", required_argument, 0, 0},
+		{"debug-pg-count", required_argument, 0, 0},
 		{0, 0, 0, 0},
 	};
 
@@ -185,6 +195,12 @@ int main(int argc, char *argv[])
 			} else if (strcmp(long_options[option_index].name,
 					  "debug-object-size") == 0) {
 				maybe_set(&cfg.debug_object_size, optarg);
+			} else if (strcmp(long_options[option_index].name,
+					  "debug-pool-id") == 0) {
+				maybe_set(&cfg.debug_pool_id, optarg);
+			} else if (strcmp(long_options[option_index].name,
+					  "debug-pg-count") == 0) {
+				maybe_set(&cfg.debug_pg_count, optarg);
 			}
 			break;
 		case 'c':
@@ -219,6 +235,10 @@ int main(int argc, char *argv[])
 		  cfg.debug_size_bytes);
 	append_kv(command_str, sizeof(command_str), "debug_object_size",
 		  cfg.debug_object_size);
+	append_kv(command_str, sizeof(command_str), "debug_pool_id",
+		  cfg.debug_pool_id);
+	append_kv(command_str, sizeof(command_str), "debug_pg_count",
+		  cfg.debug_pg_count);
 
 	sysfs_path = strcmp(operation, "attach") == 0 ?
 		SYSFS_PATH_ATTACH : SYSFS_PATH_DETACH;
@@ -258,5 +278,7 @@ int main(int argc, char *argv[])
 	free(cfg.read_only);
 	free(cfg.debug_size_bytes);
 	free(cfg.debug_object_size);
+	free(cfg.debug_pool_id);
+	free(cfg.debug_pg_count);
 	return EXIT_SUCCESS;
 }

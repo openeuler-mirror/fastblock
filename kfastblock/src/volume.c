@@ -8,6 +8,7 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/slab.h>
+#include <linux/sysfs.h>
 
 #include "kfastblock/common.h"
 #include "kfastblock/meta.h"
@@ -18,6 +19,124 @@
 static LIST_HEAD(g_kfastblock_volumes);
 static DEFINE_MUTEX(g_kfastblock_volumes_lock);
 static DEFINE_IDA(g_kfastblock_dev_ida);
+
+static ssize_t pool_name_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%s\n", vol->view.image.pool_name);
+}
+
+static ssize_t image_name_show(struct device *dev,
+			       struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%s\n", vol->view.image.image_name);
+}
+
+static ssize_t size_bytes_show(struct device *dev,
+			       struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%llu\n", vol->view.image.size_bytes);
+}
+
+static ssize_t object_size_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n", vol->view.image.object_size);
+}
+
+static ssize_t pool_id_show(struct device *dev,
+			    struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n", vol->view.image.pool_id);
+}
+
+static ssize_t pg_count_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n", vol->view.image.pg_count);
+}
+
+static ssize_t read_only_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n", vol->view.image.read_only ? 1 : 0);
+}
+
+static ssize_t sync_state_show(struct device *dev,
+			       struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n", vol->view.sync_state);
+}
+
+static DEVICE_ATTR_RO(pool_name);
+static DEVICE_ATTR_RO(image_name);
+static DEVICE_ATTR_RO(size_bytes);
+static DEVICE_ATTR_RO(object_size);
+static DEVICE_ATTR_RO(pool_id);
+static DEVICE_ATTR_RO(pg_count);
+static DEVICE_ATTR_RO(read_only);
+static DEVICE_ATTR_RO(sync_state);
+
+static struct attribute *kfastblock_volume_attrs[] = {
+	&dev_attr_pool_name.attr,
+	&dev_attr_image_name.attr,
+	&dev_attr_size_bytes.attr,
+	&dev_attr_object_size.attr,
+	&dev_attr_pool_id.attr,
+	&dev_attr_pg_count.attr,
+	&dev_attr_read_only.attr,
+	&dev_attr_sync_state.attr,
+	NULL,
+};
+
+static const struct attribute_group kfastblock_volume_attr_group = {
+	.attrs = kfastblock_volume_attrs,
+};
+
+static const struct attribute_group *kfastblock_volume_attr_groups[] = {
+	&kfastblock_volume_attr_group,
+	NULL,
+};
 
 static int kfastblock_blk_open(struct gendisk *disk, blk_mode_t mode)
 {
@@ -62,8 +181,9 @@ static blk_status_t kfastblock_queue_rq(struct blk_mq_hw_ctx *hctx,
 		return BLK_STS_IOERR;
 	}
 
+	kf_req->status = 0;
 	kfastblock_request_init(kf_req, vol, rq);
-	ret = kfastblock_request_split(kf_req, vol->view.image.object_size);
+	ret = kfastblock_request_split(kf_req);
 	if (ret) {
 		blk_mq_end_request(rq, BLK_STS_IOERR);
 		return BLK_STS_IOERR;
@@ -125,6 +245,7 @@ static void kfastblock_volume_dev_release(struct device *dev)
 
 static const struct device_type kfastblock_volume_type = {
 	.name = "kfastblock_volume",
+	.groups = kfastblock_volume_attr_groups,
 	.release = kfastblock_volume_dev_release,
 };
 
@@ -167,6 +288,8 @@ static int kfastblock_volume_add_disk(struct kfastblock_volume *vol,
 	snprintf(vol->disk->disk_name, sizeof(vol->disk->disk_name), "%s%d",
 		 KFASTBLOCK_DRV_NAME_PREFIX, vol->dev_id);
 	set_capacity(vol->disk, vol->view.image.size_bytes >> SECTOR_SHIFT);
+	if (vol->view.image.read_only)
+		set_disk_ro(vol->disk, true);
 	if (vol->view.image.block_size)
 		blk_queue_logical_block_size(vol->disk->queue,
 					     vol->view.image.block_size);
@@ -190,6 +313,7 @@ static int kfastblock_volume_add_disk(struct kfastblock_volume *vol,
 		     KFASTBLOCK_SYSFS_DEV_PREFIX,
 		     vol->view.image.pool_name,
 		     vol->view.image.image_name);
+	dev_set_drvdata(&vol->dev, vol);
 
 	ret = device_add(&vol->dev);
 	if (ret)

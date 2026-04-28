@@ -19,6 +19,8 @@ struct kfastblock_image_info {
 	u32 block_size;
 	u32 object_size;
 	u32 pool_id;
+	u32 pg_count;
+	bool read_only;
 };
 
 struct kfastblock_cluster_view {

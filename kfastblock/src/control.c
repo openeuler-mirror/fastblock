@@ -91,6 +91,10 @@ static int kfastblock_parse_attach_spec(const char *args, size_t count,
 			ret = kstrtou64(value, 10, &spec->debug_size_bytes);
 		} else if (!strcmp(key, "debug_object_size")) {
 			ret = kstrtou32(value, 10, &spec->debug_object_size);
+		} else if (!strcmp(key, "debug_pool_id")) {
+			ret = kstrtou32(value, 10, &spec->debug_pool_id);
+		} else if (!strcmp(key, "debug_pg_count")) {
+			ret = kstrtou32(value, 10, &spec->debug_pg_count);
 		} else {
 			ret = -EINVAL;
 			goto out;
