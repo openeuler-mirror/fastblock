@@ -29,6 +29,9 @@ func (s *GRPCService) ControllerGetCapabilities(context.Context, *csi.Controller
 }
 
 func (s *GRPCService) ValidateVolumeCapabilities(_ context.Context, req *csi.ValidateVolumeCapabilitiesRequest) (*csi.ValidateVolumeCapabilitiesResponse, error) {
+	if !driver.AreSupportedVolumeCapabilities(req.GetVolumeCapabilities()) {
+		return &csi.ValidateVolumeCapabilitiesResponse{}, nil
+	}
 	return &csi.ValidateVolumeCapabilitiesResponse{
 		Confirmed: &csi.ValidateVolumeCapabilitiesResponse_Confirmed{
 			VolumeCapabilities: req.GetVolumeCapabilities(),
