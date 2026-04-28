@@ -1333,6 +1333,12 @@ unsigned int kfastblock_request_completed_objects(
 	return value;
 }
 
+bool kfastblock_request_has_completed(
+	const struct kfastblock_request *kf_req)
+{
+	return kfastblock_request_completed_objects(kf_req) != 0;
+}
+
 u32 kfastblock_request_calc_pg(const char *object_name, u32 pg_count)
 {
 	if (!object_name || !pg_count)
