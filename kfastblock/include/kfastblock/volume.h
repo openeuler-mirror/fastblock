@@ -273,6 +273,12 @@ void kfastblock_volume_account_pipeline_response(
 	s32 response_status,
 	u32 response_body_len,
 	u32 transport_flags);
+s32 kfastblock_volume_pipeline_last_response_status(
+	struct kfastblock_volume *vol);
+u32 kfastblock_volume_pipeline_last_response_body_len(
+	struct kfastblock_volume *vol);
+u32 kfastblock_volume_pipeline_last_transport_flags(
+	struct kfastblock_volume *vol);
 void kfastblock_volume_update_pipeline_snapshot(
 	struct kfastblock_volume *vol,
 	const struct kfastblock_pipeline_state *state);
