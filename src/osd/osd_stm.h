@@ -233,6 +233,7 @@ public:
     }
 
     void stop(object_rw_complete cb_fn, void* arg){
+        state_machine::stop();
         _store.stop(cb_fn, arg);
     }
 

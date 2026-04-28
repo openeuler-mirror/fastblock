@@ -237,8 +237,8 @@ public:
         return *_head_tag == _complete_tag and *_tail_tag == _complete_tag;
     }
 
-    request_meta* read_request_meta() noexcept {
-        return reinterpret_cast<request_meta*>(_data_head);
+    request_meta read_request_meta() noexcept {
+        return load_request_meta(_data_head);
     }
 
     void from_net_context(memory_pool<::ibv_recv_wr>::net_context* ctx) {

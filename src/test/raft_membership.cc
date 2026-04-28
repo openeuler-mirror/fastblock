@@ -12,6 +12,9 @@
 
 #include "osd_client.h"
 
+static constexpr const char *k_osd_iobuf_small_pool_count_key = "osd_iobuf_small_pool_count";
+static constexpr const char *k_osd_iobuf_large_pool_count_key = "osd_iobuf_large_pool_count";
+
 enum {
     ADD_NODE,
     REMOVE_NODE,
@@ -133,6 +136,10 @@ raft_membership(void *arg1)
     server_t *server = (server_t *)arg1;
 
     SPDK_NOTICELOG("------block start, cpu count : %u \n", spdk_env_get_core_count());
+    core_sharded::construct(
+      core_sharded::system::begin(),
+      spdk_env_get_core_count(),
+      "raft_membership");
     auto core_no = ::spdk_env_get_current_core();
     ::spdk_cpuset cpumask{};
     ::spdk_cpuset_zero(&cpumask);
@@ -211,6 +218,23 @@ int main(int argc, char *argv[])
 
     SPDK_NOTICELOG("config file is %s\n", g_json_conf);
     boost::property_tree::read_json(std::string(g_json_conf), server.pt);
+
+    if (server.pt.count(k_osd_iobuf_small_pool_count_key) > 0
+        || server.pt.count(k_osd_iobuf_large_pool_count_key) > 0) {
+        spdk_iobuf_opts iobuf_opts = {};
+        spdk_iobuf_get_opts(&iobuf_opts, sizeof(iobuf_opts));
+        iobuf_opts.opts_size = sizeof(iobuf_opts);
+        if (server.pt.count(k_osd_iobuf_small_pool_count_key) > 0) {
+            iobuf_opts.small_pool_count = server.pt.get<uint64_t>(k_osd_iobuf_small_pool_count_key);
+        }
+        if (server.pt.count(k_osd_iobuf_large_pool_count_key) > 0) {
+            iobuf_opts.large_pool_count = server.pt.get<uint64_t>(k_osd_iobuf_large_pool_count_key);
+        }
+        if (spdk_iobuf_set_opts(&iobuf_opts) != 0) {
+            std::cerr << "failed to configure spdk iobuf options" << std::endl;
+            return -1;
+        }
+    }
 
     /* Blocks until the application is exiting */
     rc = spdk_app_start(&opts, raft_membership, &server);

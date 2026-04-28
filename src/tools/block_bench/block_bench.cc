@@ -25,6 +25,7 @@
 #include <sstream>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -54,6 +55,7 @@ struct bench_context {
     uint32_t core{};
     std::list<std::string> write_obj_name{};
     size_t request_id_gen{0};
+    size_t issue_index{0};
     size_t on_flight_io_count{0};
     size_t io_count{0};
     size_t done_io_count{0};
@@ -90,6 +92,8 @@ struct watcher_context {
     uint64_t iops_start_at{};
     uint64_t deferred_time{};
     bool infinity{false};
+    bool verify_read_data{false};
+    bool sequential_offsets{false};
     double acc_dur{0.0};
     size_t acc_dur_count{0};
     std::vector<double> lats{};
@@ -310,8 +314,13 @@ static std::unique_ptr<monitor::client> mon_client;
 static std::string sample_data{};
 static boost::property_tree::ptree g_pt{};
 static bool g_force_stop{false};
+static int g_app_stop_rc{0};
 static print_stats_context g_print_ctx{};
 static stop_context g_stop_ctx{};
+static constexpr const char *k_osd_no_huge_key = "osd_no_huge";
+static constexpr const char *k_osd_mem_size_mb_key = "osd_mem_size_mb";
+static constexpr const char *k_osd_iobuf_small_pool_count_key = "osd_iobuf_small_pool_count";
+static constexpr const char *k_osd_iobuf_large_pool_count_key = "osd_iobuf_large_pool_count";
 
 std::string random_string(const size_t length) {
     static std::string chars{
@@ -347,9 +356,20 @@ static int parse_arg(int ch, char* arg) {
 
 void write_once(bench_context* ctx) {
     auto* watcher_ctx = reinterpret_cast<watcher_context*>(ctx->watcher_ctx);
+    if (!watcher_ctx->infinity &&
+        ctx->done_io_count + ctx->on_flight_io_count >= ctx->io_count) {
+        return;
+    }
     ++(ctx->on_flight_io_count);
-    auto rnd = ::rand();
-    auto offset = (rnd * watcher_ctx->io_size) % watcher_ctx->image_size;
+    auto offset = [&]() -> size_t {
+        if (watcher_ctx->sequential_offsets) {
+            auto issue_index = ctx->issue_index++;
+            return ((issue_index * watcher_ctx->io_size) % watcher_ctx->image_size);
+        }
+
+        auto rnd = ::rand();
+        return (rnd * watcher_ctx->io_size) % watcher_ctx->image_size;
+    }();
     auto request_stk = std::make_unique<request_stack>(
       ctx->request_id_gen++, ctx,
       offset, ::spdk_get_ticks());
@@ -363,9 +383,20 @@ void write_once(bench_context* ctx) {
 
 void read_once(bench_context* ctx) {
     auto* watcher_ctx = reinterpret_cast<watcher_context*>(ctx->watcher_ctx);
+    if (!watcher_ctx->infinity &&
+        ctx->done_io_count + ctx->on_flight_io_count >= ctx->io_count) {
+        return;
+    }
     ++(ctx->on_flight_io_count);
-    auto rnd = ::rand();
-    auto offset = (rnd * watcher_ctx->io_size) % watcher_ctx->image_size;
+    auto offset = [&]() -> size_t {
+        if (watcher_ctx->sequential_offsets) {
+            auto issue_index = ctx->issue_index++;
+            return ((issue_index * watcher_ctx->io_size) % watcher_ctx->image_size);
+        }
+
+        auto rnd = ::rand();
+        return (rnd * watcher_ctx->io_size) % watcher_ctx->image_size;
+    }();
     auto request_stk = std::make_unique<request_stack>(
       ctx->request_id_gen++, reinterpret_cast<void*>(ctx),
       offset, ::spdk_get_ticks());
@@ -385,15 +416,20 @@ void on_write_done(::spdk_bdev_io* ctx, [[maybe_unused]] int32_t res) {
 
     if (res != errc::success) {
         SPDK_ERRLOG("Write object error, res %d\n", res);
-        if (res != err::ERR_NOT_FOUND_POOL) {
+        if (res == err::ERR_NOT_FOUND_POOL) {
             SPDK_ERRLOG("pool %s does not exist\n", watcher_ctx->pool_name.c_str());
             std::raise(SIGINT);
             return;
         }
+        std::raise(SIGINT);
+        return;
     }
 
     auto tick = ::spdk_get_ticks();
     auto dur = static_cast<double>(tick - stack_ptr->start_tick);
+    if (bench_ctx->on_flight_io_count != 0) {
+        bench_ctx->on_flight_io_count--;
+    }
     if (tick >= watcher_ctx->iops_start_at) {
         if (not g_print_ctx.locked) {
             if (bench_ctx->dur_it == bench_ctx->durs.end()) {
@@ -405,23 +441,14 @@ void on_write_done(::spdk_bdev_io* ctx, [[maybe_unused]] int32_t res) {
             }
         }
 
-        if(bench_ctx->deferred_count != 0){
-            //到达计时点（既延期到期）
-            bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
-            bench_ctx->deferred_count = 0;
-        }
         bench_ctx->done_io_count++;
     } else {
         bench_ctx->deferred_count++;
-        if (bench_ctx->on_flight_io_count == bench_ctx->io_count) {
-            //延期时间还没到，此核上的所有io已经完成
-            bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
-            bench_ctx->deferred_count = 0;
-        }
     }
     bench_ctx->on_flight_request.erase(stack_ptr->id);
 
-    if (watcher_ctx->infinity or bench_ctx->on_flight_io_count < bench_ctx->io_count) {
+    if (watcher_ctx->infinity ||
+        bench_ctx->done_io_count + bench_ctx->on_flight_io_count < bench_ctx->io_count) {
         write_once(bench_ctx);
     }
 }
@@ -433,8 +460,30 @@ void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
 
     if (res != errc::success) {
         SPDK_ERRLOG("Read object error, res %d\n", res);
-        if (res != err::ERR_NOT_FOUND_POOL) {
+        if (res == err::ERR_NOT_FOUND_POOL) {
             SPDK_ERRLOG("pool %s does not exist\n", watcher_ctx->pool_name.c_str());
+            std::raise(SIGINT);
+            return;
+        }
+        std::raise(SIGINT);
+        return;
+    }
+
+    if (watcher_ctx->verify_read_data) {
+        if (size != watcher_ctx->io_size) {
+            SPDK_ERRLOG(
+              "Read verify failed, unexpected size %lu, expect %lu, offset %lu\n",
+              size, watcher_ctx->io_size, stack_ptr->offset);
+            g_app_stop_rc = EIO;
+            std::raise(SIGINT);
+            return;
+        }
+        if (std::memcmp(data, sample_data.data(), watcher_ctx->io_size) != 0) {
+            SPDK_ERRLOG(
+              "Read verify failed, data mismatch at offset %lu, len %lu\n",
+              stack_ptr->offset,
+              watcher_ctx->io_size);
+            g_app_stop_rc = EIO;
             std::raise(SIGINT);
             return;
         }
@@ -442,6 +491,9 @@ void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
 
     auto tick = ::spdk_get_ticks();
     auto dur = static_cast<double>(tick - stack_ptr->start_tick);
+    if (bench_ctx->on_flight_io_count != 0) {
+        bench_ctx->on_flight_io_count--;
+    }
     if (tick >= watcher_ctx->iops_start_at) {
         if (not g_print_ctx.locked) {
             if (bench_ctx->dur_it == bench_ctx->durs.end()) {
@@ -453,23 +505,14 @@ void on_read_done(::spdk_bdev_io* arg, char* data, uint64_t size, int32_t res) {
             }
         }
 
-        if(bench_ctx->deferred_count != 0){
-            //到达计时点（既延时到期）
-            bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
-            bench_ctx->deferred_count = 0;
-        }
         bench_ctx->done_io_count++;
     } else {
         bench_ctx->deferred_count++;
-        if (bench_ctx->on_flight_io_count == bench_ctx->io_count) {
-            //延期时间还没到，此核上的所有io已经完成
-            bench_ctx->on_flight_io_count -= bench_ctx->deferred_count;
-            bench_ctx->deferred_count = 0;
-        }
     }
     bench_ctx->on_flight_request.erase(stack_ptr->id);
 
-    if (watcher_ctx->infinity or bench_ctx->on_flight_io_count < bench_ctx->io_count) {
+    if (watcher_ctx->infinity ||
+        bench_ctx->done_io_count + bench_ctx->on_flight_io_count < bench_ctx->io_count) {
         read_once(bench_ctx);
     }
 }
@@ -587,7 +630,7 @@ void general_stop_callback() {
         g_print_ctx.exit_thread();
         core_sharded::stop_all();
         SPDK_NOTICELOG("all spdk threads have been stopped, stop the spdk app\n");
-        ::spdk_app_stop(0);
+        ::spdk_app_stop(g_app_stop_rc);
         return;
     }
     default:
@@ -625,6 +668,7 @@ int watch_poller(void* arg) {
 
     if (is_all_done) {
         auto iops_dur = ::spdk_get_ticks() - ctx->iops_start_at;
+        g_print_ctx.print_stats(core_ctxs.get(), ctx->core_context_size);
         g_print_ctx.stop_poll();
         bool should_exit{true};
         switch (ctx->io_type) {
@@ -701,6 +745,13 @@ void on_app_start(void* arg) {
 
     if (g_pt.count("infinity") != 0) {
         watcher_ctx->infinity = g_pt.get_child("infinity").get_value<bool>();
+    }
+    if (g_pt.count("verify_read_data") != 0) {
+        watcher_ctx->verify_read_data = g_pt.get_child("verify_read_data").get_value<bool>();
+    }
+
+    if (g_pt.count("sequential_offsets") != 0) {
+        watcher_ctx->sequential_offsets = g_pt.get_child("sequential_offsets").get_value<bool>();
     }
 
     for (size_t i{0}; i < lat_tag_count * 2; ++i) {
@@ -869,6 +920,41 @@ int main(int argc, char** argv) {
     opts.name = "block bench";
     opts.print_level = ::spdk_log_level::SPDK_LOG_DEBUG;
     opts.shutdown_cb = on_app_stop;
+    opts.iova_mode = "va";
+
+    if (g_conf_path != nullptr) {
+        boost::property_tree::ptree startup_pt{};
+        boost::property_tree::read_json(std::string(g_conf_path), startup_pt);
+
+        if (startup_pt.count(k_osd_no_huge_key) > 0) {
+            opts.no_huge = startup_pt.get<bool>(k_osd_no_huge_key);
+        }
+        if (startup_pt.count(k_osd_mem_size_mb_key) > 0) {
+            opts.mem_size = startup_pt.get<int>(k_osd_mem_size_mb_key);
+        } else if (opts.no_huge) {
+            opts.mem_size = 1024;
+        }
+        if (opts.no_huge || startup_pt.count(k_osd_iobuf_small_pool_count_key) > 0 ||
+            startup_pt.count(k_osd_iobuf_large_pool_count_key) > 0) {
+            spdk_iobuf_opts iobuf_opts = {};
+            spdk_iobuf_get_opts(&iobuf_opts, sizeof(iobuf_opts));
+            iobuf_opts.opts_size = sizeof(iobuf_opts);
+            if (opts.no_huge) {
+                iobuf_opts.small_pool_count = 1024;
+                iobuf_opts.large_pool_count = 64;
+            }
+            if (startup_pt.count(k_osd_iobuf_small_pool_count_key) > 0) {
+                iobuf_opts.small_pool_count = startup_pt.get<uint64_t>(k_osd_iobuf_small_pool_count_key);
+            }
+            if (startup_pt.count(k_osd_iobuf_large_pool_count_key) > 0) {
+                iobuf_opts.large_pool_count = startup_pt.get<uint64_t>(k_osd_iobuf_large_pool_count_key);
+            }
+            if (spdk_iobuf_set_opts(&iobuf_opts) != 0) {
+                SPDK_ERRLOG("ERROR: configure spdk iobuf options failed\n");
+                return -EINVAL;
+            }
+        }
+    }
     rc = ::spdk_app_start(&opts, on_app_start, &g_watcher_ctx);
     if (rc) {
         SPDK_ERRLOG("ERROR: Start spdk app failed\n");

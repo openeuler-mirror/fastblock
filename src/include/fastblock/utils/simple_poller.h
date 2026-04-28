@@ -63,17 +63,7 @@ public:
 
     static void handle_unregister(void *arg) noexcept {
         auto* ctx = reinterpret_cast<unregister_context*>(arg);
-        ::spdk_poller_unregister(&(ctx->this_poller->_poller));
-        ctx->this_poller->_poller = nullptr;
-        // SPDK_NOTICELOG("unregistered the poller\n");
-        if (ctx->cb) {
-            try {
-                (ctx->cb.value())();
-            } catch (const std::exception& e) {
-                SPDK_ERRLOG("unregister_poller call user callback error: %s\n", e.what());
-            }
-        }
-
+        ctx->this_poller->do_unregister(std::move(ctx->cb));
         delete ctx;
     }
 
@@ -98,6 +88,11 @@ public:
             return 0;
         }
 
+        if (_thread == nullptr || _thread == ::spdk_get_thread()) {
+            do_unregister(std::move(cb));
+            return 0;
+        }
+
         auto* ctx = new unregister_context{this, std::move(cb)};
         return ::spdk_thread_send_msg(_thread, simple_poller::handle_unregister, ctx);
     }
@@ -112,6 +107,18 @@ public:
     }
 
 private:
+    void do_unregister(std::optional<std::function<void()>> cb = std::nullopt) noexcept {
+        ::spdk_poller_unregister(&_poller);
+        _poller = nullptr;
+        if (cb) {
+            try {
+                (cb.value())();
+            } catch (const std::exception& e) {
+                SPDK_ERRLOG("unregister_poller call user callback error: %s\n", e.what());
+            }
+        }
+    }
+
     ::spdk_poller* _poller{nullptr};
     ::spdk_thread* _thread{nullptr};
 };

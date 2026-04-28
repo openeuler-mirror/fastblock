@@ -51,7 +51,7 @@ struct write_obj_ctx{
 
 void write_obj_done(void *arg, int obj_errno){
     write_obj_ctx * ctx = (write_obj_ctx *)arg;
-    SPDK_INFOLOG(osd, "write obj %s pg: %s done in core: %u\n",
+    SPDK_DEBUGLOG(osd, "write obj %s pg: %s done in core: %u\n",
         ctx->obj_name.c_str(), ctx->stm->get_pg_name().c_str(),
         core_sharded::get_core_sharded().this_shard_id());
     ctx->stm->unlock(ctx->obj_name, utils::operation_type::WRITE);
@@ -68,7 +68,7 @@ void osd_stm::write_obj(const std::string& obj_name, uint64_t offset, const std:
     std::map<std::string, xattr_val_type> xattr;
     xattr["type"] = blob_type::object;
     xattr["pg"] = get_pg_name();
-    SPDK_INFOLOG(osd, "write obj %s xattr type: %u pg: %s in core: %u\n",
+    SPDK_DEBUGLOG(osd, "write obj %s xattr type: %u pg: %s in core: %u\n",
         obj_name.c_str(), (uint32_t)blob_type::object, get_pg_name().c_str(),
         core_sharded::get_core_sharded().this_shard_id());
     _store.write(xattr, obj_name, offset, buf, data.size(), write_obj_done, ctx);
@@ -159,7 +159,7 @@ void osd_stm::write_and_wait(
         std::string buf;
         cmd.SerializeToString(&buf);
 
-        SPDK_INFOLOG(osd, "process write_request , pg %lu.%lu object_name %s offset %lu len %lu\n",
+        SPDK_DEBUGLOG(osd, "process write_request , pg %lu.%lu object_name %s offset %lu len %lu\n",
                      request->pool_id(), request->pg_id(), request->object_name().c_str(), request->offset(),
                      request->data().size());
 

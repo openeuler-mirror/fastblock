@@ -132,6 +132,32 @@ message change_nodes_response {
     repeated int32 new_nodes = 2;
 }
 
+message write_ring_slot {
+    uint32 slot_index = 1;
+    uint64 remote_addr = 2;
+    uint32 remote_key = 3;
+    uint32 slot_size = 4;
+}
+
+message acquire_write_ring_request {
+    uint32 slot_count = 1;
+    uint32 slot_size = 2;
+    uint64 lease_us = 3;
+}
+
+message acquire_write_ring_response {
+    int32 state = 1;
+    uint64 queue_id = 2;
+    uint64 lease_us = 3;
+    repeated write_ring_slot slots = 4;
+}
+
+message commit_ring_write_request {
+    uint64 queue_id = 1;
+    uint32 slot_index = 2;
+    uint32 serialized_size = 3;
+}
+
 service rpc_service_osd{
     rpc process_write(write_request) returns (write_reply);
     rpc process_read(read_request) returns (read_reply);
@@ -142,4 +168,6 @@ service rpc_service_osd{
     rpc process_add_node(add_node_request) returns (add_node_response);
     rpc process_remove_node(remove_node_request) returns (remove_node_response);
     rpc process_change_nodes(change_nodes_request) returns (change_nodes_response);
+    rpc process_acquire_write_ring(acquire_write_ring_request) returns (acquire_write_ring_response);
+    rpc process_commit_ring_write(commit_ring_write_request) returns (write_reply);
 }

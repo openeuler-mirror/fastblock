@@ -11,14 +11,55 @@
 #pragma once
 
 #include "fastblock/rpc/osd_msg.pb.h"
+#include "fastblock/utils/simple_poller.h"
 #include "partition_manager.h"
 #include "mon_client.h"
+
+#include <atomic>
+#include <chrono>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+struct ibv_mr;
+struct ibv_pd;
 
 class osd_service : public osd::rpc_service_osd
 {
 public:
+    struct write_ring_slot {
+        void* data{nullptr};
+        ::ibv_mr* mr{nullptr};
+        uint32_t size{0};
+
+        write_ring_slot() = default;
+        write_ring_slot(const write_ring_slot&) = delete;
+        write_ring_slot& operator=(const write_ring_slot&) = delete;
+        write_ring_slot(write_ring_slot&& other) noexcept;
+        write_ring_slot& operator=(write_ring_slot&& other) noexcept;
+        ~write_ring_slot() noexcept;
+    };
+
+    struct write_ring_queue {
+        uint64_t queue_id{0};
+        uint64_t lease_us{0};
+        uint32_t slot_size{0};
+        std::string peer_address{};
+        std::chrono::steady_clock::time_point lease_deadline{};
+        std::vector<write_ring_slot> slots{};
+    };
+
     osd_service(partition_manager *pm, std::shared_ptr<monitor_client> mon_cli)
-        : _pm(pm), _monitor_client{mon_cli} {}
+        : _pm(pm), _monitor_client{mon_cli}, _write_ring_gc_poller{::spdk_get_thread()} {
+        _write_ring_gc_poller.register_poller(
+          poll_expired_write_rings, this, 1000ULL * 1000ULL, "osd_write_ring_gc");
+    }
+
+    void stop() noexcept {
+        _write_ring_gc_poller.unregister_poller();
+    }
 
     void process_write(google::protobuf::RpcController *controller,
                        const osd::write_request *request,
@@ -79,6 +120,16 @@ public:
         process<osd::change_nodes_request, osd::change_nodes_response>(request, response, done);
     }
 
+    void process_acquire_write_ring(google::protobuf::RpcController* controller,
+                         const osd::acquire_write_ring_request* request,
+                         osd::acquire_write_ring_response* response,
+                         google::protobuf::Closure* done) override;
+
+    void process_commit_ring_write(google::protobuf::RpcController* controller,
+                         const osd::commit_ring_write_request* request,
+                         osd::write_reply* response,
+                         google::protobuf::Closure* done) override;
+
     template <typename request_type, typename reply_type>
     void process(const request_type *request, reply_type *response, google::protobuf::Closure *done);
 
@@ -116,9 +167,39 @@ public:
         osd::change_nodes_response* response,
         google::protobuf::Closure* done);
 
+    void process_ring_write(
+        std::unique_ptr<osd::write_request> request,
+        osd::write_reply* response,
+        google::protobuf::Closure* done);
+
+private:
+    std::shared_ptr<write_ring_queue> create_write_ring(
+      ::ibv_pd* pd,
+      std::string peer_address,
+      uint32_t slot_count,
+      uint32_t slot_size,
+      uint64_t lease_us);
+
+    std::shared_ptr<write_ring_queue> get_write_ring(uint64_t queue_id);
+
+    std::shared_ptr<write_ring_queue> acquire_write_ring(
+      ::ibv_pd* pd,
+      const std::string& peer_address,
+      uint32_t slot_count,
+      uint32_t slot_size,
+      uint64_t lease_us);
+
+    static int poll_expired_write_rings(void* arg);
+    int cleanup_expired_write_rings();
+
 private:
     partition_manager *_pm;
     std::shared_ptr<monitor_client> _monitor_client{nullptr};
+    utils::simple_poller _write_ring_gc_poller{};
+    std::mutex _write_ring_mutex{};
+    std::unordered_map<uint64_t, std::shared_ptr<write_ring_queue>> _write_rings{};
+    std::unordered_map<std::string, uint64_t> _write_ring_owners{};
+    std::atomic<uint64_t> _next_write_ring_id{1};
 };
 
 template<typename request_type, typename reply_type>

@@ -263,6 +263,12 @@ public:
     }
 
     int send_appendentries(raft_server_t *raft, int32_t target_node_id, msg_appendentries_t* request);
+    int send_create_pg(
+      int32_t target_node_id,
+      uint64_t pool_id,
+      uint64_t pg_id,
+      int64_t revision_id,
+      std::function<void(int)> cb);
     int send_vote(raft_server_t *raft, int32_t target_node_id, msg_requestvote_t *request);
     int send_heartbeat(int32_t target_node_id, heartbeat_request* request, pg_group_t* group);
     int send_timeout_now(raft_server_t *raft, int32_t target_node_id, timeout_now_request* request);

@@ -9,8 +9,202 @@
  * See the Mulan PSL v2 for more details.
  */
 #include "osd_service.h"
+#include "fastblock/msg/rpc_controller.h"
 #include "fastblock/utils/utils.h"
 #include "fastblock/utils/err_num.h"
+
+#include <spdk/env.h>
+
+#include <infiniband/verbs.h>
+
+#include <errno.h>
+
+osd_service::write_ring_slot::write_ring_slot(write_ring_slot&& other) noexcept
+  : data(other.data)
+  , mr(other.mr)
+  , size(other.size) {
+    other.data = nullptr;
+    other.mr = nullptr;
+    other.size = 0;
+}
+
+auto osd_service::write_ring_slot::operator=(write_ring_slot&& other) noexcept -> write_ring_slot& {
+    if (this == &other) {
+        return *this;
+    }
+
+    if (mr) {
+        ::ibv_dereg_mr(mr);
+    }
+    if (data) {
+        ::spdk_free(data);
+    }
+
+    data = other.data;
+    mr = other.mr;
+    size = other.size;
+    other.data = nullptr;
+    other.mr = nullptr;
+    other.size = 0;
+    return *this;
+}
+
+osd_service::write_ring_slot::~write_ring_slot() noexcept {
+    if (mr) {
+        ::ibv_dereg_mr(mr);
+    }
+    if (data) {
+        ::spdk_free(data);
+    }
+}
+
+std::shared_ptr<osd_service::write_ring_queue> osd_service::create_write_ring(
+  ::ibv_pd* pd,
+  std::string peer_address,
+  const uint32_t slot_count,
+  const uint32_t slot_size,
+  const uint64_t lease_us) {
+    auto queue = std::make_shared<write_ring_queue>();
+    queue->queue_id = _next_write_ring_id.fetch_add(1);
+    queue->lease_us = lease_us;
+    queue->slot_size = slot_size;
+    queue->peer_address = std::move(peer_address);
+    queue->lease_deadline = std::chrono::steady_clock::now() + std::chrono::microseconds(lease_us);
+    queue->slots.reserve(slot_count);
+
+    for (uint32_t i = 0; i < slot_count; ++i) {
+        auto alloc_size = utils::align_up<uint64_t>(slot_size, 4096);
+        auto* data = ::spdk_zmalloc(
+          alloc_size, 0x1000, nullptr, SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
+        if (!data) {
+            return nullptr;
+        }
+
+        auto* mr = ::ibv_reg_mr(
+          pd,
+          data,
+          alloc_size,
+          IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
+        if (!mr) {
+            ::spdk_free(data);
+            return nullptr;
+        }
+
+        write_ring_slot slot;
+        slot.data = data;
+        slot.mr = mr;
+        slot.size = slot_size;
+        queue->slots.push_back(std::move(slot));
+    }
+
+    std::scoped_lock lk(_write_ring_mutex);
+    _write_rings.emplace(queue->queue_id, queue);
+    if (!queue->peer_address.empty()) {
+        _write_ring_owners[queue->peer_address] = queue->queue_id;
+    }
+    return queue;
+}
+
+int osd_service::poll_expired_write_rings(void* arg) {
+    auto* service = reinterpret_cast<osd_service*>(arg);
+    return service->cleanup_expired_write_rings();
+}
+
+int osd_service::cleanup_expired_write_rings() {
+    std::vector<uint64_t> expired_queue_ids{};
+    auto now = std::chrono::steady_clock::now();
+    {
+        std::scoped_lock lk(_write_ring_mutex);
+        for (auto it = _write_rings.begin(); it != _write_rings.end();) {
+            if (it->second->lease_deadline > now) {
+                ++it;
+                continue;
+            }
+
+            if (!it->second->peer_address.empty()) {
+                auto owner_it = _write_ring_owners.find(it->second->peer_address);
+                if (owner_it != _write_ring_owners.end() && owner_it->second == it->first) {
+                    _write_ring_owners.erase(owner_it);
+                }
+            }
+
+            expired_queue_ids.push_back(it->first);
+            it = _write_rings.erase(it);
+        }
+    }
+
+    for (auto queue_id : expired_queue_ids) {
+        SPDK_NOTICELOG("destroy expired write ring queue %lu\n", queue_id);
+    }
+
+    return expired_queue_ids.empty() ? SPDK_POLLER_IDLE : SPDK_POLLER_BUSY;
+}
+
+std::shared_ptr<osd_service::write_ring_queue> osd_service::get_write_ring(const uint64_t queue_id) {
+    std::scoped_lock lk(_write_ring_mutex);
+    auto it = _write_rings.find(queue_id);
+    if (it == _write_rings.end()) {
+        return nullptr;
+    }
+
+    if (it->second->lease_deadline <= std::chrono::steady_clock::now()) {
+        if (!it->second->peer_address.empty()) {
+            auto owner_it = _write_ring_owners.find(it->second->peer_address);
+            if (owner_it != _write_ring_owners.end() && owner_it->second == queue_id) {
+                _write_ring_owners.erase(owner_it);
+            }
+        }
+        _write_rings.erase(it);
+        return nullptr;
+    }
+
+    it->second->lease_deadline =
+      std::chrono::steady_clock::now() + std::chrono::microseconds(it->second->lease_us);
+
+    return it->second;
+}
+
+std::shared_ptr<osd_service::write_ring_queue> osd_service::acquire_write_ring(
+  ::ibv_pd* pd,
+  const std::string& peer_address,
+  const uint32_t slot_count,
+  const uint32_t slot_size,
+  const uint64_t lease_us) {
+    if (peer_address.empty()) {
+        return create_write_ring(pd, {}, slot_count, slot_size, lease_us);
+    }
+
+    {
+        std::scoped_lock lk(_write_ring_mutex);
+        auto owner_it = _write_ring_owners.find(peer_address);
+        if (owner_it != _write_ring_owners.end()) {
+            auto queue_it = _write_rings.find(owner_it->second);
+            if (queue_it != _write_rings.end()) {
+                auto& queue = queue_it->second;
+                if (queue->lease_deadline > std::chrono::steady_clock::now()
+                    && queue->slots.size() == slot_count
+                    && queue->slot_size == slot_size) {
+                    queue->lease_us = lease_us;
+                    queue->lease_deadline = std::chrono::steady_clock::now() + std::chrono::microseconds(lease_us);
+                    SPDK_INFOLOG(
+                      osd,
+                      "reuse write ring queue %lu for peer %s\n",
+                      queue->queue_id,
+                      peer_address.c_str());
+                    return queue;
+                }
+            }
+
+            if (queue_it != _write_rings.end()) {
+                _write_rings.erase(queue_it);
+            }
+            _write_ring_owners.erase(owner_it);
+        }
+    }
+
+    SPDK_INFOLOG(osd, "create write ring for peer %s\n", peer_address.c_str());
+    return create_write_ring(pd, peer_address, slot_count, slot_size, lease_us);
+}
 
 void osd_service::process_rpc_bench(google::protobuf::RpcController *controller,
                                     const osd::bench_request *request,
@@ -79,6 +273,158 @@ void osd_service::process_create_pg(google::protobuf::RpcController *controller,
         };
         _pm->create_partition(pool_id, pg_id, 0, std::move(osds), pool_version, std::move(new_pg_done), nullptr);
     }
+}
+
+void osd_service::process_acquire_write_ring(
+  google::protobuf::RpcController* controller,
+  const osd::acquire_write_ring_request* request,
+  osd::acquire_write_ring_response* response,
+  google::protobuf::Closure* done) {
+    auto* rdma_ctrl = dynamic_cast<msg::rdma::rpc_controller*>(controller);
+    if (!rdma_ctrl || !rdma_ctrl->pd()) {
+        response->set_state(-EINVAL);
+        done->Run();
+        return;
+    }
+
+    auto slot_count = request->slot_count() == 0 ? 16 : request->slot_count();
+    auto slot_size = request->slot_size() == 0 ? 256 * 1024 : request->slot_size();
+    auto lease_us = request->lease_us() == 0 ? 30ULL * 1000ULL * 1000ULL : request->lease_us();
+    auto queue = acquire_write_ring(
+      rdma_ctrl->pd(),
+      rdma_ctrl->peer_address(),
+      slot_count,
+      slot_size,
+      lease_us);
+    if (!queue) {
+        response->set_state(-ENOMEM);
+        done->Run();
+        return;
+    }
+
+    response->set_state(err::E_SUCCESS);
+    response->set_queue_id(queue->queue_id);
+    response->set_lease_us(queue->lease_us);
+    for (uint32_t i = 0; i < queue->slots.size(); ++i) {
+        auto* slot = response->add_slots();
+        slot->set_slot_index(i);
+        slot->set_remote_addr(reinterpret_cast<uint64_t>(queue->slots[i].mr->addr));
+        slot->set_remote_key(queue->slots[i].mr->rkey);
+        slot->set_slot_size(queue->slots[i].size);
+    }
+    done->Run();
+}
+
+namespace {
+
+class ring_write_done : public google::protobuf::Closure {
+public:
+    ring_write_done(std::unique_ptr<osd::write_request> request, google::protobuf::Closure* done)
+      : _request(std::move(request))
+      , _done(done) {}
+
+    void Run() override {
+        _done->Run();
+        delete this;
+    }
+
+private:
+    std::unique_ptr<osd::write_request> _request{};
+    google::protobuf::Closure* _done{nullptr};
+};
+
+} // namespace
+
+void osd_service::process_ring_write(
+  std::unique_ptr<osd::write_request> request,
+  osd::write_reply* response,
+  google::protobuf::Closure* done) {
+    auto pool_id = request->pool_id();
+    auto pg_id = request->pg_id();
+    uint32_t shard_id;
+
+    if(!_pm->get_pg_shard(pool_id, pg_id, shard_id)){
+        SPDK_WARNLOG("not find pg %lu.%lu\n", request->pool_id(), request->pg_id());
+        response->set_state(err::RAFT_ERR_NOT_FOUND_PG);
+        done->Run();
+        return;
+    }
+
+    _pm->get_shard().invoke_on(
+      shard_id,
+      [this, request = std::move(request), response, done, shard_id]() mutable {
+        auto raft = _pm->get_pg(shard_id, request->pool_id(), request->pg_id());
+        if(!raft){
+            SPDK_WARNLOG("not find pg %lu.%lu\n", request->pool_id(), request->pg_id());
+            response->set_state(err::RAFT_ERR_NOT_FOUND_PG);
+            done->Run();
+            return;
+        }
+        if(!raft->raft_is_leader()){
+            SPDK_WARNLOG("node %d is not the leader of pg %lu.%lu\n",
+                               raft->raft_get_nodeid(), request->pool_id(), request->pg_id());
+            response->set_state(err::RAFT_ERR_NOT_LEADER);
+            done->Run();
+            return;
+        }
+
+        auto err_num = raft_state_to_errno(raft->raft_get_op_state());
+        if(err_num != err::E_SUCCESS){
+            SPDK_WARNLOG("hand osd request for pg %lu.%lu in node %d failed: %s\n",
+                               request->pool_id(), request->pg_id(), raft->raft_get_nodeid(), err::string_status(err_num));
+            response->set_state(err_num);
+            done->Run();
+            return;
+        }
+
+        auto osd_stm_p = _pm->get_osd_stm(shard_id, request->pool_id(), request->pg_id());
+        if(!osd_stm_p){
+            SPDK_WARNLOG("not find pg %lu.%lu\n", request->pool_id(), request->pg_id());
+            response->set_state(err::RAFT_ERR_NOT_FOUND_PG);
+            done->Run();
+            return;
+        }
+        auto* request_ptr = request.get();
+        auto* ring_done = new ring_write_done(std::move(request), done);
+        process(osd_stm_p, request_ptr, response, ring_done);
+      });
+}
+
+void osd_service::process_commit_ring_write(
+  google::protobuf::RpcController* controller,
+  const osd::commit_ring_write_request* request,
+  osd::write_reply* response,
+  google::protobuf::Closure* done) {
+    (void)controller;
+
+    auto queue = get_write_ring(request->queue_id());
+    if (!queue) {
+        response->set_state(-ENOENT);
+        done->Run();
+        return;
+    }
+
+    if (request->slot_index() >= queue->slots.size()) {
+        response->set_state(-EINVAL);
+        done->Run();
+        return;
+    }
+
+    auto& slot = queue->slots[request->slot_index()];
+    if (request->serialized_size() > slot.size) {
+        response->set_state(-EMSGSIZE);
+        done->Run();
+        return;
+    }
+
+    auto write_req = std::make_unique<osd::write_request>();
+    if (!write_req->ParseFromArray(slot.data, request->serialized_size())) {
+        response->set_state(-EBADMSG);
+        done->Run();
+        return;
+    }
+
+    process_ring_write(std::move(write_req), response, done);
 }
 
 void osd_service::process(

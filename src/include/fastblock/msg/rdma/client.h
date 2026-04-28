@@ -192,6 +192,10 @@ public:
             connection* this_conn{nullptr};
         };
 
+        struct external_send_context {
+            std::function<void()> on_complete{};
+        };
+
     public:
 
         connection() = delete;
@@ -341,12 +345,12 @@ public:
               req->request->ByteSizeLong() + request_meta_size,
               req->request->ByteSizeLong());
 
-            auto* meta = reinterpret_cast<request_meta*>(req->meta.get());
+            auto meta = load_request_meta(req->meta.get());
             SPDK_DEBUGLOG(
               msg,
               "service_name_size: %d, service_name: %s, method_name_size: %d, method_name: %s\n",
-              meta->service_name_size, meta->service_name,
-              meta->method_name_size, meta->method_name);
+              meta.service_name_size, meta.service_name,
+              meta.method_name_size, meta.method_name);
 
             req->request_data->serialize_data(
               req->meta.get(),
@@ -538,20 +542,17 @@ public:
             auto req_key = _unresponsed_request_key_gen++;
             FASTBLOCK_DUR_MAP_EMPLACE_START(_enqueue_dur_map, req_key);
             auto meta_holder = std::make_unique<char[]>(request_meta_size);
-            auto* meta = reinterpret_cast<request_meta*>(meta_holder.get());
-            meta->service_name_size =
-              static_cast<request_meta::name_size_type>(service_name.size());
-            service_name.copy(meta->service_name, meta->service_name_size);
-            meta->method_name_size =
-              static_cast<request_meta::name_size_type>(method_name.size());
-            method_name.copy(meta->method_name, meta->method_name_size);
-            meta->data_size = static_cast<request_meta::data_size_type>(request->ByteSizeLong());
+            auto meta = make_request_meta(
+              service_name,
+              method_name,
+              static_cast<request_meta::data_size_type>(request->ByteSizeLong()));
+            store_request_meta(meta_holder.get(), meta);
 
             SPDK_DEBUGLOG(
               msg,
               "service_name_size: %d, service_name: %s, method_name_size: %d, method_name: %s\n",
-              meta->service_name_size, meta->service_name,
-              meta->method_name_size, meta->method_name);
+              meta.service_name_size, meta.service_name,
+              meta.method_name_size, meta.method_name);
 
             auto req = std::make_unique<rpc_request>(
               req_key, m, ctrlr, request, response, c, std::move(meta_holder));
@@ -559,14 +560,14 @@ public:
             SPDK_DEBUGLOG(
               msg,
               "transport data_size: %d, serialized_size: %ld, req_key: %d, service: %s, method: %s\n",
-              meta->data_size, request->ByteSizeLong() + request_meta_size,
+              meta.data_size, request->ByteSizeLong() + request_meta_size,
               req_key, service_name.c_str(), method_name.c_str());
 
             SPDK_INFOLOG(
               msg,
               "Enqueued rpc task(%s::%s) %d\n",
-              meta->service_name,
-              meta->method_name,
+              meta.service_name,
+              meta.method_name,
               req->request_key);
 
             auto cur_thread = spdk_get_thread();
@@ -803,6 +804,16 @@ read_done:
             auto cqe = std::move(cqe_list.front());
             cqe_list.pop_front();
 
+            auto send_it = _external_send_ctx.find(cqe->wr_id);
+            if (send_it != _external_send_ctx.end()) {
+                auto cb = std::move(send_it->second.on_complete);
+                _external_send_ctx.erase(send_it);
+                if (cb) {
+                    cb();
+                }
+                return true;
+            }
+
             switch (cqe->opcode) {
             case ::IBV_WC_SEND: {
                 auto max_wr = _sock->max_slient_wr();
@@ -956,6 +967,7 @@ read_done:
                 _recv_ctx_map.emplace(it->second->wr.wr_id, it->second);
                 _recv_ctx_map.erase(it);
             }
+            case ::IBV_WC_RDMA_WRITE:
             default:
                 break;
             }
@@ -1003,8 +1015,14 @@ read_done:
             }
 
             if (_shutdown_timeout < std::chrono::system_clock::now() or task_queue_empty()) {
+                auto master = _master;
+                auto* cm_id = _sock ? _sock->id() : nullptr;
+                auto conn_id = _id;
+                auto dispatch_id = _dispatch_id.dispatch_id();
                 free_resources();
-                _master->handle_connection_shutdown(_sock->id(), _id, _dispatch_id.dispatch_id());
+                if (master && cm_id) {
+                    master->handle_connection_shutdown(cm_id, conn_id, dispatch_id);
+                }
                 _state = state::termianted;
                 return true;
             }
@@ -1013,6 +1031,10 @@ read_done:
         }
 
         void free_resources() {
+            if (_resources_freed) {
+                return;
+            }
+            _resources_freed = true;
             _poller.unregister_poller();
             SPDK_INFOLOG(msg, "The poller of the connection has been unregistered\n");
 
@@ -1034,17 +1056,43 @@ read_done:
             }
             _wait_read_requests.clear();
 
+            for (auto& task : _send_read_requests) {
+                set_failed_msg(task->ctrlr);
+                task->closure->Run();
+            }
+            _send_read_requests.clear();
+
             for (auto& task_pair : _unresponsed_requests) {
                 set_failed_msg(task_pair.second->ctrlr);
                 task_pair.second->closure->Run();
             }
             _unresponsed_requests.clear();
-            _sock->close();
 
-            if (_recv_ctx) {
+            if (_sock) {
+                _sock->close();
+            }
+
+            if (_recv_ctx and _recv_pool) {
                 _recv_pool->put_bulk(std::move(_recv_ctx), _opts->per_post_recv_num);
             }
-            _recv_pool->free();
+            if (_recv_pool) {
+                _recv_pool->free();
+                _recv_pool.reset();
+            }
+
+            _recv_ctx_map.clear();
+            _free_server_list.clear();
+            _ctrl_ops.clear();
+            _external_send_ctx.clear();
+            cqe_list.clear();
+
+            _sock.reset();
+            _busy_list.reset();
+            _busy_priority_list.reset();
+            _master.reset();
+            _meta_pool.reset();
+            _data_pool.reset();
+            _opts.reset();
         }
 
         auto async_shutdown(const state shutdown_state = state::shutdown) {
@@ -1073,6 +1121,30 @@ read_done:
             return *_sock;
         }
 
+        auto post_send_wr(::ibv_send_wr* wr, const size_t n_wrs = 1) {
+            return send_request([wr] (bool should_signal) {
+                if (should_signal) {
+                    wr->send_flags |= IBV_SEND_SIGNALED;
+                }
+                return wr;
+            }, n_wrs);
+        }
+
+        auto post_external_send_wr(::ibv_send_wr* wr, std::function<void()> on_complete) {
+            _dispatch_id.inc_request_id();
+            wr->wr_id = _dispatch_id.value();
+            wr->send_flags |= IBV_SEND_SIGNALED;
+            _external_send_ctx.emplace(
+              wr->wr_id,
+              external_send_context{.on_complete = std::move(on_complete)});
+            auto ret = _sock->send(wr);
+            if (ret) {
+                _external_send_ctx.erase(wr->wr_id);
+            }
+
+            return ret;
+        }
+
         connection_id id() noexcept {
             return _id;
         }
@@ -1083,6 +1155,11 @@ read_done:
 
         bool is_terminated() noexcept {
             return _state == state::termianted;
+        }
+
+        void shutdown_now() {
+            free_resources();
+            _state = state::termianted;
         }
 
         bool task_queue_empty() {
@@ -1122,6 +1199,8 @@ read_done:
         int64_t _onflight_rpc_task_size{0};
         int _sock_id{SPDK_ENV_SOCKET_ID_ANY};
         std::chrono::system_clock::time_point _shutdown_timeout{};
+        std::unordered_map<uint64_t, external_send_context> _external_send_ctx{};
+        bool _resources_freed{false};
 
         FASTBLOCK_DUR_MAP_CREATE(rpc_request::key_type, _enqueue_dur_map, "enqueue_request");
         FASTBLOCK_DUR_MAP_CREATE(rpc_request::key_type, _proc_rpc_map, "process_rpc_request");
@@ -1224,12 +1303,46 @@ private:
     }
 
     void free_resources() {
+        if (_resources_freed) {
+            return;
+        }
+        _resources_freed = true;
         _core_poller.unregister_poller();
         _stop_poller.unregister_poller();
         SPDK_INFOLOG(msg, "The poller of the rpc client has been unregistered\n");
 
-        _meta_pool->free();
-        _data_pool->free();
+        for (auto& [_, conn] : _connections) {
+            if (conn) {
+                conn->shutdown_now();
+            }
+        }
+        for (auto& [_, task] : _connect_tasks) {
+            if (task and task->conn) {
+                task->conn->shutdown_now();
+            }
+        }
+
+        _connections.clear();
+        _cm_records.clear();
+        _cqe_dispatch_map.clear();
+        _connect_tasks.clear();
+        _busy_connections->clear();
+        _busy_priority_connections->clear();
+
+        if (_meta_pool) {
+            _meta_pool->free();
+            _meta_pool.reset();
+        }
+        if (_data_pool) {
+            _data_pool->free();
+            _data_pool.reset();
+        }
+        _wcs.reset();
+        _cq.reset();
+        _pd.reset();
+        _dev.reset();
+        _opts.reset();
+        _channel.close();
 
         if (_stop_ctx and _stop_ctx->on_stop_cb) {
             try {
@@ -1266,7 +1379,9 @@ public:
 
     static void on_remove_connection(void* arg){
         auto* ctx = reinterpret_cast<remove_connection_context*>(arg);
-        ctx->conn->async_shutdown();
+        if (ctx->conn && not ctx->conn->is_terminated()) {
+            ctx->conn->async_shutdown();
+        }
         ctx->cb(true);
         delete ctx;
     }
@@ -1594,12 +1709,6 @@ public:
             }
 
             conn = dispatch_it->second;
-            switch (cqe->opcode) {
-            case ::IBV_WC_RECV:
-                break;
-            default:
-                continue;
-            }
 
             if (cqe->status != ::IBV_WC_SUCCESS) {
                 if (not conn->is_terminated()) {
@@ -1702,6 +1811,7 @@ private:
     event_channel _channel{};
     std::chrono::system_clock::time_point _stop_timeout_at{};
     std::unique_ptr<stop_context> _stop_ctx{nullptr};
+    bool _resources_freed{false};
 };
 
 } // namespace rdma

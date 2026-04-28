@@ -10,7 +10,11 @@
  */
 #pragma once
 
+#include <string>
+
 #include <google/protobuf/service.h>
+
+struct ibv_pd;
 
 namespace msg {
 namespace rdma {
@@ -23,7 +27,12 @@ public:
 
 public:
 
-    virtual void Reset() override { /*TODO:*/ };
+    virtual void Reset() override {
+        _failed = false;
+        _error_reason.clear();
+        _pd = nullptr;
+        _peer_address.clear();
+    };
 
     virtual bool Failed() const override { return _failed; }
 
@@ -46,9 +55,27 @@ public:
         return _failed and _error_reason == "terminating";
     }
 
+    void attach_pd(::ibv_pd* pd) noexcept {
+        _pd = pd;
+    }
+
+    ::ibv_pd* pd() const noexcept {
+        return _pd;
+    }
+
+    void attach_peer_address(std::string peer_address) {
+        _peer_address = std::move(peer_address);
+    }
+
+    const std::string& peer_address() const noexcept {
+        return _peer_address;
+    }
+
 private:
     bool _failed{false};
     std::string _error_reason{""};
+    ::ibv_pd* _pd{nullptr};
+    std::string _peer_address{};
 };
 
 } // namespace rdma

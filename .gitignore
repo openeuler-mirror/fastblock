@@ -12,3 +12,5 @@ monitor/fastblock-mon
 monitor/fastblock-client
 monitor/fastblock-fakeosd
 fastblock.json
+.vstart/
+core.*

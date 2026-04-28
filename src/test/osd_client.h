@@ -25,6 +25,7 @@
 
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
+#include <functional>
 
 static int global_osd_id = 0;
 static const char *g_osd_addr = "127.0.0.1";
@@ -83,7 +84,14 @@ public:
     }
 
     void process_response(){
-        SPDK_NOTICELOG("change membership in the pg %lu.%lu result: %d\n", _request->pool_id(), _request->pg_id(), response.state());
+        if (ctrlr.Failed()) {
+            response.set_state(err::RAFT_ERR_NO_CONNECTED);
+            SPDK_ERRLOG("change membership in the pg %lu.%lu rpc failed: %s\n",
+              _request->pool_id(), _request->pg_id(), ctrlr.ErrorText().c_str());
+        } else {
+            SPDK_NOTICELOG("change membership in the pg %lu.%lu result: %d\n",
+              _request->pool_id(), _request->pg_id(), response.state());
+        }
         delete this;
     }
 
@@ -104,7 +112,14 @@ public:
     }
 
     void process_response(){
-        SPDK_NOTICELOG("create pg %lu.%lu result: %d\n", _request->pool_id(), _request->pg_id(), response.state());
+        if (ctrlr.Failed()) {
+            response.set_state(err::RAFT_ERR_NO_CONNECTED);
+            SPDK_ERRLOG("create pg %lu.%lu rpc failed: %s\n",
+              _request->pool_id(), _request->pg_id(), ctrlr.ErrorText().c_str());
+        } else {
+            SPDK_NOTICELOG("create pg %lu.%lu result: %d\n",
+              _request->pool_id(), _request->pg_id(), response.state());
+        }
         delete this;
     }
 
@@ -112,6 +127,76 @@ public:
     osd::create_pg_response response;
 private:
     osd::create_pg_request* _request;
+};
+
+class write_object_source{
+public:
+    using callback_type = std::function<void(int32_t)>;
+
+    write_object_source(osd::write_request* request, callback_type cb)
+    : _request(request)
+    , _cb(std::move(cb)) {}
+
+    ~write_object_source(){
+        if(_request)
+            delete _request;
+    }
+
+    void process_response(){
+        int32_t state = response.state();
+        if (ctrlr.Failed()) {
+            state = err::RAFT_ERR_NO_CONNECTED;
+            SPDK_ERRLOG("write object for pg %lu.%lu rpc failed: %s\n",
+              _request->pool_id(), _request->pg_id(), ctrlr.ErrorText().c_str());
+        } else {
+            SPDK_NOTICELOG("write object for pg %lu.%lu result: %d\n",
+              _request->pool_id(), _request->pg_id(), state);
+        }
+        _cb(state);
+        delete this;
+    }
+
+    msg::rdma::rpc_controller ctrlr;
+    osd::write_reply response;
+private:
+    osd::write_request* _request;
+    callback_type _cb;
+};
+
+class read_object_source{
+public:
+    using callback_type = std::function<void(int32_t, const std::string&)>;
+
+    read_object_source(osd::read_request* request, callback_type cb)
+    : _request(request)
+    , _cb(std::move(cb)) {}
+
+    ~read_object_source(){
+        if(_request)
+            delete _request;
+    }
+
+    void process_response(){
+        int32_t state = response.state();
+        std::string data = response.data();
+        if (ctrlr.Failed()) {
+            state = err::RAFT_ERR_NO_CONNECTED;
+            SPDK_ERRLOG("read object for pg %lu.%lu rpc failed: %s\n",
+              _request->pool_id(), _request->pg_id(), ctrlr.ErrorText().c_str());
+            data.clear();
+        } else {
+            SPDK_NOTICELOG("read object for pg %lu.%lu result: %d, size: %lu\n",
+              _request->pool_id(), _request->pg_id(), state, data.size());
+        }
+        _cb(state, data);
+        delete this;
+    }
+
+    msg::rdma::rpc_controller ctrlr;
+    osd::read_reply response;
+private:
+    osd::read_request* _request;
+    callback_type _cb;
 };
 
 class osd_client {
@@ -251,6 +336,52 @@ public:
         }
 
         stub->process_create_pg(&source->ctrlr, request, &source->response, done);
+        return err::E_SUCCESS;
+    }
+
+    int write_object(uint64_t pool_id, uint64_t pg_id, const std::string& object_name,
+                     uint64_t offset, const std::string& data,
+                     write_object_source::callback_type cb){
+        auto shard_id = 0;
+        osd::write_request* request = new osd::write_request();
+        request->set_pool_id(pool_id);
+        request->set_pg_id(pg_id);
+        request->set_object_name(object_name);
+        request->set_offset(offset);
+        request->set_data(data);
+
+        auto * source = new write_object_source(request, std::move(cb));
+        auto done = google::protobuf::NewCallback(source, &write_object_source::process_response);
+        auto stub = _get_stub(shard_id, _leader_id);
+        if(!stub){
+            delete source;
+            return err::RAFT_ERR_NO_CONNECTED;
+        }
+
+        stub->process_write(&source->ctrlr, request, &source->response, done);
+        return err::E_SUCCESS;
+    }
+
+    int read_object(uint64_t pool_id, uint64_t pg_id, const std::string& object_name,
+                    uint64_t offset, uint64_t length,
+                    read_object_source::callback_type cb){
+        auto shard_id = 0;
+        osd::read_request* request = new osd::read_request();
+        request->set_pool_id(pool_id);
+        request->set_pg_id(pg_id);
+        request->set_object_name(object_name);
+        request->set_offset(offset);
+        request->set_length(length);
+
+        auto * source = new read_object_source(request, std::move(cb));
+        auto done = google::protobuf::NewCallback(source, &read_object_source::process_response);
+        auto stub = _get_stub(shard_id, _leader_id);
+        if(!stub){
+            delete source;
+            return err::RAFT_ERR_NO_CONNECTED;
+        }
+
+        stub->process_read(&source->ctrlr, request, &source->response, done);
         return err::E_SUCCESS;
     }
 

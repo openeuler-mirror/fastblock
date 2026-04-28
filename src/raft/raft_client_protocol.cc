@@ -11,6 +11,62 @@
 #include "raft/raft.h"
 #include "raft/raft_client_protocol.h"
 #include "raft/pg_group.h"
+#include "fastblock/rpc/osd_msg.pb.h"
+
+namespace {
+
+class create_pg_msg_source {
+public:
+    create_pg_msg_source(
+      osd::create_pg_request* request,
+      uint32_t shard_id,
+      int32_t target_node_id,
+      std::shared_ptr<msg::rdma::client::connection> conn,
+      std::function<void(int)> cb,
+      raft_client_protocol* rcp)
+      : _request(request)
+      , _shard_id(shard_id)
+      , _target_node_id(target_node_id)
+      , _conn(std::move(conn))
+      , _cb(std::move(cb))
+      , _rcp(rcp) {}
+
+    ~create_pg_msg_source() {
+        if (_request) {
+            delete _request;
+        }
+    }
+
+    void process_response() {
+        auto& core_shard = core_sharded::get_core_sharded();
+        core_shard.invoke_on(
+          _shard_id,
+          [this]() {
+            int result = response.state();
+            if (ctrlr.Failed()) {
+                _rcp->remove_connect(_shard_id, _target_node_id, [](void*, int){});
+                result = err::RAFT_ERR_NO_CONNECTED;
+            }
+            if (_cb) {
+                _cb(result);
+            }
+            delete this;
+          });
+    }
+
+    msg::rdma::rpc_controller ctrlr;
+    osd::create_pg_response response;
+
+private:
+    osd::create_pg_request* _request;
+    uint32_t _shard_id;
+    int32_t _target_node_id;
+    std::shared_ptr<msg::rdma::client::connection> _conn;
+    std::function<void(int)> _cb;
+    raft_client_protocol* _rcp;
+};
+
+} // namespace
 
 void heartbeat_source::process_response(){
     auto& core_shard = core_sharded::get_core_sharded();
@@ -120,6 +176,32 @@ int raft_client_protocol::send_appendentries(raft_server_t *raft, int32_t target
         return err::RAFT_ERR_NO_CONNECTED;
     }
     stub->append_entries(&source->ctrlr, request, &source->response, done);
+    return err::E_SUCCESS;
+}
+
+int raft_client_protocol::send_create_pg(
+  int32_t target_node_id,
+  uint64_t pool_id,
+  uint64_t pg_id,
+  int64_t revision_id,
+  std::function<void(int)> cb) {
+    auto shard_id = _get_shard_id();
+    auto conn = _cache->get_connect(shard_id, target_node_id);
+    if (!conn) {
+        SPDK_INFOLOG(pg_group, "pg %lu.%lu not connect to node %d in shard %u\n",
+                     pool_id, pg_id, target_node_id, shard_id);
+        return err::RAFT_ERR_NO_CONNECTED;
+    }
+
+    auto* request = new osd::create_pg_request();
+    request->set_pool_id(pool_id);
+    request->set_pg_id(pg_id);
+    request->set_vision_id(revision_id);
+
+    auto* source = new create_pg_msg_source(request, shard_id, target_node_id, conn, std::move(cb), this);
+    auto* done = google::protobuf::NewCallback(source, &create_pg_msg_source::process_response);
+    osd::rpc_service_osd_Stub stub(conn.get());
+    stub.process_create_pg(&source->ctrlr, request, &source->response, done);
     return err::E_SUCCESS;
 }
 

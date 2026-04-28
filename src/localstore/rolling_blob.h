@@ -560,6 +560,7 @@ public:
         if (rberrno) {
             SPDK_ERRLOG("load (rblob pos:%lu len:%lu) read failed:%s\n",
                         ctx->pos, ctx->length, spdk_strerror(rberrno));
+            free_buffer_list(ctx->bl);
             ctx->cb_fn(ctx->arg, rberrno);
             delete ctx;
             return;
@@ -848,6 +849,8 @@ inline void make_rolling_blob(struct spdk_blob_store *bs, struct spdk_io_channel
   ctx = new make_rblob_ctx(bs, channel, shard_id, cb_fn, arg);
   spdk_blob_opts_init(&opts, sizeof(opts));
   opts.num_clusters = size / spdk_bs_get_cluster_size(bs);
+  opts.thin_provision = false;
+  opts.use_extent_table = false;
   spdk_bs_create_blob_ext(bs, &opts, make_create_done, ctx);
 }
 

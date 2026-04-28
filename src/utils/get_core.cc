@@ -43,6 +43,7 @@ static std::vector<int> get_all_cores() {
                     cores.push_back(core);
                 }
             }
+            numa_free_cpumask(cpumask);
             return std::move(cores);
         }
     }

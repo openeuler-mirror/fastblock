@@ -225,6 +225,25 @@ void client::send_cluster_map_request() {
 }
 
 bool client::core_poller_handler() {
+    auto now = std::chrono::system_clock::now();
+    constexpr auto stale_cluster_map_timeout = std::chrono::microseconds(_poll_period_us * 3);
+    if (_last_cluster_map_at != std::chrono::system_clock::time_point{}
+        && _on_flight_requests.empty()
+        && _request_counter > 0
+        && now - _last_cluster_map_at > stale_cluster_map_timeout) {
+        SPDK_WARNLOG(
+          "monitor client of osd %d has not received cluster map responses for %ld us, reconnecting\n",
+          _self_osd_id,
+          std::chrono::duration_cast<std::chrono::microseconds>(now - _last_cluster_map_at).count());
+        _cluster->connect();
+        _request_counter = 0;
+        _read_bytes = 0;
+        _should_read_bytes = _msg_len_size;
+        _is_read_len = true;
+        _cached = client::cached_request_class::none;
+        _responses.clear();
+        _internal_requests.clear();
+    }
     return handle_response() | consume_request();
 }
 
@@ -1085,7 +1104,8 @@ void client::send_pg_member_change_finished_notify(
   int result,
   uint64_t pool_id,
   uint64_t pg_id,
-  std::vector<int32_t> osd_list) {
+  std::vector<int32_t> osd_list,
+  on_response_callback_type&& cb) {
     auto req = std::make_unique<msg::Request>();
     auto* mem_req = req->mutable_pg_member_change_finish_request();
     mem_req->set_result(result);
@@ -1095,12 +1115,15 @@ void client::send_pg_member_change_finished_notify(
         mem_req->add_osdlist(osd_id);
     }
 
-    auto mem_cb = [](const response_status status, request_context*ctx){
-        SPDK_DEBUGLOG(mon, "notify monitor (change member of pg has been finished).\n");
-        if (status != response_status::ok) {
-            SPDK_ERRLOG("notify monitor (change member of pg has been finished) failed\n");
-        }
-    };
+    auto mem_cb = std::move(cb);
+    if (!mem_cb) {
+        mem_cb = [](const response_status status, request_context*ctx){
+            SPDK_DEBUGLOG(mon, "notify monitor (change member of pg has been finished).\n");
+            if (status != response_status::ok) {
+                SPDK_ERRLOG("notify monitor (change member of pg has been finished) failed\n");
+            }
+        };
+    }
 
     auto* req_ctx = new client::request_context{
       this, std::move(req), std::monostate{}, std::move(mem_cb)};
