@@ -178,12 +178,18 @@ void kfastblock_request_record_object_response(
 	s32 response_status,
 	u32 response_body_len,
 	u32 transport_flags);
+void kfastblock_request_clear_object_response(
+	struct kfastblock_request *kf_req,
+	unsigned int object_index);
 int kfastblock_request_record_object_response_by_seq(
 	struct kfastblock_request *kf_req,
 	u64 seq,
 	s32 response_status,
 	u32 response_body_len,
 	u32 transport_flags);
+int kfastblock_request_clear_object_response_by_seq(
+	struct kfastblock_request *kf_req,
+	u64 seq);
 void kfastblock_request_note_object_retry(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,

@@ -609,6 +609,13 @@ void kfastblock_request_record_object_response(
 						    transport_flags);
 }
 
+void kfastblock_request_clear_object_response(
+	struct kfastblock_request *kf_req,
+	unsigned int object_index)
+{
+	kfastblock_request_record_object_response(kf_req, object_index, 0, 0, 0);
+}
+
 int kfastblock_request_record_object_response_by_seq(
 	struct kfastblock_request *kf_req,
 	u64 seq,
@@ -625,9 +632,17 @@ int kfastblock_request_record_object_response_by_seq(
 
 	kfastblock_request_record_object_response(kf_req, object_index,
 						  response_status,
-						  response_body_len,
-						  transport_flags);
+							  response_body_len,
+							  transport_flags);
 	return 0;
+}
+
+int kfastblock_request_clear_object_response_by_seq(
+	struct kfastblock_request *kf_req,
+	u64 seq)
+{
+	return kfastblock_request_record_object_response_by_seq(kf_req, seq,
+								 0, 0, 0);
 }
 
 void kfastblock_request_note_object_retry(
@@ -768,13 +783,11 @@ int kfastblock_request_requeue_object(
 	runtime->state = KFASTBLOCK_OBJECT_REQUEUE;
 	runtime->last_error = ret;
 	runtime->last_retry_jiffies = jiffies;
-	runtime->response_status = 0;
-	runtime->response_body_len = 0;
-	runtime->transport_flags = 0;
 	runtime->wire_seq = 0;
 	runtime->state = KFASTBLOCK_OBJECT_READY;
 	spin_unlock_irqrestore(&kf_req->object_state_lock, flags);
 
+	kfastblock_request_clear_object_response(kf_req, object_index);
 	kfastblock_request_note_object_retry(kf_req, object_index, ret);
 	return 0;
 }
