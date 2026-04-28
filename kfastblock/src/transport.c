@@ -1051,6 +1051,21 @@ static int kfastblock_transport_complete_exchange_response(
 	return ret;
 }
 
+static void kfastblock_transport_release_response_and_exchange(
+	struct kfastblock_transport_exchange_ctx *exchange,
+	struct kfastblock_transport_response_ctx *response,
+	int *ret)
+{
+	int local_ret = ret ? *ret : 0;
+
+	if (exchange)
+		local_ret = kfastblock_transport_complete_exchange_response(
+			exchange, response, local_ret);
+	if (ret)
+		*ret = local_ret;
+	kfastblock_transport_response_ctx_release(response);
+}
+
 static int kfastblock_transport_response_decode_leader(
 	struct kfastblock_transport_response_ctx *response,
 	struct kfastblock_leader_info *leader)
@@ -1759,12 +1774,11 @@ static int kfastblock_transport_submit_object_io(
 		}
 		if (!ret)
 			ret = kfastblock_transport_match_exchange_response(&exchange);
-		ret = kfastblock_transport_complete_exchange_response(&exchange,
-							      &response, ret);
+		kfastblock_transport_release_response_and_exchange(&exchange,
+							      &response, &ret);
 		actions = ret ? kfastblock_recovery_classify_object_failure(ret) : 0;
 		kfastblock_recovery_finalize_osd_socket(vol, cached, &leader, ret,
 							actions);
-		kfastblock_transport_response_ctx_release(&response);
 		cached = NULL;
 		if (ret) {
 			if (actions) {

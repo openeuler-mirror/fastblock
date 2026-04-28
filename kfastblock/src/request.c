@@ -645,6 +645,23 @@ void kfastblock_request_note_object_retry(
 	kfastblock_volume_account_pipeline_retry(kf_req->vol);
 }
 
+int kfastblock_request_note_object_retry_by_seq(
+	struct kfastblock_request *kf_req,
+	u64 seq,
+	int ret)
+{
+	unsigned int object_index;
+	int lookup_ret;
+
+	lookup_ret = kfastblock_request_lookup_object_by_seq(kf_req, seq,
+							     &object_index);
+	if (lookup_ret)
+		return lookup_ret;
+
+	kfastblock_request_note_object_retry(kf_req, object_index, ret);
+	return 0;
+}
+
 int kfastblock_request_lookup_object_by_seq(
 	struct kfastblock_request *kf_req,
 	u64 seq,
