@@ -138,6 +138,21 @@ bool kfastblock_pipeline_empty(struct kfastblock_pipeline_state *state)
 	return kfastblock_pipeline_inflight_entries(state) == 0;
 }
 
+bool kfastblock_pipeline_full(struct kfastblock_pipeline_state *state)
+{
+	unsigned long flags;
+	bool full = false;
+
+	if (!state)
+		return false;
+
+	spin_lock_irqsave(&state->lock, flags);
+	full = state->capacity != 0 && state->inflight >= state->capacity;
+	spin_unlock_irqrestore(&state->lock, flags);
+
+	return full;
+}
+
 bool kfastblock_pipeline_has_free_entries(
 	struct kfastblock_pipeline_state *state)
 {
