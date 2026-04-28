@@ -283,6 +283,14 @@ static void kfastblock_diag_collect_pipeline(
 	snapshot->pipeline.free_entries = pipe_snapshot.free_entries;
 	snapshot->pipeline.utilization_pct =
 		kfastblock_volume_pipeline_utilization_pct(vol);
+	snapshot->pipeline.oldest_inflight_seq =
+		kfastblock_volume_pipeline_oldest_inflight_seq(vol);
+	snapshot->pipeline.newest_inflight_seq =
+		kfastblock_volume_pipeline_newest_inflight_seq(vol);
+	snapshot->pipeline.oldest_queued_jiffies =
+		kfastblock_volume_pipeline_oldest_queued_jiffies(vol);
+	snapshot->pipeline.newest_queued_jiffies =
+		kfastblock_volume_pipeline_newest_queued_jiffies(vol);
 	snapshot->pipeline.request_prepares =
 		atomic64_read(&vol->pipeline_stats.request_prepares);
 	snapshot->pipeline.request_cleanups =
