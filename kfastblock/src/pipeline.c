@@ -259,5 +259,16 @@ void kfastblock_pipeline_snapshot(struct kfastblock_pipeline_state *state,
 	snapshot->free_entries = 0;
 	list_for_each_entry(entry, &state->free_list, link)
 		snapshot->free_entries++;
+	list_for_each_entry(entry, &state->inflight_list, link) {
+		if (!snapshot->oldest_inflight_seq ||
+		    entry->queued_jiffies < snapshot->oldest_queued_jiffies) {
+			snapshot->oldest_inflight_seq = entry->seq;
+			snapshot->oldest_queued_jiffies = entry->queued_jiffies;
+		}
+		if (entry->queued_jiffies >= snapshot->newest_queued_jiffies) {
+			snapshot->newest_inflight_seq = entry->seq;
+			snapshot->newest_queued_jiffies = entry->queued_jiffies;
+		}
+	}
 	spin_unlock_irqrestore(&state->lock, flags);
 }
