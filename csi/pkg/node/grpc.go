@@ -93,3 +93,42 @@ func (s *GRPCService) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstag
 	}
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }
+
+func (s *GRPCService) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
+	if req.GetVolumeId() == "" {
+		return nil, fmt.Errorf("volume id is required")
+	}
+	if req.GetStagingTargetPath() == "" {
+		return nil, fmt.Errorf("staging target path is required")
+	}
+	if req.GetTargetPath() == "" {
+		return nil, fmt.Errorf("target path is required")
+	}
+	if req.GetVolumeCapability() == nil || req.GetVolumeCapability().GetBlock() == nil {
+		return nil, fmt.Errorf("only block volume capability is supported")
+	}
+	if err := s.service.PublishVolume(ctx, PublishVolumeRequest{
+		VolumeID:          req.GetVolumeId(),
+		StagingTargetPath: req.GetStagingTargetPath(),
+		TargetPath:        req.GetTargetPath(),
+	}); err != nil {
+		return nil, err
+	}
+	return &csi.NodePublishVolumeResponse{}, nil
+}
+
+func (s *GRPCService) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
+	if req.GetVolumeId() == "" {
+		return nil, fmt.Errorf("volume id is required")
+	}
+	if req.GetTargetPath() == "" {
+		return nil, fmt.Errorf("target path is required")
+	}
+	if err := s.service.UnpublishVolume(ctx, UnpublishVolumeRequest{
+		VolumeID:   req.GetVolumeId(),
+		TargetPath: req.GetTargetPath(),
+	}); err != nil {
+		return nil, err
+	}
+	return &csi.NodeUnpublishVolumeResponse{}, nil
+}
