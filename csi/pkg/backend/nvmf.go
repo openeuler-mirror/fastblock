@@ -54,7 +54,7 @@ func (b *NVMFBackend) Stage(ctx context.Context, _ string, volumeCtx VolumeConte
 	if ready, _ := b.IsReady(ctx, "", volumeCtx); ready {
 		return b.GetDevice(ctx, "", volumeCtx)
 	}
-	if err := b.runner.Run(ctx, "nvme", "connect", "-t", volumeCtx.Transport, "-n", volumeCtx.NQN, "-a", volumeCtx.Traddr, "-s", volumeCtx.Trsvcid); err != nil {
+	if err := b.runner.Run(ctx, "nvme", buildConnectArgs(volumeCtx)...); err != nil {
 		return "", err
 	}
 
@@ -80,7 +80,7 @@ func (b *NVMFBackend) Unstage(ctx context.Context, _ string, volumeCtx VolumeCon
 	if err := ValidateVolumeContext(volumeCtx); err != nil {
 		return err
 	}
-	return b.runner.Run(ctx, "nvme", "disconnect", "-n", volumeCtx.NQN)
+	return b.runner.Run(ctx, "nvme", buildDisconnectArgs(volumeCtx.NQN)...)
 }
 
 func (b *NVMFBackend) GetDevice(_ context.Context, _ string, volumeCtx VolumeContext) (string, error) {
@@ -175,4 +175,21 @@ func readTrimmed(path string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(data)), nil
+}
+
+func buildConnectArgs(volumeCtx VolumeContext) []string {
+	return []string{
+		"connect",
+		"-t", volumeCtx.Transport,
+		"-n", volumeCtx.NQN,
+		"-a", volumeCtx.Traddr,
+		"-s", volumeCtx.Trsvcid,
+	}
+}
+
+func buildDisconnectArgs(nqn string) []string {
+	return []string{
+		"disconnect",
+		"-n", nqn,
+	}
 }
