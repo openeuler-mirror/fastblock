@@ -993,6 +993,12 @@ unsigned int kfastblock_request_dispatchable_objects(
 	return count;
 }
 
+bool kfastblock_request_has_dispatchable(
+	const struct kfastblock_request *kf_req)
+{
+	return kfastblock_request_dispatchable_objects(kf_req) != 0;
+}
+
 unsigned int kfastblock_request_active_objects(
 	const struct kfastblock_request *kf_req)
 {

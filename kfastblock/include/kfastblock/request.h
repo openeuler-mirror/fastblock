@@ -241,6 +241,8 @@ unsigned int kfastblock_request_dispatch_credits(
 	const struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_dispatchable_objects(
 	const struct kfastblock_request *kf_req);
+bool kfastblock_request_has_dispatchable(
+	const struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_active_objects(
 	const struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_state_count(
