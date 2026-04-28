@@ -2106,6 +2106,44 @@ static int kfastblock_transport_prepare_object_submission(
 	return 0;
 }
 
+static bool kfastblock_transport_prepare_executable_object_attempt(
+	struct kfastblock_volume *vol,
+	struct kfastblock_request *kf_req,
+	const struct kfastblock_object_extent *extent,
+	enum req_op op,
+	struct kfastblock_request_pg_hint *hint,
+	struct kfastblock_leader_info *leader,
+	unsigned int object_index,
+	u8 raw_opcode,
+	int attempt,
+	struct kfastblock_cached_socket **cached,
+	struct socket **sock,
+	struct kfastblock_transport_exchange_ctx *exchange,
+	int *ret)
+{
+	if (!ret)
+		return false;
+
+	*ret = kfastblock_transport_begin_object_attempt(
+		vol, kf_req, hint, leader, object_index, raw_opcode, attempt,
+		cached, sock, exchange);
+	if (*ret) {
+		return kfastblock_transport_retry_begin_object_attempt_failure(
+			vol, kf_req, extent, op, hint, leader, object_index,
+			cached, *ret);
+	}
+
+	*ret = kfastblock_transport_maybe_inject_fault(
+		vol, KFASTBLOCK_FAULT_OBJECT_IO);
+	if (*ret) {
+		return kfastblock_transport_retry_faulted_object_attempt(
+			vol, kf_req, extent, op, hint, leader, object_index,
+			cached, exchange, *ret);
+	}
+
+	return false;
+}
+
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
@@ -2140,25 +2178,13 @@ static int kfastblock_transport_submit_object_io(
 		goto out;
 
 	for (attempt = 0; attempt < 2; ++attempt) {
-		ret = kfastblock_transport_begin_object_attempt(
-			vol, kf_req, hint, &leader, object_index, raw_opcode,
-			attempt, &cached, &sock, &exchange);
-		if (ret) {
-			if (kfastblock_transport_retry_begin_object_attempt_failure(
-				    vol, kf_req, extent, op, hint, &leader,
-				    object_index, &cached, ret))
-				continue;
-			goto out;
-		}
-		ret = kfastblock_transport_maybe_inject_fault(
-			vol, KFASTBLOCK_FAULT_OBJECT_IO);
-		if (ret) {
-			if (kfastblock_transport_retry_faulted_object_attempt(
-				    vol, kf_req, extent, op, hint, &leader,
-				    object_index, &cached, &exchange, ret))
-				continue;
-			goto out;
-		}
+		if (kfastblock_transport_prepare_executable_object_attempt(
+			    vol, kf_req, extent, op, hint, &leader,
+			    object_index, raw_opcode, attempt, &cached, &sock,
+			    &exchange, &ret))
+			continue;
+		if (ret)
+				goto out;
 		ret = kfastblock_transport_run_object_exchange(
 			sock, kf_req, extent, op, buf, &exchange, &response);
 		if (kfastblock_transport_finalize_completed_object_attempt(
