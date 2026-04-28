@@ -1825,6 +1825,22 @@ static int kfastblock_transport_pick_object_leader(
 	return kfastblock_transport_query_pg_leader(kf_req, hint, leader);
 }
 
+static int kfastblock_transport_normalize_object_ret(
+	enum req_op op,
+	const struct kfastblock_object_extent *extent,
+	void *buf,
+	int ret)
+{
+	if (ret == -ENOENT && op == REQ_OP_READ) {
+		memset(buf, 0, extent->length);
+		return 0;
+	}
+	if (ret == -ENOENT && op == REQ_OP_DISCARD)
+		return 0;
+
+	return ret;
+}
+
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
@@ -1922,12 +1938,8 @@ static int kfastblock_transport_submit_object_io(
 		ret = kfastblock_transport_execute_object_opcode(
 			sock, kf_req->request_pool_id, extent, op, buf, seq,
 			&response);
-		if (ret == -ENOENT && op == REQ_OP_READ) {
-			memset(buf, 0, extent->length);
-			ret = 0;
-		} else if (ret == -ENOENT && op == REQ_OP_DISCARD) {
-			ret = 0;
-		}
+		ret = kfastblock_transport_normalize_object_ret(op, extent, buf,
+								ret);
 		if (!ret)
 			ret = kfastblock_transport_match_exchange_response(&exchange);
 		kfastblock_transport_release_response_and_exchange(&exchange,
