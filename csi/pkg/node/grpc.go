@@ -34,6 +34,12 @@ func (s *GRPCService) NodeGetInfo(context.Context, *csi.NodeGetInfoRequest) (*cs
 }
 
 func (s *GRPCService) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
+	if req.GetVolumeId() == "" {
+		return nil, fmt.Errorf("volume id is required")
+	}
+	if req.GetStagingTargetPath() == "" {
+		return nil, fmt.Errorf("staging target path is required")
+	}
 	devicePath, err := s.service.StageVolumeFromPublishContext(ctx, PublishContextStageRequest{
 		VolumeID:       req.GetVolumeId(),
 		PublishContext: req.GetPublishContext(),
@@ -60,6 +66,12 @@ func (s *GRPCService) NodeStageVolume(ctx context.Context, req *csi.NodeStageVol
 }
 
 func (s *GRPCService) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
+	if req.GetVolumeId() == "" {
+		return nil, fmt.Errorf("volume id is required")
+	}
+	if req.GetStagingTargetPath() == "" {
+		return nil, fmt.Errorf("staging target path is required")
+	}
 	state, err := mount.ReadStageState(req.GetStagingTargetPath())
 	if err != nil {
 		return nil, err
