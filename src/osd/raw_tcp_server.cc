@@ -17,15 +17,18 @@
 
 #include <arpa/inet.h>
 #include <endian.h>
+#include <google/protobuf/stubs/callback.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include <cerrno>
+#include <condition_variable>
 #include <cstdint>
 #include <cstring>
 #include <exception>
 #include <limits>
+#include <mutex>
 #include <random>
 #include <string>
 #include <vector>
@@ -38,6 +41,9 @@ constexpr uint8_t raw_version_minor = 0U;
 constexpr uint8_t raw_service_osd = 2U;
 
 constexpr uint8_t raw_op_get_leader = 1U;
+constexpr uint8_t raw_op_read_object = 2U;
+constexpr uint8_t raw_op_write_object = 3U;
+constexpr uint8_t raw_op_delete_object = 4U;
 
 constexpr uint32_t raw_flag_response = 1U << 0;
 
@@ -79,6 +85,57 @@ struct raw_get_leader_rsp {
     uint16_t leader_port;
     uint16_t address_len;
 } __attribute__((packed));
+
+struct raw_read_object_req {
+    uint32_t pool_id;
+    uint32_t pg_id;
+    uint64_t offset;
+    uint32_t length;
+    uint16_t object_name_len;
+    uint16_t reserved;
+} __attribute__((packed));
+
+struct raw_read_object_rsp {
+    uint32_t data_len;
+    uint32_t reserved;
+} __attribute__((packed));
+
+struct raw_write_object_req {
+    uint32_t pool_id;
+    uint32_t pg_id;
+    uint64_t offset;
+    uint32_t data_len;
+    uint16_t object_name_len;
+    uint16_t reserved;
+} __attribute__((packed));
+
+struct raw_delete_object_req {
+    uint32_t pool_id;
+    uint32_t pg_id;
+    uint16_t object_name_len;
+    uint16_t reserved;
+} __attribute__((packed));
+
+class blocking_done : public google::protobuf::Closure {
+public:
+    void Run() override {
+        std::lock_guard<std::mutex> lk(_mutex);
+        _done = true;
+        _cv.notify_all();
+    }
+
+    void wait() {
+        std::unique_lock<std::mutex> lk(_mutex);
+        _cv.wait(lk, [this]() {
+            return _done;
+        });
+    }
+
+private:
+    std::mutex _mutex{};
+    std::condition_variable _cv{};
+    bool _done{false};
+};
 
 uint16_t random_raw_port() {
     thread_local std::mt19937 gen{std::random_device{}()};
@@ -270,6 +327,66 @@ int create_listener(const std::string& bind_address, uint16_t* port) noexcept {
     return -EADDRINUSE;
 }
 
+int execute_read(osd_service* service,
+                 uint32_t pool_id,
+                 uint32_t pg_id,
+                 const std::string& object_name,
+                 uint64_t offset,
+                 uint32_t length,
+                 std::string* data) {
+    osd::read_request req{};
+    osd::read_reply rsp{};
+    blocking_done done{};
+
+    req.set_pool_id(pool_id);
+    req.set_pg_id(pg_id);
+    req.set_object_name(object_name);
+    req.set_offset(offset);
+    req.set_length(length);
+    service->process_read(nullptr, &req, &rsp, &done);
+    done.wait();
+    if (rsp.state() == err::E_SUCCESS && data) {
+        *data = rsp.data();
+    }
+    return rsp.state();
+}
+
+int execute_write(osd_service* service,
+                  uint32_t pool_id,
+                  uint32_t pg_id,
+                  const std::string& object_name,
+                  uint64_t offset,
+                  const std::string& data) {
+    osd::write_request req{};
+    osd::write_reply rsp{};
+    blocking_done done{};
+
+    req.set_pool_id(pool_id);
+    req.set_pg_id(pg_id);
+    req.set_object_name(object_name);
+    req.set_offset(offset);
+    req.set_data(data);
+    service->process_write(nullptr, &req, &rsp, &done);
+    done.wait();
+    return rsp.state();
+}
+
+int execute_delete(osd_service* service,
+                   uint32_t pool_id,
+                   uint32_t pg_id,
+                   const std::string& object_name) {
+    osd::delete_request req{};
+    osd::delete_reply rsp{};
+    blocking_done done{};
+
+    req.set_pool_id(pool_id);
+    req.set_pg_id(pg_id);
+    req.set_object_name(object_name);
+    service->process_delete(nullptr, &req, &rsp, &done);
+    done.wait();
+    return rsp.state();
+}
+
 } // namespace
 
 osd_raw_tcp_server::osd_raw_tcp_server(osd_service* service)
@@ -415,6 +532,172 @@ void osd_raw_tcp_server::handle_connection(const int client_fd, const uint32_t s
         }
 
         if (req_hdr.opcode != raw_op_get_leader) {
+            if (req_hdr.opcode == raw_op_read_object) {
+                raw_read_object_req req{};
+                raw_read_object_rsp rsp{};
+                std::string data{};
+                std::string object_name{};
+                uint16_t object_name_len{};
+                uint32_t length{};
+                int state{};
+
+                if (body.size() < sizeof(req)) {
+                    if (!write_error_response(client_fd, req_hdr, raw_status_invalid_request, _running)) {
+                        break;
+                    }
+                    continue;
+                }
+
+                std::memcpy(&req, body.data(), sizeof(req));
+                object_name_len = le16toh(req.object_name_len);
+                length = le32toh(req.length);
+                if (body.size() != sizeof(req) + object_name_len || object_name_len == 0) {
+                    if (!write_error_response(client_fd, req_hdr, raw_status_invalid_request, _running)) {
+                        break;
+                    }
+                    continue;
+                }
+
+                object_name.assign(
+                  reinterpret_cast<const char*>(body.data() + sizeof(req)),
+                  object_name_len);
+                state = execute_read(
+                  _service,
+                  le32toh(req.pool_id),
+                  le32toh(req.pg_id),
+                  object_name,
+                  le64toh(req.offset),
+                  length,
+                  &data);
+                if (state != err::E_SUCCESS) {
+                    if (!write_error_response(
+                          client_fd,
+                          req_hdr,
+                          static_cast<uint32_t>(raw_status_from_errno(state)),
+                          _running)) {
+                        break;
+                    }
+                    continue;
+                }
+
+                rsp.data_len = htole32(static_cast<uint32_t>(data.size()));
+                rsp.reserved = 0;
+                std::vector<uint8_t> rsp_body(sizeof(rsp) + data.size());
+                std::memcpy(rsp_body.data(), &rsp, sizeof(rsp));
+                if (!data.empty()) {
+                    std::memcpy(rsp_body.data() + sizeof(rsp), data.data(), data.size());
+                }
+                req_hdr.status = htole32(raw_status_ok);
+                if (!write_message(client_fd, req_hdr, rsp_body.data(), rsp_body.size(), _running)) {
+                    break;
+                }
+                continue;
+            }
+
+            if (req_hdr.opcode == raw_op_write_object) {
+                raw_write_object_req req{};
+                std::string object_name{};
+                std::string data{};
+                uint16_t object_name_len{};
+                uint32_t data_len{};
+                int state{};
+
+                if (body.size() < sizeof(req)) {
+                    if (!write_error_response(client_fd, req_hdr, raw_status_invalid_request, _running)) {
+                        break;
+                    }
+                    continue;
+                }
+
+                std::memcpy(&req, body.data(), sizeof(req));
+                object_name_len = le16toh(req.object_name_len);
+                data_len = le32toh(req.data_len);
+                if (body.size() != sizeof(req) + object_name_len + data_len || object_name_len == 0) {
+                    if (!write_error_response(client_fd, req_hdr, raw_status_invalid_request, _running)) {
+                        break;
+                    }
+                    continue;
+                }
+
+                object_name.assign(
+                  reinterpret_cast<const char*>(body.data() + sizeof(req)),
+                  object_name_len);
+                data.assign(
+                  reinterpret_cast<const char*>(body.data() + sizeof(req) + object_name_len),
+                  data_len);
+                state = execute_write(
+                  _service,
+                  le32toh(req.pool_id),
+                  le32toh(req.pg_id),
+                  object_name,
+                  le64toh(req.offset),
+                  data);
+                if (state != err::E_SUCCESS) {
+                    if (!write_error_response(
+                          client_fd,
+                          req_hdr,
+                          static_cast<uint32_t>(raw_status_from_errno(state)),
+                          _running)) {
+                        break;
+                    }
+                    continue;
+                }
+
+                req_hdr.status = htole32(raw_status_ok);
+                if (!write_message(client_fd, req_hdr, nullptr, 0, _running)) {
+                    break;
+                }
+                continue;
+            }
+
+            if (req_hdr.opcode == raw_op_delete_object) {
+                raw_delete_object_req req{};
+                std::string object_name{};
+                uint16_t object_name_len{};
+                int state{};
+
+                if (body.size() < sizeof(req)) {
+                    if (!write_error_response(client_fd, req_hdr, raw_status_invalid_request, _running)) {
+                        break;
+                    }
+                    continue;
+                }
+
+                std::memcpy(&req, body.data(), sizeof(req));
+                object_name_len = le16toh(req.object_name_len);
+                if (body.size() != sizeof(req) + object_name_len || object_name_len == 0) {
+                    if (!write_error_response(client_fd, req_hdr, raw_status_invalid_request, _running)) {
+                        break;
+                    }
+                    continue;
+                }
+
+                object_name.assign(
+                  reinterpret_cast<const char*>(body.data() + sizeof(req)),
+                  object_name_len);
+                state = execute_delete(
+                  _service,
+                  le32toh(req.pool_id),
+                  le32toh(req.pg_id),
+                  object_name);
+                if (state != err::E_SUCCESS) {
+                    if (!write_error_response(
+                          client_fd,
+                          req_hdr,
+                          static_cast<uint32_t>(raw_status_from_errno(state)),
+                          _running)) {
+                        break;
+                    }
+                    continue;
+                }
+
+                req_hdr.status = htole32(raw_status_ok);
+                if (!write_message(client_fd, req_hdr, nullptr, 0, _running)) {
+                    break;
+                }
+                continue;
+            }
+
             if (!write_error_response(client_fd, req_hdr, raw_status_invalid_request, _running)) {
                 break;
             }

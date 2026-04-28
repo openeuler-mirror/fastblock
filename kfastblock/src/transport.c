@@ -1,9 +1,11 @@
 #include <linux/byteorder/little_endian.h>
+#include <linux/blk-mq.h>
 #include <linux/errno.h>
 #include <linux/in.h>
 #include <linux/inet.h>
 #include <linux/kernel.h>
 #include <linux/net.h>
+#include <linux/highmem.h>
 #include <linux/slab.h>
 #include <linux/socket.h>
 #include <linux/string.h>
@@ -12,6 +14,11 @@
 #include "kfastblock/common.h"
 #include "kfastblock/rawproto.h"
 #include "kfastblock/transport.h"
+#include "kfastblock/volume.h"
+
+static int kfastblock_transport_try_connect_host(const char *host,
+						 u16 port,
+						 struct socket **sock);
 
 static int kfastblock_transport_status_to_errno(const u32 status)
 {
@@ -565,6 +572,251 @@ static int kfastblock_transport_fetch_pg_leader_from_osd(
 	return 0;
 }
 
+static int kfastblock_transport_write_object(struct socket *sock,
+					     u32 pool_id,
+					     const struct kfastblock_object_extent *extent,
+					     const void *data,
+					     u64 seq)
+{
+	struct kfastblock_raw_write_object_req req = {
+		.pool_id = cpu_to_le32(pool_id),
+	};
+	struct kfastblock_raw_header rsp_hdr;
+	void *body = NULL;
+	u8 *req_body;
+	u32 object_name_len;
+	u32 data_len;
+	u32 body_len;
+	int ret;
+
+	if (!sock || !extent || (!data && extent->length))
+		return -EINVAL;
+
+	object_name_len = strlen(extent->object_name);
+	data_len = extent->length;
+	req.pg_id = cpu_to_le32(extent->pg_id);
+	req.offset = cpu_to_le64(extent->object_offset);
+	req.data_len = cpu_to_le32(data_len);
+	req.object_name_len = cpu_to_le16(object_name_len);
+	req.reserved = 0;
+
+	body_len = sizeof(req) + object_name_len + data_len;
+	req_body = kmalloc(body_len, GFP_KERNEL);
+	if (!req_body)
+		return -ENOMEM;
+
+	memcpy(req_body, &req, sizeof(req));
+	memcpy(req_body + sizeof(req), extent->object_name, object_name_len);
+	if (data_len)
+		memcpy(req_body + sizeof(req) + object_name_len, data, data_len);
+
+	ret = kfastblock_transport_send_request(sock,
+					KFASTBLOCK_RAW_SERVICE_OSD,
+					KFASTBLOCK_RAW_OSD_OP_WRITE_OBJECT,
+					seq,
+					req_body,
+					body_len);
+	kfree(req_body);
+	if (ret)
+		return ret;
+
+	ret = kfastblock_transport_recv_response(sock,
+					 KFASTBLOCK_RAW_SERVICE_OSD,
+					 KFASTBLOCK_RAW_OSD_OP_WRITE_OBJECT,
+					 seq,
+					 &rsp_hdr,
+					 &body);
+	kfree(body);
+	return ret;
+}
+
+static int kfastblock_transport_read_object(struct socket *sock,
+					    u32 pool_id,
+					    const struct kfastblock_object_extent *extent,
+					    void *data,
+					    u64 seq)
+{
+	struct kfastblock_raw_read_object_req req = {
+		.pool_id = cpu_to_le32(pool_id),
+		.pg_id = cpu_to_le32(extent->pg_id),
+		.offset = cpu_to_le64(extent->object_offset),
+		.length = cpu_to_le32(extent->length),
+		.object_name_len = cpu_to_le16(strlen(extent->object_name)),
+		.reserved = 0,
+	};
+	struct kfastblock_raw_read_object_rsp rsp;
+	struct kfastblock_raw_header rsp_hdr;
+	void *body = NULL;
+	u8 *req_body;
+	u32 object_name_len;
+	u32 body_len;
+	u32 data_len;
+	int ret;
+
+	if (!sock || !extent || (!data && extent->length))
+		return -EINVAL;
+
+	object_name_len = strlen(extent->object_name);
+	body_len = sizeof(req) + object_name_len;
+	req_body = kmalloc(body_len, GFP_KERNEL);
+	if (!req_body)
+		return -ENOMEM;
+
+	memcpy(req_body, &req, sizeof(req));
+	memcpy(req_body + sizeof(req), extent->object_name, object_name_len);
+
+	ret = kfastblock_transport_send_request(sock,
+					KFASTBLOCK_RAW_SERVICE_OSD,
+					KFASTBLOCK_RAW_OSD_OP_READ_OBJECT,
+					seq,
+					req_body,
+					body_len);
+	kfree(req_body);
+	if (ret)
+		return ret;
+
+	ret = kfastblock_transport_recv_response(sock,
+					 KFASTBLOCK_RAW_SERVICE_OSD,
+					 KFASTBLOCK_RAW_OSD_OP_READ_OBJECT,
+					 seq,
+					 &rsp_hdr,
+					 &body);
+	if (ret) {
+		kfree(body);
+		return ret;
+	}
+
+	body_len = le32_to_cpu(rsp_hdr.body_len);
+	if (!body || body_len < sizeof(rsp)) {
+		kfree(body);
+		return -EPROTO;
+	}
+
+	memcpy(&rsp, body, sizeof(rsp));
+	data_len = le32_to_cpu(rsp.data_len);
+	if (body_len != sizeof(rsp) + data_len || data_len > extent->length) {
+		kfree(body);
+		return -EPROTO;
+	}
+
+	memset(data, 0, extent->length);
+	if (data_len)
+		memcpy(data, (u8 *)body + sizeof(rsp), data_len);
+	kfree(body);
+	return 0;
+}
+
+static int kfastblock_transport_copy_request_data(struct request *rq,
+						  u32 request_offset,
+						  void *buf,
+						  u32 len,
+						  bool to_request)
+{
+	struct req_iterator iter;
+	struct bio_vec bvec;
+	u32 copied = 0;
+	u32 skipped = 0;
+
+	if (!rq || (!buf && len))
+		return -EINVAL;
+	if (!len)
+		return 0;
+
+	rq_for_each_segment(bvec, rq, iter) {
+		u32 seg_offset;
+		u32 chunk;
+		u8 *page_addr;
+
+		if (request_offset >= skipped + bvec.bv_len) {
+			skipped += bvec.bv_len;
+			continue;
+		}
+
+		seg_offset = request_offset > skipped ?
+			request_offset - skipped : 0;
+		chunk = min_t(u32, len - copied, bvec.bv_len - seg_offset);
+		page_addr = kmap_local_page(bvec.bv_page);
+		if (to_request)
+			memcpy(page_addr + bvec.bv_offset + seg_offset,
+			       (u8 *)buf + copied, chunk);
+		else
+			memcpy((u8 *)buf + copied,
+			       page_addr + bvec.bv_offset + seg_offset, chunk);
+		kunmap_local(page_addr);
+
+		copied += chunk;
+		skipped += bvec.bv_len;
+		if (copied == len)
+			return 0;
+	}
+
+	return copied == len ? 0 : -EIO;
+}
+
+static int kfastblock_transport_submit_object_io(
+	struct kfastblock_cluster_view *view,
+	struct request *rq,
+	const struct kfastblock_object_extent *extent,
+	bool is_write)
+{
+	struct kfastblock_leader_info leader;
+	struct socket *sock = NULL;
+	void *buf;
+	int ret;
+	int attempt;
+
+	if (!view || !rq || !extent)
+		return -EINVAL;
+
+	buf = kmalloc(extent->length, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	if (is_write) {
+		ret = kfastblock_transport_copy_request_data(
+			rq, extent->request_offset, buf, extent->length, false);
+		if (ret)
+			goto out;
+	}
+
+	for (attempt = 0; attempt < 2; ++attempt) {
+		ret = kfastblock_transport_get_pg_leader(view, view->image.pool_id,
+						 extent->pg_id, &leader);
+		if (ret)
+			goto out;
+
+		ret = kfastblock_transport_try_connect_host(leader.address,
+						     leader.port, &sock);
+		if (ret)
+			goto invalidate;
+
+		if (is_write)
+			ret = kfastblock_transport_write_object(sock, view->image.pool_id,
+						 extent, buf, 1);
+		else
+			ret = kfastblock_transport_read_object(sock, view->image.pool_id,
+						extent, buf, 1);
+		sock_release(sock);
+		sock = NULL;
+		if (ret == -ENOLINK) {
+invalidate:
+			kfastblock_meta_invalidate_pg_leader(view, view->image.pool_id,
+						      extent->pg_id);
+			continue;
+		}
+		if (!ret && !is_write)
+			ret = kfastblock_transport_copy_request_data(
+				rq, extent->request_offset, buf, extent->length, true);
+		goto out;
+	}
+
+out:
+	if (sock)
+		sock_release(sock);
+	kfree(buf);
+	return ret;
+}
+
 int kfastblock_transport_init(void)
 {
 	return 0;
@@ -752,11 +1004,36 @@ int kfastblock_transport_get_pg_leader(struct kfastblock_cluster_view *view,
 
 int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 {
-	/*
-	 * TODO:
-	 * 1. serialize parent request into per-object OSD requests
-	 * 2. route each object by pg/leader
-	 * 3. aggregate sub-request completions back into the blk request
-	 */
-	return -EOPNOTSUPP;
+	struct request *rq;
+	bool is_write;
+	unsigned int i;
+	int ret = 0;
+
+	if (!kf_req || !kf_req->rq || !kf_req->vol)
+		return -EINVAL;
+
+	rq = kf_req->rq;
+	switch (req_op(rq)) {
+	case REQ_OP_READ:
+		is_write = false;
+		break;
+	case REQ_OP_WRITE:
+		is_write = true;
+		break;
+	default:
+		return -EOPNOTSUPP;
+	}
+
+	for (i = 0; i < kf_req->nr_objects; ++i) {
+		ret = kfastblock_transport_submit_object_io(
+			&kf_req->vol->view,
+			rq,
+			&kf_req->objects[i],
+			is_write);
+		if (ret)
+			return ret;
+	}
+
+	blk_mq_end_request(rq, BLK_STS_OK);
+	return 0;
 }
