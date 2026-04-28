@@ -117,16 +117,16 @@ func TestDeleteGetExpandAndUnpublish(t *testing.T) {
 	svc := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
 	ref := monitorclient.VolumeRef{Name: "img-b", Pool: "fb"}
 
-	if _, err := svc.GetVolume(context.Background(), ref); err != nil {
+	if _, err := svc.GetVolume(context.Background(), GetVolumeRequest{Volume: ref}); err != nil {
 		t.Fatalf("get volume failed: %v", err)
 	}
-	if _, err := svc.ExpandVolume(context.Background(), ref, 2<<20); err != nil {
+	if _, err := svc.ExpandVolume(context.Background(), ExpandVolumeRequest{Volume: ref, CapacityBytes: 2 << 20}); err != nil {
 		t.Fatalf("expand volume failed: %v", err)
 	}
-	if err := svc.DeleteVolume(context.Background(), ref); err != nil {
+	if err := svc.DeleteVolume(context.Background(), DeleteVolumeRequest{Volume: ref}); err != nil {
 		t.Fatalf("delete volume failed: %v", err)
 	}
-	if err := svc.UnpublishVolume(context.Background(), "exp-9", "nqn.host.2"); err != nil {
+	if err := svc.UnpublishVolume(context.Background(), UnpublishVolumeRequest{ExportID: "exp-9", HostNQN: "nqn.host.2"}); err != nil {
 		t.Fatalf("unpublish volume failed: %v", err)
 	}
 	if monitor.deleteRef.Name != "img-b" || monitor.expandCap != 2<<20 {
