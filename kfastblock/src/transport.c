@@ -2536,6 +2536,33 @@ static void kfastblock_transport_finish_request_now(
 	put_device(&kf_req->vol->dev);
 }
 
+static void kfastblock_transport_finish_request_if_idle(
+	struct kfastblock_request *kf_req,
+	int remaining,
+	bool mark_success)
+{
+	if (!kf_req || remaining != 0)
+		return;
+
+	kfastblock_transport_finish_request_now(kf_req, mark_success);
+}
+
+static int kfastblock_transport_drop_unscheduled_pending(
+	struct kfastblock_request *kf_req,
+	int remaining)
+{
+	int unscheduled;
+
+	if (!kf_req)
+		return remaining;
+
+	unscheduled = kfastblock_transport_discard_unscheduled(kf_req);
+	if (!unscheduled)
+		return remaining;
+
+	return atomic_sub_return(unscheduled, &kf_req->pending_objects);
+}
+
 static void kfastblock_transport_complete_request(struct kfastblock_request *kf_req,
 						  unsigned int object_index,
 						  int ret)
@@ -2551,35 +2578,24 @@ static void kfastblock_transport_complete_request(struct kfastblock_request *kf_
 			kf_req, kfastblock_transport_refill_dispatch_window(kf_req));
 
 	remaining = atomic_dec_return(&kf_req->pending_objects);
-	if (first_error) {
-		int unscheduled = kfastblock_transport_discard_unscheduled(kf_req);
+	if (first_error)
+		remaining = kfastblock_transport_drop_unscheduled_pending(
+			kf_req, remaining);
 
-		if (unscheduled)
-			remaining = atomic_sub_return(unscheduled,
-						&kf_req->pending_objects);
-	}
-
-	if (remaining == 0)
-		kfastblock_transport_finish_request_now(kf_req, true);
+	kfastblock_transport_finish_request_if_idle(kf_req, remaining, true);
 }
 
 static void kfastblock_transport_abort_request(struct kfastblock_request *kf_req,
 					       int ret)
 {
 	int remaining;
-	int unscheduled;
 
 	if (!kf_req)
 		return;
 
 	(void)kfastblock_transport_set_first_error(kf_req, ret);
-	unscheduled = kfastblock_transport_discard_unscheduled(kf_req);
-	if (!unscheduled)
-		return;
-
-	remaining = atomic_sub_return(unscheduled, &kf_req->pending_objects);
-	if (remaining == 0)
-		kfastblock_transport_finish_request_now(kf_req, false);
+	remaining = kfastblock_transport_drop_unscheduled_pending(kf_req, 0);
+	kfastblock_transport_finish_request_if_idle(kf_req, remaining, false);
 }
 
 static void kfastblock_transport_object_work(struct work_struct *work)
