@@ -1031,6 +1031,11 @@ bool kfastblock_request_has_inflight(const struct kfastblock_request *kf_req)
 	return kfastblock_request_inflight_objects(kf_req) > 0;
 }
 
+bool kfastblock_request_has_terminal(const struct kfastblock_request *kf_req)
+{
+	return kfastblock_request_terminal_objects(kf_req) != 0;
+}
+
 unsigned int kfastblock_request_terminal_objects(
 	const struct kfastblock_request *kf_req)
 {
