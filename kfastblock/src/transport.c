@@ -79,6 +79,12 @@ struct kfastblock_transport_response_ctx {
 	int ret;
 };
 
+static int kfastblock_transport_copy_from_body(const u8 *body,
+					       size_t body_len,
+					       size_t *offset,
+					       void *dst,
+					       size_t len);
+
 static void kfastblock_transport_trace_osd_endpoint_decision(
 	struct kfastblock_volume *vol,
 	const struct kfastblock_leader_info *leader,
@@ -864,20 +870,6 @@ static int kfastblock_transport_response_copy_fixed(
 	return 0;
 }
 
-static int kfastblock_transport_response_expect_exact_body(
-	const struct kfastblock_transport_response_ctx *ctx,
-	u32 expected_len)
-{
-	int ret;
-
-	ret = kfastblock_transport_response_expect_min_body(ctx, expected_len);
-	if (ret)
-		return ret;
-	if (ctx->body_len != expected_len)
-		return -EPROTO;
-	return 0;
-}
-
 static int kfastblock_transport_exec_request_parts(
 	struct socket *sock,
 	u8 service,
@@ -1123,6 +1115,34 @@ static int kfastblock_transport_response_decode_read_object(
 	return 0;
 }
 
+static int kfastblock_transport_response_decode_image_info(
+	struct kfastblock_transport_response_ctx *response,
+	struct kfastblock_raw_get_image_info_rsp *rsp)
+{
+	if (!response || !rsp)
+		return -EINVAL;
+
+	return kfastblock_transport_response_copy_fixed(response, rsp,
+						       sizeof(*rsp));
+}
+
+static int kfastblock_transport_response_decode_cluster_map_header(
+	struct kfastblock_transport_response_ctx *response,
+	size_t *offset,
+	struct kfastblock_raw_cluster_map_rsp_hdr *rsp)
+{
+	if (!response || !offset || !rsp)
+		return -EINVAL;
+
+	if (kfastblock_transport_response_expect_min_body(response, sizeof(*rsp)))
+		return -EPROTO;
+
+	return kfastblock_transport_copy_from_body(response->body,
+						   response->body_len,
+						   offset, rsp,
+						   sizeof(*rsp));
+}
+
 static int kfastblock_transport_fetch_image_info(struct socket *sock,
 					 struct kfastblock_cluster_view *view,
 					 u64 seq)
@@ -1154,14 +1174,7 @@ static int kfastblock_transport_fetch_image_info(struct socket *sock,
 		kfastblock_transport_response_ctx_release(&response);
 		return ret;
 	}
-	ret = kfastblock_transport_response_expect_exact_body(&response,
-							      sizeof(rsp));
-	if (ret) {
-		kfastblock_transport_response_ctx_release(&response);
-		return ret;
-	}
-	ret = kfastblock_transport_response_copy_fixed(&response, &rsp,
-						       sizeof(rsp));
+	ret = kfastblock_transport_response_decode_image_info(&response, &rsp);
 	kfastblock_transport_response_ctx_release(&response);
 	if (ret)
 		return ret;
@@ -1368,16 +1381,8 @@ static int kfastblock_transport_fetch_cluster_map_from_monitor(
 		kfastblock_transport_response_ctx_release(&response);
 		return ret;
 	}
-	ret = kfastblock_transport_response_expect_min_body(&response,
-							    sizeof(rsp));
-	if (ret) {
-		kfastblock_transport_response_ctx_release(&response);
-		return -EPROTO;
-	}
-
-	ret = kfastblock_transport_copy_from_body(response.body, response.body_len,
-						 &offset, &rsp,
-						 sizeof(rsp));
+	ret = kfastblock_transport_response_decode_cluster_map_header(
+		&response, &offset, &rsp);
 	if (ret)
 		goto out;
 
