@@ -2794,9 +2794,10 @@ static int kfastblock_transport_run_request_submit(
 		return kfastblock_transport_finish_submit_now(ctx->kf_req,
 							      ctx->ret);
 
-	ctx->ret = kfastblock_transport_kick_initial_dispatch(ctx);
-	if (ctx->ret)
+	if (kfastblock_transport_kick_initial_dispatch(ctx))
 		return ctx->ret;
+	if (ctx->ret)
+		return 0;
 
 	return kfastblock_transport_queue_initial_dispatch(ctx);
 }
