@@ -2577,12 +2577,15 @@ static int kfastblock_transport_drop_unscheduled_pending(
 	return atomic_sub_return(unscheduled, &kf_req->pending_objects);
 }
 
-static void kfastblock_transport_complete_request(struct kfastblock_request *kf_req,
-						  unsigned int object_index,
-						  int ret)
+static bool kfastblock_transport_update_request_status_after_object(
+	struct kfastblock_request *kf_req,
+	unsigned int object_index,
+	int ret)
 {
 	bool first_error = false;
-	int remaining;
+
+	if (!kf_req)
+		return false;
 
 	kfastblock_request_mark_object_complete(kf_req, object_index, ret);
 	if (ret)
@@ -2591,10 +2594,37 @@ static void kfastblock_transport_complete_request(struct kfastblock_request *kf_
 		first_error = kfastblock_transport_set_first_error(
 			kf_req, kfastblock_transport_refill_dispatch_window(kf_req));
 
+	return first_error;
+}
+
+static int kfastblock_transport_advance_request_pending(
+	struct kfastblock_request *kf_req,
+	bool drop_unscheduled)
+{
+	int remaining;
+
+	if (!kf_req)
+		return 0;
+
 	remaining = atomic_dec_return(&kf_req->pending_objects);
-	if (first_error)
+	if (drop_unscheduled)
 		remaining = kfastblock_transport_drop_unscheduled_pending(
 			kf_req, remaining);
+
+	return remaining;
+}
+
+static void kfastblock_transport_complete_request(struct kfastblock_request *kf_req,
+						  unsigned int object_index,
+						  int ret)
+{
+	bool first_error;
+	int remaining;
+
+	first_error = kfastblock_transport_update_request_status_after_object(
+		kf_req, object_index, ret);
+	remaining = kfastblock_transport_advance_request_pending(
+		kf_req, first_error);
 
 	kfastblock_transport_finish_request_if_idle(kf_req, remaining, true);
 }
