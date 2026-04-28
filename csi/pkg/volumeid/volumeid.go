@@ -7,7 +7,10 @@ import (
 	"strings"
 )
 
-const prefix = "fbvol"
+const (
+	prefix        = "fbvol"
+	nameRefPrefix = "fbvolname"
+)
 
 type ID struct {
 	ClusterID string
@@ -45,4 +48,33 @@ func Decode(raw string) (ID, error) {
 		return ID{}, fmt.Errorf("invalid image id %q: %w", parts[3], err)
 	}
 	return ID{ClusterID: parts[1], PoolID: poolID, ImageID: imageID}, nil
+}
+
+type NameRef struct {
+	Pool string
+	Name string
+}
+
+func EncodeNameRef(ref NameRef) (string, error) {
+	if strings.TrimSpace(ref.Pool) == "" {
+		return "", errors.New("pool is required")
+	}
+	if strings.TrimSpace(ref.Name) == "" {
+		return "", errors.New("name is required")
+	}
+	return fmt.Sprintf("%s:%s:%s", nameRefPrefix, ref.Pool, ref.Name), nil
+}
+
+func DecodeNameRef(raw string) (NameRef, error) {
+	parts := strings.Split(raw, ":")
+	if len(parts) != 3 {
+		return NameRef{}, fmt.Errorf("invalid name ref %q", raw)
+	}
+	if parts[0] != nameRefPrefix {
+		return NameRef{}, fmt.Errorf("invalid name ref prefix %q", parts[0])
+	}
+	if strings.TrimSpace(parts[1]) == "" || strings.TrimSpace(parts[2]) == "" {
+		return NameRef{}, fmt.Errorf("invalid name ref %q", raw)
+	}
+	return NameRef{Pool: parts[1], Name: parts[2]}, nil
 }
