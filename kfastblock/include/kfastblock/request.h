@@ -256,6 +256,7 @@ unsigned int kfastblock_request_cancelled_objects(
 	const struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_retry_objects(
 	const struct kfastblock_request *kf_req);
+bool kfastblock_request_has_retry(const struct kfastblock_request *kf_req);
 s32 kfastblock_request_last_response_status(
 	const struct kfastblock_request *kf_req);
 u32 kfastblock_request_last_response_body_len(
