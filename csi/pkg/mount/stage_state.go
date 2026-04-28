@@ -42,3 +42,14 @@ func ReadStageState(stagePath string) (StageState, error) {
 	}
 	return state, nil
 }
+
+func RemoveStageState(stagePath string) error {
+	if stagePath == "" {
+		return errors.New("stage path is required")
+	}
+	err := os.Remove(filepath.Join(stagePath, "stage-state.json"))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
