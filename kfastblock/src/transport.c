@@ -1785,6 +1785,30 @@ static int kfastblock_transport_execute_object_opcode(
 						  response);
 }
 
+static int kfastblock_transport_finish_object_success(
+	struct kfastblock_request *kf_req,
+	const struct kfastblock_object_extent *extent,
+	enum req_op op,
+	const struct kfastblock_leader_info *leader,
+	void *buf)
+{
+	int ret = 0;
+
+	if (!kf_req || !extent || !leader)
+		return -EINVAL;
+
+	if (op == REQ_OP_READ)
+		ret = kfastblock_transport_copy_request_data(
+			kf_req->rq, extent->request_offset, buf, extent->length, true);
+	if (ret)
+		return ret;
+
+	kfastblock_volume_account_object_success(kf_req->vol, op, extent->pg_id,
+						 leader->osd_id, extent->length);
+	kfastblock_scheduler_note_success(&kf_req->vol->scheduler);
+	return 0;
+}
+
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
@@ -1910,14 +1934,9 @@ static int kfastblock_transport_submit_object_io(
 		} else if (hint) {
 			kfastblock_request_set_pg_hint_leader(hint, &leader);
 		}
-		if (!ret && op == REQ_OP_READ)
-			ret = kfastblock_transport_copy_request_data(
-				rq, extent->request_offset, buf, extent->length, true);
 		if (!ret)
-			kfastblock_volume_account_object_success(
-				vol, op, extent->pg_id, leader.osd_id, extent->length);
-		if (!ret)
-			kfastblock_scheduler_note_success(&vol->scheduler);
+			ret = kfastblock_transport_finish_object_success(
+				kf_req, extent, op, &leader, buf);
 		goto out;
 		}
 
