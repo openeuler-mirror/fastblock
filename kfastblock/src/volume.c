@@ -585,6 +585,30 @@ u64 kfastblock_volume_pipeline_newest_inflight_seq(
 	return snapshot.newest_inflight_seq;
 }
 
+unsigned long kfastblock_volume_pipeline_oldest_queued_jiffies(
+	struct kfastblock_volume *vol)
+{
+	struct kfastblock_pipeline_snapshot snapshot = {};
+
+	if (!vol)
+		return 0;
+
+	kfastblock_volume_get_pipeline_snapshot(vol, &snapshot);
+	return snapshot.oldest_queued_jiffies;
+}
+
+unsigned long kfastblock_volume_pipeline_newest_queued_jiffies(
+	struct kfastblock_volume *vol)
+{
+	struct kfastblock_pipeline_snapshot snapshot = {};
+
+	if (!vol)
+		return 0;
+
+	kfastblock_volume_get_pipeline_snapshot(vol, &snapshot);
+	return snapshot.newest_queued_jiffies;
+}
+
 void kfastblock_volume_update_pipeline_snapshot(
 	struct kfastblock_volume *vol,
 	const struct kfastblock_pipeline_state *state)
