@@ -1,0 +1,123 @@
+package monitorclient
+
+import (
+	"context"
+	"encoding/binary"
+	"io"
+	"net"
+	"testing"
+
+	msg "monitor/msg"
+
+	"github.com/gogo/protobuf/proto"
+)
+
+func TestCreateVolume(t *testing.T) {
+	address := startMockMonitor(t, func(req *msg.Request) *msg.Response {
+		payload, ok := req.Union.(*msg.Request_CreateImageRequest)
+		if !ok {
+			t.Fatalf("unexpected request type %T", req.Union)
+		}
+		if payload.CreateImageRequest.GetImagename() != "img-a" {
+			t.Fatalf("unexpected image name: %s", payload.CreateImageRequest.GetImagename())
+		}
+		return &msg.Response{
+			Union: &msg.Response_CreateImageResponse{
+				CreateImageResponse: &msg.CreateImageResponse{
+					Errorcode: msg.CreateImageErrorCode_createImageOk,
+					ImageInfo: &msg.ImageInfo{
+						Poolname:   "fb",
+						Imagename:  "img-a",
+						Size_:      1 << 20,
+						ObjectSize: 4 << 20,
+					},
+				},
+			},
+		}
+	})
+
+	client := NewTCP(address)
+	volume, err := client.CreateVolume(context.Background(), CreateVolumeRequest{
+		Name:          "img-a",
+		Pool:          "fb",
+		CapacityBytes: 1 << 20,
+		ObjectSize:    4 << 20,
+		BlockSize:     4096,
+	})
+	if err != nil {
+		t.Fatalf("create volume failed: %v", err)
+	}
+	if volume.Name != "img-a" || volume.Pool != "fb" {
+		t.Fatalf("unexpected volume: %+v", volume)
+	}
+}
+
+func TestGetVolume(t *testing.T) {
+	address := startMockMonitor(t, func(req *msg.Request) *msg.Response {
+		if _, ok := req.Union.(*msg.Request_Get_ImageInfo_Request); !ok {
+			t.Fatalf("unexpected request type %T", req.Union)
+		}
+		return &msg.Response{
+			Union: &msg.Response_GetImageInfoResponse{
+				GetImageInfoResponse: &msg.GetImageInfoResponse{
+					Errorcode: msg.GetImageErrorCode_getImageOk,
+					ImageInfo: &msg.ImageInfo{
+						Poolname:   "fb",
+						Imagename:  "img-b",
+						Size_:      2 << 20,
+						ObjectSize: 4 << 20,
+					},
+				},
+			},
+		}
+	})
+
+	client := NewTCP(address)
+	volume, err := client.GetVolume(context.Background(), VolumeRef{Name: "img-b", Pool: "fb"})
+	if err != nil {
+		t.Fatalf("get volume failed: %v", err)
+	}
+	if volume.CapacityBytes != 2<<20 {
+		t.Fatalf("unexpected volume: %+v", volume)
+	}
+}
+
+func startMockMonitor(t *testing.T, handler func(*msg.Request) *msg.Response) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		header := make([]byte, messageLengthSize)
+		if _, err := io.ReadFull(conn, header); err != nil {
+			return
+		}
+		size := binary.LittleEndian.Uint64(header)
+		body := make([]byte, size)
+		if _, err := io.ReadFull(conn, body); err != nil {
+			return
+		}
+		req := &msg.Request{}
+		if err := proto.Unmarshal(body, req); err != nil {
+			return
+		}
+
+		respBody, err := proto.Marshal(handler(req))
+		if err != nil {
+			return
+		}
+		binary.LittleEndian.PutUint64(header, uint64(len(respBody)))
+		_, _ = conn.Write(append(header, respBody...))
+	}()
+
+	return ln.Addr().String()
+}
