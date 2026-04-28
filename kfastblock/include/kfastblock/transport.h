@@ -1,6 +1,10 @@
 #ifndef KFASTBLOCK_TRANSPORT_H
 #define KFASTBLOCK_TRANSPORT_H
 
+#include <linux/in.h>
+#include <linux/socket.h>
+#include <linux/types.h>
+
 #include "kfastblock/control.h"
 #include "kfastblock/meta.h"
 #include "kfastblock/request.h"
@@ -10,5 +14,11 @@ void kfastblock_transport_exit(void);
 int kfastblock_transport_fetch_cluster_view(struct kfastblock_cluster_view *view,
 				    const struct kfastblock_attach_spec *spec);
 int kfastblock_transport_submit(struct kfastblock_request *kf_req);
+int kfastblock_transport_sockaddr_from_endpoint(
+	const struct kfastblock_monitor_endpoint *endpoint,
+	struct sockaddr_in *addr);
+int kfastblock_transport_try_connect_monitor(
+	const struct kfastblock_monitor_endpoint *endpoint,
+	struct socket **sock);
 
 #endif
