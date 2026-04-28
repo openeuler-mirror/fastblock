@@ -73,6 +73,10 @@ u64 kfastblock_pipeline_oldest_inflight_seq(
 	struct kfastblock_pipeline_state *state);
 u64 kfastblock_pipeline_newest_inflight_seq(
 	struct kfastblock_pipeline_state *state);
+unsigned long kfastblock_pipeline_oldest_queued_jiffies(
+	struct kfastblock_pipeline_state *state);
+unsigned long kfastblock_pipeline_newest_queued_jiffies(
+	struct kfastblock_pipeline_state *state);
 unsigned int kfastblock_pipeline_spare_capacity(
 	struct kfastblock_pipeline_state *state);
 struct kfastblock_pipeline_entry *kfastblock_pipeline_complete(
