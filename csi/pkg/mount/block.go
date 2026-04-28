@@ -32,6 +32,9 @@ func ValidateBlockPublishTarget(devicePath, stagePath, targetPath string) error 
 	if !filepath.IsAbs(targetPath) {
 		return errors.New("target path must be absolute")
 	}
+	if filepath.Clean(stagePath) == filepath.Clean(targetPath) {
+		return errors.New("stage path and target path must be different")
+	}
 	return nil
 }
 
@@ -43,4 +46,14 @@ func CanonicalStageDevicePath(stagePath string) (string, error) {
 		return "", errors.New("stage path must be absolute")
 	}
 	return filepath.Join(stagePath, "device"), nil
+}
+
+func CanonicalPublishDevicePath(targetPath string) (string, error) {
+	if strings.TrimSpace(targetPath) == "" {
+		return "", errors.New("target path is required")
+	}
+	if !filepath.IsAbs(targetPath) {
+		return "", errors.New("target path must be absolute")
+	}
+	return filepath.Join(targetPath, "device"), nil
 }
