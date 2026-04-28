@@ -521,8 +521,12 @@ int kfastblock_request_cancel_unqueued(struct kfastblock_request *kf_req)
 		struct kfastblock_request_object_runtime *runtime;
 
 		runtime = &kf_req->object_runtime[i];
-		if (!kfastblock_request_object_dispatchable(runtime))
+		if (runtime->state != KFASTBLOCK_OBJECT_READY &&
+		    runtime->state != KFASTBLOCK_OBJECT_QUEUED)
 			continue;
+		if (runtime->state == KFASTBLOCK_OBJECT_QUEUED &&
+		    kf_req->queued_objects)
+			kf_req->queued_objects--;
 		runtime->state = KFASTBLOCK_OBJECT_CANCELLED;
 		runtime->last_error = -ECANCELED;
 		runtime->completed_jiffies = jiffies;
