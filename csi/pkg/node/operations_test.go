@@ -91,3 +91,26 @@ func TestGetDeviceAndUnstage(t *testing.T) {
 		t.Fatalf("unexpected backend state: %+v", backendStub)
 	}
 }
+
+func TestStageVolumeRequestValidation(t *testing.T) {
+	if err := (StageVolumeRequest{}).Validate(); err == nil {
+		t.Fatal("expected empty request validation error")
+	}
+	req := StageVolumeRequest{
+		VolumeID: "fbvol:cluster:1:9",
+		VolumeContext: backend.VolumeContext{
+			Transport: "rdma",
+			NQN:       "nqn.test",
+			Traddr:    "10.0.0.10",
+			Trsvcid:   "4420",
+			NSID:      1,
+		},
+	}
+	if err := req.Validate(); err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+	req.VolumeContext.Transport = "bad"
+	if err := req.Validate(); err == nil {
+		t.Fatal("expected invalid transport error")
+	}
+}
