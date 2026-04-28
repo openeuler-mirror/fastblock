@@ -669,6 +669,23 @@ bool kfastblock_request_object_has_response_by_seq(
 	return kfastblock_request_object_has_response(kf_req, object_index);
 }
 
+bool kfastblock_request_object_is_terminal(
+	const struct kfastblock_request *kf_req,
+	unsigned int object_index)
+{
+	bool terminal = false;
+	unsigned long flags;
+
+	if (!kf_req || !kf_req->object_runtime || object_index >= kf_req->nr_objects)
+		return false;
+
+	spin_lock_irqsave((spinlock_t *)&kf_req->object_state_lock, flags);
+	terminal = kfastblock_request_object_state_terminal(
+		kf_req->object_runtime[object_index].state);
+	spin_unlock_irqrestore((spinlock_t *)&kf_req->object_state_lock, flags);
+	return terminal;
+}
+
 int kfastblock_request_clear_object_response_by_seq(
 	struct kfastblock_request *kf_req,
 	u64 seq)
