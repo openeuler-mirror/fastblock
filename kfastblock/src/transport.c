@@ -921,6 +921,24 @@ static int kfastblock_transport_exec_request(
 						       &part, 1, rsp);
 }
 
+static int kfastblock_transport_exec_request_status_only(
+	struct socket *sock,
+	u8 service,
+	u8 opcode,
+	u64 seq,
+	const struct kfastblock_transport_body_part *parts,
+	unsigned int nr_parts)
+{
+	struct kfastblock_transport_response_ctx response = {};
+	int ret;
+
+	ret = kfastblock_transport_exec_request_parts(sock, service, opcode, seq,
+						      parts, nr_parts,
+						      &response);
+	kfastblock_transport_response_ctx_release(&response);
+	return ret;
+}
+
 static int kfastblock_transport_begin_exchange(
 	struct kfastblock_transport_exchange_ctx *ctx,
 	struct kfastblock_request *kf_req,
@@ -1592,10 +1610,12 @@ static int kfastblock_transport_delete_object(struct socket *sock,
 	parts[1].buf = extent->object_name;
 	parts[1].len = object_name_len;
 
-	ret = kfastblock_transport_exec_request_parts(
+	ret = kfastblock_transport_exec_request_status_only(
 		sock, KFASTBLOCK_RAW_SERVICE_OSD,
 		KFASTBLOCK_RAW_OSD_OP_DELETE_OBJECT, seq,
-		parts, ARRAY_SIZE(parts), response);
+		parts, ARRAY_SIZE(parts));
+	kfastblock_transport_response_ctx_reset(response);
+	response->ret = ret;
 	return ret;
 }
 
