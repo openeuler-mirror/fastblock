@@ -2025,22 +2025,21 @@ static bool kfastblock_transport_finalize_completed_object_attempt(
 static int kfastblock_transport_object_io_ctx_init(
 	struct kfastblock_transport_object_io_ctx *ctx,
 	struct kfastblock_request *kf_req,
-	unsigned int object_index,
-	const struct kfastblock_object_extent *extent,
-	enum req_op op)
+	unsigned int object_index)
 {
-	if (!ctx || !kf_req || !kf_req->vol || !kf_req->rq || !extent)
+	if (!ctx || !kf_req || !kf_req->vol || !kf_req->rq ||
+	    object_index >= kf_req->nr_objects)
 		return -EINVAL;
 
 	memset(ctx, 0, sizeof(*ctx));
 	ctx->kf_req = kf_req;
 	ctx->vol = kf_req->vol;
-	ctx->extent = extent;
+	ctx->extent = &kf_req->objects[object_index];
 	ctx->hint = kfastblock_transport_find_request_pg_hint(
-		kf_req, extent->pg_id);
+		kf_req, ctx->extent->pg_id);
 	ctx->object_index = object_index;
-	ctx->op = op;
-	ctx->raw_opcode = kfastblock_transport_raw_opcode_for_object_op(op);
+	ctx->op = kfastblock_transport_object_op(kf_req, object_index);
+	ctx->raw_opcode = kfastblock_transport_raw_opcode_for_object_op(ctx->op);
 	return 0;
 }
 
@@ -2057,6 +2056,34 @@ static void kfastblock_transport_object_io_ctx_reset_attempt(
 	ctx->actions = 0;
 	memset(&ctx->exchange, 0, sizeof(ctx->exchange));
 	kfastblock_transport_response_ctx_reset(&ctx->response);
+}
+
+static void kfastblock_transport_begin_object_io_ctx(
+	struct kfastblock_transport_object_io_ctx *ctx)
+{
+	if (!ctx)
+		return;
+
+	kfastblock_request_mark_object_inflight(ctx->kf_req, ctx->object_index);
+	if (kfastblock_transport_request_failed(ctx->kf_req)) {
+		ctx->ret = -ECANCELED;
+		return;
+	}
+
+	switch (ctx->op) {
+	case REQ_OP_FLUSH:
+		ctx->ret = 0;
+		return;
+	case REQ_OP_READ:
+	case REQ_OP_WRITE:
+	case REQ_OP_DISCARD:
+	case REQ_OP_WRITE_ZEROES:
+		ctx->ret = 0;
+		return;
+	default:
+		ctx->ret = -EOPNOTSUPP;
+		return;
+	}
 }
 
 static void kfastblock_transport_prepare_object_execution(
@@ -2126,9 +2153,14 @@ static int kfastblock_transport_run_object_io_ctx(
 		return -EINVAL;
 
 	ctx->ret = 0;
-	kfastblock_transport_prepare_object_execution(ctx);
-	if (!ctx->ret)
-		kfastblock_transport_run_object_attempts(ctx);
+	kfastblock_transport_begin_object_io_ctx(ctx);
+	if (!ctx->ret && ctx->op != REQ_OP_FLUSH) {
+		kfastblock_transport_prepare_object_execution(ctx);
+		if (!ctx->ret)
+			kfastblock_transport_run_object_attempts(ctx);
+	}
+	if (ctx->op == REQ_OP_FLUSH)
+		ctx->ret = 0;
 	ret = ctx->ret;
 	kfastblock_transport_cleanup_object_io(ctx);
 	return ret;
@@ -2136,14 +2168,12 @@ static int kfastblock_transport_run_object_io_ctx(
 
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
-	unsigned int object_index,
-	const struct kfastblock_object_extent *extent,
-	enum req_op op)
+	unsigned int object_index)
 {
 	struct kfastblock_transport_object_io_ctx ctx = {};
 
 	ctx.ret = kfastblock_transport_object_io_ctx_init(
-		&ctx, kf_req, object_index, extent, op);
+		&ctx, kf_req, object_index);
 	if (ctx.ret)
 		return ctx.ret;
 
@@ -2437,32 +2467,11 @@ static int kfastblock_transport_query_pg_leader(
 static int kfastblock_transport_submit_object(struct kfastblock_request *kf_req,
 					      unsigned int object_index)
 {
-	struct request *rq;
-	enum req_op op;
-
 	if (!kf_req || !kf_req->rq || !kf_req->vol ||
 	    object_index >= kf_req->nr_objects)
 		return -EINVAL;
 
-	rq = kf_req->rq;
-	op = kfastblock_transport_object_op(kf_req, object_index);
-	switch (op) {
-	case REQ_OP_FLUSH:
-		return 0;
-	case REQ_OP_READ:
-	case REQ_OP_WRITE:
-	case REQ_OP_DISCARD:
-	case REQ_OP_WRITE_ZEROES:
-		break;
-	default:
-		return -EOPNOTSUPP;
-	}
-
-	return kfastblock_transport_submit_object_io(
-		kf_req,
-		object_index,
-		&kf_req->objects[object_index],
-		op);
+	return kfastblock_transport_submit_object_io(kf_req, object_index);
 }
 
 static int kfastblock_transport_prefetch_request_leaders(
@@ -2580,14 +2589,6 @@ static void kfastblock_transport_object_work(struct work_struct *work)
 
 	if (!kf_req || !kf_req->rq || !kf_req->vol)
 		return;
-	kfastblock_request_mark_object_inflight(kf_req,
-						obj_work->object_index);
-	if (kfastblock_transport_request_failed(kf_req)) {
-		kfastblock_transport_complete_request(kf_req,
-						     obj_work->object_index,
-						     -ECANCELED);
-		return;
-	}
 
 	ret = kfastblock_transport_submit_object(kf_req,
 					       obj_work->object_index);
