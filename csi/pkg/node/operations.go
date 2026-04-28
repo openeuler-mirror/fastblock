@@ -7,6 +7,7 @@ import (
 
 	"fastblock-csi/pkg/backend"
 	"fastblock-csi/pkg/driver"
+	"fastblock-csi/pkg/mount"
 )
 
 type StageVolumeRequest struct {
@@ -17,6 +18,17 @@ type StageVolumeRequest struct {
 type PublishContextStageRequest struct {
 	VolumeID       string
 	PublishContext map[string]string
+}
+
+type PublishVolumeRequest struct {
+	VolumeID          string
+	StagingTargetPath string
+	TargetPath        string
+}
+
+type UnpublishVolumeRequest struct {
+	VolumeID   string
+	TargetPath string
 }
 
 func (s *Service) StageVolume(ctx context.Context, req StageVolumeRequest) (string, error) {
@@ -45,6 +57,27 @@ func (s *Service) IsReady(ctx context.Context, req StageVolumeRequest) (bool, er
 		return false, err
 	}
 	return s.backend.IsReady(ctx, req.VolumeID, req.VolumeContext)
+}
+
+func (s *Service) PublishVolume(ctx context.Context, req PublishVolumeRequest) error {
+	if err := req.Validate(); err != nil {
+		return err
+	}
+	state, err := mount.ReadStageState(req.StagingTargetPath)
+	if err != nil {
+		return err
+	}
+	if state.VolumeID != req.VolumeID {
+		return errors.New("staged volume id mismatch")
+	}
+	return s.publisher.PublishBlockDevice(ctx, state.DevicePath, req.StagingTargetPath, req.TargetPath)
+}
+
+func (s *Service) UnpublishVolume(ctx context.Context, req UnpublishVolumeRequest) error {
+	if err := req.Validate(); err != nil {
+		return err
+	}
+	return s.publisher.UnpublishBlockDevice(ctx, req.TargetPath)
 }
 
 func (s *Service) StageVolumeFromPublishContext(ctx context.Context, req PublishContextStageRequest) (string, error) {
@@ -104,6 +137,29 @@ func (r PublishContextStageRequest) Validate() error {
 	}
 	if len(r.PublishContext) == 0 {
 		return errors.New("publish context is required")
+	}
+	return nil
+}
+
+func (r PublishVolumeRequest) Validate() error {
+	if strings.TrimSpace(r.VolumeID) == "" {
+		return errors.New("volume id is required")
+	}
+	if strings.TrimSpace(r.StagingTargetPath) == "" {
+		return errors.New("staging target path is required")
+	}
+	if strings.TrimSpace(r.TargetPath) == "" {
+		return errors.New("target path is required")
+	}
+	return nil
+}
+
+func (r UnpublishVolumeRequest) Validate() error {
+	if strings.TrimSpace(r.VolumeID) == "" {
+		return errors.New("volume id is required")
+	}
+	if strings.TrimSpace(r.TargetPath) == "" {
+		return errors.New("target path is required")
 	}
 	return nil
 }
