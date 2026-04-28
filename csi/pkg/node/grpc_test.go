@@ -51,6 +51,10 @@ func TestNodeStageAndUnstageVolume(t *testing.T) {
 	_, err := grpcService.NodeStageVolume(context.Background(), &csi.NodeStageVolumeRequest{
 		VolumeId:          "fbvolname:fb:img-a",
 		StagingTargetPath: stagePath,
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
+			AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+		},
 		PublishContext: map[string]string{
 			driver.PublishContextTransport: "rdma",
 			driver.PublishContextNQN:       "nqn.test",
@@ -137,6 +141,7 @@ func TestNodePublishAndUnpublishVolume(t *testing.T) {
 		TargetPath:        "/var/lib/kubelet/pods/pod/volumeDevices/publish",
 		VolumeCapability: &csi.VolumeCapability{
 			AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
+			AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
 		},
 	})
 	if err != nil {
@@ -171,6 +176,33 @@ func TestNodePublishRejectsMountCapability(t *testing.T) {
 		TargetPath:        "/tmp/target",
 		VolumeCapability: &csi.VolumeCapability{
 			AccessType: &csi.VolumeCapability_Mount{Mount: &csi.VolumeCapability_MountVolume{}},
+		},
+	}); err == nil {
+		t.Fatal("expected mount capability rejection")
+	}
+}
+
+func TestNodeStageRejectsMountCapability(t *testing.T) {
+	service := New(driver.Options{
+		DriverName: "csi.fastblock.io",
+		Endpoint:   "unix:///tmp/node.sock",
+		NodeID:     "node-a",
+		Mode:       driver.ModeNode,
+	}, &stubBackend{})
+	grpcService := NewGRPCService(service)
+	if _, err := grpcService.NodeStageVolume(context.Background(), &csi.NodeStageVolumeRequest{
+		VolumeId:          "fbvolname:fb:img-a",
+		StagingTargetPath: t.TempDir(),
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Mount{Mount: &csi.VolumeCapability_MountVolume{}},
+			AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+		},
+		PublishContext: map[string]string{
+			driver.PublishContextTransport: "rdma",
+			driver.PublishContextNQN:       "nqn.test",
+			driver.PublishContextTraddr:    "10.0.0.10",
+			driver.PublishContextTrsvcid:   "4420",
+			driver.PublishContextNSID:      "1",
 		},
 	}); err == nil {
 		t.Fatal("expected mount capability rejection")
