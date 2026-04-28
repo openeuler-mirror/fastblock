@@ -1002,6 +1002,81 @@ static int kfastblock_transport_match_exchange_response(
 	return 0;
 }
 
+static int kfastblock_transport_complete_exchange_response(
+	struct kfastblock_transport_exchange_ctx *ctx,
+	struct kfastblock_transport_response_ctx *response,
+	int ret)
+{
+	int match_ret;
+
+	if (!ctx)
+		return -EINVAL;
+
+	match_ret = ret ? 0 : kfastblock_transport_match_exchange_response(ctx);
+	if (!ret && match_ret)
+		ret = match_ret;
+	kfastblock_transport_finish_exchange(ctx, ret,
+					    ret || !response ? NULL : &response->hdr);
+	return ret;
+}
+
+static int kfastblock_transport_response_decode_leader(
+	struct kfastblock_transport_response_ctx *response,
+	struct kfastblock_leader_info *leader)
+{
+	struct kfastblock_raw_get_leader_rsp rsp;
+	u16 address_len;
+
+	if (!response || !leader)
+		return -EINVAL;
+
+	if (kfastblock_transport_response_expect_min_body(response, sizeof(rsp)))
+		return -EPROTO;
+
+	memcpy(&rsp, response->body, sizeof(rsp));
+	address_len = le16_to_cpu(rsp.address_len);
+	if (response->body_len != sizeof(rsp) + address_len ||
+	    !address_len ||
+	    address_len >= sizeof(leader->address))
+		return -EPROTO;
+
+	memset(leader, 0, sizeof(*leader));
+	leader->osd_id = le32_to_cpu(rsp.leader_id);
+	leader->port = le16_to_cpu(rsp.leader_port);
+	memcpy(leader->address, (u8 *)response->body + sizeof(rsp), address_len);
+	leader->address[address_len] = '\0';
+	if (!leader->osd_id || !leader->port || !leader->address[0])
+		return -EPROTO;
+
+	return 0;
+}
+
+static int kfastblock_transport_response_decode_read_object(
+	struct kfastblock_transport_response_ctx *response,
+	const struct kfastblock_object_extent *extent,
+	void *data)
+{
+	struct kfastblock_raw_read_object_rsp rsp;
+	u32 data_len;
+
+	if (!response || !extent || (!data && extent->length))
+		return -EINVAL;
+
+	if (kfastblock_transport_response_expect_min_body(response, sizeof(rsp)))
+		return -EPROTO;
+
+	memcpy(&rsp, response->body, sizeof(rsp));
+	data_len = le32_to_cpu(rsp.data_len);
+	if (response->body_len != sizeof(rsp) + data_len ||
+	    data_len > extent->length)
+		return -EPROTO;
+
+	memset(data, 0, extent->length);
+	if (data_len)
+		memcpy(data, (u8 *)response->body + sizeof(rsp), data_len);
+	return 0;
+}
+
 static int kfastblock_transport_fetch_image_info(struct socket *sock,
 					 struct kfastblock_cluster_view *view,
 					 u64 seq)
@@ -1337,9 +1412,7 @@ static int kfastblock_transport_fetch_pg_leader_from_osd(
 		.pool_id = cpu_to_le32(pool_id),
 		.pg_id = cpu_to_le32(pg_id),
 	};
-	struct kfastblock_raw_get_leader_rsp rsp;
 	struct kfastblock_transport_response_ctx response = {};
-	u16 address_len;
 	int ret;
 
 	if (!leader)
@@ -1354,32 +1427,8 @@ static int kfastblock_transport_fetch_pg_leader_from_osd(
 		kfastblock_transport_response_ctx_release(&response);
 		return ret;
 	}
-
-	ret = kfastblock_transport_response_expect_min_body(&response,
-							    sizeof(rsp));
-	if (ret) {
-		kfastblock_transport_response_ctx_release(&response);
-		return ret;
-	}
-
-	memcpy(&rsp, response.body, sizeof(rsp));
-	address_len = le16_to_cpu(rsp.address_len);
-	if (response.body_len != sizeof(rsp) + address_len ||
-	    !address_len ||
-	    address_len >= sizeof(leader->address)) {
-		kfastblock_transport_response_ctx_release(&response);
-		return -EPROTO;
-	}
-
-	leader->osd_id = le32_to_cpu(rsp.leader_id);
-	leader->port = le16_to_cpu(rsp.leader_port);
-	memcpy(leader->address, (u8 *)response.body + sizeof(rsp), address_len);
-	leader->address[address_len] = '\0';
+	ret = kfastblock_transport_response_decode_leader(&response, leader);
 	kfastblock_transport_response_ctx_release(&response);
-
-	if (!leader->osd_id || !leader->port || !leader->address[0])
-		return -EPROTO;
-
 	return 0;
 }
 
@@ -1438,10 +1487,8 @@ static int kfastblock_transport_read_object(struct socket *sock,
 		.object_name_len = cpu_to_le16(strlen(extent->object_name)),
 		.reserved = 0,
 	};
-	struct kfastblock_raw_read_object_rsp rsp;
 	struct kfastblock_transport_body_part parts[2];
 	u32 object_name_len;
-	u32 data_len;
 	int ret;
 
 	if (!sock || !extent || (!data && extent->length))
@@ -1457,25 +1504,12 @@ static int kfastblock_transport_read_object(struct socket *sock,
 		sock, KFASTBLOCK_RAW_SERVICE_OSD,
 		KFASTBLOCK_RAW_OSD_OP_READ_OBJECT, seq,
 		parts, ARRAY_SIZE(parts), response);
-	if (ret) {
-		return ret;
-	}
-
-	ret = kfastblock_transport_response_expect_min_body(response,
-							    sizeof(rsp));
 	if (ret)
 		return ret;
 
-	memcpy(&rsp, response->body, sizeof(rsp));
-	data_len = le32_to_cpu(rsp.data_len);
-	if (response->body_len != sizeof(rsp) + data_len ||
-	    data_len > extent->length)
-		return -EPROTO;
-
-	memset(data, 0, extent->length);
-	if (data_len)
-		memcpy(data, (u8 *)response->body + sizeof(rsp), data_len);
-	return 0;
+	return kfastblock_transport_response_decode_read_object(response,
+								extent,
+								data);
 }
 
 static int kfastblock_transport_delete_object(struct socket *sock,
@@ -1718,11 +1752,11 @@ static int kfastblock_transport_submit_object_io(
 		}
 		if (!ret)
 			ret = kfastblock_transport_match_exchange_response(&exchange);
+		ret = kfastblock_transport_complete_exchange_response(&exchange,
+							      &response, ret);
 		actions = ret ? kfastblock_recovery_classify_object_failure(ret) : 0;
 		kfastblock_recovery_finalize_osd_socket(vol, cached, &leader, ret,
 							actions);
-		kfastblock_transport_finish_exchange(&exchange, ret,
-						    ret ? NULL : &response.hdr);
 		kfastblock_transport_response_ctx_release(&response);
 		cached = NULL;
 		if (ret) {
