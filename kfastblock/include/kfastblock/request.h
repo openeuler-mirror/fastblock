@@ -290,6 +290,7 @@ unsigned long kfastblock_request_last_completed_jiffies(
 	const struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_queued_objects(
 	const struct kfastblock_request *kf_req);
+bool kfastblock_request_has_queued(const struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_inflight_objects(
 	const struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_completed_objects(
