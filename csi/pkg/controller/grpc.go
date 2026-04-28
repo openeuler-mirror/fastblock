@@ -144,11 +144,12 @@ func (s *GRPCService) ControllerPublishVolume(ctx context.Context, req *csi.Cont
 	if volume.ObjectSize == 0 {
 		volume.ObjectSize = objectSize
 	}
-	result, err := s.service.PublishVolume(ctx, PublishVolumeRequest{
+	result, err := s.service.ControllerPublishVolume(ctx, ControllerPublishRequest{
 		Volume:    volume,
 		BlockSize: blockSize,
 		Transport: req.GetVolumeContext()["transport"],
-		HostNQN:   ResolveHostNQN(req.GetNodeId(), req.GetSecrets()),
+		NodeID:    req.GetNodeId(),
+		Secrets:   req.GetSecrets(),
 	})
 	if err != nil {
 		return nil, err
@@ -162,9 +163,10 @@ func (s *GRPCService) ControllerUnpublishVolume(ctx context.Context, req *csi.Co
 	if req.GetVolumeId() == "" {
 		return nil, fmt.Errorf("volume id is required")
 	}
-	if err := s.service.UnpublishVolume(ctx, UnpublishVolumeRequest{
+	if err := s.service.ControllerUnpublishVolume(ctx, ControllerUnpublishRequest{
 		ExportID: req.GetVolumeId(),
-		HostNQN:  ResolveHostNQN(req.GetNodeId(), req.GetSecrets()),
+		NodeID:   req.GetNodeId(),
+		Secrets:  req.GetSecrets(),
 	}); err != nil {
 		return nil, err
 	}

@@ -169,6 +169,18 @@ func (s *Service) PublishVolume(ctx context.Context, req PublishVolumeRequest) (
 	}, nil
 }
 
+func (s *Service) ControllerPublishVolume(ctx context.Context, req ControllerPublishRequest) (PublishVolumeResult, error) {
+	if err := req.Validate(); err != nil {
+		return PublishVolumeResult{}, err
+	}
+	return s.PublishVolume(ctx, NewPublishVolumeRequest(
+		req.Volume,
+		req.BlockSize,
+		req.Transport,
+		ResolveHostNQN(req.NodeID, req.Secrets),
+	))
+}
+
 func (s *Service) UnpublishVolume(ctx context.Context, req UnpublishVolumeRequest) error {
 	if err := req.Validate(); err != nil {
 		return err
@@ -179,6 +191,16 @@ func (s *Service) UnpublishVolume(ctx context.Context, req UnpublishVolumeReques
 		}
 	}
 	return s.exporter.DeleteExport(ctx, req.ExportID)
+}
+
+func (s *Service) ControllerUnpublishVolume(ctx context.Context, req ControllerUnpublishRequest) error {
+	if err := req.Validate(); err != nil {
+		return err
+	}
+	return s.UnpublishVolume(ctx, NewUnpublishVolumeRequest(
+		req.ExportID,
+		ResolveHostNQN(req.NodeID, req.Secrets),
+	))
 }
 
 func (r CreateVolumeRequest) Validate() error {
@@ -254,6 +276,9 @@ func (r UnpublishVolumeRequest) Validate() error {
 }
 
 func (r ControllerPublishRequest) Validate() error {
+	if strings.TrimSpace(r.NodeID) == "" && ResolveHostNQN(r.NodeID, r.Secrets) == "" {
+		return errors.New("node id or hostNQN is required")
+	}
 	return PublishVolumeRequest{
 		Volume:    r.Volume,
 		BlockSize: r.BlockSize,
@@ -265,6 +290,9 @@ func (r ControllerPublishRequest) Validate() error {
 func (r ControllerUnpublishRequest) Validate() error {
 	if strings.TrimSpace(r.ExportID) == "" {
 		return errors.New("export id is required")
+	}
+	if strings.TrimSpace(r.NodeID) == "" && ResolveHostNQN(r.NodeID, r.Secrets) == "" {
+		return errors.New("node id or hostNQN is required")
 	}
 	return nil
 }
