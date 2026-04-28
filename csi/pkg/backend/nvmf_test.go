@@ -130,3 +130,19 @@ func TestUnstage(t *testing.T) {
 		t.Fatalf("unexpected disconnect args: %#v", runner.calls[0].args)
 	}
 }
+
+func TestCommandArgHelpers(t *testing.T) {
+	connectArgs := buildConnectArgs(VolumeContext{
+		Transport: "tcp",
+		NQN:       "nqn.test",
+		Traddr:    "10.0.0.10",
+		Trsvcid:   "4420",
+	})
+	if !reflect.DeepEqual(connectArgs, []string{"connect", "-t", "tcp", "-n", "nqn.test", "-a", "10.0.0.10", "-s", "4420"}) {
+		t.Fatalf("unexpected connect args: %#v", connectArgs)
+	}
+	disconnectArgs := buildDisconnectArgs("nqn.test")
+	if !reflect.DeepEqual(disconnectArgs, []string{"disconnect", "-n", "nqn.test"}) {
+		t.Fatalf("unexpected disconnect args: %#v", disconnectArgs)
+	}
+}
