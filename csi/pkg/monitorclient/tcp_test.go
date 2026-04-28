@@ -47,7 +47,7 @@ func TestCreateVolume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create volume failed: %v", err)
 	}
-	if volume.Name != "img-a" || volume.Pool != "fb" {
+	if volume.Name != "img-a" || volume.Pool != "fb" || volume.ID == "" {
 		t.Fatalf("unexpected volume: %+v", volume)
 	}
 }
