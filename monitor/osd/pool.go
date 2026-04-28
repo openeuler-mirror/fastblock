@@ -955,3 +955,14 @@ func ProcessGetPgOsdInfoMessage(ctx context.Context, poolIds []int32) (*msg.GetP
 	log.Info(ctx, "ProcessGetPgOsdInfoMessage done")
 	return gpo, nil
 }
+
+func GetPoolIDByName(poolName string) (int32, bool) {
+	AllPools.RwMutex.RLock()
+	defer AllPools.RwMutex.RUnlock()
+	for poolID, pool := range AllPools.pools {
+		if pool != nil && pool.Name == poolName {
+			return int32(poolID), true
+		}
+	}
+	return 0, false
+}

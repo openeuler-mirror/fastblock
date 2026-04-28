@@ -30,6 +30,7 @@ const (
 	defaultMonitorHostName       = "fbmonitor"
 	defaultMonitorAddress        = "127.0.0.1"
 	defaultMonitorPort           = 3333
+	defaultRawMonitorPort        = 3334
 	defaultPrometheusMonitorPort = 3332
 	defaultEtcdServerPort        = 2379
 	defaultEtcdPort              = 2380
@@ -74,6 +75,7 @@ type Config struct {
 	DataDir                 string `json:"data_dir"`
 	Port                    int    `json:"mon_rpc_port"`
 	PrometheusPort          int    `json:"prometheus_port"`
+	RawPort                 int    `json:"raw_monitor_port"`
 }
 
 // CONFIG parsed.
@@ -140,6 +142,10 @@ func marshalJsonConfig(configFilePath string, monitorId string) error {
 
 	if c.PrometheusPort == 0 {
 		c.PrometheusPort = defaultPrometheusMonitorPort
+	}
+
+	if c.RawPort == 0 {
+		c.RawPort = defaultRawMonitorPort
 	}
 
 	if len(c.DataDir) == 0 {

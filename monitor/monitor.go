@@ -23,6 +23,7 @@ import (
 	"monitor/log"
 	"monitor/msg"
 	"monitor/osd"
+	"monitor/rawserver"
 	"net"
 	"net/http"
 	"os"
@@ -887,6 +888,7 @@ func leaderCallback(whoAmI string, ctx context.Context, c *etcdapi.EtcdClient) {
 	go osd.CheckOsdHeartbeat(ctx, c)
 	go osd.OsdTaskrun(ctx, c)
 	go osd.UpdateClusterIos(ctx, c)
+	go rawserver.Start(ctx, c)
 	startTcpServer(ctx, c)
 }
 
