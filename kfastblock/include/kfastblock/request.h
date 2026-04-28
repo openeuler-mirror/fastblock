@@ -249,6 +249,8 @@ unsigned int kfastblock_request_state_count(
 bool kfastblock_request_any_failed(const struct kfastblock_request *kf_req);
 bool kfastblock_request_has_inflight(const struct kfastblock_request *kf_req);
 bool kfastblock_request_has_terminal(const struct kfastblock_request *kf_req);
+bool kfastblock_request_has_nonterminal(
+	const struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_terminal_objects(
 	const struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_nonterminal_objects(
