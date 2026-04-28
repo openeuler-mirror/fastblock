@@ -183,3 +183,39 @@ func TestRequestConstructors(t *testing.T) {
 		t.Fatalf("unexpected unpublish request: %+v", req)
 	}
 }
+
+func TestControllerPublishRequestUsesHostNQNPrecedence(t *testing.T) {
+	monitor := &stubMonitorClient{}
+	exporter := &stubExporterClient{}
+	svc := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+	volume := monitorclient.Volume{
+		ID:            "fbvolname:fb:img-a",
+		Name:          "img-a",
+		Pool:          "fb",
+		CapacityBytes: 1 << 20,
+		ObjectSize:    4 << 20,
+	}
+
+	if _, err := svc.ControllerPublishVolume(context.Background(), ControllerPublishRequest{
+		Volume:    volume,
+		BlockSize: 4096,
+		Transport: "rdma",
+		NodeID:    "node-a",
+		Secrets:   map[string]string{"hostNQN": "nqn.secret"},
+	}); err != nil {
+		t.Fatalf("controller publish failed: %v", err)
+	}
+	if exporter.allowNQN != "nqn.secret" {
+		t.Fatalf("expected secret hostNQN to win, got %q", exporter.allowNQN)
+	}
+
+	if err := svc.ControllerUnpublishVolume(context.Background(), ControllerUnpublishRequest{
+		ExportID: "exp-1",
+		NodeID:   "node-a",
+	}); err != nil {
+		t.Fatalf("controller unpublish failed: %v", err)
+	}
+	if exporter.denyNQN != "node-a" {
+		t.Fatalf("expected node id fallback hostNQN, got %q", exporter.denyNQN)
+	}
+}
