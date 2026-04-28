@@ -2758,10 +2758,19 @@ static int kfastblock_transport_kick_initial_dispatch(
 	kfastblock_request_dispatch_batch_reset(&ctx->batch);
 	ctx->ret = kfastblock_request_pick_dispatch_batch(
 		ctx->kf_req, &ctx->batch, ctx->initial_dispatch);
-	if (ctx->ret < 0) {
+	if (ctx->ret < 0)
 		kfastblock_transport_abort_request(ctx->kf_req, ctx->ret);
+
+	return 0;
+}
+
+static int kfastblock_transport_queue_initial_dispatch(
+	struct kfastblock_transport_submit_ctx *ctx)
+{
+	if (!ctx || !ctx->kf_req)
+		return -EINVAL;
+	if (ctx->ret)
 		return 0;
-	}
 
 	get_device(&ctx->kf_req->vol->dev);
 	ctx->ret = kfastblock_transport_queue_dispatch_batch(
@@ -2785,7 +2794,11 @@ static int kfastblock_transport_run_request_submit(
 		return kfastblock_transport_finish_submit_now(ctx->kf_req,
 							      ctx->ret);
 
-	return kfastblock_transport_kick_initial_dispatch(ctx);
+	ctx->ret = kfastblock_transport_kick_initial_dispatch(ctx);
+	if (ctx->ret)
+		return ctx->ret;
+
+	return kfastblock_transport_queue_initial_dispatch(ctx);
 }
 
 int kfastblock_transport_submit(struct kfastblock_request *kf_req)
