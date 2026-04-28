@@ -22,24 +22,45 @@ func NewHTTP(baseURL string) *HTTPClient {
 }
 
 func (c *HTTPClient) CreateExport(ctx context.Context, req CreateExportRequest) (Export, error) {
+	if err := req.Validate(); err != nil {
+		return Export{}, err
+	}
 	var export Export
 	if err := c.doJSON(ctx, http.MethodPost, "/v1/exports", req, http.StatusCreated, &export); err != nil {
+		return Export{}, err
+	}
+	if err := export.Validate(); err != nil {
 		return Export{}, err
 	}
 	return export, nil
 }
 
 func (c *HTTPClient) DeleteExport(ctx context.Context, exportID string) error {
+	if strings.TrimSpace(exportID) == "" {
+		return fmt.Errorf("export id is required")
+	}
 	return c.doJSON(ctx, http.MethodDelete, "/v1/exports/"+exportID, nil, http.StatusNoContent, nil)
 }
 
 func (c *HTTPClient) AllowHost(ctx context.Context, exportID, hostNQN string) error {
+	if strings.TrimSpace(exportID) == "" {
+		return fmt.Errorf("export id is required")
+	}
+	if strings.TrimSpace(hostNQN) == "" {
+		return fmt.Errorf("host nqn is required")
+	}
 	return c.doJSON(ctx, http.MethodPost, "/v1/exports/"+exportID+"/allow-host", map[string]string{
 		"host_nqn": hostNQN,
 	}, http.StatusNoContent, nil)
 }
 
 func (c *HTTPClient) DenyHost(ctx context.Context, exportID, hostNQN string) error {
+	if strings.TrimSpace(exportID) == "" {
+		return fmt.Errorf("export id is required")
+	}
+	if strings.TrimSpace(hostNQN) == "" {
+		return fmt.Errorf("host nqn is required")
+	}
 	return c.doJSON(ctx, http.MethodPost, "/v1/exports/"+exportID+"/deny-host", map[string]string{
 		"host_nqn": hostNQN,
 	}, http.StatusNoContent, nil)
