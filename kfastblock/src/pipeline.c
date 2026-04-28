@@ -125,6 +125,14 @@ bool kfastblock_pipeline_lookup(struct kfastblock_pipeline_state *state,
 	return found;
 }
 
+bool kfastblock_pipeline_has_seq(struct kfastblock_pipeline_state *state,
+				 u64 seq)
+{
+	struct kfastblock_pipeline_entry snapshot = {};
+
+	return kfastblock_pipeline_lookup(state, seq, &snapshot);
+}
+
 struct kfastblock_pipeline_entry *kfastblock_pipeline_enqueue(
 	struct kfastblock_pipeline_state *state,
 	u64 seq,
@@ -217,22 +225,39 @@ struct kfastblock_pipeline_entry *kfastblock_pipeline_finish_exchange(
 	return entry;
 }
 
+unsigned int kfastblock_pipeline_free_entries(
+	struct kfastblock_pipeline_state *state)
+{
+	unsigned long flags;
+	unsigned int free_entries = 0;
+	struct kfastblock_pipeline_entry *entry;
+
+	if (!state)
+		return 0;
+
+	spin_lock_irqsave(&state->lock, flags);
+	list_for_each_entry(entry, &state->free_list, link)
+		free_entries++;
+	spin_unlock_irqrestore(&state->lock, flags);
+
+	return free_entries;
+}
+
 void kfastblock_pipeline_snapshot(struct kfastblock_pipeline_state *state,
 				  struct kfastblock_pipeline_snapshot *snapshot)
 {
 	unsigned long flags;
-	unsigned int free_entries = 0;
 	struct kfastblock_pipeline_entry *entry;
 
 	if (!state || !snapshot)
 		return;
 
 	spin_lock_irqsave(&state->lock, flags);
-	list_for_each_entry(entry, &state->free_list, link)
-		free_entries++;
 	snapshot->capacity = state->capacity;
 	snapshot->inflight = state->inflight;
 	snapshot->peak_inflight = state->peak_inflight;
-	snapshot->free_entries = free_entries;
+	snapshot->free_entries = 0;
+	list_for_each_entry(entry, &state->free_list, link)
+		snapshot->free_entries++;
 	spin_unlock_irqrestore(&state->lock, flags);
 }
