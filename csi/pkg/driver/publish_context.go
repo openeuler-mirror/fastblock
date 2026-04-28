@@ -11,6 +11,7 @@ import (
 )
 
 const (
+	PublishContextExportID  = "exportID"
 	PublishContextTransport = "transport"
 	PublishContextNQN       = "nqn"
 	PublishContextTraddr    = "traddr"
@@ -38,6 +39,7 @@ func BuildPublishContext(export exporterclient.Export, transport string) (map[st
 		return nil, fmt.Errorf("unsupported transport %q", transport)
 	}
 	return map[string]string{
+		PublishContextExportID:  export.ID,
 		PublishContextTransport: transport,
 		PublishContextNQN:       export.NQN,
 		PublishContextTraddr:    export.Traddr,
