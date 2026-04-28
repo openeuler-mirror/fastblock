@@ -103,6 +103,9 @@ static constexpr const char *k_osd_mem_size_mb_key = "osd_mem_size_mb";
 static constexpr const char *k_osd_iobuf_small_pool_count_key = "osd_iobuf_small_pool_count";
 static constexpr const char *k_osd_iobuf_large_pool_count_key = "osd_iobuf_large_pool_count";
 
+static int save_rpc_port(uint32_t shard_id, uint32_t port);
+static std::optional<uint32_t> get_rpc_port(uint32_t shard_id);
+
 static void
 block_usage(void) {
     printf("--------------- osd options --------------------\n");
@@ -266,7 +269,8 @@ static void create_rpc_server(void* arg1, void* arg2) {
     auto* server = reinterpret_cast<server_t*>(arg1);
     auto shard_id = core_sharded::get_core_sharded().this_shard_id();
     auto opts = msg::rdma::server::make_options(server->pt);
-    opts->port = utils::get_random_port();
+    auto saved_port = get_rpc_port(shard_id);
+    opts->port = saved_port.value_or(utils::get_random_port());
     SPDK_NOTICELOG(
       "Starting rpc server on core %d, shard id %d, listen port is %d\n",
       ::spdk_env_get_current_core(), shard_id, opts->port);
@@ -287,9 +291,17 @@ static void create_rpc_server(void* arg1, void* arg2) {
             rpc_srv->create_listener(opts->port);
             rpc_srv->start();
             SPDK_NOTICELOG("Started rpc server on core %d\n", shard_id);
+            if(save_rpc_port(shard_id, opts->port) != 0){
+                SPDK_WARNLOG("Save rpc port %u for shard %u failed\n", opts->port, shard_id);
+            }
             break;
         } catch (const msg::rdma::bindException& ) {
-            //端口绑定失败
+            if(saved_port.has_value() && opts->port == saved_port.value()){
+                SPDK_WARNLOG(
+                  "Saved rpc port %u for shard %u is unavailable, fallback to random port\n",
+                  opts->port, shard_id);
+                saved_port.reset();
+            }
             opts->port = utils::get_random_port();
             continue;
         } catch (const std::exception& e) {
@@ -1100,6 +1112,10 @@ inline std::string core_size_path() {
     return file_name;
 }
 
+inline std::string rpc_port_path(uint32_t shard_id) {
+    return g_conf_path + "/osd-" + std::to_string(g_id) + "/rpc_port_" + std::to_string(shard_id);
+}
+
 int save_core_size(int core_num) {
     std::string  core_size = std::to_string(core_num);
     std::string path = core_size_path();
@@ -1144,6 +1160,35 @@ std::optional<int> get_core_size(){
         return std::nullopt;
     }
     return core_size;
+}
+
+int save_rpc_port(uint32_t shard_id, uint32_t port) {
+    std::ofstream ofs(rpc_port_path(shard_id), std::ios_base::trunc);
+    if(!ofs.is_open()){
+        std::cerr << "save rpc port file failed for shard " << shard_id << std::endl;
+        return -1;
+    }
+    ofs << port << std::endl;
+    return 0;
+}
+
+std::optional<uint32_t> get_rpc_port(uint32_t shard_id) {
+    std::ifstream ifs(rpc_port_path(shard_id));
+    std::string data;
+    int port;
+
+    if(!ifs.is_open() || !getline(ifs, data)){
+        return std::nullopt;
+    }
+    try {
+        port = std::stoi(data);
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+    if(port <= 0 || port > 65535){
+        return std::nullopt;
+    }
+    return static_cast<uint32_t>(port);
 }
 
 int
