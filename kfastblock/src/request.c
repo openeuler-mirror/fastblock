@@ -1,4 +1,5 @@
 #include <linux/errno.h>
+#include <linux/jiffies.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/string.h>
@@ -182,9 +183,17 @@ static int kfastblock_request_alloc_state(struct kfastblock_request *kf_req)
 	if (!kf_req->object_works)
 		goto err_free_objects;
 
+	kf_req->object_runtime = kvcalloc(count, sizeof(*kf_req->object_runtime),
+					  GFP_NOIO);
+	if (!kf_req->object_runtime)
+		goto err_free_object_works;
+
 	kf_req->max_object_extents = count;
 	return 0;
 
+err_free_object_works:
+	kvfree(kf_req->object_works);
+	kf_req->object_works = NULL;
 err_free_objects:
 	kvfree(kf_req->objects);
 	kf_req->objects = NULL;
@@ -282,10 +291,12 @@ void kfastblock_request_cleanup(struct kfastblock_request *kf_req)
 	kvfree(kf_req->pg_hints);
 	kvfree(kf_req->objects);
 	kvfree(kf_req->object_works);
+	kvfree(kf_req->object_runtime);
 	kf_req->unique_pgs = NULL;
 	kf_req->pg_hints = NULL;
 	kf_req->objects = NULL;
 	kf_req->object_works = NULL;
+	kf_req->object_runtime = NULL;
 	kf_req->max_object_extents = 0;
 }
 
@@ -324,6 +335,7 @@ int kfastblock_request_init(struct kfastblock_request *kf_req,
 	kf_req->next_object_to_queue = 0;
 	atomic_set(&kf_req->pending_objects, 0);
 	spin_lock_init(&kf_req->status_lock);
+	spin_lock_init(&kf_req->object_state_lock);
 	mutex_init(&kf_req->dispatch_lock);
 	for (i = 0; i < kf_req->max_object_extents; ++i) {
 		kf_req->object_works[i].parent = kf_req;
@@ -336,6 +348,220 @@ int kfastblock_request_init(struct kfastblock_request *kf_req,
 	}
 
 	return 0;
+}
+
+void kfastblock_request_dispatch_batch_reset(
+	struct kfastblock_request_dispatch_batch *batch)
+{
+	if (!batch)
+		return;
+
+	batch->nr_indexes = 0;
+	memset(batch->indexes, 0, sizeof(batch->indexes));
+}
+
+void kfastblock_request_prepare_runtime(struct kfastblock_request *kf_req)
+{
+	unsigned long flags;
+	unsigned int i;
+
+	if (!kf_req || !kf_req->object_runtime)
+		return;
+
+	spin_lock_irqsave(&kf_req->object_state_lock, flags);
+	kf_req->dispatch_cursor = 0;
+	kf_req->queued_objects = 0;
+	kf_req->inflight_objects = 0;
+	kf_req->completed_objects = 0;
+	kf_req->failed_objects = 0;
+	kf_req->cancelled_objects = 0;
+	kf_req->dispatch_generation++;
+	for (i = 0; i < kf_req->nr_objects; ++i) {
+		kf_req->object_runtime[i].state = KFASTBLOCK_OBJECT_READY;
+		kf_req->object_runtime[i].last_error = 0;
+		kf_req->object_runtime[i].dispatch_count = 0;
+		kf_req->object_runtime[i].attempt_count = 0;
+		kf_req->object_runtime[i].wire_seq = 0;
+		kf_req->object_runtime[i].queued_jiffies = 0;
+		kf_req->object_runtime[i].completed_jiffies = 0;
+	}
+	spin_unlock_irqrestore(&kf_req->object_state_lock, flags);
+}
+
+static bool kfastblock_request_object_dispatchable(
+	const struct kfastblock_request_object_runtime *runtime)
+{
+	return runtime && runtime->state == KFASTBLOCK_OBJECT_READY;
+}
+
+int kfastblock_request_pick_dispatch_batch(
+	struct kfastblock_request *kf_req,
+	struct kfastblock_request_dispatch_batch *batch,
+	unsigned int max_dispatch)
+{
+	unsigned long flags;
+	unsigned int count = 0;
+	unsigned int scanned = 0;
+	unsigned int cursor;
+
+	if (!kf_req || !batch || !max_dispatch)
+		return -EINVAL;
+
+	kfastblock_request_dispatch_batch_reset(batch);
+	if (!kf_req->nr_objects || !kf_req->object_runtime)
+		return 0;
+
+	spin_lock_irqsave(&kf_req->object_state_lock, flags);
+	cursor = kf_req->dispatch_cursor;
+	while (scanned < kf_req->nr_objects && count < max_dispatch) {
+		unsigned int index = (cursor + scanned) % kf_req->nr_objects;
+
+		if (kfastblock_request_object_dispatchable(
+			    &kf_req->object_runtime[index])) {
+			batch->indexes[count++] = index;
+			kf_req->object_runtime[index].state =
+				KFASTBLOCK_OBJECT_QUEUED;
+			kf_req->object_runtime[index].dispatch_count++;
+			kf_req->object_runtime[index].queued_jiffies = jiffies;
+			kf_req->queued_objects++;
+		}
+		scanned++;
+	}
+	if (count)
+		kf_req->dispatch_cursor = (batch->indexes[count - 1] + 1) %
+					  kf_req->nr_objects;
+	batch->nr_indexes = count;
+	spin_unlock_irqrestore(&kf_req->object_state_lock, flags);
+
+	return count;
+}
+
+int kfastblock_request_mark_object_queued(
+	struct kfastblock_request *kf_req,
+	unsigned int object_index)
+{
+	unsigned long flags;
+	int ret = 0;
+
+	if (!kf_req || !kf_req->object_runtime || object_index >= kf_req->nr_objects)
+		return -EINVAL;
+
+	spin_lock_irqsave(&kf_req->object_state_lock, flags);
+	if (kf_req->object_runtime[object_index].state !=
+	    KFASTBLOCK_OBJECT_QUEUED) {
+		ret = -EALREADY;
+		goto out_unlock;
+	}
+	kf_req->object_runtime[object_index].attempt_count++;
+out_unlock:
+	spin_unlock_irqrestore(&kf_req->object_state_lock, flags);
+	return ret;
+}
+
+void kfastblock_request_mark_object_inflight(
+	struct kfastblock_request *kf_req,
+	unsigned int object_index)
+{
+	unsigned long flags;
+
+	if (!kf_req || !kf_req->object_runtime || object_index >= kf_req->nr_objects)
+		return;
+
+	spin_lock_irqsave(&kf_req->object_state_lock, flags);
+	if (kf_req->object_runtime[object_index].state ==
+	    KFASTBLOCK_OBJECT_QUEUED) {
+		kf_req->object_runtime[object_index].state =
+			KFASTBLOCK_OBJECT_IN_FLIGHT;
+		if (kf_req->queued_objects)
+			kf_req->queued_objects--;
+		kf_req->inflight_objects++;
+	}
+	spin_unlock_irqrestore(&kf_req->object_state_lock, flags);
+}
+
+void kfastblock_request_mark_object_complete(
+	struct kfastblock_request *kf_req,
+	unsigned int object_index,
+	int ret)
+{
+	unsigned long flags;
+	struct kfastblock_request_object_runtime *runtime;
+
+	if (!kf_req || !kf_req->object_runtime || object_index >= kf_req->nr_objects)
+		return;
+
+	spin_lock_irqsave(&kf_req->object_state_lock, flags);
+	runtime = &kf_req->object_runtime[object_index];
+	if (runtime->state == KFASTBLOCK_OBJECT_IN_FLIGHT &&
+	    kf_req->inflight_objects)
+		kf_req->inflight_objects--;
+	runtime->last_error = ret;
+	runtime->completed_jiffies = jiffies;
+	if (ret) {
+		runtime->state = KFASTBLOCK_OBJECT_FAILED;
+		kf_req->failed_objects++;
+	} else {
+		runtime->state = KFASTBLOCK_OBJECT_DONE;
+		kf_req->completed_objects++;
+	}
+	spin_unlock_irqrestore(&kf_req->object_state_lock, flags);
+}
+
+int kfastblock_request_cancel_unqueued(struct kfastblock_request *kf_req)
+{
+	unsigned long flags;
+	unsigned int i;
+	unsigned int cancelled = 0;
+
+	if (!kf_req || !kf_req->object_runtime)
+		return 0;
+
+	spin_lock_irqsave(&kf_req->object_state_lock, flags);
+	for (i = 0; i < kf_req->nr_objects; ++i) {
+		struct kfastblock_request_object_runtime *runtime;
+
+		runtime = &kf_req->object_runtime[i];
+		if (!kfastblock_request_object_dispatchable(runtime))
+			continue;
+		runtime->state = KFASTBLOCK_OBJECT_CANCELLED;
+		runtime->last_error = -ECANCELED;
+		runtime->completed_jiffies = jiffies;
+		cancelled++;
+	}
+	kf_req->cancelled_objects += cancelled;
+	spin_unlock_irqrestore(&kf_req->object_state_lock, flags);
+
+	return cancelled;
+}
+
+unsigned int kfastblock_request_inflight_objects(
+	const struct kfastblock_request *kf_req)
+{
+	unsigned int value = 0;
+	unsigned long flags;
+
+	if (!kf_req)
+		return 0;
+
+	spin_lock_irqsave((spinlock_t *)&kf_req->object_state_lock, flags);
+	value = kf_req->inflight_objects;
+	spin_unlock_irqrestore((spinlock_t *)&kf_req->object_state_lock, flags);
+	return value;
+}
+
+unsigned int kfastblock_request_completed_objects(
+	const struct kfastblock_request *kf_req)
+{
+	unsigned int value = 0;
+	unsigned long flags;
+
+	if (!kf_req)
+		return 0;
+
+	spin_lock_irqsave((spinlock_t *)&kf_req->object_state_lock, flags);
+	value = kf_req->completed_objects;
+	spin_unlock_irqrestore((spinlock_t *)&kf_req->object_state_lock, flags);
+	return value;
 }
 
 u32 kfastblock_request_calc_pg(const char *object_name, u32 pg_count)
