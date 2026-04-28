@@ -1766,6 +1766,25 @@ static void kfastblock_transport_release_object_buffer(
 	kfastblock_buffer_pool_free(&kf_req->vol->object_buffer_pool, buf);
 }
 
+static int kfastblock_transport_execute_object_opcode(
+	struct socket *sock,
+	u32 pool_id,
+	const struct kfastblock_object_extent *extent,
+	enum req_op op,
+	void *buf,
+	u64 seq,
+	struct kfastblock_transport_response_ctx *response)
+{
+	if (op == REQ_OP_WRITE || op == REQ_OP_WRITE_ZEROES)
+		return kfastblock_transport_write_object(sock, pool_id, extent, buf,
+							 seq, response);
+	if (op == REQ_OP_READ)
+		return kfastblock_transport_read_object(sock, pool_id, extent, buf,
+							seq, response);
+	return kfastblock_transport_delete_object(sock, pool_id, extent, seq,
+						  response);
+}
+
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
@@ -1864,17 +1883,9 @@ static int kfastblock_transport_submit_object_io(
 			}
 			goto out;
 		}
-		if (op == REQ_OP_WRITE || op == REQ_OP_WRITE_ZEROES) {
-			ret = kfastblock_transport_write_object(sock, kf_req->request_pool_id,
-						 extent, buf, seq, &response);
-		} else if (op == REQ_OP_READ) {
-			ret = kfastblock_transport_read_object(sock, kf_req->request_pool_id,
-						extent, buf, seq, &response);
-		} else {
-			ret = kfastblock_transport_delete_object(sock,
-							kf_req->request_pool_id,
-							extent, seq, &response);
-		}
+		ret = kfastblock_transport_execute_object_opcode(
+			sock, kf_req->request_pool_id, extent, op, buf, seq,
+			&response);
 		if (ret == -ENOENT && op == REQ_OP_READ) {
 			memset(buf, 0, extent->length);
 			ret = 0;
