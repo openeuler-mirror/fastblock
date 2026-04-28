@@ -102,6 +102,18 @@ func TestVolumeRefHelper(t *testing.T) {
 	}
 }
 
+func TestValidateAddress(t *testing.T) {
+	if err := ValidateAddress("127.0.0.1:3333"); err != nil {
+		t.Fatalf("unexpected address validation error: %v", err)
+	}
+	if err := ValidateAddress(""); err == nil {
+		t.Fatal("expected empty address validation error")
+	}
+	if err := ValidateAddress("bad-address"); err == nil {
+		t.Fatal("expected malformed address validation error")
+	}
+}
+
 func startMockMonitor(t *testing.T, handler func(*msg.Request) *msg.Response) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
