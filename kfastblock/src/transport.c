@@ -2117,19 +2117,6 @@ static void kfastblock_transport_run_object_attempts(
 	}
 }
 
-static void kfastblock_transport_submit_prepared_object_io(
-	struct kfastblock_transport_object_io_ctx *ctx)
-{
-	if (!ctx)
-		return;
-
-	kfastblock_transport_prepare_object_execution(ctx);
-	if (ctx->ret)
-		return;
-
-	kfastblock_transport_run_object_attempts(ctx);
-}
-
 static int kfastblock_transport_run_object_io_ctx(
 	struct kfastblock_transport_object_io_ctx *ctx)
 {
@@ -2139,7 +2126,9 @@ static int kfastblock_transport_run_object_io_ctx(
 		return -EINVAL;
 
 	ctx->ret = 0;
-	kfastblock_transport_submit_prepared_object_io(ctx);
+	kfastblock_transport_prepare_object_execution(ctx);
+	if (!ctx->ret)
+		kfastblock_transport_run_object_attempts(ctx);
 	ret = ctx->ret;
 	kfastblock_transport_cleanup_object_io(ctx);
 	return ret;
