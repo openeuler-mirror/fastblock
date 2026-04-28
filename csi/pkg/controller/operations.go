@@ -59,6 +59,20 @@ type UnpublishVolumeRequest struct {
 	HostNQN  string
 }
 
+type ControllerPublishRequest struct {
+	Volume    monitorclient.Volume
+	BlockSize int64
+	Transport string
+	NodeID    string
+	Secrets   map[string]string
+}
+
+type ControllerUnpublishRequest struct {
+	ExportID string
+	NodeID   string
+	Secrets  map[string]string
+}
+
 func NewDeleteVolumeRequest(ref monitorclient.VolumeRef) DeleteVolumeRequest {
 	return DeleteVolumeRequest{Volume: ref}
 }
@@ -233,6 +247,22 @@ func (r ExpandVolumeRequest) Validate() error {
 }
 
 func (r UnpublishVolumeRequest) Validate() error {
+	if strings.TrimSpace(r.ExportID) == "" {
+		return errors.New("export id is required")
+	}
+	return nil
+}
+
+func (r ControllerPublishRequest) Validate() error {
+	return PublishVolumeRequest{
+		Volume:    r.Volume,
+		BlockSize: r.BlockSize,
+		Transport: r.Transport,
+		HostNQN:   ResolveHostNQN(r.NodeID, r.Secrets),
+	}.Validate()
+}
+
+func (r ControllerUnpublishRequest) Validate() error {
 	if strings.TrimSpace(r.ExportID) == "" {
 		return errors.New("export id is required")
 	}
