@@ -277,5 +277,8 @@ void kfastblock_volume_update_pipeline_snapshot(
 	struct kfastblock_volume *vol,
 	const struct kfastblock_pipeline_state *state);
 void kfastblock_volume_reset_pipeline_snapshot(struct kfastblock_volume *vol);
+void kfastblock_volume_get_pipeline_snapshot(
+	struct kfastblock_volume *vol,
+	struct kfastblock_pipeline_snapshot *snapshot);
 
 #endif

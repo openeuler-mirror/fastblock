@@ -547,6 +547,20 @@ void kfastblock_volume_reset_pipeline_snapshot(struct kfastblock_volume *vol)
 	spin_unlock_irqrestore(&vol->pipeline_snapshot_lock, flags);
 }
 
+void kfastblock_volume_get_pipeline_snapshot(
+	struct kfastblock_volume *vol,
+	struct kfastblock_pipeline_snapshot *snapshot)
+{
+	unsigned long flags;
+
+	if (!vol || !snapshot)
+		return;
+
+	spin_lock_irqsave(&vol->pipeline_snapshot_lock, flags);
+	*snapshot = vol->pipeline_snapshot;
+	spin_unlock_irqrestore(&vol->pipeline_snapshot_lock, flags);
+}
+
 void kfastblock_volume_account_io_submit(struct kfastblock_volume *vol,
 				       enum req_op op, u32 bytes)
 {
