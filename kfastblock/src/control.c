@@ -146,10 +146,6 @@ static int kfastblock_parse_attach_spec(const char *args, size_t count,
 			ret = kfastblock_dup_field(&spec->pool_name, value);
 		} else if (!strcmp(key, "image_name")) {
 			ret = kfastblock_dup_field(&spec->image_name, value);
-		} else if (!strcmp(key, "token")) {
-			ret = kfastblock_dup_field(&spec->token, value);
-		} else if (!strcmp(key, "snapshot_name")) {
-			ret = kfastblock_dup_field(&spec->snapshot_name, value);
 		} else if (!strcmp(key, "read_only")) {
 			if (!kfastblock_parse_bool(value, &bool_val)) {
 				ret = -EINVAL;
@@ -253,8 +249,6 @@ void kfastblock_control_cleanup_attach_spec(struct kfastblock_attach_spec *spec)
 	kfree(spec->monitor_addr);
 	kfree(spec->pool_name);
 	kfree(spec->image_name);
-	kfree(spec->token);
-	kfree(spec->snapshot_name);
 	memset(spec, 0, sizeof(*spec));
 }
 
