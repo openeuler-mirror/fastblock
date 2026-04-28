@@ -239,6 +239,8 @@ int kfastblock_request_requeue_object_by_seq(
 int kfastblock_request_cancel_unqueued(struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_dispatch_credits(
 	const struct kfastblock_request *kf_req);
+bool kfastblock_request_dispatch_window_saturated(
+	const struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_dispatchable_objects(
 	const struct kfastblock_request *kf_req);
 bool kfastblock_request_has_dispatchable(
