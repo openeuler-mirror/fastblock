@@ -581,6 +581,18 @@ u32 kfastblock_volume_pipeline_peak_inflight(
 	return snapshot.peak_inflight;
 }
 
+u32 kfastblock_volume_pipeline_free_entries(
+	struct kfastblock_volume *vol)
+{
+	struct kfastblock_pipeline_snapshot snapshot = {};
+
+	if (!vol)
+		return 0;
+
+	kfastblock_volume_get_pipeline_snapshot(vol, &snapshot);
+	return snapshot.free_entries;
+}
+
 u32 kfastblock_volume_pipeline_utilization_pct(
 	struct kfastblock_volume *vol)
 {
