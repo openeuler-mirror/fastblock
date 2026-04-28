@@ -70,6 +70,7 @@ rpm_deps=(
   jq
   libaio-devel
   libnl3-devel
+  libuuid-devel
   libtool
   make
   meson
@@ -84,7 +85,6 @@ rpm_deps=(
   python3-pip
   python3-pyelftools
   rdma-core-devel
-  util-linux
 )
 
 detect_family() {
