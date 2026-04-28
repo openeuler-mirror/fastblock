@@ -22,6 +22,7 @@ enum kfastblock_diag_anomaly_flag {
 	KFASTBLOCK_DIAG_ANOMALY_SELFCHECK_WARNING = 1U << 8,
 	KFASTBLOCK_DIAG_ANOMALY_FAULT_ARMED = 1U << 9,
 	KFASTBLOCK_DIAG_ANOMALY_EVENT_ERROR_SPIKE = 1U << 10,
+	KFASTBLOCK_DIAG_ANOMALY_PIPELINE_UNSTABLE = 1U << 11,
 };
 
 enum kfastblock_diag_drift_flag {
@@ -34,6 +35,7 @@ enum kfastblock_diag_drift_flag {
 	KFASTBLOCK_DIAG_DRIFT_SELFCHECK = 1U << 6,
 	KFASTBLOCK_DIAG_DRIFT_FAULT = 1U << 7,
 	KFASTBLOCK_DIAG_DRIFT_EVENTS = 1U << 8,
+	KFASTBLOCK_DIAG_DRIFT_PIPELINE = 1U << 9,
 };
 
 struct kfastblock_diag_volume_snapshot {

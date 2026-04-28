@@ -523,6 +523,17 @@ static void kfastblock_diag_compute_anomaly(struct kfastblock_diag_snapshot *sna
 		flags |= KFASTBLOCK_DIAG_ANOMALY_FAULT_ARMED;
 		score += 8;
 	}
+	if (snapshot->pipeline.retry_objects ||
+	    snapshot->pipeline.failed_objects ||
+	    snapshot->pipeline.cancelled_objects ||
+	    snapshot->pipeline.last_response_status) {
+		flags |= KFASTBLOCK_DIAG_ANOMALY_PIPELINE_UNSTABLE;
+		score += min_t(u32, 15,
+			       (u32)min_t(u64, snapshot->pipeline.retry_objects, 4) * 2 +
+			       (u32)min_t(u64, snapshot->pipeline.failed_objects, 4) * 3 +
+			       (u32)min_t(u64, snapshot->pipeline.cancelled_objects, 2) * 2 +
+			       (snapshot->pipeline.last_response_status ? 3 : 0));
+	}
 	if (snapshot->events.object_error_events || refresh_fail_events ||
 	    socket_events) {
 		flags |= KFASTBLOCK_DIAG_ANOMALY_EVENT_ERROR_SPIKE;
@@ -686,6 +697,19 @@ void kfastblock_diag_compare_baseline(
 		flags |= KFASTBLOCK_DIAG_DRIFT_FAULT;
 		score += 12;
 	}
+	if (current_snapshot->pipeline.dispatch_batches !=
+		    base.pipeline.dispatch_batches ||
+	    current_snapshot->pipeline.retry_objects >
+		    base.pipeline.retry_objects ||
+	    current_snapshot->pipeline.failed_objects >
+		    base.pipeline.failed_objects ||
+	    current_snapshot->pipeline.cancelled_objects >
+		    base.pipeline.cancelled_objects ||
+	    current_snapshot->pipeline.last_response_status !=
+		    base.pipeline.last_response_status) {
+		flags |= KFASTBLOCK_DIAG_DRIFT_PIPELINE;
+		score += 10;
+	}
 	if (current_snapshot->events.object_error_events >
 		    base.events.object_error_events ||
 	    current_snapshot->events.cluster_refresh_fail_events >
@@ -788,6 +812,30 @@ static int kfastblock_diag_dump_snapshot_prefixed(
 		   snapshot->volume.last_image_refresh_jiffies);
 	seq_printf(m, "%svolume.event_count=%u\n", prefix,
 		   snapshot->volume.event_count);
+	seq_printf(m, "%spipeline.request_prepares=%llu\n", prefix,
+		   snapshot->pipeline.request_prepares);
+	seq_printf(m, "%spipeline.request_cleanups=%llu\n", prefix,
+		   snapshot->pipeline.request_cleanups);
+	seq_printf(m, "%spipeline.dispatch_batches=%llu\n", prefix,
+		   snapshot->pipeline.dispatch_batches);
+	seq_printf(m, "%spipeline.queued_objects=%llu\n", prefix,
+		   snapshot->pipeline.queued_objects);
+	seq_printf(m, "%spipeline.retry_objects=%llu\n", prefix,
+		   snapshot->pipeline.retry_objects);
+	seq_printf(m, "%spipeline.completed_objects=%llu\n", prefix,
+		   snapshot->pipeline.completed_objects);
+	seq_printf(m, "%spipeline.failed_objects=%llu\n", prefix,
+		   snapshot->pipeline.failed_objects);
+	seq_printf(m, "%spipeline.cancelled_objects=%llu\n", prefix,
+		   snapshot->pipeline.cancelled_objects);
+	seq_printf(m, "%spipeline.seq_records=%llu\n", prefix,
+		   snapshot->pipeline.seq_records);
+	seq_printf(m, "%spipeline.last_response_status=%d\n", prefix,
+		   snapshot->pipeline.last_response_status);
+	seq_printf(m, "%spipeline.last_response_body_len=%u\n", prefix,
+		   snapshot->pipeline.last_response_body_len);
+	seq_printf(m, "%spipeline.last_transport_flags=0x%x\n", prefix,
+		   snapshot->pipeline.last_transport_flags);
 	seq_printf(m, "%sdiagnostics.anomaly_score=%u\n", prefix,
 		   snapshot->anomaly_score);
 	seq_printf(m, "%sdiagnostics.anomaly_status=%s\n", prefix,

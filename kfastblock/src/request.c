@@ -642,6 +642,54 @@ int kfastblock_request_complete_object_by_seq(
 	return 0;
 }
 
+int kfastblock_request_requeue_object(
+	struct kfastblock_request *kf_req,
+	unsigned int object_index,
+	int ret)
+{
+	unsigned long flags;
+	struct kfastblock_request_object_runtime *runtime;
+
+	if (!kf_req || !kf_req->object_runtime || object_index >= kf_req->nr_objects)
+		return -EINVAL;
+
+	spin_lock_irqsave(&kf_req->object_state_lock, flags);
+	runtime = &kf_req->object_runtime[object_index];
+	if (runtime->state == KFASTBLOCK_OBJECT_QUEUED && kf_req->queued_objects)
+		kf_req->queued_objects--;
+	if (runtime->state == KFASTBLOCK_OBJECT_IN_FLIGHT &&
+	    kf_req->inflight_objects)
+		kf_req->inflight_objects--;
+	runtime->state = KFASTBLOCK_OBJECT_REQUEUE;
+	runtime->last_error = ret;
+	runtime->last_retry_jiffies = jiffies;
+	runtime->response_status = 0;
+	runtime->response_body_len = 0;
+	runtime->transport_flags = 0;
+	runtime->wire_seq = 0;
+	runtime->state = KFASTBLOCK_OBJECT_READY;
+	spin_unlock_irqrestore(&kf_req->object_state_lock, flags);
+
+	kfastblock_request_note_object_retry(kf_req, object_index, ret);
+	return 0;
+}
+
+int kfastblock_request_requeue_object_by_seq(
+	struct kfastblock_request *kf_req,
+	u64 seq,
+	int ret)
+{
+	unsigned int object_index;
+	int lookup_ret;
+
+	lookup_ret = kfastblock_request_lookup_object_by_seq(kf_req, seq,
+							     &object_index);
+	if (lookup_ret)
+		return lookup_ret;
+
+	return kfastblock_request_requeue_object(kf_req, object_index, ret);
+}
+
 int kfastblock_request_cancel_unqueued(struct kfastblock_request *kf_req)
 {
 	unsigned long flags;
