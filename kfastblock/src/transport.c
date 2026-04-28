@@ -2630,24 +2630,47 @@ static void kfastblock_transport_object_work(struct work_struct *work)
 					     ret);
 }
 
+static int kfastblock_transport_finish_empty_request(
+	struct kfastblock_request *kf_req)
+{
+	if (!kf_req || !kf_req->rq || !kf_req->vol)
+		return -EINVAL;
+
+	kfastblock_request_cleanup(kf_req);
+	blk_mq_end_request(kf_req->rq, BLK_STS_OK);
+	kfastblock_volume_put_io(kf_req->vol);
+	return 0;
+}
+
+static int kfastblock_transport_prepare_request_submit(
+	struct kfastblock_request *kf_req,
+	unsigned int *initial_dispatch)
+{
+	if (!kf_req || !kf_req->rq || !kf_req->vol || !initial_dispatch)
+		return -EINVAL;
+
+	if (!kf_req->nr_objects)
+		return kfastblock_transport_finish_empty_request(kf_req);
+
+	kf_req->status = 0;
+	kfastblock_request_prepare_runtime(kf_req);
+	atomic_set(&kf_req->pending_objects, kf_req->nr_objects);
+	*initial_dispatch = min_t(unsigned int, kf_req->nr_objects,
+				  kf_req->dispatch_window ?
+				  kf_req->dispatch_window :
+				  1);
+	return kfastblock_transport_prefetch_request_leaders(kf_req);
+}
+
 int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 {
 	struct kfastblock_request_dispatch_batch batch;
 	unsigned int initial_dispatch;
 	int ret = 0;
 
-	if (!kf_req || !kf_req->rq || !kf_req->vol)
-		return -EINVAL;
-
-	if (!kf_req->nr_objects) {
-		kfastblock_request_cleanup(kf_req);
-		blk_mq_end_request(kf_req->rq, BLK_STS_OK);
-		kfastblock_volume_put_io(kf_req->vol);
-		return 0;
-	}
-
-	ret = kfastblock_transport_prefetch_request_leaders(kf_req);
-	if (ret) {
+	ret = kfastblock_transport_prepare_request_submit(kf_req,
+							    &initial_dispatch);
+	if (ret < 0) {
 		kfastblock_request_cleanup(kf_req);
 		kfastblock_volume_account_io_complete(kf_req->vol, ret);
 		blk_mq_end_request(kf_req->rq,
@@ -2655,14 +2678,9 @@ int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 		kfastblock_volume_put_io(kf_req->vol);
 		return 0;
 	}
+	if (!kf_req || !kf_req->nr_objects)
+		return 0;
 
-	kf_req->status = 0;
-	kfastblock_request_prepare_runtime(kf_req);
-	atomic_set(&kf_req->pending_objects, kf_req->nr_objects);
-	initial_dispatch = min_t(unsigned int, kf_req->nr_objects,
-				 kf_req->dispatch_window ?
-				 kf_req->dispatch_window :
-				 1);
 	kfastblock_request_dispatch_batch_reset(&batch);
 	ret = kfastblock_request_pick_dispatch_batch(kf_req, &batch,
 						     initial_dispatch);
