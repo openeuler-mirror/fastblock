@@ -279,6 +279,8 @@ u32 kfastblock_volume_pipeline_last_response_body_len(
 	struct kfastblock_volume *vol);
 u32 kfastblock_volume_pipeline_last_transport_flags(
 	struct kfastblock_volume *vol);
+u32 kfastblock_volume_pipeline_capacity(
+	struct kfastblock_volume *vol);
 u32 kfastblock_volume_pipeline_utilization_pct(
 	struct kfastblock_volume *vol);
 u64 kfastblock_volume_pipeline_oldest_inflight_seq(
