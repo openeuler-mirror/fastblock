@@ -518,31 +518,46 @@ static int kfastblock_transport_queue_object_work(
 	return 0;
 }
 
-static int kfastblock_transport_queue_next_object(struct kfastblock_request *kf_req)
+static int
+kfastblock_transport_queue_dispatch_batch(struct kfastblock_request *kf_req,
+					  const struct kfastblock_request_dispatch_batch *batch)
+{
+	unsigned int i;
+	int ret = 0;
+
+	if (!kf_req || !batch)
+		return -EINVAL;
+
+	for (i = 0; i < batch->nr_indexes; ++i) {
+		ret = kfastblock_transport_queue_object_work(kf_req,
+						     batch->indexes[i]);
+		if (ret)
+			break;
+	}
+
+	return ret;
+}
+
+static int kfastblock_transport_refill_dispatch_window(
+	struct kfastblock_request *kf_req)
 {
 	struct kfastblock_request_dispatch_batch batch;
+	unsigned int credits;
 	int ret;
 
 	if (!kf_req)
 		return -EINVAL;
 
-	kfastblock_request_dispatch_batch_reset(&batch);
-	ret = kfastblock_request_pick_dispatch_batch(kf_req, &batch, 1);
-	if (ret < 0)
-		return ret;
-	if (!batch.nr_indexes)
+	credits = kfastblock_request_dispatch_credits(kf_req);
+	if (!credits)
 		return 0;
 
-	ret = kfastblock_transport_queue_object_work(kf_req, batch.indexes[0]);
-	if (ret) {
-		int cancelled = kfastblock_request_cancel_unqueued(kf_req);
-
-		if (cancelled)
-			atomic_sub(cancelled, &kf_req->pending_objects);
+	kfastblock_request_dispatch_batch_reset(&batch);
+	ret = kfastblock_request_pick_dispatch_batch(kf_req, &batch, credits);
+	if (ret < 0 || !batch.nr_indexes)
 		return ret;
-	}
 
-	return ret;
+	return kfastblock_transport_queue_dispatch_batch(kf_req, &batch);
 }
 
 static int kfastblock_transport_discard_unscheduled(struct kfastblock_request *kf_req)
@@ -1920,7 +1935,7 @@ static void kfastblock_transport_complete_request(struct kfastblock_request *kf_
 		first_error = kfastblock_transport_set_first_error(kf_req, ret);
 	else if (!kfastblock_transport_request_failed(kf_req))
 		first_error = kfastblock_transport_set_first_error(
-			kf_req, kfastblock_transport_queue_next_object(kf_req));
+			kf_req, kfastblock_transport_refill_dispatch_window(kf_req));
 
 	remaining = atomic_dec_return(&kf_req->pending_objects);
 	if (first_error) {
@@ -2000,7 +2015,6 @@ static void kfastblock_transport_object_work(struct work_struct *work)
 int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 {
 	struct kfastblock_request_dispatch_batch batch;
-	unsigned int i;
 	unsigned int initial_dispatch;
 	int ret = 0;
 
@@ -2039,12 +2053,7 @@ int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 		return 0;
 	}
 	get_device(&kf_req->vol->dev);
-	for (i = 0; i < batch.nr_indexes; ++i) {
-		ret = kfastblock_transport_queue_object_work(kf_req,
-						     batch.indexes[i]);
-		if (ret)
-			break;
-	}
+	ret = kfastblock_transport_queue_dispatch_batch(kf_req, &batch);
 	if (ret)
 		kfastblock_transport_abort_request(kf_req, ret);
 
