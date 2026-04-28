@@ -8,6 +8,7 @@ import (
 
 type Config struct {
 	ListenAddress     string
+	MonitorAddress    string
 	RPCSocketPath     string
 	NodeName          string
 	TargetAddress     string
@@ -30,6 +31,9 @@ func (c Config) Validate() error {
 	}
 	if strings.TrimSpace(c.RPCSocketPath) == "" {
 		return errors.New("rpc socket path is required")
+	}
+	if strings.TrimSpace(c.MonitorAddress) == "" {
+		return errors.New("monitor address is required")
 	}
 	if strings.TrimSpace(c.NodeName) == "" {
 		return fmt.Errorf("node name is required")
