@@ -118,6 +118,10 @@ int kfastblock_request_init(struct kfastblock_request *kf_req,
 			    struct request *rq);
 void kfastblock_request_cleanup(struct kfastblock_request *kf_req);
 int kfastblock_request_split(struct kfastblock_request *kf_req);
+const char *kfastblock_request_object_state_name(
+	enum kfastblock_request_object_state state);
+bool kfastblock_request_object_state_terminal(
+	enum kfastblock_request_object_state state);
 int kfastblock_request_get_pg_hint_leader(
 	struct kfastblock_request_pg_hint *hint,
 	struct kfastblock_leader_info *leader);
@@ -186,6 +190,8 @@ int kfastblock_request_requeue_object_by_seq(
 	int ret);
 int kfastblock_request_cancel_unqueued(struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_dispatch_credits(
+	const struct kfastblock_request *kf_req);
+unsigned int kfastblock_request_dispatchable_objects(
 	const struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_queued_objects(
 	const struct kfastblock_request *kf_req);
