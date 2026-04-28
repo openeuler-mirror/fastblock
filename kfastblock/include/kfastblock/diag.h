@@ -114,6 +114,7 @@ struct kfastblock_diag_pipeline_snapshot {
 	u64 request_cleanups;
 	u64 dispatch_batches;
 	u64 queued_objects;
+	u64 retry_objects;
 	u64 completed_objects;
 	u64 failed_objects;
 	u64 cancelled_objects;
