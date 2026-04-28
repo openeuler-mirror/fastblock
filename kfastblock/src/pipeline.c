@@ -1,0 +1,182 @@
+#include <linux/jiffies.h>
+#include <linux/slab.h>
+
+#include "kfastblock/pipeline.h"
+
+static void kfastblock_pipeline_reset_entry(
+	struct kfastblock_pipeline_entry *entry)
+{
+	if (!entry)
+		return;
+
+	entry->seq = 0;
+	entry->object_index = 0;
+	entry->last_error = 0;
+	entry->queued_jiffies = 0;
+	entry->completed_jiffies = 0;
+	entry->active = false;
+	INIT_LIST_HEAD(&entry->link);
+}
+
+int kfastblock_pipeline_init(struct kfastblock_pipeline_state *state,
+			     unsigned int capacity,
+			     gfp_t gfp)
+{
+	unsigned int i;
+
+	if (!state)
+		return -EINVAL;
+
+	memset(state, 0, sizeof(*state));
+	spin_lock_init(&state->lock);
+	INIT_LIST_HEAD(&state->free_list);
+	INIT_LIST_HEAD(&state->inflight_list);
+	if (!capacity)
+		return 0;
+
+	state->entries = kvcalloc(capacity, sizeof(*state->entries), gfp);
+	if (!state->entries)
+		return -ENOMEM;
+
+	state->capacity = capacity;
+	for (i = 0; i < capacity; ++i) {
+		kfastblock_pipeline_reset_entry(&state->entries[i]);
+		list_add_tail(&state->entries[i].link, &state->free_list);
+	}
+
+	return 0;
+}
+
+void kfastblock_pipeline_reset(struct kfastblock_pipeline_state *state)
+{
+	unsigned long flags;
+	unsigned int i;
+
+	if (!state)
+		return;
+
+	spin_lock_irqsave(&state->lock, flags);
+	INIT_LIST_HEAD(&state->free_list);
+	INIT_LIST_HEAD(&state->inflight_list);
+	state->inflight = 0;
+	state->peak_inflight = 0;
+	for (i = 0; i < state->capacity; ++i) {
+		kfastblock_pipeline_reset_entry(&state->entries[i]);
+		list_add_tail(&state->entries[i].link, &state->free_list);
+	}
+	spin_unlock_irqrestore(&state->lock, flags);
+}
+
+void kfastblock_pipeline_cleanup(struct kfastblock_pipeline_state *state)
+{
+	if (!state)
+		return;
+
+	kvfree(state->entries);
+	state->entries = NULL;
+	state->capacity = 0;
+	state->inflight = 0;
+	state->peak_inflight = 0;
+	INIT_LIST_HEAD(&state->free_list);
+	INIT_LIST_HEAD(&state->inflight_list);
+}
+
+struct kfastblock_pipeline_entry *kfastblock_pipeline_find_locked(
+	struct kfastblock_pipeline_state *state,
+	u64 seq)
+{
+	struct kfastblock_pipeline_entry *entry;
+
+	if (!state || !seq)
+		return NULL;
+
+	list_for_each_entry(entry, &state->inflight_list, link) {
+		if (entry->active && entry->seq == seq)
+			return entry;
+	}
+
+	return NULL;
+}
+
+struct kfastblock_pipeline_entry *kfastblock_pipeline_enqueue(
+	struct kfastblock_pipeline_state *state,
+	u64 seq,
+	unsigned int object_index)
+{
+	struct kfastblock_pipeline_entry *entry = NULL;
+	unsigned long flags;
+
+	if (!state || !seq)
+		return NULL;
+
+	spin_lock_irqsave(&state->lock, flags);
+	if (!list_empty(&state->free_list)) {
+		entry = list_first_entry(&state->free_list,
+					 struct kfastblock_pipeline_entry,
+					 link);
+		list_del_init(&entry->link);
+		entry->seq = seq;
+		entry->object_index = object_index;
+		entry->last_error = 0;
+		entry->queued_jiffies = jiffies;
+		entry->completed_jiffies = 0;
+		entry->active = true;
+		list_add_tail(&entry->link, &state->inflight_list);
+		state->inflight++;
+		if (state->inflight > state->peak_inflight)
+			state->peak_inflight = state->inflight;
+	}
+	spin_unlock_irqrestore(&state->lock, flags);
+
+	return entry;
+}
+
+struct kfastblock_pipeline_entry *kfastblock_pipeline_complete(
+	struct kfastblock_pipeline_state *state,
+	u64 seq,
+	int ret)
+{
+	struct kfastblock_pipeline_entry *entry;
+	unsigned long flags;
+
+	if (!state || !seq)
+		return NULL;
+
+	spin_lock_irqsave(&state->lock, flags);
+	entry = kfastblock_pipeline_find_locked(state, seq);
+	if (!entry) {
+		spin_unlock_irqrestore(&state->lock, flags);
+		return NULL;
+	}
+
+	list_del_init(&entry->link);
+	entry->last_error = ret;
+	entry->completed_jiffies = jiffies;
+	entry->active = false;
+	if (state->inflight)
+		state->inflight--;
+	list_add_tail(&entry->link, &state->free_list);
+	spin_unlock_irqrestore(&state->lock, flags);
+
+	return entry;
+}
+
+void kfastblock_pipeline_snapshot(struct kfastblock_pipeline_state *state,
+				  struct kfastblock_pipeline_snapshot *snapshot)
+{
+	unsigned long flags;
+	unsigned int free_entries = 0;
+	struct kfastblock_pipeline_entry *entry;
+
+	if (!state || !snapshot)
+		return;
+
+	spin_lock_irqsave(&state->lock, flags);
+	list_for_each_entry(entry, &state->free_list, link)
+		free_entries++;
+	snapshot->capacity = state->capacity;
+	snapshot->inflight = state->inflight;
+	snapshot->peak_inflight = state->peak_inflight;
+	snapshot->free_entries = free_entries;
+	spin_unlock_irqrestore(&state->lock, flags);
+}
