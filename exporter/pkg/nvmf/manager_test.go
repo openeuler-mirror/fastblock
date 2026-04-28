@@ -2,6 +2,7 @@ package nvmf
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"fastblock-exporter/pkg/api"
@@ -15,11 +16,15 @@ type rpcCall struct {
 
 type stubCaller struct {
 	calls []rpcCall
+	fail  map[string]error
 }
 
 func (c *stubCaller) Call(_ context.Context, method string, params any, result any) error {
 	mapped, _ := params.(map[string]any)
 	c.calls = append(c.calls, rpcCall{method: method, params: mapped})
+	if err, ok := c.fail[method]; ok {
+		return err
+	}
 	switch method {
 	case "bdev_fastblock_create":
 		if out, ok := result.(*string); ok {
@@ -89,5 +94,35 @@ func TestDeleteAndHostACL(t *testing.T) {
 	}
 	if rpc.calls[2].method != "nvmf_subsystem_add_host" || rpc.calls[3].method != "nvmf_subsystem_remove_host" {
 		t.Fatalf("unexpected host methods: %+v", rpc.calls)
+	}
+}
+
+func TestCreateExportRollbackOnListenerFailure(t *testing.T) {
+	cfg := config.Default()
+	cfg.MonitorAddress = "10.0.0.20:3333"
+	cfg.TargetAddress = "10.0.0.10"
+	cfg.NodeName = "node-a"
+	rpc := &stubCaller{fail: map[string]error{
+		"nvmf_subsystem_add_listener": errors.New("listener failed"),
+	}}
+	manager := newLocalManagerWithRPC(cfg, rpc)
+
+	_, err := manager.CreateExport(context.Background(), api.CreateExportRequest{
+		VolumeID:      "fbvol:cluster-a:1:7",
+		PoolName:      "fb",
+		ImageName:     "img-7",
+		CapacityBytes: 1 << 20,
+		ObjectSize:    4 << 20,
+		BlockSize:     4096,
+		Transport:     "rdma",
+	})
+	if err == nil {
+		t.Fatal("expected create export failure")
+	}
+	if len(rpc.calls) != 6 {
+		t.Fatalf("unexpected call count: %d", len(rpc.calls))
+	}
+	if rpc.calls[4].method != "nvmf_delete_subsystem" || rpc.calls[5].method != "bdev_fastblock_delete" {
+		t.Fatalf("unexpected rollback calls: %+v", rpc.calls)
 	}
 }
