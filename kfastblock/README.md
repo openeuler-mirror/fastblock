@@ -18,6 +18,7 @@
 - 已有 `register_blkdev + sysfs attach/detach + blk-mq + gendisk` 的基础框架。
 - 已有请求拆分层，包含 fastblock 的 object 命名规则和 `object -> pg` hash 路由规则。
 - 已有 monitor 地址解析和 endpoint 连接骨架，支持逗号分隔的多个 `monitor_addr`。
+- 已能通过 raw TCP 向 monitor 发起 `GET_IMAGE_INFO` 和 `GET_CLUSTER_MAP`，并在 bootstrap 阶段填充 image 基本信息与 pool 的 pg_count。
 - 已有 metadata/transport 的占位接口，用来接 monitor 控制面和 OSD 数据面。
 - 未实现 monitor 请求编码解码、cluster map 缓存、leader 查询、真实读写、故障恢复。
 
