@@ -895,6 +895,37 @@ unsigned int kfastblock_request_dispatchable_objects(
 	return count;
 }
 
+unsigned int kfastblock_request_state_count(
+	const struct kfastblock_request *kf_req,
+	enum kfastblock_request_object_state state)
+{
+	unsigned int count = 0;
+	unsigned int i;
+	unsigned long flags;
+
+	if (!kf_req || !kf_req->object_runtime)
+		return 0;
+
+	spin_lock_irqsave((spinlock_t *)&kf_req->object_state_lock, flags);
+	for (i = 0; i < kf_req->nr_objects; ++i) {
+		if (kf_req->object_runtime[i].state == state)
+			count++;
+	}
+	spin_unlock_irqrestore((spinlock_t *)&kf_req->object_state_lock, flags);
+	return count;
+}
+
+bool kfastblock_request_any_failed(const struct kfastblock_request *kf_req)
+{
+	return kfastblock_request_state_count(kf_req,
+					      KFASTBLOCK_OBJECT_FAILED) > 0;
+}
+
+bool kfastblock_request_has_inflight(const struct kfastblock_request *kf_req)
+{
+	return kfastblock_request_inflight_objects(kf_req) > 0;
+}
+
 unsigned int kfastblock_request_completed_objects(
 	const struct kfastblock_request *kf_req)
 {
