@@ -15,13 +15,20 @@ type Volume struct {
 	Name          string
 	Pool          string
 	CapacityBytes int64
+	ObjectSize    int64
+}
+
+type VolumeRef struct {
+	ID   string
+	Name string
+	Pool string
 }
 
 type Client interface {
 	CreateVolume(ctx context.Context, req CreateVolumeRequest) (Volume, error)
-	DeleteVolume(ctx context.Context, volumeID string) error
-	GetVolume(ctx context.Context, volumeID string) (Volume, error)
-	ExpandVolume(ctx context.Context, volumeID string, capacityBytes int64) (Volume, error)
+	DeleteVolume(ctx context.Context, ref VolumeRef) error
+	GetVolume(ctx context.Context, ref VolumeRef) (Volume, error)
+	ExpandVolume(ctx context.Context, ref VolumeRef, capacityBytes int64) (Volume, error)
 }
 
 type NoopClient struct{}
@@ -34,14 +41,14 @@ func (c *NoopClient) CreateVolume(context.Context, CreateVolumeRequest) (Volume,
 	return Volume{}, ErrNotImplemented
 }
 
-func (c *NoopClient) DeleteVolume(context.Context, string) error {
+func (c *NoopClient) DeleteVolume(context.Context, VolumeRef) error {
 	return ErrNotImplemented
 }
 
-func (c *NoopClient) GetVolume(context.Context, string) (Volume, error) {
+func (c *NoopClient) GetVolume(context.Context, VolumeRef) (Volume, error) {
 	return Volume{}, ErrNotImplemented
 }
 
-func (c *NoopClient) ExpandVolume(context.Context, string, int64) (Volume, error) {
+func (c *NoopClient) ExpandVolume(context.Context, VolumeRef, int64) (Volume, error) {
 	return Volume{}, ErrNotImplemented
 }
