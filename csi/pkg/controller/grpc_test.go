@@ -121,3 +121,21 @@ func TestControllerGRPCPublishAndUnpublishVolume(t *testing.T) {
 		t.Fatalf("unexpected exporter unpublish state: %+v", exporter)
 	}
 }
+
+func TestControllerGRPCRequestValidation(t *testing.T) {
+	service := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, &stubMonitorClient{}, &stubExporterClient{})
+	grpcService := NewGRPCService(service)
+
+	if _, err := grpcService.CreateVolume(context.Background(), &csi.CreateVolumeRequest{Name: "img-a"}); err == nil {
+		t.Fatal("expected create volume validation error")
+	}
+	if _, err := grpcService.DeleteVolume(context.Background(), &csi.DeleteVolumeRequest{}); err == nil {
+		t.Fatal("expected delete volume validation error")
+	}
+	if _, err := grpcService.ControllerPublishVolume(context.Background(), &csi.ControllerPublishVolumeRequest{}); err == nil {
+		t.Fatal("expected controller publish validation error")
+	}
+	if _, err := grpcService.ControllerUnpublishVolume(context.Background(), &csi.ControllerUnpublishVolumeRequest{}); err == nil {
+		t.Fatal("expected controller unpublish validation error")
+	}
+}

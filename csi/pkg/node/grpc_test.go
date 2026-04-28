@@ -77,3 +77,20 @@ func TestNodeStageAndUnstageVolume(t *testing.T) {
 		t.Fatalf("node unstage volume failed: %v", err)
 	}
 }
+
+func TestNodeGRPCRequestValidation(t *testing.T) {
+	service := New(driver.Options{
+		DriverName: "csi.fastblock.io",
+		Endpoint:   "unix:///tmp/node.sock",
+		NodeID:     "node-a",
+		Mode:       driver.ModeNode,
+	}, &stubBackend{})
+	grpcService := NewGRPCService(service)
+
+	if _, err := grpcService.NodeStageVolume(context.Background(), &csi.NodeStageVolumeRequest{}); err == nil {
+		t.Fatal("expected node stage validation error")
+	}
+	if _, err := grpcService.NodeUnstageVolume(context.Background(), &csi.NodeUnstageVolumeRequest{}); err == nil {
+		t.Fatal("expected node unstage validation error")
+	}
+}
