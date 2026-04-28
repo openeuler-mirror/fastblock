@@ -933,6 +933,25 @@ static void kfastblock_transport_finish_exchange(
 					    body_len, flags);
 }
 
+static int kfastblock_transport_match_exchange_response(
+	struct kfastblock_transport_exchange_ctx *ctx)
+{
+	unsigned int matched_object = 0;
+	int ret;
+
+	if (!ctx || !ctx->kf_req)
+		return -EINVAL;
+
+	ret = kfastblock_request_lookup_object_by_seq(ctx->kf_req, ctx->seq,
+						      &matched_object);
+	if (ret)
+		return ret;
+	if (matched_object != ctx->object_index)
+		return -EPROTO;
+
+	return 0;
+}
+
 static int kfastblock_transport_fetch_image_info(struct socket *sock,
 					 struct kfastblock_cluster_view *view,
 					 u64 seq)
@@ -1334,12 +1353,12 @@ static int kfastblock_transport_write_object(struct socket *sock,
 					     u32 pool_id,
 					     const struct kfastblock_object_extent *extent,
 					     const void *data,
-					     u64 seq)
+					     u64 seq,
+					     struct kfastblock_transport_response_ctx *response)
 {
 	struct kfastblock_raw_write_object_req req = {
 		.pool_id = cpu_to_le32(pool_id),
 	};
-	struct kfastblock_transport_response_ctx response = {};
 	struct kfastblock_transport_body_part parts[3];
 	u32 object_name_len;
 	u32 data_len;
@@ -1366,8 +1385,7 @@ static int kfastblock_transport_write_object(struct socket *sock,
 	ret = kfastblock_transport_exec_request_parts(
 		sock, KFASTBLOCK_RAW_SERVICE_OSD,
 		KFASTBLOCK_RAW_OSD_OP_WRITE_OBJECT, seq,
-		parts, ARRAY_SIZE(parts), &response);
-	kfastblock_transport_response_ctx_release(&response);
+		parts, ARRAY_SIZE(parts), response);
 	return ret;
 }
 
@@ -1375,7 +1393,8 @@ static int kfastblock_transport_read_object(struct socket *sock,
 					    u32 pool_id,
 					    const struct kfastblock_object_extent *extent,
 					    void *data,
-					    u64 seq)
+					    u64 seq,
+					    struct kfastblock_transport_response_ctx *response)
 {
 	struct kfastblock_raw_read_object_req req = {
 		.pool_id = cpu_to_le32(pool_id),
@@ -1386,7 +1405,6 @@ static int kfastblock_transport_read_object(struct socket *sock,
 		.reserved = 0,
 	};
 	struct kfastblock_raw_read_object_rsp rsp;
-	struct kfastblock_transport_response_ctx response = {};
 	struct kfastblock_transport_body_part parts[2];
 	u32 object_name_len;
 	u32 data_len;
@@ -1404,36 +1422,31 @@ static int kfastblock_transport_read_object(struct socket *sock,
 	ret = kfastblock_transport_exec_request_parts(
 		sock, KFASTBLOCK_RAW_SERVICE_OSD,
 		KFASTBLOCK_RAW_OSD_OP_READ_OBJECT, seq,
-		parts, ARRAY_SIZE(parts), &response);
+		parts, ARRAY_SIZE(parts), response);
 	if (ret) {
-		kfastblock_transport_response_ctx_release(&response);
 		return ret;
 	}
 
-	if (!response.body || response.body_len < sizeof(rsp)) {
-		kfastblock_transport_response_ctx_release(&response);
+	if (!response->body || response->body_len < sizeof(rsp))
 		return -EPROTO;
-	}
 
-	memcpy(&rsp, response.body, sizeof(rsp));
+	memcpy(&rsp, response->body, sizeof(rsp));
 	data_len = le32_to_cpu(rsp.data_len);
-	if (response.body_len != sizeof(rsp) + data_len ||
-	    data_len > extent->length) {
-		kfastblock_transport_response_ctx_release(&response);
+	if (response->body_len != sizeof(rsp) + data_len ||
+	    data_len > extent->length)
 		return -EPROTO;
-	}
 
 	memset(data, 0, extent->length);
 	if (data_len)
-		memcpy(data, (u8 *)response.body + sizeof(rsp), data_len);
-	kfastblock_transport_response_ctx_release(&response);
+		memcpy(data, (u8 *)response->body + sizeof(rsp), data_len);
 	return 0;
 }
 
 static int kfastblock_transport_delete_object(struct socket *sock,
 					      u32 pool_id,
 					      const struct kfastblock_object_extent *extent,
-					      u64 seq)
+					      u64 seq,
+					      struct kfastblock_transport_response_ctx *response)
 {
 	struct kfastblock_raw_delete_object_req req = {
 		.pool_id = cpu_to_le32(pool_id),
@@ -1441,7 +1454,6 @@ static int kfastblock_transport_delete_object(struct socket *sock,
 		.object_name_len = cpu_to_le16(strlen(extent->object_name)),
 		.reserved = 0,
 	};
-	struct kfastblock_transport_response_ctx response = {};
 	struct kfastblock_transport_body_part parts[2];
 	u32 object_name_len;
 	int ret;
@@ -1458,8 +1470,7 @@ static int kfastblock_transport_delete_object(struct socket *sock,
 	ret = kfastblock_transport_exec_request_parts(
 		sock, KFASTBLOCK_RAW_SERVICE_OSD,
 		KFASTBLOCK_RAW_OSD_OP_DELETE_OBJECT, seq,
-		parts, ARRAY_SIZE(parts), &response);
-	kfastblock_transport_response_ctx_release(&response);
+		parts, ARRAY_SIZE(parts), response);
 	return ret;
 }
 
@@ -1529,6 +1540,7 @@ static int kfastblock_transport_submit_object_io(
 	u64 seq;
 	u8 raw_opcode;
 	struct kfastblock_transport_exchange_ctx exchange = {};
+	struct kfastblock_transport_response_ctx response = {};
 
 	if (!kf_req || !kf_req->vol || !kf_req->rq || !extent)
 		return -EINVAL;
@@ -1653,14 +1665,14 @@ static int kfastblock_transport_submit_object_io(
 		}
 		if (op == REQ_OP_WRITE || op == REQ_OP_WRITE_ZEROES) {
 			ret = kfastblock_transport_write_object(sock, kf_req->request_pool_id,
-						 extent, buf, seq);
+						 extent, buf, seq, &response);
 		} else if (op == REQ_OP_READ) {
 			ret = kfastblock_transport_read_object(sock, kf_req->request_pool_id,
-						extent, buf, seq);
+						extent, buf, seq, &response);
 		} else {
 			ret = kfastblock_transport_delete_object(sock,
 							kf_req->request_pool_id,
-							extent, seq);
+							extent, seq, &response);
 		}
 		if (ret == -ENOENT && op == REQ_OP_READ) {
 			memset(buf, 0, extent->length);
@@ -1668,10 +1680,14 @@ static int kfastblock_transport_submit_object_io(
 		} else if (ret == -ENOENT && op == REQ_OP_DISCARD) {
 			ret = 0;
 		}
+		if (!ret)
+			ret = kfastblock_transport_match_exchange_response(&exchange);
 		actions = ret ? kfastblock_recovery_classify_object_failure(ret) : 0;
 		kfastblock_recovery_finalize_osd_socket(vol, cached, &leader, ret,
 							actions);
-		kfastblock_transport_finish_exchange(&exchange, ret, NULL);
+		kfastblock_transport_finish_exchange(&exchange, ret,
+						    ret ? NULL : &response.hdr);
+		kfastblock_transport_response_ctx_release(&response);
 		cached = NULL;
 		if (ret) {
 			if (actions) {
