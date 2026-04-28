@@ -82,6 +82,19 @@ func TestGetVolume(t *testing.T) {
 	}
 }
 
+func TestInputValidation(t *testing.T) {
+	client := NewTCP("127.0.0.1:3333")
+	if _, err := client.CreateVolume(context.Background(), CreateVolumeRequest{}); err == nil {
+		t.Fatal("expected create validation error")
+	}
+	if err := client.DeleteVolume(context.Background(), VolumeRef{}); err == nil {
+		t.Fatal("expected delete validation error")
+	}
+	if _, err := client.ExpandVolume(context.Background(), VolumeRef{Name: "img-a", Pool: "fb"}, 0); err == nil {
+		t.Fatal("expected expand validation error")
+	}
+}
+
 func startMockMonitor(t *testing.T, handler func(*msg.Request) *msg.Response) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
