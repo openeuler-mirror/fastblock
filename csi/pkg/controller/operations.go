@@ -2,6 +2,9 @@ package controller
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
 
 	"fastblock-csi/pkg/exporterclient"
 	"fastblock-csi/pkg/monitorclient"
@@ -24,6 +27,9 @@ type PublishVolumeRequest struct {
 }
 
 func (s *Service) CreateVolume(ctx context.Context, req CreateVolumeRequest) (monitorclient.Volume, error) {
+	if err := req.Validate(); err != nil {
+		return monitorclient.Volume{}, err
+	}
 	return s.monitor.CreateVolume(ctx, monitorclient.CreateVolumeRequest{
 		Name:          req.Name,
 		Pool:          req.Pool,
@@ -46,6 +52,9 @@ func (s *Service) ExpandVolume(ctx context.Context, ref monitorclient.VolumeRef,
 }
 
 func (s *Service) PublishVolume(ctx context.Context, req PublishVolumeRequest) (exporterclient.Export, error) {
+	if err := req.Validate(); err != nil {
+		return exporterclient.Export{}, err
+	}
 	export, err := s.exporter.CreateExport(ctx, exporterclient.CreateExportRequest{
 		VolumeID:      req.Volume.ID,
 		PoolName:      req.Volume.Pool,
@@ -73,4 +82,51 @@ func (s *Service) UnpublishVolume(ctx context.Context, exportID, hostNQN string)
 		}
 	}
 	return s.exporter.DeleteExport(ctx, exportID)
+}
+
+func (r CreateVolumeRequest) Validate() error {
+	if strings.TrimSpace(r.Name) == "" {
+		return errors.New("name is required")
+	}
+	if strings.TrimSpace(r.Pool) == "" {
+		return errors.New("pool is required")
+	}
+	if r.CapacityBytes <= 0 {
+		return fmt.Errorf("invalid capacity bytes %d", r.CapacityBytes)
+	}
+	if r.ObjectSize <= 0 {
+		return fmt.Errorf("invalid object size %d", r.ObjectSize)
+	}
+	if r.BlockSize <= 0 {
+		return fmt.Errorf("invalid block size %d", r.BlockSize)
+	}
+	if r.Transport != "rdma" && r.Transport != "tcp" {
+		return fmt.Errorf("unsupported transport %q", r.Transport)
+	}
+	return nil
+}
+
+func (r PublishVolumeRequest) Validate() error {
+	if strings.TrimSpace(r.Volume.ID) == "" {
+		return errors.New("volume id is required")
+	}
+	if strings.TrimSpace(r.Volume.Name) == "" {
+		return errors.New("volume name is required")
+	}
+	if strings.TrimSpace(r.Volume.Pool) == "" {
+		return errors.New("volume pool is required")
+	}
+	if r.Volume.CapacityBytes <= 0 {
+		return fmt.Errorf("invalid volume capacity %d", r.Volume.CapacityBytes)
+	}
+	if r.Volume.ObjectSize <= 0 {
+		return fmt.Errorf("invalid volume object size %d", r.Volume.ObjectSize)
+	}
+	if r.BlockSize <= 0 {
+		return fmt.Errorf("invalid block size %d", r.BlockSize)
+	}
+	if r.Transport != "rdma" && r.Transport != "tcp" {
+		return fmt.Errorf("unsupported transport %q", r.Transport)
+	}
+	return nil
 }
