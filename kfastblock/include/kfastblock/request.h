@@ -257,6 +257,8 @@ bool kfastblock_request_all_terminal(
 	const struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_response_recorded_objects(
 	const struct kfastblock_request *kf_req);
+unsigned int kfastblock_request_response_gap_objects(
+	const struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_terminal_objects(
 	const struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_nonterminal_objects(
