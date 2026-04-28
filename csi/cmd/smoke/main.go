@@ -68,7 +68,11 @@ func main() {
 
 	controllerClient := csi.NewControllerClient(controllerConn)
 	nodeClient := csi.NewNodeClient(nodeConn)
+	controllerIdentity := csi.NewIdentityClient(controllerConn)
+	nodeIdentity := csi.NewIdentityClient(nodeConn)
 	volumeCapability := driver.SingleNodeWriterBlockVolumeCapability()
+
+	runPreflight(ctx, controllerIdentity, nodeIdentity, controllerClient, nodeClient)
 
 	log.Printf("CreateVolume name=%s pool=%s transport=%s", volumeName, pool, transport)
 	createResp, err := controllerClient.CreateVolume(ctx, &csi.CreateVolumeRequest{
@@ -204,4 +208,40 @@ func (s *smokeState) cleanup(ctx context.Context) {
 			log.Printf("cleanup DeleteVolume failed: %v", err)
 		}
 	}
+}
+
+func runPreflight(
+	ctx context.Context,
+	controllerIdentity csi.IdentityClient,
+	nodeIdentity csi.IdentityClient,
+	controllerClient csi.ControllerClient,
+	nodeClient csi.NodeClient,
+) {
+	controllerInfo, err := controllerIdentity.GetPluginInfo(ctx, &csi.GetPluginInfoRequest{})
+	if err != nil {
+		log.Fatalf("controller GetPluginInfo failed: %v", err)
+	}
+	nodeInfo, err := nodeIdentity.GetPluginInfo(ctx, &csi.GetPluginInfoRequest{})
+	if err != nil {
+		log.Fatalf("node GetPluginInfo failed: %v", err)
+	}
+	log.Printf("controller plugin=%s version=%s", controllerInfo.GetName(), controllerInfo.GetVendorVersion())
+	log.Printf("node plugin=%s version=%s", nodeInfo.GetName(), nodeInfo.GetVendorVersion())
+
+	if _, err := controllerIdentity.Probe(ctx, &csi.ProbeRequest{}); err != nil {
+		log.Fatalf("controller Probe failed: %v", err)
+	}
+	if _, err := nodeIdentity.Probe(ctx, &csi.ProbeRequest{}); err != nil {
+		log.Fatalf("node Probe failed: %v", err)
+	}
+
+	controllerCaps, err := controllerClient.ControllerGetCapabilities(ctx, &csi.ControllerGetCapabilitiesRequest{})
+	if err != nil {
+		log.Fatalf("ControllerGetCapabilities failed: %v", err)
+	}
+	nodeCaps, err := nodeClient.NodeGetCapabilities(ctx, &csi.NodeGetCapabilitiesRequest{})
+	if err != nil {
+		log.Fatalf("NodeGetCapabilities failed: %v", err)
+	}
+	log.Printf("controller capabilities=%d node capabilities=%d", len(controllerCaps.GetCapabilities()), len(nodeCaps.GetCapabilities()))
 }
