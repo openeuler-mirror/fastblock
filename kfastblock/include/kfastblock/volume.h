@@ -7,6 +7,7 @@
 #include <linux/mutex.h>
 #include <linux/socket.h>
 #include <linux/types.h>
+#include <linux/workqueue.h>
 
 #include "kfastblock/control.h"
 #include "kfastblock/meta.h"
@@ -31,11 +32,13 @@ struct kfastblock_volume {
 	atomic_t open_count;
 	atomic_t ready;
 
+	struct kfastblock_attach_spec spec;
 	struct kfastblock_cluster_view view;
 
 	struct list_head node;
 	struct device dev;
 	struct mutex inflight_lock;
+	struct delayed_work refresh_work;
 	struct kfastblock_cached_socket socket_cache[KFASTBLOCK_MAX_SOCKET_CACHE];
 };
 
