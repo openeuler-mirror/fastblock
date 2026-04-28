@@ -1156,6 +1156,26 @@ u32 kfastblock_request_last_response_body_len(
 	return value;
 }
 
+u32 kfastblock_request_last_transport_flags(
+	const struct kfastblock_request *kf_req)
+{
+	u32 value = 0;
+	unsigned long flags;
+	unsigned int i;
+
+	if (!kf_req || !kf_req->object_runtime)
+		return 0;
+
+	spin_lock_irqsave((spinlock_t *)&kf_req->object_state_lock, flags);
+	for (i = 0; i < kf_req->nr_objects; ++i) {
+		if (!kf_req->object_runtime[i].wire_seq)
+			continue;
+		value = kf_req->object_runtime[i].transport_flags;
+	}
+	spin_unlock_irqrestore((spinlock_t *)&kf_req->object_state_lock, flags);
+	return value;
+}
+
 unsigned long kfastblock_request_oldest_pending_jiffies(
 	const struct kfastblock_request *kf_req)
 {
