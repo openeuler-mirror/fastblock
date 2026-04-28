@@ -81,6 +81,22 @@ struct kfastblock_transport_response_ctx {
 	int ret;
 };
 
+struct kfastblock_transport_object_io_ctx {
+	struct kfastblock_request *kf_req;
+	struct kfastblock_volume *vol;
+	const struct kfastblock_object_extent *extent;
+	struct kfastblock_request_pg_hint *hint;
+	struct kfastblock_leader_info leader;
+	struct kfastblock_cached_socket *cached;
+	struct socket *sock;
+	void *buf;
+	unsigned int object_index;
+	enum req_op op;
+	u8 raw_opcode;
+	struct kfastblock_transport_exchange_ctx exchange;
+	struct kfastblock_transport_response_ctx response;
+};
+
 static int kfastblock_transport_copy_from_body(const u8 *body,
 					       size_t body_len,
 					       size_t *offset,
@@ -1963,21 +1979,19 @@ static int kfastblock_transport_reject_stale_object_request(
 }
 
 static void kfastblock_transport_cleanup_object_io(
-	struct kfastblock_volume *vol,
-	struct kfastblock_request *kf_req,
-	const struct kfastblock_object_extent *extent,
-	enum req_op op,
-	const struct kfastblock_leader_info *leader,
-	struct kfastblock_cached_socket *cached,
-	void *buf,
+	struct kfastblock_transport_object_io_ctx *ctx,
 	int ret)
 {
-	if (cached)
-		kfastblock_transport_release_osd_socket(cached);
-	if (ret)
+	if (!ctx)
+		return;
+
+	if (ctx->cached)
+		kfastblock_transport_release_osd_socket(ctx->cached);
+	if (ret && ctx->vol && ctx->extent)
 		kfastblock_volume_account_object_error(
-			vol, op, extent->pg_id, leader->osd_id, extent->length, ret);
-	kfastblock_transport_release_object_buffer(kf_req, buf);
+			ctx->vol, ctx->op, ctx->extent->pg_id, ctx->leader.osd_id,
+			ctx->extent->length, ret);
+	kfastblock_transport_release_object_buffer(ctx->kf_req, ctx->buf);
 }
 
 static int kfastblock_transport_begin_object_attempt(
@@ -2089,22 +2103,25 @@ static bool kfastblock_transport_finalize_completed_object_attempt(
 	return false;
 }
 
-static int kfastblock_transport_prepare_object_submission(
+static int kfastblock_transport_object_io_ctx_init(
+	struct kfastblock_transport_object_io_ctx *ctx,
 	struct kfastblock_request *kf_req,
+	unsigned int object_index,
 	const struct kfastblock_object_extent *extent,
-	enum req_op op,
-	struct kfastblock_volume **vol_out,
-	struct kfastblock_request_pg_hint **hint_out,
-	u8 *raw_opcode_out)
+	enum req_op op)
 {
-	if (!kf_req || !kf_req->vol || !kf_req->rq || !extent ||
-	    !vol_out || !hint_out || !raw_opcode_out)
+	if (!ctx || !kf_req || !kf_req->vol || !kf_req->rq || !extent)
 		return -EINVAL;
 
-	*vol_out = kf_req->vol;
-	*hint_out = kfastblock_transport_find_request_pg_hint(
+	memset(ctx, 0, sizeof(*ctx));
+	ctx->kf_req = kf_req;
+	ctx->vol = kf_req->vol;
+	ctx->extent = extent;
+	ctx->hint = kfastblock_transport_find_request_pg_hint(
 		kf_req, extent->pg_id);
-	*raw_opcode_out = kfastblock_transport_raw_opcode_for_object_op(op);
+	ctx->object_index = object_index;
+	ctx->op = op;
+	ctx->raw_opcode = kfastblock_transport_raw_opcode_for_object_op(op);
 	return 0;
 }
 
@@ -2260,28 +2277,20 @@ static int kfastblock_transport_submit_object_io(
 	const struct kfastblock_object_extent *extent,
 	enum req_op op)
 {
-	struct kfastblock_volume *vol;
-	struct kfastblock_leader_info leader = {};
-	struct kfastblock_request_pg_hint *hint;
-	struct kfastblock_cached_socket *cached = NULL;
-	struct socket *sock = NULL;
-	void *buf = NULL;
+	struct kfastblock_transport_object_io_ctx ctx = {};
 	int ret;
-	u8 raw_opcode;
-	struct kfastblock_transport_exchange_ctx exchange = {};
-	struct kfastblock_transport_response_ctx response = {};
 
-	ret = kfastblock_transport_prepare_object_submission(
-		kf_req, extent, op, &vol, &hint, &raw_opcode);
+	ret = kfastblock_transport_object_io_ctx_init(
+		&ctx, kf_req, object_index, extent, op);
 	if (ret)
 		return ret;
 
 	ret = kfastblock_transport_submit_prepared_object_io(
-		vol, kf_req, extent, op, hint, &leader, object_index, raw_opcode,
-		&cached, &sock, &buf, &exchange, &response);
+		ctx.vol, ctx.kf_req, ctx.extent, ctx.op, ctx.hint, &ctx.leader,
+		ctx.object_index, ctx.raw_opcode, &ctx.cached, &ctx.sock,
+		&ctx.buf, &ctx.exchange, &ctx.response);
 
-	kfastblock_transport_cleanup_object_io(vol, kf_req, extent, op, &leader,
-						 cached, buf, ret);
+	kfastblock_transport_cleanup_object_io(&ctx, ret);
 	return ret;
 }
 
