@@ -81,3 +81,16 @@ func TestHTTPErrorResponse(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestRejectInvalidClientInput(t *testing.T) {
+	client := NewHTTP("http://127.0.0.1")
+	if _, err := client.CreateExport(context.Background(), CreateExportRequest{}); err == nil {
+		t.Fatal("expected create validation error")
+	}
+	if err := client.DeleteExport(context.Background(), ""); err == nil {
+		t.Fatal("expected delete validation error")
+	}
+	if err := client.AllowHost(context.Background(), "exp-1", ""); err == nil {
+		t.Fatal("expected allow-host validation error")
+	}
+}
