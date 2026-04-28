@@ -281,6 +281,9 @@ static void kfastblock_diag_collect_pipeline(
 	snapshot->pipeline.inflight = pipe_snapshot.inflight;
 	snapshot->pipeline.peak_inflight = pipe_snapshot.peak_inflight;
 	snapshot->pipeline.free_entries = pipe_snapshot.free_entries;
+	if (pipe_snapshot.capacity)
+		snapshot->pipeline.utilization_pct =
+			(pipe_snapshot.inflight * 100) / pipe_snapshot.capacity;
 	snapshot->pipeline.request_prepares =
 		atomic64_read(&vol->pipeline_stats.request_prepares);
 	snapshot->pipeline.request_cleanups =
@@ -829,6 +832,8 @@ static int kfastblock_diag_dump_snapshot_prefixed(
 		   snapshot->pipeline.peak_inflight);
 	seq_printf(m, "%spipeline.free_entries=%u\n", prefix,
 		   snapshot->pipeline.free_entries);
+	seq_printf(m, "%spipeline.utilization_pct=%u\n", prefix,
+		   snapshot->pipeline.utilization_pct);
 	seq_printf(m, "%spipeline.oldest_inflight_seq=%llu\n", prefix,
 		   snapshot->pipeline.oldest_inflight_seq);
 	seq_printf(m, "%spipeline.newest_inflight_seq=%llu\n", prefix,
@@ -1020,6 +1025,8 @@ int kfastblock_diag_dump_seq(struct seq_file *m,
 		   snapshot->pipeline.peak_inflight);
 	seq_printf(m, "pipeline.free_entries=%u\n",
 		   snapshot->pipeline.free_entries);
+	seq_printf(m, "pipeline.utilization_pct=%u\n",
+		   snapshot->pipeline.utilization_pct);
 	seq_printf(m, "pipeline.oldest_inflight_seq=%llu\n",
 		   snapshot->pipeline.oldest_inflight_seq);
 	seq_printf(m, "pipeline.newest_inflight_seq=%llu\n",
