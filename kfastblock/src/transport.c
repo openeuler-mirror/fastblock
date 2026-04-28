@@ -1941,6 +1941,25 @@ static int kfastblock_transport_run_object_exchange(
 	return ret;
 }
 
+static int kfastblock_transport_reject_stale_object_request(
+	struct kfastblock_request *kf_req,
+	const struct kfastblock_object_extent *extent,
+	enum req_op op,
+	struct kfastblock_request_pg_hint *hint,
+	unsigned int object_index)
+{
+	int ret;
+
+	ret = kfastblock_transport_request_view_stale(kf_req);
+	if (ret) {
+		kfastblock_transport_handle_object_failure(
+			kf_req, extent, op, hint, NULL, object_index, ret,
+			kfastblock_recovery_classify_object_failure(ret));
+	}
+
+	return ret;
+}
+
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
@@ -1968,11 +1987,9 @@ static int kfastblock_transport_submit_object_io(
 	hint = kfastblock_transport_find_request_pg_hint(kf_req, extent->pg_id);
 	raw_opcode = kfastblock_transport_raw_opcode_for_object_op(op);
 
-	ret = kfastblock_transport_request_view_stale(kf_req);
+	ret = kfastblock_transport_reject_stale_object_request(
+		kf_req, extent, op, hint, object_index);
 	if (ret) {
-		kfastblock_transport_handle_object_failure(
-			kf_req, extent, op, hint, NULL, object_index, ret,
-			kfastblock_recovery_classify_object_failure(ret));
 		return ret;
 	}
 
