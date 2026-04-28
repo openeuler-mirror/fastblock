@@ -281,9 +281,8 @@ static void kfastblock_diag_collect_pipeline(
 	snapshot->pipeline.inflight = pipe_snapshot.inflight;
 	snapshot->pipeline.peak_inflight = pipe_snapshot.peak_inflight;
 	snapshot->pipeline.free_entries = pipe_snapshot.free_entries;
-	if (pipe_snapshot.capacity)
-		snapshot->pipeline.utilization_pct =
-			(pipe_snapshot.inflight * 100) / pipe_snapshot.capacity;
+	snapshot->pipeline.utilization_pct =
+		kfastblock_volume_pipeline_utilization_pct(vol);
 	snapshot->pipeline.request_prepares =
 		atomic64_read(&vol->pipeline_stats.request_prepares);
 	snapshot->pipeline.request_cleanups =
