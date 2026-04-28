@@ -1172,6 +1172,9 @@ int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 	rq = kf_req->rq;
 	op = req_op(rq);
 	switch (op) {
+	case REQ_OP_FLUSH:
+		blk_mq_end_request(rq, BLK_STS_OK);
+		return 0;
 	case REQ_OP_READ:
 	case REQ_OP_WRITE:
 	case REQ_OP_DISCARD:
