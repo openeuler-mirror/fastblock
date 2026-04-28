@@ -1042,6 +1042,23 @@ bool kfastblock_request_has_nonterminal(
 	return kfastblock_request_nonterminal_objects(kf_req) != 0;
 }
 
+unsigned int kfastblock_request_response_recorded_objects(
+	const struct kfastblock_request *kf_req)
+{
+	unsigned int count = 0;
+	unsigned int i;
+
+	if (!kf_req || !kf_req->object_runtime)
+		return 0;
+
+	for (i = 0; i < kf_req->nr_objects; ++i) {
+		if (kfastblock_request_object_has_response(kf_req, i))
+			count++;
+	}
+
+	return count;
+}
+
 unsigned int kfastblock_request_terminal_objects(
 	const struct kfastblock_request *kf_req)
 {
