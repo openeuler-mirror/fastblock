@@ -1186,17 +1186,17 @@ int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 
 	mutex_lock(&kf_req->vol->inflight_lock);
 	for (i = 0; i < kf_req->nr_objects; ++i) {
+		enum req_op object_op = op;
+
 		if (op == REQ_OP_DISCARD &&
 		    (kf_req->objects[i].object_offset != 0 ||
-		     kf_req->objects[i].length != kf_req->vol->view.image.object_size)) {
-			mutex_unlock(&kf_req->vol->inflight_lock);
-			return -EOPNOTSUPP;
-		}
+		     kf_req->objects[i].length != kf_req->vol->view.image.object_size))
+			object_op = REQ_OP_WRITE_ZEROES;
 		ret = kfastblock_transport_submit_object_io(
 			kf_req->vol,
 			rq,
 			&kf_req->objects[i],
-			op);
+			object_op);
 		if (ret) {
 			mutex_unlock(&kf_req->vol->inflight_lock);
 			return ret;
