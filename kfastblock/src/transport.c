@@ -2474,6 +2474,37 @@ static int kfastblock_transport_submit_object(struct kfastblock_request *kf_req,
 	return kfastblock_transport_submit_object_io(kf_req, object_index);
 }
 
+static int kfastblock_transport_prefetch_pg_leader(
+	struct kfastblock_request *kf_req,
+	struct kfastblock_request_pg_hint *hint)
+{
+	struct kfastblock_leader_info leader;
+	struct kfastblock_cached_socket *cached = NULL;
+	struct socket *sock = NULL;
+	int ret;
+
+	if (!kf_req || !kf_req->vol || !hint)
+		return -EINVAL;
+
+	if (kfastblock_request_get_pg_hint_leader(hint, &leader))
+		ret = kfastblock_transport_query_pg_leader(kf_req, hint, &leader);
+	else
+		ret = 0;
+	if (ret) {
+		kfastblock_request_invalidate_pg_hint_leader(hint);
+		return ret;
+	}
+
+	kfastblock_request_set_pg_hint_leader(hint, &leader);
+	ret = kfastblock_transport_acquire_osd_socket(
+		kf_req->vol, &leader, &cached, &sock);
+	(void)sock;
+	if (!ret)
+		kfastblock_transport_release_osd_socket(cached);
+
+	return ret;
+}
+
 static int kfastblock_transport_prefetch_request_leaders(
 	struct kfastblock_request *kf_req)
 {
@@ -2490,27 +2521,10 @@ static int kfastblock_transport_prefetch_request_leaders(
 	}
 
 	for (i = 0; i < kf_req->nr_unique_pgs; ++i) {
-		struct kfastblock_leader_info leader;
-		struct kfastblock_cached_socket *cached = NULL;
-		struct socket *sock = NULL;
-		struct kfastblock_request_pg_hint *hint = &kf_req->pg_hints[i];
-
-		if (kfastblock_request_get_pg_hint_leader(hint, &leader))
-			ret = kfastblock_transport_query_pg_leader(kf_req, hint, &leader);
-		else
-			ret = 0;
-		if (ret) {
-			kfastblock_request_invalidate_pg_hint_leader(hint);
-			if (kfastblock_recovery_prefetch_should_fail_request(ret))
-				return ret;
-			continue;
-		}
-		kfastblock_request_set_pg_hint_leader(hint, &leader);
-		ret = kfastblock_transport_acquire_osd_socket(
-			kf_req->vol, &leader, &cached, &sock);
-		(void)sock;
-		if (!ret)
-			kfastblock_transport_release_osd_socket(cached);
+		ret = kfastblock_transport_prefetch_pg_leader(kf_req,
+							      &kf_req->pg_hints[i]);
+		if (ret && kfastblock_recovery_prefetch_should_fail_request(ret))
+			return ret;
 	}
 
 	return 0;
