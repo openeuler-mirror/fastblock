@@ -140,3 +140,18 @@ func TestRejectWrongMethodOnHealthz(t *testing.T) {
 		t.Fatalf("unexpected status: %d", rec.Code)
 	}
 }
+
+func TestParseExportRoute(t *testing.T) {
+	exportID, action, ok := parseExportRoute("/v1/exports/exp-1")
+	if !ok || exportID != "exp-1" || action != "" {
+		t.Fatalf("unexpected delete route parse: %v %q %q", ok, exportID, action)
+	}
+	exportID, action, ok = parseExportRoute("/v1/exports/exp-1/allow-host")
+	if !ok || exportID != "exp-1" || action != "allow-host" {
+		t.Fatalf("unexpected action route parse: %v %q %q", ok, exportID, action)
+	}
+	_, _, ok = parseExportRoute("/v1/exports/exp-1/allow-host/extra")
+	if ok {
+		t.Fatal("expected invalid route parse failure")
+	}
+}
