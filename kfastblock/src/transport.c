@@ -2550,6 +2550,28 @@ static void kfastblock_transport_finish_request_now(
 	put_device(&kf_req->vol->dev);
 }
 
+static int kfastblock_transport_finish_submit_now(
+	struct kfastblock_request *kf_req,
+	int ret)
+{
+	if (!kf_req || !kf_req->rq || !kf_req->vol)
+		return -EINVAL;
+
+	if (!ret) {
+		kfastblock_request_cleanup(kf_req);
+		blk_mq_end_request(kf_req->rq, BLK_STS_OK);
+		kfastblock_volume_put_io(kf_req->vol);
+		return 0;
+	}
+
+	kfastblock_request_cleanup(kf_req);
+	kfastblock_volume_account_io_complete(kf_req->vol, ret);
+	blk_mq_end_request(kf_req->rq,
+		kfastblock_recovery_errno_to_blk_status(ret));
+	kfastblock_volume_put_io(kf_req->vol);
+	return 0;
+}
+
 static void kfastblock_transport_finish_request_if_idle(
 	struct kfastblock_request *kf_req,
 	int remaining,
@@ -2663,13 +2685,7 @@ static void kfastblock_transport_object_work(struct work_struct *work)
 static int kfastblock_transport_finish_empty_request(
 	struct kfastblock_request *kf_req)
 {
-	if (!kf_req || !kf_req->rq || !kf_req->vol)
-		return -EINVAL;
-
-	kfastblock_request_cleanup(kf_req);
-	blk_mq_end_request(kf_req->rq, BLK_STS_OK);
-	kfastblock_volume_put_io(kf_req->vol);
-	return 0;
+	return kfastblock_transport_finish_submit_now(kf_req, 0);
 }
 
 static int kfastblock_transport_prepare_request_submit(
@@ -2726,12 +2742,7 @@ int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 	ret = kfastblock_transport_prepare_request_submit(kf_req,
 							    &initial_dispatch);
 	if (ret < 0) {
-		kfastblock_request_cleanup(kf_req);
-		kfastblock_volume_account_io_complete(kf_req->vol, ret);
-		blk_mq_end_request(kf_req->rq,
-			kfastblock_recovery_errno_to_blk_status(ret));
-		kfastblock_volume_put_io(kf_req->vol);
-		return 0;
+		return kfastblock_transport_finish_submit_now(kf_req, ret);
 	}
 	if (!kf_req || !kf_req->nr_objects)
 		return 0;
