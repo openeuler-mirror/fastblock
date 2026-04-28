@@ -882,6 +882,10 @@ static int kfastblock_transport_submit_object_io(
 			rq, extent->request_offset, buf, extent->length, false);
 		if (ret)
 			goto out;
+	} else if (op == REQ_OP_WRITE_ZEROES) {
+		buf = kzalloc(extent->length, GFP_KERNEL);
+		if (!buf)
+			return -ENOMEM;
 	} else if (op == REQ_OP_READ) {
 		buf = kmalloc(extent->length, GFP_KERNEL);
 		if (!buf)
@@ -915,7 +919,7 @@ static int kfastblock_transport_submit_object_io(
 				sizeof(cached->address));
 		}
 
-		if (op == REQ_OP_WRITE)
+		if (op == REQ_OP_WRITE || op == REQ_OP_WRITE_ZEROES)
 			ret = kfastblock_transport_write_object(sock, view->image.pool_id,
 						 extent, buf, 1);
 		else if (op == REQ_OP_READ)
@@ -1149,6 +1153,7 @@ int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 	case REQ_OP_READ:
 	case REQ_OP_WRITE:
 	case REQ_OP_DISCARD:
+	case REQ_OP_WRITE_ZEROES:
 		break;
 	default:
 		return -EOPNOTSUPP;
