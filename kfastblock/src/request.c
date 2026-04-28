@@ -287,6 +287,7 @@ void kfastblock_request_cleanup(struct kfastblock_request *kf_req)
 		return;
 
 	kfastblock_volume_account_pipeline_cleanup(kf_req->vol);
+	kfastblock_volume_reset_pipeline_snapshot(kf_req->vol);
 	kvfree(kf_req->unique_pgs);
 	kfastblock_request_free_pg_hint_targets(kf_req);
 	kvfree(kf_req->pg_hints);
@@ -404,6 +405,8 @@ void kfastblock_request_prepare_runtime(struct kfastblock_request *kf_req)
 	}
 	spin_unlock_irqrestore(&kf_req->object_state_lock, flags);
 	kfastblock_pipeline_reset(&kf_req->pipeline);
+	kfastblock_volume_update_pipeline_snapshot(kf_req->vol,
+						&kf_req->pipeline);
 }
 
 static bool kfastblock_request_object_dispatchable(

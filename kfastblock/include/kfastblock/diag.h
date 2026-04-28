@@ -112,6 +112,10 @@ struct kfastblock_diag_scheduler_snapshot {
 };
 
 struct kfastblock_diag_pipeline_snapshot {
+	u32 capacity;
+	u32 inflight;
+	u32 peak_inflight;
+	u32 free_entries;
 	u64 request_prepares;
 	u64 request_cleanups;
 	u64 dispatch_batches;
