@@ -1194,6 +1194,18 @@ bool kfastblock_request_all_responses_recorded(
 	       kf_req->nr_objects;
 }
 
+u32 kfastblock_request_response_coverage_pct(
+	const struct kfastblock_request *kf_req)
+{
+	unsigned int covered;
+
+	if (!kf_req || !kf_req->nr_objects)
+		return 0;
+
+	covered = kfastblock_request_response_recorded_objects(kf_req);
+	return min_t(u32, 100, (covered * 100) / kf_req->nr_objects);
+}
+
 u64 kfastblock_request_last_wire_seq(const struct kfastblock_request *kf_req)
 {
 	u64 value = 0;
