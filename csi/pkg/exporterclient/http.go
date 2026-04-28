@@ -35,6 +35,20 @@ func (c *HTTPClient) CreateExport(ctx context.Context, req CreateExportRequest) 
 	return export, nil
 }
 
+func (c *HTTPClient) GetExport(ctx context.Context, exportID string) (Export, error) {
+	if strings.TrimSpace(exportID) == "" {
+		return Export{}, fmt.Errorf("export id is required")
+	}
+	var export Export
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/exports/"+exportID, nil, http.StatusOK, &export); err != nil {
+		return Export{}, err
+	}
+	if err := export.Validate(); err != nil {
+		return Export{}, err
+	}
+	return export, nil
+}
+
 func (c *HTTPClient) DeleteExport(ctx context.Context, exportID string) error {
 	if strings.TrimSpace(exportID) == "" {
 		return fmt.Errorf("export id is required")

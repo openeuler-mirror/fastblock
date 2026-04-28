@@ -14,6 +14,7 @@ import (
 
 type Manager interface {
 	CreateExport(ctx context.Context, req api.CreateExportRequest) (api.Export, error)
+	GetExport(ctx context.Context, exportID string) (api.Export, error)
 	DeleteExport(ctx context.Context, exportID string) error
 	AllowHost(ctx context.Context, exportID, hostNQN string) error
 	DenyHost(ctx context.Context, exportID, hostNQN string) error
@@ -177,6 +178,36 @@ func (m *LocalManager) DeleteExport(ctx context.Context, exportID string) error 
 	}, nil)
 }
 
+func (m *LocalManager) GetExport(ctx context.Context, exportID string) (api.Export, error) {
+	if strings.TrimSpace(exportID) == "" {
+		return api.Export{}, errors.New("export id is required")
+	}
+	nqn := subsystemNQN(m.nqnPrefix, exportID)
+	var subsystems []subsystemInfo
+	if err := m.rpc.Call(ctx, "nvmf_get_subsystems", map[string]any{
+		"nqn": nqn,
+	}, &subsystems); err != nil {
+		return api.Export{}, err
+	}
+	for _, subsystem := range subsystems {
+		if subsystem.NQN != nqn {
+			continue
+		}
+		if len(subsystem.Namespaces) == 0 || len(subsystem.ListenAddresses) == 0 {
+			return api.Export{}, fmt.Errorf("subsystem %s missing namespace or listener", nqn)
+		}
+		listener := subsystem.ListenAddresses[0]
+		return api.Export{
+			ID:      exportID,
+			NQN:     subsystem.NQN,
+			NSID:    subsystem.Namespaces[0].NSID,
+			Traddr:  listener.Traddr,
+			Trsvcid: listener.Trsvcid,
+		}, nil
+	}
+	return api.Export{}, fmt.Errorf("export %s not found", exportID)
+}
+
 func (m *LocalManager) AllowHost(ctx context.Context, exportID, hostNQN string) error {
 	if strings.TrimSpace(exportID) == "" {
 		return errors.New("export id is required")
@@ -201,4 +232,19 @@ func (m *LocalManager) DenyHost(ctx context.Context, exportID, hostNQN string) e
 		"nqn":  subsystemNQN(m.nqnPrefix, exportID),
 		"host": hostNQN,
 	}, nil)
+}
+
+type subsystemInfo struct {
+	NQN             string             `json:"nqn"`
+	Namespaces      []subsystemNS      `json:"namespaces"`
+	ListenAddresses []subsystemAddress `json:"listen_addresses"`
+}
+
+type subsystemNS struct {
+	NSID int `json:"nsid"`
+}
+
+type subsystemAddress struct {
+	Traddr  string `json:"traddr"`
+	Trsvcid string `json:"trsvcid"`
 }

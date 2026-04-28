@@ -19,6 +19,7 @@ type stubManager struct {
 	allowNQN  string
 	denyID    string
 	denyNQN   string
+	getID     string
 }
 
 func (m *stubManager) CreateExport(_ context.Context, req api.CreateExportRequest) (api.Export, error) {
@@ -29,6 +30,11 @@ func (m *stubManager) CreateExport(_ context.Context, req api.CreateExportReques
 func (m *stubManager) DeleteExport(_ context.Context, exportID string) error {
 	m.deleteID = exportID
 	return nil
+}
+
+func (m *stubManager) GetExport(_ context.Context, exportID string) (api.Export, error) {
+	m.getID = exportID
+	return api.Export{ID: exportID, NQN: "nqn.1", NSID: 1, Traddr: "10.0.0.1", Trsvcid: "4420"}, nil
 }
 
 func (m *stubManager) AllowHost(_ context.Context, exportID, hostNQN string) error {
@@ -87,6 +93,20 @@ func TestDeleteExport(t *testing.T) {
 	}
 	if manager.deleteID != "exp-9" {
 		t.Fatalf("unexpected delete id: %q", manager.deleteID)
+	}
+}
+
+func TestGetExport(t *testing.T) {
+	manager := &stubManager{}
+	srv := New(config.Config{NodeName: "node-a"}, manager)
+	req := httptest.NewRequest(http.MethodGet, "/v1/exports/exp-5", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	if manager.getID != "exp-5" {
+		t.Fatalf("unexpected get id: %q", manager.getID)
 	}
 }
 

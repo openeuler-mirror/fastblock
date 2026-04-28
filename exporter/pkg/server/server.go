@@ -98,6 +98,19 @@ func (s *Server) handleExportAction(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	if action == "" && r.Method == http.MethodGet {
+		if exportID == "" {
+			writeError(w, http.StatusBadRequest, "export id is required")
+			return
+		}
+		export, err := s.manager.GetExport(r.Context(), exportID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, export)
+		return
+	}
 	if action == "" || r.Method != http.MethodPost {
 		writeError(w, http.StatusNotFound, "route not found")
 		return

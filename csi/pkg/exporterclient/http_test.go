@@ -37,6 +37,25 @@ func TestCreateExport(t *testing.T) {
 	}
 }
 
+func TestGetExport(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/exports/exp-1" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(Export{ID: "exp-1", NQN: "nqn.1", NSID: 1, Traddr: "10.0.0.1", Trsvcid: "4420"})
+	}))
+	defer server.Close()
+
+	client := NewHTTP(server.URL)
+	export, err := client.GetExport(context.Background(), "exp-1")
+	if err != nil {
+		t.Fatalf("get export failed: %v", err)
+	}
+	if export.ID != "exp-1" {
+		t.Fatalf("unexpected export: %+v", export)
+	}
+}
+
 func TestDeleteAndHostACL(t *testing.T) {
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

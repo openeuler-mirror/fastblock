@@ -15,8 +15,9 @@ type rpcCall struct {
 }
 
 type stubCaller struct {
-	calls []rpcCall
-	fail  map[string]error
+	calls         []rpcCall
+	fail          map[string]error
+	getSubsystems []subsystemInfo
 }
 
 func (c *stubCaller) Call(_ context.Context, method string, params any, result any) error {
@@ -33,6 +34,10 @@ func (c *stubCaller) Call(_ context.Context, method string, params any, result a
 	case "nvmf_subsystem_add_ns":
 		if out, ok := result.(*int); ok {
 			*out = 11
+		}
+	case "nvmf_get_subsystems":
+		if out, ok := result.(*[]subsystemInfo); ok {
+			*out = append([]subsystemInfo(nil), c.getSubsystems...)
 		}
 	}
 	return nil
@@ -154,5 +159,33 @@ func TestBuildRPCParamsHelpers(t *testing.T) {
 	address := listenerParams["listen_address"].(map[string]any)
 	if address["trtype"] != "RDMA" || address["traddr"] != "10.0.0.10" {
 		t.Fatalf("unexpected listener params: %+v", listenerParams)
+	}
+}
+
+func TestGetExport(t *testing.T) {
+	cfg := config.Default()
+	cfg.MonitorAddress = "10.0.0.20:3333"
+	cfg.TargetAddress = "10.0.0.10"
+	cfg.NodeName = "node-a"
+	rpc := &stubCaller{
+		getSubsystems: []subsystemInfo{{
+			NQN: "nqn.2026-04.io.fastblock:fbvol-cluster-a-1-7",
+			Namespaces: []subsystemNS{{
+				NSID: 11,
+			}},
+			ListenAddresses: []subsystemAddress{{
+				Traddr:  "10.0.0.10",
+				Trsvcid: "4420",
+			}},
+		}},
+	}
+	manager := newLocalManagerWithRPC(cfg, rpc)
+
+	export, err := manager.GetExport(context.Background(), "fbvol-cluster-a-1-7")
+	if err != nil {
+		t.Fatalf("get export failed: %v", err)
+	}
+	if export.ID != "fbvol-cluster-a-1-7" || export.NSID != 11 {
+		t.Fatalf("unexpected export: %+v", export)
 	}
 }

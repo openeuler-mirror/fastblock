@@ -60,6 +60,10 @@ func (c *stubExporterClient) CreateExport(_ context.Context, req exporterclient.
 	return exporterclient.Export{ID: "exp-1", NQN: "nqn.1", NSID: 1, Traddr: "10.0.0.1", Trsvcid: "4420"}, nil
 }
 
+func (c *stubExporterClient) GetExport(_ context.Context, exportID string) (exporterclient.Export, error) {
+	return exporterclient.Export{ID: exportID, NQN: "nqn.1", NSID: 1, Traddr: "10.0.0.1", Trsvcid: "4420"}, nil
+}
+
 func (c *stubExporterClient) DeleteExport(_ context.Context, exportID string) error {
 	c.deleteID = exportID
 	return nil
