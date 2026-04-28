@@ -1809,6 +1809,22 @@ static int kfastblock_transport_finish_object_success(
 	return 0;
 }
 
+static int kfastblock_transport_pick_object_leader(
+	struct kfastblock_request *kf_req,
+	struct kfastblock_request_pg_hint *hint,
+	struct kfastblock_leader_info *leader,
+	int attempt)
+{
+	if (!kf_req || !leader)
+		return -EINVAL;
+
+	if (attempt == 0 && hint &&
+	    !kfastblock_request_get_pg_hint_leader(hint, leader))
+		return 0;
+
+	return kfastblock_transport_query_pg_leader(kf_req, hint, leader);
+}
+
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
@@ -1850,12 +1866,8 @@ static int kfastblock_transport_submit_object_io(
 		goto out;
 
 	for (attempt = 0; attempt < 2; ++attempt) {
-		if (attempt == 0 && hint &&
-		    !kfastblock_request_get_pg_hint_leader(hint, &leader)) {
-			ret = 0;
-		} else {
-			ret = kfastblock_transport_query_pg_leader(kf_req, hint, &leader);
-		}
+		ret = kfastblock_transport_pick_object_leader(kf_req, hint, &leader,
+							      attempt);
 		if (ret)
 			goto out;
 
