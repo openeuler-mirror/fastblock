@@ -100,6 +100,13 @@ struct kfastblock_transport_object_io_ctx {
 	struct kfastblock_transport_response_ctx response;
 };
 
+struct kfastblock_transport_submit_ctx {
+	struct kfastblock_request *kf_req;
+	unsigned int initial_dispatch;
+	int ret;
+	bool finished;
+};
+
 enum kfastblock_transport_object_attempt_failure_kind {
 	KFASTBLOCK_OBJECT_ATTEMPT_FAIL_BEFORE_EXCHANGE = 0,
 	KFASTBLOCK_OBJECT_ATTEMPT_FAIL_AFTER_EXCHANGE = 1,
@@ -2688,72 +2695,91 @@ static int kfastblock_transport_finish_empty_request(
 	return kfastblock_transport_finish_submit_now(kf_req, 0);
 }
 
-static int kfastblock_transport_prepare_request_submit(
-	struct kfastblock_request *kf_req,
-	unsigned int *initial_dispatch)
+static int kfastblock_transport_submit_ctx_init(
+	struct kfastblock_transport_submit_ctx *ctx,
+	struct kfastblock_request *kf_req)
 {
-	if (!kf_req || !kf_req->rq || !kf_req->vol || !initial_dispatch)
+	if (!ctx || !kf_req || !kf_req->rq || !kf_req->vol)
 		return -EINVAL;
 
-	if (!kf_req->nr_objects)
-		return kfastblock_transport_finish_empty_request(kf_req);
+	memset(ctx, 0, sizeof(*ctx));
+	ctx->kf_req = kf_req;
+	return 0;
+}
 
-	kf_req->status = 0;
-	kfastblock_request_prepare_runtime(kf_req);
-	atomic_set(&kf_req->pending_objects, kf_req->nr_objects);
-	*initial_dispatch = min_t(unsigned int, kf_req->nr_objects,
-				  kf_req->dispatch_window ?
-				  kf_req->dispatch_window :
-				  1);
-	return kfastblock_transport_prefetch_request_leaders(kf_req);
+static void kfastblock_transport_prepare_request_submit(
+	struct kfastblock_transport_submit_ctx *ctx)
+{
+	if (!ctx || !ctx->kf_req)
+		return;
+
+	if (!ctx->kf_req->nr_objects) {
+		ctx->ret = kfastblock_transport_finish_empty_request(ctx->kf_req);
+		ctx->finished = true;
+		return;
+	}
+
+	ctx->kf_req->status = 0;
+	kfastblock_request_prepare_runtime(ctx->kf_req);
+	atomic_set(&ctx->kf_req->pending_objects, ctx->kf_req->nr_objects);
+	ctx->initial_dispatch = min_t(unsigned int, ctx->kf_req->nr_objects,
+				      ctx->kf_req->dispatch_window ?
+				      ctx->kf_req->dispatch_window :
+				      1);
+	ctx->ret = kfastblock_transport_prefetch_request_leaders(ctx->kf_req);
 }
 
 static int kfastblock_transport_kick_initial_dispatch(
-	struct kfastblock_request *kf_req,
-	unsigned int initial_dispatch)
+	struct kfastblock_transport_submit_ctx *ctx)
 {
 	struct kfastblock_request_dispatch_batch batch;
 	int ret;
 
-	if (!kf_req)
+	if (!ctx || !ctx->kf_req)
 		return -EINVAL;
 
 	kfastblock_request_dispatch_batch_reset(&batch);
 	ret = kfastblock_request_pick_dispatch_batch(
-		kf_req, &batch, initial_dispatch);
+		ctx->kf_req, &batch, ctx->initial_dispatch);
 	if (ret < 0) {
-		kfastblock_transport_abort_request(kf_req, ret);
+		kfastblock_transport_abort_request(ctx->kf_req, ret);
 		return 0;
 	}
 
-	get_device(&kf_req->vol->dev);
-	ret = kfastblock_transport_queue_dispatch_batch(kf_req, &batch);
+	get_device(&ctx->kf_req->vol->dev);
+	ret = kfastblock_transport_queue_dispatch_batch(ctx->kf_req, &batch);
 	if (ret)
-		kfastblock_transport_abort_request(kf_req, ret);
+		kfastblock_transport_abort_request(ctx->kf_req, ret);
 
 	return 0;
 }
 
 static int kfastblock_transport_run_request_submit(
-	struct kfastblock_request *kf_req)
+	struct kfastblock_transport_submit_ctx *ctx)
 {
-	unsigned int initial_dispatch;
-	int ret;
+	if (!ctx || !ctx->kf_req)
+		return -EINVAL;
 
-	ret = kfastblock_transport_prepare_request_submit(
-		kf_req, &initial_dispatch);
-	if (ret < 0)
-		return kfastblock_transport_finish_submit_now(kf_req, ret);
-	if (!kf_req || !kf_req->nr_objects)
+	kfastblock_transport_prepare_request_submit(ctx);
+	if (ctx->finished)
 		return 0;
+	if (ctx->ret < 0)
+		return kfastblock_transport_finish_submit_now(ctx->kf_req,
+							      ctx->ret);
 
-	return kfastblock_transport_kick_initial_dispatch(
-		kf_req, initial_dispatch);
+	return kfastblock_transport_kick_initial_dispatch(ctx);
 }
 
 int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 {
-	return kfastblock_transport_run_request_submit(kf_req);
+	struct kfastblock_transport_submit_ctx ctx = {};
+	int ret;
+
+	ret = kfastblock_transport_submit_ctx_init(&ctx, kf_req);
+	if (ret)
+		return ret;
+
+	return kfastblock_transport_run_request_submit(&ctx);
 }
 
 int kfastblock_transport_refresh_image_volume(struct kfastblock_volume *vol)
