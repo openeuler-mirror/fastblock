@@ -78,6 +78,10 @@ struct kfastblock_pipeline_entry *kfastblock_pipeline_finish_exchange(
 	u32 transport_flags);
 unsigned int kfastblock_pipeline_free_entries(
 	struct kfastblock_pipeline_state *state);
+unsigned int kfastblock_pipeline_inflight_entries(
+	struct kfastblock_pipeline_state *state);
+bool kfastblock_pipeline_peak_reached(
+	struct kfastblock_pipeline_state *state);
 void kfastblock_pipeline_snapshot(struct kfastblock_pipeline_state *state,
 				  struct kfastblock_pipeline_snapshot *snapshot);
 

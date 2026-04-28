@@ -243,6 +243,39 @@ unsigned int kfastblock_pipeline_free_entries(
 	return free_entries;
 }
 
+unsigned int kfastblock_pipeline_inflight_entries(
+	struct kfastblock_pipeline_state *state)
+{
+	unsigned int inflight = 0;
+	unsigned long flags;
+
+	if (!state)
+		return 0;
+
+	spin_lock_irqsave(&state->lock, flags);
+	inflight = state->inflight;
+	spin_unlock_irqrestore(&state->lock, flags);
+
+	return inflight;
+}
+
+bool kfastblock_pipeline_peak_reached(
+	struct kfastblock_pipeline_state *state)
+{
+	unsigned long flags;
+	bool reached = false;
+
+	if (!state)
+		return false;
+
+	spin_lock_irqsave(&state->lock, flags);
+	reached = state->peak_inflight != 0 &&
+		  state->inflight >= state->peak_inflight;
+	spin_unlock_irqrestore(&state->lock, flags);
+
+	return reached;
+}
+
 void kfastblock_pipeline_snapshot(struct kfastblock_pipeline_state *state,
 				  struct kfastblock_pipeline_snapshot *snapshot)
 {
