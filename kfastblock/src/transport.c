@@ -1407,6 +1407,7 @@ static int kfastblock_transport_copy_request_data(struct request *rq,
 
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
+	unsigned int object_index,
 	const struct kfastblock_object_extent *extent,
 	enum req_op op)
 {
@@ -1492,12 +1493,33 @@ static int kfastblock_transport_submit_object_io(
 		}
 
 		seq = kfastblock_transport_next_seq(cached);
+		kfastblock_request_record_object_seq(kf_req, object_index, seq);
+		if (!kfastblock_pipeline_enqueue(&kf_req->pipeline,
+						 seq, object_index)) {
+			ret = -ENOMEM;
+			actions = kfastblock_recovery_classify_object_failure(ret);
+			kfastblock_recovery_finalize_osd_socket(vol, cached, &leader,
+								ret, actions);
+			cached = NULL;
+			if (actions) {
+				kfastblock_recovery_apply_object_failure(
+					vol, kf_req->request_pool_id, extent, op, &leader,
+					ret, actions);
+				if (hint &&
+				    (actions & KFASTBLOCK_RECOVERY_INVALIDATE_LEADER))
+					kfastblock_request_invalidate_pg_hint_leader(hint);
+				if (actions & KFASTBLOCK_RECOVERY_RETRY)
+					continue;
+			}
+			goto out;
+		}
 		ret = kfastblock_transport_maybe_inject_fault(
 			vol, KFASTBLOCK_FAULT_OBJECT_IO);
 		if (ret) {
 			actions = kfastblock_recovery_classify_object_failure(ret);
 			kfastblock_recovery_finalize_osd_socket(vol, cached, &leader,
 								ret, actions);
+			kfastblock_pipeline_complete(&kf_req->pipeline, seq, ret);
 			cached = NULL;
 			if (actions) {
 				kfastblock_recovery_apply_object_failure(
@@ -1530,6 +1552,7 @@ static int kfastblock_transport_submit_object_io(
 		actions = ret ? kfastblock_recovery_classify_object_failure(ret) : 0;
 		kfastblock_recovery_finalize_osd_socket(vol, cached, &leader, ret,
 							actions);
+		kfastblock_pipeline_complete(&kf_req->pipeline, seq, ret);
 		cached = NULL;
 		if (ret) {
 			if (actions) {
@@ -1877,6 +1900,7 @@ static int kfastblock_transport_submit_object(struct kfastblock_request *kf_req,
 
 	return kfastblock_transport_submit_object_io(
 		kf_req,
+		object_index,
 		&kf_req->objects[object_index],
 		op);
 }
