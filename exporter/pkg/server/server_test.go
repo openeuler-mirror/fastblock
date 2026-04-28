@@ -17,6 +17,8 @@ type stubManager struct {
 	deleteID  string
 	allowID   string
 	allowNQN  string
+	denyID    string
+	denyNQN   string
 }
 
 func (m *stubManager) CreateExport(_ context.Context, req api.CreateExportRequest) (api.Export, error) {
@@ -35,7 +37,9 @@ func (m *stubManager) AllowHost(_ context.Context, exportID, hostNQN string) err
 	return nil
 }
 
-func (m *stubManager) DenyHost(context.Context, string, string) error {
+func (m *stubManager) DenyHost(_ context.Context, exportID, hostNQN string) error {
+	m.denyID = exportID
+	m.denyNQN = hostNQN
 	return nil
 }
 
@@ -98,5 +102,41 @@ func TestAllowHost(t *testing.T) {
 	}
 	if manager.allowID != "exp-7" || manager.allowNQN == "" {
 		t.Fatalf("unexpected allow-host call: id=%q nqn=%q", manager.allowID, manager.allowNQN)
+	}
+}
+
+func TestDenyHost(t *testing.T) {
+	manager := &stubManager{}
+	srv := New(config.Config{NodeName: "node-a"}, manager)
+	body, _ := json.Marshal(api.HostAccessRequest{HostNQN: "nqn.2014-08.org.nvmexpress:uuid:test"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/exports/exp-8/deny-host", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	if manager.denyID != "exp-8" || manager.denyNQN == "" {
+		t.Fatalf("unexpected deny-host call: id=%q nqn=%q", manager.denyID, manager.denyNQN)
+	}
+}
+
+func TestRejectInvalidCreateExportRequest(t *testing.T) {
+	manager := &stubManager{}
+	srv := New(config.Config{NodeName: "node-a"}, manager)
+	req := httptest.NewRequest(http.MethodPost, "/v1/exports", bytes.NewReader([]byte(`{}`)))
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+}
+
+func TestRejectWrongMethodOnHealthz(t *testing.T) {
+	srv := New(config.Config{NodeName: "node-a"}, &stubManager{})
+	req := httptest.NewRequest(http.MethodPost, "/healthz", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("unexpected status: %d", rec.Code)
 	}
 }
