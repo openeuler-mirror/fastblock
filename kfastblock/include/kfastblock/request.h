@@ -187,6 +187,12 @@ int kfastblock_request_record_object_response_by_seq(
 	s32 response_status,
 	u32 response_body_len,
 	u32 transport_flags);
+bool kfastblock_request_object_has_response(
+	const struct kfastblock_request *kf_req,
+	unsigned int object_index);
+bool kfastblock_request_object_has_response_by_seq(
+	struct kfastblock_request *kf_req,
+	u64 seq);
 int kfastblock_request_clear_object_response_by_seq(
 	struct kfastblock_request *kf_req,
 	u64 seq);
