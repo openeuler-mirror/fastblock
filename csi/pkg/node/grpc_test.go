@@ -6,6 +6,7 @@ import (
 
 	"fastblock-csi/pkg/backend"
 	"fastblock-csi/pkg/driver"
+	"fastblock-csi/pkg/mount"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
 )
@@ -33,5 +34,46 @@ func TestNodeGRPCService(t *testing.T) {
 	}
 	if info.GetNodeId() != "node-a" {
 		t.Fatalf("unexpected node info: %+v", info)
+	}
+}
+
+func TestNodeStageAndUnstageVolume(t *testing.T) {
+	service := New(driver.Options{
+		DriverName: "csi.fastblock.io",
+		Endpoint:   "unix:///tmp/node.sock",
+		NodeID:     "node-a",
+		Mode:       driver.ModeNode,
+	}, &stubBackend{})
+	grpcService := NewGRPCService(service)
+	stagePath := t.TempDir()
+
+	_, err := grpcService.NodeStageVolume(context.Background(), &csi.NodeStageVolumeRequest{
+		VolumeId:          "fbvolname:fb:img-a",
+		StagingTargetPath: stagePath,
+		PublishContext: map[string]string{
+			driver.PublishContextTransport: "rdma",
+			driver.PublishContextNQN:       "nqn.test",
+			driver.PublishContextTraddr:    "10.0.0.10",
+			driver.PublishContextTrsvcid:   "4420",
+			driver.PublishContextNSID:      "1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("node stage volume failed: %v", err)
+	}
+	state, err := mount.ReadStageState(stagePath)
+	if err != nil {
+		t.Fatalf("read stage state failed: %v", err)
+	}
+	if state.VolumeID != "fbvolname:fb:img-a" {
+		t.Fatalf("unexpected stage state: %+v", state)
+	}
+
+	_, err = grpcService.NodeUnstageVolume(context.Background(), &csi.NodeUnstageVolumeRequest{
+		VolumeId:          "fbvolname:fb:img-a",
+		StagingTargetPath: stagePath,
+	})
+	if err != nil {
+		t.Fatalf("node unstage volume failed: %v", err)
 	}
 }
