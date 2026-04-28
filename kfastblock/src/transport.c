@@ -1988,6 +1988,10 @@ static void kfastblock_transport_cleanup_object_io(
 			ctx->vol, ctx->op, ctx->extent->pg_id, ctx->leader.osd_id,
 			ctx->extent->length, ret);
 	kfastblock_transport_release_object_buffer(ctx->kf_req, ctx->buf);
+	ctx->cached = NULL;
+	ctx->sock = NULL;
+	ctx->buf = NULL;
+	kfastblock_transport_response_ctx_reset(&ctx->response);
 }
 
 static int kfastblock_transport_begin_object_attempt(
@@ -2098,6 +2102,19 @@ static int kfastblock_transport_object_io_ctx_init(
 	return 0;
 }
 
+static void kfastblock_transport_object_io_ctx_reset_attempt(
+	struct kfastblock_transport_object_io_ctx *ctx)
+{
+	if (!ctx)
+		return;
+
+	memset(&ctx->leader, 0, sizeof(ctx->leader));
+	ctx->cached = NULL;
+	ctx->sock = NULL;
+	memset(&ctx->exchange, 0, sizeof(ctx->exchange));
+	kfastblock_transport_response_ctx_reset(&ctx->response);
+}
+
 static int kfastblock_transport_prepare_object_execution(
 	struct kfastblock_transport_object_io_ctx *ctx)
 {
@@ -2163,6 +2180,7 @@ static int kfastblock_transport_run_object_attempts(
 		return -EINVAL;
 
 	for (attempt = 0; attempt < KFASTBLOCK_OBJECT_IO_MAX_ATTEMPTS; ++attempt) {
+		kfastblock_transport_object_io_ctx_reset_attempt(ctx);
 		ctx->attempt = attempt;
 		if (kfastblock_transport_prepare_executable_object_attempt(
 			    ctx, &ret))
