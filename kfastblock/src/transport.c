@@ -100,6 +100,11 @@ struct kfastblock_transport_object_io_ctx {
 	struct kfastblock_transport_response_ctx response;
 };
 
+enum kfastblock_transport_object_attempt_failure_kind {
+	KFASTBLOCK_OBJECT_ATTEMPT_FAIL_BEFORE_EXCHANGE = 0,
+	KFASTBLOCK_OBJECT_ATTEMPT_FAIL_AFTER_EXCHANGE = 1,
+};
+
 static int kfastblock_transport_copy_from_body(const u8 *body,
 					       size_t body_len,
 					       size_t *offset,
@@ -1986,25 +1991,18 @@ static int kfastblock_transport_complete_successful_object_attempt(
 	return ctx->ret;
 }
 
-static bool kfastblock_transport_retry_begin_object_attempt_failure(
-	struct kfastblock_transport_object_io_ctx *ctx)
+static bool kfastblock_transport_fail_object_attempt(
+	struct kfastblock_transport_object_io_ctx *ctx,
+	enum kfastblock_transport_object_attempt_failure_kind kind)
 {
 	if (!ctx)
 		return false;
 
 	ctx->actions = kfastblock_recovery_classify_object_failure(ctx->ret);
-	kfastblock_transport_finalize_object_socket(ctx);
-	return kfastblock_transport_retry_object_after_failure(ctx);
-}
-
-static bool kfastblock_transport_retry_faulted_object_attempt(
-	struct kfastblock_transport_object_io_ctx *ctx)
-{
-	if (!ctx)
-		return false;
-
-	ctx->actions = kfastblock_recovery_classify_object_failure(ctx->ret);
-	kfastblock_transport_abort_object_exchange(ctx);
+	if (kind == KFASTBLOCK_OBJECT_ATTEMPT_FAIL_AFTER_EXCHANGE)
+		kfastblock_transport_abort_object_exchange(ctx);
+	else
+		kfastblock_transport_finalize_object_socket(ctx);
 	return kfastblock_transport_retry_object_after_failure(ctx);
 }
 
@@ -2084,12 +2082,14 @@ static bool kfastblock_transport_prepare_executable_object_attempt(
 
 	ctx->ret = kfastblock_transport_begin_object_attempt(ctx);
 	if (ctx->ret)
-		return kfastblock_transport_retry_begin_object_attempt_failure(ctx);
+		return kfastblock_transport_fail_object_attempt(
+			ctx, KFASTBLOCK_OBJECT_ATTEMPT_FAIL_BEFORE_EXCHANGE);
 
 	ctx->ret = kfastblock_transport_maybe_inject_fault(
 		ctx->vol, KFASTBLOCK_FAULT_OBJECT_IO);
 	if (ctx->ret)
-		return kfastblock_transport_retry_faulted_object_attempt(ctx);
+		return kfastblock_transport_fail_object_attempt(
+			ctx, KFASTBLOCK_OBJECT_ATTEMPT_FAIL_AFTER_EXCHANGE);
 
 	return false;
 }
