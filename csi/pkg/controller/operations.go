@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"fastblock-csi/pkg/driver"
 	"fastblock-csi/pkg/exporterclient"
 	"fastblock-csi/pkg/monitorclient"
 )
@@ -24,6 +25,11 @@ type PublishVolumeRequest struct {
 	BlockSize int64
 	Transport string
 	HostNQN   string
+}
+
+type PublishVolumeResult struct {
+	Export         exporterclient.Export
+	PublishContext map[string]string
 }
 
 func (s *Service) CreateVolume(ctx context.Context, req CreateVolumeRequest) (monitorclient.Volume, error) {
@@ -51,9 +57,9 @@ func (s *Service) ExpandVolume(ctx context.Context, ref monitorclient.VolumeRef,
 	return s.monitor.ExpandVolume(ctx, ref, capacityBytes)
 }
 
-func (s *Service) PublishVolume(ctx context.Context, req PublishVolumeRequest) (exporterclient.Export, error) {
+func (s *Service) PublishVolume(ctx context.Context, req PublishVolumeRequest) (PublishVolumeResult, error) {
 	if err := req.Validate(); err != nil {
-		return exporterclient.Export{}, err
+		return PublishVolumeResult{}, err
 	}
 	export, err := s.exporter.CreateExport(ctx, exporterclient.CreateExportRequest{
 		VolumeID:      req.Volume.ID,
@@ -65,14 +71,21 @@ func (s *Service) PublishVolume(ctx context.Context, req PublishVolumeRequest) (
 		Transport:     req.Transport,
 	})
 	if err != nil {
-		return exporterclient.Export{}, err
+		return PublishVolumeResult{}, err
 	}
 	if req.HostNQN != "" {
 		if err := s.exporter.AllowHost(ctx, export.ID, req.HostNQN); err != nil {
-			return exporterclient.Export{}, err
+			return PublishVolumeResult{}, err
 		}
 	}
-	return export, nil
+	publishContext, err := driver.BuildPublishContext(export, req.Transport)
+	if err != nil {
+		return PublishVolumeResult{}, err
+	}
+	return PublishVolumeResult{
+		Export:         export,
+		PublishContext: publishContext,
+	}, nil
 }
 
 func (s *Service) UnpublishVolume(ctx context.Context, exportID, hostNQN string) error {
