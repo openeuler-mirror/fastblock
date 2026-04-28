@@ -1935,24 +1935,22 @@ static void kfastblock_transport_abort_object_exchange(
 }
 
 static int kfastblock_transport_run_object_exchange(
-	struct socket *sock,
-	struct kfastblock_request *kf_req,
-	const struct kfastblock_object_extent *extent,
-	enum req_op op,
-	void *buf,
-	struct kfastblock_transport_exchange_ctx *exchange,
-	struct kfastblock_transport_response_ctx *response)
+	struct kfastblock_transport_object_io_ctx *ctx)
 {
 	int ret;
 
+	if (!ctx)
+		return -EINVAL;
+
 	ret = kfastblock_transport_execute_object_opcode(
-		sock, kf_req->request_pool_id, extent, op, buf, exchange->seq,
-		response);
-	ret = kfastblock_transport_normalize_object_ret(op, extent, buf, ret);
+		ctx->sock, ctx->kf_req->request_pool_id, ctx->extent, ctx->op,
+		ctx->buf, ctx->exchange.seq, &ctx->response);
+	ret = kfastblock_transport_normalize_object_ret(
+		ctx->op, ctx->extent, ctx->buf, ret);
 	if (!ret)
-		ret = kfastblock_transport_match_exchange_response(exchange);
-	kfastblock_transport_release_response_and_exchange(exchange, response,
-							&ret);
+		ret = kfastblock_transport_match_exchange_response(&ctx->exchange);
+	kfastblock_transport_release_response_and_exchange(
+		&ctx->exchange, &ctx->response, &ret);
 	return ret;
 }
 
@@ -2152,9 +2150,7 @@ static bool kfastblock_transport_execute_object_attempt(
 	if (!ret)
 		return false;
 
-	*ret = kfastblock_transport_run_object_exchange(
-		ctx->sock, ctx->kf_req, ctx->extent, ctx->op, ctx->buf,
-		&ctx->exchange, &ctx->response);
+	*ret = kfastblock_transport_run_object_exchange(ctx);
 	return kfastblock_transport_finalize_completed_object_attempt(ctx, ret);
 }
 
