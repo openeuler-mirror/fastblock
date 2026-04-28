@@ -83,6 +83,10 @@ func TestControllerGRPCPublishAndUnpublishVolume(t *testing.T) {
 	req := &csi.ControllerPublishVolumeRequest{
 		VolumeId: "fbvolname:fb:img-a",
 		NodeId:   "node-a",
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
+			AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+		},
 		VolumeContext: map[string]string{
 			"pool":          "fb",
 			"name":          "img-a",
@@ -131,6 +135,10 @@ func TestControllerPublishVolumeRejectsMismatchedVolumeContext(t *testing.T) {
 	_, err := grpcService.ControllerPublishVolume(context.Background(), &csi.ControllerPublishVolumeRequest{
 		VolumeId: "fbvolname:fb:img-a",
 		NodeId:   "node-a",
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
+			AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+		},
 		VolumeContext: map[string]string{
 			"pool":          "wrong",
 			"name":          "img-a",
@@ -142,6 +150,33 @@ func TestControllerPublishVolumeRejectsMismatchedVolumeContext(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected mismatched volume_context error")
+	}
+}
+
+func TestControllerPublishVolumeRejectsUnsupportedCapability(t *testing.T) {
+	monitor := &stubMonitorClient{}
+	exporter := &stubExporterClient{}
+	service := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+	grpcService := NewGRPCService(service)
+
+	_, err := grpcService.ControllerPublishVolume(context.Background(), &csi.ControllerPublishVolumeRequest{
+		VolumeId: "fbvolname:fb:img-a",
+		NodeId:   "node-a",
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Mount{Mount: &csi.VolumeCapability_MountVolume{}},
+			AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+		},
+		VolumeContext: map[string]string{
+			"pool":          "fb",
+			"name":          "img-a",
+			"transport":     "rdma",
+			"blockSize":     "4096",
+			"objectSize":    "4194304",
+			"capacityBytes": "1048576",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected unsupported capability error")
 	}
 }
 
