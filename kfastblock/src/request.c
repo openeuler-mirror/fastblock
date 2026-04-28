@@ -679,6 +679,53 @@ int kfastblock_request_lookup_object_by_seq(
 	return 0;
 }
 
+int kfastblock_request_snapshot_object(
+	struct kfastblock_request *kf_req,
+	unsigned int object_index,
+	struct kfastblock_request_object_snapshot *snapshot)
+{
+	unsigned long flags;
+	struct kfastblock_request_object_runtime *runtime;
+
+	if (!kf_req || !snapshot || !kf_req->object_runtime ||
+	    object_index >= kf_req->nr_objects)
+		return -EINVAL;
+
+	spin_lock_irqsave(&kf_req->object_state_lock, flags);
+	runtime = &kf_req->object_runtime[object_index];
+	snapshot->state = runtime->state;
+	snapshot->last_error = runtime->last_error;
+	snapshot->attempt_count = runtime->attempt_count;
+	snapshot->dispatch_count = runtime->dispatch_count;
+	snapshot->retry_count = runtime->retry_count;
+	snapshot->wire_seq = runtime->wire_seq;
+	snapshot->response_status = runtime->response_status;
+	snapshot->response_body_len = runtime->response_body_len;
+	snapshot->transport_flags = runtime->transport_flags;
+	snapshot->queued_jiffies = runtime->queued_jiffies;
+	snapshot->last_retry_jiffies = runtime->last_retry_jiffies;
+	snapshot->completed_jiffies = runtime->completed_jiffies;
+	snapshot->object_index = object_index;
+	spin_unlock_irqrestore(&kf_req->object_state_lock, flags);
+
+	return 0;
+}
+
+int kfastblock_request_snapshot_object_by_seq(
+	struct kfastblock_request *kf_req,
+	u64 seq,
+	struct kfastblock_request_object_snapshot *snapshot)
+{
+	unsigned int object_index;
+	int ret;
+
+	ret = kfastblock_request_lookup_object_by_seq(kf_req, seq, &object_index);
+	if (ret)
+		return ret;
+
+	return kfastblock_request_snapshot_object(kf_req, object_index, snapshot);
+}
+
 int kfastblock_request_complete_object_by_seq(
 	struct kfastblock_request *kf_req,
 	u64 seq,

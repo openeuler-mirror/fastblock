@@ -79,6 +79,22 @@ struct kfastblock_request_dispatch_batch {
 	unsigned int indexes[KFASTBLOCK_MAX_OBJECT_EXTENTS];
 };
 
+struct kfastblock_request_object_snapshot {
+	enum kfastblock_request_object_state state;
+	int last_error;
+	u16 attempt_count;
+	u16 dispatch_count;
+	u16 retry_count;
+	u64 wire_seq;
+	s32 response_status;
+	u32 response_body_len;
+	u32 transport_flags;
+	unsigned long queued_jiffies;
+	unsigned long last_retry_jiffies;
+	unsigned long completed_jiffies;
+	unsigned int object_index;
+};
+
 struct kfastblock_request {
 	struct request *rq;
 	struct kfastblock_volume *vol;
@@ -180,6 +196,14 @@ int kfastblock_request_lookup_object_by_seq(
 	struct kfastblock_request *kf_req,
 	u64 seq,
 	unsigned int *object_index);
+int kfastblock_request_snapshot_object(
+	struct kfastblock_request *kf_req,
+	unsigned int object_index,
+	struct kfastblock_request_object_snapshot *snapshot);
+int kfastblock_request_snapshot_object_by_seq(
+	struct kfastblock_request *kf_req,
+	u64 seq,
+	struct kfastblock_request_object_snapshot *snapshot);
 int kfastblock_request_complete_object_by_seq(
 	struct kfastblock_request *kf_req,
 	u64 seq,
