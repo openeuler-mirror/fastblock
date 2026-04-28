@@ -125,6 +125,9 @@ struct kfastblock_volume_pipeline_stats {
 	atomic64_t failed_objects;
 	atomic64_t cancelled_objects;
 	atomic64_t seq_records;
+	atomic_t last_response_status;
+	atomic_t last_response_body_len;
+	atomic_t last_transport_flags;
 };
 
 struct kfastblock_volume_health {
@@ -262,5 +265,10 @@ void kfastblock_volume_account_pipeline_cancel(
 	struct kfastblock_volume *vol,
 	unsigned int nr_objects);
 void kfastblock_volume_account_pipeline_seq(struct kfastblock_volume *vol);
+void kfastblock_volume_account_pipeline_response(
+	struct kfastblock_volume *vol,
+	s32 response_status,
+	u32 response_body_len,
+	u32 transport_flags);
 
 #endif

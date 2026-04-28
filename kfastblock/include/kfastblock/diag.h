@@ -119,6 +119,9 @@ struct kfastblock_diag_pipeline_snapshot {
 	u64 failed_objects;
 	u64 cancelled_objects;
 	u64 seq_records;
+	s32 last_response_status;
+	u32 last_response_body_len;
+	u32 last_transport_flags;
 };
 
 struct kfastblock_diag_selfcheck_snapshot {

@@ -292,6 +292,12 @@ static void kfastblock_diag_collect_pipeline(
 		atomic64_read(&vol->pipeline_stats.cancelled_objects);
 	snapshot->pipeline.seq_records =
 		atomic64_read(&vol->pipeline_stats.seq_records);
+	snapshot->pipeline.last_response_status =
+		atomic_read(&vol->pipeline_stats.last_response_status);
+	snapshot->pipeline.last_response_body_len =
+		(u32)atomic_read(&vol->pipeline_stats.last_response_body_len);
+	snapshot->pipeline.last_transport_flags =
+		(u32)atomic_read(&vol->pipeline_stats.last_transport_flags);
 }
 
 static void kfastblock_diag_collect_selfcheck(
@@ -951,6 +957,12 @@ int kfastblock_diag_dump_seq(struct seq_file *m,
 		   snapshot->pipeline.cancelled_objects);
 	seq_printf(m, "pipeline.seq_records=%llu\n",
 		   snapshot->pipeline.seq_records);
+	seq_printf(m, "pipeline.last_response_status=%d\n",
+		   snapshot->pipeline.last_response_status);
+	seq_printf(m, "pipeline.last_response_body_len=%u\n",
+		   snapshot->pipeline.last_response_body_len);
+	seq_printf(m, "pipeline.last_transport_flags=0x%x\n",
+		   snapshot->pipeline.last_transport_flags);
 
 	seq_printf(m, "osd_conn.total_slots=%u\n", snapshot->osd_conn.total_slots);
 	seq_printf(m, "osd_conn.empty_slots=%u\n", snapshot->osd_conn.empty_slots);
