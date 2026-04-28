@@ -824,6 +824,22 @@ static int kfastblock_diag_dump_snapshot_prefixed(
 		   snapshot->volume.event_count);
 	seq_printf(m, "%spipeline.request_prepares=%llu\n", prefix,
 		   snapshot->pipeline.request_prepares);
+	seq_printf(m, "%spipeline.capacity=%u\n", prefix,
+		   snapshot->pipeline.capacity);
+	seq_printf(m, "%spipeline.inflight=%u\n", prefix,
+		   snapshot->pipeline.inflight);
+	seq_printf(m, "%spipeline.peak_inflight=%u\n", prefix,
+		   snapshot->pipeline.peak_inflight);
+	seq_printf(m, "%spipeline.free_entries=%u\n", prefix,
+		   snapshot->pipeline.free_entries);
+	seq_printf(m, "%spipeline.oldest_inflight_seq=%llu\n", prefix,
+		   snapshot->pipeline.oldest_inflight_seq);
+	seq_printf(m, "%spipeline.newest_inflight_seq=%llu\n", prefix,
+		   snapshot->pipeline.newest_inflight_seq);
+	seq_printf(m, "%spipeline.oldest_queued_jiffies=%lu\n", prefix,
+		   snapshot->pipeline.oldest_queued_jiffies);
+	seq_printf(m, "%spipeline.newest_queued_jiffies=%lu\n", prefix,
+		   snapshot->pipeline.newest_queued_jiffies);
 	seq_printf(m, "%spipeline.request_cleanups=%llu\n", prefix,
 		   snapshot->pipeline.request_cleanups);
 	seq_printf(m, "%spipeline.dispatch_batches=%llu\n", prefix,
@@ -1007,6 +1023,14 @@ int kfastblock_diag_dump_seq(struct seq_file *m,
 		   snapshot->pipeline.peak_inflight);
 	seq_printf(m, "pipeline.free_entries=%u\n",
 		   snapshot->pipeline.free_entries);
+	seq_printf(m, "pipeline.oldest_inflight_seq=%llu\n",
+		   snapshot->pipeline.oldest_inflight_seq);
+	seq_printf(m, "pipeline.newest_inflight_seq=%llu\n",
+		   snapshot->pipeline.newest_inflight_seq);
+	seq_printf(m, "pipeline.oldest_queued_jiffies=%lu\n",
+		   snapshot->pipeline.oldest_queued_jiffies);
+	seq_printf(m, "pipeline.newest_queued_jiffies=%lu\n",
+		   snapshot->pipeline.newest_queued_jiffies);
 	seq_printf(m, "pipeline.request_cleanups=%llu\n",
 		   snapshot->pipeline.request_cleanups);
 	seq_printf(m, "pipeline.dispatch_batches=%llu\n",
