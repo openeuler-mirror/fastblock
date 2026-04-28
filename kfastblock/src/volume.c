@@ -561,6 +561,30 @@ u32 kfastblock_volume_pipeline_utilization_pct(
 		     (snapshot.inflight * 100) / snapshot.capacity);
 }
 
+u64 kfastblock_volume_pipeline_oldest_inflight_seq(
+	struct kfastblock_volume *vol)
+{
+	struct kfastblock_pipeline_snapshot snapshot = {};
+
+	if (!vol)
+		return 0;
+
+	kfastblock_volume_get_pipeline_snapshot(vol, &snapshot);
+	return snapshot.oldest_inflight_seq;
+}
+
+u64 kfastblock_volume_pipeline_newest_inflight_seq(
+	struct kfastblock_volume *vol)
+{
+	struct kfastblock_pipeline_snapshot snapshot = {};
+
+	if (!vol)
+		return 0;
+
+	kfastblock_volume_get_pipeline_snapshot(vol, &snapshot);
+	return snapshot.newest_inflight_seq;
+}
+
 void kfastblock_volume_update_pipeline_snapshot(
 	struct kfastblock_volume *vol,
 	const struct kfastblock_pipeline_state *state)
