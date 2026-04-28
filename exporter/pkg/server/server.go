@@ -81,21 +81,24 @@ func (s *Server) handleExports(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleExportAction(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/v1/exports/")
-	parts := strings.Split(path, "/")
-	if len(parts) == 1 && r.Method == http.MethodDelete {
-		if parts[0] == "" {
+	exportID, action, ok := parseExportRoute(r.URL.Path)
+	if !ok {
+		writeError(w, http.StatusNotFound, "route not found")
+		return
+	}
+	if action == "" && r.Method == http.MethodDelete {
+		if exportID == "" {
 			writeError(w, http.StatusBadRequest, "export id is required")
 			return
 		}
-		if err := s.manager.DeleteExport(r.Context(), parts[0]); err != nil {
+		if err := s.manager.DeleteExport(r.Context(), exportID); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if len(parts) != 2 || r.Method != http.MethodPost {
+	if action == "" || r.Method != http.MethodPost {
 		writeError(w, http.StatusNotFound, "route not found")
 		return
 	}
@@ -109,11 +112,11 @@ func (s *Server) handleExportAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var err error
-	switch parts[1] {
+	switch action {
 	case "allow-host":
-		err = s.manager.AllowHost(r.Context(), parts[0], req.HostNQN)
+		err = s.manager.AllowHost(r.Context(), exportID, req.HostNQN)
 	case "deny-host":
-		err = s.manager.DenyHost(r.Context(), parts[0], req.HostNQN)
+		err = s.manager.DenyHost(r.Context(), exportID, req.HostNQN)
 	default:
 		writeError(w, http.StatusNotFound, "route not found")
 		return
@@ -133,4 +136,17 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func parseExportRoute(path string) (exportID string, action string, ok bool) {
+	trimmed := strings.TrimPrefix(path, "/v1/exports/")
+	parts := strings.Split(trimmed, "/")
+	switch len(parts) {
+	case 1:
+		return parts[0], "", true
+	case 2:
+		return parts[0], parts[1], true
+	default:
+		return "", "", false
+	}
 }
