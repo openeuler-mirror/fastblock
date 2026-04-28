@@ -1978,6 +1978,30 @@ static void kfastblock_transport_cleanup_object_io(
 	kfastblock_transport_release_object_buffer(kf_req, buf);
 }
 
+static int kfastblock_transport_begin_object_attempt(
+	struct kfastblock_volume *vol,
+	struct kfastblock_request *kf_req,
+	struct kfastblock_request_pg_hint *hint,
+	struct kfastblock_leader_info *leader,
+	unsigned int object_index,
+	u8 raw_opcode,
+	int attempt,
+	struct kfastblock_cached_socket **cached,
+	struct socket **sock,
+	struct kfastblock_transport_exchange_ctx *exchange)
+{
+	int ret;
+
+	ret = kfastblock_transport_pick_object_leader(kf_req, hint, leader,
+						      attempt);
+	if (ret)
+		return ret;
+
+	return kfastblock_transport_prepare_object_exchange(
+		vol, kf_req, object_index, leader, raw_opcode, cached, sock,
+		exchange);
+}
+
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
@@ -2016,14 +2040,9 @@ static int kfastblock_transport_submit_object_io(
 		goto out;
 
 	for (attempt = 0; attempt < 2; ++attempt) {
-		ret = kfastblock_transport_pick_object_leader(kf_req, hint, &leader,
-							      attempt);
-		if (ret)
-			goto out;
-
-		ret = kfastblock_transport_prepare_object_exchange(
-			vol, kf_req, object_index, &leader, raw_opcode, &cached,
-			&sock, &exchange);
+		ret = kfastblock_transport_begin_object_attempt(
+			vol, kf_req, hint, &leader, object_index, raw_opcode,
+			attempt, &cached, &sock, &exchange);
 		if (ret) {
 			actions = kfastblock_recovery_classify_object_failure(ret);
 			kfastblock_transport_finalize_object_socket(
