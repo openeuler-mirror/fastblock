@@ -139,3 +139,23 @@ func TestControllerGRPCRequestValidation(t *testing.T) {
 		t.Fatal("expected controller unpublish validation error")
 	}
 }
+
+func TestValidateVolumeCapabilitiesRejectsUnsupportedMode(t *testing.T) {
+	service := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, &stubMonitorClient{}, &stubExporterClient{})
+	grpcService := NewGRPCService(service)
+
+	resp, err := grpcService.ValidateVolumeCapabilities(context.Background(), &csi.ValidateVolumeCapabilitiesRequest{
+		VolumeCapabilities: []*csi.VolumeCapability{
+			{
+				AccessType: &csi.VolumeCapability_Mount{Mount: &csi.VolumeCapability_MountVolume{}},
+				AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("validate volume capabilities failed: %v", err)
+	}
+	if resp.GetConfirmed() != nil {
+		t.Fatalf("expected unsupported capability to be unconfirmed")
+	}
+}
