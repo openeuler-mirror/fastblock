@@ -7,6 +7,7 @@
 #include <linux/list.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
+#include <linux/net.h>
 #include <linux/slab.h>
 #include <linux/sysfs.h>
 
@@ -275,6 +276,8 @@ static const struct blk_mq_ops kfastblock_mq_ops = {
 
 static void kfastblock_volume_free(struct kfastblock_volume *vol)
 {
+	int i;
+
 	if (!vol)
 		return;
 
@@ -296,6 +299,12 @@ static void kfastblock_volume_free(struct kfastblock_volume *vol)
 	if (vol->dev_id >= 0)
 		ida_free(&g_kfastblock_dev_ida, vol->dev_id);
 
+	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i) {
+		if (!vol->socket_cache[i].sock)
+			continue;
+		sock_release(vol->socket_cache[i].sock);
+		vol->socket_cache[i].sock = NULL;
+	}
 	kfastblock_meta_cleanup_view(&vol->view);
 	kfree(vol);
 	module_put(THIS_MODULE);

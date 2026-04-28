@@ -5,10 +5,20 @@
 #include <linux/device.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
+#include <linux/socket.h>
 #include <linux/types.h>
 
 #include "kfastblock/control.h"
 #include "kfastblock/meta.h"
+
+#define KFASTBLOCK_MAX_SOCKET_CACHE 16
+
+struct kfastblock_cached_socket {
+	u32 osd_id;
+	u16 port;
+	char address[KFASTBLOCK_MAX_ADDR_LEN];
+	struct socket *sock;
+};
 
 struct kfastblock_volume {
 	int dev_id;
@@ -26,6 +36,7 @@ struct kfastblock_volume {
 	struct list_head node;
 	struct device dev;
 	struct mutex inflight_lock;
+	struct kfastblock_cached_socket socket_cache[KFASTBLOCK_MAX_SOCKET_CACHE];
 };
 
 int kfastblock_volume_init(void);

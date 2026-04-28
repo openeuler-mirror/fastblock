@@ -20,6 +20,59 @@ static int kfastblock_transport_try_connect_host(const char *host,
 						 u16 port,
 						 struct socket **sock);
 
+static void kfastblock_transport_close_cached_socket(
+	struct kfastblock_cached_socket *cached)
+{
+	if (!cached)
+		return;
+
+	if (cached->sock) {
+		sock_release(cached->sock);
+		cached->sock = NULL;
+	}
+	memset(cached, 0, sizeof(*cached));
+}
+
+static struct kfastblock_cached_socket *
+kfastblock_transport_find_cached_socket(struct kfastblock_volume *vol,
+					const struct kfastblock_leader_info *leader)
+{
+	int i;
+
+	if (!vol || !leader)
+		return NULL;
+
+	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i) {
+		struct kfastblock_cached_socket *cached = &vol->socket_cache[i];
+
+		if (!cached->sock)
+			continue;
+		if (cached->osd_id != leader->osd_id || cached->port != leader->port)
+			continue;
+		if (strcmp(cached->address, leader->address))
+			continue;
+		return cached;
+	}
+
+	return NULL;
+}
+
+static struct kfastblock_cached_socket *
+kfastblock_transport_get_socket_slot(struct kfastblock_volume *vol)
+{
+	int i;
+
+	if (!vol)
+		return NULL;
+
+	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i) {
+		if (!vol->socket_cache[i].sock)
+			return &vol->socket_cache[i];
+	}
+
+	return &vol->socket_cache[0];
+}
+
 static int kfastblock_transport_status_to_errno(const u32 status)
 {
 	switch (status) {
@@ -754,19 +807,22 @@ static int kfastblock_transport_copy_request_data(struct request *rq,
 }
 
 static int kfastblock_transport_submit_object_io(
-	struct kfastblock_cluster_view *view,
+	struct kfastblock_volume *vol,
 	struct request *rq,
 	const struct kfastblock_object_extent *extent,
 	bool is_write)
 {
+	struct kfastblock_cluster_view *view;
 	struct kfastblock_leader_info leader;
+	struct kfastblock_cached_socket *cached = NULL;
 	struct socket *sock = NULL;
 	void *buf;
 	int ret;
 	int attempt;
 
-	if (!view || !rq || !extent)
+	if (!vol || !rq || !extent)
 		return -EINVAL;
+	view = &vol->view;
 
 	buf = kmalloc(extent->length, GFP_KERNEL);
 	if (!buf)
@@ -785,10 +841,26 @@ static int kfastblock_transport_submit_object_io(
 		if (ret)
 			goto out;
 
-		ret = kfastblock_transport_try_connect_host(leader.address,
-						     leader.port, &sock);
-		if (ret)
-			goto invalidate;
+		cached = kfastblock_transport_find_cached_socket(vol, &leader);
+		if (cached) {
+			sock = cached->sock;
+		} else {
+			cached = kfastblock_transport_get_socket_slot(vol);
+			if (!cached) {
+				ret = -ENOMEM;
+				goto out;
+			}
+			kfastblock_transport_close_cached_socket(cached);
+			ret = kfastblock_transport_try_connect_host(leader.address,
+							     leader.port, &sock);
+			if (ret)
+				goto invalidate;
+			cached->sock = sock;
+			cached->osd_id = leader.osd_id;
+			cached->port = leader.port;
+			strscpy(cached->address, leader.address,
+				sizeof(cached->address));
+		}
 
 		if (is_write)
 			ret = kfastblock_transport_write_object(sock, view->image.pool_id,
@@ -796,13 +868,17 @@ static int kfastblock_transport_submit_object_io(
 		else
 			ret = kfastblock_transport_read_object(sock, view->image.pool_id,
 						extent, buf, 1);
-		sock_release(sock);
-		sock = NULL;
 		if (ret == -ENOLINK) {
 invalidate:
+			kfastblock_transport_close_cached_socket(cached);
+			sock = NULL;
 			kfastblock_meta_invalidate_pg_leader(view, view->image.pool_id,
 						      extent->pg_id);
 			continue;
+		}
+		if (ret && cached) {
+			kfastblock_transport_close_cached_socket(cached);
+			sock = NULL;
 		}
 		if (!ret && !is_write)
 			ret = kfastblock_transport_copy_request_data(
@@ -811,8 +887,6 @@ invalidate:
 	}
 
 out:
-	if (sock)
-		sock_release(sock);
 	kfree(buf);
 	return ret;
 }
@@ -1024,15 +1098,19 @@ int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 		return -EOPNOTSUPP;
 	}
 
+	mutex_lock(&kf_req->vol->inflight_lock);
 	for (i = 0; i < kf_req->nr_objects; ++i) {
 		ret = kfastblock_transport_submit_object_io(
-			&kf_req->vol->view,
+			kf_req->vol,
 			rq,
 			&kf_req->objects[i],
 			is_write);
-		if (ret)
+		if (ret) {
+			mutex_unlock(&kf_req->vol->inflight_lock);
 			return ret;
+		}
 	}
+	mutex_unlock(&kf_req->vol->inflight_lock);
 
 	blk_mq_end_request(rq, BLK_STS_OK);
 	return 0;
