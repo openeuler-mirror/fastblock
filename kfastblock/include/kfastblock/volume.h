@@ -115,6 +115,17 @@ struct kfastblock_volume_stats {
 	atomic64_t manual_queue_resumes;
 };
 
+struct kfastblock_volume_pipeline_stats {
+	atomic64_t request_prepares;
+	atomic64_t request_cleanups;
+	atomic64_t dispatch_batches;
+	atomic64_t queued_objects;
+	atomic64_t completed_objects;
+	atomic64_t failed_objects;
+	atomic64_t cancelled_objects;
+	atomic64_t seq_records;
+};
+
 struct kfastblock_volume_health {
 	u32 state;
 	u32 last_failure_source;
@@ -159,6 +170,7 @@ struct kfastblock_volume {
 	struct kfastblock_attach_spec spec;
 	struct kfastblock_cluster_view view;
 	struct kfastblock_volume_stats stats;
+	struct kfastblock_volume_pipeline_stats pipeline_stats;
 	struct kfastblock_volume_health health;
 	struct kfastblock_volume_event_log event_log;
 	struct kfastblock_selfcheck_state selfcheck;
@@ -236,5 +248,17 @@ void kfastblock_volume_account_fault_injection(struct kfastblock_volume *vol,
 void kfastblock_volume_update_health(struct kfastblock_volume *vol,
 				     u32 new_state, u32 source, int ret);
 void kfastblock_volume_mark_success(struct kfastblock_volume *vol, u32 source);
+void kfastblock_volume_account_pipeline_prepare(struct kfastblock_volume *vol);
+void kfastblock_volume_account_pipeline_cleanup(struct kfastblock_volume *vol);
+void kfastblock_volume_account_pipeline_dispatch_batch(
+	struct kfastblock_volume *vol,
+	unsigned int nr_objects);
+void kfastblock_volume_account_pipeline_complete(
+	struct kfastblock_volume *vol,
+	bool failed);
+void kfastblock_volume_account_pipeline_cancel(
+	struct kfastblock_volume *vol,
+	unsigned int nr_objects);
+void kfastblock_volume_account_pipeline_seq(struct kfastblock_volume *vol);
 
 #endif

@@ -286,6 +286,7 @@ void kfastblock_request_cleanup(struct kfastblock_request *kf_req)
 	if (!kf_req)
 		return;
 
+	kfastblock_volume_account_pipeline_cleanup(kf_req->vol);
 	kvfree(kf_req->unique_pgs);
 	kfastblock_request_free_pg_hint_targets(kf_req);
 	kvfree(kf_req->pg_hints);
@@ -329,6 +330,7 @@ int kfastblock_request_init(struct kfastblock_request *kf_req,
 				       GFP_NOIO);
 	if (ret)
 		goto err_cleanup;
+	kfastblock_volume_account_pipeline_prepare(vol);
 	kf_req->dispatch_window = clamp_t(u32,
 					  kfastblock_scheduler_sample_window(
 						  &vol->scheduler,
@@ -443,6 +445,9 @@ int kfastblock_request_pick_dispatch_batch(
 					  kf_req->nr_objects;
 	batch->nr_indexes = count;
 	spin_unlock_irqrestore(&kf_req->object_state_lock, flags);
+	if (count)
+		kfastblock_volume_account_pipeline_dispatch_batch(kf_req->vol,
+								 count);
 
 	return count;
 }
@@ -516,6 +521,7 @@ void kfastblock_request_mark_object_complete(
 		kf_req->completed_objects++;
 	}
 	spin_unlock_irqrestore(&kf_req->object_state_lock, flags);
+	kfastblock_volume_account_pipeline_complete(kf_req->vol, ret != 0);
 }
 
 void kfastblock_request_record_object_seq(
@@ -531,6 +537,7 @@ void kfastblock_request_record_object_seq(
 	spin_lock_irqsave(&kf_req->object_state_lock, flags);
 	kf_req->object_runtime[object_index].wire_seq = seq;
 	spin_unlock_irqrestore(&kf_req->object_state_lock, flags);
+	kfastblock_volume_account_pipeline_seq(kf_req->vol);
 }
 
 int kfastblock_request_cancel_unqueued(struct kfastblock_request *kf_req)
@@ -560,6 +567,9 @@ int kfastblock_request_cancel_unqueued(struct kfastblock_request *kf_req)
 	}
 	kf_req->cancelled_objects += cancelled;
 	spin_unlock_irqrestore(&kf_req->object_state_lock, flags);
+	if (cancelled)
+		kfastblock_volume_account_pipeline_cancel(kf_req->vol,
+							 cancelled);
 
 	return cancelled;
 }
