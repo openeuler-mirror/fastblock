@@ -1194,6 +1194,18 @@ bool kfastblock_request_all_responses_recorded(
 	       kf_req->nr_objects;
 }
 
+u32 kfastblock_request_terminal_progress_pct(
+	const struct kfastblock_request *kf_req)
+{
+	unsigned int terminal;
+
+	if (!kf_req || !kf_req->nr_objects)
+		return 0;
+
+	terminal = kfastblock_request_terminal_objects(kf_req);
+	return min_t(u32, 100, (terminal * 100) / kf_req->nr_objects);
+}
+
 u32 kfastblock_request_response_coverage_pct(
 	const struct kfastblock_request *kf_req)
 {
