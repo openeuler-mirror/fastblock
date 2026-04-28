@@ -759,6 +759,56 @@ static int kfastblock_transport_read_object(struct socket *sock,
 	return 0;
 }
 
+static int kfastblock_transport_delete_object(struct socket *sock,
+					      u32 pool_id,
+					      const struct kfastblock_object_extent *extent,
+					      u64 seq)
+{
+	struct kfastblock_raw_delete_object_req req = {
+		.pool_id = cpu_to_le32(pool_id),
+		.pg_id = cpu_to_le32(extent->pg_id),
+		.object_name_len = cpu_to_le16(strlen(extent->object_name)),
+		.reserved = 0,
+	};
+	struct kfastblock_raw_header rsp_hdr;
+	void *body = NULL;
+	u8 *req_body;
+	u32 object_name_len;
+	u32 body_len;
+	int ret;
+
+	if (!sock || !extent)
+		return -EINVAL;
+
+	object_name_len = strlen(extent->object_name);
+	body_len = sizeof(req) + object_name_len;
+	req_body = kmalloc(body_len, GFP_KERNEL);
+	if (!req_body)
+		return -ENOMEM;
+
+	memcpy(req_body, &req, sizeof(req));
+	memcpy(req_body + sizeof(req), extent->object_name, object_name_len);
+
+	ret = kfastblock_transport_send_request(sock,
+					KFASTBLOCK_RAW_SERVICE_OSD,
+					KFASTBLOCK_RAW_OSD_OP_DELETE_OBJECT,
+					seq,
+					req_body,
+					body_len);
+	kfree(req_body);
+	if (ret)
+		return ret;
+
+	ret = kfastblock_transport_recv_response(sock,
+					 KFASTBLOCK_RAW_SERVICE_OSD,
+					 KFASTBLOCK_RAW_OSD_OP_DELETE_OBJECT,
+					 seq,
+					 &rsp_hdr,
+					 &body);
+	kfree(body);
+	return ret;
+}
+
 static int kfastblock_transport_copy_request_data(struct request *rq,
 						  u32 request_offset,
 						  void *buf,
@@ -810,13 +860,13 @@ static int kfastblock_transport_submit_object_io(
 	struct kfastblock_volume *vol,
 	struct request *rq,
 	const struct kfastblock_object_extent *extent,
-	bool is_write)
+	enum req_op op)
 {
 	struct kfastblock_cluster_view *view;
 	struct kfastblock_leader_info leader;
 	struct kfastblock_cached_socket *cached = NULL;
 	struct socket *sock = NULL;
-	void *buf;
+	void *buf = NULL;
 	int ret;
 	int attempt;
 
@@ -824,15 +874,18 @@ static int kfastblock_transport_submit_object_io(
 		return -EINVAL;
 	view = &vol->view;
 
-	buf = kmalloc(extent->length, GFP_KERNEL);
-	if (!buf)
-		return -ENOMEM;
-
-	if (is_write) {
+	if (op == REQ_OP_WRITE) {
+		buf = kmalloc(extent->length, GFP_KERNEL);
+		if (!buf)
+			return -ENOMEM;
 		ret = kfastblock_transport_copy_request_data(
 			rq, extent->request_offset, buf, extent->length, false);
 		if (ret)
 			goto out;
+	} else if (op == REQ_OP_READ) {
+		buf = kmalloc(extent->length, GFP_KERNEL);
+		if (!buf)
+			return -ENOMEM;
 	}
 
 	for (attempt = 0; attempt < 2; ++attempt) {
@@ -862,12 +915,16 @@ static int kfastblock_transport_submit_object_io(
 				sizeof(cached->address));
 		}
 
-		if (is_write)
+		if (op == REQ_OP_WRITE)
 			ret = kfastblock_transport_write_object(sock, view->image.pool_id,
 						 extent, buf, 1);
-		else
+		else if (op == REQ_OP_READ)
 			ret = kfastblock_transport_read_object(sock, view->image.pool_id,
 						extent, buf, 1);
+		else
+			ret = kfastblock_transport_delete_object(sock,
+							view->image.pool_id,
+							extent, 1);
 		if (ret == -ENOLINK) {
 invalidate:
 			kfastblock_transport_close_cached_socket(cached);
@@ -880,7 +937,7 @@ invalidate:
 			kfastblock_transport_close_cached_socket(cached);
 			sock = NULL;
 		}
-		if (!ret && !is_write)
+		if (!ret && op == REQ_OP_READ)
 			ret = kfastblock_transport_copy_request_data(
 				rq, extent->request_offset, buf, extent->length, true);
 		goto out;
@@ -1079,7 +1136,7 @@ int kfastblock_transport_get_pg_leader(struct kfastblock_cluster_view *view,
 int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 {
 	struct request *rq;
-	bool is_write;
+	enum req_op op;
 	unsigned int i;
 	int ret = 0;
 
@@ -1087,12 +1144,11 @@ int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 		return -EINVAL;
 
 	rq = kf_req->rq;
-	switch (req_op(rq)) {
+	op = req_op(rq);
+	switch (op) {
 	case REQ_OP_READ:
-		is_write = false;
-		break;
 	case REQ_OP_WRITE:
-		is_write = true;
+	case REQ_OP_DISCARD:
 		break;
 	default:
 		return -EOPNOTSUPP;
@@ -1100,11 +1156,17 @@ int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 
 	mutex_lock(&kf_req->vol->inflight_lock);
 	for (i = 0; i < kf_req->nr_objects; ++i) {
+		if (op == REQ_OP_DISCARD &&
+		    (kf_req->objects[i].object_offset != 0 ||
+		     kf_req->objects[i].length != kf_req->vol->view.image.object_size)) {
+			mutex_unlock(&kf_req->vol->inflight_lock);
+			return -EOPNOTSUPP;
+		}
 		ret = kfastblock_transport_submit_object_io(
 			kf_req->vol,
 			rq,
 			&kf_req->objects[i],
-			is_write);
+			op);
 		if (ret) {
 			mutex_unlock(&kf_req->vol->inflight_lock);
 			return ret;
