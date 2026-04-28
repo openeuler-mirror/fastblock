@@ -4,6 +4,7 @@
 add_executable(fastblock-osd
   osd.cc
   osd_service.cc
+  raw_tcp_server.cc
   partition_manager.cc
   osd_stm.cc
   data_statistics.cc

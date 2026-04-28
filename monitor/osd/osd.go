@@ -45,6 +45,7 @@ func isValidPort(port uint32) bool {
 type ShardPort struct {
 	Coreid uint32 `json:"shardid"`
 	Port   uint32 `json:"port"`
+	RawPort uint32 `json:"raw_port,omitempty"`
 }
 
 // when osd restarts, following information is changed(host may not)
@@ -369,6 +370,10 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 			log.Warn(ctx, "invalide port: ", port)
 			return OSD_ERR_ADDRESS_INVALID
 		}
+		if shard_port.RawPort != 0 && !isValidPort(shard_port.RawPort) {
+			log.Warn(ctx, "invalide raw port: ", shard_port.RawPort)
+			return OSD_ERR_ADDRESS_INVALID
+		}
 	}
 
 	if OSDCoreNum == 0 {
@@ -383,6 +388,7 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 		shardPort := ShardPort{
 			Coreid: shard_port.Coreid,
 			Port:   shard_port.Port,
+			RawPort: shard_port.RawPort,
 		}
 		shard_port_m[shard_id] = shardPort
 	}
@@ -514,6 +520,7 @@ func ProcessGetOsdMapMessage(ctx context.Context, cv int64, oid int32) ([]*msg.O
 			var shard_core msg.ShardCore
 			shard_core.Coreid = shard_port.Coreid
 			shard_core.Port = shard_port.Port
+			shard_core.RawPort = shard_port.RawPort
 			info.ShardedPorts[shard_id] = &shard_core
 		}
 		// info.ShardedPorts = osdState.ShardedPorts

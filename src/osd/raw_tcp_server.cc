@@ -1,0 +1,476 @@
+/* Copyright (c) 2023-2024 ChinaUnicom
+ * fastblock is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *          http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+#include "raw_tcp_server.h"
+
+#include "osd_service.h"
+#include "fastblock/utils/err_num.h"
+
+#include <spdk/log.h>
+
+#include <arpa/inet.h>
+#include <endian.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <cerrno>
+#include <cstdint>
+#include <cstring>
+#include <exception>
+#include <limits>
+#include <random>
+#include <string>
+#include <vector>
+
+namespace {
+
+constexpr uint32_t raw_magic = 0x46425257U;
+constexpr uint8_t raw_version_major = 1U;
+constexpr uint8_t raw_version_minor = 0U;
+constexpr uint8_t raw_service_osd = 2U;
+
+constexpr uint8_t raw_op_get_leader = 1U;
+
+constexpr uint32_t raw_flag_response = 1U << 0;
+
+constexpr uint32_t raw_status_ok = 0U;
+constexpr uint32_t raw_status_invalid_request = 1U;
+constexpr uint32_t raw_status_not_found = 2U;
+constexpr uint32_t raw_status_stale_epoch = 3U;
+constexpr uint32_t raw_status_retry_later = 4U;
+constexpr uint32_t raw_status_not_leader = 5U;
+constexpr uint32_t raw_status_pg_initializing = 6U;
+constexpr uint32_t raw_status_osd_down = 7U;
+constexpr uint32_t raw_status_internal_error = 8U;
+
+constexpr int raw_backlog = 128;
+constexpr int raw_poll_timeout_ms = 1000;
+constexpr uint16_t min_raw_port = 10001U;
+constexpr uint16_t max_raw_port = 19999U;
+constexpr size_t max_raw_body_len = 4096;
+
+struct raw_header {
+    uint32_t magic;
+    uint8_t version_major;
+    uint8_t version_minor;
+    uint8_t service;
+    uint8_t opcode;
+    uint32_t flags;
+    uint64_t seq;
+    uint32_t status;
+    uint32_t body_len;
+} __attribute__((packed));
+
+struct raw_get_leader_req {
+    uint32_t pool_id;
+    uint32_t pg_id;
+} __attribute__((packed));
+
+struct raw_get_leader_rsp {
+    uint32_t leader_id;
+    uint16_t leader_port;
+    uint16_t address_len;
+} __attribute__((packed));
+
+uint16_t random_raw_port() {
+    thread_local std::mt19937 gen{std::random_device{}()};
+    std::uniform_int_distribution<uint32_t> dist(min_raw_port, max_raw_port);
+    return static_cast<uint16_t>(dist(gen));
+}
+
+int raw_status_from_errno(const int state) noexcept {
+    switch (state) {
+    case err::E_SUCCESS:
+        return raw_status_ok;
+    case err::E_INVAL:
+        return raw_status_invalid_request;
+    case err::RAFT_ERR_NOT_FOUND_PG:
+    case err::ERR_NOT_FOUND_POOL:
+        return raw_status_not_found;
+    case err::RAFT_ERR_NOT_FOUND_LEADER:
+    case err::RAFT_ERR_NO_CONNECTED:
+    case err::RAFT_ERR_MEMBERSHIP_CHANGING:
+    case err::RAFT_ERR_SNAPSHOT_WAIT_APPLY:
+        return raw_status_retry_later;
+    case err::RAFT_ERR_NOT_LEADER:
+        return raw_status_not_leader;
+    case err::RAFT_ERR_PG_INITIALIZING:
+    case err::OSD_STARTING:
+        return raw_status_pg_initializing;
+    case err::OSD_DOWN:
+        return raw_status_osd_down;
+    default:
+        return raw_status_internal_error;
+    }
+}
+
+bool validate_request_header(const raw_header& hdr) noexcept {
+    return le32toh(hdr.magic) == raw_magic
+      && hdr.version_major == raw_version_major
+      && hdr.version_minor == raw_version_minor
+      && hdr.service == raw_service_osd
+      && (le32toh(hdr.flags) & raw_flag_response) == 0
+      && le32toh(hdr.status) == 0
+      && le32toh(hdr.body_len) <= max_raw_body_len;
+}
+
+bool wait_for_fd(const int fd, const short events, const std::atomic<bool>& running) noexcept {
+    while (running.load(std::memory_order_acquire)) {
+        ::pollfd pfd{};
+        pfd.fd = fd;
+        pfd.events = events;
+        auto rc = ::poll(&pfd, 1, raw_poll_timeout_ms);
+        if (rc > 0) {
+            if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+                return false;
+            }
+            return (pfd.revents & events) != 0;
+        }
+        if (rc == 0) {
+            continue;
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        return false;
+    }
+
+    return false;
+}
+
+bool recv_all(int fd, void* buf, size_t len, const std::atomic<bool>& running) noexcept {
+    auto* cursor = reinterpret_cast<uint8_t*>(buf);
+    size_t received = 0;
+
+    while (received < len) {
+        if (!wait_for_fd(fd, POLLIN, running)) {
+            return false;
+        }
+        auto rc = ::recv(fd, cursor + received, len - received, 0);
+        if (rc > 0) {
+            received += static_cast<size_t>(rc);
+            continue;
+        }
+        if (rc == 0) {
+            return false;
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        return false;
+    }
+
+    return true;
+}
+
+bool send_all(int fd, const void* buf, size_t len, const std::atomic<bool>& running) noexcept {
+    auto* cursor = reinterpret_cast<const uint8_t*>(buf);
+    size_t sent = 0;
+
+    while (sent < len) {
+        if (!wait_for_fd(fd, POLLOUT, running)) {
+            return false;
+        }
+        auto rc = ::send(fd, cursor + sent, len - sent, MSG_NOSIGNAL);
+        if (rc > 0) {
+            sent += static_cast<size_t>(rc);
+            continue;
+        }
+        if (rc == 0) {
+            return false;
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        return false;
+    }
+
+    return true;
+}
+
+bool write_message(int fd,
+                   const raw_header& hdr,
+                   const void* body,
+                   size_t body_len,
+                   const std::atomic<bool>& running) noexcept {
+    raw_header rsp = hdr;
+    rsp.magic = htole32(raw_magic);
+    rsp.version_major = raw_version_major;
+    rsp.version_minor = raw_version_minor;
+    rsp.service = raw_service_osd;
+    rsp.flags = htole32(le32toh(hdr.flags) | raw_flag_response);
+    rsp.body_len = htole32(static_cast<uint32_t>(body_len));
+
+    if (!send_all(fd, &rsp, sizeof(rsp), running)) {
+        return false;
+    }
+    if (body_len == 0) {
+        return true;
+    }
+
+    return send_all(fd, body, body_len, running);
+}
+
+bool write_error_response(int fd,
+                          const raw_header& req_hdr,
+                          const uint32_t status,
+                          const std::atomic<bool>& running) noexcept {
+    raw_header rsp = req_hdr;
+    rsp.status = htole32(status);
+    return write_message(fd, rsp, nullptr, 0, running);
+}
+
+int create_listener(const std::string& bind_address, uint16_t* port) noexcept {
+    if (!port) {
+        return -EINVAL;
+    }
+
+    ::sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (!bind_address.empty()) {
+        if (::inet_pton(AF_INET, bind_address.c_str(), &addr.sin_addr) != 1) {
+            return -EINVAL;
+        }
+    }
+
+    for (int attempt = 0; attempt < 256; ++attempt) {
+        auto candidate = random_raw_port();
+        auto fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (fd < 0) {
+            return -errno;
+        }
+
+        int reuse = 1;
+        if (::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) != 0) {
+            auto saved_errno = errno;
+            ::close(fd);
+            return -saved_errno;
+        }
+
+        addr.sin_port = htons(candidate);
+        if (::bind(fd, reinterpret_cast<::sockaddr*>(&addr), sizeof(addr)) == 0) {
+            if (::listen(fd, raw_backlog) == 0) {
+                *port = candidate;
+                return fd;
+            }
+        }
+
+        ::close(fd);
+    }
+
+    return -EADDRINUSE;
+}
+
+} // namespace
+
+osd_raw_tcp_server::osd_raw_tcp_server(osd_service* service)
+  : _service(service) {}
+
+osd_raw_tcp_server::~osd_raw_tcp_server() noexcept {
+    stop();
+}
+
+bool osd_raw_tcp_server::start(const std::string& bind_address, const uint32_t shard_count) {
+    if (!_service) {
+        return false;
+    }
+    if (_running.exchange(true, std::memory_order_acq_rel)) {
+        return true;
+    }
+
+    _bind_address = bind_address;
+    _listeners.clear();
+    _listeners.resize(shard_count);
+    for (uint32_t shard_id = 0; shard_id < shard_count; ++shard_id) {
+        if (start_listener(shard_id)) {
+            continue;
+        }
+
+        stop();
+        return false;
+    }
+
+    return true;
+}
+
+void osd_raw_tcp_server::stop() noexcept {
+    const auto was_running = _running.exchange(false, std::memory_order_acq_rel);
+    for (auto& listener : _listeners) {
+        if (listener.fd >= 0) {
+            ::shutdown(listener.fd, SHUT_RDWR);
+            ::close(listener.fd);
+        }
+    }
+    if (!was_running) {
+        return;
+    }
+
+    for (auto& listener : _listeners) {
+        if (listener.worker.joinable()) {
+            listener.worker.join();
+        }
+        listener.fd = -1;
+        listener.port = 0;
+    }
+}
+
+uint16_t osd_raw_tcp_server::listen_port(const uint32_t shard_id) const noexcept {
+    if (shard_id >= _listeners.size()) {
+        return 0;
+    }
+
+    return _listeners[shard_id].port;
+}
+
+bool osd_raw_tcp_server::start_listener(const uint32_t shard_id) {
+    auto& listener = _listeners.at(shard_id);
+    auto fd = create_listener(_bind_address, &listener.port);
+    if (fd < 0) {
+        SPDK_ERRLOG(
+          "ERROR: create raw TCP listener on shard %u failed: %s\n",
+          shard_id,
+          std::strerror(-fd));
+        return false;
+    }
+
+    listener.fd = fd;
+    try {
+        listener.worker = std::thread([this, shard_id]() {
+            run_listener(shard_id);
+        });
+    } catch (const std::exception& e) {
+        SPDK_ERRLOG(
+          "ERROR: create raw TCP worker on shard %u failed: %s\n",
+          shard_id,
+          e.what());
+        ::close(listener.fd);
+        listener.fd = -1;
+        listener.port = 0;
+        return false;
+    }
+    SPDK_NOTICELOG(
+      "Started raw TCP server on shard %u, listen %s:%u\n",
+      shard_id,
+      _bind_address.c_str(),
+      listener.port);
+    return true;
+}
+
+void osd_raw_tcp_server::run_listener(const uint32_t shard_id) noexcept {
+    auto& listener = _listeners.at(shard_id);
+    while (_running.load(std::memory_order_acquire)) {
+        if (!wait_for_fd(listener.fd, POLLIN, _running)) {
+            continue;
+        }
+
+        ::sockaddr_in peer_addr{};
+        ::socklen_t peer_len = sizeof(peer_addr);
+        auto client_fd = ::accept(listener.fd,
+                                  reinterpret_cast<::sockaddr*>(&peer_addr),
+                                  &peer_len);
+        if (client_fd < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            if (_running.load(std::memory_order_acquire)) {
+                SPDK_ERRLOG(
+                  "ERROR: accept raw TCP connection on shard %u failed: %s\n",
+                  shard_id,
+                  std::strerror(errno));
+            }
+            continue;
+        }
+
+        handle_connection(client_fd, shard_id);
+    }
+}
+
+void osd_raw_tcp_server::handle_connection(const int client_fd, const uint32_t shard_id) noexcept {
+    while (_running.load(std::memory_order_acquire)) {
+        raw_header req_hdr{};
+        if (!recv_all(client_fd, &req_hdr, sizeof(req_hdr), _running)) {
+            break;
+        }
+
+        if (!validate_request_header(req_hdr)) {
+            if (!write_error_response(client_fd, req_hdr, raw_status_invalid_request, _running)) {
+                break;
+            }
+            continue;
+        }
+
+        const auto body_len = le32toh(req_hdr.body_len);
+        std::vector<uint8_t> body(body_len);
+        if (body_len != 0 && !recv_all(client_fd, body.data(), body.size(), _running)) {
+            break;
+        }
+
+        if (req_hdr.opcode != raw_op_get_leader) {
+            if (!write_error_response(client_fd, req_hdr, raw_status_invalid_request, _running)) {
+                break;
+            }
+            continue;
+        }
+
+        if (body.size() != sizeof(raw_get_leader_req)) {
+            if (!write_error_response(client_fd, req_hdr, raw_status_invalid_request, _running)) {
+                break;
+            }
+            continue;
+        }
+
+        raw_get_leader_req req{};
+        std::memcpy(&req, body.data(), sizeof(req));
+        auto leader = _service->resolve_pg_leader(le32toh(req.pool_id), le32toh(req.pg_id), true);
+        if (leader.state != err::E_SUCCESS) {
+            if (!write_error_response(
+                  client_fd,
+                  req_hdr,
+                  static_cast<uint32_t>(raw_status_from_errno(leader.state)),
+                  _running)) {
+                break;
+            }
+            continue;
+        }
+
+        if (leader.leader_port <= 0 ||
+            leader.leader_port > std::numeric_limits<uint16_t>::max() ||
+            leader.leader_id < 0 ||
+            leader.leader_id > static_cast<int32_t>(std::numeric_limits<uint32_t>::max()) ||
+            leader.leader_addr.size() > std::numeric_limits<uint16_t>::max()) {
+            if (!write_error_response(client_fd, req_hdr, raw_status_internal_error, _running)) {
+                break;
+            }
+            continue;
+        }
+
+        std::vector<uint8_t> rsp_body(sizeof(raw_get_leader_rsp) + leader.leader_addr.size());
+        raw_get_leader_rsp rsp{};
+        rsp.leader_id = htole32(static_cast<uint32_t>(leader.leader_id));
+        rsp.leader_port = htole16(static_cast<uint16_t>(leader.leader_port));
+        rsp.address_len = htole16(static_cast<uint16_t>(leader.leader_addr.size()));
+        std::memcpy(rsp_body.data(), &rsp, sizeof(rsp));
+        std::memcpy(
+          rsp_body.data() + sizeof(rsp),
+          leader.leader_addr.data(),
+          leader.leader_addr.size());
+
+        req_hdr.status = htole32(raw_status_ok);
+        if (!write_message(client_fd, req_hdr, rsp_body.data(), rsp_body.size(), _running)) {
+            break;
+        }
+    }
+
+    ::shutdown(client_fd, SHUT_RDWR);
+    ::close(client_fd);
+    SPDK_NOTICELOG("Closed raw TCP connection on shard %u\n", shard_id);
+}

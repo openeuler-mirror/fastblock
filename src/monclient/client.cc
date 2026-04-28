@@ -19,7 +19,12 @@ static void make_sharded_ports(
     std::map<uint32_t, utils::core_shard_map>& osd_sharded_ports) {
     for (auto it = proto_shard_ports.begin(); it != proto_shard_ports.end(); ++it) {
         osd_sharded_ports.emplace(
-          it->first, utils::core_shard_map{it->second.port(), it->second.coreid(), it->first});
+          it->first,
+          utils::core_shard_map{
+            it->second.port(),
+            it->second.raw_port(),
+            it->second.coreid(),
+            it->first});
     }
 }
 }

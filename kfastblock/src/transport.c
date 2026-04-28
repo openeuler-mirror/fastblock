@@ -86,6 +86,7 @@ static int kfastblock_transport_recv_all(struct socket *sock,
 }
 
 static int kfastblock_transport_send_request(struct socket *sock,
+					     u8 service,
 					     u8 opcode,
 					     u64 seq,
 					     const void *body,
@@ -95,7 +96,7 @@ static int kfastblock_transport_send_request(struct socket *sock,
 		.magic = cpu_to_le32(KFASTBLOCK_RAW_MAGIC),
 		.version_major = KFASTBLOCK_RAW_VERSION_MAJOR,
 		.version_minor = KFASTBLOCK_RAW_VERSION_MINOR,
-		.service = KFASTBLOCK_RAW_SERVICE_MONITOR,
+		.service = service,
 		.opcode = opcode,
 		.flags = cpu_to_le32(0),
 		.seq = cpu_to_le64(seq),
@@ -113,6 +114,7 @@ static int kfastblock_transport_send_request(struct socket *sock,
 }
 
 static int kfastblock_transport_recv_response(struct socket *sock,
+					      u8 expected_service,
 					      u8 expected_opcode,
 					      u64 expected_seq,
 					      struct kfastblock_raw_header *hdr,
@@ -132,7 +134,7 @@ static int kfastblock_transport_recv_response(struct socket *sock,
 		return -EPROTO;
 	if (hdr->version_major != KFASTBLOCK_RAW_VERSION_MAJOR)
 		return -EPROTO;
-	if (hdr->service != KFASTBLOCK_RAW_SERVICE_MONITOR)
+	if (hdr->service != expected_service)
 		return -EPROTO;
 	if (hdr->opcode != expected_opcode)
 		return -EPROTO;
@@ -183,6 +185,7 @@ static int kfastblock_transport_fetch_image_info(struct socket *sock,
 	       view->image.image_name, strlen(view->image.image_name));
 
 	ret = kfastblock_transport_send_request(sock,
+					KFASTBLOCK_RAW_SERVICE_MONITOR,
 					KFASTBLOCK_RAW_OP_GET_IMAGE_INFO,
 					seq,
 					req_body,
@@ -192,12 +195,15 @@ static int kfastblock_transport_fetch_image_info(struct socket *sock,
 		return ret;
 
 	ret = kfastblock_transport_recv_response(sock,
+					 KFASTBLOCK_RAW_SERVICE_MONITOR,
 					 KFASTBLOCK_RAW_OP_GET_IMAGE_INFO,
 					 seq,
 					 &rsp_hdr,
 					 &body);
-	if (ret)
+	if (ret) {
+		kfree(body);
 		return ret;
+	}
 	if (!body || le32_to_cpu(rsp_hdr.body_len) != sizeof(rsp)) {
 		kfree(body);
 		return -EPROTO;
@@ -217,16 +223,165 @@ static int kfastblock_transport_fetch_image_info(struct socket *sock,
 	return 0;
 }
 
-static int kfastblock_transport_skip_bytes(const u8 *body,
-					 size_t body_len,
-					 size_t *offset,
-					 size_t len)
+static int kfastblock_transport_advance_offset(size_t body_len,
+					       size_t *offset,
+					       size_t len)
 {
 	if (!offset)
 		return -EINVAL;
 	if (*offset + len > body_len)
 		return -EPROTO;
 	*offset += len;
+	return 0;
+}
+
+static int kfastblock_transport_copy_from_body(const u8 *body,
+					       size_t body_len,
+					       size_t *offset,
+					       void *dst,
+					       size_t len)
+{
+	int ret;
+
+	if (!body || !dst)
+		return -EINVAL;
+
+	ret = kfastblock_transport_advance_offset(body_len, offset, len);
+	if (ret)
+		return ret;
+
+	memcpy(dst, body + (*offset - len), len);
+	return 0;
+}
+
+static int kfastblock_transport_decode_osd_entries(
+	const u8 *body,
+	size_t body_len,
+	size_t *offset,
+	struct kfastblock_osd_endpoint *osds,
+	u32 osd_count)
+{
+	u32 i;
+
+	for (i = 0; i < osd_count; ++i) {
+		struct kfastblock_raw_osd_entry_hdr osd_hdr;
+		u16 address_len;
+		u16 shard_count;
+		u16 shard_idx;
+		int ret;
+
+		ret = kfastblock_transport_copy_from_body(body, body_len, offset,
+							 &osd_hdr,
+							 sizeof(osd_hdr));
+		if (ret)
+			return ret;
+
+		address_len = le16_to_cpu(osd_hdr.address_len);
+		shard_count = le16_to_cpu(osd_hdr.shard_count);
+		if (address_len >= sizeof(osds[i].address))
+			return -E2BIG;
+
+		osds[i].osd_id = le32_to_cpu(osd_hdr.osd_id);
+		osds[i].flags = le32_to_cpu(osd_hdr.flags);
+		osds[i].shard_count = shard_count;
+
+		ret = kfastblock_transport_advance_offset(body_len, offset,
+							  address_len);
+		if (ret)
+			return ret;
+		if (address_len)
+			memcpy(osds[i].address, body + (*offset - address_len),
+			       address_len);
+		osds[i].address[address_len] = '\0';
+
+		if (!shard_count)
+			continue;
+
+		osds[i].shards = kcalloc(shard_count, sizeof(*osds[i].shards),
+					 GFP_KERNEL);
+		if (!osds[i].shards)
+			return -ENOMEM;
+
+		for (shard_idx = 0; shard_idx < shard_count; ++shard_idx) {
+			struct kfastblock_raw_osd_shard_entry shard_entry;
+
+			ret = kfastblock_transport_copy_from_body(
+				body, body_len, offset, &shard_entry,
+				sizeof(shard_entry));
+			if (ret)
+				return ret;
+
+			osds[i].shards[shard_idx].shard_id =
+				le32_to_cpu(shard_entry.shard_id);
+			osds[i].shards[shard_idx].port =
+				le16_to_cpu(shard_entry.port);
+			osds[i].shards[shard_idx].core_id =
+				le16_to_cpu(shard_entry.core_id);
+		}
+	}
+
+	return 0;
+}
+
+static int kfastblock_transport_decode_pg_entries(
+	const u8 *body,
+	size_t body_len,
+	size_t *offset,
+	struct kfastblock_pg_route *routes,
+	u32 route_count,
+	u32 pool_id,
+	u32 *pool_pg_count)
+{
+	u32 i;
+
+	if (!pool_pg_count)
+		return -EINVAL;
+
+	*pool_pg_count = 0;
+	for (i = 0; i < route_count; ++i) {
+		struct kfastblock_raw_pg_entry_hdr pg_hdr;
+		u32 replica_count;
+		u32 replica_idx;
+		int ret;
+
+		ret = kfastblock_transport_copy_from_body(body, body_len, offset,
+							 &pg_hdr,
+							 sizeof(pg_hdr));
+		if (ret)
+			return ret;
+
+		routes[i].pool_id = le32_to_cpu(pg_hdr.pool_id);
+		routes[i].pg_id = le32_to_cpu(pg_hdr.pg_id);
+		routes[i].version = le64_to_cpu(pg_hdr.version);
+		routes[i].state = le32_to_cpu(pg_hdr.state);
+		routes[i].primary_shard = le32_to_cpu(pg_hdr.primary_shard);
+		routes[i].replica_count = le32_to_cpu(pg_hdr.replica_count);
+		replica_count = routes[i].replica_count;
+
+		if (routes[i].pool_id == pool_id)
+			++(*pool_pg_count);
+		if (!replica_count)
+			continue;
+
+		routes[i].osd_ids = kcalloc(replica_count,
+					     sizeof(*routes[i].osd_ids),
+					     GFP_KERNEL);
+		if (!routes[i].osd_ids)
+			return -ENOMEM;
+
+		for (replica_idx = 0; replica_idx < replica_count; ++replica_idx) {
+			__le32 osd_id;
+
+			ret = kfastblock_transport_copy_from_body(body, body_len,
+							 offset, &osd_id,
+							 sizeof(osd_id));
+			if (ret)
+				return ret;
+
+			routes[i].osd_ids[replica_idx] = le32_to_cpu(osd_id);
+		}
+	}
+
 	return 0;
 }
 
@@ -240,17 +395,15 @@ static int kfastblock_transport_fetch_cluster_map(struct socket *sock,
 	};
 	struct kfastblock_raw_cluster_map_rsp_hdr rsp;
 	struct kfastblock_raw_header rsp_hdr;
+	struct kfastblock_cluster_view scratch = {};
 	void *body = NULL;
-	u8 *cursor;
+	u32 body_len;
 	u32 pool_pg_count = 0;
-	u32 osd_count;
-	u32 pg_count;
-	u32 i;
 	size_t offset = 0;
 	int ret;
-	const size_t shard_entry_size = sizeof(struct kfastblock_raw_osd_shard_entry);
 
 	ret = kfastblock_transport_send_request(sock,
+					KFASTBLOCK_RAW_SERVICE_MONITOR,
 					KFASTBLOCK_RAW_OP_GET_CLUSTER_MAP,
 					seq,
 					&req,
@@ -259,77 +412,156 @@ static int kfastblock_transport_fetch_cluster_map(struct socket *sock,
 		return ret;
 
 	ret = kfastblock_transport_recv_response(sock,
+					 KFASTBLOCK_RAW_SERVICE_MONITOR,
 					 KFASTBLOCK_RAW_OP_GET_CLUSTER_MAP,
 					 seq,
 					 &rsp_hdr,
 					 &body);
-	if (ret)
+	if (ret) {
+		kfree(body);
 		return ret;
-	if (!body || le32_to_cpu(rsp_hdr.body_len) < sizeof(rsp)) {
+	}
+	body_len = le32_to_cpu(rsp_hdr.body_len);
+	if (!body || body_len < sizeof(rsp)) {
 		kfree(body);
 		return -EPROTO;
 	}
 
-	cursor = body;
-	memcpy(&rsp, cursor, sizeof(rsp));
-	offset += sizeof(rsp);
-	view->osdmap_epoch = le64_to_cpu(rsp.osdmap_epoch);
-	view->pgmap_epoch = le64_to_cpu(rsp.pgmap_epoch);
-	osd_count = le32_to_cpu(rsp.osd_count);
-	pg_count = le32_to_cpu(rsp.pg_count);
+	ret = kfastblock_transport_copy_from_body(body, body_len, &offset, &rsp,
+						 sizeof(rsp));
+	if (ret)
+		goto out;
 
-	for (i = 0; i < osd_count; ++i) {
-		struct kfastblock_raw_osd_entry_hdr osd_hdr;
-		u16 address_len;
-		u16 shard_count;
-
-		if (offset + sizeof(osd_hdr) > le32_to_cpu(rsp_hdr.body_len)) {
-			kfree(body);
-			return -EPROTO;
-		}
-		memcpy(&osd_hdr, cursor + offset, sizeof(osd_hdr));
-		offset += sizeof(osd_hdr);
-		address_len = le16_to_cpu(osd_hdr.address_len);
-		shard_count = le16_to_cpu(osd_hdr.shard_count);
-		ret = kfastblock_transport_skip_bytes(cursor,
-					 le32_to_cpu(rsp_hdr.body_len),
-					 &offset,
-					 address_len + ((size_t)shard_count * shard_entry_size));
-		if (ret) {
-			kfree(body);
-			return ret;
+	scratch.osd_count = le32_to_cpu(rsp.osd_count);
+	scratch.route_count = le32_to_cpu(rsp.pg_count);
+	if (scratch.osd_count) {
+		scratch.osds = kvcalloc(scratch.osd_count, sizeof(*scratch.osds),
+					GFP_KERNEL);
+		if (!scratch.osds) {
+			ret = -ENOMEM;
+			goto out;
 		}
 	}
 
-	for (i = 0; i < pg_count; ++i) {
-		struct kfastblock_raw_pg_entry_hdr pg_hdr;
-		u32 replica_count;
-		u32 pool_id;
+	ret = kfastblock_transport_decode_osd_entries(body, body_len, &offset,
+						      scratch.osds,
+						      scratch.osd_count);
+	if (ret)
+		goto out;
 
-		if (offset + sizeof(pg_hdr) > le32_to_cpu(rsp_hdr.body_len)) {
-			kfree(body);
-			return -EPROTO;
-		}
-		memcpy(&pg_hdr, cursor + offset, sizeof(pg_hdr));
-		offset += sizeof(pg_hdr);
-		pool_id = le32_to_cpu(pg_hdr.pool_id);
-		replica_count = le32_to_cpu(pg_hdr.replica_count);
-		if (pool_id == view->image.pool_id)
-			++pool_pg_count;
-		ret = kfastblock_transport_skip_bytes(cursor,
-					 le32_to_cpu(rsp_hdr.body_len),
-					 &offset,
-					 (size_t)replica_count * sizeof(__le32));
-		if (ret) {
-			kfree(body);
-			return ret;
+	if (scratch.route_count) {
+		scratch.routes = kvcalloc(scratch.route_count,
+					  sizeof(*scratch.routes), GFP_KERNEL);
+		if (!scratch.routes) {
+			ret = -ENOMEM;
+			goto out;
 		}
 	}
 
+	ret = kfastblock_transport_decode_pg_entries(body, body_len, &offset,
+						     scratch.routes,
+						     scratch.route_count,
+						     view->image.pool_id,
+						     &pool_pg_count);
+	if (ret)
+		goto out;
+	if (offset != body_len) {
+		ret = -EPROTO;
+		goto out;
+	}
+	if (!pool_pg_count) {
+		ret = -ENOENT;
+		goto out;
+	}
+
+	ret = kfastblock_meta_replace_cluster_map(
+		view,
+		le64_to_cpu(rsp.osdmap_epoch),
+		le64_to_cpu(rsp.pgmap_epoch),
+		pool_pg_count,
+		scratch.osd_count,
+		scratch.osds,
+		scratch.route_count,
+		scratch.routes);
+	if (!ret) {
+		scratch.osd_count = 0;
+		scratch.route_count = 0;
+		scratch.osds = NULL;
+		scratch.routes = NULL;
+	}
+
+out:
 	kfree(body);
-	if (!pool_pg_count)
-		return -ENOENT;
-	view->image.pg_count = pool_pg_count;
+	kfastblock_meta_cleanup_view(&scratch);
+	return ret;
+}
+
+static int kfastblock_transport_fetch_pg_leader_from_osd(
+	struct socket *sock,
+	u32 pool_id,
+	u32 pg_id,
+	u64 seq,
+	struct kfastblock_leader_info *leader)
+{
+	struct kfastblock_raw_get_leader_req req = {
+		.pool_id = cpu_to_le32(pool_id),
+		.pg_id = cpu_to_le32(pg_id),
+	};
+	struct kfastblock_raw_get_leader_rsp rsp;
+	struct kfastblock_raw_header rsp_hdr;
+	void *body = NULL;
+	u32 body_len;
+	u16 address_len;
+	int ret;
+
+	if (!leader)
+		return -EINVAL;
+
+	memset(leader, 0, sizeof(*leader));
+	ret = kfastblock_transport_send_request(sock,
+					KFASTBLOCK_RAW_SERVICE_OSD,
+					KFASTBLOCK_RAW_OSD_OP_GET_LEADER,
+					seq,
+					&req,
+					sizeof(req));
+	if (ret)
+		return ret;
+
+	ret = kfastblock_transport_recv_response(sock,
+					 KFASTBLOCK_RAW_SERVICE_OSD,
+					 KFASTBLOCK_RAW_OSD_OP_GET_LEADER,
+					 seq,
+					 &rsp_hdr,
+					 &body);
+	if (ret) {
+		kfree(body);
+		return ret;
+	}
+
+	body_len = le32_to_cpu(rsp_hdr.body_len);
+	if (!body || body_len < sizeof(rsp)) {
+		kfree(body);
+		return -EPROTO;
+	}
+
+	memcpy(&rsp, body, sizeof(rsp));
+	address_len = le16_to_cpu(rsp.address_len);
+	if (body_len != sizeof(rsp) + address_len ||
+	    !address_len ||
+	    address_len >= sizeof(leader->address)) {
+		kfree(body);
+		return -EPROTO;
+	}
+
+	leader->osd_id = le32_to_cpu(rsp.leader_id);
+	leader->port = le16_to_cpu(rsp.leader_port);
+	memcpy(leader->address, (u8 *)body + sizeof(rsp), address_len);
+	leader->address[address_len] = '\0';
+	kfree(body);
+
+	if (!leader->osd_id || !leader->port || !leader->address[0])
+		return -EPROTO;
+
 	return 0;
 }
 
@@ -342,19 +574,19 @@ void kfastblock_transport_exit(void)
 {
 }
 
-int kfastblock_transport_sockaddr_from_endpoint(
-	const struct kfastblock_monitor_endpoint *endpoint,
-	struct sockaddr_in *addr)
+static int kfastblock_transport_sockaddr_from_host_port(const char *host,
+							u16 port,
+							struct sockaddr_in *addr)
 {
 	int ret;
 
-	if (!endpoint || !addr || !endpoint->host[0] || !endpoint->port)
+	if (!addr || !host || !*host || !port)
 		return -EINVAL;
 
 	memset(addr, 0, sizeof(*addr));
 	addr->sin_family = AF_INET;
-	addr->sin_port = htons(endpoint->port);
-	ret = in4_pton(endpoint->host, -1, (u8 *)&addr->sin_addr.s_addr,
+	addr->sin_port = htons(port);
+	ret = in4_pton(host, -1, (u8 *)&addr->sin_addr.s_addr,
 		       -1, NULL);
 	if (!ret)
 		return -EINVAL;
@@ -362,9 +594,21 @@ int kfastblock_transport_sockaddr_from_endpoint(
 	return 0;
 }
 
-int kfastblock_transport_try_connect_monitor(
+int kfastblock_transport_sockaddr_from_endpoint(
 	const struct kfastblock_monitor_endpoint *endpoint,
-	struct socket **sock)
+	struct sockaddr_in *addr)
+{
+	if (!endpoint)
+		return -EINVAL;
+
+	return kfastblock_transport_sockaddr_from_host_port(endpoint->host,
+						 endpoint->port,
+						 addr);
+}
+
+static int kfastblock_transport_try_connect_host(const char *host,
+						 u16 port,
+						 struct socket **sock)
 {
 	struct sockaddr_in addr;
 	struct socket *local_sock;
@@ -373,7 +617,7 @@ int kfastblock_transport_try_connect_monitor(
 	if (!sock)
 		return -EINVAL;
 
-	ret = kfastblock_transport_sockaddr_from_endpoint(endpoint, &addr);
+	ret = kfastblock_transport_sockaddr_from_host_port(host, port, &addr);
 	if (ret)
 		return ret;
 
@@ -390,6 +634,18 @@ int kfastblock_transport_try_connect_monitor(
 
 	*sock = local_sock;
 	return 0;
+}
+
+int kfastblock_transport_try_connect_monitor(
+	const struct kfastblock_monitor_endpoint *endpoint,
+	struct socket **sock)
+{
+	if (!endpoint)
+		return -EINVAL;
+
+	return kfastblock_transport_try_connect_host(endpoint->host,
+					 endpoint->port,
+					 sock);
 }
 
 int kfastblock_transport_fetch_cluster_view(struct kfastblock_cluster_view *view,
@@ -419,6 +675,75 @@ int kfastblock_transport_fetch_cluster_view(struct kfastblock_cluster_view *view
 		sock_release(sock);
 		if (!ret)
 			return 0;
+		first_err = ret;
+	}
+
+	return first_err;
+}
+
+int kfastblock_transport_get_pg_leader(struct kfastblock_cluster_view *view,
+				       u32 pool_id, u32 pg_id,
+				       struct kfastblock_leader_info *leader)
+{
+	const struct kfastblock_pg_route *route;
+	u32 i;
+	int first_err = -ENOENT;
+	int ret;
+
+	if (!view || !leader)
+		return -EINVAL;
+
+	ret = kfastblock_meta_get_pg_leader(view, pool_id, pg_id, leader);
+	if (!ret)
+		return 0;
+
+	route = kfastblock_meta_find_pg_route(view, pool_id, pg_id);
+	if (!route || !route->replica_count)
+		return -ENOENT;
+
+	for (i = 0; i < route->replica_count; ++i) {
+		const struct kfastblock_pg_route *resolved_route;
+		const struct kfastblock_osd_endpoint *osd;
+		const struct kfastblock_osd_shard *shard;
+		struct socket *sock = NULL;
+
+		ret = kfastblock_meta_resolve_pg_target(view, pool_id, pg_id,
+						 route->osd_ids[i],
+						 &resolved_route,
+						 &osd,
+						 &shard);
+		if (ret) {
+			first_err = ret;
+			continue;
+		}
+		if (!(osd->flags & KFASTBLOCK_OSD_FLAG_IN) ||
+		    !(osd->flags & KFASTBLOCK_OSD_FLAG_UP) ||
+		    !osd->address[0] || !shard->port) {
+			first_err = -EHOSTDOWN;
+			continue;
+		}
+
+		ret = kfastblock_transport_try_connect_host(osd->address,
+						     shard->port,
+						     &sock);
+		if (ret) {
+			first_err = ret;
+			continue;
+		}
+
+		ret = kfastblock_transport_fetch_pg_leader_from_osd(sock,
+						    resolved_route->pool_id,
+						    resolved_route->pg_id,
+						    1,
+						    leader);
+		sock_release(sock);
+		if (!ret) {
+			ret = kfastblock_meta_set_pg_leader(view, pool_id, pg_id,
+						 leader);
+			return ret ? ret : 0;
+		}
+
+		kfastblock_meta_invalidate_pg_leader(view, pool_id, pg_id);
 		first_err = ret;
 	}
 

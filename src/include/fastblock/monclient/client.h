@@ -405,6 +405,17 @@ public:
         return std::pair<std::string, int>{it->second->address, it->second->sharded_ports.at(shard_id).port};
     }
 
+    std::pair<std::string, int> get_osd_raw_addr(int osd_id, uint32_t shard_id) {
+        auto it = _osd_map.data.find(osd_id);
+        if (it == _osd_map.data.end()) {
+            return std::make_pair<std::string, int>("", 0);
+        }
+
+        auto& shard = it->second->sharded_ports.at(shard_id);
+        auto raw_port = shard.raw_port != 0 ? shard.raw_port : shard.port;
+        return std::pair<std::string, int>{it->second->address, static_cast<int>(raw_port)};
+    }
+
     auto last_cluster_map_at() noexcept {
         return _last_cluster_map_at;
     }

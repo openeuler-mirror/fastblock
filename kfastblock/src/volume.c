@@ -86,6 +86,61 @@ static ssize_t pg_count_show(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%u\n", vol->view.image.pg_count);
 }
 
+static ssize_t osd_count_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n", vol->view.osd_count);
+}
+
+static ssize_t route_count_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n", vol->view.route_count);
+}
+
+static ssize_t osdmap_epoch_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%llu\n", vol->view.osdmap_epoch);
+}
+
+static ssize_t pgmap_epoch_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%llu\n", vol->view.pgmap_epoch);
+}
+
+static ssize_t leader_epoch_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%llu\n", vol->view.leader_epoch);
+}
+
 static ssize_t read_only_show(struct device *dev,
 			      struct device_attribute *attr, char *buf)
 {
@@ -114,6 +169,11 @@ static DEVICE_ATTR_RO(size_bytes);
 static DEVICE_ATTR_RO(object_size);
 static DEVICE_ATTR_RO(pool_id);
 static DEVICE_ATTR_RO(pg_count);
+static DEVICE_ATTR_RO(osd_count);
+static DEVICE_ATTR_RO(route_count);
+static DEVICE_ATTR_RO(osdmap_epoch);
+static DEVICE_ATTR_RO(pgmap_epoch);
+static DEVICE_ATTR_RO(leader_epoch);
 static DEVICE_ATTR_RO(read_only);
 static DEVICE_ATTR_RO(sync_state);
 
@@ -124,6 +184,11 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_object_size.attr,
 	&dev_attr_pool_id.attr,
 	&dev_attr_pg_count.attr,
+	&dev_attr_osd_count.attr,
+	&dev_attr_route_count.attr,
+	&dev_attr_osdmap_epoch.attr,
+	&dev_attr_pgmap_epoch.attr,
+	&dev_attr_leader_epoch.attr,
 	&dev_attr_read_only.attr,
 	&dev_attr_sync_state.attr,
 	NULL,
@@ -231,6 +296,7 @@ static void kfastblock_volume_free(struct kfastblock_volume *vol)
 	if (vol->dev_id >= 0)
 		ida_free(&g_kfastblock_dev_ida, vol->dev_id);
 
+	kfastblock_meta_cleanup_view(&vol->view);
 	kfree(vol);
 	module_put(THIS_MODULE);
 }
@@ -369,6 +435,7 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	return 0;
 
 err_free:
+	kfastblock_meta_cleanup_view(&vol->view);
 	kfree(vol);
 	return ret;
 }

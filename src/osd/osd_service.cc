@@ -215,37 +215,53 @@ void osd_service::process_rpc_bench(google::protobuf::RpcController *controller,
     done->Run();
 }
 
+osd_service::leader_endpoint osd_service::resolve_pg_leader(
+  const uint64_t pool_id,
+  const uint64_t pg_id,
+  const bool use_raw_port) const {
+    leader_endpoint endpoint{};
+    uint32_t shard_id{};
+
+    if(!_pm->get_pg_shard(pool_id, pg_id, shard_id)){
+        SPDK_WARNLOG("not find pg %lu.%lu\n", pool_id, pg_id);
+        endpoint.state = err::RAFT_ERR_NOT_FOUND_PG;
+        return endpoint;
+    }
+
+    auto raft = _pm->get_pg(shard_id, pool_id, pg_id);
+    if(!raft){
+        SPDK_WARNLOG("not find pg %lu.%lu\n", pool_id, pg_id);
+        endpoint.state = err::RAFT_ERR_NOT_FOUND_PG;
+        return endpoint;
+    }
+
+    endpoint.leader_id = raft->raft_get_current_leader();
+    auto leader = use_raw_port
+      ? _monitor_client->get_osd_raw_addr(endpoint.leader_id, shard_id)
+      : _monitor_client->get_osd_addr(endpoint.leader_id, shard_id);
+    if(leader.first.empty() || leader.second == 0){
+        endpoint.state = err::RAFT_ERR_NOT_FOUND_LEADER;
+        endpoint.leader_id = -1;
+        return endpoint;
+    }
+
+    endpoint.state = err::E_SUCCESS;
+    endpoint.leader_addr = std::move(leader.first);
+    endpoint.leader_port = leader.second;
+    return endpoint;
+}
+
 void osd_service::process_get_leader(google::protobuf::RpcController* controller,
             const osd::pg_leader_request* request,
             osd::pg_leader_response* response,
             google::protobuf::Closure* done){
-    auto pool_id = request->pool_id();
-    auto pg_id = request->pg_id();
-    uint32_t shard_id;
-
     SPDK_INFOLOG(osd, "recv pg_leader_request, get the leader of pg %lu.%lu\n", request->pool_id(), request->pg_id());
-    if(!_pm->get_pg_shard(pool_id, pg_id, shard_id)){
-        SPDK_WARNLOG("not find pg %lu.%lu\n", pool_id, pg_id);
-        response->set_state(err::RAFT_ERR_NOT_FOUND_PG);
-        done->Run();
-        return;
-    }
-    auto raft = _pm->get_pg(shard_id, pool_id, pg_id);
-    if(!raft){
-        SPDK_WARNLOG("not find pg %lu.%lu\n", pool_id, pg_id);
-        response->set_state(err::RAFT_ERR_NOT_FOUND_PG);
-        done->Run();
-        return;
-    }
-    auto leader_id = raft->raft_get_current_leader();
-    auto res = _monitor_client->get_osd_addr(leader_id, shard_id);
-    if(res.first.size() == 0){
-        response->set_state(err::RAFT_ERR_NOT_FOUND_LEADER);
-    }else{
-        response->set_state(err::E_SUCCESS);
-        response->set_leader_id(leader_id);
-        response->set_leader_addr(res.first);
-        response->set_leader_port(res.second);
+    auto leader = resolve_pg_leader(request->pool_id(), request->pg_id(), false);
+    response->set_state(leader.state);
+    if(leader.state == err::E_SUCCESS){
+        response->set_leader_id(leader.leader_id);
+        response->set_leader_addr(leader.leader_addr);
+        response->set_leader_port(leader.leader_port);
     }
     done->Run();
 }
