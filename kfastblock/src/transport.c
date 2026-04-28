@@ -6,10 +6,12 @@
 #include <linux/kernel.h>
 #include <linux/net.h>
 #include <linux/highmem.h>
+#include <linux/jiffies.h>
 #include <linux/slab.h>
 #include <linux/socket.h>
 #include <linux/string.h>
 #include <linux/uio.h>
+#include <net/sock.h>
 
 #include "kfastblock/common.h"
 #include "kfastblock/rawproto.h"
@@ -118,6 +120,19 @@ static int kfastblock_transport_send_all(struct socket *sock,
 		sent += rc;
 	}
 
+	return 0;
+}
+
+static int kfastblock_transport_configure_socket(struct socket *sock)
+{
+	long timeout;
+
+	if (!sock || !sock->sk)
+		return -EINVAL;
+
+	timeout = msecs_to_jiffies(KFASTBLOCK_DEFAULT_SOCKET_TIMEOUT_MS);
+	sock->sk->sk_rcvtimeo = timeout;
+	sock->sk->sk_sndtimeo = timeout;
 	return 0;
 }
 
@@ -1012,6 +1027,12 @@ static int kfastblock_transport_try_connect_host(const char *host,
 			       &local_sock);
 	if (ret)
 		return ret;
+
+	ret = kfastblock_transport_configure_socket(local_sock);
+	if (ret) {
+		sock_release(local_sock);
+		return ret;
+	}
 
 	ret = kernel_connect(local_sock, (struct sockaddr *)&addr, sizeof(addr), 0);
 	if (ret) {
