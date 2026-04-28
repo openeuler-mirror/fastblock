@@ -125,18 +125,19 @@ func TestPublishContextHelpers(t *testing.T) {
 		driver.PublishContextTrsvcid:   "4420",
 		driver.PublishContextNSID:      "3",
 	}
-	device, err := svc.StageVolumeFromPublishContext(context.Background(), "fbvol:cluster:1:4", publishContext)
+	req := PublishContextStageRequest{VolumeID: "fbvol:cluster:1:4", PublishContext: publishContext}
+	device, err := svc.StageVolumeFromPublishContext(context.Background(), req)
 	if err != nil {
 		t.Fatalf("stage from publish context failed: %v", err)
 	}
-	ready, err := svc.IsReadyFromPublishContext(context.Background(), "fbvol:cluster:1:4", publishContext)
+	ready, err := svc.IsReadyFromPublishContext(context.Background(), req)
 	if err != nil {
 		t.Fatalf("ready from publish context failed: %v", err)
 	}
-	if _, err := svc.GetDeviceFromPublishContext(context.Background(), "fbvol:cluster:1:4", publishContext); err != nil {
+	if _, err := svc.GetDeviceFromPublishContext(context.Background(), req); err != nil {
 		t.Fatalf("get device from publish context failed: %v", err)
 	}
-	if err := svc.UnstageVolumeFromPublishContext(context.Background(), "fbvol:cluster:1:4", publishContext); err != nil {
+	if err := svc.UnstageVolumeFromPublishContext(context.Background(), req); err != nil {
 		t.Fatalf("unstage from publish context failed: %v", err)
 	}
 	if device != "/dev/nvme0n1" || !ready {
