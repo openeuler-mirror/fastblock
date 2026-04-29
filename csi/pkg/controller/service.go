@@ -16,13 +16,18 @@ type Service struct {
 }
 
 func New(opts driver.Options, monitor monitorclient.Client, exporter exporterclient.Client) *Service {
-	return &Service{
+	svc := &Service{
 		opts:        opts,
 		monitor:     monitor,
 		exporter:    exporter,
 		volumes:     newMemoryVolumeStore(),
 		attachments: newMemoryAttachmentStore(),
 	}
+	if metadataClient, ok := monitor.(monitorclient.MetadataClient); ok {
+		svc.volumes = newMonitorVolumeStore(metadataClient)
+		svc.attachments = newMonitorAttachmentStore(metadataClient)
+	}
+	return svc
 }
 
 func NewWithDefaultHostNQN(opts driver.Options, monitor monitorclient.Client, exporter exporterclient.Client, defaultHostNQN string) *Service {

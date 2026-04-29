@@ -1,21 +1,19 @@
 package controller
 
 import (
+	"context"
 	"strings"
 	"sync"
+
+	"fastblock-csi/pkg/monitorclient"
 )
 
-type Attachment struct {
-	VolumeID string
-	NodeID   string
-	HostNQN  string
-	ExportID string
-}
+type Attachment = monitorclient.Attachment
 
 type attachmentStore interface {
-	Get(volumeID string) (Attachment, bool)
-	Put(attachment Attachment)
-	Delete(volumeID string)
+	Get(ctx context.Context, volumeID string) (Attachment, bool, error)
+	Put(ctx context.Context, attachment Attachment) error
+	Delete(ctx context.Context, volumeID string) error
 }
 
 type memoryAttachmentStore struct {
@@ -29,18 +27,27 @@ func newMemoryAttachmentStore() *memoryAttachmentStore {
 	}
 }
 
-func (s *memoryAttachmentStore) Get(volumeID string) (Attachment, bool) {
+func (s *memoryAttachmentStore) Get(_ context.Context, volumeID string) (Attachment, bool, error) {
+	return s.get(volumeID)
+}
+
+func (s *memoryAttachmentStore) get(volumeID string) (Attachment, bool, error) {
 	key := strings.TrimSpace(volumeID)
 	if key == "" {
-		return Attachment{}, false
+		return Attachment{}, false, nil
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	attachment, ok := s.attachments[key]
-	return attachment, ok
+	return attachment, ok, nil
 }
 
-func (s *memoryAttachmentStore) Put(attachment Attachment) {
+func (s *memoryAttachmentStore) Put(_ context.Context, attachment Attachment) error {
+	s.put(attachment)
+	return nil
+}
+
+func (s *memoryAttachmentStore) put(attachment Attachment) {
 	key := strings.TrimSpace(attachment.VolumeID)
 	if key == "" {
 		return
@@ -50,7 +57,12 @@ func (s *memoryAttachmentStore) Put(attachment Attachment) {
 	s.attachments[key] = attachment
 }
 
-func (s *memoryAttachmentStore) Delete(volumeID string) {
+func (s *memoryAttachmentStore) Delete(_ context.Context, volumeID string) error {
+	s.delete(volumeID)
+	return nil
+}
+
+func (s *memoryAttachmentStore) delete(volumeID string) {
 	key := strings.TrimSpace(volumeID)
 	if key == "" {
 		return

@@ -1,23 +1,19 @@
 package controller
 
 import (
+	"context"
 	"strings"
 	"sync"
 
 	"fastblock-csi/pkg/monitorclient"
 )
 
-type VolumeMetadata struct {
-	Volume    monitorclient.Volume
-	BlockSize int64
-	Transport string
-	ExportID  string
-}
+type VolumeMetadata = monitorclient.VolumeMetadata
 
 type volumeStore interface {
-	Get(volumeID string) (VolumeMetadata, bool)
-	Put(metadata VolumeMetadata)
-	Delete(volumeID string)
+	Get(ctx context.Context, volumeID string) (VolumeMetadata, bool, error)
+	Put(ctx context.Context, metadata VolumeMetadata) error
+	Delete(ctx context.Context, volumeID string) error
 }
 
 type memoryVolumeStore struct {
@@ -31,18 +27,27 @@ func newMemoryVolumeStore() *memoryVolumeStore {
 	}
 }
 
-func (s *memoryVolumeStore) Get(volumeID string) (VolumeMetadata, bool) {
+func (s *memoryVolumeStore) Get(_ context.Context, volumeID string) (VolumeMetadata, bool, error) {
+	return s.get(volumeID)
+}
+
+func (s *memoryVolumeStore) get(volumeID string) (VolumeMetadata, bool, error) {
 	key := strings.TrimSpace(volumeID)
 	if key == "" {
-		return VolumeMetadata{}, false
+		return VolumeMetadata{}, false, nil
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	metadata, ok := s.volumes[key]
-	return metadata, ok
+	return metadata, ok, nil
 }
 
-func (s *memoryVolumeStore) Put(metadata VolumeMetadata) {
+func (s *memoryVolumeStore) Put(_ context.Context, metadata VolumeMetadata) error {
+	s.put(metadata)
+	return nil
+}
+
+func (s *memoryVolumeStore) put(metadata VolumeMetadata) {
 	key := strings.TrimSpace(metadata.Volume.ID)
 	if key == "" {
 		return
@@ -52,7 +57,12 @@ func (s *memoryVolumeStore) Put(metadata VolumeMetadata) {
 	s.volumes[key] = metadata
 }
 
-func (s *memoryVolumeStore) Delete(volumeID string) {
+func (s *memoryVolumeStore) Delete(_ context.Context, volumeID string) error {
+	s.delete(volumeID)
+	return nil
+}
+
+func (s *memoryVolumeStore) delete(volumeID string) {
 	key := strings.TrimSpace(volumeID)
 	if key == "" {
 		return
