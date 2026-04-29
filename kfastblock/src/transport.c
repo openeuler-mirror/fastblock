@@ -121,6 +121,7 @@ struct kfastblock_transport_request_finish_ctx {
 	int remaining;
 	bool first_error;
 	bool mark_success;
+	bool finished;
 	u8 stage;
 };
 
@@ -2716,30 +2717,62 @@ static void kfastblock_transport_finish_request_ctx_if_idle(
 
 	kfastblock_transport_finish_request_if_idle(
 		ctx->kf_req, ctx->remaining, ctx->mark_success);
-	if (ctx->remaining == 0)
+	ctx->finished = true;
+	ctx->stage = KFASTBLOCK_REQUEST_FINISH_STAGE_FINISHED;
+}
+
+static void kfastblock_transport_prepare_request_finish_status(
+	struct kfastblock_transport_request_finish_ctx *ctx)
+{
+	if (!ctx)
+		return;
+
+	if (ctx->mark_success)
+		kfastblock_transport_update_request_status_after_object(ctx);
+	else
+		(void)kfastblock_transport_set_first_error(ctx->kf_req, ctx->ret);
+}
+
+static void kfastblock_transport_prepare_request_finish_pending(
+	struct kfastblock_transport_request_finish_ctx *ctx)
+{
+	if (!ctx)
+		return;
+
+	if (ctx->mark_success)
+		kfastblock_transport_advance_request_pending(
+			ctx, ctx->first_error);
+	else {
+		ctx->remaining = kfastblock_transport_drop_unscheduled_pending(
+			ctx->kf_req, 0);
+		ctx->stage = KFASTBLOCK_REQUEST_FINISH_STAGE_PENDING_UPDATED;
+	}
+}
+
+static bool kfastblock_transport_advance_request_finish_ctx(
+	struct kfastblock_transport_request_finish_ctx *ctx)
+{
+	if (!ctx)
+		return false;
+
+	switch (ctx->stage) {
+	case KFASTBLOCK_REQUEST_FINISH_STAGE_INIT:
+		kfastblock_transport_prepare_request_finish_status(ctx);
+		return !ctx->finished;
+	case KFASTBLOCK_REQUEST_FINISH_STAGE_STATUS_UPDATED:
+		kfastblock_transport_prepare_request_finish_pending(ctx);
+		return !ctx->finished;
+	case KFASTBLOCK_REQUEST_FINISH_STAGE_PENDING_UPDATED:
+		kfastblock_transport_finish_request_ctx_if_idle(ctx);
+		return !ctx->finished;
+	case KFASTBLOCK_REQUEST_FINISH_STAGE_FINISHED:
+		ctx->finished = true;
+		return false;
+	default:
+		ctx->finished = true;
 		ctx->stage = KFASTBLOCK_REQUEST_FINISH_STAGE_FINISHED;
-}
-
-static void kfastblock_transport_prepare_request_finish_complete(
-	struct kfastblock_transport_request_finish_ctx *ctx)
-{
-	if (!ctx)
-		return;
-
-	kfastblock_transport_update_request_status_after_object(ctx);
-	kfastblock_transport_advance_request_pending(ctx, ctx->first_error);
-}
-
-static void kfastblock_transport_prepare_request_finish_abort(
-	struct kfastblock_transport_request_finish_ctx *ctx)
-{
-	if (!ctx)
-		return;
-
-	(void)kfastblock_transport_set_first_error(ctx->kf_req, ctx->ret);
-	ctx->remaining = kfastblock_transport_drop_unscheduled_pending(
-		ctx->kf_req, 0);
-	ctx->stage = KFASTBLOCK_REQUEST_FINISH_STAGE_PENDING_UPDATED;
+		return false;
+	}
 }
 
 static void kfastblock_transport_run_request_finish_ctx(
@@ -2748,11 +2781,10 @@ static void kfastblock_transport_run_request_finish_ctx(
 	if (!ctx)
 		return;
 
-	if (ctx->mark_success)
-		kfastblock_transport_prepare_request_finish_complete(ctx);
-	else
-		kfastblock_transport_prepare_request_finish_abort(ctx);
-	kfastblock_transport_finish_request_ctx_if_idle(ctx);
+	while (!ctx->finished) {
+		if (!kfastblock_transport_advance_request_finish_ctx(ctx))
+			break;
+	}
 }
 
 static void kfastblock_transport_complete_request(struct kfastblock_request *kf_req,
