@@ -61,6 +61,10 @@ func main() {
 	}
 
 	svc := controller.NewWithDefaultHostNQN(opts, monitor, exporter, strings.TrimSpace(defaultHostNQN))
+	if err := svc.Reconcile(context.Background()); err != nil {
+		fmt.Fprintf(os.Stderr, "controller reconcile failed: %v\n", err)
+		os.Exit(1)
+	}
 	server, err := driver.ListenEndpoint(opts.Endpoint)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "listen endpoint failed: %v\n", err)
