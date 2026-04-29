@@ -5,6 +5,7 @@
 #include <linux/device.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
+#include <linux/rwsem.h>
 #include <linux/socket.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
@@ -40,6 +41,7 @@ struct kfastblock_volume {
 	struct list_head node;
 	struct device dev;
 	struct mutex inflight_lock;
+	struct rw_semaphore state_lock;
 	struct delayed_work refresh_work;
 	struct kfastblock_cached_socket socket_cache[KFASTBLOCK_MAX_SOCKET_CACHE];
 };

@@ -124,9 +124,9 @@ static void kfastblock_volume_refresh_workfn(struct work_struct *work)
 	if (!atomic_read(&vol->ready))
 		return;
 
-	mutex_lock(&vol->inflight_lock);
+	down_write(&vol->state_lock);
 	if (!atomic_read(&vol->ready)) {
-		mutex_unlock(&vol->inflight_lock);
+		up_write(&vol->state_lock);
 		return;
 	}
 
@@ -175,7 +175,7 @@ static void kfastblock_volume_refresh_workfn(struct work_struct *work)
 		kfastblock_volume_close_cached_sockets(vol);
 		vol->view.sync_state = KFASTBLOCK_META_SYNC_STALE;
 	}
-	mutex_unlock(&vol->inflight_lock);
+	up_write(&vol->state_lock);
 
 	kfastblock_volume_schedule_refresh(vol);
 }
@@ -428,11 +428,6 @@ static blk_status_t kfastblock_queue_rq(struct blk_mq_hw_ctx *hctx,
 		blk_mq_end_request(rq, BLK_STS_RESOURCE);
 		return BLK_STS_RESOURCE;
 	}
-	if (!kfastblock_meta_io_ready(&vol->view)) {
-		kfastblock_volume_kick_refresh(vol);
-		blk_mq_end_request(rq, BLK_STS_RESOURCE);
-		return BLK_STS_RESOURCE;
-	}
 
 	if (blk_rq_is_passthrough(rq)) {
 		blk_mq_end_request(rq, BLK_STS_IOERR);
@@ -451,8 +446,16 @@ static blk_status_t kfastblock_queue_rq(struct blk_mq_hw_ctx *hctx,
 	}
 
 	kf_req->status = 0;
+	down_read(&vol->state_lock);
+	if (!kfastblock_meta_io_ready(&vol->view)) {
+		up_read(&vol->state_lock);
+		kfastblock_volume_kick_refresh(vol);
+		blk_mq_end_request(rq, BLK_STS_RESOURCE);
+		return BLK_STS_RESOURCE;
+	}
 	kfastblock_request_init(kf_req, vol, rq);
 	ret = kfastblock_request_split(kf_req);
+	up_read(&vol->state_lock);
 	if (ret) {
 		blk_mq_end_request(rq, BLK_STS_IOERR);
 		return BLK_STS_IOERR;
@@ -620,6 +623,7 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	atomic_set(&vol->open_count, 0);
 	atomic_set(&vol->ready, 0);
 	mutex_init(&vol->inflight_lock);
+	init_rwsem(&vol->state_lock);
 	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i)
 		mutex_init(&vol->socket_cache[i].lock);
 	INIT_DELAYED_WORK(&vol->refresh_work, kfastblock_volume_refresh_workfn);
