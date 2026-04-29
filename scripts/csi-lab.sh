@@ -756,7 +756,6 @@ down() {
     stop_pidfile "$RUN_DIR/osd.pid" osd
     stop_pidfile "$RUN_DIR/monitor.pid" monitor
     kill_repo_processes
-    nvme disconnect-all >/dev/null 2>&1 || true
     rm -f /tmp/fastblock-csi-controller.sock /tmp/fastblock-csi-node.sock
     rm -f /var/tmp/fastblock_nvmf_tgt*.sock
     rm -f "$RUN_DIR/spdk_rpc.sock"
