@@ -2705,14 +2705,17 @@ static void kfastblock_transport_complete_request(struct kfastblock_request *kf_
 static void kfastblock_transport_abort_request(struct kfastblock_request *kf_req,
 					       int ret)
 {
-	int remaining;
+	struct kfastblock_transport_request_finish_ctx ctx = {};
 
-	if (!kf_req)
+	if (kfastblock_transport_request_finish_ctx_init(
+		    &ctx, kf_req, 0, ret, false))
 		return;
 
-	(void)kfastblock_transport_set_first_error(kf_req, ret);
-	remaining = kfastblock_transport_drop_unscheduled_pending(kf_req, 0);
-	kfastblock_transport_finish_request_if_idle(kf_req, remaining, false);
+	(void)kfastblock_transport_set_first_error(ctx.kf_req, ctx.ret);
+	ctx.remaining = kfastblock_transport_drop_unscheduled_pending(
+		ctx.kf_req, 0);
+	kfastblock_transport_finish_request_if_idle(
+		ctx.kf_req, ctx.remaining, ctx.mark_success);
 }
 
 static void kfastblock_transport_object_work(struct work_struct *work)
