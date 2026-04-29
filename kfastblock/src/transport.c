@@ -2530,7 +2530,7 @@ static void kfastblock_transport_submit_ctx_reset_prefetch_pg(
 	ctx->sock = NULL;
 }
 
-static int kfastblock_transport_prefetch_submit_pg(
+static int kfastblock_transport_prefetch_submit_pg_leader(
 	struct kfastblock_transport_submit_ctx *ctx)
 {
 	if (!ctx || !ctx->kf_req || !ctx->kf_req->vol || !ctx->hint)
@@ -2546,6 +2546,15 @@ static int kfastblock_transport_prefetch_submit_pg(
 		return ctx->ret;
 	}
 
+	return 0;
+}
+
+static int kfastblock_transport_prefetch_submit_pg_socket(
+	struct kfastblock_transport_submit_ctx *ctx)
+{
+	if (!ctx || !ctx->kf_req || !ctx->kf_req->vol || !ctx->hint)
+		return -EINVAL;
+
 	kfastblock_request_set_pg_hint_leader(ctx->hint, &ctx->leader);
 	ctx->ret = kfastblock_transport_acquire_osd_socket(
 		ctx->kf_req->vol, &ctx->leader, &ctx->cached, &ctx->sock);
@@ -2556,6 +2565,21 @@ static int kfastblock_transport_prefetch_submit_pg(
 	ctx->sock = NULL;
 
 	return ctx->ret;
+}
+
+static int kfastblock_transport_drive_prefetch_submit_pg(
+	struct kfastblock_transport_submit_ctx *ctx)
+{
+	int ret;
+
+	if (!ctx)
+		return -EINVAL;
+
+	ret = kfastblock_transport_prefetch_submit_pg_leader(ctx);
+	if (ret)
+		return ret;
+
+	return kfastblock_transport_prefetch_submit_pg_socket(ctx);
 }
 
 static void kfastblock_transport_prefetch_submit_leaders(
@@ -2576,7 +2600,7 @@ static void kfastblock_transport_prefetch_submit_leaders(
 	     ++ctx->pg_index) {
 		kfastblock_transport_submit_ctx_reset_prefetch_pg(
 			ctx, ctx->pg_index);
-		ctx->ret = kfastblock_transport_prefetch_submit_pg(ctx);
+		ctx->ret = kfastblock_transport_drive_prefetch_submit_pg(ctx);
 		if (ctx->ret &&
 		    kfastblock_recovery_prefetch_should_fail_request(ctx->ret))
 			return;
