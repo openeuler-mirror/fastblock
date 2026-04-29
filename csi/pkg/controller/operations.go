@@ -175,10 +175,18 @@ func (s *Service) DeleteVolume(ctx context.Context, req DeleteVolumeRequest) err
 	if err := req.Validate(); err != nil {
 		return err
 	}
+	if err := s.reconcileState(ctx, req.Volume.ID); err != nil {
+		return err
+	}
 	if existing, ok, err := s.attachments.Get(ctx, req.Volume.ID); err != nil {
 		return err
 	} else if ok {
 		return fmt.Errorf("%w: volume %s remains attached to node %s", ErrVolumeStillPublished, existing.VolumeID, existing.NodeID)
+	}
+	if lease, ok, err := s.currentLease(ctx, req.Volume.ID); err != nil {
+		return err
+	} else if ok {
+		return fmt.Errorf("%w: volume %s lease remains held by node %s", ErrVolumeStillPublished, lease.VolumeID, lease.NodeID)
 	}
 	if strings.TrimSpace(req.Volume.ID) != "" {
 		exportID := ""
@@ -277,6 +285,9 @@ func (s *Service) ControllerPublishVolume(ctx context.Context, req ControllerPub
 	if err := req.Validate(); err != nil {
 		return PublishVolumeResult{}, err
 	}
+	if err := s.reconcileState(ctx, req.Volume.ID); err != nil {
+		return PublishVolumeResult{}, err
+	}
 	if err := s.recordVolumeMetadata(ctx, req.Volume, req.BlockSize, req.Transport, ""); err != nil {
 		return PublishVolumeResult{}, err
 	}
@@ -294,6 +305,9 @@ func (s *Service) ControllerPublishVolume(ctx context.Context, req ControllerPub
 			)
 		}
 	}
+	if err := s.acquireLease(ctx, req.Volume.ID, req.NodeID, hostNQN); err != nil {
+		return PublishVolumeResult{}, err
+	}
 	result, err := s.PublishVolume(ctx, NewPublishVolumeRequest(
 		req.Volume,
 		req.BlockSize,
@@ -301,9 +315,12 @@ func (s *Service) ControllerPublishVolume(ctx context.Context, req ControllerPub
 		hostNQN,
 	))
 	if err != nil {
+		_ = s.releaseLease(ctx, req.Volume.ID, req.NodeID, hostNQN)
 		return PublishVolumeResult{}, err
 	}
 	if err := s.recordVolumeMetadata(ctx, req.Volume, req.BlockSize, req.Transport, result.Export.ID); err != nil {
+		_ = s.UnpublishVolume(ctx, NewUnpublishVolumeRequest(result.Export.ID, hostNQN))
+		_ = s.releaseLease(ctx, req.Volume.ID, req.NodeID, hostNQN)
 		return PublishVolumeResult{}, err
 	}
 	if err := s.attachments.Put(ctx, Attachment{
@@ -312,8 +329,11 @@ func (s *Service) ControllerPublishVolume(ctx context.Context, req ControllerPub
 		HostNQN:  hostNQN,
 		ExportID: result.Export.ID,
 	}); err != nil {
+		_ = s.UnpublishVolume(ctx, NewUnpublishVolumeRequest(result.Export.ID, hostNQN))
+		_ = s.releaseLease(ctx, req.Volume.ID, req.NodeID, hostNQN)
 		return PublishVolumeResult{}, err
 	}
+	s.startLeaseRenewer(req.Volume.ID, req.NodeID, hostNQN)
 	return result, nil
 }
 
@@ -368,7 +388,11 @@ func (s *Service) ControllerUnpublishVolume(ctx context.Context, req ControllerU
 	if err := s.UnpublishVolume(ctx, NewUnpublishVolumeRequest(exportID, hostNQN)); err != nil {
 		return err
 	}
-	return s.attachments.Delete(ctx, req.VolumeID)
+	s.leaseRenewer.Stop(req.VolumeID)
+	if err := s.attachments.Delete(ctx, req.VolumeID); err != nil {
+		return err
+	}
+	return s.releaseLease(ctx, req.VolumeID, req.NodeID, hostNQN)
 }
 
 func (r CreateVolumeRequest) Validate() error {

@@ -7,21 +7,25 @@ import (
 )
 
 type Service struct {
-	opts           driver.Options
-	monitor        monitorclient.Client
-	exporter       exporterclient.Client
-	volumes        volumeStore
-	attachments    attachmentStore
-	defaultHostNQN string
+	opts            driver.Options
+	monitor         monitorclient.Client
+	exporter        exporterclient.Client
+	volumes         volumeStore
+	attachments     attachmentStore
+	leaseTTLSeconds int64
+	leaseRenewer    *leaseRenewer
+	defaultHostNQN  string
 }
 
 func New(opts driver.Options, monitor monitorclient.Client, exporter exporterclient.Client) *Service {
 	svc := &Service{
-		opts:        opts,
-		monitor:     monitor,
-		exporter:    exporter,
-		volumes:     newMemoryVolumeStore(),
-		attachments: newMemoryAttachmentStore(),
+		opts:            opts,
+		monitor:         monitor,
+		exporter:        exporter,
+		volumes:         newMemoryVolumeStore(),
+		attachments:     newMemoryAttachmentStore(),
+		leaseTTLSeconds: defaultLeaseTTLSeconds,
+		leaseRenewer:    newLeaseRenewer(),
 	}
 	if metadataClient, ok := monitor.(monitorclient.MetadataClient); ok {
 		svc.volumes = newMonitorVolumeStore(metadataClient)

@@ -25,8 +25,11 @@ type stubMetadataMonitorClient struct {
 	stubMonitorClient
 	volumeMetadata     map[string]monitorclient.VolumeMetadata
 	attachments        map[string]monitorclient.Attachment
+	leases             map[string]monitorclient.Lease
 	putVolumeCalls     int
 	putAttachmentCalls int
+	acquireLeaseCalls  int
+	releaseLeaseCalls  int
 }
 
 func (c *stubMonitorClient) CreateVolume(_ context.Context, req monitorclient.CreateVolumeRequest) (monitorclient.Volume, error) {
@@ -115,11 +118,62 @@ func (c *stubMetadataMonitorClient) DeleteAttachment(_ context.Context, volumeID
 	return nil
 }
 
+func (c *stubMetadataMonitorClient) AcquireLease(_ context.Context, lease monitorclient.Lease) (monitorclient.Lease, error) {
+	if c.leases == nil {
+		c.leases = map[string]monitorclient.Lease{}
+	}
+	if existing, ok := c.leases[lease.VolumeID]; ok {
+		if existing.NodeID != lease.NodeID || existing.HostNQN != lease.HostNQN {
+			return monitorclient.Lease{}, monitorclient.ErrLeaseConflict
+		}
+		c.acquireLeaseCalls++
+		return existing, nil
+	}
+	lease.LeaseID = int64(len(c.leases) + 1)
+	c.leases[lease.VolumeID] = lease
+	c.acquireLeaseCalls++
+	return lease, nil
+}
+
+func (c *stubMetadataMonitorClient) GetLease(_ context.Context, volumeID string) (monitorclient.Lease, error) {
+	lease, ok := c.leases[volumeID]
+	if !ok {
+		return monitorclient.Lease{}, monitorclient.ErrLeaseNotFound
+	}
+	return lease, nil
+}
+
+func (c *stubMetadataMonitorClient) RenewLease(_ context.Context, lease monitorclient.Lease) (monitorclient.Lease, error) {
+	existing, ok := c.leases[lease.VolumeID]
+	if !ok {
+		return monitorclient.Lease{}, monitorclient.ErrLeaseNotFound
+	}
+	if existing.NodeID != lease.NodeID || existing.HostNQN != lease.HostNQN {
+		return monitorclient.Lease{}, monitorclient.ErrLeaseConflict
+	}
+	return existing, nil
+}
+
+func (c *stubMetadataMonitorClient) ReleaseLease(_ context.Context, lease monitorclient.Lease) error {
+	existing, ok := c.leases[lease.VolumeID]
+	if !ok {
+		return nil
+	}
+	if existing.NodeID != lease.NodeID || existing.HostNQN != lease.HostNQN {
+		return monitorclient.ErrLeaseConflict
+	}
+	delete(c.leases, lease.VolumeID)
+	c.releaseLeaseCalls++
+	return nil
+}
+
 type stubExporterClient struct {
 	createReq exporterclient.CreateExportRequest
 	createCnt int
 	deleteID  string
 	deleteCnt int
+	getErr    error
+	getExport exporterclient.Export
 	allowID   string
 	allowNQN  string
 	allowCnt  int
@@ -139,6 +193,12 @@ func (c *stubExporterClient) CreateExport(_ context.Context, req exporterclient.
 }
 
 func (c *stubExporterClient) GetExport(_ context.Context, exportID string) (exporterclient.Export, error) {
+	if c.getErr != nil {
+		return exporterclient.Export{}, c.getErr
+	}
+	if c.getExport.ID != "" {
+		return c.getExport, nil
+	}
 	return exporterclient.Export{ID: exportID, NQN: "nqn.1", NSID: 1, Traddr: "10.0.0.1", Trsvcid: "4420"}, nil
 }
 
@@ -593,6 +653,70 @@ func TestNewUsesMonitorMetadataStoreWhenAvailable(t *testing.T) {
 	}
 	if monitor.putAttachmentCalls == 0 {
 		t.Fatal("expected attachment metadata writes")
+	}
+	if monitor.acquireLeaseCalls == 0 {
+		t.Fatal("expected lease acquire calls")
+	}
+}
+
+func TestDeleteVolumeRejectsActiveLease(t *testing.T) {
+	monitor := &stubMetadataMonitorClient{
+		leases: map[string]monitorclient.Lease{
+			"vol-1": {
+				VolumeID:   "vol-1",
+				NodeID:     "node-a",
+				HostNQN:    "nqn.host.1",
+				LeaseID:    1,
+				TTLSeconds: defaultLeaseTTLSeconds,
+			},
+		},
+	}
+	exporter := &stubExporterClient{}
+	svc := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+	err := svc.DeleteVolume(context.Background(), DeleteVolumeRequest{
+		Volume: monitorclient.VolumeRef{ID: "vol-1", Name: "img-a", Pool: "fb"},
+	})
+	if !errors.Is(err, ErrVolumeStillPublished) {
+		t.Fatalf("expected active lease to block delete, got %v", err)
+	}
+}
+
+func TestControllerPublishReconcilesStaleAttachmentWithoutLeaseOrExport(t *testing.T) {
+	monitor := &stubMetadataMonitorClient{
+		attachments: map[string]monitorclient.Attachment{
+			"vol-1": {
+				VolumeID: "vol-1",
+				NodeID:   "node-b",
+				HostNQN:  "nqn.host.old",
+				ExportID: "exp-stale",
+			},
+		},
+	}
+	exporter := &stubExporterClient{getErr: exporterclient.ErrNotFound}
+	svc := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+	volume := monitorclient.Volume{
+		ID:            "vol-1",
+		Name:          "img-a",
+		Pool:          "fb",
+		CapacityBytes: 1 << 20,
+		ObjectSize:    4 << 20,
+	}
+
+	if _, err := svc.ControllerPublishVolume(context.Background(), ControllerPublishRequest{
+		Volume:    volume,
+		BlockSize: 4096,
+		Transport: "rdma",
+		NodeID:    "node-a",
+		Secrets:   map[string]string{"hostNQN": "nqn.host.1"},
+	}); err != nil {
+		t.Fatalf("controller publish failed: %v", err)
+	}
+	attachment, err := monitor.GetAttachment(context.Background(), "vol-1")
+	if err != nil {
+		t.Fatalf("get attachment failed: %v", err)
+	}
+	if attachment.NodeID != "node-a" || attachment.HostNQN != "nqn.host.1" {
+		t.Fatalf("expected stale attachment to be replaced, got %+v", attachment)
 	}
 }
 
