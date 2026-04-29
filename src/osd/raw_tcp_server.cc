@@ -15,6 +15,7 @@
 
 #include <spdk/log.h>
 
+#include <algorithm>
 #include <arpa/inet.h>
 #include <endian.h>
 #include <google/protobuf/stubs/callback.h>
@@ -26,42 +27,14 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <exception>
+#include <functional>
 #include <limits>
 #include <mutex>
 #include <random>
 #include <string>
 #include <vector>
-
-namespace {
-
-constexpr uint32_t raw_magic = 0x46425257U;
-constexpr uint8_t raw_version_major = 1U;
-constexpr uint8_t raw_version_minor = 0U;
-constexpr uint8_t raw_service_osd = 2U;
-
-constexpr uint8_t raw_op_get_leader = 1U;
-constexpr uint8_t raw_op_read_object = 2U;
-constexpr uint8_t raw_op_write_object = 3U;
-constexpr uint8_t raw_op_delete_object = 4U;
-
-constexpr uint32_t raw_flag_response = 1U << 0;
-
-constexpr uint32_t raw_status_ok = 0U;
-constexpr uint32_t raw_status_invalid_request = 1U;
-constexpr uint32_t raw_status_not_found = 2U;
-constexpr uint32_t raw_status_stale_epoch = 3U;
-constexpr uint32_t raw_status_retry_later = 4U;
-constexpr uint32_t raw_status_not_leader = 5U;
-constexpr uint32_t raw_status_pg_initializing = 6U;
-constexpr uint32_t raw_status_osd_down = 7U;
-constexpr uint32_t raw_status_internal_error = 8U;
-
-constexpr int raw_backlog = 128;
-constexpr int raw_poll_timeout_ms = 1000;
-constexpr uint16_t min_raw_port = 10001U;
-constexpr uint16_t max_raw_port = 19999U;
-constexpr size_t max_raw_body_len = (4U * 1024U * 1024U) + 1024U;
 
 struct raw_header {
     uint32_t magic;
@@ -116,25 +89,77 @@ struct raw_delete_object_req {
     uint16_t reserved;
 } __attribute__((packed));
 
-class blocking_done : public google::protobuf::Closure {
-public:
-    void Run() override {
-        std::lock_guard<std::mutex> lk(_mutex);
-        _done = true;
-        _cv.notify_all();
-    }
+struct osd_raw_tcp_inflight_response {
+    raw_header request_header{};
+    std::vector<uint8_t> response_body{};
+    std::atomic<bool> detached{false};
+    std::atomic<bool> completed{false};
+    uint32_t status{0};
+};
 
-    void wait() {
-        std::unique_lock<std::mutex> lk(_mutex);
-        _cv.wait(lk, [this]() {
-            return _done;
-        });
+struct osd_raw_tcp_connection_state {
+    int fd{-1};
+    std::atomic<bool> stopping{false};
+    std::atomic<bool> reader_done{false};
+    std::atomic<uint64_t> requests_received{0};
+    std::atomic<uint64_t> responses_ready{0};
+    std::atomic<uint64_t> responses_sent{0};
+    std::atomic<uint64_t> responses_reordered{0};
+    std::atomic<uint64_t> callbacks_dropped{0};
+    std::atomic<uint64_t> protocol_errors{0};
+    std::mutex mutex{};
+    std::condition_variable cv{};
+    size_t peak_pending{0};
+    std::deque<std::shared_ptr<osd_raw_tcp_inflight_response>> pending{};
+    std::deque<std::shared_ptr<osd_raw_tcp_inflight_response>> ready{};
+};
+
+namespace {
+
+constexpr uint32_t raw_magic = 0x46425257U;
+constexpr uint8_t raw_version_major = 1U;
+constexpr uint8_t raw_version_minor = 0U;
+constexpr uint8_t raw_service_osd = 2U;
+
+constexpr uint8_t raw_op_get_leader = 1U;
+constexpr uint8_t raw_op_read_object = 2U;
+constexpr uint8_t raw_op_write_object = 3U;
+constexpr uint8_t raw_op_delete_object = 4U;
+
+constexpr uint32_t raw_flag_response = 1U << 0;
+
+constexpr uint32_t raw_status_ok = 0U;
+constexpr uint32_t raw_status_invalid_request = 1U;
+constexpr uint32_t raw_status_not_found = 2U;
+constexpr uint32_t raw_status_stale_epoch = 3U;
+constexpr uint32_t raw_status_retry_later = 4U;
+constexpr uint32_t raw_status_not_leader = 5U;
+constexpr uint32_t raw_status_pg_initializing = 6U;
+constexpr uint32_t raw_status_osd_down = 7U;
+constexpr uint32_t raw_status_internal_error = 8U;
+
+constexpr int raw_backlog = 128;
+constexpr int raw_poll_timeout_ms = 1000;
+constexpr uint16_t min_raw_port = 10001U;
+constexpr uint16_t max_raw_port = 19999U;
+constexpr size_t max_raw_body_len = (4U * 1024U * 1024U) + 1024U;
+constexpr size_t raw_max_inflight_requests = 128U;
+constexpr uint64_t raw_connection_summary_interval = 64U;
+
+class raw_async_done : public google::protobuf::Closure {
+public:
+    explicit raw_async_done(std::function<void()> fn)
+      : _fn(std::move(fn)) {}
+
+    void Run() override {
+        if (_fn) {
+            _fn();
+        }
+        delete this;
     }
 
 private:
-    std::mutex _mutex{};
-    std::condition_variable _cv{};
-    bool _done{false};
+    std::function<void()> _fn{};
 };
 
 uint16_t random_raw_port() {
@@ -327,64 +352,370 @@ int create_listener(const std::string& bind_address, uint16_t* port) noexcept {
     return -EADDRINUSE;
 }
 
-int execute_read(osd_service* service,
-                 uint32_t pool_id,
-                 uint32_t pg_id,
-                 const std::string& object_name,
-                 uint64_t offset,
-                 uint32_t length,
-                 std::string* data) {
-    osd::read_request req{};
-    osd::read_reply rsp{};
-    blocking_done done{};
+struct raw_read_context {
+    std::shared_ptr<osd_raw_tcp_connection_state> connection{};
+    std::shared_ptr<osd_raw_tcp_inflight_response> inflight{};
+    osd::read_request request{};
+    osd::read_reply response{};
+};
 
-    req.set_pool_id(pool_id);
-    req.set_pg_id(pg_id);
-    req.set_object_name(object_name);
-    req.set_offset(offset);
-    req.set_length(length);
-    service->process_read(nullptr, &req, &rsp, &done);
-    done.wait();
-    if (rsp.state() == err::E_SUCCESS && data) {
-        *data = rsp.data();
+struct raw_write_context {
+    std::shared_ptr<osd_raw_tcp_connection_state> connection{};
+    std::shared_ptr<osd_raw_tcp_inflight_response> inflight{};
+    osd::write_request request{};
+    osd::write_reply response{};
+};
+
+struct raw_delete_context {
+    std::shared_ptr<osd_raw_tcp_connection_state> connection{};
+    std::shared_ptr<osd_raw_tcp_inflight_response> inflight{};
+    osd::delete_request request{};
+    osd::delete_reply response{};
+};
+
+void notify_connection(const std::shared_ptr<osd_raw_tcp_connection_state>& connection) {
+    if (connection) {
+        connection->cv.notify_all();
     }
-    return rsp.state();
 }
 
-int execute_write(osd_service* service,
-                  uint32_t pool_id,
-                  uint32_t pg_id,
-                  const std::string& object_name,
-                  uint64_t offset,
-                  const std::string& data) {
-    osd::write_request req{};
-    osd::write_reply rsp{};
-    blocking_done done{};
+void stop_connection(const std::shared_ptr<osd_raw_tcp_connection_state>& connection) {
+    if (!connection) {
+        return;
+    }
 
-    req.set_pool_id(pool_id);
-    req.set_pg_id(pg_id);
-    req.set_object_name(object_name);
-    req.set_offset(offset);
-    req.set_data(data);
-    service->process_write(nullptr, &req, &rsp, &done);
-    done.wait();
-    return rsp.state();
+    connection->stopping.store(true, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lk(connection->mutex);
+        for (auto& inflight : connection->pending) {
+            if (inflight) {
+                inflight->detached.store(true, std::memory_order_release);
+            }
+        }
+        connection->ready.clear();
+    }
+    notify_connection(connection);
 }
 
-int execute_delete(osd_service* service,
-                   uint32_t pool_id,
-                   uint32_t pg_id,
-                   const std::string& object_name) {
-    osd::delete_request req{};
-    osd::delete_reply rsp{};
-    blocking_done done{};
+bool enqueue_inflight_response(
+  const std::shared_ptr<osd_raw_tcp_connection_state>& connection,
+  const std::shared_ptr<osd_raw_tcp_inflight_response>& inflight) {
+    if (!connection || !inflight) {
+        return false;
+    }
 
-    req.set_pool_id(pool_id);
-    req.set_pg_id(pg_id);
-    req.set_object_name(object_name);
-    service->process_delete(nullptr, &req, &rsp, &done);
-    done.wait();
-    return rsp.state();
+    std::unique_lock<std::mutex> lk(connection->mutex);
+    connection->cv.wait(lk, [&connection]() {
+        return connection->stopping.load(std::memory_order_acquire) ||
+               connection->pending.size() < raw_max_inflight_requests;
+    });
+    if (connection->stopping.load(std::memory_order_acquire)) {
+        return false;
+    }
+
+    connection->pending.push_back(inflight);
+    connection->requests_received.fetch_add(1, std::memory_order_relaxed);
+    if (connection->pending.size() > connection->peak_pending) {
+        connection->peak_pending = connection->pending.size();
+    }
+    lk.unlock();
+    notify_connection(connection);
+    return true;
+}
+
+void complete_inflight_response(
+  const std::shared_ptr<osd_raw_tcp_connection_state>& connection,
+  const std::shared_ptr<osd_raw_tcp_inflight_response>& inflight,
+  const uint32_t status,
+  std::vector<uint8_t> response_body = {}) {
+    if (!connection || !inflight) {
+        return;
+    }
+    if (inflight->detached.load(std::memory_order_acquire) ||
+        connection->stopping.load(std::memory_order_acquire) ||
+        inflight->completed.load(std::memory_order_acquire)) {
+        connection->callbacks_dropped.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(connection->mutex);
+        if (inflight->detached.load(std::memory_order_acquire) ||
+            connection->stopping.load(std::memory_order_acquire) ||
+            inflight->completed.load(std::memory_order_acquire)) {
+            connection->callbacks_dropped.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        inflight->status = status;
+        inflight->response_body = std::move(response_body);
+        inflight->completed.store(true, std::memory_order_release);
+        connection->ready.push_back(inflight);
+    }
+    connection->responses_ready.fetch_add(1, std::memory_order_relaxed);
+    notify_connection(connection);
+}
+
+std::vector<uint8_t> build_leader_response_body(const osd_service::leader_endpoint& leader) {
+    raw_get_leader_rsp rsp{};
+    std::vector<uint8_t> body(sizeof(rsp) + leader.leader_addr.size());
+
+    rsp.leader_id = htole32(static_cast<uint32_t>(leader.leader_id));
+    rsp.leader_port = htole16(static_cast<uint16_t>(leader.leader_port));
+    rsp.address_len = htole16(static_cast<uint16_t>(leader.leader_addr.size()));
+    std::memcpy(body.data(), &rsp, sizeof(rsp));
+    if (!leader.leader_addr.empty()) {
+        std::memcpy(body.data() + sizeof(rsp),
+                    leader.leader_addr.data(),
+                    leader.leader_addr.size());
+    }
+
+    return body;
+}
+
+std::vector<uint8_t> build_read_response_body(const std::string& data) {
+    raw_read_object_rsp rsp{};
+    std::vector<uint8_t> body(sizeof(rsp) + data.size());
+
+    rsp.data_len = htole32(static_cast<uint32_t>(data.size()));
+    rsp.reserved = 0;
+    std::memcpy(body.data(), &rsp, sizeof(rsp));
+    if (!data.empty()) {
+        std::memcpy(body.data() + sizeof(rsp), data.data(), data.size());
+    }
+
+    return body;
+}
+
+void dispatch_get_leader_request(
+  osd_service* service,
+  const std::shared_ptr<osd_raw_tcp_connection_state>& connection,
+  const std::shared_ptr<osd_raw_tcp_inflight_response>& inflight,
+  const std::vector<uint8_t>& body) {
+    raw_get_leader_req req{};
+    osd_service::leader_endpoint leader{};
+
+    if (!service || !inflight) {
+        complete_inflight_response(connection, inflight, raw_status_internal_error);
+        return;
+    }
+    if (body.size() != sizeof(req)) {
+        complete_inflight_response(connection, inflight, raw_status_invalid_request);
+        return;
+    }
+
+    std::memcpy(&req, body.data(), sizeof(req));
+    leader = service->resolve_pg_leader(le32toh(req.pool_id), le32toh(req.pg_id), true);
+    if (leader.state != err::E_SUCCESS) {
+        complete_inflight_response(
+          connection,
+          inflight,
+          static_cast<uint32_t>(raw_status_from_errno(leader.state)));
+        return;
+    }
+    if (leader.leader_port <= 0 ||
+        leader.leader_port > std::numeric_limits<uint16_t>::max() ||
+        leader.leader_id < 0 ||
+        leader.leader_addr.size() > std::numeric_limits<uint16_t>::max()) {
+        complete_inflight_response(connection, inflight, raw_status_internal_error);
+        return;
+    }
+
+    complete_inflight_response(connection,
+                               inflight,
+                               raw_status_ok,
+                               build_leader_response_body(leader));
+}
+
+void dispatch_read_request(
+  osd_service* service,
+  const std::shared_ptr<osd_raw_tcp_connection_state>& connection,
+  const std::shared_ptr<osd_raw_tcp_inflight_response>& inflight,
+  const std::vector<uint8_t>& body) {
+    raw_read_object_req req{};
+    auto ctx = std::make_shared<raw_read_context>();
+    uint16_t object_name_len{};
+
+    if (!service || !inflight) {
+        complete_inflight_response(connection, inflight, raw_status_internal_error);
+        return;
+    }
+    if (body.size() < sizeof(req)) {
+        complete_inflight_response(connection, inflight, raw_status_invalid_request);
+        return;
+    }
+
+    std::memcpy(&req, body.data(), sizeof(req));
+    object_name_len = le16toh(req.object_name_len);
+    if (body.size() != sizeof(req) + object_name_len || object_name_len == 0) {
+        complete_inflight_response(connection, inflight, raw_status_invalid_request);
+        return;
+    }
+
+    ctx->connection = connection;
+    ctx->inflight = inflight;
+    ctx->request.set_pool_id(le32toh(req.pool_id));
+    ctx->request.set_pg_id(le32toh(req.pg_id));
+    ctx->request.set_offset(le64toh(req.offset));
+    ctx->request.set_length(le32toh(req.length));
+    ctx->request.set_object_name(
+      reinterpret_cast<const char*>(body.data() + sizeof(req)),
+      object_name_len);
+    service->process_read(
+      nullptr,
+      &ctx->request,
+      &ctx->response,
+      new raw_async_done([ctx]() {
+          const auto state = ctx->response.state();
+
+          if (state != err::E_SUCCESS) {
+              complete_inflight_response(
+                ctx->connection,
+                ctx->inflight,
+                static_cast<uint32_t>(raw_status_from_errno(state)));
+              return;
+          }
+          if (ctx->response.data().size() >
+              max_raw_body_len - sizeof(raw_read_object_rsp)) {
+              complete_inflight_response(
+                ctx->connection,
+                ctx->inflight,
+                raw_status_internal_error);
+              return;
+          }
+
+          complete_inflight_response(ctx->connection,
+                                     ctx->inflight,
+                                     raw_status_ok,
+                                     build_read_response_body(ctx->response.data()));
+      }));
+}
+
+void dispatch_write_request(
+  osd_service* service,
+  const std::shared_ptr<osd_raw_tcp_connection_state>& connection,
+  const std::shared_ptr<osd_raw_tcp_inflight_response>& inflight,
+  const std::vector<uint8_t>& body) {
+    raw_write_object_req req{};
+    auto ctx = std::make_shared<raw_write_context>();
+    uint16_t object_name_len{};
+    uint32_t data_len{};
+
+    if (!service || !inflight) {
+        complete_inflight_response(connection, inflight, raw_status_internal_error);
+        return;
+    }
+    if (body.size() < sizeof(req)) {
+        complete_inflight_response(connection, inflight, raw_status_invalid_request);
+        return;
+    }
+
+    std::memcpy(&req, body.data(), sizeof(req));
+    object_name_len = le16toh(req.object_name_len);
+    data_len = le32toh(req.data_len);
+    if (body.size() != sizeof(req) + object_name_len + data_len ||
+        object_name_len == 0) {
+        complete_inflight_response(connection, inflight, raw_status_invalid_request);
+        return;
+    }
+
+    ctx->connection = connection;
+    ctx->inflight = inflight;
+    ctx->request.set_pool_id(le32toh(req.pool_id));
+    ctx->request.set_pg_id(le32toh(req.pg_id));
+    ctx->request.set_offset(le64toh(req.offset));
+    ctx->request.set_object_name(
+      reinterpret_cast<const char*>(body.data() + sizeof(req)),
+      object_name_len);
+    ctx->request.set_data(
+      reinterpret_cast<const char*>(body.data() + sizeof(req) + object_name_len),
+      data_len);
+    service->process_write(
+      nullptr,
+      &ctx->request,
+      &ctx->response,
+      new raw_async_done([ctx]() {
+          complete_inflight_response(
+            ctx->connection,
+            ctx->inflight,
+            static_cast<uint32_t>(raw_status_from_errno(ctx->response.state())));
+      }));
+}
+
+void dispatch_delete_request(
+  osd_service* service,
+  const std::shared_ptr<osd_raw_tcp_connection_state>& connection,
+  const std::shared_ptr<osd_raw_tcp_inflight_response>& inflight,
+  const std::vector<uint8_t>& body) {
+    raw_delete_object_req req{};
+    auto ctx = std::make_shared<raw_delete_context>();
+    uint16_t object_name_len{};
+
+    if (!service || !inflight) {
+        complete_inflight_response(connection, inflight, raw_status_internal_error);
+        return;
+    }
+    if (body.size() < sizeof(req)) {
+        complete_inflight_response(connection, inflight, raw_status_invalid_request);
+        return;
+    }
+
+    std::memcpy(&req, body.data(), sizeof(req));
+    object_name_len = le16toh(req.object_name_len);
+    if (body.size() != sizeof(req) + object_name_len || object_name_len == 0) {
+        complete_inflight_response(connection, inflight, raw_status_invalid_request);
+        return;
+    }
+
+    ctx->connection = connection;
+    ctx->inflight = inflight;
+    ctx->request.set_pool_id(le32toh(req.pool_id));
+    ctx->request.set_pg_id(le32toh(req.pg_id));
+    ctx->request.set_object_name(
+      reinterpret_cast<const char*>(body.data() + sizeof(req)),
+      object_name_len);
+    service->process_delete(
+      nullptr,
+      &ctx->request,
+      &ctx->response,
+      new raw_async_done([ctx]() {
+          complete_inflight_response(
+            ctx->connection,
+            ctx->inflight,
+            static_cast<uint32_t>(raw_status_from_errno(ctx->response.state())));
+      }));
+}
+
+void dispatch_request(
+  osd_service* service,
+  const std::shared_ptr<osd_raw_tcp_connection_state>& connection,
+  const std::shared_ptr<osd_raw_tcp_inflight_response>& inflight,
+  const std::vector<uint8_t>& body) {
+    if (!inflight) {
+        return;
+    }
+    if (!validate_request_header(inflight->request_header)) {
+        connection->protocol_errors.fetch_add(1, std::memory_order_relaxed);
+        complete_inflight_response(connection, inflight, raw_status_invalid_request);
+        return;
+    }
+
+    switch (inflight->request_header.opcode) {
+    case raw_op_get_leader:
+        dispatch_get_leader_request(service, connection, inflight, body);
+        return;
+    case raw_op_read_object:
+        dispatch_read_request(service, connection, inflight, body);
+        return;
+    case raw_op_write_object:
+        dispatch_write_request(service, connection, inflight, body);
+        return;
+    case raw_op_delete_object:
+        dispatch_delete_request(service, connection, inflight, body);
+        return;
+    default:
+        complete_inflight_response(connection, inflight, raw_status_invalid_request);
+        return;
+    }
 }
 
 } // namespace
@@ -424,6 +755,7 @@ void osd_raw_tcp_server::stop() noexcept {
     {
         std::lock_guard<std::mutex> lk(_connections_mutex);
         for (auto& conn : _connections) {
+            stop_connection(conn->state);
             if (conn->fd >= 0) {
                 ::shutdown(conn->fd, SHUT_RDWR);
                 ::close(conn->fd);
@@ -514,12 +846,57 @@ void osd_raw_tcp_server::cleanup_finished_connections() noexcept {
         if ((*it)->worker.joinable()) {
             (*it)->worker.join();
         }
+        if ((*it)->writer.joinable()) {
+            (*it)->writer.join();
+        }
+        (*it)->state.reset();
         it = _connections.erase(it);
     }
 }
 
+void osd_raw_tcp_server::log_connection_summary(const uint32_t shard_id) noexcept {
+    uint64_t requests = 0;
+    uint64_t ready = 0;
+    uint64_t sent = 0;
+    uint64_t reordered = 0;
+    size_t active = 0;
+    size_t pending = 0;
+    size_t ready_depth = 0;
+
+    std::lock_guard<std::mutex> lk(_connections_mutex);
+    for (const auto& conn : _connections) {
+        if (!conn || conn->done.load(std::memory_order_acquire) || !conn->state) {
+            continue;
+        }
+        active++;
+        requests += conn->state->requests_received.load(std::memory_order_relaxed);
+        ready += conn->state->responses_ready.load(std::memory_order_relaxed);
+        sent += conn->state->responses_sent.load(std::memory_order_relaxed);
+        reordered += conn->state->responses_reordered.load(std::memory_order_relaxed);
+        pending += conn->state->pending.size();
+        ready_depth += conn->state->ready.size();
+    }
+
+    if (!active) {
+        return;
+    }
+
+    SPDK_NOTICELOG(
+      "raw TCP shard %u summary: active=%zu pending=%zu ready=%zu recv=%llu ready_rsp=%llu sent=%llu reordered=%llu\n",
+      shard_id,
+      active,
+      pending,
+      ready_depth,
+      static_cast<unsigned long long>(requests),
+      static_cast<unsigned long long>(ready),
+      static_cast<unsigned long long>(sent),
+      static_cast<unsigned long long>(reordered));
+}
+
 void osd_raw_tcp_server::run_listener(const uint32_t shard_id) noexcept {
     auto& listener = _listeners.at(shard_id);
+    uint64_t accept_count = 0;
+
     while (_running.load(std::memory_order_acquire)) {
         if (!wait_for_fd(listener.fd, POLLIN, _running)) {
             continue;
@@ -565,13 +942,78 @@ void osd_raw_tcp_server::run_listener(const uint32_t shard_id) noexcept {
             std::lock_guard<std::mutex> lk(_connections_mutex);
             _connections.push_back(std::move(conn));
         }
+        accept_count++;
+        if (accept_count % raw_connection_summary_interval == 0) {
+            log_connection_summary(shard_id);
+        }
     }
 
     cleanup_finished_connections();
 }
 
+void osd_raw_tcp_server::write_connection_responses(
+  std::shared_ptr<osd_raw_tcp_connection_state> state,
+  const uint32_t shard_id) noexcept {
+    if (!state) {
+        return;
+    }
+
+    while (_running.load(std::memory_order_acquire)) {
+        std::shared_ptr<osd_raw_tcp_inflight_response> inflight{};
+        bool reordered = false;
+
+        {
+            std::unique_lock<std::mutex> lk(state->mutex);
+            state->cv.wait(lk, [&state]() {
+                return state->stopping.load(std::memory_order_acquire) ||
+                       (state->reader_done.load(std::memory_order_acquire) &&
+                        state->pending.empty()) ||
+                       !state->ready.empty();
+            });
+            if (state->stopping.load(std::memory_order_acquire)) {
+                break;
+            }
+            if (state->reader_done.load(std::memory_order_acquire) &&
+                state->pending.empty()) {
+                break;
+            }
+            if (state->ready.empty()) {
+                continue;
+            }
+
+            inflight = state->ready.front();
+            state->ready.pop_front();
+            auto it = std::find(state->pending.begin(), state->pending.end(),
+                                inflight);
+            if (it == state->pending.end()) {
+                continue;
+            }
+            reordered = it != state->pending.begin();
+            state->pending.erase(it);
+        }
+        notify_connection(state);
+
+        inflight->request_header.status = htole32(inflight->status);
+        if (!write_message(state->fd,
+                           inflight->request_header,
+                           inflight->response_body.data(),
+                           inflight->response_body.size(),
+                           _running)) {
+            stop_connection(state);
+            break;
+        }
+        state->responses_sent.fetch_add(1, std::memory_order_relaxed);
+        if (reordered) {
+            state->responses_reordered.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    SPDK_NOTICELOG("Stopped raw TCP writer on shard %u\n", shard_id);
+}
+
 void osd_raw_tcp_server::handle_connection(connection_context *conn, const uint32_t shard_id) noexcept {
     auto client_fd = conn ? conn->fd : -1;
+    auto state = std::shared_ptr<osd_raw_tcp_connection_state>{};
 
     if (client_fd < 0) {
         if (conn) {
@@ -580,17 +1022,34 @@ void osd_raw_tcp_server::handle_connection(connection_context *conn, const uint3
         return;
     }
 
-    while (_running.load(std::memory_order_acquire)) {
+    state = std::make_shared<osd_raw_tcp_connection_state>();
+    state->fd = client_fd;
+    conn->state = state;
+    try {
+        conn->writer = std::thread([this, shard_id, state]() {
+            write_connection_responses(state, shard_id);
+        });
+    } catch (const std::exception& e) {
+        SPDK_ERRLOG(
+          "ERROR: create raw TCP writer on shard %u failed: %s\n",
+          shard_id,
+          e.what());
+        stop_connection(state);
+        ::shutdown(client_fd, SHUT_RDWR);
+        ::close(client_fd);
+        conn->fd = -1;
+        conn->state.reset();
+        conn->done.store(true, std::memory_order_release);
+        return;
+    }
+
+    while (_running.load(std::memory_order_acquire) &&
+           !state->stopping.load(std::memory_order_acquire)) {
         raw_header req_hdr{};
+        std::shared_ptr<osd_raw_tcp_inflight_response> inflight{};
+
         if (!recv_all(client_fd, &req_hdr, sizeof(req_hdr), _running)) {
             break;
-        }
-
-        if (!validate_request_header(req_hdr)) {
-            if (!write_error_response(client_fd, req_hdr, raw_status_invalid_request, _running)) {
-                break;
-            }
-            continue;
         }
 
         const auto body_len = le32toh(req_hdr.body_len);
@@ -599,232 +1058,38 @@ void osd_raw_tcp_server::handle_connection(connection_context *conn, const uint3
             break;
         }
 
-        if (req_hdr.opcode != raw_op_get_leader) {
-            if (req_hdr.opcode == raw_op_read_object) {
-                raw_read_object_req req{};
-                raw_read_object_rsp rsp{};
-                std::string data{};
-                std::string object_name{};
-                uint16_t object_name_len{};
-                uint32_t length{};
-                int state{};
-
-                if (body.size() < sizeof(req)) {
-                    if (!write_error_response(client_fd, req_hdr, raw_status_invalid_request, _running)) {
-                        break;
-                    }
-                    continue;
-                }
-
-                std::memcpy(&req, body.data(), sizeof(req));
-                object_name_len = le16toh(req.object_name_len);
-                length = le32toh(req.length);
-                if (body.size() != sizeof(req) + object_name_len || object_name_len == 0) {
-                    if (!write_error_response(client_fd, req_hdr, raw_status_invalid_request, _running)) {
-                        break;
-                    }
-                    continue;
-                }
-
-                object_name.assign(
-                  reinterpret_cast<const char*>(body.data() + sizeof(req)),
-                  object_name_len);
-                state = execute_read(
-                  _service,
-                  le32toh(req.pool_id),
-                  le32toh(req.pg_id),
-                  object_name,
-                  le64toh(req.offset),
-                  length,
-                  &data);
-                if (state != err::E_SUCCESS) {
-                    if (!write_error_response(
-                          client_fd,
-                          req_hdr,
-                          static_cast<uint32_t>(raw_status_from_errno(state)),
-                          _running)) {
-                        break;
-                    }
-                    continue;
-                }
-
-                rsp.data_len = htole32(static_cast<uint32_t>(data.size()));
-                rsp.reserved = 0;
-                std::vector<uint8_t> rsp_body(sizeof(rsp) + data.size());
-                std::memcpy(rsp_body.data(), &rsp, sizeof(rsp));
-                if (!data.empty()) {
-                    std::memcpy(rsp_body.data() + sizeof(rsp), data.data(), data.size());
-                }
-                req_hdr.status = htole32(raw_status_ok);
-                if (!write_message(client_fd, req_hdr, rsp_body.data(), rsp_body.size(), _running)) {
-                    break;
-                }
-                continue;
-            }
-
-            if (req_hdr.opcode == raw_op_write_object) {
-                raw_write_object_req req{};
-                std::string object_name{};
-                std::string data{};
-                uint16_t object_name_len{};
-                uint32_t data_len{};
-                int state{};
-
-                if (body.size() < sizeof(req)) {
-                    if (!write_error_response(client_fd, req_hdr, raw_status_invalid_request, _running)) {
-                        break;
-                    }
-                    continue;
-                }
-
-                std::memcpy(&req, body.data(), sizeof(req));
-                object_name_len = le16toh(req.object_name_len);
-                data_len = le32toh(req.data_len);
-                if (body.size() != sizeof(req) + object_name_len + data_len || object_name_len == 0) {
-                    if (!write_error_response(client_fd, req_hdr, raw_status_invalid_request, _running)) {
-                        break;
-                    }
-                    continue;
-                }
-
-                object_name.assign(
-                  reinterpret_cast<const char*>(body.data() + sizeof(req)),
-                  object_name_len);
-                data.assign(
-                  reinterpret_cast<const char*>(body.data() + sizeof(req) + object_name_len),
-                  data_len);
-                state = execute_write(
-                  _service,
-                  le32toh(req.pool_id),
-                  le32toh(req.pg_id),
-                  object_name,
-                  le64toh(req.offset),
-                  data);
-                if (state != err::E_SUCCESS) {
-                    if (!write_error_response(
-                          client_fd,
-                          req_hdr,
-                          static_cast<uint32_t>(raw_status_from_errno(state)),
-                          _running)) {
-                        break;
-                    }
-                    continue;
-                }
-
-                req_hdr.status = htole32(raw_status_ok);
-                if (!write_message(client_fd, req_hdr, nullptr, 0, _running)) {
-                    break;
-                }
-                continue;
-            }
-
-            if (req_hdr.opcode == raw_op_delete_object) {
-                raw_delete_object_req req{};
-                std::string object_name{};
-                uint16_t object_name_len{};
-                int state{};
-
-                if (body.size() < sizeof(req)) {
-                    if (!write_error_response(client_fd, req_hdr, raw_status_invalid_request, _running)) {
-                        break;
-                    }
-                    continue;
-                }
-
-                std::memcpy(&req, body.data(), sizeof(req));
-                object_name_len = le16toh(req.object_name_len);
-                if (body.size() != sizeof(req) + object_name_len || object_name_len == 0) {
-                    if (!write_error_response(client_fd, req_hdr, raw_status_invalid_request, _running)) {
-                        break;
-                    }
-                    continue;
-                }
-
-                object_name.assign(
-                  reinterpret_cast<const char*>(body.data() + sizeof(req)),
-                  object_name_len);
-                state = execute_delete(
-                  _service,
-                  le32toh(req.pool_id),
-                  le32toh(req.pg_id),
-                  object_name);
-                if (state != err::E_SUCCESS) {
-                    if (!write_error_response(
-                          client_fd,
-                          req_hdr,
-                          static_cast<uint32_t>(raw_status_from_errno(state)),
-                          _running)) {
-                        break;
-                    }
-                    continue;
-                }
-
-                req_hdr.status = htole32(raw_status_ok);
-                if (!write_message(client_fd, req_hdr, nullptr, 0, _running)) {
-                    break;
-                }
-                continue;
-            }
-
-            if (!write_error_response(client_fd, req_hdr, raw_status_invalid_request, _running)) {
-                break;
-            }
-            continue;
-        }
-
-        if (body.size() != sizeof(raw_get_leader_req)) {
-            if (!write_error_response(client_fd, req_hdr, raw_status_invalid_request, _running)) {
-                break;
-            }
-            continue;
-        }
-
-        raw_get_leader_req req{};
-        std::memcpy(&req, body.data(), sizeof(req));
-        auto leader = _service->resolve_pg_leader(le32toh(req.pool_id), le32toh(req.pg_id), true);
-        if (leader.state != err::E_SUCCESS) {
-            if (!write_error_response(
-                  client_fd,
-                  req_hdr,
-                  static_cast<uint32_t>(raw_status_from_errno(leader.state)),
-                  _running)) {
-                break;
-            }
-            continue;
-        }
-
-        if (leader.leader_port <= 0 ||
-            leader.leader_port > std::numeric_limits<uint16_t>::max() ||
-            leader.leader_id < 0 ||
-            leader.leader_addr.size() > std::numeric_limits<uint16_t>::max()) {
-            if (!write_error_response(client_fd, req_hdr, raw_status_internal_error, _running)) {
-                break;
-            }
-            continue;
-        }
-
-        std::vector<uint8_t> rsp_body(sizeof(raw_get_leader_rsp) + leader.leader_addr.size());
-        raw_get_leader_rsp rsp{};
-        rsp.leader_id = htole32(static_cast<uint32_t>(leader.leader_id));
-        rsp.leader_port = htole16(static_cast<uint16_t>(leader.leader_port));
-        rsp.address_len = htole16(static_cast<uint16_t>(leader.leader_addr.size()));
-        std::memcpy(rsp_body.data(), &rsp, sizeof(rsp));
-        std::memcpy(
-          rsp_body.data() + sizeof(rsp),
-          leader.leader_addr.data(),
-          leader.leader_addr.size());
-
-        req_hdr.status = htole32(raw_status_ok);
-        if (!write_message(client_fd, req_hdr, rsp_body.data(), rsp_body.size(), _running)) {
+        inflight = std::make_shared<osd_raw_tcp_inflight_response>();
+        inflight->request_header = req_hdr;
+        inflight->status = raw_status_internal_error;
+        if (!enqueue_inflight_response(state, inflight)) {
             break;
         }
+
+        dispatch_request(_service, state, inflight, body);
     }
 
+    state->reader_done.store(true, std::memory_order_release);
+    stop_connection(state);
+    if (conn->writer.joinable()) {
+        conn->writer.join();
+    }
     ::shutdown(client_fd, SHUT_RDWR);
     ::close(client_fd);
     if (conn) {
         conn->fd = -1;
+        conn->state.reset();
         conn->done.store(true, std::memory_order_release);
     }
-    SPDK_NOTICELOG("Closed raw TCP connection on shard %u\n", shard_id);
+    SPDK_NOTICELOG(
+      "Closed raw TCP connection on shard %u: recv=%llu ready=%llu sent=%llu reordered=%llu callbacks_dropped=%llu protocol_errors=%llu peak_pending=%zu pending_left=%zu ready_left=%zu\n",
+      shard_id,
+      static_cast<unsigned long long>(state->requests_received.load(std::memory_order_relaxed)),
+      static_cast<unsigned long long>(state->responses_ready.load(std::memory_order_relaxed)),
+      static_cast<unsigned long long>(state->responses_sent.load(std::memory_order_relaxed)),
+      static_cast<unsigned long long>(state->responses_reordered.load(std::memory_order_relaxed)),
+      static_cast<unsigned long long>(state->callbacks_dropped.load(std::memory_order_relaxed)),
+      static_cast<unsigned long long>(state->protocol_errors.load(std::memory_order_relaxed)),
+      state->peak_pending,
+      state->pending.size(),
+      state->ready.size());
 }
