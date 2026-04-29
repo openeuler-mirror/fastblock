@@ -1152,8 +1152,11 @@ static void kfastblock_transport_finish_exchange(
 	}
 	if (!kfastblock_transport_lookup_response_header_object(
 		    ctx, rsp_hdr, &response_seq, &matched_object))
-		(void)kfastblock_request_record_object_response_by_seq(
-			ctx->kf_req, response_seq, status, body_len, flags);
+		kfastblock_request_record_object_response(ctx->kf_req,
+							  matched_object,
+							  status,
+							  body_len,
+							  flags);
 	else
 		kfastblock_request_record_object_response(ctx->kf_req,
 							  ctx->object_index,
