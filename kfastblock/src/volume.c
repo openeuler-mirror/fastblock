@@ -438,6 +438,17 @@ static blk_status_t kfastblock_queue_rq(struct blk_mq_hw_ctx *hctx,
 		blk_mq_end_request(rq, BLK_STS_IOERR);
 		return BLK_STS_IOERR;
 	}
+	if (vol->view.image.read_only) {
+		switch (req_op(rq)) {
+		case REQ_OP_WRITE:
+		case REQ_OP_WRITE_ZEROES:
+		case REQ_OP_DISCARD:
+			blk_mq_end_request(rq, BLK_STS_IOERR);
+			return BLK_STS_IOERR;
+		default:
+			break;
+		}
+	}
 
 	kf_req->status = 0;
 	kfastblock_request_init(kf_req, vol, rq);
