@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"fastblock-csi/pkg/driver"
@@ -48,15 +49,20 @@ func (c *stubMonitorClient) ExpandVolume(_ context.Context, ref monitorclient.Vo
 
 type stubExporterClient struct {
 	createReq exporterclient.CreateExportRequest
+	createCnt int
 	deleteID  string
+	deleteCnt int
 	allowID   string
 	allowNQN  string
+	allowCnt  int
 	denyID    string
 	denyNQN   string
+	denyCnt   int
 }
 
 func (c *stubExporterClient) CreateExport(_ context.Context, req exporterclient.CreateExportRequest) (exporterclient.Export, error) {
 	c.createReq = req
+	c.createCnt++
 	exportID, err := exporterclient.ExportIDForVolume(req.VolumeID)
 	if err != nil {
 		return exporterclient.Export{}, err
@@ -70,18 +76,21 @@ func (c *stubExporterClient) GetExport(_ context.Context, exportID string) (expo
 
 func (c *stubExporterClient) DeleteExport(_ context.Context, exportID string) error {
 	c.deleteID = exportID
+	c.deleteCnt++
 	return nil
 }
 
 func (c *stubExporterClient) AllowHost(_ context.Context, exportID, hostNQN string) error {
 	c.allowID = exportID
 	c.allowNQN = hostNQN
+	c.allowCnt++
 	return nil
 }
 
 func (c *stubExporterClient) DenyHost(_ context.Context, exportID, hostNQN string) error {
 	c.denyID = exportID
 	c.denyNQN = hostNQN
+	c.denyCnt++
 	return nil
 }
 
@@ -219,13 +228,14 @@ func TestControllerPublishRequestUsesHostNQNPrecedence(t *testing.T) {
 	}
 
 	if err := svc.ControllerUnpublishVolume(context.Background(), ControllerUnpublishRequest{
+		VolumeID: "fbvolname:fb:img-a",
 		ExportID: "exp-1",
 		NodeID:   "node-a",
 	}); err != nil {
 		t.Fatalf("controller unpublish failed: %v", err)
 	}
-	if exporter.denyNQN != "node-a" {
-		t.Fatalf("expected node id fallback hostNQN, got %q", exporter.denyNQN)
+	if exporter.denyNQN != "nqn.secret" {
+		t.Fatalf("expected stored hostNQN on unpublish, got %q", exporter.denyNQN)
 	}
 }
 
@@ -259,6 +269,7 @@ func TestControllerPublishUsesDefaultHostNQN(t *testing.T) {
 	}
 
 	if err := svc.ControllerUnpublishVolume(context.Background(), ControllerUnpublishRequest{
+		VolumeID: "fbvolname:fb:img-a",
 		ExportID: "exp-1",
 		NodeID:   "node-a",
 	}); err != nil {
@@ -269,6 +280,145 @@ func TestControllerPublishUsesDefaultHostNQN(t *testing.T) {
 	}
 }
 
+func TestControllerPublishIsIdempotentOnSameNode(t *testing.T) {
+	monitor := &stubMonitorClient{}
+	exporter := &stubExporterClient{}
+	svc := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+	volume := monitorclient.Volume{
+		ID:            "fbvolname:fb:img-a",
+		Name:          "img-a",
+		Pool:          "fb",
+		CapacityBytes: 1 << 20,
+		ObjectSize:    4 << 20,
+	}
+
+	first, err := svc.ControllerPublishVolume(context.Background(), ControllerPublishRequest{
+		Volume:    volume,
+		BlockSize: 4096,
+		Transport: "rdma",
+		NodeID:    "node-a",
+		Secrets:   map[string]string{"hostNQN": "nqn.host.1"},
+	})
+	if err != nil {
+		t.Fatalf("first controller publish failed: %v", err)
+	}
+	second, err := svc.ControllerPublishVolume(context.Background(), ControllerPublishRequest{
+		Volume:    volume,
+		BlockSize: 4096,
+		Transport: "rdma",
+		NodeID:    "node-a",
+		Secrets:   map[string]string{"hostNQN": "nqn.host.1"},
+	})
+	if err != nil {
+		t.Fatalf("second controller publish failed: %v", err)
+	}
+	if first.Export.ID != second.Export.ID {
+		t.Fatalf("expected same export id, got %q and %q", first.Export.ID, second.Export.ID)
+	}
+	if exporter.createCnt != 2 || exporter.allowCnt != 2 {
+		t.Fatalf("expected idempotent exporter calls to succeed twice, got create=%d allow=%d", exporter.createCnt, exporter.allowCnt)
+	}
+}
+
+func TestControllerPublishRejectsDifferentNodeAttachment(t *testing.T) {
+	monitor := &stubMonitorClient{}
+	exporter := &stubExporterClient{}
+	svc := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+	volume := monitorclient.Volume{
+		ID:            "fbvolname:fb:img-a",
+		Name:          "img-a",
+		Pool:          "fb",
+		CapacityBytes: 1 << 20,
+		ObjectSize:    4 << 20,
+	}
+
+	if _, err := svc.ControllerPublishVolume(context.Background(), ControllerPublishRequest{
+		Volume:    volume,
+		BlockSize: 4096,
+		Transport: "rdma",
+		NodeID:    "node-a",
+		Secrets:   map[string]string{"hostNQN": "nqn.host.1"},
+	}); err != nil {
+		t.Fatalf("initial controller publish failed: %v", err)
+	}
+	if _, err := svc.ControllerPublishVolume(context.Background(), ControllerPublishRequest{
+		Volume:    volume,
+		BlockSize: 4096,
+		Transport: "rdma",
+		NodeID:    "node-b",
+		Secrets:   map[string]string{"hostNQN": "nqn.host.2"},
+	}); !errors.Is(err, ErrVolumePublishedToAnotherNode) {
+		t.Fatalf("expected attachment conflict, got %v", err)
+	}
+	if exporter.createCnt != 1 || exporter.allowCnt != 1 {
+		t.Fatalf("expected conflicting publish to stop before exporter call, got create=%d allow=%d", exporter.createCnt, exporter.allowCnt)
+	}
+}
+
+func TestDeleteVolumeRejectsAttachedVolume(t *testing.T) {
+	monitor := &stubMonitorClient{}
+	exporter := &stubExporterClient{}
+	svc := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+	volume := monitorclient.Volume{
+		ID:            "fbvolname:fb:img-a",
+		Name:          "img-a",
+		Pool:          "fb",
+		CapacityBytes: 1 << 20,
+		ObjectSize:    4 << 20,
+	}
+
+	if _, err := svc.ControllerPublishVolume(context.Background(), ControllerPublishRequest{
+		Volume:    volume,
+		BlockSize: 4096,
+		Transport: "rdma",
+		NodeID:    "node-a",
+		Secrets:   map[string]string{"hostNQN": "nqn.host.1"},
+	}); err != nil {
+		t.Fatalf("controller publish failed: %v", err)
+	}
+	err := svc.DeleteVolume(context.Background(), DeleteVolumeRequest{
+		Volume: monitorclient.VolumeRef{ID: volume.ID, Name: volume.Name, Pool: volume.Pool},
+	})
+	if !errors.Is(err, ErrVolumeStillPublished) {
+		t.Fatalf("expected attached delete rejection, got %v", err)
+	}
+}
+
+func TestControllerUnpublishRejectsDifferentNodeAttachment(t *testing.T) {
+	monitor := &stubMonitorClient{}
+	exporter := &stubExporterClient{}
+	svc := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+	volume := monitorclient.Volume{
+		ID:            "fbvolname:fb:img-a",
+		Name:          "img-a",
+		Pool:          "fb",
+		CapacityBytes: 1 << 20,
+		ObjectSize:    4 << 20,
+	}
+	exportID := mustExportIDForVolume(t, volume.ID)
+
+	if _, err := svc.ControllerPublishVolume(context.Background(), ControllerPublishRequest{
+		Volume:    volume,
+		BlockSize: 4096,
+		Transport: "rdma",
+		NodeID:    "node-a",
+		Secrets:   map[string]string{"hostNQN": "nqn.host.1"},
+	}); err != nil {
+		t.Fatalf("controller publish failed: %v", err)
+	}
+	err := svc.ControllerUnpublishVolume(context.Background(), ControllerUnpublishRequest{
+		VolumeID: volume.ID,
+		ExportID: exportID,
+		NodeID:   "node-b",
+		Secrets:  map[string]string{"hostNQN": "nqn.host.2"},
+	})
+	if !errors.Is(err, ErrAttachmentNodeMismatch) {
+		t.Fatalf("expected unpublish attachment conflict, got %v", err)
+	}
+	if exporter.denyCnt != 0 || exporter.deleteCnt != 0 {
+		t.Fatalf("expected conflicting unpublish to stop before exporter call, got deny=%d delete=%d", exporter.denyCnt, exporter.deleteCnt)
+	}
+}
 func mustExportIDForVolume(t *testing.T, volumeID string) string {
 	t.Helper()
 	exportID, err := exporterclient.ExportIDForVolume(volumeID)

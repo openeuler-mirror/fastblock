@@ -32,6 +32,17 @@ type PublishVolumeResult struct {
 	PublishContext map[string]string
 }
 
+func attachmentConflicts(existing Attachment, nodeID, hostNQN string) bool {
+	existingNodeID := strings.TrimSpace(existing.NodeID)
+	currentNodeID := strings.TrimSpace(nodeID)
+	if existingNodeID != "" && currentNodeID != "" {
+		return existingNodeID != currentNodeID
+	}
+	existingHostNQN := strings.TrimSpace(existing.HostNQN)
+	currentHostNQN := strings.TrimSpace(hostNQN)
+	return existingHostNQN != "" && currentHostNQN != "" && existingHostNQN != currentHostNQN
+}
+
 func ResolveHostNQN(nodeID, defaultHostNQN string, secrets map[string]string) string {
 	if secrets != nil {
 		if hostNQN := strings.TrimSpace(secrets["hostNQN"]); hostNQN != "" {
@@ -71,6 +82,7 @@ type ControllerPublishRequest struct {
 }
 
 type ControllerUnpublishRequest struct {
+	VolumeID string
 	ExportID string
 	NodeID   string
 	Secrets  map[string]string
@@ -124,6 +136,18 @@ func (s *Service) DeleteVolume(ctx context.Context, req DeleteVolumeRequest) err
 	if err := req.Validate(); err != nil {
 		return err
 	}
+	if existing, ok := s.attachments.Get(req.Volume.ID); ok {
+		return fmt.Errorf("%w: volume %s remains attached to node %s", ErrVolumeStillPublished, existing.VolumeID, existing.NodeID)
+	}
+	if strings.TrimSpace(req.Volume.ID) != "" {
+		exportID, err := exporterclient.ExportIDForVolume(req.Volume.ID)
+		if err != nil {
+			return err
+		}
+		if err := s.exporter.DeleteExport(ctx, exportID); err != nil {
+			return err
+		}
+	}
 	return s.monitor.DeleteVolume(ctx, req.Volume)
 }
 
@@ -176,12 +200,34 @@ func (s *Service) ControllerPublishVolume(ctx context.Context, req ControllerPub
 	if err := req.Validate(); err != nil {
 		return PublishVolumeResult{}, err
 	}
-	return s.PublishVolume(ctx, NewPublishVolumeRequest(
+	hostNQN := ResolveHostNQN(req.NodeID, s.defaultHostNQN, req.Secrets)
+	if existing, ok := s.attachments.Get(req.Volume.ID); ok {
+		if attachmentConflicts(existing, req.NodeID, hostNQN) {
+			return PublishVolumeResult{}, fmt.Errorf(
+				"%w: volume %s is attached to node %s with host NQN %s",
+				ErrVolumePublishedToAnotherNode,
+				req.Volume.ID,
+				existing.NodeID,
+				existing.HostNQN,
+			)
+		}
+	}
+	result, err := s.PublishVolume(ctx, NewPublishVolumeRequest(
 		req.Volume,
 		req.BlockSize,
 		req.Transport,
-		ResolveHostNQN(req.NodeID, s.defaultHostNQN, req.Secrets),
+		hostNQN,
 	))
+	if err != nil {
+		return PublishVolumeResult{}, err
+	}
+	s.attachments.Put(Attachment{
+		VolumeID: req.Volume.ID,
+		NodeID:   req.NodeID,
+		HostNQN:  hostNQN,
+		ExportID: result.Export.ID,
+	})
+	return result, nil
 }
 
 func (s *Service) UnpublishVolume(ctx context.Context, req UnpublishVolumeRequest) error {
@@ -200,10 +246,30 @@ func (s *Service) ControllerUnpublishVolume(ctx context.Context, req ControllerU
 	if err := req.Validate(); err != nil {
 		return err
 	}
-	return s.UnpublishVolume(ctx, NewUnpublishVolumeRequest(
-		req.ExportID,
-		ResolveHostNQN(req.NodeID, s.defaultHostNQN, req.Secrets),
-	))
+	hostNQN := ResolveHostNQN(req.NodeID, s.defaultHostNQN, req.Secrets)
+	exportID := req.ExportID
+	if existing, ok := s.attachments.Get(req.VolumeID); ok {
+		if attachmentConflicts(existing, req.NodeID, hostNQN) {
+			return fmt.Errorf(
+				"%w: volume %s is attached to node %s with host NQN %s",
+				ErrAttachmentNodeMismatch,
+				req.VolumeID,
+				existing.NodeID,
+				existing.HostNQN,
+			)
+		}
+		if strings.TrimSpace(existing.ExportID) != "" {
+			exportID = existing.ExportID
+		}
+		if strings.TrimSpace(existing.HostNQN) != "" {
+			hostNQN = existing.HostNQN
+		}
+	}
+	if err := s.UnpublishVolume(ctx, NewUnpublishVolumeRequest(exportID, hostNQN)); err != nil {
+		return err
+	}
+	s.attachments.Delete(req.VolumeID)
+	return nil
 }
 
 func (r CreateVolumeRequest) Validate() error {
@@ -291,6 +357,9 @@ func (r ControllerPublishRequest) Validate() error {
 }
 
 func (r ControllerUnpublishRequest) Validate() error {
+	if strings.TrimSpace(r.VolumeID) == "" {
+		return errors.New("volume id is required")
+	}
 	if strings.TrimSpace(r.ExportID) == "" {
 		return errors.New("export id is required")
 	}

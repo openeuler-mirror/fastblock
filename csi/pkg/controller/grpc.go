@@ -111,7 +111,7 @@ func (s *GRPCService) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeReq
 		Pool: nameRef.Pool,
 		Name: nameRef.Name,
 	})); err != nil {
-		return nil, err
+		return nil, toGRPCError(err)
 	}
 	return &csi.DeleteVolumeResponse{}, nil
 }
@@ -149,7 +149,7 @@ func (s *GRPCService) ControllerPublishVolume(ctx context.Context, req *csi.Cont
 		Secrets:   req.GetSecrets(),
 	})
 	if err != nil {
-		return nil, err
+		return nil, toGRPCError(err)
 	}
 	return &csi.ControllerPublishVolumeResponse{
 		PublishContext: result.PublishContext,
@@ -165,11 +165,12 @@ func (s *GRPCService) ControllerUnpublishVolume(ctx context.Context, req *csi.Co
 		return nil, err
 	}
 	if err := s.service.ControllerUnpublishVolume(ctx, ControllerUnpublishRequest{
+		VolumeID: req.GetVolumeId(),
 		ExportID: exportID,
 		NodeID:   req.GetNodeId(),
 		Secrets:  req.GetSecrets(),
 	}); err != nil {
-		return nil, err
+		return nil, toGRPCError(err)
 	}
 	return &csi.ControllerUnpublishVolumeResponse{}, nil
 }

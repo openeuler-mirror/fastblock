@@ -9,6 +9,8 @@ import (
 	"fastblock-csi/pkg/monitorclient"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestControllerGRPCService(t *testing.T) {
@@ -41,7 +43,7 @@ func TestControllerGRPCService(t *testing.T) {
 
 func TestControllerGRPCCreateAndDeleteVolume(t *testing.T) {
 	monitor := &stubMonitorClient{}
-	service := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporterclient.NewNoop())
+	service := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, &stubExporterClient{})
 	grpcService := NewGRPCService(service)
 
 	createResp, err := grpcService.CreateVolume(context.Background(), &csi.CreateVolumeRequest{
@@ -196,6 +198,78 @@ func TestControllerGRPCRequestValidation(t *testing.T) {
 	}
 	if _, err := grpcService.ControllerUnpublishVolume(context.Background(), &csi.ControllerUnpublishVolumeRequest{}); err == nil {
 		t.Fatal("expected controller unpublish validation error")
+	}
+}
+
+func TestControllerPublishVolumeRejectsCrossNodeAttachmentWithFailedPrecondition(t *testing.T) {
+	monitor := &stubMonitorClient{}
+	exporter := &stubExporterClient{}
+	service := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+	grpcService := NewGRPCService(service)
+
+	baseReq := &csi.ControllerPublishVolumeRequest{
+		VolumeId: "fbvolname:fb:img-a",
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
+			AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+		},
+		VolumeContext: map[string]string{
+			"pool":          "fb",
+			"name":          "img-a",
+			"transport":     "rdma",
+			"blockSize":     "4096",
+			"objectSize":    "4194304",
+			"capacityBytes": "1048576",
+		},
+	}
+
+	firstReq := *baseReq
+	firstReq.NodeId = "node-a"
+	firstReq.Secrets = map[string]string{"hostNQN": "nqn.host.1"}
+	if _, err := grpcService.ControllerPublishVolume(context.Background(), &firstReq); err != nil {
+		t.Fatalf("initial publish failed: %v", err)
+	}
+
+	secondReq := *baseReq
+	secondReq.NodeId = "node-b"
+	secondReq.Secrets = map[string]string{"hostNQN": "nqn.host.2"}
+	_, err := grpcService.ControllerPublishVolume(context.Background(), &secondReq)
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("expected failed precondition, got %v", err)
+	}
+}
+
+func TestDeleteVolumeRejectsPublishedAttachmentWithFailedPrecondition(t *testing.T) {
+	monitor := &stubMonitorClient{}
+	exporter := &stubExporterClient{}
+	service := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+	grpcService := NewGRPCService(service)
+
+	req := &csi.ControllerPublishVolumeRequest{
+		VolumeId: "fbvolname:fb:img-a",
+		NodeId:   "node-a",
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
+			AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+		},
+		VolumeContext: map[string]string{
+			"pool":          "fb",
+			"name":          "img-a",
+			"transport":     "rdma",
+			"blockSize":     "4096",
+			"objectSize":    "4194304",
+			"capacityBytes": "1048576",
+		},
+		Secrets: map[string]string{"hostNQN": "nqn.host.1"},
+	}
+	if _, err := grpcService.ControllerPublishVolume(context.Background(), req); err != nil {
+		t.Fatalf("publish failed: %v", err)
+	}
+	_, err := grpcService.DeleteVolume(context.Background(), &csi.DeleteVolumeRequest{
+		VolumeId: "fbvolname:fb:img-a",
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("expected failed precondition, got %v", err)
 	}
 }
 
