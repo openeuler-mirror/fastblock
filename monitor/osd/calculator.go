@@ -313,6 +313,11 @@ func CreatePgs(ctx context.Context, client *etcdapi.EtcdClient, pool *PoolConfig
     optimizeCfg.OSDTree, optimizeCfg.OSDInfoMap, optimizeCfg.TotalWeight = FlattenTree(ctx, osdTreeMap, osdNodeMap, 
             pool.PGCount, pool.PGSize, pool.FailureDomain, pool.Root, pool.Root != "")
     
+    if coreNum == 0 {
+        log.Warn(ctx, "OSDCoreNum is zero, fallback to single-core placement for pool creation")
+        coreNum = 1
+    }
+
     poolPGResult, oerr := SimpleInitial(ctx, optimizeCfg, pool.PGSize, coreNum)
     if oerr != nil {
         log.Error(ctx, oerr, "create pg failed.")
@@ -1364,7 +1369,7 @@ func SimpleInitial(ctx context.Context, cfg *OptimizeCfg, poolPgSize int, coreNu
 	/**
 	 *  Step 3: 从host分配osd和cpu核。如果failure domain是osd，那么每个host下只有一个osd
 	 */
-    host_map := make([]*list.List , host_count)
+	host_map := make([]*list.List , host_count)
 	for i := 0; i < host_count; i++ {
         host_map[i] = list.New()
 
@@ -1381,7 +1386,15 @@ func SimpleInitial(ctx context.Context, cfg *OptimizeCfg, poolPgSize int, coreNu
 		    	if tree_node == nil {
 		    		return nil, errors.New("domain_node pointer invalid")
 		    	}
-		    	if coreNum == (*tree_node).CoreNUm {
+                osdCoreNum := (*tree_node).CoreNUm
+                if osdCoreNum == 0 {
+                    osdCoreNum = coreNum
+                    if osdCoreNum == 0 {
+                        osdCoreNum = 1
+                    }
+                    log.Warn(ctx, "osd", (*tree_node).OSDID, "reported zero CoreNUm, fallback to", osdCoreNum)
+                }
+		    	if c < osdCoreNum {
 					osdid := int((*tree_node).OSDID)
 		    	
 					oc := &osdCore{osdid: osdid, coreid: c, pgnum: 0}
