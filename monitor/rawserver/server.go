@@ -117,11 +117,15 @@ func handleGetImageInfo(ctx context.Context, conn net.Conn, hdr *rawproto.Header
 	if !ok {
 		return rawproto.WriteErrorResponse(conn, hdr, rawproto.StatusInternalError)
 	}
+	imageEpoch := osd.GetImageEpoch(imageInfo)
+	if req.ImageEpoch != 0 && req.ImageEpoch == imageEpoch {
+		return rawproto.WriteErrorResponse(conn, hdr, rawproto.StatusStaleEpoch)
+	}
 
 	rspHdr, rspBody, err := rawproto.EncodeGetImageInfoResponse(
 		hdr.Seq,
 		rawproto.StatusOK,
-		0,
+		imageEpoch,
 		uint32(poolID),
 		4096,
 		uint32(imageInfo.Objectsize),

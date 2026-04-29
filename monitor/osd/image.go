@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"monitor/config"
 	"monitor/etcdapi"
 	"monitor/log"
@@ -235,4 +236,21 @@ func ProcessResizeImageMessage(ctx context.Context, client *etcdapi.EtcdClient, 
 	Allimages[imageID] = imageConf
 	log.Info(ctx, "successfully put to ectd for newly image: ", imagename)
 	return msg.ResizeImageErrorCode_resizeImageOk, imageConf
+}
+
+func GetImageEpoch(image *ImageConfig) uint64 {
+	if image == nil {
+		return 0
+	}
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(image.Poolname))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(image.Imagename))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(strconv.FormatInt(int64(image.ImageID), 10)))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(strconv.FormatInt(image.Imagesize, 10)))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(strconv.FormatInt(image.Objectsize, 10)))
+	return h.Sum64()
 }
