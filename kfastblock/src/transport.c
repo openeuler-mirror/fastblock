@@ -2957,6 +2957,21 @@ static int kfastblock_transport_queue_initial_dispatch(
 	return 0;
 }
 
+static int kfastblock_transport_drive_initial_dispatch_batch(
+	struct kfastblock_transport_submit_ctx *ctx)
+{
+	int ret;
+
+	if (!ctx)
+		return -EINVAL;
+
+	ret = kfastblock_transport_prepare_initial_dispatch_batch(ctx);
+	if (ret || ctx->ret)
+		return ret;
+
+	return kfastblock_transport_queue_initial_dispatch(ctx);
+}
+
 static bool kfastblock_transport_advance_submit_ctx(
 	struct kfastblock_transport_submit_ctx *ctx)
 {
@@ -2971,10 +2986,8 @@ static bool kfastblock_transport_advance_submit_ctx(
 		kfastblock_transport_prepare_request_prefetch(ctx);
 		return ctx->ret >= 0;
 	case KFASTBLOCK_SUBMIT_STAGE_PREFETCHED:
-		(void)kfastblock_transport_prepare_initial_dispatch_batch(ctx);
-		return ctx->ret >= 0;
 	case KFASTBLOCK_SUBMIT_STAGE_BATCH_PREPARED:
-		(void)kfastblock_transport_queue_initial_dispatch(ctx);
+		(void)kfastblock_transport_drive_initial_dispatch_batch(ctx);
 		return ctx->ret >= 0;
 	case KFASTBLOCK_SUBMIT_STAGE_BATCH_QUEUED:
 	case KFASTBLOCK_SUBMIT_STAGE_EMPTY_DONE:
