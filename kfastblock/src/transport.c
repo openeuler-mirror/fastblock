@@ -126,6 +126,21 @@ struct kfastblock_transport_request_finish_ctx {
 	u8 stage;
 };
 
+struct kfastblock_transport_leader_query_ctx {
+	struct kfastblock_request *kf_req;
+	struct kfastblock_volume *vol;
+	struct kfastblock_request_pg_hint *hint;
+	struct kfastblock_leader_info *leader_out;
+	struct kfastblock_leader_info target;
+	struct kfastblock_cached_socket *cached;
+	struct socket *sock;
+	unsigned int target_index;
+	unsigned int actions;
+	u64 seq;
+	int ret;
+	int first_err;
+};
+
 enum kfastblock_transport_object_attempt_failure_kind {
 	KFASTBLOCK_OBJECT_ATTEMPT_FAIL_BEFORE_EXCHANGE = 0,
 	KFASTBLOCK_OBJECT_ATTEMPT_FAIL_AFTER_EXCHANGE = 1,
@@ -2419,93 +2434,162 @@ int kfastblock_transport_fetch_cluster_map(struct kfastblock_cluster_view *view,
 	return first_err;
 }
 
+static void kfastblock_transport_leader_query_ctx_reset_target(
+	struct kfastblock_transport_leader_query_ctx *ctx,
+	unsigned int target_index)
+{
+	if (!ctx)
+		return;
+
+	ctx->target_index = target_index;
+	memset(&ctx->target, 0, sizeof(ctx->target));
+	ctx->cached = NULL;
+	ctx->sock = NULL;
+	ctx->actions = 0;
+	ctx->seq = 0;
+}
+
+static bool kfastblock_transport_leader_query_target_usable(
+	const struct kfastblock_request_pg_target *target_hint)
+{
+	if (!target_hint)
+		return false;
+
+	return (target_hint->flags & KFASTBLOCK_OSD_FLAG_IN) &&
+	       (target_hint->flags & KFASTBLOCK_OSD_FLAG_UP) &&
+	       target_hint->address[0] && target_hint->port;
+}
+
+static int kfastblock_transport_prepare_leader_query_target(
+	struct kfastblock_transport_leader_query_ctx *ctx)
+{
+	const struct kfastblock_request_pg_target *target_hint;
+
+	if (!ctx || !ctx->hint || ctx->target_index >= ctx->hint->nr_targets)
+		return -EINVAL;
+
+	target_hint = &ctx->hint->targets[ctx->target_index];
+	if (!kfastblock_transport_leader_query_target_usable(target_hint))
+		return -EHOSTDOWN;
+
+	ctx->target.osd_id = target_hint->osd_id;
+	ctx->target.port = target_hint->port;
+	strscpy(ctx->target.address, target_hint->address,
+		sizeof(ctx->target.address));
+	return 0;
+}
+
+static void kfastblock_transport_note_leader_query_failure(
+	struct kfastblock_transport_leader_query_ctx *ctx)
+{
+	if (!ctx)
+		return;
+
+	kfastblock_request_invalidate_pg_hint_leader(ctx->hint);
+	kfastblock_recovery_apply_leader_failure(
+		ctx->vol, ctx->kf_req->request_pool_id, ctx->hint->pg_id,
+		ctx->ret, ctx->actions);
+	ctx->first_err = ctx->ret;
+}
+
+static int kfastblock_transport_drive_leader_query_target(
+	struct kfastblock_transport_leader_query_ctx *ctx)
+{
+	if (!ctx)
+		return -EINVAL;
+
+	ctx->ret = kfastblock_transport_prepare_leader_query_target(ctx);
+	if (ctx->ret)
+		return ctx->ret;
+
+	ctx->ret = kfastblock_transport_acquire_osd_socket(
+		ctx->vol, &ctx->target, &ctx->cached, &ctx->sock);
+	if (ctx->ret)
+		return ctx->ret;
+
+	ctx->seq = kfastblock_transport_next_seq(ctx->cached);
+	ctx->ret = kfastblock_transport_fetch_pg_leader_from_osd(
+		ctx->sock, ctx->kf_req->request_pool_id, ctx->hint->pg_id,
+		ctx->seq, ctx->leader_out);
+	ctx->actions = kfastblock_recovery_classify_leader_failure(ctx->ret);
+	kfastblock_recovery_finalize_osd_socket(
+		ctx->vol, ctx->cached, &ctx->target, ctx->ret, ctx->actions);
+	ctx->cached = NULL;
+	kfastblock_volume_account_leader_query(
+		ctx->vol, ctx->hint->pg_id, ctx->target.osd_id, ctx->ret);
+
+	if (!ctx->ret) {
+		ctx->ret = kfastblock_recovery_update_live_pg_leader(
+			ctx->vol, ctx->kf_req->request_pool_id, ctx->hint->pg_id,
+			ctx->leader_out);
+		return ctx->ret;
+	}
+
+	return ctx->ret;
+}
+
 static int kfastblock_transport_query_pg_leader(
 	struct kfastblock_request *kf_req,
 	struct kfastblock_request_pg_hint *hint,
 	struct kfastblock_leader_info *leader)
 {
-	struct kfastblock_volume *vol;
-	u32 i;
-	int first_err = -ENOENT;
-	int ret;
+	struct kfastblock_transport_leader_query_ctx ctx = {};
 
 	if (!kf_req || !kf_req->vol || !hint || !leader)
 		return -EINVAL;
-	vol = kf_req->vol;
 	if (!hint->nr_targets || !hint->targets)
 		return -ENOENT;
 
-	ret = kfastblock_transport_maybe_inject_fault(
-		vol, KFASTBLOCK_FAULT_LEADER_QUERY);
-	if (ret) {
+	ctx.kf_req = kf_req;
+	ctx.vol = kf_req->vol;
+	ctx.hint = hint;
+	ctx.leader_out = leader;
+	ctx.first_err = -ENOENT;
+
+	ctx.ret = kfastblock_transport_maybe_inject_fault(
+		ctx.vol, KFASTBLOCK_FAULT_LEADER_QUERY);
+	if (ctx.ret) {
 		kfastblock_recovery_apply_leader_failure(
-			vol, kf_req->request_pool_id, hint->pg_id, ret,
-			kfastblock_recovery_classify_leader_failure(ret));
-		return ret;
+			ctx.vol, ctx.kf_req->request_pool_id, ctx.hint->pg_id,
+			ctx.ret,
+			kfastblock_recovery_classify_leader_failure(ctx.ret));
+		return ctx.ret;
 	}
 
-	ret = kfastblock_transport_request_view_stale(kf_req);
-	if (ret) {
-			kfastblock_recovery_apply_leader_failure(
-				vol, kf_req->request_pool_id, hint->pg_id, ret,
-				kfastblock_recovery_classify_leader_failure(ret));
-		return ret;
+	ctx.ret = kfastblock_transport_request_view_stale(ctx.kf_req);
+	if (ctx.ret) {
+		kfastblock_recovery_apply_leader_failure(
+			ctx.vol, ctx.kf_req->request_pool_id, ctx.hint->pg_id,
+			ctx.ret,
+			kfastblock_recovery_classify_leader_failure(ctx.ret));
+		return ctx.ret;
 	}
 
-	for (i = 0; i < hint->nr_targets; ++i) {
-		const struct kfastblock_request_pg_target *target_hint =
-			&hint->targets[i];
-		struct kfastblock_cached_socket *cached = NULL;
-		struct socket *sock = NULL;
-		struct kfastblock_leader_info target = {};
-		unsigned int actions;
-		u64 seq;
-
-		if (!(target_hint->flags & KFASTBLOCK_OSD_FLAG_IN) ||
-		    !(target_hint->flags & KFASTBLOCK_OSD_FLAG_UP) ||
-		    !target_hint->address[0] || !target_hint->port) {
-			first_err = -EHOSTDOWN;
+	for (ctx.target_index = 0; ctx.target_index < ctx.hint->nr_targets;
+	     ++ctx.target_index) {
+		kfastblock_transport_leader_query_ctx_reset_target(
+			&ctx, ctx.target_index);
+		ctx.ret = kfastblock_transport_drive_leader_query_target(&ctx);
+		if (ctx.ret == -EHOSTDOWN) {
+			ctx.first_err = -EHOSTDOWN;
 			continue;
 		}
-
-		target.osd_id = target_hint->osd_id;
-		target.port = target_hint->port;
-		strscpy(target.address, target_hint->address, sizeof(target.address));
-		ret = kfastblock_transport_acquire_osd_socket(vol, &target,
-						      &cached, &sock);
-		if (ret) {
-				kfastblock_recovery_apply_leader_failure(
-					vol, kf_req->request_pool_id, hint->pg_id, ret,
-					kfastblock_recovery_classify_leader_failure(ret));
-			first_err = ret;
+		if (ctx.ret) {
+			kfastblock_recovery_apply_leader_failure(
+				ctx.vol, ctx.kf_req->request_pool_id, ctx.hint->pg_id,
+				ctx.ret,
+				kfastblock_recovery_classify_leader_failure(
+					ctx.ret));
+			ctx.first_err = ctx.ret;
 			continue;
 		}
-		seq = kfastblock_transport_next_seq(cached);
-		ret = kfastblock_transport_fetch_pg_leader_from_osd(sock,
-						    kf_req->request_pool_id,
-						    hint->pg_id,
-						    seq,
-						    leader);
-		actions = kfastblock_recovery_classify_leader_failure(ret);
-		kfastblock_recovery_finalize_osd_socket(vol, cached, &target, ret,
-							actions);
-		cached = NULL;
-		kfastblock_volume_account_leader_query(
-			vol, hint->pg_id, target.osd_id, ret);
-		if (!ret) {
-			ret = kfastblock_recovery_update_live_pg_leader(
-				vol, kf_req->request_pool_id, hint->pg_id, leader);
-			return ret ? ret : 0;
-		}
+		if (!ctx.ret)
+			return 0;
 
-		kfastblock_request_invalidate_pg_hint_leader(hint);
-			kfastblock_recovery_apply_leader_failure(
-				vol, kf_req->request_pool_id, hint->pg_id, ret,
-				actions);
-		first_err = ret;
+		kfastblock_transport_note_leader_query_failure(&ctx);
 	}
 
-	return first_err;
+	return ctx.first_err;
 }
 
 static int kfastblock_transport_submit_object(struct kfastblock_request *kf_req,
