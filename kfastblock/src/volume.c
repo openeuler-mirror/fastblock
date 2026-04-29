@@ -186,8 +186,7 @@ static void kfastblock_volume_refresh_workfn(struct work_struct *work)
 	if (!ret && vol->disk) {
 		image_ret = 0;
 		if (refresh_image)
-			image_ret = kfastblock_meta_refresh_image(&vol->view,
-							 &vol->spec);
+			image_ret = kfastblock_transport_refresh_image_volume(vol);
 		if (old_osdmap_epoch != vol->view.osdmap_epoch ||
 		    old_pgmap_epoch != vol->view.pgmap_epoch)
 			kfastblock_volume_close_osd_cached_sockets(vol);
@@ -199,13 +198,20 @@ static void kfastblock_volume_refresh_workfn(struct work_struct *work)
 		    vol->view.image.block_size)
 			blk_queue_logical_block_size(vol->disk->queue,
 					     vol->view.image.block_size);
-		if (old_object_size != vol->view.image.object_size &&
-		    vol->view.image.object_size) {
+		if ((old_block_size != vol->view.image.block_size &&
+		     vol->view.image.block_size) ||
+		    (old_object_size != vol->view.image.object_size &&
+		     vol->view.image.object_size)) {
+			u32 max_io_bytes = kfastblock_volume_effective_max_io_bytes(vol);
+
 			blk_queue_io_opt(vol->disk->queue,
 					 vol->view.image.object_size);
 			blk_queue_chunk_sectors(vol->disk->queue,
 					vol->view.image.object_size >>
 					SECTOR_SHIFT);
+			blk_queue_max_hw_sectors(vol->disk->queue,
+					 max_io_bytes >> SECTOR_SHIFT);
+			blk_queue_max_segment_size(vol->disk->queue, max_io_bytes);
 		}
 		if (old_read_only != vol->view.image.read_only)
 			set_disk_ro(vol->disk, vol->view.image.read_only);
