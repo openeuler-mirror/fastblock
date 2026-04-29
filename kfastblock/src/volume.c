@@ -76,6 +76,34 @@ static void kfastblock_volume_close_cached_sockets(struct kfastblock_volume *vol
 	kfastblock_volume_close_monitor_cached_sockets(vol);
 }
 
+static bool kfastblock_volume_should_pause_queue(const struct kfastblock_volume *vol)
+{
+	if (!vol || !atomic_read(&vol->ready))
+		return true;
+
+	return !kfastblock_meta_io_ready(&vol->view);
+}
+
+static void kfastblock_volume_update_queue_gate(struct kfastblock_volume *vol)
+{
+	bool should_pause;
+
+	if (!vol || !vol->disk || !vol->disk->queue)
+		return;
+
+	should_pause = kfastblock_volume_should_pause_queue(vol);
+	if (should_pause == vol->queue_paused)
+		return;
+
+	if (should_pause) {
+		blk_mq_quiesce_queue(vol->disk->queue);
+		vol->queue_paused = true;
+	} else {
+		blk_mq_unquiesce_queue(vol->disk->queue);
+		vol->queue_paused = false;
+	}
+}
+
 static u32 kfastblock_volume_effective_max_io_bytes(const struct kfastblock_volume *vol)
 {
 	u64 limit = KFASTBLOCK_MAX_IO_BYTES;
@@ -224,6 +252,7 @@ static void kfastblock_volume_refresh_workfn(struct work_struct *work)
 		kfastblock_volume_close_monitor_cached_sockets(vol);
 		vol->view.sync_state = KFASTBLOCK_META_SYNC_STALE;
 	}
+	kfastblock_volume_update_queue_gate(vol);
 	up_write(&vol->state_lock);
 
 	kfastblock_volume_schedule_refresh(vol);
@@ -396,6 +425,17 @@ static ssize_t sync_state_show(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%u\n", vol->view.sync_state);
 }
 
+static ssize_t queue_paused_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n", vol->queue_paused ? 1 : 0);
+}
+
 static DEVICE_ATTR_RO(pool_name);
 static DEVICE_ATTR_RO(image_name);
 static DEVICE_ATTR_RO(size_bytes);
@@ -411,6 +451,7 @@ static DEVICE_ATTR_RO(last_refresh);
 static DEVICE_ATTR_RO(last_image_refresh);
 static DEVICE_ATTR_RO(read_only);
 static DEVICE_ATTR_RO(sync_state);
+static DEVICE_ATTR_RO(queue_paused);
 
 static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_pool_name.attr,
@@ -428,6 +469,7 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_last_image_refresh.attr,
 	&dev_attr_read_only.attr,
 	&dev_attr_sync_state.attr,
+	&dev_attr_queue_paused.attr,
 	NULL,
 };
 
@@ -473,7 +515,7 @@ static blk_status_t kfastblock_queue_rq(struct blk_mq_hw_ctx *hctx,
 
 	blk_mq_start_request(rq);
 
-	if (!vol || !atomic_read(&vol->ready)) {
+	if (!vol || !atomic_read(&vol->ready) || vol->queue_paused) {
 		blk_mq_end_request(rq, BLK_STS_RESOURCE);
 		return BLK_STS_RESOURCE;
 	}
@@ -543,6 +585,8 @@ static void kfastblock_volume_free(struct kfastblock_volume *vol)
 	mutex_unlock(&g_kfastblock_volumes_lock);
 
 	if (vol->disk) {
+		vol->queue_paused = true;
+		blk_mq_quiesce_queue(vol->disk->queue);
 		del_gendisk(vol->disk);
 		put_disk(vol->disk);
 		vol->disk = NULL;
@@ -635,6 +679,7 @@ static int kfastblock_volume_add_disk(struct kfastblock_volume *vol,
 	}
 	blk_queue_max_segments(vol->disk->queue, USHRT_MAX);
 	vol->disk->queue->queuedata = vol;
+	kfastblock_volume_update_queue_gate(vol);
 
 	device_initialize(&vol->dev);
 	vol->dev.parent = parent_dev;
@@ -677,6 +722,7 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	vol->major = major;
 	atomic_set(&vol->open_count, 0);
 	atomic_set(&vol->ready, 0);
+	vol->queue_paused = false;
 	mutex_init(&vol->inflight_lock);
 	init_rwsem(&vol->state_lock);
 	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i)
@@ -708,6 +754,7 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	mutex_unlock(&g_kfastblock_volumes_lock);
 
 	atomic_set(&vol->ready, 1);
+	kfastblock_volume_update_queue_gate(vol);
 	kfastblock_volume_schedule_refresh(vol);
 	return 0;
 
@@ -744,6 +791,8 @@ int kfastblock_volume_detach(const struct kfastblock_attach_spec *spec)
 	atomic_set(&found->ready, 0);
 	cancel_delayed_work_sync(&found->refresh_work);
 	if (found->disk) {
+		found->queue_paused = true;
+		blk_mq_quiesce_queue(found->disk->queue);
 		del_gendisk(found->disk);
 		put_disk(found->disk);
 		found->disk = NULL;

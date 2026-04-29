@@ -51,6 +51,7 @@ struct kfastblock_volume {
 	struct mutex inflight_lock;
 	struct rw_semaphore state_lock;
 	struct delayed_work refresh_work;
+	bool queue_paused;
 	struct kfastblock_cached_socket socket_cache[KFASTBLOCK_MAX_SOCKET_CACHE];
 	struct kfastblock_cached_monitor_socket monitor_cache[KFASTBLOCK_MAX_MONITORS];
 };
