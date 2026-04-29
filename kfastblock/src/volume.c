@@ -594,6 +594,7 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 			     struct bus_type *bus, struct device *parent_dev)
 {
 	struct kfastblock_volume *vol;
+	int i;
 	int ret;
 
 	if (!spec || !bus || !parent_dev)
@@ -608,6 +609,8 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	atomic_set(&vol->open_count, 0);
 	atomic_set(&vol->ready, 0);
 	mutex_init(&vol->inflight_lock);
+	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i)
+		mutex_init(&vol->socket_cache[i].lock);
 	INIT_DELAYED_WORK(&vol->refresh_work, kfastblock_volume_refresh_workfn);
 	INIT_LIST_HEAD(&vol->node);
 
