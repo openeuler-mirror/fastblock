@@ -2967,6 +2967,27 @@ static int kfastblock_transport_finish_submit_ctx(
 	return kfastblock_transport_finish_submit_now(ctx->kf_req, ctx->ret);
 }
 
+static bool kfastblock_transport_transition_submit_empty_done(
+	struct kfastblock_transport_submit_ctx *ctx)
+{
+	if (!ctx)
+		return false;
+
+	ctx->finished = true;
+	ctx->stage = KFASTBLOCK_SUBMIT_STAGE_FINISHED;
+	return false;
+}
+
+static bool kfastblock_transport_transition_submit_finish(
+	struct kfastblock_transport_submit_ctx *ctx)
+{
+	if (!ctx)
+		return false;
+
+	(void)kfastblock_transport_finish_submit_ctx(ctx);
+	return false;
+}
+
 static int kfastblock_transport_queue_initial_dispatch(
 	struct kfastblock_transport_submit_ctx *ctx)
 {
@@ -3013,13 +3034,16 @@ static bool kfastblock_transport_advance_submit_ctx(
 	case KFASTBLOCK_SUBMIT_STAGE_BATCH_PREPARED:
 		return kfastblock_transport_transition_submit_batch_queue(ctx);
 	case KFASTBLOCK_SUBMIT_STAGE_BATCH_QUEUED:
-	case KFASTBLOCK_SUBMIT_STAGE_EMPTY_DONE:
-	case KFASTBLOCK_SUBMIT_STAGE_FINISHED:
 		ctx->finished = true;
+		ctx->stage = KFASTBLOCK_SUBMIT_STAGE_FINISHED;
 		return false;
+	case KFASTBLOCK_SUBMIT_STAGE_EMPTY_DONE:
+		return kfastblock_transport_transition_submit_empty_done(ctx);
+	case KFASTBLOCK_SUBMIT_STAGE_FINISHED:
+		return kfastblock_transport_transition_submit_finish(ctx);
 	default:
 		ctx->ret = -EINVAL;
-		return false;
+		return kfastblock_transport_transition_submit_finish(ctx);
 	}
 }
 
