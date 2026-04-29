@@ -1139,21 +1139,23 @@ bool osd_raw_tcp_server::start_listener(const uint32_t shard_id) {
     if (listener.use_spdk_backend) {
         listener.spdk_listener = create_spdk_listener(_bind_address, &listener.port);
         if (!listener.spdk_listener) {
-            SPDK_ERRLOG(
-              "ERROR: create SPDK raw TCP listener on shard %u failed\n",
+            SPDK_NOTICELOG(
+              "SPDK raw TCP listener unavailable on shard %u, falling back to POSIX backend\n",
               shard_id);
-            return false;
+            listener.use_spdk_backend = false;
+        } else {
+            listener.spdk_group = ::spdk_sock_group_create(this);
+            if (!listener.spdk_group) {
+                SPDK_NOTICELOG(
+                  "SPDK raw TCP sock group unavailable on shard %u, falling back to POSIX backend\n",
+                  shard_id);
+                ::spdk_sock_close(&listener.spdk_listener);
+                listener.use_spdk_backend = false;
+                listener.port = 0;
+            }
         }
-        listener.spdk_group = ::spdk_sock_group_create(this);
-        if (!listener.spdk_group) {
-            SPDK_ERRLOG(
-              "ERROR: create SPDK raw TCP sock group on shard %u failed\n",
-              shard_id);
-            ::spdk_sock_close(&listener.spdk_listener);
-            listener.port = 0;
-            return false;
-        }
-    } else {
+    }
+    if (!listener.use_spdk_backend) {
         auto fd = create_listener(_bind_address, &listener.port);
         if (fd < 0) {
             SPDK_ERRLOG(
