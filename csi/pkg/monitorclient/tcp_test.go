@@ -52,6 +52,108 @@ func TestCreateVolume(t *testing.T) {
 	}
 }
 
+func TestCreateVolumeTreatsImageExistsAsIdempotent(t *testing.T) {
+	address := startMockMonitorSequence(t, func(call int, req *msg.Request) *msg.Response {
+		switch call {
+		case 0:
+			if _, ok := req.Union.(*msg.Request_CreateImageRequest); !ok {
+				t.Fatalf("unexpected first request type %T", req.Union)
+			}
+			return &msg.Response{
+				Union: &msg.Response_CreateImageResponse{
+					CreateImageResponse: &msg.CreateImageResponse{
+						Errorcode: msg.CreateImageErrorCode_imageExists,
+					},
+				},
+			}
+		case 1:
+			if _, ok := req.Union.(*msg.Request_Get_ImageInfo_Request); !ok {
+				t.Fatalf("unexpected second request type %T", req.Union)
+			}
+			return &msg.Response{
+				Union: &msg.Response_GetImageInfoResponse{
+					GetImageInfoResponse: &msg.GetImageInfoResponse{
+						Errorcode: msg.GetImageErrorCode_getImageOk,
+						ImageInfo: &msg.ImageInfo{
+							Poolname:   "fb",
+							Imagename:  "img-a",
+							Size_:      1 << 20,
+							ObjectSize: 4 << 20,
+						},
+					},
+				},
+			}
+		default:
+			t.Fatalf("unexpected call index %d", call)
+			return nil
+		}
+	})
+
+	client := NewTCP(address)
+	volume, err := client.CreateVolume(context.Background(), CreateVolumeRequest{
+		Name:          "img-a",
+		Pool:          "fb",
+		CapacityBytes: 1 << 20,
+		ObjectSize:    4 << 20,
+		BlockSize:     4096,
+	})
+	if err != nil {
+		t.Fatalf("create volume idempotency failed: %v", err)
+	}
+	if volume.Name != "img-a" || volume.Pool != "fb" || volume.ID == "" {
+		t.Fatalf("unexpected volume: %+v", volume)
+	}
+}
+
+func TestCreateVolumeRejectsIncompatibleExistingImage(t *testing.T) {
+	address := startMockMonitorSequence(t, func(call int, req *msg.Request) *msg.Response {
+		switch call {
+		case 0:
+			if _, ok := req.Union.(*msg.Request_CreateImageRequest); !ok {
+				t.Fatalf("unexpected first request type %T", req.Union)
+			}
+			return &msg.Response{
+				Union: &msg.Response_CreateImageResponse{
+					CreateImageResponse: &msg.CreateImageResponse{
+						Errorcode: msg.CreateImageErrorCode_imageExists,
+					},
+				},
+			}
+		case 1:
+			if _, ok := req.Union.(*msg.Request_Get_ImageInfo_Request); !ok {
+				t.Fatalf("unexpected second request type %T", req.Union)
+			}
+			return &msg.Response{
+				Union: &msg.Response_GetImageInfoResponse{
+					GetImageInfoResponse: &msg.GetImageInfoResponse{
+						Errorcode: msg.GetImageErrorCode_getImageOk,
+						ImageInfo: &msg.ImageInfo{
+							Poolname:   "fb",
+							Imagename:  "img-a",
+							Size_:      512 << 10,
+							ObjectSize: 4 << 20,
+						},
+					},
+				},
+			}
+		default:
+			t.Fatalf("unexpected call index %d", call)
+			return nil
+		}
+	})
+
+	client := NewTCP(address)
+	if _, err := client.CreateVolume(context.Background(), CreateVolumeRequest{
+		Name:          "img-a",
+		Pool:          "fb",
+		CapacityBytes: 1 << 20,
+		ObjectSize:    4 << 20,
+		BlockSize:     4096,
+	}); err == nil {
+		t.Fatal("expected incompatible existing image to fail")
+	}
+}
+
 func TestGetVolume(t *testing.T) {
 	address := startMockMonitor(t, func(req *msg.Request) *msg.Response {
 		if _, ok := req.Union.(*msg.Request_Get_ImageInfo_Request); !ok {
@@ -135,6 +237,12 @@ func TestValidateAddress(t *testing.T) {
 }
 
 func startMockMonitor(t *testing.T, handler func(*msg.Request) *msg.Response) string {
+	return startMockMonitorSequence(t, func(_ int, req *msg.Request) *msg.Response {
+		return handler(req)
+	})
+}
+
+func startMockMonitorSequence(t *testing.T, handler func(int, *msg.Request) *msg.Response) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -143,32 +251,38 @@ func startMockMonitor(t *testing.T, handler func(*msg.Request) *msg.Response) st
 	t.Cleanup(func() { _ = ln.Close() })
 
 	go func() {
-		conn, err := ln.Accept()
-		if err != nil {
-			return
-		}
-		defer conn.Close()
+		call := 0
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			func(callIndex int) {
+				defer conn.Close()
 
-		header := make([]byte, messageLengthSize)
-		if _, err := io.ReadFull(conn, header); err != nil {
-			return
-		}
-		size := binary.LittleEndian.Uint64(header)
-		body := make([]byte, size)
-		if _, err := io.ReadFull(conn, body); err != nil {
-			return
-		}
-		req := &msg.Request{}
-		if err := proto.Unmarshal(body, req); err != nil {
-			return
-		}
+				header := make([]byte, messageLengthSize)
+				if _, err := io.ReadFull(conn, header); err != nil {
+					return
+				}
+				size := binary.LittleEndian.Uint64(header)
+				body := make([]byte, size)
+				if _, err := io.ReadFull(conn, body); err != nil {
+					return
+				}
+				req := &msg.Request{}
+				if err := proto.Unmarshal(body, req); err != nil {
+					return
+				}
 
-		respBody, err := proto.Marshal(handler(req))
-		if err != nil {
-			return
+				respBody, err := proto.Marshal(handler(callIndex, req))
+				if err != nil {
+					return
+				}
+				binary.LittleEndian.PutUint64(header, uint64(len(respBody)))
+				_, _ = conn.Write(append(header, respBody...))
+			}(call)
+			call++
 		}
-		binary.LittleEndian.PutUint64(header, uint64(len(respBody)))
-		_, _ = conn.Write(append(header, respBody...))
 	}()
 
 	return ln.Addr().String()
