@@ -11,6 +11,7 @@ type VolumeMetadata struct {
 	Volume    monitorclient.Volume
 	BlockSize int64
 	Transport string
+	ExportID  string
 }
 
 type volumeStore interface {

@@ -334,6 +334,10 @@ func TestControllerPublishIsIdempotentOnSameNode(t *testing.T) {
 	if exporter.createCnt != 2 || exporter.allowCnt != 2 {
 		t.Fatalf("expected idempotent exporter calls to succeed twice, got create=%d allow=%d", exporter.createCnt, exporter.allowCnt)
 	}
+	metadata, ok := svc.volumes.Get(volume.ID)
+	if !ok || metadata.ExportID != first.Export.ID {
+		t.Fatalf("expected volume metadata export id %q, got %+v", first.Export.ID, metadata)
+	}
 }
 
 func TestControllerPublishRejectsDifferentNodeAttachment(t *testing.T) {
@@ -433,6 +437,64 @@ func TestControllerUnpublishRejectsDifferentNodeAttachment(t *testing.T) {
 	}
 	if exporter.denyCnt != 0 || exporter.deleteCnt != 0 {
 		t.Fatalf("expected conflicting unpublish to stop before exporter call, got deny=%d delete=%d", exporter.denyCnt, exporter.deleteCnt)
+	}
+}
+
+func TestDeleteVolumeUsesStoredExportID(t *testing.T) {
+	monitor := &stubMonitorClient{}
+	exporter := &stubExporterClient{}
+	svc := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+	volume := monitorclient.Volume{
+		ID:            "opaque-volume-id",
+		Name:          "img-a",
+		Pool:          "fb",
+		CapacityBytes: 1 << 20,
+		ObjectSize:    4 << 20,
+	}
+	svc.volumes.Put(VolumeMetadata{
+		Volume:    volume,
+		BlockSize: 4096,
+		Transport: "rdma",
+		ExportID:  "exp-stored",
+	})
+
+	if err := svc.DeleteVolume(context.Background(), DeleteVolumeRequest{
+		Volume: monitorclient.VolumeRef{ID: volume.ID, Name: volume.Name, Pool: volume.Pool},
+	}); err != nil {
+		t.Fatalf("delete volume failed: %v", err)
+	}
+	if exporter.deleteID != "exp-stored" {
+		t.Fatalf("expected stored export id, got %q", exporter.deleteID)
+	}
+}
+
+func TestControllerUnpublishUsesStoredExportIDWithoutAttachment(t *testing.T) {
+	monitor := &stubMonitorClient{}
+	exporter := &stubExporterClient{}
+	svc := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+	volume := monitorclient.Volume{
+		ID:            "opaque-volume-id",
+		Name:          "img-a",
+		Pool:          "fb",
+		CapacityBytes: 1 << 20,
+		ObjectSize:    4 << 20,
+	}
+	svc.volumes.Put(VolumeMetadata{
+		Volume:    volume,
+		BlockSize: 4096,
+		Transport: "rdma",
+		ExportID:  "exp-stored",
+	})
+
+	if err := svc.ControllerUnpublishVolume(context.Background(), ControllerUnpublishRequest{
+		VolumeID: volume.ID,
+		NodeID:   "node-a",
+		Secrets:  map[string]string{"hostNQN": "nqn.host.1"},
+	}); err != nil {
+		t.Fatalf("controller unpublish failed: %v", err)
+	}
+	if exporter.denyID != "exp-stored" || exporter.deleteID != "exp-stored" {
+		t.Fatalf("expected stored export id, got deny=%q delete=%q", exporter.denyID, exporter.deleteID)
 	}
 }
 func mustExportIDForVolume(t *testing.T, volumeID string) string {
