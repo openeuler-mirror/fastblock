@@ -79,6 +79,9 @@ func (c *TCPClient) DeleteVolume(ctx context.Context, ref VolumeRef) error {
 	if !ok {
 		return fmt.Errorf("unexpected response type %T", resp.Union)
 	}
+	if payload.RemoveImageResponse.GetErrorcode() == msg.RemoveImageErrorCode_imageNotFound {
+		return nil
+	}
 	if payload.RemoveImageResponse.GetErrorcode() != msg.RemoveImageErrorCode_removeImageOk {
 		return fmt.Errorf("remove image failed: %s", payload.RemoveImageResponse.GetErrorcode().String())
 	}

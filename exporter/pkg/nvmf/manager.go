@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 
 	"fastblock-exporter/pkg/api"
 	"fastblock-exporter/pkg/config"
@@ -171,11 +172,26 @@ func (m *LocalManager) DeleteExport(ctx context.Context, exportID string) error 
 	if err := m.rpc.Call(ctx, "nvmf_delete_subsystem", map[string]any{
 		"nqn": subsystemNQN(m.nqnPrefix, exportID),
 	}, nil); err != nil {
+		if isSPDKNotFound(err) {
+			return nil
+		}
+		if deleted, verifyErr := m.verifyExportDeleted(exportID); verifyErr == nil && deleted {
+			return nil
+		}
 		return err
 	}
-	return m.rpc.Call(ctx, "bdev_fastblock_delete", map[string]any{
+	if err := m.rpc.Call(ctx, "bdev_fastblock_delete", map[string]any{
 		"name": bdevName(exportID),
-	}, nil)
+	}, nil); err != nil {
+		if isSPDKNotFound(err) {
+			return nil
+		}
+		if deleted, verifyErr := m.verifyExportDeleted(exportID); verifyErr == nil && deleted {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (m *LocalManager) GetExport(ctx context.Context, exportID string) (api.Export, error) {
@@ -247,4 +263,51 @@ type subsystemNS struct {
 type subsystemAddress struct {
 	Traddr  string `json:"traddr"`
 	Trsvcid string `json:"trsvcid"`
+}
+
+type bdevInfo struct {
+	Name string `json:"name"`
+}
+
+func (m *LocalManager) verifyExportDeleted(exportID string) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	subsystems, err := m.getSubsystems(ctx, exportID)
+	if err != nil && !isSPDKNotFound(err) {
+		return false, err
+	}
+	if len(subsystems) != 0 {
+		return false, nil
+	}
+
+	bdevs, err := m.getBdevs(ctx, exportID)
+	if err != nil && !isSPDKNotFound(err) {
+		return false, err
+	}
+	return len(bdevs) == 0, nil
+}
+
+func (m *LocalManager) getSubsystems(ctx context.Context, exportID string) ([]subsystemInfo, error) {
+	var subsystems []subsystemInfo
+	err := m.rpc.Call(ctx, "nvmf_get_subsystems", map[string]any{
+		"nqn": subsystemNQN(m.nqnPrefix, exportID),
+	}, &subsystems)
+	return subsystems, err
+}
+
+func (m *LocalManager) getBdevs(ctx context.Context, exportID string) ([]bdevInfo, error) {
+	var bdevs []bdevInfo
+	err := m.rpc.Call(ctx, "bdev_get_bdevs", map[string]any{
+		"name": bdevName(exportID),
+	}, &bdevs)
+	return bdevs, err
+}
+
+func isSPDKNotFound(err error) bool {
+	var rpcErr *spdkrpc.ResponseError
+	if errors.As(err, &rpcErr) {
+		return rpcErr.Code == -19 || strings.Contains(strings.ToLower(rpcErr.Message), "no such device")
+	}
+	return false
 }

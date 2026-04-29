@@ -172,42 +172,57 @@ type smokeState struct {
 }
 
 func (s *smokeState) cleanup(ctx context.Context) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
 	if s.nodePublished {
-		if _, err := s.nodeClient.NodeUnpublishVolume(ctx, &csi.NodeUnpublishVolumeRequest{
-			VolumeId:   s.volumeID,
-			TargetPath: s.targetPath,
+		if err := runCleanupStep(ctx, 15*time.Second, func(stepCtx context.Context) error {
+			_, err := s.nodeClient.NodeUnpublishVolume(stepCtx, &csi.NodeUnpublishVolumeRequest{
+				VolumeId:   s.volumeID,
+				TargetPath: s.targetPath,
+			})
+			return err
 		}); err != nil {
 			log.Printf("cleanup NodeUnpublishVolume failed: %v", err)
 		}
 	}
 	if s.nodeStaged {
-		if _, err := s.nodeClient.NodeUnstageVolume(ctx, &csi.NodeUnstageVolumeRequest{
-			VolumeId:          s.volumeID,
-			StagingTargetPath: s.stagePath,
+		if err := runCleanupStep(ctx, 30*time.Second, func(stepCtx context.Context) error {
+			_, err := s.nodeClient.NodeUnstageVolume(stepCtx, &csi.NodeUnstageVolumeRequest{
+				VolumeId:          s.volumeID,
+				StagingTargetPath: s.stagePath,
+			})
+			return err
 		}); err != nil {
 			log.Printf("cleanup NodeUnstageVolume failed: %v", err)
 		}
 	}
 	if s.controllerPublished {
-		req := &csi.ControllerUnpublishVolumeRequest{
-			VolumeId: s.publishContext[driver.PublishContextExportID],
-			NodeId:   s.nodeID,
-		}
-		if s.hostNQN != "" {
-			req.Secrets = map[string]string{"hostNQN": s.hostNQN}
-		}
-		if _, err := s.controllerClient.ControllerUnpublishVolume(ctx, req); err != nil {
+		if err := runCleanupStep(ctx, 60*time.Second, func(stepCtx context.Context) error {
+			req := &csi.ControllerUnpublishVolumeRequest{
+				VolumeId: s.publishContext[driver.PublishContextExportID],
+				NodeId:   s.nodeID,
+			}
+			if s.hostNQN != "" {
+				req.Secrets = map[string]string{"hostNQN": s.hostNQN}
+			}
+			_, err := s.controllerClient.ControllerUnpublishVolume(stepCtx, req)
+			return err
+		}); err != nil {
 			log.Printf("cleanup ControllerUnpublishVolume failed: %v", err)
 		}
 	}
 	if s.volumeID != "" {
-		if _, err := s.controllerClient.DeleteVolume(ctx, &csi.DeleteVolumeRequest{VolumeId: s.volumeID}); err != nil {
+		if err := runCleanupStep(ctx, 30*time.Second, func(stepCtx context.Context) error {
+			_, err := s.controllerClient.DeleteVolume(stepCtx, &csi.DeleteVolumeRequest{VolumeId: s.volumeID})
+			return err
+		}); err != nil {
 			log.Printf("cleanup DeleteVolume failed: %v", err)
 		}
 	}
+}
+
+func runCleanupStep(parent context.Context, timeout time.Duration, fn func(context.Context) error) error {
+	stepCtx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+	return fn(stepCtx)
 }
 
 func runPreflight(
