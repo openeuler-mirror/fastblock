@@ -2897,6 +2897,16 @@ static void kfastblock_transport_prepare_request_runtime(
 	ctx->stage = KFASTBLOCK_SUBMIT_STAGE_RUNTIME_READY;
 }
 
+static bool kfastblock_transport_transition_submit_runtime(
+	struct kfastblock_transport_submit_ctx *ctx)
+{
+	if (!ctx)
+		return false;
+
+	kfastblock_transport_prepare_request_runtime(ctx);
+	return !ctx->finished;
+}
+
 static void kfastblock_transport_prepare_request_prefetch(
 	struct kfastblock_transport_submit_ctx *ctx)
 {
@@ -2906,6 +2916,16 @@ static void kfastblock_transport_prepare_request_prefetch(
 	kfastblock_transport_prefetch_submit_leaders(ctx);
 	if (!ctx->ret)
 		ctx->stage = KFASTBLOCK_SUBMIT_STAGE_PREFETCHED;
+}
+
+static bool kfastblock_transport_transition_submit_prefetch(
+	struct kfastblock_transport_submit_ctx *ctx)
+{
+	if (!ctx)
+		return false;
+
+	kfastblock_transport_prepare_request_prefetch(ctx);
+	return ctx->ret >= 0;
 }
 
 static int kfastblock_transport_prepare_initial_dispatch_batch(
@@ -2924,6 +2944,16 @@ static int kfastblock_transport_prepare_initial_dispatch_batch(
 		ctx->stage = KFASTBLOCK_SUBMIT_STAGE_BATCH_PREPARED;
 
 	return 0;
+}
+
+static bool kfastblock_transport_transition_submit_batch_prepare(
+	struct kfastblock_transport_submit_ctx *ctx)
+{
+	if (!ctx)
+		return false;
+
+	(void)kfastblock_transport_prepare_initial_dispatch_batch(ctx);
+	return ctx->ret >= 0;
 }
 
 static int kfastblock_transport_finish_submit_ctx(
@@ -2957,19 +2987,14 @@ static int kfastblock_transport_queue_initial_dispatch(
 	return 0;
 }
 
-static int kfastblock_transport_drive_initial_dispatch_batch(
+static bool kfastblock_transport_transition_submit_batch_queue(
 	struct kfastblock_transport_submit_ctx *ctx)
 {
-	int ret;
-
 	if (!ctx)
-		return -EINVAL;
+		return false;
 
-	ret = kfastblock_transport_prepare_initial_dispatch_batch(ctx);
-	if (ret || ctx->ret)
-		return ret;
-
-	return kfastblock_transport_queue_initial_dispatch(ctx);
+	(void)kfastblock_transport_queue_initial_dispatch(ctx);
+	return ctx->ret >= 0;
 }
 
 static bool kfastblock_transport_advance_submit_ctx(
@@ -2980,15 +3005,13 @@ static bool kfastblock_transport_advance_submit_ctx(
 
 	switch (ctx->stage) {
 	case KFASTBLOCK_SUBMIT_STAGE_INIT:
-		kfastblock_transport_prepare_request_runtime(ctx);
-		return !ctx->finished;
+		return kfastblock_transport_transition_submit_runtime(ctx);
 	case KFASTBLOCK_SUBMIT_STAGE_RUNTIME_READY:
-		kfastblock_transport_prepare_request_prefetch(ctx);
-		return ctx->ret >= 0;
+		return kfastblock_transport_transition_submit_prefetch(ctx);
 	case KFASTBLOCK_SUBMIT_STAGE_PREFETCHED:
+		return kfastblock_transport_transition_submit_batch_prepare(ctx);
 	case KFASTBLOCK_SUBMIT_STAGE_BATCH_PREPARED:
-		(void)kfastblock_transport_drive_initial_dispatch_batch(ctx);
-		return ctx->ret >= 0;
+		return kfastblock_transport_transition_submit_batch_queue(ctx);
 	case KFASTBLOCK_SUBMIT_STAGE_BATCH_QUEUED:
 	case KFASTBLOCK_SUBMIT_STAGE_EMPTY_DONE:
 	case KFASTBLOCK_SUBMIT_STAGE_FINISHED:
