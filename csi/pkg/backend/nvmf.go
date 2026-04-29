@@ -33,7 +33,10 @@ type NVMFBackend struct {
 	DeviceRoot     string
 	SysClassNVMe   string
 	SysClassBlock  string
+	SysModuleRoot  string
+	HostNQNPath    string
 	runner         commandRunner
+	lookPath       func(string) (string, error)
 }
 
 func NewNVMF() *NVMFBackend {
@@ -43,12 +46,18 @@ func NewNVMF() *NVMFBackend {
 		DeviceRoot:     "/dev",
 		SysClassNVMe:   "/sys/class/nvme",
 		SysClassBlock:  "/sys/class/block",
+		SysModuleRoot:  "/sys/module",
+		HostNQNPath:    "/etc/nvme/hostnqn",
 		runner:         execRunner{},
+		lookPath:       exec.LookPath,
 	}
 }
 
 func (b *NVMFBackend) Stage(ctx context.Context, _ string, volumeCtx VolumeContext) (string, error) {
 	if err := ValidateVolumeContext(volumeCtx); err != nil {
+		return "", err
+	}
+	if err := b.preflight(volumeCtx); err != nil {
 		return "", err
 	}
 	if ready, _ := b.IsReady(ctx, "", volumeCtx); ready {
@@ -175,6 +184,41 @@ func readTrimmed(path string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(data)), nil
+}
+
+func (b *NVMFBackend) preflight(volumeCtx VolumeContext) error {
+	if b.lookPath == nil {
+		b.lookPath = exec.LookPath
+	}
+	if _, err := b.lookPath("nvme"); err != nil {
+		return fmt.Errorf("nvme command not available: %w", err)
+	}
+	hostNQN, err := readTrimmed(b.HostNQNPath)
+	if err != nil {
+		return fmt.Errorf("read hostnqn failed: %w", err)
+	}
+	if hostNQN == "" {
+		return errors.New("hostnqn is empty")
+	}
+	module := transportModule(volumeCtx.Transport)
+	if module == "" {
+		return fmt.Errorf("unsupported transport %q", volumeCtx.Transport)
+	}
+	if _, err := os.Stat(filepath.Join(b.SysModuleRoot, module)); err != nil {
+		return fmt.Errorf("required kernel module %s not loaded: %w", module, err)
+	}
+	return nil
+}
+
+func transportModule(transport string) string {
+	switch transport {
+	case "tcp":
+		return "nvme_tcp"
+	case "rdma":
+		return "nvme_rdma"
+	default:
+		return ""
+	}
 }
 
 func buildConnectArgs(volumeCtx VolumeContext) []string {
