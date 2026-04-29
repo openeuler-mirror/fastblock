@@ -869,6 +869,8 @@ static int cmd_pipeline_get_leader(const struct config *cfg)
 	char *address = NULL;
 	uint32_t count;
 	uint32_t received = 0;
+	uint32_t ok_count = 0;
+	uint32_t err_count = 0;
 	uint16_t address_len;
 	int fd = -1;
 	int ret;
@@ -927,10 +929,12 @@ static int cmd_pipeline_get_leader(const struct config *cfg)
 		       status_name(le32toh(hdr.status)),
 		       le32toh(hdr.status));
 		if (le32toh(hdr.status) != RAW_STATUS_OK) {
+			err_count++;
 			free(body);
 			body = NULL;
 			continue;
 		}
+		ok_count++;
 		if (le32toh(hdr.body_len) < sizeof(rsp)) {
 			ret = -EPROTO;
 			goto out;
@@ -955,6 +959,9 @@ static int cmd_pipeline_get_leader(const struct config *cfg)
 		free(body);
 		body = NULL;
 	}
+	printf("pipeline_ok=%u pipeline_err=%u\n", ok_count, err_count);
+	if (!ret && err_count)
+		ret = -EIO;
 
 out:
 	free(address);
@@ -977,6 +984,8 @@ static int cmd_pipeline_read_object(const struct config *cfg)
 	size_t req_len;
 	uint32_t count;
 	uint32_t received = 0;
+	uint32_t ok_count = 0;
+	uint32_t err_count = 0;
 	uint32_t data_len;
 	int fd = -1;
 	int ret;
@@ -1052,10 +1061,12 @@ static int cmd_pipeline_read_object(const struct config *cfg)
 		       status_name(le32toh(hdr.status)),
 		       le32toh(hdr.status));
 		if (le32toh(hdr.status) != RAW_STATUS_OK) {
+			err_count++;
 			free(body);
 			body = NULL;
 			continue;
 		}
+		ok_count++;
 		if (le32toh(hdr.body_len) < sizeof(rsp)) {
 			ret = -EPROTO;
 			goto out;
@@ -1076,6 +1087,9 @@ static int cmd_pipeline_read_object(const struct config *cfg)
 		free(body);
 		body = NULL;
 	}
+	printf("pipeline_ok=%u pipeline_err=%u\n", ok_count, err_count);
+	if (!ret && err_count)
+		ret = -EIO;
 
 out:
 	free(body);
@@ -1263,6 +1277,8 @@ static int cmd_pipeline_write_object(const struct config *cfg)
 	size_t req_len;
 	uint32_t count;
 	uint32_t received = 0;
+	uint32_t ok_count = 0;
+	uint32_t err_count = 0;
 	int fd = -1;
 	int ret;
 
@@ -1351,9 +1367,16 @@ static int cmd_pipeline_write_object(const struct config *cfg)
 		       (unsigned long long)seq,
 		       status_name(le32toh(hdr.status)),
 		       le32toh(hdr.status));
+		if (le32toh(hdr.status) == RAW_STATUS_OK)
+			ok_count++;
+		else
+			err_count++;
 		free(rsp_body);
 		rsp_body = NULL;
 	}
+	printf("pipeline_ok=%u pipeline_err=%u\n", ok_count, err_count);
+	if (!ret && err_count)
+		ret = -EIO;
 
 out:
 	free(rsp_body);
@@ -1376,6 +1399,8 @@ static int cmd_pipeline_delete_object(const struct config *cfg)
 	size_t req_len;
 	uint32_t count;
 	uint32_t received = 0;
+	uint32_t ok_count = 0;
+	uint32_t err_count = 0;
 	int fd = -1;
 	int ret;
 
@@ -1447,9 +1472,16 @@ static int cmd_pipeline_delete_object(const struct config *cfg)
 		       (unsigned long long)seq,
 		       status_name(le32toh(hdr.status)),
 		       le32toh(hdr.status));
+		if (le32toh(hdr.status) == RAW_STATUS_OK)
+			ok_count++;
+		else
+			err_count++;
 		free(rsp_body);
 		rsp_body = NULL;
 	}
+	printf("pipeline_ok=%u pipeline_err=%u\n", ok_count, err_count);
+	if (!ret && err_count)
+		ret = -EIO;
 
 out:
 	free(req_body);
