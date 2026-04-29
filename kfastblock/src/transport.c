@@ -1131,23 +1131,30 @@ static void kfastblock_transport_finish_exchange(
 {
 	u32 flags = 0;
 	u32 body_len = 0;
+	u64 response_seq = 0;
 	s32 status = ret;
 
 	if (!ctx || !ctx->kf_req || !ctx->seq)
 		return;
 
 	if (rsp_hdr) {
+		response_seq = le64_to_cpu(rsp_hdr->seq);
 		flags = le32_to_cpu(rsp_hdr->flags);
 		body_len = le32_to_cpu(rsp_hdr->body_len);
 		status = kfastblock_transport_status_to_errno(
 			le32_to_cpu(rsp_hdr->status));
 	}
-	kfastblock_request_record_object_response(ctx->kf_req,
-						  ctx->object_index,
-						  status,
-						  body_len,
-						  flags);
+	if (response_seq == ctx->seq)
+		(void)kfastblock_request_record_object_response_by_seq(
+			ctx->kf_req, response_seq, status, body_len, flags);
+	else
+		kfastblock_request_record_object_response(ctx->kf_req,
+							  ctx->object_index,
+							  status,
+							  body_len,
+							  flags);
 	kfastblock_pipeline_finish_exchange(&ctx->kf_req->pipeline,
+					    response_seq ? response_seq :
 					    ctx->seq, ret, status,
 					    body_len, flags);
 	kfastblock_volume_update_pipeline_snapshot(ctx->kf_req->vol,
