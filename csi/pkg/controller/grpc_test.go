@@ -76,6 +76,44 @@ func TestControllerGRPCCreateAndDeleteVolume(t *testing.T) {
 	}
 }
 
+func TestControllerGRPCDeleteVolumeUsesStoredMetadataForOpaqueVolumeID(t *testing.T) {
+	monitor := &stubMonitorClient{
+		createVol: monitorclient.Volume{
+			ID: "opaque-volume-id",
+		},
+	}
+	service := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, &stubExporterClient{})
+	grpcService := NewGRPCService(service)
+
+	createResp, err := grpcService.CreateVolume(context.Background(), &csi.CreateVolumeRequest{
+		Name: "img-a",
+		CapacityRange: &csi.CapacityRange{
+			RequiredBytes: 1 << 20,
+		},
+		Parameters: map[string]string{
+			"pool":       "fb",
+			"objectSize": "4194304",
+			"blockSize":  "4096",
+			"transport":  "rdma",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create volume failed: %v", err)
+	}
+	if createResp.GetVolume().GetVolumeId() != "opaque-volume-id" {
+		t.Fatalf("unexpected create volume id: %+v", createResp.GetVolume())
+	}
+
+	if _, err := grpcService.DeleteVolume(context.Background(), &csi.DeleteVolumeRequest{
+		VolumeId: "opaque-volume-id",
+	}); err != nil {
+		t.Fatalf("delete volume failed: %v", err)
+	}
+	if monitor.deleteRef.Name != "img-a" || monitor.deleteRef.Pool != "fb" || monitor.deleteRef.ID != "opaque-volume-id" {
+		t.Fatalf("unexpected delete ref: %+v", monitor.deleteRef)
+	}
+}
+
 func TestControllerGRPCPublishAndUnpublishVolume(t *testing.T) {
 	monitor := &stubMonitorClient{}
 	exporter := &stubExporterClient{}
@@ -130,13 +168,39 @@ func TestControllerGRPCPublishAndUnpublishVolume(t *testing.T) {
 }
 
 func TestControllerPublishVolumeRejectsMismatchedVolumeContext(t *testing.T) {
-	monitor := &stubMonitorClient{}
+	monitor := &stubMonitorClient{
+		createVol: monitorclient.Volume{
+			ID: "opaque-volume-id",
+		},
+		getVol: monitorclient.Volume{
+			ID:            "opaque-volume-id",
+			Name:          "img-a",
+			Pool:          "fb",
+			CapacityBytes: 1 << 20,
+			ObjectSize:    4 << 20,
+		},
+	}
 	exporter := &stubExporterClient{}
 	service := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
 	grpcService := NewGRPCService(service)
 
+	if _, err := grpcService.CreateVolume(context.Background(), &csi.CreateVolumeRequest{
+		Name: "img-a",
+		CapacityRange: &csi.CapacityRange{
+			RequiredBytes: 1 << 20,
+		},
+		Parameters: map[string]string{
+			"pool":       "fb",
+			"objectSize": "4194304",
+			"blockSize":  "4096",
+			"transport":  "rdma",
+		},
+	}); err != nil {
+		t.Fatalf("create volume failed: %v", err)
+	}
+
 	_, err := grpcService.ControllerPublishVolume(context.Background(), &csi.ControllerPublishVolumeRequest{
-		VolumeId: "fbvolname:fb:img-a",
+		VolumeId: "opaque-volume-id",
 		NodeId:   "node-a",
 		VolumeCapability: &csi.VolumeCapability{
 			AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
@@ -152,7 +216,7 @@ func TestControllerPublishVolumeRejectsMismatchedVolumeContext(t *testing.T) {
 		},
 	})
 	if err == nil {
-		t.Fatal("expected mismatched volume_context error")
+		t.Fatal("expected mismatched stored metadata error")
 	}
 }
 
@@ -180,6 +244,105 @@ func TestControllerPublishVolumeRejectsUnsupportedCapability(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected unsupported capability error")
+	}
+}
+
+func TestControllerPublishVolumeUsesStoredMetadataWithoutVolumeContext(t *testing.T) {
+	monitor := &stubMonitorClient{
+		createVol: monitorclient.Volume{
+			ID: "opaque-volume-id",
+		},
+		getVol: monitorclient.Volume{
+			ID:            "opaque-volume-id",
+			Name:          "img-a",
+			Pool:          "fb",
+			CapacityBytes: 1 << 20,
+			ObjectSize:    4 << 20,
+		},
+	}
+	exporter := &stubExporterClient{}
+	service := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+	grpcService := NewGRPCService(service)
+
+	createResp, err := grpcService.CreateVolume(context.Background(), &csi.CreateVolumeRequest{
+		Name: "img-a",
+		CapacityRange: &csi.CapacityRange{
+			RequiredBytes: 1 << 20,
+		},
+		Parameters: map[string]string{
+			"pool":       "fb",
+			"objectSize": "4194304",
+			"blockSize":  "4096",
+			"transport":  "rdma",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create volume failed: %v", err)
+	}
+
+	resp, err := grpcService.ControllerPublishVolume(context.Background(), &csi.ControllerPublishVolumeRequest{
+		VolumeId: createResp.GetVolume().GetVolumeId(),
+		NodeId:   "node-a",
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
+			AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+		},
+		Secrets: map[string]string{
+			"hostNQN": "nqn.host.1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("publish volume failed: %v", err)
+	}
+	if resp.GetPublishContext() == nil || resp.GetPublishContext()["nqn"] == "" {
+		t.Fatalf("unexpected publish response: %+v", resp)
+	}
+	if monitor.getRef.ID != "opaque-volume-id" || monitor.getRef.Name != "img-a" || monitor.getRef.Pool != "fb" {
+		t.Fatalf("unexpected get ref: %+v", monitor.getRef)
+	}
+}
+
+func TestControllerPublishVolumeSupportsOpaqueVolumeIDWithVolumeContext(t *testing.T) {
+	monitor := &stubMonitorClient{
+		getVol: monitorclient.Volume{
+			ID:            "opaque-volume-id",
+			Name:          "img-a",
+			Pool:          "fb",
+			CapacityBytes: 1 << 20,
+			ObjectSize:    4 << 20,
+		},
+	}
+	exporter := &stubExporterClient{}
+	service := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+	grpcService := NewGRPCService(service)
+
+	resp, err := grpcService.ControllerPublishVolume(context.Background(), &csi.ControllerPublishVolumeRequest{
+		VolumeId: "opaque-volume-id",
+		NodeId:   "node-a",
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
+			AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+		},
+		VolumeContext: map[string]string{
+			"pool":          "fb",
+			"name":          "img-a",
+			"transport":     "rdma",
+			"blockSize":     "4096",
+			"objectSize":    "4194304",
+			"capacityBytes": "1048576",
+		},
+		Secrets: map[string]string{
+			"hostNQN": "nqn.host.1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("publish volume failed: %v", err)
+	}
+	if resp.GetPublishContext() == nil || resp.GetPublishContext()["nqn"] == "" {
+		t.Fatalf("unexpected publish response: %+v", resp)
+	}
+	if monitor.getRef.ID != "opaque-volume-id" || monitor.getRef.Name != "img-a" || monitor.getRef.Pool != "fb" {
+		t.Fatalf("unexpected get ref: %+v", monitor.getRef)
 	}
 }
 
