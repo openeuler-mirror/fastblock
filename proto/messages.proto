@@ -401,6 +401,81 @@ message GetPgOsdInfoResponse {
     map<int32, PgOsdInfos> pools = 1; 
 }
 
+message CSIVolumeMetadata {
+    string volume_id = 1;
+    string pool_name = 2;
+    string image_name = 3;
+    int64 capacity_bytes = 4;
+    int64 object_size = 5;
+    int64 block_size = 6;
+    string transport = 7;
+    string export_id = 8;
+}
+
+message CSIAttachment {
+    string volume_id = 1;
+    string node_id = 2;
+    string host_nqn = 3;
+    string export_id = 4;
+}
+
+enum CSIMetadataErrorCode {
+    csiMetadataOk = 0;
+    csiMetadataNotFound = 1;
+    csiMetadataInvalidArgument = 2;
+    csiMetadataInternalError = 3;
+}
+
+message PutCSIVolumeMetadataRequest {
+    CSIVolumeMetadata metadata = 1;
+}
+
+message PutCSIVolumeMetadataResponse {
+    CSIMetadataErrorCode errorcode = 1;
+}
+
+message GetCSIVolumeMetadataRequest {
+    string volume_id = 1;
+}
+
+message GetCSIVolumeMetadataResponse {
+    CSIMetadataErrorCode errorcode = 1;
+    CSIVolumeMetadata metadata = 2;
+}
+
+message DeleteCSIVolumeMetadataRequest {
+    string volume_id = 1;
+}
+
+message DeleteCSIVolumeMetadataResponse {
+    CSIMetadataErrorCode errorcode = 1;
+}
+
+message PutCSIAttachmentRequest {
+    CSIAttachment attachment = 1;
+}
+
+message PutCSIAttachmentResponse {
+    CSIMetadataErrorCode errorcode = 1;
+}
+
+message GetCSIAttachmentRequest {
+    string volume_id = 1;
+}
+
+message GetCSIAttachmentResponse {
+    CSIMetadataErrorCode errorcode = 1;
+    CSIAttachment attachment = 2;
+}
+
+message DeleteCSIAttachmentRequest {
+    string volume_id = 1;
+}
+
+message DeleteCSIAttachmentResponse {
+    CSIMetadataErrorCode errorcode = 1;
+}
+
 message Request {
     oneof union {
         BootRequest boot_request = 1;
@@ -427,6 +502,12 @@ message Request {
         DataStatisticsRequest   data_statistics_request=22;
         OsdConfigRequest osd_config_request=23;
         GetPgOsdInfoRequest  pg_osd_info_request=24;
+        PutCSIVolumeMetadataRequest put_csi_volume_metadata_request = 25;
+        GetCSIVolumeMetadataRequest get_csi_volume_metadata_request = 26;
+        DeleteCSIVolumeMetadataRequest delete_csi_volume_metadata_request = 27;
+        PutCSIAttachmentRequest put_csi_attachment_request = 28;
+        GetCSIAttachmentRequest get_csi_attachment_request = 29;
+        DeleteCSIAttachmentRequest delete_csi_attachment_request = 30;
     }
 }
 
@@ -456,5 +537,11 @@ message Response {
         DataStatisticsResponse    data_statistics_response=22;
         OsdConfigResponse osd_config_response=23;
         GetPgOsdInfoResponse  pg_osd_info_response=24;
+        PutCSIVolumeMetadataResponse put_csi_volume_metadata_response = 25;
+        GetCSIVolumeMetadataResponse get_csi_volume_metadata_response = 26;
+        DeleteCSIVolumeMetadataResponse delete_csi_volume_metadata_response = 27;
+        PutCSIAttachmentResponse put_csi_attachment_response = 28;
+        GetCSIAttachmentResponse get_csi_attachment_response = 29;
+        DeleteCSIAttachmentResponse delete_csi_attachment_response = 30;
     }
 }
