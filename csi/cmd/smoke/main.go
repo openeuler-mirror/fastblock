@@ -11,6 +11,8 @@ import (
 	"fastblock-csi/pkg/driver"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func main() {
@@ -27,6 +29,10 @@ func main() {
 	var objectSize int64
 	var blockSize int64
 	var cleanup bool
+	var verifyPublishIdempotency bool
+	var verifyCrossNodeConflict bool
+	var conflictNodeID string
+	var conflictHostNQN string
 
 	flag.StringVar(&controllerEndpoint, "controller-endpoint", "unix:///tmp/fastblock-csi-controller.sock", "CSI controller endpoint")
 	flag.StringVar(&nodeEndpoint, "node-endpoint", "unix:///tmp/fastblock-csi-node.sock", "CSI node endpoint")
@@ -41,7 +47,22 @@ func main() {
 	flag.Int64Var(&objectSize, "object-size", 4<<20, "object size in bytes")
 	flag.Int64Var(&blockSize, "block-size", 4096, "block size in bytes")
 	flag.BoolVar(&cleanup, "cleanup", true, "cleanup resources after smoke flow")
+	flag.BoolVar(&verifyPublishIdempotency, "verify-publish-idempotency", true, "verify repeated ControllerPublishVolume on the same node succeeds")
+	flag.BoolVar(&verifyCrossNodeConflict, "verify-cross-node-conflict", true, "verify ControllerPublishVolume to another node is rejected")
+	flag.StringVar(&conflictNodeID, "conflict-node-id", "", "node id used for cross-node conflict verification")
+	flag.StringVar(&conflictHostNQN, "conflict-host-nqn", "", "host NQN used for cross-node conflict verification")
 	flag.Parse()
+
+	if conflictNodeID == "" {
+		conflictNodeID = nodeID + "-conflict"
+	}
+	if conflictHostNQN == "" {
+		if hostNQN != "" {
+			conflictHostNQN = hostNQN + ".conflict"
+		} else {
+			conflictHostNQN = conflictNodeID
+		}
+	}
 
 	baseDir := filepath.Join("/tmp", "fastblock-csi-smoke", volumeName)
 	if stagePath == "" {
@@ -126,6 +147,37 @@ func main() {
 	cleanupState.hostNQN = hostNQN
 	if cleanupState.hostNQN == "" {
 		cleanupState.hostNQN = nodeID
+	}
+
+	if verifyPublishIdempotency {
+		log.Printf("Verify repeated ControllerPublishVolume volumeID=%s nodeID=%s", volume.GetVolumeId(), nodeID)
+		repeatResp, err := controllerClient.ControllerPublishVolume(ctx, publishReq)
+		if err != nil {
+			log.Fatalf("repeat ControllerPublishVolume failed: %v", err)
+		}
+		if repeatResp.GetPublishContext()[driver.PublishContextExportID] != publishResp.GetPublishContext()[driver.PublishContextExportID] {
+			log.Fatalf("repeat publish returned different export ids: first=%q second=%q",
+				publishResp.GetPublishContext()[driver.PublishContextExportID],
+				repeatResp.GetPublishContext()[driver.PublishContextExportID],
+			)
+		}
+	}
+
+	if verifyCrossNodeConflict {
+		log.Printf("Verify cross-node ControllerPublishVolume conflict volumeID=%s nodeID=%s", volume.GetVolumeId(), conflictNodeID)
+		conflictReq := &csi.ControllerPublishVolumeRequest{
+			VolumeId:         volume.GetVolumeId(),
+			NodeId:           conflictNodeID,
+			VolumeCapability: volumeCapability,
+			VolumeContext:    volume.GetVolumeContext(),
+		}
+		if conflictHostNQN != "" {
+			conflictReq.Secrets = map[string]string{"hostNQN": conflictHostNQN}
+		}
+		_, err := controllerClient.ControllerPublishVolume(ctx, conflictReq)
+		if status.Code(err) != codes.FailedPrecondition {
+			log.Fatalf("expected cross-node publish conflict, got: %v", err)
+		}
 	}
 
 	log.Printf("NodeStageVolume stagePath=%s", stagePath)
