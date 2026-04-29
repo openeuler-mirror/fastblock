@@ -246,6 +246,8 @@ struct fbraw_get_image_info_rsp {
 ```c
 struct fbraw_get_cluster_map_req {
     __le64 osdmap_epoch;
+    __le32 pool_id;
+    __le32 reserved;
     __le64 pgmap_epoch;
 };
 ```
@@ -307,6 +309,8 @@ struct fbraw_pg_entry {
 
 说明：
 
+- 请求中的 `pool_id` 用于限定只返回目标 pool 的 pgmap，避免每次轮询都下发所有 pool 的 PG 路由。
+- 当请求里的 `osdmap_epoch` 与目标 pool 的 `pgmap_epoch` 都和服务端一致时，服务端可直接返回 `STALE_EPOCH`，不再回传全量 body。
 - `primary_shard_id` 对应当前 `PGInfo.coreindex`
 - 第一版不把 leader 塞进 cluster map
 - leader 仍由 osd 数据面上的 `GET_LEADER` 获取

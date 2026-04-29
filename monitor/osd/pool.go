@@ -751,50 +751,53 @@ func ProcessGetPgMapMessage(ctx context.Context, pvs map[int32]int64) (*msg.GetP
 			}
 		} else {
 			log.Info(ctx, "user specified pools")
-			// case the client specified poolid and versions
-			for clientPid, clientVersion := range pvs {
-				if clientPid == int32(pid) {
-					if clientVersion > ppc.PoolPgMap.Version {
-						gpmr.Errorcode[int32(pid)] = msg.GetPgMapErrorCode_pgMapclientVersionHigher
-						continue
-					} else if clientVersion == ppc.PoolPgMap.Version {
-						// we have exactly the same version, just return it
-						gpmr.Errorcode[int32(pid)] = msg.GetPgMapErrorCode_PgMapSameVersion
-					}
-				}
-				// for onther cases:
-				// 1. client didn't specify poolid, but we have ,we should return it to them
-				// 2. client specified poolid, but with lower version, we return it to them
-				// (TODO)3. client specified poolid, but  we don't have, we tell them the pool is deleted
-				pginfos := &msg.PGInfos{
-					Pi: make([]*msg.PGInfo, 0),
-				}
-				gpmr.Pools[int32(pid)] = ppc.Name
-				for pgid, pc := range ppc.PoolPgMap.PgMap {
-					pgidToi, _ := strconv.Atoi(pgid)
-					var osdlist []int32
-					var newOsdlist []int32
-					for _, oid := range pc.OsdList {
-						osdlist = append(osdlist, int32(oid))
-					}
-					for _, oid := range pc.NewOsdList {
-						newOsdlist = append(newOsdlist, int32(oid))
-					}
-					pi := &msg.PGInfo{
-						Pgid:     int32(pgidToi),
-						Version:  pc.Version,
-						State:    int32(pc.PgState),
-						Coreindex:  pc.CoreIndex,
-						Osdid:    osdlist,
-						Newcoreindex: pc.NewCoreIndex,
-						Newosdid: newOsdlist,
-					}
-					pginfos.Pi = append(pginfos.Pi, pi)
-					gpmr.Pgs[int32(pid)] = pginfos
-					gpmr.Errorcode[int32(pid)] = msg.GetPgMapErrorCode_pgMapGetOk
-					gpmr.PoolidPgmapversion[int32(pid)] = ppc.PoolPgMap.Version
-				}
+			clientVersion, ok := pvs[int32(pid)]
+			if !ok {
+				ppc.RwMutex.RUnlock()
+				continue
 			}
+			if clientVersion > ppc.PoolPgMap.Version {
+				gpmr.Errorcode[int32(pid)] = msg.GetPgMapErrorCode_pgMapclientVersionHigher
+				gpmr.PoolidPgmapversion[int32(pid)] = ppc.PoolPgMap.Version
+				ppc.RwMutex.RUnlock()
+				continue
+			}
+			if clientVersion == ppc.PoolPgMap.Version {
+				gpmr.Errorcode[int32(pid)] = msg.GetPgMapErrorCode_PgMapSameVersion
+				gpmr.PoolidPgmapversion[int32(pid)] = ppc.PoolPgMap.Version
+				gpmr.Pools[int32(pid)] = ppc.Name
+				ppc.RwMutex.RUnlock()
+				continue
+			}
+
+			pginfos := &msg.PGInfos{
+				Pi: make([]*msg.PGInfo, 0),
+			}
+			gpmr.Pools[int32(pid)] = ppc.Name
+			for pgid, pc := range ppc.PoolPgMap.PgMap {
+				pgidToi, _ := strconv.Atoi(pgid)
+				var osdlist []int32
+				var newOsdlist []int32
+				for _, oid := range pc.OsdList {
+					osdlist = append(osdlist, int32(oid))
+				}
+				for _, oid := range pc.NewOsdList {
+					newOsdlist = append(newOsdlist, int32(oid))
+				}
+				pi := &msg.PGInfo{
+					Pgid:     int32(pgidToi),
+					Version:  pc.Version,
+					State:    int32(pc.PgState),
+					Coreindex:  pc.CoreIndex,
+					Osdid:    osdlist,
+					Newcoreindex: pc.NewCoreIndex,
+					Newosdid: newOsdlist,
+				}
+				pginfos.Pi = append(pginfos.Pi, pi)
+			}
+			gpmr.Pgs[int32(pid)] = pginfos
+			gpmr.Errorcode[int32(pid)] = msg.GetPgMapErrorCode_pgMapGetOk
+			gpmr.PoolidPgmapversion[int32(pid)] = ppc.PoolPgMap.Version
 		}
 		ppc.RwMutex.RUnlock()
 	}
@@ -965,4 +968,16 @@ func GetPoolIDByName(poolName string) (int32, bool) {
 		}
 	}
 	return 0, false
+}
+
+func GetPoolPGMapVersion(poolID int32) (int64, bool) {
+	AllPools.RwMutex.RLock()
+	defer AllPools.RwMutex.RUnlock()
+	pool, ok := AllPools.pools[PoolID(poolID)]
+	if !ok || pool == nil {
+		return 0, false
+	}
+	pool.RwMutex.RLock()
+	defer pool.RwMutex.RUnlock()
+	return pool.PoolPgMap.Version, true
 }

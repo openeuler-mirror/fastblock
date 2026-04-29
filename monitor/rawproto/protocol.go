@@ -50,6 +50,8 @@ type GetImageInfoRequest struct {
 
 type GetClusterMapRequest struct {
 	OSDMapEpoch uint64
+	PoolID      uint32
+	Reserved    uint32
 	PGMapEpoch  uint64
 }
 
