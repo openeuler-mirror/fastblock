@@ -32,7 +32,7 @@ static unsigned long kfastblock_volume_image_refresh_interval(void)
 	return msecs_to_jiffies(30000);
 }
 
-static void kfastblock_volume_close_cached_sockets(struct kfastblock_volume *vol)
+static void kfastblock_volume_close_osd_cached_sockets(struct kfastblock_volume *vol)
 {
 	int i;
 
@@ -49,6 +49,14 @@ static void kfastblock_volume_close_cached_sockets(struct kfastblock_volume *vol
 		vol->socket_cache[i].osd_id = 0;
 		vol->socket_cache[i].port = 0;
 	}
+}
+
+static void kfastblock_volume_close_monitor_cached_sockets(struct kfastblock_volume *vol)
+{
+	int i;
+
+	if (!vol)
+		return;
 
 	for (i = 0; i < KFASTBLOCK_MAX_MONITORS; ++i) {
 		if (!vol->monitor_cache[i].sock)
@@ -60,6 +68,12 @@ static void kfastblock_volume_close_cached_sockets(struct kfastblock_volume *vol
 		vol->monitor_cache[i].port = 0;
 		vol->monitor_cache[i].next_seq = 0;
 	}
+}
+
+static void kfastblock_volume_close_cached_sockets(struct kfastblock_volume *vol)
+{
+	kfastblock_volume_close_osd_cached_sockets(vol);
+	kfastblock_volume_close_monitor_cached_sockets(vol);
 }
 
 static u32 kfastblock_volume_effective_max_io_bytes(const struct kfastblock_volume *vol)
@@ -176,7 +190,7 @@ static void kfastblock_volume_refresh_workfn(struct work_struct *work)
 							 &vol->spec);
 		if (old_osdmap_epoch != vol->view.osdmap_epoch ||
 		    old_pgmap_epoch != vol->view.pgmap_epoch)
-			kfastblock_volume_close_cached_sockets(vol);
+			kfastblock_volume_close_osd_cached_sockets(vol);
 		if (old_size != vol->view.image.size_bytes)
 			set_capacity_and_notify(vol->disk,
 						vol->view.image.size_bytes >>
@@ -200,7 +214,8 @@ static void kfastblock_volume_refresh_workfn(struct work_struct *work)
 				 "image metadata refresh failed: %d\n",
 				 image_ret);
 	} else if (ret) {
-		kfastblock_volume_close_cached_sockets(vol);
+		kfastblock_volume_close_osd_cached_sockets(vol);
+		kfastblock_volume_close_monitor_cached_sockets(vol);
 		vol->view.sync_state = KFASTBLOCK_META_SYNC_STALE;
 	}
 	up_write(&vol->state_lock);
