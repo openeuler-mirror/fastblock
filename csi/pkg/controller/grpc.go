@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"fastblock-csi/pkg/driver"
+	"fastblock-csi/pkg/exporterclient"
 	"fastblock-csi/pkg/monitorclient"
 	"fastblock-csi/pkg/volumeid"
 
@@ -159,8 +160,12 @@ func (s *GRPCService) ControllerUnpublishVolume(ctx context.Context, req *csi.Co
 	if req.GetVolumeId() == "" {
 		return nil, fmt.Errorf("volume id is required")
 	}
+	exportID, err := exporterclient.ExportIDForVolume(req.GetVolumeId())
+	if err != nil {
+		return nil, err
+	}
 	if err := s.service.ControllerUnpublishVolume(ctx, ControllerUnpublishRequest{
-		ExportID: req.GetVolumeId(),
+		ExportID: exportID,
 		NodeID:   req.GetNodeId(),
 		Secrets:  req.GetSecrets(),
 	}); err != nil {

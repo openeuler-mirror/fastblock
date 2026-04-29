@@ -79,6 +79,7 @@ func TestControllerGRPCPublishAndUnpublishVolume(t *testing.T) {
 	exporter := &stubExporterClient{}
 	service := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
 	grpcService := NewGRPCService(service)
+	expectedExportID := mustExportIDForVolume(t, "fbvolname:fb:img-a")
 
 	req := &csi.ControllerPublishVolumeRequest{
 		VolumeId: "fbvolname:fb:img-a",
@@ -107,12 +108,12 @@ func TestControllerGRPCPublishAndUnpublishVolume(t *testing.T) {
 	if resp.GetPublishContext() == nil || resp.GetPublishContext()["nqn"] == "" {
 		t.Fatalf("unexpected publish response: %+v", resp)
 	}
-	if exporter.allowID != "exp-1" || exporter.allowNQN != "nqn.host.1" {
+	if exporter.allowID != expectedExportID || exporter.allowNQN != "nqn.host.1" {
 		t.Fatalf("unexpected exporter allow state: %+v", exporter)
 	}
 
 	_, err = grpcService.ControllerUnpublishVolume(context.Background(), &csi.ControllerUnpublishVolumeRequest{
-		VolumeId: "exp-1",
+		VolumeId: "fbvolname:fb:img-a",
 		NodeId:   "node-a",
 		Secrets: map[string]string{
 			"hostNQN": "nqn.host.1",
@@ -121,7 +122,7 @@ func TestControllerGRPCPublishAndUnpublishVolume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unpublish volume failed: %v", err)
 	}
-	if exporter.denyID != "exp-1" || exporter.deleteID != "exp-1" {
+	if exporter.denyID != expectedExportID || exporter.deleteID != expectedExportID {
 		t.Fatalf("unexpected exporter unpublish state: %+v", exporter)
 	}
 }
