@@ -200,6 +200,12 @@ bool kfastblock_meta_ready(const struct kfastblock_cluster_view *view)
 		view->image.block_size && view->image.pg_count;
 }
 
+bool kfastblock_meta_io_ready(const struct kfastblock_cluster_view *view)
+{
+	return kfastblock_meta_ready(view) &&
+		view->sync_state == KFASTBLOCK_META_SYNC_READY;
+}
+
 const struct kfastblock_osd_endpoint *
 kfastblock_meta_find_osd(const struct kfastblock_cluster_view *view, u32 osd_id)
 {
