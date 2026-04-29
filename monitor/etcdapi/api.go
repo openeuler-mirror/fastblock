@@ -27,6 +27,12 @@ type EtcdClient struct {
 
 type LeaseID clientv3.LeaseID
 
+type Entry struct {
+	Key   string
+	Value string
+	Lease LeaseID
+}
+
 type ErrorCode int
 
 const ErrorKeyNotFound ErrorCode = 404
@@ -132,16 +138,36 @@ func (c *EtcdClient) KeepAliveOnce(ctx context.Context, id LeaseID) error {
 // It takes a context.Context and a string key as parameters.
 // It returns a string value and an error.
 func (c *EtcdClient) Get(ctx context.Context, key string) (string, error) {
+	entry, err := c.GetEntry(ctx, key)
+	if err != nil {
+		return "", err
+	}
+	return entry.Value, nil
+}
+
+func (c *EtcdClient) GetEntry(ctx context.Context, key string) (Entry, error) {
 	resp, err := c.client.Get(ctx, key)
 	if err != nil {
-		return "", fmt.Errorf("failed to get value for key: %v", err)
+		return Entry{}, fmt.Errorf("failed to get value for key: %v", err)
 	}
 
 	if len(resp.Kvs) == 0 {
-		return "", ErrorKeyNotFound
+		return Entry{}, ErrorKeyNotFound
 	}
 
-	return string(resp.Kvs[0].Value), nil
+	return Entry{
+		Key:   string(resp.Kvs[0].Key),
+		Value: string(resp.Kvs[0].Value),
+		Lease: LeaseID(resp.Kvs[0].Lease),
+	}, nil
+}
+
+func (c *EtcdClient) Revoke(ctx context.Context, id LeaseID) error {
+	_, err := c.client.Revoke(ctx, clientv3.LeaseID(id))
+	if err != nil {
+		return fmt.Errorf("failed to revoke lease: %v", err)
+	}
+	return nil
 }
 
 // KeyValue represents a key-value pair.

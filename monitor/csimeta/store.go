@@ -101,12 +101,160 @@ func DeleteAttachment(ctx context.Context, client *etcdapi.EtcdClient, volumeID 
 	return msg.CSIMetadataErrorCode_csiMetadataOk
 }
 
+func AcquireLease(ctx context.Context, client *etcdapi.EtcdClient, request *msg.AcquireCSILeaseRequest) (msg.CSILeaseErrorCode, *msg.CSIVolumeLease) {
+	if client == nil || request == nil {
+		return msg.CSILeaseErrorCode_csiLeaseInvalidArgument, nil
+	}
+	if !validLeaseRequest(request.GetVolumeId(), request.GetNodeId(), request.GetHostNqn(), request.GetTtlSeconds()) {
+		return msg.CSILeaseErrorCode_csiLeaseInvalidArgument, nil
+	}
+	key := leaseKey(request.GetVolumeId())
+
+	entry, err := client.GetEntry(ctx, key)
+	if err == nil {
+		lease, err := leaseFromEntry(entry)
+		if err != nil {
+			return msg.CSILeaseErrorCode_csiLeaseInternalError, nil
+		}
+		if sameLeaseOwner(lease, request.GetNodeId(), request.GetHostNqn()) {
+			if err := client.KeepAliveOnce(ctx, entry.Lease); err != nil {
+				return msg.CSILeaseErrorCode_csiLeaseInternalError, nil
+			}
+			return msg.CSILeaseErrorCode_csiLeaseOk, lease
+		}
+		return msg.CSILeaseErrorCode_csiLeaseConflict, lease
+	}
+	if err != etcdapi.ErrorKeyNotFound {
+		return msg.CSILeaseErrorCode_csiLeaseInternalError, nil
+	}
+
+	leaseID, err := client.Grant(ctx, request.GetTtlSeconds())
+	if err != nil {
+		return msg.CSILeaseErrorCode_csiLeaseInternalError, nil
+	}
+	lease := &msg.CSIVolumeLease{
+		VolumeId:   request.GetVolumeId(),
+		NodeId:     request.GetNodeId(),
+		HostNqn:    request.GetHostNqn(),
+		LeaseId:    int64(leaseID),
+		TtlSeconds: request.GetTtlSeconds(),
+	}
+	data, err := json.Marshal(lease)
+	if err != nil {
+		return msg.CSILeaseErrorCode_csiLeaseInternalError, nil
+	}
+	ok, err := client.PutAndLease(ctx, key, string(data), leaseID)
+	if err != nil {
+		return msg.CSILeaseErrorCode_csiLeaseInternalError, nil
+	}
+	if ok {
+		return msg.CSILeaseErrorCode_csiLeaseOk, lease
+	}
+
+	entry, err = client.GetEntry(ctx, key)
+	if err != nil {
+		if err == etcdapi.ErrorKeyNotFound {
+			return msg.CSILeaseErrorCode_csiLeaseInternalError, nil
+		}
+		return msg.CSILeaseErrorCode_csiLeaseInternalError, nil
+	}
+	existing, err := leaseFromEntry(entry)
+	if err != nil {
+		return msg.CSILeaseErrorCode_csiLeaseInternalError, nil
+	}
+	if sameLeaseOwner(existing, request.GetNodeId(), request.GetHostNqn()) {
+		return msg.CSILeaseErrorCode_csiLeaseOk, existing
+	}
+	return msg.CSILeaseErrorCode_csiLeaseConflict, existing
+}
+
+func GetLease(ctx context.Context, client *etcdapi.EtcdClient, volumeID string) (msg.CSILeaseErrorCode, *msg.CSIVolumeLease) {
+	if client == nil || strings.TrimSpace(volumeID) == "" {
+		return msg.CSILeaseErrorCode_csiLeaseInvalidArgument, nil
+	}
+	entry, err := client.GetEntry(ctx, leaseKey(volumeID))
+	if err != nil {
+		if err == etcdapi.ErrorKeyNotFound {
+			return msg.CSILeaseErrorCode_csiLeaseNotFound, nil
+		}
+		return msg.CSILeaseErrorCode_csiLeaseInternalError, nil
+	}
+	lease, err := leaseFromEntry(entry)
+	if err != nil {
+		return msg.CSILeaseErrorCode_csiLeaseInternalError, nil
+	}
+	return msg.CSILeaseErrorCode_csiLeaseOk, lease
+}
+
+func RenewLease(ctx context.Context, client *etcdapi.EtcdClient, request *msg.RenewCSILeaseRequest) (msg.CSILeaseErrorCode, *msg.CSIVolumeLease) {
+	if client == nil || request == nil {
+		return msg.CSILeaseErrorCode_csiLeaseInvalidArgument, nil
+	}
+	if !validLeaseRequest(request.GetVolumeId(), request.GetNodeId(), request.GetHostNqn(), 1) {
+		return msg.CSILeaseErrorCode_csiLeaseInvalidArgument, nil
+	}
+	entry, err := client.GetEntry(ctx, leaseKey(request.GetVolumeId()))
+	if err != nil {
+		if err == etcdapi.ErrorKeyNotFound {
+			return msg.CSILeaseErrorCode_csiLeaseNotFound, nil
+		}
+		return msg.CSILeaseErrorCode_csiLeaseInternalError, nil
+	}
+	lease, err := leaseFromEntry(entry)
+	if err != nil {
+		return msg.CSILeaseErrorCode_csiLeaseInternalError, nil
+	}
+	if !sameLeaseOwner(lease, request.GetNodeId(), request.GetHostNqn()) {
+		return msg.CSILeaseErrorCode_csiLeaseConflict, lease
+	}
+	if err := client.KeepAliveOnce(ctx, entry.Lease); err != nil {
+		return msg.CSILeaseErrorCode_csiLeaseInternalError, nil
+	}
+	return msg.CSILeaseErrorCode_csiLeaseOk, lease
+}
+
+func ReleaseLease(ctx context.Context, client *etcdapi.EtcdClient, request *msg.ReleaseCSILeaseRequest) msg.CSILeaseErrorCode {
+	if client == nil || request == nil {
+		return msg.CSILeaseErrorCode_csiLeaseInvalidArgument
+	}
+	if !validLeaseRequest(request.GetVolumeId(), request.GetNodeId(), request.GetHostNqn(), 1) {
+		return msg.CSILeaseErrorCode_csiLeaseInvalidArgument
+	}
+	entry, err := client.GetEntry(ctx, leaseKey(request.GetVolumeId()))
+	if err != nil {
+		if err == etcdapi.ErrorKeyNotFound {
+			return msg.CSILeaseErrorCode_csiLeaseOk
+		}
+		return msg.CSILeaseErrorCode_csiLeaseInternalError
+	}
+	lease, err := leaseFromEntry(entry)
+	if err != nil {
+		return msg.CSILeaseErrorCode_csiLeaseInternalError
+	}
+	if !sameLeaseOwner(lease, request.GetNodeId(), request.GetHostNqn()) {
+		return msg.CSILeaseErrorCode_csiLeaseConflict
+	}
+	if entry.Lease != 0 {
+		if err := client.Revoke(ctx, entry.Lease); err == nil {
+			return msg.CSILeaseErrorCode_csiLeaseOk
+		}
+	}
+	if err := client.Delete(ctx, leaseKey(request.GetVolumeId())); err != nil {
+		return msg.CSILeaseErrorCode_csiLeaseInternalError
+	}
+	return msg.CSILeaseErrorCode_csiLeaseOk
+}
+
 func volumeKey(volumeID string) string {
 	return config.ConfigCSIVolumesKeyPrefix + encodeVolumeID(volumeID)
 }
 
 func attachmentKey(volumeID string) string {
 	return config.ConfigCSIAttachmentsKeyPrefix + encodeVolumeID(volumeID)
+}
+
+func leaseKey(volumeID string) string {
+	return config.ConfigCSILeasesKeyPrefix + encodeVolumeID(volumeID)
 }
 
 func encodeVolumeID(volumeID string) string {
@@ -138,4 +286,28 @@ func validAttachment(attachment *msg.CSIAttachment) bool {
 		return false
 	}
 	return strings.TrimSpace(attachment.GetHostNqn()) != ""
+}
+
+func validLeaseRequest(volumeID, nodeID, hostNQN string, ttlSeconds int64) bool {
+	if strings.TrimSpace(volumeID) == "" || strings.TrimSpace(nodeID) == "" || strings.TrimSpace(hostNQN) == "" {
+		return false
+	}
+	return ttlSeconds > 0
+}
+
+func leaseFromEntry(entry etcdapi.Entry) (*msg.CSIVolumeLease, error) {
+	lease := &msg.CSIVolumeLease{}
+	if err := json.Unmarshal([]byte(entry.Value), lease); err != nil {
+		return nil, err
+	}
+	lease.LeaseId = int64(entry.Lease)
+	return lease, nil
+}
+
+func sameLeaseOwner(lease *msg.CSIVolumeLease, nodeID, hostNQN string) bool {
+	if lease == nil {
+		return false
+	}
+	return strings.TrimSpace(lease.GetNodeId()) == strings.TrimSpace(nodeID) &&
+		strings.TrimSpace(lease.GetHostNqn()) == strings.TrimSpace(hostNQN)
 }
