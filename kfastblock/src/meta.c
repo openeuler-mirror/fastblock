@@ -120,12 +120,14 @@ int kfastblock_meta_bootstrap(struct kfastblock_cluster_view *view,
 	view->image.pg_count = spec->debug_pg_count ? spec->debug_pg_count : 1;
 	view->image.read_only = spec->read_only;
 	view->last_refresh_jiffies = jiffies;
+	view->last_image_refresh_jiffies = jiffies;
 	view->sync_state = KFASTBLOCK_META_SYNC_NEW;
 
 	ret = kfastblock_transport_fetch_cluster_view(view, spec);
 	if (!ret) {
 		view->sync_state = KFASTBLOCK_META_SYNC_READY;
 		view->last_refresh_jiffies = jiffies;
+		view->last_image_refresh_jiffies = jiffies;
 		return 0;
 	}
 
@@ -149,7 +151,40 @@ int kfastblock_meta_refresh(struct kfastblock_cluster_view *view,
 	if (!ret) {
 		view->sync_state = KFASTBLOCK_META_SYNC_READY;
 		view->last_refresh_jiffies = jiffies;
+		view->last_image_refresh_jiffies = jiffies;
 	}
+
+	return ret;
+}
+
+int kfastblock_meta_refresh_cluster_map(struct kfastblock_cluster_view *view,
+					const struct kfastblock_attach_spec *spec)
+{
+	int ret;
+
+	if (!view || !spec)
+		return -EINVAL;
+
+	ret = kfastblock_transport_fetch_cluster_map(view, spec);
+	if (!ret) {
+		view->sync_state = KFASTBLOCK_META_SYNC_READY;
+		view->last_refresh_jiffies = jiffies;
+	}
+
+	return ret;
+}
+
+int kfastblock_meta_refresh_image(struct kfastblock_cluster_view *view,
+				  const struct kfastblock_attach_spec *spec)
+{
+	int ret;
+
+	if (!view || !spec)
+		return -EINVAL;
+
+	ret = kfastblock_transport_fetch_image(view, spec);
+	if (!ret)
+		view->last_image_refresh_jiffies = jiffies;
 
 	return ret;
 }

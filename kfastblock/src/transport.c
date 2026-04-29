@@ -497,9 +497,10 @@ static int kfastblock_transport_decode_pg_entries(
 	return 0;
 }
 
-static int kfastblock_transport_fetch_cluster_map(struct socket *sock,
-					  struct kfastblock_cluster_view *view,
-					  u64 seq)
+static int kfastblock_transport_fetch_cluster_map_from_monitor(
+	struct socket *sock,
+	struct kfastblock_cluster_view *view,
+	u64 seq)
 {
 	struct kfastblock_raw_get_cluster_map_req req = {
 		.osdmap_epoch = cpu_to_le64(view->osdmap_epoch),
@@ -1126,7 +1127,70 @@ int kfastblock_transport_fetch_cluster_view(struct kfastblock_cluster_view *view
 
 		ret = kfastblock_transport_fetch_image_info(sock, view, seq++);
 		if (!ret)
-			ret = kfastblock_transport_fetch_cluster_map(sock, view, seq++);
+			ret = kfastblock_transport_fetch_cluster_map_from_monitor(sock, view, seq++);
+		sock_release(sock);
+		if (!ret)
+			return 0;
+		first_err = ret;
+	}
+
+	return first_err;
+}
+
+int kfastblock_transport_fetch_image(struct kfastblock_cluster_view *view,
+				     const struct kfastblock_attach_spec *spec)
+{
+	u32 i;
+	u64 seq = 1;
+	int first_err = -EIO;
+
+	if (!view || !spec || !spec->nr_monitors)
+		return -EINVAL;
+
+	for (i = 0; i < spec->nr_monitors; ++i) {
+		struct socket *sock = NULL;
+		int ret;
+
+		ret = kfastblock_transport_try_connect_monitor(&spec->monitors[i],
+					      &sock);
+		if (ret) {
+			first_err = ret;
+			continue;
+		}
+
+		ret = kfastblock_transport_fetch_image_info(sock, view, seq++);
+		sock_release(sock);
+		if (!ret)
+			return 0;
+		first_err = ret;
+	}
+
+	return first_err;
+}
+
+int kfastblock_transport_fetch_cluster_map(struct kfastblock_cluster_view *view,
+					   const struct kfastblock_attach_spec *spec)
+{
+	u32 i;
+	u64 seq = 1;
+	int first_err = -EIO;
+
+	if (!view || !spec || !spec->nr_monitors)
+		return -EINVAL;
+
+	for (i = 0; i < spec->nr_monitors; ++i) {
+		struct socket *sock = NULL;
+		int ret;
+
+		ret = kfastblock_transport_try_connect_monitor(&spec->monitors[i],
+					      &sock);
+		if (ret) {
+			first_err = ret;
+			continue;
+		}
+
+		ret = kfastblock_transport_fetch_cluster_map_from_monitor(
+			sock, view, seq++);
 		sock_release(sock);
 		if (!ret)
 			return 0;
