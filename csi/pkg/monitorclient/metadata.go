@@ -8,6 +8,8 @@ import (
 )
 
 var ErrMetadataNotFound = errors.New("monitor metadata not found")
+var ErrLeaseNotFound = errors.New("monitor lease not found")
+var ErrLeaseConflict = errors.New("monitor lease conflict")
 
 type VolumeMetadata struct {
 	Volume    Volume
@@ -23,6 +25,14 @@ type Attachment struct {
 	ExportID string
 }
 
+type Lease struct {
+	VolumeID   string
+	NodeID     string
+	HostNQN    string
+	LeaseID    int64
+	TTLSeconds int64
+}
+
 type MetadataClient interface {
 	PutVolumeMetadata(ctx context.Context, metadata VolumeMetadata) error
 	GetVolumeMetadata(ctx context.Context, volumeID string) (VolumeMetadata, error)
@@ -30,6 +40,10 @@ type MetadataClient interface {
 	PutAttachment(ctx context.Context, attachment Attachment) error
 	GetAttachment(ctx context.Context, volumeID string) (Attachment, error)
 	DeleteAttachment(ctx context.Context, volumeID string) error
+	AcquireLease(ctx context.Context, lease Lease) (Lease, error)
+	GetLease(ctx context.Context, volumeID string) (Lease, error)
+	RenewLease(ctx context.Context, lease Lease) (Lease, error)
+	ReleaseLease(ctx context.Context, lease Lease) error
 }
 
 func (m VolumeMetadata) Validate() error {
@@ -63,6 +77,22 @@ func (a Attachment) Validate() error {
 	}
 	if strings.TrimSpace(a.ExportID) == "" {
 		return errors.New("export id is required")
+	}
+	return nil
+}
+
+func (l Lease) Validate() error {
+	if strings.TrimSpace(l.VolumeID) == "" {
+		return errors.New("volume id is required")
+	}
+	if strings.TrimSpace(l.NodeID) == "" {
+		return errors.New("node id is required")
+	}
+	if strings.TrimSpace(l.HostNQN) == "" {
+		return errors.New("host nqn is required")
+	}
+	if l.TTLSeconds <= 0 {
+		return fmt.Errorf("invalid lease ttl %d", l.TTLSeconds)
 	}
 	return nil
 }

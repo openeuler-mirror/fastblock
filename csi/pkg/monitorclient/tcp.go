@@ -315,6 +315,118 @@ func (c *TCPClient) DeleteAttachment(ctx context.Context, volumeID string) error
 	return metadataError(payload.DeleteCsiAttachmentResponse.GetErrorcode())
 }
 
+func (c *TCPClient) AcquireLease(ctx context.Context, lease Lease) (Lease, error) {
+	if err := ValidateAddress(c.address); err != nil {
+		return Lease{}, err
+	}
+	if err := lease.Validate(); err != nil {
+		return Lease{}, err
+	}
+	resp, err := c.roundTrip(ctx, &msg.Request{
+		Union: &msg.Request_AcquireCsiLeaseRequest{
+			AcquireCsiLeaseRequest: &msg.AcquireCSILeaseRequest{
+				VolumeId:   lease.VolumeID,
+				NodeId:     lease.NodeID,
+				HostNqn:    lease.HostNQN,
+				TtlSeconds: lease.TTLSeconds,
+			},
+		},
+	})
+	if err != nil {
+		return Lease{}, err
+	}
+	payload, ok := resp.Union.(*msg.Response_AcquireCsiLeaseResponse)
+	if !ok {
+		return Lease{}, fmt.Errorf("unexpected response type %T", resp.Union)
+	}
+	if err := leaseError(payload.AcquireCsiLeaseResponse.GetErrorcode()); err != nil {
+		return Lease{}, err
+	}
+	return leaseFromProto(payload.AcquireCsiLeaseResponse.GetLease()), nil
+}
+
+func (c *TCPClient) GetLease(ctx context.Context, volumeID string) (Lease, error) {
+	if err := ValidateAddress(c.address); err != nil {
+		return Lease{}, err
+	}
+	if strings.TrimSpace(volumeID) == "" {
+		return Lease{}, fmt.Errorf("volume id is required")
+	}
+	resp, err := c.roundTrip(ctx, &msg.Request{
+		Union: &msg.Request_GetCsiLeaseRequest{
+			GetCsiLeaseRequest: &msg.GetCSILeaseRequest{
+				VolumeId: volumeID,
+			},
+		},
+	})
+	if err != nil {
+		return Lease{}, err
+	}
+	payload, ok := resp.Union.(*msg.Response_GetCsiLeaseResponse)
+	if !ok {
+		return Lease{}, fmt.Errorf("unexpected response type %T", resp.Union)
+	}
+	if err := leaseError(payload.GetCsiLeaseResponse.GetErrorcode()); err != nil {
+		return Lease{}, err
+	}
+	return leaseFromProto(payload.GetCsiLeaseResponse.GetLease()), nil
+}
+
+func (c *TCPClient) RenewLease(ctx context.Context, lease Lease) (Lease, error) {
+	if err := ValidateAddress(c.address); err != nil {
+		return Lease{}, err
+	}
+	if strings.TrimSpace(lease.VolumeID) == "" || strings.TrimSpace(lease.NodeID) == "" || strings.TrimSpace(lease.HostNQN) == "" {
+		return Lease{}, fmt.Errorf("volume id, node id and host nqn are required")
+	}
+	resp, err := c.roundTrip(ctx, &msg.Request{
+		Union: &msg.Request_RenewCsiLeaseRequest{
+			RenewCsiLeaseRequest: &msg.RenewCSILeaseRequest{
+				VolumeId: lease.VolumeID,
+				NodeId:   lease.NodeID,
+				HostNqn:  lease.HostNQN,
+			},
+		},
+	})
+	if err != nil {
+		return Lease{}, err
+	}
+	payload, ok := resp.Union.(*msg.Response_RenewCsiLeaseResponse)
+	if !ok {
+		return Lease{}, fmt.Errorf("unexpected response type %T", resp.Union)
+	}
+	if err := leaseError(payload.RenewCsiLeaseResponse.GetErrorcode()); err != nil {
+		return Lease{}, err
+	}
+	return leaseFromProto(payload.RenewCsiLeaseResponse.GetLease()), nil
+}
+
+func (c *TCPClient) ReleaseLease(ctx context.Context, lease Lease) error {
+	if err := ValidateAddress(c.address); err != nil {
+		return err
+	}
+	if strings.TrimSpace(lease.VolumeID) == "" || strings.TrimSpace(lease.NodeID) == "" || strings.TrimSpace(lease.HostNQN) == "" {
+		return fmt.Errorf("volume id, node id and host nqn are required")
+	}
+	resp, err := c.roundTrip(ctx, &msg.Request{
+		Union: &msg.Request_ReleaseCsiLeaseRequest{
+			ReleaseCsiLeaseRequest: &msg.ReleaseCSILeaseRequest{
+				VolumeId: lease.VolumeID,
+				NodeId:   lease.NodeID,
+				HostNqn:  lease.HostNQN,
+			},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	payload, ok := resp.Union.(*msg.Response_ReleaseCsiLeaseResponse)
+	if !ok {
+		return fmt.Errorf("unexpected response type %T", resp.Union)
+	}
+	return leaseError(payload.ReleaseCsiLeaseResponse.GetErrorcode())
+}
+
 func (c *TCPClient) roundTrip(ctx context.Context, req *msg.Request) (*msg.Response, error) {
 	conn, err := c.dialer.DialContext(ctx, "tcp", c.address)
 	if err != nil {
@@ -420,6 +532,19 @@ func attachmentFromProto(attachment *msg.CSIAttachment) Attachment {
 	}
 }
 
+func leaseFromProto(lease *msg.CSIVolumeLease) Lease {
+	if lease == nil {
+		return Lease{}
+	}
+	return Lease{
+		VolumeID:   lease.GetVolumeId(),
+		NodeID:     lease.GetNodeId(),
+		HostNQN:    lease.GetHostNqn(),
+		LeaseID:    lease.GetLeaseId(),
+		TTLSeconds: lease.GetTtlSeconds(),
+	}
+}
+
 func metadataError(code msg.CSIMetadataErrorCode) error {
 	switch code {
 	case msg.CSIMetadataErrorCode_csiMetadataOk:
@@ -430,5 +555,20 @@ func metadataError(code msg.CSIMetadataErrorCode) error {
 		return fmt.Errorf("monitor metadata invalid argument")
 	default:
 		return fmt.Errorf("monitor metadata operation failed: %s", code.String())
+	}
+}
+
+func leaseError(code msg.CSILeaseErrorCode) error {
+	switch code {
+	case msg.CSILeaseErrorCode_csiLeaseOk:
+		return nil
+	case msg.CSILeaseErrorCode_csiLeaseNotFound:
+		return ErrLeaseNotFound
+	case msg.CSILeaseErrorCode_csiLeaseConflict:
+		return ErrLeaseConflict
+	case msg.CSILeaseErrorCode_csiLeaseInvalidArgument:
+		return fmt.Errorf("monitor lease invalid argument")
+	default:
+		return fmt.Errorf("monitor lease operation failed: %s", code.String())
 	}
 }

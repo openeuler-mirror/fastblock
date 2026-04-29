@@ -359,6 +359,153 @@ func TestMetadataGetTreatsNotFoundAsDedicatedError(t *testing.T) {
 	}
 }
 
+func TestLeaseCRUD(t *testing.T) {
+	address := startMockMonitorSequence(t, func(call int, req *msg.Request) *msg.Response {
+		switch call {
+		case 0:
+			if _, ok := req.Union.(*msg.Request_AcquireCsiLeaseRequest); !ok {
+				t.Fatalf("unexpected acquire request type %T", req.Union)
+			}
+			return &msg.Response{
+				Union: &msg.Response_AcquireCsiLeaseResponse{
+					AcquireCsiLeaseResponse: &msg.AcquireCSILeaseResponse{
+						Errorcode: msg.CSILeaseErrorCode_csiLeaseOk,
+						Lease: &msg.CSIVolumeLease{
+							VolumeId:   "vol-1",
+							NodeId:     "node-a",
+							HostNqn:    "nqn.host.1",
+							LeaseId:    7,
+							TtlSeconds: 30,
+						},
+					},
+				},
+			}
+		case 1:
+			if _, ok := req.Union.(*msg.Request_GetCsiLeaseRequest); !ok {
+				t.Fatalf("unexpected get request type %T", req.Union)
+			}
+			return &msg.Response{
+				Union: &msg.Response_GetCsiLeaseResponse{
+					GetCsiLeaseResponse: &msg.GetCSILeaseResponse{
+						Errorcode: msg.CSILeaseErrorCode_csiLeaseOk,
+						Lease: &msg.CSIVolumeLease{
+							VolumeId:   "vol-1",
+							NodeId:     "node-a",
+							HostNqn:    "nqn.host.1",
+							LeaseId:    7,
+							TtlSeconds: 30,
+						},
+					},
+				},
+			}
+		case 2:
+			if _, ok := req.Union.(*msg.Request_RenewCsiLeaseRequest); !ok {
+				t.Fatalf("unexpected renew request type %T", req.Union)
+			}
+			return &msg.Response{
+				Union: &msg.Response_RenewCsiLeaseResponse{
+					RenewCsiLeaseResponse: &msg.RenewCSILeaseResponse{
+						Errorcode: msg.CSILeaseErrorCode_csiLeaseOk,
+						Lease: &msg.CSIVolumeLease{
+							VolumeId:   "vol-1",
+							NodeId:     "node-a",
+							HostNqn:    "nqn.host.1",
+							LeaseId:    7,
+							TtlSeconds: 30,
+						},
+					},
+				},
+			}
+		case 3:
+			if _, ok := req.Union.(*msg.Request_ReleaseCsiLeaseRequest); !ok {
+				t.Fatalf("unexpected release request type %T", req.Union)
+			}
+			return &msg.Response{
+				Union: &msg.Response_ReleaseCsiLeaseResponse{
+					ReleaseCsiLeaseResponse: &msg.ReleaseCSILeaseResponse{
+						Errorcode: msg.CSILeaseErrorCode_csiLeaseOk,
+					},
+				},
+			}
+		default:
+			t.Fatalf("unexpected call index %d", call)
+			return nil
+		}
+	})
+
+	client := NewTCP(address)
+	lease, err := client.AcquireLease(context.Background(), Lease{
+		VolumeID:   "vol-1",
+		NodeID:     "node-a",
+		HostNQN:    "nqn.host.1",
+		TTLSeconds: 30,
+	})
+	if err != nil {
+		t.Fatalf("acquire lease failed: %v", err)
+	}
+	if lease.LeaseID != 7 {
+		t.Fatalf("unexpected lease: %+v", lease)
+	}
+	got, err := client.GetLease(context.Background(), "vol-1")
+	if err != nil {
+		t.Fatalf("get lease failed: %v", err)
+	}
+	if got.NodeID != "node-a" {
+		t.Fatalf("unexpected lease: %+v", got)
+	}
+	if _, err := client.RenewLease(context.Background(), lease); err != nil {
+		t.Fatalf("renew lease failed: %v", err)
+	}
+	if err := client.ReleaseLease(context.Background(), lease); err != nil {
+		t.Fatalf("release lease failed: %v", err)
+	}
+}
+
+func TestLeaseErrorsUseDedicatedSentinels(t *testing.T) {
+	address := startMockMonitorSequence(t, func(call int, req *msg.Request) *msg.Response {
+		switch call {
+		case 0:
+			if _, ok := req.Union.(*msg.Request_GetCsiLeaseRequest); !ok {
+				t.Fatalf("unexpected request type %T", req.Union)
+			}
+			return &msg.Response{
+				Union: &msg.Response_GetCsiLeaseResponse{
+					GetCsiLeaseResponse: &msg.GetCSILeaseResponse{
+						Errorcode: msg.CSILeaseErrorCode_csiLeaseNotFound,
+					},
+				},
+			}
+		case 1:
+			if _, ok := req.Union.(*msg.Request_AcquireCsiLeaseRequest); !ok {
+				t.Fatalf("unexpected request type %T", req.Union)
+			}
+			return &msg.Response{
+				Union: &msg.Response_AcquireCsiLeaseResponse{
+					AcquireCsiLeaseResponse: &msg.AcquireCSILeaseResponse{
+						Errorcode: msg.CSILeaseErrorCode_csiLeaseConflict,
+					},
+				},
+			}
+		default:
+			t.Fatalf("unexpected call index %d", call)
+			return nil
+		}
+	})
+
+	client := NewTCP(address)
+	if _, err := client.GetLease(context.Background(), "missing"); !errors.Is(err, ErrLeaseNotFound) {
+		t.Fatalf("expected lease not found, got %v", err)
+	}
+	if _, err := client.AcquireLease(context.Background(), Lease{
+		VolumeID:   "vol-1",
+		NodeID:     "node-a",
+		HostNQN:    "nqn.host.1",
+		TTLSeconds: 30,
+	}); !errors.Is(err, ErrLeaseConflict) {
+		t.Fatalf("expected lease conflict, got %v", err)
+	}
+}
+
 func TestInputValidation(t *testing.T) {
 	client := NewTCP("127.0.0.1:3333")
 	if _, err := client.CreateVolume(context.Background(), CreateVolumeRequest{}); err == nil {
