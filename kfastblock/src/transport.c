@@ -1,5 +1,6 @@
 #include <linux/byteorder/little_endian.h>
 #include <linux/blk-mq.h>
+#include <linux/completion.h>
 #include <linux/errno.h>
 #include <linux/in.h>
 #include <linux/inet.h>
@@ -31,6 +32,7 @@ static int kfastblock_transport_try_connect_host(const char *host,
 						 u16 port,
 						 struct socket **sock);
 static void kfastblock_transport_object_work(struct work_struct *work);
+static void kfastblock_transport_osd_mux_recv_work(struct work_struct *work);
 static int kfastblock_transport_query_pg_leader(
 	struct kfastblock_request *kf_req,
 	struct kfastblock_request_pg_hint *hint,
@@ -79,6 +81,16 @@ struct kfastblock_transport_response_ctx {
 	void *body;
 	u32 body_len;
 	int ret;
+};
+
+struct kfastblock_transport_mux_waiter {
+	struct list_head link;
+	struct completion done;
+	u64 seq;
+	u8 service;
+	u8 opcode;
+	int ret;
+	struct kfastblock_transport_response_ctx response;
 };
 
 struct kfastblock_transport_object_io_ctx {
@@ -196,6 +208,8 @@ static int kfastblock_transport_decode_pg_entries(
 	u32 route_count,
 	u32 pool_id,
 	u32 *pool_pg_count);
+static void kfastblock_transport_osd_mux_socket_init(
+	struct kfastblock_cached_socket *cached);
 
 static void kfastblock_transport_trace_osd_endpoint_decision(
 	struct kfastblock_volume *vol,
@@ -473,6 +487,7 @@ static int kfastblock_transport_acquire_osd_socket(
 	if (cached) {
 		kfastblock_transport_trace_osd_endpoint_decision(
 			vol, leader, "reuse", 0, 0);
+		kfastblock_transport_osd_mux_socket_init(cached);
 		*cached_out = cached;
 		*sock_out = sock;
 		return 0;
@@ -512,6 +527,7 @@ static int kfastblock_transport_acquire_osd_socket(
 	kfastblock_transport_trace_osd_endpoint_decision(
 		vol, leader, "reserve_connect",
 		active_count + 1, endpoint_parallel_limit);
+	kfastblock_transport_osd_mux_socket_init(cached);
 	*cached_out = cached;
 	*sock_out = sock;
 	return 0;
@@ -523,6 +539,7 @@ fallback_wait_match:
 	if (!cached)
 		return -EBUSY;
 
+	kfastblock_transport_osd_mux_socket_init(cached);
 	*cached_out = cached;
 	*sock_out = sock;
 	return 0;
@@ -972,6 +989,160 @@ static void kfastblock_transport_response_ctx_release(
 	ctx->body_len = 0;
 	ctx->ret = 0;
 	memset(&ctx->hdr, 0, sizeof(ctx->hdr));
+}
+
+static void kfastblock_transport_response_ctx_move(
+	struct kfastblock_transport_response_ctx *dst,
+	struct kfastblock_transport_response_ctx *src)
+{
+	if (!dst || !src)
+		return;
+
+	*dst = *src;
+	kfastblock_transport_response_ctx_reset(src);
+}
+
+static void kfastblock_transport_osd_mux_socket_init(
+	struct kfastblock_cached_socket *cached)
+{
+	if (!cached || cached->mux_initialized)
+		return;
+
+	INIT_WORK(&cached->mux_recv_work,
+		  kfastblock_transport_osd_mux_recv_work);
+	cached->mux_initialized = true;
+}
+
+static struct kfastblock_transport_mux_waiter *
+kfastblock_transport_find_mux_waiter_locked(
+	struct kfastblock_cached_socket *cached,
+	u64 seq)
+{
+	struct kfastblock_transport_mux_waiter *waiter;
+
+	if (!cached || !seq)
+		return NULL;
+
+	list_for_each_entry(waiter, &cached->mux_waiters, link) {
+		if (waiter->seq == seq)
+			return waiter;
+	}
+
+	return NULL;
+}
+
+static int kfastblock_transport_recv_raw_osd_response(
+	struct socket *sock,
+	struct kfastblock_transport_response_ctx *response)
+{
+	u32 body_len;
+	int ret;
+
+	if (!sock || !response)
+		return -EINVAL;
+
+	kfastblock_transport_response_ctx_reset(response);
+	ret = kfastblock_transport_recv_all(sock, &response->hdr,
+					    sizeof(response->hdr));
+	if (ret)
+		return ret;
+	if (le32_to_cpu(response->hdr.magic) != KFASTBLOCK_RAW_MAGIC)
+		return -EPROTO;
+	if (response->hdr.version_major != KFASTBLOCK_RAW_VERSION_MAJOR)
+		return -EPROTO;
+	if (response->hdr.service != KFASTBLOCK_RAW_SERVICE_OSD)
+		return -EPROTO;
+	if (!(le32_to_cpu(response->hdr.flags) & KFASTBLOCK_RAW_FLAG_RESPONSE))
+		return -EPROTO;
+
+	body_len = le32_to_cpu(response->hdr.body_len);
+	if (!body_len)
+		return 0;
+
+	response->body = kfastblock_transport_alloc_buffer(
+		body_len, GFP_KERNEL, KFASTBLOCK_TRANSPORT_BUFFER_LARGE);
+	if (!response->body)
+		return -ENOMEM;
+	ret = kfastblock_transport_recv_all(sock, response->body, body_len);
+	if (ret) {
+		kfastblock_transport_response_ctx_release(response);
+		return ret;
+	}
+	response->body_len = body_len;
+	return 0;
+}
+
+static void kfastblock_transport_fail_mux_waiters(
+	struct kfastblock_cached_socket *cached,
+	int ret)
+{
+	struct kfastblock_transport_mux_waiter *waiter;
+	struct kfastblock_transport_mux_waiter *tmp;
+	LIST_HEAD(waiters);
+	unsigned long flags;
+
+	if (!cached)
+		return;
+
+	spin_lock_irqsave(&cached->mux_waiter_lock, flags);
+	list_splice_init(&cached->mux_waiters, &waiters);
+	cached->mux_inflight = 0;
+	spin_unlock_irqrestore(&cached->mux_waiter_lock, flags);
+
+	list_for_each_entry_safe(waiter, tmp, &waiters, link) {
+		list_del_init(&waiter->link);
+		waiter->ret = ret;
+		kfastblock_transport_response_ctx_reset(&waiter->response);
+		complete(&waiter->done);
+	}
+}
+
+static void kfastblock_transport_osd_mux_recv_work(struct work_struct *work)
+{
+	struct kfastblock_cached_socket *cached = container_of(
+		work, struct kfastblock_cached_socket, mux_recv_work);
+	struct kfastblock_transport_response_ctx response = {};
+
+	if (!cached)
+		return;
+
+	for (;;) {
+		struct kfastblock_transport_mux_waiter *waiter;
+		unsigned long flags;
+		u64 seq;
+		int ret;
+
+		if (!READ_ONCE(cached->mux_inflight))
+			return;
+		ret = kfastblock_transport_recv_raw_osd_response(cached->sock,
+								 &response);
+		if (ret) {
+			kfastblock_transport_fail_mux_waiters(cached, ret);
+			return;
+		}
+
+		seq = le64_to_cpu(response.hdr.seq);
+		response.ret = kfastblock_transport_status_to_errno(
+			le32_to_cpu(response.hdr.status));
+		spin_lock_irqsave(&cached->mux_waiter_lock, flags);
+		waiter = kfastblock_transport_find_mux_waiter_locked(cached, seq);
+		if (waiter) {
+			list_del_init(&waiter->link);
+			if (cached->mux_inflight)
+				cached->mux_inflight--;
+		}
+		spin_unlock_irqrestore(&cached->mux_waiter_lock, flags);
+		if (!waiter) {
+			kfastblock_transport_response_ctx_release(&response);
+			kfastblock_transport_fail_mux_waiters(cached, -EPROTO);
+			return;
+		}
+
+		waiter->ret = response.ret;
+		kfastblock_transport_response_ctx_move(&waiter->response,
+						       &response);
+		complete(&waiter->done);
+	}
 }
 
 static int kfastblock_transport_response_expect_min_body(
