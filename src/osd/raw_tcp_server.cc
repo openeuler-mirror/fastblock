@@ -1565,8 +1565,8 @@ void osd_raw_tcp_server::close_connection(connection_context *conn) noexcept {
 
 void osd_raw_tcp_server::service_connection_io(connection_context *conn,
                                                const short revents) noexcept {
-    if (!conn || conn->done.load(std::memory_order_acquire) || conn->fd < 0 ||
-        !conn->state) {
+    if (!conn || conn->done.load(std::memory_order_acquire) || !conn->state ||
+        (conn->fd < 0 && !conn->spdk_socket)) {
         return;
     }
     if ((revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
@@ -1605,8 +1605,8 @@ void osd_raw_tcp_server::service_connection_io(connection_context *conn,
 }
 
 void osd_raw_tcp_server::service_connection_write(connection_context *conn) noexcept {
-    if (!conn || conn->done.load(std::memory_order_acquire) || conn->fd < 0 ||
-        !conn->state) {
+    if (!conn || conn->done.load(std::memory_order_acquire) || !conn->state ||
+        (conn->fd < 0 && !conn->spdk_socket)) {
         return;
     }
 
