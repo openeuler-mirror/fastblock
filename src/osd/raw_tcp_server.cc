@@ -34,6 +34,7 @@
 #include <mutex>
 #include <random>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 struct raw_header {
@@ -112,6 +113,7 @@ struct osd_raw_tcp_connection_state {
     size_t peak_pending{0};
     std::deque<std::shared_ptr<osd_raw_tcp_inflight_response>> pending{};
     std::deque<std::shared_ptr<osd_raw_tcp_inflight_response>> ready{};
+    std::unordered_map<uint64_t, std::shared_ptr<osd_raw_tcp_inflight_response>> inflight_by_seq{};
 };
 
 namespace {
@@ -387,11 +389,13 @@ void stop_connection(const std::shared_ptr<osd_raw_tcp_connection_state>& connec
     connection->stopping.store(true, std::memory_order_release);
     {
         std::lock_guard<std::mutex> lk(connection->mutex);
-        for (auto& inflight : connection->pending) {
-            if (inflight) {
-                inflight->detached.store(true, std::memory_order_release);
+        for (auto& entry : connection->inflight_by_seq) {
+            if (entry.second) {
+                entry.second->detached.store(true, std::memory_order_release);
             }
         }
+        connection->inflight_by_seq.clear();
+        connection->pending.clear();
         connection->ready.clear();
     }
     notify_connection(connection);
@@ -400,7 +404,12 @@ void stop_connection(const std::shared_ptr<osd_raw_tcp_connection_state>& connec
 bool enqueue_inflight_response(
   const std::shared_ptr<osd_raw_tcp_connection_state>& connection,
   const std::shared_ptr<osd_raw_tcp_inflight_response>& inflight) {
+    const auto seq = inflight ? le64toh(inflight->request_header.seq) : 0;
+
     if (!connection || !inflight) {
+        return false;
+    }
+    if (seq == 0) {
         return false;
     }
 
@@ -412,8 +421,13 @@ bool enqueue_inflight_response(
     if (connection->stopping.load(std::memory_order_acquire)) {
         return false;
     }
+    if (connection->inflight_by_seq.find(seq) != connection->inflight_by_seq.end()) {
+        connection->protocol_errors.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
 
     connection->pending.push_back(inflight);
+    connection->inflight_by_seq.emplace(seq, inflight);
     connection->requests_received.fetch_add(1, std::memory_order_relaxed);
     if (connection->pending.size() > connection->peak_pending) {
         connection->peak_pending = connection->pending.size();
@@ -440,6 +454,14 @@ void complete_inflight_response(
 
     {
         std::lock_guard<std::mutex> lk(connection->mutex);
+        const auto seq = le64toh(inflight->request_header.seq);
+        auto it = connection->inflight_by_seq.find(seq);
+
+        if (it == connection->inflight_by_seq.end() ||
+            it->second.get() != inflight.get()) {
+            connection->callbacks_dropped.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
         if (inflight->detached.load(std::memory_order_acquire) ||
             connection->stopping.load(std::memory_order_acquire) ||
             inflight->completed.load(std::memory_order_acquire)) {
@@ -860,6 +882,7 @@ void osd_raw_tcp_server::log_connection_summary(const uint32_t shard_id) noexcep
     uint64_t sent = 0;
     uint64_t reordered = 0;
     size_t active = 0;
+    size_t inflight = 0;
     size_t pending = 0;
     size_t ready_depth = 0;
 
@@ -873,6 +896,7 @@ void osd_raw_tcp_server::log_connection_summary(const uint32_t shard_id) noexcep
         ready += conn->state->responses_ready.load(std::memory_order_relaxed);
         sent += conn->state->responses_sent.load(std::memory_order_relaxed);
         reordered += conn->state->responses_reordered.load(std::memory_order_relaxed);
+        inflight += conn->state->inflight_by_seq.size();
         pending += conn->state->pending.size();
         ready_depth += conn->state->ready.size();
     }
@@ -882,9 +906,10 @@ void osd_raw_tcp_server::log_connection_summary(const uint32_t shard_id) noexcep
     }
 
     SPDK_NOTICELOG(
-      "raw TCP shard %u summary: active=%zu pending=%zu ready=%zu recv=%llu ready_rsp=%llu sent=%llu reordered=%llu\n",
+      "raw TCP shard %u summary: active=%zu inflight=%zu pending=%zu ready=%zu recv=%llu ready_rsp=%llu sent=%llu reordered=%llu\n",
       shard_id,
       active,
+      inflight,
       pending,
       ready_depth,
       static_cast<unsigned long long>(requests),
@@ -988,6 +1013,7 @@ void osd_raw_tcp_server::write_connection_responses(
             if (it == state->pending.end()) {
                 continue;
             }
+            state->inflight_by_seq.erase(le64toh(inflight->request_header.seq));
             reordered = it != state->pending.begin();
             state->pending.erase(it);
         }
@@ -1005,6 +1031,10 @@ void osd_raw_tcp_server::write_connection_responses(
         state->responses_sent.fetch_add(1, std::memory_order_relaxed);
         if (reordered) {
             state->responses_reordered.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (state->responses_sent.load(std::memory_order_relaxed) %
+            raw_connection_summary_interval == 0) {
+            log_connection_summary(shard_id);
         }
     }
 
