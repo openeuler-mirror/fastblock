@@ -149,6 +149,28 @@ static blk_status_t kfastblock_transport_errno_to_blk_status(const int ret)
 	}
 }
 
+static enum req_op kfastblock_transport_object_op(
+	const struct kfastblock_request *kf_req,
+	const unsigned int object_index)
+{
+	enum req_op op;
+	const struct kfastblock_object_extent *extent;
+
+	if (!kf_req || !kf_req->rq || object_index >= kf_req->nr_objects)
+		return REQ_OP_LAST;
+
+	op = req_op(kf_req->rq);
+	if (op != REQ_OP_DISCARD)
+		return op;
+
+	extent = &kf_req->objects[object_index];
+	if (extent->object_offset == 0 &&
+	    extent->length == kf_req->vol->view.image.object_size)
+		return REQ_OP_DISCARD;
+
+	return REQ_OP_WRITE_ZEROES;
+}
+
 static int kfastblock_transport_send_all(struct socket *sock,
 					 const void *buf,
 					 size_t len)
@@ -1315,18 +1337,18 @@ int kfastblock_transport_get_pg_leader(struct kfastblock_volume *vol,
 	return first_err;
 }
 
-static int kfastblock_transport_submit_sync(struct kfastblock_request *kf_req)
+static int kfastblock_transport_submit_object(struct kfastblock_request *kf_req,
+					      unsigned int object_index)
 {
 	struct request *rq;
 	enum req_op op;
-	unsigned int i;
-	int ret = 0;
 
-	if (!kf_req || !kf_req->rq || !kf_req->vol)
+	if (!kf_req || !kf_req->rq || !kf_req->vol ||
+	    object_index >= kf_req->nr_objects)
 		return -EINVAL;
 
 	rq = kf_req->rq;
-	op = req_op(rq);
+	op = kfastblock_transport_object_op(kf_req, object_index);
 	switch (op) {
 	case REQ_OP_FLUSH:
 		return 0;
@@ -1339,55 +1361,73 @@ static int kfastblock_transport_submit_sync(struct kfastblock_request *kf_req)
 		return -EOPNOTSUPP;
 	}
 
-	for (i = 0; i < kf_req->nr_objects; ++i) {
-		enum req_op object_op = op;
-
-		if (op == REQ_OP_DISCARD &&
-		    (kf_req->objects[i].object_offset != 0 ||
-		     kf_req->objects[i].length != kf_req->vol->view.image.object_size))
-			object_op = REQ_OP_WRITE_ZEROES;
-		ret = kfastblock_transport_submit_object_io(
-			kf_req->vol,
-			rq,
-			&kf_req->objects[i],
-			object_op);
-		if (ret)
-			return ret;
-	}
-
-	return 0;
+	return kfastblock_transport_submit_object_io(
+		kf_req->vol,
+		rq,
+		&kf_req->objects[object_index],
+		op);
 }
 
-static void kfastblock_transport_request_work(struct work_struct *work)
+static void kfastblock_transport_complete_request(struct kfastblock_request *kf_req,
+						  int ret)
 {
-	struct kfastblock_request *kf_req = container_of(work,
-						struct kfastblock_request,
+	unsigned long flags;
+
+	if (ret) {
+		spin_lock_irqsave(&kf_req->status_lock, flags);
+		if (!kf_req->status)
+			kf_req->status = ret;
+		spin_unlock_irqrestore(&kf_req->status_lock, flags);
+	}
+
+	if (atomic_dec_and_test(&kf_req->pending_objects)) {
+		blk_status_t status =
+			kfastblock_transport_errno_to_blk_status(kf_req->status);
+		blk_mq_end_request(kf_req->rq, status);
+		put_device(&kf_req->vol->dev);
+	}
+}
+
+static void kfastblock_transport_object_work(struct work_struct *work)
+{
+	struct kfastblock_object_work *obj_work = container_of(work,
+						struct kfastblock_object_work,
 						work);
-	blk_status_t status;
+	struct kfastblock_request *kf_req = obj_work->parent;
 	int ret;
 
 	if (!kf_req || !kf_req->rq || !kf_req->vol)
 		return;
 
 	down_read(&kf_req->vol->state_lock);
-	ret = kfastblock_transport_submit_sync(kf_req);
+	ret = kfastblock_transport_submit_object(kf_req,
+					       obj_work->object_index);
 	up_read(&kf_req->vol->state_lock);
-	status = kfastblock_transport_errno_to_blk_status(ret);
-	blk_mq_end_request(kf_req->rq, status);
-	put_device(&kf_req->vol->dev);
+	kfastblock_transport_complete_request(kf_req, ret);
 }
 
 int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 {
+	unsigned int i;
+
 	if (!kf_req || !kf_req->rq || !kf_req->vol)
 		return -EINVAL;
 
-	INIT_WORK(&kf_req->work, kfastblock_transport_request_work);
+	if (!kf_req->nr_objects) {
+		blk_mq_end_request(kf_req->rq, BLK_STS_OK);
+		return 0;
+	}
+
+	kf_req->status = 0;
+	atomic_set(&kf_req->pending_objects, kf_req->nr_objects);
 	get_device(&kf_req->vol->dev);
-	if (!g_kfastblock_transport_wq ||
-	    !queue_work(g_kfastblock_transport_wq, &kf_req->work)) {
-		put_device(&kf_req->vol->dev);
-		return -EBUSY;
+	for (i = 0; i < kf_req->nr_objects; ++i) {
+		INIT_WORK(&kf_req->object_works[i].work,
+			  kfastblock_transport_object_work);
+		if (!g_kfastblock_transport_wq ||
+		    !queue_work(g_kfastblock_transport_wq,
+				&kf_req->object_works[i].work))
+			kfastblock_transport_complete_request(kf_req, -EBUSY);
 	}
 
 	return 0;

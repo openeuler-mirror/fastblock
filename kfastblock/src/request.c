@@ -110,11 +110,19 @@ void kfastblock_request_init(struct kfastblock_request *kf_req,
 			     struct kfastblock_volume *vol,
 			     struct request *rq)
 {
+	unsigned int i;
+
 	memset(kf_req, 0, sizeof(*kf_req));
 	kf_req->rq = rq;
 	kf_req->vol = vol;
 	kf_req->byte_offset = blk_rq_pos(rq) << SECTOR_SHIFT;
 	kf_req->byte_length = blk_rq_bytes(rq);
+	atomic_set(&kf_req->pending_objects, 0);
+	spin_lock_init(&kf_req->status_lock);
+	for (i = 0; i < KFASTBLOCK_MAX_OBJECT_EXTENTS; ++i) {
+		kf_req->object_works[i].parent = kf_req;
+		kf_req->object_works[i].object_index = i;
+	}
 }
 
 u32 kfastblock_request_calc_pg(const char *object_name, u32 pg_count)
