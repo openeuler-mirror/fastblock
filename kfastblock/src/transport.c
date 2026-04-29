@@ -108,6 +108,7 @@ struct kfastblock_transport_submit_ctx {
 	struct socket *sock;
 	struct kfastblock_request_dispatch_batch batch;
 	unsigned int pg_index;
+	unsigned int batch_queue_index;
 	unsigned int initial_dispatch;
 	int ret;
 	bool finished;
@@ -136,6 +137,7 @@ enum kfastblock_transport_submit_stage {
 	KFASTBLOCK_SUBMIT_STAGE_RUNTIME_READY,
 	KFASTBLOCK_SUBMIT_STAGE_PREFETCHED,
 	KFASTBLOCK_SUBMIT_STAGE_BATCH_PREPARED,
+	KFASTBLOCK_SUBMIT_STAGE_BATCH_QUEUING,
 	KFASTBLOCK_SUBMIT_STAGE_BATCH_QUEUED,
 	KFASTBLOCK_SUBMIT_STAGE_FINISHED,
 };
@@ -2991,18 +2993,32 @@ static bool kfastblock_transport_transition_submit_finish(
 static int kfastblock_transport_queue_initial_dispatch(
 	struct kfastblock_transport_submit_ctx *ctx)
 {
-	if (!ctx || !ctx->kf_req ||
-	    ctx->stage != KFASTBLOCK_SUBMIT_STAGE_BATCH_PREPARED)
+	if (!ctx || !ctx->kf_req)
 		return -EINVAL;
 	if (ctx->ret)
 		return 0;
 
-	get_device(&ctx->kf_req->vol->dev);
-	ctx->ret = kfastblock_transport_queue_dispatch_batch(
-		ctx->kf_req, &ctx->batch);
-	if (ctx->ret)
+	if (ctx->stage == KFASTBLOCK_SUBMIT_STAGE_BATCH_PREPARED) {
+		get_device(&ctx->kf_req->vol->dev);
+		ctx->batch_queue_index = 0;
+		ctx->stage = KFASTBLOCK_SUBMIT_STAGE_BATCH_QUEUING;
+	}
+	if (ctx->stage != KFASTBLOCK_SUBMIT_STAGE_BATCH_QUEUING)
+		return -EINVAL;
+	if (ctx->batch_queue_index >= ctx->batch.nr_indexes) {
+		ctx->stage = KFASTBLOCK_SUBMIT_STAGE_BATCH_QUEUED;
+		return 0;
+	}
+
+	ctx->ret = kfastblock_transport_queue_object_work(
+		ctx->kf_req, ctx->batch.indexes[ctx->batch_queue_index]);
+	if (ctx->ret) {
 		kfastblock_transport_abort_request(ctx->kf_req, ctx->ret);
-	else
+		return 0;
+	}
+
+	ctx->batch_queue_index++;
+	if (ctx->batch_queue_index >= ctx->batch.nr_indexes)
 		ctx->stage = KFASTBLOCK_SUBMIT_STAGE_BATCH_QUEUED;
 
 	return 0;
@@ -3015,7 +3031,7 @@ static bool kfastblock_transport_transition_submit_batch_queue(
 		return false;
 
 	(void)kfastblock_transport_queue_initial_dispatch(ctx);
-	return ctx->ret >= 0;
+	return ctx->ret >= 0 && ctx->stage == KFASTBLOCK_SUBMIT_STAGE_BATCH_QUEUING;
 }
 
 static bool kfastblock_transport_advance_submit_ctx(
@@ -3032,6 +3048,7 @@ static bool kfastblock_transport_advance_submit_ctx(
 	case KFASTBLOCK_SUBMIT_STAGE_PREFETCHED:
 		return kfastblock_transport_transition_submit_batch_prepare(ctx);
 	case KFASTBLOCK_SUBMIT_STAGE_BATCH_PREPARED:
+	case KFASTBLOCK_SUBMIT_STAGE_BATCH_QUEUING:
 		return kfastblock_transport_transition_submit_batch_queue(ctx);
 	case KFASTBLOCK_SUBMIT_STAGE_BATCH_QUEUED:
 		ctx->finished = true;
