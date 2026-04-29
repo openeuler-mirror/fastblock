@@ -1,6 +1,6 @@
 module monitor
 
-go 1.19
+go 1.17
 
 replace github.com/coreos/bbolt v1.3.7 => go.etcd.io/bbolt v1.3.7
 
