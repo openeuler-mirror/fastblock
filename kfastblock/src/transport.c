@@ -1254,7 +1254,7 @@ out:
 	return ret;
 }
 
-static int kfastblock_transport_exec_request_status_only(
+static __maybe_unused int kfastblock_transport_exec_request_status_only(
 	struct socket *sock,
 	u8 service,
 	u8 opcode,
@@ -2070,12 +2070,13 @@ static int kfastblock_transport_fetch_pg_leader_from_osd(
 	return 0;
 }
 
-static int kfastblock_transport_write_object(struct socket *sock,
-					     u32 pool_id,
-					     const struct kfastblock_object_extent *extent,
-					     const void *data,
-					     u64 seq,
-					     struct kfastblock_transport_response_ctx *response)
+static int kfastblock_transport_write_object(
+	struct kfastblock_cached_socket *cached,
+	u32 pool_id,
+	const struct kfastblock_object_extent *extent,
+	const void *data,
+	u64 seq,
+	struct kfastblock_transport_response_ctx *response)
 {
 	struct kfastblock_raw_write_object_req req = {
 		.pool_id = cpu_to_le32(pool_id),
@@ -2085,7 +2086,7 @@ static int kfastblock_transport_write_object(struct socket *sock,
 	u32 data_len;
 	int ret;
 
-	if (!sock || !extent || (!data && extent->length))
+	if (!cached || !extent || (!data && extent->length) || !response)
 		return -EINVAL;
 
 	object_name_len = strlen(extent->object_name);
@@ -2103,19 +2104,20 @@ static int kfastblock_transport_write_object(struct socket *sock,
 	parts[2].buf = data;
 	parts[2].len = data_len;
 
-	ret = kfastblock_transport_exec_request_parts(
-		sock, KFASTBLOCK_RAW_SERVICE_OSD,
+	ret = kfastblock_transport_exec_mux_request_parts(
+		cached, KFASTBLOCK_RAW_SERVICE_OSD,
 		KFASTBLOCK_RAW_OSD_OP_WRITE_OBJECT, seq,
 		parts, ARRAY_SIZE(parts), response);
 	return ret;
 }
 
-static int kfastblock_transport_read_object(struct socket *sock,
-					    u32 pool_id,
-					    const struct kfastblock_object_extent *extent,
-					    void *data,
-					    u64 seq,
-					    struct kfastblock_transport_response_ctx *response)
+static int kfastblock_transport_read_object(
+	struct kfastblock_cached_socket *cached,
+	u32 pool_id,
+	const struct kfastblock_object_extent *extent,
+	void *data,
+	u64 seq,
+	struct kfastblock_transport_response_ctx *response)
 {
 	struct kfastblock_raw_read_object_req req = {
 		.pool_id = cpu_to_le32(pool_id),
@@ -2129,7 +2131,7 @@ static int kfastblock_transport_read_object(struct socket *sock,
 	u32 object_name_len;
 	int ret;
 
-	if (!sock || !extent || (!data && extent->length))
+	if (!cached || !extent || (!data && extent->length) || !response)
 		return -EINVAL;
 
 	object_name_len = strlen(extent->object_name);
@@ -2138,8 +2140,8 @@ static int kfastblock_transport_read_object(struct socket *sock,
 	parts[1].buf = extent->object_name;
 	parts[1].len = object_name_len;
 
-	ret = kfastblock_transport_exec_request_parts(
-		sock, KFASTBLOCK_RAW_SERVICE_OSD,
+	ret = kfastblock_transport_exec_mux_request_parts(
+		cached, KFASTBLOCK_RAW_SERVICE_OSD,
 		KFASTBLOCK_RAW_OSD_OP_READ_OBJECT, seq,
 		parts, ARRAY_SIZE(parts), response);
 	if (ret)
@@ -2150,11 +2152,12 @@ static int kfastblock_transport_read_object(struct socket *sock,
 								data);
 }
 
-static int kfastblock_transport_delete_object(struct socket *sock,
-					      u32 pool_id,
-					      const struct kfastblock_object_extent *extent,
-					      u64 seq,
-					      struct kfastblock_transport_response_ctx *response)
+static int kfastblock_transport_delete_object(
+	struct kfastblock_cached_socket *cached,
+	u32 pool_id,
+	const struct kfastblock_object_extent *extent,
+	u64 seq,
+	struct kfastblock_transport_response_ctx *response)
 {
 	struct kfastblock_raw_delete_object_req req = {
 		.pool_id = cpu_to_le32(pool_id),
@@ -2166,7 +2169,7 @@ static int kfastblock_transport_delete_object(struct socket *sock,
 	u32 object_name_len;
 	int ret;
 
-	if (!sock || !extent)
+	if (!cached || !extent || !response)
 		return -EINVAL;
 
 	object_name_len = strlen(extent->object_name);
@@ -2175,12 +2178,10 @@ static int kfastblock_transport_delete_object(struct socket *sock,
 	parts[1].buf = extent->object_name;
 	parts[1].len = object_name_len;
 
-	ret = kfastblock_transport_exec_request_status_only(
-		sock, KFASTBLOCK_RAW_SERVICE_OSD,
+	ret = kfastblock_transport_exec_mux_request_parts(
+		cached, KFASTBLOCK_RAW_SERVICE_OSD,
 		KFASTBLOCK_RAW_OSD_OP_DELETE_OBJECT, seq,
-		parts, ARRAY_SIZE(parts));
-	kfastblock_transport_response_ctx_reset(response);
-	response->ret = ret;
+		parts, ARRAY_SIZE(parts), response);
 	return ret;
 }
 
@@ -2301,14 +2302,14 @@ static int kfastblock_transport_execute_object_opcode(
 
 	if (ctx->op == REQ_OP_WRITE || ctx->op == REQ_OP_WRITE_ZEROES)
 		return kfastblock_transport_write_object(
-			ctx->sock, ctx->kf_req->request_pool_id, ctx->extent,
+			ctx->cached, ctx->kf_req->request_pool_id, ctx->extent,
 			ctx->buf, ctx->exchange.seq, &ctx->response);
 	if (ctx->op == REQ_OP_READ)
 		return kfastblock_transport_read_object(
-			ctx->sock, ctx->kf_req->request_pool_id, ctx->extent,
+			ctx->cached, ctx->kf_req->request_pool_id, ctx->extent,
 			ctx->buf, ctx->exchange.seq, &ctx->response);
 	return kfastblock_transport_delete_object(
-		ctx->sock, ctx->kf_req->request_pool_id, ctx->extent,
+		ctx->cached, ctx->kf_req->request_pool_id, ctx->extent,
 		ctx->exchange.seq, &ctx->response);
 }
 
@@ -2374,12 +2375,12 @@ static int kfastblock_transport_prepare_object_exchange(
 	if (!ctx)
 		return -EINVAL;
 
-	ret = kfastblock_transport_acquire_osd_socket(
-		ctx->vol, &ctx->leader, &ctx->cached, &ctx->sock);
+	ret = kfastblock_transport_prepare_mux_osd_socket(
+		ctx->vol, &ctx->leader, &ctx->cached);
 	if (ret)
 		return ret;
 
-	seq = kfastblock_transport_next_seq(ctx->cached);
+	seq = kfastblock_transport_next_shared_seq(ctx->cached);
 	return kfastblock_transport_begin_exchange(
 		&ctx->exchange, ctx->kf_req, ctx->object_index,
 		KFASTBLOCK_RAW_SERVICE_OSD, ctx->raw_opcode, seq);
@@ -2409,7 +2410,7 @@ static void kfastblock_transport_finalize_object_socket(
 	if (!ctx || !ctx->vol || !ctx->cached)
 		return;
 
-	kfastblock_recovery_finalize_osd_socket(
+	kfastblock_transport_finalize_mux_osd_socket(
 		ctx->vol, ctx->cached, &ctx->leader, ctx->ret, ctx->actions);
 	ctx->cached = NULL;
 }
