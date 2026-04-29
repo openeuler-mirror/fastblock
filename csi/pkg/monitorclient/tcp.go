@@ -240,6 +240,33 @@ func (c *TCPClient) DeleteVolumeMetadata(ctx context.Context, volumeID string) e
 	return metadataError(payload.DeleteCsiVolumeMetadataResponse.GetErrorcode())
 }
 
+func (c *TCPClient) ListVolumeMetadata(ctx context.Context) ([]VolumeMetadata, error) {
+	if err := ValidateAddress(c.address); err != nil {
+		return nil, err
+	}
+	resp, err := c.roundTrip(ctx, &msg.Request{
+		Union: &msg.Request_ListCsiVolumeMetadataRequest{
+			ListCsiVolumeMetadataRequest: &msg.ListCSIVolumeMetadataRequest{},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	payload, ok := resp.Union.(*msg.Response_ListCsiVolumeMetadataResponse)
+	if !ok {
+		return nil, fmt.Errorf("unexpected response type %T", resp.Union)
+	}
+	if err := metadataError(payload.ListCsiVolumeMetadataResponse.GetErrorcode()); err != nil {
+		return nil, err
+	}
+	items := payload.ListCsiVolumeMetadataResponse.GetMetadata()
+	result := make([]VolumeMetadata, 0, len(items))
+	for _, item := range items {
+		result = append(result, volumeMetadataFromProto(item))
+	}
+	return result, nil
+}
+
 func (c *TCPClient) PutAttachment(ctx context.Context, attachment Attachment) error {
 	if err := ValidateAddress(c.address); err != nil {
 		return err
@@ -313,6 +340,33 @@ func (c *TCPClient) DeleteAttachment(ctx context.Context, volumeID string) error
 		return fmt.Errorf("unexpected response type %T", resp.Union)
 	}
 	return metadataError(payload.DeleteCsiAttachmentResponse.GetErrorcode())
+}
+
+func (c *TCPClient) ListAttachments(ctx context.Context) ([]Attachment, error) {
+	if err := ValidateAddress(c.address); err != nil {
+		return nil, err
+	}
+	resp, err := c.roundTrip(ctx, &msg.Request{
+		Union: &msg.Request_ListCsiAttachmentRequest{
+			ListCsiAttachmentRequest: &msg.ListCSIAttachmentRequest{},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	payload, ok := resp.Union.(*msg.Response_ListCsiAttachmentResponse)
+	if !ok {
+		return nil, fmt.Errorf("unexpected response type %T", resp.Union)
+	}
+	if err := metadataError(payload.ListCsiAttachmentResponse.GetErrorcode()); err != nil {
+		return nil, err
+	}
+	items := payload.ListCsiAttachmentResponse.GetAttachments()
+	result := make([]Attachment, 0, len(items))
+	for _, item := range items {
+		result = append(result, attachmentFromProto(item))
+	}
+	return result, nil
 }
 
 func (c *TCPClient) AcquireLease(ctx context.Context, lease Lease) (Lease, error) {
@@ -425,6 +479,33 @@ func (c *TCPClient) ReleaseLease(ctx context.Context, lease Lease) error {
 		return fmt.Errorf("unexpected response type %T", resp.Union)
 	}
 	return leaseError(payload.ReleaseCsiLeaseResponse.GetErrorcode())
+}
+
+func (c *TCPClient) ListLeases(ctx context.Context) ([]Lease, error) {
+	if err := ValidateAddress(c.address); err != nil {
+		return nil, err
+	}
+	resp, err := c.roundTrip(ctx, &msg.Request{
+		Union: &msg.Request_ListCsiLeaseRequest{
+			ListCsiLeaseRequest: &msg.ListCSILeaseRequest{},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	payload, ok := resp.Union.(*msg.Response_ListCsiLeaseResponse)
+	if !ok {
+		return nil, fmt.Errorf("unexpected response type %T", resp.Union)
+	}
+	if err := leaseError(payload.ListCsiLeaseResponse.GetErrorcode()); err != nil {
+		return nil, err
+	}
+	items := payload.ListCsiLeaseResponse.GetLeases()
+	result := make([]Lease, 0, len(items))
+	for _, item := range items {
+		result = append(result, leaseFromProto(item))
+	}
+	return result, nil
 }
 
 func (c *TCPClient) roundTrip(ctx context.Context, req *msg.Request) (*msg.Response, error) {

@@ -37,13 +37,16 @@ type MetadataClient interface {
 	PutVolumeMetadata(ctx context.Context, metadata VolumeMetadata) error
 	GetVolumeMetadata(ctx context.Context, volumeID string) (VolumeMetadata, error)
 	DeleteVolumeMetadata(ctx context.Context, volumeID string) error
+	ListVolumeMetadata(ctx context.Context) ([]VolumeMetadata, error)
 	PutAttachment(ctx context.Context, attachment Attachment) error
 	GetAttachment(ctx context.Context, volumeID string) (Attachment, error)
 	DeleteAttachment(ctx context.Context, volumeID string) error
+	ListAttachments(ctx context.Context) ([]Attachment, error)
 	AcquireLease(ctx context.Context, lease Lease) (Lease, error)
 	GetLease(ctx context.Context, volumeID string) (Lease, error)
 	RenewLease(ctx context.Context, lease Lease) (Lease, error)
 	ReleaseLease(ctx context.Context, lease Lease) error
+	ListLeases(ctx context.Context) ([]Lease, error)
 }
 
 func (m VolumeMetadata) Validate() error {
