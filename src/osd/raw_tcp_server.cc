@@ -299,6 +299,33 @@ bool set_nonblocking(int fd) noexcept {
     return ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
 }
 
+int fill_connection_frame(int fd, uint8_t* buf, size_t target, size_t* completed) {
+    if (fd < 0 || !buf || !completed) {
+        return -EINVAL;
+    }
+
+    while (*completed < target) {
+        auto rc = ::recv(fd, buf + *completed, target - *completed, 0);
+
+        if (rc > 0) {
+            *completed += static_cast<size_t>(rc);
+            continue;
+        }
+        if (rc == 0) {
+            return -ECONNRESET;
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return 0;
+        }
+        return -errno ? -errno : -EIO;
+    }
+
+    return 1;
+}
+
 bool write_message(int fd,
                    const raw_header& hdr,
                    const void* body,
@@ -766,6 +793,71 @@ void dispatch_request(
 
 } // namespace
 
+void osd_raw_tcp_server::reset_connection_frame(connection_context* conn) noexcept {
+    if (!conn) {
+        return;
+    }
+
+    conn->recv_frame.clear();
+    conn->recv_header_bytes = 0;
+    conn->recv_body_bytes = 0;
+    conn->recv_target_body_bytes = 0;
+}
+
+int osd_raw_tcp_server::try_receive_one_request(
+  connection_context* conn,
+  raw_header* hdr_out,
+  std::vector<uint8_t>* body_out) noexcept {
+    raw_header hdr{};
+    int ret;
+
+    if (!conn || !hdr_out || !body_out) {
+        return -EINVAL;
+    }
+
+    if (conn->recv_frame.empty()) {
+        conn->recv_frame.resize(sizeof(raw_header));
+    }
+
+    if (conn->recv_header_bytes < sizeof(raw_header)) {
+        ret = fill_connection_frame(conn->fd,
+                                    conn->recv_frame.data(),
+                                    sizeof(raw_header),
+                                    &conn->recv_header_bytes);
+        if (ret <= 0) {
+            return ret;
+        }
+        std::memcpy(&hdr, conn->recv_frame.data(), sizeof(hdr));
+        if (!validate_request_header(hdr)) {
+            reset_connection_frame(conn);
+            return -EPROTO;
+        }
+        conn->recv_target_body_bytes = le32toh(hdr.body_len);
+        conn->recv_frame.resize(sizeof(raw_header) + conn->recv_target_body_bytes);
+        if (conn->recv_target_body_bytes == 0) {
+            *hdr_out = hdr;
+            body_out->clear();
+            reset_connection_frame(conn);
+            return 1;
+        }
+    }
+
+    ret = fill_connection_frame(conn->fd,
+                                conn->recv_frame.data() + sizeof(raw_header),
+                                conn->recv_target_body_bytes,
+                                &conn->recv_body_bytes);
+    if (ret <= 0) {
+        return ret;
+    }
+
+    std::memcpy(&hdr, conn->recv_frame.data(), sizeof(hdr));
+    *hdr_out = hdr;
+    body_out->assign(conn->recv_frame.begin() + sizeof(raw_header),
+                     conn->recv_frame.end());
+    reset_connection_frame(conn);
+    return 1;
+}
+
 osd_raw_tcp_server::osd_raw_tcp_server(osd_service* service)
   : _service(service) {}
 
@@ -1150,29 +1242,40 @@ void osd_raw_tcp_server::handle_connection(connection_context *conn, const uint3
 
     while (_running.load(std::memory_order_acquire) &&
            !state->stopping.load(std::memory_order_acquire)) {
-        raw_header req_hdr{};
-        std::shared_ptr<osd_raw_tcp_inflight_response> inflight{};
-
-        if (!recv_all(client_fd, &req_hdr, sizeof(req_hdr), _running)) {
-            break;
+        if (!wait_for_fd(client_fd, POLLIN, _running)) {
+            if (!_running.load(std::memory_order_acquire) ||
+                state->stopping.load(std::memory_order_acquire)) {
+                break;
+            }
+            continue;
         }
 
-        const auto body_len = le32toh(req_hdr.body_len);
-        std::vector<uint8_t> body(body_len);
-        if (body_len != 0 && !recv_all(client_fd, body.data(), body.size(), _running)) {
-            break;
-        }
+        for (;;) {
+            raw_header req_hdr{};
+            std::shared_ptr<osd_raw_tcp_inflight_response> inflight{};
+            std::vector<uint8_t> body{};
+            int recv_ret = try_receive_one_request(conn, &req_hdr, &body);
 
-        inflight = std::make_shared<osd_raw_tcp_inflight_response>();
-        inflight->request_header = req_hdr;
-        inflight->status = raw_status_internal_error;
-        if (!enqueue_inflight_response(state, inflight)) {
-            break;
-        }
+            if (recv_ret < 0) {
+                state->protocol_errors.fetch_add(1, std::memory_order_relaxed);
+                goto out_stop_connection;
+            }
+            if (recv_ret == 0) {
+                break;
+            }
 
-        dispatch_request(_service, state, inflight, body);
+            inflight = std::make_shared<osd_raw_tcp_inflight_response>();
+            inflight->request_header = req_hdr;
+            inflight->status = raw_status_internal_error;
+            if (!enqueue_inflight_response(state, inflight)) {
+                goto out_stop_connection;
+            }
+
+            dispatch_request(_service, state, inflight, body);
+        }
     }
 
+out_stop_connection:
     state->reader_done.store(true, std::memory_order_release);
     stop_connection(state);
     if (conn->writer.joinable()) {

@@ -20,6 +20,7 @@
 
 class osd_service;
 struct osd_raw_tcp_connection_state;
+struct raw_header;
 struct sockaddr_in;
 
 class osd_raw_tcp_server {
@@ -44,6 +45,10 @@ private:
         uint32_t shard_id{0};
         std::atomic<bool> done{false};
         std::string peer_address{};
+        std::vector<uint8_t> recv_frame{};
+        size_t recv_header_bytes{0};
+        size_t recv_body_bytes{0};
+        size_t recv_target_body_bytes{0};
         std::shared_ptr<osd_raw_tcp_connection_state> state{};
         std::thread worker{};
         std::thread writer{};
@@ -53,6 +58,10 @@ private:
     bool start_connection(int client_fd,
                           const sockaddr_in& peer_addr,
                           uint32_t shard_id) noexcept;
+    void reset_connection_frame(connection_context *conn) noexcept;
+    int try_receive_one_request(connection_context *conn,
+                                raw_header *hdr_out,
+                                std::vector<uint8_t> *body_out) noexcept;
     void cleanup_finished_connections() noexcept;
     void log_connection_summary(uint32_t shard_id) noexcept;
     void run_listener(uint32_t shard_id) noexcept;
