@@ -3,6 +3,7 @@
 
 #include <linux/blkdev.h>
 #include <linux/types.h>
+#include <linux/workqueue.h>
 
 struct kfastblock_volume;
 
@@ -25,6 +26,7 @@ struct kfastblock_request {
 	u32 byte_length;
 	unsigned int nr_objects;
 	int status;
+	struct work_struct work;
 	struct kfastblock_object_extent objects[KFASTBLOCK_MAX_OBJECT_EXTENTS];
 };
 
