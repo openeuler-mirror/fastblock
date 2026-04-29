@@ -1,9 +1,12 @@
 #ifndef KFASTBLOCK_CONNPOOL_H
 #define KFASTBLOCK_CONNPOOL_H
 
+#include <linux/list.h>
 #include <linux/mutex.h>
 #include <linux/socket.h>
+#include <linux/spinlock.h>
 #include <linux/types.h>
+#include <linux/workqueue.h>
 
 #include "kfastblock/control.h"
 #include "kfastblock/meta.h"
@@ -39,8 +42,15 @@ struct kfastblock_cached_socket {
 	char address[KFASTBLOCK_MAX_ADDR_LEN];
 	struct socket *sock;
 	struct mutex lock;
+	struct mutex send_lock;
+	spinlock_t mux_waiter_lock;
+	struct list_head mux_waiters;
+	struct work_struct mux_recv_work;
 	bool connecting;
+	bool mux_initialized;
+	bool mux_dead;
 	u64 next_seq;
+	u32 mux_inflight;
 	u32 fail_streak;
 	s32 last_error;
 	unsigned long last_failure_jiffies;

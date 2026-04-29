@@ -80,6 +80,9 @@ void kfastblock_osd_conn_slot_init(struct kfastblock_cached_socket *cached)
 
 	memset(cached, 0, sizeof(*cached));
 	mutex_init(&cached->lock);
+	mutex_init(&cached->send_lock);
+	spin_lock_init(&cached->mux_waiter_lock);
+	INIT_LIST_HEAD(&cached->mux_waiters);
 	cached->health_score = 50;
 	cached->state = KFASTBLOCK_CONN_STATE_EMPTY;
 }
@@ -128,7 +131,10 @@ void kfastblock_osd_conn_slot_close_locked(
 		cached->sock = NULL;
 	}
 	cached->connecting = false;
+	cached->mux_dead = false;
 	cached->next_seq = 0;
+	cached->mux_inflight = 0;
+	INIT_LIST_HEAD(&cached->mux_waiters);
 	if (cached->backoff_until_jiffies &&
 	    time_before(jiffies, cached->backoff_until_jiffies))
 		cached->state = KFASTBLOCK_CONN_STATE_BACKOFF;
