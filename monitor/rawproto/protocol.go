@@ -167,7 +167,7 @@ func EncodeGetImageInfoResponse(
 	sizeBytes uint64,
 ) (Header, []byte, error) {
 	body := bytes.NewBuffer(make([]byte, 0, 32))
-	for _, v := range []any{imageEpoch, poolID, blockSize, objectSize, flags, sizeBytes} {
+	for _, v := range []interface{}{imageEpoch, poolID, blockSize, objectSize, flags, sizeBytes} {
 		if err := binary.Write(body, binary.LittleEndian, v); err != nil {
 			return Header{}, nil, err
 		}
