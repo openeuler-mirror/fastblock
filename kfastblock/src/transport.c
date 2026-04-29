@@ -111,6 +111,7 @@ struct kfastblock_transport_submit_ctx {
 	unsigned int initial_dispatch;
 	int ret;
 	bool finished;
+	u8 stage;
 };
 
 struct kfastblock_transport_request_finish_ctx {
@@ -125,6 +126,16 @@ struct kfastblock_transport_request_finish_ctx {
 enum kfastblock_transport_object_attempt_failure_kind {
 	KFASTBLOCK_OBJECT_ATTEMPT_FAIL_BEFORE_EXCHANGE = 0,
 	KFASTBLOCK_OBJECT_ATTEMPT_FAIL_AFTER_EXCHANGE = 1,
+};
+
+enum kfastblock_transport_submit_stage {
+	KFASTBLOCK_SUBMIT_STAGE_INIT = 0,
+	KFASTBLOCK_SUBMIT_STAGE_EMPTY_DONE,
+	KFASTBLOCK_SUBMIT_STAGE_RUNTIME_READY,
+	KFASTBLOCK_SUBMIT_STAGE_PREFETCHED,
+	KFASTBLOCK_SUBMIT_STAGE_BATCH_PREPARED,
+	KFASTBLOCK_SUBMIT_STAGE_BATCH_QUEUED,
+	KFASTBLOCK_SUBMIT_STAGE_FINISHED,
 };
 
 static int kfastblock_transport_copy_from_body(const u8 *body,
@@ -2752,10 +2763,11 @@ static int kfastblock_transport_submit_ctx_init(
 	memset(ctx, 0, sizeof(*ctx));
 	ctx->kf_req = kf_req;
 	kfastblock_request_dispatch_batch_reset(&ctx->batch);
+	ctx->stage = KFASTBLOCK_SUBMIT_STAGE_INIT;
 	return 0;
 }
 
-static void kfastblock_transport_prepare_request_submit(
+static void kfastblock_transport_prepare_request_runtime(
 	struct kfastblock_transport_submit_ctx *ctx)
 {
 	if (!ctx || !ctx->kf_req)
@@ -2764,6 +2776,7 @@ static void kfastblock_transport_prepare_request_submit(
 	if (!ctx->kf_req->nr_objects) {
 		ctx->ret = kfastblock_transport_finish_empty_request(ctx->kf_req);
 		ctx->finished = true;
+		ctx->stage = KFASTBLOCK_SUBMIT_STAGE_EMPTY_DONE;
 		return;
 	}
 
@@ -2774,13 +2787,25 @@ static void kfastblock_transport_prepare_request_submit(
 				      ctx->kf_req->dispatch_window ?
 				      ctx->kf_req->dispatch_window :
 				      1);
-	kfastblock_transport_prefetch_submit_leaders(ctx);
+	ctx->stage = KFASTBLOCK_SUBMIT_STAGE_RUNTIME_READY;
 }
 
-static int kfastblock_transport_kick_initial_dispatch(
+static void kfastblock_transport_prepare_request_prefetch(
 	struct kfastblock_transport_submit_ctx *ctx)
 {
-	if (!ctx || !ctx->kf_req)
+	if (!ctx || ctx->stage != KFASTBLOCK_SUBMIT_STAGE_RUNTIME_READY)
+		return;
+
+	kfastblock_transport_prefetch_submit_leaders(ctx);
+	if (!ctx->ret)
+		ctx->stage = KFASTBLOCK_SUBMIT_STAGE_PREFETCHED;
+}
+
+static int kfastblock_transport_prepare_initial_dispatch_batch(
+	struct kfastblock_transport_submit_ctx *ctx)
+{
+	if (!ctx || !ctx->kf_req ||
+	    ctx->stage != KFASTBLOCK_SUBMIT_STAGE_PREFETCHED)
 		return -EINVAL;
 
 	kfastblock_request_dispatch_batch_reset(&ctx->batch);
@@ -2788,6 +2813,8 @@ static int kfastblock_transport_kick_initial_dispatch(
 		ctx->kf_req, &ctx->batch, ctx->initial_dispatch);
 	if (ctx->ret < 0)
 		kfastblock_transport_abort_request(ctx->kf_req, ctx->ret);
+	else
+		ctx->stage = KFASTBLOCK_SUBMIT_STAGE_BATCH_PREPARED;
 
 	return 0;
 }
@@ -2799,13 +2826,15 @@ static int kfastblock_transport_finish_submit_ctx(
 		return -EINVAL;
 
 	ctx->finished = true;
+	ctx->stage = KFASTBLOCK_SUBMIT_STAGE_FINISHED;
 	return kfastblock_transport_finish_submit_now(ctx->kf_req, ctx->ret);
 }
 
 static int kfastblock_transport_queue_initial_dispatch(
 	struct kfastblock_transport_submit_ctx *ctx)
 {
-	if (!ctx || !ctx->kf_req)
+	if (!ctx || !ctx->kf_req ||
+	    ctx->stage != KFASTBLOCK_SUBMIT_STAGE_BATCH_PREPARED)
 		return -EINVAL;
 	if (ctx->ret)
 		return 0;
@@ -2815,6 +2844,8 @@ static int kfastblock_transport_queue_initial_dispatch(
 		ctx->kf_req, &ctx->batch);
 	if (ctx->ret)
 		kfastblock_transport_abort_request(ctx->kf_req, ctx->ret);
+	else
+		ctx->stage = KFASTBLOCK_SUBMIT_STAGE_BATCH_QUEUED;
 
 	return 0;
 }
@@ -2825,13 +2856,14 @@ static int kfastblock_transport_run_request_submit(
 	if (!ctx || !ctx->kf_req)
 		return -EINVAL;
 
-	kfastblock_transport_prepare_request_submit(ctx);
+	kfastblock_transport_prepare_request_runtime(ctx);
 	if (ctx->finished)
 		return 0;
+	kfastblock_transport_prepare_request_prefetch(ctx);
 	if (ctx->ret < 0)
 		return kfastblock_transport_finish_submit_ctx(ctx);
 
-	if (kfastblock_transport_kick_initial_dispatch(ctx))
+	if (kfastblock_transport_prepare_initial_dispatch_batch(ctx))
 		return ctx->ret;
 	if (ctx->ret)
 		return 0;
