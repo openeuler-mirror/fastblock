@@ -293,6 +293,18 @@ static ssize_t leader_epoch_show(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%llu\n", vol->view.leader_epoch);
 }
 
+static ssize_t last_image_refresh_show(struct device *dev,
+				       struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lu\n",
+			 vol->view.last_image_refresh_jiffies);
+}
+
 static ssize_t read_only_show(struct device *dev,
 			      struct device_attribute *attr, char *buf)
 {
@@ -326,6 +338,7 @@ static DEVICE_ATTR_RO(route_count);
 static DEVICE_ATTR_RO(osdmap_epoch);
 static DEVICE_ATTR_RO(pgmap_epoch);
 static DEVICE_ATTR_RO(leader_epoch);
+static DEVICE_ATTR_RO(last_image_refresh);
 static DEVICE_ATTR_RO(read_only);
 static DEVICE_ATTR_RO(sync_state);
 
@@ -341,6 +354,7 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_osdmap_epoch.attr,
 	&dev_attr_pgmap_epoch.attr,
 	&dev_attr_leader_epoch.attr,
+	&dev_attr_last_image_refresh.attr,
 	&dev_attr_read_only.attr,
 	&dev_attr_sync_state.attr,
 	NULL,
