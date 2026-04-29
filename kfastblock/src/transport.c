@@ -873,12 +873,12 @@ static int kfastblock_transport_send_request_parts(
 	return 0;
 }
 
-static int kfastblock_transport_recv_response(struct socket *sock,
-					      u8 expected_service,
-					      u8 expected_opcode,
-					      u64 expected_seq,
-					      struct kfastblock_raw_header *hdr,
-					      void **body)
+static int kfastblock_transport_recv_response_any(
+	struct socket *sock,
+	u8 expected_service,
+	u8 expected_opcode,
+	struct kfastblock_raw_header *hdr,
+	void **body)
 {
 	u32 body_len;
 	int ret;
@@ -900,8 +900,6 @@ static int kfastblock_transport_recv_response(struct socket *sock,
 		return -EPROTO;
 	if (!(le32_to_cpu(hdr->flags) & KFASTBLOCK_RAW_FLAG_RESPONSE))
 		return -EPROTO;
-	if (le64_to_cpu(hdr->seq) != expected_seq)
-		return -EPROTO;
 
 	body_len = le32_to_cpu(hdr->body_len);
 	if (!body_len)
@@ -919,6 +917,31 @@ static int kfastblock_transport_recv_response(struct socket *sock,
 		return ret;
 	}
 	return kfastblock_transport_status_to_errno(le32_to_cpu(hdr->status));
+}
+
+static int kfastblock_transport_recv_response_exact(
+	struct socket *sock,
+	u8 expected_service,
+	u8 expected_opcode,
+	u64 expected_seq,
+	struct kfastblock_raw_header *hdr,
+	void **body)
+{
+	int ret;
+
+	ret = kfastblock_transport_recv_response_any(sock, expected_service,
+						     expected_opcode, hdr, body);
+	if (ret)
+		return ret;
+	if (le64_to_cpu(hdr->seq) == expected_seq)
+		return 0;
+
+	if (*body) {
+		kfastblock_transport_free_buffer(
+			*body, KFASTBLOCK_TRANSPORT_BUFFER_LARGE);
+		*body = NULL;
+	}
+	return -EPROTO;
 }
 
 static void kfastblock_transport_response_ctx_reset(
@@ -999,8 +1022,9 @@ static int kfastblock_transport_exec_request_parts(
 		return ret;
 	}
 
-	ret = kfastblock_transport_recv_response(sock, service, opcode, seq,
-						 &rsp->hdr, &rsp->body);
+	ret = kfastblock_transport_recv_response_exact(sock, service, opcode,
+						       seq, &rsp->hdr,
+						       &rsp->body);
 	rsp->ret = ret;
 	if (!ret)
 		rsp->body_len = le32_to_cpu(rsp->hdr.body_len);
