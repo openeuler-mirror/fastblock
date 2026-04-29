@@ -534,6 +534,30 @@ message ReleaseCSILeaseResponse {
     CSILeaseErrorCode errorcode = 1;
 }
 
+message ListCSIVolumeMetadataRequest {
+}
+
+message ListCSIVolumeMetadataResponse {
+    CSIMetadataErrorCode errorcode = 1;
+    repeated CSIVolumeMetadata metadata = 2;
+}
+
+message ListCSIAttachmentRequest {
+}
+
+message ListCSIAttachmentResponse {
+    CSIMetadataErrorCode errorcode = 1;
+    repeated CSIAttachment attachments = 2;
+}
+
+message ListCSILeaseRequest {
+}
+
+message ListCSILeaseResponse {
+    CSILeaseErrorCode errorcode = 1;
+    repeated CSIVolumeLease leases = 2;
+}
+
 message Request {
     oneof union {
         BootRequest boot_request = 1;
@@ -570,6 +594,9 @@ message Request {
         GetCSILeaseRequest get_csi_lease_request = 32;
         RenewCSILeaseRequest renew_csi_lease_request = 33;
         ReleaseCSILeaseRequest release_csi_lease_request = 34;
+        ListCSIVolumeMetadataRequest list_csi_volume_metadata_request = 35;
+        ListCSIAttachmentRequest list_csi_attachment_request = 36;
+        ListCSILeaseRequest list_csi_lease_request = 37;
     }
 }
 
@@ -609,5 +636,8 @@ message Response {
         GetCSILeaseResponse get_csi_lease_response = 32;
         RenewCSILeaseResponse renew_csi_lease_response = 33;
         ReleaseCSILeaseResponse release_csi_lease_response = 34;
+        ListCSIVolumeMetadataResponse list_csi_volume_metadata_response = 35;
+        ListCSIAttachmentResponse list_csi_attachment_response = 36;
+        ListCSILeaseResponse list_csi_lease_response = 37;
     }
 }
