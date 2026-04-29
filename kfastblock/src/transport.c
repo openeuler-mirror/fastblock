@@ -50,6 +50,89 @@ static u64 kfastblock_transport_next_seq(struct kfastblock_cached_socket *cached
 	return cached->next_seq++;
 }
 
+static void kfastblock_transport_close_cached_monitor_socket(
+	struct kfastblock_cached_monitor_socket *cached)
+{
+	if (!cached)
+		return;
+
+	if (cached->sock) {
+		sock_release(cached->sock);
+		cached->sock = NULL;
+	}
+	cached->port = 0;
+	cached->next_seq = 0;
+	memset(cached->address, 0, sizeof(cached->address));
+}
+
+static u64 kfastblock_transport_next_monitor_seq(
+	struct kfastblock_cached_monitor_socket *cached)
+{
+	if (!cached)
+		return 1;
+
+	if (!cached->next_seq)
+		cached->next_seq = 1;
+	return cached->next_seq++;
+}
+
+static int kfastblock_transport_get_monitor_socket(
+	struct kfastblock_volume *vol,
+	const struct kfastblock_attach_spec *spec,
+	u32 endpoint_index,
+	struct kfastblock_cached_monitor_socket **cached_out,
+	struct socket **sock_out)
+{
+	const struct kfastblock_monitor_endpoint *endpoint;
+	struct kfastblock_cached_monitor_socket *cached;
+	int ret;
+
+	if (!vol || !spec || !cached_out || !sock_out)
+		return -EINVAL;
+	if (endpoint_index >= spec->nr_monitors)
+		return -EINVAL;
+
+	endpoint = &spec->monitors[endpoint_index];
+	cached = &vol->monitor_cache[endpoint_index];
+	if (cached->sock &&
+	    cached->port == endpoint->port &&
+	    strcmp(cached->address, endpoint->host) == 0) {
+		*cached_out = cached;
+		*sock_out = cached->sock;
+		return 0;
+	}
+
+	kfastblock_transport_close_cached_monitor_socket(cached);
+	ret = kfastblock_transport_try_connect_monitor(endpoint, sock_out);
+	if (ret)
+		return ret;
+
+	cached->sock = *sock_out;
+	cached->port = endpoint->port;
+	cached->next_seq = 1;
+	strscpy(cached->address, endpoint->host, sizeof(cached->address));
+	*cached_out = cached;
+	return 0;
+}
+
+static bool kfastblock_transport_should_retry_monitor(const int ret)
+{
+	switch (ret) {
+	case -EAGAIN:
+	case -ETIMEDOUT:
+	case -ECONNRESET:
+	case -EPIPE:
+	case -ECONNREFUSED:
+	case -EHOSTUNREACH:
+	case -ENETUNREACH:
+	case -EPROTO:
+	case -EIO:
+		return true;
+	default:
+		return false;
+	}
+}
+
 static struct kfastblock_cached_socket *
 kfastblock_transport_find_cached_socket(struct kfastblock_volume *vol,
 					const struct kfastblock_leader_info *leader)
@@ -1437,4 +1520,75 @@ int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 	}
 
 	return 0;
+}
+
+int kfastblock_transport_refresh_image_volume(struct kfastblock_volume *vol)
+{
+	u32 i;
+	int first_err = -EIO;
+
+	if (!vol)
+		return -EINVAL;
+
+	for (i = 0; i < vol->spec.nr_monitors; ++i) {
+		struct kfastblock_cached_monitor_socket *cached = NULL;
+		struct socket *sock = NULL;
+		u64 seq;
+		int ret;
+
+		ret = kfastblock_transport_get_monitor_socket(vol, &vol->spec, i,
+					      &cached, &sock);
+		if (ret) {
+			first_err = ret;
+			continue;
+		}
+
+		mutex_lock(&cached->lock);
+		seq = kfastblock_transport_next_monitor_seq(cached);
+		ret = kfastblock_transport_fetch_image_info(sock, &vol->view, seq);
+		mutex_unlock(&cached->lock);
+		if (!ret || ret == -ESTALE)
+			return 0;
+		if (kfastblock_transport_should_retry_monitor(ret))
+			kfastblock_transport_close_cached_monitor_socket(cached);
+		first_err = ret;
+	}
+
+	return first_err;
+}
+
+int kfastblock_transport_refresh_cluster_map_volume(struct kfastblock_volume *vol)
+{
+	u32 i;
+	int first_err = -EIO;
+
+	if (!vol)
+		return -EINVAL;
+
+	for (i = 0; i < vol->spec.nr_monitors; ++i) {
+		struct kfastblock_cached_monitor_socket *cached = NULL;
+		struct socket *sock = NULL;
+		u64 seq;
+		int ret;
+
+		ret = kfastblock_transport_get_monitor_socket(vol, &vol->spec, i,
+					      &cached, &sock);
+		if (ret) {
+			first_err = ret;
+			continue;
+		}
+
+		mutex_lock(&cached->lock);
+		seq = kfastblock_transport_next_monitor_seq(cached);
+		ret = kfastblock_transport_fetch_cluster_map_from_monitor(sock,
+					      &vol->view, seq);
+		mutex_unlock(&cached->lock);
+		if (!ret || ret == -ESTALE)
+			return 0;
+		if (kfastblock_transport_should_retry_monitor(ret))
+			kfastblock_transport_close_cached_monitor_socket(cached);
+		first_err = ret;
+	}
+
+	return first_err;
 }

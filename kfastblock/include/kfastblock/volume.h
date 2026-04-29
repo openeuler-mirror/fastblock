@@ -24,6 +24,14 @@ struct kfastblock_cached_socket {
 	u64 next_seq;
 };
 
+struct kfastblock_cached_monitor_socket {
+	u16 port;
+	char address[KFASTBLOCK_MAX_ADDR_LEN];
+	struct socket *sock;
+	struct mutex lock;
+	u64 next_seq;
+};
+
 struct kfastblock_volume {
 	int dev_id;
 	int major;
@@ -44,6 +52,7 @@ struct kfastblock_volume {
 	struct rw_semaphore state_lock;
 	struct delayed_work refresh_work;
 	struct kfastblock_cached_socket socket_cache[KFASTBLOCK_MAX_SOCKET_CACHE];
+	struct kfastblock_cached_monitor_socket monitor_cache[KFASTBLOCK_MAX_MONITORS];
 };
 
 int kfastblock_volume_init(void);

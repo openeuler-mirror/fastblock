@@ -49,6 +49,17 @@ static void kfastblock_volume_close_cached_sockets(struct kfastblock_volume *vol
 		vol->socket_cache[i].osd_id = 0;
 		vol->socket_cache[i].port = 0;
 	}
+
+	for (i = 0; i < KFASTBLOCK_MAX_MONITORS; ++i) {
+		if (!vol->monitor_cache[i].sock)
+			continue;
+		sock_release(vol->monitor_cache[i].sock);
+		vol->monitor_cache[i].sock = NULL;
+		memset(vol->monitor_cache[i].address, 0,
+		       sizeof(vol->monitor_cache[i].address));
+		vol->monitor_cache[i].port = 0;
+		vol->monitor_cache[i].next_seq = 0;
+	}
 }
 
 static void kfastblock_volume_schedule_refresh(struct kfastblock_volume *vol)
@@ -140,7 +151,7 @@ static void kfastblock_volume_refresh_workfn(struct work_struct *work)
 		jiffies,
 		vol->view.last_image_refresh_jiffies +
 		kfastblock_volume_image_refresh_interval());
-	ret = kfastblock_meta_refresh_cluster_map(&vol->view, &vol->spec);
+	ret = kfastblock_transport_refresh_cluster_map_volume(vol);
 	if (!ret && vol->disk) {
 		image_ret = 0;
 		if (refresh_image)
@@ -626,6 +637,8 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	init_rwsem(&vol->state_lock);
 	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i)
 		mutex_init(&vol->socket_cache[i].lock);
+	for (i = 0; i < KFASTBLOCK_MAX_MONITORS; ++i)
+		mutex_init(&vol->monitor_cache[i].lock);
 	INIT_DELAYED_WORK(&vol->refresh_work, kfastblock_volume_refresh_workfn);
 	INIT_LIST_HEAD(&vol->node);
 
