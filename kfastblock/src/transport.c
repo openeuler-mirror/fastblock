@@ -139,6 +139,8 @@ struct kfastblock_transport_leader_query_ctx {
 	u64 seq;
 	int ret;
 	int first_err;
+	bool finished;
+	u8 stage;
 };
 
 enum kfastblock_transport_object_attempt_failure_kind {
@@ -162,6 +164,12 @@ enum kfastblock_transport_request_finish_stage {
 	KFASTBLOCK_REQUEST_FINISH_STAGE_STATUS_UPDATED,
 	KFASTBLOCK_REQUEST_FINISH_STAGE_PENDING_UPDATED,
 	KFASTBLOCK_REQUEST_FINISH_STAGE_FINISHED,
+};
+
+enum kfastblock_transport_leader_query_stage {
+	KFASTBLOCK_LEADER_QUERY_STAGE_INIT = 0,
+	KFASTBLOCK_LEADER_QUERY_STAGE_TARGETS,
+	KFASTBLOCK_LEADER_QUERY_STAGE_FINISHED,
 };
 
 static int kfastblock_transport_copy_from_body(const u8 *body,
@@ -2449,6 +2457,24 @@ static void kfastblock_transport_leader_query_ctx_reset_target(
 	ctx->seq = 0;
 }
 
+static void kfastblock_transport_leader_query_ctx_init(
+	struct kfastblock_transport_leader_query_ctx *ctx,
+	struct kfastblock_request *kf_req,
+	struct kfastblock_request_pg_hint *hint,
+	struct kfastblock_leader_info *leader)
+{
+	if (!ctx)
+		return;
+
+	memset(ctx, 0, sizeof(*ctx));
+	ctx->kf_req = kf_req;
+	ctx->vol = kf_req ? kf_req->vol : NULL;
+	ctx->hint = hint;
+	ctx->leader_out = leader;
+	ctx->first_err = -ENOENT;
+	ctx->stage = KFASTBLOCK_LEADER_QUERY_STAGE_INIT;
+}
+
 static bool kfastblock_transport_leader_query_target_usable(
 	const struct kfastblock_request_pg_target *target_hint)
 {
@@ -2479,6 +2505,22 @@ static int kfastblock_transport_prepare_leader_query_target(
 	return 0;
 }
 
+static void kfastblock_transport_apply_leader_query_request_failure(
+	struct kfastblock_transport_leader_query_ctx *ctx)
+{
+	unsigned int actions;
+
+	if (!ctx)
+		return;
+
+	actions = kfastblock_recovery_classify_leader_failure(ctx->ret);
+	kfastblock_recovery_apply_leader_failure(
+		ctx->vol, ctx->kf_req->request_pool_id, ctx->hint->pg_id,
+		ctx->ret, actions);
+	ctx->finished = true;
+	ctx->stage = KFASTBLOCK_LEADER_QUERY_STAGE_FINISHED;
+}
+
 static void kfastblock_transport_note_leader_query_failure(
 	struct kfastblock_transport_leader_query_ctx *ctx)
 {
@@ -2490,6 +2532,29 @@ static void kfastblock_transport_note_leader_query_failure(
 		ctx->vol, ctx->kf_req->request_pool_id, ctx->hint->pg_id,
 		ctx->ret, ctx->actions);
 	ctx->first_err = ctx->ret;
+}
+
+static int kfastblock_transport_prepare_leader_query_request(
+	struct kfastblock_transport_leader_query_ctx *ctx)
+{
+	if (!ctx)
+		return -EINVAL;
+
+	ctx->ret = kfastblock_transport_maybe_inject_fault(
+		ctx->vol, KFASTBLOCK_FAULT_LEADER_QUERY);
+	if (ctx->ret) {
+		kfastblock_transport_apply_leader_query_request_failure(ctx);
+		return ctx->ret;
+	}
+
+	ctx->ret = kfastblock_transport_request_view_stale(ctx->kf_req);
+	if (ctx->ret) {
+		kfastblock_transport_apply_leader_query_request_failure(ctx);
+		return ctx->ret;
+	}
+
+	ctx->stage = KFASTBLOCK_LEADER_QUERY_STAGE_TARGETS;
+	return 0;
 }
 
 static int kfastblock_transport_drive_leader_query_target(
@@ -2528,6 +2593,50 @@ static int kfastblock_transport_drive_leader_query_target(
 	return ctx->ret;
 }
 
+static bool kfastblock_transport_advance_leader_query_ctx(
+	struct kfastblock_transport_leader_query_ctx *ctx)
+{
+	if (!ctx)
+		return false;
+
+	switch (ctx->stage) {
+	case KFASTBLOCK_LEADER_QUERY_STAGE_INIT:
+		return kfastblock_transport_prepare_leader_query_request(ctx) == 0 &&
+		       !ctx->finished;
+	case KFASTBLOCK_LEADER_QUERY_STAGE_TARGETS:
+		while (ctx->target_index < ctx->hint->nr_targets) {
+			kfastblock_transport_leader_query_ctx_reset_target(
+				ctx, ctx->target_index);
+			ctx->ret = kfastblock_transport_drive_leader_query_target(ctx);
+			if (ctx->ret == -EHOSTDOWN) {
+				ctx->first_err = -EHOSTDOWN;
+				ctx->target_index++;
+				continue;
+			}
+			if (ctx->ret) {
+				if (!ctx->actions)
+					ctx->actions =
+						kfastblock_recovery_classify_leader_failure(
+							ctx->ret);
+				kfastblock_transport_note_leader_query_failure(ctx);
+				ctx->target_index++;
+				continue;
+			}
+
+			ctx->finished = true;
+			ctx->stage = KFASTBLOCK_LEADER_QUERY_STAGE_FINISHED;
+			return false;
+		}
+		ctx->finished = true;
+		ctx->stage = KFASTBLOCK_LEADER_QUERY_STAGE_FINISHED;
+		return false;
+	case KFASTBLOCK_LEADER_QUERY_STAGE_FINISHED:
+	default:
+		ctx->finished = true;
+		return false;
+	}
+}
+
 static int kfastblock_transport_query_pg_leader(
 	struct kfastblock_request *kf_req,
 	struct kfastblock_request_pg_hint *hint,
@@ -2540,54 +2649,13 @@ static int kfastblock_transport_query_pg_leader(
 	if (!hint->nr_targets || !hint->targets)
 		return -ENOENT;
 
-	ctx.kf_req = kf_req;
-	ctx.vol = kf_req->vol;
-	ctx.hint = hint;
-	ctx.leader_out = leader;
-	ctx.first_err = -ENOENT;
-
-	ctx.ret = kfastblock_transport_maybe_inject_fault(
-		ctx.vol, KFASTBLOCK_FAULT_LEADER_QUERY);
-	if (ctx.ret) {
-		kfastblock_recovery_apply_leader_failure(
-			ctx.vol, ctx.kf_req->request_pool_id, ctx.hint->pg_id,
-			ctx.ret,
-			kfastblock_recovery_classify_leader_failure(ctx.ret));
-		return ctx.ret;
+	kfastblock_transport_leader_query_ctx_init(&ctx, kf_req, hint, leader);
+	while (!ctx.finished) {
+		if (!kfastblock_transport_advance_leader_query_ctx(&ctx))
+			break;
 	}
-
-	ctx.ret = kfastblock_transport_request_view_stale(ctx.kf_req);
-	if (ctx.ret) {
-		kfastblock_recovery_apply_leader_failure(
-			ctx.vol, ctx.kf_req->request_pool_id, ctx.hint->pg_id,
-			ctx.ret,
-			kfastblock_recovery_classify_leader_failure(ctx.ret));
-		return ctx.ret;
-	}
-
-	for (ctx.target_index = 0; ctx.target_index < ctx.hint->nr_targets;
-	     ++ctx.target_index) {
-		kfastblock_transport_leader_query_ctx_reset_target(
-			&ctx, ctx.target_index);
-		ctx.ret = kfastblock_transport_drive_leader_query_target(&ctx);
-		if (ctx.ret == -EHOSTDOWN) {
-			ctx.first_err = -EHOSTDOWN;
-			continue;
-		}
-		if (ctx.ret) {
-			kfastblock_recovery_apply_leader_failure(
-				ctx.vol, ctx.kf_req->request_pool_id, ctx.hint->pg_id,
-				ctx.ret,
-				kfastblock_recovery_classify_leader_failure(
-					ctx.ret));
-			ctx.first_err = ctx.ret;
-			continue;
-		}
-		if (!ctx.ret)
-			return 0;
-
-		kfastblock_transport_note_leader_query_failure(&ctx);
-	}
+	if (!ctx.ret)
+		return 0;
 
 	return ctx.first_err;
 }
