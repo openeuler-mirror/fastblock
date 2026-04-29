@@ -100,6 +100,9 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, path string, requestBod
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != wantStatus {
+		if resp.StatusCode == http.StatusNotFound {
+			return ErrNotFound
+		}
 		var rpcErr struct {
 			Error string `json:"error"`
 		}

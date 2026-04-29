@@ -3,6 +3,7 @@ package exporterclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -53,6 +54,19 @@ func TestGetExport(t *testing.T) {
 	}
 	if export.ID != "exp-1" {
 		t.Fatalf("unexpected export: %+v", export)
+	}
+}
+
+func TestGetExportReturnsNotFoundSentinel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+	}))
+	defer server.Close()
+
+	client := NewHTTP(server.URL)
+	if _, err := client.GetExport(context.Background(), "exp-missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected not found sentinel, got %v", err)
 	}
 }
 

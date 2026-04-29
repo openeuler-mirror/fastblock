@@ -10,6 +10,7 @@ import (
 
 	"fastblock-exporter/pkg/api"
 	"fastblock-exporter/pkg/config"
+	"fastblock-exporter/pkg/nvmf"
 )
 
 type stubManager struct {
@@ -20,6 +21,7 @@ type stubManager struct {
 	denyID    string
 	denyNQN   string
 	getID     string
+	getErr    error
 }
 
 func (m *stubManager) CreateExport(_ context.Context, req api.CreateExportRequest) (api.Export, error) {
@@ -34,6 +36,9 @@ func (m *stubManager) DeleteExport(_ context.Context, exportID string) error {
 
 func (m *stubManager) GetExport(_ context.Context, exportID string) (api.Export, error) {
 	m.getID = exportID
+	if m.getErr != nil {
+		return api.Export{}, m.getErr
+	}
 	return api.Export{ID: exportID, NQN: "nqn.1", NSID: 1, Traddr: "10.0.0.1", Trsvcid: "4420"}, nil
 }
 
@@ -107,6 +112,17 @@ func TestGetExport(t *testing.T) {
 	}
 	if manager.getID != "exp-5" {
 		t.Fatalf("unexpected get id: %q", manager.getID)
+	}
+}
+
+func TestGetExportReturnsNotFound(t *testing.T) {
+	manager := &stubManager{getErr: nvmf.ErrExportNotFound}
+	srv := New(config.Config{NodeName: "node-a"}, manager)
+	req := httptest.NewRequest(http.MethodGet, "/v1/exports/exp-missing", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unexpected status: %d", rec.Code)
 	}
 }
 

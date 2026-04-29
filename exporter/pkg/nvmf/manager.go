@@ -13,7 +13,7 @@ import (
 	"fastblock-exporter/pkg/spdkrpc"
 )
 
-var errExportNotFound = errors.New("export not found")
+var ErrExportNotFound = errors.New("export not found")
 
 type Manager interface {
 	CreateExport(ctx context.Context, req api.CreateExportRequest) (api.Export, error)
@@ -83,7 +83,7 @@ func (m *LocalManager) CreateExport(ctx context.Context, req api.CreateExportReq
 	id := exportID(req.VolumeID)
 	if export, err := m.GetExport(ctx, id); err == nil {
 		return export, nil
-	} else if !errors.Is(err, errExportNotFound) {
+	} else if !errors.Is(err, ErrExportNotFound) {
 		return api.Export{}, err
 	}
 	bdev := bdevName(id)
@@ -239,7 +239,7 @@ func (m *LocalManager) GetExport(ctx context.Context, exportID string) (api.Expo
 			Trsvcid: listener.Trsvcid,
 		}, nil
 	}
-	return api.Export{}, fmt.Errorf("%w: %s", errExportNotFound, exportID)
+	return api.Export{}, fmt.Errorf("%w: %s", ErrExportNotFound, exportID)
 }
 
 func (m *LocalManager) AllowHost(ctx context.Context, exportID, hostNQN string) error {
