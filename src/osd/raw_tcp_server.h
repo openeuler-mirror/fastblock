@@ -40,7 +40,9 @@ private:
 
     struct connection_context {
         int fd{-1};
+        uint32_t shard_id{0};
         std::atomic<bool> done{false};
+        std::string peer_address{};
         std::shared_ptr<osd_raw_tcp_connection_state> state{};
         std::thread worker{};
         std::thread writer{};

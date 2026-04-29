@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <arpa/inet.h>
 #include <endian.h>
+#include <fcntl.h>
 #include <google/protobuf/stubs/callback.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -246,7 +247,7 @@ bool recv_all(int fd, void* buf, size_t len, const std::atomic<bool>& running) n
         if (rc == 0) {
             return false;
         }
-        if (errno == EINTR) {
+        if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
             continue;
         }
         return false;
@@ -271,13 +272,31 @@ bool send_all(int fd, const void* buf, size_t len, const std::atomic<bool>& runn
         if (rc == 0) {
             return false;
         }
-        if (errno == EINTR) {
+        if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
             continue;
         }
         return false;
     }
 
     return true;
+}
+
+bool set_nonblocking(int fd) noexcept {
+    int flags;
+
+    if (fd < 0) {
+        return false;
+    }
+
+    flags = ::fcntl(fd, F_GETFL, 0);
+    if (flags < 0) {
+        return false;
+    }
+    if ((flags & O_NONBLOCK) != 0) {
+        return true;
+    }
+
+    return ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
 }
 
 bool write_message(int fd,
@@ -338,6 +357,11 @@ int create_listener(const std::string& bind_address, uint16_t* port) noexcept {
             auto saved_errno = errno;
             ::close(fd);
             return -saved_errno;
+        }
+        if (!set_nonblocking(fd)) {
+            auto saved_errno = errno;
+            ::close(fd);
+            return saved_errno ? -saved_errno : -EIO;
         }
 
         addr.sin_port = htons(candidate);
@@ -948,7 +972,22 @@ void osd_raw_tcp_server::run_listener(const uint32_t shard_id) noexcept {
         }
 
         auto conn = std::make_unique<connection_context>();
+        char peer_host[INET_ADDRSTRLEN] = {};
+
+        if (!set_nonblocking(client_fd)) {
+            SPDK_ERRLOG(
+              "ERROR: set raw TCP connection nonblocking on shard %u failed: %s\n",
+              shard_id,
+              std::strerror(errno));
+            ::shutdown(client_fd, SHUT_RDWR);
+            ::close(client_fd);
+            continue;
+        }
         conn->fd = client_fd;
+        conn->shard_id = shard_id;
+        if (::inet_ntop(AF_INET, &peer_addr.sin_addr, peer_host, sizeof(peer_host))) {
+            conn->peer_address = peer_host;
+        }
         try {
             conn->worker = std::thread([this, shard_id, ctx = conn.get()]() {
                 handle_connection(ctx, shard_id);
