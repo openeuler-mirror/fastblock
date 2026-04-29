@@ -177,6 +177,11 @@ static int kfastblock_transport_copy_from_body(const u8 *body,
 					       size_t *offset,
 					       void *dst,
 					       size_t len);
+static int kfastblock_transport_lookup_response_header_object(
+	struct kfastblock_transport_exchange_ctx *ctx,
+	const struct kfastblock_raw_header *rsp_hdr,
+	u64 *response_seq_out,
+	unsigned int *matched_object_out);
 static int kfastblock_transport_decode_osd_entries(
 	const u8 *body,
 	size_t body_len,
@@ -1132,6 +1137,7 @@ static void kfastblock_transport_finish_exchange(
 	u32 flags = 0;
 	u32 body_len = 0;
 	u64 response_seq = 0;
+	unsigned int matched_object = 0;
 	s32 status = ret;
 
 	if (!ctx || !ctx->kf_req || !ctx->seq)
@@ -1144,7 +1150,8 @@ static void kfastblock_transport_finish_exchange(
 		status = kfastblock_transport_status_to_errno(
 			le32_to_cpu(rsp_hdr->status));
 	}
-	if (response_seq == ctx->seq)
+	if (!kfastblock_transport_lookup_response_header_object(
+		    ctx, rsp_hdr, &response_seq, &matched_object))
 		(void)kfastblock_request_record_object_response_by_seq(
 			ctx->kf_req, response_seq, status, body_len, flags);
 	else
@@ -1161,9 +1168,9 @@ static void kfastblock_transport_finish_exchange(
 						&ctx->kf_req->pipeline);
 }
 
-static int kfastblock_transport_lookup_response_object(
+static int kfastblock_transport_lookup_response_header_object(
 	struct kfastblock_transport_exchange_ctx *ctx,
-	const struct kfastblock_transport_response_ctx *response,
+	const struct kfastblock_raw_header *rsp_hdr,
 	u64 *response_seq_out,
 	unsigned int *matched_object_out)
 {
@@ -1171,14 +1178,14 @@ static int kfastblock_transport_lookup_response_object(
 	unsigned int matched_object = 0;
 	int ret;
 
-	if (!ctx || !ctx->kf_req || !response)
+	if (!ctx || !ctx->kf_req || !rsp_hdr)
 		return -EINVAL;
-	if (response->hdr.service != ctx->service)
+	if (rsp_hdr->service != ctx->service)
 		return -EPROTO;
-	if (response->hdr.opcode != ctx->opcode)
+	if (rsp_hdr->opcode != ctx->opcode)
 		return -EPROTO;
 
-	response_seq = le64_to_cpu(response->hdr.seq);
+	response_seq = le64_to_cpu(rsp_hdr->seq);
 	if (!response_seq)
 		return -EPROTO;
 
@@ -1192,6 +1199,19 @@ static int kfastblock_transport_lookup_response_object(
 		*matched_object_out = matched_object;
 
 	return 0;
+}
+
+static int kfastblock_transport_lookup_response_object(
+	struct kfastblock_transport_exchange_ctx *ctx,
+	const struct kfastblock_transport_response_ctx *response,
+	u64 *response_seq_out,
+	unsigned int *matched_object_out)
+{
+	if (!response)
+		return -EINVAL;
+
+	return kfastblock_transport_lookup_response_header_object(
+		ctx, &response->hdr, response_seq_out, matched_object_out);
 }
 
 static int kfastblock_transport_match_exchange_response(
