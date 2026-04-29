@@ -121,6 +121,7 @@ struct kfastblock_transport_request_finish_ctx {
 	int remaining;
 	bool first_error;
 	bool mark_success;
+	u8 stage;
 };
 
 enum kfastblock_transport_object_attempt_failure_kind {
@@ -136,6 +137,13 @@ enum kfastblock_transport_submit_stage {
 	KFASTBLOCK_SUBMIT_STAGE_BATCH_PREPARED,
 	KFASTBLOCK_SUBMIT_STAGE_BATCH_QUEUED,
 	KFASTBLOCK_SUBMIT_STAGE_FINISHED,
+};
+
+enum kfastblock_transport_request_finish_stage {
+	KFASTBLOCK_REQUEST_FINISH_STAGE_INIT = 0,
+	KFASTBLOCK_REQUEST_FINISH_STAGE_STATUS_UPDATED,
+	KFASTBLOCK_REQUEST_FINISH_STAGE_PENDING_UPDATED,
+	KFASTBLOCK_REQUEST_FINISH_STAGE_FINISHED,
 };
 
 static int kfastblock_transport_copy_from_body(const u8 *body,
@@ -2644,6 +2652,7 @@ static int kfastblock_transport_request_finish_ctx_init(
 	ctx->object_index = object_index;
 	ctx->ret = ret;
 	ctx->mark_success = mark_success;
+	ctx->stage = KFASTBLOCK_REQUEST_FINISH_STAGE_INIT;
 	return 0;
 }
 
@@ -2679,6 +2688,7 @@ static bool kfastblock_transport_update_request_status_after_object(
 			ctx->kf_req,
 			kfastblock_transport_refill_dispatch_window(ctx->kf_req));
 
+	ctx->stage = KFASTBLOCK_REQUEST_FINISH_STAGE_STATUS_UPDATED;
 	return ctx->first_error;
 }
 
@@ -2694,7 +2704,55 @@ static int kfastblock_transport_advance_request_pending(
 		ctx->remaining = kfastblock_transport_drop_unscheduled_pending(
 			ctx->kf_req, ctx->remaining);
 
+	ctx->stage = KFASTBLOCK_REQUEST_FINISH_STAGE_PENDING_UPDATED;
 	return ctx->remaining;
+}
+
+static void kfastblock_transport_finish_request_ctx_if_idle(
+	struct kfastblock_transport_request_finish_ctx *ctx)
+{
+	if (!ctx)
+		return;
+
+	kfastblock_transport_finish_request_if_idle(
+		ctx->kf_req, ctx->remaining, ctx->mark_success);
+	if (ctx->remaining == 0)
+		ctx->stage = KFASTBLOCK_REQUEST_FINISH_STAGE_FINISHED;
+}
+
+static void kfastblock_transport_prepare_request_finish_complete(
+	struct kfastblock_transport_request_finish_ctx *ctx)
+{
+	if (!ctx)
+		return;
+
+	kfastblock_transport_update_request_status_after_object(ctx);
+	kfastblock_transport_advance_request_pending(ctx, ctx->first_error);
+}
+
+static void kfastblock_transport_prepare_request_finish_abort(
+	struct kfastblock_transport_request_finish_ctx *ctx)
+{
+	if (!ctx)
+		return;
+
+	(void)kfastblock_transport_set_first_error(ctx->kf_req, ctx->ret);
+	ctx->remaining = kfastblock_transport_drop_unscheduled_pending(
+		ctx->kf_req, 0);
+	ctx->stage = KFASTBLOCK_REQUEST_FINISH_STAGE_PENDING_UPDATED;
+}
+
+static void kfastblock_transport_run_request_finish_ctx(
+	struct kfastblock_transport_request_finish_ctx *ctx)
+{
+	if (!ctx)
+		return;
+
+	if (ctx->mark_success)
+		kfastblock_transport_prepare_request_finish_complete(ctx);
+	else
+		kfastblock_transport_prepare_request_finish_abort(ctx);
+	kfastblock_transport_finish_request_ctx_if_idle(ctx);
 }
 
 static void kfastblock_transport_complete_request(struct kfastblock_request *kf_req,
@@ -2707,10 +2765,7 @@ static void kfastblock_transport_complete_request(struct kfastblock_request *kf_
 		    &ctx, kf_req, object_index, ret, true))
 		return;
 
-	kfastblock_transport_update_request_status_after_object(&ctx);
-	kfastblock_transport_advance_request_pending(&ctx, ctx.first_error);
-	kfastblock_transport_finish_request_if_idle(
-		ctx.kf_req, ctx.remaining, ctx.mark_success);
+	kfastblock_transport_run_request_finish_ctx(&ctx);
 }
 
 static void kfastblock_transport_abort_request(struct kfastblock_request *kf_req,
@@ -2722,11 +2777,7 @@ static void kfastblock_transport_abort_request(struct kfastblock_request *kf_req
 		    &ctx, kf_req, 0, ret, false))
 		return;
 
-	(void)kfastblock_transport_set_first_error(ctx.kf_req, ctx.ret);
-	ctx.remaining = kfastblock_transport_drop_unscheduled_pending(
-		ctx.kf_req, 0);
-	kfastblock_transport_finish_request_if_idle(
-		ctx.kf_req, ctx.remaining, ctx.mark_success);
+	kfastblock_transport_run_request_finish_ctx(&ctx);
 }
 
 static void kfastblock_transport_object_work(struct work_struct *work)
