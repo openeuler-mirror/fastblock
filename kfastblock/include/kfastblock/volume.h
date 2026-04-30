@@ -31,6 +31,10 @@ enum kfastblock_volume_event_type {
 	KFASTBLOCK_VOLUME_EVENT_LEADER_QUERY_FAIL,
 	KFASTBLOCK_VOLUME_EVENT_OBJECT_RETRY,
 	KFASTBLOCK_VOLUME_EVENT_OBJECT_ERROR,
+	KFASTBLOCK_VOLUME_EVENT_REFRESH_KICK,
+	KFASTBLOCK_VOLUME_EVENT_LEADER_INVALIDATE,
+	KFASTBLOCK_VOLUME_EVENT_OSD_SOCKET_DROP,
+	KFASTBLOCK_VOLUME_EVENT_MONITOR_SOCKET_DROP,
 };
 
 struct kfastblock_cached_socket {
@@ -73,6 +77,10 @@ struct kfastblock_volume_stats {
 	atomic64_t leader_query_fail;
 	atomic64_t object_io_retries;
 	atomic64_t object_io_errors;
+	atomic64_t refresh_kicks;
+	atomic64_t leader_invalidations;
+	atomic64_t osd_socket_drops;
+	atomic64_t monitor_socket_drops;
 };
 
 struct kfastblock_volume_event {
@@ -144,5 +152,12 @@ void kfastblock_volume_account_cluster_refresh(struct kfastblock_volume *vol,
 void kfastblock_volume_account_image_refresh(struct kfastblock_volume *vol,
 				     int ret);
 void kfastblock_volume_account_metadata_stale(struct kfastblock_volume *vol);
+void kfastblock_volume_account_refresh_kick(struct kfastblock_volume *vol,
+				      u32 pg_id, int ret);
+void kfastblock_volume_account_leader_invalidate(struct kfastblock_volume *vol,
+				       u32 pg_id, int ret);
+void kfastblock_volume_account_socket_drop(struct kfastblock_volume *vol,
+				    bool monitor_socket, u32 osd_id,
+				    u16 port, int ret);
 
 #endif
