@@ -26,6 +26,98 @@ static DEFINE_MUTEX(g_kfastblock_volumes_lock);
 static DEFINE_IDA(g_kfastblock_dev_ida);
 static struct dentry *g_kfastblock_debugfs_root;
 
+static const char *
+kfastblock_volume_event_type_name(const enum kfastblock_volume_event_type type)
+{
+	switch (type) {
+	case KFASTBLOCK_VOLUME_EVENT_ATTACH_READY:
+		return "attach_ready";
+	case KFASTBLOCK_VOLUME_EVENT_QUEUE_PAUSE:
+		return "queue_pause";
+	case KFASTBLOCK_VOLUME_EVENT_QUEUE_RESUME:
+		return "queue_resume";
+	case KFASTBLOCK_VOLUME_EVENT_METADATA_STALE:
+		return "metadata_stale";
+	case KFASTBLOCK_VOLUME_EVENT_CLUSTER_REFRESH_FAIL:
+		return "cluster_refresh_fail";
+	case KFASTBLOCK_VOLUME_EVENT_IMAGE_REFRESH_FAIL:
+		return "image_refresh_fail";
+	case KFASTBLOCK_VOLUME_EVENT_LEADER_QUERY_FAIL:
+		return "leader_query_fail";
+	case KFASTBLOCK_VOLUME_EVENT_OBJECT_RETRY:
+		return "object_retry";
+	case KFASTBLOCK_VOLUME_EVENT_OBJECT_ERROR:
+		return "object_error";
+	default:
+		return "unknown";
+	}
+}
+
+static const char *kfastblock_volume_req_op_name(const u8 op)
+{
+	switch ((enum req_op)op) {
+	case REQ_OP_READ:
+		return "read";
+	case REQ_OP_WRITE:
+		return "write";
+	case REQ_OP_FLUSH:
+		return "flush";
+	case REQ_OP_DISCARD:
+		return "discard";
+	case REQ_OP_WRITE_ZEROES:
+		return "write_zeroes";
+	default:
+		return "other";
+	}
+}
+
+static u32 kfastblock_volume_events_count(struct kfastblock_volume *vol)
+{
+	unsigned long flags;
+	u32 count = 0;
+
+	if (!vol)
+		return 0;
+
+	spin_lock_irqsave(&vol->event_log.lock, flags);
+	count = vol->event_log.count;
+	spin_unlock_irqrestore(&vol->event_log.lock, flags);
+	return count;
+}
+
+static void kfastblock_volume_record_event(
+	struct kfastblock_volume *vol,
+	enum kfastblock_volume_event_type type,
+	int ret,
+	enum req_op op,
+	u32 pg_id,
+	u32 osd_id,
+	u32 arg0,
+	u32 arg1)
+{
+	struct kfastblock_volume_event *event;
+	unsigned long flags;
+
+	if (!vol)
+		return;
+
+	spin_lock_irqsave(&vol->event_log.lock, flags);
+	event = &vol->event_log.entries[vol->event_log.next_index];
+	event->jiffies = get_jiffies_64();
+	event->ret = ret;
+	event->type = type;
+	event->pg_id = pg_id;
+	event->osd_id = osd_id;
+	event->arg0 = arg0;
+	event->arg1 = arg1;
+	event->op = (u8)op;
+	vol->event_log.next_index =
+		(vol->event_log.next_index + 1) % KFASTBLOCK_MAX_VOLUME_EVENTS;
+	if (vol->event_log.count < KFASTBLOCK_MAX_VOLUME_EVENTS)
+		++vol->event_log.count;
+	spin_unlock_irqrestore(&vol->event_log.lock, flags);
+}
+
 void kfastblock_volume_stats_init(struct kfastblock_volume *vol)
 {
 	if (!vol)
@@ -53,6 +145,10 @@ void kfastblock_volume_stats_init(struct kfastblock_volume *vol)
 	atomic64_set(&vol->stats.leader_query_fail, 0);
 	atomic64_set(&vol->stats.object_io_retries, 0);
 	atomic64_set(&vol->stats.object_io_errors, 0);
+	spin_lock_init(&vol->event_log.lock);
+	vol->event_log.next_index = 0;
+	vol->event_log.count = 0;
+	memset(vol->event_log.entries, 0, sizeof(vol->event_log.entries));
 }
 
 void kfastblock_volume_account_io_submit(struct kfastblock_volume *vol,
@@ -98,27 +194,44 @@ void kfastblock_volume_account_io_complete(struct kfastblock_volume *vol, int re
 		atomic64_inc(&vol->stats.io_completed);
 }
 
-void kfastblock_volume_account_object_retry(struct kfastblock_volume *vol)
-{
-	if (vol)
-		atomic64_inc(&vol->stats.object_io_retries);
-}
-
-void kfastblock_volume_account_object_error(struct kfastblock_volume *vol)
-{
-	if (vol)
-		atomic64_inc(&vol->stats.object_io_errors);
-}
-
-void kfastblock_volume_account_leader_query(struct kfastblock_volume *vol, int ret)
+void kfastblock_volume_account_object_retry(struct kfastblock_volume *vol,
+				      enum req_op op, u32 pg_id,
+				      u32 osd_id, u32 length, int ret)
 {
 	if (!vol)
 		return;
 
-	if (ret)
+	atomic64_inc(&vol->stats.object_io_retries);
+	kfastblock_volume_record_event(vol, KFASTBLOCK_VOLUME_EVENT_OBJECT_RETRY,
+				      ret, op, pg_id, osd_id, length, 0);
+}
+
+void kfastblock_volume_account_object_error(struct kfastblock_volume *vol,
+				     enum req_op op, u32 pg_id,
+				     u32 osd_id, u32 length, int ret)
+{
+	if (!vol)
+		return;
+
+	atomic64_inc(&vol->stats.object_io_errors);
+	kfastblock_volume_record_event(vol, KFASTBLOCK_VOLUME_EVENT_OBJECT_ERROR,
+				      ret, op, pg_id, osd_id, length, 0);
+}
+
+void kfastblock_volume_account_leader_query(struct kfastblock_volume *vol,
+				     u32 pg_id, u32 osd_id, int ret)
+{
+	if (!vol)
+		return;
+
+	if (ret) {
 		atomic64_inc(&vol->stats.leader_query_fail);
-	else
+		kfastblock_volume_record_event(
+			vol, KFASTBLOCK_VOLUME_EVENT_LEADER_QUERY_FAIL, ret,
+			REQ_OP_FLUSH, pg_id, osd_id, (u32)vol->view.leader_epoch, 0);
+	} else {
 		atomic64_inc(&vol->stats.leader_query_ok);
+	}
 }
 
 void kfastblock_volume_account_cluster_refresh(struct kfastblock_volume *vol,
@@ -127,10 +240,15 @@ void kfastblock_volume_account_cluster_refresh(struct kfastblock_volume *vol,
 	if (!vol)
 		return;
 
-	if (ret)
+	if (ret) {
 		atomic64_inc(&vol->stats.cluster_refresh_fail);
-	else
+		kfastblock_volume_record_event(
+			vol, KFASTBLOCK_VOLUME_EVENT_CLUSTER_REFRESH_FAIL, ret,
+			REQ_OP_FLUSH, 0, 0, (u32)vol->view.osdmap_epoch,
+			(u32)vol->view.pgmap_epoch);
+	} else {
 		atomic64_inc(&vol->stats.cluster_refresh_ok);
+	}
 }
 
 void kfastblock_volume_account_image_refresh(struct kfastblock_volume *vol,
@@ -139,16 +257,27 @@ void kfastblock_volume_account_image_refresh(struct kfastblock_volume *vol,
 	if (!vol)
 		return;
 
-	if (ret)
+	if (ret) {
 		atomic64_inc(&vol->stats.image_refresh_fail);
-	else
+		kfastblock_volume_record_event(
+			vol, KFASTBLOCK_VOLUME_EVENT_IMAGE_REFRESH_FAIL, ret,
+			REQ_OP_FLUSH, 0, 0, (u32)vol->view.image_epoch,
+			vol->view.image.object_size);
+	} else {
 		atomic64_inc(&vol->stats.image_refresh_ok);
+	}
 }
 
 void kfastblock_volume_account_metadata_stale(struct kfastblock_volume *vol)
 {
-	if (vol)
-		atomic64_inc(&vol->stats.metadata_stale_events);
+	if (!vol)
+		return;
+
+	atomic64_inc(&vol->stats.metadata_stale_events);
+	kfastblock_volume_record_event(vol, KFASTBLOCK_VOLUME_EVENT_METADATA_STALE,
+				      -ESTALE, REQ_OP_FLUSH, 0, 0,
+				      vol->view.sync_state,
+				      (u32)vol->view.pgmap_epoch);
 }
 
 static int kfastblock_volume_summary_show(struct seq_file *m, void *v)
@@ -181,6 +310,8 @@ static int kfastblock_volume_summary_show(struct seq_file *m, void *v)
 	seq_printf(m, "last_refresh_jiffies=%lu\n", vol->view.last_refresh_jiffies);
 	seq_printf(m, "last_image_refresh_jiffies=%lu\n",
 		   vol->view.last_image_refresh_jiffies);
+	seq_printf(m, "event_count=%u\n",
+		   kfastblock_volume_events_count(vol));
 	up_read(&vol->state_lock);
 	return 0;
 }
@@ -331,6 +462,53 @@ static int kfastblock_volume_stats_show(struct seq_file *m, void *v)
 }
 DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_stats);
 
+static int kfastblock_volume_events_show(struct seq_file *m, void *v)
+{
+	struct kfastblock_volume *vol = m->private;
+	struct kfastblock_volume_event *snapshot = NULL;
+	unsigned long flags;
+	u32 count;
+	u32 start;
+	u32 i;
+
+	if (!vol)
+		return -ENODEV;
+
+	count = kfastblock_volume_events_count(vol);
+	if (!count)
+		return 0;
+
+	snapshot = kcalloc(count, sizeof(*snapshot), GFP_KERNEL);
+	if (!snapshot)
+		return -ENOMEM;
+
+	spin_lock_irqsave(&vol->event_log.lock, flags);
+	if (count > vol->event_log.count)
+		count = vol->event_log.count;
+	start = (vol->event_log.next_index + KFASTBLOCK_MAX_VOLUME_EVENTS - count) %
+		KFASTBLOCK_MAX_VOLUME_EVENTS;
+	for (i = 0; i < count; ++i)
+		snapshot[i] = vol->event_log.entries[(start + i) %
+					KFASTBLOCK_MAX_VOLUME_EVENTS];
+	spin_unlock_irqrestore(&vol->event_log.lock, flags);
+
+	for (i = 0; i < count; ++i) {
+		const struct kfastblock_volume_event *event = &snapshot[i];
+
+		seq_printf(m,
+			   "idx=%u jiffies=%llu type=%s ret=%d op=%s pg_id=%u osd_id=%u arg0=%u arg1=%u\n",
+			   i, event->jiffies,
+			   kfastblock_volume_event_type_name(event->type),
+			   event->ret,
+			   kfastblock_volume_req_op_name(event->op),
+			   event->pg_id, event->osd_id, event->arg0, event->arg1);
+	}
+
+	kfree(snapshot);
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_events);
+
 static void kfastblock_volume_debugfs_init(struct kfastblock_volume *vol)
 {
 	if (IS_ERR_OR_NULL(g_kfastblock_debugfs_root) || !vol || !vol->disk)
@@ -353,6 +531,8 @@ static void kfastblock_volume_debugfs_init(struct kfastblock_volume *vol)
 			    &kfastblock_volume_sockets_fops);
 	debugfs_create_file("stats", 0444, vol->debugfs_dir, vol,
 			    &kfastblock_volume_stats_fops);
+	debugfs_create_file("events", 0444, vol->debugfs_dir, vol,
+			    &kfastblock_volume_events_fops);
 }
 
 static void kfastblock_volume_debugfs_exit(struct kfastblock_volume *vol)
@@ -441,10 +621,16 @@ static void kfastblock_volume_update_queue_gate(struct kfastblock_volume *vol)
 		blk_mq_quiesce_queue(vol->disk->queue);
 		vol->queue_paused = true;
 		atomic64_inc(&vol->stats.queue_pause_events);
+		kfastblock_volume_record_event(
+			vol, KFASTBLOCK_VOLUME_EVENT_QUEUE_PAUSE, 0, REQ_OP_FLUSH,
+			0, 0, vol->view.sync_state, atomic_read(&vol->ready));
 	} else {
 		blk_mq_unquiesce_queue(vol->disk->queue);
 		vol->queue_paused = false;
 		atomic64_inc(&vol->stats.queue_resume_events);
+		kfastblock_volume_record_event(
+			vol, KFASTBLOCK_VOLUME_EVENT_QUEUE_RESUME, 0, REQ_OP_FLUSH,
+			0, 0, vol->view.sync_state, atomic_read(&vol->ready));
 	}
 }
 
@@ -1219,6 +1405,9 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	mutex_unlock(&g_kfastblock_volumes_lock);
 
 	atomic_set(&vol->ready, 1);
+	kfastblock_volume_record_event(
+		vol, KFASTBLOCK_VOLUME_EVENT_ATTACH_READY, 0, REQ_OP_FLUSH,
+		0, 0, vol->view.image.pool_id, vol->view.image.pg_count);
 	kfastblock_volume_update_queue_gate(vol);
 	kfastblock_volume_schedule_refresh(vol);
 	return 0;
