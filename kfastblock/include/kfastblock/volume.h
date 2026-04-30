@@ -11,6 +11,7 @@
 #include <linux/socket.h>
 #include <linux/spinlock.h>
 #include <linux/types.h>
+#include <linux/wait.h>
 #include <linux/workqueue.h>
 
 struct dentry;
@@ -152,6 +153,7 @@ struct kfastblock_volume {
 
 	atomic_t open_count;
 	atomic_t ready;
+	atomic_t inflight_ios;
 
 	struct kfastblock_attach_spec spec;
 	struct kfastblock_cluster_view view;
@@ -162,6 +164,7 @@ struct kfastblock_volume {
 	struct list_head node;
 	struct device dev;
 	struct mutex inflight_lock;
+	wait_queue_head_t inflight_wq;
 	struct rw_semaphore state_lock;
 	struct delayed_work refresh_work;
 	struct dentry *debugfs_dir;
@@ -176,6 +179,10 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 			     struct bus_type *bus, struct device *parent_dev);
 int kfastblock_volume_detach(const struct kfastblock_attach_spec *spec);
 void kfastblock_volume_kick_refresh(struct kfastblock_volume *vol);
+void kfastblock_volume_get_io(struct kfastblock_volume *vol);
+void kfastblock_volume_put_io(struct kfastblock_volume *vol);
+int kfastblock_volume_drain_io(struct kfastblock_volume *vol,
+			     unsigned long timeout_jiffies);
 void kfastblock_volume_stats_init(struct kfastblock_volume *vol);
 void kfastblock_volume_account_io_submit(struct kfastblock_volume *vol,
 				       enum req_op op, u32 bytes);
