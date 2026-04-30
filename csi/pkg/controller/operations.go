@@ -353,12 +353,13 @@ func (s *Service) ControllerUnpublishVolume(ctx context.Context, req ControllerU
 	if err := req.Validate(); err != nil {
 		return err
 	}
-	hostNQN := ResolveHostNQN(req.NodeID, s.defaultHostNQN, req.Secrets)
+	nodeID := strings.TrimSpace(req.NodeID)
+	hostNQN := ResolveHostNQN(nodeID, s.defaultHostNQN, req.Secrets)
 	exportID := strings.TrimSpace(req.ExportID)
 	if existing, ok, err := s.attachments.Get(ctx, req.VolumeID); err != nil {
 		return err
 	} else if ok {
-		if attachmentConflicts(existing, req.NodeID, hostNQN) {
+		if attachmentConflicts(existing, nodeID, hostNQN) {
 			return fmt.Errorf(
 				"%w: volume %s is attached to node %s with host NQN %s",
 				ErrAttachmentNodeMismatch,
@@ -370,6 +371,9 @@ func (s *Service) ControllerUnpublishVolume(ctx context.Context, req ControllerU
 		if strings.TrimSpace(existing.ExportID) != "" {
 			exportID = existing.ExportID
 		}
+		if nodeID == "" && strings.TrimSpace(existing.NodeID) != "" {
+			nodeID = existing.NodeID
+		}
 		if strings.TrimSpace(existing.HostNQN) != "" {
 			hostNQN = existing.HostNQN
 		}
@@ -377,6 +381,18 @@ func (s *Service) ControllerUnpublishVolume(ctx context.Context, req ControllerU
 		return err
 	} else if ok && strings.TrimSpace(metadata.ExportID) != "" {
 		exportID = metadata.ExportID
+	}
+	if (nodeID == "" || hostNQN == "") && exportID != "" {
+		if lease, ok, err := s.currentLease(ctx, req.VolumeID); err != nil {
+			return err
+		} else if ok {
+			if nodeID == "" {
+				nodeID = lease.NodeID
+			}
+			if hostNQN == "" {
+				hostNQN = lease.HostNQN
+			}
+		}
 	}
 	if exportID == "" {
 		derivedExportID, err := exporterclient.ExportIDForVolume(req.VolumeID)
@@ -392,7 +408,10 @@ func (s *Service) ControllerUnpublishVolume(ctx context.Context, req ControllerU
 	if err := s.attachments.Delete(ctx, req.VolumeID); err != nil {
 		return err
 	}
-	return s.releaseLease(ctx, req.VolumeID, req.NodeID, hostNQN)
+	if nodeID == "" || hostNQN == "" {
+		return nil
+	}
+	return s.releaseLease(ctx, req.VolumeID, nodeID, hostNQN)
 }
 
 func (r CreateVolumeRequest) Validate() error {
@@ -482,9 +501,6 @@ func (r ControllerPublishRequest) Validate() error {
 func (r ControllerUnpublishRequest) Validate() error {
 	if strings.TrimSpace(r.VolumeID) == "" {
 		return errors.New("volume id is required")
-	}
-	if strings.TrimSpace(r.NodeID) == "" && ResolveHostNQN(r.NodeID, "", r.Secrets) == "" {
-		return errors.New("node id or hostNQN is required")
 	}
 	return nil
 }
