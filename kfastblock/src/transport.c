@@ -1823,7 +1823,6 @@ int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 	if (!kf_req || !kf_req->rq || !kf_req->vol)
 		return -EINVAL;
 
-	kfastblock_volume_get_io(kf_req->vol);
 	if (!kf_req->nr_objects) {
 		blk_mq_end_request(kf_req->rq, BLK_STS_OK);
 		kfastblock_volume_put_io(kf_req->vol);

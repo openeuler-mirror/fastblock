@@ -171,6 +171,7 @@ struct kfastblock_volume {
 	struct device dev;
 	struct mutex inflight_lock;
 	wait_queue_head_t inflight_wq;
+	bool flush_in_progress;
 	struct rw_semaphore state_lock;
 	struct delayed_work refresh_work;
 	struct dentry *debugfs_dir;
