@@ -21,11 +21,12 @@
 - 已能通过 raw TCP 向 monitor 发起 `GET_IMAGE_INFO` 和 `GET_CLUSTER_MAP`，并在 bootstrap 阶段填充 image 基本信息、完整的 OSD/shard 表和 PG route 表。
 - 已有 metadata lookup helper，可直接做 `osd_id -> endpoint`、`pool_id + pg_id -> route` 和 `pg + osd_id -> shard endpoint` 查询。
 - 已能通过 osd raw TCP 向 PG 副本发起 `GET_LEADER`，并把 leader 地址/端口缓存到对应的 PG route 上。
-- 已有第一版同步 object I/O 提交路径，可把块请求按 object 切分后串行走 `GET_LEADER + READ_OBJECT/WRITE_OBJECT`。
+- 已有第一版 object I/O 提交路径，可把块请求按 object 切分后并发走 `GET_LEADER + READ_OBJECT/WRITE_OBJECT/DELETE_OBJECT`。
 - 已有每卷一个后台 refresh work，周期向 monitor raw 重新拉取 metadata 并更新本地视图。
+- 已有最小 OSD/monitor socket cache、backoff、timeout 和请求级/对象级并发提交。
 - 已通过 sysfs 导出 `osd_count`、`route_count`、`osdmap_epoch`、`pgmap_epoch`、`leader_epoch`，便于确认 monitor raw 拉下来的缓存是否生效。
 - 已有 metadata/transport 的占位接口，用来接 monitor 控制面和 OSD 数据面。
-- 未实现连接池/并发提交、完整重试/故障恢复。
+- 未实现更细粒度的连接池调度、完整重试/故障恢复。
 
 ## 为什么单独放在顶层
 
