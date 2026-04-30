@@ -903,6 +903,46 @@ static u32 kfastblock_volume_effective_max_io_bytes(const struct kfastblock_volu
 	return (u32)limit;
 }
 
+static void kfastblock_volume_apply_queue_limits(struct kfastblock_volume *vol)
+{
+	struct request_queue *q;
+	u32 max_io_bytes;
+	u32 block_size;
+	u32 object_size;
+	u32 discard_sectors;
+
+	if (!vol || !vol->disk || !vol->disk->queue)
+		return;
+
+	q = vol->disk->queue;
+	block_size = vol->view.image.block_size ?
+		vol->view.image.block_size : KFASTBLOCK_DEFAULT_BLOCK_SIZE;
+	object_size = vol->view.image.object_size;
+	max_io_bytes = kfastblock_volume_effective_max_io_bytes(vol);
+	blk_queue_logical_block_size(q, block_size);
+	blk_queue_max_hw_sectors(q, max_io_bytes >> SECTOR_SHIFT);
+	blk_queue_max_segment_size(q, max_io_bytes);
+	blk_queue_max_segments(q, USHRT_MAX);
+	blk_queue_write_cache(q, true, false);
+
+	if (object_size) {
+		discard_sectors = max_io_bytes >> SECTOR_SHIFT;
+		blk_queue_io_opt(q, object_size);
+		blk_queue_chunk_sectors(q, object_size >> SECTOR_SHIFT);
+		blk_queue_max_discard_sectors(q, discard_sectors);
+		blk_queue_max_write_zeroes_sectors(q, discard_sectors);
+		blk_queue_max_discard_segments(q, 1);
+		q->limits.discard_granularity = block_size;
+		q->limits.discard_alignment = 0;
+	} else {
+		blk_queue_max_discard_sectors(q, 0);
+		blk_queue_max_write_zeroes_sectors(q, 0);
+		blk_queue_max_discard_segments(q, 0);
+		q->limits.discard_granularity = 0;
+		q->limits.discard_alignment = 0;
+	}
+}
+
 static void kfastblock_volume_schedule_refresh(struct kfastblock_volume *vol)
 {
 	if (!vol || !atomic_read(&vol->ready))
@@ -1211,23 +1251,11 @@ static int kfastblock_volume_refresh_locked(struct kfastblock_volume *vol,
 		if (old_size != vol->view.image.size_bytes)
 			set_capacity_and_notify(vol->disk,
 					vol->view.image.size_bytes >> SECTOR_SHIFT);
-		if (old_block_size != vol->view.image.block_size &&
-		    vol->view.image.block_size)
-			blk_queue_logical_block_size(vol->disk->queue,
-					     vol->view.image.block_size);
 		if ((old_block_size != vol->view.image.block_size &&
 		     vol->view.image.block_size) ||
 		    (old_object_size != vol->view.image.object_size &&
-		     vol->view.image.object_size)) {
-			u32 max_io_bytes = kfastblock_volume_effective_max_io_bytes(vol);
-
-			blk_queue_io_opt(vol->disk->queue, vol->view.image.object_size);
-			blk_queue_chunk_sectors(vol->disk->queue,
-					 vol->view.image.object_size >> SECTOR_SHIFT);
-			blk_queue_max_hw_sectors(vol->disk->queue,
-					 max_io_bytes >> SECTOR_SHIFT);
-			blk_queue_max_segment_size(vol->disk->queue, max_io_bytes);
-		}
+		     vol->view.image.object_size))
+			kfastblock_volume_apply_queue_limits(vol);
 		if (old_read_only != vol->view.image.read_only)
 			set_disk_ro(vol->disk, vol->view.image.read_only);
 		if (image_ret && warn_image_fail)
@@ -2139,25 +2167,7 @@ static int kfastblock_volume_add_disk(struct kfastblock_volume *vol,
 	set_capacity(vol->disk, vol->view.image.size_bytes >> SECTOR_SHIFT);
 	if (vol->view.image.read_only)
 		set_disk_ro(vol->disk, true);
-	if (vol->view.image.block_size)
-		blk_queue_logical_block_size(vol->disk->queue,
-					     vol->view.image.block_size);
-	if (vol->view.image.object_size) {
-		u32 max_io_bytes = kfastblock_volume_effective_max_io_bytes(vol);
-
-		blk_queue_io_opt(vol->disk->queue, vol->view.image.object_size);
-		blk_queue_chunk_sectors(vol->disk->queue,
-					vol->view.image.object_size >>
-					SECTOR_SHIFT);
-		blk_queue_max_hw_sectors(vol->disk->queue,
-				 max_io_bytes >> SECTOR_SHIFT);
-		blk_queue_max_segment_size(vol->disk->queue, max_io_bytes);
-	} else {
-		blk_queue_max_hw_sectors(vol->disk->queue,
-				 KFASTBLOCK_MAX_IO_BYTES >> SECTOR_SHIFT);
-		blk_queue_max_segment_size(vol->disk->queue, KFASTBLOCK_MAX_IO_BYTES);
-	}
-	blk_queue_max_segments(vol->disk->queue, USHRT_MAX);
+	kfastblock_volume_apply_queue_limits(vol);
 	vol->disk->queue->queuedata = vol;
 	kfastblock_volume_update_queue_gate(vol);
 
