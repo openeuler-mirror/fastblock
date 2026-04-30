@@ -1113,6 +1113,7 @@ static int kfastblock_transport_submit_object_io(
 		mutex_unlock(&cached->lock);
 		if (kfastblock_transport_should_retry_object_io(ret)) {
 invalidate:
+			kfastblock_volume_account_object_retry(vol);
 			kfastblock_transport_close_cached_socket(cached);
 			sock = NULL;
 			kfastblock_meta_invalidate_pg_leader(view, view->image.pool_id,
@@ -1131,6 +1132,8 @@ invalidate:
 	}
 
 out:
+	if (ret)
+		kfastblock_volume_account_object_error(vol);
 	kfree(buf);
 	return ret;
 }
@@ -1411,6 +1414,7 @@ int kfastblock_transport_get_pg_leader(struct kfastblock_volume *vol,
 						    seq,
 						    leader);
 		mutex_unlock(&cached->lock);
+		kfastblock_volume_account_leader_query(vol, ret);
 		if (!ret) {
 			ret = kfastblock_meta_set_pg_leader(view, pool_id, pg_id,
 						 leader);
@@ -1472,6 +1476,7 @@ static void kfastblock_transport_complete_request(struct kfastblock_request *kf_
 	if (atomic_dec_and_test(&kf_req->pending_objects)) {
 		blk_status_t status =
 			kfastblock_transport_errno_to_blk_status(kf_req->status);
+		kfastblock_volume_account_io_complete(kf_req->vol, kf_req->status);
 		blk_mq_end_request(kf_req->rq, status);
 		put_device(&kf_req->vol->dev);
 	}
@@ -1547,13 +1552,16 @@ int kfastblock_transport_refresh_image_volume(struct kfastblock_volume *vol)
 		seq = kfastblock_transport_next_monitor_seq(cached);
 		ret = kfastblock_transport_fetch_image_info(sock, &vol->view, seq);
 		mutex_unlock(&cached->lock);
-		if (!ret || ret == -ESTALE)
+		if (!ret || ret == -ESTALE) {
+			kfastblock_volume_account_image_refresh(vol, 0);
 			return 0;
+		}
 		if (kfastblock_transport_should_retry_monitor(ret))
 			kfastblock_transport_close_cached_monitor_socket(cached);
 		first_err = ret;
 	}
 
+	kfastblock_volume_account_image_refresh(vol, first_err);
 	return first_err;
 }
 
@@ -1583,12 +1591,15 @@ int kfastblock_transport_refresh_cluster_map_volume(struct kfastblock_volume *vo
 		ret = kfastblock_transport_fetch_cluster_map_from_monitor(sock,
 					      &vol->view, seq);
 		mutex_unlock(&cached->lock);
-		if (!ret || ret == -ESTALE)
+		if (!ret || ret == -ESTALE) {
+			kfastblock_volume_account_cluster_refresh(vol, 0);
 			return 0;
+		}
 		if (kfastblock_transport_should_retry_monitor(ret))
 			kfastblock_transport_close_cached_monitor_socket(cached);
 		first_err = ret;
 	}
 
+	kfastblock_volume_account_cluster_refresh(vol, first_err);
 	return first_err;
 }

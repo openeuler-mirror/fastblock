@@ -1,6 +1,8 @@
 #include <linux/blkdev.h>
 #include <linux/device.h>
+#include <linux/debugfs.h>
 #include <linux/errno.h>
+#include <linux/err.h>
 #include <linux/fs.h>
 #include <linux/idr.h>
 #include <linux/jiffies.h>
@@ -10,6 +12,7 @@
 #include <linux/mutex.h>
 #include <linux/net.h>
 #include <linux/slab.h>
+#include <linux/seq_file.h>
 #include <linux/sysfs.h>
 
 #include "kfastblock/common.h"
@@ -21,6 +24,345 @@
 static LIST_HEAD(g_kfastblock_volumes);
 static DEFINE_MUTEX(g_kfastblock_volumes_lock);
 static DEFINE_IDA(g_kfastblock_dev_ida);
+static struct dentry *g_kfastblock_debugfs_root;
+
+void kfastblock_volume_stats_init(struct kfastblock_volume *vol)
+{
+	if (!vol)
+		return;
+
+	atomic64_set(&vol->stats.io_submitted, 0);
+	atomic64_set(&vol->stats.io_completed, 0);
+	atomic64_set(&vol->stats.io_failed, 0);
+	atomic64_set(&vol->stats.read_requests, 0);
+	atomic64_set(&vol->stats.write_requests, 0);
+	atomic64_set(&vol->stats.discard_requests, 0);
+	atomic64_set(&vol->stats.flush_requests, 0);
+	atomic64_set(&vol->stats.write_zeroes_requests, 0);
+	atomic64_set(&vol->stats.read_bytes, 0);
+	atomic64_set(&vol->stats.write_bytes, 0);
+	atomic64_set(&vol->stats.discard_bytes, 0);
+	atomic64_set(&vol->stats.queue_pause_events, 0);
+	atomic64_set(&vol->stats.queue_resume_events, 0);
+	atomic64_set(&vol->stats.metadata_stale_events, 0);
+	atomic64_set(&vol->stats.cluster_refresh_ok, 0);
+	atomic64_set(&vol->stats.cluster_refresh_fail, 0);
+	atomic64_set(&vol->stats.image_refresh_ok, 0);
+	atomic64_set(&vol->stats.image_refresh_fail, 0);
+	atomic64_set(&vol->stats.leader_query_ok, 0);
+	atomic64_set(&vol->stats.leader_query_fail, 0);
+	atomic64_set(&vol->stats.object_io_retries, 0);
+	atomic64_set(&vol->stats.object_io_errors, 0);
+}
+
+void kfastblock_volume_account_io_submit(struct kfastblock_volume *vol,
+				       enum req_op op, u32 bytes)
+{
+	if (!vol)
+		return;
+
+	atomic64_inc(&vol->stats.io_submitted);
+	switch (op) {
+	case REQ_OP_READ:
+		atomic64_inc(&vol->stats.read_requests);
+		atomic64_add(bytes, &vol->stats.read_bytes);
+		break;
+	case REQ_OP_WRITE:
+		atomic64_inc(&vol->stats.write_requests);
+		atomic64_add(bytes, &vol->stats.write_bytes);
+		break;
+	case REQ_OP_DISCARD:
+		atomic64_inc(&vol->stats.discard_requests);
+		atomic64_add(bytes, &vol->stats.discard_bytes);
+		break;
+	case REQ_OP_WRITE_ZEROES:
+		atomic64_inc(&vol->stats.write_zeroes_requests);
+		atomic64_add(bytes, &vol->stats.discard_bytes);
+		break;
+	case REQ_OP_FLUSH:
+		atomic64_inc(&vol->stats.flush_requests);
+		break;
+	default:
+		break;
+	}
+}
+
+void kfastblock_volume_account_io_complete(struct kfastblock_volume *vol, int ret)
+{
+	if (!vol)
+		return;
+
+	if (ret)
+		atomic64_inc(&vol->stats.io_failed);
+	else
+		atomic64_inc(&vol->stats.io_completed);
+}
+
+void kfastblock_volume_account_object_retry(struct kfastblock_volume *vol)
+{
+	if (vol)
+		atomic64_inc(&vol->stats.object_io_retries);
+}
+
+void kfastblock_volume_account_object_error(struct kfastblock_volume *vol)
+{
+	if (vol)
+		atomic64_inc(&vol->stats.object_io_errors);
+}
+
+void kfastblock_volume_account_leader_query(struct kfastblock_volume *vol, int ret)
+{
+	if (!vol)
+		return;
+
+	if (ret)
+		atomic64_inc(&vol->stats.leader_query_fail);
+	else
+		atomic64_inc(&vol->stats.leader_query_ok);
+}
+
+void kfastblock_volume_account_cluster_refresh(struct kfastblock_volume *vol,
+				       int ret)
+{
+	if (!vol)
+		return;
+
+	if (ret)
+		atomic64_inc(&vol->stats.cluster_refresh_fail);
+	else
+		atomic64_inc(&vol->stats.cluster_refresh_ok);
+}
+
+void kfastblock_volume_account_image_refresh(struct kfastblock_volume *vol,
+				     int ret)
+{
+	if (!vol)
+		return;
+
+	if (ret)
+		atomic64_inc(&vol->stats.image_refresh_fail);
+	else
+		atomic64_inc(&vol->stats.image_refresh_ok);
+}
+
+void kfastblock_volume_account_metadata_stale(struct kfastblock_volume *vol)
+{
+	if (vol)
+		atomic64_inc(&vol->stats.metadata_stale_events);
+}
+
+static int kfastblock_volume_summary_show(struct seq_file *m, void *v)
+{
+	struct kfastblock_volume *vol = m->private;
+
+	if (!vol)
+		return -ENODEV;
+
+	down_read(&vol->state_lock);
+	seq_printf(m, "disk=%s\n", vol->disk ? vol->disk->disk_name : "");
+	seq_printf(m, "ready=%d\n", atomic_read(&vol->ready));
+	seq_printf(m, "queue_paused=%d\n", vol->queue_paused ? 1 : 0);
+	seq_printf(m, "open_count=%d\n", atomic_read(&vol->open_count));
+	seq_printf(m, "pool_name=%s\n", vol->view.image.pool_name);
+	seq_printf(m, "image_name=%s\n", vol->view.image.image_name);
+	seq_printf(m, "size_bytes=%llu\n", vol->view.image.size_bytes);
+	seq_printf(m, "block_size=%u\n", vol->view.image.block_size);
+	seq_printf(m, "object_size=%u\n", vol->view.image.object_size);
+	seq_printf(m, "pool_id=%u\n", vol->view.image.pool_id);
+	seq_printf(m, "pg_count=%u\n", vol->view.image.pg_count);
+	seq_printf(m, "read_only=%u\n", vol->view.image.read_only ? 1 : 0);
+	seq_printf(m, "sync_state=%u\n", vol->view.sync_state);
+	seq_printf(m, "image_epoch=%llu\n", vol->view.image_epoch);
+	seq_printf(m, "osdmap_epoch=%llu\n", vol->view.osdmap_epoch);
+	seq_printf(m, "pgmap_epoch=%llu\n", vol->view.pgmap_epoch);
+	seq_printf(m, "leader_epoch=%llu\n", vol->view.leader_epoch);
+	seq_printf(m, "osd_count=%u\n", vol->view.osd_count);
+	seq_printf(m, "route_count=%u\n", vol->view.route_count);
+	seq_printf(m, "last_refresh_jiffies=%lu\n", vol->view.last_refresh_jiffies);
+	seq_printf(m, "last_image_refresh_jiffies=%lu\n",
+		   vol->view.last_image_refresh_jiffies);
+	up_read(&vol->state_lock);
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_summary);
+
+static int kfastblock_volume_osds_show(struct seq_file *m, void *v)
+{
+	struct kfastblock_volume *vol = m->private;
+	u32 i, j;
+
+	if (!vol)
+		return -ENODEV;
+
+	down_read(&vol->state_lock);
+	for (i = 0; i < vol->view.osd_count; ++i) {
+		const struct kfastblock_osd_endpoint *osd = &vol->view.osds[i];
+
+		seq_printf(m,
+			   "osd_id=%u flags=0x%x address=%s shard_count=%u\n",
+			   osd->osd_id, osd->flags, osd->address, osd->shard_count);
+		for (j = 0; j < osd->shard_count; ++j) {
+			seq_printf(m,
+				   "  shard_id=%u core_id=%u port=%u\n",
+				   osd->shards[j].shard_id,
+				   osd->shards[j].core_id,
+				   osd->shards[j].port);
+		}
+	}
+	up_read(&vol->state_lock);
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_osds);
+
+static int kfastblock_volume_routes_show(struct seq_file *m, void *v)
+{
+	struct kfastblock_volume *vol = m->private;
+	u32 i, j;
+
+	if (!vol)
+		return -ENODEV;
+
+	down_read(&vol->state_lock);
+	for (i = 0; i < vol->view.route_count; ++i) {
+		const struct kfastblock_pg_route *route = &vol->view.routes[i];
+
+		seq_printf(m,
+			   "pool_id=%u pg_id=%u version=%llu state=0x%x primary_shard=%u replicas=%u leader_valid=%u",
+			   route->pool_id, route->pg_id, route->version, route->state,
+			   route->primary_shard, route->replica_count,
+			   route->leader_valid ? 1 : 0);
+		if (route->leader_valid) {
+			seq_printf(m,
+				   " leader_osd=%u leader_addr=%s leader_port=%u",
+				   route->leader.osd_id,
+				   route->leader.address,
+				   route->leader.port);
+		}
+		seq_putc(m, '\n');
+		for (j = 0; j < route->replica_count; ++j)
+			seq_printf(m, "  osd[%u]=%u\n", j, route->osd_ids[j]);
+	}
+	up_read(&vol->state_lock);
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_routes);
+
+static int kfastblock_volume_sockets_show(struct seq_file *m, void *v)
+{
+	struct kfastblock_volume *vol = m->private;
+	int i;
+
+	if (!vol)
+		return -ENODEV;
+
+	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i) {
+		const struct kfastblock_cached_socket *cached = &vol->socket_cache[i];
+
+		seq_printf(m,
+			   "osd_cache[%d] active=%u osd_id=%u address=%s port=%u next_seq=%llu\n",
+			   i, cached->sock ? 1 : 0, cached->osd_id, cached->address,
+			   cached->port, cached->next_seq);
+	}
+	for (i = 0; i < KFASTBLOCK_MAX_MONITORS; ++i) {
+		const struct kfastblock_cached_monitor_socket *cached =
+			&vol->monitor_cache[i];
+
+		seq_printf(m,
+			   "monitor_cache[%d] active=%u address=%s port=%u next_seq=%llu\n",
+			   i, cached->sock ? 1 : 0, cached->address, cached->port,
+			   cached->next_seq);
+	}
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_sockets);
+
+static int kfastblock_volume_stats_show(struct seq_file *m, void *v)
+{
+	struct kfastblock_volume *vol = m->private;
+
+	if (!vol)
+		return -ENODEV;
+
+	seq_printf(m, "io_submitted=%lld\n",
+		   atomic64_read(&vol->stats.io_submitted));
+	seq_printf(m, "io_completed=%lld\n",
+		   atomic64_read(&vol->stats.io_completed));
+	seq_printf(m, "io_failed=%lld\n",
+		   atomic64_read(&vol->stats.io_failed));
+	seq_printf(m, "read_requests=%lld\n",
+		   atomic64_read(&vol->stats.read_requests));
+	seq_printf(m, "write_requests=%lld\n",
+		   atomic64_read(&vol->stats.write_requests));
+	seq_printf(m, "discard_requests=%lld\n",
+		   atomic64_read(&vol->stats.discard_requests));
+	seq_printf(m, "flush_requests=%lld\n",
+		   atomic64_read(&vol->stats.flush_requests));
+	seq_printf(m, "write_zeroes_requests=%lld\n",
+		   atomic64_read(&vol->stats.write_zeroes_requests));
+	seq_printf(m, "read_bytes=%lld\n",
+		   atomic64_read(&vol->stats.read_bytes));
+	seq_printf(m, "write_bytes=%lld\n",
+		   atomic64_read(&vol->stats.write_bytes));
+	seq_printf(m, "discard_bytes=%lld\n",
+		   atomic64_read(&vol->stats.discard_bytes));
+	seq_printf(m, "queue_pause_events=%lld\n",
+		   atomic64_read(&vol->stats.queue_pause_events));
+	seq_printf(m, "queue_resume_events=%lld\n",
+		   atomic64_read(&vol->stats.queue_resume_events));
+	seq_printf(m, "metadata_stale_events=%lld\n",
+		   atomic64_read(&vol->stats.metadata_stale_events));
+	seq_printf(m, "cluster_refresh_ok=%lld\n",
+		   atomic64_read(&vol->stats.cluster_refresh_ok));
+	seq_printf(m, "cluster_refresh_fail=%lld\n",
+		   atomic64_read(&vol->stats.cluster_refresh_fail));
+	seq_printf(m, "image_refresh_ok=%lld\n",
+		   atomic64_read(&vol->stats.image_refresh_ok));
+	seq_printf(m, "image_refresh_fail=%lld\n",
+		   atomic64_read(&vol->stats.image_refresh_fail));
+	seq_printf(m, "leader_query_ok=%lld\n",
+		   atomic64_read(&vol->stats.leader_query_ok));
+	seq_printf(m, "leader_query_fail=%lld\n",
+		   atomic64_read(&vol->stats.leader_query_fail));
+	seq_printf(m, "object_io_retries=%lld\n",
+		   atomic64_read(&vol->stats.object_io_retries));
+	seq_printf(m, "object_io_errors=%lld\n",
+		   atomic64_read(&vol->stats.object_io_errors));
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_stats);
+
+static void kfastblock_volume_debugfs_init(struct kfastblock_volume *vol)
+{
+	if (IS_ERR_OR_NULL(g_kfastblock_debugfs_root) || !vol || !vol->disk)
+		return;
+
+	vol->debugfs_dir = debugfs_create_dir(vol->disk->disk_name,
+				      g_kfastblock_debugfs_root);
+	if (IS_ERR_OR_NULL(vol->debugfs_dir)) {
+		vol->debugfs_dir = NULL;
+		return;
+	}
+
+	debugfs_create_file("summary", 0444, vol->debugfs_dir, vol,
+			    &kfastblock_volume_summary_fops);
+	debugfs_create_file("osds", 0444, vol->debugfs_dir, vol,
+			    &kfastblock_volume_osds_fops);
+	debugfs_create_file("routes", 0444, vol->debugfs_dir, vol,
+			    &kfastblock_volume_routes_fops);
+	debugfs_create_file("sockets", 0444, vol->debugfs_dir, vol,
+			    &kfastblock_volume_sockets_fops);
+	debugfs_create_file("stats", 0444, vol->debugfs_dir, vol,
+			    &kfastblock_volume_stats_fops);
+}
+
+static void kfastblock_volume_debugfs_exit(struct kfastblock_volume *vol)
+{
+	if (!vol || !vol->debugfs_dir)
+		return;
+
+	debugfs_remove_recursive(vol->debugfs_dir);
+	vol->debugfs_dir = NULL;
+}
 
 static unsigned long kfastblock_volume_refresh_interval(void)
 {
@@ -98,9 +440,11 @@ static void kfastblock_volume_update_queue_gate(struct kfastblock_volume *vol)
 	if (should_pause) {
 		blk_mq_quiesce_queue(vol->disk->queue);
 		vol->queue_paused = true;
+		atomic64_inc(&vol->stats.queue_pause_events);
 	} else {
 		blk_mq_unquiesce_queue(vol->disk->queue);
 		vol->queue_paused = false;
+		atomic64_inc(&vol->stats.queue_resume_events);
 	}
 }
 
@@ -251,6 +595,7 @@ static void kfastblock_volume_refresh_workfn(struct work_struct *work)
 		kfastblock_volume_close_osd_cached_sockets(vol);
 		kfastblock_volume_close_monitor_cached_sockets(vol);
 		vol->view.sync_state = KFASTBLOCK_META_SYNC_STALE;
+		kfastblock_volume_account_metadata_stale(vol);
 	}
 	kfastblock_volume_update_queue_gate(vol);
 	up_write(&vol->state_lock);
@@ -436,6 +781,102 @@ static ssize_t queue_paused_show(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%u\n", vol->queue_paused ? 1 : 0);
 }
 
+static ssize_t io_submitted_show(struct device *dev,
+			       struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.io_submitted));
+}
+
+static ssize_t io_completed_show(struct device *dev,
+			       struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.io_completed));
+}
+
+static ssize_t io_failed_show(struct device *dev,
+			    struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.io_failed));
+}
+
+static ssize_t object_io_retries_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.object_io_retries));
+}
+
+static ssize_t metadata_stale_events_show(struct device *dev,
+				  struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.metadata_stale_events));
+}
+
+static ssize_t cluster_refresh_fail_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.cluster_refresh_fail));
+}
+
+static ssize_t image_refresh_fail_show(struct device *dev,
+			       struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.image_refresh_fail));
+}
+
+static ssize_t leader_query_fail_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.leader_query_fail));
+}
+
 static DEVICE_ATTR_RO(pool_name);
 static DEVICE_ATTR_RO(image_name);
 static DEVICE_ATTR_RO(size_bytes);
@@ -452,6 +893,14 @@ static DEVICE_ATTR_RO(last_image_refresh);
 static DEVICE_ATTR_RO(read_only);
 static DEVICE_ATTR_RO(sync_state);
 static DEVICE_ATTR_RO(queue_paused);
+static DEVICE_ATTR_RO(io_submitted);
+static DEVICE_ATTR_RO(io_completed);
+static DEVICE_ATTR_RO(io_failed);
+static DEVICE_ATTR_RO(object_io_retries);
+static DEVICE_ATTR_RO(metadata_stale_events);
+static DEVICE_ATTR_RO(cluster_refresh_fail);
+static DEVICE_ATTR_RO(image_refresh_fail);
+static DEVICE_ATTR_RO(leader_query_fail);
 
 static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_pool_name.attr,
@@ -470,6 +919,14 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_read_only.attr,
 	&dev_attr_sync_state.attr,
 	&dev_attr_queue_paused.attr,
+	&dev_attr_io_submitted.attr,
+	&dev_attr_io_completed.attr,
+	&dev_attr_io_failed.attr,
+	&dev_attr_object_io_retries.attr,
+	&dev_attr_metadata_stale_events.attr,
+	&dev_attr_cluster_refresh_fail.attr,
+	&dev_attr_image_refresh_fail.attr,
+	&dev_attr_leader_query_fail.attr,
 	NULL,
 };
 
@@ -552,8 +1009,10 @@ static blk_status_t kfastblock_queue_rq(struct blk_mq_hw_ctx *hctx,
 		return BLK_STS_IOERR;
 	}
 
+	kfastblock_volume_account_io_submit(vol, req_op(rq), blk_rq_bytes(rq));
 	ret = kfastblock_transport_submit(kf_req);
 	if (ret) {
+		kfastblock_volume_account_io_complete(vol, ret);
 		blk_mq_end_request(rq, BLK_STS_IOERR);
 		return BLK_STS_IOERR;
 	}
@@ -584,6 +1043,7 @@ static void kfastblock_volume_free(struct kfastblock_volume *vol)
 		list_del_init(&vol->node);
 	mutex_unlock(&g_kfastblock_volumes_lock);
 
+	kfastblock_volume_debugfs_exit(vol);
 	if (vol->disk) {
 		vol->queue_paused = true;
 		blk_mq_quiesce_queue(vol->disk->queue);
@@ -690,13 +1150,17 @@ static int kfastblock_volume_add_disk(struct kfastblock_volume *vol,
 		     vol->view.image.pool_name,
 		     vol->view.image.image_name);
 	dev_set_drvdata(&vol->dev, vol);
+	kfastblock_volume_debugfs_init(vol);
 
 	ret = device_add(&vol->dev);
-	if (ret)
+	if (ret) {
+		kfastblock_volume_debugfs_exit(vol);
 		return ret;
+	}
 
 	ret = device_add_disk(&vol->dev, vol->disk, NULL);
 	if (ret) {
+		kfastblock_volume_debugfs_exit(vol);
 		device_del(&vol->dev);
 		return ret;
 	}
@@ -723,6 +1187,7 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	atomic_set(&vol->open_count, 0);
 	atomic_set(&vol->ready, 0);
 	vol->queue_paused = false;
+	kfastblock_volume_stats_init(vol);
 	mutex_init(&vol->inflight_lock);
 	init_rwsem(&vol->state_lock);
 	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i)
@@ -804,6 +1269,7 @@ int kfastblock_volume_detach(const struct kfastblock_attach_spec *spec)
 int kfastblock_volume_init(void)
 {
 	ida_init(&g_kfastblock_dev_ida);
+	g_kfastblock_debugfs_root = debugfs_create_dir(KFASTBLOCK_DRV_NAME, NULL);
 	return 0;
 }
 
@@ -826,5 +1292,7 @@ void kfastblock_volume_exit(void)
 	}
 	mutex_unlock(&g_kfastblock_volumes_lock);
 
+	debugfs_remove_recursive(g_kfastblock_debugfs_root);
+	g_kfastblock_debugfs_root = NULL;
 	ida_destroy(&g_kfastblock_dev_ida);
 }
