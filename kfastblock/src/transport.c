@@ -2021,7 +2021,6 @@ int kfastblock_transport_refresh_image_volume(struct kfastblock_volume *vol)
 		ret = kfastblock_transport_fetch_image_info(sock, &vol->view, seq);
 		mutex_unlock(&cached->lock);
 		if (!ret || ret == -ESTALE) {
-			kfastblock_volume_account_image_refresh(vol, 0);
 			return 0;
 		}
 		kfastblock_transport_apply_monitor_failure(
@@ -2030,7 +2029,6 @@ int kfastblock_transport_refresh_image_volume(struct kfastblock_volume *vol)
 		first_err = ret;
 	}
 
-	kfastblock_volume_account_image_refresh(vol, first_err);
 	return first_err;
 }
 
@@ -2068,7 +2066,6 @@ int kfastblock_transport_refresh_cluster_map_volume(struct kfastblock_volume *vo
 					      &vol->view, seq);
 		mutex_unlock(&cached->lock);
 		if (!ret || ret == -ESTALE) {
-			kfastblock_volume_account_cluster_refresh(vol, 0);
 			return 0;
 		}
 		kfastblock_transport_apply_monitor_failure(
@@ -2077,6 +2074,5 @@ int kfastblock_transport_refresh_cluster_map_volume(struct kfastblock_volume *vo
 		first_err = ret;
 	}
 
-	kfastblock_volume_account_cluster_refresh(vol, first_err);
 	return first_err;
 }
