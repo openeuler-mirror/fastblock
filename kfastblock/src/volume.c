@@ -853,6 +853,7 @@ static void kfastblock_volume_close_osd_cached_sockets(struct kfastblock_volume 
 		memset(cached->address, 0, sizeof(cached->address));
 		cached->osd_id = 0;
 		cached->port = 0;
+		cached->connecting = false;
 		cached->next_seq = 0;
 		cached->fail_streak = 0;
 		cached->last_error = 0;
