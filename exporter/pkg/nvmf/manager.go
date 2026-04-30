@@ -273,7 +273,7 @@ func (m *LocalManager) DenyHost(ctx context.Context, exportID, hostNQN string) e
 		"nqn":  subsystemNQN(m.nqnPrefix, exportID),
 		"host": hostNQN,
 	}, nil)
-	if err != nil && (isSPDKNotFound(err) || isSPDKHostAccessMissing(err)) {
+	if err != nil && (isSPDKNotFound(err) || isSPDKHostAccessMissing(err) || isSPDKInvalidParams(err)) {
 		return nil
 	}
 	return err
@@ -366,6 +366,14 @@ func isSPDKHostAccessMissing(err error) bool {
 	if errors.As(err, &rpcErr) {
 		msg := strings.ToLower(rpcErr.Message)
 		return strings.Contains(msg, "host") && (strings.Contains(msg, "not found") || strings.Contains(msg, "no such"))
+	}
+	return false
+}
+
+func isSPDKInvalidParams(err error) bool {
+	var rpcErr *spdkrpc.ResponseError
+	if errors.As(err, &rpcErr) {
+		return rpcErr.Code == -32602
 	}
 	return false
 }

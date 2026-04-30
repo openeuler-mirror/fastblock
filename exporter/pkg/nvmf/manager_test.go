@@ -267,6 +267,23 @@ func TestDenyHostIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestDenyHostTreatsInvalidParamsAsIdempotent(t *testing.T) {
+	cfg := config.Default()
+	cfg.MonitorAddress = "10.0.0.20:3333"
+	cfg.TargetAddress = "10.0.0.10"
+	cfg.NodeName = "node-a"
+	rpc := &stubCaller{
+		fail: map[string]error{
+			"nvmf_subsystem_remove_host": &spdkrpc.ResponseError{Code: -32602, Message: "Invalid parameters"},
+		},
+	}
+	manager := newLocalManagerWithRPC(cfg, rpc)
+
+	if err := manager.DenyHost(context.Background(), "fbvol-cluster-a-1-7", "nqn.host.1"); err != nil {
+		t.Fatalf("deny host should treat invalid params as idempotent: %v", err)
+	}
+}
+
 func TestCreateExportRollbackOnListenerFailure(t *testing.T) {
 	cfg := config.Default()
 	cfg.MonitorAddress = "10.0.0.20:3333"
