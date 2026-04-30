@@ -35,6 +35,27 @@ enum kfastblock_volume_event_type {
 	KFASTBLOCK_VOLUME_EVENT_LEADER_INVALIDATE,
 	KFASTBLOCK_VOLUME_EVENT_OSD_SOCKET_DROP,
 	KFASTBLOCK_VOLUME_EVENT_MONITOR_SOCKET_DROP,
+	KFASTBLOCK_VOLUME_EVENT_HEALTH_CHANGE,
+	KFASTBLOCK_VOLUME_EVENT_SOCKET_BACKOFF,
+};
+
+enum kfastblock_volume_health_state {
+	KFASTBLOCK_VOLUME_HEALTH_UNKNOWN = 0,
+	KFASTBLOCK_VOLUME_HEALTH_READY = 1,
+	KFASTBLOCK_VOLUME_HEALTH_DEGRADED = 2,
+	KFASTBLOCK_VOLUME_HEALTH_STALE = 3,
+};
+
+enum kfastblock_volume_failure_source {
+	KFASTBLOCK_VOLUME_SOURCE_NONE = 0,
+	KFASTBLOCK_VOLUME_SOURCE_ATTACH = 1,
+	KFASTBLOCK_VOLUME_SOURCE_QUEUE_GATE = 2,
+	KFASTBLOCK_VOLUME_SOURCE_CLUSTER_REFRESH = 3,
+	KFASTBLOCK_VOLUME_SOURCE_IMAGE_REFRESH = 4,
+	KFASTBLOCK_VOLUME_SOURCE_LEADER_QUERY = 5,
+	KFASTBLOCK_VOLUME_SOURCE_OBJECT_IO = 6,
+	KFASTBLOCK_VOLUME_SOURCE_MONITOR_SOCKET = 7,
+	KFASTBLOCK_VOLUME_SOURCE_OSD_SOCKET = 8,
 };
 
 struct kfastblock_cached_socket {
@@ -44,6 +65,10 @@ struct kfastblock_cached_socket {
 	struct socket *sock;
 	struct mutex lock;
 	u64 next_seq;
+	u32 fail_streak;
+	s32 last_error;
+	unsigned long last_failure_jiffies;
+	unsigned long backoff_until_jiffies;
 };
 
 struct kfastblock_cached_monitor_socket {
@@ -52,6 +77,10 @@ struct kfastblock_cached_monitor_socket {
 	struct socket *sock;
 	struct mutex lock;
 	u64 next_seq;
+	u32 fail_streak;
+	s32 last_error;
+	unsigned long last_failure_jiffies;
+	unsigned long backoff_until_jiffies;
 };
 
 struct kfastblock_volume_stats {
@@ -81,6 +110,17 @@ struct kfastblock_volume_stats {
 	atomic64_t leader_invalidations;
 	atomic64_t osd_socket_drops;
 	atomic64_t monitor_socket_drops;
+	atomic64_t osd_backoff_hits;
+	atomic64_t monitor_backoff_hits;
+};
+
+struct kfastblock_volume_health {
+	u32 state;
+	u32 last_failure_source;
+	s32 last_errno;
+	unsigned long state_since_jiffies;
+	unsigned long last_failure_jiffies;
+	unsigned long last_success_jiffies;
 };
 
 struct kfastblock_volume_event {
@@ -116,6 +156,7 @@ struct kfastblock_volume {
 	struct kfastblock_attach_spec spec;
 	struct kfastblock_cluster_view view;
 	struct kfastblock_volume_stats stats;
+	struct kfastblock_volume_health health;
 	struct kfastblock_volume_event_log event_log;
 
 	struct list_head node;
@@ -159,5 +200,12 @@ void kfastblock_volume_account_leader_invalidate(struct kfastblock_volume *vol,
 void kfastblock_volume_account_socket_drop(struct kfastblock_volume *vol,
 				    bool monitor_socket, u32 osd_id,
 				    u16 port, int ret);
+void kfastblock_volume_account_socket_backoff(struct kfastblock_volume *vol,
+				       bool monitor_socket, u32 osd_id,
+				       u16 port, u32 fail_streak,
+				       unsigned long backoff_jiffies, int ret);
+void kfastblock_volume_update_health(struct kfastblock_volume *vol,
+				     u32 new_state, u32 source, int ret);
+void kfastblock_volume_mark_success(struct kfastblock_volume *vol, u32 source);
 
 #endif
