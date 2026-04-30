@@ -32,11 +32,13 @@ static void kfastblock_transport_close_cached_socket(
 	if (!cached)
 		return;
 
+	mutex_lock(&cached->lock);
 	if (cached->sock) {
 		sock_release(cached->sock);
 		cached->sock = NULL;
 	}
 	cached->next_seq = 0;
+	mutex_unlock(&cached->lock);
 }
 
 static u64 kfastblock_transport_next_seq(struct kfastblock_cached_socket *cached)
@@ -55,11 +57,13 @@ static void kfastblock_transport_close_cached_monitor_socket(
 	if (!cached)
 		return;
 
+	mutex_lock(&cached->lock);
 	if (cached->sock) {
 		sock_release(cached->sock);
 		cached->sock = NULL;
 	}
 	cached->next_seq = 0;
+	mutex_unlock(&cached->lock);
 }
 
 static u64 kfastblock_transport_next_monitor_seq(
