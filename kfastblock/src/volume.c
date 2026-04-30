@@ -1273,6 +1273,7 @@ static int kfastblock_volume_refresh_locked(struct kfastblock_volume *vol,
 				   bool warn_image_fail)
 {
 	u64 old_size;
+	u64 old_image_epoch;
 	u64 old_osdmap_epoch;
 	u64 old_pgmap_epoch;
 	u32 old_block_size;
@@ -1285,6 +1286,7 @@ static int kfastblock_volume_refresh_locked(struct kfastblock_volume *vol,
 		return -EINVAL;
 
 	old_size = vol->view.image.size_bytes;
+	old_image_epoch = vol->view.image_epoch;
 	old_osdmap_epoch = vol->view.osdmap_epoch;
 	old_pgmap_epoch = vol->view.pgmap_epoch;
 	old_block_size = vol->view.image.block_size;
@@ -1295,6 +1297,20 @@ static int kfastblock_volume_refresh_locked(struct kfastblock_volume *vol,
 		ret = kfastblock_transport_refresh_cluster_map_volume(vol);
 	if (!ret && refresh_image)
 		image_ret = kfastblock_transport_refresh_image_volume(vol);
+
+	if (refresh_cluster) {
+		if (ret)
+			kfastblock_volume_account_cluster_refresh(vol, ret);
+		else if (old_osdmap_epoch != vol->view.osdmap_epoch ||
+			 old_pgmap_epoch != vol->view.pgmap_epoch)
+			kfastblock_volume_account_cluster_refresh(vol, 0);
+	}
+	if (!ret && refresh_image) {
+		if (image_ret)
+			kfastblock_volume_account_image_refresh(vol, image_ret);
+		else if (old_image_epoch != vol->view.image_epoch)
+			kfastblock_volume_account_image_refresh(vol, 0);
+	}
 
 	if (!ret && vol->disk) {
 		if (refresh_cluster &&
