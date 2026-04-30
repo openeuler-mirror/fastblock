@@ -414,3 +414,24 @@ void kfastblock_meta_invalidate_pg_leader(struct kfastblock_cluster_view *view,
 	route->leader_valid = false;
 	memset(&route->leader, 0, sizeof(route->leader));
 }
+
+void kfastblock_meta_invalidate_all_pg_leaders(struct kfastblock_cluster_view *view)
+{
+	u32 i;
+	bool invalidated = false;
+
+	if (!view || !view->routes)
+		return;
+
+	for (i = 0; i < view->route_count; ++i) {
+		struct kfastblock_pg_route *route = &view->routes[i];
+
+		if (!route->leader_valid)
+			continue;
+		route->leader_valid = false;
+		memset(&route->leader, 0, sizeof(route->leader));
+		invalidated = true;
+	}
+	if (invalidated || !view->leader_epoch)
+		++view->leader_epoch;
+}

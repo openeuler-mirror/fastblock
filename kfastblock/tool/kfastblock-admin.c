@@ -105,7 +105,7 @@ static void parse_config_file(const char *filename, struct config *cfg)
 static void print_usage(const char *prog_name)
 {
 	fprintf(stderr,
-		"Usage: %s <attach|detach|force-refresh|reset-backoff|drop-transport> [options]\n",
+		"Usage: %s <attach|detach|force-refresh|reset-backoff|drop-transport|reset-leaders> [options]\n",
 		prog_name);
 	fprintf(stderr, "Options:\n");
 	fprintf(stderr, "  -c, --conf <file>\n");
@@ -172,7 +172,8 @@ static int op_is_volume_level(const char *operation)
 {
 	return strcmp(operation, "force-refresh") == 0 ||
 		strcmp(operation, "reset-backoff") == 0 ||
-		strcmp(operation, "drop-transport") == 0;
+		strcmp(operation, "drop-transport") == 0 ||
+		strcmp(operation, "reset-leaders") == 0;
 }
 
 static const char *volume_attr_for_operation(const char *operation)
@@ -183,6 +184,8 @@ static const char *volume_attr_for_operation(const char *operation)
 		return "reset_backoff";
 	if (strcmp(operation, "drop-transport") == 0)
 		return "drop_transport";
+	if (strcmp(operation, "reset-leaders") == 0)
+		return "reset_leaders";
 	return NULL;
 }
 
@@ -239,7 +242,8 @@ int main(int argc, char *argv[])
 	    strcmp(operation, "detach") != 0 &&
 	    strcmp(operation, "force-refresh") != 0 &&
 	    strcmp(operation, "reset-backoff") != 0 &&
-	    strcmp(operation, "drop-transport") != 0) {
+	    strcmp(operation, "drop-transport") != 0 &&
+	    strcmp(operation, "reset-leaders") != 0) {
 		print_usage(argv[0]);
 		return EXIT_FAILURE;
 	}

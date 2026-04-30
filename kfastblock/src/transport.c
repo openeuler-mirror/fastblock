@@ -26,6 +26,53 @@ static struct workqueue_struct *g_kfastblock_transport_wq;
 
 static bool kfastblock_transport_should_retry_monitor(const int ret);
 
+static void kfastblock_transport_close_cached_socket_locked(
+	struct kfastblock_cached_socket *cached)
+{
+	if (!cached)
+		return;
+
+	if (cached->sock) {
+		sock_release(cached->sock);
+		cached->sock = NULL;
+	}
+	cached->next_seq = 0;
+}
+
+static void kfastblock_transport_close_cached_monitor_socket_locked(
+	struct kfastblock_cached_monitor_socket *cached)
+{
+	if (!cached)
+		return;
+
+	if (cached->sock) {
+		sock_release(cached->sock);
+		cached->sock = NULL;
+	}
+	cached->next_seq = 0;
+}
+
+static bool kfastblock_transport_cached_socket_matches_locked(
+	const struct kfastblock_cached_socket *cached,
+	const struct kfastblock_leader_info *leader)
+{
+	if (!cached || !leader || !cached->sock)
+		return false;
+	return cached->osd_id == leader->osd_id &&
+		cached->port == leader->port &&
+		strcmp(cached->address, leader->address) == 0;
+}
+
+static bool kfastblock_transport_monitor_socket_matches_locked(
+	const struct kfastblock_cached_monitor_socket *cached,
+	const struct kfastblock_monitor_endpoint *endpoint)
+{
+	if (!cached || !endpoint || !cached->sock)
+		return false;
+	return cached->port == endpoint->port &&
+		strcmp(cached->address, endpoint->host) == 0;
+}
+
 static void kfastblock_transport_close_cached_socket(
 	struct kfastblock_cached_socket *cached)
 {
@@ -33,11 +80,7 @@ static void kfastblock_transport_close_cached_socket(
 		return;
 
 	mutex_lock(&cached->lock);
-	if (cached->sock) {
-		sock_release(cached->sock);
-		cached->sock = NULL;
-	}
-	cached->next_seq = 0;
+	kfastblock_transport_close_cached_socket_locked(cached);
 	mutex_unlock(&cached->lock);
 }
 
@@ -58,11 +101,7 @@ static void kfastblock_transport_close_cached_monitor_socket(
 		return;
 
 	mutex_lock(&cached->lock);
-	if (cached->sock) {
-		sock_release(cached->sock);
-		cached->sock = NULL;
-	}
-	cached->next_seq = 0;
+	kfastblock_transport_close_cached_monitor_socket_locked(cached);
 	mutex_unlock(&cached->lock);
 }
 
@@ -227,8 +266,13 @@ static int kfastblock_transport_connect_osd_cached(
 		return -EINVAL;
 
 	ret = kfastblock_transport_osd_backoff_active(cached, leader);
-	if (ret)
+	if (ret) {
+		unsigned long remaining = time_after(cached->backoff_until_jiffies, jiffies) ?
+			cached->backoff_until_jiffies - jiffies : 0;
+		kfastblock_volume_account_socket_backoff_wait(vol, false,
+			leader->osd_id, leader->port, remaining, ret);
 		return ret;
+	}
 
 	kfastblock_transport_close_cached_socket(cached);
 	ret = kfastblock_transport_try_connect_host(leader->address, leader->port,
@@ -262,29 +306,37 @@ static int kfastblock_transport_get_monitor_socket(
 
 	endpoint = &spec->monitors[endpoint_index];
 	cached = &vol->monitor_cache[endpoint_index];
-	if (cached->sock &&
-	    cached->port == endpoint->port &&
-	    strcmp(cached->address, endpoint->host) == 0) {
-		*cached_out = cached;
-		*sock_out = cached->sock;
+	*cached_out = cached;
+	*sock_out = NULL;
+
+	mutex_lock(&cached->lock);
+	if (kfastblock_transport_monitor_socket_matches_locked(cached, endpoint)) {
+		mutex_unlock(&cached->lock);
 		return 0;
 	}
-
 	ret = kfastblock_transport_monitor_backoff_active(cached, endpoint);
-	if (ret)
+	if (ret) {
+		unsigned long remaining = time_after(cached->backoff_until_jiffies, jiffies) ?
+			cached->backoff_until_jiffies - jiffies : 0;
+		kfastblock_volume_account_socket_backoff_wait(vol, true, 0,
+			endpoint->port, remaining, ret);
+		mutex_unlock(&cached->lock);
 		return ret;
+	}
 
-	kfastblock_transport_close_cached_monitor_socket(cached);
+	kfastblock_transport_close_cached_monitor_socket_locked(cached);
 	ret = kfastblock_transport_try_connect_monitor(endpoint, sock_out);
 	if (ret) {
 		kfastblock_transport_mark_monitor_socket_failure(vol, cached, endpoint, ret);
+		mutex_unlock(&cached->lock);
 		return ret;
 	}
 
 	cached->sock = *sock_out;
 	cached->next_seq = 1;
 	kfastblock_transport_mark_monitor_socket_success(cached, endpoint);
-	*cached_out = cached;
+	mutex_unlock(&cached->lock);
+	*sock_out = NULL;
 	return 0;
 }
 
@@ -317,14 +369,13 @@ kfastblock_transport_find_cached_socket(struct kfastblock_volume *vol,
 
 	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i) {
 		struct kfastblock_cached_socket *cached = &vol->socket_cache[i];
+		bool match;
 
-		if (!cached->sock)
-			continue;
-		if (cached->osd_id != leader->osd_id || cached->port != leader->port)
-			continue;
-		if (strcmp(cached->address, leader->address))
-			continue;
-		return cached;
+		mutex_lock(&cached->lock);
+		match = kfastblock_transport_cached_socket_matches_locked(cached, leader);
+		mutex_unlock(&cached->lock);
+		if (match)
+			return cached;
 	}
 
 	return NULL;
@@ -1389,8 +1440,15 @@ static int kfastblock_transport_submit_object_io(
 
 		cached = kfastblock_transport_find_cached_socket(vol, &leader);
 		if (cached) {
-			sock = cached->sock;
-		} else {
+			mutex_lock(&cached->lock);
+			if (!kfastblock_transport_cached_socket_matches_locked(cached, &leader)) {
+				mutex_unlock(&cached->lock);
+				cached = NULL;
+			} else {
+				sock = cached->sock;
+			}
+		}
+		if (!cached) {
 			cached = kfastblock_transport_get_socket_slot(vol);
 			if (!cached) {
 				ret = -ENOMEM;
@@ -1413,7 +1471,15 @@ static int kfastblock_transport_submit_object_io(
 			}
 		}
 
-		mutex_lock(&cached->lock);
+		if (!sock) {
+			mutex_lock(&cached->lock);
+			if (!kfastblock_transport_cached_socket_matches_locked(cached, &leader)) {
+				mutex_unlock(&cached->lock);
+				ret = -EAGAIN;
+				continue;
+			}
+			sock = cached->sock;
+		}
 		seq = kfastblock_transport_next_seq(cached);
 		if (op == REQ_OP_WRITE || op == REQ_OP_WRITE_ZEROES)
 			ret = kfastblock_transport_write_object(sock, view->image.pool_id,
@@ -1704,8 +1770,15 @@ int kfastblock_transport_get_pg_leader(struct kfastblock_volume *vol,
 		strscpy(target.address, osd->address, sizeof(target.address));
 		cached = kfastblock_transport_find_cached_socket(vol, &target);
 		if (cached) {
-			sock = cached->sock;
-		} else {
+			mutex_lock(&cached->lock);
+			if (!kfastblock_transport_cached_socket_matches_locked(cached, &target)) {
+				mutex_unlock(&cached->lock);
+				cached = NULL;
+			} else {
+				sock = cached->sock;
+			}
+		}
+		if (!cached) {
 			cached = kfastblock_transport_get_socket_slot(vol);
 			if (!cached)
 				return -ENOMEM;
@@ -1720,7 +1793,18 @@ int kfastblock_transport_get_pg_leader(struct kfastblock_volume *vol,
 			}
 		}
 
-		mutex_lock(&cached->lock);
+		if (!sock) {
+			mutex_lock(&cached->lock);
+			if (!kfastblock_transport_cached_socket_matches_locked(cached, &target)) {
+				mutex_unlock(&cached->lock);
+				kfastblock_transport_apply_leader_failure(
+					vol, view, pool_id, pg_id, &target, cached, -EAGAIN,
+					kfastblock_transport_classify_leader_failure(-EAGAIN));
+				first_err = -EAGAIN;
+				continue;
+			}
+			sock = cached->sock;
+		}
 		seq = kfastblock_transport_next_seq(cached);
 		ret = kfastblock_transport_fetch_pg_leader_from_osd(sock,
 						    resolved_route->pool_id,
@@ -1792,6 +1876,9 @@ static void kfastblock_transport_complete_request(struct kfastblock_request *kf_
 		blk_status_t status =
 			kfastblock_transport_errno_to_blk_status(kf_req->status);
 		kfastblock_volume_account_io_complete(kf_req->vol, kf_req->status);
+		if (!kf_req->status)
+			kfastblock_volume_mark_success(kf_req->vol,
+					      KFASTBLOCK_VOLUME_SOURCE_OBJECT_IO);
 		blk_mq_end_request(kf_req->rq, status);
 		kfastblock_volume_put_io(kf_req->vol);
 		put_device(&kf_req->vol->dev);
@@ -1866,6 +1953,13 @@ int kfastblock_transport_refresh_image_volume(struct kfastblock_volume *vol)
 		}
 
 		mutex_lock(&cached->lock);
+		if (!kfastblock_transport_monitor_socket_matches_locked(cached,
+						      &vol->spec.monitors[i])) {
+			mutex_unlock(&cached->lock);
+			first_err = -EAGAIN;
+			continue;
+		}
+		sock = cached->sock;
 		seq = kfastblock_transport_next_monitor_seq(cached);
 		ret = kfastblock_transport_fetch_image_info(sock, &vol->view, seq);
 		mutex_unlock(&cached->lock);
@@ -1905,6 +1999,13 @@ int kfastblock_transport_refresh_cluster_map_volume(struct kfastblock_volume *vo
 		}
 
 		mutex_lock(&cached->lock);
+		if (!kfastblock_transport_monitor_socket_matches_locked(cached,
+						      &vol->spec.monitors[i])) {
+			mutex_unlock(&cached->lock);
+			first_err = -EAGAIN;
+			continue;
+		}
+		sock = cached->sock;
 		seq = kfastblock_transport_next_monitor_seq(cached);
 		ret = kfastblock_transport_fetch_cluster_map_from_monitor(sock,
 					      &vol->view, seq);

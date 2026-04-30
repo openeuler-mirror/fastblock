@@ -41,6 +41,8 @@ enum kfastblock_volume_event_type {
 	KFASTBLOCK_VOLUME_EVENT_MANUAL_REFRESH,
 	KFASTBLOCK_VOLUME_EVENT_MANUAL_RESET_BACKOFF,
 	KFASTBLOCK_VOLUME_EVENT_MANUAL_DROP_TRANSPORT,
+	KFASTBLOCK_VOLUME_EVENT_MANUAL_RESET_LEADERS,
+	KFASTBLOCK_VOLUME_EVENT_SOCKET_BACKOFF_WAIT,
 };
 
 enum kfastblock_volume_health_state {
@@ -116,9 +118,12 @@ struct kfastblock_volume_stats {
 	atomic64_t monitor_socket_drops;
 	atomic64_t osd_backoff_hits;
 	atomic64_t monitor_backoff_hits;
+	atomic64_t osd_backoff_waits;
+	atomic64_t monitor_backoff_waits;
 	atomic64_t manual_refreshes;
 	atomic64_t manual_reset_backoffs;
 	atomic64_t manual_transport_drops;
+	atomic64_t manual_leader_resets;
 };
 
 struct kfastblock_volume_health {
@@ -218,6 +223,11 @@ void kfastblock_volume_account_socket_backoff(struct kfastblock_volume *vol,
 				       bool monitor_socket, u32 osd_id,
 				       u16 port, u32 fail_streak,
 				       unsigned long backoff_jiffies, int ret);
+void kfastblock_volume_account_socket_backoff_wait(struct kfastblock_volume *vol,
+					 bool monitor_socket, u32 osd_id,
+					 u16 port,
+					 unsigned long remaining_jiffies,
+					 int ret);
 void kfastblock_volume_update_health(struct kfastblock_volume *vol,
 				     u32 new_state, u32 source, int ret);
 void kfastblock_volume_mark_success(struct kfastblock_volume *vol, u32 source);

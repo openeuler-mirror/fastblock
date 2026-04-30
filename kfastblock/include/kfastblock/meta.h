@@ -115,5 +115,6 @@ int kfastblock_meta_set_pg_leader(struct kfastblock_cluster_view *view,
 				  const struct kfastblock_leader_info *leader);
 void kfastblock_meta_invalidate_pg_leader(struct kfastblock_cluster_view *view,
 					  u32 pool_id, u32 pg_id);
+void kfastblock_meta_invalidate_all_pg_leaders(struct kfastblock_cluster_view *view);
 
 #endif
