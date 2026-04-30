@@ -83,6 +83,10 @@ func (m *LocalManager) CreateExport(ctx context.Context, req api.CreateExportReq
 	id := exportID(req.VolumeID)
 	if export, err := m.GetExport(ctx, id); err == nil {
 		return export, nil
+	} else if isIncompleteExport(err) {
+		if cleanupErr := m.DeleteExport(ctx, id); cleanupErr != nil {
+			return api.Export{}, cleanupErr
+		}
 	} else if !errors.Is(err, ErrExportNotFound) {
 		return api.Export{}, err
 	}
@@ -376,4 +380,11 @@ func isSPDKInvalidParams(err error) bool {
 		return rpcErr.Code == -32602
 	}
 	return false
+}
+
+func isIncompleteExport(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "missing namespace or listener")
 }

@@ -186,7 +186,11 @@ func TestPublishAndUnpublishVolume(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("publish volume failed: %v", err)
 	}
-	if publisher.devicePath != "/dev/nvme0n1" || publisher.stagePath != stagePath {
+	stageDevicePath, err := mount.CanonicalStageDevicePath(stagePath)
+	if err != nil {
+		t.Fatalf("canonical stage device path failed: %v", err)
+	}
+	if publisher.devicePath != stageDevicePath || publisher.stagePath != stagePath {
 		t.Fatalf("unexpected publish call: %+v", publisher)
 	}
 	if err := service.UnpublishVolume(context.Background(), UnpublishVolumeRequest{

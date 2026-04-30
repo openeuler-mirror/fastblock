@@ -70,7 +70,11 @@ func (s *Service) PublishVolume(ctx context.Context, req PublishVolumeRequest) e
 	if state.VolumeID != req.VolumeID {
 		return errors.New("staged volume id mismatch")
 	}
-	return s.publisher.PublishBlockDevice(ctx, state.DevicePath, req.StagingTargetPath, req.TargetPath)
+	stageDevicePath, err := mount.CanonicalStageDevicePath(req.StagingTargetPath)
+	if err != nil {
+		return err
+	}
+	return s.publisher.PublishBlockDevice(ctx, stageDevicePath, req.StagingTargetPath, req.TargetPath)
 }
 
 func (s *Service) UnpublishVolume(ctx context.Context, req UnpublishVolumeRequest) error {

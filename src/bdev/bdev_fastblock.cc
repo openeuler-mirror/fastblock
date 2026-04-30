@@ -165,18 +165,6 @@ bdev_create_image(struct bdev_fastblock *fastblock)
 	return 0;
 }
 
-static void
-bdev_delete_image(struct bdev_fastblock *fastblock)
-{
-    global::mon_client->emplace_remove_image_request(
-      fastblock->pool_name,
-      fastblock->image_name,
-      [] (const monitor::client::response_status s, [[maybe_unused]] auto _) {
-          SPDK_INFOLOG(libblk, "remove_image image status %d\n", s);
-      }
-    );
-}
-
 void bdev_resize_image(struct bdev_fastblock *fastblock, uint64_t new_size_in_byte)
 {
     global::mon_client->emplace_resize_image_request(
@@ -787,7 +775,12 @@ void bdev_fastblock_delete(struct spdk_bdev *bdev, spdk_delete_fastblock_complet
 		return;
 	}
 
-	bdev_delete_image((struct bdev_fastblock *)bdev->ctxt);
+	/*
+	 * A fastblock bdev is only an SPDK-side view of an existing backend image.
+	 * Export teardown must not delete the image itself, otherwise CSI
+	 * ControllerUnpublishVolume would destroy the volume during detach/failover.
+	 * Image lifecycle is owned by the control plane DeleteVolume path.
+	 */
 	spdk_bdev_unregister(bdev, cb_fn, cb_arg);
 }
 
