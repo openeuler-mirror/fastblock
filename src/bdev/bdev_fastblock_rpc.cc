@@ -10,10 +10,17 @@
  */
 
 #include "bdev_fastblock.h"
+#include "fastblock/bdev/global.h"
 #include <spdk/rpc.h>
 #include <spdk/util.h>
 #include <spdk/string.h>
 #include <spdk/log.h>
+
+static std::shared_ptr<::libblk_client>
+get_management_blk_client()
+{
+	return global::blk_clients.at(global::app_thread_shard_id);
+}
 
 struct rpc_create_fastblock
 {
@@ -363,3 +370,86 @@ cleanup:
 }
 
 SPDK_RPC_REGISTER("bdev_fastblock_create_snapshot", rpc_bdev_fastblock_create_snapshot, SPDK_RPC_RUNTIME)
+
+struct rpc_snapshot_id_request
+{
+	char *snapshot_id;
+};
+
+static const struct spdk_json_object_decoder rpc_snapshot_id_request_decoders[] = {
+	{"snapshot_id", offsetof(struct rpc_snapshot_id_request, snapshot_id), spdk_json_decode_string},
+};
+
+static void
+free_rpc_snapshot_id_request(struct rpc_snapshot_id_request *req)
+{
+	free(req->snapshot_id);
+}
+
+static void
+rpc_bdev_fastblock_protect_snapshot(struct spdk_jsonrpc_request *request,
+						  const struct spdk_json_val *params)
+{
+	struct rpc_snapshot_id_request req = {};
+	struct spdk_json_write_ctx *w;
+	auto blk_cli = get_management_blk_client();
+
+	if (spdk_json_decode_object(params, rpc_snapshot_id_request_decoders,
+								SPDK_COUNTOF(rpc_snapshot_id_request_decoders),
+								&req))
+	{
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
+										 "spdk_json_decode_object failed");
+		goto cleanup;
+	}
+
+	if (!blk_cli)
+	{
+		spdk_jsonrpc_send_error_response(request, -EBUSY, spdk_strerror(EBUSY));
+		goto cleanup;
+	}
+
+	blk_cli->protect_snapshot(req.snapshot_id);
+	w = spdk_jsonrpc_begin_result(request);
+	spdk_json_write_bool(w, true);
+	spdk_jsonrpc_end_result(request, w);
+
+cleanup:
+	free_rpc_snapshot_id_request(&req);
+}
+
+SPDK_RPC_REGISTER("bdev_fastblock_protect_snapshot", rpc_bdev_fastblock_protect_snapshot, SPDK_RPC_RUNTIME)
+
+static void
+rpc_bdev_fastblock_unprotect_snapshot(struct spdk_jsonrpc_request *request,
+						  const struct spdk_json_val *params)
+{
+	struct rpc_snapshot_id_request req = {};
+	struct spdk_json_write_ctx *w;
+	auto blk_cli = get_management_blk_client();
+
+	if (spdk_json_decode_object(params, rpc_snapshot_id_request_decoders,
+								SPDK_COUNTOF(rpc_snapshot_id_request_decoders),
+								&req))
+	{
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
+										 "spdk_json_decode_object failed");
+		goto cleanup;
+	}
+
+	if (!blk_cli)
+	{
+		spdk_jsonrpc_send_error_response(request, -EBUSY, spdk_strerror(EBUSY));
+		goto cleanup;
+	}
+
+	blk_cli->unprotect_snapshot(req.snapshot_id);
+	w = spdk_jsonrpc_begin_result(request);
+	spdk_json_write_bool(w, true);
+	spdk_jsonrpc_end_result(request, w);
+
+cleanup:
+	free_rpc_snapshot_id_request(&req);
+}
+
+SPDK_RPC_REGISTER("bdev_fastblock_unprotect_snapshot", rpc_bdev_fastblock_unprotect_snapshot, SPDK_RPC_RUNTIME)
