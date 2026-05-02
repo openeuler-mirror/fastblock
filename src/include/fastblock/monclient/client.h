@@ -104,6 +104,24 @@ public:
         std::vector<snapshot_metadata> data{};
     };
 
+    struct image_operation_record {
+        std::string operation_id{};
+        std::string type{};
+        std::string target_id{};
+        std::string status{};
+        std::string error{};
+        int64_t started_at_unix_nano{};
+        int64_t updated_at_unix_nano{};
+    };
+
+    struct image_operation_record_list {
+        std::vector<image_operation_record> data{};
+    };
+
+    struct child_image_id_list {
+        std::vector<std::string> data{};
+    };
+
     struct pools {
         struct pool {
             int32_t pool_id;
@@ -125,7 +143,10 @@ public:
       std::unique_ptr<image_metadata>,
       std::unique_ptr<snapshot_metadata>,
       std::unique_ptr<image_metadata_list>,
-      std::unique_ptr<snapshot_metadata_list>>;
+      std::unique_ptr<snapshot_metadata_list>,
+      std::unique_ptr<image_operation_record>,
+      std::unique_ptr<image_operation_record_list>,
+      std::unique_ptr<child_image_id_list>>;
 
     struct request_context;
     using on_response_callback_type = std::function<void(const response_status, request_context*)>;
@@ -498,6 +519,13 @@ public:
     void emplace_get_snapshot_metadata_request(const std::string& image_id, const std::string& snapshot_id, on_response_callback_type&& cb);
     void emplace_delete_snapshot_metadata_request(const std::string& image_id, const std::string& snapshot_id, on_response_callback_type&& cb);
     void emplace_list_snapshot_metadata_request(const std::string& image_id, on_response_callback_type&& cb);
+    void emplace_put_image_child_link_request(const std::string& snapshot_id, const std::string& child_image_id, on_response_callback_type&& cb);
+    void emplace_delete_image_child_link_request(const std::string& snapshot_id, const std::string& child_image_id, on_response_callback_type&& cb);
+    void emplace_list_image_child_link_request(const std::string& snapshot_id, on_response_callback_type&& cb);
+    void emplace_put_image_operation_request(const image_operation_record&, on_response_callback_type&& cb);
+    void emplace_get_image_operation_request(const std::string& operation_id, on_response_callback_type&& cb);
+    void emplace_delete_image_operation_request(const std::string& operation_id, on_response_callback_type&& cb);
+    void emplace_list_image_operation_request(on_response_callback_type&& cb);
 
     void handle_emplace_request(request_context*);
     void send_cluster_map_request();
