@@ -251,6 +251,58 @@ cleanup:
 SPDK_RPC_REGISTER("bdev_fastblock_delete", rpc_bdev_fastblock_delete, SPDK_RPC_RUNTIME)
 SPDK_RPC_REGISTER_ALIAS_DEPRECATED(bdev_fastblock_delete, delete_fastblock_bdev)
 
+struct rpc_bdev_fastblock_image_name_request
+{
+	char *pool_name;
+	char *image_name;
+};
+
+static const struct spdk_json_object_decoder rpc_bdev_fastblock_image_name_request_decoders[] = {
+	{"pool_name", offsetof(struct rpc_bdev_fastblock_image_name_request, pool_name), spdk_json_decode_string},
+	{"image_name", offsetof(struct rpc_bdev_fastblock_image_name_request, image_name), spdk_json_decode_string},
+};
+
+static void
+free_rpc_bdev_fastblock_image_name_request(struct rpc_bdev_fastblock_image_name_request *req)
+{
+	free(req->pool_name);
+	free(req->image_name);
+}
+
+static void
+rpc_bdev_fastblock_remove_image(struct spdk_jsonrpc_request *request,
+						  const struct spdk_json_val *params)
+{
+	struct rpc_bdev_fastblock_image_name_request req = {};
+	struct spdk_json_write_ctx *w;
+	auto blk_cli = get_management_blk_client();
+
+	if (spdk_json_decode_object(params, rpc_bdev_fastblock_image_name_request_decoders,
+								SPDK_COUNTOF(rpc_bdev_fastblock_image_name_request_decoders),
+								&req))
+	{
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
+										 "spdk_json_decode_object failed");
+		goto cleanup;
+	}
+
+	if (!blk_cli)
+	{
+		spdk_jsonrpc_send_error_response(request, -EBUSY, spdk_strerror(EBUSY));
+		goto cleanup;
+	}
+
+	blk_cli->remove_image(req.pool_name, req.image_name);
+	w = spdk_jsonrpc_begin_result(request);
+	spdk_json_write_bool(w, true);
+	spdk_jsonrpc_end_result(request, w);
+
+cleanup:
+	free_rpc_bdev_fastblock_image_name_request(&req);
+}
+
+SPDK_RPC_REGISTER("bdev_fastblock_remove_image", rpc_bdev_fastblock_remove_image, SPDK_RPC_RUNTIME)
+
 struct rpc_bdev_fastblock_resize
 {
 	char *name;
