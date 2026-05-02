@@ -89,6 +89,7 @@ public:
     void get_image_info(const std::string pool_name, const std::string image_name);
     void get_image_metadata_by_name(const std::string pool_name, const std::string image_name);
     void get_snapshot_metadata_by_id(const std::string snapshot_id);
+    void create_image_snapshot(const std::string pool_name, const std::string image_name, const std::string snapshot_name);
 
     int write(
       const uint64_t pool_id,
