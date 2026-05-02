@@ -252,6 +252,42 @@ void libblk_client::create_clone_from_snapshot(const std::string snapshot_id, co
         });
 }
 
+void libblk_client::protect_snapshot(const std::string snapshot_id)
+{
+    _mon_cli->emplace_protect_snapshot_request(
+        snapshot_id,
+        [this](const monitor::client::response_status s, monitor::client::request_context* req_ctx)
+        {
+            SPDK_INFOLOG(libblk, "protect snapshot status %d\n", s);
+            if (s != monitor::client::response_status::ok) {
+                return;
+            }
+            auto& metadata = std::get<std::unique_ptr<monitor::client::snapshot_metadata>>(req_ctx->response_data);
+            if (!metadata) {
+                return;
+            }
+            cache_snapshot_metadata(*metadata);
+        });
+}
+
+void libblk_client::unprotect_snapshot(const std::string snapshot_id)
+{
+    _mon_cli->emplace_unprotect_snapshot_request(
+        snapshot_id,
+        [this](const monitor::client::response_status s, monitor::client::request_context* req_ctx)
+        {
+            SPDK_INFOLOG(libblk, "unprotect snapshot status %d\n", s);
+            if (s != monitor::client::response_status::ok) {
+                return;
+            }
+            auto& metadata = std::get<std::unique_ptr<monitor::client::snapshot_metadata>>(req_ctx->response_data);
+            if (!metadata) {
+                return;
+            }
+            cache_snapshot_metadata(*metadata);
+        });
+}
+
 std::vector<monitor::client::snapshot_metadata> libblk_client::build_fallback_chain(
     const std::optional<monitor::client::image_metadata>& image_metadata) const
 {
