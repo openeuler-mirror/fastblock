@@ -108,10 +108,38 @@ struct rpc_create_fastblock
 	char *monitor_address;
 };
 
+struct rpc_register_fastblock_existing
+{
+	char *name;
+	char *pool_name;
+	char *image_name;
+	uint32_t block_size;
+	char *monitor_address;
+};
+
+struct rpc_register_fastblock_existing_ctx
+{
+	struct spdk_jsonrpc_request *request;
+	std::string name;
+	std::string pool_name;
+	std::string image_name;
+	uint32_t block_size;
+	std::string monitor_address;
+};
+
 static void
 free_rpc_create_fastblock(struct rpc_create_fastblock *req)
 {
 	free(req->name);
+	free(req->image_name);
+	free(req->monitor_address);
+}
+
+static void
+free_rpc_register_fastblock_existing(struct rpc_register_fastblock_existing *req)
+{
+	free(req->name);
+	free(req->pool_name);
 	free(req->image_name);
 	free(req->monitor_address);
 }
@@ -171,6 +199,13 @@ static const struct spdk_json_object_decoder rpc_create_fastblock_decoders[] = {
 	{"block_size", offsetof(struct rpc_create_fastblock, block_size), spdk_json_decode_uint32},
 	{"monitor_address", offsetof(struct rpc_create_fastblock, monitor_address), spdk_json_decode_string}};
 
+static const struct spdk_json_object_decoder rpc_register_fastblock_existing_decoders[] = {
+	{"name", offsetof(struct rpc_register_fastblock_existing, name), spdk_json_decode_string, true},
+	{"pool_name", offsetof(struct rpc_register_fastblock_existing, pool_name), spdk_json_decode_string},
+	{"image_name", offsetof(struct rpc_register_fastblock_existing, image_name), spdk_json_decode_string},
+	{"block_size", offsetof(struct rpc_register_fastblock_existing, block_size), spdk_json_decode_uint32},
+	{"monitor_address", offsetof(struct rpc_register_fastblock_existing, monitor_address), spdk_json_decode_string}};
+
 static void
 rpc_bdev_fastblock_create(struct spdk_jsonrpc_request *request,
 						  const struct spdk_json_val *params)
@@ -212,6 +247,102 @@ cleanup:
 
 SPDK_RPC_REGISTER("bdev_fastblock_create", rpc_bdev_fastblock_create, SPDK_RPC_RUNTIME)
 SPDK_RPC_REGISTER_ALIAS_DEPRECATED(bdev_fastblock_create, construct_fastblock_bdev)
+
+static void
+rpc_bdev_fastblock_register_existing_on_image(
+	const monitor::client::response_status status,
+	monitor::client::request_context *req_ctx,
+	rpc_register_fastblock_existing_ctx *ctx)
+{
+	if (status != monitor::client::response_status::ok)
+	{
+		send_monitor_status_error(ctx->request, status);
+		delete ctx;
+		return;
+	}
+
+	auto &metadata = std::get<std::unique_ptr<monitor::client::image_metadata>>(req_ctx->response_data);
+	if (!metadata)
+	{
+		spdk_jsonrpc_send_error_response(ctx->request, -EIO, spdk_strerror(EIO));
+		delete ctx;
+		return;
+	}
+
+	struct spdk_bdev *bdev = nullptr;
+	auto rc = bdev_fastblock_register_existing(
+		&bdev,
+		ctx->name.c_str(),
+		ctx->pool_name.c_str(),
+		ctx->image_name.c_str(),
+		metadata->size,
+		ctx->block_size,
+		metadata->object_size,
+		ctx->monitor_address.c_str());
+	if (rc != 0)
+	{
+		spdk_jsonrpc_send_error_response(ctx->request, rc, spdk_strerror(-rc));
+		delete ctx;
+		return;
+	}
+
+	auto *w = spdk_jsonrpc_begin_result(ctx->request);
+	spdk_json_write_string(w, spdk_bdev_get_name(bdev));
+	spdk_jsonrpc_end_result(ctx->request, w);
+	delete ctx;
+}
+
+static void
+rpc_bdev_fastblock_register_existing(struct spdk_jsonrpc_request *request,
+						  const struct spdk_json_val *params)
+{
+	struct rpc_register_fastblock_existing req = {};
+	auto blk_cli = get_management_blk_client();
+
+	if (spdk_json_decode_object(params, rpc_register_fastblock_existing_decoders,
+								SPDK_COUNTOF(rpc_register_fastblock_existing_decoders),
+								&req))
+	{
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
+										 "spdk_json_decode_object failed");
+		goto cleanup;
+	}
+
+	if (spdk_bdev_get_by_name(req.name) != NULL)
+	{
+		spdk_jsonrpc_send_error_response(request, -EEXIST, spdk_strerror(EEXIST));
+		goto cleanup;
+	}
+
+	if (!blk_cli)
+	{
+		spdk_jsonrpc_send_error_response(request, -EBUSY, spdk_strerror(EBUSY));
+		goto cleanup;
+	}
+
+	{
+		auto *ctx = new rpc_register_fastblock_existing_ctx{
+			.request = request,
+			.name = req.name,
+			.pool_name = req.pool_name,
+			.image_name = req.image_name,
+			.block_size = req.block_size,
+			.monitor_address = req.monitor_address,
+		};
+		blk_cli->monitor_client()->emplace_get_image_metadata_by_name_request(
+			req.pool_name,
+			req.image_name,
+			[ctx](const monitor::client::response_status status, monitor::client::request_context *req_ctx)
+			{
+				rpc_bdev_fastblock_register_existing_on_image(status, req_ctx, ctx);
+			});
+	}
+
+cleanup:
+	free_rpc_register_fastblock_existing(&req);
+}
+
+SPDK_RPC_REGISTER("bdev_fastblock_register_existing", rpc_bdev_fastblock_register_existing, SPDK_RPC_RUNTIME)
 
 struct rpc_bdev_fastblock_delete
 {
