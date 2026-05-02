@@ -61,6 +61,26 @@ write_snapshot_metadata_json(struct spdk_json_write_ctx *w, const monitor::clien
 	spdk_json_write_object_end(w);
 }
 
+static void
+write_image_metadata_json(struct spdk_json_write_ctx *w, const monitor::client::image_metadata &metadata)
+{
+	spdk_json_write_object_begin(w);
+	spdk_json_write_named_string(w, "image_id", metadata.image_id.c_str());
+	spdk_json_write_named_uint32(w, "pool_id", metadata.pool_id);
+	spdk_json_write_named_string(w, "pool_name", metadata.pool_name.c_str());
+	spdk_json_write_named_string(w, "image_name", metadata.image_name.c_str());
+	spdk_json_write_named_int64(w, "size", metadata.size);
+	spdk_json_write_named_int64(w, "object_size", metadata.object_size);
+	spdk_json_write_named_uint64(w, "current_snap_seq", metadata.current_snap_seq);
+	spdk_json_write_named_string(w, "status", metadata.status.c_str());
+	spdk_json_write_named_string(w, "parent_snapshot_id", metadata.parent_snapshot_id.c_str());
+	spdk_json_write_named_uint32(w, "depth", metadata.depth);
+	spdk_json_write_named_uint64(w, "generation", metadata.generation);
+	spdk_json_write_named_int64(w, "created_at_unix_nano", metadata.created_at_unix_nano);
+	spdk_json_write_named_int64(w, "updated_at_unix_nano", metadata.updated_at_unix_nano);
+	spdk_json_write_object_end(w);
+}
+
 struct rpc_bdev_fastblock_name_request
 {
 	char *name;
@@ -302,6 +322,55 @@ cleanup:
 }
 
 SPDK_RPC_REGISTER("bdev_fastblock_remove_image", rpc_bdev_fastblock_remove_image, SPDK_RPC_RUNTIME)
+
+static void
+rpc_bdev_fastblock_get_image_metadata(struct spdk_jsonrpc_request *request,
+						  const struct spdk_json_val *params)
+{
+	struct rpc_bdev_fastblock_image_name_request req = {};
+	auto blk_cli = get_management_blk_client();
+
+	if (spdk_json_decode_object(params, rpc_bdev_fastblock_image_name_request_decoders,
+								SPDK_COUNTOF(rpc_bdev_fastblock_image_name_request_decoders),
+								&req))
+	{
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
+										 "spdk_json_decode_object failed");
+		goto cleanup;
+	}
+
+	if (!blk_cli)
+	{
+		spdk_jsonrpc_send_error_response(request, -EBUSY, spdk_strerror(EBUSY));
+		goto cleanup;
+	}
+
+	blk_cli->monitor_client()->emplace_get_image_metadata_by_name_request(
+		req.pool_name,
+		req.image_name,
+		[request](const monitor::client::response_status status, monitor::client::request_context *req_ctx)
+		{
+			if (status != monitor::client::response_status::ok)
+			{
+				send_monitor_status_error(request, status);
+				return;
+			}
+			auto &metadata = std::get<std::unique_ptr<monitor::client::image_metadata>>(req_ctx->response_data);
+			if (!metadata)
+			{
+				spdk_jsonrpc_send_error_response(request, -EIO, spdk_strerror(EIO));
+				return;
+			}
+			auto *w = spdk_jsonrpc_begin_result(request);
+			write_image_metadata_json(w, *metadata);
+			spdk_jsonrpc_end_result(request, w);
+		});
+
+cleanup:
+	free_rpc_bdev_fastblock_image_name_request(&req);
+}
+
+SPDK_RPC_REGISTER("bdev_fastblock_get_image_metadata", rpc_bdev_fastblock_get_image_metadata, SPDK_RPC_RUNTIME)
 
 struct rpc_bdev_fastblock_resize
 {
