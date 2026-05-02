@@ -221,7 +221,7 @@ public:
 
     void apply(std::shared_ptr<raft_entry_t> entry, utils::context *complete) override;
 
-    void write_obj(const std::string& obj_name, uint64_t offset, const std::string& data, utils::context *complete);
+    void write_obj(const std::string& obj_name, uint64_t offset, const std::string& data, uint64_t current_snap_seq, utils::context *complete);
     void delete_obj(const std::string& obj_name, utils::context *complete);
 
     void write_and_wait(const osd::write_request* request, osd::write_reply* response, google::protobuf::Closure* done);
