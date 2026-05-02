@@ -17,6 +17,53 @@
 #include "fastblock/utils/utils.h"
 #include "fastblock/utils/err_num.h"
 
+void libblk_client::warm_image_lineage_by_metadata(const monitor::client::image_metadata& metadata)
+{
+    cache_image_metadata(metadata);
+    if (!metadata.parent_snapshot_id.empty()) {
+        warm_snapshot_lineage(metadata.parent_snapshot_id);
+    }
+}
+
+void libblk_client::warm_image_lineage_by_id(const std::string& image_id)
+{
+    _mon_cli->emplace_get_image_metadata_request(
+        image_id,
+        [this](const monitor::client::response_status s, monitor::client::request_context* req_ctx)
+        {
+            SPDK_INFOLOG(libblk, "warm image lineage by id status %d\n", s);
+            if (s != monitor::client::response_status::ok) {
+                return;
+            }
+            auto& metadata = std::get<std::unique_ptr<monitor::client::image_metadata>>(req_ctx->response_data);
+            if (!metadata) {
+                return;
+            }
+            warm_image_lineage_by_metadata(*metadata);
+        });
+}
+
+void libblk_client::warm_snapshot_lineage(const std::string& snapshot_id)
+{
+    _mon_cli->emplace_get_snapshot_metadata_by_id_request(
+        snapshot_id,
+        [this](const monitor::client::response_status s, monitor::client::request_context* req_ctx)
+        {
+            SPDK_INFOLOG(libblk, "warm snapshot lineage status %d\n", s);
+            if (s != monitor::client::response_status::ok) {
+                return;
+            }
+            auto& metadata = std::get<std::unique_ptr<monitor::client::snapshot_metadata>>(req_ctx->response_data);
+            if (!metadata) {
+                return;
+            }
+            cache_snapshot_metadata(*metadata);
+            if (!metadata->source_image_id.empty()) {
+                warm_image_lineage_by_id(metadata->source_image_id);
+            }
+        });
+}
+
 void libblk_client::create_image(
   const std::string pool_name,
   const std::string image_name,
@@ -56,10 +103,7 @@ void libblk_client::open_image(const std::string pool_name, const std::string im
             if (!metadata) {
                 return;
             }
-            cache_image_metadata(*metadata);
-            if (!metadata->parent_snapshot_id.empty()) {
-                get_snapshot_metadata_by_id(metadata->parent_snapshot_id);
-            }
+            warm_image_lineage_by_metadata(*metadata);
         });
 }
 
@@ -112,7 +156,7 @@ void libblk_client::get_image_metadata_by_name(const std::string pool_name, cons
             if (!metadata) {
                 return;
             }
-            cache_image_metadata(*metadata);
+            warm_image_lineage_by_metadata(*metadata);
             SPDK_INFOLOG(
               libblk,
               "image metadata image_id=%s parent_snapshot_id=%s current_snap_seq=%lu status=%s\n",
@@ -138,6 +182,9 @@ void libblk_client::get_snapshot_metadata_by_id(const std::string snapshot_id)
                 return;
             }
             cache_snapshot_metadata(*metadata);
+            if (!metadata->source_image_id.empty()) {
+                warm_image_lineage_by_id(metadata->source_image_id);
+            }
             SPDK_INFOLOG(
               libblk,
               "snapshot metadata snapshot_id=%s source_image_id=%s snap_seq=%lu\n",

@@ -131,6 +131,10 @@ private:
       return std::to_string(pool_id) + "/" + image_name;
     }
 
+    void warm_image_lineage_by_metadata(const monitor::client::image_metadata& metadata);
+    void warm_image_lineage_by_id(const std::string& image_id);
+    void warm_snapshot_lineage(const std::string& snapshot_id);
+
     void cache_image_metadata(const monitor::client::image_metadata& metadata) {
       _image_metadata_cache[make_image_cache_key(metadata.pool_id, metadata.image_name)] = metadata;
     }
