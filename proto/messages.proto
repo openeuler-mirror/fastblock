@@ -777,6 +777,24 @@ message CreateCloneFromSnapshotResponse {
     ImageMetadataV2 metadata = 2;
 }
 
+message ProtectSnapshotRequest {
+    string snapshot_id = 1;
+}
+
+message ProtectSnapshotResponse {
+    ImageMetadataErrorCode errorcode = 1;
+    SnapshotMetadataV2 metadata = 2;
+}
+
+message UnprotectSnapshotRequest {
+    string snapshot_id = 1;
+}
+
+message UnprotectSnapshotResponse {
+    ImageMetadataErrorCode errorcode = 1;
+    SnapshotMetadataV2 metadata = 2;
+}
+
 message Request {
     oneof union {
         BootRequest boot_request = 1;
@@ -835,6 +853,8 @@ message Request {
         GetSnapshotMetadataByIDRequest get_snapshot_metadata_by_id_request = 54;
         CreateImageSnapshotRequest create_image_snapshot_request = 55;
         CreateCloneFromSnapshotRequest create_clone_from_snapshot_request = 56;
+        ProtectSnapshotRequest protect_snapshot_request = 57;
+        UnprotectSnapshotRequest unprotect_snapshot_request = 58;
     }
 }
 
@@ -896,5 +916,7 @@ message Response {
         GetSnapshotMetadataByIDResponse get_snapshot_metadata_by_id_response = 54;
         CreateImageSnapshotResponse create_image_snapshot_response = 55;
         CreateCloneFromSnapshotResponse create_clone_from_snapshot_response = 56;
+        ProtectSnapshotResponse protect_snapshot_response = 57;
+        UnprotectSnapshotResponse unprotect_snapshot_response = 58;
     }
 }
