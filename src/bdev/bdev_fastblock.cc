@@ -527,7 +527,9 @@ bdev_fastblock_create_cb(void *io_device, void *ctx_buf)
         auto blk_thread = blk_cli->get_blk_thread();
         blk_cli->stop(
           [blk_cli, blk_thread](){
-            spdk_thread_exit(blk_thread);
+            if (blk_thread != spdk_thread_get_app_thread()) {
+                spdk_thread_exit(blk_thread);
+            }
           }
         );
     }
