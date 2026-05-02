@@ -15,6 +15,8 @@
 #include "fastblock/client/fb_client.h"
 #include "fastblock/monclient/client.h"
 
+#include <optional>
+#include <unordered_map>
 #include <vector>
 
 constexpr size_t KiB = 1024;
@@ -125,5 +127,27 @@ public:
     }
 private:
 
+    static std::string make_image_cache_key(const int32_t pool_id, const std::string& image_name) {
+      return std::to_string(pool_id) + "/" + image_name;
+    }
+
+    void cache_image_metadata(const monitor::client::image_metadata& metadata) {
+      _image_metadata_cache[make_image_cache_key(metadata.pool_id, metadata.image_name)] = metadata;
+    }
+
+    void cache_snapshot_metadata(const monitor::client::snapshot_metadata& metadata) {
+      _snapshot_metadata_cache[metadata.snapshot_id] = metadata;
+    }
+
+    std::optional<monitor::client::image_metadata> find_cached_image_metadata(const int32_t pool_id, const std::string& image_name) const {
+      auto it = _image_metadata_cache.find(make_image_cache_key(pool_id, image_name));
+      if (it == _image_metadata_cache.end()) {
+        return std::nullopt;
+      }
+      return it->second;
+    }
+
     monitor::client* _mon_cli{nullptr};
+    std::unordered_map<std::string, monitor::client::image_metadata> _image_metadata_cache{};
+    std::unordered_map<std::string, monitor::client::snapshot_metadata> _snapshot_metadata_cache{};
 };

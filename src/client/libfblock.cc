@@ -43,6 +43,24 @@ void libblk_client::open_image(const std::string pool_name, const std::string im
         {
             SPDK_INFOLOG(libblk, "open image status %d\n", s);
         });
+    _mon_cli->emplace_get_image_metadata_by_name_request(
+        pool_name,
+        image_name,
+        [this](const monitor::client::response_status s, monitor::client::request_context* req_ctx)
+        {
+            SPDK_INFOLOG(libblk, "warm image metadata status %d\n", s);
+            if (s != monitor::client::response_status::ok) {
+                return;
+            }
+            auto& metadata = std::get<std::unique_ptr<monitor::client::image_metadata>>(req_ctx->response_data);
+            if (!metadata) {
+                return;
+            }
+            cache_image_metadata(*metadata);
+            if (!metadata->parent_snapshot_id.empty()) {
+                get_snapshot_metadata_by_id(metadata->parent_snapshot_id);
+            }
+        });
 }
 
 void libblk_client::remove_image(const std::string pool_name, const std::string image_name)
@@ -84,7 +102,7 @@ void libblk_client::get_image_metadata_by_name(const std::string pool_name, cons
     _mon_cli->emplace_get_image_metadata_by_name_request(
         pool_name,
         image_name,
-        [] (const monitor::client::response_status s, monitor::client::request_context* req_ctx)
+        [this] (const monitor::client::response_status s, monitor::client::request_context* req_ctx)
         {
             SPDK_INFOLOG(libblk, "get image metadata by name status %d\n", s);
             if (s != monitor::client::response_status::ok) {
@@ -94,6 +112,7 @@ void libblk_client::get_image_metadata_by_name(const std::string pool_name, cons
             if (!metadata) {
                 return;
             }
+            cache_image_metadata(*metadata);
             SPDK_INFOLOG(
               libblk,
               "image metadata image_id=%s parent_snapshot_id=%s current_snap_seq=%lu status=%s\n",
@@ -108,7 +127,7 @@ void libblk_client::get_snapshot_metadata_by_id(const std::string snapshot_id)
 {
     _mon_cli->emplace_get_snapshot_metadata_by_id_request(
         snapshot_id,
-        [] (const monitor::client::response_status s, monitor::client::request_context* req_ctx)
+        [this] (const monitor::client::response_status s, monitor::client::request_context* req_ctx)
         {
             SPDK_INFOLOG(libblk, "get snapshot metadata by id status %d\n", s);
             if (s != monitor::client::response_status::ok) {
@@ -118,6 +137,7 @@ void libblk_client::get_snapshot_metadata_by_id(const std::string snapshot_id)
             if (!metadata) {
                 return;
             }
+            cache_snapshot_metadata(*metadata);
             SPDK_INFOLOG(
               libblk,
               "snapshot metadata snapshot_id=%s source_image_id=%s snap_seq=%lu\n",
@@ -239,6 +259,10 @@ int libblk_client::write(const uint64_t pool_id, const std::string image_name, c
     auto obj_num = get_obj_num(offset, length);
     // 建立回调函数
     write_source *source = new write_source(cb, obj_num, bdev_io);
+    uint64_t current_snap_seq = 0;
+    if (auto metadata = find_cached_image_metadata(static_cast<int32_t>(pool_id), image_name); metadata.has_value()) {
+        current_snap_seq = metadata->current_snap_seq;
+    }
 
     SPDK_INFOLOG(libblk, "write pool: %lu image_name: %s offset: %lu length: %lu  obj_num: %lu \n",
             pool_id, image_name.c_str(), offset, length, obj_num);
@@ -249,7 +273,7 @@ int libblk_client::write(const uint64_t pool_id, const std::string image_name, c
         // 写一个对象
         std::string str = std::string(buf.c_str() + write_bytes, expected_object_size);
         // 计算对象目标pg
-        _client->write_object(object_name, object_offset, str, pool_id, &write_source::write_done, source);
+        _client->write_object(object_name, object_offset, str, pool_id, &write_source::write_done, source, current_snap_seq);
         write_bytes += expected_object_size;
         expected_object_size = default_object_size; // 默认的对象大小
         if (expected_object_size > (length - write_bytes))
