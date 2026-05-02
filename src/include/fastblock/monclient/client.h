@@ -139,6 +139,7 @@ public:
 
     using response_type = std::variant<
       std::monostate,
+      std::unique_ptr<std::string>,
       std::unique_ptr<image_info>,
       std::unique_ptr<pools>,
       std::unique_ptr<image_metadata>,
@@ -532,6 +533,7 @@ public:
     void emplace_put_snapshot_metadata_request(const snapshot_metadata&, on_response_callback_type&& cb);
     void emplace_get_snapshot_metadata_request(const std::string& image_id, const std::string& snapshot_id, on_response_callback_type&& cb);
     void emplace_get_snapshot_metadata_by_id_request(const std::string& snapshot_id, on_response_callback_type&& cb);
+    void emplace_get_snapshot_id_by_name_request(const std::string& pool_name, const std::string& image_name, const std::string& snapshot_name, on_response_callback_type&& cb);
     void emplace_delete_snapshot_metadata_request(const std::string& image_id, const std::string& snapshot_id, on_response_callback_type&& cb);
     void emplace_list_snapshot_metadata_request(const std::string& image_id, on_response_callback_type&& cb);
     void emplace_put_image_child_link_request(const std::string& snapshot_id, const std::string& child_image_id, on_response_callback_type&& cb);

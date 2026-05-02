@@ -365,6 +365,21 @@ void client::emplace_get_snapshot_metadata_by_id_request(const std::string& snap
     enqueue_request(ctx);
 }
 
+void client::emplace_get_snapshot_id_by_name_request(
+  const std::string& pool_name,
+  const std::string& image_name,
+  const std::string& snapshot_name,
+  on_response_callback_type&& cb) {
+    auto req = std::make_unique<msg::Request>();
+    auto* real_req = req->mutable_get_snapshot_id_by_name_request();
+    real_req->set_pool_name(pool_name);
+    real_req->set_image_name(image_name);
+    real_req->set_snapshot_name(snapshot_name);
+    auto* ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
+}
+
 void client::emplace_delete_snapshot_metadata_request(const std::string& image_id, const std::string& snapshot_id, on_response_callback_type&& cb) {
     auto req = std::make_unique<msg::Request>();
     auto* real_req = req->mutable_delete_snapshot_metadata_request();
@@ -1292,6 +1307,15 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
         auto& resp = response->get_snapshot_metadata_by_id_response();
         auto& req_ctx = _on_flight_requests.front();
         req_ctx->response_data = std::make_unique<client::snapshot_metadata>(snapshot_metadata_from_proto(resp.metadata()));
+        req_ctx->cb(to_response_status(resp.errorcode()), req_ctx.get());
+        _on_flight_requests.pop_front();
+        break;
+    }
+    case msg::Response::UnionCase::kGetSnapshotIdByNameResponse: {
+        SPDK_DEBUGLOG(mon, "Received get snapshot id by name response\n");
+        auto& resp = response->get_snapshot_id_by_name_response();
+        auto& req_ctx = _on_flight_requests.front();
+        req_ctx->response_data = std::make_unique<std::string>(resp.snapshot_id());
         req_ctx->cb(to_response_status(resp.errorcode()), req_ctx.get());
         _on_flight_requests.pop_front();
         break;
