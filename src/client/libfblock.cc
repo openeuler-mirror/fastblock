@@ -194,6 +194,22 @@ void libblk_client::get_snapshot_metadata_by_id(const std::string snapshot_id)
         });
 }
 
+std::vector<monitor::client::snapshot_metadata> libblk_client::build_fallback_chain(
+    const std::optional<monitor::client::image_metadata>& image_metadata) const
+{
+    std::vector<monitor::client::snapshot_metadata> chain{};
+    auto current = image_metadata;
+    while (current.has_value() && !current->parent_snapshot_id.empty()) {
+        auto parent_snapshot = find_cached_snapshot_metadata(current->parent_snapshot_id);
+        if (!parent_snapshot.has_value()) {
+            break;
+        }
+        chain.emplace_back(*parent_snapshot);
+        current = find_cached_image_metadata(parent_snapshot->source_pool_id, parent_snapshot->source_image_name);
+    }
+    return chain;
+}
+
 // bdev的IO，转化为char* buf 的io
 int libblk_client::write(
   const uint64_t pool_id,
@@ -341,7 +357,7 @@ struct read_source
         uint64_t object_offset;
         uint64_t length;
         uint64_t buffer_offset;
-        bool retried_with_parent{false};
+        size_t fallback_depth{0};
     };
 
     read_callback cb;
@@ -356,14 +372,14 @@ struct read_source
     uint64_t pool_id;
     std::string image_name;
     std::optional<monitor::client::image_metadata> image_metadata;
-    std::optional<monitor::client::snapshot_metadata> parent_snapshot;
+    std::vector<monitor::client::snapshot_metadata> fallback_chain;
     std::vector<object_read_plan> plans;
 
 
     read_source(read_callback _cb, uint32_t _obj_num, uint64_t _len, struct spdk_bdev_io *_bdev_io,
             uint64_t _offset, fblock_client* _client, uint64_t _pool_id, std::string _image_name,
             std::optional<monitor::client::image_metadata> _image_metadata,
-            std::optional<monitor::client::snapshot_metadata> _parent_snapshot)
+            std::vector<monitor::client::snapshot_metadata> _fallback_chain)
     : cb(_cb)
     , obj_num(_obj_num)
     , len(_len)
@@ -375,7 +391,7 @@ struct read_source
     , pool_id(_pool_id)
     , image_name(std::move(_image_name))
     , image_metadata(std::move(_image_metadata))
-    , parent_snapshot(std::move(_parent_snapshot)) {
+    , fallback_chain(std::move(_fallback_chain)) {
         buf = new char[len];
         memset(buf, 0, len);
         plans.reserve(_obj_num);
@@ -416,21 +432,6 @@ struct read_source
         }
     }
 
-    static void parent_read_done(void *src, uint64_t object_idx, const std::string& data, int32_t state) {
-        read_source* source = (read_source*)src;
-        auto& plan = source->plans.at(object_idx);
-        if(state == err::E_SUCCESS){
-            memcpy(source->buf + plan.buffer_offset, data.data(), data.size());
-            finish_one(source, err::E_SUCCESS);
-            return;
-        }
-        if(state == err::E_ENOENT){
-            finish_one(source, err::E_SUCCESS);
-            return;
-        }
-        finish_one(source, state);
-    }
-
     static void read_done(void *src, uint64_t object_idx, const std::string& data, int32_t state) {
         read_source* source = (read_source*)src;
         auto& plan = source->plans.at(object_idx);
@@ -441,19 +442,19 @@ struct read_source
         }
 
         if(state == err::E_ENOENT){
-            if(source->parent_snapshot.has_value() && !plan.retried_with_parent){
-                plan.retried_with_parent = true;
-                auto parent_prefix = std::to_string(source->parent_snapshot->source_pool_id) + "__blk_data___" + source->parent_snapshot->source_image_name;
+            if(plan.fallback_depth < source->fallback_chain.size()){
+                auto& fallback = source->fallback_chain[plan.fallback_depth++];
+                auto parent_prefix = std::to_string(fallback.source_pool_id) + "__blk_data___" + fallback.source_image_name;
                 auto parent_object_name = parent_prefix + std::to_string(plan.object_seq);
                 source->client->read_object(
                     parent_object_name,
                     plan.object_offset,
                     plan.length,
-                    source->parent_snapshot->source_pool_id,
-                    &read_source::parent_read_done,
+                    fallback.source_pool_id,
+                    &read_source::read_done,
                     source,
                     object_idx,
-                    source->parent_snapshot->snap_seq);
+                    fallback.snap_seq);
                 return;
             }
             finish_one(source, err::E_SUCCESS);
@@ -478,10 +479,7 @@ int libblk_client::read(const uint64_t pool_id, const std::string image_name, co
 
     auto obj_num = get_obj_num(offset, length);
     auto image_metadata = find_cached_image_metadata(static_cast<int32_t>(pool_id), image_name);
-    std::optional<monitor::client::snapshot_metadata> parent_snapshot = std::nullopt;
-    if (image_metadata.has_value() && !image_metadata->parent_snapshot_id.empty()) {
-        parent_snapshot = find_cached_snapshot_metadata(image_metadata->parent_snapshot_id);
-    }
+    auto fallback_chain = build_fallback_chain(image_metadata);
     read_source* source = new read_source(
         cb,
         obj_num,
@@ -492,7 +490,7 @@ int libblk_client::read(const uint64_t pool_id, const std::string image_name, co
         pool_id,
         image_name,
         image_metadata,
-        parent_snapshot);
+        std::move(fallback_chain));
     uint64_t object_idx = 0;
     SPDK_INFOLOG(libblk, "read pool: %lu image_name: %s offset: %lu length: %lu  obj_num: %lu\n",
                  pool_id, image_name.c_str(), offset, length, obj_num);

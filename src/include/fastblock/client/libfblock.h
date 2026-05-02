@@ -131,6 +131,9 @@ private:
       return std::to_string(pool_id) + "/" + image_name;
     }
 
+    std::vector<monitor::client::snapshot_metadata> build_fallback_chain(
+      const std::optional<monitor::client::image_metadata>& image_metadata) const;
+
     void warm_image_lineage_by_metadata(const monitor::client::image_metadata& metadata);
     void warm_image_lineage_by_id(const std::string& image_id);
     void warm_snapshot_lineage(const std::string& snapshot_id);
