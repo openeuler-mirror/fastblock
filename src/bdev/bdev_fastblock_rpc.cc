@@ -246,3 +246,60 @@ cleanup:
 }
 
 SPDK_RPC_REGISTER("bdev_fastblock_resize", rpc_bdev_fastblock_resize, SPDK_RPC_RUNTIME)
+
+struct rpc_bdev_fastblock_flatten
+{
+	char *name;
+};
+
+static const struct spdk_json_object_decoder rpc_bdev_fastblock_flatten_decoders[] = {
+	{"name", offsetof(struct rpc_bdev_fastblock_flatten, name), spdk_json_decode_string},
+};
+
+static void
+free_rpc_bdev_fastblock_flatten(struct rpc_bdev_fastblock_flatten *req)
+{
+	free(req->name);
+}
+
+static void
+rpc_bdev_fastblock_flatten(struct spdk_jsonrpc_request *request,
+						  const struct spdk_json_val *params)
+{
+	struct rpc_bdev_fastblock_flatten req = {};
+	struct spdk_bdev *bdev;
+	struct spdk_json_write_ctx *w;
+	int rc;
+
+	if (spdk_json_decode_object(params, rpc_bdev_fastblock_flatten_decoders,
+								SPDK_COUNTOF(rpc_bdev_fastblock_flatten_decoders),
+								&req))
+	{
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
+										 "spdk_json_decode_object failed");
+		goto cleanup;
+	}
+
+	bdev = spdk_bdev_get_by_name(req.name);
+	if (bdev == NULL)
+	{
+		spdk_jsonrpc_send_error_response(request, -ENODEV, spdk_strerror(ENODEV));
+		goto cleanup;
+	}
+
+	rc = bdev_fastblock_flatten(bdev);
+	if (rc)
+	{
+		spdk_jsonrpc_send_error_response(request, rc, spdk_strerror(-rc));
+		goto cleanup;
+	}
+
+	w = spdk_jsonrpc_begin_result(request);
+	spdk_json_write_bool(w, true);
+	spdk_jsonrpc_end_result(request, w);
+
+cleanup:
+	free_rpc_bdev_fastblock_flatten(&req);
+}
+
+SPDK_RPC_REGISTER("bdev_fastblock_flatten", rpc_bdev_fastblock_flatten, SPDK_RPC_RUNTIME)
