@@ -93,6 +93,7 @@ public:
     void create_clone_from_snapshot(const std::string snapshot_id, const std::string clone_image_name);
     void protect_snapshot(const std::string snapshot_id);
     void unprotect_snapshot(const std::string snapshot_id);
+    void delete_image_snapshot(const std::string snapshot_id);
 
     int write(
       const uint64_t pool_id,
