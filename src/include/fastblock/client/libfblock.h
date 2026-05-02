@@ -95,6 +95,24 @@ public:
     void unprotect_snapshot(const std::string snapshot_id);
     void delete_image_snapshot(const std::string snapshot_id);
     void finalize_flatten_image(const std::string image_id);
+    void flatten_image(const std::string pool_name, const std::string image_name);
+
+    fblock_client* data_client() {
+      return _client.get();
+    }
+
+    monitor::client* monitor_client() {
+      return _mon_cli;
+    }
+
+    void refresh_cached_image_metadata(const monitor::client::image_metadata& metadata) {
+      warm_image_lineage_by_metadata(metadata);
+    }
+
+    std::vector<monitor::client::snapshot_metadata> get_fallback_chain(
+      const std::optional<monitor::client::image_metadata>& image_metadata) const {
+      return build_fallback_chain(image_metadata);
+    }
 
     int write(
       const uint64_t pool_id,

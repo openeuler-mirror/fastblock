@@ -17,6 +17,175 @@
 #include "fastblock/utils/utils.h"
 #include "fastblock/utils/err_num.h"
 
+namespace {
+
+struct flatten_image_ctx {
+    libblk_client* owner{nullptr};
+    std::string pool_name{};
+    std::string image_name{};
+    std::optional<monitor::client::image_metadata> image_metadata{std::nullopt};
+    std::vector<monitor::client::snapshot_metadata> fallback_chain{};
+    uint64_t object_count{0};
+    uint64_t current_object_seq{0};
+    size_t fallback_depth{0};
+};
+
+void flatten_issue_next(flatten_image_ctx* ctx);
+void flatten_issue_parent_read(flatten_image_ctx* ctx);
+
+void flatten_finish(flatten_image_ctx* ctx, const int32_t state)
+{
+    SPDK_NOTICELOG("flatten image %s/%s finished with state %d\n", ctx->pool_name.c_str(), ctx->image_name.c_str(), state);
+    delete ctx;
+}
+
+void flatten_finalize_done(const monitor::client::response_status status, monitor::client::request_context* req_ctx, flatten_image_ctx* ctx)
+{
+    if (status == monitor::client::response_status::ok) {
+        auto& metadata = std::get<std::unique_ptr<monitor::client::image_metadata>>(req_ctx->response_data);
+        if (metadata) {
+            ctx->owner->refresh_cached_image_metadata(*metadata);
+        }
+        flatten_finish(ctx, err::E_SUCCESS);
+        return;
+    }
+    flatten_finish(ctx, err::E_BUSY);
+}
+
+void flatten_write_done(void *src, int32_t state)
+{
+    auto* ctx = reinterpret_cast<flatten_image_ctx*>(src);
+    if (state != err::E_SUCCESS) {
+        flatten_finish(ctx, state);
+        return;
+    }
+    ctx->current_object_seq++;
+    flatten_issue_next(ctx);
+}
+
+void flatten_parent_read_done(void *src, uint64_t object_idx, const std::string& data, int32_t state)
+{
+    (void)object_idx;
+    auto* ctx = reinterpret_cast<flatten_image_ctx*>(src);
+    if (state == err::E_SUCCESS) {
+        auto object_name = ctx->owner->calc_image_object_prefix(ctx->image_metadata->pool_id, ctx->image_metadata->image_name);
+        object_name = ctx->owner->get_image_object_name(object_name, ctx->current_object_seq);
+        ctx->owner->data_client()->write_object(
+            object_name,
+            0,
+            data,
+            ctx->image_metadata->pool_id,
+            &flatten_write_done,
+            ctx,
+            0);
+        return;
+    }
+    if (state == err::E_ENOENT) {
+        flatten_issue_parent_read(ctx);
+        return;
+    }
+    flatten_finish(ctx, state);
+}
+
+void flatten_issue_parent_read(flatten_image_ctx* ctx)
+{
+    if (ctx->fallback_depth >= ctx->fallback_chain.size()) {
+        ctx->current_object_seq++;
+        flatten_issue_next(ctx);
+        return;
+    }
+
+    auto& fallback = ctx->fallback_chain[ctx->fallback_depth++];
+    std::string parent_prefix = std::to_string(fallback.source_pool_id) + "__blk_data___" + fallback.source_image_name;
+    auto parent_object_name = ctx->owner->get_image_object_name(parent_prefix, ctx->current_object_seq);
+    ctx->owner->data_client()->read_object(
+        parent_object_name,
+        0,
+        default_object_size,
+        fallback.source_pool_id,
+        &flatten_parent_read_done,
+        ctx,
+        0,
+        fallback.snap_seq);
+}
+
+void flatten_child_probe_done(void *src, uint64_t object_idx, const std::string& data, int32_t state)
+{
+    (void)object_idx;
+    (void)data;
+    auto* ctx = reinterpret_cast<flatten_image_ctx*>(src);
+    if (state == err::E_SUCCESS) {
+        ctx->current_object_seq++;
+        flatten_issue_next(ctx);
+        return;
+    }
+    if (state == err::E_ENOENT) {
+        ctx->fallback_depth = 0;
+        flatten_issue_parent_read(ctx);
+        return;
+    }
+    flatten_finish(ctx, state);
+}
+
+void flatten_issue_next(flatten_image_ctx* ctx)
+{
+    if (ctx->current_object_seq >= ctx->object_count) {
+        ctx->owner->monitor_client()->emplace_finalize_flatten_image_request(
+            ctx->image_metadata->image_id,
+            [ctx](const monitor::client::response_status status, monitor::client::request_context* req_ctx)
+            {
+                flatten_finalize_done(status, req_ctx, ctx);
+            });
+        return;
+    }
+
+    std::string child_prefix = std::to_string(ctx->image_metadata->pool_id) + "__blk_data___" + ctx->image_metadata->image_name;
+    auto child_object_name = ctx->owner->get_image_object_name(child_prefix, ctx->current_object_seq);
+    ctx->owner->data_client()->read_object(
+        child_object_name,
+        0,
+        1,
+        ctx->image_metadata->pool_id,
+        &flatten_child_probe_done,
+        ctx,
+        0,
+        0);
+}
+
+void flatten_on_root_image(const monitor::client::response_status status, monitor::client::request_context* req_ctx, flatten_image_ctx* ctx)
+{
+    if (status != monitor::client::response_status::ok) {
+        flatten_finish(ctx, err::E_ENOENT);
+        return;
+    }
+
+    auto& metadata = std::get<std::unique_ptr<monitor::client::image_metadata>>(req_ctx->response_data);
+    if (!metadata) {
+        flatten_finish(ctx, err::E_INVAL);
+        return;
+    }
+    ctx->owner->refresh_cached_image_metadata(*metadata);
+    ctx->image_metadata = *metadata;
+    if (metadata->parent_snapshot_id.empty()) {
+        flatten_finish(ctx, err::E_INVAL);
+        return;
+    }
+    if (metadata->current_snap_seq > 0) {
+        flatten_finish(ctx, err::E_BUSY);
+        return;
+    }
+    ctx->fallback_chain = ctx->owner->get_fallback_chain(ctx->image_metadata);
+    if (!metadata->parent_snapshot_id.empty() && ctx->fallback_chain.empty()) {
+        flatten_finish(ctx, err::E_BUSY);
+        return;
+    }
+    ctx->object_count = (metadata->size + default_object_size - 1) / default_object_size;
+    ctx->current_object_seq = 0;
+    flatten_issue_next(ctx);
+}
+
+} // namespace
+
 void libblk_client::warm_image_lineage_by_metadata(const monitor::client::image_metadata& metadata)
 {
     cache_image_metadata(metadata);
@@ -321,6 +490,22 @@ void libblk_client::finalize_flatten_image(const std::string image_id)
                 return;
             }
             warm_image_lineage_by_metadata(*metadata);
+        });
+}
+
+void libblk_client::flatten_image(const std::string pool_name, const std::string image_name)
+{
+    auto* ctx = new flatten_image_ctx{
+        .owner = this,
+        .pool_name = pool_name,
+        .image_name = image_name,
+    };
+    _mon_cli->emplace_get_image_metadata_by_name_request(
+        pool_name,
+        image_name,
+        [ctx](const monitor::client::response_status status, monitor::client::request_context* req_ctx)
+        {
+            flatten_on_root_image(status, req_ctx, ctx);
         });
 }
 
