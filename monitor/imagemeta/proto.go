@@ -169,6 +169,14 @@ func CreateSnapshotByNameProto(ctx context.Context, client *etcdapi.EtcdClient, 
 	return msg.ImageMetadataErrorCode_imageMetadataOk, snapshotToProto(item)
 }
 
+func CreateCloneFromSnapshotProto(ctx context.Context, client *etcdapi.EtcdClient, snapshotID, cloneImageName string) (msg.ImageMetadataErrorCode, *msg.ImageMetadataV2) {
+	item, err := CreateCloneFromSnapshot(ctx, client, snapshotID, cloneImageName)
+	if err != nil {
+		return toImageMetadataError(err), nil
+	}
+	return msg.ImageMetadataErrorCode_imageMetadataOk, imageToProto(item)
+}
+
 func imageToProto(item *ImageMetadata) *msg.ImageMetadataV2 {
 	if item == nil {
 		return nil
@@ -339,6 +347,8 @@ func isInvalidArgument(err error) bool {
 		"invalid operation status",
 		"operation id is required",
 		"snapshot metadata already exists",
+		"image metadata already exists",
+		"snapshot metadata is not protected",
 		"pool name, image name and snapshot name are required":
 		return true
 	default:

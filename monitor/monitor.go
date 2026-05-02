@@ -902,6 +902,29 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			return err
 		}
 
+	case *msg.Request_CreateCloneFromSnapshotRequest:
+		log.Info(ctx, "Received CreateCloneFromSnapshotRequest")
+
+		errCode, metadata := imagemeta.CreateCloneFromSnapshotProto(
+			ctx,
+			client,
+			payload.CreateCloneFromSnapshotRequest.GetSnapshotId(),
+			payload.CreateCloneFromSnapshotRequest.GetCloneImageName(),
+		)
+		response := &msg.Response{
+			Union: &msg.Response_CreateCloneFromSnapshotResponse{
+				CreateCloneFromSnapshotResponse: &msg.CreateCloneFromSnapshotResponse{
+					Errorcode: errCode,
+					Metadata:  metadata,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
 	case *msg.Request_PutCsiAttachmentRequest:
 		log.Info(ctx, "Received PutCSIAttachmentRequest")
 
