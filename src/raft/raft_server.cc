@@ -1791,7 +1791,7 @@ static void write_snapshot(write_ctx *wc){
         std::map<std::string, xattr_val_type> xattr;
         xattr["type"] = blob_type::object;
         xattr["pg"] = wc->_raft->raft_get_pg_name();
-        store->write(xattr, object.object_name, 0, object.buf, object.size, write_done, wc);
+        store->write(xattr, object.object_name, 0, object.buf, object.size, 0, write_done, wc);
     }
 }
 

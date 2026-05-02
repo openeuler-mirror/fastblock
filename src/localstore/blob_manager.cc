@@ -543,6 +543,8 @@ void parse_object_xattr(struct spdk_blob *blob) {
 
   object.origin.blob = blob;
   object.origin.blobid = spdk_blob_get_id(blob);
+  object.birth_snap_seq = xattr.birth_seq;
+  object.last_snap_seq = xattr.last_snap_seq;
 }
 
 void parse_object_snap_xattr(struct spdk_blob *blob) {
@@ -565,6 +567,10 @@ void parse_object_snap_xattr(struct spdk_blob *blob) {
   snapshot.snap_blob.blobid = spdk_blob_get_id(blob);
   snapshot.snap_blob.blob = blob;
   snapshot.snap_name = xattr.snap_name;
+  snapshot.snap_seq = xattr.snap_seq;
+  if (object.last_snap_seq < xattr.snap_seq) {
+      object.last_snap_seq = xattr.snap_seq;
+  }
   object.snap_list.emplace_back(std::move(snapshot));
 }
 

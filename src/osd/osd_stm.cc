@@ -77,7 +77,7 @@ void osd_stm::write_obj(const std::string& obj_name, uint64_t offset, const std:
         obj_name.c_str(), (uint32_t)blob_type::object, get_pg_name().c_str(),
         core_sharded::get_core_sharded().this_shard_id());
     SPDK_DEBUGLOG(osd, "write obj %s current_snap_seq: %lu\n", obj_name.c_str(), current_snap_seq);
-    _store.write(xattr, obj_name, offset, buf, data.size(), write_obj_done, ctx);
+    _store.write(xattr, obj_name, offset, buf, data.size(), current_snap_seq, write_obj_done, ctx);
 }
 
 void osd_stm::delete_obj(const std::string& obj_name, utils::context *complete){
