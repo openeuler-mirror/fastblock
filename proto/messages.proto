@@ -804,6 +804,15 @@ message DeleteImageSnapshotResponse {
     SnapshotMetadataV2 metadata = 2;
 }
 
+message FinalizeFlattenImageRequest {
+    string image_id = 1;
+}
+
+message FinalizeFlattenImageResponse {
+    ImageMetadataErrorCode errorcode = 1;
+    ImageMetadataV2 metadata = 2;
+}
+
 message Request {
     oneof union {
         BootRequest boot_request = 1;
@@ -865,6 +874,7 @@ message Request {
         ProtectSnapshotRequest protect_snapshot_request = 57;
         UnprotectSnapshotRequest unprotect_snapshot_request = 58;
         DeleteImageSnapshotRequest delete_image_snapshot_request = 59;
+        FinalizeFlattenImageRequest finalize_flatten_image_request = 60;
     }
 }
 
@@ -929,5 +939,6 @@ message Response {
         ProtectSnapshotResponse protect_snapshot_response = 57;
         UnprotectSnapshotResponse unprotect_snapshot_response = 58;
         DeleteImageSnapshotResponse delete_image_snapshot_response = 59;
+        FinalizeFlattenImageResponse finalize_flatten_image_response = 60;
     }
 }
