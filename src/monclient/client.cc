@@ -202,6 +202,106 @@ void client::emplace_list_pool_request(on_response_callback_type&& cb) {
     enqueue_request(ctx);
 }
 
+void client::emplace_put_image_metadata_request(const image_metadata& metadata, on_response_callback_type&& cb) {
+    auto req = std::make_unique<msg::Request>();
+    auto* real_req = req->mutable_put_image_metadata_request();
+    auto* item = real_req->mutable_metadata();
+    item->set_image_id(metadata.image_id);
+    item->set_pool_id(metadata.pool_id);
+    item->set_pool_name(metadata.pool_name);
+    item->set_image_name(metadata.image_name);
+    item->set_size(metadata.size);
+    item->set_object_size(metadata.object_size);
+    for (const auto& feature : metadata.features) {
+        item->add_features(feature);
+    }
+    item->set_status(metadata.status);
+    item->set_parent_snapshot_id(metadata.parent_snapshot_id);
+    item->set_depth(metadata.depth);
+    item->set_created_at_unix_nano(metadata.created_at_unix_nano);
+    item->set_updated_at_unix_nano(metadata.updated_at_unix_nano);
+    item->set_generation(metadata.generation);
+
+    auto* ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
+}
+
+void client::emplace_get_image_metadata_request(const std::string& image_id, on_response_callback_type&& cb) {
+    auto req = std::make_unique<msg::Request>();
+    req->mutable_get_image_metadata_request()->set_image_id(image_id);
+    auto* ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
+}
+
+void client::emplace_delete_image_metadata_request(const std::string& image_id, on_response_callback_type&& cb) {
+    auto req = std::make_unique<msg::Request>();
+    req->mutable_delete_image_metadata_request()->set_image_id(image_id);
+    auto* ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
+}
+
+void client::emplace_list_image_metadata_request(on_response_callback_type&& cb) {
+    auto req = std::make_unique<msg::Request>();
+    [[maybe_unused]] auto _ = req->mutable_list_image_metadata_request();
+    auto* ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
+}
+
+void client::emplace_put_snapshot_metadata_request(const snapshot_metadata& metadata, on_response_callback_type&& cb) {
+    auto req = std::make_unique<msg::Request>();
+    auto* real_req = req->mutable_put_snapshot_metadata_request();
+    auto* item = real_req->mutable_metadata();
+    item->set_snapshot_id(metadata.snapshot_id);
+    item->set_snapshot_name(metadata.snapshot_name);
+    item->set_source_image_id(metadata.source_image_id);
+    item->set_source_pool_id(metadata.source_pool_id);
+    item->set_source_pool_name(metadata.source_pool_name);
+    item->set_source_image_name(metadata.source_image_name);
+    item->set_snap_seq(metadata.snap_seq);
+    item->set_status(metadata.status);
+    item->set_protected_(metadata.is_protected);
+    item->set_created_at_unix_nano(metadata.created_at_unix_nano);
+    item->set_updated_at_unix_nano(metadata.updated_at_unix_nano);
+    item->set_operation_id(metadata.operation_id);
+    item->set_child_count(metadata.child_count);
+
+    auto* ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
+}
+
+void client::emplace_get_snapshot_metadata_request(const std::string& image_id, const std::string& snapshot_id, on_response_callback_type&& cb) {
+    auto req = std::make_unique<msg::Request>();
+    auto* real_req = req->mutable_get_snapshot_metadata_request();
+    real_req->set_image_id(image_id);
+    real_req->set_snapshot_id(snapshot_id);
+    auto* ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
+}
+
+void client::emplace_delete_snapshot_metadata_request(const std::string& image_id, const std::string& snapshot_id, on_response_callback_type&& cb) {
+    auto req = std::make_unique<msg::Request>();
+    auto* real_req = req->mutable_delete_snapshot_metadata_request();
+    real_req->set_image_id(image_id);
+    real_req->set_snapshot_id(snapshot_id);
+    auto* ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
+}
+
+void client::emplace_list_snapshot_metadata_request(const std::string& image_id, on_response_callback_type&& cb) {
+    auto req = std::make_unique<msg::Request>();
+    req->mutable_list_snapshot_metadata_request()->set_image_id(image_id);
+    auto* ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
+}
+
 void client::handle_emplace_request(client::request_context* ctx) {
     _requests.push_back(std::unique_ptr<request_context>{ctx});
 }
@@ -306,6 +406,20 @@ client::to_response_status(const msg::GetImageErrorCode e) noexcept {
         return client::response_status::ok;
     default:
         return client::response_status::unknown_server_status;
+    }
+}
+
+client::response_status
+client::to_response_status(const msg::ImageMetadataErrorCode e) noexcept {
+    switch (e) {
+    case msg::ImageMetadataErrorCode::imageMetadataOk:
+        return client::response_status::ok;
+    case msg::ImageMetadataErrorCode::imageMetadataNotFound:
+        return client::response_status::image_not_found;
+    case msg::ImageMetadataErrorCode::imageMetadataInvalidArgument:
+        return client::response_status::fail;
+    default:
+        return client::response_status::server_error;
     }
 }
 
@@ -744,6 +858,43 @@ int client::send_request(msg::Request* req, bool send_directly) {
 }
 
 void client::process_response(std::shared_ptr<msg::Response> response) {
+    auto image_metadata_from_proto = [] (const msg::ImageMetadataV2& item) {
+        client::image_metadata ret{};
+        ret.image_id = item.image_id();
+        ret.pool_id = item.pool_id();
+        ret.pool_name = item.pool_name();
+        ret.image_name = item.image_name();
+        ret.size = item.size();
+        ret.object_size = item.object_size();
+        ret.features.reserve(item.features_size());
+        for (const auto& feature : item.features()) {
+            ret.features.emplace_back(feature);
+        }
+        ret.status = item.status();
+        ret.parent_snapshot_id = item.parent_snapshot_id();
+        ret.depth = item.depth();
+        ret.created_at_unix_nano = item.created_at_unix_nano();
+        ret.updated_at_unix_nano = item.updated_at_unix_nano();
+        ret.generation = item.generation();
+        return ret;
+    };
+    auto snapshot_metadata_from_proto = [] (const msg::SnapshotMetadataV2& item) {
+        client::snapshot_metadata ret{};
+        ret.snapshot_id = item.snapshot_id();
+        ret.snapshot_name = item.snapshot_name();
+        ret.source_image_id = item.source_image_id();
+        ret.source_pool_id = item.source_pool_id();
+        ret.source_pool_name = item.source_pool_name();
+        ret.source_image_name = item.source_image_name();
+        ret.snap_seq = item.snap_seq();
+        ret.status = item.status();
+        ret.is_protected = item.protected_();
+        ret.created_at_unix_nano = item.created_at_unix_nano();
+        ret.updated_at_unix_nano = item.updated_at_unix_nano();
+        ret.operation_id = item.operation_id();
+        ret.child_count = item.child_count();
+        return ret;
+    };
     auto response_case = response->union_case();
     SPDK_DEBUGLOG(mon, "Got response type %d\n", response_case);
 
@@ -856,6 +1007,80 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
         auto& req_ctx = _on_flight_requests.front();
         req_ctx->response_data = std::move(pools_info);
         req_ctx->cb(response_status::ok, req_ctx.get());
+        _on_flight_requests.pop_front();
+        break;
+    }
+    case msg::Response::UnionCase::kPutImageMetadataResponse: {
+        SPDK_DEBUGLOG(mon, "Received put image metadata response\n");
+        auto& req_ctx = _on_flight_requests.front();
+        req_ctx->cb(to_response_status(response->put_image_metadata_response().errorcode()), req_ctx.get());
+        _on_flight_requests.pop_front();
+        break;
+    }
+    case msg::Response::UnionCase::kGetImageMetadataResponse: {
+        SPDK_DEBUGLOG(mon, "Received get image metadata response\n");
+        auto& resp = response->get_image_metadata_response();
+        auto& req_ctx = _on_flight_requests.front();
+        req_ctx->response_data = std::make_unique<client::image_metadata>(image_metadata_from_proto(resp.metadata()));
+        req_ctx->cb(to_response_status(resp.errorcode()), req_ctx.get());
+        _on_flight_requests.pop_front();
+        break;
+    }
+    case msg::Response::UnionCase::kDeleteImageMetadataResponse: {
+        SPDK_DEBUGLOG(mon, "Received delete image metadata response\n");
+        auto& req_ctx = _on_flight_requests.front();
+        req_ctx->cb(to_response_status(response->delete_image_metadata_response().errorcode()), req_ctx.get());
+        _on_flight_requests.pop_front();
+        break;
+    }
+    case msg::Response::UnionCase::kListImageMetadataResponse: {
+        SPDK_DEBUGLOG(mon, "Received list image metadata response\n");
+        auto& resp = response->list_image_metadata_response();
+        auto items = std::make_unique<client::image_metadata_list>();
+        items->data.reserve(resp.metadata_size());
+        for (const auto& item : resp.metadata()) {
+            items->data.emplace_back(image_metadata_from_proto(item));
+        }
+        auto& req_ctx = _on_flight_requests.front();
+        req_ctx->response_data = std::move(items);
+        req_ctx->cb(to_response_status(resp.errorcode()), req_ctx.get());
+        _on_flight_requests.pop_front();
+        break;
+    }
+    case msg::Response::UnionCase::kPutSnapshotMetadataResponse: {
+        SPDK_DEBUGLOG(mon, "Received put snapshot metadata response\n");
+        auto& req_ctx = _on_flight_requests.front();
+        req_ctx->cb(to_response_status(response->put_snapshot_metadata_response().errorcode()), req_ctx.get());
+        _on_flight_requests.pop_front();
+        break;
+    }
+    case msg::Response::UnionCase::kGetSnapshotMetadataResponse: {
+        SPDK_DEBUGLOG(mon, "Received get snapshot metadata response\n");
+        auto& resp = response->get_snapshot_metadata_response();
+        auto& req_ctx = _on_flight_requests.front();
+        req_ctx->response_data = std::make_unique<client::snapshot_metadata>(snapshot_metadata_from_proto(resp.metadata()));
+        req_ctx->cb(to_response_status(resp.errorcode()), req_ctx.get());
+        _on_flight_requests.pop_front();
+        break;
+    }
+    case msg::Response::UnionCase::kDeleteSnapshotMetadataResponse: {
+        SPDK_DEBUGLOG(mon, "Received delete snapshot metadata response\n");
+        auto& req_ctx = _on_flight_requests.front();
+        req_ctx->cb(to_response_status(response->delete_snapshot_metadata_response().errorcode()), req_ctx.get());
+        _on_flight_requests.pop_front();
+        break;
+    }
+    case msg::Response::UnionCase::kListSnapshotMetadataResponse: {
+        SPDK_DEBUGLOG(mon, "Received list snapshot metadata response\n");
+        auto& resp = response->list_snapshot_metadata_response();
+        auto items = std::make_unique<client::snapshot_metadata_list>();
+        items->data.reserve(resp.metadata_size());
+        for (const auto& item : resp.metadata()) {
+            items->data.emplace_back(snapshot_metadata_from_proto(item));
+        }
+        auto& req_ctx = _on_flight_requests.front();
+        req_ctx->response_data = std::move(items);
+        req_ctx->cb(to_response_status(resp.errorcode()), req_ctx.get());
         _on_flight_requests.pop_front();
         break;
     }
