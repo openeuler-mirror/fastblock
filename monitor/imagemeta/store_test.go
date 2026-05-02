@@ -254,6 +254,94 @@ func TestCreateSnapshotByNameAdvancesCurrentSnapSeq(t *testing.T) {
 	}
 }
 
+func TestCreateCloneFromSnapshot(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+
+	image := &ImageMetadata{
+		ImageID:        "img-4",
+		PoolID:         13,
+		PoolName:       "fb",
+		ImageName:      "volume-d",
+		Size:           16 << 20,
+		ObjectSize:     4 << 20,
+		CurrentSnapSeq: 5,
+		Status:         ImageStatusReady,
+		Generation:     2,
+	}
+	if err := PutImage(ctx, client, image); err != nil {
+		t.Fatalf("PutImage failed: %v", err)
+	}
+
+	snapshot := &SnapshotMetadata{
+		SnapshotID:      "snap-4",
+		SnapshotName:    "base",
+		SourceImageID:   "img-4",
+		SourcePoolID:    13,
+		SourcePoolName:  "fb",
+		SourceImageName: "volume-d",
+		SnapSeq:         5,
+		Status:          SnapshotStatusReady,
+		Protected:       true,
+	}
+	if err := PutSnapshot(ctx, client, snapshot); err != nil {
+		t.Fatalf("PutSnapshot failed: %v", err)
+	}
+
+	clone, err := CreateCloneFromSnapshot(ctx, client, "snap-4", "clone-a")
+	if err != nil {
+		t.Fatalf("CreateCloneFromSnapshot failed: %v", err)
+	}
+	if clone.ParentSnapshotID != "snap-4" || clone.PoolName != "fb" || clone.ImageName != "clone-a" {
+		t.Fatalf("unexpected clone metadata: %+v", clone)
+	}
+	if clone.CurrentSnapSeq != 0 {
+		t.Fatalf("expected clone current snap seq 0, got %+v", clone)
+	}
+
+	gotClone, err := GetImage(ctx, client, clone.ImageID)
+	if err != nil {
+		t.Fatalf("GetImage clone failed: %v", err)
+	}
+	if gotClone.ParentSnapshotID != "snap-4" || gotClone.Depth != image.Depth+1 {
+		t.Fatalf("unexpected stored clone metadata: %+v", gotClone)
+	}
+
+	children, err := ListChildImageIDs(ctx, client, "snap-4")
+	if err != nil {
+		t.Fatalf("ListChildImageIDs failed: %v", err)
+	}
+	if len(children) != 1 || children[0] != clone.ImageID {
+		t.Fatalf("unexpected child links: %+v", children)
+	}
+
+	gotSnapshot, err := GetSnapshotByID(ctx, client, "snap-4")
+	if err != nil {
+		t.Fatalf("GetSnapshotByID failed: %v", err)
+	}
+	if gotSnapshot.ChildCount != 1 {
+		t.Fatalf("expected child_count=1, got %+v", gotSnapshot)
+	}
+
+	notProtected := &SnapshotMetadata{
+		SnapshotID:      "snap-5",
+		SnapshotName:    "unprotected",
+		SourceImageID:   "img-4",
+		SourcePoolID:    13,
+		SourcePoolName:  "fb",
+		SourceImageName: "volume-d",
+		SnapSeq:         5,
+		Status:          SnapshotStatusReady,
+		Protected:       false,
+	}
+	if err := PutSnapshot(ctx, client, notProtected); err != nil {
+		t.Fatalf("PutSnapshot failed: %v", err)
+	}
+	if _, err := CreateCloneFromSnapshot(ctx, client, "snap-5", "clone-b"); !errors.Is(err, ErrSnapshotNotProtected) {
+		t.Fatalf("expected ErrSnapshotNotProtected, got %v", err)
+	}
+}
+
 func newTestClient(t *testing.T) *etcdapi.EtcdClient {
 	t.Helper()
 
