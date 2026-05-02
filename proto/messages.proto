@@ -558,6 +558,114 @@ message ListCSILeaseResponse {
     repeated CSIVolumeLease leases = 2;
 }
 
+message ImageMetadataV2 {
+    string image_id = 1;
+    int32 pool_id = 2;
+    string pool_name = 3;
+    string image_name = 4;
+    int64 size = 5;
+    int64 object_size = 6;
+    repeated string features = 7;
+    string status = 8;
+    string parent_snapshot_id = 9;
+    uint32 depth = 10;
+    int64 created_at_unix_nano = 11;
+    int64 updated_at_unix_nano = 12;
+    uint64 generation = 13;
+}
+
+message SnapshotMetadataV2 {
+    string snapshot_id = 1;
+    string snapshot_name = 2;
+    string source_image_id = 3;
+    int32 source_pool_id = 4;
+    string source_pool_name = 5;
+    string source_image_name = 6;
+    uint64 snap_seq = 7;
+    string status = 8;
+    bool protected = 9;
+    int64 created_at_unix_nano = 10;
+    int64 updated_at_unix_nano = 11;
+    string operation_id = 12;
+    uint32 child_count = 13;
+}
+
+enum ImageMetadataErrorCode {
+    imageMetadataOk = 0;
+    imageMetadataNotFound = 1;
+    imageMetadataInvalidArgument = 2;
+    imageMetadataInternalError = 3;
+}
+
+message PutImageMetadataRequest {
+    ImageMetadataV2 metadata = 1;
+}
+
+message PutImageMetadataResponse {
+    ImageMetadataErrorCode errorcode = 1;
+}
+
+message GetImageMetadataRequest {
+    string image_id = 1;
+}
+
+message GetImageMetadataResponse {
+    ImageMetadataErrorCode errorcode = 1;
+    ImageMetadataV2 metadata = 2;
+}
+
+message DeleteImageMetadataRequest {
+    string image_id = 1;
+}
+
+message DeleteImageMetadataResponse {
+    ImageMetadataErrorCode errorcode = 1;
+}
+
+message ListImageMetadataRequest {
+}
+
+message ListImageMetadataResponse {
+    ImageMetadataErrorCode errorcode = 1;
+    repeated ImageMetadataV2 metadata = 2;
+}
+
+message PutSnapshotMetadataRequest {
+    SnapshotMetadataV2 metadata = 1;
+}
+
+message PutSnapshotMetadataResponse {
+    ImageMetadataErrorCode errorcode = 1;
+}
+
+message GetSnapshotMetadataRequest {
+    string image_id = 1;
+    string snapshot_id = 2;
+}
+
+message GetSnapshotMetadataResponse {
+    ImageMetadataErrorCode errorcode = 1;
+    SnapshotMetadataV2 metadata = 2;
+}
+
+message DeleteSnapshotMetadataRequest {
+    string image_id = 1;
+    string snapshot_id = 2;
+}
+
+message DeleteSnapshotMetadataResponse {
+    ImageMetadataErrorCode errorcode = 1;
+}
+
+message ListSnapshotMetadataRequest {
+    string image_id = 1;
+}
+
+message ListSnapshotMetadataResponse {
+    ImageMetadataErrorCode errorcode = 1;
+    repeated SnapshotMetadataV2 metadata = 2;
+}
+
 message Request {
     oneof union {
         BootRequest boot_request = 1;
@@ -597,6 +705,14 @@ message Request {
         ListCSIVolumeMetadataRequest list_csi_volume_metadata_request = 35;
         ListCSIAttachmentRequest list_csi_attachment_request = 36;
         ListCSILeaseRequest list_csi_lease_request = 37;
+        PutImageMetadataRequest put_image_metadata_request = 38;
+        GetImageMetadataRequest get_image_metadata_request = 39;
+        DeleteImageMetadataRequest delete_image_metadata_request = 40;
+        ListImageMetadataRequest list_image_metadata_request = 41;
+        PutSnapshotMetadataRequest put_snapshot_metadata_request = 42;
+        GetSnapshotMetadataRequest get_snapshot_metadata_request = 43;
+        DeleteSnapshotMetadataRequest delete_snapshot_metadata_request = 44;
+        ListSnapshotMetadataRequest list_snapshot_metadata_request = 45;
     }
 }
 
@@ -639,5 +755,13 @@ message Response {
         ListCSIVolumeMetadataResponse list_csi_volume_metadata_response = 35;
         ListCSIAttachmentResponse list_csi_attachment_response = 36;
         ListCSILeaseResponse list_csi_lease_response = 37;
+        PutImageMetadataResponse put_image_metadata_response = 38;
+        GetImageMetadataResponse get_image_metadata_response = 39;
+        DeleteImageMetadataResponse delete_image_metadata_response = 40;
+        ListImageMetadataResponse list_image_metadata_response = 41;
+        PutSnapshotMetadataResponse put_snapshot_metadata_response = 42;
+        GetSnapshotMetadataResponse get_snapshot_metadata_response = 43;
+        DeleteSnapshotMetadataResponse delete_snapshot_metadata_response = 44;
+        ListSnapshotMetadataResponse list_snapshot_metadata_response = 45;
     }
 }

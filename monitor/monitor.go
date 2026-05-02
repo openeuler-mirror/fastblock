@@ -20,6 +20,7 @@ import (
 	"monitor/csimeta"
 	"monitor/election"
 	"monitor/etcdapi"
+	"monitor/imagemeta"
 	"monitor/leader"
 	"monitor/log"
 	"monitor/msg"
@@ -549,6 +550,152 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			Union: &msg.Response_DeleteCsiVolumeMetadataResponse{
 				DeleteCsiVolumeMetadataResponse: &msg.DeleteCSIVolumeMetadataResponse{
 					Errorcode: csimeta.DeleteVolume(ctx, client, payload.DeleteCsiVolumeMetadataRequest.GetVolumeId()),
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_PutImageMetadataRequest:
+		log.Info(ctx, "Received PutImageMetadataRequest")
+
+		response := &msg.Response{
+			Union: &msg.Response_PutImageMetadataResponse{
+				PutImageMetadataResponse: &msg.PutImageMetadataResponse{
+					Errorcode: imagemeta.PutImageProto(ctx, client, payload.PutImageMetadataRequest.GetMetadata()),
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_GetImageMetadataRequest:
+		log.Info(ctx, "Received GetImageMetadataRequest")
+
+		errCode, metadata := imagemeta.GetImageProto(ctx, client, payload.GetImageMetadataRequest.GetImageId())
+		response := &msg.Response{
+			Union: &msg.Response_GetImageMetadataResponse{
+				GetImageMetadataResponse: &msg.GetImageMetadataResponse{
+					Errorcode: errCode,
+					Metadata:  metadata,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_DeleteImageMetadataRequest:
+		log.Info(ctx, "Received DeleteImageMetadataRequest")
+
+		response := &msg.Response{
+			Union: &msg.Response_DeleteImageMetadataResponse{
+				DeleteImageMetadataResponse: &msg.DeleteImageMetadataResponse{
+					Errorcode: imagemeta.DeleteImageProto(ctx, client, payload.DeleteImageMetadataRequest.GetImageId()),
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_ListImageMetadataRequest:
+		log.Info(ctx, "Received ListImageMetadataRequest")
+
+		errCode, metadata := imagemeta.ListImagesProto(ctx, client)
+		response := &msg.Response{
+			Union: &msg.Response_ListImageMetadataResponse{
+				ListImageMetadataResponse: &msg.ListImageMetadataResponse{
+					Errorcode: errCode,
+					Metadata:  metadata,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_PutSnapshotMetadataRequest:
+		log.Info(ctx, "Received PutSnapshotMetadataRequest")
+
+		response := &msg.Response{
+			Union: &msg.Response_PutSnapshotMetadataResponse{
+				PutSnapshotMetadataResponse: &msg.PutSnapshotMetadataResponse{
+					Errorcode: imagemeta.PutSnapshotProto(ctx, client, payload.PutSnapshotMetadataRequest.GetMetadata()),
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_GetSnapshotMetadataRequest:
+		log.Info(ctx, "Received GetSnapshotMetadataRequest")
+
+		errCode, metadata := imagemeta.GetSnapshotProto(
+			ctx,
+			client,
+			payload.GetSnapshotMetadataRequest.GetImageId(),
+			payload.GetSnapshotMetadataRequest.GetSnapshotId(),
+		)
+		response := &msg.Response{
+			Union: &msg.Response_GetSnapshotMetadataResponse{
+				GetSnapshotMetadataResponse: &msg.GetSnapshotMetadataResponse{
+					Errorcode: errCode,
+					Metadata:  metadata,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_DeleteSnapshotMetadataRequest:
+		log.Info(ctx, "Received DeleteSnapshotMetadataRequest")
+
+		response := &msg.Response{
+			Union: &msg.Response_DeleteSnapshotMetadataResponse{
+				DeleteSnapshotMetadataResponse: &msg.DeleteSnapshotMetadataResponse{
+					Errorcode: imagemeta.DeleteSnapshotProto(
+						ctx,
+						client,
+						payload.DeleteSnapshotMetadataRequest.GetImageId(),
+						payload.DeleteSnapshotMetadataRequest.GetSnapshotId(),
+					),
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_ListSnapshotMetadataRequest:
+		log.Info(ctx, "Received ListSnapshotMetadataRequest")
+
+		errCode, metadata := imagemeta.ListSnapshotsProto(ctx, client, payload.ListSnapshotMetadataRequest.GetImageId())
+		response := &msg.Response{
+			Union: &msg.Response_ListSnapshotMetadataResponse{
+				ListSnapshotMetadataResponse: &msg.ListSnapshotMetadataResponse{
+					Errorcode: errCode,
+					Metadata:  metadata,
 				},
 			},
 		}
