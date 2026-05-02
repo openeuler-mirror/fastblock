@@ -50,6 +50,13 @@ func TestImageMetadataLifecycle(t *testing.T) {
 	if imageID != "img-1" {
 		t.Fatalf("unexpected image id by name: %q", imageID)
 	}
+	gotByName, err := GetImageByName(ctx, client, "fb", "volume-a")
+	if err != nil {
+		t.Fatalf("GetImageByName failed: %v", err)
+	}
+	if gotByName.ImageID != "img-1" {
+		t.Fatalf("unexpected image metadata by name: %+v", gotByName)
+	}
 
 	items, err := ListImages(ctx, client)
 	if err != nil {
@@ -113,6 +120,13 @@ func TestSnapshotMetadataChildLinksAndOperations(t *testing.T) {
 	}
 	if snapshotID != "snap-1" {
 		t.Fatalf("unexpected snapshot id by name: %q", snapshotID)
+	}
+	gotByID, err := GetSnapshotByID(ctx, client, "snap-1")
+	if err != nil {
+		t.Fatalf("GetSnapshotByID failed: %v", err)
+	}
+	if gotByID.SourceImageID != "img-2" || gotByID.SnapshotName != "daily-1" {
+		t.Fatalf("unexpected snapshot metadata by id: %+v", gotByID)
 	}
 
 	snapshots, err := ListSnapshots(ctx, client, "img-2")

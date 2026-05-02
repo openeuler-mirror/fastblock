@@ -28,6 +28,14 @@ func GetImageProto(ctx context.Context, client *etcdapi.EtcdClient, imageID stri
 	return msg.ImageMetadataErrorCode_imageMetadataOk, imageToProto(item)
 }
 
+func GetImageByNameProto(ctx context.Context, client *etcdapi.EtcdClient, poolName, imageName string) (msg.ImageMetadataErrorCode, *msg.ImageMetadataV2) {
+	item, err := GetImageByName(ctx, client, poolName, imageName)
+	if err != nil {
+		return toImageMetadataError(err), nil
+	}
+	return msg.ImageMetadataErrorCode_imageMetadataOk, imageToProto(item)
+}
+
 func DeleteImageProto(ctx context.Context, client *etcdapi.EtcdClient, imageID string) msg.ImageMetadataErrorCode {
 	if err := DeleteImage(ctx, client, imageID); err != nil {
 		return toImageMetadataError(err)
@@ -60,6 +68,14 @@ func PutSnapshotProto(ctx context.Context, client *etcdapi.EtcdClient, metadata 
 
 func GetSnapshotProto(ctx context.Context, client *etcdapi.EtcdClient, imageID, snapshotID string) (msg.ImageMetadataErrorCode, *msg.SnapshotMetadataV2) {
 	item, err := GetSnapshot(ctx, client, imageID, snapshotID)
+	if err != nil {
+		return toImageMetadataError(err), nil
+	}
+	return msg.ImageMetadataErrorCode_imageMetadataOk, snapshotToProto(item)
+}
+
+func GetSnapshotByIDProto(ctx context.Context, client *etcdapi.EtcdClient, snapshotID string) (msg.ImageMetadataErrorCode, *msg.SnapshotMetadataV2) {
+	item, err := GetSnapshotByID(ctx, client, snapshotID)
 	if err != nil {
 		return toImageMetadataError(err), nil
 	}

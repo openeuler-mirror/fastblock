@@ -625,6 +625,16 @@ message GetImageMetadataResponse {
     ImageMetadataV2 metadata = 2;
 }
 
+message GetImageMetadataByNameRequest {
+    string pool_name = 1;
+    string image_name = 2;
+}
+
+message GetImageMetadataByNameResponse {
+    ImageMetadataErrorCode errorcode = 1;
+    ImageMetadataV2 metadata = 2;
+}
+
 message DeleteImageMetadataRequest {
     string image_id = 1;
 }
@@ -655,6 +665,15 @@ message GetSnapshotMetadataRequest {
 }
 
 message GetSnapshotMetadataResponse {
+    ImageMetadataErrorCode errorcode = 1;
+    SnapshotMetadataV2 metadata = 2;
+}
+
+message GetSnapshotMetadataByIDRequest {
+    string snapshot_id = 1;
+}
+
+message GetSnapshotMetadataByIDResponse {
     ImageMetadataErrorCode errorcode = 1;
     SnapshotMetadataV2 metadata = 2;
 }
@@ -791,6 +810,8 @@ message Request {
         GetImageOperationRequest get_image_operation_request = 50;
         DeleteImageOperationRequest delete_image_operation_request = 51;
         ListImageOperationRequest list_image_operation_request = 52;
+        GetImageMetadataByNameRequest get_image_metadata_by_name_request = 53;
+        GetSnapshotMetadataByIDRequest get_snapshot_metadata_by_id_request = 54;
     }
 }
 
@@ -848,5 +869,7 @@ message Response {
         GetImageOperationResponse get_image_operation_response = 50;
         DeleteImageOperationResponse delete_image_operation_response = 51;
         ListImageOperationResponse list_image_operation_response = 52;
+        GetImageMetadataByNameResponse get_image_metadata_by_name_response = 53;
+        GetSnapshotMetadataByIDResponse get_snapshot_metadata_by_id_response = 54;
     }
 }

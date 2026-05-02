@@ -44,6 +44,7 @@ const (
 	ConfigImageNameKeyPrefix       = "/config/image_name/"
 	ConfigImageSnapshotsKeyPrefix  = "/config/image_snaps/"
 	ConfigImageSnapNameKeyPrefix   = "/config/image_snap_name/"
+	ConfigImageSnapIDKeyPrefix     = "/config/image_snap_id/"
 	ConfigImageChildrenKeyPrefix   = "/config/image_children/"
 	ConfigImageOperationsKeyPrefix = "/config/image_ops/"
 	ConfigCSIVolumesKeyPrefix      = "/csi/volumes/"
