@@ -147,6 +147,14 @@ private:
       return it->second;
     }
 
+    std::optional<monitor::client::snapshot_metadata> find_cached_snapshot_metadata(const std::string& snapshot_id) const {
+      auto it = _snapshot_metadata_cache.find(snapshot_id);
+      if (it == _snapshot_metadata_cache.end()) {
+        return std::nullopt;
+      }
+      return it->second;
+    }
+
     monitor::client* _mon_cli{nullptr};
     std::unordered_map<std::string, monitor::client::image_metadata> _image_metadata_cache{};
     std::unordered_map<std::string, monitor::client::snapshot_metadata> _snapshot_metadata_cache{};

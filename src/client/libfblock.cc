@@ -289,29 +289,49 @@ int libblk_client::write(const uint64_t pool_id, const std::string image_name, c
 
 struct read_source
 {
+    struct object_read_plan {
+        uint64_t object_seq;
+        uint64_t object_offset;
+        uint64_t length;
+        uint64_t buffer_offset;
+        bool retried_with_parent{false};
+    };
+
     read_callback cb;
     uint32_t obj_num;
     char *buf;
     uint64_t len;
     struct spdk_bdev_io *bdev_io;
-    uint64_t first_object_size;
     int32_t result;
     uint64_t offset;
     struct spdk_thread *thread;
+    fblock_client *client;
+    uint64_t pool_id;
+    std::string image_name;
+    std::optional<monitor::client::image_metadata> image_metadata;
+    std::optional<monitor::client::snapshot_metadata> parent_snapshot;
+    std::vector<object_read_plan> plans;
 
 
-    read_source(read_callback _cb, uint32_t _obj_num, uint64_t _len, struct spdk_bdev_io *_bdev_io, uint64_t _first_object_size,
-            uint64_t _offset)
+    read_source(read_callback _cb, uint32_t _obj_num, uint64_t _len, struct spdk_bdev_io *_bdev_io,
+            uint64_t _offset, fblock_client* _client, uint64_t _pool_id, std::string _image_name,
+            std::optional<monitor::client::image_metadata> _image_metadata,
+            std::optional<monitor::client::snapshot_metadata> _parent_snapshot)
     : cb(_cb)
     , obj_num(_obj_num)
     , len(_len)
     , bdev_io(_bdev_io)
-    , first_object_size(_first_object_size)
     , result(err::E_SUCCESS)
     , offset(_offset)
-    , thread(spdk_get_thread()) {
+    , thread(spdk_get_thread())
+    , client(_client)
+    , pool_id(_pool_id)
+    , image_name(std::move(_image_name))
+    , image_metadata(std::move(_image_metadata))
+    , parent_snapshot(std::move(_parent_snapshot)) {
         buf = new char[len];
         memset(buf, 0, len);
+        plans.reserve(_obj_num);
     }
 
     ~read_source()
@@ -338,30 +358,62 @@ struct read_source
 #endif
     }
 
-    static void read_done(void *src, uint64_t object_idx, const std::string& data, int32_t state) {
-        read_source* source = (read_source*)src;
-        char* ptr = source->buf;
-        if(state == err::E_SUCCESS){
-            if(object_idx == 0){
-                memcpy(ptr, data.data(), data.size());
-            }else{
-                ptr += source->first_object_size  + (object_idx - 1) * default_object_size;
-                memcpy(ptr, data.data(), data.size());
-            }
-        }
-        else
-        {
+    static void finish_one(read_source* source, int32_t state) {
+        if(state != err::E_SUCCESS){
             source->result = state;
         }
-        // 如果要支持多核，这里还需要加锁
         source->obj_num--;
-        // SPDK_NOTICELOG("object_idx: %lu read_done, state: %d source->obj_num: %u data size: %lu is_zero: %d\n", object_idx, state, source->obj_num, data.size());
         if(source->obj_num == 0){
             SPDK_INFOLOG(libblk, "---- read data off: %lu length: %lu\n", source->offset, source->len);
             source->invoke();
-            // source->cb(source->bdev_io, source->buf, source->len, source->result);
-            // delete source;
         }
+    }
+
+    static void parent_read_done(void *src, uint64_t object_idx, const std::string& data, int32_t state) {
+        read_source* source = (read_source*)src;
+        auto& plan = source->plans.at(object_idx);
+        if(state == err::E_SUCCESS){
+            memcpy(source->buf + plan.buffer_offset, data.data(), data.size());
+            finish_one(source, err::E_SUCCESS);
+            return;
+        }
+        if(state == err::E_ENOENT){
+            finish_one(source, err::E_SUCCESS);
+            return;
+        }
+        finish_one(source, state);
+    }
+
+    static void read_done(void *src, uint64_t object_idx, const std::string& data, int32_t state) {
+        read_source* source = (read_source*)src;
+        auto& plan = source->plans.at(object_idx);
+        if(state == err::E_SUCCESS){
+            memcpy(source->buf + plan.buffer_offset, data.data(), data.size());
+            finish_one(source, err::E_SUCCESS);
+            return;
+        }
+
+        if(state == err::E_ENOENT){
+            if(source->parent_snapshot.has_value() && !plan.retried_with_parent){
+                plan.retried_with_parent = true;
+                auto parent_prefix = std::to_string(source->parent_snapshot->source_pool_id) + "__blk_data___" + source->parent_snapshot->source_image_name;
+                auto parent_object_name = parent_prefix + std::to_string(plan.object_seq);
+                source->client->read_object(
+                    parent_object_name,
+                    plan.object_offset,
+                    plan.length,
+                    source->parent_snapshot->source_pool_id,
+                    &read_source::parent_read_done,
+                    source,
+                    object_idx,
+                    source->parent_snapshot->snap_seq);
+                return;
+            }
+            finish_one(source, err::E_SUCCESS);
+            return;
+        }
+
+        finish_one(source, state);
     }
 };
 
@@ -378,7 +430,22 @@ int libblk_client::read(const uint64_t pool_id, const std::string image_name, co
     size_t read_bytes = 0;
 
     auto obj_num = get_obj_num(offset, length);
-    read_source* source = new read_source(cb, obj_num, length, bdev_io, expected_object_size, offset);
+    auto image_metadata = find_cached_image_metadata(static_cast<int32_t>(pool_id), image_name);
+    std::optional<monitor::client::snapshot_metadata> parent_snapshot = std::nullopt;
+    if (image_metadata.has_value() && !image_metadata->parent_snapshot_id.empty()) {
+        parent_snapshot = find_cached_snapshot_metadata(image_metadata->parent_snapshot_id);
+    }
+    read_source* source = new read_source(
+        cb,
+        obj_num,
+        length,
+        bdev_io,
+        offset,
+        _client.get(),
+        pool_id,
+        image_name,
+        image_metadata,
+        parent_snapshot);
     uint64_t object_idx = 0;
     SPDK_INFOLOG(libblk, "read pool: %lu image_name: %s offset: %lu length: %lu  obj_num: %lu\n",
                  pool_id, image_name.c_str(), offset, length, obj_num);
@@ -386,6 +453,12 @@ int libblk_client::read(const uint64_t pool_id, const std::string image_name, co
     while (read_bytes < length)
     {
         auto object_name = get_image_object_name(object_prefix, object_seq);
+        source->plans.push_back(read_source::object_read_plan{
+            .object_seq = object_seq,
+            .object_offset = object_offset,
+            .length = expected_object_size,
+            .buffer_offset = read_bytes,
+        });
         _client->read_object(object_name, object_offset, expected_object_size, pool_id, &read_source::read_done, source, object_idx);
         read_bytes += expected_object_size;
         expected_object_size = default_object_size; // 默认的对象大小
