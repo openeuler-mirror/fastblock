@@ -11,12 +11,15 @@ import (
 
 	"monitor/config"
 	"monitor/etcdapi"
+
+	"github.com/google/uuid"
 )
 
 var (
 	ErrImageNotFound     = errors.New("image metadata not found")
 	ErrSnapshotNotFound  = errors.New("snapshot metadata not found")
 	ErrOperationNotFound = errors.New("image operation not found")
+	ErrSnapshotExists    = errors.New("snapshot metadata already exists")
 )
 
 type ImageStatus string
@@ -210,6 +213,94 @@ func PutSnapshot(ctx context.Context, client *etcdapi.EtcdClient, metadata *Snap
 		Put(snapshotNameKey(metadata.SourceImageID, metadata.SnapshotName), metadata.SnapshotID).
 		Put(snapshotIDKey(metadata.SnapshotID), metadata.SourceImageID).
 		Commit(ctx)
+}
+
+func CreateSnapshotByName(ctx context.Context, client *etcdapi.EtcdClient, poolName, imageName, snapshotName string) (*SnapshotMetadata, error) {
+	if client == nil {
+		return nil, errors.New("client is required")
+	}
+	poolName = strings.TrimSpace(poolName)
+	imageName = strings.TrimSpace(imageName)
+	snapshotName = strings.TrimSpace(snapshotName)
+	if poolName == "" || imageName == "" || snapshotName == "" {
+		return nil, errors.New("pool name, image name and snapshot name are required")
+	}
+
+	image, err := GetImageByName(ctx, client, poolName, imageName)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := GetSnapshotIDByName(ctx, client, image.ImageID, snapshotName); err == nil {
+		return nil, ErrSnapshotExists
+	} else if err != ErrSnapshotNotFound {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	snapshotID := "snap-" + uuid.NewString()
+	opID := "op-" + uuid.NewString()
+	nextSeq := image.CurrentSnapSeq + 1
+
+	updatedImage := *image
+	updatedImage.CurrentSnapSeq = nextSeq
+	updatedImage.UpdatedAt = now
+	updatedImage.Generation++
+
+	snapshot := &SnapshotMetadata{
+		SnapshotID:      snapshotID,
+		SnapshotName:    snapshotName,
+		SourceImageID:   image.ImageID,
+		SourcePoolID:    image.PoolID,
+		SourcePoolName:  image.PoolName,
+		SourceImageName: image.ImageName,
+		SnapSeq:         nextSeq,
+		Status:          SnapshotStatusReady,
+		Protected:       false,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		OperationID:     opID,
+		ChildCount:      0,
+	}
+	if err := snapshot.normalizeAndValidate(); err != nil {
+		return nil, err
+	}
+
+	record := &ImageOperationRecord{
+		OperationID: opID,
+		Type:        OperationCreateSnapshot,
+		TargetID:    snapshotID,
+		Status:      OperationStatusDone,
+		StartedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := record.normalizeAndValidate(); err != nil {
+		return nil, err
+	}
+
+	imageData, err := json.Marshal(&updatedImage)
+	if err != nil {
+		return nil, err
+	}
+	snapshotData, err := json.Marshal(snapshot)
+	if err != nil {
+		return nil, err
+	}
+	recordData, err := json.Marshal(record)
+	if err != nil {
+		return nil, err
+	}
+
+	err = client.NewTxn().
+		Put(imageKey(updatedImage.ImageID), string(imageData)).
+		Put(snapshotKey(snapshot.SourceImageID, snapshot.SnapshotID), string(snapshotData)).
+		Put(snapshotNameKey(snapshot.SourceImageID, snapshot.SnapshotName), snapshot.SnapshotID).
+		Put(snapshotIDKey(snapshot.SnapshotID), snapshot.SourceImageID).
+		Put(operationKey(record.OperationID), string(recordData)).
+		Commit(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return snapshot, nil
 }
 
 func GetSnapshot(ctx context.Context, client *etcdapi.EtcdClient, imageID, snapshotID string) (*SnapshotMetadata, error) {
