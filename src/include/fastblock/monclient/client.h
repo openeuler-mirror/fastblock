@@ -521,6 +521,7 @@ public:
     void emplace_protect_snapshot_request(const std::string snapshot_id, on_response_callback_type&& cb);
     void emplace_unprotect_snapshot_request(const std::string snapshot_id, on_response_callback_type&& cb);
     void emplace_delete_image_snapshot_request(const std::string snapshot_id, on_response_callback_type&& cb);
+    void emplace_finalize_flatten_image_request(const std::string image_id, on_response_callback_type&& cb);
 
     void emplace_list_pool_request(on_response_callback_type&& cb);
     void emplace_put_image_metadata_request(const image_metadata&, on_response_callback_type&& cb);
