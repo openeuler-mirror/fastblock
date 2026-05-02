@@ -75,6 +75,7 @@ struct snap_create_ctx {
   std::string        object_name;
   std::string        snap_name;
   uint64_t           snap_seq;
+  spdk_blob_store*   bs;
   object_rw_complete cb_fn;
   void*              arg;
 
@@ -140,9 +141,9 @@ void object_store::write(std::map<std::string, xattr_val_type>& xattr, std::stri
 
 void object_store::read(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
                      uint64_t offset, char* buf, uint64_t len,
-                     object_rw_complete cb_fn, void* arg)
+                     uint64_t target_snap_seq, object_rw_complete cb_fn, void* arg)
 {
-    readwrite(xattr, object_name, offset, buf, len, 0, cb_fn, arg, 1);
+    readwrite(xattr, object_name, offset, buf, len, target_snap_seq, cb_fn, arg, 1);
 }
 
 void object_store::snap_create(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
@@ -159,6 +160,7 @@ void object_store::snap_create(std::map<std::string, xattr_val_type>& xattr, std
   ctx->object_name = object_name;
   ctx->snap_name = snap_name;
   ctx->snap_seq = snap_seq;
+  ctx->bs = bs;
   ctx->cb_fn = cb_fn;
   ctx->arg = arg;
   ctx->hashtable = &table;
@@ -199,14 +201,38 @@ void object_store::snap_create_complete(void *arg, spdk_blob_id snap_id, int obj
   ctx->snap.snap_blob.blob = nullptr;
   ctx->snap.snap_name = ctx->snap_name;
   ctx->snap.snap_seq = ctx->snap_seq;
-  it->second.snap_list.emplace_back(std::move(ctx->snap));
-  // SPDK_NOTICELOG("object:%s snap:%s added, snap size:%lu\n",
-  //     ctx->object_name.c_str(), ctx->snap_name.c_str(), it->second.snap_list.size());
+  it->second.snap_list.emplace_back(ctx->snap);
 
   SPDK_DEBUGLOG(object_store, "object_name:%s snap_name:%s snapshot added.\n", ctx->object_name.c_str(), ctx->snap_name.c_str());
+  spdk_bs_open_blob(ctx->bs, snap_id, snap_open_complete, ctx);
+}
+
+void object_store::snap_open_complete(void *arg, struct spdk_blob *blob, int objerrno) {
+  struct snap_create_ctx *ctx = (struct snap_create_ctx*)arg;
+  if (objerrno) {
+    SPDK_ERRLOG("object_name:%s snap_name:%s snapshot open failed:%s\n", ctx->object_name.c_str(), ctx->snap_name.c_str(), spdk_strerror(objerrno));
+    ctx->cb_fn(ctx->arg, objerrno);
+    delete ctx;
+    return;
+  }
+
+  auto it = ctx->hashtable->find(ctx->object_name);
+  if (it == ctx->hashtable->end()) {
+    SPDK_ERRLOG("object_name:%s doesn't exist.\n", ctx->object_name.c_str());
+    ctx->cb_fn(ctx->arg, -EINVAL);
+    delete ctx;
+    return;
+  }
+
+  for (auto& snap : it->second.snap_list) {
+    if (snap.snap_seq == ctx->snap_seq && snap.snap_name == ctx->snap_name && snap.snap_blob.blobid == spdk_blob_get_id(blob)) {
+      snap.snap_blob.blob = blob;
+      break;
+    }
+  }
+
   ctx->cb_fn(ctx->arg, 0);
   delete ctx;
-  return;
 }
 
 void object_store::snap_delete(std::string object_name, std::string snap_name, object_rw_complete cb_fn, void *arg) {
@@ -490,6 +516,31 @@ static void sync_head_snap_seq_then_write(void *arg, int objerrno)
   }, ctx);
 }
 
+static struct spdk_blob* select_read_blob(object_store::object& object, const uint64_t target_snap_seq)
+{
+  if (target_snap_seq == 0) {
+    return object.origin.blob;
+  }
+
+  if (target_snap_seq < object.birth_snap_seq) {
+    return nullptr;
+  }
+
+  object_store::snap* selected = nullptr;
+  for (auto& snap : object.snap_list) {
+    if (snap.snap_seq >= target_snap_seq) {
+      if (selected == nullptr || snap.snap_seq < selected->snap_seq) {
+        selected = &snap;
+      }
+    }
+  }
+
+  if (selected != nullptr) {
+    return selected->snap_blob.blob;
+  }
+  return object.origin.blob;
+}
+
 void object_store::readwrite(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
                      uint64_t offset, char* buf, uint64_t len,
                      uint64_t current_snap_seq, object_rw_complete cb_fn, void* arg, bool is_read)
@@ -505,6 +556,16 @@ void object_store::readwrite(std::map<std::string, xattr_val_type>& xattr, std::
     auto it = table.find(object_name);
     if (it != table.end()) {
       SPDK_DEBUGLOG(object_store, "object %s found, blob id:%" PRIu64 "\n", object_name.c_str(), it->second.origin.blobid);
+      if (is_read) {
+        auto* target_blob = select_read_blob(it->second, current_snap_seq);
+        if (target_blob == nullptr) {
+          memset(buf, 0, len);
+          cb_fn(arg, 0);
+          return;
+        }
+        blob_readwrite(target_blob, channel, object_name, offset, buf, len, cb_fn, arg, true);
+        return;
+      }
       if (!is_read && current_snap_seq > 0 && current_snap_seq > it->second.last_snap_seq) {
         auto* ctx = new prewrite_snapshot_ctx{
           .mgr = this,
@@ -523,6 +584,11 @@ void object_store::readwrite(std::map<std::string, xattr_val_type>& xattr, std::
       blob_readwrite(it->second.origin.blob, channel, object_name, offset, buf, len, cb_fn, arg, is_read);
     } else {
       SPDK_DEBUGLOG(object_store, "object %s not found\n", object_name.c_str());
+      if (is_read && current_snap_seq > 0) {
+        memset(buf, 0, len);
+        cb_fn(arg, 0);
+        return;
+      }
       create_blob(xattr, object_name, offset, buf, len, current_snap_seq, cb_fn, arg, is_read);
     }
 }

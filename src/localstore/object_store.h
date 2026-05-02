@@ -52,7 +52,7 @@ public:
    */
   void read(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
             uint64_t offset, char* buf, uint64_t len,
-            object_rw_complete cb_fn, void* arg);
+            uint64_t target_snap_seq, object_rw_complete cb_fn, void* arg);
 
   void write(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
              uint64_t offset, char* buf, uint64_t len,
@@ -102,6 +102,7 @@ private:
 
   static void snap_delete_complete(void *arg, int objerrno);  // 用户主动删除snapshot
   static void snap_create_complete(void *arg, spdk_blob_id snap_id, int objerrno);
+  static void snap_open_complete(void *arg, struct spdk_blob *blob, int objerrno);
 
   static void recovery_create_complete(void *arg, spdk_blob_id blob_id, int objerrno);
   static void recovery_open_complete(void *arg, struct spdk_blob *blob, int objerrno);

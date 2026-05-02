@@ -230,7 +230,15 @@ void osd_stm::read_and_wait(
         std::map<std::string, xattr_val_type> xattr;
         xattr["type"] = blob_type::object;
         xattr["pg"] = get_pg_name();
-        _store.read(xattr, request->object_name(), request->offset(), buf, request->length(), read_obj_done, ctx);
+        _store.read(
+            xattr,
+            request->object_name(),
+            request->offset(),
+            buf,
+            request->length(),
+            request->has_snap_ctx() ? request->snap_ctx().current_seq() : 0,
+            read_obj_done,
+            ctx);
     };
 
     lock_complete *complete = new lock_complete(std::move(read_func));
