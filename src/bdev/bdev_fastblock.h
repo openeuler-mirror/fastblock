@@ -43,6 +43,8 @@ void bdev_fastblock_delete(struct spdk_bdev *bdev, spdk_delete_fastblock_complet
  */
 int bdev_fastblock_resize(struct spdk_bdev *bdev, const uint64_t new_size_in_mb);
 
+int bdev_fastblock_flatten(struct spdk_bdev *bdev);
+
 extern struct spdk_bdev_module fastblock_if;
 
 uint64_t get_obj_size_of_image(struct spdk_bdev *bdev);
