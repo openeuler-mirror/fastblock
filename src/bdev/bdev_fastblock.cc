@@ -848,6 +848,16 @@ int bdev_fastblock_create_snapshot(struct spdk_bdev *bdev, const char *snapshot_
 	return 0;
 }
 
+const char *bdev_fastblock_get_pool_name(struct spdk_bdev *bdev)
+{
+	return reinterpret_cast<struct bdev_fastblock*>(bdev->ctxt)->pool_name;
+}
+
+const char *bdev_fastblock_get_image_name(struct spdk_bdev *bdev)
+{
+	return reinterpret_cast<struct bdev_fastblock*>(bdev->ctxt)->image_name;
+}
+
 static int
 bdev_fastblock_group_poll(void *arg)
 {

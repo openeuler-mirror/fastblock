@@ -47,6 +47,10 @@ int bdev_fastblock_create_snapshot(struct spdk_bdev *bdev, const char *snapshot_
 
 int bdev_fastblock_flatten(struct spdk_bdev *bdev);
 
+const char *bdev_fastblock_get_pool_name(struct spdk_bdev *bdev);
+
+const char *bdev_fastblock_get_image_name(struct spdk_bdev *bdev);
+
 extern struct spdk_bdev_module fastblock_if;
 
 uint64_t get_obj_size_of_image(struct spdk_bdev *bdev);
