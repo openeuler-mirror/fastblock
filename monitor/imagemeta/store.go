@@ -21,6 +21,7 @@ var (
 	ErrSnapshotNotFound     = errors.New("snapshot metadata not found")
 	ErrSnapshotExists       = errors.New("snapshot metadata already exists")
 	ErrSnapshotNotProtected = errors.New("snapshot metadata is not protected")
+	ErrSnapshotHasChildren  = errors.New("snapshot metadata has child images")
 	ErrOperationNotFound    = errors.New("image operation not found")
 )
 
@@ -399,6 +400,87 @@ func CreateCloneFromSnapshot(ctx context.Context, client *etcdapi.EtcdClient, sn
 		return nil, err
 	}
 	return clone, nil
+}
+
+func ProtectSnapshotByID(ctx context.Context, client *etcdapi.EtcdClient, snapshotID string) (*SnapshotMetadata, error) {
+	if client == nil {
+		return nil, errors.New("client is required")
+	}
+	snapshotID = strings.TrimSpace(snapshotID)
+	if snapshotID == "" {
+		return nil, errors.New("snapshot id is required")
+	}
+
+	snapshot, err := GetSnapshotByID(ctx, client, snapshotID)
+	if err != nil {
+		return nil, err
+	}
+	if snapshot.Protected {
+		return snapshot, nil
+	}
+
+	updated := *snapshot
+	updated.Protected = true
+	updated.UpdatedAt = time.Now().UTC()
+	if err := updated.normalizeAndValidate(); err != nil {
+		return nil, err
+	}
+
+	data, err := json.Marshal(&updated)
+	if err != nil {
+		return nil, err
+	}
+	err = client.NewTxn().
+		Put(snapshotKey(updated.SourceImageID, updated.SnapshotID), string(data)).
+		Put(snapshotNameKey(updated.SourceImageID, updated.SnapshotName), updated.SnapshotID).
+		Put(snapshotIDKey(updated.SnapshotID), updated.SourceImageID).
+		Commit(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &updated, nil
+}
+
+func UnprotectSnapshotByID(ctx context.Context, client *etcdapi.EtcdClient, snapshotID string) (*SnapshotMetadata, error) {
+	if client == nil {
+		return nil, errors.New("client is required")
+	}
+	snapshotID = strings.TrimSpace(snapshotID)
+	if snapshotID == "" {
+		return nil, errors.New("snapshot id is required")
+	}
+
+	snapshot, err := GetSnapshotByID(ctx, client, snapshotID)
+	if err != nil {
+		return nil, err
+	}
+	if snapshot.ChildCount > 0 {
+		return nil, ErrSnapshotHasChildren
+	}
+	if !snapshot.Protected {
+		return snapshot, nil
+	}
+
+	updated := *snapshot
+	updated.Protected = false
+	updated.UpdatedAt = time.Now().UTC()
+	if err := updated.normalizeAndValidate(); err != nil {
+		return nil, err
+	}
+
+	data, err := json.Marshal(&updated)
+	if err != nil {
+		return nil, err
+	}
+	err = client.NewTxn().
+		Put(snapshotKey(updated.SourceImageID, updated.SnapshotID), string(data)).
+		Put(snapshotNameKey(updated.SourceImageID, updated.SnapshotName), updated.SnapshotID).
+		Put(snapshotIDKey(updated.SnapshotID), updated.SourceImageID).
+		Commit(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &updated, nil
 }
 
 func GetSnapshot(ctx context.Context, client *etcdapi.EtcdClient, imageID, snapshotID string) (*SnapshotMetadata, error) {

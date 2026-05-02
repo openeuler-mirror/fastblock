@@ -342,6 +342,74 @@ func TestCreateCloneFromSnapshot(t *testing.T) {
 	}
 }
 
+func TestProtectAndUnprotectSnapshotByID(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+
+	image := &ImageMetadata{
+		ImageID:    "img-5",
+		PoolID:     15,
+		PoolName:   "fb",
+		ImageName:  "volume-e",
+		Size:       4 << 20,
+		ObjectSize: 4 << 20,
+		Status:     ImageStatusReady,
+	}
+	if err := PutImage(ctx, client, image); err != nil {
+		t.Fatalf("PutImage failed: %v", err)
+	}
+
+	snapshot := &SnapshotMetadata{
+		SnapshotID:      "snap-6",
+		SnapshotName:    "manual",
+		SourceImageID:   "img-5",
+		SourcePoolID:    15,
+		SourcePoolName:  "fb",
+		SourceImageName: "volume-e",
+		SnapSeq:         1,
+		Status:          SnapshotStatusReady,
+		Protected:       false,
+	}
+	if err := PutSnapshot(ctx, client, snapshot); err != nil {
+		t.Fatalf("PutSnapshot failed: %v", err)
+	}
+
+	protected, err := ProtectSnapshotByID(ctx, client, "snap-6")
+	if err != nil {
+		t.Fatalf("ProtectSnapshotByID failed: %v", err)
+	}
+	if !protected.Protected {
+		t.Fatalf("expected protected snapshot, got %+v", protected)
+	}
+
+	unprotected, err := UnprotectSnapshotByID(ctx, client, "snap-6")
+	if err != nil {
+		t.Fatalf("UnprotectSnapshotByID failed: %v", err)
+	}
+	if unprotected.Protected {
+		t.Fatalf("expected unprotected snapshot, got %+v", unprotected)
+	}
+
+	withChild := &SnapshotMetadata{
+		SnapshotID:      "snap-7",
+		SnapshotName:    "with-child",
+		SourceImageID:   "img-5",
+		SourcePoolID:    15,
+		SourcePoolName:  "fb",
+		SourceImageName: "volume-e",
+		SnapSeq:         2,
+		Status:          SnapshotStatusReady,
+		Protected:       true,
+		ChildCount:      1,
+	}
+	if err := PutSnapshot(ctx, client, withChild); err != nil {
+		t.Fatalf("PutSnapshot failed: %v", err)
+	}
+	if _, err := UnprotectSnapshotByID(ctx, client, "snap-7"); !errors.Is(err, ErrSnapshotHasChildren) {
+		t.Fatalf("expected ErrSnapshotHasChildren, got %v", err)
+	}
+}
+
 func newTestClient(t *testing.T) *etcdapi.EtcdClient {
 	t.Helper()
 
