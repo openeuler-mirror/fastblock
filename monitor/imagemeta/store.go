@@ -19,6 +19,7 @@ var (
 	ErrImageNotFound        = errors.New("image metadata not found")
 	ErrImageExists          = errors.New("image metadata already exists")
 	ErrImageNotClone        = errors.New("image metadata is not a clone")
+	ErrImageHasSnapshots    = errors.New("image metadata has snapshots")
 	ErrSnapshotNotFound     = errors.New("snapshot metadata not found")
 	ErrSnapshotExists       = errors.New("snapshot metadata already exists")
 	ErrSnapshotProtected    = errors.New("snapshot metadata is protected")
@@ -542,6 +543,9 @@ func FinalizeFlattenImageByID(ctx context.Context, client *etcdapi.EtcdClient, i
 	}
 	if image.ParentSnapshotID == "" {
 		return nil, ErrImageNotClone
+	}
+	if image.CurrentSnapSeq > 0 {
+		return nil, ErrImageHasSnapshots
 	}
 
 	parentSnapshot, err := GetSnapshotByID(ctx, client, image.ParentSnapshotID)

@@ -581,6 +581,25 @@ func TestFinalizeFlattenImageByID(t *testing.T) {
 	if _, err := FinalizeFlattenImageByID(ctx, client, "img-8"); !errors.Is(err, ErrImageNotClone) {
 		t.Fatalf("expected ErrImageNotClone, got %v", err)
 	}
+
+	withSnapshots := &ImageMetadata{
+		ImageID:          "img-9",
+		PoolID:           19,
+		PoolName:         "fb",
+		ImageName:        "clone-has-snaps",
+		Size:             4 << 20,
+		ObjectSize:       4 << 20,
+		CurrentSnapSeq:   1,
+		Status:           ImageStatusReady,
+		ParentSnapshotID: "snap-11",
+		Depth:            1,
+	}
+	if err := PutImage(ctx, client, withSnapshots); err != nil {
+		t.Fatalf("PutImage failed: %v", err)
+	}
+	if _, err := FinalizeFlattenImageByID(ctx, client, "img-9"); !errors.Is(err, ErrImageHasSnapshots) {
+		t.Fatalf("expected ErrImageHasSnapshots, got %v", err)
+	}
 }
 
 func newTestClient(t *testing.T) *etcdapi.EtcdClient {
