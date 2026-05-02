@@ -514,10 +514,12 @@ public:
     void emplace_list_pool_request(on_response_callback_type&& cb);
     void emplace_put_image_metadata_request(const image_metadata&, on_response_callback_type&& cb);
     void emplace_get_image_metadata_request(const std::string& image_id, on_response_callback_type&& cb);
+    void emplace_get_image_metadata_by_name_request(const std::string& pool_name, const std::string& image_name, on_response_callback_type&& cb);
     void emplace_delete_image_metadata_request(const std::string& image_id, on_response_callback_type&& cb);
     void emplace_list_image_metadata_request(on_response_callback_type&& cb);
     void emplace_put_snapshot_metadata_request(const snapshot_metadata&, on_response_callback_type&& cb);
     void emplace_get_snapshot_metadata_request(const std::string& image_id, const std::string& snapshot_id, on_response_callback_type&& cb);
+    void emplace_get_snapshot_metadata_by_id_request(const std::string& snapshot_id, on_response_callback_type&& cb);
     void emplace_delete_snapshot_metadata_request(const std::string& image_id, const std::string& snapshot_id, on_response_callback_type&& cb);
     void emplace_list_snapshot_metadata_request(const std::string& image_id, on_response_callback_type&& cb);
     void emplace_put_image_child_link_request(const std::string& snapshot_id, const std::string& child_image_id, on_response_callback_type&& cb);
