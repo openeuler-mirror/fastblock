@@ -878,6 +878,30 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			return err
 		}
 
+	case *msg.Request_CreateImageSnapshotRequest:
+		log.Info(ctx, "Received CreateImageSnapshotRequest")
+
+		errCode, metadata := imagemeta.CreateSnapshotByNameProto(
+			ctx,
+			client,
+			payload.CreateImageSnapshotRequest.GetPoolName(),
+			payload.CreateImageSnapshotRequest.GetImageName(),
+			payload.CreateImageSnapshotRequest.GetSnapshotName(),
+		)
+		response := &msg.Response{
+			Union: &msg.Response_CreateImageSnapshotResponse{
+				CreateImageSnapshotResponse: &msg.CreateImageSnapshotResponse{
+					Errorcode: errCode,
+					Metadata:  metadata,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
 	case *msg.Request_PutCsiAttachmentRequest:
 		log.Info(ctx, "Received PutCSIAttachmentRequest")
 
