@@ -224,6 +224,22 @@ void client::emplace_create_clone_from_snapshot_request(
     enqueue_request(ctx);
 }
 
+void client::emplace_protect_snapshot_request(const std::string snapshot_id, on_response_callback_type&& cb) {
+    auto req = std::make_unique<msg::Request>();
+    req->mutable_protect_snapshot_request()->set_snapshot_id(snapshot_id);
+    auto* ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
+}
+
+void client::emplace_unprotect_snapshot_request(const std::string snapshot_id, on_response_callback_type&& cb) {
+    auto req = std::make_unique<msg::Request>();
+    req->mutable_unprotect_snapshot_request()->set_snapshot_id(snapshot_id);
+    auto* ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
+}
+
 void client::emplace_list_pool_request(on_response_callback_type&& cb) {
     auto req = std::make_unique<msg::Request>();
     [[maybe_unused]] auto _ = req->mutable_list_pools_request();
@@ -1128,6 +1144,24 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
         auto& resp = response->create_clone_from_snapshot_response();
         auto& req_ctx = _on_flight_requests.front();
         req_ctx->response_data = std::make_unique<client::image_metadata>(image_metadata_from_proto(resp.metadata()));
+        req_ctx->cb(to_response_status(resp.errorcode()), req_ctx.get());
+        _on_flight_requests.pop_front();
+        break;
+    }
+    case msg::Response::UnionCase::kProtectSnapshotResponse: {
+        SPDK_DEBUGLOG(mon, "Received protect snapshot response\n");
+        auto& resp = response->protect_snapshot_response();
+        auto& req_ctx = _on_flight_requests.front();
+        req_ctx->response_data = std::make_unique<client::snapshot_metadata>(snapshot_metadata_from_proto(resp.metadata()));
+        req_ctx->cb(to_response_status(resp.errorcode()), req_ctx.get());
+        _on_flight_requests.pop_front();
+        break;
+    }
+    case msg::Response::UnionCase::kUnprotectSnapshotResponse: {
+        SPDK_DEBUGLOG(mon, "Received unprotect snapshot response\n");
+        auto& resp = response->unprotect_snapshot_response();
+        auto& req_ctx = _on_flight_requests.front();
+        req_ctx->response_data = std::make_unique<client::snapshot_metadata>(snapshot_metadata_from_proto(resp.metadata()));
         req_ctx->cb(to_response_status(resp.errorcode()), req_ctx.get());
         _on_flight_requests.pop_front();
         break;

@@ -518,6 +518,8 @@ public:
       const std::string snapshot_id,
       const std::string clone_image_name,
       on_response_callback_type&& cb);
+    void emplace_protect_snapshot_request(const std::string snapshot_id, on_response_callback_type&& cb);
+    void emplace_unprotect_snapshot_request(const std::string snapshot_id, on_response_callback_type&& cb);
 
     void emplace_list_pool_request(on_response_callback_type&& cb);
     void emplace_put_image_metadata_request(const image_metadata&, on_response_callback_type&& cb);
