@@ -71,6 +71,7 @@ public:
         std::string image_name{};
         int64_t size{};
         int64_t object_size{};
+        uint64_t current_snap_seq{};
         std::vector<std::string> features{};
         std::string status{};
         std::string parent_snapshot_id{};

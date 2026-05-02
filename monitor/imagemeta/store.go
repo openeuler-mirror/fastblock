@@ -65,6 +65,7 @@ type ImageMetadata struct {
 	ImageName        string      `json:"image_name"`
 	Size             int64       `json:"size"`
 	ObjectSize       int64       `json:"object_size"`
+	CurrentSnapSeq   uint64      `json:"current_snap_seq,omitempty"`
 	Features         []string    `json:"features,omitempty"`
 	Status           ImageStatus `json:"status"`
 	ParentSnapshotID string      `json:"parent_snapshot_id,omitempty"`

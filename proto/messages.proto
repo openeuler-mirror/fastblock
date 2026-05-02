@@ -565,13 +565,14 @@ message ImageMetadataV2 {
     string image_name = 4;
     int64 size = 5;
     int64 object_size = 6;
-    repeated string features = 7;
-    string status = 8;
-    string parent_snapshot_id = 9;
-    uint32 depth = 10;
-    int64 created_at_unix_nano = 11;
-    int64 updated_at_unix_nano = 12;
-    uint64 generation = 13;
+    uint64 current_snap_seq = 7;
+    repeated string features = 8;
+    string status = 9;
+    string parent_snapshot_id = 10;
+    uint32 depth = 11;
+    int64 created_at_unix_nano = 12;
+    int64 updated_at_unix_nano = 13;
+    uint64 generation = 14;
 }
 
 message SnapshotMetadataV2 {
