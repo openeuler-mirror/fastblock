@@ -227,6 +227,31 @@ void libblk_client::create_image_snapshot(const std::string pool_name, const std
         });
 }
 
+void libblk_client::create_clone_from_snapshot(const std::string snapshot_id, const std::string clone_image_name)
+{
+    _mon_cli->emplace_create_clone_from_snapshot_request(
+        snapshot_id,
+        clone_image_name,
+        [this](const monitor::client::response_status s, monitor::client::request_context* req_ctx)
+        {
+            SPDK_INFOLOG(libblk, "create clone from snapshot status %d\n", s);
+            if (s != monitor::client::response_status::ok) {
+                return;
+            }
+            auto& metadata = std::get<std::unique_ptr<monitor::client::image_metadata>>(req_ctx->response_data);
+            if (!metadata) {
+                return;
+            }
+            warm_image_lineage_by_metadata(*metadata);
+            SPDK_INFOLOG(
+              libblk,
+              "created clone image_id=%s image_name=%s parent_snapshot_id=%s\n",
+              metadata->image_id.c_str(),
+              metadata->image_name.c_str(),
+              metadata->parent_snapshot_id.c_str());
+        });
+}
+
 std::vector<monitor::client::snapshot_metadata> libblk_client::build_fallback_chain(
     const std::optional<monitor::client::image_metadata>& image_metadata) const
 {
