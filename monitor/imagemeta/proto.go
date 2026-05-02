@@ -82,6 +82,18 @@ func GetSnapshotByIDProto(ctx context.Context, client *etcdapi.EtcdClient, snaps
 	return msg.ImageMetadataErrorCode_imageMetadataOk, snapshotToProto(item)
 }
 
+func GetSnapshotIDByNameProto(ctx context.Context, client *etcdapi.EtcdClient, poolName, imageName, snapshotName string) (msg.ImageMetadataErrorCode, string) {
+	image, err := GetImageByName(ctx, client, poolName, imageName)
+	if err != nil {
+		return toImageMetadataError(err), ""
+	}
+	snapshotID, err := GetSnapshotIDByName(ctx, client, image.ImageID, snapshotName)
+	if err != nil {
+		return toImageMetadataError(err), ""
+	}
+	return msg.ImageMetadataErrorCode_imageMetadataOk, snapshotID
+}
+
 func DeleteSnapshotProto(ctx context.Context, client *etcdapi.EtcdClient, imageID, snapshotID string) msg.ImageMetadataErrorCode {
 	if err := DeleteSnapshot(ctx, client, imageID, snapshotID); err != nil {
 		return toImageMetadataError(err)

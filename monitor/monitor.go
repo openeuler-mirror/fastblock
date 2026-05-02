@@ -711,6 +711,30 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			return err
 		}
 
+	case *msg.Request_GetSnapshotIdByNameRequest:
+		log.Info(ctx, "Received GetSnapshotIDByNameRequest")
+
+		errCode, snapshotID := imagemeta.GetSnapshotIDByNameProto(
+			ctx,
+			client,
+			payload.GetSnapshotIdByNameRequest.GetPoolName(),
+			payload.GetSnapshotIdByNameRequest.GetImageName(),
+			payload.GetSnapshotIdByNameRequest.GetSnapshotName(),
+		)
+		response := &msg.Response{
+			Union: &msg.Response_GetSnapshotIdByNameResponse{
+				GetSnapshotIdByNameResponse: &msg.GetSnapshotIDByNameResponse{
+					Errorcode:  errCode,
+					SnapshotId: snapshotID,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
 	case *msg.Request_DeleteSnapshotMetadataRequest:
 		log.Info(ctx, "Received DeleteSnapshotMetadataRequest")
 
