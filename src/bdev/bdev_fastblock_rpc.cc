@@ -22,6 +22,60 @@ get_management_blk_client()
 	return global::blk_clients.at(global::app_thread_shard_id);
 }
 
+static void
+send_monitor_status_error(struct spdk_jsonrpc_request *request, monitor::client::response_status status)
+{
+	int rc = -EIO;
+	switch (status)
+	{
+	case monitor::client::response_status::image_not_found:
+		rc = -ENOENT;
+		break;
+	case monitor::client::response_status::created_image_exists:
+		rc = -EEXIST;
+		break;
+	default:
+		rc = -EIO;
+		break;
+	}
+	spdk_jsonrpc_send_error_response(request, rc, spdk_strerror(-rc));
+}
+
+static void
+write_snapshot_metadata_json(struct spdk_json_write_ctx *w, const monitor::client::snapshot_metadata &metadata)
+{
+	spdk_json_write_object_begin(w);
+	spdk_json_write_named_string(w, "snapshot_id", metadata.snapshot_id.c_str());
+	spdk_json_write_named_string(w, "snapshot_name", metadata.snapshot_name.c_str());
+	spdk_json_write_named_string(w, "source_image_id", metadata.source_image_id.c_str());
+	spdk_json_write_named_string(w, "source_pool_name", metadata.source_pool_name.c_str());
+	spdk_json_write_named_string(w, "source_image_name", metadata.source_image_name.c_str());
+	spdk_json_write_named_uint32(w, "source_pool_id", metadata.source_pool_id);
+	spdk_json_write_named_uint64(w, "snap_seq", metadata.snap_seq);
+	spdk_json_write_named_string(w, "status", metadata.status.c_str());
+	spdk_json_write_named_bool(w, "protected", metadata.is_protected);
+	spdk_json_write_named_string(w, "operation_id", metadata.operation_id.c_str());
+	spdk_json_write_named_uint32(w, "child_count", metadata.child_count);
+	spdk_json_write_named_int64(w, "created_at_unix_nano", metadata.created_at_unix_nano);
+	spdk_json_write_named_int64(w, "updated_at_unix_nano", metadata.updated_at_unix_nano);
+	spdk_json_write_object_end(w);
+}
+
+struct rpc_bdev_fastblock_name_request
+{
+	char *name;
+};
+
+static const struct spdk_json_object_decoder rpc_bdev_fastblock_name_request_decoders[] = {
+	{"name", offsetof(struct rpc_bdev_fastblock_name_request, name), spdk_json_decode_string},
+};
+
+static void
+free_rpc_bdev_fastblock_name_request(struct rpc_bdev_fastblock_name_request *req)
+{
+	free(req->name);
+}
+
 struct rpc_create_fastblock
 {
 	char *name;
@@ -590,6 +644,80 @@ cleanup:
 }
 
 SPDK_RPC_REGISTER("bdev_fastblock_delete_snapshot_by_name", rpc_bdev_fastblock_delete_snapshot_by_name, SPDK_RPC_RUNTIME)
+
+static void
+rpc_bdev_fastblock_get_snapshot_by_name(struct spdk_jsonrpc_request *request,
+						  const struct spdk_json_val *params)
+{
+	struct rpc_bdev_fastblock_snapshot_name_request req = {};
+	struct spdk_bdev *bdev;
+	auto blk_cli = get_management_blk_client();
+
+	if (spdk_json_decode_object(params, rpc_bdev_fastblock_snapshot_name_request_decoders,
+								SPDK_COUNTOF(rpc_bdev_fastblock_snapshot_name_request_decoders),
+								&req))
+	{
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
+										 "spdk_json_decode_object failed");
+		goto cleanup;
+	}
+
+	bdev = spdk_bdev_get_by_name(req.name);
+	if (bdev == NULL)
+	{
+		spdk_jsonrpc_send_error_response(request, -ENODEV, spdk_strerror(ENODEV));
+		goto cleanup;
+	}
+
+	if (!blk_cli)
+	{
+		spdk_jsonrpc_send_error_response(request, -EBUSY, spdk_strerror(EBUSY));
+		goto cleanup;
+	}
+
+	blk_cli->monitor_client()->emplace_get_snapshot_id_by_name_request(
+		bdev_fastblock_get_pool_name(bdev),
+		bdev_fastblock_get_image_name(bdev),
+		req.snapshot_name,
+		[request, blk_cli](const monitor::client::response_status status, monitor::client::request_context *req_ctx)
+		{
+			if (status != monitor::client::response_status::ok)
+			{
+				send_monitor_status_error(request, status);
+				return;
+			}
+			auto &snapshot_id = std::get<std::unique_ptr<std::string>>(req_ctx->response_data);
+			if (!snapshot_id)
+			{
+				spdk_jsonrpc_send_error_response(request, -EIO, spdk_strerror(EIO));
+				return;
+			}
+			blk_cli->monitor_client()->emplace_get_snapshot_metadata_by_id_request(
+				*snapshot_id,
+				[request](const monitor::client::response_status status, monitor::client::request_context *req_ctx)
+				{
+					if (status != monitor::client::response_status::ok)
+					{
+						send_monitor_status_error(request, status);
+						return;
+					}
+					auto &metadata = std::get<std::unique_ptr<monitor::client::snapshot_metadata>>(req_ctx->response_data);
+					if (!metadata)
+					{
+						spdk_jsonrpc_send_error_response(request, -EIO, spdk_strerror(EIO));
+						return;
+					}
+					auto *w = spdk_jsonrpc_begin_result(request);
+					write_snapshot_metadata_json(w, *metadata);
+					spdk_jsonrpc_end_result(request, w);
+				});
+		});
+
+cleanup:
+	free_rpc_bdev_fastblock_snapshot_name_request(&req);
+}
+
+SPDK_RPC_REGISTER("bdev_fastblock_get_snapshot_by_name", rpc_bdev_fastblock_get_snapshot_by_name, SPDK_RPC_RUNTIME)
 
 struct rpc_snapshot_id_request
 {
