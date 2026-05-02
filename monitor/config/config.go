@@ -38,19 +38,25 @@ const (
 // TODO: where should we keep all these keys?
 const (
 	// Input
-	ConfigPoolsKeyPrefix          = "/config/pools/"
-	ConfigImagesKeyPrefix         = "/config/images/"
-	ConfigCSIVolumesKeyPrefix     = "/csi/volumes/"
-	ConfigCSIAttachmentsKeyPrefix = "/csi/attachments/"
-	ConfigCSILeasesKeyPrefix      = "/csi/leases/"
-	ConfigClusterStatesKeySuffix  = "/cluster/states/"
-	ConfigOSDMapKey               = "/osd/osdmap"
-	ConfigTopologyKeyPrefix       = "/config/topology/"
-	ConfigHostsPrefix             = ConfigTopologyKeyPrefix + "hosts/"
-	ConfigRacksPrefix             = ConfigTopologyKeyPrefix + "racks/"
-	ConfigRootsPrefix             = ConfigTopologyKeyPrefix + "roots/"
-	ConfigStateKey                = ConfigClusterStatesKeySuffix + "state"
-	ClusterUnprocessedEvKey       = "/cluster/unprocessedev"
+	ConfigPoolsKeyPrefix           = "/config/pools/"
+	ConfigImagesKeyPrefix          = "/config/images/"
+	ConfigImageMetaKeyPrefix       = "/config/image_meta/"
+	ConfigImageNameKeyPrefix       = "/config/image_name/"
+	ConfigImageSnapshotsKeyPrefix  = "/config/image_snaps/"
+	ConfigImageSnapNameKeyPrefix   = "/config/image_snap_name/"
+	ConfigImageChildrenKeyPrefix   = "/config/image_children/"
+	ConfigImageOperationsKeyPrefix = "/config/image_ops/"
+	ConfigCSIVolumesKeyPrefix      = "/csi/volumes/"
+	ConfigCSIAttachmentsKeyPrefix  = "/csi/attachments/"
+	ConfigCSILeasesKeyPrefix       = "/csi/leases/"
+	ConfigClusterStatesKeySuffix   = "/cluster/states/"
+	ConfigOSDMapKey                = "/osd/osdmap"
+	ConfigTopologyKeyPrefix        = "/config/topology/"
+	ConfigHostsPrefix              = ConfigTopologyKeyPrefix + "hosts/"
+	ConfigRacksPrefix              = ConfigTopologyKeyPrefix + "racks/"
+	ConfigRootsPrefix              = ConfigTopologyKeyPrefix + "roots/"
+	ConfigStateKey                 = ConfigClusterStatesKeySuffix + "state"
+	ClusterUnprocessedEvKey        = "/cluster/unprocessedev"
 )
 
 // Config types.
