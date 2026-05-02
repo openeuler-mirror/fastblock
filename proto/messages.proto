@@ -590,6 +590,16 @@ message SnapshotMetadataV2 {
     uint32 child_count = 13;
 }
 
+message ImageOperationRecordV2 {
+    string operation_id = 1;
+    string type = 2;
+    string target_id = 3;
+    string status = 4;
+    string error = 5;
+    int64 started_at_unix_nano = 6;
+    int64 updated_at_unix_nano = 7;
+}
+
 enum ImageMetadataErrorCode {
     imageMetadataOk = 0;
     imageMetadataNotFound = 1;
@@ -666,6 +676,66 @@ message ListSnapshotMetadataResponse {
     repeated SnapshotMetadataV2 metadata = 2;
 }
 
+message PutImageChildLinkRequest {
+    string snapshot_id = 1;
+    string child_image_id = 2;
+}
+
+message PutImageChildLinkResponse {
+    ImageMetadataErrorCode errorcode = 1;
+}
+
+message DeleteImageChildLinkRequest {
+    string snapshot_id = 1;
+    string child_image_id = 2;
+}
+
+message DeleteImageChildLinkResponse {
+    ImageMetadataErrorCode errorcode = 1;
+}
+
+message ListImageChildLinkRequest {
+    string snapshot_id = 1;
+}
+
+message ListImageChildLinkResponse {
+    ImageMetadataErrorCode errorcode = 1;
+    repeated string child_image_ids = 2;
+}
+
+message PutImageOperationRequest {
+    ImageOperationRecordV2 record = 1;
+}
+
+message PutImageOperationResponse {
+    ImageMetadataErrorCode errorcode = 1;
+}
+
+message GetImageOperationRequest {
+    string operation_id = 1;
+}
+
+message GetImageOperationResponse {
+    ImageMetadataErrorCode errorcode = 1;
+    ImageOperationRecordV2 record = 2;
+}
+
+message DeleteImageOperationRequest {
+    string operation_id = 1;
+}
+
+message DeleteImageOperationResponse {
+    ImageMetadataErrorCode errorcode = 1;
+}
+
+message ListImageOperationRequest {
+}
+
+message ListImageOperationResponse {
+    ImageMetadataErrorCode errorcode = 1;
+    repeated ImageOperationRecordV2 records = 2;
+}
+
 message Request {
     oneof union {
         BootRequest boot_request = 1;
@@ -713,6 +783,13 @@ message Request {
         GetSnapshotMetadataRequest get_snapshot_metadata_request = 43;
         DeleteSnapshotMetadataRequest delete_snapshot_metadata_request = 44;
         ListSnapshotMetadataRequest list_snapshot_metadata_request = 45;
+        PutImageChildLinkRequest put_image_child_link_request = 46;
+        DeleteImageChildLinkRequest delete_image_child_link_request = 47;
+        ListImageChildLinkRequest list_image_child_link_request = 48;
+        PutImageOperationRequest put_image_operation_request = 49;
+        GetImageOperationRequest get_image_operation_request = 50;
+        DeleteImageOperationRequest delete_image_operation_request = 51;
+        ListImageOperationRequest list_image_operation_request = 52;
     }
 }
 
@@ -763,5 +840,12 @@ message Response {
         GetSnapshotMetadataResponse get_snapshot_metadata_response = 43;
         DeleteSnapshotMetadataResponse delete_snapshot_metadata_response = 44;
         ListSnapshotMetadataResponse list_snapshot_metadata_response = 45;
+        PutImageChildLinkResponse put_image_child_link_response = 46;
+        DeleteImageChildLinkResponse delete_image_child_link_response = 47;
+        ListImageChildLinkResponse list_image_child_link_response = 48;
+        PutImageOperationResponse put_image_operation_response = 49;
+        GetImageOperationResponse get_image_operation_response = 50;
+        DeleteImageOperationResponse delete_image_operation_response = 51;
+        ListImageOperationResponse list_image_operation_response = 52;
     }
 }
