@@ -306,6 +306,24 @@ void libblk_client::delete_image_snapshot(const std::string snapshot_id)
         });
 }
 
+void libblk_client::finalize_flatten_image(const std::string image_id)
+{
+    _mon_cli->emplace_finalize_flatten_image_request(
+        image_id,
+        [this](const monitor::client::response_status s, monitor::client::request_context* req_ctx)
+        {
+            SPDK_INFOLOG(libblk, "finalize flatten image status %d\n", s);
+            if (s != monitor::client::response_status::ok) {
+                return;
+            }
+            auto& metadata = std::get<std::unique_ptr<monitor::client::image_metadata>>(req_ctx->response_data);
+            if (!metadata) {
+                return;
+            }
+            warm_image_lineage_by_metadata(*metadata);
+        });
+}
+
 std::vector<monitor::client::snapshot_metadata> libblk_client::build_fallback_chain(
     const std::optional<monitor::client::image_metadata>& image_metadata) const
 {
