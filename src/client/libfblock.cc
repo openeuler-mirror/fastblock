@@ -30,8 +30,31 @@ struct flatten_image_ctx {
     size_t fallback_depth{0};
 };
 
+struct rollback_image_ctx {
+    libblk_client* owner{nullptr};
+    std::string pool_name{};
+    std::string image_name{};
+    std::string snapshot_name{};
+    std::optional<monitor::client::image_metadata> image_metadata{std::nullopt};
+    std::optional<monitor::client::snapshot_metadata> snapshot_metadata{std::nullopt};
+    uint64_t object_count{0};
+    uint64_t object_size{default_object_size};
+    uint64_t current_object_seq{0};
+};
+
 void flatten_issue_next(flatten_image_ctx* ctx);
 void flatten_issue_parent_read(flatten_image_ctx* ctx);
+void rollback_issue_next(rollback_image_ctx* ctx);
+
+static bool is_zero_filled(const std::string& data)
+{
+    for (const auto ch : data) {
+        if (ch != '\0') {
+            return false;
+        }
+    }
+    return true;
+}
 
 void flatten_finish(flatten_image_ctx* ctx, const int32_t state)
 {
@@ -182,6 +205,168 @@ void flatten_on_root_image(const monitor::client::response_status status, monito
     ctx->object_count = (metadata->size + default_object_size - 1) / default_object_size;
     ctx->current_object_seq = 0;
     flatten_issue_next(ctx);
+}
+
+void rollback_finish(rollback_image_ctx* ctx, const int32_t state)
+{
+    SPDK_NOTICELOG(
+      "rollback image %s/%s to snapshot %s finished with state %d\n",
+      ctx->pool_name.c_str(),
+      ctx->image_name.c_str(),
+      ctx->snapshot_name.c_str(),
+      state);
+    delete ctx;
+}
+
+void rollback_write_done(void *src, int32_t state)
+{
+    auto* ctx = reinterpret_cast<rollback_image_ctx*>(src);
+    if (state != err::E_SUCCESS) {
+        rollback_finish(ctx, state);
+        return;
+    }
+    ctx->current_object_seq++;
+    rollback_issue_next(ctx);
+}
+
+void rollback_snapshot_read_done(void *src, uint64_t object_idx, const std::string& data, int32_t state)
+{
+    (void)object_idx;
+    auto* ctx = reinterpret_cast<rollback_image_ctx*>(src);
+    if (state == err::E_ENOENT) {
+        ctx->current_object_seq++;
+        rollback_issue_next(ctx);
+        return;
+    }
+    if (state != err::E_SUCCESS) {
+        rollback_finish(ctx, state);
+        return;
+    }
+
+    auto object_prefix = ctx->owner->calc_image_object_prefix(ctx->image_metadata->pool_id, ctx->image_metadata->image_name);
+    auto object_name = ctx->owner->get_image_object_name(object_prefix, ctx->current_object_seq);
+    if (data.empty() || is_zero_filled(data)) {
+        ctx->owner->data_client()->write_object(
+            object_name,
+            0,
+            std::string(data.size(), '\0'),
+            ctx->image_metadata->pool_id,
+            &rollback_write_done,
+            ctx,
+            ctx->image_metadata->current_snap_seq);
+        return;
+    }
+
+    ctx->owner->data_client()->write_object(
+        object_name,
+        0,
+        data,
+        ctx->image_metadata->pool_id,
+        &rollback_write_done,
+        ctx,
+        ctx->image_metadata->current_snap_seq);
+}
+
+void rollback_issue_next(rollback_image_ctx* ctx)
+{
+    if (ctx->current_object_seq >= ctx->object_count) {
+        rollback_finish(ctx, err::E_SUCCESS);
+        return;
+    }
+
+    const auto start = ctx->current_object_seq * ctx->object_size;
+    auto length = ctx->object_size;
+    if (start + length > static_cast<uint64_t>(ctx->image_metadata->size)) {
+        length = static_cast<uint64_t>(ctx->image_metadata->size) - start;
+    }
+
+    auto object_prefix = ctx->owner->calc_image_object_prefix(ctx->image_metadata->pool_id, ctx->image_metadata->image_name);
+    auto object_name = ctx->owner->get_image_object_name(object_prefix, ctx->current_object_seq);
+    ctx->owner->data_client()->read_object(
+        object_name,
+        0,
+        length,
+        ctx->image_metadata->pool_id,
+        &rollback_snapshot_read_done,
+        ctx,
+        ctx->current_object_seq,
+        ctx->snapshot_metadata->snap_seq);
+}
+
+void rollback_on_snapshot_metadata(
+  const monitor::client::response_status status,
+  monitor::client::request_context* req_ctx,
+  rollback_image_ctx* ctx)
+{
+    if (status != monitor::client::response_status::ok) {
+        rollback_finish(ctx, err::E_ENOENT);
+        return;
+    }
+
+    auto& metadata = std::get<std::unique_ptr<monitor::client::snapshot_metadata>>(req_ctx->response_data);
+    if (!metadata) {
+        rollback_finish(ctx, err::E_INVAL);
+        return;
+    }
+    ctx->snapshot_metadata = *metadata;
+    if (metadata->source_pool_name != ctx->pool_name || metadata->source_image_name != ctx->image_name) {
+        rollback_finish(ctx, err::E_INVAL);
+        return;
+    }
+    ctx->object_size = ctx->image_metadata->object_size > 0 ? static_cast<uint64_t>(ctx->image_metadata->object_size) : default_object_size;
+    ctx->object_count = (ctx->image_metadata->size + ctx->object_size - 1) / ctx->object_size;
+    ctx->current_object_seq = 0;
+    rollback_issue_next(ctx);
+}
+
+void rollback_on_snapshot_id(
+  const monitor::client::response_status status,
+  monitor::client::request_context* req_ctx,
+  rollback_image_ctx* ctx)
+{
+    if (status != monitor::client::response_status::ok) {
+        rollback_finish(ctx, err::E_ENOENT);
+        return;
+    }
+
+    auto& snapshot_id = std::get<std::unique_ptr<std::string>>(req_ctx->response_data);
+    if (!snapshot_id) {
+        rollback_finish(ctx, err::E_INVAL);
+        return;
+    }
+    ctx->owner->monitor_client()->emplace_get_snapshot_metadata_by_id_request(
+        *snapshot_id,
+        [ctx](const monitor::client::response_status status, monitor::client::request_context* req_ctx)
+        {
+            rollback_on_snapshot_metadata(status, req_ctx, ctx);
+        });
+}
+
+void rollback_on_root_image(
+  const monitor::client::response_status status,
+  monitor::client::request_context* req_ctx,
+  rollback_image_ctx* ctx)
+{
+    if (status != monitor::client::response_status::ok) {
+        rollback_finish(ctx, err::E_ENOENT);
+        return;
+    }
+
+    auto& metadata = std::get<std::unique_ptr<monitor::client::image_metadata>>(req_ctx->response_data);
+    if (!metadata) {
+        rollback_finish(ctx, err::E_INVAL);
+        return;
+    }
+    ctx->owner->refresh_cached_image_metadata(*metadata);
+    ctx->image_metadata = *metadata;
+    ctx->owner->monitor_client()->emplace_get_snapshot_id_by_name_request(
+        ctx->pool_name,
+        ctx->image_name,
+        ctx->snapshot_name,
+        [ctx](const monitor::client::response_status status, monitor::client::request_context* req_ctx)
+        {
+            rollback_on_snapshot_id(status, req_ctx, ctx);
+        });
 }
 
 } // namespace
@@ -589,6 +774,26 @@ void libblk_client::delete_image_snapshot(const std::string snapshot_id)
                 return;
             }
             cache_snapshot_metadata(*metadata);
+        });
+}
+
+void libblk_client::rollback_image_to_snapshot(
+  const std::string pool_name,
+  const std::string image_name,
+  const std::string snapshot_name)
+{
+    auto* ctx = new rollback_image_ctx{
+        .owner = this,
+        .pool_name = pool_name,
+        .image_name = image_name,
+        .snapshot_name = snapshot_name,
+    };
+    _mon_cli->emplace_get_image_metadata_by_name_request(
+        pool_name,
+        image_name,
+        [ctx](const monitor::client::response_status status, monitor::client::request_context* req_ctx)
+        {
+            rollback_on_root_image(status, req_ctx, ctx);
         });
 }
 

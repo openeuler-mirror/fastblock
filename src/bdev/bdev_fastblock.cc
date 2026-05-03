@@ -895,6 +895,19 @@ int bdev_fastblock_flatten(struct spdk_bdev *bdev)
 	return 0;
 }
 
+int bdev_fastblock_rollback_to_snapshot(struct spdk_bdev *bdev, const char *snapshot_name)
+{
+	auto* fastblock = reinterpret_cast<struct bdev_fastblock*>(bdev->ctxt);
+	auto blk_cli = global::blk_clients.at(global::app_thread_shard_id);
+	if (!blk_cli) {
+		return -EBUSY;
+	}
+
+	blk_cli->open_image(fastblock->pool_name, fastblock->image_name);
+	blk_cli->rollback_image_to_snapshot(fastblock->pool_name, fastblock->image_name, snapshot_name);
+	return 0;
+}
+
 int bdev_fastblock_create_snapshot(struct spdk_bdev *bdev, const char *snapshot_name)
 {
 	auto* fastblock = reinterpret_cast<struct bdev_fastblock*>(bdev->ctxt);
