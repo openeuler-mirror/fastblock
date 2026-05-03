@@ -283,6 +283,26 @@ static int bdev_fastblock_library_init(void);
 
 static void bdev_fastblock_library_fini(void);
 
+static std::shared_ptr<::libblk_client>
+get_management_blk_client_fallback()
+{
+	if (global::blk_client) {
+		return global::blk_client;
+	}
+	if (global::app_thread_shard_id < global::blk_clients.size()) {
+		auto blk_cli = global::blk_clients.at(global::app_thread_shard_id);
+		if (blk_cli) {
+			return blk_cli;
+		}
+	}
+	for (auto& blk_cli : global::blk_clients) {
+		if (blk_cli) {
+			return blk_cli;
+		}
+	}
+	return nullptr;
+}
+
 static int
 bdev_fastblock_get_ctx_size(void)
 {
@@ -885,7 +905,7 @@ int bdev_fastblock_resize(struct spdk_bdev *bdev, const uint64_t new_size_in_mb)
 int bdev_fastblock_flatten(struct spdk_bdev *bdev)
 {
 	auto* fastblock = reinterpret_cast<struct bdev_fastblock*>(bdev->ctxt);
-	auto blk_cli = global::blk_clients.at(global::app_thread_shard_id);
+	auto blk_cli = get_management_blk_client_fallback();
 	if (!blk_cli) {
 		return -EBUSY;
 	}
@@ -898,7 +918,7 @@ int bdev_fastblock_flatten(struct spdk_bdev *bdev)
 int bdev_fastblock_rollback_to_snapshot(struct spdk_bdev *bdev, const char *snapshot_name)
 {
 	auto* fastblock = reinterpret_cast<struct bdev_fastblock*>(bdev->ctxt);
-	auto blk_cli = global::blk_clients.at(global::app_thread_shard_id);
+	auto blk_cli = get_management_blk_client_fallback();
 	if (!blk_cli) {
 		return -EBUSY;
 	}
@@ -911,7 +931,7 @@ int bdev_fastblock_rollback_to_snapshot(struct spdk_bdev *bdev, const char *snap
 int bdev_fastblock_create_snapshot(struct spdk_bdev *bdev, const char *snapshot_name)
 {
 	auto* fastblock = reinterpret_cast<struct bdev_fastblock*>(bdev->ctxt);
-	auto blk_cli = global::blk_clients.at(global::app_thread_shard_id);
+	auto blk_cli = get_management_blk_client_fallback();
 	if (!blk_cli) {
 		return -EBUSY;
 	}
