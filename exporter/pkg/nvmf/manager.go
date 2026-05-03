@@ -94,11 +94,24 @@ func (m *LocalManager) CreateExport(ctx context.Context, req api.CreateExportReq
 	nqn := subsystemNQN(m.nqnPrefix, id)
 
 	var createdBdev string
-	if err := m.rpc.Call(ctx, "bdev_fastblock_register_existing", m.buildRegisterExistingBdevParams(req, bdev), &createdBdev); err != nil {
+	registerParams := m.buildRegisterExistingBdevParams(req, bdev)
+	if err := m.rpc.Call(ctx, "bdev_fastblock_register_existing", registerParams, &createdBdev); err != nil {
 		if export, reused := m.reuseExistingExport(ctx, id, err); reused {
 			return export, nil
 		}
-		return api.Export{}, err
+		retry, recoverErr := m.cleanupStaleBdev(ctx, id, bdev, err)
+		if recoverErr != nil {
+			return api.Export{}, recoverErr
+		}
+		if !retry {
+			return api.Export{}, err
+		}
+		if retryErr := m.rpc.Call(ctx, "bdev_fastblock_register_existing", registerParams, &createdBdev); retryErr != nil {
+			if export, reused := m.reuseExistingExport(ctx, id, retryErr); reused {
+				return export, nil
+			}
+			return api.Export{}, retryErr
+		}
 	}
 
 	if err := m.rpc.Call(ctx, "nvmf_create_subsystem", buildCreateSubsystemParams(nqn, subsystemSerial(id)), nil); err != nil {
@@ -153,6 +166,21 @@ func (m *LocalManager) cleanupCreateFailure(ctx context.Context, nqn, bdev strin
 		return createErr
 	}
 	return fmt.Errorf("%w; cleanup failed: %s", createErr, strings.Join(cleanupErrors, ", "))
+}
+
+func (m *LocalManager) cleanupStaleBdev(ctx context.Context, exportID, bdev string, createErr error) (bool, error) {
+	if !isSPDKAlreadyExists(createErr) {
+		return false, nil
+	}
+	if err := m.rpc.Call(ctx, "bdev_fastblock_delete", map[string]any{"name": bdev}, nil); err != nil && !isSPDKNotFound(err) {
+		return false, err
+	}
+	if _, err := m.GetExport(ctx, exportID); err == nil {
+		return false, nil
+	} else if !errors.Is(err, ErrExportNotFound) {
+		return false, err
+	}
+	return true, nil
 }
 
 func (m *LocalManager) buildRegisterExistingBdevParams(req api.CreateExportRequest, bdev string) map[string]any {
