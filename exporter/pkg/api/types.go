@@ -38,12 +38,6 @@ func (r CreateExportRequest) Validate() error {
 	if strings.TrimSpace(r.ImageName) == "" {
 		return errors.New("image_name is required")
 	}
-	if r.CapacityBytes <= 0 {
-		return fmt.Errorf("invalid capacity_bytes %d", r.CapacityBytes)
-	}
-	if r.ObjectSize <= 0 {
-		return fmt.Errorf("invalid object_size %d", r.ObjectSize)
-	}
 	if r.BlockSize <= 0 {
 		return fmt.Errorf("invalid block_size %d", r.BlockSize)
 	}

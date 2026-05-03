@@ -87,6 +87,27 @@ func TestCreateExport(t *testing.T) {
 	}
 }
 
+func TestCreateExportWithoutSizeHints(t *testing.T) {
+	manager := &stubManager{}
+	srv := New(config.Config{NodeName: "node-a"}, manager)
+	body, _ := json.Marshal(api.CreateExportRequest{
+		VolumeID:  "fbvol:cluster:1:3",
+		PoolName:  "fb",
+		ImageName: "img-2",
+		BlockSize: 4096,
+		Transport: "tcp",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/exports", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	if manager.createReq.ImageName != "img-2" || manager.createReq.BlockSize != 4096 {
+		t.Fatalf("unexpected create request: %+v", manager.createReq)
+	}
+}
+
 func TestDeleteExport(t *testing.T) {
 	manager := &stubManager{}
 	srv := New(config.Config{NodeName: "node-a"}, manager)
