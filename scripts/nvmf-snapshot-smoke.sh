@@ -9,7 +9,6 @@ if [[ $# -gt 0 ]]; then
 fi
 
 EXPORTER_ENDPOINT="${EXPORTER_ENDPOINT:-http://127.0.0.1:9500}"
-SPDK_RPC_SOCK="${SPDK_RPC_SOCK:-}"
 POOL_NAME="${POOL_NAME:-fb}"
 IMAGE_NAME="${IMAGE_NAME:-}"
 CLONE_IMAGE_NAME="${CLONE_IMAGE_NAME:-}"
@@ -32,7 +31,6 @@ Actions:
 
 Options:
   --exporter-endpoint <url>   Exporter HTTP endpoint (default: http://127.0.0.1:9500)
-  --spdk-rpc-sock <path>      SPDK RPC unix socket path
   --pool <name>               Pool name (default: fb)
   --image <name>              Existing base image name
   --clone-image <name>        Clone image name (default: <image>-clone-<ts>)
@@ -52,10 +50,6 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --exporter-endpoint)
             EXPORTER_ENDPOINT="$2"
-            shift 2
-            ;;
-        --spdk-rpc-sock)
-            SPDK_RPC_SOCK="$2"
             shift 2
             ;;
         --pool)
@@ -148,8 +142,6 @@ ensure_inputs() {
     if [[ -z "$CLONE_IMAGE_NAME" ]]; then
         CLONE_IMAGE_NAME="${IMAGE_NAME}-clone-$(date +%s)"
     fi
-    [[ -n "$SPDK_RPC_SOCK" ]] || die "--spdk-rpc-sock is required"
-    [[ -S "$SPDK_RPC_SOCK" ]] || die "spdk rpc socket not found: $SPDK_RPC_SOCK"
     [[ "$TRANSPORT" == "tcp" || "$TRANSPORT" == "rdma" ]] || die "unsupported transport: $TRANSPORT"
 }
 
@@ -166,42 +158,6 @@ ensure_hostnqn() {
     python3 - <<'PY' >/etc/nvme/hostnqn
 import uuid
 print(f"nqn.2014-08.org.nvmexpress:uuid:{uuid.uuid4()}")
-PY
-}
-
-spdk_rpc() {
-    local method="$1"
-    local params_json="${2:-null}"
-    python3 - "$SPDK_RPC_SOCK" "$method" "$params_json" <<'PY'
-import json
-import socket
-import sys
-
-sock_path, method, params_json = sys.argv[1:4]
-req = {"jsonrpc": "2.0", "id": 1, "method": method}
-if params_json and params_json != "null":
-    req["params"] = json.loads(params_json)
-
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.settimeout(20)
-s.connect(sock_path)
-s.sendall((json.dumps(req) + "\n").encode())
-data = b""
-while True:
-    chunk = s.recv(65536)
-    if not chunk:
-        break
-    data += chunk
-    if b"\n" in chunk:
-        break
-s.close()
-
-resp = json.loads(data.decode())
-if resp.get("error"):
-    err = resp["error"]
-    print(f"spdk rpc error {err.get('code')}: {err.get('message')}", file=sys.stderr)
-    sys.exit(1)
-print(json.dumps(resp.get("result")))
 PY
 }
 
@@ -243,10 +199,6 @@ volume_export_id() {
     printf '%s' "$1" | tr ':/. ' '-----'
 }
 
-bdev_name() {
-    printf 'fbdev_%s' "$(volume_export_id "$1")"
-}
-
 create_export() {
     local volume_id="$1"
     local image_name="$2"
@@ -274,6 +226,36 @@ cleanup_exports() {
     fi
     http_json DELETE "/v1/exports/$(volume_export_id "$CLONE_VOLUME_ID")" || true
     http_json DELETE "/v1/exports/$(volume_export_id "$BASE_VOLUME_ID")" || true
+}
+
+create_snapshot() {
+    local export_id="$1"
+    local snapshot_name="$2"
+    http_json POST "/v1/exports/$export_id/snapshots" "{\"snapshot_name\":\"$snapshot_name\"}" >/dev/null
+}
+
+protect_snapshot() {
+    local export_id="$1"
+    local snapshot_name="$2"
+    http_json POST "/v1/exports/$export_id/snapshots/$snapshot_name/protect" >/dev/null
+}
+
+get_snapshot() {
+    local export_id="$1"
+    local snapshot_name="$2"
+    http_json GET "/v1/exports/$export_id/snapshots/$snapshot_name"
+}
+
+create_clone() {
+    local export_id="$1"
+    local snapshot_name="$2"
+    local clone_image_name="$3"
+    http_json POST "/v1/exports/$export_id/snapshots/$snapshot_name/clone" "{\"clone_image_name\":\"$clone_image_name\"}" >/dev/null
+}
+
+flatten_export() {
+    local export_id="$1"
+    http_json POST "/v1/exports/$export_id/flatten" >/dev/null
 }
 
 connect_clone_export() {
@@ -308,25 +290,21 @@ disconnect_clone_export() {
 }
 
 run_flow() {
-    local base_bdev clone_bdev base_export clone_export
-    base_bdev="$(bdev_name "$BASE_VOLUME_ID")"
-    clone_bdev="$(bdev_name "$CLONE_VOLUME_ID")"
+    local base_export clone_export
 
     log "exporting base image $POOL_NAME/$IMAGE_NAME"
     base_export="$(create_export "$BASE_VOLUME_ID" "$IMAGE_NAME")"
     log "base export: $base_export"
 
-    log "creating snapshot $SNAPSHOT_NAME on bdev $base_bdev"
-    spdk_rpc bdev_fastblock_create_snapshot "{\"name\":\"$base_bdev\",\"snapshot_name\":\"$SNAPSHOT_NAME\"}" >/dev/null
+    log "creating snapshot $SNAPSHOT_NAME"
+    create_snapshot "$(volume_export_id "$BASE_VOLUME_ID")" "$SNAPSHOT_NAME"
     log "protecting snapshot $SNAPSHOT_NAME"
-    spdk_rpc bdev_fastblock_protect_snapshot_by_name "{\"name\":\"$base_bdev\",\"snapshot_name\":\"$SNAPSHOT_NAME\"}" >/dev/null
+    protect_snapshot "$(volume_export_id "$BASE_VOLUME_ID")" "$SNAPSHOT_NAME"
     log "snapshot info"
-    spdk_rpc bdev_fastblock_get_snapshot_by_name "{\"name\":\"$base_bdev\",\"snapshot_name\":\"$SNAPSHOT_NAME\"}"
+    get_snapshot "$(volume_export_id "$BASE_VOLUME_ID")" "$SNAPSHOT_NAME"
 
     log "creating clone image $CLONE_IMAGE_NAME from snapshot $SNAPSHOT_NAME"
-    spdk_rpc bdev_fastblock_create_clone_from_snapshot "{\"name\":\"$base_bdev\",\"snapshot_name\":\"$SNAPSHOT_NAME\",\"clone_image_name\":\"$CLONE_IMAGE_NAME\"}" >/dev/null
-    log "clone image metadata"
-    spdk_rpc bdev_fastblock_get_image_metadata "{\"pool_name\":\"$POOL_NAME\",\"image_name\":\"$CLONE_IMAGE_NAME\"}"
+    create_clone "$(volume_export_id "$BASE_VOLUME_ID")" "$SNAPSHOT_NAME" "$CLONE_IMAGE_NAME"
 
     log "exporting clone image $POOL_NAME/$CLONE_IMAGE_NAME"
     clone_export="$(create_export "$CLONE_VOLUME_ID" "$CLONE_IMAGE_NAME")"
@@ -339,10 +317,8 @@ run_flow() {
         connect_clone_export
     fi
 
-    log "flattening clone export bdev $clone_bdev"
-    spdk_rpc bdev_fastblock_flatten "{\"name\":\"$clone_bdev\"}" >/dev/null
-    log "clone image metadata after flatten"
-    spdk_rpc bdev_fastblock_get_image_metadata "{\"pool_name\":\"$POOL_NAME\",\"image_name\":\"$CLONE_IMAGE_NAME\"}"
+    log "flattening clone export"
+    flatten_export "$(volume_export_id "$CLONE_VOLUME_ID")"
 
     if [[ "$CONNECT_NVME" -eq 1 ]]; then
         disconnect_clone_export
