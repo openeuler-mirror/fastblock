@@ -15,6 +15,7 @@ import (
 
 type stubManager struct {
 	createReq api.CreateExportRequest
+	listResp   []api.Export
 	deleteID  string
 	allowID   string
 	allowNQN  string
@@ -27,6 +28,10 @@ type stubManager struct {
 func (m *stubManager) CreateExport(_ context.Context, req api.CreateExportRequest) (api.Export, error) {
 	m.createReq = req
 	return api.Export{ID: "exp-1", NQN: "nqn.1", NSID: 1, Traddr: "10.0.0.1", Trsvcid: "4420"}, nil
+}
+
+func (m *stubManager) ListExports(_ context.Context) ([]api.Export, error) {
+	return m.listResp, nil
 }
 
 func (m *stubManager) DeleteExport(_ context.Context, exportID string) error {
@@ -84,6 +89,26 @@ func TestCreateExport(t *testing.T) {
 	}
 	if manager.createReq.VolumeID != "fbvol:cluster:1:2" {
 		t.Fatalf("unexpected create request: %+v", manager.createReq)
+	}
+}
+
+func TestListExports(t *testing.T) {
+	manager := &stubManager{
+		listResp: []api.Export{{ID: "exp-1", NQN: "nqn.1", NSID: 1, Traddr: "10.0.0.1", Trsvcid: "4420"}},
+	}
+	srv := New(config.Config{NodeName: "node-a"}, manager)
+	req := httptest.NewRequest(http.MethodGet, "/v1/exports", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	var exports []api.Export
+	if err := json.Unmarshal(rec.Body.Bytes(), &exports); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if len(exports) != 1 || exports[0].ID != "exp-1" {
+		t.Fatalf("unexpected exports: %+v", exports)
 	}
 }
 
