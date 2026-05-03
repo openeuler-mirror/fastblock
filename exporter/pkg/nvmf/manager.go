@@ -20,6 +20,14 @@ type Manager interface {
 	ListExports(ctx context.Context) ([]api.Export, error)
 	GetExport(ctx context.Context, exportID string) (api.Export, error)
 	DeleteExport(ctx context.Context, exportID string) error
+	CreateSnapshot(ctx context.Context, exportID, snapshotName string) error
+	ListSnapshots(ctx context.Context, exportID string) ([]api.Snapshot, error)
+	GetSnapshot(ctx context.Context, exportID, snapshotName string) (api.Snapshot, error)
+	ProtectSnapshot(ctx context.Context, exportID, snapshotName string) error
+	UnprotectSnapshot(ctx context.Context, exportID, snapshotName string) error
+	DeleteSnapshot(ctx context.Context, exportID, snapshotName string) error
+	CreateCloneFromSnapshot(ctx context.Context, exportID, snapshotName, cloneImageName string) error
+	FlattenExport(ctx context.Context, exportID string) error
 	AllowHost(ctx context.Context, exportID, hostNQN string) error
 	DenyHost(ctx context.Context, exportID, hostNQN string) error
 }
@@ -281,6 +289,114 @@ func (m *LocalManager) DeleteExport(ctx context.Context, exportID string) error 
 		return err
 	}
 	return nil
+}
+
+func (m *LocalManager) CreateSnapshot(ctx context.Context, exportID, snapshotName string) error {
+	if strings.TrimSpace(exportID) == "" {
+		return errors.New("export id is required")
+	}
+	if strings.TrimSpace(snapshotName) == "" {
+		return errors.New("snapshot name is required")
+	}
+	return m.rpc.Call(ctx, "bdev_fastblock_create_snapshot", map[string]any{
+		"name":          bdevName(exportID),
+		"snapshot_name": snapshotName,
+	}, nil)
+}
+
+func (m *LocalManager) ListSnapshots(ctx context.Context, exportID string) ([]api.Snapshot, error) {
+	if strings.TrimSpace(exportID) == "" {
+		return nil, errors.New("export id is required")
+	}
+	var items []api.Snapshot
+	if err := m.rpc.Call(ctx, "bdev_fastblock_list_snapshots", map[string]any{
+		"name": bdevName(exportID),
+	}, &items); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (m *LocalManager) GetSnapshot(ctx context.Context, exportID, snapshotName string) (api.Snapshot, error) {
+	if strings.TrimSpace(exportID) == "" {
+		return api.Snapshot{}, errors.New("export id is required")
+	}
+	if strings.TrimSpace(snapshotName) == "" {
+		return api.Snapshot{}, errors.New("snapshot name is required")
+	}
+	var item api.Snapshot
+	if err := m.rpc.Call(ctx, "bdev_fastblock_get_snapshot_by_name", map[string]any{
+		"name":          bdevName(exportID),
+		"snapshot_name": snapshotName,
+	}, &item); err != nil {
+		return api.Snapshot{}, err
+	}
+	return item, nil
+}
+
+func (m *LocalManager) ProtectSnapshot(ctx context.Context, exportID, snapshotName string) error {
+	if strings.TrimSpace(exportID) == "" {
+		return errors.New("export id is required")
+	}
+	if strings.TrimSpace(snapshotName) == "" {
+		return errors.New("snapshot name is required")
+	}
+	return m.rpc.Call(ctx, "bdev_fastblock_protect_snapshot_by_name", map[string]any{
+		"name":          bdevName(exportID),
+		"snapshot_name": snapshotName,
+	}, nil)
+}
+
+func (m *LocalManager) UnprotectSnapshot(ctx context.Context, exportID, snapshotName string) error {
+	if strings.TrimSpace(exportID) == "" {
+		return errors.New("export id is required")
+	}
+	if strings.TrimSpace(snapshotName) == "" {
+		return errors.New("snapshot name is required")
+	}
+	return m.rpc.Call(ctx, "bdev_fastblock_unprotect_snapshot_by_name", map[string]any{
+		"name":          bdevName(exportID),
+		"snapshot_name": snapshotName,
+	}, nil)
+}
+
+func (m *LocalManager) DeleteSnapshot(ctx context.Context, exportID, snapshotName string) error {
+	if strings.TrimSpace(exportID) == "" {
+		return errors.New("export id is required")
+	}
+	if strings.TrimSpace(snapshotName) == "" {
+		return errors.New("snapshot name is required")
+	}
+	return m.rpc.Call(ctx, "bdev_fastblock_delete_snapshot_by_name", map[string]any{
+		"name":          bdevName(exportID),
+		"snapshot_name": snapshotName,
+	}, nil)
+}
+
+func (m *LocalManager) CreateCloneFromSnapshot(ctx context.Context, exportID, snapshotName, cloneImageName string) error {
+	if strings.TrimSpace(exportID) == "" {
+		return errors.New("export id is required")
+	}
+	if strings.TrimSpace(snapshotName) == "" {
+		return errors.New("snapshot name is required")
+	}
+	if strings.TrimSpace(cloneImageName) == "" {
+		return errors.New("clone image name is required")
+	}
+	return m.rpc.Call(ctx, "bdev_fastblock_create_clone_from_snapshot", map[string]any{
+		"name":             bdevName(exportID),
+		"snapshot_name":    snapshotName,
+		"clone_image_name": cloneImageName,
+	}, nil)
+}
+
+func (m *LocalManager) FlattenExport(ctx context.Context, exportID string) error {
+	if strings.TrimSpace(exportID) == "" {
+		return errors.New("export id is required")
+	}
+	return m.rpc.Call(ctx, "bdev_fastblock_flatten", map[string]any{
+		"name": bdevName(exportID),
+	}, nil)
 }
 
 func (m *LocalManager) ListExports(ctx context.Context) ([]api.Export, error) {
