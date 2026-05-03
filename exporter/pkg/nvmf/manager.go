@@ -94,7 +94,7 @@ func (m *LocalManager) CreateExport(ctx context.Context, req api.CreateExportReq
 	nqn := subsystemNQN(m.nqnPrefix, id)
 
 	var createdBdev string
-	if err := m.rpc.Call(ctx, "bdev_fastblock_create", m.buildCreateBdevParams(req, bdev), &createdBdev); err != nil {
+	if err := m.rpc.Call(ctx, "bdev_fastblock_register_existing", m.buildRegisterExistingBdevParams(req, bdev), &createdBdev); err != nil {
 		if export, reused := m.reuseExistingExport(ctx, id, err); reused {
 			return export, nil
 		}
@@ -155,13 +155,11 @@ func (m *LocalManager) cleanupCreateFailure(ctx context.Context, nqn, bdev strin
 	return fmt.Errorf("%w; cleanup failed: %s", createErr, strings.Join(cleanupErrors, ", "))
 }
 
-func (m *LocalManager) buildCreateBdevParams(req api.CreateExportRequest, bdev string) map[string]any {
+func (m *LocalManager) buildRegisterExistingBdevParams(req api.CreateExportRequest, bdev string) map[string]any {
 	return map[string]any{
 		"name":            bdev,
 		"pool_name":       req.PoolName,
 		"image_name":      req.ImageName,
-		"image_size":      req.CapacityBytes,
-		"object_size":     req.ObjectSize,
 		"block_size":      req.BlockSize,
 		"monitor_address": m.monitorAddress,
 	}
