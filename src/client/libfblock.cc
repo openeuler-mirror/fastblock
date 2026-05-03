@@ -56,6 +56,22 @@ static bool is_zero_filled(const std::string& data)
     return true;
 }
 
+void refresh_image_on_all_clients(const std::string& pool_name, const std::string& image_name)
+{
+    auto refresh = [&pool_name, &image_name](const std::shared_ptr<::libblk_client>& blk_cli) {
+        if (blk_cli) {
+            blk_cli->open_image(pool_name, image_name);
+        }
+    };
+
+    refresh(global::blk_client);
+    for (auto& blk_cli : global::blk_clients) {
+        if (blk_cli && blk_cli != global::blk_client) {
+            refresh(blk_cli);
+        }
+    }
+}
+
 void flatten_finish(flatten_image_ctx* ctx, const int32_t state)
 {
     SPDK_NOTICELOG("flatten image %s/%s finished with state %d\n", ctx->pool_name.c_str(), ctx->image_name.c_str(), state);
@@ -607,6 +623,7 @@ void libblk_client::create_image_snapshot(const std::string pool_name, const std
                     image_metadata->current_snap_seq = metadata->snap_seq;
                     cache_image_metadata(*image_metadata);
                 }
+                refresh_image_on_all_clients(metadata->source_pool_name, metadata->source_image_name);
             }
             SPDK_INFOLOG(
               libblk,
