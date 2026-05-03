@@ -127,7 +127,7 @@ func (m *LocalManager) CreateExport(ctx context.Context, req api.CreateExportReq
 		}
 	}
 
-	if err := m.rpc.Call(ctx, "nvmf_create_subsystem", buildCreateSubsystemParams(nqn, subsystemSerial(id)), nil); err != nil {
+	if err := m.rpc.Call(ctx, "nvmf_create_subsystem", buildCreateSubsystemParams(nqn, subsystemSerial(id), req.AllowAnyHost), nil); err != nil {
 		if export, reused := m.reuseExistingExport(ctx, id, err); reused {
 			return export, nil
 		}
@@ -206,12 +206,12 @@ func (m *LocalManager) buildRegisterExistingBdevParams(req api.CreateExportReque
 	}
 }
 
-func buildCreateSubsystemParams(nqn, serial string) map[string]any {
+func buildCreateSubsystemParams(nqn, serial string, allowAnyHost bool) map[string]any {
 	return map[string]any{
 		"nqn":            nqn,
 		"serial_number":  serial,
 		"model_number":   "FASTBLOCK",
-		"allow_any_host": false,
+		"allow_any_host": allowAnyHost,
 	}
 }
 

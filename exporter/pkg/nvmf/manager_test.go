@@ -377,7 +377,7 @@ func TestBuildRPCParamsHelpers(t *testing.T) {
 		t.Fatalf("register existing params should not include object_size: %+v", bdevParams)
 	}
 
-	subsystemParams := buildCreateSubsystemParams("nqn.test", "SERIAL1")
+	subsystemParams := buildCreateSubsystemParams("nqn.test", "SERIAL1", false)
 	if subsystemParams["allow_any_host"] != false {
 		t.Fatalf("unexpected subsystem params: %+v", subsystemParams)
 	}
@@ -391,6 +391,39 @@ func TestBuildRPCParamsHelpers(t *testing.T) {
 	transportParams := buildTransportParams("tcp")
 	if transportParams["trtype"] != "TCP" || transportParams["max_io_size"] != 131072 {
 		t.Fatalf("unexpected transport params: %+v", transportParams)
+	}
+}
+
+func TestCreateExportAllowsAnyHostWhenRequested(t *testing.T) {
+	cfg := config.Default()
+	cfg.MonitorAddress = "10.0.0.20:3333"
+	cfg.TargetAddress = "10.0.0.10"
+	cfg.NodeName = "node-a"
+	rpc := &stubCaller{}
+	manager := newLocalManagerWithRPC(cfg, rpc)
+
+	_, err := manager.CreateExport(context.Background(), api.CreateExportRequest{
+		VolumeID:     "fbvol:cluster-a:1:9",
+		PoolName:     "fb",
+		ImageName:    "img-9",
+		BlockSize:    4096,
+		Transport:    "tcp",
+		AllowAnyHost: true,
+	})
+	if err != nil {
+		t.Fatalf("create export failed: %v", err)
+	}
+	var found bool
+	for _, call := range rpc.calls {
+		if call.method == "nvmf_create_subsystem" {
+			if call.params["allow_any_host"] != true {
+				t.Fatalf("unexpected subsystem params: %+v", call.params)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("nvmf_create_subsystem was not called: %+v", rpc.calls)
 	}
 }
 
