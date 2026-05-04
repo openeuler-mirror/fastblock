@@ -73,6 +73,8 @@ kfastblock_volume_event_type_name(const enum kfastblock_volume_event_type type)
 		return "image_refresh_fail";
 	case KFASTBLOCK_VOLUME_EVENT_LEADER_QUERY_FAIL:
 		return "leader_query_fail";
+	case KFASTBLOCK_VOLUME_EVENT_OBJECT_DONE:
+		return "object_done";
 	case KFASTBLOCK_VOLUME_EVENT_OBJECT_RETRY:
 		return "object_retry";
 	case KFASTBLOCK_VOLUME_EVENT_OBJECT_ERROR:
@@ -273,6 +275,7 @@ void kfastblock_volume_stats_init(struct kfastblock_volume *vol)
 	atomic64_set(&vol->stats.image_refresh_fail, 0);
 	atomic64_set(&vol->stats.leader_query_ok, 0);
 	atomic64_set(&vol->stats.leader_query_fail, 0);
+	atomic64_set(&vol->stats.object_io_completed, 0);
 	atomic64_set(&vol->stats.object_io_retries, 0);
 	atomic64_set(&vol->stats.object_io_errors, 0);
 	atomic64_set(&vol->stats.refresh_kicks, 0);
@@ -340,6 +343,18 @@ void kfastblock_volume_account_io_complete(struct kfastblock_volume *vol, int re
 		atomic64_inc(&vol->stats.io_failed);
 	else
 		atomic64_inc(&vol->stats.io_completed);
+}
+
+void kfastblock_volume_account_object_success(struct kfastblock_volume *vol,
+				      enum req_op op, u32 pg_id,
+				      u32 osd_id, u32 length)
+{
+	if (!vol)
+		return;
+
+	atomic64_inc(&vol->stats.object_io_completed);
+	kfastblock_volume_record_event(vol, KFASTBLOCK_VOLUME_EVENT_OBJECT_DONE,
+				      0, op, pg_id, osd_id, length, 0);
 }
 
 void kfastblock_volume_account_object_retry(struct kfastblock_volume *vol,
@@ -1815,6 +1830,18 @@ static ssize_t io_failed_show(struct device *dev,
 			 atomic64_read(&vol->stats.io_failed));
 }
 
+static ssize_t object_io_completed_show(struct device *dev,
+			       struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.object_io_completed));
+}
+
 static ssize_t read_requests_show(struct device *dev,
 			    struct device_attribute *attr, char *buf)
 {
@@ -2191,6 +2218,7 @@ static DEVICE_ATTR_RO(last_success_jiffies);
 static DEVICE_ATTR_RO(io_submitted);
 static DEVICE_ATTR_RO(io_completed);
 static DEVICE_ATTR_RO(io_failed);
+static DEVICE_ATTR_RO(object_io_completed);
 static DEVICE_ATTR_RO(read_requests);
 static DEVICE_ATTR_RO(write_requests);
 static DEVICE_ATTR_RO(discard_requests);
@@ -2254,6 +2282,7 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_io_submitted.attr,
 	&dev_attr_io_completed.attr,
 	&dev_attr_io_failed.attr,
+	&dev_attr_object_io_completed.attr,
 	&dev_attr_read_requests.attr,
 	&dev_attr_write_requests.attr,
 	&dev_attr_discard_requests.attr,
