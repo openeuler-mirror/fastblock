@@ -56,6 +56,11 @@ kfastblock_volume_find_get_locked(const char *pool_name, const char *image_name)
 	return vol;
 }
 
+static u32 kfastblock_volume_object_buffer_cache_limit(
+	const struct kfastblock_volume *vol);
+static u32 kfastblock_volume_object_buffer_cached(
+	struct kfastblock_volume *vol);
+
 static void kfastblock_volume_record_event(
 	struct kfastblock_volume *vol,
 	enum kfastblock_volume_event_type type,
@@ -607,6 +612,10 @@ static int kfastblock_volume_summary_show(struct seq_file *m, void *v)
 	seq_printf(m, "osd_count=%u\n", vol->view.osd_count);
 	seq_printf(m, "route_count=%u\n", vol->view.route_count);
 	seq_printf(m, "dispatch_window=%u\n", vol->dispatch_window);
+	seq_printf(m, "object_buffer_cached=%u\n",
+		   kfastblock_volume_object_buffer_cached(vol));
+	seq_printf(m, "object_buffer_cache_limit=%u\n",
+		   kfastblock_volume_object_buffer_cache_limit(vol));
 	seq_printf(m, "refresh_interval_ms=%u\n", vol->refresh_interval_ms);
 	seq_printf(m, "image_refresh_interval_ms=%u\n",
 		   vol->image_refresh_interval_ms);
@@ -776,6 +785,10 @@ static int kfastblock_volume_stats_show(struct seq_file *m, void *v)
 		   atomic64_read(&vol->stats.osd_backoff_hits));
 	seq_printf(m, "monitor_backoff_hits=%lld\n",
 		   atomic64_read(&vol->stats.monitor_backoff_hits));
+	seq_printf(m, "object_buffer_cached=%u\n",
+		   kfastblock_volume_object_buffer_cached(vol));
+	seq_printf(m, "object_buffer_cache_limit=%u\n",
+		   kfastblock_volume_object_buffer_cache_limit(vol));
 	return 0;
 }
 DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_stats);
@@ -1729,6 +1742,31 @@ static ssize_t dispatch_window_show(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%u\n", vol->dispatch_window);
 }
 
+static ssize_t object_buffer_cached_show(struct device *dev,
+					 struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_volume_object_buffer_cached(vol));
+}
+
+static ssize_t object_buffer_cache_limit_show(struct device *dev,
+					      struct device_attribute *attr,
+					      char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_volume_object_buffer_cache_limit(vol));
+}
+
 static ssize_t dispatch_window_store(struct device *dev,
 				     struct device_attribute *attr,
 				     const char *buf, size_t count)
@@ -2497,6 +2535,8 @@ static DEVICE_ATTR_RO(image_name);
 static DEVICE_ATTR_RO(size_bytes);
 static DEVICE_ATTR_RO(object_size);
 static DEVICE_ATTR_RW(dispatch_window);
+static DEVICE_ATTR_RO(object_buffer_cached);
+static DEVICE_ATTR_RO(object_buffer_cache_limit);
 static DEVICE_ATTR_RW(refresh_interval_ms);
 static DEVICE_ATTR_RW(image_refresh_interval_ms);
 static DEVICE_ATTR_RO(pool_id);
@@ -2569,6 +2609,8 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_size_bytes.attr,
 	&dev_attr_object_size.attr,
 	&dev_attr_dispatch_window.attr,
+	&dev_attr_object_buffer_cached.attr,
+	&dev_attr_object_buffer_cache_limit.attr,
 	&dev_attr_refresh_interval_ms.attr,
 	&dev_attr_image_refresh_interval_ms.attr,
 	&dev_attr_pool_id.attr,
@@ -2809,6 +2851,28 @@ static void kfastblock_volume_free_object_buffers(struct kfastblock_volume *vol)
 	}
 	vol->object_buffer_cached = 0;
 	mutex_unlock(&vol->object_buffer_lock);
+}
+
+static u32 kfastblock_volume_object_buffer_cache_limit(
+	const struct kfastblock_volume *vol)
+{
+	if (!vol || !vol->dispatch_window)
+		return 1;
+	return vol->dispatch_window;
+}
+
+static u32 kfastblock_volume_object_buffer_cached(
+	struct kfastblock_volume *vol)
+{
+	u32 cached;
+
+	if (!vol)
+		return 0;
+
+	mutex_lock(&vol->object_buffer_lock);
+	cached = vol->object_buffer_cached;
+	mutex_unlock(&vol->object_buffer_lock);
+	return cached;
 }
 
 static void kfastblock_volume_free(struct kfastblock_volume *vol)
