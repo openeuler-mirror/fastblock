@@ -1979,6 +1979,7 @@ int kfastblock_transport_refresh_image_volume(struct kfastblock_volume *vol)
 		struct socket *sock = NULL;
 		u64 seq;
 		int ret;
+		unsigned int actions;
 
 		ret = kfastblock_transport_get_monitor_socket(vol, &vol->spec, i,
 					      &cached, &sock);
@@ -1999,21 +2000,20 @@ int kfastblock_transport_refresh_image_volume(struct kfastblock_volume *vol)
 		ret = kfastblock_transport_maybe_inject_fault(
 			vol, KFASTBLOCK_FAULT_MONITOR_FETCH_IMAGE);
 		if (ret) {
-			mutex_unlock(&cached->lock);
-			kfastblock_recovery_apply_monitor_failure(
-				vol, cached, ret,
-				kfastblock_recovery_classify_monitor_failure(ret));
+			actions = kfastblock_recovery_classify_monitor_failure(ret);
+			kfastblock_recovery_finalize_monitor_socket(vol, cached, ret,
+								 actions);
 			first_err = ret;
 			continue;
 		}
 		ret = kfastblock_transport_fetch_image_info(sock, &vol->view, seq);
-		mutex_unlock(&cached->lock);
 		if (!ret || ret == -ESTALE) {
+			mutex_unlock(&cached->lock);
 			return 0;
 		}
-		kfastblock_recovery_apply_monitor_failure(
-			vol, cached, ret,
-			kfastblock_recovery_classify_monitor_failure(ret));
+		actions = kfastblock_recovery_classify_monitor_failure(ret);
+		kfastblock_recovery_finalize_monitor_socket(vol, cached, ret,
+							 actions);
 		first_err = ret;
 	}
 
@@ -2033,6 +2033,7 @@ int kfastblock_transport_refresh_cluster_map_volume(struct kfastblock_volume *vo
 		struct socket *sock = NULL;
 		u64 seq;
 		int ret;
+		unsigned int actions;
 
 		ret = kfastblock_transport_get_monitor_socket(vol, &vol->spec, i,
 					      &cached, &sock);
@@ -2053,22 +2054,21 @@ int kfastblock_transport_refresh_cluster_map_volume(struct kfastblock_volume *vo
 		ret = kfastblock_transport_maybe_inject_fault(
 			vol, KFASTBLOCK_FAULT_MONITOR_FETCH_CLUSTER);
 		if (ret) {
-			mutex_unlock(&cached->lock);
-			kfastblock_recovery_apply_monitor_failure(
-				vol, cached, ret,
-				kfastblock_recovery_classify_monitor_failure(ret));
+			actions = kfastblock_recovery_classify_monitor_failure(ret);
+			kfastblock_recovery_finalize_monitor_socket(vol, cached, ret,
+								 actions);
 			first_err = ret;
 			continue;
 		}
 		ret = kfastblock_transport_fetch_cluster_map_from_monitor(sock,
 					      &vol->view, seq);
-		mutex_unlock(&cached->lock);
 		if (!ret || ret == -ESTALE) {
+			mutex_unlock(&cached->lock);
 			return 0;
 		}
-		kfastblock_recovery_apply_monitor_failure(
-			vol, cached, ret,
-			kfastblock_recovery_classify_monitor_failure(ret));
+		actions = kfastblock_recovery_classify_monitor_failure(ret);
+		kfastblock_recovery_finalize_monitor_socket(vol, cached, ret,
+							 actions);
 		first_err = ret;
 	}
 

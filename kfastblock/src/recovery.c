@@ -260,17 +260,22 @@ void kfastblock_recovery_apply_leader_failure(
 	}
 }
 
-void kfastblock_recovery_apply_monitor_failure(
+void kfastblock_recovery_finalize_monitor_socket(
 	struct kfastblock_volume *vol,
 	struct kfastblock_cached_monitor_socket *cached,
 	int ret,
 	unsigned int actions)
 {
-	if (!vol || !actions)
+	if (!cached)
 		return;
 
-	if (actions & KFASTBLOCK_RECOVERY_DROP_SOCKET) {
-		if (cached && cached->sock) {
+	if (!ret) {
+		mutex_unlock(&cached->lock);
+		return;
+	}
+
+	if ((actions & KFASTBLOCK_RECOVERY_DROP_SOCKET) && vol) {
+		if (cached->sock) {
 			struct kfastblock_monitor_endpoint endpoint = {};
 
 			endpoint.port = cached->port;
@@ -281,7 +286,8 @@ void kfastblock_recovery_apply_monitor_failure(
 			kfastblock_volume_account_socket_drop(vol, true, 0,
 							      cached->port, ret);
 		}
-		if (cached)
-			kfastblock_monitor_conn_slot_close(cached);
+		kfastblock_monitor_conn_slot_close_locked(cached);
 	}
+
+	mutex_unlock(&cached->lock);
 }

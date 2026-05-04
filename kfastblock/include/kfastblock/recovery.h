@@ -51,7 +51,7 @@ void kfastblock_recovery_apply_leader_failure(
 	u32 pg_id,
 	int ret,
 	unsigned int actions);
-void kfastblock_recovery_apply_monitor_failure(
+void kfastblock_recovery_finalize_monitor_socket(
 	struct kfastblock_volume *vol,
 	struct kfastblock_cached_monitor_socket *cached,
 	int ret,
