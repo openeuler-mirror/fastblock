@@ -461,8 +461,11 @@ int kfastblock_selfcheck_run(struct kfastblock_volume *vol,
 	if (m)
 		seq_printf(m, "volume=%s\n",
 			   vol->disk ? vol->disk->disk_name : "<none>");
+
+	down_read(&vol->state_lock);
 	kfastblock_selfcheck_check_volume_core(vol, &local, m);
 	kfastblock_selfcheck_check_meta_view(vol, &local, m);
+	up_read(&vol->state_lock);
 	kfastblock_selfcheck_check_scheduler(vol, &local, m);
 	kfastblock_selfcheck_check_buffer_pool(vol, &local, m);
 	kfastblock_selfcheck_check_osd_conn_pool(vol, &local, m);
