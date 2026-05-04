@@ -9,6 +9,7 @@
 
 #include "kfastblock/buffer.h"
 #include "kfastblock/connpool.h"
+#include "kfastblock/fault.h"
 #include "kfastblock/meta.h"
 #include "kfastblock/request.h"
 #include "kfastblock/scheduler.h"
@@ -383,6 +384,38 @@ static void kfastblock_selfcheck_check_monitor_conn_pool(
 	}
 }
 
+static void kfastblock_selfcheck_check_fault_injection(
+	struct kfastblock_volume *vol,
+	struct kfastblock_selfcheck_report *report,
+	struct seq_file *m)
+{
+	char detail[192];
+	char mask_buf[128];
+	u32 mask;
+	u32 budget;
+	s32 err;
+	bool enabled;
+
+	if (!vol)
+		return;
+
+	mask = kfastblock_fault_injection_mask(&vol->fault_injection);
+	budget = kfastblock_fault_injection_budget(&vol->fault_injection);
+	err = kfastblock_fault_injection_errno(&vol->fault_injection);
+	enabled = kfastblock_fault_injection_enabled(&vol->fault_injection);
+	kfastblock_fault_format_mask(mask, mask_buf, sizeof(mask_buf));
+	scnprintf(detail, sizeof(detail),
+		  "enabled=%u mask=%s errno=%d budget=%u hits=%u skips=%u",
+		  enabled ? 1 : 0, mask_buf, err, budget,
+		  kfastblock_fault_injection_hit_count(&vol->fault_injection),
+		  kfastblock_fault_injection_skip_count(&vol->fault_injection));
+	kfastblock_selfcheck_note(report, m, "fault_injection.config",
+				  !enabled || (mask != 0 && err < 0 && budget > 0),
+				  enabled,
+				  KFASTBLOCK_SELFCHECK_FAULT_INJECTION,
+				  -EINVAL, detail);
+}
+
 static void kfastblock_selfcheck_commit(struct kfastblock_volume *vol,
 					const struct kfastblock_selfcheck_report *report)
 {
@@ -434,6 +467,7 @@ int kfastblock_selfcheck_run(struct kfastblock_volume *vol,
 	kfastblock_selfcheck_check_buffer_pool(vol, &local, m);
 	kfastblock_selfcheck_check_osd_conn_pool(vol, &local, m);
 	kfastblock_selfcheck_check_monitor_conn_pool(vol, &local, m);
+	kfastblock_selfcheck_check_fault_injection(vol, &local, m);
 	if (m) {
 		seq_printf(m,
 			   "summary total=%u failed=%u warnings=%u flags=0x%x result_errno=%d\n",

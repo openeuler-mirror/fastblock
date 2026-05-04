@@ -173,6 +173,12 @@ kfastblock_volume_event_type_name(const enum kfastblock_volume_event_type type)
 		return "manual_queue_resume";
 	case KFASTBLOCK_VOLUME_EVENT_SOCKET_BACKOFF_WAIT:
 		return "socket_backoff_wait";
+	case KFASTBLOCK_VOLUME_EVENT_MANUAL_FAULT_INJECTION_ARM:
+		return "manual_fault_injection_arm";
+	case KFASTBLOCK_VOLUME_EVENT_MANUAL_FAULT_INJECTION_RESET:
+		return "manual_fault_injection_reset";
+	case KFASTBLOCK_VOLUME_EVENT_FAULT_INJECTION_TRIGGER:
+		return "fault_injection_trigger";
 	default:
 		return "unknown";
 	}
@@ -626,11 +632,44 @@ void kfastblock_volume_account_socket_backoff_wait(struct kfastblock_volume *vol
 				      KFASTBLOCK_VOLUME_SOURCE_OSD_SOCKET, ret);
 }
 
+void kfastblock_volume_account_fault_injection(struct kfastblock_volume *vol,
+					 u32 site, int ret)
+{
+	u32 failure_source = KFASTBLOCK_VOLUME_SOURCE_QUEUE_GATE;
+
+	if (!vol)
+		return;
+
+	switch (site) {
+	case KFASTBLOCK_FAULT_MONITOR_CONNECT:
+	case KFASTBLOCK_FAULT_MONITOR_FETCH_IMAGE:
+	case KFASTBLOCK_FAULT_MONITOR_FETCH_CLUSTER:
+		failure_source = KFASTBLOCK_VOLUME_SOURCE_MONITOR_SOCKET;
+		break;
+	case KFASTBLOCK_FAULT_OSD_CONNECT:
+	case KFASTBLOCK_FAULT_OBJECT_IO:
+		failure_source = KFASTBLOCK_VOLUME_SOURCE_OSD_SOCKET;
+		break;
+	case KFASTBLOCK_FAULT_LEADER_QUERY:
+		failure_source = KFASTBLOCK_VOLUME_SOURCE_LEADER_QUERY;
+		break;
+	default:
+		break;
+	}
+
+	kfastblock_volume_record_event(vol,
+				      KFASTBLOCK_VOLUME_EVENT_FAULT_INJECTION_TRIGGER,
+				      ret, REQ_OP_FLUSH, 0, 0, site, 0);
+	kfastblock_volume_update_health(vol, KFASTBLOCK_VOLUME_HEALTH_DEGRADED,
+				      failure_source, ret);
+}
+
 static int kfastblock_volume_summary_show(struct seq_file *m, void *v)
 {
 	struct kfastblock_volume *vol = m->private;
 	struct kfastblock_conn_pool_snapshot osd_conn = {};
 	struct kfastblock_conn_pool_snapshot monitor_conn = {};
+	char fault_mask[128];
 
 	if (!vol)
 		return -ENODEV;
@@ -641,6 +680,9 @@ static int kfastblock_volume_summary_show(struct seq_file *m, void *v)
 	kfastblock_monitor_conn_pool_snapshot(vol->monitor_cache,
 					      KFASTBLOCK_MAX_MONITORS,
 					      &monitor_conn);
+	kfastblock_fault_format_mask(
+		kfastblock_fault_injection_mask(&vol->fault_injection),
+		fault_mask, sizeof(fault_mask));
 	down_read(&vol->state_lock);
 	seq_printf(m, "disk=%s\n", vol->disk ? vol->disk->disk_name : "");
 	seq_printf(m, "ready=%d\n", atomic_read(&vol->ready));
@@ -739,6 +781,36 @@ static int kfastblock_volume_summary_show(struct seq_file *m, void *v)
 		   monitor_conn.max_health_score);
 	seq_printf(m, "monitor_conn_health_avg=%u\n",
 		   monitor_conn.avg_health_score);
+	seq_printf(m, "fault_injection_enabled=%u\n",
+		   kfastblock_fault_injection_enabled(&vol->fault_injection) ? 1 : 0);
+	seq_printf(m, "fault_injection_mask=%s\n", fault_mask);
+	seq_printf(m, "fault_injection_errno=%d\n",
+		   kfastblock_fault_injection_errno(&vol->fault_injection));
+	seq_printf(m, "fault_injection_budget=%u\n",
+		   kfastblock_fault_injection_budget(&vol->fault_injection));
+	seq_printf(m, "fault_injection_arm_count=%u\n",
+		   kfastblock_fault_injection_arm_count(&vol->fault_injection));
+	seq_printf(m, "fault_injection_reset_count=%u\n",
+		   kfastblock_fault_injection_reset_count(&vol->fault_injection));
+	seq_printf(m, "fault_injection_hit_count=%u\n",
+		   kfastblock_fault_injection_hit_count(&vol->fault_injection));
+	seq_printf(m, "fault_injection_skip_count=%u\n",
+		   kfastblock_fault_injection_skip_count(&vol->fault_injection));
+	seq_printf(m, "fault_injection_last_site=%s\n",
+		   kfastblock_fault_site_name(
+			   kfastblock_fault_injection_last_site(
+				   &vol->fault_injection)));
+	seq_printf(m, "fault_injection_last_errno=%d\n",
+		   kfastblock_fault_injection_last_errno(&vol->fault_injection));
+	seq_printf(m, "fault_injection_last_arm_jiffies=%lu\n",
+		   kfastblock_fault_injection_last_arm_jiffies(
+			   &vol->fault_injection));
+	seq_printf(m, "fault_injection_last_reset_jiffies=%lu\n",
+		   kfastblock_fault_injection_last_reset_jiffies(
+			   &vol->fault_injection));
+	seq_printf(m, "fault_injection_last_trigger_jiffies=%lu\n",
+		   kfastblock_fault_injection_last_trigger_jiffies(
+			   &vol->fault_injection));
 	seq_printf(m, "object_buffer_cached=%u\n",
 		   kfastblock_volume_object_buffer_cached(vol));
 	seq_printf(m, "object_buffer_cache_limit=%u\n",
@@ -890,6 +962,7 @@ static int kfastblock_volume_stats_show(struct seq_file *m, void *v)
 	struct kfastblock_volume *vol = m->private;
 	struct kfastblock_conn_pool_snapshot osd_conn = {};
 	struct kfastblock_conn_pool_snapshot monitor_conn = {};
+	char fault_mask[128];
 
 	if (!vol)
 		return -ENODEV;
@@ -900,6 +973,9 @@ static int kfastblock_volume_stats_show(struct seq_file *m, void *v)
 	kfastblock_monitor_conn_pool_snapshot(vol->monitor_cache,
 					      KFASTBLOCK_MAX_MONITORS,
 					      &monitor_conn);
+	kfastblock_fault_format_mask(
+		kfastblock_fault_injection_mask(&vol->fault_injection),
+		fault_mask, sizeof(fault_mask));
 	seq_printf(m, "io_submitted=%lld\n",
 		   atomic64_read(&vol->stats.io_submitted));
 	seq_printf(m, "io_completed=%lld\n",
@@ -1045,6 +1121,36 @@ static int kfastblock_volume_stats_show(struct seq_file *m, void *v)
 		   monitor_conn.max_health_score);
 	seq_printf(m, "monitor_conn_health_avg=%u\n",
 		   monitor_conn.avg_health_score);
+	seq_printf(m, "fault_injection_enabled=%u\n",
+		   kfastblock_fault_injection_enabled(&vol->fault_injection) ? 1 : 0);
+	seq_printf(m, "fault_injection_mask=%s\n", fault_mask);
+	seq_printf(m, "fault_injection_errno=%d\n",
+		   kfastblock_fault_injection_errno(&vol->fault_injection));
+	seq_printf(m, "fault_injection_budget=%u\n",
+		   kfastblock_fault_injection_budget(&vol->fault_injection));
+	seq_printf(m, "fault_injection_arm_count=%u\n",
+		   kfastblock_fault_injection_arm_count(&vol->fault_injection));
+	seq_printf(m, "fault_injection_reset_count=%u\n",
+		   kfastblock_fault_injection_reset_count(&vol->fault_injection));
+	seq_printf(m, "fault_injection_hit_count=%u\n",
+		   kfastblock_fault_injection_hit_count(&vol->fault_injection));
+	seq_printf(m, "fault_injection_skip_count=%u\n",
+		   kfastblock_fault_injection_skip_count(&vol->fault_injection));
+	seq_printf(m, "fault_injection_last_site=%s\n",
+		   kfastblock_fault_site_name(
+			   kfastblock_fault_injection_last_site(
+				   &vol->fault_injection)));
+	seq_printf(m, "fault_injection_last_errno=%d\n",
+		   kfastblock_fault_injection_last_errno(&vol->fault_injection));
+	seq_printf(m, "fault_injection_last_arm_jiffies=%lu\n",
+		   kfastblock_fault_injection_last_arm_jiffies(
+			   &vol->fault_injection));
+	seq_printf(m, "fault_injection_last_reset_jiffies=%lu\n",
+		   kfastblock_fault_injection_last_reset_jiffies(
+			   &vol->fault_injection));
+	seq_printf(m, "fault_injection_last_trigger_jiffies=%lu\n",
+		   kfastblock_fault_injection_last_trigger_jiffies(
+			   &vol->fault_injection));
 	seq_printf(m, "selfcheck_runs=%u\n",
 		   kfastblock_selfcheck_run_count(&vol->selfcheck));
 	seq_printf(m, "selfcheck_failure_runs=%u\n",
@@ -3172,6 +3278,266 @@ static ssize_t manual_queue_resumes_show(struct device *dev,
 			 atomic64_read(&vol->stats.manual_queue_resumes));
 }
 
+static ssize_t fault_injection_enabled_show(struct device *dev,
+					    struct device_attribute *attr,
+					    char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_fault_injection_enabled(
+				 &vol->fault_injection) ? 1 : 0);
+}
+
+static ssize_t fault_injection_enabled_store(struct device *dev,
+					     struct device_attribute *attr,
+					     const char *buf, size_t count)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	bool enabled;
+
+	if (!vol)
+		return -ENODEV;
+
+	if (sysfs_streq(buf, "1") || sysfs_streq(buf, "true") ||
+	    sysfs_streq(buf, "yes"))
+		enabled = true;
+	else if (sysfs_streq(buf, "0") || sysfs_streq(buf, "false") ||
+		 sysfs_streq(buf, "no"))
+		enabled = false;
+	else
+		return -EINVAL;
+
+	kfastblock_fault_injection_set_enabled(&vol->fault_injection, enabled);
+	kfastblock_volume_record_event(
+		vol,
+		enabled ? KFASTBLOCK_VOLUME_EVENT_MANUAL_FAULT_INJECTION_ARM :
+			  KFASTBLOCK_VOLUME_EVENT_MANUAL_FAULT_INJECTION_RESET,
+		0, REQ_OP_FLUSH, 0, 0,
+		kfastblock_fault_injection_mask(&vol->fault_injection),
+		kfastblock_fault_injection_budget(&vol->fault_injection));
+	return count;
+}
+
+static ssize_t fault_injection_mask_show(struct device *dev,
+					 struct device_attribute *attr,
+					 char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	char mask_buf[128];
+
+	if (!vol)
+		return -ENODEV;
+
+	kfastblock_fault_format_mask(
+		kfastblock_fault_injection_mask(&vol->fault_injection),
+		mask_buf, sizeof(mask_buf));
+	return scnprintf(buf, PAGE_SIZE, "%s\n", mask_buf);
+}
+
+static ssize_t fault_injection_mask_store(struct device *dev,
+					  struct device_attribute *attr,
+					  const char *buf, size_t count)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	u32 mask;
+	int ret;
+
+	if (!vol)
+		return -ENODEV;
+
+	ret = kfastblock_fault_parse_mask(buf, &mask);
+	if (ret)
+		return ret;
+
+	kfastblock_fault_injection_set_mask(&vol->fault_injection, mask);
+	return count;
+}
+
+static ssize_t fault_injection_errno_show(struct device *dev,
+					  struct device_attribute *attr,
+					  char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n",
+			 kfastblock_fault_injection_errno(&vol->fault_injection));
+}
+
+static ssize_t fault_injection_errno_store(struct device *dev,
+					   struct device_attribute *attr,
+					   const char *buf, size_t count)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	int value;
+	int ret;
+
+	if (!vol)
+		return -ENODEV;
+
+	ret = kstrtoint(buf, 0, &value);
+	if (ret)
+		return ret;
+	if (value >= 0)
+		return -EINVAL;
+
+	kfastblock_fault_injection_set_errno(&vol->fault_injection, value);
+	return count;
+}
+
+static ssize_t fault_injection_budget_show(struct device *dev,
+					   struct device_attribute *attr,
+					   char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_fault_injection_budget(&vol->fault_injection));
+}
+
+static ssize_t fault_injection_budget_store(struct device *dev,
+					    struct device_attribute *attr,
+					    const char *buf, size_t count)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	u32 value;
+	int ret;
+
+	if (!vol)
+		return -ENODEV;
+
+	ret = kfastblock_volume_parse_u32_value(buf, count, &value);
+	if (ret)
+		return ret;
+
+	kfastblock_fault_injection_set_budget(&vol->fault_injection, value);
+	return count;
+}
+
+static ssize_t fault_injection_arm_count_show(struct device *dev,
+					      struct device_attribute *attr,
+					      char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_fault_injection_arm_count(&vol->fault_injection));
+}
+
+static ssize_t fault_injection_reset_count_show(struct device *dev,
+						struct device_attribute *attr,
+						char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_fault_injection_reset_count(
+				 &vol->fault_injection));
+}
+
+static ssize_t fault_injection_hit_count_show(struct device *dev,
+					      struct device_attribute *attr,
+					      char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_fault_injection_hit_count(&vol->fault_injection));
+}
+
+static ssize_t fault_injection_skip_count_show(struct device *dev,
+					       struct device_attribute *attr,
+					       char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_fault_injection_skip_count(&vol->fault_injection));
+}
+
+static ssize_t fault_injection_last_site_show(struct device *dev,
+					      struct device_attribute *attr,
+					      char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%s\n",
+			 kfastblock_fault_site_name(
+				 kfastblock_fault_injection_last_site(
+					 &vol->fault_injection)));
+}
+
+static ssize_t fault_injection_last_errno_show(struct device *dev,
+					       struct device_attribute *attr,
+					       char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n",
+			 kfastblock_fault_injection_last_errno(
+				 &vol->fault_injection));
+}
+
+static ssize_t fault_injection_last_trigger_show(struct device *dev,
+						 struct device_attribute *attr,
+						 char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lu\n",
+			 kfastblock_fault_injection_last_trigger_jiffies(
+				 &vol->fault_injection));
+}
+
+static ssize_t reset_fault_injection_store(struct device *dev,
+					   struct device_attribute *attr,
+					   const char *buf, size_t count)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+	if (!sysfs_streq(buf, "1") && !sysfs_streq(buf, "true") &&
+	    !sysfs_streq(buf, "yes") && !sysfs_streq(buf, "reset"))
+		return -EINVAL;
+
+	kfastblock_fault_injection_reset(&vol->fault_injection);
+	kfastblock_volume_record_event(
+		vol, KFASTBLOCK_VOLUME_EVENT_MANUAL_FAULT_INJECTION_RESET,
+		0, REQ_OP_FLUSH, 0, 0, 0, 0);
+	return count;
+}
+
 static ssize_t selfcheck_runs_show(struct device *dev,
 				   struct device_attribute *attr, char *buf)
 {
@@ -3396,6 +3762,17 @@ static DEVICE_ATTR_RO(manual_transport_drops);
 static DEVICE_ATTR_RO(manual_leader_resets);
 static DEVICE_ATTR_RO(manual_queue_pauses);
 static DEVICE_ATTR_RO(manual_queue_resumes);
+static DEVICE_ATTR_RW(fault_injection_enabled);
+static DEVICE_ATTR_RW(fault_injection_mask);
+static DEVICE_ATTR_RW(fault_injection_errno);
+static DEVICE_ATTR_RW(fault_injection_budget);
+static DEVICE_ATTR_RO(fault_injection_arm_count);
+static DEVICE_ATTR_RO(fault_injection_reset_count);
+static DEVICE_ATTR_RO(fault_injection_hit_count);
+static DEVICE_ATTR_RO(fault_injection_skip_count);
+static DEVICE_ATTR_RO(fault_injection_last_site);
+static DEVICE_ATTR_RO(fault_injection_last_errno);
+static DEVICE_ATTR_RO(fault_injection_last_trigger);
 static DEVICE_ATTR_RO(selfcheck_runs);
 static DEVICE_ATTR_RO(selfcheck_failure_runs);
 static DEVICE_ATTR_RO(selfcheck_warning_runs);
@@ -3410,6 +3787,7 @@ static DEVICE_ATTR_WO(drop_transport);
 static DEVICE_ATTR_WO(reset_leaders);
 static DEVICE_ATTR_WO(pause_queue);
 static DEVICE_ATTR_WO(resume_queue);
+static DEVICE_ATTR_WO(reset_fault_injection);
 static DEVICE_ATTR_WO(run_selfcheck);
 
 static struct attribute *kfastblock_volume_attrs[] = {
@@ -3504,6 +3882,17 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_manual_leader_resets.attr,
 	&dev_attr_manual_queue_pauses.attr,
 	&dev_attr_manual_queue_resumes.attr,
+	&dev_attr_fault_injection_enabled.attr,
+	&dev_attr_fault_injection_mask.attr,
+	&dev_attr_fault_injection_errno.attr,
+	&dev_attr_fault_injection_budget.attr,
+	&dev_attr_fault_injection_arm_count.attr,
+	&dev_attr_fault_injection_reset_count.attr,
+	&dev_attr_fault_injection_hit_count.attr,
+	&dev_attr_fault_injection_skip_count.attr,
+	&dev_attr_fault_injection_last_site.attr,
+	&dev_attr_fault_injection_last_errno.attr,
+	&dev_attr_fault_injection_last_trigger.attr,
 	&dev_attr_selfcheck_runs.attr,
 	&dev_attr_selfcheck_failure_runs.attr,
 	&dev_attr_selfcheck_warning_runs.attr,
@@ -3518,6 +3907,7 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_reset_leaders.attr,
 	&dev_attr_pause_queue.attr,
 	&dev_attr_resume_queue.attr,
+	&dev_attr_reset_fault_injection.attr,
 	&dev_attr_run_selfcheck.attr,
 	NULL,
 };
@@ -4014,6 +4404,7 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 		KFASTBLOCK_DEFAULT_IMAGE_REFRESH_INTERVAL_MS;
 	kfastblock_volume_stats_init(vol);
 	kfastblock_selfcheck_state_init(&vol->selfcheck);
+	kfastblock_fault_injection_init(&vol->fault_injection);
 	mutex_init(&vol->lifecycle_lock);
 	mutex_init(&vol->inflight_lock);
 	kfastblock_buffer_pool_init(&vol->object_buffer_pool,

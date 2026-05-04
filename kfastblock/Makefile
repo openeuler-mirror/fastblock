@@ -26,6 +26,7 @@ kfastblock-objs := \
 	src/control.o \
 	src/buffer.o \
 	src/connpool.o \
+	src/fault.o \
 	src/meta.o \
 	src/request.o \
 	src/scheduler.o \
