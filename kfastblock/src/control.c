@@ -204,7 +204,7 @@ int kfastblock_control_attach(const char *args, size_t count, int major,
 
 	ret = kfastblock_volume_attach(spec, major, bus, parent_dev);
 	if (ret == -EOPNOTSUPP) {
-		kfastblock_set_last_error("monitor bootstrap protocol is not implemented yet");
+		kfastblock_set_last_error("volume metadata is incomplete");
 	} else if (ret == -EEXIST) {
 		kfastblock_set_last_error("volume already attached");
 	} else if (ret) {
