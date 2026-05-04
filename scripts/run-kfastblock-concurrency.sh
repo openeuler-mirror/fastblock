@@ -157,10 +157,11 @@ open_worker() {
             continue
         fi
 
-        if exec {fd}<>"$device_path" 2>/dev/null; then
+        if { exec {fd}<>"$device_path"; } 2>/dev/null; then
             opens=$((opens + 1))
-            sleep 0.2
+            sleep 0.05
             exec {fd}>&-
+            sleep 0.05
         else
             sleep 0.1
         fi
