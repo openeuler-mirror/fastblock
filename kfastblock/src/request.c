@@ -1,5 +1,6 @@
 #include <linux/errno.h>
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include <linux/string.h>
 
 #include "kfastblock/request.h"
@@ -118,7 +119,7 @@ static void kfastblock_request_track_unique_pg(struct kfastblock_request *kf_req
 		if (kf_req->unique_pgs[i] == pg_id)
 			return;
 	}
-	if (kf_req->nr_unique_pgs >= KFASTBLOCK_MAX_OBJECT_EXTENTS)
+	if (kf_req->nr_unique_pgs >= kf_req->max_object_extents)
 		return;
 
 	kf_req->unique_pgs[kf_req->nr_unique_pgs++] = pg_id;
@@ -126,12 +127,99 @@ static void kfastblock_request_track_unique_pg(struct kfastblock_request *kf_req
 	kf_req->pg_hints[kf_req->nr_unique_pgs - 1].leader_valid = false;
 }
 
-void kfastblock_request_init(struct kfastblock_request *kf_req,
-			     struct kfastblock_volume *vol,
-			     struct request *rq)
+static unsigned int
+kfastblock_request_estimate_extent_count(const struct kfastblock_request *kf_req)
+{
+	u64 first_object;
+	u64 last_object;
+
+	if (!kf_req || !kf_req->byte_length || !kf_req->request_object_size)
+		return 0;
+
+	first_object = div_u64(kf_req->byte_offset, kf_req->request_object_size);
+	last_object = div_u64(kf_req->byte_offset + kf_req->byte_length - 1,
+			      kf_req->request_object_size);
+
+	if (last_object < first_object)
+		return 0;
+	if (last_object - first_object + 1 > KFASTBLOCK_MAX_OBJECT_EXTENTS)
+		return KFASTBLOCK_MAX_OBJECT_EXTENTS + 1;
+
+	return (unsigned int)(last_object - first_object + 1);
+}
+
+static int kfastblock_request_alloc_state(struct kfastblock_request *kf_req)
+{
+	unsigned int count;
+
+	if (!kf_req)
+		return -EINVAL;
+
+	count = kfastblock_request_estimate_extent_count(kf_req);
+	if (!count)
+		return 0;
+	if (count > KFASTBLOCK_MAX_OBJECT_EXTENTS)
+		return -E2BIG;
+
+	kf_req->unique_pgs = kvcalloc(count, sizeof(*kf_req->unique_pgs), GFP_NOIO);
+	if (!kf_req->unique_pgs)
+		return -ENOMEM;
+
+	kf_req->pg_hints = kvcalloc(count, sizeof(*kf_req->pg_hints), GFP_NOIO);
+	if (!kf_req->pg_hints)
+		goto err_free_unique;
+
+	kf_req->objects = kvcalloc(count, sizeof(*kf_req->objects), GFP_NOIO);
+	if (!kf_req->objects)
+		goto err_free_hints;
+
+	kf_req->object_works = kvcalloc(count, sizeof(*kf_req->object_works),
+					GFP_NOIO);
+	if (!kf_req->object_works)
+		goto err_free_objects;
+
+	kf_req->max_object_extents = count;
+	return 0;
+
+err_free_objects:
+	kvfree(kf_req->objects);
+	kf_req->objects = NULL;
+err_free_hints:
+	kvfree(kf_req->pg_hints);
+	kf_req->pg_hints = NULL;
+err_free_unique:
+	kvfree(kf_req->unique_pgs);
+	kf_req->unique_pgs = NULL;
+	return -ENOMEM;
+}
+
+void kfastblock_request_cleanup(struct kfastblock_request *kf_req)
+{
+	if (!kf_req)
+		return;
+
+	kvfree(kf_req->unique_pgs);
+	kvfree(kf_req->pg_hints);
+	kvfree(kf_req->objects);
+	kvfree(kf_req->object_works);
+	kf_req->unique_pgs = NULL;
+	kf_req->pg_hints = NULL;
+	kf_req->objects = NULL;
+	kf_req->object_works = NULL;
+	kf_req->max_object_extents = 0;
+}
+
+int kfastblock_request_init(struct kfastblock_request *kf_req,
+			    struct kfastblock_volume *vol,
+			    struct request *rq)
 {
 	unsigned int i;
+	int ret;
 
+	if (!kf_req || !vol || !rq)
+		return -EINVAL;
+
+	kfastblock_request_cleanup(kf_req);
 	memset(kf_req, 0, sizeof(*kf_req));
 	kf_req->rq = rq;
 	kf_req->vol = vol;
@@ -141,21 +229,27 @@ void kfastblock_request_init(struct kfastblock_request *kf_req,
 	kf_req->request_object_size = vol->view.image.object_size;
 	kf_req->request_osdmap_epoch = vol->view.osdmap_epoch;
 	kf_req->request_pgmap_epoch = vol->view.pgmap_epoch;
+	ret = kfastblock_request_alloc_state(kf_req);
+	if (ret)
+		return ret;
 	kf_req->dispatch_window = clamp_t(u32,
 					  vol->dispatch_window ?
 					  vol->dispatch_window : 1,
 					  1,
-					  KFASTBLOCK_MAX_OBJECT_EXTENTS);
+					  kf_req->max_object_extents ?
+					  kf_req->max_object_extents : 1);
 	kf_req->next_object_to_queue = 0;
 	atomic_set(&kf_req->pending_objects, 0);
 	spin_lock_init(&kf_req->status_lock);
 	mutex_init(&kf_req->dispatch_lock);
-	for (i = 0; i < KFASTBLOCK_MAX_OBJECT_EXTENTS; ++i) {
+	for (i = 0; i < kf_req->max_object_extents; ++i) {
 		kf_req->object_works[i].parent = kf_req;
 		kf_req->object_works[i].object_index = i;
 		kf_req->pg_hints[i].pg_id = 0;
 		kf_req->pg_hints[i].leader_valid = false;
 	}
+
+	return 0;
 }
 
 u32 kfastblock_request_calc_pg(const char *object_name, u32 pg_count)
@@ -201,7 +295,7 @@ int kfastblock_request_split(struct kfastblock_request *kf_req)
 		u32 object_offset;
 		u32 object_len;
 
-		if (kf_req->nr_objects >= KFASTBLOCK_MAX_OBJECT_EXTENTS)
+		if (kf_req->nr_objects >= kf_req->max_object_extents)
 			return -E2BIG;
 
 		extent = &kf_req->objects[kf_req->nr_objects];

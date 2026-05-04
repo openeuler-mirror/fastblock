@@ -50,19 +50,21 @@ struct kfastblock_request {
 	unsigned int nr_unique_pgs;
 	unsigned int next_object_to_queue;
 	unsigned int dispatch_window;
+	unsigned int max_object_extents;
 	int status;
 	atomic_t pending_objects;
 	spinlock_t status_lock;
 	struct mutex dispatch_lock;
-	u32 unique_pgs[KFASTBLOCK_MAX_OBJECT_EXTENTS];
-	struct kfastblock_request_pg_hint pg_hints[KFASTBLOCK_MAX_OBJECT_EXTENTS];
-	struct kfastblock_object_extent objects[KFASTBLOCK_MAX_OBJECT_EXTENTS];
-	struct kfastblock_object_work object_works[KFASTBLOCK_MAX_OBJECT_EXTENTS];
+	u32 *unique_pgs;
+	struct kfastblock_request_pg_hint *pg_hints;
+	struct kfastblock_object_extent *objects;
+	struct kfastblock_object_work *object_works;
 };
 
-void kfastblock_request_init(struct kfastblock_request *kf_req,
-			     struct kfastblock_volume *vol,
-			     struct request *rq);
+int kfastblock_request_init(struct kfastblock_request *kf_req,
+			    struct kfastblock_volume *vol,
+			    struct request *rq);
+void kfastblock_request_cleanup(struct kfastblock_request *kf_req);
 int kfastblock_request_split(struct kfastblock_request *kf_req);
 u32 kfastblock_request_calc_pg(const char *object_name, u32 pg_count);
 void kfastblock_request_build_object_name(char *buf, size_t buf_len,

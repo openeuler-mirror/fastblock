@@ -796,7 +796,6 @@ void osd_raw_tcp_server::handle_connection(connection_context *conn, const uint3
         if (leader.leader_port <= 0 ||
             leader.leader_port > std::numeric_limits<uint16_t>::max() ||
             leader.leader_id < 0 ||
-            leader.leader_id > static_cast<int32_t>(std::numeric_limits<uint32_t>::max()) ||
             leader.leader_addr.size() > std::numeric_limits<uint16_t>::max()) {
             if (!write_error_response(client_fd, req_hdr, raw_status_internal_error, _running)) {
                 break;
