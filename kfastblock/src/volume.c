@@ -17,6 +17,7 @@
 
 #include "kfastblock/common.h"
 #include "kfastblock/buffer.h"
+#include "kfastblock/diag.h"
 #include "kfastblock/meta.h"
 #include "kfastblock/request.h"
 #include "kfastblock/scheduler.h"
@@ -1182,6 +1183,19 @@ static int kfastblock_volume_selfcheck_show(struct seq_file *m, void *v)
 }
 DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_selfcheck);
 
+static int kfastblock_volume_diagnostics_show(struct seq_file *m, void *v)
+{
+	struct kfastblock_volume *vol = m->private;
+	struct kfastblock_diag_snapshot snapshot = {};
+
+	if (!vol)
+		return -ENODEV;
+
+	kfastblock_diag_collect(vol, &snapshot);
+	return kfastblock_diag_dump_seq(m, &snapshot);
+}
+DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_diagnostics);
+
 static int kfastblock_volume_events_show(struct seq_file *m, void *v)
 {
 	struct kfastblock_volume *vol = m->private;
@@ -1255,6 +1269,8 @@ static void kfastblock_volume_debugfs_init(struct kfastblock_volume *vol)
 			    &kfastblock_volume_events_fops);
 	debugfs_create_file("selfcheck", 0444, vol->debugfs_dir, vol,
 			    &kfastblock_volume_selfcheck_fops);
+	debugfs_create_file("diagnostics", 0444, vol->debugfs_dir, vol,
+			    &kfastblock_volume_diagnostics_fops);
 }
 
 static void kfastblock_volume_debugfs_exit(struct kfastblock_volume *vol)
