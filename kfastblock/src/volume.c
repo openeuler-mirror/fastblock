@@ -588,6 +588,10 @@ static int kfastblock_volume_summary_show(struct seq_file *m, void *v)
 	seq_printf(m, "leader_epoch=%llu\n", vol->view.leader_epoch);
 	seq_printf(m, "osd_count=%u\n", vol->view.osd_count);
 	seq_printf(m, "route_count=%u\n", vol->view.route_count);
+	seq_printf(m, "dispatch_window=%u\n", vol->dispatch_window);
+	seq_printf(m, "refresh_interval_ms=%u\n", vol->refresh_interval_ms);
+	seq_printf(m, "image_refresh_interval_ms=%u\n",
+		   vol->image_refresh_interval_ms);
 	seq_printf(m, "last_refresh_jiffies=%lu\n", vol->view.last_refresh_jiffies);
 	seq_printf(m, "last_image_refresh_jiffies=%lu\n",
 		   vol->view.last_image_refresh_jiffies);
@@ -840,14 +844,23 @@ static void kfastblock_volume_debugfs_exit(struct kfastblock_volume *vol)
 	vol->debugfs_dir = NULL;
 }
 
-static unsigned long kfastblock_volume_refresh_interval(void)
+static unsigned long kfastblock_volume_refresh_interval(struct kfastblock_volume *vol)
 {
-	return msecs_to_jiffies(3000);
+	u32 interval_ms = KFASTBLOCK_DEFAULT_REFRESH_INTERVAL_MS;
+
+	if (vol && vol->refresh_interval_ms)
+		interval_ms = vol->refresh_interval_ms;
+	return msecs_to_jiffies(interval_ms);
 }
 
-static unsigned long kfastblock_volume_image_refresh_interval(void)
+static unsigned long kfastblock_volume_image_refresh_interval(
+	struct kfastblock_volume *vol)
 {
-	return msecs_to_jiffies(30000);
+	u32 interval_ms = KFASTBLOCK_DEFAULT_IMAGE_REFRESH_INTERVAL_MS;
+
+	if (vol && vol->image_refresh_interval_ms)
+		interval_ms = vol->image_refresh_interval_ms;
+	return msecs_to_jiffies(interval_ms);
 }
 
 static void kfastblock_volume_close_osd_cached_sockets(struct kfastblock_volume *vol)
@@ -1012,8 +1025,8 @@ static void kfastblock_volume_schedule_refresh(struct kfastblock_volume *vol)
 	if (!vol || !atomic_read(&vol->ready))
 		return;
 
-	schedule_delayed_work(&vol->refresh_work,
-			      kfastblock_volume_refresh_interval());
+	mod_delayed_work(system_wq, &vol->refresh_work,
+			 kfastblock_volume_refresh_interval(vol));
 }
 
 void kfastblock_volume_kick_refresh(struct kfastblock_volume *vol)
@@ -1177,6 +1190,30 @@ static int kfastblock_volume_copy_attach_spec(struct kfastblock_attach_spec *dst
 nomem:
 	kfastblock_control_cleanup_attach_spec(dst);
 	return -ENOMEM;
+}
+
+static int kfastblock_volume_parse_u32_value(const char *buf, size_t count,
+					     u32 *value)
+{
+	char *scratch;
+	char *trimmed;
+	int ret;
+
+	if (!buf || !count || !value)
+		return -EINVAL;
+
+	scratch = kmemdup_nul(buf, count, GFP_KERNEL);
+	if (!scratch)
+		return -ENOMEM;
+	trimmed = strim(scratch);
+	if (!*trimmed) {
+		kfree(scratch);
+		return -EINVAL;
+	}
+
+	ret = kstrtou32(trimmed, 10, value);
+	kfree(scratch);
+	return ret;
 }
 
 enum kfastblock_volume_manual_refresh_scope {
@@ -1508,7 +1545,7 @@ static void kfastblock_volume_refresh_workfn(struct work_struct *work)
 	refresh_image = time_after_eq(
 		jiffies,
 		vol->view.last_image_refresh_jiffies +
-		kfastblock_volume_image_refresh_interval());
+		kfastblock_volume_image_refresh_interval(vol));
 	(void)kfastblock_volume_refresh_locked(vol, true, refresh_image, true);
 	up_write(&vol->state_lock);
 
@@ -1557,6 +1594,111 @@ static ssize_t object_size_show(struct device *dev,
 		return -ENODEV;
 
 	return scnprintf(buf, PAGE_SIZE, "%u\n", vol->view.image.object_size);
+}
+
+static ssize_t dispatch_window_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n", vol->dispatch_window);
+}
+
+static ssize_t dispatch_window_store(struct device *dev,
+				     struct device_attribute *attr,
+				     const char *buf, size_t count)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	u32 value;
+	int ret;
+
+	if (!vol)
+		return -ENODEV;
+
+	ret = kfastblock_volume_parse_u32_value(buf, count, &value);
+	if (ret)
+		return ret;
+	if (value == 0 || value > KFASTBLOCK_MAX_OBJECT_EXTENTS)
+		return -EINVAL;
+
+	down_write(&vol->state_lock);
+	vol->dispatch_window = value;
+	up_write(&vol->state_lock);
+	return count;
+}
+
+static ssize_t refresh_interval_ms_show(struct device *dev,
+					struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n", vol->refresh_interval_ms);
+}
+
+static ssize_t refresh_interval_ms_store(struct device *dev,
+					 struct device_attribute *attr,
+					 const char *buf, size_t count)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	u32 value;
+	int ret;
+
+	if (!vol)
+		return -ENODEV;
+
+	ret = kfastblock_volume_parse_u32_value(buf, count, &value);
+	if (ret)
+		return ret;
+	if (value < 100 || value > 600000)
+		return -EINVAL;
+
+	down_write(&vol->state_lock);
+	vol->refresh_interval_ms = value;
+	up_write(&vol->state_lock);
+	kfastblock_volume_schedule_refresh(vol);
+	return count;
+}
+
+static ssize_t image_refresh_interval_ms_show(struct device *dev,
+					      struct device_attribute *attr,
+					      char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 vol->image_refresh_interval_ms);
+}
+
+static ssize_t image_refresh_interval_ms_store(struct device *dev,
+					       struct device_attribute *attr,
+					       const char *buf, size_t count)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	u32 value;
+	int ret;
+
+	if (!vol)
+		return -ENODEV;
+
+	ret = kfastblock_volume_parse_u32_value(buf, count, &value);
+	if (ret)
+		return ret;
+	if (value < 100 || value > 3600000)
+		return -EINVAL;
+
+	down_write(&vol->state_lock);
+	vol->image_refresh_interval_ms = value;
+	up_write(&vol->state_lock);
+	return count;
 }
 
 static ssize_t pool_id_show(struct device *dev,
@@ -2194,6 +2336,9 @@ static DEVICE_ATTR_RO(pool_name);
 static DEVICE_ATTR_RO(image_name);
 static DEVICE_ATTR_RO(size_bytes);
 static DEVICE_ATTR_RO(object_size);
+static DEVICE_ATTR_RW(dispatch_window);
+static DEVICE_ATTR_RW(refresh_interval_ms);
+static DEVICE_ATTR_RW(image_refresh_interval_ms);
 static DEVICE_ATTR_RO(pool_id);
 static DEVICE_ATTR_RO(pg_count);
 static DEVICE_ATTR_RO(osd_count);
@@ -2258,6 +2403,9 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_image_name.attr,
 	&dev_attr_size_bytes.attr,
 	&dev_attr_object_size.attr,
+	&dev_attr_dispatch_window.attr,
+	&dev_attr_refresh_interval_ms.attr,
+	&dev_attr_image_refresh_interval_ms.attr,
 	&dev_attr_pool_id.attr,
 	&dev_attr_pg_count.attr,
 	&dev_attr_osd_count.attr,
@@ -2581,6 +2729,10 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	atomic_set(&vol->inflight_ios, 0);
 	vol->queue_paused = false;
 	vol->flush_in_progress = false;
+	vol->dispatch_window = KFASTBLOCK_DEFAULT_OBJECT_DISPATCH_WINDOW;
+	vol->refresh_interval_ms = KFASTBLOCK_DEFAULT_REFRESH_INTERVAL_MS;
+	vol->image_refresh_interval_ms =
+		KFASTBLOCK_DEFAULT_IMAGE_REFRESH_INTERVAL_MS;
 	kfastblock_volume_stats_init(vol);
 	mutex_init(&vol->inflight_lock);
 	init_waitqueue_head(&vol->inflight_wq);
