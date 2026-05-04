@@ -1839,6 +1839,18 @@ static ssize_t metadata_stale_events_show(struct device *dev,
 			 atomic64_read(&vol->stats.metadata_stale_events));
 }
 
+static ssize_t cluster_refresh_ok_show(struct device *dev,
+				       struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.cluster_refresh_ok));
+}
+
 static ssize_t cluster_refresh_fail_show(struct device *dev,
 				 struct device_attribute *attr, char *buf)
 {
@@ -1851,6 +1863,18 @@ static ssize_t cluster_refresh_fail_show(struct device *dev,
 			 atomic64_read(&vol->stats.cluster_refresh_fail));
 }
 
+static ssize_t image_refresh_ok_show(struct device *dev,
+				     struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.image_refresh_ok));
+}
+
 static ssize_t image_refresh_fail_show(struct device *dev,
 			       struct device_attribute *attr, char *buf)
 {
@@ -1861,6 +1885,18 @@ static ssize_t image_refresh_fail_show(struct device *dev,
 
 	return scnprintf(buf, PAGE_SIZE, "%lld\n",
 			 atomic64_read(&vol->stats.image_refresh_fail));
+}
+
+static ssize_t leader_query_ok_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lld\n",
+			 atomic64_read(&vol->stats.leader_query_ok));
 }
 
 static ssize_t leader_query_fail_show(struct device *dev,
@@ -2049,8 +2085,11 @@ static DEVICE_ATTR_RO(io_completed);
 static DEVICE_ATTR_RO(io_failed);
 static DEVICE_ATTR_RO(object_io_retries);
 static DEVICE_ATTR_RO(metadata_stale_events);
+static DEVICE_ATTR_RO(cluster_refresh_ok);
 static DEVICE_ATTR_RO(cluster_refresh_fail);
+static DEVICE_ATTR_RO(image_refresh_ok);
 static DEVICE_ATTR_RO(image_refresh_fail);
+static DEVICE_ATTR_RO(leader_query_ok);
 static DEVICE_ATTR_RO(leader_query_fail);
 static DEVICE_ATTR_RO(refresh_kicks);
 static DEVICE_ATTR_RO(leader_invalidations);
@@ -2100,8 +2139,11 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_io_failed.attr,
 	&dev_attr_object_io_retries.attr,
 	&dev_attr_metadata_stale_events.attr,
+	&dev_attr_cluster_refresh_ok.attr,
 	&dev_attr_cluster_refresh_fail.attr,
+	&dev_attr_image_refresh_ok.attr,
 	&dev_attr_image_refresh_fail.attr,
+	&dev_attr_leader_query_ok.attr,
 	&dev_attr_leader_query_fail.attr,
 	&dev_attr_refresh_kicks.attr,
 	&dev_attr_leader_invalidations.attr,
