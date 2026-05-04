@@ -118,6 +118,16 @@ struct recover_read_ctx {
   void*              arg;
 };
 
+struct object_delete_ctx {
+  std::string object_name;
+  object_rw_complete cb_fn;
+  void* arg;
+
+  spdk_blob_store* bs;
+  fb_blob blob;
+  object_store::container* hashtable;
+};
+
 void object_store::write(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
                       uint64_t offset, char* buf, uint64_t len,
                       object_rw_complete cb_fn, void* arg)
@@ -130,6 +140,29 @@ void object_store::read(std::map<std::string, xattr_val_type>& xattr, std::strin
                      object_rw_complete cb_fn, void* arg)
 {
     readwrite(xattr, object_name, offset, buf, len, cb_fn, arg, 1);
+}
+
+void object_store::delete_object(std::string object_name,
+                                 object_rw_complete cb_fn, void* arg)
+{
+  auto it = table.find(object_name);
+  struct object_delete_ctx* ctx;
+
+  if (it == table.end() || it->second.origin.blobid == 0 ||
+      it->second.origin.blob == nullptr) {
+    cb_fn(arg, -ENOENT);
+    return;
+  }
+
+  ctx = new object_delete_ctx();
+  ctx->object_name = object_name;
+  ctx->cb_fn = cb_fn;
+  ctx->arg = arg;
+  ctx->bs = bs;
+  ctx->blob = it->second.origin;
+  ctx->hashtable = &table;
+
+  spdk_blob_close(ctx->blob.blob, delete_close_complete, ctx);
 }
 
 void object_store::snap_create(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
@@ -433,6 +466,49 @@ void object_store::recovery_read_complete(void *arg, int objerrno) {
   delete ctx;
 }
 
+void object_store::delete_close_complete(void *arg, int objerrno) {
+  struct object_delete_ctx* ctx = (struct object_delete_ctx*)arg;
+  if (objerrno) {
+    SPDK_ERRLOG("object_name:%s close failed:%s\n",
+        ctx->object_name.c_str(), spdk_strerror(objerrno));
+    ctx->cb_fn(ctx->arg, objerrno);
+    delete ctx;
+    return;
+  }
+
+  auto it = ctx->hashtable->find(ctx->object_name);
+  if (it == ctx->hashtable->end()) {
+    ctx->cb_fn(ctx->arg, -ENOENT);
+    delete ctx;
+    return;
+  }
+
+  it->second.origin.blob = nullptr;
+  spdk_bs_delete_blob(ctx->bs, ctx->blob.blobid, delete_complete, ctx);
+}
+
+void object_store::delete_complete(void *arg, int objerrno) {
+  struct object_delete_ctx* ctx = (struct object_delete_ctx*)arg;
+  if (objerrno) {
+    SPDK_ERRLOG("object_name:%s delete failed:%s\n",
+        ctx->object_name.c_str(), spdk_strerror(objerrno));
+    ctx->cb_fn(ctx->arg, objerrno);
+    delete ctx;
+    return;
+  }
+
+  auto it = ctx->hashtable->find(ctx->object_name);
+  if (it != ctx->hashtable->end()) {
+    it->second.origin.blobid = 0;
+    if (it->second.recover.blobid == 0 && it->second.snap_list.empty()) {
+      ctx->hashtable->erase(it);
+    }
+  }
+
+  ctx->cb_fn(ctx->arg, 0);
+  delete ctx;
+}
+
 void object_store::readwrite(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
                      uint64_t offset, char* buf, uint64_t len,
                      object_rw_complete cb_fn, void* arg, bool is_read)
@@ -446,9 +522,13 @@ void object_store::readwrite(std::map<std::string, xattr_val_type>& xattr, std::
   }
 
     auto it = table.find(object_name);
-    if (it != table.end()) {
+    if (it != table.end() && it->second.origin.blob != nullptr &&
+        it->second.origin.blobid != 0) {
       SPDK_DEBUGLOG(object_store, "object %s found, blob id:%" PRIu64 "\n", object_name.c_str(), it->second.origin.blobid);
       blob_readwrite(it->second.origin.blob, channel, object_name, offset, buf, len, cb_fn, arg, is_read);
+    } else if (is_read) {
+      SPDK_DEBUGLOG(object_store, "object %s not found for read\n", object_name.c_str());
+      cb_fn(arg, -ENOENT);
     } else {
       SPDK_DEBUGLOG(object_store, "object %s not found\n", object_name.c_str());
       create_blob(xattr, object_name, offset, buf, len, cb_fn, arg, is_read);

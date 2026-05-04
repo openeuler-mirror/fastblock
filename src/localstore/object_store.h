@@ -58,6 +58,9 @@ public:
              uint64_t offset, char* buf, uint64_t len,
              object_rw_complete cb_fn, void* arg);
 
+  void delete_object(std::string object_name,
+                     object_rw_complete cb_fn, void* arg);
+
   void stop(object_rw_complete cb_fn, void* arg);
 
   void snap_create(std::map<std::string, xattr_val_type>& xattr, std::string object_name, std::string snap_name,
@@ -108,6 +111,8 @@ private:
   static void recovery_close_complete(void *arg, int objerrno);
   static void recovery_delete_complete(void *arg, int objerrno);
   static void recovery_read_complete(void *arg, int objerrno);
+  static void delete_complete(void *arg, int objerrno);
+  static void delete_close_complete(void *arg, int objerrno);
 
   static bool is_lba_aligned(uint64_t offset, uint64_t length) {
     uint32_t lba_size = object_store::unit_size;

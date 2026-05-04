@@ -60,6 +60,22 @@ void write_obj_done(void *arg, int obj_errno){
     delete ctx;
 }
 
+struct delete_obj_ctx{
+    osd_stm* stm;
+    std::string obj_name;
+    utils::context *complete;
+};
+
+void delete_obj_done(void *arg, int obj_errno){
+    delete_obj_ctx * ctx = (delete_obj_ctx *)arg;
+    SPDK_DEBUGLOG(osd, "delete obj %s pg: %s done in core: %u\n",
+        ctx->obj_name.c_str(), ctx->stm->get_pg_name().c_str(),
+        core_sharded::get_core_sharded().this_shard_id());
+    ctx->stm->unlock(ctx->obj_name, utils::operation_type::DELETE);
+    ctx->complete->complete(obj_errno);
+    delete ctx;
+}
+
 void osd_stm::write_obj(const std::string& obj_name, uint64_t offset, const std::string& data, utils::context *complete){
     uint64_t len = utils::align_up<uint64_t>(data.size(), 512 * BLOCK_UNITS);
     char* buf = (char*)spdk_zmalloc(len, 0x1000, NULL, _sockid, SPDK_MALLOC_DMA);
@@ -75,10 +91,8 @@ void osd_stm::write_obj(const std::string& obj_name, uint64_t offset, const std:
 }
 
 void osd_stm::delete_obj(const std::string& obj_name, utils::context *complete){
-    //delete object
-
-    _object_rw_lock.unlock(obj_name, utils::operation_type::DELETE);
-    complete->complete(err::E_SUCCESS);
+    delete_obj_ctx * ctx = new delete_obj_ctx{this, obj_name, complete};
+    _store.delete_object(obj_name, delete_obj_done, ctx);
 }
 
 
