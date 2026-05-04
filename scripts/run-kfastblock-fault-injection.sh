@@ -139,6 +139,15 @@ kfastblock_attach_volume "$repo_root" "$monitor_addr" "$pool_name" "$image_name"
 detach_needed=1
 device_path="$(kfastblock_resolve_device)"
 
+"$repo_root/kfastblock/tool/kfastblock-admin" force-refresh \
+    --pool-name "$pool_name" \
+    --image-name "$image_name" \
+    --scope all >/dev/null
+"$repo_root/kfastblock/tool/kfastblock-admin" reset-leaders \
+    --pool-name "$pool_name" \
+    --image-name "$image_name" >/dev/null
+sleep 2
+
 "$repo_root/kfastblock/tool/kfastblock-admin" show \
     --pool-name "$pool_name" \
     --image-name "$image_name" > "$run_dir/admin-before.txt"
