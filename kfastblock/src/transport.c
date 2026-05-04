@@ -983,12 +983,12 @@ static int kfastblock_transport_recv_response(struct socket *sock,
 	if (!body_len)
 		return kfastblock_transport_status_to_errno(le32_to_cpu(hdr->status));
 
-	*body = kmalloc(body_len, GFP_KERNEL);
+	*body = kvmalloc(body_len, GFP_KERNEL);
 	if (!*body)
 		return -ENOMEM;
 	ret = kfastblock_transport_recv_all(sock, *body, body_len);
 	if (ret) {
-		kfree(*body);
+		kvfree(*body);
 		*body = NULL;
 		return ret;
 	}
@@ -1039,15 +1039,15 @@ static int kfastblock_transport_fetch_image_info(struct socket *sock,
 	if (ret == -ESTALE)
 		return 0;
 	if (ret) {
-		kfree(body);
+		kvfree(body);
 		return ret;
 	}
 	if (!body || le32_to_cpu(rsp_hdr.body_len) != sizeof(rsp)) {
-		kfree(body);
+		kvfree(body);
 		return -EPROTO;
 	}
 	memcpy(&rsp, body, sizeof(rsp));
-	kfree(body);
+	kvfree(body);
 
 	view->image_epoch = le64_to_cpu(rsp.image_epoch);
 	view->image.pool_id = le32_to_cpu(rsp.pool_id);
@@ -1261,12 +1261,12 @@ static int kfastblock_transport_fetch_cluster_map_from_monitor(
 	if (ret == -ESTALE)
 		return 0;
 	if (ret) {
-		kfree(body);
-		return ret;
-	}
+			kvfree(body);
+			return ret;
+		}
 	body_len = le32_to_cpu(rsp_hdr.body_len);
 	if (!body || body_len < sizeof(rsp)) {
-		kfree(body);
+		kvfree(body);
 		return -EPROTO;
 	}
 
@@ -1334,7 +1334,7 @@ static int kfastblock_transport_fetch_cluster_map_from_monitor(
 	}
 
 out:
-	kfree(body);
+	kvfree(body);
 	kfastblock_meta_cleanup_view(&scratch);
 	return ret;
 }
@@ -1377,13 +1377,13 @@ static int kfastblock_transport_fetch_pg_leader_from_osd(
 					 &rsp_hdr,
 					 &body);
 	if (ret) {
-		kfree(body);
-		return ret;
-	}
+			kvfree(body);
+			return ret;
+		}
 
 	body_len = le32_to_cpu(rsp_hdr.body_len);
 	if (!body || body_len < sizeof(rsp)) {
-		kfree(body);
+		kvfree(body);
 		return -EPROTO;
 	}
 
@@ -1392,15 +1392,15 @@ static int kfastblock_transport_fetch_pg_leader_from_osd(
 	if (body_len != sizeof(rsp) + address_len ||
 	    !address_len ||
 	    address_len >= sizeof(leader->address)) {
-		kfree(body);
-		return -EPROTO;
-	}
+			kvfree(body);
+			return -EPROTO;
+		}
 
 	leader->osd_id = le32_to_cpu(rsp.leader_id);
 	leader->port = le16_to_cpu(rsp.leader_port);
 	memcpy(leader->address, (u8 *)body + sizeof(rsp), address_len);
 	leader->address[address_len] = '\0';
-	kfree(body);
+	kvfree(body);
 
 	if (!leader->osd_id || !leader->port || !leader->address[0])
 		return -EPROTO;
@@ -1437,7 +1437,7 @@ static int kfastblock_transport_write_object(struct socket *sock,
 	req.reserved = 0;
 
 	body_len = sizeof(req) + object_name_len + data_len;
-	req_body = kmalloc(body_len, GFP_KERNEL);
+	req_body = kvmalloc(body_len, GFP_KERNEL);
 	if (!req_body)
 		return -ENOMEM;
 
@@ -1452,7 +1452,7 @@ static int kfastblock_transport_write_object(struct socket *sock,
 					seq,
 					req_body,
 					body_len);
-	kfree(req_body);
+	kvfree(req_body);
 	if (ret)
 		return ret;
 
@@ -1462,7 +1462,7 @@ static int kfastblock_transport_write_object(struct socket *sock,
 					 seq,
 					 &rsp_hdr,
 					 &body);
-	kfree(body);
+	kvfree(body);
 	return ret;
 }
 
@@ -1518,27 +1518,27 @@ static int kfastblock_transport_read_object(struct socket *sock,
 					 &rsp_hdr,
 					 &body);
 	if (ret) {
-		kfree(body);
-		return ret;
-	}
+			kvfree(body);
+			return ret;
+		}
 
 	body_len = le32_to_cpu(rsp_hdr.body_len);
 	if (!body || body_len < sizeof(rsp)) {
-		kfree(body);
+		kvfree(body);
 		return -EPROTO;
 	}
 
 	memcpy(&rsp, body, sizeof(rsp));
 	data_len = le32_to_cpu(rsp.data_len);
 	if (body_len != sizeof(rsp) + data_len || data_len > extent->length) {
-		kfree(body);
-		return -EPROTO;
-	}
+			kvfree(body);
+			return -EPROTO;
+		}
 
 	memset(data, 0, extent->length);
 	if (data_len)
 		memcpy(data, (u8 *)body + sizeof(rsp), data_len);
-	kfree(body);
+	kvfree(body);
 	return 0;
 }
 
@@ -1673,22 +1673,22 @@ static int kfastblock_transport_submit_object_io(
 	}
 
 	if (op == REQ_OP_WRITE) {
-		buf = kmalloc(extent->length, GFP_KERNEL);
-		if (!buf)
-			return -ENOMEM;
+			buf = kvmalloc(extent->length, GFP_KERNEL);
+			if (!buf)
+				return -ENOMEM;
 		ret = kfastblock_transport_copy_request_data(
 			rq, extent->request_offset, buf, extent->length, false);
 		if (ret)
 			goto out;
 	} else if (op == REQ_OP_WRITE_ZEROES) {
-		buf = kzalloc(extent->length, GFP_KERNEL);
-		if (!buf)
-			return -ENOMEM;
-	} else if (op == REQ_OP_READ) {
-		buf = kmalloc(extent->length, GFP_KERNEL);
-		if (!buf)
-			return -ENOMEM;
-	}
+			buf = kvzalloc(extent->length, GFP_KERNEL);
+			if (!buf)
+				return -ENOMEM;
+		} else if (op == REQ_OP_READ) {
+			buf = kvmalloc(extent->length, GFP_KERNEL);
+			if (!buf)
+				return -ENOMEM;
+		}
 
 	for (attempt = 0; attempt < 2; ++attempt) {
 		if (attempt == 0 && hint &&
@@ -1769,7 +1769,7 @@ out:
 	if (ret)
 		kfastblock_volume_account_object_error(
 			vol, op, extent->pg_id, leader.osd_id, extent->length, ret);
-	kfree(buf);
+	kvfree(buf);
 	return ret;
 }
 
