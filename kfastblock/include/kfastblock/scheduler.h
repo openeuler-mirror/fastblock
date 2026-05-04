@@ -28,7 +28,8 @@ void kfastblock_scheduler_set_base_window(
 void kfastblock_scheduler_set_dynamic_enabled(
 	struct kfastblock_scheduler_controller *controller,
 	bool enabled);
-u32 kfastblock_scheduler_snapshot_window(
+/* Sample the current dispatch window for a newly initialized request. */
+u32 kfastblock_scheduler_sample_window(
 	struct kfastblock_scheduler_controller *controller);
 void kfastblock_scheduler_note_success(
 	struct kfastblock_scheduler_controller *controller);
