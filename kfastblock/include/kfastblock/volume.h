@@ -183,6 +183,9 @@ struct kfastblock_volume {
 	struct device dev;
 	struct mutex lifecycle_lock;
 	struct mutex inflight_lock;
+	struct mutex object_buffer_lock;
+	struct list_head object_buffer_free;
+	u32 object_buffer_cached;
 	wait_queue_head_t inflight_wq;
 	bool flush_in_progress;
 	struct rw_semaphore state_lock;
