@@ -117,6 +117,10 @@ void kfastblock_request_init(struct kfastblock_request *kf_req,
 	kf_req->vol = vol;
 	kf_req->byte_offset = blk_rq_pos(rq) << SECTOR_SHIFT;
 	kf_req->byte_length = blk_rq_bytes(rq);
+	kf_req->request_pool_id = vol->view.image.pool_id;
+	kf_req->request_object_size = vol->view.image.object_size;
+	kf_req->request_osdmap_epoch = vol->view.osdmap_epoch;
+	kf_req->request_pgmap_epoch = vol->view.pgmap_epoch;
 	atomic_set(&kf_req->pending_objects, 0);
 	spin_lock_init(&kf_req->status_lock);
 	for (i = 0; i < KFASTBLOCK_MAX_OBJECT_EXTENTS; ++i) {
@@ -156,7 +160,7 @@ int kfastblock_request_split(struct kfastblock_request *kf_req)
 		return -EINVAL;
 
 	view = &kf_req->vol->view;
-	object_size = view->image.object_size;
+	object_size = kf_req->request_object_size;
 	if (!object_size || !view->image.pg_count)
 		return -EINVAL;
 
@@ -182,7 +186,7 @@ int kfastblock_request_split(struct kfastblock_request *kf_req)
 		extent->length = object_len;
 		kfastblock_request_build_object_name(extent->object_name,
 						    sizeof(extent->object_name),
-						    view->image.pool_id,
+						    kf_req->request_pool_id,
 						    view->image.image_name,
 						    object_seq);
 		extent->pg_id = kfastblock_request_calc_pg(extent->object_name,

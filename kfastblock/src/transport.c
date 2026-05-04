@@ -466,6 +466,8 @@ static unsigned int
 kfastblock_transport_classify_object_failure(const int ret)
 {
 	switch (ret) {
+	case -ESTALE:
+		return KFASTBLOCK_TRANSPORT_FAILURE_KICK_REFRESH;
 	case -ENOLINK:
 	case -EAGAIN:
 	case -EHOSTDOWN:
@@ -650,10 +652,26 @@ static enum req_op kfastblock_transport_object_op(
 
 	extent = &kf_req->objects[object_index];
 	if (extent->object_offset == 0 &&
-	    extent->length == kf_req->vol->view.image.object_size)
+	    extent->length == kf_req->request_object_size)
 		return REQ_OP_DISCARD;
 
 	return REQ_OP_WRITE_ZEROES;
+}
+
+static int kfastblock_transport_request_view_stale(
+	const struct kfastblock_request *kf_req)
+{
+	const struct kfastblock_cluster_view *view;
+
+	if (!kf_req || !kf_req->vol)
+		return -EINVAL;
+
+	view = &kf_req->vol->view;
+	if (view->osdmap_epoch != kf_req->request_osdmap_epoch ||
+	    view->pgmap_epoch != kf_req->request_pgmap_epoch)
+		return -ESTALE;
+
+	return 0;
 }
 
 static int kfastblock_transport_send_all(struct socket *sock,
@@ -1436,11 +1454,12 @@ static int kfastblock_transport_copy_request_data(struct request *rq,
 }
 
 static int kfastblock_transport_submit_object_io(
-	struct kfastblock_volume *vol,
-	struct request *rq,
+	struct kfastblock_request *kf_req,
 	const struct kfastblock_object_extent *extent,
 	enum req_op op)
 {
+	struct kfastblock_volume *vol;
+	struct request *rq;
 	struct kfastblock_cluster_view *view;
 	struct kfastblock_leader_info leader = {};
 	struct kfastblock_cached_socket *cached = NULL;
@@ -1450,9 +1469,19 @@ static int kfastblock_transport_submit_object_io(
 	int attempt;
 	u64 seq;
 
-	if (!vol || !rq || !extent)
+	if (!kf_req || !kf_req->vol || !kf_req->rq || !extent)
 		return -EINVAL;
+	vol = kf_req->vol;
+	rq = kf_req->rq;
 	view = &vol->view;
+
+	ret = kfastblock_transport_request_view_stale(kf_req);
+	if (ret) {
+		kfastblock_transport_apply_object_failure(
+			vol, view, extent, op, NULL, NULL, ret,
+			kfastblock_transport_classify_object_failure(ret));
+		return ret;
+	}
 
 	if (op == REQ_OP_WRITE) {
 		buf = kmalloc(extent->length, GFP_KERNEL);
@@ -1902,8 +1931,7 @@ static int kfastblock_transport_submit_object(struct kfastblock_request *kf_req,
 	}
 
 	return kfastblock_transport_submit_object_io(
-		kf_req->vol,
-		rq,
+		kf_req,
 		&kf_req->objects[object_index],
 		op);
 }
