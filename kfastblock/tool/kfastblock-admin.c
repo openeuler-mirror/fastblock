@@ -31,6 +31,7 @@ struct config {
 	char *debug_pool_id;
 	char *debug_pg_count;
 	char *scope;
+	char *value;
 };
 
 static void trim(char *str)
@@ -98,6 +99,8 @@ static void parse_config_file(const char *filename, struct config *cfg)
 			maybe_set(&cfg->debug_pg_count, value);
 		} else if (strcmp(key, "scope") == 0) {
 			maybe_set(&cfg->scope, value);
+		} else if (strcmp(key, "value") == 0) {
+			maybe_set(&cfg->value, value);
 		}
 	}
 
@@ -107,7 +110,7 @@ static void parse_config_file(const char *filename, struct config *cfg)
 static void print_usage(const char *prog_name)
 {
 	fprintf(stderr,
-		"Usage: %s <attach|detach|force-refresh|reset-backoff|drop-transport|reset-leaders|list|show> [options]\n",
+		"Usage: %s <attach|detach|force-refresh|reset-backoff|drop-transport|reset-leaders|set-dispatch-window|set-refresh-interval|set-image-refresh-interval|list|show> [options]\n",
 		prog_name);
 	fprintf(stderr, "Options:\n");
 	fprintf(stderr, "  -c, --conf <file>\n");
@@ -120,9 +123,11 @@ static void print_usage(const char *prog_name)
 	fprintf(stderr, "  --debug-pool-id <id>\n");
 	fprintf(stderr, "  --debug-pg-count <count>\n");
 	fprintf(stderr, "  --scope <all|cluster|image|osd|monitor>\n");
+	fprintf(stderr, "  --value <number>\n");
 	fprintf(stderr, "\nExamples:\n");
 	fprintf(stderr, "  %s list\n", prog_name);
 	fprintf(stderr, "  %s show --pool-name <pool> --image-name <image>\n", prog_name);
+	fprintf(stderr, "  %s set-dispatch-window --pool-name <pool> --image-name <image> --value 16\n", prog_name);
 }
 
 static void append_kv(char *buf, size_t buf_len, const char *key,
@@ -210,7 +215,10 @@ static int op_is_volume_level(const char *operation)
 	return strcmp(operation, "force-refresh") == 0 ||
 		strcmp(operation, "reset-backoff") == 0 ||
 		strcmp(operation, "drop-transport") == 0 ||
-		strcmp(operation, "reset-leaders") == 0;
+		strcmp(operation, "reset-leaders") == 0 ||
+		strcmp(operation, "set-dispatch-window") == 0 ||
+		strcmp(operation, "set-refresh-interval") == 0 ||
+		strcmp(operation, "set-image-refresh-interval") == 0;
 }
 
 static int op_is_read_only(const char *operation)
@@ -229,6 +237,12 @@ static const char *volume_attr_for_operation(const char *operation)
 		return "drop_transport";
 	if (strcmp(operation, "reset-leaders") == 0)
 		return "reset_leaders";
+	if (strcmp(operation, "set-dispatch-window") == 0)
+		return "dispatch_window";
+	if (strcmp(operation, "set-refresh-interval") == 0)
+		return "refresh_interval_ms";
+	if (strcmp(operation, "set-image-refresh-interval") == 0)
+		return "image_refresh_interval_ms";
 	return NULL;
 }
 
@@ -246,6 +260,7 @@ static void free_config(struct config *cfg)
 	free(cfg->debug_pool_id);
 	free(cfg->debug_pg_count);
 	free(cfg->scope);
+	free(cfg->value);
 }
 
 static int build_volume_root_path(char *buf, size_t buf_len,
@@ -417,6 +432,7 @@ int main(int argc, char *argv[])
 		{"debug-pool-id", required_argument, 0, 0},
 		{"debug-pg-count", required_argument, 0, 0},
 		{"scope", required_argument, 0, 0},
+		{"value", required_argument, 0, 0},
 		{0, 0, 0, 0},
 	};
 
@@ -432,6 +448,9 @@ int main(int argc, char *argv[])
 	    strcmp(operation, "reset-backoff") != 0 &&
 	    strcmp(operation, "drop-transport") != 0 &&
 	    strcmp(operation, "reset-leaders") != 0 &&
+	    strcmp(operation, "set-dispatch-window") != 0 &&
+	    strcmp(operation, "set-refresh-interval") != 0 &&
+	    strcmp(operation, "set-image-refresh-interval") != 0 &&
 	    strcmp(operation, "list") != 0 &&
 	    strcmp(operation, "show") != 0) {
 		print_usage(argv[0]);
@@ -470,11 +489,14 @@ int main(int argc, char *argv[])
 			} else if (strcmp(long_options[option_index].name,
 				  "debug-pg-count") == 0) {
 				maybe_set(&cfg.debug_pg_count, optarg);
-			} else if (strcmp(long_options[option_index].name,
-				  "scope") == 0) {
-				maybe_set(&cfg.scope, optarg);
-			}
-			break;
+				} else if (strcmp(long_options[option_index].name,
+					  "scope") == 0) {
+					maybe_set(&cfg.scope, optarg);
+				} else if (strcmp(long_options[option_index].name,
+					  "value") == 0) {
+					maybe_set(&cfg.value, optarg);
+				}
+				break;
 		case 'c':
 			cfg.conf_file = strdup(optarg);
 			break;
@@ -508,6 +530,14 @@ int main(int argc, char *argv[])
 		free_config(&cfg);
 		return EXIT_FAILURE;
 	}
+	if ((strcmp(operation, "set-dispatch-window") == 0 ||
+	     strcmp(operation, "set-refresh-interval") == 0 ||
+	     strcmp(operation, "set-image-refresh-interval") == 0) &&
+	    (!cfg.value || !*cfg.value)) {
+		fprintf(stderr, "--value is required for %s\n", operation);
+		free_config(&cfg);
+		return EXIT_FAILURE;
+	}
 
 	if (!volume_level) {
 		append_kv(command_str, sizeof(command_str), "monitor_addr",
@@ -538,8 +568,13 @@ int main(int argc, char *argv[])
 			return EXIT_FAILURE;
 		}
 		sysfs_path = sysfs_path_buf;
-		strncpy(command_str, cfg.scope ? cfg.scope : "all",
-			sizeof(command_str) - 1);
+		if (strcmp(operation, "set-dispatch-window") == 0 ||
+		    strcmp(operation, "set-refresh-interval") == 0 ||
+		    strcmp(operation, "set-image-refresh-interval") == 0)
+			strncpy(command_str, cfg.value, sizeof(command_str) - 1);
+		else
+			strncpy(command_str, cfg.scope ? cfg.scope : "all",
+				sizeof(command_str) - 1);
 	}
 
 	fd = open(sysfs_path, O_WRONLY);
