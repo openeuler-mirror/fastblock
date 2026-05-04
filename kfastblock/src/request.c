@@ -314,7 +314,10 @@ int kfastblock_request_init(struct kfastblock_request *kf_req,
 		return ret;
 	kf_req->dispatch_window = clamp_t(u32,
 					  kfastblock_scheduler_sample_window(
-						  &vol->scheduler),
+						  &vol->scheduler,
+						  atomic_read(&vol->inflight_ios),
+						  kf_req->max_object_extents,
+						  NULL),
 					  1,
 					  kf_req->max_object_extents ?
 					  kf_req->max_object_extents : 1);
