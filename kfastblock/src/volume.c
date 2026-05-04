@@ -796,21 +796,31 @@ static int kfastblock_volume_sockets_show(struct seq_file *m, void *v)
 		const struct kfastblock_cached_socket *cached = &vol->socket_cache[i];
 
 		seq_printf(m,
-			   "osd_cache[%d] active=%u osd_id=%u address=%s port=%u next_seq=%llu fail_streak=%u last_error=%d last_failure_jiffies=%lu backoff_until_jiffies=%lu\n",
-			   i, cached->sock ? 1 : 0, cached->osd_id, cached->address,
+			   "osd_cache[%d] state=%s active=%u osd_id=%u address=%s port=%u next_seq=%llu fail_streak=%u last_error=%d last_failure_jiffies=%lu backoff_until_jiffies=%lu last_connect_jiffies=%lu last_use_jiffies=%lu connect_attempts=%u reuse_hits=%u success_count=%u failure_count=%u health_score=%u\n",
+			   i, kfastblock_conn_state_name(cached->state),
+			   cached->sock ? 1 : 0, cached->osd_id, cached->address,
 			   cached->port, cached->next_seq, cached->fail_streak,
 			   cached->last_error, cached->last_failure_jiffies,
-			   cached->backoff_until_jiffies);
+			   cached->backoff_until_jiffies,
+			   cached->last_connect_jiffies, cached->last_use_jiffies,
+			   cached->connect_attempts, cached->reuse_hits,
+			   cached->success_count, cached->failure_count,
+			   cached->health_score);
 	}
 	for (i = 0; i < KFASTBLOCK_MAX_MONITORS; ++i) {
 		const struct kfastblock_cached_monitor_socket *cached =
 			&vol->monitor_cache[i];
 
 		seq_printf(m,
-			   "monitor_cache[%d] active=%u address=%s port=%u next_seq=%llu fail_streak=%u last_error=%d last_failure_jiffies=%lu backoff_until_jiffies=%lu\n",
-			   i, cached->sock ? 1 : 0, cached->address, cached->port,
+			   "monitor_cache[%d] state=%s active=%u address=%s port=%u next_seq=%llu fail_streak=%u last_error=%d last_failure_jiffies=%lu backoff_until_jiffies=%lu last_connect_jiffies=%lu last_use_jiffies=%lu connect_attempts=%u reuse_hits=%u success_count=%u failure_count=%u health_score=%u\n",
+			   i, kfastblock_conn_state_name(cached->state),
+			   cached->sock ? 1 : 0, cached->address, cached->port,
 			   cached->next_seq, cached->fail_streak, cached->last_error,
-			   cached->last_failure_jiffies, cached->backoff_until_jiffies);
+			   cached->last_failure_jiffies, cached->backoff_until_jiffies,
+			   cached->last_connect_jiffies, cached->last_use_jiffies,
+			   cached->connect_attempts, cached->reuse_hits,
+			   cached->success_count, cached->failure_count,
+			   cached->health_score);
 	}
 	return 0;
 }
@@ -1040,57 +1050,20 @@ static unsigned long kfastblock_volume_image_refresh_interval(
 
 static void kfastblock_volume_close_osd_cached_sockets(struct kfastblock_volume *vol)
 {
-	int i;
-
 	if (!vol)
 		return;
 
-	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i) {
-		struct kfastblock_cached_socket *cached = &vol->socket_cache[i];
-
-		mutex_lock(&cached->lock);
-		if (cached->sock) {
-			sock_release(cached->sock);
-			cached->sock = NULL;
-		}
-		memset(cached->address, 0, sizeof(cached->address));
-		cached->osd_id = 0;
-		cached->port = 0;
-		cached->connecting = false;
-		cached->next_seq = 0;
-		cached->fail_streak = 0;
-		cached->last_error = 0;
-		cached->last_failure_jiffies = 0;
-		cached->backoff_until_jiffies = 0;
-		mutex_unlock(&cached->lock);
-	}
+	kfastblock_osd_conn_pool_close(vol->socket_cache,
+				       KFASTBLOCK_MAX_SOCKET_CACHE);
 }
 
 static void kfastblock_volume_close_monitor_cached_sockets(struct kfastblock_volume *vol)
 {
-	int i;
-
 	if (!vol)
 		return;
 
-	for (i = 0; i < KFASTBLOCK_MAX_MONITORS; ++i) {
-		struct kfastblock_cached_monitor_socket *cached =
-			&vol->monitor_cache[i];
-
-		mutex_lock(&cached->lock);
-		if (cached->sock) {
-			sock_release(cached->sock);
-			cached->sock = NULL;
-		}
-		memset(cached->address, 0, sizeof(cached->address));
-		cached->port = 0;
-		cached->next_seq = 0;
-		cached->fail_streak = 0;
-		cached->last_error = 0;
-		cached->last_failure_jiffies = 0;
-		cached->backoff_until_jiffies = 0;
-		mutex_unlock(&cached->lock);
-	}
+	kfastblock_monitor_conn_pool_close(vol->monitor_cache,
+					   KFASTBLOCK_MAX_MONITORS);
 }
 
 static void kfastblock_volume_close_cached_sockets(struct kfastblock_volume *vol)
@@ -1530,41 +1503,20 @@ static int kfastblock_volume_parse_manual_trigger(const char *buf, size_t count)
 
 static void kfastblock_volume_reset_osd_backoff(struct kfastblock_volume *vol)
 {
-	int i;
-
 	if (!vol)
 		return;
 
-	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i) {
-		struct kfastblock_cached_socket *cached = &vol->socket_cache[i];
-
-		mutex_lock(&cached->lock);
-		cached->fail_streak = 0;
-		cached->last_error = 0;
-		cached->last_failure_jiffies = 0;
-		cached->backoff_until_jiffies = 0;
-		mutex_unlock(&cached->lock);
-	}
+	kfastblock_osd_conn_pool_reset_backoff(vol->socket_cache,
+					       KFASTBLOCK_MAX_SOCKET_CACHE);
 }
 
 static void kfastblock_volume_reset_monitor_backoff(struct kfastblock_volume *vol)
 {
-	int i;
-
 	if (!vol)
 		return;
 
-	for (i = 0; i < KFASTBLOCK_MAX_MONITORS; ++i) {
-		struct kfastblock_cached_monitor_socket *cached =
-			&vol->monitor_cache[i];
-
-		mutex_lock(&cached->lock);
-		cached->fail_streak = 0;
-		cached->last_error = 0;
-		cached->last_failure_jiffies = 0;
-		cached->backoff_until_jiffies = 0;
-		mutex_unlock(&cached->lock);
-	}
+	kfastblock_monitor_conn_pool_reset_backoff(vol->monitor_cache,
+						   KFASTBLOCK_MAX_MONITORS);
 }
 
 static int kfastblock_volume_refresh_locked(struct kfastblock_volume *vol,
@@ -3750,7 +3702,6 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 			     struct bus_type *bus, struct device *parent_dev)
 {
 	struct kfastblock_volume *vol;
-	int i;
 	int ret;
 
 	if (!spec || !bus || !parent_dev)
@@ -3791,10 +3742,10 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 				  KFASTBLOCK_MAX_OBJECT_EXTENTS);
 	init_waitqueue_head(&vol->inflight_wq);
 	init_rwsem(&vol->state_lock);
-	for (i = 0; i < KFASTBLOCK_MAX_SOCKET_CACHE; ++i)
-		mutex_init(&vol->socket_cache[i].lock);
-	for (i = 0; i < KFASTBLOCK_MAX_MONITORS; ++i)
-		mutex_init(&vol->monitor_cache[i].lock);
+	kfastblock_osd_conn_pool_init(vol->socket_cache,
+				      KFASTBLOCK_MAX_SOCKET_CACHE);
+	kfastblock_monitor_conn_pool_init(vol->monitor_cache,
+					  KFASTBLOCK_MAX_MONITORS);
 	INIT_DELAYED_WORK(&vol->refresh_work, kfastblock_volume_refresh_workfn);
 	INIT_LIST_HEAD(&vol->node);
 
