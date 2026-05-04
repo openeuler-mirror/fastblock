@@ -460,7 +460,7 @@ int kfastblock_selfcheck_run(struct kfastblock_volume *vol,
 	local.result_errno = 0;
 	if (m)
 		seq_printf(m, "volume=%s\n",
-			   vol->disk ? vol->disk->disk_name : "<none>");
+			   vol->disk_name[0] ? vol->disk_name : "<none>");
 
 	down_read(&vol->state_lock);
 	kfastblock_selfcheck_check_volume_core(vol, &local, m);
