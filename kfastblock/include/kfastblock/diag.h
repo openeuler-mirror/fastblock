@@ -2,6 +2,7 @@
 #define KFASTBLOCK_DIAG_H
 
 #include <linux/blkdev.h>
+#include <linux/mutex.h>
 #include <linux/types.h>
 
 #include "kfastblock/connpool.h"
@@ -21,6 +22,18 @@ enum kfastblock_diag_anomaly_flag {
 	KFASTBLOCK_DIAG_ANOMALY_SELFCHECK_WARNING = 1U << 8,
 	KFASTBLOCK_DIAG_ANOMALY_FAULT_ARMED = 1U << 9,
 	KFASTBLOCK_DIAG_ANOMALY_EVENT_ERROR_SPIKE = 1U << 10,
+};
+
+enum kfastblock_diag_drift_flag {
+	KFASTBLOCK_DIAG_DRIFT_HEALTH = 1U << 0,
+	KFASTBLOCK_DIAG_DRIFT_META = 1U << 1,
+	KFASTBLOCK_DIAG_DRIFT_SCHEDULER = 1U << 2,
+	KFASTBLOCK_DIAG_DRIFT_BUFFER = 1U << 3,
+	KFASTBLOCK_DIAG_DRIFT_OSD_CONN = 1U << 4,
+	KFASTBLOCK_DIAG_DRIFT_MONITOR_CONN = 1U << 5,
+	KFASTBLOCK_DIAG_DRIFT_SELFCHECK = 1U << 6,
+	KFASTBLOCK_DIAG_DRIFT_FAULT = 1U << 7,
+	KFASTBLOCK_DIAG_DRIFT_EVENTS = 1U << 8,
 };
 
 struct kfastblock_diag_volume_snapshot {
@@ -160,9 +173,56 @@ struct kfastblock_diag_snapshot {
 };
 
 const char *kfastblock_diag_anomaly_status(u32 score);
+struct kfastblock_diag_baseline_state {
+	struct mutex lock;
+	bool valid;
+	u32 capture_count;
+	u32 reset_count;
+	unsigned long last_capture_jiffies;
+	unsigned long last_reset_jiffies;
+	unsigned long last_compare_jiffies;
+	u32 last_drift_score;
+	u32 last_drift_flags;
+	struct kfastblock_diag_snapshot snapshot;
+};
+
+void kfastblock_diag_baseline_init(
+	struct kfastblock_diag_baseline_state *state);
+void kfastblock_diag_baseline_capture(
+	struct kfastblock_diag_baseline_state *state,
+	const struct kfastblock_diag_snapshot *snapshot);
+void kfastblock_diag_baseline_reset(
+	struct kfastblock_diag_baseline_state *state);
+bool kfastblock_diag_baseline_valid(
+	struct kfastblock_diag_baseline_state *state);
+u32 kfastblock_diag_baseline_capture_count(
+	struct kfastblock_diag_baseline_state *state);
+u32 kfastblock_diag_baseline_reset_count(
+	struct kfastblock_diag_baseline_state *state);
+unsigned long kfastblock_diag_baseline_last_capture_jiffies(
+	struct kfastblock_diag_baseline_state *state);
+unsigned long kfastblock_diag_baseline_last_reset_jiffies(
+	struct kfastblock_diag_baseline_state *state);
+unsigned long kfastblock_diag_baseline_last_compare_jiffies(
+	struct kfastblock_diag_baseline_state *state);
+u32 kfastblock_diag_baseline_last_drift_score(
+	struct kfastblock_diag_baseline_state *state);
+u32 kfastblock_diag_baseline_last_drift_flags(
+	struct kfastblock_diag_baseline_state *state);
+const char *kfastblock_diag_drift_status(bool valid, u32 score);
 void kfastblock_diag_collect(struct kfastblock_volume *vol,
 			     struct kfastblock_diag_snapshot *snapshot);
+void kfastblock_diag_compare_baseline(
+	struct kfastblock_diag_baseline_state *state,
+	const struct kfastblock_diag_snapshot *current_snapshot,
+	u32 *score_out,
+	u32 *flags_out,
+	bool *valid_out);
 int kfastblock_diag_dump_seq(struct seq_file *m,
 			     const struct kfastblock_diag_snapshot *snapshot);
+int kfastblock_diag_dump_baseline_seq(
+	struct seq_file *m,
+	struct kfastblock_diag_baseline_state *state,
+	const struct kfastblock_diag_snapshot *current_snapshot);
 
 #endif

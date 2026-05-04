@@ -120,6 +120,17 @@ const char *kfastblock_diag_anomaly_status(u32 score)
 	return "ok";
 }
 
+const char *kfastblock_diag_drift_status(bool valid, u32 score)
+{
+	if (!valid)
+		return "unset";
+	if (score >= 40)
+		return "critical";
+	if (score >= 15)
+		return "warn";
+	return "ok";
+}
+
 static void kfastblock_diag_collect_volume(struct kfastblock_volume *vol,
 					   struct kfastblock_diag_snapshot *snapshot)
 {
@@ -492,6 +503,267 @@ static void kfastblock_diag_compute_anomaly(struct kfastblock_diag_snapshot *sna
 	snapshot->anomaly_score = min_t(u32, score, 100);
 }
 
+void kfastblock_diag_baseline_init(
+	struct kfastblock_diag_baseline_state *state)
+{
+	if (!state)
+		return;
+
+	memset(state, 0, sizeof(*state));
+	mutex_init(&state->lock);
+}
+
+void kfastblock_diag_baseline_capture(
+	struct kfastblock_diag_baseline_state *state,
+	const struct kfastblock_diag_snapshot *snapshot)
+{
+	if (!state || !snapshot)
+		return;
+
+	mutex_lock(&state->lock);
+	state->snapshot = *snapshot;
+	state->valid = true;
+	state->capture_count++;
+	state->last_capture_jiffies = jiffies;
+	mutex_unlock(&state->lock);
+}
+
+void kfastblock_diag_baseline_reset(
+	struct kfastblock_diag_baseline_state *state)
+{
+	if (!state)
+		return;
+
+	mutex_lock(&state->lock);
+	state->valid = false;
+	memset(&state->snapshot, 0, sizeof(state->snapshot));
+	state->last_drift_score = 0;
+	state->last_drift_flags = 0;
+	state->last_compare_jiffies = 0;
+	state->reset_count++;
+	state->last_reset_jiffies = jiffies;
+	mutex_unlock(&state->lock);
+}
+
+static u32 kfastblock_diag_compare_conn_pool(
+	const struct kfastblock_conn_pool_snapshot *base,
+	const struct kfastblock_conn_pool_snapshot *current_snapshot)
+{
+	u32 score = 0;
+
+	if (!base || !current_snapshot)
+		return 0;
+
+	if (current_snapshot->backoff_slots > base->backoff_slots)
+		score += (current_snapshot->backoff_slots - base->backoff_slots) * 4;
+	if (current_snapshot->failure_count > base->failure_count)
+		score += min_t(u32, 10,
+			       (u32)(current_snapshot->failure_count -
+				     base->failure_count));
+	if (current_snapshot->avg_health_score + 5 < base->avg_health_score)
+		score += 6;
+	return score;
+}
+
+void kfastblock_diag_compare_baseline(
+	struct kfastblock_diag_baseline_state *state,
+	const struct kfastblock_diag_snapshot *current_snapshot,
+	u32 *score_out,
+	u32 *flags_out,
+	bool *valid_out)
+{
+	struct kfastblock_diag_snapshot base = {};
+	u32 score = 0;
+	u32 flags = 0;
+	bool valid = false;
+
+	if (score_out)
+		*score_out = 0;
+	if (flags_out)
+		*flags_out = 0;
+	if (valid_out)
+		*valid_out = false;
+	if (!state || !current_snapshot)
+		return;
+
+	mutex_lock(&state->lock);
+	if (state->valid) {
+		base = state->snapshot;
+		valid = true;
+	}
+	mutex_unlock(&state->lock);
+
+	if (!valid) {
+		if (valid_out)
+			*valid_out = false;
+		return;
+	}
+
+	if (base.volume.health_state != current_snapshot->volume.health_state ||
+	    base.volume.last_failure_source !=
+		    current_snapshot->volume.last_failure_source) {
+		flags |= KFASTBLOCK_DIAG_DRIFT_HEALTH;
+		score += 18;
+	}
+	if (base.volume.sync_state != current_snapshot->volume.sync_state ||
+	    base.volume.image_epoch != current_snapshot->volume.image_epoch ||
+	    base.volume.osdmap_epoch != current_snapshot->volume.osdmap_epoch ||
+	    base.volume.pgmap_epoch != current_snapshot->volume.pgmap_epoch) {
+		flags |= KFASTBLOCK_DIAG_DRIFT_META;
+		score += 16;
+	}
+	if (base.scheduler.policy != current_snapshot->scheduler.policy ||
+	    base.scheduler.current_window !=
+		    current_snapshot->scheduler.current_window ||
+	    base.scheduler.base_window != current_snapshot->scheduler.base_window) {
+		flags |= KFASTBLOCK_DIAG_DRIFT_SCHEDULER;
+		score += 10;
+	}
+	if (current_snapshot->buffer.evictions > base.buffer.evictions ||
+	    current_snapshot->buffer.direct_allocs > base.buffer.direct_allocs ||
+	    current_snapshot->buffer.cached > current_snapshot->buffer.cache_limit) {
+		flags |= KFASTBLOCK_DIAG_DRIFT_BUFFER;
+		score += 8;
+	}
+	if (kfastblock_diag_compare_conn_pool(&base.osd_conn,
+					      &current_snapshot->osd_conn)) {
+		flags |= KFASTBLOCK_DIAG_DRIFT_OSD_CONN;
+		score += kfastblock_diag_compare_conn_pool(&base.osd_conn,
+							      &current_snapshot->osd_conn);
+	}
+	if (kfastblock_diag_compare_conn_pool(&base.monitor_conn,
+					      &current_snapshot->monitor_conn)) {
+		flags |= KFASTBLOCK_DIAG_DRIFT_MONITOR_CONN;
+		score += kfastblock_diag_compare_conn_pool(&base.monitor_conn,
+							      &current_snapshot->monitor_conn);
+	}
+	if (current_snapshot->selfcheck.failure_runs >
+		    base.selfcheck.failure_runs ||
+	    current_snapshot->selfcheck.last_failed_checks >
+		    base.selfcheck.last_failed_checks ||
+	    current_snapshot->selfcheck.last_warning_checks >
+		    base.selfcheck.last_warning_checks) {
+		flags |= KFASTBLOCK_DIAG_DRIFT_SELFCHECK;
+		score += 15;
+	}
+	if (base.fault.enabled != current_snapshot->fault.enabled ||
+	    base.fault.mask != current_snapshot->fault.mask ||
+	    base.fault.budget != current_snapshot->fault.budget ||
+	    base.fault.errno_value != current_snapshot->fault.errno_value) {
+		flags |= KFASTBLOCK_DIAG_DRIFT_FAULT;
+		score += 12;
+	}
+	if (current_snapshot->events.object_error_events >
+		    base.events.object_error_events ||
+	    current_snapshot->events.cluster_refresh_fail_events >
+		    base.events.cluster_refresh_fail_events ||
+	    current_snapshot->events.image_refresh_fail_events >
+		    base.events.image_refresh_fail_events ||
+	    current_snapshot->events.leader_query_fail_events >
+		    base.events.leader_query_fail_events ||
+	    current_snapshot->events.socket_drop_events >
+		    base.events.socket_drop_events ||
+	    current_snapshot->events.fault_events > base.events.fault_events) {
+		flags |= KFASTBLOCK_DIAG_DRIFT_EVENTS;
+		score += 12;
+	}
+
+	score = min_t(u32, score, 100);
+	mutex_lock(&state->lock);
+	state->last_drift_score = score;
+	state->last_drift_flags = flags;
+	state->last_compare_jiffies = jiffies;
+	mutex_unlock(&state->lock);
+
+	if (score_out)
+		*score_out = score;
+	if (flags_out)
+		*flags_out = flags;
+	if (valid_out)
+		*valid_out = true;
+}
+
+static int kfastblock_diag_dump_snapshot_prefixed(
+	struct seq_file *m,
+	const char *prefix,
+	const struct kfastblock_diag_snapshot *snapshot)
+{
+	if (!m || !prefix || !snapshot)
+		return -EINVAL;
+
+	seq_printf(m, "%svolume.disk=%s\n", prefix, snapshot->volume.disk_name);
+	seq_printf(m, "%svolume.pool=%s\n", prefix, snapshot->volume.pool_name);
+	seq_printf(m, "%svolume.image=%s\n", prefix, snapshot->volume.image_name);
+	seq_printf(m, "%svolume.ready=%d\n", prefix, snapshot->volume.ready);
+	seq_printf(m, "%svolume.queue_paused=%d\n", prefix,
+		   snapshot->volume.queue_paused);
+	seq_printf(m, "%svolume.manual_queue_pause=%d\n", prefix,
+		   snapshot->volume.manual_queue_pause);
+	seq_printf(m, "%svolume.open_count=%d\n", prefix,
+		   snapshot->volume.open_count);
+	seq_printf(m, "%svolume.inflight_ios=%d\n", prefix,
+		   snapshot->volume.inflight_ios);
+	seq_printf(m, "%svolume.health_state=%s\n", prefix,
+		   kfastblock_diag_health_state_name(
+			   snapshot->volume.health_state));
+	seq_printf(m, "%svolume.last_failure_source=%s\n", prefix,
+		   kfastblock_diag_failure_source_name(
+			   snapshot->volume.last_failure_source));
+	seq_printf(m, "%svolume.last_failure_errno=%d\n", prefix,
+		   snapshot->volume.last_failure_errno);
+	seq_printf(m, "%svolume.health_since_jiffies=%lu\n", prefix,
+		   snapshot->volume.health_since_jiffies);
+	seq_printf(m, "%svolume.last_failure_jiffies=%lu\n", prefix,
+		   snapshot->volume.last_failure_jiffies);
+	seq_printf(m, "%svolume.last_success_jiffies=%lu\n", prefix,
+		   snapshot->volume.last_success_jiffies);
+	seq_printf(m, "%svolume.size_bytes=%llu\n", prefix,
+		   snapshot->volume.size_bytes);
+	seq_printf(m, "%svolume.block_size=%u\n", prefix,
+		   snapshot->volume.block_size);
+	seq_printf(m, "%svolume.object_size=%u\n", prefix,
+		   snapshot->volume.object_size);
+	seq_printf(m, "%svolume.pool_id=%u\n", prefix,
+		   snapshot->volume.pool_id);
+	seq_printf(m, "%svolume.pg_count=%u\n", prefix,
+		   snapshot->volume.pg_count);
+	seq_printf(m, "%svolume.read_only=%u\n", prefix,
+		   snapshot->volume.read_only);
+	seq_printf(m, "%svolume.sync_state=%u\n", prefix,
+		   snapshot->volume.sync_state);
+	seq_printf(m, "%svolume.image_epoch=%llu\n", prefix,
+		   snapshot->volume.image_epoch);
+	seq_printf(m, "%svolume.osdmap_epoch=%llu\n", prefix,
+		   snapshot->volume.osdmap_epoch);
+	seq_printf(m, "%svolume.pgmap_epoch=%llu\n", prefix,
+		   snapshot->volume.pgmap_epoch);
+	seq_printf(m, "%svolume.leader_epoch=%llu\n", prefix,
+		   snapshot->volume.leader_epoch);
+	seq_printf(m, "%svolume.osd_count=%u\n", prefix,
+		   snapshot->volume.osd_count);
+	seq_printf(m, "%svolume.route_count=%u\n", prefix,
+		   snapshot->volume.route_count);
+	seq_printf(m, "%svolume.dispatch_window=%u\n", prefix,
+		   snapshot->volume.dispatch_window);
+	seq_printf(m, "%svolume.refresh_interval_ms=%u\n", prefix,
+		   snapshot->volume.refresh_interval_ms);
+	seq_printf(m, "%svolume.image_refresh_interval_ms=%u\n", prefix,
+		   snapshot->volume.image_refresh_interval_ms);
+	seq_printf(m, "%svolume.last_refresh_jiffies=%lu\n", prefix,
+		   snapshot->volume.last_refresh_jiffies);
+	seq_printf(m, "%svolume.last_image_refresh_jiffies=%lu\n", prefix,
+		   snapshot->volume.last_image_refresh_jiffies);
+	seq_printf(m, "%svolume.event_count=%u\n", prefix,
+		   snapshot->volume.event_count);
+	seq_printf(m, "%sdiagnostics.anomaly_score=%u\n", prefix,
+		   snapshot->anomaly_score);
+	seq_printf(m, "%sdiagnostics.anomaly_status=%s\n", prefix,
+		   kfastblock_diag_anomaly_status(snapshot->anomaly_score));
+	seq_printf(m, "%sdiagnostics.anomaly_flags=0x%x\n", prefix,
+		   snapshot->anomaly_flags);
+	return 0;
+}
+
 void kfastblock_diag_collect(struct kfastblock_volume *vol,
 			     struct kfastblock_diag_snapshot *snapshot)
 {
@@ -761,5 +1033,96 @@ int kfastblock_diag_dump_seq(struct seq_file *m,
 		   kfastblock_diag_anomaly_status(snapshot->anomaly_score));
 	seq_printf(m, "diagnostics.anomaly_flags=0x%x\n",
 		   snapshot->anomaly_flags);
+	return 0;
+}
+
+#define KFASTBLOCK_DIAG_BASELINE_GETTER(name, field, type) \
+type name(struct kfastblock_diag_baseline_state *state) \
+{ \
+	type value = 0; \
+	if (!state) \
+		return 0; \
+	mutex_lock(&state->lock); \
+	value = state->field; \
+	mutex_unlock(&state->lock); \
+	return value; \
+}
+
+bool kfastblock_diag_baseline_valid(
+	struct kfastblock_diag_baseline_state *state)
+{
+	bool valid = false;
+
+	if (!state)
+		return false;
+
+	mutex_lock(&state->lock);
+	valid = state->valid;
+	mutex_unlock(&state->lock);
+	return valid;
+}
+
+KFASTBLOCK_DIAG_BASELINE_GETTER(kfastblock_diag_baseline_capture_count,
+				capture_count, u32)
+KFASTBLOCK_DIAG_BASELINE_GETTER(kfastblock_diag_baseline_reset_count,
+				reset_count, u32)
+KFASTBLOCK_DIAG_BASELINE_GETTER(kfastblock_diag_baseline_last_capture_jiffies,
+				last_capture_jiffies, unsigned long)
+KFASTBLOCK_DIAG_BASELINE_GETTER(kfastblock_diag_baseline_last_reset_jiffies,
+				last_reset_jiffies, unsigned long)
+KFASTBLOCK_DIAG_BASELINE_GETTER(kfastblock_diag_baseline_last_compare_jiffies,
+				last_compare_jiffies, unsigned long)
+KFASTBLOCK_DIAG_BASELINE_GETTER(kfastblock_diag_baseline_last_drift_score,
+				last_drift_score, u32)
+KFASTBLOCK_DIAG_BASELINE_GETTER(kfastblock_diag_baseline_last_drift_flags,
+				last_drift_flags, u32)
+
+int kfastblock_diag_dump_baseline_seq(
+	struct seq_file *m,
+	struct kfastblock_diag_baseline_state *state,
+	const struct kfastblock_diag_snapshot *current_snapshot)
+{
+	struct kfastblock_diag_snapshot baseline = {};
+	u32 drift_score = 0;
+	u32 drift_flags = 0;
+	unsigned long last_capture = 0;
+	unsigned long last_reset = 0;
+	unsigned long last_compare = 0;
+	u32 capture_count = 0;
+	u32 reset_count = 0;
+	bool valid = false;
+
+	if (!m || !state || !current_snapshot)
+		return -EINVAL;
+
+	mutex_lock(&state->lock);
+	valid = state->valid;
+	if (valid)
+		baseline = state->snapshot;
+	capture_count = state->capture_count;
+	reset_count = state->reset_count;
+	last_capture = state->last_capture_jiffies;
+	last_reset = state->last_reset_jiffies;
+	mutex_unlock(&state->lock);
+
+	kfastblock_diag_compare_baseline(state, current_snapshot,
+					 &drift_score, &drift_flags, &valid);
+	last_compare = kfastblock_diag_baseline_last_compare_jiffies(state);
+
+	seq_printf(m, "baseline.valid=%u\n", valid ? 1 : 0);
+	seq_printf(m, "baseline.capture_count=%u\n", capture_count);
+	seq_printf(m, "baseline.reset_count=%u\n", reset_count);
+	seq_printf(m, "baseline.last_capture_jiffies=%lu\n", last_capture);
+	seq_printf(m, "baseline.last_reset_jiffies=%lu\n", last_reset);
+	seq_printf(m, "baseline.last_compare_jiffies=%lu\n", last_compare);
+	seq_printf(m, "drift.score=%u\n", drift_score);
+	seq_printf(m, "drift.flags=0x%x\n", drift_flags);
+	seq_printf(m, "drift.status=%s\n",
+		   kfastblock_diag_drift_status(valid, drift_score));
+	if (valid)
+		kfastblock_diag_dump_snapshot_prefixed(m, "baseline.",
+						       &baseline);
+	kfastblock_diag_dump_snapshot_prefixed(m, "current.",
+					       current_snapshot);
 	return 0;
 }
