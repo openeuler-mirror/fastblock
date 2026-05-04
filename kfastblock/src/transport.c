@@ -45,6 +45,11 @@ enum kfastblock_transport_buffer_flags {
 	KFASTBLOCK_TRANSPORT_BUFFER_LARGE = 1U << 1,
 };
 
+struct kfastblock_transport_body_part {
+	const void *buf;
+	u32 len;
+};
+
 static void *kfastblock_transport_alloc_buffer(size_t size, gfp_t gfp,
 					       unsigned int flags)
 {
@@ -1073,6 +1078,38 @@ static int kfastblock_transport_send_request(struct socket *sock,
 	return kfastblock_transport_send_all(sock, body, body_len);
 }
 
+static int kfastblock_transport_send_request_parts(
+	struct socket *sock,
+	u8 service,
+	u8 opcode,
+	u64 seq,
+	const struct kfastblock_transport_body_part *parts,
+	unsigned int nr_parts)
+{
+	u32 body_len = 0;
+	unsigned int i;
+	int ret;
+
+	if (parts && nr_parts) {
+		for (i = 0; i < nr_parts; ++i)
+			body_len += parts[i].len;
+	}
+
+	ret = kfastblock_transport_send_request(sock, service, opcode, seq, NULL, body_len);
+	if (ret)
+		return ret;
+
+	for (i = 0; i < nr_parts; ++i) {
+		if (!parts[i].len)
+			continue;
+		ret = kfastblock_transport_send_all(sock, parts[i].buf, parts[i].len);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
 static int kfastblock_transport_recv_response(struct socket *sock,
 					      u8 expected_service,
 					      u8 expected_opcode,
@@ -1133,26 +1170,24 @@ static int kfastblock_transport_fetch_image_info(struct socket *sock,
 	struct kfastblock_raw_get_image_info_rsp rsp;
 	struct kfastblock_raw_header rsp_hdr;
 	void *body = NULL;
-	u8 *req_body;
+	struct kfastblock_transport_body_part parts[3];
 	u32 body_len;
 	int ret;
 
 	body_len = sizeof(req) + strlen(view->image.pool_name) + strlen(view->image.image_name);
-	req_body = kmalloc(body_len, GFP_KERNEL);
-	if (!req_body)
-		return -ENOMEM;
-	memcpy(req_body, &req, sizeof(req));
-	memcpy(req_body + sizeof(req), view->image.pool_name, strlen(view->image.pool_name));
-	memcpy(req_body + sizeof(req) + strlen(view->image.pool_name),
-	       view->image.image_name, strlen(view->image.image_name));
+	parts[0].buf = &req;
+	parts[0].len = sizeof(req);
+	parts[1].buf = view->image.pool_name;
+	parts[1].len = strlen(view->image.pool_name);
+	parts[2].buf = view->image.image_name;
+	parts[2].len = strlen(view->image.image_name);
 
-	ret = kfastblock_transport_send_request(sock,
+	ret = kfastblock_transport_send_request_parts(sock,
 					KFASTBLOCK_RAW_SERVICE_MONITOR,
 					KFASTBLOCK_RAW_OP_GET_IMAGE_INFO,
 					seq,
-					req_body,
-					body_len);
-	kfree(req_body);
+					parts,
+					ARRAY_SIZE(parts));
 	if (ret)
 		return ret;
 
@@ -1545,10 +1580,9 @@ static int kfastblock_transport_write_object(struct socket *sock,
 	};
 	struct kfastblock_raw_header rsp_hdr;
 	void *body = NULL;
-	u8 *req_body;
+	struct kfastblock_transport_body_part parts[3];
 	u32 object_name_len;
 	u32 data_len;
-	u32 body_len;
 	int ret;
 
 	if (!sock || !extent || (!data && extent->length))
@@ -1562,25 +1596,19 @@ static int kfastblock_transport_write_object(struct socket *sock,
 	req.object_name_len = cpu_to_le16(object_name_len);
 	req.reserved = 0;
 
-	body_len = sizeof(req) + object_name_len + data_len;
-	req_body = kfastblock_transport_alloc_buffer(body_len, GFP_KERNEL,
-					     KFASTBLOCK_TRANSPORT_BUFFER_LARGE);
-	if (!req_body)
-		return -ENOMEM;
+	parts[0].buf = &req;
+	parts[0].len = sizeof(req);
+	parts[1].buf = extent->object_name;
+	parts[1].len = object_name_len;
+	parts[2].buf = data;
+	parts[2].len = data_len;
 
-	memcpy(req_body, &req, sizeof(req));
-	memcpy(req_body + sizeof(req), extent->object_name, object_name_len);
-	if (data_len)
-		memcpy(req_body + sizeof(req) + object_name_len, data, data_len);
-
-	ret = kfastblock_transport_send_request(sock,
+	ret = kfastblock_transport_send_request_parts(sock,
 					KFASTBLOCK_RAW_SERVICE_OSD,
 					KFASTBLOCK_RAW_OSD_OP_WRITE_OBJECT,
 					seq,
-					req_body,
-					body_len);
-	kfastblock_transport_free_buffer(req_body,
-				       KFASTBLOCK_TRANSPORT_BUFFER_LARGE);
+					parts,
+					ARRAY_SIZE(parts));
 	if (ret)
 		return ret;
 
@@ -1611,7 +1639,7 @@ static int kfastblock_transport_read_object(struct socket *sock,
 	struct kfastblock_raw_read_object_rsp rsp;
 	struct kfastblock_raw_header rsp_hdr;
 	void *body = NULL;
-	u8 *req_body;
+	struct kfastblock_transport_body_part parts[2];
 	u32 object_name_len;
 	u32 body_len;
 	u32 data_len;
@@ -1621,21 +1649,17 @@ static int kfastblock_transport_read_object(struct socket *sock,
 		return -EINVAL;
 
 	object_name_len = strlen(extent->object_name);
-	body_len = sizeof(req) + object_name_len;
-	req_body = kfastblock_transport_alloc_buffer(body_len, GFP_KERNEL, 0);
-	if (!req_body)
-		return -ENOMEM;
+	parts[0].buf = &req;
+	parts[0].len = sizeof(req);
+	parts[1].buf = extent->object_name;
+	parts[1].len = object_name_len;
 
-	memcpy(req_body, &req, sizeof(req));
-	memcpy(req_body + sizeof(req), extent->object_name, object_name_len);
-
-	ret = kfastblock_transport_send_request(sock,
+	ret = kfastblock_transport_send_request_parts(sock,
 					KFASTBLOCK_RAW_SERVICE_OSD,
 					KFASTBLOCK_RAW_OSD_OP_READ_OBJECT,
 					seq,
-					req_body,
-					body_len);
-	kfastblock_transport_free_buffer(req_body, 0);
+					parts,
+					ARRAY_SIZE(parts));
 	if (ret)
 		return ret;
 
@@ -1683,30 +1707,25 @@ static int kfastblock_transport_delete_object(struct socket *sock,
 	};
 	struct kfastblock_raw_header rsp_hdr;
 	void *body = NULL;
-	u8 *req_body;
+	struct kfastblock_transport_body_part parts[2];
 	u32 object_name_len;
-	u32 body_len;
 	int ret;
 
 	if (!sock || !extent)
 		return -EINVAL;
 
 	object_name_len = strlen(extent->object_name);
-	body_len = sizeof(req) + object_name_len;
-	req_body = kmalloc(body_len, GFP_KERNEL);
-	if (!req_body)
-		return -ENOMEM;
+	parts[0].buf = &req;
+	parts[0].len = sizeof(req);
+	parts[1].buf = extent->object_name;
+	parts[1].len = object_name_len;
 
-	memcpy(req_body, &req, sizeof(req));
-	memcpy(req_body + sizeof(req), extent->object_name, object_name_len);
-
-	ret = kfastblock_transport_send_request(sock,
+	ret = kfastblock_transport_send_request_parts(sock,
 					KFASTBLOCK_RAW_SERVICE_OSD,
 					KFASTBLOCK_RAW_OSD_OP_DELETE_OBJECT,
 					seq,
-					req_body,
-					body_len);
-	kfree(req_body);
+					parts,
+					ARRAY_SIZE(parts));
 	if (ret)
 		return ret;
 
