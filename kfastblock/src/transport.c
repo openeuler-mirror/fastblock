@@ -22,6 +22,7 @@
 static int kfastblock_transport_try_connect_host(const char *host,
 						 u16 port,
 						 struct socket **sock);
+static void kfastblock_transport_object_work(struct work_struct *work);
 static struct workqueue_struct *g_kfastblock_transport_wq;
 
 static bool kfastblock_transport_should_retry_monitor(const int ret);
@@ -634,6 +635,82 @@ static bool kfastblock_transport_request_failed(
 	const struct kfastblock_request *kf_req)
 {
 	return kf_req && READ_ONCE(kf_req->status) != 0;
+}
+
+static bool kfastblock_transport_set_first_error(struct kfastblock_request *kf_req,
+						 int ret)
+{
+	unsigned long flags;
+	bool first = false;
+
+	if (!kf_req || !ret)
+		return false;
+
+	spin_lock_irqsave(&kf_req->status_lock, flags);
+	if (!kf_req->status) {
+		kf_req->status = ret;
+		first = true;
+	}
+	spin_unlock_irqrestore(&kf_req->status_lock, flags);
+	return first;
+}
+
+static int kfastblock_transport_queue_object_work(
+	struct kfastblock_request *kf_req,
+	unsigned int object_index)
+{
+	if (!kf_req || object_index >= kf_req->nr_objects)
+		return -EINVAL;
+
+	INIT_WORK(&kf_req->object_works[object_index].work,
+		  kfastblock_transport_object_work);
+	if (!g_kfastblock_transport_wq ||
+	    !queue_work(g_kfastblock_transport_wq,
+			&kf_req->object_works[object_index].work))
+		return -EBUSY;
+
+	return 0;
+}
+
+static int kfastblock_transport_queue_next_object(struct kfastblock_request *kf_req)
+{
+	unsigned int object_index;
+	int ret;
+
+	if (!kf_req)
+		return -EINVAL;
+
+	mutex_lock(&kf_req->dispatch_lock);
+	if (kf_req->next_object_to_queue >= kf_req->nr_objects) {
+		mutex_unlock(&kf_req->dispatch_lock);
+		return 0;
+	}
+	object_index = kf_req->next_object_to_queue;
+	ret = kfastblock_transport_queue_object_work(kf_req, object_index);
+	if (!ret)
+		kf_req->next_object_to_queue++;
+	mutex_unlock(&kf_req->dispatch_lock);
+
+	return ret;
+}
+
+static int kfastblock_transport_discard_unscheduled(struct kfastblock_request *kf_req)
+{
+	unsigned int unscheduled;
+
+	if (!kf_req)
+		return 0;
+
+	mutex_lock(&kf_req->dispatch_lock);
+	if (kf_req->next_object_to_queue >= kf_req->nr_objects) {
+		mutex_unlock(&kf_req->dispatch_lock);
+		return 0;
+	}
+	unscheduled = kf_req->nr_objects - kf_req->next_object_to_queue;
+	kf_req->next_object_to_queue = kf_req->nr_objects;
+	mutex_unlock(&kf_req->dispatch_lock);
+
+	return unscheduled;
 }
 
 static enum req_op kfastblock_transport_object_op(
@@ -1948,22 +2025,56 @@ static int kfastblock_transport_submit_object(struct kfastblock_request *kf_req,
 static void kfastblock_transport_complete_request(struct kfastblock_request *kf_req,
 						  int ret)
 {
-	unsigned long flags;
+	bool first_error = false;
+	int remaining;
 
-	if (ret) {
-		spin_lock_irqsave(&kf_req->status_lock, flags);
-		if (!kf_req->status)
-			kf_req->status = ret;
-		spin_unlock_irqrestore(&kf_req->status_lock, flags);
+	if (ret)
+		first_error = kfastblock_transport_set_first_error(kf_req, ret);
+	else if (!kfastblock_transport_request_failed(kf_req))
+		first_error = kfastblock_transport_set_first_error(
+			kf_req, kfastblock_transport_queue_next_object(kf_req));
+
+	remaining = atomic_dec_return(&kf_req->pending_objects);
+	if (first_error) {
+		int unscheduled = kfastblock_transport_discard_unscheduled(kf_req);
+
+		if (unscheduled)
+			remaining = atomic_sub_return(unscheduled,
+						&kf_req->pending_objects);
 	}
 
-	if (atomic_dec_and_test(&kf_req->pending_objects)) {
+	if (remaining == 0) {
 		blk_status_t status =
 			kfastblock_transport_errno_to_blk_status(kf_req->status);
 		kfastblock_volume_account_io_complete(kf_req->vol, kf_req->status);
 		if (!kf_req->status)
 			kfastblock_volume_mark_success(kf_req->vol,
 					      KFASTBLOCK_VOLUME_SOURCE_OBJECT_IO);
+		blk_mq_end_request(kf_req->rq, status);
+		kfastblock_volume_put_io(kf_req->vol);
+		put_device(&kf_req->vol->dev);
+	}
+}
+
+static void kfastblock_transport_abort_request(struct kfastblock_request *kf_req,
+					       int ret)
+{
+	int remaining;
+	int unscheduled;
+
+	if (!kf_req)
+		return;
+
+	(void)kfastblock_transport_set_first_error(kf_req, ret);
+	unscheduled = kfastblock_transport_discard_unscheduled(kf_req);
+	if (!unscheduled)
+		return;
+
+	remaining = atomic_sub_return(unscheduled, &kf_req->pending_objects);
+	if (remaining == 0) {
+		blk_status_t status =
+			kfastblock_transport_errno_to_blk_status(kf_req->status);
+		kfastblock_volume_account_io_complete(kf_req->vol, kf_req->status);
 		blk_mq_end_request(kf_req->rq, status);
 		kfastblock_volume_put_io(kf_req->vol);
 		put_device(&kf_req->vol->dev);
@@ -2000,6 +2111,8 @@ static void kfastblock_transport_object_work(struct work_struct *work)
 int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 {
 	unsigned int i;
+	unsigned int initial_dispatch;
+	int ret = 0;
 
 	if (!kf_req || !kf_req->rq || !kf_req->vol)
 		return -EINVAL;
@@ -2012,15 +2125,19 @@ int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 
 	kf_req->status = 0;
 	atomic_set(&kf_req->pending_objects, kf_req->nr_objects);
+	kf_req->next_object_to_queue = 0;
+	initial_dispatch = min_t(unsigned int, kf_req->nr_objects,
+				 kf_req->dispatch_window ?
+				 kf_req->dispatch_window :
+				 1);
 	get_device(&kf_req->vol->dev);
-	for (i = 0; i < kf_req->nr_objects; ++i) {
-		INIT_WORK(&kf_req->object_works[i].work,
-			  kfastblock_transport_object_work);
-		if (!g_kfastblock_transport_wq ||
-		    !queue_work(g_kfastblock_transport_wq,
-				&kf_req->object_works[i].work))
-			kfastblock_transport_complete_request(kf_req, -EBUSY);
+	for (i = 0; i < initial_dispatch; ++i) {
+		ret = kfastblock_transport_queue_next_object(kf_req);
+		if (ret)
+			break;
 	}
+	if (ret)
+		kfastblock_transport_abort_request(kf_req, ret);
 
 	return 0;
 }
