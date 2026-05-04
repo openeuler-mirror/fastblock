@@ -110,7 +110,7 @@ static void parse_config_file(const char *filename, struct config *cfg)
 static void print_usage(const char *prog_name)
 {
 	fprintf(stderr,
-		"Usage: %s <attach|detach|force-refresh|reset-backoff|drop-transport|reset-leaders|set-dispatch-window|set-refresh-interval|set-image-refresh-interval|list|show> [options]\n",
+		"Usage: %s <attach|detach|force-refresh|reset-backoff|drop-transport|reset-leaders|pause-queue|resume-queue|set-dispatch-window|set-refresh-interval|set-image-refresh-interval|list|show> [options]\n",
 		prog_name);
 	fprintf(stderr, "Options:\n");
 	fprintf(stderr, "  -c, --conf <file>\n");
@@ -127,6 +127,7 @@ static void print_usage(const char *prog_name)
 	fprintf(stderr, "\nExamples:\n");
 	fprintf(stderr, "  %s list\n", prog_name);
 	fprintf(stderr, "  %s show --pool-name <pool> --image-name <image>\n", prog_name);
+	fprintf(stderr, "  %s pause-queue --pool-name <pool> --image-name <image>\n", prog_name);
 	fprintf(stderr, "  %s set-dispatch-window --pool-name <pool> --image-name <image> --value 16\n", prog_name);
 }
 
@@ -216,6 +217,8 @@ static int op_is_volume_level(const char *operation)
 		strcmp(operation, "reset-backoff") == 0 ||
 		strcmp(operation, "drop-transport") == 0 ||
 		strcmp(operation, "reset-leaders") == 0 ||
+		strcmp(operation, "pause-queue") == 0 ||
+		strcmp(operation, "resume-queue") == 0 ||
 		strcmp(operation, "set-dispatch-window") == 0 ||
 		strcmp(operation, "set-refresh-interval") == 0 ||
 		strcmp(operation, "set-image-refresh-interval") == 0;
@@ -237,6 +240,10 @@ static const char *volume_attr_for_operation(const char *operation)
 		return "drop_transport";
 	if (strcmp(operation, "reset-leaders") == 0)
 		return "reset_leaders";
+	if (strcmp(operation, "pause-queue") == 0)
+		return "pause_queue";
+	if (strcmp(operation, "resume-queue") == 0)
+		return "resume_queue";
 	if (strcmp(operation, "set-dispatch-window") == 0)
 		return "dispatch_window";
 	if (strcmp(operation, "set-refresh-interval") == 0)
@@ -295,12 +302,13 @@ static int print_volume_attr(const char *root_path, const char *attr)
 
 static int do_list_volumes(void)
 {
-	static const char *attrs[] = {
-		"health_state",
-		"sync_state",
-		"queue_paused",
-		"open_count",
-	};
+		static const char *attrs[] = {
+			"health_state",
+			"sync_state",
+			"queue_paused",
+			"manual_queue_pause",
+			"open_count",
+		};
 	DIR *dir;
 	struct dirent *de;
 	char path[MAX_SYSFS_PATH];
@@ -367,11 +375,12 @@ static int do_show_volume(const struct config *cfg)
 		"leader_epoch",
 		"last_refresh",
 		"last_image_refresh",
-		"read_only",
-		"open_count",
-		"sync_state",
-		"queue_paused",
-		"flush_in_progress",
+			"read_only",
+			"open_count",
+			"sync_state",
+			"queue_paused",
+			"manual_queue_pause",
+			"flush_in_progress",
 		"inflight_ios",
 		"health_state",
 		"health_since",
@@ -389,13 +398,15 @@ static int do_show_volume(const struct config *cfg)
 		"cluster_refresh_fail",
 		"image_refresh_ok",
 		"image_refresh_fail",
-		"leader_query_ok",
-		"leader_query_fail",
-		"refresh_kicks",
-		"leader_invalidations",
-		"osd_socket_drops",
-		"monitor_socket_drops",
-	};
+			"leader_query_ok",
+			"leader_query_fail",
+			"refresh_kicks",
+			"leader_invalidations",
+			"osd_socket_drops",
+			"monitor_socket_drops",
+			"manual_queue_pauses",
+			"manual_queue_resumes",
+		};
 	char root_path[MAX_SYSFS_PATH];
 	size_t i;
 
@@ -448,6 +459,8 @@ int main(int argc, char *argv[])
 	    strcmp(operation, "reset-backoff") != 0 &&
 	    strcmp(operation, "drop-transport") != 0 &&
 	    strcmp(operation, "reset-leaders") != 0 &&
+	    strcmp(operation, "pause-queue") != 0 &&
+	    strcmp(operation, "resume-queue") != 0 &&
 	    strcmp(operation, "set-dispatch-window") != 0 &&
 	    strcmp(operation, "set-refresh-interval") != 0 &&
 	    strcmp(operation, "set-image-refresh-interval") != 0 &&
