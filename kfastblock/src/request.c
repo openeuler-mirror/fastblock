@@ -122,6 +122,8 @@ static void kfastblock_request_track_unique_pg(struct kfastblock_request *kf_req
 		return;
 
 	kf_req->unique_pgs[kf_req->nr_unique_pgs++] = pg_id;
+	kf_req->pg_hints[kf_req->nr_unique_pgs - 1].pg_id = pg_id;
+	kf_req->pg_hints[kf_req->nr_unique_pgs - 1].leader_valid = false;
 }
 
 void kfastblock_request_init(struct kfastblock_request *kf_req,
@@ -151,6 +153,8 @@ void kfastblock_request_init(struct kfastblock_request *kf_req,
 	for (i = 0; i < KFASTBLOCK_MAX_OBJECT_EXTENTS; ++i) {
 		kf_req->object_works[i].parent = kf_req;
 		kf_req->object_works[i].object_index = i;
+		kf_req->pg_hints[i].pg_id = 0;
+		kf_req->pg_hints[i].leader_valid = false;
 	}
 }
 
