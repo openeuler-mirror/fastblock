@@ -16,6 +16,13 @@ struct kfastblock_volume;
 
 struct kfastblock_request;
 
+struct kfastblock_request_pg_target {
+	u32 osd_id;
+	u32 flags;
+	u16 port;
+	char address[KFASTBLOCK_MAX_ADDR_LEN];
+};
+
 struct kfastblock_object_extent {
 	u64 object_seq;
 	u32 request_offset;
@@ -32,9 +39,12 @@ struct kfastblock_object_work {
 };
 
 struct kfastblock_request_pg_hint {
+	spinlock_t lock;
 	u32 pg_id;
+	unsigned int nr_targets;
 	bool leader_valid;
 	struct kfastblock_leader_info leader;
+	struct kfastblock_request_pg_target *targets;
 };
 
 struct kfastblock_request {
@@ -66,6 +76,14 @@ int kfastblock_request_init(struct kfastblock_request *kf_req,
 			    struct request *rq);
 void kfastblock_request_cleanup(struct kfastblock_request *kf_req);
 int kfastblock_request_split(struct kfastblock_request *kf_req);
+int kfastblock_request_get_pg_hint_leader(
+	struct kfastblock_request_pg_hint *hint,
+	struct kfastblock_leader_info *leader);
+void kfastblock_request_set_pg_hint_leader(
+	struct kfastblock_request_pg_hint *hint,
+	const struct kfastblock_leader_info *leader);
+void kfastblock_request_invalidate_pg_hint_leader(
+	struct kfastblock_request_pg_hint *hint);
 u32 kfastblock_request_calc_pg(const char *object_name, u32 pg_count);
 void kfastblock_request_build_object_name(char *buf, size_t buf_len,
 					  u32 pool_id,

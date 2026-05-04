@@ -45,6 +45,17 @@ kfastblock_volume_find_locked(const char *pool_name, const char *image_name)
 	return NULL;
 }
 
+static struct kfastblock_volume *
+kfastblock_volume_find_get_locked(const char *pool_name, const char *image_name)
+{
+	struct kfastblock_volume *vol;
+
+	vol = kfastblock_volume_find_locked(pool_name, image_name);
+	if (vol)
+		get_device(&vol->dev);
+	return vol;
+}
+
 static void kfastblock_volume_record_event(
 	struct kfastblock_volume *vol,
 	enum kfastblock_volume_event_type type,
@@ -1179,6 +1190,40 @@ static int kfastblock_volume_begin_stop(struct kfastblock_volume *vol,
 		kfastblock_volume_update_queue_gate(vol);
 		kfastblock_volume_schedule_refresh(vol);
 	}
+	return ret;
+}
+
+static int kfastblock_volume_unregister(struct kfastblock_volume *vol,
+					bool rollback_on_timeout)
+{
+	int ret;
+
+	if (!vol)
+		return -EINVAL;
+
+	mutex_lock(&vol->lifecycle_lock);
+	if (!atomic_read(&vol->ready)) {
+		ret = -ENOENT;
+		goto out_unlock;
+	}
+	if (rollback_on_timeout && atomic_read(&vol->open_count) > 0) {
+		ret = -EBUSY;
+		goto out_unlock;
+	}
+
+	ret = kfastblock_volume_begin_stop(vol, rollback_on_timeout);
+	if (ret)
+		goto out_unlock;
+	if (vol->disk) {
+		del_gendisk(vol->disk);
+		put_disk(vol->disk);
+		vol->disk = NULL;
+	}
+	device_unregister(&vol->dev);
+	ret = 0;
+
+out_unlock:
+	mutex_unlock(&vol->lifecycle_lock);
 	return ret;
 }
 
@@ -2604,24 +2649,31 @@ static const struct attribute_group *kfastblock_volume_attr_groups[] = {
 static int kfastblock_blk_open(struct gendisk *disk, blk_mode_t mode)
 {
 	struct kfastblock_volume *vol = disk->private_data;
+	int ret = 0;
 
 	if (!vol)
 		return -ENXIO;
 
-	if (!atomic_read(&vol->ready))
-		return -ENOENT;
+	mutex_lock(&vol->lifecycle_lock);
+	if (!atomic_read(&vol->ready)) {
+		ret = -ENOENT;
+		goto out_unlock;
+	}
 
 	atomic_inc(&vol->open_count);
 	get_device(&vol->dev);
-	return 0;
+
+out_unlock:
+	mutex_unlock(&vol->lifecycle_lock);
+	return ret;
 }
 
 static void kfastblock_blk_release(struct gendisk *disk)
 {
 	struct kfastblock_volume *vol = disk->private_data;
 
-	put_device(&vol->dev);
 	atomic_dec(&vol->open_count);
+	put_device(&vol->dev);
 }
 
 static blk_status_t kfastblock_queue_rq(struct blk_mq_hw_ctx *hctx,
@@ -2890,6 +2942,7 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	vol->image_refresh_interval_ms =
 		KFASTBLOCK_DEFAULT_IMAGE_REFRESH_INTERVAL_MS;
 	kfastblock_volume_stats_init(vol);
+	mutex_init(&vol->lifecycle_lock);
 	mutex_init(&vol->inflight_lock);
 	init_waitqueue_head(&vol->inflight_wq);
 	init_rwsem(&vol->state_lock);
@@ -2958,7 +3011,6 @@ err_free:
 
 int kfastblock_volume_detach(const struct kfastblock_attach_spec *spec)
 {
-	struct kfastblock_volume *vol;
 	struct kfastblock_volume *found = NULL;
 	int ret;
 
@@ -2966,31 +3018,16 @@ int kfastblock_volume_detach(const struct kfastblock_attach_spec *spec)
 		return -EINVAL;
 
 	mutex_lock(&g_kfastblock_volumes_lock);
-	list_for_each_entry(vol, &g_kfastblock_volumes, node) {
-		if (strcmp(vol->view.image.pool_name, spec->pool_name))
-			continue;
-		if (strcmp(vol->view.image.image_name, spec->image_name))
-			continue;
-		found = vol;
-		break;
-	}
+	found = kfastblock_volume_find_get_locked(spec->pool_name,
+						 spec->image_name);
 	mutex_unlock(&g_kfastblock_volumes_lock);
 
 	if (!found)
 		return -ENOENT;
-	if (atomic_read(&found->open_count) > 0)
-		return -EBUSY;
 
-	ret = kfastblock_volume_begin_stop(found, true);
-	if (ret)
-		return ret;
-	if (found->disk) {
-		del_gendisk(found->disk);
-		put_disk(found->disk);
-		found->disk = NULL;
-	}
-	device_unregister(&found->dev);
-	return 0;
+	ret = kfastblock_volume_unregister(found, true);
+	put_device(&found->dev);
+	return ret;
 }
 
 int kfastblock_volume_init(void)
@@ -3012,16 +3049,12 @@ void kfastblock_volume_exit(void)
 		}
 		vol = list_first_entry(&g_kfastblock_volumes,
 					 struct kfastblock_volume, node);
+		get_device(&vol->dev);
 		list_del_init(&vol->node);
 		mutex_unlock(&g_kfastblock_volumes_lock);
 
-		(void)kfastblock_volume_begin_stop(vol, false);
-		if (vol->disk) {
-			del_gendisk(vol->disk);
-			put_disk(vol->disk);
-			vol->disk = NULL;
-		}
-		device_unregister(&vol->dev);
+		(void)kfastblock_volume_unregister(vol, false);
+		put_device(&vol->dev);
 	}
 
 	debugfs_remove_recursive(g_kfastblock_debugfs_root);

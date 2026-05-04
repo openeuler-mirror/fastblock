@@ -181,6 +181,7 @@ struct kfastblock_volume {
 
 	struct list_head node;
 	struct device dev;
+	struct mutex lifecycle_lock;
 	struct mutex inflight_lock;
 	wait_queue_head_t inflight_wq;
 	bool flush_in_progress;
