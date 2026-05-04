@@ -33,7 +33,14 @@ cleanup() {
     if [ "$detach_needed" = "1" ]; then
         kfastblock_detach_volume "$repo_root" "$pool_name" "$image_name" >/dev/null 2>&1 || true
     fi
+    kfastblock_release_test_lock
 }
+
+on_error() {
+    kfastblock_capture_failure_snapshot "$repo_root" "$run_dir" "$pool_name" "$image_name"
+}
+
+trap on_error ERR
 trap cleanup EXIT
 
 write_current_device() {
@@ -170,6 +177,12 @@ attach_detach_worker() {
     local attach_ok=0
     local device_path=""
 
+    if [ "$attach_cycles" -le 0 ]; then
+        printf 'cycles=0 detach_ok=0 attach_ok=0 busy=0 skipped=1\n' \
+            > "$run_dir/attach-detach.summary"
+        return 0
+    fi
+
     while [ "$SECONDS" -lt "$deadline" ] && [ "$stop_requested" = "0" ] && [ "$cycles" -lt "$attach_cycles" ]; do
         if kfastblock_detach_volume "$repo_root" "$pool_name" "$image_name" >/dev/null 2>&1; then
             detach_ok=$((detach_ok + 1))
@@ -196,6 +209,7 @@ attach_detach_worker() {
 }
 
 kfastblock_require_root
+kfastblock_acquire_test_lock "$repo_root"
 kfastblock_start_logging "$log_file"
 echo "artifact_dir=$run_dir"
 echo "duration_sec=$duration_sec io_workers=$io_workers open_workers=$open_workers attach_cycles=$attach_cycles"
@@ -220,8 +234,13 @@ for worker_id in $(seq 1 "$open_workers"); do
     open_worker "$worker_id" "$deadline" &
     bg_pids+=("$!")
 done
-attach_detach_worker "$deadline" &
-bg_pids+=("$!")
+if [ "$attach_cycles" -gt 0 ]; then
+    attach_detach_worker "$deadline" &
+    bg_pids+=("$!")
+else
+    printf 'cycles=0 detach_ok=0 attach_ok=0 busy=0 skipped=1\n' \
+        > "$run_dir/attach-detach.summary"
+fi
 
 for pid in "${bg_pids[@]}"; do
     if ! wait "$pid"; then
