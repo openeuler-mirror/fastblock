@@ -338,6 +338,28 @@ kfastblock_detach_volume() {
         --image-name "$image_name"
 }
 
+kfastblock_set_dispatch_window() {
+    local repo_root="$1"
+    local pool_name="$2"
+    local image_name="$3"
+    local value="$4"
+
+    "$repo_root/kfastblock/tool/kfastblock-admin" set-dispatch-window \
+        --pool-name "$pool_name" \
+        --image-name "$image_name" \
+        --value "$value" >/dev/null
+}
+
+kfastblock_show_volume() {
+    local repo_root="$1"
+    local pool_name="$2"
+    local image_name="$3"
+
+    "$repo_root/kfastblock/tool/kfastblock-admin" show \
+        --pool-name "$pool_name" \
+        --image-name "$image_name"
+}
+
 kfastblock_resolve_device() {
     local device_path
 
