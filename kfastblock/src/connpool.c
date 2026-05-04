@@ -656,11 +656,13 @@ void kfastblock_monitor_conn_pool_snapshot(
 	kfastblock_conn_pool_finalize_average(snapshot);
 }
 
-struct kfastblock_cached_socket *kfastblock_osd_conn_pool_acquire_match(
+static struct kfastblock_cached_socket *
+kfastblock_osd_conn_pool_acquire_match_common(
 	struct kfastblock_cached_socket *slots,
 	u32 nr_slots,
 	const struct kfastblock_leader_info *leader,
-	struct socket **sock_out)
+	struct socket **sock_out,
+	bool nonblocking)
 {
 	u32 i;
 
@@ -672,7 +674,12 @@ struct kfastblock_cached_socket *kfastblock_osd_conn_pool_acquire_match(
 	for (i = 0; i < nr_slots; ++i) {
 		struct kfastblock_cached_socket *cached = &slots[i];
 
-		mutex_lock(&cached->lock);
+		if (nonblocking) {
+			if (!mutex_trylock(&cached->lock))
+				continue;
+		} else {
+			mutex_lock(&cached->lock);
+		}
 		if (!kfastblock_osd_conn_slot_matches_locked(cached, leader)) {
 			mutex_unlock(&cached->lock);
 			continue;
@@ -684,6 +691,26 @@ struct kfastblock_cached_socket *kfastblock_osd_conn_pool_acquire_match(
 	}
 
 	return NULL;
+}
+
+struct kfastblock_cached_socket *kfastblock_osd_conn_pool_acquire_match(
+	struct kfastblock_cached_socket *slots,
+	u32 nr_slots,
+	const struct kfastblock_leader_info *leader,
+	struct socket **sock_out)
+{
+	return kfastblock_osd_conn_pool_acquire_match_common(
+		slots, nr_slots, leader, sock_out, false);
+}
+
+struct kfastblock_cached_socket *kfastblock_osd_conn_pool_try_acquire_match(
+	struct kfastblock_cached_socket *slots,
+	u32 nr_slots,
+	const struct kfastblock_leader_info *leader,
+	struct socket **sock_out)
+{
+	return kfastblock_osd_conn_pool_acquire_match_common(
+		slots, nr_slots, leader, sock_out, true);
 }
 
 struct kfastblock_cached_monitor_socket *
@@ -743,6 +770,32 @@ int kfastblock_osd_conn_pool_check_backoff(
 	}
 
 	return 0;
+}
+
+u32 kfastblock_osd_conn_pool_endpoint_active_count(
+	struct kfastblock_cached_socket *slots,
+	u32 nr_slots,
+	const struct kfastblock_leader_info *leader)
+{
+	u32 i;
+	u32 count = 0;
+
+	if (!slots || !leader)
+		return 0;
+
+	for (i = 0; i < nr_slots; ++i) {
+		struct kfastblock_cached_socket *cached = &slots[i];
+
+		mutex_lock(&cached->lock);
+		if (cached->osd_id == leader->osd_id &&
+		    cached->port == leader->port &&
+		    !strcmp(cached->address, leader->address) &&
+		    (cached->sock || cached->connecting))
+			count++;
+		mutex_unlock(&cached->lock);
+	}
+
+	return count;
 }
 
 int kfastblock_monitor_conn_pool_check_backoff(

@@ -99,6 +99,11 @@ struct kfastblock_cached_socket *kfastblock_osd_conn_pool_acquire_match(
 	u32 nr_slots,
 	const struct kfastblock_leader_info *leader,
 	struct socket **sock_out);
+struct kfastblock_cached_socket *kfastblock_osd_conn_pool_try_acquire_match(
+	struct kfastblock_cached_socket *slots,
+	u32 nr_slots,
+	const struct kfastblock_leader_info *leader,
+	struct socket **sock_out);
 struct kfastblock_cached_monitor_socket *
 kfastblock_monitor_conn_pool_acquire_match(
 	struct kfastblock_cached_monitor_socket *slots,
@@ -110,6 +115,10 @@ int kfastblock_osd_conn_pool_check_backoff(
 	u32 nr_slots,
 	const struct kfastblock_leader_info *leader,
 	unsigned long *remaining_jiffies);
+u32 kfastblock_osd_conn_pool_endpoint_active_count(
+	struct kfastblock_cached_socket *slots,
+	u32 nr_slots,
+	const struct kfastblock_leader_info *leader);
 int kfastblock_monitor_conn_pool_check_backoff(
 	struct kfastblock_cached_monitor_socket *slots,
 	u32 nr_slots,
