@@ -201,6 +201,7 @@ static int kfastblock_transport_get_monitor_socket(
 {
 	const struct kfastblock_monitor_endpoint *endpoint;
 	struct kfastblock_cached_monitor_socket *cached;
+	unsigned long remaining = 0;
 	int ret;
 
 	if (!vol || !spec || !cached_out || !sock_out)
@@ -209,27 +210,35 @@ static int kfastblock_transport_get_monitor_socket(
 		return -EINVAL;
 
 	endpoint = &spec->monitors[endpoint_index];
-	cached = &vol->monitor_cache[endpoint_index];
-	*cached_out = cached;
 	*sock_out = NULL;
-
-	mutex_lock(&cached->lock);
-	if (kfastblock_transport_monitor_socket_matches_locked(cached, endpoint)) {
-		kfastblock_monitor_conn_slot_note_reuse_locked(cached);
+	cached = kfastblock_monitor_conn_pool_acquire_match(vol->monitor_cache,
+							spec->nr_monitors,
+							endpoint, sock_out);
+	if (cached) {
+		*cached_out = cached;
 		mutex_unlock(&cached->lock);
 		return 0;
 	}
-	ret = kfastblock_monitor_conn_slot_backoff_active_locked(cached, endpoint,
-							       NULL);
+
+	ret = kfastblock_monitor_conn_pool_check_backoff(vol->monitor_cache,
+						 spec->nr_monitors,
+						 endpoint, &remaining);
 	if (ret) {
-		unsigned long remaining = time_after(cached->backoff_until_jiffies, jiffies) ?
-			cached->backoff_until_jiffies - jiffies : 0;
 		kfastblock_volume_account_socket_backoff_wait(vol, true, 0,
 			endpoint->port, remaining, ret);
-		mutex_unlock(&cached->lock);
 		return ret;
 	}
 
+	cached = &vol->monitor_cache[endpoint_index];
+	*cached_out = cached;
+	mutex_lock(&cached->lock);
+	if (kfastblock_transport_monitor_socket_matches_locked(cached, endpoint)) {
+		kfastblock_monitor_conn_slot_note_reuse_locked(cached);
+		if (sock_out)
+			*sock_out = cached->sock;
+		mutex_unlock(&cached->lock);
+		return 0;
+	}
 	kfastblock_transport_close_cached_monitor_socket_locked(cached);
 	kfastblock_monitor_conn_slot_begin_connect_locked(cached);
 	ret = kfastblock_transport_try_connect_monitor(endpoint, sock_out);
