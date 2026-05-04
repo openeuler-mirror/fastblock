@@ -39,12 +39,14 @@ struct kfastblock_request {
 	u32 request_pool_id;
 	u32 request_object_size;
 	unsigned int nr_objects;
+	unsigned int nr_unique_pgs;
 	unsigned int next_object_to_queue;
 	unsigned int dispatch_window;
 	int status;
 	atomic_t pending_objects;
 	spinlock_t status_lock;
 	struct mutex dispatch_lock;
+	u32 unique_pgs[KFASTBLOCK_MAX_OBJECT_EXTENTS];
 	struct kfastblock_object_extent objects[KFASTBLOCK_MAX_OBJECT_EXTENTS];
 	struct kfastblock_object_work object_works[KFASTBLOCK_MAX_OBJECT_EXTENTS];
 };
