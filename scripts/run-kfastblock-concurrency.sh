@@ -214,7 +214,7 @@ kfastblock_start_logging "$log_file"
 echo "artifact_dir=$run_dir"
 echo "duration_sec=$duration_sec io_workers=$io_workers open_workers=$open_workers attach_cycles=$attach_cycles"
 
-kfastblock_prepare_dev_cluster "$repo_root" "$config_file"
+kfastblock_prepare_or_reuse_dev_cluster "$repo_root" "$config_file"
 kfastblock_capture_context "$config_file" "$run_dir"
 monitor_addr="$(kfastblock_resolve_monitor_addr "$config_file")"
 

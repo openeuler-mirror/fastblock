@@ -128,7 +128,7 @@ kfastblock_start_logging "$log_file"
 echo "artifact_dir=$run_dir"
 echo "target_osd=$target_osd down_sleep_sec=$down_sleep_sec io_duration_sec=$io_duration_sec"
 
-kfastblock_prepare_dev_cluster "$repo_root" "$config_file"
+kfastblock_prepare_or_reuse_dev_cluster "$repo_root" "$config_file"
 kfastblock_capture_context "$config_file" "$run_dir"
 monitor_addr="$(kfastblock_resolve_monitor_addr "$config_file")"
 

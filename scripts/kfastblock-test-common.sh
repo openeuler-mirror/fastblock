@@ -97,6 +97,9 @@ kfastblock_start_local_process() {
         _pid_file=$1
         _log_file=$2
         shift 2
+        if [ -n "${KFASTBLOCK_TEST_LOCK_FD:-}" ]; then
+            eval "exec ${KFASTBLOCK_TEST_LOCK_FD}>&-"
+        fi
         echo $$ > "$_pid_file"
         exec "$@" < /dev/null >> "$_log_file" 2>&1
     ' bash "$pid_file" "$log_file" "$@"
@@ -243,6 +246,20 @@ kfastblock_prepare_dev_cluster() {
     kfastblock_wait_cluster_active "$repo_root" "$config_file"
 }
 
+kfastblock_prepare_or_reuse_dev_cluster() {
+    local repo_root="$1"
+    local config_file="$2"
+
+    if [ "${KFASTBLOCK_TEST_REUSE_CLUSTER:-0}" = "1" ] && [ -f "$config_file" ]; then
+        echo "reuse existing dev cluster"
+        kfastblock_detach_all_volumes "$repo_root"
+        kfastblock_wait_cluster_active "$repo_root" "$config_file"
+        return 0
+    fi
+
+    kfastblock_prepare_dev_cluster "$repo_root" "$config_file"
+}
+
 kfastblock_resolve_monitor_addr() {
     local config_file="$1"
     local monitor_addr
@@ -358,6 +375,7 @@ kfastblock_acquire_test_lock() {
     mkdir -p "$(dirname "$lock_file")"
     exec {KFASTBLOCK_TEST_LOCK_FD}> "$lock_file"
     flock "$KFASTBLOCK_TEST_LOCK_FD"
+    export KFASTBLOCK_TEST_LOCK_FD
 }
 
 kfastblock_release_test_lock() {
@@ -365,5 +383,6 @@ kfastblock_release_test_lock() {
         flock -u "$KFASTBLOCK_TEST_LOCK_FD" || true
         eval "exec ${KFASTBLOCK_TEST_LOCK_FD}>&-"
         KFASTBLOCK_TEST_LOCK_FD=""
+        export KFASTBLOCK_TEST_LOCK_FD
     fi
 }
