@@ -9,6 +9,7 @@ run_sanitizer="${KFASTBLOCK_MATRIX_RUN_SANITIZER:-1}"
 profile="${KFASTBLOCK_MATRIX_PROFILE:-default}"
 case_filter="${KFASTBLOCK_MATRIX_CASES:-}"
 reuse_cluster="${KFASTBLOCK_MATRIX_REUSE_CLUSTER:-0}"
+fault_reuse_cluster="${KFASTBLOCK_MATRIX_FAULT_REUSE_CLUSTER:-0}"
 refresh_duration="${KFASTBLOCK_MATRIX_REFRESH_DURATION_SEC:-8}"
 lifecycle_duration="${KFASTBLOCK_MATRIX_LIFECYCLE_DURATION_SEC:-8}"
 lifecycle_cycles="${KFASTBLOCK_MATRIX_LIFECYCLE_ATTACH_CYCLES:-1}"
@@ -204,7 +205,7 @@ run_case_if_enabled concurrency-lifecycle env \
     KFASTBLOCK_CONCURRENCY_OPEN_WORKERS=1 \
     "$repo_root/scripts/run-kfastblock-concurrency.sh"
 run_case_if_enabled fault-injection env \
-    KFASTBLOCK_TEST_REUSE_CLUSTER=1 \
+    KFASTBLOCK_TEST_REUSE_CLUSTER="$fault_reuse_cluster" \
     KFASTBLOCK_FAULT_IO_DURATION_SEC="$fault_duration" \
     KFASTBLOCK_FAULT_DOWN_SEC="$fault_down_sec" \
     "$repo_root/scripts/run-kfastblock-fault-injection.sh"
