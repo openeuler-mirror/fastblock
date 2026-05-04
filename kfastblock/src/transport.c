@@ -17,6 +17,7 @@
 #include "kfastblock/common.h"
 #include "kfastblock/buffer.h"
 #include "kfastblock/rawproto.h"
+#include "kfastblock/scheduler.h"
 #include "kfastblock/transport.h"
 #include "kfastblock/volume.h"
 
@@ -707,9 +708,11 @@ static void kfastblock_transport_apply_object_failure(
 		kfastblock_volume_account_refresh_kick(vol, extent->pg_id, ret);
 		kfastblock_volume_kick_refresh(vol);
 	}
-	if (actions & KFASTBLOCK_TRANSPORT_FAILURE_RETRY)
+	if (actions & KFASTBLOCK_TRANSPORT_FAILURE_RETRY) {
+		kfastblock_scheduler_note_retry(&vol->scheduler);
 		kfastblock_volume_account_object_retry(vol, op, extent->pg_id,
-				   leader ? leader->osd_id : 0, extent->length, ret);
+					   leader ? leader->osd_id : 0, extent->length, ret);
+	}
 }
 
 static void kfastblock_transport_apply_leader_failure(
@@ -824,8 +827,12 @@ static int kfastblock_transport_queue_object_work(
 		  kfastblock_transport_object_work);
 	if (!g_kfastblock_transport_wq ||
 	    !queue_work(g_kfastblock_transport_wq,
-			&kf_req->object_works[object_index].work))
+			&kf_req->object_works[object_index].work)) {
+		if (kf_req->vol)
+			kfastblock_scheduler_note_dispatch_failure(
+				&kf_req->vol->scheduler);
 		return -EBUSY;
+	}
 
 	return 0;
 }
@@ -1835,8 +1842,10 @@ static int kfastblock_transport_submit_object_io(
 		if (!ret)
 			kfastblock_volume_account_object_success(
 				vol, op, extent->pg_id, leader.osd_id, extent->length);
+		if (!ret)
+			kfastblock_scheduler_note_success(&vol->scheduler);
 		goto out;
-	}
+		}
 
 out:
 	if (cached)

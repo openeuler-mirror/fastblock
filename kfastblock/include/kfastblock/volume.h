@@ -19,6 +19,7 @@ struct dentry;
 #include "kfastblock/control.h"
 #include "kfastblock/buffer.h"
 #include "kfastblock/meta.h"
+#include "kfastblock/scheduler.h"
 
 #define KFASTBLOCK_MAX_SOCKET_CACHE 16
 #define KFASTBLOCK_MAX_VOLUME_EVENTS 128
@@ -185,6 +186,7 @@ struct kfastblock_volume {
 	struct mutex lifecycle_lock;
 	struct mutex inflight_lock;
 	struct kfastblock_object_buffer_pool object_buffer_pool;
+	struct kfastblock_scheduler_controller scheduler;
 	wait_queue_head_t inflight_wq;
 	bool flush_in_progress;
 	struct rw_semaphore state_lock;
