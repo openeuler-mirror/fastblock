@@ -17,6 +17,7 @@
 struct dentry;
 
 #include "kfastblock/control.h"
+#include "kfastblock/buffer.h"
 #include "kfastblock/meta.h"
 
 #define KFASTBLOCK_MAX_SOCKET_CACHE 16
@@ -183,9 +184,7 @@ struct kfastblock_volume {
 	struct device dev;
 	struct mutex lifecycle_lock;
 	struct mutex inflight_lock;
-	struct mutex object_buffer_lock;
-	struct list_head object_buffer_free;
-	u32 object_buffer_cached;
+	struct kfastblock_object_buffer_pool object_buffer_pool;
 	wait_queue_head_t inflight_wq;
 	bool flush_in_progress;
 	struct rw_semaphore state_lock;
