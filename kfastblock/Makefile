@@ -29,6 +29,7 @@ kfastblock-objs := \
 	src/meta.o \
 	src/request.o \
 	src/scheduler.o \
+	src/selfcheck.o \
 	src/transport.o \
 	src/volume.o
 

@@ -20,6 +20,7 @@ struct dentry;
 #include "kfastblock/connpool.h"
 #include "kfastblock/meta.h"
 #include "kfastblock/scheduler.h"
+#include "kfastblock/selfcheck.h"
 
 #define KFASTBLOCK_MAX_SOCKET_CACHE 16
 #define KFASTBLOCK_MAX_VOLUME_EVENTS 128
@@ -154,6 +155,7 @@ struct kfastblock_volume {
 	struct kfastblock_volume_stats stats;
 	struct kfastblock_volume_health health;
 	struct kfastblock_volume_event_log event_log;
+	struct kfastblock_selfcheck_state selfcheck;
 
 	struct list_head node;
 	struct device dev;

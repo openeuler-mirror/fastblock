@@ -761,6 +761,22 @@ static int kfastblock_volume_summary_show(struct seq_file *m, void *v)
 		   vol->view.last_image_refresh_jiffies);
 	seq_printf(m, "event_count=%u\n",
 		   kfastblock_volume_events_count(vol));
+	seq_printf(m, "selfcheck_runs=%u\n",
+		   kfastblock_selfcheck_run_count(&vol->selfcheck));
+	seq_printf(m, "selfcheck_failure_runs=%u\n",
+		   kfastblock_selfcheck_failure_runs(&vol->selfcheck));
+	seq_printf(m, "selfcheck_warning_runs=%u\n",
+		   kfastblock_selfcheck_warning_runs(&vol->selfcheck));
+	seq_printf(m, "selfcheck_last_errno=%d\n",
+		   kfastblock_selfcheck_last_errno(&vol->selfcheck));
+	seq_printf(m, "selfcheck_last_failed_checks=%u\n",
+		   kfastblock_selfcheck_last_failed_checks(&vol->selfcheck));
+	seq_printf(m, "selfcheck_last_warning_checks=%u\n",
+		   kfastblock_selfcheck_last_warning_checks(&vol->selfcheck));
+	seq_printf(m, "selfcheck_last_flags=0x%x\n",
+		   kfastblock_selfcheck_last_flags(&vol->selfcheck));
+	seq_printf(m, "selfcheck_last_run_jiffies=%lu\n",
+		   kfastblock_selfcheck_last_run_jiffies(&vol->selfcheck));
 	up_read(&vol->state_lock);
 	return 0;
 }
@@ -1029,9 +1045,36 @@ static int kfastblock_volume_stats_show(struct seq_file *m, void *v)
 		   monitor_conn.max_health_score);
 	seq_printf(m, "monitor_conn_health_avg=%u\n",
 		   monitor_conn.avg_health_score);
+	seq_printf(m, "selfcheck_runs=%u\n",
+		   kfastblock_selfcheck_run_count(&vol->selfcheck));
+	seq_printf(m, "selfcheck_failure_runs=%u\n",
+		   kfastblock_selfcheck_failure_runs(&vol->selfcheck));
+	seq_printf(m, "selfcheck_warning_runs=%u\n",
+		   kfastblock_selfcheck_warning_runs(&vol->selfcheck));
+	seq_printf(m, "selfcheck_last_errno=%d\n",
+		   kfastblock_selfcheck_last_errno(&vol->selfcheck));
+	seq_printf(m, "selfcheck_last_failed_checks=%u\n",
+		   kfastblock_selfcheck_last_failed_checks(&vol->selfcheck));
+	seq_printf(m, "selfcheck_last_warning_checks=%u\n",
+		   kfastblock_selfcheck_last_warning_checks(&vol->selfcheck));
+	seq_printf(m, "selfcheck_last_flags=0x%x\n",
+		   kfastblock_selfcheck_last_flags(&vol->selfcheck));
+	seq_printf(m, "selfcheck_last_run_jiffies=%lu\n",
+		   kfastblock_selfcheck_last_run_jiffies(&vol->selfcheck));
 	return 0;
 }
 DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_stats);
+
+static int kfastblock_volume_selfcheck_show(struct seq_file *m, void *v)
+{
+	struct kfastblock_volume *vol = m->private;
+
+	if (!vol)
+		return -ENODEV;
+
+	return kfastblock_selfcheck_run(vol, NULL, m);
+}
+DEFINE_SHOW_ATTRIBUTE(kfastblock_volume_selfcheck);
 
 static int kfastblock_volume_events_show(struct seq_file *m, void *v)
 {
@@ -1104,6 +1147,8 @@ static void kfastblock_volume_debugfs_init(struct kfastblock_volume *vol)
 			    &kfastblock_volume_stats_fops);
 	debugfs_create_file("events", 0444, vol->debugfs_dir, vol,
 			    &kfastblock_volume_events_fops);
+	debugfs_create_file("selfcheck", 0444, vol->debugfs_dir, vol,
+			    &kfastblock_volume_selfcheck_fops);
 }
 
 static void kfastblock_volume_debugfs_exit(struct kfastblock_volume *vol)
@@ -3127,6 +3172,139 @@ static ssize_t manual_queue_resumes_show(struct device *dev,
 			 atomic64_read(&vol->stats.manual_queue_resumes));
 }
 
+static ssize_t selfcheck_runs_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_selfcheck_run_count(&vol->selfcheck));
+}
+
+static ssize_t selfcheck_failure_runs_show(struct device *dev,
+					   struct device_attribute *attr,
+					   char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_selfcheck_failure_runs(&vol->selfcheck));
+}
+
+static ssize_t selfcheck_warning_runs_show(struct device *dev,
+					   struct device_attribute *attr,
+					   char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_selfcheck_warning_runs(&vol->selfcheck));
+}
+
+static ssize_t selfcheck_last_errno_show(struct device *dev,
+					 struct device_attribute *attr,
+					 char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n",
+			 kfastblock_selfcheck_last_errno(&vol->selfcheck));
+}
+
+static ssize_t selfcheck_last_failed_checks_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_selfcheck_last_failed_checks(&vol->selfcheck));
+}
+
+static ssize_t selfcheck_last_warning_checks_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n",
+			 kfastblock_selfcheck_last_warning_checks(&vol->selfcheck));
+}
+
+static ssize_t selfcheck_last_flags_show(struct device *dev,
+					 struct device_attribute *attr,
+					 char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "0x%x\n",
+			 kfastblock_selfcheck_last_flags(&vol->selfcheck));
+}
+
+static ssize_t selfcheck_last_run_show(struct device *dev,
+				       struct device_attribute *attr,
+				       char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+
+	if (!vol)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE, "%lu\n",
+			 kfastblock_selfcheck_last_run_jiffies(&vol->selfcheck));
+}
+
+static ssize_t run_selfcheck_store(struct device *dev,
+				   struct device_attribute *attr,
+				   const char *buf, size_t count)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	struct kfastblock_selfcheck_report report = {};
+	bool run = false;
+	int ret;
+
+	if (!vol)
+		return -ENODEV;
+
+	if (sysfs_streq(buf, "1") || sysfs_streq(buf, "true") ||
+	    sysfs_streq(buf, "yes") || sysfs_streq(buf, "run"))
+		run = true;
+	else
+		return -EINVAL;
+
+	if (!run)
+		return -EINVAL;
+
+	ret = kfastblock_selfcheck_run(vol, &report, NULL);
+	if (ret)
+		return ret;
+
+	return count;
+}
+
 static DEVICE_ATTR_RO(pool_name);
 static DEVICE_ATTR_RO(image_name);
 static DEVICE_ATTR_RO(size_bytes);
@@ -3218,12 +3396,21 @@ static DEVICE_ATTR_RO(manual_transport_drops);
 static DEVICE_ATTR_RO(manual_leader_resets);
 static DEVICE_ATTR_RO(manual_queue_pauses);
 static DEVICE_ATTR_RO(manual_queue_resumes);
+static DEVICE_ATTR_RO(selfcheck_runs);
+static DEVICE_ATTR_RO(selfcheck_failure_runs);
+static DEVICE_ATTR_RO(selfcheck_warning_runs);
+static DEVICE_ATTR_RO(selfcheck_last_errno);
+static DEVICE_ATTR_RO(selfcheck_last_failed_checks);
+static DEVICE_ATTR_RO(selfcheck_last_warning_checks);
+static DEVICE_ATTR_RO(selfcheck_last_flags);
+static DEVICE_ATTR_RO(selfcheck_last_run);
 static DEVICE_ATTR_WO(force_refresh);
 static DEVICE_ATTR_WO(reset_backoff);
 static DEVICE_ATTR_WO(drop_transport);
 static DEVICE_ATTR_WO(reset_leaders);
 static DEVICE_ATTR_WO(pause_queue);
 static DEVICE_ATTR_WO(resume_queue);
+static DEVICE_ATTR_WO(run_selfcheck);
 
 static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_pool_name.attr,
@@ -3317,12 +3504,21 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_manual_leader_resets.attr,
 	&dev_attr_manual_queue_pauses.attr,
 	&dev_attr_manual_queue_resumes.attr,
+	&dev_attr_selfcheck_runs.attr,
+	&dev_attr_selfcheck_failure_runs.attr,
+	&dev_attr_selfcheck_warning_runs.attr,
+	&dev_attr_selfcheck_last_errno.attr,
+	&dev_attr_selfcheck_last_failed_checks.attr,
+	&dev_attr_selfcheck_last_warning_checks.attr,
+	&dev_attr_selfcheck_last_flags.attr,
+	&dev_attr_selfcheck_last_run.attr,
 	&dev_attr_force_refresh.attr,
 	&dev_attr_reset_backoff.attr,
 	&dev_attr_drop_transport.attr,
 	&dev_attr_reset_leaders.attr,
 	&dev_attr_pause_queue.attr,
 	&dev_attr_resume_queue.attr,
+	&dev_attr_run_selfcheck.attr,
 	NULL,
 };
 
@@ -3817,6 +4013,7 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 	vol->image_refresh_interval_ms =
 		KFASTBLOCK_DEFAULT_IMAGE_REFRESH_INTERVAL_MS;
 	kfastblock_volume_stats_init(vol);
+	kfastblock_selfcheck_state_init(&vol->selfcheck);
 	mutex_init(&vol->lifecycle_lock);
 	mutex_init(&vol->inflight_lock);
 	kfastblock_buffer_pool_init(&vol->object_buffer_pool,
