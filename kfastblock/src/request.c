@@ -298,6 +298,7 @@ void kfastblock_request_cleanup(struct kfastblock_request *kf_req)
 	kf_req->object_works = NULL;
 	kf_req->object_runtime = NULL;
 	kf_req->max_object_extents = 0;
+	kfastblock_pipeline_cleanup(&kf_req->pipeline);
 }
 
 int kfastblock_request_init(struct kfastblock_request *kf_req,
@@ -323,6 +324,11 @@ int kfastblock_request_init(struct kfastblock_request *kf_req,
 	ret = kfastblock_request_alloc_state(kf_req);
 	if (ret)
 		return ret;
+	ret = kfastblock_pipeline_init(&kf_req->pipeline,
+				       kf_req->max_object_extents,
+				       GFP_NOIO);
+	if (ret)
+		goto err_cleanup;
 	kf_req->dispatch_window = clamp_t(u32,
 					  kfastblock_scheduler_sample_window(
 						  &vol->scheduler,
@@ -348,6 +354,10 @@ int kfastblock_request_init(struct kfastblock_request *kf_req,
 	}
 
 	return 0;
+
+err_cleanup:
+	kfastblock_request_cleanup(kf_req);
+	return ret;
 }
 
 void kfastblock_request_dispatch_batch_reset(
@@ -386,6 +396,7 @@ void kfastblock_request_prepare_runtime(struct kfastblock_request *kf_req)
 		kf_req->object_runtime[i].completed_jiffies = 0;
 	}
 	spin_unlock_irqrestore(&kf_req->object_state_lock, flags);
+	kfastblock_pipeline_reset(&kf_req->pipeline);
 }
 
 static bool kfastblock_request_object_dispatchable(

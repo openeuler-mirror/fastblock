@@ -8,6 +8,7 @@
 #include <linux/workqueue.h>
 
 #include "kfastblock/meta.h"
+#include "kfastblock/pipeline.h"
 
 struct kfastblock_volume;
 
@@ -103,6 +104,7 @@ struct kfastblock_request {
 	struct kfastblock_object_extent *objects;
 	struct kfastblock_object_work *object_works;
 	struct kfastblock_request_object_runtime *object_runtime;
+	struct kfastblock_pipeline_state pipeline;
 };
 
 int kfastblock_request_init(struct kfastblock_request *kf_req,

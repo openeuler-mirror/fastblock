@@ -29,6 +29,7 @@ kfastblock-objs := \
 	src/diag.o \
 	src/fault.o \
 	src/meta.o \
+	src/pipeline.o \
 	src/recovery.o \
 	src/request.o \
 	src/scheduler.o \
