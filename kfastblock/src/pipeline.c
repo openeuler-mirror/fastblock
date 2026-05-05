@@ -12,6 +12,11 @@ static void kfastblock_pipeline_reset_entry(
 	entry->seq = 0;
 	entry->object_index = 0;
 	entry->last_error = 0;
+	entry->response_body_len = 0;
+	entry->transport_flags = 0;
+	entry->response_status = 0;
+	entry->service = 0;
+	entry->opcode = 0;
 	entry->queued_jiffies = 0;
 	entry->completed_jiffies = 0;
 	entry->active = false;
@@ -103,6 +108,16 @@ struct kfastblock_pipeline_entry *kfastblock_pipeline_enqueue(
 	u64 seq,
 	unsigned int object_index)
 {
+	return kfastblock_pipeline_begin_exchange(state, seq, object_index, 0, 0);
+}
+
+struct kfastblock_pipeline_entry *kfastblock_pipeline_begin_exchange(
+	struct kfastblock_pipeline_state *state,
+	u64 seq,
+	unsigned int object_index,
+	u8 service,
+	u8 opcode)
+{
 	struct kfastblock_pipeline_entry *entry = NULL;
 	unsigned long flags;
 
@@ -118,6 +133,11 @@ struct kfastblock_pipeline_entry *kfastblock_pipeline_enqueue(
 		entry->seq = seq;
 		entry->object_index = object_index;
 		entry->last_error = 0;
+		entry->response_body_len = 0;
+		entry->transport_flags = 0;
+		entry->response_status = 0;
+		entry->service = service;
+		entry->opcode = opcode;
 		entry->queued_jiffies = jiffies;
 		entry->completed_jiffies = 0;
 		entry->active = true;
@@ -136,6 +156,17 @@ struct kfastblock_pipeline_entry *kfastblock_pipeline_complete(
 	u64 seq,
 	int ret)
 {
+	return kfastblock_pipeline_finish_exchange(state, seq, ret, ret, 0, 0);
+}
+
+struct kfastblock_pipeline_entry *kfastblock_pipeline_finish_exchange(
+	struct kfastblock_pipeline_state *state,
+	u64 seq,
+	int ret,
+	s32 response_status,
+	u32 response_body_len,
+	u32 transport_flags)
+{
 	struct kfastblock_pipeline_entry *entry;
 	unsigned long flags;
 
@@ -151,6 +182,9 @@ struct kfastblock_pipeline_entry *kfastblock_pipeline_complete(
 
 	list_del_init(&entry->link);
 	entry->last_error = ret;
+	entry->response_status = response_status;
+	entry->response_body_len = response_body_len;
+	entry->transport_flags = transport_flags;
 	entry->completed_jiffies = jiffies;
 	entry->active = false;
 	if (state->inflight)

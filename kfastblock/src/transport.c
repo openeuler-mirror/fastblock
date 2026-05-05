@@ -63,6 +63,15 @@ struct kfastblock_transport_body_part {
 	u32 len;
 };
 
+struct kfastblock_transport_exchange_ctx {
+	struct kfastblock_request *kf_req;
+	unsigned int object_index;
+	struct kfastblock_pipeline_entry *pipeline_entry;
+	u8 service;
+	u8 opcode;
+	u64 seq;
+};
+
 static void kfastblock_transport_trace_osd_endpoint_decision(
 	struct kfastblock_volume *vol,
 	const struct kfastblock_leader_info *leader,
@@ -590,6 +599,21 @@ static enum req_op kfastblock_transport_object_op(
 	return REQ_OP_WRITE_ZEROES;
 }
 
+static u8 kfastblock_transport_raw_opcode_for_object_op(enum req_op op)
+{
+	switch (op) {
+	case REQ_OP_WRITE:
+	case REQ_OP_WRITE_ZEROES:
+		return KFASTBLOCK_RAW_OSD_OP_WRITE_OBJECT;
+	case REQ_OP_READ:
+		return KFASTBLOCK_RAW_OSD_OP_READ_OBJECT;
+	case REQ_OP_DISCARD:
+		return KFASTBLOCK_RAW_OSD_OP_DELETE_OBJECT;
+	default:
+		return 0;
+	}
+}
+
 static int kfastblock_transport_request_view_stale(
 	const struct kfastblock_request *kf_req)
 {
@@ -775,6 +799,55 @@ static int kfastblock_transport_recv_response(struct socket *sock,
 		return ret;
 	}
 	return kfastblock_transport_status_to_errno(le32_to_cpu(hdr->status));
+}
+
+static int kfastblock_transport_begin_exchange(
+	struct kfastblock_transport_exchange_ctx *ctx,
+	struct kfastblock_request *kf_req,
+	unsigned int object_index,
+	u8 service,
+	u8 opcode,
+	u64 seq)
+{
+	if (!ctx || !kf_req || !seq)
+		return -EINVAL;
+
+	memset(ctx, 0, sizeof(*ctx));
+	ctx->kf_req = kf_req;
+	ctx->object_index = object_index;
+	ctx->service = service;
+	ctx->opcode = opcode;
+	ctx->seq = seq;
+	ctx->pipeline_entry = kfastblock_pipeline_begin_exchange(
+		&kf_req->pipeline, seq, object_index, service, opcode);
+	if (!ctx->pipeline_entry)
+		return -ENOMEM;
+
+	kfastblock_request_record_object_seq(kf_req, object_index, seq);
+	return 0;
+}
+
+static void kfastblock_transport_finish_exchange(
+	struct kfastblock_transport_exchange_ctx *ctx,
+	int ret,
+	struct kfastblock_raw_header *rsp_hdr)
+{
+	u32 flags = 0;
+	u32 body_len = 0;
+	s32 status = ret;
+
+	if (!ctx || !ctx->kf_req || !ctx->seq)
+		return;
+
+	if (rsp_hdr) {
+		flags = le32_to_cpu(rsp_hdr->flags);
+		body_len = le32_to_cpu(rsp_hdr->body_len);
+		status = kfastblock_transport_status_to_errno(
+			le32_to_cpu(rsp_hdr->status));
+	}
+	kfastblock_pipeline_finish_exchange(&ctx->kf_req->pipeline,
+					    ctx->seq, ret, status,
+					    body_len, flags);
 }
 
 static int kfastblock_transport_fetch_image_info(struct socket *sock,
@@ -1422,12 +1495,15 @@ static int kfastblock_transport_submit_object_io(
 	int ret;
 	int attempt;
 	u64 seq;
+	u8 raw_opcode;
+	struct kfastblock_transport_exchange_ctx exchange = {};
 
 	if (!kf_req || !kf_req->vol || !kf_req->rq || !extent)
 		return -EINVAL;
 	vol = kf_req->vol;
 	rq = kf_req->rq;
 	hint = kfastblock_transport_find_request_pg_hint(kf_req, extent->pg_id);
+	raw_opcode = kfastblock_transport_raw_opcode_for_object_op(op);
 
 	ret = kfastblock_transport_request_view_stale(kf_req);
 	if (ret) {
@@ -1493,10 +1569,11 @@ static int kfastblock_transport_submit_object_io(
 		}
 
 		seq = kfastblock_transport_next_seq(cached);
-		kfastblock_request_record_object_seq(kf_req, object_index, seq);
-		if (!kfastblock_pipeline_enqueue(&kf_req->pipeline,
-						 seq, object_index)) {
-			ret = -ENOMEM;
+		ret = kfastblock_transport_begin_exchange(&exchange, kf_req,
+							  object_index,
+							  KFASTBLOCK_RAW_SERVICE_OSD,
+							  raw_opcode, seq);
+		if (ret) {
 			actions = kfastblock_recovery_classify_object_failure(ret);
 			kfastblock_recovery_finalize_osd_socket(vol, cached, &leader,
 								ret, actions);
@@ -1519,7 +1596,7 @@ static int kfastblock_transport_submit_object_io(
 			actions = kfastblock_recovery_classify_object_failure(ret);
 			kfastblock_recovery_finalize_osd_socket(vol, cached, &leader,
 								ret, actions);
-			kfastblock_pipeline_complete(&kf_req->pipeline, seq, ret);
+			kfastblock_transport_finish_exchange(&exchange, ret, NULL);
 			cached = NULL;
 			if (actions) {
 				kfastblock_recovery_apply_object_failure(
@@ -1533,16 +1610,17 @@ static int kfastblock_transport_submit_object_io(
 			}
 			goto out;
 		}
-		if (op == REQ_OP_WRITE || op == REQ_OP_WRITE_ZEROES)
+		if (op == REQ_OP_WRITE || op == REQ_OP_WRITE_ZEROES) {
 			ret = kfastblock_transport_write_object(sock, kf_req->request_pool_id,
 						 extent, buf, seq);
-		else if (op == REQ_OP_READ)
+		} else if (op == REQ_OP_READ) {
 			ret = kfastblock_transport_read_object(sock, kf_req->request_pool_id,
 						extent, buf, seq);
-		else
+		} else {
 			ret = kfastblock_transport_delete_object(sock,
 							kf_req->request_pool_id,
 							extent, seq);
+		}
 		if (ret == -ENOENT && op == REQ_OP_READ) {
 			memset(buf, 0, extent->length);
 			ret = 0;
@@ -1552,7 +1630,7 @@ static int kfastblock_transport_submit_object_io(
 		actions = ret ? kfastblock_recovery_classify_object_failure(ret) : 0;
 		kfastblock_recovery_finalize_osd_socket(vol, cached, &leader, ret,
 							actions);
-		kfastblock_pipeline_complete(&kf_req->pipeline, seq, ret);
+		kfastblock_transport_finish_exchange(&exchange, ret, NULL);
 		cached = NULL;
 		if (ret) {
 			if (actions) {
