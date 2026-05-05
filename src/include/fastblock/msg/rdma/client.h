@@ -1014,11 +1014,26 @@ read_done:
                 return false;
             }
 
-            if (_shutdown_timeout < std::chrono::system_clock::now() or task_queue_empty()) {
+            if (_shutdown_timeout < std::chrono::system_clock::now() or shutdown_drained()) {
                 auto master = _master;
                 auto* cm_id = _sock ? _sock->id() : nullptr;
                 auto conn_id = _id;
                 auto dispatch_id = _dispatch_id.dispatch_id();
+                if (_shutdown_timeout < std::chrono::system_clock::now() &&
+                    !shutdown_drained()) {
+                    SPDK_WARNLOG(
+                      "shutdown timeout with pending state: conn id %lu, dispatch id %lu, onflight=%lu priority_onflight=%lu wait_read=%lu send_read=%lu unresponsed=%lu external_send=%lu cqes=%lu onflight_send_wr=%d\n",
+                      conn_id.value(),
+                      dispatch_id,
+                      _onflight_requests.size(),
+                      _priority_onflight_requests.size(),
+                      _wait_read_requests.size(),
+                      _send_read_requests.size(),
+                      _unresponsed_requests.size(),
+                      _external_send_ctx.size(),
+                      cqe_list.size(),
+                      _onflight_send_wr);
+                }
                 free_resources();
                 if (master && cm_id) {
                     master->handle_connection_shutdown(cm_id, conn_id, dispatch_id);
@@ -1164,6 +1179,17 @@ read_done:
 
         bool task_queue_empty() {
             return _unresponsed_requests.empty() and _wait_read_requests.empty();
+        }
+
+        bool shutdown_drained() {
+            return _onflight_requests.empty()
+                && _priority_onflight_requests.empty()
+                && _wait_read_requests.empty()
+                && _send_read_requests.empty()
+                && _unresponsed_requests.empty()
+                && _external_send_ctx.empty()
+                && cqe_list.empty()
+                && _onflight_send_wr == 0;
         }
 
     private:
