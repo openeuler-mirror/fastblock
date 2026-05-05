@@ -267,6 +267,31 @@ static void kfastblock_diag_collect_scheduler(
 		kfastblock_scheduler_cooldown_active(sched);
 }
 
+static void kfastblock_diag_collect_pipeline(
+	struct kfastblock_volume *vol,
+	struct kfastblock_diag_snapshot *snapshot)
+{
+	if (!vol || !snapshot)
+		return;
+
+	snapshot->pipeline.request_prepares =
+		atomic64_read(&vol->pipeline_stats.request_prepares);
+	snapshot->pipeline.request_cleanups =
+		atomic64_read(&vol->pipeline_stats.request_cleanups);
+	snapshot->pipeline.dispatch_batches =
+		atomic64_read(&vol->pipeline_stats.dispatch_batches);
+	snapshot->pipeline.queued_objects =
+		atomic64_read(&vol->pipeline_stats.queued_objects);
+	snapshot->pipeline.completed_objects =
+		atomic64_read(&vol->pipeline_stats.completed_objects);
+	snapshot->pipeline.failed_objects =
+		atomic64_read(&vol->pipeline_stats.failed_objects);
+	snapshot->pipeline.cancelled_objects =
+		atomic64_read(&vol->pipeline_stats.cancelled_objects);
+	snapshot->pipeline.seq_records =
+		atomic64_read(&vol->pipeline_stats.seq_records);
+}
+
 static void kfastblock_diag_collect_selfcheck(
 	struct kfastblock_volume *vol,
 	struct kfastblock_diag_snapshot *snapshot)
@@ -777,6 +802,7 @@ void kfastblock_diag_collect(struct kfastblock_volume *vol,
 	kfastblock_diag_collect_volume(vol, snapshot);
 	kfastblock_diag_collect_buffer(vol, snapshot);
 	kfastblock_diag_collect_scheduler(vol, snapshot);
+	kfastblock_diag_collect_pipeline(vol, snapshot);
 	kfastblock_osd_conn_pool_snapshot(vol->socket_cache,
 					  KFASTBLOCK_MAX_SOCKET_CACHE,
 					  &snapshot->osd_conn);
@@ -904,6 +930,23 @@ int kfastblock_diag_dump_seq(struct seq_file *m,
 		   snapshot->scheduler.last_sample_pressure_window);
 	seq_printf(m, "scheduler.last_sample_effective_window=%u\n",
 		   snapshot->scheduler.last_sample_effective_window);
+
+	seq_printf(m, "pipeline.request_prepares=%llu\n",
+		   snapshot->pipeline.request_prepares);
+	seq_printf(m, "pipeline.request_cleanups=%llu\n",
+		   snapshot->pipeline.request_cleanups);
+	seq_printf(m, "pipeline.dispatch_batches=%llu\n",
+		   snapshot->pipeline.dispatch_batches);
+	seq_printf(m, "pipeline.queued_objects=%llu\n",
+		   snapshot->pipeline.queued_objects);
+	seq_printf(m, "pipeline.completed_objects=%llu\n",
+		   snapshot->pipeline.completed_objects);
+	seq_printf(m, "pipeline.failed_objects=%llu\n",
+		   snapshot->pipeline.failed_objects);
+	seq_printf(m, "pipeline.cancelled_objects=%llu\n",
+		   snapshot->pipeline.cancelled_objects);
+	seq_printf(m, "pipeline.seq_records=%llu\n",
+		   snapshot->pipeline.seq_records);
 
 	seq_printf(m, "osd_conn.total_slots=%u\n", snapshot->osd_conn.total_slots);
 	seq_printf(m, "osd_conn.empty_slots=%u\n", snapshot->osd_conn.empty_slots);

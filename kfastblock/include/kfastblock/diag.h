@@ -109,6 +109,17 @@ struct kfastblock_diag_scheduler_snapshot {
 	bool cooldown_active;
 };
 
+struct kfastblock_diag_pipeline_snapshot {
+	u64 request_prepares;
+	u64 request_cleanups;
+	u64 dispatch_batches;
+	u64 queued_objects;
+	u64 completed_objects;
+	u64 failed_objects;
+	u64 cancelled_objects;
+	u64 seq_records;
+};
+
 struct kfastblock_diag_selfcheck_snapshot {
 	u32 run_count;
 	u32 failure_runs;
@@ -163,6 +174,7 @@ struct kfastblock_diag_snapshot {
 	struct kfastblock_diag_volume_snapshot volume;
 	struct kfastblock_diag_buffer_snapshot buffer;
 	struct kfastblock_diag_scheduler_snapshot scheduler;
+	struct kfastblock_diag_pipeline_snapshot pipeline;
 	struct kfastblock_conn_pool_snapshot osd_conn;
 	struct kfastblock_conn_pool_snapshot monitor_conn;
 	struct kfastblock_diag_selfcheck_snapshot selfcheck;

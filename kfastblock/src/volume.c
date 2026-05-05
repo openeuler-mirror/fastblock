@@ -411,6 +411,14 @@ void kfastblock_volume_stats_init(struct kfastblock_volume *vol)
 	atomic64_set(&vol->stats.manual_leader_resets, 0);
 	atomic64_set(&vol->stats.manual_queue_pauses, 0);
 	atomic64_set(&vol->stats.manual_queue_resumes, 0);
+	atomic64_set(&vol->pipeline_stats.request_prepares, 0);
+	atomic64_set(&vol->pipeline_stats.request_cleanups, 0);
+	atomic64_set(&vol->pipeline_stats.dispatch_batches, 0);
+	atomic64_set(&vol->pipeline_stats.queued_objects, 0);
+	atomic64_set(&vol->pipeline_stats.completed_objects, 0);
+	atomic64_set(&vol->pipeline_stats.failed_objects, 0);
+	atomic64_set(&vol->pipeline_stats.cancelled_objects, 0);
+	atomic64_set(&vol->pipeline_stats.seq_records, 0);
 	spin_lock_init(&vol->event_log.lock);
 	vol->event_log.next_index = 0;
 	vol->event_log.count = 0;
@@ -421,6 +429,63 @@ void kfastblock_volume_stats_init(struct kfastblock_volume *vol)
 	vol->health.state_since_jiffies = jiffies;
 	vol->health.last_failure_jiffies = 0;
 	vol->health.last_success_jiffies = 0;
+}
+
+void kfastblock_volume_account_pipeline_prepare(struct kfastblock_volume *vol)
+{
+	if (!vol)
+		return;
+
+	atomic64_inc(&vol->pipeline_stats.request_prepares);
+}
+
+void kfastblock_volume_account_pipeline_cleanup(struct kfastblock_volume *vol)
+{
+	if (!vol)
+		return;
+
+	atomic64_inc(&vol->pipeline_stats.request_cleanups);
+}
+
+void kfastblock_volume_account_pipeline_dispatch_batch(
+	struct kfastblock_volume *vol,
+	unsigned int nr_objects)
+{
+	if (!vol || !nr_objects)
+		return;
+
+	atomic64_inc(&vol->pipeline_stats.dispatch_batches);
+	atomic64_add(nr_objects, &vol->pipeline_stats.queued_objects);
+}
+
+void kfastblock_volume_account_pipeline_complete(
+	struct kfastblock_volume *vol,
+	bool failed)
+{
+	if (!vol)
+		return;
+
+	atomic64_inc(&vol->pipeline_stats.completed_objects);
+	if (failed)
+		atomic64_inc(&vol->pipeline_stats.failed_objects);
+}
+
+void kfastblock_volume_account_pipeline_cancel(
+	struct kfastblock_volume *vol,
+	unsigned int nr_objects)
+{
+	if (!vol || !nr_objects)
+		return;
+
+	atomic64_add(nr_objects, &vol->pipeline_stats.cancelled_objects);
+}
+
+void kfastblock_volume_account_pipeline_seq(struct kfastblock_volume *vol)
+{
+	if (!vol)
+		return;
+
+	atomic64_inc(&vol->pipeline_stats.seq_records);
 }
 
 void kfastblock_volume_account_io_submit(struct kfastblock_volume *vol,
