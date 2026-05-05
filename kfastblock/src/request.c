@@ -518,6 +518,21 @@ void kfastblock_request_mark_object_complete(
 	spin_unlock_irqrestore(&kf_req->object_state_lock, flags);
 }
 
+void kfastblock_request_record_object_seq(
+	struct kfastblock_request *kf_req,
+	unsigned int object_index,
+	u64 seq)
+{
+	unsigned long flags;
+
+	if (!kf_req || !kf_req->object_runtime || object_index >= kf_req->nr_objects)
+		return;
+
+	spin_lock_irqsave(&kf_req->object_state_lock, flags);
+	kf_req->object_runtime[object_index].wire_seq = seq;
+	spin_unlock_irqrestore(&kf_req->object_state_lock, flags);
+}
+
 int kfastblock_request_cancel_unqueued(struct kfastblock_request *kf_req)
 {
 	unsigned long flags;

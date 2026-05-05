@@ -142,6 +142,10 @@ void kfastblock_request_mark_object_complete(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
 	int ret);
+void kfastblock_request_record_object_seq(
+	struct kfastblock_request *kf_req,
+	unsigned int object_index,
+	u64 seq);
 int kfastblock_request_cancel_unqueued(struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_dispatch_credits(
 	const struct kfastblock_request *kf_req);
