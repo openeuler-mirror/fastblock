@@ -55,8 +55,11 @@ case "$stage" in
     cluster)
         "$repo_root/monitor/fastblock-client" -conf="$config_file" -op=status
         ;;
-    rawctl|module|attach|open|io)
+    image|rawctl|module|attach|open|io)
         kfastblock_create_image "$repo_root" "$config_file" "$pool_name" "$image_name"
+        if [ "$stage" = "image" ]; then
+            exit 0
+        fi
         kfastblock_run_rawctl_checks "$repo_root" "$monitor_addr" "$pool_name" "$image_name"
         if [ "$stage" = "rawctl" ]; then
             exit 0
