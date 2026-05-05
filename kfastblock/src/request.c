@@ -553,6 +553,40 @@ unsigned int kfastblock_request_inflight_objects(
 	return value;
 }
 
+unsigned int kfastblock_request_queued_objects(
+	const struct kfastblock_request *kf_req)
+{
+	unsigned int value = 0;
+	unsigned long flags;
+
+	if (!kf_req)
+		return 0;
+
+	spin_lock_irqsave((spinlock_t *)&kf_req->object_state_lock, flags);
+	value = kf_req->queued_objects;
+	spin_unlock_irqrestore((spinlock_t *)&kf_req->object_state_lock, flags);
+	return value;
+}
+
+unsigned int kfastblock_request_dispatch_credits(
+	const struct kfastblock_request *kf_req)
+{
+	unsigned int dispatched;
+	unsigned int window;
+	unsigned int credits = 0;
+	unsigned long flags;
+
+	if (!kf_req)
+		return 0;
+
+	spin_lock_irqsave((spinlock_t *)&kf_req->object_state_lock, flags);
+	window = kf_req->dispatch_window ? kf_req->dispatch_window : 1;
+	dispatched = kf_req->queued_objects + kf_req->inflight_objects;
+	credits = dispatched >= window ? 0 : window - dispatched;
+	spin_unlock_irqrestore((spinlock_t *)&kf_req->object_state_lock, flags);
+	return credits;
+}
+
 unsigned int kfastblock_request_completed_objects(
 	const struct kfastblock_request *kf_req)
 {
