@@ -655,8 +655,7 @@ rpc_bdev_fastblock_create_snapshot(struct spdk_jsonrpc_request *request,
 {
 	struct rpc_bdev_fastblock_create_snapshot req = {};
 	struct spdk_bdev *bdev;
-	struct spdk_json_write_ctx *w;
-	int rc;
+	auto blk_cli = get_management_blk_client();
 
 	if (spdk_json_decode_object(params, rpc_bdev_fastblock_create_snapshot_decoders,
 								SPDK_COUNTOF(rpc_bdev_fastblock_create_snapshot_decoders),
@@ -674,16 +673,34 @@ rpc_bdev_fastblock_create_snapshot(struct spdk_jsonrpc_request *request,
 		goto cleanup;
 	}
 
-	rc = bdev_fastblock_create_snapshot(bdev, req.snapshot_name);
-	if (rc)
+	if (!blk_cli)
 	{
-		spdk_jsonrpc_send_error_response(request, rc, spdk_strerror(-rc));
+		spdk_jsonrpc_send_error_response(request, -EBUSY, spdk_strerror(EBUSY));
 		goto cleanup;
 	}
 
-	w = spdk_jsonrpc_begin_result(request);
-	spdk_json_write_bool(w, true);
-	spdk_jsonrpc_end_result(request, w);
+	blk_cli->monitor_client()->emplace_create_image_snapshot_request(
+		bdev_fastblock_get_pool_name(bdev),
+		bdev_fastblock_get_image_name(bdev),
+		req.snapshot_name,
+		[request, blk_cli](const monitor::client::response_status status, monitor::client::request_context* req_ctx)
+		{
+			if (status != monitor::client::response_status::ok)
+			{
+				send_monitor_status_error(request, status);
+				return;
+			}
+			auto& metadata = std::get<std::unique_ptr<monitor::client::snapshot_metadata>>(req_ctx->response_data);
+			if (!metadata)
+			{
+				spdk_jsonrpc_send_error_response(request, -EIO, spdk_strerror(EIO));
+				return;
+			}
+			blk_cli->advance_cached_image_snap_seq(metadata->source_pool_id, metadata->source_image_name, metadata->snap_seq);
+			auto *w = spdk_jsonrpc_begin_result(request);
+			spdk_json_write_bool(w, true);
+			spdk_jsonrpc_end_result(request, w);
+		});
 
 cleanup:
 	free_rpc_bdev_fastblock_create_snapshot(&req);
