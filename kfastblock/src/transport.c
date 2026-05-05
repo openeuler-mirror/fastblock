@@ -495,8 +495,14 @@ static int kfastblock_transport_queue_object_work(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index)
 {
+	int ret;
+
 	if (!kf_req || object_index >= kf_req->nr_objects)
 		return -EINVAL;
+
+	ret = kfastblock_request_mark_object_queued(kf_req, object_index);
+	if (ret)
+		return ret;
 
 	INIT_WORK(&kf_req->object_works[object_index].work,
 		  kfastblock_transport_object_work);
@@ -514,43 +520,37 @@ static int kfastblock_transport_queue_object_work(
 
 static int kfastblock_transport_queue_next_object(struct kfastblock_request *kf_req)
 {
-	unsigned int object_index;
+	struct kfastblock_request_dispatch_batch batch;
 	int ret;
 
 	if (!kf_req)
 		return -EINVAL;
 
-	mutex_lock(&kf_req->dispatch_lock);
-	if (kf_req->next_object_to_queue >= kf_req->nr_objects) {
-		mutex_unlock(&kf_req->dispatch_lock);
+	kfastblock_request_dispatch_batch_reset(&batch);
+	ret = kfastblock_request_pick_dispatch_batch(kf_req, &batch, 1);
+	if (ret < 0)
+		return ret;
+	if (!batch.nr_indexes)
 		return 0;
+
+	ret = kfastblock_transport_queue_object_work(kf_req, batch.indexes[0]);
+	if (ret) {
+		int cancelled = kfastblock_request_cancel_unqueued(kf_req);
+
+		if (cancelled)
+			atomic_sub(cancelled, &kf_req->pending_objects);
+		return ret;
 	}
-	object_index = kf_req->next_object_to_queue;
-	ret = kfastblock_transport_queue_object_work(kf_req, object_index);
-	if (!ret)
-		kf_req->next_object_to_queue++;
-	mutex_unlock(&kf_req->dispatch_lock);
 
 	return ret;
 }
 
 static int kfastblock_transport_discard_unscheduled(struct kfastblock_request *kf_req)
 {
-	unsigned int unscheduled;
-
 	if (!kf_req)
 		return 0;
 
-	mutex_lock(&kf_req->dispatch_lock);
-	if (kf_req->next_object_to_queue >= kf_req->nr_objects) {
-		mutex_unlock(&kf_req->dispatch_lock);
-		return 0;
-	}
-	unscheduled = kf_req->nr_objects - kf_req->next_object_to_queue;
-	kf_req->next_object_to_queue = kf_req->nr_objects;
-	mutex_unlock(&kf_req->dispatch_lock);
-
-	return unscheduled;
+	return kfastblock_request_cancel_unqueued(kf_req);
 }
 
 static enum req_op kfastblock_transport_object_op(
@@ -1909,11 +1909,13 @@ static int kfastblock_transport_prefetch_request_leaders(
 }
 
 static void kfastblock_transport_complete_request(struct kfastblock_request *kf_req,
+						  unsigned int object_index,
 						  int ret)
 {
 	bool first_error = false;
 	int remaining;
 
+	kfastblock_request_mark_object_complete(kf_req, object_index, ret);
 	if (ret)
 		first_error = kfastblock_transport_set_first_error(kf_req, ret);
 	else if (!kfastblock_transport_request_failed(kf_req))
@@ -1979,18 +1981,25 @@ static void kfastblock_transport_object_work(struct work_struct *work)
 
 	if (!kf_req || !kf_req->rq || !kf_req->vol)
 		return;
+	kfastblock_request_mark_object_inflight(kf_req,
+						obj_work->object_index);
 	if (kfastblock_transport_request_failed(kf_req)) {
-		kfastblock_transport_complete_request(kf_req, 0);
+		kfastblock_transport_complete_request(kf_req,
+						     obj_work->object_index,
+						     -ECANCELED);
 		return;
 	}
 
 	ret = kfastblock_transport_submit_object(kf_req,
 					       obj_work->object_index);
-	kfastblock_transport_complete_request(kf_req, ret);
+	kfastblock_transport_complete_request(kf_req,
+					     obj_work->object_index,
+					     ret);
 }
 
 int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 {
+	struct kfastblock_request_dispatch_batch batch;
 	unsigned int i;
 	unsigned int initial_dispatch;
 	int ret = 0;
@@ -2016,15 +2025,23 @@ int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 	}
 
 	kf_req->status = 0;
+	kfastblock_request_prepare_runtime(kf_req);
 	atomic_set(&kf_req->pending_objects, kf_req->nr_objects);
-	kf_req->next_object_to_queue = 0;
 	initial_dispatch = min_t(unsigned int, kf_req->nr_objects,
 				 kf_req->dispatch_window ?
 				 kf_req->dispatch_window :
 				 1);
+	kfastblock_request_dispatch_batch_reset(&batch);
+	ret = kfastblock_request_pick_dispatch_batch(kf_req, &batch,
+						     initial_dispatch);
+	if (ret < 0) {
+		kfastblock_transport_abort_request(kf_req, ret);
+		return 0;
+	}
 	get_device(&kf_req->vol->dev);
-	for (i = 0; i < initial_dispatch; ++i) {
-		ret = kfastblock_transport_queue_next_object(kf_req);
+	for (i = 0; i < batch.nr_indexes; ++i) {
+		ret = kfastblock_transport_queue_object_work(kf_req,
+						     batch.indexes[i]);
 		if (ret)
 			break;
 	}
