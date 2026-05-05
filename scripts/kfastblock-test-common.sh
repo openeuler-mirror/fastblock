@@ -229,6 +229,36 @@ kfastblock_wait_cluster_active() {
     return 1
 }
 
+kfastblock_wait_osd_not_up() {
+    local repo_root="$1"
+    local config_file="$2"
+    local osd_id="$3"
+    local timeout_sec="${4:-20}"
+    local deadline=$((SECONDS + timeout_sec))
+    local map_output=""
+    local osd_line=""
+    local status_up=""
+
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        map_output="$("$repo_root/monitor/fastblock-client" \
+            -conf="$config_file" \
+            -op=getosdmap \
+            -osdid="$osd_id" 2>/dev/null || true)"
+        osd_line="$(printf '%s\n' "$map_output" | awk -v osd_id="$osd_id" '$1 == osd_id { print; exit }')"
+        if [ -n "$osd_line" ]; then
+            status_up="$(printf '%s\n' "$osd_line" | awk '{print $3}')"
+            if [ "$status_up" = "down" ]; then
+                return 0
+            fi
+        fi
+        sleep 1
+    done
+
+    echo "osd $osd_id did not leave up state before restart" >&2
+    printf '%s\n' "$map_output" >&2
+    return 1
+}
+
 kfastblock_prepare_dev_cluster() {
     local repo_root="$1"
     local config_file="$2"
