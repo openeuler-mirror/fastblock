@@ -24,13 +24,22 @@ echo "dispatch_window=${dispatch_window:-default}"
 echo "reuse_cluster=$reuse_cluster"
 
 IFS=',' read -r -a limit_values <<< "$limits"
+first_limit=1
 for limit in "${limit_values[@]}"; do
+    run_reuse_cluster="$reuse_cluster"
+    force_reload_module=1
+
+    if [ "$first_limit" = "0" ]; then
+        run_reuse_cluster=1
+        force_reload_module=0
+    fi
+
     echo "[sweep] start osd_endpoint_parallel_limit=$limit"
     env \
         KFASTBLOCK_TEST_ARTIFACT_ROOT="$run_dir" \
-        KFASTBLOCK_TEST_REUSE_CLUSTER="$reuse_cluster" \
+        KFASTBLOCK_TEST_REUSE_CLUSTER="$run_reuse_cluster" \
         KFASTBLOCK_MODULE_PARAMS="osd_endpoint_parallel_limit=$limit" \
-        KFASTBLOCK_FORCE_RELOAD_MODULE=1 \
+        KFASTBLOCK_FORCE_RELOAD_MODULE="$force_reload_module" \
         KFASTBLOCK_CONCURRENCY_DURATION_SEC="$duration_sec" \
         KFASTBLOCK_CONCURRENCY_IO_WORKERS="$io_workers" \
         KFASTBLOCK_CONCURRENCY_OPEN_WORKERS="$open_workers" \
@@ -59,6 +68,7 @@ for limit in "${limit_values[@]}"; do
         "$limit" "$latest_dir" "$refresh_summary" "$open_summary" "$io_summary" \
         "$attach_summary" >> "$run_dir/summary.tsv"
     echo "[sweep] ok osd_endpoint_parallel_limit=$limit artifact=$latest_dir"
+    first_limit=0
 done
 
 echo "[sweep] complete"
