@@ -120,18 +120,11 @@ die() {
 require_commands() {
     local missing=()
     local cmd
-    for cmd in curl python3; do
+    for cmd in curl python3 nvme modprobe; do
         if ! command -v "$cmd" >/dev/null 2>&1; then
             missing+=("$cmd")
         fi
     done
-    if [[ "$CONNECT_NVME" -eq 1 ]]; then
-        for cmd in nvme modprobe; do
-            if ! command -v "$cmd" >/dev/null 2>&1; then
-                missing+=("$cmd")
-            fi
-        done
-    fi
     if [[ ${#missing[@]} -ne 0 ]]; then
         die "missing required commands: ${missing[*]}"
     fi
@@ -199,6 +192,48 @@ volume_export_id() {
     printf '%s' "$1" | tr ':/. ' '-----'
 }
 
+controllers_for_nqn() {
+    local nqn="$1"
+    local ctrl
+    for ctrl in /sys/class/nvme/nvme*; do
+        [[ -e "$ctrl/subsysnqn" ]] || continue
+        if [[ "$(cat "$ctrl/subsysnqn" 2>/dev/null || true)" == "$nqn" ]]; then
+            basename "$ctrl"
+        fi
+    done
+}
+
+force_delete_controllers() {
+    local nqn="$1"
+    local ctrl
+    while read -r ctrl; do
+        [[ -n "$ctrl" ]] || continue
+        if [[ -w "/sys/class/nvme/$ctrl/delete_controller" ]]; then
+            log "force delete controller $ctrl for nqn=$nqn"
+            echo 1 > "/sys/class/nvme/$ctrl/delete_controller" || true
+        fi
+    done < <(controllers_for_nqn "$nqn")
+}
+
+wait_controllers_gone() {
+    local nqn="$1"
+    local i
+    for ((i = 0; i < 20; i++)); do
+        if [[ -z "$(controllers_for_nqn "$nqn")" ]]; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+disconnect_nqn() {
+    local nqn="$1"
+    timeout 5s nvme disconnect -n "$nqn" >/dev/null 2>&1 || true
+    force_delete_controllers "$nqn"
+    wait_controllers_gone "$nqn" || true
+}
+
 create_export() {
     local volume_id="$1"
     local image_name="$2"
@@ -224,6 +259,8 @@ cleanup_exports() {
     if [[ "$KEEP_EXPORTS" -eq 1 ]]; then
         return
     fi
+    disconnect_nqn "nqn.2026-04.io.fastblock:$(volume_export_id "$CLONE_VOLUME_ID")"
+    disconnect_nqn "nqn.2026-04.io.fastblock:$(volume_export_id "$BASE_VOLUME_ID")"
     http_json DELETE "/v1/exports/$(volume_export_id "$CLONE_VOLUME_ID")" || true
     http_json DELETE "/v1/exports/$(volume_export_id "$BASE_VOLUME_ID")" || true
 }
@@ -279,6 +316,7 @@ connect_clone_export() {
     trsvcid="$(printf '%s' "$export_json" | json_get trsvcid)"
     nqn="$(printf '%s' "$export_json" | json_get nqn)"
 
+    disconnect_nqn "$nqn"
     log "nvme discover transport=$TRANSPORT traddr=$traddr trsvcid=$trsvcid"
     nvme discover -t "$TRANSPORT" -a "$traddr" -s "$trsvcid" >/dev/null
     log "nvme connect nqn=$nqn"
@@ -290,8 +328,7 @@ disconnect_clone_export() {
     export_json="$(http_json GET "/v1/exports/$(volume_export_id "$CLONE_VOLUME_ID")")"
     nqn="$(printf '%s' "$export_json" | json_get nqn)"
     if [[ -n "$nqn" ]]; then
-        log "nvme disconnect nqn=$nqn"
-        nvme disconnect -n "$nqn" || true
+        disconnect_nqn "$nqn"
     fi
 }
 
