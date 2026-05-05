@@ -16,6 +16,16 @@ struct kfastblock_volume;
 
 struct kfastblock_request;
 
+enum kfastblock_request_object_state {
+	KFASTBLOCK_OBJECT_INIT = 0,
+	KFASTBLOCK_OBJECT_READY,
+	KFASTBLOCK_OBJECT_QUEUED,
+	KFASTBLOCK_OBJECT_IN_FLIGHT,
+	KFASTBLOCK_OBJECT_DONE,
+	KFASTBLOCK_OBJECT_FAILED,
+	KFASTBLOCK_OBJECT_CANCELLED,
+};
+
 struct kfastblock_request_pg_target {
 	u32 osd_id;
 	u32 flags;
@@ -47,6 +57,21 @@ struct kfastblock_request_pg_hint {
 	struct kfastblock_request_pg_target *targets;
 };
 
+struct kfastblock_request_object_runtime {
+	enum kfastblock_request_object_state state;
+	int last_error;
+	u16 attempt_count;
+	u16 dispatch_count;
+	u64 wire_seq;
+	unsigned long queued_jiffies;
+	unsigned long completed_jiffies;
+};
+
+struct kfastblock_request_dispatch_batch {
+	unsigned int nr_indexes;
+	unsigned int indexes[KFASTBLOCK_MAX_OBJECT_EXTENTS];
+};
+
 struct kfastblock_request {
 	struct request *rq;
 	struct kfastblock_volume *vol;
@@ -64,11 +89,20 @@ struct kfastblock_request {
 	int status;
 	atomic_t pending_objects;
 	spinlock_t status_lock;
+	spinlock_t object_state_lock;
 	struct mutex dispatch_lock;
+	unsigned int dispatch_cursor;
+	unsigned int queued_objects;
+	unsigned int inflight_objects;
+	unsigned int completed_objects;
+	unsigned int failed_objects;
+	unsigned int cancelled_objects;
+	u32 dispatch_generation;
 	u32 *unique_pgs;
 	struct kfastblock_request_pg_hint *pg_hints;
 	struct kfastblock_object_extent *objects;
 	struct kfastblock_object_work *object_works;
+	struct kfastblock_request_object_runtime *object_runtime;
 };
 
 int kfastblock_request_init(struct kfastblock_request *kf_req,
@@ -89,5 +123,27 @@ void kfastblock_request_build_object_name(char *buf, size_t buf_len,
 					  u32 pool_id,
 					  const char *image_name,
 					  u64 object_seq);
+void kfastblock_request_dispatch_batch_reset(
+	struct kfastblock_request_dispatch_batch *batch);
+void kfastblock_request_prepare_runtime(struct kfastblock_request *kf_req);
+int kfastblock_request_pick_dispatch_batch(
+	struct kfastblock_request *kf_req,
+	struct kfastblock_request_dispatch_batch *batch,
+	unsigned int max_dispatch);
+int kfastblock_request_mark_object_queued(
+	struct kfastblock_request *kf_req,
+	unsigned int object_index);
+void kfastblock_request_mark_object_inflight(
+	struct kfastblock_request *kf_req,
+	unsigned int object_index);
+void kfastblock_request_mark_object_complete(
+	struct kfastblock_request *kf_req,
+	unsigned int object_index,
+	int ret);
+int kfastblock_request_cancel_unqueued(struct kfastblock_request *kf_req);
+unsigned int kfastblock_request_inflight_objects(
+	const struct kfastblock_request *kf_req);
+unsigned int kfastblock_request_completed_objects(
+	const struct kfastblock_request *kf_req);
 
 #endif
