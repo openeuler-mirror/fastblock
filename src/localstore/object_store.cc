@@ -63,10 +63,13 @@ struct blob_create_ctx {
   object_xattr xattr;
 };
 
+struct blob_info {
+  fb_blob     fblob;
+  std::string object_name;
+};
+
 struct blob_stop_ctx {
-  object_store::container table;
-  object_store::iterator  it;
-  spdk_blob_store*        bs;
+  std::list<blob_info>    blobs;
   object_rw_complete      cb_fn;
   void*                   arg;
 };
@@ -868,54 +871,61 @@ void object_store::stop(object_rw_complete cb_fn, void* arg) {
     return;
   }
 
-  ctx->table = std::exchange(table, {});
-  ctx->it = ctx->table.begin();
-  ctx->bs = bs;
+  auto objects = std::exchange(table, {});
+  for (auto& pr : objects) {
+    if (pr.second.origin.blob) {
+      blob_info iblob{.fblob = std::move(pr.second.origin), .object_name = pr.first};
+      ctx->blobs.emplace_back(std::move(iblob));
+    }
+    if (pr.second.recover.blob) {
+      blob_info iblob{.fblob = std::move(pr.second.recover), .object_name = pr.first};
+      ctx->blobs.emplace_back(std::move(iblob));
+    }
+    while (!pr.second.snap_list.empty()) {
+      auto snap = pr.second.snap_list.front();
+      pr.second.snap_list.pop_front();
+      if (snap.snap_blob.blob) {
+        blob_info iblob{.fblob = std::move(snap.snap_blob), .object_name = pr.first};
+        ctx->blobs.emplace_back(std::move(iblob));
+      }
+    }
+  }
   ctx->cb_fn = cb_fn;
   ctx->arg = arg;
 
-  // SPDK_NOTICELOG("object_name:%s origin close.\n", ctx->it->first.c_str());
-  spdk_blob_close(ctx->it->second.origin.blob, close_done, ctx);
+  if (ctx->blobs.empty()) {
+    ctx->cb_fn(ctx->arg, 0);
+    delete ctx;
+    return;
+  }
+
+  spdk_blob_close(ctx->blobs.front().fblob.blob, close_done, ctx);
 }
 
 void object_store::close_done(void *arg, int objerrno) {
   struct blob_stop_ctx* ctx = (struct blob_stop_ctx*)arg;
+  auto fblob = ctx->blobs.front();
 
   if (objerrno) {
-    SPDK_ERRLOG("object_name:%s delete failed:%s\n",
-        ctx->it->first.c_str(), spdk_strerror(objerrno));
+    SPDK_ERRLOG("object_name:%s close blob %lu failed:%s\n",
+        fblob.object_name.c_str(), fblob.fblob.blobid, spdk_strerror(objerrno));
     ctx->cb_fn(ctx->arg, objerrno);
     delete ctx;
 		return;
 	}
 
-  auto& object = ctx->it->second;
-  // if there is snapshot
-  if (!object.snap_list.empty()) {
-      auto del_snap = object.snap_list.front();
-      // SPDK_NOTICELOG("object_name:%s snap_name:%s delete.\n", ctx->it->first.c_str(), del_snap.snap_name.c_str());
-      object.snap_list.pop_front();
-      spdk_bs_delete_blob(ctx->bs, del_snap.snap_blob.blobid, close_done, ctx);
-      return;
-  }
+  SPDK_INFOLOG(object_store, "object_name:%s close blob %lu done\n",
+      fblob.object_name.c_str(), fblob.fblob.blobid);
+  ctx->blobs.pop_front();
 
-  ++ctx->it;
-  // if all object deleted
-  if (ctx->it == ctx->table.end()) {
+  if (ctx->blobs.empty()) {
     ctx->cb_fn(ctx->arg, 0);
     delete ctx;
 		return;
   }
 
-  // delete next object
-  // SPDK_NOTICELOG("object_name:%s origin close.\n", ctx->it->first.c_str());
-  spdk_blob_close(ctx->it->second.origin.blob, close_done, ctx);
+  spdk_blob_close(ctx->blobs.front().fblob.blob, close_done, ctx);
 }
-
-struct blob_info {
-  fb_blob     fblob;
-  std::string object_name;
-};
 
 struct blob_delete_ctx {
   object_store::container table;
