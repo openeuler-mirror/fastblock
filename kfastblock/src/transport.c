@@ -40,12 +40,18 @@ static struct kfastblock_cached_socket *
 kfastblock_transport_reserve_osd_slot(struct kfastblock_volume *vol);
 static struct workqueue_struct *g_kfastblock_transport_wq;
 static unsigned int g_kfastblock_osd_endpoint_parallel_limit = 1;
+static bool g_kfastblock_osd_endpoint_parallel_trace;
 
 module_param_named(osd_endpoint_parallel_limit,
 		   g_kfastblock_osd_endpoint_parallel_limit,
 		   uint, 0644);
 MODULE_PARM_DESC(osd_endpoint_parallel_limit,
 		 "maximum active raw TCP sockets allowed per OSD endpoint");
+module_param_named(osd_endpoint_parallel_trace,
+		   g_kfastblock_osd_endpoint_parallel_trace,
+		   bool, 0644);
+MODULE_PARM_DESC(osd_endpoint_parallel_trace,
+		 "enable ratelimited logging for OSD endpoint parallel decisions");
 
 enum kfastblock_transport_buffer_flags {
 	KFASTBLOCK_TRANSPORT_BUFFER_ZERO = 1U << 0,
@@ -56,6 +62,23 @@ struct kfastblock_transport_body_part {
 	const void *buf;
 	u32 len;
 };
+
+static void kfastblock_transport_trace_osd_endpoint_decision(
+	struct kfastblock_volume *vol,
+	const struct kfastblock_leader_info *leader,
+	const char *decision,
+	u32 active_count,
+	u32 endpoint_parallel_limit)
+{
+	if (!READ_ONCE(g_kfastblock_osd_endpoint_parallel_trace) ||
+	    !vol || !leader || !decision)
+		return;
+
+	dev_info_ratelimited(&vol->dev,
+			     "osd endpoint decision=%s osd_id=%u addr=%s port=%u active=%u limit=%u\n",
+			     decision, leader->osd_id, leader->address,
+			     leader->port, active_count, endpoint_parallel_limit);
+}
 
 static int kfastblock_transport_maybe_inject_fault(
 	struct kfastblock_volume *vol,
@@ -314,6 +337,8 @@ static int kfastblock_transport_acquire_osd_socket(
 		KFASTBLOCK_MAX_SOCKET_CACHE,
 		leader, &sock);
 	if (cached) {
+		kfastblock_transport_trace_osd_endpoint_decision(
+			vol, leader, "reuse", 0, 0);
 		*cached_out = cached;
 		*sock_out = sock;
 		return 0;
@@ -327,12 +352,20 @@ static int kfastblock_transport_acquire_osd_socket(
 		max_t(u32, READ_ONCE(g_kfastblock_osd_endpoint_parallel_limit), 1);
 	active_count = kfastblock_osd_conn_pool_endpoint_active_count(
 		vol->socket_cache, KFASTBLOCK_MAX_SOCKET_CACHE, leader);
-	if (active_count >= endpoint_parallel_limit)
+	if (active_count >= endpoint_parallel_limit) {
+		kfastblock_transport_trace_osd_endpoint_decision(
+			vol, leader, "fallback_limit",
+			active_count, endpoint_parallel_limit);
 		goto fallback_wait_match;
+	}
 
 	cached = kfastblock_transport_reserve_osd_slot(vol);
-	if (!cached)
+	if (!cached) {
+		kfastblock_transport_trace_osd_endpoint_decision(
+			vol, leader, "fallback_reserve_busy",
+			active_count, endpoint_parallel_limit);
 		goto fallback_wait_match;
+	}
 
 	cached->osd_id = leader->osd_id;
 	cached->port = leader->port;
@@ -342,6 +375,9 @@ static int kfastblock_transport_acquire_osd_socket(
 	if (ret)
 		return ret;
 
+	kfastblock_transport_trace_osd_endpoint_decision(
+		vol, leader, "reserve_connect",
+		active_count + 1, endpoint_parallel_limit);
 	*cached_out = cached;
 	*sock_out = sock;
 	return 0;
