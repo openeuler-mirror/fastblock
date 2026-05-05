@@ -1446,6 +1446,12 @@ public:
             return;
         }
 
+        SPDK_NOTICELOG(
+          "Start stop the rpc client, connections=%lu connect_tasks=%lu cm_records=%lu dispatch=%lu\n",
+          _connections.size(),
+          _connect_tasks.size(),
+          _cm_records.size(),
+          _cqe_dispatch_map.size());
         for (auto& conn_pair : _connections) {
             conn_pair.second->async_shutdown();
         }
@@ -1758,7 +1764,16 @@ public:
     }
 
     int handle_stop_poll() {
-        if (_stop_timeout_at < std::chrono::system_clock::now() or all_connection_termianted()) {
+        auto timeout = _stop_timeout_at < std::chrono::system_clock::now();
+        if (timeout && !all_connection_termianted()) {
+            SPDK_WARNLOG(
+              "rpc client stop timeout: connections=%lu connect_tasks=%lu cm_records=%lu dispatch=%lu\n",
+              _connections.size(),
+              _connect_tasks.size(),
+              _cm_records.size(),
+              _cqe_dispatch_map.size());
+        }
+        if (timeout or all_connection_termianted()) {
             free_resources();
         }
 
