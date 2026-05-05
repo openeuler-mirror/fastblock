@@ -95,6 +95,26 @@ write_image_metadata_json(struct spdk_json_write_ctx *w, const monitor::client::
 	spdk_json_write_object_end(w);
 }
 
+static void
+advance_image_snap_seq_on_all_clients(
+	const int32_t pool_id,
+	const std::string& image_name,
+	const uint64_t snap_seq)
+{
+	auto advance = [pool_id, &image_name, snap_seq](const std::shared_ptr<::libblk_client>& blk_cli) {
+		if (blk_cli) {
+			blk_cli->advance_cached_image_snap_seq(pool_id, image_name, snap_seq);
+		}
+	};
+
+	advance(global::blk_client);
+	for (auto& blk_cli : global::blk_clients) {
+		if (blk_cli && blk_cli != global::blk_client) {
+			advance(blk_cli);
+		}
+	}
+}
+
 struct rpc_bdev_fastblock_name_request
 {
 	char *name;
@@ -696,7 +716,7 @@ rpc_bdev_fastblock_create_snapshot(struct spdk_jsonrpc_request *request,
 				spdk_jsonrpc_send_error_response(request, -EIO, spdk_strerror(EIO));
 				return;
 			}
-			blk_cli->advance_cached_image_snap_seq(metadata->source_pool_id, metadata->source_image_name, metadata->snap_seq);
+			advance_image_snap_seq_on_all_clients(metadata->source_pool_id, metadata->source_image_name, metadata->snap_seq);
 			auto *w = spdk_jsonrpc_begin_result(request);
 			spdk_json_write_bool(w, true);
 			spdk_jsonrpc_end_result(request, w);
