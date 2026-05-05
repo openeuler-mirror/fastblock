@@ -560,6 +560,10 @@ func ProcessOsdStopMessage(ctx context.Context, client *etcdapi.EtcdClient, id i
 
 	osdState.IsUp = false
 	osdState.RwMutex.Unlock()
+	if hb, ok := AllHeartBeatInfo[OSDID(id)]; ok {
+		hb.lastHeartBeat = time.Time{}
+		hb.successCounter = 0
+	}
 
 	AllOSDInfo.Version++
 	osdmap, err := json.Marshal(AllOSDInfo)
