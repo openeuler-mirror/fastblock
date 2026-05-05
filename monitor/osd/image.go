@@ -123,8 +123,8 @@ func LoadImageConfig(ctx context.Context, client *etcdapi.EtcdClient) (err error
 			log.Error(ctx, err)
 			return err
 		}
-		if lastSeenPoolId < int32(imageID) {
-			lastSeenPoolId = int32(imageID)
+		if lastImageId < int32(imageID) {
+			lastImageId = int32(imageID)
 		}
 
 		log.Debug(ctx, "imageID", imageID)
