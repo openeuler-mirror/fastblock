@@ -7,22 +7,22 @@ import (
 )
 
 type CreateExportRequest struct {
-	VolumeID      string
-	PoolName      string
-	ImageName     string
-	CapacityBytes int64
-	ObjectSize    int64
-	BlockSize     int64
-	Transport     string
-	AllowAnyHost  bool
+	VolumeID      string `json:"volume_id"`
+	PoolName      string `json:"pool_name"`
+	ImageName     string `json:"image_name"`
+	CapacityBytes int64  `json:"capacity_bytes"`
+	ObjectSize    int64  `json:"object_size"`
+	BlockSize     int64  `json:"block_size"`
+	Transport     string `json:"transport"`
+	AllowAnyHost  bool   `json:"allow_any_host"`
 }
 
 type Export struct {
-	ID      string
-	NQN     string
-	NSID    int
-	Traddr  string
-	Trsvcid string
+	ID      string `json:"id"`
+	NQN     string `json:"nqn"`
+	NSID    int    `json:"nsid"`
+	Traddr  string `json:"traddr"`
+	Trsvcid string `json:"trsvcid"`
 }
 
 type Snapshot struct {
