@@ -420,6 +420,9 @@ void kfastblock_volume_stats_init(struct kfastblock_volume *vol)
 	atomic64_set(&vol->pipeline_stats.failed_objects, 0);
 	atomic64_set(&vol->pipeline_stats.cancelled_objects, 0);
 	atomic64_set(&vol->pipeline_stats.seq_records, 0);
+	atomic_set(&vol->pipeline_stats.last_response_status, 0);
+	atomic_set(&vol->pipeline_stats.last_response_body_len, 0);
+	atomic_set(&vol->pipeline_stats.last_transport_flags, 0);
 	spin_lock_init(&vol->event_log.lock);
 	vol->event_log.next_index = 0;
 	vol->event_log.count = 0;
@@ -495,6 +498,22 @@ void kfastblock_volume_account_pipeline_seq(struct kfastblock_volume *vol)
 		return;
 
 	atomic64_inc(&vol->pipeline_stats.seq_records);
+}
+
+void kfastblock_volume_account_pipeline_response(
+	struct kfastblock_volume *vol,
+	s32 response_status,
+	u32 response_body_len,
+	u32 transport_flags)
+{
+	if (!vol)
+		return;
+
+	atomic_set(&vol->pipeline_stats.last_response_status, response_status);
+	atomic_set(&vol->pipeline_stats.last_response_body_len,
+		   (int)response_body_len);
+	atomic_set(&vol->pipeline_stats.last_transport_flags,
+		   (int)transport_flags);
 }
 
 void kfastblock_volume_account_io_submit(struct kfastblock_volume *vol,

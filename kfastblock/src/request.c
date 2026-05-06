@@ -395,6 +395,9 @@ void kfastblock_request_prepare_runtime(struct kfastblock_request *kf_req)
 		kf_req->object_runtime[i].attempt_count = 0;
 		kf_req->object_runtime[i].retry_count = 0;
 		kf_req->object_runtime[i].wire_seq = 0;
+		kf_req->object_runtime[i].response_status = 0;
+		kf_req->object_runtime[i].response_body_len = 0;
+		kf_req->object_runtime[i].transport_flags = 0;
 		kf_req->object_runtime[i].queued_jiffies = 0;
 		kf_req->object_runtime[i].last_retry_jiffies = 0;
 		kf_req->object_runtime[i].completed_jiffies = 0;
@@ -540,6 +543,50 @@ void kfastblock_request_record_object_seq(
 	kf_req->object_runtime[object_index].wire_seq = seq;
 	spin_unlock_irqrestore(&kf_req->object_state_lock, flags);
 	kfastblock_volume_account_pipeline_seq(kf_req->vol);
+}
+
+void kfastblock_request_record_object_response(
+	struct kfastblock_request *kf_req,
+	unsigned int object_index,
+	s32 response_status,
+	u32 response_body_len,
+	u32 transport_flags)
+{
+	unsigned long flags;
+
+	if (!kf_req || !kf_req->object_runtime || object_index >= kf_req->nr_objects)
+		return;
+
+	spin_lock_irqsave(&kf_req->object_state_lock, flags);
+	kf_req->object_runtime[object_index].response_status = response_status;
+	kf_req->object_runtime[object_index].response_body_len = response_body_len;
+	kf_req->object_runtime[object_index].transport_flags = transport_flags;
+	spin_unlock_irqrestore(&kf_req->object_state_lock, flags);
+	kfastblock_volume_account_pipeline_response(kf_req->vol,
+						    response_status,
+						    response_body_len,
+						    transport_flags);
+}
+
+int kfastblock_request_record_object_response_by_seq(
+	struct kfastblock_request *kf_req,
+	u64 seq,
+	s32 response_status,
+	u32 response_body_len,
+	u32 transport_flags)
+{
+	unsigned int object_index;
+	int ret;
+
+	ret = kfastblock_request_lookup_object_by_seq(kf_req, seq, &object_index);
+	if (ret)
+		return ret;
+
+	kfastblock_request_record_object_response(kf_req, object_index,
+						  response_status,
+						  response_body_len,
+						  transport_flags);
+	return 0;
 }
 
 void kfastblock_request_note_object_retry(

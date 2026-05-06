@@ -928,6 +928,11 @@ static void kfastblock_transport_finish_exchange(
 		status = kfastblock_transport_status_to_errno(
 			le32_to_cpu(rsp_hdr->status));
 	}
+	kfastblock_request_record_object_response(ctx->kf_req,
+						  ctx->object_index,
+						  status,
+						  body_len,
+						  flags);
 	kfastblock_pipeline_finish_exchange(&ctx->kf_req->pipeline,
 					    ctx->seq, ret, status,
 					    body_len, flags);
