@@ -1701,6 +1701,71 @@ static int kfastblock_transport_copy_request_data(struct request *rq,
 	return copied == len ? 0 : -EIO;
 }
 
+static int kfastblock_transport_prepare_object_buffer(
+	struct kfastblock_request *kf_req,
+	const struct kfastblock_object_extent *extent,
+	enum req_op op,
+	void **buf_out)
+{
+	struct kfastblock_volume *vol;
+	void *buf;
+	int ret = 0;
+
+	if (!kf_req || !extent || !buf_out)
+		return -EINVAL;
+
+	*buf_out = NULL;
+	vol = kf_req->vol;
+	if (!vol)
+		return -EINVAL;
+
+	switch (op) {
+	case REQ_OP_WRITE:
+		buf = kfastblock_buffer_pool_alloc(&vol->object_buffer_pool,
+						   extent->length, GFP_KERNEL,
+						   false);
+		if (!buf)
+			return -ENOMEM;
+		ret = kfastblock_transport_copy_request_data(
+			kf_req->rq, extent->request_offset, buf,
+			extent->length, false);
+		if (ret) {
+			kfastblock_buffer_pool_free(&vol->object_buffer_pool, buf);
+			return ret;
+		}
+		*buf_out = buf;
+		return 0;
+	case REQ_OP_WRITE_ZEROES:
+		buf = kfastblock_buffer_pool_alloc(&vol->object_buffer_pool,
+						   extent->length, GFP_KERNEL,
+						   true);
+		if (!buf)
+			return -ENOMEM;
+		*buf_out = buf;
+		return 0;
+	case REQ_OP_READ:
+		buf = kfastblock_buffer_pool_alloc(&vol->object_buffer_pool,
+						   extent->length, GFP_KERNEL,
+						   false);
+		if (!buf)
+			return -ENOMEM;
+		*buf_out = buf;
+		return 0;
+	default:
+		return 0;
+	}
+}
+
+static void kfastblock_transport_release_object_buffer(
+	struct kfastblock_request *kf_req,
+	void *buf)
+{
+	if (!kf_req || !kf_req->vol)
+		return;
+
+	kfastblock_buffer_pool_free(&kf_req->vol->object_buffer_pool, buf);
+}
+
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
@@ -1737,29 +1802,9 @@ static int kfastblock_transport_submit_object_io(
 		return ret;
 	}
 
-	if (op == REQ_OP_WRITE) {
-			buf = kfastblock_buffer_pool_alloc(
-				&vol->object_buffer_pool,
-				extent->length, GFP_KERNEL, false);
-			if (!buf)
-				return -ENOMEM;
-		ret = kfastblock_transport_copy_request_data(
-			rq, extent->request_offset, buf, extent->length, false);
-		if (ret)
-			goto out;
-	} else if (op == REQ_OP_WRITE_ZEROES) {
-			buf = kfastblock_buffer_pool_alloc(
-				&vol->object_buffer_pool,
-				extent->length, GFP_KERNEL, true);
-			if (!buf)
-				return -ENOMEM;
-		} else if (op == REQ_OP_READ) {
-			buf = kfastblock_buffer_pool_alloc(
-				&vol->object_buffer_pool,
-				extent->length, GFP_KERNEL, false);
-			if (!buf)
-				return -ENOMEM;
-		}
+	ret = kfastblock_transport_prepare_object_buffer(kf_req, extent, op, &buf);
+	if (ret)
+		goto out;
 
 	for (attempt = 0; attempt < 2; ++attempt) {
 		if (attempt == 0 && hint &&
@@ -1871,7 +1916,7 @@ out:
 	if (ret)
 		kfastblock_volume_account_object_error(
 			vol, op, extent->pg_id, leader.osd_id, extent->length, ret);
-	kfastblock_buffer_pool_free(&vol->object_buffer_pool, buf);
+	kfastblock_transport_release_object_buffer(kf_req, buf);
 	return ret;
 }
 
