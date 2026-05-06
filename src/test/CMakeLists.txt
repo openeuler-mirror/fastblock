@@ -45,3 +45,19 @@ target_link_libraries(snapshot_pg_stress
     osd_msg
     msg
 )
+
+add_executable(rollback_proof
+  rollback_proof.cc
+)
+
+target_include_directories(rollback_proof
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(rollback_proof
+  PUBLIC
+    base
+    osd_msg
+    msg
+    monclient
+    fbclient
+)
