@@ -172,6 +172,10 @@ void kfastblock_request_note_object_retry(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
 	int ret);
+int kfastblock_request_note_object_retry_by_seq(
+	struct kfastblock_request *kf_req,
+	u64 seq,
+	int ret);
 int kfastblock_request_lookup_object_by_seq(
 	struct kfastblock_request *kf_req,
 	u64 seq,
