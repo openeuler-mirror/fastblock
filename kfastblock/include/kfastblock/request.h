@@ -63,8 +63,10 @@ struct kfastblock_request_object_runtime {
 	int last_error;
 	u16 attempt_count;
 	u16 dispatch_count;
+	u16 retry_count;
 	u64 wire_seq;
 	unsigned long queued_jiffies;
+	unsigned long last_retry_jiffies;
 	unsigned long completed_jiffies;
 };
 
@@ -146,6 +148,10 @@ void kfastblock_request_record_object_seq(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
 	u64 seq);
+void kfastblock_request_note_object_retry(
+	struct kfastblock_request *kf_req,
+	unsigned int object_index,
+	int ret);
 int kfastblock_request_cancel_unqueued(struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_dispatch_credits(
 	const struct kfastblock_request *kf_req);

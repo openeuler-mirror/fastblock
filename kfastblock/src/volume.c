@@ -415,6 +415,7 @@ void kfastblock_volume_stats_init(struct kfastblock_volume *vol)
 	atomic64_set(&vol->pipeline_stats.request_cleanups, 0);
 	atomic64_set(&vol->pipeline_stats.dispatch_batches, 0);
 	atomic64_set(&vol->pipeline_stats.queued_objects, 0);
+	atomic64_set(&vol->pipeline_stats.retry_objects, 0);
 	atomic64_set(&vol->pipeline_stats.completed_objects, 0);
 	atomic64_set(&vol->pipeline_stats.failed_objects, 0);
 	atomic64_set(&vol->pipeline_stats.cancelled_objects, 0);
@@ -456,6 +457,14 @@ void kfastblock_volume_account_pipeline_dispatch_batch(
 
 	atomic64_inc(&vol->pipeline_stats.dispatch_batches);
 	atomic64_add(nr_objects, &vol->pipeline_stats.queued_objects);
+}
+
+void kfastblock_volume_account_pipeline_retry(struct kfastblock_volume *vol)
+{
+	if (!vol)
+		return;
+
+	atomic64_inc(&vol->pipeline_stats.retry_objects);
 }
 
 void kfastblock_volume_account_pipeline_complete(

@@ -120,6 +120,7 @@ struct kfastblock_volume_pipeline_stats {
 	atomic64_t request_cleanups;
 	atomic64_t dispatch_batches;
 	atomic64_t queued_objects;
+	atomic64_t retry_objects;
 	atomic64_t completed_objects;
 	atomic64_t failed_objects;
 	atomic64_t cancelled_objects;
@@ -253,6 +254,7 @@ void kfastblock_volume_account_pipeline_cleanup(struct kfastblock_volume *vol);
 void kfastblock_volume_account_pipeline_dispatch_batch(
 	struct kfastblock_volume *vol,
 	unsigned int nr_objects);
+void kfastblock_volume_account_pipeline_retry(struct kfastblock_volume *vol);
 void kfastblock_volume_account_pipeline_complete(
 	struct kfastblock_volume *vol,
 	bool failed);

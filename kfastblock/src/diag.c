@@ -282,6 +282,8 @@ static void kfastblock_diag_collect_pipeline(
 		atomic64_read(&vol->pipeline_stats.dispatch_batches);
 	snapshot->pipeline.queued_objects =
 		atomic64_read(&vol->pipeline_stats.queued_objects);
+	snapshot->pipeline.retry_objects =
+		atomic64_read(&vol->pipeline_stats.retry_objects);
 	snapshot->pipeline.completed_objects =
 		atomic64_read(&vol->pipeline_stats.completed_objects);
 	snapshot->pipeline.failed_objects =
@@ -939,6 +941,8 @@ int kfastblock_diag_dump_seq(struct seq_file *m,
 		   snapshot->pipeline.dispatch_batches);
 	seq_printf(m, "pipeline.queued_objects=%llu\n",
 		   snapshot->pipeline.queued_objects);
+	seq_printf(m, "pipeline.retry_objects=%llu\n",
+		   snapshot->pipeline.retry_objects);
 	seq_printf(m, "pipeline.completed_objects=%llu\n",
 		   snapshot->pipeline.completed_objects);
 	seq_printf(m, "pipeline.failed_objects=%llu\n",

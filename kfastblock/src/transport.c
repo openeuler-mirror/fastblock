@@ -1558,13 +1558,16 @@ static int kfastblock_transport_submit_object_io(
 				kfastblock_recovery_apply_object_failure(
 					vol, kf_req->request_pool_id, extent, op, &leader,
 					ret, actions);
-				if (hint &&
-				    (actions & KFASTBLOCK_RECOVERY_INVALIDATE_LEADER))
-					kfastblock_request_invalidate_pg_hint_leader(hint);
-				sock = NULL;
-				if (actions & KFASTBLOCK_RECOVERY_RETRY)
-					continue;
-			}
+					if (hint &&
+					    (actions & KFASTBLOCK_RECOVERY_INVALIDATE_LEADER))
+						kfastblock_request_invalidate_pg_hint_leader(hint);
+					sock = NULL;
+					if (actions & KFASTBLOCK_RECOVERY_RETRY) {
+						kfastblock_request_note_object_retry(
+							kf_req, object_index, ret);
+						continue;
+					}
+				}
 			goto out;
 		}
 
@@ -1582,12 +1585,15 @@ static int kfastblock_transport_submit_object_io(
 				kfastblock_recovery_apply_object_failure(
 					vol, kf_req->request_pool_id, extent, op, &leader,
 					ret, actions);
-				if (hint &&
-				    (actions & KFASTBLOCK_RECOVERY_INVALIDATE_LEADER))
-					kfastblock_request_invalidate_pg_hint_leader(hint);
-				if (actions & KFASTBLOCK_RECOVERY_RETRY)
-					continue;
-			}
+					if (hint &&
+					    (actions & KFASTBLOCK_RECOVERY_INVALIDATE_LEADER))
+						kfastblock_request_invalidate_pg_hint_leader(hint);
+					if (actions & KFASTBLOCK_RECOVERY_RETRY) {
+						kfastblock_request_note_object_retry(
+							kf_req, object_index, ret);
+						continue;
+					}
+				}
 			goto out;
 		}
 		ret = kfastblock_transport_maybe_inject_fault(
@@ -1602,12 +1608,15 @@ static int kfastblock_transport_submit_object_io(
 				kfastblock_recovery_apply_object_failure(
 					vol, kf_req->request_pool_id, extent, op, &leader,
 					ret, actions);
-				if (hint &&
-				    (actions & KFASTBLOCK_RECOVERY_INVALIDATE_LEADER))
-					kfastblock_request_invalidate_pg_hint_leader(hint);
-				if (actions & KFASTBLOCK_RECOVERY_RETRY)
-					continue;
-			}
+					if (hint &&
+					    (actions & KFASTBLOCK_RECOVERY_INVALIDATE_LEADER))
+						kfastblock_request_invalidate_pg_hint_leader(hint);
+					if (actions & KFASTBLOCK_RECOVERY_RETRY) {
+						kfastblock_request_note_object_retry(
+							kf_req, object_index, ret);
+						continue;
+					}
+				}
 			goto out;
 		}
 		if (op == REQ_OP_WRITE || op == REQ_OP_WRITE_ZEROES) {
@@ -1637,13 +1646,16 @@ static int kfastblock_transport_submit_object_io(
 				kfastblock_recovery_apply_object_failure(
 					vol, kf_req->request_pool_id, extent, op, &leader,
 					ret, actions);
-				if (hint &&
-				    (actions & KFASTBLOCK_RECOVERY_INVALIDATE_LEADER))
-					kfastblock_request_invalidate_pg_hint_leader(hint);
-				sock = NULL;
-				if (actions & KFASTBLOCK_RECOVERY_RETRY)
-					continue;
-			}
+					if (hint &&
+					    (actions & KFASTBLOCK_RECOVERY_INVALIDATE_LEADER))
+						kfastblock_request_invalidate_pg_hint_leader(hint);
+					sock = NULL;
+					if (actions & KFASTBLOCK_RECOVERY_RETRY) {
+						kfastblock_request_note_object_retry(
+							kf_req, object_index, ret);
+						continue;
+					}
+				}
 		} else if (hint) {
 			kfastblock_request_set_pg_hint_leader(hint, &leader);
 		}

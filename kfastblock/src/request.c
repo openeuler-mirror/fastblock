@@ -393,8 +393,10 @@ void kfastblock_request_prepare_runtime(struct kfastblock_request *kf_req)
 		kf_req->object_runtime[i].last_error = 0;
 		kf_req->object_runtime[i].dispatch_count = 0;
 		kf_req->object_runtime[i].attempt_count = 0;
+		kf_req->object_runtime[i].retry_count = 0;
 		kf_req->object_runtime[i].wire_seq = 0;
 		kf_req->object_runtime[i].queued_jiffies = 0;
+		kf_req->object_runtime[i].last_retry_jiffies = 0;
 		kf_req->object_runtime[i].completed_jiffies = 0;
 	}
 	spin_unlock_irqrestore(&kf_req->object_state_lock, flags);
@@ -538,6 +540,24 @@ void kfastblock_request_record_object_seq(
 	kf_req->object_runtime[object_index].wire_seq = seq;
 	spin_unlock_irqrestore(&kf_req->object_state_lock, flags);
 	kfastblock_volume_account_pipeline_seq(kf_req->vol);
+}
+
+void kfastblock_request_note_object_retry(
+	struct kfastblock_request *kf_req,
+	unsigned int object_index,
+	int ret)
+{
+	unsigned long flags;
+
+	if (!kf_req || !kf_req->object_runtime || object_index >= kf_req->nr_objects)
+		return;
+
+	spin_lock_irqsave(&kf_req->object_state_lock, flags);
+	kf_req->object_runtime[object_index].retry_count++;
+	kf_req->object_runtime[object_index].last_error = ret;
+	kf_req->object_runtime[object_index].last_retry_jiffies = jiffies;
+	spin_unlock_irqrestore(&kf_req->object_state_lock, flags);
+	kfastblock_volume_account_pipeline_retry(kf_req->vol);
 }
 
 int kfastblock_request_cancel_unqueued(struct kfastblock_request *kf_req)
