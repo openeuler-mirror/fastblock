@@ -1002,6 +1002,37 @@ static int kfastblock_transport_match_exchange_response(
 	return 0;
 }
 
+static bool kfastblock_transport_retry_requested(unsigned int actions)
+{
+	return !!(actions & KFASTBLOCK_RECOVERY_RETRY);
+}
+
+static bool kfastblock_transport_handle_object_failure(
+	struct kfastblock_request *kf_req,
+	const struct kfastblock_object_extent *extent,
+	enum req_op op,
+	struct kfastblock_request_pg_hint *hint,
+	const struct kfastblock_leader_info *leader,
+	unsigned int object_index,
+	int ret,
+	unsigned int actions)
+{
+	if (!kf_req || !extent || !actions)
+		return false;
+
+	kfastblock_recovery_apply_object_failure(
+		kf_req->vol, kf_req->request_pool_id, extent, op, leader, ret,
+		actions);
+	if (hint && (actions & KFASTBLOCK_RECOVERY_INVALIDATE_LEADER))
+		kfastblock_request_invalidate_pg_hint_leader(hint);
+	if (kfastblock_transport_retry_requested(actions)) {
+		kfastblock_request_requeue_object(kf_req, object_index, ret);
+		return true;
+	}
+
+	return false;
+}
+
 static int kfastblock_transport_complete_exchange_response(
 	struct kfastblock_transport_exchange_ctx *ctx,
 	struct kfastblock_transport_response_ctx *response,
@@ -1621,11 +1652,9 @@ static int kfastblock_transport_submit_object_io(
 
 	ret = kfastblock_transport_request_view_stale(kf_req);
 	if (ret) {
-		kfastblock_recovery_apply_object_failure(
-			vol, kf_req->request_pool_id, extent, op, NULL, ret,
+		kfastblock_transport_handle_object_failure(
+			kf_req, extent, op, hint, NULL, object_index, ret,
 			kfastblock_recovery_classify_object_failure(ret));
-		if (hint)
-			kfastblock_request_invalidate_pg_hint_leader(hint);
 		return ret;
 	}
 
@@ -1669,19 +1698,11 @@ static int kfastblock_transport_submit_object_io(
 			actions = kfastblock_recovery_classify_object_failure(ret);
 
 			if (actions) {
-				kfastblock_recovery_apply_object_failure(
-					vol, kf_req->request_pool_id, extent, op, &leader,
-					ret, actions);
-					if (hint &&
-					    (actions & KFASTBLOCK_RECOVERY_INVALIDATE_LEADER))
-						kfastblock_request_invalidate_pg_hint_leader(hint);
-					sock = NULL;
-					if (actions & KFASTBLOCK_RECOVERY_RETRY) {
-						kfastblock_request_note_object_retry(
-							kf_req, object_index, ret);
-						continue;
-					}
-				}
+				if (kfastblock_transport_handle_object_failure(
+					    kf_req, extent, op, hint, &leader,
+					    object_index, ret, actions))
+					continue;
+			}
 			goto out;
 		}
 
@@ -1696,18 +1717,11 @@ static int kfastblock_transport_submit_object_io(
 								ret, actions);
 			cached = NULL;
 			if (actions) {
-				kfastblock_recovery_apply_object_failure(
-					vol, kf_req->request_pool_id, extent, op, &leader,
-					ret, actions);
-					if (hint &&
-					    (actions & KFASTBLOCK_RECOVERY_INVALIDATE_LEADER))
-						kfastblock_request_invalidate_pg_hint_leader(hint);
-					if (actions & KFASTBLOCK_RECOVERY_RETRY) {
-						kfastblock_request_note_object_retry(
-							kf_req, object_index, ret);
-						continue;
-					}
-				}
+				if (kfastblock_transport_handle_object_failure(
+					    kf_req, extent, op, hint, &leader,
+					    object_index, ret, actions))
+					continue;
+			}
 			goto out;
 		}
 		ret = kfastblock_transport_maybe_inject_fault(
@@ -1719,18 +1733,11 @@ static int kfastblock_transport_submit_object_io(
 			kfastblock_transport_finish_exchange(&exchange, ret, NULL);
 			cached = NULL;
 			if (actions) {
-				kfastblock_recovery_apply_object_failure(
-					vol, kf_req->request_pool_id, extent, op, &leader,
-					ret, actions);
-					if (hint &&
-					    (actions & KFASTBLOCK_RECOVERY_INVALIDATE_LEADER))
-						kfastblock_request_invalidate_pg_hint_leader(hint);
-					if (actions & KFASTBLOCK_RECOVERY_RETRY) {
-						kfastblock_request_note_object_retry(
-							kf_req, object_index, ret);
-						continue;
-					}
-				}
+				if (kfastblock_transport_handle_object_failure(
+					    kf_req, extent, op, hint, &leader,
+					    object_index, ret, actions))
+					continue;
+			}
 			goto out;
 		}
 		if (op == REQ_OP_WRITE || op == REQ_OP_WRITE_ZEROES) {
@@ -1761,19 +1768,11 @@ static int kfastblock_transport_submit_object_io(
 		cached = NULL;
 		if (ret) {
 			if (actions) {
-				kfastblock_recovery_apply_object_failure(
-					vol, kf_req->request_pool_id, extent, op, &leader,
-					ret, actions);
-					if (hint &&
-					    (actions & KFASTBLOCK_RECOVERY_INVALIDATE_LEADER))
-						kfastblock_request_invalidate_pg_hint_leader(hint);
-					sock = NULL;
-					if (actions & KFASTBLOCK_RECOVERY_RETRY) {
-						kfastblock_request_note_object_retry(
-							kf_req, object_index, ret);
-						continue;
-					}
-				}
+				if (kfastblock_transport_handle_object_failure(
+					    kf_req, extent, op, hint, &leader,
+					    object_index, ret, actions))
+					continue;
+			}
 		} else if (hint) {
 			kfastblock_request_set_pg_hint_leader(hint, &leader);
 		}
