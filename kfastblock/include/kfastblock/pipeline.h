@@ -56,6 +56,9 @@ struct kfastblock_pipeline_entry *kfastblock_pipeline_begin_exchange(
 struct kfastblock_pipeline_entry *kfastblock_pipeline_find_locked(
 	struct kfastblock_pipeline_state *state,
 	u64 seq);
+bool kfastblock_pipeline_lookup(struct kfastblock_pipeline_state *state,
+				u64 seq,
+				struct kfastblock_pipeline_entry *snapshot);
 struct kfastblock_pipeline_entry *kfastblock_pipeline_complete(
 	struct kfastblock_pipeline_state *state,
 	u64 seq,

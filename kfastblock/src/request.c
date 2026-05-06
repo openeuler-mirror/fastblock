@@ -560,6 +560,41 @@ void kfastblock_request_note_object_retry(
 	kfastblock_volume_account_pipeline_retry(kf_req->vol);
 }
 
+int kfastblock_request_lookup_object_by_seq(
+	struct kfastblock_request *kf_req,
+	u64 seq,
+	unsigned int *object_index)
+{
+	struct kfastblock_pipeline_entry entry = {};
+
+	if (!kf_req || !seq || !object_index)
+		return -EINVAL;
+
+	if (!kfastblock_pipeline_lookup(&kf_req->pipeline, seq, &entry))
+		return -ENOENT;
+
+	*object_index = entry.object_index;
+	return 0;
+}
+
+int kfastblock_request_complete_object_by_seq(
+	struct kfastblock_request *kf_req,
+	u64 seq,
+	int ret)
+{
+	struct kfastblock_pipeline_entry *entry;
+
+	if (!kf_req || !seq)
+		return -EINVAL;
+
+	entry = kfastblock_pipeline_complete(&kf_req->pipeline, seq, ret);
+	if (!entry)
+		return -ENOENT;
+
+	kfastblock_request_mark_object_complete(kf_req, entry->object_index, ret);
+	return 0;
+}
+
 int kfastblock_request_cancel_unqueued(struct kfastblock_request *kf_req)
 {
 	unsigned long flags;
