@@ -84,6 +84,20 @@ static int kfastblock_transport_copy_from_body(const u8 *body,
 					       size_t *offset,
 					       void *dst,
 					       size_t len);
+static int kfastblock_transport_decode_osd_entries(
+	const u8 *body,
+	size_t body_len,
+	size_t *offset,
+	struct kfastblock_osd_endpoint *osds,
+	u32 osd_count);
+static int kfastblock_transport_decode_pg_entries(
+	const u8 *body,
+	size_t body_len,
+	size_t *offset,
+	struct kfastblock_pg_route *routes,
+	u32 route_count,
+	u32 pool_id,
+	u32 *pool_pg_count);
 
 static void kfastblock_transport_trace_osd_endpoint_decision(
 	struct kfastblock_volume *vol,
@@ -1180,6 +1194,89 @@ static int kfastblock_transport_response_decode_cluster_map_header(
 						   sizeof(*rsp));
 }
 
+static int kfastblock_transport_response_decode_cluster_map(
+	struct kfastblock_transport_response_ctx *response,
+	struct kfastblock_cluster_view *view)
+{
+	struct kfastblock_raw_cluster_map_rsp_hdr rsp;
+	struct kfastblock_cluster_view scratch = {};
+	u32 pool_pg_count = 0;
+	size_t offset = 0;
+	int ret;
+
+	if (!response || !view)
+		return -EINVAL;
+
+	ret = kfastblock_transport_response_decode_cluster_map_header(
+		response, &offset, &rsp);
+	if (ret)
+		goto out;
+
+	scratch.osd_count = le32_to_cpu(rsp.osd_count);
+	scratch.route_count = le32_to_cpu(rsp.pg_count);
+	if (scratch.osd_count) {
+		scratch.osds = kvcalloc(scratch.osd_count, sizeof(*scratch.osds),
+					GFP_KERNEL);
+		if (!scratch.osds) {
+			ret = -ENOMEM;
+			goto out;
+		}
+	}
+
+	ret = kfastblock_transport_decode_osd_entries(response->body,
+						      response->body_len, &offset,
+						      scratch.osds,
+						      scratch.osd_count);
+	if (ret)
+		goto out;
+
+	if (scratch.route_count) {
+		scratch.routes = kvcalloc(scratch.route_count,
+					  sizeof(*scratch.routes), GFP_KERNEL);
+		if (!scratch.routes) {
+			ret = -ENOMEM;
+			goto out;
+		}
+	}
+
+	ret = kfastblock_transport_decode_pg_entries(response->body,
+						     response->body_len, &offset,
+						     scratch.routes,
+						     scratch.route_count,
+						     view->image.pool_id,
+						     &pool_pg_count);
+	if (ret)
+		goto out;
+	if (offset != response->body_len) {
+		ret = -EPROTO;
+		goto out;
+	}
+	if (!pool_pg_count) {
+		ret = -ENOENT;
+		goto out;
+	}
+
+	ret = kfastblock_meta_replace_cluster_map(
+		view,
+		le64_to_cpu(rsp.osdmap_epoch),
+		le64_to_cpu(rsp.pgmap_epoch),
+		pool_pg_count,
+		scratch.osd_count,
+		scratch.osds,
+		scratch.route_count,
+		scratch.routes);
+	if (!ret) {
+		scratch.osd_count = 0;
+		scratch.route_count = 0;
+		scratch.osds = NULL;
+		scratch.routes = NULL;
+	}
+
+out:
+	kfastblock_meta_cleanup_view(&scratch);
+	return ret;
+}
+
 static int kfastblock_transport_fetch_image_info(struct socket *sock,
 					 struct kfastblock_cluster_view *view,
 					 u64 seq)
@@ -1394,11 +1491,7 @@ static int kfastblock_transport_fetch_cluster_map_from_monitor(
 		.reserved = cpu_to_le32(0),
 		.pgmap_epoch = cpu_to_le64(view->pgmap_epoch),
 	};
-	struct kfastblock_raw_cluster_map_rsp_hdr rsp;
 	struct kfastblock_transport_response_ctx response = {};
-	struct kfastblock_cluster_view scratch = {};
-	u32 pool_pg_count = 0;
-	size_t offset = 0;
 	int ret;
 
 	ret = kfastblock_transport_exec_request(
@@ -1411,74 +1504,8 @@ static int kfastblock_transport_fetch_cluster_map_from_monitor(
 		kfastblock_transport_response_ctx_release(&response);
 		return ret;
 	}
-	ret = kfastblock_transport_response_decode_cluster_map_header(
-		&response, &offset, &rsp);
-	if (ret)
-		goto out;
-
-	scratch.osd_count = le32_to_cpu(rsp.osd_count);
-	scratch.route_count = le32_to_cpu(rsp.pg_count);
-	if (scratch.osd_count) {
-		scratch.osds = kvcalloc(scratch.osd_count, sizeof(*scratch.osds),
-					GFP_KERNEL);
-		if (!scratch.osds) {
-			ret = -ENOMEM;
-			goto out;
-		}
-	}
-
-	ret = kfastblock_transport_decode_osd_entries(response.body,
-						      response.body_len, &offset,
-						      scratch.osds,
-						      scratch.osd_count);
-	if (ret)
-		goto out;
-
-	if (scratch.route_count) {
-		scratch.routes = kvcalloc(scratch.route_count,
-					  sizeof(*scratch.routes), GFP_KERNEL);
-		if (!scratch.routes) {
-			ret = -ENOMEM;
-			goto out;
-		}
-	}
-
-	ret = kfastblock_transport_decode_pg_entries(response.body,
-						     response.body_len, &offset,
-						     scratch.routes,
-						     scratch.route_count,
-						     view->image.pool_id,
-						     &pool_pg_count);
-	if (ret)
-		goto out;
-	if (offset != response.body_len) {
-		ret = -EPROTO;
-		goto out;
-	}
-	if (!pool_pg_count) {
-		ret = -ENOENT;
-		goto out;
-	}
-
-	ret = kfastblock_meta_replace_cluster_map(
-		view,
-		le64_to_cpu(rsp.osdmap_epoch),
-		le64_to_cpu(rsp.pgmap_epoch),
-		pool_pg_count,
-		scratch.osd_count,
-		scratch.osds,
-		scratch.route_count,
-		scratch.routes);
-	if (!ret) {
-		scratch.osd_count = 0;
-		scratch.route_count = 0;
-		scratch.osds = NULL;
-		scratch.routes = NULL;
-	}
-
-out:
+	ret = kfastblock_transport_response_decode_cluster_map(&response, view);
 	kfastblock_transport_response_ctx_release(&response);
-	kfastblock_meta_cleanup_view(&scratch);
 	return ret;
 }
 
