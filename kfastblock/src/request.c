@@ -942,6 +942,63 @@ bool kfastblock_request_has_inflight(const struct kfastblock_request *kf_req)
 	return kfastblock_request_inflight_objects(kf_req) > 0;
 }
 
+unsigned int kfastblock_request_terminal_objects(
+	const struct kfastblock_request *kf_req)
+{
+	return kfastblock_request_failed_objects(kf_req) +
+	       kfastblock_request_cancelled_objects(kf_req) +
+	       kfastblock_request_completed_objects(kf_req);
+}
+
+unsigned int kfastblock_request_failed_objects(
+	const struct kfastblock_request *kf_req)
+{
+	unsigned int value = 0;
+	unsigned long flags;
+
+	if (!kf_req)
+		return 0;
+
+	spin_lock_irqsave((spinlock_t *)&kf_req->object_state_lock, flags);
+	value = kf_req->failed_objects;
+	spin_unlock_irqrestore((spinlock_t *)&kf_req->object_state_lock, flags);
+	return value;
+}
+
+unsigned int kfastblock_request_cancelled_objects(
+	const struct kfastblock_request *kf_req)
+{
+	unsigned int value = 0;
+	unsigned long flags;
+
+	if (!kf_req)
+		return 0;
+
+	spin_lock_irqsave((spinlock_t *)&kf_req->object_state_lock, flags);
+	value = kf_req->cancelled_objects;
+	spin_unlock_irqrestore((spinlock_t *)&kf_req->object_state_lock, flags);
+	return value;
+}
+
+unsigned int kfastblock_request_retry_objects(
+	const struct kfastblock_request *kf_req)
+{
+	unsigned int count = 0;
+	unsigned int i;
+	unsigned long flags;
+
+	if (!kf_req || !kf_req->object_runtime)
+		return 0;
+
+	spin_lock_irqsave((spinlock_t *)&kf_req->object_state_lock, flags);
+	for (i = 0; i < kf_req->nr_objects; ++i) {
+		if (kf_req->object_runtime[i].retry_count)
+			count++;
+	}
+	spin_unlock_irqrestore((spinlock_t *)&kf_req->object_state_lock, flags);
+	return count;
+}
+
 unsigned int kfastblock_request_completed_objects(
 	const struct kfastblock_request *kf_req)
 {
