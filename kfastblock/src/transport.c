@@ -921,6 +921,32 @@ static int kfastblock_transport_exec_request(
 						       &part, 1, rsp);
 }
 
+static int kfastblock_transport_exec_request_fixed_body(
+	struct socket *sock,
+	u8 service,
+	u8 opcode,
+	u64 seq,
+	const struct kfastblock_transport_body_part *parts,
+	unsigned int nr_parts,
+	void *dst,
+	u32 expected_len)
+{
+	struct kfastblock_transport_response_ctx response = {};
+	int ret;
+
+	ret = kfastblock_transport_exec_request_parts(sock, service, opcode, seq,
+						      parts, nr_parts,
+						      &response);
+	if (ret)
+		goto out;
+
+	ret = kfastblock_transport_response_copy_fixed(&response, dst,
+						       expected_len);
+out:
+	kfastblock_transport_response_ctx_release(&response);
+	return ret;
+}
+
 static int kfastblock_transport_exec_request_status_only(
 	struct socket *sock,
 	u8 service,
@@ -1137,17 +1163,6 @@ static int kfastblock_transport_response_decode_read_object(
 	return 0;
 }
 
-static int kfastblock_transport_response_decode_image_info(
-	struct kfastblock_transport_response_ctx *response,
-	struct kfastblock_raw_get_image_info_rsp *rsp)
-{
-	if (!response || !rsp)
-		return -EINVAL;
-
-	return kfastblock_transport_response_copy_fixed(response, rsp,
-						       sizeof(*rsp));
-}
-
 static int kfastblock_transport_response_decode_cluster_map_header(
 	struct kfastblock_transport_response_ctx *response,
 	size_t *offset,
@@ -1175,7 +1190,6 @@ static int kfastblock_transport_fetch_image_info(struct socket *sock,
 		.image_name_len = cpu_to_le16(strlen(view->image.image_name)),
 	};
 	struct kfastblock_raw_get_image_info_rsp rsp;
-	struct kfastblock_transport_response_ctx response = {};
 	struct kfastblock_transport_body_part parts[3];
 	int ret;
 
@@ -1186,18 +1200,12 @@ static int kfastblock_transport_fetch_image_info(struct socket *sock,
 	parts[2].buf = view->image.image_name;
 	parts[2].len = strlen(view->image.image_name);
 
-	ret = kfastblock_transport_exec_request_parts(
+	ret = kfastblock_transport_exec_request_fixed_body(
 		sock, KFASTBLOCK_RAW_SERVICE_MONITOR,
 		KFASTBLOCK_RAW_OP_GET_IMAGE_INFO, seq,
-		parts, ARRAY_SIZE(parts), &response);
+		parts, ARRAY_SIZE(parts), &rsp, sizeof(rsp));
 	if (ret == -ESTALE)
 		return 0;
-	if (ret) {
-		kfastblock_transport_response_ctx_release(&response);
-		return ret;
-	}
-	ret = kfastblock_transport_response_decode_image_info(&response, &rsp);
-	kfastblock_transport_response_ctx_release(&response);
 	if (ret)
 		return ret;
 
