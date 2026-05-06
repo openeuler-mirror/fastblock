@@ -59,6 +59,8 @@ struct kfastblock_pipeline_entry *kfastblock_pipeline_find_locked(
 bool kfastblock_pipeline_lookup(struct kfastblock_pipeline_state *state,
 				u64 seq,
 				struct kfastblock_pipeline_entry *snapshot);
+bool kfastblock_pipeline_has_seq(struct kfastblock_pipeline_state *state,
+				 u64 seq);
 struct kfastblock_pipeline_entry *kfastblock_pipeline_complete(
 	struct kfastblock_pipeline_state *state,
 	u64 seq,
@@ -70,6 +72,8 @@ struct kfastblock_pipeline_entry *kfastblock_pipeline_finish_exchange(
 	s32 response_status,
 	u32 response_body_len,
 	u32 transport_flags);
+unsigned int kfastblock_pipeline_free_entries(
+	struct kfastblock_pipeline_state *state);
 void kfastblock_pipeline_snapshot(struct kfastblock_pipeline_state *state,
 				  struct kfastblock_pipeline_snapshot *snapshot);
 
