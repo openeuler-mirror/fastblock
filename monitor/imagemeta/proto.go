@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"monitor/etcdapi"
+	"monitor/log"
 	"monitor/msg"
 )
 
@@ -176,6 +177,7 @@ func ListOperationsProto(ctx context.Context, client *etcdapi.EtcdClient) (msg.I
 func CreateSnapshotByNameProto(ctx context.Context, client *etcdapi.EtcdClient, poolName, imageName, snapshotName string) (msg.ImageMetadataErrorCode, *msg.SnapshotMetadataV2) {
 	item, err := CreateSnapshotByName(ctx, client, poolName, imageName, snapshotName)
 	if err != nil {
+		log.Error(ctx, "CreateSnapshotByNameProto failed", " pool=", poolName, " image=", imageName, " snapshot=", snapshotName, " err=", err)
 		return toImageMetadataError(err), nil
 	}
 	return msg.ImageMetadataErrorCode_imageMetadataOk, snapshotToProto(item)

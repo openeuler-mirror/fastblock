@@ -19,6 +19,19 @@
 
 namespace {
 
+struct image_cache_refresh_msg {
+    std::shared_ptr<::libblk_client> blk_cli;
+    std::string pool_name;
+    std::string image_name;
+};
+
+struct image_snap_seq_msg {
+    std::shared_ptr<::libblk_client> blk_cli;
+    int32_t pool_id;
+    std::string image_name;
+    uint64_t snap_seq;
+};
+
 struct flatten_image_ctx {
     libblk_client* owner{nullptr};
     std::string pool_name{};
@@ -35,6 +48,7 @@ struct rollback_image_ctx {
     std::string pool_name{};
     std::string image_name{};
     std::string snapshot_name{};
+    std::function<void(int32_t)> completion{};
     std::optional<monitor::client::image_metadata> image_metadata{std::nullopt};
     std::optional<monitor::client::snapshot_metadata> snapshot_metadata{std::nullopt};
     uint64_t object_count{0};
@@ -56,11 +70,35 @@ static bool is_zero_filled(const std::string& data)
     return true;
 }
 
+static void refresh_image_on_client_thread(void *arg)
+{
+    auto* msg = reinterpret_cast<image_cache_refresh_msg*>(arg);
+    msg->blk_cli->open_image(msg->pool_name, msg->image_name);
+    delete msg;
+}
+
+static void advance_snap_seq_on_client_thread(void *arg)
+{
+    auto* msg = reinterpret_cast<image_snap_seq_msg*>(arg);
+    msg->blk_cli->advance_cached_image_snap_seq(msg->pool_id, msg->image_name, msg->snap_seq);
+    delete msg;
+}
+
 void refresh_image_on_all_clients(const std::string& pool_name, const std::string& image_name)
 {
     auto refresh = [&pool_name, &image_name](const std::shared_ptr<::libblk_client>& blk_cli) {
         if (blk_cli) {
-            blk_cli->open_image(pool_name, image_name);
+            auto* blk_thread = blk_cli->get_blk_thread();
+            if (!blk_thread || blk_thread == spdk_get_thread()) {
+                blk_cli->open_image(pool_name, image_name);
+                return;
+            }
+            auto* msg = new image_cache_refresh_msg{
+                .blk_cli = blk_cli,
+                .pool_name = pool_name,
+                .image_name = image_name,
+            };
+            spdk_thread_send_msg(blk_thread, refresh_image_on_client_thread, msg);
         }
     };
 
@@ -79,7 +117,18 @@ void advance_snap_seq_on_all_clients(
 {
     auto advance = [pool_id, &image_name, snap_seq](const std::shared_ptr<::libblk_client>& blk_cli) {
         if (blk_cli) {
-            blk_cli->advance_cached_image_snap_seq(pool_id, image_name, snap_seq);
+            auto* blk_thread = blk_cli->get_blk_thread();
+            if (!blk_thread || blk_thread == spdk_get_thread()) {
+                blk_cli->advance_cached_image_snap_seq(pool_id, image_name, snap_seq);
+                return;
+            }
+            auto* msg = new image_snap_seq_msg{
+                .blk_cli = blk_cli,
+                .pool_id = pool_id,
+                .image_name = image_name,
+                .snap_seq = snap_seq,
+            };
+            spdk_thread_send_msg(blk_thread, advance_snap_seq_on_client_thread, msg);
         }
     };
 
@@ -250,12 +299,20 @@ void rollback_finish(rollback_image_ctx* ctx, const int32_t state)
       ctx->image_name.c_str(),
       ctx->snapshot_name.c_str(),
       state);
+    if (ctx->completion) {
+        ctx->completion(state);
+    }
     delete ctx;
 }
 
 void rollback_write_done(void *src, int32_t state)
 {
     auto* ctx = reinterpret_cast<rollback_image_ctx*>(src);
+    SPDK_NOTICELOG(
+      "rollback write done image=%s object_seq=%lu state=%d\n",
+      ctx->image_name.c_str(),
+      ctx->current_object_seq,
+      state);
     if (state != err::E_SUCCESS) {
         rollback_finish(ctx, state);
         return;
@@ -268,6 +325,16 @@ void rollback_snapshot_read_done(void *src, uint64_t object_idx, const std::stri
 {
     (void)object_idx;
     auto* ctx = reinterpret_cast<rollback_image_ctx*>(src);
+    // Rollback replays the target snapshot into head; do not trigger a fresh COW boundary.
+    constexpr uint64_t rollback_write_snap_seq = 0;
+    SPDK_NOTICELOG(
+      "rollback snapshot read done image=%s object_seq=%lu snap_seq=%lu state=%d len=%lu zero=%d\n",
+      ctx->image_name.c_str(),
+      ctx->current_object_seq,
+      ctx->snapshot_metadata.has_value() ? ctx->snapshot_metadata->snap_seq : 0,
+      state,
+      data.size(),
+      (!data.empty() && is_zero_filled(data)) ? 1 : 0);
     if (state == err::E_ENOENT) {
         ctx->current_object_seq++;
         rollback_issue_next(ctx);
@@ -288,7 +355,7 @@ void rollback_snapshot_read_done(void *src, uint64_t object_idx, const std::stri
             ctx->image_metadata->pool_id,
             &rollback_write_done,
             ctx,
-            ctx->image_metadata->current_snap_seq);
+            rollback_write_snap_seq);
         return;
     }
 
@@ -299,7 +366,7 @@ void rollback_snapshot_read_done(void *src, uint64_t object_idx, const std::stri
         ctx->image_metadata->pool_id,
         &rollback_write_done,
         ctx,
-        ctx->image_metadata->current_snap_seq);
+        rollback_write_snap_seq);
 }
 
 void rollback_issue_next(rollback_image_ctx* ctx)
@@ -317,6 +384,13 @@ void rollback_issue_next(rollback_image_ctx* ctx)
 
     auto object_prefix = ctx->owner->calc_image_object_prefix(ctx->image_metadata->pool_id, ctx->image_metadata->image_name);
     auto object_name = ctx->owner->get_image_object_name(object_prefix, ctx->current_object_seq);
+    SPDK_NOTICELOG(
+      "rollback issue read image=%s object=%s object_seq=%lu target_snap_seq=%lu current_head_snap_seq=%lu\n",
+      ctx->image_name.c_str(),
+      object_name.c_str(),
+      ctx->current_object_seq,
+      ctx->snapshot_metadata->snap_seq,
+      ctx->image_metadata->current_snap_seq);
     ctx->owner->data_client()->read_object(
         object_name,
         0,
@@ -638,12 +712,22 @@ void libblk_client::create_image_snapshot(const std::string pool_name, const std
             cache_snapshot_metadata(*metadata);
             if (!metadata->source_image_name.empty()) {
                 auto image_metadata = find_cached_image_metadata(metadata->source_pool_id, metadata->source_image_name);
+                uint64_t cached_before = 0;
+                if (image_metadata.has_value()) {
+                    cached_before = image_metadata->current_snap_seq;
+                }
                 if (image_metadata.has_value()) {
                     image_metadata->current_snap_seq = metadata->snap_seq;
                     cache_image_metadata(*image_metadata);
                 }
                 advance_snap_seq_on_all_clients(metadata->source_pool_id, metadata->source_image_name, metadata->snap_seq);
                 refresh_image_on_all_clients(metadata->source_pool_name, metadata->source_image_name);
+                SPDK_NOTICELOG(
+                  "snapshot seq advanced image=%s pool_id=%d cached_before=%lu new_seq=%lu\n",
+                  metadata->source_image_name.c_str(),
+                  metadata->source_pool_id,
+                  cached_before,
+                  metadata->snap_seq);
             }
             SPDK_INFOLOG(
               libblk,
@@ -829,13 +913,15 @@ void libblk_client::delete_image_snapshot(const std::string snapshot_id)
 void libblk_client::rollback_image_to_snapshot(
   const std::string pool_name,
   const std::string image_name,
-  const std::string snapshot_name)
+  const std::string snapshot_name,
+  std::function<void(int32_t)> cb)
 {
     auto* ctx = new rollback_image_ctx{
         .owner = this,
         .pool_name = pool_name,
         .image_name = image_name,
         .snapshot_name = snapshot_name,
+        .completion = std::move(cb),
     };
     _mon_cli->emplace_get_image_metadata_by_name_request(
         pool_name,
@@ -1130,6 +1216,12 @@ int libblk_client::write(const uint64_t pool_id, const std::string image_name, c
     if (image_metadata.has_value()) {
         current_snap_seq = image_metadata->current_snap_seq;
     }
+    SPDK_NOTICELOG(
+      "libblk write image=%s pool=%lu current_snap_seq=%lu cache_hit=%d\n",
+      image_name.c_str(),
+      pool_id,
+      current_snap_seq,
+      image_metadata.has_value() ? 1 : 0);
     auto fallback_chain = build_fallback_chain(image_metadata);
     bool is_clone = image_metadata.has_value() && !image_metadata->parent_snapshot_id.empty();
     // 建立回调函数

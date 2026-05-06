@@ -205,8 +205,6 @@ private:
     static bool should_retry_request(const int32_t state) noexcept {
         switch (state) {
         case -ENOLINK:
-        case -ENOENT:
-        case -EINVAL:
         case err::RAFT_ERR_NOT_LEADER:
         case err::RAFT_ERR_NOT_FOUND_PG:
         case err::RAFT_ERR_PG_SHUTDOWN:

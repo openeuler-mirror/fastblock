@@ -101,9 +101,31 @@ advance_image_snap_seq_on_all_clients(
 	const std::string& image_name,
 	const uint64_t snap_seq)
 {
-	auto advance = [pool_id, &image_name, snap_seq](const std::shared_ptr<::libblk_client>& blk_cli) {
+	struct image_snap_seq_msg {
+		std::shared_ptr<::libblk_client> blk_cli;
+		int32_t pool_id;
+		std::string image_name;
+		uint64_t snap_seq;
+	};
+	auto advance_on_thread = [](void *arg) {
+		auto* msg = reinterpret_cast<image_snap_seq_msg*>(arg);
+		msg->blk_cli->advance_cached_image_snap_seq(msg->pool_id, msg->image_name, msg->snap_seq);
+		delete msg;
+	};
+	auto advance = [pool_id, &image_name, snap_seq, advance_on_thread](const std::shared_ptr<::libblk_client>& blk_cli) {
 		if (blk_cli) {
-			blk_cli->advance_cached_image_snap_seq(pool_id, image_name, snap_seq);
+			auto* blk_thread = blk_cli->get_blk_thread();
+			if (!blk_thread || blk_thread == spdk_get_thread()) {
+				blk_cli->advance_cached_image_snap_seq(pool_id, image_name, snap_seq);
+				return;
+			}
+			auto* msg = new image_snap_seq_msg{
+				.blk_cli = blk_cli,
+				.pool_id = pool_id,
+				.image_name = image_name,
+				.snap_seq = snap_seq,
+			};
+			spdk_thread_send_msg(blk_thread, advance_on_thread, msg);
 		}
 	};
 
@@ -703,19 +725,37 @@ rpc_bdev_fastblock_create_snapshot(struct spdk_jsonrpc_request *request,
 		bdev_fastblock_get_pool_name(bdev),
 		bdev_fastblock_get_image_name(bdev),
 		req.snapshot_name,
-		[request, blk_cli](const monitor::client::response_status status, monitor::client::request_context* req_ctx)
+		[request, blk_cli, bdev, snapshot_name = std::string(req.snapshot_name)](const monitor::client::response_status status, monitor::client::request_context* req_ctx)
 		{
 			if (status != monitor::client::response_status::ok)
 			{
+				SPDK_ERRLOG(
+				  "create snapshot monitor request failed pool=%s image=%s snapshot=%s status=%d\n",
+				  bdev_fastblock_get_pool_name(bdev),
+				  bdev_fastblock_get_image_name(bdev),
+				  snapshot_name.c_str(),
+				  static_cast<int>(status));
 				send_monitor_status_error(request, status);
 				return;
 			}
 			auto& metadata = std::get<std::unique_ptr<monitor::client::snapshot_metadata>>(req_ctx->response_data);
 			if (!metadata)
 			{
+				SPDK_ERRLOG(
+				  "create snapshot monitor response missing metadata pool=%s image=%s snapshot=%s\n",
+				  bdev_fastblock_get_pool_name(bdev),
+				  bdev_fastblock_get_image_name(bdev),
+				  snapshot_name.c_str());
 				spdk_jsonrpc_send_error_response(request, -EIO, spdk_strerror(EIO));
 				return;
 			}
+			SPDK_NOTICELOG(
+			  "create snapshot monitor response pool=%s image=%s snapshot=%s snap_seq=%lu snapshot_id=%s\n",
+			  bdev_fastblock_get_pool_name(bdev),
+			  bdev_fastblock_get_image_name(bdev),
+			  snapshot_name.c_str(),
+			  metadata->snap_seq,
+			  metadata->snapshot_id.c_str());
 			advance_image_snap_seq_on_all_clients(metadata->source_pool_id, metadata->source_image_name, metadata->snap_seq);
 			auto *w = spdk_jsonrpc_begin_result(request);
 			spdk_json_write_bool(w, true);
@@ -771,16 +811,30 @@ rpc_bdev_fastblock_rollback_to_snapshot(struct spdk_jsonrpc_request *request,
 		goto cleanup;
 	}
 
-	rc = bdev_fastblock_rollback_to_snapshot(bdev, req.snapshot_name);
-	if (rc)
 	{
-		spdk_jsonrpc_send_error_response(request, rc, spdk_strerror(-rc));
-		goto cleanup;
+		auto blk_cli = get_management_blk_client();
+		if (!blk_cli) {
+			spdk_jsonrpc_send_error_response(request, -EBUSY, spdk_strerror(EBUSY));
+			goto cleanup;
+		}
+		auto pool_name = std::string(bdev_fastblock_get_pool_name(bdev));
+		auto image_name = std::string(bdev_fastblock_get_image_name(bdev));
+		blk_cli->open_image(pool_name, image_name);
+		blk_cli->rollback_image_to_snapshot(
+			pool_name,
+			image_name,
+			req.snapshot_name,
+			[request](int32_t state)
+			{
+				if (state != err::E_SUCCESS) {
+					spdk_jsonrpc_send_error_response(request, state, err::string_status(state));
+					return;
+				}
+				auto *w = spdk_jsonrpc_begin_result(request);
+				spdk_json_write_bool(w, true);
+				spdk_jsonrpc_end_result(request, w);
+			});
 	}
-
-	w = spdk_jsonrpc_begin_result(request);
-	spdk_json_write_bool(w, true);
-	spdk_jsonrpc_end_result(request, w);
 
 cleanup:
 	free_rpc_bdev_fastblock_snapshot_name_request(&req);
