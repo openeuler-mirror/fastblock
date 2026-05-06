@@ -26,6 +26,10 @@ struct kfastblock_pipeline_snapshot {
 	unsigned int inflight;
 	unsigned int peak_inflight;
 	unsigned int free_entries;
+	u64 oldest_inflight_seq;
+	u64 newest_inflight_seq;
+	unsigned long oldest_queued_jiffies;
+	unsigned long newest_queued_jiffies;
 };
 
 struct kfastblock_pipeline_state {
