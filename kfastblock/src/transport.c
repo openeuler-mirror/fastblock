@@ -72,6 +72,13 @@ struct kfastblock_transport_exchange_ctx {
 	u64 seq;
 };
 
+struct kfastblock_transport_response_ctx {
+	struct kfastblock_raw_header hdr;
+	void *body;
+	u32 body_len;
+	int ret;
+};
+
 static void kfastblock_transport_trace_osd_endpoint_decision(
 	struct kfastblock_volume *vol,
 	const struct kfastblock_leader_info *leader,
@@ -801,6 +808,82 @@ static int kfastblock_transport_recv_response(struct socket *sock,
 	return kfastblock_transport_status_to_errno(le32_to_cpu(hdr->status));
 }
 
+static void kfastblock_transport_response_ctx_reset(
+	struct kfastblock_transport_response_ctx *ctx)
+{
+	if (!ctx)
+		return;
+
+	memset(&ctx->hdr, 0, sizeof(ctx->hdr));
+	ctx->body = NULL;
+	ctx->body_len = 0;
+	ctx->ret = 0;
+}
+
+static void kfastblock_transport_response_ctx_release(
+	struct kfastblock_transport_response_ctx *ctx)
+{
+	if (!ctx)
+		return;
+
+	kvfree(ctx->body);
+	ctx->body = NULL;
+	ctx->body_len = 0;
+	ctx->ret = 0;
+	memset(&ctx->hdr, 0, sizeof(ctx->hdr));
+}
+
+static int kfastblock_transport_exec_request_parts(
+	struct socket *sock,
+	u8 service,
+	u8 opcode,
+	u64 seq,
+	const struct kfastblock_transport_body_part *parts,
+	unsigned int nr_parts,
+	struct kfastblock_transport_response_ctx *rsp)
+{
+	int ret;
+
+	if (!rsp)
+		return -EINVAL;
+
+	kfastblock_transport_response_ctx_reset(rsp);
+	ret = kfastblock_transport_send_request_parts(sock, service, opcode, seq,
+						      parts, nr_parts);
+	if (ret) {
+		rsp->ret = ret;
+		return ret;
+	}
+
+	ret = kfastblock_transport_recv_response(sock, service, opcode, seq,
+						 &rsp->hdr, &rsp->body);
+	rsp->ret = ret;
+	if (!ret)
+		rsp->body_len = le32_to_cpu(rsp->hdr.body_len);
+	return ret;
+}
+
+static int kfastblock_transport_exec_request(
+	struct socket *sock,
+	u8 service,
+	u8 opcode,
+	u64 seq,
+	const void *body,
+	u32 body_len,
+	struct kfastblock_transport_response_ctx *rsp)
+{
+	struct kfastblock_transport_body_part part = {
+		.buf = body,
+		.len = body_len,
+	};
+
+	if (!body || !body_len)
+		return kfastblock_transport_exec_request_parts(sock, service, opcode,
+							       seq, NULL, 0, rsp);
+	return kfastblock_transport_exec_request_parts(sock, service, opcode, seq,
+						       &part, 1, rsp);
+}
+
 static int kfastblock_transport_begin_exchange(
 	struct kfastblock_transport_exchange_ctx *ctx,
 	struct kfastblock_request *kf_req,
@@ -1204,9 +1287,7 @@ static int kfastblock_transport_fetch_pg_leader_from_osd(
 		.pg_id = cpu_to_le32(pg_id),
 	};
 	struct kfastblock_raw_get_leader_rsp rsp;
-	struct kfastblock_raw_header rsp_hdr;
-	void *body = NULL;
-	u32 body_len;
+	struct kfastblock_transport_response_ctx response = {};
 	u16 address_len;
 	int ret;
 
@@ -1214,46 +1295,34 @@ static int kfastblock_transport_fetch_pg_leader_from_osd(
 		return -EINVAL;
 
 	memset(leader, 0, sizeof(*leader));
-	ret = kfastblock_transport_send_request(sock,
-					KFASTBLOCK_RAW_SERVICE_OSD,
-					KFASTBLOCK_RAW_OSD_OP_GET_LEADER,
-					seq,
-					&req,
-					sizeof(req));
-	if (ret)
-		return ret;
-
-	ret = kfastblock_transport_recv_response(sock,
-					 KFASTBLOCK_RAW_SERVICE_OSD,
-					 KFASTBLOCK_RAW_OSD_OP_GET_LEADER,
-					 seq,
-					 &rsp_hdr,
-					 &body);
+	ret = kfastblock_transport_exec_request(
+		sock, KFASTBLOCK_RAW_SERVICE_OSD,
+		KFASTBLOCK_RAW_OSD_OP_GET_LEADER, seq,
+		&req, sizeof(req), &response);
 	if (ret) {
-			kvfree(body);
-			return ret;
-		}
+		kfastblock_transport_response_ctx_release(&response);
+		return ret;
+	}
 
-	body_len = le32_to_cpu(rsp_hdr.body_len);
-	if (!body || body_len < sizeof(rsp)) {
-		kvfree(body);
+	if (!response.body || response.body_len < sizeof(rsp)) {
+		kfastblock_transport_response_ctx_release(&response);
 		return -EPROTO;
 	}
 
-	memcpy(&rsp, body, sizeof(rsp));
+	memcpy(&rsp, response.body, sizeof(rsp));
 	address_len = le16_to_cpu(rsp.address_len);
-	if (body_len != sizeof(rsp) + address_len ||
+	if (response.body_len != sizeof(rsp) + address_len ||
 	    !address_len ||
 	    address_len >= sizeof(leader->address)) {
-			kvfree(body);
-			return -EPROTO;
-		}
+		kfastblock_transport_response_ctx_release(&response);
+		return -EPROTO;
+	}
 
 	leader->osd_id = le32_to_cpu(rsp.leader_id);
 	leader->port = le16_to_cpu(rsp.leader_port);
-	memcpy(leader->address, (u8 *)body + sizeof(rsp), address_len);
+	memcpy(leader->address, (u8 *)response.body + sizeof(rsp), address_len);
 	leader->address[address_len] = '\0';
-	kvfree(body);
+	kfastblock_transport_response_ctx_release(&response);
 
 	if (!leader->osd_id || !leader->port || !leader->address[0])
 		return -EPROTO;
@@ -1270,8 +1339,7 @@ static int kfastblock_transport_write_object(struct socket *sock,
 	struct kfastblock_raw_write_object_req req = {
 		.pool_id = cpu_to_le32(pool_id),
 	};
-	struct kfastblock_raw_header rsp_hdr;
-	void *body = NULL;
+	struct kfastblock_transport_response_ctx response = {};
 	struct kfastblock_transport_body_part parts[3];
 	u32 object_name_len;
 	u32 data_len;
@@ -1295,22 +1363,11 @@ static int kfastblock_transport_write_object(struct socket *sock,
 	parts[2].buf = data;
 	parts[2].len = data_len;
 
-	ret = kfastblock_transport_send_request_parts(sock,
-					KFASTBLOCK_RAW_SERVICE_OSD,
-					KFASTBLOCK_RAW_OSD_OP_WRITE_OBJECT,
-					seq,
-					parts,
-					ARRAY_SIZE(parts));
-	if (ret)
-		return ret;
-
-	ret = kfastblock_transport_recv_response(sock,
-					 KFASTBLOCK_RAW_SERVICE_OSD,
-					 KFASTBLOCK_RAW_OSD_OP_WRITE_OBJECT,
-					 seq,
-					 &rsp_hdr,
-					 &body);
-	kvfree(body);
+	ret = kfastblock_transport_exec_request_parts(
+		sock, KFASTBLOCK_RAW_SERVICE_OSD,
+		KFASTBLOCK_RAW_OSD_OP_WRITE_OBJECT, seq,
+		parts, ARRAY_SIZE(parts), &response);
+	kfastblock_transport_response_ctx_release(&response);
 	return ret;
 }
 
@@ -1329,11 +1386,9 @@ static int kfastblock_transport_read_object(struct socket *sock,
 		.reserved = 0,
 	};
 	struct kfastblock_raw_read_object_rsp rsp;
-	struct kfastblock_raw_header rsp_hdr;
-	void *body = NULL;
+	struct kfastblock_transport_response_ctx response = {};
 	struct kfastblock_transport_body_part parts[2];
 	u32 object_name_len;
-	u32 body_len;
 	u32 data_len;
 	int ret;
 
@@ -1346,43 +1401,32 @@ static int kfastblock_transport_read_object(struct socket *sock,
 	parts[1].buf = extent->object_name;
 	parts[1].len = object_name_len;
 
-	ret = kfastblock_transport_send_request_parts(sock,
-					KFASTBLOCK_RAW_SERVICE_OSD,
-					KFASTBLOCK_RAW_OSD_OP_READ_OBJECT,
-					seq,
-					parts,
-					ARRAY_SIZE(parts));
-	if (ret)
-		return ret;
-
-	ret = kfastblock_transport_recv_response(sock,
-					 KFASTBLOCK_RAW_SERVICE_OSD,
-					 KFASTBLOCK_RAW_OSD_OP_READ_OBJECT,
-					 seq,
-					 &rsp_hdr,
-					 &body);
+	ret = kfastblock_transport_exec_request_parts(
+		sock, KFASTBLOCK_RAW_SERVICE_OSD,
+		KFASTBLOCK_RAW_OSD_OP_READ_OBJECT, seq,
+		parts, ARRAY_SIZE(parts), &response);
 	if (ret) {
-			kvfree(body);
-			return ret;
-		}
+		kfastblock_transport_response_ctx_release(&response);
+		return ret;
+	}
 
-	body_len = le32_to_cpu(rsp_hdr.body_len);
-	if (!body || body_len < sizeof(rsp)) {
-		kvfree(body);
+	if (!response.body || response.body_len < sizeof(rsp)) {
+		kfastblock_transport_response_ctx_release(&response);
 		return -EPROTO;
 	}
 
-	memcpy(&rsp, body, sizeof(rsp));
+	memcpy(&rsp, response.body, sizeof(rsp));
 	data_len = le32_to_cpu(rsp.data_len);
-	if (body_len != sizeof(rsp) + data_len || data_len > extent->length) {
-			kvfree(body);
-			return -EPROTO;
-		}
+	if (response.body_len != sizeof(rsp) + data_len ||
+	    data_len > extent->length) {
+		kfastblock_transport_response_ctx_release(&response);
+		return -EPROTO;
+	}
 
 	memset(data, 0, extent->length);
 	if (data_len)
-		memcpy(data, (u8 *)body + sizeof(rsp), data_len);
-	kvfree(body);
+		memcpy(data, (u8 *)response.body + sizeof(rsp), data_len);
+	kfastblock_transport_response_ctx_release(&response);
 	return 0;
 }
 
@@ -1397,8 +1441,7 @@ static int kfastblock_transport_delete_object(struct socket *sock,
 		.object_name_len = cpu_to_le16(strlen(extent->object_name)),
 		.reserved = 0,
 	};
-	struct kfastblock_raw_header rsp_hdr;
-	void *body = NULL;
+	struct kfastblock_transport_response_ctx response = {};
 	struct kfastblock_transport_body_part parts[2];
 	u32 object_name_len;
 	int ret;
@@ -1412,22 +1455,11 @@ static int kfastblock_transport_delete_object(struct socket *sock,
 	parts[1].buf = extent->object_name;
 	parts[1].len = object_name_len;
 
-	ret = kfastblock_transport_send_request_parts(sock,
-					KFASTBLOCK_RAW_SERVICE_OSD,
-					KFASTBLOCK_RAW_OSD_OP_DELETE_OBJECT,
-					seq,
-					parts,
-					ARRAY_SIZE(parts));
-	if (ret)
-		return ret;
-
-	ret = kfastblock_transport_recv_response(sock,
-					 KFASTBLOCK_RAW_SERVICE_OSD,
-					 KFASTBLOCK_RAW_OSD_OP_DELETE_OBJECT,
-					 seq,
-					 &rsp_hdr,
-					 &body);
-	kvfree(body);
+	ret = kfastblock_transport_exec_request_parts(
+		sock, KFASTBLOCK_RAW_SERVICE_OSD,
+		KFASTBLOCK_RAW_OSD_OP_DELETE_OBJECT, seq,
+		parts, ARRAY_SIZE(parts), &response);
+	kfastblock_transport_response_ctx_release(&response);
 	return ret;
 }
 
