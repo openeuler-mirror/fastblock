@@ -833,6 +833,51 @@ static void kfastblock_transport_response_ctx_release(
 	memset(&ctx->hdr, 0, sizeof(ctx->hdr));
 }
 
+static int kfastblock_transport_response_expect_min_body(
+	const struct kfastblock_transport_response_ctx *ctx,
+	u32 min_len)
+{
+	if (!ctx)
+		return -EINVAL;
+	if (!ctx->body || ctx->body_len < min_len)
+		return -EPROTO;
+	return 0;
+}
+
+static int kfastblock_transport_response_copy_fixed(
+	const struct kfastblock_transport_response_ctx *ctx,
+	void *dst,
+	u32 expected_len)
+{
+	int ret;
+
+	if (!ctx || !dst)
+		return -EINVAL;
+
+	ret = kfastblock_transport_response_expect_min_body(ctx, expected_len);
+	if (ret)
+		return ret;
+	if (ctx->body_len != expected_len)
+		return -EPROTO;
+
+	memcpy(dst, ctx->body, expected_len);
+	return 0;
+}
+
+static int kfastblock_transport_response_expect_exact_body(
+	const struct kfastblock_transport_response_ctx *ctx,
+	u32 expected_len)
+{
+	int ret;
+
+	ret = kfastblock_transport_response_expect_min_body(ctx, expected_len);
+	if (ret)
+		return ret;
+	if (ctx->body_len != expected_len)
+		return -EPROTO;
+	return 0;
+}
+
 static int kfastblock_transport_exec_request_parts(
 	struct socket *sock,
 	u8 service,
@@ -967,13 +1012,10 @@ static int kfastblock_transport_fetch_image_info(struct socket *sock,
 		.image_name_len = cpu_to_le16(strlen(view->image.image_name)),
 	};
 	struct kfastblock_raw_get_image_info_rsp rsp;
-	struct kfastblock_raw_header rsp_hdr;
-	void *body = NULL;
+	struct kfastblock_transport_response_ctx response = {};
 	struct kfastblock_transport_body_part parts[3];
-	u32 body_len;
 	int ret;
 
-	body_len = sizeof(req) + strlen(view->image.pool_name) + strlen(view->image.image_name);
 	parts[0].buf = &req;
 	parts[0].len = sizeof(req);
 	parts[1].buf = view->image.pool_name;
@@ -981,33 +1023,27 @@ static int kfastblock_transport_fetch_image_info(struct socket *sock,
 	parts[2].buf = view->image.image_name;
 	parts[2].len = strlen(view->image.image_name);
 
-	ret = kfastblock_transport_send_request_parts(sock,
-					KFASTBLOCK_RAW_SERVICE_MONITOR,
-					KFASTBLOCK_RAW_OP_GET_IMAGE_INFO,
-					seq,
-					parts,
-					ARRAY_SIZE(parts));
-	if (ret)
-		return ret;
-
-	ret = kfastblock_transport_recv_response(sock,
-					 KFASTBLOCK_RAW_SERVICE_MONITOR,
-					 KFASTBLOCK_RAW_OP_GET_IMAGE_INFO,
-					 seq,
-					 &rsp_hdr,
-					 &body);
+	ret = kfastblock_transport_exec_request_parts(
+		sock, KFASTBLOCK_RAW_SERVICE_MONITOR,
+		KFASTBLOCK_RAW_OP_GET_IMAGE_INFO, seq,
+		parts, ARRAY_SIZE(parts), &response);
 	if (ret == -ESTALE)
 		return 0;
 	if (ret) {
-		kvfree(body);
+		kfastblock_transport_response_ctx_release(&response);
 		return ret;
 	}
-	if (!body || le32_to_cpu(rsp_hdr.body_len) != sizeof(rsp)) {
-		kvfree(body);
-		return -EPROTO;
+	ret = kfastblock_transport_response_expect_exact_body(&response,
+							      sizeof(rsp));
+	if (ret) {
+		kfastblock_transport_response_ctx_release(&response);
+		return ret;
 	}
-	memcpy(&rsp, body, sizeof(rsp));
-	kvfree(body);
+	ret = kfastblock_transport_response_copy_fixed(&response, &rsp,
+						       sizeof(rsp));
+	kfastblock_transport_response_ctx_release(&response);
+	if (ret)
+		return ret;
 
 	view->image_epoch = le64_to_cpu(rsp.image_epoch);
 	view->image.pool_id = le32_to_cpu(rsp.pool_id);
@@ -1195,42 +1231,31 @@ static int kfastblock_transport_fetch_cluster_map_from_monitor(
 		.pgmap_epoch = cpu_to_le64(view->pgmap_epoch),
 	};
 	struct kfastblock_raw_cluster_map_rsp_hdr rsp;
-	struct kfastblock_raw_header rsp_hdr;
+	struct kfastblock_transport_response_ctx response = {};
 	struct kfastblock_cluster_view scratch = {};
-	void *body = NULL;
-	u32 body_len;
 	u32 pool_pg_count = 0;
 	size_t offset = 0;
 	int ret;
 
-	ret = kfastblock_transport_send_request(sock,
-					KFASTBLOCK_RAW_SERVICE_MONITOR,
-					KFASTBLOCK_RAW_OP_GET_CLUSTER_MAP,
-					seq,
-					&req,
-					sizeof(req));
-	if (ret)
-		return ret;
-
-	ret = kfastblock_transport_recv_response(sock,
-					 KFASTBLOCK_RAW_SERVICE_MONITOR,
-					 KFASTBLOCK_RAW_OP_GET_CLUSTER_MAP,
-					 seq,
-					 &rsp_hdr,
-					 &body);
+	ret = kfastblock_transport_exec_request(
+		sock, KFASTBLOCK_RAW_SERVICE_MONITOR,
+		KFASTBLOCK_RAW_OP_GET_CLUSTER_MAP, seq,
+		&req, sizeof(req), &response);
 	if (ret == -ESTALE)
 		return 0;
 	if (ret) {
-			kvfree(body);
-			return ret;
-		}
-	body_len = le32_to_cpu(rsp_hdr.body_len);
-	if (!body || body_len < sizeof(rsp)) {
-		kvfree(body);
+		kfastblock_transport_response_ctx_release(&response);
+		return ret;
+	}
+	ret = kfastblock_transport_response_expect_min_body(&response,
+							    sizeof(rsp));
+	if (ret) {
+		kfastblock_transport_response_ctx_release(&response);
 		return -EPROTO;
 	}
 
-	ret = kfastblock_transport_copy_from_body(body, body_len, &offset, &rsp,
+	ret = kfastblock_transport_copy_from_body(response.body, response.body_len,
+						 &offset, &rsp,
 						 sizeof(rsp));
 	if (ret)
 		goto out;
@@ -1246,7 +1271,8 @@ static int kfastblock_transport_fetch_cluster_map_from_monitor(
 		}
 	}
 
-	ret = kfastblock_transport_decode_osd_entries(body, body_len, &offset,
+	ret = kfastblock_transport_decode_osd_entries(response.body,
+						      response.body_len, &offset,
 						      scratch.osds,
 						      scratch.osd_count);
 	if (ret)
@@ -1261,14 +1287,15 @@ static int kfastblock_transport_fetch_cluster_map_from_monitor(
 		}
 	}
 
-	ret = kfastblock_transport_decode_pg_entries(body, body_len, &offset,
+	ret = kfastblock_transport_decode_pg_entries(response.body,
+						     response.body_len, &offset,
 						     scratch.routes,
 						     scratch.route_count,
 						     view->image.pool_id,
 						     &pool_pg_count);
 	if (ret)
 		goto out;
-	if (offset != body_len) {
+	if (offset != response.body_len) {
 		ret = -EPROTO;
 		goto out;
 	}
@@ -1294,7 +1321,7 @@ static int kfastblock_transport_fetch_cluster_map_from_monitor(
 	}
 
 out:
-	kvfree(body);
+	kfastblock_transport_response_ctx_release(&response);
 	kfastblock_meta_cleanup_view(&scratch);
 	return ret;
 }
@@ -1328,9 +1355,11 @@ static int kfastblock_transport_fetch_pg_leader_from_osd(
 		return ret;
 	}
 
-	if (!response.body || response.body_len < sizeof(rsp)) {
+	ret = kfastblock_transport_response_expect_min_body(&response,
+							    sizeof(rsp));
+	if (ret) {
 		kfastblock_transport_response_ctx_release(&response);
-		return -EPROTO;
+		return ret;
 	}
 
 	memcpy(&rsp, response.body, sizeof(rsp));
@@ -1432,8 +1461,10 @@ static int kfastblock_transport_read_object(struct socket *sock,
 		return ret;
 	}
 
-	if (!response->body || response->body_len < sizeof(rsp))
-		return -EPROTO;
+	ret = kfastblock_transport_response_expect_min_body(response,
+							    sizeof(rsp));
+	if (ret)
+		return ret;
 
 	memcpy(&rsp, response->body, sizeof(rsp));
 	data_len = le32_to_cpu(rsp.data_len);

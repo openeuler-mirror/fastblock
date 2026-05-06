@@ -412,6 +412,44 @@ static bool kfastblock_request_object_dispatchable(
 	return runtime && runtime->state == KFASTBLOCK_OBJECT_READY;
 }
 
+const char *kfastblock_request_object_state_name(
+	enum kfastblock_request_object_state state)
+{
+	switch (state) {
+	case KFASTBLOCK_OBJECT_INIT:
+		return "init";
+	case KFASTBLOCK_OBJECT_READY:
+		return "ready";
+	case KFASTBLOCK_OBJECT_QUEUED:
+		return "queued";
+	case KFASTBLOCK_OBJECT_IN_FLIGHT:
+		return "in_flight";
+	case KFASTBLOCK_OBJECT_REQUEUE:
+		return "requeue";
+	case KFASTBLOCK_OBJECT_DONE:
+		return "done";
+	case KFASTBLOCK_OBJECT_FAILED:
+		return "failed";
+	case KFASTBLOCK_OBJECT_CANCELLED:
+		return "cancelled";
+	default:
+		return "unknown";
+	}
+}
+
+bool kfastblock_request_object_state_terminal(
+	enum kfastblock_request_object_state state)
+{
+	switch (state) {
+	case KFASTBLOCK_OBJECT_DONE:
+	case KFASTBLOCK_OBJECT_FAILED:
+	case KFASTBLOCK_OBJECT_CANCELLED:
+		return true;
+	default:
+		return false;
+	}
+}
+
 int kfastblock_request_pick_dispatch_batch(
 	struct kfastblock_request *kf_req,
 	struct kfastblock_request_dispatch_batch *batch,
@@ -771,6 +809,26 @@ unsigned int kfastblock_request_dispatch_credits(
 	credits = dispatched >= window ? 0 : window - dispatched;
 	spin_unlock_irqrestore((spinlock_t *)&kf_req->object_state_lock, flags);
 	return credits;
+}
+
+unsigned int kfastblock_request_dispatchable_objects(
+	const struct kfastblock_request *kf_req)
+{
+	unsigned int count = 0;
+	unsigned int i;
+	unsigned long flags;
+
+	if (!kf_req || !kf_req->object_runtime)
+		return 0;
+
+	spin_lock_irqsave((spinlock_t *)&kf_req->object_state_lock, flags);
+	for (i = 0; i < kf_req->nr_objects; ++i) {
+		if (kfastblock_request_object_dispatchable(
+			    &kf_req->object_runtime[i]))
+			count++;
+	}
+	spin_unlock_irqrestore((spinlock_t *)&kf_req->object_state_lock, flags);
+	return count;
 }
 
 unsigned int kfastblock_request_completed_objects(
