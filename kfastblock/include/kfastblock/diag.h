@@ -116,6 +116,10 @@ struct kfastblock_diag_pipeline_snapshot {
 	u32 inflight;
 	u32 peak_inflight;
 	u32 free_entries;
+	u64 oldest_inflight_seq;
+	u64 newest_inflight_seq;
+	unsigned long oldest_queued_jiffies;
+	unsigned long newest_queued_jiffies;
 	u64 request_prepares;
 	u64 request_cleanups;
 	u64 dispatch_batches;
