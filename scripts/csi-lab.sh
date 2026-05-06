@@ -44,17 +44,23 @@ EXPORTER_BIN="$ROOT/exporter/bin/fastblock-exporter"
 CONTROLLER_BIN="$ROOT/csi/bin/fastblock-csi-controller"
 NODE_BIN="$ROOT/csi/bin/fastblock-csi-node"
 SMOKE_BIN="$ROOT/csi/bin/fastblock-csi-smoke"
+ROLLBACK_PROOF_BIN="$ROOT/build/src/test/rollback_proof"
 RDMA_SCRIPT="$ROOT/scripts/create-rdma-rxe.sh"
+ROLLBACK_PROOF_IMAGE="${ROLLBACK_PROOF_IMAGE:-rollback-proof-base-$(date +%s)}"
+ROLLBACK_PROOF_SNAPSHOT="${ROLLBACK_PROOF_SNAPSHOT:-snap-proof-$(date +%s)}"
+ROLLBACK_PROOF_COREMASK="${ROLLBACK_PROOF_COREMASK:-0x2}"
 
 usage() {
     cat <<'EOF'
 Usage:
-  scripts/csi-lab.sh [up|down|status] [options]
+  scripts/csi-lab.sh [up|down|status|rollback-proof] [options]
 
 Actions:
   up       Build binaries, prepare host, deploy the single-OSD CSI lab, and run smoke validation.
   down     Stop lab daemons and clean sockets/runtime state.
   status   Show process, pool, transport, and endpoint status.
+  rollback-proof
+           Bring up a minimal monitor+OSD lab and run the direct rollback proof.
 
 Options:
   --lab-root <path>         Override lab state root (default: .lab-ready under repo root)
@@ -69,6 +75,9 @@ Options:
   --nvmf-mem-mb <n>         SPDK target memory size in MB (default: 2048)
   --smoke-transport <name>  Smoke transport: rdma, tcp, or none (default: rdma)
   --aio-file-size <size>    Sparse file size for single-OSD aio backend (default: 100G)
+  --proof-image <name>      Rollback proof image name
+  --proof-snapshot <name>   Rollback proof snapshot name
+  --proof-coremask <mask>   SPDK core mask for rollback proof (default: 0x2)
   --skip-build              Reuse existing binaries instead of rebuilding
   --skip-smoke              Start environment without running smoke validation
   --reuse-state             Keep lab root and stored OSD identity instead of resetting from zero
@@ -124,6 +133,18 @@ while [[ $# -gt 0 ]]; do
             ;;
         --aio-file-size)
             AIO_FILE_SIZE="$2"
+            shift 2
+            ;;
+        --proof-image)
+            ROLLBACK_PROOF_IMAGE="$2"
+            shift 2
+            ;;
+        --proof-snapshot)
+            ROLLBACK_PROOF_SNAPSHOT="$2"
+            shift 2
+            ;;
+        --proof-coremask)
+            ROLLBACK_PROOF_COREMASK="$2"
             shift 2
             ;;
         --skip-build)
@@ -447,6 +468,13 @@ build_binaries() {
     )
 }
 
+build_rollback_proof() {
+    log "building rollback proof binary"
+    mkdir -p /tmp/fastblock-gocache /tmp/fastblock-gotmp
+    GOCACHE=/tmp/fastblock-gocache GOTMPDIR=/tmp/fastblock-gotmp cmake -S "$ROOT" -B "$ROOT/build" >/dev/null
+    cmake --build "$ROOT/build" --target rollback_proof -j2 >/dev/null
+}
+
 ensure_binaries_exist() {
     local bin
     for bin in \
@@ -460,6 +488,10 @@ ensure_binaries_exist() {
         "$SMOKE_BIN"; do
         [[ -x "$bin" ]] || die "missing binary: $bin"
     done
+}
+
+ensure_rollback_proof_exists() {
+    [[ -x "$ROLLBACK_PROOF_BIN" ]] || die "missing binary: $ROLLBACK_PROOF_BIN"
 }
 
 spdk_rpc_sock() {
@@ -746,6 +778,8 @@ show_status() {
     log "node socket: /tmp/fastblock-csi-node.sock"
     log "sample RDMA smoke:"
     printf '  %s -controller-endpoint unix:///tmp/fastblock-csi-controller.sock -node-endpoint unix:///tmp/fastblock-csi-node.sock -node-id %s -host-nqn "$(cat /etc/nvme/hostnqn)" -volume-name smoke-rdma -pool %s -transport rdma -size-bytes 16777216 -object-size 4194304 -block-size 4096\n' "$SMOKE_BIN" "$NODE_ID" "$POOL_NAME"
+    log "sample rollback proof:"
+    printf '  %s rollback-proof --skip-build --proof-image rollback-proof-base --proof-snapshot snap-proof\n' "$0"
 }
 
 down() {
@@ -793,6 +827,39 @@ up() {
     show_status
 }
 
+rollback_proof_action() {
+    require_root
+    require_commands
+    ensure_host_ip
+    ensure_netdev
+    if [[ "$FRESH" -eq 1 ]]; then
+        down || true
+        rm -rf "$LAB_ROOT"
+    fi
+    mkdir -p "$RUN_DIR" "$LOG_DIR" "$STATE_DIR"
+    write_config
+    ensure_modules
+    ensure_rdma
+    ensure_hugepages
+    if [[ "$BUILD" -eq 1 ]]; then
+        build_binaries
+        build_rollback_proof
+    fi
+    ensure_binaries_exist
+    ensure_rollback_proof_exists
+    start_monitor
+    ensure_osd_identity
+    mkfs_osd_if_needed
+    start_osd
+    ensure_pool
+    log "running rollback proof image=$ROLLBACK_PROOF_IMAGE snapshot=$ROLLBACK_PROOF_SNAPSHOT coremask=$ROLLBACK_PROOF_COREMASK"
+    FB_ROLLBACK_POOL="$POOL_NAME" \
+    FB_ROLLBACK_IMAGE="$ROLLBACK_PROOF_IMAGE" \
+    FB_ROLLBACK_SNAPSHOT="$ROLLBACK_PROOF_SNAPSHOT" \
+    "$ROLLBACK_PROOF_BIN" -m "$ROLLBACK_PROOF_COREMASK" -C "$CONFIG_PATH"
+    log "rollback proof passed"
+}
+
 case "$ACTION" in
     up)
         up
@@ -805,6 +872,9 @@ case "$ACTION" in
         ensure_host_ip
         ensure_netdev
         show_status
+        ;;
+    rollback-proof)
+        rollback_proof_action
         ;;
     *)
         usage
