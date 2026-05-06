@@ -22,6 +22,7 @@ enum kfastblock_request_object_state {
 	KFASTBLOCK_OBJECT_READY,
 	KFASTBLOCK_OBJECT_QUEUED,
 	KFASTBLOCK_OBJECT_IN_FLIGHT,
+	KFASTBLOCK_OBJECT_REQUEUE,
 	KFASTBLOCK_OBJECT_DONE,
 	KFASTBLOCK_OBJECT_FAILED,
 	KFASTBLOCK_OBJECT_CANCELLED,
@@ -172,6 +173,14 @@ int kfastblock_request_lookup_object_by_seq(
 	u64 seq,
 	unsigned int *object_index);
 int kfastblock_request_complete_object_by_seq(
+	struct kfastblock_request *kf_req,
+	u64 seq,
+	int ret);
+int kfastblock_request_requeue_object(
+	struct kfastblock_request *kf_req,
+	unsigned int object_index,
+	int ret);
+int kfastblock_request_requeue_object_by_seq(
 	struct kfastblock_request *kf_req,
 	u64 seq,
 	int ret);
