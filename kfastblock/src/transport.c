@@ -944,6 +944,8 @@ static int kfastblock_transport_begin_exchange(
 		return -ENOMEM;
 
 	kfastblock_request_record_object_seq(kf_req, object_index, seq);
+	kfastblock_volume_update_pipeline_snapshot(kf_req->vol,
+						&kf_req->pipeline);
 	return 0;
 }
 
@@ -973,6 +975,8 @@ static void kfastblock_transport_finish_exchange(
 	kfastblock_pipeline_finish_exchange(&ctx->kf_req->pipeline,
 					    ctx->seq, ret, status,
 					    body_len, flags);
+	kfastblock_volume_update_pipeline_snapshot(ctx->kf_req->vol,
+						&ctx->kf_req->pipeline);
 }
 
 static int kfastblock_transport_match_exchange_response(

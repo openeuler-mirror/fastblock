@@ -271,9 +271,19 @@ static void kfastblock_diag_collect_pipeline(
 	struct kfastblock_volume *vol,
 	struct kfastblock_diag_snapshot *snapshot)
 {
+	unsigned long flags;
+	struct kfastblock_pipeline_snapshot pipe_snapshot = {};
+
 	if (!vol || !snapshot)
 		return;
 
+	spin_lock_irqsave(&vol->pipeline_snapshot_lock, flags);
+	pipe_snapshot = vol->pipeline_snapshot;
+	spin_unlock_irqrestore(&vol->pipeline_snapshot_lock, flags);
+	snapshot->pipeline.capacity = pipe_snapshot.capacity;
+	snapshot->pipeline.inflight = pipe_snapshot.inflight;
+	snapshot->pipeline.peak_inflight = pipe_snapshot.peak_inflight;
+	snapshot->pipeline.free_entries = pipe_snapshot.free_entries;
 	snapshot->pipeline.request_prepares =
 		atomic64_read(&vol->pipeline_stats.request_prepares);
 	snapshot->pipeline.request_cleanups =
@@ -989,6 +999,14 @@ int kfastblock_diag_dump_seq(struct seq_file *m,
 
 	seq_printf(m, "pipeline.request_prepares=%llu\n",
 		   snapshot->pipeline.request_prepares);
+	seq_printf(m, "pipeline.capacity=%u\n",
+		   snapshot->pipeline.capacity);
+	seq_printf(m, "pipeline.inflight=%u\n",
+		   snapshot->pipeline.inflight);
+	seq_printf(m, "pipeline.peak_inflight=%u\n",
+		   snapshot->pipeline.peak_inflight);
+	seq_printf(m, "pipeline.free_entries=%u\n",
+		   snapshot->pipeline.free_entries);
 	seq_printf(m, "pipeline.request_cleanups=%llu\n",
 		   snapshot->pipeline.request_cleanups);
 	seq_printf(m, "pipeline.dispatch_batches=%llu\n",

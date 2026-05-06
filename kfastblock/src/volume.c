@@ -423,6 +423,8 @@ void kfastblock_volume_stats_init(struct kfastblock_volume *vol)
 	atomic_set(&vol->pipeline_stats.last_response_status, 0);
 	atomic_set(&vol->pipeline_stats.last_response_body_len, 0);
 	atomic_set(&vol->pipeline_stats.last_transport_flags, 0);
+	spin_lock_init(&vol->pipeline_snapshot_lock);
+	memset(&vol->pipeline_snapshot, 0, sizeof(vol->pipeline_snapshot));
 	spin_lock_init(&vol->event_log.lock);
 	vol->event_log.next_index = 0;
 	vol->event_log.count = 0;
@@ -514,6 +516,35 @@ void kfastblock_volume_account_pipeline_response(
 		   (int)response_body_len);
 	atomic_set(&vol->pipeline_stats.last_transport_flags,
 		   (int)transport_flags);
+}
+
+void kfastblock_volume_update_pipeline_snapshot(
+	struct kfastblock_volume *vol,
+	const struct kfastblock_pipeline_state *state)
+{
+	unsigned long flags;
+	struct kfastblock_pipeline_snapshot snapshot = {};
+
+	if (!vol || !state)
+		return;
+
+	kfastblock_pipeline_snapshot((struct kfastblock_pipeline_state *)state,
+				     &snapshot);
+	spin_lock_irqsave(&vol->pipeline_snapshot_lock, flags);
+	vol->pipeline_snapshot = snapshot;
+	spin_unlock_irqrestore(&vol->pipeline_snapshot_lock, flags);
+}
+
+void kfastblock_volume_reset_pipeline_snapshot(struct kfastblock_volume *vol)
+{
+	unsigned long flags;
+
+	if (!vol)
+		return;
+
+	spin_lock_irqsave(&vol->pipeline_snapshot_lock, flags);
+	memset(&vol->pipeline_snapshot, 0, sizeof(vol->pipeline_snapshot));
+	spin_unlock_irqrestore(&vol->pipeline_snapshot_lock, flags);
 }
 
 void kfastblock_volume_account_io_submit(struct kfastblock_volume *vol,

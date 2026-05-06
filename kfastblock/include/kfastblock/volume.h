@@ -21,6 +21,7 @@ struct dentry;
 #include "kfastblock/diag.h"
 #include "kfastblock/fault.h"
 #include "kfastblock/meta.h"
+#include "kfastblock/pipeline.h"
 #include "kfastblock/scheduler.h"
 #include "kfastblock/selfcheck.h"
 
@@ -180,6 +181,8 @@ struct kfastblock_volume {
 	struct kfastblock_selfcheck_state selfcheck;
 	struct kfastblock_fault_injection_state fault_injection;
 	struct kfastblock_diag_baseline_state diag_baseline;
+	spinlock_t pipeline_snapshot_lock;
+	struct kfastblock_pipeline_snapshot pipeline_snapshot;
 
 	struct list_head node;
 	struct device dev;
@@ -270,5 +273,9 @@ void kfastblock_volume_account_pipeline_response(
 	s32 response_status,
 	u32 response_body_len,
 	u32 transport_flags);
+void kfastblock_volume_update_pipeline_snapshot(
+	struct kfastblock_volume *vol,
+	const struct kfastblock_pipeline_state *state);
+void kfastblock_volume_reset_pipeline_snapshot(struct kfastblock_volume *vol);
 
 #endif
