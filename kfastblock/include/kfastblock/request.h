@@ -248,6 +248,7 @@ unsigned int kfastblock_request_state_count(
 	enum kfastblock_request_object_state state);
 bool kfastblock_request_any_failed(const struct kfastblock_request *kf_req);
 bool kfastblock_request_has_inflight(const struct kfastblock_request *kf_req);
+bool kfastblock_request_has_terminal(const struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_terminal_objects(
 	const struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_nonterminal_objects(
