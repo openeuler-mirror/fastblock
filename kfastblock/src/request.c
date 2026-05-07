@@ -669,6 +669,22 @@ bool kfastblock_request_object_has_response_by_seq(
 	return kfastblock_request_object_has_response(kf_req, object_index);
 }
 
+bool kfastblock_request_has_response_recorded(
+	const struct kfastblock_request *kf_req)
+{
+	unsigned int i;
+
+	if (!kf_req || !kf_req->object_runtime)
+		return false;
+
+	for (i = 0; i < kf_req->nr_objects; ++i) {
+		if (kfastblock_request_object_has_response(kf_req, i))
+			return true;
+	}
+
+	return false;
+}
+
 bool kfastblock_request_object_is_dispatchable(
 	const struct kfastblock_request *kf_req,
 	unsigned int object_index)
