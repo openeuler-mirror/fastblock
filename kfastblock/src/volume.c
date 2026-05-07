@@ -518,6 +518,33 @@ void kfastblock_volume_account_pipeline_response(
 		   (int)transport_flags);
 }
 
+s32 kfastblock_volume_pipeline_last_response_status(
+	struct kfastblock_volume *vol)
+{
+	if (!vol)
+		return 0;
+
+	return atomic_read(&vol->pipeline_stats.last_response_status);
+}
+
+u32 kfastblock_volume_pipeline_last_response_body_len(
+	struct kfastblock_volume *vol)
+{
+	if (!vol)
+		return 0;
+
+	return (u32)atomic_read(&vol->pipeline_stats.last_response_body_len);
+}
+
+u32 kfastblock_volume_pipeline_last_transport_flags(
+	struct kfastblock_volume *vol)
+{
+	if (!vol)
+		return 0;
+
+	return (u32)atomic_read(&vol->pipeline_stats.last_transport_flags);
+}
+
 void kfastblock_volume_update_pipeline_snapshot(
 	struct kfastblock_volume *vol,
 	const struct kfastblock_pipeline_state *state)
