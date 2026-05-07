@@ -233,12 +233,16 @@ unsigned int kfastblock_request_dispatch_credits(
 	const struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_dispatchable_objects(
 	const struct kfastblock_request *kf_req);
+unsigned int kfastblock_request_active_objects(
+	const struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_state_count(
 	const struct kfastblock_request *kf_req,
 	enum kfastblock_request_object_state state);
 bool kfastblock_request_any_failed(const struct kfastblock_request *kf_req);
 bool kfastblock_request_has_inflight(const struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_terminal_objects(
+	const struct kfastblock_request *kf_req);
+unsigned int kfastblock_request_nonterminal_objects(
 	const struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_failed_objects(
 	const struct kfastblock_request *kf_req);

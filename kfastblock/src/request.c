@@ -943,6 +943,13 @@ unsigned int kfastblock_request_dispatchable_objects(
 	return count;
 }
 
+unsigned int kfastblock_request_active_objects(
+	const struct kfastblock_request *kf_req)
+{
+	return kfastblock_request_queued_objects(kf_req) +
+	       kfastblock_request_inflight_objects(kf_req);
+}
+
 unsigned int kfastblock_request_state_count(
 	const struct kfastblock_request *kf_req,
 	enum kfastblock_request_object_state state)
@@ -980,6 +987,18 @@ unsigned int kfastblock_request_terminal_objects(
 	return kfastblock_request_failed_objects(kf_req) +
 	       kfastblock_request_cancelled_objects(kf_req) +
 	       kfastblock_request_completed_objects(kf_req);
+}
+
+unsigned int kfastblock_request_nonterminal_objects(
+	const struct kfastblock_request *kf_req)
+{
+	if (!kf_req)
+		return 0;
+	if (kf_req->nr_objects <= kfastblock_request_terminal_objects(kf_req))
+		return 0;
+
+	return kf_req->nr_objects -
+	       kfastblock_request_terminal_objects(kf_req);
 }
 
 unsigned int kfastblock_request_failed_objects(
