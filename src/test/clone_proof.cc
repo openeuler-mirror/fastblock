@@ -14,6 +14,7 @@
 #include "fastblock/monclient/client.h"
 #include "fastblock/msg/rdma/client.h"
 #include "fastblock/utils/err_num.h"
+#include "fastblock/utils/simple_poller.h"
 #include "fastblock/utils/utils.h"
 
 #include <spdk/event.h>
@@ -54,6 +55,8 @@ constexpr uint64_t seg1_offset = default_object_size;
 constexpr uint64_t seg2_offset = default_object_size * 2;
 constexpr uint64_t io_size = 4096;
 constexpr uint64_t partial_size = 512;
+constexpr uint64_t clone_retry_delay_us = 10 * 1000;
+constexpr uint32_t clone_retry_limit = 200;
 
 static char* g_conf_path{nullptr};
 static std::string g_pool_name{"fb"};
@@ -96,6 +99,8 @@ struct app_ctx {
     std::string seg2_base{};   // @@BASE_B\n
     std::string seg0_clone{};  // @@CLONEC\n
     std::string seg1_partial{}; // @@PARTL\n (512 bytes)
+    std::unique_ptr<utils::simple_poller> clone_retry_poller{};
+    uint32_t clone_retry_count{0};
     phase current_phase{phase::init};
     std::atomic<bool> stopping{false};
     int rc{0};
@@ -180,6 +185,47 @@ static void issue_read_clone_seg2_fallback();
 static void issue_read_base_seg0();
 static void ensure_image_ready();
 
+static int clone_write_retry_poll(void*)
+{
+    if (g_ctx.clone_retry_poller) {
+        g_ctx.clone_retry_poller->unregister_poller();
+    }
+
+    switch (g_ctx.current_phase) {
+    case phase::write_clone_seg0:
+        issue_write_clone_seg0();
+        break;
+    case phase::write_clone_seg1_partial:
+        issue_write_clone_seg1_partial();
+        break;
+    default:
+        SPDK_ERRLOG("unexpected clone retry phase %d\n", static_cast<int>(g_ctx.current_phase));
+        app_stop_with_rc(EIO);
+        break;
+    }
+
+    return SPDK_POLLER_BUSY;
+}
+
+static void schedule_clone_write_retry()
+{
+    if (!g_ctx.clone_retry_poller) {
+        SPDK_ERRLOG("clone retry poller is not initialized\n");
+        app_stop_with_rc(EIO);
+        return;
+    }
+    if (++g_ctx.clone_retry_count > clone_retry_limit) {
+        SPDK_ERRLOG("clone proof exhausted lineage warmup retries\n");
+        app_stop_with_rc(EIO);
+        return;
+    }
+    g_ctx.clone_retry_poller->register_poller(
+      clone_write_retry_poll,
+      nullptr,
+      clone_retry_delay_us,
+      "clone_pf_retry");
+}
+
 // ---------- read callback (shared by all read phases) ----------
 
 static void on_read_done(struct spdk_bdev_io*, char* buf, uint64_t len, int32_t state)
@@ -208,10 +254,11 @@ static void on_read_done(struct spdk_bdev_io*, char* buf, uint64_t len, int32_t 
             app_stop_with_rc(EIO);
             return;
         }
-        // Verify the suffix (bytes 512..4095) still carry parent data (@@BASE_B\n + zeros)
+        // Partial copy-up only overwrites the first 512 bytes, so the rest must stay
+        // identical to the parent object tail, which is zero-filled in this proof.
         auto suffix = data.substr(partial_size);
-        if (suffix.rfind("@@BASE_B\n", 0) != 0) {
-            SPDK_ERRLOG("clone SEG1 partial copy-up verify failed: suffix not from parent\n");
+        if (std::any_of(suffix.begin(), suffix.end(), [](char ch) { return ch != '\0'; })) {
+            SPDK_ERRLOG("clone SEG1 partial copy-up verify failed: suffix not preserved from parent tail\n");
             app_stop_with_rc(EIO);
             return;
         }
@@ -388,10 +435,20 @@ static void on_base_write_done(struct spdk_bdev_io*, int32_t state)
 
 static void on_clone_write_done(struct spdk_bdev_io*, int32_t state)
 {
+    if (state == err::E_BUSY) {
+        SPDK_NOTICELOG(
+          "clone write hit E_BUSY in phase %d, wait for lineage warmup and retry (%u/%u)\n",
+          static_cast<int>(g_ctx.current_phase),
+          g_ctx.clone_retry_count + 1,
+          clone_retry_limit);
+        schedule_clone_write_retry();
+        return;
+    }
     if (state != err::E_SUCCESS) {
         fail_with_state("clone image write", state);
         return;
     }
+    g_ctx.clone_retry_count = 0;
 
     switch (g_ctx.current_phase) {
     case phase::write_clone_seg0:
@@ -521,6 +578,7 @@ static void start_worker()
     spdk_cpuset_set_cpu(&cpumask, current_core, true);
 
     g_ctx.blk_thread = spdk_thread_create("clone_proof_blk", &cpumask);
+    g_ctx.clone_retry_poller = std::make_unique<utils::simple_poller>(g_ctx.blk_thread);
     auto opts = msg::rdma::client::make_options(g_ctx.pt);
     g_ctx.blk_client = std::make_unique<libblk_client>(g_ctx.mon_client.get(), g_ctx.blk_thread, opts);
     g_ctx.blk_client->start([]() {
