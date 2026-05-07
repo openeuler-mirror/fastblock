@@ -303,11 +303,11 @@ static void kfastblock_diag_collect_pipeline(
 	snapshot->pipeline.seq_records =
 		atomic64_read(&vol->pipeline_stats.seq_records);
 	snapshot->pipeline.last_response_status =
-		atomic_read(&vol->pipeline_stats.last_response_status);
+		kfastblock_volume_pipeline_last_response_status(vol);
 	snapshot->pipeline.last_response_body_len =
-		(u32)atomic_read(&vol->pipeline_stats.last_response_body_len);
+		kfastblock_volume_pipeline_last_response_body_len(vol);
 	snapshot->pipeline.last_transport_flags =
-		(u32)atomic_read(&vol->pipeline_stats.last_transport_flags);
+		kfastblock_volume_pipeline_last_transport_flags(vol);
 }
 
 static void kfastblock_diag_collect_selfcheck(
