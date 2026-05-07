@@ -197,10 +197,54 @@ func DeleteImage(ctx context.Context, client *etcdapi.EtcdClient, imageID string
 	if err != nil {
 		return err
 	}
-	return client.NewTxn().
+
+	// Check if image has snapshots
+	if metadata.CurrentSnapSeq > 0 {
+		snapshots, err := ListSnapshots(ctx, client, imageID)
+		if err != nil {
+			return err
+		}
+		// Filter out deleted snapshots
+		activeSnapshots := 0
+		for _, snap := range snapshots {
+			if snap.Status != SnapshotStatusDeletedPendingGC {
+				activeSnapshots++
+			}
+		}
+		if activeSnapshots > 0 {
+			return ErrImageHasSnapshots
+		}
+	}
+
+	txn := client.NewTxn().
 		Delete(imageKey(imageID)).
-		Delete(imageNameKey(metadata.PoolName, metadata.ImageName)).
-		Commit(ctx)
+		Delete(imageNameKey(metadata.PoolName, metadata.ImageName))
+
+	// If this is a clone image, decrement parent snapshot's child_count
+	if metadata.ParentSnapshotID != "" {
+		parentSnapshot, err := GetSnapshotByID(ctx, client, metadata.ParentSnapshotID)
+		if err != nil {
+			return err
+		}
+		if parentSnapshot.ChildCount > 0 {
+			updatedSnapshot := *parentSnapshot
+			updatedSnapshot.ChildCount--
+			updatedSnapshot.UpdatedAt = time.Now().UTC()
+			if err := updatedSnapshot.normalizeAndValidate(); err != nil {
+				return err
+			}
+			snapshotData, err := json.Marshal(&updatedSnapshot)
+			if err != nil {
+				return err
+			}
+			txn = txn.
+				Put(snapshotKey(updatedSnapshot.SourceImageID, updatedSnapshot.SnapshotID), string(snapshotData)).
+				Put(snapshotNameKey(updatedSnapshot.SourceImageID, updatedSnapshot.SnapshotName), updatedSnapshot.SnapshotID).
+				Put(snapshotIDKey(updatedSnapshot.SnapshotID), updatedSnapshot.SourceImageID)
+		}
+	}
+
+	return txn.Commit(ctx)
 }
 
 func PutSnapshot(ctx context.Context, client *etcdapi.EtcdClient, metadata *SnapshotMetadata) error {

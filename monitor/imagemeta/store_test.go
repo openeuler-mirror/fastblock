@@ -602,6 +602,141 @@ func TestFinalizeFlattenImageByID(t *testing.T) {
 	}
 }
 
+func TestDeleteImageConstraints(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+
+	// Create base image
+	image := &ImageMetadata{
+		ImageID:    "img-del-1",
+		PoolID:     20,
+		PoolName:   "fb",
+		ImageName:  "delete-test",
+		Size:       8 << 20,
+		ObjectSize: 4 << 20,
+		Status:     ImageStatusReady,
+	}
+	if err := PutImage(ctx, client, image); err != nil {
+		t.Fatalf("PutImage failed: %v", err)
+	}
+
+	// Create snapshot
+	snapshot, err := CreateSnapshotByName(ctx, client, "fb", "delete-test", "snap-del")
+	if err != nil {
+		t.Fatalf("CreateSnapshotByName failed: %v", err)
+	}
+
+	// Should not be able to delete image with active snapshots
+	if err := DeleteImage(ctx, client, "img-del-1"); !errors.Is(err, ErrImageHasSnapshots) {
+		t.Fatalf("expected ErrImageHasSnapshots when deleting image with snapshots, got %v", err)
+	}
+
+	// Mark snapshot as deleted
+	deletedSnapshot, err := DeleteSnapshotByID(ctx, client, snapshot.SnapshotID)
+	if err != nil {
+		t.Fatalf("DeleteSnapshotByID failed: %v", err)
+	}
+	if deletedSnapshot.Status != SnapshotStatusDeletedPendingGC {
+		t.Fatalf("expected snapshot status DeletedPendingGC, got %v", deletedSnapshot.Status)
+	}
+
+	// Now should be able to delete image (snapshot is marked as deleted)
+	if err := DeleteImage(ctx, client, "img-del-1"); err != nil {
+		t.Fatalf("DeleteImage should succeed after snapshot deleted, got %v", err)
+	}
+
+	// Verify image is deleted
+	if _, err := GetImage(ctx, client, "img-del-1"); !errors.Is(err, ErrImageNotFound) {
+		t.Fatalf("expected ErrImageNotFound after deletion, got %v", err)
+	}
+}
+
+func TestDeleteSnapshotConstraints(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+
+	// Create base image
+	image := &ImageMetadata{
+		ImageID:    "img-snap-del-1",
+		PoolID:     21,
+		PoolName:   "fb",
+		ImageName:  "snap-delete-test",
+		Size:       8 << 20,
+		ObjectSize: 4 << 20,
+		Status:     ImageStatusReady,
+	}
+	if err := PutImage(ctx, client, image); err != nil {
+		t.Fatalf("PutImage failed: %v", err)
+	}
+
+	// Create and protect snapshot
+	snapshot, err := CreateSnapshotByName(ctx, client, "fb", "snap-delete-test", "snap-protected")
+	if err != nil {
+		t.Fatalf("CreateSnapshotByName failed: %v", err)
+	}
+	protectedSnapshot, err := ProtectSnapshotByID(ctx, client, snapshot.SnapshotID)
+	if err != nil {
+		t.Fatalf("ProtectSnapshotByID failed: %v", err)
+	}
+
+	// Should not be able to delete protected snapshot
+	if _, err := DeleteSnapshotByID(ctx, client, protectedSnapshot.SnapshotID); !errors.Is(err, ErrSnapshotProtected) {
+		t.Fatalf("expected ErrSnapshotProtected when deleting protected snapshot, got %v", err)
+	}
+
+	// Create clone from snapshot
+	clone, err := CreateCloneFromSnapshot(ctx, client, protectedSnapshot.SnapshotID, "clone-del-test")
+	if err != nil {
+		t.Fatalf("CreateCloneFromSnapshot failed: %v", err)
+	}
+
+	// Verify child_count increased
+	updatedSnapshot, err := GetSnapshotByID(ctx, client, protectedSnapshot.SnapshotID)
+	if err != nil {
+		t.Fatalf("GetSnapshotByID failed: %v", err)
+	}
+	if updatedSnapshot.ChildCount != 1 {
+		t.Fatalf("expected child_count=1 after clone creation, got %d", updatedSnapshot.ChildCount)
+	}
+
+	// Should not be able to unprotect snapshot with children
+	if _, err := UnprotectSnapshotByID(ctx, client, protectedSnapshot.SnapshotID); !errors.Is(err, ErrSnapshotHasChildren) {
+		t.Fatalf("expected ErrSnapshotHasChildren when unprotecting snapshot with children, got %v", err)
+	}
+
+	// Delete clone image
+	if err := DeleteImage(ctx, client, clone.ImageID); err != nil {
+		t.Fatalf("DeleteImage failed: %v", err)
+	}
+
+	// Verify child_count decreased
+	afterDeleteSnapshot, err := GetSnapshotByID(ctx, client, protectedSnapshot.SnapshotID)
+	if err != nil {
+		t.Fatalf("GetSnapshotByID failed: %v", err)
+	}
+	if afterDeleteSnapshot.ChildCount != 0 {
+		t.Fatalf("expected child_count=0 after clone deletion, got %d", afterDeleteSnapshot.ChildCount)
+	}
+
+	// Now should be able to unprotect
+	unprotectedSnapshot, err := UnprotectSnapshotByID(ctx, client, protectedSnapshot.SnapshotID)
+	if err != nil {
+		t.Fatalf("UnprotectSnapshotByID should succeed after children deleted, got %v", err)
+	}
+	if unprotectedSnapshot.Protected {
+		t.Fatalf("expected snapshot to be unprotected")
+	}
+
+	// Now should be able to delete
+	deletedSnapshot, err := DeleteSnapshotByID(ctx, client, protectedSnapshot.SnapshotID)
+	if err != nil {
+		t.Fatalf("DeleteSnapshotByID should succeed after unprotect, got %v", err)
+	}
+	if deletedSnapshot.Status != SnapshotStatusDeletedPendingGC {
+		t.Fatalf("expected snapshot status DeletedPendingGC, got %v", deletedSnapshot.Status)
+	}
+}
+
 func newTestClient(t *testing.T) *etcdapi.EtcdClient {
 	t.Helper()
 
