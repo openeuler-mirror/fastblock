@@ -193,6 +193,9 @@ bool kfastblock_request_object_has_response(
 bool kfastblock_request_object_has_response_by_seq(
 	struct kfastblock_request *kf_req,
 	u64 seq);
+bool kfastblock_request_object_is_terminal(
+	const struct kfastblock_request *kf_req,
+	unsigned int object_index);
 int kfastblock_request_clear_object_response_by_seq(
 	struct kfastblock_request *kf_req,
 	u64 seq);
