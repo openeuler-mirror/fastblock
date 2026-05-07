@@ -271,15 +271,12 @@ static void kfastblock_diag_collect_pipeline(
 	struct kfastblock_volume *vol,
 	struct kfastblock_diag_snapshot *snapshot)
 {
-	unsigned long flags;
 	struct kfastblock_pipeline_snapshot pipe_snapshot = {};
 
 	if (!vol || !snapshot)
 		return;
 
-	spin_lock_irqsave(&vol->pipeline_snapshot_lock, flags);
-	pipe_snapshot = vol->pipeline_snapshot;
-	spin_unlock_irqrestore(&vol->pipeline_snapshot_lock, flags);
+	kfastblock_volume_get_pipeline_snapshot(vol, &pipe_snapshot);
 	snapshot->pipeline.capacity = pipe_snapshot.capacity;
 	snapshot->pipeline.inflight = pipe_snapshot.inflight;
 	snapshot->pipeline.peak_inflight = pipe_snapshot.peak_inflight;
