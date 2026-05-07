@@ -669,6 +669,23 @@ bool kfastblock_request_object_has_response_by_seq(
 	return kfastblock_request_object_has_response(kf_req, object_index);
 }
 
+bool kfastblock_request_object_is_dispatchable(
+	const struct kfastblock_request *kf_req,
+	unsigned int object_index)
+{
+	bool dispatchable = false;
+	unsigned long flags;
+
+	if (!kf_req || !kf_req->object_runtime || object_index >= kf_req->nr_objects)
+		return false;
+
+	spin_lock_irqsave((spinlock_t *)&kf_req->object_state_lock, flags);
+	dispatchable = kfastblock_request_object_dispatchable(
+		&kf_req->object_runtime[object_index]);
+	spin_unlock_irqrestore((spinlock_t *)&kf_req->object_state_lock, flags);
+	return dispatchable;
+}
+
 bool kfastblock_request_object_is_terminal(
 	const struct kfastblock_request *kf_req,
 	unsigned int object_index)
