@@ -244,6 +244,10 @@ s32 kfastblock_request_last_response_status(
 	const struct kfastblock_request *kf_req);
 u32 kfastblock_request_last_response_body_len(
 	const struct kfastblock_request *kf_req);
+unsigned long kfastblock_request_oldest_pending_jiffies(
+	const struct kfastblock_request *kf_req);
+unsigned long kfastblock_request_last_completed_jiffies(
+	const struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_queued_objects(
 	const struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_inflight_objects(

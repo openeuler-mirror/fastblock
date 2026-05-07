@@ -1039,6 +1039,51 @@ u32 kfastblock_request_last_response_body_len(
 	return value;
 }
 
+unsigned long kfastblock_request_oldest_pending_jiffies(
+	const struct kfastblock_request *kf_req)
+{
+	unsigned long value = 0;
+	unsigned long flags;
+	unsigned int i;
+
+	if (!kf_req || !kf_req->object_runtime)
+		return 0;
+
+	spin_lock_irqsave((spinlock_t *)&kf_req->object_state_lock, flags);
+	for (i = 0; i < kf_req->nr_objects; ++i) {
+		const struct kfastblock_request_object_runtime *runtime;
+
+		runtime = &kf_req->object_runtime[i];
+		if (kfastblock_request_object_state_terminal(runtime->state))
+			continue;
+		if (!runtime->queued_jiffies)
+			continue;
+		if (!value || runtime->queued_jiffies < value)
+			value = runtime->queued_jiffies;
+	}
+	spin_unlock_irqrestore((spinlock_t *)&kf_req->object_state_lock, flags);
+	return value;
+}
+
+unsigned long kfastblock_request_last_completed_jiffies(
+	const struct kfastblock_request *kf_req)
+{
+	unsigned long value = 0;
+	unsigned long flags;
+	unsigned int i;
+
+	if (!kf_req || !kf_req->object_runtime)
+		return 0;
+
+	spin_lock_irqsave((spinlock_t *)&kf_req->object_state_lock, flags);
+	for (i = 0; i < kf_req->nr_objects; ++i) {
+		if (kf_req->object_runtime[i].completed_jiffies > value)
+			value = kf_req->object_runtime[i].completed_jiffies;
+	}
+	spin_unlock_irqrestore((spinlock_t *)&kf_req->object_state_lock, flags);
+	return value;
+}
+
 unsigned int kfastblock_request_completed_objects(
 	const struct kfastblock_request *kf_req)
 {
