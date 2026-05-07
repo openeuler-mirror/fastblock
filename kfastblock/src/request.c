@@ -1084,6 +1084,11 @@ unsigned int kfastblock_request_retry_objects(
 	return count;
 }
 
+bool kfastblock_request_has_retry(const struct kfastblock_request *kf_req)
+{
+	return kfastblock_request_retry_objects(kf_req) != 0;
+}
+
 s32 kfastblock_request_last_response_status(
 	const struct kfastblock_request *kf_req)
 {
