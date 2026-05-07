@@ -61,3 +61,19 @@ target_link_libraries(rollback_proof
     monclient
     fbclient
 )
+
+add_executable(clone_proof
+  clone_proof.cc
+)
+
+target_include_directories(clone_proof
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(clone_proof
+  PUBLIC
+    base
+    osd_msg
+    msg
+    monclient
+    fbclient
+)
