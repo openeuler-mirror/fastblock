@@ -65,6 +65,9 @@ bool kfastblock_pipeline_lookup(struct kfastblock_pipeline_state *state,
 				struct kfastblock_pipeline_entry *snapshot);
 bool kfastblock_pipeline_has_seq(struct kfastblock_pipeline_state *state,
 				 u64 seq);
+bool kfastblock_pipeline_empty(struct kfastblock_pipeline_state *state);
+bool kfastblock_pipeline_has_free_entries(
+	struct kfastblock_pipeline_state *state);
 struct kfastblock_pipeline_entry *kfastblock_pipeline_complete(
 	struct kfastblock_pipeline_state *state,
 	u64 seq,
