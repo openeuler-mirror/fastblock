@@ -637,6 +637,38 @@ int kfastblock_request_record_object_response_by_seq(
 	return 0;
 }
 
+bool kfastblock_request_object_has_response(
+	const struct kfastblock_request *kf_req,
+	unsigned int object_index)
+{
+	bool has_response = false;
+	unsigned long flags;
+
+	if (!kf_req || !kf_req->object_runtime || object_index >= kf_req->nr_objects)
+		return false;
+
+	spin_lock_irqsave((spinlock_t *)&kf_req->object_state_lock, flags);
+	has_response = kf_req->object_runtime[object_index].response_status != 0 ||
+		       kf_req->object_runtime[object_index].response_body_len != 0 ||
+		       kf_req->object_runtime[object_index].transport_flags != 0;
+	spin_unlock_irqrestore((spinlock_t *)&kf_req->object_state_lock, flags);
+	return has_response;
+}
+
+bool kfastblock_request_object_has_response_by_seq(
+	struct kfastblock_request *kf_req,
+	u64 seq)
+{
+	unsigned int object_index = 0;
+	int ret;
+
+	ret = kfastblock_request_lookup_object_by_seq(kf_req, seq, &object_index);
+	if (ret)
+		return false;
+
+	return kfastblock_request_object_has_response(kf_req, object_index);
+}
+
 int kfastblock_request_clear_object_response_by_seq(
 	struct kfastblock_request *kf_req,
 	u64 seq)
