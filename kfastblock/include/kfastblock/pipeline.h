@@ -69,6 +69,10 @@ bool kfastblock_pipeline_empty(struct kfastblock_pipeline_state *state);
 bool kfastblock_pipeline_full(struct kfastblock_pipeline_state *state);
 bool kfastblock_pipeline_has_free_entries(
 	struct kfastblock_pipeline_state *state);
+u64 kfastblock_pipeline_oldest_inflight_seq(
+	struct kfastblock_pipeline_state *state);
+u64 kfastblock_pipeline_newest_inflight_seq(
+	struct kfastblock_pipeline_state *state);
 struct kfastblock_pipeline_entry *kfastblock_pipeline_complete(
 	struct kfastblock_pipeline_state *state,
 	u64 seq,
