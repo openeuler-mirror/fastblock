@@ -177,6 +177,23 @@ u64 kfastblock_pipeline_newest_inflight_seq(
 	return snapshot.newest_inflight_seq;
 }
 
+unsigned int kfastblock_pipeline_spare_capacity(
+	struct kfastblock_pipeline_state *state)
+{
+	unsigned int spare = 0;
+	unsigned long flags;
+
+	if (!state)
+		return 0;
+
+	spin_lock_irqsave(&state->lock, flags);
+	if (state->capacity > state->inflight)
+		spare = state->capacity - state->inflight;
+	spin_unlock_irqrestore(&state->lock, flags);
+
+	return spare;
+}
+
 struct kfastblock_pipeline_entry *kfastblock_pipeline_enqueue(
 	struct kfastblock_pipeline_state *state,
 	u64 seq,
