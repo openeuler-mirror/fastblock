@@ -1841,6 +1841,29 @@ static int kfastblock_transport_normalize_object_ret(
 	return ret;
 }
 
+static int kfastblock_transport_prepare_object_exchange(
+	struct kfastblock_volume *vol,
+	struct kfastblock_request *kf_req,
+	unsigned int object_index,
+	const struct kfastblock_leader_info *leader,
+	u8 raw_opcode,
+	struct kfastblock_cached_socket **cached,
+	struct socket **sock,
+	struct kfastblock_transport_exchange_ctx *exchange)
+{
+	u64 seq;
+	int ret;
+
+	ret = kfastblock_transport_acquire_osd_socket(vol, leader, cached, sock);
+	if (ret)
+		return ret;
+
+	seq = kfastblock_transport_next_seq(*cached);
+	return kfastblock_transport_begin_exchange(
+		exchange, kf_req, object_index, KFASTBLOCK_RAW_SERVICE_OSD,
+		raw_opcode, seq);
+}
+
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
@@ -1857,7 +1880,6 @@ static int kfastblock_transport_submit_object_io(
 	unsigned int actions = 0;
 	int ret;
 	int attempt;
-	u64 seq;
 	u8 raw_opcode;
 	struct kfastblock_transport_exchange_ctx exchange = {};
 	struct kfastblock_transport_response_ctx response = {};
@@ -1887,29 +1909,14 @@ static int kfastblock_transport_submit_object_io(
 		if (ret)
 			goto out;
 
-		ret = kfastblock_transport_acquire_osd_socket(vol, &leader,
-						      &cached, &sock);
+		ret = kfastblock_transport_prepare_object_exchange(
+			vol, kf_req, object_index, &leader, raw_opcode, &cached,
+			&sock, &exchange);
 		if (ret) {
 			actions = kfastblock_recovery_classify_object_failure(ret);
-
-			if (actions) {
-				if (kfastblock_transport_handle_object_failure(
-					    kf_req, extent, op, hint, &leader,
-					    object_index, ret, actions))
-					continue;
-			}
-			goto out;
-		}
-
-		seq = kfastblock_transport_next_seq(cached);
-		ret = kfastblock_transport_begin_exchange(&exchange, kf_req,
-							  object_index,
-							  KFASTBLOCK_RAW_SERVICE_OSD,
-							  raw_opcode, seq);
-		if (ret) {
-			actions = kfastblock_recovery_classify_object_failure(ret);
-			kfastblock_recovery_finalize_osd_socket(vol, cached, &leader,
-								ret, actions);
+			if (cached)
+				kfastblock_recovery_finalize_osd_socket(
+					vol, cached, &leader, ret, actions);
 			cached = NULL;
 			if (actions) {
 				if (kfastblock_transport_handle_object_failure(
@@ -1936,7 +1943,8 @@ static int kfastblock_transport_submit_object_io(
 			goto out;
 		}
 		ret = kfastblock_transport_execute_object_opcode(
-			sock, kf_req->request_pool_id, extent, op, buf, seq,
+			sock, kf_req->request_pool_id, extent, op, buf,
+			exchange.seq,
 			&response);
 		ret = kfastblock_transport_normalize_object_ret(op, extent, buf,
 								ret);
