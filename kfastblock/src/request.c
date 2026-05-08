@@ -1116,6 +1116,25 @@ bool kfastblock_request_has_retry(const struct kfastblock_request *kf_req)
 	return kfastblock_request_retry_objects(kf_req) != 0;
 }
 
+u64 kfastblock_request_last_wire_seq(const struct kfastblock_request *kf_req)
+{
+	u64 value = 0;
+	unsigned long flags;
+	unsigned int i;
+
+	if (!kf_req || !kf_req->object_runtime)
+		return 0;
+
+	spin_lock_irqsave((spinlock_t *)&kf_req->object_state_lock, flags);
+	for (i = 0; i < kf_req->nr_objects; ++i) {
+		if (!kf_req->object_runtime[i].wire_seq)
+			continue;
+		value = kf_req->object_runtime[i].wire_seq;
+	}
+	spin_unlock_irqrestore((spinlock_t *)&kf_req->object_state_lock, flags);
+	return value;
+}
+
 s32 kfastblock_request_last_response_status(
 	const struct kfastblock_request *kf_req)
 {
