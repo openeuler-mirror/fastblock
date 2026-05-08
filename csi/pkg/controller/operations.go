@@ -18,6 +18,7 @@ type CreateVolumeRequest struct {
 	ObjectSize    int64
 	BlockSize     int64
 	Transport     string
+	SnapshotID    string
 }
 
 type PublishVolumeRequest struct {
@@ -155,13 +156,50 @@ func (s *Service) CreateVolume(ctx context.Context, req CreateVolumeRequest) (mo
 	if err := req.Validate(); err != nil {
 		return monitorclient.Volume{}, err
 	}
-	volume, err := s.monitor.CreateVolume(ctx, monitorclient.CreateVolumeRequest{
-		Name:          req.Name,
-		Pool:          req.Pool,
-		CapacityBytes: req.CapacityBytes,
-		ObjectSize:    req.ObjectSize,
-		BlockSize:     req.BlockSize,
-	})
+	var (
+		volume monitorclient.Volume
+		err    error
+	)
+	if strings.TrimSpace(req.SnapshotID) != "" {
+		if s.snapshotMonitor == nil {
+			return monitorclient.Volume{}, ErrSnapshotNotSupported
+		}
+		snapshot, err := s.snapshotMonitor.GetSnapshot(ctx, req.SnapshotID)
+		if err != nil {
+			return monitorclient.Volume{}, err
+		}
+		if !snapshot.ReadyToUse {
+			return monitorclient.Volume{}, ErrSnapshotNotReady
+		}
+		if snapshot.SizeBytes > 0 && req.CapacityBytes < snapshot.SizeBytes {
+			return monitorclient.Volume{}, fmt.Errorf(
+				"%w: requested=%d snapshot=%d",
+				ErrSnapshotRestoreSizeTooSmall,
+				req.CapacityBytes,
+				snapshot.SizeBytes,
+			)
+		}
+		restoreReq := monitorclient.CreateVolumeFromSnapshotRequest{
+			Name:          req.Name,
+			Pool:          req.Pool,
+			CapacityBytes: req.CapacityBytes,
+			ObjectSize:    req.ObjectSize,
+			BlockSize:     req.BlockSize,
+			SnapshotID:    req.SnapshotID,
+		}
+		if err := restoreReq.Validate(); err != nil {
+			return monitorclient.Volume{}, err
+		}
+		volume, err = s.snapshotMonitor.CreateVolumeFromSnapshot(ctx, restoreReq)
+	} else {
+		volume, err = s.monitor.CreateVolume(ctx, monitorclient.CreateVolumeRequest{
+			Name:          req.Name,
+			Pool:          req.Pool,
+			CapacityBytes: req.CapacityBytes,
+			ObjectSize:    req.ObjectSize,
+			BlockSize:     req.BlockSize,
+		})
+	}
 	if err != nil {
 		return monitorclient.Volume{}, err
 	}

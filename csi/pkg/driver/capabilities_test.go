@@ -18,7 +18,7 @@ func TestPluginCapabilities(t *testing.T) {
 }
 
 func TestControllerServiceCapabilities(t *testing.T) {
-	caps := ControllerServiceCapabilities()
+	caps := ControllerServiceCapabilities(false)
 	if len(caps) != 2 {
 		t.Fatalf("unexpected controller capability count: %d", len(caps))
 	}
@@ -27,6 +27,17 @@ func TestControllerServiceCapabilities(t *testing.T) {
 	}
 	if caps[1].GetRpc().GetType() != csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME {
 		t.Fatalf("unexpected second controller capability: %+v", caps[1])
+	}
+
+	withSnapshots := ControllerServiceCapabilities(true)
+	if len(withSnapshots) != 4 {
+		t.Fatalf("unexpected snapshot controller capability count: %d", len(withSnapshots))
+	}
+	if withSnapshots[2].GetRpc().GetType() != csi.ControllerServiceCapability_RPC_CREATE_DELETE_SNAPSHOT {
+		t.Fatalf("unexpected snapshot create/delete capability: %+v", withSnapshots[2])
+	}
+	if withSnapshots[3].GetRpc().GetType() != csi.ControllerServiceCapability_RPC_LIST_SNAPSHOTS {
+		t.Fatalf("unexpected snapshot list capability: %+v", withSnapshots[3])
 	}
 }
 

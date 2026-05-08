@@ -41,6 +41,7 @@ struct flatten_image_ctx {
     uint64_t object_count{0};
     uint64_t current_object_seq{0};
     size_t fallback_depth{0};
+    std::function<void(int32_t)> completion{};
 };
 
 struct rollback_image_ctx {
@@ -143,6 +144,9 @@ void advance_snap_seq_on_all_clients(
 void flatten_finish(flatten_image_ctx* ctx, const int32_t state)
 {
     SPDK_NOTICELOG("flatten image %s/%s finished with state %d\n", ctx->pool_name.c_str(), ctx->image_name.c_str(), state);
+    if (ctx->completion) {
+        ctx->completion(state);
+    }
     delete ctx;
 }
 
@@ -950,12 +954,13 @@ void libblk_client::finalize_flatten_image(const std::string image_id)
         });
 }
 
-void libblk_client::flatten_image(const std::string pool_name, const std::string image_name)
+void libblk_client::flatten_image(const std::string pool_name, const std::string image_name, std::function<void(int32_t)> cb)
 {
     auto* ctx = new flatten_image_ctx{
         .owner = this,
         .pool_name = pool_name,
         .image_name = image_name,
+        .completion = std::move(cb),
     };
     _mon_cli->emplace_get_image_metadata_by_name_request(
         pool_name,
