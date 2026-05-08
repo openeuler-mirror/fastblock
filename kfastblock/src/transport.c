@@ -1881,6 +1881,16 @@ static bool kfastblock_transport_retry_object_after_failure(
 		kf_req, extent, op, hint, leader, object_index, ret, actions);
 }
 
+static void kfastblock_transport_note_object_leader_success(
+	struct kfastblock_request_pg_hint *hint,
+	const struct kfastblock_leader_info *leader)
+{
+	if (!hint || !leader)
+		return;
+
+	kfastblock_request_set_pg_hint_leader(hint, leader);
+}
+
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
@@ -1974,8 +1984,9 @@ static int kfastblock_transport_submit_object_io(
 				    kf_req, extent, op, hint, &leader,
 				    object_index, ret, actions))
 				continue;
-		} else if (hint) {
-			kfastblock_request_set_pg_hint_leader(hint, &leader);
+		} else {
+			kfastblock_transport_note_object_leader_success(hint,
+								 &leader);
 		}
 		if (!ret)
 			ret = kfastblock_transport_finish_object_success(
