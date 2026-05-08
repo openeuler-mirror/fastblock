@@ -1891,6 +1891,21 @@ static void kfastblock_transport_note_object_leader_success(
 	kfastblock_request_set_pg_hint_leader(hint, leader);
 }
 
+static void kfastblock_transport_finalize_object_socket(
+	struct kfastblock_volume *vol,
+	struct kfastblock_cached_socket **cached,
+	const struct kfastblock_leader_info *leader,
+	int ret,
+	unsigned int actions)
+{
+	if (!vol || !cached || !*cached)
+		return;
+
+	kfastblock_recovery_finalize_osd_socket(vol, *cached, leader, ret,
+							actions);
+	*cached = NULL;
+}
+
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
@@ -1941,10 +1956,8 @@ static int kfastblock_transport_submit_object_io(
 			&sock, &exchange);
 		if (ret) {
 			actions = kfastblock_recovery_classify_object_failure(ret);
-			if (cached)
-				kfastblock_recovery_finalize_osd_socket(
-					vol, cached, &leader, ret, actions);
-			cached = NULL;
+			kfastblock_transport_finalize_object_socket(
+				vol, &cached, &leader, ret, actions);
 			if (kfastblock_transport_retry_object_after_failure(
 				    kf_req, extent, op, hint, &leader,
 				    object_index, ret, actions))
@@ -1955,10 +1968,9 @@ static int kfastblock_transport_submit_object_io(
 			vol, KFASTBLOCK_FAULT_OBJECT_IO);
 		if (ret) {
 			actions = kfastblock_recovery_classify_object_failure(ret);
-			kfastblock_recovery_finalize_osd_socket(vol, cached, &leader,
-								ret, actions);
+			kfastblock_transport_finalize_object_socket(
+				vol, &cached, &leader, ret, actions);
 			kfastblock_transport_finish_exchange(&exchange, ret, NULL);
-			cached = NULL;
 			if (kfastblock_transport_retry_object_after_failure(
 				    kf_req, extent, op, hint, &leader,
 				    object_index, ret, actions))
@@ -1976,9 +1988,8 @@ static int kfastblock_transport_submit_object_io(
 		kfastblock_transport_release_response_and_exchange(&exchange,
 							      &response, &ret);
 		actions = ret ? kfastblock_recovery_classify_object_failure(ret) : 0;
-		kfastblock_recovery_finalize_osd_socket(vol, cached, &leader, ret,
-							actions);
-		cached = NULL;
+		kfastblock_transport_finalize_object_socket(
+			vol, &cached, &leader, ret, actions);
 		if (ret) {
 			if (kfastblock_transport_retry_object_after_failure(
 				    kf_req, extent, op, hint, &leader,
