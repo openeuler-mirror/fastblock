@@ -108,9 +108,11 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		}
 
 		exportID := ""
+		volumeRef := volumeRefFromID(volumeID)
 		if metadata, ok, err := s.volumes.Get(ctx, volumeID); err != nil {
 			return err
 		} else if ok {
+			volumeRef = mergeVolumeRefs(volumeRef, metadata.Volume.Ref())
 			exportID = strings.TrimSpace(metadata.ExportID)
 		}
 		if exportID == "" && attachmentOK {
@@ -127,12 +129,12 @@ func (s *Service) Reconcile(ctx context.Context) error {
 
 		switch {
 		case attachmentOK && exportExists && leaseOK:
-			s.startLeaseRenewer(volumeID, lease.NodeID, lease.HostNQN)
+			s.startLeaseRenewer(volumeRef, lease.NodeID, lease.HostNQN)
 		case attachmentOK && exportExists && !leaseOK:
 			if err := s.acquireLease(ctx, volumeID, attachment.NodeID, attachment.HostNQN); err != nil {
 				return err
 			}
-			s.startLeaseRenewer(volumeID, attachment.NodeID, attachment.HostNQN)
+			s.startLeaseRenewer(volumeRef, attachment.NodeID, attachment.HostNQN)
 		case !attachmentOK && leaseOK && !exportExists:
 			s.leaseRenewer.Stop(volumeID)
 			if err := s.releaseLease(ctx, volumeID, lease.NodeID, lease.HostNQN); err != nil {

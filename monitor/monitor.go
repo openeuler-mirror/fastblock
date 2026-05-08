@@ -1037,6 +1037,78 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			return err
 		}
 
+	case *msg.Request_AttachImageRequest:
+		log.Info(ctx, "Received AttachImageRequest")
+
+		errCode, metadata := imagemeta.AttachImageProto(
+			ctx,
+			client,
+			payload.AttachImageRequest.GetImageId(),
+			payload.AttachImageRequest.GetClientId(),
+			payload.AttachImageRequest.GetClientType(),
+			payload.AttachImageRequest.GetLeaseDurationSeconds(),
+		)
+		response := &msg.Response{
+			Union: &msg.Response_AttachImageResponse{
+				AttachImageResponse: &msg.AttachImageResponse{
+					Errorcode: errCode,
+					Metadata:  metadata,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_DetachImageRequest:
+		log.Info(ctx, "Received DetachImageRequest")
+
+		errCode, metadata := imagemeta.DetachImageProto(
+			ctx,
+			client,
+			payload.DetachImageRequest.GetImageId(),
+			payload.DetachImageRequest.GetClientId(),
+		)
+		response := &msg.Response{
+			Union: &msg.Response_DetachImageResponse{
+				DetachImageResponse: &msg.DetachImageResponse{
+					Errorcode: errCode,
+					Metadata:  metadata,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_RenewImageLeaseRequest:
+		log.Info(ctx, "Received RenewImageLeaseRequest")
+
+		errCode, metadata := imagemeta.RenewImageLeaseProto(
+			ctx,
+			client,
+			payload.RenewImageLeaseRequest.GetImageId(),
+			payload.RenewImageLeaseRequest.GetClientId(),
+			payload.RenewImageLeaseRequest.GetLeaseDurationSeconds(),
+		)
+		response := &msg.Response{
+			Union: &msg.Response_RenewImageLeaseResponse{
+				RenewImageLeaseResponse: &msg.RenewImageLeaseResponse{
+					Errorcode: errCode,
+					Metadata:  metadata,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
 	case *msg.Request_PutCsiAttachmentRequest:
 		log.Info(ctx, "Received PutCSIAttachmentRequest")
 

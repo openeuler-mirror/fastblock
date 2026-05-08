@@ -20,6 +20,8 @@ var (
 	ErrImageExists          = errors.New("image metadata already exists")
 	ErrImageNotClone        = errors.New("image metadata is not a clone")
 	ErrImageHasSnapshots    = errors.New("image metadata has snapshots")
+	ErrImageAttached        = errors.New("image metadata is attached")
+	ErrAttachmentNotFound   = errors.New("image attachment not found")
 	ErrSnapshotNotFound     = errors.New("snapshot metadata not found")
 	ErrSnapshotExists       = errors.New("snapshot metadata already exists")
 	ErrSnapshotProtected    = errors.New("snapshot metadata is protected")
@@ -68,20 +70,28 @@ const (
 )
 
 type ImageMetadata struct {
-	ImageID          string      `json:"image_id"`
-	PoolID           int32       `json:"pool_id,omitempty"`
-	PoolName         string      `json:"pool_name"`
-	ImageName        string      `json:"image_name"`
-	Size             int64       `json:"size"`
-	ObjectSize       int64       `json:"object_size"`
-	CurrentSnapSeq   uint64      `json:"current_snap_seq,omitempty"`
-	Features         []string    `json:"features,omitempty"`
-	Status           ImageStatus `json:"status"`
-	ParentSnapshotID string      `json:"parent_snapshot_id,omitempty"`
-	Depth            uint32      `json:"depth,omitempty"`
-	CreatedAt        time.Time   `json:"created_at"`
-	UpdatedAt        time.Time   `json:"updated_at"`
-	Generation       uint64      `json:"generation,omitempty"`
+	ImageID          string            `json:"image_id"`
+	PoolID           int32             `json:"pool_id,omitempty"`
+	PoolName         string            `json:"pool_name"`
+	ImageName        string            `json:"image_name"`
+	Size             int64             `json:"size"`
+	ObjectSize       int64             `json:"object_size"`
+	CurrentSnapSeq   uint64            `json:"current_snap_seq,omitempty"`
+	Features         []string          `json:"features,omitempty"`
+	Status           ImageStatus       `json:"status"`
+	ParentSnapshotID string            `json:"parent_snapshot_id,omitempty"`
+	Depth            uint32            `json:"depth,omitempty"`
+	CreatedAt        time.Time         `json:"created_at"`
+	UpdatedAt        time.Time         `json:"updated_at"`
+	Generation       uint64            `json:"generation,omitempty"`
+	Attachments      []ImageAttachment `json:"attachments,omitempty"`
+}
+
+type ImageAttachment struct {
+	ClientID       string    `json:"client_id"`
+	ClientType     string    `json:"client_type"`
+	AttachedAt     time.Time `json:"attached_at"`
+	LeaseExpiresAt time.Time `json:"lease_expires_at"`
 }
 
 type SnapshotMetadata struct {
@@ -214,6 +224,11 @@ func DeleteImage(ctx context.Context, client *etcdapi.EtcdClient, imageID string
 		if activeSnapshots > 0 {
 			return ErrImageHasSnapshots
 		}
+	}
+
+	// A still-published image must not be deleted. Expired attachments are ignored.
+	if IsImageAttached(metadata) {
+		return ErrImageAttached
 	}
 
 	txn := client.NewTxn().
@@ -861,6 +876,19 @@ func (m *ImageMetadata) normalizeAndValidate() error {
 	if m.UpdatedAt.IsZero() {
 		m.UpdatedAt = m.CreatedAt
 	}
+	for i := range m.Attachments {
+		m.Attachments[i].ClientID = strings.TrimSpace(m.Attachments[i].ClientID)
+		m.Attachments[i].ClientType = strings.TrimSpace(m.Attachments[i].ClientType)
+		if m.Attachments[i].ClientID == "" || m.Attachments[i].ClientType == "" {
+			return errors.New("image attachment client id and client type are required")
+		}
+		if m.Attachments[i].AttachedAt.IsZero() {
+			m.Attachments[i].AttachedAt = now
+		}
+		if m.Attachments[i].LeaseExpiresAt.IsZero() {
+			return errors.New("image attachment lease expiration is required")
+		}
+	}
 	return nil
 }
 
@@ -989,6 +1017,231 @@ func childLinkKey(snapshotID, childImageID string) string {
 
 func operationKey(operationID string) string {
 	return config.ConfigImageOperationsKeyPrefix + encodeKeyPart(operationID)
+}
+
+// AttachImage adds an attachment to an image, indicating it's being used by a client
+func AttachImage(ctx context.Context, client *etcdapi.EtcdClient, imageID, clientID, clientType string, leaseDuration time.Duration) (*ImageMetadata, error) {
+	if client == nil {
+		return nil, errors.New("client is required")
+	}
+	imageID = strings.TrimSpace(imageID)
+	clientID = strings.TrimSpace(clientID)
+	clientType = strings.TrimSpace(clientType)
+	if imageID == "" || clientID == "" || clientType == "" {
+		return nil, errors.New("image id, client id and client type are required")
+	}
+	if leaseDuration <= 0 {
+		return nil, errors.New("lease duration must be positive")
+	}
+
+	image, err := GetImage(ctx, client, imageID)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	leaseExpires := now.Add(leaseDuration)
+
+	// Check if client already attached
+	found := false
+	for i := range image.Attachments {
+		if image.Attachments[i].ClientID == clientID {
+			image.Attachments[i].ClientType = clientType
+			image.Attachments[i].LeaseExpiresAt = leaseExpires
+			image.Attachments[i].AttachedAt = now
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		image.Attachments = append(image.Attachments, ImageAttachment{
+			ClientID:       clientID,
+			ClientType:     clientType,
+			AttachedAt:     now,
+			LeaseExpiresAt: leaseExpires,
+		})
+	}
+
+	image.UpdatedAt = now
+	if err := image.normalizeAndValidate(); err != nil {
+		return nil, err
+	}
+
+	data, err := json.Marshal(image)
+	if err != nil {
+		return nil, err
+	}
+
+	err = client.NewTxn().
+		Put(imageKey(image.ImageID), string(data)).
+		Commit(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return image, nil
+}
+
+// DetachImage removes an attachment from an image
+func DetachImage(ctx context.Context, client *etcdapi.EtcdClient, imageID, clientID string) (*ImageMetadata, error) {
+	if client == nil {
+		return nil, errors.New("client is required")
+	}
+	imageID = strings.TrimSpace(imageID)
+	clientID = strings.TrimSpace(clientID)
+	if imageID == "" || clientID == "" {
+		return nil, errors.New("image id and client id are required")
+	}
+
+	image, err := GetImage(ctx, client, imageID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Remove the attachment
+	filtered := make([]ImageAttachment, 0, len(image.Attachments))
+	for _, att := range image.Attachments {
+		if att.ClientID != clientID {
+			filtered = append(filtered, att)
+		}
+	}
+	image.Attachments = filtered
+	image.UpdatedAt = time.Now().UTC()
+
+	if err := image.normalizeAndValidate(); err != nil {
+		return nil, err
+	}
+
+	data, err := json.Marshal(image)
+	if err != nil {
+		return nil, err
+	}
+
+	err = client.NewTxn().
+		Put(imageKey(image.ImageID), string(data)).
+		Commit(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return image, nil
+}
+
+// RenewImageLease renews the lease for an existing attachment
+func RenewImageLease(ctx context.Context, client *etcdapi.EtcdClient, imageID, clientID string, leaseDuration time.Duration) (*ImageMetadata, error) {
+	if client == nil {
+		return nil, errors.New("client is required")
+	}
+	imageID = strings.TrimSpace(imageID)
+	clientID = strings.TrimSpace(clientID)
+	if imageID == "" || clientID == "" {
+		return nil, errors.New("image id and client id are required")
+	}
+	if leaseDuration <= 0 {
+		return nil, errors.New("lease duration must be positive")
+	}
+
+	image, err := GetImage(ctx, client, imageID)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	found := false
+	for i := range image.Attachments {
+		if image.Attachments[i].ClientID == clientID {
+			image.Attachments[i].LeaseExpiresAt = now.Add(leaseDuration)
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return nil, ErrAttachmentNotFound
+	}
+
+	image.UpdatedAt = now
+	if err := image.normalizeAndValidate(); err != nil {
+		return nil, err
+	}
+
+	data, err := json.Marshal(image)
+	if err != nil {
+		return nil, err
+	}
+
+	err = client.NewTxn().
+		Put(imageKey(image.ImageID), string(data)).
+		Commit(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return image, nil
+}
+
+// IsImageAttached checks if an image has any active attachments
+func IsImageAttached(image *ImageMetadata) bool {
+	if image == nil {
+		return false
+	}
+	now := time.Now().UTC()
+	for _, att := range image.Attachments {
+		if att.LeaseExpiresAt.After(now) {
+			return true
+		}
+	}
+	return false
+}
+
+// CleanExpiredAttachments removes expired attachments from an image
+func CleanExpiredAttachments(ctx context.Context, client *etcdapi.EtcdClient, imageID string) (*ImageMetadata, error) {
+	if client == nil {
+		return nil, errors.New("client is required")
+	}
+	imageID = strings.TrimSpace(imageID)
+	if imageID == "" {
+		return nil, errors.New("image id is required")
+	}
+
+	image, err := GetImage(ctx, client, imageID)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	filtered := make([]ImageAttachment, 0, len(image.Attachments))
+	for _, att := range image.Attachments {
+		if att.LeaseExpiresAt.After(now) {
+			filtered = append(filtered, att)
+		}
+	}
+
+	if len(filtered) == len(image.Attachments) {
+		return image, nil
+	}
+
+	image.Attachments = filtered
+	image.UpdatedAt = now
+
+	if err := image.normalizeAndValidate(); err != nil {
+		return nil, err
+	}
+
+	data, err := json.Marshal(image)
+	if err != nil {
+		return nil, err
+	}
+
+	err = client.NewTxn().
+		Put(imageKey(image.ImageID), string(data)).
+		Commit(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return image, nil
 }
 
 func encodeKeyPart(value string) string {

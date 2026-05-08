@@ -9,6 +9,7 @@ import (
 	"fastblock-csi/pkg/driver"
 	"fastblock-csi/pkg/exporterclient"
 	"fastblock-csi/pkg/monitorclient"
+	"fastblock-csi/pkg/volumeid"
 )
 
 type CreateVolumeRequest struct {
@@ -44,6 +45,30 @@ func normalizeVolume(volume monitorclient.Volume, ref monitorclient.VolumeRef) m
 		volume.Pool = ref.Pool
 	}
 	return volume
+}
+
+func volumeRefFromID(volumeID string) monitorclient.VolumeRef {
+	ref := monitorclient.VolumeRef{ID: strings.TrimSpace(volumeID)}
+	nameRef, err := volumeid.DecodeNameRef(volumeID)
+	if err != nil {
+		return ref
+	}
+	ref.Pool = nameRef.Pool
+	ref.Name = nameRef.Name
+	return ref
+}
+
+func mergeVolumeRefs(primary, fallback monitorclient.VolumeRef) monitorclient.VolumeRef {
+	if strings.TrimSpace(primary.ID) == "" {
+		primary.ID = fallback.ID
+	}
+	if strings.TrimSpace(primary.Name) == "" {
+		primary.Name = fallback.Name
+	}
+	if strings.TrimSpace(primary.Pool) == "" {
+		primary.Pool = fallback.Pool
+	}
+	return primary
 }
 
 func attachmentConflicts(existing Attachment, nodeID, hostNQN string) bool {
@@ -361,17 +386,23 @@ func (s *Service) ControllerPublishVolume(ctx context.Context, req ControllerPub
 		_ = s.releaseLease(ctx, req.Volume.ID, req.NodeID, hostNQN)
 		return PublishVolumeResult{}, err
 	}
+	if err := s.attachPublishedImage(ctx, req.Volume.Ref(), req.NodeID, hostNQN); err != nil {
+		_ = s.UnpublishVolume(ctx, NewUnpublishVolumeRequest(result.Export.ID, hostNQN))
+		_ = s.releaseLease(ctx, req.Volume.ID, req.NodeID, hostNQN)
+		return PublishVolumeResult{}, err
+	}
 	if err := s.attachments.Put(ctx, Attachment{
 		VolumeID: req.Volume.ID,
 		NodeID:   req.NodeID,
 		HostNQN:  hostNQN,
 		ExportID: result.Export.ID,
 	}); err != nil {
+		_ = s.detachPublishedImage(ctx, req.Volume.Ref(), req.NodeID, hostNQN)
 		_ = s.UnpublishVolume(ctx, NewUnpublishVolumeRequest(result.Export.ID, hostNQN))
 		_ = s.releaseLease(ctx, req.Volume.ID, req.NodeID, hostNQN)
 		return PublishVolumeResult{}, err
 	}
-	s.startLeaseRenewer(req.Volume.ID, req.NodeID, hostNQN)
+	s.startLeaseRenewer(req.Volume.Ref(), req.NodeID, hostNQN)
 	return result, nil
 }
 
@@ -394,6 +425,7 @@ func (s *Service) ControllerUnpublishVolume(ctx context.Context, req ControllerU
 	nodeID := strings.TrimSpace(req.NodeID)
 	hostNQN := ResolveHostNQN(nodeID, s.defaultHostNQN, req.Secrets)
 	exportID := strings.TrimSpace(req.ExportID)
+	volumeRef := volumeRefFromID(req.VolumeID)
 	if existing, ok, err := s.attachments.Get(ctx, req.VolumeID); err != nil {
 		return err
 	} else if ok {
@@ -417,8 +449,11 @@ func (s *Service) ControllerUnpublishVolume(ctx context.Context, req ControllerU
 		}
 	} else if metadata, ok, err := s.volumes.Get(ctx, req.VolumeID); err != nil {
 		return err
-	} else if ok && strings.TrimSpace(metadata.ExportID) != "" {
-		exportID = metadata.ExportID
+	} else if ok {
+		volumeRef = mergeVolumeRefs(volumeRef, metadata.Volume.Ref())
+		if strings.TrimSpace(metadata.ExportID) != "" {
+			exportID = metadata.ExportID
+		}
 	}
 	if (nodeID == "" || hostNQN == "") && exportID != "" {
 		if lease, ok, err := s.currentLease(ctx, req.VolumeID); err != nil {
@@ -444,6 +479,9 @@ func (s *Service) ControllerUnpublishVolume(ctx context.Context, req ControllerU
 	}
 	s.leaseRenewer.Stop(req.VolumeID)
 	if err := s.attachments.Delete(ctx, req.VolumeID); err != nil {
+		return err
+	}
+	if err := s.detachPublishedImage(ctx, volumeRef, nodeID, hostNQN); err != nil {
 		return err
 	}
 	if nodeID == "" || hostNQN == "" {

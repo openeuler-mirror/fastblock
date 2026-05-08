@@ -227,6 +227,15 @@ func imageToProto(item *ImageMetadata) *msg.ImageMetadataV2 {
 	if item == nil {
 		return nil
 	}
+	attachments := make([]*msg.ImageAttachment, 0, len(item.Attachments))
+	for _, att := range item.Attachments {
+		attachments = append(attachments, &msg.ImageAttachment{
+			ClientId:               att.ClientID,
+			ClientType:             att.ClientType,
+			AttachedAtUnixNano:     att.AttachedAt.UnixNano(),
+			LeaseExpiresAtUnixNano: att.LeaseExpiresAt.UnixNano(),
+		})
+	}
 	return &msg.ImageMetadataV2{
 		ImageId:           item.ImageID,
 		PoolId:            item.PoolID,
@@ -242,12 +251,27 @@ func imageToProto(item *ImageMetadata) *msg.ImageMetadataV2 {
 		CreatedAtUnixNano: item.CreatedAt.UnixNano(),
 		UpdatedAtUnixNano: item.UpdatedAt.UnixNano(),
 		Generation:        item.Generation,
+		Attachments:       attachments,
 	}
 }
 
 func imageFromProto(metadata *msg.ImageMetadataV2) (*ImageMetadata, error) {
 	if metadata == nil {
 		return nil, errors.New("image metadata is required")
+	}
+	attachments := make([]ImageAttachment, 0, len(metadata.GetAttachments()))
+	for _, att := range metadata.GetAttachments() {
+		attachment := ImageAttachment{
+			ClientID:   att.GetClientId(),
+			ClientType: att.GetClientType(),
+		}
+		if ts := att.GetAttachedAtUnixNano(); ts != 0 {
+			attachment.AttachedAt = time.Unix(0, ts).UTC()
+		}
+		if ts := att.GetLeaseExpiresAtUnixNano(); ts != 0 {
+			attachment.LeaseExpiresAt = time.Unix(0, ts).UTC()
+		}
+		attachments = append(attachments, attachment)
 	}
 	item := &ImageMetadata{
 		ImageID:          metadata.GetImageId(),
@@ -262,6 +286,7 @@ func imageFromProto(metadata *msg.ImageMetadataV2) (*ImageMetadata, error) {
 		ParentSnapshotID: metadata.GetParentSnapshotId(),
 		Depth:            metadata.GetDepth(),
 		Generation:       metadata.GetGeneration(),
+		Attachments:      attachments,
 	}
 	if ts := metadata.GetCreatedAtUnixNano(); ts != 0 {
 		item.CreatedAt = time.Unix(0, ts).UTC()
@@ -358,14 +383,52 @@ func toImageMetadataError(err error) msg.ImageMetadataErrorCode {
 	switch {
 	case err == nil:
 		return msg.ImageMetadataErrorCode_imageMetadataOk
-	case errors.Is(err, ErrImageNotFound), errors.Is(err, ErrSnapshotNotFound), errors.Is(err, ErrOperationNotFound):
+	case errors.Is(err, ErrImageNotFound), errors.Is(err, ErrSnapshotNotFound), errors.Is(err, ErrOperationNotFound),
+		errors.Is(err, ErrAttachmentNotFound):
 		return msg.ImageMetadataErrorCode_imageMetadataNotFound
+	case errors.Is(err, ErrImageAttached), errors.Is(err, ErrImageHasSnapshots), errors.Is(err, ErrSnapshotProtected),
+		errors.Is(err, ErrSnapshotHasChildren), errors.Is(err, ErrImageNotClone), errors.Is(err, ErrSnapshotNotProtected):
+		return msg.ImageMetadataErrorCode_imageMetadataInvalidArgument
 	default:
 		if isInvalidArgument(err) {
 			return msg.ImageMetadataErrorCode_imageMetadataInvalidArgument
 		}
 		return msg.ImageMetadataErrorCode_imageMetadataInternalError
 	}
+}
+
+func AttachImageProto(ctx context.Context, client *etcdapi.EtcdClient, imageID, clientID, clientType string, leaseDurationSeconds int64) (msg.ImageMetadataErrorCode, *msg.ImageMetadataV2) {
+	leaseDuration := time.Duration(leaseDurationSeconds) * time.Second
+	item, err := AttachImage(ctx, client, imageID, clientID, clientType, leaseDuration)
+	if err != nil {
+		return toImageMetadataError(err), nil
+	}
+	return msg.ImageMetadataErrorCode_imageMetadataOk, imageToProto(item)
+}
+
+func DetachImageProto(ctx context.Context, client *etcdapi.EtcdClient, imageID, clientID string) (msg.ImageMetadataErrorCode, *msg.ImageMetadataV2) {
+	item, err := DetachImage(ctx, client, imageID, clientID)
+	if err != nil {
+		return toImageMetadataError(err), nil
+	}
+	return msg.ImageMetadataErrorCode_imageMetadataOk, imageToProto(item)
+}
+
+func RenewImageLeaseProto(ctx context.Context, client *etcdapi.EtcdClient, imageID, clientID string, leaseDurationSeconds int64) (msg.ImageMetadataErrorCode, *msg.ImageMetadataV2) {
+	leaseDuration := time.Duration(leaseDurationSeconds) * time.Second
+	item, err := RenewImageLease(ctx, client, imageID, clientID, leaseDuration)
+	if err != nil {
+		return toImageMetadataError(err), nil
+	}
+	return msg.ImageMetadataErrorCode_imageMetadataOk, imageToProto(item)
+}
+
+func CleanExpiredAttachmentsProto(ctx context.Context, client *etcdapi.EtcdClient, imageID string) (msg.ImageMetadataErrorCode, *msg.ImageMetadataV2) {
+	item, err := CleanExpiredAttachments(ctx, client, imageID)
+	if err != nil {
+		return toImageMetadataError(err), nil
+	}
+	return msg.ImageMetadataErrorCode_imageMetadataOk, imageToProto(item)
 }
 
 func isInvalidArgument(err error) bool {

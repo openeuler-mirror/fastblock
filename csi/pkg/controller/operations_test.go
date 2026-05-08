@@ -26,10 +26,14 @@ type stubMetadataMonitorClient struct {
 	volumeMetadata     map[string]monitorclient.VolumeMetadata
 	attachments        map[string]monitorclient.Attachment
 	leases             map[string]monitorclient.Lease
+	imageAttachments   map[string]string
 	putVolumeCalls     int
 	putAttachmentCalls int
 	acquireLeaseCalls  int
 	releaseLeaseCalls  int
+	attachImageCalls   int
+	detachImageCalls   int
+	renewImageCalls    int
 }
 
 func (c *stubMonitorClient) CreateVolume(_ context.Context, req monitorclient.CreateVolumeRequest) (monitorclient.Volume, error) {
@@ -189,6 +193,37 @@ func (c *stubMetadataMonitorClient) ListLeases(_ context.Context) ([]monitorclie
 		items = append(items, item)
 	}
 	return items, nil
+}
+
+func (c *stubMetadataMonitorClient) AttachImage(_ context.Context, ref monitorclient.VolumeRef, clientID, _ string, _ int64) error {
+	if c.imageAttachments == nil {
+		c.imageAttachments = map[string]string{}
+	}
+	c.imageAttachments[ref.ID] = clientID
+	c.attachImageCalls++
+	return nil
+}
+
+func (c *stubMetadataMonitorClient) DetachImage(_ context.Context, ref monitorclient.VolumeRef, clientID string) error {
+	if c.imageAttachments != nil {
+		if existing, ok := c.imageAttachments[ref.ID]; ok && existing == clientID {
+			delete(c.imageAttachments, ref.ID)
+		}
+	}
+	c.detachImageCalls++
+	return nil
+}
+
+func (c *stubMetadataMonitorClient) RenewImageLease(_ context.Context, ref monitorclient.VolumeRef, clientID string, _ int64) error {
+	if c.imageAttachments == nil {
+		c.imageAttachments = map[string]string{}
+	}
+	if _, ok := c.imageAttachments[ref.ID]; !ok {
+		return monitorclient.ErrImageNotFound
+	}
+	c.imageAttachments[ref.ID] = clientID
+	c.renewImageCalls++
+	return nil
 }
 
 type stubExporterClient struct {
@@ -476,6 +511,51 @@ func TestControllerPublishIsIdempotentOnSameNode(t *testing.T) {
 	}
 	if !ok || metadata.ExportID != first.Export.ID {
 		t.Fatalf("expected volume metadata export id %q, got %+v", first.Export.ID, metadata)
+	}
+}
+
+func TestControllerPublishTracksImageAttachmentLifecycle(t *testing.T) {
+	monitor := &stubMetadataMonitorClient{}
+	exporter := &stubExporterClient{}
+	svc := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+	volume := monitorclient.Volume{
+		ID:            "fbvolname:fb:img-attach",
+		Name:          "img-attach",
+		Pool:          "fb",
+		CapacityBytes: 1 << 20,
+		ObjectSize:    4 << 20,
+	}
+
+	result, err := svc.ControllerPublishVolume(context.Background(), ControllerPublishRequest{
+		Volume:    volume,
+		BlockSize: 4096,
+		Transport: "rdma",
+		NodeID:    "node-a",
+		Secrets:   map[string]string{"hostNQN": "nqn.host.1"},
+	})
+	if err != nil {
+		t.Fatalf("controller publish failed: %v", err)
+	}
+	if monitor.attachImageCalls != 1 {
+		t.Fatalf("expected image attachment on publish, got %d calls", monitor.attachImageCalls)
+	}
+	if got := monitor.imageAttachments[volume.ID]; got != "node-a" {
+		t.Fatalf("expected image attachment client id node-a, got %q", got)
+	}
+
+	if err := svc.ControllerUnpublishVolume(context.Background(), ControllerUnpublishRequest{
+		VolumeID: volume.ID,
+		ExportID: result.Export.ID,
+		NodeID:   "node-a",
+		Secrets:  map[string]string{"hostNQN": "nqn.host.1"},
+	}); err != nil {
+		t.Fatalf("controller unpublish failed: %v", err)
+	}
+	if monitor.detachImageCalls != 1 {
+		t.Fatalf("expected image detach on unpublish, got %d calls", monitor.detachImageCalls)
+	}
+	if _, ok := monitor.imageAttachments[volume.ID]; ok {
+		t.Fatalf("expected image attachment to be removed after unpublish")
 	}
 }
 

@@ -75,6 +75,139 @@ func TestImageMetadataLifecycle(t *testing.T) {
 	}
 }
 
+func TestImageAttachmentLifecycle(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+
+	image := &ImageMetadata{
+		ImageID:    "img-attach-1",
+		PoolID:     17,
+		PoolName:   "fb",
+		ImageName:  "volume-attach-a",
+		Size:       1 << 20,
+		ObjectSize: 4 << 20,
+		Status:     ImageStatusReady,
+	}
+	if err := PutImage(ctx, client, image); err != nil {
+		t.Fatalf("PutImage failed: %v", err)
+	}
+
+	attached, err := AttachImage(ctx, client, image.ImageID, "client-a", "controller", time.Minute)
+	if err != nil {
+		t.Fatalf("AttachImage failed: %v", err)
+	}
+	if len(attached.Attachments) != 1 {
+		t.Fatalf("expected one attachment, got %+v", attached.Attachments)
+	}
+	if attached.Attachments[0].ClientID != "client-a" || attached.Attachments[0].ClientType != "controller" {
+		t.Fatalf("unexpected attachment payload: %+v", attached.Attachments[0])
+	}
+
+	initialLease := attached.Attachments[0].LeaseExpiresAt
+	reattached, err := AttachImage(ctx, client, image.ImageID, "client-a", "node", 2*time.Minute)
+	if err != nil {
+		t.Fatalf("reattach failed: %v", err)
+	}
+	if len(reattached.Attachments) != 1 {
+		t.Fatalf("expected reattach to update in place, got %+v", reattached.Attachments)
+	}
+	if reattached.Attachments[0].ClientType != "node" {
+		t.Fatalf("expected client type update on reattach, got %+v", reattached.Attachments[0])
+	}
+	if !reattached.Attachments[0].LeaseExpiresAt.After(initialLease) {
+		t.Fatalf("expected renewed lease expiration after %v, got %v", initialLease, reattached.Attachments[0].LeaseExpiresAt)
+	}
+
+	renewed, err := RenewImageLease(ctx, client, image.ImageID, "client-a", 3*time.Minute)
+	if err != nil {
+		t.Fatalf("RenewImageLease failed: %v", err)
+	}
+	if len(renewed.Attachments) != 1 {
+		t.Fatalf("expected one attachment after renew, got %+v", renewed.Attachments)
+	}
+	if !renewed.Attachments[0].LeaseExpiresAt.After(reattached.Attachments[0].LeaseExpiresAt) {
+		t.Fatalf("expected lease expiration to advance after renew")
+	}
+
+	detached, err := DetachImage(ctx, client, image.ImageID, "client-a")
+	if err != nil {
+		t.Fatalf("DetachImage failed: %v", err)
+	}
+	if len(detached.Attachments) != 0 {
+		t.Fatalf("expected no attachments after detach, got %+v", detached.Attachments)
+	}
+}
+
+func TestDeleteImageRejectsActiveAttachments(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+
+	active := &ImageMetadata{
+		ImageID:    "img-attach-active",
+		PoolID:     18,
+		PoolName:   "fb",
+		ImageName:  "volume-attach-active",
+		Size:       1 << 20,
+		ObjectSize: 4 << 20,
+		Status:     ImageStatusReady,
+	}
+	if err := PutImage(ctx, client, active); err != nil {
+		t.Fatalf("PutImage failed: %v", err)
+	}
+	if _, err := AttachImage(ctx, client, active.ImageID, "client-a", "controller", time.Minute); err != nil {
+		t.Fatalf("AttachImage failed: %v", err)
+	}
+	if err := DeleteImage(ctx, client, active.ImageID); !errors.Is(err, ErrImageAttached) {
+		t.Fatalf("expected ErrImageAttached, got %v", err)
+	}
+
+	expired := &ImageMetadata{
+		ImageID:    "img-attach-expired",
+		PoolID:     19,
+		PoolName:   "fb",
+		ImageName:  "volume-attach-expired",
+		Size:       1 << 20,
+		ObjectSize: 4 << 20,
+		Status:     ImageStatusReady,
+		Attachments: []ImageAttachment{
+			{
+				ClientID:       "client-b",
+				ClientType:     "controller",
+				AttachedAt:     time.Now().UTC().Add(-2 * time.Minute),
+				LeaseExpiresAt: time.Now().UTC().Add(-1 * time.Minute),
+			},
+		},
+	}
+	if err := PutImage(ctx, client, expired); err != nil {
+		t.Fatalf("PutImage failed: %v", err)
+	}
+	if err := DeleteImage(ctx, client, expired.ImageID); err != nil {
+		t.Fatalf("DeleteImage should ignore expired attachments, got %v", err)
+	}
+}
+
+func TestRenewImageLeaseRequiresExistingAttachment(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+
+	image := &ImageMetadata{
+		ImageID:    "img-attach-renew",
+		PoolID:     20,
+		PoolName:   "fb",
+		ImageName:  "volume-attach-renew",
+		Size:       1 << 20,
+		ObjectSize: 4 << 20,
+		Status:     ImageStatusReady,
+	}
+	if err := PutImage(ctx, client, image); err != nil {
+		t.Fatalf("PutImage failed: %v", err)
+	}
+
+	if _, err := RenewImageLease(ctx, client, image.ImageID, "missing-client", time.Minute); !errors.Is(err, ErrAttachmentNotFound) {
+		t.Fatalf("expected ErrAttachmentNotFound, got %v", err)
+	}
+}
+
 func TestSnapshotMetadataChildLinksAndOperations(t *testing.T) {
 	client := newTestClient(t)
 	ctx := context.Background()

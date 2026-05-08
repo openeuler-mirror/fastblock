@@ -59,6 +59,18 @@ func (c *NoopClient) ExpandVolume(context.Context, VolumeRef, int64) (Volume, er
 	return Volume{}, ErrNotImplemented
 }
 
+func (c *NoopClient) AttachImage(context.Context, VolumeRef, string, string, int64) error {
+	return ErrNotImplemented
+}
+
+func (c *NoopClient) DetachImage(context.Context, VolumeRef, string) error {
+	return ErrNotImplemented
+}
+
+func (c *NoopClient) RenewImageLease(context.Context, VolumeRef, string, int64) error {
+	return ErrNotImplemented
+}
+
 func (r CreateVolumeRequest) Validate() error {
 	if strings.TrimSpace(r.Name) == "" {
 		return errors.New("name is required")

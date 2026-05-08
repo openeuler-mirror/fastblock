@@ -573,6 +573,14 @@ message ImageMetadataV2 {
     int64 created_at_unix_nano = 12;
     int64 updated_at_unix_nano = 13;
     uint64 generation = 14;
+    repeated ImageAttachment attachments = 15;
+}
+
+message ImageAttachment {
+    string client_id = 1;
+    string client_type = 2;
+    int64 attached_at_unix_nano = 3;
+    int64 lease_expires_at_unix_nano = 4;
 }
 
 message SnapshotMetadataV2 {
@@ -824,6 +832,39 @@ message FinalizeFlattenImageResponse {
     ImageMetadataV2 metadata = 2;
 }
 
+message AttachImageRequest {
+    string image_id = 1;
+    string client_id = 2;
+    string client_type = 3;
+    int64 lease_duration_seconds = 4;
+}
+
+message AttachImageResponse {
+    ImageMetadataErrorCode errorcode = 1;
+    ImageMetadataV2 metadata = 2;
+}
+
+message DetachImageRequest {
+    string image_id = 1;
+    string client_id = 2;
+}
+
+message DetachImageResponse {
+    ImageMetadataErrorCode errorcode = 1;
+    ImageMetadataV2 metadata = 2;
+}
+
+message RenewImageLeaseRequest {
+    string image_id = 1;
+    string client_id = 2;
+    int64 lease_duration_seconds = 3;
+}
+
+message RenewImageLeaseResponse {
+    ImageMetadataErrorCode errorcode = 1;
+    ImageMetadataV2 metadata = 2;
+}
+
 message Request {
     oneof union {
         BootRequest boot_request = 1;
@@ -887,6 +928,9 @@ message Request {
         DeleteImageSnapshotRequest delete_image_snapshot_request = 59;
         FinalizeFlattenImageRequest finalize_flatten_image_request = 60;
         GetSnapshotIDByNameRequest get_snapshot_id_by_name_request = 61;
+        AttachImageRequest attach_image_request = 62;
+        DetachImageRequest detach_image_request = 63;
+        RenewImageLeaseRequest renew_image_lease_request = 64;
     }
 }
 
@@ -953,5 +997,8 @@ message Response {
         DeleteImageSnapshotResponse delete_image_snapshot_response = 59;
         FinalizeFlattenImageResponse finalize_flatten_image_response = 60;
         GetSnapshotIDByNameResponse get_snapshot_id_by_name_response = 61;
+        AttachImageResponse attach_image_response = 62;
+        DetachImageResponse detach_image_response = 63;
+        RenewImageLeaseResponse renew_image_lease_response = 64;
     }
 }
