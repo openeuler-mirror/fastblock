@@ -133,6 +133,12 @@ bool kfastblock_pipeline_has_seq(struct kfastblock_pipeline_state *state,
 	return kfastblock_pipeline_lookup(state, seq, &snapshot);
 }
 
+bool kfastblock_pipeline_has_inflight_entries(
+	struct kfastblock_pipeline_state *state)
+{
+	return kfastblock_pipeline_inflight_entries(state) != 0;
+}
+
 bool kfastblock_pipeline_empty(struct kfastblock_pipeline_state *state)
 {
 	return kfastblock_pipeline_inflight_entries(state) == 0;
