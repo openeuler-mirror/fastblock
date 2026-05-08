@@ -1864,6 +1864,23 @@ static int kfastblock_transport_prepare_object_exchange(
 		raw_opcode, seq);
 }
 
+static bool kfastblock_transport_retry_object_after_failure(
+	struct kfastblock_request *kf_req,
+	const struct kfastblock_object_extent *extent,
+	enum req_op op,
+	struct kfastblock_request_pg_hint *hint,
+	const struct kfastblock_leader_info *leader,
+	unsigned int object_index,
+	int ret,
+	unsigned int actions)
+{
+	if (!actions)
+		return false;
+
+	return kfastblock_transport_handle_object_failure(
+		kf_req, extent, op, hint, leader, object_index, ret, actions);
+}
+
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
@@ -1918,12 +1935,10 @@ static int kfastblock_transport_submit_object_io(
 				kfastblock_recovery_finalize_osd_socket(
 					vol, cached, &leader, ret, actions);
 			cached = NULL;
-			if (actions) {
-				if (kfastblock_transport_handle_object_failure(
-					    kf_req, extent, op, hint, &leader,
-					    object_index, ret, actions))
-					continue;
-			}
+			if (kfastblock_transport_retry_object_after_failure(
+				    kf_req, extent, op, hint, &leader,
+				    object_index, ret, actions))
+				continue;
 			goto out;
 		}
 		ret = kfastblock_transport_maybe_inject_fault(
@@ -1934,12 +1949,10 @@ static int kfastblock_transport_submit_object_io(
 								ret, actions);
 			kfastblock_transport_finish_exchange(&exchange, ret, NULL);
 			cached = NULL;
-			if (actions) {
-				if (kfastblock_transport_handle_object_failure(
-					    kf_req, extent, op, hint, &leader,
-					    object_index, ret, actions))
-					continue;
-			}
+			if (kfastblock_transport_retry_object_after_failure(
+				    kf_req, extent, op, hint, &leader,
+				    object_index, ret, actions))
+				continue;
 			goto out;
 		}
 		ret = kfastblock_transport_execute_object_opcode(
@@ -1957,12 +1970,10 @@ static int kfastblock_transport_submit_object_io(
 							actions);
 		cached = NULL;
 		if (ret) {
-			if (actions) {
-				if (kfastblock_transport_handle_object_failure(
-					    kf_req, extent, op, hint, &leader,
-					    object_index, ret, actions))
-					continue;
-			}
+			if (kfastblock_transport_retry_object_after_failure(
+				    kf_req, extent, op, hint, &leader,
+				    object_index, ret, actions))
+				continue;
 		} else if (hint) {
 			kfastblock_request_set_pg_hint_leader(hint, &leader);
 		}
