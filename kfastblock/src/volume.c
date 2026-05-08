@@ -545,6 +545,22 @@ u32 kfastblock_volume_pipeline_last_transport_flags(
 	return (u32)atomic_read(&vol->pipeline_stats.last_transport_flags);
 }
 
+u32 kfastblock_volume_pipeline_utilization_pct(
+	struct kfastblock_volume *vol)
+{
+	struct kfastblock_pipeline_snapshot snapshot = {};
+
+	if (!vol)
+		return 0;
+
+	kfastblock_volume_get_pipeline_snapshot(vol, &snapshot);
+	if (!snapshot.capacity)
+		return 0;
+
+	return min_t(u32, 100,
+		     (snapshot.inflight * 100) / snapshot.capacity);
+}
+
 void kfastblock_volume_update_pipeline_snapshot(
 	struct kfastblock_volume *vol,
 	const struct kfastblock_pipeline_state *state)
