@@ -973,6 +973,13 @@ unsigned int kfastblock_request_dispatch_credits(
 	return credits;
 }
 
+bool kfastblock_request_dispatch_window_saturated(
+	const struct kfastblock_request *kf_req)
+{
+	return kfastblock_request_dispatch_credits(kf_req) == 0 &&
+	       kfastblock_request_has_dispatchable(kf_req);
+}
+
 unsigned int kfastblock_request_dispatchable_objects(
 	const struct kfastblock_request *kf_req)
 {
