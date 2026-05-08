@@ -1074,6 +1074,19 @@ unsigned int kfastblock_request_response_recorded_objects(
 	return count;
 }
 
+unsigned int kfastblock_request_response_gap_objects(
+	const struct kfastblock_request *kf_req)
+{
+	if (!kf_req)
+		return 0;
+	if (kf_req->nr_objects <=
+	    kfastblock_request_response_recorded_objects(kf_req))
+		return 0;
+
+	return kf_req->nr_objects -
+	       kfastblock_request_response_recorded_objects(kf_req);
+}
+
 unsigned int kfastblock_request_terminal_objects(
 	const struct kfastblock_request *kf_req)
 {
