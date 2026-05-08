@@ -79,6 +79,8 @@ unsigned long kfastblock_pipeline_newest_queued_jiffies(
 	struct kfastblock_pipeline_state *state);
 unsigned int kfastblock_pipeline_spare_capacity(
 	struct kfastblock_pipeline_state *state);
+u32 kfastblock_pipeline_utilization_pct(
+	struct kfastblock_pipeline_state *state);
 struct kfastblock_pipeline_entry *kfastblock_pipeline_complete(
 	struct kfastblock_pipeline_state *state,
 	u64 seq,

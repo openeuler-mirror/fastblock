@@ -212,6 +212,19 @@ unsigned int kfastblock_pipeline_spare_capacity(
 	return spare;
 }
 
+u32 kfastblock_pipeline_utilization_pct(
+	struct kfastblock_pipeline_state *state)
+{
+	struct kfastblock_pipeline_snapshot snapshot = {};
+
+	kfastblock_pipeline_snapshot(state, &snapshot);
+	if (!snapshot.capacity)
+		return 0;
+
+	return min_t(u32, 100,
+		     (snapshot.inflight * 100) / snapshot.capacity);
+}
+
 struct kfastblock_pipeline_entry *kfastblock_pipeline_enqueue(
 	struct kfastblock_pipeline_state *state,
 	u64 seq,
