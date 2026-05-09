@@ -287,6 +287,8 @@ u32 kfastblock_volume_pipeline_peak_inflight(
 	struct kfastblock_volume *vol);
 u32 kfastblock_volume_pipeline_utilization_pct(
 	struct kfastblock_volume *vol);
+u32 kfastblock_volume_pipeline_free_entries(
+	struct kfastblock_volume *vol);
 u64 kfastblock_volume_pipeline_oldest_inflight_seq(
 	struct kfastblock_volume *vol);
 u64 kfastblock_volume_pipeline_newest_inflight_seq(
