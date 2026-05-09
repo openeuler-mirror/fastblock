@@ -2002,6 +2002,19 @@ static int kfastblock_transport_begin_object_attempt(
 		exchange);
 }
 
+static int kfastblock_transport_complete_successful_object_attempt(
+	struct kfastblock_request *kf_req,
+	const struct kfastblock_object_extent *extent,
+	enum req_op op,
+	struct kfastblock_request_pg_hint *hint,
+	const struct kfastblock_leader_info *leader,
+	void *buf)
+{
+	kfastblock_transport_note_object_leader_success(hint, leader);
+	return kfastblock_transport_finish_object_success(kf_req, extent, op,
+							  leader, buf);
+}
+
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
@@ -2075,13 +2088,10 @@ static int kfastblock_transport_submit_object_io(
 				    kf_req, extent, op, hint, &leader,
 				    object_index, ret, actions))
 				continue;
-		} else {
-			kfastblock_transport_note_object_leader_success(hint,
-								 &leader);
 		}
 		if (!ret)
-			ret = kfastblock_transport_finish_object_success(
-				kf_req, extent, op, &leader, buf);
+			ret = kfastblock_transport_complete_successful_object_attempt(
+				kf_req, extent, op, hint, &leader, buf);
 		goto out;
 		}
 
