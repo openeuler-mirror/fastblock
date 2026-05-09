@@ -954,6 +954,11 @@ unsigned int kfastblock_request_queued_objects(
 	return value;
 }
 
+bool kfastblock_request_has_queued(const struct kfastblock_request *kf_req)
+{
+	return kfastblock_request_queued_objects(kf_req) != 0;
+}
+
 unsigned int kfastblock_request_dispatch_credits(
 	const struct kfastblock_request *kf_req)
 {
