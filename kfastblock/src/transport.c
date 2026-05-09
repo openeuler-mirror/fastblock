@@ -2035,6 +2035,27 @@ static bool kfastblock_transport_retry_begin_object_attempt_failure(
 		kf_req, extent, op, hint, leader, object_index, ret, actions);
 }
 
+static bool kfastblock_transport_retry_faulted_object_attempt(
+	struct kfastblock_volume *vol,
+	struct kfastblock_request *kf_req,
+	const struct kfastblock_object_extent *extent,
+	enum req_op op,
+	struct kfastblock_request_pg_hint *hint,
+	const struct kfastblock_leader_info *leader,
+	unsigned int object_index,
+	struct kfastblock_cached_socket **cached,
+	struct kfastblock_transport_exchange_ctx *exchange,
+	int ret)
+{
+	unsigned int actions;
+
+	actions = kfastblock_recovery_classify_object_failure(ret);
+	kfastblock_transport_abort_object_exchange(vol, cached, leader, exchange,
+						    ret, actions);
+	return kfastblock_transport_retry_object_after_failure(
+		kf_req, extent, op, hint, leader, object_index, ret, actions);
+}
+
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
@@ -2086,12 +2107,9 @@ static int kfastblock_transport_submit_object_io(
 		ret = kfastblock_transport_maybe_inject_fault(
 			vol, KFASTBLOCK_FAULT_OBJECT_IO);
 		if (ret) {
-			actions = kfastblock_recovery_classify_object_failure(ret);
-			kfastblock_transport_abort_object_exchange(
-				vol, &cached, &leader, &exchange, ret, actions);
-			if (kfastblock_transport_retry_object_after_failure(
-				    kf_req, extent, op, hint, &leader,
-				    object_index, ret, actions))
+			if (kfastblock_transport_retry_faulted_object_attempt(
+				    vol, kf_req, extent, op, hint, &leader,
+				    object_index, &cached, &exchange, ret))
 				continue;
 			goto out;
 		}
