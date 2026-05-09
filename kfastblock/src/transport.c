@@ -2056,6 +2056,37 @@ static bool kfastblock_transport_retry_faulted_object_attempt(
 		kf_req, extent, op, hint, leader, object_index, ret, actions);
 }
 
+static bool kfastblock_transport_finalize_completed_object_attempt(
+	struct kfastblock_volume *vol,
+	struct kfastblock_request *kf_req,
+	const struct kfastblock_object_extent *extent,
+	enum req_op op,
+	struct kfastblock_request_pg_hint *hint,
+	const struct kfastblock_leader_info *leader,
+	unsigned int object_index,
+	struct kfastblock_cached_socket **cached,
+	void *buf,
+	int *ret)
+{
+	unsigned int actions = 0;
+
+	if (!ret)
+		return false;
+
+	actions = *ret ? kfastblock_recovery_classify_object_failure(*ret) : 0;
+	kfastblock_transport_finalize_object_socket(vol, cached, leader, *ret,
+						     actions);
+	if (*ret) {
+		return kfastblock_transport_retry_object_after_failure(
+			kf_req, extent, op, hint, leader, object_index, *ret,
+			actions);
+	}
+
+	*ret = kfastblock_transport_complete_successful_object_attempt(
+		kf_req, extent, op, hint, leader, buf);
+	return false;
+}
+
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
@@ -2069,7 +2100,6 @@ static int kfastblock_transport_submit_object_io(
 	struct kfastblock_cached_socket *cached = NULL;
 	struct socket *sock = NULL;
 	void *buf = NULL;
-	unsigned int actions = 0;
 	int ret;
 	int attempt;
 	u8 raw_opcode;
@@ -2115,18 +2145,10 @@ static int kfastblock_transport_submit_object_io(
 		}
 		ret = kfastblock_transport_run_object_exchange(
 			sock, kf_req, extent, op, buf, &exchange, &response);
-		actions = ret ? kfastblock_recovery_classify_object_failure(ret) : 0;
-		kfastblock_transport_finalize_object_socket(
-			vol, &cached, &leader, ret, actions);
-		if (ret) {
-			if (kfastblock_transport_retry_object_after_failure(
-				    kf_req, extent, op, hint, &leader,
-				    object_index, ret, actions))
-				continue;
-		}
-		if (!ret)
-			ret = kfastblock_transport_complete_successful_object_attempt(
-				kf_req, extent, op, hint, &leader, buf);
+		if (kfastblock_transport_finalize_completed_object_attempt(
+			    vol, kf_req, extent, op, hint, &leader, object_index,
+			    &cached, buf, &ret))
+			continue;
 		goto out;
 		}
 
