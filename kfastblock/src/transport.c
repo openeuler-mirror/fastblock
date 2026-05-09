@@ -1960,6 +1960,24 @@ static int kfastblock_transport_reject_stale_object_request(
 	return ret;
 }
 
+static void kfastblock_transport_cleanup_object_io(
+	struct kfastblock_volume *vol,
+	struct kfastblock_request *kf_req,
+	const struct kfastblock_object_extent *extent,
+	enum req_op op,
+	const struct kfastblock_leader_info *leader,
+	struct kfastblock_cached_socket *cached,
+	void *buf,
+	int ret)
+{
+	if (cached)
+		kfastblock_transport_release_osd_socket(cached);
+	if (ret)
+		kfastblock_volume_account_object_error(
+			vol, op, extent->pg_id, leader->osd_id, extent->length, ret);
+	kfastblock_transport_release_object_buffer(kf_req, buf);
+}
+
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
@@ -2049,12 +2067,8 @@ static int kfastblock_transport_submit_object_io(
 		}
 
 out:
-	if (cached)
-		kfastblock_transport_release_osd_socket(cached);
-	if (ret)
-		kfastblock_volume_account_object_error(
-			vol, op, extent->pg_id, leader.osd_id, extent->length, ret);
-	kfastblock_transport_release_object_buffer(kf_req, buf);
+	kfastblock_transport_cleanup_object_io(vol, kf_req, extent, op, &leader,
+						 cached, buf, ret);
 	return ret;
 }
 
