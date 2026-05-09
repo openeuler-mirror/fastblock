@@ -2087,6 +2087,25 @@ static bool kfastblock_transport_finalize_completed_object_attempt(
 	return false;
 }
 
+static int kfastblock_transport_prepare_object_submission(
+	struct kfastblock_request *kf_req,
+	const struct kfastblock_object_extent *extent,
+	enum req_op op,
+	struct kfastblock_volume **vol_out,
+	struct kfastblock_request_pg_hint **hint_out,
+	u8 *raw_opcode_out)
+{
+	if (!kf_req || !kf_req->vol || !kf_req->rq || !extent ||
+	    !vol_out || !hint_out || !raw_opcode_out)
+		return -EINVAL;
+
+	*vol_out = kf_req->vol;
+	*hint_out = kfastblock_transport_find_request_pg_hint(
+		kf_req, extent->pg_id);
+	*raw_opcode_out = kfastblock_transport_raw_opcode_for_object_op(op);
+	return 0;
+}
+
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
@@ -2094,7 +2113,6 @@ static int kfastblock_transport_submit_object_io(
 	enum req_op op)
 {
 	struct kfastblock_volume *vol;
-	struct request *rq;
 	struct kfastblock_leader_info leader = {};
 	struct kfastblock_request_pg_hint *hint;
 	struct kfastblock_cached_socket *cached = NULL;
@@ -2106,12 +2124,10 @@ static int kfastblock_transport_submit_object_io(
 	struct kfastblock_transport_exchange_ctx exchange = {};
 	struct kfastblock_transport_response_ctx response = {};
 
-	if (!kf_req || !kf_req->vol || !kf_req->rq || !extent)
-		return -EINVAL;
-	vol = kf_req->vol;
-	rq = kf_req->rq;
-	hint = kfastblock_transport_find_request_pg_hint(kf_req, extent->pg_id);
-	raw_opcode = kfastblock_transport_raw_opcode_for_object_op(op);
+	ret = kfastblock_transport_prepare_object_submission(
+		kf_req, extent, op, &vol, &hint, &raw_opcode);
+	if (ret)
+		return ret;
 
 	ret = kfastblock_transport_reject_stale_object_request(
 		kf_req, extent, op, hint, object_index);
