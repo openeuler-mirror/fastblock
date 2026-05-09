@@ -295,5 +295,7 @@ unsigned int kfastblock_request_inflight_objects(
 	const struct kfastblock_request *kf_req);
 unsigned int kfastblock_request_completed_objects(
 	const struct kfastblock_request *kf_req);
+bool kfastblock_request_has_completed(
+	const struct kfastblock_request *kf_req);
 
 #endif
