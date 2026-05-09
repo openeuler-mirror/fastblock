@@ -2106,6 +2106,25 @@ static int kfastblock_transport_prepare_object_submission(
 	return 0;
 }
 
+static int kfastblock_transport_prepare_object_execution(
+	struct kfastblock_request *kf_req,
+	const struct kfastblock_object_extent *extent,
+	enum req_op op,
+	struct kfastblock_request_pg_hint *hint,
+	unsigned int object_index,
+	void **buf_out)
+{
+	int ret;
+
+	ret = kfastblock_transport_reject_stale_object_request(
+		kf_req, extent, op, hint, object_index);
+	if (ret)
+		return ret;
+
+	return kfastblock_transport_prepare_object_buffer(kf_req, extent, op,
+							 buf_out);
+}
+
 static bool kfastblock_transport_prepare_executable_object_attempt(
 	struct kfastblock_volume *vol,
 	struct kfastblock_request *kf_req,
@@ -2192,13 +2211,8 @@ static int kfastblock_transport_submit_object_io(
 	if (ret)
 		return ret;
 
-	ret = kfastblock_transport_reject_stale_object_request(
-		kf_req, extent, op, hint, object_index);
-	if (ret) {
-		return ret;
-	}
-
-	ret = kfastblock_transport_prepare_object_buffer(kf_req, extent, op, &buf);
+	ret = kfastblock_transport_prepare_object_execution(
+		kf_req, extent, op, hint, object_index, &buf);
 	if (ret)
 		goto out;
 
