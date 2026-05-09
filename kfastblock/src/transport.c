@@ -2144,6 +2144,31 @@ static bool kfastblock_transport_prepare_executable_object_attempt(
 	return false;
 }
 
+static bool kfastblock_transport_execute_object_attempt(
+	struct kfastblock_volume *vol,
+	struct kfastblock_request *kf_req,
+	const struct kfastblock_object_extent *extent,
+	enum req_op op,
+	struct kfastblock_request_pg_hint *hint,
+	struct kfastblock_leader_info *leader,
+	unsigned int object_index,
+	struct kfastblock_cached_socket **cached,
+	struct socket *sock,
+	void *buf,
+	struct kfastblock_transport_exchange_ctx *exchange,
+	struct kfastblock_transport_response_ctx *response,
+	int *ret)
+{
+	if (!ret)
+		return false;
+
+	*ret = kfastblock_transport_run_object_exchange(
+		sock, kf_req, extent, op, buf, exchange, response);
+	return kfastblock_transport_finalize_completed_object_attempt(
+		vol, kf_req, extent, op, hint, leader, object_index, cached,
+		buf, ret);
+}
+
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
@@ -2185,11 +2210,9 @@ static int kfastblock_transport_submit_object_io(
 			continue;
 		if (ret)
 				goto out;
-		ret = kfastblock_transport_run_object_exchange(
-			sock, kf_req, extent, op, buf, &exchange, &response);
-		if (kfastblock_transport_finalize_completed_object_attempt(
+		if (kfastblock_transport_execute_object_attempt(
 			    vol, kf_req, extent, op, hint, &leader, object_index,
-			    &cached, buf, &ret))
+			    &cached, sock, buf, &exchange, &response, &ret))
 			continue;
 		goto out;
 		}
