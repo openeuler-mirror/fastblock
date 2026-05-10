@@ -92,6 +92,8 @@ struct kfastblock_transport_object_io_ctx {
 	void *buf;
 	unsigned int object_index;
 	unsigned int attempt;
+	unsigned int actions;
+	int ret;
 	enum req_op op;
 	u8 raw_opcode;
 	struct kfastblock_transport_exchange_ctx exchange;
@@ -1975,22 +1977,23 @@ static int kfastblock_transport_reject_stale_object_request(
 }
 
 static void kfastblock_transport_cleanup_object_io(
-	struct kfastblock_transport_object_io_ctx *ctx,
-	int ret)
+	struct kfastblock_transport_object_io_ctx *ctx)
 {
 	if (!ctx)
 		return;
 
 	if (ctx->cached)
 		kfastblock_transport_release_osd_socket(ctx->cached);
-	if (ret && ctx->vol && ctx->extent)
+	if (ctx->ret && ctx->vol && ctx->extent)
 		kfastblock_volume_account_object_error(
 			ctx->vol, ctx->op, ctx->extent->pg_id, ctx->leader.osd_id,
-			ctx->extent->length, ret);
+			ctx->extent->length, ctx->ret);
 	kfastblock_transport_release_object_buffer(ctx->kf_req, ctx->buf);
 	ctx->cached = NULL;
 	ctx->sock = NULL;
 	ctx->buf = NULL;
+	ctx->ret = 0;
+	ctx->actions = 0;
 	kfastblock_transport_response_ctx_reset(&ctx->response);
 }
 
@@ -2111,6 +2114,8 @@ static void kfastblock_transport_object_io_ctx_reset_attempt(
 	memset(&ctx->leader, 0, sizeof(ctx->leader));
 	ctx->cached = NULL;
 	ctx->sock = NULL;
+	ctx->ret = 0;
+	ctx->actions = 0;
 	memset(&ctx->exchange, 0, sizeof(ctx->exchange));
 	kfastblock_transport_response_ctx_reset(&ctx->response);
 }
@@ -2215,14 +2220,12 @@ static int kfastblock_transport_submit_prepared_object_io(
 static int kfastblock_transport_run_object_io_ctx(
 	struct kfastblock_transport_object_io_ctx *ctx)
 {
-	int ret;
-
 	if (!ctx)
 		return -EINVAL;
 
-	ret = kfastblock_transport_submit_prepared_object_io(ctx);
-	kfastblock_transport_cleanup_object_io(ctx, ret);
-	return ret;
+	ctx->ret = kfastblock_transport_submit_prepared_object_io(ctx);
+	kfastblock_transport_cleanup_object_io(ctx);
+	return ctx->ret;
 }
 
 static int kfastblock_transport_submit_object_io(
