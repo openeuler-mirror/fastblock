@@ -2143,38 +2143,32 @@ static int kfastblock_transport_prepare_object_execution(
 }
 
 static bool kfastblock_transport_prepare_executable_object_attempt(
-	struct kfastblock_volume *vol,
-	struct kfastblock_request *kf_req,
-	const struct kfastblock_object_extent *extent,
-	enum req_op op,
-	struct kfastblock_request_pg_hint *hint,
-	struct kfastblock_leader_info *leader,
-	unsigned int object_index,
-	u8 raw_opcode,
+	struct kfastblock_transport_object_io_ctx *ctx,
 	int attempt,
-	struct kfastblock_cached_socket **cached,
-	struct socket **sock,
-	struct kfastblock_transport_exchange_ctx *exchange,
 	int *ret)
 {
+	if (!ctx)
+		return false;
 	if (!ret)
 		return false;
 
 	*ret = kfastblock_transport_begin_object_attempt(
-		vol, kf_req, hint, leader, object_index, raw_opcode, attempt,
-		cached, sock, exchange);
+		ctx->vol, ctx->kf_req, ctx->hint, &ctx->leader, ctx->object_index,
+		ctx->raw_opcode, attempt, &ctx->cached, &ctx->sock,
+		&ctx->exchange);
 	if (*ret) {
 		return kfastblock_transport_retry_begin_object_attempt_failure(
-			vol, kf_req, extent, op, hint, leader, object_index,
-			cached, *ret);
+			ctx->vol, ctx->kf_req, ctx->extent, ctx->op, ctx->hint,
+			&ctx->leader, ctx->object_index, &ctx->cached, *ret);
 	}
 
 	*ret = kfastblock_transport_maybe_inject_fault(
-		vol, KFASTBLOCK_FAULT_OBJECT_IO);
+		ctx->vol, KFASTBLOCK_FAULT_OBJECT_IO);
 	if (*ret) {
 		return kfastblock_transport_retry_faulted_object_attempt(
-			vol, kf_req, extent, op, hint, leader, object_index,
-			cached, exchange, *ret);
+			ctx->vol, ctx->kf_req, ctx->extent, ctx->op, ctx->hint,
+			&ctx->leader, ctx->object_index, &ctx->cached,
+			&ctx->exchange, *ret);
 	}
 
 	return false;
@@ -2206,34 +2200,25 @@ static bool kfastblock_transport_execute_object_attempt(
 }
 
 static int kfastblock_transport_run_object_attempts(
-	struct kfastblock_volume *vol,
-	struct kfastblock_request *kf_req,
-	const struct kfastblock_object_extent *extent,
-	enum req_op op,
-	struct kfastblock_request_pg_hint *hint,
-	struct kfastblock_leader_info *leader,
-	unsigned int object_index,
-	u8 raw_opcode,
-	struct kfastblock_cached_socket **cached,
-	struct socket **sock,
-	void *buf,
-	struct kfastblock_transport_exchange_ctx *exchange,
-	struct kfastblock_transport_response_ctx *response)
+	struct kfastblock_transport_object_io_ctx *ctx)
 {
 	int ret = 0;
 	int attempt;
 
+	if (!ctx)
+		return -EINVAL;
+
 	for (attempt = 0; attempt < KFASTBLOCK_OBJECT_IO_MAX_ATTEMPTS; ++attempt) {
 		if (kfastblock_transport_prepare_executable_object_attempt(
-			    vol, kf_req, extent, op, hint, leader,
-			    object_index, raw_opcode, attempt, cached, sock,
-			    exchange, &ret))
+			    ctx, attempt, &ret))
 			continue;
 		if (ret)
 			return ret;
 		if (kfastblock_transport_execute_object_attempt(
-			    vol, kf_req, extent, op, hint, leader, object_index,
-			    cached, *sock, buf, exchange, response, &ret))
+			    ctx->vol, ctx->kf_req, ctx->extent, ctx->op,
+			    ctx->hint, &ctx->leader, ctx->object_index,
+			    &ctx->cached, ctx->sock, ctx->buf, &ctx->exchange,
+			    &ctx->response, &ret))
 			continue;
 		return ret;
 	}
@@ -2253,10 +2238,7 @@ static int kfastblock_transport_submit_prepared_object_io(
 	if (ret)
 		return ret;
 
-	ret = kfastblock_transport_run_object_attempts(
-		ctx->vol, ctx->kf_req, ctx->extent, ctx->op, ctx->hint,
-		&ctx->leader, ctx->object_index, ctx->raw_opcode, &ctx->cached,
-		&ctx->sock, ctx->buf, &ctx->exchange, &ctx->response);
+	ret = kfastblock_transport_run_object_attempts(ctx);
 	return ret;
 }
 
