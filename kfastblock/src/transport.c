@@ -1829,19 +1829,17 @@ static int kfastblock_transport_finish_object_success(
 }
 
 static int kfastblock_transport_pick_object_leader(
-	struct kfastblock_request *kf_req,
-	struct kfastblock_request_pg_hint *hint,
-	struct kfastblock_leader_info *leader,
-	int attempt)
+	struct kfastblock_transport_object_io_ctx *ctx)
 {
-	if (!kf_req || !leader)
+	if (!ctx)
 		return -EINVAL;
 
-	if (attempt == 0 && hint &&
-	    !kfastblock_request_get_pg_hint_leader(hint, leader))
+	if (ctx->attempt == 0 && ctx->hint &&
+	    !kfastblock_request_get_pg_hint_leader(ctx->hint, &ctx->leader))
 		return 0;
 
-	return kfastblock_transport_query_pg_leader(kf_req, hint, leader);
+	return kfastblock_transport_query_pg_leader(
+		ctx->kf_req, ctx->hint, &ctx->leader);
 }
 
 static int kfastblock_transport_normalize_object_ret(
@@ -1893,13 +1891,12 @@ static bool kfastblock_transport_retry_object_after_failure(
 }
 
 static void kfastblock_transport_note_object_leader_success(
-	struct kfastblock_request_pg_hint *hint,
-	const struct kfastblock_leader_info *leader)
+	struct kfastblock_transport_object_io_ctx *ctx)
 {
-	if (!hint || !leader)
+	if (!ctx || !ctx->hint)
 		return;
 
-	kfastblock_request_set_pg_hint_leader(hint, leader);
+	kfastblock_request_set_pg_hint_leader(ctx->hint, &ctx->leader);
 }
 
 static void kfastblock_transport_finalize_object_socket(
@@ -1948,18 +1945,18 @@ static int kfastblock_transport_run_object_exchange(
 }
 
 static int kfastblock_transport_reject_stale_object_request(
-	struct kfastblock_request *kf_req,
-	const struct kfastblock_object_extent *extent,
-	enum req_op op,
-	struct kfastblock_request_pg_hint *hint,
-	unsigned int object_index)
+	struct kfastblock_transport_object_io_ctx *ctx)
 {
 	int ret;
 
-	ret = kfastblock_transport_request_view_stale(kf_req);
+	if (!ctx)
+		return -EINVAL;
+
+	ret = kfastblock_transport_request_view_stale(ctx->kf_req);
 	if (ret) {
 		kfastblock_transport_handle_object_failure(
-			kf_req, extent, op, hint, NULL, object_index, ret,
+			ctx->kf_req, ctx->extent, ctx->op, ctx->hint, NULL,
+			ctx->object_index, ret,
 			kfastblock_recovery_classify_object_failure(ret));
 	}
 
@@ -1995,8 +1992,7 @@ static int kfastblock_transport_begin_object_attempt(
 	if (!ctx)
 		return -EINVAL;
 
-	ret = kfastblock_transport_pick_object_leader(
-		ctx->kf_req, ctx->hint, &ctx->leader, ctx->attempt);
+	ret = kfastblock_transport_pick_object_leader(ctx);
 	if (ret)
 		return ret;
 
@@ -2009,7 +2005,7 @@ static int kfastblock_transport_complete_successful_object_attempt(
 	if (!ctx)
 		return -EINVAL;
 
-	kfastblock_transport_note_object_leader_success(ctx->hint, &ctx->leader);
+	kfastblock_transport_note_object_leader_success(ctx);
 	return kfastblock_transport_finish_object_success(ctx);
 }
 
@@ -2110,7 +2106,7 @@ static int kfastblock_transport_prepare_object_execution(
 		return -EINVAL;
 
 	ret = kfastblock_transport_reject_stale_object_request(
-		ctx->kf_req, ctx->extent, ctx->op, ctx->hint, ctx->object_index);
+		ctx);
 	if (ret)
 		return ret;
 
