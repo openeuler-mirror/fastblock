@@ -25,6 +25,8 @@
 #include "kfastblock/transport.h"
 #include "kfastblock/volume.h"
 
+#define KFASTBLOCK_OBJECT_IO_MAX_ATTEMPTS 2
+
 static int kfastblock_transport_try_connect_host(const char *host,
 						 u16 port,
 						 struct socket **sock);
@@ -2206,7 +2208,7 @@ static int kfastblock_transport_run_object_attempts(
 	int ret = 0;
 	int attempt;
 
-	for (attempt = 0; attempt < 2; ++attempt) {
+	for (attempt = 0; attempt < KFASTBLOCK_OBJECT_IO_MAX_ATTEMPTS; ++attempt) {
 		if (kfastblock_transport_prepare_executable_object_attempt(
 			    vol, kf_req, extent, op, hint, leader,
 			    object_index, raw_opcode, attempt, cached, sock,
