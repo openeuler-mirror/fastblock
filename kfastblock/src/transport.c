@@ -2126,22 +2126,20 @@ static int kfastblock_transport_object_io_ctx_init(
 }
 
 static int kfastblock_transport_prepare_object_execution(
-	struct kfastblock_request *kf_req,
-	const struct kfastblock_object_extent *extent,
-	enum req_op op,
-	struct kfastblock_request_pg_hint *hint,
-	unsigned int object_index,
-	void **buf_out)
+	struct kfastblock_transport_object_io_ctx *ctx)
 {
 	int ret;
 
+	if (!ctx)
+		return -EINVAL;
+
 	ret = kfastblock_transport_reject_stale_object_request(
-		kf_req, extent, op, hint, object_index);
+		ctx->kf_req, ctx->extent, ctx->op, ctx->hint, ctx->object_index);
 	if (ret)
 		return ret;
 
-	return kfastblock_transport_prepare_object_buffer(kf_req, extent, op,
-							 buf_out);
+	return kfastblock_transport_prepare_object_buffer(
+		ctx->kf_req, ctx->extent, ctx->op, &ctx->buf);
 }
 
 static bool kfastblock_transport_prepare_executable_object_attempt(
@@ -2244,30 +2242,21 @@ static int kfastblock_transport_run_object_attempts(
 }
 
 static int kfastblock_transport_submit_prepared_object_io(
-	struct kfastblock_volume *vol,
-	struct kfastblock_request *kf_req,
-	const struct kfastblock_object_extent *extent,
-	enum req_op op,
-	struct kfastblock_request_pg_hint *hint,
-	struct kfastblock_leader_info *leader,
-	unsigned int object_index,
-	u8 raw_opcode,
-	struct kfastblock_cached_socket **cached,
-	struct socket **sock,
-	void **buf_out,
-	struct kfastblock_transport_exchange_ctx *exchange,
-	struct kfastblock_transport_response_ctx *response)
+	struct kfastblock_transport_object_io_ctx *ctx)
 {
 	int ret;
 
-	ret = kfastblock_transport_prepare_object_execution(
-		kf_req, extent, op, hint, object_index, buf_out);
+	if (!ctx)
+		return -EINVAL;
+
+	ret = kfastblock_transport_prepare_object_execution(ctx);
 	if (ret)
 		return ret;
 
 	ret = kfastblock_transport_run_object_attempts(
-		vol, kf_req, extent, op, hint, leader, object_index, raw_opcode,
-		cached, sock, *buf_out, exchange, response);
+		ctx->vol, ctx->kf_req, ctx->extent, ctx->op, ctx->hint,
+		&ctx->leader, ctx->object_index, ctx->raw_opcode, &ctx->cached,
+		&ctx->sock, ctx->buf, &ctx->exchange, &ctx->response);
 	return ret;
 }
 
@@ -2285,10 +2274,7 @@ static int kfastblock_transport_submit_object_io(
 	if (ret)
 		return ret;
 
-	ret = kfastblock_transport_submit_prepared_object_io(
-		ctx.vol, ctx.kf_req, ctx.extent, ctx.op, ctx.hint, &ctx.leader,
-		ctx.object_index, ctx.raw_opcode, &ctx.cached, &ctx.sock,
-		&ctx.buf, &ctx.exchange, &ctx.response);
+	ret = kfastblock_transport_submit_prepared_object_io(&ctx);
 
 	kfastblock_transport_cleanup_object_io(&ctx, ret);
 	return ret;
