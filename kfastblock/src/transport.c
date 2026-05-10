@@ -2280,7 +2280,6 @@ static int kfastblock_transport_submit_object_io(
 		vol, kf_req, extent, op, hint, &leader, object_index, raw_opcode,
 		&cached, &sock, &buf, &exchange, &response);
 
-out:
 	kfastblock_transport_cleanup_object_io(vol, kf_req, extent, op, &leader,
 						 cached, buf, ret);
 	return ret;
