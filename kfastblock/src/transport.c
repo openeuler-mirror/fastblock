@@ -2030,44 +2030,38 @@ static int kfastblock_transport_complete_successful_object_attempt(
 }
 
 static bool kfastblock_transport_retry_begin_object_attempt_failure(
-	struct kfastblock_volume *vol,
-	struct kfastblock_request *kf_req,
-	const struct kfastblock_object_extent *extent,
-	enum req_op op,
-	struct kfastblock_request_pg_hint *hint,
-	const struct kfastblock_leader_info *leader,
-	unsigned int object_index,
-	struct kfastblock_cached_socket **cached,
+	struct kfastblock_transport_object_io_ctx *ctx,
 	int ret)
 {
 	unsigned int actions;
 
+	if (!ctx)
+		return false;
+
 	actions = kfastblock_recovery_classify_object_failure(ret);
-	kfastblock_transport_finalize_object_socket(vol, cached, leader, ret,
-						     actions);
+	kfastblock_transport_finalize_object_socket(
+		ctx->vol, &ctx->cached, &ctx->leader, ret, actions);
 	return kfastblock_transport_retry_object_after_failure(
-		kf_req, extent, op, hint, leader, object_index, ret, actions);
+		ctx->kf_req, ctx->extent, ctx->op, ctx->hint, &ctx->leader,
+		ctx->object_index, ret, actions);
 }
 
 static bool kfastblock_transport_retry_faulted_object_attempt(
-	struct kfastblock_volume *vol,
-	struct kfastblock_request *kf_req,
-	const struct kfastblock_object_extent *extent,
-	enum req_op op,
-	struct kfastblock_request_pg_hint *hint,
-	const struct kfastblock_leader_info *leader,
-	unsigned int object_index,
-	struct kfastblock_cached_socket **cached,
-	struct kfastblock_transport_exchange_ctx *exchange,
+	struct kfastblock_transport_object_io_ctx *ctx,
 	int ret)
 {
 	unsigned int actions;
 
+	if (!ctx)
+		return false;
+
 	actions = kfastblock_recovery_classify_object_failure(ret);
-	kfastblock_transport_abort_object_exchange(vol, cached, leader, exchange,
-						    ret, actions);
+	kfastblock_transport_abort_object_exchange(
+		ctx->vol, &ctx->cached, &ctx->leader, &ctx->exchange, ret,
+		actions);
 	return kfastblock_transport_retry_object_after_failure(
-		kf_req, extent, op, hint, leader, object_index, ret, actions);
+		ctx->kf_req, ctx->extent, ctx->op, ctx->hint, &ctx->leader,
+		ctx->object_index, ret, actions);
 }
 
 static bool kfastblock_transport_finalize_completed_object_attempt(
@@ -2149,17 +2143,14 @@ static bool kfastblock_transport_prepare_executable_object_attempt(
 		&ctx->exchange);
 	if (*ret) {
 		return kfastblock_transport_retry_begin_object_attempt_failure(
-			ctx->vol, ctx->kf_req, ctx->extent, ctx->op, ctx->hint,
-			&ctx->leader, ctx->object_index, &ctx->cached, *ret);
+			ctx, *ret);
 	}
 
 	*ret = kfastblock_transport_maybe_inject_fault(
 		ctx->vol, KFASTBLOCK_FAULT_OBJECT_IO);
 	if (*ret) {
 		return kfastblock_transport_retry_faulted_object_attempt(
-			ctx->vol, ctx->kf_req, ctx->extent, ctx->op, ctx->hint,
-			&ctx->leader, ctx->object_index, &ctx->cached,
-			&ctx->exchange, *ret);
+			ctx, *ret);
 	}
 
 	return false;
