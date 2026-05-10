@@ -1897,31 +1897,24 @@ static void kfastblock_transport_note_object_leader_success(
 }
 
 static void kfastblock_transport_finalize_object_socket(
-	struct kfastblock_volume *vol,
-	struct kfastblock_cached_socket **cached,
-	const struct kfastblock_leader_info *leader,
-	int ret,
-	unsigned int actions)
+	struct kfastblock_transport_object_io_ctx *ctx)
 {
-	if (!vol || !cached || !*cached)
+	if (!ctx || !ctx->vol || !ctx->cached)
 		return;
 
-	kfastblock_recovery_finalize_osd_socket(vol, *cached, leader, ret,
-							actions);
-	*cached = NULL;
+	kfastblock_recovery_finalize_osd_socket(
+		ctx->vol, ctx->cached, &ctx->leader, ctx->ret, ctx->actions);
+	ctx->cached = NULL;
 }
 
 static void kfastblock_transport_abort_object_exchange(
-	struct kfastblock_volume *vol,
-	struct kfastblock_cached_socket **cached,
-	const struct kfastblock_leader_info *leader,
-	struct kfastblock_transport_exchange_ctx *exchange,
-	int ret,
-	unsigned int actions)
+	struct kfastblock_transport_object_io_ctx *ctx)
 {
-	kfastblock_transport_finalize_object_socket(vol, cached, leader, ret,
-						     actions);
-	kfastblock_transport_finish_exchange(exchange, ret, NULL);
+	if (!ctx)
+		return;
+
+	kfastblock_transport_finalize_object_socket(ctx);
+	kfastblock_transport_finish_exchange(&ctx->exchange, ctx->ret, NULL);
 }
 
 static int kfastblock_transport_run_object_exchange(
@@ -2014,8 +2007,7 @@ static bool kfastblock_transport_retry_begin_object_attempt_failure(
 
 	ctx->ret = ret;
 	ctx->actions = kfastblock_recovery_classify_object_failure(ret);
-	kfastblock_transport_finalize_object_socket(
-		ctx->vol, &ctx->cached, &ctx->leader, ctx->ret, ctx->actions);
+	kfastblock_transport_finalize_object_socket(ctx);
 	return kfastblock_transport_retry_object_after_failure(ctx);
 }
 
@@ -2028,9 +2020,7 @@ static bool kfastblock_transport_retry_faulted_object_attempt(
 
 	ctx->ret = ret;
 	ctx->actions = kfastblock_recovery_classify_object_failure(ret);
-	kfastblock_transport_abort_object_exchange(
-		ctx->vol, &ctx->cached, &ctx->leader, &ctx->exchange, ctx->ret,
-		ctx->actions);
+	kfastblock_transport_abort_object_exchange(ctx);
 	return kfastblock_transport_retry_object_after_failure(ctx);
 }
 
@@ -2046,8 +2036,7 @@ static bool kfastblock_transport_finalize_completed_object_attempt(
 	ctx->ret = *ret;
 	ctx->actions = ctx->ret ?
 		kfastblock_recovery_classify_object_failure(ctx->ret) : 0;
-	kfastblock_transport_finalize_object_socket(
-		ctx->vol, &ctx->cached, &ctx->leader, ctx->ret, ctx->actions);
+	kfastblock_transport_finalize_object_socket(ctx);
 	if (ctx->ret)
 		return kfastblock_transport_retry_object_after_failure(ctx);
 
