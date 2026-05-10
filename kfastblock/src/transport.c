@@ -1920,18 +1920,17 @@ static void kfastblock_transport_abort_object_exchange(
 static int kfastblock_transport_run_object_exchange(
 	struct kfastblock_transport_object_io_ctx *ctx)
 {
-	int ret;
-
 	if (!ctx)
 		return -EINVAL;
 
-	ret = kfastblock_transport_execute_object_opcode(ctx);
-	ret = kfastblock_transport_normalize_object_ret(ctx, ret);
-	if (!ret)
-		ret = kfastblock_transport_match_exchange_response(&ctx->exchange);
+	ctx->ret = kfastblock_transport_execute_object_opcode(ctx);
+	ctx->ret = kfastblock_transport_normalize_object_ret(ctx, ctx->ret);
+	if (!ctx->ret)
+		ctx->ret = kfastblock_transport_match_exchange_response(
+			&ctx->exchange);
 	kfastblock_transport_release_response_and_exchange(
-		&ctx->exchange, &ctx->response, &ret);
-	return ret;
+		&ctx->exchange, &ctx->response, &ctx->ret);
+	return ctx->ret;
 }
 
 static int kfastblock_transport_reject_stale_object_request(
@@ -1995,7 +1994,8 @@ static int kfastblock_transport_complete_successful_object_attempt(
 		return -EINVAL;
 
 	kfastblock_transport_note_object_leader_success(ctx);
-	return kfastblock_transport_finish_object_success(ctx);
+	ctx->ret = kfastblock_transport_finish_object_success(ctx);
+	return ctx->ret;
 }
 
 static bool kfastblock_transport_retry_begin_object_attempt_failure(
@@ -2025,23 +2025,18 @@ static bool kfastblock_transport_retry_faulted_object_attempt(
 }
 
 static bool kfastblock_transport_finalize_completed_object_attempt(
-	struct kfastblock_transport_object_io_ctx *ctx,
-	int *ret)
+	struct kfastblock_transport_object_io_ctx *ctx)
 {
 	if (!ctx)
 		return false;
-	if (!ret)
-		return false;
 
-	ctx->ret = *ret;
 	ctx->actions = ctx->ret ?
 		kfastblock_recovery_classify_object_failure(ctx->ret) : 0;
 	kfastblock_transport_finalize_object_socket(ctx);
 	if (ctx->ret)
 		return kfastblock_transport_retry_object_after_failure(ctx);
 
-	*ret = kfastblock_transport_complete_successful_object_attempt(ctx);
-	ctx->ret = *ret;
+	ctx->ret = kfastblock_transport_complete_successful_object_attempt(ctx);
 	return false;
 }
 
@@ -2124,16 +2119,13 @@ static bool kfastblock_transport_prepare_executable_object_attempt(
 }
 
 static bool kfastblock_transport_execute_object_attempt(
-	struct kfastblock_transport_object_io_ctx *ctx,
-	int *ret)
+	struct kfastblock_transport_object_io_ctx *ctx)
 {
 	if (!ctx)
 		return false;
-	if (!ret)
-		return false;
 
-	*ret = kfastblock_transport_run_object_exchange(ctx);
-	return kfastblock_transport_finalize_completed_object_attempt(ctx, ret);
+	ctx->ret = kfastblock_transport_run_object_exchange(ctx);
+	return kfastblock_transport_finalize_completed_object_attempt(ctx);
 }
 
 static int kfastblock_transport_run_object_attempts(
@@ -2153,13 +2145,14 @@ static int kfastblock_transport_run_object_attempts(
 			continue;
 		if (ret)
 			return ret;
-		if (kfastblock_transport_execute_object_attempt(
-			    ctx, &ret))
+		ctx->ret = ret;
+		if (kfastblock_transport_execute_object_attempt(ctx))
 			continue;
-		return ret;
+		return ctx->ret;
 	}
 
-	return ret;
+	ctx->ret = ret;
+	return ctx->ret;
 }
 
 static int kfastblock_transport_submit_prepared_object_io(
