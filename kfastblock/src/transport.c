@@ -1883,20 +1883,14 @@ static int kfastblock_transport_prepare_object_exchange(
 }
 
 static bool kfastblock_transport_retry_object_after_failure(
-	struct kfastblock_request *kf_req,
-	const struct kfastblock_object_extent *extent,
-	enum req_op op,
-	struct kfastblock_request_pg_hint *hint,
-	const struct kfastblock_leader_info *leader,
-	unsigned int object_index,
-	int ret,
-	unsigned int actions)
+	struct kfastblock_transport_object_io_ctx *ctx)
 {
-	if (!actions)
+	if (!ctx || !ctx->actions)
 		return false;
 
 	return kfastblock_transport_handle_object_failure(
-		kf_req, extent, op, hint, leader, object_index, ret, actions);
+		ctx->kf_req, ctx->extent, ctx->op, ctx->hint, &ctx->leader,
+		ctx->object_index, ctx->ret, ctx->actions);
 }
 
 static void kfastblock_transport_note_object_leader_success(
@@ -2028,58 +2022,50 @@ static bool kfastblock_transport_retry_begin_object_attempt_failure(
 	struct kfastblock_transport_object_io_ctx *ctx,
 	int ret)
 {
-	unsigned int actions;
-
 	if (!ctx)
 		return false;
 
-	actions = kfastblock_recovery_classify_object_failure(ret);
+	ctx->ret = ret;
+	ctx->actions = kfastblock_recovery_classify_object_failure(ret);
 	kfastblock_transport_finalize_object_socket(
-		ctx->vol, &ctx->cached, &ctx->leader, ret, actions);
-	return kfastblock_transport_retry_object_after_failure(
-		ctx->kf_req, ctx->extent, ctx->op, ctx->hint, &ctx->leader,
-		ctx->object_index, ret, actions);
+		ctx->vol, &ctx->cached, &ctx->leader, ctx->ret, ctx->actions);
+	return kfastblock_transport_retry_object_after_failure(ctx);
 }
 
 static bool kfastblock_transport_retry_faulted_object_attempt(
 	struct kfastblock_transport_object_io_ctx *ctx,
 	int ret)
 {
-	unsigned int actions;
-
 	if (!ctx)
 		return false;
 
-	actions = kfastblock_recovery_classify_object_failure(ret);
+	ctx->ret = ret;
+	ctx->actions = kfastblock_recovery_classify_object_failure(ret);
 	kfastblock_transport_abort_object_exchange(
-		ctx->vol, &ctx->cached, &ctx->leader, &ctx->exchange, ret,
-		actions);
-	return kfastblock_transport_retry_object_after_failure(
-		ctx->kf_req, ctx->extent, ctx->op, ctx->hint, &ctx->leader,
-		ctx->object_index, ret, actions);
+		ctx->vol, &ctx->cached, &ctx->leader, &ctx->exchange, ctx->ret,
+		ctx->actions);
+	return kfastblock_transport_retry_object_after_failure(ctx);
 }
 
 static bool kfastblock_transport_finalize_completed_object_attempt(
 	struct kfastblock_transport_object_io_ctx *ctx,
 	int *ret)
 {
-	unsigned int actions = 0;
-
 	if (!ctx)
 		return false;
 	if (!ret)
 		return false;
 
-	actions = *ret ? kfastblock_recovery_classify_object_failure(*ret) : 0;
+	ctx->ret = *ret;
+	ctx->actions = ctx->ret ?
+		kfastblock_recovery_classify_object_failure(ctx->ret) : 0;
 	kfastblock_transport_finalize_object_socket(
-		ctx->vol, &ctx->cached, &ctx->leader, *ret, actions);
-	if (*ret) {
-		return kfastblock_transport_retry_object_after_failure(
-			ctx->kf_req, ctx->extent, ctx->op, ctx->hint, &ctx->leader,
-			ctx->object_index, *ret, actions);
-	}
+		ctx->vol, &ctx->cached, &ctx->leader, ctx->ret, ctx->actions);
+	if (ctx->ret)
+		return kfastblock_transport_retry_object_after_failure(ctx);
 
 	*ret = kfastblock_transport_complete_successful_object_attempt(ctx);
+	ctx->ret = *ret;
 	return false;
 }
 
