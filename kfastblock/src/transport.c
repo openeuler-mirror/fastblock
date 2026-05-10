@@ -2094,25 +2094,22 @@ static int kfastblock_transport_prepare_object_execution(
 }
 
 static bool kfastblock_transport_prepare_executable_object_attempt(
-	struct kfastblock_transport_object_io_ctx *ctx,
-	int *ret)
+	struct kfastblock_transport_object_io_ctx *ctx)
 {
 	if (!ctx)
 		return false;
-	if (!ret)
-		return false;
 
-	*ret = kfastblock_transport_begin_object_attempt(ctx);
-	if (*ret) {
+	ctx->ret = kfastblock_transport_begin_object_attempt(ctx);
+	if (ctx->ret) {
 		return kfastblock_transport_retry_begin_object_attempt_failure(
-			ctx, *ret);
+			ctx, ctx->ret);
 	}
 
-	*ret = kfastblock_transport_maybe_inject_fault(
+	ctx->ret = kfastblock_transport_maybe_inject_fault(
 		ctx->vol, KFASTBLOCK_FAULT_OBJECT_IO);
-	if (*ret) {
+	if (ctx->ret) {
 		return kfastblock_transport_retry_faulted_object_attempt(
-			ctx, *ret);
+			ctx, ctx->ret);
 	}
 
 	return false;
@@ -2131,7 +2128,6 @@ static bool kfastblock_transport_execute_object_attempt(
 static int kfastblock_transport_run_object_attempts(
 	struct kfastblock_transport_object_io_ctx *ctx)
 {
-	int ret = 0;
 	int attempt;
 
 	if (!ctx)
@@ -2141,17 +2137,15 @@ static int kfastblock_transport_run_object_attempts(
 		kfastblock_transport_object_io_ctx_reset_attempt(ctx);
 		ctx->attempt = attempt;
 		if (kfastblock_transport_prepare_executable_object_attempt(
-			    ctx, &ret))
+			    ctx))
 			continue;
-		if (ret)
-			return ret;
-		ctx->ret = ret;
+		if (ctx->ret)
+			return ctx->ret;
 		if (kfastblock_transport_execute_object_attempt(ctx))
 			continue;
 		return ctx->ret;
 	}
 
-	ctx->ret = ret;
 	return ctx->ret;
 }
 
