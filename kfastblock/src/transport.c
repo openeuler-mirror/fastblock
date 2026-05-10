@@ -1723,54 +1723,50 @@ static int kfastblock_transport_copy_request_data(struct request *rq,
 }
 
 static int kfastblock_transport_prepare_object_buffer(
-	struct kfastblock_request *kf_req,
-	const struct kfastblock_object_extent *extent,
-	enum req_op op,
-	void **buf_out)
+	struct kfastblock_transport_object_io_ctx *ctx)
 {
 	struct kfastblock_volume *vol;
 	void *buf;
 	int ret = 0;
 
-	if (!kf_req || !extent || !buf_out)
+	if (!ctx)
 		return -EINVAL;
-
-	*buf_out = NULL;
-	vol = kf_req->vol;
+	ctx->buf = NULL;
+	vol = ctx->vol;
 	if (!vol)
 		return -EINVAL;
 
-	switch (op) {
+	switch (ctx->op) {
 	case REQ_OP_WRITE:
 		buf = kfastblock_buffer_pool_alloc(&vol->object_buffer_pool,
-						   extent->length, GFP_KERNEL,
+						   ctx->extent->length, GFP_KERNEL,
 						   false);
 		if (!buf)
 			return -ENOMEM;
 		ret = kfastblock_transport_copy_request_data(
-			kf_req->rq, extent->request_offset, buf,
-			extent->length, false);
+			ctx->kf_req->rq, ctx->extent->request_offset, buf,
+			ctx->extent->length, false);
 		if (ret) {
 			kfastblock_buffer_pool_free(&vol->object_buffer_pool, buf);
 			return ret;
 		}
-		*buf_out = buf;
+		ctx->buf = buf;
 		return 0;
 	case REQ_OP_WRITE_ZEROES:
 		buf = kfastblock_buffer_pool_alloc(&vol->object_buffer_pool,
-						   extent->length, GFP_KERNEL,
+						   ctx->extent->length, GFP_KERNEL,
 						   true);
 		if (!buf)
 			return -ENOMEM;
-		*buf_out = buf;
+		ctx->buf = buf;
 		return 0;
 	case REQ_OP_READ:
 		buf = kfastblock_buffer_pool_alloc(&vol->object_buffer_pool,
-						   extent->length, GFP_KERNEL,
+						   ctx->extent->length, GFP_KERNEL,
 						   false);
 		if (!buf)
 			return -ENOMEM;
-		*buf_out = buf;
+		ctx->buf = buf;
 		return 0;
 	default:
 		return 0;
@@ -1778,13 +1774,14 @@ static int kfastblock_transport_prepare_object_buffer(
 }
 
 static void kfastblock_transport_release_object_buffer(
-	struct kfastblock_request *kf_req,
-	void *buf)
+	struct kfastblock_transport_object_io_ctx *ctx)
 {
-	if (!kf_req || !kf_req->vol)
+	if (!ctx || !ctx->kf_req || !ctx->kf_req->vol)
 		return;
 
-	kfastblock_buffer_pool_free(&kf_req->vol->object_buffer_pool, buf);
+	kfastblock_buffer_pool_free(&ctx->kf_req->vol->object_buffer_pool,
+				      ctx->buf);
+	ctx->buf = NULL;
 }
 
 static int kfastblock_transport_execute_object_opcode(
@@ -1975,10 +1972,9 @@ static void kfastblock_transport_cleanup_object_io(
 		kfastblock_volume_account_object_error(
 			ctx->vol, ctx->op, ctx->extent->pg_id, ctx->leader.osd_id,
 			ctx->extent->length, ctx->ret);
-	kfastblock_transport_release_object_buffer(ctx->kf_req, ctx->buf);
+	kfastblock_transport_release_object_buffer(ctx);
 	ctx->cached = NULL;
 	ctx->sock = NULL;
-	ctx->buf = NULL;
 	ctx->ret = 0;
 	ctx->actions = 0;
 	kfastblock_transport_response_ctx_reset(&ctx->response);
@@ -2110,8 +2106,7 @@ static int kfastblock_transport_prepare_object_execution(
 	if (ret)
 		return ret;
 
-	return kfastblock_transport_prepare_object_buffer(
-		ctx->kf_req, ctx->extent, ctx->op, &ctx->buf);
+	return kfastblock_transport_prepare_object_buffer(ctx);
 }
 
 static bool kfastblock_transport_prepare_executable_object_attempt(
