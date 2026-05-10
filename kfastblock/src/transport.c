@@ -2224,6 +2224,34 @@ static int kfastblock_transport_run_object_attempts(
 	return ret;
 }
 
+static int kfastblock_transport_submit_prepared_object_io(
+	struct kfastblock_volume *vol,
+	struct kfastblock_request *kf_req,
+	const struct kfastblock_object_extent *extent,
+	enum req_op op,
+	struct kfastblock_request_pg_hint *hint,
+	struct kfastblock_leader_info *leader,
+	unsigned int object_index,
+	u8 raw_opcode,
+	struct kfastblock_cached_socket **cached,
+	struct socket **sock,
+	void **buf_out,
+	struct kfastblock_transport_exchange_ctx *exchange,
+	struct kfastblock_transport_response_ctx *response)
+{
+	int ret;
+
+	ret = kfastblock_transport_prepare_object_execution(
+		kf_req, extent, op, hint, object_index, buf_out);
+	if (ret)
+		return ret;
+
+	ret = kfastblock_transport_run_object_attempts(
+		vol, kf_req, extent, op, hint, leader, object_index, raw_opcode,
+		cached, sock, *buf_out, exchange, response);
+	return ret;
+}
+
 static int kfastblock_transport_submit_object_io(
 	struct kfastblock_request *kf_req,
 	unsigned int object_index,
@@ -2246,14 +2274,9 @@ static int kfastblock_transport_submit_object_io(
 	if (ret)
 		return ret;
 
-	ret = kfastblock_transport_prepare_object_execution(
-		kf_req, extent, op, hint, object_index, &buf);
-	if (ret)
-		goto out;
-
-	ret = kfastblock_transport_run_object_attempts(
+	ret = kfastblock_transport_submit_prepared_object_io(
 		vol, kf_req, extent, op, hint, &leader, object_index, raw_opcode,
-		&cached, &sock, buf, &exchange, &response);
+		&cached, &sock, &buf, &exchange, &response);
 
 out:
 	kfastblock_transport_cleanup_object_io(vol, kf_req, extent, op, &leader,
