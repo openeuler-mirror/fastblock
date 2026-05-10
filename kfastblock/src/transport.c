@@ -91,6 +91,7 @@ struct kfastblock_transport_object_io_ctx {
 	struct socket *sock;
 	void *buf;
 	unsigned int object_index;
+	unsigned int attempt;
 	enum req_op op;
 	u8 raw_opcode;
 	struct kfastblock_transport_exchange_ctx exchange;
@@ -1990,8 +1991,7 @@ static void kfastblock_transport_cleanup_object_io(
 }
 
 static int kfastblock_transport_begin_object_attempt(
-	struct kfastblock_transport_object_io_ctx *ctx,
-	int attempt)
+	struct kfastblock_transport_object_io_ctx *ctx)
 {
 	int ret;
 
@@ -1999,7 +1999,7 @@ static int kfastblock_transport_begin_object_attempt(
 		return -EINVAL;
 
 	ret = kfastblock_transport_pick_object_leader(
-		ctx->kf_req, ctx->hint, &ctx->leader, attempt);
+		ctx->kf_req, ctx->hint, &ctx->leader, ctx->attempt);
 	if (ret)
 		return ret;
 
@@ -2117,7 +2117,6 @@ static int kfastblock_transport_prepare_object_execution(
 
 static bool kfastblock_transport_prepare_executable_object_attempt(
 	struct kfastblock_transport_object_io_ctx *ctx,
-	int attempt,
 	int *ret)
 {
 	if (!ctx)
@@ -2125,7 +2124,7 @@ static bool kfastblock_transport_prepare_executable_object_attempt(
 	if (!ret)
 		return false;
 
-	*ret = kfastblock_transport_begin_object_attempt(ctx, attempt);
+	*ret = kfastblock_transport_begin_object_attempt(ctx);
 	if (*ret) {
 		return kfastblock_transport_retry_begin_object_attempt_failure(
 			ctx, *ret);
@@ -2164,8 +2163,9 @@ static int kfastblock_transport_run_object_attempts(
 		return -EINVAL;
 
 	for (attempt = 0; attempt < KFASTBLOCK_OBJECT_IO_MAX_ATTEMPTS; ++attempt) {
+		ctx->attempt = attempt;
 		if (kfastblock_transport_prepare_executable_object_attempt(
-			    ctx, attempt, &ret))
+			    ctx, &ret))
 			continue;
 		if (ret)
 			return ret;
