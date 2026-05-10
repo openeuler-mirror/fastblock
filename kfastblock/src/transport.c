@@ -1788,45 +1788,43 @@ static void kfastblock_transport_release_object_buffer(
 }
 
 static int kfastblock_transport_execute_object_opcode(
-	struct socket *sock,
-	u32 pool_id,
-	const struct kfastblock_object_extent *extent,
-	enum req_op op,
-	void *buf,
-	u64 seq,
-	struct kfastblock_transport_response_ctx *response)
+	struct kfastblock_transport_object_io_ctx *ctx)
 {
-	if (op == REQ_OP_WRITE || op == REQ_OP_WRITE_ZEROES)
-		return kfastblock_transport_write_object(sock, pool_id, extent, buf,
-							 seq, response);
-	if (op == REQ_OP_READ)
-		return kfastblock_transport_read_object(sock, pool_id, extent, buf,
-							seq, response);
-	return kfastblock_transport_delete_object(sock, pool_id, extent, seq,
-						  response);
+	if (!ctx)
+		return -EINVAL;
+
+	if (ctx->op == REQ_OP_WRITE || ctx->op == REQ_OP_WRITE_ZEROES)
+		return kfastblock_transport_write_object(
+			ctx->sock, ctx->kf_req->request_pool_id, ctx->extent,
+			ctx->buf, ctx->exchange.seq, &ctx->response);
+	if (ctx->op == REQ_OP_READ)
+		return kfastblock_transport_read_object(
+			ctx->sock, ctx->kf_req->request_pool_id, ctx->extent,
+			ctx->buf, ctx->exchange.seq, &ctx->response);
+	return kfastblock_transport_delete_object(
+		ctx->sock, ctx->kf_req->request_pool_id, ctx->extent,
+		ctx->exchange.seq, &ctx->response);
 }
 
 static int kfastblock_transport_finish_object_success(
-	struct kfastblock_request *kf_req,
-	const struct kfastblock_object_extent *extent,
-	enum req_op op,
-	const struct kfastblock_leader_info *leader,
-	void *buf)
+	struct kfastblock_transport_object_io_ctx *ctx)
 {
 	int ret = 0;
 
-	if (!kf_req || !extent || !leader)
+	if (!ctx || !ctx->kf_req || !ctx->extent)
 		return -EINVAL;
 
-	if (op == REQ_OP_READ)
+	if (ctx->op == REQ_OP_READ)
 		ret = kfastblock_transport_copy_request_data(
-			kf_req->rq, extent->request_offset, buf, extent->length, true);
+			ctx->kf_req->rq, ctx->extent->request_offset, ctx->buf,
+			ctx->extent->length, true);
 	if (ret)
 		return ret;
 
-	kfastblock_volume_account_object_success(kf_req->vol, op, extent->pg_id,
-						 leader->osd_id, extent->length);
-	kfastblock_scheduler_note_success(&kf_req->vol->scheduler);
+	kfastblock_volume_account_object_success(
+		ctx->kf_req->vol, ctx->op, ctx->extent->pg_id, ctx->leader.osd_id,
+		ctx->extent->length);
+	kfastblock_scheduler_note_success(&ctx->kf_req->vol->scheduler);
 	return 0;
 }
 
@@ -1847,16 +1845,17 @@ static int kfastblock_transport_pick_object_leader(
 }
 
 static int kfastblock_transport_normalize_object_ret(
-	enum req_op op,
-	const struct kfastblock_object_extent *extent,
-	void *buf,
+	struct kfastblock_transport_object_io_ctx *ctx,
 	int ret)
 {
-	if (ret == -ENOENT && op == REQ_OP_READ) {
-		memset(buf, 0, extent->length);
+	if (!ctx)
+		return ret;
+
+	if (ret == -ENOENT && ctx->op == REQ_OP_READ) {
+		memset(ctx->buf, 0, ctx->extent->length);
 		return 0;
 	}
-	if (ret == -ENOENT && op == REQ_OP_DISCARD)
+	if (ret == -ENOENT && ctx->op == REQ_OP_DISCARD)
 		return 0;
 
 	return ret;
@@ -1939,11 +1938,8 @@ static int kfastblock_transport_run_object_exchange(
 	if (!ctx)
 		return -EINVAL;
 
-	ret = kfastblock_transport_execute_object_opcode(
-		ctx->sock, ctx->kf_req->request_pool_id, ctx->extent, ctx->op,
-		ctx->buf, ctx->exchange.seq, &ctx->response);
-	ret = kfastblock_transport_normalize_object_ret(
-		ctx->op, ctx->extent, ctx->buf, ret);
+	ret = kfastblock_transport_execute_object_opcode(ctx);
+	ret = kfastblock_transport_normalize_object_ret(ctx, ret);
 	if (!ret)
 		ret = kfastblock_transport_match_exchange_response(&ctx->exchange);
 	kfastblock_transport_release_response_and_exchange(
@@ -2014,8 +2010,7 @@ static int kfastblock_transport_complete_successful_object_attempt(
 		return -EINVAL;
 
 	kfastblock_transport_note_object_leader_success(ctx->hint, &ctx->leader);
-	return kfastblock_transport_finish_object_success(
-		ctx->kf_req, ctx->extent, ctx->op, &ctx->leader, ctx->buf);
+	return kfastblock_transport_finish_object_success(ctx);
 }
 
 static bool kfastblock_transport_retry_begin_object_attempt_failure(
