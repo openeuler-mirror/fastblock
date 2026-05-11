@@ -2662,9 +2662,34 @@ static int kfastblock_transport_prepare_request_submit(
 	return kfastblock_transport_prefetch_request_leaders(kf_req);
 }
 
-int kfastblock_transport_submit(struct kfastblock_request *kf_req)
+static int kfastblock_transport_kick_initial_dispatch(
+	struct kfastblock_request *kf_req,
+	unsigned int initial_dispatch)
 {
 	struct kfastblock_request_dispatch_batch batch;
+	int ret;
+
+	if (!kf_req)
+		return -EINVAL;
+
+	kfastblock_request_dispatch_batch_reset(&batch);
+	ret = kfastblock_request_pick_dispatch_batch(
+		kf_req, &batch, initial_dispatch);
+	if (ret < 0) {
+		kfastblock_transport_abort_request(kf_req, ret);
+		return 0;
+	}
+
+	get_device(&kf_req->vol->dev);
+	ret = kfastblock_transport_queue_dispatch_batch(kf_req, &batch);
+	if (ret)
+		kfastblock_transport_abort_request(kf_req, ret);
+
+	return 0;
+}
+
+int kfastblock_transport_submit(struct kfastblock_request *kf_req)
+{
 	unsigned int initial_dispatch;
 	int ret = 0;
 
@@ -2681,19 +2706,8 @@ int kfastblock_transport_submit(struct kfastblock_request *kf_req)
 	if (!kf_req || !kf_req->nr_objects)
 		return 0;
 
-	kfastblock_request_dispatch_batch_reset(&batch);
-	ret = kfastblock_request_pick_dispatch_batch(kf_req, &batch,
-						     initial_dispatch);
-	if (ret < 0) {
-		kfastblock_transport_abort_request(kf_req, ret);
-		return 0;
-	}
-	get_device(&kf_req->vol->dev);
-	ret = kfastblock_transport_queue_dispatch_batch(kf_req, &batch);
-	if (ret)
-		kfastblock_transport_abort_request(kf_req, ret);
-
-	return 0;
+	return kfastblock_transport_kick_initial_dispatch(
+		kf_req, initial_dispatch);
 }
 
 int kfastblock_transport_refresh_image_volume(struct kfastblock_volume *vol)
