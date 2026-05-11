@@ -2516,6 +2516,26 @@ static int kfastblock_transport_prefetch_request_leaders(
 	return 0;
 }
 
+static void kfastblock_transport_finish_request_now(
+	struct kfastblock_request *kf_req,
+	bool mark_success)
+{
+	blk_status_t status;
+
+	if (!kf_req)
+		return;
+
+	status = kfastblock_recovery_errno_to_blk_status(kf_req->status);
+	kfastblock_volume_account_io_complete(kf_req->vol, kf_req->status);
+	if (mark_success && !kf_req->status)
+		kfastblock_volume_mark_success(
+			kf_req->vol, KFASTBLOCK_VOLUME_SOURCE_OBJECT_IO);
+	kfastblock_request_cleanup(kf_req);
+	blk_mq_end_request(kf_req->rq, status);
+	kfastblock_volume_put_io(kf_req->vol);
+	put_device(&kf_req->vol->dev);
+}
+
 static void kfastblock_transport_complete_request(struct kfastblock_request *kf_req,
 						  unsigned int object_index,
 						  int ret)
@@ -2539,18 +2559,8 @@ static void kfastblock_transport_complete_request(struct kfastblock_request *kf_
 						&kf_req->pending_objects);
 	}
 
-	if (remaining == 0) {
-		blk_status_t status =
-			kfastblock_recovery_errno_to_blk_status(kf_req->status);
-		kfastblock_volume_account_io_complete(kf_req->vol, kf_req->status);
-		if (!kf_req->status)
-			kfastblock_volume_mark_success(kf_req->vol,
-					      KFASTBLOCK_VOLUME_SOURCE_OBJECT_IO);
-		kfastblock_request_cleanup(kf_req);
-		blk_mq_end_request(kf_req->rq, status);
-		kfastblock_volume_put_io(kf_req->vol);
-		put_device(&kf_req->vol->dev);
-	}
+	if (remaining == 0)
+		kfastblock_transport_finish_request_now(kf_req, true);
 }
 
 static void kfastblock_transport_abort_request(struct kfastblock_request *kf_req,
@@ -2568,15 +2578,8 @@ static void kfastblock_transport_abort_request(struct kfastblock_request *kf_req
 		return;
 
 	remaining = atomic_sub_return(unscheduled, &kf_req->pending_objects);
-	if (remaining == 0) {
-		blk_status_t status =
-			kfastblock_recovery_errno_to_blk_status(kf_req->status);
-		kfastblock_volume_account_io_complete(kf_req->vol, kf_req->status);
-		kfastblock_request_cleanup(kf_req);
-		blk_mq_end_request(kf_req->rq, status);
-		kfastblock_volume_put_io(kf_req->vol);
-		put_device(&kf_req->vol->dev);
-	}
+	if (remaining == 0)
+		kfastblock_transport_finish_request_now(kf_req, false);
 }
 
 static void kfastblock_transport_object_work(struct work_struct *work)
