@@ -102,7 +102,12 @@ struct kfastblock_transport_object_io_ctx {
 
 struct kfastblock_transport_submit_ctx {
 	struct kfastblock_request *kf_req;
+	struct kfastblock_request_pg_hint *hint;
+	struct kfastblock_leader_info leader;
+	struct kfastblock_cached_socket *cached;
+	struct socket *sock;
 	struct kfastblock_request_dispatch_batch batch;
+	unsigned int pg_index;
 	unsigned int initial_dispatch;
 	int ret;
 	bool finished;
@@ -2482,42 +2487,51 @@ static int kfastblock_transport_submit_object(struct kfastblock_request *kf_req,
 	return kfastblock_transport_submit_object_io(kf_req, object_index);
 }
 
-static int kfastblock_transport_prefetch_pg_leader(
-	struct kfastblock_request *kf_req,
-	struct kfastblock_request_pg_hint *hint)
+static void kfastblock_transport_submit_ctx_reset_prefetch_pg(
+	struct kfastblock_transport_submit_ctx *ctx,
+	unsigned int pg_index)
 {
-	struct kfastblock_leader_info leader;
-	struct kfastblock_cached_socket *cached = NULL;
-	struct socket *sock = NULL;
-	int ret;
+	if (!ctx || !ctx->kf_req || pg_index >= ctx->kf_req->nr_unique_pgs)
+		return;
 
-	if (!kf_req || !kf_req->vol || !hint)
+	ctx->pg_index = pg_index;
+	ctx->hint = &ctx->kf_req->pg_hints[pg_index];
+	memset(&ctx->leader, 0, sizeof(ctx->leader));
+	ctx->cached = NULL;
+	ctx->sock = NULL;
+}
+
+static int kfastblock_transport_prefetch_submit_pg(
+	struct kfastblock_transport_submit_ctx *ctx)
+{
+	if (!ctx || !ctx->kf_req || !ctx->kf_req->vol || !ctx->hint)
 		return -EINVAL;
 
-	if (kfastblock_request_get_pg_hint_leader(hint, &leader))
-		ret = kfastblock_transport_query_pg_leader(kf_req, hint, &leader);
+	if (kfastblock_request_get_pg_hint_leader(ctx->hint, &ctx->leader))
+		ctx->ret = kfastblock_transport_query_pg_leader(
+			ctx->kf_req, ctx->hint, &ctx->leader);
 	else
-		ret = 0;
-	if (ret) {
-		kfastblock_request_invalidate_pg_hint_leader(hint);
-		return ret;
+		ctx->ret = 0;
+	if (ctx->ret) {
+		kfastblock_request_invalidate_pg_hint_leader(ctx->hint);
+		return ctx->ret;
 	}
 
-	kfastblock_request_set_pg_hint_leader(hint, &leader);
-	ret = kfastblock_transport_acquire_osd_socket(
-		kf_req->vol, &leader, &cached, &sock);
-	(void)sock;
-	if (!ret)
-		kfastblock_transport_release_osd_socket(cached);
+	kfastblock_request_set_pg_hint_leader(ctx->hint, &ctx->leader);
+	ctx->ret = kfastblock_transport_acquire_osd_socket(
+		ctx->kf_req->vol, &ctx->leader, &ctx->cached, &ctx->sock);
+	(void)ctx->sock;
+	if (!ctx->ret)
+		kfastblock_transport_release_osd_socket(ctx->cached);
+	ctx->cached = NULL;
+	ctx->sock = NULL;
 
-	return ret;
+	return ctx->ret;
 }
 
 static void kfastblock_transport_prefetch_submit_leaders(
 	struct kfastblock_transport_submit_ctx *ctx)
 {
-	unsigned int i;
-
 	if (!ctx || !ctx->kf_req)
 		return;
 
@@ -2529,9 +2543,11 @@ static void kfastblock_transport_prefetch_submit_leaders(
 		return;
 	}
 
-	for (i = 0; i < ctx->kf_req->nr_unique_pgs; ++i) {
-		ctx->ret = kfastblock_transport_prefetch_pg_leader(
-			ctx->kf_req, &ctx->kf_req->pg_hints[i]);
+	for (ctx->pg_index = 0; ctx->pg_index < ctx->kf_req->nr_unique_pgs;
+	     ++ctx->pg_index) {
+		kfastblock_transport_submit_ctx_reset_prefetch_pg(
+			ctx, ctx->pg_index);
+		ctx->ret = kfastblock_transport_prefetch_submit_pg(ctx);
 		if (ctx->ret &&
 		    kfastblock_recovery_prefetch_should_fail_request(ctx->ret))
 			return;
