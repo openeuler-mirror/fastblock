@@ -1926,22 +1926,18 @@ static int kfastblock_transport_run_object_exchange(
 	return ctx->ret;
 }
 
-static int kfastblock_transport_reject_stale_object_request(
+static void kfastblock_transport_reject_stale_object_request(
 	struct kfastblock_transport_object_io_ctx *ctx)
 {
-	int ret;
-
 	if (!ctx)
-		return -EINVAL;
+		return;
 
-	ret = kfastblock_transport_request_view_stale(ctx->kf_req);
-	if (ret) {
-		ctx->ret = ret;
-		ctx->actions = kfastblock_recovery_classify_object_failure(ret);
+	ctx->ret = kfastblock_transport_request_view_stale(ctx->kf_req);
+	if (ctx->ret) {
+		ctx->actions = kfastblock_recovery_classify_object_failure(
+			ctx->ret);
 		kfastblock_transport_handle_object_failure(ctx);
 	}
-
-	return ret;
 }
 
 static void kfastblock_transport_cleanup_object_io(
@@ -2065,18 +2061,19 @@ static void kfastblock_transport_object_io_ctx_reset_attempt(
 	kfastblock_transport_response_ctx_reset(&ctx->response);
 }
 
-static int kfastblock_transport_prepare_object_execution(
+static void kfastblock_transport_prepare_object_execution(
 	struct kfastblock_transport_object_io_ctx *ctx)
 {
 	if (!ctx)
-		return -EINVAL;
+		return;
 
-	ctx->ret = kfastblock_transport_reject_stale_object_request(ctx);
+	ctx->ret = 0;
+	ctx->actions = 0;
+	kfastblock_transport_reject_stale_object_request(ctx);
 	if (ctx->ret)
-		return ctx->ret;
+		return;
 
 	ctx->ret = kfastblock_transport_prepare_object_buffer(ctx);
-	return ctx->ret;
 }
 
 static bool kfastblock_transport_prepare_executable_object_attempt(
@@ -2121,48 +2118,49 @@ static bool kfastblock_transport_run_single_object_attempt(
 	return kfastblock_transport_execute_object_attempt(ctx);
 }
 
-static int kfastblock_transport_run_object_attempts(
+static void kfastblock_transport_run_object_attempts(
 	struct kfastblock_transport_object_io_ctx *ctx)
 {
 	int attempt;
 
 	if (!ctx)
-		return -EINVAL;
+		return;
 
 	for (attempt = 0; attempt < KFASTBLOCK_OBJECT_IO_MAX_ATTEMPTS; ++attempt) {
 		kfastblock_transport_object_io_ctx_reset_attempt(ctx);
 		ctx->attempt = attempt;
 		if (kfastblock_transport_run_single_object_attempt(ctx))
 			continue;
-		return ctx->ret;
+		return;
 	}
-
-	return ctx->ret;
 }
 
-static int kfastblock_transport_submit_prepared_object_io(
+static void kfastblock_transport_submit_prepared_object_io(
 	struct kfastblock_transport_object_io_ctx *ctx)
 {
 	if (!ctx)
-		return -EINVAL;
+		return;
 
-	ctx->ret = kfastblock_transport_prepare_object_execution(ctx);
+	kfastblock_transport_prepare_object_execution(ctx);
 	if (ctx->ret)
-		return ctx->ret;
+		return;
 
-	ctx->ret = kfastblock_transport_run_object_attempts(ctx);
-	return ctx->ret;
+	kfastblock_transport_run_object_attempts(ctx);
 }
 
 static int kfastblock_transport_run_object_io_ctx(
 	struct kfastblock_transport_object_io_ctx *ctx)
 {
+	int ret;
+
 	if (!ctx)
 		return -EINVAL;
 
-	ctx->ret = kfastblock_transport_submit_prepared_object_io(ctx);
+	ctx->ret = 0;
+	kfastblock_transport_submit_prepared_object_io(ctx);
+	ret = ctx->ret;
 	kfastblock_transport_cleanup_object_io(ctx);
-	return ctx->ret;
+	return ret;
 }
 
 static int kfastblock_transport_submit_object_io(
