@@ -2792,6 +2792,16 @@ static int kfastblock_transport_kick_initial_dispatch(
 	return 0;
 }
 
+static int kfastblock_transport_finish_submit_ctx(
+	struct kfastblock_transport_submit_ctx *ctx)
+{
+	if (!ctx || !ctx->kf_req)
+		return -EINVAL;
+
+	ctx->finished = true;
+	return kfastblock_transport_finish_submit_now(ctx->kf_req, ctx->ret);
+}
+
 static int kfastblock_transport_queue_initial_dispatch(
 	struct kfastblock_transport_submit_ctx *ctx)
 {
@@ -2819,8 +2829,7 @@ static int kfastblock_transport_run_request_submit(
 	if (ctx->finished)
 		return 0;
 	if (ctx->ret < 0)
-		return kfastblock_transport_finish_submit_now(ctx->kf_req,
-							      ctx->ret);
+		return kfastblock_transport_finish_submit_ctx(ctx);
 
 	if (kfastblock_transport_kick_initial_dispatch(ctx))
 		return ctx->ret;
