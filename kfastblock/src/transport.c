@@ -2734,21 +2734,26 @@ static int kfastblock_transport_kick_initial_dispatch(
 	return 0;
 }
 
-int kfastblock_transport_submit(struct kfastblock_request *kf_req)
+static int kfastblock_transport_run_request_submit(
+	struct kfastblock_request *kf_req)
 {
 	unsigned int initial_dispatch;
-	int ret = 0;
+	int ret;
 
-	ret = kfastblock_transport_prepare_request_submit(kf_req,
-							    &initial_dispatch);
-	if (ret < 0) {
+	ret = kfastblock_transport_prepare_request_submit(
+		kf_req, &initial_dispatch);
+	if (ret < 0)
 		return kfastblock_transport_finish_submit_now(kf_req, ret);
-	}
 	if (!kf_req || !kf_req->nr_objects)
 		return 0;
 
 	return kfastblock_transport_kick_initial_dispatch(
 		kf_req, initial_dispatch);
+}
+
+int kfastblock_transport_submit(struct kfastblock_request *kf_req)
+{
+	return kfastblock_transport_run_request_submit(kf_req);
 }
 
 int kfastblock_transport_refresh_image_volume(struct kfastblock_volume *vol)
