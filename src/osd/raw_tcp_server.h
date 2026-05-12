@@ -20,6 +20,7 @@
 
 class osd_service;
 struct osd_raw_tcp_connection_state;
+struct sockaddr_in;
 
 class osd_raw_tcp_server {
 public:
@@ -49,6 +50,9 @@ private:
     };
 
     bool start_listener(uint32_t shard_id);
+    bool start_connection(int client_fd,
+                          const sockaddr_in& peer_addr,
+                          uint32_t shard_id) noexcept;
     void cleanup_finished_connections() noexcept;
     void log_connection_summary(uint32_t shard_id) noexcept;
     void run_listener(uint32_t shard_id) noexcept;

@@ -942,6 +942,54 @@ void osd_raw_tcp_server::log_connection_summary(const uint32_t shard_id) noexcep
       static_cast<unsigned long long>(reordered));
 }
 
+bool osd_raw_tcp_server::start_connection(
+  const int client_fd,
+  const sockaddr_in& peer_addr,
+  const uint32_t shard_id) noexcept {
+    auto conn = std::make_unique<connection_context>();
+    char peer_host[INET_ADDRSTRLEN] = {};
+
+    if (!set_nonblocking(client_fd)) {
+        SPDK_ERRLOG(
+          "ERROR: set raw TCP connection nonblocking on shard %u failed: %s\n",
+          shard_id,
+          std::strerror(errno));
+        ::shutdown(client_fd, SHUT_RDWR);
+        ::close(client_fd);
+        return false;
+    }
+
+    conn->fd = client_fd;
+    conn->shard_id = shard_id;
+    if (::inet_ntop(AF_INET, &peer_addr.sin_addr, peer_host, sizeof(peer_host))) {
+        conn->peer_address = peer_host;
+    }
+    try {
+        conn->worker = std::thread([this, shard_id, ctx = conn.get()]() {
+            handle_connection(ctx, shard_id);
+        });
+    } catch (const std::exception& e) {
+        SPDK_ERRLOG(
+          "ERROR: create raw TCP connection worker on shard %u failed: %s\n",
+          shard_id,
+          e.what());
+        ::shutdown(client_fd, SHUT_RDWR);
+        ::close(client_fd);
+        return false;
+    }
+
+    SPDK_NOTICELOG("Accepted raw TCP connection on shard %u peer=%s fd=%d\n",
+                   shard_id,
+                   conn->peer_address.empty() ? "<unknown>" :
+                     conn->peer_address.c_str(),
+                   client_fd);
+    {
+        std::lock_guard<std::mutex> lk(_connections_mutex);
+        _connections.push_back(std::move(conn));
+    }
+    return true;
+}
+
 void osd_raw_tcp_server::run_listener(const uint32_t shard_id) noexcept {
     auto& listener = _listeners.at(shard_id);
     uint64_t accept_count = 0;
@@ -971,44 +1019,32 @@ void osd_raw_tcp_server::run_listener(const uint32_t shard_id) noexcept {
             continue;
         }
 
-        auto conn = std::make_unique<connection_context>();
-        char peer_host[INET_ADDRSTRLEN] = {};
+        for (;;) {
+            if (!start_connection(client_fd, peer_addr, shard_id)) {
+                break;
+            }
+            accept_count++;
+            if (accept_count % raw_connection_summary_interval == 0) {
+                log_connection_summary(shard_id);
+            }
 
-        if (!set_nonblocking(client_fd)) {
-            SPDK_ERRLOG(
-              "ERROR: set raw TCP connection nonblocking on shard %u failed: %s\n",
-              shard_id,
-              std::strerror(errno));
-            ::shutdown(client_fd, SHUT_RDWR);
-            ::close(client_fd);
-            continue;
-        }
-        conn->fd = client_fd;
-        conn->shard_id = shard_id;
-        if (::inet_ntop(AF_INET, &peer_addr.sin_addr, peer_host, sizeof(peer_host))) {
-            conn->peer_address = peer_host;
-        }
-        try {
-            conn->worker = std::thread([this, shard_id, ctx = conn.get()]() {
-                handle_connection(ctx, shard_id);
-            });
-        } catch (const std::exception& e) {
-            SPDK_ERRLOG(
-              "ERROR: create raw TCP connection worker on shard %u failed: %s\n",
-              shard_id,
-              e.what());
-            ::shutdown(client_fd, SHUT_RDWR);
-            ::close(client_fd);
-            continue;
-        }
-
-        {
-            std::lock_guard<std::mutex> lk(_connections_mutex);
-            _connections.push_back(std::move(conn));
-        }
-        accept_count++;
-        if (accept_count % raw_connection_summary_interval == 0) {
-            log_connection_summary(shard_id);
+            peer_addr = {};
+            peer_len = sizeof(peer_addr);
+            client_fd = ::accept(listener.fd,
+                                 reinterpret_cast<::sockaddr*>(&peer_addr),
+                                 &peer_len);
+            if (client_fd < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    break;
+                }
+                if (errno != EINTR && _running.load(std::memory_order_acquire)) {
+                    SPDK_ERRLOG(
+                      "ERROR: drain raw TCP accept queue on shard %u failed: %s\n",
+                      shard_id,
+                      std::strerror(errno));
+                }
+                break;
+            }
         }
     }
 
