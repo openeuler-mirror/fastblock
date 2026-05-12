@@ -1272,7 +1272,7 @@ static int kfastblock_transport_exec_request_status_only(
 	return ret;
 }
 
-static __maybe_unused u64 kfastblock_transport_next_shared_seq(
+static u64 kfastblock_transport_next_shared_seq(
 	struct kfastblock_cached_socket *cached)
 {
 	u64 seq;
@@ -1286,7 +1286,7 @@ static __maybe_unused u64 kfastblock_transport_next_shared_seq(
 	return seq;
 }
 
-static __maybe_unused int kfastblock_transport_prepare_mux_osd_socket(
+static int kfastblock_transport_prepare_mux_osd_socket(
 	struct kfastblock_volume *vol,
 	const struct kfastblock_leader_info *leader,
 	struct kfastblock_cached_socket **cached_out)
@@ -1364,7 +1364,7 @@ static void kfastblock_transport_unregister_mux_waiter(
 	spin_unlock_irqrestore(&cached->mux_waiter_lock, flags);
 }
 
-static __maybe_unused int kfastblock_transport_exec_mux_request_parts(
+static int kfastblock_transport_exec_mux_request_parts(
 	struct kfastblock_cached_socket *cached,
 	u8 service,
 	u8 opcode,
@@ -1405,6 +1405,49 @@ static __maybe_unused int kfastblock_transport_exec_mux_request_parts(
 	wait_for_completion(&waiter.done);
 	*rsp = waiter.response;
 	return waiter.ret;
+}
+
+static void kfastblock_transport_finalize_mux_osd_socket(
+	struct kfastblock_volume *vol,
+	struct kfastblock_cached_socket *cached,
+	const struct kfastblock_leader_info *leader,
+	int ret,
+	unsigned int actions)
+{
+	struct socket *sock = NULL;
+
+	if (!cached || !ret)
+		return;
+
+	mutex_lock(&cached->send_lock);
+	mutex_lock(&cached->lock);
+	if (cached->sock && !cached->mux_dead) {
+		cached->mux_dead = true;
+		sock = cached->sock;
+	}
+	mutex_unlock(&cached->lock);
+	if (sock)
+		kernel_sock_shutdown(sock, SHUT_RDWR);
+	mutex_unlock(&cached->send_lock);
+	flush_work(&cached->mux_recv_work);
+
+	mutex_lock(&cached->send_lock);
+	mutex_lock(&cached->lock);
+	if (cached->sock == sock && cached->sock) {
+		if ((actions & KFASTBLOCK_RECOVERY_DROP_SOCKET) && leader) {
+			kfastblock_transport_mark_osd_socket_failure(
+				vol, cached, leader, ret);
+			kfastblock_volume_account_socket_drop(
+				vol, false, leader->osd_id, leader->port, ret);
+		} else if (leader) {
+			kfastblock_volume_account_socket_drop(
+				vol, false, leader->osd_id, leader->port, ret);
+		}
+		kfastblock_osd_conn_slot_close_locked(cached);
+	}
+	mutex_unlock(&cached->lock);
+	mutex_unlock(&cached->send_lock);
+	kfastblock_transport_fail_mux_waiters(cached, ret);
 }
 
 static int kfastblock_transport_begin_exchange(
@@ -1993,7 +2036,7 @@ static int kfastblock_transport_fetch_cluster_map_from_monitor(
 }
 
 static int kfastblock_transport_fetch_pg_leader_from_osd(
-	struct socket *sock,
+	struct kfastblock_cached_socket *cached,
 	u32 pool_id,
 	u32 pg_id,
 	u64 seq,
@@ -2003,17 +2046,21 @@ static int kfastblock_transport_fetch_pg_leader_from_osd(
 		.pool_id = cpu_to_le32(pool_id),
 		.pg_id = cpu_to_le32(pg_id),
 	};
+	struct kfastblock_transport_body_part part = {
+		.buf = &req,
+		.len = sizeof(req),
+	};
 	struct kfastblock_transport_response_ctx response = {};
 	int ret;
 
-	if (!leader)
+	if (!cached || !leader)
 		return -EINVAL;
 
 	memset(leader, 0, sizeof(*leader));
-	ret = kfastblock_transport_exec_request(
-		sock, KFASTBLOCK_RAW_SERVICE_OSD,
+	ret = kfastblock_transport_exec_mux_request_parts(
+		cached, KFASTBLOCK_RAW_SERVICE_OSD,
 		KFASTBLOCK_RAW_OSD_OP_GET_LEADER, seq,
-		&req, sizeof(req), &response);
+		&part, 1, &response);
 	if (ret) {
 		kfastblock_transport_response_ctx_release(&response);
 		return ret;
@@ -2959,17 +3006,17 @@ static int kfastblock_transport_drive_leader_query_target(
 	if (ctx->ret)
 		return ctx->ret;
 
-	ctx->ret = kfastblock_transport_acquire_osd_socket(
-		ctx->vol, &ctx->target, &ctx->cached, &ctx->sock);
+	ctx->ret = kfastblock_transport_prepare_mux_osd_socket(
+		ctx->vol, &ctx->target, &ctx->cached);
 	if (ctx->ret)
 		return ctx->ret;
 
-	ctx->seq = kfastblock_transport_next_seq(ctx->cached);
+	ctx->seq = kfastblock_transport_next_shared_seq(ctx->cached);
 	ctx->ret = kfastblock_transport_fetch_pg_leader_from_osd(
-		ctx->sock, ctx->kf_req->request_pool_id, ctx->hint->pg_id,
+		ctx->cached, ctx->kf_req->request_pool_id, ctx->hint->pg_id,
 		ctx->seq, ctx->leader_out);
 	ctx->actions = kfastblock_recovery_classify_leader_failure(ctx->ret);
-	kfastblock_recovery_finalize_osd_socket(
+	kfastblock_transport_finalize_mux_osd_socket(
 		ctx->vol, ctx->cached, &ctx->target, ctx->ret, ctx->actions);
 	ctx->cached = NULL;
 	kfastblock_volume_account_leader_query(
