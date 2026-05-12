@@ -1155,15 +1155,25 @@ static void kfastblock_transport_finish_exchange(
 }
 
 static int kfastblock_transport_match_exchange_response(
-	struct kfastblock_transport_exchange_ctx *ctx)
+	struct kfastblock_transport_exchange_ctx *ctx,
+	const struct kfastblock_transport_response_ctx *response)
 {
+	u64 response_seq;
 	unsigned int matched_object = 0;
 	int ret;
 
-	if (!ctx || !ctx->kf_req)
+	if (!ctx || !ctx->kf_req || !response)
 		return -EINVAL;
+	if (response->hdr.service != ctx->service)
+		return -EPROTO;
+	if (response->hdr.opcode != ctx->opcode)
+		return -EPROTO;
 
-	ret = kfastblock_request_lookup_object_by_seq(ctx->kf_req, ctx->seq,
+	response_seq = le64_to_cpu(response->hdr.seq);
+	if (!response_seq || response_seq != ctx->seq)
+		return -EPROTO;
+
+	ret = kfastblock_request_lookup_object_by_seq(ctx->kf_req, response_seq,
 						      &matched_object);
 	if (ret)
 		return ret;
@@ -1209,8 +1219,9 @@ static int kfastblock_transport_complete_exchange_response(
 	if (!ctx)
 		return -EINVAL;
 
-	match_ret = ret ? 0 : kfastblock_transport_match_exchange_response(ctx);
-	if (!ret && match_ret)
+	match_ret = response ?
+		kfastblock_transport_match_exchange_response(ctx, response) : 0;
+	if (match_ret)
 		ret = match_ret;
 	kfastblock_transport_finish_exchange(ctx, ret,
 					    ret || !response ? NULL : &response->hdr);
@@ -2014,9 +2025,6 @@ static int kfastblock_transport_run_object_exchange(
 
 	ctx->ret = kfastblock_transport_execute_object_opcode(ctx);
 	ctx->ret = kfastblock_transport_normalize_object_ret(ctx, ctx->ret);
-	if (!ctx->ret)
-		ctx->ret = kfastblock_transport_match_exchange_response(
-			&ctx->exchange);
 	kfastblock_transport_release_response_and_exchange(
 		&ctx->exchange, &ctx->response, &ctx->ret);
 	return ctx->ret;
