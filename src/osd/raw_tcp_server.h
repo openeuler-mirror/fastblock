@@ -19,6 +19,7 @@
 #include <vector>
 
 class osd_service;
+struct osd_raw_tcp_connection_state;
 
 class osd_raw_tcp_server {
 public:
@@ -40,13 +41,19 @@ private:
     struct connection_context {
         int fd{-1};
         std::atomic<bool> done{false};
+        std::shared_ptr<osd_raw_tcp_connection_state> state{};
         std::thread worker{};
+        std::thread writer{};
     };
 
     bool start_listener(uint32_t shard_id);
     void cleanup_finished_connections() noexcept;
+    void log_connection_summary(uint32_t shard_id) noexcept;
     void run_listener(uint32_t shard_id) noexcept;
     void handle_connection(connection_context *conn, uint32_t shard_id) noexcept;
+    void write_connection_responses(
+      std::shared_ptr<osd_raw_tcp_connection_state> state,
+      uint32_t shard_id) noexcept;
 
 private:
     osd_service* _service{nullptr};

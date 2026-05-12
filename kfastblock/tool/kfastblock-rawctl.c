@@ -162,6 +162,7 @@ struct config {
 	char *output_file;
 	uint32_t pool_id;
 	uint32_t pg_id;
+	uint32_t count;
 	uint64_t image_epoch;
 	uint64_t osdmap_epoch;
 	uint64_t pgmap_epoch;
@@ -174,12 +175,13 @@ struct config {
 	bool pgmap_epoch_set;
 	bool offset_set;
 	bool length_set;
+	bool count_set;
 };
 
 static void usage(const char *prog)
 {
 	fprintf(stderr,
-		"Usage: %s <get-image-info|get-cluster-map|get-leader|read-object|write-object|delete-object> [options]\n",
+		"Usage: %s <get-image-info|get-cluster-map|get-leader|pipeline-get-leader|pipeline-read-object|pipeline-write-object|pipeline-delete-object|read-object|write-object|delete-object> [options]\n",
 		prog);
 	fprintf(stderr, "Options:\n");
 	fprintf(stderr, "  --addr <host:port>\n");
@@ -193,6 +195,7 @@ static void usage(const char *prog)
 	fprintf(stderr, "  --object <name>\n");
 	fprintf(stderr, "  --offset <bytes>\n");
 	fprintf(stderr, "  --length <bytes>\n");
+	fprintf(stderr, "  --count <n>\n");
 	fprintf(stderr, "  --data <string>\n");
 	fprintf(stderr, "  --data-file <path>\n");
 	fprintf(stderr, "  --output <path>\n");
@@ -200,6 +203,10 @@ static void usage(const char *prog)
 	fprintf(stderr, "  %s get-image-info --addr 127.0.0.1:3334 --pool-name pool1 --image-name img1\n", prog);
 	fprintf(stderr, "  %s get-cluster-map --addr 127.0.0.1:3334 --pool-id 1\n", prog);
 	fprintf(stderr, "  %s get-leader --addr 127.0.0.1:12001 --pool-id 1 --pg-id 7\n", prog);
+	fprintf(stderr, "  %s pipeline-get-leader --addr 127.0.0.1:12001 --pool-id 1 --pg-id 7 --count 16\n", prog);
+	fprintf(stderr, "  %s pipeline-read-object --addr 127.0.0.1:12001 --pool-id 1 --pg-id 7 --object obj.0001 --length 4096 --count 8\n", prog);
+	fprintf(stderr, "  %s pipeline-write-object --addr 127.0.0.1:12001 --pool-id 1 --pg-id 7 --object obj.0001 --data hello --count 8\n", prog);
+	fprintf(stderr, "  %s pipeline-delete-object --addr 127.0.0.1:12001 --pool-id 1 --pg-id 7 --object obj.0001 --count 8\n", prog);
 	fprintf(stderr, "  %s write-object --addr 127.0.0.1:12001 --pool-id 1 --pg-id 7 --object obj.0001 --offset 0 --data hello\n", prog);
 	fprintf(stderr, "  %s read-object --addr 127.0.0.1:12001 --pool-id 1 --pg-id 7 --object obj.0001 --offset 0 --length 5\n", prog);
 }
@@ -386,8 +393,8 @@ static int send_message(int fd, uint8_t service, uint8_t opcode, uint64_t seq,
 	return send_all(fd, body, body_len);
 }
 
-static int recv_message(int fd, uint8_t service, uint8_t opcode, uint64_t seq,
-			struct raw_header *rsp_hdr, unsigned char **body_out)
+static int recv_message_any(int fd, uint8_t service, uint8_t opcode,
+			    struct raw_header *rsp_hdr, unsigned char **body_out)
 {
 	struct raw_header hdr;
 	unsigned char *body = NULL;
@@ -410,8 +417,6 @@ static int recv_message(int fd, uint8_t service, uint8_t opcode, uint64_t seq,
 		return -EPROTO;
 	if ((le32toh(hdr.flags) & RAW_FLAG_RESPONSE) == 0)
 		return -EPROTO;
-	if (le64toh(hdr.seq) != seq)
-		return -EPROTO;
 
 	body_len = le32toh(hdr.body_len);
 	if (body_len) {
@@ -427,6 +432,22 @@ static int recv_message(int fd, uint8_t service, uint8_t opcode, uint64_t seq,
 
 	*rsp_hdr = hdr;
 	*body_out = body;
+	return 0;
+}
+
+static int recv_message(int fd, uint8_t service, uint8_t opcode, uint64_t seq,
+			struct raw_header *rsp_hdr, unsigned char **body_out)
+{
+	int ret;
+
+	ret = recv_message_any(fd, service, opcode, rsp_hdr, body_out);
+	if (ret)
+		return ret;
+	if (le64toh(rsp_hdr->seq) != seq) {
+		free(*body_out);
+		*body_out = NULL;
+		return -EPROTO;
+	}
 	return 0;
 }
 
@@ -838,6 +859,233 @@ out:
 	return ret;
 }
 
+static int cmd_pipeline_get_leader(const struct config *cfg)
+{
+	struct raw_get_leader_req req;
+	struct raw_get_leader_rsp rsp;
+	struct raw_header hdr;
+	unsigned char *body = NULL;
+	bool *seen = NULL;
+	char *address = NULL;
+	uint32_t count;
+	uint32_t received = 0;
+	uint16_t address_len;
+	int fd = -1;
+	int ret;
+
+	ret = ensure_addr(cfg);
+	if (ret)
+		return ret;
+	ret = ensure_pool_pg(cfg);
+	if (ret)
+		return ret;
+
+	count = cfg->count_set ? cfg->count : 8;
+	if (count == 0) {
+		fprintf(stderr, "--count must be greater than 0\n");
+		return -EINVAL;
+	}
+
+	seen = calloc(count + 1, sizeof(*seen));
+	if (!seen)
+		return -ENOMEM;
+
+	req.pool_id = htole32(cfg->pool_id);
+	req.pg_id = htole32(cfg->pg_id);
+
+	fd = connect_addr(cfg->addr);
+	if (fd < 0) {
+		ret = fd;
+		goto out;
+	}
+
+	for (received = 0; received < count; ++received) {
+		ret = send_message(fd, RAW_SERVICE_OSD, RAW_OSD_OP_GET_LEADER,
+				   (uint64_t)received + 1, &req, sizeof(req));
+		if (ret)
+			goto out;
+	}
+
+	printf("pipeline_count=%u\n", count);
+	for (received = 0; received < count; ++received) {
+		uint64_t seq;
+
+		ret = recv_message_any(fd, RAW_SERVICE_OSD, RAW_OSD_OP_GET_LEADER,
+				       &hdr, &body);
+		if (ret)
+			goto out;
+
+		seq = le64toh(hdr.seq);
+		if (seq == 0 || seq > count || seen[seq]) {
+			ret = -EPROTO;
+			goto out;
+		}
+		seen[seq] = true;
+
+		printf("seq=%llu status=%s(%u)\n",
+		       (unsigned long long)seq,
+		       status_name(le32toh(hdr.status)),
+		       le32toh(hdr.status));
+		if (le32toh(hdr.status) != RAW_STATUS_OK) {
+			free(body);
+			body = NULL;
+			continue;
+		}
+		if (le32toh(hdr.body_len) < sizeof(rsp)) {
+			ret = -EPROTO;
+			goto out;
+		}
+
+		memcpy(&rsp, body, sizeof(rsp));
+		address_len = le16toh(rsp.address_len);
+		if (le32toh(hdr.body_len) != sizeof(rsp) + address_len) {
+			ret = -EPROTO;
+			goto out;
+		}
+		address = calloc(1, (size_t)address_len + 1);
+		if (!address) {
+			ret = -ENOMEM;
+			goto out;
+		}
+		memcpy(address, body + sizeof(rsp), address_len);
+		printf("  leader_id=%u leader_port=%u leader_addr=%s\n",
+		       le32toh(rsp.leader_id), le16toh(rsp.leader_port), address);
+		free(address);
+		address = NULL;
+		free(body);
+		body = NULL;
+	}
+
+out:
+	free(address);
+	free(body);
+	free(seen);
+	if (fd >= 0)
+		close(fd);
+	return ret;
+}
+
+static int cmd_pipeline_read_object(const struct config *cfg)
+{
+	struct raw_read_object_req req;
+	struct raw_read_object_rsp rsp;
+	struct raw_header hdr;
+	unsigned char *body = NULL;
+	unsigned char *req_body = NULL;
+	bool *seen = NULL;
+	size_t object_len;
+	size_t req_len;
+	uint32_t count;
+	uint32_t received = 0;
+	uint32_t data_len;
+	int fd = -1;
+	int ret;
+
+	ret = ensure_addr(cfg);
+	if (ret)
+		return ret;
+	ret = ensure_pool_pg(cfg);
+	if (ret)
+		return ret;
+	if (!cfg->object_name || !cfg->length_set) {
+		fprintf(stderr, "--object and --length are required\n");
+		return -EINVAL;
+	}
+
+	count = cfg->count_set ? cfg->count : 8;
+	if (count == 0) {
+		fprintf(stderr, "--count must be greater than 0\n");
+		return -EINVAL;
+	}
+
+	seen = calloc(count + 1, sizeof(*seen));
+	if (!seen)
+		return -ENOMEM;
+
+	object_len = strlen(cfg->object_name);
+	req_len = sizeof(req) + object_len;
+	req_body = calloc(1, req_len);
+	if (!req_body) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	req.pool_id = htole32(cfg->pool_id);
+	req.pg_id = htole32(cfg->pg_id);
+	req.offset = htole64(cfg->offset_set ? cfg->offset : 0);
+	req.length = htole32(cfg->length);
+	req.object_name_len = htole16((uint16_t)object_len);
+	memcpy(req_body, &req, sizeof(req));
+	memcpy(req_body + sizeof(req), cfg->object_name, object_len);
+
+	fd = connect_addr(cfg->addr);
+	if (fd < 0) {
+		ret = fd;
+		goto out;
+	}
+
+	for (received = 0; received < count; ++received) {
+		ret = send_message(fd, RAW_SERVICE_OSD, RAW_OSD_OP_READ_OBJECT,
+				   (uint64_t)received + 1, req_body,
+				   (uint32_t)req_len);
+		if (ret)
+			goto out;
+	}
+
+	printf("pipeline_count=%u\n", count);
+	for (received = 0; received < count; ++received) {
+		uint64_t seq;
+
+		ret = recv_message_any(fd, RAW_SERVICE_OSD, RAW_OSD_OP_READ_OBJECT,
+				       &hdr, &body);
+		if (ret)
+			goto out;
+
+		seq = le64toh(hdr.seq);
+		if (seq == 0 || seq > count || seen[seq]) {
+			ret = -EPROTO;
+			goto out;
+		}
+		seen[seq] = true;
+		printf("seq=%llu status=%s(%u)\n",
+		       (unsigned long long)seq,
+		       status_name(le32toh(hdr.status)),
+		       le32toh(hdr.status));
+		if (le32toh(hdr.status) != RAW_STATUS_OK) {
+			free(body);
+			body = NULL;
+			continue;
+		}
+		if (le32toh(hdr.body_len) < sizeof(rsp)) {
+			ret = -EPROTO;
+			goto out;
+		}
+
+		memcpy(&rsp, body, sizeof(rsp));
+		data_len = le32toh(rsp.data_len);
+		if (le32toh(hdr.body_len) != sizeof(rsp) + data_len) {
+			ret = -EPROTO;
+			goto out;
+		}
+		printf("  data_len=%u\n", data_len);
+		if (cfg->output_file) {
+			ret = write_file(cfg->output_file, body + sizeof(rsp), data_len);
+			if (ret)
+				goto out;
+		}
+		free(body);
+		body = NULL;
+	}
+
+out:
+	free(body);
+	free(req_body);
+	free(seen);
+	if (fd >= 0)
+		close(fd);
+	return ret;
+}
+
 static int cmd_read_object(const struct config *cfg)
 {
 	struct raw_read_object_req req;
@@ -1002,6 +1250,216 @@ out:
 	return ret;
 }
 
+static int cmd_pipeline_write_object(const struct config *cfg)
+{
+	struct raw_write_object_req req;
+	struct raw_header hdr;
+	unsigned char *payload = NULL;
+	unsigned char *rsp_body = NULL;
+	unsigned char *data = NULL;
+	bool *seen = NULL;
+	size_t object_len;
+	size_t data_len = 0;
+	size_t req_len;
+	uint32_t count;
+	uint32_t received = 0;
+	int fd = -1;
+	int ret;
+
+	ret = ensure_addr(cfg);
+	if (ret)
+		return ret;
+	ret = ensure_pool_pg(cfg);
+	if (ret)
+		return ret;
+	if (!cfg->object_name || (!cfg->data && !cfg->data_file)) {
+		fprintf(stderr, "--object and one of --data/--data-file are required\n");
+		return -EINVAL;
+	}
+
+	count = cfg->count_set ? cfg->count : 8;
+	if (count == 0) {
+		fprintf(stderr, "--count must be greater than 0\n");
+		return -EINVAL;
+	}
+
+	seen = calloc(count + 1, sizeof(*seen));
+	if (!seen)
+		return -ENOMEM;
+
+	if (cfg->data_file) {
+		ret = load_file(cfg->data_file, &data, &data_len);
+		if (ret)
+			goto out;
+	} else {
+		data_len = strlen(cfg->data);
+		data = malloc(data_len);
+		if (!data) {
+			ret = -ENOMEM;
+			goto out;
+		}
+		memcpy(data, cfg->data, data_len);
+	}
+
+	object_len = strlen(cfg->object_name);
+	req_len = sizeof(req) + object_len + data_len;
+	payload = calloc(1, req_len);
+	if (!payload) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	req.pool_id = htole32(cfg->pool_id);
+	req.pg_id = htole32(cfg->pg_id);
+	req.offset = htole64(cfg->offset_set ? cfg->offset : 0);
+	req.data_len = htole32((uint32_t)data_len);
+	req.object_name_len = htole16((uint16_t)object_len);
+	memcpy(payload, &req, sizeof(req));
+	memcpy(payload + sizeof(req), cfg->object_name, object_len);
+	memcpy(payload + sizeof(req) + object_len, data, data_len);
+
+	fd = connect_addr(cfg->addr);
+	if (fd < 0) {
+		ret = fd;
+		goto out;
+	}
+
+	for (received = 0; received < count; ++received) {
+		ret = send_message(fd, RAW_SERVICE_OSD, RAW_OSD_OP_WRITE_OBJECT,
+				   (uint64_t)received + 1, payload,
+				   (uint32_t)req_len);
+		if (ret)
+			goto out;
+	}
+
+	printf("pipeline_count=%u\n", count);
+	for (received = 0; received < count; ++received) {
+		uint64_t seq;
+
+		ret = recv_message_any(fd, RAW_SERVICE_OSD, RAW_OSD_OP_WRITE_OBJECT,
+				       &hdr, &rsp_body);
+		if (ret)
+			goto out;
+
+		seq = le64toh(hdr.seq);
+		if (seq == 0 || seq > count || seen[seq]) {
+			ret = -EPROTO;
+			goto out;
+		}
+		seen[seq] = true;
+		printf("seq=%llu status=%s(%u)\n",
+		       (unsigned long long)seq,
+		       status_name(le32toh(hdr.status)),
+		       le32toh(hdr.status));
+		free(rsp_body);
+		rsp_body = NULL;
+	}
+
+out:
+	free(rsp_body);
+	free(payload);
+	free(data);
+	free(seen);
+	if (fd >= 0)
+		close(fd);
+	return ret;
+}
+
+static int cmd_pipeline_delete_object(const struct config *cfg)
+{
+	struct raw_delete_object_req req;
+	struct raw_header hdr;
+	unsigned char *req_body = NULL;
+	unsigned char *rsp_body = NULL;
+	bool *seen = NULL;
+	size_t object_len;
+	size_t req_len;
+	uint32_t count;
+	uint32_t received = 0;
+	int fd = -1;
+	int ret;
+
+	ret = ensure_addr(cfg);
+	if (ret)
+		return ret;
+	ret = ensure_pool_pg(cfg);
+	if (ret)
+		return ret;
+	if (!cfg->object_name) {
+		fprintf(stderr, "--object is required\n");
+		return -EINVAL;
+	}
+
+	count = cfg->count_set ? cfg->count : 8;
+	if (count == 0) {
+		fprintf(stderr, "--count must be greater than 0\n");
+		return -EINVAL;
+	}
+
+	seen = calloc(count + 1, sizeof(*seen));
+	if (!seen)
+		return -ENOMEM;
+
+	object_len = strlen(cfg->object_name);
+	req_len = sizeof(req) + object_len;
+	req_body = calloc(1, req_len);
+	if (!req_body) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	req.pool_id = htole32(cfg->pool_id);
+	req.pg_id = htole32(cfg->pg_id);
+	req.object_name_len = htole16((uint16_t)object_len);
+	memcpy(req_body, &req, sizeof(req));
+	memcpy(req_body + sizeof(req), cfg->object_name, object_len);
+
+	fd = connect_addr(cfg->addr);
+	if (fd < 0) {
+		ret = fd;
+		goto out;
+	}
+
+	for (received = 0; received < count; ++received) {
+		ret = send_message(fd, RAW_SERVICE_OSD, RAW_OSD_OP_DELETE_OBJECT,
+				   (uint64_t)received + 1, req_body,
+				   (uint32_t)req_len);
+		if (ret)
+			goto out;
+	}
+
+	printf("pipeline_count=%u\n", count);
+	for (received = 0; received < count; ++received) {
+		uint64_t seq;
+
+		ret = recv_message_any(fd, RAW_SERVICE_OSD,
+				       RAW_OSD_OP_DELETE_OBJECT, &hdr, &rsp_body);
+		if (ret)
+			goto out;
+
+		seq = le64toh(hdr.seq);
+		if (seq == 0 || seq > count || seen[seq]) {
+			ret = -EPROTO;
+			goto out;
+		}
+		seen[seq] = true;
+		printf("seq=%llu status=%s(%u)\n",
+		       (unsigned long long)seq,
+		       status_name(le32toh(hdr.status)),
+		       le32toh(hdr.status));
+		free(rsp_body);
+		rsp_body = NULL;
+	}
+
+out:
+	free(req_body);
+	free(rsp_body);
+	free(seen);
+	if (fd >= 0)
+		close(fd);
+	return ret;
+}
+
 static int cmd_delete_object(const struct config *cfg)
 {
 	struct raw_delete_object_req req;
@@ -1076,6 +1534,7 @@ static int parse_args(int argc, char **argv, struct config *cfg)
 		OPT_OBJECT,
 		OPT_OFFSET,
 		OPT_LENGTH,
+		OPT_COUNT,
 		OPT_DATA,
 		OPT_DATA_FILE,
 		OPT_OUTPUT,
@@ -1092,6 +1551,7 @@ static int parse_args(int argc, char **argv, struct config *cfg)
 		{"object", required_argument, NULL, OPT_OBJECT},
 		{"offset", required_argument, NULL, OPT_OFFSET},
 		{"length", required_argument, NULL, OPT_LENGTH},
+		{"count", required_argument, NULL, OPT_COUNT},
 		{"data", required_argument, NULL, OPT_DATA},
 		{"data-file", required_argument, NULL, OPT_DATA_FILE},
 		{"output", required_argument, NULL, OPT_OUTPUT},
@@ -1170,6 +1630,12 @@ static int parse_args(int argc, char **argv, struct config *cfg)
 				return ret;
 			cfg->length_set = true;
 			break;
+		case OPT_COUNT:
+			ret = parse_u32(optarg, &cfg->count);
+			if (ret)
+				return ret;
+			cfg->count_set = true;
+			break;
 		default:
 			return -EINVAL;
 		}
@@ -1206,6 +1672,14 @@ int main(int argc, char **argv)
 		ret = cmd_get_cluster_map(&cfg);
 	else if (strcmp(cfg.command, "get-leader") == 0)
 		ret = cmd_get_leader(&cfg);
+	else if (strcmp(cfg.command, "pipeline-get-leader") == 0)
+		ret = cmd_pipeline_get_leader(&cfg);
+	else if (strcmp(cfg.command, "pipeline-read-object") == 0)
+		ret = cmd_pipeline_read_object(&cfg);
+	else if (strcmp(cfg.command, "pipeline-write-object") == 0)
+		ret = cmd_pipeline_write_object(&cfg);
+	else if (strcmp(cfg.command, "pipeline-delete-object") == 0)
+		ret = cmd_pipeline_delete_object(&cfg);
 	else if (strcmp(cfg.command, "read-object") == 0)
 		ret = cmd_read_object(&cfg);
 	else if (strcmp(cfg.command, "write-object") == 0)
