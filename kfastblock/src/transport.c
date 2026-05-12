@@ -1272,6 +1272,141 @@ static int kfastblock_transport_exec_request_status_only(
 	return ret;
 }
 
+static __maybe_unused u64 kfastblock_transport_next_shared_seq(
+	struct kfastblock_cached_socket *cached)
+{
+	u64 seq;
+
+	if (!cached)
+		return 1;
+
+	mutex_lock(&cached->lock);
+	seq = kfastblock_transport_next_seq(cached);
+	mutex_unlock(&cached->lock);
+	return seq;
+}
+
+static __maybe_unused int kfastblock_transport_prepare_mux_osd_socket(
+	struct kfastblock_volume *vol,
+	const struct kfastblock_leader_info *leader,
+	struct kfastblock_cached_socket **cached_out)
+{
+	struct socket *sock = NULL;
+	struct kfastblock_cached_socket *cached = NULL;
+	int ret;
+
+	if (!cached_out)
+		return -EINVAL;
+
+	ret = kfastblock_transport_acquire_osd_socket(vol, leader, &cached, &sock);
+	if (ret)
+		return ret;
+
+	mutex_unlock(&cached->lock);
+	*cached_out = cached;
+	return 0;
+}
+
+static void kfastblock_transport_init_mux_waiter(
+	struct kfastblock_transport_mux_waiter *waiter,
+	u64 seq,
+	u8 service,
+	u8 opcode)
+{
+	if (!waiter)
+		return;
+
+	memset(waiter, 0, sizeof(*waiter));
+	INIT_LIST_HEAD(&waiter->link);
+	init_completion(&waiter->done);
+	waiter->seq = seq;
+	waiter->service = service;
+	waiter->opcode = opcode;
+	waiter->ret = -EINPROGRESS;
+	kfastblock_transport_response_ctx_reset(&waiter->response);
+}
+
+static int kfastblock_transport_register_mux_waiter(
+	struct kfastblock_cached_socket *cached,
+	struct kfastblock_transport_mux_waiter *waiter)
+{
+	unsigned long flags;
+
+	if (!cached || !waiter)
+		return -EINVAL;
+
+	spin_lock_irqsave(&cached->mux_waiter_lock, flags);
+	if (cached->mux_dead) {
+		spin_unlock_irqrestore(&cached->mux_waiter_lock, flags);
+		return -ENOTCONN;
+	}
+	list_add_tail(&waiter->link, &cached->mux_waiters);
+	cached->mux_inflight++;
+	spin_unlock_irqrestore(&cached->mux_waiter_lock, flags);
+	return 0;
+}
+
+static void kfastblock_transport_unregister_mux_waiter(
+	struct kfastblock_cached_socket *cached,
+	struct kfastblock_transport_mux_waiter *waiter)
+{
+	unsigned long flags;
+
+	if (!cached || !waiter)
+		return;
+
+	spin_lock_irqsave(&cached->mux_waiter_lock, flags);
+	if (!list_empty(&waiter->link)) {
+		list_del_init(&waiter->link);
+		if (cached->mux_inflight)
+			cached->mux_inflight--;
+	}
+	spin_unlock_irqrestore(&cached->mux_waiter_lock, flags);
+}
+
+static __maybe_unused int kfastblock_transport_exec_mux_request_parts(
+	struct kfastblock_cached_socket *cached,
+	u8 service,
+	u8 opcode,
+	u64 seq,
+	const struct kfastblock_transport_body_part *parts,
+	unsigned int nr_parts,
+	struct kfastblock_transport_response_ctx *rsp)
+{
+	struct kfastblock_transport_mux_waiter waiter = {};
+	struct socket *sock = NULL;
+	int ret;
+
+	if (!cached || !rsp)
+		return -EINVAL;
+
+	kfastblock_transport_init_mux_waiter(&waiter, seq, service, opcode);
+	ret = kfastblock_transport_register_mux_waiter(cached, &waiter);
+	if (ret)
+		return ret;
+
+	mutex_lock(&cached->send_lock);
+	mutex_lock(&cached->lock);
+	if (!cached->sock || cached->mux_dead)
+		ret = -ENOTCONN;
+	else
+		sock = cached->sock;
+	mutex_unlock(&cached->lock);
+	if (!ret)
+		ret = kfastblock_transport_send_request_parts(sock, service, opcode,
+							      seq, parts, nr_parts);
+	mutex_unlock(&cached->send_lock);
+	if (ret) {
+		kfastblock_transport_unregister_mux_waiter(cached, &waiter);
+		return ret;
+	}
+
+	queue_work(g_kfastblock_transport_wq, &cached->mux_recv_work);
+	wait_for_completion(&waiter.done);
+	*rsp = waiter.response;
+	return waiter.ret;
+}
+
 static int kfastblock_transport_begin_exchange(
 	struct kfastblock_transport_exchange_ctx *ctx,
 	struct kfastblock_request *kf_req,
