@@ -1161,9 +1161,11 @@ static void kfastblock_transport_finish_exchange(
 						&ctx->kf_req->pipeline);
 }
 
-static int kfastblock_transport_match_exchange_response(
+static int kfastblock_transport_lookup_response_object(
 	struct kfastblock_transport_exchange_ctx *ctx,
-	const struct kfastblock_transport_response_ctx *response)
+	const struct kfastblock_transport_response_ctx *response,
+	u64 *response_seq_out,
+	unsigned int *matched_object_out)
 {
 	u64 response_seq;
 	unsigned int matched_object = 0;
@@ -1177,13 +1179,35 @@ static int kfastblock_transport_match_exchange_response(
 		return -EPROTO;
 
 	response_seq = le64_to_cpu(response->hdr.seq);
-	if (!response_seq || response_seq != ctx->seq)
+	if (!response_seq)
 		return -EPROTO;
 
 	ret = kfastblock_request_lookup_object_by_seq(ctx->kf_req, response_seq,
 						      &matched_object);
 	if (ret)
 		return ret;
+	if (response_seq_out)
+		*response_seq_out = response_seq;
+	if (matched_object_out)
+		*matched_object_out = matched_object;
+
+	return 0;
+}
+
+static int kfastblock_transport_match_exchange_response(
+	struct kfastblock_transport_exchange_ctx *ctx,
+	const struct kfastblock_transport_response_ctx *response)
+{
+	u64 response_seq = 0;
+	unsigned int matched_object = 0;
+	int ret;
+
+	ret = kfastblock_transport_lookup_response_object(
+		ctx, response, &response_seq, &matched_object);
+	if (ret)
+		return ret;
+	if (response_seq != ctx->seq)
+		return -EPROTO;
 	if (matched_object != ctx->object_index)
 		return -EPROTO;
 
