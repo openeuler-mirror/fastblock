@@ -23,6 +23,8 @@ struct osd_raw_tcp_connection_state;
 struct osd_raw_tcp_inflight_response;
 struct raw_header;
 struct sockaddr_in;
+struct spdk_sock;
+struct spdk_sock_group;
 
 class osd_raw_tcp_server {
 public:
@@ -39,12 +41,16 @@ private:
         int fd{-1};
         int wake_read_fd{-1};
         int wake_write_fd{-1};
+        spdk_sock* spdk_listener{nullptr};
+        spdk_sock_group* spdk_group{nullptr};
+        bool use_spdk_backend{false};
         uint16_t port{0};
         std::thread worker{};
     };
 
     struct connection_context {
         int fd{-1};
+        spdk_sock* spdk_socket{nullptr};
         uint32_t shard_id{0};
         std::atomic<bool> done{false};
         std::string peer_address{};
@@ -63,12 +69,19 @@ private:
     bool start_connection(int client_fd,
                           const sockaddr_in& peer_addr,
                           uint32_t shard_id) noexcept;
+    static bool use_spdk_sock_backend() noexcept;
     void reset_connection_frame(connection_context *conn) noexcept;
+    int fill_connection_frame(connection_context *conn,
+                              uint8_t *buf,
+                              size_t target,
+                              size_t *completed) noexcept;
     int try_receive_one_request(connection_context *conn,
                                 raw_header *hdr_out,
                                 std::vector<uint8_t> *body_out) noexcept;
     void reset_connection_send(connection_context *conn) noexcept;
     int flush_connection_send_frame(connection_context *conn) noexcept;
+    ssize_t connection_recv(connection_context *conn, void *buf, size_t len) noexcept;
+    ssize_t connection_send(connection_context *conn, const void *buf, size_t len) noexcept;
     void close_connection(connection_context *conn) noexcept;
     void service_connection_io(connection_context *conn, short revents) noexcept;
     void service_connection_write(connection_context *conn) noexcept;

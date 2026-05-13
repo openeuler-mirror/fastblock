@@ -14,6 +14,7 @@
 #include "fastblock/utils/err_num.h"
 
 #include <spdk/log.h>
+#include <spdk/sock.h>
 
 #include <algorithm>
 #include <arpa/inet.h>
@@ -141,6 +142,7 @@ constexpr uint32_t raw_status_not_leader = 5U;
 constexpr uint32_t raw_status_pg_initializing = 6U;
 constexpr uint32_t raw_status_osd_down = 7U;
 constexpr uint32_t raw_status_internal_error = 8U;
+constexpr const char* raw_spdk_sock_impl_name = "posix";
 
 constexpr int raw_backlog = 128;
 constexpr int raw_poll_timeout_ms = 1000;
@@ -358,33 +360,6 @@ void notify_listener_wakeup(const std::shared_ptr<osd_raw_tcp_connection_state>&
         }
         return;
     }
-}
-
-int fill_connection_frame(int fd, uint8_t* buf, size_t target, size_t* completed) {
-    if (fd < 0 || !buf || !completed) {
-        return -EINVAL;
-    }
-
-    while (*completed < target) {
-        auto rc = ::recv(fd, buf + *completed, target - *completed, 0);
-
-        if (rc > 0) {
-            *completed += static_cast<size_t>(rc);
-            continue;
-        }
-        if (rc == 0) {
-            return -ECONNRESET;
-        }
-        if (errno == EINTR) {
-            continue;
-        }
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return 0;
-        }
-        return -errno ? -errno : -EIO;
-    }
-
-    return 1;
 }
 
 bool write_message(int fd,
@@ -866,6 +841,36 @@ void osd_raw_tcp_server::reset_connection_frame(connection_context* conn) noexce
     conn->recv_target_body_bytes = 0;
 }
 
+int osd_raw_tcp_server::fill_connection_frame(connection_context *conn,
+                                              uint8_t *buf,
+                                              size_t target,
+                                              size_t *completed) noexcept {
+    if (!conn || !buf || !completed) {
+        return -EINVAL;
+    }
+
+    while (*completed < target) {
+        auto rc = connection_recv(conn, buf + *completed, target - *completed);
+
+        if (rc > 0) {
+            *completed += static_cast<size_t>(rc);
+            continue;
+        }
+        if (rc == 0) {
+            return -ECONNRESET;
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return 0;
+        }
+        return -errno ? -errno : -EIO;
+    }
+
+    return 1;
+}
+
 void osd_raw_tcp_server::reset_connection_send(connection_context* conn) noexcept {
     if (!conn) {
         return;
@@ -893,7 +898,7 @@ int osd_raw_tcp_server::try_receive_one_request(
     }
 
     if (conn->recv_header_bytes < sizeof(raw_header)) {
-        ret = fill_connection_frame(conn->fd,
+        ret = fill_connection_frame(conn,
                                     conn->recv_frame.data(),
                                     sizeof(raw_header),
                                     &conn->recv_header_bytes);
@@ -915,7 +920,7 @@ int osd_raw_tcp_server::try_receive_one_request(
         }
     }
 
-    ret = fill_connection_frame(conn->fd,
+    ret = fill_connection_frame(conn,
                                 conn->recv_frame.data() + sizeof(raw_header),
                                 conn->recv_target_body_bytes,
                                 &conn->recv_body_bytes);
@@ -934,10 +939,9 @@ int osd_raw_tcp_server::try_receive_one_request(
 int osd_raw_tcp_server::flush_connection_send_frame(
   connection_context* conn) noexcept {
     while (conn->send_bytes < conn->send_frame.size()) {
-        auto rc = ::send(conn->fd,
-                         conn->send_frame.data() + conn->send_bytes,
-                         conn->send_frame.size() - conn->send_bytes,
-                         MSG_NOSIGNAL);
+        auto rc = connection_send(conn,
+                                  conn->send_frame.data() + conn->send_bytes,
+                                  conn->send_frame.size() - conn->send_bytes);
 
         if (rc > 0) {
             conn->send_bytes += static_cast<size_t>(rc);
@@ -958,11 +962,51 @@ int osd_raw_tcp_server::flush_connection_send_frame(
     return 1;
 }
 
+ssize_t osd_raw_tcp_server::connection_recv(connection_context *conn,
+                                            void *buf,
+                                            size_t len) noexcept {
+    if (!conn || !buf || len == 0) {
+        return -EINVAL;
+    }
+    if (conn->spdk_socket) {
+        return ::spdk_sock_recv(conn->spdk_socket, buf, len);
+    }
+    return ::recv(conn->fd, buf, len, 0);
+}
+
+ssize_t osd_raw_tcp_server::connection_send(connection_context *conn,
+                                            const void *buf,
+                                            size_t len) noexcept {
+    if (!conn || !buf || len == 0) {
+        return -EINVAL;
+    }
+    if (conn->spdk_socket) {
+        ::iovec iov = {
+          .iov_base = const_cast<void*>(buf),
+          .iov_len = len,
+        };
+
+        return ::spdk_sock_writev(conn->spdk_socket, &iov, 1);
+    }
+    return ::send(conn->fd, buf, len, MSG_NOSIGNAL);
+}
+
 osd_raw_tcp_server::osd_raw_tcp_server(osd_service* service)
   : _service(service) {}
 
 osd_raw_tcp_server::~osd_raw_tcp_server() noexcept {
     stop();
+}
+
+bool osd_raw_tcp_server::use_spdk_sock_backend() noexcept {
+    const char* env = std::getenv("KFASTBLOCK_RAW_USE_SPDK_SOCK");
+
+    if (!env || !*env) {
+        return false;
+    }
+    return std::strcmp(env, "0") != 0 &&
+           std::strcmp(env, "false") != 0 &&
+           std::strcmp(env, "False") != 0;
 }
 
 bool osd_raw_tcp_server::start(const std::string& bind_address, const uint32_t shard_count) {
