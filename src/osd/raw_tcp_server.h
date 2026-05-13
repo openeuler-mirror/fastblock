@@ -69,6 +69,11 @@ private:
     bool start_connection(int client_fd,
                           const sockaddr_in& peer_addr,
                           uint32_t shard_id) noexcept;
+    bool start_spdk_connection(spdk_sock *sock,
+                               uint32_t shard_id) noexcept;
+    static void spdk_group_sock_cb(void *arg,
+                                   spdk_sock_group *group,
+                                   spdk_sock *sock) noexcept;
     static bool use_spdk_sock_backend() noexcept;
     void reset_connection_frame(connection_context *conn) noexcept;
     int fill_connection_frame(connection_context *conn,

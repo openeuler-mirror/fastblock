@@ -441,6 +441,31 @@ int create_listener(const std::string& bind_address, uint16_t* port) noexcept {
     return -EADDRINUSE;
 }
 
+spdk_sock *create_spdk_listener(const std::string& bind_address,
+                                uint16_t* port) noexcept {
+    ::spdk_sock_opts opts{};
+
+    if (!port) {
+        return nullptr;
+    }
+
+    opts.opts_size = sizeof(opts);
+    ::spdk_sock_get_default_opts(&opts);
+    for (int attempt = 0; attempt < 256; ++attempt) {
+        auto candidate = random_raw_port();
+        auto *listener = ::spdk_sock_listen_ext(bind_address.c_str(),
+                                                candidate,
+                                                raw_spdk_sock_impl_name,
+                                                &opts);
+        if (listener) {
+            *port = candidate;
+            return listener;
+        }
+    }
+
+    return nullptr;
+}
+
 struct raw_read_context {
     std::shared_ptr<osd_raw_tcp_connection_state> connection{};
     std::shared_ptr<osd_raw_tcp_inflight_response> inflight{};
@@ -1009,6 +1034,22 @@ bool osd_raw_tcp_server::use_spdk_sock_backend() noexcept {
            std::strcmp(env, "False") != 0;
 }
 
+void osd_raw_tcp_server::spdk_group_sock_cb(void *arg,
+                                            spdk_sock_group *group,
+                                            spdk_sock *sock) noexcept {
+    auto *conn = static_cast<connection_context*>(arg);
+    auto *server = static_cast<osd_raw_tcp_server*>(
+      ::spdk_sock_group_get_ctx(group));
+
+    (void)sock;
+    if (!server || !conn || conn->done.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    server->service_connection_io(conn, POLLIN);
+    server->service_connection_write(conn);
+}
+
 bool osd_raw_tcp_server::start(const std::string& bind_address, const uint32_t shard_count) {
     if (!_service) {
         return false;
@@ -1050,6 +1091,12 @@ void osd_raw_tcp_server::stop() noexcept {
             ::shutdown(listener.fd, SHUT_RDWR);
             ::close(listener.fd);
         }
+        if (listener.spdk_listener) {
+            ::spdk_sock_close(&listener.spdk_listener);
+        }
+        if (listener.spdk_group) {
+            ::spdk_sock_group_close(&listener.spdk_group);
+        }
         if (listener.wake_read_fd >= 0) {
             ::close(listener.wake_read_fd);
         }
@@ -1087,23 +1134,52 @@ uint16_t osd_raw_tcp_server::listen_port(const uint32_t shard_id) const noexcept
 
 bool osd_raw_tcp_server::start_listener(const uint32_t shard_id) {
     auto& listener = _listeners.at(shard_id);
-    auto fd = create_listener(_bind_address, &listener.port);
-    if (fd < 0) {
-        SPDK_ERRLOG(
-          "ERROR: create raw TCP listener on shard %u failed: %s\n",
-          shard_id,
-          std::strerror(-fd));
-        return false;
+    listener.use_spdk_backend = use_spdk_sock_backend();
+    if (listener.use_spdk_backend) {
+        listener.spdk_listener = create_spdk_listener(_bind_address, &listener.port);
+        if (!listener.spdk_listener) {
+            SPDK_ERRLOG(
+              "ERROR: create SPDK raw TCP listener on shard %u failed\n",
+              shard_id);
+            return false;
+        }
+        listener.spdk_group = ::spdk_sock_group_create(this);
+        if (!listener.spdk_group) {
+            SPDK_ERRLOG(
+              "ERROR: create SPDK raw TCP sock group on shard %u failed\n",
+              shard_id);
+            ::spdk_sock_close(&listener.spdk_listener);
+            listener.port = 0;
+            return false;
+        }
+    } else {
+        auto fd = create_listener(_bind_address, &listener.port);
+        if (fd < 0) {
+            SPDK_ERRLOG(
+              "ERROR: create raw TCP listener on shard %u failed: %s\n",
+              shard_id,
+              std::strerror(-fd));
+            return false;
+        }
+        listener.fd = fd;
     }
-
-    listener.fd = fd;
     if (!create_wakeup_pipe(&listener.wake_read_fd, &listener.wake_write_fd)) {
         SPDK_ERRLOG(
           "ERROR: create raw TCP wakeup pipe on shard %u failed: %s\n",
           shard_id,
           std::strerror(errno));
-        ::close(listener.fd);
+        if (listener.fd >= 0) {
+            ::close(listener.fd);
+        }
+        if (listener.spdk_listener) {
+            ::spdk_sock_close(&listener.spdk_listener);
+        }
+        if (listener.spdk_group) {
+            ::spdk_sock_group_close(&listener.spdk_group);
+        }
         listener.fd = -1;
+        listener.spdk_listener = nullptr;
+        listener.spdk_group = nullptr;
         listener.port = 0;
         return false;
     }
@@ -1116,10 +1192,20 @@ bool osd_raw_tcp_server::start_listener(const uint32_t shard_id) {
           "ERROR: create raw TCP worker on shard %u failed: %s\n",
           shard_id,
           e.what());
-        ::close(listener.fd);
+        if (listener.fd >= 0) {
+            ::close(listener.fd);
+        }
+        if (listener.spdk_listener) {
+            ::spdk_sock_close(&listener.spdk_listener);
+        }
+        if (listener.spdk_group) {
+            ::spdk_sock_group_close(&listener.spdk_group);
+        }
         ::close(listener.wake_read_fd);
         ::close(listener.wake_write_fd);
         listener.fd = -1;
+        listener.spdk_listener = nullptr;
+        listener.spdk_group = nullptr;
         listener.wake_read_fd = -1;
         listener.wake_write_fd = -1;
         listener.port = 0;
@@ -1226,9 +1312,100 @@ bool osd_raw_tcp_server::start_connection(
     return true;
 }
 
+bool osd_raw_tcp_server::start_spdk_connection(
+  spdk_sock *sock,
+  const uint32_t shard_id) noexcept {
+    auto conn = std::make_unique<connection_context>();
+    char saddr[INET_ADDRSTRLEN] = {};
+    char caddr[INET_ADDRSTRLEN] = {};
+    uint16_t sport = 0;
+    uint16_t cport = 0;
+
+    if (!sock) {
+        return false;
+    }
+
+    conn->fd = -1;
+    conn->spdk_socket = sock;
+    conn->shard_id = shard_id;
+    conn->state = std::make_shared<osd_raw_tcp_connection_state>();
+    conn->state->fd = -1;
+    conn->state->wake_fd = _listeners.at(shard_id).wake_write_fd;
+    if (::spdk_sock_getaddr(sock, saddr, sizeof(saddr), &sport,
+                            caddr, sizeof(caddr), &cport) == 0) {
+        conn->peer_address = caddr;
+    }
+    if (::spdk_sock_group_add_sock(_listeners.at(shard_id).spdk_group, sock,
+                                   &osd_raw_tcp_server::spdk_group_sock_cb,
+                                   conn.get()) != 0) {
+        SPDK_ERRLOG("ERROR: add SPDK raw TCP socket to group on shard %u failed\n",
+                    shard_id);
+        ::spdk_sock_close(&sock);
+        return false;
+    }
+
+    SPDK_NOTICELOG("Accepted SPDK raw TCP connection on shard %u peer=%s\n",
+                   shard_id,
+                   conn->peer_address.empty() ? "<unknown>" :
+                     conn->peer_address.c_str());
+    {
+        std::lock_guard<std::mutex> lk(_connections_mutex);
+        _connections.push_back(std::move(conn));
+    }
+    return true;
+}
+
 void osd_raw_tcp_server::run_listener(const uint32_t shard_id) noexcept {
     auto& listener = _listeners.at(shard_id);
     uint64_t accept_count = 0;
+
+    if (listener.use_spdk_backend) {
+        while (_running.load(std::memory_order_acquire)) {
+            ::pollfd pfd{
+              .fd = listener.wake_read_fd,
+              .events = POLLIN,
+              .revents = 0,
+            };
+            int rc;
+
+            cleanup_finished_connections();
+            for (;;) {
+                auto *sock = ::spdk_sock_accept(listener.spdk_listener);
+
+                if (!sock) {
+                    break;
+                }
+                if (!start_spdk_connection(sock, shard_id)) {
+                    break;
+                }
+                accept_count++;
+                if (accept_count % raw_connection_summary_interval == 0) {
+                    log_connection_summary(shard_id);
+                }
+            }
+
+            if (listener.spdk_group) {
+                auto group_rc = ::spdk_sock_group_poll_count(listener.spdk_group, 32);
+
+                if (group_rc < 0 && _running.load(std::memory_order_acquire)) {
+                    SPDK_ERRLOG("ERROR: poll SPDK raw TCP group on shard %u failed\n",
+                                shard_id);
+                }
+            }
+
+            rc = ::poll(&pfd, 1, raw_poll_timeout_ms);
+            if (rc > 0 && (pfd.revents & POLLIN) != 0) {
+                drain_wakeup_fd(listener.wake_read_fd);
+            } else if (rc < 0 && errno != EINTR && _running.load(std::memory_order_acquire)) {
+                SPDK_ERRLOG("ERROR: poll SPDK raw wakeup fd on shard %u failed: %s\n",
+                            shard_id,
+                            std::strerror(errno));
+            }
+        }
+
+        cleanup_finished_connections();
+        return;
+    }
 
     while (_running.load(std::memory_order_acquire)) {
         std::vector<::pollfd> pfds{};
@@ -1337,7 +1514,14 @@ void osd_raw_tcp_server::close_connection(connection_context *conn) noexcept {
         state->reader_done.store(true, std::memory_order_release);
         stop_connection(state);
     }
-    if (conn->fd >= 0) {
+    if (conn->spdk_socket) {
+        auto& listener = _listeners.at(conn->shard_id);
+
+        if (listener.spdk_group) {
+            ::spdk_sock_group_remove_sock(listener.spdk_group, conn->spdk_socket);
+        }
+        ::spdk_sock_close(&conn->spdk_socket);
+    } else if (conn->fd >= 0) {
         ::shutdown(conn->fd, SHUT_RDWR);
         ::close(conn->fd);
         conn->fd = -1;
