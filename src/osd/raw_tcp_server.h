@@ -50,7 +50,6 @@ private:
         size_t recv_body_bytes{0};
         size_t recv_target_body_bytes{0};
         std::shared_ptr<osd_raw_tcp_connection_state> state{};
-        std::thread worker{};
         std::thread writer{};
     };
 
@@ -62,10 +61,11 @@ private:
     int try_receive_one_request(connection_context *conn,
                                 raw_header *hdr_out,
                                 std::vector<uint8_t> *body_out) noexcept;
+    void close_connection(connection_context *conn) noexcept;
+    void service_connection_io(connection_context *conn, short revents) noexcept;
     void cleanup_finished_connections() noexcept;
     void log_connection_summary(uint32_t shard_id) noexcept;
     void run_listener(uint32_t shard_id) noexcept;
-    void handle_connection(connection_context *conn, uint32_t shard_id) noexcept;
     void write_connection_responses(
       std::shared_ptr<osd_raw_tcp_connection_state> state,
       uint32_t shard_id) noexcept;

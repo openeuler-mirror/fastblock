@@ -921,11 +921,6 @@ void osd_raw_tcp_server::stop() noexcept {
 
     {
         std::lock_guard<std::mutex> lk(_connections_mutex);
-        for (auto& conn : _connections) {
-            if (conn->worker.joinable()) {
-                conn->worker.join();
-            }
-        }
         _connections.clear();
     }
 }
@@ -981,9 +976,6 @@ void osd_raw_tcp_server::cleanup_finished_connections() noexcept {
             continue;
         }
 
-        if ((*it)->worker.joinable()) {
-            (*it)->worker.join();
-        }
         if ((*it)->writer.joinable()) {
             (*it)->writer.join();
         }
@@ -1053,16 +1045,18 @@ bool osd_raw_tcp_server::start_connection(
 
     conn->fd = client_fd;
     conn->shard_id = shard_id;
+    conn->state = std::make_shared<osd_raw_tcp_connection_state>();
+    conn->state->fd = client_fd;
     if (::inet_ntop(AF_INET, &peer_addr.sin_addr, peer_host, sizeof(peer_host))) {
         conn->peer_address = peer_host;
     }
     try {
-        conn->worker = std::thread([this, shard_id, ctx = conn.get()]() {
-            handle_connection(ctx, shard_id);
+        conn->writer = std::thread([this, shard_id, state = conn->state]() {
+            write_connection_responses(state, shard_id);
         });
     } catch (const std::exception& e) {
         SPDK_ERRLOG(
-          "ERROR: create raw TCP connection worker on shard %u failed: %s\n",
+          "ERROR: create raw TCP writer on shard %u failed: %s\n",
           shard_id,
           e.what());
         ::shutdown(client_fd, SHUT_RDWR);
@@ -1087,60 +1081,163 @@ void osd_raw_tcp_server::run_listener(const uint32_t shard_id) noexcept {
     uint64_t accept_count = 0;
 
     while (_running.load(std::memory_order_acquire)) {
-        if (!wait_for_fd(listener.fd, POLLIN, _running)) {
-            continue;
-        }
+        std::vector<::pollfd> pfds{};
+        std::vector<connection_context*> conns{};
+        int rc;
 
         cleanup_finished_connections();
+        pfds.push_back({.fd = listener.fd, .events = POLLIN, .revents = 0});
+        {
+            std::lock_guard<std::mutex> lk(_connections_mutex);
+            for (const auto& conn : _connections) {
+                if (!conn || conn->done.load(std::memory_order_acquire) ||
+                    conn->fd < 0 || conn->shard_id != shard_id) {
+                    continue;
+                }
+                conns.push_back(conn.get());
+                pfds.push_back({.fd = conn->fd,
+                                .events = static_cast<short>(POLLIN | POLLERR |
+                                                              POLLHUP | POLLNVAL),
+                                .revents = 0});
+            }
+        }
 
-        ::sockaddr_in peer_addr{};
-        ::socklen_t peer_len = sizeof(peer_addr);
-        auto client_fd = ::accept(listener.fd,
-                                  reinterpret_cast<::sockaddr*>(&peer_addr),
-                                  &peer_len);
-        if (client_fd < 0) {
+        rc = ::poll(pfds.data(), pfds.size(), raw_poll_timeout_ms);
+        if (rc < 0) {
             if (errno == EINTR) {
                 continue;
             }
             if (_running.load(std::memory_order_acquire)) {
                 SPDK_ERRLOG(
-                  "ERROR: accept raw TCP connection on shard %u failed: %s\n",
+                  "ERROR: poll raw TCP loop on shard %u failed: %s\n",
                   shard_id,
                   std::strerror(errno));
             }
             continue;
         }
+        if (rc == 0) {
+            continue;
+        }
 
-        for (;;) {
-            if (!start_connection(client_fd, peer_addr, shard_id)) {
-                break;
-            }
-            accept_count++;
-            if (accept_count % raw_connection_summary_interval == 0) {
-                log_connection_summary(shard_id);
-            }
-
-            peer_addr = {};
-            peer_len = sizeof(peer_addr);
-            client_fd = ::accept(listener.fd,
-                                 reinterpret_cast<::sockaddr*>(&peer_addr),
-                                 &peer_len);
-            if (client_fd < 0) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        if ((pfds[0].revents & POLLIN) != 0) {
+            ::sockaddr_in peer_addr{};
+            ::socklen_t peer_len = sizeof(peer_addr);
+            auto client_fd = ::accept(listener.fd,
+                                      reinterpret_cast<::sockaddr*>(&peer_addr),
+                                      &peer_len);
+            for (;;) {
+                if (client_fd < 0) {
+                    if (errno != EAGAIN && errno != EWOULDBLOCK &&
+                        errno != EINTR && _running.load(std::memory_order_acquire)) {
+                        SPDK_ERRLOG(
+                          "ERROR: drain raw TCP accept queue on shard %u failed: %s\n",
+                          shard_id,
+                          std::strerror(errno));
+                    }
                     break;
                 }
-                if (errno != EINTR && _running.load(std::memory_order_acquire)) {
-                    SPDK_ERRLOG(
-                      "ERROR: drain raw TCP accept queue on shard %u failed: %s\n",
-                      shard_id,
-                      std::strerror(errno));
+                if (!start_connection(client_fd, peer_addr, shard_id)) {
+                    break;
                 }
-                break;
+                accept_count++;
+                if (accept_count % raw_connection_summary_interval == 0) {
+                    log_connection_summary(shard_id);
+                }
+
+                peer_addr = {};
+                peer_len = sizeof(peer_addr);
+                client_fd = ::accept(listener.fd,
+                                     reinterpret_cast<::sockaddr*>(&peer_addr),
+                                     &peer_len);
             }
+        }
+
+        for (size_t i = 1; i < pfds.size(); ++i) {
+            if (pfds[i].revents == 0) {
+                continue;
+            }
+            service_connection_io(conns[i - 1], pfds[i].revents);
         }
     }
 
     cleanup_finished_connections();
+}
+
+void osd_raw_tcp_server::close_connection(connection_context *conn) noexcept {
+    auto state = std::shared_ptr<osd_raw_tcp_connection_state>{};
+
+    if (!conn) {
+        return;
+    }
+
+    state = conn->state;
+    if (state) {
+        state->reader_done.store(true, std::memory_order_release);
+        stop_connection(state);
+    }
+    if (conn->fd >= 0) {
+        ::shutdown(conn->fd, SHUT_RDWR);
+        ::close(conn->fd);
+        conn->fd = -1;
+    }
+    conn->done.store(true, std::memory_order_release);
+    if (!state) {
+        return;
+    }
+
+    SPDK_NOTICELOG(
+      "Closed raw TCP connection on shard %u: recv=%llu ready=%llu sent=%llu reordered=%llu callbacks_dropped=%llu protocol_errors=%llu peak_pending=%zu pending_left=%zu ready_left=%zu\n",
+      conn->shard_id,
+      static_cast<unsigned long long>(state->requests_received.load(std::memory_order_relaxed)),
+      static_cast<unsigned long long>(state->responses_ready.load(std::memory_order_relaxed)),
+      static_cast<unsigned long long>(state->responses_sent.load(std::memory_order_relaxed)),
+      static_cast<unsigned long long>(state->responses_reordered.load(std::memory_order_relaxed)),
+      static_cast<unsigned long long>(state->callbacks_dropped.load(std::memory_order_relaxed)),
+      static_cast<unsigned long long>(state->protocol_errors.load(std::memory_order_relaxed)),
+      state->peak_pending,
+      state->pending.size(),
+      state->ready.size());
+}
+
+void osd_raw_tcp_server::service_connection_io(connection_context *conn,
+                                               const short revents) noexcept {
+    if (!conn || conn->done.load(std::memory_order_acquire) || conn->fd < 0 ||
+        !conn->state) {
+        return;
+    }
+    if ((revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+        close_connection(conn);
+        return;
+    }
+    if ((revents & POLLIN) == 0) {
+        return;
+    }
+
+    for (;;) {
+        raw_header req_hdr{};
+        std::shared_ptr<osd_raw_tcp_inflight_response> inflight{};
+        std::vector<uint8_t> body{};
+        int recv_ret = try_receive_one_request(conn, &req_hdr, &body);
+
+        if (recv_ret < 0) {
+            conn->state->protocol_errors.fetch_add(1, std::memory_order_relaxed);
+            close_connection(conn);
+            return;
+        }
+        if (recv_ret == 0) {
+            break;
+        }
+
+        inflight = std::make_shared<osd_raw_tcp_inflight_response>();
+        inflight->request_header = req_hdr;
+        inflight->status = raw_status_internal_error;
+        if (!enqueue_inflight_response(conn->state, inflight)) {
+            close_connection(conn);
+            return;
+        }
+
+        dispatch_request(_service, conn->state, inflight, body);
+    }
 }
 
 void osd_raw_tcp_server::write_connection_responses(
@@ -1206,98 +1303,4 @@ void osd_raw_tcp_server::write_connection_responses(
     }
 
     SPDK_NOTICELOG("Stopped raw TCP writer on shard %u\n", shard_id);
-}
-
-void osd_raw_tcp_server::handle_connection(connection_context *conn, const uint32_t shard_id) noexcept {
-    auto client_fd = conn ? conn->fd : -1;
-    auto state = std::shared_ptr<osd_raw_tcp_connection_state>{};
-
-    if (client_fd < 0) {
-        if (conn) {
-            conn->done.store(true, std::memory_order_release);
-        }
-        return;
-    }
-
-    state = std::make_shared<osd_raw_tcp_connection_state>();
-    state->fd = client_fd;
-    conn->state = state;
-    try {
-        conn->writer = std::thread([this, shard_id, state]() {
-            write_connection_responses(state, shard_id);
-        });
-    } catch (const std::exception& e) {
-        SPDK_ERRLOG(
-          "ERROR: create raw TCP writer on shard %u failed: %s\n",
-          shard_id,
-          e.what());
-        stop_connection(state);
-        ::shutdown(client_fd, SHUT_RDWR);
-        ::close(client_fd);
-        conn->fd = -1;
-        conn->state.reset();
-        conn->done.store(true, std::memory_order_release);
-        return;
-    }
-
-    while (_running.load(std::memory_order_acquire) &&
-           !state->stopping.load(std::memory_order_acquire)) {
-        if (!wait_for_fd(client_fd, POLLIN, _running)) {
-            if (!_running.load(std::memory_order_acquire) ||
-                state->stopping.load(std::memory_order_acquire)) {
-                break;
-            }
-            continue;
-        }
-
-        for (;;) {
-            raw_header req_hdr{};
-            std::shared_ptr<osd_raw_tcp_inflight_response> inflight{};
-            std::vector<uint8_t> body{};
-            int recv_ret = try_receive_one_request(conn, &req_hdr, &body);
-
-            if (recv_ret < 0) {
-                state->protocol_errors.fetch_add(1, std::memory_order_relaxed);
-                goto out_stop_connection;
-            }
-            if (recv_ret == 0) {
-                break;
-            }
-
-            inflight = std::make_shared<osd_raw_tcp_inflight_response>();
-            inflight->request_header = req_hdr;
-            inflight->status = raw_status_internal_error;
-            if (!enqueue_inflight_response(state, inflight)) {
-                goto out_stop_connection;
-            }
-
-            dispatch_request(_service, state, inflight, body);
-        }
-    }
-
-out_stop_connection:
-    state->reader_done.store(true, std::memory_order_release);
-    stop_connection(state);
-    if (conn->writer.joinable()) {
-        conn->writer.join();
-    }
-    ::shutdown(client_fd, SHUT_RDWR);
-    ::close(client_fd);
-    if (conn) {
-        conn->fd = -1;
-        conn->state.reset();
-        conn->done.store(true, std::memory_order_release);
-    }
-    SPDK_NOTICELOG(
-      "Closed raw TCP connection on shard %u: recv=%llu ready=%llu sent=%llu reordered=%llu callbacks_dropped=%llu protocol_errors=%llu peak_pending=%zu pending_left=%zu ready_left=%zu\n",
-      shard_id,
-      static_cast<unsigned long long>(state->requests_received.load(std::memory_order_relaxed)),
-      static_cast<unsigned long long>(state->responses_ready.load(std::memory_order_relaxed)),
-      static_cast<unsigned long long>(state->responses_sent.load(std::memory_order_relaxed)),
-      static_cast<unsigned long long>(state->responses_reordered.load(std::memory_order_relaxed)),
-      static_cast<unsigned long long>(state->callbacks_dropped.load(std::memory_order_relaxed)),
-      static_cast<unsigned long long>(state->protocol_errors.load(std::memory_order_relaxed)),
-      state->peak_pending,
-      state->pending.size(),
-      state->ready.size());
 }
