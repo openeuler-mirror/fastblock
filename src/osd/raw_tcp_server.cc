@@ -101,6 +101,7 @@ struct osd_raw_tcp_inflight_response {
 
 struct osd_raw_tcp_connection_state {
     int fd{-1};
+    int wake_fd{-1};
     std::atomic<bool> stopping{false};
     std::atomic<bool> reader_done{false};
     std::atomic<uint64_t> requests_received{0};
@@ -297,6 +298,66 @@ bool set_nonblocking(int fd) noexcept {
     }
 
     return ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+}
+
+bool create_wakeup_pipe(int* read_fd, int* write_fd) noexcept {
+    int fds[2] = {-1, -1};
+
+    if (!read_fd || !write_fd) {
+        return false;
+    }
+    if (::pipe(fds) != 0) {
+        return false;
+    }
+    if (!set_nonblocking(fds[0]) || !set_nonblocking(fds[1])) {
+        ::close(fds[0]);
+        ::close(fds[1]);
+        return false;
+    }
+
+    *read_fd = fds[0];
+    *write_fd = fds[1];
+    return true;
+}
+
+void drain_wakeup_fd(int fd) noexcept {
+    uint8_t buf[64];
+
+    if (fd < 0) {
+        return;
+    }
+
+    for (;;) {
+        auto rc = ::read(fd, buf, sizeof(buf));
+
+        if (rc > 0) {
+            continue;
+        }
+        if (rc < 0 && errno == EINTR) {
+            continue;
+        }
+        break;
+    }
+}
+
+void notify_listener_wakeup(const std::shared_ptr<osd_raw_tcp_connection_state>& connection) {
+    uint8_t byte = 1;
+
+    if (!connection || connection->wake_fd < 0) {
+        return;
+    }
+
+    for (;;) {
+        auto rc = ::write(connection->wake_fd, &byte, sizeof(byte));
+
+        if (rc > 0 || (rc < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))) {
+            return;
+        }
+        if (rc < 0 && errno == EINTR) {
+            continue;
+        }
+        return;
+    }
 }
 
 int fill_connection_frame(int fd, uint8_t* buf, size_t target, size_t* completed) {
@@ -526,6 +587,7 @@ void complete_inflight_response(
     }
     connection->responses_ready.fetch_add(1, std::memory_order_relaxed);
     notify_connection(connection);
+    notify_listener_wakeup(connection);
 }
 
 std::vector<uint8_t> build_leader_response_body(const osd_service::leader_endpoint& leader) {
@@ -804,6 +866,17 @@ void osd_raw_tcp_server::reset_connection_frame(connection_context* conn) noexce
     conn->recv_target_body_bytes = 0;
 }
 
+void osd_raw_tcp_server::reset_connection_send(connection_context* conn) noexcept {
+    if (!conn) {
+        return;
+    }
+
+    conn->send_bytes = 0;
+    conn->send_reordered = false;
+    conn->send_frame.clear();
+    conn->sending.reset();
+}
+
 int osd_raw_tcp_server::try_receive_one_request(
   connection_context* conn,
   raw_header* hdr_out,
@@ -858,6 +931,33 @@ int osd_raw_tcp_server::try_receive_one_request(
     return 1;
 }
 
+int osd_raw_tcp_server::flush_connection_send_frame(
+  connection_context* conn) noexcept {
+    while (conn->send_bytes < conn->send_frame.size()) {
+        auto rc = ::send(conn->fd,
+                         conn->send_frame.data() + conn->send_bytes,
+                         conn->send_frame.size() - conn->send_bytes,
+                         MSG_NOSIGNAL);
+
+        if (rc > 0) {
+            conn->send_bytes += static_cast<size_t>(rc);
+            continue;
+        }
+        if (rc == 0) {
+            return -EIO;
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return 0;
+        }
+        return -errno ? -errno : -EIO;
+    }
+
+    return 1;
+}
+
 osd_raw_tcp_server::osd_raw_tcp_server(osd_service* service)
   : _service(service) {}
 
@@ -906,6 +1006,12 @@ void osd_raw_tcp_server::stop() noexcept {
             ::shutdown(listener.fd, SHUT_RDWR);
             ::close(listener.fd);
         }
+        if (listener.wake_read_fd >= 0) {
+            ::close(listener.wake_read_fd);
+        }
+        if (listener.wake_write_fd >= 0) {
+            ::close(listener.wake_write_fd);
+        }
     }
     if (!was_running) {
         return;
@@ -916,6 +1022,8 @@ void osd_raw_tcp_server::stop() noexcept {
             listener.worker.join();
         }
         listener.fd = -1;
+        listener.wake_read_fd = -1;
+        listener.wake_write_fd = -1;
         listener.port = 0;
     }
 
@@ -945,6 +1053,16 @@ bool osd_raw_tcp_server::start_listener(const uint32_t shard_id) {
     }
 
     listener.fd = fd;
+    if (!create_wakeup_pipe(&listener.wake_read_fd, &listener.wake_write_fd)) {
+        SPDK_ERRLOG(
+          "ERROR: create raw TCP wakeup pipe on shard %u failed: %s\n",
+          shard_id,
+          std::strerror(errno));
+        ::close(listener.fd);
+        listener.fd = -1;
+        listener.port = 0;
+        return false;
+    }
     try {
         listener.worker = std::thread([this, shard_id]() {
             run_listener(shard_id);
@@ -955,7 +1073,11 @@ bool osd_raw_tcp_server::start_listener(const uint32_t shard_id) {
           shard_id,
           e.what());
         ::close(listener.fd);
+        ::close(listener.wake_read_fd);
+        ::close(listener.wake_write_fd);
         listener.fd = -1;
+        listener.wake_read_fd = -1;
+        listener.wake_write_fd = -1;
         listener.port = 0;
         return false;
     }
@@ -976,9 +1098,6 @@ void osd_raw_tcp_server::cleanup_finished_connections() noexcept {
             continue;
         }
 
-        if ((*it)->writer.joinable()) {
-            (*it)->writer.join();
-        }
         (*it)->state.reset();
         it = _connections.erase(it);
     }
@@ -1047,23 +1166,10 @@ bool osd_raw_tcp_server::start_connection(
     conn->shard_id = shard_id;
     conn->state = std::make_shared<osd_raw_tcp_connection_state>();
     conn->state->fd = client_fd;
+    conn->state->wake_fd = _listeners.at(shard_id).wake_write_fd;
     if (::inet_ntop(AF_INET, &peer_addr.sin_addr, peer_host, sizeof(peer_host))) {
         conn->peer_address = peer_host;
     }
-    try {
-        conn->writer = std::thread([this, shard_id, state = conn->state]() {
-            write_connection_responses(state, shard_id);
-        });
-    } catch (const std::exception& e) {
-        SPDK_ERRLOG(
-          "ERROR: create raw TCP writer on shard %u failed: %s\n",
-          shard_id,
-          e.what());
-        ::shutdown(client_fd, SHUT_RDWR);
-        ::close(client_fd);
-        return false;
-    }
-
     SPDK_NOTICELOG("Accepted raw TCP connection on shard %u peer=%s fd=%d\n",
                    shard_id,
                    conn->peer_address.empty() ? "<unknown>" :
@@ -1087,6 +1193,7 @@ void osd_raw_tcp_server::run_listener(const uint32_t shard_id) noexcept {
 
         cleanup_finished_connections();
         pfds.push_back({.fd = listener.fd, .events = POLLIN, .revents = 0});
+        pfds.push_back({.fd = listener.wake_read_fd, .events = POLLIN, .revents = 0});
         {
             std::lock_guard<std::mutex> lk(_connections_mutex);
             for (const auto& conn : _connections) {
@@ -1097,6 +1204,7 @@ void osd_raw_tcp_server::run_listener(const uint32_t shard_id) noexcept {
                 conns.push_back(conn.get());
                 pfds.push_back({.fd = conn->fd,
                                 .events = static_cast<short>(POLLIN | POLLERR |
+                                                              (conn->sending ? POLLOUT : 0) |
                                                               POLLHUP | POLLNVAL),
                                 .revents = 0});
             }
@@ -1117,6 +1225,10 @@ void osd_raw_tcp_server::run_listener(const uint32_t shard_id) noexcept {
         }
         if (rc == 0) {
             continue;
+        }
+
+        if ((pfds[1].revents & POLLIN) != 0) {
+            drain_wakeup_fd(listener.wake_read_fd);
         }
 
         if ((pfds[0].revents & POLLIN) != 0) {
@@ -1152,11 +1264,17 @@ void osd_raw_tcp_server::run_listener(const uint32_t shard_id) noexcept {
             }
         }
 
-        for (size_t i = 1; i < pfds.size(); ++i) {
+        for (size_t i = 2; i < pfds.size(); ++i) {
             if (pfds[i].revents == 0) {
-                continue;
+                if ((pfds[1].revents & POLLIN) == 0) {
+                    continue;
+                }
             }
-            service_connection_io(conns[i - 1], pfds[i].revents);
+            service_connection_io(conns[i - 2], pfds[i].revents);
+            if ((pfds[i].revents & POLLOUT) != 0 ||
+                (pfds[1].revents & POLLIN) != 0) {
+                service_connection_write(conns[i - 2]);
+            }
         }
     }
 
@@ -1240,67 +1358,69 @@ void osd_raw_tcp_server::service_connection_io(connection_context *conn,
     }
 }
 
-void osd_raw_tcp_server::write_connection_responses(
-  std::shared_ptr<osd_raw_tcp_connection_state> state,
-  const uint32_t shard_id) noexcept {
-    if (!state) {
+void osd_raw_tcp_server::service_connection_write(connection_context *conn) noexcept {
+    if (!conn || conn->done.load(std::memory_order_acquire) || conn->fd < 0 ||
+        !conn->state) {
         return;
     }
 
-    while (_running.load(std::memory_order_acquire)) {
+    while (_running.load(std::memory_order_acquire) &&
+           !conn->state->stopping.load(std::memory_order_acquire)) {
         std::shared_ptr<osd_raw_tcp_inflight_response> inflight{};
-        bool reordered = false;
+        int send_ret;
 
-        {
-            std::unique_lock<std::mutex> lk(state->mutex);
-            state->cv.wait(lk, [&state]() {
-                return state->stopping.load(std::memory_order_acquire) ||
-                       (state->reader_done.load(std::memory_order_acquire) &&
-                        state->pending.empty()) ||
-                       !state->ready.empty();
-            });
-            if (state->stopping.load(std::memory_order_acquire)) {
-                break;
+        if (!conn->sending) {
+            std::lock_guard<std::mutex> lk(conn->state->mutex);
+            if (conn->state->ready.empty()) {
+                return;
             }
-            if (state->reader_done.load(std::memory_order_acquire) &&
-                state->pending.empty()) {
-                break;
-            }
-            if (state->ready.empty()) {
+
+            inflight = conn->state->ready.front();
+            conn->state->ready.pop_front();
+            auto it = std::find(conn->state->pending.begin(),
+                                conn->state->pending.end(), inflight);
+            if (it == conn->state->pending.end()) {
                 continue;
             }
+            conn->state->inflight_by_seq.erase(le64toh(inflight->request_header.seq));
+            conn->send_reordered = it != conn->state->pending.begin();
+            conn->state->pending.erase(it);
+            conn->sending = inflight;
+            conn->send_frame.resize(sizeof(raw_header) + inflight->response_body.size());
+            auto *hdr = reinterpret_cast<raw_header*>(conn->send_frame.data());
 
-            inflight = state->ready.front();
-            state->ready.pop_front();
-            auto it = std::find(state->pending.begin(), state->pending.end(),
-                                inflight);
-            if (it == state->pending.end()) {
-                continue;
+            *hdr = inflight->request_header;
+            hdr->magic = htole32(raw_magic);
+            hdr->version_major = raw_version_major;
+            hdr->version_minor = raw_version_minor;
+            hdr->service = raw_service_osd;
+            hdr->flags = htole32(le32toh(hdr->flags) | raw_flag_response);
+            hdr->status = htole32(inflight->status);
+            hdr->body_len = htole32(static_cast<uint32_t>(inflight->response_body.size()));
+            if (!inflight->response_body.empty()) {
+                std::memcpy(conn->send_frame.data() + sizeof(raw_header),
+                            inflight->response_body.data(),
+                            inflight->response_body.size());
             }
-            state->inflight_by_seq.erase(le64toh(inflight->request_header.seq));
-            reordered = it != state->pending.begin();
-            state->pending.erase(it);
         }
-        notify_connection(state);
 
-        inflight->request_header.status = htole32(inflight->status);
-        if (!write_message(state->fd,
-                           inflight->request_header,
-                           inflight->response_body.data(),
-                           inflight->response_body.size(),
-                           _running)) {
-            stop_connection(state);
-            break;
+        send_ret = flush_connection_send_frame(conn);
+        if (send_ret < 0) {
+            close_connection(conn);
+            return;
         }
-        state->responses_sent.fetch_add(1, std::memory_order_relaxed);
-        if (reordered) {
-            state->responses_reordered.fetch_add(1, std::memory_order_relaxed);
+        if (send_ret == 0) {
+            return;
         }
-        if (state->responses_sent.load(std::memory_order_relaxed) %
+
+        conn->state->responses_sent.fetch_add(1, std::memory_order_relaxed);
+        if (conn->send_reordered) {
+            conn->state->responses_reordered.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (conn->state->responses_sent.load(std::memory_order_relaxed) %
             raw_connection_summary_interval == 0) {
-            log_connection_summary(shard_id);
+            log_connection_summary(conn->shard_id);
         }
+        reset_connection_send(conn);
     }
-
-    SPDK_NOTICELOG("Stopped raw TCP writer on shard %u\n", shard_id);
 }

@@ -20,6 +20,7 @@
 
 class osd_service;
 struct osd_raw_tcp_connection_state;
+struct osd_raw_tcp_inflight_response;
 struct raw_header;
 struct sockaddr_in;
 
@@ -36,6 +37,8 @@ public:
 private:
     struct listener_context {
         int fd{-1};
+        int wake_read_fd{-1};
+        int wake_write_fd{-1};
         uint16_t port{0};
         std::thread worker{};
     };
@@ -49,8 +52,11 @@ private:
         size_t recv_header_bytes{0};
         size_t recv_body_bytes{0};
         size_t recv_target_body_bytes{0};
+        size_t send_bytes{0};
+        bool send_reordered{false};
+        std::vector<uint8_t> send_frame{};
+        std::shared_ptr<osd_raw_tcp_inflight_response> sending{};
         std::shared_ptr<osd_raw_tcp_connection_state> state{};
-        std::thread writer{};
     };
 
     bool start_listener(uint32_t shard_id);
@@ -61,8 +67,11 @@ private:
     int try_receive_one_request(connection_context *conn,
                                 raw_header *hdr_out,
                                 std::vector<uint8_t> *body_out) noexcept;
+    void reset_connection_send(connection_context *conn) noexcept;
+    int flush_connection_send_frame(connection_context *conn) noexcept;
     void close_connection(connection_context *conn) noexcept;
     void service_connection_io(connection_context *conn, short revents) noexcept;
+    void service_connection_write(connection_context *conn) noexcept;
     void cleanup_finished_connections() noexcept;
     void log_connection_summary(uint32_t shard_id) noexcept;
     void run_listener(uint32_t shard_id) noexcept;
