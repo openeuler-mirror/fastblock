@@ -146,6 +146,7 @@ constexpr const char* raw_spdk_sock_impl_name = "posix";
 
 constexpr int raw_backlog = 128;
 constexpr int raw_poll_timeout_ms = 1000;
+constexpr int raw_spdk_poll_timeout_ms = 10;
 constexpr uint16_t min_raw_port = 10001U;
 constexpr uint16_t max_raw_port = 19999U;
 constexpr size_t max_raw_body_len = (4U * 1024U * 1024U) + 1024U;
@@ -1393,7 +1394,7 @@ void osd_raw_tcp_server::run_listener(const uint32_t shard_id) noexcept {
                 }
             }
 
-            rc = ::poll(&pfd, 1, raw_poll_timeout_ms);
+            rc = ::poll(&pfd, 1, raw_spdk_poll_timeout_ms);
             if (rc > 0 && (pfd.revents & POLLIN) != 0) {
                 drain_wakeup_fd(listener.wake_read_fd);
             } else if (rc < 0 && errno != EINTR && _running.load(std::memory_order_acquire)) {
