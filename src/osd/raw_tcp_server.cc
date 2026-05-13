@@ -1396,7 +1396,22 @@ void osd_raw_tcp_server::run_listener(const uint32_t shard_id) noexcept {
 
             rc = ::poll(&pfd, 1, raw_spdk_poll_timeout_ms);
             if (rc > 0 && (pfd.revents & POLLIN) != 0) {
+                std::vector<connection_context*> conns{};
+
                 drain_wakeup_fd(listener.wake_read_fd);
+                {
+                    std::lock_guard<std::mutex> lk(_connections_mutex);
+                    for (const auto& conn : _connections) {
+                        if (!conn || conn->done.load(std::memory_order_acquire) ||
+                            conn->shard_id != shard_id) {
+                            continue;
+                        }
+                        conns.push_back(conn.get());
+                    }
+                }
+                for (auto *conn : conns) {
+                    service_connection_write(conn);
+                }
             } else if (rc < 0 && errno != EINTR && _running.load(std::memory_order_acquire)) {
                 SPDK_ERRLOG("ERROR: poll SPDK raw wakeup fd on shard %u failed: %s\n",
                             shard_id,
