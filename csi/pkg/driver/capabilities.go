@@ -18,6 +18,7 @@ func ControllerServiceCapabilities(includeSnapshots bool) []*csi.ControllerServi
 	rpcs := []csi.ControllerServiceCapability_RPC_Type{
 		csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME,
 		csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME,
+		csi.ControllerServiceCapability_RPC_EXPAND_VOLUME,
 	}
 	if includeSnapshots {
 		rpcs = append(rpcs,
