@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"fastblock-csi/pkg/backend"
 	"fastblock-csi/pkg/driver"
@@ -43,14 +44,43 @@ func (s *GRPCService) NodeStageVolume(ctx context.Context, req *csi.NodeStageVol
 	if !driver.IsSupportedVolumeCapability(req.GetVolumeCapability()) {
 		return nil, fmt.Errorf("unsupported volume capability")
 	}
+	volumeCtx, err := driver.ParsePublishContext(req.GetPublishContext())
+	if err != nil {
+		return nil, err
+	}
+	if state, err := mount.ReadStageState(req.GetStagingTargetPath()); err == nil {
+		if state.VolumeID != req.GetVolumeId() {
+			return nil, fmt.Errorf("staged volume id mismatch: got %s want %s", state.VolumeID, req.GetVolumeId())
+		}
+		if !stageStateMatchesVolumeContext(state, volumeCtx) {
+			return nil, fmt.Errorf("staged volume context mismatch for volume %s", req.GetVolumeId())
+		}
+		ready, err := s.service.IsReady(ctx, StageVolumeRequest{
+			VolumeID: req.GetVolumeId(),
+			VolumeContext: backend.VolumeContext{
+				Transport: state.Transport,
+				NQN:       state.NQN,
+				Traddr:    state.Traddr,
+				Trsvcid:   state.Trsvcid,
+				NSID:      state.NSID,
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+		if ready {
+			if err := mount.WriteStageDeviceLink(req.GetStagingTargetPath(), state.DevicePath); err != nil {
+				return nil, err
+			}
+			return &csi.NodeStageVolumeResponse{}, nil
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
 	devicePath, err := s.service.StageVolumeFromPublishContext(ctx, PublishContextStageRequest{
 		VolumeID:       req.GetVolumeId(),
 		PublishContext: req.GetPublishContext(),
 	})
-	if err != nil {
-		return nil, err
-	}
-	volumeCtx, err := driver.ParsePublishContext(req.GetPublishContext())
 	if err != nil {
 		return nil, err
 	}
@@ -80,6 +110,15 @@ func (s *GRPCService) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstag
 	}
 	state, err := mount.ReadStageState(req.GetStagingTargetPath())
 	if err != nil {
+		if os.IsNotExist(err) {
+			if err := mount.RemoveStageDeviceLink(req.GetStagingTargetPath()); err != nil {
+				return nil, err
+			}
+			if err := mount.RemoveStageState(req.GetStagingTargetPath()); err != nil {
+				return nil, err
+			}
+			return &csi.NodeUnstageVolumeResponse{}, nil
+		}
 		return nil, err
 	}
 	if state.VolumeID != req.GetVolumeId() {
@@ -104,6 +143,14 @@ func (s *GRPCService) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstag
 		return nil, err
 	}
 	return &csi.NodeUnstageVolumeResponse{}, nil
+}
+
+func stageStateMatchesVolumeContext(state mount.StageState, volumeCtx backend.VolumeContext) bool {
+	return state.Transport == volumeCtx.Transport &&
+		state.NQN == volumeCtx.NQN &&
+		state.Traddr == volumeCtx.Traddr &&
+		state.Trsvcid == volumeCtx.Trsvcid &&
+		state.NSID == volumeCtx.NSID
 }
 
 func (s *GRPCService) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {

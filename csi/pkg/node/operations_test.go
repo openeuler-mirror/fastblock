@@ -10,11 +10,13 @@ import (
 )
 
 type stubBackend struct {
-	stageID   string
-	stageCtx  backend.VolumeContext
-	unstageID string
-	getID     string
-	readyID   string
+	stageID    string
+	stageCtx   backend.VolumeContext
+	unstageID  string
+	getID      string
+	readyID    string
+	stageCalls int
+	readyCalls int
 }
 
 type stubPublisher struct {
@@ -39,6 +41,7 @@ func (p *stubPublisher) UnpublishBlockDevice(_ context.Context, targetPath strin
 func (b *stubBackend) Stage(_ context.Context, volumeID string, volumeCtx backend.VolumeContext) (string, error) {
 	b.stageID = volumeID
 	b.stageCtx = volumeCtx
+	b.stageCalls++
 	return "/dev/nvme0n1", nil
 }
 
@@ -54,6 +57,7 @@ func (b *stubBackend) GetDevice(_ context.Context, volumeID string, _ backend.Vo
 
 func (b *stubBackend) IsReady(_ context.Context, volumeID string, _ backend.VolumeContext) (bool, error) {
 	b.readyID = volumeID
+	b.readyCalls++
 	return true, nil
 }
 

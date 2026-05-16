@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"fastblock-csi/pkg/backend"
@@ -93,6 +94,123 @@ func TestNodeStageAndUnstageVolume(t *testing.T) {
 	}
 	if _, err := os.Lstat(deviceLink); !os.IsNotExist(err) {
 		t.Fatalf("expected stage device link to be removed, err=%v", err)
+	}
+}
+
+func TestNodeStageVolumeIsIdempotentWithExistingStageState(t *testing.T) {
+	backendStub := &stubBackend{}
+	service := New(driver.Options{
+		DriverName: "csi.fastblock.io",
+		Endpoint:   "unix:///tmp/node.sock",
+		NodeID:     "node-a",
+		Mode:       driver.ModeNode,
+	}, backendStub)
+	grpcService := NewGRPCService(service)
+	stagePath := t.TempDir()
+	devicePath := filepath.Join(t.TempDir(), "nvme0n1")
+	if err := os.WriteFile(devicePath, []byte("fake-device"), 0o644); err != nil {
+		t.Fatalf("write fake device failed: %v", err)
+	}
+	if err := mount.WriteStageState(stagePath, mount.StageState{
+		VolumeID:   "fbvolname:fb:img-a",
+		DevicePath: devicePath,
+		Transport:  "rdma",
+		NQN:        "nqn.test",
+		Traddr:     "10.0.0.10",
+		Trsvcid:    "4420",
+		NSID:       1,
+	}); err != nil {
+		t.Fatalf("write stage state failed: %v", err)
+	}
+
+	_, err := grpcService.NodeStageVolume(context.Background(), &csi.NodeStageVolumeRequest{
+		VolumeId:          "fbvolname:fb:img-a",
+		StagingTargetPath: stagePath,
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
+			AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+		},
+		PublishContext: map[string]string{
+			driver.PublishContextTransport: "rdma",
+			driver.PublishContextNQN:       "nqn.test",
+			driver.PublishContextTraddr:    "10.0.0.10",
+			driver.PublishContextTrsvcid:   "4420",
+			driver.PublishContextNSID:      "1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("node stage idempotency failed: %v", err)
+	}
+	if backendStub.stageCalls != 0 {
+		t.Fatalf("expected backend stage to be skipped, got %d calls", backendStub.stageCalls)
+	}
+	if backendStub.readyCalls == 0 {
+		t.Fatal("expected backend readiness check")
+	}
+	linkPath, err := mount.CanonicalStageDevicePath(stagePath)
+	if err != nil {
+		t.Fatalf("canonical stage device path failed: %v", err)
+	}
+	if _, err := os.Lstat(linkPath); err != nil {
+		t.Fatalf("expected stage device link after idempotent stage: %v", err)
+	}
+}
+
+func TestNodeStageVolumeRejectsMismatchedExistingStageState(t *testing.T) {
+	service := New(driver.Options{
+		DriverName: "csi.fastblock.io",
+		Endpoint:   "unix:///tmp/node.sock",
+		NodeID:     "node-a",
+		Mode:       driver.ModeNode,
+	}, &stubBackend{})
+	grpcService := NewGRPCService(service)
+	stagePath := t.TempDir()
+	if err := mount.WriteStageState(stagePath, mount.StageState{
+		VolumeID:   "fbvolname:fb:img-a",
+		DevicePath: "/dev/nvme0n1",
+		Transport:  "tcp",
+		NQN:        "nqn.other",
+		Traddr:     "10.0.0.20",
+		Trsvcid:    "4421",
+		NSID:       2,
+	}); err != nil {
+		t.Fatalf("write stage state failed: %v", err)
+	}
+
+	_, err := grpcService.NodeStageVolume(context.Background(), &csi.NodeStageVolumeRequest{
+		VolumeId:          "fbvolname:fb:img-a",
+		StagingTargetPath: stagePath,
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
+			AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+		},
+		PublishContext: map[string]string{
+			driver.PublishContextTransport: "rdma",
+			driver.PublishContextNQN:       "nqn.test",
+			driver.PublishContextTraddr:    "10.0.0.10",
+			driver.PublishContextTrsvcid:   "4420",
+			driver.PublishContextNSID:      "1",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected mismatched stage state rejection")
+	}
+}
+
+func TestNodeUnstageMissingStateIsNoop(t *testing.T) {
+	service := New(driver.Options{
+		DriverName: "csi.fastblock.io",
+		Endpoint:   "unix:///tmp/node.sock",
+		NodeID:     "node-a",
+		Mode:       driver.ModeNode,
+	}, &stubBackend{})
+	grpcService := NewGRPCService(service)
+
+	if _, err := grpcService.NodeUnstageVolume(context.Background(), &csi.NodeUnstageVolumeRequest{
+		VolumeId:          "fbvolname:fb:img-a",
+		StagingTargetPath: t.TempDir(),
+	}); err != nil {
+		t.Fatalf("expected missing stage state to be a noop, got %v", err)
 	}
 }
 
