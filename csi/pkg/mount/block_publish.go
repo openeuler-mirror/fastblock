@@ -36,6 +36,11 @@ func (p *BlockPublisher) PublishBlockDevice(ctx context.Context, devicePath, sta
 	if err := ValidateBlockPublishTarget(devicePath, stagePath, targetPath); err != nil {
 		return err
 	}
+	if same, err := isAlreadyPublished(devicePath, targetPath); err != nil {
+		return err
+	} else if same {
+		return nil
+	}
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
 		return err
 	}
@@ -64,4 +69,22 @@ func (p *BlockPublisher) UnpublishBlockDevice(ctx context.Context, targetPath st
 		return err
 	}
 	return os.Remove(targetPath)
+}
+
+func isAlreadyPublished(devicePath, targetPath string) (bool, error) {
+	deviceInfo, err := os.Stat(devicePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	targetInfo, err := os.Stat(targetPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return os.SameFile(deviceInfo, targetInfo), nil
 }
