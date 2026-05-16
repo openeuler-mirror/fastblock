@@ -32,6 +32,7 @@ func main() {
 	var cleanup bool
 	var verifyExpand bool
 	var verifyPublishIdempotency bool
+	var verifyNodeIdempotency bool
 	var verifyCrossNodeConflict bool
 	var conflictNodeID string
 	var conflictHostNQN string
@@ -52,6 +53,7 @@ func main() {
 	flag.BoolVar(&cleanup, "cleanup", true, "cleanup resources after smoke flow")
 	flag.BoolVar(&verifyExpand, "verify-expand", true, "verify ControllerExpandVolume after create")
 	flag.BoolVar(&verifyPublishIdempotency, "verify-publish-idempotency", true, "verify repeated ControllerPublishVolume on the same node succeeds")
+	flag.BoolVar(&verifyNodeIdempotency, "verify-node-idempotency", true, "verify repeated NodeStageVolume/NodePublishVolume/NodeUnpublishVolume succeed")
 	flag.BoolVar(&verifyCrossNodeConflict, "verify-cross-node-conflict", true, "verify ControllerPublishVolume to another node is rejected")
 	flag.StringVar(&conflictNodeID, "conflict-node-id", "", "node id used for cross-node conflict verification")
 	flag.StringVar(&conflictHostNQN, "conflict-host-nqn", "", "host NQN used for cross-node conflict verification")
@@ -209,29 +211,63 @@ func main() {
 	}
 
 	log.Printf("NodeStageVolume stagePath=%s", stagePath)
-	if _, err := nodeClient.NodeStageVolume(ctx, &csi.NodeStageVolumeRequest{
+	stageReq := &csi.NodeStageVolumeRequest{
 		VolumeId:          volume.GetVolumeId(),
 		PublishContext:    publishResp.GetPublishContext(),
 		StagingTargetPath: stagePath,
 		VolumeCapability:  volumeCapability,
 		VolumeContext:     volume.GetVolumeContext(),
-	}); err != nil {
+	}
+	if _, err := nodeClient.NodeStageVolume(ctx, stageReq); err != nil {
 		log.Fatalf("NodeStageVolume failed: %v", err)
 	}
 	cleanupState.nodeStaged = true
+	if verifyNodeIdempotency {
+		log.Printf("Verify repeated NodeStageVolume stagePath=%s", stagePath)
+		if _, err := nodeClient.NodeStageVolume(ctx, stageReq); err != nil {
+			log.Fatalf("repeat NodeStageVolume failed: %v", err)
+		}
+	}
 
 	log.Printf("NodePublishVolume targetPath=%s", targetPath)
-	if _, err := nodeClient.NodePublishVolume(ctx, &csi.NodePublishVolumeRequest{
+	publishNodeReq := &csi.NodePublishVolumeRequest{
 		VolumeId:          volume.GetVolumeId(),
 		PublishContext:    publishResp.GetPublishContext(),
 		StagingTargetPath: stagePath,
 		TargetPath:        targetPath,
 		VolumeCapability:  volumeCapability,
 		VolumeContext:     volume.GetVolumeContext(),
-	}); err != nil {
+	}
+	if _, err := nodeClient.NodePublishVolume(ctx, publishNodeReq); err != nil {
 		log.Fatalf("NodePublishVolume failed: %v", err)
 	}
 	cleanupState.nodePublished = true
+	if verifyNodeIdempotency {
+		log.Printf("Verify repeated NodePublishVolume targetPath=%s", targetPath)
+		if _, err := nodeClient.NodePublishVolume(ctx, publishNodeReq); err != nil {
+			log.Fatalf("repeat NodePublishVolume failed: %v", err)
+		}
+	}
+
+	if verifyNodeIdempotency {
+		log.Printf("Verify repeated NodeUnpublishVolume targetPath=%s", targetPath)
+		unpublishReq := &csi.NodeUnpublishVolumeRequest{
+			VolumeId:   volume.GetVolumeId(),
+			TargetPath: targetPath,
+		}
+		if _, err := nodeClient.NodeUnpublishVolume(ctx, unpublishReq); err != nil {
+			log.Fatalf("NodeUnpublishVolume idempotency probe failed: %v", err)
+		}
+		cleanupState.nodePublished = false
+		if _, err := nodeClient.NodeUnpublishVolume(ctx, unpublishReq); err != nil {
+			log.Fatalf("repeat NodeUnpublishVolume failed: %v", err)
+		}
+		log.Printf("Re-publish after NodeUnpublishVolume targetPath=%s", targetPath)
+		if _, err := nodeClient.NodePublishVolume(ctx, publishNodeReq); err != nil {
+			log.Fatalf("NodePublishVolume after unpublish failed: %v", err)
+		}
+		cleanupState.nodePublished = true
+	}
 
 	log.Printf("Smoke flow succeeded volumeID=%s", volume.GetVolumeId())
 }
