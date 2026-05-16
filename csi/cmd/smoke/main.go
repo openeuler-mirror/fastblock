@@ -28,7 +28,9 @@ func main() {
 	var sizeBytes int64
 	var objectSize int64
 	var blockSize int64
+	var expandedSizeBytes int64
 	var cleanup bool
+	var verifyExpand bool
 	var verifyPublishIdempotency bool
 	var verifyCrossNodeConflict bool
 	var conflictNodeID string
@@ -46,7 +48,9 @@ func main() {
 	flag.Int64Var(&sizeBytes, "size-bytes", 1<<20, "volume size in bytes")
 	flag.Int64Var(&objectSize, "object-size", 4<<20, "object size in bytes")
 	flag.Int64Var(&blockSize, "block-size", 4096, "block size in bytes")
+	flag.Int64Var(&expandedSizeBytes, "expanded-size-bytes", 0, "expanded volume size in bytes for ControllerExpandVolume verification (default: 2x size-bytes)")
 	flag.BoolVar(&cleanup, "cleanup", true, "cleanup resources after smoke flow")
+	flag.BoolVar(&verifyExpand, "verify-expand", true, "verify ControllerExpandVolume after create")
 	flag.BoolVar(&verifyPublishIdempotency, "verify-publish-idempotency", true, "verify repeated ControllerPublishVolume on the same node succeeds")
 	flag.BoolVar(&verifyCrossNodeConflict, "verify-cross-node-conflict", true, "verify ControllerPublishVolume to another node is rejected")
 	flag.StringVar(&conflictNodeID, "conflict-node-id", "", "node id used for cross-node conflict verification")
@@ -62,6 +66,9 @@ func main() {
 		} else {
 			conflictHostNQN = conflictNodeID
 		}
+	}
+	if expandedSizeBytes == 0 {
+		expandedSizeBytes = sizeBytes * 2
 	}
 
 	baseDir := filepath.Join("/tmp", "fastblock-csi-smoke", volumeName)
@@ -115,6 +122,27 @@ func main() {
 	volume := createResp.GetVolume()
 	if volume == nil {
 		log.Fatalf("CreateVolume returned nil volume")
+	}
+	if verifyExpand {
+		log.Printf("ControllerExpandVolume volumeID=%s requiredBytes=%d", volume.GetVolumeId(), expandedSizeBytes)
+		expandResp, err := controllerClient.ControllerExpandVolume(ctx, &csi.ControllerExpandVolumeRequest{
+			VolumeId: volume.GetVolumeId(),
+			CapacityRange: &csi.CapacityRange{
+				RequiredBytes: expandedSizeBytes,
+			},
+			VolumeCapability: volumeCapability,
+		})
+		if err != nil {
+			log.Fatalf("ControllerExpandVolume failed: %v", err)
+		}
+		if expandResp.GetCapacityBytes() != expandedSizeBytes {
+			log.Fatalf("ControllerExpandVolume returned unexpected capacity: got=%d want=%d", expandResp.GetCapacityBytes(), expandedSizeBytes)
+		}
+		if expandResp.GetNodeExpansionRequired() {
+			log.Fatalf("ControllerExpandVolume unexpectedly requires node expansion for block volume")
+		}
+		volume.CapacityBytes = expandedSizeBytes
+		log.Printf("ControllerExpandVolume verified volumeID=%s capacityBytes=%d", volume.GetVolumeId(), expandedSizeBytes)
 	}
 
 	cleanupState := &smokeState{
