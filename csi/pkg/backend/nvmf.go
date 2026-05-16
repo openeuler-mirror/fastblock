@@ -12,6 +12,13 @@ import (
 	"time"
 )
 
+var (
+	ErrHostNQNMissing      = errors.New("hostnqn file is missing")
+	ErrHostNQNEmpty        = errors.New("hostnqn is empty")
+	ErrNVMeCommandMissing  = errors.New("nvme command not available")
+	ErrKernelModuleMissing = errors.New("required kernel module not loaded")
+)
+
 type VolumeContext struct {
 	Transport string
 	NQN       string
@@ -194,21 +201,27 @@ func (b *NVMFBackend) preflight(volumeCtx VolumeContext) error {
 		b.lookPath = exec.LookPath
 	}
 	if _, err := b.lookPath("nvme"); err != nil {
-		return fmt.Errorf("nvme command not available: %w", err)
+		return fmt.Errorf("%w: %v", ErrNVMeCommandMissing, err)
 	}
 	hostNQN, err := readTrimmed(b.HostNQNPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%w: %s", ErrHostNQNMissing, b.HostNQNPath)
+		}
 		return fmt.Errorf("read hostnqn failed: %w", err)
 	}
 	if hostNQN == "" {
-		return errors.New("hostnqn is empty")
+		return ErrHostNQNEmpty
 	}
 	module := transportModule(volumeCtx.Transport)
 	if module == "" {
 		return fmt.Errorf("unsupported transport %q", volumeCtx.Transport)
 	}
 	if _, err := os.Stat(filepath.Join(b.SysModuleRoot, module)); err != nil {
-		return fmt.Errorf("required kernel module %s not loaded: %w", module, err)
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%w: %s", ErrKernelModuleMissing, module)
+		}
+		return fmt.Errorf("stat kernel module %s failed: %w", module, err)
 	}
 	return nil
 }
