@@ -196,6 +196,14 @@ func (s *Service) CreateVolume(ctx context.Context, req CreateVolumeRequest) (mo
 		if !snapshot.ReadyToUse {
 			return monitorclient.Volume{}, ErrSnapshotNotReady
 		}
+		if sourcePool := strings.TrimSpace(snapshot.SourceVolume.Pool); sourcePool != "" && sourcePool != req.Pool {
+			return monitorclient.Volume{}, fmt.Errorf(
+				"%w: source=%s target=%s",
+				ErrSnapshotRestoreDifferentPool,
+				sourcePool,
+				req.Pool,
+			)
+		}
 		if snapshot.SizeBytes > 0 && req.CapacityBytes < snapshot.SizeBytes {
 			return monitorclient.Volume{}, fmt.Errorf(
 				"%w: requested=%d snapshot=%d",

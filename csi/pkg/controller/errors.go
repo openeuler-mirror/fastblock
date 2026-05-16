@@ -16,6 +16,7 @@ var (
 	ErrSnapshotNotSupported         = errors.New("snapshot operations are not supported by the monitor backend")
 	ErrSnapshotNotReady             = errors.New("snapshot is not ready to use")
 	ErrSnapshotRestoreSizeTooSmall  = errors.New("requested volume capacity is smaller than the snapshot size")
+	ErrSnapshotRestoreDifferentPool = errors.New("snapshot restore into a different pool is not supported")
 )
 
 func toGRPCError(err error) error {
@@ -28,7 +29,8 @@ func toGRPCError(err error) error {
 		return status.Error(codes.Unimplemented, err.Error())
 	case errors.Is(err, ErrSnapshotNotReady):
 		return status.Error(codes.FailedPrecondition, err.Error())
-	case errors.Is(err, ErrSnapshotRestoreSizeTooSmall):
+	case errors.Is(err, ErrSnapshotRestoreSizeTooSmall),
+		errors.Is(err, ErrSnapshotRestoreDifferentPool):
 		return status.Error(codes.InvalidArgument, err.Error())
 	case errors.Is(err, monitorclient.ErrSnapshotNotFound):
 		return status.Error(codes.NotFound, err.Error())

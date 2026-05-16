@@ -185,6 +185,259 @@ func TestGetVolume(t *testing.T) {
 	}
 }
 
+func TestCreateSnapshotTreatsExistingSnapshotAsIdempotent(t *testing.T) {
+	address := startMockMonitorSequence(t, func(call int, req *msg.Request) *msg.Response {
+		switch call {
+		case 0:
+			if _, ok := req.Union.(*msg.Request_CreateImageSnapshotRequest); !ok {
+				t.Fatalf("unexpected create snapshot request type %T", req.Union)
+			}
+			return &msg.Response{
+				Union: &msg.Response_CreateImageSnapshotResponse{
+					CreateImageSnapshotResponse: &msg.CreateImageSnapshotResponse{
+						Errorcode: msg.ImageMetadataErrorCode_imageMetadataInvalidArgument,
+					},
+				},
+			}
+		case 1:
+			payload, ok := req.Union.(*msg.Request_GetSnapshotIdByNameRequest)
+			if !ok {
+				t.Fatalf("unexpected get snapshot id request type %T", req.Union)
+			}
+			if payload.GetSnapshotIdByNameRequest.GetPoolName() != "fb" ||
+				payload.GetSnapshotIdByNameRequest.GetImageName() != "img-a" ||
+				payload.GetSnapshotIdByNameRequest.GetSnapshotName() != "snap-a" {
+				t.Fatalf("unexpected get snapshot id request: %+v", payload.GetSnapshotIdByNameRequest)
+			}
+			return &msg.Response{
+				Union: &msg.Response_GetSnapshotIdByNameResponse{
+					GetSnapshotIdByNameResponse: &msg.GetSnapshotIDByNameResponse{
+						Errorcode:  msg.ImageMetadataErrorCode_imageMetadataOk,
+						SnapshotId: "snap-a",
+					},
+				},
+			}
+		case 2:
+			if _, ok := req.Union.(*msg.Request_GetSnapshotMetadataByIdRequest); !ok {
+				t.Fatalf("unexpected get snapshot request type %T", req.Union)
+			}
+			return &msg.Response{
+				Union: &msg.Response_GetSnapshotMetadataByIdResponse{
+					GetSnapshotMetadataByIdResponse: &msg.GetSnapshotMetadataByIDResponse{
+						Errorcode: msg.ImageMetadataErrorCode_imageMetadataOk,
+						Metadata: &msg.SnapshotMetadataV2{
+							SnapshotId:      "snap-a",
+							SnapshotName:    "snap-a",
+							SourcePoolName:  "fb",
+							SourceImageName: "img-a",
+							Status:          "ready",
+						},
+					},
+				},
+			}
+		case 3:
+			if _, ok := req.Union.(*msg.Request_GetImageMetadataByNameRequest); !ok {
+				t.Fatalf("unexpected get image metadata request type %T", req.Union)
+			}
+			return &msg.Response{
+				Union: &msg.Response_GetImageMetadataByNameResponse{
+					GetImageMetadataByNameResponse: &msg.GetImageMetadataByNameResponse{
+						Errorcode: msg.ImageMetadataErrorCode_imageMetadataOk,
+						Metadata: &msg.ImageMetadataV2{
+							ImageId:   "img-1",
+							PoolName:  "fb",
+							ImageName: "img-a",
+							Size_:     1 << 20,
+						},
+					},
+				},
+			}
+		default:
+			t.Fatalf("unexpected call index %d", call)
+			return nil
+		}
+	})
+
+	client := NewTCP(address)
+	snapshot, err := client.CreateSnapshot(context.Background(), CreateSnapshotRequest{
+		Name:         "snap-a",
+		SourceVolume: VolumeRef{ID: "fbvolname:fb:img-a", Pool: "fb", Name: "img-a"},
+	})
+	if err != nil {
+		t.Fatalf("create snapshot idempotency failed: %v", err)
+	}
+	if snapshot.ID != "snap-a" || snapshot.SourceVolume.Name != "img-a" || snapshot.SizeBytes != 1<<20 {
+		t.Fatalf("unexpected snapshot: %+v", snapshot)
+	}
+}
+
+func TestListSnapshotsFiltersDeletedEntries(t *testing.T) {
+	address := startMockMonitorSequence(t, func(call int, req *msg.Request) *msg.Response {
+		switch call {
+		case 0:
+			if _, ok := req.Union.(*msg.Request_ListImageMetadataRequest); !ok {
+				t.Fatalf("unexpected list image metadata request type %T", req.Union)
+			}
+			return &msg.Response{
+				Union: &msg.Response_ListImageMetadataResponse{
+					ListImageMetadataResponse: &msg.ListImageMetadataResponse{
+						Errorcode: msg.ImageMetadataErrorCode_imageMetadataOk,
+						Metadata: []*msg.ImageMetadataV2{{
+							ImageId:   "img-1",
+							PoolName:  "fb",
+							ImageName: "img-a",
+							Size_:     1 << 20,
+						}},
+					},
+				},
+			}
+		case 1:
+			payload, ok := req.Union.(*msg.Request_ListSnapshotMetadataRequest)
+			if !ok {
+				t.Fatalf("unexpected list snapshot request type %T", req.Union)
+			}
+			if payload.ListSnapshotMetadataRequest.GetImageId() != "img-1" {
+				t.Fatalf("unexpected list snapshot request: %+v", payload.ListSnapshotMetadataRequest)
+			}
+			return &msg.Response{
+				Union: &msg.Response_ListSnapshotMetadataResponse{
+					ListSnapshotMetadataResponse: &msg.ListSnapshotMetadataResponse{
+						Errorcode: msg.ImageMetadataErrorCode_imageMetadataOk,
+						Metadata: []*msg.SnapshotMetadataV2{
+							{
+								SnapshotId:      "snap-a",
+								SnapshotName:    "snap-a",
+								SourcePoolName:  "fb",
+								SourceImageName: "img-a",
+								Status:          "ready",
+							},
+							{
+								SnapshotId:      "snap-deleted",
+								SnapshotName:    "snap-deleted",
+								SourcePoolName:  "fb",
+								SourceImageName: "img-a",
+								Status:          "deleted_pending_gc",
+							},
+						},
+					},
+				},
+			}
+		default:
+			t.Fatalf("unexpected call index %d", call)
+			return nil
+		}
+	})
+
+	client := NewTCP(address)
+	items, err := client.ListSnapshots(context.Background(), ListSnapshotsRequest{})
+	if err != nil {
+		t.Fatalf("list snapshots failed: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != "snap-a" {
+		t.Fatalf("unexpected snapshot list: %+v", items)
+	}
+}
+
+func TestCreateVolumeFromSnapshot(t *testing.T) {
+	address := startMockMonitorSequence(t, func(call int, req *msg.Request) *msg.Response {
+		switch call {
+		case 0:
+			if _, ok := req.Union.(*msg.Request_GetSnapshotMetadataByIdRequest); !ok {
+				t.Fatalf("unexpected get snapshot request type %T", req.Union)
+			}
+			return &msg.Response{
+				Union: &msg.Response_GetSnapshotMetadataByIdResponse{
+					GetSnapshotMetadataByIdResponse: &msg.GetSnapshotMetadataByIDResponse{
+						Errorcode: msg.ImageMetadataErrorCode_imageMetadataOk,
+						Metadata: &msg.SnapshotMetadataV2{
+							SnapshotId:      "snap-a",
+							SnapshotName:    "snap-a",
+							SourcePoolName:  "fb",
+							SourceImageName: "img-a",
+							Status:          "ready",
+						},
+					},
+				},
+			}
+		case 1:
+			if _, ok := req.Union.(*msg.Request_GetImageMetadataByNameRequest); !ok {
+				t.Fatalf("unexpected get image metadata request type %T", req.Union)
+			}
+			return &msg.Response{
+				Union: &msg.Response_GetImageMetadataByNameResponse{
+					GetImageMetadataByNameResponse: &msg.GetImageMetadataByNameResponse{
+						Errorcode: msg.ImageMetadataErrorCode_imageMetadataOk,
+						Metadata: &msg.ImageMetadataV2{
+							ImageId:   "img-1",
+							PoolName:  "fb",
+							ImageName: "img-a",
+							Size_:     1 << 20,
+						},
+					},
+				},
+			}
+		case 2:
+			payload, ok := req.Union.(*msg.Request_ProtectSnapshotRequest)
+			if !ok {
+				t.Fatalf("unexpected protect snapshot request type %T", req.Union)
+			}
+			if payload.ProtectSnapshotRequest.GetSnapshotId() != "snap-a" {
+				t.Fatalf("unexpected protect snapshot request: %+v", payload.ProtectSnapshotRequest)
+			}
+			return &msg.Response{
+				Union: &msg.Response_ProtectSnapshotResponse{
+					ProtectSnapshotResponse: &msg.ProtectSnapshotResponse{
+						Errorcode: msg.ImageMetadataErrorCode_imageMetadataOk,
+					},
+				},
+			}
+		case 3:
+			payload, ok := req.Union.(*msg.Request_CreateCloneFromSnapshotRequest)
+			if !ok {
+				t.Fatalf("unexpected clone request type %T", req.Union)
+			}
+			if payload.CreateCloneFromSnapshotRequest.GetSnapshotId() != "snap-a" ||
+				payload.CreateCloneFromSnapshotRequest.GetCloneImageName() != "img-clone" {
+				t.Fatalf("unexpected clone request: %+v", payload.CreateCloneFromSnapshotRequest)
+			}
+			return &msg.Response{
+				Union: &msg.Response_CreateCloneFromSnapshotResponse{
+					CreateCloneFromSnapshotResponse: &msg.CreateCloneFromSnapshotResponse{
+						Errorcode: msg.ImageMetadataErrorCode_imageMetadataOk,
+						Metadata: &msg.ImageMetadataV2{
+							ImageId:          "img-clone-id",
+							PoolName:         "fb",
+							ImageName:        "img-clone",
+							Size_:            1 << 20,
+							ObjectSize:       4 << 20,
+							ParentSnapshotId: "snap-a",
+						},
+					},
+				},
+			}
+		default:
+			t.Fatalf("unexpected call index %d", call)
+			return nil
+		}
+	})
+
+	client := NewTCP(address)
+	volume, err := client.CreateVolumeFromSnapshot(context.Background(), CreateVolumeFromSnapshotRequest{
+		Name:          "img-clone",
+		Pool:          "fb",
+		CapacityBytes: 1 << 20,
+		ObjectSize:    4 << 20,
+		BlockSize:     4096,
+		SnapshotID:    "snap-a",
+	})
+	if err != nil {
+		t.Fatalf("create volume from snapshot failed: %v", err)
+	}
+	if volume.Name != "img-clone" || volume.Pool != "fb" || volume.ObjectSize != 4<<20 || volume.ID == "" {
+		t.Fatalf("unexpected restored volume: %+v", volume)
+	}
+}
+
 func TestVolumeMetadataCRUD(t *testing.T) {
 	address := startMockMonitorSequence(t, func(call int, req *msg.Request) *msg.Response {
 		switch call {
