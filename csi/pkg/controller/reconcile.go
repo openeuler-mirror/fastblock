@@ -19,13 +19,15 @@ func (s *Service) reconcileState(ctx context.Context, volumeID string) error {
 	if err != nil {
 		return err
 	}
-	_, leaseOK, err := s.currentLease(ctx, volumeID)
+	lease, leaseOK, err := s.currentLease(ctx, volumeID)
 	if err != nil {
 		return err
 	}
 
 	exportID := ""
+	volumeRef := volumeRefFromID(volumeID)
 	if metadataOK {
+		volumeRef = mergeVolumeRefs(volumeRef, metadata.Volume.Ref())
 		exportID = strings.TrimSpace(metadata.ExportID)
 	}
 	if exportID == "" && attachmentOK {
@@ -50,6 +52,24 @@ func (s *Service) reconcileState(ctx context.Context, volumeID string) error {
 			return err
 		}
 		attachmentOK = false
+	}
+	if exportBroken {
+		if attachmentOK {
+			if err := s.detachPublishedImage(ctx, volumeRef, attachment.NodeID, attachment.HostNQN); err != nil {
+				return err
+			}
+			if err := s.attachments.Delete(ctx, volumeID); err != nil {
+				return err
+			}
+			attachmentOK = false
+		}
+		if leaseOK {
+			s.leaseRenewer.Stop(volumeID)
+			if err := s.releaseLease(ctx, volumeID, lease.NodeID, lease.HostNQN); err != nil {
+				return err
+			}
+			leaseOK = false
+		}
 	}
 	if metadataOK && !exportExists && !exportBroken && strings.TrimSpace(metadata.ExportID) != "" {
 		metadata.ExportID = ""
