@@ -9,8 +9,11 @@ import (
 	"strings"
 )
 
+type mountInfoReader func() ([]byte, error)
+
 type BlockPublisher struct {
-	runner commandRunner
+	runner        commandRunner
+	readMountInfo mountInfoReader
 }
 
 type commandRunner interface {
@@ -20,7 +23,14 @@ type commandRunner interface {
 type execRunner struct{}
 
 func NewBlockPublisher() *BlockPublisher {
-	return &BlockPublisher{runner: execRunner{}}
+	return &BlockPublisher{
+		runner: execRunner{},
+		readMountInfo: defaultMountInfoReader,
+	}
+}
+
+func defaultMountInfoReader() ([]byte, error) {
+	return os.ReadFile("/proc/self/mountinfo")
 }
 
 func (execRunner) Run(ctx context.Context, name string, args ...string) error {
@@ -65,8 +75,14 @@ func (p *BlockPublisher) UnpublishBlockDevice(ctx context.Context, targetPath st
 		}
 		return err
 	}
-	if err := p.runner.Run(ctx, "umount", targetPath); err != nil {
+	mounted, err := isMountedTarget(targetPath, p.readMountInfo)
+	if err != nil {
 		return err
+	}
+	if mounted {
+		if err := p.runner.Run(ctx, "umount", targetPath); err != nil {
+			return err
+		}
 	}
 	return os.Remove(targetPath)
 }
@@ -87,4 +103,36 @@ func isAlreadyPublished(devicePath, targetPath string) (bool, error) {
 		return false, err
 	}
 	return os.SameFile(deviceInfo, targetInfo), nil
+}
+
+func isMountedTarget(targetPath string, readMountInfo mountInfoReader) (bool, error) {
+	if readMountInfo == nil {
+		readMountInfo = defaultMountInfoReader
+	}
+	data, err := readMountInfo()
+	if err != nil {
+		return false, err
+	}
+	targetPath = filepath.Clean(targetPath)
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		if unescapeMountInfoPath(fields[4]) == targetPath {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func unescapeMountInfoPath(path string) string {
+	path = strings.ReplaceAll(path, `\040`, " ")
+	path = strings.ReplaceAll(path, `\011`, "\t")
+	path = strings.ReplaceAll(path, `\012`, "\n")
+	path = strings.ReplaceAll(path, `\134`, `\`)
+	return path
 }

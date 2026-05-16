@@ -319,6 +319,30 @@ func TestNodePublishVolumeIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestNodeUnpublishVolumeIsIdempotent(t *testing.T) {
+	publisher := &stubPublisher{}
+	service := &Service{
+		opts:      driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/node.sock", NodeID: "node-a"},
+		backend:   &stubBackend{},
+		publisher: publisher,
+	}
+	grpcService := NewGRPCService(service)
+	req := &csi.NodeUnpublishVolumeRequest{
+		VolumeId:   "fbvolname:fb:img-a",
+		TargetPath: "/var/lib/kubelet/pods/pod/volumeDevices/publish",
+	}
+
+	if _, err := grpcService.NodeUnpublishVolume(context.Background(), req); err != nil {
+		t.Fatalf("first node unpublish failed: %v", err)
+	}
+	if _, err := grpcService.NodeUnpublishVolume(context.Background(), req); err != nil {
+		t.Fatalf("second node unpublish should remain successful, got %v", err)
+	}
+	if publisher.unpublish != req.TargetPath {
+		t.Fatalf("unexpected unpublish call state: %+v", publisher)
+	}
+}
+
 func TestNodePublishRejectsMountCapability(t *testing.T) {
 	service := &Service{
 		opts:      driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/node.sock", NodeID: "node-a"},
