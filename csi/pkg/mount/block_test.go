@@ -71,6 +71,30 @@ func TestWriteAndRemoveStageDeviceLink(t *testing.T) {
 	}
 }
 
+func TestWriteStageDeviceLinkReplacesStaleFilePath(t *testing.T) {
+	stageRoot := t.TempDir()
+	stagePath := filepath.Join(stageRoot, "stage")
+	devicePath := filepath.Join(t.TempDir(), "nvme0n1")
+	file, err := os.Create(devicePath)
+	if err != nil {
+		t.Fatalf("create fake device path failed: %v", err)
+	}
+	_ = file.Close()
+	if err := os.WriteFile(stagePath, []byte("stale"), 0o644); err != nil {
+		t.Fatalf("write stale stage file failed: %v", err)
+	}
+	if err := WriteStageDeviceLink(stagePath, devicePath); err != nil {
+		t.Fatalf("write stage device link failed: %v", err)
+	}
+	info, err := os.Stat(stagePath)
+	if err != nil {
+		t.Fatalf("stat repaired stage path failed: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("expected repaired stage path to be directory, got mode %v", info.Mode())
+	}
+}
+
 func TestWriteStageDeviceLinkFallsBackToBlockDeviceNode(t *testing.T) {
 	stagePath := t.TempDir()
 	sysClassBlockRoot := filepath.Join(t.TempDir(), "sys", "class", "block")

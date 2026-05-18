@@ -1,6 +1,10 @@
 package mount
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestWriteAndReadStageState(t *testing.T) {
 	stagePath := t.TempDir()
@@ -35,5 +39,23 @@ func TestRemoveStageState(t *testing.T) {
 	}
 	if _, err := ReadStageState(stagePath); err == nil {
 		t.Fatal("expected removed stage state to be unreadable")
+	}
+}
+
+func TestWriteStageStateReplacesStaleFilePath(t *testing.T) {
+	stageRoot := t.TempDir()
+	stagePath := filepath.Join(stageRoot, "stage")
+	if err := os.WriteFile(stagePath, []byte("stale"), 0o644); err != nil {
+		t.Fatalf("write stale stage file failed: %v", err)
+	}
+	if err := WriteStageState(stagePath, StageState{VolumeID: "fbvolname:fb:img-a"}); err != nil {
+		t.Fatalf("write stage state failed: %v", err)
+	}
+	info, err := os.Stat(stagePath)
+	if err != nil {
+		t.Fatalf("stat repaired stage path failed: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("expected repaired stage path to be directory, got mode %v", info.Mode())
 	}
 }
