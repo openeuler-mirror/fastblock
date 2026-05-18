@@ -8,13 +8,13 @@ import (
 )
 
 type CreateExportRequest struct {
-	VolumeID      string
-	PoolName      string
-	ImageName     string
-	CapacityBytes int64
-	ObjectSize    int64
-	BlockSize     int64
-	Transport     string
+	VolumeID      string `json:"volume_id"`
+	PoolName      string `json:"pool_name"`
+	ImageName     string `json:"image_name"`
+	CapacityBytes int64  `json:"capacity_bytes"`
+	ObjectSize    int64  `json:"object_size"`
+	BlockSize     int64  `json:"block_size"`
+	Transport     string `json:"transport"`
 }
 
 type Export struct {

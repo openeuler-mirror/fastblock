@@ -15,6 +15,13 @@ func TestCreateExport(t *testing.T) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/exports" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request body failed: %v", err)
+		}
+		if req["volume_id"] != "fbvol:cluster:1:2" || req["pool_name"] != "fb" || req["image_name"] != "img-2" {
+			t.Fatalf("unexpected request payload: %+v", req)
+		}
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(Export{ID: "exp-1", NQN: "nqn.1", NSID: 1, Traddr: "10.0.0.1", Trsvcid: "4420"})
 	}))
