@@ -50,6 +50,7 @@ struct bdev_fastblock
 	tailq;
 	struct spdk_poller *reset_timer;
 	struct spdk_bdev_io *reset_bdev_io;
+	struct spdk_thread *destruct_td;
 };
 
 struct bdev_fastblock_group_channel
@@ -360,11 +361,22 @@ static int
 bdev_fastblock_destruct(void *ctx)
 {
 	struct bdev_fastblock *fastblock = (struct bdev_fastblock *)ctx;
-
-	spdk_io_device_unregister(fastblock, NULL);
-
-	bdev_fastblock_free(fastblock);
-	return 0;
+	assert(fastblock->destruct_td == NULL);
+	fastblock->destruct_td = spdk_get_thread();
+	spdk_io_device_unregister(fastblock, [](void *io_device) {
+		auto *fastblock = reinterpret_cast<struct bdev_fastblock *>(io_device);
+		auto destruct_done = [](void *arg) {
+			auto *fastblock = reinterpret_cast<struct bdev_fastblock *>(arg);
+			spdk_bdev_destruct_done(&fastblock->disk, 0);
+			bdev_fastblock_free(fastblock);
+		};
+		if (fastblock->destruct_td && fastblock->destruct_td != spdk_get_thread()) {
+			spdk_thread_send_msg(fastblock->destruct_td, destruct_done, fastblock);
+			return;
+		}
+		destruct_done(fastblock);
+	});
+	return 1;
 }
 
 /*
