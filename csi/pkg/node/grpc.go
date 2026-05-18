@@ -2,8 +2,10 @@ package node
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"syscall"
 
 	"fastblock-csi/pkg/backend"
 	"fastblock-csi/pkg/driver"
@@ -74,7 +76,7 @@ func (s *GRPCService) NodeStageVolume(ctx context.Context, req *csi.NodeStageVol
 			}
 			return &csi.NodeStageVolumeResponse{}, nil
 		}
-	} else if !os.IsNotExist(err) {
+	} else if !isMissingStageStateError(err) {
 		return nil, err
 	}
 	devicePath, err := s.service.StageVolumeFromPublishContext(ctx, PublishContextStageRequest{
@@ -110,7 +112,7 @@ func (s *GRPCService) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstag
 	}
 	state, err := mount.ReadStageState(req.GetStagingTargetPath())
 	if err != nil {
-		if os.IsNotExist(err) {
+		if isMissingStageStateError(err) {
 			if err := mount.RemoveStageDeviceLink(req.GetStagingTargetPath()); err != nil {
 				return nil, err
 			}
@@ -190,4 +192,8 @@ func (s *GRPCService) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpu
 		return nil, err
 	}
 	return &csi.NodeUnpublishVolumeResponse{}, nil
+}
+
+func isMissingStageStateError(err error) bool {
+	return os.IsNotExist(err) || errors.Is(err, syscall.ENOTDIR)
 }
