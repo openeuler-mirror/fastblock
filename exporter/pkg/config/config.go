@@ -7,12 +7,12 @@ import (
 )
 
 type Config struct {
-	ListenAddress     string
-	MonitorAddress    string
-	RPCSocketPath     string
-	NodeName          string
-	TargetAddress     string
-	TargetServiceID   string
+	ListenAddress      string
+	MonitorAddress     string
+	RPCSocketPath      string
+	NodeName           string
+	TargetAddress      string
+	TargetServiceID    string
 	SubsystemNQNPrefix string
 }
 

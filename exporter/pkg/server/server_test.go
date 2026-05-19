@@ -57,6 +57,7 @@ func TestCreateExport(t *testing.T) {
 		PoolName:      "fb",
 		ImageName:     "img-1",
 		CapacityBytes: 1 << 20,
+		ObjectSize:    4 << 20,
 		BlockSize:     4096,
 		Transport:     "rdma",
 	})

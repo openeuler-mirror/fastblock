@@ -27,7 +27,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	srv := server.New(cfg, nvmf.NewLocalManager(cfg.RPCSocketPath))
+	srv := server.New(cfg, nvmf.NewLocalManager(cfg))
 	if err := srv.Start(context.Background()); err != nil {
 		fmt.Fprintf(os.Stderr, "exporter start failed: %v\n", err)
 		os.Exit(1)
