@@ -3,8 +3,13 @@ package nvmf
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
+	"strings"
 
 	"fastblock-exporter/pkg/api"
+	"fastblock-exporter/pkg/config"
+	"fastblock-exporter/pkg/spdkrpc"
 )
 
 type Manager interface {
@@ -15,25 +20,155 @@ type Manager interface {
 }
 
 type LocalManager struct {
-	RPCSocketPath string
+	rpc             spdkrpc.Caller
+	monitorAddress  string
+	targetAddress   string
+	targetServiceID string
+	nqnPrefix       string
 }
 
-func NewLocalManager(rpcSocketPath string) *LocalManager {
-	return &LocalManager{RPCSocketPath: rpcSocketPath}
+func NewLocalManager(cfg config.Config) *LocalManager {
+	return newLocalManagerWithRPC(cfg, spdkrpc.New(cfg.RPCSocketPath))
 }
 
-func (m *LocalManager) CreateExport(context.Context, api.CreateExportRequest) (api.Export, error) {
-	return api.Export{}, errors.New("create export not implemented")
+func newLocalManagerWithRPC(cfg config.Config, rpc spdkrpc.Caller) *LocalManager {
+	return &LocalManager{
+		rpc:             rpc,
+		monitorAddress:  cfg.MonitorAddress,
+		targetAddress:   cfg.TargetAddress,
+		targetServiceID: cfg.TargetServiceID,
+		nqnPrefix:       strings.TrimRight(cfg.SubsystemNQNPrefix, ":"),
+	}
 }
 
-func (m *LocalManager) DeleteExport(context.Context, string) error {
-	return errors.New("delete export not implemented")
+func exportID(volumeID string) string {
+	replacer := strings.NewReplacer(":", "-", "/", "-", " ", "-", ".", "-")
+	return replacer.Replace(volumeID)
 }
 
-func (m *LocalManager) AllowHost(context.Context, string, string) error {
-	return errors.New("allow host not implemented")
+func bdevName(exportID string) string {
+	return fmt.Sprintf("fbdev_%s", exportID)
 }
 
-func (m *LocalManager) DenyHost(context.Context, string, string) error {
-	return errors.New("deny host not implemented")
+func subsystemNQN(prefix, exportID string) string {
+	return fmt.Sprintf("%s:%s", strings.TrimRight(prefix, ":"), exportID)
+}
+
+func addressFamily(traddr string) string {
+	ip := net.ParseIP(traddr)
+	if ip != nil && ip.To4() == nil {
+		return "IPv6"
+	}
+	return "IPv4"
+}
+
+func subsystemSerial(exportID string) string {
+	serial := strings.ToUpper(strings.ReplaceAll(exportID, "-", ""))
+	serial = "FB" + serial
+	if len(serial) > 20 {
+		return serial[:20]
+	}
+	return serial
+}
+
+func (m *LocalManager) CreateExport(ctx context.Context, req api.CreateExportRequest) (api.Export, error) {
+	if err := req.Validate(); err != nil {
+		return api.Export{}, err
+	}
+
+	id := exportID(req.VolumeID)
+	bdev := bdevName(id)
+	nqn := subsystemNQN(m.nqnPrefix, id)
+
+	var createdBdev string
+	if err := m.rpc.Call(ctx, "bdev_fastblock_create", map[string]any{
+		"name":            bdev,
+		"pool_name":       req.PoolName,
+		"image_name":      req.ImageName,
+		"image_size":      req.CapacityBytes,
+		"object_size":     req.ObjectSize,
+		"block_size":      req.BlockSize,
+		"monitor_address": m.monitorAddress,
+	}, &createdBdev); err != nil {
+		return api.Export{}, err
+	}
+
+	if err := m.rpc.Call(ctx, "nvmf_create_subsystem", map[string]any{
+		"nqn":            nqn,
+		"serial_number":  subsystemSerial(id),
+		"model_number":   "FASTBLOCK",
+		"allow_any_host": false,
+	}, nil); err != nil {
+		return api.Export{}, err
+	}
+
+	var nsid int
+	if err := m.rpc.Call(ctx, "nvmf_subsystem_add_ns", map[string]any{
+		"nqn": nqn,
+		"namespace": map[string]any{
+			"bdev_name": createdBdev,
+		},
+	}, &nsid); err != nil {
+		return api.Export{}, err
+	}
+
+	if err := m.rpc.Call(ctx, "nvmf_subsystem_add_listener", map[string]any{
+		"nqn": nqn,
+		"listen_address": map[string]any{
+			"trtype":  strings.ToUpper(req.Transport),
+			"adrfam":  addressFamily(m.targetAddress),
+			"traddr":  m.targetAddress,
+			"trsvcid": m.targetServiceID,
+		},
+	}, nil); err != nil {
+		return api.Export{}, err
+	}
+
+	return api.Export{
+		ID:      id,
+		NQN:     nqn,
+		NSID:    nsid,
+		Traddr:  m.targetAddress,
+		Trsvcid: m.targetServiceID,
+	}, nil
+}
+
+func (m *LocalManager) DeleteExport(ctx context.Context, exportID string) error {
+	if strings.TrimSpace(exportID) == "" {
+		return errors.New("export id is required")
+	}
+	if err := m.rpc.Call(ctx, "nvmf_delete_subsystem", map[string]any{
+		"nqn": subsystemNQN(m.nqnPrefix, exportID),
+	}, nil); err != nil {
+		return err
+	}
+	return m.rpc.Call(ctx, "bdev_fastblock_delete", map[string]any{
+		"name": bdevName(exportID),
+	}, nil)
+}
+
+func (m *LocalManager) AllowHost(ctx context.Context, exportID, hostNQN string) error {
+	if strings.TrimSpace(exportID) == "" {
+		return errors.New("export id is required")
+	}
+	if strings.TrimSpace(hostNQN) == "" {
+		return errors.New("host nqn is required")
+	}
+	return m.rpc.Call(ctx, "nvmf_subsystem_add_host", map[string]any{
+		"nqn":  subsystemNQN(m.nqnPrefix, exportID),
+		"host": hostNQN,
+	}, nil)
+}
+
+func (m *LocalManager) DenyHost(ctx context.Context, exportID, hostNQN string) error {
+	if strings.TrimSpace(exportID) == "" {
+		return errors.New("export id is required")
+	}
+	if strings.TrimSpace(hostNQN) == "" {
+		return errors.New("host nqn is required")
+	}
+	return m.rpc.Call(ctx, "nvmf_subsystem_remove_host", map[string]any{
+		"nqn":  subsystemNQN(m.nqnPrefix, exportID),
+		"host": hostNQN,
+	}, nil)
 }
