@@ -14,6 +14,7 @@ import (
 func main() {
 	cfg := config.Default()
 	flag.StringVar(&cfg.ListenAddress, "listen", cfg.ListenAddress, "exporter listen address")
+	flag.StringVar(&cfg.MonitorAddress, "monitor-address", "", "fastblock monitor address")
 	flag.StringVar(&cfg.RPCSocketPath, "spdk-rpc-sock", cfg.RPCSocketPath, "SPDK RPC socket path")
 	flag.StringVar(&cfg.NodeName, "node-name", "", "exporter node name")
 	flag.StringVar(&cfg.TargetAddress, "target-address", "", "NVMe-oF target transport address")
