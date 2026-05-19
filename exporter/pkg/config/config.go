@@ -7,15 +7,20 @@ import (
 )
 
 type Config struct {
-	ListenAddress string
-	RPCSocketPath string
-	NodeName      string
+	ListenAddress     string
+	RPCSocketPath     string
+	NodeName          string
+	TargetAddress     string
+	TargetServiceID   string
+	SubsystemNQNPrefix string
 }
 
 func Default() Config {
 	return Config{
-		ListenAddress: ":9500",
-		RPCSocketPath: "/var/tmp/fastblock_nvmf_tgt.sock",
+		ListenAddress:      ":9500",
+		RPCSocketPath:      "/var/tmp/fastblock_nvmf_tgt.sock",
+		TargetServiceID:    "4420",
+		SubsystemNQNPrefix: "nqn.2026-04.io.fastblock",
 	}
 }
 
@@ -28,6 +33,15 @@ func (c Config) Validate() error {
 	}
 	if strings.TrimSpace(c.NodeName) == "" {
 		return fmt.Errorf("node name is required")
+	}
+	if strings.TrimSpace(c.TargetAddress) == "" {
+		return errors.New("target address is required")
+	}
+	if strings.TrimSpace(c.TargetServiceID) == "" {
+		return errors.New("target service id is required")
+	}
+	if strings.TrimSpace(c.SubsystemNQNPrefix) == "" {
+		return errors.New("subsystem nqn prefix is required")
 	}
 	return nil
 }
