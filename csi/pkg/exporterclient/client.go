@@ -7,6 +7,7 @@ type CreateExportRequest struct {
 	PoolName      string
 	ImageName     string
 	CapacityBytes int64
+	ObjectSize    int64
 	BlockSize     int64
 	Transport     string
 }

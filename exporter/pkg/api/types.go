@@ -11,6 +11,7 @@ type CreateExportRequest struct {
 	PoolName      string
 	ImageName     string
 	CapacityBytes int64
+	ObjectSize    int64
 	BlockSize     int64
 	Transport     string
 }
@@ -39,6 +40,9 @@ func (r CreateExportRequest) Validate() error {
 	}
 	if r.CapacityBytes <= 0 {
 		return fmt.Errorf("invalid capacity_bytes %d", r.CapacityBytes)
+	}
+	if r.ObjectSize <= 0 {
+		return fmt.Errorf("invalid object_size %d", r.ObjectSize)
 	}
 	if r.BlockSize <= 0 {
 		return fmt.Errorf("invalid block_size %d", r.BlockSize)
