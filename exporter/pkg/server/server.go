@@ -2,8 +2,14 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"log"
+	"net/http"
+	"strings"
+	"time"
 
+	"fastblock-exporter/pkg/api"
 	"fastblock-exporter/pkg/config"
 	"fastblock-exporter/pkg/nvmf"
 )
@@ -17,7 +23,114 @@ func New(cfg config.Config, manager nvmf.Manager) *Server {
 	return &Server{cfg: cfg, manager: manager}
 }
 
-func (s *Server) Start(context.Context) error {
-	log.Printf("fastblock exporter skeleton listening on %s with spdk socket %s", s.cfg.ListenAddress, s.cfg.RPCSocketPath)
-	return nil
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", s.handleHealthz)
+	mux.HandleFunc("/v1/exports", s.handleExports)
+	mux.HandleFunc("/v1/exports/", s.handleExportAction)
+	return mux
+}
+
+func (s *Server) Start(ctx context.Context) error {
+	httpServer := &http.Server{
+		Addr:    s.cfg.ListenAddress,
+		Handler: s.Handler(),
+	}
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = httpServer.Shutdown(shutdownCtx)
+	}()
+	log.Printf("fastblock exporter listening on %s with spdk socket %s", s.cfg.ListenAddress, s.cfg.RPCSocketPath)
+	err := httpServer.ListenAndServe()
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
+}
+
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "node_name": s.cfg.NodeName})
+}
+
+func (s *Server) handleExports(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var req api.CreateExportRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	if err := req.Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	export, err := s.manager.CreateExport(r.Context(), req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, export)
+}
+
+func (s *Server) handleExportAction(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/v1/exports/")
+	parts := strings.Split(path, "/")
+	if len(parts) == 1 && r.Method == http.MethodDelete {
+		if parts[0] == "" {
+			writeError(w, http.StatusBadRequest, "export id is required")
+			return
+		}
+		if err := s.manager.DeleteExport(r.Context(), parts[0]); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if len(parts) != 2 || r.Method != http.MethodPost {
+		writeError(w, http.StatusNotFound, "route not found")
+		return
+	}
+	var req api.HostAccessRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	if err := req.Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var err error
+	switch parts[1] {
+	case "allow-host":
+		err = s.manager.AllowHost(r.Context(), parts[0], req.HostNQN)
+	case "deny-host":
+		err = s.manager.DenyHost(r.Context(), parts[0], req.HostNQN)
+	default:
+		writeError(w, http.StatusNotFound, "route not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{"error": message})
 }
