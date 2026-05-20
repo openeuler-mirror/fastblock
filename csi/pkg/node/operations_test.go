@@ -114,3 +114,32 @@ func TestStageVolumeRequestValidation(t *testing.T) {
 		t.Fatal("expected invalid transport error")
 	}
 }
+
+func TestPublishContextHelpers(t *testing.T) {
+	backendStub := &stubBackend{}
+	svc := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/node.sock", NodeID: "node-a"}, backendStub)
+	publishContext := map[string]string{
+		driver.PublishContextTransport: "rdma",
+		driver.PublishContextNQN:       "nqn.test",
+		driver.PublishContextTraddr:    "10.0.0.10",
+		driver.PublishContextTrsvcid:   "4420",
+		driver.PublishContextNSID:      "3",
+	}
+	device, err := svc.StageVolumeFromPublishContext(context.Background(), "fbvol:cluster:1:4", publishContext)
+	if err != nil {
+		t.Fatalf("stage from publish context failed: %v", err)
+	}
+	ready, err := svc.IsReadyFromPublishContext(context.Background(), "fbvol:cluster:1:4", publishContext)
+	if err != nil {
+		t.Fatalf("ready from publish context failed: %v", err)
+	}
+	if _, err := svc.GetDeviceFromPublishContext(context.Background(), "fbvol:cluster:1:4", publishContext); err != nil {
+		t.Fatalf("get device from publish context failed: %v", err)
+	}
+	if err := svc.UnstageVolumeFromPublishContext(context.Background(), "fbvol:cluster:1:4", publishContext); err != nil {
+		t.Fatalf("unstage from publish context failed: %v", err)
+	}
+	if device != "/dev/nvme0n1" || !ready {
+		t.Fatalf("unexpected helper results: device=%s ready=%v", device, ready)
+	}
+}
