@@ -136,3 +136,27 @@ func TestDeleteGetExpandAndUnpublish(t *testing.T) {
 		t.Fatalf("unexpected exporter state: %+v", exporter)
 	}
 }
+
+func TestRequestValidation(t *testing.T) {
+	if err := (CreateVolumeRequest{}).Validate(); err == nil {
+		t.Fatal("expected create request validation error")
+	}
+	validPublish := PublishVolumeRequest{
+		Volume: monitorclient.Volume{
+			ID:            "fbvol:cluster:1:2",
+			Name:          "img-a",
+			Pool:          "fb",
+			CapacityBytes: 1 << 20,
+			ObjectSize:    4 << 20,
+		},
+		BlockSize: 4096,
+		Transport: "rdma",
+	}
+	if err := validPublish.Validate(); err != nil {
+		t.Fatalf("unexpected publish validation error: %v", err)
+	}
+	validPublish.Transport = "bad"
+	if err := validPublish.Validate(); err == nil {
+		t.Fatal("expected publish request validation error")
+	}
+}
