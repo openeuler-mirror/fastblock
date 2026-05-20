@@ -99,7 +99,7 @@ func (m *LocalManager) CreateExport(ctx context.Context, req api.CreateExportReq
 		"model_number":   "FASTBLOCK",
 		"allow_any_host": false,
 	}, nil); err != nil {
-		return api.Export{}, err
+		return api.Export{}, m.cleanupCreateFailure(ctx, "", createdBdev, err)
 	}
 
 	var nsid int
@@ -109,7 +109,7 @@ func (m *LocalManager) CreateExport(ctx context.Context, req api.CreateExportReq
 			"bdev_name": createdBdev,
 		},
 	}, &nsid); err != nil {
-		return api.Export{}, err
+		return api.Export{}, m.cleanupCreateFailure(ctx, nqn, createdBdev, err)
 	}
 
 	if err := m.rpc.Call(ctx, "nvmf_subsystem_add_listener", map[string]any{
@@ -121,7 +121,7 @@ func (m *LocalManager) CreateExport(ctx context.Context, req api.CreateExportReq
 			"trsvcid": m.targetServiceID,
 		},
 	}, nil); err != nil {
-		return api.Export{}, err
+		return api.Export{}, m.cleanupCreateFailure(ctx, nqn, createdBdev, err)
 	}
 
 	return api.Export{
@@ -131,6 +131,24 @@ func (m *LocalManager) CreateExport(ctx context.Context, req api.CreateExportReq
 		Traddr:  m.targetAddress,
 		Trsvcid: m.targetServiceID,
 	}, nil
+}
+
+func (m *LocalManager) cleanupCreateFailure(ctx context.Context, nqn, bdev string, createErr error) error {
+	var cleanupErrors []string
+	if nqn != "" {
+		if err := m.rpc.Call(ctx, "nvmf_delete_subsystem", map[string]any{"nqn": nqn}, nil); err != nil {
+			cleanupErrors = append(cleanupErrors, "delete subsystem: "+err.Error())
+		}
+	}
+	if bdev != "" {
+		if err := m.rpc.Call(ctx, "bdev_fastblock_delete", map[string]any{"name": bdev}, nil); err != nil {
+			cleanupErrors = append(cleanupErrors, "delete bdev: "+err.Error())
+		}
+	}
+	if len(cleanupErrors) == 0 {
+		return createErr
+	}
+	return fmt.Errorf("%w; cleanup failed: %s", createErr, strings.Join(cleanupErrors, ", "))
 }
 
 func (m *LocalManager) DeleteExport(ctx context.Context, exportID string) error {
