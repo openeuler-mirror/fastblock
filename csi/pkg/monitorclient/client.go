@@ -86,3 +86,11 @@ func (r VolumeRef) Validate() error {
 	}
 	return nil
 }
+
+func (v Volume) Ref() VolumeRef {
+	return VolumeRef{
+		ID:   v.ID,
+		Name: v.Name,
+		Pool: v.Pool,
+	}
+}
