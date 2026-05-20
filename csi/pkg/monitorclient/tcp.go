@@ -27,6 +27,9 @@ func NewTCP(address string) *TCPClient {
 }
 
 func (c *TCPClient) CreateVolume(ctx context.Context, req CreateVolumeRequest) (Volume, error) {
+	if err := req.Validate(); err != nil {
+		return Volume{}, err
+	}
 	resp, err := c.roundTrip(ctx, &msg.Request{
 		Union: &msg.Request_CreateImageRequest{
 			CreateImageRequest: &msg.CreateImageRequest{
@@ -51,6 +54,9 @@ func (c *TCPClient) CreateVolume(ctx context.Context, req CreateVolumeRequest) (
 }
 
 func (c *TCPClient) DeleteVolume(ctx context.Context, ref VolumeRef) error {
+	if err := ref.Validate(); err != nil {
+		return err
+	}
 	resp, err := c.roundTrip(ctx, &msg.Request{
 		Union: &msg.Request_RemoveImageRequest{
 			RemoveImageRequest: &msg.RemoveImageRequest{
@@ -73,6 +79,9 @@ func (c *TCPClient) DeleteVolume(ctx context.Context, ref VolumeRef) error {
 }
 
 func (c *TCPClient) GetVolume(ctx context.Context, ref VolumeRef) (Volume, error) {
+	if err := ref.Validate(); err != nil {
+		return Volume{}, err
+	}
 	resp, err := c.roundTrip(ctx, &msg.Request{
 		Union: &msg.Request_Get_ImageInfo_Request{
 			Get_ImageInfo_Request: &msg.GetImageInfoRequest{
@@ -95,6 +104,12 @@ func (c *TCPClient) GetVolume(ctx context.Context, ref VolumeRef) (Volume, error
 }
 
 func (c *TCPClient) ExpandVolume(ctx context.Context, ref VolumeRef, capacityBytes int64) (Volume, error) {
+	if err := ref.Validate(); err != nil {
+		return Volume{}, err
+	}
+	if capacityBytes <= 0 {
+		return Volume{}, fmt.Errorf("invalid capacity bytes %d", capacityBytes)
+	}
 	resp, err := c.roundTrip(ctx, &msg.Request{
 		Union: &msg.Request_ResizeImageRequest{
 			ResizeImageRequest: &msg.ResizeImageRequest{
