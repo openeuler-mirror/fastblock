@@ -70,7 +70,16 @@ func TestStageAndReadiness(t *testing.T) {
 func TestGetDeviceAndUnstage(t *testing.T) {
 	backendStub := &stubBackend{}
 	svc := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/node.sock", NodeID: "node-a"}, backendStub)
-	req := StageVolumeRequest{VolumeID: "fbvol:cluster:1:3"}
+	req := StageVolumeRequest{
+		VolumeID: "fbvol:cluster:1:3",
+		VolumeContext: backend.VolumeContext{
+			Transport: "tcp",
+			NQN:       "nqn.test",
+			Traddr:    "10.0.0.11",
+			Trsvcid:   "4420",
+			NSID:      2,
+		},
+	}
 
 	if _, err := svc.GetDevice(context.Background(), req); err != nil {
 		t.Fatalf("get device failed: %v", err)
