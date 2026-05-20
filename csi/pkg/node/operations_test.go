@@ -1,0 +1,84 @@
+package node
+
+import (
+	"context"
+	"testing"
+
+	"fastblock-csi/pkg/backend"
+	"fastblock-csi/pkg/driver"
+)
+
+type stubBackend struct {
+	stageID   string
+	stageCtx  backend.VolumeContext
+	unstageID string
+	getID     string
+	readyID   string
+}
+
+func (b *stubBackend) Stage(_ context.Context, volumeID string, volumeCtx backend.VolumeContext) (string, error) {
+	b.stageID = volumeID
+	b.stageCtx = volumeCtx
+	return "/dev/nvme0n1", nil
+}
+
+func (b *stubBackend) Unstage(_ context.Context, volumeID string, _ backend.VolumeContext) error {
+	b.unstageID = volumeID
+	return nil
+}
+
+func (b *stubBackend) GetDevice(_ context.Context, volumeID string, _ backend.VolumeContext) (string, error) {
+	b.getID = volumeID
+	return "/dev/nvme0n1", nil
+}
+
+func (b *stubBackend) IsReady(_ context.Context, volumeID string, _ backend.VolumeContext) (bool, error) {
+	b.readyID = volumeID
+	return true, nil
+}
+
+func TestStageAndReadiness(t *testing.T) {
+	backendStub := &stubBackend{}
+	svc := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/node.sock", NodeID: "node-a"}, backendStub)
+	req := StageVolumeRequest{
+		VolumeID: "fbvol:cluster:1:2",
+		VolumeContext: backend.VolumeContext{
+			Transport: "rdma",
+			NQN:       "nqn.test",
+			Traddr:    "10.0.0.10",
+			Trsvcid:   "4420",
+			NSID:      1,
+		},
+	}
+
+	device, err := svc.StageVolume(context.Background(), req)
+	if err != nil {
+		t.Fatalf("stage failed: %v", err)
+	}
+	ready, err := svc.IsReady(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ready failed: %v", err)
+	}
+	if device != "/dev/nvme0n1" || !ready {
+		t.Fatalf("unexpected stage result: device=%s ready=%v", device, ready)
+	}
+	if backendStub.stageID != req.VolumeID || backendStub.readyID != req.VolumeID {
+		t.Fatalf("unexpected backend state: %+v", backendStub)
+	}
+}
+
+func TestGetDeviceAndUnstage(t *testing.T) {
+	backendStub := &stubBackend{}
+	svc := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/node.sock", NodeID: "node-a"}, backendStub)
+	req := StageVolumeRequest{VolumeID: "fbvol:cluster:1:3"}
+
+	if _, err := svc.GetDevice(context.Background(), req); err != nil {
+		t.Fatalf("get device failed: %v", err)
+	}
+	if err := svc.UnstageVolume(context.Background(), req); err != nil {
+		t.Fatalf("unstage failed: %v", err)
+	}
+	if backendStub.getID != req.VolumeID || backendStub.unstageID != req.VolumeID {
+		t.Fatalf("unexpected backend state: %+v", backendStub)
+	}
+}
