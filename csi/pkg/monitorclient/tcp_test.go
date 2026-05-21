@@ -95,6 +95,13 @@ func TestInputValidation(t *testing.T) {
 	}
 }
 
+func TestVolumeRefHelper(t *testing.T) {
+	ref := (Volume{ID: "fbvol:cluster:1:2", Name: "img-a", Pool: "fb"}).Ref()
+	if ref.ID != "fbvol:cluster:1:2" || ref.Name != "img-a" || ref.Pool != "fb" {
+		t.Fatalf("unexpected ref: %+v", ref)
+	}
+}
+
 func startMockMonitor(t *testing.T, handler func(*msg.Request) *msg.Response) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
