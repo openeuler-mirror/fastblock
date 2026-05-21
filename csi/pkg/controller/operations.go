@@ -50,6 +50,37 @@ type UnpublishVolumeRequest struct {
 	HostNQN  string
 }
 
+func NewDeleteVolumeRequest(ref monitorclient.VolumeRef) DeleteVolumeRequest {
+	return DeleteVolumeRequest{Volume: ref}
+}
+
+func NewGetVolumeRequest(ref monitorclient.VolumeRef) GetVolumeRequest {
+	return GetVolumeRequest{Volume: ref}
+}
+
+func NewExpandVolumeRequest(ref monitorclient.VolumeRef, capacityBytes int64) ExpandVolumeRequest {
+	return ExpandVolumeRequest{
+		Volume:        ref,
+		CapacityBytes: capacityBytes,
+	}
+}
+
+func NewPublishVolumeRequest(volume monitorclient.Volume, blockSize int64, transport, hostNQN string) PublishVolumeRequest {
+	return PublishVolumeRequest{
+		Volume:    volume,
+		BlockSize: blockSize,
+		Transport: transport,
+		HostNQN:   hostNQN,
+	}
+}
+
+func NewUnpublishVolumeRequest(exportID, hostNQN string) UnpublishVolumeRequest {
+	return UnpublishVolumeRequest{
+		ExportID: exportID,
+		HostNQN:  hostNQN,
+	}
+}
+
 func (s *Service) CreateVolume(ctx context.Context, req CreateVolumeRequest) (monitorclient.Volume, error) {
 	if err := req.Validate(); err != nil {
 		return monitorclient.Volume{}, err
