@@ -32,6 +32,24 @@ type PublishVolumeResult struct {
 	PublishContext map[string]string
 }
 
+type DeleteVolumeRequest struct {
+	Volume monitorclient.VolumeRef
+}
+
+type GetVolumeRequest struct {
+	Volume monitorclient.VolumeRef
+}
+
+type ExpandVolumeRequest struct {
+	Volume        monitorclient.VolumeRef
+	CapacityBytes int64
+}
+
+type UnpublishVolumeRequest struct {
+	ExportID string
+	HostNQN  string
+}
+
 func (s *Service) CreateVolume(ctx context.Context, req CreateVolumeRequest) (monitorclient.Volume, error) {
 	if err := req.Validate(); err != nil {
 		return monitorclient.Volume{}, err
@@ -45,16 +63,25 @@ func (s *Service) CreateVolume(ctx context.Context, req CreateVolumeRequest) (mo
 	})
 }
 
-func (s *Service) DeleteVolume(ctx context.Context, ref monitorclient.VolumeRef) error {
-	return s.monitor.DeleteVolume(ctx, ref)
+func (s *Service) DeleteVolume(ctx context.Context, req DeleteVolumeRequest) error {
+	if err := req.Validate(); err != nil {
+		return err
+	}
+	return s.monitor.DeleteVolume(ctx, req.Volume)
 }
 
-func (s *Service) GetVolume(ctx context.Context, ref monitorclient.VolumeRef) (monitorclient.Volume, error) {
-	return s.monitor.GetVolume(ctx, ref)
+func (s *Service) GetVolume(ctx context.Context, req GetVolumeRequest) (monitorclient.Volume, error) {
+	if err := req.Validate(); err != nil {
+		return monitorclient.Volume{}, err
+	}
+	return s.monitor.GetVolume(ctx, req.Volume)
 }
 
-func (s *Service) ExpandVolume(ctx context.Context, ref monitorclient.VolumeRef, capacityBytes int64) (monitorclient.Volume, error) {
-	return s.monitor.ExpandVolume(ctx, ref, capacityBytes)
+func (s *Service) ExpandVolume(ctx context.Context, req ExpandVolumeRequest) (monitorclient.Volume, error) {
+	if err := req.Validate(); err != nil {
+		return monitorclient.Volume{}, err
+	}
+	return s.monitor.ExpandVolume(ctx, req.Volume, req.CapacityBytes)
 }
 
 func (s *Service) PublishVolume(ctx context.Context, req PublishVolumeRequest) (PublishVolumeResult, error) {
@@ -88,13 +115,16 @@ func (s *Service) PublishVolume(ctx context.Context, req PublishVolumeRequest) (
 	}, nil
 }
 
-func (s *Service) UnpublishVolume(ctx context.Context, exportID, hostNQN string) error {
-	if hostNQN != "" {
-		if err := s.exporter.DenyHost(ctx, exportID, hostNQN); err != nil {
+func (s *Service) UnpublishVolume(ctx context.Context, req UnpublishVolumeRequest) error {
+	if err := req.Validate(); err != nil {
+		return err
+	}
+	if req.HostNQN != "" {
+		if err := s.exporter.DenyHost(ctx, req.ExportID, req.HostNQN); err != nil {
 			return err
 		}
 	}
-	return s.exporter.DeleteExport(ctx, exportID)
+	return s.exporter.DeleteExport(ctx, req.ExportID)
 }
 
 func (r CreateVolumeRequest) Validate() error {
@@ -140,6 +170,31 @@ func (r PublishVolumeRequest) Validate() error {
 	}
 	if r.Transport != "rdma" && r.Transport != "tcp" {
 		return fmt.Errorf("unsupported transport %q", r.Transport)
+	}
+	return nil
+}
+
+func (r DeleteVolumeRequest) Validate() error {
+	return r.Volume.Validate()
+}
+
+func (r GetVolumeRequest) Validate() error {
+	return r.Volume.Validate()
+}
+
+func (r ExpandVolumeRequest) Validate() error {
+	if err := r.Volume.Validate(); err != nil {
+		return err
+	}
+	if r.CapacityBytes <= 0 {
+		return fmt.Errorf("invalid capacity bytes %d", r.CapacityBytes)
+	}
+	return nil
+}
+
+func (r UnpublishVolumeRequest) Validate() error {
+	if strings.TrimSpace(r.ExportID) == "" {
+		return errors.New("export id is required")
 	}
 	return nil
 }
