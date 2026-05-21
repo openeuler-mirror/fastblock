@@ -160,3 +160,24 @@ func TestRequestValidation(t *testing.T) {
 		t.Fatal("expected publish request validation error")
 	}
 }
+
+func TestRequestConstructors(t *testing.T) {
+	ref := monitorclient.VolumeRef{ID: "fbvol:cluster:1:2", Name: "img-a", Pool: "fb"}
+	volume := monitorclient.Volume{ID: "fbvol:cluster:1:2", Name: "img-a", Pool: "fb", CapacityBytes: 1 << 20, ObjectSize: 4 << 20}
+
+	if req := NewDeleteVolumeRequest(ref); req.Volume.Name != "img-a" {
+		t.Fatalf("unexpected delete request: %+v", req)
+	}
+	if req := NewGetVolumeRequest(ref); req.Volume.Pool != "fb" {
+		t.Fatalf("unexpected get request: %+v", req)
+	}
+	if req := NewExpandVolumeRequest(ref, 2<<20); req.CapacityBytes != 2<<20 {
+		t.Fatalf("unexpected expand request: %+v", req)
+	}
+	if req := NewPublishVolumeRequest(volume, 4096, "rdma", "nqn.host.1"); req.HostNQN != "nqn.host.1" {
+		t.Fatalf("unexpected publish request: %+v", req)
+	}
+	if req := NewUnpublishVolumeRequest("exp-1", "nqn.host.1"); req.ExportID != "exp-1" {
+		t.Fatalf("unexpected unpublish request: %+v", req)
+	}
+}
