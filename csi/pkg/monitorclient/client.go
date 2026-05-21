@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 )
 
@@ -93,4 +94,21 @@ func (v Volume) Ref() VolumeRef {
 		Name: v.Name,
 		Pool: v.Pool,
 	}
+}
+
+func ValidateAddress(address string) error {
+	if strings.TrimSpace(address) == "" {
+		return errors.New("address is required")
+	}
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(host) == "" {
+		return errors.New("host is required")
+	}
+	if strings.TrimSpace(port) == "" {
+		return errors.New("port is required")
+	}
+	return nil
 }

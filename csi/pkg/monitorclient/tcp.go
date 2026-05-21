@@ -27,6 +27,9 @@ func NewTCP(address string) *TCPClient {
 }
 
 func (c *TCPClient) CreateVolume(ctx context.Context, req CreateVolumeRequest) (Volume, error) {
+	if err := ValidateAddress(c.address); err != nil {
+		return Volume{}, err
+	}
 	if err := req.Validate(); err != nil {
 		return Volume{}, err
 	}
@@ -54,6 +57,9 @@ func (c *TCPClient) CreateVolume(ctx context.Context, req CreateVolumeRequest) (
 }
 
 func (c *TCPClient) DeleteVolume(ctx context.Context, ref VolumeRef) error {
+	if err := ValidateAddress(c.address); err != nil {
+		return err
+	}
 	if err := ref.Validate(); err != nil {
 		return err
 	}
@@ -79,6 +85,9 @@ func (c *TCPClient) DeleteVolume(ctx context.Context, ref VolumeRef) error {
 }
 
 func (c *TCPClient) GetVolume(ctx context.Context, ref VolumeRef) (Volume, error) {
+	if err := ValidateAddress(c.address); err != nil {
+		return Volume{}, err
+	}
 	if err := ref.Validate(); err != nil {
 		return Volume{}, err
 	}
@@ -104,6 +113,9 @@ func (c *TCPClient) GetVolume(ctx context.Context, ref VolumeRef) (Volume, error
 }
 
 func (c *TCPClient) ExpandVolume(ctx context.Context, ref VolumeRef, capacityBytes int64) (Volume, error) {
+	if err := ValidateAddress(c.address); err != nil {
+		return Volume{}, err
+	}
 	if err := ref.Validate(); err != nil {
 		return Volume{}, err
 	}
