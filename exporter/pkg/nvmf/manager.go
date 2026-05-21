@@ -81,24 +81,11 @@ func (m *LocalManager) CreateExport(ctx context.Context, req api.CreateExportReq
 	nqn := subsystemNQN(m.nqnPrefix, id)
 
 	var createdBdev string
-	if err := m.rpc.Call(ctx, "bdev_fastblock_create", map[string]any{
-		"name":            bdev,
-		"pool_name":       req.PoolName,
-		"image_name":      req.ImageName,
-		"image_size":      req.CapacityBytes,
-		"object_size":     req.ObjectSize,
-		"block_size":      req.BlockSize,
-		"monitor_address": m.monitorAddress,
-	}, &createdBdev); err != nil {
+	if err := m.rpc.Call(ctx, "bdev_fastblock_create", m.buildCreateBdevParams(req, bdev), &createdBdev); err != nil {
 		return api.Export{}, err
 	}
 
-	if err := m.rpc.Call(ctx, "nvmf_create_subsystem", map[string]any{
-		"nqn":            nqn,
-		"serial_number":  subsystemSerial(id),
-		"model_number":   "FASTBLOCK",
-		"allow_any_host": false,
-	}, nil); err != nil {
+	if err := m.rpc.Call(ctx, "nvmf_create_subsystem", buildCreateSubsystemParams(nqn, subsystemSerial(id)), nil); err != nil {
 		return api.Export{}, m.cleanupCreateFailure(ctx, "", createdBdev, err)
 	}
 
@@ -112,15 +99,7 @@ func (m *LocalManager) CreateExport(ctx context.Context, req api.CreateExportReq
 		return api.Export{}, m.cleanupCreateFailure(ctx, nqn, createdBdev, err)
 	}
 
-	if err := m.rpc.Call(ctx, "nvmf_subsystem_add_listener", map[string]any{
-		"nqn": nqn,
-		"listen_address": map[string]any{
-			"trtype":  strings.ToUpper(req.Transport),
-			"adrfam":  addressFamily(m.targetAddress),
-			"traddr":  m.targetAddress,
-			"trsvcid": m.targetServiceID,
-		},
-	}, nil); err != nil {
+	if err := m.rpc.Call(ctx, "nvmf_subsystem_add_listener", m.buildListenerParams(req.Transport, nqn), nil); err != nil {
 		return api.Export{}, m.cleanupCreateFailure(ctx, nqn, createdBdev, err)
 	}
 
@@ -149,6 +128,39 @@ func (m *LocalManager) cleanupCreateFailure(ctx context.Context, nqn, bdev strin
 		return createErr
 	}
 	return fmt.Errorf("%w; cleanup failed: %s", createErr, strings.Join(cleanupErrors, ", "))
+}
+
+func (m *LocalManager) buildCreateBdevParams(req api.CreateExportRequest, bdev string) map[string]any {
+	return map[string]any{
+		"name":            bdev,
+		"pool_name":       req.PoolName,
+		"image_name":      req.ImageName,
+		"image_size":      req.CapacityBytes,
+		"object_size":     req.ObjectSize,
+		"block_size":      req.BlockSize,
+		"monitor_address": m.monitorAddress,
+	}
+}
+
+func buildCreateSubsystemParams(nqn, serial string) map[string]any {
+	return map[string]any{
+		"nqn":            nqn,
+		"serial_number":  serial,
+		"model_number":   "FASTBLOCK",
+		"allow_any_host": false,
+	}
+}
+
+func (m *LocalManager) buildListenerParams(transport, nqn string) map[string]any {
+	return map[string]any{
+		"nqn": nqn,
+		"listen_address": map[string]any{
+			"trtype":  strings.ToUpper(transport),
+			"adrfam":  addressFamily(m.targetAddress),
+			"traddr":  m.targetAddress,
+			"trsvcid": m.targetServiceID,
+		},
+	}
 }
 
 func (m *LocalManager) DeleteExport(ctx context.Context, exportID string) error {
