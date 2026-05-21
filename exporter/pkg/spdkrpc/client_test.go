@@ -70,3 +70,62 @@ func TestCallReturnsRPCError(t *testing.T) {
 		t.Fatal("expected rpc error")
 	}
 }
+
+func TestCallRejectsUnexpectedResponseMetadata(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "spdk.sock")
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_ = json.NewEncoder(conn).Encode(map[string]any{
+			"jsonrpc": "1.0",
+			"id":      2,
+			"result":  map[string]any{"name": "ok"},
+		})
+	}()
+
+	client := New(socketPath)
+	var result struct {
+		Name string `json:"name"`
+	}
+	if err := client.Call(context.Background(), "test_method", nil, &result); err == nil {
+		t.Fatal("expected response metadata error")
+	}
+}
+
+func TestCallRejectsMissingResult(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "spdk.sock")
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_ = json.NewEncoder(conn).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+		})
+	}()
+
+	client := New(socketPath)
+	var result struct {
+		Name string `json:"name"`
+	}
+	if err := client.Call(context.Background(), "test_method", nil, &result); err == nil {
+		t.Fatal("expected missing result error")
+	}
+}
