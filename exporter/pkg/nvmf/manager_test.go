@@ -126,3 +126,33 @@ func TestCreateExportRollbackOnListenerFailure(t *testing.T) {
 		t.Fatalf("unexpected rollback calls: %+v", rpc.calls)
 	}
 }
+
+func TestBuildRPCParamsHelpers(t *testing.T) {
+	cfg := config.Default()
+	cfg.MonitorAddress = "10.0.0.20:3333"
+	cfg.TargetAddress = "10.0.0.10"
+	cfg.NodeName = "node-a"
+	manager := newLocalManagerWithRPC(cfg, &stubCaller{})
+
+	bdevParams := manager.buildCreateBdevParams(api.CreateExportRequest{
+		PoolName:      "fb",
+		ImageName:     "img-1",
+		CapacityBytes: 1 << 20,
+		ObjectSize:    4 << 20,
+		BlockSize:     4096,
+	}, "fbdev-exp1")
+	if bdevParams["monitor_address"] != "10.0.0.20:3333" {
+		t.Fatalf("unexpected bdev params: %+v", bdevParams)
+	}
+
+	subsystemParams := buildCreateSubsystemParams("nqn.test", "SERIAL1")
+	if subsystemParams["allow_any_host"] != false {
+		t.Fatalf("unexpected subsystem params: %+v", subsystemParams)
+	}
+
+	listenerParams := manager.buildListenerParams("rdma", "nqn.test")
+	address := listenerParams["listen_address"].(map[string]any)
+	if address["trtype"] != "RDMA" || address["traddr"] != "10.0.0.10" {
+		t.Fatalf("unexpected listener params: %+v", listenerParams)
+	}
+}
