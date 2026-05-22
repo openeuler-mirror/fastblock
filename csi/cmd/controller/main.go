@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"fastblock-csi/pkg/controller"
 	"fastblock-csi/pkg/driver"
@@ -44,5 +47,20 @@ func main() {
 	}
 
 	svc := controller.New(opts, monitor, exporter)
-	log.Printf("fastblock CSI controller skeleton starting, driver=%s endpoint=%s", svc.DriverName(), svc.Endpoint())
+	server, err := driver.ListenEndpoint(opts.Endpoint)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "listen endpoint failed: %v\n", err)
+		os.Exit(1)
+	}
+	server.RegisterIdentity(driver.NewIdentityService(opts))
+	server.RegisterController(controller.NewGRPCService(svc))
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	log.Printf("fastblock CSI controller serving, driver=%s endpoint=%s", svc.DriverName(), svc.Endpoint())
+	if err := server.Serve(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "controller server failed: %v\n", err)
+		os.Exit(1)
+	}
 }
