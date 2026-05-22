@@ -71,9 +71,12 @@ func (s *GRPCService) CreateVolume(ctx context.Context, req *csi.CreateVolumeReq
 			VolumeId:      volume.ID,
 			CapacityBytes: volume.CapacityBytes,
 			VolumeContext: map[string]string{
-				"pool":      volume.Pool,
-				"name":      volume.Name,
-				"transport": transport,
+				"pool":          volume.Pool,
+				"name":          volume.Name,
+				"transport":     transport,
+				"blockSize":     req.GetParameters()["blockSize"],
+				"objectSize":    req.GetParameters()["objectSize"],
+				"capacityBytes": strconv.FormatInt(volume.CapacityBytes, 10),
 			},
 		},
 	}, nil
@@ -92,4 +95,60 @@ func (s *GRPCService) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeReq
 		return nil, err
 	}
 	return &csi.DeleteVolumeResponse{}, nil
+}
+
+func (s *GRPCService) ControllerPublishVolume(ctx context.Context, req *csi.ControllerPublishVolumeRequest) (*csi.ControllerPublishVolumeResponse, error) {
+	nameRef, err := volumeid.DecodeNameRef(req.GetVolumeId())
+	if err != nil {
+		return nil, err
+	}
+	blockSize, err := strconv.ParseInt(req.GetVolumeContext()["blockSize"], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid blockSize: %w", err)
+	}
+	objectSize, err := strconv.ParseInt(req.GetVolumeContext()["objectSize"], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid objectSize: %w", err)
+	}
+	capacityBytes, err := strconv.ParseInt(req.GetVolumeContext()["capacityBytes"], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid capacityBytes: %w", err)
+	}
+	volume, err := s.service.GetVolume(ctx, NewGetVolumeRequest(monitorclient.VolumeRef{
+		ID:   req.GetVolumeId(),
+		Pool: nameRef.Pool,
+		Name: nameRef.Name,
+	}))
+	if err != nil {
+		return nil, err
+	}
+	volume.ID = req.GetVolumeId()
+	if volume.CapacityBytes == 0 {
+		volume.CapacityBytes = capacityBytes
+	}
+	if volume.ObjectSize == 0 {
+		volume.ObjectSize = objectSize
+	}
+	result, err := s.service.PublishVolume(ctx, PublishVolumeRequest{
+		Volume:    volume,
+		BlockSize: blockSize,
+		Transport: req.GetVolumeContext()["transport"],
+		HostNQN:   ResolveHostNQN(req.GetNodeId(), req.GetSecrets()),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &csi.ControllerPublishVolumeResponse{
+		PublishContext: result.PublishContext,
+	}, nil
+}
+
+func (s *GRPCService) ControllerUnpublishVolume(ctx context.Context, req *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {
+	if err := s.service.UnpublishVolume(ctx, UnpublishVolumeRequest{
+		ExportID: req.GetVolumeId(),
+		HostNQN:  ResolveHostNQN(req.GetNodeId(), req.GetSecrets()),
+	}); err != nil {
+		return nil, err
+	}
+	return &csi.ControllerUnpublishVolumeResponse{}, nil
 }
