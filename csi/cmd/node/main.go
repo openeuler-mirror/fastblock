@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"fastblock-csi/pkg/backend"
 	"fastblock-csi/pkg/driver"
@@ -33,5 +36,20 @@ func main() {
 	}
 
 	svc := node.New(opts, backend.NewNVMF())
-	log.Printf("fastblock CSI node skeleton starting, driver=%s nodeID=%s", svc.DriverName(), svc.NodeID())
+	server, err := driver.ListenEndpoint(opts.Endpoint)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "listen endpoint failed: %v\n", err)
+		os.Exit(1)
+	}
+	server.RegisterIdentity(driver.NewIdentityService(opts))
+	server.RegisterNode(node.NewGRPCService(svc))
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	log.Printf("fastblock CSI node serving, driver=%s nodeID=%s endpoint=%s", svc.DriverName(), svc.NodeID(), opts.Endpoint)
+	if err := server.Serve(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "node server failed: %v\n", err)
+		os.Exit(1)
+	}
 }
