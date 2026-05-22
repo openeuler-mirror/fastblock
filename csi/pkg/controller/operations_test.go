@@ -7,6 +7,7 @@ import (
 	"fastblock-csi/pkg/driver"
 	"fastblock-csi/pkg/exporterclient"
 	"fastblock-csi/pkg/monitorclient"
+	"fastblock-csi/pkg/volumeid"
 )
 
 type stubMonitorClient struct {
@@ -19,8 +20,9 @@ type stubMonitorClient struct {
 
 func (c *stubMonitorClient) CreateVolume(_ context.Context, req monitorclient.CreateVolumeRequest) (monitorclient.Volume, error) {
 	c.createReq = req
+	id, _ := volumeid.EncodeNameRef(volumeid.NameRef{Pool: req.Pool, Name: req.Name})
 	return monitorclient.Volume{
-		ID:            "fbvol:cluster:1:2",
+		ID:            id,
 		Name:          req.Name,
 		Pool:          req.Pool,
 		CapacityBytes: req.CapacityBytes,

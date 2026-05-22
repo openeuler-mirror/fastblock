@@ -38,3 +38,38 @@ func TestControllerGRPCService(t *testing.T) {
 		t.Fatalf("expected confirmed capabilities")
 	}
 }
+
+func TestControllerGRPCCreateAndDeleteVolume(t *testing.T) {
+	monitor := &stubMonitorClient{}
+	service := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporterclient.NewNoop())
+	grpcService := NewGRPCService(service)
+
+	createResp, err := grpcService.CreateVolume(context.Background(), &csi.CreateVolumeRequest{
+		Name: "img-a",
+		CapacityRange: &csi.CapacityRange{
+			RequiredBytes: 1 << 20,
+		},
+		Parameters: map[string]string{
+			"pool":       "fb",
+			"objectSize": "4194304",
+			"blockSize":  "4096",
+			"transport":  "rdma",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create volume failed: %v", err)
+	}
+	if createResp.GetVolume() == nil || createResp.GetVolume().GetVolumeId() == "" {
+		t.Fatalf("unexpected create response: %+v", createResp)
+	}
+
+	_, err = grpcService.DeleteVolume(context.Background(), &csi.DeleteVolumeRequest{
+		VolumeId: createResp.GetVolume().GetVolumeId(),
+	})
+	if err != nil {
+		t.Fatalf("delete volume failed: %v", err)
+	}
+	if monitor.deleteRef.Name != "img-a" || monitor.deleteRef.Pool != "fb" {
+		t.Fatalf("unexpected delete ref: %+v", monitor.deleteRef)
+	}
+}
