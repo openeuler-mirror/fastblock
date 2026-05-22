@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 
+	"fastblock-csi/pkg/volumeid"
 	msg "monitor/msg"
 
 	"github.com/gogo/protobuf/proto"
@@ -184,7 +185,12 @@ func volumeFromImageInfo(info *msg.ImageInfo) Volume {
 	if info == nil {
 		return Volume{}
 	}
+	encodedID, _ := volumeid.EncodeNameRef(volumeid.NameRef{
+		Pool: info.GetPoolname(),
+		Name: info.GetImagename(),
+	})
 	return Volume{
+		ID:            encodedID,
 		Name:          info.GetImagename(),
 		Pool:          info.GetPoolname(),
 		CapacityBytes: info.GetSize_(),
