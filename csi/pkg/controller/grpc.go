@@ -42,6 +42,9 @@ func (s *GRPCService) CreateVolume(ctx context.Context, req *csi.CreateVolumeReq
 	if req.GetName() == "" {
 		return nil, fmt.Errorf("volume name is required")
 	}
+	if req.GetParameters()["pool"] == "" {
+		return nil, fmt.Errorf("pool parameter is required")
+	}
 	required := req.GetCapacityRange().GetRequiredBytes()
 	if required <= 0 {
 		return nil, fmt.Errorf("required bytes must be greater than zero")
@@ -83,6 +86,9 @@ func (s *GRPCService) CreateVolume(ctx context.Context, req *csi.CreateVolumeReq
 }
 
 func (s *GRPCService) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
+	if req.GetVolumeId() == "" {
+		return nil, fmt.Errorf("volume id is required")
+	}
 	nameRef, err := volumeid.DecodeNameRef(req.GetVolumeId())
 	if err != nil {
 		return nil, err
@@ -98,6 +104,12 @@ func (s *GRPCService) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeReq
 }
 
 func (s *GRPCService) ControllerPublishVolume(ctx context.Context, req *csi.ControllerPublishVolumeRequest) (*csi.ControllerPublishVolumeResponse, error) {
+	if req.GetVolumeId() == "" {
+		return nil, fmt.Errorf("volume id is required")
+	}
+	if req.GetNodeId() == "" {
+		return nil, fmt.Errorf("node id is required")
+	}
 	nameRef, err := volumeid.DecodeNameRef(req.GetVolumeId())
 	if err != nil {
 		return nil, err
@@ -144,6 +156,9 @@ func (s *GRPCService) ControllerPublishVolume(ctx context.Context, req *csi.Cont
 }
 
 func (s *GRPCService) ControllerUnpublishVolume(ctx context.Context, req *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {
+	if req.GetVolumeId() == "" {
+		return nil, fmt.Errorf("volume id is required")
+	}
 	if err := s.service.UnpublishVolume(ctx, UnpublishVolumeRequest{
 		ExportID: req.GetVolumeId(),
 		HostNQN:  ResolveHostNQN(req.GetNodeId(), req.GetSecrets()),
