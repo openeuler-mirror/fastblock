@@ -122,6 +122,29 @@ func TestControllerGRPCPublishAndUnpublishVolume(t *testing.T) {
 	}
 }
 
+func TestControllerPublishVolumeRejectsMismatchedVolumeContext(t *testing.T) {
+	monitor := &stubMonitorClient{}
+	exporter := &stubExporterClient{}
+	service := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+	grpcService := NewGRPCService(service)
+
+	_, err := grpcService.ControllerPublishVolume(context.Background(), &csi.ControllerPublishVolumeRequest{
+		VolumeId: "fbvolname:fb:img-a",
+		NodeId:   "node-a",
+		VolumeContext: map[string]string{
+			"pool":          "wrong",
+			"name":          "img-a",
+			"transport":     "rdma",
+			"blockSize":     "4096",
+			"objectSize":    "4194304",
+			"capacityBytes": "1048576",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected mismatched volume_context error")
+	}
+}
+
 func TestControllerGRPCRequestValidation(t *testing.T) {
 	service := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, &stubMonitorClient{}, &stubExporterClient{})
 	grpcService := NewGRPCService(service)

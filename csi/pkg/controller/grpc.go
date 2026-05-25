@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"fastblock-csi/pkg/driver"
 	"fastblock-csi/pkg/monitorclient"
@@ -16,6 +17,14 @@ type GRPCService struct {
 	csi.UnimplementedControllerServer
 
 	service *Service
+}
+
+type publishVolumeContext struct {
+	ref           monitorclient.VolumeRef
+	transport     string
+	blockSize     int64
+	objectSize    int64
+	capacityBytes int64
 }
 
 func NewGRPCService(service *Service) *GRPCService {
@@ -113,41 +122,25 @@ func (s *GRPCService) ControllerPublishVolume(ctx context.Context, req *csi.Cont
 	if req.GetNodeId() == "" {
 		return nil, fmt.Errorf("node id is required")
 	}
-	nameRef, err := volumeid.DecodeNameRef(req.GetVolumeId())
+	volumeCtx, err := parsePublishVolumeContext(req.GetVolumeId(), req.GetVolumeContext())
 	if err != nil {
 		return nil, err
 	}
-	blockSize, err := strconv.ParseInt(req.GetVolumeContext()["blockSize"], 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("invalid blockSize: %w", err)
-	}
-	objectSize, err := strconv.ParseInt(req.GetVolumeContext()["objectSize"], 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("invalid objectSize: %w", err)
-	}
-	capacityBytes, err := strconv.ParseInt(req.GetVolumeContext()["capacityBytes"], 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("invalid capacityBytes: %w", err)
-	}
-	volume, err := s.service.GetVolume(ctx, NewGetVolumeRequest(monitorclient.VolumeRef{
-		ID:   req.GetVolumeId(),
-		Pool: nameRef.Pool,
-		Name: nameRef.Name,
-	}))
+	volume, err := s.service.GetVolume(ctx, NewGetVolumeRequest(volumeCtx.ref))
 	if err != nil {
 		return nil, err
 	}
 	volume.ID = req.GetVolumeId()
 	if volume.CapacityBytes == 0 {
-		volume.CapacityBytes = capacityBytes
+		volume.CapacityBytes = volumeCtx.capacityBytes
 	}
 	if volume.ObjectSize == 0 {
-		volume.ObjectSize = objectSize
+		volume.ObjectSize = volumeCtx.objectSize
 	}
 	result, err := s.service.ControllerPublishVolume(ctx, ControllerPublishRequest{
 		Volume:    volume,
-		BlockSize: blockSize,
-		Transport: req.GetVolumeContext()["transport"],
+		BlockSize: volumeCtx.blockSize,
+		Transport: volumeCtx.transport,
 		NodeID:    req.GetNodeId(),
 		Secrets:   req.GetSecrets(),
 	})
@@ -171,4 +164,49 @@ func (s *GRPCService) ControllerUnpublishVolume(ctx context.Context, req *csi.Co
 		return nil, err
 	}
 	return &csi.ControllerUnpublishVolumeResponse{}, nil
+}
+
+func parsePublishVolumeContext(volumeID string, ctx map[string]string) (publishVolumeContext, error) {
+	nameRef, err := volumeid.DecodeNameRef(volumeID)
+	if err != nil {
+		return publishVolumeContext{}, err
+	}
+	pool := strings.TrimSpace(ctx["pool"])
+	if pool == "" {
+		return publishVolumeContext{}, fmt.Errorf("volume_context.pool is required")
+	}
+	name := strings.TrimSpace(ctx["name"])
+	if name == "" {
+		return publishVolumeContext{}, fmt.Errorf("volume_context.name is required")
+	}
+	if pool != nameRef.Pool || name != nameRef.Name {
+		return publishVolumeContext{}, fmt.Errorf("volume_context pool/name mismatch with volume id")
+	}
+	transport := strings.TrimSpace(ctx["transport"])
+	if transport != "rdma" && transport != "tcp" {
+		return publishVolumeContext{}, fmt.Errorf("invalid volume_context.transport %q", transport)
+	}
+	blockSize, err := strconv.ParseInt(ctx["blockSize"], 10, 64)
+	if err != nil || blockSize <= 0 {
+		return publishVolumeContext{}, fmt.Errorf("invalid volume_context.blockSize")
+	}
+	objectSize, err := strconv.ParseInt(ctx["objectSize"], 10, 64)
+	if err != nil || objectSize <= 0 {
+		return publishVolumeContext{}, fmt.Errorf("invalid volume_context.objectSize")
+	}
+	capacityBytes, err := strconv.ParseInt(ctx["capacityBytes"], 10, 64)
+	if err != nil || capacityBytes <= 0 {
+		return publishVolumeContext{}, fmt.Errorf("invalid volume_context.capacityBytes")
+	}
+	return publishVolumeContext{
+		ref: monitorclient.VolumeRef{
+			ID:   volumeID,
+			Pool: pool,
+			Name: name,
+		},
+		transport:     transport,
+		blockSize:     blockSize,
+		objectSize:    objectSize,
+		capacityBytes: capacityBytes,
+	}, nil
 }
