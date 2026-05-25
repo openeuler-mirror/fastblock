@@ -95,6 +95,26 @@ func TestInputValidation(t *testing.T) {
 	}
 }
 
+func TestDeleteVolumeTreatsImageNotFoundAsSuccess(t *testing.T) {
+	address := startMockMonitor(t, func(req *msg.Request) *msg.Response {
+		if _, ok := req.Union.(*msg.Request_RemoveImageRequest); !ok {
+			t.Fatalf("unexpected request type %T", req.Union)
+		}
+		return &msg.Response{
+			Union: &msg.Response_RemoveImageResponse{
+				RemoveImageResponse: &msg.RemoveImageResponse{
+					Errorcode: msg.RemoveImageErrorCode_imageNotFound,
+				},
+			},
+		}
+	})
+
+	client := NewTCP(address)
+	if err := client.DeleteVolume(context.Background(), VolumeRef{Name: "img-missing", Pool: "fb"}); err != nil {
+		t.Fatalf("delete volume should ignore missing image: %v", err)
+	}
+}
+
 func TestVolumeRefHelper(t *testing.T) {
 	ref := (Volume{ID: "fbvol:cluster:1:2", Name: "img-a", Pool: "fb"}).Ref()
 	if ref.ID != "fbvol:cluster:1:2" || ref.Name != "img-a" || ref.Pool != "fb" {
