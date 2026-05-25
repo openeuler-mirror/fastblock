@@ -2,6 +2,7 @@ package mount
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -56,4 +57,28 @@ func CanonicalPublishDevicePath(targetPath string) (string, error) {
 		return "", errors.New("target path must be absolute")
 	}
 	return filepath.Join(targetPath, "device"), nil
+}
+
+func WriteStageDeviceLink(stagePath, devicePath string) error {
+	linkPath, err := CanonicalStageDevicePath(stagePath)
+	if err != nil {
+		return err
+	}
+	if err := ValidateBlockTarget(devicePath, stagePath); err != nil {
+		return err
+	}
+	_ = os.Remove(linkPath)
+	return os.Symlink(devicePath, linkPath)
+}
+
+func RemoveStageDeviceLink(stagePath string) error {
+	linkPath, err := CanonicalStageDevicePath(stagePath)
+	if err != nil {
+		return err
+	}
+	err = os.Remove(linkPath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }

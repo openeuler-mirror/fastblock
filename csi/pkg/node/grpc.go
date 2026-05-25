@@ -62,6 +62,9 @@ func (s *GRPCService) NodeStageVolume(ctx context.Context, req *csi.NodeStageVol
 	}); err != nil {
 		return nil, err
 	}
+	if err := mount.WriteStageDeviceLink(req.GetStagingTargetPath(), devicePath); err != nil {
+		return nil, err
+	}
 	return &csi.NodeStageVolumeResponse{}, nil
 }
 
@@ -89,6 +92,9 @@ func (s *GRPCService) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstag
 			NSID:      state.NSID,
 		},
 	}); err != nil {
+		return nil, err
+	}
+	if err := mount.RemoveStageDeviceLink(req.GetStagingTargetPath()); err != nil {
 		return nil, err
 	}
 	if err := mount.RemoveStageState(req.GetStagingTargetPath()); err != nil {
