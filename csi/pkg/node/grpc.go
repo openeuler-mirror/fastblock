@@ -40,6 +40,9 @@ func (s *GRPCService) NodeStageVolume(ctx context.Context, req *csi.NodeStageVol
 	if req.GetStagingTargetPath() == "" {
 		return nil, fmt.Errorf("staging target path is required")
 	}
+	if !driver.IsSupportedVolumeCapability(req.GetVolumeCapability()) {
+		return nil, fmt.Errorf("unsupported volume capability")
+	}
 	devicePath, err := s.service.StageVolumeFromPublishContext(ctx, PublishContextStageRequest{
 		VolumeID:       req.GetVolumeId(),
 		PublishContext: req.GetPublishContext(),
@@ -113,8 +116,8 @@ func (s *GRPCService) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	if req.GetTargetPath() == "" {
 		return nil, fmt.Errorf("target path is required")
 	}
-	if req.GetVolumeCapability() == nil || req.GetVolumeCapability().GetBlock() == nil {
-		return nil, fmt.Errorf("only block volume capability is supported")
+	if !driver.IsSupportedVolumeCapability(req.GetVolumeCapability()) {
+		return nil, fmt.Errorf("unsupported volume capability")
 	}
 	if err := s.service.PublishVolume(ctx, PublishVolumeRequest{
 		VolumeID:          req.GetVolumeId(),
