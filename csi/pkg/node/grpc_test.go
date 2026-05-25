@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"fastblock-csi/pkg/backend"
@@ -68,6 +69,13 @@ func TestNodeStageAndUnstageVolume(t *testing.T) {
 	if state.VolumeID != "fbvolname:fb:img-a" {
 		t.Fatalf("unexpected stage state: %+v", state)
 	}
+	deviceLink, err := mount.CanonicalStageDevicePath(stagePath)
+	if err != nil {
+		t.Fatalf("canonical stage device path failed: %v", err)
+	}
+	if _, err := os.Lstat(deviceLink); err != nil {
+		t.Fatalf("expected stage device link: %v", err)
+	}
 
 	_, err = grpcService.NodeUnstageVolume(context.Background(), &csi.NodeUnstageVolumeRequest{
 		VolumeId:          "fbvolname:fb:img-a",
@@ -78,6 +86,9 @@ func TestNodeStageAndUnstageVolume(t *testing.T) {
 	}
 	if _, err := mount.ReadStageState(stagePath); err == nil {
 		t.Fatal("expected stage state to be removed after unstage")
+	}
+	if _, err := os.Lstat(deviceLink); !os.IsNotExist(err) {
+		t.Fatalf("expected stage device link to be removed, err=%v", err)
 	}
 }
 
