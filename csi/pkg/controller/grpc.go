@@ -122,6 +122,9 @@ func (s *GRPCService) ControllerPublishVolume(ctx context.Context, req *csi.Cont
 	if req.GetNodeId() == "" {
 		return nil, fmt.Errorf("node id is required")
 	}
+	if !driver.IsSupportedVolumeCapability(req.GetVolumeCapability()) {
+		return nil, fmt.Errorf("unsupported volume capability")
+	}
 	volumeCtx, err := parsePublishVolumeContext(req.GetVolumeId(), req.GetVolumeContext())
 	if err != nil {
 		return nil, err
