@@ -76,6 +76,9 @@ func TestNodeStageAndUnstageVolume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("node unstage volume failed: %v", err)
 	}
+	if _, err := mount.ReadStageState(stagePath); err == nil {
+		t.Fatal("expected stage state to be removed after unstage")
+	}
 }
 
 func TestNodeGRPCRequestValidation(t *testing.T) {
