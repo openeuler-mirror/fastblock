@@ -93,6 +93,12 @@ func TestNodeGRPCRequestValidation(t *testing.T) {
 	if _, err := grpcService.NodeUnstageVolume(context.Background(), &csi.NodeUnstageVolumeRequest{}); err == nil {
 		t.Fatal("expected node unstage validation error")
 	}
+	if _, err := grpcService.NodePublishVolume(context.Background(), &csi.NodePublishVolumeRequest{}); err == nil {
+		t.Fatal("expected node publish validation error")
+	}
+	if _, err := grpcService.NodeUnpublishVolume(context.Background(), &csi.NodeUnpublishVolumeRequest{}); err == nil {
+		t.Fatal("expected node unpublish validation error")
+	}
 }
 
 func TestNodePublishAndUnpublishVolume(t *testing.T) {
@@ -135,5 +141,24 @@ func TestNodePublishAndUnpublishVolume(t *testing.T) {
 	}
 	if publisher.unpublish != "/var/lib/kubelet/pods/pod/volumeDevices/publish" {
 		t.Fatalf("unexpected unpublish call: %+v", publisher)
+	}
+}
+
+func TestNodePublishRejectsMountCapability(t *testing.T) {
+	service := &Service{
+		opts:      driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/node.sock", NodeID: "node-a"},
+		backend:   &stubBackend{},
+		publisher: &stubPublisher{},
+	}
+	grpcService := NewGRPCService(service)
+	if _, err := grpcService.NodePublishVolume(context.Background(), &csi.NodePublishVolumeRequest{
+		VolumeId:          "fbvolname:fb:img-a",
+		StagingTargetPath: "/tmp/stage",
+		TargetPath:        "/tmp/target",
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Mount{Mount: &csi.VolumeCapability_MountVolume{}},
+		},
+	}); err == nil {
+		t.Fatal("expected mount capability rejection")
 	}
 }
