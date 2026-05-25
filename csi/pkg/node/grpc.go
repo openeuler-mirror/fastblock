@@ -91,6 +91,9 @@ func (s *GRPCService) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstag
 	}); err != nil {
 		return nil, err
 	}
+	if err := mount.RemoveStageState(req.GetStagingTargetPath()); err != nil {
+		return nil, err
+	}
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }
 
