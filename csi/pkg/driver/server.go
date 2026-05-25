@@ -46,6 +46,7 @@ func (s *Server) RegisterNode(node csi.NodeServer) {
 }
 
 func (s *Server) Serve(ctx context.Context) error {
+	defer s.cleanup()
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- s.grpcServer.Serve(s.listener)
@@ -71,4 +72,13 @@ func ListenEndpoint(raw string) (*Server, error) {
 		return nil, fmt.Errorf("parse endpoint: %w", err)
 	}
 	return NewServer(ep)
+}
+
+func (s *Server) cleanup() {
+	if s.listener != nil {
+		_ = s.listener.Close()
+	}
+	if s.endpoint.Network == "unix" {
+		_ = os.Remove(s.endpoint.Address)
+	}
 }
