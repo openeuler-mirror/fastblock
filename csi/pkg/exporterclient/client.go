@@ -27,6 +27,7 @@ type Export struct {
 
 type Client interface {
 	CreateExport(ctx context.Context, req CreateExportRequest) (Export, error)
+	GetExport(ctx context.Context, exportID string) (Export, error)
 	DeleteExport(ctx context.Context, exportID string) error
 	AllowHost(ctx context.Context, exportID, hostNQN string) error
 	DenyHost(ctx context.Context, exportID, hostNQN string) error
@@ -39,6 +40,10 @@ func NewNoop() *NoopClient {
 }
 
 func (c *NoopClient) CreateExport(context.Context, CreateExportRequest) (Export, error) {
+	return Export{}, ErrNotImplemented
+}
+
+func (c *NoopClient) GetExport(context.Context, string) (Export, error) {
 	return Export{}, ErrNotImplemented
 }
 
