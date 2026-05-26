@@ -476,6 +476,64 @@ message DeleteCSIAttachmentResponse {
     CSIMetadataErrorCode errorcode = 1;
 }
 
+message CSIVolumeLease {
+    string volume_id = 1;
+    string node_id = 2;
+    string host_nqn = 3;
+    int64 lease_id = 4;
+    int64 ttl_seconds = 5;
+}
+
+enum CSILeaseErrorCode {
+    csiLeaseOk = 0;
+    csiLeaseNotFound = 1;
+    csiLeaseConflict = 2;
+    csiLeaseInvalidArgument = 3;
+    csiLeaseInternalError = 4;
+}
+
+message AcquireCSILeaseRequest {
+    string volume_id = 1;
+    string node_id = 2;
+    string host_nqn = 3;
+    int64 ttl_seconds = 4;
+}
+
+message AcquireCSILeaseResponse {
+    CSILeaseErrorCode errorcode = 1;
+    CSIVolumeLease lease = 2;
+}
+
+message GetCSILeaseRequest {
+    string volume_id = 1;
+}
+
+message GetCSILeaseResponse {
+    CSILeaseErrorCode errorcode = 1;
+    CSIVolumeLease lease = 2;
+}
+
+message RenewCSILeaseRequest {
+    string volume_id = 1;
+    string node_id = 2;
+    string host_nqn = 3;
+}
+
+message RenewCSILeaseResponse {
+    CSILeaseErrorCode errorcode = 1;
+    CSIVolumeLease lease = 2;
+}
+
+message ReleaseCSILeaseRequest {
+    string volume_id = 1;
+    string node_id = 2;
+    string host_nqn = 3;
+}
+
+message ReleaseCSILeaseResponse {
+    CSILeaseErrorCode errorcode = 1;
+}
+
 message Request {
     oneof union {
         BootRequest boot_request = 1;
@@ -508,6 +566,10 @@ message Request {
         PutCSIAttachmentRequest put_csi_attachment_request = 28;
         GetCSIAttachmentRequest get_csi_attachment_request = 29;
         DeleteCSIAttachmentRequest delete_csi_attachment_request = 30;
+        AcquireCSILeaseRequest acquire_csi_lease_request = 31;
+        GetCSILeaseRequest get_csi_lease_request = 32;
+        RenewCSILeaseRequest renew_csi_lease_request = 33;
+        ReleaseCSILeaseRequest release_csi_lease_request = 34;
     }
 }
 
@@ -543,5 +605,9 @@ message Response {
         PutCSIAttachmentResponse put_csi_attachment_response = 28;
         GetCSIAttachmentResponse get_csi_attachment_response = 29;
         DeleteCSIAttachmentResponse delete_csi_attachment_response = 30;
+        AcquireCSILeaseResponse acquire_csi_lease_response = 31;
+        GetCSILeaseResponse get_csi_lease_response = 32;
+        RenewCSILeaseResponse renew_csi_lease_response = 33;
+        ReleaseCSILeaseResponse release_csi_lease_response = 34;
     }
 }

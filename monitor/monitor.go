@@ -608,6 +608,76 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			return err
 		}
 
+	case *msg.Request_AcquireCsiLeaseRequest:
+		log.Info(ctx, "Received AcquireCSILeaseRequest")
+
+		errCode, lease := csimeta.AcquireLease(ctx, client, payload.AcquireCsiLeaseRequest)
+		response := &msg.Response{
+			Union: &msg.Response_AcquireCsiLeaseResponse{
+				AcquireCsiLeaseResponse: &msg.AcquireCSILeaseResponse{
+					Errorcode: errCode,
+					Lease:     lease,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_GetCsiLeaseRequest:
+		log.Info(ctx, "Received GetCSILeaseRequest")
+
+		errCode, lease := csimeta.GetLease(ctx, client, payload.GetCsiLeaseRequest.GetVolumeId())
+		response := &msg.Response{
+			Union: &msg.Response_GetCsiLeaseResponse{
+				GetCsiLeaseResponse: &msg.GetCSILeaseResponse{
+					Errorcode: errCode,
+					Lease:     lease,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_RenewCsiLeaseRequest:
+		log.Info(ctx, "Received RenewCSILeaseRequest")
+
+		errCode, lease := csimeta.RenewLease(ctx, client, payload.RenewCsiLeaseRequest)
+		response := &msg.Response{
+			Union: &msg.Response_RenewCsiLeaseResponse{
+				RenewCsiLeaseResponse: &msg.RenewCSILeaseResponse{
+					Errorcode: errCode,
+					Lease:     lease,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_ReleaseCsiLeaseRequest:
+		log.Info(ctx, "Received ReleaseCSILeaseRequest")
+
+		response := &msg.Response{
+			Union: &msg.Response_ReleaseCsiLeaseResponse{
+				ReleaseCsiLeaseResponse: &msg.ReleaseCSILeaseResponse{
+					Errorcode: csimeta.ReleaseLease(ctx, client, payload.ReleaseCsiLeaseRequest),
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
 	case *msg.Request_OsdOutRequest:
 		log.Info(ctx, "Received OsdOutRequest")
 		osdid := payload.OsdOutRequest.GetOsdid()
