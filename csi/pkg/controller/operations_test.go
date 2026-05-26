@@ -57,7 +57,11 @@ type stubExporterClient struct {
 
 func (c *stubExporterClient) CreateExport(_ context.Context, req exporterclient.CreateExportRequest) (exporterclient.Export, error) {
 	c.createReq = req
-	return exporterclient.Export{ID: "exp-1", NQN: "nqn.1", NSID: 1, Traddr: "10.0.0.1", Trsvcid: "4420"}, nil
+	exportID, err := exporterclient.ExportIDForVolume(req.VolumeID)
+	if err != nil {
+		return exporterclient.Export{}, err
+	}
+	return exporterclient.Export{ID: exportID, NQN: "nqn.1", NSID: 1, Traddr: "10.0.0.1", Trsvcid: "4420"}, nil
 }
 
 func (c *stubExporterClient) GetExport(_ context.Context, exportID string) (exporterclient.Export, error) {
@@ -85,6 +89,7 @@ func TestCreateVolumeAndPublish(t *testing.T) {
 	monitor := &stubMonitorClient{}
 	exporter := &stubExporterClient{}
 	svc := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+	expectedExportID := mustExportIDForVolume(t, "fbvolname:fb:img-a")
 
 	volume, err := svc.CreateVolume(context.Background(), CreateVolumeRequest{
 		Name:          "img-a",
@@ -109,10 +114,10 @@ func TestCreateVolumeAndPublish(t *testing.T) {
 	if monitor.createReq.Name != "img-a" {
 		t.Fatalf("unexpected create req: %+v", monitor.createReq)
 	}
-	if exporter.createReq.ImageName != "img-a" || exporter.allowID != "exp-1" {
+	if exporter.createReq.ImageName != "img-a" || exporter.allowID != expectedExportID {
 		t.Fatalf("unexpected exporter state: %+v", exporter)
 	}
-	if result.Export.ID != "exp-1" || result.PublishContext["nqn"] == "" {
+	if result.Export.ID != expectedExportID || result.PublishContext["nqn"] == "" {
 		t.Fatalf("unexpected publish result: %+v", result)
 	}
 }
@@ -262,4 +267,13 @@ func TestControllerPublishUsesDefaultHostNQN(t *testing.T) {
 	if exporter.denyNQN != "nqn.default" {
 		t.Fatalf("expected default hostNQN on unpublish, got %q", exporter.denyNQN)
 	}
+}
+
+func mustExportIDForVolume(t *testing.T, volumeID string) string {
+	t.Helper()
+	exportID, err := exporterclient.ExportIDForVolume(volumeID)
+	if err != nil {
+		t.Fatalf("derive export id failed: %v", err)
+	}
+	return exportID
 }

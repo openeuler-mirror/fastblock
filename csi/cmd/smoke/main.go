@@ -123,7 +123,6 @@ func main() {
 		log.Fatalf("ControllerPublishVolume failed: %v", err)
 	}
 	cleanupState.controllerPublished = true
-	cleanupState.publishContext = publishResp.GetPublishContext()
 	cleanupState.hostNQN = hostNQN
 	if cleanupState.hostNQN == "" {
 		cleanupState.hostNQN = nodeID
@@ -165,7 +164,6 @@ type smokeState struct {
 	stagePath           string
 	targetPath          string
 	hostNQN             string
-	publishContext      map[string]string
 	controllerPublished bool
 	nodeStaged          bool
 	nodePublished       bool
@@ -197,7 +195,7 @@ func (s *smokeState) cleanup(ctx context.Context) {
 	if s.controllerPublished {
 		if err := runCleanupStep(ctx, 60*time.Second, func(stepCtx context.Context) error {
 			req := &csi.ControllerUnpublishVolumeRequest{
-				VolumeId: s.publishContext[driver.PublishContextExportID],
+				VolumeId: s.volumeID,
 				NodeId:   s.nodeID,
 			}
 			if s.hostNQN != "" {
