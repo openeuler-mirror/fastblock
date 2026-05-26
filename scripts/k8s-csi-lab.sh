@@ -484,10 +484,24 @@ wait_for_pod_ready() {
     die "test pod did not become ready"
 }
 
+restart_controller_and_recreate_pod() {
+    log "restarting CSI controller deployment"
+    kubectl rollout restart deployment/fastblock-csi-controller -n "$NAMESPACE"
+    wait_for_workload
+
+    log "recreating test pod after controller restart"
+    kubectl delete pod fastblock-block-pod -n "$TEST_NAMESPACE" --ignore-not-found=true --wait=true
+    apply_test_workload
+    wait_for_pod_ready
+}
+
 run_test() {
     apply_test_workload
     wait_for_pvc_bound
     wait_for_pod_ready
+    kubectl get pvc,pv,pod -n "$TEST_NAMESPACE" -o wide
+    kubectl logs fastblock-block-pod -n "$TEST_NAMESPACE" --tail=20 || true
+    restart_controller_and_recreate_pod
     kubectl get pvc,pv,pod -n "$TEST_NAMESPACE" -o wide
     kubectl logs fastblock-block-pod -n "$TEST_NAMESPACE" --tail=20 || true
 }
