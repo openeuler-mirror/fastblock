@@ -16,6 +16,7 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
+	"monitor/csimeta"
 	"monitor/config"
 	"monitor/election"
 	"monitor/etcdapi"
@@ -498,6 +499,106 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 				GetImageInfoResponse: &msg.GetImageInfoResponse{
 					Errorcode: errCode,
 					ImageInfo: imageInfo,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_PutCsiVolumeMetadataRequest:
+		log.Info(ctx, "Received PutCSIVolumeMetadataRequest")
+
+		response := &msg.Response{
+			Union: &msg.Response_PutCsiVolumeMetadataResponse{
+				PutCsiVolumeMetadataResponse: &msg.PutCSIVolumeMetadataResponse{
+					Errorcode: csimeta.PutVolume(ctx, client, payload.PutCsiVolumeMetadataRequest.GetMetadata()),
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_GetCsiVolumeMetadataRequest:
+		log.Info(ctx, "Received GetCSIVolumeMetadataRequest")
+
+		errCode, metadata := csimeta.GetVolume(ctx, client, payload.GetCsiVolumeMetadataRequest.GetVolumeId())
+		response := &msg.Response{
+			Union: &msg.Response_GetCsiVolumeMetadataResponse{
+				GetCsiVolumeMetadataResponse: &msg.GetCSIVolumeMetadataResponse{
+					Errorcode: errCode,
+					Metadata:  metadata,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_DeleteCsiVolumeMetadataRequest:
+		log.Info(ctx, "Received DeleteCSIVolumeMetadataRequest")
+
+		response := &msg.Response{
+			Union: &msg.Response_DeleteCsiVolumeMetadataResponse{
+				DeleteCsiVolumeMetadataResponse: &msg.DeleteCSIVolumeMetadataResponse{
+					Errorcode: csimeta.DeleteVolume(ctx, client, payload.DeleteCsiVolumeMetadataRequest.GetVolumeId()),
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_PutCsiAttachmentRequest:
+		log.Info(ctx, "Received PutCSIAttachmentRequest")
+
+		response := &msg.Response{
+			Union: &msg.Response_PutCsiAttachmentResponse{
+				PutCsiAttachmentResponse: &msg.PutCSIAttachmentResponse{
+					Errorcode: csimeta.PutAttachment(ctx, client, payload.PutCsiAttachmentRequest.GetAttachment()),
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_GetCsiAttachmentRequest:
+		log.Info(ctx, "Received GetCSIAttachmentRequest")
+
+		errCode, attachment := csimeta.GetAttachment(ctx, client, payload.GetCsiAttachmentRequest.GetVolumeId())
+		response := &msg.Response{
+			Union: &msg.Response_GetCsiAttachmentResponse{
+				GetCsiAttachmentResponse: &msg.GetCSIAttachmentResponse{
+					Errorcode:  errCode,
+					Attachment: attachment,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_DeleteCsiAttachmentRequest:
+		log.Info(ctx, "Received DeleteCSIAttachmentRequest")
+
+		response := &msg.Response{
+			Union: &msg.Response_DeleteCsiAttachmentResponse{
+				DeleteCsiAttachmentResponse: &msg.DeleteCSIAttachmentResponse{
+					Errorcode: csimeta.DeleteAttachment(ctx, client, payload.DeleteCsiAttachmentRequest.GetVolumeId()),
 				},
 			},
 		}

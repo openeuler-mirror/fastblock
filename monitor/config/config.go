@@ -38,8 +38,10 @@ const (
 // TODO: where should we keep all these keys?
 const (
 	// Input
-	ConfigPoolsKeyPrefix    = "/config/pools/"
-	ConfigImagesKeyPrefix   = "/config/images/"
+	ConfigPoolsKeyPrefix        = "/config/pools/"
+	ConfigImagesKeyPrefix       = "/config/images/"
+	ConfigCSIVolumesKeyPrefix   = "/csi/volumes/"
+	ConfigCSIAttachmentsKeyPrefix = "/csi/attachments/"
 	ConfigClusterStatesKeySuffix = "/cluster/states/"
 	ConfigOSDMapKey         = "/osd/osdmap"
 	ConfigTopologyKeyPrefix = "/config/topology/"
