@@ -292,19 +292,9 @@ spec:
           EOS
           chmod +x /host-tools/nvme
           export PATH=/host-tools:/usr/sbin:/usr/bin:/sbin:/bin
-          CSI_NODE_ID="$(tr -d '\n' </etc/nvme/hostnqn 2>/dev/null || true)"
-          if [ -z "$CSI_NODE_ID" ]; then
-            CSI_NODE_ID="${KUBE_NODE_NAME}"
-          fi
           exec /opt/fastblock/bin/fastblock-csi-node \
             -endpoint=unix://${KUBELET_DIR}/plugins/${DRIVER_NAME}/csi.sock \
-            -driver-name=${DRIVER_NAME} \
-            -node-id="${CSI_NODE_ID}"
-        env:
-        - name: KUBE_NODE_NAME
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
+            -driver-name=${DRIVER_NAME}
         securityContext:
           privileged: true
         volumeMounts:
