@@ -269,6 +269,39 @@ func TestVolumeMetadataCRUD(t *testing.T) {
 	}
 }
 
+func TestListVolumeMetadata(t *testing.T) {
+	address := startMockMonitor(t, func(req *msg.Request) *msg.Response {
+		if _, ok := req.Union.(*msg.Request_ListCsiVolumeMetadataRequest); !ok {
+			t.Fatalf("unexpected request type %T", req.Union)
+		}
+		return &msg.Response{
+			Union: &msg.Response_ListCsiVolumeMetadataResponse{
+				ListCsiVolumeMetadataResponse: &msg.ListCSIVolumeMetadataResponse{
+					Errorcode: msg.CSIMetadataErrorCode_csiMetadataOk,
+					Metadata: []*msg.CSIVolumeMetadata{{
+						VolumeId:      "vol-1",
+						PoolName:      "fb",
+						ImageName:     "img-a",
+						CapacityBytes: 1 << 20,
+						ObjectSize:    4 << 20,
+						BlockSize:     4096,
+						Transport:     "rdma",
+					}},
+				},
+			},
+		}
+	})
+
+	client := NewTCP(address)
+	items, err := client.ListVolumeMetadata(context.Background())
+	if err != nil {
+		t.Fatalf("list volume metadata failed: %v", err)
+	}
+	if len(items) != 1 || items[0].Volume.ID != "vol-1" {
+		t.Fatalf("unexpected metadata list: %+v", items)
+	}
+}
+
 func TestAttachmentCRUD(t *testing.T) {
 	address := startMockMonitorSequence(t, func(call int, req *msg.Request) *msg.Response {
 		switch call {
@@ -336,6 +369,36 @@ func TestAttachmentCRUD(t *testing.T) {
 	}
 	if err := client.DeleteAttachment(context.Background(), "vol-1"); err != nil {
 		t.Fatalf("delete attachment failed: %v", err)
+	}
+}
+
+func TestListAttachments(t *testing.T) {
+	address := startMockMonitor(t, func(req *msg.Request) *msg.Response {
+		if _, ok := req.Union.(*msg.Request_ListCsiAttachmentRequest); !ok {
+			t.Fatalf("unexpected request type %T", req.Union)
+		}
+		return &msg.Response{
+			Union: &msg.Response_ListCsiAttachmentResponse{
+				ListCsiAttachmentResponse: &msg.ListCSIAttachmentResponse{
+					Errorcode: msg.CSIMetadataErrorCode_csiMetadataOk,
+					Attachments: []*msg.CSIAttachment{{
+						VolumeId: "vol-1",
+						NodeId:   "node-a",
+						HostNqn:  "nqn.host.1",
+						ExportId: "exp-1",
+					}},
+				},
+			},
+		}
+	})
+
+	client := NewTCP(address)
+	items, err := client.ListAttachments(context.Background())
+	if err != nil {
+		t.Fatalf("list attachments failed: %v", err)
+	}
+	if len(items) != 1 || items[0].VolumeID != "vol-1" {
+		t.Fatalf("unexpected attachments list: %+v", items)
 	}
 }
 
@@ -458,6 +521,37 @@ func TestLeaseCRUD(t *testing.T) {
 	}
 	if err := client.ReleaseLease(context.Background(), lease); err != nil {
 		t.Fatalf("release lease failed: %v", err)
+	}
+}
+
+func TestListLeases(t *testing.T) {
+	address := startMockMonitor(t, func(req *msg.Request) *msg.Response {
+		if _, ok := req.Union.(*msg.Request_ListCsiLeaseRequest); !ok {
+			t.Fatalf("unexpected request type %T", req.Union)
+		}
+		return &msg.Response{
+			Union: &msg.Response_ListCsiLeaseResponse{
+				ListCsiLeaseResponse: &msg.ListCSILeaseResponse{
+					Errorcode: msg.CSILeaseErrorCode_csiLeaseOk,
+					Leases: []*msg.CSIVolumeLease{{
+						VolumeId:   "vol-1",
+						NodeId:     "node-a",
+						HostNqn:    "nqn.host.1",
+						LeaseId:    7,
+						TtlSeconds: 30,
+					}},
+				},
+			},
+		}
+	})
+
+	client := NewTCP(address)
+	items, err := client.ListLeases(context.Background())
+	if err != nil {
+		t.Fatalf("list leases failed: %v", err)
+	}
+	if len(items) != 1 || items[0].LeaseID != 7 {
+		t.Fatalf("unexpected lease list: %+v", items)
 	}
 }
 
