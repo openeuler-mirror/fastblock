@@ -10,14 +10,16 @@ type Service struct {
 	opts           driver.Options
 	monitor        monitorclient.Client
 	exporter       exporterclient.Client
+	attachments    attachmentStore
 	defaultHostNQN string
 }
 
 func New(opts driver.Options, monitor monitorclient.Client, exporter exporterclient.Client) *Service {
 	return &Service{
-		opts:     opts,
-		monitor:  monitor,
-		exporter: exporter,
+		opts:        opts,
+		monitor:     monitor,
+		exporter:    exporter,
+		attachments: newMemoryAttachmentStore(),
 	}
 }
 
