@@ -16,8 +16,8 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
-	"monitor/csimeta"
 	"monitor/config"
+	"monitor/csimeta"
 	"monitor/election"
 	"monitor/etcdapi"
 	"monitor/leader"
@@ -669,6 +669,60 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			Union: &msg.Response_ReleaseCsiLeaseResponse{
 				ReleaseCsiLeaseResponse: &msg.ReleaseCSILeaseResponse{
 					Errorcode: csimeta.ReleaseLease(ctx, client, payload.ReleaseCsiLeaseRequest),
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_ListCsiVolumeMetadataRequest:
+		log.Info(ctx, "Received ListCSIVolumeMetadataRequest")
+
+		errCode, metadata := csimeta.ListVolumes(ctx, client)
+		response := &msg.Response{
+			Union: &msg.Response_ListCsiVolumeMetadataResponse{
+				ListCsiVolumeMetadataResponse: &msg.ListCSIVolumeMetadataResponse{
+					Errorcode: errCode,
+					Metadata:  metadata,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_ListCsiAttachmentRequest:
+		log.Info(ctx, "Received ListCSIAttachmentRequest")
+
+		errCode, attachments := csimeta.ListAttachments(ctx, client)
+		response := &msg.Response{
+			Union: &msg.Response_ListCsiAttachmentResponse{
+				ListCsiAttachmentResponse: &msg.ListCSIAttachmentResponse{
+					Errorcode:   errCode,
+					Attachments: attachments,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_ListCsiLeaseRequest:
+		log.Info(ctx, "Received ListCSILeaseRequest")
+
+		errCode, leases := csimeta.ListLeases(ctx, client)
+		response := &msg.Response{
+			Union: &msg.Response_ListCsiLeaseResponse{
+				ListCsiLeaseResponse: &msg.ListCSILeaseResponse{
+					Errorcode: errCode,
+					Leases:    leases,
 				},
 			},
 		}

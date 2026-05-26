@@ -56,6 +56,25 @@ func DeleteVolume(ctx context.Context, client *etcdapi.EtcdClient, volumeID stri
 	return msg.CSIMetadataErrorCode_csiMetadataOk
 }
 
+func ListVolumes(ctx context.Context, client *etcdapi.EtcdClient) (msg.CSIMetadataErrorCode, []*msg.CSIVolumeMetadata) {
+	if client == nil {
+		return msg.CSIMetadataErrorCode_csiMetadataInvalidArgument, nil
+	}
+	kvs, err := client.GetWithPrefix(ctx, config.ConfigCSIVolumesKeyPrefix)
+	if err != nil {
+		return msg.CSIMetadataErrorCode_csiMetadataInternalError, nil
+	}
+	volumes := make([]*msg.CSIVolumeMetadata, 0, len(kvs))
+	for _, kv := range kvs {
+		metadata := &msg.CSIVolumeMetadata{}
+		if err := json.Unmarshal([]byte(kv.Value), metadata); err != nil {
+			return msg.CSIMetadataErrorCode_csiMetadataInternalError, nil
+		}
+		volumes = append(volumes, metadata)
+	}
+	return msg.CSIMetadataErrorCode_csiMetadataOk, volumes
+}
+
 func PutAttachment(ctx context.Context, client *etcdapi.EtcdClient, attachment *msg.CSIAttachment) msg.CSIMetadataErrorCode {
 	if client == nil || attachment == nil {
 		return msg.CSIMetadataErrorCode_csiMetadataInvalidArgument
@@ -99,6 +118,25 @@ func DeleteAttachment(ctx context.Context, client *etcdapi.EtcdClient, volumeID 
 		return msg.CSIMetadataErrorCode_csiMetadataInternalError
 	}
 	return msg.CSIMetadataErrorCode_csiMetadataOk
+}
+
+func ListAttachments(ctx context.Context, client *etcdapi.EtcdClient) (msg.CSIMetadataErrorCode, []*msg.CSIAttachment) {
+	if client == nil {
+		return msg.CSIMetadataErrorCode_csiMetadataInvalidArgument, nil
+	}
+	kvs, err := client.GetWithPrefix(ctx, config.ConfigCSIAttachmentsKeyPrefix)
+	if err != nil {
+		return msg.CSIMetadataErrorCode_csiMetadataInternalError, nil
+	}
+	attachments := make([]*msg.CSIAttachment, 0, len(kvs))
+	for _, kv := range kvs {
+		attachment := &msg.CSIAttachment{}
+		if err := json.Unmarshal([]byte(kv.Value), attachment); err != nil {
+			return msg.CSIMetadataErrorCode_csiMetadataInternalError, nil
+		}
+		attachments = append(attachments, attachment)
+	}
+	return msg.CSIMetadataErrorCode_csiMetadataOk, attachments
 }
 
 func AcquireLease(ctx context.Context, client *etcdapi.EtcdClient, request *msg.AcquireCSILeaseRequest) (msg.CSILeaseErrorCode, *msg.CSIVolumeLease) {
@@ -243,6 +281,25 @@ func ReleaseLease(ctx context.Context, client *etcdapi.EtcdClient, request *msg.
 		return msg.CSILeaseErrorCode_csiLeaseInternalError
 	}
 	return msg.CSILeaseErrorCode_csiLeaseOk
+}
+
+func ListLeases(ctx context.Context, client *etcdapi.EtcdClient) (msg.CSILeaseErrorCode, []*msg.CSIVolumeLease) {
+	if client == nil {
+		return msg.CSILeaseErrorCode_csiLeaseInvalidArgument, nil
+	}
+	kvs, err := client.GetWithPrefix(ctx, config.ConfigCSILeasesKeyPrefix)
+	if err != nil {
+		return msg.CSILeaseErrorCode_csiLeaseInternalError, nil
+	}
+	leases := make([]*msg.CSIVolumeLease, 0, len(kvs))
+	for _, kv := range kvs {
+		lease := &msg.CSIVolumeLease{}
+		if err := json.Unmarshal([]byte(kv.Value), lease); err != nil {
+			return msg.CSILeaseErrorCode_csiLeaseInternalError, nil
+		}
+		leases = append(leases, lease)
+	}
+	return msg.CSILeaseErrorCode_csiLeaseOk, leases
 }
 
 func volumeKey(volumeID string) string {
