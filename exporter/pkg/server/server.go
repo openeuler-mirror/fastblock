@@ -105,6 +105,10 @@ func (s *Server) handleExportAction(w http.ResponseWriter, r *http.Request) {
 		}
 		export, err := s.manager.GetExport(r.Context(), exportID)
 		if err != nil {
+			if errors.Is(err, nvmf.ErrExportNotFound) {
+				writeError(w, http.StatusNotFound, err.Error())
+				return
+			}
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
