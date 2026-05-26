@@ -102,15 +102,11 @@ func (s *GRPCService) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeReq
 	if req.GetVolumeId() == "" {
 		return nil, fmt.Errorf("volume id is required")
 	}
-	nameRef, err := volumeid.DecodeNameRef(req.GetVolumeId())
+	ref, err := s.resolveVolumeRef(req.GetVolumeId())
 	if err != nil {
 		return nil, err
 	}
-	if err := s.service.DeleteVolume(ctx, NewDeleteVolumeRequest(monitorclient.VolumeRef{
-		ID:   req.GetVolumeId(),
-		Pool: nameRef.Pool,
-		Name: nameRef.Name,
-	})); err != nil {
+	if err := s.service.DeleteVolume(ctx, NewDeleteVolumeRequest(ref)); err != nil {
 		return nil, toGRPCError(err)
 	}
 	return &csi.DeleteVolumeResponse{}, nil
@@ -126,7 +122,7 @@ func (s *GRPCService) ControllerPublishVolume(ctx context.Context, req *csi.Cont
 	if !driver.IsSupportedVolumeCapability(req.GetVolumeCapability()) {
 		return nil, fmt.Errorf("unsupported volume capability")
 	}
-	volumeCtx, err := parsePublishVolumeContext(req.GetVolumeId(), req.GetVolumeContext())
+	volumeCtx, err := s.resolvePublishVolumeContext(req.GetVolumeId(), req.GetVolumeContext())
 	if err != nil {
 		return nil, err
 	}
@@ -175,11 +171,58 @@ func (s *GRPCService) ControllerUnpublishVolume(ctx context.Context, req *csi.Co
 	return &csi.ControllerUnpublishVolumeResponse{}, nil
 }
 
-func parsePublishVolumeContext(volumeID string, ctx map[string]string) (publishVolumeContext, error) {
+func (s *GRPCService) resolveVolumeRef(volumeID string) (monitorclient.VolumeRef, error) {
+	if metadata, ok := s.service.volumes.Get(volumeID); ok {
+		return metadata.Volume.Ref(), nil
+	}
 	nameRef, err := volumeid.DecodeNameRef(volumeID)
 	if err != nil {
-		return publishVolumeContext{}, err
+		return monitorclient.VolumeRef{}, err
 	}
+	return monitorclient.VolumeRef{
+		ID:   volumeID,
+		Pool: nameRef.Pool,
+		Name: nameRef.Name,
+	}, nil
+}
+
+func (s *GRPCService) resolvePublishVolumeContext(volumeID string, ctx map[string]string) (publishVolumeContext, error) {
+	if metadata, ok := s.service.volumes.Get(volumeID); ok {
+		if metadata.BlockSize > 0 &&
+			(metadata.Transport == "rdma" || metadata.Transport == "tcp") &&
+			metadata.Volume.ObjectSize > 0 &&
+			metadata.Volume.CapacityBytes > 0 &&
+			strings.TrimSpace(metadata.Volume.Name) != "" &&
+			strings.TrimSpace(metadata.Volume.Pool) != "" {
+			if err := validatePublishVolumeContextAgainstMetadata(metadata, ctx); err != nil {
+				return publishVolumeContext{}, err
+			}
+			return publishVolumeContext{
+				ref:           metadata.Volume.Ref(),
+				transport:     metadata.Transport,
+				blockSize:     metadata.BlockSize,
+				objectSize:    metadata.Volume.ObjectSize,
+				capacityBytes: metadata.Volume.CapacityBytes,
+			}, nil
+		}
+	}
+	return parsePublishVolumeContext(volumeID, ctx)
+}
+
+func validatePublishVolumeContextAgainstMetadata(metadata VolumeMetadata, ctx map[string]string) error {
+	if len(ctx) == 0 {
+		return nil
+	}
+	if pool := strings.TrimSpace(ctx["pool"]); pool != "" && pool != metadata.Volume.Pool {
+		return fmt.Errorf("volume_context pool mismatch with stored metadata")
+	}
+	if name := strings.TrimSpace(ctx["name"]); name != "" && name != metadata.Volume.Name {
+		return fmt.Errorf("volume_context name mismatch with stored metadata")
+	}
+	return nil
+}
+
+func parsePublishVolumeContext(volumeID string, ctx map[string]string) (publishVolumeContext, error) {
 	pool := strings.TrimSpace(ctx["pool"])
 	if pool == "" {
 		return publishVolumeContext{}, fmt.Errorf("volume_context.pool is required")
@@ -187,9 +230,6 @@ func parsePublishVolumeContext(volumeID string, ctx map[string]string) (publishV
 	name := strings.TrimSpace(ctx["name"])
 	if name == "" {
 		return publishVolumeContext{}, fmt.Errorf("volume_context.name is required")
-	}
-	if pool != nameRef.Pool || name != nameRef.Name {
-		return publishVolumeContext{}, fmt.Errorf("volume_context pool/name mismatch with volume id")
 	}
 	transport := strings.TrimSpace(ctx["transport"])
 	if transport != "rdma" && transport != "tcp" {

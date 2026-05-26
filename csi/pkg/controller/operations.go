@@ -32,6 +32,19 @@ type PublishVolumeResult struct {
 	PublishContext map[string]string
 }
 
+func normalizeVolume(volume monitorclient.Volume, ref monitorclient.VolumeRef) monitorclient.Volume {
+	if strings.TrimSpace(volume.ID) == "" {
+		volume.ID = ref.ID
+	}
+	if strings.TrimSpace(volume.Name) == "" {
+		volume.Name = ref.Name
+	}
+	if strings.TrimSpace(volume.Pool) == "" {
+		volume.Pool = ref.Pool
+	}
+	return volume
+}
+
 func attachmentConflicts(existing Attachment, nodeID, hostNQN string) bool {
 	existingNodeID := strings.TrimSpace(existing.NodeID)
 	currentNodeID := strings.TrimSpace(nodeID)
@@ -119,17 +132,33 @@ func NewUnpublishVolumeRequest(exportID, hostNQN string) UnpublishVolumeRequest 
 	}
 }
 
+func (s *Service) recordVolumeMetadata(volume monitorclient.Volume, blockSize int64, transport string) {
+	if strings.TrimSpace(volume.ID) == "" || blockSize <= 0 || (transport != "rdma" && transport != "tcp") {
+		return
+	}
+	s.volumes.Put(VolumeMetadata{
+		Volume:    volume,
+		BlockSize: blockSize,
+		Transport: transport,
+	})
+}
+
 func (s *Service) CreateVolume(ctx context.Context, req CreateVolumeRequest) (monitorclient.Volume, error) {
 	if err := req.Validate(); err != nil {
 		return monitorclient.Volume{}, err
 	}
-	return s.monitor.CreateVolume(ctx, monitorclient.CreateVolumeRequest{
+	volume, err := s.monitor.CreateVolume(ctx, monitorclient.CreateVolumeRequest{
 		Name:          req.Name,
 		Pool:          req.Pool,
 		CapacityBytes: req.CapacityBytes,
 		ObjectSize:    req.ObjectSize,
 		BlockSize:     req.BlockSize,
 	})
+	if err != nil {
+		return monitorclient.Volume{}, err
+	}
+	s.recordVolumeMetadata(volume, req.BlockSize, req.Transport)
+	return volume, nil
 }
 
 func (s *Service) DeleteVolume(ctx context.Context, req DeleteVolumeRequest) error {
@@ -148,21 +177,41 @@ func (s *Service) DeleteVolume(ctx context.Context, req DeleteVolumeRequest) err
 			return err
 		}
 	}
-	return s.monitor.DeleteVolume(ctx, req.Volume)
+	if err := s.monitor.DeleteVolume(ctx, req.Volume); err != nil {
+		return err
+	}
+	s.volumes.Delete(req.Volume.ID)
+	return nil
 }
 
 func (s *Service) GetVolume(ctx context.Context, req GetVolumeRequest) (monitorclient.Volume, error) {
 	if err := req.Validate(); err != nil {
 		return monitorclient.Volume{}, err
 	}
-	return s.monitor.GetVolume(ctx, req.Volume)
+	volume, err := s.monitor.GetVolume(ctx, req.Volume)
+	if err != nil {
+		return monitorclient.Volume{}, err
+	}
+	volume = normalizeVolume(volume, req.Volume)
+	if existing, ok := s.volumes.Get(req.Volume.ID); ok {
+		s.recordVolumeMetadata(volume, existing.BlockSize, existing.Transport)
+	}
+	return volume, nil
 }
 
 func (s *Service) ExpandVolume(ctx context.Context, req ExpandVolumeRequest) (monitorclient.Volume, error) {
 	if err := req.Validate(); err != nil {
 		return monitorclient.Volume{}, err
 	}
-	return s.monitor.ExpandVolume(ctx, req.Volume, req.CapacityBytes)
+	volume, err := s.monitor.ExpandVolume(ctx, req.Volume, req.CapacityBytes)
+	if err != nil {
+		return monitorclient.Volume{}, err
+	}
+	volume = normalizeVolume(volume, req.Volume)
+	if existing, ok := s.volumes.Get(req.Volume.ID); ok {
+		s.recordVolumeMetadata(volume, existing.BlockSize, existing.Transport)
+	}
+	return volume, nil
 }
 
 func (s *Service) PublishVolume(ctx context.Context, req PublishVolumeRequest) (PublishVolumeResult, error) {
@@ -200,6 +249,7 @@ func (s *Service) ControllerPublishVolume(ctx context.Context, req ControllerPub
 	if err := req.Validate(); err != nil {
 		return PublishVolumeResult{}, err
 	}
+	s.recordVolumeMetadata(req.Volume, req.BlockSize, req.Transport)
 	hostNQN := ResolveHostNQN(req.NodeID, s.defaultHostNQN, req.Secrets)
 	if existing, ok := s.attachments.Get(req.Volume.ID); ok {
 		if attachmentConflicts(existing, req.NodeID, hostNQN) {

@@ -10,6 +10,7 @@ type Service struct {
 	opts           driver.Options
 	monitor        monitorclient.Client
 	exporter       exporterclient.Client
+	volumes        volumeStore
 	attachments    attachmentStore
 	defaultHostNQN string
 }
@@ -19,6 +20,7 @@ func New(opts driver.Options, monitor monitorclient.Client, exporter exportercli
 		opts:        opts,
 		monitor:     monitor,
 		exporter:    exporter,
+		volumes:     newMemoryVolumeStore(),
 		attachments: newMemoryAttachmentStore(),
 	}
 }

@@ -13,14 +13,27 @@ import (
 
 type stubMonitorClient struct {
 	createReq monitorclient.CreateVolumeRequest
+	createVol monitorclient.Volume
 	deleteRef monitorclient.VolumeRef
 	getRef    monitorclient.VolumeRef
+	getVol    monitorclient.Volume
 	expandRef monitorclient.VolumeRef
 	expandCap int64
 }
 
 func (c *stubMonitorClient) CreateVolume(_ context.Context, req monitorclient.CreateVolumeRequest) (monitorclient.Volume, error) {
 	c.createReq = req
+	if c.createVol.ID != "" {
+		volume := c.createVol
+		volume = normalizeVolume(volume, monitorclient.VolumeRef{Name: req.Name, Pool: req.Pool})
+		if volume.CapacityBytes == 0 {
+			volume.CapacityBytes = req.CapacityBytes
+		}
+		if volume.ObjectSize == 0 {
+			volume.ObjectSize = req.ObjectSize
+		}
+		return volume, nil
+	}
 	id, _ := volumeid.EncodeNameRef(volumeid.NameRef{Pool: req.Pool, Name: req.Name})
 	return monitorclient.Volume{
 		ID:            id,
@@ -38,6 +51,9 @@ func (c *stubMonitorClient) DeleteVolume(_ context.Context, ref monitorclient.Vo
 
 func (c *stubMonitorClient) GetVolume(_ context.Context, ref monitorclient.VolumeRef) (monitorclient.Volume, error) {
 	c.getRef = ref
+	if c.getVol.ID != "" {
+		return normalizeVolume(c.getVol, ref), nil
+	}
 	return monitorclient.Volume{Name: ref.Name, Pool: ref.Pool}, nil
 }
 
