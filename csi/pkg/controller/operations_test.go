@@ -96,6 +96,14 @@ func (c *stubMetadataMonitorClient) DeleteVolumeMetadata(_ context.Context, volu
 	return nil
 }
 
+func (c *stubMetadataMonitorClient) ListVolumeMetadata(_ context.Context) ([]monitorclient.VolumeMetadata, error) {
+	items := make([]monitorclient.VolumeMetadata, 0, len(c.volumeMetadata))
+	for _, item := range c.volumeMetadata {
+		items = append(items, item)
+	}
+	return items, nil
+}
+
 func (c *stubMetadataMonitorClient) PutAttachment(_ context.Context, attachment monitorclient.Attachment) error {
 	if c.attachments == nil {
 		c.attachments = map[string]monitorclient.Attachment{}
@@ -116,6 +124,14 @@ func (c *stubMetadataMonitorClient) GetAttachment(_ context.Context, volumeID st
 func (c *stubMetadataMonitorClient) DeleteAttachment(_ context.Context, volumeID string) error {
 	delete(c.attachments, volumeID)
 	return nil
+}
+
+func (c *stubMetadataMonitorClient) ListAttachments(_ context.Context) ([]monitorclient.Attachment, error) {
+	items := make([]monitorclient.Attachment, 0, len(c.attachments))
+	for _, item := range c.attachments {
+		items = append(items, item)
+	}
+	return items, nil
 }
 
 func (c *stubMetadataMonitorClient) AcquireLease(_ context.Context, lease monitorclient.Lease) (monitorclient.Lease, error) {
@@ -165,6 +181,14 @@ func (c *stubMetadataMonitorClient) ReleaseLease(_ context.Context, lease monito
 	delete(c.leases, lease.VolumeID)
 	c.releaseLeaseCalls++
 	return nil
+}
+
+func (c *stubMetadataMonitorClient) ListLeases(_ context.Context) ([]monitorclient.Lease, error) {
+	items := make([]monitorclient.Lease, 0, len(c.leases))
+	for _, item := range c.leases {
+		items = append(items, item)
+	}
+	return items, nil
 }
 
 type stubExporterClient struct {
@@ -678,6 +702,101 @@ func TestDeleteVolumeRejectsActiveLease(t *testing.T) {
 	})
 	if !errors.Is(err, ErrVolumeStillPublished) {
 		t.Fatalf("expected active lease to block delete, got %v", err)
+	}
+}
+
+func TestReconcileReacquiresMissingLeaseForActiveAttachment(t *testing.T) {
+	monitor := &stubMetadataMonitorClient{
+		volumeMetadata: map[string]monitorclient.VolumeMetadata{
+			"vol-1": {
+				Volume: monitorclient.Volume{
+					ID:            "vol-1",
+					Name:          "img-a",
+					Pool:          "fb",
+					CapacityBytes: 1 << 20,
+					ObjectSize:    4 << 20,
+				},
+				BlockSize: 4096,
+				Transport: "rdma",
+				ExportID:  "exp-1",
+			},
+		},
+		attachments: map[string]monitorclient.Attachment{
+			"vol-1": {
+				VolumeID: "vol-1",
+				NodeID:   "node-a",
+				HostNQN:  "nqn.host.1",
+				ExportID: "exp-1",
+			},
+		},
+	}
+	exporter := &stubExporterClient{
+		getExport: exporterclient.Export{ID: "exp-1", NQN: "nqn.1", NSID: 1, Traddr: "10.0.0.1", Trsvcid: "4420"},
+	}
+	svc := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+
+	if err := svc.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile failed: %v", err)
+	}
+	if monitor.acquireLeaseCalls == 0 {
+		t.Fatal("expected reconcile to reacquire missing lease")
+	}
+	lease, err := monitor.GetLease(context.Background(), "vol-1")
+	if err != nil {
+		t.Fatalf("get lease failed: %v", err)
+	}
+	if lease.NodeID != "node-a" || lease.HostNQN != "nqn.host.1" {
+		t.Fatalf("unexpected lease after reconcile: %+v", lease)
+	}
+	svc.leaseRenewer.Stop("vol-1")
+}
+
+func TestReconcileDeletesOrphanExportAndLease(t *testing.T) {
+	monitor := &stubMetadataMonitorClient{
+		volumeMetadata: map[string]monitorclient.VolumeMetadata{
+			"vol-1": {
+				Volume: monitorclient.Volume{
+					ID:            "vol-1",
+					Name:          "img-a",
+					Pool:          "fb",
+					CapacityBytes: 1 << 20,
+					ObjectSize:    4 << 20,
+				},
+				BlockSize: 4096,
+				Transport: "rdma",
+				ExportID:  "exp-1",
+			},
+		},
+		leases: map[string]monitorclient.Lease{
+			"vol-1": {
+				VolumeID:   "vol-1",
+				NodeID:     "node-a",
+				HostNQN:    "nqn.host.1",
+				LeaseID:    1,
+				TTLSeconds: defaultLeaseTTLSeconds,
+			},
+		},
+	}
+	exporter := &stubExporterClient{
+		getExport: exporterclient.Export{ID: "exp-1", NQN: "nqn.1", NSID: 1, Traddr: "10.0.0.1", Trsvcid: "4420"},
+	}
+	svc := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+
+	if err := svc.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile failed: %v", err)
+	}
+	if exporter.deleteID != "exp-1" {
+		t.Fatalf("expected orphan export to be deleted, got %q", exporter.deleteID)
+	}
+	if monitor.releaseLeaseCalls == 0 {
+		t.Fatal("expected orphan lease to be released")
+	}
+	metadata, err := monitor.GetVolumeMetadata(context.Background(), "vol-1")
+	if err != nil {
+		t.Fatalf("get volume metadata failed: %v", err)
+	}
+	if metadata.ExportID != "" {
+		t.Fatalf("expected export id to be cleared, got %+v", metadata)
 	}
 }
 
