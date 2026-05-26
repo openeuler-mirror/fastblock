@@ -13,6 +13,8 @@ import (
 	"fastblock-exporter/pkg/spdkrpc"
 )
 
+var errExportNotFound = errors.New("export not found")
+
 type Manager interface {
 	CreateExport(ctx context.Context, req api.CreateExportRequest) (api.Export, error)
 	GetExport(ctx context.Context, exportID string) (api.Export, error)
@@ -79,15 +81,26 @@ func (m *LocalManager) CreateExport(ctx context.Context, req api.CreateExportReq
 	}
 
 	id := exportID(req.VolumeID)
+	if export, err := m.GetExport(ctx, id); err == nil {
+		return export, nil
+	} else if !errors.Is(err, errExportNotFound) {
+		return api.Export{}, err
+	}
 	bdev := bdevName(id)
 	nqn := subsystemNQN(m.nqnPrefix, id)
 
 	var createdBdev string
 	if err := m.rpc.Call(ctx, "bdev_fastblock_create", m.buildCreateBdevParams(req, bdev), &createdBdev); err != nil {
+		if export, reused := m.reuseExistingExport(ctx, id, err); reused {
+			return export, nil
+		}
 		return api.Export{}, err
 	}
 
 	if err := m.rpc.Call(ctx, "nvmf_create_subsystem", buildCreateSubsystemParams(nqn, subsystemSerial(id)), nil); err != nil {
+		if export, reused := m.reuseExistingExport(ctx, id, err); reused {
+			return export, nil
+		}
 		return api.Export{}, m.cleanupCreateFailure(ctx, "", createdBdev, err)
 	}
 
@@ -98,10 +111,16 @@ func (m *LocalManager) CreateExport(ctx context.Context, req api.CreateExportReq
 			"bdev_name": createdBdev,
 		},
 	}, &nsid); err != nil {
+		if export, reused := m.reuseExistingExport(ctx, id, err); reused {
+			return export, nil
+		}
 		return api.Export{}, m.cleanupCreateFailure(ctx, nqn, createdBdev, err)
 	}
 
 	if err := m.rpc.Call(ctx, "nvmf_subsystem_add_listener", m.buildListenerParams(req.Transport, nqn), nil); err != nil {
+		if export, reused := m.reuseExistingExport(ctx, id, err); reused {
+			return export, nil
+		}
 		return api.Export{}, m.cleanupCreateFailure(ctx, nqn, createdBdev, err)
 	}
 
@@ -172,13 +191,12 @@ func (m *LocalManager) DeleteExport(ctx context.Context, exportID string) error 
 	if err := m.rpc.Call(ctx, "nvmf_delete_subsystem", map[string]any{
 		"nqn": subsystemNQN(m.nqnPrefix, exportID),
 	}, nil); err != nil {
-		if isSPDKNotFound(err) {
-			return nil
+		if !isSPDKNotFound(err) {
+			if deleted, verifyErr := m.verifyExportDeleted(exportID); verifyErr == nil && deleted {
+				return nil
+			}
+			return err
 		}
-		if deleted, verifyErr := m.verifyExportDeleted(exportID); verifyErr == nil && deleted {
-			return nil
-		}
-		return err
 	}
 	if err := m.rpc.Call(ctx, "bdev_fastblock_delete", map[string]any{
 		"name": bdevName(exportID),
@@ -221,7 +239,7 @@ func (m *LocalManager) GetExport(ctx context.Context, exportID string) (api.Expo
 			Trsvcid: listener.Trsvcid,
 		}, nil
 	}
-	return api.Export{}, fmt.Errorf("export %s not found", exportID)
+	return api.Export{}, fmt.Errorf("%w: %s", errExportNotFound, exportID)
 }
 
 func (m *LocalManager) AllowHost(ctx context.Context, exportID, hostNQN string) error {
@@ -231,10 +249,14 @@ func (m *LocalManager) AllowHost(ctx context.Context, exportID, hostNQN string) 
 	if strings.TrimSpace(hostNQN) == "" {
 		return errors.New("host nqn is required")
 	}
-	return m.rpc.Call(ctx, "nvmf_subsystem_add_host", map[string]any{
+	err := m.rpc.Call(ctx, "nvmf_subsystem_add_host", map[string]any{
 		"nqn":  subsystemNQN(m.nqnPrefix, exportID),
 		"host": hostNQN,
 	}, nil)
+	if err != nil && isSPDKAlreadyExists(err) {
+		return nil
+	}
+	return err
 }
 
 func (m *LocalManager) DenyHost(ctx context.Context, exportID, hostNQN string) error {
@@ -244,10 +266,14 @@ func (m *LocalManager) DenyHost(ctx context.Context, exportID, hostNQN string) e
 	if strings.TrimSpace(hostNQN) == "" {
 		return errors.New("host nqn is required")
 	}
-	return m.rpc.Call(ctx, "nvmf_subsystem_remove_host", map[string]any{
+	err := m.rpc.Call(ctx, "nvmf_subsystem_remove_host", map[string]any{
 		"nqn":  subsystemNQN(m.nqnPrefix, exportID),
 		"host": hostNQN,
 	}, nil)
+	if err != nil && (isSPDKNotFound(err) || isSPDKHostAccessMissing(err)) {
+		return nil
+	}
+	return err
 }
 
 type subsystemInfo struct {
@@ -267,6 +293,17 @@ type subsystemAddress struct {
 
 type bdevInfo struct {
 	Name string `json:"name"`
+}
+
+func (m *LocalManager) reuseExistingExport(ctx context.Context, exportID string, createErr error) (api.Export, bool) {
+	if !isSPDKAlreadyExists(createErr) {
+		return api.Export{}, false
+	}
+	export, err := m.GetExport(ctx, exportID)
+	if err != nil {
+		return api.Export{}, false
+	}
+	return export, true
 }
 
 func (m *LocalManager) verifyExportDeleted(exportID string) (bool, error) {
@@ -308,6 +345,24 @@ func isSPDKNotFound(err error) bool {
 	var rpcErr *spdkrpc.ResponseError
 	if errors.As(err, &rpcErr) {
 		return rpcErr.Code == -19 || strings.Contains(strings.ToLower(rpcErr.Message), "no such device")
+	}
+	return false
+}
+
+func isSPDKAlreadyExists(err error) bool {
+	var rpcErr *spdkrpc.ResponseError
+	if errors.As(err, &rpcErr) {
+		msg := strings.ToLower(rpcErr.Message)
+		return rpcErr.Code == -17 || strings.Contains(msg, "already exists") || strings.Contains(msg, " exists")
+	}
+	return false
+}
+
+func isSPDKHostAccessMissing(err error) bool {
+	var rpcErr *spdkrpc.ResponseError
+	if errors.As(err, &rpcErr) {
+		msg := strings.ToLower(rpcErr.Message)
+		return strings.Contains(msg, "host") && (strings.Contains(msg, "not found") || strings.Contains(msg, "no such"))
 	}
 	return false
 }
