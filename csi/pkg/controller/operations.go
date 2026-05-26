@@ -132,15 +132,18 @@ func NewUnpublishVolumeRequest(exportID, hostNQN string) UnpublishVolumeRequest 
 	}
 }
 
-func (s *Service) recordVolumeMetadata(volume monitorclient.Volume, blockSize int64, transport, exportID string) {
+func (s *Service) recordVolumeMetadata(ctx context.Context, volume monitorclient.Volume, blockSize int64, transport, exportID string) error {
 	if strings.TrimSpace(volume.ID) == "" || blockSize <= 0 || (transport != "rdma" && transport != "tcp") {
-		return
+		return nil
 	}
-	existing, ok := s.volumes.Get(volume.ID)
+	existing, ok, err := s.volumes.Get(ctx, volume.ID)
+	if err != nil {
+		return err
+	}
 	if ok && strings.TrimSpace(exportID) == "" {
 		exportID = existing.ExportID
 	}
-	s.volumes.Put(VolumeMetadata{
+	return s.volumes.Put(ctx, VolumeMetadata{
 		Volume:    volume,
 		BlockSize: blockSize,
 		Transport: transport,
@@ -162,7 +165,9 @@ func (s *Service) CreateVolume(ctx context.Context, req CreateVolumeRequest) (mo
 	if err != nil {
 		return monitorclient.Volume{}, err
 	}
-	s.recordVolumeMetadata(volume, req.BlockSize, req.Transport, "")
+	if err := s.recordVolumeMetadata(ctx, volume, req.BlockSize, req.Transport, ""); err != nil {
+		return monitorclient.Volume{}, err
+	}
 	return volume, nil
 }
 
@@ -170,12 +175,16 @@ func (s *Service) DeleteVolume(ctx context.Context, req DeleteVolumeRequest) err
 	if err := req.Validate(); err != nil {
 		return err
 	}
-	if existing, ok := s.attachments.Get(req.Volume.ID); ok {
+	if existing, ok, err := s.attachments.Get(ctx, req.Volume.ID); err != nil {
+		return err
+	} else if ok {
 		return fmt.Errorf("%w: volume %s remains attached to node %s", ErrVolumeStillPublished, existing.VolumeID, existing.NodeID)
 	}
 	if strings.TrimSpace(req.Volume.ID) != "" {
 		exportID := ""
-		if metadata, ok := s.volumes.Get(req.Volume.ID); ok {
+		if metadata, ok, err := s.volumes.Get(ctx, req.Volume.ID); err != nil {
+			return err
+		} else if ok {
 			exportID = strings.TrimSpace(metadata.ExportID)
 		}
 		if exportID == "" {
@@ -192,8 +201,7 @@ func (s *Service) DeleteVolume(ctx context.Context, req DeleteVolumeRequest) err
 	if err := s.monitor.DeleteVolume(ctx, req.Volume); err != nil {
 		return err
 	}
-	s.volumes.Delete(req.Volume.ID)
-	return nil
+	return s.volumes.Delete(ctx, req.Volume.ID)
 }
 
 func (s *Service) GetVolume(ctx context.Context, req GetVolumeRequest) (monitorclient.Volume, error) {
@@ -205,8 +213,12 @@ func (s *Service) GetVolume(ctx context.Context, req GetVolumeRequest) (monitorc
 		return monitorclient.Volume{}, err
 	}
 	volume = normalizeVolume(volume, req.Volume)
-	if existing, ok := s.volumes.Get(req.Volume.ID); ok {
-		s.recordVolumeMetadata(volume, existing.BlockSize, existing.Transport, existing.ExportID)
+	if existing, ok, err := s.volumes.Get(ctx, req.Volume.ID); err != nil {
+		return monitorclient.Volume{}, err
+	} else if ok {
+		if err := s.recordVolumeMetadata(ctx, volume, existing.BlockSize, existing.Transport, existing.ExportID); err != nil {
+			return monitorclient.Volume{}, err
+		}
 	}
 	return volume, nil
 }
@@ -220,8 +232,12 @@ func (s *Service) ExpandVolume(ctx context.Context, req ExpandVolumeRequest) (mo
 		return monitorclient.Volume{}, err
 	}
 	volume = normalizeVolume(volume, req.Volume)
-	if existing, ok := s.volumes.Get(req.Volume.ID); ok {
-		s.recordVolumeMetadata(volume, existing.BlockSize, existing.Transport, existing.ExportID)
+	if existing, ok, err := s.volumes.Get(ctx, req.Volume.ID); err != nil {
+		return monitorclient.Volume{}, err
+	} else if ok {
+		if err := s.recordVolumeMetadata(ctx, volume, existing.BlockSize, existing.Transport, existing.ExportID); err != nil {
+			return monitorclient.Volume{}, err
+		}
 	}
 	return volume, nil
 }
@@ -261,9 +277,13 @@ func (s *Service) ControllerPublishVolume(ctx context.Context, req ControllerPub
 	if err := req.Validate(); err != nil {
 		return PublishVolumeResult{}, err
 	}
-	s.recordVolumeMetadata(req.Volume, req.BlockSize, req.Transport, "")
+	if err := s.recordVolumeMetadata(ctx, req.Volume, req.BlockSize, req.Transport, ""); err != nil {
+		return PublishVolumeResult{}, err
+	}
 	hostNQN := ResolveHostNQN(req.NodeID, s.defaultHostNQN, req.Secrets)
-	if existing, ok := s.attachments.Get(req.Volume.ID); ok {
+	if existing, ok, err := s.attachments.Get(ctx, req.Volume.ID); err != nil {
+		return PublishVolumeResult{}, err
+	} else if ok {
 		if attachmentConflicts(existing, req.NodeID, hostNQN) {
 			return PublishVolumeResult{}, fmt.Errorf(
 				"%w: volume %s is attached to node %s with host NQN %s",
@@ -283,13 +303,17 @@ func (s *Service) ControllerPublishVolume(ctx context.Context, req ControllerPub
 	if err != nil {
 		return PublishVolumeResult{}, err
 	}
-	s.recordVolumeMetadata(req.Volume, req.BlockSize, req.Transport, result.Export.ID)
-	s.attachments.Put(Attachment{
+	if err := s.recordVolumeMetadata(ctx, req.Volume, req.BlockSize, req.Transport, result.Export.ID); err != nil {
+		return PublishVolumeResult{}, err
+	}
+	if err := s.attachments.Put(ctx, Attachment{
 		VolumeID: req.Volume.ID,
 		NodeID:   req.NodeID,
 		HostNQN:  hostNQN,
 		ExportID: result.Export.ID,
-	})
+	}); err != nil {
+		return PublishVolumeResult{}, err
+	}
 	return result, nil
 }
 
@@ -311,7 +335,9 @@ func (s *Service) ControllerUnpublishVolume(ctx context.Context, req ControllerU
 	}
 	hostNQN := ResolveHostNQN(req.NodeID, s.defaultHostNQN, req.Secrets)
 	exportID := strings.TrimSpace(req.ExportID)
-	if existing, ok := s.attachments.Get(req.VolumeID); ok {
+	if existing, ok, err := s.attachments.Get(ctx, req.VolumeID); err != nil {
+		return err
+	} else if ok {
 		if attachmentConflicts(existing, req.NodeID, hostNQN) {
 			return fmt.Errorf(
 				"%w: volume %s is attached to node %s with host NQN %s",
@@ -327,7 +353,9 @@ func (s *Service) ControllerUnpublishVolume(ctx context.Context, req ControllerU
 		if strings.TrimSpace(existing.HostNQN) != "" {
 			hostNQN = existing.HostNQN
 		}
-	} else if metadata, ok := s.volumes.Get(req.VolumeID); ok && strings.TrimSpace(metadata.ExportID) != "" {
+	} else if metadata, ok, err := s.volumes.Get(ctx, req.VolumeID); err != nil {
+		return err
+	} else if ok && strings.TrimSpace(metadata.ExportID) != "" {
 		exportID = metadata.ExportID
 	}
 	if exportID == "" {
@@ -340,8 +368,7 @@ func (s *Service) ControllerUnpublishVolume(ctx context.Context, req ControllerU
 	if err := s.UnpublishVolume(ctx, NewUnpublishVolumeRequest(exportID, hostNQN)); err != nil {
 		return err
 	}
-	s.attachments.Delete(req.VolumeID)
-	return nil
+	return s.attachments.Delete(ctx, req.VolumeID)
 }
 
 func (r CreateVolumeRequest) Validate() error {

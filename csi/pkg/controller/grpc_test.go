@@ -346,6 +346,77 @@ func TestControllerPublishVolumeSupportsOpaqueVolumeIDWithVolumeContext(t *testi
 	}
 }
 
+func TestControllerMetadataSurvivesServiceRecreation(t *testing.T) {
+	monitor := &stubMetadataMonitorClient{
+		stubMonitorClient: stubMonitorClient{
+			createVol: monitorclient.Volume{
+				ID: "opaque-volume-id",
+			},
+			getVol: monitorclient.Volume{
+				ID:            "opaque-volume-id",
+				Name:          "img-a",
+				Pool:          "fb",
+				CapacityBytes: 1 << 20,
+				ObjectSize:    4 << 20,
+			},
+		},
+	}
+	exporter1 := &stubExporterClient{}
+	service1 := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter1)
+	grpc1 := NewGRPCService(service1)
+
+	createResp, err := grpc1.CreateVolume(context.Background(), &csi.CreateVolumeRequest{
+		Name: "img-a",
+		CapacityRange: &csi.CapacityRange{
+			RequiredBytes: 1 << 20,
+		},
+		Parameters: map[string]string{
+			"pool":       "fb",
+			"objectSize": "4194304",
+			"blockSize":  "4096",
+			"transport":  "rdma",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create volume failed: %v", err)
+	}
+	if _, err := grpc1.ControllerPublishVolume(context.Background(), &csi.ControllerPublishVolumeRequest{
+		VolumeId: createResp.GetVolume().GetVolumeId(),
+		NodeId:   "node-a",
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
+			AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+		},
+		Secrets: map[string]string{
+			"hostNQN": "nqn.host.1",
+		},
+	}); err != nil {
+		t.Fatalf("publish volume failed: %v", err)
+	}
+
+	exporter2 := &stubExporterClient{}
+	service2 := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter2)
+	grpc2 := NewGRPCService(service2)
+
+	if _, err := grpc2.ControllerUnpublishVolume(context.Background(), &csi.ControllerUnpublishVolumeRequest{
+		VolumeId: createResp.GetVolume().GetVolumeId(),
+		NodeId:   "node-a",
+	}); err != nil {
+		t.Fatalf("unpublish after service recreation failed: %v", err)
+	}
+	if exporter2.denyID == "" || exporter2.deleteID == "" {
+		t.Fatalf("expected unpublish to use persisted export metadata, got %+v", exporter2)
+	}
+	if _, err := grpc2.DeleteVolume(context.Background(), &csi.DeleteVolumeRequest{
+		VolumeId: createResp.GetVolume().GetVolumeId(),
+	}); err != nil {
+		t.Fatalf("delete after service recreation failed: %v", err)
+	}
+	if monitor.deleteRef.ID != "opaque-volume-id" || monitor.deleteRef.Name != "img-a" || monitor.deleteRef.Pool != "fb" {
+		t.Fatalf("unexpected delete ref after service recreation: %+v", monitor.deleteRef)
+	}
+}
+
 func TestControllerGRPCRequestValidation(t *testing.T) {
 	service := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, &stubMonitorClient{}, &stubExporterClient{})
 	grpcService := NewGRPCService(service)

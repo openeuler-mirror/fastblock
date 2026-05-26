@@ -21,6 +21,14 @@ type stubMonitorClient struct {
 	expandCap int64
 }
 
+type stubMetadataMonitorClient struct {
+	stubMonitorClient
+	volumeMetadata     map[string]monitorclient.VolumeMetadata
+	attachments        map[string]monitorclient.Attachment
+	putVolumeCalls     int
+	putAttachmentCalls int
+}
+
 func (c *stubMonitorClient) CreateVolume(_ context.Context, req monitorclient.CreateVolumeRequest) (monitorclient.Volume, error) {
 	c.createReq = req
 	if c.createVol.ID != "" {
@@ -61,6 +69,50 @@ func (c *stubMonitorClient) ExpandVolume(_ context.Context, ref monitorclient.Vo
 	c.expandRef = ref
 	c.expandCap = capacityBytes
 	return monitorclient.Volume{Name: ref.Name, Pool: ref.Pool, CapacityBytes: capacityBytes}, nil
+}
+
+func (c *stubMetadataMonitorClient) PutVolumeMetadata(_ context.Context, metadata monitorclient.VolumeMetadata) error {
+	if c.volumeMetadata == nil {
+		c.volumeMetadata = map[string]monitorclient.VolumeMetadata{}
+	}
+	c.volumeMetadata[metadata.Volume.ID] = metadata
+	c.putVolumeCalls++
+	return nil
+}
+
+func (c *stubMetadataMonitorClient) GetVolumeMetadata(_ context.Context, volumeID string) (monitorclient.VolumeMetadata, error) {
+	metadata, ok := c.volumeMetadata[volumeID]
+	if !ok {
+		return monitorclient.VolumeMetadata{}, monitorclient.ErrMetadataNotFound
+	}
+	return metadata, nil
+}
+
+func (c *stubMetadataMonitorClient) DeleteVolumeMetadata(_ context.Context, volumeID string) error {
+	delete(c.volumeMetadata, volumeID)
+	return nil
+}
+
+func (c *stubMetadataMonitorClient) PutAttachment(_ context.Context, attachment monitorclient.Attachment) error {
+	if c.attachments == nil {
+		c.attachments = map[string]monitorclient.Attachment{}
+	}
+	c.attachments[attachment.VolumeID] = attachment
+	c.putAttachmentCalls++
+	return nil
+}
+
+func (c *stubMetadataMonitorClient) GetAttachment(_ context.Context, volumeID string) (monitorclient.Attachment, error) {
+	attachment, ok := c.attachments[volumeID]
+	if !ok {
+		return monitorclient.Attachment{}, monitorclient.ErrMetadataNotFound
+	}
+	return attachment, nil
+}
+
+func (c *stubMetadataMonitorClient) DeleteAttachment(_ context.Context, volumeID string) error {
+	delete(c.attachments, volumeID)
+	return nil
 }
 
 type stubExporterClient struct {
@@ -334,7 +386,10 @@ func TestControllerPublishIsIdempotentOnSameNode(t *testing.T) {
 	if exporter.createCnt != 2 || exporter.allowCnt != 2 {
 		t.Fatalf("expected idempotent exporter calls to succeed twice, got create=%d allow=%d", exporter.createCnt, exporter.allowCnt)
 	}
-	metadata, ok := svc.volumes.Get(volume.ID)
+	metadata, ok, err := svc.volumes.Get(context.Background(), volume.ID)
+	if err != nil {
+		t.Fatalf("get stored volume metadata failed: %v", err)
+	}
 	if !ok || metadata.ExportID != first.Export.ID {
 		t.Fatalf("expected volume metadata export id %q, got %+v", first.Export.ID, metadata)
 	}
@@ -451,12 +506,14 @@ func TestDeleteVolumeUsesStoredExportID(t *testing.T) {
 		CapacityBytes: 1 << 20,
 		ObjectSize:    4 << 20,
 	}
-	svc.volumes.Put(VolumeMetadata{
+	if err := svc.volumes.Put(context.Background(), VolumeMetadata{
 		Volume:    volume,
 		BlockSize: 4096,
 		Transport: "rdma",
 		ExportID:  "exp-stored",
-	})
+	}); err != nil {
+		t.Fatalf("put stored volume metadata failed: %v", err)
+	}
 
 	if err := svc.DeleteVolume(context.Background(), DeleteVolumeRequest{
 		Volume: monitorclient.VolumeRef{ID: volume.ID, Name: volume.Name, Pool: volume.Pool},
@@ -479,12 +536,14 @@ func TestControllerUnpublishUsesStoredExportIDWithoutAttachment(t *testing.T) {
 		CapacityBytes: 1 << 20,
 		ObjectSize:    4 << 20,
 	}
-	svc.volumes.Put(VolumeMetadata{
+	if err := svc.volumes.Put(context.Background(), VolumeMetadata{
 		Volume:    volume,
 		BlockSize: 4096,
 		Transport: "rdma",
 		ExportID:  "exp-stored",
-	})
+	}); err != nil {
+		t.Fatalf("put stored volume metadata failed: %v", err)
+	}
 
 	if err := svc.ControllerUnpublishVolume(context.Background(), ControllerUnpublishRequest{
 		VolumeID: volume.ID,
@@ -497,6 +556,46 @@ func TestControllerUnpublishUsesStoredExportIDWithoutAttachment(t *testing.T) {
 		t.Fatalf("expected stored export id, got deny=%q delete=%q", exporter.denyID, exporter.deleteID)
 	}
 }
+
+func TestNewUsesMonitorMetadataStoreWhenAvailable(t *testing.T) {
+	monitor := &stubMetadataMonitorClient{}
+	exporter := &stubExporterClient{}
+	svc := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+	if _, ok := svc.volumes.(*monitorVolumeStore); !ok {
+		t.Fatalf("expected monitor-backed volume store, got %T", svc.volumes)
+	}
+	if _, ok := svc.attachments.(*monitorAttachmentStore); !ok {
+		t.Fatalf("expected monitor-backed attachment store, got %T", svc.attachments)
+	}
+
+	volume, err := svc.CreateVolume(context.Background(), CreateVolumeRequest{
+		Name:          "img-a",
+		Pool:          "fb",
+		CapacityBytes: 1 << 20,
+		ObjectSize:    4 << 20,
+		BlockSize:     4096,
+		Transport:     "rdma",
+	})
+	if err != nil {
+		t.Fatalf("create volume failed: %v", err)
+	}
+	if _, err := svc.ControllerPublishVolume(context.Background(), ControllerPublishRequest{
+		Volume:    volume,
+		BlockSize: 4096,
+		Transport: "rdma",
+		NodeID:    "node-a",
+		Secrets:   map[string]string{"hostNQN": "nqn.host.1"},
+	}); err != nil {
+		t.Fatalf("controller publish failed: %v", err)
+	}
+	if monitor.putVolumeCalls == 0 {
+		t.Fatal("expected volume metadata writes")
+	}
+	if monitor.putAttachmentCalls == 0 {
+		t.Fatal("expected attachment metadata writes")
+	}
+}
+
 func mustExportIDForVolume(t *testing.T, volumeID string) string {
 	t.Helper()
 	exportID, err := exporterclient.ExportIDForVolume(volumeID)
