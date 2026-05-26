@@ -88,6 +88,10 @@ func (r VolumeRef) Validate() error {
 	return nil
 }
 
+func (v Volume) Validate() error {
+	return v.Ref().Validate()
+}
+
 func (v Volume) Ref() VolumeRef {
 	return VolumeRef{
 		ID:   v.ID,

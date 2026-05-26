@@ -3,6 +3,7 @@ package monitorclient
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"testing"
@@ -181,6 +182,180 @@ func TestGetVolume(t *testing.T) {
 	}
 	if volume.CapacityBytes != 2<<20 {
 		t.Fatalf("unexpected volume: %+v", volume)
+	}
+}
+
+func TestVolumeMetadataCRUD(t *testing.T) {
+	address := startMockMonitorSequence(t, func(call int, req *msg.Request) *msg.Response {
+		switch call {
+		case 0:
+			payload, ok := req.Union.(*msg.Request_PutCsiVolumeMetadataRequest)
+			if !ok {
+				t.Fatalf("unexpected put request type %T", req.Union)
+			}
+			if payload.PutCsiVolumeMetadataRequest.GetMetadata().GetVolumeId() != "vol-1" {
+				t.Fatalf("unexpected metadata payload: %+v", payload.PutCsiVolumeMetadataRequest.GetMetadata())
+			}
+			return &msg.Response{
+				Union: &msg.Response_PutCsiVolumeMetadataResponse{
+					PutCsiVolumeMetadataResponse: &msg.PutCSIVolumeMetadataResponse{
+						Errorcode: msg.CSIMetadataErrorCode_csiMetadataOk,
+					},
+				},
+			}
+		case 1:
+			if _, ok := req.Union.(*msg.Request_GetCsiVolumeMetadataRequest); !ok {
+				t.Fatalf("unexpected get request type %T", req.Union)
+			}
+			return &msg.Response{
+				Union: &msg.Response_GetCsiVolumeMetadataResponse{
+					GetCsiVolumeMetadataResponse: &msg.GetCSIVolumeMetadataResponse{
+						Errorcode: msg.CSIMetadataErrorCode_csiMetadataOk,
+						Metadata: &msg.CSIVolumeMetadata{
+							VolumeId:      "vol-1",
+							PoolName:      "fb",
+							ImageName:     "img-a",
+							CapacityBytes: 1 << 20,
+							ObjectSize:    4 << 20,
+							BlockSize:     4096,
+							Transport:     "rdma",
+							ExportId:      "exp-1",
+						},
+					},
+				},
+			}
+		case 2:
+			if _, ok := req.Union.(*msg.Request_DeleteCsiVolumeMetadataRequest); !ok {
+				t.Fatalf("unexpected delete request type %T", req.Union)
+			}
+			return &msg.Response{
+				Union: &msg.Response_DeleteCsiVolumeMetadataResponse{
+					DeleteCsiVolumeMetadataResponse: &msg.DeleteCSIVolumeMetadataResponse{
+						Errorcode: msg.CSIMetadataErrorCode_csiMetadataOk,
+					},
+				},
+			}
+		default:
+			t.Fatalf("unexpected call index %d", call)
+			return nil
+		}
+	})
+
+	client := NewTCP(address)
+	metadata := VolumeMetadata{
+		Volume: Volume{
+			ID:            "vol-1",
+			Name:          "img-a",
+			Pool:          "fb",
+			CapacityBytes: 1 << 20,
+			ObjectSize:    4 << 20,
+		},
+		BlockSize: 4096,
+		Transport: "rdma",
+		ExportID:  "exp-1",
+	}
+	if err := client.PutVolumeMetadata(context.Background(), metadata); err != nil {
+		t.Fatalf("put volume metadata failed: %v", err)
+	}
+	got, err := client.GetVolumeMetadata(context.Background(), "vol-1")
+	if err != nil {
+		t.Fatalf("get volume metadata failed: %v", err)
+	}
+	if got.ExportID != "exp-1" || got.Volume.Name != "img-a" {
+		t.Fatalf("unexpected volume metadata: %+v", got)
+	}
+	if err := client.DeleteVolumeMetadata(context.Background(), "vol-1"); err != nil {
+		t.Fatalf("delete volume metadata failed: %v", err)
+	}
+}
+
+func TestAttachmentCRUD(t *testing.T) {
+	address := startMockMonitorSequence(t, func(call int, req *msg.Request) *msg.Response {
+		switch call {
+		case 0:
+			if _, ok := req.Union.(*msg.Request_PutCsiAttachmentRequest); !ok {
+				t.Fatalf("unexpected put request type %T", req.Union)
+			}
+			return &msg.Response{
+				Union: &msg.Response_PutCsiAttachmentResponse{
+					PutCsiAttachmentResponse: &msg.PutCSIAttachmentResponse{
+						Errorcode: msg.CSIMetadataErrorCode_csiMetadataOk,
+					},
+				},
+			}
+		case 1:
+			if _, ok := req.Union.(*msg.Request_GetCsiAttachmentRequest); !ok {
+				t.Fatalf("unexpected get request type %T", req.Union)
+			}
+			return &msg.Response{
+				Union: &msg.Response_GetCsiAttachmentResponse{
+					GetCsiAttachmentResponse: &msg.GetCSIAttachmentResponse{
+						Errorcode: msg.CSIMetadataErrorCode_csiMetadataOk,
+						Attachment: &msg.CSIAttachment{
+							VolumeId: "vol-1",
+							NodeId:   "node-a",
+							HostNqn:  "nqn.host.1",
+							ExportId: "exp-1",
+						},
+					},
+				},
+			}
+		case 2:
+			if _, ok := req.Union.(*msg.Request_DeleteCsiAttachmentRequest); !ok {
+				t.Fatalf("unexpected delete request type %T", req.Union)
+			}
+			return &msg.Response{
+				Union: &msg.Response_DeleteCsiAttachmentResponse{
+					DeleteCsiAttachmentResponse: &msg.DeleteCSIAttachmentResponse{
+						Errorcode: msg.CSIMetadataErrorCode_csiMetadataOk,
+					},
+				},
+			}
+		default:
+			t.Fatalf("unexpected call index %d", call)
+			return nil
+		}
+	})
+
+	client := NewTCP(address)
+	attachment := Attachment{
+		VolumeID: "vol-1",
+		NodeID:   "node-a",
+		HostNQN:  "nqn.host.1",
+		ExportID: "exp-1",
+	}
+	if err := client.PutAttachment(context.Background(), attachment); err != nil {
+		t.Fatalf("put attachment failed: %v", err)
+	}
+	got, err := client.GetAttachment(context.Background(), "vol-1")
+	if err != nil {
+		t.Fatalf("get attachment failed: %v", err)
+	}
+	if got.NodeID != "node-a" || got.ExportID != "exp-1" {
+		t.Fatalf("unexpected attachment: %+v", got)
+	}
+	if err := client.DeleteAttachment(context.Background(), "vol-1"); err != nil {
+		t.Fatalf("delete attachment failed: %v", err)
+	}
+}
+
+func TestMetadataGetTreatsNotFoundAsDedicatedError(t *testing.T) {
+	address := startMockMonitor(t, func(req *msg.Request) *msg.Response {
+		if _, ok := req.Union.(*msg.Request_GetCsiVolumeMetadataRequest); !ok {
+			t.Fatalf("unexpected request type %T", req.Union)
+		}
+		return &msg.Response{
+			Union: &msg.Response_GetCsiVolumeMetadataResponse{
+				GetCsiVolumeMetadataResponse: &msg.GetCSIVolumeMetadataResponse{
+					Errorcode: msg.CSIMetadataErrorCode_csiMetadataNotFound,
+				},
+			},
+		}
+	})
+
+	client := NewTCP(address)
+	if _, err := client.GetVolumeMetadata(context.Background(), "missing"); !errors.Is(err, ErrMetadataNotFound) {
+		t.Fatalf("expected metadata not found, got %v", err)
 	}
 }
 

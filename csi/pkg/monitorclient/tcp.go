@@ -165,6 +165,156 @@ func (c *TCPClient) ExpandVolume(ctx context.Context, ref VolumeRef, capacityByt
 	return volumeFromImageInfo(payload.ResizeImageResponse.GetImageInfo()), nil
 }
 
+func (c *TCPClient) PutVolumeMetadata(ctx context.Context, metadata VolumeMetadata) error {
+	if err := ValidateAddress(c.address); err != nil {
+		return err
+	}
+	if err := metadata.Validate(); err != nil {
+		return err
+	}
+	resp, err := c.roundTrip(ctx, &msg.Request{
+		Union: &msg.Request_PutCsiVolumeMetadataRequest{
+			PutCsiVolumeMetadataRequest: &msg.PutCSIVolumeMetadataRequest{
+				Metadata: volumeMetadataToProto(metadata),
+			},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	payload, ok := resp.Union.(*msg.Response_PutCsiVolumeMetadataResponse)
+	if !ok {
+		return fmt.Errorf("unexpected response type %T", resp.Union)
+	}
+	return metadataError(payload.PutCsiVolumeMetadataResponse.GetErrorcode())
+}
+
+func (c *TCPClient) GetVolumeMetadata(ctx context.Context, volumeID string) (VolumeMetadata, error) {
+	if err := ValidateAddress(c.address); err != nil {
+		return VolumeMetadata{}, err
+	}
+	if strings.TrimSpace(volumeID) == "" {
+		return VolumeMetadata{}, fmt.Errorf("volume id is required")
+	}
+	resp, err := c.roundTrip(ctx, &msg.Request{
+		Union: &msg.Request_GetCsiVolumeMetadataRequest{
+			GetCsiVolumeMetadataRequest: &msg.GetCSIVolumeMetadataRequest{
+				VolumeId: volumeID,
+			},
+		},
+	})
+	if err != nil {
+		return VolumeMetadata{}, err
+	}
+	payload, ok := resp.Union.(*msg.Response_GetCsiVolumeMetadataResponse)
+	if !ok {
+		return VolumeMetadata{}, fmt.Errorf("unexpected response type %T", resp.Union)
+	}
+	if err := metadataError(payload.GetCsiVolumeMetadataResponse.GetErrorcode()); err != nil {
+		return VolumeMetadata{}, err
+	}
+	return volumeMetadataFromProto(payload.GetCsiVolumeMetadataResponse.GetMetadata()), nil
+}
+
+func (c *TCPClient) DeleteVolumeMetadata(ctx context.Context, volumeID string) error {
+	if err := ValidateAddress(c.address); err != nil {
+		return err
+	}
+	if strings.TrimSpace(volumeID) == "" {
+		return fmt.Errorf("volume id is required")
+	}
+	resp, err := c.roundTrip(ctx, &msg.Request{
+		Union: &msg.Request_DeleteCsiVolumeMetadataRequest{
+			DeleteCsiVolumeMetadataRequest: &msg.DeleteCSIVolumeMetadataRequest{
+				VolumeId: volumeID,
+			},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	payload, ok := resp.Union.(*msg.Response_DeleteCsiVolumeMetadataResponse)
+	if !ok {
+		return fmt.Errorf("unexpected response type %T", resp.Union)
+	}
+	return metadataError(payload.DeleteCsiVolumeMetadataResponse.GetErrorcode())
+}
+
+func (c *TCPClient) PutAttachment(ctx context.Context, attachment Attachment) error {
+	if err := ValidateAddress(c.address); err != nil {
+		return err
+	}
+	if err := attachment.Validate(); err != nil {
+		return err
+	}
+	resp, err := c.roundTrip(ctx, &msg.Request{
+		Union: &msg.Request_PutCsiAttachmentRequest{
+			PutCsiAttachmentRequest: &msg.PutCSIAttachmentRequest{
+				Attachment: attachmentToProto(attachment),
+			},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	payload, ok := resp.Union.(*msg.Response_PutCsiAttachmentResponse)
+	if !ok {
+		return fmt.Errorf("unexpected response type %T", resp.Union)
+	}
+	return metadataError(payload.PutCsiAttachmentResponse.GetErrorcode())
+}
+
+func (c *TCPClient) GetAttachment(ctx context.Context, volumeID string) (Attachment, error) {
+	if err := ValidateAddress(c.address); err != nil {
+		return Attachment{}, err
+	}
+	if strings.TrimSpace(volumeID) == "" {
+		return Attachment{}, fmt.Errorf("volume id is required")
+	}
+	resp, err := c.roundTrip(ctx, &msg.Request{
+		Union: &msg.Request_GetCsiAttachmentRequest{
+			GetCsiAttachmentRequest: &msg.GetCSIAttachmentRequest{
+				VolumeId: volumeID,
+			},
+		},
+	})
+	if err != nil {
+		return Attachment{}, err
+	}
+	payload, ok := resp.Union.(*msg.Response_GetCsiAttachmentResponse)
+	if !ok {
+		return Attachment{}, fmt.Errorf("unexpected response type %T", resp.Union)
+	}
+	if err := metadataError(payload.GetCsiAttachmentResponse.GetErrorcode()); err != nil {
+		return Attachment{}, err
+	}
+	return attachmentFromProto(payload.GetCsiAttachmentResponse.GetAttachment()), nil
+}
+
+func (c *TCPClient) DeleteAttachment(ctx context.Context, volumeID string) error {
+	if err := ValidateAddress(c.address); err != nil {
+		return err
+	}
+	if strings.TrimSpace(volumeID) == "" {
+		return fmt.Errorf("volume id is required")
+	}
+	resp, err := c.roundTrip(ctx, &msg.Request{
+		Union: &msg.Request_DeleteCsiAttachmentRequest{
+			DeleteCsiAttachmentRequest: &msg.DeleteCSIAttachmentRequest{
+				VolumeId: volumeID,
+			},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	payload, ok := resp.Union.(*msg.Response_DeleteCsiAttachmentResponse)
+	if !ok {
+		return fmt.Errorf("unexpected response type %T", resp.Union)
+	}
+	return metadataError(payload.DeleteCsiAttachmentResponse.GetErrorcode())
+}
+
 func (c *TCPClient) roundTrip(ctx context.Context, req *msg.Request) (*msg.Response, error) {
 	conn, err := c.dialer.DialContext(ctx, "tcp", c.address)
 	if err != nil {
@@ -215,5 +365,70 @@ func volumeFromImageInfo(info *msg.ImageInfo) Volume {
 		Pool:          info.GetPoolname(),
 		CapacityBytes: info.GetSize_(),
 		ObjectSize:    info.GetObjectSize(),
+	}
+}
+
+func volumeMetadataToProto(metadata VolumeMetadata) *msg.CSIVolumeMetadata {
+	return &msg.CSIVolumeMetadata{
+		VolumeId:      metadata.Volume.ID,
+		PoolName:      metadata.Volume.Pool,
+		ImageName:     metadata.Volume.Name,
+		CapacityBytes: metadata.Volume.CapacityBytes,
+		ObjectSize:    metadata.Volume.ObjectSize,
+		BlockSize:     metadata.BlockSize,
+		Transport:     metadata.Transport,
+		ExportId:      metadata.ExportID,
+	}
+}
+
+func volumeMetadataFromProto(metadata *msg.CSIVolumeMetadata) VolumeMetadata {
+	if metadata == nil {
+		return VolumeMetadata{}
+	}
+	return VolumeMetadata{
+		Volume: Volume{
+			ID:            metadata.GetVolumeId(),
+			Name:          metadata.GetImageName(),
+			Pool:          metadata.GetPoolName(),
+			CapacityBytes: metadata.GetCapacityBytes(),
+			ObjectSize:    metadata.GetObjectSize(),
+		},
+		BlockSize: metadata.GetBlockSize(),
+		Transport: metadata.GetTransport(),
+		ExportID:  metadata.GetExportId(),
+	}
+}
+
+func attachmentToProto(attachment Attachment) *msg.CSIAttachment {
+	return &msg.CSIAttachment{
+		VolumeId: attachment.VolumeID,
+		NodeId:   attachment.NodeID,
+		HostNqn:  attachment.HostNQN,
+		ExportId: attachment.ExportID,
+	}
+}
+
+func attachmentFromProto(attachment *msg.CSIAttachment) Attachment {
+	if attachment == nil {
+		return Attachment{}
+	}
+	return Attachment{
+		VolumeID: attachment.GetVolumeId(),
+		NodeID:   attachment.GetNodeId(),
+		HostNQN:  attachment.GetHostNqn(),
+		ExportID: attachment.GetExportId(),
+	}
+}
+
+func metadataError(code msg.CSIMetadataErrorCode) error {
+	switch code {
+	case msg.CSIMetadataErrorCode_csiMetadataOk:
+		return nil
+	case msg.CSIMetadataErrorCode_csiMetadataNotFound:
+		return ErrMetadataNotFound
+	case msg.CSIMetadataErrorCode_csiMetadataInvalidArgument:
+		return fmt.Errorf("monitor metadata invalid argument")
+	default:
+		return fmt.Errorf("monitor metadata operation failed: %s", code.String())
 	}
 }
