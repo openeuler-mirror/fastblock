@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 
 	"fastblock-csi/pkg/volumeid"
 	msg "monitor/msg"
@@ -50,6 +51,22 @@ func (c *TCPClient) CreateVolume(ctx context.Context, req CreateVolumeRequest) (
 	payload, ok := resp.Union.(*msg.Response_CreateImageResponse)
 	if !ok {
 		return Volume{}, fmt.Errorf("unexpected response type %T", resp.Union)
+	}
+	if payload.CreateImageResponse.GetErrorcode() == msg.CreateImageErrorCode_imageExists {
+		existing, err := c.GetVolume(ctx, VolumeRef{Name: req.Name, Pool: req.Pool})
+		if err != nil {
+			return Volume{}, err
+		}
+		if existing.CapacityBytes < req.CapacityBytes {
+			return Volume{}, fmt.Errorf("existing image capacity %d is smaller than requested %d", existing.CapacityBytes, req.CapacityBytes)
+		}
+		if existing.ObjectSize != req.ObjectSize {
+			return Volume{}, fmt.Errorf("existing image object size %d does not match requested %d", existing.ObjectSize, req.ObjectSize)
+		}
+		if strings.TrimSpace(existing.Name) != req.Name || strings.TrimSpace(existing.Pool) != req.Pool {
+			return Volume{}, fmt.Errorf("existing image identity %s/%s does not match requested %s/%s", existing.Pool, existing.Name, req.Pool, req.Name)
+		}
+		return existing, nil
 	}
 	if payload.CreateImageResponse.GetErrorcode() != msg.CreateImageErrorCode_createImageOk {
 		return Volume{}, fmt.Errorf("create image failed: %s", payload.CreateImageResponse.GetErrorcode().String())
