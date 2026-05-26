@@ -18,7 +18,6 @@ func ControllerServiceCapabilities() []*csi.ControllerServiceCapability {
 	rpcs := []csi.ControllerServiceCapability_RPC_Type{
 		csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME,
 		csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME,
-		csi.ControllerServiceCapability_RPC_EXPAND_VOLUME,
 	}
 
 	caps := make([]*csi.ControllerServiceCapability, 0, len(rpcs))

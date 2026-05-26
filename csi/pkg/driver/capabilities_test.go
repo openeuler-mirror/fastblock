@@ -19,8 +19,14 @@ func TestPluginCapabilities(t *testing.T) {
 
 func TestControllerServiceCapabilities(t *testing.T) {
 	caps := ControllerServiceCapabilities()
-	if len(caps) != 3 {
+	if len(caps) != 2 {
 		t.Fatalf("unexpected controller capability count: %d", len(caps))
+	}
+	if caps[0].GetRpc().GetType() != csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME {
+		t.Fatalf("unexpected first controller capability: %+v", caps[0])
+	}
+	if caps[1].GetRpc().GetType() != csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME {
+		t.Fatalf("unexpected second controller capability: %+v", caps[1])
 	}
 }
 
