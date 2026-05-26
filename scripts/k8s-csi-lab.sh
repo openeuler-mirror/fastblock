@@ -222,15 +222,11 @@ spec:
         - -driver-name=${DRIVER_NAME}
         - -monitor-address=${HOST_IP}:3333
         - -exporter-endpoint=http://${HOST_IP}:9500
-        - -default-host-nqn-file=/etc/nvme/hostnqn
         volumeMounts:
         - name: csi-socket
           mountPath: /csi
         - name: plugin-bin
           mountPath: /opt/fastblock/bin
-          readOnly: true
-        - name: host-nvme
-          mountPath: /etc/nvme
           readOnly: true
       - name: csi-provisioner
         image: ${PROVISIONER_IMAGE}
@@ -258,10 +254,6 @@ spec:
       - name: plugin-bin
         hostPath:
           path: ${ROOT}/csi/bin
-          type: Directory
-      - name: host-nvme
-        hostPath:
-          path: /etc/nvme
           type: Directory
 ---
 apiVersion: apps/v1
@@ -300,10 +292,14 @@ spec:
           EOS
           chmod +x /host-tools/nvme
           export PATH=/host-tools:/usr/sbin:/usr/bin:/sbin:/bin
+          CSI_NODE_ID="$(tr -d '\n' </etc/nvme/hostnqn 2>/dev/null || true)"
+          if [ -z "$CSI_NODE_ID" ]; then
+            CSI_NODE_ID="${KUBE_NODE_NAME}"
+          fi
           exec /opt/fastblock/bin/fastblock-csi-node \
             -endpoint=unix://${KUBELET_DIR}/plugins/${DRIVER_NAME}/csi.sock \
             -driver-name=${DRIVER_NAME} \
-            -node-id=\${KUBE_NODE_NAME}
+            -node-id="${CSI_NODE_ID}"
         env:
         - name: KUBE_NODE_NAME
           valueFrom:
