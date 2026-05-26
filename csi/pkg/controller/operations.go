@@ -32,11 +32,14 @@ type PublishVolumeResult struct {
 	PublishContext map[string]string
 }
 
-func ResolveHostNQN(nodeID string, secrets map[string]string) string {
+func ResolveHostNQN(nodeID, defaultHostNQN string, secrets map[string]string) string {
 	if secrets != nil {
 		if hostNQN := strings.TrimSpace(secrets["hostNQN"]); hostNQN != "" {
 			return hostNQN
 		}
+	}
+	if hostNQN := strings.TrimSpace(defaultHostNQN); hostNQN != "" {
+		return hostNQN
 	}
 	return strings.TrimSpace(nodeID)
 }
@@ -177,7 +180,7 @@ func (s *Service) ControllerPublishVolume(ctx context.Context, req ControllerPub
 		req.Volume,
 		req.BlockSize,
 		req.Transport,
-		ResolveHostNQN(req.NodeID, req.Secrets),
+		ResolveHostNQN(req.NodeID, s.defaultHostNQN, req.Secrets),
 	))
 }
 
@@ -199,7 +202,7 @@ func (s *Service) ControllerUnpublishVolume(ctx context.Context, req ControllerU
 	}
 	return s.UnpublishVolume(ctx, NewUnpublishVolumeRequest(
 		req.ExportID,
-		ResolveHostNQN(req.NodeID, req.Secrets),
+		ResolveHostNQN(req.NodeID, s.defaultHostNQN, req.Secrets),
 	))
 }
 
@@ -276,14 +279,14 @@ func (r UnpublishVolumeRequest) Validate() error {
 }
 
 func (r ControllerPublishRequest) Validate() error {
-	if strings.TrimSpace(r.NodeID) == "" && ResolveHostNQN(r.NodeID, r.Secrets) == "" {
+	if strings.TrimSpace(r.NodeID) == "" && ResolveHostNQN(r.NodeID, "", r.Secrets) == "" {
 		return errors.New("node id or hostNQN is required")
 	}
 	return PublishVolumeRequest{
 		Volume:    r.Volume,
 		BlockSize: r.BlockSize,
 		Transport: r.Transport,
-		HostNQN:   ResolveHostNQN(r.NodeID, r.Secrets),
+		HostNQN:   ResolveHostNQN(r.NodeID, "", r.Secrets),
 	}.Validate()
 }
 
@@ -291,7 +294,7 @@ func (r ControllerUnpublishRequest) Validate() error {
 	if strings.TrimSpace(r.ExportID) == "" {
 		return errors.New("export id is required")
 	}
-	if strings.TrimSpace(r.NodeID) == "" && ResolveHostNQN(r.NodeID, r.Secrets) == "" {
+	if strings.TrimSpace(r.NodeID) == "" && ResolveHostNQN(r.NodeID, "", r.Secrets) == "" {
 		return errors.New("node id or hostNQN is required")
 	}
 	return nil

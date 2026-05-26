@@ -223,3 +223,43 @@ func TestControllerPublishRequestUsesHostNQNPrecedence(t *testing.T) {
 		t.Fatalf("expected node id fallback hostNQN, got %q", exporter.denyNQN)
 	}
 }
+
+func TestControllerPublishUsesDefaultHostNQN(t *testing.T) {
+	monitor := &stubMonitorClient{}
+	exporter := &stubExporterClient{}
+	svc := NewWithDefaultHostNQN(
+		driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"},
+		monitor,
+		exporter,
+		"nqn.default",
+	)
+	volume := monitorclient.Volume{
+		ID:            "fbvolname:fb:img-a",
+		Name:          "img-a",
+		Pool:          "fb",
+		CapacityBytes: 1 << 20,
+		ObjectSize:    4 << 20,
+	}
+
+	if _, err := svc.ControllerPublishVolume(context.Background(), ControllerPublishRequest{
+		Volume:    volume,
+		BlockSize: 4096,
+		Transport: "rdma",
+		NodeID:    "node-a",
+	}); err != nil {
+		t.Fatalf("controller publish failed: %v", err)
+	}
+	if exporter.allowNQN != "nqn.default" {
+		t.Fatalf("expected default hostNQN to win, got %q", exporter.allowNQN)
+	}
+
+	if err := svc.ControllerUnpublishVolume(context.Background(), ControllerUnpublishRequest{
+		ExportID: "exp-1",
+		NodeID:   "node-a",
+	}); err != nil {
+		t.Fatalf("controller unpublish failed: %v", err)
+	}
+	if exporter.denyNQN != "nqn.default" {
+		t.Fatalf("expected default hostNQN on unpublish, got %q", exporter.denyNQN)
+	}
+}

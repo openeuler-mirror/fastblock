@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"fastblock-csi/pkg/controller"
@@ -20,11 +21,15 @@ func main() {
 	var driverName string
 	var exporterEndpoint string
 	var monitorAddress string
+	var defaultHostNQN string
+	var defaultHostNQNFile string
 
 	flag.StringVar(&endpoint, "endpoint", "unix:///var/lib/kubelet/plugins/csi.fastblock.io/controller.sock", "CSI controller endpoint")
 	flag.StringVar(&driverName, "driver-name", driver.DefaultDriverName, "CSI driver name")
 	flag.StringVar(&monitorAddress, "monitor-address", "", "fastblock monitor address")
 	flag.StringVar(&exporterEndpoint, "exporter-endpoint", "", "fastblock exporter base url")
+	flag.StringVar(&defaultHostNQN, "default-host-nqn", "", "default host NQN used when ControllerPublish secrets do not include hostNQN")
+	flag.StringVar(&defaultHostNQNFile, "default-host-nqn-file", "", "file containing default host NQN used when ControllerPublish secrets do not include hostNQN")
 	flag.Parse()
 
 	opts := driver.Options{
@@ -46,7 +51,16 @@ func main() {
 		exporter = exporterclient.NewHTTP(exporterEndpoint)
 	}
 
-	svc := controller.New(opts, monitor, exporter)
+	if strings.TrimSpace(defaultHostNQN) == "" && strings.TrimSpace(defaultHostNQNFile) != "" {
+		data, err := os.ReadFile(defaultHostNQNFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "read default host nqn file failed: %v\n", err)
+			os.Exit(2)
+		}
+		defaultHostNQN = strings.TrimSpace(string(data))
+	}
+
+	svc := controller.NewWithDefaultHostNQN(opts, monitor, exporter, strings.TrimSpace(defaultHostNQN))
 	server, err := driver.ListenEndpoint(opts.Endpoint)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "listen endpoint failed: %v\n", err)

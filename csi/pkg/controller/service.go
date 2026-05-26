@@ -7,9 +7,10 @@ import (
 )
 
 type Service struct {
-	opts     driver.Options
-	monitor  monitorclient.Client
-	exporter exporterclient.Client
+	opts           driver.Options
+	monitor        monitorclient.Client
+	exporter       exporterclient.Client
+	defaultHostNQN string
 }
 
 func New(opts driver.Options, monitor monitorclient.Client, exporter exporterclient.Client) *Service {
@@ -20,10 +21,20 @@ func New(opts driver.Options, monitor monitorclient.Client, exporter exportercli
 	}
 }
 
+func NewWithDefaultHostNQN(opts driver.Options, monitor monitorclient.Client, exporter exporterclient.Client, defaultHostNQN string) *Service {
+	svc := New(opts, monitor, exporter)
+	svc.defaultHostNQN = defaultHostNQN
+	return svc
+}
+
 func (s *Service) DriverName() string {
 	return s.opts.DriverName
 }
 
 func (s *Service) Endpoint() string {
 	return s.opts.Endpoint
+}
+
+func (s *Service) DefaultHostNQN() string {
+	return s.defaultHostNQN
 }
