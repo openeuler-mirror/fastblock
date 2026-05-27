@@ -79,6 +79,54 @@ void libblk_client::get_image_info(const std::string pool_name, const std::strin
         });
 }
 
+void libblk_client::get_image_metadata_by_name(const std::string pool_name, const std::string image_name)
+{
+    _mon_cli->emplace_get_image_metadata_by_name_request(
+        pool_name,
+        image_name,
+        [] (const monitor::client::response_status s, monitor::client::request_context* req_ctx)
+        {
+            SPDK_INFOLOG(libblk, "get image metadata by name status %d\n", s);
+            if (s != monitor::client::response_status::ok) {
+                return;
+            }
+            auto& metadata = std::get<std::unique_ptr<monitor::client::image_metadata>>(req_ctx->response_data);
+            if (!metadata) {
+                return;
+            }
+            SPDK_INFOLOG(
+              libblk,
+              "image metadata image_id=%s parent_snapshot_id=%s current_snap_seq=%lu status=%s\n",
+              metadata->image_id.c_str(),
+              metadata->parent_snapshot_id.c_str(),
+              metadata->current_snap_seq,
+              metadata->status.c_str());
+        });
+}
+
+void libblk_client::get_snapshot_metadata_by_id(const std::string snapshot_id)
+{
+    _mon_cli->emplace_get_snapshot_metadata_by_id_request(
+        snapshot_id,
+        [] (const monitor::client::response_status s, monitor::client::request_context* req_ctx)
+        {
+            SPDK_INFOLOG(libblk, "get snapshot metadata by id status %d\n", s);
+            if (s != monitor::client::response_status::ok) {
+                return;
+            }
+            auto& metadata = std::get<std::unique_ptr<monitor::client::snapshot_metadata>>(req_ctx->response_data);
+            if (!metadata) {
+                return;
+            }
+            SPDK_INFOLOG(
+              libblk,
+              "snapshot metadata snapshot_id=%s source_image_id=%s snap_seq=%lu\n",
+              metadata->snapshot_id.c_str(),
+              metadata->source_image_id.c_str(),
+              metadata->snap_seq);
+        });
+}
+
 // bdev的IO，转化为char* buf 的io
 int libblk_client::write(
   const uint64_t pool_id,
