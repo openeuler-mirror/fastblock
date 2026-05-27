@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -17,6 +18,8 @@ type recordedCall struct {
 type stubRunner struct {
 	calls []recordedCall
 	run   func()
+	err   error
+	errs  []error
 }
 
 func (r *stubRunner) Run(_ context.Context, name string, args ...string) error {
@@ -24,7 +27,12 @@ func (r *stubRunner) Run(_ context.Context, name string, args ...string) error {
 	if r.run != nil {
 		r.run()
 	}
-	return nil
+	if len(r.errs) > 0 {
+		err := r.errs[0]
+		r.errs = r.errs[1:]
+		return err
+	}
+	return r.err
 }
 
 func TestStageSkipsConnectWhenDeviceIsReady(t *testing.T) {
@@ -75,6 +83,70 @@ func TestStageConnectsAndFindsDevice(t *testing.T) {
 	want := []string{"connect", "-t", "rdma", "-n", "nqn.test", "-a", "10.0.0.10", "-s", "4420"}
 	if !reflect.DeepEqual(runner.calls[0].args, want) {
 		t.Fatalf("unexpected connect args: %#v", runner.calls[0].args)
+	}
+}
+
+func TestStageTreatsAlreadyConnectedAsIdempotent(t *testing.T) {
+	root := t.TempDir()
+	runner := &stubRunner{
+		err: errors.New("nvme connect failed: already connected"),
+		run: func() { prepareFakeDevice(t, root, "nqn.test", "3") },
+	}
+	backend := newTestBackend(t, root, runner)
+
+	device, err := backend.Stage(context.Background(), "vol-1", VolumeContext{
+		Transport: "rdma",
+		NQN:       "nqn.test",
+		Traddr:    "10.0.0.10",
+		Trsvcid:   "4420",
+		NSID:      3,
+	})
+	if err != nil {
+		t.Fatalf("stage failed: %v", err)
+	}
+	if device != filepath.Join(root, "dev", "nvme0n1") {
+		t.Fatalf("unexpected device path: %s", device)
+	}
+}
+
+func TestStageReconnectsAfterStaleAlreadyConnectedSession(t *testing.T) {
+	root := t.TempDir()
+	runCount := 0
+	runner := &stubRunner{
+		errs: []error{
+			errors.New("nvme connect failed: already connected"),
+			nil,
+			nil,
+		},
+		run: func() {
+			runCount++
+			if runCount == 3 {
+				prepareFakeDevice(t, root, "nqn.test", "3")
+			}
+		},
+	}
+	backend := newTestBackend(t, root, runner)
+	backend.ConnectTimeout = 20 * time.Millisecond
+	backend.PollInterval = 5 * time.Millisecond
+
+	device, err := backend.Stage(context.Background(), "vol-1", VolumeContext{
+		Transport: "rdma",
+		NQN:       "nqn.test",
+		Traddr:    "10.0.0.10",
+		Trsvcid:   "4420",
+		NSID:      3,
+	})
+	if err != nil {
+		t.Fatalf("stage failed: %v", err)
+	}
+	if device != filepath.Join(root, "dev", "nvme0n1") {
+		t.Fatalf("unexpected device path: %s", device)
+	}
+	if len(runner.calls) != 3 {
+		t.Fatalf("expected connect/disconnect/reconnect sequence, got %#v", runner.calls)
+	}
+	if runner.calls[1].args[0] != "disconnect" || runner.calls[2].args[0] != "connect" {
+		t.Fatalf("unexpected retry sequence: %#v", runner.calls)
 	}
 }
 
@@ -162,6 +234,9 @@ func TestTransportModuleHelper(t *testing.T) {
 	}
 	if transportModule("bad") != "" {
 		t.Fatalf("unexpected module for bad transport: %q", transportModule("bad"))
+	}
+	if !isAlreadyConnectedError(errors.New("already connected")) {
+		t.Fatal("expected already connected error detection")
 	}
 }
 

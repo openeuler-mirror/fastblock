@@ -64,25 +64,24 @@ func (b *NVMFBackend) Stage(ctx context.Context, _ string, volumeCtx VolumeConte
 		return b.GetDevice(ctx, "", volumeCtx)
 	}
 	if err := b.runner.Run(ctx, "nvme", buildConnectArgs(volumeCtx)...); err != nil {
-		return "", err
-	}
-
-	waitCtx, cancel := context.WithTimeout(ctx, b.ConnectTimeout)
-	defer cancel()
-	for {
-		devicePath, err := b.GetDevice(waitCtx, "", volumeCtx)
-		if err == nil {
-			return devicePath, nil
-		}
-		if !errors.Is(err, ErrDeviceNotFound) {
+		if !isAlreadyConnectedError(err) {
 			return "", err
 		}
-		select {
-		case <-waitCtx.Done():
-			return "", waitCtx.Err()
-		case <-time.After(b.PollInterval):
+		devicePath, waitErr := b.waitForDevice(ctx, volumeCtx)
+		if waitErr == nil {
+			return devicePath, nil
+		}
+		if !errors.Is(waitErr, context.DeadlineExceeded) {
+			return "", waitErr
+		}
+		if err := b.runner.Run(ctx, "nvme", buildDisconnectArgs(volumeCtx.NQN)...); err != nil && !isAlreadyConnectedError(err) {
+			return "", err
+		}
+		if err := b.runner.Run(ctx, "nvme", buildConnectArgs(volumeCtx)...); err != nil {
+			return "", err
 		}
 	}
+	return b.waitForDevice(ctx, volumeCtx)
 }
 
 func (b *NVMFBackend) Unstage(ctx context.Context, _ string, volumeCtx VolumeContext) error {
@@ -235,5 +234,31 @@ func buildDisconnectArgs(nqn string) []string {
 	return []string{
 		"disconnect",
 		"-n", nqn,
+	}
+}
+
+func isAlreadyConnectedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "already connected")
+}
+
+func (b *NVMFBackend) waitForDevice(ctx context.Context, volumeCtx VolumeContext) (string, error) {
+	waitCtx, cancel := context.WithTimeout(ctx, b.ConnectTimeout)
+	defer cancel()
+	for {
+		devicePath, err := b.GetDevice(waitCtx, "", volumeCtx)
+		if err == nil {
+			return devicePath, nil
+		}
+		if !errors.Is(err, ErrDeviceNotFound) {
+			return "", err
+		}
+		select {
+		case <-waitCtx.Done():
+			return "", waitCtx.Err()
+		case <-time.After(b.PollInterval):
+		}
 	}
 }
