@@ -417,6 +417,61 @@ func TestControllerMetadataSurvivesServiceRecreation(t *testing.T) {
 	}
 }
 
+func TestControllerPublishRejectsForeignLeaseAfterServiceRecreation(t *testing.T) {
+	monitor := &stubMetadataMonitorClient{
+		stubMonitorClient: stubMonitorClient{
+			createVol: monitorclient.Volume{
+				ID: "opaque-volume-id",
+			},
+			getVol: monitorclient.Volume{
+				ID:            "opaque-volume-id",
+				Name:          "img-a",
+				Pool:          "fb",
+				CapacityBytes: 1 << 20,
+				ObjectSize:    4 << 20,
+			},
+		},
+		volumeMetadata: map[string]monitorclient.VolumeMetadata{
+			"opaque-volume-id": {
+				Volume: monitorclient.Volume{
+					ID:            "opaque-volume-id",
+					Name:          "img-a",
+					Pool:          "fb",
+					CapacityBytes: 1 << 20,
+					ObjectSize:    4 << 20,
+				},
+				BlockSize: 4096,
+				Transport: "rdma",
+			},
+		},
+		leases: map[string]monitorclient.Lease{
+			"opaque-volume-id": {
+				VolumeID:   "opaque-volume-id",
+				NodeID:     "node-b",
+				HostNQN:    "nqn.host.2",
+				LeaseID:    9,
+				TTLSeconds: defaultLeaseTTLSeconds,
+			},
+		},
+	}
+	exporter := &stubExporterClient{}
+	service := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+	grpcService := NewGRPCService(service)
+
+	_, err := grpcService.ControllerPublishVolume(context.Background(), &csi.ControllerPublishVolumeRequest{
+		VolumeId: "opaque-volume-id",
+		NodeId:   "node-a",
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
+			AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+		},
+		Secrets: map[string]string{"hostNQN": "nqn.host.1"},
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("expected failed precondition on foreign lease, got %v", err)
+	}
+}
+
 func TestControllerGRPCRequestValidation(t *testing.T) {
 	service := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, &stubMonitorClient{}, &stubExporterClient{})
 	grpcService := NewGRPCService(service)
