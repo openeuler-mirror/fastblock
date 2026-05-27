@@ -212,6 +212,7 @@ void client::emplace_put_image_metadata_request(const image_metadata& metadata, 
     item->set_image_name(metadata.image_name);
     item->set_size(metadata.size);
     item->set_object_size(metadata.object_size);
+    item->set_current_snap_seq(metadata.current_snap_seq);
     for (const auto& feature : metadata.features) {
         item->add_features(feature);
     }
@@ -934,6 +935,7 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
         ret.image_name = item.image_name();
         ret.size = item.size();
         ret.object_size = item.object_size();
+        ret.current_snap_seq = item.current_snap_seq();
         ret.features.reserve(item.features_size());
         for (const auto& feature : item.features()) {
             ret.features.emplace_back(feature);
