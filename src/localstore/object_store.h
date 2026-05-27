@@ -56,12 +56,12 @@ public:
 
   void write(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
              uint64_t offset, char* buf, uint64_t len,
-             object_rw_complete cb_fn, void* arg);
+             uint64_t current_snap_seq, object_rw_complete cb_fn, void* arg);
 
   void stop(object_rw_complete cb_fn, void* arg);
 
   void snap_create(std::map<std::string, xattr_val_type>& xattr, std::string object_name, std::string snap_name,
-                   object_rw_complete cb_fn, void* arg);
+                   uint64_t snap_seq, object_rw_complete cb_fn, void* arg);
 
   void snap_delete(std::string object_name, std::string snap_name,
                    object_rw_complete cb_fn, void* arg);
@@ -84,10 +84,10 @@ public:
 private:
   void readwrite(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
                      uint64_t offset, char* buf, uint64_t len,
-                     object_rw_complete cb_fn, void* arg, bool is_read);
+                     uint64_t current_snap_seq, object_rw_complete cb_fn, void* arg, bool is_read);
   void create_blob(std::map<std::string, xattr_val_type>& xattr, std::string object_name,
                      uint64_t offset, char* buf, uint64_t len,
-                     object_rw_complete cb_fn, void* arg, bool is_read);
+                     uint64_t current_snap_seq, object_rw_complete cb_fn, void* arg, bool is_read);
 
   static void blob_readwrite(struct spdk_blob *blob, struct spdk_io_channel * channel,
                        std::string object_name, uint64_t offset, char* buf, uint64_t len,
@@ -131,10 +131,13 @@ public:
   struct snap {
     fb_blob     snap_blob;
     std::string snap_name;
+    uint64_t    snap_seq{0};
   };
   struct object {
     fb_blob         origin;
     fb_blob         recover;
+    uint64_t        birth_snap_seq{0};
+    uint64_t        last_snap_seq{0};
     std::list<snap> snap_list;
   };
   //快照版本链表的结点。

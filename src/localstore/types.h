@@ -117,12 +117,14 @@ struct log_xattr {
 };
 
 struct object_xattr {
-    constexpr static char *xattr_names[] = {"type", "shard", "pg", "name"};
+    constexpr static char *xattr_names[] = {"type", "shard", "pg", "name", "birth_seq", "last_snap_seq"};
     constexpr static size_t xattr_count = SPDK_COUNTOF(xattr_names);
     constexpr static blob_type type = blob_type::object;
     uint32_t shard_id;
     std::string pg;
     std::string obj_name;
+    uint64_t birth_seq;
+    uint64_t last_snap_seq;
 
     static object_xattr parse_xattr(struct spdk_blob *blob) {
         uint32_t *shard_id;
@@ -139,7 +141,15 @@ struct object_xattr {
         rc = spdk_blob_get_xattr_value(blob, "name", (const void **)&value, &len);
         obj_name = std::string(value, len);
 
-        return object_xattr{.shard_id = *shard_id, .pg = pg, .obj_name = obj_name}; 
+        uint64_t *birth_seq = nullptr;
+        uint64_t *last_snap_seq = nullptr;
+        rc = spdk_blob_get_xattr_value(blob, "birth_seq", (const void **)&birth_seq, &len);
+        uint64_t birth = rc == 0 && birth_seq != nullptr ? *birth_seq : 0;
+
+        rc = spdk_blob_get_xattr_value(blob, "last_snap_seq", (const void **)&last_snap_seq, &len);
+        uint64_t last = rc == 0 && last_snap_seq != nullptr ? *last_snap_seq : 0;
+
+        return object_xattr{.shard_id = *shard_id, .pg = pg, .obj_name = obj_name, .birth_seq = birth, .last_snap_seq = last}; 
     }
 
     static void get_xattr_value(void *arg, const char *name, const void **value, size_t *value_len) {
@@ -161,6 +171,14 @@ struct object_xattr {
             *value = ctx->obj_name.c_str();
             *value_len = ctx->obj_name.size(); 
             return; 
+        } else if(!strcmp("birth_seq", name)){
+            *value = &(ctx->birth_seq);
+            *value_len = sizeof(ctx->birth_seq);
+            return;
+        } else if(!strcmp("last_snap_seq", name)){
+            *value = &(ctx->last_snap_seq);
+            *value_len = sizeof(ctx->last_snap_seq);
+            return;
         }
         *value = NULL;
         *value_len = 0;
@@ -171,17 +189,20 @@ struct object_xattr {
         spdk_blob_set_xattr(blob, "shard", &shard_id, sizeof(shard_id));
         spdk_blob_set_xattr(blob, "pg", pg.c_str(), pg.size());
         spdk_blob_set_xattr(blob, "name", obj_name.c_str(), obj_name.size());
+        spdk_blob_set_xattr(blob, "birth_seq", &birth_seq, sizeof(birth_seq));
+        spdk_blob_set_xattr(blob, "last_snap_seq", &last_snap_seq, sizeof(last_snap_seq));
     }
 };
 
 struct object_snap_xattr {
-    constexpr static char *xattr_names[] = {"type", "shard", "pg", "name", "snap_name"};
+    constexpr static char *xattr_names[] = {"type", "shard", "pg", "name", "snap_name", "snap_seq"};
     constexpr static size_t xattr_count = SPDK_COUNTOF(xattr_names);
     constexpr static blob_type type = blob_type::object_snap;
     uint32_t shard_id;
     std::string pg;
     std::string obj_name;
     std::string snap_name;
+    uint64_t snap_seq;
 
     static object_snap_xattr parse_xattr(struct spdk_blob *blob) {
         uint32_t *shard_id;
@@ -200,7 +221,10 @@ struct object_snap_xattr {
 
         rc = spdk_blob_get_xattr_value(blob, "snap_name", (const void **)&value, &len);
         snap_name = std::string(value, len);
-        return object_snap_xattr{.shard_id = *shard_id, .pg = pg, .obj_name = obj_name, .snap_name = snap_name};
+        uint64_t *snap_seq = nullptr;
+        rc = spdk_blob_get_xattr_value(blob, "snap_seq", (const void **)&snap_seq, &len);
+        uint64_t seq = rc == 0 && snap_seq != nullptr ? *snap_seq : 0;
+        return object_snap_xattr{.shard_id = *shard_id, .pg = pg, .obj_name = obj_name, .snap_name = snap_name, .snap_seq = seq};
     }
 
     static void get_xattr_value(void *arg, const char *name, const void **value, size_t *value_len) {
@@ -226,6 +250,10 @@ struct object_snap_xattr {
             *value = ctx->snap_name.c_str();
             *value_len = ctx->snap_name.size(); 
             return; 
+        } else if(!strcmp("snap_seq", name)){
+            *value = &(ctx->snap_seq);
+            *value_len = sizeof(ctx->snap_seq);
+            return;
         }
         *value = NULL;
         *value_len = 0;
@@ -235,8 +263,9 @@ struct object_snap_xattr {
         spdk_blob_set_xattr(blob, "type", &type, sizeof(type));
         spdk_blob_set_xattr(blob, "shard", &shard_id, sizeof(shard_id));
         spdk_blob_set_xattr(blob, "pg", pg.c_str(), pg.size());
-        spdk_blob_set_xattr(blob, "name", pg.c_str(), pg.size());
-        spdk_blob_set_xattr(blob, "snap_name", pg.c_str(), pg.size());
+        spdk_blob_set_xattr(blob, "name", obj_name.c_str(), obj_name.size());
+        spdk_blob_set_xattr(blob, "snap_name", snap_name.c_str(), snap_name.size());
+        spdk_blob_set_xattr(blob, "snap_seq", &snap_seq, sizeof(snap_seq));
     }
 };
 
