@@ -389,3 +389,43 @@ func TestGetExportTreatsSPDKNotFoundAsErrExportNotFound(t *testing.T) {
 		t.Fatalf("expected ErrExportNotFound, got %v", err)
 	}
 }
+
+func TestCreateExportRecreatesIncompleteSubsystem(t *testing.T) {
+	cfg := config.Default()
+	cfg.MonitorAddress = "10.0.0.20:3333"
+	cfg.TargetAddress = "10.0.0.10"
+	cfg.NodeName = "node-a"
+	rpc := &stubCaller{
+		getSubsystems: []subsystemInfo{{
+			NQN:        "nqn.2026-04.io.fastblock:fbvol-cluster-a-1-7",
+			Namespaces: nil,
+			ListenAddresses: []subsystemAddress{{
+				Traddr:  "10.0.0.10",
+				Trsvcid: "4420",
+			}},
+		}},
+	}
+	manager := newLocalManagerWithRPC(cfg, rpc)
+
+	export, err := manager.CreateExport(context.Background(), api.CreateExportRequest{
+		VolumeID:      "fbvol:cluster-a:1:7",
+		PoolName:      "fb",
+		ImageName:     "img-7",
+		CapacityBytes: 1 << 20,
+		ObjectSize:    4 << 20,
+		BlockSize:     4096,
+		Transport:     "rdma",
+	})
+	if err != nil {
+		t.Fatalf("create export failed: %v", err)
+	}
+	if export.ID == "" || export.NSID != 11 {
+		t.Fatalf("unexpected export: %+v", export)
+	}
+	if len(rpc.calls) < 7 {
+		t.Fatalf("expected cleanup and recreate calls, got %d", len(rpc.calls))
+	}
+	if rpc.calls[1].method != "nvmf_delete_subsystem" || rpc.calls[2].method != "bdev_fastblock_delete" {
+		t.Fatalf("expected stale export cleanup before recreate, got %+v", rpc.calls)
+	}
+}
