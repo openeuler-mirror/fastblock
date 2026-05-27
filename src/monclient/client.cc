@@ -302,6 +302,74 @@ void client::emplace_list_snapshot_metadata_request(const std::string& image_id,
     enqueue_request(ctx);
 }
 
+void client::emplace_put_image_child_link_request(const std::string& snapshot_id, const std::string& child_image_id, on_response_callback_type&& cb) {
+    auto req = std::make_unique<msg::Request>();
+    auto* real_req = req->mutable_put_image_child_link_request();
+    real_req->set_snapshot_id(snapshot_id);
+    real_req->set_child_image_id(child_image_id);
+    auto* ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
+}
+
+void client::emplace_delete_image_child_link_request(const std::string& snapshot_id, const std::string& child_image_id, on_response_callback_type&& cb) {
+    auto req = std::make_unique<msg::Request>();
+    auto* real_req = req->mutable_delete_image_child_link_request();
+    real_req->set_snapshot_id(snapshot_id);
+    real_req->set_child_image_id(child_image_id);
+    auto* ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
+}
+
+void client::emplace_list_image_child_link_request(const std::string& snapshot_id, on_response_callback_type&& cb) {
+    auto req = std::make_unique<msg::Request>();
+    req->mutable_list_image_child_link_request()->set_snapshot_id(snapshot_id);
+    auto* ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
+}
+
+void client::emplace_put_image_operation_request(const image_operation_record& record, on_response_callback_type&& cb) {
+    auto req = std::make_unique<msg::Request>();
+    auto* real_req = req->mutable_put_image_operation_request();
+    auto* item = real_req->mutable_record();
+    item->set_operation_id(record.operation_id);
+    item->set_type(record.type);
+    item->set_target_id(record.target_id);
+    item->set_status(record.status);
+    item->set_error(record.error);
+    item->set_started_at_unix_nano(record.started_at_unix_nano);
+    item->set_updated_at_unix_nano(record.updated_at_unix_nano);
+    auto* ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
+}
+
+void client::emplace_get_image_operation_request(const std::string& operation_id, on_response_callback_type&& cb) {
+    auto req = std::make_unique<msg::Request>();
+    req->mutable_get_image_operation_request()->set_operation_id(operation_id);
+    auto* ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
+}
+
+void client::emplace_delete_image_operation_request(const std::string& operation_id, on_response_callback_type&& cb) {
+    auto req = std::make_unique<msg::Request>();
+    req->mutable_delete_image_operation_request()->set_operation_id(operation_id);
+    auto* ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
+}
+
+void client::emplace_list_image_operation_request(on_response_callback_type&& cb) {
+    auto req = std::make_unique<msg::Request>();
+    [[maybe_unused]] auto _ = req->mutable_list_image_operation_request();
+    auto* ctx = new client::request_context{
+      this, std::move(req), std::monostate{}, std::move(cb)};
+    enqueue_request(ctx);
+}
+
 void client::handle_emplace_request(client::request_context* ctx) {
     _requests.push_back(std::unique_ptr<request_context>{ctx});
 }
@@ -895,6 +963,17 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
         ret.child_count = item.child_count();
         return ret;
     };
+    auto image_operation_from_proto = [] (const msg::ImageOperationRecordV2& item) {
+        client::image_operation_record ret{};
+        ret.operation_id = item.operation_id();
+        ret.type = item.type();
+        ret.target_id = item.target_id();
+        ret.status = item.status();
+        ret.error = item.error();
+        ret.started_at_unix_nano = item.started_at_unix_nano();
+        ret.updated_at_unix_nano = item.updated_at_unix_nano();
+        return ret;
+    };
     auto response_case = response->union_case();
     SPDK_DEBUGLOG(mon, "Got response type %d\n", response_case);
 
@@ -1077,6 +1156,71 @@ void client::process_response(std::shared_ptr<msg::Response> response) {
         items->data.reserve(resp.metadata_size());
         for (const auto& item : resp.metadata()) {
             items->data.emplace_back(snapshot_metadata_from_proto(item));
+        }
+        auto& req_ctx = _on_flight_requests.front();
+        req_ctx->response_data = std::move(items);
+        req_ctx->cb(to_response_status(resp.errorcode()), req_ctx.get());
+        _on_flight_requests.pop_front();
+        break;
+    }
+    case msg::Response::UnionCase::kPutImageChildLinkResponse: {
+        SPDK_DEBUGLOG(mon, "Received put image child link response\n");
+        auto& req_ctx = _on_flight_requests.front();
+        req_ctx->cb(to_response_status(response->put_image_child_link_response().errorcode()), req_ctx.get());
+        _on_flight_requests.pop_front();
+        break;
+    }
+    case msg::Response::UnionCase::kDeleteImageChildLinkResponse: {
+        SPDK_DEBUGLOG(mon, "Received delete image child link response\n");
+        auto& req_ctx = _on_flight_requests.front();
+        req_ctx->cb(to_response_status(response->delete_image_child_link_response().errorcode()), req_ctx.get());
+        _on_flight_requests.pop_front();
+        break;
+    }
+    case msg::Response::UnionCase::kListImageChildLinkResponse: {
+        SPDK_DEBUGLOG(mon, "Received list image child link response\n");
+        auto& resp = response->list_image_child_link_response();
+        auto items = std::make_unique<client::child_image_id_list>();
+        items->data.reserve(resp.child_image_ids_size());
+        for (const auto& item : resp.child_image_ids()) {
+            items->data.emplace_back(item);
+        }
+        auto& req_ctx = _on_flight_requests.front();
+        req_ctx->response_data = std::move(items);
+        req_ctx->cb(to_response_status(resp.errorcode()), req_ctx.get());
+        _on_flight_requests.pop_front();
+        break;
+    }
+    case msg::Response::UnionCase::kPutImageOperationResponse: {
+        SPDK_DEBUGLOG(mon, "Received put image operation response\n");
+        auto& req_ctx = _on_flight_requests.front();
+        req_ctx->cb(to_response_status(response->put_image_operation_response().errorcode()), req_ctx.get());
+        _on_flight_requests.pop_front();
+        break;
+    }
+    case msg::Response::UnionCase::kGetImageOperationResponse: {
+        SPDK_DEBUGLOG(mon, "Received get image operation response\n");
+        auto& resp = response->get_image_operation_response();
+        auto& req_ctx = _on_flight_requests.front();
+        req_ctx->response_data = std::make_unique<client::image_operation_record>(image_operation_from_proto(resp.record()));
+        req_ctx->cb(to_response_status(resp.errorcode()), req_ctx.get());
+        _on_flight_requests.pop_front();
+        break;
+    }
+    case msg::Response::UnionCase::kDeleteImageOperationResponse: {
+        SPDK_DEBUGLOG(mon, "Received delete image operation response\n");
+        auto& req_ctx = _on_flight_requests.front();
+        req_ctx->cb(to_response_status(response->delete_image_operation_response().errorcode()), req_ctx.get());
+        _on_flight_requests.pop_front();
+        break;
+    }
+    case msg::Response::UnionCase::kListImageOperationResponse: {
+        SPDK_DEBUGLOG(mon, "Received list image operation response\n");
+        auto& resp = response->list_image_operation_response();
+        auto items = std::make_unique<client::image_operation_record_list>();
+        items->data.reserve(resp.records_size());
+        for (const auto& item : resp.records()) {
+            items->data.emplace_back(image_operation_from_proto(item));
         }
         auto& req_ctx = _on_flight_requests.front();
         req_ctx->response_data = std::move(items);
