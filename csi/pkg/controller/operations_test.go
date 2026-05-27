@@ -641,6 +641,42 @@ func TestControllerUnpublishUsesStoredExportIDWithoutAttachment(t *testing.T) {
 	}
 }
 
+func TestControllerUnpublishWithoutNodeIDUsesStoredAttachmentOwner(t *testing.T) {
+	monitor := &stubMetadataMonitorClient{
+		attachments: map[string]monitorclient.Attachment{
+			"vol-1": {
+				VolumeID: "vol-1",
+				NodeID:   "kerneldev",
+				HostNQN:  "nqn.host.1",
+				ExportID: "exp-1",
+			},
+		},
+		leases: map[string]monitorclient.Lease{
+			"vol-1": {
+				VolumeID:   "vol-1",
+				NodeID:     "kerneldev",
+				HostNQN:    "nqn.host.1",
+				LeaseID:    1,
+				TTLSeconds: defaultLeaseTTLSeconds,
+			},
+		},
+	}
+	exporter := &stubExporterClient{}
+	svc := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+
+	if err := svc.ControllerUnpublishVolume(context.Background(), ControllerUnpublishRequest{
+		VolumeID: "vol-1",
+	}); err != nil {
+		t.Fatalf("controller unpublish failed: %v", err)
+	}
+	if exporter.denyID != "exp-1" || exporter.deleteID != "exp-1" {
+		t.Fatalf("expected stored export id, got deny=%q delete=%q", exporter.denyID, exporter.deleteID)
+	}
+	if monitor.releaseLeaseCalls == 0 {
+		t.Fatal("expected lease release call")
+	}
+}
+
 func TestNewUsesMonitorMetadataStoreWhenAvailable(t *testing.T) {
 	monitor := &stubMetadataMonitorClient{}
 	exporter := &stubExporterClient{}
