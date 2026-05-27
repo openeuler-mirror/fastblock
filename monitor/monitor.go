@@ -705,6 +705,134 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			return err
 		}
 
+	case *msg.Request_PutImageChildLinkRequest:
+		log.Info(ctx, "Received PutImageChildLinkRequest")
+
+		response := &msg.Response{
+			Union: &msg.Response_PutImageChildLinkResponse{
+				PutImageChildLinkResponse: &msg.PutImageChildLinkResponse{
+					Errorcode: imagemeta.PutChildLinkProto(
+						ctx,
+						client,
+						payload.PutImageChildLinkRequest.GetSnapshotId(),
+						payload.PutImageChildLinkRequest.GetChildImageId(),
+					),
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_DeleteImageChildLinkRequest:
+		log.Info(ctx, "Received DeleteImageChildLinkRequest")
+
+		response := &msg.Response{
+			Union: &msg.Response_DeleteImageChildLinkResponse{
+				DeleteImageChildLinkResponse: &msg.DeleteImageChildLinkResponse{
+					Errorcode: imagemeta.DeleteChildLinkProto(
+						ctx,
+						client,
+						payload.DeleteImageChildLinkRequest.GetSnapshotId(),
+						payload.DeleteImageChildLinkRequest.GetChildImageId(),
+					),
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_ListImageChildLinkRequest:
+		log.Info(ctx, "Received ListImageChildLinkRequest")
+
+		errCode, childImageIDs := imagemeta.ListChildLinkProto(ctx, client, payload.ListImageChildLinkRequest.GetSnapshotId())
+		response := &msg.Response{
+			Union: &msg.Response_ListImageChildLinkResponse{
+				ListImageChildLinkResponse: &msg.ListImageChildLinkResponse{
+					Errorcode:     errCode,
+					ChildImageIds: childImageIDs,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_PutImageOperationRequest:
+		log.Info(ctx, "Received PutImageOperationRequest")
+
+		response := &msg.Response{
+			Union: &msg.Response_PutImageOperationResponse{
+				PutImageOperationResponse: &msg.PutImageOperationResponse{
+					Errorcode: imagemeta.PutOperationProto(ctx, client, payload.PutImageOperationRequest.GetRecord()),
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_GetImageOperationRequest:
+		log.Info(ctx, "Received GetImageOperationRequest")
+
+		errCode, record := imagemeta.GetOperationProto(ctx, client, payload.GetImageOperationRequest.GetOperationId())
+		response := &msg.Response{
+			Union: &msg.Response_GetImageOperationResponse{
+				GetImageOperationResponse: &msg.GetImageOperationResponse{
+					Errorcode: errCode,
+					Record:    record,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_DeleteImageOperationRequest:
+		log.Info(ctx, "Received DeleteImageOperationRequest")
+
+		response := &msg.Response{
+			Union: &msg.Response_DeleteImageOperationResponse{
+				DeleteImageOperationResponse: &msg.DeleteImageOperationResponse{
+					Errorcode: imagemeta.DeleteOperationProto(ctx, client, payload.DeleteImageOperationRequest.GetOperationId()),
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_ListImageOperationRequest:
+		log.Info(ctx, "Received ListImageOperationRequest")
+
+		errCode, records := imagemeta.ListOperationsProto(ctx, client)
+		response := &msg.Response{
+			Union: &msg.Response_ListImageOperationResponse{
+				ListImageOperationResponse: &msg.ListImageOperationResponse{
+					Errorcode: errCode,
+					Records:   records,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
 	case *msg.Request_PutCsiAttachmentRequest:
 		log.Info(ctx, "Received PutCSIAttachmentRequest")
 

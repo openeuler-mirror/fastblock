@@ -85,6 +85,66 @@ func ListSnapshotsProto(ctx context.Context, client *etcdapi.EtcdClient, imageID
 	return msg.ImageMetadataErrorCode_imageMetadataOk, resp
 }
 
+func PutChildLinkProto(ctx context.Context, client *etcdapi.EtcdClient, snapshotID, childImageID string) msg.ImageMetadataErrorCode {
+	if err := PutChildLink(ctx, client, snapshotID, childImageID); err != nil {
+		return toImageMetadataError(err)
+	}
+	return msg.ImageMetadataErrorCode_imageMetadataOk
+}
+
+func DeleteChildLinkProto(ctx context.Context, client *etcdapi.EtcdClient, snapshotID, childImageID string) msg.ImageMetadataErrorCode {
+	if err := DeleteChildLink(ctx, client, snapshotID, childImageID); err != nil {
+		return toImageMetadataError(err)
+	}
+	return msg.ImageMetadataErrorCode_imageMetadataOk
+}
+
+func ListChildLinkProto(ctx context.Context, client *etcdapi.EtcdClient, snapshotID string) (msg.ImageMetadataErrorCode, []string) {
+	items, err := ListChildImageIDs(ctx, client, snapshotID)
+	if err != nil {
+		return toImageMetadataError(err), nil
+	}
+	return msg.ImageMetadataErrorCode_imageMetadataOk, items
+}
+
+func PutOperationProto(ctx context.Context, client *etcdapi.EtcdClient, record *msg.ImageOperationRecordV2) msg.ImageMetadataErrorCode {
+	item, err := operationFromProto(record)
+	if err != nil {
+		return toImageMetadataError(err)
+	}
+	if err := PutOperation(ctx, client, item); err != nil {
+		return toImageMetadataError(err)
+	}
+	return msg.ImageMetadataErrorCode_imageMetadataOk
+}
+
+func GetOperationProto(ctx context.Context, client *etcdapi.EtcdClient, operationID string) (msg.ImageMetadataErrorCode, *msg.ImageOperationRecordV2) {
+	item, err := GetOperation(ctx, client, operationID)
+	if err != nil {
+		return toImageMetadataError(err), nil
+	}
+	return msg.ImageMetadataErrorCode_imageMetadataOk, operationToProto(item)
+}
+
+func DeleteOperationProto(ctx context.Context, client *etcdapi.EtcdClient, operationID string) msg.ImageMetadataErrorCode {
+	if err := DeleteOperation(ctx, client, operationID); err != nil {
+		return toImageMetadataError(err)
+	}
+	return msg.ImageMetadataErrorCode_imageMetadataOk
+}
+
+func ListOperationsProto(ctx context.Context, client *etcdapi.EtcdClient) (msg.ImageMetadataErrorCode, []*msg.ImageOperationRecordV2) {
+	items, err := ListOperations(ctx, client)
+	if err != nil {
+		return toImageMetadataError(err), nil
+	}
+	resp := make([]*msg.ImageOperationRecordV2, 0, len(items))
+	for _, item := range items {
+		resp = append(resp, operationToProto(item))
+	}
+	return msg.ImageMetadataErrorCode_imageMetadataOk, resp
+}
+
 func imageToProto(item *ImageMetadata) *msg.ImageMetadataV2 {
 	if item == nil {
 		return nil
@@ -179,6 +239,41 @@ func snapshotFromProto(metadata *msg.SnapshotMetadataV2) (*SnapshotMetadata, err
 	return item, nil
 }
 
+func operationToProto(item *ImageOperationRecord) *msg.ImageOperationRecordV2 {
+	if item == nil {
+		return nil
+	}
+	return &msg.ImageOperationRecordV2{
+		OperationId:       item.OperationID,
+		Type:              string(item.Type),
+		TargetId:          item.TargetID,
+		Status:            string(item.Status),
+		Error:             item.Error,
+		StartedAtUnixNano: item.StartedAt.UnixNano(),
+		UpdatedAtUnixNano: item.UpdatedAt.UnixNano(),
+	}
+}
+
+func operationFromProto(record *msg.ImageOperationRecordV2) (*ImageOperationRecord, error) {
+	if record == nil {
+		return nil, errors.New("image operation record is required")
+	}
+	item := &ImageOperationRecord{
+		OperationID: record.GetOperationId(),
+		Type:        OperationType(record.GetType()),
+		TargetID:    record.GetTargetId(),
+		Status:      OperationStatus(record.GetStatus()),
+		Error:       record.GetError(),
+	}
+	if ts := record.GetStartedAtUnixNano(); ts != 0 {
+		item.StartedAt = time.Unix(0, ts).UTC()
+	}
+	if ts := record.GetUpdatedAtUnixNano(); ts != 0 {
+		item.UpdatedAt = time.Unix(0, ts).UTC()
+	}
+	return item, nil
+}
+
 func toImageMetadataError(err error) msg.ImageMetadataErrorCode {
 	switch {
 	case err == nil:
@@ -202,14 +297,21 @@ func isInvalidArgument(err error) bool {
 	case "client is required",
 		"client and image metadata are required",
 		"client and snapshot metadata are required",
+		"client and operation record are required",
 		"image metadata is required",
 		"snapshot metadata is required",
+		"image operation record is required",
 		"image id, pool name and image name are required",
 		"image size and object size must be positive",
 		"invalid image status",
 		"snapshot id, snapshot name and source image id are required",
 		"source pool name and source image name are required",
-		"invalid snapshot status":
+		"invalid snapshot status",
+		"snapshot id and child image id are required",
+		"operation id and target id are required",
+		"invalid operation type",
+		"invalid operation status",
+		"operation id is required":
 		return true
 	default:
 		return false
