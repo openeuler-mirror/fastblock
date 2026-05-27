@@ -354,3 +354,21 @@ func TestGetExport(t *testing.T) {
 		t.Fatalf("unexpected export: %+v", export)
 	}
 }
+
+func TestGetExportTreatsSPDKNotFoundAsErrExportNotFound(t *testing.T) {
+	cfg := config.Default()
+	cfg.MonitorAddress = "10.0.0.20:3333"
+	cfg.TargetAddress = "10.0.0.10"
+	cfg.NodeName = "node-a"
+	rpc := &stubCaller{
+		fail: map[string]error{
+			"nvmf_get_subsystems": &spdkrpc.ResponseError{Code: -19, Message: "No such device"},
+		},
+	}
+	manager := newLocalManagerWithRPC(cfg, rpc)
+
+	_, err := manager.GetExport(context.Background(), "fbvol-cluster-a-1-7")
+	if !errors.Is(err, ErrExportNotFound) {
+		t.Fatalf("expected ErrExportNotFound, got %v", err)
+	}
+}

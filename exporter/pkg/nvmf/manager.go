@@ -221,6 +221,9 @@ func (m *LocalManager) GetExport(ctx context.Context, exportID string) (api.Expo
 	if err := m.rpc.Call(ctx, "nvmf_get_subsystems", map[string]any{
 		"nqn": nqn,
 	}, &subsystems); err != nil {
+		if isSPDKNotFound(err) {
+			return api.Export{}, fmt.Errorf("%w: %s", ErrExportNotFound, exportID)
+		}
 		return api.Export{}, err
 	}
 	for _, subsystem := range subsystems {
