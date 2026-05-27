@@ -1270,7 +1270,8 @@ public:
       const std::string &buf,
       int32_t target_pool_id,
       write_object_callback cb_fn,
-      void *source) {
+      void *source,
+      uint64_t current_snap_seq = 0) {
         auto target_pg = calc_target(object_name, target_pool_id);
 
         auto req = std::make_unique<osd::write_request>();
@@ -1279,6 +1280,7 @@ public:
         req->set_object_name(object_name);
         req->set_offset(offset);
         req->set_data(buf);
+        req->mutable_snap_ctx()->set_current_seq(current_snap_seq);
         send_request(target_pool_id, target_pg, std::move(req), cb_fn, source);
 
         SPDK_INFOLOG(

@@ -32,7 +32,12 @@ void osd_stm::apply(std::shared_ptr<raft_entry_t> entry, utils::context *complet
     if(entry->type() == RAFT_LOGTYPE_WRITE){
         osd::write_cmd write;
         write.ParseFromString(entry->meta());
-        write_obj(write.object_name(), write.offset(), entry->data(), complete);
+        write_obj(
+            write.object_name(),
+            write.offset(),
+            entry->data(),
+            write.has_snap_ctx() ? write.snap_ctx().current_seq() : 0,
+            complete);
     }else if(entry->type() == RAFT_LOGTYPE_DELETE){
         osd::delete_cmd del;
         del.ParseFromString(entry->meta());
@@ -60,7 +65,7 @@ void write_obj_done(void *arg, int obj_errno){
     delete ctx;
 }
 
-void osd_stm::write_obj(const std::string& obj_name, uint64_t offset, const std::string& data, utils::context *complete){
+void osd_stm::write_obj(const std::string& obj_name, uint64_t offset, const std::string& data, uint64_t current_snap_seq, utils::context *complete){
     uint64_t len = utils::align_up<uint64_t>(data.size(), 512 * BLOCK_UNITS);
     char* buf = (char*)spdk_zmalloc(len, 0x1000, NULL, _sockid, SPDK_MALLOC_DMA);
     memcpy(buf, data.c_str(), data.size());
@@ -71,6 +76,7 @@ void osd_stm::write_obj(const std::string& obj_name, uint64_t offset, const std:
     SPDK_DEBUGLOG(osd, "write obj %s xattr type: %u pg: %s in core: %u\n",
         obj_name.c_str(), (uint32_t)blob_type::object, get_pg_name().c_str(),
         core_sharded::get_core_sharded().this_shard_id());
+    SPDK_DEBUGLOG(osd, "write obj %s current_snap_seq: %lu\n", obj_name.c_str(), current_snap_seq);
     _store.write(xattr, obj_name, offset, buf, data.size(), write_obj_done, ctx);
 }
 
@@ -156,6 +162,9 @@ void osd_stm::write_and_wait(
         osd::write_cmd cmd;
         cmd.set_object_name(request->object_name());
         cmd.set_offset(request->offset());
+        if (request->has_snap_ctx()) {
+            cmd.mutable_snap_ctx()->set_current_seq(request->snap_ctx().current_seq());
+        }
         std::string buf;
         cmd.SerializeToString(&buf);
 
