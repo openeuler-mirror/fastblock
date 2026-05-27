@@ -16,10 +16,12 @@ import (
 	"fmt"
 	"monitor/config"
 	"monitor/etcdapi"
+	"monitor/imagemeta"
 	"monitor/log"
 	"monitor/msg"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type ImageConfig struct {
@@ -39,6 +41,49 @@ var lastImageId int32 = 0
 
 func findUsableImageId() int32 {
 	return int32(lastImageId + 1)
+}
+
+func findPoolIDByName(poolname string) (int32, bool) {
+	AllPools.RwMutex.RLock()
+	defer AllPools.RwMutex.RUnlock()
+	for poolID, pc := range AllPools.pools {
+		if poolname == pc.Name {
+			return int32(poolID), true
+		}
+	}
+	return 0, false
+}
+
+func syncImageMetadata(ctx context.Context, client *etcdapi.EtcdClient, imageID int32, imageConf *ImageConfig) error {
+	if client == nil || imageConf == nil {
+		return fmt.Errorf("client and image config are required")
+	}
+	poolID, ok := findPoolIDByName(imageConf.Poolname)
+	if !ok {
+		return fmt.Errorf("unknown pool name %q", imageConf.Poolname)
+	}
+
+	now := time.Now().UTC()
+	createdAt := now
+	if existing, err := imagemeta.GetImage(ctx, client, strconv.FormatInt(int64(imageID), 10)); err == nil {
+		if !existing.CreatedAt.IsZero() {
+			createdAt = existing.CreatedAt
+		}
+	} else if err != imagemeta.ErrImageNotFound {
+		return err
+	}
+
+	return imagemeta.PutImage(ctx, client, &imagemeta.ImageMetadata{
+		ImageID:    strconv.FormatInt(int64(imageID), 10),
+		PoolID:     poolID,
+		PoolName:   imageConf.Poolname,
+		ImageName:  imageConf.Imagename,
+		Size:       imageConf.Imagesize,
+		ObjectSize: imageConf.Objectsize,
+		Status:     imagemeta.ImageStatusReady,
+		CreatedAt:  createdAt,
+		UpdatedAt:  now,
+	})
 }
 
 func LoadImageConfig(ctx context.Context, client *etcdapi.EtcdClient) (err error) {
@@ -74,6 +119,10 @@ func LoadImageConfig(ctx context.Context, client *etcdapi.EtcdClient) (err error
 		}
 
 		Allimages[int32(imageID)] = &imageConfig
+		if err := syncImageMetadata(ctx, client, int32(imageID), &imageConfig); err != nil {
+			log.Error(ctx, err)
+			return err
+		}
 		if lastSeenPoolId < int32(imageID) {
 			lastSeenPoolId = int32(imageID)
 		}
@@ -83,7 +132,7 @@ func LoadImageConfig(ctx context.Context, client *etcdapi.EtcdClient) (err error
 
 	log.Info(ctx, "loadPoolConfig done")
 	// for k, v := range AllPools {
-		// log.Info(ctx, k, v)
+	// log.Info(ctx, k, v)
 	// }
 
 	return nil
@@ -141,6 +190,15 @@ func ProcessCreateImageMessage(ctx context.Context, client *etcdapi.EtcdClient, 
 	}
 
 	Allimages[imageID] = imageConf
+	if err := syncImageMetadata(ctx, client, imageID, imageConf); err != nil {
+		log.Error(ctx, err)
+		_ = client.Delete(ctx, key)
+		delete(Allimages, imageID)
+		if strings.Contains(err.Error(), "unknown pool name") {
+			return msg.CreateImageErrorCode_unknownPoolName
+		}
+		return msg.CreateImageErrorCode_putEtcdError
+	}
 	log.Info(ctx, "successfully put to etcd for newly image, name :%s ", imagename)
 	return msg.CreateImageErrorCode_createImageOk
 }
@@ -171,6 +229,10 @@ func ProcessRemoveImageMessage(ctx context.Context, client *etcdapi.EtcdClient, 
 	//remove the pool id from the map
 	imageinfo := Allimages[imageid]
 	delete(Allimages, imageid)
+	if err := imagemeta.DeleteImage(ctx, client, strconv.FormatInt(int64(imageid), 10)); err != nil && err != imagemeta.ErrImageNotFound {
+		log.Error(ctx, err)
+		return msg.RemoveImageErrorCode_removeImageFail, nil
+	}
 
 	log.Info(ctx, "successfully deleted image '", imagename, "' from etcd")
 	return msg.RemoveImageErrorCode_removeImageOk, imageinfo
@@ -233,6 +295,10 @@ func ProcessResizeImageMessage(ctx context.Context, client *etcdapi.EtcdClient, 
 	}
 
 	Allimages[imageID] = imageConf
+	if err := syncImageMetadata(ctx, client, imageID, imageConf); err != nil {
+		log.Error(ctx, err)
+		return msg.ResizeImageErrorCode_putResizeImageEtcdError, nil
+	}
 	log.Info(ctx, "successfully put to ectd for newly image: ", imagename)
 	return msg.ResizeImageErrorCode_resizeImageOk, imageConf
 }
