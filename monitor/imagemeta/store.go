@@ -150,6 +150,14 @@ func GetImageIDByName(ctx context.Context, client *etcdapi.EtcdClient, poolName,
 	return strings.TrimSpace(value), nil
 }
 
+func GetImageByName(ctx context.Context, client *etcdapi.EtcdClient, poolName, imageName string) (*ImageMetadata, error) {
+	imageID, err := GetImageIDByName(ctx, client, poolName, imageName)
+	if err != nil {
+		return nil, err
+	}
+	return GetImage(ctx, client, imageID)
+}
+
 func ListImages(ctx context.Context, client *etcdapi.EtcdClient) ([]*ImageMetadata, error) {
 	if client == nil {
 		return nil, errors.New("client is required")
@@ -200,6 +208,7 @@ func PutSnapshot(ctx context.Context, client *etcdapi.EtcdClient, metadata *Snap
 	return client.NewTxn().
 		Put(snapshotKey(metadata.SourceImageID, metadata.SnapshotID), string(data)).
 		Put(snapshotNameKey(metadata.SourceImageID, metadata.SnapshotName), metadata.SnapshotID).
+		Put(snapshotIDKey(metadata.SnapshotID), metadata.SourceImageID).
 		Commit(ctx)
 }
 
@@ -235,6 +244,20 @@ func GetSnapshotIDByName(ctx context.Context, client *etcdapi.EtcdClient, imageI
 	return strings.TrimSpace(value), nil
 }
 
+func GetSnapshotByID(ctx context.Context, client *etcdapi.EtcdClient, snapshotID string) (*SnapshotMetadata, error) {
+	if client == nil {
+		return nil, errors.New("client is required")
+	}
+	imageID, err := client.Get(ctx, snapshotIDKey(snapshotID))
+	if err != nil {
+		if err == etcdapi.ErrorKeyNotFound {
+			return nil, ErrSnapshotNotFound
+		}
+		return nil, err
+	}
+	return GetSnapshot(ctx, client, strings.TrimSpace(imageID), snapshotID)
+}
+
 func ListSnapshots(ctx context.Context, client *etcdapi.EtcdClient, imageID string) ([]*SnapshotMetadata, error) {
 	if client == nil {
 		return nil, errors.New("client is required")
@@ -268,6 +291,7 @@ func DeleteSnapshot(ctx context.Context, client *etcdapi.EtcdClient, imageID, sn
 	return client.NewTxn().
 		Delete(snapshotKey(imageID, snapshotID)).
 		Delete(snapshotNameKey(imageID, metadata.SnapshotName)).
+		Delete(snapshotIDKey(snapshotID)).
 		Commit(ctx)
 }
 
@@ -513,6 +537,10 @@ func snapshotKey(imageID, snapshotID string) string {
 
 func snapshotNameKey(imageID, snapshotName string) string {
 	return config.ConfigImageSnapNameKeyPrefix + encodeKeyPart(imageID) + "/" + encodeKeyPart(snapshotName)
+}
+
+func snapshotIDKey(snapshotID string) string {
+	return config.ConfigImageSnapIDKeyPrefix + encodeKeyPart(snapshotID)
 }
 
 func childLinkPrefix(snapshotID string) string {

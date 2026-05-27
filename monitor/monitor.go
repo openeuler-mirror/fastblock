@@ -593,6 +593,29 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			return err
 		}
 
+	case *msg.Request_GetImageMetadataByNameRequest:
+		log.Info(ctx, "Received GetImageMetadataByNameRequest")
+
+		errCode, metadata := imagemeta.GetImageByNameProto(
+			ctx,
+			client,
+			payload.GetImageMetadataByNameRequest.GetPoolName(),
+			payload.GetImageMetadataByNameRequest.GetImageName(),
+		)
+		response := &msg.Response{
+			Union: &msg.Response_GetImageMetadataByNameResponse{
+				GetImageMetadataByNameResponse: &msg.GetImageMetadataByNameResponse{
+					Errorcode: errCode,
+					Metadata:  metadata,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
 	case *msg.Request_DeleteImageMetadataRequest:
 		log.Info(ctx, "Received DeleteImageMetadataRequest")
 
@@ -655,6 +678,28 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 		response := &msg.Response{
 			Union: &msg.Response_GetSnapshotMetadataResponse{
 				GetSnapshotMetadataResponse: &msg.GetSnapshotMetadataResponse{
+					Errorcode: errCode,
+					Metadata:  metadata,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_GetSnapshotMetadataByIdRequest:
+		log.Info(ctx, "Received GetSnapshotMetadataByIDRequest")
+
+		errCode, metadata := imagemeta.GetSnapshotByIDProto(
+			ctx,
+			client,
+			payload.GetSnapshotMetadataByIdRequest.GetSnapshotId(),
+		)
+		response := &msg.Response{
+			Union: &msg.Response_GetSnapshotMetadataByIdResponse{
+				GetSnapshotMetadataByIdResponse: &msg.GetSnapshotMetadataByIDResponse{
 					Errorcode: errCode,
 					Metadata:  metadata,
 				},
