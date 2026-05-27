@@ -404,7 +404,7 @@ wait_for_workload() {
     kubectl get pods -n "$NAMESPACE" -o wide
 }
 
-apply_test_workload() {
+apply_test_namespace_and_pvc() {
     kubectl apply -f - <<EOF
 apiVersion: v1
 kind: Namespace
@@ -424,7 +424,11 @@ spec:
   resources:
     requests:
       storage: 16Mi
----
+EOF
+}
+
+apply_test_pod() {
+    kubectl apply -f - <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
@@ -452,6 +456,7 @@ spec:
   - name: data
     persistentVolumeClaim:
       claimName: fastblock-pvc
+---
 EOF
 }
 
@@ -491,12 +496,13 @@ restart_controller_and_recreate_pod() {
 
     log "recreating test pod after controller restart"
     kubectl delete pod fastblock-block-pod -n "$TEST_NAMESPACE" --ignore-not-found=true --wait=true
-    apply_test_workload
+    apply_test_pod
     wait_for_pod_ready
 }
 
 run_test() {
-    apply_test_workload
+    apply_test_namespace_and_pvc
+    apply_test_pod
     wait_for_pvc_bound
     wait_for_pod_ready
     kubectl get pvc,pv,pod -n "$TEST_NAMESPACE" -o wide
