@@ -193,6 +193,14 @@ func UnprotectSnapshotByIDProto(ctx context.Context, client *etcdapi.EtcdClient,
 	return msg.ImageMetadataErrorCode_imageMetadataOk, snapshotToProto(item)
 }
 
+func DeleteSnapshotByIDProto(ctx context.Context, client *etcdapi.EtcdClient, snapshotID string) (msg.ImageMetadataErrorCode, *msg.SnapshotMetadataV2) {
+	item, err := DeleteSnapshotByID(ctx, client, snapshotID)
+	if err != nil {
+		return toImageMetadataError(err), nil
+	}
+	return msg.ImageMetadataErrorCode_imageMetadataOk, snapshotToProto(item)
+}
+
 func imageToProto(item *ImageMetadata) *msg.ImageMetadataV2 {
 	if item == nil {
 		return nil
@@ -366,7 +374,8 @@ func isInvalidArgument(err error) bool {
 		"image metadata already exists",
 		"snapshot metadata is not protected",
 		"snapshot metadata has child images",
-		"pool name, image name and snapshot name are required":
+		"pool name, image name and snapshot name are required",
+		"snapshot metadata is protected":
 		return true
 	default:
 		return false

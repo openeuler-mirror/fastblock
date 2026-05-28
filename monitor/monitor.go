@@ -969,6 +969,28 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			return err
 		}
 
+	case *msg.Request_DeleteImageSnapshotRequest:
+		log.Info(ctx, "Received DeleteImageSnapshotRequest")
+
+		errCode, metadata := imagemeta.DeleteSnapshotByIDProto(
+			ctx,
+			client,
+			payload.DeleteImageSnapshotRequest.GetSnapshotId(),
+		)
+		response := &msg.Response{
+			Union: &msg.Response_DeleteImageSnapshotResponse{
+				DeleteImageSnapshotResponse: &msg.DeleteImageSnapshotResponse{
+					Errorcode: errCode,
+					Metadata:  metadata,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
 	case *msg.Request_PutCsiAttachmentRequest:
 		log.Info(ctx, "Received PutCSIAttachmentRequest")
 
