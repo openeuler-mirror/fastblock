@@ -510,6 +510,10 @@ public:
     void emplace_get_image_info_request(
       const std::string pool_name, const std::string image_name,
       on_response_callback_type&& cb);
+    void emplace_create_image_snapshot_request(
+      const std::string pool_name, const std::string image_name,
+      const std::string snapshot_name,
+      on_response_callback_type&& cb);
 
     void emplace_list_pool_request(on_response_callback_type&& cb);
     void emplace_put_image_metadata_request(const image_metadata&, on_response_callback_type&& cb);
