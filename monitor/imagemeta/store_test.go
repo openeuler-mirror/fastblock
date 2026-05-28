@@ -2,6 +2,7 @@ package imagemeta
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -191,6 +192,65 @@ func TestSnapshotMetadataChildLinksAndOperations(t *testing.T) {
 	}
 	if _, err := GetOperation(ctx, client, "op-1"); err != ErrOperationNotFound {
 		t.Fatalf("expected ErrOperationNotFound after delete, got %v", err)
+	}
+}
+
+func TestCreateSnapshotByNameAdvancesCurrentSnapSeq(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+
+	image := &ImageMetadata{
+		ImageID:        "img-3",
+		PoolID:         11,
+		PoolName:       "fb",
+		ImageName:      "volume-c",
+		Size:           8 << 20,
+		ObjectSize:     4 << 20,
+		CurrentSnapSeq: 2,
+		Status:         ImageStatusReady,
+		Generation:     7,
+	}
+	if err := PutImage(ctx, client, image); err != nil {
+		t.Fatalf("PutImage failed: %v", err)
+	}
+
+	snapshot, err := CreateSnapshotByName(ctx, client, "fb", "volume-c", "snap-a")
+	if err != nil {
+		t.Fatalf("CreateSnapshotByName failed: %v", err)
+	}
+	if snapshot.SourceImageID != "img-3" || snapshot.SnapSeq != 3 || snapshot.OperationID == "" {
+		t.Fatalf("unexpected snapshot returned: %+v", snapshot)
+	}
+
+	gotImage, err := GetImage(ctx, client, "img-3")
+	if err != nil {
+		t.Fatalf("GetImage failed: %v", err)
+	}
+	if gotImage.CurrentSnapSeq != 3 {
+		t.Fatalf("expected current snap seq 3, got %+v", gotImage)
+	}
+	if gotImage.Generation != 8 {
+		t.Fatalf("expected generation increment, got %+v", gotImage)
+	}
+
+	gotSnap, err := GetSnapshotByID(ctx, client, snapshot.SnapshotID)
+	if err != nil {
+		t.Fatalf("GetSnapshotByID failed: %v", err)
+	}
+	if gotSnap.SnapshotName != "snap-a" || gotSnap.SnapSeq != 3 {
+		t.Fatalf("unexpected stored snapshot: %+v", gotSnap)
+	}
+
+	gotOp, err := GetOperation(ctx, client, snapshot.OperationID)
+	if err != nil {
+		t.Fatalf("GetOperation failed: %v", err)
+	}
+	if gotOp.Type != OperationCreateSnapshot || gotOp.TargetID != snapshot.SnapshotID || gotOp.Status != OperationStatusDone {
+		t.Fatalf("unexpected operation: %+v", gotOp)
+	}
+
+	if _, err := CreateSnapshotByName(ctx, client, "fb", "volume-c", "snap-a"); !errors.Is(err, ErrSnapshotExists) {
+		t.Fatalf("expected ErrSnapshotExists, got %v", err)
 	}
 }
 
