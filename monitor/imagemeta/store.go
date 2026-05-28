@@ -20,6 +20,7 @@ var (
 	ErrImageExists          = errors.New("image metadata already exists")
 	ErrSnapshotNotFound     = errors.New("snapshot metadata not found")
 	ErrSnapshotExists       = errors.New("snapshot metadata already exists")
+	ErrSnapshotProtected    = errors.New("snapshot metadata is protected")
 	ErrSnapshotNotProtected = errors.New("snapshot metadata is not protected")
 	ErrSnapshotHasChildren  = errors.New("snapshot metadata has child images")
 	ErrOperationNotFound    = errors.New("image operation not found")
@@ -475,6 +476,48 @@ func UnprotectSnapshotByID(ctx context.Context, client *etcdapi.EtcdClient, snap
 	err = client.NewTxn().
 		Put(snapshotKey(updated.SourceImageID, updated.SnapshotID), string(data)).
 		Put(snapshotNameKey(updated.SourceImageID, updated.SnapshotName), updated.SnapshotID).
+		Put(snapshotIDKey(updated.SnapshotID), updated.SourceImageID).
+		Commit(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &updated, nil
+}
+
+func DeleteSnapshotByID(ctx context.Context, client *etcdapi.EtcdClient, snapshotID string) (*SnapshotMetadata, error) {
+	if client == nil {
+		return nil, errors.New("client is required")
+	}
+	snapshotID = strings.TrimSpace(snapshotID)
+	if snapshotID == "" {
+		return nil, errors.New("snapshot id is required")
+	}
+
+	snapshot, err := GetSnapshotByID(ctx, client, snapshotID)
+	if err != nil {
+		return nil, err
+	}
+	if snapshot.Protected {
+		return nil, ErrSnapshotProtected
+	}
+	if snapshot.ChildCount > 0 {
+		return nil, ErrSnapshotHasChildren
+	}
+
+	updated := *snapshot
+	updated.Status = SnapshotStatusDeletedPendingGC
+	updated.UpdatedAt = time.Now().UTC()
+	if err := updated.normalizeAndValidate(); err != nil {
+		return nil, err
+	}
+
+	data, err := json.Marshal(&updated)
+	if err != nil {
+		return nil, err
+	}
+	err = client.NewTxn().
+		Put(snapshotKey(updated.SourceImageID, updated.SnapshotID), string(data)).
+		Delete(snapshotNameKey(updated.SourceImageID, updated.SnapshotName)).
 		Put(snapshotIDKey(updated.SnapshotID), updated.SourceImageID).
 		Commit(ctx)
 	if err != nil {

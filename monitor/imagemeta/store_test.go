@@ -410,6 +410,93 @@ func TestProtectAndUnprotectSnapshotByID(t *testing.T) {
 	}
 }
 
+func TestDeleteSnapshotByIDMarksDeletedPendingGC(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+
+	image := &ImageMetadata{
+		ImageID:    "img-6",
+		PoolID:     17,
+		PoolName:   "fb",
+		ImageName:  "volume-f",
+		Size:       4 << 20,
+		ObjectSize: 4 << 20,
+		Status:     ImageStatusReady,
+	}
+	if err := PutImage(ctx, client, image); err != nil {
+		t.Fatalf("PutImage failed: %v", err)
+	}
+
+	protected := &SnapshotMetadata{
+		SnapshotID:      "snap-8",
+		SnapshotName:    "protected",
+		SourceImageID:   "img-6",
+		SourcePoolID:    17,
+		SourcePoolName:  "fb",
+		SourceImageName: "volume-f",
+		SnapSeq:         1,
+		Status:          SnapshotStatusReady,
+		Protected:       true,
+	}
+	if err := PutSnapshot(ctx, client, protected); err != nil {
+		t.Fatalf("PutSnapshot failed: %v", err)
+	}
+	if _, err := DeleteSnapshotByID(ctx, client, "snap-8"); !errors.Is(err, ErrSnapshotProtected) {
+		t.Fatalf("expected ErrSnapshotProtected, got %v", err)
+	}
+
+	withChild := &SnapshotMetadata{
+		SnapshotID:      "snap-9",
+		SnapshotName:    "child",
+		SourceImageID:   "img-6",
+		SourcePoolID:    17,
+		SourcePoolName:  "fb",
+		SourceImageName: "volume-f",
+		SnapSeq:         2,
+		Status:          SnapshotStatusReady,
+		Protected:       false,
+		ChildCount:      1,
+	}
+	if err := PutSnapshot(ctx, client, withChild); err != nil {
+		t.Fatalf("PutSnapshot failed: %v", err)
+	}
+	if _, err := DeleteSnapshotByID(ctx, client, "snap-9"); !errors.Is(err, ErrSnapshotHasChildren) {
+		t.Fatalf("expected ErrSnapshotHasChildren, got %v", err)
+	}
+
+	deletable := &SnapshotMetadata{
+		SnapshotID:      "snap-10",
+		SnapshotName:    "old",
+		SourceImageID:   "img-6",
+		SourcePoolID:    17,
+		SourcePoolName:  "fb",
+		SourceImageName: "volume-f",
+		SnapSeq:         3,
+		Status:          SnapshotStatusReady,
+		Protected:       false,
+	}
+	if err := PutSnapshot(ctx, client, deletable); err != nil {
+		t.Fatalf("PutSnapshot failed: %v", err)
+	}
+	deleted, err := DeleteSnapshotByID(ctx, client, "snap-10")
+	if err != nil {
+		t.Fatalf("DeleteSnapshotByID failed: %v", err)
+	}
+	if deleted.Status != SnapshotStatusDeletedPendingGC {
+		t.Fatalf("expected deleted_pending_gc, got %+v", deleted)
+	}
+	gotByID, err := GetSnapshotByID(ctx, client, "snap-10")
+	if err != nil {
+		t.Fatalf("GetSnapshotByID failed: %v", err)
+	}
+	if gotByID.Status != SnapshotStatusDeletedPendingGC {
+		t.Fatalf("expected stored deleted_pending_gc, got %+v", gotByID)
+	}
+	if _, err := GetSnapshotIDByName(ctx, client, "img-6", "old"); !errors.Is(err, ErrSnapshotNotFound) {
+		t.Fatalf("expected snapshot name index removed, got %v", err)
+	}
+}
+
 func newTestClient(t *testing.T) *etcdapi.EtcdClient {
 	t.Helper()
 
