@@ -194,6 +194,39 @@ void libblk_client::get_snapshot_metadata_by_id(const std::string snapshot_id)
         });
 }
 
+void libblk_client::create_image_snapshot(const std::string pool_name, const std::string image_name, const std::string snapshot_name)
+{
+    _mon_cli->emplace_create_image_snapshot_request(
+        pool_name,
+        image_name,
+        snapshot_name,
+        [this](const monitor::client::response_status s, monitor::client::request_context* req_ctx)
+        {
+            SPDK_INFOLOG(libblk, "create image snapshot status %d\n", s);
+            if (s != monitor::client::response_status::ok) {
+                return;
+            }
+            auto& metadata = std::get<std::unique_ptr<monitor::client::snapshot_metadata>>(req_ctx->response_data);
+            if (!metadata) {
+                return;
+            }
+            cache_snapshot_metadata(*metadata);
+            if (!metadata->source_image_name.empty()) {
+                auto image_metadata = find_cached_image_metadata(metadata->source_pool_id, metadata->source_image_name);
+                if (image_metadata.has_value()) {
+                    image_metadata->current_snap_seq = metadata->snap_seq;
+                    cache_image_metadata(*image_metadata);
+                }
+            }
+            SPDK_INFOLOG(
+              libblk,
+              "created snapshot snapshot_id=%s source_image_id=%s snap_seq=%lu\n",
+              metadata->snapshot_id.c_str(),
+              metadata->source_image_id.c_str(),
+              metadata->snap_seq);
+        });
+}
+
 std::vector<monitor::client::snapshot_metadata> libblk_client::build_fallback_chain(
     const std::optional<monitor::client::image_metadata>& image_metadata) const
 {
