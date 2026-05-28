@@ -16,10 +16,12 @@ import (
 )
 
 var (
-	ErrImageNotFound     = errors.New("image metadata not found")
-	ErrSnapshotNotFound  = errors.New("snapshot metadata not found")
-	ErrOperationNotFound = errors.New("image operation not found")
-	ErrSnapshotExists    = errors.New("snapshot metadata already exists")
+	ErrImageNotFound        = errors.New("image metadata not found")
+	ErrImageExists          = errors.New("image metadata already exists")
+	ErrSnapshotNotFound     = errors.New("snapshot metadata not found")
+	ErrSnapshotExists       = errors.New("snapshot metadata already exists")
+	ErrSnapshotNotProtected = errors.New("snapshot metadata is not protected")
+	ErrOperationNotFound    = errors.New("image operation not found")
 )
 
 type ImageStatus string
@@ -301,6 +303,102 @@ func CreateSnapshotByName(ctx context.Context, client *etcdapi.EtcdClient, poolN
 		return nil, err
 	}
 	return snapshot, nil
+}
+
+func CreateCloneFromSnapshot(ctx context.Context, client *etcdapi.EtcdClient, snapshotID, cloneImageName string) (*ImageMetadata, error) {
+	if client == nil {
+		return nil, errors.New("client is required")
+	}
+	snapshotID = strings.TrimSpace(snapshotID)
+	cloneImageName = strings.TrimSpace(cloneImageName)
+	if snapshotID == "" || cloneImageName == "" {
+		return nil, errors.New("snapshot id and clone image name are required")
+	}
+
+	snapshot, err := GetSnapshotByID(ctx, client, snapshotID)
+	if err != nil {
+		return nil, err
+	}
+	if !snapshot.Protected {
+		return nil, ErrSnapshotNotProtected
+	}
+	sourceImage, err := GetImage(ctx, client, snapshot.SourceImageID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := GetImageIDByName(ctx, client, sourceImage.PoolName, cloneImageName); err == nil {
+		return nil, ErrImageExists
+	} else if err != ErrImageNotFound {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	imageID := "img-" + uuid.NewString()
+	opID := "op-" + uuid.NewString()
+
+	clone := &ImageMetadata{
+		ImageID:          imageID,
+		PoolID:           sourceImage.PoolID,
+		PoolName:         sourceImage.PoolName,
+		ImageName:        cloneImageName,
+		Size:             sourceImage.Size,
+		ObjectSize:       sourceImage.ObjectSize,
+		CurrentSnapSeq:   0,
+		Features:         append([]string(nil), sourceImage.Features...),
+		Status:           ImageStatusReady,
+		ParentSnapshotID: snapshotID,
+		Depth:            sourceImage.Depth + 1,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+		Generation:       1,
+	}
+	if err := clone.normalizeAndValidate(); err != nil {
+		return nil, err
+	}
+
+	updatedSnapshot := *snapshot
+	updatedSnapshot.ChildCount++
+	updatedSnapshot.UpdatedAt = now
+	if err := updatedSnapshot.normalizeAndValidate(); err != nil {
+		return nil, err
+	}
+
+	record := &ImageOperationRecord{
+		OperationID: opID,
+		Type:        OperationCloneImage,
+		TargetID:    imageID,
+		Status:      OperationStatusDone,
+		StartedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := record.normalizeAndValidate(); err != nil {
+		return nil, err
+	}
+
+	cloneData, err := json.Marshal(clone)
+	if err != nil {
+		return nil, err
+	}
+	snapshotData, err := json.Marshal(&updatedSnapshot)
+	if err != nil {
+		return nil, err
+	}
+	recordData, err := json.Marshal(record)
+	if err != nil {
+		return nil, err
+	}
+
+	err = client.NewTxn().
+		Put(imageKey(clone.ImageID), string(cloneData)).
+		Put(imageNameKey(clone.PoolName, clone.ImageName), clone.ImageID).
+		Put(snapshotKey(updatedSnapshot.SourceImageID, updatedSnapshot.SnapshotID), string(snapshotData)).
+		Put(childLinkKey(snapshotID, imageID), imageID).
+		Put(operationKey(record.OperationID), string(recordData)).
+		Commit(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return clone, nil
 }
 
 func GetSnapshot(ctx context.Context, client *etcdapi.EtcdClient, imageID, snapshotID string) (*SnapshotMetadata, error) {
