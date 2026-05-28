@@ -925,6 +925,50 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			return err
 		}
 
+	case *msg.Request_ProtectSnapshotRequest:
+		log.Info(ctx, "Received ProtectSnapshotRequest")
+
+		errCode, metadata := imagemeta.ProtectSnapshotByIDProto(
+			ctx,
+			client,
+			payload.ProtectSnapshotRequest.GetSnapshotId(),
+		)
+		response := &msg.Response{
+			Union: &msg.Response_ProtectSnapshotResponse{
+				ProtectSnapshotResponse: &msg.ProtectSnapshotResponse{
+					Errorcode: errCode,
+					Metadata:  metadata,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
+	case *msg.Request_UnprotectSnapshotRequest:
+		log.Info(ctx, "Received UnprotectSnapshotRequest")
+
+		errCode, metadata := imagemeta.UnprotectSnapshotByIDProto(
+			ctx,
+			client,
+			payload.UnprotectSnapshotRequest.GetSnapshotId(),
+		)
+		response := &msg.Response{
+			Union: &msg.Response_UnprotectSnapshotResponse{
+				UnprotectSnapshotResponse: &msg.UnprotectSnapshotResponse{
+					Errorcode: errCode,
+					Metadata:  metadata,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
 	case *msg.Request_PutCsiAttachmentRequest:
 		log.Info(ctx, "Received PutCSIAttachmentRequest")
 

@@ -177,6 +177,22 @@ func CreateCloneFromSnapshotProto(ctx context.Context, client *etcdapi.EtcdClien
 	return msg.ImageMetadataErrorCode_imageMetadataOk, imageToProto(item)
 }
 
+func ProtectSnapshotByIDProto(ctx context.Context, client *etcdapi.EtcdClient, snapshotID string) (msg.ImageMetadataErrorCode, *msg.SnapshotMetadataV2) {
+	item, err := ProtectSnapshotByID(ctx, client, snapshotID)
+	if err != nil {
+		return toImageMetadataError(err), nil
+	}
+	return msg.ImageMetadataErrorCode_imageMetadataOk, snapshotToProto(item)
+}
+
+func UnprotectSnapshotByIDProto(ctx context.Context, client *etcdapi.EtcdClient, snapshotID string) (msg.ImageMetadataErrorCode, *msg.SnapshotMetadataV2) {
+	item, err := UnprotectSnapshotByID(ctx, client, snapshotID)
+	if err != nil {
+		return toImageMetadataError(err), nil
+	}
+	return msg.ImageMetadataErrorCode_imageMetadataOk, snapshotToProto(item)
+}
+
 func imageToProto(item *ImageMetadata) *msg.ImageMetadataV2 {
 	if item == nil {
 		return nil
@@ -349,6 +365,7 @@ func isInvalidArgument(err error) bool {
 		"snapshot metadata already exists",
 		"image metadata already exists",
 		"snapshot metadata is not protected",
+		"snapshot metadata has child images",
 		"pool name, image name and snapshot name are required":
 		return true
 	default:
