@@ -756,6 +756,17 @@ message ListImageOperationResponse {
     repeated ImageOperationRecordV2 records = 2;
 }
 
+message CreateImageSnapshotRequest {
+    string pool_name = 1;
+    string image_name = 2;
+    string snapshot_name = 3;
+}
+
+message CreateImageSnapshotResponse {
+    ImageMetadataErrorCode errorcode = 1;
+    SnapshotMetadataV2 metadata = 2;
+}
+
 message Request {
     oneof union {
         BootRequest boot_request = 1;
@@ -812,6 +823,7 @@ message Request {
         ListImageOperationRequest list_image_operation_request = 52;
         GetImageMetadataByNameRequest get_image_metadata_by_name_request = 53;
         GetSnapshotMetadataByIDRequest get_snapshot_metadata_by_id_request = 54;
+        CreateImageSnapshotRequest create_image_snapshot_request = 55;
     }
 }
 
@@ -871,5 +883,6 @@ message Response {
         ListImageOperationResponse list_image_operation_response = 52;
         GetImageMetadataByNameResponse get_image_metadata_by_name_response = 53;
         GetSnapshotMetadataByIDResponse get_snapshot_metadata_by_id_response = 54;
+        CreateImageSnapshotResponse create_image_snapshot_response = 55;
     }
 }

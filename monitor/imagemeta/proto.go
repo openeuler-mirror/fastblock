@@ -161,6 +161,14 @@ func ListOperationsProto(ctx context.Context, client *etcdapi.EtcdClient) (msg.I
 	return msg.ImageMetadataErrorCode_imageMetadataOk, resp
 }
 
+func CreateSnapshotByNameProto(ctx context.Context, client *etcdapi.EtcdClient, poolName, imageName, snapshotName string) (msg.ImageMetadataErrorCode, *msg.SnapshotMetadataV2) {
+	item, err := CreateSnapshotByName(ctx, client, poolName, imageName, snapshotName)
+	if err != nil {
+		return toImageMetadataError(err), nil
+	}
+	return msg.ImageMetadataErrorCode_imageMetadataOk, snapshotToProto(item)
+}
+
 func imageToProto(item *ImageMetadata) *msg.ImageMetadataV2 {
 	if item == nil {
 		return nil
@@ -329,7 +337,9 @@ func isInvalidArgument(err error) bool {
 		"operation id and target id are required",
 		"invalid operation type",
 		"invalid operation status",
-		"operation id is required":
+		"operation id is required",
+		"snapshot metadata already exists",
+		"pool name, image name and snapshot name are required":
 		return true
 	default:
 		return false
