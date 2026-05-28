@@ -584,9 +584,8 @@ void object_store::readwrite(std::map<std::string, xattr_val_type>& xattr, std::
       blob_readwrite(it->second.origin.blob, channel, object_name, offset, buf, len, cb_fn, arg, is_read);
     } else {
       SPDK_DEBUGLOG(object_store, "object %s not found\n", object_name.c_str());
-      if (is_read && current_snap_seq > 0) {
-        memset(buf, 0, len);
-        cb_fn(arg, 0);
+      if (is_read) {
+        cb_fn(arg, -ENOENT);
         return;
       }
       create_blob(xattr, object_name, offset, buf, len, current_snap_seq, cb_fn, arg, is_read);
