@@ -162,6 +162,8 @@ private:
       return it->second;
     }
 
+    bool is_image_lineage_ready(const std::optional<monitor::client::image_metadata>& image_metadata) const;
+
     monitor::client* _mon_cli{nullptr};
     std::unordered_map<std::string, monitor::client::image_metadata> _image_metadata_cache{};
     std::unordered_map<std::string, monitor::client::snapshot_metadata> _snapshot_metadata_cache{};

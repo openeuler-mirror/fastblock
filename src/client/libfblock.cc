@@ -210,6 +210,26 @@ std::vector<monitor::client::snapshot_metadata> libblk_client::build_fallback_ch
     return chain;
 }
 
+bool libblk_client::is_image_lineage_ready(const std::optional<monitor::client::image_metadata>& image_metadata) const
+{
+    if (!image_metadata.has_value()) {
+        return false;
+    }
+
+    auto current = image_metadata;
+    while (current.has_value() && !current->parent_snapshot_id.empty()) {
+        auto parent_snapshot = find_cached_snapshot_metadata(current->parent_snapshot_id);
+        if (!parent_snapshot.has_value()) {
+            return false;
+        }
+        current = find_cached_image_metadata(parent_snapshot->source_pool_id, parent_snapshot->source_image_name);
+        if (!current.has_value()) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // bdev的IO，转化为char* buf 的io
 int libblk_client::write(
   const uint64_t pool_id,
@@ -417,6 +437,10 @@ int libblk_client::write(const uint64_t pool_id, const std::string image_name, c
     auto obj_num = get_obj_num(offset, length);
     uint64_t current_snap_seq = 0;
     auto image_metadata = find_cached_image_metadata(static_cast<int32_t>(pool_id), image_name);
+    if (!is_image_lineage_ready(image_metadata)) {
+        cb(bdev_io, err::E_BUSY);
+        return 0;
+    }
     if (image_metadata.has_value()) {
         current_snap_seq = image_metadata->current_snap_seq;
     }
@@ -602,6 +626,10 @@ int libblk_client::read(const uint64_t pool_id, const std::string image_name, co
 
     auto obj_num = get_obj_num(offset, length);
     auto image_metadata = find_cached_image_metadata(static_cast<int32_t>(pool_id), image_name);
+    if (!is_image_lineage_ready(image_metadata)) {
+        cb(bdev_io, nullptr, 0, err::E_BUSY);
+        return 0;
+    }
     auto fallback_chain = build_fallback_chain(image_metadata);
     bool is_clone = image_metadata.has_value() && !image_metadata->parent_snapshot_id.empty();
     read_source* source = new read_source(
