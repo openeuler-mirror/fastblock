@@ -497,6 +497,92 @@ func TestDeleteSnapshotByIDMarksDeletedPendingGC(t *testing.T) {
 	}
 }
 
+func TestFinalizeFlattenImageByID(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+
+	image := &ImageMetadata{
+		ImageID:    "img-7",
+		PoolID:     19,
+		PoolName:   "fb",
+		ImageName:  "volume-g",
+		Size:       8 << 20,
+		ObjectSize: 4 << 20,
+		Status:     ImageStatusReady,
+	}
+	if err := PutImage(ctx, client, image); err != nil {
+		t.Fatalf("PutImage failed: %v", err)
+	}
+
+	snapshot := &SnapshotMetadata{
+		SnapshotID:      "snap-11",
+		SnapshotName:    "base",
+		SourceImageID:   "img-7",
+		SourcePoolID:    19,
+		SourcePoolName:  "fb",
+		SourceImageName: "volume-g",
+		SnapSeq:         1,
+		Status:          SnapshotStatusReady,
+		Protected:       true,
+	}
+	if err := PutSnapshot(ctx, client, snapshot); err != nil {
+		t.Fatalf("PutSnapshot failed: %v", err)
+	}
+
+	clone, err := CreateCloneFromSnapshot(ctx, client, "snap-11", "clone-c")
+	if err != nil {
+		t.Fatalf("CreateCloneFromSnapshot failed: %v", err)
+	}
+
+	flattened, err := FinalizeFlattenImageByID(ctx, client, clone.ImageID)
+	if err != nil {
+		t.Fatalf("FinalizeFlattenImageByID failed: %v", err)
+	}
+	if flattened.ParentSnapshotID != "" || flattened.Depth != 0 {
+		t.Fatalf("unexpected flattened image: %+v", flattened)
+	}
+
+	gotImage, err := GetImage(ctx, client, clone.ImageID)
+	if err != nil {
+		t.Fatalf("GetImage failed: %v", err)
+	}
+	if gotImage.ParentSnapshotID != "" || gotImage.Depth != 0 {
+		t.Fatalf("unexpected stored flattened image: %+v", gotImage)
+	}
+
+	gotSnapshot, err := GetSnapshotByID(ctx, client, "snap-11")
+	if err != nil {
+		t.Fatalf("GetSnapshotByID failed: %v", err)
+	}
+	if gotSnapshot.ChildCount != 0 {
+		t.Fatalf("expected child_count=0 after flatten, got %+v", gotSnapshot)
+	}
+
+	children, err := ListChildImageIDs(ctx, client, "snap-11")
+	if err != nil {
+		t.Fatalf("ListChildImageIDs failed: %v", err)
+	}
+	if len(children) != 0 {
+		t.Fatalf("expected child links removed, got %+v", children)
+	}
+
+	plain := &ImageMetadata{
+		ImageID:    "img-8",
+		PoolID:     19,
+		PoolName:   "fb",
+		ImageName:  "plain",
+		Size:       4 << 20,
+		ObjectSize: 4 << 20,
+		Status:     ImageStatusReady,
+	}
+	if err := PutImage(ctx, client, plain); err != nil {
+		t.Fatalf("PutImage failed: %v", err)
+	}
+	if _, err := FinalizeFlattenImageByID(ctx, client, "img-8"); !errors.Is(err, ErrImageNotClone) {
+		t.Fatalf("expected ErrImageNotClone, got %v", err)
+	}
+}
+
 func newTestClient(t *testing.T) *etcdapi.EtcdClient {
 	t.Helper()
 

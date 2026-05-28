@@ -18,6 +18,7 @@ import (
 var (
 	ErrImageNotFound        = errors.New("image metadata not found")
 	ErrImageExists          = errors.New("image metadata already exists")
+	ErrImageNotClone        = errors.New("image metadata is not a clone")
 	ErrSnapshotNotFound     = errors.New("snapshot metadata not found")
 	ErrSnapshotExists       = errors.New("snapshot metadata already exists")
 	ErrSnapshotProtected    = errors.New("snapshot metadata is protected")
@@ -524,6 +525,79 @@ func DeleteSnapshotByID(ctx context.Context, client *etcdapi.EtcdClient, snapsho
 		return nil, err
 	}
 	return &updated, nil
+}
+
+func FinalizeFlattenImageByID(ctx context.Context, client *etcdapi.EtcdClient, imageID string) (*ImageMetadata, error) {
+	if client == nil {
+		return nil, errors.New("client is required")
+	}
+	imageID = strings.TrimSpace(imageID)
+	if imageID == "" {
+		return nil, errors.New("image id is required")
+	}
+
+	image, err := GetImage(ctx, client, imageID)
+	if err != nil {
+		return nil, err
+	}
+	if image.ParentSnapshotID == "" {
+		return nil, ErrImageNotClone
+	}
+
+	parentSnapshot, err := GetSnapshotByID(ctx, client, image.ParentSnapshotID)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	updatedImage := *image
+	updatedImage.ParentSnapshotID = ""
+	updatedImage.Depth = 0
+	updatedImage.Status = ImageStatusReady
+	updatedImage.UpdatedAt = now
+	updatedImage.Generation++
+
+	updatedSnapshot := *parentSnapshot
+	if updatedSnapshot.ChildCount > 0 {
+		updatedSnapshot.ChildCount--
+	}
+	updatedSnapshot.UpdatedAt = now
+
+	record := &ImageOperationRecord{
+		OperationID: "op-" + uuid.NewString(),
+		Type:        OperationFlattenImage,
+		TargetID:    image.ImageID,
+		Status:      OperationStatusDone,
+		StartedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := record.normalizeAndValidate(); err != nil {
+		return nil, err
+	}
+
+	imageData, err := json.Marshal(&updatedImage)
+	if err != nil {
+		return nil, err
+	}
+	snapshotData, err := json.Marshal(&updatedSnapshot)
+	if err != nil {
+		return nil, err
+	}
+	recordData, err := json.Marshal(record)
+	if err != nil {
+		return nil, err
+	}
+
+	err = client.NewTxn().
+		Put(imageKey(updatedImage.ImageID), string(imageData)).
+		Put(snapshotKey(updatedSnapshot.SourceImageID, updatedSnapshot.SnapshotID), string(snapshotData)).
+		Delete(childLinkKey(parentSnapshot.SnapshotID, image.ImageID)).
+		Put(operationKey(record.OperationID), string(recordData)).
+		Commit(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &updatedImage, nil
 }
 
 func GetSnapshot(ctx context.Context, client *etcdapi.EtcdClient, imageID, snapshotID string) (*SnapshotMetadata, error) {
