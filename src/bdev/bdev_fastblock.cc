@@ -539,6 +539,7 @@ bdev_fastblock_create_cb(void *io_device, void *ctx_buf)
     blk_cli_ptr->start([] () {
         SPDK_INFOLOG(bdev_fastblock, "block client has been started on core %d, thread id %lu\n", ::spdk_env_get_current_core(), ::spdk_thread_get_id(::spdk_get_thread()));
     });
+    blk_cli_ptr->open_image(ch->disk->pool_name, ch->disk->image_name);
 
 	return 0;
 }
