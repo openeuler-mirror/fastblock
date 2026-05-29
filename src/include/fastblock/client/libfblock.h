@@ -94,6 +94,7 @@ public:
     void protect_snapshot(const std::string snapshot_id);
     void unprotect_snapshot(const std::string snapshot_id);
     void delete_image_snapshot(const std::string snapshot_id);
+    void finalize_flatten_image(const std::string image_id);
 
     int write(
       const uint64_t pool_id,
