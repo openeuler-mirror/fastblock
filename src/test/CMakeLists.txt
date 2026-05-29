@@ -1,5 +1,12 @@
 find_package(absl REQUIRED)
 
+# Unified test framework
+add_subdirectory(framework)
+
+# Test cases using the new framework
+add_subdirectory(tests)
+
+# Legacy test executables (preserved for backward compatibility)
 add_executable(raft_membership
   osd_client.cc
   raft_membership.cc
