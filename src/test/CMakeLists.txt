@@ -3,13 +3,10 @@ find_package(absl REQUIRED)
 # Unified test framework
 add_subdirectory(framework)
 
-# Test cases using the new framework
-add_subdirectory(tests)
-
-# Legacy test executables (preserved for backward compatibility)
+# Stress tests
 add_executable(raft_membership
-  osd_client.cc
-  raft_membership.cc
+  framework/osd_client.cc
+  stress/raft_membership.cc
 )
 
 target_include_directories (raft_membership
@@ -23,7 +20,7 @@ target_link_libraries(raft_membership
 )
 
 add_executable(snapshot_write_stress
-  snapshot_write_stress.cc
+  stress/snapshot_write_stress.cc
 )
 
 target_include_directories(snapshot_write_stress
@@ -39,8 +36,8 @@ target_link_libraries(snapshot_write_stress
 )
 
 add_executable(snapshot_pg_stress
-  osd_client.cc
-  snapshot_pg_stress.cc
+  framework/osd_client.cc
+  stress/snapshot_pg_stress.cc
 )
 
 target_include_directories(snapshot_pg_stress
