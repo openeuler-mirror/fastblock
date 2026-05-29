@@ -991,6 +991,28 @@ func handleRequest(request *msg.Request, ctx context.Context, conn net.Conn, cli
 			return err
 		}
 
+	case *msg.Request_FinalizeFlattenImageRequest:
+		log.Info(ctx, "Received FinalizeFlattenImageRequest")
+
+		errCode, metadata := imagemeta.FinalizeFlattenImageProto(
+			ctx,
+			client,
+			payload.FinalizeFlattenImageRequest.GetImageId(),
+		)
+		response := &msg.Response{
+			Union: &msg.Response_FinalizeFlattenImageResponse{
+				FinalizeFlattenImageResponse: &msg.FinalizeFlattenImageResponse{
+					Errorcode: errCode,
+					Metadata:  metadata,
+				},
+			},
+		}
+
+		err := sendResponse(response, ctx, conn)
+		if err != nil {
+			return err
+		}
+
 	case *msg.Request_PutCsiAttachmentRequest:
 		log.Info(ctx, "Received PutCSIAttachmentRequest")
 
