@@ -139,6 +139,13 @@ void fb_client_init(std::optional<std::function<void()>> &&cb)
     global::blk_clients.resize(core_sharded::system::capacity() + 1);
     global::app_thread_shard_id = core_sharded::system::capacity();
     global::vhost_worker_threads.resize(core_sharded::system::capacity() + 1);
+
+    auto blk_cli = std::make_shared<::libblk_client>(global::mon_client.get(), spdk_thread_get_app_thread(), global::rpc_cli_opts);
+    auto* blk_cli_ptr = blk_cli.get();
+    global::blk_clients[global::app_thread_shard_id] = std::move(blk_cli);
+    blk_cli_ptr->start([] () {
+        SPDK_INFOLOG(common, "management block client has been started on app thread %lu\n", ::spdk_thread_get_id(::spdk_get_thread()));
+    });
 }
 
 void app_run(void *)
@@ -210,4 +217,3 @@ void app_stop(){
 		general_stop();
 	});
 }
-
