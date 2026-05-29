@@ -15,6 +15,12 @@ if(BUILD_FASTBLOCK_TESTS)
 	  raft_membership.cc
 	)
 
+	# Stress tests
+	add_executable(raft_membership
+	  framework/osd_client.cc
+	  stress/raft_membership.cc
+	)
+
 	target_include_directories (raft_membership
 	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
