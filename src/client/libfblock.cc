@@ -363,6 +363,30 @@ void libblk_client::get_snapshot_metadata_by_id(const std::string snapshot_id)
         });
 }
 
+void libblk_client::get_snapshot_id_by_name(const std::string pool_name, const std::string image_name, const std::string snapshot_name)
+{
+    _mon_cli->emplace_get_snapshot_id_by_name_request(
+        pool_name,
+        image_name,
+        snapshot_name,
+        [snapshot_name] (const monitor::client::response_status s, monitor::client::request_context* req_ctx)
+        {
+            SPDK_INFOLOG(libblk, "get snapshot id by name status %d\n", s);
+            if (s != monitor::client::response_status::ok) {
+                return;
+            }
+            auto& snapshot_id = std::get<std::unique_ptr<std::string>>(req_ctx->response_data);
+            if (!snapshot_id) {
+                return;
+            }
+            SPDK_INFOLOG(
+              libblk,
+              "snapshot name=%s snapshot_id=%s\n",
+              snapshot_name.c_str(),
+              snapshot_id->c_str());
+        });
+}
+
 void libblk_client::create_image_snapshot(const std::string pool_name, const std::string image_name, const std::string snapshot_name)
 {
     _mon_cli->emplace_create_image_snapshot_request(
@@ -396,6 +420,30 @@ void libblk_client::create_image_snapshot(const std::string pool_name, const std
         });
 }
 
+void libblk_client::create_clone_from_snapshot_name(
+  const std::string pool_name,
+  const std::string image_name,
+  const std::string snapshot_name,
+  const std::string clone_image_name)
+{
+    _mon_cli->emplace_get_snapshot_id_by_name_request(
+        pool_name,
+        image_name,
+        snapshot_name,
+        [this, clone_image_name](const monitor::client::response_status s, monitor::client::request_context* req_ctx)
+        {
+            SPDK_INFOLOG(libblk, "lookup snapshot id for clone status %d\n", s);
+            if (s != monitor::client::response_status::ok) {
+                return;
+            }
+            auto& snapshot_id = std::get<std::unique_ptr<std::string>>(req_ctx->response_data);
+            if (!snapshot_id) {
+                return;
+            }
+            create_clone_from_snapshot(*snapshot_id, clone_image_name);
+        });
+}
+
 void libblk_client::create_clone_from_snapshot(const std::string snapshot_id, const std::string clone_image_name)
 {
     _mon_cli->emplace_create_clone_from_snapshot_request(
@@ -421,6 +469,29 @@ void libblk_client::create_clone_from_snapshot(const std::string snapshot_id, co
         });
 }
 
+void libblk_client::protect_snapshot_by_name(
+  const std::string pool_name,
+  const std::string image_name,
+  const std::string snapshot_name)
+{
+    _mon_cli->emplace_get_snapshot_id_by_name_request(
+        pool_name,
+        image_name,
+        snapshot_name,
+        [this](const monitor::client::response_status s, monitor::client::request_context* req_ctx)
+        {
+            SPDK_INFOLOG(libblk, "lookup snapshot id for protect status %d\n", s);
+            if (s != monitor::client::response_status::ok) {
+                return;
+            }
+            auto& snapshot_id = std::get<std::unique_ptr<std::string>>(req_ctx->response_data);
+            if (!snapshot_id) {
+                return;
+            }
+            protect_snapshot(*snapshot_id);
+        });
+}
+
 void libblk_client::protect_snapshot(const std::string snapshot_id)
 {
     _mon_cli->emplace_protect_snapshot_request(
@@ -439,6 +510,29 @@ void libblk_client::protect_snapshot(const std::string snapshot_id)
         });
 }
 
+void libblk_client::unprotect_snapshot_by_name(
+  const std::string pool_name,
+  const std::string image_name,
+  const std::string snapshot_name)
+{
+    _mon_cli->emplace_get_snapshot_id_by_name_request(
+        pool_name,
+        image_name,
+        snapshot_name,
+        [this](const monitor::client::response_status s, monitor::client::request_context* req_ctx)
+        {
+            SPDK_INFOLOG(libblk, "lookup snapshot id for unprotect status %d\n", s);
+            if (s != monitor::client::response_status::ok) {
+                return;
+            }
+            auto& snapshot_id = std::get<std::unique_ptr<std::string>>(req_ctx->response_data);
+            if (!snapshot_id) {
+                return;
+            }
+            unprotect_snapshot(*snapshot_id);
+        });
+}
+
 void libblk_client::unprotect_snapshot(const std::string snapshot_id)
 {
     _mon_cli->emplace_unprotect_snapshot_request(
@@ -454,6 +548,29 @@ void libblk_client::unprotect_snapshot(const std::string snapshot_id)
                 return;
             }
             cache_snapshot_metadata(*metadata);
+        });
+}
+
+void libblk_client::delete_image_snapshot_by_name(
+  const std::string pool_name,
+  const std::string image_name,
+  const std::string snapshot_name)
+{
+    _mon_cli->emplace_get_snapshot_id_by_name_request(
+        pool_name,
+        image_name,
+        snapshot_name,
+        [this](const monitor::client::response_status s, monitor::client::request_context* req_ctx)
+        {
+            SPDK_INFOLOG(libblk, "lookup snapshot id for delete status %d\n", s);
+            if (s != monitor::client::response_status::ok) {
+                return;
+            }
+            auto& snapshot_id = std::get<std::unique_ptr<std::string>>(req_ctx->response_data);
+            if (!snapshot_id) {
+                return;
+            }
+            delete_image_snapshot(*snapshot_id);
         });
 }
 
