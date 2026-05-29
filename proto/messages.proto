@@ -678,6 +678,17 @@ message GetSnapshotMetadataByIDResponse {
     SnapshotMetadataV2 metadata = 2;
 }
 
+message GetSnapshotIDByNameRequest {
+    string pool_name = 1;
+    string image_name = 2;
+    string snapshot_name = 3;
+}
+
+message GetSnapshotIDByNameResponse {
+    ImageMetadataErrorCode errorcode = 1;
+    string snapshot_id = 2;
+}
+
 message DeleteSnapshotMetadataRequest {
     string image_id = 1;
     string snapshot_id = 2;
@@ -875,6 +886,7 @@ message Request {
         UnprotectSnapshotRequest unprotect_snapshot_request = 58;
         DeleteImageSnapshotRequest delete_image_snapshot_request = 59;
         FinalizeFlattenImageRequest finalize_flatten_image_request = 60;
+        GetSnapshotIDByNameRequest get_snapshot_id_by_name_request = 61;
     }
 }
 
@@ -940,5 +952,6 @@ message Response {
         UnprotectSnapshotResponse unprotect_snapshot_response = 58;
         DeleteImageSnapshotResponse delete_image_snapshot_response = 59;
         FinalizeFlattenImageResponse finalize_flatten_image_response = 60;
+        GetSnapshotIDByNameResponse get_snapshot_id_by_name_response = 61;
     }
 }
