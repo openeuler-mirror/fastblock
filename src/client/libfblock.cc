@@ -72,6 +72,25 @@ void refresh_image_on_all_clients(const std::string& pool_name, const std::strin
     }
 }
 
+void advance_snap_seq_on_all_clients(
+  const int32_t pool_id,
+  const std::string& image_name,
+  const uint64_t snap_seq)
+{
+    auto advance = [pool_id, &image_name, snap_seq](const std::shared_ptr<::libblk_client>& blk_cli) {
+        if (blk_cli) {
+            blk_cli->advance_cached_image_snap_seq(pool_id, image_name, snap_seq);
+        }
+    };
+
+    advance(global::blk_client);
+    for (auto& blk_cli : global::blk_clients) {
+        if (blk_cli && blk_cli != global::blk_client) {
+            advance(blk_cli);
+        }
+    }
+}
+
 void flatten_finish(flatten_image_ctx* ctx, const int32_t state)
 {
     SPDK_NOTICELOG("flatten image %s/%s finished with state %d\n", ctx->pool_name.c_str(), ctx->image_name.c_str(), state);
@@ -623,6 +642,7 @@ void libblk_client::create_image_snapshot(const std::string pool_name, const std
                     image_metadata->current_snap_seq = metadata->snap_seq;
                     cache_image_metadata(*image_metadata);
                 }
+                advance_snap_seq_on_all_clients(metadata->source_pool_id, metadata->source_image_name, metadata->snap_seq);
                 refresh_image_on_all_clients(metadata->source_pool_name, metadata->source_image_name);
             }
             SPDK_INFOLOG(

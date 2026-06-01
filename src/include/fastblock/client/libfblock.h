@@ -115,6 +115,21 @@ public:
       warm_image_lineage_by_metadata(metadata);
     }
 
+    void advance_cached_image_snap_seq(
+      const int32_t pool_id,
+      const std::string& image_name,
+      const uint64_t snap_seq) {
+      auto metadata = find_cached_image_metadata(pool_id, image_name);
+      if (!metadata.has_value()) {
+        return;
+      }
+      if (metadata->current_snap_seq >= snap_seq) {
+        return;
+      }
+      metadata->current_snap_seq = snap_seq;
+      cache_image_metadata(*metadata);
+    }
+
     std::vector<monitor::client::snapshot_metadata> get_fallback_chain(
       const std::optional<monitor::client::image_metadata>& image_metadata) const {
       return build_fallback_chain(image_metadata);
