@@ -25,6 +25,14 @@ int bdev_fastblock_create(struct spdk_bdev **bdev, const char *name,
 						  uint64_t object_size,
 						  const char *monitor_address);
 
+int bdev_fastblock_register_existing(struct spdk_bdev **bdev, const char *name,
+						  const char *pool_name,
+						  const char *image_name,
+						  uint64_t image_size,
+						  uint32_t block_size,
+						  uint64_t object_size,
+						  const char *monitor_address);
+
 /**
  * Delete fastblock bdev.
  *

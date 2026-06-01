@@ -71,6 +71,10 @@ struct bdev_fastblock_io
 	size_t total_len;
 };
 
+static int bdev_fastblock_create_cb(void *io_device, void *ctx_buf);
+static void bdev_fastblock_destroy_cb(void *io_device, void *ctx_buf);
+static const struct spdk_bdev_fn_table *get_fastblock_fn_table();
+
 static void
 bdev_fastblock_free(struct bdev_fastblock *fastblock)
 {
@@ -163,6 +167,104 @@ bdev_create_image(struct bdev_fastblock *fastblock)
     }
 
 	return 0;
+}
+
+static int
+bdev_fastblock_register_disk(struct spdk_bdev **bdev,
+						  const char *name,
+						  const char *pool_name,
+						  const char *image_name,
+						  uint64_t image_size,
+						  uint32_t block_size,
+						  uint64_t object_size,
+						  const char *monitor_address)
+{
+	struct bdev_fastblock *fastblock = NULL;
+	monitor::client::pg_map::pool_id_type pool_id;
+	std::string pool_name_str = pool_name;
+	int ret;
+
+	if (image_name == NULL)
+	{
+		return -EINVAL;
+	}
+
+	if(!global::mon_client->get_pool_id(pool_name_str, pool_id)){
+		SPDK_ERRLOG("pool %s does not exist.\n", pool_name);
+		return -EINVAL;
+	}
+	SPDK_INFOLOG(bdev_fastblock, "pool name %s, pool id %d\n", pool_name, pool_id);
+
+	SPDK_INFOLOG(bdev_fastblock, "create fastblock bdev on core %d\n", spdk_env_get_current_core());
+	fastblock = (struct bdev_fastblock *)calloc(1, sizeof(struct bdev_fastblock));
+	if (fastblock == NULL)
+	{
+		SPDK_ERRLOG("Failed to allocate bdev_fastblock struct\n");
+		return -ENOMEM;
+	}
+
+	fastblock->image_name = strdup(image_name);
+	if (!fastblock->image_name)
+	{
+		bdev_fastblock_free(fastblock);
+		return -ENOMEM;
+	}
+	fastblock->image_size = image_size;
+	fastblock->pool_id = pool_id;
+	fastblock->pool_name = ::strdup(pool_name);
+	fastblock->block_size = block_size;
+	if (object_size == 0)
+		fastblock->object_size = default_object_size;
+	else
+		fastblock->object_size = object_size;
+
+	fastblock->monitor_address = strdup(monitor_address);
+	if (!fastblock->monitor_address)
+	{
+		bdev_fastblock_free(fastblock);
+		return -ENOMEM;
+	}
+	SPDK_INFOLOG(bdev_fastblock, "image_name %s, monitor_address %s\n", fastblock->image_name, fastblock->monitor_address);
+
+	if (name)
+	{
+		fastblock->disk.name = strdup(name);
+	}
+	else
+	{
+		fastblock->disk.name = spdk_sprintf_alloc("Fastblock%d", bdev_fastblock_count);
+	}
+	if (!fastblock->disk.name)
+	{
+		bdev_fastblock_free(fastblock);
+		return -ENOMEM;
+	}
+	fastblock->disk.product_name = (char*)"Fastblock Disk";
+	bdev_fastblock_count++;
+
+	fastblock->disk.write_cache = 0;
+	fastblock->disk.blocklen = block_size;
+	fastblock->disk.blockcnt = fastblock->image_size / fastblock->disk.blocklen;
+	fastblock->disk.ctxt = fastblock;
+	fastblock->disk.fn_table = get_fastblock_fn_table();
+	fastblock->disk.module = &fastblock_if;
+
+	SPDK_INFOLOG(bdev_fastblock, "Add %s fastblock disk to lun\n", fastblock->disk.name);
+
+	spdk_io_device_register(fastblock, bdev_fastblock_create_cb,
+							bdev_fastblock_destroy_cb,
+							sizeof(struct bdev_fastblock_io_channel),
+							image_name);
+	ret = spdk_bdev_register(&fastblock->disk);
+	if (ret)
+	{
+		spdk_io_device_unregister(fastblock, NULL);
+		bdev_fastblock_free(fastblock);
+		return ret;
+	}
+
+	*bdev = &(fastblock->disk);
+	return ret;
 }
 
 void bdev_resize_image(struct bdev_fastblock *fastblock, uint64_t new_size_in_byte)
@@ -665,6 +767,11 @@ static const struct spdk_bdev_fn_table fastblock_fn_table = {
 	.write_config_json = bdev_fastblock_write_config_json,
 };
 
+static const struct spdk_bdev_fn_table *get_fastblock_fn_table()
+{
+	return &fastblock_fn_table;
+}
+
 int bdev_fastblock_create(struct spdk_bdev **bdev, const char *name,
 						  const char *pool_name,
 						  const char *image_name,
@@ -673,101 +780,53 @@ int bdev_fastblock_create(struct spdk_bdev **bdev, const char *name,
 						  uint64_t object_size,
 						  const char *monitor_address)
 {
+	struct spdk_bdev *registered_bdev = NULL;
 	struct bdev_fastblock *fastblock = NULL;
 	int ret;
-	if (image_name == NULL)
+	ret = bdev_fastblock_register_disk(
+		&registered_bdev,
+		name,
+		pool_name,
+		image_name,
+		image_size,
+		block_size,
+		object_size,
+		monitor_address);
+	if (ret != 0)
 	{
-		return -EINVAL;
+		return ret;
 	}
-
-	monitor::client::pg_map::pool_id_type pool_id;
-	std::string pool_name_str = pool_name;
-	if(!global::mon_client->get_pool_id(pool_name_str, pool_id)){
-		SPDK_ERRLOG("pool %s does not exist.\n", pool_name);
-		return -EINVAL;
-	}
-	SPDK_INFOLOG(bdev_fastblock, "pool name %s, pool id %d\n", pool_name, pool_id);
-
-	SPDK_INFOLOG(bdev_fastblock, "create fastblock bdev on core %d\n", spdk_env_get_current_core());
-	fastblock = (struct bdev_fastblock *)calloc(1, sizeof(struct bdev_fastblock));
-	if (fastblock == NULL)
-	{
-		SPDK_ERRLOG("Failed to allocate bdev_fastblock struct\n");
-		return -ENOMEM;
-	}
-
-	fastblock->image_name = strdup(image_name);
-	if (!fastblock->image_name)
-	{
-		bdev_fastblock_free(fastblock);
-		return -ENOMEM;
-	}
-	fastblock->image_size = image_size;
-	fastblock->pool_id = pool_id;
-    fastblock->pool_name = ::strdup(pool_name);
-	fastblock->block_size = block_size;
-	if (object_size == 0)
-		fastblock->object_size = default_object_size;
-	else
-		fastblock->object_size = object_size;
-
-	fastblock->monitor_address = strdup(monitor_address);
-	if (!fastblock->monitor_address)
-	{
-		bdev_fastblock_free(fastblock);
-		return -ENOMEM;
-	}
-	SPDK_INFOLOG(bdev_fastblock, "image_name %s, monitor_address %s\n", fastblock->image_name, fastblock->monitor_address);
+	fastblock = (struct bdev_fastblock *)registered_bdev->ctxt;
 
 	ret = bdev_create_image(fastblock);
 	if (ret != 0)
 	{
-		bdev_fastblock_free(fastblock);
 		SPDK_ERRLOG("Failed to init fastblock device\n");
 		return ret;
 	}
 
 	SPDK_INFOLOG(bdev_fastblock, "after bdev_create_image\n");
-	if (name)
-	{
-		fastblock->disk.name = strdup(name);
-	}
-	else
-	{
-		fastblock->disk.name = spdk_sprintf_alloc("Fastblock%d", bdev_fastblock_count);
-	}
-	if (!fastblock->disk.name)
-	{
-		bdev_fastblock_free(fastblock);
-		return -ENOMEM;
-	}
-	fastblock->disk.product_name = (char*)"Fastblock Disk";
-	bdev_fastblock_count++;
+	*bdev = registered_bdev;
+	return 0;
+}
 
-	fastblock->disk.write_cache = 0;
-	fastblock->disk.blocklen = block_size;
-	fastblock->disk.blockcnt = fastblock->image_size / fastblock->disk.blocklen;
-	fastblock->disk.ctxt = fastblock;
-	fastblock->disk.fn_table = &fastblock_fn_table;
-	fastblock->disk.module = &fastblock_if;
-
-	SPDK_INFOLOG(bdev_fastblock, "Add %s fastblock disk to lun\n", fastblock->disk.name);
-
-	spdk_io_device_register(fastblock, bdev_fastblock_create_cb,
-							bdev_fastblock_destroy_cb,
-							sizeof(struct bdev_fastblock_io_channel),
-							image_name);
-	ret = spdk_bdev_register(&fastblock->disk);
-	if (ret)
-	{
-		spdk_io_device_unregister(fastblock, NULL);
-		bdev_fastblock_free(fastblock);
-		return ret;
-	}
-
-	*bdev = &(fastblock->disk);
-
-	return ret;
+int bdev_fastblock_register_existing(struct spdk_bdev **bdev, const char *name,
+						  const char *pool_name,
+						  const char *image_name,
+						  uint64_t image_size,
+						  uint32_t block_size,
+						  uint64_t object_size,
+						  const char *monitor_address)
+{
+	return bdev_fastblock_register_disk(
+		bdev,
+		name,
+		pool_name,
+		image_name,
+		image_size,
+		block_size,
+		object_size,
+		monitor_address);
 }
 
 void bdev_fastblock_delete(struct spdk_bdev *bdev, spdk_delete_fastblock_complete cb_fn, void *cb_arg)
