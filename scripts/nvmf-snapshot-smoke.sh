@@ -27,7 +27,7 @@ Usage:
   scripts/nvmf-snapshot-smoke.sh run [options]
 
 Actions:
-  run      Export base image, create snapshot, protect, clone, export clone, optional nvme connect, and flatten clone.
+  run      Export base image, create snapshot, protect, clone, export clone, optional nvme connect, rollback base, and flatten clone.
 
 Options:
   --exporter-endpoint <url>   Exporter HTTP endpoint (default: http://127.0.0.1:9500)
@@ -258,6 +258,12 @@ flatten_export() {
     http_json POST "/v1/exports/$export_id/flatten" >/dev/null
 }
 
+rollback_snapshot() {
+    local export_id="$1"
+    local snapshot_name="$2"
+    http_json POST "/v1/exports/$export_id/snapshots/$snapshot_name/rollback" >/dev/null
+}
+
 connect_clone_export() {
     ensure_hostnqn
     modprobe nvme-fabrics
@@ -316,6 +322,9 @@ run_flow() {
     if [[ "$CONNECT_NVME" -eq 1 ]]; then
         connect_clone_export
     fi
+
+    log "rolling back base export to snapshot $SNAPSHOT_NAME"
+    rollback_snapshot "$(volume_export_id "$BASE_VOLUME_ID")" "$SNAPSHOT_NAME"
 
     log "flattening clone export"
     flatten_export "$(volume_export_id "$CLONE_VOLUME_ID")"
