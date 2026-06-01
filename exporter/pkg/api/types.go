@@ -14,6 +14,7 @@ type CreateExportRequest struct {
 	ObjectSize    int64
 	BlockSize     int64
 	Transport     string
+	AllowAnyHost  bool
 }
 
 type Export struct {
