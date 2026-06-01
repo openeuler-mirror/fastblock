@@ -79,14 +79,17 @@ func TestCreateExport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create export failed: %v", err)
 	}
-	if len(rpc.calls) != 5 {
+	if len(rpc.calls) != 6 {
 		t.Fatalf("unexpected call count: %d", len(rpc.calls))
 	}
 	if rpc.calls[0].method != "nvmf_get_subsystems" {
 		t.Fatalf("unexpected first method: %s", rpc.calls[0].method)
 	}
-	if rpc.calls[1].method != "bdev_fastblock_register_existing" {
+	if rpc.calls[1].method != "nvmf_create_transport" {
 		t.Fatalf("unexpected second method: %s", rpc.calls[1].method)
+	}
+	if rpc.calls[2].method != "bdev_fastblock_register_existing" {
+		t.Fatalf("unexpected third method: %s", rpc.calls[2].method)
 	}
 	if export.ID == "" || export.NQN == "" || export.NSID != 11 {
 		t.Fatalf("unexpected export: %+v", export)
@@ -177,7 +180,7 @@ func TestCreateExportReusesExistingExportOnAlreadyExists(t *testing.T) {
 	if export.ID != "fbvol-cluster-a-1-7" || export.NSID != 11 {
 		t.Fatalf("unexpected export reuse result: %+v", export)
 	}
-	if len(rpc.calls) != 3 {
+	if len(rpc.calls) != 4 {
 		t.Fatalf("unexpected call count: %d", len(rpc.calls))
 	}
 }
@@ -210,10 +213,10 @@ func TestCreateExportCleansStaleBdevAndRetries(t *testing.T) {
 	if export.ID != "fbvol-cluster-a-1-7" || export.NSID != 11 {
 		t.Fatalf("unexpected export: %+v", export)
 	}
-	if len(rpc.calls) != 9 {
+	if len(rpc.calls) != 10 {
 		t.Fatalf("unexpected call count: %d", len(rpc.calls))
 	}
-	if rpc.calls[1].method != "bdev_fastblock_register_existing" || rpc.calls[3].method != "bdev_fastblock_delete" || rpc.calls[5].method != "bdev_fastblock_register_existing" {
+	if rpc.calls[1].method != "nvmf_create_transport" || rpc.calls[2].method != "bdev_fastblock_register_existing" || rpc.calls[4].method != "bdev_fastblock_delete" || rpc.calls[6].method != "bdev_fastblock_register_existing" {
 		t.Fatalf("unexpected stale bdev recovery calls: %+v", rpc.calls)
 	}
 }
@@ -342,10 +345,10 @@ func TestCreateExportRollbackOnListenerFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected create export failure")
 	}
-	if len(rpc.calls) != 7 {
+	if len(rpc.calls) != 8 {
 		t.Fatalf("unexpected call count: %d", len(rpc.calls))
 	}
-	if rpc.calls[5].method != "nvmf_delete_subsystem" || rpc.calls[6].method != "bdev_fastblock_delete" {
+	if rpc.calls[6].method != "nvmf_delete_subsystem" || rpc.calls[7].method != "bdev_fastblock_delete" {
 		t.Fatalf("unexpected rollback calls: %+v", rpc.calls)
 	}
 }
@@ -384,6 +387,11 @@ func TestBuildRPCParamsHelpers(t *testing.T) {
 	if address["trtype"] != "RDMA" || address["traddr"] != "10.0.0.10" {
 		t.Fatalf("unexpected listener params: %+v", listenerParams)
 	}
+
+	transportParams := buildTransportParams("tcp")
+	if transportParams["trtype"] != "TCP" || transportParams["max_io_size"] != 131072 {
+		t.Fatalf("unexpected transport params: %+v", transportParams)
+	}
 }
 
 func TestGetExport(t *testing.T) {
@@ -411,6 +419,36 @@ func TestGetExport(t *testing.T) {
 	}
 	if export.ID != "fbvol-cluster-a-1-7" || export.NSID != 11 {
 		t.Fatalf("unexpected export: %+v", export)
+	}
+}
+
+func TestListExports(t *testing.T) {
+	cfg := config.Default()
+	cfg.MonitorAddress = "10.0.0.20:3333"
+	cfg.TargetAddress = "10.0.0.10"
+	cfg.NodeName = "node-a"
+	rpc := &stubCaller{
+		getSubsystems: []subsystemInfo{
+			{
+				NQN: "nqn.2026-04.io.fastblock:fbvol-cluster-a-1-7",
+				Namespaces: []subsystemNS{{NSID: 11}},
+				ListenAddresses: []subsystemAddress{{Traddr: "10.0.0.10", Trsvcid: "4420"}},
+			},
+			{
+				NQN: "nqn.other:test",
+				Namespaces: []subsystemNS{{NSID: 1}},
+				ListenAddresses: []subsystemAddress{{Traddr: "127.0.0.1", Trsvcid: "4420"}},
+			},
+		},
+	}
+	manager := newLocalManagerWithRPC(cfg, rpc)
+
+	exports, err := manager.ListExports(context.Background())
+	if err != nil {
+		t.Fatalf("list exports failed: %v", err)
+	}
+	if len(exports) != 1 || exports[0].ID != "fbvol-cluster-a-1-7" {
+		t.Fatalf("unexpected exports: %+v", exports)
 	}
 }
 
@@ -464,10 +502,27 @@ func TestCreateExportRecreatesIncompleteSubsystem(t *testing.T) {
 	if export.ID == "" || export.NSID != 11 {
 		t.Fatalf("unexpected export: %+v", export)
 	}
-	if len(rpc.calls) < 7 {
+	if len(rpc.calls) < 8 {
 		t.Fatalf("expected cleanup and recreate calls, got %d", len(rpc.calls))
 	}
 	if rpc.calls[1].method != "nvmf_delete_subsystem" || rpc.calls[2].method != "bdev_fastblock_delete" {
 		t.Fatalf("expected stale export cleanup before recreate, got %+v", rpc.calls)
+	}
+}
+
+func TestEnsureTransportIsIdempotent(t *testing.T) {
+	cfg := config.Default()
+	cfg.MonitorAddress = "10.0.0.20:3333"
+	cfg.TargetAddress = "10.0.0.10"
+	cfg.NodeName = "node-a"
+	rpc := &stubCaller{
+		fail: map[string]error{
+			"nvmf_create_transport": &spdkrpc.ResponseError{Code: -17, Message: "transport already exists"},
+		},
+	}
+	manager := newLocalManagerWithRPC(cfg, rpc)
+
+	if err := manager.ensureTransport(context.Background(), "rdma"); err != nil {
+		t.Fatalf("ensure transport should be idempotent: %v", err)
 	}
 }

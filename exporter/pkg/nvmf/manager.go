@@ -17,6 +17,7 @@ var ErrExportNotFound = errors.New("export not found")
 
 type Manager interface {
 	CreateExport(ctx context.Context, req api.CreateExportRequest) (api.Export, error)
+	ListExports(ctx context.Context) ([]api.Export, error)
 	GetExport(ctx context.Context, exportID string) (api.Export, error)
 	DeleteExport(ctx context.Context, exportID string) error
 	AllowHost(ctx context.Context, exportID, hostNQN string) error
@@ -58,6 +59,14 @@ func subsystemNQN(prefix, exportID string) string {
 	return fmt.Sprintf("%s:%s", strings.TrimRight(prefix, ":"), exportID)
 }
 
+func exportIDFromNQN(prefix, nqn string) (string, bool) {
+	prefix = strings.TrimRight(prefix, ":") + ":"
+	if !strings.HasPrefix(nqn, prefix) {
+		return "", false
+	}
+	return strings.TrimPrefix(nqn, prefix), true
+}
+
 func addressFamily(traddr string) string {
 	ip := net.ParseIP(traddr)
 	if ip != nil && ip.To4() == nil {
@@ -88,6 +97,10 @@ func (m *LocalManager) CreateExport(ctx context.Context, req api.CreateExportReq
 			return api.Export{}, cleanupErr
 		}
 	} else if !errors.Is(err, ErrExportNotFound) {
+		return api.Export{}, err
+	}
+
+	if err := m.ensureTransport(ctx, req.Transport); err != nil {
 		return api.Export{}, err
 	}
 	bdev := bdevName(id)
@@ -202,6 +215,34 @@ func buildCreateSubsystemParams(nqn, serial string) map[string]any {
 	}
 }
 
+func buildTransportParams(transport string) map[string]any {
+	switch strings.ToUpper(transport) {
+	case "RDMA":
+		return map[string]any{
+			"trtype":                  "RDMA",
+			"max_queue_depth":         128,
+			"max_io_qpairs_per_ctrlr": 8,
+			"max_io_size":             131072,
+			"in_capsule_data_size":    8192,
+		}
+	default:
+		return map[string]any{
+			"trtype":                  "TCP",
+			"max_io_qpairs_per_ctrlr": 8,
+			"max_io_size":             131072,
+			"in_capsule_data_size":    8192,
+		}
+	}
+}
+
+func (m *LocalManager) ensureTransport(ctx context.Context, transport string) error {
+	err := m.rpc.Call(ctx, "nvmf_create_transport", buildTransportParams(transport), nil)
+	if err != nil && isSPDKAlreadyExists(err) {
+		return nil
+	}
+	return err
+}
+
 func (m *LocalManager) buildListenerParams(transport, nqn string) map[string]any {
 	return map[string]any{
 		"nqn": nqn,
@@ -240,6 +281,35 @@ func (m *LocalManager) DeleteExport(ctx context.Context, exportID string) error 
 		return err
 	}
 	return nil
+}
+
+func (m *LocalManager) ListExports(ctx context.Context) ([]api.Export, error) {
+	var subsystems []subsystemInfo
+	if err := m.rpc.Call(ctx, "nvmf_get_subsystems", nil, &subsystems); err != nil {
+		if isSPDKNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	exports := make([]api.Export, 0, len(subsystems))
+	for _, subsystem := range subsystems {
+		exportID, ok := exportIDFromNQN(m.nqnPrefix, subsystem.NQN)
+		if !ok {
+			continue
+		}
+		if len(subsystem.Namespaces) == 0 || len(subsystem.ListenAddresses) == 0 {
+			continue
+		}
+		listener := subsystem.ListenAddresses[0]
+		exports = append(exports, api.Export{
+			ID:      exportID,
+			NQN:     subsystem.NQN,
+			NSID:    subsystem.Namespaces[0].NSID,
+			Traddr:  listener.Traddr,
+			Trsvcid: listener.Trsvcid,
+		})
+	}
+	return exports, nil
 }
 
 func (m *LocalManager) GetExport(ctx context.Context, exportID string) (api.Export, error) {
