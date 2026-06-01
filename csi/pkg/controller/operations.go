@@ -420,10 +420,17 @@ func (s *Service) UnpublishVolume(ctx context.Context, req UnpublishVolumeReques
 	}
 	if req.HostNQN != "" {
 		if err := s.exporter.DenyHost(ctx, req.ExportID, req.HostNQN); err != nil {
+			if !errors.Is(err, exporterclient.ErrNotFound) && !errors.Is(err, exporterclient.ErrIncomplete) {
+				return err
+			}
+		}
+	}
+	if err := s.exporter.DeleteExport(ctx, req.ExportID); err != nil {
+		if !errors.Is(err, exporterclient.ErrNotFound) && !errors.Is(err, exporterclient.ErrIncomplete) {
 			return err
 		}
 	}
-	return s.exporter.DeleteExport(ctx, req.ExportID)
+	return nil
 }
 
 func (s *Service) ControllerUnpublishVolume(ctx context.Context, req ControllerUnpublishRequest) error {
@@ -455,11 +462,12 @@ func (s *Service) ControllerUnpublishVolume(ctx context.Context, req ControllerU
 		if strings.TrimSpace(existing.HostNQN) != "" {
 			hostNQN = existing.HostNQN
 		}
-	} else if metadata, ok, err := s.volumes.Get(ctx, req.VolumeID); err != nil {
+	}
+	if metadata, ok, err := s.volumes.Get(ctx, req.VolumeID); err != nil {
 		return err
 	} else if ok {
 		volumeRef = mergeVolumeRefs(volumeRef, metadata.Volume.Ref())
-		if strings.TrimSpace(metadata.ExportID) != "" {
+		if strings.TrimSpace(metadata.ExportID) != "" && exportID == "" {
 			exportID = metadata.ExportID
 		}
 	}

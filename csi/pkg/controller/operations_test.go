@@ -231,6 +231,7 @@ type stubExporterClient struct {
 	createCnt int
 	deleteID  string
 	deleteCnt int
+	deleteErr error
 	getErr    error
 	getExport exporterclient.Export
 	allowID   string
@@ -239,6 +240,7 @@ type stubExporterClient struct {
 	denyID    string
 	denyNQN   string
 	denyCnt   int
+	denyErr   error
 }
 
 func (c *stubExporterClient) CreateExport(_ context.Context, req exporterclient.CreateExportRequest) (exporterclient.Export, error) {
@@ -264,7 +266,7 @@ func (c *stubExporterClient) GetExport(_ context.Context, exportID string) (expo
 func (c *stubExporterClient) DeleteExport(_ context.Context, exportID string) error {
 	c.deleteID = exportID
 	c.deleteCnt++
-	return nil
+	return c.deleteErr
 }
 
 func (c *stubExporterClient) AllowHost(_ context.Context, exportID, hostNQN string) error {
@@ -278,7 +280,7 @@ func (c *stubExporterClient) DenyHost(_ context.Context, exportID, hostNQN strin
 	c.denyID = exportID
 	c.denyNQN = hostNQN
 	c.denyCnt++
-	return nil
+	return c.denyErr
 }
 
 func TestCreateVolumeAndPublish(t *testing.T) {
@@ -751,6 +753,67 @@ func TestControllerUnpublishWithoutNodeIDUsesStoredAttachmentOwner(t *testing.T)
 	}
 	if exporter.denyID != "exp-1" || exporter.deleteID != "exp-1" {
 		t.Fatalf("expected stored export id, got deny=%q delete=%q", exporter.denyID, exporter.deleteID)
+	}
+	if monitor.releaseLeaseCalls == 0 {
+		t.Fatal("expected lease release call")
+	}
+}
+
+func TestControllerUnpublishToleratesIncompleteExporterState(t *testing.T) {
+	monitor := &stubMetadataMonitorClient{
+		volumeMetadata: map[string]monitorclient.VolumeMetadata{
+			"vol-1": {
+				Volume: monitorclient.Volume{
+					ID:            "vol-1",
+					Name:          "img-a",
+					Pool:          "fb",
+					CapacityBytes: 1 << 20,
+					ObjectSize:    4 << 20,
+				},
+				BlockSize: 4096,
+				Transport: "rdma",
+				ExportID:  "exp-broken",
+			},
+		},
+		attachments: map[string]monitorclient.Attachment{
+			"vol-1": {
+				VolumeID: "vol-1",
+				NodeID:   "node-a",
+				HostNQN:  "nqn.host.1",
+				ExportID: "exp-broken",
+			},
+		},
+		leases: map[string]monitorclient.Lease{
+			"vol-1": {
+				VolumeID:   "vol-1",
+				NodeID:     "node-a",
+				HostNQN:    "nqn.host.1",
+				LeaseID:    1,
+				TTLSeconds: defaultLeaseTTLSeconds,
+			},
+		},
+		imageAttachments: map[string]string{
+			"vol-1": "node-a",
+		},
+	}
+	exporter := &stubExporterClient{
+		denyErr:   exporterclient.ErrIncomplete,
+		deleteErr: exporterclient.ErrIncomplete,
+	}
+	svc := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+
+	if err := svc.ControllerUnpublishVolume(context.Background(), ControllerUnpublishRequest{
+		VolumeID: "vol-1",
+		NodeID:   "node-a",
+		Secrets:  map[string]string{"hostNQN": "nqn.host.1"},
+	}); err != nil {
+		t.Fatalf("controller unpublish should tolerate incomplete exporter state, got %v", err)
+	}
+	if _, err := monitor.GetAttachment(context.Background(), "vol-1"); !errors.Is(err, monitorclient.ErrMetadataNotFound) {
+		t.Fatalf("expected attachment metadata removed, got %v", err)
+	}
+	if _, ok := monitor.imageAttachments["vol-1"]; ok {
+		t.Fatal("expected image attachment removed")
 	}
 	if monitor.releaseLeaseCalls == 0 {
 		t.Fatal("expected lease release call")
