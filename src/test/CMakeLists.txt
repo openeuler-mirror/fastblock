@@ -77,3 +77,19 @@ target_link_libraries(clone_proof
     monclient
     fbclient
 )
+
+add_executable(flatten_proof
+  flatten_proof.cc
+)
+
+target_include_directories(flatten_proof
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(flatten_proof
+  PUBLIC
+    base
+    osd_msg
+    msg
+    monclient
+    fbclient
+)

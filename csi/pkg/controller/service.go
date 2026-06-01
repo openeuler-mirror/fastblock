@@ -9,6 +9,7 @@ import (
 type Service struct {
 	opts            driver.Options
 	monitor         monitorclient.Client
+	snapshotMonitor monitorclient.SnapshotClient
 	exporter        exporterclient.Client
 	volumes         volumeStore
 	attachments     attachmentStore
@@ -31,6 +32,9 @@ func New(opts driver.Options, monitor monitorclient.Client, exporter exportercli
 		svc.volumes = newMonitorVolumeStore(metadataClient)
 		svc.attachments = newMonitorAttachmentStore(metadataClient)
 	}
+	if snapshotClient, ok := monitor.(monitorclient.SnapshotClient); ok {
+		svc.snapshotMonitor = snapshotClient
+	}
 	return svc
 }
 
@@ -50,4 +54,8 @@ func (s *Service) Endpoint() string {
 
 func (s *Service) DefaultHostNQN() string {
 	return s.defaultHostNQN
+}
+
+func (s *Service) SupportsSnapshots() bool {
+	return s.snapshotMonitor != nil
 }

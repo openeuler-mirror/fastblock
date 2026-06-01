@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -11,6 +12,9 @@ import (
 	"fastblock-csi/pkg/volumeid"
 
 	csi "github.com/container-storage-interface/spec/lib/go/csi"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type GRPCService struct {
@@ -33,7 +37,7 @@ func NewGRPCService(service *Service) *GRPCService {
 
 func (s *GRPCService) ControllerGetCapabilities(context.Context, *csi.ControllerGetCapabilitiesRequest) (*csi.ControllerGetCapabilitiesResponse, error) {
 	return &csi.ControllerGetCapabilitiesResponse{
-		Capabilities: driver.ControllerServiceCapabilities(),
+		Capabilities: driver.ControllerServiceCapabilities(s.service.SupportsSnapshots()),
 	}, nil
 }
 
@@ -57,6 +61,20 @@ func (s *GRPCService) CreateVolume(ctx context.Context, req *csi.CreateVolumeReq
 	if req.GetParameters()["pool"] == "" {
 		return nil, fmt.Errorf("pool parameter is required")
 	}
+	source := req.GetVolumeContentSource()
+	snapshotID := ""
+	if source != nil {
+		if source.GetVolume() != nil {
+			return nil, status.Error(codes.Unimplemented, "volume clone is not supported")
+		}
+		if source.GetSnapshot() == nil || strings.TrimSpace(source.GetSnapshot().GetSnapshotId()) == "" {
+			return nil, status.Error(codes.InvalidArgument, "snapshot content source requires snapshot id")
+		}
+		if !s.service.SupportsSnapshots() {
+			return nil, status.Error(codes.Unimplemented, ErrSnapshotNotSupported.Error())
+		}
+		snapshotID = strings.TrimSpace(source.GetSnapshot().GetSnapshotId())
+	}
 	required := req.GetCapacityRange().GetRequiredBytes()
 	if required <= 0 {
 		return nil, fmt.Errorf("required bytes must be greater than zero")
@@ -77,14 +95,26 @@ func (s *GRPCService) CreateVolume(ctx context.Context, req *csi.CreateVolumeReq
 		ObjectSize:    objectSize,
 		BlockSize:     blockSize,
 		Transport:     transport,
+		SnapshotID:    snapshotID,
 	})
 	if err != nil {
-		return nil, err
+		return nil, toGRPCError(err)
+	}
+	var contentSource *csi.VolumeContentSource
+	if snapshotID != "" {
+		contentSource = &csi.VolumeContentSource{
+			Type: &csi.VolumeContentSource_Snapshot{
+				Snapshot: &csi.VolumeContentSource_SnapshotSource{
+					SnapshotId: snapshotID,
+				},
+			},
+		}
 	}
 	return &csi.CreateVolumeResponse{
 		Volume: &csi.Volume{
 			VolumeId:      volume.ID,
 			CapacityBytes: volume.CapacityBytes,
+			ContentSource: contentSource,
 			VolumeContext: map[string]string{
 				"pool":          volume.Pool,
 				"name":          volume.Name,
@@ -95,6 +125,85 @@ func (s *GRPCService) CreateVolume(ctx context.Context, req *csi.CreateVolumeReq
 			},
 		},
 	}, nil
+}
+
+func (s *GRPCService) CreateSnapshot(ctx context.Context, req *csi.CreateSnapshotRequest) (*csi.CreateSnapshotResponse, error) {
+	if !s.service.SupportsSnapshots() {
+		return nil, status.Error(codes.Unimplemented, ErrSnapshotNotSupported.Error())
+	}
+	if strings.TrimSpace(req.GetName()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "snapshot name is required")
+	}
+	if strings.TrimSpace(req.GetSourceVolumeId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "source volume id is required")
+	}
+	sourceVolume, err := s.resolveVolumeRef(ctx, req.GetSourceVolumeId())
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	snapshot, err := s.service.CreateSnapshot(ctx, CreateSnapshotRequest{
+		Name:         req.GetName(),
+		SourceVolume: sourceVolume,
+	})
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	return &csi.CreateSnapshotResponse{
+		Snapshot: toCSISnapshot(snapshot),
+	}, nil
+}
+
+func (s *GRPCService) DeleteSnapshot(ctx context.Context, req *csi.DeleteSnapshotRequest) (*csi.DeleteSnapshotResponse, error) {
+	if !s.service.SupportsSnapshots() {
+		return nil, status.Error(codes.Unimplemented, ErrSnapshotNotSupported.Error())
+	}
+	if strings.TrimSpace(req.GetSnapshotId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "snapshot id is required")
+	}
+	if err := s.service.DeleteSnapshot(ctx, DeleteSnapshotRequest{SnapshotID: req.GetSnapshotId()}); err != nil {
+		return nil, toGRPCError(err)
+	}
+	return &csi.DeleteSnapshotResponse{}, nil
+}
+
+func (s *GRPCService) ListSnapshots(ctx context.Context, req *csi.ListSnapshotsRequest) (*csi.ListSnapshotsResponse, error) {
+	if !s.service.SupportsSnapshots() {
+		return nil, status.Error(codes.Unimplemented, ErrSnapshotNotSupported.Error())
+	}
+	if req.GetMaxEntries() < 0 {
+		return nil, status.Error(codes.InvalidArgument, "max entries must not be negative")
+	}
+	listReq := ListSnapshotsRequest{
+		SnapshotID:     req.GetSnapshotId(),
+		SourceVolumeID: req.GetSourceVolumeId(),
+	}
+	if err := listReq.Validate(); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	snapshots, err := s.service.ListSnapshots(ctx, listReq)
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	sort.Slice(snapshots, func(i, j int) bool {
+		return snapshots[i].ID < snapshots[j].ID
+	})
+	start, err := parseSnapshotStartingToken(req.GetStartingToken(), len(snapshots))
+	if err != nil {
+		return nil, err
+	}
+	entries, nextToken := paginateSnapshots(snapshots, start, req.GetMaxEntries())
+	resp := &csi.ListSnapshotsResponse{
+		Entries: make([]*csi.ListSnapshotsResponse_Entry, 0, len(entries)),
+	}
+	if nextToken != "" {
+		resp.NextToken = nextToken
+	}
+	for _, snapshot := range entries {
+		resp.Entries = append(resp.Entries, &csi.ListSnapshotsResponse_Entry{
+			Snapshot: toCSISnapshot(snapshot),
+		})
+	}
+	return resp, nil
 }
 
 func (s *GRPCService) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
@@ -256,4 +365,45 @@ func parsePublishVolumeContext(volumeID string, ctx map[string]string) (publishV
 		objectSize:    objectSize,
 		capacityBytes: capacityBytes,
 	}, nil
+}
+
+func toCSISnapshot(snapshot monitorclient.Snapshot) *csi.Snapshot {
+	if snapshot.ID == "" {
+		return nil
+	}
+	item := &csi.Snapshot{
+		SizeBytes:      snapshot.SizeBytes,
+		SnapshotId:     snapshot.ID,
+		SourceVolumeId: snapshot.SourceVolume.ID,
+		ReadyToUse:     snapshot.ReadyToUse,
+	}
+	if !snapshot.CreationTime.IsZero() {
+		item.CreationTime = timestamppb.New(snapshot.CreationTime)
+	}
+	return item
+}
+
+func parseSnapshotStartingToken(token string, total int) (int, error) {
+	if strings.TrimSpace(token) == "" {
+		return 0, nil
+	}
+	start, err := strconv.Atoi(token)
+	if err != nil || start < 0 || start > total {
+		return 0, status.Error(codes.Aborted, "invalid starting token")
+	}
+	return start, nil
+}
+
+func paginateSnapshots(snapshots []monitorclient.Snapshot, start int, maxEntries int32) ([]monitorclient.Snapshot, string) {
+	if start >= len(snapshots) {
+		return nil, ""
+	}
+	if maxEntries <= 0 {
+		return snapshots[start:], ""
+	}
+	end := start + int(maxEntries)
+	if end >= len(snapshots) {
+		return snapshots[start:], ""
+	}
+	return snapshots[start:end], strconv.Itoa(end)
 }

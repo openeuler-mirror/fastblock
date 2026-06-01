@@ -105,7 +105,7 @@ public:
       const std::string snapshot_name,
       std::function<void(int32_t)> cb = {});
     void finalize_flatten_image(const std::string image_id);
-    void flatten_image(const std::string pool_name, const std::string image_name);
+    void flatten_image(const std::string pool_name, const std::string image_name, std::function<void(int32_t)> cb = {});
 
     fblock_client* data_client() {
       return _client.get();

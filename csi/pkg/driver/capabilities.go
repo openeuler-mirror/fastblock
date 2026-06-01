@@ -14,10 +14,16 @@ func PluginCapabilities() []*csi.PluginCapability {
 	}
 }
 
-func ControllerServiceCapabilities() []*csi.ControllerServiceCapability {
+func ControllerServiceCapabilities(includeSnapshots bool) []*csi.ControllerServiceCapability {
 	rpcs := []csi.ControllerServiceCapability_RPC_Type{
 		csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME,
 		csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME,
+	}
+	if includeSnapshots {
+		rpcs = append(rpcs,
+			csi.ControllerServiceCapability_RPC_CREATE_DELETE_SNAPSHOT,
+			csi.ControllerServiceCapability_RPC_LIST_SNAPSHOTS,
+		)
 	}
 
 	caps := make([]*csi.ControllerServiceCapability, 0, len(rpcs))
