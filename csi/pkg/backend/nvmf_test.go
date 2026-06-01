@@ -150,6 +150,32 @@ func TestStageReconnectsAfterStaleAlreadyConnectedSession(t *testing.T) {
 	}
 }
 
+func TestStageReportsNamespaceNotReadyWhenControllerExistsWithoutBlockDevice(t *testing.T) {
+	root := t.TempDir()
+	sysNVMe := filepath.Join(root, "sys", "class", "nvme", "nvme0")
+	if err := os.MkdirAll(sysNVMe, 0o755); err != nil {
+		t.Fatalf("mkdir nvme failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sysNVMe, "subsysnqn"), []byte("nqn.test\n"), 0o644); err != nil {
+		t.Fatalf("write subsysnqn failed: %v", err)
+	}
+	runner := &stubRunner{}
+	backend := newTestBackend(t, root, runner)
+	backend.ConnectTimeout = 20 * time.Millisecond
+	backend.PollInterval = 5 * time.Millisecond
+
+	_, err := backend.Stage(context.Background(), "vol-1", VolumeContext{
+		Transport: "rdma",
+		NQN:       "nqn.test",
+		Traddr:    "10.0.0.10",
+		Trsvcid:   "4420",
+		NSID:      3,
+	})
+	if !errors.Is(err, ErrNamespaceNotReady) {
+		t.Fatalf("expected ErrNamespaceNotReady, got %v", err)
+	}
+}
+
 func prepareFakeDevice(t *testing.T, root, nqn, nsid string) {
 	t.Helper()
 	sysNVMe := filepath.Join(root, "sys", "class", "nvme", "nvme0")

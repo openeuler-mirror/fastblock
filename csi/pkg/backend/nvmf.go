@@ -17,6 +17,7 @@ var (
 	ErrHostNQNEmpty        = errors.New("hostnqn is empty")
 	ErrNVMeCommandMissing  = errors.New("nvme command not available")
 	ErrKernelModuleMissing = errors.New("required kernel module not loaded")
+	ErrNamespaceNotReady   = errors.New("nvme controller exists but namespace device is not ready")
 )
 
 type VolumeContext struct {
@@ -285,6 +286,13 @@ func (b *NVMFBackend) waitForDevice(ctx context.Context, volumeCtx VolumeContext
 		}
 		select {
 		case <-waitCtx.Done():
+			controllers, ctrlErr := b.controllersForNQN(volumeCtx.NQN)
+			if ctrlErr != nil {
+				return "", ctrlErr
+			}
+			if len(controllers) > 0 {
+				return "", fmt.Errorf("%w: nqn=%s nsid=%d controllers=%s", ErrNamespaceNotReady, volumeCtx.NQN, volumeCtx.NSID, strings.Join(controllers, ","))
+			}
 			return "", waitCtx.Err()
 		case <-time.After(b.PollInterval):
 		}
