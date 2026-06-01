@@ -2,6 +2,7 @@ find_package(absl REQUIRED)
 
 add_executable(block_bench
   block_bench.cc
+  ../../bdev/global.cc
 )
 
 target_include_directories (block_bench
