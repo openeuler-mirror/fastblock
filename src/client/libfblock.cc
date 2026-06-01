@@ -308,6 +308,10 @@ void rollback_on_snapshot_metadata(
         rollback_finish(ctx, err::E_INVAL);
         return;
     }
+    if (metadata->status != "ready") {
+        rollback_finish(ctx, err::E_BUSY);
+        return;
+    }
     ctx->snapshot_metadata = *metadata;
     if (metadata->source_pool_name != ctx->pool_name || metadata->source_image_name != ctx->image_name) {
         rollback_finish(ctx, err::E_INVAL);
@@ -354,6 +358,14 @@ void rollback_on_root_image(
 
     auto& metadata = std::get<std::unique_ptr<monitor::client::image_metadata>>(req_ctx->response_data);
     if (!metadata) {
+        rollback_finish(ctx, err::E_INVAL);
+        return;
+    }
+    if (metadata->status != "ready") {
+        rollback_finish(ctx, err::E_BUSY);
+        return;
+    }
+    if (!metadata->parent_snapshot_id.empty()) {
         rollback_finish(ctx, err::E_INVAL);
         return;
     }
