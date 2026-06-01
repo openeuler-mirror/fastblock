@@ -270,6 +270,51 @@ func TestCreateVolumeFromSnapshotRejectsNotReadySnapshot(t *testing.T) {
 	}
 }
 
+func TestCreateVolumeFromSnapshotRejectsDifferentPool(t *testing.T) {
+	sourceVolumeID, _ := volumeid.EncodeNameRef(volumeid.NameRef{Pool: "fb", Name: "img-a"})
+	monitor := &stubSnapshotMonitorClient{
+		snapshots: map[string]monitorclient.Snapshot{
+			"snap-a": {
+				ID:           "snap-a",
+				Name:         "snap-a",
+				SourceVolume: monitorclient.VolumeRef{ID: sourceVolumeID, Pool: "fb", Name: "img-a"},
+				CreationTime: time.Unix(1714608000, 0).UTC(),
+				SizeBytes:    1 << 20,
+				ReadyToUse:   true,
+			},
+		},
+	}
+	service := New(
+		driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"},
+		monitor,
+		&stubExporterClient{},
+	)
+	grpcService := NewGRPCService(service)
+
+	_, err := grpcService.CreateVolume(context.Background(), &csi.CreateVolumeRequest{
+		Name: "img-from-snap",
+		CapacityRange: &csi.CapacityRange{
+			RequiredBytes: 1 << 20,
+		},
+		Parameters: map[string]string{
+			"pool":       "other",
+			"objectSize": "4194304",
+			"blockSize":  "4096",
+			"transport":  "rdma",
+		},
+		VolumeContentSource: &csi.VolumeContentSource{
+			Type: &csi.VolumeContentSource_Snapshot{
+				Snapshot: &csi.VolumeContentSource_SnapshotSource{
+					SnapshotId: "snap-a",
+				},
+			},
+		},
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected invalid argument for cross-pool snapshot restore, got %v", err)
+	}
+}
+
 func TestSnapshotRPCsAreUnimplementedWithoutSnapshotBackend(t *testing.T) {
 	service := New(
 		driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"},
