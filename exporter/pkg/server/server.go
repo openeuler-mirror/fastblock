@@ -231,6 +231,11 @@ func (s *Server) handleSnapshotAction(w http.ResponseWriter, r *http.Request, ex
 				writeError(w, http.StatusInternalServerError, err.Error())
 				return
 			}
+		case "rollback":
+			if err := s.manager.RollbackSnapshot(r.Context(), exportID, snapshotName); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
 		case "unprotect":
 			if err := s.manager.UnprotectSnapshot(r.Context(), exportID, snapshotName); err != nil {
 				writeError(w, http.StatusInternalServerError, err.Error())

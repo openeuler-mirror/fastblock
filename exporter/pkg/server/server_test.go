@@ -39,6 +39,10 @@ type stubManager struct {
 		exportID string
 		name     string
 	}
+	snapshotRollback struct {
+		exportID string
+		name     string
+	}
 	snapshotClone struct {
 		exportID  string
 		name      string
@@ -106,6 +110,12 @@ func (m *stubManager) UnprotectSnapshot(_ context.Context, exportID, snapshotNam
 func (m *stubManager) DeleteSnapshot(_ context.Context, exportID, snapshotName string) error {
 	m.snapshotDelete.exportID = exportID
 	m.snapshotDelete.name = snapshotName
+	return nil
+}
+
+func (m *stubManager) RollbackSnapshot(_ context.Context, exportID, snapshotName string) error {
+	m.snapshotRollback.exportID = exportID
+	m.snapshotRollback.name = snapshotName
 	return nil
 }
 
@@ -270,6 +280,13 @@ func TestSnapshotActions(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent || manager.snapshotUnprotect.name != "snap-a" {
 		t.Fatalf("unexpected unprotect result: status=%d call=%+v", rec.Code, manager.snapshotUnprotect)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/v1/exports/exp-1/snapshots/snap-a/rollback", bytes.NewReader(nil))
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || manager.snapshotRollback.name != "snap-a" {
+		t.Fatalf("unexpected rollback result: status=%d call=%+v", rec.Code, manager.snapshotRollback)
 	}
 
 	req = httptest.NewRequest(http.MethodDelete, "/v1/exports/exp-1/snapshots/snap-a", nil)

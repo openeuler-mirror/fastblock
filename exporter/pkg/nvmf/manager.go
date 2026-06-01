@@ -26,6 +26,7 @@ type Manager interface {
 	ProtectSnapshot(ctx context.Context, exportID, snapshotName string) error
 	UnprotectSnapshot(ctx context.Context, exportID, snapshotName string) error
 	DeleteSnapshot(ctx context.Context, exportID, snapshotName string) error
+	RollbackSnapshot(ctx context.Context, exportID, snapshotName string) error
 	CreateCloneFromSnapshot(ctx context.Context, exportID, snapshotName, cloneImageName string) error
 	FlattenExport(ctx context.Context, exportID string) error
 	AllowHost(ctx context.Context, exportID, hostNQN string) error
@@ -368,6 +369,19 @@ func (m *LocalManager) DeleteSnapshot(ctx context.Context, exportID, snapshotNam
 		return errors.New("snapshot name is required")
 	}
 	return m.rpc.Call(ctx, "bdev_fastblock_delete_snapshot_by_name", map[string]any{
+		"name":          bdevName(exportID),
+		"snapshot_name": snapshotName,
+	}, nil)
+}
+
+func (m *LocalManager) RollbackSnapshot(ctx context.Context, exportID, snapshotName string) error {
+	if strings.TrimSpace(exportID) == "" {
+		return errors.New("export id is required")
+	}
+	if strings.TrimSpace(snapshotName) == "" {
+		return errors.New("snapshot name is required")
+	}
+	return m.rpc.Call(ctx, "bdev_fastblock_rollback_to_snapshot", map[string]any{
 		"name":          bdevName(exportID),
 		"snapshot_name": snapshotName,
 	}, nil)
