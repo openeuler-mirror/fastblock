@@ -39,7 +39,7 @@ func (c *stubCaller) Call(_ context.Context, method string, params any, result a
 		return err
 	}
 	switch method {
-	case "bdev_fastblock_create":
+	case "bdev_fastblock_register_existing":
 		if out, ok := result.(*string); ok {
 			*out = mapped["name"].(string)
 		}
@@ -85,7 +85,7 @@ func TestCreateExport(t *testing.T) {
 	if rpc.calls[0].method != "nvmf_get_subsystems" {
 		t.Fatalf("unexpected first method: %s", rpc.calls[0].method)
 	}
-	if rpc.calls[1].method != "bdev_fastblock_create" {
+	if rpc.calls[1].method != "bdev_fastblock_register_existing" {
 		t.Fatalf("unexpected second method: %s", rpc.calls[1].method)
 	}
 	if export.ID == "" || export.NQN == "" || export.NSID != 11 {
@@ -142,7 +142,7 @@ func TestCreateExportReusesExistingExportOnAlreadyExists(t *testing.T) {
 	cfg.NodeName = "node-a"
 	rpc := &stubCaller{
 		failSeq: map[string][]error{
-			"bdev_fastblock_create": {
+			"bdev_fastblock_register_existing": {
 				&spdkrpc.ResponseError{Code: -17, Message: "bdev already exists"},
 			},
 		},
@@ -321,7 +321,7 @@ func TestBuildRPCParamsHelpers(t *testing.T) {
 	cfg.NodeName = "node-a"
 	manager := newLocalManagerWithRPC(cfg, &stubCaller{})
 
-	bdevParams := manager.buildCreateBdevParams(api.CreateExportRequest{
+	bdevParams := manager.buildRegisterExistingBdevParams(api.CreateExportRequest{
 		PoolName:      "fb",
 		ImageName:     "img-1",
 		CapacityBytes: 1 << 20,
@@ -330,6 +330,12 @@ func TestBuildRPCParamsHelpers(t *testing.T) {
 	}, "fbdev-exp1")
 	if bdevParams["monitor_address"] != "10.0.0.20:3333" {
 		t.Fatalf("unexpected bdev params: %+v", bdevParams)
+	}
+	if _, ok := bdevParams["image_size"]; ok {
+		t.Fatalf("register existing params should not include image_size: %+v", bdevParams)
+	}
+	if _, ok := bdevParams["object_size"]; ok {
+		t.Fatalf("register existing params should not include object_size: %+v", bdevParams)
 	}
 
 	subsystemParams := buildCreateSubsystemParams("nqn.test", "SERIAL1")
