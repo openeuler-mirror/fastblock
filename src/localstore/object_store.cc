@@ -522,10 +522,16 @@ static void sync_head_snap_seq_then_write(void *arg, int objerrno)
 static struct spdk_blob* select_read_blob(object_store::object& object, const uint64_t target_snap_seq)
 {
   if (target_snap_seq == 0) {
+    SPDK_NOTICELOG("snapshot read select head target_seq=0\n");
     return object.origin.blob;
   }
 
-  if (target_snap_seq < object.birth_snap_seq) {
+  // Objects first materialized after snapshot N must not become visible to snapshot N.
+  if (target_snap_seq <= object.birth_snap_seq) {
+    SPDK_NOTICELOG(
+      "snapshot read select none target_seq=%lu birth_seq=%lu\n",
+      target_snap_seq,
+      object.birth_snap_seq);
     return nullptr;
   }
 
@@ -539,8 +545,18 @@ static struct spdk_blob* select_read_blob(object_store::object& object, const ui
   }
 
   if (selected != nullptr) {
+    SPDK_NOTICELOG(
+      "snapshot read select snapshot target_seq=%lu selected_seq=%lu selected_name=%s\n",
+      target_snap_seq,
+      selected->snap_seq,
+      selected->snap_name.c_str());
     return selected->snap_blob.blob;
   }
+  SPDK_NOTICELOG(
+    "snapshot read fall back to head target_seq=%lu birth_seq=%lu snap_count=%lu\n",
+    target_snap_seq,
+    object.birth_snap_seq,
+    object.snap_list.size());
   return object.origin.blob;
 }
 
@@ -570,6 +586,11 @@ void object_store::readwrite(std::map<std::string, xattr_val_type>& xattr, std::
         return;
       }
       if (!is_read && current_snap_seq > 0 && current_snap_seq > it->second.last_snap_seq) {
+        SPDK_NOTICELOG(
+          "prewrite snapshot object=%s current_snap_seq=%lu last_snap_seq=%lu\n",
+          object_name.c_str(),
+          current_snap_seq,
+          it->second.last_snap_seq);
         auto* ctx = new prewrite_snapshot_ctx{
           .mgr = this,
           .object_name = object_name,

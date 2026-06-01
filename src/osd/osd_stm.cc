@@ -117,7 +117,22 @@ struct osd_service_complete : public utils::context{
     void finish(int r) override {
         SPDK_DEBUGLOG(osd, "process osd service done.\n");
         if(r != 0){
-            SPDK_ERRLOG("process osd service failed: %d\n", r);
+            const char* op_name = "unknown";
+            if(std::is_same_v<type, osd::read_reply>){
+                op_name = "read";
+            }else if(std::is_same_v<type, osd::write_reply>){
+                op_name = "write";
+            }else if(std::is_same_v<type, osd::delete_reply>){
+                op_name = "delete";
+            }
+            SPDK_ERRLOG(
+              "process osd service failed: op=%s obj=%s pg=%s state=%d desc=%s is_leader=%d\n",
+              op_name,
+              obj_name.c_str(),
+              stm->get_pg_name().c_str(),
+              r,
+              err::string_status(r),
+              stm->raft_is_leader() ? 1 : 0);
             if(std::is_same_v<type, osd::write_reply>){
                 stm->unlock(obj_name, utils::operation_type::WRITE);
             }else if(std::is_same_v<type, osd::delete_reply>){
@@ -222,6 +237,11 @@ void osd_stm::read_and_wait(
         SPDK_INFOLOG(osd, "process read_request , pool %lu pg %lu object_name %s offset %lu len %lu\n",
                      request->pool_id(), request->pg_id(), request->object_name().c_str(), request->offset(),
                      request->length());
+        SPDK_NOTICELOG(
+          "osd read request object=%s pg=%s target_snap_seq=%lu\n",
+          request->object_name().c_str(),
+          get_pg_name().c_str(),
+          request->has_snap_ctx() ? request->snap_ctx().current_seq() : 0);
 
         uint64_t len = utils::align_up<uint64_t>(request->length(), 512 * BLOCK_UNITS);
         char* buf = (char*)spdk_zmalloc(len, 0x1000, NULL, _sockid, SPDK_MALLOC_DMA);
