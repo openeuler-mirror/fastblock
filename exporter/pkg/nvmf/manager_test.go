@@ -182,6 +182,42 @@ func TestCreateExportReusesExistingExportOnAlreadyExists(t *testing.T) {
 	}
 }
 
+func TestCreateExportCleansStaleBdevAndRetries(t *testing.T) {
+	cfg := config.Default()
+	cfg.MonitorAddress = "10.0.0.20:3333"
+	cfg.TargetAddress = "10.0.0.10"
+	cfg.NodeName = "node-a"
+	rpc := &stubCaller{
+		failSeq: map[string][]error{
+			"bdev_fastblock_register_existing": {
+				&spdkrpc.ResponseError{Code: -17, Message: "bdev already exists"},
+				nil,
+			},
+		},
+	}
+	manager := newLocalManagerWithRPC(cfg, rpc)
+
+	export, err := manager.CreateExport(context.Background(), api.CreateExportRequest{
+		VolumeID:  "fbvol:cluster-a:1:7",
+		PoolName:  "fb",
+		ImageName: "img-7",
+		BlockSize: 4096,
+		Transport: "rdma",
+	})
+	if err != nil {
+		t.Fatalf("create export failed: %v", err)
+	}
+	if export.ID != "fbvol-cluster-a-1-7" || export.NSID != 11 {
+		t.Fatalf("unexpected export: %+v", export)
+	}
+	if len(rpc.calls) != 9 {
+		t.Fatalf("unexpected call count: %d", len(rpc.calls))
+	}
+	if rpc.calls[1].method != "bdev_fastblock_register_existing" || rpc.calls[3].method != "bdev_fastblock_delete" || rpc.calls[5].method != "bdev_fastblock_register_existing" {
+		t.Fatalf("unexpected stale bdev recovery calls: %+v", rpc.calls)
+	}
+}
+
 func TestDeleteAndHostACL(t *testing.T) {
 	cfg := config.Default()
 	cfg.MonitorAddress = "10.0.0.20:3333"
