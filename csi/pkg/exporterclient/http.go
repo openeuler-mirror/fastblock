@@ -107,6 +107,9 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, path string, requestBod
 			Error string `json:"error"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&rpcErr); err == nil && rpcErr.Error != "" {
+			if strings.Contains(strings.ToLower(rpcErr.Error), "missing namespace or listener") {
+				return ErrIncomplete
+			}
 			return fmt.Errorf("exporter http %d: %s", resp.StatusCode, rpcErr.Error)
 		}
 		return fmt.Errorf("exporter http %d", resp.StatusCode)

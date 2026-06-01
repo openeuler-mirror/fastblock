@@ -33,10 +33,13 @@ func (s *Service) reconcileState(ctx context.Context, volumeID string) error {
 	}
 
 	exportExists := false
+	exportBroken := false
 	if exportID != "" {
 		_, err := s.exporter.GetExport(ctx, exportID)
 		if err == nil {
 			exportExists = true
+		} else if errors.Is(err, exporterclient.ErrIncomplete) {
+			exportBroken = true
 		} else if !errors.Is(err, exporterclient.ErrNotFound) {
 			return err
 		}
@@ -48,7 +51,7 @@ func (s *Service) reconcileState(ctx context.Context, volumeID string) error {
 		}
 		attachmentOK = false
 	}
-	if metadataOK && !exportExists && strings.TrimSpace(metadata.ExportID) != "" {
+	if metadataOK && !exportExists && !exportBroken && strings.TrimSpace(metadata.ExportID) != "" {
 		metadata.ExportID = ""
 		if err := s.volumes.Put(ctx, metadata); err != nil {
 			return err
@@ -119,9 +122,12 @@ func (s *Service) Reconcile(ctx context.Context) error {
 			exportID = strings.TrimSpace(attachment.ExportID)
 		}
 		exportExists := false
+		exportBroken := false
 		if exportID != "" {
 			if _, err := s.exporter.GetExport(ctx, exportID); err == nil {
 				exportExists = true
+			} else if errors.Is(err, exporterclient.ErrIncomplete) {
+				exportBroken = true
 			} else if !errors.Is(err, exporterclient.ErrNotFound) {
 				return err
 			}
@@ -135,12 +141,12 @@ func (s *Service) Reconcile(ctx context.Context) error {
 				return err
 			}
 			s.startLeaseRenewer(volumeRef, attachment.NodeID, attachment.HostNQN)
-		case !attachmentOK && leaseOK && !exportExists:
+		case !attachmentOK && leaseOK && !exportExists && !exportBroken:
 			s.leaseRenewer.Stop(volumeID)
 			if err := s.releaseLease(ctx, volumeID, lease.NodeID, lease.HostNQN); err != nil {
 				return err
 			}
-		case !attachmentOK && exportExists:
+		case !attachmentOK && (exportExists || exportBroken):
 			if err := s.exporter.DeleteExport(ctx, exportID); err != nil && !errors.Is(err, exporterclient.ErrNotFound) {
 				return err
 			}

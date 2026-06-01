@@ -916,6 +916,55 @@ func TestReconcileDeletesOrphanExportAndLease(t *testing.T) {
 	}
 }
 
+func TestReconcileTreatsIncompleteExportAsOrphan(t *testing.T) {
+	monitor := &stubMetadataMonitorClient{
+		volumeMetadata: map[string]monitorclient.VolumeMetadata{
+			"vol-1": {
+				Volume: monitorclient.Volume{
+					ID:            "vol-1",
+					Name:          "img-a",
+					Pool:          "fb",
+					CapacityBytes: 1 << 20,
+					ObjectSize:    4 << 20,
+				},
+				BlockSize: 4096,
+				Transport: "rdma",
+				ExportID:  "exp-1",
+			},
+		},
+		leases: map[string]monitorclient.Lease{
+			"vol-1": {
+				VolumeID:   "vol-1",
+				NodeID:     "node-a",
+				HostNQN:    "nqn.host.1",
+				LeaseID:    1,
+				TTLSeconds: defaultLeaseTTLSeconds,
+			},
+		},
+	}
+	exporter := &stubExporterClient{
+		getErr: exporterclient.ErrIncomplete,
+	}
+	svc := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+
+	if err := svc.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile failed: %v", err)
+	}
+	if exporter.deleteID != "exp-1" {
+		t.Fatalf("expected incomplete export to be deleted, got %q", exporter.deleteID)
+	}
+	if monitor.releaseLeaseCalls == 0 {
+		t.Fatal("expected lease to be released for incomplete export")
+	}
+	metadata, err := monitor.GetVolumeMetadata(context.Background(), "vol-1")
+	if err != nil {
+		t.Fatalf("get volume metadata failed: %v", err)
+	}
+	if metadata.ExportID != "" {
+		t.Fatalf("expected export id cleared for incomplete export, got %+v", metadata)
+	}
+}
+
 func TestControllerPublishReconcilesStaleAttachmentWithoutLeaseOrExport(t *testing.T) {
 	monitor := &stubMetadataMonitorClient{
 		attachments: map[string]monitorclient.Attachment{
