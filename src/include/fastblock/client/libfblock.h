@@ -99,6 +99,7 @@ public:
     void unprotect_snapshot(const std::string snapshot_id);
     void delete_image_snapshot_by_name(const std::string pool_name, const std::string image_name, const std::string snapshot_name);
     void delete_image_snapshot(const std::string snapshot_id);
+    void rollback_image_to_snapshot(const std::string pool_name, const std::string image_name, const std::string snapshot_name);
     void finalize_flatten_image(const std::string image_id);
     void flatten_image(const std::string pool_name, const std::string image_name);
 

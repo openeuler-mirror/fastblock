@@ -55,6 +55,8 @@ int bdev_fastblock_create_snapshot(struct spdk_bdev *bdev, const char *snapshot_
 
 int bdev_fastblock_flatten(struct spdk_bdev *bdev);
 
+int bdev_fastblock_rollback_to_snapshot(struct spdk_bdev *bdev, const char *snapshot_name);
+
 const char *bdev_fastblock_get_pool_name(struct spdk_bdev *bdev);
 
 const char *bdev_fastblock_get_image_name(struct spdk_bdev *bdev);
