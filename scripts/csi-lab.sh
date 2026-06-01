@@ -45,10 +45,16 @@ CONTROLLER_BIN="$ROOT/csi/bin/fastblock-csi-controller"
 NODE_BIN="$ROOT/csi/bin/fastblock-csi-node"
 SMOKE_BIN="$ROOT/csi/bin/fastblock-csi-smoke"
 ROLLBACK_PROOF_BIN="$ROOT/build/src/test/rollback_proof"
+CLONE_PROOF_BIN="$ROOT/build/src/test/clone_proof"
 RDMA_SCRIPT="$ROOT/scripts/create-rdma-rxe.sh"
 ROLLBACK_PROOF_IMAGE="${ROLLBACK_PROOF_IMAGE:-rollback-proof-base-$(date +%s)}"
 ROLLBACK_PROOF_SNAPSHOT="${ROLLBACK_PROOF_SNAPSHOT:-snap-proof-$(date +%s)}"
 ROLLBACK_PROOF_COREMASK="${ROLLBACK_PROOF_COREMASK:-0x2}"
+CLONE_PROOF_POOL="${CLONE_PROOF_POOL:-fb}"
+CLONE_PROOF_IMAGE="${CLONE_PROOF_IMAGE:-clone-proof-base}"
+CLONE_PROOF_SNAPSHOT="${CLONE_PROOF_SNAPSHOT:-snap-clone-proof}"
+CLONE_PROOF_CLONE="${CLONE_PROOF_CLONE:-clone-proof-child}"
+CLONE_PROOF_COREMASK="${CLONE_PROOF_COREMASK:-0x2}"
 
 usage() {
     cat <<'EOF'
@@ -61,6 +67,8 @@ Actions:
   status   Show process, pool, transport, and endpoint status.
   rollback-proof
            Bring up a minimal monitor+OSD lab and run the direct rollback proof.
+  clone-proof
+           Bring up a minimal monitor+OSD lab and run the direct clone proof.
 
 Options:
   --lab-root <path>         Override lab state root (default: .lab-ready under repo root)
@@ -78,6 +86,11 @@ Options:
   --proof-image <name>      Rollback proof image name
   --proof-snapshot <name>   Rollback proof snapshot name
   --proof-coremask <mask>   SPDK core mask for rollback proof (default: 0x2)
+  --clone-pool <name>       Clone proof pool (default: fb)
+  --clone-image <name>      Clone proof base image (default: clone-proof-base)
+  --clone-snapshot <name>   Clone proof snapshot (default: snap-clone-proof)
+  --clone-clone <name>      Clone proof clone image (default: clone-proof-child)
+  --clone-coremask <mask>   SPDK core mask for clone proof (default: 0x2)
   --skip-build              Reuse existing binaries instead of rebuilding
   --skip-smoke              Start environment without running smoke validation
   --reuse-state             Keep lab root and stored OSD identity instead of resetting from zero
@@ -145,6 +158,26 @@ while [[ $# -gt 0 ]]; do
             ;;
         --proof-coremask)
             ROLLBACK_PROOF_COREMASK="$2"
+            shift 2
+            ;;
+        --clone-pool)
+            CLONE_PROOF_POOL="$2"
+            shift 2
+            ;;
+        --clone-image)
+            CLONE_PROOF_IMAGE="$2"
+            shift 2
+            ;;
+        --clone-snapshot)
+            CLONE_PROOF_SNAPSHOT="$2"
+            shift 2
+            ;;
+        --clone-clone)
+            CLONE_PROOF_CLONE="$2"
+            shift 2
+            ;;
+        --clone-coremask)
+            CLONE_PROOF_COREMASK="$2"
             shift 2
             ;;
         --skip-build)
@@ -475,6 +508,13 @@ build_rollback_proof() {
     cmake --build "$ROOT/build" --target rollback_proof -j2 >/dev/null
 }
 
+build_clone_proof() {
+    log "building clone proof binary"
+    mkdir -p /tmp/fastblock-gocache /tmp/fastblock-gotmp
+    GOCACHE=/tmp/fastblock-gocache GOTMPDIR=/tmp/fastblock-gotmp cmake -S "$ROOT" -B "$ROOT/build" >/dev/null
+    cmake --build "$ROOT/build" --target clone_proof -j2 >/dev/null
+}
+
 ensure_binaries_exist() {
     local bin
     for bin in \
@@ -492,6 +532,10 @@ ensure_binaries_exist() {
 
 ensure_rollback_proof_exists() {
     [[ -x "$ROLLBACK_PROOF_BIN" ]] || die "missing binary: $ROLLBACK_PROOF_BIN"
+}
+
+ensure_clone_proof_exists() {
+    [[ -x "$CLONE_PROOF_BIN" ]] || die "missing binary: $CLONE_PROOF_BIN"
 }
 
 spdk_rpc_sock() {
@@ -860,6 +904,42 @@ rollback_proof_action() {
     log "rollback proof passed"
 }
 
+clone_proof_action() {
+    require_root
+    require_commands
+    ensure_host_ip
+    ensure_netdev
+    if [[ "$FRESH" -eq 1 ]]; then
+        down || true
+        rm -rf "$LAB_ROOT"
+    fi
+    mkdir -p "$RUN_DIR" "$LOG_DIR" "$STATE_DIR"
+    write_config
+    ensure_modules
+    ensure_rdma
+    ensure_hugepages
+    if [[ "$BUILD" -eq 1 ]]; then
+        build_binaries
+        build_clone_proof
+    fi
+    for bin in "$MONITOR_BIN" "$CLIENT_BIN" "$OSD_BIN"; do
+        [[ -x "$bin" ]] || die "missing binary: $bin"
+    done
+    ensure_clone_proof_exists
+    start_monitor
+    ensure_osd_identity
+    mkfs_osd_if_needed
+    start_osd
+    ensure_pool
+    log "running clone proof pool=$CLONE_PROOF_POOL image=$CLONE_PROOF_IMAGE snapshot=$CLONE_PROOF_SNAPSHOT clone=$CLONE_PROOF_CLONE coremask=$CLONE_PROOF_COREMASK"
+    FB_CLONE_POOL="$CLONE_PROOF_POOL" \
+    FB_CLONE_IMAGE="$CLONE_PROOF_IMAGE" \
+    FB_CLONE_SNAPSHOT="$CLONE_PROOF_SNAPSHOT" \
+    FB_CLONE_CLONE="$CLONE_PROOF_CLONE" \
+    "$CLONE_PROOF_BIN" -m "$CLONE_PROOF_COREMASK" -C "$CONFIG_PATH"
+    log "clone proof passed"
+}
+
 case "$ACTION" in
     up)
         up
@@ -875,6 +955,9 @@ case "$ACTION" in
         ;;
     rollback-proof)
         rollback_proof_action
+        ;;
+    clone-proof)
+        clone_proof_action
         ;;
     *)
         usage
