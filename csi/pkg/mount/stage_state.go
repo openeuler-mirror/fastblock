@@ -21,7 +21,7 @@ func WriteStageState(stagePath string, state StageState) error {
 	if stagePath == "" {
 		return errors.New("stage path is required")
 	}
-	if err := os.MkdirAll(stagePath, 0o755); err != nil {
+	if err := ensureStagePathDirectory(stagePath); err != nil {
 		return err
 	}
 	data, err := json.Marshal(state)
@@ -52,4 +52,19 @@ func RemoveStageState(stagePath string) error {
 		return err
 	}
 	return nil
+}
+
+func ensureStagePathDirectory(stagePath string) error {
+	info, err := os.Lstat(stagePath)
+	if err == nil {
+		if info.IsDir() {
+			return nil
+		}
+		if err := os.Remove(stagePath); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return os.MkdirAll(stagePath, 0o755)
 }

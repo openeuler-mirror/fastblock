@@ -74,6 +74,9 @@ func writeStageDeviceLinkWithSysfsRoot(stagePath, devicePath, sysClassBlockRoot 
 	if err := ValidateBlockTarget(devicePath, stagePath); err != nil {
 		return err
 	}
+	if err := ensureStagePathDirectory(stagePath); err != nil {
+		return err
+	}
 	_ = os.Remove(linkPath)
 	if _, err := os.Stat(devicePath); err == nil {
 		return os.Symlink(devicePath, linkPath)
