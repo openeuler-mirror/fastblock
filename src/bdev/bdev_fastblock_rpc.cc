@@ -719,6 +719,82 @@ cleanup:
 
 SPDK_RPC_REGISTER("bdev_fastblock_get_snapshot_by_name", rpc_bdev_fastblock_get_snapshot_by_name, SPDK_RPC_RUNTIME)
 
+static void
+rpc_bdev_fastblock_list_snapshots(struct spdk_jsonrpc_request *request,
+						  const struct spdk_json_val *params)
+{
+	struct rpc_bdev_fastblock_name_request req = {};
+	struct spdk_bdev *bdev;
+	auto blk_cli = get_management_blk_client();
+
+	if (spdk_json_decode_object(params, rpc_bdev_fastblock_name_request_decoders,
+								SPDK_COUNTOF(rpc_bdev_fastblock_name_request_decoders),
+								&req))
+	{
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
+										 "spdk_json_decode_object failed");
+		goto cleanup;
+	}
+
+	bdev = spdk_bdev_get_by_name(req.name);
+	if (bdev == NULL)
+	{
+		spdk_jsonrpc_send_error_response(request, -ENODEV, spdk_strerror(ENODEV));
+		goto cleanup;
+	}
+
+	if (!blk_cli)
+	{
+		spdk_jsonrpc_send_error_response(request, -EBUSY, spdk_strerror(EBUSY));
+		goto cleanup;
+	}
+
+	blk_cli->monitor_client()->emplace_get_image_metadata_by_name_request(
+		bdev_fastblock_get_pool_name(bdev),
+		bdev_fastblock_get_image_name(bdev),
+		[request, blk_cli](const monitor::client::response_status status, monitor::client::request_context *req_ctx)
+		{
+			if (status != monitor::client::response_status::ok)
+			{
+				send_monitor_status_error(request, status);
+				return;
+			}
+			auto &metadata = std::get<std::unique_ptr<monitor::client::image_metadata>>(req_ctx->response_data);
+			if (!metadata)
+			{
+				spdk_jsonrpc_send_error_response(request, -EIO, spdk_strerror(EIO));
+				return;
+			}
+			blk_cli->monitor_client()->emplace_list_snapshot_metadata_request(
+				metadata->image_id,
+				[request](const monitor::client::response_status status, monitor::client::request_context *req_ctx)
+				{
+					if (status != monitor::client::response_status::ok)
+					{
+						send_monitor_status_error(request, status);
+						return;
+					}
+					auto &items = std::get<std::unique_ptr<monitor::client::snapshot_metadata_list>>(req_ctx->response_data);
+					auto *w = spdk_jsonrpc_begin_result(request);
+					spdk_json_write_array_begin(w);
+					if (items)
+					{
+						for (const auto &item : items->data)
+						{
+							write_snapshot_metadata_json(w, item);
+						}
+					}
+					spdk_json_write_array_end(w);
+					spdk_jsonrpc_end_result(request, w);
+				});
+		});
+
+cleanup:
+	free_rpc_bdev_fastblock_name_request(&req);
+}
+
+SPDK_RPC_REGISTER("bdev_fastblock_list_snapshots", rpc_bdev_fastblock_list_snapshots, SPDK_RPC_RUNTIME)
+
 struct rpc_snapshot_id_request
 {
 	char *snapshot_id;
