@@ -214,6 +214,46 @@ func TestNodeUnstageMissingStateIsNoop(t *testing.T) {
 	}
 }
 
+func TestNodeStageVolumeRepairsStaleFileStagingPath(t *testing.T) {
+	service := New(driver.Options{
+		DriverName: "csi.fastblock.io",
+		Endpoint:   "unix:///tmp/node.sock",
+		NodeID:     "node-a",
+		Mode:       driver.ModeNode,
+	}, &stubBackend{})
+	grpcService := NewGRPCService(service)
+	stagePath := filepath.Join(t.TempDir(), "stage")
+	if err := os.WriteFile(stagePath, []byte("stale"), 0o644); err != nil {
+		t.Fatalf("write stale stage file failed: %v", err)
+	}
+
+	_, err := grpcService.NodeStageVolume(context.Background(), &csi.NodeStageVolumeRequest{
+		VolumeId:          "fbvolname:fb:img-a",
+		StagingTargetPath: stagePath,
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
+			AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+		},
+		PublishContext: map[string]string{
+			driver.PublishContextTransport: "rdma",
+			driver.PublishContextNQN:       "nqn.test",
+			driver.PublishContextTraddr:    "10.0.0.10",
+			driver.PublishContextTrsvcid:   "4420",
+			driver.PublishContextNSID:      "1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("node stage volume failed: %v", err)
+	}
+	info, err := os.Stat(stagePath)
+	if err != nil {
+		t.Fatalf("stat repaired stage path failed: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("expected repaired stage path to be directory, got mode %v", info.Mode())
+	}
+}
+
 func TestNodeGRPCRequestValidation(t *testing.T) {
 	service := New(driver.Options{
 		DriverName: "csi.fastblock.io",
