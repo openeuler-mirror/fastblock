@@ -1004,6 +1004,85 @@ func TestControllerPublishReconcilesStaleAttachmentWithoutLeaseOrExport(t *testi
 	}
 }
 
+func TestControllerPublishRecoversBrokenExportAttachmentAndLease(t *testing.T) {
+	monitor := &stubMetadataMonitorClient{
+		volumeMetadata: map[string]monitorclient.VolumeMetadata{
+			"vol-1": {
+				Volume: monitorclient.Volume{
+					ID:            "vol-1",
+					Name:          "img-a",
+					Pool:          "fb",
+					CapacityBytes: 1 << 20,
+					ObjectSize:    4 << 20,
+				},
+				BlockSize: 4096,
+				Transport: "rdma",
+				ExportID:  "exp-broken",
+			},
+		},
+		attachments: map[string]monitorclient.Attachment{
+			"vol-1": {
+				VolumeID: "vol-1",
+				NodeID:   "node-b",
+				HostNQN:  "nqn.host.old",
+				ExportID: "exp-broken",
+			},
+		},
+		leases: map[string]monitorclient.Lease{
+			"vol-1": {
+				VolumeID:   "vol-1",
+				NodeID:     "node-b",
+				HostNQN:    "nqn.host.old",
+				LeaseID:    1,
+				TTLSeconds: defaultLeaseTTLSeconds,
+			},
+		},
+		imageAttachments: map[string]string{
+			"vol-1": "node-b",
+		},
+	}
+	exporter := &stubExporterClient{getErr: exporterclient.ErrIncomplete}
+	svc := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, exporter)
+	volume := monitorclient.Volume{
+		ID:            "vol-1",
+		Name:          "img-a",
+		Pool:          "fb",
+		CapacityBytes: 1 << 20,
+		ObjectSize:    4 << 20,
+	}
+
+	result, err := svc.ControllerPublishVolume(context.Background(), ControllerPublishRequest{
+		Volume:    volume,
+		BlockSize: 4096,
+		Transport: "rdma",
+		NodeID:    "node-a",
+		Secrets:   map[string]string{"hostNQN": "nqn.host.1"},
+	})
+	if err != nil {
+		t.Fatalf("controller publish failed: %v", err)
+	}
+	if result.Export.ID == "" {
+		t.Fatal("expected publish to recreate export")
+	}
+	attachment, err := monitor.GetAttachment(context.Background(), "vol-1")
+	if err != nil {
+		t.Fatalf("get attachment failed: %v", err)
+	}
+	if attachment.NodeID != "node-a" || attachment.HostNQN != "nqn.host.1" {
+		t.Fatalf("expected attachment healed to new node, got %+v", attachment)
+	}
+	lease, err := monitor.GetLease(context.Background(), "vol-1")
+	if err != nil {
+		t.Fatalf("get lease failed: %v", err)
+	}
+	if lease.NodeID != "node-a" || lease.HostNQN != "nqn.host.1" {
+		t.Fatalf("expected lease healed to new node, got %+v", lease)
+	}
+	if got := monitor.imageAttachments["vol-1"]; got != "node-a" {
+		t.Fatalf("expected image attachment healed to node-a, got %q", got)
+	}
+}
+
 func mustExportIDForVolume(t *testing.T, volumeID string) string {
 	t.Helper()
 	exportID, err := exporterclient.ExportIDForVolume(volumeID)
