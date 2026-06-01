@@ -239,8 +239,62 @@ func TestStageFailsWhenHostEnvironmentIsMissing(t *testing.T) {
 		Traddr:    "10.0.0.10",
 		Trsvcid:   "4420",
 		NSID:      3,
-	}); err == nil {
-		t.Fatal("expected missing hostnqn to fail preflight")
+	}); !errors.Is(err, ErrHostNQNMissing) {
+		t.Fatalf("expected ErrHostNQNMissing, got %v", err)
+	}
+}
+
+func TestStageFailsWhenHostNQNIsEmpty(t *testing.T) {
+	root := t.TempDir()
+	backend := newTestBackend(t, root, &stubRunner{})
+	if err := os.WriteFile(backend.HostNQNPath, []byte("\n"), 0o644); err != nil {
+		t.Fatalf("truncate hostnqn failed: %v", err)
+	}
+	_, err := backend.Stage(context.Background(), "vol-1", VolumeContext{
+		Transport: "rdma",
+		NQN:       "nqn.test",
+		Traddr:    "10.0.0.10",
+		Trsvcid:   "4420",
+		NSID:      3,
+	})
+	if !errors.Is(err, ErrHostNQNEmpty) {
+		t.Fatalf("expected ErrHostNQNEmpty, got %v", err)
+	}
+}
+
+func TestStageFailsWhenKernelModuleIsMissing(t *testing.T) {
+	root := t.TempDir()
+	backend := newTestBackend(t, root, &stubRunner{})
+	if err := os.RemoveAll(filepath.Join(root, "sys", "module", "nvme_rdma")); err != nil {
+		t.Fatalf("remove module dir failed: %v", err)
+	}
+	_, err := backend.Stage(context.Background(), "vol-1", VolumeContext{
+		Transport: "rdma",
+		NQN:       "nqn.test",
+		Traddr:    "10.0.0.10",
+		Trsvcid:   "4420",
+		NSID:      3,
+	})
+	if !errors.Is(err, ErrKernelModuleMissing) {
+		t.Fatalf("expected ErrKernelModuleMissing, got %v", err)
+	}
+}
+
+func TestStageFailsWhenNVMeCommandMissing(t *testing.T) {
+	root := t.TempDir()
+	backend := newTestBackend(t, root, &stubRunner{})
+	backend.lookPath = func(string) (string, error) {
+		return "", errors.New("not found")
+	}
+	_, err := backend.Stage(context.Background(), "vol-1", VolumeContext{
+		Transport: "rdma",
+		NQN:       "nqn.test",
+		Traddr:    "10.0.0.10",
+		Trsvcid:   "4420",
+		NSID:      3,
+	})
+	if !errors.Is(err, ErrNVMeCommandMissing) {
+		t.Fatalf("expected ErrNVMeCommandMissing, got %v", err)
 	}
 }
 
