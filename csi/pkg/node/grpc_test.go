@@ -281,6 +281,44 @@ func TestNodePublishAndUnpublishVolume(t *testing.T) {
 	}
 }
 
+func TestNodePublishVolumeIsIdempotent(t *testing.T) {
+	publisher := &stubPublisher{}
+	service := &Service{
+		opts:      driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/node.sock", NodeID: "node-a"},
+		backend:   &stubBackend{},
+		publisher: publisher,
+	}
+	grpcService := NewGRPCService(service)
+	stagePath := t.TempDir()
+	targetPath := "/var/lib/kubelet/pods/pod/volumeDevices/publish"
+	if err := mount.WriteStageState(stagePath, mount.StageState{
+		VolumeID:   "fbvolname:fb:img-a",
+		DevicePath: "/dev/nvme0n1",
+	}); err != nil {
+		t.Fatalf("write stage state failed: %v", err)
+	}
+
+	req := &csi.NodePublishVolumeRequest{
+		VolumeId:          "fbvolname:fb:img-a",
+		StagingTargetPath: stagePath,
+		TargetPath:        targetPath,
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
+			AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+		},
+	}
+
+	if _, err := grpcService.NodePublishVolume(context.Background(), req); err != nil {
+		t.Fatalf("first node publish failed: %v", err)
+	}
+	if _, err := grpcService.NodePublishVolume(context.Background(), req); err != nil {
+		t.Fatalf("second node publish should remain successful, got %v", err)
+	}
+	if publisher.targetPath != targetPath {
+		t.Fatalf("unexpected publish call state: %+v", publisher)
+	}
+}
+
 func TestNodePublishRejectsMountCapability(t *testing.T) {
 	service := &Service{
 		opts:      driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/node.sock", NodeID: "node-a"},

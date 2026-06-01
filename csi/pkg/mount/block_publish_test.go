@@ -62,3 +62,30 @@ func TestUnpublishMissingTargetIsNoop(t *testing.T) {
 		t.Fatalf("unexpected error for missing target: %v", err)
 	}
 }
+
+func TestPublishBlockDeviceAlreadyPublishedIsNoop(t *testing.T) {
+	runner := &stubCommandRunner{}
+	publisher := &BlockPublisher{runner: runner}
+	stagePath := t.TempDir()
+	devicePath := filepath.Join(t.TempDir(), "device")
+	targetPath := filepath.Join(t.TempDir(), "publish", "device")
+
+	file, err := os.Create(devicePath)
+	if err != nil {
+		t.Fatalf("create device file failed: %v", err)
+	}
+	_ = file.Close()
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		t.Fatalf("mkdir publish dir failed: %v", err)
+	}
+	if err := os.Link(devicePath, targetPath); err != nil {
+		t.Fatalf("link target to device failed: %v", err)
+	}
+
+	if err := publisher.PublishBlockDevice(context.Background(), devicePath, stagePath, targetPath); err != nil {
+		t.Fatalf("expected already published target to be a noop, got %v", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("expected no mount call for already published target, got %d", len(runner.calls))
+	}
+}
