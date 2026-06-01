@@ -303,6 +303,22 @@ get_management_blk_client_fallback()
 	return nullptr;
 }
 
+static std::shared_ptr<::libblk_client>
+get_data_blk_client_fallback()
+{
+	auto worker_index = utils::get_current_shard_id();
+	if (worker_index < global::blk_clients.size()) {
+		auto blk_cli = global::blk_clients.at(worker_index);
+		if (blk_cli) {
+			return blk_cli;
+		}
+	}
+	if (strcmp("app_thread", spdk_thread_get_name(spdk_get_thread())) == 0) {
+		return get_management_blk_client_fallback();
+	}
+	return get_management_blk_client_fallback();
+}
+
 static int
 bdev_fastblock_get_ctx_size(void)
 {
@@ -435,9 +451,10 @@ bdev_fastblock_write(struct spdk_bdev_io *bdev_io,
 
 	auto worker_index = utils::get_current_shard_id();
 	SPDK_DEBUGLOG(libblk, "worker index: %d\n", worker_index);
-	auto blk_cli = global::blk_clients.at(worker_index);
-	if(!blk_cli && strcmp("app_thread", spdk_thread_get_name(spdk_get_thread())) == 0){
-		blk_cli = global::blk_clients.at(global::app_thread_shard_id);
+	auto blk_cli = get_data_blk_client_fallback();
+	if (!blk_cli) {
+		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+		return;
 	}
 
 	blk_cli->write(
@@ -487,9 +504,10 @@ bdev_fastblock_get_buf_cb(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_
 
 	auto worker_index = utils::get_current_shard_id();
 	SPDK_DEBUGLOG(libblk, "worker index: %d\n", worker_index);
-	auto blk_cli = global::blk_clients.at(worker_index);
-	if(!blk_cli && strcmp("app_thread", spdk_thread_get_name(spdk_get_thread())) == 0){
-		blk_cli = global::blk_clients.at(global::app_thread_shard_id);
+	auto blk_cli = get_data_blk_client_fallback();
+	if (!blk_cli) {
+		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_FAILED);
+		return;
 	}
 
 	blk_cli->read(
