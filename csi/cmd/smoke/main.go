@@ -33,6 +33,7 @@ func main() {
 	var verifyExpand bool
 	var verifyPublishIdempotency bool
 	var verifyNodeIdempotency bool
+	var verifyControllerRepublish bool
 	var verifyCrossNodeConflict bool
 	var conflictNodeID string
 	var conflictHostNQN string
@@ -54,6 +55,7 @@ func main() {
 	flag.BoolVar(&verifyExpand, "verify-expand", true, "verify ControllerExpandVolume after create")
 	flag.BoolVar(&verifyPublishIdempotency, "verify-publish-idempotency", true, "verify repeated ControllerPublishVolume on the same node succeeds")
 	flag.BoolVar(&verifyNodeIdempotency, "verify-node-idempotency", true, "verify repeated NodeStageVolume/NodePublishVolume/NodeUnpublishVolume succeed")
+	flag.BoolVar(&verifyControllerRepublish, "verify-controller-republish", true, "verify ControllerUnpublishVolume followed by ControllerPublishVolume succeeds")
 	flag.BoolVar(&verifyCrossNodeConflict, "verify-cross-node-conflict", true, "verify ControllerPublishVolume to another node is rejected")
 	flag.StringVar(&conflictNodeID, "conflict-node-id", "", "node id used for cross-node conflict verification")
 	flag.StringVar(&conflictHostNQN, "conflict-host-nqn", "", "host NQN used for cross-node conflict verification")
@@ -267,6 +269,26 @@ func main() {
 			log.Fatalf("NodePublishVolume after unpublish failed: %v", err)
 		}
 		cleanupState.nodePublished = true
+	}
+	if verifyControllerRepublish {
+		log.Printf("Verify ControllerUnpublishVolume -> ControllerPublishVolume volumeID=%s nodeID=%s", volume.GetVolumeId(), nodeID)
+		unpublishReq := &csi.ControllerUnpublishVolumeRequest{
+			VolumeId: volume.GetVolumeId(),
+			NodeId:   nodeID,
+		}
+		if cleanupState.hostNQN != "" {
+			unpublishReq.Secrets = map[string]string{"hostNQN": cleanupState.hostNQN}
+		}
+		if _, err := controllerClient.ControllerUnpublishVolume(ctx, unpublishReq); err != nil {
+			log.Fatalf("ControllerUnpublishVolume republish probe failed: %v", err)
+		}
+		cleanupState.controllerPublished = false
+		republishResp, err := controllerClient.ControllerPublishVolume(ctx, publishReq)
+		if err != nil {
+			log.Fatalf("ControllerPublishVolume after unpublish failed: %v", err)
+		}
+		publishResp = republishResp
+		cleanupState.controllerPublished = true
 	}
 
 	log.Printf("Smoke flow succeeded volumeID=%s", volume.GetVolumeId())
