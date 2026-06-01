@@ -208,6 +208,25 @@ func TestUnstage(t *testing.T) {
 	}
 }
 
+func TestUnstageTreatsMissingSessionAsIdempotent(t *testing.T) {
+	runner := &stubRunner{
+		err: errors.New("nvme disconnect failed: no controller found"),
+	}
+	backend := NewNVMF()
+	backend.runner = runner
+
+	err := backend.Unstage(context.Background(), "vol-1", VolumeContext{
+		Transport: "tcp",
+		NQN:       "nqn.test",
+		Traddr:    "10.0.0.10",
+		Trsvcid:   "4420",
+		NSID:      1,
+	})
+	if err != nil {
+		t.Fatalf("unstage should ignore missing session: %v", err)
+	}
+}
+
 func TestStageFailsWhenHostEnvironmentIsMissing(t *testing.T) {
 	root := t.TempDir()
 	backend := newTestBackend(t, root, &stubRunner{})
@@ -237,6 +256,9 @@ func TestTransportModuleHelper(t *testing.T) {
 	}
 	if !isAlreadyConnectedError(errors.New("already connected")) {
 		t.Fatal("expected already connected error detection")
+	}
+	if !isAlreadyDisconnectedError(errors.New("no controller found")) {
+		t.Fatal("expected already disconnected error detection")
 	}
 }
 

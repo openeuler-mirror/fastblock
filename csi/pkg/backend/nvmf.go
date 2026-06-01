@@ -88,7 +88,11 @@ func (b *NVMFBackend) Unstage(ctx context.Context, _ string, volumeCtx VolumeCon
 	if err := ValidateVolumeContext(volumeCtx); err != nil {
 		return err
 	}
-	return b.runner.Run(ctx, "nvme", buildDisconnectArgs(volumeCtx.NQN)...)
+	err := b.runner.Run(ctx, "nvme", buildDisconnectArgs(volumeCtx.NQN)...)
+	if err != nil && isAlreadyDisconnectedError(err) {
+		return nil
+	}
+	return err
 }
 
 func (b *NVMFBackend) GetDevice(_ context.Context, _ string, volumeCtx VolumeContext) (string, error) {
@@ -242,6 +246,17 @@ func isAlreadyConnectedError(err error) bool {
 		return false
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "already connected")
+}
+
+func isAlreadyDisconnectedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "not connected") ||
+		strings.Contains(text, "no controller") ||
+		strings.Contains(text, "no matching") ||
+		strings.Contains(text, "failed to disconnect")
 }
 
 func (b *NVMFBackend) waitForDevice(ctx context.Context, volumeCtx VolumeContext) (string, error) {
