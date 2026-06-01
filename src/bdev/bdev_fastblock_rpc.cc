@@ -19,7 +19,21 @@
 static std::shared_ptr<::libblk_client>
 get_management_blk_client()
 {
-	return global::blk_clients.at(global::app_thread_shard_id);
+	if (global::blk_client) {
+		return global::blk_client;
+	}
+	if (global::app_thread_shard_id < global::blk_clients.size()) {
+		auto blk_cli = global::blk_clients.at(global::app_thread_shard_id);
+		if (blk_cli) {
+			return blk_cli;
+		}
+	}
+	for (auto& blk_cli : global::blk_clients) {
+		if (blk_cli) {
+			return blk_cli;
+		}
+	}
+	return nullptr;
 }
 
 static void
