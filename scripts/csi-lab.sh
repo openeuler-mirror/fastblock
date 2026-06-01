@@ -665,30 +665,36 @@ mkfs_osd_if_needed() {
     "$OSD_BIN" -C "$CONFIG_PATH" --id "$id" --mkfs --force --uuid "$(osd_uuid)" -S 1 >/dev/null
 }
 
-ensure_pool() {
+ensure_named_pool() {
+    local pool_name="$1"
     local pools
     pools="$(monitor_client -op=listpools 2>&1 || true)"
-    if grep -q "name: $POOL_NAME" <<<"$pools"; then
-        log "pool $POOL_NAME already exists"
+    if grep -q "name: $pool_name" <<<"$pools"; then
+        log "pool $pool_name already exists"
     else
-        monitor_client -op=createpool -poolname="$POOL_NAME" -pgcount="$PG_COUNT" -pgsize="$PG_SIZE" >/dev/null
-        log "created pool $POOL_NAME"
+        monitor_client -op=createpool -poolname="$pool_name" -pgcount="$PG_COUNT" -pgsize="$PG_SIZE" >/dev/null
+        log "created pool $pool_name"
     fi
-    wait_for_pool_ready
+    wait_for_named_pool_ready "$pool_name"
 }
 
-wait_for_pool_ready() {
+ensure_pool() {
+    ensure_named_pool "$POOL_NAME"
+}
+
+wait_for_named_pool_ready() {
+    local pool_name="$1"
     local i pools status
     for ((i = 0; i < 60; i++)); do
         pools="$(monitor_client -op=listpools 2>&1 || true)"
         status="$(monitor_client -op=status 2>&1 || true)"
-        if grep -q "name: $POOL_NAME" <<<"$pools" && grep -q "pools  : 1 pools" <<<"$status" && grep -q "active" <<<"$status"; then
-            log "pool $POOL_NAME is active"
+        if grep -q "name: $pool_name" <<<"$pools" && grep -q "pools  : 1 pools" <<<"$status" && grep -q "active" <<<"$status"; then
+            log "pool $pool_name is active"
             return 0
         fi
         sleep 1
     done
-    die "pool $POOL_NAME did not become active"
+    die "pool $pool_name did not become active"
 }
 
 wait_for_osd_up() {
@@ -930,7 +936,7 @@ clone_proof_action() {
     ensure_osd_identity
     mkfs_osd_if_needed
     start_osd
-    ensure_pool
+    ensure_named_pool "$CLONE_PROOF_POOL"
     log "running clone proof pool=$CLONE_PROOF_POOL image=$CLONE_PROOF_IMAGE snapshot=$CLONE_PROOF_SNAPSHOT clone=$CLONE_PROOF_CLONE coremask=$CLONE_PROOF_COREMASK"
     FB_CLONE_POOL="$CLONE_PROOF_POOL" \
     FB_CLONE_IMAGE="$CLONE_PROOF_IMAGE" \
