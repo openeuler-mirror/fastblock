@@ -1988,7 +1988,7 @@ public:
             std::map<std::string, xattr_val_type> xattr;
             xattr["type"] = blob_type::object;
             xattr["pg"] = _raft->raft_get_pg_name();
-            obs->read(xattr, obj_name, 0, ctx->buf, object_unit_size, read_continue, ctx);
+            obs->read(xattr, obj_name, 0, ctx->buf, object_unit_size, 0, read_continue, ctx);
         }
     }
 
