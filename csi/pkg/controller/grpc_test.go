@@ -76,6 +76,92 @@ func TestControllerGRPCCreateAndDeleteVolume(t *testing.T) {
 	}
 }
 
+func TestControllerGRPCExpandVolume(t *testing.T) {
+	monitor := &stubMonitorClient{
+		createVol: monitorclient.Volume{
+			ID: "opaque-volume-id",
+		},
+		getVol: monitorclient.Volume{
+			ID:            "opaque-volume-id",
+			Name:          "img-a",
+			Pool:          "fb",
+			CapacityBytes: 1 << 20,
+			ObjectSize:    4 << 20,
+		},
+	}
+	service := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, &stubExporterClient{})
+	grpcService := NewGRPCService(service)
+
+	createResp, err := grpcService.CreateVolume(context.Background(), &csi.CreateVolumeRequest{
+		Name: "img-a",
+		CapacityRange: &csi.CapacityRange{
+			RequiredBytes: 1 << 20,
+		},
+		Parameters: map[string]string{
+			"pool":       "fb",
+			"objectSize": "4194304",
+			"blockSize":  "4096",
+			"transport":  "rdma",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create volume failed: %v", err)
+	}
+
+	resp, err := grpcService.ControllerExpandVolume(context.Background(), &csi.ControllerExpandVolumeRequest{
+		VolumeId: createResp.GetVolume().GetVolumeId(),
+		CapacityRange: &csi.CapacityRange{
+			RequiredBytes: 2 << 20,
+		},
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}},
+			AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expand volume failed: %v", err)
+	}
+	if resp.GetCapacityBytes() != 2<<20 || resp.GetNodeExpansionRequired() {
+		t.Fatalf("unexpected expand response: %+v", resp)
+	}
+	if monitor.expandRef.ID != "opaque-volume-id" || monitor.expandRef.Name != "img-a" || monitor.expandRef.Pool != "fb" {
+		t.Fatalf("unexpected expand ref: %+v", monitor.expandRef)
+	}
+	if monitor.expandCap != 2<<20 {
+		t.Fatalf("unexpected expand capacity: %d", monitor.expandCap)
+	}
+}
+
+func TestControllerGRPCExpandVolumeIsNoopWhenRequestedSizeDoesNotGrow(t *testing.T) {
+	monitor := &stubMonitorClient{
+		getVol: monitorclient.Volume{
+			ID:            "fbvolname:fb:img-a",
+			Name:          "img-a",
+			Pool:          "fb",
+			CapacityBytes: 2 << 20,
+			ObjectSize:    4 << 20,
+		},
+	}
+	service := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, &stubExporterClient{})
+	grpcService := NewGRPCService(service)
+
+	resp, err := grpcService.ControllerExpandVolume(context.Background(), &csi.ControllerExpandVolumeRequest{
+		VolumeId: "fbvolname:fb:img-a",
+		CapacityRange: &csi.CapacityRange{
+			RequiredBytes: 1 << 20,
+		},
+	})
+	if err != nil {
+		t.Fatalf("expand volume noop failed: %v", err)
+	}
+	if resp.GetCapacityBytes() != 2<<20 {
+		t.Fatalf("unexpected noop expand response: %+v", resp)
+	}
+	if monitor.expandCap != 0 {
+		t.Fatalf("expected monitor expand not to be called, got %d", monitor.expandCap)
+	}
+}
+
 func TestControllerGRPCDeleteVolumeUsesStoredMetadataForOpaqueVolumeID(t *testing.T) {
 	monitor := &stubMonitorClient{
 		createVol: monitorclient.Volume{
@@ -482,11 +568,42 @@ func TestControllerGRPCRequestValidation(t *testing.T) {
 	if _, err := grpcService.DeleteVolume(context.Background(), &csi.DeleteVolumeRequest{}); err == nil {
 		t.Fatal("expected delete volume validation error")
 	}
+	if _, err := grpcService.ControllerExpandVolume(context.Background(), &csi.ControllerExpandVolumeRequest{}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected controller expand validation error, got %v", err)
+	}
 	if _, err := grpcService.ControllerPublishVolume(context.Background(), &csi.ControllerPublishVolumeRequest{}); err == nil {
 		t.Fatal("expected controller publish validation error")
 	}
 	if _, err := grpcService.ControllerUnpublishVolume(context.Background(), &csi.ControllerUnpublishVolumeRequest{}); err == nil {
 		t.Fatal("expected controller unpublish validation error")
+	}
+}
+
+func TestControllerGRPCExpandVolumeRejectsUnsupportedCapability(t *testing.T) {
+	monitor := &stubMonitorClient{
+		getVol: monitorclient.Volume{
+			ID:            "fbvolname:fb:img-a",
+			Name:          "img-a",
+			Pool:          "fb",
+			CapacityBytes: 1 << 20,
+			ObjectSize:    4 << 20,
+		},
+	}
+	service := New(driver.Options{DriverName: "csi.fastblock.io", Endpoint: "unix:///tmp/controller.sock"}, monitor, &stubExporterClient{})
+	grpcService := NewGRPCService(service)
+
+	_, err := grpcService.ControllerExpandVolume(context.Background(), &csi.ControllerExpandVolumeRequest{
+		VolumeId: "fbvolname:fb:img-a",
+		CapacityRange: &csi.CapacityRange{
+			RequiredBytes: 2 << 20,
+		},
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Mount{Mount: &csi.VolumeCapability_MountVolume{}},
+			AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+		},
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected invalid argument for unsupported expand capability, got %v", err)
 	}
 }
 

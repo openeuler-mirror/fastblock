@@ -220,6 +220,45 @@ func (s *GRPCService) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeReq
 	return &csi.DeleteVolumeResponse{}, nil
 }
 
+func (s *GRPCService) ControllerExpandVolume(ctx context.Context, req *csi.ControllerExpandVolumeRequest) (*csi.ControllerExpandVolumeResponse, error) {
+	if req.GetVolumeId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "volume id is required")
+	}
+	if capability := req.GetVolumeCapability(); capability != nil && !driver.IsSupportedVolumeCapability(capability) {
+		return nil, status.Error(codes.InvalidArgument, "unsupported volume capability")
+	}
+	capacityBytes, err := requestedExpandCapacityBytes(req.GetCapacityRange())
+	if err != nil {
+		return nil, err
+	}
+	ref, err := s.resolveVolumeRef(ctx, req.GetVolumeId())
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	current, err := s.service.GetVolume(ctx, NewGetVolumeRequest(ref))
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	current = normalizeVolume(current, ref)
+	if current.CapacityBytes > 0 && capacityBytes <= current.CapacityBytes {
+		return &csi.ControllerExpandVolumeResponse{
+			CapacityBytes:         current.CapacityBytes,
+			NodeExpansionRequired: false,
+		}, nil
+	}
+	volume, err := s.service.ExpandVolume(ctx, NewExpandVolumeRequest(ref, capacityBytes))
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	if volume.CapacityBytes <= 0 {
+		volume.CapacityBytes = capacityBytes
+	}
+	return &csi.ControllerExpandVolumeResponse{
+		CapacityBytes:         volume.CapacityBytes,
+		NodeExpansionRequired: false,
+	}, nil
+}
+
 func (s *GRPCService) ControllerPublishVolume(ctx context.Context, req *csi.ControllerPublishVolumeRequest) (*csi.ControllerPublishVolumeResponse, error) {
 	if req.GetVolumeId() == "" {
 		return nil, fmt.Errorf("volume id is required")
@@ -406,4 +445,18 @@ func paginateSnapshots(snapshots []monitorclient.Snapshot, start int, maxEntries
 		return snapshots[start:], ""
 	}
 	return snapshots[start:end], strconv.Itoa(end)
+}
+
+func requestedExpandCapacityBytes(capRange *csi.CapacityRange) (int64, error) {
+	if capRange == nil {
+		return 0, status.Error(codes.InvalidArgument, "capacity range is required")
+	}
+	capacityBytes := capRange.GetRequiredBytes()
+	if capacityBytes <= 0 {
+		capacityBytes = capRange.GetLimitBytes()
+	}
+	if capacityBytes <= 0 {
+		return 0, status.Error(codes.InvalidArgument, "required or limit bytes must be greater than zero")
+	}
+	return capacityBytes, nil
 }

@@ -116,14 +116,21 @@ func TestControllerCapabilitiesIncludeSnapshotsWhenSupported(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get capabilities failed: %v", err)
 	}
-	if len(resp.GetCapabilities()) != 4 {
+	if len(resp.GetCapabilities()) != 5 {
 		t.Fatalf("unexpected capability count: %d", len(resp.GetCapabilities()))
 	}
-	if resp.GetCapabilities()[2].GetRpc().GetType() != csi.ControllerServiceCapability_RPC_CREATE_DELETE_SNAPSHOT {
-		t.Fatalf("missing create/delete snapshot capability: %+v", resp.GetCapabilities()[2])
+	seen := map[csi.ControllerServiceCapability_RPC_Type]bool{}
+	for _, capability := range resp.GetCapabilities() {
+		seen[capability.GetRpc().GetType()] = true
 	}
-	if resp.GetCapabilities()[3].GetRpc().GetType() != csi.ControllerServiceCapability_RPC_LIST_SNAPSHOTS {
-		t.Fatalf("missing list snapshots capability: %+v", resp.GetCapabilities()[3])
+	if !seen[csi.ControllerServiceCapability_RPC_EXPAND_VOLUME] {
+		t.Fatalf("missing expand volume capability: %+v", resp.GetCapabilities())
+	}
+	if !seen[csi.ControllerServiceCapability_RPC_CREATE_DELETE_SNAPSHOT] {
+		t.Fatalf("missing create/delete snapshot capability: %+v", resp.GetCapabilities())
+	}
+	if !seen[csi.ControllerServiceCapability_RPC_LIST_SNAPSHOTS] {
+		t.Fatalf("missing list snapshots capability: %+v", resp.GetCapabilities())
 	}
 }
 
