@@ -508,6 +508,114 @@ func (c *TCPClient) ListLeases(ctx context.Context) ([]Lease, error) {
 	return result, nil
 }
 
+func (c *TCPClient) AttachImage(ctx context.Context, ref VolumeRef, clientID, clientType string, leaseDurationSeconds int64) error {
+	if err := ValidateAddress(c.address); err != nil {
+		return err
+	}
+	if err := ref.Validate(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(clientID) == "" {
+		return fmt.Errorf("client id is required")
+	}
+	if strings.TrimSpace(clientType) == "" {
+		return fmt.Errorf("client type is required")
+	}
+	if leaseDurationSeconds <= 0 {
+		return fmt.Errorf("invalid lease duration seconds %d", leaseDurationSeconds)
+	}
+	imageID, err := c.imageIDByRef(ctx, ref)
+	if err != nil {
+		return err
+	}
+	resp, err := c.roundTrip(ctx, &msg.Request{
+		Union: &msg.Request_AttachImageRequest{
+			AttachImageRequest: &msg.AttachImageRequest{
+				ImageId:              imageID,
+				ClientId:             clientID,
+				ClientType:           clientType,
+				LeaseDurationSeconds: leaseDurationSeconds,
+			},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	payload, ok := resp.Union.(*msg.Response_AttachImageResponse)
+	if !ok {
+		return fmt.Errorf("unexpected response type %T", resp.Union)
+	}
+	return imageMetadataError(payload.AttachImageResponse.GetErrorcode())
+}
+
+func (c *TCPClient) DetachImage(ctx context.Context, ref VolumeRef, clientID string) error {
+	if err := ValidateAddress(c.address); err != nil {
+		return err
+	}
+	if err := ref.Validate(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(clientID) == "" {
+		return fmt.Errorf("client id is required")
+	}
+	imageID, err := c.imageIDByRef(ctx, ref)
+	if err != nil {
+		return err
+	}
+	resp, err := c.roundTrip(ctx, &msg.Request{
+		Union: &msg.Request_DetachImageRequest{
+			DetachImageRequest: &msg.DetachImageRequest{
+				ImageId:  imageID,
+				ClientId: clientID,
+			},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	payload, ok := resp.Union.(*msg.Response_DetachImageResponse)
+	if !ok {
+		return fmt.Errorf("unexpected response type %T", resp.Union)
+	}
+	return imageMetadataError(payload.DetachImageResponse.GetErrorcode())
+}
+
+func (c *TCPClient) RenewImageLease(ctx context.Context, ref VolumeRef, clientID string, leaseDurationSeconds int64) error {
+	if err := ValidateAddress(c.address); err != nil {
+		return err
+	}
+	if err := ref.Validate(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(clientID) == "" {
+		return fmt.Errorf("client id is required")
+	}
+	if leaseDurationSeconds <= 0 {
+		return fmt.Errorf("invalid lease duration seconds %d", leaseDurationSeconds)
+	}
+	imageID, err := c.imageIDByRef(ctx, ref)
+	if err != nil {
+		return err
+	}
+	resp, err := c.roundTrip(ctx, &msg.Request{
+		Union: &msg.Request_RenewImageLeaseRequest{
+			RenewImageLeaseRequest: &msg.RenewImageLeaseRequest{
+				ImageId:              imageID,
+				ClientId:             clientID,
+				LeaseDurationSeconds: leaseDurationSeconds,
+			},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	payload, ok := resp.Union.(*msg.Response_RenewImageLeaseResponse)
+	if !ok {
+		return fmt.Errorf("unexpected response type %T", resp.Union)
+	}
+	return imageMetadataError(payload.RenewImageLeaseResponse.GetErrorcode())
+}
+
 func (c *TCPClient) roundTrip(ctx context.Context, req *msg.Request) (*msg.Response, error) {
 	conn, err := c.dialer.DialContext(ctx, "tcp", c.address)
 	if err != nil {
@@ -542,6 +650,32 @@ func (c *TCPClient) roundTrip(ctx context.Context, req *msg.Request) (*msg.Respo
 		return nil, err
 	}
 	return resp, nil
+}
+
+func (c *TCPClient) imageIDByRef(ctx context.Context, ref VolumeRef) (string, error) {
+	resp, err := c.roundTrip(ctx, &msg.Request{
+		Union: &msg.Request_GetImageMetadataByNameRequest{
+			GetImageMetadataByNameRequest: &msg.GetImageMetadataByNameRequest{
+				PoolName:  ref.Pool,
+				ImageName: ref.Name,
+			},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	payload, ok := resp.Union.(*msg.Response_GetImageMetadataByNameResponse)
+	if !ok {
+		return "", fmt.Errorf("unexpected response type %T", resp.Union)
+	}
+	if err := imageMetadataError(payload.GetImageMetadataByNameResponse.GetErrorcode()); err != nil {
+		return "", err
+	}
+	metadata := payload.GetImageMetadataByNameResponse.GetMetadata()
+	if metadata == nil || strings.TrimSpace(metadata.GetImageId()) == "" {
+		return "", fmt.Errorf("monitor returned empty image metadata for %s/%s", ref.Pool, ref.Name)
+	}
+	return metadata.GetImageId(), nil
 }
 
 func volumeFromImageInfo(info *msg.ImageInfo) Volume {
@@ -651,5 +785,18 @@ func leaseError(code msg.CSILeaseErrorCode) error {
 		return fmt.Errorf("monitor lease invalid argument")
 	default:
 		return fmt.Errorf("monitor lease operation failed: %s", code.String())
+	}
+}
+
+func imageMetadataError(code msg.ImageMetadataErrorCode) error {
+	switch code {
+	case msg.ImageMetadataErrorCode_imageMetadataOk:
+		return nil
+	case msg.ImageMetadataErrorCode_imageMetadataNotFound:
+		return ErrImageNotFound
+	case msg.ImageMetadataErrorCode_imageMetadataInvalidArgument:
+		return fmt.Errorf("monitor image metadata invalid argument")
+	default:
+		return fmt.Errorf("monitor image metadata operation failed: %s", code.String())
 	}
 }

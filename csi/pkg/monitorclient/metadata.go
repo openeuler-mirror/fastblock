@@ -10,6 +10,7 @@ import (
 var ErrMetadataNotFound = errors.New("monitor metadata not found")
 var ErrLeaseNotFound = errors.New("monitor lease not found")
 var ErrLeaseConflict = errors.New("monitor lease conflict")
+var ErrImageNotFound = errors.New("monitor image not found")
 
 type VolumeMetadata struct {
 	Volume    Volume
@@ -47,6 +48,9 @@ type MetadataClient interface {
 	RenewLease(ctx context.Context, lease Lease) (Lease, error)
 	ReleaseLease(ctx context.Context, lease Lease) error
 	ListLeases(ctx context.Context) ([]Lease, error)
+	AttachImage(ctx context.Context, ref VolumeRef, clientID, clientType string, leaseDurationSeconds int64) error
+	DetachImage(ctx context.Context, ref VolumeRef, clientID string) error
+	RenewImageLease(ctx context.Context, ref VolumeRef, clientID string, leaseDurationSeconds int64) error
 }
 
 func (m VolumeMetadata) Validate() error {

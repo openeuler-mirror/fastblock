@@ -600,6 +600,93 @@ func TestLeaseErrorsUseDedicatedSentinels(t *testing.T) {
 	}
 }
 
+func TestImageAttachmentLifecycle(t *testing.T) {
+	address := startMockMonitorSequence(t, func(call int, req *msg.Request) *msg.Response {
+		switch call {
+		case 0, 2, 4:
+			payload, ok := req.Union.(*msg.Request_GetImageMetadataByNameRequest)
+			if !ok {
+				t.Fatalf("unexpected request type %T", req.Union)
+			}
+			if payload.GetImageMetadataByNameRequest.GetPoolName() != "fb" || payload.GetImageMetadataByNameRequest.GetImageName() != "img-a" {
+				t.Fatalf("unexpected get image metadata request: %+v", payload.GetImageMetadataByNameRequest)
+			}
+			return &msg.Response{
+				Union: &msg.Response_GetImageMetadataByNameResponse{
+					GetImageMetadataByNameResponse: &msg.GetImageMetadataByNameResponse{
+						Errorcode: msg.ImageMetadataErrorCode_imageMetadataOk,
+						Metadata: &msg.ImageMetadataV2{
+							ImageId:   "img-1",
+							PoolName:  "fb",
+							ImageName: "img-a",
+						},
+					},
+				},
+			}
+		case 1:
+			payload, ok := req.Union.(*msg.Request_AttachImageRequest)
+			if !ok {
+				t.Fatalf("unexpected request type %T", req.Union)
+			}
+			if payload.AttachImageRequest.GetImageId() != "img-1" || payload.AttachImageRequest.GetClientId() != "node-a" {
+				t.Fatalf("unexpected attach request: %+v", payload.AttachImageRequest)
+			}
+			return &msg.Response{
+				Union: &msg.Response_AttachImageResponse{
+					AttachImageResponse: &msg.AttachImageResponse{
+						Errorcode: msg.ImageMetadataErrorCode_imageMetadataOk,
+					},
+				},
+			}
+		case 3:
+			payload, ok := req.Union.(*msg.Request_RenewImageLeaseRequest)
+			if !ok {
+				t.Fatalf("unexpected request type %T", req.Union)
+			}
+			if payload.RenewImageLeaseRequest.GetImageId() != "img-1" || payload.RenewImageLeaseRequest.GetClientId() != "node-a" {
+				t.Fatalf("unexpected renew request: %+v", payload.RenewImageLeaseRequest)
+			}
+			return &msg.Response{
+				Union: &msg.Response_RenewImageLeaseResponse{
+					RenewImageLeaseResponse: &msg.RenewImageLeaseResponse{
+						Errorcode: msg.ImageMetadataErrorCode_imageMetadataOk,
+					},
+				},
+			}
+		case 5:
+			payload, ok := req.Union.(*msg.Request_DetachImageRequest)
+			if !ok {
+				t.Fatalf("unexpected request type %T", req.Union)
+			}
+			if payload.DetachImageRequest.GetImageId() != "img-1" || payload.DetachImageRequest.GetClientId() != "node-a" {
+				t.Fatalf("unexpected detach request: %+v", payload.DetachImageRequest)
+			}
+			return &msg.Response{
+				Union: &msg.Response_DetachImageResponse{
+					DetachImageResponse: &msg.DetachImageResponse{
+						Errorcode: msg.ImageMetadataErrorCode_imageMetadataOk,
+					},
+				},
+			}
+		default:
+			t.Fatalf("unexpected call index %d", call)
+			return nil
+		}
+	})
+
+	client := NewTCP(address)
+	ref := VolumeRef{Name: "img-a", Pool: "fb"}
+	if err := client.AttachImage(context.Background(), ref, "node-a", "csi-controller", 30); err != nil {
+		t.Fatalf("attach image failed: %v", err)
+	}
+	if err := client.RenewImageLease(context.Background(), ref, "node-a", 30); err != nil {
+		t.Fatalf("renew image lease failed: %v", err)
+	}
+	if err := client.DetachImage(context.Background(), ref, "node-a"); err != nil {
+		t.Fatalf("detach image failed: %v", err)
+	}
+}
+
 func TestInputValidation(t *testing.T) {
 	client := NewTCP("127.0.0.1:3333")
 	if _, err := client.CreateVolume(context.Background(), CreateVolumeRequest{}); err == nil {
