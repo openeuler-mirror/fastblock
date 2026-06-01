@@ -23,6 +23,30 @@ type stubManager struct {
 	denyNQN   string
 	getID     string
 	getErr    error
+	snapshotCreate struct {
+		exportID string
+		name     string
+	}
+	snapshotDelete struct {
+		exportID string
+		name     string
+	}
+	snapshotProtect struct {
+		exportID string
+		name     string
+	}
+	snapshotUnprotect struct {
+		exportID string
+		name     string
+	}
+	snapshotClone struct {
+		exportID  string
+		name      string
+		cloneName string
+	}
+	snapshotList []api.Snapshot
+	snapshotGet  api.Snapshot
+	flattenID    string
 }
 
 func (m *stubManager) CreateExport(_ context.Context, req api.CreateExportRequest) (api.Export, error) {
@@ -45,6 +69,56 @@ func (m *stubManager) GetExport(_ context.Context, exportID string) (api.Export,
 		return api.Export{}, m.getErr
 	}
 	return api.Export{ID: exportID, NQN: "nqn.1", NSID: 1, Traddr: "10.0.0.1", Trsvcid: "4420"}, nil
+}
+
+func (m *stubManager) CreateSnapshot(_ context.Context, exportID, snapshotName string) error {
+	m.snapshotCreate.exportID = exportID
+	m.snapshotCreate.name = snapshotName
+	return nil
+}
+
+func (m *stubManager) ListSnapshots(_ context.Context, exportID string) ([]api.Snapshot, error) {
+	m.snapshotCreate.exportID = exportID
+	return m.snapshotList, nil
+}
+
+func (m *stubManager) GetSnapshot(_ context.Context, exportID, snapshotName string) (api.Snapshot, error) {
+	m.snapshotGet.SnapshotName = snapshotName
+	m.snapshotCreate.exportID = exportID
+	if m.snapshotGet.SnapshotID == "" {
+		m.snapshotGet = api.Snapshot{SnapshotID: "snap-1", SnapshotName: snapshotName}
+	}
+	return m.snapshotGet, nil
+}
+
+func (m *stubManager) ProtectSnapshot(_ context.Context, exportID, snapshotName string) error {
+	m.snapshotProtect.exportID = exportID
+	m.snapshotProtect.name = snapshotName
+	return nil
+}
+
+func (m *stubManager) UnprotectSnapshot(_ context.Context, exportID, snapshotName string) error {
+	m.snapshotUnprotect.exportID = exportID
+	m.snapshotUnprotect.name = snapshotName
+	return nil
+}
+
+func (m *stubManager) DeleteSnapshot(_ context.Context, exportID, snapshotName string) error {
+	m.snapshotDelete.exportID = exportID
+	m.snapshotDelete.name = snapshotName
+	return nil
+}
+
+func (m *stubManager) CreateCloneFromSnapshot(_ context.Context, exportID, snapshotName, cloneImageName string) error {
+	m.snapshotClone.exportID = exportID
+	m.snapshotClone.name = snapshotName
+	m.snapshotClone.cloneName = cloneImageName
+	return nil
+}
+
+func (m *stubManager) FlattenExport(_ context.Context, exportID string) error {
+	m.flattenID = exportID
+	return nil
 }
 
 func (m *stubManager) AllowHost(_ context.Context, exportID, hostNQN string) error {
@@ -144,6 +218,84 @@ func TestDeleteExport(t *testing.T) {
 	}
 	if manager.deleteID != "exp-9" {
 		t.Fatalf("unexpected delete id: %q", manager.deleteID)
+	}
+}
+
+func TestCreateSnapshot(t *testing.T) {
+	manager := &stubManager{}
+	srv := New(config.Config{NodeName: "node-a"}, manager)
+	body := bytes.NewReader([]byte(`{"snapshot_name":"snap-a"}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/exports/exp-1/snapshots", body)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	if manager.snapshotCreate.exportID != "exp-1" || manager.snapshotCreate.name != "snap-a" {
+		t.Fatalf("unexpected snapshot create call: %+v", manager.snapshotCreate)
+	}
+}
+
+func TestListSnapshots(t *testing.T) {
+	manager := &stubManager{snapshotList: []api.Snapshot{{SnapshotID: "snap-1", SnapshotName: "snap-a"}}}
+	srv := New(config.Config{NodeName: "node-a"}, manager)
+	req := httptest.NewRequest(http.MethodGet, "/v1/exports/exp-1/snapshots", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	var items []api.Snapshot
+	if err := json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if len(items) != 1 || items[0].SnapshotName != "snap-a" {
+		t.Fatalf("unexpected snapshots: %+v", items)
+	}
+}
+
+func TestSnapshotActions(t *testing.T) {
+	manager := &stubManager{}
+	srv := New(config.Config{NodeName: "node-a"}, manager)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/exports/exp-1/snapshots/snap-a/protect", bytes.NewReader(nil))
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || manager.snapshotProtect.name != "snap-a" {
+		t.Fatalf("unexpected protect result: status=%d call=%+v", rec.Code, manager.snapshotProtect)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/v1/exports/exp-1/snapshots/snap-a/unprotect", bytes.NewReader(nil))
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || manager.snapshotUnprotect.name != "snap-a" {
+		t.Fatalf("unexpected unprotect result: status=%d call=%+v", rec.Code, manager.snapshotUnprotect)
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/v1/exports/exp-1/snapshots/snap-a", nil)
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || manager.snapshotDelete.name != "snap-a" {
+		t.Fatalf("unexpected delete result: status=%d call=%+v", rec.Code, manager.snapshotDelete)
+	}
+}
+
+func TestCloneAndFlattenActions(t *testing.T) {
+	manager := &stubManager{}
+	srv := New(config.Config{NodeName: "node-a"}, manager)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/exports/exp-1/snapshots/snap-a/clone", bytes.NewReader([]byte(`{"clone_image_name":"img-clone"}`)))
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || manager.snapshotClone.cloneName != "img-clone" {
+		t.Fatalf("unexpected clone result: status=%d call=%+v", rec.Code, manager.snapshotClone)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/v1/exports/exp-1/flatten", bytes.NewReader(nil))
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || manager.flattenID != "exp-1" {
+		t.Fatalf("unexpected flatten result: status=%d flattenID=%q", rec.Code, manager.flattenID)
 	}
 }
 
