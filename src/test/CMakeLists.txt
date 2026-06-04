@@ -3,6 +3,20 @@ find_package(absl REQUIRED)
 # Unified test framework
 add_subdirectory(framework)
 
+# Unit tests
+add_executable(test_raft_state
+  unit/test_raft_state.cc
+)
+
+target_include_directories(test_raft_state
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(test_raft_state
+  PUBLIC
+    test_framework
+    base
+)
+
 # Stress tests
 add_executable(raft_membership
   framework/osd_client.cc
