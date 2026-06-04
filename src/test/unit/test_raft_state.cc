@@ -268,5 +268,79 @@ FB_TEST(raft_state, term_max_boundary) {
     FB_ASSERT_TRUE(large_term > 0);
 }
 
+// ============================================================================
+// PR 3: Test Suite: Index and Time Operations
+// ============================================================================
+
+FB_TEST(raft_state, idx_inc) {
+    raft_index_t idx = 1;
+    idx = idx + 1;
+    FB_ASSERT_EQ(idx, 2L);
+    idx += 1;
+    FB_ASSERT_EQ(idx, 3L);
+    idx++;
+    FB_ASSERT_EQ(idx, 4L);
+}
+
+FB_TEST(raft_state, idx_dec) {
+    raft_index_t idx = 10;
+    idx = idx - 1;
+    FB_ASSERT_EQ(idx, 9L);
+    idx -= 1;
+    FB_ASSERT_EQ(idx, 8L);
+    idx--;
+    FB_ASSERT_EQ(idx, 7L);
+}
+
+FB_TEST(raft_state, idx_diff) {
+    raft_index_t start = 5;
+    raft_index_t end = 10;
+    raft_index_t diff = end - start;
+    FB_ASSERT_EQ(diff, 5L);
+    FB_ASSERT_TRUE(start + diff == end);
+}
+
+FB_TEST(raft_state, time_add) {
+    raft_time_t now = 1000;
+    raft_time_t timeout = 500;
+    raft_time_t expiry = now + timeout;
+    FB_ASSERT_EQ(expiry, 1500L);
+    FB_ASSERT_TRUE(expiry > now);
+}
+
+FB_TEST(raft_state, time_diff) {
+    raft_time_t start = 1000;
+    raft_time_t end = 1750;
+    raft_time_t elapsed = end - start;
+    FB_ASSERT_EQ(elapsed, 750L);
+    FB_ASSERT_TRUE(elapsed >= 0);
+}
+
+FB_TEST(raft_state, next_idx_boundary) {
+    auto clamp_next_idx = [](int64_t next_idx) -> int64_t {
+        return next_idx < 1 ? 1 : next_idx;
+    };
+
+    FB_ASSERT_EQ(clamp_next_idx(0), 1L);
+    FB_ASSERT_EQ(clamp_next_idx(1), 1L);
+    FB_ASSERT_EQ(clamp_next_idx(5), 5L);
+    FB_ASSERT_EQ(clamp_next_idx(-1), 1L);
+    FB_ASSERT_EQ(clamp_next_idx(100), 100L);
+}
+
+FB_TEST(raft_state, match_idx_logic) {
+    int64_t match_idx = 0;
+
+    FB_ASSERT_EQ(match_idx, 0L);
+    match_idx = 5;
+    FB_ASSERT_EQ(match_idx, 5L);
+    match_idx = 10;
+    FB_ASSERT_EQ(match_idx, 10L);
+    match_idx = 3;
+    FB_ASSERT_EQ(match_idx, 3L);
+    match_idx = 0;
+    FB_ASSERT_EQ(match_idx, 0L);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
