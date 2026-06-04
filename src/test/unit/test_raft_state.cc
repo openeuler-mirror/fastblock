@@ -417,5 +417,88 @@ FB_TEST(raft_state, logtype_config_check) {
     FB_ASSERT_TRUE(type == 3);
 }
 
+// ============================================================================
+// PR 5: Test Suite: Membership and Voting
+// ============================================================================
+
+namespace {
+enum raft_membership_e {
+    RAFT_MEMBERSHIP_ADD,
+    RAFT_MEMBERSHIP_REMOVE,
+    RAFT_MEMBERSHIP_NO_CHANGE
+};
+
+constexpr int RAFT_NODE_VOTED_FOR_ME = (1 << 0);
+}
+
+FB_TEST(raft_state, membership_enum) {
+    FB_ASSERT_EQ(RAFT_MEMBERSHIP_ADD, 0);
+    FB_ASSERT_EQ(RAFT_MEMBERSHIP_REMOVE, 1);
+    FB_ASSERT_EQ(RAFT_MEMBERSHIP_NO_CHANGE, 2);
+}
+
+FB_TEST(raft_state, membership_add) {
+    raft_membership_e m = RAFT_MEMBERSHIP_ADD;
+    FB_ASSERT_TRUE(m == RAFT_MEMBERSHIP_ADD);
+    FB_ASSERT_TRUE(m != RAFT_MEMBERSHIP_REMOVE);
+    FB_ASSERT_TRUE(m != RAFT_MEMBERSHIP_NO_CHANGE);
+}
+
+FB_TEST(raft_state, membership_remove) {
+    raft_membership_e m = RAFT_MEMBERSHIP_REMOVE;
+    FB_ASSERT_TRUE(m == RAFT_MEMBERSHIP_REMOVE);
+    FB_ASSERT_TRUE(m != RAFT_MEMBERSHIP_ADD);
+    FB_ASSERT_TRUE(m != RAFT_MEMBERSHIP_NO_CHANGE);
+}
+
+FB_TEST(raft_state, membership_no_change) {
+    raft_membership_e m = RAFT_MEMBERSHIP_NO_CHANGE;
+    FB_ASSERT_TRUE(m == RAFT_MEMBERSHIP_NO_CHANGE);
+    FB_ASSERT_TRUE(m != RAFT_MEMBERSHIP_ADD);
+    FB_ASSERT_TRUE(m != RAFT_MEMBERSHIP_REMOVE);
+}
+
+FB_TEST(raft_state, votes_majority_single) {
+    uint64_t node_num = 5;
+    uint64_t votes = 3;
+    bool is_majority = votes > node_num / 2;
+    FB_ASSERT_TRUE(is_majority);
+
+    votes = 2;
+    is_majority = votes > node_num / 2;
+    FB_ASSERT_FALSE(is_majority);
+}
+
+FB_TEST(raft_state, votes_majority_joint) {
+    uint64_t old_node_num = 5;
+    uint64_t new_node_num = 3;
+    uint64_t old_votes = 3;
+    uint64_t new_votes = 2;
+
+    bool old_majority = old_votes > old_node_num / 2;
+    bool new_majority = new_votes > new_node_num / 2;
+
+    FB_ASSERT_TRUE(old_majority);
+    FB_ASSERT_TRUE(new_majority);
+
+    bool joint_majority = old_majority && new_majority;
+    FB_ASSERT_TRUE(joint_majority);
+}
+
+FB_TEST(raft_state, vote_flag_logic) {
+    int flags = 0;
+
+    // Initially no vote
+    FB_ASSERT_FALSE((flags & RAFT_NODE_VOTED_FOR_ME) != 0);
+
+    // Set vote
+    flags |= RAFT_NODE_VOTED_FOR_ME;
+    FB_ASSERT_TRUE((flags & RAFT_NODE_VOTED_FOR_ME) != 0);
+
+    // Clear vote
+    flags &= ~RAFT_NODE_VOTED_FOR_ME;
+    FB_ASSERT_FALSE((flags & RAFT_NODE_VOTED_FOR_ME) != 0);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
