@@ -12,9 +12,7 @@ target_include_directories(test_framework
 target_link_libraries(test_framework
     PUBLIC
         base
-        spdk::env
-        spdk::log
-        Boost::headers
+        spdk::spdk
 )
 
 # Test runner executable
