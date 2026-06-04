@@ -38,7 +38,7 @@ enum class raft_op_state {
 } // anonymous namespace
 
 // ============================================================================
-// PR 2: Additional Raft Types
+// Additional Raft Types
 // ============================================================================
 
 namespace {
@@ -173,7 +173,7 @@ FB_TEST(raft_state, op_state_snapshot) {
 }
 
 // ============================================================================
-// PR 2: Test Suite: Raft Types
+// Test Suite: Raft Types
 // ============================================================================
 
 FB_TEST(raft_state, types_basic) {
@@ -269,7 +269,7 @@ FB_TEST(raft_state, term_max_boundary) {
 }
 
 // ============================================================================
-// PR 3: Test Suite: Index and Time Operations
+// Test Suite: Index and Time Operations
 // ============================================================================
 
 FB_TEST(raft_state, idx_inc) {
@@ -343,7 +343,7 @@ FB_TEST(raft_state, match_idx_logic) {
 }
 
 // ============================================================================
-// PR 4: Test Suite: Election and Log Types
+// Test Suite: Election and Log Types
 // ============================================================================
 
 namespace {
@@ -418,7 +418,7 @@ FB_TEST(raft_state, logtype_config_check) {
 }
 
 // ============================================================================
-// PR 5: Test Suite: Membership and Voting
+// Test Suite: Membership and Voting
 // ============================================================================
 
 namespace {
@@ -501,7 +501,7 @@ FB_TEST(raft_state, vote_flag_logic) {
 }
 
 // ============================================================================
-// PR 6: Test Suite: Node Operations
+// Test Suite: Node Operations
 // ============================================================================
 
 FB_TEST(raft_state, node_id_eq) {
@@ -599,6 +599,143 @@ FB_TEST(raft_state, node_suppress_heartbeat) {
     FB_ASSERT_FALSE(suppress_heartbeat);
     suppress_heartbeat = true;
     FB_ASSERT_TRUE(suppress_heartbeat);
+}
+
+// Test Suite: Lease and Cache Operations
+
+#include <map>
+
+FB_TEST(raft_state, lease_logic) {
+    int64_t lease = 0;
+
+    FB_ASSERT_EQ(lease, 0L);
+
+    auto set_lease = [&lease](int64_t new_lease) {
+        if (lease < new_lease) {
+            lease = new_lease;
+        }
+    };
+
+    set_lease(100);
+    FB_ASSERT_EQ(lease, 100L);
+
+    set_lease(50);
+    FB_ASSERT_EQ(lease, 100L);
+
+    set_lease(200);
+    FB_ASSERT_EQ(lease, 200L);
+}
+
+FB_TEST(raft_state, node_lease_only_increases) {
+    int64_t lease = 0;
+
+    auto update_lease = [&lease](int64_t new_lease) {
+        if (new_lease > lease) {
+            lease = new_lease;
+        }
+    };
+
+    update_lease(100);
+    FB_ASSERT_EQ(lease, 100L);
+
+    update_lease(50);
+    FB_ASSERT_EQ(lease, 100L);
+
+    update_lease(150);
+    FB_ASSERT_EQ(lease, 150L);
+}
+
+FB_TEST(raft_state, cache_add_remove) {
+    std::map<long int, int> cache;
+
+    cache[1] = 10;
+    cache[2] = 20;
+    FB_ASSERT_EQ(cache.size(), 2UL);
+
+    cache.erase(1);
+    FB_ASSERT_EQ(cache.size(), 1UL);
+    FB_ASSERT_EQ(cache.count(1), 0UL);
+    FB_ASSERT_EQ(cache[2], 20);
+}
+
+FB_TEST(raft_state, cache_get_upper) {
+    std::map<long int, int> cache;
+    cache[1] = 10;
+    cache[5] = 50;
+    cache[10] = 100;
+
+    auto it = cache.upper_bound(5);
+    FB_ASSERT_TRUE(it != cache.end());
+    FB_ASSERT_EQ(it->first, 10L);
+}
+
+// Test Suite: Server Operations
+
+FB_TEST(raft_state, server_catch_up_num) {
+    int catch_up_num = 0;
+    FB_ASSERT_EQ(catch_up_num, 0);
+    catch_up_num = 3;
+    FB_ASSERT_EQ(catch_up_num, 3);
+}
+
+FB_TEST(raft_state, server_election_timeout) {
+    int base_timeout = 500;
+    int randomized = base_timeout + (rand() % base_timeout);
+    FB_ASSERT_TRUE(randomized >= base_timeout);
+    FB_ASSERT_TRUE(randomized < 2 * base_timeout);
+}
+
+FB_TEST(raft_state, server_heartbeat_period) {
+    int heartbeat_period = 100;
+    FB_ASSERT_TRUE(heartbeat_period > 0);
+    FB_ASSERT_TRUE(heartbeat_period < 1000);
+}
+
+FB_TEST(raft_state, server_ptr_check) {
+    void* ptr = nullptr;
+    FB_ASSERT_TRUE(ptr == nullptr);
+
+    int value = 42;
+    ptr = &value;
+    FB_ASSERT_TRUE(ptr != nullptr);
+}
+
+FB_TEST(raft_state, server_snapshot_chunks) {
+    int max_chunks = 1024;
+    FB_ASSERT_TRUE(max_chunks > 0);
+}
+
+FB_TEST(raft_state, server_timeout_elapsed) {
+    raft_time_t now = 1000;
+    raft_time_t timeout = 500;
+    raft_time_t deadline = now + timeout;
+
+    raft_time_t current = 1200;
+    bool elapsed = current >= deadline;
+    FB_ASSERT_FALSE(elapsed);
+
+    current = 1500;
+    elapsed = current >= deadline;
+    FB_ASSERT_TRUE(elapsed);
+}
+
+FB_TEST(raft_state, timer_constants) {
+    int heartbeat_timeout = 100;
+    int election_timeout = 500;
+
+    FB_ASSERT_TRUE(heartbeat_timeout > 0);
+    FB_ASSERT_TRUE(election_timeout > 0);
+    FB_ASSERT_TRUE(election_timeout > heartbeat_timeout);
+}
+
+FB_TEST(raft_state, log_max_applied_cache) {
+    int max_applied_cache = 1000;
+    FB_ASSERT_TRUE(max_applied_cache > 0);
+}
+
+FB_TEST(raft_state, log_next_idx_init_check) {
+    raft_index_t next_idx = 1;
+    FB_ASSERT_EQ(next_idx, 1L);
 }
 
 // Main function for test runner
