@@ -1711,3 +1711,76 @@ public:
             return;                                                                 \
         }                                                                           \
     } while (0)
+
+// ============================================================================
+// Test Execution Helpers
+// ============================================================================
+
+/**
+ * @brief Test retry helper for flaky tests
+ */
+template<typename Func>
+bool retry_test(Func func, int max_attempts = 3, int delay_ms = 100) {
+    for (int attempt = 0; attempt < max_attempts; ++attempt) {
+        try {
+            func();
+            return true;
+        } catch (...) {
+            if (attempt < max_attempts - 1) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+            }
+        }
+    }
+    return false;
+}
+
+#define FB_RETRY(max_attempts, delay_ms)                                            \
+    for (int fb_attempt = 0; fb_attempt < (max_attempts); ++fb_attempt)             \
+        if (fb_attempt > 0)                                                         \
+            std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));       \
+        else
+
+/**
+ * @brief Test loop helper for stress testing
+ */
+#define FB_STRESS_LOOP(iterations)                                                  \
+    for (int fb_stress_i = 0; fb_stress_i < (iterations); ++fb_stress_i)
+
+#define FB_STRESS_RUN_UNTIL(condition, max_iterations)                              \
+    for (int fb_stress_i = 0; fb_stress_i < (max_iterations) && !(condition); ++fb_stress_i)
+
+/**
+ * @brief Test timing helper
+ */
+class execution_timer {
+public:
+    execution_timer() : _start(std::chrono::high_resolution_clock::now()) {}
+
+    void reset() {
+        _start = std::chrono::high_resolution_clock::now();
+    }
+
+    std::chrono::nanoseconds elapsed_ns() const {
+        auto now = std::chrono::high_resolution_clock::now();
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(now - _start);
+    }
+
+    std::chrono::milliseconds elapsed_ms() const {
+        auto now = std::chrono::high_resolution_clock::now();
+        return std::chrono::duration_cast<std::chrono::milliseconds>(now - _start);
+    }
+
+    std::chrono::seconds elapsed_sec() const {
+        auto now = std::chrono::high_resolution_clock::now();
+        return std::chrono::duration_cast<std::chrono::seconds>(now - _start);
+    }
+
+private:
+    std::chrono::high_resolution_clock::time_point _start;
+};
+
+#define FB_TIMER_START()              ::fastblock::test::execution_timer fb_timer_
+#define FB_TIMER_ELAPSED_NS()         fb_timer_.elapsed_ns()
+#define FB_TIMER_ELAPSED_MS()         fb_timer_.elapsed_ms()
+#define FB_TIMER_ELAPSED_SEC()        fb_timer_.elapsed_sec()
+#define FB_TIMER_RESET()              fb_timer_.reset()
