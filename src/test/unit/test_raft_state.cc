@@ -2464,7 +2464,7 @@ FB_TEST(raft_state, node_id_operations) {
 // Test Suite: Entry Cache Tests
 // ============================================================================
 
-FB_TEST(raft_state, cache_add_remove) {
+FB_TEST(raft_state, entry_cache_add_remove) {
     std::map<raft_index_t, int> cache;
 
     // 添加条目
@@ -2483,7 +2483,7 @@ FB_TEST(raft_state, cache_add_remove) {
     FB_ASSERT_EQ(cache[3], 30);
 }
 
-FB_TEST(raft_state, cache_get_upper) {
+FB_TEST(raft_state, entry_cache_get_upper) {
     std::map<raft_index_t, int> cache;
     for (int i = 1; i <= 10; i++) {
         cache[i] = i * 10;
@@ -2499,7 +2499,7 @@ FB_TEST(raft_state, cache_get_upper) {
     FB_ASSERT_EQ(entries[5], 100);
 }
 
-FB_TEST(raft_state, cache_get_between) {
+FB_TEST(raft_state, entry_cache_get_between) {
     std::map<raft_index_t, int> cache;
     for (int i = 1; i <= 20; i++) {
         cache[i] = i;
@@ -2519,7 +2519,7 @@ FB_TEST(raft_state, cache_get_between) {
     FB_ASSERT_EQ(entries.back(), 10);
 }
 
-FB_TEST(raft_state, cache_remove_between) {
+FB_TEST(raft_state, entry_cache_remove_between) {
     std::map<raft_index_t, int> cache;
     for (int i = 1; i <= 20; i++) {
         cache[i] = i;
@@ -2540,7 +2540,7 @@ FB_TEST(raft_state, cache_remove_between) {
     FB_ASSERT_EQ(cache[11], 11); // 之后存在
 }
 
-FB_TEST(raft_state, cache_get_at_idx) {
+FB_TEST(raft_state, entry_cache_get_at_idx) {
     std::map<raft_index_t, int> cache;
     cache[10] = 100;
     cache[20] = 200;
@@ -2555,7 +2555,7 @@ FB_TEST(raft_state, cache_get_at_idx) {
     FB_ASSERT_TRUE(it == cache.end());
 }
 
-FB_TEST(raft_state, cache_first_last_entry) {
+FB_TEST(raft_state, entry_cache_first_last_entry) {
     std::map<raft_index_t, int> cache;
 
     // 空缓存
@@ -2574,7 +2574,7 @@ FB_TEST(raft_state, cache_first_last_entry) {
     FB_ASSERT_EQ(last_idx, 15L);
 }
 
-FB_TEST(raft_state, cache_count) {
+FB_TEST(raft_state, entry_cache_count) {
     std::map<raft_index_t, int> cache;
 
     FB_ASSERT_EQ(cache.size(), 0UL);
@@ -2591,7 +2591,7 @@ FB_TEST(raft_state, cache_count) {
     FB_ASSERT_EQ(cache.size(), 50UL);
 }
 
-FB_TEST(raft_state, cache_clear) {
+FB_TEST(raft_state, entry_cache_clear) {
     std::map<raft_index_t, int> cache;
 
     for (int i = 1; i <= 100; i++) {
@@ -2605,7 +2605,7 @@ FB_TEST(raft_state, cache_clear) {
     FB_ASSERT_TRUE(cache.empty());
 }
 
-FB_TEST(raft_state, cache_complete_callback) {
+FB_TEST(raft_state, entry_cache_complete_callback) {
     // 模拟回调完成机制
     int completed_count = 0;
     int result_code = 0;
@@ -2626,7 +2626,7 @@ FB_TEST(raft_state, cache_complete_callback) {
     FB_ASSERT_EQ(result_code, -1);
 }
 
-FB_TEST(raft_state, cache_remove_upper) {
+FB_TEST(raft_state, entry_cache_remove_upper) {
     std::map<raft_index_t, int> cache;
     for (int i = 1; i <= 20; i++) {
         cache[i] = i;
@@ -2644,7 +2644,7 @@ FB_TEST(raft_state, cache_remove_upper) {
     FB_ASSERT_EQ(cache.count(20), 0UL);
 }
 
-FB_TEST(raft_state, cache_range_validation) {
+FB_TEST(raft_state, entry_cache_range_validation) {
     std::map<raft_index_t, int> cache;
     cache[5] = 50;
     cache[10] = 100;
@@ -2995,7 +2995,10 @@ FB_TEST(raft_state, config_rollback) {
     }
 
     FB_ASSERT_EQ(config.size(), 3UL);
-    FB_ASSERT_EQ(config, backup);
+    FB_ASSERT_EQ(config.size(), backup.size());
+    for (size_t i = 0; i < config.size(); i++) {
+        FB_ASSERT_EQ(config[i], backup[i]);
+    }
 }
 
 FB_TEST(raft_state, config_index_tracking) {
