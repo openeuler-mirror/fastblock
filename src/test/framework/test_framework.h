@@ -1972,6 +1972,8 @@ public:
 
 /**
  * @brief Simple memory tracker for detecting leaks in tests
+ *
+ * Thread-safe: Uses std::atomic for lock-free concurrent access.
  */
 class memory_tracker {
 public:
@@ -1990,11 +1992,11 @@ public:
         _dealloc_count++;
     }
 
-    size_t allocated() const { return _allocations; }
-    size_t deallocated() const { return _deallocations; }
-    size_t leak() const { return _allocations - _deallocations; }
-    size_t alloc_count() const { return _alloc_count; }
-    size_t dealloc_count() const { return _dealloc_count; }
+    size_t allocated() const { return _allocations.load(); }
+    size_t deallocated() const { return _deallocations.load(); }
+    size_t leak() const { return _allocations.load() - _deallocations.load(); }
+    size_t alloc_count() const { return _alloc_count.load(); }
+    size_t dealloc_count() const { return _dealloc_count.load(); }
 
     void reset() {
         _allocations = 0;
@@ -2005,10 +2007,10 @@ public:
 
 private:
     memory_tracker() : _allocations(0), _deallocations(0), _alloc_count(0), _dealloc_count(0) {}
-    size_t _allocations;
-    size_t _deallocations;
-    size_t _alloc_count;
-    size_t _dealloc_count;
+    std::atomic<size_t> _allocations;
+    std::atomic<size_t> _deallocations;
+    std::atomic<size_t> _alloc_count;
+    std::atomic<size_t> _dealloc_count;
 };
 
 #define FB_RECORD_ALLOC(size)          ::fastblock::test::memory_tracker::instance().record_allocation(size)
