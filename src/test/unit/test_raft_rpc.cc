@@ -17,12 +17,15 @@
 #include "test/framework/test_framework.h"
 #include "test/framework/test_harness.h"
 
+#include <queue>
+
 namespace {
 
 typedef long int raft_term_t;
 typedef long int raft_index_t;
 typedef int raft_node_id_t;
 typedef long int raft_time_t;
+typedef long int raft_entry_id_t;
 
 typedef enum {
     RAFT_STATE_NONE,
@@ -30,6 +33,13 @@ typedef enum {
     RAFT_STATE_CANDIDATE,
     RAFT_STATE_LEADER
 } raft_identity;
+
+typedef enum {
+    RAFT_LOGTYPE_WRITE,
+    RAFT_LOGTYPE_DELETE,
+    RAFT_LOGTYPE_ADD_NONVOTING_NODE,
+    RAFT_LOGTYPE_CONFIGURATION,
+} raft_logtype_e;
 
 } // anonymous namespace
 
@@ -2291,9 +2301,9 @@ FB_TEST(raft_rpc, propose_entry_id_unique) {
     FB_ASSERT_TRUE(id1 != id2);
 
     // 检测重复
-    std::set<raft_entry_id_t> seen_ids;
-    seen_ids.insert(id1);
-    bool duplicate = seen_ids.count(id2) > 0;
+    std::set<raft_entry_id_t> entry_ids_seen;
+    entry_ids_seen.insert(id1);
+    bool duplicate = entry_ids_seen.count(id2) > 0;
     FB_ASSERT_FALSE(duplicate);
 }
 
@@ -2309,7 +2319,7 @@ FB_TEST(raft_rpc, propose_batch_optimization) {
     FB_ASSERT_EQ(total_size, 3584UL);
 
     // 合并为一次 AppendEntries
-    int rpc_calls = 1;
+    size_t rpc_calls = 1;
     FB_ASSERT_TRUE(rpc_calls < entry_sizes.size());
 }
 
@@ -4912,7 +4922,7 @@ FB_TEST(raft_rpc, recovery_concurrent_recovery) {
     std::set<raft_node_id_t> recovering_nodes = {3, 4, 5};
 
     // Leader 限制并发恢复数
-    int max_concurrent_recovery = 2;
+    size_t max_concurrent_recovery = 2;
     bool can_start_new = recovering_nodes.size() < max_concurrent_recovery;
 
     FB_ASSERT_FALSE(can_start_new);
@@ -5674,7 +5684,7 @@ FB_TEST(raft_rpc, asyncappend_batch_optimization) {
     std::vector<raft_index_t> entries = {101, 102, 103, 104, 105};
 
     // 合并为一次异步请求
-    int rpc_count = 1;
+    size_t rpc_count = 1;
     FB_ASSERT_LT(rpc_count, entries.size());
 
     raft_index_t start_idx = entries.front();
@@ -5712,16 +5722,16 @@ FB_TEST(raft_rpc, asyncappend_concurrent_senders) {
 
 FB_TEST(raft_rpc, asyncappend_callback_context) {
     // 回调上下文
-    struct callback_context {
+    struct callback_ctx {
         uint64_t request_id;
         raft_index_t expected_match_idx;
         void* user_data;
     };
 
-    callback_context ctx = {1001, 105, nullptr};
+    callback_ctx cb_ctx = {1001, 105, nullptr};
 
-    FB_ASSERT_EQ(ctx.request_id, 1001UL);
-    FB_ASSERT_EQ(ctx.expected_match_idx, 105L);
+    FB_ASSERT_EQ(cb_ctx.request_id, 1001UL);
+    FB_ASSERT_EQ(cb_ctx.expected_match_idx, 105L);
 }
 
 FB_TEST(raft_rpc, asyncappend_failure_propagation) {

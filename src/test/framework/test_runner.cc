@@ -330,19 +330,19 @@ void test_runner::print_results() const {
         }
     }
 
-    std::cout << "Total:   " << total << "\n";
-    std::cout << "Passed:  " << passed << " (" << (100.0 * passed / total) << "%)\n";
-    std::cout << "Failed:  " << failed << " (" << (100.0 * failed / total) << "%)\n";
-    std::cout << "Skipped: " << skipped << " (" << (100.0 * skipped / total) << "%)\n";
-    std::cout << "========================================\n";
+    ::std::cout << "Total:   " << total << "\n";
+    ::std::cout << "Passed:  " << passed << " (" << (100.0 * passed / total) << "%)\n";
+    ::std::cout << "Failed:  " << failed << " (" << (100.0 * failed / total) << "%)\n";
+    ::std::cout << "Skipped: " << skipped << " (" << (100.0 * skipped / total) << "%)\n";
+    ::std::cout << "========================================\n";
 
     if (failed > 0) {
-        std::cout << "\n*** FAILED TESTS ***\n";
+        ::std::cout << "\n*** FAILED TESTS ***\n";
         for (const auto& r : _results) {
             if (r.status == test_status::FAILED) {
-                std::cout << "  - " << r.suite_name << "." << r.test_name
+                ::std::cout << "  - " << r.suite_name << "." << r.test_name
                           << " (" << r.file << ":" << r.line << ")\n";
-                std::cout << "    " << r.message << "\n";
+                ::std::cout << "    " << r.message << "\n";
             }
         }
     }

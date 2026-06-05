@@ -106,12 +106,13 @@ struct test_result {
     int line;
     std::chrono::microseconds duration;
     test_severity severity;
+    std::string skip_reason;
 
     test_result(const std::string& name, const std::string& suite,
                 test_status s, const std::string& msg = "",
                 const std::string& f = "", int l = 0)
         : test_name(name), suite_name(suite), status(s), message(msg),
-          file(f), line(l), duration(0), severity(test_severity::NORMAL) {}
+          file(f), line(l), duration(0), severity(test_severity::NORMAL), skip_reason("") {}
 };
 
 /**
@@ -125,6 +126,8 @@ public:
               test_func func, test_severity sev = test_severity::NORMAL)
         : _name(name), _suite(suite), _func(func), _severity(sev),
           _status(test_status::PENDING) {}
+
+    virtual ~test_case() = default;
 
     const std::string& name() const { return _name; }
     const std::string& suite() const { return _suite; }
@@ -305,6 +308,21 @@ private:
 
     std::vector<std::shared_ptr<test_suite>> _suites;
     mutable std::mutex _mutex;
+};
+
+/**
+ * @brief Test tag enumeration for categorizing tests
+ */
+enum class test_tag {
+    NONE = 0,
+    QUICK = 1 << 0,
+    SLOW = 1 << 1,
+    INTEGRATION = 1 << 2,
+    UNIT = 1 << 3,
+    PERFORMANCE = 1 << 4,
+    FLAKY = 1 << 5,
+    SANITY = 1 << 6,
+    REGRESSION = 1 << 7
 };
 
 /**
@@ -1133,21 +1151,6 @@ public:
 // ============================================================================
 // Test Tags and Filtering
 // ============================================================================
-
-/**
- * @brief Test tag enumeration
- */
-enum class test_tag {
-    NONE = 0,
-    QUICK = 1 << 0,
-    SLOW = 1 << 1,
-    INTEGRATION = 1 << 2,
-    UNIT = 1 << 3,
-    PERFORMANCE = 1 << 4,
-    FLAKY = 1 << 5,
-    SANITY = 1 << 6,
-    REGRESSION = 1 << 7
-};
 
 /**
  * @brief Tagged test case
@@ -3938,3 +3941,6 @@ private:
 
 #define FB_REPORT_WRITE(content, path)                                             \
     ::fastblock::test::report_generator::write_to_file(content, path)
+
+} // namespace test
+} // namespace fastblock
