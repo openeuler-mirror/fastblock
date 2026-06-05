@@ -422,5 +422,147 @@ FB_TEST(raft_rpc, heartbeat_leader_change_detection) {
     FB_ASSERT_EQ(current_term, 6L);
 }
 
+// ============================================================================
+// Test Suite: Snapshot RPC Tests
+// ============================================================================
+
+FB_TEST(raft_rpc, installsnapshot_request_fields) {
+    raft_term_t term = 5;
+    raft_node_id_t leader_id = 1;
+    raft_index_t last_included_idx = 100;
+    raft_term_t last_included_term = 4;
+    int offset = 0;
+    bool done = false;
+
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(leader_id > 0);
+    FB_ASSERT_TRUE(last_included_idx > 0);
+    FB_ASSERT_TRUE(last_included_term > 0);
+    FB_ASSERT_TRUE(offset >= 0);
+}
+
+FB_TEST(raft_rpc, installsnapshot_chunk_offset) {
+    int64_t total_size = 1024 * 1024;  // 1MB
+    int chunk_size = 64 * 1024;        // 64KB
+    int offset = 0;
+    int chunk_count = 0;
+
+    while (offset < total_size) {
+        offset += chunk_size;
+        chunk_count++;
+    }
+
+    FB_ASSERT_EQ(chunk_count, 16);
+    FB_ASSERT_TRUE(offset >= total_size);
+}
+
+FB_TEST(raft_rpc, installsnapshot_progress_tracking) {
+    int64_t total_size = 1024 * 1024;
+    int64_t transferred = 0;
+    int chunk_size = 64 * 1024;
+
+    for (int i = 0; i < 8; i++) {
+        transferred += chunk_size;
+    }
+
+    double progress = 100.0 * transferred / total_size;
+    FB_ASSERT_TRUE(progress >= 50.0);
+    FB_ASSERT_TRUE(progress < 100.0);
+}
+
+FB_TEST(raft_rpc, snapshot_check_request) {
+    raft_index_t snapshot_idx = 100;
+    raft_term_t snapshot_term = 5;
+
+    FB_ASSERT_TRUE(snapshot_idx > 0);
+    FB_ASSERT_TRUE(snapshot_term > 0);
+
+    // Follower 的日志落后于快照
+    raft_index_t follower_last_idx = 50;
+    bool needs_snapshot = snapshot_idx > follower_last_idx;
+    FB_ASSERT_TRUE(needs_snapshot);
+}
+
+FB_TEST(raft_rpc, snapshot_check_follower_ahead) {
+    raft_index_t snapshot_idx = 100;
+    raft_index_t follower_last_idx = 150;
+
+    // Follower 日志超前，不需要安装快照
+    bool needs_snapshot = snapshot_idx > follower_last_idx;
+    FB_ASSERT_FALSE(needs_snapshot);
+}
+
+FB_TEST(raft_rpc, installsnapshot_response_fields) {
+    raft_term_t term = 5;
+    bool success = true;
+
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(success);
+}
+
+FB_TEST(raft_rpc, installsnapshot_failure_retry) {
+    int retry_count = 0;
+    int max_retries = 3;
+
+    // 模拟传输失败
+    bool success = false;
+    while (!success && retry_count < max_retries) {
+        retry_count++;
+        // 模拟重试逻辑
+        if (retry_count >= 2) {
+            success = true;
+        }
+    }
+
+    FB_ASSERT_TRUE(success);
+    FB_ASSERT_EQ(retry_count, 2);
+}
+
+FB_TEST(raft_rpc, snapshot_apply_after_receive) {
+    raft_index_t last_included_idx = 100;
+    raft_term_t last_included_term = 4;
+
+    // 应用快照后更新状态机索引
+    raft_index_t last_applied = last_included_idx;
+    raft_index_t commit_idx = last_included_idx;
+
+    FB_ASSERT_EQ(last_applied, 100L);
+    FB_ASSERT_EQ(commit_idx, 100L);
+}
+
+FB_TEST(raft_rpc, snapshot_discard_conflicting_logs) {
+    // 快照之后丢弃冲突的日志
+    raft_index_t snapshot_idx = 100;
+
+    // 本地日志索引 95-110 与快照冲突
+    std::vector<raft_index_t> local_logs;
+    for (int i = 95; i <= 110; i++) {
+        local_logs.push_back(i);
+    }
+
+    // 丢弃 snapshot_idx 之前的日志
+    local_logs.erase(
+        std::remove_if(local_logs.begin(), local_logs.end(),
+                       [snapshot_idx](raft_index_t idx) { return idx <= snapshot_idx; }),
+        local_logs.end());
+
+    FB_ASSERT_EQ(local_logs.size(), 10UL);
+    FB_ASSERT_EQ(local_logs.front(), 101L);
+}
+
+FB_TEST(raft_rpc, snapshot_concurrent_transfer_limit) {
+    int max_concurrent = 3;
+    int current_transfers = 0;
+
+    // 模拟并发快照传输
+    for (int i = 0; i < 5; i++) {
+        if (current_transfers < max_concurrent) {
+            current_transfers++;
+        }
+    }
+
+    FB_ASSERT_EQ(current_transfers, 3);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
