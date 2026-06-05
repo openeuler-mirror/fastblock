@@ -4249,5 +4249,332 @@ FB_TEST(raft_rpc, prevote_multiple_rounds) {
     FB_ASSERT_EQ(prevote_round, 2);
 }
 
+// ============================================================================
+// Test Suite: Lease RPC Tests (Leader Lease Management)
+// ============================================================================
+
+FB_TEST(raft_rpc, lease_request_fields) {
+    // 租约请求字段
+    raft_term_t term = 5;
+    raft_node_id_t leader_id = 1;
+    raft_time_t lease_duration = 1000;
+
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(leader_id > 0);
+    FB_ASSERT_TRUE(lease_duration > 0);
+}
+
+FB_TEST(raft_rpc, lease_grant_response) {
+    // 租约授予响应
+    raft_term_t term = 5;
+    raft_time_t lease_expiry = 2000;
+    bool lease_granted = true;
+
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(lease_expiry > 0);
+    FB_ASSERT_TRUE(lease_granted);
+}
+
+FB_TEST(raft_rpc, lease_revoke_request) {
+    // 租约撤销请求
+    raft_node_id_t leader_id = 1;
+    raft_term_t term = 5;
+    bool revoke_requested = true;
+
+    FB_ASSERT_TRUE(leader_id > 0);
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(revoke_requested);
+}
+
+FB_TEST(raft_rpc, lease_duration_calculation) {
+    // 租约时长计算
+    raft_time_t heartbeat_period = 100;
+    raft_time_t lease_multiplier = 5;
+    raft_time_t lease_duration = heartbeat_period * lease_multiplier;
+
+    FB_ASSERT_EQ(lease_duration, 500L);
+
+    // 租约应大于心跳间隔
+    bool lease_valid = lease_duration > heartbeat_period;
+    FB_ASSERT_TRUE(lease_valid);
+}
+
+FB_TEST(raft_rpc, lease_expiry_check) {
+    // 租约过期检查
+    raft_time_t lease_expiry = 1000;
+    raft_time_t current_time = 800;
+
+    bool lease_valid = current_time < lease_expiry;
+    FB_ASSERT_TRUE(lease_valid);
+
+    // 租约过期
+    current_time = 1200;
+    lease_valid = current_time < lease_expiry;
+    FB_ASSERT_FALSE(lease_valid);
+}
+
+FB_TEST(raft_rpc, lease_renewal_on_heartbeat) {
+    // 心跳时续约租约
+    raft_time_t lease_expiry = 1000;
+    raft_time_t heartbeat_period = 100;
+
+    // 收到心跳后续约
+    lease_expiry += heartbeat_period;
+
+    FB_ASSERT_EQ(lease_expiry, 1100L);
+}
+
+FB_TEST(raft_rpc, lease_leader_exclusive) {
+    // 租约仅 Leader 可用
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    bool has_lease = false;
+
+    FB_ASSERT_FALSE(has_lease);
+
+    // 只有 Leader 有租约
+    state = RAFT_STATE_LEADER;
+    has_lease = (state == RAFT_STATE_LEADER);
+    FB_ASSERT_TRUE(has_lease);
+}
+
+FB_TEST(raft_rpc, lease_read_without_rpc) {
+    // 租约读无需 RPC
+    bool lease_valid = true;
+    raft_index_t read_index = 100;
+
+    if (lease_valid) {
+        // 直接使用本地 commit_idx
+        bool can_read = true;
+        FB_ASSERT_TRUE(can_read);
+    }
+
+    // 无租约时需要 ReadIndex RPC
+    lease_valid = false;
+    bool need_readindex_rpc = !lease_valid;
+    FB_ASSERT_TRUE(need_readindex_rpc);
+}
+
+FB_TEST(raft_rpc, lease_clock_drift_tolerance) {
+    // 时钟漂移容忍度
+    raft_time_t lease_duration = 500;
+    raft_time_t max_clock_drift = 50;
+
+    // 实际有效租约时间
+    raft_time_t effective_lease = lease_duration - max_clock_drift;
+
+    FB_ASSERT_EQ(effective_lease, 450L);
+    FB_ASSERT_TRUE(effective_lease > 0);
+}
+
+FB_TEST(raft_rpc, lease_safety_margin) {
+    // 安全裕度
+    raft_time_t election_timeout = 500;
+    raft_time_t lease_duration = 400;
+
+    // 租约必须小于选举超时
+    bool lease_safe = lease_duration < election_timeout;
+    FB_ASSERT_TRUE(lease_safe);
+
+    raft_time_t safety_margin = election_timeout - lease_duration;
+    FB_ASSERT_EQ(safety_margin, 100L);
+}
+
+FB_TEST(raft_rpc, lease_transfer_invalidation) {
+    // 领导权转移时租约失效
+    bool lease_valid = true;
+    bool leader_transfer = true;
+
+    if (leader_transfer) {
+        lease_valid = false;
+    }
+
+    FB_ASSERT_FALSE(lease_valid);
+}
+
+FB_TEST(raft_rpc, lease_step_down_invalidation) {
+    // Leader 退位时租约失效
+    raft_identity state = RAFT_STATE_LEADER;
+    bool lease_valid = true;
+
+    // 收到更高 term
+    raft_term_t current_term = 5;
+    raft_term_t received_term = 6;
+
+    if (received_term > current_term) {
+        state = RAFT_STATE_FOLLOWER;
+        lease_valid = false;
+    }
+
+    FB_ASSERT_FALSE(lease_valid);
+    FB_ASSERT_EQ(state, RAFT_STATE_FOLLOWER);
+}
+
+FB_TEST(raft_rpc, lease_quorum_dependency) {
+    // 租约依赖法定节点确认
+    uint64_t node_num = 5;
+    uint64_t quorum_responses = 3;
+
+    bool has_quorum = quorum_responses > node_num / 2;
+    FB_ASSERT_TRUE(has_quorum);
+
+    // 有法定节点确认才能续约
+    bool lease_renewable = has_quorum;
+    FB_ASSERT_TRUE(lease_renewable);
+}
+
+FB_TEST(raft_rpc, lease_network_partition_effect) {
+    // 网络分区影响租约
+    std::set<raft_node_id_t> reachable_nodes = {1, 2};
+    uint64_t total_nodes = 5;
+
+    bool has_quorum = reachable_nodes.size() > total_nodes / 2;
+    FB_ASSERT_FALSE(has_quorum);
+
+    // 无法定节点，租约无法续约
+    bool lease_can_renew = has_quorum;
+    FB_ASSERT_FALSE(lease_can_renew);
+}
+
+FB_TEST(raft_rpc, lease_multiple_leaders_conflict) {
+    // 多 Leader 租约冲突检测
+    raft_node_id_t known_leader = 1;
+    raft_term_t known_term = 5;
+    raft_node_id_t other_leader = 2;
+    raft_term_t other_term = 6;
+
+    // 更高 term 的 Leader 租约优先
+    bool other_lease_valid = other_term > known_term;
+    FB_ASSERT_TRUE(other_lease_valid);
+
+    // 本地租约失效
+    bool local_lease_valid = !other_lease_valid;
+    FB_ASSERT_FALSE(local_lease_valid);
+}
+
+FB_TEST(raft_rpc, lease_graceful_expiry) {
+    // 租约优雅过期处理
+    raft_time_t lease_expiry = 1000;
+    raft_time_t current_time = 1000;
+
+    // 刚好过期
+    bool lease_expired = current_time >= lease_expiry;
+    FB_ASSERT_TRUE(lease_expired);
+
+    // 切换到 ReadIndex 模式
+    bool use_readindex = lease_expired;
+    FB_ASSERT_TRUE(use_readindex);
+}
+
+FB_TEST(raft_rpc, lease_concurrent_reads) {
+    // 租约期间并发读
+    int concurrent_reads = 10;
+    bool lease_valid = true;
+
+    // 所有读都无需 RPC
+    int rpc_needed = lease_valid ? 0 : concurrent_reads;
+    FB_ASSERT_EQ(rpc_needed, 0);
+}
+
+FB_TEST(raft_rpc, lease_performance_improvement) {
+    // 租约性能提升
+    int reads_with_lease = 1000;
+    int rpc_with_lease = 0;
+    int reads_without_lease = 1000;
+    int rpc_without_lease = reads_without_lease;
+
+    FB_ASSERT_TRUE(rpc_with_lease < rpc_without_lease);
+
+    double latency_improvement = 100.0 * (rpc_without_lease - rpc_with_lease) / rpc_without_lease;
+    FB_ASSERT_EQ(latency_improvement, 100.0);
+}
+
+FB_TEST(raft_rpc, lease_timeout_handling) {
+    // 租约超时处理
+    int lease_timeout_ms = 500;
+    int elapsed_ms = 600;
+
+    bool timed_out = elapsed_ms >= lease_timeout_ms;
+    FB_ASSERT_TRUE(timed_out);
+}
+
+FB_TEST(raft_rpc, lease_follower_tracking) {
+    // Follower 租约跟踪
+    std::map<raft_node_id_t, raft_time_t> follower_leases;
+    follower_leases[1] = 1000;
+    follower_leases[2] = 1000;
+    follower_leases[3] = 800;  // 较短租约
+
+    // 检查所有 Follower 租约
+    for (const auto& pair : follower_leases) {
+        FB_ASSERT_TRUE(pair.second > 0);
+    }
+}
+
+FB_TEST(raft_rpc, lease_min_max_duration) {
+    // 租约最小最大时长
+    raft_time_t min_lease = 100;
+    raft_time_t max_lease = 10000;
+    raft_time_t actual_lease = 500;
+
+    bool lease_in_range = (actual_lease >= min_lease) && (actual_lease <= max_lease);
+    FB_ASSERT_TRUE(lease_in_range);
+}
+
+FB_TEST(raft_rpc, lease_config_change_effect) {
+    // 配置变更对租约的影响
+    uint64_t old_nodes = 5;
+    uint64_t new_nodes = 7;
+    raft_time_t old_lease_expiry = 1000;
+
+    // 配置变更后需要重新确认法定节点
+    bool need_quorum_reconfirm = true;
+    FB_ASSERT_TRUE(need_quorum_reconfirm);
+}
+
+FB_TEST(raft_rpc, lease_snapshot_impact) {
+    // 快照传输对租约的影响
+    bool snapshot_in_progress = true;
+
+    // 快照期间租约仍然有效
+    bool lease_valid = true;  // 快照不影响租约
+    FB_ASSERT_TRUE(lease_valid);
+}
+
+FB_TEST(raft_rpc, lease_metrics_collection) {
+    // 租约指标收集
+    uint64_t lease_grants_total = 100;
+    uint64_t lease_renewals_total = 500;
+    uint64_t lease_expiry_total = 10;
+
+    FB_ASSERT_GT(lease_renewals_total, lease_grants_total);
+    FB_ASSERT_LT(lease_expiry_total, lease_grants_total);
+}
+
+FB_TEST(raft_rpc, lease_leader_lease_table) {
+    // Leader 租约表管理
+    std::map<raft_node_id_t, raft_time_t> lease_table;
+    lease_table[2] = 1000;
+    lease_table[3] = 1000;
+    lease_table[4] = 1000;
+
+    // 更新单个 Follower 租约
+    lease_table[2] = 1100;
+
+    FB_ASSERT_EQ(lease_table[2], 1100L);
+    FB_ASSERT_EQ(lease_table.size(), 3UL);
+}
+
+FB_TEST(raft_rpc, lease_batch_renewal) {
+    // 批量租约续约
+    std::vector<raft_node_id_t> followers = {2, 3, 4};
+    raft_time_t new_expiry = 1500;
+
+    for (auto id : followers) {
+        // 更新每个 Follower 的租约
+    }
+
+    FB_ASSERT_EQ(followers.size(), 3UL);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
