@@ -2486,3 +2486,138 @@ public:
 
 #define FB_VALIDATE_OPTIONAL(value, validator)                                      \
     ::fastblock::test::schema_validator::validate_optional(value, validator)
+
+// ============================================================================
+// Test Metrics Collection
+// ============================================================================
+
+/**
+ * @brief Metrics collector for test performance tracking
+ */
+class metrics_collector {
+public:
+    static metrics_collector& instance() {
+        static metrics_collector collector;
+        return collector;
+    }
+
+    void record_latency(const std::string& name, std::chrono::nanoseconds latency) {
+        auto& metric = _latencies[name];
+        metric.total += latency;
+        metric.count++;
+        metric.min = std::min(metric.min, latency);
+        metric.max = std::max(metric.max, latency);
+    }
+
+    void record_count(const std::string& name, int64_t delta = 1) {
+        _counts[name] += delta;
+    }
+
+    void record_value(const std::string& name, double value) {
+        auto& metric = _values[name];
+        metric.total += value;
+        metric.count++;
+        metric.min = std::min(metric.min, value);
+        metric.max = std::max(metric.max, value);
+    }
+
+    struct latency_metric {
+        std::chrono::nanoseconds total{0};
+        size_t count = 0;
+        std::chrono::nanoseconds min{std::numeric_limits<std::chrono::nanoseconds>::max()};
+        std::chrono::nanoseconds max{0};
+
+        double avg_ns() const {
+            return count > 0 ? (double)total.count() / count : 0;
+        }
+        double avg_ms() const { return avg_ns() / 1000000; }
+    };
+
+    struct value_metric {
+        double total = 0;
+        size_t count = 0;
+        double min = std::numeric_limits<double>::max();
+        double max = std::numeric_limits<double>::lowest();
+
+        double avg() const { return count > 0 ? total / count : 0; }
+    };
+
+    latency_metric get_latency(const std::string& name) const {
+        auto it = _latencies.find(name);
+        return it != _latencies.end() ? it->second : latency_metric{};
+    }
+
+    int64_t get_count(const std::string& name) const {
+        auto it = _counts.find(name);
+        return it != _counts.end() ? it->second : 0;
+    }
+
+    value_metric get_value(const std::string& name) const {
+        auto it = _values.find(name);
+        return it != _values.end() ? it->second : value_metric{};
+    }
+
+    void reset() {
+        _latencies.clear();
+        _counts.clear();
+        _values.clear();
+    }
+
+    void reset_metric(const std::string& name) {
+        _latencies.erase(name);
+        _counts.erase(name);
+        _values.erase(name);
+    }
+
+private:
+    metrics_collector() = default;
+    std::map<std::string, latency_metric> _latencies;
+    std::map<std::string, int64_t> _counts;
+    std::map<std::string, value_metric> _values;
+};
+
+/**
+ * @brief RAII latency recorder
+ */
+class latency_scope {
+public:
+    latency_scope(const std::string& name)
+        : _name(name), _start(std::chrono::high_resolution_clock::now()) {}
+
+    ~latency_scope() {
+        auto end = std::chrono::high_resolution_clock::now();
+        auto latency = std::chrono::duration_cast<std::chrono::nanoseconds>(end - _start);
+        metrics_collector::instance().record_latency(_name, latency);
+    }
+
+private:
+    std::string _name;
+    std::chrono::high_resolution_clock::time_point _start;
+};
+
+#define FB_METRICS_RECORD_LATENCY(name, latency)                                    \
+    ::fastblock::test::metrics_collector::instance().record_latency(name, latency)
+
+#define FB_METRICS_RECORD_COUNT(name, delta)                                        \
+    ::fastblock::test::metrics_collector::instance().record_count(name, delta)
+
+#define FB_METRICS_RECORD_VALUE(name, value)                                        \
+    ::fastblock::test::metrics_collector::instance().record_value(name, value)
+
+#define FB_METRICS_GET_LATENCY(name)                                                \
+    ::fastblock::test::metrics_collector::instance().get_latency(name)
+
+#define FB_METRICS_GET_COUNT(name)                                                  \
+    ::fastblock::test::metrics_collector::instance().get_count(name)
+
+#define FB_METRICS_GET_VALUE(name)                                                  \
+    ::fastblock::test::metrics_collector::instance().get_value(name)
+
+#define FB_METRICS_RESET()                                                          \
+    ::fastblock::test::metrics_collector::instance().reset()
+
+#define FB_METRICS_RESET_METRIC(name)                                              \
+    ::fastblock::test::metrics_collector::instance().reset_metric(name)
+
+#define FB_LATENCY_SCOPE(name)                                                      \
+    ::fastblock::test::latency_scope fb_latency_scope_##name(#name)
