@@ -13,6 +13,7 @@ if(BUILD_FASTBLOCK_TESTS)
 	add_executable(raft_membership
 	  osd_client.cc
 	  raft_membership.cc
+	)
 	add_executable(test_raft_state
 	  unit/test_raft_state.cc
 	)

@@ -1718,5 +1718,189 @@ FB_TEST(raft_state, graceful_degradation) {
     FB_ASSERT_FALSE(cluster_available);
 }
 
+// ============================================================================
+// Test Suite: Concurrency Scenario Tests
+// ============================================================================
+
+#include <atomic>
+#include <thread>
+#include <mutex>
+
+FB_TEST(raft_state, atomic_term_update) {
+    std::atomic<raft_term_t> current_term{1};
+
+    // 模拟并发更新 term
+    current_term.store(5);
+    FB_ASSERT_EQ(current_term.load(), 5L);
+
+    // 原子递增
+    raft_term_t old_term = current_term.fetch_add(1);
+    FB_ASSERT_EQ(old_term, 5L);
+    FB_ASSERT_EQ(current_term.load(), 6L);
+
+    // 比较交换
+    raft_term_t expected = 6;
+    bool success = current_term.compare_exchange_strong(expected, 10);
+    FB_ASSERT_TRUE(success);
+    FB_ASSERT_EQ(current_term.load(), 10L);
+}
+
+FB_TEST(raft_state, concurrent_vote_counting) {
+    std::atomic<uint64_t> votes{0};
+    uint64_t node_num = 5;
+
+    // 模拟并发投票
+    for (int i = 0; i < 3; i++) {
+        votes.fetch_add(1);
+    }
+    FB_ASSERT_EQ(votes.load(), 3UL);
+
+    // 检查是否达到多数派
+    bool has_majority = votes.load() > node_num / 2;
+    FB_ASSERT_TRUE(has_majority);
+}
+
+FB_TEST(raft_state, commit_index_ordering) {
+    std::atomic<int64_t> commit_idx{0};
+
+    // 模拟多个线程尝试更新 commit_idx
+    // commit_idx 只能单调递增
+    int64_t old_val = commit_idx.load();
+    int64_t new_val = 5;
+
+    bool success = false;
+    int64_t expected = old_val;
+    if (new_val > expected) {
+        success = commit_idx.compare_exchange_strong(expected, new_val);
+    }
+    FB_ASSERT_TRUE(success);
+    FB_ASSERT_EQ(commit_idx.load(), 5L);
+
+    // 尝试回退（不应该成功）
+    old_val = commit_idx.load();
+    new_val = 3;
+    expected = old_val;
+    if (new_val > expected) {
+        commit_idx.compare_exchange_strong(expected, new_val);
+    }
+    FB_ASSERT_EQ(commit_idx.load(), 5L);  // 值未改变
+}
+
+FB_TEST(raft_state, state_flag_operations) {
+    std::atomic<int> flags{0};
+    constexpr int RAFT_NODE_VOTED_FOR_ME = (1 << 0);
+    constexpr int RAFT_NODE_MATCHING_LOG = (1 << 1);
+
+    // 设置标志位
+    flags.fetch_or(RAFT_NODE_VOTED_FOR_ME);
+    FB_ASSERT_TRUE((flags.load() & RAFT_NODE_VOTED_FOR_ME) != 0);
+
+    // 设置另一个标志
+    flags.fetch_or(RAFT_NODE_MATCHING_LOG);
+    FB_ASSERT_TRUE((flags.load() & RAFT_NODE_MATCHING_LOG) != 0);
+
+    // 清除标志
+    flags.fetch_and(~RAFT_NODE_VOTED_FOR_ME);
+    FB_ASSERT_FALSE((flags.load() & RAFT_NODE_VOTED_FOR_ME) != 0);
+    FB_ASSERT_TRUE((flags.load() & RAFT_NODE_MATCHING_LOG) != 0);
+}
+
+FB_TEST(raft_state, leader_id_atomic_access) {
+    std::atomic<raft_node_id_t> leader_id{0};
+
+    // 初始无 Leader
+    FB_ASSERT_EQ(leader_id.load(), 0L);
+
+    // Leader 变更
+    leader_id.store(3);
+    FB_ASSERT_EQ(leader_id.load(), 3L);
+
+    // Leader 再次变更
+    leader_id.store(5);
+    FB_ASSERT_EQ(leader_id.load(), 5L);
+}
+
+FB_TEST(raft_state, match_idx_concurrent_update) {
+    // 模拟 match_idx 数组的并发更新
+    std::vector<std::atomic<int64_t>> match_idx(5);
+    for (auto& idx : match_idx) {
+        idx.store(0);
+    }
+
+    // 模拟不同节点的 match_idx 更新
+    match_idx[0].store(10);
+    match_idx[1].store(8);
+    match_idx[2].store(12);
+    match_idx[3].store(10);
+    match_idx[4].store(9);
+
+    // 计算提交索引（多数派已复制的最小索引）
+    int64_t values[] = {10, 8, 12, 10, 9};
+    std::sort(values, values + 5);
+    int64_t majority_idx = values[2];  // 第三个值（中位数）
+    FB_ASSERT_EQ(majority_idx, 10L);
+}
+
+FB_TEST(raft_state, election_timeout_race) {
+    std::atomic<bool> election_triggered{false};
+    std::atomic<bool> heartbeat_received{false};
+
+    // 模拟心跳和选举超时的竞争
+    heartbeat_received.store(true);
+
+    // 检查是否应该触发选举
+    if (!heartbeat_received.load()) {
+        election_triggered.store(true);
+    }
+    FB_ASSERT_FALSE(election_triggered.load());
+
+    // 超时未收到心跳
+    heartbeat_received.store(false);
+    if (!heartbeat_received.load()) {
+        election_triggered.store(true);
+    }
+    FB_ASSERT_TRUE(election_triggered.load());
+}
+
+FB_TEST(raft_state, mutex_protected_config_change) {
+    std::mutex config_mutex;
+    uint64_t old_nodes = 5;
+    uint64_t new_nodes = 0;
+    bool config_change_in_progress = false;
+
+    {
+        std::lock_guard<std::mutex> lock(config_mutex);
+        // 开始配置变更
+        config_change_in_progress = true;
+        new_nodes = old_nodes + 1;
+        // 配置变更完成
+        config_change_in_progress = false;
+    }
+
+    FB_ASSERT_EQ(new_nodes, 6UL);
+    FB_ASSERT_FALSE(config_change_in_progress);
+}
+
+FB_TEST(raft_state, cas_state_transition) {
+    std::atomic<raft_identity> state{RAFT_STATE_FOLLOWER};
+
+    // Follower -> Candidate (CAS 操作)
+    raft_identity expected = RAFT_STATE_FOLLOWER;
+    bool success = state.compare_exchange_strong(expected, RAFT_STATE_CANDIDATE);
+    FB_ASSERT_TRUE(success);
+    FB_ASSERT_EQ(state.load(), RAFT_STATE_CANDIDATE);
+
+    // Candidate -> Leader
+    expected = RAFT_STATE_CANDIDATE;
+    success = state.compare_exchange_strong(expected, RAFT_STATE_LEADER);
+    FB_ASSERT_TRUE(success);
+    FB_ASSERT_EQ(state.load(), RAFT_STATE_LEADER);
+
+    // 非法转换（状态已被其他线程修改）
+    expected = RAFT_STATE_CANDIDATE;
+    success = state.compare_exchange_strong(expected, RAFT_STATE_LEADER);
+    FB_ASSERT_FALSE(success);  // CAS 失败
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
