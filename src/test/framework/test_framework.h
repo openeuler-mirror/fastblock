@@ -2903,5 +2903,118 @@ public:
 #define FB_VERIFY_ARGS(name, idx, expected)                                         \
     ::fastblock::test::callback_verifier::verify_args(name, idx, expected)
 
-} // namespace test
-} // namespace fastblock
+// ============================================================================
+// State Machine Testing
+// ============================================================================
+
+/**
+ * @brief State machine verifier for testing state transitions
+ */
+template<typename StateType>
+class state_machine_verifier {
+public:
+    state_machine_verifier(StateType initial_state)
+        : _current_state(initial_state), _transition_count(0) {}
+
+    void transition(StateType new_state) {
+        _history.push_back({_current_state, new_state});
+        _current_state = new_state;
+        _transition_count++;
+    }
+
+    StateType current_state() const { return _current_state; }
+    size_t transition_count() const { return _transition_count; }
+
+    bool was_state(StateType state) const {
+        for (const auto& t : _history) {
+            if (t.from == state || t.to == state) return true;
+        }
+        return _current_state == state;
+    }
+
+    bool transition_occurred(StateType from, StateType to) const {
+        for (const auto& t : _history) {
+            if (t.from == from && t.to == to) return true;
+        }
+        return false;
+    }
+
+    size_t count_transitions(StateType from, StateType to) const {
+        size_t count = 0;
+        for (const auto& t : _history) {
+            if (t.from == from && t.to == to) count++;
+        }
+        return count;
+    }
+
+    const std::vector<std::pair<StateType, StateType>>& history() const {
+        return _history;
+    }
+
+    void reset(StateType initial_state) {
+        _current_state = initial_state;
+        _history.clear();
+        _transition_count = 0;
+    }
+
+private:
+    struct transition {
+        StateType from;
+        StateType to;
+    };
+
+    StateType _current_state;
+    std::vector<std::pair<StateType, StateType>> _history;
+    size_t _transition_count;
+};
+
+#define FB_STATE_MACHINE(state_type)                                               \
+    ::fastblock::test::state_machine_verifier<state_type>
+
+#define FB_STATE_TRANSITION(sm, new_state)                                         \
+    sm.transition(new_state)
+
+#define FB_STATE_CURRENT(sm)                                                       \
+    sm.current_state()
+
+#define FB_STATE_WAS(sm, state)                                                     \
+    sm.was_state(state)
+
+#define FB_STATE_TRANSITION_OCCURRED(sm, from, to)                                 \
+    sm.transition_occurred(from, to)
+
+#define FB_STATE_COUNT_TRANSITIONS(sm, from, to)                                   \
+    sm.count_transitions(from, to)
+
+#define FB_STATE_HISTORY(sm)                                                       \
+    sm.history()
+
+#define FB_STATE_RESET(sm, initial_state)                                          \
+    sm.reset(initial_state)
+
+/**
+ * @brief State machine expectation builder
+ */
+template<typename StateType>
+class state_expectation {
+public:
+    explicit state_expectation(StateType expected_state)
+        : _expected(expected_state) {}
+
+    bool verify(const state_machine_verifier<StateType>& sm) const {
+        return sm.current_state() == _expected;
+    }
+
+    StateType expected() const { return _expected; }
+
+private:
+    StateType _expected;
+};
+
+template<typename StateType>
+state_expectation<StateType> expect_state(StateType state) {
+    return state_expectation<StateType>(state);
+}
+
+#define FB_EXPECT_STATE(state)                                                      \
+    ::fastblock::test::expect_state(state)
