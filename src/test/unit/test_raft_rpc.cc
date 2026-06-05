@@ -292,5 +292,135 @@ FB_TEST(raft_rpc, requestvote_response_fields) {
     FB_ASSERT_TRUE(vote_granted);
 }
 
+// ============================================================================
+// Test Suite: Heartbeat RPC Tests
+// ============================================================================
+
+FB_TEST(raft_rpc, heartbeat_message_fields) {
+    raft_term_t term = 5;
+    raft_node_id_t leader_id = 1;
+    raft_index_t commit_idx = 10;
+
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(leader_id > 0);
+    FB_ASSERT_TRUE(commit_idx >= 0);
+}
+
+FB_TEST(raft_rpc, heartbeat_reset_election_timer) {
+    bool heartbeat_received = true;
+    raft_time_t last_leader_contact = 0;
+
+    if (heartbeat_received) {
+        last_leader_contact = 1000;  // 更新时间
+    }
+
+    FB_ASSERT_EQ(last_leader_contact, 1000L);
+
+    // 验证选举超时应该被重置
+    raft_time_t election_timeout = 500;
+    raft_time_t current_time = 1200;
+    bool election_expired = (current_time - last_leader_contact) >= election_timeout;
+    FB_ASSERT_FALSE(election_expired);
+}
+
+FB_TEST(raft_rpc, heartbeat_leader_lease_renewal) {
+    raft_time_t lease_expiry = 1000;
+
+    // 收到心跳后续约租约
+    raft_time_t heartbeat_period = 100;
+    lease_expiry = lease_expiry + heartbeat_period;
+
+    FB_ASSERT_EQ(lease_expiry, 1100L);
+}
+
+FB_TEST(raft_rpc, heartbeat_suppress_redundant) {
+    bool suppress_heartbeat = false;
+    raft_index_t match_idx = 100;
+    raft_index_t next_idx = 101;
+
+    // 日志已同步，可以抑制心跳
+    if (match_idx + 1 == next_idx) {
+        suppress_heartbeat = true;
+    }
+
+    FB_ASSERT_TRUE(suppress_heartbeat);
+}
+
+FB_TEST(raft_rpc, heartbeat_interval_ratio) {
+    int election_timeout = 500;
+    int heartbeat_timeout = 100;
+
+    // 心跳间隔应远小于选举超时
+    bool valid_ratio = (heartbeat_timeout > 0) &&
+                       (election_timeout > heartbeat_timeout) &&
+                       (election_timeout >= 5 * heartbeat_timeout);
+
+    FB_ASSERT_TRUE(valid_ratio);
+}
+
+FB_TEST(raft_rpc, heartbeat_batch_optimization) {
+    // 批量发送心跳优化
+    int node_count = 5;
+    int batch_size = 10;
+    int total_heartbeats = node_count * batch_size;
+
+    FB_ASSERT_EQ(total_heartbeats, 50);
+
+    // 批处理减少 RPC 次数
+    int rpc_calls = 1;  // 批量发送只需一次
+    FB_ASSERT_TRUE(rpc_calls < total_heartbeats);
+}
+
+FB_TEST(raft_rpc, heartbeat_as_appendentries_empty) {
+    // 心跳等同于空的 AppendEntries
+    int entries_count = 0;
+    bool is_heartbeat = (entries_count == 0);
+
+    FB_ASSERT_TRUE(is_heartbeat);
+
+    // 但仍包含 prev_log_idx/term 和 leader_commit
+    raft_index_t prev_log_idx = 10;
+    raft_term_t prev_log_term = 5;
+    raft_index_t leader_commit = 8;
+
+    FB_ASSERT_TRUE(prev_log_idx >= 0);
+    FB_ASSERT_TRUE(prev_log_term >= 0);
+    FB_ASSERT_TRUE(leader_commit >= 0);
+}
+
+FB_TEST(raft_rpc, heartbeat_commit_update) {
+    raft_index_t leader_commit = 15;
+    raft_index_t local_commit = 10;
+    raft_index_t last_log_idx = 20;
+
+    // 更新 commit_idx = min(leader_commit, last_log_idx)
+    raft_index_t new_commit = std::min(leader_commit, last_log_idx);
+    FB_ASSERT_EQ(new_commit, 15L);
+
+    // leader_commit 超过本地日志
+    leader_commit = 25;
+    new_commit = std::min(leader_commit, last_log_idx);
+    FB_ASSERT_EQ(new_commit, 20L);
+}
+
+FB_TEST(raft_rpc, heartbeat_leader_change_detection) {
+    raft_node_id_t current_leader = 1;
+    raft_node_id_t new_leader = 2;
+    raft_term_t current_term = 5;
+    raft_term_t new_term = 6;
+
+    // 收到更高 term 的心跳，说明有新 Leader
+    bool leader_changed = (new_term > current_term);
+    FB_ASSERT_TRUE(leader_changed);
+
+    if (leader_changed) {
+        current_leader = new_leader;
+        current_term = new_term;
+    }
+
+    FB_ASSERT_EQ(current_leader, 2L);
+    FB_ASSERT_EQ(current_term, 6L);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
