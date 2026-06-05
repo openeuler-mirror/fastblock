@@ -986,3 +986,105 @@ public:
             (ctx).end_iteration();                                                 \
         }                                                                           \
     } while (0)
+
+// ============================================================================
+// PR6: Mock Object Support
+// ============================================================================
+
+/**
+ * @brief Mock call record
+ */
+struct mock_call {
+    std::string method_name;
+    std::vector<std::string> args;
+    bool matched = false;
+};
+
+/**
+ * @brief Mock expectation
+ */
+struct mock_expectation {
+    std::string method_name;
+    int times_called = 0;
+    int expected_times = -1;  // -1 = any
+    std::function<bool(const mock_call&)> matcher;
+
+    bool satisfied() const {
+        return expected_times < 0 || times_called >= expected_times;
+    }
+};
+
+/**
+ * @brief Base mock class
+ */
+class mock_base {
+public:
+    virtual ~mock_base() = default;
+
+    void record_call(const std::string& method, const std::vector<std::string>& args = {}) {
+        mock_call call{method, args};
+        _calls.push_back(call);
+
+        for (auto& exp : _expectations) {
+            if (exp.method_name == method && (!exp.matcher || exp.matcher(call))) {
+                exp.times_called++;
+                call.matched = true;
+                break;
+            }
+        }
+    }
+
+    void expect_call(const std::string& method, int times = -1) {
+        mock_expectation exp;
+        exp.method_name = method;
+        exp.expected_times = times;
+        _expectations.push_back(exp);
+    }
+
+    bool verify() {
+        for (const auto& exp : _expectations) {
+            if (!exp.satisfied()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void clear() {
+        _calls.clear();
+        _expectations.clear();
+    }
+
+protected:
+    std::vector<mock_call> _calls;
+    std::vector<mock_expectation> _expectations;
+};
+
+/**
+ * @brief Mock template for interfaces
+ */
+template<typename Interface>
+class Mock : public Interface, public mock_base {
+public:
+    virtual ~Mock() = default;
+};
+
+/**
+ * @brief Mock method helper
+ * Usage:
+ *   MOCK_METHOD(RaftNode, send_vote_request, (int term));
+ */
+#define MOCK_METHOD(return_type, method_name, args)                                \
+    return_type method_name args override {                                        \
+        record_call(#method_name);                                                 \
+    }
+
+/**
+ * @brief Expectation macros
+ */
+#define EXPECT_CALL(mock_obj, method, matcher)                                    \
+    do {                                                                            \
+        (mock_obj).expect_call(#method);                                           \
+    } while (0)
+
+#define MOCK_TIMES(n) n
