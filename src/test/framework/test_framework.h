@@ -588,3 +588,77 @@ public:
         typename std::decay<decltype(*(values).begin())>::type>                   \
         fb_param_reg_##suite##_##name(#suite, #name,                              \
                                        fb_test_p_##suite##_##name, values)
+
+// ============================================================================
+// PR2: Test Fixtures (FB_TEST_F)
+// ============================================================================
+
+/**
+ * @brief Base class for test fixtures
+ */
+class test_fixture {
+public:
+    virtual ~test_fixture() = default;
+    virtual void SetUp() {}
+    virtual void TearDown() {}
+
+    test_context* ctx = nullptr;
+};
+
+/**
+ * @brief Fixture test case
+ */
+template<typename Fixture>
+class fixture_test_case : public test_case {
+public:
+    using test_func = std::function<void(Fixture&)>;
+
+    fixture_test_case(const std::string& name, const std::string& suite,
+                      test_func func)
+        : test_case(name, suite, [this, func](test_context& ctx) {
+            Fixture fixture;
+            fixture.ctx = &ctx;
+            fixture.SetUp();
+            try {
+                func(fixture);
+            } catch (...) {
+                fixture.TearDown();
+                throw;
+            }
+            fixture.TearDown();
+        }) {}
+};
+
+/**
+ * @brief Registrar for fixture tests
+ */
+template<typename Fixture>
+class fixture_test_registrar {
+public:
+    fixture_test_registrar(const std::string& suite_name,
+                           const std::string& test_name,
+                           typename fixture_test_case<Fixture>::test_func func) {
+        auto tc = std::make_shared<fixture_test_case<Fixture>>(
+            test_name, suite_name, func);
+        test_registry::instance().register_test(suite_name, tc);
+    }
+};
+
+/**
+ * @brief Define a fixture test
+ * Usage:
+ *   class RaftStateFixture : public fastblock::test::test_fixture {
+ *   protected:
+ *       raft_identity state = RAFT_STATE_FOLLOWER;
+ *       void SetUp() override { state = RAFT_STATE_FOLLOWER; }
+ *   };
+ *   FB_TEST_F(RaftStateFixture, test_example) {
+ *       FB_ASSERT_EQ(state, RAFT_STATE_FOLLOWER);
+ *   }
+ */
+#define FB_TEST_F(fixture, name)                                                   \
+    void fb_test_f_##fixture##_##name(fixture& fb_fixture_);                       \
+    static ::fastblock::test::fixture_test_registrar<fixture>                      \
+        fb_fixture_reg_##fixture##_##name(#fixture, #name,                        \
+                                          fb_test_f_##fixture##_##name);           \
+    void fb_test_f_##fixture##_##name(fixture& fb_fixture_)
