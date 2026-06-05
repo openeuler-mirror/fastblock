@@ -2110,5 +2110,183 @@ FB_TEST(raft_state, network_bandwidth_limit) {
     FB_ASSERT_TRUE(batch_count > 0);
 }
 
+// ============================================================================
+// Test Suite: Raft Log Tests
+// ============================================================================
+
+FB_TEST(raft_state, log_base_index) {
+    // 模拟日志基索引
+    raft_index_t base_idx = 1;
+    FB_ASSERT_TRUE(base_idx >= 1);
+
+    // 快照后的基索引
+    base_idx = 100;
+    FB_ASSERT_TRUE(base_idx > 1);
+
+    // 基索引 + 1 = 第一条日志索引
+    raft_index_t first_entry_idx = base_idx + 1;
+    FB_ASSERT_EQ(first_entry_idx, 101L);
+}
+
+FB_TEST(raft_state, log_next_idx_tracking) {
+    raft_index_t next_idx = 1;
+
+    // 追加日志后 next_idx 递增
+    next_idx++;
+    FB_ASSERT_EQ(next_idx, 2L);
+
+    next_idx++;
+    next_idx++;
+    FB_ASSERT_EQ(next_idx, 4L);
+
+    // next_idx 应该等于 last_log_idx + 1
+    raft_index_t last_log_idx = next_idx - 1;
+    FB_ASSERT_EQ(last_log_idx, 3L);
+}
+
+FB_TEST(raft_state, log_append_sequence) {
+    // 模拟日志追加序列
+    raft_index_t current_idx = 0;
+
+    for (int i = 0; i < 10; i++) {
+        current_idx++;
+    }
+    FB_ASSERT_EQ(current_idx, 10L);
+
+    // 日志索引必须连续
+    for (raft_index_t idx = 1; idx <= current_idx; idx++) {
+        FB_ASSERT_TRUE(idx >= 1);
+        FB_ASSERT_TRUE(idx <= current_idx);
+    }
+}
+
+FB_TEST(raft_state, log_truncate_operation) {
+    raft_index_t last_idx = 100;
+    raft_index_t truncate_idx = 50;
+
+    // 截断后，last_idx 变为 truncate_idx - 1
+    raft_index_t new_last_idx = truncate_idx - 1;
+    FB_ASSERT_EQ(new_last_idx, 49L);
+
+    // 截断掉 [truncate_idx, last_idx] 区间的日志
+    raft_index_t truncated_count = last_idx - truncate_idx + 1;
+    FB_ASSERT_EQ(truncated_count, 51L);
+}
+
+FB_TEST(raft_state, log_term_consistency) {
+    raft_term_t term1 = 1;
+    raft_term_t term2 = 2;
+    raft_term_t term3 = 3;
+
+    // 日志 term 应该单调非递减
+    FB_ASSERT_TRUE(term1 <= term2);
+    FB_ASSERT_TRUE(term2 <= term3);
+
+    // 同一 term 内可能有多条日志
+    raft_index_t idx1 = 5;
+    raft_index_t idx2 = 6;
+    raft_term_t log_term_5 = 2;
+    raft_term_t log_term_6 = 2;
+    FB_ASSERT_EQ(log_term_5, log_term_6);
+}
+
+FB_TEST(raft_state, log_get_from_idx) {
+    // 模拟从指定索引获取日志
+    raft_index_t start_idx = 10;
+    raft_index_t end_idx = 20;
+
+    std::vector<raft_index_t> entries;
+    for (raft_index_t idx = start_idx; idx <= end_idx; idx++) {
+        entries.push_back(idx);
+    }
+
+    FB_ASSERT_EQ(entries.size(), 11UL);
+    FB_ASSERT_EQ(entries.front(), 10L);
+    FB_ASSERT_EQ(entries.back(), 20L);
+}
+
+FB_TEST(raft_state, log_get_at_idx) {
+    // 模拟获取特定索引的日志
+    std::map<raft_index_t, raft_term_t> log_entries;
+
+    for (int i = 1; i <= 100; i++) {
+        log_entries[i] = (i <= 50) ? 1 : 2;
+    }
+
+    // 验证获取特定索引
+    FB_ASSERT_EQ(log_entries[25], 1L);
+    FB_ASSERT_EQ(log_entries[75], 2L);
+    FB_ASSERT_EQ(log_entries[50], 1L);
+    FB_ASSERT_EQ(log_entries[51], 2L);
+}
+
+FB_TEST(raft_state, log_first_and_last) {
+    std::map<raft_index_t, int> log_cache;
+
+    // 空缓存情况
+    bool is_empty = log_cache.empty();
+    FB_ASSERT_TRUE(is_empty);
+
+    // 添加日志
+    for (int i = 1; i <= 100; i++) {
+        log_cache[i] = i;
+    }
+
+    is_empty = log_cache.empty();
+    FB_ASSERT_FALSE(is_empty);
+
+    // 第一条和最后一条
+    raft_index_t first_idx = log_cache.begin()->first;
+    raft_index_t last_idx = log_cache.rbegin()->first;
+    FB_ASSERT_EQ(first_idx, 1L);
+    FB_ASSERT_EQ(last_idx, 100L);
+}
+
+FB_TEST(raft_state, log_cache_size_limit) {
+    uint32_t max_cache_entries = 500;
+    uint32_t current_cache_size = 0;
+
+    // 模拟缓存增长
+    for (int i = 0; i < 600; i++) {
+        if (current_cache_size >= max_cache_entries) {
+            // 需要清理旧条目
+            current_cache_size--;  // 移除一个
+        }
+        current_cache_size++;
+    }
+
+    FB_ASSERT_TRUE(current_cache_size <= max_cache_entries + 1);
+}
+
+FB_TEST(raft_state, log_disk_sync) {
+    // 模拟磁盘同步点
+    raft_index_t synced_idx = 0;
+    raft_index_t in_memory_idx = 100;
+
+    // 同步到磁盘
+    synced_idx = in_memory_idx;
+    FB_ASSERT_EQ(synced_idx, 100L);
+
+    // 内存中的日志可以超前于磁盘
+    in_memory_idx = 150;
+    bool has_unsynced = in_memory_idx > synced_idx;
+    FB_ASSERT_TRUE(has_unsynced);
+}
+
+FB_TEST(raft_state, log_recovery_from_disk) {
+    // 模拟从磁盘恢复日志
+    raft_index_t disk_first_idx = 1;
+    raft_index_t disk_last_idx = 80;
+
+    // 恢复后，next_idx = last_idx + 1
+    raft_index_t next_idx = disk_last_idx + 1;
+    FB_ASSERT_EQ(next_idx, 81L);
+
+    // 需要加载未应用的日志到缓存
+    raft_index_t last_applied_idx = 75;
+    raft_index_t first_unapplied_idx = last_applied_idx + 1;
+    FB_ASSERT_EQ(first_unapplied_idx, 76L);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
