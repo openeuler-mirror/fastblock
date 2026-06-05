@@ -1738,6 +1738,8 @@ public:
 
 /**
  * @brief Test environment for managing test configuration
+ *
+ * Thread-safe: Uses mutex to protect concurrent access.
  */
 class test_environment {
 public:
@@ -1747,35 +1749,43 @@ public:
     }
 
     void set_var(const std::string& key, const std::string& value) {
+        std::lock_guard<std::mutex> lock(_mutex);
         _vars[key] = value;
     }
 
-    std::string get_var(const std::string& key, const std::string& default_val = "") {
+    std::string get_var(const std::string& key, const std::string& default_val = "") const {
+        std::lock_guard<std::mutex> lock(_mutex);
         auto it = _vars.find(key);
         return it != _vars.end() ? it->second : default_val;
     }
 
-    bool has_var(const std::string& key) {
+    bool has_var(const std::string& key) const {
+        std::lock_guard<std::mutex> lock(_mutex);
         return _vars.find(key) != _vars.end();
     }
 
     void clear() {
+        std::lock_guard<std::mutex> lock(_mutex);
         _vars.clear();
     }
 
     void set_timeout(uint32_t seconds) {
+        std::lock_guard<std::mutex> lock(_mutex);
         _default_timeout = seconds;
     }
 
     uint32_t timeout() const {
+        std::lock_guard<std::mutex> lock(_mutex);
         return _default_timeout;
     }
 
     void set_verbose(bool verbose) {
+        std::lock_guard<std::mutex> lock(_mutex);
         _verbose = verbose;
     }
 
     bool verbose() const {
+        std::lock_guard<std::mutex> lock(_mutex);
         return _verbose;
     }
 
@@ -1784,6 +1794,7 @@ private:
     std::map<std::string, std::string> _vars;
     uint32_t _default_timeout;
     bool _verbose;
+    mutable std::mutex _mutex;
 };
 
 #define FB_SET_ENV(key, value)          ::fastblock::test::test_environment::instance().set_var(key, value)
