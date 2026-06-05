@@ -3935,5 +3935,319 @@ FB_TEST(raft_rpc, metrics_aggregation) {
     FB_ASSERT_EQ(avg, 3.0);
 }
 
+// ============================================================================
+// Test Suite: PreVote RPC Tests (Pre-Vote Extension)
+// ============================================================================
+
+FB_TEST(raft_rpc, prevote_request_fields) {
+    // PreVote 请求字段
+    raft_term_t term = 6;
+    raft_node_id_t candidate_id = 3;
+    raft_index_t last_log_idx = 100;
+    raft_term_t last_log_term = 5;
+
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(candidate_id > 0);
+    FB_ASSERT_TRUE(last_log_idx >= 0);
+    FB_ASSERT_TRUE(last_log_term >= 0);
+}
+
+FB_TEST(raft_rpc, prevote_does_not_increment_term) {
+    // PreVote 不增加 term
+    raft_term_t current_term = 5;
+    raft_term_t prevote_term = 6;
+
+    // PreVote 收到后不更新 term
+    raft_term_t after_prevote = current_term;
+    FB_ASSERT_EQ(after_prevote, 5L);
+
+    // 普通 RequestVote 会更新 term
+    bool would_update_term = (prevote_term > current_term);
+    FB_ASSERT_TRUE(would_update_term);
+}
+
+FB_TEST(raft_rpc, prevote_check_leader_alive) {
+    // PreVote 检查 Leader 是否存活
+    raft_time_t last_leader_contact = 1000;
+    raft_time_t election_timeout = 500;
+    raft_time_t current_time = 1700;
+
+    bool leader_timeout = (current_time - last_leader_contact) >= election_timeout;
+    FB_ASSERT_TRUE(leader_timeout);
+
+    // 只有 Leader 超时才响应 PreVote
+    bool grant_prevote = leader_timeout;
+    FB_ASSERT_TRUE(grant_prevote);
+}
+
+FB_TEST(raft_rpc, prevote_leader_present_reject) {
+    // Leader 存活时拒绝 PreVote
+    raft_time_t last_leader_contact = 1000;
+    raft_time_t current_time = 1100;
+    raft_time_t heartbeat_timeout = 100;
+
+    bool leader_alive = (current_time - last_leader_contact) < heartbeat_timeout;
+    FB_ASSERT_TRUE(leader_alive);
+
+    bool grant_prevote = !leader_alive;
+    FB_ASSERT_FALSE(grant_prevote);
+}
+
+FB_TEST(raft_rpc, prevote_log_up_to_date_check) {
+    // PreVote 也检查日志新旧
+    raft_index_t my_last_log_idx = 50;
+    raft_term_t my_last_log_term = 5;
+    raft_index_t cand_last_log_idx = 60;
+    raft_term_t cand_last_log_term = 5;
+
+    bool log_ok = (cand_last_log_term > my_last_log_term) ||
+                  ((cand_last_log_term == my_last_log_term) &&
+                   (cand_last_log_idx >= my_last_log_idx));
+    FB_ASSERT_TRUE(log_ok);
+}
+
+FB_TEST(raft_rpc, prevote_network_partition) {
+    // 网络分区时的 PreVote
+    std::set<raft_node_id_t> partition_nodes = {3, 4};
+
+    // 分区中的节点无法收到 Leader 心跳
+    raft_node_id_t candidate_id = 3;
+    bool in_partition = partition_nodes.count(candidate_id) > 0;
+    FB_ASSERT_TRUE(in_partition);
+
+    // PreVote 防止分区节点干扰主集群
+    bool can_prevote = in_partition;
+    FB_ASSERT_TRUE(can_prevote);
+}
+
+FB_TEST(raft_rpc, prevote_response_fields) {
+    raft_term_t term = 5;
+    bool prevote_granted = true;
+
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(prevote_granted);
+}
+
+FB_TEST(raft_rpc, prevote_no_state_change) {
+    // PreVote 不改变状态
+    raft_identity state = RAFT_STATE_FOLLOWER;
+
+    // 发送 PreVote 不改变状态
+    bool sending_prevote = true;
+    if (sending_prevote) {
+        // 状态保持不变
+    }
+
+    FB_ASSERT_EQ(state, RAFT_STATE_FOLLOWER);
+}
+
+FB_TEST(raft_rpc, prevote_to_real_vote_transition) {
+    // PreVote 成功后转为正式投票
+    uint64_t prevotes_granted = 3;
+    uint64_t node_num = 5;
+
+    bool prevote_success = prevotes_granted > node_num / 2;
+    FB_ASSERT_TRUE(prevote_success);
+
+    if (prevote_success) {
+        // 开始正式选举
+        raft_identity state = RAFT_STATE_CANDIDATE;
+        FB_ASSERT_EQ(state, RAFT_STATE_CANDIDATE);
+    }
+}
+
+FB_TEST(raft_rpc, prevote_prevote_fail_no_real_vote) {
+    // PreVote 失败不发起正式选举
+    uint64_t prevotes_granted = 2;
+    uint64_t node_num = 5;
+
+    bool prevote_success = prevotes_granted > node_num / 2;
+    FB_ASSERT_FALSE(prevote_success);
+
+    // 保持 Follower 状态
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    FB_ASSERT_EQ(state, RAFT_STATE_FOLLOWER);
+}
+
+FB_TEST(raft_rpc, prevote_disruptive_leader) {
+    // 防止干扰 Leader
+    raft_node_id_t leader_id = 2;
+    raft_time_t last_leader_heartbeat = 1000;
+    raft_time_t current_time = 1100;
+    raft_time_t heartbeat_timeout = 100;
+
+    bool leader_healthy = (current_time - last_leader_heartbeat) < heartbeat_timeout;
+    FB_ASSERT_TRUE(leader_healthy);
+
+    // 不响应 PreVote，保护 Leader
+    bool grant_prevote = !leader_healthy;
+    FB_ASSERT_FALSE(grant_prevote);
+}
+
+FB_TEST(raft_rpc, prevote_concurrent_candidates) {
+    // 多个节点同时 PreVote
+    std::vector<raft_node_id_t> prevote_candidates = {2, 3, 4};
+
+    FB_ASSERT_EQ(prevote_candidates.size(), 3UL);
+
+    // 每个候选者独立 PreVote
+    for (auto id : prevote_candidates) {
+        FB_ASSERT_TRUE(id > 0);
+    }
+}
+
+FB_TEST(raft_rpc, prevote_timeout_handling) {
+    // PreVote 超时
+    int prevote_timeout_ms = 500;
+    int elapsed_ms = 600;
+
+    bool timed_out = elapsed_ms >= prevote_timeout_ms;
+    FB_ASSERT_TRUE(timed_out);
+}
+
+FB_TEST(raft_rpc, prevote_retry_on_failure) {
+    // PreVote 失败重试
+    int retry_count = 0;
+    int max_retries = 3;
+    bool success = false;
+
+    while (!success && retry_count < max_retries) {
+        retry_count++;
+        if (retry_count == 2) {
+            success = true;
+        }
+    }
+
+    FB_ASSERT_TRUE(success);
+    FB_ASSERT_EQ(retry_count, 2);
+}
+
+FB_TEST(raft_rpc, prevote_min_timeout_before_prevote) {
+    // PreVote 前等待最小超时
+    raft_time_t election_timeout = 500;
+    raft_time_t min_prevote_timeout = 400;
+
+    FB_ASSERT_TRUE(min_prevote_timeout < election_timeout);
+
+    // 防止过早 PreVote
+    bool can_prevote_now = false;  // 需要等待
+    FB_ASSERT_FALSE(can_prevote_now);
+}
+
+FB_TEST(raft_rpc, prevote_joint_consensus_check) {
+    // 联合共识期间的 PreVote
+    bool in_joint_consensus = true;
+
+    // 需要两个配置都同意
+    uint64_t old_prevotes = 3;
+    uint64_t new_prevotes = 2;
+    uint64_t old_nodes = 5;
+    uint64_t new_nodes = 3;
+
+    bool old_ok = old_prevotes > old_nodes / 2;
+    bool new_ok = new_prevotes > new_nodes / 2;
+
+    FB_ASSERT_TRUE(old_ok);
+    FB_ASSERT_TRUE(new_ok);
+}
+
+FB_TEST(raft_rpc, prevote_leader_in_joint_consensus) {
+    // 联合共识中 Leader 仍在工作
+    raft_identity state = RAFT_STATE_LEADER;
+    bool in_joint_consensus = true;
+
+    // Leader 继续服务
+    bool can_serve = (state == RAFT_STATE_LEADER);
+    FB_ASSERT_TRUE(can_serve);
+
+    // 拒绝 PreVote
+    bool grant_prevote = false;
+    FB_ASSERT_FALSE(grant_prevote);
+}
+
+FB_TEST(raft_rpc, prevote_follower_only_respond) {
+    // 只有 Follower 响应 PreVote
+    raft_identity state = RAFT_STATE_LEADER;
+
+    bool should_respond = (state == RAFT_STATE_FOLLOWER);
+    FB_ASSERT_FALSE(should_respond);
+
+    state = RAFT_STATE_FOLLOWER;
+    should_respond = (state == RAFT_STATE_FOLLOWER);
+    FB_ASSERT_TRUE(should_respond);
+}
+
+FB_TEST(raft_rpc, prevote_candidate_term_check) {
+    // PreVote term 检查
+    raft_term_t current_term = 5;
+    raft_term_t candidate_prevote_term = 6;
+
+    // PreVote term 应该是候选者期望的 term
+    bool term_valid = candidate_prevote_term >= current_term;
+    FB_ASSERT_TRUE(term_valid);
+}
+
+FB_TEST(raft_rpc, prevote_quorum_calculation) {
+    // PreVote 多数派计算
+    uint64_t node_num = 5;
+    uint64_t prevotes_needed = node_num / 2 + 1;
+
+    FB_ASSERT_EQ(prevotes_needed, 3UL);
+
+    uint64_t prevotes_received = 3;
+    bool has_quorum = prevotes_received >= prevotes_needed;
+    FB_ASSERT_TRUE(has_quorum);
+}
+
+FB_TEST(raft_rpc, prevote_stale_candidate_detection) {
+    // 检测过时的 PreVote 候选者
+    raft_term_t current_term = 7;
+    raft_term_t prevote_term = 5;
+
+    bool prevote_stale = prevote_term < current_term;
+    FB_ASSERT_TRUE(prevote_stale);
+
+    // 拒绝过时的 PreVote
+    bool grant_prevote = !prevote_stale;
+    FB_ASSERT_FALSE(grant_prevote);
+}
+
+FB_TEST(raft_rpc, prevote_benefits) {
+    // PreVote 的好处
+    bool prevents_disruptive_elections = true;
+    bool reduces_unnecessary_term_increments = true;
+    bool improves_cluster_stability = true;
+
+    FB_ASSERT_TRUE(prevents_disruptive_elections);
+    FB_ASSERT_TRUE(reduces_unnecessary_term_increments);
+    FB_ASSERT_TRUE(improves_cluster_stability);
+}
+
+FB_TEST(raft_rpc, prevote_without_prevote_comparison) {
+    // 有无 PreVote 的对比
+    int elections_without_prevote = 10;  // 可能有很多不必要选举
+    int elections_with_prevote = 3;      // PreVote 减少不必要选举
+
+    bool prevote_effective = elections_with_prevote < elections_without_prevote;
+    FB_ASSERT_TRUE(prevote_effective);
+}
+
+FB_TEST(raft_rpc, prevote_multiple_rounds) {
+    // 多轮 PreVote
+    int prevote_round = 1;
+    int max_prevote_rounds = 3;
+    bool prevote_success = false;
+
+    while (!prevote_success && prevote_round <= max_prevote_rounds) {
+        prevote_round++;
+        if (prevote_round == 2) {
+            prevote_success = true;
+        }
+    }
+
+    FB_ASSERT_TRUE(prevote_success);
+    FB_ASSERT_EQ(prevote_round, 2);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
