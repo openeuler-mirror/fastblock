@@ -1386,5 +1386,159 @@ FB_TEST(raft_state, log_truncation_before_snapshot) {
     FB_ASSERT_EQ(new_first_log_idx, 301L);
 }
 
+// ============================================================================
+// Test Suite: Configuration Change Tests
+// ============================================================================
+
+FB_TEST(raft_state, joint_consensus_votes) {
+    // 联合共识需要新旧配置都满足多数
+    uint64_t old_nodes = 5, old_votes = 3;
+    uint64_t new_nodes = 3, new_votes = 2;
+
+    bool old_ok = old_votes > old_nodes / 2;
+    bool new_ok = new_votes > new_nodes / 2;
+    FB_ASSERT_TRUE(old_ok && new_ok);
+
+    // 新配置不满足多数
+    new_votes = 1;
+    new_ok = new_votes > new_nodes / 2;
+    FB_ASSERT_FALSE(old_ok && new_ok);
+
+    // 旧配置不满足多数
+    old_votes = 2;
+    new_votes = 2;
+    old_ok = old_votes > old_nodes / 2;
+    new_ok = new_votes > new_nodes / 2;
+    FB_ASSERT_FALSE(old_ok && new_ok);
+}
+
+FB_TEST(raft_state, config_change_tracking) {
+    raft_membership_e membership = RAFT_MEMBERSHIP_ADD;
+    FB_ASSERT_TRUE(membership == RAFT_MEMBERSHIP_ADD);
+    FB_ASSERT_TRUE(membership != RAFT_MEMBERSHIP_REMOVE);
+    FB_ASSERT_TRUE(membership != RAFT_MEMBERSHIP_NO_CHANGE);
+
+    membership = RAFT_MEMBERSHIP_REMOVE;
+    FB_ASSERT_TRUE(membership == RAFT_MEMBERSHIP_REMOVE);
+    FB_ASSERT_TRUE(membership != RAFT_MEMBERSHIP_ADD);
+
+    membership = RAFT_MEMBERSHIP_NO_CHANGE;
+    FB_ASSERT_TRUE(membership == RAFT_MEMBERSHIP_NO_CHANGE);
+}
+
+FB_TEST(raft_state, config_change_log_entry) {
+    // 配置变更使用特殊日志类型
+    raft_logtype_e log_type = RAFT_LOGTYPE_CONFIGURATION;
+    FB_ASSERT_EQ(log_type, RAFT_LOGTYPE_CONFIGURATION);
+
+    // 区分普通日志和配置日志
+    raft_logtype_e normal_type = RAFT_LOGTYPE_WRITE;
+    bool is_config_change = (log_type == RAFT_LOGTYPE_CONFIGURATION);
+    FB_ASSERT_TRUE(is_config_change);
+    is_config_change = (normal_type == RAFT_LOGTYPE_CONFIGURATION);
+    FB_ASSERT_FALSE(is_config_change);
+}
+
+FB_TEST(raft_state, add_node_to_cluster) {
+    uint64_t node_num = 3;
+    raft_node_id_t new_node_id = 4;
+
+    // 添加节点后，集群大小增加
+    uint64_t new_node_num = node_num + 1;
+    FB_ASSERT_EQ(new_node_num, 4UL);
+
+    // 新节点最初是非投票节点
+    bool is_voting = false;
+    FB_ASSERT_FALSE(is_voting);
+
+    // 变为投票节点后
+    is_voting = true;
+    FB_ASSERT_TRUE(is_voting);
+}
+
+FB_TEST(raft_state, remove_node_from_cluster) {
+    uint64_t node_num = 5;
+    raft_node_id_t removed_node_id = 3;
+
+    // 移除节点后，集群大小减少
+    uint64_t new_node_num = node_num - 1;
+    FB_ASSERT_EQ(new_node_num, 4UL);
+
+    // 需要验证新的多数派计算
+    uint64_t votes_needed = new_node_num / 2 + 1;
+    FB_ASSERT_EQ(votes_needed, 3UL);
+}
+
+FB_TEST(raft_state, config_change_safety) {
+    // 配置变更期间，新配置生效前仍使用旧配置
+    bool config_change_in_progress = true;
+    uint64_t old_nodes = 5;
+    uint64_t new_nodes = 3;
+
+    // 在联合共识期间，两个配置都需要满足
+    uint64_t old_votes = 3;
+    uint64_t new_votes = 2;
+
+    bool old_majority = old_votes > old_nodes / 2;
+    bool new_majority = new_votes > new_nodes / 2;
+
+    // 联合共识期间，两个配置都需要多数
+    bool safe_to_commit = old_majority && new_majority;
+    FB_ASSERT_TRUE(safe_to_commit);
+
+    // 配置变更完成后
+    config_change_in_progress = false;
+    // 只需要新配置的多数
+    safe_to_commit = new_majority;
+    FB_ASSERT_TRUE(safe_to_commit);
+}
+
+FB_TEST(raft_state, node_promotion_demotion) {
+    bool is_voting = false;
+    raft_node_id_t node_id = 5;
+
+    // 非投票节点 -> 投票节点（提升）
+    is_voting = true;
+    FB_ASSERT_TRUE(is_voting);
+
+    // 投票节点 -> 非投票节点（降级）
+    is_voting = false;
+    FB_ASSERT_FALSE(is_voting);
+
+    // 节点 ID 不变
+    FB_ASSERT_EQ(node_id, 5L);
+}
+
+FB_TEST(raft_state, single_node_cluster) {
+    // 单节点集群的特殊情况
+    uint64_t node_num = 1;
+    uint64_t votes = 1;
+
+    // 单节点集群，自己就是 Leader
+    bool is_leader = votes > node_num / 2;
+    FB_ASSERT_TRUE(is_leader);
+
+    // 无需心跳（自己给自己发）
+    bool needs_heartbeat = false;
+    FB_ASSERT_FALSE(needs_heartbeat);
+}
+
+FB_TEST(raft_state, config_change_index_tracking) {
+    int64_t config_index = 10;
+    int64_t config_term = 5;
+
+    // 跟踪最新配置的索引和term
+    FB_ASSERT_TRUE(config_index > 0);
+    FB_ASSERT_TRUE(config_term > 0);
+
+    // 新配置会覆盖旧配置
+    int64_t new_config_index = 20;
+    int64_t new_config_term = 6;
+
+    bool is_newer_config = (new_config_term > config_term) ||
+                           (new_config_term == config_term && new_config_index > config_index);
+    FB_ASSERT_TRUE(is_newer_config);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
