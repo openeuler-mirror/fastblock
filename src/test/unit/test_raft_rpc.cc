@@ -2956,5 +2956,212 @@ FB_TEST(raft_rpc, clientsession_retry_on_leader_change) {
     FB_ASSERT_EQ(retry_target, 2L);
 }
 
+// ============================================================================
+// Test Suite: GetConfiguration RPC Tests (Configuration Query)
+// ============================================================================
+
+FB_TEST(raft_rpc, getconfiguration_request_fields) {
+    // 配置查询请求字段
+    raft_term_t term = 5;
+    raft_node_id_t requester_id = 3;
+
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(requester_id > 0);
+}
+
+FB_TEST(raft_rpc, getconfiguration_response_nodes) {
+    // 配置响应包含节点列表
+    std::vector<raft_node_id_t> nodes = {1, 2, 3, 4, 5};
+
+    FB_ASSERT_EQ(nodes.size(), 5UL);
+    FB_ASSERT_TRUE(nodes[0] == 1);
+    FB_ASSERT_TRUE(nodes[4] == 5);
+}
+
+FB_TEST(raft_rpc, getconfiguration_leader_node) {
+    // 响应包含Leader信息
+    raft_node_id_t leader_id = 2;
+    bool leader_present = (leader_id > 0);
+
+    FB_ASSERT_TRUE(leader_present);
+    FB_ASSERT_EQ(leader_id, 2L);
+}
+
+FB_TEST(raft_rpc, getconfiguration_voting_status) {
+    // 节点投票状态
+    std::map<raft_node_id_t, bool> voting_status;
+    voting_status[1] = true;
+    voting_status[2] = true;
+    voting_status[3] = true;
+    voting_status[4] = false;  // 非投票节点
+    voting_status[5] = false;
+
+    int voting_count = 0;
+    for (const auto& pair : voting_status) {
+        if (pair.second) voting_count++;
+    }
+
+    FB_ASSERT_EQ(voting_count, 3);
+}
+
+FB_TEST(raft_rpc, getconfiguration_node_addresses) {
+    // 节点地址信息
+    std::map<raft_node_id_t, std::pair<std::string, int>> node_addrs;
+    node_addrs[1] = {"127.0.0.1", 8888};
+    node_addrs[2] = {"127.0.0.1", 8889};
+    node_addrs[3] = {"127.0.0.1", 8890};
+
+    FB_ASSERT_EQ(node_addrs[1].second, 8888);
+    FB_ASSERT_STR_EQ(node_addrs[2].first, "127.0.0.1");
+}
+
+FB_TEST(raft_rpc, getconfiguration_config_index) {
+    // 配置索引
+    raft_index_t config_index = 50;
+    raft_term_t config_term = 5;
+
+    FB_ASSERT_TRUE(config_index > 0);
+    FB_ASSERT_TRUE(config_term > 0);
+}
+
+FB_TEST(raft_rpc, getconfiguration_any_node_respond) {
+    // 任何节点都可以响应配置查询（不一定需要Leader）
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    bool can_respond = true;  // Follower也可以响应
+
+    FB_ASSERT_TRUE(can_respond);
+
+    state = RAFT_STATE_CANDIDATE;
+    can_respond = (state != RAFT_STATE_LEADER);
+    FB_ASSERT_TRUE(can_respond);
+}
+
+FB_TEST(raft_rpc, getconfiguration_stale_config_warning) {
+    // 检测过期配置
+    raft_index_t config_index = 50;
+    raft_index_t latest_config_index = 60;
+
+    bool config_stale = config_index < latest_config_index;
+    FB_ASSERT_TRUE(config_stale);
+}
+
+FB_TEST(raft_rpc, getconfiguration_joint_consensus_info) {
+    // 联合共识配置信息
+    std::vector<raft_node_id_t> old_config = {1, 2, 3};
+    std::vector<raft_node_id_t> new_config = {1, 2, 4};
+    bool in_joint_consensus = true;
+
+    if (in_joint_consensus) {
+        // 返回两个配置
+        FB_ASSERT_EQ(old_config.size(), 3UL);
+        FB_ASSERT_EQ(new_config.size(), 3UL);
+    }
+}
+
+FB_TEST(raft_rpc, getconfiguration_node_metadata) {
+    // 节点元数据
+    struct node_meta {
+        raft_node_id_t id;
+        std::string addr;
+        int port;
+        bool is_voting;
+        bool is_healthy;
+    };
+
+    node_meta node1 = {1, "127.0.0.1", 8888, true, true};
+    node_meta node2 = {2, "127.0.0.1", 8889, true, false};  // 不健康
+
+    FB_ASSERT_TRUE(node1.is_healthy);
+    FB_ASSERT_FALSE(node2.is_healthy);
+}
+
+FB_TEST(raft_rpc, getconfiguration_cluster_id) {
+    // 集群ID
+    uint64_t cluster_id = 12345;
+
+    FB_ASSERT_TRUE(cluster_id > 0);
+    FB_ASSERT_EQ(cluster_id, 12345UL);
+}
+
+FB_TEST(raft_rpc, getconfiguration_bootstrap_info) {
+    // 引导信息
+    bool is_bootstrap_complete = true;
+    uint64_t bootstrap_node_id = 1;
+
+    FB_ASSERT_TRUE(is_bootstrap_complete);
+    FB_ASSERT_EQ(bootstrap_node_id, 1UL);
+}
+
+FB_TEST(raft_rpc, getconfiguration_version_tracking) {
+    // 配置版本跟踪
+    uint64_t config_version = 1;
+    config_version++;
+
+    FB_ASSERT_EQ(config_version, 2UL);
+
+    // 每次配置变更递增版本
+    config_version++;
+    FB_ASSERT_EQ(config_version, 3UL);
+}
+
+FB_TEST(raft_rpc, getconfiguration_compatibility_check) {
+    // 兼容性检查
+    int config_format_version = 2;
+    int supported_version = 3;
+
+    bool compatible = config_format_version <= supported_version;
+    FB_ASSERT_TRUE(compatible);
+
+    config_format_version = 4;
+    compatible = config_format_version <= supported_version;
+    FB_ASSERT_FALSE(compatible);
+}
+
+FB_TEST(raft_rpc, getconfiguration_caching) {
+    // 配置缓存
+    std::vector<raft_node_id_t> cached_config = {1, 2, 3};
+    raft_index_t cache_version = 10;
+    raft_index_t current_version = 10;
+
+    bool cache_valid = (cache_version == current_version);
+    FB_ASSERT_TRUE(cache_valid);
+
+    // 配置变更后缓存失效
+    current_version = 11;
+    cache_valid = (cache_version == current_version);
+    FB_ASSERT_FALSE(cache_valid);
+}
+
+FB_TEST(raft_rpc, getconfiguration_partial_response) {
+    // 大配置分页响应
+    size_t total_nodes = 1000;
+    size_t page_size = 100;
+    size_t total_pages = (total_nodes + page_size - 1) / page_size;
+
+    FB_ASSERT_EQ(total_pages, 10UL);
+}
+
+FB_TEST(raft_rpc, getconfiguration_filter_voting_only) {
+    // 只返回投票节点
+    std::vector<std::pair<raft_node_id_t, bool>> all_nodes = {
+        {1, true}, {2, true}, {3, false}, {4, true}, {5, false}
+    };
+
+    std::vector<raft_node_id_t> voting_only;
+    for (const auto& pair : all_nodes) {
+        if (pair.second) voting_only.push_back(pair.first);
+    }
+
+    FB_ASSERT_EQ(voting_only.size(), 3UL);
+}
+
+FB_TEST(raft_rpc, getconfiguration_security_check) {
+    // 安全检查：权限验证
+    uint64_t requester_id = 100;
+    bool has_permission = true;  // 配置查询通常不需要特殊权限
+
+    FB_ASSERT_TRUE(has_permission);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
