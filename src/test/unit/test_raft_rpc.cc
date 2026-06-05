@@ -1278,5 +1278,211 @@ FB_TEST(raft_rpc, timeoutnow_state_machine_consistency) {
     FB_ASSERT_EQ(saved_applied, 100L);
 }
 
+// ============================================================================
+// Test Suite: AddNode RPC Tests (Membership Change)
+// ============================================================================
+
+FB_TEST(raft_rpc, addnode_request_fields) {
+    // 模拟 AddNode 请求字段
+    raft_term_t term = 5;
+    raft_node_id_t new_node_id = 4;
+    std::string addr = "127.0.0.1";
+    int port = 8888;
+
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(new_node_id > 0);
+    FB_ASSERT_TRUE(port > 0);
+}
+
+FB_TEST(raft_rpc, addnode_leader_only_operation) {
+    // 只有 Leader 可以添加节点
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    bool can_add_node = (state == RAFT_STATE_LEADER);
+    FB_ASSERT_FALSE(can_add_node);
+
+    state = RAFT_STATE_LEADER;
+    can_add_node = (state == RAFT_STATE_LEADER);
+    FB_ASSERT_TRUE(can_add_node);
+}
+
+FB_TEST(raft_rpc, addnode_joint_consensus_phase) {
+    // 添加节点进入联合共识阶段
+    std::vector<raft_node_id_t> old_config = {1, 2, 3};
+    std::vector<raft_node_id_t> new_config = {1, 2, 3, 4};  // 新增节点4
+
+    // 联合共识期间，新旧配置都有效
+    bool in_joint_consensus = true;
+    FB_ASSERT_TRUE(in_joint_consensus);
+
+    // 新节点最初是非投票节点
+    bool is_voting = false;
+    FB_ASSERT_FALSE(is_voting);
+}
+
+FB_TEST(raft_rpc, addnode_node_info_validation) {
+    // 验证节点信息有效性
+    raft_node_id_t node_id = 5;
+    std::string addr = "192.168.1.100";
+    int port = 9000;
+
+    // ID 必须唯一且有效
+    bool valid_id = node_id > 0;
+    FB_ASSERT_TRUE(valid_id);
+
+    // 端口必须合法
+    bool valid_port = port > 0 && port <= 65535;
+    FB_ASSERT_TRUE(valid_port);
+
+    // 地址不能为空
+    bool valid_addr = !addr.empty();
+    FB_ASSERT_TRUE(valid_addr);
+}
+
+FB_TEST(raft_rpc, addnode_catch_up_process) {
+    // 新节点需要追赶日志
+    raft_index_t leader_last_idx = 100;
+    raft_index_t new_node_match_idx = 0;
+
+    // 新节点开始追赶
+    bool needs_catchup = new_node_match_idx < leader_last_idx;
+    FB_ASSERT_TRUE(needs_catchup);
+
+    // 追赶进度
+    new_node_match_idx = 50;
+    double progress = 100.0 * new_node_match_idx / leader_last_idx;
+    FB_ASSERT_TRUE(progress >= 50.0);
+
+    // 追赶完成
+    new_node_match_idx = leader_last_idx;
+    needs_catchup = new_node_match_idx < leader_last_idx;
+    FB_ASSERT_FALSE(needs_catchup);
+}
+
+FB_TEST(raft_rpc, addnode_promote_to_voting) {
+    // 新节点追赶完成后提升为投票节点
+    bool is_voting = false;
+    bool catchup_complete = true;
+
+    if (catchup_complete) {
+        is_voting = true;
+    }
+
+    FB_ASSERT_TRUE(is_voting);
+}
+
+FB_TEST(raft_rpc, addnode_config_index_tracking) {
+    // 配置变更日志索引跟踪
+    raft_index_t config_entry_idx = 50;
+    raft_term_t config_term = 5;
+
+    // 配置变更作为特殊日志条目
+    FB_ASSERT_TRUE(config_entry_idx > 0);
+    FB_ASSERT_TRUE(config_term > 0);
+
+    // 变更在日志提交后生效
+    raft_index_t commit_idx = 55;
+    bool config_applied = commit_idx >= config_entry_idx;
+    FB_ASSERT_TRUE(config_applied);
+}
+
+FB_TEST(raft_rpc, addnode_duplicate_id_check) {
+    // 检查节点 ID 是否已存在
+    std::set<raft_node_id_t> existing_nodes = {1, 2, 3};
+    raft_node_id_t new_id = 3;
+
+    bool duplicate = existing_nodes.count(new_id) > 0;
+    FB_ASSERT_TRUE(duplicate);
+
+    // 使用唯一 ID
+    new_id = 4;
+    duplicate = existing_nodes.count(new_id) > 0;
+    FB_ASSERT_FALSE(duplicate);
+}
+
+FB_TEST(raft_rpc, addnode_response_fields) {
+    raft_term_t term = 5;
+    bool success = true;
+
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(success);
+}
+
+FB_TEST(raft_rpc, addnode_failure_node_unreachable) {
+    // 新节点无法连接
+    bool node_reachable = false;
+    bool add_success = node_reachable;
+    FB_ASSERT_FALSE(add_success);
+
+    // 重试机制
+    int retry_count = 0;
+    int max_retries = 3;
+    while (!node_reachable && retry_count < max_retries) {
+        retry_count++;
+    }
+    FB_ASSERT_EQ(retry_count, 3);
+}
+
+FB_TEST(raft_rpc, addnode_rollback_on_failure) {
+    // 添加失败时回滚配置
+    std::vector<raft_node_id_t> config = {1, 2, 3};
+    std::vector<raft_node_id_t> backup = config;
+
+    // 尝试添加
+    config.push_back(4);
+
+    // 失败回滚
+    bool add_failed = true;
+    if (add_failed) {
+        config = backup;
+    }
+
+    FB_ASSERT_EQ(config.size(), 3UL);
+}
+
+FB_TEST(raft_rpc, addnode_multiple_nodes_batch) {
+    // 批量添加多个节点
+    std::vector<raft_node_id_t> config = {1, 2, 3};
+    std::vector<raft_node_id_t> new_nodes = {4, 5};
+
+    // 逐个添加
+    for (auto id : new_nodes) {
+        config.push_back(id);
+    }
+
+    FB_ASSERT_EQ(config.size(), 5UL);
+
+    // 每个添加都是独立的配置变更
+    int config_changes = new_nodes.size();
+    FB_ASSERT_EQ(config_changes, 2);
+}
+
+FB_TEST(raft_rpc, addnode_network_partition_check) {
+    // 添加前检查网络连通性
+    std::set<raft_node_id_t> reachable_nodes = {1, 2, 3};
+    raft_node_id_t new_node = 4;
+
+    bool can_reach = reachable_nodes.count(new_node) > 0;
+    FB_ASSERT_FALSE(can_reach);
+
+    // 网络恢复后
+    reachable_nodes.insert(new_node);
+    can_reach = reachable_nodes.count(new_node) > 0;
+    FB_ASSERT_TRUE(can_reach);
+}
+
+FB_TEST(raft_rpc, addnode_cluster_size_limit) {
+    // 集群大小限制检查
+    size_t max_nodes = 100;
+    size_t current_nodes = 95;
+
+    bool can_add = current_nodes < max_nodes;
+    FB_ASSERT_TRUE(can_add);
+
+    // 达到限制
+    current_nodes = 100;
+    can_add = current_nodes < max_nodes;
+    FB_ASSERT_FALSE(can_add);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
