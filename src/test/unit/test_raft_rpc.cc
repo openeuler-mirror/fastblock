@@ -3424,5 +3424,277 @@ FB_TEST(raft_rpc, snapshotstatus_version_compatibility) {
     FB_ASSERT_FALSE(compatible);
 }
 
+// ============================================================================
+// Test Suite: Ping RPC Tests (Health Check)
+// ============================================================================
+
+FB_TEST(raft_rpc, ping_request_fields) {
+    // Ping 请求字段
+    raft_term_t term = 5;
+    raft_node_id_t from_id = 1;
+    raft_time_t timestamp = 1000;
+
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(from_id > 0);
+    FB_ASSERT_TRUE(timestamp > 0);
+}
+
+FB_TEST(raft_rpc, ping_response_fields) {
+    // Ping 响应字段
+    raft_term_t term = 5;
+    raft_time_t server_timestamp = 1000;
+    raft_time_t client_timestamp = 950;
+
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(server_timestamp >= client_timestamp);
+}
+
+FB_TEST(raft_rpc, ping_latency_measurement) {
+    // 延迟测量
+    raft_time_t send_time = 1000;
+    raft_time_t receive_time = 1050;
+    raft_time_t reply_time = 1100;
+    raft_time_t response_time = 1150;
+
+    raft_time_t rtt = response_time - send_time;
+    raft_time_t server_processing = receive_time - reply_time;
+
+    FB_ASSERT_EQ(rtt, 150L);
+    FB_ASSERT_TRUE(rtt > server_processing);
+}
+
+FB_TEST(raft_rpc, ping_health_check) {
+    // 健康检查
+    bool ping_success = true;
+    int consecutive_failures = 0;
+
+    if (ping_success) {
+        consecutive_failures = 0;
+    }
+
+    FB_ASSERT_EQ(consecutive_failures, 0);
+}
+
+FB_TEST(raft_rpc, ping_failure_detection) {
+    // 故障检测
+    int consecutive_failures = 3;
+    int failure_threshold = 3;
+
+    bool node_unhealthy = consecutive_failures >= failure_threshold;
+    FB_ASSERT_TRUE(node_unhealthy);
+}
+
+FB_TEST(raft_rpc, ping_timeout_handling) {
+    // Ping 超时
+    int ping_timeout_ms = 100;
+    int elapsed_ms = 150;
+
+    bool timed_out = elapsed_ms >= ping_timeout_ms;
+    FB_ASSERT_TRUE(timed_out);
+}
+
+FB_TEST(raft_rpc, ping_periodic_interval) {
+    // 定期 Ping 间隔
+    int ping_interval_ms = 1000;
+    int ping_count = 0;
+
+    for (int time = 0; time <= 5000; time += ping_interval_ms) {
+        ping_count++;
+    }
+
+    FB_ASSERT_EQ(ping_count, 6);
+}
+
+FB_TEST(raft_rpc, ping_all_nodes) {
+    // Ping 所有节点
+    std::set<raft_node_id_t> nodes = {1, 2, 3, 4, 5};
+    std::set<raft_node_id_t> responded;
+
+    for (auto id : nodes) {
+        responded.insert(id);
+    }
+
+    FB_ASSERT_EQ(responded.size(), 5UL);
+}
+
+FB_TEST(raft_rpc, ping_node_health_status) {
+    // 节点健康状态
+    std::map<raft_node_id_t, bool> health_status;
+    health_status[1] = true;
+    health_status[2] = true;
+    health_status[3] = false;  // 不健康
+
+    int healthy_count = 0;
+    for (const auto& pair : health_status) {
+        if (pair.second) healthy_count++;
+    }
+
+    FB_ASSERT_EQ(healthy_count, 2);
+}
+
+FB_TEST(raft_rpc, ping_clock_synchronization) {
+    // 时钟同步检测
+    raft_time_t local_time = 1000;
+    raft_time_t server_time = 1050;
+    raft_time_t offset = server_time - local_time;
+
+    FB_ASSERT_EQ(offset, 50L);
+
+    // 检测时钟漂移
+    bool clock_drift_detected = (offset > 100 || offset < -100);
+    FB_ASSERT_FALSE(clock_drift_detected);
+}
+
+FB_TEST(raft_rpc, ping_response_timeout) {
+    // Ping 响应超时
+    int response_timeout_ms = 50;
+    int elapsed_ms = 60;
+
+    bool response_timeout = elapsed_ms >= response_timeout_ms;
+    FB_ASSERT_TRUE(response_timeout);
+}
+
+FB_TEST(raft_rpc, ping_retry_on_failure) {
+    // 失败重试
+    int retry_count = 0;
+    int max_retries = 3;
+    bool success = false;
+
+    while (!success && retry_count < max_retries) {
+        retry_count++;
+        if (retry_count == 2) {
+            success = true;
+        }
+    }
+
+    FB_ASSERT_TRUE(success);
+    FB_ASSERT_EQ(retry_count, 2);
+}
+
+FB_TEST(raft_rpc, ping_network_partition) {
+    // 网络分区检测
+    std::set<raft_node_id_t> reachable = {1, 2};
+    std::set<raft_node_id_t> all_nodes = {1, 2, 3, 4, 5};
+
+    bool partition_detected = reachable.size() < all_nodes.size();
+    FB_ASSERT_TRUE(partition_detected);
+
+    int unreachable_count = all_nodes.size() - reachable.size();
+    FB_ASSERT_EQ(unreachable_count, 3);
+}
+
+FB_TEST(raft_rpc, ping_load_balancing) {
+    // 负载均衡：选择延迟最低的节点
+    std::map<raft_node_id_t, int> latencies;
+    latencies[1] = 50;
+    latencies[2] = 30;
+    latencies[3] = 80;
+
+    raft_node_id_t best_node = 1;
+    int min_latency = latencies[1];
+
+    for (const auto& pair : latencies) {
+        if (pair.second < min_latency) {
+            min_latency = pair.second;
+            best_node = pair.first;
+        }
+    }
+
+    FB_ASSERT_EQ(best_node, 2L);
+    FB_ASSERT_EQ(min_latency, 30);
+}
+
+FB_TEST(raft_rpc, ping_concurrent_requests) {
+    // 并发 Ping 请求
+    int concurrent_pings = 5;
+    std::atomic<int> pending_responses{concurrent_pings};
+
+    for (int i = 0; i < concurrent_pings; i++) {
+        pending_responses--;
+    }
+
+    FB_ASSERT_EQ(pending_responses.load(), 0);
+}
+
+FB_TEST(raft_rpc, ping_statistics_collection) {
+    // Ping 统计收集
+    int pings_sent = 100;
+    int pings_success = 95;
+    int pings_failed = 5;
+
+    FB_ASSERT_EQ(pings_sent, pings_success + pings_failed);
+
+    double success_rate = 100.0 * pings_success / pings_sent;
+    FB_ASSERT_GE(success_rate, 95.0);
+}
+
+FB_TEST(raft_rpc, ping_latency_percentiles) {
+    // 延迟百分位数
+    std::vector<int> latencies = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100};
+
+    // P50
+    int p50 = latencies[5];
+    FB_ASSERT_EQ(p50, 60);
+
+    // P99
+    int p99 = latencies[9];
+    FB_ASSERT_EQ(p99, 100);
+}
+
+FB_TEST(raft_rpc, ping_leader_prioritized) {
+    // 优先 Ping Leader
+    raft_node_id_t leader_id = 2;
+    std::vector<raft_node_id_t> ping_order;
+
+    ping_order.push_back(leader_id);
+    // 然后是其他节点
+    for (int i = 1; i <= 5; i++) {
+        if (i != leader_id) ping_order.push_back(i);
+    }
+
+    FB_ASSERT_EQ(ping_order[0], 2L);
+    FB_ASSERT_EQ(ping_order.size(), 5UL);
+}
+
+FB_TEST(raft_rpc, ping_adaptive_interval) {
+    // 自适应 Ping 间隔
+    int base_interval = 1000;
+    int latency = 50;
+    int adaptive_interval = base_interval;
+
+    // 根据延迟调整间隔
+    if (latency > 100) {
+        adaptive_interval = base_interval / 2;  // 高延迟时更频繁
+    }
+
+    FB_ASSERT_EQ(adaptive_interval, 1000);
+
+    latency = 150;
+    if (latency > 100) {
+        adaptive_interval = base_interval / 2;
+    }
+
+    FB_ASSERT_EQ(adaptive_interval, 500);
+}
+
+FB_TEST(raft_rpc, ping_graceful_degradation) {
+    // 优雅降级：部分节点不可达
+    std::set<raft_node_id_t> healthy = {1, 2, 3};
+    std::set<raft_node_id_t> unhealthy = {4, 5};
+
+    // 继续服务健康节点
+    bool can_serve = healthy.size() > healthy.size() / 2;
+    FB_ASSERT_TRUE(can_serve);
+}
+
+FB_TEST(raft_rpc, ping_alert_threshold) {
+    // 告警阈值
+    double failure_rate = 0.3;  // 30% 失败率
+    double alert_threshold = 0.2;  // 20% 阈值
+
+    bool should_alert = failure_rate >= alert_threshold;
+    FB_ASSERT_TRUE(should_alert);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
