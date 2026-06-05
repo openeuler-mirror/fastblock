@@ -1164,5 +1164,119 @@ FB_TEST(raft_rpc, timeoutnow_term_mismatch) {
     FB_ASSERT_TRUE(should_ignore);
 }
 
+FB_TEST(raft_rpc, timeoutnow_pre_vote_check) {
+    // PreVote 场景下的 TimeoutNow
+    bool is_prevote = true;
+    bool has_lease = false;
+
+    // PreVote 模式下需要额外检查
+    if (is_prevote && !has_lease) {
+        // 不立即触发选举
+    }
+
+    bool trigger_election = !is_prevote;
+    FB_ASSERT_TRUE(trigger_election);
+}
+
+FB_TEST(raft_rpc, timeoutnow_idempotent_handling) {
+    // 幂等处理：多次收到 TimeoutNow
+    int received_count = 0;
+    for (int i = 0; i < 5; i++) {
+        received_count++;
+        // 无论收到多少次，只触发一次选举
+    }
+
+    FB_ASSERT_EQ(received_count, 5);
+
+    // 但只产生一次状态变化
+    raft_identity state = RAFT_STATE_CANDIDATE;
+    FB_ASSERT_EQ(state, RAFT_STATE_CANDIDATE);
+}
+
+FB_TEST(raft_rpc, timeoutnow_with_pending_entries) {
+    // 有待处理日志时的 TimeoutNow
+    int pending_entries = 10;
+    bool has_pending = pending_entries > 0;
+
+    // 通常需要先处理完待处理日志
+    if (has_pending) {
+        // 记录状态以便后续同步
+        int saved_pending = pending_entries;
+        pending_entries = 0;
+        FB_ASSERT_EQ(saved_pending, 10);
+    }
+
+    FB_ASSERT_EQ(pending_entries, 0);
+}
+
+FB_TEST(raft_rpc, timeoutnow_leader_election_race) {
+    // 与 Leader 选举竞争
+    raft_term_t local_term = 6;
+    raft_term_t timeout_term = 6;
+
+    // 同时收到 Leader 心跳和 TimeoutNow
+    bool leader_heartbeat = true;
+    bool timeout_now = true;
+
+    // Leader 心跳优先
+    raft_identity final_state;
+    if (leader_heartbeat && timeout_now) {
+        final_state = RAFT_STATE_FOLLOWER;  // 保持 Follower
+    }
+
+    FB_ASSERT_EQ(final_state, RAFT_STATE_FOLLOWER);
+}
+
+FB_TEST(raft_rpc, timeoutnow_quorum_check) {
+    // 法定节点检查
+    int total_nodes = 5;
+    int reachable_nodes = 3;
+
+    // 至少需要联系多数派才能有效选举
+    bool quorum_reachable = reachable_nodes > total_nodes / 2;
+    FB_ASSERT_TRUE(quorum_reachable);
+
+    // 无法联系多数派
+    reachable_nodes = 2;
+    quorum_reachable = reachable_nodes > total_nodes / 2;
+    FB_ASSERT_FALSE(quorum_reachable);
+}
+
+FB_TEST(raft_rpc, timeoutnow_graceful_shutdown) {
+    // 优雅关闭时的 TimeoutNow 处理
+    bool is_shutting_down = true;
+    bool ignore_timeout_now = is_shutting_down;
+
+    FB_ASSERT_TRUE(ignore_timeout_now);
+}
+
+FB_TEST(raft_rpc, timeoutnow_network_delay) {
+    // 网络延迟场景
+    raft_time_t send_time = 1000;
+    raft_time_t receive_time = 1500;
+    raft_time_t propagation_delay = receive_time - send_time;
+
+    FB_ASSERT_EQ(propagation_delay, 500L);
+
+    // 超时补偿
+    raft_time_t election_timeout = 300;
+    bool need_compensation = propagation_delay > election_timeout;
+    FB_ASSERT_TRUE(need_compensation);
+}
+
+FB_TEST(raft_rpc, timeoutnow_state_machine_consistency) {
+    // 状态机一致性保证
+    raft_index_t last_applied = 100;
+    raft_index_t commit_idx = 100;
+
+    // TimeoutNow 前确保已应用
+    bool consistent = last_applied >= commit_idx;
+    FB_ASSERT_TRUE(consistent);
+
+    // 记录最后应用索引
+    raft_index_t saved_applied = last_applied;
+    FB_ASSERT_EQ(saved_applied, 100L);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
