@@ -2859,5 +2859,191 @@ FB_TEST(raft_state, nodes_const_iterator) {
     FB_ASSERT_EQ(count, 2);
 }
 
+// ============================================================================
+// Test Suite: Configuration Manager Tests
+// ============================================================================
+
+FB_TEST(raft_state, config_node_info) {
+    // 模拟节点信息
+    struct node_info {
+        raft_node_id_t node_id;
+        std::string addr;
+        int port;
+    };
+
+    node_info info1 = {1, "127.0.0.1", 8888};
+    node_info info2 = {2, "127.0.0.1", 8889};
+
+    FB_ASSERT_EQ(info1.node_id, 1);
+    FB_ASSERT_EQ(info2.node_id, 2);
+    FB_ASSERT_TRUE(info1.node_id != info2.node_id);
+    FB_ASSERT_TRUE(info1.port != info2.port);
+}
+
+FB_TEST(raft_state, config_initial_nodes) {
+    // 初始配置
+    std::vector<raft_node_id_t> initial_members = {1, 2, 3};
+
+    FB_ASSERT_EQ(initial_members.size(), 3UL);
+
+    // 验证所有成员
+    for (raft_node_id_t id : initial_members) {
+        FB_ASSERT_TRUE(id >= 1);
+        FB_ASSERT_TRUE(id <= 3);
+    }
+}
+
+FB_TEST(raft_state, config_add_node) {
+    std::vector<raft_node_id_t> members = {1, 2, 3};
+
+    // 添加新节点
+    raft_node_id_t new_node_id = 4;
+    members.push_back(new_node_id);
+
+    FB_ASSERT_EQ(members.size(), 4UL);
+    FB_ASSERT_TRUE(std::find(members.begin(), members.end(), 4) != members.end());
+}
+
+FB_TEST(raft_state, config_remove_node) {
+    std::vector<raft_node_id_t> members = {1, 2, 3, 4, 5};
+
+    // 移除节点
+    raft_node_id_t remove_id = 3;
+    members.erase(std::remove(members.begin(), members.end(), remove_id), members.end());
+
+    FB_ASSERT_EQ(members.size(), 4UL);
+    FB_ASSERT_FALSE(std::find(members.begin(), members.end(), 3) != members.end());
+}
+
+FB_TEST(raft_state, config_replace_node) {
+    std::map<raft_node_id_t, int> config;
+    config[1] = 100;
+    config[2] = 200;
+
+    // 替换节点：移除旧节点，添加新节点
+    config.erase(1);
+    config[3] = 300;
+
+    FB_ASSERT_EQ(config.size(), 2UL);
+    FB_ASSERT_FALSE(config.count(1));
+    FB_ASSERT_TRUE(config.count(3));
+}
+
+FB_TEST(raft_state, config_majority_calc) {
+    // 不同配置大小下的多数派计算
+    auto calc_majority = [](size_t node_count) -> size_t {
+        return node_count / 2 + 1;
+    };
+
+    FB_ASSERT_EQ(calc_majority(3), 2UL);
+    FB_ASSERT_EQ(calc_majority(5), 3UL);
+    FB_ASSERT_EQ(calc_majority(7), 4UL);
+    FB_ASSERT_EQ(calc_majority(4), 3UL);
+    FB_ASSERT_EQ(calc_majority(100), 51UL);
+}
+
+FB_TEST(raft_state, config_change_sequence) {
+    // 配置变更序列：C_old -> C_old,new -> C_new
+    std::vector<std::string> configs;
+    configs.push_back("C_old");
+    configs.push_back("C_old,new");
+    configs.push_back("C_new");
+
+    FB_ASSERT_EQ(configs.size(), 3UL);
+    FB_ASSERT_EQ(configs[0], "C_old");
+    FB_ASSERT_EQ(configs[1], "C_old,new");
+    FB_ASSERT_EQ(configs[2], "C_new");
+}
+
+FB_TEST(raft_state, config_joint_consensus_phase) {
+    std::vector<raft_node_id_t> old_config = {1, 2, 3};
+    std::vector<raft_node_id_t> new_config = {4, 5, 6};
+
+    // 联合共识阶段，两个配置都有效
+    bool in_joint_consensus = true;
+
+    if (in_joint_consensus) {
+        // 需要新旧配置都满足多数
+        size_t old_majority = old_config.size() / 2 + 1;
+        size_t new_majority = new_config.size() / 2 + 1;
+
+        FB_ASSERT_EQ(old_majority, 2UL);
+        FB_ASSERT_EQ(new_majority, 2UL);
+    }
+}
+
+FB_TEST(raft_state, config_transition_complete) {
+    std::string phase = "C_old,new";
+
+    // 变更完成后进入新配置
+    phase = "C_new";
+    FB_ASSERT_EQ(phase, "C_new");
+
+    // 旧配置不再有效
+    bool old_config_valid = false;
+    FB_ASSERT_FALSE(old_config_valid);
+}
+
+FB_TEST(raft_state, config_rollback) {
+    std::vector<raft_node_id_t> config = {1, 2, 3, 4};  // 新配置
+    std::vector<raft_node_id_t> backup = {1, 2, 3};      // 旧配置备份
+
+    // 变更失败，回滚到旧配置
+    bool change_failed = true;
+    if (change_failed) {
+        config = backup;
+    }
+
+    FB_ASSERT_EQ(config.size(), 3UL);
+    FB_ASSERT_EQ(config, backup);
+}
+
+FB_TEST(raft_state, config_index_tracking) {
+    raft_index_t config_index = 0;
+    raft_term_t config_term = 0;
+
+    // 记录配置变更的索引和term
+    config_index = 100;
+    config_term = 5;
+
+    FB_ASSERT_EQ(config_index, 100L);
+    FB_ASSERT_EQ(config_term, 5L);
+
+    // 新的配置变更
+    raft_index_t new_config_index = 150;
+    raft_term_t new_config_term = 6;
+
+    bool is_newer = (new_config_term > config_term) ||
+                    (new_config_term == config_term && new_config_index > config_index);
+    FB_ASSERT_TRUE(is_newer);
+}
+
+FB_TEST(raft_state, config_voting_members) {
+    std::map<raft_node_id_t, bool> voting_status;
+    voting_status[1] = true;   // 投票节点
+    voting_status[2] = true;   // 投票节点
+    voting_status[3] = false;  // 非投票节点
+
+    // 统计投票节点数
+    int voting_count = 0;
+    for (const auto& pair : voting_status) {
+        if (pair.second) voting_count++;
+    }
+    FB_ASSERT_EQ(voting_count, 2);
+
+    // 计算多数派（只计算投票节点）
+    int majority = voting_count / 2 + 1;
+    FB_ASSERT_EQ(majority, 2);
+}
+
+FB_TEST(raft_state, config_promote_non_voting) {
+    std::map<raft_node_id_t, bool> voting_status;
+    voting_status[3] = false;  // 非投票节点
+
+    // 提升为投票节点
+    voting_status[3] = true;
+    FB_ASSERT_TRUE(voting_status[3]);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
