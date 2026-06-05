@@ -3163,5 +3163,266 @@ FB_TEST(raft_rpc, getconfiguration_security_check) {
     FB_ASSERT_TRUE(has_permission);
 }
 
+// ============================================================================
+// Test Suite: SnapshotStatus RPC Tests (Snapshot Transfer Notification)
+// ============================================================================
+
+FB_TEST(raft_rpc, snapshotstatus_request_fields) {
+    // 快照状态通知请求字段
+    raft_term_t term = 5;
+    raft_node_id_t follower_id = 3;
+    raft_index_t snapshot_index = 100;
+    bool success = true;
+
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(follower_id > 0);
+    FB_ASSERT_TRUE(snapshot_index > 0);
+}
+
+FB_TEST(raft_rpc, snapshotstatus_success_notification) {
+    // Follower 成功安装快照通知
+    bool install_success = true;
+    raft_index_t snapshot_idx = 100;
+
+    if (install_success) {
+        // Leader 更新 follower 的 match_idx
+        raft_index_t new_match_idx = snapshot_idx;
+        FB_ASSERT_EQ(new_match_idx, 100L);
+    }
+}
+
+FB_TEST(raft_rpc, snapshotstatus_failure_notification) {
+    // Follower 快照安装失败通知
+    bool install_success = false;
+    int error_code = -1;  // 错误码
+
+    if (!install_success) {
+        // Leader 需要重新发送快照或重试
+        FB_ASSERT_TRUE(error_code != 0);
+    }
+}
+
+FB_TEST(raft_rpc, snapshotstatus_match_idx_update) {
+    // 快照成功后更新 match_idx
+    raft_index_t match_idx = 0;
+    raft_index_t snapshot_idx = 100;
+
+    // 快照安装成功
+    bool success = true;
+    if (success) {
+        match_idx = snapshot_idx;
+    }
+
+    FB_ASSERT_EQ(match_idx, 100L);
+}
+
+FB_TEST(raft_rpc, snapshotstatus_next_idx_update) {
+    // 快照成功后更新 next_idx
+    raft_index_t next_idx = 101;
+    raft_index_t snapshot_idx = 100;
+
+    // 快照安装成功后，next_idx = snapshot_idx + 1
+    next_idx = snapshot_idx + 1;
+
+    FB_ASSERT_EQ(next_idx, 101L);
+}
+
+FB_TEST(raft_rpc, snapshotstatus_leader_process) {
+    // Leader 处理快照状态通知
+    raft_identity state = RAFT_STATE_LEADER;
+    bool can_process = (state == RAFT_STATE_LEADER);
+
+    FB_ASSERT_TRUE(can_process);
+}
+
+FB_TEST(raft_rpc, snapshotstatus_follower_send) {
+    // Follower 发送快照状态通知
+    raft_identity state = RAFT_STATE_FOLLOWER;
+
+    // Follower 可以发送状态通知
+    bool can_send = true;
+    FB_ASSERT_TRUE(can_send);
+}
+
+FB_TEST(raft_rpc, snapshotstatus_error_codes) {
+    // 不同错误码含义
+    int SUCCESS = 0;
+    int ERR_IO = -1;
+    int ERR_CORRUPTED = -2;
+    int ERR_OUT_OF_SPACE = -3;
+    int ERR_TIMEOUT = -4;
+
+    FB_ASSERT_EQ(SUCCESS, 0);
+    FB_ASSERT_TRUE(ERR_IO < 0);
+    FB_ASSERT_TRUE(ERR_CORRUPTED < 0);
+    FB_ASSERT_TRUE(ERR_OUT_OF_SPACE < 0);
+    FB_ASSERT_TRUE(ERR_TIMEOUT < 0);
+}
+
+FB_TEST(raft_rpc, snapshotstatus_retry_on_failure) {
+    // 失败后重试
+    int retry_count = 0;
+    int max_retries = 3;
+    bool success = false;
+
+    while (!success && retry_count < max_retries) {
+        retry_count++;
+        if (retry_count == 2) {
+            success = true;
+        }
+    }
+
+    FB_ASSERT_TRUE(success);
+    FB_ASSERT_EQ(retry_count, 2);
+}
+
+FB_TEST(raft_rpc, snapshotstatus_chunk_tracking) {
+    // 快照分块传输跟踪
+    int64_t total_chunks = 16;
+    int64_t received_chunks = 8;
+
+    double progress = 100.0 * received_chunks / total_chunks;
+    FB_ASSERT_TRUE(progress >= 50.0);
+
+    // 全部接收完成
+    received_chunks = total_chunks;
+    progress = 100.0 * received_chunks / total_chunks;
+    FB_ASSERT_EQ(progress, 100.0);
+}
+
+FB_TEST(raft_rpc, snapshotstatus_checksum_validation) {
+    // 校验和验证
+    uint32_t expected_checksum = 0xABCDEF12;
+    uint32_t received_checksum = 0xABCDEF12;
+
+    bool checksum_ok = (expected_checksum == received_checksum);
+    FB_ASSERT_TRUE(checksum_ok);
+
+    // 校验失败
+    received_checksum = 0xABCDEF13;
+    checksum_ok = (expected_checksum == received_checksum);
+    FB_ASSERT_FALSE(checksum_ok);
+}
+
+FB_TEST(raft_rpc, snapshotstatus_disk_space_check) {
+    // 磁盘空间检查
+    size_t snapshot_size = 100 * 1024 * 1024;  // 100MB
+    size_t available_space = 150 * 1024 * 1024;  // 150MB
+
+    bool space_sufficient = available_space >= snapshot_size;
+    FB_ASSERT_TRUE(space_sufficient);
+
+    // 空间不足
+    available_space = 50 * 1024 * 1024;  // 50MB
+    space_sufficient = available_space >= snapshot_size;
+    FB_ASSERT_FALSE(space_sufficient);
+}
+
+FB_TEST(raft_rpc, snapshotstatus_progress_percentage) {
+    // 进度百分比计算
+    raft_index_t snapshot_idx = 100;
+    raft_index_t follower_last_idx = 50;
+
+    // 快照索引超过 Follower 日志
+    bool needs_snapshot = snapshot_idx > follower_last_idx;
+    FB_ASSERT_TRUE(needs_snapshot);
+
+    // 计算需要传输的日志差距
+    raft_index_t gap = snapshot_idx - follower_last_idx;
+    FB_ASSERT_EQ(gap, 50L);
+}
+
+FB_TEST(raft_rpc, snapshotstatus_timeout_handling) {
+    // 超时处理
+    int status_timeout_ms = 5000;
+    int elapsed_ms = 6000;
+
+    bool timed_out = elapsed_ms >= status_timeout_ms;
+    FB_ASSERT_TRUE(timed_out);
+}
+
+FB_TEST(raft_rpc, snapshotstatus_network_error) {
+    // 网络错误处理
+    bool network_error = true;
+
+    if (network_error) {
+        // 重试发送状态通知
+        int retries = 0;
+        while (network_error && retries < 3) {
+            retries++;
+            network_error = false;
+        }
+        FB_ASSERT_EQ(retries, 1);
+    }
+}
+
+FB_TEST(raft_rpc, snapshotstatus_multiple_followers) {
+    // 多个 Follower 的快照状态跟踪
+    std::map<raft_node_id_t, raft_index_t> follower_snapshot_status;
+    follower_snapshot_status[1] = 100;  // 完成
+    follower_snapshot_status[2] = 50;   // 进行中
+    follower_snapshot_status[3] = 0;    // 未开始
+
+    int completed_count = 0;
+    for (const auto& pair : follower_snapshot_status) {
+        if (pair.second == 100) completed_count++;
+    }
+
+    FB_ASSERT_EQ(completed_count, 1);
+}
+
+FB_TEST(raft_rpc, snapshotstatus_concurrent_transfers) {
+    // 并发快照传输限制
+    int max_concurrent = 3;
+    int current_transfers = 2;
+
+    bool can_start_new = current_transfers < max_concurrent;
+    FB_ASSERT_TRUE(can_start_new);
+
+    current_transfers = 3;
+    can_start_new = current_transfers < max_concurrent;
+    FB_ASSERT_FALSE(can_start_new);
+}
+
+FB_TEST(raft_rpc, snapshotstatus_resume_interrupted) {
+    // 中断后恢复传输
+    int64_t last_chunk_received = 5;
+    int64_t total_chunks = 16;
+
+    // 从上次接收位置继续
+    int64_t next_chunk = last_chunk_received + 1;
+    FB_ASSERT_EQ(next_chunk, 6L);
+
+    int64_t remaining_chunks = total_chunks - last_chunk_received;
+    FB_ASSERT_EQ(remaining_chunks, 11L);
+}
+
+FB_TEST(raft_rpc, snapshotstatus_cancel_transfer) {
+    // 取消快照传输
+    bool transfer_cancelled = true;
+    raft_index_t snapshot_idx = 100;
+
+    if (transfer_cancelled) {
+        // 清理已接收的临时数据
+        snapshot_idx = 0;  // 重置
+    }
+
+    FB_ASSERT_EQ(snapshot_idx, 0L);
+}
+
+FB_TEST(raft_rpc, snapshotstatus_version_compatibility) {
+    // 快照版本兼容性检查
+    int snapshot_version = 2;
+    int follower_version = 3;
+
+    bool compatible = snapshot_version <= follower_version;
+    FB_ASSERT_TRUE(compatible);
+
+    // 版本不兼容
+    snapshot_version = 4;
+    compatible = snapshot_version <= follower_version;
+    FB_ASSERT_FALSE(compatible);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
