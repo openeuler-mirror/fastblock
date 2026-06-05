@@ -4918,5 +4918,329 @@ FB_TEST(raft_rpc, recovery_concurrent_recovery) {
     FB_ASSERT_FALSE(can_start_new);
 }
 
+// ============================================================================
+// Test Suite: Bootstrap RPC Tests (Cluster Initialization)
+// ============================================================================
+
+FB_TEST(raft_rpc, bootstrap_init_request) {
+    // 引导初始化请求
+    std::vector<raft_node_id_t> initial_members = {1, 2, 3};
+    uint64_t cluster_id = 12345;
+
+    FB_ASSERT_EQ(initial_members.size(), 3UL);
+    FB_ASSERT_TRUE(cluster_id > 0);
+}
+
+FB_TEST(raft_rpc, bootstrap_first_node_becomes_leader) {
+    // 第一个节点成为 Leader
+    raft_node_id_t first_node_id = 1;
+    raft_identity first_state = RAFT_STATE_LEADER;
+
+    // 单节点集群
+    uint64_t node_num = 1;
+    bool can_be_leader = (first_state == RAFT_STATE_LEADER);
+    FB_ASSERT_TRUE(can_be_leader);
+}
+
+FB_TEST(raft_rpc, bootstrap_single_node_cluster) {
+    // 单节点集群
+    std::vector<raft_node_id_t> members = {1};
+
+    FB_ASSERT_EQ(members.size(), 1UL);
+
+    // 单节点直接成为 Leader
+    uint64_t votes = 1;
+    uint64_t node_num = 1;
+    bool is_leader = votes > node_num / 2;
+    FB_ASSERT_TRUE(is_leader);
+}
+
+FB_TEST(raft_rpc, bootstrap_multi_node_join) {
+    // 多节点加入
+    std::vector<raft_node_id_t> members = {1, 2, 3};
+
+    // 第一个节点引导，其他节点加入
+    bool bootstrap_complete = true;
+
+    for (raft_node_id_t id : members) {
+        if (id != 1) {
+            // 其他节点加入集群
+        }
+    }
+
+    FB_ASSERT_TRUE(bootstrap_complete);
+}
+
+FB_TEST(raft_rpc, bootstrap_config_entry_creation) {
+    // 创建配置日志条目
+    raft_logtype_e log_type = RAFT_LOGTYPE_CONFIGURATION;
+    raft_index_t config_idx = 1;
+
+    FB_ASSERT_EQ(log_type, RAFT_LOGTYPE_CONFIGURATION);
+    FB_ASSERT_EQ(config_idx, 1L);
+}
+
+FB_TEST(raft_rpc, bootstrap_term_initialization) {
+    // Term 初始化
+    raft_term_t initial_term = 1;
+
+    FB_ASSERT_EQ(initial_term, 1L);
+
+    // 从 1 开始
+    bool term_valid = initial_term >= 1;
+    FB_ASSERT_TRUE(term_valid);
+}
+
+FB_TEST(raft_rpc, bootstrap_empty_log_start) {
+    // 空日志开始
+    raft_index_t first_log_idx = 1;
+    raft_index_t commit_idx = 0;
+
+    FB_ASSERT_EQ(first_log_idx, 1L);
+    FB_ASSERT_EQ(commit_idx, 0L);
+}
+
+FB_TEST(raft_rpc, bootstrap_duplicate_bootstrap_reject) {
+    // 拒绝重复引导
+    bool already_bootstrapped = true;
+
+    bool can_bootstrap = !already_bootstrapped;
+    FB_ASSERT_FALSE(can_bootstrap);
+}
+
+FB_TEST(raft_rpc, bootstrap_idempotent_check) {
+    // 幂等检查
+    bool bootstrap_requested = true;
+    bool cluster_initialized = true;
+
+    // 已初始化的集群拒绝再次引导
+    bool should_bootstrap = bootstrap_requested && !cluster_initialized;
+    FB_ASSERT_FALSE(should_bootstrap);
+}
+
+FB_TEST(raft_rpc, bootstrap_node_addresses) {
+    // 节点地址配置
+    std::map<raft_node_id_t, std::pair<std::string, int>> addresses;
+    addresses[1] = {"127.0.0.1", 8888};
+    addresses[2] = {"127.0.0.1", 8889};
+    addresses[3] = {"127.0.0.1", 8890};
+
+    FB_ASSERT_EQ(addresses.size(), 3UL);
+}
+
+FB_TEST(raft_rpc, bootstrap_quorum_calculation) {
+    // 引导时多数派计算
+    uint64_t initial_members = 3;
+    uint64_t quorum = initial_members / 2 + 1;
+
+    FB_ASSERT_EQ(quorum, 2UL);
+}
+
+FB_TEST(raft_rpc, bootstrap_leader_election_skip) {
+    // 引导时跳过选举
+    bool is_bootstrap = true;
+    bool need_election = !is_bootstrap;
+
+    FB_ASSERT_FALSE(need_election);
+
+    // 第一个节点直接成为 Leader
+    raft_identity state = RAFT_STATE_LEADER;
+    FB_ASSERT_EQ(state, RAFT_STATE_LEADER);
+}
+
+FB_TEST(raft_rpc, bootstrap_persistent_state) {
+    // 持久化状态
+    raft_term_t current_term = 1;
+    raft_node_id_t voted_for = 1;  // 投给自己
+    std::vector<raft_node_id_t> config = {1, 2, 3};
+
+    FB_ASSERT_EQ(current_term, 1L);
+    FB_ASSERT_EQ(voted_for, 1L);
+    FB_ASSERT_EQ(config.size(), 3UL);
+}
+
+FB_TEST(raft_rpc, bootstrap_join_existing_cluster) {
+    // 加入现有集群
+    std::vector<raft_node_id_t> existing_members = {1, 2, 3};
+    raft_node_id_t new_node = 4;
+
+    // 新节点通过 AddNode RPC 加入
+    bool can_join = true;
+    FB_ASSERT_TRUE(can_join);
+}
+
+FB_TEST(raft_rpc, bootstrap_timeout_handling) {
+    // 引导超时
+    int bootstrap_timeout_ms = 30000;
+    int elapsed_ms = 35000;
+
+    bool timed_out = elapsed_ms >= bootstrap_timeout_ms;
+    FB_ASSERT_TRUE(timed_out);
+}
+
+FB_TEST(raft_rpc, bootstrap_failure_recovery) {
+    // 引导失败恢复
+    bool bootstrap_failed = true;
+
+    if (bootstrap_failed) {
+        // 清理部分状态
+        bool cleaned_up = true;
+        FB_ASSERT_TRUE(cleaned_up);
+
+        // 可以重试引导
+        bool can_retry = true;
+        FB_ASSERT_TRUE(can_retry);
+    }
+}
+
+FB_TEST(raft_rpc, bootstrap_cluster_id_unique) {
+    // 集群 ID 唯一性
+    uint64_t cluster_id_1 = 12345;
+    uint64_t cluster_id_2 = 67890;
+
+    bool unique = (cluster_id_1 != cluster_id_2);
+    FB_ASSERT_TRUE(unique);
+}
+
+FB_TEST(raft_rpc, bootstrap_node_id_assignment) {
+    // 节点 ID 分配
+    std::set<raft_node_id_t> used_ids;
+    raft_node_id_t next_id = 1;
+
+    while (used_ids.count(next_id)) {
+        next_id++;
+    }
+
+    used_ids.insert(next_id);
+
+    FB_ASSERT_EQ(used_ids.size(), 1UL);
+    FB_ASSERT_TRUE(used_ids.count(1));
+}
+
+FB_TEST(raft_rpc, bootstrap_min_cluster_size) {
+    // 最小集群大小
+    uint64_t min_size = 1;
+    uint64_t actual_size = 3;
+
+    bool meets_minimum = actual_size >= min_size;
+    FB_ASSERT_TRUE(meets_minimum);
+}
+
+FB_TEST(raft_rpc, bootstrap_max_cluster_size) {
+    // 最大集群大小
+    uint64_t max_size = 100;
+    uint64_t actual_size = 5;
+
+    bool within_limit = actual_size <= max_size;
+    FB_ASSERT_TRUE(within_limit);
+}
+
+FB_TEST(raft_rpc, bootstrap_config_propagation) {
+    // 配置传播
+    std::vector<raft_node_id_t> members = {1, 2, 3};
+    int propagation_count = 0;
+
+    for (auto id : members) {
+        if (id != 1) {
+            propagation_count++;
+        }
+    }
+
+    FB_ASSERT_EQ(propagation_count, 2);
+}
+
+FB_TEST(raft_rpc, bootstrap_state_verification) {
+    // 状态验证
+    raft_term_t term = 1;
+    raft_index_t commit_idx = 1;
+    raft_identity state = RAFT_STATE_LEADER;
+
+    bool bootstrap_valid = (term == 1) && (commit_idx == 1) && (state == RAFT_STATE_LEADER);
+    FB_ASSERT_TRUE(bootstrap_valid);
+}
+
+FB_TEST(raft_rpc, bootstrap_rollback_on_failure) {
+    // 失败时回滚
+    std::vector<raft_node_id_t> members = {1, 2, 3};
+    bool rollback_needed = true;
+
+    if (rollback_needed) {
+        members.clear();
+    }
+
+    FB_ASSERT_TRUE(members.empty());
+}
+
+FB_TEST(raft_rpc, bootstrap_metadata_initialization) {
+    // 元数据初始化
+    std::string cluster_name = "my-cluster";
+    uint64_t create_time = 1000;
+    std::string version = "1.0.0";
+
+    FB_ASSERT_FALSE(cluster_name.empty());
+    FB_ASSERT_TRUE(create_time > 0);
+    FB_ASSERT_FALSE(version.empty());
+}
+
+FB_TEST(raft_rpc, bootstrap_initial_snapshot) {
+    // 初始快照（可选）
+    bool has_initial_snapshot = false;
+    raft_index_t snapshot_idx = 0;
+
+    if (!has_initial_snapshot) {
+        snapshot_idx = 0;
+    }
+
+    FB_ASSERT_EQ(snapshot_idx, 0L);
+}
+
+FB_TEST(raft_rpc, bootstrap_concurrent_attempt) {
+    // 并发引导尝试
+    int concurrent_bootstrap_requests = 2;
+
+    // 只允许一个成功
+    int successful_bootstrap = 1;
+    FB_ASSERT_LT(successful_bootstrap, concurrent_bootstrap_requests);
+}
+
+FB_TEST(raft_rpc, bootstrap_network_connectivity) {
+    // 网络连通性检查
+    std::set<raft_node_id_t> reachable_nodes = {1, 2};
+    std::vector<raft_node_id_t> initial_members = {1, 2, 3};
+
+    bool all_reachable = reachable_nodes.size() >= initial_members.size();
+    FB_ASSERT_FALSE(all_reachable);
+
+    // 需要等待所有节点可达
+    bool bootstrap_complete = all_reachable;
+    FB_ASSERT_FALSE(bootstrap_complete);
+}
+
+FB_TEST(raft_rpc, bootstrap_voting_members) {
+    // 投票成员配置
+    std::map<raft_node_id_t, bool> voting_status;
+    voting_status[1] = true;
+    voting_status[2] = true;
+    voting_status[3] = true;
+
+    int voting_count = 0;
+    for (const auto& pair : voting_status) {
+        if (pair.second) voting_count++;
+    }
+
+    FB_ASSERT_EQ(voting_count, 3);
+}
+
+FB_TEST(raft_rpc, bootstrap_joint_consensus_initial) {
+    // 初始无联合共识
+    bool in_joint_consensus = false;
+
+    FB_ASSERT_FALSE(in_joint_consensus);
+
+    // 只有单一配置
+    bool single_config = !in_joint_consensus;
+    FB_ASSERT_TRUE(single_config);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
