@@ -37,6 +37,11 @@
 #include <algorithm>
 #include <cmath>
 #include <set>
+#include <map>
+#include <fstream>
+#include <atomic>
+#include <random>
+#include <initializer_list>
 
 #ifdef __linux__
 #include <sys/types.h>
@@ -1448,6 +1453,88 @@ private:
 
 #define FB_SCOPED_TIMER(name)                                                      \
     ::fastblock::test::scoped_timer fb_timer_##name(#name, ctx)
+
+// ============================================================================
+// Test Data Generation Utilities
+// ============================================================================
+
+/**
+ * @brief Random data generator for testing
+ */
+class random_generator {
+public:
+    static int random_int(int min_val, int max_val) {
+        return min_val + rand() % (max_val - min_val + 1);
+    }
+
+    static uint64_t random_uint64(uint64_t min_val, uint64_t max_val) {
+        return min_val + ((uint64_t)rand() << 32 | rand()) % (max_val - min_val + 1);
+    }
+
+    static std::string random_string(size_t length) {
+        static const char chars[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        std::string result;
+        result.reserve(length);
+        for (size_t i = 0; i < length; ++i) {
+            result += chars[rand() % (sizeof(chars) - 1)];
+        }
+        return result;
+    }
+
+    static std::vector<uint8_t> random_bytes(size_t length) {
+        std::vector<uint8_t> result(length);
+        for (size_t i = 0; i < length; ++i) {
+            result[i] = rand() % 256;
+        }
+        return result;
+    }
+
+    static double random_double(double min_val, double max_val) {
+        return min_val + (double)rand() / RAND_MAX * (max_val - min_val);
+    }
+
+    static bool random_bool() {
+        return rand() % 2 == 0;
+    }
+};
+
+#define FB_RANDOM_INT(min, max)        ::fastblock::test::random_generator::random_int(min, max)
+#define FB_RANDOM_UINT64(min, max)     ::fastblock::test::random_generator::random_uint64(min, max)
+#define FB_RANDOM_STRING(len)          ::fastblock::test::random_generator::random_string(len)
+#define FB_RANDOM_BYTES(len)           ::fastblock::test::random_generator::random_bytes(len)
+#define FB_RANDOM_DOUBLE(min, max)     ::fastblock::test::random_generator::random_double(min, max)
+#define FB_RANDOM_BOOL()               ::fastblock::test::random_generator::random_bool()
+
+/**
+ * @brief Test value builder for creating test scenarios
+ */
+class test_value_builder {
+public:
+    template<typename T>
+    static std::vector<T> range(T start, T end, T step = 1) {
+        std::vector<T> result;
+        for (T i = start; i <= end; i += step) {
+            result.push_back(i);
+        }
+        return result;
+    }
+
+    template<typename T>
+    static std::vector<T> repeat(T value, size_t count) {
+        std::vector<T> result(count, value);
+        return result;
+    }
+
+    template<typename T>
+    static std::vector<T> shuffle(std::vector<T> values) {
+        std::random_shuffle(values.begin(), values.end());
+        return values;
+    }
+};
+
+#define FB_RANGE(start, end, step)     ::fastblock::test::test_value_builder::range(start, end, step)
+#define FB_REPEAT(value, count)        ::fastblock::test::test_value_builder::repeat(value, count)
+#define FB_SHUFFLE(values)             ::fastblock::test::test_value_builder::shuffle(values)
 
 } // namespace test
 } // namespace fastblock
