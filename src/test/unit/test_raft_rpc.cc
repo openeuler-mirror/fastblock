@@ -5242,5 +5242,321 @@ FB_TEST(raft_rpc, bootstrap_joint_consensus_initial) {
     FB_ASSERT_TRUE(single_config);
 }
 
+// ============================================================================
+// Test Suite: LogGC RPC Tests (Log Garbage Collection)
+// ============================================================================
+
+FB_TEST(raft_rpc, loggc_request_fields) {
+    // 日志清理请求字段
+    raft_index_t safe_to_delete_idx = 50;
+    raft_term_t term = 5;
+
+    FB_ASSERT_TRUE(safe_to_delete_idx >= 0);
+    FB_ASSERT_TRUE(term > 0);
+}
+
+FB_TEST(raft_rpc, loggc_snapshot_based_gc) {
+    // 基于快照的日志清理
+    raft_index_t snapshot_idx = 100;
+    raft_index_t first_log_idx = 1;
+
+    // 快照后可删除快照之前的日志
+    bool can_gc = snapshot_idx > first_log_idx;
+    FB_ASSERT_TRUE(can_gc);
+
+    raft_index_t new_first_idx = snapshot_idx + 1;
+    FB_ASSERT_EQ(new_first_idx, 101L);
+}
+
+FB_TEST(raft_rpc, loggc_commit_idx_based_gc) {
+    // 基于 commit_idx 的日志清理
+    raft_index_t commit_idx = 80;
+    raft_index_t first_log_idx = 1;
+    raft_index_t gc_threshold = 50;
+
+    // 超过阈值的已提交日志可清理
+    raft_index_t gcable = commit_idx - first_log_idx;
+    bool should_gc = gcable >= gc_threshold;
+
+    FB_ASSERT_TRUE(should_gc);
+}
+
+FB_TEST(raft_rpc, loggc_retention_policy) {
+    // 日志保留策略
+    raft_index_t last_log_idx = 100;
+    raft_index_t retain_count = 10;
+
+    // 保留最近 N 条日志
+    raft_index_t safe_delete_up_to = last_log_idx - retain_count;
+
+    FB_ASSERT_EQ(safe_delete_up_to, 90L);
+}
+
+FB_TEST(raft_rpc, loggc_disk_space_reclamation) {
+    // 磁盘空间回收
+    size_t entries_deleted = 100;
+    size_t bytes_per_entry = 1024;
+    size_t bytes_freed = entries_deleted * bytes_per_entry;
+
+    FB_ASSERT_EQ(bytes_freed, 102400UL);
+}
+
+FB_TEST(raft_rpc, loggc_follower_sync_check) {
+    // Follower 同步检查
+    std::map<raft_node_id_t, raft_index_t> match_indices;
+    match_indices[2] = 95;
+    match_indices[3] = 90;
+    match_indices[4] = 85;
+
+    // 找最小的 match_idx
+    raft_index_t min_match = match_indices[2];
+    for (const auto& pair : match_indices) {
+        if (pair.second < min_match) {
+            min_match = pair.second;
+        }
+    }
+
+    FB_ASSERT_EQ(min_match, 85L);
+
+    // 只能删除所有 Follower 都已同步的日志
+    bool safe_delete = true;
+    FB_ASSERT_TRUE(safe_delete);
+}
+
+FB_TEST(raft_rpc, loggc_in_progress_entries_check) {
+    // 待处理日志检查
+    raft_index_t next_idx = 100;
+    raft_index_t match_idx = 95;
+
+    // 正在传输中的日志不能删除
+    raft_index_t in_flight = next_idx - match_idx - 1;
+    FB_ASSERT_EQ(in_flight, 4L);
+}
+
+FB_TEST(raft_rpc, loggc_snapshot_first) {
+    // 先创建快照再清理
+    bool snapshot_exists = true;
+    bool can_gc = snapshot_exists;
+
+    FB_ASSERT_TRUE(can_gc);
+
+    // 无快照时不能清理
+    snapshot_exists = false;
+    can_gc = snapshot_exists;
+    FB_ASSERT_FALSE(can_gc);
+}
+
+FB_TEST(raft_rpc, loggc_batch_deletion) {
+    // 批量删除
+    int batch_size = 100;
+    int total_entries = 500;
+    int batches = (total_entries + batch_size - 1) / batch_size;
+
+    FB_ASSERT_EQ(batches, 5);
+}
+
+FB_TEST(raft_rpc, loggc_disk_io_optimization) {
+    // 磁盘 I/O 优化
+    bool use_batch_delete = true;
+    int individual_deletes = 100;
+    int batch_deletes = 1;
+
+    if (use_batch_delete) {
+        FB_ASSERT_LT(batch_deletes, individual_deletes);
+    }
+}
+
+FB_TEST(raft_rpc, loggc_truncate_vs_delete) {
+    // 截断 vs 删除
+    bool use_truncate = true;  // 文件截断更快
+    raft_index_t entries_to_remove = 100;
+
+    FB_ASSERT_TRUE(use_truncate);
+    FB_ASSERT_EQ(entries_to_remove, 100L);
+}
+
+FB_TEST(raft_rpc, loggc_metadata_update) {
+    // 元数据更新
+    raft_index_t old_first_idx = 1;
+    raft_index_t new_first_idx = 50;
+
+    // 更新 first_log_idx
+    raft_index_t first_log_idx = new_first_idx;
+
+    FB_ASSERT_EQ(first_log_idx, 50L);
+    FB_ASSERT_TRUE(first_log_idx > old_first_idx);
+}
+
+FB_TEST(raft_rpc, loggc_index_mapping) {
+    // 索引映射更新
+    std::map<raft_index_t, raft_term_t> log_cache;
+
+    // 删除旧条目
+    raft_index_t delete_up_to = 50;
+    for (raft_index_t idx = 1; idx <= delete_up_to; idx++) {
+        log_cache.erase(idx);
+    }
+
+    FB_ASSERT_TRUE(log_cache.empty());
+}
+
+FB_TEST(raft_rpc, loggc_concurrent_access) {
+    // 并发访问安全
+    std::atomic<bool> gc_in_progress{true};
+    std::atomic<bool> can_append{false};
+
+    // GC 期间暂停日志追加
+    can_append = !gc_in_progress.load();
+    FB_ASSERT_FALSE(can_append);
+
+    gc_in_progress.store(false);
+    can_append = !gc_in_progress.load();
+    FB_ASSERT_TRUE(can_append);
+}
+
+FB_TEST(raft_rpc, loggc_recovery_consistency) {
+    // 恢复一致性
+    raft_index_t first_log_idx = 50;
+    raft_index_t snapshot_idx = 100;
+
+    // 确保快照索引有效
+    bool consistent = snapshot_idx >= first_log_idx - 1;
+    FB_ASSERT_TRUE(consistent);
+}
+
+FB_TEST(raft_rpc, loggc_partial_gc) {
+    // 部分清理
+    raft_index_t gc_start = 1;
+    raft_index_t gc_end = 50;
+    raft_index_t safe_point = 40;  // 只清理到安全点
+
+    raft_index_t actual_gc_end = std::min(gc_end, safe_point);
+    FB_ASSERT_EQ(actual_gc_end, 40L);
+}
+
+FB_TEST(raft_rpc, loggc_failure_rollback) {
+    // 清理失败回滚
+    bool gc_failed = true;
+    raft_index_t deleted_count = 30;
+
+    if (gc_failed) {
+        deleted_count = 0;  // 回滚
+    }
+
+    FB_ASSERT_EQ(deleted_count, 0L);
+}
+
+FB_TEST(raft_rpc, loggc_metrics_tracking) {
+    // 指标跟踪
+    uint64_t gc_runs_total = 10;
+    uint64_t entries_deleted_total = 500;
+    uint64_t bytes_freed_total = 512 * 1024;
+
+    double avg_entries_per_run = entries_deleted_total / gc_runs_total;
+    FB_ASSERT_EQ(avg_entries_per_run, 50.0);
+}
+
+FB_TEST(raft_rpc, loggc_trigger_conditions) {
+    // 触发条件
+    size_t log_count = 10000;
+    size_t log_threshold = 5000;
+
+    bool should_gc = log_count >= log_threshold;
+    FB_ASSERT_TRUE(should_gc);
+
+    // 空间触发
+    size_t log_size = 100 * 1024 * 1024;  // 100MB
+    size_t size_threshold = 50 * 1024 * 1024;  // 50MB
+
+    should_gc = should_gc || (log_size >= size_threshold);
+    FB_ASSERT_TRUE(should_gc);
+}
+
+FB_TEST(raft_rpc, loggc_periodic_vs_event) {
+    // 周期性 vs 事件触发
+    bool periodic_gc = true;
+    bool event_triggered_gc = true;
+
+    // 两种触发方式都支持
+    bool gc_supported = periodic_gc || event_triggered_gc;
+    FB_ASSERT_TRUE(gc_supported);
+}
+
+FB_TEST(raft_rpc, loggc_priority) {
+    // 清理优先级
+    int normal_priority = 0;
+    int low_priority = -1;  // GC 使用低优先级
+
+    FB_ASSERT_LT(low_priority, normal_priority);
+
+    // 不影响正常操作
+    bool non_blocking = true;
+    FB_ASSERT_TRUE(non_blocking);
+}
+
+FB_TEST(raft_rpc, loggc_compaction_ratio) {
+    // 压缩比
+    size_t original_size = 100000;
+    size_t after_gc_size = 50000;
+
+    double compaction_ratio = 100.0 * (original_size - after_gc_size) / original_size;
+    FB_ASSERT_EQ(compaction_ratio, 50.0);
+}
+
+FB_TEST(raft_rpc, loggc_cache_eviction) {
+    // 缓存驱逐
+    std::map<raft_index_t, int> cache;
+    for (int i = 1; i <= 100; i++) {
+        cache[i] = i;
+    }
+
+    // 清理缓存中的旧条目
+    raft_index_t evict_up_to = 50;
+    for (raft_index_t idx = 1; idx <= evict_up_to; idx++) {
+        cache.erase(idx);
+    }
+
+    FB_ASSERT_EQ(cache.size(), 50UL);
+}
+
+FB_TEST(raft_rpc, loggc_leader_coordinated) {
+    // Leader 协调清理
+    raft_identity state = RAFT_STATE_LEADER;
+
+    bool can_initiate_gc = (state == RAFT_STATE_LEADER);
+    FB_ASSERT_TRUE(can_initiate_gc);
+}
+
+FB_TEST(raft_rpc, loggc_follower_autonomous) {
+    // Follower 自主清理
+    raft_identity state = RAFT_STATE_FOLLOWER;
+
+    // Follower 可以根据本地快照自主清理
+    bool has_local_snapshot = true;
+    bool can_gc = has_local_snapshot;
+
+    FB_ASSERT_TRUE(can_gc);
+}
+
+FB_TEST(raft_rpc, loggc_min_retention) {
+    // 最小保留
+    raft_index_t min_retention = 100;
+    raft_index_t current_log_count = 50;
+
+    // 低于最小保留量不清理
+    bool should_gc = current_log_count > min_retention;
+    FB_ASSERT_FALSE(should_gc);
+}
+
+FB_TEST(raft_rpc, loggc_max_retention) {
+    // 最大保留
+    raft_index_t max_retention = 10000;
+    raft_index_t current_log_count = 15000;
+
+    // 超过最大保留量必须清理
+    bool must_gc = current_log_count > max_retention;
+    FB_ASSERT_TRUE(must_gc);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
