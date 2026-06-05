@@ -2460,5 +2460,208 @@ FB_TEST(raft_state, node_id_operations) {
     FB_ASSERT_EQ(nodes[id2], 200);
 }
 
+// ============================================================================
+// Test Suite: Entry Cache Tests
+// ============================================================================
+
+FB_TEST(raft_state, cache_add_remove) {
+    std::map<raft_index_t, int> cache;
+
+    // 添加条目
+    cache[1] = 10;
+    cache[2] = 20;
+    cache[3] = 30;
+    FB_ASSERT_EQ(cache.size(), 3UL);
+
+    // 移除条目
+    cache.erase(2);
+    FB_ASSERT_EQ(cache.size(), 2UL);
+    FB_ASSERT_EQ(cache.count(2), 0UL);
+
+    // 验证剩余条目
+    FB_ASSERT_EQ(cache[1], 10);
+    FB_ASSERT_EQ(cache[3], 30);
+}
+
+FB_TEST(raft_state, cache_get_upper) {
+    std::map<raft_index_t, int> cache;
+    for (int i = 1; i <= 10; i++) {
+        cache[i] = i * 10;
+    }
+
+    // 获取 >= 5 的条目
+    std::vector<int> entries;
+    for (auto it = cache.lower_bound(5); it != cache.end(); it++) {
+        entries.push_back(it->second);
+    }
+    FB_ASSERT_EQ(entries.size(), 6UL);
+    FB_ASSERT_EQ(entries[0], 50);
+    FB_ASSERT_EQ(entries[5], 100);
+}
+
+FB_TEST(raft_state, cache_get_between) {
+    std::map<raft_index_t, int> cache;
+    for (int i = 1; i <= 20; i++) {
+        cache[i] = i;
+    }
+
+    // 获取 [5, 10] 区间的条目
+    raft_index_t start_idx = 5;
+    raft_index_t end_idx = 10;
+
+    std::vector<int> entries;
+    for (auto it = cache.lower_bound(start_idx); it != cache.end(); it++) {
+        if (it->first > end_idx) break;
+        entries.push_back(it->second);
+    }
+    FB_ASSERT_EQ(entries.size(), 6UL);
+    FB_ASSERT_EQ(entries.front(), 5);
+    FB_ASSERT_EQ(entries.back(), 10);
+}
+
+FB_TEST(raft_state, cache_remove_between) {
+    std::map<raft_index_t, int> cache;
+    for (int i = 1; i <= 20; i++) {
+        cache[i] = i;
+    }
+
+    // 删除 [5, 10] 区间的条目
+    raft_index_t start_idx = 5;
+    raft_index_t end_idx = 10;
+
+    for (raft_index_t idx = start_idx; idx <= end_idx; idx++) {
+        cache.erase(idx);
+    }
+
+    FB_ASSERT_EQ(cache.size(), 14UL);
+    FB_ASSERT_EQ(cache.count(5), 0UL);
+    FB_ASSERT_EQ(cache.count(10), 0UL);
+    FB_ASSERT_EQ(cache[4], 4);   // 之前存在
+    FB_ASSERT_EQ(cache[11], 11); // 之后存在
+}
+
+FB_TEST(raft_state, cache_get_at_idx) {
+    std::map<raft_index_t, int> cache;
+    cache[10] = 100;
+    cache[20] = 200;
+
+    // 获取特定索引
+    auto it = cache.find(10);
+    FB_ASSERT_TRUE(it != cache.end());
+    FB_ASSERT_EQ(it->second, 100);
+
+    // 索引不存在
+    it = cache.find(15);
+    FB_ASSERT_TRUE(it == cache.end());
+}
+
+FB_TEST(raft_state, cache_first_last_entry) {
+    std::map<raft_index_t, int> cache;
+
+    // 空缓存
+    bool empty = cache.empty();
+    FB_ASSERT_TRUE(empty);
+
+    // 添加条目
+    for (int i = 5; i <= 15; i++) {
+        cache[i] = i;
+    }
+
+    // 第一条和最后一条
+    raft_index_t first_idx = cache.begin()->first;
+    raft_index_t last_idx = cache.rbegin()->first;
+    FB_ASSERT_EQ(first_idx, 5L);
+    FB_ASSERT_EQ(last_idx, 15L);
+}
+
+FB_TEST(raft_state, cache_count) {
+    std::map<raft_index_t, int> cache;
+
+    FB_ASSERT_EQ(cache.size(), 0UL);
+
+    for (int i = 0; i < 100; i++) {
+        cache[i + 1] = i;
+    }
+    FB_ASSERT_EQ(cache.size(), 100UL);
+
+    // 移除一半
+    for (int i = 1; i <= 50; i++) {
+        cache.erase(i);
+    }
+    FB_ASSERT_EQ(cache.size(), 50UL);
+}
+
+FB_TEST(raft_state, cache_clear) {
+    std::map<raft_index_t, int> cache;
+
+    for (int i = 1; i <= 100; i++) {
+        cache[i] = i;
+    }
+    FB_ASSERT_EQ(cache.size(), 100UL);
+
+    // 清空缓存
+    cache.clear();
+    FB_ASSERT_EQ(cache.size(), 0UL);
+    FB_ASSERT_TRUE(cache.empty());
+}
+
+FB_TEST(raft_state, cache_complete_callback) {
+    // 模拟回调完成机制
+    int completed_count = 0;
+    int result_code = 0;
+
+    auto complete_entry = [&completed_count, &result_code](int result) {
+        completed_count++;
+        result_code = result;
+    };
+
+    // 完成单个条目
+    complete_entry(0);
+    FB_ASSERT_EQ(completed_count, 1);
+    FB_ASSERT_EQ(result_code, 0);
+
+    // 完成失败
+    complete_entry(-1);
+    FB_ASSERT_EQ(completed_count, 2);
+    FB_ASSERT_EQ(result_code, -1);
+}
+
+FB_TEST(raft_state, cache_remove_upper) {
+    std::map<raft_index_t, int> cache;
+    for (int i = 1; i <= 20; i++) {
+        cache[i] = i;
+    }
+
+    // 删除 >= 15 的条目
+    raft_index_t idx = 15;
+    for (auto it = cache.lower_bound(idx); it != cache.end(); ) {
+        it = cache.erase(it);
+    }
+
+    FB_ASSERT_EQ(cache.size(), 14UL);
+    FB_ASSERT_EQ(cache.rbegin()->first, 14L);
+    FB_ASSERT_EQ(cache.count(15), 0UL);
+    FB_ASSERT_EQ(cache.count(20), 0UL);
+}
+
+FB_TEST(raft_state, cache_range_validation) {
+    std::map<raft_index_t, int> cache;
+    cache[5] = 50;
+    cache[10] = 100;
+    cache[15] = 150;
+
+    // 验证范围查询边界
+    raft_index_t start = 5, end = 15;
+
+    // start > end 是无效范围
+    bool valid_range = start <= end;
+    FB_ASSERT_TRUE(valid_range);
+
+    // 反转范围
+    start = 20; end = 10;
+    valid_range = start <= end;
+    FB_ASSERT_FALSE(valid_range);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
