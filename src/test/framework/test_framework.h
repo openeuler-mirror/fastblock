@@ -46,6 +46,7 @@
 #include <optional>
 #include <regex>
 #include <stdexcept>
+#include <cstring>
 
 #ifdef __linux__
 #include <sys/types.h>
@@ -1461,6 +1462,74 @@ public:
 #define FB_ASSERT_TYPE_DERIVED(derived, base)                                      \
     static_assert(std::is_base_of<base, derived>::value,                           \
                   "Type not derived: " #derived " is not derived from " #base)
+
+/**
+ * @brief Memory comparison assertion
+ */
+#define FB_ASSERT_MEM_EQ(expected, actual, size)                                    \
+    do {                                                                            \
+        const void* fb_exp = (expected);                                            \
+        const void* fb_act = (actual);                                              \
+        size_t fb_sz = (size);                                                      \
+        if (fb_sz > 0 && memcmp(fb_exp, fb_act, fb_sz) != 0) {                      \
+            std::stringstream ss;                                                  \
+            ss << "Memory comparison failed: " << #expected << " != " << #actual    \
+               << " (size: " << fb_sz << ")";                                       \
+            ctx.fail(ss.str(), __FILE__, __LINE__);                               \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+#define FB_ASSERT_MEM_NE(expected, actual, size)                                    \
+    do {                                                                            \
+        const void* fb_exp = (expected);                                            \
+        const void* fb_act = (actual);                                              \
+        size_t fb_sz = (size);                                                      \
+        if (fb_sz > 0 && memcmp(fb_exp, fb_act, fb_sz) == 0) {                      \
+            ctx.fail("Memory unexpectedly equal: " #expected " == " #actual,        \
+                    __FILE__, __LINE__);                                           \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+/**
+ * @brief String N-character comparison assertion
+ */
+#define FB_ASSERT_STRN_EQ(expected, actual, n)                                       \
+    do {                                                                            \
+        std::string fb_e = std::string(expected).substr(0, n);                      \
+        std::string fb_a = std::string(actual).substr(0, n);                       \
+        if (fb_e != fb_a) {                                                         \
+            std::stringstream ss;                                                  \
+            ss << "String prefix comparison failed (first " << n << " chars): "     \
+               << "expected \"" << fb_e << "\", actual \"" << fb_a << "\"";         \
+            ctx.fail(ss.str(), __FILE__, __LINE__);                               \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+/**
+ * @brief String contains N-times assertion
+ */
+#define FB_ASSERT_STR_COUNT(str, substr, expected_count)                            \
+    do {                                                                            \
+        std::string fb_s = (str);                                                   \
+        std::string fb_sub = (substr);                                              \
+        size_t fb_count = 0;                                                       \
+        size_t fb_pos = 0;                                                         \
+        while ((fb_pos = fb_s.find(fb_sub, fb_pos)) != std::string::npos) {         \
+            fb_count++;                                                             \
+            fb_pos += fb_sub.length();                                              \
+        }                                                                           \
+        if (fb_count != (expected_count)) {                                        \
+            std::stringstream ss;                                                  \
+            ss << "String count assertion failed: expected " << (expected_count)    \
+               << " occurrences of \"" << fb_sub << "\" in \"" << fb_s << "\""      \
+               << ", found " << fb_count;                                           \
+            ctx.fail(ss.str(), __FILE__, __LINE__);                               \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
 
 /**
  * @brief Scoped timer for timing code blocks
