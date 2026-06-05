@@ -2532,7 +2532,10 @@ public:
 
     template<typename ExceptionType>
     static void throw_randomly(double probability, const std::string& message = "") {
-        if ((double)rand() / RAND_MAX < probability) {
+        // Use thread-local random engine for thread safety
+        static thread_local std::mt19937 engine(std::random_device{}());
+        std::uniform_real_distribution<double> dist(0.0, 1.0);
+        if (dist(engine) < probability) {
             throw ExceptionType(message);
         }
     }
