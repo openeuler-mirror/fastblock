@@ -243,6 +243,8 @@ private:
 
 /**
  * @brief Test registry - singleton for managing all test suites
+ *
+ * Thread-safe: Uses mutex to protect concurrent access to test suites.
  */
 class test_registry {
 public:
@@ -256,7 +258,8 @@ public:
      */
     void register_test(const std::string& suite_name,
                        std::shared_ptr<test_case> tc) {
-        auto& suite = get_or_create_suite(suite_name);
+        std::lock_guard<std::mutex> lock(_mutex);
+        auto& suite = get_or_create_suite_unlocked(suite_name);
         suite.add_test(tc);
     }
 
@@ -264,6 +267,31 @@ public:
      * @brief Get or create a test suite
      */
     test_suite& get_or_create_suite(const std::string& name) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return get_or_create_suite_unlocked(name);
+    }
+
+    /**
+     * @brief Get all test suites (thread-safe copy)
+     */
+    std::vector<std::shared_ptr<test_suite>> suites() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _suites;
+    }
+
+    /**
+     * @brief Clear all registered tests
+     */
+    void clear() {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _suites.clear();
+    }
+
+private:
+    test_registry() = default;
+
+    // Internal unlocked version for use within locked methods
+    test_suite& get_or_create_suite_unlocked(const std::string& name) {
         for (auto& s : _suites) {
             if (s->name() == name) {
                 return *s;
@@ -274,19 +302,8 @@ public:
         return *suite;
     }
 
-    /**
-     * @brief Get all test suites
-     */
-    const std::vector<std::shared_ptr<test_suite>>& suites() const { return _suites; }
-
-    /**
-     * @brief Clear all registered tests
-     */
-    void clear() { _suites.clear(); }
-
-private:
-    test_registry() = default;
     std::vector<std::shared_ptr<test_suite>> _suites;
+    mutable std::mutex _mutex;
 };
 
 /**
@@ -3382,9 +3399,12 @@ public:
 // ============================================================================
 
 /**
- * @brief Test filter for selective test execution
+ * @brief Test matcher for selective test execution
+ *
+ * Note: This is different from test_filter in test_config.h which stores
+ * filter criteria. This class provides matching operations.
  */
-class test_filter {
+class test_matcher {
 public:
     enum class match_mode {
         EXACT,       // Exact name match
@@ -3457,24 +3477,24 @@ public:
 };
 
 #define FB_FILTER_EXACT(name, pattern)                                              \
-    ::fastblock::test::test_filter::matches(name, pattern,                          \
-        ::fastblock::test::test_filter::match_mode::EXACT)
+    ::fastblock::test::test_matcher::matches(name, pattern,                          \
+        ::fastblock::test::test_matcher::match_mode::EXACT)
 
 #define FB_FILTER_PREFIX(name, pattern)                                             \
-    ::fastblock::test::test_filter::matches(name, pattern,                          \
-        ::fastblock::test::test_filter::match_mode::PREFIX)
+    ::fastblock::test::test_matcher::matches(name, pattern,                          \
+        ::fastblock::test::test_matcher::match_mode::PREFIX)
 
 #define FB_FILTER_SUFFIX(name, pattern)                                             \
-    ::fastblock::test::test_filter::matches(name, pattern,                          \
-        ::fastblock::test::test_filter::match_mode::SUFFIX)
+    ::fastblock::test::test_matcher::matches(name, pattern,                          \
+        ::fastblock::test::test_matcher::match_mode::SUFFIX)
 
 #define FB_FILTER_CONTAINS(name, pattern)                                           \
-    ::fastblock::test::test_filter::matches(name, pattern,                          \
-        ::fastblock::test::test_filter::match_mode::CONTAINS)
+    ::fastblock::test::test_matcher::matches(name, pattern,                          \
+        ::fastblock::test::test_matcher::match_mode::CONTAINS)
 
 #define FB_FILTER_REGEX(name, pattern)                                              \
-    ::fastblock::test::test_filter::matches(name, pattern,                          \
-        ::fastblock::test::test_filter::match_mode::REGEX)
+    ::fastblock::test::test_matcher::matches(name, pattern,                          \
+        ::fastblock::test::test_matcher::match_mode::REGEX)
 
 /**
  * @brief Test selector for building test queries
@@ -3486,7 +3506,7 @@ public:
         return *this;
     }
 
-    test_selector& select_name(const std::string& pattern, test_filter::match_mode mode) {
+    test_selector& select_name(const std::string& pattern, test_matcher::match_mode mode) {
         _name_pattern = pattern;
         _name_mode = mode;
         return *this;
@@ -3508,7 +3528,7 @@ public:
 private:
     std::string _suite_filter;
     std::string _name_pattern;
-    test_filter::match_mode _name_mode = test_filter::match_mode::EXACT;
+    test_matcher::match_mode _name_mode = test_matcher::match_mode::EXACT;
     test_tag _tag_filter = test_tag::NONE;
     bool _use_tag = false;
     std::vector<std::string> _excludes;
