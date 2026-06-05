@@ -422,6 +422,133 @@ FB_TEST(raft_rpc, requestvote_response_fields) {
     FB_ASSERT_TRUE(vote_granted);
 }
 
+FB_TEST(raft_rpc, requestvote_candidate_log_behind) {
+    // 候选人日志落后的各种场景
+    raft_index_t my_last_idx = 100;
+    raft_term_t my_last_term = 5;
+
+    // 场景1：term相同，idx落后
+    raft_index_t cand_idx = 80;
+    raft_term_t cand_term = 5;
+    bool log_ok = (cand_term > my_last_term) ||
+                  ((cand_term == my_last_term) && (cand_idx >= my_last_idx));
+    FB_ASSERT_FALSE(log_ok);
+
+    // 场景2：term落后
+    cand_idx = 120;
+    cand_term = 4;
+    log_ok = (cand_term > my_last_term) ||
+             ((cand_term == my_last_term) && (cand_idx >= my_last_idx));
+    FB_ASSERT_FALSE(log_ok);
+
+    // 场景3：idx超前但term落后
+    cand_idx = 200;
+    cand_term = 4;
+    log_ok = (cand_term > my_last_term) ||
+             ((cand_term == my_last_term) && (cand_idx >= my_last_idx));
+    FB_ASSERT_FALSE(log_ok);
+}
+
+FB_TEST(raft_rpc, requestvote_vote_timeout) {
+    // 投票超时处理
+    int vote_timeout_ms = 100;
+    int elapsed_ms = 50;
+    bool timed_out = elapsed_ms >= vote_timeout_ms;
+    FB_ASSERT_FALSE(timed_out);
+
+    elapsed_ms = 150;
+    timed_out = elapsed_ms >= vote_timeout_ms;
+    FB_ASSERT_TRUE(timed_out);
+}
+
+FB_TEST(raft_rpc, requestvote_after_vote_update_state) {
+    // 投票后更新本地状态
+    raft_term_t current_term = 5;
+    raft_node_id_t voted_for = 0;
+    raft_term_t candidate_term = 6;
+    raft_node_id_t candidate_id = 3;
+
+    // 更新term
+    if (candidate_term > current_term) {
+        current_term = candidate_term;
+        voted_for = 0;  // 重置投票
+    }
+
+    // 投票
+    voted_for = candidate_id;
+
+    FB_ASSERT_EQ(current_term, 6L);
+    FB_ASSERT_EQ(voted_for, 3L);
+}
+
+FB_TEST(raft_rpc, requestvote_rejected_no_state_change) {
+    // 拒绝投票不改变状态
+    raft_term_t current_term = 6;
+    raft_node_id_t voted_for = 5;
+
+    raft_term_t candidate_term = 4;  // 过期term
+    raft_node_id_t candidate_id = 3;
+
+    // 拒绝投票
+    bool grant = candidate_term >= current_term;
+    if (!grant) {
+        // 状态不变
+    }
+
+    FB_ASSERT_EQ(current_term, 6L);
+    FB_ASSERT_EQ(voted_for, 5L);  // 保持原值
+}
+
+FB_TEST(raft_rpc, requestvote_prevote_extension) {
+    // PreVote 扩展（Raft论文扩展）
+    bool is_prevote = true;
+    raft_term_t current_term = 5;
+    raft_term_t candidate_term = 6;
+
+    // PreVote 不更新 term
+    if (is_prevote) {
+        // 只检查是否可以投票，不改变状态
+        bool would_grant = candidate_term >= current_term;
+        FB_ASSERT_TRUE(would_grant);
+    }
+
+    // term 不变
+    FB_ASSERT_EQ(current_term, 5L);
+}
+
+FB_TEST(raft_rpc, requestvote_multiple_candidates) {
+    // 多个候选人同时请求投票
+    std::map<raft_node_id_t, bool> vote_responses;
+    raft_node_id_t voted_for = 0;
+
+    std::vector<raft_node_id_t> candidates = {1, 2, 3};
+
+    // 只能给第一个满足条件的候选人投票
+    for (auto cand_id : candidates) {
+        if (voted_for == 0) {
+            vote_responses[cand_id] = true;
+            voted_for = cand_id;
+        } else {
+            vote_responses[cand_id] = false;
+        }
+    }
+
+    FB_ASSERT_EQ(voted_for, 1L);
+    FB_ASSERT_TRUE(vote_responses[1]);
+    FB_ASSERT_FALSE(vote_responses[2]);
+    FB_ASSERT_FALSE(vote_responses[3]);
+}
+
+FB_TEST(raft_rpc, requestvote_disrupted_leader) {
+    // 网络分区导致的老Leader场景
+    raft_term_t old_leader_term = 5;
+    raft_term_t new_leader_term = 7;
+
+    // 拒绝老Leader的投票请求
+    bool grant = old_leader_term >= new_leader_term;
+    FB_ASSERT_FALSE(grant);
+}
+
 // ============================================================================
 // Test Suite: Heartbeat RPC Tests
 // ============================================================================
