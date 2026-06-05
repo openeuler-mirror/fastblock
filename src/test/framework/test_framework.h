@@ -1664,5 +1664,50 @@ private:
 #define FB_GET_TIMEOUT()                ::fastblock::test::test_environment::instance().timeout()
 #define FB_SET_VERBOSE(flag)            ::fastblock::test::test_environment::instance().set_verbose(flag)
 
-} // namespace test
-} // namespace fastblock
+// ============================================================================
+// Test Preconditions Checker
+// ============================================================================
+
+/**
+ * @brief Test precondition checker
+ */
+class precondition_checker {
+public:
+    static bool check_environment_var(const std::string& key) {
+        return test_environment::instance().has_var(key);
+    }
+
+    static bool check_file_exists(const std::string& path) {
+        std::ifstream f(path);
+        return f.good();
+    }
+
+    static bool check_minimum_version(const std::string& version, const std::string& required) {
+        return version >= required;  // Simple string comparison
+    }
+};
+
+#define FB_REQUIRE_ENV(key)                                                        \
+    do {                                                                            \
+        if (!::fastblock::test::precondition_checker::check_environment_var(key)) { \
+            ctx.skip("Missing environment variable: " #key);                        \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+#define FB_REQUIRE_FILE(path)                                                     \
+    do {                                                                            \
+        if (!::fastblock::test::precondition_checker::check_file_exists(path)) {   \
+            ctx.skip("Missing required file: " #path);                              \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+#define FB_REQUIRE_VERSION(version, required)                                      \
+    do {                                                                            \
+        if (!::fastblock::test::precondition_checker::check_minimum_version(      \
+                version, required)) {                                              \
+            ctx.skip("Version requirement not met: " #version " < " #required);    \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
