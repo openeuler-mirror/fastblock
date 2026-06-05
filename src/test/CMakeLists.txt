@@ -30,6 +30,19 @@ target_link_libraries(test_raft_rpc
     base
 )
 
+add_executable(test_framework_macros
+  unit/test_framework_macros.cc
+)
+
+target_include_directories(test_framework_macros
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(test_framework_macros
+  PUBLIC
+    test_framework
+    base
+)
+
 # Stress tests
 add_executable(raft_membership
   framework/osd_client.cc
