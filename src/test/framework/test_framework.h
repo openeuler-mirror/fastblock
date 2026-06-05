@@ -42,6 +42,7 @@
 #include <atomic>
 #include <random>
 #include <initializer_list>
+#include <optional>
 
 #ifdef __linux__
 #include <sys/types.h>
@@ -2765,3 +2766,142 @@ public:
 
 #define FB_LOG_KV_LIST(...)                                                        \
     ::fastblock::test::structured_logger::format_kv_list({__VA_ARGS__})
+
+// ============================================================================
+// Callback Management
+// ============================================================================
+
+/**
+ * @brief Callback tracker for testing async callbacks
+ */
+class callback_tracker {
+public:
+    static callback_tracker& instance() {
+        static callback_tracker tracker;
+        return tracker;
+    }
+
+    void record_call(const std::string& name) {
+        _call_counts[name]++;
+    }
+
+    void record_call_with_args(const std::string& name, const std::string& args) {
+        _call_counts[name]++;
+        _call_args[name].push_back(args);
+    }
+
+    size_t call_count(const std::string& name) const {
+        auto it = _call_counts.find(name);
+        return it != _call_counts.end() ? it->second : 0;
+    }
+
+    std::vector<std::string> call_args(const std::string& name) const {
+        auto it = _call_args.find(name);
+        return it != _call_args.end() ? it->second : std::vector<std::string>{};
+    }
+
+    bool was_called(const std::string& name) const {
+        return call_count(name) > 0;
+    }
+
+    void reset() {
+        _call_counts.clear();
+        _call_args.clear();
+    }
+
+    void reset(const std::string& name) {
+        _call_counts.erase(name);
+        _call_args.erase(name);
+    }
+
+private:
+    callback_tracker() = default;
+    std::map<std::string, size_t> _call_counts;
+    std::map<std::string, std::vector<std::string>> _call_args;
+};
+
+/**
+ * @brief RAII callback guard for automatic cleanup
+ */
+class callback_guard {
+public:
+    callback_guard(const std::string& name) : _name(name) {}
+
+    void operator()() {
+        callback_tracker::instance().record_call(_name);
+    }
+
+    template<typename T>
+    void operator()(const T& arg) {
+        std::stringstream ss;
+        ss << arg;
+        callback_tracker::instance().record_call_with_args(_name, ss.str());
+    }
+
+private:
+    std::string _name;
+};
+
+#define FB_CALLBACK_RECORD(name)                                                    \
+    ::fastblock::test::callback_tracker::instance().record_call(name)
+
+#define FB_CALLBACK_RECORD_ARGS(name, args)                                        \
+    ::fastblock::test::callback_tracker::instance().record_call_with_args(name, args)
+
+#define FB_CALLBACK_COUNT(name)                                                     \
+    ::fastblock::test::callback_tracker::instance().call_count(name)
+
+#define FB_CALLBACK_WAS_CALLED(name)                                               \
+    ::fastblock::test::callback_tracker::instance().was_called(name)
+
+#define FB_CALLBACK_RESET()                                                         \
+    ::fastblock::test::callback_tracker::instance().reset()
+
+#define FB_CALLBACK_GUARD(name)                                                     \
+    ::fastblock::test::callback_guard(name)
+
+/**
+ * @brief Callback verifier for testing expectations
+ */
+class callback_verifier {
+public:
+    static bool verify_called(const std::string& name, size_t expected_count = 1) {
+        return callback_tracker::instance().call_count(name) == expected_count;
+    }
+
+    static bool verify_not_called(const std::string& name) {
+        return !callback_tracker::instance().was_called(name);
+    }
+
+    static bool verify_called_at_least(const std::string& name, size_t min_count) {
+        return callback_tracker::instance().call_count(name) >= min_count;
+    }
+
+    static bool verify_called_at_most(const std::string& name, size_t max_count) {
+        return callback_tracker::instance().call_count(name) <= max_count;
+    }
+
+    static bool verify_args(const std::string& name, size_t call_index, const std::string& expected) {
+        auto args = callback_tracker::instance().call_args(name);
+        if (call_index >= args.size()) return false;
+        return args[call_index] == expected;
+    }
+};
+
+#define FB_VERIFY_CALLED(name, count)                                               \
+    ::fastblock::test::callback_verifier::verify_called(name, count)
+
+#define FB_VERIFY_NOT_CALLED(name)                                                  \
+    ::fastblock::test::callback_verifier::verify_not_called(name)
+
+#define FB_VERIFY_CALLED_AT_LEAST(name, min_count)                                  \
+    ::fastblock::test::callback_verifier::verify_called_at_least(name, min_count)
+
+#define FB_VERIFY_CALLED_AT_MOST(name, max_count)                                   \
+    ::fastblock::test::callback_verifier::verify_called_at_most(name, max_count)
+
+#define FB_VERIFY_ARGS(name, idx, expected)                                         \
+    ::fastblock::test::callback_verifier::verify_args(name, idx, expected)
+
+} // namespace test
+} // namespace fastblock
