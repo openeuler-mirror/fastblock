@@ -2943,6 +2943,8 @@ public:
 
 /**
  * @brief Callback tracker for testing async callbacks
+ *
+ * Thread-safe: Uses mutex to protect concurrent access.
  */
 class callback_tracker {
 public:
@@ -2952,20 +2954,24 @@ public:
     }
 
     void record_call(const std::string& name) {
+        std::lock_guard<std::mutex> lock(_mutex);
         _call_counts[name]++;
     }
 
     void record_call_with_args(const std::string& name, const std::string& args) {
+        std::lock_guard<std::mutex> lock(_mutex);
         _call_counts[name]++;
         _call_args[name].push_back(args);
     }
 
     size_t call_count(const std::string& name) const {
+        std::lock_guard<std::mutex> lock(_mutex);
         auto it = _call_counts.find(name);
         return it != _call_counts.end() ? it->second : 0;
     }
 
     std::vector<std::string> call_args(const std::string& name) const {
+        std::lock_guard<std::mutex> lock(_mutex);
         auto it = _call_args.find(name);
         return it != _call_args.end() ? it->second : std::vector<std::string>{};
     }
@@ -2975,11 +2981,13 @@ public:
     }
 
     void reset() {
+        std::lock_guard<std::mutex> lock(_mutex);
         _call_counts.clear();
         _call_args.clear();
     }
 
     void reset(const std::string& name) {
+        std::lock_guard<std::mutex> lock(_mutex);
         _call_counts.erase(name);
         _call_args.erase(name);
     }
@@ -2988,6 +2996,7 @@ private:
     callback_tracker() = default;
     std::map<std::string, size_t> _call_counts;
     std::map<std::string, std::vector<std::string>> _call_args;
+    mutable std::mutex _mutex;
 };
 
 /**
