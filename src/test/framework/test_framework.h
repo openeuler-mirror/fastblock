@@ -1784,3 +1784,56 @@ private:
 #define FB_TIMER_ELAPSED_MS()         fb_timer_.elapsed_ms()
 #define FB_TIMER_ELAPSED_SEC()        fb_timer_.elapsed_sec()
 #define FB_TIMER_RESET()              fb_timer_.reset()
+
+// ============================================================================
+// Test Output Formatting
+// ============================================================================
+
+/**
+ * @brief Test output formatter
+ */
+class test_formatter {
+public:
+    static std::string format_result(const test_result& result) {
+        std::stringstream ss;
+        ss << "[" << test_status_str(result.status) << "] "
+           << result.suite_name << "." << result.test_name;
+        if (!result.message.empty()) {
+            ss << " - " << result.message;
+        }
+        if (result.duration.count() > 0) {
+            ss << " (" << result.duration.count() / 1000.0 << " ms)";
+        }
+        return ss.str();
+    }
+
+    static std::string format_summary(int total, int passed, int failed, int skipped) {
+        std::stringstream ss;
+        ss << "Tests: " << total << " total, "
+           << passed << " passed, " << failed << " failed, "
+           << skipped << " skipped";
+        return ss.str();
+    }
+
+    static std::string format_progress(int current, int total, const std::string& test_name) {
+        std::stringstream ss;
+        ss << "[" << current << "/" << total << "] " << test_name;
+        return ss.str();
+    }
+
+    static std::string format_error(const std::string& test_name, const std::string& error,
+                                     const std::string& file, int line) {
+        std::stringstream ss;
+        ss << "ERROR: " << test_name << " failed at " << file << ":" << line
+           << "\n  " << error;
+        return ss.str();
+    }
+};
+
+#define FB_FORMAT_RESULT(result)       ::fastblock::test::test_formatter::format_result(result)
+#define FB_FORMAT_SUMMARY(total, passed, failed, skipped)                          \
+    ::fastblock::test::test_formatter::format_summary(total, passed, failed, skipped)
+#define FB_FORMAT_PROGRESS(current, total, name)                                    \
+    ::fastblock::test::test_formatter::format_progress(current, total, name)
+#define FB_FORMAT_ERROR(name, error, file, line)                                   \
+    ::fastblock::test::test_formatter::format_error(name, error, file, line)
