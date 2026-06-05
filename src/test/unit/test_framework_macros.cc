@@ -237,5 +237,110 @@ FB_TEST(framework_macros, str_eq_with_c_strings) {
     FB_ASSERT_STR_EQ(expected, actual);
 }
 
+// ============================================================================
+// Test Suite: Container Assertion Macros
+// ============================================================================
+
+FB_TEST(framework_macros, container_empty_vector) {
+    std::vector<int> vec;
+
+    FB_ASSERT_EMPTY(vec);
+}
+
+FB_TEST(framework_macros, container_empty_map) {
+    std::map<int, int> m;
+
+    FB_ASSERT_EMPTY(m);
+}
+
+FB_TEST(framework_macros, container_empty_set) {
+    std::set<std::string> s;
+
+    FB_ASSERT_EMPTY(s);
+}
+
+FB_TEST(framework_macros, container_not_empty_after_insert) {
+    std::vector<int> vec;
+    vec.push_back(1);
+
+    // Vector is not empty now
+    FB_ASSERT_TRUE(!vec.empty());
+}
+
+FB_TEST(framework_macros, container_size_vector) {
+    std::vector<int> vec = {1, 2, 3, 4, 5};
+
+    FB_ASSERT_SIZE(vec, 5);
+}
+
+FB_TEST(framework_macros, container_size_map) {
+    std::map<int, std::string> m;
+    m[1] = "one";
+    m[2] = "two";
+    m[3] = "three";
+
+    FB_ASSERT_SIZE(m, 3);
+}
+
+FB_TEST(framework_macros, container_size_set) {
+    std::set<int> s = {10, 20, 30, 40};
+
+    FB_ASSERT_SIZE(s, 4);
+}
+
+FB_TEST(framework_macros, container_contains_vector) {
+    std::vector<int> vec = {1, 2, 3, 4, 5};
+
+    FB_ASSERT_CONTAINS(vec, 3);
+}
+
+FB_TEST(framework_macros, container_contains_set) {
+    std::set<std::string> s = {"apple", "banana", "cherry"};
+
+    FB_ASSERT_CONTAINS(s, "banana");
+}
+
+FB_TEST(framework_macros, container_contains_map_key) {
+    std::map<int, std::string> m;
+    m[1] = "one";
+    m[2] = "two";
+
+    // Map contains key
+    FB_ASSERT_TRUE(m.count(1) > 0);
+    FB_ASSERT_TRUE(m.count(2) > 0);
+}
+
+FB_TEST(framework_macros, container_not_contains_vector) {
+    std::vector<int> vec = {1, 2, 3};
+
+    FB_ASSERT_NOT_CONTAINS(vec, 10);
+}
+
+FB_TEST(framework_macros, container_not_contains_set) {
+    std::set<int> s = {100, 200, 300};
+
+    FB_ASSERT_NOT_CONTAINS(s, 999);
+}
+
+FB_TEST(framework_macros, container_clear_makes_empty) {
+    std::vector<int> vec = {1, 2, 3};
+    vec.clear();
+
+    FB_ASSERT_EMPTY(vec);
+}
+
+FB_TEST(framework_macros, container_size_after_operations) {
+    std::vector<int> vec;
+
+    FB_ASSERT_SIZE(vec, 0);
+
+    vec.push_back(1);
+    vec.push_back(2);
+    FB_ASSERT_SIZE(vec, 2);
+
+    vec.pop_back();
+    FB_ASSERT_SIZE(vec, 1);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
