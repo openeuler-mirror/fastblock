@@ -2663,5 +2663,201 @@ FB_TEST(raft_state, cache_range_validation) {
     FB_ASSERT_FALSE(valid_range);
 }
 
+// ============================================================================
+// Test Suite: Raft Nodes Collection Tests
+// ============================================================================
+
+FB_TEST(raft_state, nodes_contains) {
+    std::map<raft_node_id_t, int> nodes;
+    nodes[1] = 100;
+    nodes[2] = 200;
+    nodes[3] = 300;
+
+    // 检查节点是否存在
+    FB_ASSERT_TRUE(nodes.find(1) != nodes.end());
+    FB_ASSERT_TRUE(nodes.find(2) != nodes.end());
+    FB_ASSERT_FALSE(nodes.find(5) != nodes.end());
+}
+
+FB_TEST(raft_state, nodes_find) {
+    std::map<raft_node_id_t, int> nodes;
+    nodes[1] = 100;
+    nodes[2] = 200;
+
+    // 查找存在的节点
+    auto it = nodes.find(1);
+    FB_ASSERT_TRUE(it != nodes.end());
+    FB_ASSERT_EQ(it->second, 100);
+
+    // 查找不存在的节点
+    it = nodes.find(99);
+    FB_ASSERT_TRUE(it == nodes.end());
+}
+
+FB_TEST(raft_state, nodes_size) {
+    std::map<raft_node_id_t, int> nodes;
+
+    FB_ASSERT_EQ(nodes.size(), 0UL);
+
+    nodes[1] = 100;
+    nodes[2] = 200;
+    nodes[3] = 300;
+    FB_ASSERT_EQ(nodes.size(), 3UL);
+
+    nodes.erase(2);
+    FB_ASSERT_EQ(nodes.size(), 2UL);
+}
+
+FB_TEST(raft_state, nodes_get_node) {
+    std::map<raft_node_id_t, int> nodes;
+    nodes[1] = 100;
+    nodes[5] = 500;
+
+    // 获取存在的节点
+    auto it = nodes.find(1);
+    FB_ASSERT_TRUE(it != nodes.end());
+    FB_ASSERT_EQ(it->second, 100);
+
+    // 获取不存在的节点返回 nullptr 等效
+    it = nodes.find(99);
+    bool is_nullptr = (it == nodes.end());
+    FB_ASSERT_TRUE(is_nullptr);
+}
+
+FB_TEST(raft_state, nodes_get_ids) {
+    std::map<raft_node_id_t, int> nodes;
+    nodes[1] = 100;
+    nodes[2] = 200;
+    nodes[3] = 300;
+
+    // 获取所有节点 ID
+    std::vector<raft_node_id_t> ids;
+    for (const auto& pair : nodes) {
+        ids.push_back(pair.first);
+    }
+    FB_ASSERT_EQ(ids.size(), 3UL);
+
+    // 验证包含所有 ID
+    FB_ASSERT_TRUE(std::find(ids.begin(), ids.end(), 1) != ids.end());
+    FB_ASSERT_TRUE(std::find(ids.begin(), ids.end(), 2) != ids.end());
+    FB_ASSERT_TRUE(std::find(ids.begin(), ids.end(), 3) != ids.end());
+}
+
+FB_TEST(raft_state, nodes_for_all) {
+    std::map<raft_node_id_t, int> nodes;
+    nodes[1] = 100;
+    nodes[2] = 200;
+    nodes[3] = 300;
+
+    // 遍历所有节点
+    int visited_count = 0;
+    for (const auto& pair : nodes) {
+        visited_count++;
+        FB_ASSERT_TRUE(pair.first >= 1);
+        FB_ASSERT_TRUE(pair.second >= 100);
+    }
+    FB_ASSERT_EQ(visited_count, 3);
+}
+
+FB_TEST(raft_state, nodes_new_nodes_management) {
+    // 模拟 _nodes 和 _new_nodes 的管理
+    std::map<raft_node_id_t, int> nodes;
+    std::map<raft_node_id_t, int> new_nodes;
+
+    // 初始节点
+    nodes[1] = 100;
+    nodes[2] = 200;
+    nodes[3] = 300;
+
+    // 配置变更：添加新节点
+    new_nodes[4] = 400;
+    new_nodes[5] = 500;
+
+    // 联合共识期间，需要向所有节点发送消息
+    int total_recipients = nodes.size() + new_nodes.size();
+    FB_ASSERT_EQ(total_recipients, 5);
+
+    // 遍历所有节点（包括新节点）
+    int all_count = 0;
+    for (const auto& pair : nodes) all_count++;
+    for (const auto& pair : new_nodes) all_count++;
+    FB_ASSERT_EQ(all_count, 5);
+}
+
+FB_TEST(raft_state, nodes_for_new_nodes) {
+    std::map<raft_node_id_t, int> new_nodes;
+    new_nodes[4] = 400;
+    new_nodes[5] = 500;
+
+    // 只遍历新节点
+    int new_count = 0;
+    for (const auto& pair : new_nodes) {
+        new_count++;
+        FB_ASSERT_TRUE(pair.first >= 4);
+    }
+    FB_ASSERT_EQ(new_count, 2);
+}
+
+FB_TEST(raft_state, nodes_get_new_node) {
+    std::map<raft_node_id_t, int> new_nodes;
+    new_nodes[4] = 400;
+
+    // 获取新节点
+    auto it = new_nodes.find(4);
+    FB_ASSERT_TRUE(it != new_nodes.end());
+    FB_ASSERT_EQ(it->second, 400);
+
+    // 获取不存在的新节点
+    it = new_nodes.find(99);
+    FB_ASSERT_TRUE(it == new_nodes.end());
+}
+
+FB_TEST(raft_state, nodes_new_node_size) {
+    std::map<raft_node_id_t, int> new_nodes;
+
+    FB_ASSERT_EQ(new_nodes.size(), 0UL);
+
+    new_nodes[4] = 400;
+    new_nodes[5] = 500;
+    FB_ASSERT_EQ(new_nodes.size(), 2UL);
+}
+
+FB_TEST(raft_state, nodes_iterator_operations) {
+    std::map<raft_node_id_t, int> nodes;
+    nodes[1] = 100;
+    nodes[2] = 200;
+    nodes[3] = 300;
+
+    // 开始迭代器
+    auto it = nodes.begin();
+    FB_ASSERT_EQ(it->first, 1);
+
+    // 结束迭代器
+    auto end = nodes.end();
+    FB_ASSERT_TRUE(end == nodes.end());
+
+    // 遍历
+    int count = 0;
+    for (auto it = nodes.begin(); it != nodes.end(); it++) {
+        count++;
+    }
+    FB_ASSERT_EQ(count, 3);
+}
+
+FB_TEST(raft_state, nodes_const_iterator) {
+    std::map<raft_node_id_t, int> nodes;
+    nodes[1] = 100;
+    nodes[2] = 200;
+
+    const auto& const_nodes = nodes;
+
+    // 常量迭代器
+    int count = 0;
+    for (auto it = const_nodes.begin(); it != const_nodes.end(); it++) {
+        count++;
+    }
+    FB_ASSERT_EQ(count, 2);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
