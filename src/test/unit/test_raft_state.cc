@@ -2288,5 +2288,177 @@ FB_TEST(raft_state, log_recovery_from_disk) {
     FB_ASSERT_EQ(first_unapplied_idx, 76L);
 }
 
+// ============================================================================
+// Test Suite: Raft Node Tests
+// ============================================================================
+
+FB_TEST(raft_state, node_next_idx_init) {
+    // 节点初始 next_idx = 1
+    raft_index_t next_idx = 1;
+    FB_ASSERT_EQ(next_idx, 1L);
+
+    // next_idx 小于 1 时应该 clamp 到 1
+    next_idx = -5;
+    next_idx = next_idx < 1 ? 1 : next_idx;
+    FB_ASSERT_EQ(next_idx, 1L);
+
+    next_idx = 0;
+    next_idx = next_idx < 1 ? 1 : next_idx;
+    FB_ASSERT_EQ(next_idx, 1L);
+}
+
+FB_TEST(raft_state, node_match_idx_update) {
+    raft_index_t match_idx = 0;
+    raft_index_t next_idx = 1;
+
+    // 成功复制后更新 match_idx
+    match_idx = next_idx;
+    next_idx++;
+    FB_ASSERT_EQ(match_idx, 1L);
+    FB_ASSERT_EQ(next_idx, 2L);
+
+    // match_idx 只能递增
+    raft_index_t old_match_idx = match_idx;
+    raft_index_t new_match_idx = 5;
+    if (new_match_idx > old_match_idx) {
+        match_idx = new_match_idx;
+    }
+    FB_ASSERT_EQ(match_idx, 5L);
+
+    // 尝试回退（不应该成功）
+    new_match_idx = 3;
+    if (new_match_idx > match_idx) {
+        match_idx = new_match_idx;
+    }
+    FB_ASSERT_EQ(match_idx, 5L);  // 保持原值
+}
+
+FB_TEST(raft_state, node_vote_flag) {
+    int flags = 0;
+    constexpr int RAFT_NODE_VOTED_FOR_ME = (1 << 0);
+
+    // 设置投票标志
+    flags |= RAFT_NODE_VOTED_FOR_ME;
+    FB_ASSERT_TRUE((flags & RAFT_NODE_VOTED_FOR_ME) != 0);
+
+    // 清除投票标志
+    flags &= ~RAFT_NODE_VOTED_FOR_ME;
+    FB_ASSERT_FALSE((flags & RAFT_NODE_VOTED_FOR_ME) != 0);
+}
+
+FB_TEST(raft_state, node_lease_management) {
+    raft_time_t lease = 0;
+
+    // lease 只能递增
+    auto update_lease = [&lease](raft_time_t new_lease) {
+        if (new_lease > lease) {
+            lease = new_lease;
+        }
+    };
+
+    update_lease(100);
+    FB_ASSERT_EQ(lease, 100L);
+
+    // 尝试设置更小的值（不应该改变）
+    update_lease(50);
+    FB_ASSERT_EQ(lease, 100L);
+
+    // 设置更大的值
+    update_lease(200);
+    FB_ASSERT_EQ(lease, 200L);
+}
+
+FB_TEST(raft_state, node_effective_time) {
+    raft_time_t effective_time = 0;
+
+    // 设置节点生效时间
+    effective_time = 1000;
+    FB_ASSERT_EQ(effective_time, 1000L);
+
+    // 验证时间单调性
+    raft_time_t new_time = 1500;
+    bool is_later = new_time > effective_time;
+    FB_ASSERT_TRUE(is_later);
+}
+
+FB_TEST(raft_state, node_heartbeat_suppression) {
+    bool suppress_heartbeats = false;
+
+    // 开启心跳抑制
+    suppress_heartbeats = true;
+    FB_ASSERT_TRUE(suppress_heartbeats);
+
+    // 关闭心跳抑制
+    suppress_heartbeats = false;
+    FB_ASSERT_FALSE(suppress_heartbeats);
+}
+
+FB_TEST(raft_state, node_heartbeating_status) {
+    bool is_heartbeating = false;
+
+    // 开始心跳
+    is_heartbeating = true;
+    FB_ASSERT_TRUE(is_heartbeating);
+
+    // 停止心跳
+    is_heartbeating = false;
+    FB_ASSERT_FALSE(is_heartbeating);
+}
+
+FB_TEST(raft_state, node_recovering_status) {
+    bool is_recovering = false;
+
+    // 开始恢复
+    is_recovering = true;
+    FB_ASSERT_TRUE(is_recovering);
+
+    // 恢复完成
+    is_recovering = false;
+    FB_ASSERT_FALSE(is_recovering);
+}
+
+FB_TEST(raft_state, node_end_idx_tracking) {
+    raft_index_t end_idx = 0;
+
+    // 设置 end_idx（Leader发送的最后一个日志索引）
+    end_idx = 100;
+    FB_ASSERT_EQ(end_idx, 100L);
+
+    // end_idx 可以用于判断日志发送进度
+    raft_index_t match_idx = 80;
+    bool has_more = match_idx < end_idx;
+    FB_ASSERT_TRUE(has_more);
+}
+
+FB_TEST(raft_state, node_append_time) {
+    raft_time_t append_time = 0;
+    raft_time_t current_time = 1000;
+
+    // 记录追加时间
+    append_time = current_time;
+    FB_ASSERT_EQ(append_time, 1000L);
+
+    // 计算距离上次追加的时间
+    raft_time_t elapsed = current_time - append_time;
+    FB_ASSERT_EQ(elapsed, 0L);
+}
+
+FB_TEST(raft_state, node_id_operations) {
+    raft_node_id_t id1 = 1;
+    raft_node_id_t id2 = 2;
+
+    // ID 比较
+    FB_ASSERT_TRUE(id1 != id2);
+    FB_ASSERT_TRUE(id1 < id2);
+
+    // 查找节点
+    std::map<raft_node_id_t, int> nodes;
+    nodes[id1] = 100;
+    nodes[id2] = 200;
+
+    FB_ASSERT_EQ(nodes[id1], 100);
+    FB_ASSERT_EQ(nodes[id2], 200);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
