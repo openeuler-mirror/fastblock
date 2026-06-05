@@ -2855,6 +2855,8 @@ enum class test_log_level {
 
 /**
  * @brief Enhanced test logger
+ *
+ * Thread-safe: Uses std::atomic for log level to avoid locking on reads.
  */
 class test_logger {
 public:
@@ -2863,12 +2865,17 @@ public:
         return logger;
     }
 
-    void set_level(test_log_level level) { _level = level; }
-    test_log_level level() const { return _level; }
+    void set_level(test_log_level level) {
+        _level.store(level);
+    }
+
+    test_log_level level() const {
+        return _level.load();
+    }
 
     void log(test_log_level level, const std::string& message,
              const char* file = nullptr, int line = 0) {
-        if (level < _level) return;
+        if (level < _level.load()) return;
 
         const char* level_str = level_to_string(level);
         std::stringstream ss;
@@ -2924,7 +2931,7 @@ private:
         }
     }
 
-    test_log_level _level;
+    std::atomic<test_log_level> _level;
 };
 
 
