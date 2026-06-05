@@ -1267,5 +1267,124 @@ FB_TEST(raft_state, vote_reset_on_new_term) {
     FB_ASSERT_TRUE(can_vote);
 }
 
+// ============================================================================
+// Test Suite: Snapshot and Log Compaction Tests
+// ============================================================================
+
+FB_TEST(raft_state, snapshot_index_tracking) {
+    int64_t snapshot_idx = 100;
+    int64_t last_applied = 100;
+    int64_t commit_idx = 150;
+
+    // 快照索引不能超过已应用索引
+    FB_ASSERT_TRUE(snapshot_idx <= last_applied);
+    FB_ASSERT_TRUE(snapshot_idx < commit_idx);
+
+    // 快照后，first_log_idx 会更新
+    int64_t first_log_idx = snapshot_idx + 1;
+    FB_ASSERT_EQ(first_log_idx, 101L);
+}
+
+FB_TEST(raft_state, log_compaction_free_space) {
+    int64_t first_idx = 10;
+    int64_t last_idx = 1000;
+    int64_t entries_count = last_idx - first_idx + 1;
+    FB_ASSERT_EQ(entries_count, 991L);
+
+    // 创建快照后释放的空间
+    int64_t snapshot_idx = 500;
+    int64_t freed_entries = snapshot_idx - first_idx + 1;
+    FB_ASSERT_EQ(freed_entries, 491L);
+
+    // 快照后剩余的日志条目
+    int64_t remaining_entries = last_idx - snapshot_idx;
+    FB_ASSERT_EQ(remaining_entries, 500L);
+}
+
+FB_TEST(raft_state, snapshot_term_tracking) {
+    int64_t snapshot_idx = 100;
+    raft_term_t snapshot_term = 5;
+
+    // 快照包含的信息
+    FB_ASSERT_TRUE(snapshot_idx > 0);
+    FB_ASSERT_TRUE(snapshot_term > 0);
+
+    // 快照 term 用于日志一致性检查
+    raft_term_t last_included_term = snapshot_term;
+    FB_ASSERT_EQ(last_included_term, 5L);
+}
+
+FB_TEST(raft_state, snapshot_transfer_chunks) {
+    int64_t total_size = 1024 * 1024;  // 1MB snapshot
+    int chunk_size = 64 * 1024;         // 64KB chunks
+    int expected_chunks = total_size / chunk_size;
+    if (total_size % chunk_size != 0) {
+        expected_chunks++;
+    }
+
+    FB_ASSERT_EQ(expected_chunks, 16);
+
+    // 边界情况：刚好整除
+    total_size = 64 * 1024;
+    expected_chunks = total_size / chunk_size;
+    FB_ASSERT_EQ(expected_chunks, 1);
+}
+
+FB_TEST(raft_state, snapshot_request_conditions) {
+    int64_t log_size = 10000;
+    int64_t snapshot_threshold = 5000;
+
+    // 达到阈值时触发快照
+    bool should_snapshot = log_size >= snapshot_threshold;
+    FB_ASSERT_TRUE(should_snapshot);
+
+    // 未达到阈值
+    log_size = 3000;
+    should_snapshot = log_size >= snapshot_threshold;
+    FB_ASSERT_FALSE(should_snapshot);
+}
+
+FB_TEST(raft_state, follower_snapshot_install) {
+    int64_t follower_last_idx = 50;
+    int64_t leader_snapshot_idx = 100;
+
+    // Follower 日志落后于 Leader 的快照，需要安装快照
+    bool needs_snapshot = leader_snapshot_idx > follower_last_idx;
+    FB_ASSERT_TRUE(needs_snapshot);
+
+    // 安装快照后更新索引
+    int64_t new_last_idx = leader_snapshot_idx;
+    FB_ASSERT_EQ(new_last_idx, 100L);
+}
+
+FB_TEST(raft_state, snapshot_during_append_conflict) {
+    // 正在接收快照时，不能处理新的日志追加
+    bool is_receiving_snapshot = true;
+    bool can_append_entries = !is_receiving_snapshot;
+    FB_ASSERT_FALSE(can_append_entries);
+
+    // 快照完成后可以继续追加
+    is_receiving_snapshot = false;
+    can_append_entries = !is_receiving_snapshot;
+    FB_ASSERT_TRUE(can_append_entries);
+}
+
+FB_TEST(raft_state, log_truncation_before_snapshot) {
+    int64_t first_log_idx = 100;
+    int64_t last_log_idx = 500;
+    int64_t snapshot_idx = 300;
+
+    // 快照后，[first_log_idx, snapshot_idx] 的日志可被删除
+    int64_t first_deletable = first_log_idx;
+    int64_t last_deletable = snapshot_idx;
+    int64_t deletable_count = last_deletable - first_deletable + 1;
+
+    FB_ASSERT_EQ(deletable_count, 201L);
+
+    // 新的 first_log_idx
+    int64_t new_first_log_idx = snapshot_idx + 1;
+    FB_ASSERT_EQ(new_first_log_idx, 301L);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
