@@ -2228,3 +2228,127 @@ public:
 
 #define FB_RELATIVE_EQ(a, b, eps)                                                   \
     ::fastblock::test::comparison_helper::relatively_equal(a, b, eps)
+
+// ============================================================================
+// Error Simulation Utilities
+// ============================================================================
+
+/**
+ * @brief Error injector for testing error handling
+ */
+class error_injector {
+public:
+    static error_injector& instance() {
+        static error_injector injector;
+        return injector;
+    }
+
+    void enable() { _enabled = true; }
+    void disable() { _enabled = false; }
+    bool is_enabled() const { return _enabled; }
+
+    void set_error_rate(double rate) { _error_rate = rate; }
+    double error_rate() const { return _error_rate; }
+
+    bool should_inject() {
+        if (!_enabled) return false;
+        return (double)rand() / RAND_MAX < _error_rate;
+    }
+
+    void set_error_type(const std::string& type) { _error_type = type; }
+    const std::string& error_type() const { return _error_type; }
+
+    void reset() {
+        _enabled = false;
+        _error_rate = 0.0;
+        _error_type.clear();
+        _failure_count = 0;
+        _success_count = 0;
+    }
+
+    void record_failure() { _failure_count++; }
+    void record_success() { _success_count++; }
+    size_t failure_count() const { return _failure_count; }
+    size_t success_count() const { return _success_count; }
+
+private:
+    error_injector() : _enabled(false), _error_rate(0.0), _failure_count(0), _success_count(0) {}
+    bool _enabled;
+    double _error_rate;
+    std::string _error_type;
+    size_t _failure_count;
+    size_t _success_count;
+};
+
+#define FB_ERROR_INJECT_ENABLE()       ::fastblock::test::error_injector::instance().enable()
+#define FB_ERROR_INJECT_DISABLE()      ::fastblock::test::error_injector::instance().disable()
+#define FB_ERROR_INJECT_SET_RATE(r)    ::fastblock::test::error_injector::instance().set_error_rate(r)
+#define FB_ERROR_INJECT_SHOULD()       ::fastblock::test::error_injector::instance().should_inject()
+#define FB_ERROR_INJECT_RESET()        ::fastblock::test::error_injector::instance().reset()
+
+/**
+ * @brief Fault injector for controlled failures
+ */
+class fault_injector {
+public:
+    void set_fault_point(const std::string& name, bool should_fail = true) {
+        _fault_points[name] = should_fail;
+    }
+
+    bool should_fail(const std::string& name) {
+        auto it = _fault_points.find(name);
+        if (it != _fault_points.end() && it->second) {
+            it->second = false;  // Reset after trigger
+            return true;
+        }
+        return false;
+    }
+
+    void clear() { _fault_points.clear(); }
+
+private:
+    std::map<std::string, bool> _fault_points;
+};
+
+#define FB_FAULT_SET(name)             ::fastblock::test::fault_injector().set_fault_point(name, true)
+#define FB_FAULT_CHECK(name)           ::fastblock::test::fault_injector().should_fail(name)
+#define FB_FAULT_CLEAR()               ::fastblock::test::fault_injector().clear()
+
+/**
+ * @brief Exception simulator for testing exception handling
+ */
+class exception_simulator {
+public:
+    template<typename ExceptionType>
+    static void throw_if(bool condition, const std::string& message = "") {
+        if (condition) {
+            throw ExceptionType(message);
+        }
+    }
+
+    template<typename ExceptionType>
+    static void throw_randomly(double probability, const std::string& message = "") {
+        if ((double)rand() / RAND_MAX < probability) {
+            throw ExceptionType(message);
+        }
+    }
+
+    template<typename Func>
+    static bool throws_exception(Func func) {
+        try {
+            func();
+            return false;
+        } catch (...) {
+            return true;
+        }
+    }
+};
+
+#define FB_THROW_IF(condition, exception_type, message)                             \
+    ::fastblock::test::exception_simulator::throw_if<exception_type>(condition, message)
+
+#define FB_THROW_RANDOM(probability, exception_type, message)                      \
+    ::fastblock::test::exception_simulator::throw_randomly<exception_type>(probability, message)
+
+#define FB_THROWS(func)                                                             \
+    ::fastblock::test::exception_simulator::throws_exception(func)
