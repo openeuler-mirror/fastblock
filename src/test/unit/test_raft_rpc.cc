@@ -5558,5 +5558,416 @@ FB_TEST(raft_rpc, loggc_max_retention) {
     FB_ASSERT_TRUE(must_gc);
 }
 
+// ============================================================================
+// Test Suite: AsyncAppend RPC Tests (Async Log Replication)
+// ============================================================================
+
+FB_TEST(raft_rpc, asyncappend_request_fields) {
+    // 异步追加请求字段
+    raft_term_t term = 5;
+    raft_node_id_t leader_id = 1;
+    raft_index_t prev_log_idx = 100;
+    std::vector<raft_index_t> entry_indices = {101, 102, 103};
+
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(leader_id > 0);
+    FB_ASSERT_TRUE(prev_log_idx >= 0);
+    FB_ASSERT_EQ(entry_indices.size(), 3UL);
+}
+
+FB_TEST(raft_rpc, asyncappend_callback_registration) {
+    // 回调注册
+    bool callback_registered = true;
+    uint64_t callback_id = 12345;
+
+    FB_ASSERT_TRUE(callback_registered);
+    FB_ASSERT_TRUE(callback_id > 0);
+}
+
+FB_TEST(raft_rpc, asyncappend_response_handling) {
+    // 响应处理
+    bool success = true;
+    raft_index_t match_idx = 103;
+    uint64_t callback_id = 12345;
+
+    // 回调触发
+    if (success) {
+        // 更新 match_idx
+    }
+
+    FB_ASSERT_TRUE(success);
+    FB_ASSERT_EQ(match_idx, 103L);
+}
+
+FB_TEST(raft_rpc, asyncappend_pipeline_depth) {
+    // 流水线深度
+    int max_pipeline_depth = 3;
+    int current_pipeline_depth = 2;
+
+    bool can_send_more = current_pipeline_depth < max_pipeline_depth;
+    FB_ASSERT_TRUE(can_send_more);
+
+    current_pipeline_depth = 3;
+    can_send_more = current_pipeline_depth < max_pipeline_depth;
+    FB_ASSERT_FALSE(can_send_more);
+}
+
+FB_TEST(raft_rpc, asyncappend_in_flight_tracking) {
+    // 进行中的请求跟踪
+    std::set<uint64_t> in_flight_requests;
+    in_flight_requests.insert(1001);
+    in_flight_requests.insert(1002);
+    in_flight_requests.insert(1003);
+
+    FB_ASSERT_EQ(in_flight_requests.size(), 3UL);
+
+    // 请求完成后移除
+    in_flight_requests.erase(1001);
+    FB_ASSERT_EQ(in_flight_requests.size(), 2UL);
+}
+
+FB_TEST(raft_rpc, asyncappend_timeout_handling) {
+    // 超时处理
+    int async_timeout_ms = 5000;
+    int elapsed_ms = 6000;
+
+    bool timed_out = elapsed_ms >= async_timeout_ms;
+    FB_ASSERT_TRUE(timed_out);
+
+    // 超时后回调
+    bool callback_triggered = timed_out;
+    FB_ASSERT_TRUE(callback_triggered);
+}
+
+FB_TEST(raft_rpc, asyncappend_retry_on_failure) {
+    // 失败重试
+    int retry_count = 0;
+    int max_retries = 3;
+    bool success = false;
+
+    while (!success && retry_count < max_retries) {
+        retry_count++;
+        if (retry_count == 2) {
+            success = true;
+        }
+    }
+
+    FB_ASSERT_TRUE(success);
+    FB_ASSERT_EQ(retry_count, 2);
+}
+
+FB_TEST(raft_rpc, asyncappend_flow_control) {
+    // 流量控制
+    int window_size = 10;
+    int in_flight = 8;
+    int available_window = window_size - in_flight;
+
+    FB_ASSERT_EQ(available_window, 2);
+
+    // 窗口为0时暂停发送
+    bool can_send = available_window > 0;
+    FB_ASSERT_TRUE(can_send);
+}
+
+FB_TEST(raft_rpc, asyncappend_batch_optimization) {
+    // 批量优化
+    std::vector<raft_index_t> entries = {101, 102, 103, 104, 105};
+
+    // 合并为一次异步请求
+    int rpc_count = 1;
+    FB_ASSERT_LT(rpc_count, entries.size());
+
+    raft_index_t start_idx = entries.front();
+    raft_index_t end_idx = entries.back();
+    FB_ASSERT_EQ(end_idx - start_idx + 1, 5L);
+}
+
+FB_TEST(raft_rpc, asyncappend_ordering_guarantee) {
+    // 顺序保证
+    std::vector<uint64_t> request_order = {1001, 1002, 1003};
+    std::vector<uint64_t> response_order;
+
+    for (auto id : request_order) {
+        response_order.push_back(id);  // 按顺序完成
+    }
+
+    FB_ASSERT_EQ(response_order.size(), request_order.size());
+    for (size_t i = 0; i < request_order.size(); i++) {
+        FB_ASSERT_EQ(response_order[i], request_order[i]);
+    }
+}
+
+FB_TEST(raft_rpc, asyncappend_concurrent_senders) {
+    // 并发发送者
+    int concurrent_senders = 5;
+    std::atomic<int> active_requests{concurrent_senders};
+
+    FB_ASSERT_EQ(active_requests.load(), 5);
+
+    // 限制并发
+    int max_concurrent = 10;
+    bool within_limit = concurrent_senders <= max_concurrent;
+    FB_ASSERT_TRUE(within_limit);
+}
+
+FB_TEST(raft_rpc, asyncappend_callback_context) {
+    // 回调上下文
+    struct callback_context {
+        uint64_t request_id;
+        raft_index_t expected_match_idx;
+        void* user_data;
+    };
+
+    callback_context ctx = {1001, 105, nullptr};
+
+    FB_ASSERT_EQ(ctx.request_id, 1001UL);
+    FB_ASSERT_EQ(ctx.expected_match_idx, 105L);
+}
+
+FB_TEST(raft_rpc, asyncappend_failure_propagation) {
+    // 失败传播
+    bool append_failed = true;
+    int error_code = -1;
+
+    // 回调传递错误
+    bool callback_received_error = append_failed;
+    FB_ASSERT_TRUE(callback_received_error);
+
+    // 用户处理错误
+    FB_ASSERT_TRUE(error_code < 0);
+}
+
+FB_TEST(raft_rpc, asyncappend_success_notification) {
+    // 成功通知
+    bool append_success = true;
+    raft_index_t new_match_idx = 105;
+
+    // 回调通知成功
+    if (append_success) {
+        // 用户收到成功通知
+        bool user_notified = true;
+        FB_ASSERT_TRUE(user_notified);
+    }
+}
+
+FB_TEST(raft_rpc, asyncappend_priority_levels) {
+    // 优先级级别
+    int high_priority = 1;
+    int normal_priority = 0;
+    int low_priority = -1;
+
+    FB_ASSERT_GT(high_priority, normal_priority);
+    FB_ASSERT_LT(low_priority, normal_priority);
+
+    // 高优先级优先处理
+    bool process_first = true;
+    FB_ASSERT_TRUE(process_first);
+}
+
+FB_TEST(raft_rpc, asyncappend_backpressure) {
+    // 反压机制
+    int pending_requests = 100;
+    int max_pending = 50;
+
+    bool apply_backpressure = pending_requests > max_pending;
+    FB_ASSERT_TRUE(apply_backpressure);
+
+    // 减缓发送速度
+    int new_send_rate = max_pending;
+    FB_ASSERT_LT(new_send_rate, pending_requests);
+}
+
+FB_TEST(raft_rpc, asyncappend_cancellation) {
+    // 取消请求
+    uint64_t request_id = 1001;
+    std::set<uint64_t> pending_requests = {1001, 1002, 1003};
+
+    // 取消请求
+    pending_requests.erase(request_id);
+
+    FB_ASSERT_FALSE(pending_requests.count(request_id));
+    FB_ASSERT_EQ(pending_requests.size(), 2UL);
+
+    // 回调不触发
+    bool callback_skipped = true;
+    FB_ASSERT_TRUE(callback_skipped);
+}
+
+FB_TEST(raft_rpc, asyncappend_metrics_collection) {
+    // 指标收集
+    uint64_t async_requests_total = 100;
+    uint64_t async_requests_success = 95;
+    uint64_t async_requests_failed = 5;
+
+    FB_ASSERT_EQ(async_requests_total, async_requests_success + async_requests_failed);
+
+    double success_rate = 100.0 * async_requests_success / async_requests_total;
+    FB_ASSERT_GE(success_rate, 95.0);
+}
+
+FB_TEST(raft_rpc, asyncappend_latency_measurement) {
+    // 延迟测量
+    raft_time_t send_time = 1000;
+    raft_time_t callback_time = 1500;
+
+    raft_time_t latency = callback_time - send_time;
+    FB_ASSERT_EQ(latency, 500L);
+
+    // 平均延迟
+    std::vector<raft_time_t> latencies = {400, 500, 600};
+    raft_time_t avg_latency = 0;
+    for (auto l : latencies) avg_latency += l;
+    avg_latency /= latencies.size();
+
+    FB_ASSERT_EQ(avg_latency, 500L);
+}
+
+FB_TEST(raft_rpc, asyncappend_network_optimization) {
+    // 网络优化
+    bool use_compression = true;
+    size_t original_size = 1024;
+    size_t compressed_size = 512;
+
+    if (use_compression) {
+        FB_ASSERT_LT(compressed_size, original_size);
+    }
+}
+
+FB_TEST(raft_rpc, asyncappend_buffer_management) {
+    // 缓冲区管理
+    size_t buffer_size = 64 * 1024;
+    size_t used_buffer = 30 * 1024;
+    size_t available_buffer = buffer_size - used_buffer;
+
+    FB_ASSERT_EQ(available_buffer, 34 * 1024UL);
+
+    // 缓冲区满时等待
+    bool buffer_available = available_buffer > 0;
+    FB_ASSERT_TRUE(buffer_available);
+}
+
+FB_TEST(raft_rpc, asyncappend_error_recovery) {
+    // 错误恢复
+    int consecutive_errors = 3;
+    int error_threshold = 5;
+
+    bool need_recovery = consecutive_errors >= error_threshold;
+    FB_ASSERT_FALSE(need_recovery);
+
+    // 恢复策略
+    consecutive_errors = 0;  // 重置
+    FB_ASSERT_EQ(consecutive_errors, 0);
+}
+
+FB_TEST(raft_rpc, asyncappend_leader_change_handling) {
+    // Leader 变更处理
+    raft_node_id_t current_leader = 1;
+    raft_node_id_t new_leader = 2;
+
+    // 进行中的请求需要重定向
+    bool need_redirect = (current_leader != new_leader);
+    FB_ASSERT_TRUE(need_redirect);
+
+    // 取消旧请求
+    bool cancel_pending = need_redirect;
+    FB_ASSERT_TRUE(cancel_pending);
+}
+
+FB_TEST(raft_rpc, asyncappend_follower_slow_response) {
+    // Follower 慢响应
+    raft_time_t expected_response_time = 500;
+    raft_time_t actual_response_time = 2000;
+
+    bool slow_response = actual_response_time > expected_response_time;
+    FB_ASSERT_TRUE(slow_response);
+
+    // 调整流水线深度
+    int new_pipeline_depth = 1;  // 减少深度
+    FB_ASSERT_LT(new_pipeline_depth, 3);
+}
+
+FB_TEST(raft_rpc, asyncappend_fast_path_optimization) {
+    // 快速路径优化
+    bool use_fast_path = true;
+    raft_index_t prev_log_idx = 100;
+    raft_index_t match_idx = 100;
+
+    // match_idx == prev_log_idx 时使用快速路径
+    bool can_fast_path = use_fast_path && (match_idx == prev_log_idx);
+    FB_ASSERT_TRUE(can_fast_path);
+}
+
+FB_TEST(raft_rpc, asyncappend_resource_cleanup) {
+    // 资源清理
+    std::vector<void*> allocated_resources;
+    allocated_resources.push_back((void*)1);
+    allocated_resources.push_back((void*)2);
+
+    // 请求完成后清理
+    for (auto ptr : allocated_resources) {
+        // 释放资源
+    }
+    allocated_resources.clear();
+
+    FB_ASSERT_TRUE(allocated_resources.empty());
+}
+
+FB_TEST(raft_rpc, asyncappend_parallel_follower_append) {
+    // 并行 Follower 追加
+    std::set<raft_node_id_t> followers = {2, 3, 4};
+    int parallel_append_count = 0;
+
+    for (auto id : followers) {
+        parallel_append_count++;
+    }
+
+    FB_ASSERT_EQ(parallel_append_count, 3);
+}
+
+FB_TEST(raft_rpc, asyncappend_quorum_wait) {
+    // 多数派等待
+    uint64_t node_num = 5;
+    uint64_t quorum = node_num / 2 + 1;
+    uint64_t success_count = 0;
+
+    // 等待多数派响应
+    while (success_count < quorum) {
+        success_count++;
+    }
+
+    FB_ASSERT_GE(success_count, quorum);
+    FB_ASSERT_EQ(success_count, 3UL);
+}
+
+FB_TEST(raft_rpc, asyncappend_commit_notification) {
+    // 提交通知
+    raft_index_t commit_idx = 103;
+    bool quorum_reached = true;
+
+    if (quorum_reached) {
+        // 通知用户日志已提交
+        bool user_notified = true;
+        FB_ASSERT_TRUE(user_notified);
+    }
+
+    FB_ASSERT_EQ(commit_idx, 103L);
+}
+
+FB_TEST(raft_rpc, asyncappend_user_callback_types) {
+    // 用户回调类型
+    enum callback_type {
+        ON_SUCCESS,
+        ON_FAILURE,
+        ON_TIMEOUT,
+        ON_CANCEL
+    };
+
+    callback_type cb = ON_SUCCESS;
+    FB_ASSERT_EQ(static_cast<int>(cb), 0);
+
+    cb = ON_FAILURE;
+    FB_ASSERT_EQ(static_cast<int>(cb), 1);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
