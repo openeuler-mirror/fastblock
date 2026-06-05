@@ -3018,3 +3018,140 @@ state_expectation<StateType> expect_state(StateType state) {
 
 #define FB_EXPECT_STATE(state)                                                      \
     ::fastblock::test::expect_state(state)
+
+// ============================================================================
+// File Testing Utilities
+// ============================================================================
+
+/**
+ * @brief File testing utilities
+ */
+class file_tester {
+public:
+    static bool file_exists(const std::string& path) {
+        std::ifstream f(path);
+        return f.good();
+    }
+
+    static bool file_readable(const std::string& path) {
+        std::ifstream f(path);
+        return f.is_open();
+    }
+
+    static bool file_writable(const std::string& path) {
+        std::ofstream f(path, std::ios::app);
+        return f.is_open();
+    }
+
+    static size_t file_size(const std::string& path) {
+        std::ifstream f(path, std::ifstream::ate | std::ifstream::binary);
+        return f.tellg();
+    }
+
+    static std::string file_content(const std::string& path) {
+        std::ifstream f(path);
+        std::stringstream ss;
+        ss << f.rdbuf();
+        return ss.str();
+    }
+
+    static bool file_contains(const std::string& path, const std::string& content) {
+        std::string file_content_str = file_content(path);
+        return file_content_str.find(content) != std::string::npos;
+    }
+
+    static bool file_starts_with(const std::string& path, const std::string& prefix) {
+        std::ifstream f(path);
+        std::string first_line;
+        std::getline(f, first_line);
+        return first_line.substr(0, prefix.length()) == prefix;
+    }
+
+    static bool file_ends_with(const std::string& path, const std::string& suffix) {
+        std::string content = file_content(path);
+        if (content.length() < suffix.length()) return false;
+        return content.substr(content.length() - suffix.length()) == suffix;
+    }
+
+    static bool directory_exists(const std::string& path) {
+        struct stat st;
+        return stat(path.c_str(), &st) == 0 && (st.st_mode & S_IFDIR);
+    }
+
+    static bool create_temp_file(const std::string& path, const std::string& content) {
+        std::ofstream f(path);
+        if (!f.is_open()) return false;
+        f << content;
+        return true;
+    }
+
+    static bool delete_file(const std::string& path) {
+        return std::remove(path.c_str()) == 0;
+    }
+
+    static bool copy_file(const std::string& src, const std::string& dst) {
+        std::ifstream in(src, std::ios::binary);
+        std::ofstream out(dst, std::ios::binary);
+        if (!in.is_open() || !out.is_open()) return false;
+        out << in.rdbuf();
+        return true;
+    }
+
+    static std::vector<std::string> list_directory(const std::string& path) {
+        std::vector<std::string> files;
+        DIR* dir = opendir(path.c_str());
+        if (dir) {
+            struct dirent* entry;
+            while ((entry = readdir(dir)) != nullptr) {
+                if (entry->d_name[0] != '.') {
+                    files.push_back(entry->d_name);
+                }
+            }
+            closedir(dir);
+        }
+        return files;
+    }
+};
+
+#define FB_FILE_EXISTS(path)           ::fastblock::test::file_tester::file_exists(path)
+#define FB_FILE_READABLE(path)         ::fastblock::test::file_tester::file_readable(path)
+#define FB_FILE_WRITABLE(path)         ::fastblock::test::file_tester::file_writable(path)
+#define FB_FILE_SIZE(path)             ::fastblock::test::file_tester::file_size(path)
+#define FB_FILE_CONTENT(path)          ::fastblock::test::file_tester::file_content(path)
+#define FB_FILE_CONTAINS(path, content)                                            \
+    ::fastblock::test::file_tester::file_contains(path, content)
+#define FB_FILE_STARTS_WITH(path, prefix)                                          \
+    ::fastblock::test::file_tester::file_starts_with(path, prefix)
+#define FB_FILE_ENDS_WITH(path, suffix)                                            \
+    ::fastblock::test::file_tester::file_ends_with(path, suffix)
+#define FB_DIR_EXISTS(path)            ::fastblock::test::file_tester::directory_exists(path)
+#define FB_CREATE_TEMP_FILE(path, content)                                         \
+    ::fastblock::test::file_tester::create_temp_file(path, content)
+#define FB_DELETE_FILE(path)           ::fastblock::test::file_tester::delete_file(path)
+#define FB_COPY_FILE(src, dst)        ::fastblock::test::file_tester::copy_file(src, dst)
+#define FB_LIST_DIR(path)             ::fastblock::test::file_tester::list_directory(path)
+
+/**
+ * @brief Temporary file guard for automatic cleanup
+ */
+class temp_file_guard {
+public:
+    temp_file_guard(const std::string& path) : _path(path) {}
+
+    ~temp_file_guard() {
+        if (!_released) {
+            file_tester::delete_file(_path);
+        }
+    }
+
+    const std::string& path() const { return _path; }
+
+    void release() { _released = true; }
+
+private:
+    std::string _path;
+    bool _released = false;
+};
+
+#define FB_TEMP_FILE_GUARD(path)                                                    \
+    ::fastblock::test::temp_file_guard(path)
