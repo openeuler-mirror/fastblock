@@ -1837,3 +1837,108 @@ public:
     ::fastblock::test::test_formatter::format_progress(current, total, name)
 #define FB_FORMAT_ERROR(name, error, file, line)                                   \
     ::fastblock::test::test_formatter::format_error(name, error, file, line)
+
+// ============================================================================
+// Memory and Resource Tracking
+// ============================================================================
+
+/**
+ * @brief Simple memory tracker for detecting leaks in tests
+ */
+class memory_tracker {
+public:
+    static memory_tracker& instance() {
+        static memory_tracker tracker;
+        return tracker;
+    }
+
+    void record_allocation(size_t size) {
+        _allocations += size;
+        _alloc_count++;
+    }
+
+    void record_deallocation(size_t size) {
+        _deallocations += size;
+        _dealloc_count++;
+    }
+
+    size_t allocated() const { return _allocations; }
+    size_t deallocated() const { return _deallocations; }
+    size_t leak() const { return _allocations - _deallocations; }
+    size_t alloc_count() const { return _alloc_count; }
+    size_t dealloc_count() const { return _dealloc_count; }
+
+    void reset() {
+        _allocations = 0;
+        _deallocations = 0;
+        _alloc_count = 0;
+        _dealloc_count = 0;
+    }
+
+private:
+    memory_tracker() : _allocations(0), _deallocations(0), _alloc_count(0), _dealloc_count(0) {}
+    size_t _allocations;
+    size_t _deallocations;
+    size_t _alloc_count;
+    size_t _dealloc_count;
+};
+
+#define FB_RECORD_ALLOC(size)          ::fastblock::test::memory_tracker::instance().record_allocation(size)
+#define FB_RECORD_DEALLOC(size)        ::fastblock::test::memory_tracker::instance().record_deallocation(size)
+#define FB_MEMORY_LEAK()               ::fastblock::test::memory_tracker::instance().leak()
+#define FB_RESET_MEMORY_TRACKER()      ::fastblock::test::memory_tracker::instance().reset()
+
+/**
+ * @brief Resource guard for automatic cleanup
+ */
+template<typename T, typename CleanupFunc>
+class resource_guard {
+public:
+    resource_guard(T resource, CleanupFunc cleanup)
+        : _resource(resource), _cleanup(cleanup), _released(false) {}
+
+    ~resource_guard() {
+        if (!_released) {
+            _cleanup(_resource);
+        }
+    }
+
+    T get() const { return _resource; }
+
+    void release() { _released = true; }
+
+private:
+    T _resource;
+    CleanupFunc _cleanup;
+    bool _released;
+};
+
+template<typename T, typename CleanupFunc>
+resource_guard<T, CleanupFunc> make_guard(T resource, CleanupFunc cleanup) {
+    return resource_guard<T, CleanupFunc>(resource, cleanup);
+}
+
+#define FB_RESOURCE_GUARD(resource, cleanup)                                        \
+    ::fastblock::test::make_guard(resource, cleanup)
+
+/**
+ * @brief Scope exit for deferred cleanup
+ */
+class scope_exit {
+public:
+    template<typename Func>
+    explicit scope_exit(Func&& func) : _func(std::forward<Func>(func)), _dismissed(false) {}
+
+    ~scope_exit() {
+        if (!_dismissed) _func();
+    }
+
+    void dismiss() { _dismissed = true; }
+
+private:
+    std::function<void()> _func;
+    bool _dismissed;
+};
+
+#define FB_SCOPE_EXIT(code)                                                         \
+    ::fastblock::test::scope_exit fb_scope_exit_##__LINE__([&]() { code; })
