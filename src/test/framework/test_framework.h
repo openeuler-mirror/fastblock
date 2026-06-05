@@ -1160,3 +1160,125 @@ public:
 #define FB_TEST_PERFORMANCE(suite, name) FB_TEST_TAGGED(suite, name, FB_TAG(PERFORMANCE))
 #define FB_TEST_SANITY(suite, name) FB_TEST_TAGGED(suite, name, FB_TAG(SANITY))
 #define FB_TEST_REGRESSION(suite, name) FB_TEST_TAGGED(suite, name, FB_TAG(REGRESSION))
+
+// ============================================================================
+// PR8: Additional Assertion Macros
+// ============================================================================
+
+/**
+ * @brief Floating point comparison with tolerance
+ */
+#define FB_ASSERT_FLOAT_NEAR(expected, actual, tolerance)                          \
+    do {                                                                            \
+        double fb_diff = std::abs((expected) - (actual));                          \
+        if (fb_diff > (tolerance)) {                                               \
+            std::stringstream ss;                                                  \
+            ss << "Float assertion failed: " << #expected << " ~ " << #actual     \
+               << " (diff: " << fb_diff << ", tolerance: " << tolerance << ")";    \
+            ctx.fail(ss.str(), __FILE__, __LINE__);                               \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+/**
+ * @brief Exception assertion
+ */
+#define FB_ASSERT_THROW(expression, exception_type)                                \
+    do {                                                                            \
+        bool fb_caught = false;                                                    \
+        try {                                                                        \
+            expression;                                                             \
+        } catch (const exception_type&) {                                          \
+            fb_caught = true;                                                       \
+        } catch (...) {                                                             \
+            ctx.fail("Wrong exception type thrown", __FILE__, __LINE__);           \
+            return;                                                                 \
+        }                                                                           \
+        if (!fb_caught) {                                                           \
+            ctx.fail("No exception thrown: " #exception_type, __FILE__, __LINE__); \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+#define FB_ASSERT_NO_THROW(expression)                                             \
+    do {                                                                            \
+        try {                                                                        \
+            expression;                                                             \
+        } catch (...) {                                                             \
+            ctx.fail("Unexpected exception thrown", __FILE__, __LINE__);           \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+/**
+ * @brief Container assertions
+ */
+#define FB_ASSERT_EMPTY(container)                                                 \
+    do {                                                                            \
+        if (!(container).empty()) {                                                \
+            std::stringstream ss;                                                  \
+            ss << "Container not empty, size: " << (container).size();             \
+            ctx.fail(ss.str(), __FILE__, __LINE__);                               \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+#define FB_ASSERT_SIZE(container, expected_size)                                   \
+    do {                                                                            \
+        if ((container).size() != (expected_size)) {                               \
+            std::stringstream ss;                                                  \
+            ss << "Container size mismatch: expected " << (expected_size)          \
+               << ", actual " << (container).size();                               \
+            ctx.fail(ss.str(), __FILE__, __LINE__);                               \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+#define FB_ASSERT_CONTAINS(container, element)                                    \
+    do {                                                                            \
+        if (std::find((container).begin(), (container).end(), (element)) ==       \
+            (container).end()) {                                                   \
+            ctx.fail("Container does not contain element: " #element,             \
+                    __FILE__, __LINE__);                                           \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+/**
+ * @brief Range assertions
+ */
+#define FB_ASSERT_IN_RANGE(value, min_val, max_val)                                \
+    do {                                                                            \
+        if ((value) < (min_val) || (value) > (max_val)) {                          \
+            std::stringstream ss;                                                  \
+            ss << "Value not in range: " << (value) << " not in ["                 \
+               << (min_val) << ", " << (max_val) << "]";                           \
+            ctx.fail(ss.str(), __FILE__, __LINE__);                               \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+/**
+ * @brief Scoped timer for timing code blocks
+ */
+class scoped_timer {
+public:
+    scoped_timer(const std::string& name, test_context& ctx)
+        : _name(name), _ctx(ctx),
+          _start(std::chrono::high_resolution_clock::now()) {}
+
+    ~scoped_timer() {
+        auto end = std::chrono::high_resolution_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            end - _start);
+        SPDK_NOTICELOG("[%s] elapsed: %ld ms\n", _name.c_str(), elapsed.count());
+    }
+
+private:
+    std::string _name;
+    test_context& _ctx;
+    std::chrono::high_resolution_clock::time_point _start;
+};
+
+#define FB_SCOPED_TIMER(name)                                                      \
+    ::fastblock::test::scoped_timer fb_timer_##name(#name, ctx)
