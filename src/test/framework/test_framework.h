@@ -1088,3 +1088,75 @@ public:
     } while (0)
 
 #define MOCK_TIMES(n) n
+
+// ============================================================================
+// PR7: Test Tags and Filtering
+// ============================================================================
+
+/**
+ * @brief Test tag enumeration
+ */
+enum class test_tag {
+    NONE = 0,
+    QUICK = 1 << 0,
+    SLOW = 1 << 1,
+    INTEGRATION = 1 << 2,
+    UNIT = 1 << 3,
+    PERFORMANCE = 1 << 4,
+    FLAKY = 1 << 5,
+    SANITY = 1 << 6,
+    REGRESSION = 1 << 7
+};
+
+/**
+ * @brief Tagged test case
+ */
+class tagged_test_case : public test_case {
+public:
+    tagged_test_case(const std::string& name, const std::string& suite,
+                     test_func func, test_tag tag)
+        : test_case(name, suite, func), _tag(tag) {}
+
+    test_tag tag() const { return _tag; }
+
+private:
+    test_tag _tag;
+};
+
+/**
+ * @brief Tagged test registrar
+ */
+class tagged_test_registrar {
+public:
+    tagged_test_registrar(const std::string& suite_name,
+                          const std::string& test_name,
+                          test_case::test_func func,
+                          test_tag tag) {
+        auto tc = std::make_shared<tagged_test_case>(test_name, suite_name, func, tag);
+        test_registry::instance().register_test(suite_name, tc);
+    }
+};
+
+/**
+ * @brief Define a tagged test
+ * Usage:
+ *   FB_TEST_TAGGED(raft_state, quick_test, FB_TAG(QUICK)) { ... }
+ */
+#define FB_TAG(name) ::fastblock::test::test_tag::name
+
+#define FB_TEST_TAGGED(suite, name, tag)                                           \
+    void fb_test_tag_##suite##_##name(::fastblock::test::test_context& ctx);       \
+    static ::fastblock::test::tagged_test_registrar                                \
+        fb_tag_reg_##suite##_##name(#suite, #name,                                \
+                                     fb_test_tag_##suite##_##name, tag);            \
+    void fb_test_tag_##suite##_##name(::fastblock::test::test_context& ctx)
+
+/**
+ * @brief Convenience macros for common tags
+ */
+#define FB_TEST_QUICK(suite, name) FB_TEST_TAGGED(suite, name, FB_TAG(QUICK))
+#define FB_TEST_SLOW(suite, name) FB_TEST_TAGGED(suite, name, FB_TAG(SLOW))
+#define FB_TEST_INTEGRATION(suite, name) FB_TEST_TAGGED(suite, name, FB_TAG(INTEGRATION))
+#define FB_TEST_PERFORMANCE(suite, name) FB_TEST_TAGGED(suite, name, FB_TAG(PERFORMANCE))
+#define FB_TEST_SANITY(suite, name) FB_TEST_TAGGED(suite, name, FB_TAG(SANITY))
+#define FB_TEST_REGRESSION(suite, name) FB_TEST_TAGGED(suite, name, FB_TAG(REGRESSION))
