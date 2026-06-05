@@ -466,5 +466,140 @@ FB_TEST(framework_macros, bit_set_high_position) {
     FB_ASSERT_BIT_SET(value, bit);
 }
 
+// ============================================================================
+// Test Suite: Random Generator Macros
+// ============================================================================
+
+FB_TEST(framework_macros, random_int_basic) {
+    int min = 0;
+    int max = 100;
+
+    for (int i = 0; i < 100; i++) {
+        int value = FB_RANDOM_INT(min, max);
+        FB_ASSERT_IN_RANGE(value, min, max);
+    }
+}
+
+FB_TEST(framework_macros, random_int_negative_range) {
+    int min = -100;
+    int max = -10;
+
+    for (int i = 0; i < 50; i++) {
+        int value = FB_RANDOM_INT(min, max);
+        FB_ASSERT_IN_RANGE(value, min, max);
+    }
+}
+
+FB_TEST(framework_macros, random_int_same_min_max) {
+    int min = 42;
+    int max = 42;
+
+    int value = FB_RANDOM_INT(min, max);
+    FB_ASSERT_EQ(value, 42);
+}
+
+FB_TEST(framework_macros, random_uint64_basic) {
+    uint64_t min = 0;
+    uint64_t max = 1000000ULL;
+
+    for (int i = 0; i < 50; i++) {
+        uint64_t value = FB_RANDOM_UINT64(min, max);
+        FB_ASSERT_TRUE(value >= min);
+        FB_ASSERT_TRUE(value <= max);
+    }
+}
+
+FB_TEST(framework_macros, random_uint64_large_range) {
+    uint64_t min = 0;
+    uint64_t max = std::numeric_limits<uint64_t>::max() / 2;
+
+    uint64_t value = FB_RANDOM_UINT64(min, max);
+    FB_ASSERT_TRUE(value >= min);
+    FB_ASSERT_TRUE(value <= max);
+}
+
+FB_TEST(framework_macros, random_string_basic) {
+    int len = 10;
+    std::string str = FB_RANDOM_STRING(len);
+
+    FB_ASSERT_EQ(static_cast<int>(str.length()), len);
+}
+
+FB_TEST(framework_macros, random_string_various_lengths) {
+    for (int len = 1; len <= 100; len++) {
+        std::string str = FB_RANDOM_STRING(len);
+        FB_ASSERT_EQ(static_cast<int>(str.length()), len);
+    }
+}
+
+FB_TEST(framework_macros, random_string_empty) {
+    std::string str = FB_RANDOM_STRING(0);
+    FB_ASSERT_TRUE(str.empty());
+}
+
+FB_TEST(framework_macros, random_bytes_basic) {
+    int len = 16;
+    std::string bytes = FB_RANDOM_BYTES(len);
+
+    FB_ASSERT_EQ(static_cast<int>(bytes.length()), len);
+}
+
+FB_TEST(framework_macros, random_bytes_various_lengths) {
+    for (int len = 1; len <= 32; len++) {
+        std::string bytes = FB_RANDOM_BYTES(len);
+        FB_ASSERT_EQ(static_cast<int>(bytes.length()), len);
+    }
+}
+
+FB_TEST(framework_macros, random_double_basic) {
+    double min = 0.0;
+    double max = 1.0;
+
+    for (int i = 0; i < 100; i++) {
+        double value = FB_RANDOM_DOUBLE(min, max);
+        FB_ASSERT_TRUE(value >= min);
+        FB_ASSERT_TRUE(value <= max);
+    }
+}
+
+FB_TEST(framework_macros, random_double_range) {
+    double min = -100.5;
+    double max = 200.5;
+
+    for (int i = 0; i < 50; i++) {
+        double value = FB_RANDOM_DOUBLE(min, max);
+        FB_ASSERT_TRUE(value >= min);
+        FB_ASSERT_TRUE(value <= max);
+    }
+}
+
+FB_TEST(framework_macros, random_bool_basic) {
+    int true_count = 0;
+    int false_count = 0;
+
+    for (int i = 0; i < 1000; i++) {
+        if (FB_RANDOM_BOOL()) {
+            true_count++;
+        } else {
+            false_count++;
+        }
+    }
+
+    // Both should have reasonable distribution
+    FB_ASSERT_TRUE(true_count > 200);
+    FB_ASSERT_TRUE(false_count > 200);
+}
+
+FB_TEST(framework_macros, random_uniqueness) {
+    std::set<int> values;
+
+    for (int i = 0; i < 100; i++) {
+        values.insert(FB_RANDOM_INT(0, 10000));
+    }
+
+    // Should have mostly unique values
+    FB_ASSERT_TRUE(values.size() > 90);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
