@@ -465,6 +465,17 @@ public:
         }                                                                       \
     } while (0)
 
+#define FB_ASSERT_GE(a, b)                                                     \
+    do {                                                                        \
+        if (!((a) >= (b))) {                                                   \
+            std::stringstream ss;                                               \
+            ss << "Assertion failed: " << #a << " >= " << #b                   \
+               << " (" << (a) << " is less than " << (b) << ")";               \
+            ctx.fail(ss.str(), __FILE__, __LINE__);                            \
+            return;                                                             \
+        }                                                                       \
+    } while (0)
+
 #define FB_ASSERT_NULL(ptr)                                                    \
     do {                                                                        \
         if ((ptr) != nullptr) {                                                \
