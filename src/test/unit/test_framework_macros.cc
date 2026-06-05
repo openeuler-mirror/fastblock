@@ -121,5 +121,121 @@ FB_TEST(framework_macros, float_precision_different_types) {
     FB_ASSERT_FLOAT_NEAR(f, d, tolerance);
 }
 
+// ============================================================================
+// Test Suite: String Assertion Macros
+// ============================================================================
+
+FB_TEST(framework_macros, str_contains_basic) {
+    std::string str = "hello world";
+    std::string substr = "world";
+
+    FB_ASSERT_STR_CONTAINS(str, substr);
+}
+
+FB_TEST(framework_macros, str_contains_empty) {
+    std::string str = "hello";
+    std::string substr = "";
+
+    // Empty substring should always match
+    FB_ASSERT_STR_CONTAINS(str, substr);
+}
+
+FB_TEST(framework_macros, str_contains_multiple) {
+    std::string str = "the quick brown fox";
+    std::string substr = "quick";
+
+    FB_ASSERT_STR_CONTAINS(str, substr);
+    substr = "brown";
+    FB_ASSERT_STR_CONTAINS(str, substr);
+    substr = "fox";
+    FB_ASSERT_STR_CONTAINS(str, substr);
+}
+
+FB_TEST(framework_macros, str_contains_case_sensitive) {
+    std::string str = "Hello World";
+    std::string substr = "Hello";
+
+    FB_ASSERT_STR_CONTAINS(str, substr);
+}
+
+FB_TEST(framework_macros, str_starts_with_basic) {
+    std::string str = "prefix_suffix";
+    std::string prefix = "prefix";
+
+    FB_ASSERT_STR_STARTS_WITH(str, prefix);
+}
+
+FB_TEST(framework_macros, str_starts_with_empty_prefix) {
+    std::string str = "hello";
+    std::string prefix = "";
+
+    // Empty prefix should match
+    FB_ASSERT_STR_STARTS_WITH(str, prefix);
+}
+
+FB_TEST(framework_macros, str_starts_with_full_string) {
+    std::string str = "complete";
+    std::string prefix = "complete";
+
+    FB_ASSERT_STR_STARTS_WITH(str, prefix);
+}
+
+FB_TEST(framework_macros, str_ends_with_basic) {
+    std::string str = "prefix_suffix";
+    std::string suffix = "suffix";
+
+    FB_ASSERT_STR_ENDS_WITH(str, suffix);
+}
+
+FB_TEST(framework_macros, str_ends_with_empty_suffix) {
+    std::string str = "hello";
+    std::string suffix = "";
+
+    // Empty suffix should match
+    FB_ASSERT_STR_ENDS_WITH(str, suffix);
+}
+
+FB_TEST(framework_macros, str_ends_with_full_string) {
+    std::string str = "complete";
+    std::string suffix = "complete";
+
+    FB_ASSERT_STR_ENDS_WITH(str, suffix);
+}
+
+FB_TEST(framework_macros, str_not_contains_basic) {
+    std::string str = "hello world";
+    std::string substr = "foo";
+
+    FB_ASSERT_STR_NOT_CONTAINS(str, substr);
+}
+
+FB_TEST(framework_macros, str_not_contains_substring_present) {
+    std::string str = "hello";
+    std::string substr = "xyz";
+
+    FB_ASSERT_STR_NOT_CONTAINS(str, substr);
+}
+
+FB_TEST(framework_macros, str_eq_with_normal_strings) {
+    std::string expected = "test string";
+    std::string actual = "test string";
+
+    FB_ASSERT_STR_EQ(expected, actual);
+}
+
+FB_TEST(framework_macros, str_eq_with_empty_strings) {
+    std::string expected = "";
+    std::string actual = "";
+
+    FB_ASSERT_STR_EQ(expected, actual);
+}
+
+FB_TEST(framework_macros, str_eq_with_c_strings) {
+    const char* expected = "hello";
+    const char* actual = "hello";
+
+    FB_ASSERT_STR_EQ(expected, actual);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
