@@ -2032,3 +2032,126 @@ void run_concurrent(int thread_count, Func func) {
 
 #define FB_RUN_CONCURRENT(count, func)                                             \
     ::fastblock::test::run_concurrent(count, func)
+
+// ============================================================================
+// Predicate Helpers
+// ============================================================================
+
+/**
+ * @brief Predicate builders for complex conditions
+ */
+namespace predicates {
+
+template<typename T>
+std::function<bool(T)> always_true() {
+    return [](T) { return true; };
+}
+
+template<typename T>
+std::function<bool(T)> always_false() {
+    return [](T) { return false; };
+}
+
+template<typename T>
+std::function<bool(T)> is_equal(const T& expected) {
+    return [expected](T actual) { return actual == expected; };
+}
+
+template<typename T>
+std::function<bool(T)> is_not_equal(const T& unexpected) {
+    return [unexpected](T actual) { return actual != unexpected; };
+}
+
+template<typename T>
+std::function<bool(T)> is_greater_than(const T& threshold) {
+    return [threshold](T actual) { return actual > threshold; };
+}
+
+template<typename T>
+std::function<bool(T)> is_less_than(const T& threshold) {
+    return [threshold](T actual) { return actual < threshold; };
+}
+
+template<typename T>
+std::function<bool(T)> is_greater_or_equal(const T& threshold) {
+    return [threshold](T actual) { return actual >= threshold; };
+}
+
+template<typename T>
+std::function<bool(T)> is_less_or_equal(const T& threshold) {
+    return [threshold](T actual) { return actual <= threshold; };
+}
+
+template<typename T>
+std::function<bool(T)> is_between(const T& min_val, const T& max_val) {
+    return [min_val, max_val](T actual) {
+        return actual >= min_val && actual <= max_val;
+    };
+}
+
+template<typename T>
+std::function<bool(T)> is_not_between(const T& min_val, const T& max_val) {
+    return [min_val, max_val](T actual) {
+        return actual < min_val || actual > max_val;
+    };
+}
+
+template<typename T>
+std::function<bool(T)> is_null() {
+    return [](T actual) { return actual == nullptr; };
+}
+
+template<typename T>
+std::function<bool(T)> is_not_null() {
+    return [](T actual) { return actual != nullptr; };
+}
+
+template<typename T>
+std::function<bool(T)> is_one_of(const std::vector<T>& values) {
+    return [&values](T actual) {
+        return std::find(values.begin(), values.end(), actual) != values.end();
+    };
+}
+
+template<typename T>
+std::function<bool(T)> is_none_of(const std::vector<T>& values) {
+    return [&values](T actual) {
+        return std::find(values.begin(), values.end(), actual) == values.end();
+    };
+}
+
+template<typename T>
+std::function<bool(T)> negate(std::function<bool(T)> predicate) {
+    return [predicate](T actual) { return !predicate(actual); };
+}
+
+template<typename T>
+std::function<bool(T)> combine_and(std::function<bool(T)> p1, std::function<bool(T)> p2) {
+    return [p1, p2](T actual) { return p1(actual) && p2(actual); };
+}
+
+template<typename T>
+std::function<bool(T)> combine_or(std::function<bool(T)> p1, std::function<bool(T)> p2) {
+    return [p1, p2](T actual) { return p1(actual) || p2(actual); };
+}
+
+} // namespace predicates
+
+// Predicate convenience macros
+#define FB_PRED_TRUE()                 ::fastblock::test::predicates::always_true()
+#define FB_PRED_FALSE()                ::fastblock::test::predicates::always_false()
+#define FB_PRED_EQ(value)              ::fastblock::test::predicates::is_equal(value)
+#define FB_PRED_NE(value)              ::fastblock::test::predicates::is_not_equal(value)
+#define FB_PRED_GT(value)              ::fastblock::test::predicates::is_greater_than(value)
+#define FB_PRED_LT(value)              ::fastblock::test::predicates::is_less_than(value)
+#define FB_PRED_GE(value)              ::fastblock::test::predicates::is_greater_or_equal(value)
+#define FB_PRED_LE(value)              ::fastblock::test::predicates::is_less_or_equal(value)
+#define FB_PRED_BETWEEN(min, max)      ::fastblock::test::predicates::is_between(min, max)
+#define FB_PRED_NOT_BETWEEN(min, max)   ::fastblock::test::predicates::is_not_between(min, max)
+#define FB_PRED_NULL()                 ::fastblock::test::predicates::is_null()
+#define FB_PRED_NOT_NULL()             ::fastblock::test::predicates::is_not_null()
+#define FB_PRED_ONE_OF(values)          ::fastblock::test::predicates::is_one_of(values)
+#define FB_PRED_NONE_OF(values)         ::fastblock::test::predicates::is_none_of(values)
+#define FB_PRED_NEGATE(p)               ::fastblock::test::predicates::negate(p)
+#define FB_PRED_AND(p1, p2)             ::fastblock::test::predicates::combine_and(p1, p2)
+#define FB_PRED_OR(p1, p2)              ::fastblock::test::predicates::combine_or(p1, p2)
