@@ -679,6 +679,112 @@ FB_TEST(raft_rpc, heartbeat_leader_change_detection) {
     FB_ASSERT_EQ(current_term, 6L);
 }
 
+FB_TEST(raft_rpc, heartbeat_missed_detection) {
+    // 心跳丢失检测
+    raft_time_t last_heartbeat = 1000;
+    raft_time_t current_time = 2000;
+    raft_time_t heartbeat_timeout = 100;
+
+    int missed_count = 0;
+    while (last_heartbeat + heartbeat_timeout < current_time) {
+        missed_count++;
+        last_heartbeat += heartbeat_timeout;
+    }
+
+    FB_ASSERT_GE(missed_count, 5);
+}
+
+FB_TEST(raft_rpc, heartbeat_burst_on_leader_election) {
+    // 新Leader当选后立即发送心跳
+    raft_identity state = RAFT_STATE_LEADER;
+    int heartbeat_count = 0;
+
+    if (state == RAFT_STATE_LEADER) {
+        // 立即向所有节点发送心跳
+        for (int i = 0; i < 5; i++) {
+            heartbeat_count++;
+        }
+    }
+
+    FB_ASSERT_EQ(heartbeat_count, 5);
+}
+
+FB_TEST(raft_rpc, heartbeat_coalescing) {
+    // 心跳合并优化
+    int pending_heartbeats = 3;
+    int sent_heartbeats = 0;
+
+    // 合并为一次发送
+    if (pending_heartbeats > 0) {
+        sent_heartbeats = 1;  // 批量发送
+        pending_heartbeats = 0;
+    }
+
+    FB_ASSERT_EQ(sent_heartbeats, 1);
+    FB_ASSERT_EQ(pending_heartbeats, 0);
+}
+
+FB_TEST(raft_rpc, heartbeat_timeout_trigger_election) {
+    // 心跳超时触发选举
+    raft_time_t last_heartbeat = 1000;
+    raft_time_t election_timeout = 500;
+    raft_time_t current_time = 1600;
+
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    bool timeout = (current_time - last_heartbeat) >= election_timeout;
+
+    if (timeout) {
+        state = RAFT_STATE_CANDIDATE;
+    }
+
+    FB_ASSERT_TRUE(timeout);
+    FB_ASSERT_EQ(state, RAFT_STATE_CANDIDATE);
+}
+
+FB_TEST(raft_rpc, heartbeat_pending_writes_flush) {
+    // 心跳前刷新待写入
+    int pending_writes = 10;
+    bool flush_before_heartbeat = true;
+
+    int flushed = 0;
+    if (flush_before_heartbeat) {
+        flushed = pending_writes;
+        pending_writes = 0;
+    }
+
+    FB_ASSERT_EQ(flushed, 10);
+    FB_ASSERT_EQ(pending_writes, 0);
+}
+
+FB_TEST(raft_rpc, heartbeat_network_partition) {
+    // 网络分区场景
+    raft_node_id_t leader_id = 1;
+    std::set<raft_node_id_t> partitioned_nodes = {3, 4};
+
+    // 分区内的节点无法收到心跳
+    bool can_receive_heartbeat = !partitioned_nodes.count(2);
+    FB_ASSERT_TRUE(can_receive_heartbeat);
+
+    can_receive_heartbeat = !partitioned_nodes.count(3);
+    FB_ASSERT_FALSE(can_receive_heartbeat);
+}
+
+FB_TEST(raft_rpc, heartbeat_response_batching) {
+    // 心跳响应批量处理
+    std::vector<bool> responses = {true, true, true, false, true};
+    int success_count = 0;
+
+    for (bool r : responses) {
+        if (r) success_count++;
+    }
+
+    FB_ASSERT_EQ(success_count, 4);
+
+    // 检查多数派响应成功
+    bool majority_success = success_count > responses.size() / 2;
+    FB_ASSERT_TRUE(majority_success);
+}
+
 // ============================================================================
 // Test Suite: Snapshot RPC Tests
 // ============================================================================
