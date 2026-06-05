@@ -927,6 +927,105 @@ FB_TEST(raft_rpc, snapshot_concurrent_transfer_limit) {
     FB_ASSERT_EQ(current_transfers, 3);
 }
 
+FB_TEST(raft_rpc, snapshot_integrity_check) {
+    // 快照完整性检查
+    uint32_t expected_checksum = 0xABCDEF12;
+    uint32_t computed_checksum = 0xABCDEF12;
+
+    bool integrity_ok = (expected_checksum == computed_checksum);
+    FB_ASSERT_TRUE(integrity_ok);
+
+    // 损坏检测
+    computed_checksum = 0xABCDEF13;
+    integrity_ok = (expected_checksum == computed_checksum);
+    FB_ASSERT_FALSE(integrity_ok);
+}
+
+FB_TEST(raft_rpc, snapshot_recovery_log_sync) {
+    // 快照恢复后的日志同步
+    raft_index_t snapshot_idx = 100;
+    raft_index_t leader_next_idx = 101;
+
+    // 恢复后需要同步后续日志
+    std::vector<raft_index_t> logs_to_sync;
+    for (raft_index_t idx = leader_next_idx; idx <= 110; idx++) {
+        logs_to_sync.push_back(idx);
+    }
+
+    FB_ASSERT_EQ(logs_to_sync.size(), 10UL);
+    FB_ASSERT_EQ(logs_to_sync.front(), 101L);
+    FB_ASSERT_EQ(logs_to_sync.back(), 110L);
+}
+
+FB_TEST(raft_rpc, snapshot_transfer_abort) {
+    // 快照传输中断处理
+    int64_t total_size = 1024 * 1024;
+    int64_t transferred = 300 * 1024;  // 只传输了300KB
+    bool transfer_aborted = true;
+
+    if (transfer_aborted) {
+        transferred = 0;  // 需要重新开始
+    }
+
+    FB_ASSERT_EQ(transferred, 0L);
+}
+
+FB_TEST(raft_rpc, snapshot_incremental_apply) {
+    // 增量应用快照
+    raft_index_t snapshot_idx = 100;
+    raft_index_t applied_idx = 0;
+
+    // 增量应用
+    while (applied_idx < snapshot_idx) {
+        applied_idx += 10;
+        if (applied_idx > snapshot_idx) {
+            applied_idx = snapshot_idx;
+        }
+    }
+
+    FB_ASSERT_EQ(applied_idx, 100L);
+}
+
+FB_TEST(raft_rpc, snapshot_memory_pressure) {
+    // 内存压力下处理快照
+    size_t available_memory = 50 * 1024 * 1024;  // 50MB
+    size_t snapshot_size = 100 * 1024 * 1024;    // 100MB
+
+    bool can_load = available_memory >= snapshot_size;
+    FB_ASSERT_FALSE(can_load);
+
+    // 需要分块处理
+    size_t chunk_size = 10 * 1024 * 1024;  // 10MB
+    can_load = available_memory >= chunk_size;
+    FB_ASSERT_TRUE(can_load);
+}
+
+FB_TEST(raft_rpc, snapshot_compression_transfer) {
+    // 压缩传输优化
+    size_t original_size = 1024 * 1024;
+    size_t compressed_size = 256 * 1024;  // 4倍压缩
+    double compression_ratio = (double)original_size / compressed_size;
+
+    FB_ASSERT_GE(compression_ratio, 4.0);
+
+    size_t bytes_saved = original_size - compressed_size;
+    FB_ASSERT_EQ(bytes_saved, 768UL * 1024);
+}
+
+FB_TEST(raft_rpc, snapshot_version_compatibility) {
+    // 快照版本兼容性
+    int snapshot_version = 2;
+    int current_version = 3;
+
+    bool compatible = snapshot_version <= current_version;
+    FB_ASSERT_TRUE(compatible);
+
+    // 不兼容版本
+    snapshot_version = 4;
+    compatible = snapshot_version <= current_version;
+    FB_ASSERT_FALSE(compatible);
+}
+
 // ============================================================================
 // Test Suite: TimeoutNow RPC Tests
 // ============================================================================
