@@ -1536,5 +1536,70 @@ public:
 #define FB_REPEAT(value, count)        ::fastblock::test::test_value_builder::repeat(value, count)
 #define FB_SHUFFLE(values)             ::fastblock::test::test_value_builder::shuffle(values)
 
-} // namespace test
-} // namespace fastblock
+// ============================================================================
+// Enhanced Mock Framework
+// ============================================================================
+
+/**
+ * @brief Mock matcher for flexible expectations
+ */
+class mock_matcher {
+public:
+    template<typename T>
+    static std::function<bool(const mock_call&)> any() {
+        return [](const mock_call&) { return true; };
+    }
+
+    template<typename T>
+    static std::function<bool(const mock_call&)> eq(const T& expected) {
+        return [expected](const mock_call& call) {
+            if (call.args.empty()) return false;
+            return call.args[0] == std::to_string(expected);
+        };
+    }
+
+    template<typename T>
+    static std::function<bool(const mock_call&)> between(const T& min_val, const T& max_val) {
+        return [min_val, max_val](const mock_call& call) {
+            if (call.args.empty()) return false;
+            T val = std::stoi(call.args[0]);
+            return val >= min_val && val <= max_val;
+        };
+    }
+
+    static std::function<bool(const mock_call&)> contains(const std::string& substr) {
+        return [substr](const mock_call& call) {
+            for (const auto& arg : call.args) {
+                if (arg.find(substr) != std::string::npos) return true;
+            }
+            return false;
+        };
+    }
+};
+
+#define FB_MOCK_ANY()                   ::fastblock::test::mock_matcher::any()
+#define FB_MOCK_EQ(value)               ::fastblock::test::mock_matcher::eq(value)
+#define FB_MOCK_BETWEEN(min, max)       ::fastblock::test::mock_matcher::between(min, max)
+#define FB_MOCK_CONTAINS(substr)        ::fastblock::test::mock_matcher::contains(substr)
+
+/**
+ * @brief Enhanced mock verification
+ */
+class mock_verifier {
+public:
+    static bool verify_all(std::initializer_list<mock_base*> mocks) {
+        for (auto* mock : mocks) {
+            if (!mock->verify()) return false;
+        }
+        return true;
+    }
+
+    static void clear_all(std::initializer_list<mock_base*> mocks) {
+        for (auto* mock : mocks) {
+            mock->clear();
+        }
+    }
+};
+
+#define FB_VERIFY_ALL(...)              ::fastblock::test::mock_verifier::verify_all({__VA_ARGS__})
+#define FB_CLEAR_ALL(...)               ::fastblock::test::mock_verifier::clear_all({__VA_ARGS__})
