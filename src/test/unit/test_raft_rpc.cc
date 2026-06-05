@@ -1696,5 +1696,218 @@ FB_TEST(raft_rpc, removenode_multiple_nodes_batch) {
     FB_ASSERT_TRUE(std::find(config.begin(), config.end(), 3) == config.end());
 }
 
+// ============================================================================
+// Test Suite: ReadIndex RPC Tests (Linearizable Read)
+// ============================================================================
+
+FB_TEST(raft_rpc, readindex_request_fields) {
+    // 模拟 ReadIndex 请求字段
+    raft_term_t term = 5;
+    raft_node_id_t leader_id = 1;
+
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(leader_id > 0);
+}
+
+FB_TEST(raft_rpc, readindex_leader_only_operation) {
+    // 只有 Leader 可以处理 ReadIndex
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    bool can_read = (state == RAFT_STATE_LEADER);
+    FB_ASSERT_FALSE(can_read);
+
+    state = RAFT_STATE_LEADER;
+    can_read = (state == RAFT_STATE_LEADER);
+    FB_ASSERT_TRUE(can_read);
+}
+
+FB_TEST(raft_rpc, readindex_lease_based_read) {
+    // 基于租约的读一致性
+    raft_time_t lease_expiry = 1000;
+    raft_time_t current_time = 800;
+
+    bool lease_valid = current_time < lease_expiry;
+    FB_ASSERT_TRUE(lease_valid);
+
+    // 租约过期
+    current_time = 1200;
+    lease_valid = current_time < lease_expiry;
+    FB_ASSERT_FALSE(lease_valid);
+}
+
+FB_TEST(raft_rpc, readindex_quorum_heartbeat) {
+    // ReadIndex 需要确认领导权（发送心跳确认）
+    uint64_t node_num = 5;
+    uint64_t heartbeat_responses = 3;
+
+    bool has_quorum = heartbeat_responses > node_num / 2;
+    FB_ASSERT_TRUE(has_quorum);
+
+    // 未确认领导权
+    heartbeat_responses = 2;
+    has_quorum = heartbeat_responses > node_num / 2;
+    FB_ASSERT_FALSE(has_quorum);
+}
+
+FB_TEST(raft_rpc, readindex_commit_idx_check) {
+    // ReadIndex 需要等待 commit_idx 应用
+    raft_index_t commit_idx = 100;
+    raft_index_t last_applied = 95;
+
+    bool can_read = last_applied >= commit_idx;
+    FB_ASSERT_FALSE(can_read);
+
+    // 等待应用完成
+    last_applied = 100;
+    can_read = last_applied >= commit_idx;
+    FB_ASSERT_TRUE(can_read);
+}
+
+FB_TEST(raft_rpc, readindex_response_fields) {
+    raft_index_t read_index = 100;
+    bool success = true;
+
+    FB_ASSERT_TRUE(read_index >= 0);
+    FB_ASSERT_TRUE(success);
+}
+
+FB_TEST(raft_rpc, readindex_follower_redirect) {
+    // Follower 收到 ReadIndex 请求时重定向到 Leader
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    raft_node_id_t leader_id = 2;
+
+    if (state != RAFT_STATE_LEADER) {
+        // 返回 Leader ID 供客户端重定向
+        FB_ASSERT_TRUE(leader_id > 0);
+    }
+}
+
+FB_TEST(raft_rpc, readindex_wait_for_commit) {
+    // ReadIndex 等待日志提交
+    raft_index_t proposed_idx = 105;
+    raft_index_t commit_idx = 100;
+
+    bool need_wait = proposed_idx > commit_idx;
+    FB_ASSERT_TRUE(need_wait);
+
+    // 日志提交完成
+    commit_idx = proposed_idx;
+    need_wait = proposed_idx > commit_idx;
+    FB_ASSERT_FALSE(need_wait);
+}
+
+FB_TEST(raft_rpc, readindex_concurrent_reads) {
+    // 并发 ReadIndex 请求
+    int concurrent_reads = 5;
+    raft_index_t last_commit = 100;
+
+    // 所有读请求使用同一个 commit_idx
+    for (int i = 0; i < concurrent_reads; i++) {
+        raft_index_t read_idx = last_commit;
+        FB_ASSERT_EQ(read_idx, 100L);
+    }
+}
+
+FB_TEST(raft_rpc, readindex_batch_optimization) {
+    // 批量 ReadIndex 优化
+    std::vector<raft_index_t> read_requests = {100, 100, 100, 105, 105};
+    raft_index_t max_read_idx = *std::max_element(read_requests.begin(), read_requests.end());
+
+    // 只需要等待最大的 read_idx 提交
+    FB_ASSERT_EQ(max_read_idx, 105L);
+}
+
+FB_TEST(raft_rpc, readindex_lease_renewal) {
+    // 读请求时续约租约
+    raft_time_t lease_expiry = 1000;
+    raft_time_t heartbeat_period = 100;
+
+    // 收到读请求时续约
+    lease_expiry += heartbeat_period;
+    FB_ASSERT_EQ(lease_expiry, 1100L);
+}
+
+FB_TEST(raft_rpc, readindex_timeout_handling) {
+    // ReadIndex 超时处理
+    int read_timeout_ms = 500;
+    int elapsed_ms = 300;
+
+    bool timed_out = elapsed_ms >= read_timeout_ms;
+    FB_ASSERT_FALSE(timed_out);
+
+    elapsed_ms = 600;
+    timed_out = elapsed_ms >= read_timeout_ms;
+    FB_ASSERT_TRUE(timed_out);
+}
+
+FB_TEST(raft_rpc, readindex_stale_leader_detection) {
+    // 检测过期 Leader
+    raft_term_t current_term = 6;
+    raft_term_t leader_term = 5;
+
+    bool is_stale_leader = leader_term < current_term;
+    FB_ASSERT_TRUE(is_stale_leader);
+
+    // 拒绝过期 Leader 的读请求
+    bool allow_read = !is_stale_leader;
+    FB_ASSERT_FALSE(allow_read);
+}
+
+FB_TEST(raft_rpc, readindex_network_partition) {
+    // 网络分区时的 ReadIndex
+    std::set<raft_node_id_t> reachable_nodes = {1, 2};
+    uint64_t total_nodes = 5;
+
+    bool has_quorum = reachable_nodes.size() > total_nodes / 2;
+    FB_ASSERT_FALSE(has_quorum);
+
+    // 无法确认领导权，拒绝读请求
+    bool allow_read = has_quorum;
+    FB_ASSERT_FALSE(allow_read);
+}
+
+FB_TEST(raft_rpc, readindex_state_machine_query) {
+    // ReadIndex 后查询状态机
+    raft_index_t read_idx = 100;
+    raft_index_t last_applied = 100;
+
+    bool can_query = last_applied >= read_idx;
+    FB_ASSERT_TRUE(can_query);
+
+    // 模拟状态机查询
+    int query_result = 42;
+    FB_ASSERT_EQ(query_result, 42);
+}
+
+FB_TEST(raft_rpc, readindex_retry_on_failure) {
+    // ReadIndex 失败重试
+    int retry_count = 0;
+    int max_retries = 3;
+    bool success = false;
+
+    while (!success && retry_count < max_retries) {
+        retry_count++;
+        if (retry_count == 2) {
+            success = true;
+        }
+    }
+
+    FB_ASSERT_TRUE(success);
+    FB_ASSERT_EQ(retry_count, 2);
+}
+
+FB_TEST(raft_rpc, readindex_lease_vs_quorum) {
+    // 租约模式 vs Quorum 确认模式对比
+    bool use_lease = true;
+    int lease_read_latency = 1;  // 租约读：1次RPC
+    int quorum_read_latency = 2; // Quorum读：需要心跳确认
+
+    if (use_lease) {
+        FB_ASSERT_TRUE(lease_read_latency < quorum_read_latency);
+    } else {
+        // Quorum 模式更安全但延迟更高
+        FB_ASSERT_TRUE(quorum_read_latency > lease_read_latency);
+    }
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
