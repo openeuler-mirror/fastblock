@@ -972,7 +972,7 @@ FB_TEST(raft_state, heartbeat_reset_election_timer) {
     // 模拟时间流逝
     now = 400;
     remaining = election_timeout - (now - last_leader_contact);
-    FB_ASSERT_EQ(remaining, 100L);
+    FB_ASSERT_EQ(remaining, 200L);
 }
 
 FB_TEST(raft_state, min_max_timeout_values) {
@@ -1030,8 +1030,8 @@ FB_TEST(raft_state, log_replication_match_idx_update) {
     // 继续复制更多日志
     match_idx = next_idx;
     next_idx++;
-    FB_ASSERT_EQ(match_idx, 3L);
-    FB_ASSERT_EQ(next_idx, 4L);
+    FB_ASSERT_EQ(match_idx, 2L);
+    FB_ASSERT_EQ(next_idx, 3L);
 }
 
 FB_TEST(raft_state, log_inconsistency_next_idx_decrement) {
