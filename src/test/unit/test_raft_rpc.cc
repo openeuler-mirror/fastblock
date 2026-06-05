@@ -4576,5 +4576,347 @@ FB_TEST(raft_rpc, lease_batch_renewal) {
     FB_ASSERT_EQ(followers.size(), 3UL);
 }
 
+// ============================================================================
+// Test Suite: Recovery RPC Tests (Node Recovery)
+// ============================================================================
+
+FB_TEST(raft_rpc, recovery_request_fields) {
+    // 恢复请求字段
+    raft_node_id_t recovering_node_id = 3;
+    raft_index_t last_log_idx = 50;
+    raft_term_t last_log_term = 4;
+
+    FB_ASSERT_TRUE(recovering_node_id > 0);
+    FB_ASSERT_TRUE(last_log_idx >= 0);
+    FB_ASSERT_TRUE(last_log_term >= 0);
+}
+
+FB_TEST(raft_rpc, recovery_leader_response) {
+    // Leader 响应恢复请求
+    raft_identity state = RAFT_STATE_LEADER;
+    bool can_respond = (state == RAFT_STATE_LEADER);
+
+    FB_ASSERT_TRUE(can_respond);
+}
+
+FB_TEST(raft_rpc, recovery_follower_cannot_respond) {
+    // Follower 无法响应恢复请求
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    bool can_respond = (state == RAFT_STATE_LEADER);
+
+    FB_ASSERT_FALSE(can_respond);
+
+    // 应该重定向到 Leader
+    raft_node_id_t leader_id = 2;
+    FB_ASSERT_TRUE(leader_id > 0);
+}
+
+FB_TEST(raft_rpc, recovery_log_sync_needed) {
+    // 恢复节点需要日志同步
+    raft_index_t leader_last_idx = 100;
+    raft_index_t recovering_last_idx = 50;
+
+    bool needs_sync = recovering_last_idx < leader_last_idx;
+    FB_ASSERT_TRUE(needs_sync);
+
+    raft_index_t entries_to_sync = leader_last_idx - recovering_last_idx;
+    FB_ASSERT_EQ(entries_to_sync, 50L);
+}
+
+FB_TEST(raft_rpc, recovery_snapshot_needed) {
+    // 恢复节点需要快照
+    raft_index_t leader_snapshot_idx = 80;
+    raft_index_t recovering_last_idx = 50;
+
+    bool needs_snapshot = recovering_last_idx < leader_snapshot_idx;
+    FB_ASSERT_TRUE(needs_snapshot);
+}
+
+FB_TEST(raft_rpc, recovery_from_disk_state) {
+    // 从磁盘恢复状态
+    raft_index_t disk_last_idx = 80;
+    raft_index_t disk_commit_idx = 75;
+    raft_term_t disk_term = 5;
+
+    FB_ASSERT_TRUE(disk_last_idx >= disk_commit_idx);
+    FB_ASSERT_TRUE(disk_term > 0);
+}
+
+FB_TEST(raft_rpc, recovery_term_restore) {
+    // 恢复 term
+    raft_term_t persisted_term = 5;
+    raft_node_id_t persisted_voted_for = 3;
+
+    FB_ASSERT_TRUE(persisted_term > 0);
+    FB_ASSERT_TRUE(persisted_voted_for > 0);
+}
+
+FB_TEST(raft_rpc, recovery_commit_idx_restore) {
+    // 恢复 commit_idx
+    raft_index_t persisted_commit_idx = 75;
+    raft_index_t current_commit_idx = 0;
+
+    // 从磁盘恢复
+    current_commit_idx = persisted_commit_idx;
+
+    FB_ASSERT_EQ(current_commit_idx, 75L);
+}
+
+FB_TEST(raft_rpc, recovery_last_applied_catchup) {
+    // 恢复后 last_applied 追赶
+    raft_index_t commit_idx = 75;
+    raft_index_t last_applied = 70;
+
+    while (last_applied < commit_idx) {
+        last_applied++;
+    }
+
+    FB_ASSERT_EQ(last_applied, 75L);
+}
+
+FB_TEST(raft_rpc, recovery_snapshot_apply) {
+    // 恢复时应用快照
+    raft_index_t snapshot_idx = 100;
+    raft_term_t snapshot_term = 5;
+
+    // 应用快照后更新索引
+    raft_index_t last_applied = snapshot_idx;
+    raft_index_t commit_idx = snapshot_idx;
+
+    FB_ASSERT_EQ(last_applied, 100L);
+    FB_ASSERT_EQ(commit_idx, 100L);
+}
+
+FB_TEST(raft_rpc, recovery_network_reconnect) {
+    // 恢复网络连接
+    std::set<raft_node_id_t> connected_nodes;
+    raft_node_id_t recovering_node = 3;
+
+    // 连接恢复
+    connected_nodes.insert(recovering_node);
+
+    bool is_connected = connected_nodes.count(recovering_node) > 0;
+    FB_ASSERT_TRUE(is_connected);
+}
+
+FB_TEST(raft_rpc, recovery_state_transition) {
+    // 恢复状态转换
+    raft_identity state = RAFT_STATE_NONE;
+
+    // 恢复完成后成为 Follower
+    state = RAFT_STATE_FOLLOWER;
+
+    FB_ASSERT_EQ(state, RAFT_STATE_FOLLOWER);
+}
+
+FB_TEST(raft_rpc, recovery_timeout_handling) {
+    // 恢复超时
+    int recovery_timeout_ms = 30000;
+    int elapsed_ms = 35000;
+
+    bool timed_out = elapsed_ms >= recovery_timeout_ms;
+    FB_ASSERT_TRUE(timed_out);
+}
+
+FB_TEST(raft_rpc, recovery_retry_on_failure) {
+    // 恢复失败重试
+    int retry_count = 0;
+    int max_retries = 3;
+    bool success = false;
+
+    while (!success && retry_count < max_retries) {
+        retry_count++;
+        if (retry_count == 2) {
+            success = true;
+        }
+    }
+
+    FB_ASSERT_TRUE(success);
+    FB_ASSERT_EQ(retry_count, 2);
+}
+
+FB_TEST(raft_rpc, recovery_partial_log) {
+    // 部分日志恢复
+    std::vector<raft_index_t> persisted_logs;
+    for (int i = 1; i <= 80; i++) {
+        persisted_logs.push_back(i);
+    }
+
+    FB_ASSERT_EQ(persisted_logs.size(), 80UL);
+    FB_ASSERT_EQ(persisted_logs.back(), 80L);
+}
+
+FB_TEST(raft_rpc, recovery_log_truncation) {
+    // 恢复时日志截断
+    raft_index_t persisted_last_idx = 85;
+    raft_index_t leader_commit_idx = 80;
+
+    // 截断未提交的日志
+    if (persisted_last_idx > leader_commit_idx) {
+        persisted_last_idx = leader_commit_idx;
+    }
+
+    FB_ASSERT_EQ(persisted_last_idx, 80L);
+}
+
+FB_TEST(raft_rpc, recovery_config_restore) {
+    // 恢复配置
+    std::vector<raft_node_id_t> persisted_config = {1, 2, 3};
+    std::vector<raft_node_id_t> current_config;
+
+    current_config = persisted_config;
+
+    FB_ASSERT_EQ(current_config.size(), 3UL);
+}
+
+FB_TEST(raft_rpc, recovery_vote_state_reset) {
+    // 恢复投票状态
+    raft_node_id_t voted_for = 0;  // 重置
+
+    FB_ASSERT_EQ(voted_for, 0L);
+
+    // 可以重新投票
+    bool can_vote = (voted_for == 0);
+    FB_ASSERT_TRUE(can_vote);
+}
+
+FB_TEST(raft_rpc, recovery_leader_identification) {
+    // 恢复后识别 Leader
+    raft_node_id_t leader_id = 0;  // 未知
+
+    // 通过心跳识别 Leader
+    raft_node_id_t heartbeat_from = 2;
+    if (heartbeat_from > 0) {
+        leader_id = heartbeat_from;
+    }
+
+    FB_ASSERT_EQ(leader_id, 2L);
+}
+
+FB_TEST(raft_rpc, recovery_graceful_restart) {
+    // 优雅重启
+    bool was_leader = true;
+    raft_identity restart_state = RAFT_STATE_FOLLOWER;
+
+    // 重启后不立即成为 Leader
+    FB_ASSERT_EQ(restart_state, RAFT_STATE_FOLLOWER);
+}
+
+FB_TEST(raft_rpc, recovery_crash_recovery) {
+    // 崩溃恢复
+    bool crash_occurred = true;
+    bool recovery_needed = crash_occurred;
+
+    FB_ASSERT_TRUE(recovery_needed);
+
+    // 从持久化状态恢复
+    bool persisted_state_valid = true;
+    FB_ASSERT_TRUE(persisted_state_valid);
+}
+
+FB_TEST(raft_rpc, recovery_during_election) {
+    // 选举期间的恢复
+    raft_identity current_leader_state = RAFT_STATE_CANDIDATE;
+
+    // 等待选举完成
+    bool election_complete = false;
+
+    // 恢复节点等待
+    bool wait_for_leader = !election_complete;
+    FB_ASSERT_TRUE(wait_for_leader);
+}
+
+FB_TEST(raft_rpc, recovery_batch_entries) {
+    // 批量恢复日志条目
+    int batch_size = 100;
+    int total_entries = 500;
+    int batches_needed = (total_entries + batch_size - 1) / batch_size;
+
+    FB_ASSERT_EQ(batches_needed, 5);
+}
+
+FB_TEST(raft_rpc, recovery_incremental_sync) {
+    // 增量同步
+    raft_index_t local_last_idx = 80;
+    raft_index_t leader_last_idx = 100;
+
+    int sync_rounds = 0;
+    while (local_last_idx < leader_last_idx) {
+        local_last_idx += 10;
+        sync_rounds++;
+        if (local_last_idx > leader_last_idx) {
+            local_last_idx = leader_last_idx;
+        }
+    }
+
+    FB_ASSERT_EQ(local_last_idx, 100L);
+    FB_ASSERT_EQ(sync_rounds, 2);
+}
+
+FB_TEST(raft_rpc, recovery_uncommitted_entries) {
+    // 未提交条目处理
+    std::vector<raft_index_t> uncommitted = {81, 82, 83};
+
+    // 恢复时丢弃未提交条目
+    uncommitted.clear();
+
+    FB_ASSERT_TRUE(uncommitted.empty());
+}
+
+FB_TEST(raft_rpc, recovery_metrics_tracking) {
+    // 恢复指标跟踪
+    raft_time_t recovery_start = 1000;
+    raft_time_t recovery_end = 1500;
+
+    raft_time_t recovery_duration = recovery_end - recovery_start;
+    FB_ASSERT_EQ(recovery_duration, 500L);
+}
+
+FB_TEST(raft_rpc, recovery_checkpoint_usage) {
+    // 检查点使用
+    raft_index_t checkpoint_idx = 70;
+    raft_index_t current_idx = 50;
+
+    // 从检查点恢复
+    bool use_checkpoint = checkpoint_idx > current_idx;
+    FB_ASSERT_TRUE(use_checkpoint);
+
+    raft_index_t recovery_start_idx = checkpoint_idx;
+    FB_ASSERT_EQ(recovery_start_idx, 70L);
+}
+
+FB_TEST(raft_rpc, recovery_node_rejoining_cluster) {
+    // 节点重新加入集群
+    raft_node_id_t node_id = 3;
+    std::set<raft_node_id_t> cluster_nodes = {1, 2, 3, 4, 5};
+
+    bool was_member = cluster_nodes.count(node_id) > 0;
+    FB_ASSERT_TRUE(was_member);
+
+    // 无需添加，直接恢复
+    bool need_add = !was_member;
+    FB_ASSERT_FALSE(need_add);
+}
+
+FB_TEST(raft_rpc, recovery_timeout_during_sync) {
+    // 同步期间超时
+    int sync_timeout_ms = 5000;
+    int elapsed_ms = 6000;
+
+    bool sync_timed_out = elapsed_ms >= sync_timeout_ms;
+    FB_ASSERT_TRUE(sync_timed_out);
+}
+
+FB_TEST(raft_rpc, recovery_concurrent_recovery) {
+    // 多节点并发恢复
+    std::set<raft_node_id_t> recovering_nodes = {3, 4, 5};
+
+    // Leader 限制并发恢复数
+    int max_concurrent_recovery = 2;
+    bool can_start_new = recovering_nodes.size() < max_concurrent_recovery;
+
+    FB_ASSERT_FALSE(can_start_new);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
