@@ -43,6 +43,8 @@
 #include <random>
 #include <initializer_list>
 #include <optional>
+#include <regex>
+#include <stdexcept>
 
 #ifdef __linux__
 #include <sys/types.h>
@@ -3340,6 +3342,146 @@ public:
 
 #define FB_STR_COUNT(str, substr)                                                  \
     ::fastblock::test::string_tester::count_occurrences(str, substr)
+
+// ============================================================================
+// Test Discovery and Filtering
+// ============================================================================
+
+/**
+ * @brief Test filter for selective test execution
+ */
+class test_filter {
+public:
+    enum class match_mode {
+        EXACT,       // Exact name match
+        PREFIX,      // Starts with pattern
+        SUFFIX,      // Ends with pattern
+        CONTAINS,    // Contains pattern
+        REGEX        // Regular expression match
+    };
+
+    static bool matches(const std::string& name, const std::string& pattern, match_mode mode) {
+        switch (mode) {
+            case match_mode::EXACT:
+                return name == pattern;
+            case match_mode::PREFIX:
+                return name.substr(0, pattern.length()) == pattern;
+            case match_mode::SUFFIX:
+                if (pattern.length() > name.length()) return false;
+                return name.substr(name.length() - pattern.length()) == pattern;
+            case match_mode::CONTAINS:
+                return name.find(pattern) != std::string::npos;
+            case match_mode::REGEX:
+                try {
+                    std::regex re(pattern);
+                    return std::regex_search(name, re);
+                } catch (...) {
+                    return false;
+                }
+            default:
+                return false;
+        }
+    }
+
+    static std::vector<std::shared_ptr<test_case>> filter_tests(
+        const std::vector<std::shared_ptr<test_case>>& tests,
+        const std::string& pattern,
+        match_mode mode) {
+        std::vector<std::shared_ptr<test_case>> result;
+        for (const auto& tc : tests) {
+            if (matches(tc->name(), pattern, mode)) {
+                result.push_back(tc);
+            }
+        }
+        return result;
+    }
+
+    static std::vector<std::shared_ptr<test_case>> filter_by_suite(
+        const std::vector<std::shared_ptr<test_case>>& tests,
+        const std::string& suite_name) {
+        std::vector<std::shared_ptr<test_case>> result;
+        for (const auto& tc : tests) {
+            if (tc->suite() == suite_name) {
+                result.push_back(tc);
+            }
+        }
+        return result;
+    }
+
+    static std::vector<std::shared_ptr<test_case>> filter_by_tag(
+        const std::vector<std::shared_ptr<test_case>>& tests,
+        test_tag tag) {
+        std::vector<std::shared_ptr<test_case>> result;
+        for (const auto& tc : tests) {
+            auto tagged = std::dynamic_pointer_cast<tagged_test_case>(tc);
+            if (tagged && tagged->tag() == tag) {
+                result.push_back(tc);
+            }
+        }
+        return result;
+    }
+};
+
+#define FB_FILTER_EXACT(name, pattern)                                              \
+    ::fastblock::test::test_filter::matches(name, pattern,                          \
+        ::fastblock::test::test_filter::match_mode::EXACT)
+
+#define FB_FILTER_PREFIX(name, pattern)                                             \
+    ::fastblock::test::test_filter::matches(name, pattern,                          \
+        ::fastblock::test::test_filter::match_mode::PREFIX)
+
+#define FB_FILTER_SUFFIX(name, pattern)                                             \
+    ::fastblock::test::test_filter::matches(name, pattern,                          \
+        ::fastblock::test::test_filter::match_mode::SUFFIX)
+
+#define FB_FILTER_CONTAINS(name, pattern)                                           \
+    ::fastblock::test::test_filter::matches(name, pattern,                          \
+        ::fastblock::test::test_filter::match_mode::CONTAINS)
+
+#define FB_FILTER_REGEX(name, pattern)                                              \
+    ::fastblock::test::test_filter::matches(name, pattern,                          \
+        ::fastblock::test::test_filter::match_mode::REGEX)
+
+/**
+ * @brief Test selector for building test queries
+ */
+class test_selector {
+public:
+    test_selector& select_suite(const std::string& suite_name) {
+        _suite_filter = suite_name;
+        return *this;
+    }
+
+    test_selector& select_name(const std::string& pattern, test_filter::match_mode mode) {
+        _name_pattern = pattern;
+        _name_mode = mode;
+        return *this;
+    }
+
+    test_selector& select_tag(test_tag tag) {
+        _tag_filter = tag;
+        _use_tag = true;
+        return *this;
+    }
+
+    test_selector& exclude(const std::string& pattern) {
+        _excludes.push_back(pattern);
+        return *this;
+    }
+
+    std::vector<std::shared_ptr<test_case>> apply() const;
+
+private:
+    std::string _suite_filter;
+    std::string _name_pattern;
+    test_filter::match_mode _name_mode = test_filter::match_mode::EXACT;
+    test_tag _tag_filter = test_tag::NONE;
+    bool _use_tag = false;
+    std::vector<std::string> _excludes;
+};
+
+#define FB_SELECT()                                                                 \
+    ::fastblock::test::test_selector()
 
 } // namespace test
 } // namespace fastblock
