@@ -2358,6 +2358,8 @@ public:
 
 /**
  * @brief Error injector for testing error handling
+ *
+ * Thread-safe: Uses mutex to protect state and thread_local random engine.
  */
 class error_injector {
 public:
@@ -2366,22 +2368,52 @@ public:
         return injector;
     }
 
-    void enable() { _enabled = true; }
-    void disable() { _enabled = false; }
-    bool is_enabled() const { return _enabled; }
-
-    void set_error_rate(double rate) { _error_rate = rate; }
-    double error_rate() const { return _error_rate; }
-
-    bool should_inject() {
-        if (!_enabled) return false;
-        return (double)rand() / RAND_MAX < _error_rate;
+    void enable() {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _enabled = true;
     }
 
-    void set_error_type(const std::string& type) { _error_type = type; }
-    const std::string& error_type() const { return _error_type; }
+    void disable() {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _enabled = false;
+    }
+
+    bool is_enabled() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _enabled;
+    }
+
+    void set_error_rate(double rate) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _error_rate = rate;
+    }
+
+    double error_rate() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _error_rate;
+    }
+
+    bool should_inject() {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (!_enabled) return false;
+        // Use thread-local random engine for thread safety
+        static thread_local std::mt19937 engine(std::random_device{}());
+        std::uniform_real_distribution<double> dist(0.0, 1.0);
+        return dist(engine) < _error_rate;
+    }
+
+    void set_error_type(const std::string& type) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _error_type = type;
+    }
+
+    std::string error_type() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _error_type;
+    }
 
     void reset() {
+        std::lock_guard<std::mutex> lock(_mutex);
         _enabled = false;
         _error_rate = 0.0;
         _error_type.clear();
@@ -2389,10 +2421,25 @@ public:
         _success_count = 0;
     }
 
-    void record_failure() { _failure_count++; }
-    void record_success() { _success_count++; }
-    size_t failure_count() const { return _failure_count; }
-    size_t success_count() const { return _success_count; }
+    void record_failure() {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _failure_count++;
+    }
+
+    void record_success() {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _success_count++;
+    }
+
+    size_t failure_count() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _failure_count;
+    }
+
+    size_t success_count() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _success_count;
+    }
 
 private:
     error_injector() : _enabled(false), _error_rate(0.0), _failure_count(0), _success_count(0) {}
@@ -2401,6 +2448,7 @@ private:
     std::string _error_type;
     size_t _failure_count;
     size_t _success_count;
+    mutable std::mutex _mutex;
 };
 
 #define FB_ERROR_INJECT_ENABLE()       ::fastblock::test::error_injector::instance().enable()
