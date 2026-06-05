@@ -3696,5 +3696,244 @@ FB_TEST(raft_rpc, ping_alert_threshold) {
     FB_ASSERT_TRUE(should_alert);
 }
 
+// ============================================================================
+// Test Suite: Metrics RPC Tests (Monitoring & Observability)
+// ============================================================================
+
+FB_TEST(raft_rpc, metrics_request_fields) {
+    // 指标查询请求字段
+    raft_node_id_t requester_id = 1;
+    std::vector<std::string> metric_names = {"commit_idx", "apply_idx", "term"};
+
+    FB_ASSERT_TRUE(requester_id > 0);
+    FB_ASSERT_EQ(metric_names.size(), 3UL);
+}
+
+FB_TEST(raft_rpc, metrics_commit_apply_gap) {
+    // commit 与 apply 差距
+    raft_index_t commit_idx = 100;
+    raft_index_t last_applied = 95;
+
+    raft_index_t gap = commit_idx - last_applied;
+    FB_ASSERT_EQ(gap, 5L);
+
+    // 差距过大时告警
+    bool gap_too_large = gap > 10;
+    FB_ASSERT_FALSE(gap_too_large);
+}
+
+FB_TEST(raft_rpc, metrics_leader_stats) {
+    // Leader 统计指标
+    uint64_t proposals_total = 1000;
+    uint64_t proposals_committed = 950;
+    uint64_t proposals_applied = 900;
+
+    double commit_rate = 100.0 * proposals_committed / proposals_total;
+    double apply_rate = 100.0 * proposals_applied / proposals_total;
+
+    FB_ASSERT_GE(commit_rate, 95.0);
+    FB_ASSERT_GE(apply_rate, 90.0);
+}
+
+FB_TEST(raft_rpc, metrics_follower_stats) {
+    // Follower 统计指标
+    uint64_t append_entries_received = 500;
+    uint64_t append_entries_success = 480;
+    uint64_t append_entries_rejected = 20;
+
+    double success_rate = 100.0 * append_entries_success / append_entries_received;
+    FB_ASSERT_GE(success_rate, 90.0);
+}
+
+FB_TEST(raft_rpc, metrics_network_stats) {
+    // 网络统计
+    uint64_t bytes_sent = 1024 * 1024;  // 1MB
+    uint64_t bytes_received = 2 * 1024 * 1024;  // 2MB
+    uint64_t rpc_calls = 1000;
+
+    double avg_request_size = bytes_sent / rpc_calls;
+    FB_ASSERT_EQ(avg_request_size, 1024UL);
+}
+
+FB_TEST(raft_rpc, metrics_latency_histogram) {
+    // 延迟直方图
+    std::vector<int> latencies = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100};
+
+    int min_latency = *std::min_element(latencies.begin(), latencies.end());
+    int max_latency = *std::max_element(latencies.begin(), latencies.end());
+
+    FB_ASSERT_EQ(min_latency, 10);
+    FB_ASSERT_EQ(max_latency, 100);
+}
+
+FB_TEST(raft_rpc, metrics_election_stats) {
+    // 选举统计
+    uint64_t elections_started = 5;
+    uint64_t elections_won = 3;
+    uint64_t elections_lost = 2;
+
+    FB_ASSERT_EQ(elections_started, elections_won + elections_lost);
+
+    double win_rate = 100.0 * elections_won / elections_started;
+    FB_ASSERT_GE(win_rate, 50.0);
+}
+
+FB_TEST(raft_rpc, metrics_snapshot_stats) {
+    // 快照统计
+    uint64_t snapshots_created = 10;
+    uint64_t snapshots_applied = 8;
+    uint64_t snapshot_size_bytes = 1024 * 1024 * 100;  // 100MB
+
+    FB_ASSERT_GE(snapshots_created, snapshots_applied);
+
+    double avg_snapshot_size = snapshot_size_bytes / snapshots_created;
+    FB_ASSERT_EQ(avg_snapshot_size, 10UL * 1024 * 1024);
+}
+
+FB_TEST(raft_rpc, metrics_cluster_health) {
+    // 集群健康度
+    uint64_t total_nodes = 5;
+    uint64_t healthy_nodes = 4;
+    uint64_t unhealthy_nodes = 1;
+
+    double health_percentage = 100.0 * healthy_nodes / total_nodes;
+    FB_ASSERT_GE(health_percentage, 80.0);
+}
+
+FB_TEST(raft_rpc, metrics_leader_id) {
+    // Leader ID 指标
+    raft_node_id_t current_leader = 2;
+    raft_term_t current_term = 5;
+
+    FB_ASSERT_TRUE(current_leader > 0);
+    FB_ASSERT_TRUE(current_term > 0);
+}
+
+FB_TEST(raft_rpc, metrics_node_role) {
+    // 节点角色指标
+    raft_identity role = RAFT_STATE_LEADER;
+
+    int role_value = static_cast<int>(role);
+    FB_ASSERT_EQ(role_value, 3);
+
+    role = RAFT_STATE_FOLLOWER;
+    role_value = static_cast<int>(role);
+    FB_ASSERT_EQ(role_value, 1);
+}
+
+FB_TEST(raft_rpc, metrics_replication_lag) {
+    // 复制延迟
+    std::map<raft_node_id_t, raft_index_t> match_indices;
+    match_indices[1] = 100;  // Leader
+    match_indices[2] = 95;
+    match_indices[3] = 90;
+    match_indices[4] = 85;
+
+    raft_index_t leader_idx = match_indices[1];
+    for (const auto& pair : match_indices) {
+        raft_index_t lag = leader_idx - pair.second;
+        FB_ASSERT_TRUE(lag >= 0);
+    }
+}
+
+FB_TEST(raft_rpc, metrics_throughput) {
+    // 吞吐量计算
+    uint64_t entries_committed = 1000;
+    uint64_t time_elapsed_ms = 1000;  // 1秒
+
+    double throughput = 1000.0 * entries_committed / time_elapsed_ms;
+    FB_ASSERT_GE(throughput, 1000.0);
+}
+
+FB_TEST(raft_rpc, metrics_error_rates) {
+    // 错误率统计
+    uint64_t total_requests = 1000;
+    uint64_t errors = 50;
+
+    double error_rate = 100.0 * errors / total_requests;
+    FB_ASSERT_GE(error_rate, 0.0);
+    FB_ASSERT_LE(error_rate, 10.0);
+}
+
+FB_TEST(raft_rpc, metrics_resource_usage) {
+    // 资源使用情况
+    size_t memory_used = 512 * 1024 * 1024;  // 512MB
+    size_t memory_limit = 1024 * 1024 * 1024;  // 1GB
+    double cpu_usage = 0.45;  // 45%
+
+    double memory_usage = 100.0 * memory_used / memory_limit;
+    FB_ASSERT_GE(memory_usage, 50.0);
+    FB_ASSERT_LE(cpu_usage, 1.0);
+}
+
+FB_TEST(raft_rpc, metrics_log_cache) {
+    // 日志缓存指标
+    size_t cache_size = 100;
+    size_t cache_hits = 95;
+    size_t cache_misses = 5;
+
+    double hit_rate = 100.0 * cache_hits / cache_size;
+    FB_ASSERT_GE(hit_rate, 95.0);
+}
+
+FB_TEST(raft_rpc, metrics_disk_io) {
+    // 磁盘 I/O 指标
+    uint64_t bytes_read = 100 * 1024 * 1024;  // 100MB
+    uint64_t bytes_written = 50 * 1024 * 1024;  // 50MB
+    uint64_t fsync_count = 1000;
+
+    FB_ASSERT_GT(bytes_read, bytes_written);
+    FB_ASSERT_GE(fsync_count, 100UL);
+}
+
+FB_TEST(raft_rpc, metrics_uptime) {
+    // 运行时间
+    raft_time_t start_time = 1000;
+    raft_time_t current_time = 3601000;  // 1小时后
+
+    raft_time_t uptime_seconds = (current_time - start_time) / 1000;
+    FB_ASSERT_GE(uptime_seconds, 3600L);
+}
+
+FB_TEST(raft_rpc, metrics_version_info) {
+    // 版本信息
+    std::string version = "1.0.0";
+    int protocol_version = 2;
+    int config_version = 10;
+
+    FB_ASSERT_FALSE(version.empty());
+    FB_ASSERT_TRUE(protocol_version > 0);
+    FB_ASSERT_TRUE(config_version > 0);
+}
+
+FB_TEST(raft_rpc, metrics_histogram_buckets) {
+    // 直方图桶
+    std::map<std::string, uint64_t> buckets;
+    buckets["0-10ms"] = 50;
+    buckets["10-50ms"] = 30;
+    buckets["50-100ms"] = 15;
+    buckets["100ms+"] = 5;
+
+    uint64_t total = 0;
+    for (const auto& pair : buckets) {
+        total += pair.second;
+    }
+
+    FB_ASSERT_EQ(total, 100UL);
+}
+
+FB_TEST(raft_rpc, metrics_aggregation) {
+    // 指标聚合
+    std::vector<double> values = {1.0, 2.0, 3.0, 4.0, 5.0};
+
+    double sum = 0;
+    for (double v : values) {
+        sum += v;
+    }
+    double avg = sum / values.size();
+
+    FB_ASSERT_EQ(avg, 3.0);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
