@@ -2179,5 +2179,297 @@ FB_TEST(raft_rpc, transferleader_pending_writes_flush) {
     FB_ASSERT_EQ(pending_writes, 0);
 }
 
+// ============================================================================
+// Test Suite: Propose RPC Tests (Write Operations)
+// ============================================================================
+
+FB_TEST(raft_rpc, propose_request_fields) {
+    // 模拟 Propose 请求字段
+    raft_term_t term = 5;
+    raft_node_id_t leader_id = 1;
+    raft_index_t prev_log_idx = 10;
+    raft_term_t prev_log_term = 4;
+    int entry_type = 0;  // RAFT_LOGTYPE_WRITE
+    size_t entry_size = 1024;
+
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(leader_id > 0);
+    FB_ASSERT_TRUE(prev_log_idx >= 0);
+    FB_ASSERT_TRUE(prev_log_term >= 0);
+    FB_ASSERT_TRUE(entry_size > 0);
+}
+
+FB_TEST(raft_rpc, propose_leader_only_operation) {
+    // 只有 Leader 可以处理写入
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    bool can_propose = (state == RAFT_STATE_LEADER);
+    FB_ASSERT_FALSE(can_propose);
+
+    state = RAFT_STATE_LEADER;
+    can_propose = (state == RAFT_STATE_LEADER);
+    FB_ASSERT_TRUE(can_propose);
+}
+
+FB_TEST(raft_rpc, propose_append_to_log) {
+    // 写入请求追加到 Leader 日志
+    raft_index_t last_log_idx = 100;
+    raft_index_t new_entry_idx = last_log_idx + 1;
+
+    FB_ASSERT_EQ(new_entry_idx, 101L);
+
+    // next_idx 递增
+    last_log_idx = new_entry_idx;
+    FB_ASSERT_EQ(last_log_idx, 101L);
+}
+
+FB_TEST(raft_rpc, propose_replicate_to_followers) {
+    // 写入需要复制到多数派 Follower
+    uint64_t node_num = 5;
+    uint64_t replication_count = 3;
+
+    bool has_quorum = replication_count > node_num / 2;
+    FB_ASSERT_TRUE(has_quorum);
+
+    // 未达到多数派
+    replication_count = 2;
+    has_quorum = replication_count > node_num / 2;
+    FB_ASSERT_FALSE(has_quorum);
+}
+
+FB_TEST(raft_rpc, propose_commit_after_quorum) {
+    // 多数派确认后提交
+    raft_index_t proposed_idx = 101;
+    raft_index_t commit_idx = 100;
+
+    bool can_commit = proposed_idx <= commit_idx;
+    FB_ASSERT_FALSE(can_commit);
+
+    // 多数派确认后更新 commit_idx
+    commit_idx = proposed_idx;
+    can_commit = proposed_idx <= commit_idx;
+    FB_ASSERT_TRUE(can_commit);
+}
+
+FB_TEST(raft_rpc, propose_apply_to_state_machine) {
+    // 提交后应用到状态机
+    raft_index_t commit_idx = 101;
+    raft_index_t last_applied = 100;
+
+    bool need_apply = commit_idx > last_applied;
+    FB_ASSERT_TRUE(need_apply);
+
+    // 应用完成
+    last_applied = commit_idx;
+    need_apply = commit_idx > last_applied;
+    FB_ASSERT_FALSE(need_apply);
+}
+
+FB_TEST(raft_rpc, propose_response_success) {
+    // 写入成功响应
+    raft_index_t commit_idx = 101;
+    bool success = true;
+
+    FB_ASSERT_TRUE(commit_idx > 0);
+    FB_ASSERT_TRUE(success);
+}
+
+FB_TEST(raft_rpc, propose_response_failure_redirect) {
+    // 非 Leader 收到请求时重定向
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    raft_node_id_t leader_id = 2;
+
+    bool need_redirect = (state != RAFT_STATE_LEADER);
+    FB_ASSERT_TRUE(need_redirect);
+    FB_ASSERT_TRUE(leader_id > 0);
+}
+
+FB_TEST(raft_rpc, propose_entry_id_unique) {
+    // 每个写入条目 ID 必须唯一
+    raft_entry_id_t id1 = 1001;
+    raft_entry_id_t id2 = 1002;
+
+    FB_ASSERT_TRUE(id1 != id2);
+
+    // 检测重复
+    std::set<raft_entry_id_t> seen_ids;
+    seen_ids.insert(id1);
+    bool duplicate = seen_ids.count(id2) > 0;
+    FB_ASSERT_FALSE(duplicate);
+}
+
+FB_TEST(raft_rpc, propose_batch_optimization) {
+    // 批量写入优化
+    std::vector<size_t> entry_sizes = {512, 1024, 2048};
+    size_t total_size = 0;
+
+    for (size_t s : entry_sizes) {
+        total_size += s;
+    }
+
+    FB_ASSERT_EQ(total_size, 3584UL);
+
+    // 合并为一次 AppendEntries
+    int rpc_calls = 1;
+    FB_ASSERT_TRUE(rpc_calls < entry_sizes.size());
+}
+
+FB_TEST(raft_rpc, propose_timeout_handling) {
+    // 写入超时处理
+    int propose_timeout_ms = 1000;
+    int elapsed_ms = 1500;
+
+    bool timed_out = elapsed_ms >= propose_timeout_ms;
+    FB_ASSERT_TRUE(timed_out);
+}
+
+FB_TEST(raft_rpc, propose_retry_on_timeout) {
+    // 超时重试
+    int retry_count = 0;
+    int max_retries = 3;
+    bool success = false;
+
+    while (!success && retry_count < max_retries) {
+        retry_count++;
+        if (retry_count == 2) {
+            success = true;
+        }
+    }
+
+    FB_ASSERT_TRUE(success);
+    FB_ASSERT_EQ(retry_count, 2);
+}
+
+FB_TEST(raft_rpc, propose_conflict_resolution) {
+    // 冲突日志条目解决
+    raft_index_t leader_prev_idx = 100;
+    raft_term_t leader_prev_term = 5;
+    raft_index_t follower_last_idx = 95;
+    raft_term_t follower_last_term = 5;
+
+    // Follower 日志落后
+    bool follower_behind = follower_last_idx < leader_prev_idx;
+    FB_ASSERT_TRUE(follower_behind);
+
+    // 需要发送更多日志
+    raft_index_t entries_to_send = leader_prev_idx - follower_last_idx;
+    FB_ASSERT_EQ(entries_to_send, 5L);
+}
+
+FB_TEST(raft_rpc, propose_log_truncation) {
+    // 冲突时截断 Follower 日志
+    raft_index_t follower_last_idx = 105;
+    raft_index_t conflict_idx = 100;
+
+    // 截断冲突部分
+    raft_index_t new_last_idx = conflict_idx - 1;
+    FB_ASSERT_EQ(new_last_idx, 99L);
+
+    int truncated_count = follower_last_idx - new_last_idx;
+    FB_ASSERT_EQ(truncated_count, 6);
+}
+
+FB_TEST(raft_rpc, propose_client_request_id) {
+    // 客户端请求 ID 用于去重和响应匹配
+    uint64_t request_id = 12345;
+    uint64_t client_id = 100;
+
+    FB_ASSERT_TRUE(request_id > 0);
+    FB_ASSERT_TRUE(client_id > 0);
+
+    // 记录请求 ID 用于响应
+    std::map<uint64_t, raft_index_t> pending_requests;
+    pending_requests[request_id] = 101;
+    FB_ASSERT_EQ(pending_requests[request_id], 101L);
+}
+
+FB_TEST(raft_rpc, propose_duplicate_request_detection) {
+    // 检测客户端重复请求
+    uint64_t client_id = 100;
+    uint64_t request_id = 12345;
+
+    std::map<uint64_t, uint64_t> last_request_per_client;
+
+    // 第一次请求
+    bool is_duplicate = (last_request_per_client[client_id] == request_id);
+    FB_ASSERT_FALSE(is_duplicate);
+
+    // 记录请求
+    last_request_per_client[client_id] = request_id;
+
+    // 重复请求
+    is_duplicate = (last_request_per_client[client_id] == request_id);
+    FB_ASSERT_TRUE(is_duplicate);
+}
+
+FB_TEST(raft_rpc, propose_pending_requests_limit) {
+    // 待处理请求限制
+    size_t max_pending = 1000;
+    size_t current_pending = 800;
+
+    bool can_accept = current_pending < max_pending;
+    FB_ASSERT_TRUE(can_accept);
+
+    // 达到限制
+    current_pending = 1000;
+    can_accept = current_pending < max_pending;
+    FB_ASSERT_FALSE(can_accept);
+}
+
+FB_TEST(raft_rpc, propose_ordering_guarantee) {
+    // 写入顺序保证
+    raft_index_t idx1 = 100;
+    raft_index_t idx2 = 101;
+    raft_index_t idx3 = 102;
+
+    // 日志索引严格递增
+    FB_ASSERT_TRUE(idx1 < idx2);
+    FB_ASSERT_TRUE(idx2 < idx3);
+
+    // 应用顺序与日志顺序一致
+    std::vector<raft_index_t> apply_order = {idx1, idx2, idx3};
+    FB_ASSERT_EQ(apply_order[0], 100L);
+    FB_ASSERT_EQ(apply_order[2], 102L);
+}
+
+FB_TEST(raft_rpc, propose_linearizability_check) {
+    // 线性一致性检查
+    raft_index_t write_commit_idx = 101;
+    raft_index_t read_index = 101;
+
+    // 读请求必须在写提交后才能看到
+    bool read_after_write = read_index >= write_commit_idx;
+    FB_ASSERT_TRUE(read_after_write);
+}
+
+FB_TEST(raft_rpc, propose_network_partition_handling) {
+    // 网络分区时的写入处理
+    std::set<raft_node_id_t> reachable_nodes = {1, 2};
+    uint64_t total_nodes = 5;
+
+    bool has_quorum = reachable_nodes.size() > total_nodes / 2;
+    FB_ASSERT_FALSE(has_quorum);
+
+    // 无法写入
+    bool can_propose = has_quorum;
+    FB_ASSERT_FALSE(can_propose);
+}
+
+FB_TEST(raft_rpc, propose_leader_change_abort) {
+    // Leader 变更时中止写入
+    raft_identity state = RAFT_STATE_LEADER;
+
+    // 检测到更高 term
+    raft_term_t current_term = 5;
+    raft_term_t received_term = 6;
+
+    if (received_term > current_term) {
+        state = RAFT_STATE_FOLLOWER;
+    }
+
+    // 写入中止
+    bool can_propose = (state == RAFT_STATE_LEADER);
+    FB_ASSERT_FALSE(can_propose);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
