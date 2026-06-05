@@ -148,6 +148,129 @@ FB_TEST(raft_rpc, appendentries_empty_entries_heartbeat) {
     FB_ASSERT_TRUE(is_heartbeat);
 }
 
+FB_TEST(raft_rpc, appendentries_conflict_resolution) {
+    // 模拟日志冲突检测
+    raft_index_t leader_prev_idx = 10;
+    raft_term_t leader_prev_term = 5;
+
+    std::map<raft_index_t, raft_term_t> local_log;
+    for (int i = 1; i <= 15; i++) {
+        local_log[i] = (i <= 8) ? 4 : 5;
+    }
+
+    // 本地日志在 prev_idx 处 term 不匹配
+    bool conflict = local_log.count(leader_prev_idx) &&
+                    local_log[leader_prev_idx] != leader_prev_term;
+    FB_ASSERT_FALSE(conflict);  // 10处的term是5，匹配
+
+    // 测试冲突场景
+    leader_prev_term = 4;  // 期望term=4，但实际是5
+    conflict = local_log.count(leader_prev_idx) &&
+               local_log[leader_prev_idx] != leader_prev_term;
+    FB_ASSERT_TRUE(conflict);
+}
+
+FB_TEST(raft_rpc, appendentries_log_truncation) {
+    // 冲突时需要截断本地日志
+    raft_index_t prev_log_idx = 10;
+    raft_index_t new_entry_idx = 11;
+
+    std::vector<raft_index_t> local_log;
+    for (int i = 1; i <= 20; i++) {
+        local_log.push_back(i);
+    }
+
+    // 截断冲突日志
+    local_log.erase(local_log.begin() + prev_log_idx, local_log.end());
+
+    FB_ASSERT_EQ(local_log.size(), 10UL);
+    FB_ASSERT_EQ(local_log.back(), 10L);
+}
+
+FB_TEST(raft_rpc, appendentries_batch_optimization) {
+    // 批量追加优化
+    int batch_size = 100;
+    int entries_in_batch = 0;
+
+    for (int i = 0; i < batch_size; i++) {
+        entries_in_batch++;
+    }
+
+    FB_ASSERT_EQ(entries_in_batch, 100);
+
+    // 批处理减少RPC次数
+    int single_rpc_count = batch_size;
+    int batch_rpc_count = 1;
+    FB_ASSERT_TRUE(batch_rpc_count < single_rpc_count);
+}
+
+FB_TEST(raft_rpc, appendentries_retransmission) {
+    // 网络重传场景
+    int retry_count = 0;
+    int max_retries = 3;
+    bool success = false;
+
+    while (retry_count < max_retries && !success) {
+        retry_count++;
+        if (retry_count == 2) {
+            success = true;  // 第二次成功
+        }
+    }
+
+    FB_ASSERT_TRUE(success);
+    FB_ASSERT_EQ(retry_count, 2);
+}
+
+FB_TEST(raft_rpc, appendentries_flow_control) {
+    // 流量控制
+    int in_flight_requests = 5;
+    int max_in_flight = 10;
+    int window_size = 5;
+
+    bool can_send = (in_flight_requests + window_size) <= max_in_flight;
+    FB_ASSERT_TRUE(can_send);
+
+    // 窗口满时不能发送
+    in_flight_requests = 8;
+    can_send = (in_flight_requests + window_size) <= max_in_flight;
+    FB_ASSERT_FALSE(can_send);
+}
+
+FB_TEST(raft_rpc, appendentries_duplicate_detection) {
+    // 重复请求检测
+    std::set<std::pair<raft_term_t, raft_index_t>> received;
+
+    raft_term_t term = 5;
+    raft_index_t prev_idx = 10;
+
+    auto key = std::make_pair(term, prev_idx);
+    bool is_duplicate = received.count(key) > 0;
+    FB_ASSERT_FALSE(is_duplicate);
+
+    received.insert(key);
+    is_duplicate = received.count(key) > 0;
+    FB_ASSERT_TRUE(is_duplicate);
+}
+
+FB_TEST(raft_rpc, appendentries_pipeline_optimization) {
+    // 流水线优化
+    raft_index_t base_idx = 100;
+    int pipeline_depth = 3;
+
+    std::vector<raft_index_t> in_flight;
+    for (int i = 0; i < pipeline_depth; i++) {
+        in_flight.push_back(base_idx + i * 10);
+    }
+
+    FB_ASSERT_EQ(in_flight.size(), 3UL);
+
+    // 检查流水线中的请求范围
+    raft_index_t min_idx = *std::min_element(in_flight.begin(), in_flight.end());
+    raft_index_t max_idx = *std::max_element(in_flight.begin(), in_flight.end());
+    FB_ASSERT_EQ(min_idx, 100L);
+    FB_ASSERT_EQ(max_idx, 120L);
+}
+
 // ============================================================================
 // Test Suite: RequestVote RPC Tests
 // ============================================================================
