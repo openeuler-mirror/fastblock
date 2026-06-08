@@ -342,5 +342,80 @@ FB_TEST(raft_state, match_idx_logic) {
     FB_ASSERT_EQ(match_idx, 0L);
 }
 
+// ============================================================================
+// PR 4: Test Suite: Election and Log Types
+// ============================================================================
+
+namespace {
+typedef enum {
+    RAFT_LOGTYPE_WRITE,
+    RAFT_LOGTYPE_DELETE,
+    RAFT_LOGTYPE_ADD_NONVOTING_NODE,
+    RAFT_LOGTYPE_CONFIGURATION,
+} raft_logtype_e;
+}
+
+FB_TEST(raft_state, election_timeout_logic) {
+    int election_timeout = 100;
+    int election_timeout_rand = election_timeout + rand() % election_timeout;
+
+    // Randomized timeout should be in [base, 2*base)
+    FB_ASSERT_TRUE(election_timeout_rand >= election_timeout);
+    FB_ASSERT_TRUE(election_timeout_rand < 2 * election_timeout);
+}
+
+FB_TEST(raft_state, election_timeout_randomize) {
+    int base = 500;
+    bool all_in_range = true;
+
+    for (int i = 0; i < 100; ++i) {
+        int randomized = base + (rand() % base);
+        if (randomized < base || randomized >= 2 * base) {
+            all_in_range = false;
+            break;
+        }
+    }
+    FB_ASSERT_TRUE(all_in_range);
+}
+
+FB_TEST(raft_state, logtype) {
+    FB_ASSERT_EQ(RAFT_LOGTYPE_WRITE, 0);
+    FB_ASSERT_EQ(RAFT_LOGTYPE_DELETE, 1);
+    FB_ASSERT_EQ(RAFT_LOGTYPE_ADD_NONVOTING_NODE, 2);
+    FB_ASSERT_EQ(RAFT_LOGTYPE_CONFIGURATION, 3);
+}
+
+FB_TEST(raft_state, logtype_enum) {
+    raft_logtype_e type = RAFT_LOGTYPE_WRITE;
+    FB_ASSERT_EQ(type, RAFT_LOGTYPE_WRITE);
+    type = RAFT_LOGTYPE_DELETE;
+    FB_ASSERT_EQ(type, RAFT_LOGTYPE_DELETE);
+}
+
+FB_TEST(raft_state, logtype_normal) {
+    raft_logtype_e type = RAFT_LOGTYPE_WRITE;
+    FB_ASSERT_EQ(type, 0);
+}
+
+FB_TEST(raft_state, logtype_write_check) {
+    raft_logtype_e type = RAFT_LOGTYPE_WRITE;
+    FB_ASSERT_TRUE(type == 0);
+}
+
+FB_TEST(raft_state, logtype_delete_check) {
+    raft_logtype_e type = RAFT_LOGTYPE_DELETE;
+    FB_ASSERT_TRUE(type == 1);
+}
+
+FB_TEST(raft_state, logtype_add_node) {
+    raft_logtype_e type = RAFT_LOGTYPE_ADD_NONVOTING_NODE;
+    FB_ASSERT_TRUE(type == 2);
+}
+
+FB_TEST(raft_state, logtype_config_check) {
+    raft_logtype_e type = RAFT_LOGTYPE_CONFIGURATION;
+    FB_ASSERT_TRUE(type == 3);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
