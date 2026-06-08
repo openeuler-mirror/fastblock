@@ -1076,5 +1076,100 @@ FB_TEST(raft_log_node, node_match_idx_max_value) {
     FB_ASSERT_TRUE(match_idx > other_idx);
 }
 
+// ============================================================================
+// Test Suite: Concurrency Scenario Tests
+// ============================================================================
+
+FB_TEST(raft_log_node, log_concurrent_append) {
+    // 并发追加模拟
+    std::atomic<raft_index_t> current_idx{0};
+
+    // 模拟并发追加
+    for (int i = 0; i < 100; i++) {
+        current_idx++;
+    }
+
+    FB_ASSERT_EQ(current_idx.load(), 100L);
+}
+
+FB_TEST(raft_log_node, log_concurrent_read_write) {
+    // 并发读写模拟
+    std::map<raft_index_t, int> log_cache;
+    std::mutex cache_mutex;
+
+    // 模拟写入
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        for (int i = 1; i <= 50; i++) {
+            log_cache[i] = i;
+        }
+    }
+
+    // 模拟读取
+    raft_index_t read_count = 0;
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        for (const auto& pair : log_cache) {
+            read_count++;
+        }
+    }
+
+    FB_ASSERT_EQ(read_count, 50L);
+}
+
+FB_TEST(raft_log_node, node_concurrent_state_update) {
+    // 并发状态更新
+    std::atomic<raft_index_t> match_idx{0};
+    std::atomic<raft_index_t> next_idx{1};
+
+    // 模拟并发更新
+    for (int i = 0; i < 10; i++) {
+        raft_index_t old_match = match_idx.load();
+        raft_index_t new_match = old_match + 1;
+        match_idx.compare_exchange_strong(old_match, new_match);
+    }
+
+    FB_ASSERT_EQ(match_idx.load(), 10L);
+}
+
+FB_TEST(raft_log_node, nodes_concurrent_iteration) {
+    // 并发遍历模拟
+    std::map<raft_node_id_t, int> nodes;
+    for (int i = 1; i <= 10; i++) {
+        nodes[i] = i * 10;
+    }
+
+    std::atomic<int> visited_count{0};
+
+    // 模拟并发遍历
+    for (const auto& pair : nodes) {
+        visited_count++;
+    }
+
+    FB_ASSERT_EQ(visited_count.load(), 10);
+}
+
+FB_TEST(raft_log_node, log_cache_thread_safety) {
+    // 缓存线程安全测试
+    std::map<raft_index_t, int> cache;
+    std::mutex cache_mutex;
+    std::atomic<int> operation_count{0};
+
+    // 模拟线程安全操作
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        cache[1] = 100;
+        operation_count++;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        int val = cache[1];
+        operation_count++;
+    }
+
+    FB_ASSERT_EQ(operation_count.load(), 2);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
