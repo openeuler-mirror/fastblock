@@ -9,7 +9,7 @@ if(BUILD_FASTBLOCK_TESTS)
 
 	# Unified test framework
 	add_subdirectory(framework)
-
+	
 	add_executable(raft_membership
 	  osd_client.cc
 	  raft_membership.cc
