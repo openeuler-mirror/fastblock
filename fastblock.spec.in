@@ -1,3 +1,4 @@
+%define debug_package %{nil}
 Name:               fastblock
 Version:            @VERSION@
 Release:            1%{?dist}

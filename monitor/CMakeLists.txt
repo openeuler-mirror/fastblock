@@ -1,5 +1,5 @@
 EXECUTE_PROCESS(
-        COMMAND go build -o fastblock-mon ./cmd/fastblock-mon
+        COMMAND go build -buildvcs=false -o fastblock-mon ./cmd/fastblock-mon
         WORKING_DIRECTORY monitor
 )
 
@@ -7,7 +7,7 @@ install(FILES fastblock-mon DESTINATION bin PERMISSIONS OWNER_EXECUTE OWNER_WRIT
         GROUP_EXECUTE GROUP_READ WORLD_READ WORLD_EXECUTE)
 
 EXECUTE_PROCESS(
-        COMMAND go build -o fastblock-client ./cmd/fastblock-client
+        COMMAND go build -buildvcs=false -o fastblock-client ./cmd/fastblock-client
         WORKING_DIRECTORY monitor
 )
 

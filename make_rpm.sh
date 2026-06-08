@@ -43,7 +43,8 @@ else
 fi
 cd $root && sed "s/@VERSION@/$commit_version/g" fastblock.spec.in > fastblock.spec
 cd $root && mv fastblock.spec $(rpm --eval %{_specdir})
-cd $root/../ && tar -zcvf fastblock-$commit_version.tar.gz fastblock >/dev/null 2>&1
+local_dir=$(basename "$root")
+cd $root/../ && tar --transform="s/^${local_dir}/fastblock/" -zcvf fastblock-$commit_version.tar.gz ${local_dir} >/dev/null 2>&1
 cd $root/../ && mv fastblock-$commit_version.tar.gz $(rpm --eval %{_sourcedir})
 
 
