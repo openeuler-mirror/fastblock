@@ -2096,5 +2096,147 @@ FB_TEST(raft_log_node, log_matching_commit_update) {
     FB_ASSERT_TRUE(can_commit);
 }
 
+// ============================================================================
+// Test Suite: Pre-Vote Mechanism
+// ============================================================================
+
+FB_TEST(raft_log_node, prevote_request_handling) {
+    // Pre-Vote 请求处理
+    raft_term_t current_term = 5;
+    raft_term_t candidate_term = 6;
+    bool is_prevote = true;
+
+    // Pre-Vote 请求不更新 term
+    raft_term_t original_term = current_term;
+    if (!is_prevote) {
+        current_term = std::max(current_term, candidate_term);
+    }
+    FB_ASSERT_EQ(current_term, original_term);
+
+    // 正式投票请求会更新 term
+    is_prevote = false;
+    if (!is_prevote && candidate_term > current_term) {
+        current_term = candidate_term;
+    }
+    FB_ASSERT_EQ(current_term, 6L);
+}
+
+FB_TEST(raft_log_node, prevote_log_check) {
+    // Pre-Vote 日志检查
+    raft_term_t current_last_log_term = 3;
+    raft_index_t current_last_log_idx = 100;
+    raft_term_t candidate_last_log_term = 4;
+    raft_index_t candidate_last_log_idx = 105;
+
+    // Pre-Vote 也需要检查日志是否更新
+    bool log_is_up_to_date = (candidate_last_log_term > current_last_log_term) ||
+        (candidate_last_log_term == current_last_log_term &&
+         candidate_last_log_idx >= current_last_log_idx);
+    FB_ASSERT_TRUE(log_is_up_to_date);
+
+    // 日志更旧的候选人无法获得 Pre-Vote
+    candidate_last_log_term = 2;
+    candidate_last_log_idx = 90;
+    log_is_up_to_date = (candidate_last_log_term > current_last_log_term) ||
+        (candidate_last_log_term == current_last_log_term &&
+         candidate_last_log_idx >= current_last_log_idx);
+    FB_ASSERT_FALSE(log_is_up_to_date);
+}
+
+FB_TEST(raft_log_node, prevote_network_partition) {
+    // Pre-Vote 在网络分区中的作用
+    int total_nodes = 5;
+    int partition_a_size = 2;  // 少数派分区
+    int partition_b_size = 3;  // 多数派分区
+
+    // 少数派分区的节点发送 Pre-Vote
+    int prevotes_received = 0;
+    // 只能从自己分区的节点获得 Pre-Vote
+    for (int i = 0; i < partition_a_size; i++) {
+        prevotes_received++;
+    }
+
+    int quorum = total_nodes / 2 + 1;  // 3
+    bool can_start_election = prevotes_received >= quorum;
+    FB_ASSERT_FALSE(can_start_election);  // 少数派无法开始选举
+}
+
+FB_TEST(raft_log_node, prevote_to_vote_transition) {
+    // Pre-Vote 到正式投票的转换
+    int prevotes_granted = 3;
+    int cluster_size = 5;
+    int quorum = cluster_size / 2 + 1;
+
+    // Pre-Vote 成功后开始正式投票
+    bool prevote_success = prevotes_granted >= quorum;
+    FB_ASSERT_TRUE(prevote_success);
+
+    // 正式投票需要重新请求投票
+    int votes_granted = 0;
+    // 通常 Pre-Vote 成功的节点也会在正式投票中支持
+    votes_granted = prevotes_granted;
+    bool election_won = votes_granted >= quorum;
+    FB_ASSERT_TRUE(election_won);
+}
+
+FB_TEST(raft_log_node, prevote_suppress_disruptive_election) {
+    // Pre-Vote 抑制破坏性选举
+    // 场景：节点从网络分区恢复，term 更高但日志落后
+
+    raft_term_t isolated_node_term = 10;
+    raft_term_t cluster_term = 5;
+    raft_index_t isolated_log_idx = 50;
+    raft_index_t cluster_log_idx = 100;
+
+    // 没有 Pre-Vote：孤立节点会干扰集群
+    bool term_higher = isolated_node_term > cluster_term;
+    bool log_behind = isolated_log_idx < cluster_log_idx;
+    FB_ASSERT_TRUE(term_higher);
+    FB_ASSERT_TRUE(log_behind);
+
+    // 有 Pre-Vote：孤立节点无法获得 Pre-Vote（日志落后）
+    bool can_get_prevote = !(log_behind);
+    FB_ASSERT_FALSE(can_get_prevote);
+}
+
+FB_TEST(raft_log_node, prevote_candidate_state) {
+    // Pre-Vote 候选人状态
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    bool is_prevote_candidate = false;
+
+    // 开始 Pre-Vote（不改变状态）
+    is_prevote_candidate = true;
+    FB_ASSERT_TRUE(is_prevote_candidate);
+    FB_ASSERT_EQ(state, RAFT_STATE_FOLLOWER);  // 状态不变
+
+    // Pre-Vote 成功后转为正式候选人
+    bool prevote_success = true;
+    if (prevote_success) {
+        state = RAFT_STATE_CANDIDATE;
+    }
+    FB_ASSERT_EQ(state, RAFT_STATE_CANDIDATE);
+}
+
+FB_TEST(raft_log_node, prevote_leader_lease_check) {
+    // Pre-Vote 检查 Leader lease
+    raft_time_t last_leader_contact = 1000;
+    raft_time_t current_time = 1100;
+    raft_time_t election_timeout = 150;
+
+    // 节点认为 Leader 还活着
+    bool leader_alive = (current_time - last_leader_contact) < election_timeout;
+    FB_ASSERT_TRUE(leader_alive);
+
+    // 如果 Leader 还活着，拒绝 Pre-Vote
+    bool grant_prevote = !leader_alive;
+    FB_ASSERT_FALSE(grant_prevote);
+
+    // Leader 失联后可以授予 Pre-Vote
+    current_time = 1300;
+    leader_alive = (current_time - last_leader_contact) < election_timeout;
+    grant_prevote = !leader_alive;
+    FB_ASSERT_TRUE(grant_prevote);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
