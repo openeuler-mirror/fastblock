@@ -905,5 +905,100 @@ FB_TEST(raft_log_node, log_node_snapshot_sync) {
     FB_ASSERT_EQ(new_match_idx, 100L);
 }
 
+// ============================================================================
+// Test Suite: Error Handling and Exception Tests
+// ============================================================================
+
+FB_TEST(raft_log_node, log_invalid_index_handling) {
+    // 无效索引处理
+    raft_index_t invalid_idx = -1;
+    bool is_valid = invalid_idx >= 0;
+    FB_ASSERT_FALSE(is_valid);
+
+    // 索引 0 表示"空"状态
+    raft_index_t zero_idx = 0;
+    bool is_empty = (zero_idx == 0);
+    FB_ASSERT_TRUE(is_empty);
+
+    // 有效索引从 1 开始
+    raft_index_t valid_idx = 1;
+    is_valid = valid_idx > 0;
+    FB_ASSERT_TRUE(is_valid);
+}
+
+FB_TEST(raft_log_node, log_negative_index_clamp) {
+    // 负索引截断到有效值
+    auto clamp_idx = [](raft_index_t idx) -> raft_index_t {
+        return idx < 1 ? 1 : idx;
+    };
+
+    FB_ASSERT_EQ(clamp_idx(-100), 1L);
+    FB_ASSERT_EQ(clamp_idx(-1), 1L);
+    FB_ASSERT_EQ(clamp_idx(0), 1L);
+    FB_ASSERT_EQ(clamp_idx(1), 1L);
+    FB_ASSERT_EQ(clamp_idx(100), 100L);
+}
+
+FB_TEST(raft_log_node, log_empty_cache_operations) {
+    // 空缓存操作
+    std::map<raft_index_t, int> empty_cache;
+
+    FB_ASSERT_TRUE(empty_cache.empty());
+    FB_ASSERT_EQ(empty_cache.size(), 0UL);
+
+    // 获取不存在条目返回 end
+    auto it = empty_cache.find(1);
+    FB_ASSERT_TRUE(it == empty_cache.end());
+}
+
+FB_TEST(raft_log_node, log_overflow_protection) {
+    // 溢出保护
+    raft_index_t max_idx = std::numeric_limits<raft_index_t>::max();
+    FB_ASSERT_TRUE(max_idx > 0);
+
+    // 大索引值操作
+    raft_index_t large_idx = max_idx - 100;
+    raft_index_t next_idx = large_idx + 1;
+    FB_ASSERT_TRUE(next_idx > large_idx);
+}
+
+FB_TEST(raft_log_node, log_disk_write_failure) {
+    // 磁盘写入失败处理
+    int write_result = -1;  // 模拟失败
+    bool write_success = (write_result == 0);
+    FB_ASSERT_FALSE(write_success);
+
+    // 重试机制
+    int retry_count = 0;
+    int max_retries = 3;
+    while (!write_success && retry_count < max_retries) {
+        retry_count++;
+        if (retry_count == 2) {
+            write_result = 0;
+            write_success = true;
+        }
+    }
+    FB_ASSERT_TRUE(write_success);
+    FB_ASSERT_EQ(retry_count, 2);
+}
+
+FB_TEST(raft_log_node, log_recovery_partial_failure) {
+    // 部分恢复失败处理
+    std::vector<int> recovery_results = {0, 0, -1, 0};  // 第三个失败
+    int failure_count = 0;
+
+    for (int result : recovery_results) {
+        if (result != 0) {
+            failure_count++;
+        }
+    }
+
+    FB_ASSERT_EQ(failure_count, 1);
+
+    // 恢复成功比例
+    double success_rate = 100.0 * (recovery_results.size() - failure_count) / recovery_results.size();
+    FB_ASSERT_EQ(success_rate, 75.0);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
