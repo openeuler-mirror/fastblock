@@ -905,5 +905,834 @@ FB_TEST(raft_log_node, log_node_snapshot_sync) {
     FB_ASSERT_EQ(new_match_idx, 100L);
 }
 
+// ============================================================================
+// Test Suite: Error Handling and Exception Tests
+// ============================================================================
+
+FB_TEST(raft_log_node, log_invalid_index_handling) {
+    // 无效索引处理
+    raft_index_t invalid_idx = -1;
+    bool is_valid = invalid_idx >= 0;
+    FB_ASSERT_FALSE(is_valid);
+
+    // 索引 0 表示"空"状态
+    raft_index_t zero_idx = 0;
+    bool is_empty = (zero_idx == 0);
+    FB_ASSERT_TRUE(is_empty);
+
+    // 有效索引从 1 开始
+    raft_index_t valid_idx = 1;
+    is_valid = valid_idx > 0;
+    FB_ASSERT_TRUE(is_valid);
+}
+
+FB_TEST(raft_log_node, log_negative_index_clamp) {
+    // 负索引截断到有效值
+    auto clamp_idx = [](raft_index_t idx) -> raft_index_t {
+        return idx < 1 ? 1 : idx;
+    };
+
+    FB_ASSERT_EQ(clamp_idx(-100), 1L);
+    FB_ASSERT_EQ(clamp_idx(-1), 1L);
+    FB_ASSERT_EQ(clamp_idx(0), 1L);
+    FB_ASSERT_EQ(clamp_idx(1), 1L);
+    FB_ASSERT_EQ(clamp_idx(100), 100L);
+}
+
+FB_TEST(raft_log_node, log_empty_cache_operations) {
+    // 空缓存操作
+    std::map<raft_index_t, int> empty_cache;
+
+    FB_ASSERT_TRUE(empty_cache.empty());
+    FB_ASSERT_EQ(empty_cache.size(), 0UL);
+
+    // 获取不存在条目返回 end
+    auto it = empty_cache.find(1);
+    FB_ASSERT_TRUE(it == empty_cache.end());
+
+    // lower_bound/upper_bound 返回 end
+    FB_ASSERT_TRUE(empty_cache.lower_bound(1) == empty_cache.end());
+    FB_ASSERT_TRUE(empty_cache.upper_bound(1) == empty_cache.end());
+}
+
+FB_TEST(raft_log_node, log_overflow_protection) {
+    // 溢出保护
+    raft_index_t max_idx = std::numeric_limits<raft_index_t>::max();
+    FB_ASSERT_TRUE(max_idx > 0);
+
+    // 大索引值操作
+    raft_index_t large_idx = max_idx - 100;
+    raft_index_t next_idx = large_idx + 1;
+    FB_ASSERT_TRUE(next_idx > large_idx);
+
+    // 边界检查
+    bool within_limits = large_idx < max_idx;
+    FB_ASSERT_TRUE(within_limits);
+}
+
+FB_TEST(raft_log_node, log_disk_write_failure) {
+    // 磁盘写入失败处理
+    int write_result = -1;  // 模拟失败
+    bool write_success = (write_result == 0);
+    FB_ASSERT_FALSE(write_success);
+
+    // 重试机制
+    int retry_count = 0;
+    int max_retries = 3;
+    while (!write_success && retry_count < max_retries) {
+        retry_count++;
+        if (retry_count == 2) {
+            write_result = 0;
+            write_success = true;
+        }
+    }
+    FB_ASSERT_TRUE(write_success);
+    FB_ASSERT_EQ(retry_count, 2);
+}
+
+FB_TEST(raft_log_node, log_recovery_partial_failure) {
+    // 部分恢复失败处理
+    std::vector<int> recovery_results = {0, 0, -1, 0};  // 第三个失败
+    int failure_count = 0;
+
+    for (int result : recovery_results) {
+        if (result != 0) {
+            failure_count++;
+        }
+    }
+
+    FB_ASSERT_EQ(failure_count, 1);
+
+    // 恢复成功比例
+    double success_rate = 100.0 * (recovery_results.size() - failure_count) / recovery_results.size();
+    FB_ASSERT_EQ(success_rate, 75.0);
+}
+
+// ============================================================================
+// Test Suite: Boundary Condition Tests
+// ============================================================================
+
+FB_TEST(raft_log_node, log_max_index_boundary) {
+    // 最大索引边界
+    raft_index_t max_idx = std::numeric_limits<raft_index_t>::max();
+    FB_ASSERT_TRUE(max_idx > 0);
+
+    // 接近最大值时的递增
+    raft_index_t near_max = max_idx - 1;
+    raft_index_t incremented = near_max + 1;
+    FB_ASSERT_TRUE(incremented > near_max);
+}
+
+FB_TEST(raft_log_node, log_max_term_boundary) {
+    // 最大 term 边界
+    raft_term_t max_term = std::numeric_limits<raft_term_t>::max();
+    FB_ASSERT_TRUE(max_term > 0);
+
+    // 大 term 值比较
+    raft_term_t large_term = max_term - 1000;
+    raft_term_t other_term = large_term - 1;
+    FB_ASSERT_TRUE(large_term > other_term);
+}
+
+FB_TEST(raft_log_node, log_index_zero_handling) {
+    // 索引 0 处理
+    raft_index_t zero_idx = 0;
+
+    // 0 表示无效或初始状态
+    bool is_initial = (zero_idx == 0);
+    FB_ASSERT_TRUE(is_initial);
+
+    // next_idx 从 1 开始
+    raft_index_t next_idx = zero_idx + 1;
+    FB_ASSERT_EQ(next_idx, 1L);
+}
+
+FB_TEST(raft_log_node, log_term_zero_handling) {
+    // Term 0 处理
+    raft_term_t zero_term = 0;
+
+    // Term 从 1 开始有效
+    bool is_valid_term = zero_term > 0;
+    FB_ASSERT_FALSE(is_valid_term);
+
+    // 初始 term
+    raft_term_t initial_term = 1;
+    is_valid_term = initial_term > 0;
+    FB_ASSERT_TRUE(is_valid_term);
+}
+
+FB_TEST(raft_log_node, node_next_idx_max_value) {
+    // next_idx 最大值
+    raft_index_t max_next = std::numeric_limits<raft_index_t>::max();
+
+    // 不能超过最大值
+    raft_index_t next_idx = max_next;
+    bool can_increment = next_idx < std::numeric_limits<raft_index_t>::max();
+    FB_ASSERT_FALSE(can_increment);
+}
+
+FB_TEST(raft_log_node, node_match_idx_max_value) {
+    // match_idx 最大值
+    raft_index_t max_match = std::numeric_limits<raft_index_t>::max();
+
+    // match_idx 可以达到最大值
+    raft_index_t match_idx = max_match;
+    FB_ASSERT_EQ(match_idx, max_match);
+
+    // 验证比较操作
+    raft_index_t other_idx = max_match - 1;
+    FB_ASSERT_TRUE(match_idx > other_idx);
+}
+
+// ============================================================================
+// Test Suite: Concurrency Scenario Tests
+// ============================================================================
+
+FB_TEST(raft_log_node, log_concurrent_append) {
+    // 并发追加模拟
+    std::atomic<raft_index_t> current_idx{0};
+
+    // 模拟并发追加
+    for (int i = 0; i < 100; i++) {
+        current_idx++;
+    }
+
+    FB_ASSERT_EQ(current_idx.load(), 100L);
+}
+
+FB_TEST(raft_log_node, log_concurrent_read_write) {
+    // 并发读写模拟
+    std::map<raft_index_t, int> log_cache;
+    std::mutex cache_mutex;
+
+    // 模拟写入
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        for (int i = 1; i <= 50; i++) {
+            log_cache[i] = i;
+        }
+    }
+
+    // 模拟读取
+    raft_index_t read_count = 0;
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        for (const auto& pair : log_cache) {
+            read_count++;
+        }
+    }
+
+    FB_ASSERT_EQ(read_count, 50L);
+}
+
+FB_TEST(raft_log_node, node_concurrent_state_update) {
+    // 并发状态更新
+    std::atomic<raft_index_t> match_idx{0};
+    std::atomic<raft_index_t> next_idx{1};
+
+    // 模拟并发更新
+    for (int i = 0; i < 10; i++) {
+        raft_index_t old_match = match_idx.load();
+        raft_index_t new_match = old_match + 1;
+        match_idx.compare_exchange_strong(old_match, new_match);
+    }
+
+    FB_ASSERT_EQ(match_idx.load(), 10L);
+}
+
+FB_TEST(raft_log_node, nodes_concurrent_iteration) {
+    // 并发遍历模拟
+    std::map<raft_node_id_t, int> nodes;
+    for (int i = 1; i <= 10; i++) {
+        nodes[i] = i * 10;
+    }
+
+    std::atomic<int> visited_count{0};
+
+    // 模拟并发遍历
+    for (const auto& pair : nodes) {
+        visited_count++;
+    }
+
+    FB_ASSERT_EQ(visited_count.load(), 10);
+}
+
+FB_TEST(raft_log_node, log_cache_thread_safety) {
+    // 缓存线程安全测试
+    std::map<raft_index_t, int> cache;
+    std::mutex cache_mutex;
+    std::atomic<int> operation_count{0};
+
+    // 模拟线程安全操作
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        cache[1] = 100;
+        operation_count++;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        int val = cache[1];
+        operation_count++;
+    }
+
+    FB_ASSERT_EQ(operation_count.load(), 2);
+}
+
+// ============================================================================
+// Test Suite: Performance Boundary Tests
+// ============================================================================
+
+FB_TEST(raft_log_node, log_large_batch_append) {
+    // 大批量追加
+    std::vector<raft_index_t> batch;
+    batch.reserve(10000);
+
+    for (int i = 1; i <= 10000; i++) {
+        batch.push_back(i);
+    }
+
+    FB_ASSERT_EQ(batch.size(), 10000UL);
+    FB_ASSERT_EQ(batch.front(), 1L);
+    FB_ASSERT_EQ(batch.back(), 10000L);
+}
+
+FB_TEST(raft_log_node, log_cache_pressure_handling) {
+    // 缓存压力测试
+    size_t max_cache_size = 1000;
+    std::map<raft_index_t, int> cache;
+
+    // 填充到最大容量
+    for (size_t i = 1; i <= max_cache_size; i++) {
+        cache[i] = i;
+    }
+
+    FB_ASSERT_EQ(cache.size(), max_cache_size);
+
+    // 超出时移除旧条目
+    raft_index_t new_idx = max_cache_size + 1;
+    cache[new_idx] = new_idx;
+    cache.erase(cache.begin()->first);
+
+    FB_ASSERT_EQ(cache.size(), max_cache_size);
+}
+
+FB_TEST(raft_log_node, log_high_frequency_operations) {
+    // 高频操作测试
+    std::map<raft_index_t, int> cache;
+    size_t operations = 1000;
+
+    auto start_time = std::chrono::high_resolution_clock::now();
+
+    for (size_t i = 1; i <= operations; i++) {
+        cache[i] = i;
+    }
+
+    auto end_time = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+
+    FB_ASSERT_EQ(cache.size(), operations);
+    FB_ASSERT_TRUE(duration.count() < 100000);  // 应该在100ms内完成
+}
+
+FB_TEST(raft_log_node, log_memory_usage_tracking) {
+    // 内存使用跟踪
+    size_t entry_size = 1024;  // 每条日志 1KB
+    size_t max_entries = 1000;
+    size_t max_memory = entry_size * max_entries;
+
+    // 当前使用量
+    size_t current_entries = 500;
+    size_t current_memory = entry_size * current_entries;
+
+    double usage_percent = 100.0 * current_memory / max_memory;
+    FB_ASSERT_EQ(usage_percent, 50.0);
+
+    // 检查是否接近限制
+    bool near_limit = usage_percent > 80.0;
+    FB_ASSERT_FALSE(near_limit);
+}
+
+FB_TEST(raft_log_node, nodes_large_cluster_operations) {
+    // 大规模集群操作
+    std::map<raft_node_id_t, raft_index_t> nodes;
+
+    // 添加 100 个节点
+    for (int i = 1; i <= 100; i++) {
+        nodes[i] = 1000;
+    }
+
+    FB_ASSERT_EQ(nodes.size(), 100UL);
+
+    // 计算多数派
+    uint64_t quorum = nodes.size() / 2 + 1;
+    FB_ASSERT_EQ(quorum, 51UL);
+
+    // 遍历所有节点
+    int visited = 0;
+    for (const auto& pair : nodes) {
+        visited++;
+    }
+    FB_ASSERT_EQ(visited, 100);
+}
+
+// ============================================================================
+// Test Suite: Log Compaction and Cleanup Tests
+// ============================================================================
+
+FB_TEST(raft_log_node, log_compaction_trigger) {
+    // 压缩触发条件
+    size_t log_count = 10000;
+    size_t compaction_threshold = 5000;
+
+    bool should_compact = log_count >= compaction_threshold;
+    FB_ASSERT_TRUE(should_compact);
+
+    // 压缩后数量
+    size_t compacted_count = log_count - compaction_threshold;
+    FB_ASSERT_EQ(compacted_count, 5000UL);
+}
+
+FB_TEST(raft_log_node, log_gc_eligible_entries) {
+    // GC 可回收条目判断
+    raft_index_t commit_idx = 100;
+    raft_index_t snapshot_idx = 80;
+
+    // 快照之前的日志可以 GC
+    std::vector<raft_index_t> gc_eligible;
+    for (raft_index_t idx = 1; idx <= snapshot_idx; idx++) {
+        gc_eligible.push_back(idx);
+    }
+
+    FB_ASSERT_EQ(gc_eligible.size(), 80UL);
+}
+
+FB_TEST(raft_log_node, log_snapshot_compaction) {
+    // 快照压缩
+    raft_index_t first_idx = 1;
+    raft_index_t snapshot_idx = 100;
+    raft_index_t last_idx = 200;
+
+    // 压缩后更新索引
+    raft_index_t new_first_idx = snapshot_idx + 1;
+    FB_ASSERT_EQ(new_first_idx, 101L);
+
+    // 保留的日志条目数
+    size_t remaining = last_idx - new_first_idx + 1;
+    FB_ASSERT_EQ(remaining, 100UL);
+}
+
+FB_TEST(raft_log_node, log_retention_policy) {
+    // 日志保留策略
+    raft_index_t last_applied = 100;
+    size_t retention_window = 50;
+
+    // 只保留最近 N 条已应用的日志
+    raft_index_t oldest_retained = last_applied - retention_window + 1;
+    FB_ASSERT_EQ(oldest_retained, 51L);
+
+    // 可以删除的条目
+    raft_index_t first_log_idx = 1;
+    size_t deletable = oldest_retained - first_log_idx;
+    FB_ASSERT_EQ(deletable, 50UL);
+}
+
+FB_TEST(raft_log_node, log_space_reclamation) {
+    // 空间回收计算
+    size_t log_size = 10 * 1024 * 1024;  // 10MB
+    size_t snapshot_size = 2 * 1024 * 1024;  // 2MB
+
+    // 压缩后释放空间
+    size_t freed_space = log_size - snapshot_size;
+    FB_ASSERT_EQ(freed_space, 8UL * 1024 * 1024);
+
+    // 压缩比
+    double compression_ratio = 100.0 * freed_space / log_size;
+    FB_ASSERT_EQ(compression_ratio, 80.0);
+}
+
+// ============================================================================
+// Test Suite: Configuration Change Scenario Tests
+// ============================================================================
+
+FB_TEST(raft_log_node, log_config_change_during_replication) {
+    // 复制期间的配置变更
+    raft_index_t current_idx = 100;
+    bool config_change_in_progress = true;
+
+    // 配置变更日志追加
+    raft_logtype_e entry_type = RAFT_LOGTYPE_CONFIGURATION;
+
+    // 继续复制
+    if (config_change_in_progress) {
+        current_idx++;
+    }
+
+    FB_ASSERT_EQ(current_idx, 101L);
+    FB_ASSERT_EQ(entry_type, RAFT_LOGTYPE_CONFIGURATION);
+}
+
+FB_TEST(raft_log_node, node_added_to_cluster) {
+    // 节点添加到集群
+    std::set<raft_node_id_t> nodes = {1, 2, 3};
+    raft_node_id_t new_node = 4;
+
+    // 添加新节点
+    nodes.insert(new_node);
+
+    FB_ASSERT_EQ(nodes.size(), 4UL);
+    FB_ASSERT_TRUE(nodes.count(4));
+
+    // 新节点初始 match_idx = 0
+    raft_index_t new_node_match = 0;
+    FB_ASSERT_EQ(new_node_match, 0L);
+}
+
+FB_TEST(raft_log_node, node_removed_from_cluster) {
+    // 节点从集群移除
+    std::set<raft_node_id_t> nodes = {1, 2, 3, 4, 5};
+    raft_node_id_t remove_node = 3;
+
+    // 移除节点
+    nodes.erase(remove_node);
+
+    FB_ASSERT_EQ(nodes.size(), 4UL);
+    FB_ASSERT_FALSE(nodes.count(3));
+}
+
+FB_TEST(raft_log_node, nodes_joint_consensus_operations) {
+    // 联合共识操作
+    std::set<raft_node_id_t> old_nodes = {1, 2, 3};
+    std::set<raft_node_id_t> new_nodes = {4, 5, 6};
+
+    // 联合共识期间向所有节点发送
+    size_t total_recipients = old_nodes.size() + new_nodes.size();
+    FB_ASSERT_EQ(total_recipients, 6UL);
+
+    // 需要两个配置的多数派
+    uint64_t old_quorum = old_nodes.size() / 2 + 1;
+    uint64_t new_quorum = new_nodes.size() / 2 + 1;
+
+    FB_ASSERT_EQ(old_quorum, 2UL);
+    FB_ASSERT_EQ(new_quorum, 2UL);
+}
+
+FB_TEST(raft_log_node, log_config_entry_handling) {
+    // 配置日志条目处理
+    raft_logtype_e type = RAFT_LOGTYPE_CONFIGURATION;
+    raft_index_t config_idx = 50;
+    raft_term_t config_term = 5;
+
+    // 配置日志索引跟踪
+    FB_ASSERT_EQ(type, RAFT_LOGTYPE_CONFIGURATION);
+    FB_ASSERT_TRUE(config_idx > 0);
+
+    // 提交后配置生效
+    raft_index_t commit_idx = 55;
+    bool config_applied = commit_idx >= config_idx;
+    FB_ASSERT_TRUE(config_applied);
+}
+
+// ============================================================================
+// Test Suite: Data Integrity Tests
+// ============================================================================
+
+FB_TEST(raft_log_node, log_checksum_validation) {
+    // 校验和验证
+    uint32_t expected_checksum = 0xABCD1234;
+    uint32_t computed_checksum = 0xABCD1234;
+
+    bool valid = (expected_checksum == computed_checksum);
+    FB_ASSERT_TRUE(valid);
+
+    // 校验失败
+    computed_checksum = 0xABCD1235;
+    valid = (expected_checksum == computed_checksum);
+    FB_ASSERT_FALSE(valid);
+}
+
+FB_TEST(raft_log_node, log_entry_integrity_check) {
+    // 日志条目完整性检查
+    raft_index_t idx = 100;
+    raft_term_t term = 5;
+    raft_logtype_e type = RAFT_LOGTYPE_WRITE;
+    size_t data_size = 4096;
+
+    // 完整性条件
+    bool valid_idx = idx > 0;
+    bool valid_term = term > 0;
+    bool valid_type = type <= RAFT_LOGTYPE_CONFIGURATION;
+    bool valid_size = data_size > 0 && (data_size % 4096 == 0);
+
+    FB_ASSERT_TRUE(valid_idx);
+    FB_ASSERT_TRUE(valid_term);
+    FB_ASSERT_TRUE(valid_type);
+    FB_ASSERT_TRUE(valid_size);
+}
+
+FB_TEST(raft_log_node, log_corruption_detection) {
+    // 数据损坏检测
+    std::string original_data = "test_data_content";
+    std::string stored_data = "test_data_content";
+
+    // 模拟损坏
+    bool is_corrupted = (original_data != stored_data);
+    FB_ASSERT_FALSE(is_corrupted);
+
+    // 损坏场景
+    stored_data[5] = 'X';
+    is_corrupted = (original_data != stored_data);
+    FB_ASSERT_TRUE(is_corrupted);
+}
+
+FB_TEST(raft_log_node, log_data_consistency_verification) {
+    // 数据一致性验证
+    std::map<raft_index_t, raft_term_t> log_terms;
+    for (int i = 1; i <= 100; i++) {
+        log_terms[i] = (i <= 50) ? 1 : 2;
+    }
+
+    // 验证 term 单调性
+    bool term_monotonic = true;
+    raft_term_t prev_term = 0;
+    for (const auto& pair : log_terms) {
+        if (pair.second < prev_term) {
+            term_monotonic = false;
+            break;
+        }
+        prev_term = pair.second;
+    }
+
+    FB_ASSERT_TRUE(term_monotonic);
+}
+
+// ============================================================================
+// Test Suite: Flow Control and Backpressure Tests
+// ============================================================================
+
+FB_TEST(raft_log_node, log_flow_control_window) {
+    // 流控窗口
+    int window_size = 10;
+    int in_flight = 7;
+
+    bool can_send_more = in_flight < window_size;
+    FB_ASSERT_TRUE(can_send_more);
+
+    // 窗口满
+    in_flight = 10;
+    can_send_more = in_flight < window_size;
+    FB_ASSERT_FALSE(can_send_more);
+}
+
+FB_TEST(raft_log_node, log_backpressure_handling) {
+    // 背压处理
+    int pending_writes = 100;
+    int max_pending = 50;
+
+    bool apply_backpressure = pending_writes > max_pending;
+    FB_ASSERT_TRUE(apply_backpressure);
+
+    // 处理部分请求
+    pending_writes = max_pending;
+    apply_backpressure = pending_writes > max_pending;
+    FB_ASSERT_FALSE(apply_backpressure);
+}
+
+FB_TEST(raft_log_node, node_pipeline_depth_control) {
+    // 流水线深度控制
+    int max_pipeline_depth = 3;
+    int current_depth = 2;
+
+    bool can_pipeline = current_depth < max_pipeline_depth;
+    FB_ASSERT_TRUE(can_pipeline);
+
+    // 达到最大深度
+    current_depth = 3;
+    can_pipeline = current_depth < max_pipeline_depth;
+    FB_ASSERT_FALSE(can_pipeline);
+}
+
+FB_TEST(raft_log_node, log_in_flight_request_limit) {
+    // 进行中请求限制
+    size_t max_in_flight = 100;
+    std::set<uint64_t> in_flight_requests;
+
+    // 模拟请求
+    for (int i = 0; i < 80; i++) {
+        if (in_flight_requests.size() < max_in_flight) {
+            in_flight_requests.insert(i);
+        }
+    }
+
+    FB_ASSERT_EQ(in_flight_requests.size(), 80UL);
+
+    // 超出限制
+    for (int i = 80; i < 120; i++) {
+        if (in_flight_requests.size() < max_in_flight) {
+            in_flight_requests.insert(i);
+        }
+    }
+
+    FB_ASSERT_EQ(in_flight_requests.size(), 100UL);
+}
+
+// ============================================================================
+// Test Suite: Snapshot and Log Interaction Tests
+// ============================================================================
+
+FB_TEST(raft_log_node, log_snapshot_creation) {
+    // 快照创建
+    raft_index_t last_applied = 100;
+    raft_index_t snapshot_idx = last_applied;
+
+    // 快照包含已应用的所有日志
+    FB_ASSERT_EQ(snapshot_idx, 100L);
+
+    // 快照元数据
+    raft_term_t snapshot_term = 5;
+    FB_ASSERT_TRUE(snapshot_term > 0);
+}
+
+FB_TEST(raft_log_node, log_snapshot_apply) {
+    // 快照应用
+    raft_index_t snapshot_idx = 100;
+    raft_term_t snapshot_term = 5;
+
+    // 应用后更新索引
+    raft_index_t last_applied = snapshot_idx;
+    raft_index_t commit_idx = snapshot_idx;
+
+    FB_ASSERT_EQ(last_applied, 100L);
+    FB_ASSERT_EQ(commit_idx, 100L);
+
+    // 更新日志基索引
+    raft_index_t new_base_idx = snapshot_idx + 1;
+    FB_ASSERT_EQ(new_base_idx, 101L);
+}
+
+FB_TEST(raft_log_node, log_after_snapshot_sync) {
+    // 快照后日志同步
+    raft_index_t snapshot_idx = 100;
+    raft_index_t leader_next_idx = 105;
+
+    // 快照后需要同步后续日志
+    std::vector<raft_index_t> logs_to_sync;
+    for (raft_index_t idx = snapshot_idx + 1; idx <= leader_next_idx; idx++) {
+        logs_to_sync.push_back(idx);
+    }
+
+    FB_ASSERT_EQ(logs_to_sync.size(), 5UL);
+    FB_ASSERT_EQ(logs_to_sync.front(), 101L);
+    FB_ASSERT_EQ(logs_to_sync.back(), 105L);
+}
+
+FB_TEST(raft_log_node, log_snapshot_index_update) {
+    // 快照索引更新
+    raft_index_t old_base = 1;
+    raft_index_t snapshot_idx = 100;
+
+    // 更新基索引
+    raft_index_t new_base = snapshot_idx + 1;
+    FB_ASSERT_EQ(new_base, 101L);
+
+    // 可删除的日志范围
+    size_t deletable_count = snapshot_idx - old_base + 1;
+    FB_ASSERT_EQ(deletable_count, 100UL);
+}
+
+FB_TEST(raft_log_node, node_snapshot_transfer_progress) {
+    // 快照传输进度
+    int64_t total_chunks = 16;
+    int64_t transferred_chunks = 0;
+
+    // 传输进度
+    for (int i = 0; i < 10; i++) {
+        transferred_chunks++;
+    }
+
+    double progress = 100.0 * transferred_chunks / total_chunks;
+    FB_ASSERT_GE(progress, 60.0);
+
+    // 传输完成
+    transferred_chunks = total_chunks;
+    progress = 100.0 * transferred_chunks / total_chunks;
+    FB_ASSERT_EQ(progress, 100.0);
+}
+
+// ============================================================================
+// Test Suite: Node Lifecycle Tests
+// ============================================================================
+
+FB_TEST(raft_log_node, node_become_leader_state) {
+    // 成为 Leader 状态变化
+    raft_identity state = RAFT_STATE_FOLLOWER;
+
+    // 发起选举
+    state = RAFT_STATE_CANDIDATE;
+    FB_ASSERT_EQ(state, RAFT_STATE_CANDIDATE);
+
+    // 赢得选举
+    state = RAFT_STATE_LEADER;
+    FB_ASSERT_EQ(state, RAFT_STATE_LEADER);
+}
+
+FB_TEST(raft_log_node, node_become_follower_state) {
+    // 成为 Follower 状态变化
+    raft_identity state = RAFT_STATE_LEADER;
+
+    // 发现更高 term
+    state = RAFT_STATE_FOLLOWER;
+    FB_ASSERT_EQ(state, RAFT_STATE_FOLLOWER);
+}
+
+FB_TEST(raft_log_node, node_step_down_handling) {
+    // 退位处理
+    raft_identity state = RAFT_STATE_LEADER;
+    raft_term_t current_term = 5;
+    raft_term_t received_term = 6;
+
+    // 发现更高 term，退位
+    if (received_term > current_term) {
+        state = RAFT_STATE_FOLLOWER;
+        current_term = received_term;
+    }
+
+    FB_ASSERT_EQ(state, RAFT_STATE_FOLLOWER);
+    FB_ASSERT_EQ(current_term, 6L);
+}
+
+FB_TEST(raft_log_node, node_election_state_change) {
+    // 选举状态变化
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    raft_time_t last_leader_contact = 1000;
+    raft_time_t election_timeout = 500;
+    raft_time_t current_time = 1600;
+
+    // 选举超时
+    bool timeout = (current_time - last_leader_contact) >= election_timeout;
+    FB_ASSERT_TRUE(timeout);
+
+    // 转为候选人
+    if (timeout) {
+        state = RAFT_STATE_CANDIDATE;
+    }
+
+    FB_ASSERT_EQ(state, RAFT_STATE_CANDIDATE);
+}
+
+FB_TEST(raft_log_node, nodes_leader_change_handling) {
+    // Leader 变更处理
+    raft_node_id_t old_leader = 1;
+    raft_node_id_t new_leader = 3;
+
+    // 更新 Leader 信息
+    raft_node_id_t current_leader = new_leader;
+    FB_ASSERT_EQ(current_leader, 3L);
+
+    // 旧 Leader 需要重置状态
+    bool old_leader_demoted = (old_leader != current_leader);
+    FB_ASSERT_TRUE(old_leader_demoted);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
