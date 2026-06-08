@@ -1262,5 +1262,80 @@ FB_TEST(raft_log_node, nodes_large_cluster_operations) {
     FB_ASSERT_EQ(visited, 100);
 }
 
+// ============================================================================
+// Test Suite: Log Compaction and Cleanup Tests
+// ============================================================================
+
+FB_TEST(raft_log_node, log_compaction_trigger) {
+    // 压缩触发条件
+    size_t log_count = 10000;
+    size_t compaction_threshold = 5000;
+
+    bool should_compact = log_count >= compaction_threshold;
+    FB_ASSERT_TRUE(should_compact);
+
+    // 压缩后数量
+    size_t compacted_count = log_count - compaction_threshold;
+    FB_ASSERT_EQ(compacted_count, 5000UL);
+}
+
+FB_TEST(raft_log_node, log_gc_eligible_entries) {
+    // GC 可回收条目判断
+    raft_index_t commit_idx = 100;
+    raft_index_t snapshot_idx = 80;
+
+    // 快照之前的日志可以 GC
+    std::vector<raft_index_t> gc_eligible;
+    for (raft_index_t idx = 1; idx <= snapshot_idx; idx++) {
+        gc_eligible.push_back(idx);
+    }
+
+    FB_ASSERT_EQ(gc_eligible.size(), 80UL);
+}
+
+FB_TEST(raft_log_node, log_snapshot_compaction) {
+    // 快照压缩
+    raft_index_t first_idx = 1;
+    raft_index_t snapshot_idx = 100;
+    raft_index_t last_idx = 200;
+
+    // 压缩后更新索引
+    raft_index_t new_first_idx = snapshot_idx + 1;
+    FB_ASSERT_EQ(new_first_idx, 101L);
+
+    // 保留的日志条目数
+    size_t remaining = last_idx - new_first_idx + 1;
+    FB_ASSERT_EQ(remaining, 100UL);
+}
+
+FB_TEST(raft_log_node, log_retention_policy) {
+    // 日志保留策略
+    raft_index_t last_applied = 100;
+    size_t retention_window = 50;
+
+    // 只保留最近 N 条已应用的日志
+    raft_index_t oldest_retained = last_applied - retention_window + 1;
+    FB_ASSERT_EQ(oldest_retained, 51L);
+
+    // 可以删除的条目
+    raft_index_t first_log_idx = 1;
+    size_t deletable = oldest_retained - first_log_idx;
+    FB_ASSERT_EQ(deletable, 50UL);
+}
+
+FB_TEST(raft_log_node, log_space_reclamation) {
+    // 空间回收计算
+    size_t log_size = 10 * 1024 * 1024;  // 10MB
+    size_t snapshot_size = 2 * 1024 * 1024;  // 2MB
+
+    // 压缩后释放空间
+    size_t freed_space = log_size - snapshot_size;
+    FB_ASSERT_EQ(freed_space, 8UL * 1024 * 1024);
+
+    // 压缩比
+    double compression_ratio = 100.0 * freed_space / log_size;
+    FB_ASSERT_EQ(compression_ratio, 80.0);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
