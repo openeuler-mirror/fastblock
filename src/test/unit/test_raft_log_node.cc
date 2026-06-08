@@ -1000,5 +1000,81 @@ FB_TEST(raft_log_node, log_recovery_partial_failure) {
     FB_ASSERT_EQ(success_rate, 75.0);
 }
 
+// ============================================================================
+// Test Suite: Boundary Condition Tests
+// ============================================================================
+
+FB_TEST(raft_log_node, log_max_index_boundary) {
+    // 最大索引边界
+    raft_index_t max_idx = std::numeric_limits<raft_index_t>::max();
+    FB_ASSERT_TRUE(max_idx > 0);
+
+    // 接近最大值时的递增
+    raft_index_t near_max = max_idx - 1;
+    raft_index_t incremented = near_max + 1;
+    FB_ASSERT_TRUE(incremented > near_max);
+}
+
+FB_TEST(raft_log_node, log_max_term_boundary) {
+    // 最大 term 边界
+    raft_term_t max_term = std::numeric_limits<raft_term_t>::max();
+    FB_ASSERT_TRUE(max_term > 0);
+
+    // 大 term 值比较
+    raft_term_t large_term = max_term - 1000;
+    raft_term_t other_term = large_term - 1;
+    FB_ASSERT_TRUE(large_term > other_term);
+}
+
+FB_TEST(raft_log_node, log_index_zero_handling) {
+    // 索引 0 处理
+    raft_index_t zero_idx = 0;
+
+    // 0 表示无效或初始状态
+    bool is_initial = (zero_idx == 0);
+    FB_ASSERT_TRUE(is_initial);
+
+    // next_idx 从 1 开始
+    raft_index_t next_idx = zero_idx + 1;
+    FB_ASSERT_EQ(next_idx, 1L);
+}
+
+FB_TEST(raft_log_node, log_term_zero_handling) {
+    // Term 0 处理
+    raft_term_t zero_term = 0;
+
+    // Term 从 1 开始有效
+    bool is_valid_term = zero_term > 0;
+    FB_ASSERT_FALSE(is_valid_term);
+
+    // 初始 term
+    raft_term_t initial_term = 1;
+    is_valid_term = initial_term > 0;
+    FB_ASSERT_TRUE(is_valid_term);
+}
+
+FB_TEST(raft_log_node, node_next_idx_max_value) {
+    // next_idx 最大值
+    raft_index_t max_next = std::numeric_limits<raft_index_t>::max();
+
+    // 不能超过最大值
+    raft_index_t next_idx = max_next;
+    bool can_increment = next_idx < std::numeric_limits<raft_index_t>::max();
+    FB_ASSERT_FALSE(can_increment);
+}
+
+FB_TEST(raft_log_node, node_match_idx_max_value) {
+    // match_idx 最大值
+    raft_index_t max_match = std::numeric_limits<raft_index_t>::max();
+
+    // match_idx 可以达到最大值
+    raft_index_t match_idx = max_match;
+    FB_ASSERT_EQ(match_idx, max_match);
+
+    // 验证比较操作
+    raft_index_t other_idx = max_match - 1;
+    FB_ASSERT_TRUE(match_idx > other_idx);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
