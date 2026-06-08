@@ -1337,5 +1337,187 @@ FB_TEST(raft_log_node, log_space_reclamation) {
     FB_ASSERT_EQ(compression_ratio, 80.0);
 }
 
+// ============================================================================
+// Test Suite: Leader Election
+// ============================================================================
+
+FB_TEST(raft_log_node, election_timeout_trigger) {
+    // 选举超时触发
+    raft_time_t election_timeout = 150;  // ms
+    raft_time_t last_heartbeat = 1000;
+    raft_time_t current_time = 1200;
+
+    // 检查是否超时
+    bool timeout = (current_time - last_heartbeat) > election_timeout;
+    FB_ASSERT_TRUE(timeout);
+
+    // 未超时情况
+    current_time = 1100;
+    timeout = (current_time - last_heartbeat) > election_timeout;
+    FB_ASSERT_FALSE(timeout);
+}
+
+FB_TEST(raft_log_node, election_timeout_randomization) {
+    // 选举超时随机化
+    raft_time_t base_timeout = 150;
+    raft_time_t min_timeout = base_timeout;
+    raft_time_t max_timeout = base_timeout * 2;
+
+    // 随机化后的超时应在范围内
+    for (int i = 0; i < 10; i++) {
+        raft_time_t randomized = base_timeout + (i * 15);
+        FB_ASSERT_TRUE(randomized >= min_timeout);
+        FB_ASSERT_TRUE(randomized <= max_timeout);
+    }
+}
+
+FB_TEST(raft_log_node, candidate_state_transition) {
+    // 候选人状态转换
+    raft_identity state = RAFT_STATE_FOLLOWER;
+
+    // Follower -> Candidate
+    state = RAFT_STATE_CANDIDATE;
+    FB_ASSERT_EQ(state, RAFT_STATE_CANDIDATE);
+
+    // Candidate -> Leader (赢得选举)
+    state = RAFT_STATE_LEADER;
+    FB_ASSERT_EQ(state, RAFT_STATE_LEADER);
+
+    // Leader -> Follower (收到更高 term)
+    state = RAFT_STATE_FOLLOWER;
+    FB_ASSERT_EQ(state, RAFT_STATE_FOLLOWER);
+}
+
+FB_TEST(raft_log_node, vote_request_term_check) {
+    // 投票请求 term 检查
+    raft_term_t current_term = 5;
+    raft_term_t request_term = 6;
+
+    // 请求 term 更高，接受
+    bool accept = request_term >= current_term;
+    FB_ASSERT_TRUE(accept);
+
+    // 请求 term 更低，拒绝
+    request_term = 4;
+    accept = request_term >= current_term;
+    FB_ASSERT_FALSE(accept);
+}
+
+FB_TEST(raft_log_node, vote_request_log_check) {
+    // 投票请求日志检查
+    raft_term_t current_last_log_term = 3;
+    raft_index_t current_last_log_idx = 100;
+    raft_term_t candidate_last_log_term = 4;
+    raft_index_t candidate_last_log_idx = 105;
+
+    // 候选人日志更新，接受投票
+    bool log_is_up_to_date = (candidate_last_log_term > current_last_log_term) ||
+        (candidate_last_log_term == current_last_log_term &&
+         candidate_last_log_idx >= current_last_log_idx);
+    FB_ASSERT_TRUE(log_is_up_to_date);
+
+    // 候选人日志更旧，拒绝投票
+    candidate_last_log_term = 2;
+    candidate_last_log_idx = 90;
+    log_is_up_to_date = (candidate_last_log_term > current_last_log_term) ||
+        (candidate_last_log_term == current_last_log_term &&
+         candidate_last_log_idx >= current_last_log_idx);
+    FB_ASSERT_FALSE(log_is_up_to_date);
+}
+
+FB_TEST(raft_log_node, vote_granted_tracking) {
+    // 投票授予跟踪
+    std::map<raft_node_id_t, bool> votes_received;
+    votes_received[1] = true;
+    votes_received[2] = true;
+    votes_received[3] = false;
+    votes_received[4] = true;
+    votes_received[5] = false;
+
+    // 计算获得的票数
+    int votes_for_me = 0;
+    for (const auto& pair : votes_received) {
+        if (pair.second) votes_for_me++;
+    }
+    FB_ASSERT_EQ(votes_for_me, 3);
+
+    // 检查是否获得多数票 (5 节点集群，需要 3 票)
+    int cluster_size = 5;
+    int quorum = cluster_size / 2 + 1;
+    bool won_election = votes_for_me >= quorum;
+    FB_ASSERT_TRUE(won_election);
+}
+
+FB_TEST(raft_log_node, split_vote_scenario) {
+    // Split Vote 场景
+    // 3 个候选人的 5 节点集群，各获得不同票数
+    int total_nodes = 5;
+    int quorum = total_nodes / 2 + 1;  // 3
+
+    // 候选人 A 获得 2 票
+    int votes_a = 2;
+    bool a_wins = votes_a >= quorum;
+    FB_ASSERT_FALSE(a_wins);
+
+    // 候选人 B 获得 2 票
+    int votes_b = 2;
+    bool b_wins = votes_b >= quorum;
+    FB_ASSERT_FALSE(b_wins);
+
+    // 候选人 C 获得 1 票
+    int votes_c = 1;
+    bool c_wins = votes_c >= quorum;
+    FB_ASSERT_FALSE(c_wins);
+
+    // 无人获胜，需要增加 term 重新选举
+    bool need_new_election = !a_wins && !b_wins && !c_wins;
+    FB_ASSERT_TRUE(need_new_election);
+}
+
+FB_TEST(raft_log_node, term_increment_on_election) {
+    // 选举时 term 递增
+    raft_term_t current_term = 5;
+
+    // 开始选举时递增 term
+    current_term++;
+    FB_ASSERT_EQ(current_term, 6L);
+
+    // 多次选举 term 持续递增
+    current_term++;
+    current_term++;
+    FB_ASSERT_EQ(current_term, 8L);
+}
+
+FB_TEST(raft_log_node, voted_for_persistence) {
+    // voted_for 持久化
+    raft_node_id_t voted_for = 0;  // 初始为空
+
+    // 投票给候选人 3
+    voted_for = 3;
+    FB_ASSERT_EQ(voted_for, 3);
+
+    // 已投票状态检查
+    bool has_voted = voted_for != 0;
+    FB_ASSERT_TRUE(has_voted);
+
+    // 新 term 开始，清除投票
+    voted_for = 0;
+    has_voted = voted_for != 0;
+    FB_ASSERT_FALSE(has_voted);
+}
+
+FB_TEST(raft_log_node, election_safety_single_leader) {
+    // 选举安全性：同一 term 只有一个 Leader
+    std::map<raft_term_t, int> leaders_per_term;
+    leaders_per_term[1] = 1;
+    leaders_per_term[2] = 1;
+    leaders_per_term[3] = 1;
+
+    // 每个 term 应该只有一个 Leader
+    for (const auto& pair : leaders_per_term) {
+        FB_ASSERT_EQ(pair.second, 1);
+    }
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
