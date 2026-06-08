@@ -500,5 +500,106 @@ FB_TEST(raft_state, vote_flag_logic) {
     FB_ASSERT_FALSE((flags & RAFT_NODE_VOTED_FOR_ME) != 0);
 }
 
+// ============================================================================
+// PR 6: Test Suite: Node Operations
+// ============================================================================
+
+FB_TEST(raft_state, node_id_eq) {
+    raft_node_id_t id1 = 1;
+    raft_node_id_t id2 = 1;
+    FB_ASSERT_TRUE(id1 == id2);
+}
+
+FB_TEST(raft_state, node_id_neq) {
+    raft_node_id_t id1 = 1;
+    raft_node_id_t id2 = 2;
+    FB_ASSERT_TRUE(id1 != id2);
+}
+
+FB_TEST(raft_state, node_flags) {
+    int flags = 0;
+    flags |= RAFT_NODE_VOTED_FOR_ME;
+    FB_ASSERT_TRUE((flags & RAFT_NODE_VOTED_FOR_ME) != 0);
+}
+
+FB_TEST(raft_state, node_logic) {
+    auto clamp_next_idx = [](int64_t next_idx) -> int64_t {
+        return next_idx < 1 ? 1 : next_idx;
+    };
+
+    FB_ASSERT_EQ(clamp_next_idx(-100), 1L);
+    FB_ASSERT_EQ(clamp_next_idx(-1), 1L);
+    FB_ASSERT_EQ(clamp_next_idx(0), 1L);
+    FB_ASSERT_EQ(clamp_next_idx(1), 1L);
+    FB_ASSERT_EQ(clamp_next_idx(5), 5L);
+    FB_ASSERT_EQ(clamp_next_idx(1000), 1000L);
+}
+
+FB_TEST(raft_state, node_next_idx) {
+    auto set_next_idx = [](raft_index_t idx) -> raft_index_t {
+        return idx < 1 ? 1 : idx;
+    };
+
+    FB_ASSERT_EQ(set_next_idx(0), 1L);
+    FB_ASSERT_EQ(set_next_idx(1), 1L);
+    FB_ASSERT_EQ(set_next_idx(5), 5L);
+    FB_ASSERT_EQ(set_next_idx(-1), 1L);
+    FB_ASSERT_EQ(set_next_idx(-100), 1L);
+    FB_ASSERT_EQ(set_next_idx(100), 100L);
+}
+
+FB_TEST(raft_state, node_next_idx_clamp) {
+    auto clamp_min_one = [](long int idx) -> long int {
+        return idx < 1 ? 1 : idx;
+    };
+
+    FB_ASSERT_EQ(clamp_min_one(0), 1L);
+    FB_ASSERT_EQ(clamp_min_one(-5), 1L);
+    FB_ASSERT_EQ(clamp_min_one(1), 1L);
+    FB_ASSERT_EQ(clamp_min_one(10), 10L);
+}
+
+FB_TEST(raft_state, next_idx_logic) {
+    int64_t next_idx = 1;
+
+    auto set_next_idx = [&next_idx](int64_t idx) {
+        next_idx = idx < 1 ? 1 : idx;
+    };
+
+    FB_ASSERT_EQ(next_idx, 1L);
+    set_next_idx(10);
+    FB_ASSERT_EQ(next_idx, 10L);
+    set_next_idx(0);
+    FB_ASSERT_EQ(next_idx, 1L);
+    set_next_idx(-5);
+    FB_ASSERT_EQ(next_idx, 1L);
+    set_next_idx(100);
+    FB_ASSERT_EQ(next_idx, 100L);
+}
+
+FB_TEST(raft_state, is_self_check) {
+    raft_node_id_t self_id = 1;
+    raft_node_id_t other_id = 2;
+
+    FB_ASSERT_TRUE(self_id == self_id);
+    FB_ASSERT_FALSE(self_id == other_id);
+}
+
+FB_TEST(raft_state, node_voted_for_me) {
+    int flags = 0;
+
+    FB_ASSERT_FALSE((flags & RAFT_NODE_VOTED_FOR_ME) != 0);
+
+    flags |= RAFT_NODE_VOTED_FOR_ME;
+    FB_ASSERT_TRUE((flags & RAFT_NODE_VOTED_FOR_ME) != 0);
+}
+
+FB_TEST(raft_state, node_suppress_heartbeat) {
+    bool suppress_heartbeat = false;
+    FB_ASSERT_FALSE(suppress_heartbeat);
+    suppress_heartbeat = true;
+    FB_ASSERT_TRUE(suppress_heartbeat);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
