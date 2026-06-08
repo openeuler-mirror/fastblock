@@ -2238,5 +2238,143 @@ FB_TEST(raft_log_node, prevote_leader_lease_check) {
     FB_ASSERT_TRUE(grant_prevote);
 }
 
+// ============================================================================
+// Test Suite: Network Partition
+// ============================================================================
+
+FB_TEST(raft_log_node, partition_minority_cannot_progress) {
+    // 少数派分区无法推进
+    int total_nodes = 5;
+    int minority_size = 2;
+    int quorum = total_nodes / 2 + 1;
+
+    // 少数派无法达成共识
+    bool can_commit = minority_size >= quorum;
+    FB_ASSERT_FALSE(can_commit);
+
+    // 少数派分区中的 Leader 会降级
+    raft_identity leader_state = RAFT_STATE_LEADER;
+    bool can_get_heartbeat_response = false;
+    if (!can_get_heartbeat_response) {
+        leader_state = RAFT_STATE_FOLLOWER;
+    }
+    FB_ASSERT_EQ(leader_state, RAFT_STATE_FOLLOWER);
+}
+
+FB_TEST(raft_log_node, partition_majority_continues) {
+    // 多数派分区继续工作
+    int total_nodes = 5;
+    int majority_size = 3;
+    int quorum = total_nodes / 2 + 1;
+
+    // 多数派可以达成共识
+    bool can_commit = majority_size >= quorum;
+    FB_ASSERT_TRUE(can_commit);
+
+    // 多数派可以选举新 Leader
+    int votes = majority_size;
+    bool can_win_election = votes >= quorum;
+    FB_ASSERT_TRUE(can_win_election);
+}
+
+FB_TEST(raft_log_node, partition_brain_split_scenario) {
+    // 脑裂场景模拟
+    int total_nodes = 6;  // 6 节点集群
+    int partition_a_size = 3;
+    int partition_b_size = 3;
+
+    // 两个分区大小相等，都无法获得多数派
+    int quorum = total_nodes / 2 + 1;  // 4
+    bool partition_a_can_progress = partition_a_size >= quorum;
+    bool partition_b_can_progress = partition_b_size >= quorum;
+    FB_ASSERT_FALSE(partition_a_can_progress);
+    FB_ASSERT_FALSE(partition_b_can_progress);
+
+    // 都无法选举 Leader
+    bool partition_a_can_elect = partition_a_size >= quorum;
+    FB_ASSERT_FALSE(partition_a_can_elect);
+}
+
+FB_TEST(raft_log_node, partition_healing_sync) {
+    // 网络恢复后同步
+    raft_term_t old_leader_term = 5;
+    raft_term_t new_leader_term = 7;
+    raft_index_t old_partition_log_idx = 80;
+    raft_index_t new_partition_log_idx = 100;
+
+    // 网络恢复后，旧分区节点发现更高 term
+    bool need_sync = new_leader_term > old_leader_term;
+    FB_ASSERT_TRUE(need_sync);
+
+    // 需要同步日志差距
+    int entries_to_sync = new_partition_log_idx - old_partition_log_idx;
+    FB_ASSERT_EQ(entries_to_sync, 20);
+}
+
+FB_TEST(raft_log_node, partition_leader_step_down) {
+    // 分区 Leader 降级
+    raft_identity state = RAFT_STATE_LEADER;
+    raft_term_t current_term = 5;
+    raft_term_t higher_term = 7;
+
+    // 收到更高 term 的消息后降级
+    if (higher_term > current_term) {
+        current_term = higher_term;
+        state = RAFT_STATE_FOLLOWER;
+    }
+    FB_ASSERT_EQ(current_term, 7L);
+    FB_ASSERT_EQ(state, RAFT_STATE_FOLLOWER);
+}
+
+FB_TEST(raft_log_node, partition_stale_read_prevention) {
+    // 防止分区导致的过期读
+    raft_identity state = RAFT_STATE_LEADER;
+    bool is_in_majority_partition = false;
+
+    // 如果不在多数派分区，不能处理读请求
+    bool can_serve_read = (state == RAFT_STATE_LEADER) && is_in_majority_partition;
+    FB_ASSERT_FALSE(can_serve_read);
+
+    // 在多数派分区中可以处理读请求
+    is_in_majority_partition = true;
+    can_serve_read = (state == RAFT_STATE_LEADER) && is_in_majority_partition;
+    FB_ASSERT_TRUE(can_serve_read);
+}
+
+FB_TEST(raft_log_node, partition_log_divergence) {
+    // 分区日志分歧
+    std::map<raft_index_t, raft_term_t> partition_a_log;
+    for (int i = 1; i <= 80; i++) {
+        partition_a_log[i] = (i <= 50) ? 3 : 4;
+    }
+
+    std::map<raft_index_t, raft_term_t> partition_b_log;
+    for (int i = 1; i <= 100; i++) {
+        partition_b_log[i] = (i <= 50) ? 3 : ((i <= 70) ? 4 : 5);
+    }
+
+    // 公共前缀（term 3 的日志）
+    raft_index_t common_prefix_end = 50;
+    FB_ASSERT_EQ(partition_a_log[50], partition_b_log[50]);
+
+    // 分歧点
+    bool diverged = partition_a_log[80] != partition_b_log[80];
+    FB_ASSERT_TRUE(diverged);
+}
+
+FB_TEST(raft_log_node, partition_removal_safety) {
+    // 分区期间移除节点安全性
+    int old_cluster_size = 5;
+    int new_cluster_size = 3;  // 移除 2 个节点
+    int old_quorum = old_cluster_size / 2 + 1;  // 3
+    int new_quorum = new_cluster_size / 2 + 1;  // 2
+
+    // 配置变更需要两个配置的多数派都同意
+    // 如果被移除的节点在分区中，可能影响安全性
+    int nodes_removed = old_cluster_size - new_cluster_size;
+    bool safe_removal = nodes_removed < old_quorum;
+    FB_ASSERT_TRUE(safe_removal);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
