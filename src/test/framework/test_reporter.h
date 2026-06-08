@@ -21,6 +21,7 @@
 #include <sstream>
 #include <ctime>
 #include <iomanip>
+#include <iostream>
 
 namespace fastblock {
 namespace test {

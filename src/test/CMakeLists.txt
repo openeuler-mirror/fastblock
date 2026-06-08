@@ -13,22 +13,23 @@ if(BUILD_FASTBLOCK_TESTS)
 	add_executable(raft_membership
 	  osd_client.cc
 	  raft_membership.cc
+	add_executable(test_raft_state
+	  unit/test_raft_state.cc
+	)
+
+	target_include_directories(test_raft_state
+	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+	target_link_libraries(test_raft_state
+	  PUBLIC
+	    test_framework
+	    base
 	)
 
 	# Stress tests
 	add_executable(raft_membership
 	  framework/osd_client.cc
 	  stress/raft_membership.cc
-	)
-
-	target_include_directories (raft_membership
-	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-	target_link_libraries(raft_membership
-	  PUBLIC
-	    base
-	    osd_msg
-	    msg
 	)
 
 	add_executable(snapshot_write_stress
