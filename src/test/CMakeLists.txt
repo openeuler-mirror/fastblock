@@ -5,15 +5,11 @@ find_package(absl REQUIRED)
 option(BUILD_FASTBLOCK_TESTS "Build fastblock unit tests" OFF)
 
 if(BUILD_FASTBLOCK_TESTS)
-# Legacy test executables (preserved for backward compatibility)
 
 	# Unified test framework
 	add_subdirectory(framework)
-	
-	add_executable(raft_membership
-	  osd_client.cc
-	  raft_membership.cc
-	)
+
+	# Unit tests
 	add_executable(test_raft_state
 	  unit/test_raft_state.cc
 	)
@@ -53,14 +49,37 @@ if(BUILD_FASTBLOCK_TESTS)
 	    base
 	)
 
+	add_executable(test_raft_log_node
+	  unit/test_raft_log_node.cc
+	)
+
+	target_include_directories(test_raft_log_node
+	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+	target_link_libraries(test_raft_log_node
+	  PUBLIC
+	    test_framework
+	    base
+	)
+
 	# Stress tests
 	add_executable(raft_membership
 	  framework/osd_client.cc
 	  stress/raft_membership.cc
 	)
 
+	target_include_directories(raft_membership
+	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+	target_link_libraries(raft_membership
+	  PUBLIC
+	    base
+	    osd_msg
+	    msg
+	)
+
 	add_executable(snapshot_write_stress
-	  snapshot_write_stress.cc
+	  stress/snapshot_write_stress.cc
 	)
 
 	target_include_directories(snapshot_write_stress
@@ -76,8 +95,8 @@ if(BUILD_FASTBLOCK_TESTS)
 	)
 
 	add_executable(snapshot_pg_stress
-	  osd_client.cc
-	  snapshot_pg_stress.cc
+	  framework/osd_client.cc
+	  stress/snapshot_pg_stress.cc
 	)
 
 	target_include_directories(snapshot_pg_stress
