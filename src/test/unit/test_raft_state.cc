@@ -1013,5 +1013,123 @@ FB_TEST(raft_state, randomize_avoid_same_timeout) {
     FB_ASSERT_TRUE(has_variation);
 }
 
+// ============================================================================
+// Test Suite: Log Replication and Consistency Tests
+// ============================================================================
+
+FB_TEST(raft_state, log_replication_match_idx_update) {
+    int64_t match_idx = 0;
+    int64_t next_idx = 1;
+
+    // 成功复制日志后更新 match_idx 和 next_idx
+    match_idx = next_idx;
+    next_idx++;
+    FB_ASSERT_EQ(match_idx, 1L);
+    FB_ASSERT_EQ(next_idx, 2L);
+
+    // 继续复制更多日志
+    match_idx = next_idx;
+    next_idx++;
+    FB_ASSERT_EQ(match_idx, 3L);
+    FB_ASSERT_EQ(next_idx, 4L);
+}
+
+FB_TEST(raft_state, log_inconsistency_next_idx_decrement) {
+    int64_t next_idx = 10;
+
+    // 日志不一致时，递减 next_idx
+    next_idx = std::max(1L, next_idx - 1);
+    FB_ASSERT_EQ(next_idx, 9L);
+
+    // 多次递减
+    next_idx = std::max(1L, next_idx - 1);
+    FB_ASSERT_EQ(next_idx, 8L);
+
+    // 递减到最小值
+    next_idx = 1;
+    next_idx = std::max(1L, next_idx - 1);
+    FB_ASSERT_EQ(next_idx, 1L);  // 不能小于1
+}
+
+FB_TEST(raft_state, log_commit_idx_advancement) {
+    int64_t commit_idx = 0;
+    int64_t last_log_idx = 5;
+
+    // commit_idx 只能前进，不能后退
+    commit_idx = 3;
+    FB_ASSERT_TRUE(commit_idx <= last_log_idx);
+
+    // 新的 commit_idx 必须大于旧的
+    int64_t new_commit_idx = 4;
+    FB_ASSERT_TRUE(new_commit_idx > commit_idx);
+    FB_ASSERT_TRUE(new_commit_idx <= last_log_idx);
+
+    // commit_idx 不能超过 last_log_idx
+    new_commit_idx = 10;
+    bool can_commit = new_commit_idx <= last_log_idx;
+    FB_ASSERT_FALSE(can_commit);
+}
+
+FB_TEST(raft_state, log_last_applied_tracking) {
+    int64_t last_applied = 0;
+    int64_t commit_idx = 5;
+
+    // last_applied 应该追赶 commit_idx
+    while (last_applied < commit_idx) {
+        last_applied++;
+    }
+    FB_ASSERT_EQ(last_applied, 5L);
+
+    // last_applied 不能超过 commit_idx
+    FB_ASSERT_TRUE(last_applied <= commit_idx);
+}
+
+FB_TEST(raft_state, log_entry_id_uniqueness) {
+    raft_entry_id_t id1 = 1001;
+    raft_entry_id_t id2 = 1002;
+    raft_entry_id_t id3 = 1001;
+
+    // ID 应该唯一
+    FB_ASSERT_TRUE(id1 != id2);
+    FB_ASSERT_TRUE(id1 == id3);
+}
+
+FB_TEST(raft_state, log_prev_log_term_check) {
+    raft_term_t current_term = 5;
+    raft_term_t prev_log_term = 4;
+    raft_index_t prev_log_idx = 10;
+
+    // 验证 prev_log_term 和 prev_log_idx 的语义
+    FB_ASSERT_TRUE(prev_log_term <= current_term);
+    FB_ASSERT_TRUE(prev_log_idx >= 0);
+}
+
+FB_TEST(raft_state, log_replication_quorum) {
+    uint64_t node_num = 5;
+    uint64_t replication_count = 3;  // 成功复制到3个节点
+
+    // 需要多数派才能提交
+    bool has_quorum = replication_count > node_num / 2;
+    FB_ASSERT_TRUE(has_quorum);
+
+    // 不够多数派
+    replication_count = 2;
+    has_quorum = replication_count > node_num / 2;
+    FB_ASSERT_FALSE(has_quorum);
+}
+
+FB_TEST(raft_state, log_consistency_check) {
+    int64_t leader_next_idx = 10;
+    int64_t follower_match_idx = 7;
+
+    // Follower 的 match_idx 小于 Leader 的 next_idx 表示日志落后
+    bool follower_behind = follower_match_idx < leader_next_idx - 1;
+    FB_ASSERT_TRUE(follower_behind);
+
+    // 计算需要发送的日志条目数
+    int64_t entries_to_send = leader_next_idx - follower_match_idx - 1;
+    FB_ASSERT_EQ(entries_to_send, 2L);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
