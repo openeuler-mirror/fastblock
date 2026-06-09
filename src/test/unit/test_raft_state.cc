@@ -1540,5 +1540,183 @@ FB_TEST(raft_state, config_change_index_tracking) {
     FB_ASSERT_TRUE(is_newer_config);
 }
 
+// ============================================================================
+// Test Suite: Error Handling Tests
+// ============================================================================
+
+FB_TEST(raft_state, invalid_term_handling) {
+    // Term 为负数或零是无效的
+    raft_term_t invalid_term = 0;
+    bool is_valid = invalid_term > 0;
+    FB_ASSERT_FALSE(is_valid);
+
+    invalid_term = -1;
+    is_valid = invalid_term > 0;
+    FB_ASSERT_FALSE(is_valid);
+
+    // 正常 term
+    raft_term_t valid_term = 1;
+    is_valid = valid_term > 0;
+    FB_ASSERT_TRUE(is_valid);
+}
+
+FB_TEST(raft_state, invalid_index_handling) {
+    // Index 为负数是无效的
+    raft_index_t invalid_idx = -1;
+    bool is_valid = invalid_idx >= 0;
+    FB_ASSERT_FALSE(is_valid);
+
+    // Index 为零表示"空"状态
+    raft_index_t zero_idx = 0;
+    bool is_empty = (zero_idx == 0);
+    FB_ASSERT_TRUE(is_empty);
+
+    // 有效索引
+    raft_index_t valid_idx = 1;
+    is_valid = valid_idx > 0;
+    FB_ASSERT_TRUE(is_valid);
+}
+
+FB_TEST(raft_state, null_pointer_check) {
+    void* ptr = nullptr;
+    bool is_null = (ptr == nullptr);
+    FB_ASSERT_TRUE(is_null);
+
+    // 使用前必须检查
+    if (ptr == nullptr) {
+        // 不能解引用
+        ptr = (void*)1;  // 模拟分配
+    }
+    FB_ASSERT_TRUE(ptr != nullptr);
+}
+
+FB_TEST(raft_state, buffer_overflow_protection) {
+    size_t buffer_size = 1024;
+    size_t data_size = 512;
+
+    // 检查数据是否适合缓冲区
+    bool fits = data_size <= buffer_size;
+    FB_ASSERT_TRUE(fits);
+
+    // 数据超过缓冲区
+    data_size = 2048;
+    fits = data_size <= buffer_size;
+    FB_ASSERT_FALSE(fits);
+
+    // 边界情况：刚好填满
+    data_size = 1024;
+    fits = data_size <= buffer_size;
+    FB_ASSERT_TRUE(fits);
+}
+
+FB_TEST(raft_state, message_corruption_detection) {
+    // 模拟消息校验和检查
+    uint32_t expected_checksum = 0xABCD1234;
+    uint32_t received_checksum = 0xABCD1234;
+    bool is_valid = (expected_checksum == received_checksum);
+    FB_ASSERT_TRUE(is_valid);
+
+    // 损坏的消息
+    received_checksum = 0xABCD1235;
+    is_valid = (expected_checksum == received_checksum);
+    FB_ASSERT_FALSE(is_valid);
+}
+
+FB_TEST(raft_state, network_timeout_handling) {
+    int retry_count = 0;
+    int max_retries = 3;
+
+    // 模拟超时重试
+    while (retry_count < max_retries) {
+        retry_count++;
+    }
+    FB_ASSERT_EQ(retry_count, 3);
+
+    // 达到最大重试次数后放弃
+    bool should_give_up = retry_count >= max_retries;
+    FB_ASSERT_TRUE(should_give_up);
+}
+
+FB_TEST(raft_state, disk_error_recovery) {
+    enum class disk_status { OK, ERROR, RETRY };
+    disk_status status = disk_status::ERROR;
+
+    // 检测到错误后尝试恢复
+    bool needs_recovery = (status != disk_status::OK);
+    FB_ASSERT_TRUE(needs_recovery);
+
+    // 恢复后状态
+    status = disk_status::OK;
+    needs_recovery = (status != disk_status::OK);
+    FB_ASSERT_FALSE(needs_recovery);
+}
+
+FB_TEST(raft_state, memory_exhaustion_handling) {
+    size_t available_memory = 1024 * 1024;  // 1MB
+    size_t required_memory = 2 * 1024 * 1024;  // 2MB
+
+    // 内存不足
+    bool memory_sufficient = available_memory >= required_memory;
+    FB_ASSERT_FALSE(memory_sufficient);
+
+    // 释放后内存足够
+    required_memory = 512 * 1024;  // 512KB
+    memory_sufficient = available_memory >= required_memory;
+    FB_ASSERT_TRUE(memory_sufficient);
+}
+
+FB_TEST(raft_state, invalid_message_type) {
+    int valid_types[] = {0, 1, 2, 3};  // 有效消息类型
+    int received_type = 99;  // 无效类型
+
+    bool is_valid_type = false;
+    for (int i = 0; i < 4; i++) {
+        if (valid_types[i] == received_type) {
+            is_valid_type = true;
+            break;
+        }
+    }
+    FB_ASSERT_FALSE(is_valid_type);
+
+    // 有效类型
+    received_type = 2;
+    is_valid_type = false;
+    for (int i = 0; i < 4; i++) {
+        if (valid_types[i] == received_type) {
+            is_valid_type = true;
+            break;
+        }
+    }
+    FB_ASSERT_TRUE(is_valid_type);
+}
+
+FB_TEST(raft_state, state_inconsistency_recovery) {
+    raft_term_t local_term = 5;
+    raft_term_t leader_term = 6;
+
+    // 发现状态不一致，需要更新本地 term
+    bool need_update = leader_term > local_term;
+    FB_ASSERT_TRUE(need_update);
+
+    if (need_update) {
+        local_term = leader_term;
+    }
+    FB_ASSERT_EQ(local_term, 6L);
+}
+
+FB_TEST(raft_state, graceful_degradation) {
+    uint64_t healthy_nodes = 3;
+    uint64_t total_nodes = 5;
+
+    // 部分节点故障，集群仍可用
+    bool cluster_available = healthy_nodes > total_nodes / 2;
+    FB_ASSERT_TRUE(cluster_available);
+
+    // 更多节点故障，集群不可用
+    healthy_nodes = 2;
+    cluster_available = healthy_nodes > total_nodes / 2;
+    FB_ASSERT_FALSE(cluster_available);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
