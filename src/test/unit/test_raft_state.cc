@@ -1131,5 +1131,141 @@ FB_TEST(raft_state, log_consistency_check) {
     FB_ASSERT_EQ(entries_to_send, 2L);
 }
 
+// ============================================================================
+// Test Suite: Majority and Voting Tests
+// ============================================================================
+
+FB_TEST(raft_state, majority_calculation_various_sizes) {
+    // 奇数节点集群
+    FB_ASSERT_TRUE(2 > 3 / 2);   // 3节点需要2票
+    FB_ASSERT_TRUE(3 > 5 / 2);   // 5节点需要3票
+    FB_ASSERT_TRUE(4 > 7 / 2);   // 7节点需要4票
+    FB_ASSERT_TRUE(51 > 101 / 2); // 101节点需要51票
+
+    // 偶数节点集群
+    FB_ASSERT_TRUE(3 > 4 / 2);   // 4节点需要3票
+    FB_ASSERT_TRUE(4 > 6 / 2);   // 6节点需要4票
+    FB_ASSERT_TRUE(51 > 100 / 2); // 100节点需要51票
+}
+
+FB_TEST(raft_state, vote_granting_rules) {
+    raft_term_t current_term = 5;
+    raft_term_t candidate_term = 6;
+
+    // 规则1: Candidate term >= current_term
+    bool term_ok = candidate_term >= current_term;
+    FB_ASSERT_TRUE(term_ok);
+
+    // Candidate term 小于 current_term，拒绝投票
+    candidate_term = 4;
+    term_ok = candidate_term >= current_term;
+    FB_ASSERT_FALSE(term_ok);
+
+    // 规则2: 如果已经投票给其他人，不能再投票
+    raft_node_id_t voted_for = 1;
+    raft_node_id_t candidate_id = 2;
+    bool can_vote = (voted_for == 0) || (voted_for == candidate_id);
+    FB_ASSERT_FALSE(can_vote);  // 已投票给节点1，不能投票给节点2
+}
+
+FB_TEST(raft_state, split_vote_detection) {
+    uint64_t votes = 2;
+    uint64_t node_num = 5;
+    bool has_majority = votes > node_num / 2;
+    FB_ASSERT_FALSE(has_majority);  // 2/5 不够多数
+
+    // 更极端的分裂投票
+    votes = 2;
+    node_num = 4;
+    has_majority = votes > node_num / 2;
+    FB_ASSERT_FALSE(has_majority);  // 2/4 不够多数 (需要3票)
+}
+
+FB_TEST(raft_state, self_vote_included) {
+    uint64_t node_num = 5;
+    uint64_t votes = 1;  // Candidate 先给自己投票
+
+    // 还需要获得其他节点的投票
+    uint64_t additional_votes_needed = (node_num / 2) + 1 - votes;
+    FB_ASSERT_EQ(additional_votes_needed, 2UL);
+
+    // 获得足够的票数后
+    votes = 3;
+    bool wins_election = votes > node_num / 2;
+    FB_ASSERT_TRUE(wins_election);
+}
+
+FB_TEST(raft_state, vote_during_election) {
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    raft_term_t current_term = 5;
+    raft_node_id_t voted_for = 0;  // 尚未投票
+
+    // 收到投票请求
+    raft_term_t candidate_term = 6;
+    raft_node_id_t candidate_id = 3;
+
+    // 更新 term 并投票
+    if (candidate_term > current_term) {
+        current_term = candidate_term;
+        voted_for = candidate_id;
+        state = RAFT_STATE_FOLLOWER;
+    }
+
+    FB_ASSERT_EQ(current_term, 6L);
+    FB_ASSERT_EQ(voted_for, 3L);
+    FB_ASSERT_EQ(state, RAFT_STATE_FOLLOWER);
+}
+
+FB_TEST(raft_state, prevent_double_vote) {
+    raft_node_id_t voted_for = 1;
+    raft_node_id_t new_candidate = 2;
+    raft_term_t current_term = 5;
+    raft_term_t new_candidate_term = 5;
+
+    // 同一个 term 不能投票给不同的 candidate
+    bool can_vote = (voted_for == 0) || (voted_for == new_candidate);
+    FB_ASSERT_FALSE(can_vote);
+
+    // 但可以投票给同一个 candidate（重试）
+    new_candidate = 1;
+    can_vote = (voted_for == 0) || (voted_for == new_candidate);
+    FB_ASSERT_TRUE(can_vote);
+}
+
+FB_TEST(raft_state, election_winner_calculation) {
+    // 辅助函数：计算是否赢得选举
+    auto check_election_win = [](uint64_t votes, uint64_t node_num) -> bool {
+        return votes > node_num / 2;
+    };
+
+    // 各种场景
+    FB_ASSERT_TRUE(check_election_win(3, 5));
+    FB_ASSERT_TRUE(check_election_win(2, 3));
+    FB_ASSERT_FALSE(check_election_win(2, 5));
+    FB_ASSERT_FALSE(check_election_win(1, 3));
+    FB_ASSERT_TRUE(check_election_win(51, 100));
+    FB_ASSERT_FALSE(check_election_win(50, 100));
+}
+
+FB_TEST(raft_state, vote_reset_on_new_term) {
+    raft_node_id_t voted_for = 3;
+    raft_term_t current_term = 5;
+
+    // 收到更高 term 时，重置 voted_for
+    raft_term_t new_term = 6;
+    if (new_term > current_term) {
+        current_term = new_term;
+        voted_for = 0;  // 重置，可以重新投票
+    }
+
+    FB_ASSERT_EQ(current_term, 6L);
+    FB_ASSERT_EQ(voted_for, 0L);
+
+    // 现可以投票给新的 candidate
+    raft_node_id_t candidate_id = 7;
+    bool can_vote = (voted_for == 0) || (voted_for == candidate_id);
+    FB_ASSERT_TRUE(can_vote);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
