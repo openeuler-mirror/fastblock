@@ -31,6 +31,18 @@
 #include <chrono>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <algorithm>
+#include <cmath>
+#include <set>
+
+#ifdef __linux__
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 #include "spdk/stdinc.h"
 #include "spdk/log.h"
@@ -513,3 +525,66 @@ public:
 
 #define FB_LOG_INFO(msg) ctx.log_info(msg)
 #define FB_LOG_DEBUG(msg) ctx.log_debug(msg)
+
+// ============================================================================
+// PR1: Parameterized Tests (FB_TEST_P)
+// ============================================================================
+
+/**
+ * @brief Parameterized test case template
+ */
+template<typename ParamType>
+class parameterized_test_case : public test_case {
+public:
+    using param_func = std::function<void(test_context&, const ParamType&)>;
+
+    parameterized_test_case(const std::string& name, const std::string& suite,
+                            param_func func, const ParamType& param)
+        : test_case(name, suite, [this, func](test_context& ctx) {
+            func(ctx, _param);
+        }), _param(param) {}
+
+private:
+    ParamType _param;
+};
+
+/**
+ * @brief Registrar for parameterized tests
+ */
+template<typename ParamType>
+class parameterized_test_registrar {
+public:
+    template<typename Container>
+    parameterized_test_registrar(const std::string& suite_name,
+                                  const std::string& test_name,
+                                  typename parameterized_test_case<ParamType>::param_func func,
+                                  const Container& params) {
+        int idx = 0;
+        for (const auto& param : params) {
+            std::string name = test_name + "/" + std::to_string(idx);
+            auto tc = std::make_shared<parameterized_test_case<ParamType>>(
+                name, suite_name, func, param);
+            test_registry::instance().register_test(suite_name, tc);
+            idx++;
+        }
+    }
+};
+
+/**
+ * @brief Define a parameterized test
+ * Usage:
+ *   FB_TEST_P(raft_state, term_comparison, term_pair) {
+ *       FB_ASSERT_TRUE(term_pair.first < term_pair.second);
+ *   }
+ *   FB_INSTANTIATE_TEST_SUITE_P(raft_state, term_comparison,
+ *       std::vector<std::pair<int,int>>{{1,2}, {2,3}, {100,200}});
+ */
+#define FB_TEST_P(suite, name, param_name)                                         \
+    void fb_test_p_##suite##_##name(::fastblock::test::test_context& ctx,         \
+                                     const auto& param_name)
+
+#define FB_INSTANTIATE_TEST_SUITE_P(suite, name, values)                           \
+    static ::fastblock::test::parameterized_test_registrar<                       \
+        typename std::decay<decltype(*(values).begin())>::type>                   \
+        fb_param_reg_##suite##_##name(#suite, #name,                              \
+                                       fb_test_p_##suite##_##name, values)
