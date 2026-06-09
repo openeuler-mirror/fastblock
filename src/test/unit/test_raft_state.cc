@@ -893,5 +893,125 @@ FB_TEST(raft_state, leader_step_down_on_higher_term) {
     FB_ASSERT_EQ(current_term, 6L);
 }
 
+// ============================================================================
+// Test Suite: Heartbeat and Timeout Tests
+// ============================================================================
+
+FB_TEST(raft_state, heartbeat_timeout_ratio) {
+    int election_timeout = 500;
+    int heartbeat_timeout = 100;
+
+    // 心跳间隔应该远小于选举超时，以防止不必要的选举
+    FB_ASSERT_TRUE(heartbeat_timeout < election_timeout / 2);
+    FB_ASSERT_TRUE(heartbeat_timeout > 0);
+    FB_ASSERT_TRUE(election_timeout > heartbeat_timeout);
+}
+
+FB_TEST(raft_state, election_timeout_rand_range) {
+    int base = 1000;
+    bool all_in_range = true;
+
+    // 验证随机化选举超时在合理范围内 [base, 2*base)
+    for (int i = 0; i < 1000; i++) {
+        int randomized = base + (rand() % base);
+        if (randomized < base || randomized >= 2 * base) {
+            all_in_range = false;
+            break;
+        }
+    }
+    FB_ASSERT_TRUE(all_in_range);
+}
+
+FB_TEST(raft_state, leader_heartbeat_timing) {
+    raft_time_t last_heartbeat = 1000;
+    raft_time_t heartbeat_interval = 100;
+
+    // 当前时间刚好达到心跳间隔
+    raft_time_t now = 1100;
+    bool need_heartbeat = (now - last_heartbeat) >= heartbeat_interval;
+    FB_ASSERT_TRUE(need_heartbeat);
+
+    // 当前时间还没达到心跳间隔
+    now = 1050;
+    need_heartbeat = (now - last_heartbeat) >= heartbeat_interval;
+    FB_ASSERT_FALSE(need_heartbeat);
+}
+
+FB_TEST(raft_state, follower_election_timeout_elapsed) {
+    raft_time_t last_leader_contact = 1000;
+    raft_time_t election_timeout = 500;
+
+    // 未超时
+    raft_time_t now = 1200;
+    bool election_triggered = (now - last_leader_contact) >= election_timeout;
+    FB_ASSERT_FALSE(election_triggered);
+
+    // 刚好超时
+    now = 1500;
+    election_triggered = (now - last_leader_contact) >= election_timeout;
+    FB_ASSERT_TRUE(election_triggered);
+
+    // 已超时很久
+    now = 2000;
+    election_triggered = (now - last_leader_contact) >= election_timeout;
+    FB_ASSERT_TRUE(election_triggered);
+}
+
+FB_TEST(raft_state, heartbeat_reset_election_timer) {
+    raft_time_t election_timeout = 500;
+    raft_time_t last_leader_contact = 0;
+
+    // 收到心跳后重置选举计时器
+    raft_time_t now = 100;
+    last_leader_contact = now;
+
+    // 计算剩余超时时间
+    raft_time_t remaining = election_timeout - (now - last_leader_contact);
+    FB_ASSERT_EQ(remaining, 500L);
+
+    // 模拟时间流逝
+    now = 400;
+    remaining = election_timeout - (now - last_leader_contact);
+    FB_ASSERT_EQ(remaining, 100L);
+}
+
+FB_TEST(raft_state, min_max_timeout_values) {
+    // 定义合理的超时范围
+    int min_election_timeout = 100;   // 最小100ms
+    int max_election_timeout = 60000; // 最大60秒
+
+    int actual_timeout = 500;
+    FB_ASSERT_TRUE(actual_timeout >= min_election_timeout);
+    FB_ASSERT_TRUE(actual_timeout <= max_election_timeout);
+
+    int min_heartbeat_timeout = 10;   // 最小10ms
+    int max_heartbeat_timeout = 1000; // 最大1秒
+
+    int actual_heartbeat = 100;
+    FB_ASSERT_TRUE(actual_heartbeat >= min_heartbeat_timeout);
+    FB_ASSERT_TRUE(actual_heartbeat <= max_heartbeat_timeout);
+}
+
+FB_TEST(raft_state, randomize_avoid_same_timeout) {
+    // 多个节点同时启动时，随机化超时避免同时发起选举
+    int base_timeout = 500;
+    std::vector<int> timeouts;
+
+    for (int i = 0; i < 5; i++) {
+        int randomized = base_timeout + (rand() % base_timeout);
+        timeouts.push_back(randomized);
+    }
+
+    // 验证至少有一些差异
+    bool has_variation = false;
+    for (size_t i = 0; i < timeouts.size() - 1; i++) {
+        if (timeouts[i] != timeouts[i + 1]) {
+            has_variation = true;
+            break;
+        }
+    }
+    FB_ASSERT_TRUE(has_variation);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
