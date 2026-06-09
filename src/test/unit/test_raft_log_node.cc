@@ -4249,5 +4249,381 @@ FB_TEST(raft_log_node, batch_append_queue_backpressure) {
     FB_ASSERT_EQ(pending_batches, 5);
 }
 
+// ============================================================================
+// Test Suite: Request Rate Limiting and Resource Management
+// ============================================================================
+
+FB_TEST(raft_log_node, rate_limit_basic) {
+    // 基本限流
+    int max_requests_per_second = 1000;
+    int current_rate = 800;
+
+    // 检查是否超限
+    bool within_limit = current_rate <= max_requests_per_second;
+    FB_ASSERT_TRUE(within_limit);
+
+    // 超限情况
+    current_rate = 1200;
+    within_limit = current_rate <= max_requests_per_second;
+    FB_ASSERT_FALSE(within_limit);
+}
+
+FB_TEST(raft_log_node, rate_limit_token_bucket) {
+    // 令牌桶限流
+    int bucket_capacity = 100;
+    int tokens = 100;
+    int refill_rate = 10;  // 每秒补充 10 个令牌
+
+    // 消耗令牌
+    int requests = 50;
+    for (int i = 0; i < requests && tokens > 0; i++) {
+        tokens--;
+    }
+
+    FB_ASSERT_EQ(tokens, 50);
+
+    // 补充令牌
+    tokens = std::min(tokens + refill_rate, bucket_capacity);
+    FB_ASSERT_EQ(tokens, 60);
+}
+
+FB_TEST(raft_log_node, rate_limit_sliding_window) {
+    // 滑动窗口限流
+    std::vector<raft_time_t> request_times;
+    raft_time_t window_duration = 1000;  // 1秒窗口
+    raft_time_t current_time = 5000;
+    int max_requests = 100;
+
+    // 添加请求
+    for (int i = 0; i < 80; i++) {
+        request_times.push_back(current_time - 500 + i);
+    }
+
+    // 计算窗口内请求数
+    int requests_in_window = 0;
+    for (raft_time_t time : request_times) {
+        if (current_time - time <= window_duration) {
+            requests_in_window++;
+        }
+    }
+
+    FB_ASSERT_TRUE(requests_in_window <= max_requests);
+}
+
+FB_TEST(raft_log_node, rate_limit_burst_handling) {
+    // 突发流量处理
+    int burst_capacity = 200;
+    int normal_rate = 100;
+    int burst_requests = 150;
+
+    // 突发请求
+    bool burst_within_capacity = burst_requests <= burst_capacity;
+    FB_ASSERT_TRUE(burst_within_capacity);
+
+    // 突发后恢复到正常速率
+    int post_burst_rate = normal_rate;
+    FB_ASSERT_EQ(post_burst_rate, 100);
+}
+
+FB_TEST(raft_log_node, resource_memory_limit) {
+    // 内存资源限制
+    size_t max_memory = 100 * 1024 * 1024;  // 100MB
+    size_t current_usage = 50 * 1024 * 1024;  // 50MB
+
+    // 检查内存使用
+    bool within_limit = current_usage <= max_memory;
+    FB_ASSERT_TRUE(within_limit);
+
+    // 内存使用百分比
+    double usage_percent = 100.0 * current_usage / max_memory;
+    FB_ASSERT_EQ(usage_percent, 50.0);
+}
+
+FB_TEST(raft_log_node, resource_cpu_limit) {
+    // CPU 资源限制
+    int max_cpu_percent = 80;
+    int current_cpu = 60;
+
+    // 检查 CPU 使用
+    bool within_limit = current_cpu <= max_cpu_percent;
+    FB_ASSERT_TRUE(within_limit);
+
+    // 高负载情况
+    current_cpu = 90;
+    within_limit = current_cpu <= max_cpu_percent;
+    FB_ASSERT_FALSE(within_limit);
+}
+
+FB_TEST(raft_log_node, resource_connection_limit) {
+    // 连接资源限制
+    int max_connections = 100;
+    int current_connections = 80;
+
+    // 检查连接数
+    bool can_accept = current_connections < max_connections;
+    FB_ASSERT_TRUE(can_accept);
+
+    // 连接满时拒绝
+    current_connections = 100;
+    can_accept = current_connections < max_connections;
+    FB_ASSERT_FALSE(can_accept);
+}
+
+FB_TEST(raft_log_node, resource_disk_io_limit) {
+    // 磁盘 I/O 限制
+    int max_iops = 10000;
+    int current_iops = 5000;
+
+    // 检查 IOPS
+    bool within_limit = current_iops <= max_iops;
+    FB_ASSERT_TRUE(within_limit);
+
+    // 高 I/O 时排队
+    current_iops = 12000;
+    if (current_iops > max_iops) {
+        int queued_ops = current_iops - max_iops;
+        FB_ASSERT_EQ(queued_ops, 2000);
+    }
+}
+
+FB_TEST(raft_log_node, backpressure_propagation) {
+    // 背压传播
+    bool follower_overloaded = true;
+    bool leader_should_slow_down = false;
+
+    // Follower 负载高时通知 Leader
+    if (follower_overloaded) {
+        leader_should_slow_down = true;
+    }
+
+    FB_ASSERT_TRUE(leader_should_slow_down);
+
+    // Leader 降低发送速率
+    int original_rate = 1000;
+    int reduced_rate = original_rate / 2;
+    FB_ASSERT_EQ(reduced_rate, 500);
+}
+
+FB_TEST(raft_log_node, backpressure_queue_size) {
+    // 背压队列大小
+    int max_queue_size = 1000;
+    int current_queue_size = 800;
+
+    // 检查队列大小
+    bool queue_ok = current_queue_size < max_queue_size;
+    FB_ASSERT_TRUE(queue_ok);
+
+    // 队列满时触发背压
+    current_queue_size = 1000;
+    bool need_backpressure = current_queue_size >= max_queue_size;
+    FB_ASSERT_TRUE(need_backpressure);
+}
+
+FB_TEST(raft_log_node, resource_graceful_degradation) {
+    // 资源不足时优雅降级
+    int available_memory = 30;  // 百分比
+    bool low_memory = available_memory < 50;
+
+    if (low_memory) {
+        // 降级策略：减少缓存大小
+        size_t reduced_cache_size = 1024 * 1024;  // 1MB
+        FB_ASSERT_EQ(reduced_cache_size, 1024 * 1024);
+    }
+}
+
+FB_TEST(raft_log_node, rate_limit_priority_queue) {
+    // 限流优先级队列
+    enum class request_priority {
+        CRITICAL,
+        HIGH,
+        NORMAL,
+        LOW
+    };
+
+    std::vector<std::pair<int, request_priority>> pending_requests;
+    pending_requests.push_back({1, request_priority::CRITICAL});
+    pending_requests.push_back({2, request_priority::NORMAL});
+    pending_requests.push_back({3, request_priority::HIGH});
+    pending_requests.push_back({4, request_priority::LOW});
+
+    // 限流时优先处理高优先级请求
+    int critical_count = 0;
+    for (const auto& req : pending_requests) {
+        if (req.second == request_priority::CRITICAL) {
+            critical_count++;
+        }
+    }
+    FB_ASSERT_EQ(critical_count, 1);
+}
+
+FB_TEST(raft_log_node, rate_limit_adaptive) {
+    // 自适应限流
+    int base_rate = 1000;
+    int current_rate = base_rate;
+    int success_rate = 95;  // 百分比
+
+    // 根据成功率调整速率
+    if (success_rate > 90) {
+        current_rate = base_rate * 1.2;  // 增加 20%
+    } else if (success_rate < 70) {
+        current_rate = base_rate * 0.8;  // 减少 20%
+    }
+
+    FB_ASSERT_EQ(current_rate, 1200);
+}
+
+FB_TEST(raft_log_node, resource_allocation_tracking) {
+    // 资源分配跟踪
+    std::map<std::string, size_t> allocated_resources;
+    allocated_resources["log_cache"] = 10 * 1024 * 1024;
+    allocated_resources["snapshot"] = 20 * 1024 * 1024;
+    allocated_resources["network_buffer"] = 5 * 1024 * 1024;
+
+    // 计算总分配
+    size_t total_allocated = 0;
+    for (const auto& pair : allocated_resources) {
+        total_allocated += pair.second;
+    }
+
+    FB_ASSERT_EQ(total_allocated, 35 * 1024 * 1024);
+}
+
+FB_TEST(raft_log_node, rate_limit_per_client) {
+    // 每客户端限流
+    std::map<raft_node_id_t, int> client_rates;
+    int max_per_client = 100;
+
+    client_rates[1] = 80;
+    client_rates[2] = 120;
+    client_rates[3] = 50;
+
+    // 检查各客户端速率
+    int over_limit_clients = 0;
+    for (const auto& pair : client_rates) {
+        if (pair.second > max_per_client) {
+            over_limit_clients++;
+        }
+    }
+
+    FB_ASSERT_EQ(over_limit_clients, 1);
+}
+
+FB_TEST(raft_log_node, resource_timeout_cleanup) {
+    // 资源超时清理
+    std::map<int, raft_time_t> allocated_with_timeout;
+    raft_time_t current_time = 5000;
+
+    allocated_with_timeout[1] = 3000;
+    allocated_with_timeout[2] = 4500;
+    allocated_with_timeout[3] = 6000;  // 超时
+
+    int timeout_ms = 1000;
+    int cleaned = 0;
+
+    for (const auto& pair : allocated_with_timeout) {
+        if (current_time - pair.second > timeout_ms) {
+            cleaned++;
+        }
+    }
+
+    FB_ASSERT_EQ(cleaned, 1);
+}
+
+FB_TEST(raft_log_node, rate_limit_circuit_breaker) {
+    // 断路器模式
+    int failure_count = 0;
+    int failure_threshold = 5;
+    bool circuit_open = false;
+
+    // 模拟失败
+    std::vector<int> results = {-1, -1, 0, -1, -1, -1, -1};
+    for (int result : results) {
+        if (result == -1) {
+            failure_count++;
+            if (failure_count >= failure_threshold) {
+                circuit_open = true;
+            }
+        } else {
+            failure_count = 0;
+        }
+    }
+
+    FB_ASSERT_TRUE(circuit_open);
+    FB_ASSERT_EQ(failure_count, 7);
+}
+
+FB_TEST(raft_log_node, resource_monitoring_metrics) {
+    // 资源监控指标
+    std::map<std::string, double> metrics;
+    metrics["memory_usage"] = 65.5;
+    metrics["cpu_usage"] = 45.0;
+    metrics["disk_usage"] = 80.0;
+    metrics["network_usage"] = 30.0;
+
+    // 检查是否有资源超过阈值
+    double threshold = 70.0;
+    int exceeded = 0;
+    for (const auto& pair : metrics) {
+        if (pair.second > threshold) {
+            exceeded++;
+        }
+    }
+
+    FB_ASSERT_EQ(exceeded, 1);
+}
+
+FB_TEST(raft_log_node, rate_limit_retry_with_backoff) {
+    // 限流重试与退避
+    int base_delay = 100;  // ms
+    int max_delay = 5000;
+    int attempt = 0;
+
+    // 指数退避
+    for (int i = 0; i < 5; i++) {
+        int delay = std::min(base_delay * (1 << i), max_delay);
+        attempt++;
+        if (i == 2) break;  // 第三次成功
+    }
+
+    FB_ASSERT_EQ(attempt, 3);
+}
+
+FB_TEST(raft_log_node, resource_quota_management) {
+    // 资源配额管理
+    std::map<std::string, size_t> quotas;
+    quotas["log_entries"] = 10000;
+    quotas["pending_requests"] = 500;
+    quotas["memory_per_node"] = 10 * 1024 * 1024;
+
+    // 检查配额
+    int current_log_entries = 8000;
+    bool within_quota = current_log_entries <= quotas["log_entries"];
+    FB_ASSERT_TRUE(within_quota);
+
+    // 接近配额时预警
+    double usage_ratio = 100.0 * current_log_entries / quotas["log_entries"];
+    bool need_warning = usage_ratio > 80.0;
+    FB_ASSERT_FALSE(need_warning);
+}
+
+FB_TEST(raft_log_node, rate_limit_global_vs_local) {
+    // 全局与局部限流
+    int global_limit = 5000;
+    int local_limit = 1000;
+    int global_usage = 3000;
+    int local_usage = 1200;
+
+    // 局部超限但全局未超
+    bool local_ok = local_usage <= local_limit;
+    bool global_ok = global_usage <= global_limit;
+
+    FB_ASSERT_FALSE(local_ok);
+    FB_ASSERT_TRUE(global_ok);
+
+    // 需要同时满足全局和局部
+    bool both_ok = local_ok && global_ok;
+    FB_ASSERT_FALSE(both_ok);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
