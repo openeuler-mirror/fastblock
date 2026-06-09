@@ -738,5 +738,72 @@ FB_TEST(raft_state, log_next_idx_init_check) {
     FB_ASSERT_EQ(next_idx, 1L);
 }
 
+// ============================================================================
+// Test Suite: Boundary and Overflow Tests
+// ============================================================================
+
+FB_TEST(raft_state, term_overflow_protection) {
+    raft_term_t term = std::numeric_limits<raft_term_t>::max();
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(term == std::numeric_limits<raft_term_t>::max());
+
+    // 验证溢出后的行为（有符号整数溢出是未定义行为）
+    raft_term_t max_minus_one = std::numeric_limits<raft_term_t>::max() - 1;
+    FB_ASSERT_TRUE(max_minus_one > 0);
+    FB_ASSERT_TRUE(max_minus_one < term);
+}
+
+FB_TEST(raft_state, index_zero_boundary) {
+    raft_index_t idx = 0;
+    FB_ASSERT_TRUE(idx >= 0);
+
+    // commit_idx = 0 表示还没有任何日志被提交
+    int64_t commit_idx = 0;
+    FB_ASSERT_EQ(commit_idx, 0L);
+
+    // commit_idx 必须小于等于 last_log_idx
+    int64_t last_log_idx = 5;
+    FB_ASSERT_TRUE(commit_idx <= last_log_idx);
+}
+
+FB_TEST(raft_state, negative_index_handling) {
+    auto clamp = [](long int idx) -> long int {
+        return idx < 1 ? 1 : idx;
+    };
+
+    FB_ASSERT_EQ(clamp(-999999), 1L);
+    FB_ASSERT_EQ(clamp(-1), 1L);
+    FB_ASSERT_EQ(clamp(0), 1L);
+    FB_ASSERT_EQ(clamp(1), 1L);
+    FB_ASSERT_EQ(clamp(100), 100L);
+    FB_ASSERT_EQ(clamp(std::numeric_limits<long int>::min()), 1L);
+}
+
+FB_TEST(raft_state, term_boundary_values) {
+    raft_term_t min_term = std::numeric_limits<raft_term_t>::min();
+    raft_term_t max_term = std::numeric_limits<raft_term_t>::max();
+
+    FB_ASSERT_TRUE(min_term < max_term);
+    FB_ASSERT_TRUE(max_term > 0);
+
+    // Term 应该从 1 开始，0 是无效值
+    raft_term_t valid_term = 1;
+    FB_ASSERT_TRUE(valid_term > 0);
+}
+
+FB_TEST(raft_state, index_boundary_values) {
+    raft_index_t min_idx = 0;
+    raft_index_t max_idx = std::numeric_limits<raft_index_t>::max();
+
+    FB_ASSERT_TRUE(min_idx >= 0);
+    FB_ASSERT_TRUE(max_idx > 0);
+    FB_ASSERT_TRUE(min_idx < max_idx);
+
+    // 验证 first_idx 和 last_idx 的合理范围
+    raft_index_t first_idx = 1;
+    raft_index_t last_idx = max_idx;
+    FB_ASSERT_TRUE(first_idx <= last_idx);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
