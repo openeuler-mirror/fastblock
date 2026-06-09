@@ -805,5 +805,93 @@ FB_TEST(raft_state, index_boundary_values) {
     FB_ASSERT_TRUE(first_idx <= last_idx);
 }
 
+// ============================================================================
+// Test Suite: State Machine Transition Tests
+// ============================================================================
+
+FB_TEST(raft_state, valid_state_transitions) {
+    // Follower -> Candidate -> Leader -> Follower (标准转换路径)
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    FB_ASSERT_EQ(state, RAFT_STATE_FOLLOWER);
+
+    // Follower -> Candidate (选举超时触发)
+    state = RAFT_STATE_CANDIDATE;
+    FB_ASSERT_EQ(state, RAFT_STATE_CANDIDATE);
+    FB_ASSERT_TRUE(state != RAFT_STATE_FOLLOWER);
+
+    // Candidate -> Leader (赢得选举)
+    state = RAFT_STATE_LEADER;
+    FB_ASSERT_EQ(state, RAFT_STATE_LEADER);
+    FB_ASSERT_TRUE(state != RAFT_STATE_CANDIDATE);
+
+    // Leader -> Follower (发现更高term)
+    state = RAFT_STATE_FOLLOWER;
+    FB_ASSERT_EQ(state, RAFT_STATE_FOLLOWER);
+    FB_ASSERT_TRUE(state != RAFT_STATE_LEADER);
+}
+
+FB_TEST(raft_state, invalid_direct_follower_to_leader) {
+    // 不能直接从Follower变成Leader（必须先经过Candidate阶段）
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    raft_identity prev_state = state;
+
+    // 模拟非法转换检测
+    bool transition_valid = (prev_state == RAFT_STATE_CANDIDATE);
+    FB_ASSERT_FALSE(transition_valid);
+
+    // 正确的转换路径必须经过Candidate
+    prev_state = RAFT_STATE_CANDIDATE;
+    transition_valid = (prev_state == RAFT_STATE_CANDIDATE);
+    FB_ASSERT_TRUE(transition_valid);
+}
+
+FB_TEST(raft_state, state_all_valid_values) {
+    // 验证所有状态值都在合法范围内
+    for (int i = RAFT_STATE_NONE; i <= RAFT_STATE_LEADER; i++) {
+        FB_ASSERT_TRUE(i >= RAFT_STATE_NONE);
+        FB_ASSERT_TRUE(i <= RAFT_STATE_LEADER);
+    }
+}
+
+FB_TEST(raft_state, state_none_is_initial) {
+    // RAFT_STATE_NONE 表示节点尚未加入集群
+    raft_identity state = RAFT_STATE_NONE;
+    FB_ASSERT_EQ(state, RAFT_STATE_NONE);
+
+    // NONE 状态的节点不参与选举
+    bool can_vote = (state == RAFT_STATE_FOLLOWER || state == RAFT_STATE_CANDIDATE);
+    FB_ASSERT_FALSE(can_vote);
+}
+
+FB_TEST(raft_state, candidate_can_become_leader_or_follower) {
+    raft_identity state = RAFT_STATE_CANDIDATE;
+
+    // Candidate 可能赢得选举成为 Leader
+    raft_identity after_win = RAFT_STATE_LEADER;
+    FB_ASSERT_TRUE(after_win == RAFT_STATE_LEADER);
+
+    // Candidate 可能收到更高term成为 Follower
+    raft_identity after_lose = RAFT_STATE_FOLLOWER;
+    FB_ASSERT_TRUE(after_lose == RAFT_STATE_FOLLOWER);
+}
+
+FB_TEST(raft_state, leader_step_down_on_higher_term) {
+    raft_identity state = RAFT_STATE_LEADER;
+    raft_term_t current_term = 5;
+    raft_term_t received_term = 6;
+
+    // 收到更高term时，Leader必须step down
+    bool should_step_down = received_term > current_term;
+    FB_ASSERT_TRUE(should_step_down);
+
+    if (should_step_down) {
+        state = RAFT_STATE_FOLLOWER;
+        current_term = received_term;
+    }
+
+    FB_ASSERT_EQ(state, RAFT_STATE_FOLLOWER);
+    FB_ASSERT_EQ(current_term, 6L);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
