@@ -662,3 +662,110 @@ public:
         fb_fixture_reg_##fixture##_##name(#fixture, #name,                        \
                                           fb_test_f_##fixture##_##name);           \
     void fb_test_f_##fixture##_##name(fixture& fb_fixture_)
+
+// ============================================================================
+// PR3: Async Test Support (FB_TEST_ASYNC)
+// ============================================================================
+
+/**
+ * @brief Async test context for tracking async operations
+ */
+class async_test_context {
+public:
+    bool completed = false;
+    bool timed_out = false;
+    std::string error_message;
+    std::condition_variable cv;
+    std::mutex mutex;
+};
+
+/**
+ * @brief Async test case
+ */
+class async_test_case : public test_case {
+public:
+    using async_func = std::function<void(test_context&, async_test_context&)>;
+
+    async_test_case(const std::string& name, const std::string& suite,
+                    async_func func, uint32_t timeout_ms = 5000)
+        : test_case(name, suite, [this, func, timeout_ms](test_context& ctx) {
+            async_test_context async_ctx;
+            std::thread([this, func, &ctx, &async_ctx]() {
+                func(ctx, async_ctx);
+            }).detach();
+
+            std::unique_lock<std::mutex> lock(async_ctx.mutex);
+            if (!async_ctx.cv.wait_for(lock,
+                    std::chrono::milliseconds(timeout_ms),
+                    [&async_ctx] { return async_ctx.completed; })) {
+                async_ctx.timed_out = true;
+                ctx.fail("Async test timed out", __FILE__, __LINE__);
+            }
+            if (!async_ctx.error_message.empty()) {
+                ctx.fail(async_ctx.error_message, __FILE__, __LINE__);
+            }
+        }) {}
+};
+
+/**
+ * @brief Registrar for async tests
+ */
+class async_test_registrar {
+public:
+    async_test_registrar(const std::string& suite_name,
+                         const std::string& test_name,
+                         async_test_case::async_func func,
+                         uint32_t timeout_ms = 5000) {
+        auto tc = std::make_shared<async_test_case>(test_name, suite_name,
+                                                     func, timeout_ms);
+        test_registry::instance().register_test(suite_name, tc);
+    }
+};
+
+/**
+ * @brief Define an async test
+ * Usage:
+ *   FB_TEST_ASYNC(raft_state, election_timeout_trigger) {
+ *       start_election_timer();
+ *       FB_WAIT_FOR(state == RAFT_STATE_CANDIDATE, async_ctx, 1000);
+ *       FB_ASYNC_COMPLETE(async_ctx);
+ *   }
+ */
+#define FB_TEST_ASYNC(suite, name)                                                 \
+    void fb_test_async_##suite##_##name(::fastblock::test::test_context& ctx,    \
+                                         ::fastblock::test::async_test_context& fb_async_ctx_); \
+    static ::fastblock::test::async_test_registrar                                 \
+        fb_async_reg_##suite##_##name(#suite, #name,                              \
+                                       fb_test_async_##suite##_##name);            \
+    void fb_test_async_##suite##_##name(::fastblock::test::test_context& ctx,     \
+                                         ::fastblock::test::async_test_context& fb_async_ctx_)
+
+#define FB_ASYNC_ASSERT_TRUE(condition, async_ctx)                                 \
+    do {                                                                            \
+        if (!(condition)) {                                                        \
+            std::lock_guard<std::mutex> lock((async_ctx).mutex);                  \
+            (async_ctx).error_message = "Async assertion failed: " #condition;    \
+            (async_ctx).cv.notify_all();                                           \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+#define FB_WAIT_FOR(condition, async_ctx, timeout_ms)                              \
+    do {                                                                            \
+        std::unique_lock<std::mutex> lock((async_ctx).mutex);                      \
+        if (!(async_ctx).cv.wait_for(lock,                                         \
+                std::chrono::milliseconds(timeout_ms),                             \
+                [&] { return (condition); })) {                                   \
+        } else {                                                                    \
+            (async_ctx).timed_out = true;                                          \
+            (async_ctx).error_message = "Wait timed out: " #condition;             \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+#define FB_ASYNC_COMPLETE(async_ctx)                                               \
+    do {                                                                            \
+        std::lock_guard<std::mutex> lock((async_ctx).mutex);                      \
+        (async_ctx).completed = true;                                              \
+        (async_ctx).cv.notify_all();                                               \
+    } while (0)
