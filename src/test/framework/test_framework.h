@@ -358,9 +358,6 @@ public:
     }
 };
 
-} // namespace test
-} // namespace fastblock
-
 // Convenience macros for test definition
 
 /**
@@ -1282,3 +1279,6 @@ private:
 
 #define FB_SCOPED_TIMER(name)                                                      \
     ::fastblock::test::scoped_timer fb_timer_##name(#name, ctx)
+
+} // namespace test
+} // namespace fastblock
