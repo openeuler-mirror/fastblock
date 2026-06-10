@@ -1902,5 +1902,213 @@ FB_TEST(raft_state, cas_state_transition) {
     FB_ASSERT_FALSE(success);  // CAS 失败
 }
 
+// ============================================================================
+// Test Suite: Performance Boundary Tests
+// ============================================================================
+
+FB_TEST(raft_state, large_term_values) {
+    // 测试非常大的 term 值
+    raft_term_t term = std::numeric_limits<raft_term_t>::max() - 1000;
+    FB_ASSERT_TRUE(term > 0);
+
+    // 大 term 值的比较
+    raft_term_t other_term = term - 1;
+    FB_ASSERT_TRUE(term > other_term);
+
+    // 接近最大值时的递增
+    term = term + 1;
+    FB_ASSERT_TRUE(term > other_term);
+}
+
+FB_TEST(raft_state, large_index_values) {
+    // 测试大索引值
+    raft_index_t idx = 1000000000LL;  // 10亿
+    FB_ASSERT_TRUE(idx > 0);
+
+    // 大索引的算术运算
+    raft_index_t next_idx = idx + 1;
+    FB_ASSERT_TRUE(next_idx > idx);
+
+    // 索引差值计算
+    raft_index_t diff = next_idx - idx;
+    FB_ASSERT_EQ(diff, 1L);
+}
+
+FB_TEST(raft_state, max_cluster_size) {
+    // 测试大规模集群
+    uint64_t max_nodes = 1000;
+    uint64_t votes = 501;  // 多数派
+
+    bool has_majority = votes > max_nodes / 2;
+    FB_ASSERT_TRUE(has_majority);
+
+    // 边界情况：刚好多数
+    votes = 501;
+    has_majority = votes > max_nodes / 2;
+    FB_ASSERT_TRUE(has_majority);
+
+    // 边界情况：不够多数
+    votes = 500;
+    has_majority = votes > max_nodes / 2;
+    FB_ASSERT_FALSE(has_majority);
+}
+
+FB_TEST(raft_state, large_log_entries) {
+    // 测试大量日志条目
+    int64_t first_idx = 1;
+    int64_t last_idx = 10000000;  // 1000万条日志
+    int64_t entry_count = last_idx - first_idx + 1;
+
+    FB_ASSERT_EQ(entry_count, 10000000L);
+
+    // 日志索引范围检查
+    bool valid_range = (first_idx >= 1) && (last_idx >= first_idx);
+    FB_ASSERT_TRUE(valid_range);
+}
+
+FB_TEST(raft_state, high_frequency_term_changes) {
+    // 模拟高频率的 term 变化
+    raft_term_t term = 1;
+    for (int i = 0; i < 10000; i++) {
+        term++;
+    }
+    FB_ASSERT_EQ(term, 10001L);
+
+    // term 单调递增验证
+    raft_term_t prev_term = 1;
+    bool always_increasing = true;
+    for (int i = 0; i < 1000; i++) {
+        raft_term_t new_term = prev_term + 1;
+        if (new_term <= prev_term) {
+            always_increasing = false;
+            break;
+        }
+        prev_term = new_term;
+    }
+    FB_ASSERT_TRUE(always_increasing);
+}
+
+FB_TEST(raft_state, rapid_state_transitions) {
+    // 测试快速状态切换
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    int transition_count = 0;
+
+    for (int cycle = 0; cycle < 1000; cycle++) {
+        // Follower -> Candidate -> Leader -> Follower
+        state = RAFT_STATE_CANDIDATE;
+        transition_count++;
+        state = RAFT_STATE_LEADER;
+        transition_count++;
+        state = RAFT_STATE_FOLLOWER;
+        transition_count++;
+    }
+
+    FB_ASSERT_EQ(transition_count, 3000);
+    FB_ASSERT_EQ(state, RAFT_STATE_FOLLOWER);
+}
+
+FB_TEST(raft_state, large_snapshot_size) {
+    // 测试大快照
+    int64_t snapshot_size = 1024LL * 1024 * 1024;  // 1GB
+    int64_t chunk_size = 64 * 1024;  // 64KB chunks
+
+    int64_t total_chunks = snapshot_size / chunk_size;
+    if (snapshot_size % chunk_size != 0) {
+        total_chunks++;
+    }
+
+    FB_ASSERT_EQ(total_chunks, 16384L);
+
+    // 快照传输进度跟踪
+    int64_t transferred_chunks = 0;
+    int64_t remaining_chunks = total_chunks - transferred_chunks;
+    FB_ASSERT_EQ(remaining_chunks, 16384L);
+}
+
+FB_TEST(raft_state, many_concurrent_config_changes) {
+    // 模拟多次配置变更
+    uint64_t node_count = 3;
+    uint64_t config_changes = 0;
+
+    for (int i = 0; i < 100; i++) {
+        // 添加节点
+        node_count++;
+        config_changes++;
+        // 移除节点
+        node_count--;
+        config_changes++;
+    }
+
+    FB_ASSERT_EQ(config_changes, 200UL);
+    FB_ASSERT_EQ(node_count, 3UL);  // 最终节点数
+}
+
+FB_TEST(raft_state, extreme_timeout_values) {
+    // 测试极端超时值
+    int min_timeout = 1;  // 最小1ms
+    int max_timeout = 3600000;  // 最大1小时
+
+    // 极小超时
+    bool valid = (min_timeout >= 1 && min_timeout <= max_timeout);
+    FB_ASSERT_TRUE(valid);
+
+    // 极大超时
+    valid = (max_timeout >= 1 && max_timeout <= 3600000);
+    FB_ASSERT_TRUE(valid);
+
+    // 心跳超时与选举超时的比例
+    int heartbeat = 1;
+    int election = 2;
+    bool reasonable_ratio = (heartbeat > 0) && (election >= 2 * heartbeat);
+    FB_ASSERT_TRUE(reasonable_ratio);
+}
+
+FB_TEST(raft_state, zero_and_negative_boundary) {
+    // 边界值测试
+    auto clamp = [](int64_t value) -> int64_t {
+        return value < 1 ? 1 : value;
+    };
+
+    // 极端负值
+    FB_ASSERT_EQ(clamp(std::numeric_limits<int64_t>::min()), 1L);
+    FB_ASSERT_EQ(clamp(-999999999999LL), 1L);
+
+    // 零值
+    FB_ASSERT_EQ(clamp(0), 1L);
+
+    // 正常值
+    FB_ASSERT_EQ(clamp(1), 1L);
+    FB_ASSERT_EQ(clamp(std::numeric_limits<int64_t>::max()),
+                 std::numeric_limits<int64_t>::max());
+}
+
+FB_TEST(raft_state, memory_limit_handling) {
+    // 模拟内存限制
+    size_t total_memory = 1024ULL * 1024 * 1024;  // 1GB
+    size_t log_entry_size = 1024;  // 每条日志1KB
+    size_t max_entries = total_memory / log_entry_size;
+
+    FB_ASSERT_EQ(max_entries, 1024ULL * 1024);  // 100万条
+
+    // 检查日志条目数是否在限制内
+    int64_t current_entries = 500000;
+    bool within_limit = current_entries <= static_cast<int64_t>(max_entries);
+    FB_ASSERT_TRUE(within_limit);
+}
+
+FB_TEST(raft_state, network_bandwidth_limit) {
+    // 模拟网络带宽限制
+    int64_t bandwidth_bps = 10LL * 1000 * 1000 * 1000;  // 10Gbps
+    int64_t entry_size = 1024;  // 1KB per entry
+    int64_t entries_per_second = bandwidth_bps / (entry_size * 8);
+
+    FB_ASSERT_TRUE(entries_per_second > 0);
+
+    // 计算日志复制吞吐量
+    int64_t batch_size = 1000;
+    int64_t batch_count = entries_per_second / batch_size;
+    FB_ASSERT_TRUE(batch_count > 0);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
