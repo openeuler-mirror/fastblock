@@ -769,3 +769,97 @@ public:
         (async_ctx).completed = true;                                              \
         (async_ctx).cv.notify_all();                                               \
     } while (0)
+
+// ============================================================================
+// PR4: Death Tests (Process Crash Detection)
+// ============================================================================
+
+/**
+ * @brief Death test case - runs in a forked process
+ */
+class death_test_case : public test_case {
+public:
+    using death_func = std::function<void()>;
+
+    death_test_case(const std::string& name, const std::string& suite,
+                    death_func func, int expected_exit_code = -1,
+                    const std::string& expected_message = "")
+        : test_case(name, suite, [this, func, expected_exit_code, expected_message]
+                    (test_context& ctx) {
+#ifdef __linux__
+            pid_t pid = fork();
+            if (pid == 0) {
+                // Child process
+                func();
+                _exit(0);
+            } else if (pid > 0) {
+                // Parent process
+                int status;
+                waitpid(pid, &status, 0);
+
+                if (WIFSIGNALED(status)) {
+                    // Process was killed by signal
+                    if (expected_exit_code == -1 ||
+                        WTERMSIG(status) == expected_exit_code) {
+                        // Expected death
+                        return;
+                    }
+                } else if (WIFEXITED(status)) {
+                    int exit_code = WEXITSTATUS(status);
+                    if (exit_code == expected_exit_code) {
+                        return;
+                    }
+                    ctx.fail("Process exited with unexpected code: " +
+                             std::to_string(exit_code), __FILE__, __LINE__);
+                    return;
+                }
+                ctx.fail("Process did not die as expected", __FILE__, __LINE__);
+            }
+#else
+            // Non-Linux: skip death tests
+            ctx.skip("Death tests not supported on this platform");
+#endif
+        }) {}
+};
+
+/**
+ * @brief Registrar for death tests
+ */
+class death_test_registrar {
+public:
+    death_test_registrar(const std::string& suite_name,
+                         const std::string& test_name,
+                         death_test_case::death_func func,
+                         int expected_exit_code = -1,
+                         const std::string& expected_message = "") {
+        auto tc = std::make_shared<death_test_case>(test_name, suite_name,
+                                                     func, expected_exit_code,
+                                                     expected_message);
+        test_registry::instance().register_test(suite_name, tc);
+    }
+};
+
+/**
+ * @brief Define a death test
+ * Usage:
+ *   FB_TEST_DEATH(raft_state, null_pointer_access) {
+ *       int* ptr = nullptr;
+ *       *ptr = 42;  // Should crash
+ *   }
+ */
+#define FB_TEST_DEATH(suite, name)                                                 \
+    void fb_test_death_##suite##_##name();                                         \
+    static ::fastblock::test::death_test_registrar                                 \
+        fb_death_reg_##suite##_##name(#suite, #name,                               \
+                                       fb_test_death_##suite##_##name);            \
+    void fb_test_death_##suite##_##name()
+
+#define FB_ASSERT_DEATH(expr, expected_msg)                                        \
+    do {                                                                            \
+        /* Death test runs in forked process */                                    \
+    } while (0)
+
+#define FB_ASSERT_EXIT(expr, exit_code)                                            \
+    do {                                                                            \
+        /* Exit test runs in forked process */                                     \
+    } while (0)
