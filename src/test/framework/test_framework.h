@@ -1178,6 +1178,92 @@ public:
     } while (0)
 
 /**
+ * @brief Floating point equality (with default tolerance)
+ */
+#define FB_ASSERT_FLOAT_EQ(expected, actual)                                       \
+    FB_ASSERT_FLOAT_NEAR(expected, actual, 1e-6)
+
+/**
+ * @brief Integer near comparison
+ */
+#define FB_ASSERT_NEAR(expected, actual, tolerance)                                \
+    do {                                                                            \
+        auto fb_diff = std::abs((expected) - (actual));                            \
+        if (fb_diff > (tolerance)) {                                               \
+            std::stringstream ss;                                                  \
+            ss << "Near assertion failed: " << #expected << " ~ " << #actual     \
+               << " (diff: " << fb_diff << ", tolerance: " << tolerance << ")";    \
+            ctx.fail(ss.str(), __FILE__, __LINE__);                               \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+/**
+ * @brief String contains assertion
+ */
+#define FB_ASSERT_STR_CONTAINS(str, substr)                                        \
+    do {                                                                            \
+        std::string fb_s = (str);                                                  \
+        std::string fb_sub = (substr);                                             \
+        if (fb_s.find(fb_sub) == std::string::npos) {                              \
+            std::stringstream ss;                                                  \
+            ss << "String does not contain substring: \"" << fb_sub << "\""        \
+               << " in \"" << fb_s << "\"";                                        \
+            ctx.fail(ss.str(), __FILE__, __LINE__);                               \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+/**
+ * @brief String starts with assertion
+ */
+#define FB_ASSERT_STR_STARTS_WITH(str, prefix)                                     \
+    do {                                                                            \
+        std::string fb_s = (str);                                                  \
+        std::string fb_p = (prefix);                                               \
+        if (fb_s.substr(0, fb_p.length()) != fb_p) {                               \
+            std::stringstream ss;                                                  \
+            ss << "String does not start with: \"" << fb_p << "\""                 \
+               << ", actual: \"" << fb_s << "\"";                                  \
+            ctx.fail(ss.str(), __FILE__, __LINE__);                               \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+/**
+ * @brief String ends with assertion
+ */
+#define FB_ASSERT_STR_ENDS_WITH(str, suffix)                                       \
+    do {                                                                            \
+        std::string fb_s = (str);                                                  \
+        std::string fb_su = (suffix);                                              \
+        if (fb_s.length() < fb_su.length() ||                                      \
+            fb_s.substr(fb_s.length() - fb_su.length()) != fb_su) {                \
+            std::stringstream ss;                                                  \
+            ss << "String does not end with: \"" << fb_su << "\""                  \
+               << ", actual: \"" << fb_s << "\"";                                  \
+            ctx.fail(ss.str(), __FILE__, __LINE__);                               \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+/**
+ * @brief String not contains assertion
+ */
+#define FB_ASSERT_STR_NOT_CONTAINS(str, substr)                                    \
+    do {                                                                            \
+        std::string fb_s = (str);                                                  \
+        std::string fb_sub = (substr);                                             \
+        if (fb_s.find(fb_sub) != std::string::npos) {                              \
+            std::stringstream ss;                                                  \
+            ss << "String unexpectedly contains: \"" << fb_sub << "\""             \
+               << " in \"" << fb_s << "\"";                                        \
+            ctx.fail(ss.str(), __FILE__, __LINE__);                               \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+/**
  * @brief Exception assertion
  */
 #define FB_ASSERT_THROW(expression, exception_type)                                \
@@ -1241,6 +1327,16 @@ public:
         }                                                                           \
     } while (0)
 
+#define FB_ASSERT_NOT_CONTAINS(container, element)                                 \
+    do {                                                                            \
+        if (std::find((container).begin(), (container).end(), (element)) !=       \
+            (container).end()) {                                                   \
+            ctx.fail("Container unexpectedly contains element: " #element,        \
+                    __FILE__, __LINE__);                                           \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
 /**
  * @brief Range assertions
  */
@@ -1254,6 +1350,79 @@ public:
             return;                                                                 \
         }                                                                           \
     } while (0)
+
+#define FB_ASSERT_NOT_IN_RANGE(value, min_val, max_val)                            \
+    do {                                                                            \
+        if ((value) >= (min_val) && (value) <= (max_val)) {                        \
+            std::stringstream ss;                                                  \
+            ss << "Value unexpectedly in range: " << (value) << " in ["            \
+               << (min_val) << ", " << (max_val) << "]";                           \
+            ctx.fail(ss.str(), __FILE__, __LINE__);                               \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+/**
+ * @brief Bit manipulation assertions
+ */
+#define FB_ASSERT_BITS_SET(value, bits)                                            \
+    do {                                                                            \
+        if (((value) & (bits)) != (bits)) {                                        \
+            std::stringstream ss;                                                  \
+            ss << "Bits not set: expected " << (bits) << " in " << (value);        \
+            ctx.fail(ss.str(), __FILE__, __LINE__);                               \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+#define FB_ASSERT_BITS_CLEAR(value, bits)                                          \
+    do {                                                                            \
+        if (((value) & (bits)) != 0) {                                             \
+            std::stringstream ss;                                                  \
+            ss << "Bits unexpectedly set: " << (bits) << " in " << (value);        \
+            ctx.fail(ss.str(), __FILE__, __LINE__);                               \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+#define FB_ASSERT_BIT_SET(value, bit)                                              \
+    FB_ASSERT_BITS_SET(value, (1 << (bit)))
+
+#define FB_ASSERT_BIT_CLEAR(value, bit)                                            \
+    FB_ASSERT_BITS_CLEAR(value, (1 << (bit)))
+
+/**
+ * @brief Pointer assertions
+ */
+#define FB_ASSERT_SAME_PTR(ptr1, ptr2)                                             \
+    do {                                                                            \
+        if ((ptr1) != (ptr2)) {                                                    \
+            std::stringstream ss;                                                  \
+            ss << "Pointers not same: " << (void*)(ptr1) << " != " << (void*)(ptr2); \
+            ctx.fail(ss.str(), __FILE__, __LINE__);                               \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+#define FB_ASSERT_DIFFERENT_PTR(ptr1, ptr2)                                        \
+    do {                                                                            \
+        if ((ptr1) == (ptr2)) {                                                    \
+            ctx.fail("Pointers unexpectedly same: both are "                       \
+                    << (void*)(ptr1), __FILE__, __LINE__);                         \
+            return;                                                                 \
+        }                                                                           \
+    } while (0)
+
+/**
+ * @brief Type assertions (compile-time)
+ */
+#define FB_ASSERT_TYPE_EQ(type1, type2)                                            \
+    static_assert(std::is_same<type1, type2>::value,                               \
+                  "Types are not equal: " #type1 " != " #type2)
+
+#define FB_ASSERT_TYPE_DERIVED(derived, base)                                      \
+    static_assert(std::is_base_of<base, derived>::value,                           \
+                  "Type not derived: " #derived " is not derived from " #base)
 
 /**
  * @brief Scoped timer for timing code blocks
