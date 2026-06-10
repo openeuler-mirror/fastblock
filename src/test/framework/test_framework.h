@@ -863,3 +863,126 @@ public:
     do {                                                                            \
         /* Exit test runs in forked process */                                     \
     } while (0)
+
+// ============================================================================
+// PR5: Performance Benchmark Tests (FB_BENCHMARK)
+// ============================================================================
+
+/**
+ * @brief Benchmark result
+ */
+struct benchmark_result {
+    std::string name;
+    int iterations;
+    std::chrono::nanoseconds total_time;
+    std::chrono::nanoseconds min_time;
+    std::chrono::nanoseconds max_time;
+    std::chrono::nanoseconds avg_time;
+
+    double ops_per_second() const {
+        return (double)iterations * 1000000000.0 / total_time.count();
+    }
+};
+
+/**
+ * @brief Benchmark test case
+ */
+class benchmark_test_case : public test_case {
+public:
+    using bench_func = std::function<benchmark_result()>;
+
+    benchmark_test_case(const std::string& name, const std::string& suite,
+                        bench_func func)
+        : test_case(name, suite, [this, func](test_context& ctx) {
+            auto result = func();
+            SPDK_NOTICELOG("BENCHMARK %s: %d iterations, avg %.2f ns, "
+                          "%.2f ops/sec\n",
+                          result.name.c_str(), result.iterations,
+                          (double)result.avg_time.count(),
+                          result.ops_per_second());
+        }) {}
+};
+
+/**
+ * @brief Benchmark registrar
+ */
+class benchmark_registrar {
+public:
+    benchmark_registrar(const std::string& suite_name,
+                        const std::string& test_name,
+                        benchmark_test_case::bench_func func) {
+        auto tc = std::make_shared<benchmark_test_case>(test_name, suite_name, func);
+        test_registry::instance().register_test(suite_name, tc);
+    }
+};
+
+/**
+ * @brief Benchmark context for timing
+ */
+class benchmark_context {
+public:
+    std::string name;
+    int iterations = 0;
+    std::chrono::high_resolution_clock::time_point start_time;
+    std::chrono::nanoseconds total_time{0};
+    std::chrono::nanoseconds min_time{std::chrono::nanoseconds::max()};
+    std::chrono::nanoseconds max_time{0};
+
+    void start_iteration() {
+        start_time = std::chrono::high_resolution_clock::now();
+    }
+
+    void end_iteration() {
+        auto end_time = std::chrono::high_resolution_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            end_time - start_time);
+        total_time += elapsed;
+        min_time = std::min(min_time, elapsed);
+        max_time = std::max(max_time, elapsed);
+        iterations++;
+    }
+
+    benchmark_result result() const {
+        benchmark_result r;
+        r.name = name;
+        r.iterations = iterations;
+        r.total_time = total_time;
+        r.min_time = min_time;
+        r.max_time = max_time;
+        r.avg_time = iterations > 0 ?
+            std::chrono::nanoseconds(total_time.count() / iterations) :
+            std::chrono::nanoseconds(0);
+        return r;
+    }
+};
+
+/**
+ * @brief Define a benchmark test
+ * Usage:
+ *   FB_BENCHMARK(raft_state, term_comparison_perf) {
+ *       benchmark_context bench_ctx;
+ *       for (int i = 0; i < 1000000; i++) {
+ *           bench_ctx.start_iteration();
+ *           raft_term_t t1 = i, t2 = i + 1;
+ *           bool result = t2 > t1;
+ *           bench_ctx.end_iteration();
+ *       }
+ *       return bench_ctx.result();
+ *   }
+ */
+#define FB_BENCHMARK(suite, name)                                                  \
+    ::fastblock::test::benchmark_result fb_benchmark_##suite##_##name();          \
+    static ::fastblock::test::benchmark_registrar                                  \
+        fb_bench_reg_##suite##_##name(#suite, #name,                              \
+                                       fb_benchmark_##suite##_##name);              \
+    ::fastblock::test::benchmark_result fb_benchmark_##suite##_##name()
+
+#define FB_BENCHMARK_START(ctx)                                                    \
+    (ctx).start_iteration()
+
+#define FB_BENCHMARK_END(ctx, iterations)                                          \
+    do {                                                                            \
+        for (int fb_bench_i = 0; fb_bench_i < (iterations); fb_bench_i++) {       \
+            (ctx).end_iteration();                                                 \
+        }                                                                           \
+    } while (0)
