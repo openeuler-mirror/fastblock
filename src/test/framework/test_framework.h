@@ -2621,3 +2621,147 @@ private:
 
 #define FB_LATENCY_SCOPE(name)                                                      \
     ::fastblock::test::latency_scope fb_latency_scope_##name(#name)
+
+// ============================================================================
+// Enhanced Test Logging
+// ============================================================================
+
+/**
+ * @brief Log level for test output
+ */
+enum class test_log_level {
+    TRACE,
+    DEBUG,
+    INFO,
+    WARN,
+    ERROR,
+    FATAL
+};
+
+/**
+ * @brief Enhanced test logger
+ */
+class test_logger {
+public:
+    static test_logger& instance() {
+        static test_logger logger;
+        return logger;
+    }
+
+    void set_level(test_log_level level) { _level = level; }
+    test_log_level level() const { return _level; }
+
+    void log(test_log_level level, const std::string& message,
+             const char* file = nullptr, int line = 0) {
+        if (level < _level) return;
+
+        const char* level_str = level_to_string(level);
+        std::stringstream ss;
+        ss << "[" << level_str << "] ";
+        if (file) {
+            ss << file << ":" << line << " - ";
+        }
+        ss << message;
+
+        if (level >= test_log_level::ERROR) {
+            SPDK_ERRLOG("%s\n", ss.str().c_str());
+        } else {
+            SPDK_NOTICELOG("%s\n", ss.str().c_str());
+        }
+    }
+
+    void trace(const std::string& msg, const char* file = nullptr, int line = 0) {
+        log(test_log_level::TRACE, msg, file, line);
+    }
+
+    void debug(const std::string& msg, const char* file = nullptr, int line = 0) {
+        log(test_log_level::DEBUG, msg, file, line);
+    }
+
+    void info(const std::string& msg, const char* file = nullptr, int line = 0) {
+        log(test_log_level::INFO, msg, file, line);
+    }
+
+    void warn(const std::string& msg, const char* file = nullptr, int line = 0) {
+        log(test_log_level::WARN, msg, file, line);
+    }
+
+    void error(const std::string& msg, const char* file = nullptr, int line = 0) {
+        log(test_log_level::ERROR, msg, file, line);
+    }
+
+    void fatal(const std::string& msg, const char* file = nullptr, int line = 0) {
+        log(test_log_level::FATAL, msg, file, line);
+    }
+
+private:
+    test_logger() : _level(test_log_level::INFO) {}
+
+    const char* level_to_string(test_log_level level) {
+        switch (level) {
+            case test_log_level::TRACE: return "TRACE";
+            case test_log_level::DEBUG: return "DEBUG";
+            case test_log_level::INFO: return "INFO";
+            case test_log_level::WARN: return "WARN";
+            case test_log_level::ERROR: return "ERROR";
+            case test_log_level::FATAL: return "FATAL";
+            default: return "UNKNOWN";
+        }
+    }
+
+    test_log_level _level;
+};
+
+#define FB_LOG_SET_LEVEL(level)                                                     \
+    ::fastblock::test::test_logger::instance().set_level(level)
+
+#define FB_LOG_TRACE(msg)                                                           \
+    ::fastblock::test::test_logger::instance().trace(msg, __FILE__, __LINE__)
+
+#define FB_LOG_DEBUG(msg)                                                           \
+    ::fastblock::test::test_logger::instance().debug(msg, __FILE__, __LINE__)
+
+#define FB_LOG_INFO(msg)                                                            \
+    ::fastblock::test::test_logger::instance().info(msg, __FILE__, __LINE__)
+
+#define FB_LOG_WARN(msg)                                                            \
+    ::fastblock::test::test_logger::instance().warn(msg, __FILE__, __LINE__)
+
+#define FB_LOG_ERROR(msg)                                                           \
+    ::fastblock::test::test_logger::instance().error(msg, __FILE__, __LINE__)
+
+#define FB_LOG_FATAL(msg)                                                           \
+    ::fastblock::test::test_logger::instance().fatal(msg, __FILE__, __LINE__)
+
+/**
+ * @brief Structured logging for complex data
+ */
+class structured_logger {
+public:
+    template<typename K, typename V>
+    static std::string format_kv(const K& key, const V& value) {
+        std::stringstream ss;
+        ss << key << "=" << value;
+        return ss.str();
+    }
+
+    template<typename K, typename V>
+    static std::string format_kv_list(std::initializer_list<std::pair<K, V>> pairs) {
+        std::stringstream ss;
+        ss << "{";
+        bool first = true;
+        for (const auto& p : pairs) {
+            if (!first) ss << ", ";
+            ss << p.first << "=" << p.second;
+            first = false;
+        }
+        ss << "}";
+        return ss.str();
+    }
+};
+
+#define FB_LOG_KV(key, value)                                                       \
+    ::fastblock::test::structured_logger::format_kv(key, value)
+
+#define FB_LOG_KV_LIST(...)                                                        \
+    ::fastblock::test::structured_logger::format_kv_list({__VA_ARGS__})
