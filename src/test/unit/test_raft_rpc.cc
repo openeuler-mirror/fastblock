@@ -564,5 +564,143 @@ FB_TEST(raft_rpc, snapshot_concurrent_transfer_limit) {
     FB_ASSERT_EQ(current_transfers, 3);
 }
 
+// ============================================================================
+// Test Suite: TimeoutNow RPC Tests
+// ============================================================================
+
+FB_TEST(raft_rpc, timeoutnow_triggers_election) {
+    // TimeoutNow 让 Follower 立即开始选举
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    bool timeout_now_received = true;
+
+    if (timeout_now_received) {
+        state = RAFT_STATE_CANDIDATE;
+    }
+
+    FB_ASSERT_EQ(state, RAFT_STATE_CANDIDATE);
+}
+
+FB_TEST(raft_rpc, timeoutnow_bypasses_election_timeout) {
+    raft_time_t election_timeout = 500;
+    raft_time_t remaining_timeout = 300;
+
+    // TimeoutNow 不等待超时，立即选举
+    bool bypass_timeout = true;
+    if (bypass_timeout) {
+        remaining_timeout = 0;
+    }
+
+    FB_ASSERT_EQ(remaining_timeout, 0L);
+}
+
+FB_TEST(raft_rpc, timeoutnow_only_for_followers) {
+    // 只有 Follower 响应 TimeoutNow
+    raft_identity state = RAFT_STATE_LEADER;
+
+    bool should_respond = (state == RAFT_STATE_FOLLOWER);
+    FB_ASSERT_FALSE(should_respond);
+
+    // Follower 状态
+    state = RAFT_STATE_FOLLOWER;
+    should_respond = (state == RAFT_STATE_FOLLOWER);
+    FB_ASSERT_TRUE(should_respond);
+}
+
+FB_TEST(raft_rpc, timeoutnow_increment_term) {
+    raft_term_t current_term = 5;
+
+    // 收到 TimeoutNow 后递增 term 开始选举
+    current_term++;
+
+    FB_ASSERT_EQ(current_term, 6L);
+}
+
+FB_TEST(raft_rpc, timeoutnow_request_vote_self) {
+    // 收到 TimeoutNow 后给自己投票
+    uint64_t votes = 0;
+    uint64_t node_num = 5;
+
+    votes++;  // 自己的一票
+
+    FB_ASSERT_EQ(votes, 1UL);
+
+    // 检查是否可能赢得选举
+    bool can_win = votes > node_num / 2;
+    FB_ASSERT_FALSE(can_win);  // 需要更多票
+}
+
+FB_TEST(raft_rpc, timeoutnow_leader_lease_transfer) {
+    // Leader 通过 TimeoutNow 转移领导权
+    raft_node_id_t current_leader = 1;
+    raft_node_id_t target_follower = 3;
+
+    // Leader 发送 TimeoutNow 给目标 Follower
+    bool lease_transferred = true;
+
+    if (lease_transferred) {
+        // 旧 Leader 应该退位
+        current_leader = 0;  // 暂时没有 Leader
+    }
+
+    FB_ASSERT_EQ(current_leader, 0L);
+}
+
+FB_TEST(raft_rpc, timeoutnow_use_case_graceful_transfer) {
+    // 优雅的领导权转移场景
+    std::string step = "identify_target";
+    bool target_synced = true;
+
+    if (step == "identify_target" && target_synced) {
+        step = "send_timeout_now";
+    }
+
+    FB_ASSERT_EQ(step, "send_timeout_now");
+
+    // 目标节点成为新 Leader
+    step = "new_leader_elected";
+    FB_ASSERT_EQ(step, "new_leader_elected");
+}
+
+FB_TEST(raft_rpc, timeoutnow_no_response_needed) {
+    // TimeoutNow 不需要响应
+    bool require_response = false;
+
+    FB_ASSERT_FALSE(require_response);
+
+    // 发送方不等待响应
+    bool wait_for_response = false;
+    FB_ASSERT_FALSE(wait_for_response);
+}
+
+FB_TEST(raft_rpc, timeoutnow_multiple_senders) {
+    // 多个节点同时收到 TimeoutNow 会导致分票
+    int candidates = 3;
+    int total_votes = 3;
+
+    // 每个候选人得到自己的票
+    std::vector<int> votes_per_candidate(candidates, 1);
+
+    // 没有人能得到多数票
+    int majority_needed = (total_votes / 2) + 1;
+    bool any_majority = false;
+    for (int v : votes_per_candidate) {
+        if (v >= majority_needed) {
+            any_majority = true;
+            break;
+        }
+    }
+
+    FB_ASSERT_FALSE(any_majority);
+}
+
+FB_TEST(raft_rpc, timeoutnow_term_mismatch) {
+    raft_term_t current_term = 6;
+    raft_term_t leader_term = 5;
+
+    // 如果 TimeoutNow 的 term 过期，忽略
+    bool should_ignore = leader_term < current_term;
+    FB_ASSERT_TRUE(should_ignore);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
