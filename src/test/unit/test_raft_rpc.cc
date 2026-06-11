@@ -24,6 +24,13 @@ typedef long int raft_index_t;
 typedef int raft_node_id_t;
 typedef long int raft_time_t;
 
+typedef enum {
+    RAFT_STATE_NONE,
+    RAFT_STATE_FOLLOWER,
+    RAFT_STATE_CANDIDATE,
+    RAFT_STATE_LEADER
+} raft_identity;
+
 } // anonymous namespace
 
 FB_SUITE_SETUP(raft_rpc) {
