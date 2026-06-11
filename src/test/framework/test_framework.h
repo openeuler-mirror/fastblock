@@ -1603,3 +1603,66 @@ public:
 
 #define FB_VERIFY_ALL(...)              ::fastblock::test::mock_verifier::verify_all({__VA_ARGS__})
 #define FB_CLEAR_ALL(...)               ::fastblock::test::mock_verifier::clear_all({__VA_ARGS__})
+
+// ============================================================================
+// Test Environment Configuration
+// ============================================================================
+
+/**
+ * @brief Test environment for managing test configuration
+ */
+class test_environment {
+public:
+    static test_environment& instance() {
+        static test_environment env;
+        return env;
+    }
+
+    void set_var(const std::string& key, const std::string& value) {
+        _vars[key] = value;
+    }
+
+    std::string get_var(const std::string& key, const std::string& default_val = "") {
+        auto it = _vars.find(key);
+        return it != _vars.end() ? it->second : default_val;
+    }
+
+    bool has_var(const std::string& key) {
+        return _vars.find(key) != _vars.end();
+    }
+
+    void clear() {
+        _vars.clear();
+    }
+
+    void set_timeout(uint32_t seconds) {
+        _default_timeout = seconds;
+    }
+
+    uint32_t timeout() const {
+        return _default_timeout;
+    }
+
+    void set_verbose(bool verbose) {
+        _verbose = verbose;
+    }
+
+    bool verbose() const {
+        return _verbose;
+    }
+
+private:
+    test_environment() : _default_timeout(300), _verbose(false) {}
+    std::map<std::string, std::string> _vars;
+    uint32_t _default_timeout;
+    bool _verbose;
+};
+
+#define FB_SET_ENV(key, value)          ::fastblock::test::test_environment::instance().set_var(key, value)
+#define FB_GET_ENV(key, default)        ::fastblock::test::test_environment::instance().get_var(key, default)
+#define FB_SET_TIMEOUT(sec)             ::fastblock::test::test_environment::instance().set_timeout(sec)
+#define FB_GET_TIMEOUT()                ::fastblock::test::test_environment::instance().timeout()
+#define FB_SET_VERBOSE(flag)            ::fastblock::test::test_environment::instance().set_verbose(flag)
+
+} // namespace test
+} // namespace fastblock
