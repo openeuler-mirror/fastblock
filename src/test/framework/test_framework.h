@@ -1942,3 +1942,93 @@ private:
 
 #define FB_SCOPE_EXIT(code)                                                         \
     ::fastblock::test::scope_exit fb_scope_exit_##__LINE__([&]() { code; })
+
+// ============================================================================
+// Thread and Concurrency Testing
+// ============================================================================
+
+/**
+ * @brief Thread barrier for synchronized testing
+ */
+class thread_barrier {
+public:
+    thread_barrier(int count) : _threshold(count), _count(count), _generation(0) {}
+
+    void arrive_and_wait() {
+        std::unique_lock<std::mutex> lock(_mutex);
+        int gen = _generation;
+        if (--_count == 0) {
+            _generation++;
+            _count = _threshold;
+            _cv.notify_all();
+        } else {
+            _cv.wait(lock, [this, gen] { return gen != _generation; });
+        }
+    }
+
+private:
+    std::mutex _mutex;
+    std::condition_variable _cv;
+    int _threshold;
+    int _count;
+    int _generation;
+};
+
+/**
+ * @brief Atomic test counter for concurrent tests
+ */
+class atomic_test_counter {
+public:
+    atomic_test_counter() : _count(0) {}
+    void increment() { _count++; }
+    void decrement() { _count--; }
+    int get() const { return _count; }
+    void reset() { _count = 0; }
+private:
+    std::atomic<int> _count;
+};
+
+/**
+ * @brief Thread-safe flag for signaling
+ */
+class thread_flag {
+public:
+    thread_flag() : _flag(false) {}
+    void set() { _flag = true; _cv.notify_all(); }
+    void wait() {
+        std::unique_lock<std::mutex> lock(_mutex);
+        _cv.wait(lock, [this] { return _flag.load(); });
+    }
+    bool wait_for(int timeout_ms) {
+        std::unique_lock<std::mutex> lock(_mutex);
+        return _cv.wait_for(lock, std::chrono::milliseconds(timeout_ms),
+                           [this] { return _flag.load(); });
+    }
+    bool is_set() const { return _flag; }
+    void reset() { _flag = false; }
+private:
+    std::mutex _mutex;
+    std::condition_variable _cv;
+    std::atomic<bool> _flag;
+};
+
+#define FB_THREAD_BARRIER(count)      ::fastblock::test::thread_barrier(count)
+#define FB_ATOMIC_COUNTER             ::fastblock::test::atomic_test_counter
+#define FB_THREAD_FLAG                 ::fastblock::test::thread_flag
+
+/**
+ * @brief Concurrent test executor
+ */
+template<typename Func>
+void run_concurrent(int thread_count, Func func) {
+    std::vector<std::thread> threads;
+    for (int i = 0; i < thread_count; ++i) {
+        threads.emplace_back([i, &func]() { func(i); });
+    }
+    for (auto& t : threads) {
+        t.join();
+    }
+}
+
+#define FB_RUN_CONCURRENT(count, func)                                             \
+    ::fastblock::test::run_concurrent(count, func)
