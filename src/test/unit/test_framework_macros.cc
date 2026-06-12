@@ -601,5 +601,118 @@ FB_TEST(framework_macros, random_uniqueness) {
     FB_ASSERT_TRUE(values.size() > 90);
 }
 
+// ============================================================================
+// Test Suite: Predicate Macros
+// ============================================================================
+
+FB_TEST(framework_macros, pred_between_basic) {
+    auto pred = FB_PRED_BETWEEN(0, 100);
+
+    FB_ASSERT_TRUE(pred(50));
+    FB_ASSERT_TRUE(pred(0));
+    FB_ASSERT_TRUE(pred(100));
+    FB_ASSERT_FALSE(pred(-1));
+    FB_ASSERT_FALSE(pred(101));
+}
+
+FB_TEST(framework_macros, pred_between_negative) {
+    auto pred = FB_PRED_BETWEEN(-50, 50);
+
+    FB_ASSERT_TRUE(pred(-25));
+    FB_ASSERT_TRUE(pred(0));
+    FB_ASSERT_TRUE(pred(25));
+    FB_ASSERT_FALSE(pred(-100));
+    FB_ASSERT_FALSE(pred(100));
+}
+
+FB_TEST(framework_macros, pred_not_between_basic) {
+    auto pred = FB_PRED_NOT_BETWEEN(0, 10);
+
+    FB_ASSERT_TRUE(pred(-1));
+    FB_ASSERT_TRUE(pred(11));
+    FB_ASSERT_FALSE(pred(5));
+    FB_ASSERT_FALSE(pred(0));
+    FB_ASSERT_FALSE(pred(10));
+}
+
+FB_TEST(framework_macros, pred_null_basic) {
+    auto pred = FB_PRED_NULL();
+
+    int* null_ptr = nullptr;
+    int* valid_ptr = new int(42);
+
+    FB_ASSERT_TRUE(pred(null_ptr));
+    FB_ASSERT_FALSE(pred(valid_ptr));
+
+    delete valid_ptr;
+}
+
+FB_TEST(framework_macros, pred_not_null_basic) {
+    auto pred = FB_PRED_NOT_NULL();
+
+    int* null_ptr = nullptr;
+    int* valid_ptr = new int(42);
+
+    FB_ASSERT_FALSE(pred(null_ptr));
+    FB_ASSERT_TRUE(pred(valid_ptr));
+
+    delete valid_ptr;
+}
+
+FB_TEST(framework_macros, pred_one_of_basic) {
+    std::vector<int> values = {1, 3, 5, 7, 9};
+    auto pred = FB_PRED_ONE_OF(values);
+
+    FB_ASSERT_TRUE(pred(1));
+    FB_ASSERT_TRUE(pred(5));
+    FB_ASSERT_TRUE(pred(9));
+    FB_ASSERT_FALSE(pred(0));
+    FB_ASSERT_FALSE(pred(2));
+    FB_ASSERT_FALSE(pred(10));
+}
+
+FB_TEST(framework_macros, pred_none_of_basic) {
+    std::vector<int> values = {1, 3, 5, 7, 9};
+    auto pred = FB_PRED_NONE_OF(values);
+
+    FB_ASSERT_FALSE(pred(1));
+    FB_ASSERT_FALSE(pred(5));
+    FB_ASSERT_TRUE(pred(0));
+    FB_ASSERT_TRUE(pred(2));
+    FB_ASSERT_TRUE(pred(10));
+}
+
+FB_TEST(framework_macros, pred_negate_basic) {
+    auto is_positive = [](int x) { return x > 0; };
+    auto is_not_positive = FB_PRED_NEGATE(is_positive);
+
+    FB_ASSERT_FALSE(is_not_positive(5));
+    FB_ASSERT_TRUE(is_not_positive(-5));
+    FB_ASSERT_TRUE(is_not_positive(0));
+}
+
+FB_TEST(framework_macros, pred_and_basic) {
+    auto is_positive = [](int x) { return x > 0; };
+    auto is_even = [](int x) { return x % 2 == 0; };
+    auto positive_and_even = FB_PRED_AND(is_positive, is_even);
+
+    FB_ASSERT_TRUE(positive_and_even(2));
+    FB_ASSERT_TRUE(positive_and_even(4));
+    FB_ASSERT_FALSE(positive_and_even(-2));
+    FB_ASSERT_FALSE(positive_and_even(1));
+    FB_ASSERT_FALSE(positive_and_even(0));
+}
+
+FB_TEST(framework_macros, pred_or_basic) {
+    auto is_negative = [](int x) { return x < 0; };
+    auto is_large = [](int x) { return x > 100; };
+    auto negative_or_large = FB_PRED_OR(is_negative, is_large);
+
+    FB_ASSERT_TRUE(negative_or_large(-5));
+    FB_ASSERT_TRUE(negative_or_large(200));
+    FB_ASSERT_FALSE(negative_or_large(50));
+    FB_ASSERT_FALSE(negative_or_large(0));
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
