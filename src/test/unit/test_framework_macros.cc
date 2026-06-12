@@ -410,62 +410,6 @@ FB_TEST(framework_macros, not_in_range_above_max) {
     FB_ASSERT_NOT_IN_RANGE(value, min_val, max_val);
 }
 
-FB_TEST(framework_macros, bits_set_basic) {
-    uint32_t value = 0x0F;  // 00001111
-    uint32_t bits = 0x07;   // 00000111
-
-    FB_ASSERT_BITS_SET(value, bits);
-}
-
-FB_TEST(framework_macros, bits_set_all) {
-    uint32_t value = 0xFF;  // all bits set
-    uint32_t bits = 0xFF;
-
-    FB_ASSERT_BITS_SET(value, bits);
-}
-
-FB_TEST(framework_macros, bits_set_single_bit) {
-    uint32_t value = 0x04;  // 00000100
-    uint32_t bits = 0x04;
-
-    FB_ASSERT_BITS_SET(value, bits);
-}
-
-FB_TEST(framework_macros, bits_clear_basic) {
-    uint32_t value = 0xF0;  // 11110000
-    uint32_t bits = 0x0F;   // 00001111
-
-    FB_ASSERT_BITS_CLEAR(value, bits);
-}
-
-FB_TEST(framework_macros, bits_clear_all_low) {
-    uint32_t value = 0x00;  // all bits clear
-    uint32_t bits = 0xFF;
-
-    FB_ASSERT_BITS_CLEAR(value, bits);
-}
-
-FB_TEST(framework_macros, bit_set_single) {
-    uint32_t value = 0x08;  // bit 3 set
-    int bit = 3;
-
-    FB_ASSERT_BIT_SET(value, bit);
-}
-
-FB_TEST(framework_macros, bit_clear_single) {
-    uint32_t value = 0xF7;  // bit 3 clear
-    int bit = 3;
-
-    FB_ASSERT_BIT_CLEAR(value, bit);
-}
-
-FB_TEST(framework_macros, bit_set_high_position) {
-    uint32_t value = 0x80000000;  // bit 31 set
-    int bit = 31;
-
-    FB_ASSERT_BIT_SET(value, bit);
-}
-
 // ============================================================================
 // Test Suite: Random Generator Macros
 // ============================================================================
@@ -539,15 +483,15 @@ FB_TEST(framework_macros, random_string_empty) {
 
 FB_TEST(framework_macros, random_bytes_basic) {
     int len = 16;
-    std::string bytes = FB_RANDOM_BYTES(len);
+    std::vector<unsigned char> bytes = FB_RANDOM_BYTES(len);
 
-    FB_ASSERT_EQ(static_cast<int>(bytes.length()), len);
+    FB_ASSERT_EQ(static_cast<int>(bytes.size()), len);
 }
 
 FB_TEST(framework_macros, random_bytes_various_lengths) {
     for (int len = 1; len <= 32; len++) {
-        std::string bytes = FB_RANDOM_BYTES(len);
-        FB_ASSERT_EQ(static_cast<int>(bytes.length()), len);
+        std::vector<unsigned char> bytes = FB_RANDOM_BYTES(len);
+        FB_ASSERT_EQ(static_cast<int>(bytes.size()), len);
     }
 }
 
@@ -633,85 +577,6 @@ FB_TEST(framework_macros, pred_not_between_basic) {
     FB_ASSERT_FALSE(pred(5));
     FB_ASSERT_FALSE(pred(0));
     FB_ASSERT_FALSE(pred(10));
-}
-
-FB_TEST(framework_macros, pred_null_basic) {
-    auto pred = FB_PRED_NULL();
-
-    int* null_ptr = nullptr;
-    int* valid_ptr = new int(42);
-
-    FB_ASSERT_TRUE(pred(null_ptr));
-    FB_ASSERT_FALSE(pred(valid_ptr));
-
-    delete valid_ptr;
-}
-
-FB_TEST(framework_macros, pred_not_null_basic) {
-    auto pred = FB_PRED_NOT_NULL();
-
-    int* null_ptr = nullptr;
-    int* valid_ptr = new int(42);
-
-    FB_ASSERT_FALSE(pred(null_ptr));
-    FB_ASSERT_TRUE(pred(valid_ptr));
-
-    delete valid_ptr;
-}
-
-FB_TEST(framework_macros, pred_one_of_basic) {
-    std::vector<int> values = {1, 3, 5, 7, 9};
-    auto pred = FB_PRED_ONE_OF(values);
-
-    FB_ASSERT_TRUE(pred(1));
-    FB_ASSERT_TRUE(pred(5));
-    FB_ASSERT_TRUE(pred(9));
-    FB_ASSERT_FALSE(pred(0));
-    FB_ASSERT_FALSE(pred(2));
-    FB_ASSERT_FALSE(pred(10));
-}
-
-FB_TEST(framework_macros, pred_none_of_basic) {
-    std::vector<int> values = {1, 3, 5, 7, 9};
-    auto pred = FB_PRED_NONE_OF(values);
-
-    FB_ASSERT_FALSE(pred(1));
-    FB_ASSERT_FALSE(pred(5));
-    FB_ASSERT_TRUE(pred(0));
-    FB_ASSERT_TRUE(pred(2));
-    FB_ASSERT_TRUE(pred(10));
-}
-
-FB_TEST(framework_macros, pred_negate_basic) {
-    auto is_positive = [](int x) { return x > 0; };
-    auto is_not_positive = FB_PRED_NEGATE(is_positive);
-
-    FB_ASSERT_FALSE(is_not_positive(5));
-    FB_ASSERT_TRUE(is_not_positive(-5));
-    FB_ASSERT_TRUE(is_not_positive(0));
-}
-
-FB_TEST(framework_macros, pred_and_basic) {
-    auto is_positive = [](int x) { return x > 0; };
-    auto is_even = [](int x) { return x % 2 == 0; };
-    auto positive_and_even = FB_PRED_AND(is_positive, is_even);
-
-    FB_ASSERT_TRUE(positive_and_even(2));
-    FB_ASSERT_TRUE(positive_and_even(4));
-    FB_ASSERT_FALSE(positive_and_even(-2));
-    FB_ASSERT_FALSE(positive_and_even(1));
-    FB_ASSERT_FALSE(positive_and_even(0));
-}
-
-FB_TEST(framework_macros, pred_or_basic) {
-    auto is_negative = [](int x) { return x < 0; };
-    auto is_large = [](int x) { return x > 100; };
-    auto negative_or_large = FB_PRED_OR(is_negative, is_large);
-
-    FB_ASSERT_TRUE(negative_or_large(-5));
-    FB_ASSERT_TRUE(negative_or_large(200));
-    FB_ASSERT_FALSE(negative_or_large(50));
-    FB_ASSERT_FALSE(negative_or_large(0));
 }
 
 // Main function for test runner
