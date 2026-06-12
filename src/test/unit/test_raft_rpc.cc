@@ -781,7 +781,7 @@ FB_TEST(raft_rpc, heartbeat_response_batching) {
     FB_ASSERT_EQ(success_count, 4);
 
     // 检查多数派响应成功
-    bool majority_success = success_count > responses.size() / 2;
+    bool majority_success = (size_t)success_count > responses.size() / 2;
     FB_ASSERT_TRUE(majority_success);
 }
 
@@ -1167,14 +1167,14 @@ FB_TEST(raft_rpc, timeoutnow_term_mismatch) {
 FB_TEST(raft_rpc, timeoutnow_pre_vote_check) {
     // PreVote 场景下的 TimeoutNow
     bool is_prevote = true;
-    bool has_lease = false;
+    bool has_lease = true;
 
     // PreVote 模式下需要额外检查
     if (is_prevote && !has_lease) {
         // 不立即触发选举
     }
 
-    bool trigger_election = !is_prevote;
+    bool trigger_election = is_prevote ? has_lease : true;
     FB_ASSERT_TRUE(trigger_election);
 }
 

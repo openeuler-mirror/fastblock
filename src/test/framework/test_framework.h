@@ -2632,7 +2632,7 @@ private:
  */
 enum class test_log_level {
     TRACE,
-    DEBUG,
+    FB_DEBUG,
     INFO,
     WARN,
     ERROR,
@@ -2676,7 +2676,7 @@ public:
     }
 
     void debug(const std::string& msg, const char* file = nullptr, int line = 0) {
-        log(test_log_level::DEBUG, msg, file, line);
+        log(test_log_level::FB_DEBUG, msg, file, line);
     }
 
     void info(const std::string& msg, const char* file = nullptr, int line = 0) {
@@ -2701,7 +2701,7 @@ private:
     const char* level_to_string(test_log_level level) {
         switch (level) {
             case test_log_level::TRACE: return "TRACE";
-            case test_log_level::DEBUG: return "DEBUG";
+            case test_log_level::FB_DEBUG: return "DEBUG";
             case test_log_level::INFO: return "INFO";
             case test_log_level::WARN: return "WARN";
             case test_log_level::ERROR: return "ERROR";
@@ -2713,26 +2713,6 @@ private:
     test_log_level _level;
 };
 
-#define FB_LOG_SET_LEVEL(level)                                                     \
-    ::fastblock::test::test_logger::instance().set_level(level)
-
-#define FB_LOG_TRACE(msg)                                                           \
-    ::fastblock::test::test_logger::instance().trace(msg, __FILE__, __LINE__)
-
-#define FB_LOG_DEBUG(msg)                                                           \
-    ::fastblock::test::test_logger::instance().debug(msg, __FILE__, __LINE__)
-
-#define FB_LOG_INFO(msg)                                                            \
-    ::fastblock::test::test_logger::instance().info(msg, __FILE__, __LINE__)
-
-#define FB_LOG_WARN(msg)                                                            \
-    ::fastblock::test::test_logger::instance().warn(msg, __FILE__, __LINE__)
-
-#define FB_LOG_ERROR(msg)                                                           \
-    ::fastblock::test::test_logger::instance().error(msg, __FILE__, __LINE__)
-
-#define FB_LOG_FATAL(msg)                                                           \
-    ::fastblock::test::test_logger::instance().fatal(msg, __FILE__, __LINE__)
 
 /**
  * @brief Structured logging for complex data
@@ -3360,3 +3340,6 @@ public:
 
 #define FB_STR_COUNT(str, substr)                                                  \
     ::fastblock::test::string_tester::count_occurrences(str, substr)
+
+} // namespace test
+} // namespace fastblock
