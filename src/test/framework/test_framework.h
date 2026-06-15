@@ -2155,3 +2155,76 @@ std::function<bool(T)> combine_or(std::function<bool(T)> p1, std::function<bool(
 #define FB_PRED_NEGATE(p)               ::fastblock::test::predicates::negate(p)
 #define FB_PRED_AND(p1, p2)             ::fastblock::test::predicates::combine_and(p1, p2)
 #define FB_PRED_OR(p1, p2)              ::fastblock::test::predicates::combine_or(p1, p2)
+
+// ============================================================================
+// Test Comparison Helpers
+// ============================================================================
+
+/**
+ * @brief Deep comparison for containers
+ */
+class comparison_helper {
+public:
+    template<typename Container>
+    static bool containers_equal(const Container& a, const Container& b) {
+        if (a.size() != b.size()) return false;
+        auto it_a = a.begin();
+        auto it_b = b.begin();
+        while (it_a != a.end() && it_b != b.end()) {
+            if (*it_a != *it_b) return false;
+            ++it_a;
+            ++it_b;
+        }
+        return true;
+    }
+
+    template<typename Container>
+    static bool containers_equivalent(const Container& a, const Container& b) {
+        if (a.size() != b.size()) return false;
+        for (const auto& elem : a) {
+            if (std::find(b.begin(), b.end(), elem) == b.end()) return false;
+        }
+        return true;
+    }
+
+    template<typename Container, typename Func>
+    static bool containers_equal_by(const Container& a, const Container& b, Func comparator) {
+        if (a.size() != b.size()) return false;
+        auto it_a = a.begin();
+        auto it_b = b.begin();
+        while (it_a != a.end() && it_b != b.end()) {
+            if (!comparator(*it_a, *it_b)) return false;
+            ++it_a;
+            ++it_b;
+        }
+        return true;
+    }
+
+    template<typename T>
+    static bool approximately_equal(T a, T b, T tolerance) {
+        return std::abs(a - b) <= tolerance;
+    }
+
+    template<typename T>
+    static bool relatively_equal(T a, T b, T epsilon) {
+        if (a == b) return true;
+        T diff = std::abs(a - b);
+        T max_val = std::max(std::abs(a), std::abs(b));
+        return diff <= max_val * epsilon;
+    }
+};
+
+#define FB_CONTAINER_EQ(a, b)                                                      \
+    ::fastblock::test::comparison_helper::containers_equal(a, b)
+
+#define FB_CONTAINER_EQUIV(a, b)                                                    \
+    ::fastblock::test::comparison_helper::containers_equivalent(a, b)
+
+#define FB_CONTAINER_EQ_BY(a, b, comp)                                              \
+    ::fastblock::test::comparison_helper::containers_equal_by(a, b, comp)
+
+#define FB_APPROX_EQ(a, b, tol)                                                     \
+    ::fastblock::test::comparison_helper::approximately_equal(a, b, tol)
+
+#define FB_RELATIVE_EQ(a, b, eps)                                                   \
+    ::fastblock::test::comparison_helper::relatively_equal(a, b, eps)
