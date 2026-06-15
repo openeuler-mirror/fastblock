@@ -1,8 +1,39 @@
 find_package(absl REQUIRED)
 
+# Unified test framework
+add_subdirectory(framework)
+
+# Unit tests
+add_executable(test_raft_state
+  unit/test_raft_state.cc
+)
+
+target_include_directories(test_raft_state
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(test_raft_state
+  PUBLIC
+    test_framework
+    base
+)
+
+add_executable(test_raft_rpc
+  unit/test_raft_rpc.cc
+)
+
+target_include_directories(test_raft_rpc
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(test_raft_rpc
+  PUBLIC
+    test_framework
+    base
+)
+
+# Stress tests
 add_executable(raft_membership
-  osd_client.cc
-  raft_membership.cc
+  framework/osd_client.cc
+  stress/raft_membership.cc
 )
 
 target_include_directories (raft_membership
@@ -16,7 +47,7 @@ target_link_libraries(raft_membership
 )
 
 add_executable(snapshot_write_stress
-  snapshot_write_stress.cc
+  stress/snapshot_write_stress.cc
 )
 
 target_include_directories(snapshot_write_stress
@@ -32,8 +63,8 @@ target_link_libraries(snapshot_write_stress
 )
 
 add_executable(snapshot_pg_stress
-  osd_client.cc
-  snapshot_pg_stress.cc
+  framework/osd_client.cc
+  stress/snapshot_pg_stress.cc
 )
 
 target_include_directories(snapshot_pg_stress
