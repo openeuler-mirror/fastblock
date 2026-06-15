@@ -2352,3 +2352,137 @@ public:
 
 #define FB_THROWS(func)                                                             \
     ::fastblock::test::exception_simulator::throws_exception(func)
+
+// ============================================================================
+// Test Data Validation
+// ============================================================================
+
+/**
+ * @brief Data validator for test data verification
+ */
+class data_validator {
+public:
+    template<typename T>
+    static bool is_valid_range(const T& value, const T& min_val, const T& max_val) {
+        return value >= min_val && value <= max_val;
+    }
+
+    template<typename T>
+    static bool is_positive(const T& value) {
+        return value > 0;
+    }
+
+    template<typename T>
+    static bool is_non_negative(const T& value) {
+        return value >= 0;
+    }
+
+    template<typename T>
+    static bool is_valid_index(const T& index, const T& size) {
+        return index >= 0 && index < size;
+    }
+
+    static bool is_valid_string(const std::string& str, size_t min_len = 0, size_t max_len = SIZE_MAX) {
+        return str.length() >= min_len && str.length() <= max_len;
+    }
+
+    static bool is_numeric(const std::string& str) {
+        if (str.empty()) return false;
+        for (char c : str) {
+            if (!std::isdigit(c)) return false;
+        }
+        return true;
+    }
+
+    static bool is_alphanumeric(const std::string& str) {
+        if (str.empty()) return false;
+        for (char c : str) {
+            if (!std::isalnum(c)) return false;
+        }
+        return true;
+    }
+
+    static bool is_valid_email(const std::string& email) {
+        return email.find('@') != std::string::npos && email.find('.') != std::string::npos;
+    }
+
+    template<typename T>
+    static bool is_sorted(const std::vector<T>& vec, bool ascending = true) {
+        if (vec.size() < 2) return true;
+        for (size_t i = 1; i < vec.size(); ++i) {
+            if (ascending && vec[i] < vec[i-1]) return false;
+            if (!ascending && vec[i] > vec[i-1]) return false;
+        }
+        return true;
+    }
+
+    template<typename T>
+    static bool is_unique(const std::vector<T>& vec) {
+        std::set<T> seen;
+        for (const auto& elem : vec) {
+            if (seen.count(elem)) return false;
+            seen.insert(elem);
+        }
+        return true;
+    }
+};
+
+#define FB_VALID_RANGE(val, min, max)                                               \
+    ::fastblock::test::data_validator::is_valid_range(val, min, max)
+
+#define FB_IS_POSITIVE(val)                                                         \
+    ::fastblock::test::data_validator::is_positive(val)
+
+#define FB_IS_NON_NEGATIVE(val)                                                     \
+    ::fastblock::test::data_validator::is_non_negative(val)
+
+#define FB_VALID_INDEX(idx, size)                                                   \
+    ::fastblock::test::data_validator::is_valid_index(idx, size)
+
+#define FB_VALID_STRING(str, min_len, max_len)                                      \
+    ::fastblock::test::data_validator::is_valid_string(str, min_len, max_len)
+
+#define FB_IS_NUMERIC(str)                                                          \
+    ::fastblock::test::data_validator::is_numeric(str)
+
+#define FB_IS_ALPHANUMERIC(str)                                                     \
+    ::fastblock::test::data_validator::is_alphanumeric(str)
+
+#define FB_IS_SORTED(vec, asc)                                                      \
+    ::fastblock::test::data_validator::is_sorted(vec, asc)
+
+#define FB_IS_UNIQUE(vec)                                                           \
+    ::fastblock::test::data_validator::is_unique(vec)
+
+/**
+ * @brief Schema validator for structured data
+ */
+class schema_validator {
+public:
+    template<typename T>
+    static bool validate_field(const T& value, const std::string& name,
+                                std::function<bool(const T&)> validator) {
+        return validator(value);
+    }
+
+    template<typename T>
+    static bool validate_required(const T& value) {
+        return true;  // Field exists
+    }
+
+    template<typename T>
+    static bool validate_optional(const std::optional<T>& value,
+                                   std::function<bool(const T&)> validator) {
+        if (!value.has_value()) return true;  // Optional, missing is OK
+        return validator(value.value());
+    }
+};
+
+#define FB_VALIDATE_FIELD(value, name, validator)                                   \
+    ::fastblock::test::schema_validator::validate_field(value, name, validator)
+
+#define FB_VALIDATE_REQUIRED(value)                                                 \
+    ::fastblock::test::schema_validator::validate_required(value)
+
+#define FB_VALIDATE_OPTIONAL(value, validator)                                      \
+    ::fastblock::test::schema_validator::validate_optional(value, validator)
