@@ -2464,14 +2464,24 @@ private:
 
 /**
  * @brief Fault injector for controlled failures
+ *
+ * Singleton pattern: Use instance() to access the single instance.
+ * Thread-safe: Uses mutex to protect concurrent access.
  */
 class fault_injector {
 public:
+    static fault_injector& instance() {
+        static fault_injector injector;
+        return injector;
+    }
+
     void set_fault_point(const std::string& name, bool should_fail = true) {
+        std::lock_guard<std::mutex> lock(_mutex);
         _fault_points[name] = should_fail;
     }
 
     bool should_fail(const std::string& name) {
+        std::lock_guard<std::mutex> lock(_mutex);
         auto it = _fault_points.find(name);
         if (it != _fault_points.end() && it->second) {
             it->second = false;  // Reset after trigger
@@ -2480,15 +2490,20 @@ public:
         return false;
     }
 
-    void clear() { _fault_points.clear(); }
+    void clear() {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _fault_points.clear();
+    }
 
 private:
+    fault_injector() = default;
     std::map<std::string, bool> _fault_points;
+    std::mutex _mutex;
 };
 
-#define FB_FAULT_SET(name)             ::fastblock::test::fault_injector().set_fault_point(name, true)
-#define FB_FAULT_CHECK(name)           ::fastblock::test::fault_injector().should_fail(name)
-#define FB_FAULT_CLEAR()               ::fastblock::test::fault_injector().clear()
+#define FB_FAULT_SET(name)             ::fastblock::test::fault_injector::instance().set_fault_point(name, true)
+#define FB_FAULT_CHECK(name)           ::fastblock::test::fault_injector::instance().should_fail(name)
+#define FB_FAULT_CLEAR()               ::fastblock::test::fault_injector::instance().clear()
 
 /**
  * @brief Exception simulator for testing exception handling
