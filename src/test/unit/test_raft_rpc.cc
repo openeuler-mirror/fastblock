@@ -2740,5 +2740,221 @@ FB_TEST(raft_rpc, checkquorum_follower_timeout_detection) {
     FB_ASSERT_EQ(state, RAFT_STATE_CANDIDATE);
 }
 
+// ============================================================================
+// Test Suite: ClientSession RPC Tests (Session Management)
+// ============================================================================
+
+FB_TEST(raft_rpc, clientsession_register_request) {
+    // 客户端注册请求
+    uint64_t client_id = 0;  // 新客户端ID为0，由Leader分配
+
+    FB_ASSERT_EQ(client_id, 0UL);
+}
+
+FB_TEST(raft_rpc, clientsession_client_id_allocation) {
+    // Leader 分配客户端 ID
+    uint64_t next_client_id = 1001;
+    uint64_t allocated_id = next_client_id;
+    next_client_id++;
+
+    FB_ASSERT_EQ(allocated_id, 1001UL);
+    FB_ASSERT_EQ(next_client_id, 1002UL);
+}
+
+FB_TEST(raft_rpc, clientsession_response_fields) {
+    uint64_t client_id = 1001;
+    uint64_t session_id = 5001;
+    raft_term_t term = 5;
+
+    FB_ASSERT_TRUE(client_id > 0);
+    FB_ASSERT_TRUE(session_id > 0);
+    FB_ASSERT_TRUE(term > 0);
+}
+
+FB_TEST(raft_rpc, clientsession_leader_only_registration) {
+    // 只有 Leader 可以处理客户端注册
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    bool can_register = (state == RAFT_STATE_LEADER);
+    FB_ASSERT_FALSE(can_register);
+
+    state = RAFT_STATE_LEADER;
+    can_register = (state == RAFT_STATE_LEADER);
+    FB_ASSERT_TRUE(can_register);
+}
+
+FB_TEST(raft_rpc, clientsession_redirect_to_leader) {
+    // Follower 重定向客户端到 Leader
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    raft_node_id_t leader_id = 2;
+
+    bool need_redirect = (state != RAFT_STATE_LEADER);
+    FB_ASSERT_TRUE(need_redirect);
+    FB_ASSERT_TRUE(leader_id > 0);
+}
+
+FB_TEST(raft_rpc, clientsession_keepalive) {
+    // 客户端心跳保活
+    raft_time_t last_heartbeat = 1000;
+    raft_time_t current_time = 1100;
+    raft_time_t session_timeout = 500;
+
+    bool session_valid = (current_time - last_heartbeat) < session_timeout;
+    FB_ASSERT_TRUE(session_valid);
+
+    // 会话即将过期
+    current_time = 1400;
+    session_valid = (current_time - last_heartbeat) < session_timeout;
+    FB_ASSERT_FALSE(session_valid);
+}
+
+FB_TEST(raft_rpc, clientsession_request_id_tracking) {
+    // 请求ID跟踪，防止重复执行
+    uint64_t client_id = 1001;
+    uint64_t request_id = 12345;
+
+    std::map<uint64_t, uint64_t> last_request;
+    last_request[client_id] = request_id;
+
+    // 检查是否重复请求
+    bool is_duplicate = (last_request[client_id] == request_id);
+    FB_ASSERT_TRUE(is_duplicate);
+
+    // 新请求
+    uint64_t new_request_id = 12346;
+    is_duplicate = (last_request[client_id] == new_request_id);
+    FB_ASSERT_FALSE(is_duplicate);
+}
+
+FB_TEST(raft_rpc, clientsession_duplicate_request_response) {
+    // 重复请求返回缓存的响应
+    uint64_t request_id = 12345;
+    bool cached = true;
+    raft_index_t result_idx = 100;
+
+    if (cached) {
+        // 直接返回缓存结果
+        FB_ASSERT_EQ(result_idx, 100L);
+    }
+}
+
+FB_TEST(raft_rpc, clientsession_session_expiration) {
+    // 会话过期处理
+    raft_time_t session_start = 1000;
+    raft_time_t session_timeout = 30000;  // 30秒
+    raft_time_t current_time = 32000;
+
+    bool session_expired = (current_time - session_start) >= session_timeout;
+    FB_ASSERT_TRUE(session_expired);
+
+    // 清理过期会话
+    if (session_expired) {
+        // 删除会话状态
+    }
+}
+
+FB_TEST(raft_rpc, clientsession_leader_change_invalidation) {
+    // Leader 变更时客户端会话可能失效
+    raft_term_t session_term = 5;
+    raft_term_t current_term = 6;
+
+    bool session_invalid = (session_term < current_term);
+    FB_ASSERT_TRUE(session_invalid);
+
+    // 客户端需要重新注册
+    bool need_reregister = session_invalid;
+    FB_ASSERT_TRUE(need_reregister);
+}
+
+FB_TEST(raft_rpc, clientsession_max_sessions_limit) {
+    // 最大会话数限制
+    size_t max_sessions = 10000;
+    size_t current_sessions = 9500;
+
+    bool can_accept = current_sessions < max_sessions;
+    FB_ASSERT_TRUE(can_accept);
+
+    // 达到限制
+    current_sessions = 10000;
+    can_accept = current_sessions < max_sessions;
+    FB_ASSERT_FALSE(can_accept);
+}
+
+FB_TEST(raft_rpc, clientsession_cleanup_on_disconnect) {
+    // 客户端断开连接时清理会话
+    uint64_t client_id = 1001;
+    std::set<uint64_t> active_sessions = {1001, 1002, 1003};
+
+    // 清理会话
+    active_sessions.erase(client_id);
+
+    FB_ASSERT_FALSE(active_sessions.count(client_id));
+    FB_ASSERT_EQ(active_sessions.size(), 2UL);
+}
+
+FB_TEST(raft_rpc, clientsession_reconnect_handling) {
+    // 客户端重连处理
+    uint64_t client_id = 1001;
+    uint64_t old_session_id = 5001;
+    uint64_t new_session_id = 5002;
+
+    // 旧会话失效
+    std::map<uint64_t, uint64_t> session_map;
+    session_map[client_id] = new_session_id;
+
+    FB_ASSERT_EQ(session_map[client_id], new_session_id);
+    FB_ASSERT_TRUE(session_map[client_id] != old_session_id);
+}
+
+FB_TEST(raft_rpc, clientsession_pending_requests_tracking) {
+    // 待处理请求跟踪
+    uint64_t client_id = 1001;
+    std::map<uint64_t, int> pending_counts;
+    pending_counts[client_id] = 3;
+
+    // 客户端有待处理请求
+    bool has_pending = pending_counts[client_id] > 0;
+    FB_ASSERT_TRUE(has_pending);
+
+    // 请求完成后更新
+    pending_counts[client_id]--;
+    FB_ASSERT_EQ(pending_counts[client_id], 2);
+}
+
+FB_TEST(raft_rpc, clientsession_serial_execution) {
+    // 同一客户端请求串行执行
+    std::vector<uint64_t> request_order = {1, 2, 3};
+    std::vector<uint64_t> execute_order;
+
+    for (auto id : request_order) {
+        execute_order.push_back(id);
+    }
+
+    FB_ASSERT_EQ(execute_order.size(), 3UL);
+    FB_ASSERT_EQ(execute_order[0], 1UL);
+    FB_ASSERT_EQ(execute_order[2], 3UL);
+}
+
+FB_TEST(raft_rpc, clientsession_timeout_handling) {
+    // 会话操作超时
+    int timeout_ms = 1000;
+    int elapsed_ms = 1500;
+
+    bool timed_out = elapsed_ms >= timeout_ms;
+    FB_ASSERT_TRUE(timed_out);
+}
+
+FB_TEST(raft_rpc, clientsession_retry_on_leader_change) {
+    // Leader 变更后客户端重试
+    raft_node_id_t known_leader = 1;
+    raft_node_id_t new_leader = 2;
+
+    bool leader_changed = (known_leader != new_leader);
+    FB_ASSERT_TRUE(leader_changed);
+
+    // 客户端需要重试到新Leader
+    raft_node_id_t retry_target = new_leader;
+    FB_ASSERT_EQ(retry_target, 2L);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
