@@ -247,13 +247,15 @@ public:
         osd::pg_leader_request* request = new osd::pg_leader_request();
         request->set_pool_id(pool_id);
         request->set_pg_id(pg_id);
-        get_leader_source * source = new get_leader_source(target_node_id, request, this, fun);
 
-        auto done = google::protobuf::NewCallback(source, &get_leader_source::process_response);
         auto stub = _get_stub(shard_id, target_node_id);
         if(!stub){
+            delete request;  // Fix memory leak: delete request before returning
             return  err::RAFT_ERR_NO_CONNECTED;
         }
+
+        get_leader_source * source = new get_leader_source(target_node_id, request, this, fun);
+        auto done = google::protobuf::NewCallback(source, &get_leader_source::process_response);
         stub->process_get_leader(&source->ctrlr, request, &source->response, done);
         return err::E_SUCCESS;
     }
@@ -267,14 +269,16 @@ public:
         info->set_node_id(node_id);
         info->set_addr(addr);
         info->set_port(port);
-        auto * source = new change_membership_source<osd::add_node_request, osd::add_node_response>(request);
 
-        auto done = google::protobuf::NewCallback(source,
-                &change_membership_source<osd::add_node_request, osd::add_node_response>::process_response);
         auto stub = _get_stub(shard_id, _leader_id);
         if(!stub){
+            delete request;  // Fix memory leak: delete request before returning
             return  err::RAFT_ERR_NO_CONNECTED;
         }
+
+        auto * source = new change_membership_source<osd::add_node_request, osd::add_node_response>(request);
+        auto done = google::protobuf::NewCallback(source,
+                &change_membership_source<osd::add_node_request, osd::add_node_response>::process_response);
         stub->process_add_node(&source->ctrlr, request, &source->response, done);
         return err::E_SUCCESS;
     }
@@ -288,14 +292,16 @@ public:
         info->set_node_id(node_id);
         info->set_addr(addr);
         info->set_port(port);
-        auto * source = new change_membership_source<osd::remove_node_request, osd::remove_node_response>(request);
 
-        auto done = google::protobuf::NewCallback(source,
-                &change_membership_source<osd::remove_node_request, osd::remove_node_response>::process_response);
         auto stub = _get_stub(shard_id, _leader_id);
         if(!stub){
+            delete request;  // Fix memory leak: delete request before returning
             return  err::RAFT_ERR_NO_CONNECTED;
         }
+
+        auto * source = new change_membership_source<osd::remove_node_request, osd::remove_node_response>(request);
+        auto done = google::protobuf::NewCallback(source,
+                &change_membership_source<osd::remove_node_request, osd::remove_node_response>::process_response);
         stub->process_remove_node(&source->ctrlr, request, &source->response, done);
         return err::E_SUCCESS;
     }
@@ -309,14 +315,16 @@ public:
             auto node = request->add_new_nodes();
             *node = node_info;
         }
-        auto * source = new change_membership_source<osd::change_nodes_request, osd::change_nodes_response>(request);
 
-        auto done = google::protobuf::NewCallback(source,
-                &change_membership_source<osd::change_nodes_request, osd::change_nodes_response>::process_response);
         auto stub = _get_stub(shard_id, _leader_id);
         if(!stub){
+            delete request;  // Fix memory leak: delete request before returning
             return  err::RAFT_ERR_NO_CONNECTED;
         }
+
+        auto * source = new change_membership_source<osd::change_nodes_request, osd::change_nodes_response>(request);
+        auto done = google::protobuf::NewCallback(source,
+                &change_membership_source<osd::change_nodes_request, osd::change_nodes_response>::process_response);
         stub->process_change_nodes(&source->ctrlr, request, &source->response, done);
         return err::E_SUCCESS;
     }
@@ -328,13 +336,14 @@ public:
         request->set_pg_id(pg_id);
         request->set_vision_id(pool_version);
 
-        auto * source = new create_pg_source(request);
-        auto done = google::protobuf::NewCallback(source, &create_pg_source::process_response);
         auto stub = _get_stub(shard_id, target_node_id);
         if(!stub){
+            delete request;  // Fix memory leak: delete request before returning
             return  err::RAFT_ERR_NO_CONNECTED;
         }
 
+        auto * source = new create_pg_source(request);
+        auto done = google::protobuf::NewCallback(source, &create_pg_source::process_response);
         stub->process_create_pg(&source->ctrlr, request, &source->response, done);
         return err::E_SUCCESS;
     }
