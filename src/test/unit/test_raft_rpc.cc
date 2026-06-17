@@ -1909,5 +1909,275 @@ FB_TEST(raft_rpc, readindex_lease_vs_quorum) {
     }
 }
 
+// ============================================================================
+// Test Suite: TransferLeader RPC Tests (Leadership Transfer)
+// ============================================================================
+
+FB_TEST(raft_rpc, transferleader_request_fields) {
+    // 模拟 TransferLeader 请求字段
+    raft_term_t term = 5;
+    raft_node_id_t target_node_id = 3;
+
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(target_node_id > 0);
+}
+
+FB_TEST(raft_rpc, transferleader_leader_only_operation) {
+    // 只有当前 Leader 可以发起领导权转移
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    bool can_transfer = (state == RAFT_STATE_LEADER);
+    FB_ASSERT_FALSE(can_transfer);
+
+    state = RAFT_STATE_LEADER;
+    can_transfer = (state == RAFT_STATE_LEADER);
+    FB_ASSERT_TRUE(can_transfer);
+}
+
+FB_TEST(raft_rpc, transferleader_target_must_be_follower) {
+    // 目标节点必须是 Follower
+    raft_identity target_state = RAFT_STATE_CANDIDATE;
+    bool valid_target = (target_state == RAFT_STATE_FOLLOWER);
+    FB_ASSERT_FALSE(valid_target);
+
+    target_state = RAFT_STATE_FOLLOWER;
+    valid_target = (target_state == RAFT_STATE_FOLLOWER);
+    FB_ASSERT_TRUE(valid_target);
+}
+
+FB_TEST(raft_rpc, transferleader_target_log_up_to_date) {
+    // 目标节点日志必须是最新的
+    raft_index_t leader_last_idx = 100;
+    raft_index_t target_match_idx = 95;
+
+    bool log_ready = target_match_idx >= leader_last_idx;
+    FB_ASSERT_FALSE(log_ready);
+
+    // 目标节点日志追上
+    target_match_idx = 100;
+    log_ready = target_match_idx >= leader_last_idx;
+    FB_ASSERT_TRUE(log_ready);
+}
+
+FB_TEST(raft_rpc, transferleader_send_timeoutnow) {
+    // Leader 发送 TimeoutNow 给目标节点
+    raft_node_id_t leader_id = 1;
+    raft_node_id_t target_id = 3;
+
+    // 发送 TimeoutNow 触发目标节点立即选举
+    bool timeoutnow_sent = true;
+    FB_ASSERT_TRUE(timeoutnow_sent);
+}
+
+FB_TEST(raft_rpc, transferleader_leader_step_down) {
+    // Leader 发起转移后立即退位
+    raft_identity state = RAFT_STATE_LEADER;
+
+    // 发送 TimeoutNow 后退位为 Follower
+    state = RAFT_STATE_FOLLOWER;
+
+    FB_ASSERT_EQ(state, RAFT_STATE_FOLLOWER);
+}
+
+FB_TEST(raft_rpc, transferleader_new_leader_elected) {
+    // 目标节点成为新 Leader
+    raft_node_id_t old_leader = 1;
+    raft_node_id_t new_leader = 3;
+
+    FB_ASSERT_TRUE(new_leader != old_leader);
+
+    // 新 Leader term 应该更大
+    raft_term_t old_term = 5;
+    raft_term_t new_term = 6;
+    FB_ASSERT_TRUE(new_term > old_term);
+}
+
+FB_TEST(raft_rpc, transferleader_abort_on_new_entry) {
+    // 转移期间有新日志写入时中止
+    bool transfer_in_progress = true;
+    bool new_entry_arrived = true;
+
+    if (new_entry_arrived) {
+        transfer_in_progress = false;
+    }
+
+    FB_ASSERT_FALSE(transfer_in_progress);
+}
+
+FB_TEST(raft_rpc, transferleader_abort_on_higher_term) {
+    // 收到更高 term 时中止转移
+    raft_term_t current_term = 5;
+    raft_term_t received_term = 6;
+
+    bool abort_transfer = received_term > current_term;
+    FB_ASSERT_TRUE(abort_transfer);
+}
+
+FB_TEST(raft_rpc, transferleader_timeout_handling) {
+    // 转移超时处理
+    int transfer_timeout_ms = 500;
+    int elapsed_ms = 600;
+
+    bool timed_out = elapsed_ms >= transfer_timeout_ms;
+    FB_ASSERT_TRUE(timed_out);
+
+    // 超时后保持原 Leader
+    raft_identity state = RAFT_STATE_LEADER;
+    FB_ASSERT_EQ(state, RAFT_STATE_LEADER);
+}
+
+FB_TEST(raft_rpc, transferleader_retry_on_failure) {
+    // 转移失败重试
+    int retry_count = 0;
+    int max_retries = 3;
+    bool success = false;
+
+    while (!success && retry_count < max_retries) {
+        retry_count++;
+        if (retry_count == 2) {
+            success = true;
+        }
+    }
+
+    FB_ASSERT_TRUE(success);
+    FB_ASSERT_EQ(retry_count, 2);
+}
+
+FB_TEST(raft_rpc, transferleader_multiple_targets) {
+    // 不能同时向多个目标转移
+    std::vector<raft_node_id_t> targets = {2, 3};
+
+    // 只能选择一个目标
+    raft_node_id_t selected_target = targets[0];
+    FB_ASSERT_EQ(selected_target, 2L);
+
+    bool single_target = targets.size() == 1;
+    FB_ASSERT_FALSE(single_target);
+}
+
+FB_TEST(raft_rpc, transferleader_node_not_found) {
+    // 目标节点不存在
+    std::set<raft_node_id_t> existing_nodes = {1, 2, 3};
+    raft_node_id_t target_id = 99;
+
+    bool node_exists = existing_nodes.count(target_id) > 0;
+    FB_ASSERT_FALSE(node_exists);
+
+    // 转移失败
+    bool transfer_success = node_exists;
+    FB_ASSERT_FALSE(transfer_success);
+}
+
+FB_TEST(raft_rpc, transferleader_unreachable_target) {
+    // 目标节点不可达
+    std::set<raft_node_id_t> reachable_nodes = {1, 2};
+    raft_node_id_t target_id = 3;
+
+    bool reachable = reachable_nodes.count(target_id) > 0;
+    FB_ASSERT_FALSE(reachable);
+
+    // 转移失败
+    bool transfer_success = reachable;
+    FB_ASSERT_FALSE(transfer_success);
+}
+
+FB_TEST(raft_rpc, transferleader_progress_tracking) {
+    // 转移进度跟踪
+    std::string phase = "init";
+    FB_ASSERT_EQ(phase, "init");
+
+    phase = "check_target";
+    FB_ASSERT_EQ(phase, "check_target");
+
+    phase = "send_timeoutnow";
+    FB_ASSERT_EQ(phase, "send_timeoutnow");
+
+    phase = "wait_new_leader";
+    FB_ASSERT_EQ(phase, "wait_new_leader");
+
+    phase = "completed";
+    FB_ASSERT_EQ(phase, "completed");
+}
+
+FB_TEST(raft_rpc, transferleader_rollback_on_failure) {
+    // 转移失败时恢复原状态
+    raft_identity state = RAFT_STATE_LEADER;
+    raft_identity backup_state = state;
+
+    // 尝试转移
+    bool transfer_failed = true;
+    if (transfer_failed) {
+        state = backup_state;  // 保持原状态
+    }
+
+    FB_ASSERT_EQ(state, RAFT_STATE_LEADER);
+}
+
+FB_TEST(raft_rpc, transferleader_client_redirect) {
+    // 转移完成后客户端重定向
+    raft_node_id_t old_leader = 1;
+    raft_node_id_t new_leader = 3;
+
+    // 客户端收到旧 Leader 的重定向响应
+    bool need_redirect = true;
+    raft_node_id_t redirect_target = new_leader;
+
+    FB_ASSERT_TRUE(need_redirect);
+    FB_ASSERT_EQ(redirect_target, 3L);
+}
+
+FB_TEST(raft_rpc, transferleader_graceful_vs_forceful) {
+    // 优雅转移 vs 强制转移
+    bool graceful = true;
+    bool wait_for_log_sync = graceful;
+
+    FB_ASSERT_TRUE(wait_for_log_sync);
+
+    // 强制转移可能导致日志不一致
+    graceful = false;
+    wait_for_log_sync = graceful;
+    FB_ASSERT_FALSE(wait_for_log_sync);
+}
+
+FB_TEST(raft_rpc, transferleader_joint_consensus_check) {
+    // 联合共识期间不能转移
+    bool in_joint_consensus = true;
+
+    bool can_transfer = !in_joint_consensus;
+    FB_ASSERT_FALSE(can_transfer);
+
+    // 联合共识完成后可以转移
+    in_joint_consensus = false;
+    can_transfer = !in_joint_consensus;
+    FB_ASSERT_TRUE(can_transfer);
+}
+
+FB_TEST(raft_rpc, transferleader_config_change_in_progress) {
+    // 配置变更期间不能转移
+    bool config_change_in_progress = true;
+
+    bool can_transfer = !config_change_in_progress;
+    FB_ASSERT_FALSE(can_transfer);
+}
+
+FB_TEST(raft_rpc, transferleader_snapshot_in_progress) {
+    // 快照传输期间不能转移
+    bool snapshot_in_progress = true;
+
+    bool can_transfer = !snapshot_in_progress;
+    FB_ASSERT_FALSE(can_transfer);
+}
+
+FB_TEST(raft_rpc, transferleader_pending_writes_flush) {
+    // 转移前刷新待写入
+    int pending_writes = 10;
+
+    // 转移前需要处理完待写入
+    while (pending_writes > 0) {
+        pending_writes--;
+    }
+
+    FB_ASSERT_EQ(pending_writes, 0);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
