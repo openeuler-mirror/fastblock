@@ -14,6 +14,7 @@
 #include <iomanip>
 #include <regex>
 #include <algorithm>
+#include <future>
 
 namespace fastblock {
 namespace test {
@@ -24,44 +25,59 @@ test_result test_case::execute(test_context& ctx) {
     result.severity = _severity;
 
     _status = test_status::RUNNING;
-    SPDK_NOTICELOG("=== Running test: %s.%s ===\n", _suite.c_str(), _name.c_str());
+    SPDK_NOTICELOG("=== Running test: %s.%s (timeout: %u s) ===\n",
+                   _suite.c_str(), _name.c_str(), _timeout_seconds);
 
-    try {
+    // Execute test with timeout checking
+    auto future = std::async(std::launch::async, [this, &ctx]() {
         _func(ctx);
+    });
 
-        auto end = std::chrono::high_resolution_clock::now();
-        result.duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+    std::future_status status = future.wait_for(std::chrono::seconds(_timeout_seconds));
 
-        if (ctx.skipped()) {
-            _status = test_status::SKIPPED;
-            result.status = test_status::SKIPPED;
-            result.message = ctx.skip_reason();
-        } else if (ctx.failed()) {
+    auto end = std::chrono::high_resolution_clock::now();
+    result.duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+
+    if (status == std::future_status::timeout) {
+        // Test timed out
+        _status = test_status::FAILED;
+        result.status = test_status::FAILED;
+        result.message = "Test timed out after " + std::to_string(_timeout_seconds) + " seconds";
+        result.file = __FILE__;
+        result.line = __LINE__;
+        SPDK_ERRLOG("=== Test %s.%s TIMEOUT ===\n", _suite.c_str(), _name.c_str());
+    } else {
+        // Test completed within timeout
+        try {
+            future.get();  // Get result or throw exception
+
+            if (ctx.skipped()) {
+                _status = test_status::SKIPPED;
+                result.status = test_status::SKIPPED;
+                result.message = ctx.skip_reason();
+            } else if (ctx.failed()) {
+                _status = test_status::FAILED;
+                result.status = test_status::FAILED;
+                result.message = ctx.fail_message();
+                result.file = ctx.fail_file();
+                result.line = ctx.fail_line();
+            } else {
+                _status = test_status::PASSED;
+                result.status = test_status::PASSED;
+            }
+        } catch (const std::exception& e) {
             _status = test_status::FAILED;
             result.status = test_status::FAILED;
-            result.message = ctx.fail_message();
-            result.file = ctx.fail_file();
-            result.line = ctx.fail_line();
-        } else {
-            _status = test_status::PASSED;
-            result.status = test_status::PASSED;
+            result.message = std::string("Exception: ") + e.what();
+            result.file = __FILE__;
+            result.line = __LINE__;
+        } catch (...) {
+            _status = test_status::FAILED;
+            result.status = test_status::FAILED;
+            result.message = "Unknown exception";
+            result.file = __FILE__;
+            result.line = __LINE__;
         }
-    } catch (const std::exception& e) {
-        auto end = std::chrono::high_resolution_clock::now();
-        result.duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-        _status = test_status::FAILED;
-        result.status = test_status::FAILED;
-        result.message = std::string("Exception: ") + e.what();
-        result.file = __FILE__;
-        result.line = __LINE__;
-    } catch (...) {
-        auto end = std::chrono::high_resolution_clock::now();
-        result.duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-        _status = test_status::FAILED;
-        result.status = test_status::FAILED;
-        result.message = "Unknown exception";
-        result.file = __FILE__;
-        result.line = __LINE__;
     }
 
     SPDK_NOTICELOG("=== Test %s.%s: %s (duration: %lu us) ===\n",
