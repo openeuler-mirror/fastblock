@@ -342,5 +342,129 @@ FB_TEST(framework_macros, container_size_after_operations) {
     FB_ASSERT_SIZE(vec, 1);
 }
 
+// ============================================================================
+// Test Suite: Range and Bits Assertion Macros
+// ============================================================================
+
+FB_TEST(framework_macros, in_range_basic) {
+    int value = 50;
+    int min_val = 0;
+    int max_val = 100;
+
+    FB_ASSERT_IN_RANGE(value, min_val, max_val);
+}
+
+FB_TEST(framework_macros, in_range_boundary_min) {
+    int value = 0;
+    int min_val = 0;
+    int max_val = 10;
+
+    FB_ASSERT_IN_RANGE(value, min_val, max_val);
+}
+
+FB_TEST(framework_macros, in_range_boundary_max) {
+    int value = 10;
+    int min_val = 0;
+    int max_val = 10;
+
+    FB_ASSERT_IN_RANGE(value, min_val, max_val);
+}
+
+FB_TEST(framework_macros, in_range_negative_bounds) {
+    int value = -5;
+    int min_val = -10;
+    int max_val = 0;
+
+    FB_ASSERT_IN_RANGE(value, min_val, max_val);
+}
+
+FB_TEST(framework_macros, in_range_large_values) {
+    long value = 1000000L;
+    long min_val = 0L;
+    long max_val = 2000000L;
+
+    FB_ASSERT_IN_RANGE(value, min_val, max_val);
+}
+
+FB_TEST(framework_macros, not_in_range_basic) {
+    int value = 150;
+    int min_val = 0;
+    int max_val = 100;
+
+    FB_ASSERT_NOT_IN_RANGE(value, min_val, max_val);
+}
+
+FB_TEST(framework_macros, not_in_range_below_min) {
+    int value = -5;
+    int min_val = 0;
+    int max_val = 10;
+
+    FB_ASSERT_NOT_IN_RANGE(value, min_val, max_val);
+}
+
+FB_TEST(framework_macros, not_in_range_above_max) {
+    int value = 20;
+    int min_val = 5;
+    int max_val = 15;
+
+    FB_ASSERT_NOT_IN_RANGE(value, min_val, max_val);
+}
+
+FB_TEST(framework_macros, bits_set_basic) {
+    uint32_t value = 0x0F;  // 00001111
+    uint32_t bits = 0x07;   // 00000111
+
+    FB_ASSERT_BITS_SET(value, bits);
+}
+
+FB_TEST(framework_macros, bits_set_all) {
+    uint32_t value = 0xFF;  // all bits set
+    uint32_t bits = 0xFF;
+
+    FB_ASSERT_BITS_SET(value, bits);
+}
+
+FB_TEST(framework_macros, bits_set_single_bit) {
+    uint32_t value = 0x04;  // 00000100
+    uint32_t bits = 0x04;
+
+    FB_ASSERT_BITS_SET(value, bits);
+}
+
+FB_TEST(framework_macros, bits_clear_basic) {
+    uint32_t value = 0xF0;  // 11110000
+    uint32_t bits = 0x0F;   // 00001111
+
+    FB_ASSERT_BITS_CLEAR(value, bits);
+}
+
+FB_TEST(framework_macros, bits_clear_all_low) {
+    uint32_t value = 0x00;  // all bits clear
+    uint32_t bits = 0xFF;
+
+    FB_ASSERT_BITS_CLEAR(value, bits);
+}
+
+FB_TEST(framework_macros, bit_set_single) {
+    uint32_t value = 0x08;  // bit 3 set
+    int bit = 3;
+
+    FB_ASSERT_BIT_SET(value, bit);
+}
+
+FB_TEST(framework_macros, bit_clear_single) {
+    uint32_t value = 0xF7;  // bit 3 clear
+    int bit = 3;
+
+    FB_ASSERT_BIT_CLEAR(value, bit);
+}
+
+FB_TEST(framework_macros, bit_set_high_position) {
+    uint32_t value = 0x80000000;  // bit 31 set
+    int bit = 31;
+
+    FB_ASSERT_BIT_SET(value, bit);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
