@@ -3483,5 +3483,224 @@ private:
 #define FB_SELECT()                                                                 \
     ::fastblock::test::test_selector()
 
-} // namespace test
-} // namespace fastblock
+// ============================================================================
+// Test Report Generation
+// ============================================================================
+
+/**
+ * @brief Report format enumeration
+ */
+enum class report_format {
+    TEXT,
+    JSON,
+    JUNIT_XML,
+    TAP
+};
+
+/**
+ * @brief Test report generator
+ */
+class report_generator {
+public:
+    static std::string generate_junit_xml(
+        const std::vector<test_result>& results,
+        const std::string& suite_name = "test_suite") {
+
+        std::stringstream ss;
+        ss << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+        ss << "<testsuite name=\"" << escape_xml(suite_name) << "\" ";
+
+        int tests = 0, failures = 0, errors = 0, skipped = 0;
+        std::stringstream testcases;
+
+        for (const auto& r : results) {
+            tests++;
+            testcases << "  <testcase name=\"" << escape_xml(r.test_name)
+                      << "\" classname=\"" << escape_xml(r.suite_name) << "\"";
+
+            if (r.duration.count() > 0) {
+                testcases << " time=\"" << (r.duration.count() / 1000000.0) << "\"";
+            }
+
+            if (r.status == test_status::FAILED) {
+                failures++;
+                testcases << ">\n";
+                testcases << "    <failure message=\"" << escape_xml(r.message)
+                          << "\">\n";
+                testcases << "      " << escape_xml(r.file) << ":" << r.line << "\n";
+                testcases << "    </failure>\n";
+                testcases << "  </testcase>\n";
+            } else if (r.status == test_status::SKIPPED) {
+                skipped++;
+                testcases << ">\n";
+                testcases << "    <skipped message=\"" << escape_xml(r.skip_reason)
+                          << "\"/>\n";
+                testcases << "  </testcase>\n";
+            } else {
+                testcases << "/>\n";
+            }
+        }
+
+        ss << "tests=\"" << tests << "\" "
+           << "failures=\"" << failures << "\" "
+           << "errors=\"" << errors << "\" "
+           << "skipped=\"" << skipped << "\">\n";
+        ss << testcases.str();
+        ss << "</testsuite>\n";
+
+        return ss.str();
+    }
+
+    static std::string generate_json(
+        const std::vector<test_result>& results,
+        const std::string& suite_name = "test_suite") {
+
+        std::stringstream ss;
+        ss << "{\n";
+        ss << "  \"suite\": \"" << escape_json(suite_name) << "\",\n";
+        ss << "  \"results\": [\n";
+
+        bool first = true;
+        for (const auto& r : results) {
+            if (!first) ss << ",\n";
+            first = false;
+
+            ss << "    {\n";
+            ss << "      \"name\": \"" << escape_json(r.test_name) << "\",\n";
+            ss << "      \"suite\": \"" << escape_json(r.suite_name) << "\",\n";
+            ss << "      \"status\": \"" << test_status_str(r.status) << "\",\n";
+            ss << "      \"duration_ms\": " << (r.duration.count() / 1000.0) << ",\n";
+
+            if (!r.message.empty()) {
+                ss << "      \"message\": \"" << escape_json(r.message) << "\",\n";
+            }
+            if (!r.file.empty()) {
+                ss << "      \"file\": \"" << escape_json(r.file) << "\",\n";
+                ss << "      \"line\": " << r.line << "\n";
+            }
+            ss << "    }";
+        }
+
+        ss << "\n  ]\n";
+        ss << "}\n";
+
+        return ss.str();
+    }
+
+    static std::string generate_tap(
+        const std::vector<test_result>& results) {
+
+        std::stringstream ss;
+        ss << "TAP version 13\n";
+        ss << "1.." << results.size() << "\n";
+
+        int i = 1;
+        for (const auto& r : results) {
+            if (r.status == test_status::PASSED) {
+                ss << "ok " << i << " - " << r.test_name << "\n";
+            } else if (r.status == test_status::SKIPPED) {
+                ss << "ok " << i << " - " << r.test_name
+                   << " # SKIP " << r.skip_reason << "\n";
+            } else {
+                ss << "not ok " << i << " - " << r.test_name << "\n";
+                if (!r.message.empty()) {
+                    ss << "  ---\n";
+                    ss << "  message: " << r.message << "\n";
+                    ss << "  ---\n";
+                }
+            }
+            i++;
+        }
+
+        return ss.str();
+    }
+
+    static std::string generate_text(
+        const std::vector<test_result>& results) {
+
+        int total = results.size();
+        int passed = 0, failed = 0, skipped = 0;
+
+        for (const auto& r : results) {
+            if (r.status == test_status::PASSED) passed++;
+            else if (r.status == test_status::FAILED) failed++;
+            else if (r.status == test_status::SKIPPED) skipped++;
+        }
+
+        std::stringstream ss;
+        ss << "Test Results:\n";
+        ss << "  Total:   " << total << "\n";
+        ss << "  Passed:  " << passed << "\n";
+        ss << "  Failed:  " << failed << "\n";
+        ss << "  Skipped: " << skipped << "\n\n";
+
+        if (failed > 0) {
+            ss << "Failures:\n";
+            for (const auto& r : results) {
+                if (r.status == test_status::FAILED) {
+                    ss << "  - " << r.suite_name << "." << r.test_name;
+                    if (!r.file.empty()) {
+                        ss << " (" << r.file << ":" << r.line << ")";
+                    }
+                    ss << "\n";
+                    ss << "    " << r.message << "\n";
+                }
+            }
+        }
+
+        return ss.str();
+    }
+
+    static bool write_to_file(const std::string& content, const std::string& path) {
+        std::ofstream f(path);
+        if (!f.is_open()) return false;
+        f << content;
+        return true;
+    }
+
+private:
+    static std::string escape_xml(const std::string& s) {
+        std::string result;
+        for (char c : s) {
+            switch (c) {
+                case '&': result += "&amp;"; break;
+                case '<': result += "&lt;"; break;
+                case '>': result += "&gt;"; break;
+                case '"': result += "&quot;"; break;
+                case '\'': result += "&apos;"; break;
+                default: result += c;
+            }
+        }
+        return result;
+    }
+
+    static std::string escape_json(const std::string& s) {
+        std::string result;
+        for (char c : s) {
+            switch (c) {
+                case '"': result += "\\\""; break;
+                case '\\': result += "\\\\"; break;
+                case '\n': result += "\\n"; break;
+                case '\r': result += "\\r"; break;
+                case '\t': result += "\\t"; break;
+                default: result += c;
+            }
+        }
+        return result;
+    }
+};
+
+#define FB_REPORT_JUNIT_XML(results, suite)                                       \
+    ::fastblock::test::report_generator::generate_junit_xml(results, suite)
+
+#define FB_REPORT_JSON(results, suite)                                            \
+    ::fastblock::test::report_generator::generate_json(results, suite)
+
+#define FB_REPORT_TAP(results)                                                     \
+    ::fastblock::test::report_generator::generate_tap(results)
+
+#define FB_REPORT_TEXT(results)                                                    \
+    ::fastblock::test::report_generator::generate_text(results)
+
+#define FB_REPORT_WRITE(content, path)                                             \
+    ::fastblock::test::report_generator::write_to_file(content, path)
