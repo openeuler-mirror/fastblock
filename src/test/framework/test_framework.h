@@ -1476,41 +1476,62 @@ private:
 
 /**
  * @brief Random data generator for testing
+ *
+ * Uses thread-local std::mt19937 for thread-safe random number generation.
+ * Each thread has its own random generator to avoid race conditions.
  */
 class random_generator {
+private:
+    // Thread-local random engine for thread safety
+    static std::mt19937& get_engine() {
+        static thread_local std::mt19937 engine(std::random_device{}());
+        return engine;
+    }
+
 public:
     static int random_int(int min_val, int max_val) {
-        return min_val + rand() % (max_val - min_val + 1);
+        std::uniform_int_distribution<int> dist(min_val, max_val);
+        return dist(get_engine());
     }
 
     static uint64_t random_uint64(uint64_t min_val, uint64_t max_val) {
-        return min_val + ((uint64_t)rand() << 32 | rand()) % (max_val - min_val + 1);
+        std::uniform_int_distribution<uint64_t> dist(min_val, max_val);
+        return dist(get_engine());
     }
 
     static std::string random_string(size_t length) {
         static const char chars[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        std::uniform_int_distribution<size_t> dist(0, sizeof(chars) - 2);
         std::string result;
         result.reserve(length);
         for (size_t i = 0; i < length; ++i) {
-            result += chars[rand() % (sizeof(chars) - 1)];
+            result += chars[dist(get_engine())];
         }
         return result;
     }
 
     static std::vector<uint8_t> random_bytes(size_t length) {
+        std::uniform_int_distribution<int> dist(0, 255);
         std::vector<uint8_t> result(length);
         for (size_t i = 0; i < length; ++i) {
-            result[i] = rand() % 256;
+            result[i] = static_cast<uint8_t>(dist(get_engine()));
         }
         return result;
     }
 
     static double random_double(double min_val, double max_val) {
-        return min_val + (double)rand() / RAND_MAX * (max_val - min_val);
+        std::uniform_real_distribution<double> dist(min_val, max_val);
+        return dist(get_engine());
     }
 
     static bool random_bool() {
-        return rand() % 2 == 0;
+        std::uniform_int_distribution<int> dist(0, 1);
+        return dist(get_engine()) == 1;
+    }
+
+    // Seed the random engine (useful for reproducible tests)
+    static void seed(unsigned int seed_value) {
+        get_engine().seed(seed_value);
     }
 };
 
@@ -1543,7 +1564,7 @@ public:
 
     template<typename T>
     static std::vector<T> shuffle(std::vector<T> values) {
-        std::random_shuffle(values.begin(), values.end());
+        std::shuffle(values.begin(), values.end(), std::mt19937(std::random_device{}()));
         return values;
     }
 };
