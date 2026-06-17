@@ -3155,3 +3155,208 @@ private:
 
 #define FB_TEMP_FILE_GUARD(path)                                                    \
     ::fastblock::test::temp_file_guard(path)
+
+// ============================================================================
+// String Testing Utilities
+// ============================================================================
+
+/**
+ * @brief String testing utilities
+ */
+class string_tester {
+public:
+    static bool starts_with(const std::string& str, const std::string& prefix) {
+        if (prefix.length() > str.length()) return false;
+        return str.substr(0, prefix.length()) == prefix;
+    }
+
+    static bool ends_with(const std::string& str, const std::string& suffix) {
+        if (suffix.length() > str.length()) return false;
+        return str.substr(str.length() - suffix.length()) == suffix;
+    }
+
+    static bool contains(const std::string& str, const std::string& substr) {
+        return str.find(substr) != std::string::npos;
+    }
+
+    static bool matches_pattern(const std::string& str, const std::string& pattern) {
+        // Simple wildcard matching: * matches any sequence
+        size_t str_idx = 0, pat_idx = 0;
+        size_t str_len = str.length(), pat_len = pattern.length();
+
+        while (pat_idx < pat_len) {
+            if (pattern[pat_idx] == '*') {
+                pat_idx++;
+                if (pat_idx == pat_len) return true;
+                while (str_idx < str_len && str[str_idx] != pattern[pat_idx]) {
+                    str_idx++;
+                }
+            } else {
+                if (str_idx >= str_len || str[str_idx] != pattern[pat_idx]) {
+                    return false;
+                }
+                str_idx++;
+                pat_idx++;
+            }
+        }
+        return str_idx == str_len;
+    }
+
+    static bool is_empty(const std::string& str) {
+        return str.empty();
+    }
+
+    static bool is_blank(const std::string& str) {
+        return str.empty() || str.find_first_not_of(" \t\n\r") == std::string::npos;
+    }
+
+    static bool is_numeric(const std::string& str) {
+        if (str.empty()) return false;
+        for (char c : str) {
+            if (!std::isdigit(c)) return false;
+        }
+        return true;
+    }
+
+    static bool is_alphabetic(const std::string& str) {
+        if (str.empty()) return false;
+        for (char c : str) {
+            if (!std::isalpha(c)) return false;
+        }
+        return true;
+    }
+
+    static bool is_alphanumeric(const std::string& str) {
+        if (str.empty()) return false;
+        for (char c : str) {
+            if (!std::isalnum(c)) return false;
+        }
+        return true;
+    }
+
+    static bool is_lower(const std::string& str) {
+        for (char c : str) {
+            if (std::isalpha(c) && !std::islower(c)) return false;
+        }
+        return true;
+    }
+
+    static bool is_upper(const std::string& str) {
+        for (char c : str) {
+            if (std::isalpha(c) && !std::isupper(c)) return false;
+        }
+        return true;
+    }
+
+    static std::string trim(const std::string& str) {
+        size_t start = str.find_first_not_of(" \t\n\r");
+        if (start == std::string::npos) return "";
+        size_t end = str.find_last_not_of(" \t\n\r");
+        return str.substr(start, end - start + 1);
+    }
+
+    static std::string to_lower(const std::string& str) {
+        std::string result = str;
+        std::transform(result.begin(), result.end(), result.begin(), ::tolower);
+        return result;
+    }
+
+    static std::string to_upper(const std::string& str) {
+        std::string result = str;
+        std::transform(result.begin(), result.end(), result.begin(), ::toupper);
+        return result;
+    }
+
+    static std::vector<std::string> split(const std::string& str, char delimiter) {
+        std::vector<std::string> tokens;
+        std::stringstream ss(str);
+        std::string token;
+        while (std::getline(ss, token, delimiter)) {
+            tokens.push_back(token);
+        }
+        return tokens;
+    }
+
+    static std::string join(const std::vector<std::string>& parts, const std::string& delimiter) {
+        std::stringstream ss;
+        for (size_t i = 0; i < parts.size(); ++i) {
+            if (i > 0) ss << delimiter;
+            ss << parts[i];
+        }
+        return ss.str();
+    }
+
+    static std::string replace(const std::string& str, const std::string& from, const std::string& to) {
+        std::string result = str;
+        size_t pos = 0;
+        while ((pos = result.find(from, pos)) != std::string::npos) {
+            result.replace(pos, from.length(), to);
+            pos += to.length();
+        }
+        return result;
+    }
+
+    static size_t count_occurrences(const std::string& str, const std::string& substr) {
+        size_t count = 0;
+        size_t pos = 0;
+        while ((pos = str.find(substr, pos)) != std::string::npos) {
+            count++;
+            pos += substr.length();
+        }
+        return count;
+    }
+};
+
+#define FB_STR_STARTS_WITH(str, prefix)                                            \
+    ::fastblock::test::string_tester::starts_with(str, prefix)
+
+#define FB_STR_ENDS_WITH(str, suffix)                                              \
+    ::fastblock::test::string_tester::ends_with(str, suffix)
+
+#define FB_STR_CONTAINS(str, substr)                                               \
+    ::fastblock::test::string_tester::contains(str, substr)
+
+#define FB_STR_MATCHES(str, pattern)                                               \
+    ::fastblock::test::string_tester::matches_pattern(str, pattern)
+
+#define FB_STR_IS_EMPTY(str)                                                       \
+    ::fastblock::test::string_tester::is_empty(str)
+
+#define FB_STR_IS_BLANK(str)                                                       \
+    ::fastblock::test::string_tester::is_blank(str)
+
+#define FB_STR_IS_NUMERIC(str)                                                     \
+    ::fastblock::test::string_tester::is_numeric(str)
+
+#define FB_STR_IS_ALPHA(str)                                                       \
+    ::fastblock::test::string_tester::is_alphabetic(str)
+
+#define FB_STR_IS_ALNUM(str)                                                       \
+    ::fastblock::test::string_tester::is_alphanumeric(str)
+
+#define FB_STR_IS_LOWER(str)                                                       \
+    ::fastblock::test::string_tester::is_lower(str)
+
+#define FB_STR_IS_UPPER(str)                                                       \
+    ::fastblock::test::string_tester::is_upper(str)
+
+#define FB_STR_TRIM(str)                                                           \
+    ::fastblock::test::string_tester::trim(str)
+
+#define FB_STR_TO_LOWER(str)                                                       \
+    ::fastblock::test::string_tester::to_lower(str)
+
+#define FB_STR_TO_UPPER(str)                                                       \
+    ::fastblock::test::string_tester::to_upper(str)
+
+#define FB_STR_SPLIT(str, delim)                                                   \
+    ::fastblock::test::string_tester::split(str, delim)
+
+#define FB_STR_JOIN(parts, delim)                                                  \
+    ::fastblock::test::string_tester::join(parts, delim)
+
+#define FB_STR_REPLACE(str, from, to)                                              \
+    ::fastblock::test::string_tester::replace(str, from, to)
+
+#define FB_STR_COUNT(str, substr)                                                  \
+    ::fastblock::test::string_tester::count_occurrences(str, substr)
