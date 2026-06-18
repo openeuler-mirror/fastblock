@@ -21,6 +21,7 @@
 #include <map>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
 
@@ -62,6 +63,8 @@ struct test_filter {
 
 /**
  * @brief Test configuration
+ *
+ * Thread-safe: Uses mutex to protect concurrent access.
  */
 class test_config {
 public:
@@ -74,10 +77,11 @@ public:
      * @brief Load configuration from JSON file
      */
     bool load_from_file(const std::string& path) {
+        std::lock_guard<std::mutex> lock(_mutex);
         try {
             boost::property_tree::read_json(path, _pt);
             _config_path = path;
-            parse_config();
+            parse_config_unlocked();
             return true;
         } catch (const std::exception& e) {
             SPDK_ERRLOG("Failed to load config from %s: %s\n", path.c_str(), e.what());
@@ -89,11 +93,17 @@ public:
      * @brief Load configuration from command line arguments
      */
     bool load_from_args(int argc, char* argv[]) {
+        std::lock_guard<std::mutex> lock(_mutex);
         for (int i = 1; i < argc; i++) {
             std::string arg = argv[i];
             if (arg == "-C" || arg == "--config") {
                 if (i + 1 < argc) {
-                    return load_from_file(argv[++i]);
+                    std::string path = argv[++i];
+                    // Temporarily unlock for recursive call
+                    _mutex.unlock();
+                    bool result = load_from_file(path);
+                    _mutex.lock();
+                    return result;
                 }
             } else if (arg == "-s" || arg == "--suite") {
                 if (i + 1 < argc) {
@@ -127,21 +137,49 @@ public:
     }
 
     // Getters
-    const std::string& config_path() const { return _config_path; }
-    execution_mode mode() const { return _mode; }
-    output_format format() const { return _format; }
-    const test_filter& filter() const { return _filter; }
-    bool verbose() const { return _verbose; }
-    bool quiet() const { return _quiet; }
-    bool list_only() const { return _list_only; }
-    uint32_t timeout_seconds() const { return _timeout_seconds; }
-    uint32_t parallel_jobs() const { return _parallel_jobs; }
+    std::string config_path() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _config_path;
+    }
+    execution_mode mode() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _mode;
+    }
+    output_format format() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _format;
+    }
+    test_filter filter() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _filter;
+    }
+    bool verbose() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _verbose;
+    }
+    bool quiet() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _quiet;
+    }
+    bool list_only() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _list_only;
+    }
+    uint32_t timeout_seconds() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _timeout_seconds;
+    }
+    uint32_t parallel_jobs() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _parallel_jobs;
+    }
 
     /**
      * @brief Get test-specific configuration value
      */
     template<typename T>
     T get(const std::string& key, const T& default_value = T{}) const {
+        std::lock_guard<std::mutex> lock(_mutex);
         try {
             return _pt.get<T>(key, default_value);
         } catch (...) {
@@ -152,7 +190,10 @@ public:
     /**
      * @brief Get environment-specific test parameters
      */
-    const std::map<std::string, std::string>& env_params() const { return _env_params; }
+    std::map<std::string, std::string> env_params() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _env_params;
+    }
 
     /**
      * @brief Print usage information
@@ -182,7 +223,7 @@ private:
         , _timeout_seconds(300)
         , _parallel_jobs(1) {}
 
-    void parse_config() {
+    void parse_config_unlocked() {
         _mode = parse_mode(_pt.get("mode", "sequential"));
         _format = parse_format(_pt.get("format", "text"));
         _verbose = _pt.get("verbose", false);
@@ -230,6 +271,7 @@ private:
     uint32_t _timeout_seconds;
     uint32_t _parallel_jobs;
     std::map<std::string, std::string> _env_params;
+    mutable std::mutex _mutex;
 };
 
 } // namespace test
