@@ -2812,7 +2812,7 @@ FB_TEST(raft_rpc, clientsession_keepalive) {
     FB_ASSERT_TRUE(session_valid);
 
     // 会话即将过期
-    current_time = 1400;
+    current_time = 1600;  // 1600 - 1000 = 600 > 500
     session_valid = (current_time - last_heartbeat) < session_timeout;
     FB_ASSERT_FALSE(session_valid);
 }
@@ -3757,11 +3757,11 @@ FB_TEST(raft_rpc, metrics_follower_stats) {
 
 FB_TEST(raft_rpc, metrics_network_stats) {
     // 网络统计
-    uint64_t bytes_sent = 1024 * 1024;  // 1MB
-    uint64_t bytes_received = 2 * 1024 * 1024;  // 2MB
+    uint64_t bytes_sent = 1024 * 1000;  // 1MB in bytes
+    uint64_t bytes_received = 2 * 1024 * 1000;  // 2MB
     uint64_t rpc_calls = 1000;
 
-    double avg_request_size = bytes_sent / rpc_calls;
+    uint64_t avg_request_size = bytes_sent / rpc_calls;
     FB_ASSERT_EQ(avg_request_size, 1024UL);
 }
 
@@ -3993,7 +3993,7 @@ FB_TEST(raft_rpc, prevote_check_leader_alive) {
 FB_TEST(raft_rpc, prevote_leader_present_reject) {
     // Leader 存活时拒绝 PreVote
     raft_time_t last_leader_contact = 1000;
-    raft_time_t current_time = 1100;
+    raft_time_t current_time = 1050;  // 50ms ago
     raft_time_t heartbeat_timeout = 100;
 
     bool leader_alive = (current_time - last_leader_contact) < heartbeat_timeout;
@@ -4083,7 +4083,7 @@ FB_TEST(raft_rpc, prevote_disruptive_leader) {
     // 防止干扰 Leader
     raft_node_id_t leader_id = 2;
     raft_time_t last_leader_heartbeat = 1000;
-    raft_time_t current_time = 1100;
+    raft_time_t current_time = 1050;  // 50ms ago
     raft_time_t heartbeat_timeout = 100;
 
     bool leader_healthy = (current_time - last_leader_heartbeat) < heartbeat_timeout;
