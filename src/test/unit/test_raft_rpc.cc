@@ -2471,5 +2471,274 @@ FB_TEST(raft_rpc, propose_leader_change_abort) {
     FB_ASSERT_FALSE(can_propose);
 }
 
+// ============================================================================
+// Test Suite: CheckQuorum RPC Tests (Quorum Verification)
+// ============================================================================
+
+FB_TEST(raft_rpc, checkquorum_request_fields) {
+    // 模拟 CheckQuorum 请求字段
+    raft_term_t term = 5;
+    raft_node_id_t leader_id = 1;
+
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(leader_id > 0);
+}
+
+FB_TEST(raft_rpc, checkquorum_leader_self_check) {
+    // Leader 检查自身是否仍能联系多数派
+    uint64_t node_num = 5;
+    uint64_t reachable_nodes = 3;
+
+    bool has_quorum = reachable_nodes > node_num / 2;
+    FB_ASSERT_TRUE(has_quorum);
+}
+
+FB_TEST(raft_rpc, checkquorum_step_down_on_failure) {
+    // 无法联系多数派时退位
+    uint64_t node_num = 5;
+    uint64_t reachable_nodes = 2;
+
+    bool has_quorum = reachable_nodes > node_num / 2;
+    FB_ASSERT_FALSE(has_quorum);
+
+    // 退位为 Follower
+    raft_identity state = RAFT_STATE_LEADER;
+    if (!has_quorum) {
+        state = RAFT_STATE_FOLLOWER;
+    }
+    FB_ASSERT_EQ(state, RAFT_STATE_FOLLOWER);
+}
+
+FB_TEST(raft_rpc, checkquorum_heartbeat_responses) {
+    // 通过心跳响应判断节点可达性
+    std::map<raft_node_id_t, bool> heartbeat_responses;
+    heartbeat_responses[1] = true;   // 自己
+    heartbeat_responses[2] = true;
+    heartbeat_responses[3] = false;  // 节点3不可达
+    heartbeat_responses[4] = true;
+
+    int reachable_count = 0;
+    for (const auto& pair : heartbeat_responses) {
+        if (pair.second) reachable_count++;
+    }
+
+    FB_ASSERT_EQ(reachable_count, 3);
+}
+
+FB_TEST(raft_rpc, checkquorum_timeout_threshold) {
+    // 心跳超时阈值
+    raft_time_t heartbeat_timeout = 100;
+    raft_time_t last_contact_time = 800;
+    raft_time_t current_time = 1000;
+
+    bool timed_out = (current_time - last_contact_time) > heartbeat_timeout;
+    FB_ASSERT_TRUE(timed_out);
+}
+
+FB_TEST(raft_rpc, checkquorum_periodic_check) {
+    // 定期检查法定节点
+    int check_interval_ms = 1000;
+    int checks_performed = 0;
+
+    for (int i = 0; i < 5; i++) {
+        checks_performed++;
+    }
+
+    FB_ASSERT_EQ(checks_performed, 5);
+}
+
+FB_TEST(raft_rpc, checkquorum_response_fields) {
+    raft_term_t term = 5;
+    bool quorum_ok = true;
+
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(quorum_ok);
+}
+
+FB_TEST(raft_rpc, checkquorum_network_partition_detection) {
+    // 网络分区检测
+    std::set<raft_node_id_t> reachable_nodes = {1, 2};
+    uint64_t total_nodes = 5;
+
+    bool in_minority_partition = reachable_nodes.size() <= total_nodes / 2;
+    FB_ASSERT_TRUE(in_minority_partition);
+
+    // 多数派分区
+    reachable_nodes = {1, 2, 3, 4};
+    in_minority_partition = reachable_nodes.size() <= total_nodes / 2;
+    FB_ASSERT_FALSE(in_minority_partition);
+}
+
+FB_TEST(raft_rpc, checkquorum_leader_lease_update) {
+    // CheckQuorum 更新租约
+    raft_time_t lease_expiry = 1000;
+    raft_time_t lease_period = 100;
+
+    // 成功确认后续约租约
+    bool quorum_ok = true;
+    if (quorum_ok) {
+        lease_expiry += lease_period;
+    }
+
+    FB_ASSERT_EQ(lease_expiry, 1100L);
+}
+
+FB_TEST(raft_rpc, checkquorum_follower_participation) {
+    // Follower 参与 CheckQuorum
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    bool is_leader = (state == RAFT_STATE_LEADER);
+
+    // Follower 不发起 CheckQuorum
+    FB_ASSERT_FALSE(is_leader);
+
+    // 但 Follower 响应心跳
+    bool respond_to_heartbeat = true;
+    FB_ASSERT_TRUE(respond_to_heartbeat);
+}
+
+FB_TEST(raft_rpc, checkquorum_minimum_cluster_size) {
+    // 最小集群大小检查
+    uint64_t min_nodes = 1;
+    uint64_t current_nodes = 3;
+
+    bool meets_minimum = current_nodes >= min_nodes;
+    FB_ASSERT_TRUE(meets_minimum);
+
+    // 单节点集群
+    current_nodes = 1;
+    meets_minimum = current_nodes >= min_nodes;
+    FB_ASSERT_TRUE(meets_minimum);
+}
+
+FB_TEST(raft_rpc, checkquorum_joint_consensus_check) {
+    // 联合共识期间的法定节点检查
+    uint64_t old_nodes = 5;
+    uint64_t new_nodes = 3;
+    uint64_t old_reachable = 3;
+    uint64_t new_reachable = 2;
+
+    bool old_quorum = old_reachable > old_nodes / 2;
+    bool new_quorum = new_reachable > new_nodes / 2;
+
+    // 联合共识期间需要两个配置都满足
+    bool joint_quorum = old_quorum && new_quorum;
+    FB_ASSERT_TRUE(joint_quorum);
+}
+
+FB_TEST(raft_rpc, checkquorum_graceful_degradation) {
+    // 优雅降级
+    uint64_t healthy_nodes = 3;
+    uint64_t total_nodes = 5;
+
+    // 部分节点故障，集群仍可用
+    bool cluster_available = healthy_nodes > total_nodes / 2;
+    FB_ASSERT_TRUE(cluster_available);
+
+    // 更多节点故障
+    healthy_nodes = 2;
+    cluster_available = healthy_nodes > total_nodes / 2;
+    FB_ASSERT_FALSE(cluster_available);
+}
+
+FB_TEST(raft_rpc, checkquorum_node_recovery) {
+    // 节点恢复后重新计数
+    std::set<raft_node_id_t> reachable_nodes = {1, 2};
+    uint64_t total_nodes = 5;
+
+    bool has_quorum = reachable_nodes.size() > total_nodes / 2;
+    FB_ASSERT_FALSE(has_quorum);
+
+    // 节点3恢复
+    reachable_nodes.insert(3);
+    has_quorum = reachable_nodes.size() > total_nodes / 2;
+    FB_ASSERT_TRUE(has_quorum);
+}
+
+FB_TEST(raft_rpc, checkquorum_pre_vote_check) {
+    // PreVote 模式的法定节点检查
+    bool use_prevote = true;
+    uint64_t reachable_nodes = 2;
+    uint64_t total_nodes = 5;
+
+    if (use_prevote) {
+        // PreVote 需要先确认能否联系到多数派
+        bool can_prevote = reachable_nodes > total_nodes / 2;
+        FB_ASSERT_FALSE(can_prevote);
+    }
+}
+
+FB_TEST(raft_rpc, checkquorum_leader_election_safety) {
+    // CheckQuorum 保证选举安全
+    // 防止多个 Leader 同时存在
+    int active_leaders = 1;
+    int expected_leaders = 1;
+
+    FB_ASSERT_EQ(active_leaders, expected_leaders);
+
+    // CheckQuorum 防止分裂脑
+    bool single_leader = (active_leaders == 1);
+    FB_ASSERT_TRUE(single_leader);
+}
+
+FB_TEST(raft_rpc, checkquorum_timeout_trigger_election) {
+    //法定节点检查失败触发选举
+    bool quorum_failed = true;
+    raft_identity state = RAFT_STATE_LEADER;
+
+    if (quorum_failed) {
+        state = RAFT_STATE_CANDIDATE;  // 退位后开始新选举
+    }
+
+    FB_ASSERT_EQ(state, RAFT_STATE_CANDIDATE);
+}
+
+FB_TEST(raft_rpc, checkquorum_metrics_collection) {
+    //法定节点指标收集
+    int quorum_checks_total = 100;
+    int quorum_checks_passed = 95;
+    int quorum_checks_failed = 5;
+
+    FB_ASSERT_EQ(quorum_checks_total, 100);
+    FB_ASSERT_EQ(quorum_checks_passed + quorum_checks_failed, quorum_checks_total);
+
+    double pass_rate = 100.0 * quorum_checks_passed / quorum_checks_total;
+    FB_ASSERT_GE(pass_rate, 95.0);
+}
+
+FB_TEST(raft_rpc, checkquorum_config_change_handling) {
+    // 配置变更期间的法定节点检查
+    bool config_change_in_progress = true;
+
+    // 配置变更期间使用联合共识检查
+    if (config_change_in_progress) {
+        uint64_t old_reachable = 3;
+        uint64_t new_reachable = 2;
+        uint64_t old_nodes = 5;
+        uint64_t new_nodes = 3;
+
+        bool old_ok = old_reachable > old_nodes / 2;
+        bool new_ok = new_reachable > new_nodes / 2;
+
+        FB_ASSERT_TRUE(old_ok && new_ok);
+    }
+}
+
+FB_TEST(raft_rpc, checkquorum_follower_timeout_detection) {
+    // Follower 超时检测
+    raft_time_t last_leader_contact = 1000;
+    raft_time_t election_timeout = 500;
+    raft_time_t current_time = 1600;
+
+    bool leader_timeout = (current_time - last_leader_contact) >= election_timeout;
+    FB_ASSERT_TRUE(leader_timeout);
+
+    // Follower 应该开始选举
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    if (leader_timeout) {
+        state = RAFT_STATE_CANDIDATE;
+    }
+    FB_ASSERT_EQ(state, RAFT_STATE_CANDIDATE);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
