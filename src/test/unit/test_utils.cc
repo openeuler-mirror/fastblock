@@ -607,3 +607,66 @@ FB_TEST(varint64_boundary, roundtrip_large_value) {
     auto [value, decoded_len] = decode_varint64(buffer, len);
     FB_ASSERT_EQ(value, original);
 }
+
+// ============================================================================
+// Test Suite: md5_properties (MD5 Hash Properties Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(md5_properties) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(md5_properties) {
+    // Teardown code here
+}
+
+FB_TEST(md5_properties, fixed_length) {
+    char data1[] = "a";
+    char data2[] = "abcdefghijklmnopqrstuvwxyz";
+    char data3[] = "";
+
+    std::string hash1 = utils::md5(data1, strlen(data1));
+    std::string hash2 = utils::md5(data2, strlen(data2));
+    std::string hash3 = utils::md5(data3, 0);
+
+    // All MD5 hashes should be 16 bytes (128 bits)
+    FB_ASSERT_EQ(hash1.length(), 16);
+    FB_ASSERT_EQ(hash2.length(), 16);
+    FB_ASSERT_EQ(hash3.length(), 16);
+}
+
+FB_TEST(md5_properties, deterministic) {
+    char data[] = "deterministic test";
+    std::string hash1 = utils::md5(data, strlen(data));
+    std::string hash2 = utils::md5(data, strlen(data));
+    std::string hash3 = utils::md5(data, strlen(data));
+
+    FB_ASSERT_EQ(hash1, hash2);
+    FB_ASSERT_EQ(hash2, hash3);
+}
+
+FB_TEST(md5_properties, similar_inputs_different_output) {
+    char data1[] = "test1";
+    char data2[] = "test2";
+
+    std::string hash1 = utils::md5(data1, strlen(data1));
+    std::string hash2 = utils::md5(data2, strlen(data2));
+
+    // Similar inputs should produce different hashes
+    FB_ASSERT_TRUE(hash1 != hash2);
+}
+
+FB_TEST(md5_properties, long_string) {
+    std::string long_data(10000, 'a');
+    std::string hash = utils::md5(const_cast<char*>(long_data.c_str()), long_data.size());
+
+    // MD5 should work with long strings and still produce 16-byte hash
+    FB_ASSERT_EQ(hash.length(), 16);
+}
+
+FB_TEST(md5_properties, binary_data) {
+    char binary_data[] = {0x00, 0x01, 0x02, 0xFF, 0xFE, 0xFD};
+    std::string hash = utils::md5(binary_data, sizeof(binary_data));
+
+    FB_ASSERT_EQ(hash.length(), 16);
+}
