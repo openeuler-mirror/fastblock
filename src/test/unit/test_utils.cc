@@ -1084,4 +1084,51 @@ FB_TEST(string_conversion, itos_consistency) {
     }
 }
 
+// ============================================================================
+// Test Suite: varint_encoding_efficiency (Varint Encoding Efficiency Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(varint_encoding_efficiency) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(varint_encoding_efficiency) {
+    // Teardown code here
+}
+
+FB_TEST(varint_encoding_efficiency, small_values_efficient) {
+    char buffer[10];
+    // Values 0-127 should use only 1 byte
+    for (uint32_t i = 0; i <= 127; i++) {
+        size_t len = encode_varint32(buffer, i);
+        FB_ASSERT_EQ(len, 1);
+    }
+}
+
+FB_TEST(varint_encoding_efficiency, medium_values_efficiency) {
+    char buffer[10];
+    // Values 128-16383 should use 2 bytes
+    FB_ASSERT_EQ(encode_varint32(buffer, 128), 2);
+    FB_ASSERT_EQ(encode_varint32(buffer, 16383), 2);
+}
+
+FB_TEST(varint_encoding_efficiency, large_values_efficiency) {
+    char buffer[10];
+    // Values 16384-2097151 should use 3 bytes
+    FB_ASSERT_EQ(encode_varint32(buffer, 16384), 3);
+    FB_ASSERT_EQ(encode_varint32(buffer, 2097151), 3);
+}
+
+FB_TEST(varint_encoding_efficiency, space_savings) {
+    char varint_buf[10];
+    char fixed_buf[8];
+
+    // For small values, varint saves space compared to fixed
+    uint32_t small = 127;
+    size_t varint_len = encode_varint32(varint_buf, small);
+    size_t fixed_len = 4;
+
+    FB_ASSERT_TRUE(varint_len < fixed_len);
+}
+
 FB_TEST_MAIN()
