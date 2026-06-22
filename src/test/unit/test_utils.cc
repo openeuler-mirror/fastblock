@@ -1250,4 +1250,54 @@ FB_TEST(encoding_decode_edge_cases, fixed64_all_ones) {
     FB_ASSERT_EQ(decoded, 0xFFFFFFFFFFFFFFFFULL);
 }
 
+// ============================================================================
+// Test Suite: units_literal_tests (Units Literal Comprehensive Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(units_literal_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(units_literal_tests) {
+    // Teardown code here
+}
+
+FB_TEST(units_literal_tests, kb_multiples) {
+    FB_ASSERT_EQ(1_KB, 1024);
+    FB_ASSERT_EQ(2_KB, 2048);
+    FB_ASSERT_EQ(4_KB, 4096);
+    FB_ASSERT_EQ(8_KB, 8192);
+    FB_ASSERT_EQ(16_KB, 16384);
+}
+
+FB_TEST(units_literal_tests, mb_multiples) {
+    FB_ASSERT_EQ(1_MB, 1048576);
+    FB_ASSERT_EQ(2_MB, 2097152);
+    FB_ASSERT_EQ(4_MB, 4194304);
+    FB_ASSERT_EQ(8_MB, 8388608);
+}
+
+FB_TEST(units_literal_tests, gb_multiples) {
+    FB_ASSERT_EQ(1_GB, 1073741824);
+    FB_ASSERT_EQ(2_GB, 2147483648ULL);
+    FB_ASSERT_EQ(4_GB, 4294967296ULL);
+}
+
+FB_TEST(units_literal_tests, mixed_operations) {
+    size_t val1 = 1_MB + 1_KB;
+    size_t val2 = 1048576 + 1024;
+    FB_ASSERT_EQ(val1, val2);
+
+    size_t val3 = 1_GB - 1_MB;
+    size_t val4 = 1073741824 - 1048576;
+    FB_ASSERT_EQ(val3, val4);
+}
+
+FB_TEST(units_literal_tests, comparison) {
+    FB_ASSERT_TRUE(1_KB < 1_MB);
+    FB_ASSERT_TRUE(1_MB < 1_GB);
+    FB_ASSERT_TRUE(1024_KB == 1_MB);
+    FB_ASSERT_TRUE(1024_MB == 1_GB);
+}
+
 FB_TEST_MAIN()
