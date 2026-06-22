@@ -11,6 +11,18 @@
 
 #include "osd_client.h"
 
+namespace fastblock {
+namespace test {
+namespace osd_config {
+    // Define global OSD configuration variables
+    int osd_id = 0;
+    const char* osd_addr = "127.0.0.1";
+    int osd_port = 8888;
+    uint64_t pool_id = 0;
+    uint64_t pg_id = 0;
+}
+}
+
 void get_leader_source::process_response(){
     SPDK_NOTICELOG("leader of the pg %lu.%lu is %d\n", _request->pool_id(), _request->pg_id(), response.leader_id());
     _client->set_leader_id(response.leader_id());
@@ -18,7 +30,7 @@ void get_leader_source::process_response(){
         _client->create_connect(response.leader_addr(), response.leader_port(), response.leader_id(),
         [this](void *, int ){
           _fun();
-          delete this;  
+          delete this;
         });
     }else{
         _fun();

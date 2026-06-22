@@ -27,11 +27,36 @@
 #include <boost/property_tree/json_parser.hpp>
 #include <functional>
 
-static int global_osd_id = 0;
-static const char *g_osd_addr = "127.0.0.1";
-static int g_osd_port = 8888;
-static uint64_t g_pool_id = 0;
-static uint64_t g_pg_id = 0;
+/**
+ * @brief Global OSD configuration for testing
+ *
+ * These variables are used across test files. They are declared here
+ * and should be defined in one translation unit (osd_client.cc).
+ *
+ * Usage:
+ *   fastblock::test::osd_config::osd_id = 1;
+ *   server.node_id = fastblock::test::osd_config::osd_id;
+ */
+namespace fastblock {
+namespace test {
+namespace osd_config {
+    extern int osd_id;
+    extern const char* osd_addr;
+    extern int osd_port;
+    extern uint64_t pool_id;
+    extern uint64_t pg_id;
+}
+}
+
+// Global variables for backward compatibility (deprecated, use namespace above)
+// These are kept for existing code that uses the old global variables
+static int& global_osd_id = fastblock::test::osd_config::osd_id;
+static const char*& g_osd_addr = fastblock::test::osd_config::osd_addr;
+static int& g_osd_port = fastblock::test::osd_config::osd_port;
+static uint64_t& g_pool_id = fastblock::test::osd_config::pool_id;
+static uint64_t& g_pg_id = fastblock::test::osd_config::pg_id;
+
+} // namespace fastblock
 
 typedef struct
 {
