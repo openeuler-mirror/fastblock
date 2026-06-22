@@ -431,3 +431,45 @@ FB_TEST(itos_edge_cases, int32_min) {
     std::string result = itos(min_val);
     FB_ASSERT_EQ(result, "-2147483648");
 }
+
+// ============================================================================
+// Test Suite: units_combinations (Units Combination Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(units_combinations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(units_combinations) {
+    // Teardown code here
+}
+
+FB_TEST(units_combinations, kb_plus_kb) {
+    size_t val = 1_KB + 1_KB;
+    FB_ASSERT_EQ(val, 2048);
+}
+
+FB_TEST(units_combinations, mb_plus_kb) {
+    size_t val = 1_MB + 1_KB;
+    FB_ASSERT_EQ(val, 1024 * 1024 + 1024);
+}
+
+FB_TEST(units_combinations, gb_plus_mb) {
+    size_t val = 1_GB + 1_MB;
+    FB_ASSERT_EQ(val, 1024 * 1024 * 1024 + 1024 * 1024);
+}
+
+FB_TEST(units_combinations, gb_minus_mb) {
+    size_t val = 1_GB - 1_MB;
+    FB_ASSERT_EQ(val, 1024 * 1024 * 1024 - 1024 * 1024);
+}
+
+FB_TEST(units_combinations, mb_times_int) {
+    size_t val = 4_MB;
+    FB_ASSERT_EQ(val, 4 * 1024 * 1024);
+}
+
+FB_TEST(units_combinations, complex_expression) {
+    size_t val = 2_GB - 512_MB + 128_KB;
+    FB_ASSERT_EQ(val, 2 * 1024 * 1024 * 1024 - 512 * 1024 * 1024 + 128 * 1024);
+}
