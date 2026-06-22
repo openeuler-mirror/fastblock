@@ -1043,4 +1043,45 @@ FB_TEST(encoding_comparison, fixed_size_constant) {
     FB_ASSERT_TRUE(true);  // If we got here, encoding succeeded
 }
 
+// ============================================================================
+// Test Suite: string_conversion (String Conversion Edge Cases)
+// ============================================================================
+
+FB_SUITE_SETUP(string_conversion) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(string_conversion) {
+    // Teardown code here
+}
+
+FB_TEST(string_conversion, itos_single_digit) {
+    for (int i = 0; i <= 9; i++) {
+        std::string result = itos(i);
+        FB_ASSERT_EQ(result.length(), 1);
+    }
+}
+
+FB_TEST(string_conversion, itos_double_digit) {
+    for (int i = 10; i <= 99; i++) {
+        std::string result = itos(i);
+        FB_ASSERT_EQ(result.length(), 2);
+    }
+}
+
+FB_TEST(string_conversion, itos_triple_digit) {
+    for (int i = 100; i <= 999; i++) {
+        std::string result = itos(i);
+        FB_ASSERT_EQ(result.length(), 3);
+    }
+}
+
+FB_TEST(string_conversion, itos_consistency) {
+    for (int i = 0; i < 100; i++) {
+        std::string result1 = itos(i);
+        std::string result2 = itos(i);
+        FB_ASSERT_EQ(result1, result2);
+    }
+}
+
 FB_TEST_MAIN()
