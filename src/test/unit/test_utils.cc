@@ -1563,13 +1563,68 @@ FB_TEST(mixed_encoding, encode_decode_sequence) {
 }
 
 FB_TEST(mixed_encoding, buffer_reuse) {
-    char buffer[10];
+    char buffer[10] = {0};  // Initialize buffer to avoid uninitialized warning
 
     // Encode and decode multiple times using same buffer
     for (int i = 0; i < 10; i++) {
         encode_varint32(buffer, i * 100);
         auto [val, len] = decode_varint32(buffer, 5);
         FB_ASSERT_EQ(val, static_cast<uint32_t>(i * 100));
+    }
+}
+
+// ============================================================================
+// Test Suite: stress_tests (Stress Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(stress_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(stress_tests) {
+    // Teardown code here
+}
+
+FB_TEST(stress_tests, itos_many_iterations) {
+    for (int i = 0; i < 10000; i++) {
+        std::string result = itos(i);
+        FB_ASSERT_TRUE(result.length() > 0);
+    }
+}
+
+FB_TEST(stress_tests, varint32_many_roundtrips) {
+    char buffer[5];
+    for (uint32_t i = 0; i < 10000; i++) {
+        size_t len = encode_varint32(buffer, i);
+        auto [val, decoded_len] = decode_varint32(buffer, len);
+        FB_ASSERT_EQ(val, i);
+    }
+}
+
+FB_TEST(stress_tests, varint64_many_roundtrips) {
+    char buffer[10];
+    for (uint64_t i = 0; i < 10000; i++) {
+        size_t len = encode_varint64(buffer, i);
+        auto [val, decoded_len] = decode_varint64(buffer, len);
+        FB_ASSERT_EQ(val, i);
+    }
+}
+
+FB_TEST(stress_tests, fixed32_many_roundtrips) {
+    char buffer[4];
+    for (uint32_t i = 0; i < 10000; i++) {
+        encode_fixed32(buffer, i);
+        uint32_t val = decode_fixed32(buffer);
+        FB_ASSERT_EQ(val, i);
+    }
+}
+
+FB_TEST(stress_tests, fixed64_many_roundtrips) {
+    char buffer[8];
+    for (uint64_t i = 0; i < 10000; i++) {
+        encode_fixed64(buffer, i);
+        uint64_t val = decode_fixed64(buffer);
+        FB_ASSERT_EQ(val, i);
     }
 }
 
