@@ -1680,4 +1680,49 @@ FB_TEST(boundary_values, varint64_max_encoded_length) {
     FB_ASSERT_TRUE(len <= 10);
 }
 
+// ============================================================================
+// Test Suite: md5_input_variations (MD5 Input Variations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(md5_input_variations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(md5_input_variations) {
+    // Teardown code here
+}
+
+FB_TEST(md5_input_variations, null_bytes) {
+    unsigned char data[] = {0x00, 0x00, 0x00, 0x00};
+    std::string hash = utils::md5(reinterpret_cast<char*>(data), 4);
+    FB_ASSERT_EQ(hash.length(), 16);
+}
+
+FB_TEST(md5_input_variations, single_null) {
+    char data = 0x00;
+    std::string hash = utils::md5(&data, 1);
+    FB_ASSERT_EQ(hash.length(), 16);
+}
+
+FB_TEST(md5_input_variations, repeating_pattern) {
+    std::string data(100, 'A');
+    std::string hash = utils::md5(const_cast<char*>(data.c_str()), data.size());
+    FB_ASSERT_EQ(hash.length(), 16);
+}
+
+FB_TEST(md5_input_variations, all_ones) {
+    unsigned char data[] = {0xFF, 0xFF, 0xFF, 0xFF};
+    std::string hash = utils::md5(reinterpret_cast<char*>(data), 4);
+    FB_ASSERT_EQ(hash.length(), 16);
+}
+
+FB_TEST(md5_input_variations, incremental_bytes) {
+    unsigned char data[256];
+    for (int i = 0; i < 256; i++) {
+        data[i] = static_cast<unsigned char>(i);
+    }
+    std::string hash = utils::md5(reinterpret_cast<char*>(data), 256);
+    FB_ASSERT_EQ(hash.length(), 16);
+}
+
 FB_TEST_MAIN()
