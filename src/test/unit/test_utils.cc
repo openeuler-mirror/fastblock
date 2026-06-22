@@ -1408,4 +1408,72 @@ FB_TEST(varint_special_values, alternating_bits_64) {
     FB_ASSERT_EQ(decoded, val);
 }
 
+// ============================================================================
+// Test Suite: fixed_special_values (Fixed Encoding Special Values Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(fixed_special_values) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(fixed_special_values) {
+    // Teardown code here
+}
+
+FB_TEST(fixed_special_values, all_zeros_32) {
+    char buffer[4];
+    encode_fixed32(buffer, 0x00000000);
+    uint32_t decoded = decode_fixed32(buffer);
+    FB_ASSERT_EQ(decoded, 0x00000000);
+}
+
+FB_TEST(fixed_special_values, all_ones_32) {
+    char buffer[4];
+    encode_fixed32(buffer, 0xFFFFFFFF);
+    uint32_t decoded = decode_fixed32(buffer);
+    FB_ASSERT_EQ(decoded, 0xFFFFFFFF);
+}
+
+FB_TEST(fixed_special_values, alternating_32) {
+    char buffer[4];
+    encode_fixed32(buffer, 0xAAAAAAAA);
+    uint32_t decoded = decode_fixed32(buffer);
+    FB_ASSERT_EQ(decoded, 0xAAAAAAAA);
+}
+
+FB_TEST(fixed_special_values, checkerboard_32) {
+    char buffer[4];
+    encode_fixed32(buffer, 0x55555555);
+    uint32_t decoded = decode_fixed32(buffer);
+    FB_ASSERT_EQ(decoded, 0x55555555);
+}
+
+FB_TEST(fixed_special_values, all_zeros_64) {
+    char buffer[8];
+    encode_fixed64(buffer, 0x0000000000000000ULL);
+    uint64_t decoded = decode_fixed64(buffer);
+    FB_ASSERT_EQ(decoded, 0x0000000000000000ULL);
+}
+
+FB_TEST(fixed_special_values, all_ones_64) {
+    char buffer[8];
+    encode_fixed64(buffer, 0xFFFFFFFFFFFFFFFFULL);
+    uint64_t decoded = decode_fixed64(buffer);
+    FB_ASSERT_EQ(decoded, 0xFFFFFFFFFFFFFFFFULL);
+}
+
+FB_TEST(fixed_special_values, alternating_64) {
+    char buffer[8];
+    encode_fixed64(buffer, 0xAAAAAAAAAAAAAAAAULL);
+    uint64_t decoded = decode_fixed64(buffer);
+    FB_ASSERT_EQ(decoded, 0xAAAAAAAAAAAAAAAAULL);
+}
+
+FB_TEST(fixed_special_values, checkerboard_64) {
+    char buffer[8];
+    encode_fixed64(buffer, 0x5555555555555555ULL);
+    uint64_t decoded = decode_fixed64(buffer);
+    FB_ASSERT_EQ(decoded, 0x5555555555555555ULL);
+}
+
 FB_TEST_MAIN()
