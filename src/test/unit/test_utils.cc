@@ -1773,4 +1773,49 @@ FB_TEST(encoding_sequence, encode_multiples) {
     }
 }
 
+// ============================================================================
+// Test Suite: units_operations (Units Arithmetic Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(units_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(units_operations) {
+    // Teardown code here
+}
+
+FB_TEST(units_operations, addition_overflow) {
+    size_t val = 1_GB + 1_GB;
+    FB_ASSERT_EQ(val, 2ULL * 1024 * 1024 * 1024);
+}
+
+FB_TEST(units_operations, subtraction) {
+    size_t val = 2_MB - 1_MB;
+    FB_ASSERT_EQ(val, 1_MB);
+}
+
+FB_TEST(units_operations, multiplication) {
+    size_t val = 2_KB * 2;
+    FB_ASSERT_EQ(val, 4_KB);
+}
+
+FB_TEST(units_operations, division) {
+    size_t val = 1_MB / 2;
+    FB_ASSERT_EQ(val, 512_KB);
+}
+
+FB_TEST(units_operations, modulo) {
+    size_t val = 1_GB % 1_MB;
+    FB_ASSERT_EQ(val, 0);
+}
+
+FB_TEST(units_operations, comparison_ops) {
+    FB_ASSERT_TRUE(1_KB > B);
+    FB_ASSERT_TRUE(1_MB > 1_KB);
+    FB_ASSERT_TRUE(1_GB > 1_MB);
+    FB_ASSERT_TRUE(1_KB >= 1_KB);
+    FB_ASSERT_TRUE(1_KB <= 1_MB);
+}
+
 FB_TEST_MAIN()
