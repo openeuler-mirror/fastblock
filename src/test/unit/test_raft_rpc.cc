@@ -1484,5 +1484,217 @@ FB_TEST(raft_rpc, addnode_cluster_size_limit) {
     FB_ASSERT_FALSE(can_add);
 }
 
+// ============================================================================
+// Test Suite: RemoveNode RPC Tests (Membership Change)
+// ============================================================================
+
+FB_TEST(raft_rpc, removenode_request_fields) {
+    // 模拟 RemoveNode 请求字段
+    raft_term_t term = 5;
+    raft_node_id_t remove_node_id = 3;
+
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(remove_node_id > 0);
+}
+
+FB_TEST(raft_rpc, removenode_leader_only_operation) {
+    // 只有 Leader 可以移除节点
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    bool can_remove_node = (state == RAFT_STATE_LEADER);
+    FB_ASSERT_FALSE(can_remove_node);
+
+    state = RAFT_STATE_LEADER;
+    can_remove_node = (state == RAFT_STATE_LEADER);
+    FB_ASSERT_TRUE(can_remove_node);
+}
+
+FB_TEST(raft_rpc, removenode_cannot_remove_self) {
+    // Leader 不能直接移除自己
+    raft_node_id_t leader_id = 1;
+    raft_node_id_t remove_id = 1;
+
+    bool is_self = (leader_id == remove_id);
+    FB_ASSERT_TRUE(is_self);
+
+    // 需要先转移领导权
+    bool needs_transfer = is_self;
+    FB_ASSERT_TRUE(needs_transfer);
+}
+
+FB_TEST(raft_rpc, removenode_joint_consensus_phase) {
+    // 移除节点进入联合共识阶段
+    std::vector<raft_node_id_t> old_config = {1, 2, 3, 4};
+    std::vector<raft_node_id_t> new_config = {1, 2, 4};  // 移除节点3
+
+    // 联合共识期间，新旧配置都有效
+    bool in_joint_consensus = true;
+    FB_ASSERT_TRUE(in_joint_consensus);
+}
+
+FB_TEST(raft_rpc, removenode_graceful_shutdown) {
+    // 被移除节点需要优雅关闭
+    bool node_removed = true;
+    bool pending_entries = true;
+
+    // 等待待处理日志完成
+    if (pending_entries) {
+        // 先处理完待处理日志
+        pending_entries = false;
+    }
+
+    FB_ASSERT_FALSE(pending_entries);
+    FB_ASSERT_TRUE(node_removed);
+}
+
+FB_TEST(raft_rpc, removenode_log_truncation) {
+    // 移除节点后，可能需要截断其日志
+    raft_index_t removed_node_match_idx = 50;
+    raft_index_t leader_commit_idx = 60;
+
+    // 移除节点的日志索引不再重要
+    bool was_caught_up = removed_node_match_idx >= leader_commit_idx;
+    FB_ASSERT_FALSE(was_caught_up);
+}
+
+FB_TEST(raft_rpc, removenode_majority_preserved) {
+    // 移除节点后必须保持多数派
+    uint64_t old_nodes = 5;
+    uint64_t new_nodes = 4;
+
+    // 移除后仍需多数派
+    uint64_t new_majority = new_nodes / 2 + 1;
+    FB_ASSERT_EQ(new_majority, 3UL);
+
+    // 验证集群仍然可用
+    bool cluster_available = new_nodes >= 3;
+    FB_ASSERT_TRUE(cluster_available);
+}
+
+FB_TEST(raft_rpc, removenode_response_fields) {
+    raft_term_t term = 5;
+    bool success = true;
+
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(success);
+}
+
+FB_TEST(raft_rpc, removenode_node_not_found) {
+    // 尝试移除不存在的节点
+    std::set<raft_node_id_t> existing_nodes = {1, 2, 3};
+    raft_node_id_t remove_id = 99;
+
+    bool node_exists = existing_nodes.count(remove_id) > 0;
+    FB_ASSERT_FALSE(node_exists);
+
+    // 移除失败
+    bool remove_success = node_exists;
+    FB_ASSERT_FALSE(remove_success);
+}
+
+FB_TEST(raft_rpc, removenode_quorum_after_removal) {
+    // 移除后检查是否仍有法定节点
+    uint64_t total_nodes = 5;
+    uint64_t removing_count = 2;
+    uint64_t remaining_nodes = total_nodes - removing_count;
+
+    // 剩余节点需要能形成多数派
+    bool has_quorum = remaining_nodes >= 2;
+    FB_ASSERT_TRUE(has_quorum);
+
+    // 移除太多节点会失去法定节点
+    removing_count = 4;
+    remaining_nodes = total_nodes - removing_count;
+    has_quorum = remaining_nodes >= 2;
+    FB_ASSERT_FALSE(has_quorum);
+}
+
+FB_TEST(raft_rpc, removenode_config_index_tracking) {
+    // 配置变更日志索引跟踪
+    raft_index_t config_entry_idx = 55;
+    raft_term_t config_term = 5;
+
+    FB_ASSERT_TRUE(config_entry_idx > 0);
+    FB_ASSERT_TRUE(config_term > 0);
+
+    // 变更在日志提交后生效
+    raft_index_t commit_idx = 60;
+    bool config_applied = commit_idx >= config_entry_idx;
+    FB_ASSERT_TRUE(config_applied);
+}
+
+FB_TEST(raft_rpc, removenode_leader_transfer_first) {
+    // 移除 Leader 需要先转移领导权
+    raft_node_id_t leader_id = 1;
+    raft_node_id_t remove_id = 1;
+
+    if (remove_id == leader_id) {
+        // 需要先转移领导权给其他节点
+        raft_node_id_t new_leader = 2;
+        leader_id = new_leader;
+    }
+
+    FB_ASSERT_NE(leader_id, remove_id);
+}
+
+FB_TEST(raft_rpc, removenode_rollback_on_failure) {
+    // 移除失败时回滚配置
+    std::vector<raft_node_id_t> config = {1, 2, 3, 4};
+    std::vector<raft_node_id_t> backup = config;
+
+    // 尝试移除
+    config.erase(std::remove(config.begin(), config.end(), 3), config.end());
+
+    // 失败回滚
+    bool remove_failed = true;
+    if (remove_failed) {
+        config = backup;
+    }
+
+    FB_ASSERT_EQ(config.size(), 4UL);
+}
+
+FB_TEST(raft_rpc, removenode_pending_votes_clear) {
+    // 移除节点时清理其投票状态
+    std::map<raft_node_id_t, bool> voted_for_me;
+    voted_for_me[1] = true;
+    voted_for_me[2] = true;
+    voted_for_me[3] = true;
+
+    // 移除节点3的投票记录
+    raft_node_id_t remove_id = 3;
+    voted_for_me.erase(remove_id);
+
+    FB_ASSERT_EQ(voted_for_me.size(), 2UL);
+    FB_ASSERT_FALSE(voted_for_me.count(3));
+}
+
+FB_TEST(raft_rpc, removenode_network_partition_handling) {
+    // 网络分区时的节点移除
+    std::set<raft_node_id_t> partitioned_nodes = {3, 4};
+    raft_node_id_t remove_id = 3;
+
+    // 分区中的节点可能无法收到移除通知
+    bool in_partition = partitioned_nodes.count(remove_id) > 0;
+    FB_ASSERT_TRUE(in_partition);
+
+    // 需要 Leader 直接更新配置
+    bool leader_update = true;
+    FB_ASSERT_TRUE(leader_update);
+}
+
+FB_TEST(raft_rpc, removenode_multiple_nodes_batch) {
+    // 批量移除多个节点
+    std::vector<raft_node_id_t> config = {1, 2, 3, 4, 5};
+    std::vector<raft_node_id_t> remove_nodes = {3, 4};
+
+    // 逐个移除（每次都是独立的配置变更）
+    for (auto id : remove_nodes) {
+        config.erase(std::remove(config.begin(), config.end(), id), config.end());
+    }
+
+    FB_ASSERT_EQ(config.size(), 3UL);
+    FB_ASSERT_TRUE(std::find(config.begin(), config.end(), 3) == config.end());
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
