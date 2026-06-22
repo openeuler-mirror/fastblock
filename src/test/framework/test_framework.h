@@ -34,6 +34,7 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <future>
 #include <algorithm>
 #include <cmath>
 #include <set>
@@ -695,20 +696,32 @@ public:
                     async_func func, uint32_t timeout_ms = 5000)
         : test_case(name, suite, [this, func, timeout_ms](test_context& ctx) {
             async_test_context async_ctx;
-            std::thread([this, func, &ctx, &async_ctx]() {
+
+            // Use std::async instead of std::thread::detach() for proper resource management
+            auto future = std::async(std::launch::async, [&func, &ctx, &async_ctx]() {
                 func(ctx, async_ctx);
-            }).detach();
+            });
 
             std::unique_lock<std::mutex> lock(async_ctx.mutex);
-            if (!async_ctx.cv.wait_for(lock,
+            bool completed = async_ctx.cv.wait_for(lock,
                     std::chrono::milliseconds(timeout_ms),
-                    [&async_ctx] { return async_ctx.completed; })) {
+                    [&async_ctx] { return async_ctx.completed; });
+
+            if (!completed) {
                 async_ctx.timed_out = true;
                 ctx.fail("Async test timed out", __FILE__, __LINE__);
+                // Note: We cannot forcefully cancel the async thread, but we can
+                // signal it to stop by setting timed_out flag. The test function
+                // should check async_ctx.timed_out and exit early if needed.
             }
             if (!async_ctx.error_message.empty()) {
                 ctx.fail(async_ctx.error_message, __FILE__, __LINE__);
             }
+
+            // Wait for the async thread to complete to ensure proper cleanup
+            // Use a short timeout to avoid hanging indefinitely
+            lock.unlock();
+            future.wait_for(std::chrono::milliseconds(100));
         }) {}
 };
 
