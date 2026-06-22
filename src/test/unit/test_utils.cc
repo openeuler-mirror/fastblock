@@ -926,3 +926,59 @@ FB_TEST(varint_roundtrip, varint32_random_values) {
         FB_ASSERT_EQ(value, val);
     }
 }
+
+// ============================================================================
+// Test Suite: fixed_roundtrip (Fixed Encoding Roundtrip Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(fixed_roundtrip) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(fixed_roundtrip) {
+    // Teardown code here
+}
+
+FB_TEST(fixed_roundtrip, fixed32_multiple_values) {
+    char buffer[4];
+    uint32_t values[] = {0, 1, 127, 128, 255, 256, 65535, 65536, 16777215, 16777216, 4294967295};
+
+    for (uint32_t val : values) {
+        encode_fixed32(buffer, val);
+        uint32_t decoded = decode_fixed32(buffer);
+        FB_ASSERT_EQ(decoded, val);
+    }
+}
+
+FB_TEST(fixed_roundtrip, fixed64_multiple_values) {
+    char buffer[8];
+    uint64_t values[] = {0, 1, 127, 128, 255, 256, 65535, 65536,
+                         16777215, 16777216, 4294967295, 4294967296,
+                         18446744073709551615ULL};
+
+    for (uint64_t val : values) {
+        encode_fixed64(buffer, val);
+        uint64_t decoded = decode_fixed64(buffer);
+        FB_ASSERT_EQ(decoded, val);
+    }
+}
+
+FB_TEST(fixed_roundtrip, fixed32_powers_of_two) {
+    char buffer[4];
+    for (int i = 0; i < 32; i++) {
+        uint32_t val = 1U << i;
+        encode_fixed32(buffer, val);
+        uint32_t decoded = decode_fixed32(buffer);
+        FB_ASSERT_EQ(decoded, val);
+    }
+}
+
+FB_TEST(fixed_roundtrip, fixed64_powers_of_two) {
+    char buffer[8];
+    for (int i = 0; i < 64; i++) {
+        uint64_t val = 1ULL << i;
+        encode_fixed64(buffer, val);
+        uint64_t decoded = decode_fixed64(buffer);
+        FB_ASSERT_EQ(decoded, val);
+    }
+}
