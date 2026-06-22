@@ -545,3 +545,65 @@ FB_TEST(varint32_boundary, roundtrip_16384) {
     FB_ASSERT_EQ(value, original);
     FB_ASSERT_EQ(decoded_len, 3);
 }
+
+// ============================================================================
+// Test Suite: varint64_boundary (Varint64 Boundary Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(varint64_boundary) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(varint64_boundary) {
+    // Teardown code here
+}
+
+FB_TEST(varint64_boundary, encode_127_boundary) {
+    char buffer[10];
+    size_t len = encode_varint64(buffer, 127);
+    FB_ASSERT_EQ(len, 1);
+}
+
+FB_TEST(varint64_boundary, encode_128_boundary) {
+    char buffer[10];
+    size_t len = encode_varint64(buffer, 128);
+    FB_ASSERT_EQ(len, 2);
+}
+
+FB_TEST(varint64_boundary, encode_16383_boundary) {
+    char buffer[10];
+    size_t len = encode_varint64(buffer, 16383);
+    FB_ASSERT_EQ(len, 2);
+}
+
+FB_TEST(varint64_boundary, encode_16384_boundary) {
+    char buffer[10];
+    size_t len = encode_varint64(buffer, 16384);
+    FB_ASSERT_EQ(len, 3);
+}
+
+FB_TEST(varint64_boundary, roundtrip_127) {
+    char buffer[10];
+    uint64_t original = 127;
+    size_t len = encode_varint64(buffer, original);
+    auto [value, decoded_len] = decode_varint64(buffer, len);
+    FB_ASSERT_EQ(value, original);
+    FB_ASSERT_EQ(decoded_len, 1);
+}
+
+FB_TEST(varint64_boundary, roundtrip_128) {
+    char buffer[10];
+    uint64_t original = 128;
+    size_t len = encode_varint64(buffer, original);
+    auto [value, decoded_len] = decode_varint64(buffer, len);
+    FB_ASSERT_EQ(value, original);
+    FB_ASSERT_EQ(decoded_len, 2);
+}
+
+FB_TEST(varint64_boundary, roundtrip_large_value) {
+    char buffer[10];
+    uint64_t original = 1099511627775ULL; // 2^40 - 1
+    size_t len = encode_varint64(buffer, original);
+    auto [value, decoded_len] = decode_varint64(buffer, len);
+    FB_ASSERT_EQ(value, original);
+}
