@@ -6645,6 +6645,289 @@ FB_TEST(final_summary, constants_defined) {
 }
 
 // ============================================================================
+// Test Suite: buffer_list_pop_front (Buffer List Pop Front Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_pop_front) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_pop_front) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_pop_front, pop_single) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    spdk_buffer popped = bl.pop_front();
+    FB_ASSERT_EQ(popped.size(), 100);
+    FB_ASSERT_EQ(bl.bytes(), 0);
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_pop_front, pop_first_of_two) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    spdk_buffer popped = bl.pop_front();
+    FB_ASSERT_EQ(popped.size(), 100);
+    FB_ASSERT_EQ(bl.bytes(), 200);
+}
+
+FB_TEST(buffer_list_pop_front, pop_all_sequentially) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    size_t total_popped = 0;
+    while (!bl.empty()) {
+        total_popped += bl.pop_front().size();
+    }
+    FB_ASSERT_EQ(total_popped, 600);
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_pop_front, pop_preserves_remaining) {
+    char buffer1[50], buffer2[150];
+    spdk_buffer sbuf1(buffer1, 50);
+    spdk_buffer sbuf2(buffer2, 150);
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    bl.pop_front();
+    FB_ASSERT_EQ(bl.bytes(), 150);
+
+    // Remaining buffer should still be iterable
+    int count = 0;
+    for (auto& buf : bl) {
+        (void)buf;
+        count++;
+    }
+    FB_ASSERT_EQ(count, 1);
+}
+
+// ============================================================================
+// Test Suite: encoder_get_operations (Encoder Get Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(encoder_get_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(encoder_get_operations) {
+    // Setup code here
+}
+
+FB_TEST(encoder_get_operations, get_uint64_basic) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder enc(bl);
+    enc.put(42ULL);
+
+    bl.begin()->reset();
+    buffer_list_encoder reader(bl);
+
+    uint64_t val = 0;
+    bool ok = reader.get(val);
+    FB_ASSERT_TRUE(ok);
+    FB_ASSERT_EQ(val, 42);
+}
+
+FB_TEST(encoder_get_operations, get_string_basic) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder enc(bl);
+    enc.put(std::string("hello"));
+
+    bl.begin()->reset();
+    buffer_list_encoder reader(bl);
+
+    std::string val;
+    bool ok = reader.get(val);
+    FB_ASSERT_TRUE(ok);
+    FB_ASSERT_EQ(val, "hello");
+}
+
+FB_TEST(encoder_get_operations, get_raw_data) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder enc(bl);
+    enc.put("raw_data", 8);
+
+    bl.begin()->reset();
+    buffer_list_encoder reader(bl);
+
+    char out[16] = {0};
+    bool ok = reader.get(out, 8);
+    FB_ASSERT_TRUE(ok);
+    FB_ASSERT_EQ(std::string(out, 8), "raw_data");
+}
+
+FB_TEST(encoder_get_operations, get_fails_no_data) {
+    char buffer[8];
+    spdk_buffer sbuf(buffer, 8);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder reader(bl);
+
+    uint64_t val;
+    bool ok = reader.get(val);
+    FB_ASSERT_FALSE(ok); // Buffer not filled with valid data
+}
+
+// ============================================================================
+// Test Suite: log_entry_meta_operations (Log Entry Meta Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_entry_meta_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_entry_meta_operations) {
+    // Setup code here
+}
+
+FB_TEST(log_entry_meta_operations, empty_meta) {
+    log_entry_t entry;
+    entry.meta = "";
+    FB_ASSERT_TRUE(entry.meta.empty());
+}
+
+FB_TEST(log_entry_meta_operations, json_meta) {
+    log_entry_t entry;
+    entry.meta = R"({"pool_id":1,"pg_id":2,"op":"write"})";
+    FB_ASSERT_TRUE(entry.meta.find("pool_id") != std::string::npos);
+    FB_ASSERT_TRUE(entry.meta.find("write") != std::string::npos);
+}
+
+FB_TEST(log_entry_meta_operations, binary_meta) {
+    log_entry_t entry;
+    entry.meta = std::string(5, '\0') + "trail";
+    FB_ASSERT_EQ(entry.meta.size(), 10);
+}
+
+FB_TEST(log_entry_meta_operations, long_meta) {
+    log_entry_t entry;
+    entry.meta = std::string(10000, 'm');
+    FB_ASSERT_EQ(entry.meta.size(), 10000);
+}
+
+FB_TEST(log_entry_meta_operations, meta_copy) {
+    log_entry_t entry1;
+    entry1.meta = "original";
+
+    log_entry_t entry2 = entry1;
+    entry2.meta = "modified";
+
+    FB_ASSERT_EQ(entry1.meta, "original");
+    FB_ASSERT_EQ(entry2.meta, "modified");
+}
+
+// ============================================================================
+// Test Suite: buffer_list_to_iovec_advanced (Buffer List To Iovec Advanced Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_to_iovec_advanced) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_to_iovec_advanced) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_to_iovec_advanced, single_buffer_full_range) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    iovecs iovs = bl.to_iovec(0, 4096);
+    FB_ASSERT_EQ(iovs.size(), 1);
+    FB_ASSERT_EQ(iovs[0].iov_len, 4096);
+}
+
+FB_TEST(buffer_list_to_iovec_advanced, single_buffer_partial_start) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    iovecs iovs = bl.to_iovec(0, 1024);
+    FB_ASSERT_EQ(iovs.size(), 1);
+    FB_ASSERT_EQ(iovs[0].iov_len, 1024);
+}
+
+FB_TEST(buffer_list_to_iovec_advanced, single_buffer_partial_offset) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    iovecs iovs = bl.to_iovec(512, 1024);
+    FB_ASSERT_TRUE(iovs.size() >= 1);
+}
+
+FB_TEST(buffer_list_to_iovec_advanced, two_buffers_spanning) {
+    char buffer1[4096], buffer2[4096];
+    spdk_buffer sbuf1(buffer1, 4096);
+    spdk_buffer sbuf2(buffer2, 4096);
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    // Request range starting in first buffer, ending in second
+    iovecs iovs = bl.to_iovec(2048, 4096);
+    FB_ASSERT_TRUE(iovs.size() >= 1);
+}
+
+FB_TEST(buffer_list_to_iovec_advanced, three_buffers_full) {
+    char buffer1[1024], buffer2[2048], buffer3[4096];
+    spdk_buffer sbuf1(buffer1, 1024);
+    spdk_buffer sbuf2(buffer2, 2048);
+    spdk_buffer sbuf3(buffer3, 4096);
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    iovecs iovs = bl.to_iovec();
+    FB_ASSERT_EQ(iovs.size(), 3);
+}
+
+FB_TEST(buffer_list_to_iovec_advanced, zero_length) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    iovecs iovs = bl.to_iovec(0, 0);
+    FB_ASSERT_TRUE(iovs.empty());
+}
+
+// ============================================================================
 // Test Suite: xattr_val_type_operations (Xattr Val Type Operations Tests)
 // ============================================================================
 
