@@ -4373,3 +4373,230 @@ FB_TEST(context_structures_sizes, rblob_md_ctx_size) {
 FB_TEST(context_structures_sizes, rblob_trim_ctx_size) {
     FB_ASSERT_TRUE(sizeof(rblob_trim_ctx) > 0);
 }
+
+// ============================================================================
+// Test Suite: serialization_roundtrip (Serialization Roundtrip Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization_roundtrip) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization_roundtrip) {
+    // Setup code here
+}
+
+FB_TEST(serialization_roundtrip, fixed32_multiple) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    uint32_t vals[] = {0, 1, 127, 255, 65535, 0x12345678, 0xFFFFFFFF};
+    for (auto v : vals) {
+        sbuf.reset();
+        PutFixed32(sbuf, v);
+        sbuf.reset();
+        uint32_t out = 0;
+        GetFixed32(sbuf, out);
+        FB_ASSERT_EQ(out, v);
+    }
+}
+
+FB_TEST(serialization_roundtrip, fixed64_multiple) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    uint64_t vals[] = {0, 1, 0x123456789ABCDEF0ULL, 0xFFFFFFFFFFFFFFFFULL};
+    for (auto v : vals) {
+        sbuf.reset();
+        PutFixed64(sbuf, v);
+        sbuf.reset();
+        uint64_t out = 0;
+        GetFixed64(sbuf, out);
+        FB_ASSERT_EQ(out, v);
+    }
+}
+
+FB_TEST(serialization_roundtrip, string_multiple) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    std::string vals[] = {"", "a", "hello", "hello world", std::string(100, 'x')};
+    for (const auto& v : vals) {
+        sbuf.reset();
+        PutString(sbuf, v);
+        sbuf.reset();
+        std::string out;
+        GetString(sbuf, out);
+        FB_ASSERT_EQ(out, v);
+    }
+}
+
+FB_TEST(serialization_roundtrip, opt_string_multiple) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    {
+        std::optional<std::string> val = "test";
+        sbuf.reset();
+        PutOptString(sbuf, val);
+        sbuf.reset();
+        std::optional<std::string> out;
+        GetOptString(sbuf, out);
+        FB_ASSERT_TRUE(out.has_value());
+        FB_ASSERT_EQ(*out, "test");
+    }
+    {
+        std::optional<std::string> val = std::nullopt;
+        sbuf.reset();
+        PutOptString(sbuf, val);
+        sbuf.reset();
+        std::optional<std::string> out = "dummy";
+        GetOptString(sbuf, out);
+        FB_ASSERT_FALSE(out.has_value());
+    }
+}
+
+FB_TEST(serialization_roundtrip, mixed_sequence) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+
+    PutFixed32(sbuf, 0xAA);
+    PutFixed64(sbuf, 0xBB);
+    PutString(sbuf, "mixed");
+    PutFixed32(sbuf, 0xCC);
+
+    sbuf.reset();
+
+    uint32_t v32a, v32c;
+    uint64_t v64;
+    std::string str;
+
+    GetFixed32(sbuf, v32a);
+    GetFixed64(sbuf, v64);
+    GetString(sbuf, str);
+    GetFixed32(sbuf, v32c);
+
+    FB_ASSERT_EQ(v32a, 0xAA);
+    FB_ASSERT_EQ(v64, 0xBB);
+    FB_ASSERT_EQ(str, "mixed");
+    FB_ASSERT_EQ(v32c, 0xCC);
+}
+
+// ============================================================================
+// Test Suite: log_entry_operations (Log Entry Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_entry_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_entry_operations) {
+    // Setup code here
+}
+
+FB_TEST(log_entry_operations, entry_with_data) {
+    log_entry_t entry;
+    entry.term_id = 5;
+    entry.index = 100;
+    entry.size = 1024;
+    entry.type = 1;
+
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    entry.data.append_buffer(sbuf);
+
+    FB_ASSERT_EQ(entry.data.bytes(), 1024);
+}
+
+FB_TEST(log_entry_operations, entry_with_meta) {
+    log_entry_t entry;
+    entry.meta = R"({"key":"value"})";
+    FB_ASSERT_TRUE(!entry.meta.empty());
+    FB_ASSERT_TRUE(entry.meta.find("key") != std::string::npos);
+}
+
+FB_TEST(log_entry_operations, entry_copy) {
+    log_entry_t entry1;
+    entry1.term_id = 1;
+    entry1.index = 100;
+    entry1.meta = "test_meta";
+
+    log_entry_t entry2 = entry1;
+    FB_ASSERT_EQ(entry2.term_id, 1);
+    FB_ASSERT_EQ(entry2.index, 100);
+    FB_ASSERT_EQ(entry2.meta, "test_meta");
+}
+
+FB_TEST(log_entry_operations, entry_vector) {
+    std::vector<log_entry_t> entries;
+    for (int i = 0; i < 5; i++) {
+        log_entry_t entry;
+        entry.index = i * 10;
+        entries.push_back(entry);
+    }
+
+    FB_ASSERT_EQ(entries.size(), 5);
+    FB_ASSERT_EQ(entries[2].index, 20);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_encoder_operations (Buffer List Encoder Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_encoder_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_encoder_operations) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_encoder_operations, encoder_remain_tracking) {
+    char buffer[128];
+    spdk_buffer sbuf(buffer, 128);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    FB_ASSERT_EQ(encoder.remain(), 128);
+
+    encoder.put(1ULL);
+    FB_ASSERT_EQ(encoder.remain(), 120);
+}
+
+FB_TEST(buffer_list_encoder_operations, encoder_used_tracking) {
+    char buffer[128];
+    spdk_buffer sbuf(buffer, 128);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    FB_ASSERT_EQ(encoder.used(), 0);
+
+    encoder.put(1ULL);
+    FB_ASSERT_EQ(encoder.used(), 8);
+}
+
+FB_TEST(buffer_list_encoder_operations, encoder_bytes_total) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    FB_ASSERT_EQ(encoder.bytes(), 256);
+}
+
+FB_TEST(buffer_list_encoder_operations, put_multiple_uint64) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    for (uint64_t i = 0; i < 10; i++) {
+        bool ok = encoder.put(i);
+        FB_ASSERT_TRUE(ok);
+    }
+    FB_ASSERT_EQ(encoder.used(), 80);
+}
