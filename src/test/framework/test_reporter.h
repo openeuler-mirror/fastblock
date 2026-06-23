@@ -248,11 +248,19 @@ public:
             int suite_count = _suite_counts[suite_name];
             int suite_failures = _suite_failures[suite_name];
 
+            // Count actual skipped tests in this suite
+            int suite_skipped = 0;
+            for (const auto& test : tests) {
+                if (test.status == test_status::SKIPPED) {
+                    suite_skipped++;
+                }
+            }
+
             _xml << "\n  <testsuite name=\"" << suite_name << "\" ";
             _xml << "tests=\"" << suite_count << "\" ";
             _xml << "failures=\"" << suite_failures << "\" ";
             _xml << "errors=\"0\" ";
-            _xml << "skipped=\"" << (suite_count - tests.size() + suite_failures) << "\" ";
+            _xml << "skipped=\"" << suite_skipped << "\" ";
             _xml << "time=\"" << std::fixed << std::setprecision(3) << suite_time << "\">";
 
             for (const auto& test : tests) {
