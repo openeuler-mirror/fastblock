@@ -20291,3 +20291,116 @@ FB_TEST(buffer_list_iterator_operations, empty_list_iterator) {
     }
     FB_ASSERT_EQ(count, 0);
 }
+
+// ============================================================================
+// Test Suite: buffer_list_splice_operations (Buffer List Splice Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_splice_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_splice_operations) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_list_splice_operations, splice_single_buffer) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl1, bl2;
+    bl1.append_buffer(sbuf1);
+    bl2.append_buffer(sbuf2);
+
+    bl1.append_buffer(bl2);
+
+    FB_ASSERT_EQ(bl1.bytes(), 300);
+    FB_ASSERT_EQ(bl2.bytes(), 0);
+    FB_ASSERT_TRUE(bl2.empty());
+}
+
+FB_TEST(buffer_list_splice_operations, splice_preserves_order) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl1, bl2;
+    bl1.append_buffer(sbuf1);
+    bl2.append_buffer(sbuf2);
+    bl2.append_buffer(sbuf3);
+
+    bl1.append_buffer(bl2);
+
+    FB_ASSERT_EQ(bl1.bytes(), 600);
+    auto it = bl1.begin();
+    FB_ASSERT_EQ(it->size(), 100);
+    ++it;
+    FB_ASSERT_EQ(it->size(), 200);
+    ++it;
+    FB_ASSERT_EQ(it->size(), 300);
+}
+
+// ============================================================================
+// Test Suite: serialization_varint_patterns (Serialization Varint Patterns Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization_varint_patterns) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization_varint_patterns) {
+    // Teardown code here
+}
+
+FB_TEST(serialization_varint_patterns, fixed32_various_values) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    uint32_t patterns[] = {0, 1, 127, 128, 255, 256, 65535, 65536, 0xFFFFFFFF};
+    for (auto pattern : patterns) {
+        sbuf.reset();
+        PutFixed64(sbuf, pattern);
+        sbuf.reset();
+        uint64_t out = 0;
+        GetFixed64(sbuf, out);
+        FB_ASSERT_EQ(out, pattern);
+    }
+}
+
+FB_TEST(serialization_varint_patterns, string_roundtrip_various_lengths) {
+    char buffer[8192];
+    spdk_buffer sbuf(buffer, 8192);
+
+    std::vector<std::string> test_strings = {"", "a", "ab", "abc", "hello", std::string(100, 'x'), std::string(1000, 't')};
+    for (const auto& s : test_strings) {
+        sbuf.reset();
+        PutString(sbuf, s);
+        sbuf.reset();
+        std::string out;
+        GetString(sbuf, out);
+        FB_ASSERT_EQ(out, s);
+    }
+}
+
+FB_TEST(serialization_varint_patterns, mixed_operations_stress) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+
+    for (int i = 0; i < 50; i++) {
+        PutFixed32(sbuf, i);
+        PutFixed64(sbuf, i * 1000ULL);
+    }
+
+    sbuf.reset();
+
+    for (int i = 0; i < 50; i++) {
+        uint32_t v32 = 0;
+        uint64_t v64 = 0;
+        GetFixed32(sbuf, v32);
+        GetFixed64(sbuf, v64);
+        FB_ASSERT_EQ(v32, i);
+        FB_ASSERT_EQ(v64, i * 1000ULL);
+    }
+}
