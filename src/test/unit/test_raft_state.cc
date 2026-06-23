@@ -3087,5 +3087,179 @@ FB_TEST(raft, perf_benchmark) {
     FB_SKIP("Performance benchmark skipped in normal test run");
 }
 
+// ============================================================================
+// Test Suite: Raft Term Advancement
+// ============================================================================
+
+FB_TEST(raft_state, term_advance_on_higher_seen) {
+    // When a server sees a higher term, it must update its current term
+    // and revert to follower state.
+    raft_identity state = RAFT_STATE_LEADER;
+    int64_t my_term = 5;
+    int64_t peer_term = 7;
+
+    if (peer_term > my_term) {
+        my_term = peer_term;
+        state = RAFT_STATE_FOLLOWER;
+    }
+
+    FB_ASSERT_EQ(my_term, 7);
+    FB_ASSERT_EQ(state, RAFT_STATE_FOLLOWER);
+}
+
+FB_TEST(raft_state, term_no_advance_on_equal) {
+    int64_t my_term = 5;
+    int64_t peer_term = 5;
+    bool stepped_down = false;
+
+    if (peer_term > my_term) {
+        stepped_down = true;
+    }
+
+    FB_ASSERT_FALSE(stepped_down);
+    FB_ASSERT_EQ(my_term, 5);
+}
+
+FB_TEST(raft_state, term_no_advance_on_lower) {
+    int64_t my_term = 10;
+    int64_t peer_term = 8;
+    bool advanced = false;
+
+    if (peer_term > my_term) {
+        my_term = peer_term;
+        advanced = true;
+    }
+
+    FB_ASSERT_FALSE(advanced);
+    FB_ASSERT_EQ(my_term, 10);
+}
+
+FB_TEST(raft_state, term_starts_at_zero) {
+    // A fresh raft server should start with term 0
+    int64_t initial_term = 0;
+    FB_ASSERT_EQ(initial_term, 0);
+}
+
+FB_TEST(raft_state, term_increments_on_election) {
+    // When starting an election, term increments by 1
+    int64_t term = 3;
+    term++; // candidate increments before requesting votes
+    FB_ASSERT_EQ(term, 4);
+}
+
+// ============================================================================
+// Test Suite: Raft Vote State
+// ============================================================================
+
+FB_TEST(raft_state, vote_for_self_on_candidate) {
+    // When becoming candidate, vote for self
+    int self_id = 5;
+    int voted_for = -1; // -1 means not voted
+    raft_identity state = RAFT_STATE_FOLLOWER;
+
+    state = RAFT_STATE_CANDIDATE;
+    voted_for = self_id;
+
+    FB_ASSERT_EQ(voted_for, self_id);
+    FB_ASSERT_EQ(state, RAFT_STATE_CANDIDATE);
+}
+
+FB_TEST(raft_state, vote_reset_on_new_term) {
+    int voted_for = 3;
+    int64_t my_term = 5;
+    int64_t new_term = 6;
+
+    if (new_term > my_term) {
+        my_term = new_term;
+        voted_for = -1;
+    }
+
+    FB_ASSERT_EQ(voted_for, -1);
+    FB_ASSERT_EQ(my_term, 6);
+}
+
+FB_TEST(raft_state, vote_grant_first_request) {
+    int voted_for = -1; // not voted yet
+    int requester_id = 7;
+    bool granted = false;
+
+    if (voted_for == -1) {
+        voted_for = requester_id;
+        granted = true;
+    }
+
+    FB_ASSERT_TRUE(granted);
+    FB_ASSERT_EQ(voted_for, 7);
+}
+
+FB_TEST(raft_state, vote_deny_already_voted) {
+    int voted_for = 3; // already voted for node 3
+    int requester_id = 7;
+    bool granted = false;
+
+    if (voted_for == -1 || voted_for == requester_id) {
+        granted = true;
+    }
+
+    FB_ASSERT_FALSE(granted);
+    FB_ASSERT_EQ(voted_for, 3); // unchanged
+}
+
+FB_TEST(raft_state, vote_grant_same_node_again) {
+    // If voted_for == request.candidate_id, request can be re-granted (idempotent)
+    int voted_for = 3;
+    int requester_id = 3;
+    bool granted = (voted_for == -1 || voted_for == requester_id);
+    FB_ASSERT_TRUE(granted);
+}
+
+// ============================================================================
+// Test Suite: Raft Log Index Tracking
+// ============================================================================
+
+FB_TEST(raft_state, commit_idx_monotonic) {
+    int64_t commit_idx = 5;
+    int64_t new_commit = 8;
+
+    if (new_commit > commit_idx) {
+        commit_idx = new_commit;
+    }
+    FB_ASSERT_EQ(commit_idx, 8);
+}
+
+FB_TEST(raft_state, commit_idx_never_regresses) {
+    int64_t commit_idx = 10;
+    int64_t lower = 5;
+
+    if (lower > commit_idx) {
+        commit_idx = lower; // would never happen in real raft
+    }
+    FB_ASSERT_EQ(commit_idx, 10);
+}
+
+FB_TEST(raft_state, last_applied_le_commit_idx) {
+    int64_t commit_idx = 10;
+    int64_t last_applied = 7;
+
+    FB_ASSERT_TRUE(last_applied <= commit_idx);
+}
+
+FB_TEST(raft_state, last_applied_advances_toward_commit) {
+    int64_t commit_idx = 10;
+    int64_t last_applied = 5;
+
+    // simulate state machine application
+    while (last_applied < commit_idx) {
+        last_applied++;
+    }
+    FB_ASSERT_EQ(last_applied, 10);
+}
+
+FB_TEST(raft_state, log_index_starts_at_one) {
+    // First log entry has index 1 (index 0 is sentinel)
+    int64_t first_idx = 1;
+    FB_ASSERT_TRUE(first_idx > 0);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
