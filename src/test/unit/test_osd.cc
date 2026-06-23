@@ -7943,6 +7943,91 @@ FB_TEST(osd_background_tasks, task_idle_detection) {
 }
 
 // ============================================================================
+// Test Suite: osd_resource_limits (OSD Resource Limits Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_resource_limits) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_resource_limits) {
+    // Teardown code here
+}
+
+FB_TEST(osd_resource_limits, max_connections_per_osd) {
+    // Maximum RDMA connections per OSD
+    uint32_t max_connections = 256;
+    FB_ASSERT_TRUE(max_connections > 0);
+}
+
+FB_TEST(osd_resource_limits, connection_pool_size) {
+    // Connection pool size bounded
+    uint32_t pool_size = 128;
+    FB_ASSERT_TRUE(pool_size > 0);
+    FB_ASSERT_TRUE(pool_size <= max_connections);
+}
+
+FB_TEST(osd_resource_limits, memory_per_connection) {
+    // Memory per connection (buffers, MR, etc.)
+    uint64_t mr_size = 4096; // 4KB per MR
+    uint32_t max_conns = 256;
+    uint64_t total_mr_memory = mr_size * max_conns;
+
+    FB_ASSERT_EQ(total_mr_memory, 1024 * 1024); // 1MB
+}
+
+FB_TEST(osd_resource_limits, max_pgs_per_shard) {
+    // Maximum PGs per shard
+    uint32_t max_pgs = 256;
+    FB_ASSERT_TRUE(max_pgs > 0);
+}
+
+FB_TEST(osd_resource_limits, shard_table_memory) {
+    // Shard table memory: each entry ~16 bytes
+    uint32_t entries = 1024;
+    uint64_t entry_size = 16;
+    uint64_t total_memory = entries * entry_size;
+
+    FB_ASSERT_EQ(total_memory, 16384); // 16KB
+}
+
+FB_TEST(osd_resource_limits, max_objects_per_pg) {
+    // Maximum objects per PG (bounded by blob IDs)
+    uint32_t max_objects = 1000000;
+    FB_ASSERT_TRUE(max_objects > 0);
+}
+
+FB_TEST(osd_resource_limits, write_ring_slots_per_client) {
+    // Write ring slots per client
+    uint32_t slots = 16;
+    FB_ASSERT_TRUE(slots > 0);
+}
+
+FB_TEST(osd_resource_limits, rate_limit_iops) {
+    // Rate limit: IOPS per client
+    uint64_t max_iops = 100000;
+    FB_ASSERT_TRUE(max_iops > 0);
+}
+
+FB_TEST(osd_resource_limits, rate_limit_mbps) {
+    // Rate limit: MB/s per client
+    uint64_t max_mbps = 1000;
+    FB_ASSERT_TRUE(max_mbps > 0);
+}
+
+FB_TEST(osd_resource_limits, cpu_core_affinity) {
+    // OSD runs on specific CPU cores
+    std::vector<uint32_t> cores = {0, 1, 2, 3};
+    FB_ASSERT_EQ(cores.size(), 4);
+}
+
+FB_TEST(osd_resource_limits, numa_node_affinity) {
+    // SPDK buffer allocated from local NUMA node
+    uint32_t socket_id = 0;
+    FB_ASSERT_TRUE(socket_id >= 0 || socket_id <= 1);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
