@@ -4759,3 +4759,248 @@ FB_TEST(cluster_calculations, cluster_alignment) {
     uint64_t cluster_size = 1_MB;
     FB_ASSERT_EQ(cluster_size % 4096, 0);
 }
+
+// ============================================================================
+// Test Suite: endian_encoding (Endian Encoding Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(endian_encoding) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(endian_encoding) {
+    // Setup code here
+}
+
+FB_TEST(endian_encoding, fixed32_roundtrip) {
+    char buffer[8];
+    spdk_buffer sbuf(buffer, 8);
+
+    uint32_t original = 0x12345678;
+    PutFixed32(sbuf, original);
+
+    sbuf.reset();
+    uint32_t decoded;
+    GetFixed32(sbuf, decoded);
+
+    FB_ASSERT_EQ(decoded, original);
+}
+
+FB_TEST(endian_encoding, fixed64_roundtrip) {
+    char buffer[16];
+    spdk_buffer sbuf(buffer, 16);
+
+    uint64_t original = 0xDEADBEEFCAFEBABEULL;
+    PutFixed64(sbuf, original);
+
+    sbuf.reset();
+    uint64_t decoded;
+    GetFixed64(sbuf, decoded);
+
+    FB_ASSERT_EQ(decoded, original);
+}
+
+FB_TEST(endian_encoding, string_preserves_data) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    std::string original = "Hello, World! 测试数据";
+    PutString(sbuf, original);
+
+    sbuf.reset();
+    std::string decoded;
+    GetString(sbuf, decoded);
+
+    FB_ASSERT_EQ(decoded, original);
+}
+
+FB_TEST(endian_encoding, zero_values) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+
+    PutFixed32(sbuf, 0);
+    PutFixed64(sbuf, 0);
+
+    sbuf.reset();
+
+    uint32_t v32;
+    uint64_t v64;
+    GetFixed32(sbuf, v32);
+    GetFixed64(sbuf, v64);
+
+    FB_ASSERT_EQ(v32, 0);
+    FB_ASSERT_EQ(v64, 0);
+}
+
+FB_TEST(endian_encoding, max_values) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+
+    PutFixed32(sbuf, 0xFFFFFFFF);
+    PutFixed64(sbuf, 0xFFFFFFFFFFFFFFFFULL);
+
+    sbuf.reset();
+
+    uint32_t v32;
+    uint64_t v64;
+    GetFixed32(sbuf, v32);
+    GetFixed64(sbuf, v64);
+
+    FB_ASSERT_EQ(v32, 0xFFFFFFFF);
+    FB_ASSERT_EQ(v64, 0xFFFFFFFFFFFFFFFFULL);
+}
+
+// ============================================================================
+// Test Suite: callback_invocation (Callback Invocation Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(callback_invocation) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(callback_invocation) {
+    // Setup code here
+}
+
+FB_TEST(callback_invocation, simple_callback) {
+    int value = 0;
+    auto cb = [&value](void*, int err) { value = err; };
+    cb(nullptr, 42);
+    FB_ASSERT_EQ(value, 42);
+}
+
+FB_TEST(callback_invocation, callback_with_arg) {
+    int result = 0;
+    auto cb = [](void* arg, int err) {
+        int* out = static_cast<int*>(arg);
+        *out = err;
+    };
+    cb(&result, 100);
+    FB_ASSERT_EQ(result, 100);
+}
+
+FB_TEST(callback_invocation, log_op_callback) {
+    int called = 0;
+    log_op_complete cb = [&called](void*, int) { called++; };
+    cb(nullptr, 0);
+    FB_ASSERT_EQ(called, 1);
+}
+
+FB_TEST(callback_invocation, kvstore_rw_callback) {
+    int error_code = 0;
+    kvstore_rw_complete cb = [&error_code](void*, int err) { error_code = err; };
+    cb(nullptr, -EINVAL);
+    FB_ASSERT_EQ(error_code, -EINVAL);
+}
+
+// ============================================================================
+// Test Suite: op_structure_operations (Op Structure Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(op_structure_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(op_structure_operations) {
+    // Setup code here
+}
+
+FB_TEST(op_structure_operations, create_op) {
+    op operation;
+    operation.key = "test_key";
+    operation.value = "test_value";
+
+    FB_ASSERT_EQ(operation.key, "test_key");
+    FB_ASSERT_TRUE(operation.value.has_value());
+    FB_ASSERT_EQ(*operation.value, "test_value");
+}
+
+FB_TEST(op_structure_operations, delete_op) {
+    op operation;
+    operation.key = "delete_key";
+    operation.value = std::nullopt;
+
+    FB_ASSERT_EQ(operation.key, "delete_key");
+    FB_ASSERT_FALSE(operation.value.has_value());
+}
+
+FB_TEST(op_structure_operations, op_in_vector) {
+    std::vector<op> ops;
+
+    op op1, op2;
+    op1.key = "key1";
+    op1.value = "value1";
+    op2.key = "key2";
+    op2.value = std::nullopt;
+
+    ops.push_back(op1);
+    ops.push_back(op2);
+
+    FB_ASSERT_EQ(ops.size(), 2);
+    FB_ASSERT_TRUE(ops[0].value.has_value());
+    FB_ASSERT_FALSE(ops[1].value.has_value());
+}
+
+FB_TEST(op_structure_operations, op_key_length) {
+    op operation;
+    operation.key = std::string(256, 'k');
+    FB_ASSERT_EQ(operation.key.length(), 256);
+}
+
+// ============================================================================
+// Test Suite: buffer_operations_advanced (Buffer Operations Advanced Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_operations_advanced) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_operations_advanced) {
+    // Setup code here
+}
+
+FB_TEST(buffer_operations_advanced, buffer_list_multiple_append) {
+    char buffer1[256], buffer2[512], buffer3[1024];
+    spdk_buffer sbuf1(buffer1, 256);
+    spdk_buffer sbuf2(buffer2, 512);
+    spdk_buffer sbuf3(buffer3, 1024);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    FB_ASSERT_EQ(bl.bytes(), 1792);
+}
+
+FB_TEST(buffer_operations_advanced, buffer_list_prepend_sequence) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.prepend_buffer(sbuf2);
+    bl.prepend_buffer(sbuf3);
+
+    FB_ASSERT_EQ(bl.bytes(), 600);
+}
+
+FB_TEST(buffer_operations_advanced, buffer_list_trim_sequence) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    bl.trim_front();
+    FB_ASSERT_EQ(bl.bytes(), 500);
+
+    bl.trim_back();
+    FB_ASSERT_EQ(bl.bytes(), 200);
+}
