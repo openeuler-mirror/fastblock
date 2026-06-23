@@ -8959,6 +8959,260 @@ FB_TEST(comprehensive_final_tests, log_init_final_check) {
 }
 
 // ============================================================================
+// Test Suite: edge_case_buffer_tests (Edge Case Buffer Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(edge_case_buffer_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(edge_case_buffer_tests) {
+    // Setup code here
+}
+
+FB_TEST(edge_case_buffer_tests, buffer_size_one) {
+    char buffer[1];
+    spdk_buffer sbuf(buffer, 1);
+    FB_ASSERT_EQ(sbuf.size(), 1);
+    FB_ASSERT_EQ(sbuf.remain(), 1);
+
+    size_t written = sbuf.append("a", 1);
+    FB_ASSERT_EQ(written, 1);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
+FB_TEST(edge_case_buffer_tests, buffer_append_byte_by_byte) {
+    char buffer[10];
+    spdk_buffer sbuf(buffer, 10);
+
+    for (int i = 0; i < 10; i++) {
+        sbuf.append("x", 1);
+    }
+    FB_ASSERT_EQ(sbuf.used(), 10);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
+FB_TEST(edge_case_buffer_tests, buffer_reset_many_times) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    for (int i = 0; i < 50; i++) {
+        sbuf.inc(50);
+        FB_ASSERT_EQ(sbuf.used(), 50);
+        sbuf.reset();
+        FB_ASSERT_EQ(sbuf.used(), 0);
+    }
+}
+
+// ============================================================================
+// Test Suite: edge_case_list_tests (Edge Case List Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(edge_case_list_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(edge_case_list_tests) {
+    // Setup code here
+}
+
+FB_TEST(edge_case_list_tests, list_append_prepend_alternating) {
+    char buffers[10][100];
+    buffer_list bl;
+
+    for (int i = 0; i < 5; i++) {
+        spdk_buffer sbuf_append(buffers[i*2], 100);
+        spdk_buffer sbuf_prepend(buffers[i*2+1], 100);
+        bl.append_buffer(sbuf_append);
+        bl.prepend_buffer(sbuf_prepend);
+    }
+    FB_ASSERT_EQ(bl.bytes(), 1000);
+}
+
+FB_TEST(edge_case_list_tests, list_pop_then_append) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+
+    bl.pop_front();
+    FB_ASSERT_TRUE(bl.empty());
+
+    bl.append_buffer(sbuf2);
+    FB_ASSERT_EQ(bl.bytes(), 200);
+}
+
+FB_TEST(edge_case_list_tests, list_trim_front_then_back) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    bl.trim_front();
+    bl.trim_back();
+    FB_ASSERT_EQ(bl.bytes(), 200);
+}
+
+// ============================================================================
+// Test Suite: edge_case_serialization_tests (Edge Case Serialization Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(edge_case_serialization_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(edge_case_serialization_tests) {
+    // Setup code here
+}
+
+FB_TEST(edge_case_serialization_tests, string_with_special_chars) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    std::string original = "hello\tworld\n!@#$%^&*()";
+    PutString(sbuf, original);
+    sbuf.reset();
+
+    std::string decoded;
+    GetString(sbuf, decoded);
+    FB_ASSERT_EQ(decoded, original);
+}
+
+FB_TEST(edge_case_serialization_tests, string_single_char) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    PutString(sbuf, "a");
+    sbuf.reset();
+
+    std::string decoded;
+    GetString(sbuf, decoded);
+    FB_ASSERT_EQ(decoded, "a");
+}
+
+FB_TEST(edge_case_serialization_tests, opt_string_toggle) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    std::optional<std::string> val1 = "present";
+    std::optional<std::string> val2 = std::nullopt;
+
+    PutOptString(sbuf, val1);
+    PutOptString(sbuf, val2);
+
+    sbuf.reset();
+
+    std::optional<std::string> out1, out2;
+    GetOptString(sbuf, out1);
+    GetOptString(sbuf, out2);
+
+    FB_ASSERT_TRUE(out1.has_value());
+    FB_ASSERT_EQ(*out1, "present");
+    FB_ASSERT_FALSE(out2.has_value());
+}
+
+// ============================================================================
+// Test Suite: edge_case_log_tests (Edge Case Log Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(edge_case_log_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(edge_case_log_tests) {
+    // Setup code here
+}
+
+FB_TEST(edge_case_log_tests, entry_zero_term_index) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    log_entry_t entry;
+    entry.term_id = 0;
+    entry.index = 0;
+    entry.size = 0;
+    entry.type = 0;
+    entry.meta = "";
+
+    EncodeLogHeader(sbuf, entry);
+    sbuf.reset();
+
+    log_entry_t out;
+    DecodeLogHeader(sbuf, out);
+
+    FB_ASSERT_EQ(out.term_id, 0);
+    FB_ASSERT_EQ(out.index, 0);
+}
+
+FB_TEST(edge_case_log_tests, entry_max_values) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    log_entry_t entry;
+    entry.term_id = UINT64_MAX;
+    entry.index = UINT64_MAX;
+    entry.size = UINT64_MAX;
+    entry.type = UINT64_MAX;
+    entry.meta = "max";
+
+    EncodeLogHeader(sbuf, entry);
+    sbuf.reset();
+
+    log_entry_t out;
+    DecodeLogHeader(sbuf, out);
+
+    FB_ASSERT_EQ(out.term_id, UINT64_MAX);
+    FB_ASSERT_EQ(out.index, UINT64_MAX);
+}
+
+// ============================================================================
+// Test Suite: edge_case_iovec_tests (Edge Case Iovec Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(edge_case_iovec_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(edge_case_iovec_tests) {
+    // Setup code here
+}
+
+FB_TEST(edge_case_iovec_tests, buffer_list_to_iovec_zero_len) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    iovecs iovs = bl.to_iovec(0, 0);
+    FB_ASSERT_TRUE(iovs.empty());
+}
+
+FB_TEST(edge_case_iovec_tests, buffer_list_to_iovec_exact_end) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    iovecs iovs = bl.to_iovec(0, 100);
+    FB_ASSERT_EQ(iovs.size(), 1);
+}
+
+FB_TEST(edge_case_iovec_tests, buffer_list_to_iovec_start_at_end) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    iovecs iovs = bl.to_iovec(100, 0);
+    FB_ASSERT_TRUE(iovs.empty());
+}
+
+// ============================================================================
 // Test Suite: xattr_val_type_operations (Xattr Val Type Operations Tests)
 // ============================================================================
 
