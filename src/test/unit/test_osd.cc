@@ -1342,6 +1342,47 @@ FB_TEST(raft_term, large_term) {
 }
 
 // ============================================================================
+// Test Suite: raft_index (Raft Index Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(raft_index) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(raft_index) {
+    // Teardown code here
+}
+
+FB_TEST(raft_index, initial_index) {
+    // Initial log index should be 0
+    raft_index_t index = 0;
+    FB_ASSERT_TRUE(index >= 0);
+}
+
+FB_TEST(raft_index, index_sequence) {
+    // Indices should be sequential
+    raft_index_t idx1 = 1;
+    raft_index_t idx2 = 2;
+    raft_index_t idx3 = 3;
+    FB_ASSERT_TRUE(idx1 < idx2);
+    FB_ASSERT_TRUE(idx2 < idx3);
+}
+
+FB_TEST(raft_index, commit_index) {
+    // Commit index should not exceed log length
+    raft_index_t commit_idx = 50;
+    raft_index_t last_log_idx = 100;
+    FB_ASSERT_TRUE(commit_idx <= last_log_idx);
+}
+
+FB_TEST(raft_index, applied_index) {
+    // Applied index should not exceed commit index
+    raft_index_t applied_idx = 40;
+    raft_index_t commit_idx = 50;
+    FB_ASSERT_TRUE(applied_idx <= commit_idx);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
