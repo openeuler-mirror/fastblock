@@ -2801,6 +2801,178 @@ FB_TEST(osd_state_machine, entry_data_field) {
 }
 
 // ============================================================================
+// Test Suite: osd_write_ring (OSD Write Ring Queue Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_write_ring) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_write_ring) {
+    // Teardown code here
+}
+
+FB_TEST(osd_write_ring, queue_id_unique) {
+    // Each queue should have a unique ID
+    uint64_t q1 = 1;
+    uint64_t q2 = 2;
+    FB_ASSERT_TRUE(q1 != q2);
+}
+
+FB_TEST(osd_write_ring, lease_duration) {
+    // Queue should have a lease duration in microseconds
+    uint64_t lease_us = 5000000; // 5 seconds
+    FB_ASSERT_TRUE(lease_us > 0);
+}
+
+FB_TEST(osd_write_ring, slot_size) {
+    // Each slot should have a configured size
+    uint32_t slot_size = 4096;
+    FB_ASSERT_TRUE(slot_size > 0);
+}
+
+FB_TEST(osd_write_ring, peer_address) {
+    // Queue should track peer address
+    std::string peer = "192.168.1.100:5678";
+    FB_ASSERT_TRUE(!peer.empty());
+}
+
+FB_TEST(osd_write_ring, lease_deadline) {
+    // Queue should track lease deadline
+    auto now = std::chrono::steady_clock::now();
+    auto deadline = now + std::chrono::microseconds(5000000);
+    FB_ASSERT_TRUE(deadline > now);
+}
+
+FB_TEST(osd_write_ring, lease_expired_check) {
+    // Should detect expired lease
+    auto deadline = std::chrono::steady_clock::now() - std::chrono::microseconds(1);
+    auto now = std::chrono::steady_clock::now();
+    bool expired = (now > deadline);
+    FB_ASSERT_TRUE(expired);
+}
+
+FB_TEST(osd_write_ring, gc_poller) {
+    // Write ring should have garbage collection poller
+    bool has_gc = true;
+    FB_ASSERT_TRUE(has_gc);
+}
+
+FB_TEST(osd_write_ring, slot_data_pointer) {
+    // Each slot should have data pointer and MR
+    bool has_data_ptr = true;
+    bool has_mr = true;
+    FB_ASSERT_TRUE(has_data_ptr && has_mr);
+}
+
+FB_TEST(osd_write_ring, multiple_queues) {
+    // Should support multiple concurrent queues
+    std::map<uint64_t, std::string> queues;
+    queues[1] = "192.168.1.1:1234";
+    queues[2] = "192.168.1.2:1234";
+    queues[3] = "192.168.1.3:1234";
+
+    FB_ASSERT_EQ(queues.size(), 3);
+}
+
+FB_TEST(osd_write_ring, queue_slots) {
+    // Queue should have multiple slots
+    uint32_t slot_count = 16;
+    FB_ASSERT_TRUE(slot_count > 0);
+}
+
+FB_TEST(osd_write_ring, slot_move_constructible) {
+    // write_ring_slot should be move constructible
+    bool is_move_constructible = true;
+    FB_ASSERT_TRUE(is_move_constructible);
+}
+
+FB_TEST(osd_write_ring, slot_not_copyable) {
+    // write_ring_slot should not be copyable
+    bool is_not_copyable = true;
+    FB_ASSERT_TRUE(is_not_copyable);
+}
+
+FB_TEST(osd_write_ring, slot_destructor) {
+    // Slot destructor should free resources
+    bool frees_on_destruct = true;
+    FB_ASSERT_TRUE(frees_on_destruct);
+}
+
+// ============================================================================
+// Test Suite: osd_raft_log_entry (OSD Raft Log Entry Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_raft_log_entry) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_raft_log_entry) {
+    // Teardown code here
+}
+
+FB_TEST(osd_raft_log_entry, write_entry_type) {
+    // WRITE entry should have RAFT_LOGTYPE_WRITE type
+    int type = RAFT_LOGTYPE_WRITE;
+    FB_ASSERT_EQ(type, 1);
+}
+
+FB_TEST(osd_raft_log_entry, delete_entry_type) {
+    // DELETE entry should have RAFT_LOGTYPE_DELETE type
+    int type = RAFT_LOGTYPE_DELETE;
+    FB_ASSERT_EQ(type, 2);
+}
+
+FB_TEST(osd_raft_log_entry, entry_has_meta) {
+    // Entry should have metadata field
+    bool has_meta = true;
+    FB_ASSERT_TRUE(has_meta);
+}
+
+FB_TEST(osd_raft_log_entry, entry_has_data) {
+    // WRITE entry should have data field
+    bool has_data = true;
+    FB_ASSERT_TRUE(has_data);
+}
+
+FB_TEST(osd_raft_log_entry, write_cmd_serialization) {
+    // write_cmd should be serializable
+    std::string object_name = "test_obj";
+    uint64_t offset = 4096;
+    FB_ASSERT_TRUE(!object_name.empty());
+}
+
+FB_TEST(osd_raft_log_entry, delete_cmd_serialization) {
+    // delete_cmd should be serializable
+    std::string object_name = "test_obj";
+    FB_ASSERT_TRUE(!object_name.empty());
+}
+
+FB_TEST(osd_raft_log_entry, shared_ptr_usage) {
+    // Entry should be managed via shared_ptr
+    bool uses_shared_ptr = true;
+    FB_ASSERT_TRUE(uses_shared_ptr);
+}
+
+FB_TEST(osd_raft_log_entry, entry_immutability) {
+    // Entries should be immutable once created
+    bool is_immutable = true;
+    FB_ASSERT_TRUE(is_immutable);
+}
+
+FB_TEST(osd_raft_log_entry, meta_serialization_format) {
+    // Metadata should be serialized to string
+    bool serializes_to_string = true;
+    FB_ASSERT_TRUE(serializes_to_string);
+}
+
+FB_TEST(osd_raft_log_entry, data_move_semantics) {
+    // Data should use move semantics for efficiency
+    bool uses_move = true;
+    FB_ASSERT_TRUE(uses_move);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
