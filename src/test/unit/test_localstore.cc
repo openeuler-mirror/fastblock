@@ -121,4 +121,43 @@ FB_TEST(blob_type_string, free_string) {
     FB_ASSERT_EQ(type_string(blob_type::free), "blob_type::free");
 }
 
+// ============================================================================
+// Test Suite: fb_blob (Blob Structure Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(fb_blob) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(fb_blob) {
+    // Teardown code here
+}
+
+FB_TEST(fb_blob, default_values) {
+    fb_blob blob;
+    FB_ASSERT_EQ(blob.blob, nullptr);
+    FB_ASSERT_EQ(blob.blobid, 0);
+}
+
+FB_TEST(fb_blob, initialized_values) {
+    fb_blob blob;
+    blob.blob = reinterpret_cast<struct spdk_blob*>(0x12345678);
+    blob.blobid = 12345;
+    FB_ASSERT_EQ(blob.blob, reinterpret_cast<struct spdk_blob*>(0x12345678));
+    FB_ASSERT_EQ(blob.blobid, 12345);
+}
+
+FB_TEST(fb_blob, size_check) {
+    FB_ASSERT_TRUE(sizeof(fb_blob) >= sizeof(void*) + sizeof(spdk_blob_id));
+}
+
+FB_TEST(fb_blob, assignment) {
+    fb_blob blob1;
+    blob1.blobid = 100;
+
+    fb_blob blob2;
+    blob2 = blob1;
+    FB_ASSERT_EQ(blob2.blobid, 100);
+}
+
 FB_TEST_MAIN()
