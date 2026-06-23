@@ -17884,3 +17884,133 @@ FB_TEST(log_header_codec_integrity, truncated_header_fails) {
     log_entry_t out;
     FB_ASSERT_FALSE(DecodeLogHeader(small_sbuf, out));
 }
+
+// ============================================================================
+// Test Suite: buffer_list_iovec_mapping (Buffer List Iovec Mapping Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_iovec_mapping) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_iovec_mapping) {
+    // Setup code here
+}
+
+// Test iovec generation from single buffer at different offsets
+FB_TEST(buffer_list_iovec_mapping, single_buffer_offset_variations) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    // Test various offset/length combinations
+    struct { size_t offset; size_t length; } tests[] = {
+        {0, 4096}, {0, 2048}, {0, 512}, {512, 1024}, {2048, 2048},
+        {1024, 512}, {4095, 1}
+    };
+
+    for (auto& test : tests) {
+        iovecs iovs = bl.to_iovec(test.offset, test.length);
+        FB_ASSERT_TRUE(iovs.size() >= 1);
+
+        size_t total = 0;
+        for (auto& iov : iovs) {
+            total += iov.iov_len;
+        }
+        FB_ASSERT_EQ(total, test.length);
+    }
+}
+
+// Test iovec generation spanning multiple buffers
+FB_TEST(buffer_list_iovec_mapping, multi_buffer_spanning) {
+    char buffer1[1024], buffer2[2048], buffer3[4096];
+    spdk_buffer sbuf1(buffer1, 1024);
+    spdk_buffer sbuf2(buffer2, 2048);
+    spdk_buffer sbuf3(buffer3, 4096);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    // Request range that starts in buffer1 and ends in buffer3
+    iovecs iovs = bl.to_iovec(512, 5120); // 512 from buf1 + 2048 from buf2 + 2560 from buf3
+
+    // Should span all three buffers
+    FB_ASSERT_TRUE(iovs.size() >= 2);
+
+    size_t total = 0;
+    for (auto& iov : iovs) {
+        total += iov.iov_len;
+    }
+    FB_ASSERT_EQ(total, 5120);
+}
+
+// Test edge case: request exactly at buffer boundary
+FB_TEST(buffer_list_iovec_mapping, exact_boundary) {
+    char buffer1[1024], buffer2[2048];
+    spdk_buffer sbuf1(buffer1, 1024);
+    spdk_buffer sbuf2(buffer2, 2048);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    // Request starting exactly at boundary (offset 1024)
+    iovecs iovs = bl.to_iovec(1024, 1024);
+
+    FB_ASSERT_TRUE(iovs.size() >= 1);
+
+    // Should only touch buffer2
+    size_t total = 0;
+    for (auto& iov : iovs) {
+        total += iov.iov_len;
+    }
+    FB_ASSERT_EQ(total, 1024);
+}
+
+// Test invalid requests return empty iovecs
+FB_TEST(buffer_list_iovec_mapping, invalid_requests) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    // Request beyond buffer capacity
+    iovecs iovs1 = bl.to_iovec(0, 2048);
+    FB_ASSERT_TRUE(iovs1.empty());
+
+    // Request with offset beyond total bytes
+    iovecs iovs2 = bl.to_iovec(2048, 100);
+    FB_ASSERT_TRUE(iovs2.empty());
+
+    // Request with offset + length beyond total
+    iovecs iovs3 = bl.to_iovec(512, 1024);
+    FB_ASSERT_TRUE(iovs3.empty());
+}
+
+// Test iovec generation with many small buffers
+FB_TEST(buffer_list_iovec_mapping, many_small_buffers) {
+    buffer_list bl;
+
+    // 100 buffers of 64 bytes each = 6400 total
+    char buffers[100][64];
+    for (int i = 0; i < 100; i++) {
+        spdk_buffer sbuf(buffers[i], 64);
+        bl.append_buffer(sbuf);
+    }
+
+    FB_ASSERT_EQ(bl.bytes(), 6400);
+
+    // Request range spanning many buffers
+    iovecs iovs = bl.to_iovec(320, 1280); // Starts in buffer 5, spans multiple
+
+    FB_ASSERT_TRUE(iovs.size() >= 1);
+
+    size_t total = 0;
+    for (auto& iov : iovs) {
+        total += iov.iov_len;
+    }
+    FB_ASSERT_EQ(total, 1280);
+}
