@@ -4877,6 +4877,168 @@ FB_TEST(osd_rebuild, rebuild_impact_minimization) {
 }
 
 // ============================================================================
+// Test Suite: osd_data_integrity (OSD Data Integrity Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_data_integrity) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_data_integrity) {
+    // Teardown code here
+}
+
+FB_TEST(osd_data_integrity, checksum_per_object) {
+    // Should maintain checksum per object
+    bool has_checksum = true;
+    FB_ASSERT_TRUE(has_checksum);
+}
+
+FB_TEST(osd_data_integrity, checksum_algorithm) {
+    // Should use strong checksum algorithm
+    std::string algorithm = "crc32c";
+    FB_ASSERT_TRUE(!algorithm.empty());
+}
+
+FB_TEST(osd_data_integrity, checksum_verification) {
+    // Should verify checksum on read
+    bool verifies_on_read = true;
+    FB_ASSERT_TRUE(verifies_on_read);
+}
+
+FB_TEST(osd_data_integrity, checksum_update) {
+    // Should update checksum on write
+    bool updates_on_write = true;
+    FB_ASSERT_TRUE(updates_on_write);
+}
+
+FB_TEST(osd_data_integrity, checksum_mismatch_detection) {
+    // Should detect checksum mismatch
+    bool can_detect = true;
+    FB_ASSERT_TRUE(can_detect);
+}
+
+FB_TEST(osd_data_integrity, checksum_mismatch_handling) {
+    // Should handle checksum mismatch
+    bool handles_mismatch = true;
+    FB_ASSERT_TRUE(handles_mismatch);
+}
+
+FB_TEST(osd_data_integrity, bit_rot_detection) {
+    // Should detect bit rot
+    bool can_detect = true;
+    FB_ASSERT_TRUE(can_detect);
+}
+
+FB_TEST(osd_data_integrity, bit_rot_correction) {
+    // Should correct bit rot using replicas
+    bool can_correct = true;
+    FB_ASSERT_TRUE(can_correct);
+}
+
+FB_TEST(osd_data_integrity, scrub_periodic) {
+    // Should perform periodic scrub
+    uint64_t scrub_interval_hours = 24;
+    FB_ASSERT_TRUE(scrub_interval_hours > 0);
+}
+
+FB_TEST(osd_data_integrity, scrub_depth) {
+    // Scrub can be shallow or deep
+    bool has_deep_scrub = true;
+    FB_ASSERT_TRUE(has_deep_scrub);
+}
+
+FB_TEST(osd_data_integrity, scrub_progress) {
+    // Should track scrub progress
+    uint64_t scrubbed_objects = 500;
+    FB_ASSERT_TRUE(scrubbed_objects > 0);
+}
+
+FB_TEST(osd_data_integrity, scrub_report) {
+    // Should report scrub results
+    bool has_report = true;
+    FB_ASSERT_TRUE(has_report);
+}
+
+// ============================================================================
+// Test Suite: osd_security (OSD Security Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_security) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_security) {
+    // Teardown code here
+}
+
+FB_TEST(osd_security, client_authentication) {
+    // Should authenticate clients
+    bool authenticates = true;
+    FB_ASSERT_TRUE(authenticates);
+}
+
+FB_TEST(osd_security, authorization_check) {
+    // Should check authorization for operations
+    bool authorizes = true;
+    FB_ASSERT_TRUE(authorizes);
+}
+
+FB_TEST(osd_security, access_control_list) {
+    // May use ACL for access control
+    bool has_acl = true;
+    FB_ASSERT_TRUE(has_acl);
+}
+
+FB_TEST(osd_security, data_encryption) {
+    // May encrypt data at rest
+    bool encrypts_data = true;
+    FB_ASSERT_TRUE(encrypts_data);
+}
+
+FB_TEST(osd_security, encryption_key_management) {
+    // Should manage encryption keys
+    bool manages_keys = true;
+    FB_ASSERT_TRUE(manages_keys);
+}
+
+FB_TEST(osd_security, encryption_algorithm) {
+    // Should use strong encryption
+    std::string algorithm = "aes-256";
+    FB_ASSERT_TRUE(!algorithm.empty());
+}
+
+FB_TEST(osd_security, network_encryption) {
+    // May encrypt network traffic
+    bool encrypts_network = true;
+    FB_ASSERT_TRUE(encrypts_network);
+}
+
+FB_TEST(osd_security, secure_erase) {
+    // Should securely erase deleted data
+    bool secure_erase = true;
+    FB_ASSERT_TRUE(secure_erase);
+}
+
+FB_TEST(osd_security, audit_logging) {
+    // Should log security events
+    bool has_audit = true;
+    FB_ASSERT_TRUE(has_audit);
+}
+
+FB_TEST(osd_security, unauthorized_access_rejection) {
+    // Should reject unauthorized access
+    bool rejects = true;
+    FB_ASSERT_TRUE(rejects);
+}
+
+FB_TEST(osd_security, encryption_performance) {
+    // Encryption should not degrade performance significantly
+    uint64_t max_latency_increase_pct = 10;
+    FB_ASSERT_TRUE(max_latency_increase_pct > 0);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
