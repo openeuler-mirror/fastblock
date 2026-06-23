@@ -2337,6 +2337,70 @@ FB_TEST(md5_security, output_randomness) {
 }
 
 // ============================================================================
+// Test Suite: encoding_interoperability (Encoding Interoperability Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(encoding_interoperability) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(encoding_interoperability) {
+    // Teardown code here
+}
+
+FB_TEST(encoding_interoperability, varint32_to_fixed32) {
+    char varint_buf[5];
+    char fixed_buf[4];
+    uint32_t val = 42;
+
+    encode_varint32(varint_buf, val);
+    encode_fixed32(fixed_buf, val);
+
+    auto [varint_decoded, varint_len] = decode_varint32(varint_buf, 5);
+    uint32_t fixed_decoded = decode_fixed32(fixed_buf);
+
+    FB_ASSERT_EQ(varint_decoded, fixed_decoded);
+    FB_ASSERT_EQ(varint_decoded, val);
+}
+
+FB_TEST(encoding_interoperability, varint64_to_fixed64) {
+    char varint_buf[10];
+    char fixed_buf[8];
+    uint64_t val = 12345678901234ULL;
+
+    encode_varint64(varint_buf, val);
+    encode_fixed64(fixed_buf, val);
+
+    auto [varint_decoded, varint_len] = decode_varint64(varint_buf, 10);
+    uint64_t fixed_decoded = decode_fixed64(fixed_buf);
+
+    FB_ASSERT_EQ(varint_decoded, fixed_decoded);
+    FB_ASSERT_EQ(varint_decoded, val);
+}
+
+FB_TEST(encoding_interoperability, mixed_encoding_sequence) {
+    char buffer[20];
+    size_t offset = 0;
+
+    // Write mixed sequence
+    encode_fixed32(buffer + offset, 100);
+    offset += 4;
+    encode_varint32(buffer + offset, 200);
+    offset += encode_varint32(buffer + offset, 200);
+    encode_fixed64(buffer + offset, 300ULL);
+    offset += 8;
+
+    // Read back
+    offset = 0;
+    FB_ASSERT_EQ(decode_fixed32(buffer + offset), 100);
+    offset += 4;
+    auto [val32, len32] = decode_varint32(buffer + offset, 10);
+    FB_ASSERT_EQ(val32, 200);
+    offset += len32;
+    FB_ASSERT_EQ(decode_fixed64(buffer + offset), 300ULL);
+}
+
+// ============================================================================
 // Test Suite: final_validation (Final Validation Tests)
 // ============================================================================
 
