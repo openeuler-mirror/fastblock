@@ -583,4 +583,208 @@ FB_TEST(buffer_list_advanced, const_iteration) {
     FB_ASSERT_EQ(count, 1);
 }
 
+// ============================================================================
+// Test Suite: xattr_types (Extended Attribute Types Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_types) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_types) {
+    // Teardown code here
+}
+
+FB_TEST(xattr_types, log_xattr_names) {
+    FB_ASSERT_EQ(log_xattr::xattr_count, 3);
+}
+
+FB_TEST(xattr_types, object_xattr_names) {
+    FB_ASSERT_EQ(object_xattr::xattr_count, 4);
+}
+
+FB_TEST(xattr_types, object_snap_xattr_names) {
+    FB_ASSERT_EQ(object_snap_xattr::xattr_count, 5);
+}
+
+FB_TEST(xattr_types, object_recover_xattr_names) {
+    FB_ASSERT_EQ(object_recover_xattr::xattr_count, 4);
+}
+
+FB_TEST(xattr_types, kv_xattr_names) {
+    FB_ASSERT_EQ(kv_xattr::xattr_count, 2);
+}
+
+FB_TEST(xattr_types, kv_checkpoint_xattr_names) {
+    FB_ASSERT_EQ(kv_checkpoint_xattr::xattr_count, 2);
+}
+
+FB_TEST(xattr_types, kv_checkpoint_new_xattr_names) {
+    FB_ASSERT_EQ(kv_checkpoint_new_xattr::xattr_count, 2);
+}
+
+FB_TEST(xattr_types, super_xattr_names) {
+    FB_ASSERT_EQ(super_xattr::xattr_count, 1);
+}
+
+FB_TEST(xattr_types, free_xattr_names) {
+    FB_ASSERT_EQ(free_xattr::xattr_count, 1);
+}
+
+// ============================================================================
+// Test Suite: xattr_structure (Extended Attribute Structure Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_structure) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_structure) {
+    // Teardown code here
+}
+
+FB_TEST(xattr_structure, log_xattr_default) {
+    log_xattr xattr;
+    FB_ASSERT_EQ(xattr.type, blob_type::log);
+}
+
+FB_TEST(xattr_structure, log_xattr_values) {
+    log_xattr xattr;
+    xattr.shard_id = 42;
+    xattr.pg = "test_pg";
+    FB_ASSERT_EQ(xattr.shard_id, 42);
+    FB_ASSERT_EQ(xattr.pg, "test_pg");
+}
+
+FB_TEST(xattr_structure, object_xattr_default) {
+    object_xattr xattr;
+    FB_ASSERT_EQ(xattr.type, blob_type::object);
+}
+
+FB_TEST(xattr_structure, object_xattr_values) {
+    object_xattr xattr;
+    xattr.shard_id = 1;
+    xattr.pg = "pg_1";
+    xattr.obj_name = "object_1";
+    FB_ASSERT_EQ(xattr.shard_id, 1);
+    FB_ASSERT_EQ(xattr.pg, "pg_1");
+    FB_ASSERT_EQ(xattr.obj_name, "object_1");
+}
+
+FB_TEST(xattr_structure, kv_xattr_default) {
+    kv_xattr xattr;
+    FB_ASSERT_EQ(xattr.type, blob_type::kv);
+}
+
+FB_TEST(xattr_structure, kv_xattr_values) {
+    kv_xattr xattr;
+    xattr.shard_id = 5;
+    FB_ASSERT_EQ(xattr.shard_id, 5);
+}
+
+// ============================================================================
+// Test Suite: serialization (Serialization Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization) {
+    // Teardown code here
+}
+
+FB_TEST(serialization, fixed32_roundtrip) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    uint32_t original = 0x12345678;
+    FB_ASSERT_TRUE(PutFixed32(sbuf, original));
+    sbuf.reset();
+
+    uint32_t decoded;
+    FB_ASSERT_TRUE(GetFixed32(sbuf, decoded));
+    FB_ASSERT_EQ(decoded, original);
+}
+
+FB_TEST(serialization, fixed64_roundtrip) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    uint64_t original = 0x123456789ABCDEF0ULL;
+    FB_ASSERT_TRUE(PutFixed64(sbuf, original));
+    sbuf.reset();
+
+    uint64_t decoded;
+    FB_ASSERT_TRUE(GetFixed64(sbuf, decoded));
+    FB_ASSERT_EQ(decoded, original);
+}
+
+FB_TEST(serialization, string_roundtrip) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::string original = "hello world";
+    FB_ASSERT_TRUE(PutString(sbuf, original));
+    sbuf.reset();
+
+    std::string decoded;
+    FB_ASSERT_TRUE(GetString(sbuf, decoded));
+    FB_ASSERT_EQ(decoded, original);
+}
+
+FB_TEST(serialization, empty_string_roundtrip) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::string original = "";
+    FB_ASSERT_TRUE(PutString(sbuf, original));
+    sbuf.reset();
+
+    std::string decoded;
+    FB_ASSERT_TRUE(GetString(sbuf, decoded));
+    FB_ASSERT_EQ(decoded, original);
+}
+
+FB_TEST(serialization, optional_string_roundtrip) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::optional<std::string> original = "test";
+    FB_ASSERT_TRUE(PutOptString(sbuf, original));
+    sbuf.reset();
+
+    std::optional<std::string> decoded;
+    FB_ASSERT_TRUE(GetOptString(sbuf, decoded));
+    FB_ASSERT_TRUE(decoded.has_value());
+    FB_ASSERT_EQ(decoded.value(), "test");
+}
+
+FB_TEST(serialization, optional_string_nullopt) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::optional<std::string> original = std::nullopt;
+    FB_ASSERT_TRUE(PutOptString(sbuf, original));
+    sbuf.reset();
+
+    std::optional<std::string> decoded;
+    FB_ASSERT_TRUE(GetOptString(sbuf, decoded));
+    FB_ASSERT_FALSE(decoded.has_value());
+}
+
+FB_TEST(serialization, length_calculation) {
+    std::string str = "hello";
+    uint64_t len = LengthString(str);
+    FB_ASSERT_EQ(len, sizeof(uint64_t) + 5);
+
+    std::optional<std::string> opt_str = "world";
+    uint64_t opt_len = LengthOptString(opt_str);
+    FB_ASSERT_EQ(opt_len, sizeof(uint64_t) + 5);
+
+    std::optional<std::string> empty_opt = std::nullopt;
+    uint64_t empty_len = LengthOptString(empty_opt);
+    FB_ASSERT_EQ(empty_len, sizeof(uint64_t));
+}
+
 FB_TEST_MAIN()
