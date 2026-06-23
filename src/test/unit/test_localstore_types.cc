@@ -14859,13 +14859,16 @@ FB_TEST(performance_simulation, rapid_encoder_operations) {
 }
 
 FB_TEST(performance_simulation, rapid_type_string_calls) {
+    // Performance test: type_string is called 1000*9 times. Verify that it
+    // returns consistent results for all valid blob_type values.
     for (int i = 0; i < 1000; i++) {
         for (uint32_t j = 0; j <= 8; j++) {
             blob_type t = static_cast<blob_type>(j);
-            type_string(t);
+            std::string result = type_string(t);
+            FB_ASSERT_TRUE(!result.empty());
+            FB_ASSERT_TRUE(result.find("blob_type::") == 0);
         }
     }
-    FB_ASSERT_TRUE(true);
 }
 
 // ============================================================================
@@ -14991,6 +14994,8 @@ FB_TEST(api_compatibility_tests, spdk_buffer_api_exists) {
     FB_ASSERT_EQ(sbuf.used(), 50);   // Empty append doesn't change used
 }
 
+// API compatibility tests: verify that encoder, log_entry, blob_type, fb_blob,
+// and context structs compile and have correct default values or return types.
 FB_TEST(api_compatibility_tests, encoder_api_exists) {
     char buffer[1024];
     spdk_buffer sbuf(buffer, 1024);
@@ -14998,55 +15003,69 @@ FB_TEST(api_compatibility_tests, encoder_api_exists) {
     bl.append_buffer(sbuf);
 
     buffer_list_encoder encoder(bl);
-    (void)encoder.bytes();
-    (void)encoder.used();
-    (void)encoder.remain();
-    encoder.put(1ULL);
-    encoder.put(std::string("test"));
-    encoder.put("data", 4);
-    FB_ASSERT_TRUE(true);
+    FB_ASSERT_EQ(encoder.bytes(), 1024);    // Total buffer size
+    FB_ASSERT_EQ(encoder.used(), 0);         // Initially no data written
+    FB_ASSERT_EQ(encoder.remain(), 1024);    // All space available
+
+    FB_ASSERT_TRUE(encoder.put(1ULL));
+    FB_ASSERT_EQ(encoder.used(), 8);
+
+    FB_ASSERT_TRUE(encoder.put(std::string("test")));
+    FB_ASSERT_EQ(encoder.used(), 8 + 8 + 4);
+
+    FB_ASSERT_TRUE(encoder.put("data", 4));
+    FB_ASSERT_EQ(encoder.used(), 8 + 8 + 4 + 4);
 }
 
 FB_TEST(api_compatibility_tests, log_entry_api_exists) {
     log_entry_t entry;
-    (void)entry.term_id;
-    (void)entry.index;
-    (void)entry.size;
-    (void)entry.type;
-    (void)entry.meta;
-    (void)entry.data;
-    (void)log_entry_t::init;
-    FB_ASSERT_TRUE(true);
+    FB_ASSERT_EQ(entry.term_id, log_entry_t::init);  // Default to init constant
+    FB_ASSERT_EQ(entry.index, log_entry_t::init);
+    FB_ASSERT_EQ(entry.size, log_entry_t::init);
+    FB_ASSERT_EQ(entry.type, log_entry_t::init);
+    FB_ASSERT_TRUE(entry.meta.empty());              // Default meta is empty
+    FB_ASSERT_EQ(entry.data.bytes(), 0);             // Default data buffer_list empty
+    FB_ASSERT_EQ(log_entry_t::init, UINT64_MAX);     // init is UINT64_MAX
 }
 
 FB_TEST(api_compatibility_tests, blob_type_api_exists) {
     blob_type t = blob_type::log;
-    (void)type_string(t);
-    (void)static_cast<uint32_t>(t);
-    FB_ASSERT_TRUE(true);
+    FB_ASSERT_EQ(static_cast<uint32_t>(t), 0);       // First enum value is 0
+
+    std::string str = type_string(t);
+    FB_ASSERT_TRUE(!str.empty());                    // type_string returns non-empty
+    FB_ASSERT_TRUE(str.find("blob_type::") == 0);    // Has expected prefix
+
+    for (uint32_t i = 0; i <= 8; i++) {
+        blob_type t2 = static_cast<blob_type>(i);
+        FB_ASSERT_TRUE(!type_string(t2).empty());
+    }
 }
 
 FB_TEST(api_compatibility_tests, fb_blob_api_exists) {
     fb_blob blob;
-    (void)blob.blob;
-    (void)blob.blobid;
-    FB_ASSERT_TRUE(true);
+    FB_ASSERT_EQ(blob.blob, nullptr);                // Default blob pointer null
+    FB_ASSERT_EQ(blob.blobid, 0);                    // Default blobid zero
+
+    blob.blob = reinterpret_cast<void*>(0x1000);
+    blob.blobid = 12345;
+    FB_ASSERT_TRUE(blob.blob != nullptr);
+    FB_ASSERT_EQ(blob.blobid, 12345);
 }
 
 FB_TEST(api_compatibility_tests, context_api_exists) {
     log_append_ctx la_ctx;
-    (void)la_ctx.idx_pos;
-    (void)la_ctx.headers;
-    (void)la_ctx.bytes();
-    (void)la_ctx.cb_fn;
-    (void)la_ctx.arg;
+    FB_ASSERT_TRUE(la_ctx.idx_pos.empty());          // idx_pos vector empty
+    FB_ASSERT_TRUE(la_ctx.headers.empty());          // headers vector empty
+    FB_ASSERT_EQ(la_ctx.bytes(), 0);                 // buffer_list empty
+    FB_ASSERT_EQ(la_ctx.cb_fn, nullptr);             // callback null
+    FB_ASSERT_EQ(la_ctx.arg, nullptr);               // arg null
 
     log_read_ctx lr_ctx;
-    (void)lr_ctx.entries;
-    (void)lr_ctx.start_index;
-    (void)lr_ctx.end_index;
-
-    FB_ASSERT_TRUE(true);
+    FB_ASSERT_TRUE(lr_ctx.entries.empty());          // entries vector empty
+    FB_ASSERT_EQ(lr_ctx.start_index, 0);
+    FB_ASSERT_EQ(lr_ctx.end_index, 0);
+}
 }
 
 // ============================================================================
