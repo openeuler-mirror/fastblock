@@ -160,4 +160,63 @@ FB_TEST(fb_blob, assignment) {
     FB_ASSERT_EQ(blob2.blobid, 100);
 }
 
+// ============================================================================
+// Test Suite: spdk_buffer (SPDK Buffer Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer) {
+    // Teardown code here
+}
+
+FB_TEST(spdk_buffer, default_constructor) {
+    spdk_buffer sbuf;
+    FB_ASSERT_EQ(sbuf.size(), 0);
+    FB_ASSERT_EQ(sbuf.used(), 0);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
+FB_TEST(spdk_buffer, parameterized_constructor) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    FB_ASSERT_EQ(sbuf.size(), 100);
+    FB_ASSERT_EQ(sbuf.used(), 0);
+    FB_ASSERT_EQ(sbuf.remain(), 100);
+}
+
+FB_TEST(spdk_buffer, append_basic) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    const char* data = "hello";
+    size_t written = sbuf.append(data, 5);
+    FB_ASSERT_EQ(written, 5);
+    FB_ASSERT_EQ(sbuf.used(), 5);
+    FB_ASSERT_EQ(sbuf.remain(), 95);
+}
+
+FB_TEST(spdk_buffer, append_string) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::string str = "world";
+    size_t written = sbuf.append(str);
+    FB_ASSERT_EQ(written, 5);
+    FB_ASSERT_EQ(sbuf.used(), 5);
+}
+
+FB_TEST(spdk_buffer, append_overflow) {
+    char buffer[10];
+    spdk_buffer sbuf(buffer, 10);
+
+    const char* data = "123456789012345";  // 15 chars
+    size_t written = sbuf.append(data, 15);
+    FB_ASSERT_EQ(written, 10);  // Only 10 bytes written
+    FB_ASSERT_EQ(sbuf.used(), 10);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
 FB_TEST_MAIN()
