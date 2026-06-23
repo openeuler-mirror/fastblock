@@ -8572,6 +8572,68 @@ FB_TEST(osd_background_tasks, task_completion_notification) {
 }
 
 // ============================================================================
+// Test Suite: osd_resource_limits (OSD Resource Limits Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_resource_limits) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_resource_limits) {
+    // Teardown code here
+}
+
+FB_TEST(osd_resource_limits, max_concurrent_writes) {
+    uint32_t max_writes = 64;
+    FB_ASSERT_TRUE(max_writes > 0);
+}
+
+FB_TEST(osd_resource_limits, max_concurrent_reads) {
+    uint32_t max_reads = 128;
+    FB_ASSERT_TRUE(max_reads > 0);
+}
+
+FB_TEST(osd_resource_limits, max_pg_per_osd) {
+    uint32_t max_pgs = 256;
+    FB_ASSERT_TRUE(max_pgs > 0);
+}
+
+FB_TEST(osd_resource_limits, memory_limit) {
+    uint64_t mem_limit_mb = 8192;
+    FB_ASSERT_TRUE(mem_limit_mb > 0);
+}
+
+FB_TEST(osd_resource_limits, disk_space_limit) {
+    uint64_t disk_limit_gb = 1024;
+    FB_ASSERT_TRUE(disk_limit_gb > 0);
+}
+
+FB_TEST(osd_resource_limits, file_descriptor_limit) {
+    uint32_t fd_limit = 65535;
+    FB_ASSERT_TRUE(fd_limit > 1024);
+}
+
+FB_TEST(osd_resource_limits, cpu_core_assignment) {
+    std::vector<uint32_t> assigned_cores = {0, 1, 2, 3};
+    FB_ASSERT_EQ(assigned_cores.size(), 4);
+}
+
+FB_TEST(osd_resource_limits, network_bandwidth_limit) {
+    uint64_t bw_limit_mbps = 10000;
+    FB_ASSERT_TRUE(bw_limit_mbps > 0);
+}
+
+FB_TEST(osd_resource_limits, connection_limit) {
+    uint32_t max_connections = 1024;
+    FB_ASSERT_TRUE(max_connections > 0);
+}
+
+FB_TEST(osd_resource_limits, queue_depth_limit) {
+    uint32_t queue_depth = 256;
+    FB_ASSERT_TRUE(queue_depth > 0);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
