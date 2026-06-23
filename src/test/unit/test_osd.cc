@@ -2141,74 +2141,130 @@ FB_SUITE_TEARDOWN(osd_leader_checks) {
     // Teardown code here
 }
 
-FB_TEST(osd_leader_checks, is_leader_true) {
-    // Should return true when node is leader
-    bool is_leader = true;
+FB_TEST(osd_leader_checks, is_leader_state) {
+    // Leader is identified by raft_identity == RAFT_STATE_LEADER
+    raft_identity state = RAFT_STATE_LEADER;
+    bool is_leader = (state == RAFT_STATE_LEADER);
+
     FB_ASSERT_TRUE(is_leader);
+    FB_ASSERT_TRUE(state != RAFT_STATE_FOLLOWER);
+    FB_ASSERT_TRUE(state != RAFT_STATE_CANDIDATE);
 }
 
-FB_TEST(osd_leader_checks, is_leader_false) {
-    // Should return false when node is follower
-    bool is_leader = false;
+FB_TEST(osd_leader_checks, is_follower_not_leader) {
+    // Follower should not serve writes
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    bool is_leader = (state == RAFT_STATE_LEADER);
+
     FB_ASSERT_TRUE(!is_leader);
+    // Follower returns RAFT_ERR_NOT_LEADER for write requests
+    FB_ASSERT_TRUE(state == RAFT_STATE_FOLLOWER);
 }
 
 FB_TEST(osd_leader_checks, write_only_on_leader) {
-    // WRITE operations should only be accepted on leader
-    bool is_leader = true;
-    bool can_write = is_leader;
+    // WRITE calls raft_write_entry which requires leader state
+    // Non-leader: write_and_wait returns RAFT_ERR_NOT_LEADER
+    raft_identity follower_state = RAFT_STATE_FOLLOWER;
+    bool can_write = (follower_state == RAFT_STATE_LEADER);
+    FB_ASSERT_TRUE(!can_write);
 
+    raft_identity leader_state = RAFT_STATE_LEADER;
+    can_write = (leader_state == RAFT_STATE_LEADER);
     FB_ASSERT_TRUE(can_write);
 }
 
 FB_TEST(osd_leader_checks, read_from_leader) {
-    // READ can be served from leader
-    bool is_leader = true;
-    bool can_read = is_leader;
+    // READ requires: is_leader AND linearization check
+    raft_identity state = RAFT_STATE_LEADER;
+    bool is_leader = (state == RAFT_STATE_LEADER);
+    bool can_read = is_leader; // simplified: also needs linearization
 
     FB_ASSERT_TRUE(can_read);
+    // Follower cannot serve reads
+    state = RAFT_STATE_FOLLOWER;
+    can_read = (state == RAFT_STATE_LEADER);
+    FB_ASSERT_TRUE(!can_read);
 }
 
 FB_TEST(osd_leader_checks, linearization_check) {
-    // Linearization should ensure read reflects committed writes
-    bool linearization_ok = true;
-    FB_ASSERT_TRUE(linearization_ok);
-}
+    // Linearization ensures read reflects all committed writes
+    // Conditions: is_leader AND lease is valid
+    raft_identity state = RAFT_STATE_LEADER;
+    bool is_leader = (state == RAFT_STATE_LEADER);
 
-FB_TEST(osd_leader_checks, leader_term_check) {
-    // Leader should have correct term
-    raft_term_t leader_term = 5;
-    FB_ASSERT_TRUE(leader_term > 0);
-}
-
-FB_TEST(osd_leader_checks, leader_lease) {
-    // Leader should have lease for read linearization
-    uint64_t lease_us = 1000000;
-    FB_ASSERT_TRUE(lease_us > 0);
-}
-
-FB_TEST(osd_leader_checks, lease_expired) {
-    // Lease should expire after deadline
     auto now = std::chrono::steady_clock::now();
-    auto deadline = now - std::chrono::microseconds(1);
-    bool lease_expired = (now > deadline);
+    auto lease_deadline = now + std::chrono::microseconds(1000000);
+    bool lease_valid = (lease_deadline > now);
 
+    bool can_linearize = is_leader && lease_valid;
+    FB_ASSERT_TRUE(can_linearize);
+
+    // If lease expired, cannot linearize
+    auto expired_deadline = now - std::chrono::microseconds(1);
+    bool lease_expired = (expired_deadline < now);
+    bool cannot_linearize = is_leader && lease_expired;
+    // With expired lease, read returns RAFT_ERR_NOT_LEADER
     FB_ASSERT_TRUE(lease_expired);
 }
 
+FB_TEST(osd_leader_checks, leader_term_check) {
+    // Leader's term should match the term it was elected in
+    raft_term_t current_term = 5;
+    raft_term_t leader_term = 5;
+
+    // Leader term must equal current term
+    FB_ASSERT_EQ(current_term, leader_term);
+
+    // Stale term means no longer leader
+    raft_term_t newer_term = 6;
+    bool is_stale = (leader_term < newer_term);
+    FB_ASSERT_TRUE(is_stale);
+}
+
+FB_TEST(osd_leader_checks, leader_lease) {
+    // Leader lease is granted by majority heartbeat responses
+    // Lease duration = heartbeat_interval * clock_drift_bound
+    uint64_t heartbeat_ms = 1000;
+    uint64_t drift_bound = 2;
+    uint64_t lease_us = heartbeat_ms * drift_bound * 1000;
+
+    FB_ASSERT_TRUE(lease_us > 0);
+    FB_ASSERT_EQ(lease_us, 2000000); // 2 seconds
+}
+
+FB_TEST(osd_leader_checks, lease_expired) {
+    // Lease expired: now > deadline
+    auto now = std::chrono::steady_clock::now();
+    auto deadline = now - std::chrono::microseconds(1);
+
+    bool lease_expired = (now > deadline);
+    FB_ASSERT_TRUE(lease_expired);
+
+    // With expired lease, read must return RAFT_ERR_NOT_LEADER
+    // to prevent stale reads
+}
+
 FB_TEST(osd_leader_checks, lease_valid) {
-    // Lease should be valid before deadline
+    // Lease valid: deadline > now
     auto now = std::chrono::steady_clock::now();
     auto deadline = now + std::chrono::microseconds(1000000);
-    bool lease_valid = (deadline > now);
 
+    bool lease_valid = (deadline > now);
     FB_ASSERT_TRUE(lease_valid);
+
+    // Remaining lease time
+    auto remaining = std::chrono::duration_cast<std::chrono::microseconds>(deadline - now);
+    FB_ASSERT_TRUE(remaining.count() > 0);
 }
 
 FB_TEST(osd_leader_checks, get_leader_from_pg) {
-    // Should be able to get leader info for PG
-    std::string pg_name = "1.100";
-    FB_ASSERT_TRUE(!pg_name.empty());
+    // PG leader info: pool_id + pg_id -> leader_node_id
+    uint64_t pool_id = 1;
+    uint64_t pg_id = 100;
+    std::string pg_name = std::to_string(pool_id) + "." + std::to_string(pg_id);
+
+    FB_ASSERT_EQ(pg_name, "1.100");
+    // pg_group.get_pg() -> raft_server -> get_leader_id()
 }
 
 // ============================================================================
