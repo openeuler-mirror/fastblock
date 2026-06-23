@@ -1980,6 +1980,56 @@ FB_TEST(units_conversions, mb_to_gb) {
 }
 
 // ============================================================================
+// Test Suite: varint_encoding_patterns (Varint Encoding Pattern Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(varint_encoding_patterns) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(varint_encoding_patterns) {
+    // Teardown code here
+}
+
+FB_TEST(varint_encoding_patterns, zero_pattern) {
+    char buffer[10];
+    size_t len = encode_varint32(buffer, 0);
+    FB_ASSERT_EQ(len, 1);
+    FB_ASSERT_EQ(static_cast<uint8_t>(buffer[0]), 0);
+}
+
+FB_TEST(varint_encoding_patterns, single_byte_pattern) {
+    char buffer[10];
+    // Values 1-127 use single byte with MSB = 0
+    for (uint32_t i = 1; i <= 127; i++) {
+        size_t len = encode_varint32(buffer, i);
+        FB_ASSERT_EQ(len, 1);
+        FB_ASSERT_EQ(static_cast<uint8_t>(buffer[0]) & 0x80, 0);
+    }
+}
+
+FB_TEST(varint_encoding_patterns, two_byte_pattern) {
+    char buffer[10];
+    // Values 128-16383 use two bytes
+    size_t len = encode_varint32(buffer, 128);
+    FB_ASSERT_EQ(len, 2);
+    FB_ASSERT_TRUE(static_cast<uint8_t>(buffer[0]) & 0x80);  // First byte has MSB set
+}
+
+FB_TEST(varint_encoding_patterns, continuation_bits) {
+    char buffer[10];
+    uint32_t val = 300;
+    size_t len = encode_varint32(buffer, val);
+
+    // Check continuation bits are set correctly
+    for (size_t i = 0; i < len - 1; i++) {
+        FB_ASSERT_TRUE(static_cast<uint8_t>(buffer[i]) & 0x80);
+    }
+    // Last byte should have MSB = 0
+    FB_ASSERT_TRUE((static_cast<uint8_t>(buffer[len-1]) & 0x80) == 0);
+}
+
+// ============================================================================
 // Test Suite: final_validation (Final Validation Tests)
 // ============================================================================
 
