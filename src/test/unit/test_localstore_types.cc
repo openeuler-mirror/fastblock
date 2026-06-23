@@ -8013,3 +8013,166 @@ FB_TEST(buffer_list_size_tracking, bytes_after_clear) {
     bl.clear();
     FB_ASSERT_EQ(bl.bytes(), 0);
 }
+
+// ============================================================================
+// Test Suite: encoding_put_failure_modes (Encoding Put Failure Modes Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(encoding_put_failure_modes) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(encoding_put_failure_modes) {
+    // Setup code here
+}
+
+FB_TEST(encoding_put_failure_modes, put32_on_zero_buffer) {
+    spdk_buffer sbuf;
+    FB_ASSERT_FALSE(PutFixed32(sbuf, 42));
+}
+
+FB_TEST(encoding_put_failure_modes, put64_on_zero_buffer) {
+    spdk_buffer sbuf;
+    FB_ASSERT_FALSE(PutFixed64(sbuf, 42));
+}
+
+FB_TEST(encoding_put_failure_modes, put_string_on_zero_buffer) {
+    spdk_buffer sbuf;
+    FB_ASSERT_FALSE(PutString(sbuf, "test"));
+}
+
+FB_TEST(encoding_put_failure_modes, put32_on_small_buffer) {
+    char buffer[2];
+    spdk_buffer sbuf(buffer, 2);
+    FB_ASSERT_FALSE(PutFixed32(sbuf, 42));
+}
+
+FB_TEST(encoding_put_failure_modes, put64_on_small_buffer) {
+    char buffer[6];
+    spdk_buffer sbuf(buffer, 6);
+    FB_ASSERT_FALSE(PutFixed64(sbuf, 42));
+}
+
+FB_TEST(encoding_put_failure_modes, put_string_on_small_buffer) {
+    char buffer[8];
+    spdk_buffer sbuf(buffer, 8);
+    // Need 8 bytes for length + data
+    FB_ASSERT_FALSE(PutString(sbuf, "test"));
+}
+
+// ============================================================================
+// Test Suite: encoding_get_failure_modes (Encoding Get Failure Modes Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(encoding_get_failure_modes) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(encoding_get_failure_modes) {
+    // Setup code here
+}
+
+FB_TEST(encoding_get_failure_modes, get32_on_zero_buffer) {
+    spdk_buffer sbuf;
+    uint32_t val;
+    FB_ASSERT_FALSE(GetFixed32(sbuf, val));
+}
+
+FB_TEST(encoding_get_failure_modes, get64_on_zero_buffer) {
+    spdk_buffer sbuf;
+    uint64_t val;
+    FB_ASSERT_FALSE(GetFixed64(sbuf, val));
+}
+
+FB_TEST(encoding_get_failure_modes, get_string_on_zero_buffer) {
+    spdk_buffer sbuf;
+    std::string val;
+    FB_ASSERT_FALSE(GetString(sbuf, val));
+}
+
+FB_TEST(encoding_get_failure_modes, get32_on_small_buffer) {
+    char buffer[2];
+    spdk_buffer sbuf(buffer, 2);
+    uint32_t val;
+    FB_ASSERT_FALSE(GetFixed32(sbuf, val));
+}
+
+FB_TEST(encoding_get_failure_modes, get_string_partial_length) {
+    char buffer[4];
+    spdk_buffer sbuf(buffer, 4);
+    std::string val;
+    FB_ASSERT_FALSE(GetString(sbuf, val));
+}
+
+FB_TEST(encoding_get_failure_modes, get_opt_string_on_zero) {
+    spdk_buffer sbuf;
+    std::optional<std::string> val;
+    FB_ASSERT_FALSE(GetOptString(sbuf, val));
+}
+
+// ============================================================================
+// Test Suite: encoding_put_get_consistency (Encoding Put Get Consistency Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(encoding_put_get_consistency) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(encoding_put_get_consistency) {
+    // Setup code here
+}
+
+FB_TEST(encoding_put_get_consistency, put32_used_matches_get32_consumed) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+
+    PutFixed32(sbuf, 0xAABBCCDD);
+    size_t after_put = sbuf.used();
+
+    sbuf.reset();
+    uint32_t val;
+    GetFixed32(sbuf, val);
+    size_t after_get = sbuf.used();
+
+    FB_ASSERT_EQ(after_put, after_get);
+}
+
+FB_TEST(encoding_put_get_consistency, put64_used_matches_get64_consumed) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+
+    PutFixed64(sbuf, 0xDEADBEEFCAFEBABEULL);
+    size_t after_put = sbuf.used();
+
+    sbuf.reset();
+    uint64_t val;
+    GetFixed64(sbuf, val);
+    size_t after_get = sbuf.used();
+
+    FB_ASSERT_EQ(after_put, after_get);
+}
+
+FB_TEST(encoding_put_get_consistency, put_string_used_matches_get_string_consumed) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    PutString(sbuf, "test_string");
+    size_t after_put = sbuf.used();
+
+    sbuf.reset();
+    std::string val;
+    GetString(sbuf, val);
+    size_t after_get = sbuf.used();
+
+    FB_ASSERT_EQ(after_put, after_get);
+}
+
+FB_TEST(encoding_put_get_consistency, length_matches_actual_size) {
+    std::string str = "hello";
+    uint64_t predicted = LengthString(str);
+
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+    PutString(sbuf, str);
+    FB_ASSERT_EQ(sbuf.used(), predicted);
+}
