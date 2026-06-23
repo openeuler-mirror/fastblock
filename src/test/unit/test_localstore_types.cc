@@ -17117,3 +17117,323 @@ FB_TEST(final_validation_roundtrip, log_entry_full_cycle) {
     FB_ASSERT_EQ(decoded.type, original.type);
     FB_ASSERT_EQ(decoded.meta, original.meta);
 }
+
+// ============================================================================
+// Test Suite: spdk_buffer_advanced_ops (SPDK Buffer Advanced Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_advanced_ops) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_advanced_ops) {
+    // Setup code here
+}
+
+FB_TEST(spdk_buffer_advanced_ops, append_then_modify_source) {
+    char source[] = "Original";
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    sbuf.append(source, 8);
+    FB_ASSERT_EQ(memcmp(buffer, "Original", 8), 0);
+
+    // Modify source - buffer should not change (append copies data)
+    strcpy(source, "Modified");
+    FB_ASSERT_EQ(memcmp(buffer, "Original", 8), 0);
+}
+
+FB_TEST(spdk_buffer_advanced_ops, multiple_resets_reuse) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    for (int round = 0; round < 10; round++) {
+        sbuf.append("data", 4);
+        FB_ASSERT_EQ(sbuf.used(), 4);
+
+        sbuf.reset();
+        FB_ASSERT_EQ(sbuf.used(), 0);
+        FB_ASSERT_EQ(sbuf.remain(), 100);
+    }
+}
+
+FB_TEST(spdk_buffer_advanced_ops, get_append_position_tracking) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    FB_ASSERT_EQ(sbuf.get_append(), buffer);
+
+    sbuf.inc(10);
+    FB_ASSERT_EQ(sbuf.get_append(), buffer + 10);
+
+    sbuf.append("hello", 5);
+    FB_ASSERT_EQ(sbuf.get_append(), buffer + 15);
+
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.get_append(), buffer);
+}
+
+FB_TEST(spdk_buffer_advanced_ops, remain_consistency_throughout) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    size_t expected_remain = 100;
+    for (int i = 0; i < 10; i++) {
+        FB_ASSERT_EQ(sbuf.remain(), expected_remain);
+        sbuf.inc(5);
+        expected_remain -= 5;
+    }
+    FB_ASSERT_EQ(sbuf.remain(), 50);
+    FB_ASSERT_EQ(sbuf.used(), 50);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_advanced_ops (Buffer List Advanced Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_advanced_ops) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_advanced_ops) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_advanced_ops, splice_preserves_byte_count) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl1, bl2;
+    bl1.append_buffer(sbuf1);
+    bl2.append_buffer(sbuf2);
+    bl2.append_buffer(sbuf3);
+
+    size_t bl1_bytes = bl1.bytes();
+    size_t bl2_bytes = bl2.bytes();
+
+    bl1.append_buffer(bl2);
+
+    FB_ASSERT_EQ(bl1.bytes(), bl1_bytes + bl2_bytes);
+    FB_ASSERT_EQ(bl2.bytes(), 0);
+}
+
+FB_TEST(buffer_list_advanced_ops, trim_front_back_asymmetric) {
+    char buffer1[100], buffer2[200], buffer3[300], buffer4[400];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+    spdk_buffer sbuf4(buffer4, 400);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+    bl.append_buffer(sbuf4);
+
+    FB_ASSERT_EQ(bl.bytes(), 1000);
+
+    // Trim front removes buffer1 (100 bytes)
+    bl.trim_front();
+    FB_ASSERT_EQ(bl.bytes(), 900);
+
+    // Trim back removes buffer4 (400 bytes)
+    bl.trim_back();
+    FB_ASSERT_EQ(bl.bytes(), 500);
+
+    // Verify remaining buffers are sbuf2 and sbuf3
+    int count = 0;
+    for (auto& buf : bl) {
+        if (count == 0) FB_ASSERT_EQ(buf.size(), 200);
+        if (count == 1) FB_ASSERT_EQ(buf.size(), 300);
+        count++;
+    }
+    FB_ASSERT_EQ(count, 2);
+}
+
+FB_TEST(buffer_list_advanced_ops, pop_front_then_prepend) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    // Pop front removes sbuf1
+    spdk_buffer popped = bl.pop_front();
+    FB_ASSERT_EQ(popped.size(), 100);
+    FB_ASSERT_EQ(bl.bytes(), 200);
+
+    // Prepend sbuf1 back
+    bl.prepend_buffer(sbuf1);
+    FB_ASSERT_EQ(bl.bytes(), 300);
+
+    // Verify order: sbuf1, sbuf2
+    int count = 0;
+    for (auto& buf : bl) {
+        if (count == 0) FB_ASSERT_EQ(buf.get_buf(), buffer1);
+        if (count == 1) FB_ASSERT_EQ(buf.get_buf(), buffer2);
+        count++;
+    }
+    FB_ASSERT_EQ(count, 2);
+}
+
+// ============================================================================
+// Test Suite: serialization_pattern_validation (Serialization Pattern Validation Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization_pattern_validation) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization_pattern_validation) {
+    // Setup code here
+}
+
+FB_TEST(serialization_pattern_validation, fixed32_bit_patterns) {
+    char buffer[64];
+
+    uint32_t patterns[] = {
+        0x00000001, 0x00000010, 0x00000100, 0x00001000,
+        0x00010000, 0x00100000, 0x01000000, 0x10000000,
+        0xAAAAAAAA, 0x55555555, 0xFFFFFFFF, 0x00000000
+    };
+
+    for (auto pattern : patterns) {
+        spdk_buffer sbuf(buffer, 64);
+        PutFixed32(sbuf, pattern);
+        sbuf.reset();
+
+        uint32_t retrieved;
+        GetFixed32(sbuf, retrieved);
+        FB_ASSERT_EQ(retrieved, pattern);
+    }
+}
+
+FB_TEST(serialization_pattern_validation, fixed64_bit_patterns) {
+    char buffer[128];
+
+    uint64_t patterns[] = {
+        0x0000000000000001ULL, 0x0000000000000100ULL,
+        0x0000000000010000ULL, 0x0000000100000000ULL,
+        0x0000010000000000ULL, 0x0001000000000000ULL,
+        0x0100000000000000ULL, 0x1000000000000000ULL,
+        0xAAAAAAAAAAAAAAAAULL, 0x5555555555555555ULL,
+        0xFFFFFFFFFFFFFFFFULL, 0x0000000000000000ULL
+    };
+
+    for (auto pattern : patterns) {
+        spdk_buffer sbuf(buffer, 128);
+        PutFixed64(sbuf, pattern);
+        sbuf.reset();
+
+        uint64_t retrieved;
+        GetFixed64(sbuf, retrieved);
+        FB_ASSERT_EQ(retrieved, pattern);
+    }
+}
+
+FB_TEST(serialization_pattern_validation, string_with_embedded_nulls) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    std::string original(5, '\0');
+    original += "tail";
+
+    PutString(sbuf, original);
+    sbuf.reset();
+
+    std::string retrieved;
+    GetString(sbuf, retrieved);
+
+    FB_ASSERT_EQ(retrieved.size(), original.size());
+    FB_ASSERT_EQ(memcmp(retrieved.data(), original.data(), original.size()), 0);
+}
+
+// ============================================================================
+// Test Suite: context_data_flow (Context Data Flow Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(context_data_flow) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(context_data_flow) {
+    // Setup code here
+}
+
+FB_TEST(context_data_flow, kv_write_ops_accumulate) {
+    kvstore_write_ctx ctx;
+
+    // Simulate batch of write operations
+    for (int i = 0; i < 50; i++) {
+        op operation;
+        operation.key = "key_" + std::to_string(i);
+        if (i % 3 == 0) {
+            operation.value = std::nullopt; // Delete
+        } else {
+            operation.value = "value_" + std::to_string(i);
+        }
+        ctx.ops.push_back(operation);
+    }
+
+    FB_ASSERT_EQ(ctx.ops.size(), 50);
+
+    // Count puts vs deletes
+    int puts = 0, deletes = 0;
+    for (auto& op : ctx.ops) {
+        if (op.value.has_value()) puts++;
+        else deletes++;
+    }
+    FB_ASSERT_EQ(puts, 34);  // 50 * 2/3
+    FB_ASSERT_EQ(deletes, 16); // 50 * 1/3
+}
+
+FB_TEST(context_data_flow, log_read_range_calculations) {
+    log_read_ctx ctx;
+    ctx.start_index = 100;
+    ctx.end_index = 200;
+
+    uint64_t count = ctx.end_index - ctx.start_index + 1;
+    FB_ASSERT_EQ(count, 101);
+
+    // Fill with entries
+    for (uint64_t i = ctx.start_index; i <= ctx.end_index; i++) {
+        log_entry_t entry;
+        entry.index = i;
+        ctx.entries.push_back(entry);
+    }
+
+    FB_ASSERT_EQ(ctx.entries.size(), count);
+
+    // Verify first and last
+    FB_ASSERT_EQ(ctx.entries.front().index, 100);
+    FB_ASSERT_EQ(ctx.entries.back().index, 200);
+}
+
+FB_TEST(context_data_flow, rblob_rw_iov_accumulation) {
+    rblob_rw_ctx ctx;
+    ctx.is_read = true;
+    ctx.start_pos = 0;
+
+    // Simulate scattered read with multiple iovs
+    size_t offsets[] = {0, 4096, 8192, 16384};
+    size_t lengths[] = {512, 1024, 2048, 4096};
+
+    for (int i = 0; i < 4; i++) {
+        struct iovec iov;
+        iov.iov_base = reinterpret_cast<void*>(offsets[i]);
+        iov.iov_len = lengths[i];
+        ctx.iov.push_back(iov);
+    }
+
+    FB_ASSERT_EQ(ctx.iov.size(), 4);
+
+    size_t total = 0;
+    for (auto& iov : ctx.iov) {
+        total += iov.iov_len;
+    }
+    FB_ASSERT_EQ(total, 512 + 1024 + 2048 + 4096);
+}
