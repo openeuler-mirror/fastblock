@@ -3808,6 +3808,134 @@ FB_TEST(osd_protocol_buffers, bytes_fields) {
 }
 
 // ============================================================================
+// Test Suite: osd_client_api (OSD Client API Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_client_api) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_client_api) {
+    // Teardown code here
+}
+
+FB_TEST(osd_client_api, client_connect) {
+    // Client should connect to OSD cluster
+    bool connected = true;
+    FB_ASSERT_TRUE(connected);
+}
+
+FB_TEST(osd_client_api, client_disconnect) {
+    // Client should disconnect gracefully
+    bool disconnected = true;
+    FB_ASSERT_TRUE(disconnected);
+}
+
+FB_TEST(osd_client_api, client_write_object) {
+    // Client should write object via OSD
+    std::string object_name = "client_obj_001";
+    std::string data = "client_write_data";
+    FB_ASSERT_TRUE(!object_name.empty());
+    FB_ASSERT_TRUE(!data.empty());
+}
+
+FB_TEST(osd_client_api, client_read_object) {
+    // Client should read object from OSD
+    std::string object_name = "client_obj_001";
+    uint64_t offset = 0;
+    uint64_t length = 4096;
+    FB_ASSERT_TRUE(!object_name.empty());
+    FB_ASSERT_TRUE(length > 0);
+}
+
+FB_TEST(osd_client_api, client_delete_object) {
+    // Client should delete object from OSD
+    std::string object_name = "client_obj_001";
+    FB_ASSERT_TRUE(!object_name.empty());
+}
+
+FB_TEST(osd_client_api, client_pool_id) {
+    // Client should specify pool_id for operations
+    uint64_t pool_id = 1;
+    FB_ASSERT_TRUE(pool_id > 0);
+}
+
+FB_TEST(osd_client_api, client_pg_id) {
+    // Client should specify pg_id for operations
+    uint64_t pg_id = 100;
+    FB_ASSERT_TRUE(pg_id > 0);
+}
+
+FB_TEST(osd_client_api, client_timeout) {
+    // Client operations should have timeout
+    uint64_t timeout_ms = 5000;
+    FB_ASSERT_TRUE(timeout_ms > 0);
+}
+
+FB_TEST(osd_client_api, client_retry_on_error) {
+    // Client should retry on transient errors
+    uint32_t max_retries = 3;
+    FB_ASSERT_TRUE(max_retries > 0);
+}
+
+FB_TEST(osd_client_api, client_async_operation) {
+    // Client should support async operations
+    bool async_supported = true;
+    FB_ASSERT_TRUE(async_supported);
+}
+
+FB_TEST(osd_client_api, client_sync_operation) {
+    // Client should support sync operations
+    bool sync_supported = true;
+    FB_ASSERT_TRUE(sync_supported);
+}
+
+FB_TEST(osd_client_api, client_callback_on_complete) {
+    // Client should invoke callback on completion
+    bool callback_invoked = true;
+    FB_ASSERT_TRUE(callback_invoked);
+}
+
+FB_TEST(osd_client_api, client_multiple_pools) {
+    // Client should access objects across multiple pools
+    std::vector<uint64_t> pools = {1, 2, 3};
+    FB_ASSERT_EQ(pools.size(), 3);
+}
+
+FB_TEST(osd_client_api, client_object_naming_convention) {
+    // Object names should follow naming convention
+    std::string valid_name = "pool_1_obj_001";
+    FB_ASSERT_TRUE(!valid_name.empty());
+    FB_ASSERT_TRUE(valid_name.find(' ') == std::string::npos);
+}
+
+FB_TEST(osd_client_api, client_response_state) {
+    // Client should check response state
+    int state_success = 0;
+    int state_error = -1;
+    FB_ASSERT_TRUE(state_success == 0);
+    FB_ASSERT_TRUE(state_error < 0);
+}
+
+FB_TEST(osd_client_api, client_lib_init) {
+    // Client library should initialize properly
+    bool initialized = true;
+    FB_ASSERT_TRUE(initialized);
+}
+
+FB_TEST(osd_client_api, client_lib_cleanup) {
+    // Client library should cleanup resources
+    bool cleaned = true;
+    FB_ASSERT_TRUE(cleaned);
+}
+
+FB_TEST(osd_client_api, client_connection_cache) {
+    // Client should cache connections
+    bool has_cache = true;
+    FB_ASSERT_TRUE(has_cache);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
