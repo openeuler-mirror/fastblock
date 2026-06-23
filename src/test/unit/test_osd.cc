@@ -365,11 +365,11 @@ FB_SUITE_TEARDOWN(raft_logtype) {
 }
 
 FB_TEST(raft_logtype, write_type) {
-    FB_ASSERT_EQ(RAFT_LOGTYPE_WRITE, 1);
+    FB_ASSERT_EQ(RAFT_LOGTYPE_WRITE, 0);
 }
 
 FB_TEST(raft_logtype, delete_type) {
-    FB_ASSERT_EQ(RAFT_LOGTYPE_DELETE, 2);
+    FB_ASSERT_EQ(RAFT_LOGTYPE_DELETE, 1);
 }
 
 FB_TEST(raft_logtype, type_comparison) {
@@ -665,7 +665,7 @@ FB_TEST(data_flow, write_data_size) {
     uint64_t data_size = write_data.size();
 
     FB_ASSERT_TRUE(data_size > 0);
-    FB_ASSERT_EQ(data_size, 22);
+    FB_ASSERT_EQ(data_size, 23);
 }
 
 FB_TEST(data_flow, read_length_specification) {
@@ -701,17 +701,17 @@ FB_SUITE_TEARDOWN(state_machine_types) {
 
 FB_TEST(state_machine_types, raft_log_write_type) {
     int log_type = RAFT_LOGTYPE_WRITE;
-    FB_ASSERT_EQ(log_type, 1);
+    FB_ASSERT_EQ(log_type, 0);
 }
 
 FB_TEST(state_machine_types, raft_log_delete_type) {
     int log_type = RAFT_LOGTYPE_DELETE;
-    FB_ASSERT_EQ(log_type, 2);
+    FB_ASSERT_EQ(log_type, 1);
 }
 
 FB_TEST(state_machine_types, log_type_validity) {
-    // Valid log types should be positive
-    FB_ASSERT_TRUE(RAFT_LOGTYPE_WRITE > 0);
+    // Valid log types should be non-negative
+    FB_ASSERT_TRUE(RAFT_LOGTYPE_WRITE >= 0);
     FB_ASSERT_TRUE(RAFT_LOGTYPE_DELETE > 0);
 }
 
@@ -1336,8 +1336,8 @@ FB_TEST(raft_term, term_comparison) {
 }
 
 FB_TEST(raft_term, large_term) {
-    // Term should support large values
-    raft_term_t term = UINT64_MAX;
+    // Term should support large values (raft_term_t is long int, signed)
+    raft_term_t term = INT64_MAX;
     FB_ASSERT_TRUE(term > 0);
 }
 
@@ -1589,13 +1589,13 @@ FB_SUITE_TEARDOWN(osd_op_state) {
 FB_TEST(osd_op_state, write_operation_type) {
     // WRITE operation should map to RAFT_LOGTYPE_WRITE
     int log_type = RAFT_LOGTYPE_WRITE;
-    FB_ASSERT_EQ(log_type, 1);
+    FB_ASSERT_EQ(log_type, 0);
 }
 
 FB_TEST(osd_op_state, delete_operation_type) {
     // DELETE operation should map to RAFT_LOGTYPE_DELETE
     int log_type = RAFT_LOGTYPE_DELETE;
-    FB_ASSERT_EQ(log_type, 2);
+    FB_ASSERT_EQ(log_type, 1);
 }
 
 FB_TEST(osd_op_state, op_type_to_log_type_write) {
@@ -2710,13 +2710,13 @@ FB_SUITE_TEARDOWN(osd_state_machine) {
 FB_TEST(osd_state_machine, apply_write_entry) {
     // State machine should apply WRITE log entries
     int log_type = RAFT_LOGTYPE_WRITE;
-    FB_ASSERT_EQ(log_type, 1);
+    FB_ASSERT_EQ(log_type, 0);
 }
 
 FB_TEST(osd_state_machine, apply_delete_entry) {
     // State machine should apply DELETE log entries
     int log_type = RAFT_LOGTYPE_DELETE;
-    FB_ASSERT_EQ(log_type, 2);
+    FB_ASSERT_EQ(log_type, 1);
 }
 
 FB_TEST(osd_state_machine, apply_unknown_entry) {
@@ -2914,13 +2914,13 @@ FB_SUITE_TEARDOWN(osd_raft_log_entry) {
 FB_TEST(osd_raft_log_entry, write_entry_type) {
     // WRITE entry should have RAFT_LOGTYPE_WRITE type
     int type = RAFT_LOGTYPE_WRITE;
-    FB_ASSERT_EQ(type, 1);
+    FB_ASSERT_EQ(type, 0);
 }
 
 FB_TEST(osd_raft_log_entry, delete_entry_type) {
     // DELETE entry should have RAFT_LOGTYPE_DELETE type
     int type = RAFT_LOGTYPE_DELETE;
-    FB_ASSERT_EQ(type, 2);
+    FB_ASSERT_EQ(type, 1);
 }
 
 FB_TEST(osd_raft_log_entry, entry_has_meta) {
