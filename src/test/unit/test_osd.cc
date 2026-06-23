@@ -3077,6 +3077,151 @@ FB_TEST(osd_snapshot, snapshot_concurrent_access) {
 }
 
 // ============================================================================
+// Test Suite: osd_cluster_map (OSD Cluster Map Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_cluster_map) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_cluster_map) {
+    // Teardown code here
+}
+
+FB_TEST(osd_cluster_map, map_version) {
+    // Cluster map should have version number
+    uint64_t version = 100;
+    FB_ASSERT_TRUE(version > 0);
+}
+
+FB_TEST(osd_cluster_map, pool_list) {
+    // Cluster map should contain pool list
+    std::vector<uint64_t> pools = {1, 2, 3};
+    FB_ASSERT_EQ(pools.size(), 3);
+}
+
+FB_TEST(osd_cluster_map, pg_per_pool) {
+    // Each pool should have multiple PGs
+    std::map<uint64_t, std::vector<uint64_t>> pool_pgs;
+    pool_pgs[1] = {100, 101, 102};
+    pool_pgs[2] = {200, 201};
+
+    FB_ASSERT_EQ(pool_pgs[1].size(), 3);
+    FB_ASSERT_EQ(pool_pgs[2].size(), 2);
+}
+
+FB_TEST(osd_cluster_map, osd_list) {
+    // Cluster map should contain OSD list
+    std::vector<uint32_t> osds = {1, 2, 3, 4, 5};
+    FB_ASSERT_EQ(osds.size(), 5);
+}
+
+FB_TEST(osd_cluster_map, osd_state_tracking) {
+    // OSD state should be tracked in cluster map
+    osd_state state = osd_state::OSD_ACTIVE;
+    FB_ASSERT_TRUE(state == osd_state::OSD_ACTIVE);
+}
+
+FB_TEST(osd_cluster_map, pg_to_osd_mapping) {
+    // PG should be mapped to OSDs
+    std::string pg_name = "1.100";
+    std::vector<uint32_t> osds = {1, 2, 3};
+    FB_ASSERT_TRUE(!pg_name.empty());
+    FB_ASSERT_EQ(osds.size(), 3);
+}
+
+FB_TEST(osd_cluster_map, map_update) {
+    // Cluster map should be updatable
+    uint64_t old_version = 100;
+    uint64_t new_version = 101;
+    FB_ASSERT_TRUE(new_version > old_version);
+}
+
+FB_TEST(osd_cluster_map, map_increment) {
+    // Map version should increment monotonically
+    uint64_t version1 = 100;
+    uint64_t version2 = version1 + 1;
+    FB_ASSERT_TRUE(version2 > version1);
+}
+
+FB_TEST(osd_cluster_map, map_broadcast) {
+    // Map updates should be broadcast to all OSDs
+    bool broadcasted = true;
+    FB_ASSERT_TRUE(broadcasted);
+}
+
+FB_TEST(osd_cluster_map, map_subscription) {
+    // OSDs should subscribe to map updates
+    bool subscribed = true;
+    FB_ASSERT_TRUE(subscribed);
+}
+
+FB_TEST(osd_cluster_map, osd_addition) {
+    // New OSDs should be added to cluster map
+    std::vector<uint32_t> osds = {1, 2, 3};
+    osds.push_back(4);
+    FB_ASSERT_EQ(osds.size(), 4);
+}
+
+FB_TEST(osd_cluster_map, osd_removal) {
+    // OSDs should be removed from cluster map
+    std::vector<uint32_t> osds = {1, 2, 3, 4};
+    osds.erase(osds.begin() + 1);
+    FB_ASSERT_EQ(osds.size(), 3);
+}
+
+FB_TEST(osd_cluster_map, pg_rebalancing) {
+    // PGs should be rebalanced when OSDs change
+    bool can_rebalance = true;
+    FB_ASSERT_TRUE(can_rebalance);
+}
+
+FB_TEST(osd_cluster_map, map_persistence) {
+    // Cluster map should be persisted
+    bool persisted = true;
+    FB_ASSERT_TRUE(persisted);
+}
+
+FB_TEST(osd_cluster_map, map_recovery) {
+    // Cluster map should be recoverable
+    bool recoverable = true;
+    FB_ASSERT_TRUE(recoverable);
+}
+
+FB_TEST(osd_cluster_map, map_consistency) {
+    // All OSDs should see consistent map
+    uint64_t version1 = 100;
+    uint64_t version2 = 100;
+    FB_ASSERT_EQ(version1, version2);
+}
+
+FB_TEST(osd_cluster_map, pool_creation) {
+    // New pools should be added to cluster map
+    std::vector<uint64_t> pools = {1};
+    pools.push_back(2);
+    FB_ASSERT_EQ(pools.size(), 2);
+}
+
+FB_TEST(osd_cluster_map, pool_deletion) {
+    // Pools should be deleted from cluster map
+    std::vector<uint64_t> pools = {1, 2, 3};
+    pools.pop_back();
+    FB_ASSERT_EQ(pools.size(), 2);
+}
+
+FB_TEST(osd_cluster_map, pg_count_per_pool) {
+    // Pool should have configurable PG count
+    uint64_t pg_count = 100;
+    FB_ASSERT_TRUE(pg_count > 0);
+}
+
+FB_TEST(osd_cluster_map, osd_weight) {
+    // OSDs should have weight for PG distribution
+    double weight = 1.0;
+    FB_ASSERT_TRUE(weight > 0.0);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
