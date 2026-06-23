@@ -3490,5 +3490,76 @@ FB_TEST(raft_state, catch_up_num_value) {
     FB_ASSERT_TRUE(CATCH_UP_NUM > 0);
 }
 
+// ============================================================================
+// Test Suite: Raft Op State Error Mapping
+// ============================================================================
+
+FB_TEST(raft_state, op_state_init_to_errno) {
+    int err = raft_state_to_errno(raft_op_state::RAFT_INIT);
+    // Should return a non-zero errno when not active
+    FB_ASSERT_TRUE(err != 0);
+}
+
+FB_TEST(raft_state, op_state_active_to_errno) {
+    int err = raft_state_to_errno(raft_op_state::RAFT_ACTIVE);
+    // Active state is the only ready state; errno should be 0
+    FB_ASSERT_EQ(err, 0);
+}
+
+FB_TEST(raft_state, op_state_down_to_errno) {
+    int err = raft_state_to_errno(raft_op_state::RAFT_DOWN);
+    FB_ASSERT_TRUE(err != 0);
+}
+
+FB_TEST(raft_state, op_state_delete_to_errno) {
+    int err = raft_state_to_errno(raft_op_state::RAFT_DELETE);
+    FB_ASSERT_TRUE(err != 0);
+}
+
+FB_TEST(raft_state, op_state_only_active_returns_zero) {
+    // Across all defined op states, only RAFT_ACTIVE maps to 0
+    int err_active = raft_state_to_errno(raft_op_state::RAFT_ACTIVE);
+    int err_init   = raft_state_to_errno(raft_op_state::RAFT_INIT);
+    int err_down   = raft_state_to_errno(raft_op_state::RAFT_DOWN);
+    int err_delete = raft_state_to_errno(raft_op_state::RAFT_DELETE);
+
+    FB_ASSERT_EQ(err_active, 0);
+    FB_ASSERT_TRUE(err_init != 0);
+    FB_ASSERT_TRUE(err_down != 0);
+    FB_ASSERT_TRUE(err_delete != 0);
+}
+
+// ============================================================================
+// Test Suite: PG ID to Name Conversion
+// ============================================================================
+
+FB_TEST(raft_state, pg_id_to_name_basic) {
+    std::string name = pg_id_to_name(1, 100);
+    FB_ASSERT_FALSE(name.empty());
+}
+
+FB_TEST(raft_state, pg_id_to_name_different) {
+    std::string n1 = pg_id_to_name(1, 100);
+    std::string n2 = pg_id_to_name(2, 100);
+    FB_ASSERT_TRUE(n1 != n2);
+}
+
+FB_TEST(raft_state, pg_id_to_name_distinguishes_pg) {
+    std::string n1 = pg_id_to_name(1, 100);
+    std::string n2 = pg_id_to_name(1, 101);
+    FB_ASSERT_TRUE(n1 != n2);
+}
+
+FB_TEST(raft_state, pg_id_to_name_deterministic) {
+    std::string n1 = pg_id_to_name(5, 42);
+    std::string n2 = pg_id_to_name(5, 42);
+    FB_ASSERT_EQ(n1, n2);
+}
+
+FB_TEST(raft_state, pg_id_to_name_zero_ids) {
+    std::string name = pg_id_to_name(0, 0);
+    FB_ASSERT_FALSE(name.empty());
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
