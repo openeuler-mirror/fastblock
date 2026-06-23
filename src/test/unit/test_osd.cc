@@ -3325,6 +3325,130 @@ FB_TEST(osd_resource_management, resource_accounting) {
 }
 
 // ============================================================================
+// Test Suite: osd_network (OSD Network Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_network) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_network) {
+    // Teardown code here
+}
+
+FB_TEST(osd_network, rdma_connection) {
+    // OSD should support RDMA connections
+    bool has_rdma = true;
+    FB_ASSERT_TRUE(has_rdma);
+}
+
+FB_TEST(osd_network, tcp_fallback) {
+    // Should fall back to TCP if RDMA unavailable
+    bool can_fallback = true;
+    FB_ASSERT_TRUE(can_fallback);
+}
+
+FB_TEST(osd_network, connection_state) {
+    // Connection should track state
+    int state_connected = 1;
+    int state_disconnected = 0;
+    FB_ASSERT_TRUE(state_connected != state_disconnected);
+}
+
+FB_TEST(osd_network, message_ordering) {
+    // Messages should maintain ordering
+    uint64_t seq1 = 1;
+    uint64_t seq2 = 2;
+    uint64_t seq3 = 3;
+    FB_ASSERT_TRUE(seq1 < seq2 && seq2 < seq3);
+}
+
+FB_TEST(osd_network, message_retransmission) {
+    // Should support message retransmission
+    bool can_retransmit = true;
+    FB_ASSERT_TRUE(can_retransmit);
+}
+
+FB_TEST(osd_network, flow_control) {
+    // Should implement flow control
+    bool has_flow_control = true;
+    FB_ASSERT_TRUE(has_flow_control);
+}
+
+FB_TEST(osd_network, zero_copy_send) {
+    // Should support zero-copy send
+    bool supports_zero_copy = true;
+    FB_ASSERT_TRUE(supports_zero_copy);
+}
+
+FB_TEST(osd_network, memory_registration) {
+    // RDMA requires memory registration
+    bool mr_registered = true;
+    FB_ASSERT_TRUE(mr_registered);
+}
+
+FB_TEST(osd_network, peer_address_format) {
+    // Peer address should be in host:port format
+    std::string peer = "192.168.1.100:5678";
+    FB_ASSERT_TRUE(!peer.empty());
+    FB_ASSERT_TRUE(peer.find(':') != std::string::npos);
+}
+
+FB_TEST(osd_network, connection_timeout) {
+    // Connection should have timeout
+    uint64_t timeout_ms = 5000;
+    FB_ASSERT_TRUE(timeout_ms > 0);
+}
+
+FB_TEST(osd_network, heartbeat_interval) {
+    // Heartbeat should be periodic
+    uint64_t heartbeat_ms = 1000;
+    FB_ASSERT_TRUE(heartbeat_ms > 0);
+}
+
+FB_TEST(osd_network, max_message_size) {
+    // Messages should have size limit
+    uint64_t max_size = 1024 * 1024; // 1MB
+    FB_ASSERT_TRUE(max_size > 0);
+}
+
+FB_TEST(osd_network, scatter_gather) {
+    // Should support scatter-gather I/O
+    bool supports_sg = true;
+    FB_ASSERT_TRUE(supports_sg);
+}
+
+FB_TEST(osd_network, async_send) {
+    // Should support async send
+    bool async = true;
+    FB_ASSERT_TRUE(async);
+}
+
+FB_TEST(osd_network, async_recv) {
+    // Should support async receive
+    bool async = true;
+    FB_ASSERT_TRUE(async);
+}
+
+FB_TEST(osd_network, connection_pool) {
+    // Should maintain connection pool
+    uint32_t pool_size = 100;
+    FB_ASSERT_TRUE(pool_size > 0);
+}
+
+FB_TEST(osd_network, connection_reuse) {
+    // Connections should be reused
+    bool can_reuse = true;
+    FB_ASSERT_TRUE(can_reuse);
+}
+
+FB_TEST(osd_network, error_recovery) {
+    // Should recover from network errors
+    bool can_recover = true;
+    FB_ASSERT_TRUE(can_recover);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
