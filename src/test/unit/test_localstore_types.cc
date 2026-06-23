@@ -6328,3 +6328,243 @@ FB_TEST(spdk_buffer_inc_operations, inc_twice_full) {
     FB_ASSERT_EQ(inc, 0);
     FB_ASSERT_EQ(sbuf.used(), 100);
 }
+
+// ============================================================================
+// Test Suite: spdk_buffer_reset_operations (SPDK Buffer Reset Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_reset_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_reset_operations) {
+    // Setup code here
+}
+
+FB_TEST(spdk_buffer_reset_operations, reset_empty) {
+    spdk_buffer sbuf;
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.used(), 0);
+}
+
+FB_TEST(spdk_buffer_reset_operations, reset_after_inc) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.inc(50);
+    FB_ASSERT_EQ(sbuf.used(), 50);
+
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.used(), 0);
+    FB_ASSERT_EQ(sbuf.remain(), 100);
+}
+
+FB_TEST(spdk_buffer_reset_operations, reset_after_append) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.append("hello", 5);
+    FB_ASSERT_EQ(sbuf.used(), 5);
+
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.used(), 0);
+}
+
+FB_TEST(spdk_buffer_reset_operations, reset_multiple_times) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.inc(30);
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.used(), 0);
+
+    sbuf.inc(60);
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.used(), 0);
+
+    sbuf.inc(90);
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.used(), 0);
+}
+
+FB_TEST(spdk_buffer_reset_operations, reset_preserves_size) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.inc(50);
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.size(), 100);
+}
+
+// ============================================================================
+// Test Suite: spdk_buffer_set_used (SPDK Buffer Set Used Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_set_used) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_set_used) {
+    // Setup code here
+}
+
+FB_TEST(spdk_buffer_set_used, set_used_zero) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.set_used(0);
+    FB_ASSERT_EQ(sbuf.used(), 0);
+}
+
+FB_TEST(spdk_buffer_set_used, set_used_partial) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.set_used(50);
+    FB_ASSERT_EQ(sbuf.used(), 50);
+    FB_ASSERT_EQ(sbuf.remain(), 50);
+}
+
+FB_TEST(spdk_buffer_set_used, set_used_full) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.set_used(100);
+    FB_ASSERT_EQ(sbuf.used(), 100);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
+FB_TEST(spdk_buffer_set_used, set_used_overflow) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.set_used(200);
+    FB_ASSERT_EQ(sbuf.used(), 100); // Clamped to size
+}
+
+FB_TEST(spdk_buffer_set_used, set_used_negative_effect) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.inc(80);
+    sbuf.set_used(40); // Reduce used
+    FB_ASSERT_EQ(sbuf.used(), 40);
+    FB_ASSERT_EQ(sbuf.remain(), 60);
+}
+
+// ============================================================================
+// Test Suite: spdk_buffer_get_append_position (SPDK Buffer Get Append Position Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_get_append_position) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_get_append_position) {
+    // Setup code here
+}
+
+FB_TEST(spdk_buffer_get_append_position, get_append_initial) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    FB_ASSERT_EQ(sbuf.get_append(), buffer);
+}
+
+FB_TEST(spdk_buffer_get_append_position, get_append_after_inc) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.inc(50);
+    FB_ASSERT_EQ(sbuf.get_append(), buffer + 50);
+}
+
+FB_TEST(spdk_buffer_get_append_position, get_append_after_append) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.append("hello", 5);
+    FB_ASSERT_EQ(sbuf.get_append(), buffer + 5);
+}
+
+FB_TEST(spdk_buffer_get_append_position, get_append_after_reset) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.inc(50);
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.get_append(), buffer);
+}
+
+FB_TEST(spdk_buffer_get_append_position, get_append_at_end) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.inc(100);
+    FB_ASSERT_EQ(sbuf.get_append(), buffer + 100);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_to_iovec_edge (Buffer List To Iovec Edge Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_to_iovec_edge) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_to_iovec_edge) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_to_iovec_edge, to_iovec_from_offset) {
+    char buffer[512];
+    spdk_buffer sbuf(buffer, 512);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    iovecs iovs = bl.to_iovec(256, 128);
+    FB_ASSERT_TRUE(iovs.size() >= 1);
+}
+
+FB_TEST(buffer_list_to_iovec_edge, to_iovec_cross_boundary) {
+    char buffer1[256], buffer2[256];
+    spdk_buffer sbuf1(buffer1, 256);
+    spdk_buffer sbuf2(buffer2, 256);
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    // Request range spanning both buffers
+    iovecs iovs = bl.to_iovec(200, 200);
+    FB_ASSERT_TRUE(iovs.size() >= 2);
+}
+
+FB_TEST(buffer_list_to_iovec_edge, to_iovec_at_boundary) {
+    char buffer1[256], buffer2[256];
+    spdk_buffer sbuf1(buffer1, 256);
+    spdk_buffer sbuf2(buffer2, 256);
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    // Start exactly at first buffer end
+    iovecs iovs = bl.to_iovec(256, 100);
+    FB_ASSERT_TRUE(iovs.size() >= 1);
+}
+
+FB_TEST(buffer_list_to_iovec_edge, to_iovec_request_more_than_available) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    iovecs iovs = bl.to_iovec(0, 1000);
+    FB_ASSERT_TRUE(iovs.empty());
+}
+
+FB_TEST(buffer_list_to_iovec_edge, to_iovec_zero_length) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    iovecs iovs = bl.to_iovec(100, 0);
+    FB_ASSERT_TRUE(iovs.empty());
+}
+
+FB_TEST(buffer_list_to_iovec_edge, to_iovec_offset_exceeds_total) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    iovecs iovs = bl.to_iovec(1000, 10);
+    FB_ASSERT_TRUE(iovs.empty());
+}
