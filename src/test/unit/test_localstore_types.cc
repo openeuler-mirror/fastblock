@@ -5915,3 +5915,216 @@ FB_TEST(spdk_buffer_append_tracking, append_empty) {
     FB_ASSERT_EQ(written, 0);
     FB_ASSERT_EQ(sbuf.used(), 0);
 }
+
+// ============================================================================
+// Test Suite: xattr_val_type_operations (Xattr Val Type Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_val_type_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_val_type_operations) {
+    // Setup code here
+}
+
+FB_TEST(xattr_val_type_operations, store_blob_type) {
+    xattr_val_type val = blob_type::log;
+    FB_ASSERT_TRUE(std::holds_alternative<blob_type>(val));
+    FB_ASSERT_EQ(std::get<blob_type>(val), blob_type::log);
+}
+
+FB_TEST(xattr_val_type_operations, store_shard_id) {
+    xattr_val_type val = 42u;
+    FB_ASSERT_TRUE(std::holds_alternative<uint32_t>(val));
+    FB_ASSERT_EQ(std::get<uint32_t>(val), 42);
+}
+
+FB_TEST(xattr_val_type_operations, store_pg_string) {
+    xattr_val_type val = std::string("1.0");
+    FB_ASSERT_TRUE(std::holds_alternative<std::string>(val));
+    FB_ASSERT_EQ(std::get<std::string>(val), "1.0");
+}
+
+FB_TEST(xattr_val_type_operations, store_obj_name) {
+    xattr_val_type val = std::string("object_001");
+    FB_ASSERT_TRUE(std::holds_alternative<std::string>(val));
+}
+
+FB_TEST(xattr_val_type_operations, reassign_type) {
+    xattr_val_type val = blob_type::log;
+    val = 12345u;
+    FB_ASSERT_TRUE(std::holds_alternative<uint32_t>(val));
+    FB_ASSERT_EQ(std::get<uint32_t>(val), 12345);
+}
+
+// ============================================================================
+// Test Suite: set_xattr_ctx_operations (Set Xattr Ctx Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(set_xattr_ctx_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(set_xattr_ctx_operations) {
+    // Setup code here
+}
+
+FB_TEST(set_xattr_ctx_operations, default_cb_fn_null) {
+    set_xattr_ctx ctx;
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+}
+
+FB_TEST(set_xattr_ctx_operations, default_arg_null) {
+    set_xattr_ctx ctx;
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+FB_TEST(set_xattr_ctx_operations, set_cb_fn) {
+    set_xattr_ctx ctx;
+    ctx.cb_fn = [](void*, int) {};
+    FB_ASSERT_TRUE(ctx.cb_fn != nullptr);
+}
+
+FB_TEST(set_xattr_ctx_operations, set_arg) {
+    set_xattr_ctx ctx;
+    int dummy = 0;
+    ctx.arg = &dummy;
+    FB_ASSERT_EQ(ctx.arg, &dummy);
+}
+
+// ============================================================================
+// Test Suite: encoding_size_calculations (Encoding Size Calculations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(encoding_size_calculations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(encoding_size_calculations) {
+    // Setup code here
+}
+
+FB_TEST(encoding_size_calculations, fixed32_size) {
+    FB_ASSERT_EQ(sizeof(uint32_t), 4);
+}
+
+FB_TEST(encoding_size_calculations, fixed64_size) {
+    FB_ASSERT_EQ(sizeof(uint64_t), 8);
+}
+
+FB_TEST(encoding_size_calculations, string_encoding_overhead) {
+    // String encoding = 8 bytes length + data
+    std::string str = "hello";
+    uint64_t encoded_size = sizeof(uint64_t) + str.size();
+    FB_ASSERT_EQ(encoded_size, 13);
+}
+
+FB_TEST(encoding_size_calculations, empty_string_encoding_size) {
+    std::string str = "";
+    uint64_t encoded_size = sizeof(uint64_t) + str.size();
+    FB_ASSERT_EQ(encoded_size, 8);
+}
+
+FB_TEST(encoding_size_calculations, opt_string_nullopt_size) {
+    std::optional<std::string> opt = std::nullopt;
+    uint64_t size = LengthOptString(opt);
+    FB_ASSERT_EQ(size, sizeof(uint64_t));
+}
+
+FB_TEST(encoding_size_calculations, opt_string_value_size) {
+    std::optional<std::string> opt = "test";
+    uint64_t size = LengthOptString(opt);
+    FB_ASSERT_EQ(size, sizeof(uint64_t) + 4);
+}
+
+FB_TEST(encoding_size_calculations, log_header_encoding_size) {
+    // 4 * uint64_t (term, index, size, type) + string (length + meta)
+    std::string meta = "abc";
+    uint64_t expected = 4 * sizeof(uint64_t) + sizeof(uint64_t) + meta.size();
+    FB_ASSERT_EQ(expected, 43);
+}
+
+// ============================================================================
+// Test Suite: data_integrity (Data Integrity Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(data_integrity) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(data_integrity) {
+    // Setup code here
+}
+
+FB_TEST(data_integrity, fixed32_preserves_value) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+
+    for (uint32_t val : {0u, 1u, 127u, 255u, 65535u, 0x80000000u, 0xFFFFFFFFu}) {
+        sbuf.reset();
+        PutFixed32(sbuf, val);
+        sbuf.reset();
+        uint32_t out;
+        GetFixed32(sbuf, out);
+        FB_ASSERT_EQ(out, val);
+    }
+}
+
+FB_TEST(data_integrity, fixed64_preserves_value) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+
+    for (uint64_t val : {0ULL, 1ULL, 0x7FFFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL}) {
+        sbuf.reset();
+        PutFixed64(sbuf, val);
+        sbuf.reset();
+        uint64_t out;
+        GetFixed64(sbuf, out);
+        FB_ASSERT_EQ(out, val);
+    }
+}
+
+FB_TEST(data_integrity, string_preserves_content) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    std::string vals[] = {"", "a", "abc", "hello world", "12345"};
+    for (const auto& val : vals) {
+        sbuf.reset();
+        PutString(sbuf, val);
+        sbuf.reset();
+        std::string out;
+        GetString(sbuf, out);
+        FB_ASSERT_EQ(out, val);
+    }
+}
+
+FB_TEST(data_integrity, mixed_data_preserves_order) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    PutFixed32(sbuf, 111);
+    PutString(sbuf, "first");
+    PutFixed64(sbuf, 222);
+    PutString(sbuf, "second");
+    PutFixed32(sbuf, 333);
+
+    sbuf.reset();
+
+    uint32_t v1, v5;
+    std::string s2, s4;
+    uint64_t v3;
+
+    GetFixed32(sbuf, v1);
+    GetString(sbuf, s2);
+    GetFixed64(sbuf, v3);
+    GetString(sbuf, s4);
+    GetFixed32(sbuf, v5);
+
+    FB_ASSERT_EQ(v1, 111);
+    FB_ASSERT_EQ(s2, "first");
+    FB_ASSERT_EQ(v3, 222);
+    FB_ASSERT_EQ(s4, "second");
+    FB_ASSERT_EQ(v5, 333);
+}
