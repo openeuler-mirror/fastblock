@@ -7850,6 +7850,377 @@ FB_TEST(final_validation_tests, log_init_constant_valid) {
 }
 
 // ============================================================================
+// Test Suite: vector_stress_tests (Vector Stress Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(vector_stress_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(vector_stress_tests) {
+    // Setup code here
+}
+
+FB_TEST(vector_stress_tests, large_vector_append) {
+    std::vector<uint64_t> vec;
+    for (uint64_t i = 0; i < 10000; i++) {
+        vec.push_back(i);
+    }
+    FB_ASSERT_EQ(vec.size(), 10000);
+}
+
+FB_TEST(vector_stress_tests, vector_clear_reuse) {
+    std::vector<int> vec;
+    for (int i = 0; i < 1000; i++) vec.push_back(i);
+    vec.clear();
+    for (int i = 0; i < 500; i++) vec.push_back(i);
+    FB_ASSERT_EQ(vec.size(), 500);
+}
+
+FB_TEST(vector_stress_tests, vector_erase_loop) {
+    std::vector<int> vec;
+    for (int i = 0; i < 100; i++) vec.push_back(i);
+    vec.erase(vec.begin() + 50);
+    FB_ASSERT_EQ(vec.size(), 99);
+}
+
+FB_TEST(vector_stress_tests, vector_of_vectors) {
+    std::vector<std::vector<int>> outer;
+    for (int i = 0; i < 10; i++) {
+        std::vector<int> inner;
+        for (int j = 0; j < 10; j++) inner.push_back(j);
+        outer.push_back(inner);
+    }
+    FB_ASSERT_EQ(outer.size(), 10);
+    FB_ASSERT_EQ(outer[5].size(), 10);
+}
+
+// ============================================================================
+// Test Suite: map_stress_tests (Map Stress Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(map_stress_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(map_stress_tests) {
+    // Setup code here
+}
+
+FB_TEST(map_stress_tests, large_map_insert) {
+    std::map<uint64_t, std::string> m;
+    for (uint64_t i = 0; i < 10000; i++) {
+        m[i] = "val_" + std::to_string(i);
+    }
+    FB_ASSERT_EQ(m.size(), 10000);
+}
+
+FB_TEST(map_stress_tests, map_erase_many) {
+    std::map<int, int> m;
+    for (int i = 0; i < 100; i++) m[i] = i;
+    for (int i = 0; i < 50; i++) m.erase(i);
+    FB_ASSERT_EQ(m.size(), 50);
+}
+
+FB_TEST(map_stress_tests, map_lookup_speed) {
+    std::map<int, int> m;
+    for (int i = 0; i < 1000; i++) m[i] = i;
+    for (int i = 0; i < 1000; i++) {
+        auto it = m.find(i);
+        FB_ASSERT_TRUE(it != m.end());
+    }
+}
+
+// ============================================================================
+// Test Suite: string_stress_tests (String Stress Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(string_stress_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(string_stress_tests) {
+    // Setup code here
+}
+
+FB_TEST(string_stress_tests, long_string) {
+    std::string s(100000, 'x');
+    FB_ASSERT_EQ(s.size(), 100000);
+}
+
+FB_TEST(string_stress_tests, string_concat_many) {
+    std::string s;
+    for (int i = 0; i < 1000; i++) s += std::to_string(i);
+    FB_ASSERT_GT(s.size(), 0);
+}
+
+FB_TEST(string_stress_tests, string_find_many) {
+    std::string s = "abcdefghij";
+    for (int i = 0; i < 10; i++) {
+        FB_ASSERT_NE(s.find(s[i]), std::string::npos);
+    }
+}
+
+// ============================================================================
+// Test Suite: optional_stress_tests (Optional Stress Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(optional_stress_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(optional_stress_tests) {
+    // Setup code here
+}
+
+FB_TEST(optional_stress_tests, optional_toggle) {
+    std::optional<int> opt;
+    for (int i = 0; i < 100; i++) {
+        opt = i;
+        opt = std::nullopt;
+    }
+    FB_ASSERT_FALSE(opt.has_value());
+}
+
+FB_TEST(optional_stress_tests, optional_value_or_chain) {
+    std::optional<std::string> opt;
+    std::string result = opt.value_or("default").substr(0, 7);
+    FB_ASSERT_EQ(result, "default");
+}
+
+// ============================================================================
+// Test Suite: tuple_stress_tests (Tuple Stress Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(tuple_stress_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(tuple_stress_tests) {
+    // Setup code here
+}
+
+FB_TEST(tuple_stress_tests, tuple_vector) {
+    std::vector<std::tuple<int, int, int>> vec;
+    for (int i = 0; i < 100; i++) {
+        vec.emplace_back(i, i*2, i*3);
+    }
+    FB_ASSERT_EQ(vec.size(), 100);
+}
+
+FB_TEST(tuple_stress_tests, tuple_element_access) {
+    auto t = std::make_tuple(1, 2, 3, 4);
+    FB_ASSERT_EQ(std::get<0>(t), 1);
+    FB_ASSERT_EQ(std::get<1>(t), 2);
+    FB_ASSERT_EQ(std::get<2>(t), 3);
+    FB_ASSERT_EQ(std::get<3>(t), 4);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_stress_tests (Buffer List Stress Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_stress_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_stress_tests) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_stress_tests, append_many_buffers) {
+    buffer_list bl;
+    char buffers[100][128];
+
+    for (int i = 0; i < 100; i++) {
+        spdk_buffer sbuf(buffers[i], 128);
+        bl.append_buffer(sbuf);
+    }
+    FB_ASSERT_EQ(bl.bytes(), 12800);
+}
+
+FB_TEST(buffer_list_stress_tests, trim_many_buffers) {
+    buffer_list bl;
+    char buffers[50][256];
+
+    for (int i = 0; i < 50; i++) {
+        spdk_buffer sbuf(buffers[i], 256);
+        bl.append_buffer(sbuf);
+    }
+
+    for (int i = 0; i < 25; i++) {
+        bl.trim_front();
+    }
+    FB_ASSERT_EQ(bl.bytes(), 25 * 256);
+}
+
+FB_TEST(buffer_list_stress_tests, iterate_many_buffers) {
+    buffer_list bl;
+    char buffers[100][64];
+
+    for (int i = 0; i < 100; i++) {
+        spdk_buffer sbuf(buffers[i], 64);
+        bl.append_buffer(sbuf);
+    }
+
+    int count = 0;
+    for (auto& buf : bl) {
+        (void)buf;
+        count++;
+    }
+    FB_ASSERT_EQ(count, 100);
+}
+
+// ============================================================================
+// Test Suite: serialization_stress_extended (Serialization Stress Extended Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization_stress_extended) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization_stress_extended) {
+    // Setup code here
+}
+
+FB_TEST(serialization_stress_extended, put_get_1000_uint64) {
+    char buffer[8192];
+    spdk_buffer sbuf(buffer, 8192);
+
+    for (uint64_t i = 0; i < 1000; i++) {
+        PutFixed64(sbuf, i * 1000);
+    }
+
+    sbuf.reset();
+
+    bool all_correct = true;
+    for (uint64_t i = 0; i < 1000; i++) {
+        uint64_t val;
+        if (!GetFixed64(sbuf, val) || val != i * 1000) {
+            all_correct = false;
+            break;
+        }
+    }
+    FB_ASSERT_TRUE(all_correct);
+}
+
+FB_TEST(serialization_stress_extended, put_get_500_strings) {
+    char buffer[65536];
+    spdk_buffer sbuf(buffer, 65536);
+
+    std::vector<std::string> original;
+    for (int i = 0; i < 500; i++) {
+        std::string str = "string_" + std::to_string(i);
+        original.push_back(str);
+        PutString(sbuf, str);
+    }
+
+    sbuf.reset();
+
+    bool all_correct = true;
+    for (int i = 0; i < 500; i++) {
+        std::string val;
+        if (!GetString(sbuf, val) || val != original[i]) {
+            all_correct = false;
+            break;
+        }
+    }
+    FB_ASSERT_TRUE(all_correct);
+}
+
+// ============================================================================
+// Test Suite: log_entry_stress_tests (Log Entry Stress Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_entry_stress_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_entry_stress_tests) {
+    // Setup code here
+}
+
+FB_TEST(log_entry_stress_tests, create_many_entries) {
+    std::vector<log_entry_t> entries;
+    for (int i = 0; i < 1000; i++) {
+        log_entry_t entry;
+        entry.term_id = i;
+        entry.index = i * 10;
+        entry.size = i * 4096;
+        entry.type = i % 9;
+        entry.meta = std::to_string(i);
+        entries.push_back(entry);
+    }
+    FB_ASSERT_EQ(entries.size(), 1000);
+}
+
+FB_TEST(log_entry_stress_tests, encode_decode_many) {
+    char buffer[1024];
+
+    for (int i = 0; i < 100; i++) {
+        spdk_buffer sbuf(buffer, 1024);
+
+        log_entry_t in;
+        in.term_id = i;
+        in.index = i * 100;
+        in.meta = "meta_" + std::to_string(i);
+
+        EncodeLogHeader(sbuf, in);
+        sbuf.reset();
+
+        log_entry_t out;
+        DecodeLogHeader(sbuf, out);
+
+        FB_ASSERT_EQ(out.term_id, static_cast<uint64_t>(i));
+        FB_ASSERT_EQ(out.index, static_cast<uint64_t>(i * 100));
+    }
+}
+
+// ============================================================================
+// Test Suite: final_performance_tests (Final Performance Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(final_performance_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(final_performance_tests) {
+    // Setup code here
+}
+
+FB_TEST(final_performance_tests, buffer_ops_count) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+
+    int ops = 0;
+    while (sbuf.remain() >= 8) {
+        sbuf.inc(8);
+        ops++;
+    }
+    FB_ASSERT_EQ(ops, 512);
+}
+
+FB_TEST(final_performance_tests, string_ops_count) {
+    std::string s;
+    for (int i = 0; i < 100; i++) {
+        s += std::to_string(i);
+    }
+    FB_ASSERT_GT(s.size(), 0);
+}
+
+FB_TEST(final_performance_tests, vector_ops_count) {
+    std::vector<int> vec;
+    for (int i = 0; i < 10000; i++) vec.push_back(i);
+    FB_ASSERT_EQ(vec.size(), 10000);
+}
+
+FB_TEST(final_performance_tests, map_ops_count) {
+    std::map<int, int> m;
+    for (int i = 0; i < 1000; i++) m[i] = i;
+    FB_ASSERT_EQ(m.size(), 1000);
+}
+
+// ============================================================================
 // Test Suite: xattr_val_type_operations (Xattr Val Type Operations Tests)
 // ============================================================================
 
