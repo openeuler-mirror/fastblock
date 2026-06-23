@@ -10263,3 +10263,298 @@ FB_TEST(serialization_mixed_types, all_types_sequence) {
     FB_ASSERT_TRUE(o2.has_value());
     FB_ASSERT_EQ(*o2, "opt");
 }
+
+// ============================================================================
+// Test Suite: buffer_list_multiple_splice (Buffer List Multiple Splice Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_multiple_splice) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_multiple_splice) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_multiple_splice, splice_two_lists) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl1, bl2, bl3;
+    bl2.append_buffer(sbuf1);
+    bl3.append_buffer(sbuf2);
+
+    bl1.append_buffer(bl2);
+    bl1.append_buffer(bl3);
+
+    FB_ASSERT_EQ(bl1.bytes(), 300);
+    FB_ASSERT_EQ(bl2.bytes(), 0);
+    FB_ASSERT_EQ(bl3.bytes(), 0);
+}
+
+FB_TEST(buffer_list_multiple_splice, splice_chain) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    buffer_list bl1, bl2, bl3;
+    bl3.append_buffer(sbuf);
+
+    bl2.append_buffer(bl3);
+    bl1.append_buffer(bl2);
+
+    FB_ASSERT_EQ(bl1.bytes(), 100);
+    FB_ASSERT_EQ(bl2.bytes(), 0);
+    FB_ASSERT_EQ(bl3.bytes(), 0);
+}
+
+FB_TEST(buffer_list_multiple_splice, splice_then_append) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl1, bl2;
+    bl2.append_buffer(sbuf1);
+
+    bl1.append_buffer(bl2);
+    bl1.append_buffer(sbuf2);
+
+    FB_ASSERT_EQ(bl1.bytes(), 300);
+}
+
+FB_TEST(buffer_list_multiple_splice, splice_then_prepend) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl1, bl2;
+    bl2.append_buffer(sbuf1);
+
+    bl1.append_buffer(bl2);
+    bl1.prepend_buffer(sbuf2);
+
+    FB_ASSERT_EQ(bl1.bytes(), 300);
+}
+
+FB_TEST(buffer_list_multiple_splice, splice_rvalue) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    buffer_list bl1, bl2;
+    bl2.append_buffer(sbuf);
+
+    bl1.append_buffer(std::move(bl2));
+    FB_ASSERT_EQ(bl1.bytes(), 100);
+}
+
+// ============================================================================
+// Test Suite: rblob_rw_result_operations (RBlob RW Result Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(rblob_rw_result_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(rblob_rw_result_operations) {
+    // Setup code here
+}
+
+FB_TEST(rblob_rw_result_operations, zero_values) {
+    rblob_rw_result result;
+    FB_ASSERT_EQ(result.start_pos, 0);
+    FB_ASSERT_EQ(result.len, 0);
+}
+
+FB_TEST(rblob_rw_result_operations, positive_values) {
+    rblob_rw_result result{1024, 8192};
+    FB_ASSERT_EQ(result.start_pos, 1024);
+    FB_ASSERT_EQ(result.len, 8192);
+}
+
+FB_TEST(rblob_rw_result_operations, large_values) {
+    rblob_rw_result result{UINT64_MAX / 2, 1024 * 1024};
+    FB_ASSERT_TRUE(result.start_pos > 0);
+    FB_ASSERT_TRUE(result.len > 0);
+}
+
+FB_TEST(rblob_rw_result_operations, copy_values) {
+    rblob_rw_result original{100, 200};
+    rblob_rw_result copy = original;
+
+    FB_ASSERT_EQ(copy.start_pos, original.start_pos);
+    FB_ASSERT_EQ(copy.len, original.len);
+}
+
+FB_TEST(rblob_rw_result_operations, end_calculation) {
+    rblob_rw_result result{4096, 8192};
+    uint64_t end = result.start_pos + result.len;
+    FB_ASSERT_EQ(end, 12288);
+}
+
+FB_TEST(rblob_rw_result_operations, range_calculation) {
+    rblob_rw_result result{0, 4096};
+    FB_ASSERT_TRUE(result.start_pos >= 0);
+    FB_ASSERT_TRUE(result.len > 0);
+}
+
+FB_TEST(rblob_rw_result_operations, modify_values) {
+    rblob_rw_result result;
+    result.start_pos = 512;
+    result.len = 1024;
+    FB_ASSERT_EQ(result.start_pos, 512);
+    FB_ASSERT_EQ(result.len, 1024);
+}
+
+// ============================================================================
+// Test Suite: iovec_structure_operations (Iovec Structure Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(iovec_structure_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(iovec_structure_operations) {
+    // Setup code here
+}
+
+FB_TEST(iovec_structure_operations, basic_iovec) {
+    struct iovec iov;
+    char buffer[100];
+    iov.iov_base = buffer;
+    iov.iov_len = 100;
+
+    FB_ASSERT_EQ(iov.iov_base, buffer);
+    FB_ASSERT_EQ(iov.iov_len, 100);
+}
+
+FB_TEST(iovec_structure_operations, iovec_size) {
+    struct iovec iov;
+    FB_ASSERT_TRUE(sizeof(iov.iov_base) == sizeof(void*));
+    FB_ASSERT_TRUE(sizeof(iov.iov_len) >= sizeof(size_t));
+}
+
+FB_TEST(iovec_structure_operations, iovec_in_vector) {
+    iovecs vec;
+    struct iovec iov;
+    iov.iov_len = 512;
+    vec.push_back(iov);
+
+    FB_ASSERT_EQ(vec.size(), 1);
+    FB_ASSERT_EQ(vec[0].iov_len, 512);
+}
+
+FB_TEST(iovec_structure_operations, iovec_nullptr) {
+    struct iovec iov;
+    iov.iov_base = nullptr;
+    iov.iov_len = 0;
+
+    FB_ASSERT_EQ(iov.iov_base, nullptr);
+    FB_ASSERT_EQ(iov.iov_len, 0);
+}
+
+FB_TEST(iovec_structure_operations, iovec_copy) {
+    struct iovec iov1;
+    iov1.iov_len = 1024;
+
+    struct iovec iov2 = iov1;
+    FB_ASSERT_EQ(iov2.iov_len, iov1.iov_len);
+}
+
+FB_TEST(iovec_structure_operations, iovecs_clear) {
+    iovecs vec;
+    struct iovec iov;
+    vec.push_back(iov);
+    vec.push_back(iov);
+
+    FB_ASSERT_EQ(vec.size(), 2);
+    vec.clear();
+    FB_ASSERT_TRUE(vec.empty());
+}
+
+FB_TEST(iovec_structure_operations, iovecs_resize) {
+    iovecs vec;
+    vec.resize(10);
+
+    FB_ASSERT_EQ(vec.size(), 10);
+
+    vec.resize(5);
+    FB_ASSERT_EQ(vec.size(), 5);
+}
+
+FB_TEST(iovec_structure_operations, iovecs_total_length) {
+    iovecs vec;
+    struct iovec iov1, iov2, iov3;
+    iov1.iov_len = 512;
+    iov2.iov_len = 1024;
+    iov3.iov_len = 2048;
+
+    vec.push_back(iov1);
+    vec.push_back(iov2);
+    vec.push_back(iov3);
+
+    size_t total = 0;
+    for (const auto& iov : vec) {
+        total += iov.iov_len;
+    }
+    FB_ASSERT_EQ(total, 3584);
+}
+
+// ============================================================================
+// Test Suite: encoding_length_consistency (Encoding Length Consistency Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(encoding_length_consistency) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(encoding_length_consistency) {
+    // Setup code here
+}
+
+FB_TEST(encoding_length_consistency, fixed32_size) {
+    FB_ASSERT_EQ(sizeof(uint32_t), 4);
+}
+
+FB_TEST(encoding_length_consistency, fixed64_size) {
+    FB_ASSERT_EQ(sizeof(uint64_t), 8);
+}
+
+FB_TEST(encoding_length_consistency, string_overhead) {
+    std::string str = "test";
+    uint64_t encoded_len = LengthString(str);
+    FB_ASSERT_EQ(encoded_len, sizeof(uint64_t) + str.size());
+}
+
+FB_TEST(encoding_length_consistency, opt_string_nullopt_length) {
+    std::optional<std::string> opt = std::nullopt;
+    uint64_t len = LengthOptString(opt);
+    FB_ASSERT_EQ(len, sizeof(uint64_t));
+}
+
+FB_TEST(encoding_length_consistency, opt_string_value_length) {
+    std::optional<std::string> opt = "value";
+    uint64_t len = LengthOptString(opt);
+    FB_ASSERT_EQ(len, sizeof(uint64_t) + 5);
+}
+
+FB_TEST(encoding_length_consistency, log_header_min_size) {
+    FB_ASSERT_EQ(entry_header_size, 3 * sizeof(uint64_t));
+}
+
+FB_TEST(encoding_length_consistency, log_header_with_meta) {
+    std::string meta = "";
+    uint64_t base_size = 4 * sizeof(uint64_t); // term, index, size, type
+    uint64_t meta_size = sizeof(uint64_t) + meta.size();
+
+    uint64_t total = base_size + meta_size;
+    FB_ASSERT_TRUE(total >= 5 * sizeof(uint64_t));
+}
+
+FB_TEST(encoding_length_consistency, log_header_with_long_meta) {
+    std::string meta(1000, 'x');
+    uint64_t base_size = 4 * sizeof(uint64_t);
+    uint64_t meta_size = sizeof(uint64_t) + meta.size();
+
+    uint64_t total = base_size + meta_size;
+    FB_ASSERT_TRUE(total >= 1008);
+}
