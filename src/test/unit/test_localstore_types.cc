@@ -21035,3 +21035,52 @@ FB_TEST(buffer_list_trim_operations, trim_front_back_sequence) {
     bl.trim_back();  // Remove 300
     FB_ASSERT_EQ(bl.bytes(), 200);
 }
+
+// ============================================================================
+// Test Suite: buffer_list_clear_operations (Buffer List Clear Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_clear_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_clear_operations) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_list_clear_operations, clear_single_buffer) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    FB_ASSERT_FALSE(bl.empty());
+    bl.clear();
+    FB_ASSERT_TRUE(bl.empty());
+    FB_ASSERT_EQ(bl.bytes(), 0);
+}
+
+FB_TEST(buffer_list_clear_operations, clear_multiple_buffers) {
+    char b1[100], b2[200], b3[300];
+    spdk_buffer s1(b1, 100), s2(b2, 200), s3(b3, 300);
+    buffer_list bl;
+    bl.append_buffer(s1);
+    bl.append_buffer(s2);
+    bl.append_buffer(s3);
+
+    FB_ASSERT_EQ(bl.bytes(), 600);
+    bl.clear();
+    FB_ASSERT_TRUE(bl.empty());
+    FB_ASSERT_EQ(bl.bytes(), 0);
+}
+
+FB_TEST(buffer_list_clear_operations, clear_twice_safe) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    bl.clear();
+    bl.clear(); // Should be safe to call twice
+    FB_ASSERT_TRUE(bl.empty());
+}
