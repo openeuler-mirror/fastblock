@@ -8404,3 +8404,313 @@ FB_TEST(encoding_opt_string_advanced, long_optional_string) {
     FB_ASSERT_TRUE(out.has_value());
     FB_ASSERT_EQ(out->size(), 5000);
 }
+
+// ============================================================================
+// Test Suite: serialization_boundary_values (Serialization Boundary Values Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization_boundary_values) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization_boundary_values) {
+    // Setup code here
+}
+
+FB_TEST(serialization_boundary_values, uint32_min) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+    PutFixed32(sbuf, 0);
+    sbuf.reset();
+    uint32_t val;
+    GetFixed32(sbuf, val);
+    FB_ASSERT_EQ(val, 0);
+}
+
+FB_TEST(serialization_boundary_values, uint32_max) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+    PutFixed32(sbuf, UINT32_MAX);
+    sbuf.reset();
+    uint32_t val;
+    GetFixed32(sbuf, val);
+    FB_ASSERT_EQ(val, UINT32_MAX);
+}
+
+FB_TEST(serialization_boundary_values, uint64_min) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+    PutFixed64(sbuf, 0);
+    sbuf.reset();
+    uint64_t val;
+    GetFixed64(sbuf, val);
+    FB_ASSERT_EQ(val, 0);
+}
+
+FB_TEST(serialization_boundary_values, uint64_max) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+    PutFixed64(sbuf, UINT64_MAX);
+    sbuf.reset();
+    uint64_t val;
+    GetFixed64(sbuf, val);
+    FB_ASSERT_EQ(val, UINT64_MAX);
+}
+
+FB_TEST(serialization_boundary_values, string_max_length) {
+    char buffer[10000];
+    spdk_buffer sbuf(buffer, 10000);
+    std::string str(8000, 'a');
+    bool ok = PutString(sbuf, str);
+    FB_ASSERT_TRUE(ok);
+
+    sbuf.reset();
+    std::string out;
+    GetString(sbuf, out);
+    FB_ASSERT_EQ(out.size(), 8000);
+}
+
+FB_TEST(serialization_boundary_values, string_zero_length) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+    std::string str = "";
+    PutString(sbuf, str);
+    sbuf.reset();
+    std::string out = "dummy";
+    GetString(sbuf, out);
+    FB_ASSERT_TRUE(out.empty());
+}
+
+// ============================================================================
+// Test Suite: buffer_list_edge_cases (Buffer List Edge Cases Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_edge_cases) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_edge_cases) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_edge_cases, append_then_remove_all) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    bl.pop_front();
+    FB_ASSERT_TRUE(bl.empty());
+    FB_ASSERT_EQ(bl.bytes(), 0);
+}
+
+FB_TEST(buffer_list_edge_cases, prepend_then_remove_all) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.prepend_buffer(sbuf);
+    bl.trim_front();
+    FB_ASSERT_TRUE(bl.empty());
+    FB_ASSERT_EQ(bl.bytes(), 0);
+}
+
+FB_TEST(buffer_list_edge_cases, append_prepend_alternating) {
+    char buffer1[100], buffer2[200], buffer3[300], buffer4[400];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+    spdk_buffer sbuf4(buffer4, 400);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.prepend_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+    bl.prepend_buffer(sbuf4);
+
+    FB_ASSERT_EQ(bl.bytes(), 1000);
+}
+
+FB_TEST(buffer_list_edge_cases, to_iovec_exact_size) {
+    char buffer[512];
+    spdk_buffer sbuf(buffer, 512);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    iovecs iovs = bl.to_iovec(0, 512);
+    FB_ASSERT_TRUE(iovs.size() >= 1);
+}
+
+FB_TEST(buffer_list_edge_cases, to_iovec_one_byte) {
+    char buffer[512];
+    spdk_buffer sbuf(buffer, 512);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    iovecs iovs = bl.to_iovec(256, 1);
+    FB_ASSERT_TRUE(iovs.size() >= 1);
+    FB_ASSERT_TRUE(iovs[0].iov_len >= 1);
+}
+
+FB_TEST(buffer_list_edge_cases, pop_front_list_zero) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list popped = bl.pop_front_list(0);
+    FB_ASSERT_EQ(popped.bytes(), 0);
+    FB_ASSERT_EQ(bl.bytes(), 100);
+}
+
+// ============================================================================
+// Test Suite: spdk_buffer_boundary (SPDK Buffer Boundary Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_boundary) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_boundary) {
+    // Setup code here
+}
+
+FB_TEST(spdk_buffer_boundary, inc_to_exact_limit) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    size_t inc = sbuf.inc(100);
+    FB_ASSERT_EQ(inc, 100);
+    FB_ASSERT_EQ(sbuf.used(), 100);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
+FB_TEST(spdk_buffer_boundary, inc_one_past_limit) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    size_t inc = sbuf.inc(101);
+    FB_ASSERT_EQ(inc, 100);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
+FB_TEST(spdk_buffer_boundary, append_exact_fit) {
+    char buffer[10];
+    spdk_buffer sbuf(buffer, 10);
+    size_t written = sbuf.append("1234567890", 10);
+    FB_ASSERT_EQ(written, 10);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
+FB_TEST(spdk_buffer_boundary, append_one_past_fit) {
+    char buffer[10];
+    spdk_buffer sbuf(buffer, 10);
+    size_t written = sbuf.append("12345678901", 11);
+    FB_ASSERT_EQ(written, 10);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
+FB_TEST(spdk_buffer_boundary, set_used_to_exact) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.set_used(100);
+    FB_ASSERT_EQ(sbuf.used(), 100);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
+FB_TEST(spdk_buffer_boundary, set_used_past_limit) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.set_used(150);
+    FB_ASSERT_EQ(sbuf.used(), 100);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
+FB_TEST(spdk_buffer_boundary, reset_after_full) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.inc(100);
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.used(), 0);
+    FB_ASSERT_EQ(sbuf.remain(), 100);
+}
+
+// ============================================================================
+// Test Suite: log_entry_header_edge (Log Entry Header Edge Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_entry_header_edge) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_entry_header_edge) {
+    // Setup code here
+}
+
+FB_TEST(log_entry_header_edge, encode_minimal_values) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    log_entry_t entry;
+    entry.term_id = 0;
+    entry.index = 0;
+    entry.size = 0;
+    entry.type = 0;
+    entry.meta = "";
+
+    bool ok = EncodeLogHeader(sbuf, entry);
+    FB_ASSERT_TRUE(ok);
+}
+
+FB_TEST(log_entry_header_edge, encode_max_values) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    log_entry_t entry;
+    entry.term_id = UINT64_MAX;
+    entry.index = UINT64_MAX;
+    entry.size = UINT64_MAX;
+    entry.type = UINT64_MAX;
+    entry.meta = "";
+
+    bool ok = EncodeLogHeader(sbuf, entry);
+    FB_ASSERT_TRUE(ok);
+}
+
+FB_TEST(log_entry_header_edge, encode_empty_meta) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    log_entry_t entry;
+    entry.meta = "";
+
+    EncodeLogHeader(sbuf, entry);
+    // Should write 5 * sizeof(uint64_t) for header + 0 for meta
+    FB_ASSERT_TRUE(sbuf.used() >= 5 * sizeof(uint64_t));
+}
+
+FB_TEST(log_entry_header_edge, encode_long_meta) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+
+    log_entry_t entry;
+    entry.meta = std::string(2000, 'x');
+
+    bool ok = EncodeLogHeader(sbuf, entry);
+    FB_ASSERT_TRUE(ok);
+    FB_ASSERT_TRUE(sbuf.used() > 2000);
+}
+
+FB_TEST(log_entry_header_edge, decode_preserves_init) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    log_entry_t entry_in;
+    entry_in.term_id = log_entry_t::init;
+    entry_in.index = log_entry_t::init;
+
+    EncodeLogHeader(sbuf, entry_in);
+    sbuf.reset();
+
+    log_entry_t entry_out;
+    DecodeLogHeader(sbuf, entry_out);
+
+    FB_ASSERT_EQ(entry_out.term_id, log_entry_t::init);
+    FB_ASSERT_EQ(entry_out.index, log_entry_t::init);
+}
