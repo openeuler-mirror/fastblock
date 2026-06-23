@@ -20556,3 +20556,124 @@ FB_TEST(xattr_variant_operations, variant_assignment_changes_type) {
     val = std::string("hello");
     FB_ASSERT_TRUE(std::holds_alternative<std::string>(val));
 }
+
+// ============================================================================
+// Test Suite: context_default_state (Context Default State Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(context_default_state) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(context_default_state) {
+    // Teardown code here
+}
+
+FB_TEST(context_default_state, pool_create_ctx_defaults) {
+    pool_create_ctx ctx;
+    FB_ASSERT_EQ(ctx.pool, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+    FB_ASSERT_EQ(ctx.idx, 0);
+    FB_ASSERT_EQ(ctx.max, 0);
+}
+
+FB_TEST(context_default_state, pool_delete_ctx_defaults) {
+    pool_delete_ctx ctx;
+    FB_ASSERT_EQ(ctx.pool, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+FB_TEST(context_default_state, log_append_ctx_defaults) {
+    log_append_ctx ctx;
+    FB_ASSERT_TRUE(ctx.idx_pos.empty());
+    FB_ASSERT_TRUE(ctx.headers.empty());
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+    FB_ASSERT_EQ(ctx.log, nullptr);
+}
+
+FB_TEST(context_default_state, log_read_ctx_defaults) {
+    log_read_ctx ctx;
+    FB_ASSERT_TRUE(ctx.entries.empty());
+    FB_ASSERT_EQ(ctx.start_index, 0);
+    FB_ASSERT_EQ(ctx.end_index, 0);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+FB_TEST(context_default_state, log_op_ctx_defaults) {
+    log_op_ctx ctx;
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+FB_TEST(context_default_state, kvstore_write_ctx_defaults) {
+    kvstore_write_ctx ctx;
+    FB_ASSERT_TRUE(ctx.ops.empty());
+    FB_ASSERT_EQ(ctx.op_length, 0);
+    FB_ASSERT_EQ(ctx.kvs, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+FB_TEST(context_default_state, kvstore_read_ctx_defaults) {
+    kvstore_read_ctx ctx;
+    FB_ASSERT_EQ(ctx.kvs, nullptr);
+    FB_ASSERT_EQ(ctx.kvloader, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+    FB_ASSERT_EQ(ctx.start_pos, 0);
+    FB_ASSERT_EQ(ctx.len, 0);
+    FB_ASSERT_EQ(ctx.rblob, nullptr);
+}
+
+FB_TEST(context_default_state, kvstore_ckpt_ctx_defaults) {
+    kvstore_ckpt_ctx ctx;
+    FB_ASSERT_EQ(ctx.kvs, nullptr);
+    FB_ASSERT_EQ(ctx.kv_ckpt, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+FB_TEST(context_default_state, rblob_rw_ctx_defaults) {
+    rblob_rw_ctx ctx;
+    FB_ASSERT_EQ(ctx.is_read, false);
+    FB_ASSERT_EQ(ctx.blob, nullptr);
+    FB_ASSERT_EQ(ctx.channel, nullptr);
+    FB_ASSERT_TRUE(ctx.iov.empty());
+    FB_ASSERT_EQ(ctx.start_pos, 0);
+    FB_ASSERT_EQ(ctx.lba, 0);
+    FB_ASSERT_EQ(ctx.len, 0);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+    FB_ASSERT_EQ(ctx.next, nullptr);
+    FB_ASSERT_EQ(ctx.rb, nullptr);
+}
+
+FB_TEST(context_default_state, rblob_md_ctx_defaults) {
+    rblob_md_ctx ctx;
+    FB_ASSERT_EQ(ctx.is_load, false);
+    FB_ASSERT_EQ(ctx.rblob, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+FB_TEST(context_default_state, rblob_trim_ctx_defaults) {
+    rblob_trim_ctx ctx;
+    FB_ASSERT_EQ(ctx.blob, nullptr);
+    FB_ASSERT_EQ(ctx.channel, nullptr);
+    FB_ASSERT_EQ(ctx.lba, 0);
+    FB_ASSERT_EQ(ctx.len, 0);
+    FB_ASSERT_EQ(ctx.next, nullptr);
+    FB_ASSERT_EQ(ctx.rblob, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+FB_TEST(context_default_state, set_xattr_ctx_defaults) {
+    set_xattr_ctx ctx;
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
