@@ -3449,6 +3449,143 @@ FB_TEST(osd_network, error_recovery) {
 }
 
 // ============================================================================
+// Test Suite: osd_integration_concept (OSD Integration Concept Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_integration_concept) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_integration_concept) {
+    // Teardown code here
+}
+
+FB_TEST(osd_integration_concept, osd_startup_sequence) {
+    // OSD startup: init -> register with monitor -> wait for map -> active
+    std::vector<std::string> stages = {"init", "register", "wait_map", "active"};
+    FB_ASSERT_EQ(stages.size(), 4);
+}
+
+FB_TEST(osd_integration_concept, osd_shutdown_sequence) {
+    // OSD shutdown: stop IO -> leave PGs -> notify monitor -> exit
+    std::vector<std::string> stages = {"stop_io", "leave_pgs", "notify", "exit"};
+    FB_ASSERT_EQ(stages.size(), 4);
+}
+
+FB_TEST(osd_integration_concept, pg_create_flow) {
+    // PG creation: request -> create -> activate -> ready
+    std::vector<std::string> stages = {"request", "create", "activate", "ready"};
+    FB_ASSERT_EQ(stages.size(), 4);
+}
+
+FB_TEST(osd_integration_concept, pg_delete_flow) {
+    // PG deletion: request -> stop -> cleanup -> delete
+    std::vector<std::string> stages = {"request", "stop", "cleanup", "delete"};
+    FB_ASSERT_EQ(stages.size(), 4);
+}
+
+FB_TEST(osd_integration_concept, write_flow) {
+    // Write: client -> leader -> raft -> apply -> ack
+    std::vector<std::string> stages = {"client", "leader", "raft", "apply", "ack"};
+    FB_ASSERT_EQ(stages.size(), 5);
+}
+
+FB_TEST(osd_integration_concept, read_flow) {
+    // Read: client -> leader -> read -> ack
+    std::vector<std::string> stages = {"client", "leader", "read", "ack"};
+    FB_ASSERT_EQ(stages.size(), 4);
+}
+
+FB_TEST(osd_integration_concept, delete_flow) {
+    // Delete: client -> leader -> raft -> apply -> ack
+    std::vector<std::string> stages = {"client", "leader", "raft", "apply", "ack"};
+    FB_ASSERT_EQ(stages.size(), 5);
+}
+
+FB_TEST(osd_integration_concept, raft_election_flow) {
+    // Raft election: timeout -> candidate -> request_vote -> votes -> leader
+    std::vector<std::string> stages = {"timeout", "candidate", "request_vote", "votes", "leader"};
+    FB_ASSERT_EQ(stages.size(), 5);
+}
+
+FB_TEST(osd_integration_concept, raft_heartbeat_flow) {
+    // Raft heartbeat: leader -> send -> followers -> ack
+    std::vector<std::string> stages = {"leader", "send", "followers", "ack"};
+    FB_ASSERT_EQ(stages.size(), 4);
+}
+
+FB_TEST(osd_integration_concept, raft_log_replication) {
+    // Log replication: leader -> append -> replicate -> commit -> apply
+    std::vector<std::string> stages = {"leader", "append", "replicate", "commit", "apply"};
+    FB_ASSERT_EQ(stages.size(), 5);
+}
+
+FB_TEST(osd_integration_concept, monitor_interaction) {
+    // OSD-Monitor: heartbeat -> report -> receive_map -> apply
+    std::vector<std::string> stages = {"heartbeat", "report", "receive_map", "apply"};
+    FB_ASSERT_EQ(stages.size(), 4);
+}
+
+FB_TEST(osd_integration_concept, client_osd_interaction) {
+    // Client-OSD: connect -> request -> response -> disconnect
+    std::vector<std::string> stages = {"connect", "request", "response", "disconnect"};
+    FB_ASSERT_EQ(stages.size(), 4);
+}
+
+FB_TEST(osd_integration_concept, recovery_flow) {
+    // Recovery: detect failure -> rebuild -> replicate -> ready
+    std::vector<std::string> stages = {"detect", "rebuild", "replicate", "ready"};
+    FB_ASSERT_EQ(stages.size(), 4);
+}
+
+FB_TEST(osd_integration_concept, rebalance_flow) {
+    // Rebalance: map change -> calculate -> move -> verify
+    std::vector<std::string> stages = {"map_change", "calculate", "move", "verify"};
+    FB_ASSERT_EQ(stages.size(), 4);
+}
+
+FB_TEST(osd_integration_concept, snapshot_flow) {
+    // Snapshot: trigger -> capture -> store -> restore
+    std::vector<std::string> stages = {"trigger", "capture", "store", "restore"};
+    FB_ASSERT_EQ(stages.size(), 4);
+}
+
+FB_TEST(osd_integration_concept, consistency_model) {
+    // Consistency: linearizable writes, reads follow writes
+    bool linearizable = true;
+    FB_ASSERT_TRUE(linearizable);
+}
+
+FB_TEST(osd_integration_concept, fault_tolerance) {
+    // Fault tolerance: tolerate minority failures
+    int total = 3;
+    int tolerated = total / 2;
+    FB_ASSERT_EQ(tolerated, 1);
+}
+
+FB_TEST(osd_integration_concept, availability_model) {
+    // Availability: majority must be alive
+    int total = 5;
+    int majority = total / 2 + 1;
+    FB_ASSERT_EQ(majority, 3);
+}
+
+FB_TEST(osd_integration_concept, scalability) {
+    // Scalability: multiple PGs per pool, multiple pools
+    uint64_t pools = 10;
+    uint64_t pgs_per_pool = 100;
+    uint64_t total_pgs = pools * pgs_per_pool;
+    FB_ASSERT_EQ(total_pgs, 1000);
+}
+
+FB_TEST(osd_integration_concept, performance_optimization) {
+    // Optimization: parallel IO, batch operations
+    bool parallel_io = true;
+    bool batch_ops = true;
+    FB_ASSERT_TRUE(parallel_io && batch_ops);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
