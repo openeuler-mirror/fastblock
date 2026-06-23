@@ -5218,3 +5218,244 @@ FB_TEST(context_callbacks, rblob_op_callback_type) {
     rblob_op_complete cb = [](void*, int) {};
     FB_ASSERT_TRUE(static_cast<bool>(cb));
 }
+
+// ============================================================================
+// Test Suite: blob_id_operations (Blob ID Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(blob_id_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(blob_id_operations) {
+    // Setup code here
+}
+
+FB_TEST(blob_id_operations, zero_blob_id) {
+    spdk_blob_id id = 0;
+    FB_ASSERT_EQ(id, 0);
+}
+
+FB_TEST(blob_id_operations, blob_id_size) {
+    FB_ASSERT_EQ(sizeof(spdk_blob_id), sizeof(uint64_t));
+}
+
+FB_TEST(blob_id_operations, blob_id_range) {
+    spdk_blob_id min_id = 0;
+    spdk_blob_id max_id = UINT64_MAX;
+    FB_ASSERT_TRUE(max_id > min_id);
+}
+
+FB_TEST(blob_id_operations, blob_id_comparison) {
+    spdk_blob_id id1 = 100;
+    spdk_blob_id id2 = 200;
+    spdk_blob_id id3 = 100;
+
+    FB_ASSERT_TRUE(id2 > id1);
+    FB_ASSERT_TRUE(id1 == id3);
+    FB_ASSERT_TRUE(id1 != id2);
+}
+
+FB_TEST(blob_id_operations, blob_id_in_fb_blob) {
+    fb_blob blob;
+    blob.blobid = 12345;
+    FB_ASSERT_EQ(blob.blobid, 12345);
+}
+
+// ============================================================================
+// Test Suite: type_string_function (Type String Function Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(type_string_function) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(type_string_function) {
+    // Setup code here
+}
+
+FB_TEST(type_string_function, all_defined_types) {
+    FB_ASSERT_EQ(type_string(blob_type::log), "blob_type::log");
+    FB_ASSERT_EQ(type_string(blob_type::object), "blob_type::object");
+    FB_ASSERT_EQ(type_string(blob_type::object_snap), "blob_type::object_snap");
+    FB_ASSERT_EQ(type_string(blob_type::object_recover), "blob_type::object_recover");
+    FB_ASSERT_EQ(type_string(blob_type::kv), "blob_type::kv");
+    FB_ASSERT_EQ(type_string(blob_type::kv_checkpoint), "blob_type::kv_checkpoint");
+    FB_ASSERT_EQ(type_string(blob_type::kv_checkpoint_new), "blob_type::kv_checkpoint_new");
+    FB_ASSERT_EQ(type_string(blob_type::super_blob), "blob_type::super_blob");
+    FB_ASSERT_EQ(type_string(blob_type::free), "blob_type::free");
+}
+
+FB_TEST(type_string_function, unknown_type) {
+    blob_type unknown = static_cast<blob_type>(999);
+    FB_ASSERT_EQ(type_string(unknown), "blob_type::unknown");
+}
+
+FB_TEST(type_string_function, returns_nonempty) {
+    for (uint32_t i = 0; i <= 8; i++) {
+        blob_type t = static_cast<blob_type>(i);
+        FB_ASSERT_TRUE(!type_string(t).empty());
+    }
+}
+
+FB_TEST(type_string_function, has_prefix) {
+    FB_ASSERT_TRUE(type_string(blob_type::log).substr(0, 11) == "blob_type::");
+}
+
+// ============================================================================
+// Test Suite: log_header_size_calculation (Log Header Size Calculation Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_header_size_calculation) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_header_size_calculation) {
+    // Setup code here
+}
+
+FB_TEST(log_header_size_calculation, header_size_constant) {
+    FB_ASSERT_EQ(entry_header_size, 24);
+}
+
+FB_TEST(log_header_size_calculation, encode_size_without_meta) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    log_entry_t entry;
+    entry.term_id = 1;
+    entry.index = 100;
+    entry.size = 4096;
+    entry.type = 2;
+    entry.meta = "";
+
+    EncodeLogHeader(sbuf, entry);
+
+    // 4 * sizeof(uint64_t) for term/index/size/type
+    // + sizeof(uint64_t) for meta length (0)
+    // + 0 for meta data
+    size_t expected = 5 * sizeof(uint64_t);
+    FB_ASSERT_EQ(sbuf.used(), expected);
+}
+
+FB_TEST(log_header_size_calculation, encode_size_with_meta) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    log_entry_t entry;
+    entry.term_id = 1;
+    entry.index = 100;
+    entry.size = 4096;
+    entry.type = 2;
+    entry.meta = "test";
+
+    EncodeLogHeader(sbuf, entry);
+
+    // 4 * sizeof(uint64_t) for term/index/size/type
+    // + sizeof(uint64_t) for meta length
+    // + 4 for meta data
+    size_t expected = 5 * sizeof(uint64_t) + 4;
+    FB_ASSERT_EQ(sbuf.used(), expected);
+}
+
+// ============================================================================
+// Test Suite: vector_operations_advanced (Vector Operations Advanced Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(vector_operations_advanced) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(vector_operations_advanced) {
+    // Setup code here
+}
+
+FB_TEST(vector_operations_advanced, vector_of_log_entries) {
+    std::vector<log_entry_t> entries;
+
+    for (int i = 0; i < 10; i++) {
+        log_entry_t entry;
+        entry.index = i * 100;
+        entries.push_back(entry);
+    }
+
+    FB_ASSERT_EQ(entries.size(), 10);
+    FB_ASSERT_EQ(entries[5].index, 500);
+}
+
+FB_TEST(vector_operations_advanced, vector_of_fb_blobs) {
+    std::vector<fb_blob> blobs;
+
+    for (int i = 0; i < 5; i++) {
+        fb_blob blob;
+        blob.blobid = i + 1;
+        blobs.push_back(blob);
+    }
+
+    FB_ASSERT_EQ(blobs.size(), 5);
+    FB_ASSERT_EQ(blobs[2].blobid, 3);
+}
+
+FB_TEST(vector_operations_advanced, vector_of_buffer_lists) {
+    std::vector<buffer_list> lists;
+
+    for (int i = 0; i < 3; i++) {
+        buffer_list bl;
+        char buffer[100];
+        spdk_buffer sbuf(buffer, 100);
+        bl.append_buffer(sbuf);
+        lists.push_back(std::move(bl));
+    }
+
+    FB_ASSERT_EQ(lists.size(), 3);
+}
+
+FB_TEST(vector_operations_advanced, vector_resize) {
+    std::vector<int> vec;
+    vec.resize(100);
+    FB_ASSERT_EQ(vec.size(), 100);
+
+    vec.resize(50);
+    FB_ASSERT_EQ(vec.size(), 50);
+}
+
+// ============================================================================
+// Test Suite: optional_string_advanced (Optional String Advanced Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(optional_string_advanced) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(optional_string_advanced) {
+    // Setup code here
+}
+
+FB_TEST(optional_string_advanced, empty_string_has_value) {
+    std::optional<std::string> opt = "";
+    FB_ASSERT_TRUE(opt.has_value());
+    FB_ASSERT_EQ(opt->size(), 0);
+}
+
+FB_TEST(optional_string_advanced, nullopt_no_value) {
+    std::optional<std::string> opt = std::nullopt;
+    FB_ASSERT_FALSE(opt.has_value());
+}
+
+FB_TEST(optional_string_advanced, value_or_with_empty) {
+    std::optional<std::string> opt;
+    std::string result = opt.value_or("default");
+    FB_ASSERT_EQ(result, "default");
+}
+
+FB_TEST(optional_string_advanced, assign_and_reset) {
+    std::optional<std::string> opt = "initial";
+    FB_ASSERT_TRUE(opt.has_value());
+
+    opt = std::nullopt;
+    FB_ASSERT_FALSE(opt.has_value());
+
+    opt = "new value";
+    FB_ASSERT_TRUE(opt.has_value());
+    FB_ASSERT_EQ(*opt, "new value");
+}
