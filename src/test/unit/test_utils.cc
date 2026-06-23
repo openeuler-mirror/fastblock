@@ -2455,6 +2455,48 @@ FB_TEST(itos_edge_cases, power_of_ten_sequence) {
 }
 
 // ============================================================================
+// Test Suite: units_arithmetic_advanced (Advanced Units Arithmetic Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(units_arithmetic_advanced) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(units_arithmetic_advanced) {
+    // Teardown code here
+}
+
+FB_TEST(units_arithmetic_advanced, compound_operations) {
+    size_t val = 1_GB;
+    val += 512_MB;
+    val -= 256_MB;
+    FB_ASSERT_EQ(val, 1280_MB);
+}
+
+FB_TEST(units_arithmetic_advanced, scaling) {
+    size_t val = 4_KB * 1024;
+    FB_ASSERT_EQ(val, 4_MB);
+}
+
+FB_TEST(units_arithmetic_advanced, division_exact) {
+    size_t val = 1_MB;
+    size_t parts = val / 4;
+    FB_ASSERT_EQ(parts, 256_KB);
+}
+
+FB_TEST(units_arithmetic_advanced, modulo_operations) {
+    size_t val = 1_MB + 1_KB;
+    size_t remainder = val % 1_KB;
+    FB_ASSERT_EQ(remainder, 0);
+}
+
+FB_TEST(units_arithmetic_advanced, percentage_calculation) {
+    size_t total = 1_GB;
+    size_t percent_50 = total / 2;
+    FB_ASSERT_EQ(percent_50, 512_MB);
+}
+
+// ============================================================================
 // Test Suite: final_validation (Final Validation Tests)
 // ============================================================================
 
