@@ -1847,6 +1847,52 @@ FB_TEST(itos_boundary_comprehensive, uint8_all_values) {
 }
 
 // ============================================================================
+// Test Suite: encoding_buffer_sizes (Encoding Buffer Size Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(encoding_buffer_sizes) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(encoding_buffer_sizes) {
+    // Teardown code here
+}
+
+FB_TEST(encoding_buffer_sizes, varint32_min_buffer) {
+    char buffer[1];  // Minimum buffer for value 0
+    size_t len = encode_varint32(buffer, 0);
+    FB_ASSERT_EQ(len, 1);
+}
+
+FB_TEST(encoding_buffer_sizes, varint32_typical_buffer) {
+    char buffer[5];  // Typical buffer size
+    for (uint32_t val = 0; val < 1000; val++) {
+        size_t len = encode_varint32(buffer, val);
+        FB_ASSERT_TRUE(len <= 5);
+    }
+}
+
+FB_TEST(encoding_buffer_sizes, varint64_min_buffer) {
+    char buffer[1];
+    size_t len = encode_varint64(buffer, 0);
+    FB_ASSERT_EQ(len, 1);
+}
+
+FB_TEST(encoding_buffer_sizes, fixed32_exact_buffer) {
+    char buffer[4];
+    encode_fixed32(buffer, 0x12345678);
+    uint32_t decoded = decode_fixed32(buffer);
+    FB_ASSERT_EQ(decoded, 0x12345678);
+}
+
+FB_TEST(encoding_buffer_sizes, fixed64_exact_buffer) {
+    char buffer[8];
+    encode_fixed64(buffer, 0x123456789ABCDEF0ULL);
+    uint64_t decoded = decode_fixed64(buffer);
+    FB_ASSERT_EQ(decoded, 0x123456789ABCDEF0ULL);
+}
+
+// ============================================================================
 // Test Suite: final_validation (Final Validation Tests)
 // ============================================================================
 
