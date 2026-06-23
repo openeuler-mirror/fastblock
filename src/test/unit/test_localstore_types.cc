@@ -18,10 +18,14 @@
 #include "test/framework/test_harness.h"
 #include "localstore/spdk_buffer.h"
 #include "localstore/types.h"
+#include "localstore/log_entry.h"
 
 #include <string>
 #include <cstdint>
 #include <cstring>
+#include <optional>
+#include <variant>
+#include <limits>
 
 // ============================================================================
 // Test Suite: blob_type (Blob Type Enumeration)
@@ -1197,4 +1201,662 @@ FB_TEST(set_xattr_ctx, initialized_values) {
     ctx.arg = reinterpret_cast<void*>(0x12345678);
     FB_ASSERT_TRUE(ctx.cb_fn != nullptr);
     FB_ASSERT_EQ(ctx.arg, reinterpret_cast<void*>(0x12345678));
+}
+
+// ============================================================================
+// Test Suite: log_entry_t (Log Entry Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_entry_t) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_entry_t) {
+    // Teardown code here
+}
+
+FB_TEST(log_entry_t, default_values) {
+    log_entry_t entry;
+    FB_ASSERT_EQ(entry.term_id, std::numeric_limits<uint64_t>::max());
+    FB_ASSERT_EQ(entry.index, std::numeric_limits<uint64_t>::max());
+    FB_ASSERT_EQ(entry.size, std::numeric_limits<uint64_t>::max());
+    FB_ASSERT_EQ(entry.type, std::numeric_limits<uint64_t>::max());
+    FB_ASSERT_TRUE(entry.meta.empty());
+}
+
+FB_TEST(log_entry_t, init_constant) {
+    FB_ASSERT_EQ(log_entry_t::init, std::numeric_limits<uint64_t>::max());
+}
+
+FB_TEST(log_entry_t, set_term_id) {
+    log_entry_t entry;
+    entry.term_id = 100;
+    FB_ASSERT_EQ(entry.term_id, 100);
+}
+
+FB_TEST(log_entry_t, set_index) {
+    log_entry_t entry;
+    entry.index = 200;
+    FB_ASSERT_EQ(entry.index, 200);
+}
+
+FB_TEST(log_entry_t, set_size) {
+    log_entry_t entry;
+    entry.size = 4096;
+    FB_ASSERT_EQ(entry.size, 4096);
+}
+
+FB_TEST(log_entry_t, set_type) {
+    log_entry_t entry;
+    entry.type = 1;
+    FB_ASSERT_EQ(entry.type, 1);
+}
+
+FB_TEST(log_entry_t, set_meta) {
+    log_entry_t entry;
+    entry.meta = "test_meta";
+    FB_ASSERT_EQ(entry.meta, "test_meta");
+}
+
+FB_TEST(log_entry_t, max_term_id) {
+    log_entry_t entry;
+    entry.term_id = 0xFFFFFFFFFFFFFFFFULL;
+    FB_ASSERT_EQ(entry.term_id, std::numeric_limits<uint64_t>::max());
+}
+
+FB_TEST(log_entry_t, max_index) {
+    log_entry_t entry;
+    entry.index = 0xFFFFFFFFFFFFFFFFULL;
+    FB_ASSERT_EQ(entry.index, std::numeric_limits<uint64_t>::max());
+}
+
+// ============================================================================
+// Test Suite: entry_header_size (Entry Header Size Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(entry_header_size) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(entry_header_size) {
+    // Teardown code here
+}
+
+FB_TEST(entry_header_size, value) {
+    FB_ASSERT_EQ(entry_header_size, sizeof(uint64_t) * 3);
+}
+
+FB_TEST(entry_header_size, is_24_bytes) {
+    FB_ASSERT_EQ(entry_header_size, 24);
+}
+
+// ============================================================================
+// Test Suite: log_header_codec (Log Header Codec Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_header_codec) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_header_codec) {
+    // Teardown code here
+}
+
+FB_TEST(log_header_codec, encode_decode_basic) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    log_entry_t entry_in;
+    entry_in.term_id = 1;
+    entry_in.index = 100;
+    entry_in.size = 4096;
+    entry_in.type = 2;
+    entry_in.meta = "test_meta_data";
+
+    bool encode_ok = EncodeLogHeader(sbuf, entry_in);
+    FB_ASSERT_TRUE(encode_ok);
+
+    sbuf.reset();
+
+    log_entry_t entry_out;
+    bool decode_ok = DecodeLogHeader(sbuf, entry_out);
+    FB_ASSERT_TRUE(decode_ok);
+
+    FB_ASSERT_EQ(entry_out.term_id, 1);
+    FB_ASSERT_EQ(entry_out.index, 100);
+    FB_ASSERT_EQ(entry_out.size, 4096);
+    FB_ASSERT_EQ(entry_out.type, 2);
+    FB_ASSERT_EQ(entry_out.meta, "test_meta_data");
+}
+
+FB_TEST(log_header_codec, encode_decode_zero_values) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    log_entry_t entry_in;
+    entry_in.term_id = 0;
+    entry_in.index = 0;
+    entry_in.size = 0;
+    entry_in.type = 0;
+    entry_in.meta = "";
+
+    bool encode_ok = EncodeLogHeader(sbuf, entry_in);
+    FB_ASSERT_TRUE(encode_ok);
+
+    sbuf.reset();
+
+    log_entry_t entry_out;
+    bool decode_ok = DecodeLogHeader(sbuf, entry_out);
+    FB_ASSERT_TRUE(decode_ok);
+
+    FB_ASSERT_EQ(entry_out.term_id, 0);
+    FB_ASSERT_EQ(entry_out.index, 0);
+    FB_ASSERT_EQ(entry_out.size, 0);
+    FB_ASSERT_EQ(entry_out.type, 0);
+    FB_ASSERT_EQ(entry_out.meta, "");
+}
+
+FB_TEST(log_header_codec, encode_decode_max_values) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    log_entry_t entry_in;
+    entry_in.term_id = 0xFFFFFFFFFFFFFFFFULL;
+    entry_in.index = 0xFFFFFFFFFFFFFFFFULL;
+    entry_in.size = 0xFFFFFFFFFFFFFFFFULL;
+    entry_in.type = 0xFFFFFFFFFFFFFFFFULL;
+    entry_in.meta = "max_test";
+
+    bool encode_ok = EncodeLogHeader(sbuf, entry_in);
+    FB_ASSERT_TRUE(encode_ok);
+
+    sbuf.reset();
+
+    log_entry_t entry_out;
+    bool decode_ok = DecodeLogHeader(sbuf, entry_out);
+    FB_ASSERT_TRUE(decode_ok);
+
+    FB_ASSERT_EQ(entry_out.term_id, 0xFFFFFFFFFFFFFFFFULL);
+    FB_ASSERT_EQ(entry_out.index, 0xFFFFFFFFFFFFFFFFULL);
+    FB_ASSERT_EQ(entry_out.size, 0xFFFFFFFFFFFFFFFFULL);
+    FB_ASSERT_EQ(entry_out.type, 0xFFFFFFFFFFFFFFFFULL);
+}
+
+FB_TEST(log_header_codec, encode_insufficient_space) {
+    char buffer[10];
+    spdk_buffer sbuf(buffer, 10);
+
+    log_entry_t entry;
+    entry.term_id = 1;
+    entry.index = 100;
+    entry.size = 4096;
+    entry.type = 2;
+    entry.meta = "test";
+
+    bool encode_ok = EncodeLogHeader(sbuf, entry);
+    FB_ASSERT_FALSE(encode_ok);
+}
+
+FB_TEST(log_header_codec, decode_insufficient_space) {
+    char buffer[10];
+    spdk_buffer sbuf(buffer, 10);
+
+    log_entry_t entry;
+    bool decode_ok = DecodeLogHeader(sbuf, entry);
+    FB_ASSERT_FALSE(decode_ok);
+}
+
+FB_TEST(log_header_codec, encode_size_calculation) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    log_entry_t entry;
+    entry.term_id = 1;
+    entry.index = 100;
+    entry.size = 4096;
+    entry.type = 2;
+    entry.meta = "abc";
+
+    EncodeLogHeader(sbuf, entry);
+    // 4 * sizeof(uint64_t) + sizeof(uint64_t) + meta.size()
+    size_t expected = 4 * sizeof(uint64_t) + sizeof(uint64_t) + 3;
+    FB_ASSERT_EQ(sbuf.used(), expected);
+}
+
+// ============================================================================
+// Test Suite: iovecs_type (Iovecs Type Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(iovecs_type) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(iovecs_type) {
+    // Teardown code here
+}
+
+FB_TEST(iovecs_type, empty_iovecs) {
+    iovecs iovs;
+    FB_ASSERT_TRUE(iovs.empty());
+    FB_ASSERT_EQ(iovs.size(), 0);
+}
+
+FB_TEST(iovecs_type, single_iovec) {
+    iovecs iovs;
+    struct iovec iov;
+    iov.iov_base = reinterpret_cast<void*>(0x1000);
+    iov.iov_len = 4096;
+    iovs.push_back(iov);
+
+    FB_ASSERT_EQ(iovs.size(), 1);
+    FB_ASSERT_EQ(iovs[0].iov_len, 4096);
+}
+
+FB_TEST(iovecs_type, multiple_iovecs) {
+    iovecs iovs;
+    struct iovec iov1, iov2;
+    iov1.iov_base = reinterpret_cast<void*>(0x1000);
+    iov1.iov_len = 4096;
+    iov2.iov_base = reinterpret_cast<void*>(0x2000);
+    iov2.iov_len = 8192;
+
+    iovs.push_back(iov1);
+    iovs.push_back(iov2);
+
+    FB_ASSERT_EQ(iovs.size(), 2);
+    FB_ASSERT_EQ(iovs[0].iov_len + iovs[1].iov_len, 12288);
+}
+
+FB_TEST(iovecs_type, clear_iovecs) {
+    iovecs iovs;
+    struct iovec iov;
+    iov.iov_base = nullptr;
+    iov.iov_len = 0;
+    iovs.push_back(iov);
+
+    FB_ASSERT_EQ(iovs.size(), 1);
+    iovs.clear();
+    FB_ASSERT_TRUE(iovs.empty());
+}
+
+// ============================================================================
+// Test Suite: buffer_list_append (Buffer List Append Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_append) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_append) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_list_append, append_lvalue_reference) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl1, bl2;
+    bl1.append_buffer(sbuf1);
+    bl2.append_buffer(sbuf2);
+
+    bl1.append_buffer(bl2);
+    FB_ASSERT_EQ(bl1.bytes(), 300);
+    FB_ASSERT_EQ(bl2.bytes(), 0); // bl2 is now empty after splice
+}
+
+FB_TEST(buffer_list_append, append_rvalue_reference) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl1, bl2;
+    bl1.append_buffer(sbuf1);
+    bl2.append_buffer(sbuf2);
+
+    bl1.append_buffer(std::move(bl2));
+    FB_ASSERT_EQ(bl1.bytes(), 300);
+}
+
+FB_TEST(buffer_list_append, pop_front_list) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    buffer_list front_list = bl.pop_front_list(2);
+    FB_ASSERT_EQ(front_list.bytes(), 300);
+    FB_ASSERT_EQ(bl.bytes(), 300);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_to_iovec (Buffer List To Iovec Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_to_iovec) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_to_iovec) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_list_to_iovec, empty_list) {
+    buffer_list bl;
+    iovecs iovs = bl.to_iovec();
+    FB_ASSERT_TRUE(iovs.empty());
+}
+
+FB_TEST(buffer_list_to_iovec, single_buffer_full) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    iovecs iovs = bl.to_iovec();
+    FB_ASSERT_EQ(iovs.size(), 1);
+    FB_ASSERT_EQ(iovs[0].iov_len, 100);
+}
+
+FB_TEST(buffer_list_to_iovec, multiple_buffers_full) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    iovecs iovs = bl.to_iovec();
+    FB_ASSERT_EQ(iovs.size(), 3);
+}
+
+FB_TEST(buffer_list_to_iovec, partial_offset) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    iovecs iovs = bl.to_iovec(50, 100);
+    FB_ASSERT_TRUE(iovs.size() >= 1);
+}
+
+FB_TEST(buffer_list_to_iovec, out_of_bounds) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    iovecs iovs = bl.to_iovec(0, 200); // Request more than available
+    FB_ASSERT_TRUE(iovs.empty());
+}
+
+FB_TEST(buffer_list_to_iovec, offset_beyond_size) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    iovecs iovs = bl.to_iovec(200, 10); // Offset beyond buffer
+    FB_ASSERT_TRUE(iovs.empty());
+}
+
+// ============================================================================
+// Test Suite: pool_create_ctx (Pool Create Context Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(pool_create_ctx) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(pool_create_ctx) {
+    // Teardown code here
+}
+
+FB_TEST(pool_create_ctx, default_values) {
+    pool_create_ctx ctx;
+    FB_ASSERT_EQ(ctx.pool, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+    FB_ASSERT_EQ(ctx.idx, 0);
+    FB_ASSERT_EQ(ctx.max, 0);
+}
+
+FB_TEST(pool_create_ctx, type_is_blob_type) {
+    pool_create_ctx ctx;
+    ctx.type = blob_type::log;
+    FB_ASSERT_EQ(ctx.type, blob_type::log);
+}
+
+FB_TEST(pool_create_ctx, set_idx_max) {
+    pool_create_ctx ctx;
+    ctx.idx = 100;
+    ctx.max = 200;
+    FB_ASSERT_EQ(ctx.idx, 100);
+    FB_ASSERT_EQ(ctx.max, 200);
+}
+
+// ============================================================================
+// Test Suite: pool_delete_ctx (Pool Delete Context Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(pool_delete_ctx) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(pool_delete_ctx) {
+    // Teardown code here
+}
+
+FB_TEST(pool_delete_ctx, default_values) {
+    pool_delete_ctx ctx;
+    FB_ASSERT_EQ(ctx.pool, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+FB_TEST(pool_delete_ctx, set_pool) {
+    pool_delete_ctx ctx;
+    blob_pool* mock_pool = reinterpret_cast<blob_pool*>(0x12345678);
+    ctx.pool = mock_pool;
+    FB_ASSERT_EQ(ctx.pool, mock_pool);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_encoder_basic (Buffer List Encoder Basic Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_encoder_basic) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_encoder_basic) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_list_encoder_basic, bytes_used_remain) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    FB_ASSERT_EQ(encoder.bytes(), 1024);
+    FB_ASSERT_EQ(encoder.used(), 0);
+    FB_ASSERT_EQ(encoder.remain(), 1024);
+}
+
+FB_TEST(buffer_list_encoder_basic, put_uint64) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    bool ok = encoder.put(0x123456789ABCDEF0ULL);
+    FB_ASSERT_TRUE(ok);
+    FB_ASSERT_EQ(encoder.used(), sizeof(uint64_t));
+}
+
+FB_TEST(buffer_list_encoder_basic, put_string) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    std::string str = "hello";
+    bool ok = encoder.put(str);
+    FB_ASSERT_TRUE(ok);
+    // uint64_t for size + string data
+    FB_ASSERT_EQ(encoder.used(), sizeof(uint64_t) + str.size());
+}
+
+FB_TEST(buffer_list_encoder_basic, put_raw_data) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    const char* data = "test_data";
+    bool ok = encoder.put(data, 9);
+    FB_ASSERT_TRUE(ok);
+    FB_ASSERT_EQ(encoder.used(), 9);
+}
+
+FB_TEST(buffer_list_encoder_basic, put_insufficient_space) {
+    char buffer[8];
+    spdk_buffer sbuf(buffer, 8);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    bool ok = encoder.put(0x123456789ABCDEF0ULL);
+    FB_ASSERT_TRUE(ok); // 8 bytes fits exactly
+
+    ok = encoder.put(static_cast<uint64_t>(1)); // Try to put another uint64
+    FB_ASSERT_FALSE(ok); // No space left
+}
+
+// ============================================================================
+// Test Suite: buffer_list_encoder_codec (Buffer List Encoder Codec Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_encoder_codec) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_encoder_codec) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_list_encoder_codec, put_get_uint64) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    sbuf.reset();
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+
+    uint64_t value_in = 0x123456789ABCDEF0ULL;
+    bool put_ok = encoder.put(value_in);
+    FB_ASSERT_TRUE(put_ok);
+
+    // Reset the buffer for reading
+    bl.begin()->reset();
+    buffer_list_encoder reader(bl);
+    reader = buffer_list_encoder(bl); // Re-create encoder to reset _used
+
+    uint64_t value_out = 0;
+    bool get_ok = reader.get(value_out);
+    FB_ASSERT_TRUE(get_ok);
+    FB_ASSERT_EQ(value_out, value_in);
+}
+
+FB_TEST(buffer_list_encoder_codec, put_get_string) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+
+    std::string str_in = "test_string";
+    bool put_ok = encoder.put(str_in);
+    FB_ASSERT_TRUE(put_ok);
+
+    bl.begin()->reset();
+    buffer_list_encoder reader(bl);
+
+    std::string str_out;
+    bool get_ok = reader.get(str_out);
+    FB_ASSERT_TRUE(get_ok);
+    FB_ASSERT_EQ(str_out, str_in);
+}
+
+FB_TEST(buffer_list_encoder_codec, put_get_raw_data) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+
+    const char* data_in = "raw_data_123";
+    bool put_ok = encoder.put(data_in, 12);
+    FB_ASSERT_TRUE(put_ok);
+
+    bl.begin()->reset();
+    buffer_list_encoder reader(bl);
+
+    char data_out[20] = {0};
+    bool get_ok = reader.get(data_out, 12);
+    FB_ASSERT_TRUE(get_ok);
+    FB_ASSERT_EQ(std::string(data_out, 12), std::string(data_in, 12));
+}
+
+// ============================================================================
+// Test Suite: constants_and_limits (Constants and Limits Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(constants_and_limits) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(constants_and_limits) {
+    // Teardown code here
+}
+
+FB_TEST(constants_and_limits, blob_type_count) {
+    // Verify we have 9 blob types (0-8)
+    uint32_t count = static_cast<uint32_t>(blob_type::free) - static_cast<uint32_t>(blob_type::log) + 1;
+    FB_ASSERT_EQ(count, 9);
+}
+
+FB_TEST(constants_and_limits, uint64_max_value) {
+    FB_ASSERT_EQ(std::numeric_limits<uint64_t>::max(), 0xFFFFFFFFFFFFFFFFULL);
+}
+
+FB_TEST(constants_and_limits, uint32_max_value) {
+    FB_ASSERT_EQ(std::numeric_limits<uint32_t>::max(), 0xFFFFFFFF);
+}
+
+FB_TEST(constants_and_limits, size_t_nonzero) {
+    FB_ASSERT_TRUE(sizeof(size_t) >= 4);
+}
+
+FB_TEST(constants_and_limits, pointer_size) {
+    FB_ASSERT_TRUE(sizeof(void*) == 4 || sizeof(void*) == 8);
 }
