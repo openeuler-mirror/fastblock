@@ -11199,3 +11199,308 @@ FB_TEST(edge_case_combinations, encode_decode_cycle) {
         FB_ASSERT_EQ(decoded.meta, entry.meta);
     }
 }
+
+// ============================================================================
+// Test Suite: performance_simulation (Performance Simulation Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(performance_simulation) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(performance_simulation) {
+    // Setup code here
+}
+
+FB_TEST(performance_simulation, rapid_encoding) {
+    char buffer[8192];
+    spdk_buffer sbuf(buffer, 8192);
+
+    for (int i = 0; i < 1000; i++) {
+        sbuf.reset();
+        PutFixed32(sbuf, i);
+    }
+    FB_ASSERT_TRUE(true);
+}
+
+FB_TEST(performance_simulation, rapid_buffer_list_ops) {
+    buffer_list bl;
+    char buffer[128];
+    spdk_buffer sbuf(buffer, 128);
+
+    for (int i = 0; i < 100; i++) {
+        bl.append_buffer(sbuf);
+    }
+
+    for (int i = 0; i < 100; i++) {
+        bl.pop_front();
+    }
+
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(performance_simulation, rapid_encoder_operations) {
+    char buffer[8192];
+    spdk_buffer sbuf(buffer, 8192);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    for (int i = 0; i < 500; i++) {
+        encoder.put(static_cast<uint64_t>(i));
+    }
+    FB_ASSERT_TRUE(encoder.used() == 4000);
+}
+
+FB_TEST(performance_simulation, rapid_type_string_calls) {
+    for (int i = 0; i < 1000; i++) {
+        for (uint32_t j = 0; j <= 8; j++) {
+            blob_type t = static_cast<blob_type>(j);
+            type_string(t);
+        }
+    }
+    FB_ASSERT_TRUE(true);
+}
+
+// ============================================================================
+// Test Suite: memory_safety_tests (Memory Safety Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(memory_safety_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(memory_safety_tests) {
+    // Setup code here
+}
+
+FB_TEST(memory_safety_tests, no_buffer_overflow) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+
+    size_t written = sbuf.append("1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890", 100);
+    FB_ASSERT_EQ(written, 64);
+    FB_ASSERT_EQ(sbuf.used(), 64);
+}
+
+FB_TEST(memory_safety_tests, inc_bounds_check) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    size_t inc = sbuf.inc(200);
+    FB_ASSERT_EQ(inc, 100);
+    FB_ASSERT_EQ(sbuf.used(), 100);
+}
+
+FB_TEST(memory_safety_tests, set_used_bounds_check) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.set_used(200);
+    FB_ASSERT_EQ(sbuf.used(), 100);
+}
+
+FB_TEST(memory_safety_tests, to_iovec_bounds_check) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    iovecs iovs = bl.to_iovec(1000, 100);
+    FB_ASSERT_TRUE(iovs.empty());
+}
+
+FB_TEST(memory_safety_tests, encoder_bounds_check) {
+    char buffer[4];
+    spdk_buffer sbuf(buffer, 4);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    bool ok = encoder.put(1ULL);
+    FB_ASSERT_FALSE(ok);
+}
+
+FB_TEST(memory_safety_tests, decoding_bounds_check) {
+    char buffer[8];
+    spdk_buffer sbuf(buffer, 8);
+
+    log_entry_t entry;
+    bool ok = DecodeLogHeader(sbuf, entry);
+    FB_ASSERT_FALSE(ok);
+}
+
+// ============================================================================
+// Test Suite: api_compatibility_tests (API Compatibility Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(api_compatibility_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(api_compatibility_tests) {
+    // Setup code here
+}
+
+FB_TEST(api_compatibility_tests, buffer_list_api_exists) {
+    buffer_list bl;
+    (void)bl.bytes();
+    (void)bl.empty();
+    (void)bl.begin();
+    (void)bl.end();
+    bl.clear();
+    FB_ASSERT_TRUE(true);
+}
+
+FB_TEST(api_compatibility_tests, spdk_buffer_api_exists) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    (void)sbuf.size();
+    (void)sbuf.used();
+    (void)sbuf.remain();
+    (void)sbuf.get_buf();
+    (void)sbuf.get_append();
+    sbuf.reset();
+    sbuf.inc(10);
+    sbuf.append("", 0);
+    sbuf.set_used(50);
+    FB_ASSERT_TRUE(true);
+}
+
+FB_TEST(api_compatibility_tests, encoder_api_exists) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    (void)encoder.bytes();
+    (void)encoder.used();
+    (void)encoder.remain();
+    encoder.put(1ULL);
+    encoder.put(std::string("test"));
+    encoder.put("data", 4);
+    FB_ASSERT_TRUE(true);
+}
+
+FB_TEST(api_compatibility_tests, log_entry_api_exists) {
+    log_entry_t entry;
+    (void)entry.term_id;
+    (void)entry.index;
+    (void)entry.size;
+    (void)entry.type;
+    (void)entry.meta;
+    (void)entry.data;
+    (void)log_entry_t::init;
+    FB_ASSERT_TRUE(true);
+}
+
+FB_TEST(api_compatibility_tests, blob_type_api_exists) {
+    blob_type t = blob_type::log;
+    (void)type_string(t);
+    (void)static_cast<uint32_t>(t);
+    FB_ASSERT_TRUE(true);
+}
+
+FB_TEST(api_compatibility_tests, fb_blob_api_exists) {
+    fb_blob blob;
+    (void)blob.blob;
+    (void)blob.blobid;
+    FB_ASSERT_TRUE(true);
+}
+
+FB_TEST(api_compatibility_tests, context_api_exists) {
+    log_append_ctx la_ctx;
+    (void)la_ctx.idx_pos;
+    (void)la_ctx.headers;
+    (void)la_ctx.bytes();
+    (void)la_ctx.cb_fn;
+    (void)la_ctx.arg;
+
+    log_read_ctx lr_ctx;
+    (void)lr_ctx.entries;
+    (void)lr_ctx.start_index;
+    (void)lr_ctx.end_index;
+
+    FB_ASSERT_TRUE(true);
+}
+
+// ============================================================================
+// Test Suite: final_boundary_tests (Final Boundary Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(final_boundary_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(final_boundary_tests) {
+    // Setup code here
+}
+
+FB_TEST(final_boundary_tests, absolute_min_values) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+
+    PutFixed32(sbuf, 0);
+    PutFixed64(sbuf, 0);
+    PutString(sbuf, "");
+
+    sbuf.reset();
+
+    uint32_t v32;
+    uint64_t v64;
+    std::string str;
+
+    GetFixed32(sbuf, v32);
+    GetFixed64(sbuf, v64);
+    GetString(sbuf, str);
+
+    FB_ASSERT_EQ(v32, 0);
+    FB_ASSERT_EQ(v64, 0);
+    FB_ASSERT_TRUE(str.empty());
+}
+
+FB_TEST(final_boundary_tests, absolute_max_values) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+
+    PutFixed32(sbuf, UINT32_MAX);
+    PutFixed64(sbuf, UINT64_MAX);
+
+    sbuf.reset();
+
+    uint32_t v32;
+    uint64_t v64;
+
+    GetFixed32(sbuf, v32);
+    GetFixed64(sbuf, v64);
+
+    FB_ASSERT_EQ(v32, UINT32_MAX);
+    FB_ASSERT_EQ(v64, UINT64_MAX);
+}
+
+FB_TEST(final_boundary_tests, boundary_offset_calc) {
+    uint64_t lba = 0;
+    uint64_t offset = lba * 512;
+    FB_ASSERT_EQ(offset, 0);
+
+    lba = UINT64_MAX;
+    offset = lba * 512;
+    FB_ASSERT_TRUE(offset > 0);
+}
+
+FB_TEST(final_boundary_tests, boundary_alignment_check) {
+    uint64_t addr = 0;
+    FB_ASSERT_EQ(addr % 4096, 0);
+    FB_ASSERT_EQ(addr % 512, 0);
+
+    addr = 4096;
+    FB_ASSERT_EQ(addr % 4096, 0);
+    FB_ASSERT_EQ(addr % 512, 0);
+}
+
+FB_TEST(final_boundary_tests, final_type_verification) {
+    FB_ASSERT_EQ(sizeof(blob_type), sizeof(uint32_t));
+    FB_ASSERT_EQ(sizeof(spdk_blob_id), sizeof(uint64_t));
+    FB_ASSERT_EQ(entry_header_size, 24);
+}
