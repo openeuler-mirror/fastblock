@@ -2076,6 +2076,53 @@ FB_TEST(fixed_encoding_endian, roundtrip_endian) {
 }
 
 // ============================================================================
+// Test Suite: itos_format (Integer to String Format Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(itos_format) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(itos_format) {
+    // Teardown code here
+}
+
+FB_TEST(itos_format, no_leading_zeros) {
+    FB_ASSERT_EQ(itos(0), "0");
+    FB_ASSERT_EQ(itos(1), "1");
+    FB_ASSERT_EQ(itos(10), "10");
+    FB_ASSERT_EQ(itos(100), "100");
+}
+
+FB_TEST(itos_format, correct_length) {
+    FB_ASSERT_EQ(itos(0).length(), 1);
+    FB_ASSERT_EQ(itos(9).length(), 1);
+    FB_ASSERT_EQ(itos(10).length(), 2);
+    FB_ASSERT_EQ(itos(99).length(), 2);
+    FB_ASSERT_EQ(itos(100).length(), 3);
+    FB_ASSERT_EQ(itos(999).length(), 3);
+    FB_ASSERT_EQ(itos(1000).length(), 4);
+}
+
+FB_TEST(itos_format, negative_length) {
+    FB_ASSERT_EQ(itos(-1).length(), 2);    // "-1"
+    FB_ASSERT_EQ(itos(-9).length(), 2);    // "-9"
+    FB_ASSERT_EQ(itos(-10).length(), 3);   // "-10"
+    FB_ASSERT_EQ(itos(-99).length(), 3);   // "-99"
+    FB_ASSERT_EQ(itos(-100).length(), 4);  // "-100"
+}
+
+FB_TEST(itos_format, digit_correctness) {
+    std::string result = itos(12345);
+    FB_ASSERT_EQ(result, "12345");
+    FB_ASSERT_EQ(result[0], '1');
+    FB_ASSERT_EQ(result[1], '2');
+    FB_ASSERT_EQ(result[2], '3');
+    FB_ASSERT_EQ(result[3], '4');
+    FB_ASSERT_EQ(result[4], '5');
+}
+
+// ============================================================================
 // Test Suite: final_validation (Final Validation Tests)
 // ============================================================================
 
