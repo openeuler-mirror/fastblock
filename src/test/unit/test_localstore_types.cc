@@ -18014,3 +18014,139 @@ FB_TEST(buffer_list_iovec_mapping, many_small_buffers) {
     }
     FB_ASSERT_EQ(total, 1280);
 }
+
+// ============================================================================
+// Test Suite: serialization_stress (Serialization Stress Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization_stress) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization_stress) {
+    // Setup code here
+}
+
+// Encode/decode a large batch of uint32 values
+FB_TEST(serialization_stress, batch_uint32_roundtrip) {
+    char buffer[65536];
+    spdk_buffer sbuf(buffer, 65536);
+
+    // Write 10000 uint32 values
+    for (uint32_t i = 0; i < 10000; i++) {
+        FB_ASSERT_TRUE(PutFixed32(sbuf, i * 7 + 3));
+    }
+
+    sbuf.reset();
+
+    // Read them all back
+    for (uint32_t i = 0; i < 10000; i++) {
+        uint32_t val;
+        FB_ASSERT_TRUE(GetFixed32(sbuf, val));
+        FB_ASSERT_EQ(val, i * 7 + 3);
+    }
+}
+
+// Encode/decode a large batch of uint64 values
+FB_TEST(serialization_stress, batch_uint64_roundtrip) {
+    char buffer[131072];
+    spdk_buffer sbuf(buffer, 131072);
+
+    // Write 10000 uint64 values
+    for (uint64_t i = 0; i < 10000; i++) {
+        FB_ASSERT_TRUE(PutFixed64(sbuf, i * 0x123456789ABCDEF0ULL + i));
+    }
+
+    sbuf.reset();
+
+    // Read them all back
+    for (uint64_t i = 0; i < 10000; i++) {
+        uint64_t val;
+        FB_ASSERT_TRUE(GetFixed64(sbuf, val));
+        FB_ASSERT_EQ(val, i * 0x123456789ABCDEF0ULL + i);
+    }
+}
+
+// Encode/decode many strings of varying lengths
+FB_TEST(serialization_stress, batch_string_roundtrip) {
+    char buffer[131072];
+    spdk_buffer sbuf(buffer, 131072);
+
+    // Generate strings of varying lengths: 0, 1, 2, ..., 99
+    for (int len = 0; len < 100; len++) {
+        std::string str(len, 'A' + (len % 26));
+        FB_ASSERT_TRUE(PutString(sbuf, str));
+    }
+
+    sbuf.reset();
+
+    // Verify each string
+    for (int len = 0; len < 100; len++) {
+        std::string expected(len, 'A' + (len % 26));
+        std::string got;
+        FB_ASSERT_TRUE(GetString(sbuf, got));
+        FB_ASSERT_EQ(got, expected);
+    }
+}
+
+// Mixed serialization: interleave different types densely
+FB_TEST(serialization_stress, dense_mixed_types) {
+    char buffer[65536];
+    spdk_buffer sbuf(buffer, 65536);
+
+    // Write a pattern: uint32, uint64, string, optional_string, repeat
+    for (int i = 0; i < 200; i++) {
+        FB_ASSERT_TRUE(PutFixed32(sbuf, i));
+        FB_ASSERT_TRUE(PutFixed64(sbuf, i * 1000));
+        FB_ASSERT_TRUE(PutString(sbuf, "s" + std::to_string(i)));
+
+        std::optional<std::string> opt = (i % 2 == 0)
+            ? std::optional<std::string>("opt_" + std::to_string(i))
+            : std::nullopt;
+        FB_ASSERT_TRUE(PutOptString(sbuf, opt));
+    }
+
+    sbuf.reset();
+
+    // Read back and verify
+    for (int i = 0; i < 200; i++) {
+        uint32_t v32;
+        uint64_t v64;
+        std::string str;
+        std::optional<std::string> opt;
+
+        FB_ASSERT_TRUE(GetFixed32(sbuf, v32));
+        FB_ASSERT_EQ(v32, i);
+
+        FB_ASSERT_TRUE(GetFixed64(sbuf, v64));
+        FB_ASSERT_EQ(v64, i * 1000);
+
+        FB_ASSERT_TRUE(GetString(sbuf, str));
+        FB_ASSERT_EQ(str, "s" + std::to_string(i));
+
+        FB_ASSERT_TRUE(GetOptString(sbuf, opt));
+        if (i % 2 == 0) {
+            FB_ASSERT_TRUE(opt.has_value());
+            FB_ASSERT_EQ(*opt, "opt_" + std::to_string(i));
+        } else {
+            FB_ASSERT_FALSE(opt.has_value());
+        }
+    }
+}
+
+// Test buffer overflow during batch write
+FB_TEST(serialization_stress, batch_overflow_detection) {
+    char small_buffer[256];
+    spdk_buffer sbuf(small_buffer, 256);
+
+    int successful_writes = 0;
+    for (uint64_t i = 0; i < 100; i++) {
+        if (!PutFixed64(sbuf, i)) {
+            break;
+        }
+        successful_writes++;
+    }
+
+    // 256 / 8 = 32 max uint64 values
+    FB_ASSERT_EQ(successful_writes, 32);
+}
