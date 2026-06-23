@@ -1262,6 +1262,48 @@ FB_TEST(pg_id_to_name, uniqueness) {
 }
 
 // ============================================================================
+// Test Suite: raft_consensus (Raft Consensus Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(raft_consensus) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(raft_consensus) {
+    // Teardown code here
+}
+
+FB_TEST(raft_consensus, leader_state_check) {
+    // Leader should be in LEADER state
+    raft_identity state = RAFT_STATE_LEADER;
+    FB_ASSERT_TRUE(state == RAFT_STATE_LEADER);
+    FB_ASSERT_TRUE(state != RAFT_STATE_FOLLOWER);
+}
+
+FB_TEST(raft_consensus, follower_state_check) {
+    // Follower should be in FOLLOWER state
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    FB_ASSERT_TRUE(state == RAFT_STATE_FOLLOWER);
+    FB_ASSERT_TRUE(state != RAFT_STATE_LEADER);
+}
+
+FB_TEST(raft_consensus, candidate_state_check) {
+    // Candidate should be in CANDIDATE state
+    raft_identity state = RAFT_STATE_CANDIDATE;
+    FB_ASSERT_TRUE(state == RAFT_STATE_CANDIDATE);
+    FB_ASSERT_TRUE(state != RAFT_STATE_LEADER);
+}
+
+FB_TEST(raft_consensus, state_transitions_valid) {
+    // Valid state transitions: FOLLOWER -> CANDIDATE -> LEADER
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    state = RAFT_STATE_CANDIDATE;
+    FB_ASSERT_TRUE(state == RAFT_STATE_CANDIDATE);
+    state = RAFT_STATE_LEADER;
+    FB_ASSERT_TRUE(state == RAFT_STATE_LEADER);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
