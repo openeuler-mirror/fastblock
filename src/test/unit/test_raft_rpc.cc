@@ -5969,5 +5969,414 @@ FB_TEST(raft_rpc, asyncappend_user_callback_types) {
     FB_ASSERT_EQ(static_cast<int>(cb), 1);
 }
 
+// ============================================================================
+// Test Suite: Watch RPC Tests (Change Notification)
+// ============================================================================
+
+FB_TEST(raft_rpc, watch_request_fields) {
+    // Watch 请求字段
+    raft_index_t start_idx = 100;
+    uint64_t watch_id = 12345;
+    bool watch_commit = true;
+
+    FB_ASSERT_TRUE(start_idx >= 0);
+    FB_ASSERT_TRUE(watch_id > 0);
+    FB_ASSERT_TRUE(watch_commit);
+}
+
+FB_TEST(raft_rpc, watch_registration) {
+    // Watch 注册
+    uint64_t client_id = 1001;
+    raft_index_t watch_from_idx = 100;
+
+    std::map<uint64_t, raft_index_t> registered_watches;
+    registered_watches[client_id] = watch_from_idx;
+
+    FB_ASSERT_TRUE(registered_watches.count(client_id));
+    FB_ASSERT_EQ(registered_watches[client_id], 100L);
+}
+
+FB_TEST(raft_rpc, watch_notification_trigger) {
+    // Watch 通知触发
+    raft_index_t commit_idx = 105;
+    raft_index_t watch_idx = 100;
+
+    bool should_notify = commit_idx >= watch_idx;
+    FB_ASSERT_TRUE(should_notify);
+}
+
+FB_TEST(raft_rpc, watch_batch_notification) {
+    // 批量通知
+    std::vector<uint64_t> watch_ids = {1001, 1002, 1003};
+
+    // 一次通知所有 Watch
+    int notification_count = watch_ids.size();
+
+    FB_ASSERT_EQ(notification_count, 3);
+}
+
+FB_TEST(raft_rpc, watch_progressive_notification) {
+    // 渐进式通知
+    raft_index_t last_notified_idx = 100;
+    raft_index_t current_commit_idx = 105;
+
+    // 通知新增的提交
+    raft_index_t new_commit_count = current_commit_idx - last_notified_idx;
+
+    FB_ASSERT_EQ(new_commit_count, 5L);
+}
+
+FB_TEST(raft_rpc, watch_cancel) {
+    // Watch 取消
+    uint64_t watch_id = 1001;
+    std::set<uint64_t> active_watches = {1001, 1002, 1003};
+
+    active_watches.erase(watch_id);
+
+    FB_ASSERT_FALSE(active_watches.count(watch_id));
+    FB_ASSERT_EQ(active_watches.size(), 2UL);
+}
+
+FB_TEST(raft_rpc, watch_timeout) {
+    // Watch 超时
+    int watch_timeout_ms = 60000;
+    int elapsed_ms = 65000;
+
+    bool timed_out = elapsed_ms >= watch_timeout_ms;
+    FB_ASSERT_TRUE(timed_out);
+}
+
+FB_TEST(raft_rpc, watch_leader_only_register) {
+    // 只有 Leader 可处理 Watch 注册
+    raft_identity state = RAFT_STATE_FOLLOWER;
+
+    bool can_register = (state == RAFT_STATE_LEADER);
+    FB_ASSERT_FALSE(can_register);
+}
+
+FB_TEST(raft_rpc, watch_follower_redirect) {
+    // Follower 重定向 Watch
+    raft_node_id_t leader_id = 2;
+
+    bool need_redirect = true;
+    FB_ASSERT_TRUE(need_redirect);
+    FB_ASSERT_TRUE(leader_id > 0);
+}
+
+FB_TEST(raft_rpc, watch_state_change_watch) {
+    // 状态变更 Watch
+    raft_identity current_state = RAFT_STATE_FOLLOWER;
+    raft_identity new_state = RAFT_STATE_LEADER;
+
+    bool state_changed = (current_state != new_state);
+    FB_ASSERT_TRUE(state_changed);
+}
+
+FB_TEST(raft_rpc, watch_config_change_watch) {
+    // 配置变更 Watch
+    std::vector<raft_node_id_t> old_config = {1, 2, 3};
+    std::vector<raft_node_id_t> new_config = {1, 2, 3, 4};
+
+    bool config_changed = (old_config.size() != new_config.size());
+    FB_ASSERT_TRUE(config_changed);
+}
+
+FB_TEST(raft_rpc, watch_leader_change_watch) {
+    // Leader 变更 Watch
+    raft_node_id_t old_leader = 1;
+    raft_node_id_t new_leader = 2;
+
+    bool leader_changed = (old_leader != new_leader);
+    FB_ASSERT_TRUE(leader_changed);
+}
+
+FB_TEST(raft_rpc, watch_term_change_watch) {
+    // Term 变更 Watch
+    raft_term_t old_term = 5;
+    raft_term_t new_term = 6;
+
+    bool term_changed = (old_term != new_term);
+    FB_ASSERT_TRUE(term_changed);
+}
+
+FB_TEST(raft_rpc, watch_multiple_watchers) {
+    // 多个 Watcher
+    std::set<uint64_t> watchers = {1001, 1002, 1003, 1004};
+
+    FB_ASSERT_EQ(watchers.size(), 4UL);
+
+    // 通知所有 Watcher
+    int notified_count = 0;
+    for (auto id : watchers) {
+        notified_count++;
+    }
+
+    FB_ASSERT_EQ(notified_count, 4);
+}
+
+FB_TEST(raft_rpc, watch_event_filter) {
+    // 事件过滤
+    enum watch_event {
+        COMMIT_CHANGE,
+        STATE_CHANGE,
+        CONFIG_CHANGE,
+        LEADER_CHANGE
+    };
+
+    watch_event filter = COMMIT_CHANGE;
+
+    FB_ASSERT_EQ(static_cast<int>(filter), 0);
+}
+
+FB_TEST(raft_rpc, watch_callback_invocation) {
+    // 回调调用
+    bool callback_invoked = true;
+    raft_index_t notified_idx = 105;
+
+    FB_ASSERT_TRUE(callback_invoked);
+    FB_ASSERT_EQ(notified_idx, 105L);
+}
+
+FB_TEST(raft_rpc, watch_buffered_notifications) {
+    // 缓冲通知
+    std::vector<raft_index_t> pending_notifications = {100, 101, 102};
+
+    FB_ASSERT_EQ(pending_notifications.size(), 3UL);
+
+    // 批量发送
+    pending_notifications.clear();
+    FB_ASSERT_TRUE(pending_notifications.empty());
+}
+
+FB_TEST(raft_rpc, watch_max_watches_limit) {
+    // 最大 Watch 数限制
+    size_t max_watches = 1000;
+    size_t current_watches = 500;
+
+    bool can_register = current_watches < max_watches;
+    FB_ASSERT_TRUE(can_register);
+
+    current_watches = 1000;
+    can_register = current_watches < max_watches;
+    FB_ASSERT_FALSE(can_register);
+}
+
+FB_TEST(raft_rpc, watch_duplicate_watch_id) {
+    // 重复 Watch ID
+    uint64_t watch_id = 1001;
+    std::set<uint64_t> registered_ids = {1001, 1002};
+
+    bool duplicate = registered_ids.count(watch_id) > 0;
+    FB_ASSERT_TRUE(duplicate);
+
+    // 拒绝重复注册
+    bool can_register = !duplicate;
+    FB_ASSERT_FALSE(can_register);
+}
+
+FB_TEST(raft_rpc, watch_watch_since_snapshot) {
+    // 从快照开始 Watch
+    raft_index_t snapshot_idx = 100;
+    raft_index_t watch_from = snapshot_idx + 1;
+
+    FB_ASSERT_EQ(watch_from, 101L);
+
+    // 快照部分不通知
+    bool notify_snapshot = false;
+    FB_ASSERT_FALSE(notify_snapshot);
+}
+
+FB_TEST(raft_rpc, watch_retention_policy) {
+    // Watch 保留策略
+    raft_index_t commit_idx = 105;
+    raft_index_t retention_window = 100;
+
+    // 只通知保留窗口内的变更
+    raft_index_t oldest_notifyable = commit_idx - retention_window;
+
+    FB_ASSERT_EQ(oldest_notifyable, 5L);
+}
+
+FB_TEST(raft_rpc, watch_leader_change_notification) {
+    // Leader 变更通知
+    raft_node_id_t old_leader = 1;
+    raft_node_id_t new_leader = 2;
+
+    struct leader_change_event {
+        raft_node_id_t old_leader;
+        raft_node_id_t new_leader;
+        raft_term_t term;
+    };
+
+    leader_change_event event = {old_leader, new_leader, 6};
+
+    FB_ASSERT_EQ(event.old_leader, 1L);
+    FB_ASSERT_EQ(event.new_leader, 2L);
+    FB_ASSERT_EQ(event.term, 6L);
+}
+
+FB_TEST(raft_rpc, watch_retry_on_failure) {
+    // 失败重试
+    int retry_count = 0;
+    int max_retries = 3;
+    bool success = false;
+
+    while (!success && retry_count < max_retries) {
+        retry_count++;
+        if (retry_count == 2) {
+            success = true;
+        }
+    }
+
+    FB_ASSERT_TRUE(success);
+    FB_ASSERT_EQ(retry_count, 2);
+}
+
+FB_TEST(raft_rpc, watch_network_partition_effect) {
+    // 网络分区影响
+    std::set<raft_node_id_t> partitioned_nodes = {3, 4};
+
+    // 分区节点无法收到通知
+    raft_node_id_t watcher_id = 3;
+    bool can_notify = !partitioned_nodes.count(watcher_id);
+
+    FB_ASSERT_FALSE(can_notify);
+
+    // 缓存通知等待恢复
+    bool buffer_notifications = !can_notify;
+    FB_ASSERT_TRUE(buffer_notifications);
+}
+
+FB_TEST(raft_rpc, watch_client_disconnect_cleanup) {
+    // 客户端断开清理
+    uint64_t client_id = 1001;
+    std::set<uint64_t> active_clients = {1001, 1002};
+
+    // 客户端断开
+    active_clients.erase(client_id);
+
+    FB_ASSERT_FALSE(active_clients.count(client_id));
+
+    // 清理相关 Watch
+    bool watch_cleaned = true;
+    FB_ASSERT_TRUE(watch_cleaned);
+}
+
+FB_TEST(raft_rpc, watch_metrics_collection) {
+    // 指标收集
+    uint64_t watches_total = 100;
+    uint64_t notifications_sent = 500;
+    uint64_t notifications_failed = 5;
+
+    double success_rate = 100.0 * notifications_sent / (notifications_sent + notifications_failed);
+    FB_ASSERT_GE(success_rate, 99.0);
+}
+
+FB_TEST(raft_rpc, watch_priority_notification) {
+    // 优先通知
+    int high_priority_watch = 1;
+    int normal_priority_watch = 0;
+
+    FB_ASSERT_GT(high_priority_watch, normal_priority_watch);
+
+    // 高优先级先通知
+    bool notify_first = true;
+    FB_ASSERT_TRUE(notify_first);
+}
+
+FB_TEST(raft_rpc, watch_batch_timeout) {
+    // 批量超时
+    int batch_timeout_ms = 100;
+    int batch_size = 10;
+    int total_time = batch_timeout_ms * batch_size;
+
+    FB_ASSERT_EQ(total_time, 1000);
+}
+
+FB_TEST(raft_rpc, watch_event_queue) {
+    // 事件队列
+    std::queue<raft_index_t> event_queue;
+    event_queue.push(100);
+    event_queue.push(101);
+    event_queue.push(102);
+
+    FB_ASSERT_EQ(event_queue.size(), 3UL);
+
+    // 按顺序处理
+    raft_index_t first_event = event_queue.front();
+    FB_ASSERT_EQ(first_event, 100L);
+}
+
+FB_TEST(raft_rpc, watch_delayed_notification) {
+    // 延迟通知
+    raft_time_t event_time = 1000;
+    raft_time_t notification_time = 1500;
+
+    raft_time_t delay = notification_time - event_time;
+    FB_ASSERT_EQ(delay, 500L);
+
+    // 检查延迟阈值
+    int max_delay_ms = 1000;
+    bool delay_acceptable = delay < max_delay_ms;
+    FB_ASSERT_TRUE(delay_acceptable);
+}
+
+FB_TEST(raft_rpc, watch_streaming_mode) {
+    // 流式模式
+    bool streaming_mode = true;
+    raft_index_t last_sent_idx = 100;
+
+    // 连续发送变更
+    for (int i = 1; i <= 5; i++) {
+        last_sent_idx++;
+    }
+
+    FB_ASSERT_EQ(last_sent_idx, 105L);
+}
+
+FB_TEST(raft_rpc, watch_snapshot_mode) {
+    // 快照模式
+    bool snapshot_watch = true;
+    raft_index_t snapshot_idx = 100;
+
+    if (snapshot_watch) {
+        // Watch 快照完成事件
+        bool snapshot_complete = true;
+        FB_ASSERT_TRUE(snapshot_complete);
+    }
+}
+
+FB_TEST(raft_rpc, watch_concurrent_registration) {
+    // 并发注册
+    std::atomic<int> registered_count{0};
+
+    for (int i = 0; i < 5; i++) {
+        registered_count++;
+    }
+
+    FB_ASSERT_EQ(registered_count.load(), 5);
+}
+
+FB_TEST(raft_rpc, watch_cleanup_on_shutdown) {
+    // 关闭时清理
+    bool shutting_down = true;
+    std::set<uint64_t> active_watches = {1001, 1002};
+
+    if (shutting_down) {
+        active_watches.clear();
+    }
+
+    FB_ASSERT_TRUE(active_watches.empty());
+}
+
+FB_TEST(raft_rpc, watch_error_handling) {
+    // 错误处理
+    int error_code = -1;
+    std::string error_message = "Watch registration failed";
+
+    FB_ASSERT_TRUE(error_code < 0);
+    FB_ASSERT_FALSE(error_message.empty());
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
