@@ -19034,3 +19034,328 @@ FB_TEST(spdk_buffer_data_integrity, buffer_list_byte_count_integrity) {
     bl.clear();
     FB_ASSERT_EQ(bl.bytes(), 0);
 }
+
+// ============================================================================
+// Test Suite: xattr_get_value_logic (Xattr Get Value Logic Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_get_value_logic) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_get_value_logic) {
+    // Setup code here
+}
+
+// Test log_xattr::get_xattr_value returns correct type pointer and length
+FB_TEST(xattr_get_value_logic, log_xattr_type_lookup) {
+    log_xattr ctx;
+    ctx.shard_id = 42;
+    ctx.pg = "1.0";
+
+    const void* value = nullptr;
+    size_t value_len = 0;
+
+    log_xattr::get_xattr_value(&ctx, "type", &value, &value_len);
+    FB_ASSERT_TRUE(value != nullptr);
+    FB_ASSERT_EQ(value_len, sizeof(blob_type));
+    FB_ASSERT_EQ(*static_cast<const blob_type*>(value), blob_type::log);
+}
+
+FB_TEST(xattr_get_value_logic, log_xattr_shard_lookup) {
+    log_xattr ctx;
+    ctx.shard_id = 42;
+    ctx.pg = "1.0";
+
+    const void* value = nullptr;
+    size_t value_len = 0;
+
+    log_xattr::get_xattr_value(&ctx, "shard", &value, &value_len);
+    FB_ASSERT_TRUE(value != nullptr);
+    FB_ASSERT_EQ(value_len, sizeof(uint32_t));
+    FB_ASSERT_EQ(*static_cast<const uint32_t*>(value), 42);
+}
+
+FB_TEST(xattr_get_value_logic, log_xattr_pg_lookup) {
+    log_xattr ctx;
+    ctx.shard_id = 1;
+    ctx.pg = "2.100";
+
+    const void* value = nullptr;
+    size_t value_len = 0;
+
+    log_xattr::get_xattr_value(&ctx, "pg", &value, &value_len);
+    FB_ASSERT_TRUE(value != nullptr);
+    FB_ASSERT_EQ(value_len, 5);  // "2.100" = 5 chars
+}
+
+FB_TEST(xattr_get_value_logic, log_xattr_unknown_key) {
+    log_xattr ctx;
+    ctx.shard_id = 1;
+    ctx.pg = "1.0";
+
+    const void* value = nullptr;
+    size_t value_len = 0;
+
+    log_xattr::get_xattr_value(&ctx, "nonexistent", &value, &value_len);
+    FB_ASSERT_EQ(value, nullptr);
+    FB_ASSERT_EQ(value_len, 0);
+}
+
+// Test object_xattr::get_xattr_value returns correct name field
+FB_TEST(xattr_get_value_logic, object_xattr_name_lookup) {
+    object_xattr ctx;
+    ctx.shard_id = 1;
+    ctx.pg = "1.0";
+    ctx.obj_name = "volume_001";
+
+    const void* value = nullptr;
+    size_t value_len = 0;
+
+    object_xattr::get_xattr_value(&ctx, "name", &value, &value_len);
+    FB_ASSERT_TRUE(value != nullptr);
+    FB_ASSERT_EQ(value_len, 10); // "volume_001" = 10 chars
+}
+
+FB_TEST(xattr_get_value_logic, object_xattr_type_lookup) {
+    object_xattr ctx;
+    ctx.shard_id = 1;
+    ctx.pg = "1.0";
+    ctx.obj_name = "obj1";
+
+    const void* value = nullptr;
+    size_t value_len = 0;
+
+    object_xattr::get_xattr_value(&ctx, "type", &value, &value_len);
+    FB_ASSERT_TRUE(value != nullptr);
+    FB_ASSERT_EQ(*static_cast<const blob_type*>(value), blob_type::object);
+}
+
+// Test object_snap_xattr::get_xattr_value returns snap_name
+FB_TEST(xattr_get_value_logic, object_snap_xattr_snap_name) {
+    object_snap_xattr ctx;
+    ctx.shard_id = 1;
+    ctx.pg = "1.0";
+    ctx.obj_name = "obj1";
+    ctx.snap_name = "snap_20240101";
+
+    const void* value = nullptr;
+    size_t value_len = 0;
+
+    object_snap_xattr::get_xattr_value(&ctx, "snap_name", &value, &value_len);
+    FB_ASSERT_TRUE(value != nullptr);
+    FB_ASSERT_EQ(value_len, 13); // "snap_20240101" = 13 chars
+}
+
+// Test kv_xattr::get_xattr_value with minimal fields
+FB_TEST(xattr_get_value_logic, kv_xattr_shard_lookup) {
+    kv_xattr ctx;
+    ctx.shard_id = 7;
+
+    const void* value = nullptr;
+    size_t value_len = 0;
+
+    kv_xattr::get_xattr_value(&ctx, "shard", &value, &value_len);
+    FB_ASSERT_TRUE(value != nullptr);
+    FB_ASSERT_EQ(value_len, sizeof(uint32_t));
+    FB_ASSERT_EQ(*static_cast<const uint32_t*>(value), 7);
+}
+
+FB_TEST(xattr_get_value_logic, kv_xattr_type_lookup) {
+    kv_xattr ctx;
+    ctx.shard_id = 7;
+
+    const void* value = nullptr;
+    size_t value_len = 0;
+
+    kv_xattr::get_xattr_value(&ctx, "type", &value, &value_len);
+    FB_ASSERT_TRUE(value != nullptr);
+    FB_ASSERT_EQ(*static_cast<const blob_type*>(value), blob_type::kv);
+}
+
+FB_TEST(xattr_get_value_logic, kv_xattr_unknown_key) {
+    kv_xattr ctx;
+    ctx.shard_id = 7;
+
+    const void* value = nullptr;
+    size_t value_len = 0;
+
+    kv_xattr::get_xattr_value(&ctx, "pg", &value, &value_len);
+    FB_ASSERT_EQ(value, nullptr);  // kv_xattr has no "pg" field
+    FB_ASSERT_EQ(value_len, 0);
+}
+
+// ============================================================================
+// Test Suite: xattr_xattr_count_consistency (Xattr Count Consistency Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_xattr_count_consistency) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_xattr_count_consistency) {
+    // Setup code here
+}
+
+// Verify that each xattr struct's xattr_count matches its xattr_names array size
+FB_TEST(xattr_xattr_count_consistency, log_xattr_count_matches_names) {
+    FB_ASSERT_EQ(log_xattr::xattr_count, 3);
+    // Verify all name entries are non-null and non-empty
+    for (size_t i = 0; i < log_xattr::xattr_count; i++) {
+        FB_ASSERT_TRUE(log_xattr::xattr_names[i] != nullptr);
+        FB_ASSERT_TRUE(strlen(log_xattr::xattr_names[i]) > 0);
+    }
+}
+
+FB_TEST(xattr_xattr_count_consistency, object_xattr_count_matches_names) {
+    FB_ASSERT_EQ(object_xattr::xattr_count, 4);
+    for (size_t i = 0; i < object_xattr::xattr_count; i++) {
+        FB_ASSERT_TRUE(object_xattr::xattr_names[i] != nullptr);
+        FB_ASSERT_TRUE(strlen(object_xattr::xattr_names[i]) > 0);
+    }
+}
+
+FB_TEST(xattr_xattr_count_consistency, object_snap_xattr_count_matches_names) {
+    FB_ASSERT_EQ(object_snap_xattr::xattr_count, 5);
+    for (size_t i = 0; i < object_snap_xattr::xattr_count; i++) {
+        FB_ASSERT_TRUE(object_snap_xattr::xattr_names[i] != nullptr);
+        FB_ASSERT_TRUE(strlen(object_snap_xattr::xattr_names[i]) > 0);
+    }
+}
+
+FB_TEST(xattr_xattr_count_consistency, object_recover_xattr_count_matches_names) {
+    FB_ASSERT_EQ(object_recover_xattr::xattr_count, 4);
+    for (size_t i = 0; i < object_recover_xattr::xattr_count; i++) {
+        FB_ASSERT_TRUE(object_recover_xattr::xattr_names[i] != nullptr);
+        FB_ASSERT_TRUE(strlen(object_recover_xattr::xattr_names[i]) > 0);
+    }
+}
+
+FB_TEST(xattr_xattr_count_consistency, kv_xattr_count_matches_names) {
+    FB_ASSERT_EQ(kv_xattr::xattr_count, 2);
+    for (size_t i = 0; i < kv_xattr::xattr_count; i++) {
+        FB_ASSERT_TRUE(kv_xattr::xattr_names[i] != nullptr);
+        FB_ASSERT_TRUE(strlen(kv_xattr::xattr_names[i]) > 0);
+    }
+}
+
+FB_TEST(xattr_xattr_count_consistency, kv_checkpoint_xattr_count) {
+    FB_ASSERT_EQ(kv_checkpoint_xattr::xattr_count, 2);
+    FB_ASSERT_EQ(kv_checkpoint_xattr::type, blob_type::kv_checkpoint);
+}
+
+FB_TEST(xattr_xattr_count_consistency, kv_checkpoint_new_xattr_count) {
+    FB_ASSERT_EQ(kv_checkpoint_new_xattr::xattr_count, 2);
+    FB_ASSERT_EQ(kv_checkpoint_new_xattr::type, blob_type::kv_checkpoint_new);
+}
+
+FB_TEST(xattr_xattr_count_consistency, super_xattr_count) {
+    FB_ASSERT_EQ(super_xattr::xattr_count, 1);
+    FB_ASSERT_EQ(super_xattr::type, blob_type::super_blob);
+}
+
+FB_TEST(xattr_xattr_count_consistency, free_xattr_count) {
+    FB_ASSERT_EQ(free_xattr::xattr_count, 1);
+    FB_ASSERT_EQ(free_xattr::type, blob_type::free);
+}
+
+// ============================================================================
+// Test Suite: xattr_type_field (Xattr Type Field Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_type_field) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_type_field) {
+    // Setup code here
+}
+
+// Verify each xattr struct's static type constant matches its blob_type
+FB_TEST(xattr_type_field, log_type_is_log) {
+    FB_ASSERT_EQ(log_xattr::type, blob_type::log);
+}
+
+FB_TEST(xattr_type_field, object_type_is_object) {
+    FB_ASSERT_EQ(object_xattr::type, blob_type::object);
+}
+
+FB_TEST(xattr_type_field, object_snap_type) {
+    FB_ASSERT_EQ(object_snap_xattr::type, blob_type::object_snap);
+}
+
+FB_TEST(xattr_type_field, object_recover_type) {
+    FB_ASSERT_EQ(object_recover_xattr::type, blob_type::object_recover);
+}
+
+FB_TEST(xattr_type_field, kv_type) {
+    FB_ASSERT_EQ(kv_xattr::type, blob_type::kv);
+}
+
+FB_TEST(xattr_type_field, kv_checkpoint_type) {
+    FB_ASSERT_EQ(kv_checkpoint_xattr::type, blob_type::kv_checkpoint);
+}
+
+FB_TEST(xattr_type_field, kv_checkpoint_new_type) {
+    FB_ASSERT_EQ(kv_checkpoint_new_xattr::type, blob_type::kv_checkpoint_new);
+}
+
+FB_TEST(xattr_type_field, super_blob_type) {
+    FB_ASSERT_EQ(super_xattr::type, blob_type::super_blob);
+}
+
+FB_TEST(xattr_type_field, free_type) {
+    FB_ASSERT_EQ(free_xattr::type, blob_type::free);
+}
+
+// ============================================================================
+// Test Suite: xattr_shared_names_prefix (Xattr Shared Names Prefix Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_shared_names_prefix) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_shared_names_prefix) {
+    // Setup code here
+}
+
+// Verify that "type" is always the first xattr name across all xattr structs
+FB_TEST(xattr_shared_names_prefix, type_is_first_everywhere) {
+    FB_ASSERT_TRUE(strcmp(log_xattr::xattr_names[0], "type") == 0);
+    FB_ASSERT_TRUE(strcmp(object_xattr::xattr_names[0], "type") == 0);
+    FB_ASSERT_TRUE(strcmp(object_snap_xattr::xattr_names[0], "type") == 0);
+    FB_ASSERT_TRUE(strcmp(object_recover_xattr::xattr_names[0], "type") == 0);
+    FB_ASSERT_TRUE(strcmp(kv_xattr::xattr_names[0], "type") == 0);
+    FB_ASSERT_TRUE(strcmp(kv_checkpoint_xattr::xattr_names[0], "type") == 0);
+    FB_ASSERT_TRUE(strcmp(kv_checkpoint_new_xattr::xattr_names[0], "type") == 0);
+    FB_ASSERT_TRUE(strcmp(super_xattr::xattr_names[0], "type") == 0);
+    FB_ASSERT_TRUE(strcmp(free_xattr::xattr_names[0], "type") == 0);
+}
+
+// Verify that xattr types with shard field all have "shard" as second entry
+FB_TEST(xattr_shared_names_prefix, shard_is_second_where_present) {
+    // These types all have shard as the second xattr
+    FB_ASSERT_TRUE(strcmp(log_xattr::xattr_names[1], "shard") == 0);
+    FB_ASSERT_TRUE(strcmp(object_xattr::xattr_names[1], "shard") == 0);
+    FB_ASSERT_TRUE(strcmp(object_snap_xattr::xattr_names[1], "shard") == 0);
+    FB_ASSERT_TRUE(strcmp(object_recover_xattr::xattr_names[1], "shard") == 0);
+    FB_ASSERT_TRUE(strcmp(kv_xattr::xattr_names[1], "shard") == 0);
+    FB_ASSERT_TRUE(strcmp(kv_checkpoint_xattr::xattr_names[1], "shard") == 0);
+    FB_ASSERT_TRUE(strcmp(kv_checkpoint_new_xattr::xattr_names[1], "shard") == 0);
+}
+
+// Verify that object-based xattr types share the "pg" field at index 2
+FB_TEST(xattr_shared_names_prefix, pg_at_index_2_for_object_types) {
+    FB_ASSERT_TRUE(strcmp(log_xattr::xattr_names[2], "pg") == 0);
+    FB_ASSERT_TRUE(strcmp(object_xattr::xattr_names[2], "pg") == 0);
+    FB_ASSERT_TRUE(strcmp(object_snap_xattr::xattr_names[2], "pg") == 0);
+    FB_ASSERT_TRUE(strcmp(object_recover_xattr::xattr_names[2], "pg") == 0);
+}
+
+// Verify that object-related types have "name" at index 3
+FB_TEST(xattr_shared_names_prefix, name_at_index_3_for_named_types) {
+    FB_ASSERT_TRUE(strcmp(object_xattr::xattr_names[3], "name") == 0);
+    FB_ASSERT_TRUE(strcmp(object_snap_xattr::xattr_names[3], "name") == 0);
+    FB_ASSERT_TRUE(strcmp(object_recover_xattr::xattr_names[3], "name") == 0);
+}
