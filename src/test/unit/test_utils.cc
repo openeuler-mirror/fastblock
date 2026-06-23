@@ -1943,6 +1943,43 @@ FB_TEST(md5_properties_advanced, length_extension) {
 }
 
 // ============================================================================
+// Test Suite: units_conversions (Unit Conversion Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(units_conversions) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(units_conversions) {
+    // Teardown code here
+}
+
+FB_TEST(units_conversions, kb_to_bytes) {
+    size_t bytes = 4_KB;
+    FB_ASSERT_EQ(bytes, 4096UL);
+}
+
+FB_TEST(units_conversions, mb_to_bytes) {
+    size_t bytes = 2_MB;
+    FB_ASSERT_EQ(bytes, 2097152UL);
+}
+
+FB_TEST(units_conversions, gb_to_bytes) {
+    size_t bytes = 1_GB;
+    FB_ASSERT_EQ(bytes, 1073741824UL);
+}
+
+FB_TEST(units_conversions, kb_to_mb) {
+    size_t kb = 1024_KB;
+    FB_ASSERT_EQ(kb, 1_MB);
+}
+
+FB_TEST(units_conversions, mb_to_gb) {
+    size_t mb = 1024_MB;
+    FB_ASSERT_EQ(mb, 1_GB);
+}
+
+// ============================================================================
 // Test Suite: final_validation (Final Validation Tests)
 // ============================================================================
 
