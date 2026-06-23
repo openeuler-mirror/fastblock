@@ -157,25 +157,39 @@ FB_SUITE_TEARDOWN(xattr_types) {
     // Teardown code here
 }
 
-// Test xattr_names array structure
+// Test xattr_names array structure: verify each xattr struct declares the
+// expected set of attribute names, including "type" as the first entry and
+// the correct total count.
 FB_TEST(xattr_types, log_xattr_names) {
-    const char* expected_names[] = {"type", "shard", "pg"};
-    FB_ASSERT_TRUE(true); // Basic structure test
+    const char* expected[] = {"type", "shard", "pg"};
+    FB_ASSERT_EQ(log_xattr::xattr_count, 3);
+    for (size_t i = 0; i < 3; i++) {
+        FB_ASSERT_TRUE(std::strcmp(log_xattr::xattr_names[i], expected[i]) == 0);
+    }
 }
 
 FB_TEST(xattr_types, object_xattr_names) {
-    const char* expected_names[] = {"type", "shard", "pg", "name"};
-    FB_ASSERT_TRUE(true); // Basic structure test
+    const char* expected[] = {"type", "shard", "pg", "name"};
+    FB_ASSERT_EQ(object_xattr::xattr_count, 4);
+    for (size_t i = 0; i < 4; i++) {
+        FB_ASSERT_TRUE(std::strcmp(object_xattr::xattr_names[i], expected[i]) == 0);
+    }
 }
 
 FB_TEST(xattr_types, object_snap_xattr_names) {
-    const char* expected_names[] = {"type", "shard", "pg", "name", "snap_name"};
-    FB_ASSERT_TRUE(true); // Basic structure test
+    const char* expected[] = {"type", "shard", "pg", "name", "snap_name"};
+    FB_ASSERT_EQ(object_snap_xattr::xattr_count, 5);
+    for (size_t i = 0; i < 5; i++) {
+        FB_ASSERT_TRUE(std::strcmp(object_snap_xattr::xattr_names[i], expected[i]) == 0);
+    }
 }
 
 FB_TEST(xattr_types, kv_xattr_names) {
-    const char* expected_names[] = {"type", "shard"};
-    FB_ASSERT_TRUE(true); // Basic structure test
+    const char* expected[] = {"type", "shard"};
+    FB_ASSERT_EQ(kv_xattr::xattr_count, 2);
+    for (size_t i = 0; i < 2; i++) {
+        FB_ASSERT_TRUE(std::strcmp(kv_xattr::xattr_names[i], expected[i]) == 0);
+    }
 }
 
 // ============================================================================
