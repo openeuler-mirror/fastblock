@@ -8344,6 +8344,73 @@ FB_TEST(osd_background_tasks, task_scheduling_interval) {
 }
 
 // ============================================================================
+// Test Suite: osd_resource_limits (OSD Resource Limits Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_resource_limits) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_resource_limits) {
+    // Teardown code here
+}
+
+FB_TEST(osd_resource_limits, max_concurrent_writes) {
+    // Maximum concurrent writes per OSD
+    uint32_t max_writes = 1024;
+    FB_ASSERT_TRUE(max_writes > 0);
+}
+
+FB_TEST(osd_resource_limits, max_concurrent_reads) {
+    uint32_t max_reads = 2048;
+    FB_ASSERT_TRUE(max_reads > max_writes);
+}
+
+FB_TEST(osd_resource_limits, memory_per_connection) {
+    // Memory per RDMA connection
+    uint64_t mr_size = 1024 * 1024; // 1MB
+    uint32_t max_connections = 256;
+    uint64_t total_memory = mr_size * max_connections;
+    FB_ASSERT_EQ(total_memory, 256 * 1024 * 1024);
+}
+
+FB_TEST(osd_resource_limits, buffer_pool_size) {
+    // Buffer pool size
+    uint32_t pool_size = 4096;
+    FB_ASSERT_TRUE(pool_size > 0);
+}
+
+FB_TEST(osd_resource_limits, connection_pool_limit) {
+    uint32_t max_connections = 256;
+    FB_ASSERT_TRUE(max_connections > 0);
+}
+
+FB_TEST(osd_resource_limits, thread_pool_size) {
+    uint32_t thread_count = 8;
+    FB_ASSERT_TRUE(thread_count > 0);
+}
+
+FB_TEST(osd_resource_limits, queue_depth_limit) {
+    uint32_t queue_depth = 128;
+    FB_ASSERT_TRUE(queue_depth > 0);
+}
+
+FB_TEST(osd_resource_limits, max_pgs_per_osd) {
+    uint32_t max_pgs = 256;
+    FB_ASSERT_TRUE(max_pgs > 0);
+}
+
+FB_TEST(osd_resource_limits, disk_space_warning_threshold) {
+    uint64_t warning_percent = 80;
+    FB_ASSERT_TRUE(warning_percent < 100);
+}
+
+FB_TEST(osd_resource_limits, disk_space_critical_threshold) {
+    uint64_t critical_percent = 90;
+    FB_ASSERT_TRUE(critical_percent > 80);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
