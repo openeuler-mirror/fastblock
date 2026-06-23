@@ -7520,6 +7520,336 @@ FB_TEST(serialization_integrity_tests, boundary_exact_fit) {
 }
 
 // ============================================================================
+// Test Suite: context_nullptr_tests (Context Nullptr Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(context_nullptr_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(context_nullptr_tests) {
+    // Setup code here
+}
+
+FB_TEST(context_nullptr_tests, log_append_ctx_nullptrs) {
+    log_append_ctx ctx;
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+    FB_ASSERT_EQ(ctx.log, nullptr);
+}
+
+FB_TEST(context_nullptr_tests, log_read_ctx_nullptrs) {
+    log_read_ctx ctx;
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+FB_TEST(context_nullptr_tests, log_op_ctx_nullptrs) {
+    log_op_ctx ctx;
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+FB_TEST(context_nullptr_tests, kvstore_write_ctx_nullptrs) {
+    kvstore_write_ctx ctx;
+    FB_ASSERT_EQ(ctx.kvs, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+FB_TEST(context_nullptr_tests, kvstore_read_ctx_nullptrs) {
+    kvstore_read_ctx ctx;
+    FB_ASSERT_EQ(ctx.kvs, nullptr);
+    FB_ASSERT_EQ(ctx.kvloader, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+    FB_ASSERT_EQ(ctx.rblob, nullptr);
+}
+
+FB_TEST(context_nullptr_tests, kvstore_ckpt_ctx_nullptrs) {
+    kvstore_ckpt_ctx ctx;
+    FB_ASSERT_EQ(ctx.kvs, nullptr);
+    FB_ASSERT_EQ(ctx.kv_ckpt, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+FB_TEST(context_nullptr_tests, rblob_rw_ctx_nullptrs) {
+    rblob_rw_ctx ctx;
+    FB_ASSERT_EQ(ctx.blob, nullptr);
+    FB_ASSERT_EQ(ctx.channel, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+    FB_ASSERT_EQ(ctx.next, nullptr);
+    FB_ASSERT_EQ(ctx.rb, nullptr);
+}
+
+FB_TEST(context_nullptr_tests, rblob_md_ctx_nullptrs) {
+    rblob_md_ctx ctx;
+    FB_ASSERT_EQ(ctx.rblob, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+FB_TEST(context_nullptr_tests, rblob_trim_ctx_nullptrs) {
+    rblob_trim_ctx ctx;
+    FB_ASSERT_EQ(ctx.blob, nullptr);
+    FB_ASSERT_EQ(ctx.channel, nullptr);
+    FB_ASSERT_EQ(ctx.next, nullptr);
+    FB_ASSERT_EQ(ctx.rblob, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+// ============================================================================
+// Test Suite: context_zero_values_tests (Context Zero Values Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(context_zero_values_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(context_zero_values_tests) {
+    // Setup code here
+}
+
+FB_TEST(context_zero_values_tests, log_read_ctx_indices) {
+    log_read_ctx ctx;
+    FB_ASSERT_EQ(ctx.start_index, 0);
+    FB_ASSERT_EQ(ctx.end_index, 0);
+}
+
+FB_TEST(context_zero_values_tests, kvstore_write_ctx_op_length) {
+    kvstore_write_ctx ctx;
+    FB_ASSERT_EQ(ctx.op_length, 0);
+}
+
+FB_TEST(context_zero_values_tests, kvstore_read_ctx_positions) {
+    kvstore_read_ctx ctx;
+    FB_ASSERT_EQ(ctx.start_pos, 0);
+    FB_ASSERT_EQ(ctx.len, 0);
+}
+
+FB_TEST(context_zero_values_tests, rblob_rw_ctx_positions) {
+    rblob_rw_ctx ctx;
+    FB_ASSERT_EQ(ctx.start_pos, 0);
+    FB_ASSERT_EQ(ctx.lba, 0);
+    FB_ASSERT_EQ(ctx.len, 0);
+}
+
+FB_TEST(context_zero_values_tests, rblob_trim_ctx_positions) {
+    rblob_trim_ctx ctx;
+    FB_ASSERT_EQ(ctx.lba, 0);
+    FB_ASSERT_EQ(ctx.len, 0);
+}
+
+FB_TEST(context_zero_values_tests, pool_create_ctx_indices) {
+    pool_create_ctx ctx;
+    FB_ASSERT_EQ(ctx.idx, 0);
+    FB_ASSERT_EQ(ctx.max, 0);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_empty_state_tests (Buffer List Empty State Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_empty_state_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_empty_state_tests) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_empty_state_tests, new_list_empty) {
+    buffer_list bl;
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_empty_state_tests, after_append_not_empty) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    FB_ASSERT_FALSE(bl.empty());
+}
+
+FB_TEST(buffer_list_empty_state_tests, after_clear_empty) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    bl.clear();
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_empty_state_tests, after_all_popped_empty) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    bl.pop_front();
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_empty_state_tests, after_all_trimmed_empty) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    bl.trim_front();
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+// ============================================================================
+// Test Suite: spdk_buffer_state_tests (SPDK Buffer State Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_state_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_state_tests) {
+    // Setup code here
+}
+
+FB_TEST(spdk_buffer_state_tests, new_buffer_zero_used) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    FB_ASSERT_EQ(sbuf.used(), 0);
+}
+
+FB_TEST(spdk_buffer_state_tests, new_buffer_full_remain) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    FB_ASSERT_EQ(sbuf.remain(), 100);
+}
+
+FB_TEST(spdk_buffer_state_tests, after_append_used_updated) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.append("hello", 5);
+    FB_ASSERT_EQ(sbuf.used(), 5);
+}
+
+FB_TEST(spdk_buffer_state_tests, after_append_remain_updated) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.append("hello", 5);
+    FB_ASSERT_EQ(sbuf.remain(), 95);
+}
+
+FB_TEST(spdk_buffer_state_tests, after_reset_zero_used) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.append("hello", 5);
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.used(), 0);
+}
+
+FB_TEST(spdk_buffer_state_tests, after_reset_full_remain) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.append("hello", 5);
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.remain(), 100);
+}
+
+// ============================================================================
+// Test Suite: type_string_coverage_tests (Type String Coverage Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(type_string_coverage_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(type_string_coverage_tests) {
+    // Setup code here
+}
+
+FB_TEST(type_string_coverage_tests, log_string) {
+    FB_ASSERT_EQ(type_string(blob_type::log), "blob_type::log");
+}
+
+FB_TEST(type_string_coverage_tests, object_string) {
+    FB_ASSERT_EQ(type_string(blob_type::object), "blob_type::object");
+}
+
+FB_TEST(type_string_coverage_tests, object_snap_string) {
+    FB_ASSERT_EQ(type_string(blob_type::object_snap), "blob_type::object_snap");
+}
+
+FB_TEST(type_string_coverage_tests, object_recover_string) {
+    FB_ASSERT_EQ(type_string(blob_type::object_recover), "blob_type::object_recover");
+}
+
+FB_TEST(type_string_coverage_tests, kv_string) {
+    FB_ASSERT_EQ(type_string(blob_type::kv), "blob_type::kv");
+}
+
+FB_TEST(type_string_coverage_tests, kv_checkpoint_string) {
+    FB_ASSERT_EQ(type_string(blob_type::kv_checkpoint), "blob_type::kv_checkpoint");
+}
+
+FB_TEST(type_string_coverage_tests, kv_checkpoint_new_string) {
+    FB_ASSERT_EQ(type_string(blob_type::kv_checkpoint_new), "blob_type::kv_checkpoint_new");
+}
+
+FB_TEST(type_string_coverage_tests, super_blob_string) {
+    FB_ASSERT_EQ(type_string(blob_type::super_blob), "blob_type::super_blob");
+}
+
+FB_TEST(type_string_coverage_tests, free_string) {
+    FB_ASSERT_EQ(type_string(blob_type::free), "blob_type::free");
+}
+
+// ============================================================================
+// Test Suite: final_validation_tests (Final Validation Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(final_validation_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(final_validation_tests) {
+    // Setup code here
+}
+
+FB_TEST(final_validation_tests, all_blob_types_valid) {
+    std::vector<blob_type> types = {
+        blob_type::log, blob_type::object, blob_type::object_snap,
+        blob_type::object_recover, blob_type::kv, blob_type::kv_checkpoint,
+        blob_type::kv_checkpoint_new, blob_type::super_blob, blob_type::free
+    };
+
+    for (const auto& t : types) {
+        uint32_t val = static_cast<uint32_t>(t);
+        FB_ASSERT_LE(val, 8);
+    }
+}
+
+FB_TEST(final_validation_tests, buffer_pool_constants_valid) {
+    FB_ASSERT_GT(buffer_memory, 0);
+    FB_ASSERT_GT(buffer_size, 0);
+    FB_ASSERT_GT(buffer_pool_size, 0);
+}
+
+FB_TEST(final_validation_tests, trim_constants_valid) {
+    FB_ASSERT_GT(TRIM_TRIGGER_PERCENTAGE, 0.0f);
+    FB_ASSERT_LT(TRIM_TRIGGER_PERCENTAGE, 1.0f);
+    FB_ASSERT_GT(TRIM_PERCENTAGE, 0.0f);
+    FB_ASSERT_LT(TRIM_PERCENTAGE, 1.0f);
+}
+
+FB_TEST(final_validation_tests, header_constants_valid) {
+    FB_ASSERT_EQ(entry_header_size, 24);
+}
+
+FB_TEST(final_validation_tests, log_init_constant_valid) {
+    FB_ASSERT_EQ(log_entry_t::init, UINT64_MAX);
+}
+
+// ============================================================================
 // Test Suite: xattr_val_type_operations (Xattr Val Type Operations Tests)
 // ============================================================================
 
