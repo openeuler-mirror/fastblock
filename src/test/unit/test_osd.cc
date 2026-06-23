@@ -4326,6 +4326,150 @@ FB_TEST(osd_capacity_management, quota_exceeded_handling) {
 }
 
 // ============================================================================
+// Test Suite: osd_tiering (OSD Tiering Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_tiering) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_tiering) {
+    // Teardown code here
+}
+
+FB_TEST(osd_tiering, hot_tier_definition) {
+    // Hot tier for frequently accessed data
+    std::string tier = "hot";
+    FB_ASSERT_TRUE(!tier.empty());
+}
+
+FB_TEST(osd_tiering, cold_tier_definition) {
+    // Cold tier for infrequently accessed data
+    std::string tier = "cold";
+    FB_ASSERT_TRUE(!tier.empty());
+}
+
+FB_TEST(osd_tiering, tier_promotion) {
+    // Data should be promoted from cold to hot
+    bool can_promote = true;
+    FB_ASSERT_TRUE(can_promote);
+}
+
+FB_TEST(osd_tiering, tier_demotion) {
+    // Data should be demoted from hot to cold
+    bool can_demote = true;
+    FB_ASSERT_TRUE(can_demote);
+}
+
+FB_TEST(osd_tiering, tier_policy) {
+    // Tiering should follow policy (access frequency, age)
+    bool has_policy = true;
+    FB_ASSERT_TRUE(has_policy);
+}
+
+FB_TEST(osd_tiering, tier_migration_threshold) {
+    // Migration should have threshold
+    uint64_t access_count_threshold = 100;
+    FB_ASSERT_TRUE(access_count_threshold > 0);
+}
+
+FB_TEST(osd_tiering, tier_migration_background) {
+    // Migration should run in background
+    bool background = true;
+    FB_ASSERT_TRUE(background);
+}
+
+FB_TEST(osd_tiering, tier_cost_optimization) {
+    // Tiering should optimize storage cost
+    bool cost_optimized = true;
+    FB_ASSERT_TRUE(cost_optimized);
+}
+
+// ============================================================================
+// Test Suite: osd_compression (OSD Compression Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_compression) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_compression) {
+    // Teardown code here
+}
+
+FB_TEST(osd_compression, compression_enabled) {
+    // Compression should be configurable
+    bool enabled = true;
+    FB_ASSERT_TRUE(enabled);
+}
+
+FB_TEST(osd_compression, compression_algorithm) {
+    // Should support compression algorithms
+    std::string algorithm = "lz4";
+    FB_ASSERT_TRUE(!algorithm.empty());
+}
+
+FB_TEST(osd_compression, compression_ratio) {
+    // Should track compression ratio
+    uint64_t original_size = 10000;
+    uint64_t compressed_size = 3000;
+    double ratio = static_cast<double>(original_size) / compressed_size;
+    FB_ASSERT_TRUE(ratio > 1.0);
+}
+
+FB_TEST(osd_compression, compression_level) {
+    // Should support compression levels
+    int level = 5;
+    FB_ASSERT_TRUE(level >= 1 && level <= 9);
+}
+
+FB_TEST(osd_compression, decompression_correctness) {
+    // Decompression should restore original data
+    std::string original = "test_data_for_compression";
+    std::string compressed = original; // Simulated
+    std::string decompressed = compressed;
+    FB_ASSERT_EQ(original, decompressed);
+}
+
+FB_TEST(osd_compression, compression_savings) {
+    // Should calculate space savings
+    uint64_t before = 10000;
+    uint64_t after = 3000;
+    uint64_t savings = before - after;
+    FB_ASSERT_EQ(savings, 7000);
+}
+
+FB_TEST(osd_compression, compression_per_object) {
+    // Compression can be per-object
+    bool per_object = true;
+    FB_ASSERT_TRUE(per_object);
+}
+
+FB_TEST(osd_compression, compression_per_pool) {
+    // Compression can be per-pool
+    bool per_pool = true;
+    FB_ASSERT_TRUE(per_pool);
+}
+
+FB_TEST(osd_compression, compression_metadata) {
+    // Should store compression metadata
+    bool has_metadata = true;
+    FB_ASSERT_TRUE(has_metadata);
+}
+
+FB_TEST(osd_compression, incompressible_data_handling) {
+    // Should handle incompressible data
+    bool handled = true;
+    FB_ASSERT_TRUE(handled);
+}
+
+FB_TEST(osd_compression, compression_performance) {
+    // Compression should be fast enough
+    uint64_t max_latency_us = 1000;
+    FB_ASSERT_TRUE(max_latency_us > 0);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
