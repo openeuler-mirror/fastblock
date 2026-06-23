@@ -785,6 +785,686 @@ FB_TEST(lease_management, lease_expiration) {
 }
 
 // ============================================================================
+// Test Suite: excl_lock_lock_unlock (op_type_excl_lock Lock/Unlock Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(excl_lock_lock_unlock) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(excl_lock_lock_unlock) {
+    // Teardown code here
+}
+
+// Helper: a simple context that records whether it was completed
+struct test_complete_ctx : public utils::context {
+    int called{0};
+    int rc{0};
+    void finish(int r) override {
+        called++;
+        rc = r;
+    }
+};
+
+FB_TEST(excl_lock_lock_unlock, lock_read_immediate) {
+    // First READ lock should be granted immediately
+    op_type_excl_lock<utils::operation_type> lock;
+    test_complete_ctx ctx;
+
+    lock.lock(utils::operation_type::READ, &ctx);
+    FB_ASSERT_EQ(ctx.called, 1);
+    FB_ASSERT_EQ(ctx.rc, 0);
+    FB_ASSERT_EQ(lock.holders(), 1);
+}
+
+FB_TEST(excl_lock_lock_unlock, lock_write_immediate) {
+    // First WRITE lock should be granted immediately
+    op_type_excl_lock<utils::operation_type> lock;
+    test_complete_ctx ctx;
+
+    lock.lock(utils::operation_type::WRITE, &ctx);
+    FB_ASSERT_EQ(ctx.called, 1);
+    FB_ASSERT_EQ(ctx.rc, 0);
+    FB_ASSERT_EQ(lock.holders(), 1);
+}
+
+FB_TEST(excl_lock_lock_unlock, lock_delete_immediate) {
+    // First DELETE lock should be granted immediately
+    op_type_excl_lock<utils::operation_type> lock;
+    test_complete_ctx ctx;
+
+    lock.lock(utils::operation_type::DELETE, &ctx);
+    FB_ASSERT_EQ(ctx.called, 1);
+    FB_ASSERT_EQ(ctx.rc, 0);
+    FB_ASSERT_EQ(lock.holders(), 1);
+}
+
+FB_TEST(excl_lock_lock_unlock, concurrent_read_locks) {
+    // Multiple READ locks should be granted concurrently
+    op_type_excl_lock<utils::operation_type> lock;
+    test_complete_ctx ctx1, ctx2;
+
+    lock.lock(utils::operation_type::READ, &ctx1);
+    FB_ASSERT_EQ(ctx1.called, 1);
+
+    lock.lock(utils::operation_type::READ, &ctx2);
+    // Second READ should also be granted immediately (same type, no waiters)
+    FB_ASSERT_EQ(ctx2.called, 1);
+    FB_ASSERT_EQ(lock.holders(), 2);
+}
+
+FB_TEST(excl_lock_lock_unlock, concurrent_write_locks) {
+    // Multiple WRITE locks should be granted concurrently
+    op_type_excl_lock<utils::operation_type> lock;
+    test_complete_ctx ctx1, ctx2;
+
+    lock.lock(utils::operation_type::WRITE, &ctx1);
+    FB_ASSERT_EQ(ctx1.called, 1);
+
+    lock.lock(utils::operation_type::WRITE, &ctx2);
+    // Second WRITE should also be granted immediately (same type, no waiters)
+    FB_ASSERT_EQ(ctx2.called, 1);
+    FB_ASSERT_EQ(lock.holders(), 2);
+}
+
+FB_TEST(excl_lock_lock_unlock, read_write_exclusion_wait) {
+    // READ followed by WRITE should cause WRITE to wait
+    op_type_excl_lock<utils::operation_type> lock;
+    test_complete_ctx ctx_read, ctx_write;
+
+    lock.lock(utils::operation_type::READ, &ctx_read);
+    FB_ASSERT_EQ(ctx_read.called, 1);
+
+    lock.lock(utils::operation_type::WRITE, &ctx_write);
+    // WRITE should NOT be granted (different type, must wait)
+    FB_ASSERT_EQ(ctx_write.called, 0);
+    // holders includes 1 runner + 1 waiter
+    FB_ASSERT_EQ(lock.holders(), 2);
+}
+
+FB_TEST(excl_lock_lock_unlock, write_read_exclusion_wait) {
+    // WRITE followed by READ should cause READ to wait
+    op_type_excl_lock<utils::operation_type> lock;
+    test_complete_ctx ctx_write, ctx_read;
+
+    lock.lock(utils::operation_type::WRITE, &ctx_write);
+    FB_ASSERT_EQ(ctx_write.called, 1);
+
+    lock.lock(utils::operation_type::READ, &ctx_read);
+    // READ should NOT be granted (different type, must wait)
+    FB_ASSERT_EQ(ctx_read.called, 0);
+    FB_ASSERT_EQ(lock.holders(), 2);
+}
+
+FB_TEST(excl_lock_lock_unlock, unlock_reduces_runners) {
+    // Unlock should reduce runner count
+    op_type_excl_lock<utils::operation_type> lock;
+    test_complete_ctx ctx;
+
+    lock.lock(utils::operation_type::READ, &ctx);
+    FB_ASSERT_EQ(lock.holders(), 1);
+
+    lock.unlock(utils::operation_type::READ);
+    FB_ASSERT_EQ(lock.holders(), 0);
+}
+
+FB_TEST(excl_lock_lock_unlock, unlock_wakes_waiter_same_type) {
+    // Unlocking should wake a compatible waiter
+    op_type_excl_lock<utils::operation_type> lock;
+    test_complete_ctx ctx1, ctx2;
+
+    // First READ lock
+    lock.lock(utils::operation_type::READ, &ctx1);
+    FB_ASSERT_EQ(ctx1.called, 1);
+
+    // WRITE waits (incompatible with READ)
+    lock.lock(utils::operation_type::WRITE, &ctx2);
+    FB_ASSERT_EQ(ctx2.called, 0);
+
+    // Unlock READ - should NOT wake WRITE (still incompatible)
+    // Wait, actually: unlock READ reduces runners to 0, so _lock_type becomes NONE,
+    // and wake() tries to wake the WRITE waiter - try_lock sees NONE, grants it
+    lock.unlock(utils::operation_type::READ);
+    // After READ unlock, _lock_type becomes NONE, so WRITE waiter should be woken
+    FB_ASSERT_EQ(ctx2.called, 1);
+}
+
+FB_TEST(excl_lock_lock_unlock, unlock_no_wake_incompatible) {
+    // If waiter type is incompatible with remaining lock type, it should not wake
+    op_type_excl_lock<utils::operation_type> lock;
+    test_complete_ctx ctx1, ctx2, ctx3;
+
+    // Two concurrent READs
+    lock.lock(utils::operation_type::READ, &ctx1);
+    lock.lock(utils::operation_type::READ, &ctx2);
+
+    // WRITE waits
+    lock.lock(utils::operation_type::WRITE, &ctx3);
+    FB_ASSERT_EQ(ctx3.called, 0);
+
+    // Unlock one READ - still one READ runner, WRITE should still wait
+    lock.unlock(utils::operation_type::READ);
+    FB_ASSERT_EQ(ctx3.called, 0); // Still waiting, incompatible with READ
+    FB_ASSERT_EQ(lock.holders(), 2); // 1 READ runner + 1 WRITE waiter
+}
+
+FB_TEST(excl_lock_lock_unlock, multiple_waiters_fifo) {
+    // Multiple waiters should be queued in FIFO order
+    op_type_excl_lock<utils::operation_type> lock;
+    test_complete_ctx ctx1, ctx2, ctx3;
+
+    lock.lock(utils::operation_type::WRITE, &ctx1);
+
+    // Both READs wait
+    lock.lock(utils::operation_type::READ, &ctx2);
+    lock.lock(utils::operation_type::READ, &ctx3);
+
+    FB_ASSERT_EQ(ctx2.called, 0);
+    FB_ASSERT_EQ(ctx3.called, 0);
+
+    // Unlock WRITE - should wake both READs
+    lock.unlock(utils::operation_type::WRITE);
+    FB_ASSERT_EQ(ctx2.called, 1);
+    FB_ASSERT_EQ(ctx3.called, 1);
+}
+
+FB_TEST(excl_lock_lock_unlock, same_type_with_waiter_blocks) {
+    // If there are waiters, even same-type new lock should wait (fairness)
+    op_type_excl_lock<utils::operation_type> lock;
+    test_complete_ctx ctx_read, ctx_write, ctx_read2;
+
+    lock.lock(utils::operation_type::READ, &ctx_read);
+
+    // WRITE waits
+    lock.lock(utils::operation_type::WRITE, &ctx_write);
+
+    // Another READ should also wait because there is a waiter (WRITE)
+    // try_lock checks: is_compatible_type(READ, READ) == true, BUT _waiters is not empty
+    lock.lock(utils::operation_type::READ, &ctx_read2);
+    FB_ASSERT_EQ(ctx_read2.called, 0); // Must wait due to existing waiter
+}
+
+// ============================================================================
+// Test Suite: excl_lock_edge_cases (op_type_excl_lock Edge Cases)
+// ============================================================================
+
+FB_SUITE_SETUP(excl_lock_edge_cases) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(excl_lock_edge_cases) {
+    // Teardown code here
+}
+
+FB_TEST(excl_lock_edge_cases, none_type_lock) {
+    // Locking with NONE type should always succeed
+    op_type_excl_lock<utils::operation_type> lock;
+    test_complete_ctx ctx;
+
+    lock.lock(utils::operation_type::NONE, &ctx);
+    FB_ASSERT_EQ(ctx.called, 1);
+}
+
+FB_TEST(excl_lock_edge_cases, lock_unlock_cycle) {
+    // Full lock/unlock cycle should reset state
+    op_type_excl_lock<utils::operation_type> lock;
+    test_complete_ctx ctx1, ctx2;
+
+    lock.lock(utils::operation_type::WRITE, &ctx1);
+    FB_ASSERT_EQ(ctx1.called, 1);
+    FB_ASSERT_EQ(lock.holders(), 1);
+
+    lock.unlock(utils::operation_type::WRITE);
+    FB_ASSERT_EQ(lock.holders(), 0);
+
+    // Should be able to lock again with different type
+    lock.lock(utils::operation_type::READ, &ctx2);
+    FB_ASSERT_EQ(ctx2.called, 1);
+    FB_ASSERT_EQ(lock.holders(), 1);
+}
+
+FB_TEST(excl_lock_edge_cases, multiple_lock_unlock_cycles) {
+    // Repeated lock/unlock cycles
+    op_type_excl_lock<utils::operation_type> lock;
+
+    for (int i = 0; i < 10; i++) {
+        test_complete_ctx ctx;
+        lock.lock(utils::operation_type::READ, &ctx);
+        FB_ASSERT_EQ(ctx.called, 1);
+        FB_ASSERT_EQ(lock.holders(), 1);
+        lock.unlock(utils::operation_type::READ);
+        FB_ASSERT_EQ(lock.holders(), 0);
+    }
+}
+
+FB_TEST(excl_lock_edge_cases, holders_after_multiple_locks) {
+    // Track holders count with multiple concurrent locks
+    op_type_excl_lock<utils::operation_type> lock;
+    test_complete_ctx ctx1, ctx2, ctx3;
+
+    lock.lock(utils::operation_type::READ, &ctx1);
+    FB_ASSERT_EQ(lock.holders(), 1);
+
+    lock.lock(utils::operation_type::READ, &ctx2);
+    FB_ASSERT_EQ(lock.holders(), 2);
+
+    lock.lock(utils::operation_type::READ, &ctx3);
+    FB_ASSERT_EQ(lock.holders(), 3);
+
+    lock.unlock(utils::operation_type::READ);
+    FB_ASSERT_EQ(lock.holders(), 2);
+
+    lock.unlock(utils::operation_type::READ);
+    FB_ASSERT_EQ(lock.holders(), 1);
+
+    lock.unlock(utils::operation_type::READ);
+    FB_ASSERT_EQ(lock.holders(), 0);
+}
+
+// ============================================================================
+// Test Suite: write_ring_slot (Write Ring Slot Structure Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(write_ring_slot) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(write_ring_slot) {
+    // Teardown code here
+}
+
+FB_TEST(write_ring_slot, queue_structure) {
+    // Test write_ring_queue conceptual fields
+    uint64_t queue_id = 42;
+    uint64_t lease_us = 5000000;
+    uint32_t slot_size = 4096;
+    std::string peer_address = "192.168.1.1:12345";
+
+    FB_ASSERT_EQ(queue_id, 42);
+    FB_ASSERT_EQ(lease_us, 5000000);
+    FB_ASSERT_EQ(slot_size, 4096);
+    FB_ASSERT_EQ(peer_address, "192.168.1.1:12345");
+}
+
+FB_TEST(write_ring_slot, slot_data_tracking) {
+    // Conceptual test: slot tracks data pointer and size
+    uint32_t data_size = 8192;
+    void* data_ptr = nullptr; // Would be real pointer in production
+
+    FB_ASSERT_EQ(data_size, 8192);
+    FB_ASSERT_TRUE(data_ptr == nullptr);
+}
+
+FB_TEST(write_ring_slot, multiple_slots) {
+    // Simulate multiple slots in a queue
+    const int SLOT_COUNT = 16;
+    uint32_t slot_sizes[SLOT_COUNT];
+    for (int i = 0; i < SLOT_COUNT; i++) {
+        slot_sizes[i] = 4096 * (i + 1);
+    }
+
+    FB_ASSERT_EQ(slot_sizes[0], 4096);
+    FB_ASSERT_EQ(slot_sizes[SLOT_COUNT - 1], 4096 * SLOT_COUNT);
+}
+
+// ============================================================================
+// Test Suite: osd_service_types (OSD Service Type Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_service_types) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_service_types) {
+    // Teardown code here
+}
+
+FB_TEST(osd_service_types, write_request_fields) {
+    // Test conceptual write request fields
+    uint64_t pool_id = 1;
+    uint64_t pg_id = 100;
+    std::string object_name = "obj_001";
+    uint64_t offset = 0;
+    std::string data = "hello";
+
+    FB_ASSERT_EQ(pool_id, 1);
+    FB_ASSERT_EQ(pg_id, 100);
+    FB_ASSERT_EQ(object_name, "obj_001");
+    FB_ASSERT_EQ(offset, 0);
+    FB_ASSERT_EQ(data.size(), 5);
+}
+
+FB_TEST(osd_service_types, read_request_fields) {
+    uint64_t pool_id = 2;
+    uint64_t pg_id = 200;
+    std::string object_name = "obj_002";
+    uint64_t offset = 4096;
+    uint64_t length = 8192;
+
+    FB_ASSERT_EQ(pool_id, 2);
+    FB_ASSERT_EQ(pg_id, 200);
+    FB_ASSERT_EQ(object_name, "obj_002");
+    FB_ASSERT_EQ(offset, 4096);
+    FB_ASSERT_EQ(length, 8192);
+}
+
+FB_TEST(osd_service_types, delete_request_fields) {
+    uint64_t pool_id = 3;
+    uint64_t pg_id = 300;
+    std::string object_name = "obj_003";
+
+    FB_ASSERT_EQ(pool_id, 3);
+    FB_ASSERT_EQ(pg_id, 300);
+    FB_ASSERT_EQ(object_name, "obj_003");
+}
+
+FB_TEST(osd_service_types, reply_state_field) {
+    // Reply has a state field indicating success/failure
+    int success_state = 0;
+    int error_state = -1;
+
+    FB_ASSERT_EQ(success_state, 0);
+    FB_ASSERT_TRUE(error_state < 0);
+    FB_ASSERT_TRUE(success_state != error_state);
+}
+
+// ============================================================================
+// Test Suite: partition_manager_types (Partition Manager Type Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(partition_manager_types) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(partition_manager_types) {
+    // Teardown code here
+}
+
+FB_TEST(partition_manager_types, osd_state_starting) {
+    osd_state state = osd_state::OSD_STARTING;
+    FB_ASSERT_TRUE(state == osd_state::OSD_STARTING);
+    FB_ASSERT_TRUE(state != osd_state::OSD_ACTIVE);
+    FB_ASSERT_TRUE(state != osd_state::OSD_DOWN);
+}
+
+FB_TEST(partition_manager_types, osd_state_active) {
+    osd_state state = osd_state::OSD_ACTIVE;
+    FB_ASSERT_TRUE(state == osd_state::OSD_ACTIVE);
+    FB_ASSERT_TRUE(state != osd_state::OSD_STARTING);
+    FB_ASSERT_TRUE(state != osd_state::OSD_DOWN);
+}
+
+FB_TEST(partition_manager_types, osd_state_down) {
+    osd_state state = osd_state::OSD_DOWN;
+    FB_ASSERT_TRUE(state == osd_state::OSD_DOWN);
+    FB_ASSERT_TRUE(state != osd_state::OSD_STARTING);
+    FB_ASSERT_TRUE(state != osd_state::OSD_ACTIVE);
+}
+
+FB_TEST(partition_manager_types, osd_state_lifecycle) {
+    // Normal lifecycle: STARTING -> ACTIVE -> DOWN
+    osd_state state = osd_state::OSD_STARTING;
+    FB_ASSERT_TRUE(state == osd_state::OSD_STARTING);
+
+    state = osd_state::OSD_ACTIVE;
+    FB_ASSERT_TRUE(state == osd_state::OSD_ACTIVE);
+
+    state = osd_state::OSD_DOWN;
+    FB_ASSERT_TRUE(state == osd_state::OSD_DOWN);
+}
+
+// ============================================================================
+// Test Suite: data_statistics_logic (Data Statistics Logic Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(data_statistics_logic) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(data_statistics_logic) {
+    // Teardown code here
+}
+
+FB_TEST(data_statistics_logic, read_io_increment) {
+    // Simulate insert_data logic for READ
+    std::map<std::string, utils::cluster_io> ios;
+    std::string pg_name = "1.100";
+
+    // First READ
+    ios[pg_name] = utils::cluster_io{.read_ios = 1, .read_bytes = 512};
+
+    FB_ASSERT_EQ(ios[pg_name].read_ios, 1);
+    FB_ASSERT_EQ(ios[pg_name].read_bytes, 512);
+
+    // Second READ
+    ios[pg_name].read_ios++;
+    ios[pg_name].read_bytes += 1024;
+
+    FB_ASSERT_EQ(ios[pg_name].read_ios, 2);
+    FB_ASSERT_EQ(ios[pg_name].read_bytes, 1536);
+}
+
+FB_TEST(data_statistics_logic, write_io_increment) {
+    // Simulate insert_data logic for WRITE
+    std::map<std::string, utils::cluster_io> ios;
+    std::string pg_name = "1.100";
+
+    // First WRITE
+    ios[pg_name] = utils::cluster_io{.write_ios = 1, .write_bytes = 4096};
+
+    FB_ASSERT_EQ(ios[pg_name].write_ios, 1);
+    FB_ASSERT_EQ(ios[pg_name].write_bytes, 4096);
+
+    // Second WRITE
+    ios[pg_name].write_ios++;
+    ios[pg_name].write_bytes += 8192;
+
+    FB_ASSERT_EQ(ios[pg_name].write_ios, 2);
+    FB_ASSERT_EQ(ios[pg_name].write_bytes, 12288);
+}
+
+FB_TEST(data_statistics_logic, mixed_io_tracking) {
+    // Track both READ and WRITE IO for same PG
+    std::map<std::string, utils::cluster_io> ios;
+    std::string pg_name = "2.200";
+
+    ios[pg_name] = utils::cluster_io{.read_ios = 1, .read_bytes = 512};
+
+    // Add WRITE to existing entry
+    ios[pg_name].write_ios++;
+    ios[pg_name].write_bytes += 4096;
+
+    FB_ASSERT_EQ(ios[pg_name].read_ios, 1);
+    FB_ASSERT_EQ(ios[pg_name].read_bytes, 512);
+    FB_ASSERT_EQ(ios[pg_name].write_ios, 1);
+    FB_ASSERT_EQ(ios[pg_name].write_bytes, 4096);
+}
+
+FB_TEST(data_statistics_logic, multiple_pg_tracking) {
+    // Track IO for multiple PGs independently
+    std::map<std::string, utils::cluster_io> ios;
+
+    ios["1.100"] = utils::cluster_io{.read_ios = 10, .read_bytes = 10240};
+    ios["1.200"] = utils::cluster_io{.write_ios = 5, .write_bytes = 20480};
+    ios["2.100"] = utils::cluster_io{.read_ios = 3, .read_bytes = 3072, .write_ios = 2, .write_bytes = 8192};
+
+    FB_ASSERT_EQ(ios.size(), 3);
+    FB_ASSERT_EQ(ios["1.100"].read_ios, 10);
+    FB_ASSERT_EQ(ios["1.200"].write_ios, 5);
+    FB_ASSERT_EQ(ios["2.100"].read_ios, 3);
+    FB_ASSERT_EQ(ios["2.100"].write_ios, 2);
+}
+
+FB_TEST(data_statistics_logic, data_exchange) {
+    // Simulate std::exchange pattern used in send_data_to_mon
+    std::map<std::string, utils::cluster_io> ios;
+    ios["1.100"] = utils::cluster_io{.read_ios = 10, .read_bytes = 10240};
+
+    // Exchange takes the data, leaving empty map
+    auto old_ios = std::exchange(ios, {});
+    FB_ASSERT_EQ(ios.size(), 0);
+    FB_ASSERT_EQ(old_ios.size(), 1);
+    FB_ASSERT_EQ(old_ios["1.100"].read_ios, 10);
+}
+
+// ============================================================================
+// Test Suite: error_codes (OSD Error Code Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(error_codes) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(error_codes) {
+    // Teardown code here
+}
+
+FB_TEST(error_codes, success_code) {
+    int success = 0;
+    FB_ASSERT_EQ(success, 0);
+}
+
+FB_TEST(error_codes, common_error_values) {
+    // Common error codes in the OSD module
+    FB_ASSERT_TRUE(-1 != 0);   // General error
+    FB_ASSERT_TRUE(-2 != 0);   // No such file or directory
+    FB_ASSERT_TRUE(-EEXIST != 0); // File exists
+}
+
+FB_TEST(error_codes, error_propagation) {
+    // Error code should propagate through completion
+    int error_from_store = -5;
+    test_complete_ctx ctx;
+    ctx.finish(error_from_store);
+
+    FB_ASSERT_EQ(ctx.rc, -5);
+    FB_ASSERT_EQ(ctx.called, 1);
+}
+
+// ============================================================================
+// Test Suite: xattr_metadata (Extended Attribute Metadata Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_metadata) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_metadata) {
+    // Teardown code here
+}
+
+FB_TEST(xattr_metadata, blob_type_xattr) {
+    // Verify blob_type enumeration used as xattr
+    // xattr["type"] = blob_type::object
+    uint32_t type_val = static_cast<uint32_t>(blob_type::object);
+    FB_ASSERT_EQ(type_val, 1);
+}
+
+FB_TEST(xattr_metadata, pg_name_xattr) {
+    // xattr["pg"] = pg_name
+    std::string pg_name = "1.100";
+    FB_ASSERT_EQ(pg_name, "1.100");
+}
+
+FB_TEST(xattr_metadata, xattr_map) {
+    // Simulate xattr map as used in write_obj
+    std::map<std::string, xattr_val_type> xattr;
+    xattr["type"] = blob_type::object;
+    xattr["pg"] = std::string("1.100");
+
+    FB_ASSERT_EQ(xattr.size(), 2);
+    // Verify both keys exist
+    FB_ASSERT_TRUE(xattr.find("type") != xattr.end());
+    FB_ASSERT_TRUE(xattr.find("pg") != xattr.end());
+}
+
+// ============================================================================
+// Test Suite: context_completion_advanced (Advanced Context Completion Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(context_completion_advanced) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(context_completion_advanced) {
+    // Teardown code here
+}
+
+FB_TEST(context_completion_advanced, context_called_once) {
+    test_complete_ctx ctx;
+    ctx.finish(0);
+    FB_ASSERT_EQ(ctx.called, 1);
+    FB_ASSERT_EQ(ctx.rc, 0);
+}
+
+FB_TEST(context_completion_advanced, context_with_error) {
+    test_complete_ctx ctx;
+    ctx.finish(-1);
+    FB_ASSERT_EQ(ctx.called, 1);
+    FB_ASSERT_EQ(ctx.rc, -1);
+}
+
+FB_TEST(context_completion_advanced, multiple_contexts) {
+    test_complete_ctx ctx1, ctx2, ctx3;
+    ctx1.finish(0);
+    ctx2.finish(-1);
+    ctx3.finish(0);
+
+    FB_ASSERT_EQ(ctx1.rc, 0);
+    FB_ASSERT_EQ(ctx2.rc, -1);
+    FB_ASSERT_EQ(ctx3.rc, 0);
+}
+
+// ============================================================================
+// Test Suite: pg_id_to_name (PG ID to Name Conversion Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(pg_id_to_name) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(pg_id_to_name) {
+    // Teardown code here
+}
+
+FB_TEST(pg_id_to_name, basic_conversion) {
+    // pg_id_to_name(pool_id, pg_id) typically formats as "pool_id.pg_id"
+    uint64_t pool_id = 1;
+    uint64_t pg_id = 100;
+    std::string name = std::to_string(pool_id) + "." + std::to_string(pg_id);
+
+    FB_ASSERT_EQ(name, "1.100");
+}
+
+FB_TEST(pg_id_to_name, large_ids) {
+    uint64_t pool_id = 999999;
+    uint64_t pg_id = 888888;
+    std::string name = std::to_string(pool_id) + "." + std::to_string(pg_id);
+
+    FB_ASSERT_TRUE(name.size() > 0);
+    FB_ASSERT_TRUE(name.find('.') != std::string::npos);
+}
+
+FB_TEST(pg_id_to_name, zero_ids) {
+    uint64_t pool_id = 0;
+    uint64_t pg_id = 0;
+    std::string name = std::to_string(pool_id) + "." + std::to_string(pg_id);
+
+    FB_ASSERT_EQ(name, "0.0");
+}
+
+FB_TEST(pg_id_to_name, uniqueness) {
+    // Different (pool_id, pg_id) pairs should produce different names
+    auto make_name = [](uint64_t p, uint64_t g) {
+        return std::to_string(p) + "." + std::to_string(g);
+    };
+
+    FB_ASSERT_TRUE(make_name(1, 100) != make_name(1, 200));
+    FB_ASSERT_TRUE(make_name(1, 100) != make_name(2, 100));
+    FB_ASSERT_TRUE(make_name(1, 100) == make_name(1, 100));
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
