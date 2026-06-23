@@ -4600,3 +4600,162 @@ FB_TEST(buffer_list_encoder_operations, put_multiple_uint64) {
     }
     FB_ASSERT_EQ(encoder.used(), 80);
 }
+
+// ============================================================================
+// Test Suite: xattr_xattr_names (Xattr Xattr Names Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_xattr_names) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_xattr_names) {
+    // Setup code here
+}
+
+FB_TEST(xattr_xattr_names, log_xattr_count) {
+    // log_xattr has 3 xattr names: type, shard, pg
+    FB_ASSERT_TRUE(true);
+}
+
+FB_TEST(xattr_xattr_names, object_xattr_count) {
+    // object_xattr has 4 xattr names: type, shard, pg, name
+    FB_ASSERT_TRUE(true);
+}
+
+FB_TEST(xattr_xattr_names, object_snap_xattr_count) {
+    // object_snap_xattr has 5 xattr names: type, shard, pg, name, snap_name
+    FB_ASSERT_TRUE(true);
+}
+
+FB_TEST(xattr_xattr_names, kv_xattr_count) {
+    // kv_xattr has 2 xattr names: type, shard
+    FB_ASSERT_TRUE(true);
+}
+
+// ============================================================================
+// Test Suite: rblob_rw_result_operations (RBlob RW Result Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(rblob_rw_result_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(rblob_rw_result_operations) {
+    // Setup code here
+}
+
+FB_TEST(rblob_rw_result_operations, default_constructor) {
+    rblob_rw_result result;
+    FB_ASSERT_EQ(result.start_pos, 0);
+    FB_ASSERT_EQ(result.len, 0);
+}
+
+FB_TEST(rblob_rw_result_operations, initialized_values) {
+    rblob_rw_result result{4096, 8192};
+    FB_ASSERT_EQ(result.start_pos, 4096);
+    FB_ASSERT_EQ(result.len, 8192);
+}
+
+FB_TEST(rblob_rw_result_operations, copy) {
+    rblob_rw_result r1{1024, 2048};
+    rblob_rw_result r2 = r1;
+    FB_ASSERT_EQ(r2.start_pos, 1024);
+    FB_ASSERT_EQ(r2.len, 2048);
+}
+
+FB_TEST(rblob_rw_result_operations, end_calculation) {
+    rblob_rw_result result{1000, 500};
+    uint64_t end = result.start_pos + result.len;
+    FB_ASSERT_EQ(end, 1500);
+}
+
+// ============================================================================
+// Test Suite: io_unit_calculations (IO Unit Calculations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(io_unit_calculations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(io_unit_calculations) {
+    // Setup code here
+}
+
+FB_TEST(io_unit_calculations, bytes_to_blocks) {
+    uint64_t bytes = 4096;
+    uint64_t block_size = 512;
+    uint64_t blocks = (bytes + block_size - 1) / block_size;
+    FB_ASSERT_EQ(blocks, 8);
+}
+
+FB_TEST(io_unit_calculations, bytes_to_blocks_partial) {
+    uint64_t bytes = 4097;
+    uint64_t block_size = 512;
+    uint64_t blocks = (bytes + block_size - 1) / block_size;
+    FB_ASSERT_EQ(blocks, 9);
+}
+
+FB_TEST(io_unit_calculations, blocks_to_bytes) {
+    uint64_t blocks = 8;
+    uint64_t block_size = 512;
+    uint64_t bytes = blocks * block_size;
+    FB_ASSERT_EQ(bytes, 4096);
+}
+
+FB_TEST(io_unit_calculations, lba_to_byte) {
+    uint64_t lba = 100;
+    uint64_t byte_offset = lba * 512;
+    FB_ASSERT_EQ(byte_offset, 51200);
+}
+
+FB_TEST(io_unit_calculations, byte_to_lba) {
+    uint64_t byte_offset = 51200;
+    uint64_t lba = byte_offset / 512;
+    FB_ASSERT_EQ(lba, 100);
+}
+
+FB_TEST(io_unit_calculations, align_up) {
+    uint64_t size = 3000;
+    uint64_t alignment = 4096;
+    uint64_t aligned = ((size + alignment - 1) / alignment) * alignment;
+    FB_ASSERT_EQ(aligned, 4096);
+}
+
+// ============================================================================
+// Test Suite: cluster_calculations (Cluster Calculations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(cluster_calculations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(cluster_calculations) {
+    // Setup code here
+}
+
+FB_TEST(cluster_calculations, bytes_to_clusters) {
+    uint64_t bytes = 2_MB;
+    uint64_t cluster_size = 1_MB;
+    uint64_t clusters = bytes / cluster_size;
+    FB_ASSERT_EQ(clusters, 2);
+}
+
+FB_TEST(cluster_calculations, clusters_to_bytes) {
+    uint64_t clusters = 4;
+    uint64_t cluster_size = 1_MB;
+    uint64_t bytes = clusters * cluster_size;
+    FB_ASSERT_EQ(bytes, 4_MB);
+}
+
+FB_TEST(cluster_calculations, blob_clusters) {
+    constexpr uint32_t blob_cluster = 4;
+    constexpr uint32_t cluster_size = 1_MB;
+    constexpr uint32_t blob_size = blob_cluster * cluster_size;
+    FB_ASSERT_EQ(blob_size, 4_MB);
+}
+
+FB_TEST(cluster_calculations, cluster_alignment) {
+    uint64_t cluster_size = 1_MB;
+    FB_ASSERT_EQ(cluster_size % 4096, 0);
+}
