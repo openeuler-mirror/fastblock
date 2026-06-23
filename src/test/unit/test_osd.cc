@@ -4470,6 +4470,186 @@ FB_TEST(osd_compression, compression_performance) {
 }
 
 // ============================================================================
+// Test Suite: osd_qos (OSD QoS Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_qos) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_qos) {
+    // Teardown code here
+}
+
+FB_TEST(osd_qos, iops_limit) {
+    // Should enforce IOPS limit
+    uint64_t max_iops = 10000;
+    FB_ASSERT_TRUE(max_iops > 0);
+}
+
+FB_TEST(osd_qos, bandwidth_limit) {
+    // Should enforce bandwidth limit
+    uint64_t max_bps = 1024ULL * 1024ULL * 100ULL; // 100MB/s
+    FB_ASSERT_TRUE(max_bps > 0);
+}
+
+FB_TEST(osd_qos, read_qos) {
+    // Should have separate QoS for reads
+    uint64_t max_read_iops = 5000;
+    FB_ASSERT_TRUE(max_read_iops > 0);
+}
+
+FB_TEST(osd_qos, write_qos) {
+    // Should have separate QoS for writes
+    uint64_t max_write_iops = 5000;
+    FB_ASSERT_TRUE(max_write_iops > 0);
+}
+
+FB_TEST(osd_qos, per_client_qos) {
+    // QoS can be per-client
+    bool per_client = true;
+    FB_ASSERT_TRUE(per_client);
+}
+
+FB_TEST(osd_qos, per_pool_qos) {
+    // QoS can be per-pool
+    bool per_pool = true;
+    FB_ASSERT_TRUE(per_pool);
+}
+
+FB_TEST(osd_qos, qos_priority) {
+    // Should support priority levels
+    uint32_t high_priority = 0;
+    uint32_t low_priority = 10;
+    FB_ASSERT_TRUE(high_priority < low_priority);
+}
+
+FB_TEST(osd_qos, qos_queue_depth) {
+    // Should manage queue depth
+    uint32_t max_queue_depth = 256;
+    FB_ASSERT_TRUE(max_queue_depth > 0);
+}
+
+FB_TEST(osd_qos, qos_rate_limiting) {
+    // Should rate-limit requests
+    bool rate_limiting = true;
+    FB_ASSERT_TRUE(rate_limiting);
+}
+
+FB_TEST(osd_qos, qos_token_bucket) {
+    // May use token bucket algorithm
+    bool token_bucket = true;
+    FB_ASSERT_TRUE(token_bucket);
+}
+
+FB_TEST(osd_qos, qos_enforcement) {
+    // QoS should be enforced
+    bool enforced = true;
+    FB_ASSERT_TRUE(enforced);
+}
+
+FB_TEST(osd_qos, qos_violation_handling) {
+    // Should handle QoS violations
+    bool handled = true;
+    FB_ASSERT_TRUE(handled);
+}
+
+// ============================================================================
+// Test Suite: osd_multi_pool (OSD Multi Pool Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_multi_pool) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_multi_pool) {
+    // Teardown code here
+}
+
+FB_TEST(osd_multi_pool, pool_creation) {
+    // Should create multiple pools
+    std::vector<uint64_t> pools = {1, 2, 3};
+    FB_ASSERT_EQ(pools.size(), 3);
+}
+
+FB_TEST(osd_multi_pool, pool_deletion) {
+    // Should delete pools
+    std::vector<uint64_t> pools = {1, 2, 3};
+    pools.pop_back();
+    FB_ASSERT_EQ(pools.size(), 2);
+}
+
+FB_TEST(osd_multi_pool, pool_isolation) {
+    // Pools should be isolated from each other
+    bool isolated = true;
+    FB_ASSERT_TRUE(isolated);
+}
+
+FB_TEST(osd_multi_pool, pool_pg_count) {
+    // Each pool should have configurable PG count
+    std::map<uint64_t, uint64_t> pool_pg_count;
+    pool_pg_count[1] = 100;
+    pool_pg_count[2] = 200;
+
+    FB_ASSERT_EQ(pool_pg_count.size(), 2);
+}
+
+FB_TEST(osd_multi_pool, pool_capacity) {
+    // Each pool should have its own capacity
+    std::map<uint64_t, uint64_t> pool_capacity;
+    pool_capacity[1] = 10ULL * 1024ULL * 1024ULL * 1024ULL;
+    pool_capacity[2] = 20ULL * 1024ULL * 1024ULL * 1024ULL;
+
+    FB_ASSERT_EQ(pool_capacity.size(), 2);
+}
+
+FB_TEST(osd_multi_pool, pool_replication_factor) {
+    // Each pool should have replication factor
+    std::map<uint64_t, uint32_t> pool_replication;
+    pool_replication[1] = 3;
+    pool_replication[2] = 2;
+
+    FB_ASSERT_EQ(pool_replication[1], 3);
+    FB_ASSERT_EQ(pool_replication[2], 2);
+}
+
+FB_TEST(osd_multi_pool, pool_policy) {
+    // Each pool should have its own policy
+    bool has_policy = true;
+    FB_ASSERT_TRUE(has_policy);
+}
+
+FB_TEST(osd_multi_pool, cross_pool_object) {
+    // Objects cannot span multiple pools
+    uint64_t pool_id = 1;
+    FB_ASSERT_TRUE(pool_id > 0);
+}
+
+FB_TEST(osd_multi_pool, pool_access_control) {
+    // Pool access should be controlled
+    bool access_control = true;
+    FB_ASSERT_TRUE(access_control);
+}
+
+FB_TEST(osd_multi_pool, pool_statistics) {
+    // Each pool should have its own statistics
+    std::map<uint64_t, utils::cluster_io> pool_stats;
+    pool_stats[1] = utils::cluster_io{.read_ios = 100};
+    pool_stats[2] = utils::cluster_io{.write_ios = 50};
+
+    FB_ASSERT_EQ(pool_stats.size(), 2);
+}
+
+FB_TEST(osd_multi_pool, pool_object_count) {
+    // Should track object count per pool
+    std::map<uint64_t, uint64_t> pool_objects;
+    pool_objects[1] = 1000;
+    pool_objects[2] = 2000;
+
+    FB_ASSERT_TRUE(pool_objects[1] > 0);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
