@@ -9349,3 +9349,493 @@ FB_TEST(encoding_multiple_sequence, alternating_strings_and_numbers) {
         FB_ASSERT_EQ(str, std::to_string(i));
     }
 }
+
+// ============================================================================
+// Test Suite: buffer_list_capacity_tests (Buffer List Capacity Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_capacity_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_capacity_tests) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_capacity_tests, single_large_buffer) {
+    char buffer[10000];
+    spdk_buffer sbuf(buffer, 10000);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    FB_ASSERT_EQ(bl.bytes(), 10000);
+}
+
+FB_TEST(buffer_list_capacity_tests, many_small_buffers) {
+    buffer_list bl;
+    char buffers[100][128];
+    for (int i = 0; i < 100; i++) {
+        spdk_buffer sbuf(buffers[i], 128);
+        bl.append_buffer(sbuf);
+    }
+    FB_ASSERT_EQ(bl.bytes(), 12800);
+}
+
+FB_TEST(buffer_list_capacity_tests, varied_size_buffers) {
+    char buffer1[512], buffer2[1024], buffer3[4096], buffer4[8192];
+    spdk_buffer sbuf1(buffer1, 512);
+    spdk_buffer sbuf2(buffer2, 1024);
+    spdk_buffer sbuf3(buffer3, 4096);
+    spdk_buffer sbuf4(buffer4, 8192);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+    bl.append_buffer(sbuf4);
+
+    FB_ASSERT_EQ(bl.bytes(), 13824);
+}
+
+FB_TEST(buffer_list_capacity_tests, capacity_after_operations) {
+    char buffer1[512], buffer2[1024];
+    spdk_buffer sbuf1(buffer1, 512);
+    spdk_buffer sbuf2(buffer2, 1024);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    FB_ASSERT_EQ(bl.bytes(), 1536);
+
+    bl.trim_front();
+    FB_ASSERT_EQ(bl.bytes(), 1024);
+
+    bl.clear();
+    FB_ASSERT_EQ(bl.bytes(), 0);
+}
+
+// ============================================================================
+// Test Suite: spdk_buffer_capacity_tests (SPDK Buffer Capacity Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_capacity_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_capacity_tests) {
+    // Setup code here
+}
+
+FB_TEST(spdk_buffer_capacity_tests, small_buffer_operations) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+
+    FB_ASSERT_EQ(sbuf.size(), 64);
+    FB_ASSERT_EQ(sbuf.remain(), 64);
+
+    sbuf.inc(32);
+    FB_ASSERT_EQ(sbuf.used(), 32);
+    FB_ASSERT_EQ(sbuf.remain(), 32);
+}
+
+FB_TEST(spdk_buffer_capacity_tests, medium_buffer_operations) {
+    char buffer[512];
+    spdk_buffer sbuf(buffer, 512);
+
+    sbuf.append("hello", 5);
+    FB_ASSERT_EQ(sbuf.remain(), 507);
+
+    sbuf.append("world", 5);
+    FB_ASSERT_EQ(sbuf.used(), 10);
+}
+
+FB_TEST(spdk_buffer_capacity_tests, large_buffer_operations) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+
+    std::string data(2048, 'x');
+    sbuf.append(data);
+    FB_ASSERT_EQ(sbuf.used(), 2048);
+    FB_ASSERT_EQ(sbuf.remain(), 2048);
+}
+
+FB_TEST(spdk_buffer_capacity_tests, capacity_exhaustion) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.inc(50);
+    sbuf.inc(50);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+
+    size_t written = sbuf.append("extra", 5);
+    FB_ASSERT_EQ(written, 0);
+}
+
+// ============================================================================
+// Test Suite: encoder_decoder_roundtrip (Encoder Decoder Roundtrip Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(encoder_decoder_roundtrip) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(encoder_decoder_roundtrip) {
+    // Setup code here
+}
+
+FB_TEST(encoder_decoder_roundtrip, uint64_roundtrip) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    encoder.put(0xFEDCBA9876543210ULL);
+    bl.begin()->reset();
+
+    buffer_list_encoder decoder(bl);
+    uint64_t val;
+    decoder.get(val);
+    FB_ASSERT_EQ(val, 0xFEDCBA9876543210ULL);
+}
+
+FB_TEST(encoder_decoder_roundtrip, string_roundtrip) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    encoder.put(std::string("roundtrip_test"));
+    bl.begin()->reset();
+
+    buffer_list_encoder decoder(bl);
+    std::string val;
+    decoder.get(val);
+    FB_ASSERT_EQ(val, "roundtrip_test");
+}
+
+FB_TEST(encoder_decoder_roundtrip, multiple_values_roundtrip) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    encoder.put(1ULL);
+    encoder.put(2ULL);
+    encoder.put(std::string("three"));
+    encoder.put(4ULL);
+
+    bl.begin()->reset();
+
+    buffer_list_encoder decoder(bl);
+    uint64_t v1, v2, v4;
+    std::string v3;
+
+    decoder.get(v1);
+    decoder.get(v2);
+    decoder.get(v3);
+    decoder.get(v4);
+
+    FB_ASSERT_EQ(v1, 1);
+    FB_ASSERT_EQ(v2, 2);
+    FB_ASSERT_EQ(v3, "three");
+    FB_ASSERT_EQ(v4, 4);
+}
+
+FB_TEST(encoder_decoder_roundtrip, complex_sequence) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    for (int i = 0; i < 20; i++) {
+        encoder.put(static_cast<uint64_t>(i));
+        encoder.put(std::to_string(i));
+    }
+
+    bl.begin()->reset();
+
+    buffer_list_encoder decoder(bl);
+    for (int i = 0; i < 20; i++) {
+        uint64_t num;
+        std::string str;
+        decoder.get(num);
+        decoder.get(str);
+        FB_ASSERT_EQ(num, static_cast<uint64_t>(i));
+        FB_ASSERT_EQ(str, std::to_string(i));
+    }
+}
+
+// ============================================================================
+// Test Suite: buffer_list_iterator_operations (Buffer List Iterator Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_iterator_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_iterator_operations) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_iterator_operations, iterate_empty_list) {
+    buffer_list bl;
+    int count = 0;
+    for (auto it = bl.begin(); it != bl.end(); ++it) {
+        count++;
+    }
+    FB_ASSERT_EQ(count, 0);
+}
+
+FB_TEST(buffer_list_iterator_operations, iterate_single_buffer) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    int count = 0;
+    for (auto it = bl.begin(); it != bl.end(); ++it) {
+        count++;
+    }
+    FB_ASSERT_EQ(count, 1);
+}
+
+FB_TEST(buffer_list_iterator_operations, iterate_multiple_buffers) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    int count = 0;
+    for (auto& buf : bl) {
+        count++;
+    }
+    FB_ASSERT_EQ(count, 3);
+}
+
+FB_TEST(buffer_list_iterator_operations, iterator_dereference) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    auto it = bl.begin();
+    FB_ASSERT_EQ(it->size(), 100);
+}
+
+FB_TEST(buffer_list_iterator_operations, iterator_increment) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    auto it = bl.begin();
+    FB_ASSERT_EQ(it->size(), 100);
+    ++it;
+    FB_ASSERT_EQ(it->size(), 200);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_const_iterator (Buffer List Const Iterator Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_const_iterator) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_const_iterator) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_const_iterator, const_begin_end) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    const buffer_list& cbl = bl;
+    int count = 0;
+    for (auto it = cbl.begin(); it != cbl.end(); ++it) {
+        count++;
+    }
+    FB_ASSERT_EQ(count, 1);
+}
+
+FB_TEST(buffer_list_const_iterator, const_iterator_access) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list::const_iterator it = bl.begin();
+    FB_ASSERT_EQ(it->size(), 100);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_empty_checks_advanced (Buffer List Empty Checks Advanced Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_empty_checks_advanced) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_empty_checks_advanced) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_empty_checks_advanced, empty_after_construction) {
+    buffer_list bl;
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_empty_checks_advanced, not_empty_after_append) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    FB_ASSERT_FALSE(bl.empty());
+}
+
+FB_TEST(buffer_list_empty_checks_advanced, empty_after_clear) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    bl.clear();
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_empty_checks_advanced, empty_after_all_pop_front) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    bl.pop_front();
+    bl.pop_front();
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_empty_checks_advanced, empty_after_all_trim) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    bl.trim_front();
+    bl.trim_front();
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_empty_checks_advanced, empty_alternates_with_operations) {
+    buffer_list bl;
+    FB_ASSERT_TRUE(bl.empty());
+
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    bl.append_buffer(sbuf);
+    FB_ASSERT_FALSE(bl.empty());
+
+    bl.clear();
+    FB_ASSERT_TRUE(bl.empty());
+
+    bl.prepend_buffer(sbuf);
+    FB_ASSERT_FALSE(bl.empty());
+}
+
+// ============================================================================
+// Test Suite: buffer_list_bytes_tracking (Buffer List Bytes Tracking Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_bytes_tracking) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_bytes_tracking) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_bytes_tracking, bytes_zero_initially) {
+    buffer_list bl;
+    FB_ASSERT_EQ(bl.bytes(), 0);
+}
+
+FB_TEST(buffer_list_bytes_tracking, bytes_single_append) {
+    char buffer[512];
+    spdk_buffer sbuf(buffer, 512);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    FB_ASSERT_EQ(bl.bytes(), 512);
+}
+
+FB_TEST(buffer_list_bytes_tracking, bytes_multiple_appends) {
+    char buffer1[256], buffer2[512];
+    spdk_buffer sbuf1(buffer1, 256);
+    spdk_buffer sbuf2(buffer2, 512);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    FB_ASSERT_EQ(bl.bytes(), 768);
+}
+
+FB_TEST(buffer_list_bytes_tracking, bytes_prepend) {
+    char buffer[512];
+    spdk_buffer sbuf(buffer, 512);
+    buffer_list bl;
+    bl.prepend_buffer(sbuf);
+    FB_ASSERT_EQ(bl.bytes(), 512);
+}
+
+FB_TEST(buffer_list_bytes_tracking, bytes_splice) {
+    char buffer[512];
+    spdk_buffer sbuf(buffer, 512);
+
+    buffer_list bl1, bl2;
+    bl2.append_buffer(sbuf);
+    bl1.append_buffer(bl2);
+    FB_ASSERT_EQ(bl1.bytes(), 512);
+    FB_ASSERT_EQ(bl2.bytes(), 0);
+}
+
+FB_TEST(buffer_list_bytes_tracking, bytes_after_pop_front) {
+    char buffer1[256], buffer2[512];
+    spdk_buffer sbuf1(buffer1, 256);
+    spdk_buffer sbuf2(buffer2, 512);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    bl.pop_front();
+    FB_ASSERT_EQ(bl.bytes(), 512);
+}
+
+FB_TEST(buffer_list_bytes_tracking, bytes_after_trim_back) {
+    char buffer1[256], buffer2[512];
+    spdk_buffer sbuf1(buffer1, 256);
+    spdk_buffer sbuf2(buffer2, 512);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    bl.trim_back();
+    FB_ASSERT_EQ(bl.bytes(), 256);
+}
