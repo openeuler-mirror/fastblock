@@ -5004,3 +5004,217 @@ FB_TEST(buffer_operations_advanced, buffer_list_trim_sequence) {
     bl.trim_back();
     FB_ASSERT_EQ(bl.bytes(), 200);
 }
+
+// ============================================================================
+// Test Suite: memory_layout (Memory Layout Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(memory_layout) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(memory_layout) {
+    // Setup code here
+}
+
+FB_TEST(memory_layout, fb_blob_layout) {
+    fb_blob blob;
+    FB_ASSERT_TRUE(reinterpret_cast<char*>(&blob.blob) + sizeof(void*) <= reinterpret_cast<char*>(&blob.blobid));
+}
+
+FB_TEST(memory_layout, spdk_buffer_layout) {
+    spdk_buffer sbuf;
+    char* base = reinterpret_cast<char*>(&sbuf);
+    char* buf_ptr = reinterpret_cast<char*>(&sbuf._buf);
+    char* size_ptr = reinterpret_cast<char*>(&sbuf._size);
+    char* used_ptr = reinterpret_cast<char*>(&sbuf._used);
+
+    FB_ASSERT_TRUE(buf_ptr >= base);
+    FB_ASSERT_TRUE(size_ptr > buf_ptr);
+    FB_ASSERT_TRUE(used_ptr > size_ptr);
+}
+
+FB_TEST(memory_layout, blob_type_size_4bytes) {
+    FB_ASSERT_EQ(sizeof(blob_type), 4);
+}
+
+FB_TEST(memory_layout, spdk_blob_id_size_8bytes) {
+    FB_ASSERT_EQ(sizeof(spdk_blob_id), 8);
+}
+
+// ============================================================================
+// Test Suite: error_handling_patterns (Error Handling Patterns Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(error_handling_patterns) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(error_handling_patterns) {
+    // Setup code here
+}
+
+FB_TEST(error_handling_patterns, put_returns_false_on_overflow) {
+    char buffer[4];
+    spdk_buffer sbuf(buffer, 4);
+
+    FB_ASSERT_FALSE(PutFixed64(sbuf, 1));
+    FB_ASSERT_FALSE(PutString(sbuf, "test"));
+}
+
+FB_TEST(error_handling_patterns, get_returns_false_on_underflow) {
+    char buffer[4];
+    spdk_buffer sbuf(buffer, 4);
+
+    uint64_t val;
+    FB_ASSERT_FALSE(GetFixed64(sbuf, val));
+
+    std::string str;
+    FB_ASSERT_FALSE(GetString(sbuf, str));
+}
+
+FB_TEST(error_handling_patterns, encode_returns_false_on_small_buffer) {
+    char buffer[8];
+    spdk_buffer sbuf(buffer, 8);
+
+    log_entry_t entry;
+    entry.term_id = 1;
+    entry.index = 100;
+    entry.size = 4096;
+    entry.type = 2;
+    entry.meta = "x";
+
+    FB_ASSERT_FALSE(EncodeLogHeader(sbuf, entry));
+}
+
+FB_TEST(error_handling_patterns, decode_returns_false_on_small_buffer) {
+    char buffer[8];
+    spdk_buffer sbuf(buffer, 8);
+
+    log_entry_t entry;
+    FB_ASSERT_FALSE(DecodeLogHeader(sbuf, entry));
+}
+
+// ============================================================================
+// Test Suite: serialization_edge_cases (Serialization Edge Cases Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization_edge_cases) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization_edge_cases) {
+    // Setup code here
+}
+
+FB_TEST(serialization_edge_cases, string_with_null_char) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    std::string original(5, '\0');
+    original += "tail";
+    PutString(sbuf, original);
+
+    sbuf.reset();
+    std::string decoded;
+    GetString(sbuf, decoded);
+
+    FB_ASSERT_EQ(decoded.size(), original.size());
+}
+
+FB_TEST(serialization_edge_cases, very_long_string) {
+    char buffer[8192];
+    spdk_buffer sbuf(buffer, 8192);
+
+    std::string original(7000, 'A');
+    bool put_ok = PutString(sbuf, original);
+    FB_ASSERT_TRUE(put_ok);
+
+    sbuf.reset();
+    std::string decoded;
+    GetString(sbuf, decoded);
+
+    FB_ASSERT_EQ(decoded, original);
+}
+
+FB_TEST(serialization_edge_cases, consecutive_puts_gets) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    for (uint32_t i = 0; i < 20; i++) {
+        PutFixed32(sbuf, i * 100);
+    }
+
+    sbuf.reset();
+
+    for (uint32_t i = 0; i < 20; i++) {
+        uint32_t val;
+        GetFixed32(sbuf, val);
+        FB_ASSERT_EQ(val, i * 100);
+    }
+}
+
+FB_TEST(serialization_edge_cases, opt_string_empty_vs_nullopt) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    // nullopt -> empty string encoding
+    std::optional<std::string> opt_empty = std::nullopt;
+    PutOptString(sbuf, opt_empty);
+
+    // actual empty string
+    std::optional<std::string> opt_real_empty = "";
+    PutOptString(sbuf, opt_real_empty);
+
+    sbuf.reset();
+
+    std::optional<std::string> out1, out2;
+    GetOptString(sbuf, out1);
+    GetOptString(sbuf, out2);
+
+    FB_ASSERT_FALSE(out1.has_value());
+    FB_ASSERT_TRUE(out2.has_value());
+    FB_ASSERT_EQ(*out2, "");
+}
+
+// ============================================================================
+// Test Suite: context_callbacks (Context Callbacks Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(context_callbacks) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(context_callbacks) {
+    // Setup code here
+}
+
+FB_TEST(context_callbacks, pool_create_callback_type) {
+    pool_create_complete cb = [](void*, int) {};
+    FB_ASSERT_TRUE(static_cast<bool>(cb));
+}
+
+FB_TEST(context_callbacks, object_rw_callback_type) {
+    object_rw_complete cb = [](void*, int) {};
+    FB_ASSERT_TRUE(static_cast<bool>(cb));
+}
+
+FB_TEST(context_callbacks, log_op_callback_type) {
+    log_op_complete cb = [](void*, int) {};
+    FB_ASSERT_TRUE(static_cast<bool>(cb));
+}
+
+FB_TEST(context_callbacks, kvstore_rw_callback_type) {
+    kvstore_rw_complete cb = [](void*, int) {};
+    FB_ASSERT_TRUE(static_cast<bool>(cb));
+}
+
+FB_TEST(context_callbacks, rblob_rw_callback_type) {
+    rblob_rw_complete cb = [](void*, rblob_rw_result, int) {};
+    FB_ASSERT_TRUE(static_cast<bool>(cb));
+}
+
+FB_TEST(context_callbacks, rblob_op_callback_type) {
+    rblob_op_complete cb = [](void*, int) {};
+    FB_ASSERT_TRUE(static_cast<bool>(cb));
+}
