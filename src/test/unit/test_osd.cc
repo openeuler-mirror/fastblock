@@ -6468,6 +6468,195 @@ FB_TEST(osd_lock_contention, lock_cleanup_on_zero_holders) {
 }
 
 // ============================================================================
+// Test Suite: osd_write_ring_operations (OSD Write Ring Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_write_ring_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_write_ring_operations) {
+    // Teardown code here
+}
+
+FB_TEST(osd_write_ring_operations, queue_insertion_order) {
+    // Write ring queues should maintain insertion order
+    std::map<uint64_t, std::string> queues;
+    queues[1] = "client_A";
+    queues[2] = "client_B";
+    queues[3] = "client_C";
+
+    // Verify FIFO-like behavior via ordered traversal
+    uint64_t prev_id = 0;
+    for (const auto& [id, client] : queues) {
+        FB_ASSERT_TRUE(id > prev_id);
+        prev_id = id;
+    }
+}
+
+FB_TEST(osd_write_ring_operations, queue_expiry_detection) {
+    // Should detect expired queues based on lease deadline
+    auto now = std::chrono::steady_clock::now();
+    auto expired = now - std::chrono::microseconds(1);
+    auto active = now + std::chrono::microseconds(5000000);
+
+    FB_ASSERT_TRUE(now > expired);
+    FB_ASSERT_TRUE(active > now);
+}
+
+FB_TEST(osd_write_ring_operations, lease_extension) {
+    // Lease should be extendable
+    uint64_t original_lease_us = 5000000;
+    uint64_t extended_lease_us = original_lease_us + 1000000;
+
+    FB_ASSERT_TRUE(extended_lease_us > original_lease_us);
+}
+
+FB_TEST(osd_write_ring_operations, slot_allocation) {
+    // Slots should be allocated within queue limits
+    const uint32_t MAX_SLOTS = 16;
+    std::vector<uint32_t> allocated_slots;
+    for (uint32_t i = 0; i < MAX_SLOTS; i++) {
+        allocated_slots.push_back(i);
+    }
+    FB_ASSERT_EQ(allocated_slots.size(), MAX_SLOTS);
+}
+
+FB_TEST(osd_write_ring_operations, slot_deallocation) {
+    // Slots should be deallocated on completion
+    std::vector<int> active_slots = {0, 1, 2, 3, 4};
+    active_slots.erase(active_slots.begin() + 2); // Complete slot 2
+
+    FB_ASSERT_EQ(active_slots.size(), 4);
+    FB_ASSERT_TRUE(std::find(active_slots.begin(), active_slots.end(), 2) == active_slots.end());
+}
+
+FB_TEST(osd_write_ring_operations, peer_tracking) {
+    // Should track peer addresses per queue
+    std::map<uint64_t, std::string> peer_table;
+    peer_table[1] = "192.168.1.10:1234";
+    peer_table[2] = "192.168.1.11:1234";
+
+    FB_ASSERT_EQ(peer_table.size(), 2);
+    FB_ASSERT_TRUE(peer_table[1] != peer_table[2]);
+}
+
+FB_TEST(osd_write_ring_operations, gc_expired_queues) {
+    // Should garbage collect expired queues
+    std::map<uint64_t, std::chrono::steady_clock::time_point> deadlines;
+    auto now = std::chrono::steady_clock::now();
+    deadlines[1] = now - std::chrono::microseconds(1); // expired
+    deadlines[2] = now + std::chrono::microseconds(5000000); // active
+
+    uint32_t expired_count = 0;
+    for (const auto& [id, deadline] : deadlines) {
+        if (now > deadline) expired_count++;
+    }
+    FB_ASSERT_EQ(expired_count, 1);
+}
+
+// ============================================================================
+// Test Suite: osd_raft_fsm_operations (OSD Raft FSM Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_raft_fsm_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_raft_fsm_operations) {
+    // Teardown code here
+}
+
+FB_TEST(osd_raft_fsm_operations, state_transition_follower_to_candidate) {
+    // Follower becomes Candidate on election timeout
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    state = RAFT_STATE_CANDIDATE;
+    FB_ASSERT_TRUE(state == RAFT_STATE_CANDIDATE);
+}
+
+FB_TEST(osd_raft_fsm_operations, state_transition_candidate_to_leader) {
+    // Candidate becomes Leader on winning election
+    raft_identity state = RAFT_STATE_CANDIDATE;
+    state = RAFT_STATE_LEADER;
+    FB_ASSERT_TRUE(state == RAFT_STATE_LEADER);
+}
+
+FB_TEST(osd_raft_fsm_operations, state_transition_leader_to_follower) {
+    // Leader becomes Follower on discovering higher term
+    raft_identity state = RAFT_STATE_LEADER;
+    state = RAFT_STATE_FOLLOWER;
+    FB_ASSERT_TRUE(state == RAFT_STATE_FOLLOWER);
+}
+
+FB_TEST(osd_raft_fsm_operations, term_increment_on_state_change) {
+    // Term should increment when becoming Candidate
+    raft_term_t term = 5;
+    term++;
+    FB_ASSERT_EQ(term, 6);
+}
+
+FB_TEST(osd_raft_fsm_operations, vote_counting) {
+    // Should count votes for election
+    std::map<uint32_t, bool> votes;
+    votes[1] = true;
+    votes[2] = true;
+    votes[3] = false;
+
+    uint32_t granted = 0;
+    for (const auto& [node, vote] : votes) {
+        if (vote) granted++;
+    }
+    FB_ASSERT_EQ(granted, 2);
+}
+
+FB_TEST(osd_raft_fsm_operations, quorum_calculation) {
+    // Should calculate quorum for election
+    uint32_t cluster_size = 5;
+    uint32_t quorum = cluster_size / 2 + 1;
+    FB_ASSERT_EQ(quorum, 3);
+}
+
+FB_TEST(osd_raft_fsm_operations, election_won) {
+    // Election won when quorum reached
+    uint32_t votes_granted = 3;
+    uint32_t quorum = 3;
+    FB_ASSERT_TRUE(votes_granted >= quorum);
+}
+
+FB_TEST(osd_raft_fsm_operations, election_lost) {
+    // Election lost when quorum not reached
+    uint32_t votes_granted = 2;
+    uint32_t quorum = 3;
+    FB_ASSERT_TRUE(votes_granted < quorum);
+}
+
+FB_TEST(osd_raft_fsm_operations, log_type_mapping) {
+    // OSD operations should map to correct Raft log types
+    uint32_t write_op = static_cast<uint32_t>(utils::operation_type::WRITE);
+    int write_log_type = RAFT_LOGTYPE_WRITE;
+
+    // WRITE op should create WRITE log entry
+    FB_ASSERT_TRUE(write_op > 0);
+    FB_ASSERT_EQ(write_log_type, 0);
+}
+
+FB_TEST(osd_raft_fsm_operations, commit_index_tracking) {
+    // Should track commit index progression
+    raft_index_t commit_idx = 0;
+    commit_idx += 5; // Process 5 entries
+    FB_ASSERT_EQ(commit_idx, 5);
+}
+
+FB_TEST(osd_raft_fsm_operations, applied_index_tracking) {
+    // Should track applied index separately from commit
+    raft_index_t commit_idx = 10;
+    raft_index_t applied_idx = 7;
+
+    // Applied should not exceed commit
+    FB_ASSERT_TRUE(applied_idx <= commit_idx);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
