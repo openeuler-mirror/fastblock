@@ -7119,3 +7119,278 @@ FB_TEST(spdk_buffer_size_edge_cases, one_over_fill) {
     FB_ASSERT_EQ(written, 10);
     FB_ASSERT_EQ(sbuf.remain(), 0);
 }
+
+// ============================================================================
+// Test Suite: iovec_multiple_segments (Iovec Multiple Segments Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(iovec_multiple_segments) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(iovec_multiple_segments) {
+    // Setup code here
+}
+
+FB_TEST(iovec_multiple_segments, two_segments) {
+    iovecs iovs;
+    struct iovec iov1, iov2;
+    iov1.iov_len = 100;
+    iov2.iov_len = 200;
+    iovs.push_back(iov1);
+    iovs.push_back(iov2);
+    FB_ASSERT_EQ(iovs.size(), 2);
+}
+
+FB_TEST(iovec_multiple_segments, many_segments) {
+    iovecs iovs;
+    for (int i = 0; i < 10; i++) {
+        struct iovec iov;
+        iov.iov_len = 512;
+        iovs.push_back(iov);
+    }
+    FB_ASSERT_EQ(iovs.size(), 10);
+}
+
+FB_TEST(iovec_multiple_segments, total_length_calculation) {
+    iovecs iovs;
+    struct iovec iov1, iov2, iov3;
+    iov1.iov_len = 512;
+    iov2.iov_len = 1024;
+    iov3.iov_len = 2048;
+    iovs.push_back(iov1);
+    iovs.push_back(iov2);
+    iovs.push_back(iov3);
+
+    size_t total = 0;
+    for (const auto& iov : iovs) {
+        total += iov.iov_len;
+    }
+    FB_ASSERT_EQ(total, 3584);
+}
+
+FB_TEST(iovec_multiple_segments, segment_indexing) {
+    iovecs iovs;
+    struct iovec iov1, iov2;
+    iov1.iov_len = 100;
+    iov2.iov_len = 200;
+    iovs.push_back(iov1);
+    iovs.push_back(iov2);
+
+    FB_ASSERT_EQ(iovs[0].iov_len, 100);
+    FB_ASSERT_EQ(iovs[1].iov_len, 200);
+}
+
+// ============================================================================
+// Test Suite: variant_type_changes (Variant Type Changes Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(variant_type_changes) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(variant_type_changes) {
+    // Setup code here
+}
+
+FB_TEST(variant_type_changes, change_from_blob_to_uint) {
+    xattr_val_type val = blob_type::log;
+    val = 12345u;
+    FB_ASSERT_TRUE(std::holds_alternative<uint32_t>(val));
+    FB_ASSERT_FALSE(std::holds_alternative<blob_type>(val));
+}
+
+FB_TEST(variant_type_changes, change_from_uint_to_string) {
+    xattr_val_type val = 12345u;
+    val = std::string("test");
+    FB_ASSERT_TRUE(std::holds_alternative<std::string>(val));
+    FB_ASSERT_FALSE(std::holds_alternative<uint32_t>(val));
+}
+
+FB_TEST(variant_type_changes, change_from_string_to_blob) {
+    xattr_val_type val = std::string("test");
+    val = blob_type::kv;
+    FB_ASSERT_TRUE(std::holds_alternative<blob_type>(val));
+    FB_ASSERT_FALSE(std::holds_alternative<std::string>(val));
+}
+
+FB_TEST(variant_type_changes, multiple_changes) {
+    xattr_val_type val;
+
+    val = blob_type::log;
+    FB_ASSERT_TRUE(std::holds_alternative<blob_type>(val));
+
+    val = 42u;
+    FB_ASSERT_TRUE(std::holds_alternative<uint32_t>(val));
+
+    val = std::string("final");
+    FB_ASSERT_TRUE(std::holds_alternative<std::string>(val));
+}
+
+// ============================================================================
+// Test Suite: optional_string_operations (Optional String Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(optional_string_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(optional_string_operations) {
+    // Setup code here
+}
+
+FB_TEST(optional_string_operations, empty_vs_nullopt_distinction) {
+    std::optional<std::string> empty_str = "";
+    std::optional<std::string> null_opt = std::nullopt;
+
+    FB_ASSERT_TRUE(empty_str.has_value());
+    FB_ASSERT_FALSE(null_opt.has_value());
+}
+
+FB_TEST(optional_string_operations, value_or_different_cases) {
+    std::optional<std::string> opt1 = "value";
+    std::optional<std::string> opt2 = std::nullopt;
+    std::optional<std::string> opt3 = "";
+
+    FB_ASSERT_EQ(opt1.value_or("default"), "value");
+    FB_ASSERT_EQ(opt2.value_or("default"), "default");
+    FB_ASSERT_EQ(opt3.value_or("default"), "");
+}
+
+FB_TEST(optional_string_operations, assign_value_then_nullopt) {
+    std::optional<std::string> opt = "initial";
+    FB_ASSERT_TRUE(opt.has_value());
+
+    opt = std::nullopt;
+    FB_ASSERT_FALSE(opt.has_value());
+
+    opt = "new";
+    FB_ASSERT_TRUE(opt.has_value());
+    FB_ASSERT_EQ(*opt, "new");
+}
+
+FB_TEST(optional_string_operations, reset_vs_assign_nullopt) {
+    std::optional<std::string> opt1 = "value";
+    std::optional<std::string> opt2 = "value";
+
+    opt1.reset();
+    opt2 = std::nullopt;
+
+    FB_ASSERT_FALSE(opt1.has_value());
+    FB_ASSERT_FALSE(opt2.has_value());
+}
+
+// ============================================================================
+// Test Suite: tuple_element_access (Tuple Element Access Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(tuple_element_access) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(tuple_element_access) {
+    // Setup code here
+}
+
+FB_TEST(tuple_element_access, get_first_element) {
+    std::tuple<uint64_t, uint64_t, uint64_t> t(100, 200, 300);
+    FB_ASSERT_EQ(std::get<0>(t), 100);
+}
+
+FB_TEST(tuple_element_access, get_last_element) {
+    std::tuple<uint64_t, uint64_t, uint64_t> t(100, 200, 300);
+    FB_ASSERT_EQ(std::get<2>(t), 300);
+}
+
+FB_TEST(tuple_element_access, get_middle_element) {
+    std::tuple<uint64_t, uint64_t, uint64_t, uint64_t> t(10, 20, 30, 40);
+    FB_ASSERT_EQ(std::get<1>(t), 20);
+    FB_ASSERT_EQ(std::get<2>(t), 30);
+}
+
+FB_TEST(tuple_element_access, tuple_size) {
+    std::tuple<uint64_t, uint64_t, uint64_t, uint64_t> t;
+    constexpr size_t size = std::tuple_size<decltype(t)>::value;
+    FB_ASSERT_EQ(size, 4);
+}
+
+// ============================================================================
+// Test Suite: log_append_ctx_vector (Log Append Ctx Vector Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_append_ctx_vector) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_append_ctx_vector) {
+    // Setup code here
+}
+
+FB_TEST(log_append_ctx_vector, idx_pos_multiple_entries) {
+    log_append_ctx ctx;
+    for (int i = 0; i < 20; i++) {
+        ctx.idx_pos.emplace_back(i, i * 100, 0, 4096);
+    }
+    FB_ASSERT_EQ(ctx.idx_pos.size(), 20);
+}
+
+FB_TEST(log_append_ctx_vector, headers_multiple_entries) {
+    log_append_ctx ctx;
+    char buffers[10][512];
+    for (int i = 0; i < 10; i++) {
+        spdk_buffer sbuf(buffers[i], 512);
+        ctx.headers.push_back(sbuf);
+    }
+    FB_ASSERT_EQ(ctx.headers.size(), 10);
+}
+
+FB_TEST(log_append_ctx_vector, idx_pos_element_access) {
+    log_append_ctx ctx;
+    ctx.idx_pos.emplace_back(1, 100, 200, 300);
+    ctx.idx_pos.emplace_back(2, 400, 500, 600);
+
+    auto& elem = ctx.idx_pos[0];
+    FB_ASSERT_EQ(std::get<0>(elem), 1);
+    FB_ASSERT_EQ(std::get<1>(elem), 100);
+}
+
+// ============================================================================
+// Test Suite: log_read_ctx_entries (Log Read Ctx Entries Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_read_ctx_entries) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_read_ctx_entries) {
+    // Setup code here
+}
+
+FB_TEST(log_read_ctx_entries, entries_multiple) {
+    log_read_ctx ctx;
+    for (int i = 0; i < 10; i++) {
+        log_entry_t entry;
+        entry.index = i * 100;
+        ctx.entries.push_back(entry);
+    }
+    FB_ASSERT_EQ(ctx.entries.size(), 10);
+}
+
+FB_TEST(log_read_ctx_entries, entries_access) {
+    log_read_ctx ctx;
+    log_entry_t entry;
+    entry.term_id = 5;
+    entry.index = 100;
+    ctx.entries.push_back(entry);
+
+    FB_ASSERT_EQ(ctx.entries[0].term_id, 5);
+    FB_ASSERT_EQ(ctx.entries[0].index, 100);
+}
+
+FB_TEST(log_read_ctx_entries, index_range) {
+    log_read_ctx ctx;
+    ctx.start_index = 1;
+    ctx.end_index = 100;
+    uint64_t range = ctx.end_index - ctx.start_index + 1;
+    FB_ASSERT_EQ(range, 100);
+}
