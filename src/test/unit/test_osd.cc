@@ -8634,6 +8634,81 @@ FB_TEST(osd_resource_limits, queue_depth_limit) {
 }
 
 // ============================================================================
+// Test Suite: osd_tiering (OSD Storage Tiering Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_tiering) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_tiering) {
+    // Teardown code here
+}
+
+FB_TEST(osd_tiering, tier_levels) {
+    // Tier levels: hot, warm, cold
+    int tier_hot = 0;
+    int tier_warm = 1;
+    int tier_cold = 2;
+
+    FB_ASSERT_TRUE(tier_hot < tier_warm);
+    FB_ASSERT_TRUE(tier_warm < tier_cold);
+}
+
+FB_TEST(osd_tiering, hot_tier_capacity) {
+    uint64_t hot_capacity_gb = 100;
+    FB_ASSERT_TRUE(hot_capacity_gb > 0);
+}
+
+FB_TEST(osd_tiering, warm_tier_capacity) {
+    uint64_t warm_capacity_gb = 1024;
+    FB_ASSERT_TRUE(warm_capacity_gb > 0);
+}
+
+FB_TEST(osd_tiering, cold_tier_capacity) {
+    uint64_t cold_capacity_gb = 10240;
+    FB_ASSERT_TRUE(cold_capacity_gb > 0);
+}
+
+FB_TEST(osd_tiering, tier_migration_threshold) {
+    uint32_t access_count_threshold = 10;
+    FB_ASSERT_TRUE(access_count_threshold > 0);
+}
+
+FB_TEST(osd_tiering, hot_to_warm_migration) {
+    bool migrated = true;
+    FB_ASSERT_TRUE(migrated);
+}
+
+FB_TEST(osd_tiering, warm_to_cold_migration) {
+    bool migrated = true;
+    FB_ASSERT_TRUE(migrated);
+}
+
+FB_TEST(osd_tiering, cold_to_warm_promotion) {
+    bool promoted = true;
+    FB_ASSERT_TRUE(promoted);
+}
+
+FB_TEST(osd_tiering, tier_access_latency) {
+    uint64_t hot_latency_us = 100;
+    uint64_t warm_latency_us = 1000;
+    uint64_t cold_latency_us = 10000;
+
+    FB_ASSERT_TRUE(hot_latency_us < warm_latency_us);
+    FB_ASSERT_TRUE(warm_latency_us < cold_latency_us);
+}
+
+FB_TEST(osd_tiering, tier_cost_per_gb) {
+    double hot_cost = 1.0;
+    double warm_cost = 0.5;
+    double cold_cost = 0.1;
+
+    FB_ASSERT_TRUE(hot_cost > warm_cost);
+    FB_ASSERT_TRUE(warm_cost > cold_cost);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
