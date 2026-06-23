@@ -2417,6 +2417,44 @@ FB_TEST(final_summary, all_tests_pass) {
 }
 
 // ============================================================================
+// Test Suite: itos_edge_cases (Additional Edge Case Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(itos_edge_cases) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(itos_edge_cases) {
+    // Teardown code here
+}
+
+FB_TEST(itos_edge_cases, consecutive_zeros) {
+    FB_ASSERT_EQ(itos(100), "100");
+    FB_ASSERT_EQ(itos(1000), "1000");
+    FB_ASSERT_EQ(itos(10000), "10000");
+    FB_ASSERT_EQ(itos(100000), "100000");
+}
+
+FB_TEST(itos_edge_cases, all_same_digits) {
+    FB_ASSERT_EQ(itos(111), "111");
+    FB_ASSERT_EQ(itos(222), "222");
+    FB_ASSERT_EQ(itos(999), "999");
+}
+
+FB_TEST(itos_edge_cases, palindrome_numbers) {
+    FB_ASSERT_EQ(itos(121), "121");
+    FB_ASSERT_EQ(itos(12321), "12321");
+    FB_ASSERT_EQ(itos(1234321), "1234321");
+}
+
+FB_TEST(itos_edge_cases, power_of_ten_sequence) {
+    for (int64_t i = 1; i <= 1000000000LL; i *= 10) {
+        std::string result = itos(i);
+        FB_ASSERT_TRUE(result.length() > 0);
+    }
+}
+
+// ============================================================================
 // Test Suite: final_validation (Final Validation Tests)
 // ============================================================================
 
