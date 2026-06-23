@@ -23,6 +23,7 @@
 #include <functional>
 #include <map>
 #include <spdk/string.h>
+#include <ostream>
 
 struct fb_blob {
     struct spdk_blob* blob   = nullptr;
@@ -64,6 +65,10 @@ inline std::string type_string(const blob_type& type) {
     default:
       return "blob_type::unknown";
   }
+}
+
+inline std::ostream& operator<<(std::ostream& os, const blob_type& type) {
+  return os << type_string(type);
 }
 
 #pragma GCC diagnostic push
