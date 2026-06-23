@@ -2686,6 +2686,8 @@ public:
 
 /**
  * @brief Metrics collector for test performance tracking
+ *
+ * Thread-safe: Uses mutex to protect concurrent access.
  */
 class metrics_collector {
 public:
@@ -2695,6 +2697,7 @@ public:
     }
 
     void record_latency(const std::string& name, std::chrono::nanoseconds latency) {
+        std::lock_guard<std::mutex> lock(_mutex);
         auto& metric = _latencies[name];
         metric.total += latency;
         metric.count++;
@@ -2703,10 +2706,12 @@ public:
     }
 
     void record_count(const std::string& name, int64_t delta = 1) {
+        std::lock_guard<std::mutex> lock(_mutex);
         _counts[name] += delta;
     }
 
     void record_value(const std::string& name, double value) {
+        std::lock_guard<std::mutex> lock(_mutex);
         auto& metric = _values[name];
         metric.total += value;
         metric.count++;
@@ -2736,27 +2741,32 @@ public:
     };
 
     latency_metric get_latency(const std::string& name) const {
+        std::lock_guard<std::mutex> lock(_mutex);
         auto it = _latencies.find(name);
         return it != _latencies.end() ? it->second : latency_metric{};
     }
 
     int64_t get_count(const std::string& name) const {
+        std::lock_guard<std::mutex> lock(_mutex);
         auto it = _counts.find(name);
         return it != _counts.end() ? it->second : 0;
     }
 
     value_metric get_value(const std::string& name) const {
+        std::lock_guard<std::mutex> lock(_mutex);
         auto it = _values.find(name);
         return it != _values.end() ? it->second : value_metric{};
     }
 
     void reset() {
+        std::lock_guard<std::mutex> lock(_mutex);
         _latencies.clear();
         _counts.clear();
         _values.clear();
     }
 
     void reset_metric(const std::string& name) {
+        std::lock_guard<std::mutex> lock(_mutex);
         _latencies.erase(name);
         _counts.erase(name);
         _values.erase(name);
@@ -2767,6 +2777,7 @@ private:
     std::map<std::string, latency_metric> _latencies;
     std::map<std::string, int64_t> _counts;
     std::map<std::string, value_metric> _values;
+    mutable std::mutex _mutex;
 };
 
 /**
