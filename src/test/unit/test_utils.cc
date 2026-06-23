@@ -2155,6 +2155,40 @@ FB_TEST(final_comprehensive, fixed_all_pass) {
 }
 
 // ============================================================================
+// Test Suite: itos_performance (Integer to String Performance Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(itos_performance) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(itos_performance) {
+    // Teardown code here
+}
+
+FB_TEST(itos_performance, many_conversions) {
+    for (int i = 0; i < 10000; i++) {
+        std::string result = itos(i);
+        FB_ASSERT_TRUE(result.length() > 0);
+    }
+}
+
+FB_TEST(itos_performance, alternating_signs) {
+    for (int i = 0; i < 1000; i++) {
+        int val = (i % 2 == 0) ? i : -i;
+        std::string result = itos(val);
+        FB_ASSERT_TRUE(result.length() > 0);
+    }
+}
+
+FB_TEST(itos_performance, large_values) {
+    for (int64_t i = 1000000000; i < 1000001000; i++) {
+        std::string result = itos(i);
+        FB_ASSERT_TRUE(result.length() >= 10);
+    }
+}
+
+// ============================================================================
 // Test Suite: final_validation (Final Validation Tests)
 // ============================================================================
 
