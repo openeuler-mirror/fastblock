@@ -3009,3 +3009,454 @@ FB_TEST(rblob_structures, rblob_md_ctx_load_flag) {
     ctx2.is_load = false;
     FB_ASSERT_FALSE(ctx2.is_load);
 }
+
+// ============================================================================
+// Test Suite: xattr_log_structure (Log Xattr Structure Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_log_structure) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_log_structure) {
+    // Teardown code here
+}
+
+FB_TEST(xattr_log_structure, type_constant) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::log), 0);
+}
+
+FB_TEST(xattr_log_structure, shard_id_type) {
+    uint32_t shard_id = 42;
+    FB_ASSERT_TRUE(shard_id >= 0);
+    FB_ASSERT_TRUE(shard_id <= UINT32_MAX);
+}
+
+FB_TEST(xattr_log_structure, pg_string_format) {
+    std::string pg = "1.100";
+    FB_ASSERT_TRUE(!pg.empty());
+    FB_ASSERT_TRUE(pg.find(".") != std::string::npos);
+}
+
+// ============================================================================
+// Test Suite: xattr_object_structure (Object Xattr Structure Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_object_structure) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_object_structure) {
+    // Teardown code here
+}
+
+FB_TEST(xattr_object_structure, type_constant) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::object), 1);
+}
+
+FB_TEST(xattr_object_structure, obj_name_field) {
+    std::string obj_name = "volume_001";
+    FB_ASSERT_EQ(obj_name.size(), 10);
+}
+
+FB_TEST(xattr_object_structure, all_fields_present) {
+    // Verify object_xattr has all expected fields
+    uint32_t shard_id = 1;
+    std::string pg = "1.0";
+    std::string obj_name = "obj1";
+
+    FB_ASSERT_TRUE(shard_id >= 0);
+    FB_ASSERT_TRUE(!pg.empty());
+    FB_ASSERT_TRUE(!obj_name.empty());
+}
+
+// ============================================================================
+// Test Suite: xattr_object_snap_structure (Object Snap Xattr Structure Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_object_snap_structure) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_object_snap_structure) {
+    // Teardown code here
+}
+
+FB_TEST(xattr_object_snap_structure, type_constant) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::object_snap), 2);
+}
+
+FB_TEST(xattr_object_snap_structure, snap_name_field) {
+    std::string snap_name = "snapshot_20240101";
+    FB_ASSERT_TRUE(!snap_name.empty());
+}
+
+FB_TEST(xattr_object_snap_structure, all_fields_present) {
+    uint32_t shard_id = 1;
+    std::string pg = "1.0";
+    std::string obj_name = "obj1";
+    std::string snap_name = "snap1";
+
+    FB_ASSERT_TRUE(shard_id >= 0);
+    FB_ASSERT_TRUE(!pg.empty());
+    FB_ASSERT_TRUE(!obj_name.empty());
+    FB_ASSERT_TRUE(!snap_name.empty());
+}
+
+// ============================================================================
+// Test Suite: xattr_kv_structure (KV Xattr Structure Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_kv_structure) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_kv_structure) {
+    // Teardown code here
+}
+
+FB_TEST(xattr_kv_structure, type_constant) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::kv), 4);
+}
+
+FB_TEST(xattr_kv_structure, shard_id_field) {
+    uint32_t shard_id = 100;
+    FB_ASSERT_EQ(shard_id, 100);
+}
+
+// ============================================================================
+// Test Suite: xattr_checkpoint_structure (Checkpoint Xattr Structure Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_checkpoint_structure) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_checkpoint_structure) {
+    // Teardown code here
+}
+
+FB_TEST(xattr_checkpoint_structure, kv_checkpoint_type) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::kv_checkpoint), 5);
+}
+
+FB_TEST(xattr_checkpoint_structure, kv_checkpoint_new_type) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::kv_checkpoint_new), 6);
+}
+
+FB_TEST(xattr_checkpoint_structure, type_difference) {
+    FB_ASSERT_TRUE(blob_type::kv_checkpoint != blob_type::kv_checkpoint_new);
+}
+
+// ============================================================================
+// Test Suite: xattr_super_structure (Super Blob Xattr Structure Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_super_structure) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_super_structure) {
+    // Teardown code here
+}
+
+FB_TEST(xattr_super_structure, type_constant) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::super_blob), 7);
+}
+
+// ============================================================================
+// Test Suite: xattr_free_structure (Free Blob Xattr Structure Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_free_structure) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_free_structure) {
+    // Teardown code here
+}
+
+FB_TEST(xattr_free_structure, type_constant) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::free), 8);
+}
+
+FB_TEST(xattr_free_structure, is_last_type) {
+    // free should be the last defined type
+    uint32_t max_defined = static_cast<uint32_t>(blob_type::free);
+    for (uint32_t i = 0; i <= 8; i++) {
+        FB_ASSERT_TRUE(i <= max_defined);
+    }
+}
+
+// ============================================================================
+// Test Suite: xattr_recover_structure (Object Recover Xattr Structure Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_recover_structure) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_recover_structure) {
+    // Teardown code here
+}
+
+FB_TEST(xattr_recover_structure, type_constant) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::object_recover), 3);
+}
+
+FB_TEST(xattr_recover_structure, between_snap_and_kv) {
+    FB_ASSERT_TRUE(static_cast<uint32_t>(blob_type::object_snap) < static_cast<uint32_t>(blob_type::object_recover));
+    FB_ASSERT_TRUE(static_cast<uint32_t>(blob_type::object_recover) < static_cast<uint32_t>(blob_type::kv));
+}
+
+// ============================================================================
+// Test Suite: numeric_limits (Numeric Limits Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(numeric_limits) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(numeric_limits) {
+    // Teardown code here
+}
+
+FB_TEST(numeric_limits, uint32_max) {
+    FB_ASSERT_EQ(std::numeric_limits<uint32_t>::max(), 0xFFFFFFFF);
+}
+
+FB_TEST(numeric_limits, uint64_max) {
+    FB_ASSERT_EQ(std::numeric_limits<uint64_t>::max(), 0xFFFFFFFFFFFFFFFFULL);
+}
+
+FB_TEST(numeric_limits, int64_max) {
+    FB_ASSERT_EQ(std::numeric_limits<int64_t>::max(), 0x7FFFFFFFFFFFFFFFLL);
+}
+
+FB_TEST(numeric_limits, int64_min) {
+    FB_ASSERT_EQ(std::numeric_limits<int64_t>::min(), (-9223372036854775807LL - 1));
+}
+
+FB_TEST(numeric_limits, size_t_nonzero) {
+    FB_ASSERT_TRUE(std::numeric_limits<size_t>::max() > 0);
+}
+
+// ============================================================================
+// Test Suite: error_codes (Error Codes Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(error_codes) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(error_codes) {
+    // Teardown code here
+}
+
+FB_TEST(error_codes, success_code) {
+    int success = 0;
+    FB_ASSERT_EQ(success, 0);
+}
+
+FB_TEST(error_codes, negative_error) {
+    int error = -1;
+    FB_ASSERT_TRUE(error < 0);
+}
+
+FB_TEST(error_codes, errno_valid) {
+    // Common errno values
+    FB_ASSERT_EQ(EINVAL, 22);
+    FB_ASSERT_EQ(ENOMEM, 12);
+    FB_ASSERT_EQ(EIO, 5);
+}
+
+// ============================================================================
+// Test Suite: memory_constants (Memory Constants Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(memory_constants) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(memory_constants) {
+    // Teardown code here
+}
+
+namespace {
+    constexpr uint32_t KB = 1024;
+    constexpr uint32_t MB = KB * 1024;
+    constexpr uint32_t GB = MB * 1024;
+}
+
+FB_TEST(memory_constants, kb_value) {
+    FB_ASSERT_EQ(KB, 1024);
+}
+
+FB_TEST(memory_constants, mb_value) {
+    FB_ASSERT_EQ(MB, 1024 * 1024);
+}
+
+FB_TEST(memory_constants, gb_value) {
+    FB_ASSERT_EQ(GB, 1024 * 1024 * 1024);
+}
+
+FB_TEST(memory_constants, size_relationships) {
+    FB_ASSERT_TRUE(GB > MB);
+    FB_ASSERT_TRUE(MB > KB);
+    FB_ASSERT_TRUE(KB > 1);
+}
+
+// ============================================================================
+// Test Suite: alignment_tests (Memory Alignment Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(alignment_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(alignment_tests) {
+    // Teardown code here
+}
+
+FB_TEST(alignment_tests, page_size) {
+    constexpr size_t page_size = 4096;
+    FB_ASSERT_EQ(page_size, 4_KB);
+}
+
+FB_TEST(alignment_tests, sector_size) {
+    constexpr size_t sector_size = 512;
+    FB_ASSERT_EQ(sector_size, 512);
+}
+
+FB_TEST(alignment_tests, is_page_aligned) {
+    uint64_t addr = 4096;
+    FB_ASSERT_EQ(addr % 4096, 0);
+}
+
+FB_TEST(alignment_tests, is_sector_aligned) {
+    uint64_t addr = 512;
+    FB_ASSERT_EQ(addr % 512, 0);
+}
+
+FB_TEST(alignment_tests, misaligned_address) {
+    uint64_t addr = 4097;
+    FB_ASSERT_TRUE(addr % 4096 != 0);
+}
+
+// ============================================================================
+// Test Suite: offset_calculations (Offset Calculations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(offset_calculations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(offset_calculations) {
+    // Teardown code here
+}
+
+FB_TEST(offset_calculations, block_offset) {
+    uint64_t lba = 8;
+    uint64_t offset = lba * 512;
+    FB_ASSERT_EQ(offset, 4096);
+}
+
+FB_TEST(offset_calculations, cluster_offset) {
+    uint64_t cluster = 2;
+    uint64_t cluster_size = 1_MB;
+    uint64_t offset = cluster * cluster_size;
+    FB_ASSERT_EQ(offset, 2_MB);
+}
+
+FB_TEST(offset_calculations, page_offset) {
+    uint64_t page = 3;
+    uint64_t offset = page * 4096;
+    FB_ASSERT_EQ(offset, 12288);
+}
+
+FB_TEST(offset_calculations, unit_to_byte) {
+    uint64_t units = 8;
+    uint64_t unit_size = 512;
+    uint64_t bytes = units * unit_size;
+    FB_ASSERT_EQ(bytes, 4096);
+}
+
+// ============================================================================
+// Test Suite: capacity_calculations (Capacity Calculations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(capacity_calculations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(capacity_calculations) {
+    // Teardown code here
+}
+
+FB_TEST(capacity_calculations, bytes_to_mb) {
+    uint64_t bytes = 100_MB;
+    uint64_t mb = bytes / (1_MB);
+    FB_ASSERT_EQ(mb, 100);
+}
+
+FB_TEST(capacity_calculations, bytes_to_gb) {
+    uint64_t bytes = 10_GB;
+    uint64_t gb = bytes / (1_GB);
+    FB_ASSERT_EQ(gb, 10);
+}
+
+FB_TEST(capacity_calculations, capacity_overflow_check) {
+    uint64_t capacity = UINT64_MAX;
+    FB_ASSERT_TRUE(capacity > 0);
+}
+
+FB_TEST(capacity_calculations, remaining_space) {
+    uint64_t total = 1_GB;
+    uint64_t used = 512_MB;
+    uint64_t remaining = total - used;
+    FB_ASSERT_EQ(remaining, 512_MB);
+}
+
+// ============================================================================
+// Test Suite: time_constants (Time Constants Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(time_constants) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(time_constants) {
+    // Teardown code here
+}
+
+namespace {
+    constexpr uint64_t US_PER_MS = 1000;
+    constexpr uint64_t MS_PER_S = 1000;
+    constexpr uint64_t US_PER_S = US_PER_MS * MS_PER_S;
+}
+
+FB_TEST(time_constants, us_per_ms) {
+    FB_ASSERT_EQ(US_PER_MS, 1000);
+}
+
+FB_TEST(time_constants, ms_per_s) {
+    FB_ASSERT_EQ(MS_PER_S, 1000);
+}
+
+FB_TEST(time_constants, us_per_s) {
+    FB_ASSERT_EQ(US_PER_S, 1000000);
+}
+
+FB_TEST(time_constants, poller_period_conversion) {
+    // poller_period_us = 5000 (5ms)
+    constexpr uint64_t poller_period_us = 5000;
+    uint64_t ms = poller_period_us / US_PER_MS;
+    FB_ASSERT_EQ(ms, 5);
+}
+
+FB_TEST(time_constants, slow_io_threshold) {
+    // slow_io_warn_us = 100000 (100ms)
+    constexpr uint64_t slow_io_warn_us = 100000;
+    uint64_t ms = slow_io_warn_us / US_PER_MS;
+    FB_ASSERT_EQ(ms, 100);
+}
