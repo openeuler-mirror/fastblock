@@ -21084,3 +21084,60 @@ FB_TEST(buffer_list_clear_operations, clear_twice_safe) {
     bl.clear(); // Should be safe to call twice
     FB_ASSERT_TRUE(bl.empty());
 }
+
+// ============================================================================
+// Test Suite: spdk_buffer_state_tracking (SPDK Buffer State Tracking Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_state_tracking) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_state_tracking) {
+    // Teardown code here
+}
+
+FB_TEST(spdk_buffer_state_tracking, initial_used_zero) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    FB_ASSERT_EQ(sbuf.used(), 0);
+}
+
+FB_TEST(spdk_buffer_state_tracking, used_after_append) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.append("hello", 5);
+    FB_ASSERT_EQ(sbuf.used(), 5);
+}
+
+FB_TEST(spdk_buffer_state_tracking, used_after_inc) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.inc(50);
+    FB_ASSERT_EQ(sbuf.used(), 50);
+}
+
+FB_TEST(spdk_buffer_state_tracking, used_after_reset) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.inc(50);
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.used(), 0);
+}
+
+FB_TEST(spdk_buffer_state_tracking, used_after_set_used) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.set_used(75);
+    FB_ASSERT_EQ(sbuf.used(), 75);
+}
+
+FB_TEST(spdk_buffer_state_tracking, remain_decreases_with_used) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    FB_ASSERT_EQ(sbuf.remain(), 100);
+    sbuf.inc(30);
+    FB_ASSERT_EQ(sbuf.remain(), 70);
+    sbuf.inc(20);
+    FB_ASSERT_EQ(sbuf.remain(), 50);
+}
