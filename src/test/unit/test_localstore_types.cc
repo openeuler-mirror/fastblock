@@ -5459,3 +5459,238 @@ FB_TEST(optional_string_advanced, assign_and_reset) {
     FB_ASSERT_TRUE(opt.has_value());
     FB_ASSERT_EQ(*opt, "new value");
 }
+
+// ============================================================================
+// Test Suite: buffer_list_empty_checks (Buffer List Empty Checks Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_empty_checks) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_empty_checks) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_empty_checks, newly_created_is_empty) {
+    buffer_list bl;
+    FB_ASSERT_TRUE(bl.empty());
+    FB_ASSERT_EQ(bl.bytes(), 0);
+}
+
+FB_TEST(buffer_list_empty_checks, after_append_not_empty) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    FB_ASSERT_FALSE(bl.empty());
+    FB_ASSERT_EQ(bl.bytes(), 100);
+}
+
+FB_TEST(buffer_list_empty_checks, after_clear_is_empty) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    bl.clear();
+
+    FB_ASSERT_TRUE(bl.empty());
+    FB_ASSERT_EQ(bl.bytes(), 0);
+}
+
+FB_TEST(buffer_list_empty_checks, after_pop_all_is_empty) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    bl.pop_front();
+    bl.pop_front();
+
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+// ============================================================================
+// Test Suite: iovec_basic_operations (Iovec Basic Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(iovec_basic_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(iovec_basic_operations) {
+    // Setup code here
+}
+
+FB_TEST(iovec_basic_operations, create_iovec) {
+    struct iovec iov;
+    char buffer[100];
+    iov.iov_base = buffer;
+    iov.iov_len = 100;
+
+    FB_ASSERT_EQ(iov.iov_base, buffer);
+    FB_ASSERT_EQ(iov.iov_len, 100);
+}
+
+FB_TEST(iovec_basic_operations, iovec_in_iovecs) {
+    iovecs iovs;
+    struct iovec iov;
+    iov.iov_base = nullptr;
+    iov.iov_len = 0;
+
+    iovs.push_back(iov);
+    FB_ASSERT_EQ(iovs.size(), 1);
+}
+
+FB_TEST(iovec_basic_operations, iovec_total_length) {
+    iovecs iovs;
+    struct iovec iov1, iov2;
+    iov1.iov_len = 512;
+    iov2.iov_len = 1024;
+
+    iovs.push_back(iov1);
+    iovs.push_back(iov2);
+
+    size_t total = 0;
+    for (const auto& iov : iovs) {
+        total += iov.iov_len;
+    }
+    FB_ASSERT_EQ(total, 1536);
+}
+
+// ============================================================================
+// Test Suite: encoding_boundaries (Encoding Boundaries Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(encoding_boundaries) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(encoding_boundaries) {
+    // Setup code here
+}
+
+FB_TEST(encoding_boundaries, exact_fit_uint64) {
+    char buffer[8];
+    spdk_buffer sbuf(buffer, 8);
+
+    FB_ASSERT_TRUE(PutFixed64(sbuf, 12345));
+    FB_ASSERT_EQ(sbuf.used(), 8);
+}
+
+FB_TEST(encoding_boundaries, exact_fit_uint32) {
+    char buffer[4];
+    spdk_buffer sbuf(buffer, 4);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 12345));
+    FB_ASSERT_EQ(sbuf.used(), 4);
+}
+
+FB_TEST(encoding_boundaries, one_byte_short_uint32) {
+    char buffer[3];
+    spdk_buffer sbuf(buffer, 3);
+
+    FB_ASSERT_FALSE(PutFixed32(sbuf, 12345));
+}
+
+FB_TEST(encoding_boundaries, one_byte_short_uint64) {
+    char buffer[7];
+    spdk_buffer sbuf(buffer, 7);
+
+    FB_ASSERT_FALSE(PutFixed64(sbuf, 12345));
+}
+
+FB_TEST(encoding_boundaries, empty_buffer_fails) {
+    spdk_buffer sbuf;
+
+    FB_ASSERT_FALSE(PutFixed32(sbuf, 12345));
+    FB_ASSERT_FALSE(PutFixed64(sbuf, 12345));
+    FB_ASSERT_FALSE(PutString(sbuf, "test"));
+}
+
+// ============================================================================
+// Test Suite: log_entry_default_values (Log Entry Default Values Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_entry_default_values) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_entry_default_values) {
+    // Setup code here
+}
+
+FB_TEST(log_entry_default_values, term_id_default) {
+    log_entry_t entry;
+    FB_ASSERT_EQ(entry.term_id, std::numeric_limits<uint64_t>::max());
+}
+
+FB_TEST(log_entry_default_values, index_default) {
+    log_entry_t entry;
+    FB_ASSERT_EQ(entry.index, std::numeric_limits<uint64_t>::max());
+}
+
+FB_TEST(log_entry_default_values, size_default) {
+    log_entry_t entry;
+    FB_ASSERT_EQ(entry.size, std::numeric_limits<uint64_t>::max());
+}
+
+FB_TEST(log_entry_default_values, type_default) {
+    log_entry_t entry;
+    FB_ASSERT_EQ(entry.type, std::numeric_limits<uint64_t>::max());
+}
+
+FB_TEST(log_entry_default_values, meta_default_empty) {
+    log_entry_t entry;
+    FB_ASSERT_TRUE(entry.meta.empty());
+}
+
+FB_TEST(log_entry_default_values, data_default_empty) {
+    log_entry_t entry;
+    FB_ASSERT_EQ(entry.data.bytes(), 0);
+}
+
+// ============================================================================
+// Test Suite: pool_context_defaults (Pool Context Defaults Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(pool_context_defaults) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(pool_context_defaults) {
+    // Setup code here
+}
+
+FB_TEST(pool_context_defaults, pool_create_ctx_pool_null) {
+    pool_create_ctx ctx;
+    FB_ASSERT_EQ(ctx.pool, nullptr);
+}
+
+FB_TEST(pool_context_defaults, pool_create_ctx_callback_null) {
+    pool_create_ctx ctx;
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+}
+
+FB_TEST(pool_context_defaults, pool_create_ctx_arg_null) {
+    pool_create_ctx ctx;
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+FB_TEST(pool_context_defaults, pool_create_ctx_idx_zero) {
+    pool_create_ctx ctx;
+    FB_ASSERT_EQ(ctx.idx, 0);
+}
+
+FB_TEST(pool_context_defaults, pool_create_ctx_max_zero) {
+    pool_create_ctx ctx;
+    FB_ASSERT_EQ(ctx.max, 0);
+}
+
+FB_TEST(pool_context_defaults, pool_delete_ctx_pool_null) {
+    pool_delete_ctx ctx;
+    FB_ASSERT_EQ(ctx.pool, nullptr);
+}
