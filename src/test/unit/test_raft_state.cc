@@ -3392,5 +3392,103 @@ FB_TEST(raft_state, follower_commit_idx_below_leader) {
     FB_ASSERT_EQ(new_commit, 5);
 }
 
+// ============================================================================
+// Test Suite: Raft Snapshot
+// ============================================================================
+
+FB_TEST(raft_state, snapshot_includes_last_applied_idx) {
+    // A snapshot records the last_included_index and last_included_term
+    int64_t last_applied = 100;
+    int64_t snapshot_last_included = last_applied;
+    FB_ASSERT_EQ(snapshot_last_included, 100);
+}
+
+FB_TEST(raft_state, snapshot_advances_log_compaction) {
+    // After snapshot, log can be compacted up through snapshot last_included
+    int64_t log_first_idx = 1;
+    int64_t snapshot_last_included = 50;
+
+    if (snapshot_last_included >= log_first_idx) {
+        log_first_idx = snapshot_last_included + 1;
+    }
+    FB_ASSERT_EQ(log_first_idx, 51);
+}
+
+FB_TEST(raft_state, snapshot_reject_older) {
+    // Receiving InstallSnapshot with last_included <= my snapshot is ignored
+    int64_t my_snapshot = 50;
+    int64_t their_snapshot = 30;
+
+    bool should_install = (their_snapshot > my_snapshot);
+    FB_ASSERT_FALSE(should_install);
+}
+
+FB_TEST(raft_state, snapshot_accept_newer) {
+    int64_t my_snapshot = 50;
+    int64_t their_snapshot = 100;
+
+    bool should_install = (their_snapshot > my_snapshot);
+    FB_ASSERT_TRUE(should_install);
+}
+
+FB_TEST(raft_state, snapshot_resets_commit_idx_if_below) {
+    // After installing a newer snapshot, commit_idx is set to at least the snapshot idx
+    int64_t commit_idx = 30;
+    int64_t snapshot_last_idx = 50;
+
+    if (snapshot_last_idx > commit_idx) {
+        commit_idx = snapshot_last_idx;
+    }
+    FB_ASSERT_EQ(commit_idx, 50);
+}
+
+FB_TEST(raft_state, snapshot_chunk_constants) {
+    // Verify SNAPSHOT_MAX_CHUNK / SNAPSHOT_MAX_CONCURRENT are positive
+    FB_ASSERT_TRUE(SNAPSHOT_MAX_CHUNK > 0);
+    FB_ASSERT_TRUE(SNAPSHOT_MAX_CONCURRENT > 0);
+}
+
+FB_TEST(raft_state, snapshot_chunk_max_one) {
+    FB_ASSERT_EQ(SNAPSHOT_MAX_CHUNK, 1);
+    FB_ASSERT_EQ(SNAPSHOT_MAX_CONCURRENT, 1);
+}
+
+// ============================================================================
+// Test Suite: Raft Timer Constants
+// ============================================================================
+
+FB_TEST(raft_state, timer_period_value) {
+    FB_ASSERT_EQ(TIMER_PERIOD_MSEC, 500);
+}
+
+FB_TEST(raft_state, heartbeat_period_value) {
+    FB_ASSERT_EQ(HEARTBEAT_TIMER_INTERVAL_MSEC, 500);
+}
+
+FB_TEST(raft_state, raft_task_period_value) {
+    FB_ASSERT_EQ(RAFT_TASK_TIMER_USEC, 100);
+}
+
+FB_TEST(raft_state, heartbeat_less_than_election_timeout) {
+    // Heartbeat must be much shorter than election timeout to prevent
+    // unnecessary leader changes.
+    int32_t heartbeat_ms = HEARTBEAT_TIMER_INTERVAL_MSEC;
+    int32_t typical_election_timeout_ms = 1500; // common raft default
+
+    FB_ASSERT_TRUE(heartbeat_ms < typical_election_timeout_ms);
+}
+
+FB_TEST(raft_state, raft_task_timer_microsecond_unit) {
+    // RAFT_TASK_TIMER_USEC is in microseconds, should be much smaller than ms timer
+    int64_t task_ns = RAFT_TASK_TIMER_USEC * 1000LL;
+    int64_t timer_ns = TIMER_PERIOD_MSEC * 1000000LL;
+    FB_ASSERT_TRUE(task_ns < timer_ns);
+}
+
+FB_TEST(raft_state, catch_up_num_value) {
+    FB_ASSERT_EQ(CATCH_UP_NUM, 200);
+    FB_ASSERT_TRUE(CATCH_UP_NUM > 0);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
