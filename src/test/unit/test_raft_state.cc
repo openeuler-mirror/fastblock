@@ -3924,5 +3924,93 @@ FB_TEST(raft_state, node_config_size_independent_of_find) {
     FB_ASSERT_EQ(cfg.get_node_size(), 1);
 }
 
+// ============================================================================
+// Test Suite: node_configuration index/term and accessors
+// ============================================================================
+
+FB_TEST(raft_state, node_config_default_index_term_zero) {
+    node_configuration cfg;
+    FB_ASSERT_EQ(cfg.get_index(), 0);
+    FB_ASSERT_EQ(cfg.get_term(), 0);
+}
+
+FB_TEST(raft_state, node_config_param_ctor_sets_index_term) {
+    std::vector<raft_node_info> empty_nodes;
+    std::vector<raft_node_info> empty_new_nodes;
+    node_configuration cfg(42, 7, std::move(empty_new_nodes), std::move(empty_nodes));
+
+    FB_ASSERT_EQ(cfg.get_index(), 42);
+    FB_ASSERT_EQ(cfg.get_term(), 7);
+}
+
+FB_TEST(raft_state, node_config_get_nodes_returns_ref) {
+    node_configuration cfg;
+    std::string addr = "127.0.0.1";
+    cfg.add_node(1, addr, 8080);
+    cfg.add_node(2, addr, 8081);
+
+    const auto& nodes = cfg.get_nodes();
+    FB_ASSERT_EQ(nodes.size(), 2u);
+}
+
+FB_TEST(raft_state, node_config_get_new_nodes_empty) {
+    node_configuration cfg;
+    const auto& new_nodes = cfg.get_new_nodes();
+    FB_ASSERT_TRUE(new_nodes.empty());
+}
+
+FB_TEST(raft_state, node_config_get_nodes_id_order) {
+    node_configuration cfg;
+    std::string addr = "10.1.1.1";
+    cfg.add_node(11, addr, 9000);
+    cfg.add_node(22, addr, 9001);
+    cfg.add_node(33, addr, 9002);
+
+    auto ids = cfg.get_nodes_id();
+    FB_ASSERT_EQ(ids.size(), 3u);
+    FB_ASSERT_EQ(ids[0], 11);
+    FB_ASSERT_EQ(ids[1], 22);
+    FB_ASSERT_EQ(ids[2], 33);
+}
+
+FB_TEST(raft_state, node_config_get_nodes_id_empty) {
+    node_configuration cfg;
+    auto ids = cfg.get_nodes_id();
+    FB_ASSERT_TRUE(ids.empty());
+}
+
+// ============================================================================
+// Test Suite: cfg_state enum
+// ============================================================================
+
+FB_TEST(raft_state, cfg_state_none_zero) {
+    FB_ASSERT_EQ(static_cast<int>(cfg_state::CFG_NONE), 0);
+}
+
+FB_TEST(raft_state, cfg_state_all_distinct) {
+    FB_ASSERT_TRUE(cfg_state::CFG_NONE != cfg_state::CFG_CATCHING_START);
+    FB_ASSERT_TRUE(cfg_state::CFG_CATCHING_START != cfg_state::CFG_CATCHING_UP);
+    FB_ASSERT_TRUE(cfg_state::CFG_CATCHING_UP != cfg_state::CFG_JOINT);
+    FB_ASSERT_TRUE(cfg_state::CFG_JOINT != cfg_state::CFG_UPDATE_NEW_CFG);
+}
+
+FB_TEST(raft_state, cfg_state_ordering) {
+    // Membership change progresses through these states in order
+    FB_ASSERT_TRUE(static_cast<int>(cfg_state::CFG_NONE) <
+                   static_cast<int>(cfg_state::CFG_CATCHING_START));
+    FB_ASSERT_TRUE(static_cast<int>(cfg_state::CFG_CATCHING_START) <
+                   static_cast<int>(cfg_state::CFG_JOINT));
+}
+
+FB_TEST(raft_state, cfg_state_transitions_valid) {
+    // The lifecycle: NONE -> CATCHING_START -> [CATCHING_UP ->] JOINT -> UPDATE_NEW_CFG -> NONE
+    cfg_state s = cfg_state::CFG_NONE;
+    s = cfg_state::CFG_CATCHING_START;
+    s = cfg_state::CFG_JOINT;
+    s = cfg_state::CFG_UPDATE_NEW_CFG;
+    s = cfg_state::CFG_NONE;
+    FB_ASSERT_EQ(s, cfg_state::CFG_NONE);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
