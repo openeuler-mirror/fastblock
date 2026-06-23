@@ -19710,3 +19710,402 @@ FB_TEST(spdk_buffer_edge_conditions, incremental_inc) {
     sbuf.inc(25);
     FB_ASSERT_EQ(sbuf.used(), 100);
 }
+
+// ============================================================================
+// Test Suite: log_entry_field_mutations (Log Entry Field Mutations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_entry_field_mutations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_entry_field_mutations) {
+    // Setup code here
+}
+
+// Test that log_entry fields can be set and remain independent
+FB_TEST(log_entry_field_mutations, field_independence) {
+    log_entry_t entry;
+    entry.term_id = 1;
+    entry.index = 100;
+    entry.size = 4096;
+    entry.type = 2;
+
+    // Modifying one field shouldn't affect others
+    entry.term_id = 2;
+    FB_ASSERT_EQ(entry.term_id, 2);
+    FB_ASSERT_EQ(entry.index, 100);
+    FB_ASSERT_EQ(entry.size, 4096);
+    FB_ASSERT_EQ(entry.type, 2);
+
+    entry.index = 200;
+    FB_ASSERT_EQ(entry.term_id, 2);
+    FB_ASSERT_EQ(entry.index, 200);
+}
+
+// Test meta string mutation
+FB_TEST(log_entry_field_mutations, meta_string_ops) {
+    log_entry_t entry;
+
+    entry.meta = "initial";
+    FB_ASSERT_EQ(entry.meta, "initial");
+
+    entry.meta += "_suffix";
+    FB_ASSERT_EQ(entry.meta, "initial_suffix");
+
+    entry.meta.clear();
+    FB_ASSERT_TRUE(entry.meta.empty());
+
+    entry.meta = std::string(100, 'x');
+    FB_ASSERT_EQ(entry.meta.size(), 100);
+}
+
+// Test data buffer_list mutation
+FB_TEST(log_entry_field_mutations, data_buffer_list_ops) {
+    log_entry_t entry;
+    char buffer1[1024], buffer2[512];
+
+    spdk_buffer sbuf1(buffer1, 1024);
+    entry.data.append_buffer(sbuf1);
+    FB_ASSERT_EQ(entry.data.bytes(), 1024);
+
+    spdk_buffer sbuf2(buffer2, 512);
+    entry.data.append_buffer(sbuf2);
+    FB_ASSERT_EQ(entry.data.bytes(), 1536);
+
+    entry.data.clear();
+    FB_ASSERT_EQ(entry.data.bytes(), 0);
+    FB_ASSERT_TRUE(entry.data.empty());
+}
+
+// Test copying log_entry preserves all fields
+FB_TEST(log_entry_field_mutations, copy_preserves_fields) {
+    log_entry_t original;
+    original.term_id = 5;
+    original.index = 200;
+    original.size = 8192;
+    original.type = 1;
+    original.meta = "test_meta";
+
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    original.data.append_buffer(sbuf);
+
+    log_entry_t copy = original;
+
+    FB_ASSERT_EQ(copy.term_id, 5);
+    FB_ASSERT_EQ(copy.index, 200);
+    FB_ASSERT_EQ(copy.size, 8192);
+    FB_ASSERT_EQ(copy.type, 1);
+    FB_ASSERT_EQ(copy.meta, "test_meta");
+    FB_ASSERT_EQ(copy.data.bytes(), 100);
+}
+
+// Test modifying copy doesn't affect original
+FB_TEST(log_entry_field_mutations, copy_is_independent) {
+    log_entry_t original;
+    original.term_id = 1;
+    original.meta = "original_meta";
+
+    log_entry_t copy = original;
+    copy.term_id = 2;
+    copy.meta = "modified_meta";
+
+    FB_ASSERT_EQ(original.term_id, 1);
+    FB_ASSERT_EQ(original.meta, "original_meta");
+    FB_ASSERT_EQ(copy.term_id, 2);
+    FB_ASSERT_EQ(copy.meta, "modified_meta");
+}
+
+// ============================================================================
+// Test Suite: buffer_list_encoder_state (Buffer List Encoder State Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_encoder_encoder_state) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_encoder_state) {
+    // Setup code here
+}
+
+// Test encoder tracks used bytes correctly through multiple operations
+FB_TEST(buffer_list_encoder_state, used_tracking) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    FB_ASSERT_EQ(encoder.used(), 0);
+
+    encoder.put(1ULL);
+    FB_ASSERT_EQ(encoder.used(), 8);
+
+    encoder.put(2ULL);
+    FB_ASSERT_EQ(encoder.used(), 16);
+
+    encoder.put(std::string("abc"));
+    FB_ASSERT_EQ(encoder.used(), 16 + 8 + 3);
+}
+
+// Test encoder remain decreases as data is written
+FB_TEST(buffer_list_encoder_state, remain_tracking) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    FB_ASSERT_EQ(encoder.remain(), 64);
+
+    encoder.put(1ULL);
+    FB_ASSERT_EQ(encoder.remain(), 56);
+
+    encoder.put(2ULL);
+    FB_ASSERT_EQ(encoder.remain(), 48);
+
+    encoder.put(3ULL);
+    FB_ASSERT_EQ(encoder.remain(), 40);
+
+    encoder.put(4ULL);
+    FB_ASSERT_EQ(encoder.remain(), 32);
+}
+
+// Test encoder bytes() stays constant (total buffer capacity)
+FB_TEST(buffer_list_encoder_state, bytes_constant) {
+    char buffer[128];
+    spdk_buffer sbuf(buffer, 128);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+
+    for (int i = 0; i < 16; i++) {
+        encoder.put(static_cast<uint64_t>(i));
+        FB_ASSERT_EQ(encoder.bytes(), 128);
+    }
+}
+
+// Test encoder fails gracefully when buffer exhausted
+FB_TEST(buffer_list_encoder_state, exhaustion_handling) {
+    char buffer[32];
+    spdk_buffer sbuf(buffer, 32);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+
+    FB_ASSERT_TRUE(encoder.put(1ULL));     // 8 bytes
+    FB_ASSERT_TRUE(encoder.put(2ULL));     // 16 bytes
+    FB_ASSERT_TRUE(encoder.put(3ULL));     // 24 bytes
+    FB_ASSERT_TRUE(encoder.put(4ULL));     // 32 bytes - full
+
+    FB_ASSERT_FALSE(encoder.put(5ULL));    // Fails - no space
+    FB_ASSERT_EQ(encoder.used(), 32);
+    FB_ASSERT_EQ(encoder.remain(), 0);
+}
+
+// ============================================================================
+// Test Suite: xattr_val_type_operations (Xattr Val Type Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_val_type_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_val_type_operations) {
+    // Setup code here
+}
+
+// Test xattr_val_type variant can hold blob_type
+FB_TEST(xattr_val_type_operations, holds_blob_type) {
+    xattr_val_type val = blob_type::object;
+    FB_ASSERT_TRUE(std::holds_alternative<blob_type>(val));
+    blob_type t = std::get<blob_type>(val);
+    FB_ASSERT_EQ(t, blob_type::object);
+}
+
+// Test xattr_val_type variant can hold uint32_t
+FB_TEST(xattr_val_type_operations, holds_uint32) {
+    xattr_val_type val = 12345u;
+    FB_ASSERT_TRUE(std::holds_alternative<uint32_t>(val));
+    uint32_t n = std::get<uint32_t>(val);
+    FB_ASSERT_EQ(n, 12345);
+}
+
+// Test xattr_val_type variant can hold string
+FB_TEST(xattr_val_type_operations, holds_string) {
+    xattr_val_type val = std::string("test_value");
+    FB_ASSERT_TRUE(std::holds_alternative<std::string>(val));
+    std::string s = std::get<std::string>(val);
+    FB_ASSERT_EQ(s, "test_value");
+}
+
+// Test xattr_val_type assignment transitions
+FB_TEST(xattr_val_type_operations, assignment_transitions) {
+    xattr_val_type val;
+
+    val = blob_type::log;
+    FB_ASSERT_TRUE(std::holds_alternative<blob_type>(val));
+
+    val = 999u;
+    FB_ASSERT_TRUE(std::holds_alternative<uint32_t>(val));
+
+    val = std::string("changed");
+    FB_ASSERT_TRUE(std::holds_alternative<std::string>(val));
+}
+
+// Test xattr_val_type in std::map
+FB_TEST(xattr_val_type_operations, map_with_variant) {
+    std::map<std::string, xattr_val_type> xattr_map;
+
+    xattr_map["type"] = blob_type::kv;
+    xattr_map["shard"] = 5u;
+    xattr_map["pg"] = std::string("1.100");
+
+    FB_ASSERT_TRUE(std::holds_alternative<blob_type>(xattr_map["type"]));
+    FB_ASSERT_TRUE(std::holds_alternative<uint32_t>(xattr_map["shard"]));
+    FB_ASSERT_TRUE(std::holds_alternative<std::string>(xattr_map["pg"]));
+}
+
+// ============================================================================
+// Test Suite: context_default_state (Context Default State Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(context_default_state) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(context_default_state) {
+    // Setup code here
+}
+
+// Verify pool_create_ctx defaults
+FB_TEST(context_default_state, pool_create_ctx_defaults) {
+    pool_create_ctx ctx;
+    FB_ASSERT_EQ(ctx.pool, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+    FB_ASSERT_EQ(ctx.type, blob_type::free);  // Default type
+    FB_ASSERT_EQ(ctx.idx, 0);
+    FB_ASSERT_EQ(ctx.max, 0);
+    FB_ASSERT_EQ(ctx.blob.blob, nullptr);
+    FB_ASSERT_EQ(ctx.blob.blobid, 0);
+}
+
+// Verify pool_delete_ctx defaults
+FB_TEST(context_default_state, pool_delete_ctx_defaults) {
+    pool_delete_ctx ctx;
+    FB_ASSERT_EQ(ctx.pool, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+    FB_ASSERT_EQ(ctx.blob.blob, nullptr);
+    FB_ASSERT_EQ(ctx.blob.blobid, 0);
+}
+
+// Verify log_append_ctx defaults
+FB_TEST(context_default_state, log_append_ctx_defaults) {
+    log_append_ctx ctx;
+    FB_ASSERT_TRUE(ctx.idx_pos.empty());
+    FB_ASSERT_TRUE(ctx.headers.empty());
+    FB_ASSERT_EQ(ctx.bytes(), 0);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+    FB_ASSERT_EQ(ctx.log, nullptr);
+}
+
+// Verify log_read_ctx defaults
+FB_TEST(context_default_state, log_read_ctx_defaults) {
+    log_read_ctx ctx;
+    FB_ASSERT_EQ(ctx.bytes(), 0);
+    FB_ASSERT_TRUE(ctx.entries.empty());
+    FB_ASSERT_EQ(ctx.start_index, 0);
+    FB_ASSERT_EQ(ctx.end_index, 0);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+// Verify log_op_ctx defaults
+FB_TEST(context_default_state, log_op_ctx_defaults) {
+    log_op_ctx ctx;
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+// Verify kvstore_write_ctx defaults
+FB_TEST(context_default_state, kvstore_write_ctx_defaults) {
+    kvstore_write_ctx ctx;
+    FB_ASSERT_TRUE(ctx.ops.empty());
+    FB_ASSERT_EQ(ctx.op_length, 0);
+    FB_ASSERT_EQ(ctx.kvs, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+// Verify kvstore_read_ctx defaults
+FB_TEST(context_default_state, kvstore_read_ctx_defaults) {
+    kvstore_read_ctx ctx;
+    FB_ASSERT_EQ(ctx.kvs, nullptr);
+    FB_ASSERT_EQ(ctx.kvloader, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+    FB_ASSERT_EQ(ctx.start_pos, 0);
+    FB_ASSERT_EQ(ctx.len, 0);
+    FB_ASSERT_EQ(ctx.rblob, nullptr);
+}
+
+// Verify kvstore_ckpt_ctx defaults
+FB_TEST(context_default_state, kvstore_ckpt_ctx_defaults) {
+    kvstore_ckpt_ctx ctx;
+    FB_ASSERT_EQ(ctx.kvs, nullptr);
+    FB_ASSERT_EQ(ctx.kv_ckpt, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+    FB_ASSERT_EQ(ctx.bytes(), 0);
+}
+
+// Verify rblob_rw_ctx defaults
+FB_TEST(context_default_state, rblob_rw_ctx_defaults) {
+    rblob_rw_ctx ctx;
+    FB_ASSERT_EQ(ctx.is_read, false);
+    FB_ASSERT_EQ(ctx.blob, nullptr);
+    FB_ASSERT_EQ(ctx.channel, nullptr);
+    FB_ASSERT_TRUE(ctx.iov.empty());
+    FB_ASSERT_EQ(ctx.start_pos, 0);
+    FB_ASSERT_EQ(ctx.lba, 0);
+    FB_ASSERT_EQ(ctx.len, 0);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+    FB_ASSERT_EQ(ctx.next, nullptr);
+    FB_ASSERT_EQ(ctx.rb, nullptr);
+}
+
+// Verify rblob_md_ctx defaults
+FB_TEST(context_default_state, rblob_md_ctx_defaults) {
+    rblob_md_ctx ctx;
+    FB_ASSERT_EQ(ctx.is_load, false);
+    FB_ASSERT_EQ(ctx.rblob, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+// Verify rblob_trim_ctx defaults
+FB_TEST(context_default_state, rblob_trim_ctx_defaults) {
+    rblob_trim_ctx ctx;
+    FB_ASSERT_EQ(ctx.blob, nullptr);
+    FB_ASSERT_EQ(ctx.channel, nullptr);
+    FB_ASSERT_EQ(ctx.lba, 0);
+    FB_ASSERT_EQ(ctx.len, 0);
+    FB_ASSERT_EQ(ctx.next, nullptr);
+    FB_ASSERT_EQ(ctx.rblob, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+// Verify set_xattr_ctx defaults
+FB_TEST(context_default_state, set_xattr_ctx_defaults) {
+    set_xattr_ctx ctx;
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
