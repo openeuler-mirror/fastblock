@@ -18274,3 +18274,190 @@ FB_TEST(log_entry_data_operations, max_field_values) {
     FB_ASSERT_EQ(decoded.type, UINT64_MAX);
     FB_ASSERT_EQ(decoded.meta.size(), 1000);
 }
+
+// ============================================================================
+// Test Suite: kv_op_sequences (KV Operation Sequences Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(kv_op_sequences) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(kv_op_sequences) {
+    // Setup code here
+}
+
+// Simulate a sequence of KV write operations
+FB_TEST(kv_op_sequences, write_sequence) {
+    kvstore_write_ctx ctx;
+
+    // Simulate 5 write operations
+    for (int i = 0; i < 5; i++) {
+        op operation;
+        operation.key = "key_" + std::to_string(i);
+        operation.value = "value_" + std::to_string(i * 100);
+        ctx.ops.push_back(operation);
+    }
+
+    ctx.op_length = ctx.ops.size();
+    FB_ASSERT_EQ(ctx.ops.size(), 5);
+    FB_ASSERT_EQ(ctx.op_length, 5);
+
+    // Verify all operations are writes (have values)
+    for (const auto& operation : ctx.ops) {
+        FB_ASSERT_TRUE(operation.value.has_value());
+    }
+}
+
+// Simulate a sequence of mixed write and delete operations
+FB_TEST(kv_op_sequences, mixed_write_delete) {
+    kvstore_write_ctx ctx;
+
+    // Write operations
+    for (int i = 0; i < 3; i++) {
+        op operation;
+        operation.key = "write_key_" + std::to_string(i);
+        operation.value = "data_" + std::to_string(i);
+        ctx.ops.push_back(operation);
+    }
+
+    // Delete operations
+    for (int i = 0; i < 2; i++) {
+        op operation;
+        operation.key = "delete_key_" + std::to_string(i);
+        operation.value = std::nullopt;
+        ctx.ops.push_back(operation);
+    }
+
+    FB_ASSERT_EQ(ctx.ops.size(), 5);
+
+    // Count write vs delete
+    int writes = 0, deletes = 0;
+    for (const auto& op : ctx.ops) {
+        if (op.value.has_value()) writes++;
+        else deletes++;
+    }
+    FB_ASSERT_EQ(writes, 3);
+    FB_ASSERT_EQ(deletes, 2);
+}
+
+// Simulate KV read context with position tracking
+FB_TEST(kv_op_sequences, read_position_tracking) {
+    kvstore_read_ctx ctx;
+
+    // Simulate reading from different positions
+    struct { uint64_t start; uint64_t len; } reads[] = {
+        {0, 4096}, {4096, 8192}, {12288, 4096}, {16384, 32768}
+    };
+
+    for (auto& r : reads) {
+        ctx.start_pos = r.start;
+        ctx.len = r.len;
+
+        // Verify read range is valid
+        uint64_t end = ctx.start_pos + ctx.len;
+        FB_ASSERT_TRUE(end > ctx.start_pos);
+        FB_ASSERT_EQ(end - ctx.start_pos, r.len);
+    }
+}
+
+// Simulate checkpoint context with buffer accumulation
+FB_TEST(kv_op_sequences, checkpoint_buffer_accumulation) {
+    kvstore_ckpt_ctx ctx;
+
+    // Simulate accumulating data into checkpoint buffer
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+    ctx.bl.append_buffer(sbuf);
+
+    // Encode checkpoint data
+    buffer_list_encoder encoder(ctx.bl);
+    FB_ASSERT_TRUE(encoder.put(1ULL));          // version
+    FB_ASSERT_TRUE(encoder.put(100ULL));        // entry count
+    FB_ASSERT_TRUE(encoder.put(std::string("checkpoint_v1"))); // tag
+
+    FB_ASSERT_TRUE(ctx.bl.bytes() >= encoder.used());
+}
+
+// ============================================================================
+// Test Suite: rblob_context_scenarios (RBlob Context Scenarios Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(rblob_context_scenarios) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(rblob_context_scenarios) {
+    // Setup code here
+}
+
+// Simulate a read operation context setup
+FB_TEST(rblob_context_scenarios, read_context_setup) {
+    rblob_rw_ctx ctx;
+    ctx.is_read = true;
+    ctx.start_pos = 0;
+    ctx.lba = 0;
+    ctx.len = 8192;
+
+    struct iovec iov;
+    char buffer[8192];
+    iov.iov_base = buffer;
+    iov.iov_len = 8192;
+    ctx.iov.push_back(iov);
+
+    FB_ASSERT_TRUE(ctx.is_read);
+    FB_ASSERT_EQ(ctx.iov.size(), 1);
+    FB_ASSERT_EQ(ctx.iov[0].iov_len, 8192);
+    FB_ASSERT_EQ(ctx.len, 8192);
+}
+
+// Simulate a write operation with multiple iovecs
+FB_TEST(rblob_context_scenarios, write_context_scattered) {
+    rblob_rw_ctx ctx;
+    ctx.is_read = false;
+
+    char buf1[4096], buf2[4096], buf3[4096];
+    struct iovec iov1, iov2, iov3;
+    iov1.iov_base = buf1; iov1.iov_len = 4096;
+    iov2.iov_base = buf2; iov2.iov_len = 4096;
+    iov3.iov_base = buf3; iov3.iov_len = 4096;
+
+    ctx.iov.push_back(iov1);
+    ctx.iov.push_back(iov2);
+    ctx.iov.push_back(iov3);
+
+    ctx.start_pos = 8192;
+    ctx.len = 12288;
+
+    FB_ASSERT_FALSE(ctx.is_read);
+    FB_ASSERT_EQ(ctx.iov.size(), 3);
+
+    size_t total_iov = 0;
+    for (auto& iov : ctx.iov) total_iov += iov.iov_len;
+    FB_ASSERT_EQ(total_iov, 12288);
+}
+
+// Simulate metadata load context
+FB_TEST(rblob_context_scenarios, metadata_load) {
+    rblob_md_ctx ctx;
+    ctx.is_load = true;
+
+    // Simulate callback
+    int called = 0;
+    ctx.cb_fn = [&called](void*, int) { called++; };
+    ctx.arg = &called;
+
+    FB_ASSERT_TRUE(ctx.is_load);
+    ctx.cb_fn(ctx.arg, 0);
+    FB_ASSERT_EQ(called, 1);
+}
+
+// Simulate trim context with large range
+FB_TEST(rblob_context_scenarios, trim_large_range) {
+    rblob_trim_ctx ctx;
+    ctx.lba = 0;
+    ctx.len = 1_GB / 512; // Trim 1GB worth of sectors
+
+    uint64_t bytes_trimmed = ctx.len * 512;
+    FB_ASSERT_EQ(bytes_trimmed, 1_GB);
+}
