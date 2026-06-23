@@ -19,6 +19,7 @@
 #include "localstore/spdk_buffer.h"
 #include "localstore/types.h"
 #include "localstore/log_entry.h"
+#include "localstore/buffer_pool.h"
 
 #include <string>
 #include <cstdint>
@@ -26,6 +27,9 @@
 #include <optional>
 #include <variant>
 #include <limits>
+#include <functional>
+#include <tuple>
+#include <vector>
 
 // ============================================================================
 // Test Suite: blob_type (Blob Type Enumeration)
@@ -1859,4 +1863,574 @@ FB_TEST(constants_and_limits, size_t_nonzero) {
 
 FB_TEST(constants_and_limits, pointer_size) {
     FB_ASSERT_TRUE(sizeof(void*) == 4 || sizeof(void*) == 8);
+}
+
+// ============================================================================
+// Test Suite: callback_types (Callback Types Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(callback_types) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(callback_types) {
+    // Teardown code here
+}
+
+FB_TEST(callback_types, object_rw_complete_signature) {
+    object_rw_complete cb = [](void* arg, int errno_val) {};
+    FB_ASSERT_TRUE(cb != nullptr);
+}
+
+FB_TEST(callback_types, log_op_complete_signature) {
+    log_op_complete cb = [](void* arg, int rberrno) {};
+    FB_ASSERT_TRUE(cb != nullptr);
+}
+
+FB_TEST(callback_types, log_op_with_entry_complete_signature) {
+    log_op_with_entry_complete cb = [](void* arg, std::vector<log_entry_t>&& entries, int rberrno) {};
+    FB_ASSERT_TRUE(cb != nullptr);
+}
+
+FB_TEST(callback_types, kvstore_rw_complete_signature) {
+    kvstore_rw_complete cb = [](void* arg, int errno_val) {};
+    FB_ASSERT_TRUE(cb != nullptr);
+}
+
+FB_TEST(callback_types, rblob_rw_complete_signature) {
+    rblob_rw_complete cb = [](void* arg, rblob_rw_result result, int errno_val) {};
+    FB_ASSERT_TRUE(cb != nullptr);
+}
+
+FB_TEST(callback_types, rblob_op_complete_signature) {
+    rblob_op_complete cb = [](void* arg, int errno_val) {};
+    FB_ASSERT_TRUE(cb != nullptr);
+}
+
+// ============================================================================
+// Test Suite: trim_constants (Trim Constants Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(trim_constants) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(trim_constants) {
+    // Teardown code here
+}
+
+FB_TEST(trim_constants, trigger_percentage_value) {
+    FB_ASSERT_TRUE(TRIM_TRIGGER_PERCENTAGE > 0.0f);
+    FB_ASSERT_TRUE(TRIM_TRIGGER_PERCENTAGE < 1.0f);
+}
+
+FB_TEST(trim_constants, percentage_value) {
+    FB_ASSERT_TRUE(TRIM_PERCENTAGE > 0.0f);
+    FB_ASSERT_TRUE(TRIM_PERCENTAGE < 1.0f);
+}
+
+FB_TEST(trim_constants, percentage_relationship) {
+    // Trim percentage should be less than trigger
+    FB_ASSERT_TRUE(TRIM_PERCENTAGE < TRIM_TRIGGER_PERCENTAGE);
+}
+
+// ============================================================================
+// Test Suite: log_append_ctx (Log Append Context Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_append_ctx) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_append_ctx) {
+    // Teardown code here
+}
+
+FB_TEST(log_append_ctx, default_values) {
+    log_append_ctx ctx;
+    FB_ASSERT_TRUE(ctx.idx_pos.empty());
+    FB_ASSERT_TRUE(ctx.headers.empty());
+    FB_ASSERT_EQ(ctx.bytes(), 0);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+    FB_ASSERT_EQ(ctx.log, nullptr);
+}
+
+FB_TEST(log_append_ctx, set_callback) {
+    log_append_ctx ctx;
+    ctx.cb_fn = [](void*, int) {};
+    FB_ASSERT_TRUE(ctx.cb_fn != nullptr);
+}
+
+FB_TEST(log_append_ctx, set_arg) {
+    log_append_ctx ctx;
+    ctx.arg = reinterpret_cast<void*>(0x12345678);
+    FB_ASSERT_EQ(ctx.arg, reinterpret_cast<void*>(0x12345678));
+}
+
+FB_TEST(log_append_ctx, idx_pos_tuple_size) {
+    std::tuple<uint64_t, uint64_t, uint64_t, uint64_t> tuple(1, 2, 3, 4);
+    FB_ASSERT_EQ(std::get<0>(tuple), 1);
+    FB_ASSERT_EQ(std::get<1>(tuple), 2);
+    FB_ASSERT_EQ(std::get<2>(tuple), 3);
+    FB_ASSERT_EQ(std::get<3>(tuple), 4);
+}
+
+FB_TEST(log_append_ctx, add_idx_pos) {
+    log_append_ctx ctx;
+    ctx.idx_pos.emplace_back(1, 100, 0, 4096);
+    FB_ASSERT_EQ(ctx.idx_pos.size(), 1);
+}
+
+FB_TEST(log_append_ctx, add_header) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    log_append_ctx ctx;
+    ctx.headers.push_back(sbuf);
+    FB_ASSERT_EQ(ctx.headers.size(), 1);
+}
+
+// ============================================================================
+// Test Suite: log_read_ctx (Log Read Context Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_read_ctx) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_read_ctx) {
+    // Teardown code here
+}
+
+FB_TEST(log_read_ctx, default_values) {
+    log_read_ctx ctx;
+    FB_ASSERT_EQ(ctx.bytes(), 0);
+    FB_ASSERT_TRUE(ctx.entries.empty());
+    FB_ASSERT_EQ(ctx.start_index, 0);
+    FB_ASSERT_EQ(ctx.end_index, 0);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+FB_TEST(log_read_ctx, set_indices) {
+    log_read_ctx ctx;
+    ctx.start_index = 100;
+    ctx.end_index = 200;
+    FB_ASSERT_EQ(ctx.start_index, 100);
+    FB_ASSERT_EQ(ctx.end_index, 200);
+}
+
+FB_TEST(log_read_ctx, index_range) {
+    log_read_ctx ctx;
+    ctx.start_index = 50;
+    ctx.end_index = 150;
+    uint64_t count = ctx.end_index - ctx.start_index + 1;
+    FB_ASSERT_EQ(count, 101);
+}
+
+FB_TEST(log_read_ctx, add_entry) {
+    log_read_ctx ctx;
+    log_entry_t entry;
+    entry.index = 100;
+    ctx.entries.push_back(entry);
+    FB_ASSERT_EQ(ctx.entries.size(), 1);
+    FB_ASSERT_EQ(ctx.entries[0].index, 100);
+}
+
+// ============================================================================
+// Test Suite: log_op_ctx (Log Operation Context Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_op_ctx) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_op_ctx) {
+    // Teardown code here
+}
+
+FB_TEST(log_op_ctx, default_values) {
+    log_op_ctx ctx;
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+FB_TEST(log_op_ctx, set_callback) {
+    log_op_ctx ctx;
+    ctx.cb_fn = [](void*, int) {};
+    FB_ASSERT_TRUE(ctx.cb_fn != nullptr);
+}
+
+FB_TEST(log_op_ctx, set_arg) {
+    log_op_ctx ctx;
+    ctx.arg = reinterpret_cast<void*>(0xABCDEF);
+    FB_ASSERT_EQ(ctx.arg, reinterpret_cast<void*>(0xABCDEF));
+}
+
+// ============================================================================
+// Test Suite: op_struct (KV Operation Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(op_struct) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(op_struct) {
+    // Teardown code here
+}
+
+FB_TEST(op_struct, key_only) {
+    op operation;
+    operation.key = "test_key";
+    FB_ASSERT_EQ(operation.key, "test_key");
+    FB_ASSERT_FALSE(operation.value.has_value());
+}
+
+FB_TEST(op_struct, with_value) {
+    op operation;
+    operation.key = "test_key";
+    operation.value = "test_value";
+    FB_ASSERT_EQ(operation.key, "test_key");
+    FB_ASSERT_TRUE(operation.value.has_value());
+    FB_ASSERT_EQ(*operation.value, "test_value");
+}
+
+FB_TEST(op_struct, empty_key) {
+    op operation;
+    operation.key = "";
+    FB_ASSERT_TRUE(operation.key.empty());
+}
+
+FB_TEST(op_struct, long_key) {
+    op operation;
+    operation.key = std::string(255, 'k');
+    FB_ASSERT_EQ(operation.key.size(), 255);
+}
+
+FB_TEST(op_struct, nullopt_value) {
+    op operation;
+    operation.key = "key";
+    operation.value = std::nullopt;
+    FB_ASSERT_FALSE(operation.value.has_value());
+}
+
+// ============================================================================
+// Test Suite: kvstore_write_ctx (KV Store Write Context Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(kvstore_write_ctx) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(kvstore_write_ctx) {
+    // Teardown code here
+}
+
+FB_TEST(kvstore_write_ctx, default_values) {
+    kvstore_write_ctx ctx;
+    FB_ASSERT_TRUE(ctx.ops.empty());
+    FB_ASSERT_EQ(ctx.op_length, 0);
+    FB_ASSERT_EQ(ctx.kvs, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+FB_TEST(kvstore_write_ctx, add_op) {
+    kvstore_write_ctx ctx;
+    op operation;
+    operation.key = "key1";
+    operation.value = "value1";
+    ctx.ops.push_back(operation);
+    FB_ASSERT_EQ(ctx.ops.size(), 1);
+}
+
+FB_TEST(kvstore_write_ctx, multiple_ops) {
+    kvstore_write_ctx ctx;
+    for (int i = 0; i < 5; i++) {
+        op operation;
+        operation.key = "key" + std::to_string(i);
+        ctx.ops.push_back(operation);
+    }
+    FB_ASSERT_EQ(ctx.ops.size(), 5);
+}
+
+FB_TEST(kvstore_write_ctx, set_op_length) {
+    kvstore_write_ctx ctx;
+    ctx.op_length = 100;
+    FB_ASSERT_EQ(ctx.op_length, 100);
+}
+
+// ============================================================================
+// Test Suite: kvstore_read_ctx (KV Store Read Context Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(kvstore_read_ctx) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(kvstore_read_ctx) {
+    // Teardown code here
+}
+
+FB_TEST(kvstore_read_ctx, default_values) {
+    kvstore_read_ctx ctx;
+    FB_ASSERT_EQ(ctx.kvs, nullptr);
+    FB_ASSERT_EQ(ctx.kvloader, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+    FB_ASSERT_EQ(ctx.start_pos, 0);
+    FB_ASSERT_EQ(ctx.len, 0);
+    FB_ASSERT_EQ(ctx.rblob, nullptr);
+}
+
+FB_TEST(kvstore_read_ctx, set_positions) {
+    kvstore_read_ctx ctx;
+    ctx.start_pos = 1024;
+    ctx.len = 4096;
+    FB_ASSERT_EQ(ctx.start_pos, 1024);
+    FB_ASSERT_EQ(ctx.len, 4096);
+}
+
+FB_TEST(kvstore_read_ctx, read_range) {
+    kvstore_read_ctx ctx;
+    ctx.start_pos = 0;
+    ctx.len = 8192;
+    uint64_t end_pos = ctx.start_pos + ctx.len;
+    FB_ASSERT_EQ(end_pos, 8192);
+}
+
+// ============================================================================
+// Test Suite: kvstore_ckpt_ctx (KV Store Checkpoint Context Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(kvstore_ckpt_ctx) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(kvstore_ckpt_ctx) {
+    // Teardown code here
+}
+
+FB_TEST(kvstore_ckpt_ctx, default_values) {
+    kvstore_ckpt_ctx ctx;
+    FB_ASSERT_EQ(ctx.kvs, nullptr);
+    FB_ASSERT_EQ(ctx.kv_ckpt, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+    FB_ASSERT_EQ(ctx.bytes(), 0);
+}
+
+FB_TEST(kvstore_ckpt_ctx, buffer_list_operations) {
+    kvstore_ckpt_ctx ctx;
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    ctx.bl.append_buffer(sbuf);
+    FB_ASSERT_EQ(ctx.bytes(), 100);
+}
+
+// ============================================================================
+// Test Suite: rblob_rw_result (Rolling Blob RW Result Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(rblob_rw_result) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(rblob_rw_result) {
+    // Teardown code here
+}
+
+FB_TEST(rblob_rw_result, default_values) {
+    rblob_rw_result result;
+    FB_ASSERT_EQ(result.start_pos, 0);
+    FB_ASSERT_EQ(result.len, 0);
+}
+
+FB_TEST(rblob_rw_result, set_values) {
+    rblob_rw_result result;
+    result.start_pos = 4096;
+    result.len = 8192;
+    FB_ASSERT_EQ(result.start_pos, 4096);
+    FB_ASSERT_EQ(result.len, 8192);
+}
+
+FB_TEST(rblob_rw_result, end_pos_calculation) {
+    rblob_rw_result result;
+    result.start_pos = 0;
+    result.len = 4096;
+    uint64_t end_pos = result.start_pos + result.len;
+    FB_ASSERT_EQ(end_pos, 4096);
+}
+
+FB_TEST(rblob_rw_result, large_values) {
+    rblob_rw_result result;
+    result.start_pos = UINT64_MAX / 2;
+    result.len = 1024 * 1024;
+    FB_ASSERT_TRUE(result.start_pos > 0);
+    FB_ASSERT_TRUE(result.len > 0);
+}
+
+// ============================================================================
+// Test Suite: rblob_rw_ctx (Rolling Blob RW Context Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(rblob_rw_ctx) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(rblob_rw_ctx) {
+    // Teardown code here
+}
+
+FB_TEST(rblob_rw_ctx, default_values) {
+    rblob_rw_ctx ctx;
+    FB_ASSERT_EQ(ctx.is_read, false);
+    FB_ASSERT_EQ(ctx.blob, nullptr);
+    FB_ASSERT_EQ(ctx.channel, nullptr);
+    FB_ASSERT_TRUE(ctx.iov.empty());
+    FB_ASSERT_EQ(ctx.start_pos, 0);
+    FB_ASSERT_EQ(ctx.lba, 0);
+    FB_ASSERT_EQ(ctx.len, 0);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+    FB_ASSERT_EQ(ctx.next, nullptr);
+    FB_ASSERT_EQ(ctx.rb, nullptr);
+}
+
+FB_TEST(rblob_rw_ctx, set_iov) {
+    rblob_rw_ctx ctx;
+    struct iovec iov;
+    iov.iov_base = nullptr;
+    iov.iov_len = 4096;
+    ctx.iov.push_back(iov);
+    FB_ASSERT_EQ(ctx.iov.size(), 1);
+}
+
+FB_TEST(rblob_rw_ctx, set_positions) {
+    rblob_rw_ctx ctx;
+    ctx.start_pos = 1024;
+    ctx.lba = 2048;
+    ctx.len = 4096;
+    FB_ASSERT_EQ(ctx.start_pos, 1024);
+    FB_ASSERT_EQ(ctx.lba, 2048);
+    FB_ASSERT_EQ(ctx.len, 4096);
+}
+
+FB_TEST(rblob_rw_ctx, is_read_flag) {
+    rblob_rw_ctx ctx_read;
+    ctx_read.is_read = true;
+    FB_ASSERT_TRUE(ctx_read.is_read);
+
+    rblob_rw_ctx ctx_write;
+    ctx_write.is_read = false;
+    FB_ASSERT_FALSE(ctx_write.is_read);
+}
+
+// ============================================================================
+// Test Suite: rblob_md_ctx (Rolling Blob Metadata Context Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(rblob_md_ctx) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(rblob_md_ctx) {
+    // Teardown code here
+}
+
+FB_TEST(rblob_md_ctx, default_values) {
+    rblob_md_ctx ctx;
+    FB_ASSERT_EQ(ctx.is_load, false);
+    FB_ASSERT_EQ(ctx.rblob, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+FB_TEST(rblob_md_ctx, is_load_flag) {
+    rblob_md_ctx ctx;
+    ctx.is_load = true;
+    FB_ASSERT_TRUE(ctx.is_load);
+}
+
+FB_TEST(rblob_md_ctx, set_callback) {
+    rblob_md_ctx ctx;
+    ctx.cb_fn = [](void*, int) {};
+    FB_ASSERT_TRUE(ctx.cb_fn != nullptr);
+}
+
+// ============================================================================
+// Test Suite: rblob_trim_ctx (Rolling Blob Trim Context Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(rblob_trim_ctx) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(rblob_trim_ctx) {
+    // Teardown code here
+}
+
+FB_TEST(rblob_trim_ctx, default_values) {
+    rblob_trim_ctx ctx;
+    FB_ASSERT_EQ(ctx.blob, nullptr);
+    FB_ASSERT_EQ(ctx.channel, nullptr);
+    FB_ASSERT_EQ(ctx.lba, 0);
+    FB_ASSERT_EQ(ctx.len, 0);
+    FB_ASSERT_EQ(ctx.next, nullptr);
+    FB_ASSERT_EQ(ctx.rblob, nullptr);
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+FB_TEST(rblob_trim_ctx, set_lba_len) {
+    rblob_trim_ctx ctx;
+    ctx.lba = 1024;
+    ctx.len = 8192;
+    FB_ASSERT_EQ(ctx.lba, 1024);
+    FB_ASSERT_EQ(ctx.len, 8192);
+}
+
+FB_TEST(rblob_trim_ctx, trim_range) {
+    rblob_trim_ctx ctx;
+    ctx.lba = 0;
+    ctx.len = 4096;
+    uint64_t end_lba = ctx.lba + ctx.len;
+    FB_ASSERT_EQ(end_lba, 4096);
+}
+
+// ============================================================================
+// Test Suite: buffer_pool_constants (Buffer Pool Constants Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_pool_constants) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_pool_constants) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_pool_constants, buffer_memory_value) {
+    FB_ASSERT_EQ(buffer_memory, 512 * 1024 * 1024);
+}
+
+FB_TEST(buffer_pool_constants, buffer_size_value) {
+    FB_ASSERT_EQ(buffer_size, 4 * 1024);
+}
+
+FB_TEST(buffer_pool_constants, buffer_pool_size_calculation) {
+    FB_ASSERT_EQ(buffer_pool_size, buffer_memory / buffer_size);
+    FB_ASSERT_EQ(buffer_pool_size, 512_MB / 4_KB);
+}
+
+FB_TEST(buffer_pool_constants, buffer_pool_size_value) {
+    FB_ASSERT_EQ(buffer_pool_size, 128 * 1024);
+}
+
+FB_TEST(buffer_pool_constants, buffer_size_4kb) {
+    FB_ASSERT_TRUE(buffer_size >= 4096);
+}
+
+FB_TEST(buffer_pool_constants, buffer_memory_512mb) {
+    FB_ASSERT_TRUE(buffer_memory >= 512 * 1024 * 1024);
 }
