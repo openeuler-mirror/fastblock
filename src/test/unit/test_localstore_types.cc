@@ -10558,3 +10558,294 @@ FB_TEST(encoding_length_consistency, log_header_with_long_meta) {
     uint64_t total = base_size + meta_size;
     FB_ASSERT_TRUE(total >= 1008);
 }
+
+// ============================================================================
+// Test Suite: final_comprehensive_tests (Final Comprehensive Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(final_comprehensive_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(final_comprehensive_tests) {
+    // Setup code here
+}
+
+FB_TEST(final_comprehensive_tests, comprehensive_encoding) {
+    char buffer[8192];
+    spdk_buffer sbuf(buffer, 8192);
+
+    // Encode multiple types
+    PutFixed32(sbuf, 0x12345678);
+    PutFixed64(sbuf, 0x123456789ABCDEF0ULL);
+    PutString(sbuf, "comprehensive_test");
+    PutOptString(sbuf, std::nullopt);
+    PutOptString(sbuf, std::string("optional_value"));
+    PutFixed32(sbuf, 0xFFFFFFFF);
+    PutFixed64(sbuf, 0xFFFFFFFFFFFFFFFFULL);
+
+    sbuf.reset();
+
+    // Decode and verify
+    uint32_t v32_1, v32_2;
+    uint64_t v64_1, v64_2;
+    std::string str1;
+    std::optional<std::string> opt1, opt2;
+
+    GetFixed32(sbuf, v32_1);
+    GetFixed64(sbuf, v64_1);
+    GetString(sbuf, str1);
+    GetOptString(sbuf, opt1);
+    GetOptString(sbuf, opt2);
+    GetFixed32(sbuf, v32_2);
+    GetFixed64(sbuf, v64_2);
+
+    FB_ASSERT_EQ(v32_1, 0x12345678);
+    FB_ASSERT_EQ(v64_1, 0x123456789ABCDEF0ULL);
+    FB_ASSERT_EQ(str1, "comprehensive_test");
+    FB_ASSERT_FALSE(opt1.has_value());
+    FB_ASSERT_TRUE(opt2.has_value());
+    FB_ASSERT_EQ(*opt2, "optional_value");
+    FB_ASSERT_EQ(v32_2, 0xFFFFFFFF);
+    FB_ASSERT_EQ(v64_2, 0xFFFFFFFFFFFFFFFFULL);
+}
+
+FB_TEST(final_comprehensive_tests, comprehensive_buffer_list) {
+    char buffers[10][512];
+    buffer_list bl;
+
+    for (int i = 0; i < 10; i++) {
+        spdk_buffer sbuf(buffers[i], 512);
+        bl.append_buffer(sbuf);
+    }
+
+    FB_ASSERT_EQ(bl.bytes(), 5120);
+
+    // Trim operations
+    bl.trim_front();
+    FB_ASSERT_EQ(bl.bytes(), 4608);
+
+    bl.trim_back();
+    FB_ASSERT_EQ(bl.bytes(), 4096);
+
+    // Pop operations
+    bl.pop_front();
+    FB_ASSERT_EQ(bl.bytes(), 3584);
+
+    // Clear
+    bl.clear();
+    FB_ASSERT_EQ(bl.bytes(), 0);
+}
+
+FB_TEST(final_comprehensive_tests, comprehensive_log_entry) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    log_entry_t entry;
+    entry.term_id = 5;
+    entry.index = 100;
+    entry.size = 4096;
+    entry.type = 2;
+    entry.meta = "final_test_meta";
+    entry.data.append_buffer(sbuf);
+
+    FB_ASSERT_EQ(entry.term_id, 5);
+    FB_ASSERT_EQ(entry.index, 100);
+    FB_ASSERT_EQ(entry.size, 4096);
+    FB_ASSERT_EQ(entry.type, 2);
+    FB_ASSERT_EQ(entry.meta, "final_test_meta");
+    FB_ASSERT_EQ(entry.data.bytes(), 1024);
+}
+
+FB_TEST(final_comprehensive_tests, comprehensive_blob_type) {
+    for (uint32_t i = 0; i <= 8; i++) {
+        blob_type t = static_cast<blob_type>(i);
+        std::string str = type_string(t);
+        FB_ASSERT_TRUE(!str.empty());
+        FB_ASSERT_TRUE(str.find("blob_type::") == 0);
+    }
+
+    blob_type invalid = static_cast<blob_type>(999);
+    FB_ASSERT_EQ(type_string(invalid), "blob_type::unknown");
+}
+
+FB_TEST(final_comprehensive_tests, comprehensive_fb_blob) {
+    fb_blob blob;
+    blob.blob = reinterpret_cast<void*>(0x1000);
+    blob.blobid = 0x12345678;
+
+    FB_ASSERT_EQ(blob.blob, reinterpret_cast<void*>(0x1000));
+    FB_ASSERT_EQ(blob.blobid, 0x12345678);
+
+    fb_blob copy = blob;
+    FB_ASSERT_EQ(copy.blob, blob.blob);
+    FB_ASSERT_EQ(copy.blobid, blob.blobid);
+}
+
+FB_TEST(final_comprehensive_tests, comprehensive_spdk_buffer) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    FB_ASSERT_EQ(sbuf.size(), 1024);
+    FB_ASSERT_EQ(sbuf.used(), 0);
+    FB_ASSERT_EQ(sbuf.remain(), 1024);
+
+    sbuf.inc(512);
+    FB_ASSERT_EQ(sbuf.used(), 512);
+    FB_ASSERT_EQ(sbuf.remain(), 512);
+
+    sbuf.append("test", 4);
+    FB_ASSERT_EQ(sbuf.used(), 516);
+
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.used(), 0);
+
+    sbuf.set_used(100);
+    FB_ASSERT_EQ(sbuf.used(), 100);
+}
+
+FB_TEST(final_comprehensive_tests, comprehensive_xattr_val_type) {
+    xattr_val_type val;
+
+    val = blob_type::kv;
+    FB_ASSERT_TRUE(std::holds_alternative<blob_type>(val));
+
+    val = 12345u;
+    FB_ASSERT_TRUE(std::holds_alternative<uint32_t>(val));
+
+    val = std::string("test");
+    FB_ASSERT_TRUE(std::holds_alternative<std::string>(val));
+}
+
+FB_TEST(final_comprehensive_tests, comprehensive_encoder_decoder) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    for (uint64_t i = 0; i < 50; i++) {
+        encoder.put(i);
+    }
+
+    bl.begin()->reset();
+
+    buffer_list_encoder decoder(bl);
+    for (uint64_t i = 0; i < 50; i++) {
+        uint64_t val;
+        decoder.get(val);
+        FB_ASSERT_EQ(val, i);
+    }
+}
+
+FB_TEST(final_comprehensive_tests, comprehensive_context_structures) {
+    log_append_ctx la_ctx;
+    FB_ASSERT_TRUE(la_ctx.idx_pos.empty());
+
+    log_read_ctx lr_ctx;
+    FB_ASSERT_TRUE(lr_ctx.entries.empty());
+
+    log_op_ctx lo_ctx;
+    FB_ASSERT_EQ(lo_ctx.cb_fn, nullptr);
+
+    pool_create_ctx pc_ctx;
+    FB_ASSERT_EQ(pc_ctx.pool, nullptr);
+
+    pool_delete_ctx pd_ctx;
+    FB_ASSERT_EQ(pd_ctx.pool, nullptr);
+
+    kvstore_write_ctx kw_ctx;
+    FB_ASSERT_TRUE(kw_ctx.ops.empty());
+
+    kvstore_read_ctx kr_ctx;
+    FB_ASSERT_EQ(kr_ctx.kvs, nullptr);
+
+    kvstore_ckpt_ctx kc_ctx;
+    FB_ASSERT_EQ(kc_ctx.kvs, nullptr);
+
+    rblob_rw_ctx rw_ctx;
+    FB_ASSERT_TRUE(rw_ctx.iov.empty());
+
+    rblob_md_ctx md_ctx;
+    FB_ASSERT_EQ(md_ctx.rblob, nullptr);
+
+    rblob_trim_ctx trim_ctx;
+    FB_ASSERT_EQ(trim_ctx.rblob, nullptr);
+}
+
+FB_TEST(final_comprehensive_tests, comprehensive_iovec_operations) {
+    iovecs iovs;
+
+    struct iovec iov;
+    iov.iov_len = 512;
+    iovs.push_back(iov);
+    iov.iov_len = 1024;
+    iovs.push_back(iov);
+    iov.iov_len = 2048;
+    iovs.push_back(iov);
+
+    FB_ASSERT_EQ(iovs.size(), 3);
+
+    size_t total = 0;
+    for (const auto& i : iovs) {
+        total += i.iov_len;
+    }
+    FB_ASSERT_EQ(total, 3584);
+
+    iovs.clear();
+    FB_ASSERT_TRUE(iovs.empty());
+}
+
+FB_TEST(final_comprehensive_tests, comprehensive_opt_string) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    std::optional<std::string> values[] = {
+        std::nullopt,
+        std::string(""),
+        std::string("short"),
+        std::string(100, 'x')
+    };
+
+    for (const auto& v : values) {
+        sbuf.reset();
+        PutOptString(sbuf, v);
+        sbuf.reset();
+        std::optional<std::string> out;
+        GetOptString(sbuf, out);
+
+        if (!v.has_value()) {
+            FB_ASSERT_FALSE(out.has_value());
+        } else {
+            FB_ASSERT_TRUE(out.has_value());
+            FB_ASSERT_EQ(*out, *v);
+        }
+    }
+}
+
+FB_TEST(final_comprehensive_tests, comprehensive_log_entry_header) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+
+    log_entry_t entry;
+    entry.term_id = 1;
+    entry.index = 100;
+    entry.size = 4096;
+    entry.type = 2;
+    entry.meta = "test_meta";
+
+    bool ok = EncodeLogHeader(sbuf, entry);
+    FB_ASSERT_TRUE(ok);
+
+    sbuf.reset();
+
+    log_entry_t decoded;
+    ok = DecodeLogHeader(sbuf, decoded);
+    FB_ASSERT_TRUE(ok);
+
+    FB_ASSERT_EQ(decoded.term_id, entry.term_id);
+    FB_ASSERT_EQ(decoded.index, entry.index);
+    FB_ASSERT_EQ(decoded.size, entry.size);
+    FB_ASSERT_EQ(decoded.type, entry.type);
+    FB_ASSERT_EQ(decoded.meta, entry.meta);
+}
