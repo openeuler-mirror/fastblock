@@ -236,6 +236,64 @@ test_runner::summary test_runner::run_matching(const std::string& pattern) {
     return s;
 }
 
+test_runner::summary test_runner::run_by_tag(test_tag tag) {
+    summary s;
+    _results.clear();
+
+    SPDK_NOTICELOG("Running tests with tag: %d\n", static_cast<int>(tag));
+
+    for (auto& suite : test_registry::instance().suites()) {
+        bool suite_matched = false;
+
+        for (auto& tc : suite->tests()) {
+            // Check if test has the specified tag
+            auto tagged = std::dynamic_pointer_cast<tagged_test_case>(tc);
+            if (tagged && tagged->tag() == tag) {
+                suite_matched = true;
+
+                if (suite_matched) {
+                    suite->run_setup();
+                }
+
+                test_context ctx(*tc);
+                auto result = tc->execute(ctx);
+                _results.push_back(result);
+
+                s.total++;
+                s.total_duration += result.duration;
+
+                switch (result.status) {
+                    case test_status::PASSED:
+                        s.passed++;
+                        break;
+                    case test_status::FAILED:
+                        s.failed++;
+                        if (tc->severity() == test_severity::CRITICAL) {
+                            suite->run_teardown();
+                            return s;
+                        }
+                        break;
+                    case test_status::SKIPPED:
+                        s.skipped++;
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+
+        if (suite_matched) {
+            suite->run_teardown();
+        }
+    }
+
+    if (s.total == 0) {
+        SPDK_NOTICELOG("No tests found with tag %d\n", static_cast<int>(tag));
+    }
+
+    return s;
+}
+
 void test_runner::print_results() const {
     std::cout << "\n========================================\n";
     std::cout << "Test Results Summary\n";

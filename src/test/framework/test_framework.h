@@ -336,6 +336,11 @@ public:
     summary run_matching(const std::string& pattern);
 
     /**
+     * @brief Run tests with specific tag
+     */
+    summary run_by_tag(test_tag tag);
+
+    /**
      * @brief Print test results
      */
     void print_results() const;
