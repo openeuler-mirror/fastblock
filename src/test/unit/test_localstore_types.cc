@@ -19359,3 +19359,354 @@ FB_TEST(xattr_shared_names_prefix, name_at_index_3_for_named_types) {
     FB_ASSERT_TRUE(strcmp(object_snap_xattr::xattr_names[3], "name") == 0);
     FB_ASSERT_TRUE(strcmp(object_recover_xattr::xattr_names[3], "name") == 0);
 }
+
+// ============================================================================
+// Test Suite: buffer_list_splice_operations (Buffer List Splice Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_splice_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_splice_operations) {
+    // Setup code here
+}
+
+// Test splice transfer from one buffer_list to another via lvalue reference
+FB_TEST(buffer_list_splice_operations, splice_lvalue_transfer) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl1, bl2;
+    bl1.append_buffer(sbuf1);
+    bl2.append_buffer(sbuf2);
+
+    // Splice bl2 into bl1 via lvalue reference
+    bl1.append_buffer(bl2);
+
+    FB_ASSERT_EQ(bl1.bytes(), 300);
+    FB_ASSERT_EQ(bl2.bytes(), 0);    // bl2 is now empty after splice
+    FB_ASSERT_TRUE(bl2.empty());
+}
+
+// Test splice transfer via rvalue reference
+FB_TEST(buffer_list_splice_operations, splice_rvalue_transfer) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl1, bl2;
+    bl1.append_buffer(sbuf1);
+    bl2.append_buffer(sbuf2);
+    bl2.append_buffer(sbuf3);
+
+    bl1.append_buffer(std::move(bl2));
+
+    FB_ASSERT_EQ(bl1.bytes(), 600);
+    FB_ASSERT_EQ(bl2.bytes(), 0);
+}
+
+// Test sequential splice operations
+FB_TEST(buffer_list_splice_operations, sequential_splice) {
+    char buffers[5][100];
+    buffer_list bl_main;
+
+    for (int i = 0; i < 5; i++) {
+        buffer_list bl_tmp;
+        spdk_buffer sbuf(buffers[i], 100);
+        bl_tmp.append_buffer(sbuf);
+        bl_main.append_buffer(std::move(bl_tmp));
+    }
+
+    FB_ASSERT_EQ(bl_main.bytes(), 500);
+
+    // Verify iteration yields 5 buffers
+    int count = 0;
+    for (auto& buf : bl_main) {
+        count++;
+    }
+    FB_ASSERT_EQ(count, 5);
+}
+
+// Test pop_front_list creates correct sublist
+FB_TEST(buffer_list_splice_operations, pop_front_list_basic) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    buffer_list front_list = bl.pop_front_list(2);
+
+    FB_ASSERT_EQ(front_list.bytes(), 300);  // 100 + 200
+    FB_ASSERT_EQ(bl.bytes(), 300);          // Remaining 300
+}
+
+// Test pop_front_list with count matching total
+FB_TEST(buffer_list_splice_operations, pop_front_list_all) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    buffer_list all_list = bl.pop_front_list(2);
+
+    FB_ASSERT_EQ(all_list.bytes(), 300);
+    FB_ASSERT_EQ(bl.bytes(), 0);
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+// ============================================================================
+// Test Suite: serialization_varint_patterns (Serialization Varint Patterns Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization_varint_patterns) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization_varint_patterns) {
+    // Setup code here
+}
+
+// Test encode_fixed64 for small values that fit in fewer bytes
+FB_TEST(serialization_varint_patterns, encode_small_uint64) {
+    char buffer[16];
+    spdk_buffer sbuf(buffer, 16);
+
+    uint64_t small_vals[] = {0, 1, 127, 128, 16383, 16384};
+
+    for (auto v : small_vals) {
+        sbuf.reset();
+        encode_fixed64(sbuf.get_append(), v);
+        FB_ASSERT_EQ(sbuf.used(), 0);  // encode_fixed64 doesn't advance used
+
+        sbuf.inc(8);
+        uint64_t decoded = decode_fixed64(buffer);
+        FB_ASSERT_EQ(decoded, v);
+    }
+}
+
+// Test encode_fixed64 for large values
+FB_TEST(serialization_varint_patterns, encode_large_uint64) {
+    char buffer[16];
+    spdk_buffer sbuf(buffer, 16);
+
+    uint64_t large_vals[] = {
+        UINT32_MAX, UINT64_MAX, 0xDEADBEEFCAFEBABEULL
+    };
+
+    for (auto v : large_vals) {
+        sbuf.reset();
+        encode_fixed64(sbuf.get_append(), v);
+        sbuf.inc(8);
+
+        uint64_t decoded = decode_fixed64(buffer);
+        FB_ASSERT_EQ(decoded, v);
+    }
+}
+
+// Test encode_fixed32/decode_fixed32 roundtrip
+FB_TEST(serialization_varint_patterns, fixed32_roundtrip) {
+    char buffer[8];
+    spdk_buffer sbuf(buffer, 8);
+
+    uint32_t vals[] = {0, 127, 255, 256, 65535, 65536, UINT32_MAX};
+
+    for (auto v : vals) {
+        sbuf.reset();
+        encode_fixed32(sbuf.get_append(), v);
+        sbuf.inc(4);
+
+        uint32_t decoded = decode_fixed32(buffer);
+        FB_ASSERT_EQ(decoded, v);
+    }
+}
+
+// Test that encode_fixed64 produces consistent byte pattern
+FB_TEST(serialization_varint_patterns, encode_consistency) {
+    char buffer1[8], buffer2[8];
+
+    uint64_t val = 0x123456789ABCDEF0ULL;
+
+    encode_fixed64(buffer1, val);
+    encode_fixed64(buffer2, val);
+
+    // Same input should produce identical output
+    FB_ASSERT_TRUE(memcmp(buffer1, buffer2, 8) == 0);
+}
+
+// ============================================================================
+// Test Suite: iovec_structure_validation (Iovec Structure Validation Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(iovec_structure_validation) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(iovec_structure_validation) {
+    // Setup code here
+}
+
+// Verify iovec structure has expected field types and sizes
+FB_TEST(iovec_structure_validation, iovec_field_types) {
+    struct iovec iov;
+    iov.iov_base = nullptr;
+    iov.iov_len = 0;
+
+    FB_ASSERT_TRUE(iov.iov_base == nullptr);
+    FB_ASSERT_EQ(iov.iov_len, 0);
+
+    FB_ASSERT_EQ(sizeof(iov.iov_base), sizeof(void*));
+    FB_ASSERT_EQ(sizeof(iov.iov_len), sizeof(size_t));
+}
+
+// Verify iovec can hold valid memory pointers
+FB_TEST(iovec_structure_validation, iovec_pointer_assignment) {
+    char buffer[1024];
+    struct iovec iov;
+    iov.iov_base = buffer;
+    iov.iov_len = 1024;
+
+    FB_ASSERT_EQ(iov.iov_base, buffer);
+    FB_ASSERT_EQ(iov.iov_len, 1024);
+}
+
+// Verify iovec pointer arithmetic works correctly
+FB_TEST(iovec_structure_validation, iovec_pointer_math) {
+    char buffer[4096];
+    struct iovec iov;
+    iov.iov_base = buffer + 512;  // Offset into buffer
+    iov.iov_len = 1024;
+
+    FB_ASSERT_TRUE(static_cast<char*>(iov.iov_base) == buffer + 512);
+}
+
+// Verify iovec can represent partial buffer views
+FB_TEST(iovec_structure_validation, iovec_partial_view) {
+    char buffer[4096];
+    struct iovec iovs[4];
+
+    // Four partial views into same buffer
+    iovs[0].iov_base = buffer;
+    iovs[0].iov_len = 1024;
+
+    iovs[1].iov_base = buffer + 1024;
+    iovs[1].iov_len = 512;
+
+    iovs[2].iov_base = buffer + 1536;
+    iovs[2].iov_len = 2048;
+
+    iovs[3].iov_base = buffer + 3584;
+    iovs[3].iov_len = 512;
+
+    // Verify all views are within buffer bounds
+    size_t total = 0;
+    for (int i = 0; i < 4; i++) {
+        total += iovs[i].iov_len;
+        FB_ASSERT_TRUE(static_cast<char*>(iovs[i].iov_base) >= buffer);
+        FB_ASSERT_TRUE(static_cast<char*>(iovs[i].iov_base) + iovs[i].iov_len <= buffer + 4096);
+    }
+    FB_ASSERT_EQ(total, 4096);
+}
+
+// ============================================================================
+// Test Suite: spdk_buffer_edge_conditions (SPDK Buffer Edge Conditions Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_edge_conditions) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_edge_conditions) {
+    // Setup code here
+}
+
+// Test inc() with exact buffer size
+FB_TEST(spdk_buffer_edge_conditions, inc_exact_size) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    size_t inc_result = sbuf.inc(100);
+    FB_ASSERT_EQ(inc_result, 100);
+    FB_ASSERT_EQ(sbuf.used(), 100);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
+// Test inc() with overflow past buffer size
+FB_TEST(spdk_buffer_edge_conditions, inc_overflow) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    size_t inc_result = sbuf.inc(200);  // Request more than available
+    FB_ASSERT_EQ(inc_result, 100);      // Clamped to buffer size
+    FB_ASSERT_EQ(sbuf.used(), 100);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
+// Test set_used() with value larger than buffer
+FB_TEST(spdk_buffer_edge_conditions, set_used_overflow) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.set_used(200);
+    FB_ASSERT_EQ(sbuf.used(), 100);    // Clamped to size
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
+// Test append() when buffer is full
+FB_TEST(spdk_buffer_edge_conditions, append_to_full_buffer) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.inc(100);  // Fill buffer
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+
+    const char* data = "more data";
+    size_t written = sbuf.append(data, 9);
+    FB_ASSERT_EQ(written, 0);          // No space, write returns 0
+    FB_ASSERT_EQ(sbuf.used(), 100);    // used unchanged
+}
+
+// Test remain() calculation consistency
+FB_TEST(spdk_buffer_edge_conditions, remain_consistency) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    for (int i = 0; i <= 100; i++) {
+        sbuf.reset();
+        sbuf.set_used(i);
+        FB_ASSERT_EQ(sbuf.remain(), 100 - i);
+        FB_ASSERT_EQ(sbuf.size() - sbuf.used(), sbuf.remain());
+    }
+}
+
+// Test multiple inc() calls accumulate correctly
+FB_TEST(spdk_buffer_edge_conditions, incremental_inc) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.inc(25);
+    FB_ASSERT_EQ(sbuf.used(), 25);
+
+    sbuf.inc(25);
+    FB_ASSERT_EQ(sbuf.used(), 50);
+
+    sbuf.inc(25);
+    FB_ASSERT_EQ(sbuf.used(), 75);
+
+    sbuf.inc(25);
+    FB_ASSERT_EQ(sbuf.used(), 100);
+
+    // Additional inc on full buffer returns 0
+    sbuf.inc(25);
+    FB_ASSERT_EQ(sbuf.used(), 100);
+}
