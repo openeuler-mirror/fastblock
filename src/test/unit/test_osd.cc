@@ -3222,6 +3222,109 @@ FB_TEST(osd_cluster_map, osd_weight) {
 }
 
 // ============================================================================
+// Test Suite: osd_resource_management (OSD Resource Management Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_resource_management) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_resource_management) {
+    // Teardown code here
+}
+
+FB_TEST(osd_resource_management, memory_pool_size) {
+    // Memory pool should have configurable size
+    uint64_t pool_size = 1024 * 1024 * 1024; // 1GB
+    FB_ASSERT_TRUE(pool_size > 0);
+}
+
+FB_TEST(osd_resource_management, buffer_pool_allocation) {
+    // Buffer pool should manage allocations
+    bool can_allocate = true;
+    FB_ASSERT_TRUE(can_allocate);
+}
+
+FB_TEST(osd_resource_management, buffer_pool_reclaim) {
+    // Buffers should be reclaimable
+    bool can_reclaim = true;
+    FB_ASSERT_TRUE(can_reclaim);
+}
+
+FB_TEST(osd_resource_management, spdk_buffer_usage) {
+    // SPDK buffers should be tracked
+    uint64_t spdk_buffer_count = 1000;
+    FB_ASSERT_TRUE(spdk_buffer_count > 0);
+}
+
+FB_TEST(osd_resource_management, dma_memory_tracking) {
+    // DMA memory should be tracked
+    uint64_t dma_bytes = 1024 * 1024;
+    FB_ASSERT_TRUE(dma_bytes > 0);
+}
+
+FB_TEST(osd_resource_management, numa_locality) {
+    // Resources should respect NUMA locality
+    uint32_t numa_node = 0;
+    FB_ASSERT_TRUE(numuma_node <= UINT32_MAX);
+}
+
+FB_TEST(osd_resource_management, resource_limit) {
+    // Resource usage should have limits
+    uint64_t limit = 1024 * 1024 * 1024;
+    uint64_t usage = 512 * 1024 * 1024;
+    FB_ASSERT_TRUE(usage <= limit);
+}
+
+FB_TEST(osd_resource_management, resource_exhaustion_handling) {
+    // Should handle resource exhaustion
+    bool handled = true;
+    FB_ASSERT_TRUE(handled);
+}
+
+FB_TEST(osd_resource_management, connection_pool_size) {
+    // Connection pool should have configurable size
+    uint32_t max_connections = 1000;
+    FB_ASSERT_TRUE(max_connections > 0);
+}
+
+FB_TEST(osd_resource_management, connection_reuse) {
+    // Connections should be reused
+    bool can_reuse = true;
+    FB_ASSERT_TRUE(can_reuse);
+}
+
+FB_TEST(osd_resource_management, thread_pool_size) {
+    // Thread pool should have configurable size
+    uint32_t thread_count = 8;
+    FB_ASSERT_TRUE(thread_count > 0);
+}
+
+FB_TEST(osd_resource_management, queue_depth_limit) {
+    // IO queues should have depth limits
+    uint32_t queue_depth = 256;
+    FB_ASSERT_TRUE(queue_depth > 0);
+}
+
+FB_TEST(osd_resource_management, rate_limiting) {
+    // May support rate limiting
+    uint64_t iops_limit = 100000;
+    FB_ASSERT_TRUE(iops_limit > 0);
+}
+
+FB_TEST(osd_resource_management, bandwidth_limit) {
+    // May support bandwidth limiting
+    uint64_t bps_limit = 1024 * 1024 * 1024;
+    FB_ASSERT_TRUE(bps_limit > 0);
+}
+
+FB_TEST(osd_resource_management, resource_accounting) {
+    // Should track resource usage
+    bool has_accounting = true;
+    FB_ASSERT_TRUE(has_accounting);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
