@@ -2030,6 +2030,52 @@ FB_TEST(varint_encoding_patterns, continuation_bits) {
 }
 
 // ============================================================================
+// Test Suite: fixed_encoding_endian (Fixed Encoding Endianness Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(fixed_encoding_endian) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(fixed_encoding_endian) {
+    // Teardown code here
+}
+
+FB_TEST(fixed_encoding_endian, little_endian_32) {
+    char buffer[4];
+    uint32_t val = 0x12345678;
+    encode_fixed32(buffer, val);
+
+    // Little-endian: least significant byte first
+    FB_ASSERT_EQ(static_cast<uint8_t>(buffer[0]), 0x78);
+    FB_ASSERT_EQ(static_cast<uint8_t>(buffer[1]), 0x56);
+    FB_ASSERT_EQ(static_cast<uint8_t>(buffer[2]), 0x34);
+    FB_ASSERT_EQ(static_cast<uint8_t>(buffer[3]), 0x12);
+}
+
+FB_TEST(fixed_encoding_endian, little_endian_64) {
+    char buffer[8];
+    uint64_t val = 0x123456789ABCDEF0ULL;
+    encode_fixed64(buffer, val);
+
+    // Little-endian: least significant byte first
+    FB_ASSERT_EQ(static_cast<uint8_t>(buffer[0]), 0xF0);
+    FB_ASSERT_EQ(static_cast<uint8_t>(buffer[1]), 0xDE);
+    FB_ASSERT_EQ(static_cast<uint8_t>(buffer[2]), 0xBC);
+    FB_ASSERT_EQ(static_cast<uint8_t>(buffer[3]), 0x9A);
+}
+
+FB_TEST(fixed_encoding_endian, roundtrip_endian) {
+    char buffer[4];
+    uint32_t original = 0xDEADBEEF;
+    encode_fixed32(buffer, original);
+    uint32_t decoded = decode_fixed32(buffer);
+
+    // Roundtrip should preserve value regardless of endianness
+    FB_ASSERT_EQ(decoded, original);
+}
+
+// ============================================================================
 // Test Suite: final_validation (Final Validation Tests)
 // ============================================================================
 
