@@ -20890,3 +20890,56 @@ FB_TEST(serialization_string_edge_cases, boundary_size_string) {
     GetString(sbuf, decoded);
     FB_ASSERT_EQ(decoded, original);
 }
+
+// ============================================================================
+// Test Suite: buffer_list_pop_front_operations (Buffer List Pop Front Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_pop_front_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_pop_front_operations) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_list_pop_front_operations, pop_front_single) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    spdk_buffer popped = bl.pop_front();
+    FB_ASSERT_EQ(popped.size(), 100);
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_pop_front_operations, pop_front_multiple) {
+    char b1[100], b2[200], b3[300];
+    spdk_buffer s1(b1, 100), s2(b2, 200), s3(b3, 300);
+    buffer_list bl;
+    bl.append_buffer(s1);
+    bl.append_buffer(s2);
+    bl.append_buffer(s3);
+
+    spdk_buffer p1 = bl.pop_front();
+    FB_ASSERT_EQ(p1.size(), 100);
+    FB_ASSERT_EQ(bl.bytes(), 500);
+
+    spdk_buffer p2 = bl.pop_front();
+    FB_ASSERT_EQ(p2.size(), 200);
+    FB_ASSERT_EQ(bl.bytes(), 300);
+}
+
+FB_TEST(buffer_list_pop_front_operations, pop_front_list) {
+    char b1[100], b2[200], b3[300];
+    spdk_buffer s1(b1, 100), s2(b2, 200), s3(b3, 300);
+    buffer_list bl;
+    bl.append_buffer(s1);
+    bl.append_buffer(s2);
+    bl.append_buffer(s3);
+
+    buffer_list front_list = bl.pop_front_list(2);
+    FB_ASSERT_EQ(front_list.bytes(), 300);
+    FB_ASSERT_EQ(bl.bytes(), 300);
+}
