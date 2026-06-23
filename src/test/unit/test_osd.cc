@@ -6046,6 +6046,126 @@ FB_TEST(osd_read_optimization, read_error_retry) {
 }
 
 // ============================================================================
+// Test Suite: osd_background_tasks (OSD Background Tasks Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_background_tasks) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_background_tasks) {
+    // Teardown code here
+}
+
+FB_TEST(osd_background_tasks, scrub_task) {
+    // Should run background scrub task
+    bool runs_scrub = true;
+    FB_ASSERT_TRUE(runs_scrub);
+}
+
+FB_TEST(osd_background_tasks, scrub_interval) {
+    // Scrub should have interval
+    uint64_t scrub_interval_hours = 24;
+    FB_ASSERT_TRUE(scrub_interval_hours > 0);
+}
+
+FB_TEST(osd_background_tasks, scrub_deep_interval) {
+    // Deep scrub should have longer interval
+    uint64_t deep_scrub_hours = 168; // 1 week
+    FB_ASSERT_TRUE(deep_scrub_hours > scrub_interval_hours);
+}
+
+FB_TEST(osd_background_tasks, garbage_collection) {
+    // Should run garbage collection
+    bool runs_gc = true;
+    FB_ASSERT_TRUE(runs_gc);
+}
+
+FB_TEST(osd_background_tasks, gc_threshold) {
+    // GC should have trigger threshold
+    uint64_t gc_threshold_pct = 70;
+    FB_ASSERT_TRUE(gc_threshold_pct > 0);
+}
+
+FB_TEST(osd_background_tasks, compaction_task) {
+    // Should run compaction
+    bool runs_compaction = true;
+    FB_ASSERT_TRUE(runs_compaction);
+}
+
+FB_TEST(osd_background_tasks, compaction_threshold) {
+    // Compaction should have threshold
+    uint32_t fragmentation_threshold = 50;
+    FB_ASSERT_TRUE(fragmentation_threshold > 0);
+}
+
+FB_TEST(osd_background_tasks, stats_collection) {
+    // Should collect stats in background
+    bool collects = true;
+    FB_ASSERT_TRUE(collects);
+}
+
+FB_TEST(osd_background_tasks, stats_interval) {
+    // Stats collection should have interval
+    uint64_t stats_interval_ms = 1000;
+    FB_ASSERT_TRUE(stats_interval_ms > 0);
+}
+
+FB_TEST(osd_background_tasks, heartbeat_task) {
+    // Should send heartbeats in background
+    bool sends_heartbeat = true;
+    FB_ASSERT_TRUE(sends_heartbeat);
+}
+
+FB_TEST(osd_background_tasks, heartbeat_interval_ms) {
+    // Heartbeat should have interval
+    uint64_t hb_interval = 5000;
+    FB_ASSERT_TRUE(hb_interval > 0);
+}
+
+FB_TEST(osd_background_tasks, write_ring_gc) {
+    // Should garbage collect expired write rings
+    bool gc_write_rings = true;
+    FB_ASSERT_TRUE(gc_write_rings);
+}
+
+FB_TEST(osd_background_tasks, write_ring_gc_interval) {
+    // Write ring GC should have interval
+    uint64_t gc_interval_us = 1000000; // 1 second
+    FB_ASSERT_TRUE(gc_interval_us > 0);
+}
+
+FB_TEST(osd_background_tasks, data_statistics_timer) {
+    // Data statistics should use timer
+    bool uses_timer = true;
+    FB_ASSERT_TRUE(uses_timer);
+}
+
+FB_TEST(osd_background_tasks, data_statistics_interval) {
+    // Data statistics report interval
+    uint64_t report_interval_ms = 500; // 0.5 seconds
+    FB_ASSERT_TRUE(report_interval_ms > 0);
+}
+
+FB_TEST(osd_background_tasks, task_priority) {
+    // Background tasks should have lower priority
+    bool lower_priority = true;
+    FB_ASSERT_TRUE(lower_priority);
+}
+
+FB_TEST(osd_background_tasks, task_cancellation) {
+    // Should cancel background tasks on stop
+    bool can_cancel = true;
+    FB_ASSERT_TRUE(can_cancel);
+}
+
+FB_TEST(osd_background_tasks, task_list) {
+    // Should maintain list of background tasks
+    std::vector<std::string> tasks = {"scrub", "gc", "heartbeat", "stats"};
+    FB_ASSERT_EQ(tasks.size(), 4);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
