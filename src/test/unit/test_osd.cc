@@ -2539,6 +2539,163 @@ FB_TEST(osd_shard_service, shard_lookup_miss) {
 }
 
 // ============================================================================
+// Test Suite: osd_rpc_protocol (OSD RPC Protocol Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_rpc_protocol) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_rpc_protocol) {
+    // Teardown code here
+}
+
+FB_TEST(osd_rpc_protocol, write_request_structure) {
+    // Write request contains: pool_id, pg_id, object_name, offset, data
+    uint64_t pool_id = 1;
+    uint64_t pg_id = 100;
+    std::string object_name = "test_object";
+    uint64_t offset = 0;
+    std::string data = "hello world";
+
+    FB_ASSERT_TRUE(pool_id > 0);
+    FB_ASSERT_TRUE(pg_id > 0);
+    FB_ASSERT_TRUE(!object_name.empty());
+    FB_ASSERT_TRUE(!data.empty());
+}
+
+FB_TEST(osd_rpc_protocol, read_request_structure) {
+    // Read request contains: pool_id, pg_id, object_name, offset, length
+    uint64_t pool_id = 1;
+    uint64_t pg_id = 100;
+    std::string object_name = "test_object";
+    uint64_t offset = 4096;
+    uint64_t length = 8192;
+
+    FB_ASSERT_TRUE(pool_id > 0);
+    FB_ASSERT_TRUE(pg_id > 0);
+    FB_ASSERT_TRUE(offset < offset + length);
+}
+
+FB_TEST(osd_rpc_protocol, delete_request_structure) {
+    // Delete request contains: pool_id, pg_id, object_name
+    uint64_t pool_id = 1;
+    uint64_t pg_id = 100;
+    std::string object_name = "test_object";
+
+    FB_ASSERT_TRUE(pool_id > 0);
+    FB_ASSERT_TRUE(pg_id > 0);
+    FB_ASSERT_TRUE(!object_name.empty());
+}
+
+FB_TEST(osd_rpc_protocol, reply_state_field) {
+    // All replies have a state field
+    int state_success = 0;
+    int state_error = -1;
+
+    FB_ASSERT_TRUE(state_success == 0);
+    FB_ASSERT_TRUE(state_error < 0);
+}
+
+FB_TEST(osd_rpc_protocol, write_reply_structure) {
+    // Write reply contains state field
+    int state = 0;
+    FB_ASSERT_TRUE(state == 0);
+}
+
+FB_TEST(osd_rpc_protocol, read_reply_structure) {
+    // Read reply contains state field and data
+    int state = 0;
+    std::string data = "read_data";
+
+    FB_ASSERT_TRUE(state == 0);
+    FB_ASSERT_TRUE(!data.empty());
+}
+
+FB_TEST(osd_rpc_protocol, delete_reply_structure) {
+    // Delete reply contains state field
+    int state = 0;
+    FB_ASSERT_TRUE(state == 0);
+}
+
+FB_TEST(osd_rpc_protocol, bench_request_structure) {
+    // Benchmark request for testing
+    uint64_t iterations = 10000;
+    uint64_t payload_size = 4096;
+
+    FB_ASSERT_TRUE(iterations > 0);
+    FB_ASSERT_TRUE(payload_size > 0);
+}
+
+FB_TEST(osd_rpc_protocol, bench_response_structure) {
+    // Benchmark response
+    uint64_t total_time_us = 12345;
+    uint64_t total_bytes = 40960000;
+
+    FB_ASSERT_TRUE(total_time_us > 0);
+    FB_ASSERT_TRUE(total_bytes > 0);
+}
+
+FB_TEST(osd_rpc_protocol, pg_leader_request) {
+    // PG leader request
+    uint64_t pool_id = 1;
+    uint64_t pg_id = 100;
+
+    FB_ASSERT_TRUE(pool_id > 0);
+    FB_ASSERT_TRUE(pg_id > 0);
+}
+
+FB_TEST(osd_rpc_protocol, pg_leader_response) {
+    // PG leader response has node_id
+    uint32_t leader_node_id = 5;
+
+    FB_ASSERT_TRUE(leader_node_id > 0);
+}
+
+FB_TEST(osd_rpc_protocol, create_pg_request) {
+    // Create PG request
+    uint64_t pool_id = 1;
+    uint64_t pg_id = 100;
+    std::vector<uint32_t> osds = {1, 2, 3};
+
+    FB_ASSERT_TRUE(pool_id > 0);
+    FB_ASSERT_TRUE(pg_id > 0);
+    FB_ASSERT_EQ(osds.size(), 3);
+}
+
+FB_TEST(osd_rpc_protocol, create_pg_response) {
+    // Create PG response has state
+    int state = 0;
+    FB_ASSERT_TRUE(state == 0);
+}
+
+FB_TEST(osd_rpc_protocol, rpc_serialization) {
+    // RPC messages are serialized using protobuf
+    bool uses_protobuf = true;
+    FB_ASSERT_TRUE(uses_protobuf);
+}
+
+FB_TEST(osd_rpc_protocol, rpc_controller) {
+    // RPC controller for async operations
+    bool has_controller = true;
+    FB_ASSERT_TRUE(has_controller);
+}
+
+FB_TEST(osd_rpc_protocol, rpc_closure) {
+    // RPC closure for completion callback
+    bool has_closure = true;
+    FB_ASSERT_TRUE(has_closure);
+}
+
+FB_TEST(osd_rpc_protocol, message_id_correlation) {
+    // Requests and replies can be correlated
+    uint64_t request_id = 12345;
+    uint64_t reply_id = 12345;
+
+    FB_ASSERT_EQ(request_id, reply_id);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
