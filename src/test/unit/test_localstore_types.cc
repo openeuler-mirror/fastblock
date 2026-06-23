@@ -18808,3 +18808,121 @@ FB_TEST(final_integrity_check, constants_consistency) {
     FB_ASSERT_EQ(entry_header_size, 24);
     FB_ASSERT_EQ(entry_header_size, 3 * sizeof(uint64_t));
 }
+
+// ============================================================================
+// Test Suite: spdk_buffer_data_integrity (SPDK Buffer Data Integrity Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_data_integrity) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_data_integrity) {
+    // Setup code here
+}
+
+// Verify data written to spdk_buffer is correctly preserved
+FB_TEST(spdk_buffer_data_integrity, write_read_pattern) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    // Write a known pattern
+    const char* pattern = "ABCDEFGH";
+    size_t written = sbuf.append(pattern, 8);
+    FB_ASSERT_EQ(written, 8);
+
+    // Verify the pattern was stored
+    FB_ASSERT_EQ(std::memcmp(buffer, "ABCDEFGH", 8), 0);
+
+    // Write more data after first write
+    written = sbuf.append("IJKLMNOP", 8);
+    FB_ASSERT_EQ(written, 8);
+    FB_ASSERT_EQ(sbuf.used(), 16);
+
+    // Verify full pattern
+    FB_ASSERT_EQ(std::memcmp(buffer, "ABCDEFGHIJKLMNOP", 16), 0);
+}
+
+// Verify buffer reset preserves underlying memory but resets used counter
+FB_TEST(spdk_buffer_data_integrity, reset_preserves_memory) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    sbuf.append("TESTDATA", 8);
+    FB_ASSERT_EQ(sbuf.used(), 8);
+
+    // Reset - should clear used but not the memory
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.used(), 0);
+    FB_ASSERT_EQ(sbuf.remain(), 256);
+
+    // Memory still contains old data (not cleared)
+    FB_ASSERT_EQ(std::memcmp(buffer, "TESTDATA", 8), 0);
+}
+
+// Verify append with string type preserves content
+FB_TEST(spdk_buffer_data_integrity, string_append_preserves) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    std::string str1 = "Hello";
+    std::string str2 = " World";
+
+    sbuf.append(str1);
+    sbuf.append(str2);
+
+    // Verify concatenation in buffer
+    FB_ASSERT_EQ(std::memcmp(buffer, "Hello World", 11), 0);
+    FB_ASSERT_EQ(sbuf.used(), 11);
+}
+
+// Verify inc() doesn't modify existing data
+FB_TEST(spdk_buffer_data_integrity, inc_preserves_data) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    sbuf.append("DATA", 4);
+    FB_ASSERT_EQ(sbuf.used(), 4);
+
+    // Advance position without writing
+    sbuf.inc(10);
+    FB_ASSERT_EQ(sbuf.used(), 14);
+
+    // Original data still intact
+    FB_ASSERT_EQ(std::memcmp(buffer, "DATA", 4), 0);
+}
+
+// Verify buffer_list maintains correct byte count through complex operations
+FB_TEST(spdk_buffer_data_integrity, buffer_list_byte_count_integrity) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    FB_ASSERT_EQ(bl.bytes(), 100);
+
+    bl.append_buffer(sbuf2);
+    FB_ASSERT_EQ(bl.bytes(), 300);
+
+    bl.prepend_buffer(sbuf3);
+    FB_ASSERT_EQ(bl.bytes(), 600);
+
+    // Trim operations maintain correct count
+    bl.trim_front();
+    FB_ASSERT_EQ(bl.bytes(), 300);
+
+    bl.trim_back();
+    FB_ASSERT_EQ(bl.bytes(), 100);
+
+    // Pop front maintains count
+    spdk_buffer popped = bl.pop_front();
+    FB_ASSERT_EQ(popped.size(), 100);
+    FB_ASSERT_EQ(bl.bytes(), 0);
+    FB_ASSERT_TRUE(bl.empty());
+
+    // Clear on empty list is safe
+    bl.clear();
+    FB_ASSERT_EQ(bl.bytes(), 0);
+}
