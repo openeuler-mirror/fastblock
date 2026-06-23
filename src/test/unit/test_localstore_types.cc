@@ -9054,3 +9054,298 @@ FB_TEST(buffer_list_encoder_state, state_consistency) {
     encoder.put(42ULL);
     FB_ASSERT_EQ(encoder.bytes(), encoder.used() + encoder.remain());
 }
+
+// ============================================================================
+// Test Suite: type_string_all_cases (Type String All Cases Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(type_string_all_cases) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(type_string_all_cases) {
+    // Setup code here
+}
+
+FB_TEST(type_string_all_cases, log_type_string) {
+    FB_ASSERT_EQ(type_string(blob_type::log), "blob_type::log");
+}
+
+FB_TEST(type_string_all_cases, object_type_string) {
+    FB_ASSERT_EQ(type_string(blob_type::object), "blob_type::object");
+}
+
+FB_TEST(type_string_all_cases, object_snap_type_string) {
+    FB_ASSERT_EQ(type_string(blob_type::object_snap), "blob_type::object_snap");
+}
+
+FB_TEST(type_string_all_cases, object_recover_type_string) {
+    FB_ASSERT_EQ(type_string(blob_type::object_recover), "blob_type::object_recover");
+}
+
+FB_TEST(type_string_all_cases, kv_type_string) {
+    FB_ASSERT_EQ(type_string(blob_type::kv), "blob_type::kv");
+}
+
+FB_TEST(type_string_all_cases, kv_checkpoint_type_string) {
+    FB_ASSERT_EQ(type_string(blob_type::kv_checkpoint), "blob_type::kv_checkpoint");
+}
+
+FB_TEST(type_string_all_cases, kv_checkpoint_new_type_string) {
+    FB_ASSERT_EQ(type_string(blob_type::kv_checkpoint_new), "blob_type::kv_checkpoint_new");
+}
+
+FB_TEST(type_string_all_cases, super_blob_type_string) {
+    FB_ASSERT_EQ(type_string(blob_type::super_blob), "blob_type::super_blob");
+}
+
+FB_TEST(type_string_all_cases, free_type_string) {
+    FB_ASSERT_EQ(type_string(blob_type::free), "blob_type::free");
+}
+
+FB_TEST(type_string_all_cases, invalid_type_returns_unknown) {
+    blob_type invalid = static_cast<blob_type>(100);
+    FB_ASSERT_EQ(type_string(invalid), "blob_type::unknown");
+}
+
+FB_TEST(type_string_all_cases, operator_stream_output) {
+    std::ostringstream oss;
+    oss << blob_type::kv;
+    FB_ASSERT_TRUE(oss.str().find("blob_type::") == 0);
+}
+
+// ============================================================================
+// Test Suite: blob_type_all_comparisons (Blob Type All Comparisons Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(blob_type_all_comparisons) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(blob_type_all_comparisons) {
+    // Setup code here
+}
+
+FB_TEST(blob_type_all_comparisons, log_vs_object) {
+    FB_ASSERT_TRUE(blob_type::log != blob_type::object);
+    FB_ASSERT_TRUE(static_cast<uint32_t>(blob_type::log) < static_cast<uint32_t>(blob_type::object));
+}
+
+FB_TEST(blob_type_all_comparisons, object_vs_snap) {
+    FB_ASSERT_TRUE(blob_type::object != blob_type::object_snap);
+    FB_ASSERT_TRUE(static_cast<uint32_t>(blob_type::object) < static_cast<uint32_t>(blob_type::object_snap));
+}
+
+FB_TEST(blob_type_all_comparisons, snap_vs_recover) {
+    FB_ASSERT_TRUE(blob_type::object_snap != blob_type::object_recover);
+    FB_ASSERT_TRUE(static_cast<uint32_t>(blob_type::object_snap) < static_cast<uint32_t>(blob_type::object_recover));
+}
+
+FB_TEST(blob_type_all_comparisons, recover_vs_kv) {
+    FB_ASSERT_TRUE(blob_type::object_recover != blob_type::kv);
+    FB_ASSERT_TRUE(static_cast<uint32_t>(blob_type::object_recover) < static_cast<uint32_t>(blob_type::kv));
+}
+
+FB_TEST(blob_type_all_comparisons, kv_vs_checkpoint) {
+    FB_ASSERT_TRUE(blob_type::kv != blob_type::kv_checkpoint);
+    FB_ASSERT_TRUE(static_cast<uint32_t>(blob_type::kv) < static_cast<uint32_t>(blob_type::kv_checkpoint));
+}
+
+FB_TEST(blob_type_all_comparisons, checkpoint_vs_checkpoint_new) {
+    FB_ASSERT_TRUE(blob_type::kv_checkpoint != blob_type::kv_checkpoint_new);
+    FB_ASSERT_TRUE(static_cast<uint32_t>(blob_type::kv_checkpoint) < static_cast<uint32_t>(blob_type::kv_checkpoint_new));
+}
+
+FB_TEST(blob_type_all_comparisons, checkpoint_new_vs_super) {
+    FB_ASSERT_TRUE(blob_type::kv_checkpoint_new != blob_type::super_blob);
+    FB_ASSERT_TRUE(static_cast<uint32_t>(blob_type::kv_checkpoint_new) < static_cast<uint32_t>(blob_type::super_blob));
+}
+
+FB_TEST(blob_type_all_comparisons, super_vs_free) {
+    FB_ASSERT_TRUE(blob_type::super_blob != blob_type::free);
+    FB_ASSERT_TRUE(static_cast<uint32_t>(blob_type::super_blob) < static_cast<uint32_t>(blob_type::free));
+}
+
+// ============================================================================
+// Test Suite: serialization_string_special_chars (Serialization String Special Characters Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization_string_special_chars) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization_string_special_chars) {
+    // Setup code here
+}
+
+FB_TEST(serialization_string_special_chars, string_with_newline) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+    std::string str = "line1\nline2";
+    PutString(sbuf, str);
+    sbuf.reset();
+    std::string out;
+    GetString(sbuf, out);
+    FB_ASSERT_EQ(out, str);
+}
+
+FB_TEST(serialization_string_special_chars, string_with_tab) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+    std::string str = "col1\tcol2";
+    PutString(sbuf, str);
+    sbuf.reset();
+    std::string out;
+    GetString(sbuf, out);
+    FB_ASSERT_EQ(out, str);
+}
+
+FB_TEST(serialization_string_special_chars, string_with_null_embedded) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+    std::string str(10, '\0');
+    str += "end";
+    PutString(sbuf, str);
+    sbuf.reset();
+    std::string out;
+    GetString(sbuf, out);
+    FB_ASSERT_EQ(out.size(), str.size());
+}
+
+FB_TEST(serialization_string_special_chars, string_with_unicode) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+    std::string str = "测试数据";
+    PutString(sbuf, str);
+    sbuf.reset();
+    std::string out;
+    GetString(sbuf, out);
+    FB_ASSERT_EQ(out, str);
+}
+
+FB_TEST(serialization_string_special_chars, string_with_spaces) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+    std::string str = "   leading trailing   ";
+    PutString(sbuf, str);
+    sbuf.reset();
+    std::string out;
+    GetString(sbuf, out);
+    FB_ASSERT_EQ(out, str);
+}
+
+FB_TEST(serialization_string_special_chars, string_with_special_chars) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+    std::string str = "!@#$%^&*()_+-=[]{}|;':\",./<>?";
+    PutString(sbuf, str);
+    sbuf.reset();
+    std::string out;
+    GetString(sbuf, out);
+    FB_ASSERT_EQ(out, str);
+}
+
+// ============================================================================
+// Test Suite: encoding_multiple_sequence (Encoding Multiple Sequence Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(encoding_multiple_sequence) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(encoding_multiple_sequence) {
+    // Setup code here
+}
+
+FB_TEST(encoding_multiple_sequence, sequence_of_10_uint32) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    for (uint32_t i = 0; i < 10; i++) {
+        PutFixed32(sbuf, i * 1000);
+    }
+
+    sbuf.reset();
+
+    for (uint32_t i = 0; i < 10; i++) {
+        uint32_t val;
+        GetFixed32(sbuf, val);
+        FB_ASSERT_EQ(val, i * 1000);
+    }
+}
+
+FB_TEST(encoding_multiple_sequence, sequence_of_10_uint64) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    for (uint64_t i = 0; i < 10; i++) {
+        PutFixed64(sbuf, i * 10000);
+    }
+
+    sbuf.reset();
+
+    for (uint64_t i = 0; i < 10; i++) {
+        uint64_t val;
+        GetFixed64(sbuf, val);
+        FB_ASSERT_EQ(val, i * 10000);
+    }
+}
+
+FB_TEST(encoding_multiple_sequence, sequence_of_10_strings) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+
+    for (int i = 0; i < 10; i++) {
+        PutString(sbuf, "string_" + std::to_string(i));
+    }
+
+    sbuf.reset();
+
+    for (int i = 0; i < 10; i++) {
+        std::string val;
+        GetString(sbuf, val);
+        FB_ASSERT_EQ(val, "string_" + std::to_string(i));
+    }
+}
+
+FB_TEST(encoding_multiple_sequence, interleaved_types) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    for (int i = 0; i < 5; i++) {
+        PutFixed32(sbuf, i);
+        PutFixed64(sbuf, i * 100);
+    }
+
+    sbuf.reset();
+
+    for (int i = 0; i < 5; i++) {
+        uint32_t v32;
+        uint64_t v64;
+        GetFixed32(sbuf, v32);
+        GetFixed64(sbuf, v64);
+        FB_ASSERT_EQ(v32, static_cast<uint32_t>(i));
+        FB_ASSERT_EQ(v64, static_cast<uint64_t>(i * 100));
+    }
+}
+
+FB_TEST(encoding_multiple_sequence, alternating_strings_and_numbers) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    for (int i = 0; i < 5; i++) {
+        PutFixed64(sbuf, i);
+        PutString(sbuf, std::to_string(i));
+    }
+
+    sbuf.reset();
+
+    for (int i = 0; i < 5; i++) {
+        uint64_t num;
+        std::string str;
+        GetFixed64(sbuf, num);
+        GetString(sbuf, str);
+        FB_ASSERT_EQ(num, static_cast<uint64_t>(i));
+        FB_ASSERT_EQ(str, std::to_string(i));
+    }
+}
