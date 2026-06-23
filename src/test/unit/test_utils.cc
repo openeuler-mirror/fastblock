@@ -2497,6 +2497,48 @@ FB_TEST(units_arithmetic_advanced, percentage_calculation) {
 }
 
 // ============================================================================
+// Test Suite: md5_inputs (Various MD5 Input Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(md5_inputs) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(md5_inputs) {
+    // Teardown code here
+}
+
+FB_TEST(md5_inputs, numeric_strings) {
+    std::string data = "12345";
+    std::string hash = utils::md5(const_cast<char*>(data.c_str()), data.size());
+    FB_ASSERT_EQ(hash.length(), 16);
+}
+
+FB_TEST(md5_inputs, special_characters) {
+    std::string data = "!@#$%^&*()";
+    std::string hash = utils::md5(const_cast<char*>(data.c_str()), data.size());
+    FB_ASSERT_EQ(hash.length(), 16);
+}
+
+FB_TEST(md5_inputs, whitespace) {
+    std::string data = "   ";
+    std::string hash = utils::md5(const_cast<char*>(data.c_str()), data.size());
+    FB_ASSERT_EQ(hash.length(), 16);
+}
+
+FB_TEST(md5_inputs, newline_characters) {
+    std::string data = "line1\nline2\nline3";
+    std::string hash = utils::md5(const_cast<char*>(data.c_str()), data.size());
+    FB_ASSERT_EQ(hash.length(), 16);
+}
+
+FB_TEST(md5_inputs, unicode_like_bytes) {
+    unsigned char data[] = {0xE4, 0xB8, 0xAD, 0xE6, 0x96, 0x87};  // UTF-8 "中文"
+    std::string hash = utils::md5(reinterpret_cast<char*>(data), 6);
+    FB_ASSERT_EQ(hash.length(), 16);
+}
+
+// ============================================================================
 // Test Suite: final_validation (Final Validation Tests)
 // ============================================================================
 
