@@ -958,4 +958,149 @@ FB_TEST(log_entry_serialization, long_meta) {
     FB_ASSERT_TRUE(EncodeLogHeader(sbuf, entry));
 }
 
+// ============================================================================
+// Test Suite: log_xattr_structure (Log Xattr Structure Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_xattr_structure) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_xattr_structure) {
+    // Teardown code here
+}
+
+FB_TEST(log_xattr_structure, xattr_names_count) {
+    FB_ASSERT_EQ(log_xattr::xattr_count, 3);
+}
+
+FB_TEST(log_xattr_structure, xattr_names_type) {
+    FB_ASSERT_EQ(strcmp(log_xattr::xattr_names[0], "type"), 0);
+}
+
+FB_TEST(log_xattr_structure, xattr_names_shard) {
+    FB_ASSERT_EQ(strcmp(log_xattr::xattr_names[1], "shard"), 0);
+}
+
+FB_TEST(log_xattr_structure, xattr_names_pg) {
+    FB_ASSERT_EQ(strcmp(log_xattr::xattr_names[2], "pg"), 0);
+}
+
+FB_TEST(log_xattr_structure, type_value) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(log_xattr::type), 0);
+}
+
+FB_TEST(log_xattr_structure, default_shard_id) {
+    log_xattr xattr;
+    FB_ASSERT_EQ(xattr.shard_id, 0u);
+}
+
+FB_TEST(log_xattr_structure, shard_id_assignment) {
+    log_xattr xattr;
+    xattr.shard_id = 42;
+    FB_ASSERT_EQ(xattr.shard_id, 42u);
+}
+
+FB_TEST(log_xattr_structure, pg_default_empty) {
+    log_xattr xattr;
+    FB_ASSERT_TRUE(xattr.pg.empty());
+}
+
+FB_TEST(log_xattr_structure, pg_string_assignment) {
+    log_xattr xattr;
+    xattr.pg = "pool1.pg42";
+    FB_ASSERT_EQ(xattr.pg, "pool1.pg42");
+}
+
+FB_TEST(log_xattr_structure, pg_string_size) {
+    log_xattr xattr;
+    xattr.pg = "test_pg";
+    FB_ASSERT_EQ(xattr.pg.size(), 7);
+}
+
+// ============================================================================
+// Test Suite: object_xattr_structure (Object Xattr Structure Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(object_xattr_structure) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(object_xattr_structure) {
+    // Teardown code here
+}
+
+FB_TEST(object_xattr_structure, xattr_names_count) {
+    FB_ASSERT_EQ(object_xattr::xattr_count, 4);
+}
+
+FB_TEST(object_xattr_structure, xattr_names_type) {
+    FB_ASSERT_EQ(strcmp(object_xattr::xattr_names[0], "type"), 0);
+}
+
+FB_TEST(object_xattr_structure, xattr_names_shard) {
+    FB_ASSERT_EQ(strcmp(object_xattr::xattr_names[1], "shard"), 0);
+}
+
+FB_TEST(object_xattr_structure, xattr_names_pg) {
+    FB_ASSERT_EQ(strcmp(object_xattr::xattr_names[2], "pg"), 0);
+}
+
+FB_TEST(object_xattr_structure, xattr_names_name) {
+    FB_ASSERT_EQ(strcmp(object_xattr::xattr_names[3], "name"), 0);
+}
+
+FB_TEST(object_xattr_structure, type_value) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(object_xattr::type), 1);
+}
+
+FB_TEST(object_xattr_structure, default_shard_id) {
+    object_xattr xattr;
+    FB_ASSERT_EQ(xattr.shard_id, 0u);
+}
+
+FB_TEST(object_xattr_structure, shard_id_assignment) {
+    object_xattr xattr;
+    xattr.shard_id = 123;
+    FB_ASSERT_EQ(xattr.shard_id, 123u);
+}
+
+FB_TEST(object_xattr_structure, pg_default_empty) {
+    object_xattr xattr;
+    FB_ASSERT_TRUE(xattr.pg.empty());
+}
+
+FB_TEST(object_xattr_structure, pg_string_assignment) {
+    object_xattr xattr;
+    xattr.pg = "pool2.pg100";
+    FB_ASSERT_EQ(xattr.pg, "pool2.pg100");
+}
+
+FB_TEST(object_xattr_structure, obj_name_default_empty) {
+    object_xattr xattr;
+    FB_ASSERT_TRUE(xattr.obj_name.empty());
+}
+
+FB_TEST(object_xattr_structure, obj_name_assignment) {
+    object_xattr xattr;
+    xattr.obj_name = "object_123";
+    FB_ASSERT_EQ(xattr.obj_name, "object_123");
+}
+
+FB_TEST(object_xattr_structure, obj_name_size) {
+    object_xattr xattr;
+    xattr.obj_name = "test_object";
+    FB_ASSERT_EQ(xattr.obj_name.size(), 11);
+}
+
+FB_TEST(object_xattr_structure, all_fields_assignment) {
+    object_xattr xattr;
+    xattr.shard_id = 5;
+    xattr.pg = "pool.pg";
+    xattr.obj_name = "obj";
+    FB_ASSERT_EQ(xattr.shard_id, 5u);
+    FB_ASSERT_EQ(xattr.pg, "pool.pg");
+    FB_ASSERT_EQ(xattr.obj_name, "obj");
+}
+
 FB_TEST_MAIN()
