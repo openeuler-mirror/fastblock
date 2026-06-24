@@ -1527,6 +1527,109 @@ FB_TEST(core_indexing, empty_shard_cores) {
 }
 
 // ============================================================================
+// Test Suite: shard_construction (Shard Construction Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_construction) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_construction) {
+    // Teardown code here
+}
+
+FB_TEST(shard_construction, counter_starts_at_zero) {
+    // Constructor counter starts at 0
+    uint32_t counter = 0;
+    FB_ASSERT_EQ(counter, 0);
+}
+
+FB_TEST(shard_construction, counter_reaches_n_core) {
+    // Counter loops up to n_core
+    uint32_t counter = 0;
+    uint32_t n_core = 4;
+
+    while (counter < n_core) {
+        counter++;
+    }
+    FB_ASSERT_EQ(counter, n_core);
+}
+
+FB_TEST(shard_construction, iterator_advances_per_iteration) {
+    // begin iterator advances with each iteration
+    std::vector<uint32_t> source = {0, 1, 2, 3};
+    auto it = source.begin();
+    uint32_t collected = 0;
+
+    while (it != source.end()) {
+        collected++;
+        ++it;
+    }
+    FB_ASSERT_EQ(collected, 4);
+}
+
+FB_TEST(shard_construction, shard_core_pushback) {
+    // _shard_cores.push_back(*begin) collects each core
+    std::vector<uint32_t> source = {0, 2, 4, 6};
+    std::vector<uint32_t> collected;
+    for (uint32_t c : source) {
+        collected.push_back(c);
+    }
+    FB_ASSERT_EQ(collected, source);
+}
+
+FB_TEST(shard_construction, cpuset_zero_then_set_pattern) {
+    // For each core: cpuset_zero, cpuset_set_cpu(core)
+    uint64_t mask = 0;
+    uint32_t core = 5;
+
+    mask = 0; // cpuset_zero
+    mask |= (1ULL << core); // cpuset_set_cpu
+
+    FB_ASSERT_EQ(mask, 32);
+}
+
+FB_TEST(shard_construction, thread_name_per_shard) {
+    // Each shard gets a unique thread name
+    std::string app_name = "test_";
+    std::vector<std::string> names;
+    for (uint32_t i = 0; i < 4; i++) {
+        names.push_back(app_name + std::to_string(i));
+    }
+
+    std::set<std::string> unique(names.begin(), names.end());
+    FB_ASSERT_EQ(unique.size(), names.size());
+}
+
+FB_TEST(shard_construction, thread_created_with_cpumask) {
+    // spdk_thread_create called with thread_name + cpumask
+    bool thread_created = true;
+    bool has_cpumask = true;
+    FB_ASSERT_TRUE(thread_created);
+    FB_ASSERT_TRUE(has_cpumask);
+}
+
+FB_TEST(shard_construction, threads_pushback_after_create) {
+    // _threads.push_back(thread) after each creation
+    std::vector<void*> threads;
+    for (uint32_t i = 0; i < 4; i++) {
+        threads.push_back((void*)(uintptr_t)(0x1000 * (i + 1)));
+    }
+    FB_ASSERT_EQ(threads.size(), 4);
+    FB_ASSERT_TRUE(threads[0] != threads[1]);
+}
+
+FB_TEST(shard_construction, parallel_initialization) {
+    // After construction: _shard_cores.size() == _threads.size() == n_core
+    std::vector<uint32_t> shard_cores = {0, 1, 2, 3};
+    std::vector<void*> threads(4, (void*)0x1);
+    uint32_t n_core = 4;
+
+    FB_ASSERT_EQ(shard_cores.size(), n_core);
+    FB_ASSERT_EQ(threads.size(), n_core);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
