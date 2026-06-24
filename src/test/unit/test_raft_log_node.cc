@@ -48,11 +48,11 @@ constexpr int RAFT_NODE_VOTED_FOR_ME = (1 << 0);
 } // anonymous namespace
 
 FB_SUITE_SETUP(raft_log_node) {
-    FB_LOG_INFO("Setting up raft_log_node test suite");
+    // Setup code here
 }
 
 FB_SUITE_TEARDOWN(raft_log_node) {
-    FB_LOG_INFO("Tearing down raft_log_node test suite");
+    // Teardown code here
 }
 
 // ============================================================================
