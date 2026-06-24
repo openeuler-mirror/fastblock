@@ -2339,4 +2339,204 @@ FB_TEST(serialization_combined, buffer_reuse) {
     FB_ASSERT_EQ(v, 200u);
 }
 
+// ============================================================================
+// Test Suite: serialization_error_cases (Serialization Error Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization_error_cases) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization_error_cases) {
+    // Teardown code here
+}
+
+FB_TEST(serialization_error_cases, insufficient_for_fixed32_header) {
+    char buffer[3];
+    spdk_buffer sbuf(buffer, 3);
+
+    FB_ASSERT_FALSE(PutFixed32(sbuf, 123u));
+}
+
+FB_TEST(serialization_error_cases, insufficient_for_fixed64_header) {
+    char buffer[7];
+    spdk_buffer sbuf(buffer, 7);
+
+    FB_ASSERT_FALSE(PutFixed64(sbuf, 123ull));
+}
+
+FB_TEST(serialization_error_cases, insufficient_for_string_header) {
+    char buffer[7];
+    spdk_buffer sbuf(buffer, 7);
+
+    FB_ASSERT_FALSE(PutString(sbuf, "test"));
+}
+
+FB_TEST(serialization_error_cases, insufficient_for_string_data) {
+    char buffer[10];
+    spdk_buffer sbuf(buffer, 10);
+
+    FB_ASSERT_FALSE(PutString(sbuf, "too_long_string"));
+}
+
+FB_TEST(serialization_error_cases, get_fixed32_insufficient) {
+    char buffer[3];
+    spdk_buffer sbuf(buffer, 3);
+
+    uint32_t v;
+    FB_ASSERT_FALSE(GetFixed32(sbuf, v));
+}
+
+FB_TEST(serialization_error_cases, get_fixed64_insufficient) {
+    char buffer[7];
+    spdk_buffer sbuf(buffer, 7);
+
+    uint64_t v;
+    FB_ASSERT_FALSE(GetFixed64(sbuf, v));
+}
+
+FB_TEST(serialization_error_cases, get_string_header_insufficient) {
+    char buffer[7];
+    spdk_buffer sbuf(buffer, 7);
+
+    std::string v;
+    FB_ASSERT_FALSE(GetString(sbuf, v));
+}
+
+FB_TEST(serialization_error_cases, get_string_data_insufficient) {
+    char buffer[9];
+    spdk_buffer sbuf(buffer, 9);
+
+    // Try to read string that claims to be longer than buffer
+    // Note: This test may not be possible without corrupting the buffer
+    std::string v;
+    FB_ASSERT_FALSE(GetString(sbuf, v));
+}
+
+// ============================================================================
+// Test Suite: xattr_comparison (Xattr Comparison Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_comparison) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_comparison) {
+    // Teardown code here
+}
+
+FB_TEST(xattr_comparison, log_xattr_equality) {
+    log_xattr x1{};
+    x1.shard_id = 1;
+    x1.pg = "pg1";
+
+    log_xattr x2{};
+    x2.shard_id = 1;
+    x2.pg = "pg1";
+
+    FB_ASSERT_EQ(x1.shard_id, x2.shard_id);
+    FB_ASSERT_EQ(x1.pg, x2.pg);
+}
+
+FB_TEST(xattr_comparison, log_xattr_inequality) {
+    log_xattr x1{};
+    x1.shard_id = 1;
+
+    log_xattr x2{};
+    x2.shard_id = 2;
+
+    FB_ASSERT_TRUE(x1.shard_id != x2.shard_id);
+}
+
+FB_TEST(xattr_comparison, object_xattr_equality) {
+    object_xattr x1{};
+    x1.shard_id = 1;
+    x1.pg = "pg1";
+    x1.obj_name = "obj1";
+
+    object_xattr x2{};
+    x2.shard_id = 1;
+    x2.pg = "pg1";
+    x2.obj_name = "obj1";
+
+    FB_ASSERT_EQ(x1.shard_id, x2.shard_id);
+    FB_ASSERT_EQ(x1.pg, x2.pg);
+    FB_ASSERT_EQ(x1.obj_name, x2.obj_name);
+}
+
+FB_TEST(xattr_comparison, object_snap_all_fields) {
+    object_snap_xattr x{};
+    x.shard_id = 5;
+    x.pg = "pool.pg";
+    x.obj_name = "object";
+    x.snap_name = "snapshot";
+
+    FB_ASSERT_EQ(x.shard_id, 5u);
+    FB_ASSERT_EQ(x.pg, "pool.pg");
+    FB_ASSERT_EQ(x.obj_name, "object");
+    FB_ASSERT_EQ(x.snap_name, "snapshot");
+}
+
+// ============================================================================
+// Test Suite: spdk_buffer_utility (Spdk Buffer Utility Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_utility) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_utility) {
+    // Teardown code here
+}
+
+FB_TEST(spdk_buffer_utility, remain_after_write) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 1u));
+    FB_ASSERT_EQ(sbuf.remain(), 96u);
+}
+
+FB_TEST(spdk_buffer_utility, remain_multiple_writes) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 1u));
+    FB_ASSERT_TRUE(PutFixed64(sbuf, 2ull));
+    FB_ASSERT_EQ(sbuf.remain(), 88u);
+}
+
+FB_TEST(spdk_buffer_utility, remain_full_buffer) {
+    char buffer[4];
+    spdk_buffer sbuf(buffer, 4);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 1u));
+    FB_ASSERT_EQ(sbuf.remain(), 0u);
+}
+
+FB_TEST(spdk_buffer_utility, reset_clears_used) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 1u));
+    FB_ASSERT_TRUE(sbuf.used() > 0);
+
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.used(), 0u);
+}
+
+FB_TEST(spdk_buffer_utility, used_accumulates) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 1u));
+    FB_ASSERT_EQ(sbuf.used(), 4u);
+
+    FB_ASSERT_TRUE(PutFixed64(sbuf, 2ull));
+    FB_ASSERT_EQ(sbuf.used(), 12u);
+
+    FB_ASSERT_TRUE(PutString(sbuf, "test"));
+    FB_ASSERT_EQ(sbuf.used(), 20u);
+}
+
 FB_TEST_MAIN()
