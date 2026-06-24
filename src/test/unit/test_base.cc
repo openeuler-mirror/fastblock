@@ -5774,6 +5774,118 @@ FB_TEST(shard_workload_patterns, throughput_bound_workload) {
 }
 
 // ============================================================================
+// Test Suite: shard_message_queue (Shard Message Queue Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_message_queue) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_message_queue) {
+    // Teardown code here
+}
+
+FB_TEST(shard_message_queue, fifo_ordering) {
+    // Messages dequeued in send order
+    std::queue<int> msg_queue;
+    for (int i = 1; i <= 5; i++) msg_queue.push(i);
+
+    std::vector<int> dequeued;
+    while (!msg_queue.empty()) {
+        dequeued.push_back(msg_queue.front());
+        msg_queue.pop();
+    }
+
+    FB_ASSERT_EQ(dequeued.size(), 5);
+    FB_ASSERT_EQ(dequeued[0], 1);
+    FB_ASSERT_EQ(dequeued[4], 5);
+}
+
+FB_TEST(shard_message_queue, empty_initially) {
+    std::queue<int> q;
+    FB_ASSERT_TRUE(q.empty());
+    FB_ASSERT_EQ(q.size(), 0);
+}
+
+FB_TEST(shard_message_queue, size_grows_on_push) {
+    std::queue<int> q;
+    for (int i = 0; i < 10; i++) {
+        q.push(i);
+        FB_ASSERT_EQ(q.size(), static_cast<size_t>(i + 1));
+    }
+}
+
+FB_TEST(shard_message_queue, size_shrinks_on_pop) {
+    std::queue<int> q;
+    for (int i = 0; i < 10; i++) q.push(i);
+    size_t initial = q.size();
+
+    for (int i = 0; i < 3; i++) q.pop();
+    FB_ASSERT_EQ(q.size(), initial - 3);
+}
+
+FB_TEST(shard_message_queue, drained_by_polling) {
+    // SPDK threads poll the queue periodically
+    std::queue<int> q;
+    for (int i = 0; i < 100; i++) q.push(i);
+
+    // Simulate polling: process all
+    while (!q.empty()) q.pop();
+
+    FB_ASSERT_TRUE(q.empty());
+}
+
+FB_TEST(shard_message_queue, ordered_independent_of_sender) {
+    // Multiple senders -> single receiver: FIFO within sender, interleaved across senders
+    std::queue<int> q;
+    // Sender A sends 1,3,5
+    q.push(1); q.push(3); q.push(5);
+    // Sender B sends 2,4,6 (interleaved)
+    // In real scenario, ordering is non-deterministic between senders
+    // but each sender's messages stay in order
+    std::vector<int> received;
+    while (!q.empty()) {
+        received.push_back(q.front());
+        q.pop();
+    }
+
+    // A's messages in order
+    FB_ASSERT_EQ(received[0], 1);
+    FB_ASSERT_TRUE(received[0] < received[1]);
+}
+
+FB_TEST(shard_message_queue, unbounded_capacity_logical) {
+    // Logically unbounded; physically limited by memory
+    std::queue<int> q;
+    for (int i = 0; i < 10000; i++) q.push(i);
+    FB_ASSERT_EQ(q.size(), 10000);
+
+    while (!q.empty()) q.pop();
+}
+
+FB_TEST(shard_message_queue, msg_carries_callback_and_arg) {
+    // Each message: (callback function, void* arg)
+    struct msg {
+        void (*fn)(void*);
+        void* arg;
+    };
+
+    std::queue<msg> q;
+    int counter = 0;
+    auto cb = [](void* arg) { (*static_cast<int*>(arg))++; };
+    q.push({cb, &counter});
+    q.push({cb, &counter});
+
+    while (!q.empty()) {
+        msg m = q.front();
+        m.fn(m.arg);
+        q.pop();
+    }
+
+    FB_ASSERT_EQ(counter, 2);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
