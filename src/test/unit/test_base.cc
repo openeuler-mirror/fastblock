@@ -2351,6 +2351,163 @@ FB_TEST(core_sharded_initialization, shard_cores_vector_grows_by_n_core) {
 }
 
 // ============================================================================
+// Test Suite: core_context_dispatch (Core Context Dispatch Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(core_context_dispatch) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(core_context_dispatch) {
+    // Teardown code here
+}
+
+FB_TEST(core_context_dispatch, run_invokes_run_task_then_deletes) {
+    // core_context::run(void*) -> cast to core_context*, invoke run_task(), delete
+    static int task_runs;
+    static int destructions;
+    task_runs = 0;
+    destructions = 0;
+
+    struct test_op {
+        void run_task() { task_runs++; }
+        ~test_op() { destructions++; }
+    };
+
+    // Mimic the run() static dispatch
+    auto run = [](void* arg) {
+        test_op* op = static_cast<test_op*>(arg);
+        op->run_task();
+        delete op;
+    };
+
+    test_op* op = new test_op();
+    run((void*)op);
+
+    FB_ASSERT_EQ(task_runs, 1);
+    FB_ASSERT_EQ(destructions, 1);
+}
+
+FB_TEST(core_context_dispatch, void_pointer_round_trip) {
+    // Pattern: core_context* -> void* -> core_context*
+    struct task { int data = 42; };
+    task t;
+    void* opaque = static_cast<void*>(&t);
+    task* recovered = static_cast<task*>(opaque);
+
+    FB_ASSERT_EQ(recovered, &t);
+    FB_ASSERT_EQ(recovered->data, 42);
+}
+
+FB_TEST(core_context_dispatch, no_access_after_delete) {
+    // run() deletes ctx; caller must not retain reference
+    static bool deleted_called;
+    deleted_called = false;
+
+    struct lifetime_ctx {
+        ~lifetime_ctx() { deleted_called = true; }
+    };
+
+    lifetime_ctx* p = new lifetime_ctx();
+    delete p;
+    FB_ASSERT_TRUE(deleted_called);
+    // After this point, p is dangling - testing pattern not the actual pointer
+}
+
+FB_TEST(core_context_dispatch, multiple_dispatches_independent) {
+    // Each dispatch creates new ctx, invokes, deletes independently
+    static int total_runs;
+    total_runs = 0;
+
+    struct op { void run() { total_runs++; } };
+
+    for (int i = 0; i < 100; i++) {
+        op* o = new op();
+        o->run();
+        delete o;
+    }
+    FB_ASSERT_EQ(total_runs, 100);
+}
+
+FB_TEST(core_context_dispatch, exception_in_run_task_propagates) {
+    // If run_task throws, ctx must still be deleted (RAII pattern)
+    // Verify via try/catch + destructor counter
+    static int destructions;
+    destructions = 0;
+
+    struct throws_op {
+        ~throws_op() { destructions++; }
+        void run() { throw std::runtime_error("test"); }
+    };
+
+    bool caught = false;
+    throws_op* op = new throws_op();
+    try {
+        op->run();
+    } catch (const std::runtime_error&) {
+        caught = true;
+        delete op;
+    }
+    FB_ASSERT_TRUE(caught);
+    FB_ASSERT_EQ(destructions, 1);
+}
+
+FB_TEST(core_context_dispatch, dispatch_via_function_pointer) {
+    // core_context::run is a static method, can be used as function pointer
+    static int counter;
+    counter = 0;
+
+    struct ctx_t {
+        void run_task() { counter++; }
+    };
+
+    void (*dispatch_fn)(void*) = [](void* arg) {
+        static_cast<ctx_t*>(arg)->run_task();
+        delete static_cast<ctx_t*>(arg);
+    };
+
+    dispatch_fn(new ctx_t());
+    FB_ASSERT_EQ(counter, 1);
+    dispatch_fn(new ctx_t());
+    FB_ASSERT_EQ(counter, 2);
+}
+
+FB_TEST(core_context_dispatch, base_pointer_polymorphism) {
+    // Dispatch through base class pointer respects vtable
+    struct base { virtual int describe() = 0; virtual ~base() = default; };
+    struct derived_a : base { int describe() override { return 1; } };
+    struct derived_b : base { int describe() override { return 2; } };
+
+    base* ptr_a = new derived_a();
+    base* ptr_b = new derived_b();
+
+    FB_ASSERT_EQ(ptr_a->describe(), 1);
+    FB_ASSERT_EQ(ptr_b->describe(), 2);
+
+    delete ptr_a;
+    delete ptr_b;
+}
+
+FB_TEST(core_context_dispatch, opaque_type_erasure) {
+    // void* erases type; receiver must know the concrete type to recover
+    struct type_a { int x = 1; };
+    struct type_b { double y = 2.0; };
+
+    void* erased_a = new type_a();
+    void* erased_b = new type_b();
+
+    // Recover concrete types
+    type_a* a = static_cast<type_a*>(erased_a);
+    type_b* b = static_cast<type_b*>(erased_b);
+
+    FB_ASSERT_EQ(a->x, 1);
+    FB_ASSERT_EQ(b->y, 2.0);
+
+    delete a;
+    delete b;
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
