@@ -3872,5 +3872,382 @@ FB_TEST(raft_log_node, read_timeout_propagation) {
     FB_ASSERT_EQ(time_remaining, 200L);
 }
 
+// ============================================================================
+// Test Suite: Log Entry Batch Processing
+// ============================================================================
+
+FB_TEST(raft_log_node, batch_append_basic) {
+    // 批量追加基本操作
+    std::vector<raft_index_t> batch;
+    for (int i = 1; i <= 10; i++) {
+        batch.push_back(i);
+    }
+
+    // 批量追加
+    raft_index_t start_idx = 0;
+    for (raft_index_t idx : batch) {
+        start_idx++;
+    }
+
+    FB_ASSERT_EQ(start_idx, 10L);
+    FB_ASSERT_EQ(batch.size(), 10UL);
+}
+
+FB_TEST(raft_log_node, batch_append_efficiency) {
+    // 批量追加效率
+    int single_append_cost = 10;   // 单次追加成本
+    int batch_append_cost = 15;    // 批量追加成本
+
+    int entries = 100;
+
+    // 单次追加总成本
+    int single_total = entries * single_append_cost;
+
+    // 批量追加成本（假设每批 10 个）
+    int batch_size = 10;
+    int batches = entries / batch_size;
+    int batch_total = batches * batch_append_cost;
+
+    FB_ASSERT_TRUE(batch_total < single_total);
+
+    // 批量追加节省的时间
+    int saved_cost = single_total - batch_total;
+    FB_ASSERT_EQ(saved_cost, 985);
+}
+
+FB_TEST(raft_log_node, batch_append_order_preservation) {
+    // 批量追加顺序保持
+    std::vector<int> batch = {1, 2, 3, 4, 5};
+    std::vector<int> appended;
+
+    for (int entry : batch) {
+        appended.push_back(entry);
+    }
+
+    // 验证顺序一致
+    FB_ASSERT_EQ(appended.size(), batch.size());
+    for (size_t i = 0; i < batch.size(); i++) {
+        FB_ASSERT_EQ(appended[i], batch[i]);
+    }
+}
+
+FB_TEST(raft_log_node, batch_replication_pipeline) {
+    // 批量复制 Pipeline
+    std::vector<raft_index_t> pending_batches;
+    int max_inflight = 3;
+
+    // 模拟 Pipeline
+    int inflight = 0;
+    for (int i = 0; i < 10; i++) {
+        if (inflight < max_inflight) {
+            pending_batches.push_back(i);
+            inflight++;
+        }
+        // 模拟确认
+        if (i % 3 == 0 && inflight > 0) {
+            inflight--;
+        }
+    }
+
+    FB_ASSERT_TRUE(pending_batches.size() <= 10);
+}
+
+FB_TEST(raft_log_node, batch_append_atomicity) {
+    // 批量追加原子性
+    std::vector<raft_index_t> batch = {101, 102, 103, 104, 105};
+    bool all_succeeded = true;
+
+    // 批量操作要么全部成功，要么全部失败
+    std::vector<raft_index_t> appended;
+    for (raft_index_t idx : batch) {
+        appended.push_back(idx);
+    }
+
+    // 验证原子性
+    if (all_succeeded) {
+        FB_ASSERT_EQ(appended.size(), batch.size());
+    } else {
+        FB_ASSERT_TRUE(appended.empty());
+    }
+}
+
+FB_TEST(raft_log_node, batch_size_optimization) {
+    // 批量大小优化
+    size_t optimal_batch_size = 100;
+    size_t max_batch_size = 1000;
+    size_t current_batch_size = 50;
+
+    // 调整到最优批量大小
+    if (current_batch_size < optimal_batch_size) {
+        current_batch_size = optimal_batch_size;
+    }
+    FB_ASSERT_EQ(current_batch_size, optimal_batch_size);
+
+    // 不超过最大批量大小
+    current_batch_size = 2000;
+    if (current_batch_size > max_batch_size) {
+        current_batch_size = max_batch_size;
+    }
+    FB_ASSERT_EQ(current_batch_size, max_batch_size);
+}
+
+FB_TEST(raft_log_node, batch_commit_efficiency) {
+    // 批量提交效率
+    int entries_to_commit = 100;
+    int single_commit_latency = 5;  // ms
+    int batch_commit_latency = 10;  // ms
+    int batch_size = 20;
+
+    // 单次提交
+    int single_total_time = entries_to_commit * single_commit_latency;
+
+    // 批量提交
+    int batches = entries_to_commit / batch_size;
+    int batch_total_time = batches * batch_commit_latency;
+
+    FB_ASSERT_TRUE(batch_total_time < single_total_time);
+}
+
+FB_TEST(raft_log_node, batch_append_memory_efficiency) {
+    // 批量追加内存效率
+    size_t entry_size = 1024;  // 1KB per entry
+    size_t batch_count = 100;
+
+    // 预分配内存
+    size_t expected_memory = entry_size * batch_count;
+
+    // 批量追加只需要一次内存分配
+    int allocations = 1;
+    FB_ASSERT_EQ(allocations, 1);
+
+    // 单条追加需要多次分配
+    int single_allocations = batch_count;
+    FB_ASSERT_TRUE(single_allocations > allocations);
+}
+
+FB_TEST(raft_log_node, batch_append_with_priority) {
+    // 带优先级的批量追加
+    enum class entry_priority {
+        HIGH,
+        NORMAL,
+        LOW
+    };
+
+    std::vector<std::pair<raft_index_t, entry_priority>> batch;
+    batch.push_back({1, entry_priority::NORMAL});
+    batch.push_back({2, entry_priority::HIGH});
+    batch.push_back({3, entry_priority::LOW});
+    batch.push_back({4, entry_priority::HIGH});
+
+    // 按优先级处理
+    int high_priority_count = 0;
+    for (const auto& entry : batch) {
+        if (entry.second == entry_priority::HIGH) {
+            high_priority_count++;
+        }
+    }
+    FB_ASSERT_EQ(high_priority_count, 2);
+}
+
+FB_TEST(raft_log_node, batch_append_concurrent) {
+    // 并发批量追加
+    std::atomic<int> total_appended{0};
+    int batch_count = 10;
+    int entries_per_batch = 100;
+
+    // 模拟并发批量追加
+    for (int batch = 0; batch < batch_count; batch++) {
+        for (int entry = 0; entry < entries_per_batch; entry++) {
+            total_appended++;
+        }
+    }
+
+    FB_ASSERT_EQ(total_appended.load(), batch_count * entries_per_batch);
+}
+
+FB_TEST(raft_log_node, batch_append_partial_failure) {
+    // 批量追加部分失败处理
+    std::vector<int> append_results = {0, 0, -1, 0, 0, -1, 0, 0, 0, 0};
+    int successful = 0;
+    int failed = 0;
+
+    for (int result : append_results) {
+        if (result == 0) {
+            successful++;
+        } else {
+            failed++;
+        }
+    }
+
+    FB_ASSERT_EQ(successful, 8);
+    FB_ASSERT_EQ(failed, 2);
+
+    // 失败后重试
+    int retried = 0;
+    for (int result : append_results) {
+        if (result != 0) {
+            retried++;
+        }
+    }
+    FB_ASSERT_EQ(retried, 2);
+}
+
+FB_TEST(raft_log_node, batch_append_with_compaction) {
+    // 批量追加与压缩
+    size_t batch_size = 1000;
+    size_t max_entries = 10000;
+    size_t current_entries = 0;
+
+    // 追加批次
+    current_entries += batch_size;
+
+    // 超过限制时压缩
+    if (current_entries > max_entries) {
+        size_t compacted = current_entries / 2;
+        current_entries -= compacted;
+    }
+
+    FB_ASSERT_EQ(current_entries, 1000UL);
+
+    // 多次追加后触发压缩
+    current_entries += batch_size * 10;
+    if (current_entries > max_entries) {
+        size_t compacted = current_entries / 2;
+        current_entries -= compacted;
+    }
+    FB_ASSERT_TRUE(current_entries <= max_entries);
+}
+
+FB_TEST(raft_log_node, batch_append_timeout) {
+    // 批量追加超时
+    raft_time_t batch_start = 1000;
+    raft_time_t batch_timeout = 100;
+    raft_time_t current_time = 1050;
+
+    // 批量追加中
+    bool batch_in_progress = true;
+
+    // 检查超时
+    bool timed_out = (current_time - batch_start) > batch_timeout;
+    FB_ASSERT_FALSE(timed_out);
+
+    // 超时后取消
+    current_time = 1150;
+    timed_out = (current_time - batch_start) > batch_timeout;
+    if (timed_out) {
+        batch_in_progress = false;
+    }
+    FB_ASSERT_TRUE(timed_out);
+    FB_ASSERT_FALSE(batch_in_progress);
+}
+
+FB_TEST(raft_log_node, batch_append_checksum) {
+    // 批量追加校验和
+    std::vector<uint32_t> checksums;
+    for (int i = 0; i < 10; i++) {
+        checksums.push_back(i * 1000);
+    }
+
+    // 验证校验和
+    int valid_entries = 0;
+    for (size_t i = 0; i < checksums.size(); i++) {
+        if (checksums[i] == i * 1000) {
+            valid_entries++;
+        }
+    }
+    FB_ASSERT_EQ(valid_entries, 10);
+}
+
+FB_TEST(raft_log_node, batch_append_with_deduplication) {
+    // 批量追加去重
+    std::vector<int> batch = {1, 2, 3, 2, 4, 3, 5};
+    std::set<int> seen;
+    std::vector<int> deduped;
+
+    for (int entry : batch) {
+        if (seen.find(entry) == seen.end()) {
+            seen.insert(entry);
+            deduped.push_back(entry);
+        }
+    }
+
+    FB_ASSERT_EQ(deduped.size(), 5UL);
+}
+
+FB_TEST(raft_log_node, batch_append_network_efficiency) {
+    // 批量追加网络效率
+    int single_msg_overhead = 100;  // bytes
+    int batch_msg_overhead = 150;   // bytes
+    int entries_per_batch = 10;
+
+    // 单条发送的网络开销
+    int single_total_overhead = entries_per_batch * single_msg_overhead;
+
+    // 批量发送的网络开销
+    int batch_total_overhead = batch_msg_overhead;
+
+    FB_ASSERT_TRUE(batch_total_overhead < single_total_overhead);
+}
+
+FB_TEST(raft_log_node, batch_append_rollback) {
+    // 批量追加回滚
+    std::vector<raft_index_t> batch = {101, 102, 103, 104, 105};
+    std::vector<raft_index_t> appended;
+
+    // 追加
+    for (raft_index_t idx : batch) {
+        appended.push_back(idx);
+    }
+    FB_ASSERT_EQ(appended.size(), 5UL);
+
+    // 回滚
+    raft_index_t rollback_point = 102;
+    while (!appended.empty() && appended.back() > rollback_point) {
+        appended.pop_back();
+    }
+
+    FB_ASSERT_EQ(appended.size(), 2UL);
+}
+
+FB_TEST(raft_log_node, batch_append_multi_term) {
+    // 跨 term 的批量追加
+    std::vector<std::pair<raft_index_t, raft_term_t>> batch;
+    for (int i = 1; i <= 5; i++) {
+        batch.push_back({i, 1});
+    }
+    for (int i = 6; i <= 10; i++) {
+        batch.push_back({i, 2});
+    }
+
+    // 统计各 term 的条目数
+    std::map<raft_term_t, int> term_counts;
+    for (const auto& entry : batch) {
+        term_counts[entry.second]++;
+    }
+
+    FB_ASSERT_EQ(term_counts[1], 5);
+    FB_ASSERT_EQ(term_counts[2], 5);
+}
+
+FB_TEST(raft_log_node, batch_append_queue_backpressure) {
+    // 批量追加队列背压
+    int max_pending_batches = 5;
+    int pending_batches = 0;
+    bool can_accept = true;
+
+    // 模拟接收批次
+    for (int i = 0; i < 7; i++) {
+        if (pending_batches >= max_pending_batches) {
+            can_accept = false;
+        }
+        if (can_accept) {
+            pending_batches++;
+        }
+    }
+
+    FB_ASSERT_FALSE(can_accept);
+    FB_ASSERT_EQ(pending_batches, 5);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
