@@ -9067,6 +9067,88 @@ FB_TEST(shard_request_routing, fallback_on_target_unavailable) {
 }
 
 // ============================================================================
+// Test Suite: shard_atomic_operations (Atomic Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_atomic_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_atomic_operations) {
+    // Teardown code here
+}
+
+FB_TEST(shard_atomic_operations, atomic_load_store) {
+    std::atomic<int> v(0);
+    v.store(42);
+    FB_ASSERT_EQ(v.load(), 42);
+}
+
+FB_TEST(shard_atomic_operations, atomic_fetch_add) {
+    std::atomic<uint64_t> counter(0);
+    counter.fetch_add(5);
+    counter.fetch_add(10);
+    FB_ASSERT_EQ(counter.load(), 15);
+}
+
+FB_TEST(shard_atomic_operations, atomic_compare_exchange) {
+    std::atomic<int> v(0);
+    int expected = 0;
+    bool ok = v.compare_exchange_strong(expected, 42);
+    FB_ASSERT_TRUE(ok);
+    FB_ASSERT_EQ(v.load(), 42);
+
+    // Second time fails (current != expected)
+    expected = 0;
+    ok = v.compare_exchange_strong(expected, 100);
+    FB_ASSERT_TRUE(!ok);
+    FB_ASSERT_EQ(expected, 42); // expected updated to actual
+}
+
+FB_TEST(shard_atomic_operations, atomic_exchange) {
+    std::atomic<int> v(10);
+    int old = v.exchange(99);
+    FB_ASSERT_EQ(old, 10);
+    FB_ASSERT_EQ(v.load(), 99);
+}
+
+FB_TEST(shard_atomic_operations, memory_order_relaxed) {
+    // Relaxed: no ordering guarantee
+    std::atomic<int> v(0);
+    v.store(42, std::memory_order_relaxed);
+    FB_ASSERT_EQ(v.load(std::memory_order_relaxed), 42);
+}
+
+FB_TEST(shard_atomic_operations, memory_order_acquire_release) {
+    // Acquire/release: synchronizes with paired store/load
+    std::atomic<int> data(0);
+    std::atomic<bool> ready(false);
+
+    data.store(42, std::memory_order_relaxed);
+    ready.store(true, std::memory_order_release);
+
+    if (ready.load(std::memory_order_acquire)) {
+        FB_ASSERT_EQ(data.load(std::memory_order_relaxed), 42);
+    }
+}
+
+FB_TEST(shard_atomic_operations, atomic_flag_test_and_set) {
+    std::atomic_flag flag = ATOMIC_FLAG_INIT;
+    bool was_set = flag.test_and_set();
+    FB_ASSERT_TRUE(!was_set); // first set returns false
+
+    was_set = flag.test_and_set();
+    FB_ASSERT_TRUE(was_set); // already set
+    flag.clear();
+}
+
+FB_TEST(shard_atomic_operations, atomic_lock_free) {
+    // Common atomic types should be lock-free
+    std::atomic<int> v;
+    FB_ASSERT_TRUE(v.is_lock_free());
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
