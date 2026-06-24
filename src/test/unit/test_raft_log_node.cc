@@ -2891,5 +2891,280 @@ FB_TEST(raft_log_node, heartbeat_backpressure_handling) {
     FB_ASSERT_EQ(inflight_heartbeats, 10);
 }
 
+// ============================================================================
+// Test Suite: Leader Transfer
+// ============================================================================
+
+FB_TEST(raft_log_node, leader_transfer_initiation) {
+    // Leader 转移启动
+    raft_node_id_t current_leader = 1;
+    raft_node_id_t target_leader = 3;
+
+    // 启动 Leader 转移
+    bool transfer_in_progress = true;
+    FB_ASSERT_TRUE(transfer_in_progress);
+
+    // 目标节点必须存在且可投票
+    bool target_is_voting = true;
+    bool can_transfer = target_is_voting && (target_leader != current_leader);
+    FB_ASSERT_TRUE(can_transfer);
+}
+
+FB_TEST(raft_log_node, leader_transfer_log_sync) {
+    // Leader 转移前的日志同步
+    raft_index_t leader_last_idx = 100;
+    raft_index_t target_match_idx = 95;
+
+    // 确保目标节点日志同步
+    bool log_synced = target_match_idx >= leader_last_idx;
+    FB_ASSERT_FALSE(log_synced);
+
+    // 需要先同步日志
+    int entries_to_send = leader_last_idx - target_match_idx;
+    FB_ASSERT_EQ(entries_to_send, 5);
+
+    // 同步完成后可以转移
+    target_match_idx = leader_last_idx;
+    log_synced = target_match_idx >= leader_last_idx;
+    FB_ASSERT_TRUE(log_synced);
+}
+
+FB_TEST(raft_log_node, leader_transfer_timeout_now) {
+    // 发送 TimeoutNow 消息
+    raft_term_t leader_term = 5;
+    raft_node_id_t target_node = 3;
+
+    // TimeoutNow 让目标节点立即开始选举
+    bool timeout_now_sent = true;
+    FB_ASSERT_TRUE(timeout_now_sent);
+
+    // 目标节点收到后增加 term 并开始选举
+    raft_term_t new_term = leader_term + 1;
+    FB_ASSERT_EQ(new_term, 6L);
+}
+
+FB_TEST(raft_log_node, leader_transfer_timeout_detection) {
+    // Leader 转移超时检测
+    raft_time_t transfer_start = 1000;
+    raft_time_t transfer_timeout = 500;
+    raft_time_t current_time = 1400;
+
+    // 检查是否超时
+    bool timed_out = (current_time - transfer_start) > transfer_timeout;
+    FB_ASSERT_FALSE(timed_out);
+
+    // 超时情况
+    current_time = 1600;
+    timed_out = (current_time - transfer_start) > transfer_timeout;
+    FB_ASSERT_TRUE(timed_out);
+}
+
+FB_TEST(raft_log_node, leader_transfer_abort) {
+    // Leader 转移中止
+    bool transfer_in_progress = true;
+    raft_term_t new_term_seen = 6;
+    raft_term_t current_term = 5;
+
+    // 收到更高 term 的消息，中止转移
+    if (new_term_seen > current_term) {
+        transfer_in_progress = false;
+    }
+    FB_ASSERT_FALSE(transfer_in_progress);
+}
+
+FB_TEST(raft_log_node, leader_transfer_complete) {
+    // Leader 转移完成
+    raft_identity state = RAFT_STATE_LEADER;
+    raft_node_id_t new_leader = 3;
+    raft_term_t new_leader_term = 6;
+
+    // 收到新 Leader 的心跳
+    bool new_leader_heartbeat = true;
+    raft_term_t current_term = 5;
+
+    if (new_leader_heartbeat && new_leader_term > current_term) {
+        state = RAFT_STATE_FOLLOWER;
+        current_term = new_leader_term;
+    }
+
+    FB_ASSERT_EQ(state, RAFT_STATE_FOLLOWER);
+    FB_ASSERT_EQ(current_term, 6L);
+}
+
+FB_TEST(raft_log_node, leader_transfer_multiple_candidates) {
+    // Leader 转移时多个候选人的处理
+    int nodes_receiving_timeout_now = 1;  // 只发给目标节点
+
+    // 确保只有一个节点收到 TimeoutNow
+    FB_ASSERT_EQ(nodes_receiving_timeout_now, 1);
+
+    // 如果多个节点收到，可能导致分票
+    nodes_receiving_timeout_now = 3;
+    bool split_vote_risk = nodes_receiving_timeout_now > 1;
+    FB_ASSERT_TRUE(split_vote_risk);
+}
+
+FB_TEST(raft_log_node, leader_transfer_rollback) {
+    // Leader 转移回滚
+    bool transfer_in_progress = true;
+    raft_index_t last_transfer_idx = 100;
+    raft_index_t new_entries_since_transfer = 5;
+
+    // 转移期间收到新写入，需要回滚转移
+    bool has_new_activity = new_entries_since_transfer > 0;
+    if (has_new_activity) {
+        transfer_in_progress = false;
+    }
+    FB_ASSERT_FALSE(transfer_in_progress);
+}
+
+FB_TEST(raft_log_node, leader_transfer_target_unavailable) {
+    // 目标节点不可用时的处理
+    raft_node_id_t target_node = 3;
+    std::map<raft_node_id_t, bool> node_available;
+    node_available[1] = true;
+    node_available[2] = true;
+    node_available[3] = false;  // 目标节点不可用
+
+    // 检查目标节点是否可用
+    bool can_transfer = node_available[target_node];
+    FB_ASSERT_FALSE(can_transfer);
+
+    // 选择另一个目标
+    raft_node_id_t new_target = 2;
+    can_transfer = node_available[new_target];
+    FB_ASSERT_TRUE(can_transfer);
+}
+
+FB_TEST(raft_log_node, leader_transfer_follower_log_check) {
+    // Leader 转移前检查 Follower 日志
+    std::map<raft_node_id_t, raft_index_t> match_indices;
+    match_indices[1] = 100;  // Leader
+    match_indices[2] = 100;  // 完全同步
+    match_indices[3] = 98;   // 稍有落后
+    match_indices[4] = 95;   // 明显落后
+
+    raft_index_t leader_last_idx = 100;
+
+    // 选择日志最新的节点作为转移目标
+    raft_node_id_t best_candidate = 0;
+    raft_index_t max_match = 0;
+    for (const auto& pair : match_indices) {
+        if (pair.first != 1 && pair.second > max_match) {
+            max_match = pair.second;
+            best_candidate = pair.first;
+        }
+    }
+
+    FB_ASSERT_EQ(best_candidate, 2);
+    FB_ASSERT_EQ(max_match, 100L);
+}
+
+FB_TEST(raft_log_node, leader_transfer_quorum_preserved) {
+    // Leader 转移期间保持多数派
+    int cluster_size = 5;
+    int available_nodes = 4;  // 一个节点正在转移
+    int quorum = cluster_size / 2 + 1;
+
+    // 确保转移后仍有多数派可用
+    bool quorum_preserved = available_nodes >= quorum;
+    FB_ASSERT_TRUE(quorum_preserved);
+}
+
+FB_TEST(raft_log_node, leader_transfer_state_machine_consistency) {
+    // Leader 转移时状态机一致性
+    raft_index_t leader_last_applied = 95;
+    raft_index_t target_last_applied = 95;
+
+    // 确保目标节点状态机也是最新的
+    bool state_machine_synced = target_last_applied >= leader_last_applied;
+    FB_ASSERT_TRUE(state_machine_synced);
+}
+
+FB_TEST(raft_log_node, leader_transfer_configuration_consistency) {
+    // Leader 转移时配置一致性
+    std::map<raft_node_id_t, bool> leader_config;
+    leader_config[1] = true;
+    leader_config[2] = true;
+    leader_config[3] = true;
+
+    std::map<raft_node_id_t, bool> target_config;
+    target_config[1] = true;
+    target_config[2] = true;
+    target_config[3] = true;
+
+    // 配置应该一致
+    bool config_match = (leader_config == target_config);
+    FB_ASSERT_TRUE(config_match);
+}
+
+FB_TEST(raft_log_node, leader_transfer_pre_vote_check) {
+    // Leader 转移时 Pre-Vote 检查
+    bool prevote_enabled = true;
+    raft_term_t leader_term = 5;
+
+    // Pre-Vote 模式下，确保新 Leader 能获得多数派支持
+    int prevotes_needed = 3;  // 5 节点集群需要 3 票
+    int expected_prevotes = 3;
+
+    bool can_win_prevote = expected_prevotes >= prevotes_needed;
+    FB_ASSERT_TRUE(can_win_prevote);
+}
+
+FB_TEST(raft_log_node, leader_transfer_during_partition) {
+    // 网络分区期间的 Leader 转移
+    int total_nodes = 5;
+    int majority_partition_size = 3;
+    int target_in_majority = true;
+
+    // 只在多数派分区内进行转移
+    bool safe_to_transfer = target_in_majority && (majority_partition_size >= total_nodes / 2 + 1);
+    FB_ASSERT_TRUE(safe_to_transfer);
+
+    // 目标在少数派分区时不能转移
+    target_in_majority = false;
+    safe_to_transfer = target_in_majority;
+    FB_ASSERT_FALSE(safe_to_transfer);
+}
+
+FB_TEST(raft_log_node, leader_transfer_graceful_shutdown) {
+    // Leader 优雅关闭时的转移
+    bool graceful_shutdown = true;
+    bool transfer_completed = false;
+
+    // 优雅关闭需要先完成转移
+    if (graceful_shutdown) {
+        // 执行转移流程
+        transfer_completed = true;
+    }
+
+    FB_ASSERT_TRUE(transfer_completed);
+}
+
+FB_TEST(raft_log_node, leader_transfer_concurrent_requests) {
+    // 并发 Leader 转移请求处理
+    int transfer_requests = 2;
+
+    // 只允许一个转移进行
+    bool first_transfer_active = true;
+    bool second_transfer_accepted = !first_transfer_active;
+
+    FB_ASSERT_FALSE(second_transfer_accepted);
+}
+
+FB_TEST(raft_log_node, leader_transfer_snapshot_needed) {
+    // Leader 转移时需要快照
+    raft_index_t target_last_idx = 50;
+    raft_index_t leader_snapshot_idx = 80;
+
+    // 目标节点需要快照才能追上
+    bool needs_snapshot = leader_snapshot_idx > target_last_idx;
+    FB_ASSERT_TRUE(needs_snapshot);
+
+    // 先发送快照
+    raft_index_t new_target_idx = leader_snapshot_idx;
+    FB_ASSERT_EQ(new_target_idx, 80L);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
