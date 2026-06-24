@@ -4393,6 +4393,94 @@ FB_TEST(lambda_capture_modes, capture_this_pointer) {
 }
 
 // ============================================================================
+// Test Suite: tuple_operations (Tuple Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(tuple_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(tuple_operations) {
+    // Teardown code here
+}
+
+FB_TEST(tuple_operations, get_by_index) {
+    auto t = std::make_tuple(1, 2.5, std::string("hi"));
+    FB_ASSERT_EQ(std::get<0>(t), 1);
+    FB_ASSERT_EQ(std::get<1>(t), 2.5);
+    FB_ASSERT_EQ(std::get<2>(t), "hi");
+}
+
+FB_TEST(tuple_operations, get_by_type) {
+    auto t = std::make_tuple(1, 2.5, std::string("hello"));
+    FB_ASSERT_EQ(std::get<int>(t), 1);
+    FB_ASSERT_EQ(std::get<double>(t), 2.5);
+    FB_ASSERT_EQ(std::get<std::string>(t), "hello");
+}
+
+FB_TEST(tuple_operations, modify_via_get) {
+    auto t = std::make_tuple(0, 0, 0);
+    std::get<0>(t) = 100;
+    std::get<1>(t) = 200;
+    std::get<2>(t) = 300;
+
+    FB_ASSERT_EQ(std::get<0>(t), 100);
+    FB_ASSERT_EQ(std::get<1>(t), 200);
+    FB_ASSERT_EQ(std::get<2>(t), 300);
+}
+
+FB_TEST(tuple_operations, structured_binding) {
+    auto t = std::make_tuple(42, std::string("test"), 3.14);
+    auto& [i, s, d] = t;
+
+    FB_ASSERT_EQ(i, 42);
+    FB_ASSERT_EQ(s, "test");
+    FB_ASSERT_EQ(d, 3.14);
+
+    // Modification through bindings
+    i = 100;
+    FB_ASSERT_EQ(std::get<0>(t), 100);
+}
+
+FB_TEST(tuple_operations, tuple_cat_combines) {
+    auto t1 = std::make_tuple(1, 2);
+    auto t2 = std::make_tuple(3, 4);
+    auto combined = std::tuple_cat(t1, t2);
+
+    constexpr size_t sz = std::tuple_size_v<decltype(combined)>;
+    FB_ASSERT_EQ(sz, 4);
+    FB_ASSERT_EQ(std::get<0>(combined), 1);
+    FB_ASSERT_EQ(std::get<3>(combined), 4);
+}
+
+FB_TEST(tuple_operations, tie_for_unpacking) {
+    int a = 0; double b = 0; std::string c;
+    std::tie(a, b, c) = std::make_tuple(10, 2.5, std::string("hi"));
+
+    FB_ASSERT_EQ(a, 10);
+    FB_ASSERT_EQ(b, 2.5);
+    FB_ASSERT_EQ(c, "hi");
+}
+
+FB_TEST(tuple_operations, equality_comparison) {
+    auto t1 = std::make_tuple(1, 2, 3);
+    auto t2 = std::make_tuple(1, 2, 3);
+    auto t3 = std::make_tuple(1, 2, 4);
+
+    FB_ASSERT_TRUE(t1 == t2);
+    FB_ASSERT_TRUE(t1 != t3);
+    FB_ASSERT_TRUE(t1 < t3); // lexicographic
+}
+
+FB_TEST(tuple_operations, apply_with_args) {
+    // std::apply expands tuple to function args
+    auto multiply = [](int a, int b, int c) { return a * b * c; };
+    auto args = std::make_tuple(2, 3, 4);
+    int result = std::apply(multiply, args);
+    FB_ASSERT_EQ(result, 24);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
