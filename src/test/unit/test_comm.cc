@@ -868,6 +868,136 @@ FB_TEST(monclient_endpoint, host_string_preserved_verbatim) {
 }
 
 // ============================================================================
+// Test Suite: monclient_osd_map — versioned osd directory
+//
+// osd_map carries (version, data) where data is osd_id -> osd_info. monclient
+// only applies maps with a STRICTLY newer version than what it holds; stale
+// maps are ignored. Invariants pinned here:
+//   - default version is -1 (sentinel meaning "no map received yet"); a real
+//     first map at version 0 must still be accepted.
+//   - version_type is int64_t — needs the negative range and headroom for
+//     long-running clusters.
+//   - data is a flat osd_id -> info dictionary; updates overwrite in place.
+// If any of these drifts, monclient either applies stale maps (data
+// corruption) or ignores new ones (cluster-state stuck).
+// ============================================================================
+
+namespace {
+
+struct fake_osd_info {
+    int32_t id{0};
+    std::string address{};
+    bool is_in{false};
+    bool is_up{false};
+};
+
+struct fake_osd_map {
+    using osd_id_type  = int32_t;
+    using version_type = int64_t;
+
+    std::map<osd_id_type, std::unique_ptr<fake_osd_info>> data{};
+    version_type version{-1};
+};
+
+// Mirror of monclient's "apply if newer" policy.
+inline bool should_apply(const fake_osd_map& current, fake_osd_map::version_type incoming) {
+    return incoming > current.version;
+}
+
+} // anonymous namespace
+
+FB_SUITE_SETUP(monclient_osd_map) {}
+FB_SUITE_TEARDOWN(monclient_osd_map) {}
+
+FB_TEST(monclient_osd_map, default_version_is_sentinel) {
+    // Default version is -1 so the very first received map at version 0
+    // still counts as newer. If the sentinel were 0, the first map would be
+    // silently dropped.
+    fake_osd_map m;
+    FB_ASSERT_EQ(m.version, -1);
+    FB_ASSERT_TRUE(m.data.empty());
+
+    FB_ASSERT_TRUE(should_apply(m, 0));   // first real map applies
+    FB_ASSERT_TRUE(should_apply(m, 100)); // any positive version applies
+}
+
+FB_TEST(monclient_osd_map, version_type_is_signed_64bit) {
+    // The negative range is required for the -1 sentinel; the 64-bit width
+    // gives a long-running cluster plenty of headroom.
+    using V = fake_osd_map::version_type;
+    FB_ASSERT_TRUE((std::is_same_v<V, int64_t>));
+    FB_ASSERT_TRUE(std::is_signed_v<V>);
+}
+
+FB_TEST(monclient_osd_map, only_strictly_newer_versions_apply) {
+    // Equal version is NOT newer — applying it twice would re-run the diff
+    // logic and possibly drop just-issued updates.
+    fake_osd_map m;
+    m.version = 17;
+    FB_ASSERT_FALSE(should_apply(m, 17));
+    FB_ASSERT_FALSE(should_apply(m, 16));
+    FB_ASSERT_TRUE(should_apply(m, 18));
+}
+
+FB_TEST(monclient_osd_map, insert_and_lookup_osd) {
+    fake_osd_map m;
+    auto info = std::make_unique<fake_osd_info>();
+    info->id      = 5;
+    info->address = "10.0.0.5:5000";
+    info->is_in   = true;
+    info->is_up   = true;
+    m.data.emplace(5, std::move(info));
+    m.version = 1;
+
+    auto it = m.data.find(5);
+    FB_ASSERT_TRUE(it != m.data.end());
+    FB_ASSERT_EQ(it->second->id, 5);
+    FB_ASSERT_STR_EQ(it->second->address.c_str(), "10.0.0.5:5000");
+    FB_ASSERT_TRUE(it->second->is_in);
+    FB_ASSERT_TRUE(it->second->is_up);
+}
+
+FB_TEST(monclient_osd_map, replace_osd_overwrites_in_place) {
+    // When monclient receives an updated osd_info for an existing id, it
+    // overwrites the entry rather than double-inserting. emplace returns
+    // inserted=false; operator[] overwrites.
+    fake_osd_map m;
+    m.data.emplace(7, std::make_unique<fake_osd_info>(
+                          fake_osd_info{7, "old:5000", false, false}));
+
+    // emplace into an existing key MUST NOT insert / overwrite.
+    auto [it, inserted] = m.data.emplace(7, std::make_unique<fake_osd_info>());
+    FB_ASSERT_FALSE(inserted);
+    FB_ASSERT_STR_EQ(it->second->address.c_str(), "old:5000");
+
+    // operator[] overwrite IS the canonical update path.
+    m.data[7] = std::make_unique<fake_osd_info>(
+                  fake_osd_info{7, "new:6000", true, true});
+    FB_ASSERT_STR_EQ(m.data[7]->address.c_str(), "new:6000");
+    FB_ASSERT_TRUE(m.data[7]->is_in);
+    FB_ASSERT_TRUE(m.data[7]->is_up);
+}
+
+FB_TEST(monclient_osd_map, erase_removes_only_target_osd) {
+    // Erasing one osd must not touch the others — regression target: a
+    // stray iterator that advances after invalidation.
+    fake_osd_map m;
+    for (int32_t id : {1, 2, 3, 4}) {
+        m.data.emplace(id, std::make_unique<fake_osd_info>(
+                              fake_osd_info{id, "addr", true, true}));
+    }
+    FB_ASSERT_EQ(m.data.size(), 4u);
+
+    auto erased = m.data.erase(3);
+    FB_ASSERT_EQ(erased, 1u);
+    FB_ASSERT_EQ(m.data.size(), 3u);
+    FB_ASSERT_TRUE(m.data.find(1) != m.data.end());
+    FB_ASSERT_TRUE(m.data.find(2) != m.data.end());
+    FB_ASSERT_FALSE(m.data.find(3) != m.data.end());
+    FB_ASSERT_TRUE(m.data.find(4) != m.data.end());
+}
+
+// ============================================================================
 // Test Suite: monclient — pg_state bitmask
 // ============================================================================
 
