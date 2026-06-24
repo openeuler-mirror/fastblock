@@ -6005,6 +6005,96 @@ FB_TEST(shard_service_specialization, service_holds_resources) {
 }
 
 // ============================================================================
+// Test Suite: shard_invoke_callbacks (Shard Invoke Callbacks Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_invoke_callbacks) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_invoke_callbacks) {
+    // Teardown code here
+}
+
+FB_TEST(shard_invoke_callbacks, function_pointer_invocation) {
+    using fn_t = void(*)(int);
+    static int captured;
+    captured = 0;
+
+    fn_t fn = [](int x) { captured = x * 2; };
+    fn(21);
+    FB_ASSERT_EQ(captured, 42);
+}
+
+FB_TEST(shard_invoke_callbacks, std_function_invocation) {
+    std::function<int(int, int)> fn = [](int a, int b) { return a * b; };
+    FB_ASSERT_EQ(fn(6, 7), 42);
+}
+
+FB_TEST(shard_invoke_callbacks, generic_lambda) {
+    // Generic lambda with auto parameters
+    auto fn = [](auto a, auto b) { return a + b; };
+    FB_ASSERT_EQ(fn(1, 2), 3);
+    FB_ASSERT_EQ(fn(1.5, 2.5), 4.0);
+}
+
+FB_TEST(shard_invoke_callbacks, lambda_returning_lambda) {
+    // Higher-order: lambda returns lambda
+    auto make_adder = [](int x) {
+        return [x](int y) { return x + y; };
+    };
+
+    auto add_5 = make_adder(5);
+    FB_ASSERT_EQ(add_5(3), 8);
+    FB_ASSERT_EQ(add_5(10), 15);
+}
+
+FB_TEST(shard_invoke_callbacks, callback_chain) {
+    // Chain of callbacks
+    std::vector<int> results;
+    auto cb1 = [&results](int x) { results.push_back(x); return x * 2; };
+    auto cb2 = [&results](int x) { results.push_back(x); return x + 10; };
+
+    int result = cb2(cb1(5));
+    FB_ASSERT_EQ(result, 20); // 5*2=10 -> 10+10=20
+    FB_ASSERT_EQ(results.size(), 2);
+    FB_ASSERT_EQ(results[0], 5);
+    FB_ASSERT_EQ(results[1], 10);
+}
+
+FB_TEST(shard_invoke_callbacks, member_function_via_bind) {
+    struct svc {
+        int value = 0;
+        void set(int v) { value = v; }
+    };
+
+    svc s;
+    auto bound = std::bind(&svc::set, &s, std::placeholders::_1);
+    bound(42);
+    FB_ASSERT_EQ(s.value, 42);
+}
+
+FB_TEST(shard_invoke_callbacks, invoke_with_member_function) {
+    struct svc {
+        int multiply(int x, int y) { return x * y; }
+    };
+
+    svc s;
+    int result = std::invoke(&svc::multiply, &s, 6, 7);
+    FB_ASSERT_EQ(result, 42);
+}
+
+FB_TEST(shard_invoke_callbacks, void_returning_callback) {
+    // Void-returning callback (no result to check directly)
+    static int side_effect;
+    side_effect = 0;
+
+    auto cb = []() { side_effect = 999; };
+    cb();
+    FB_ASSERT_EQ(side_effect, 999);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
