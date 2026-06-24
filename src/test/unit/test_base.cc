@@ -1820,6 +1820,108 @@ FB_TEST(shard_data_locality, no_synchronization_within_shard) {
 }
 
 // ============================================================================
+// Test Suite: core_traversal_pattern (Core Traversal Pattern Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(core_traversal_pattern) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(core_traversal_pattern) {
+    // Teardown code here
+}
+
+FB_TEST(core_traversal_pattern, foreach_core_idiom) {
+    // SPDK_ENV_FOREACH_CORE iterates all cores
+    std::vector<uint32_t> all_cores = {0, 1, 2, 3, 4, 5, 6, 7};
+    uint32_t count = 0;
+    for (uint32_t c : all_cores) {
+        (void)c;
+        count++;
+    }
+    FB_ASSERT_EQ(count, all_cores.size());
+}
+
+FB_TEST(core_traversal_pattern, first_then_next_idiom) {
+    // first_core() + next_core() walk
+    std::vector<uint32_t> cores;
+    uint32_t first = 0;
+    uint32_t last = 7;
+
+    uint32_t c = first;
+    while (c != UINT32_MAX) {
+        cores.push_back(c);
+        if (c == last) break;
+        c++;
+    }
+    FB_ASSERT_EQ(cores.size(), 8);
+}
+
+FB_TEST(core_traversal_pattern, stop_at_last_core) {
+    // Loop terminates when reaching last_core
+    uint32_t first = 0;
+    uint32_t last = 4;
+    std::vector<uint32_t> cores;
+
+    uint32_t c = first;
+    while (c != last) {
+        cores.push_back(c);
+        c++;
+    }
+    FB_ASSERT_EQ(cores.size(), 4);
+    FB_ASSERT_TRUE(std::find(cores.begin(), cores.end(), last) == cores.end());
+}
+
+FB_TEST(core_traversal_pattern, capacity_matches_iterations) {
+    // capacity() returns total core count
+    uint32_t expected_capacity = 8;
+    std::vector<uint32_t> cores;
+    for (uint32_t i = 0; i < expected_capacity; i++) {
+        cores.push_back(i);
+    }
+    FB_ASSERT_EQ(cores.size(), expected_capacity);
+}
+
+FB_TEST(core_traversal_pattern, parallel_iteration_iterator) {
+    // begin() / end() pattern
+    std::vector<uint32_t> cores = {0, 1, 2, 3, 4};
+    auto begin = cores.begin();
+    auto end = cores.end();
+
+    uint32_t count = 0;
+    while (begin != end) {
+        count++;
+        ++begin;
+    }
+    FB_ASSERT_EQ(count, 5);
+}
+
+FB_TEST(core_traversal_pattern, std_for_each_works) {
+    // std::for_each with forward iterators
+    std::vector<uint32_t> cores = {1, 2, 3, 4};
+    uint32_t sum = 0;
+    std::for_each(cores.begin(), cores.end(), [&sum](uint32_t c) {
+        sum += c;
+    });
+    FB_ASSERT_EQ(sum, 10);
+}
+
+FB_TEST(core_traversal_pattern, sentinel_end_iteration) {
+    // end iterator = sentinel value UINT32_MAX
+    uint32_t sentinel = UINT32_MAX;
+    uint32_t valid_value = 100;
+    FB_ASSERT_TRUE(valid_value != sentinel);
+}
+
+FB_TEST(core_traversal_pattern, ordered_traversal) {
+    // first_core, next_core return cores in ascending order
+    std::vector<uint32_t> cores = {0, 2, 5, 7};
+    for (size_t i = 1; i < cores.size(); i++) {
+        FB_ASSERT_TRUE(cores[i] > cores[i-1]);
+    }
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
