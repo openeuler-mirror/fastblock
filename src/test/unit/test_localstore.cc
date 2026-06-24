@@ -2794,4 +2794,165 @@ FB_TEST(log_entry_operations, multiple_entries_sequence) {
     FB_ASSERT_TRUE(sbuf.used() > 0);
 }
 
+// ============================================================================
+// Test Suite: serialization_large_data (Large Data Serialization Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization_large_data) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization_large_data) {
+    // Teardown code here
+}
+
+FB_TEST(serialization_large_data, large_string_1kb) {
+    char buffer[2000];
+    spdk_buffer sbuf(buffer, 2000);
+
+    std::string large(1024, 'A');
+    FB_ASSERT_TRUE(PutString(sbuf, large));
+
+    sbuf.reset();
+    std::string decoded;
+    FB_ASSERT_TRUE(GetString(sbuf, decoded));
+    FB_ASSERT_EQ(decoded.size(), 1024);
+}
+
+FB_TEST(serialization_large_data, large_string_4kb) {
+    char buffer[5000];
+    spdk_buffer sbuf(buffer, 5000);
+
+    std::string large(4096, 'B');
+    FB_ASSERT_TRUE(PutString(sbuf, large));
+
+    sbuf.reset();
+    std::string decoded;
+    FB_ASSERT_TRUE(GetString(sbuf, decoded));
+    FB_ASSERT_EQ(decoded.size(), 4096);
+}
+
+FB_TEST(serialization_large_data, many_small_entries) {
+    char buffer[10000];
+    spdk_buffer sbuf(buffer, 10000);
+
+    for (int i = 0; i < 100; i++) {
+        FB_ASSERT_TRUE(PutFixed32(sbuf, i));
+    }
+
+    sbuf.reset();
+    for (int i = 0; i < 100; i++) {
+        uint32_t v;
+        FB_ASSERT_TRUE(GetFixed32(sbuf, v));
+        FB_ASSERT_EQ(v, static_cast<uint32_t>(i));
+    }
+}
+
+FB_TEST(serialization_large_data, alternating_types) {
+    char buffer[5000];
+    spdk_buffer sbuf(buffer, 5000);
+
+    for (int i = 0; i < 50; i++) {
+        FB_ASSERT_TRUE(PutFixed32(sbuf, i));
+        FB_ASSERT_TRUE(PutString(sbuf, std::to_string(i)));
+    }
+
+    sbuf.reset();
+    for (int i = 0; i < 50; i++) {
+        uint32_t v;
+        std::string s;
+        FB_ASSERT_TRUE(GetFixed32(sbuf, v));
+        FB_ASSERT_TRUE(GetString(sbuf, s));
+        FB_ASSERT_EQ(v, static_cast<uint32_t>(i));
+        FB_ASSERT_EQ(s, std::to_string(i));
+    }
+}
+
+FB_TEST(serialization_large_data, optional_string_large) {
+    char buffer[6000];
+    spdk_buffer sbuf(buffer, 6000);
+
+    std::optional<std::string> large(std::string(5000, 'C'));
+    FB_ASSERT_TRUE(PutOptString(sbuf, large));
+
+    sbuf.reset();
+    std::optional<std::string> decoded;
+    FB_ASSERT_TRUE(GetOptString(sbuf, decoded));
+    FB_ASSERT_TRUE(decoded.has_value());
+    FB_ASSERT_EQ(decoded->size(), 5000);
+}
+
+FB_TEST(serialization_large_data, buffer_near_capacity) {
+    char buffer[20];
+    spdk_buffer sbuf(buffer, 20);
+
+    // Fill to exactly capacity
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 1));
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 2));
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 3));
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 4));
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 5));
+
+    FB_ASSERT_EQ(sbuf.remain(), 0u);
+
+    // Any more writes should fail
+    FB_ASSERT_FALSE(PutFixed32(sbuf, 6));
+}
+
+FB_TEST(serialization_large_data, boundary_exhaustion) {
+    char buffer[17];
+    spdk_buffer sbuf(buffer, 17);
+
+    // Write 16 bytes
+    FB_ASSERT_TRUE(PutFixed64(sbuf, 1ull));
+    FB_ASSERT_TRUE(PutFixed64(sbuf, 2ull));
+
+    FB_ASSERT_EQ(sbuf.remain(), 1u);
+
+    // Can't write fixed32 (needs 4 bytes)
+    FB_ASSERT_FALSE(PutFixed32(sbuf, 3u));
+}
+
+FB_TEST(serialization_large_data, mixed_large_small) {
+    char buffer[3000];
+    spdk_buffer sbuf(buffer, 3000);
+
+    FB_ASSERT_TRUE(PutString(sbuf, std::string(1000, 'X')));
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 1u));
+    FB_ASSERT_TRUE(PutString(sbuf, std::string(1000, 'Y')));
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 2u));
+
+    sbuf.reset();
+
+    std::string s1, s2;
+    uint32_t v1, v2;
+
+    FB_ASSERT_TRUE(GetString(sbuf, s1));
+    FB_ASSERT_TRUE(GetFixed32(sbuf, v1));
+    FB_ASSERT_TRUE(GetString(sbuf, s2));
+    FB_ASSERT_TRUE(GetFixed32(sbuf, v2));
+
+    FB_ASSERT_EQ(s1.size(), 1000);
+    FB_ASSERT_EQ(s2.size(), 1000);
+    FB_ASSERT_EQ(v1, 1u);
+    FB_ASSERT_EQ(v2, 2u);
+}
+
+FB_TEST(serialization_large_data, sequential_fixed64) {
+    char buffer[1000];
+    spdk_buffer sbuf(buffer, 1000);
+
+    for (uint64_t i = 0; i < 100; i++) {
+        FB_ASSERT_TRUE(PutFixed64(sbuf, i * 1000));
+    }
+
+    sbuf.reset();
+
+    for (uint64_t i = 0; i < 100; i++) {
+        uint64_t v;
+        FB_ASSERT_TRUE(GetFixed64(sbuf, v));
+        FB_ASSERT_EQ(v, i * 1000);
+    }
+}
+
 FB_TEST_MAIN()
