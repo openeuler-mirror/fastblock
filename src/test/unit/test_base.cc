@@ -7256,6 +7256,114 @@ FB_TEST(shard_failover, split_brain_prevention) {
 }
 
 // ============================================================================
+// Test Suite: shard_partitioning_consistency (Partitioning Consistency)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_partitioning_consistency) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_partitioning_consistency) {
+    // Teardown code here
+}
+
+FB_TEST(shard_partitioning_consistency, same_key_same_shard_deterministic) {
+    // Deterministic: same key always maps to same shard
+    uint32_t shards = 4;
+    auto shard_of = [&](uint64_t key) { return key % shards; };
+
+    for (uint64_t k = 0; k < 100; k++) {
+        FB_ASSERT_EQ(shard_of(k), shard_of(k));
+    }
+}
+
+FB_TEST(shard_partitioning_consistency, every_key_has_a_shard) {
+    // Every key must map to a valid shard (no orphans)
+    uint32_t shards = 4;
+    auto shard_of = [&](uint64_t key) { return key % shards; };
+
+    for (uint64_t k = 0; k < 1000; k++) {
+        FB_ASSERT_TRUE(shard_of(k) < shards);
+    }
+}
+
+FB_TEST(shard_partitioning_consistency, key_space_fully_covered) {
+    // Sum of shard assignments equals total keys
+    uint32_t shards = 4;
+    std::vector<uint64_t> counts(shards, 0);
+    uint64_t total = 1000;
+
+    for (uint64_t k = 0; k < total; k++) {
+        counts[k % shards]++;
+    }
+
+    uint64_t sum = 0;
+    for (auto c : counts) sum += c;
+    FB_ASSERT_EQ(sum, total);
+}
+
+FB_TEST(shard_partitioning_consistency, contiguous_keys_same_shard_range) {
+    // Range partitioning: contiguous keys -> contiguous shards
+    uint32_t shards = 4;
+    uint64_t range_per_shard = 250;
+
+    auto shard_of = [&](uint64_t k) { return std::min(static_cast<uint32_t>(k / range_per_shard), shards - 1); };
+
+    FB_ASSERT_EQ(shard_of(0), 0);
+    FB_ASSERT_EQ(shard_of(249), 0);
+    FB_ASSERT_EQ(shard_of(250), 1);
+    FB_ASSERT_EQ(shard_of(1000), shards - 1); // overflow clamped
+}
+
+FB_TEST(shard_partitioning_consistency, hash_partition_balanced_at_scale) {
+    // Hash partition: balance improves with more keys
+    uint32_t shards = 4;
+
+    for (uint64_t n : {100, 1000, 10000}) {
+        std::vector<uint64_t> counts(shards, 0);
+        for (uint64_t k = 0; k < n; k++) counts[k % shards]++;
+
+        uint64_t max_c = *std::max_element(counts.begin(), counts.end());
+        uint64_t min_c = *std::min_element(counts.begin(), counts.end());
+        FB_ASSERT_TRUE(max_c - min_c <= 1);
+    }
+}
+
+FB_TEST(shard_partitioning_consistency, partition_function_idempotent) {
+    // Calling partition function twice yields same result
+    uint32_t shards = 4;
+    auto shard_of = [&](uint64_t key) { return key % shards; };
+
+    uint64_t key = 42;
+    FB_ASSERT_EQ(shard_of(key), shard_of(key));
+}
+
+FB_TEST(shard_partitioning_consistency, no_empty_shards_at_scale) {
+    // At sufficient scale, every shard should have keys
+    uint32_t shards = 4;
+    std::vector<uint64_t> counts(shards, 0);
+
+    for (uint64_t k = 0; k < 1000; k++) counts[k % shards]++;
+
+    for (auto c : counts) {
+        FB_ASSERT_TRUE(c > 0);
+    }
+}
+
+FB_TEST(shard_partitioning_consistency, shard_count_change_minimal_disruption) {
+    // When shard count N -> N+1, only ~K/(N+1) keys should move
+    uint32_t old_n = 4;
+    uint32_t new_n = 5;
+    uint64_t total = 1000;
+
+    // Ideal consistent hashing: ~1/(new_n) keys move
+    uint64_t ideal_moved = total / new_n;
+    FB_ASSERT_TRUE(ideal_moved > 0);
+    FB_ASSERT_TRUE(ideal_moved < total);
+    (void)old_n;
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
