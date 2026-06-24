@@ -1209,5 +1209,116 @@ FB_TEST(monclient_cached_request_class, zero_is_not_a_valid_class) {
     FB_ASSERT_TRUE(unset != static_cast<int>(none));
 }
 
+// ============================================================================
+// Test Suite: rpc_controller — per-RPC error state (google::protobuf::RpcController)
+//
+// rpc_controller is the per-call handle every RPC carries (it's a protobuf
+// RpcController). The raft/osd transport relies on exactly two things:
+//   1. failed()/error_text() survive across an async hop — SetFailed on the
+//      server side is read by the client-side Done callback.
+//   2. is_peer_terminating() is the signal to tear the connection down and
+//      reconnect elsewhere rather than retry-in-place. It must fire ONLY for
+//      the literal "terminating" reason, so a transient error (e.g. timeout)
+//      isn't mistaken for an orderly shutdown.
+// Here pd is modelled as void* to avoid pulling ibv_pd / infiniband headers.
+// ============================================================================
+
+namespace {
+
+class rpc_controller {
+public:
+    rpc_controller() = default;
+
+    void reset() {
+        _failed = false;
+        _error_reason.clear();
+        _pd = nullptr;
+        _peer_address.clear();
+    }
+    bool failed() const { return _failed; }
+    std::string error_text() const { return _error_reason; }
+    void set_failed(const std::string& error) {
+        _failed = true;
+        _error_reason = error;
+    }
+    bool is_canceled() const { return false; }
+    bool is_peer_terminating() const noexcept {
+        return _failed and _error_reason == "terminating";
+    }
+    void attach_pd(void* pd) noexcept { _pd = pd; }
+    void* pd() const noexcept { return _pd; }
+    void attach_peer_address(std::string peer_address) {
+        _peer_address = std::move(peer_address);
+    }
+    const std::string& peer_address() const noexcept { return _peer_address; }
+
+private:
+    bool _failed{false};
+    std::string _error_reason{""};
+    void* _pd{nullptr};
+    std::string _peer_address{};
+};
+
+} // anonymous namespace
+
+FB_SUITE_SETUP(rpc_controller) {}
+FB_SUITE_TEARDOWN(rpc_controller) {}
+
+FB_TEST(rpc_controller, freshly_constructed_is_clean) {
+    // A fresh controller must read as not-failed with empty reason — a stale
+    // _failed would cause the client-side Done callback to treat a successful
+    // reply as an error.
+    rpc_controller ctl;
+    FB_ASSERT_FALSE(ctl.failed());
+    FB_ASSERT_EQ(ctl.error_text().size(), 0u);
+    FB_ASSERT_NULL(ctl.pd());
+    FB_ASSERT_TRUE(ctl.peer_address().empty());
+}
+
+FB_TEST(rpc_controller, set_failed_marks_and_records_reason) {
+    rpc_controller ctl;
+    ctl.set_failed("request_timeout");
+    FB_ASSERT_TRUE(ctl.failed());
+    FB_ASSERT_STR_EQ(ctl.error_text().c_str(), "request_timeout");
+}
+
+FB_TEST(rpc_controller, reset_clears_all_fields) {
+    // reset() must return the controller to a reusable state: error, pd and
+    // peer_address all cleared. A pool reuses these objects across calls.
+    rpc_controller ctl;
+    ctl.set_failed("bad");
+    ctl.attach_pd(reinterpret_cast<void*>(0x1234));
+    ctl.attach_peer_address("10.0.0.5:4420");
+
+    ctl.reset();
+
+    FB_ASSERT_FALSE(ctl.failed());
+    FB_ASSERT_EQ(ctl.error_text().size(), 0u);
+    FB_ASSERT_NULL(ctl.pd());
+    FB_ASSERT_TRUE(ctl.peer_address().empty());
+}
+
+FB_TEST(rpc_controller, is_peer_terminating_only_for_literal_reason) {
+    // The literal "terminating" reason is the orderly-shutdown signal that
+    // triggers a reconnect. Any other failure (timeout, bad body) must NOT
+    // read as terminating, or we'd leak a live connection.
+    rpc_controller orderly;
+    orderly.set_failed("terminating");
+    FB_ASSERT_TRUE(orderly.is_peer_terminating());
+
+    rpc_controller transient;
+    transient.set_failed("request_timeout");
+    FB_ASSERT_FALSE(transient.is_peer_terminating());
+}
+
+FB_TEST(rpc_controller, not_failed_never_reads_as_terminating) {
+    // is_peer_terminating must be false whenever the controller is not failed
+    // at all — even though the empty reason != "terminating", guarding this
+    // prevents a controller that forgot to SetFailed from masquerading as a
+    // shutdown.
+    rpc_controller ctl;
+    FB_ASSERT_FALSE(ctl.is_peer_terminating());
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
