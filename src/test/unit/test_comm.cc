@@ -2535,5 +2535,70 @@ FB_TEST(bdev_io_size_arithmetic, multi_segment_iov_alignment) {
     FB_ASSERT_FALSE(is_4k_aligned(sum_iov_lengths(unaligned_iovs, 3)));
 }
 
+// ============================================================================
+// Test Suite: bdev_blockcnt_calculation — SPDK blockcnt reported to upper layers
+//
+// bdev_fastblock sets disk.blockcnt = image_size / blocklen. SPDK uses this
+// to bound legal LBA ranges. The contract:
+//   - image_size aligned to blocklen → blockcnt is exact, no truncation.
+//   - image_size NOT aligned would TRUNCATE (integer division), exposing
+//     fewer blocks than the image actually has. This is why caller MUST
+//     pass an aligned image_size.
+// ============================================================================
+
+namespace {
+
+uint64_t calc_blockcnt(uint64_t image_size, uint32_t blocklen) {
+    return image_size / blocklen;
+}
+
+uint64_t calc_max_offset_bytes(uint64_t blockcnt, uint32_t blocklen) {
+    return blockcnt * blocklen;
+}
+
+} // anonymous namespace
+
+FB_SUITE_SETUP(bdev_blockcnt_calculation) {}
+FB_SUITE_TEARDOWN(bdev_blockcnt_calculation) {}
+
+FB_TEST(bdev_blockcnt_calculation, exact_division_at_aligned_size) {
+    // Properly aligned image: blockcnt is exact.
+    FB_ASSERT_EQ(calc_blockcnt(4096, 4096), 1u);
+    FB_ASSERT_EQ(calc_blockcnt(1024 * 4096, 4096), 1024u);
+    FB_ASSERT_EQ(calc_blockcnt(1ULL << 30, 4096), (1ULL << 30) / 4096); // 1 GiB / 4 KiB
+}
+
+FB_TEST(bdev_blockcnt_calculation, unaligned_image_size_truncates) {
+    // Unaligned: integer division truncates. Caller must avoid this.
+    FB_ASSERT_EQ(calc_blockcnt(4096 + 1, 4096), 1u); // not 1.0001
+    FB_ASSERT_EQ(calc_blockcnt(4096 - 1, 4096), 0u); // last byte is lost
+    FB_ASSERT_EQ(calc_blockcnt(2 * 4096 - 1, 4096), 1u);
+}
+
+FB_TEST(bdev_blockcnt_calculation, blockcnt_zero_for_subblock_image) {
+    // image_size smaller than one block: blockcnt is 0. Such an image is
+    // unusable; the caller should reject early.
+    FB_ASSERT_EQ(calc_blockcnt(0, 4096), 0u);
+    FB_ASSERT_EQ(calc_blockcnt(100, 4096), 0u);
+}
+
+FB_TEST(bdev_blockcnt_calculation, round_trip_blockcnt_to_image_size) {
+    // For aligned input, blockcnt * blocklen reconstructs image_size exactly.
+    std::array<uint64_t, 5> sizes = {4096, 8192, 4096 * 1024, 16777216, (1ULL << 30)};
+    for (uint64_t img_sz : sizes) {
+        uint32_t blocklen = 4096;
+        auto bc = calc_blockcnt(img_sz, blocklen);
+        FB_ASSERT_EQ(calc_max_offset_bytes(bc, blocklen), img_sz);
+    }
+}
+
+FB_TEST(bdev_blockcnt_calculation, scale_with_smaller_blocklen) {
+    // Same image, smaller blocklen → more blocks (linear scaling).
+    uint64_t img = 64 * 1024; // 64 KiB
+    FB_ASSERT_EQ(calc_blockcnt(img, 4096), 16u);
+    FB_ASSERT_EQ(calc_blockcnt(img, 512), 128u);
+    FB_ASSERT_EQ(calc_blockcnt(img, 1024), 64u);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
