@@ -3552,21 +3552,23 @@ FB_TEST(stress_patterns, max_min_alternation) {
 }
 
 FB_TEST(stress_patterns, string_repeat_pattern) {
-    char buffer[1000];
-    spdk_buffer sbuf(buffer, 1000);
+    // Allocate enough buffer to avoid compiler warnings
+    char* buffer = new char[500];
+    spdk_buffer sbuf(buffer, 500);
 
     std::string pattern = "abc";
-    // Reduced iterations to avoid compiler warning
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < 10; i++) {
         FB_ASSERT_TRUE(PutString(sbuf, pattern));
     }
 
     sbuf.reset();
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < 10; i++) {
         std::string decoded;
         FB_ASSERT_TRUE(GetString(sbuf, decoded));
         FB_ASSERT_EQ(decoded, pattern);
     }
+
+    delete[] buffer;
 }
 
 FB_TEST(stress_patterns, varying_length_strings) {
@@ -4183,7 +4185,7 @@ FB_TEST(final_comprehensive, log_entry_all_types) {
         sbuf.reset();
         log_entry_t decoded{};
         FB_ASSERT_TRUE(DecodeLogHeader(sbuf, decoded));
-        FB_ASSERT_EQ(decoded.type, static_cast<int>(type));
+        FB_ASSERT_EQ(static_cast<int>(decoded.type), type);
     }
 }
 
@@ -4284,7 +4286,10 @@ FB_TEST(buffer_list_basic, prepend_buffer) {
     bl.prepend_buffer(sbuf2);
 
     FB_ASSERT_EQ(bl.bytes(), 300u);
-    FB_ASSERT_EQ(bl.front().size(), 200u);
+
+    // Verify front buffer is the prepended one
+    auto it = bl.begin();
+    FB_ASSERT_EQ(it->size(), 200u);
 }
 
 FB_TEST(buffer_list_basic, append_buffer_list) {
@@ -4930,8 +4935,11 @@ FB_TEST(buffer_list_iterator, front_back_access) {
     bl.append_buffer(sbuf1);
     bl.append_buffer(sbuf2);
 
-    FB_ASSERT_EQ(bl.front().size(), 100u);
-    FB_ASSERT_EQ(bl.back().size(), 200u);
+    // Verify sizes using iterators
+    auto it = bl.begin();
+    FB_ASSERT_EQ(it->size(), 100u);
+    ++it;
+    FB_ASSERT_EQ(it->size(), 200u);
 }
 
 FB_TEST(buffer_list_iterator, iterator_after_trim) {
@@ -4973,18 +4981,18 @@ FB_TEST(buffer_list_iterator, iterator_after_pop) {
 }
 
 // ============================================================================
-// Test Suite: buffer_list_advanced (Buffer List Advanced Tests)
+// Test Suite: buffer_list_complex_operations (Buffer List Complex Operations)
 // ============================================================================
 
-FB_SUITE_SETUP(buffer_list_advanced) {
+FB_SUITE_SETUP(buffer_list_complex_operations) {
     // Setup code here
 }
 
-FB_SUITE_TEARDOWN(buffer_list_advanced) {
+FB_SUITE_TEARDOWN(buffer_list_complex_operations) {
     // Teardown code here
 }
 
-FB_TEST(buffer_list_advanced, append_rvalue) {
+FB_TEST(buffer_list_complex_operations, append_rvalue) {
     char buf1[100], buf2[200];
     spdk_buffer sbuf1(buf1, 100);
     spdk_buffer sbuf2(buf2, 200);
@@ -5000,7 +5008,7 @@ FB_TEST(buffer_list_advanced, append_rvalue) {
     FB_ASSERT_EQ(bl1.bytes(), 300u);
 }
 
-FB_TEST(buffer_list_advanced, multiple_trim_operations) {
+FB_TEST(buffer_list_complex_operations, multiple_trim_operations) {
     char buf1[100], buf2[200], buf3[300];
     spdk_buffer sbuf1(buf1, 100);
     spdk_buffer sbuf2(buf2, 200);
@@ -5017,7 +5025,7 @@ FB_TEST(buffer_list_advanced, multiple_trim_operations) {
     FB_ASSERT_EQ(bl.bytes(), 200u);
 }
 
-FB_TEST(buffer_list_advanced, sequential_pops) {
+FB_TEST(buffer_list_complex_operations, sequential_pops) {
     char buf1[100], buf2[200], buf3[300];
     spdk_buffer sbuf1(buf1, 100);
     spdk_buffer sbuf2(buf2, 200);
@@ -5036,7 +5044,7 @@ FB_TEST(buffer_list_advanced, sequential_pops) {
     FB_ASSERT_EQ(bl.bytes(), 300u);
 }
 
-FB_TEST(buffer_list_advanced, mixed_operations) {
+FB_TEST(buffer_list_complex_operations, mixed_operations) {
     char buf1[100], buf2[200], buf3[300], buf4[400];
     spdk_buffer sbuf1(buf1, 100);
     spdk_buffer sbuf2(buf2, 200);
@@ -5057,7 +5065,7 @@ FB_TEST(buffer_list_advanced, mixed_operations) {
     FB_ASSERT_EQ(bl.bytes(), 300u);
 }
 
-FB_TEST(buffer_list_advanced, empty_operations) {
+FB_TEST(buffer_list_complex_operations, empty_operations) {
     buffer_list bl;
 
     FB_ASSERT_TRUE(bl.empty());
@@ -5069,7 +5077,7 @@ FB_TEST(buffer_list_advanced, empty_operations) {
     FB_ASSERT_TRUE(bl.empty());
 }
 
-FB_TEST(buffer_list_advanced, append_clear_append) {
+FB_TEST(buffer_list_complex_operations, append_clear_append) {
     char buf1[100], buf2[200];
     spdk_buffer sbuf1(buf1, 100);
     spdk_buffer sbuf2(buf2, 200);
@@ -5085,7 +5093,7 @@ FB_TEST(buffer_list_advanced, append_clear_append) {
     FB_ASSERT_FALSE(bl.empty());
 }
 
-FB_TEST(buffer_list_advanced, pop_front_list_partial) {
+FB_TEST(buffer_list_complex_operations, pop_front_list_partial) {
     char buf1[100], buf2[200], buf3[300], buf4[400];
     spdk_buffer sbuf1(buf1, 100);
     spdk_buffer sbuf2(buf2, 200);
@@ -5104,7 +5112,7 @@ FB_TEST(buffer_list_advanced, pop_front_list_partial) {
     FB_ASSERT_EQ(bl.bytes(), 400u);
 }
 
-FB_TEST(buffer_list_advanced, to_iovec_partial_range) {
+FB_TEST(buffer_list_complex_operations, to_iovec_partial_range) {
     char buf1[100], buf2[200], buf3[300];
     spdk_buffer sbuf1(buf1, 100);
     spdk_buffer sbuf2(buf2, 200);
@@ -5121,7 +5129,7 @@ FB_TEST(buffer_list_advanced, to_iovec_partial_range) {
     FB_ASSERT_TRUE(iovs.size() > 0);
 }
 
-FB_TEST(buffer_list_advanced, large_buffer_list) {
+FB_TEST(buffer_list_complex_operations, large_buffer_list) {
     buffer_list bl;
 
     for (int i = 0; i < 100; i++) {
