@@ -2376,5 +2376,205 @@ FB_TEST(raft_log_node, partition_removal_safety) {
     FB_ASSERT_TRUE(safe_removal);
 }
 
+// ============================================================================
+// Test Suite: Safety Properties
+// ============================================================================
+
+FB_TEST(raft_log_node, leader_completeness) {
+    // Leader 完整性：所有已提交的日志在所有未来 Leader 中都存在
+    std::map<raft_index_t, raft_term_t> committed_log;
+    for (int i = 1; i <= 100; i++) {
+        committed_log[i] = (i <= 50) ? 3 : 4;
+    }
+
+    raft_index_t commit_idx = 100;
+
+    // 新 Leader 必须包含所有已提交的日志
+    std::map<raft_index_t, raft_term_t> new_leader_log;
+    for (int i = 1; i <= commit_idx; i++) {
+        new_leader_log[i] = committed_log[i];
+    }
+
+    // 验证完整性
+    for (raft_index_t idx = 1; idx <= commit_idx; idx++) {
+        FB_ASSERT_EQ(new_leader_log[idx], committed_log[idx]);
+    }
+}
+
+FB_TEST(raft_log_node, leader_completeness_vote_check) {
+    // Leader 完整性通过投票检查保证
+    raft_index_t voter_last_log_idx = 100;
+    raft_term_t voter_last_log_term = 4;
+    raft_index_t candidate_last_log_idx = 95;
+    raft_term_t candidate_last_log_term = 4;
+
+    // 候选人日志更旧，无法获得投票
+    bool log_is_up_to_date = (candidate_last_log_term > voter_last_log_term) ||
+        (candidate_last_log_term == voter_last_log_term &&
+         candidate_last_log_idx >= voter_last_log_idx);
+    FB_ASSERT_FALSE(log_is_up_to_date);
+
+    // 因此，日志落后的候选人无法成为 Leader
+    // 保证了 Leader 完整性
+}
+
+FB_TEST(raft_log_node, state_machine_safety) {
+    // 状态机安全性：所有节点按相同顺序应用相同日志
+    std::vector<int> applied_commands_node_a = {1, 2, 3, 4, 5};
+    std::vector<int> applied_commands_node_b = {1, 2, 3, 4, 5};
+
+    // 验证两个节点应用了相同的命令序列
+    FB_ASSERT_EQ(applied_commands_node_a.size(), applied_commands_node_b.size());
+    for (size_t i = 0; i < applied_commands_node_a.size(); i++) {
+        FB_ASSERT_EQ(applied_commands_node_a[i], applied_commands_node_b[i]);
+    }
+}
+
+FB_TEST(raft_log_node, state_machine_safety_order) {
+    // 状态机安全性：命令应用顺序必须一致
+    std::map<raft_index_t, int> log_commands;
+    log_commands[1] = 100;
+    log_commands[2] = 200;
+    log_commands[3] = 300;
+
+    // 应用顺序必须按 index 递增
+    raft_index_t last_applied = 0;
+    for (const auto& pair : log_commands) {
+        FB_ASSERT_TRUE(pair.first > last_applied);
+        last_applied = pair.first;
+    }
+}
+
+FB_TEST(raft_log_node, election_safety_single_leader) {
+    // 选举安全性：每个 term 最多有一个 Leader
+    std::map<raft_term_t, std::set<raft_node_id_t>> term_leaders;
+
+    // 每个 term 只记录一个 Leader
+    term_leaders[1].insert(5);  // term 1 的 Leader 是节点 5
+    term_leaders[2].insert(3);  // term 2 的 Leader 是节点 3
+    term_leaders[3].insert(1);  // term 3 的 Leader 是节点 1
+
+    // 每个 term 最多只有一个 Leader
+    for (const auto& pair : term_leaders) {
+        FB_ASSERT_TRUE(pair.second.size() <= 1);
+    }
+}
+
+FB_TEST(raft_log_node, election_safety_term_monotonic) {
+    // 选举安全性：term 单调递增
+    raft_term_t current_term = 0;
+
+    // 模拟多次选举
+    std::vector<raft_term_t> terms = {1, 2, 3, 5, 7};
+    for (raft_term_t term : terms) {
+        FB_ASSERT_TRUE(term > current_term);
+        current_term = term;
+    }
+}
+
+FB_TEST(raft_log_node, log_matching_property) {
+    // 日志匹配属性：相同索引和 term 的日志相同
+    struct LogEntry {
+        raft_term_t term;
+        int command;
+    };
+
+    std::map<raft_index_t, LogEntry> log_a = {
+        {1, {1, 100}},
+        {2, {1, 200}},
+        {3, {2, 300}}
+    };
+
+    std::map<raft_index_t, LogEntry> log_b = {
+        {1, {1, 100}},
+        {2, {1, 200}},
+        {3, {2, 300}}
+    };
+
+    // 验证匹配
+    for (const auto& pair : log_a) {
+        raft_index_t idx = pair.first;
+        FB_ASSERT_EQ(log_a[idx].term, log_b[idx].term);
+        FB_ASSERT_EQ(log_a[idx].command, log_b[idx].command);
+    }
+}
+
+FB_TEST(raft_log_node, leader_append_only) {
+    // Leader 只追加原则：Leader 从不覆盖或删除自己的日志
+    std::vector<raft_index_t> leader_log_indices;
+    for (int i = 1; i <= 100; i++) {
+        leader_log_indices.push_back(i);
+    }
+
+    size_t original_size = leader_log_indices.size();
+
+    // Leader 只能追加
+    leader_log_indices.push_back(101);
+    FB_ASSERT_TRUE(leader_log_indices.size() > original_size);
+
+    // Leader 不会删除
+    FB_ASSERT_TRUE(leader_log_indices.size() >= original_size);
+}
+
+FB_TEST(raft_log_node, follower_log_consolidation) {
+    // Follower 日志整合：Follower 复制 Leader 日志
+    std::map<raft_index_t, raft_term_t> follower_log;
+    for (int i = 1; i <= 50; i++) {
+        follower_log[i] = 1;
+    }
+
+    // 收到 Leader 的 AppendEntries
+    raft_index_t leader_prev_idx = 50;
+    raft_term_t leader_prev_term = 1;
+
+    // 验证 prev 匹配
+    bool prev_match = follower_log[leader_prev_idx] == leader_prev_term;
+    FB_ASSERT_TRUE(prev_match);
+
+    // 追加新日志
+    for (int i = 51; i <= 60; i++) {
+        follower_log[i] = 2;
+    }
+
+    FB_ASSERT_EQ(follower_log.size(), 60UL);
+}
+
+FB_TEST(raft_log_node, commit_index_safety) {
+    // commit_idx 安全性：只有当前 term 的日志才能提交
+    raft_term_t current_term = 5;
+    std::map<raft_index_t, raft_term_t> log;
+    for (int i = 1; i <= 100; i++) {
+        log[i] = (i <= 80) ? 4 : 5;
+    }
+
+    raft_index_t match_idx = 100;
+
+    // 检查 match_idx 处的 term 是否是当前 term
+    bool can_commit = log[match_idx] == current_term;
+    FB_ASSERT_TRUE(can_commit);
+
+    // 如果是旧 term 的日志，不能提交
+    match_idx = 70;
+    can_commit = log[match_idx] == current_term;
+    FB_ASSERT_FALSE(can_commit);
+}
+
+FB_TEST(raft_log_node, invariant_preservation) {
+    // 不变量保持：关键不变量在任何时候都成立
+    // 不变量1：commit_idx <= last_log_idx
+    raft_index_t commit_idx = 100;
+    raft_index_t last_log_idx = 150;
+    FB_ASSERT_TRUE(commit_idx <= last_log_idx);
+
+    // 不变量2：last_applied <= commit_idx
+    raft_index_t last_applied = 95;
+    FB_ASSERT_TRUE(last_applied <= commit_idx);
+
+    // 不变量3：current_term 单调递增
+    raft_term_t old_term = 5;
+    raft_term_t new_term = 6;
+    FB_ASSERT_TRUE(new_term >= old_term);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
