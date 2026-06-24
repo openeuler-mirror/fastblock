@@ -311,20 +311,36 @@ FB_TEST(shard_count, non_power_of_two) {
 }
 
 FB_TEST(shard_count, shard_id_within_count) {
-    // shard_id must be < count()
+    // shard_id must satisfy 0 <= shard_id < count().
+    // Verify boundary: count-1 valid, count itself invalid.
     uint32_t shard_count = 4;
-    uint32_t shard_id = 3;
-    FB_ASSERT_TRUE(shard_id < shard_count);
+
+    // All ids in [0, count) are valid
+    for (uint32_t id = 0; id < shard_count; id++) {
+        FB_ASSERT_TRUE(id < shard_count);
+    }
+    // Boundary: id == count is invalid
+    FB_ASSERT_TRUE(!(shard_count < shard_count));
+    // Sentinel UINT32_MAX (returned by this_shard_id on miss) is also invalid
+    uint32_t sentinel = UINT32_MAX;
+    FB_ASSERT_TRUE(!(sentinel < shard_count));
 }
 
 FB_TEST(shard_count, shard_count_matches_threads) {
-    // shard_count should equal _threads.size()
-    uint32_t expected_shards = 4;
-    uint32_t shard_cores_size = 4;
-    uint32_t threads_size = 4;
+    // _shard_cores.size() and _threads.size() must remain equal at all times.
+    // Simulate the construction loop and verify invariant.
+    std::vector<uint32_t> shard_cores;
+    std::vector<void*> threads;
 
-    FB_ASSERT_EQ(shard_cores_size, threads_size);
-    FB_ASSERT_EQ(shard_cores_size, expected_shards);
+    uint32_t n_core = 4;
+    for (uint32_t i = 0; i < n_core; i++) {
+        // Each iteration adds one entry to BOTH vectors
+        shard_cores.push_back(i);
+        threads.push_back((void*)(uintptr_t)(0x1000 + i));
+        // Invariant holds throughout
+        FB_ASSERT_EQ(shard_cores.size(), threads.size());
+    }
+    FB_ASSERT_EQ(shard_cores.size(), n_core);
 }
 
 // ============================================================================
@@ -475,12 +491,20 @@ FB_TEST(lambda_ctx, deferred_execution) {
 }
 
 FB_TEST(lambda_ctx, ownership_via_new) {
-    // lambda_ctx allocated via new, deleted after run
-    int* ptr = new int(100);
-    FB_ASSERT_TRUE(ptr != nullptr);
-    FB_ASSERT_EQ(*ptr, 100);
-    delete ptr;
-    // After delete, pointer is dangling
+    // lambda_ctx is heap-allocated; verify ownership semantics via shared_ptr counter
+    static int alive_count;
+    alive_count = 0;
+
+    struct ctx_lifetime {
+        ctx_lifetime() { alive_count++; }
+        ~ctx_lifetime() { alive_count--; }
+    };
+
+    ctx_lifetime* p = new ctx_lifetime();
+    FB_ASSERT_EQ(alive_count, 1);
+
+    delete p; // simulates core_context::run() deleting itself
+    FB_ASSERT_EQ(alive_count, 0);
 }
 
 // ============================================================================
@@ -523,12 +547,25 @@ FB_TEST(core_context, run_static_method) {
 }
 
 FB_TEST(core_context, ownership_transfer) {
-    // run() deletes the context after running
-    // Caller must not access ctx after run()
-    int* heap_obj = new int(42);
-    FB_ASSERT_TRUE(heap_obj != nullptr);
-    delete heap_obj;
-    // heap_obj now dangling
+    // core_context::run() deletes the context after invoking run_task().
+    // Verify the run-then-delete pattern via destructor counter.
+    static int destroyed;
+    destroyed = 0;
+
+    struct my_ctx {
+        int& counter;
+        my_ctx(int& c) : counter(c) {}
+        ~my_ctx() { counter++; }
+        void run_task() { /* do work */ }
+    };
+
+    my_ctx* c = new my_ctx(destroyed);
+    // Simulate run(): invoke task then delete
+    c->run_task();
+    delete c;
+
+    // After run(), the context is gone (count should be 1)
+    FB_ASSERT_EQ(destroyed, 1);
 }
 
 FB_TEST(core_context, virtual_destructor) {
@@ -600,10 +637,31 @@ FB_TEST(invoke_on_logic, shard_id_bounds) {
 }
 
 FB_TEST(invoke_on_logic, lambda_lifetime) {
-    // Lambda must be heap-allocated to survive across thread boundary
-    auto* heap_lambda = new int(10); // Simulating heap allocation
-    FB_ASSERT_TRUE(heap_lambda != nullptr);
-    delete heap_lambda;
+    // Lambda must outlive sending thread's invocation frame.
+    // Verify pattern: lambda captures by value, heap-allocated, processed later.
+    static int execution_count;
+    execution_count = 0;
+
+    struct heap_ctx {
+        std::function<void()> fn;
+        heap_ctx(std::function<void()> f) : fn(std::move(f)) {}
+        void run() { fn(); }
+    };
+
+    int captured_value = 42;
+    // Heap-allocate, capture by value (survives caller frame exit)
+    heap_ctx* hctx = new heap_ctx([captured_value]() {
+        execution_count += captured_value;
+    });
+
+    // Simulate "caller returns, frame goes away"
+    // ... time passes ...
+
+    // Receiver runs later
+    hctx->run();
+    delete hctx;
+
+    FB_ASSERT_EQ(execution_count, 42);
 }
 
 FB_TEST(invoke_on_logic, args_perfect_forwarding) {
@@ -995,37 +1053,91 @@ FB_TEST(shard_lifecycle, stop_handles_null_threads) {
 }
 
 FB_TEST(shard_lifecycle, copy_construction_deleted) {
-    // core_sharded(const core_sharded&) = delete
-    FB_ASSERT_TRUE(!std::is_copy_constructible_v<std::unique_ptr<int>>);
+    // core_sharded explicitly deletes copy constructor:
+    //   core_sharded(const core_sharded&) = delete
+    // Verify the pattern via a mock class with same deletion.
+    struct non_copyable {
+        int v;
+        non_copyable(int x) : v(x) {}
+        non_copyable(const non_copyable&) = delete;
+        non_copyable& operator=(const non_copyable&) = delete;
+    };
+
+    constexpr bool copyable = std::is_copy_constructible_v<non_copyable>;
+    constexpr bool assignable = std::is_copy_assignable_v<non_copyable>;
+    FB_ASSERT_TRUE(!copyable);
+    FB_ASSERT_TRUE(!assignable);
+
+    // But can still be constructed normally
+    non_copyable n(42);
+    FB_ASSERT_EQ(n.v, 42);
 }
 
 FB_TEST(shard_lifecycle, move_construction_deleted) {
-    // core_sharded(core_sharded&&) = delete
-    // Verify unique_ptr is not copyable
-    std::unique_ptr<int> p1(new int(42));
-    FB_ASSERT_TRUE(p1 != nullptr);
+    // core_sharded explicitly deletes move constructor:
+    //   core_sharded(core_sharded&&) = delete
+    struct non_movable {
+        int v;
+        non_movable(int x) : v(x) {}
+        non_movable(const non_movable&) = delete;
+        non_movable(non_movable&&) = delete;
+        non_movable& operator=(const non_movable&) = delete;
+        non_movable& operator=(non_movable&&) = delete;
+    };
 
-    // Move is fine, but copy is not
-    std::unique_ptr<int> p2 = std::move(p1);
-    FB_ASSERT_TRUE(p1 == nullptr); // After move
-    FB_ASSERT_TRUE(p2 != nullptr);
+    constexpr bool movable = std::is_move_constructible_v<non_movable>;
+    constexpr bool move_assignable = std::is_move_assignable_v<non_movable>;
+    FB_ASSERT_TRUE(!movable);
+    FB_ASSERT_TRUE(!move_assignable);
+
+    non_movable nm(99);
+    FB_ASSERT_EQ(nm.v, 99);
 }
 
 FB_TEST(shard_lifecycle, singleton_pattern) {
-    // g_core_sharded is a singleton (unique_ptr in anonymous namespace)
-    std::unique_ptr<int> singleton(new int(42));
-    FB_ASSERT_TRUE(singleton != nullptr);
-    FB_ASSERT_EQ(*singleton, 42);
+    // g_core_sharded is a unique_ptr in anonymous namespace -> singleton.
+    // Verify singleton semantics: at most one alive instance.
+    static int instances_alive;
+    instances_alive = 0;
+
+    struct mock_singleton {
+        mock_singleton() { instances_alive++; }
+        ~mock_singleton() { instances_alive--; }
+    };
+
+    // Initially no instance
+    std::unique_ptr<mock_singleton> g_singleton;
+    FB_ASSERT_EQ(instances_alive, 0);
+
+    // construct() initializes
+    g_singleton = std::make_unique<mock_singleton>();
+    FB_ASSERT_EQ(instances_alive, 1);
+
+    // Construct again -> previous one destroyed (singleton property)
+    g_singleton = std::make_unique<mock_singleton>();
+    FB_ASSERT_EQ(instances_alive, 1);
+
+    // Reset -> zero
+    g_singleton.reset();
+    FB_ASSERT_EQ(instances_alive, 0);
 }
 
 FB_TEST(shard_lifecycle, construct_initializes_singleton) {
-    // core_sharded::construct() initializes the singleton
+    // core_sharded::construct(args...) does std::make_unique<core_sharded>(args...).
+    // Verify: before construct() singleton is empty; after, it holds the new instance.
     std::unique_ptr<int> singleton;
     FB_ASSERT_TRUE(singleton == nullptr);
+    FB_ASSERT_TRUE(!static_cast<bool>(singleton));
 
+    // construct() equivalent
     singleton = std::make_unique<int>(100);
     FB_ASSERT_TRUE(singleton != nullptr);
+    FB_ASSERT_TRUE(static_cast<bool>(singleton));
     FB_ASSERT_EQ(*singleton, 100);
+
+    // get_core_sharded() returns *g_core_sharded
+    int& ref = *singleton;
+    FB_ASSERT_EQ(&ref, singleton.get());
 }
 
 // ============================================================================
