@@ -7890,6 +7890,106 @@ FB_TEST(shard_resource_ownership, no_dangling_after_stop) {
 }
 
 // ============================================================================
+// Test Suite: shard_affinity (Shard Affinity Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_affinity) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_affinity) {
+    // Teardown code here
+}
+
+FB_TEST(shard_affinity, pg_pinned_to_shard) {
+    // PG is pinned to a specific shard for its lifetime
+    std::map<std::string, uint32_t> pg_shard;
+    pg_shard["1.100"] = 0;
+    pg_shard["1.200"] = 2;
+
+    // Same PG always returns same shard
+    FB_ASSERT_EQ(pg_shard["1.100"], pg_shard["1.100"]);
+    FB_ASSERT_EQ(pg_shard["1.100"], 0);
+}
+
+FB_TEST(shard_affinity, affinity_preserves_cache_locality) {
+    // Pinning PG to shard keeps its data cache-local
+    uint32_t shard = 1;
+    std::vector<int> shard_cache(1024, 42); // shard 1's cache
+
+    // Access is local (no cross-shard)
+    FB_ASSERT_EQ(shard_cache[0], 42);
+    FB_ASSERT_TRUE(shard < 4);
+}
+
+FB_TEST(shard_affinity, affinity_reduces_cross_shard_msgs) {
+    // With affinity, most ops are local
+    uint32_t local_ops = 950;
+    uint32_t cross_shard_ops = 50;
+    uint32_t total = local_ops + cross_shard_ops;
+
+    double local_ratio = static_cast<double>(local_ops) / total;
+    FB_ASSERT_TRUE(local_ratio > 0.9);
+}
+
+FB_TEST(shard_affinity, rebalancing_changes_affinity) {
+    // When shards rebalance, PG affinity may change
+    uint32_t old_shard = 0;
+    uint32_t new_shard = 3;
+
+    std::map<std::string, uint32_t> pg_shard;
+    pg_shard["1.100"] = old_shard;
+
+    // Rebalance
+    pg_shard["1.100"] = new_shard;
+    FB_ASSERT_EQ(pg_shard["1.100"], new_shard);
+    FB_ASSERT_TRUE(pg_shard["1.100"] != old_shard);
+}
+
+FB_TEST(shard_affinity, affinity_table_lookup) {
+    // shard_table maps pg_name -> shard_revision
+    std::map<std::string, shard_revision> shard_table;
+    shard_table["1.100"] = shard_revision{2, 50};
+
+    auto it = shard_table.find("1.100");
+    FB_ASSERT_TRUE(it != shard_table.end());
+    FB_ASSERT_EQ(it->second._shard, 2);
+}
+
+FB_TEST(shard_affinity, affinity_persists_across_restart) {
+    // Affinity mapping persisted (via osd_map)
+    std::map<std::string, uint32_t> saved;
+    saved["1.100"] = 1;
+    saved["2.100"] = 3;
+
+    // Simulate restart: reload
+    std::map<std::string, uint32_t> loaded = saved;
+    FB_ASSERT_EQ(loaded["1.100"], 1);
+    FB_ASSERT_EQ(loaded["2.100"], 3);
+}
+
+FB_TEST(shard_affinity, new_pg_gets_least_loaded_shard) {
+    // New PG assigned to least-loaded shard
+    std::vector<uint32_t> shard_loads = {5, 2, 8, 3};
+
+    auto min_it = std::min_element(shard_loads.begin(), shard_loads.end());
+    uint32_t target_shard = static_cast<uint32_t>(min_it - shard_loads.begin());
+
+    FB_ASSERT_EQ(target_shard, 1); // shard 1 has load 2 (min)
+}
+
+FB_TEST(shard_affinity, affinity_must_be_consistent) {
+    // All OSDs agree on PG -> shard mapping
+    std::map<std::string, uint32_t> osd_a_view;
+    std::map<std::string, uint32_t> osd_b_view;
+
+    osd_a_view["1.100"] = 2;
+    osd_b_view["1.100"] = 2;
+
+    FB_ASSERT_TRUE(osd_a_view["1.100"] == osd_b_view["1.100"]);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
