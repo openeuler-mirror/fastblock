@@ -10,7 +10,7 @@
  */
 
 
-#include "osd_client.h"
+#include "framework/osd_client.h"
 
 static constexpr const char *k_osd_iobuf_small_pool_count_key = "osd_iobuf_small_pool_count";
 static constexpr const char *k_osd_iobuf_large_pool_count_key = "osd_iobuf_large_pool_count";
@@ -50,19 +50,19 @@ fbbench_parse_arg(int ch, char *arg)
         g_json_conf = arg;
         break;
     case 'I':
-        global_osd_id = spdk_strtol(arg, 10);
+        fastblock::test::osd_config::osd_id = spdk_strtol(arg, 10);
         break;
     case 'o':
-        g_osd_addr = arg;
+        fastblock::test::osd_config::osd_addr = arg;
         break;
     case 't':
-        g_osd_port = spdk_strtol(arg, 10);
+        fastblock::test::osd_config::osd_port = spdk_strtol(arg, 10);
         break;
     case 'P':
-        g_pool_id = spdk_strtoll(arg, 10);
+        fastblock::test::osd_config::pool_id = spdk_strtoll(arg, 10);
         break;
     case 'G':
-        g_pg_id = spdk_strtoll(arg, 10);
+        fastblock::test::osd_config::pg_id = spdk_strtoll(arg, 10);
         break;   
     case 'N':
     {
@@ -210,11 +210,11 @@ int main(int argc, char *argv[])
         exit(rc);
     }
 
-    server.node_id = global_osd_id;
-    server.osd_addr = g_osd_addr;
-    server.osd_port = g_osd_port;
-    server.pool_id = g_pool_id;
-    server.pg_id = g_pg_id;
+    server.node_id = fastblock::test::osd_config::osd_id;
+    server.osd_addr = fastblock::test::osd_config::osd_addr;
+    server.osd_port = fastblock::test::osd_config::osd_port;
+    server.pool_id = fastblock::test::osd_config::pool_id;
+    server.pg_id = fastblock::test::osd_config::pg_id;
 
     SPDK_NOTICELOG("config file is %s\n", g_json_conf);
     boost::property_tree::read_json(std::string(g_json_conf), server.pt);

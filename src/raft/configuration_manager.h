@@ -12,7 +12,8 @@
 
 #include <deque>
 #include <vector>
-#include<memory>
+#include <memory>
+#include <iostream>
 #include <assert.h>
 #include <absl/container/node_hash_map.h>
 
@@ -280,3 +281,15 @@ private:
     int _new_node_match_size;
     int _new_node_fail_size;
 };
+
+// Overload operator<< for cfg_state enum to support streaming
+inline std::ostream& operator<<(std::ostream& os, cfg_state state) {
+    switch (state) {
+        case cfg_state::CFG_NONE:           return os << "CFG_NONE";
+        case cfg_state::CFG_CATCHING_START: return os << "CFG_CATCHING_START";
+        case cfg_state::CFG_CATCHING_UP:    return os << "CFG_CATCHING_UP";
+        case cfg_state::CFG_JOINT:          return os << "CFG_JOINT";
+        case cfg_state::CFG_UPDATE_NEW_CFG: return os << "CFG_UPDATE_NEW_CFG";
+        default:                            return os << "UNKNOWN_CFG_STATE(" << static_cast<int>(state) << ")";
+    }
+}
