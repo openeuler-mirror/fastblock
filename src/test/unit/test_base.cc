@@ -9525,6 +9525,89 @@ FB_TEST(shard_async_io_pattern, retry_on_transient_failure) {
 }
 
 // ============================================================================
+// Test Suite: shard_msg_routing_table (Message Routing Table Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_msg_routing_table) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_msg_routing_table) {
+    // Teardown code here
+}
+
+FB_TEST(shard_msg_routing_table, table_insertion) {
+    std::map<uint64_t, uint32_t> routing;
+    routing[100] = 0;
+    routing[200] = 1;
+    routing[300] = 2;
+    FB_ASSERT_EQ(routing.size(), 3);
+}
+
+FB_TEST(shard_msg_routing_table, table_lookup_hit) {
+    std::map<uint64_t, uint32_t> routing;
+    routing[100] = 2;
+    auto it = routing.find(100);
+    FB_ASSERT_TRUE(it != routing.end());
+    FB_ASSERT_EQ(it->second, 2);
+}
+
+FB_TEST(shard_msg_routing_table, table_lookup_miss) {
+    std::map<uint64_t, uint32_t> routing;
+    auto it = routing.find(999);
+    FB_ASSERT_TRUE(it == routing.end());
+}
+
+FB_TEST(shard_msg_routing_table, table_update) {
+    std::map<uint64_t, uint32_t> routing;
+    routing[100] = 0;
+    routing[100] = 3; // update
+    FB_ASSERT_EQ(routing[100], 3);
+    FB_ASSERT_EQ(routing.size(), 1);
+}
+
+FB_TEST(shard_msg_routing_table, table_removal) {
+    std::map<uint64_t, uint32_t> routing;
+    routing[100] = 0;
+    routing[200] = 1;
+    size_t erased = routing.erase(100);
+    FB_ASSERT_EQ(erased, 1);
+    FB_ASSERT_EQ(routing.size(), 1);
+}
+
+FB_TEST(shard_msg_routing_table, table_clear) {
+    std::map<uint64_t, uint32_t> routing;
+    for (uint64_t i = 0; i < 10; i++) routing[i] = i % 4;
+    routing.clear();
+    FB_ASSERT_TRUE(routing.empty());
+}
+
+FB_TEST(shard_msg_routing_table, table_iteration_sorted) {
+    std::map<uint64_t, uint32_t> routing;
+    routing[300] = 2;
+    routing[100] = 0;
+    routing[200] = 1;
+
+    std::vector<uint64_t> keys;
+    for (const auto& [k, v] : routing) keys.push_back(k);
+
+    // std::map iterates in sorted order
+    FB_ASSERT_EQ(keys[0], 100);
+    FB_ASSERT_EQ(keys[1], 200);
+    FB_ASSERT_EQ(keys[2], 300);
+}
+
+FB_TEST(shard_msg_routing_table, hash_table_alternative) {
+    std::unordered_map<uint64_t, uint32_t> routing;
+    routing[100] = 0;
+    routing[200] = 1;
+
+    // O(1) lookup
+    FB_ASSERT_EQ(routing[100], 0);
+    FB_ASSERT_EQ(routing.size(), 2);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
