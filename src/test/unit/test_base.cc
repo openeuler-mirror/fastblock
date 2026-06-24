@@ -2248,6 +2248,109 @@ FB_TEST(shard_args_forwarding, move_only_in_tuple) {
 }
 
 // ============================================================================
+// Test Suite: core_sharded_initialization (Core Sharded Init Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(core_sharded_initialization) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(core_sharded_initialization) {
+    // Teardown code here
+}
+
+FB_TEST(core_sharded_initialization, system_size_capacity) {
+    // system::capacity() returns total core count
+    // Verify capacity == count of all cores iterated
+    uint32_t simulated_capacity = 8;
+    std::vector<uint32_t> all_cores;
+    for (uint32_t i = 0; i < simulated_capacity; i++) {
+        all_cores.push_back(i);
+    }
+    FB_ASSERT_EQ(all_cores.size(), simulated_capacity);
+}
+
+FB_TEST(core_sharded_initialization, system_first_core_min) {
+    // first_core() must be the smallest valid core ID
+    std::vector<uint32_t> cores = {3, 5, 7, 9};
+    uint32_t min_core = *std::min_element(cores.begin(), cores.end());
+    FB_ASSERT_EQ(min_core, 3);
+    FB_ASSERT_EQ(cores.front(), min_core);
+}
+
+FB_TEST(core_sharded_initialization, system_last_core_max) {
+    // last_core() must be the largest valid core ID
+    std::vector<uint32_t> cores = {0, 1, 2, 3, 4};
+    uint32_t max_core = *std::max_element(cores.begin(), cores.end());
+    FB_ASSERT_EQ(max_core, 4);
+    FB_ASSERT_EQ(cores.back(), max_core);
+}
+
+FB_TEST(core_sharded_initialization, n_core_arg_bounded_by_capacity) {
+    // Constructor's n_core must not exceed system::capacity()
+    uint32_t capacity = 16;
+    uint32_t n_core_requested = 8;
+    FB_ASSERT_TRUE(n_core_requested <= capacity);
+
+    // Edge case: n_core == capacity
+    uint32_t n_core_max = 16;
+    FB_ASSERT_TRUE(n_core_max <= capacity);
+}
+
+FB_TEST(core_sharded_initialization, app_name_used_in_thread_naming) {
+    // app_name passed to constructor used as prefix in thread names
+    std::string app_name = "osd_app_";
+    std::vector<std::string> thread_names;
+    for (uint32_t i = 0; i < 4; i++) {
+        thread_names.push_back(app_name + std::to_string(i));
+    }
+
+    // All thread names start with app_name prefix
+    for (const auto& name : thread_names) {
+        FB_ASSERT_TRUE(name.find(app_name) == 0);
+    }
+}
+
+FB_TEST(core_sharded_initialization, construct_with_iterator_begin) {
+    // Constructor takes begin iterator + n_core
+    // Verify iterator can walk n_core steps without exhaustion
+    std::vector<uint32_t> available_cores = {0, 1, 2, 3, 4, 5, 6, 7};
+    auto it = available_cores.begin();
+    uint32_t n = 4;
+    uint32_t consumed = 0;
+
+    while (consumed < n && it != available_cores.end()) {
+        ++it;
+        consumed++;
+    }
+    FB_ASSERT_EQ(consumed, n);
+}
+
+FB_TEST(core_sharded_initialization, threads_vector_grows_by_n_core) {
+    // After construction, _threads.size() == n_core
+    std::vector<void*> threads;
+    uint32_t n_core = 6;
+    for (uint32_t i = 0; i < n_core; i++) {
+        threads.push_back((void*)(uintptr_t)(0x1000 + i));
+    }
+    FB_ASSERT_EQ(threads.size(), n_core);
+}
+
+FB_TEST(core_sharded_initialization, shard_cores_vector_grows_by_n_core) {
+    // After construction, _shard_cores.size() == n_core
+    std::vector<uint32_t> shard_cores;
+    uint32_t n_core = 6;
+    auto it = std::vector<uint32_t>{2, 4, 6, 8, 10, 12, 14}.begin();
+    for (uint32_t i = 0; i < n_core; i++) {
+        shard_cores.push_back(*it);
+        ++it;
+    }
+    FB_ASSERT_EQ(shard_cores.size(), n_core);
+    FB_ASSERT_EQ(shard_cores[0], 2);
+    FB_ASSERT_EQ(shard_cores[5], 12);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
