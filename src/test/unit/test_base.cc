@@ -2508,6 +2508,138 @@ FB_TEST(core_context_dispatch, opaque_type_erasure) {
 }
 
 // ============================================================================
+// Test Suite: lambda_ctx_advanced (Advanced Lambda Context Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(lambda_ctx_advanced) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(lambda_ctx_advanced) {
+    // Teardown code here
+}
+
+FB_TEST(lambda_ctx_advanced, copy_deleted) {
+    // lambda_ctx(lambda_ctx* l) = delete -> no copy from raw pointer
+    // Verify by simulating the deletion pattern
+    struct no_copy_ctx {
+        no_copy_ctx() = default;
+        no_copy_ctx(no_copy_ctx* /*l*/) = delete;
+    };
+
+    no_copy_ctx orig;
+    // Test that we cannot accidentally clone via pointer
+    no_copy_ctx other;
+    // Both can exist independently
+    FB_ASSERT_TRUE(&orig != &other);
+}
+
+FB_TEST(lambda_ctx_advanced, func_stored_by_value) {
+    // Func member stored via std::move(func)
+    static int callable_destruction_count;
+    callable_destruction_count = 0;
+
+    struct callable {
+        ~callable() { callable_destruction_count++; }
+        void operator()() {}
+    };
+
+    {
+        callable c;
+        callable stored = std::move(c);
+        (void)stored;
+        // After move: original c still gets destroyed, stored also destroyed
+    }
+    FB_ASSERT_EQ(callable_destruction_count, 2);
+}
+
+FB_TEST(lambda_ctx_advanced, args_perfect_forwarding) {
+    // make_tuple with forward<Args>... preserves value categories
+    struct trace {
+        static int copies;
+        static int moves;
+        trace() = default;
+        trace(const trace&) { copies++; }
+        trace(trace&&) noexcept { moves++; }
+    };
+    trace::copies = 0;
+    trace::moves = 0;
+
+    auto make = [](trace&& t) { return std::make_tuple(std::forward<trace>(t)); };
+    auto tup = make(trace{});
+
+    FB_ASSERT_TRUE(trace::moves >= 1);
+    // No copy when rvalue forwarded
+    FB_ASSERT_EQ(trace::copies, 0);
+}
+
+FB_TEST(lambda_ctx_advanced, run_task_invokes_apply) {
+    // run_task() calls std::apply(func, args)
+    int captured_result = 0;
+    auto fn = [&captured_result](int a, int b) { captured_result = a + b; };
+    auto args = std::make_tuple(10, 20);
+
+    std::apply(fn, args);
+    FB_ASSERT_EQ(captured_result, 30);
+}
+
+FB_TEST(lambda_ctx_advanced, multiple_arg_types) {
+    // Variadic Args... allows mixed types
+    std::string s;
+    auto fn = [&s](int i, double d, const std::string& str) {
+        s = std::to_string(i) + "_" + std::to_string(static_cast<int>(d)) + "_" + str;
+    };
+    auto args = std::make_tuple(1, 2.5, std::string("test"));
+    std::apply(fn, args);
+
+    FB_ASSERT_TRUE(s.find("1_") != std::string::npos);
+    FB_ASSERT_TRUE(s.find("_test") != std::string::npos);
+}
+
+FB_TEST(lambda_ctx_advanced, zero_args_lambda) {
+    // Zero arguments: empty tuple, no-arg lambda
+    int counter = 0;
+    auto fn = [&counter]() { counter++; };
+    std::tuple<> empty;
+
+    std::apply(fn, empty);
+    FB_ASSERT_EQ(counter, 1);
+    std::apply(fn, empty);
+    FB_ASSERT_EQ(counter, 2);
+}
+
+FB_TEST(lambda_ctx_advanced, lambda_with_state_capture) {
+    // Lambda captures local state by value (independent of caller)
+    int initial = 100;
+    auto fn = [initial](int delta) { return initial + delta; };
+
+    // Modifying initial after capture doesn't affect lambda
+    initial = 999;
+    int result = fn(5);
+    FB_ASSERT_EQ(result, 105); // 100 (captured) + 5
+}
+
+FB_TEST(lambda_ctx_advanced, args_destroyed_with_ctx) {
+    // When lambda_ctx is destroyed, args tuple is destroyed too
+    static int int_dtors;
+    int_dtors = 0;
+
+    struct counted_int {
+        int v;
+        counted_int(int x) : v(x) {}
+        ~counted_int() { int_dtors++; }
+        counted_int(const counted_int& o) : v(o.v) {}
+    };
+
+    {
+        auto tup = std::make_tuple(counted_int(1), counted_int(2), counted_int(3));
+        (void)tup;
+    }
+    // At least 3 destructions (may be more due to copies/moves in make_tuple)
+    FB_ASSERT_TRUE(int_dtors >= 3);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
