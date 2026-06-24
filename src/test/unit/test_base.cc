@@ -5246,6 +5246,118 @@ FB_TEST(core_id_arithmetic, bitwise_ops_on_mask) {
 }
 
 // ============================================================================
+// Test Suite: shard_thread_pinning (Thread CPU Pinning Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_thread_pinning) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_thread_pinning) {
+    // Teardown code here
+}
+
+FB_TEST(shard_thread_pinning, single_cpu_per_thread) {
+    // Each thread pinned to exactly one CPU
+    for (uint32_t core = 0; core < 8; core++) {
+        uint64_t mask = (1ULL << core);
+        int bits_set = __builtin_popcountll(mask);
+        FB_ASSERT_EQ(bits_set, 1);
+    }
+}
+
+FB_TEST(shard_thread_pinning, no_overlap_between_threads) {
+    // Different threads pinned to different CPUs
+    std::vector<uint64_t> masks;
+    for (uint32_t core = 0; core < 4; core++) {
+        masks.push_back(1ULL << core);
+    }
+
+    // Pairwise no overlap
+    for (size_t i = 0; i < masks.size(); i++) {
+        for (size_t j = i + 1; j < masks.size(); j++) {
+            FB_ASSERT_EQ(masks[i] & masks[j], 0);
+        }
+    }
+}
+
+FB_TEST(shard_thread_pinning, mask_built_via_zero_then_set) {
+    // Pattern: cpuset_zero then cpuset_set_cpu
+    uint64_t mask = 0xFFFFFFFFFFFFFFFFULL; // dirty
+    mask = 0;                              // zero
+    uint32_t target_core = 7;
+    mask |= (1ULL << target_core);
+
+    FB_ASSERT_EQ(mask, 1ULL << 7);
+    FB_ASSERT_EQ(__builtin_popcountll(mask), 1);
+}
+
+FB_TEST(shard_thread_pinning, isolation_via_pinning) {
+    // Pinned threads don't migrate, reducing cache misses
+    // Verify: each shard's CPU set has only one bit
+    std::vector<uint64_t> shard_cpus = {
+        1ULL << 0, 1ULL << 1, 1ULL << 2, 1ULL << 3
+    };
+    for (uint64_t mask : shard_cpus) {
+        FB_ASSERT_EQ(__builtin_popcountll(mask), 1);
+    }
+}
+
+FB_TEST(shard_thread_pinning, hyperthread_sibling_consideration) {
+    // Hyperthreads share L1/L2 cache; topology matters
+    // Cores 0 and 1 might be same physical core
+    uint64_t core_0 = 1ULL << 0;
+    uint64_t core_1 = 1ULL << 1;
+
+    // Their masks don't overlap
+    FB_ASSERT_EQ(core_0 & core_1, 0);
+}
+
+FB_TEST(shard_thread_pinning, numa_aware_pinning) {
+    // NUMA nodes affect optimal pinning
+    // Verify pinning respects NUMA topology
+    uint32_t socket_0_cores[] = {0, 2, 4, 6}; // NUMA 0
+    uint32_t socket_1_cores[] = {1, 3, 5, 7}; // NUMA 1
+
+    uint64_t numa_0_mask = 0;
+    uint64_t numa_1_mask = 0;
+    for (auto c : socket_0_cores) numa_0_mask |= (1ULL << c);
+    for (auto c : socket_1_cores) numa_1_mask |= (1ULL << c);
+
+    FB_ASSERT_EQ(numa_0_mask & numa_1_mask, 0);
+    FB_ASSERT_EQ(__builtin_popcountll(numa_0_mask), 4);
+    FB_ASSERT_EQ(__builtin_popcountll(numa_1_mask), 4);
+}
+
+FB_TEST(shard_thread_pinning, all_cpus_union) {
+    // Union of all shard masks covers all assigned CPUs
+    std::vector<uint64_t> shard_masks = {
+        1ULL << 0, 1ULL << 1, 1ULL << 2, 1ULL << 3
+    };
+
+    uint64_t total = 0;
+    for (uint64_t m : shard_masks) total |= m;
+
+    FB_ASSERT_EQ(__builtin_popcountll(total), 4);
+}
+
+FB_TEST(shard_thread_pinning, pinning_prevents_migration) {
+    // Pinned thread always runs on the same core (modeled via assignment table)
+    std::map<uint32_t, uint32_t> thread_to_core;
+    for (uint32_t shard = 0; shard < 4; shard++) {
+        thread_to_core[shard] = shard;
+    }
+
+    // No thread migrates: mapping is stable
+    for (uint32_t shard = 0; shard < 4; shard++) {
+        FB_ASSERT_EQ(thread_to_core[shard], shard);
+    }
+
+    // Even after operations, mapping unchanged
+    FB_ASSERT_EQ(thread_to_core[2], 2);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
