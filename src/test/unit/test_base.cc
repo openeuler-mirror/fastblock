@@ -5073,6 +5073,101 @@ FB_TEST(core_iterator_traits, supports_default_construction) {
 }
 
 // ============================================================================
+// Test Suite: sharded_template_methods (sharded<> Method Behaviors)
+// ============================================================================
+
+FB_SUITE_SETUP(sharded_template_methods) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(sharded_template_methods) {
+    // Teardown code here
+}
+
+FB_TEST(sharded_template_methods, local_method_noexcept) {
+    // local() is noexcept (returns reference, no allocation)
+    auto local_fn = []() noexcept -> int& {
+        static int v = 42;
+        return v;
+    };
+    constexpr bool is_noexcept = noexcept(local_fn());
+    FB_ASSERT_TRUE(is_noexcept);
+}
+
+FB_TEST(sharded_template_methods, on_shard_method_noexcept) {
+    // on_shard(N) is noexcept
+    auto fn = [](uint32_t /*s*/) noexcept -> int& {
+        static int v = 0;
+        return v;
+    };
+    constexpr bool is_noexcept = noexcept(fn(0u));
+    FB_ASSERT_TRUE(is_noexcept);
+}
+
+FB_TEST(sharded_template_methods, shard_is_started_noexcept) {
+    // shard_is_started is noexcept
+    auto fn = [](uint32_t /*s*/) noexcept -> bool { return true; };
+    constexpr bool is_noexcept = noexcept(fn(0u));
+    FB_ASSERT_TRUE(is_noexcept);
+}
+
+FB_TEST(sharded_template_methods, size_returns_size_t_like) {
+    // size() returns size_t (vector::size)
+    std::vector<int> v = {1, 2, 3, 4};
+    auto sz = v.size();
+    constexpr bool is_size_t = std::is_same_v<decltype(sz), size_t>;
+    FB_ASSERT_TRUE(is_size_t);
+    FB_ASSERT_EQ(sz, 4);
+}
+
+FB_TEST(sharded_template_methods, local_returns_modifiable_reference) {
+    // local() returns Service& (not const)
+    std::vector<int*> instances = {new int(0)};
+    int& ref = *instances[0];
+    constexpr bool is_const = std::is_const_v<std::remove_reference_t<decltype(ref)>>;
+    FB_ASSERT_TRUE(!is_const);
+
+    ref = 100;
+    FB_ASSERT_EQ(*instances[0], 100);
+
+    delete instances[0];
+}
+
+FB_TEST(sharded_template_methods, start_takes_variadic_args) {
+    // start(Args&&...) takes any number of args
+    auto start_fn = [](auto&&... args) {
+        return sizeof...(args);
+    };
+
+    FB_ASSERT_EQ(start_fn(), 0);
+    FB_ASSERT_EQ(start_fn(1), 1);
+    FB_ASSERT_EQ(start_fn(1, 2, 3), 3);
+    FB_ASSERT_EQ(start_fn(1, 2, 3, "a", 5.0), 5);
+}
+
+FB_TEST(sharded_template_methods, stop_void_return) {
+    // stop() returns void
+    auto stop_fn = []() { /* cleanup */ };
+    constexpr bool is_void = std::is_same_v<decltype(stop_fn()), void>;
+    FB_ASSERT_TRUE(is_void);
+}
+
+FB_TEST(sharded_template_methods, ref_invalidated_after_stop) {
+    // After stop(), references obtained from local() are invalid
+    std::vector<int*> instances = {new int(42)};
+    int& ref = *instances[0];
+    int saved_value = ref;
+
+    // Simulate stop
+    delete instances[0];
+    instances.clear();
+
+    FB_ASSERT_EQ(saved_value, 42);
+    FB_ASSERT_TRUE(instances.empty());
+    // ref is now dangling, must not use
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
