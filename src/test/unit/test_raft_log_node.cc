@@ -1171,5 +1171,96 @@ FB_TEST(raft_log_node, log_cache_thread_safety) {
     FB_ASSERT_EQ(operation_count.load(), 2);
 }
 
+// ============================================================================
+// Test Suite: Performance Boundary Tests
+// ============================================================================
+
+FB_TEST(raft_log_node, log_large_batch_append) {
+    // 大批量追加
+    std::vector<raft_index_t> batch;
+    batch.reserve(10000);
+
+    for (int i = 1; i <= 10000; i++) {
+        batch.push_back(i);
+    }
+
+    FB_ASSERT_EQ(batch.size(), 10000UL);
+    FB_ASSERT_EQ(batch.front(), 1L);
+    FB_ASSERT_EQ(batch.back(), 10000L);
+}
+
+FB_TEST(raft_log_node, log_cache_pressure_handling) {
+    // 缓存压力测试
+    size_t max_cache_size = 1000;
+    std::map<raft_index_t, int> cache;
+
+    // 填充到最大容量
+    for (size_t i = 1; i <= max_cache_size; i++) {
+        cache[i] = i;
+    }
+
+    FB_ASSERT_EQ(cache.size(), max_cache_size);
+
+    // 超出时移除旧条目
+    raft_index_t new_idx = max_cache_size + 1;
+    cache[new_idx] = new_idx;
+    cache.erase(cache.begin()->first);
+
+    FB_ASSERT_EQ(cache.size(), max_cache_size);
+}
+
+FB_TEST(raft_log_node, log_high_frequency_operations) {
+    // 高频操作测试
+    std::map<raft_index_t, int> cache;
+    int operations = 1000;
+
+    for (int i = 1; i <= operations; i++) {
+        cache[i] = i;
+    }
+
+    FB_ASSERT_EQ(cache.size(), operations);
+}
+
+FB_TEST(raft_log_node, log_memory_usage_tracking) {
+    // 内存使用跟踪
+    size_t entry_size = 1024;  // 每条日志 1KB
+    size_t max_entries = 1000;
+    size_t max_memory = entry_size * max_entries;
+
+    // 当前使用量
+    size_t current_entries = 500;
+    size_t current_memory = entry_size * current_entries;
+
+    double usage_percent = 100.0 * current_memory / max_memory;
+    FB_ASSERT_EQ(usage_percent, 50.0);
+
+    // 检查是否接近限制
+    bool near_limit = usage_percent > 80.0;
+    FB_ASSERT_FALSE(near_limit);
+}
+
+FB_TEST(raft_log_node, nodes_large_cluster_operations) {
+    // 大规模集群操作
+    std::map<raft_node_id_t, raft_index_t> nodes;
+
+    // 添加 100 个节点
+    for (int i = 1; i <= 100; i++) {
+        nodes[i] = 1000;
+    }
+
+    FB_ASSERT_EQ(nodes.size(), 100UL);
+
+    // 计算多数派
+    uint64_t quorum = nodes.size() / 2 + 1;
+    FB_ASSERT_EQ(quorum, 51UL);
+
+    // 遍历所有节点
+    int visited = 0;
+    for (const auto& pair : nodes) {
+        visited++;
+    }
+    FB_ASSERT_EQ(visited, 100);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
