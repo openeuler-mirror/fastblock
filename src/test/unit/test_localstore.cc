@@ -1278,4 +1278,127 @@ FB_TEST(object_recover_xattr_structure, all_fields_assignment) {
     FB_ASSERT_EQ(xattr.obj_name, "recovery_obj");
 }
 
+// ============================================================================
+// Test Suite: kv_xattr_structure (KV Xattr Structure Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(kv_xattr_structure) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(kv_xattr_structure) {
+    // Teardown code here
+}
+
+FB_TEST(kv_xattr_structure, xattr_names_count) {
+    FB_ASSERT_EQ(kv_xattr::xattr_count, 2);
+}
+
+FB_TEST(kv_xattr_structure, xattr_names_type) {
+    FB_ASSERT_EQ(strcmp(kv_xattr::xattr_names[0], "type"), 0);
+}
+
+FB_TEST(kv_xattr_structure, xattr_names_shard) {
+    FB_ASSERT_EQ(strcmp(kv_xattr::xattr_names[1], "shard"), 0);
+}
+
+FB_TEST(kv_xattr_structure, type_value) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(kv_xattr::type), 4);
+}
+
+FB_TEST(kv_xattr_structure, default_shard_id) {
+    kv_xattr xattr{};
+    FB_ASSERT_EQ(xattr.shard_id, 0u);
+}
+
+FB_TEST(kv_xattr_structure, shard_id_assignment) {
+    kv_xattr xattr;
+    xattr.shard_id = 77;
+    FB_ASSERT_EQ(xattr.shard_id, 77u);
+}
+
+FB_TEST(kv_xattr_structure, shard_id_boundary) {
+    kv_xattr xattr;
+    xattr.shard_id = std::numeric_limits<uint32_t>::max();
+    FB_ASSERT_EQ(xattr.shard_id, std::numeric_limits<uint32_t>::max());
+}
+
+// ============================================================================
+// Test Suite: kv_checkpoint_xattr_structure (KV Checkpoint Xattr Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(kv_checkpoint_xattr_structure) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(kv_checkpoint_xattr_structure) {
+    // Teardown code here
+}
+
+FB_TEST(kv_checkpoint_xattr_structure, xattr_names_count) {
+    FB_ASSERT_EQ(kv_checkpoint_xattr::xattr_count, 2);
+}
+
+FB_TEST(kv_checkpoint_xattr_structure, xattr_names_type) {
+    FB_ASSERT_EQ(strcmp(kv_checkpoint_xattr::xattr_names[0], "type"), 0);
+}
+
+FB_TEST(kv_checkpoint_xattr_structure, xattr_names_shard) {
+    FB_ASSERT_EQ(strcmp(kv_checkpoint_xattr::xattr_names[1], "shard"), 0);
+}
+
+FB_TEST(kv_checkpoint_xattr_structure, type_value) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(kv_checkpoint_xattr::type), 5);
+}
+
+FB_TEST(kv_checkpoint_xattr_structure, default_shard_id) {
+    kv_checkpoint_xattr xattr{};
+    FB_ASSERT_EQ(xattr.shard_id, 0u);
+}
+
+FB_TEST(kv_checkpoint_xattr_structure, shard_id_assignment) {
+    kv_checkpoint_xattr xattr;
+    xattr.shard_id = 88;
+    FB_ASSERT_EQ(xattr.shard_id, 88u);
+}
+
+// ============================================================================
+// Test Suite: kv_checkpoint_new_xattr_structure (KV Checkpoint New Xattr Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(kv_checkpoint_new_xattr_structure) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(kv_checkpoint_new_xattr_structure) {
+    // Teardown code here
+}
+
+FB_TEST(kv_checkpoint_new_xattr_structure, xattr_names_count) {
+    FB_ASSERT_EQ(kv_checkpoint_new_xattr::xattr_count, 2);
+}
+
+FB_TEST(kv_checkpoint_new_xattr_structure, xattr_names_type) {
+    FB_ASSERT_EQ(strcmp(kv_checkpoint_new_xattr::xattr_names[0], "type"), 0);
+}
+
+FB_TEST(kv_checkpoint_new_xattr_structure, xattr_names_shard) {
+    FB_ASSERT_EQ(strcmp(kv_checkpoint_new_xattr::xattr_names[1], "shard"), 0);
+}
+
+FB_TEST(kv_checkpoint_new_xattr_structure, type_value) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(kv_checkpoint_new_xattr::type), 6);
+}
+
+FB_TEST(kv_checkpoint_new_xattr_structure, default_shard_id) {
+    kv_checkpoint_new_xattr xattr{};
+    FB_ASSERT_EQ(xattr.shard_id, 0u);
+}
+
+FB_TEST(kv_checkpoint_new_xattr_structure, shard_id_assignment) {
+    kv_checkpoint_new_xattr xattr;
+    xattr.shard_id = 99;
+    FB_ASSERT_EQ(xattr.shard_id, 99u);
+}
+
 FB_TEST_MAIN()
