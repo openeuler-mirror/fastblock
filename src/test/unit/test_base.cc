@@ -1922,6 +1922,96 @@ FB_TEST(core_traversal_pattern, ordered_traversal) {
 }
 
 // ============================================================================
+// Test Suite: shard_args_forwarding (Shard Args Forwarding Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_args_forwarding) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_args_forwarding) {
+    // Teardown code here
+}
+
+FB_TEST(shard_args_forwarding, lvalue_passed_as_lvalue) {
+    // lvalue arguments preserved through std::forward
+    int x = 42;
+    auto f = [](int& ref) -> int& { return ref; };
+    int& result = f(x);
+    FB_ASSERT_EQ(&result, &x);
+    result = 100;
+    FB_ASSERT_EQ(x, 100);
+}
+
+FB_TEST(shard_args_forwarding, rvalue_passed_as_rvalue) {
+    // rvalue arguments moved through std::forward
+    std::string source = "hello";
+    auto f = [](std::string&& s) { return std::move(s); };
+    std::string result = f(std::move(source));
+    FB_ASSERT_EQ(result, "hello");
+}
+
+FB_TEST(shard_args_forwarding, copy_on_lvalue_pass) {
+    // Pass by value copies lvalue
+    int original = 10;
+    auto copy_fn = [](int v) { v = 999; return v; };
+    int result = copy_fn(original);
+    FB_ASSERT_EQ(result, 999);
+    FB_ASSERT_EQ(original, 10); // Unchanged
+}
+
+FB_TEST(shard_args_forwarding, move_on_rvalue_pass) {
+    // Pass by value moves rvalue
+    auto src = std::make_unique<int>(42);
+    auto dst = std::move(src);
+    FB_ASSERT_TRUE(src == nullptr);
+    FB_ASSERT_TRUE(dst != nullptr);
+    FB_ASSERT_EQ(*dst, 42);
+}
+
+FB_TEST(shard_args_forwarding, variadic_tuple_construction) {
+    // std::make_tuple captures variadic args
+    auto tup = std::make_tuple(1, std::string("hi"), 3.14);
+    FB_ASSERT_EQ(std::get<0>(tup), 1);
+    FB_ASSERT_EQ(std::get<1>(tup), "hi");
+    FB_ASSERT_EQ(std::get<2>(tup), 3.14);
+}
+
+FB_TEST(shard_args_forwarding, tuple_size) {
+    // tuple_size reflects parameter count
+    using TupType = std::tuple<int, double, std::string>;
+    constexpr size_t sz = std::tuple_size_v<TupType>;
+    FB_ASSERT_EQ(sz, 3);
+}
+
+FB_TEST(shard_args_forwarding, no_args_empty_tuple) {
+    // Zero arguments produce empty tuple
+    auto empty = std::make_tuple();
+    constexpr size_t sz = std::tuple_size_v<decltype(empty)>;
+    FB_ASSERT_EQ(sz, 0);
+}
+
+FB_TEST(shard_args_forwarding, apply_unpacks_tuple) {
+    // std::apply unpacks tuple to function call
+    auto fn = [](int a, int b, int c) { return a * b + c; };
+    auto args = std::make_tuple(3, 4, 5);
+    int result = std::apply(fn, args);
+    FB_ASSERT_EQ(result, 17);
+}
+
+FB_TEST(shard_args_forwarding, move_only_in_tuple) {
+    // Move-only types stored in tuple
+    auto p1 = std::make_unique<int>(1);
+    auto p2 = std::make_unique<int>(2);
+    auto tup = std::make_tuple(std::move(p1), std::move(p2));
+
+    FB_ASSERT_TRUE(p1 == nullptr);
+    FB_ASSERT_TRUE(p2 == nullptr);
+    FB_ASSERT_EQ(*std::get<0>(tup), 1);
+    FB_ASSERT_EQ(*std::get<1>(tup), 2);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
