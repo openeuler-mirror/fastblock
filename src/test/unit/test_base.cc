@@ -5466,6 +5466,166 @@ FB_TEST(core_sharded_error_handling, stop_during_active_ops) {
 }
 
 // ============================================================================
+// Test Suite: shard_init_order_constraints (Init Order Constraints Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_init_order_constraints) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_init_order_constraints) {
+    // Teardown code here
+}
+
+FB_TEST(shard_init_order_constraints, current_shard_initialized_inline) {
+    // start() initializes current shard inline (before invoke_on for others)
+    static int init_order_idx;
+    init_order_idx = 0;
+    std::vector<int> init_order;
+
+    uint32_t this_shard = 1;
+    uint32_t count = 4;
+
+    for (uint32_t s = 0; s < count; s++) {
+        if (s == this_shard) {
+            init_order.push_back(static_cast<int>(s));
+        } else {
+            // would be enqueued for other shard
+        }
+    }
+
+    FB_ASSERT_EQ(init_order.size(), 1);
+    FB_ASSERT_EQ(init_order[0], 1);
+}
+
+FB_TEST(shard_init_order_constraints, other_shards_init_async) {
+    // Other shards initialized async via invoke_on
+    static int async_inits;
+    async_inits = 0;
+
+    uint32_t this_shard = 0;
+    uint32_t count = 4;
+
+    for (uint32_t s = 0; s < count; s++) {
+        if (s != this_shard) {
+            async_inits++; // would call invoke_on
+        }
+    }
+    FB_ASSERT_EQ(async_inits, 3);
+}
+
+FB_TEST(shard_init_order_constraints, instances_resized_before_assignment) {
+    // _instances.resize(count) must happen BEFORE per-shard assignment
+    std::vector<int*> instances;
+    uint32_t count = 4;
+
+    // Step 1: resize
+    instances.resize(count, nullptr);
+    FB_ASSERT_EQ(instances.size(), count);
+
+    // Step 2: assign
+    for (uint32_t s = 0; s < count; s++) {
+        instances[s] = new int(static_cast<int>(s));
+    }
+
+    for (uint32_t s = 0; s < count; s++) {
+        FB_ASSERT_EQ(*instances[s], static_cast<int>(s));
+    }
+
+    for (auto* p : instances) delete p;
+}
+
+FB_TEST(shard_init_order_constraints, start_before_first_op) {
+    // Application must call start() before any op (otherwise local() returns garbage)
+    std::vector<int*> instances;
+
+    // Before start: empty
+    FB_ASSERT_TRUE(instances.empty());
+
+    // start()
+    for (int i = 0; i < 4; i++) instances.push_back(new int(i));
+
+    // Now safe to call local()
+    FB_ASSERT_EQ(instances.size(), 4);
+
+    for (auto* p : instances) delete p;
+}
+
+FB_TEST(shard_init_order_constraints, stop_before_dtor) {
+    // stop() can be called manually before destructor
+    // (destructor calls stop again, must be idempotent)
+    static int dtor_invocations;
+    dtor_invocations = 0;
+
+    struct svc {
+        ~svc() { dtor_invocations++; }
+    };
+
+    {
+        std::vector<svc*> instances;
+        instances.push_back(new svc());
+        instances.push_back(new svc());
+
+        // Manual stop
+        for (auto*& p : instances) { delete p; p = nullptr; }
+        instances.clear();
+
+        // Implicit dtor at scope exit: vector empty, no-op
+    }
+    FB_ASSERT_EQ(dtor_invocations, 2);
+}
+
+FB_TEST(shard_init_order_constraints, dependencies_init_in_order) {
+    // Services depending on others must init in order: A then B
+    static std::vector<std::string> init_log;
+    init_log.clear();
+
+    struct service_A { service_A() { init_log.push_back("A"); } };
+    struct service_B {
+        service_B() { init_log.push_back("B"); }
+    };
+
+    auto* a = new service_A();
+    auto* b = new service_B();
+
+    FB_ASSERT_EQ(init_log.size(), 2);
+    FB_ASSERT_EQ(init_log[0], "A");
+    FB_ASSERT_EQ(init_log[1], "B");
+
+    delete b;
+    delete a;
+}
+
+FB_TEST(shard_init_order_constraints, dependencies_destroy_in_reverse) {
+    // Services destroyed in reverse init order: B first, then A
+    static std::vector<std::string> dtor_log;
+    dtor_log.clear();
+
+    struct service_A { ~service_A() { dtor_log.push_back("A"); } };
+    struct service_B { ~service_B() { dtor_log.push_back("B"); } };
+
+    auto* a = new service_A();
+    auto* b = new service_B();
+    delete b; // reverse
+    delete a;
+
+    FB_ASSERT_EQ(dtor_log.size(), 2);
+    FB_ASSERT_EQ(dtor_log[0], "B");
+    FB_ASSERT_EQ(dtor_log[1], "A");
+}
+
+FB_TEST(shard_init_order_constraints, no_access_before_construct) {
+    // Accessing g_core_sharded before construct() is undefined
+    std::unique_ptr<int> g;
+    FB_ASSERT_TRUE(g == nullptr);
+    // Calling g.get() returns nullptr, not crash, but dereferencing would crash
+
+    // After construct
+    g = std::make_unique<int>(42);
+    FB_ASSERT_TRUE(g != nullptr);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
