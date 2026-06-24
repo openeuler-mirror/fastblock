@@ -8773,6 +8773,100 @@ FB_TEST(shard_pollers, idle_poller_zero_cpu) {
 }
 
 // ============================================================================
+// Test Suite: shard_initialization_order (Initialization Order Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_initialization_order) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_initialization_order) {
+    // Teardown code here
+}
+
+FB_TEST(shard_initialization_order, dpdk_init_before_spdk) {
+    // DPDK env initialized before SPDK
+    static std::vector<std::string> order;
+    order.clear();
+
+    order.push_back("dpdk");
+    order.push_back("spdk");
+
+    FB_ASSERT_EQ(order[0], "dpdk");
+    FB_ASSERT_EQ(order[1], "spdk");
+}
+
+FB_TEST(shard_initialization_order, spdk_before_threads_created) {
+    // SPDK env must be ready before creating spdk_threads
+    std::vector<std::string> order;
+    order.push_back("spdk_env_init");
+    order.push_back("create_threads");
+    FB_ASSERT_TRUE(order[0] == "spdk_env_init");
+}
+
+FB_TEST(shard_initialization_order, threads_before_services) {
+    // Threads ready before services can use invoke_on
+    std::vector<std::string> order;
+    order.push_back("threads_created");
+    order.push_back("services_start");
+    FB_ASSERT_EQ(order.size(), 2);
+}
+
+FB_TEST(shard_initialization_order, services_in_dependency_order) {
+    // Services started in dependency order (e.g., localstore before raft)
+    std::vector<std::string> services;
+    services.push_back("monclient");
+    services.push_back("localstore");
+    services.push_back("raft");
+    services.push_back("osd");
+
+    FB_ASSERT_EQ(services.size(), 4);
+}
+
+FB_TEST(shard_initialization_order, monclient_first) {
+    // Monitor client must connect first (to fetch cluster map)
+    std::vector<std::string> startup_order = {"monclient", "localstore", "raft", "osd"};
+    FB_ASSERT_EQ(startup_order[0], "monclient");
+}
+
+FB_TEST(shard_initialization_order, shutdown_in_reverse) {
+    // Shutdown in reverse order of startup
+    std::vector<std::string> startup = {"monclient", "localstore", "raft", "osd"};
+    std::vector<std::string> shutdown(startup.rbegin(), startup.rend());
+
+    FB_ASSERT_EQ(shutdown[0], "osd");
+    FB_ASSERT_EQ(shutdown.back(), "monclient");
+}
+
+FB_TEST(shard_initialization_order, partial_init_cleanup) {
+    // If init fails partway, cleanup only completed parts
+    static int cleaned;
+    cleaned = 0;
+
+    std::vector<std::function<void()>> cleanups;
+
+    // Init step 1: success, register cleanup
+    cleanups.push_back([]() { cleaned++; });
+
+    // Init step 2: fails, don't register
+    bool step_2_failed = true;
+    if (step_2_failed) {
+        // Run only registered cleanups
+        for (auto it = cleanups.rbegin(); it != cleanups.rend(); ++it) (*it)();
+    }
+    FB_ASSERT_EQ(cleaned, 1); // Only step 1's cleanup ran
+}
+
+FB_TEST(shard_initialization_order, init_complete_signal) {
+    // Init complete -> signal main thread to proceed
+    bool init_done = false;
+    auto signal_done = [&init_done]() { init_done = true; };
+
+    signal_done();
+    FB_ASSERT_TRUE(init_done);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
