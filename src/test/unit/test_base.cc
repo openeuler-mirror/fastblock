@@ -6597,6 +6597,125 @@ FB_TEST(shard_synchronization, fence_ordering) {
 }
 
 // ============================================================================
+// Test Suite: shard_resource_management (Resource Management Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_resource_management) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_resource_management) {
+    // Teardown code here
+}
+
+FB_TEST(shard_resource_management, raii_for_per_shard_resources) {
+    // Resources acquired in ctor, released in dtor
+    static int alive;
+    alive = 0;
+
+    struct resource {
+        resource() { alive++; }
+        ~resource() { alive--; }
+    };
+
+    {
+        resource r;
+        FB_ASSERT_EQ(alive, 1);
+    }
+    FB_ASSERT_EQ(alive, 0);
+}
+
+FB_TEST(shard_resource_management, unique_ptr_for_owned_resources) {
+    auto p = std::make_unique<std::vector<int>>(10, 42);
+    FB_ASSERT_TRUE(p != nullptr);
+    FB_ASSERT_EQ(p->size(), 10);
+    FB_ASSERT_EQ((*p)[0], 42);
+}
+
+FB_TEST(shard_resource_management, shared_ptr_for_refcounted) {
+    auto p1 = std::make_shared<int>(42);
+    auto p2 = p1;
+    FB_ASSERT_EQ(p1.use_count(), 2);
+    p2.reset();
+    FB_ASSERT_EQ(p1.use_count(), 1);
+}
+
+FB_TEST(shard_resource_management, weak_ptr_breaks_cycles) {
+    auto sp = std::make_shared<int>(42);
+    std::weak_ptr<int> wp = sp;
+    FB_ASSERT_TRUE(!wp.expired());
+
+    sp.reset();
+    FB_ASSERT_TRUE(wp.expired());
+}
+
+FB_TEST(shard_resource_management, resource_pool_recycling) {
+    // Pool: reuse objects instead of constant alloc/free
+    std::vector<int*> pool;
+
+    // Allocate
+    for (int i = 0; i < 5; i++) pool.push_back(new int(i));
+
+    // Use one
+    int* obj = pool.back();
+    pool.pop_back();
+    FB_ASSERT_EQ(*obj, 4);
+
+    // Return to pool
+    pool.push_back(obj);
+    FB_ASSERT_EQ(pool.size(), 5);
+
+    for (auto* p : pool) delete p;
+}
+
+FB_TEST(shard_resource_management, exception_safety_in_alloc) {
+    // If new throws, no leak
+    bool caught = false;
+    int* p = nullptr;
+    try {
+        p = new int(42);
+        // Hypothetical: subsequent op throws
+        throw std::runtime_error("simulated");
+    } catch (const std::runtime_error&) {
+        caught = true;
+    }
+    delete p;
+    FB_ASSERT_TRUE(caught);
+}
+
+FB_TEST(shard_resource_management, smart_pointer_exception_safe) {
+    // unique_ptr provides exception safety automatically
+    static int dtors;
+    dtors = 0;
+
+    struct counted { ~counted() { dtors++; } };
+
+    bool caught = false;
+    try {
+        auto p = std::make_unique<counted>();
+        throw std::runtime_error("simulated");
+    } catch (...) {
+        caught = true;
+    }
+    FB_ASSERT_TRUE(caught);
+    FB_ASSERT_EQ(dtors, 1); // unique_ptr cleaned up
+}
+
+FB_TEST(shard_resource_management, scope_guard_pattern) {
+    // Manual scope guard
+    static int rolled_back;
+    rolled_back = 0;
+
+    auto guard = [](bool commit) {
+        if (!commit) rolled_back++;
+    };
+
+    // Simulate failed commit
+    guard(false);
+    FB_ASSERT_EQ(rolled_back, 1);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
