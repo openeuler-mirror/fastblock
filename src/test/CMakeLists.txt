@@ -122,6 +122,23 @@ if(BUILD_FASTBLOCK_TESTS)
 	    base
 	)
 
+	# Communication-link unit tests: msg / rpc / monclient combined.
+	# Does NOT link the real msg/rpc/monclient libs (they pull in rdmacm /
+	# ibverbs / spdk env that may be absent in CI). Tests mirror the data
+	# contracts; production headers stay the source of truth.
+	add_executable(test_comm
+	  unit/test_comm.cc
+	)
+
+	target_include_directories(test_comm
+	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+	target_link_libraries(test_comm
+	  PUBLIC
+	    test_framework
+	    base
+	)
+
 	# Stress tests
 	add_executable(raft_membership
 	  framework/osd_client.cc
