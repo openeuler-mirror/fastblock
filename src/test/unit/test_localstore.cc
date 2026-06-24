@@ -2179,4 +2179,164 @@ FB_TEST(blob_type_string_output, multiple_outputs) {
     FB_ASSERT_EQ(oss.str(), expected);
 }
 
+// ============================================================================
+// Test Suite: xattr_field_boundaries (Xattr Field Boundary Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_field_boundaries) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_field_boundaries) {
+    // Teardown code here
+}
+
+FB_TEST(xattr_field_boundaries, log_shard_id_max) {
+    log_xattr xattr;
+    xattr.shard_id = std::numeric_limits<uint32_t>::max();
+    FB_ASSERT_EQ(xattr.shard_id, std::numeric_limits<uint32_t>::max());
+}
+
+FB_TEST(xattr_field_boundaries, object_shard_id_max) {
+    object_xattr xattr;
+    xattr.shard_id = std::numeric_limits<uint32_t>::max();
+    FB_ASSERT_EQ(xattr.shard_id, std::numeric_limits<uint32_t>::max());
+}
+
+FB_TEST(xattr_field_boundaries, pg_string_max_size) {
+    log_xattr xattr;
+    xattr.pg = std::string(10000, 'x');
+    FB_ASSERT_EQ(xattr.pg.size(), 10000);
+}
+
+FB_TEST(xattr_field_boundaries, obj_name_max_size) {
+    object_xattr xattr;
+    xattr.obj_name = std::string(10000, 'y');
+    FB_ASSERT_EQ(xattr.obj_name.size(), 10000);
+}
+
+FB_TEST(xattr_field_boundaries, snap_name_max_size) {
+    object_snap_xattr xattr;
+    xattr.snap_name = std::string(10000, 'z');
+    FB_ASSERT_EQ(xattr.snap_name.size(), 10000);
+}
+
+FB_TEST(xattr_field_boundaries, all_xattr_types_defined) {
+    // Verify all blob_type values have corresponding xattr types
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::log), 0u);
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::object), 1u);
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::object_snap), 2u);
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::object_recover), 3u);
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::kv), 4u);
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::kv_checkpoint), 5u);
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::kv_checkpoint_new), 6u);
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::super_blob), 7u);
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::free), 8u);
+}
+
+// ============================================================================
+// Test Suite: serialization_combined (Combined Serialization Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization_combined) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization_combined) {
+    // Teardown code here
+}
+
+FB_TEST(serialization_combined, fixed32_and_string) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    uint32_t num = 123;
+    std::string str = "test";
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, num));
+    FB_ASSERT_TRUE(PutString(sbuf, str));
+
+    sbuf.reset();
+
+    uint32_t decoded_num;
+    std::string decoded_str;
+
+    FB_ASSERT_TRUE(GetFixed32(sbuf, decoded_num));
+    FB_ASSERT_TRUE(GetString(sbuf, decoded_str));
+
+    FB_ASSERT_EQ(decoded_num, num);
+    FB_ASSERT_EQ(decoded_str, str);
+}
+
+FB_TEST(serialization_combined, fixed64_and_string) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    uint64_t num = 0x123456789ABCDEF0ULL;
+    std::string str = "large_number";
+
+    FB_ASSERT_TRUE(PutFixed64(sbuf, num));
+    FB_ASSERT_TRUE(PutString(sbuf, str));
+
+    sbuf.reset();
+
+    uint64_t decoded_num;
+    std::string decoded_str;
+
+    FB_ASSERT_TRUE(GetFixed64(sbuf, decoded_num));
+    FB_ASSERT_TRUE(GetString(sbuf, decoded_str));
+
+    FB_ASSERT_EQ(decoded_num, num);
+    FB_ASSERT_EQ(decoded_str, str);
+}
+
+FB_TEST(serialization_combined, multiple_types) {
+    char buffer[200];
+    spdk_buffer sbuf(buffer, 200);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 1u));
+    FB_ASSERT_TRUE(PutFixed64(sbuf, 2ull));
+    FB_ASSERT_TRUE(PutString(sbuf, "three"));
+    FB_ASSERT_TRUE(PutOptString(sbuf, std::nullopt));
+
+    sbuf.reset();
+
+    uint32_t v1;
+    uint64_t v2;
+    std::string v3;
+    std::optional<std::string> v4;
+
+    FB_ASSERT_TRUE(GetFixed32(sbuf, v1));
+    FB_ASSERT_TRUE(GetFixed64(sbuf, v2));
+    FB_ASSERT_TRUE(GetString(sbuf, v3));
+    FB_ASSERT_TRUE(GetOptString(sbuf, v4));
+
+    FB_ASSERT_EQ(v1, 1u);
+    FB_ASSERT_EQ(v2, 2ull);
+    FB_ASSERT_EQ(v3, "three");
+    FB_ASSERT_FALSE(v4.has_value());
+}
+
+FB_TEST(serialization_combined, buffer_reuse) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    // First write
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 100u));
+    sbuf.reset();
+
+    // Read back
+    uint32_t v;
+    FB_ASSERT_TRUE(GetFixed32(sbuf, v));
+    FB_ASSERT_EQ(v, 100u);
+
+    // Reuse buffer
+    sbuf.reset();
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 200u));
+    sbuf.reset();
+
+    FB_ASSERT_TRUE(GetFixed32(sbuf, v));
+    FB_ASSERT_EQ(v, 200u);
+}
+
 FB_TEST_MAIN()
