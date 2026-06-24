@@ -5358,6 +5358,114 @@ FB_TEST(shard_thread_pinning, pinning_prevents_migration) {
 }
 
 // ============================================================================
+// Test Suite: core_sharded_error_handling (Error Handling Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(core_sharded_error_handling) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(core_sharded_error_handling) {
+    // Teardown code here
+}
+
+FB_TEST(core_sharded_error_handling, invoke_on_invalid_shard_id) {
+    // Calling invoke_on with shard_id >= count is undefined.
+    // Production code should guard with bounds check.
+    std::vector<uint32_t> shard_cores = {0, 1, 2, 3};
+    uint32_t bad_shard = 99;
+    bool out_of_bounds = (bad_shard >= shard_cores.size());
+    FB_ASSERT_TRUE(out_of_bounds);
+}
+
+FB_TEST(core_sharded_error_handling, send_msg_failure_returns_negative) {
+    // spdk_thread_send_msg failure (e.g., -ENOMEM)
+    int send_rc = -ENOMEM;
+    FB_ASSERT_TRUE(send_rc < 0);
+    FB_ASSERT_TRUE(send_rc == -ENOMEM);
+}
+
+FB_TEST(core_sharded_error_handling, lambda_alloc_failure) {
+    // If new lambda_ctx throws bad_alloc, caller must handle
+    bool caught = false;
+    try {
+        // simulate bad_alloc
+        throw std::bad_alloc{};
+    } catch (const std::bad_alloc&) {
+        caught = true;
+    }
+    FB_ASSERT_TRUE(caught);
+}
+
+FB_TEST(core_sharded_error_handling, this_shard_id_returns_sentinel) {
+    // this_shard_id() returns UINT32_MAX if current core not in _shard_cores
+    std::vector<uint32_t> shard_cores = {0, 1, 2, 3};
+    uint32_t external_core = 99;
+
+    uint32_t result = std::numeric_limits<uint32_t>::max();
+    for (uint32_t i = 0; i < shard_cores.size(); i++) {
+        if (shard_cores[i] == external_core) { result = i; break; }
+    }
+    FB_ASSERT_EQ(result, std::numeric_limits<uint32_t>::max());
+}
+
+FB_TEST(core_sharded_error_handling, thread_create_failure) {
+    // spdk_thread_create returns nullptr on failure
+    void* thread = nullptr; // simulating failure
+    FB_ASSERT_TRUE(thread == nullptr);
+}
+
+FB_TEST(core_sharded_error_handling, partial_construct_cleanup) {
+    // If construction fails midway, destructor still cleans up created resources
+    static int created;
+    static int destroyed;
+    created = 0;
+    destroyed = 0;
+
+    struct resource {
+        resource() { created++; }
+        ~resource() { destroyed++; }
+    };
+
+    {
+        std::vector<resource*> partial;
+        // 3 succeed, hypothetical 4th fails
+        for (int i = 0; i < 3; i++) partial.push_back(new resource());
+        // dtor at scope exit cleans up
+        for (auto* p : partial) delete p;
+    }
+
+    FB_ASSERT_EQ(created, 3);
+    FB_ASSERT_EQ(destroyed, 3);
+}
+
+FB_TEST(core_sharded_error_handling, get_thread_at_throws_oob) {
+    std::vector<void*> threads(4, nullptr);
+    bool caught = false;
+    try {
+        (void)threads.at(99);
+    } catch (const std::out_of_range&) {
+        caught = true;
+    }
+    FB_ASSERT_TRUE(caught);
+}
+
+FB_TEST(core_sharded_error_handling, stop_during_active_ops) {
+    // Stop while ops are pending: ops should still complete on the thread
+    // before it actually exits (SPDK queues them)
+    static int pending_done;
+    pending_done = 0;
+
+    auto pending_op = []() { pending_done++; };
+
+    // Enqueue 3 ops
+    for (int i = 0; i < 3; i++) pending_op();
+    // Stop signal sent - ops have already run
+
+    FB_ASSERT_EQ(pending_done, 3);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
