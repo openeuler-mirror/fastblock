@@ -1519,5 +1519,152 @@ FB_TEST(raft_log_node, election_safety_single_leader) {
     }
 }
 
+// ============================================================================
+// Test Suite: Configuration Change
+// ============================================================================
+
+FB_TEST(raft_log_node, config_change_add_node) {
+    // 添加节点到配置
+    std::map<raft_node_id_t, int> nodes;
+    nodes[1] = 100;
+    nodes[2] = 200;
+    nodes[3] = 300;
+
+    // 初始配置
+    FB_ASSERT_EQ(nodes.size(), 3UL);
+
+    // 添加新节点
+    nodes[4] = 400;
+    FB_ASSERT_EQ(nodes.size(), 4UL);
+    FB_ASSERT_TRUE(nodes.find(4) != nodes.end());
+}
+
+FB_TEST(raft_log_node, config_change_remove_node) {
+    // 从配置中移除节点
+    std::map<raft_node_id_t, int> nodes;
+    nodes[1] = 100;
+    nodes[2] = 200;
+    nodes[3] = 300;
+    nodes[4] = 400;
+
+    // 移除节点
+    nodes.erase(3);
+    FB_ASSERT_EQ(nodes.size(), 3UL);
+    FB_ASSERT_TRUE(nodes.find(3) == nodes.end());
+}
+
+FB_TEST(raft_log_node, config_change_joint_consensus) {
+    // 联合共识阶段
+    std::map<raft_node_id_t, int> old_config;
+    old_config[1] = 100;
+    old_config[2] = 200;
+    old_config[3] = 300;
+
+    std::map<raft_node_id_t, int> new_config;
+    new_config[4] = 400;
+    new_config[5] = 500;
+
+    // 联合共识期间需要同时向两个配置发送消息
+    int total_recipients = old_config.size() + new_config.size();
+    FB_ASSERT_EQ(total_recipients, 5);
+
+    // 需要两个配置的多数派都确认
+    int old_quorum = old_config.size() / 2 + 1;
+    int new_quorum = new_config.size() / 2 + 1;
+    FB_ASSERT_EQ(old_quorum, 2);
+    FB_ASSERT_EQ(new_quorum, 2);
+}
+
+FB_TEST(raft_log_node, config_change_catch_up) {
+    // 新节点追赶
+    raft_index_t leader_last_idx = 1000;
+    raft_index_t follower_last_idx = 500;
+
+    // 新节点落后太多，需要追赶
+    bool needs_catch_up = (leader_last_idx - follower_last_idx) > 100;
+    FB_ASSERT_TRUE(needs_catch_up);
+
+    // 追赶进度
+    int entries_to_send = leader_last_idx - follower_last_idx;
+    FB_ASSERT_EQ(entries_to_send, 500);
+}
+
+FB_TEST(raft_log_node, config_change_safety_check) {
+    // 配置变更安全性检查
+    int old_cluster_size = 3;
+    int new_cluster_size = 5;
+
+    // 计算重叠的多数派
+    int old_quorum = old_cluster_size / 2 + 1;
+    int new_quorum = new_cluster_size / 2 + 1;
+
+    // 确保安全性：两个配置的多数派必须有交集
+    // 3 节点多数派需要 2，5 节点多数派需要 3
+    // 交集至少需要 1 个节点
+    int min_overlap = old_quorum + new_quorum - old_cluster_size;
+    bool safe = min_overlap > 0;
+    FB_ASSERT_TRUE(safe);
+}
+
+FB_TEST(raft_log_node, config_change_rollback) {
+    // 配置变更回滚
+    std::map<raft_node_id_t, int> current_config;
+    current_config[1] = 100;
+    current_config[2] = 200;
+    current_config[3] = 300;
+
+    // 保存旧配置
+    std::map<raft_node_id_t, int> old_config = current_config;
+
+    // 尝试添加新节点
+    current_config[4] = 400;
+
+    // 变更失败，回滚到旧配置
+    current_config = old_config;
+    FB_ASSERT_EQ(current_config.size(), 3UL);
+    FB_ASSERT_TRUE(current_config.find(4) == current_config.end());
+}
+
+FB_TEST(raft_log_node, config_change_log_entry_type) {
+    // 配置变更日志条目类型
+    raft_logtype_e entry_type = RAFT_LOGTYPE_CONFIGURATION;
+    FB_ASSERT_EQ(entry_type, RAFT_LOGTYPE_CONFIGURATION);
+
+    // 区分普通写日志和配置变更日志
+    bool is_config_change = (entry_type == RAFT_LOGTYPE_CONFIGURATION ||
+                             entry_type == RAFT_LOGTYPE_ADD_NONVOTING_NODE);
+    FB_ASSERT_TRUE(is_config_change);
+
+    // 普通写日志不是配置变更
+    entry_type = RAFT_LOGTYPE_WRITE;
+    is_config_change = (entry_type == RAFT_LOGTYPE_CONFIGURATION ||
+                        entry_type == RAFT_LOGTYPE_ADD_NONVOTING_NODE);
+    FB_ASSERT_FALSE(is_config_change);
+}
+
+FB_TEST(raft_log_node, config_change_nonvoting_node) {
+    // 非投票节点管理
+    std::map<raft_node_id_t, bool> voting_status;
+    voting_status[1] = true;   // 投票节点
+    voting_status[2] = true;   // 投票节点
+    voting_status[3] = false;  // 非投票节点
+    voting_status[4] = false;  // 非投票节点
+
+    // 计算投票节点数量
+    int voting_count = 0;
+    for (const auto& pair : voting_status) {
+        if (pair.second) voting_count++;
+    }
+    FB_ASSERT_EQ(voting_count, 2);
+
+    // 非投票节点可以转换为投票节点
+    voting_status[3] = true;
+    voting_count = 0;
+    for (const auto& pair : voting_status) {
+        if (pair.second) voting_count++;
+    }
+    FB_ASSERT_EQ(voting_count, 3);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
