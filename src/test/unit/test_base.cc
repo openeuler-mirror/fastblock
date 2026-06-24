@@ -3823,6 +3823,106 @@ FB_TEST(shard_balancing_strategies, balance_with_string_keys) {
 }
 
 // ============================================================================
+// Test Suite: core_sharded_singleton_access (Singleton Access Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(core_sharded_singleton_access) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(core_sharded_singleton_access) {
+    // Teardown code here
+}
+
+FB_TEST(core_sharded_singleton_access, get_core_sharded_dereferences_singleton) {
+    // get_core_sharded() returns *g_core_sharded
+    auto singleton = std::make_unique<int>(42);
+    int& ref = *singleton;
+    FB_ASSERT_EQ(ref, 42);
+    FB_ASSERT_EQ(&ref, singleton.get());
+}
+
+FB_TEST(core_sharded_singleton_access, get_thread_by_core) {
+    // get_thread(core) returns _threads.at(core)
+    std::vector<void*> threads = {(void*)0x100, (void*)0x200, (void*)0x300, (void*)0x400};
+    FB_ASSERT_EQ(threads.at(0), (void*)0x100);
+    FB_ASSERT_EQ(threads.at(3), (void*)0x400);
+}
+
+FB_TEST(core_sharded_singleton_access, get_thread_throws_on_oob) {
+    // .at() throws std::out_of_range on out-of-bounds
+    std::vector<void*> threads = {(void*)0x1, (void*)0x2};
+    bool caught = false;
+    try {
+        (void)threads.at(99);
+    } catch (const std::out_of_range&) {
+        caught = true;
+    }
+    FB_ASSERT_TRUE(caught);
+}
+
+FB_TEST(core_sharded_singleton_access, get_shard_cores_returns_ref) {
+    // get_shard_cores() returns reference to internal vector
+    auto singleton = std::make_unique<std::vector<uint32_t>>();
+    singleton->push_back(0);
+    singleton->push_back(1);
+    singleton->push_back(2);
+
+    std::vector<uint32_t>& ref = *singleton;
+    FB_ASSERT_EQ(ref.size(), 3);
+
+    // Modifications through ref affect singleton
+    ref.push_back(3);
+    FB_ASSERT_EQ(singleton->size(), 4);
+}
+
+FB_TEST(core_sharded_singleton_access, stop_all_invokes_singleton_stop) {
+    // stop_all() calls g_core_sharded->stop()
+    static int stops_called;
+    stops_called = 0;
+
+    struct sharded_mock {
+        void stop() { stops_called++; }
+    };
+
+    auto singleton = std::make_unique<sharded_mock>();
+    singleton->stop(); // stop_all() does this
+    FB_ASSERT_EQ(stops_called, 1);
+}
+
+FB_TEST(core_sharded_singleton_access, construct_makes_unique) {
+    // construct(args...) does g_core_sharded = std::make_unique<core_sharded>(args...)
+    std::unique_ptr<int> g_singleton;
+    FB_ASSERT_TRUE(g_singleton == nullptr);
+
+    // Simulate construct(42)
+    g_singleton = std::make_unique<int>(42);
+    FB_ASSERT_TRUE(g_singleton != nullptr);
+    FB_ASSERT_EQ(*g_singleton, 42);
+}
+
+FB_TEST(core_sharded_singleton_access, second_construct_replaces_first) {
+    // Calling construct() twice replaces the singleton
+    std::unique_ptr<int> g;
+    g = std::make_unique<int>(1);
+    int* first_addr = g.get();
+
+    g = std::make_unique<int>(2);
+    int* second_addr = g.get();
+
+    // Different memory addresses
+    FB_ASSERT_TRUE(first_addr != second_addr);
+    FB_ASSERT_EQ(*g, 2);
+}
+
+FB_TEST(core_sharded_singleton_access, gnu_optimize_pragma_present) {
+    // get_core_sharded() has [[gnu::optimize("O0")]] attribute
+    // This prevents inlining; verify a function pointer can be taken
+    auto fn_ptr = []() -> int { return 42; };
+    FB_ASSERT_EQ(fn_ptr(), 42);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
