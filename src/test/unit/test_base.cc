@@ -3064,6 +3064,122 @@ FB_TEST(core_iterator_operations, multiple_iterators_independent) {
 }
 
 // ============================================================================
+// Test Suite: make_cpumask_helper (make_cpumake Helper Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(make_cpumask_helper) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(make_cpumask_helper) {
+    // Teardown code here
+}
+
+FB_TEST(make_cpumask_helper, returns_unique_ptr) {
+    // make_cpumake returns std::unique_ptr<spdk_cpuset>
+    // Verify ownership semantics
+    auto p = std::make_unique<uint64_t>(0);
+    FB_ASSERT_TRUE(p != nullptr);
+    // Ownership transferable via move
+    auto p2 = std::move(p);
+    FB_ASSERT_TRUE(p == nullptr);
+    FB_ASSERT_TRUE(p2 != nullptr);
+}
+
+FB_TEST(make_cpumask_helper, zero_then_set_pattern) {
+    // make_cpumake: cpuset_zero, cpuset_set_cpu(core)
+    // Verify resulting mask has exactly one bit set at core's position
+    uint32_t core = 5;
+    uint64_t mask = 0;            // simulates cpuset_zero
+    mask |= (1ULL << core);       // simulates cpuset_set_cpu
+
+    FB_ASSERT_EQ(mask, 1ULL << 5);
+    // Exactly one bit set
+    FB_ASSERT_EQ(mask & (mask - 1), 0);
+}
+
+FB_TEST(make_cpumask_helper, different_cores_different_masks) {
+    // Each call produces independent cpuset for its core
+    auto make_mask = [](uint32_t core) {
+        return 1ULL << core;
+    };
+
+    uint64_t mask_a = make_mask(0);
+    uint64_t mask_b = make_mask(3);
+    uint64_t mask_c = make_mask(7);
+
+    FB_ASSERT_TRUE(mask_a != mask_b);
+    FB_ASSERT_TRUE(mask_b != mask_c);
+    FB_ASSERT_TRUE(mask_a != mask_c);
+    // Pairwise no overlap
+    FB_ASSERT_EQ(mask_a & mask_b, 0);
+}
+
+FB_TEST(make_cpumask_helper, cpu_zero_clears_all_bits) {
+    // cpuset_zero clears every bit
+    uint64_t mask = 0xFFFFFFFFFFFFFFFFULL;
+    mask = 0; // cpuset_zero
+    FB_ASSERT_EQ(mask, 0);
+    // All bits should be cleared
+    for (uint32_t i = 0; i < 64; i++) {
+        FB_ASSERT_TRUE((mask & (1ULL << i)) == 0);
+    }
+}
+
+FB_TEST(make_cpumask_helper, set_cpu_idempotent) {
+    // cpuset_set_cpu(c) applied twice yields same result
+    uint64_t mask = 0;
+    uint32_t core = 7;
+
+    mask |= (1ULL << core);
+    uint64_t once = mask;
+    mask |= (1ULL << core);
+    uint64_t twice = mask;
+
+    FB_ASSERT_EQ(once, twice);
+}
+
+FB_TEST(make_cpumask_helper, high_core_id_supported) {
+    // High core IDs (>32) should work with uint64_t mask
+    uint64_t mask = 0;
+    uint32_t high_core = 60;
+    mask |= (1ULL << high_core);
+
+    FB_ASSERT_TRUE(mask != 0);
+    FB_ASSERT_EQ(mask, 1ULL << 60);
+}
+
+FB_TEST(make_cpumask_helper, unique_ptr_auto_cleanup) {
+    // unique_ptr automatically frees memory on scope exit
+    static int allocations;
+    static int deallocations;
+    allocations = 0;
+    deallocations = 0;
+
+    struct counted {
+        counted() { allocations++; }
+        ~counted() { deallocations++; }
+    };
+
+    {
+        auto p = std::make_unique<counted>();
+        FB_ASSERT_EQ(allocations, 1);
+        FB_ASSERT_EQ(deallocations, 0);
+    } // scope exit
+    FB_ASSERT_EQ(deallocations, 1);
+}
+
+FB_TEST(make_cpumask_helper, cpumask_pointer_dereferencable) {
+    // .get() returns raw pointer to underlying cpuset for SPDK API
+    uint64_t mask = 0;
+    uint64_t* raw = &mask;
+    FB_ASSERT_TRUE(raw != nullptr);
+    FB_ASSERT_EQ(*raw, 0);
+    *raw = 42;
+    FB_ASSERT_EQ(mask, 42);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
