@@ -2534,4 +2534,133 @@ FB_TEST(spdk_buffer_utility, used_accumulates) {
     FB_ASSERT_EQ(sbuf.used(), 24u);
 }
 
+// ============================================================================
+// Test Suite: spdk_buffer_edge_cases (Spdk Buffer Edge Cases Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_edge_cases) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_edge_cases) {
+    // Teardown code here
+}
+
+FB_TEST(spdk_buffer_edge_cases, exact_fit_fixed32) {
+    char buffer[4];
+    spdk_buffer sbuf(buffer, 4);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 123u));
+    FB_ASSERT_EQ(sbuf.remain(), 0u);
+}
+
+FB_TEST(spdk_buffer_edge_cases, exact_fit_fixed64) {
+    char buffer[8];
+    spdk_buffer sbuf(buffer, 8);
+
+    FB_ASSERT_TRUE(PutFixed64(sbuf, 123ull));
+    FB_ASSERT_EQ(sbuf.remain(), 0u);
+}
+
+FB_TEST(spdk_buffer_edge_cases, exact_fit_string) {
+    // String "hi" needs 8 (header) + 2 (data) = 10 bytes
+    char buffer[10];
+    spdk_buffer sbuf(buffer, 10);
+
+    FB_ASSERT_TRUE(PutString(sbuf, "hi"));
+    FB_ASSERT_EQ(sbuf.remain(), 0u);
+}
+
+FB_TEST(spdk_buffer_edge_cases, one_byte_short_fixed32) {
+    char buffer[3];
+    spdk_buffer sbuf(buffer, 3);
+
+    FB_ASSERT_FALSE(PutFixed32(sbuf, 123u));
+}
+
+FB_TEST(spdk_buffer_edge_cases, one_byte_short_fixed64) {
+    char buffer[7];
+    spdk_buffer sbuf(buffer, 7);
+
+    FB_ASSERT_FALSE(PutFixed64(sbuf, 123ull));
+}
+
+FB_TEST(spdk_buffer_edge_cases, zero_size_buffer) {
+    char buffer[1];
+    spdk_buffer sbuf(buffer, 0);
+
+    FB_ASSERT_EQ(sbuf.remain(), 0u);
+    FB_ASSERT_EQ(sbuf.used(), 0u);
+
+    FB_ASSERT_FALSE(PutFixed32(sbuf, 123u));
+}
+
+FB_TEST(spdk_buffer_edge_cases, overflow_protection) {
+    char buffer[10];
+    spdk_buffer sbuf(buffer, 10);
+
+    // First write succeeds
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 1u));
+    FB_ASSERT_EQ(sbuf.used(), 4u);
+    FB_ASSERT_EQ(sbuf.remain(), 6u);
+
+    // Second write that would overflow fails
+    FB_ASSERT_FALSE(PutFixed64(sbuf, 2ull));
+    FB_ASSERT_EQ(sbuf.used(), 4u);  // Used should not change
+}
+
+FB_TEST(spdk_buffer_edge_cases, consecutive_writes_tracking) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    size_t expected_used = 0;
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 1u));
+    expected_used += 4;
+    FB_ASSERT_EQ(sbuf.used(), expected_used);
+
+    FB_ASSERT_TRUE(PutFixed64(sbuf, 2ull));
+    expected_used += 8;
+    FB_ASSERT_EQ(sbuf.used(), expected_used);
+
+    FB_ASSERT_TRUE(PutString(sbuf, "abc"));
+    expected_used += 8 + 3;  // header + data
+    FB_ASSERT_EQ(sbuf.used(), expected_used);
+
+    FB_ASSERT_TRUE(PutString(sbuf, "xyz"));
+    expected_used += 8 + 3;
+    FB_ASSERT_EQ(sbuf.used(), expected_used);
+}
+
+FB_TEST(spdk_buffer_edge_cases, reset_repeatedly) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    for (int i = 0; i < 10; i++) {
+        FB_ASSERT_TRUE(PutFixed32(sbuf, i));
+        FB_ASSERT_EQ(sbuf.used(), 4u);
+        sbuf.reset();
+        FB_ASSERT_EQ(sbuf.used(), 0u);
+    }
+}
+
+FB_TEST(spdk_buffer_edge_cases, get_after_partial_failure) {
+    char buffer[8];
+    spdk_buffer sbuf(buffer, 8);
+
+    // Write fixed64 successfully
+    FB_ASSERT_TRUE(PutFixed64(sbuf, 123ull));
+
+    sbuf.reset();
+
+    // Read it back
+    uint64_t v1;
+    FB_ASSERT_TRUE(GetFixed64(sbuf, v1));
+    FB_ASSERT_EQ(v1, 123ull);
+
+    // Try to read more (should fail)
+    uint64_t v2;
+    FB_ASSERT_FALSE(GetFixed64(sbuf, v2));
+}
+
 FB_TEST_MAIN()
