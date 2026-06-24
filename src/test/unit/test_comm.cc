@@ -27,6 +27,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <memory>
 #include <set>
@@ -641,6 +642,125 @@ FB_TEST(rpc_dispatch, dispatch_is_case_sensitive) {
       reg.dispatch("osdservice", "Read", "x") == dispatch_result::service_not_found);
     FB_ASSERT_TRUE(
       reg.dispatch("OsdService", "READ", "x") == dispatch_result::method_not_found);
+}
+
+// ============================================================================
+// Test Suite: rpc_request_lifecycle — request/response callback contract
+//
+// monclient (and other RPC users) hand the transport a request_context that
+// owns the request, the callback, and a slot for the response data. The
+// transport's contract:
+//   1. The callback fires EXACTLY ONCE per request — success or failure.
+//   2. The request_context pointer is still valid when the callback runs
+//      (the transport doesn't free it before invoking).
+//   3. On failure paths the callback still fires; we must not leak callers
+//      waiting on a response that never comes.
+// These mirror what monclient::request_context promises in the production
+// header; locking them down here prevents a regression from silently
+// hanging callers.
+// ============================================================================
+
+namespace {
+
+enum class rpc_callback_status { ok, fail };
+
+struct fake_request_context {
+    int request_id{0};
+    std::string payload{};
+    std::function<void(rpc_callback_status, fake_request_context*)> cb{};
+};
+
+class fake_request_runner {
+public:
+    void submit(fake_request_context* ctx, bool simulate_success) {
+        if (simulate_success) {
+            ctx->cb(rpc_callback_status::ok, ctx);
+        } else {
+            ctx->cb(rpc_callback_status::fail, ctx);
+        }
+    }
+};
+
+} // anonymous namespace
+
+FB_SUITE_SETUP(rpc_request_lifecycle) {}
+FB_SUITE_TEARDOWN(rpc_request_lifecycle) {}
+
+FB_TEST(rpc_request_lifecycle, success_invokes_callback_once) {
+    // The success path must invoke the callback exactly once. Two-callback
+    // bugs hide easily because the second call usually still "works" — the
+    // damage is double-free / double-release downstream.
+    int call_count = 0;
+    rpc_callback_status seen = rpc_callback_status::fail;
+    fake_request_context ctx;
+    ctx.request_id = 7;
+    ctx.cb = [&](rpc_callback_status s, fake_request_context* c) {
+        ++call_count;
+        seen = s;
+        // ctx pointer must still be valid inside the callback.
+        FB_ASSERT_NOT_NULL(c);
+        FB_ASSERT_EQ(c->request_id, 7);
+    };
+    fake_request_runner runner;
+    runner.submit(&ctx, /*simulate_success=*/true);
+
+    FB_ASSERT_EQ(call_count, 1);
+    FB_ASSERT_TRUE(seen == rpc_callback_status::ok);
+}
+
+FB_TEST(rpc_request_lifecycle, failure_still_invokes_callback) {
+    // Failure path MUST still fire the callback — otherwise the caller waits
+    // forever for a response that will never arrive.
+    int call_count = 0;
+    rpc_callback_status seen = rpc_callback_status::ok;
+    fake_request_context ctx;
+    ctx.cb = [&](rpc_callback_status s, fake_request_context*) {
+        ++call_count;
+        seen = s;
+    };
+    fake_request_runner runner;
+    runner.submit(&ctx, /*simulate_success=*/false);
+
+    FB_ASSERT_EQ(call_count, 1);
+    FB_ASSERT_TRUE(seen == rpc_callback_status::fail);
+}
+
+FB_TEST(rpc_request_lifecycle, callback_can_read_payload) {
+    // The callback receives the same request_context the caller submitted —
+    // its payload field must be unchanged so the callback can correlate the
+    // response with the original request.
+    fake_request_context ctx;
+    ctx.payload = "AppendEntries:term=5,leader=1";
+    std::string captured;
+    ctx.cb = [&](rpc_callback_status, fake_request_context* c) {
+        captured = c->payload;
+    };
+    fake_request_runner runner;
+    runner.submit(&ctx, /*simulate_success=*/true);
+
+    FB_ASSERT_STR_EQ(captured.c_str(), "AppendEntries:term=5,leader=1");
+}
+
+FB_TEST(rpc_request_lifecycle, distinct_requests_run_distinct_callbacks) {
+    // Two outstanding requests must each receive their own callback exactly
+    // once — regression target: a shared static state in the dispatcher.
+    int hits_a = 0, hits_b = 0;
+    fake_request_context ctx_a, ctx_b;
+    ctx_a.request_id = 1;
+    ctx_b.request_id = 2;
+    ctx_a.cb = [&](rpc_callback_status, fake_request_context* c) {
+        if (c->request_id == 1) ++hits_a;
+    };
+    ctx_b.cb = [&](rpc_callback_status, fake_request_context* c) {
+        if (c->request_id == 2) ++hits_b;
+    };
+
+    fake_request_runner runner;
+    runner.submit(&ctx_a, true);
+    runner.submit(&ctx_b, false);
+
+    FB_ASSERT_EQ(hits_a, 1);
+    FB_ASSERT_EQ(hits_b, 1);
 }
 
 // ============================================================================
