@@ -3115,4 +3115,197 @@ FB_TEST(error_recovery, optional_string_failure_handling) {
     FB_ASSERT_EQ(sbuf.used(), 4u);
 }
 
+// ============================================================================
+// Test Suite: data_integrity (Data Integrity Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(data_integrity) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(data_integrity) {
+    // Teardown code here
+}
+
+FB_TEST(data_integrity, fixed32_value_preserved) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    uint32_t original = 0xDEADBEEF;
+    FB_ASSERT_TRUE(PutFixed32(sbuf, original));
+
+    sbuf.reset();
+    uint32_t decoded;
+    FB_ASSERT_TRUE(GetFixed32(sbuf, decoded));
+
+    FB_ASSERT_EQ(decoded, original);
+}
+
+FB_TEST(data_integrity, fixed64_value_preserved) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    uint64_t original = 0x123456789ABCDEF0ULL;
+    FB_ASSERT_TRUE(PutFixed64(sbuf, original));
+
+    sbuf.reset();
+    uint64_t decoded;
+    FB_ASSERT_TRUE(GetFixed64(sbuf, decoded));
+
+    FB_ASSERT_EQ(decoded, original);
+}
+
+FB_TEST(data_integrity, string_content_preserved) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::string original = "Hello, World! 测试数据";
+    FB_ASSERT_TRUE(PutString(sbuf, original));
+
+    sbuf.reset();
+    std::string decoded;
+    FB_ASSERT_TRUE(GetString(sbuf, decoded));
+
+    FB_ASSERT_EQ(decoded, original);
+}
+
+FB_TEST(data_integrity, binary_data_preserved) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::string original;
+    for (int i = 0; i < 50; i++) {
+        original.push_back(static_cast<char>(i));
+    }
+
+    FB_ASSERT_TRUE(PutString(sbuf, original));
+
+    sbuf.reset();
+    std::string decoded;
+    FB_ASSERT_TRUE(GetString(sbuf, decoded));
+
+    FB_ASSERT_EQ(decoded.size(), original.size());
+    for (size_t i = 0; i < original.size(); i++) {
+        FB_ASSERT_EQ(decoded[i], original[i]);
+    }
+}
+
+FB_TEST(data_integrity, multiple_values_order) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 1u));
+    FB_ASSERT_TRUE(PutFixed64(sbuf, 2ull));
+    FB_ASSERT_TRUE(PutString(sbuf, "third"));
+
+    sbuf.reset();
+
+    uint32_t v1;
+    uint64_t v2;
+    std::string v3;
+
+    FB_ASSERT_TRUE(GetFixed32(sbuf, v1));
+    FB_ASSERT_TRUE(GetFixed64(sbuf, v2));
+    FB_ASSERT_TRUE(GetString(sbuf, v3));
+
+    FB_ASSERT_EQ(v1, 1u);
+    FB_ASSERT_EQ(v2, 2ull);
+    FB_ASSERT_EQ(v3, "third");
+}
+
+FB_TEST(data_integrity, optional_string_values) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::optional<std::string> opt1 = "present";
+    std::optional<std::string> opt2 = std::nullopt;
+    std::optional<std::string> opt3 = "also_present";
+
+    FB_ASSERT_TRUE(PutOptString(sbuf, opt1));
+    FB_ASSERT_TRUE(PutOptString(sbuf, opt2));
+    FB_ASSERT_TRUE(PutOptString(sbuf, opt3));
+
+    sbuf.reset();
+
+    std::optional<std::string> d1, d2, d3;
+    FB_ASSERT_TRUE(GetOptString(sbuf, d1));
+    FB_ASSERT_TRUE(GetOptString(sbuf, d2));
+    FB_ASSERT_TRUE(GetOptString(sbuf, d3));
+
+    FB_ASSERT_TRUE(d1.has_value() && *d1 == "present");
+    FB_ASSERT_FALSE(d2.has_value());
+    FB_ASSERT_TRUE(d3.has_value() && *d3 == "also_present");
+}
+
+FB_TEST(data_integrity, zero_values_handling) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 0u));
+    FB_ASSERT_TRUE(PutFixed64(sbuf, 0ull));
+    FB_ASSERT_TRUE(PutString(sbuf, ""));
+
+    sbuf.reset();
+
+    uint32_t v1 = 99;
+    uint64_t v2 = 99;
+    std::string v3 = "non-empty";
+
+    FB_ASSERT_TRUE(GetFixed32(sbuf, v1));
+    FB_ASSERT_TRUE(GetFixed64(sbuf, v2));
+    FB_ASSERT_TRUE(GetString(sbuf, v3));
+
+    FB_ASSERT_EQ(v1, 0u);
+    FB_ASSERT_EQ(v2, 0ull);
+    FB_ASSERT_TRUE(v3.empty());
+}
+
+FB_TEST(data_integrity, special_characters) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::string original = "\n\t\r\\\"\'\0";
+    FB_ASSERT_TRUE(PutString(sbuf, original));
+
+    sbuf.reset();
+    std::string decoded;
+    FB_ASSERT_TRUE(GetString(sbuf, decoded));
+
+    FB_ASSERT_EQ(decoded.size(), original.size());
+}
+
+FB_TEST(data_integrity, utf8_preserved) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::string original = "中文测试 日本語 한국어";
+    FB_ASSERT_TRUE(PutString(sbuf, original));
+
+    sbuf.reset();
+    std::string decoded;
+    FB_ASSERT_TRUE(GetString(sbuf, decoded));
+
+    FB_ASSERT_EQ(decoded, original);
+}
+
+FB_TEST(data_integrity, long_term_id) {
+    char buffer[500];
+    spdk_buffer sbuf(buffer, 500);
+
+    log_entry_t entry{};
+    entry.term_id = 999999999;
+    entry.index = 888888888;
+    entry.meta = "long_term_test";
+
+    FB_ASSERT_TRUE(EncodeLogHeader(sbuf, entry));
+
+    sbuf.reset();
+    log_entry_t decoded{};
+    FB_ASSERT_TRUE(DecodeLogHeader(sbuf, decoded));
+
+    FB_ASSERT_EQ(decoded.term_id, 999999999);
+    FB_ASSERT_EQ(decoded.index, 888888888);
+    FB_ASSERT_EQ(decoded.meta, "long_term_test");
+}
+
 FB_TEST_MAIN()
