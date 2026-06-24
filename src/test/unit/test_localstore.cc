@@ -2663,4 +2663,135 @@ FB_TEST(spdk_buffer_edge_cases, get_after_partial_failure) {
     FB_ASSERT_FALSE(GetFixed64(sbuf, v2));
 }
 
+// ============================================================================
+// Test Suite: log_entry_operations (Log Entry Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_entry_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_entry_operations) {
+    // Teardown code here
+}
+
+FB_TEST(log_entry_operations, entry_default_values) {
+    log_entry_t entry{};
+    FB_ASSERT_EQ(entry.term_id, 0);
+    FB_ASSERT_EQ(entry.index, 0);
+    FB_ASSERT_EQ(entry.size, 0);
+    FB_ASSERT_EQ(entry.type, 0);
+}
+
+FB_TEST(log_entry_operations, entry_field_assignment) {
+    log_entry_t entry{};
+    entry.term_id = 5;
+    entry.index = 100;
+    entry.size = 256;
+    entry.type = RAFT_LOGTYPE_WRITE;
+    entry.meta = "test_meta";
+
+    FB_ASSERT_EQ(entry.term_id, 5);
+    FB_ASSERT_EQ(entry.index, 100);
+    FB_ASSERT_EQ(entry.size, 256);
+    FB_ASSERT_EQ(entry.type, RAFT_LOGTYPE_WRITE);
+    FB_ASSERT_EQ(entry.meta, "test_meta");
+}
+
+FB_TEST(log_entry_operations, entry_large_values) {
+    log_entry_t entry{};
+    entry.term_id = std::numeric_limits<int>::max();
+    entry.index = std::numeric_limits<long>::max();
+    entry.size = std::numeric_limits<int>::max();
+
+    FB_ASSERT_EQ(entry.term_id, std::numeric_limits<int>::max());
+    FB_ASSERT_EQ(entry.index, std::numeric_limits<long>::max());
+    FB_ASSERT_EQ(entry.size, std::numeric_limits<int>::max());
+}
+
+FB_TEST(log_entry_operations, entry_meta_empty) {
+    log_entry_t entry{};
+    FB_ASSERT_TRUE(entry.meta.empty());
+}
+
+FB_TEST(log_entry_operations, entry_meta_long) {
+    log_entry_t entry{};
+    entry.meta = std::string(500, 'm');
+    FB_ASSERT_EQ(entry.meta.size(), 500);
+}
+
+FB_TEST(log_entry_operations, entry_meta_binary) {
+    log_entry_t entry{};
+    entry.meta = "\x00\x01\x02\x03\x04";
+    FB_ASSERT_EQ(entry.meta.size(), 5);
+}
+
+FB_TEST(log_entry_operations, entry_copy) {
+    log_entry_t entry1{};
+    entry1.term_id = 10;
+    entry1.index = 50;
+    entry1.meta = "original";
+
+    log_entry_t entry2 = entry1;
+    FB_ASSERT_EQ(entry2.term_id, 10);
+    FB_ASSERT_EQ(entry2.index, 50);
+    FB_ASSERT_EQ(entry2.meta, "original");
+}
+
+FB_TEST(log_entry_operations, entry_different_types) {
+    log_entry_t entry{};
+
+    entry.type = RAFT_LOGTYPE_WRITE;
+    FB_ASSERT_EQ(entry.type, RAFT_LOGTYPE_WRITE);
+
+    entry.type = RAFT_LOGTYPE_DELETE;
+    FB_ASSERT_EQ(entry.type, RAFT_LOGTYPE_DELETE);
+
+    entry.type = RAFT_LOGTYPE_ADD_NONVOTING_NODE;
+    FB_ASSERT_EQ(entry.type, RAFT_LOGTYPE_ADD_NONVOTING_NODE);
+
+    entry.type = RAFT_LOGTYPE_CONFIGURATION;
+    FB_ASSERT_EQ(entry.type, RAFT_LOGTYPE_CONFIGURATION);
+}
+
+FB_TEST(log_entry_operations, encode_decode_roundtrip) {
+    char buffer[500];
+    spdk_buffer sbuf(buffer, 500);
+
+    log_entry_t original{};
+    original.term_id = 123;
+    original.index = 456;
+    original.size = 789;
+    original.type = RAFT_LOGTYPE_WRITE;
+    original.meta = "test_metadata";
+
+    FB_ASSERT_TRUE(EncodeLogHeader(sbuf, original));
+
+    sbuf.reset();
+    log_entry_t decoded{};
+    FB_ASSERT_TRUE(DecodeLogHeader(sbuf, decoded));
+
+    FB_ASSERT_EQ(decoded.term_id, original.term_id);
+    FB_ASSERT_EQ(decoded.index, original.index);
+    FB_ASSERT_EQ(decoded.size, original.size);
+    FB_ASSERT_EQ(decoded.type, original.type);
+    FB_ASSERT_EQ(decoded.meta, original.meta);
+}
+
+FB_TEST(log_entry_operations, multiple_entries_sequence) {
+    char buffer[1000];
+    spdk_buffer sbuf(buffer, 1000);
+
+    for (int i = 0; i < 5; i++) {
+        log_entry_t entry{};
+        entry.term_id = i;
+        entry.index = i * 10;
+        entry.meta = "entry_" + std::to_string(i);
+
+        FB_ASSERT_TRUE(EncodeLogHeader(sbuf, entry));
+    }
+
+    FB_ASSERT_TRUE(sbuf.used() > 0);
+}
+
 FB_TEST_MAIN()
