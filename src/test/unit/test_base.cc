@@ -6183,6 +6183,83 @@ FB_TEST(shard_runtime_introspection, function_signature_inspection) {
 }
 
 // ============================================================================
+// Test Suite: shard_cpuset_operations (Advanced CPU Set Operations)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_cpuset_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_cpuset_operations) {
+    // Teardown code here
+}
+
+FB_TEST(shard_cpuset_operations, set_intersection) {
+    // Intersection of two CPU sets
+    uint64_t set_a = 0b00001111;
+    uint64_t set_b = 0b00110011;
+
+    uint64_t intersection = set_a & set_b;
+    FB_ASSERT_EQ(intersection, 0b00000011);
+}
+
+FB_TEST(shard_cpuset_operations, set_union) {
+    uint64_t set_a = 0b00001111;
+    uint64_t set_b = 0b00110011;
+
+    uint64_t un = set_a | set_b;
+    FB_ASSERT_EQ(un, 0b00111111);
+}
+
+FB_TEST(shard_cpuset_operations, set_difference) {
+    uint64_t set_a = 0b00111111;
+    uint64_t set_b = 0b00000011;
+
+    uint64_t diff = set_a & ~set_b;
+    FB_ASSERT_EQ(diff, 0b00111100);
+}
+
+FB_TEST(shard_cpuset_operations, set_complement) {
+    uint64_t set = 0b00001111;
+    uint64_t complement = ~set;
+
+    // Lowest 4 bits cleared in complement
+    FB_ASSERT_EQ(complement & 0b00001111, 0);
+    // Higher bits all set
+    FB_ASSERT_TRUE((complement >> 4) != 0);
+}
+
+FB_TEST(shard_cpuset_operations, is_subset) {
+    uint64_t superset = 0b11111111;
+    uint64_t subset = 0b00001111;
+
+    bool is_sub = (subset & superset) == subset;
+    FB_ASSERT_TRUE(is_sub);
+
+    uint64_t not_sub = 0b00010000;
+    bool is_not_sub = (not_sub & subset) == not_sub;
+    FB_ASSERT_TRUE(!is_not_sub);
+}
+
+FB_TEST(shard_cpuset_operations, count_set_bits) {
+    uint64_t set = 0b10101010;
+    int count = __builtin_popcountll(set);
+    FB_ASSERT_EQ(count, 4);
+}
+
+FB_TEST(shard_cpuset_operations, find_first_set) {
+    uint64_t set = 0b00100000;
+    int first = __builtin_ctzll(set); // count trailing zeros
+    FB_ASSERT_EQ(first, 5);
+}
+
+FB_TEST(shard_cpuset_operations, find_last_set) {
+    uint64_t set = 0b00100100;
+    int last = 63 - __builtin_clzll(set); // count leading zeros
+    FB_ASSERT_EQ(last, 5);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
