@@ -1544,11 +1544,7 @@ FB_TEST(rpc_connect_cache_reconnect, overwrite_is_local_to_one_node) {
 
 namespace {
 
-struct mon_endpoint {
-    std::string host{};
-    uint16_t port{};
-};
-
+// mon_endpoint is defined by the monclient_endpoint suite above; reused here.
 struct mon_image_info {
     std::string pool_name{};
     std::string image_name{};
