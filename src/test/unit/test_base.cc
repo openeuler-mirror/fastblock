@@ -1211,6 +1211,130 @@ FB_TEST(core_iterator_advanced, distance_calculation) {
 }
 
 // ============================================================================
+// Test Suite: service_pattern (Service Pattern Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(service_pattern) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(service_pattern) {
+    // Teardown code here
+}
+
+FB_TEST(service_pattern, service_with_default_ctor) {
+    // Service must be constructible (Args = empty)
+    struct DefaultService { int value = 0; };
+    DefaultService s;
+    FB_ASSERT_EQ(s.value, 0);
+}
+
+FB_TEST(service_pattern, service_with_args) {
+    // Service with arguments (forwarded)
+    struct ArgService {
+        int id;
+        std::string name;
+        ArgService(int i, std::string n) : id(i), name(std::move(n)) {}
+    };
+
+    ArgService s(42, "test");
+    FB_ASSERT_EQ(s.id, 42);
+    FB_ASSERT_EQ(s.name, "test");
+}
+
+FB_TEST(service_pattern, service_instance_per_shard) {
+    // Each shard has independent Service instance
+    struct CounterService { int counter = 0; };
+
+    std::vector<CounterService*> services(4);
+    for (uint32_t i = 0; i < 4; i++) {
+        services[i] = new CounterService();
+        services[i]->counter = static_cast<int>(i * 10);
+    }
+
+    FB_ASSERT_EQ(services[0]->counter, 0);
+    FB_ASSERT_EQ(services[1]->counter, 10);
+    FB_ASSERT_EQ(services[2]->counter, 20);
+    FB_ASSERT_EQ(services[3]->counter, 30);
+
+    for (auto* s : services) delete s;
+}
+
+FB_TEST(service_pattern, service_isolation) {
+    // Service instances do not share state
+    struct State { int value = 0; };
+
+    std::vector<State*> states(4);
+    for (uint32_t i = 0; i < 4; i++) {
+        states[i] = new State();
+    }
+
+    states[0]->value = 100;
+    states[2]->value = 200;
+
+    FB_ASSERT_EQ(states[0]->value, 100);
+    FB_ASSERT_EQ(states[1]->value, 0);
+    FB_ASSERT_EQ(states[2]->value, 200);
+    FB_ASSERT_EQ(states[3]->value, 0);
+
+    for (auto* s : states) delete s;
+}
+
+FB_TEST(service_pattern, service_pointer_validity) {
+    // Service pointers remain valid until stop()
+    int* p = new int(42);
+    int* saved = p;
+    FB_ASSERT_TRUE(p == saved);
+    FB_ASSERT_EQ(*saved, 42);
+    delete p;
+}
+
+FB_TEST(service_pattern, service_destruction_order) {
+    // stop() deletes services in order
+    std::vector<int*> services;
+    for (int i = 0; i < 4; i++) {
+        services.push_back(new int(i));
+    }
+
+    // Track deletion order
+    std::vector<int> deletion_order;
+    for (uint32_t i = 0; i < services.size(); i++) {
+        deletion_order.push_back(*services[i]);
+        delete services[i];
+        services[i] = nullptr;
+    }
+    services.clear();
+
+    FB_ASSERT_EQ(deletion_order.size(), 4);
+    FB_ASSERT_EQ(deletion_order[0], 0);
+    FB_ASSERT_EQ(deletion_order[3], 3);
+}
+
+FB_TEST(service_pattern, service_constructor_forwarding) {
+    // Args forwarded via std::forward
+    struct Counter {
+        int construct_count;
+        Counter(int c) : construct_count(c) {}
+    };
+
+    Counter c(99);
+    FB_ASSERT_EQ(c.construct_count, 99);
+}
+
+FB_TEST(service_pattern, service_move_only_arg) {
+    // Service can accept move-only arguments
+    struct MoveOnly {
+        std::unique_ptr<int> ptr;
+        MoveOnly(std::unique_ptr<int> p) : ptr(std::move(p)) {}
+    };
+
+    auto p = std::make_unique<int>(42);
+    MoveOnly s(std::move(p));
+    FB_ASSERT_TRUE(s.ptr != nullptr);
+    FB_ASSERT_EQ(*s.ptr, 42);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
