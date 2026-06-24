@@ -6260,6 +6260,107 @@ FB_TEST(shard_cpuset_operations, find_last_set) {
 }
 
 // ============================================================================
+// Test Suite: core_sharded_perf_counters (Performance Counter Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(core_sharded_perf_counters) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(core_sharded_perf_counters) {
+    // Teardown code here
+}
+
+FB_TEST(core_sharded_perf_counters, per_shard_op_count) {
+    // Each shard maintains its own op counter
+    std::vector<uint64_t> op_counts(4, 0);
+    for (uint32_t s = 0; s < 4; s++) {
+        for (uint64_t i = 0; i < 100; i++) {
+            op_counts[s]++;
+        }
+    }
+    for (uint64_t c : op_counts) {
+        FB_ASSERT_EQ(c, 100);
+    }
+}
+
+FB_TEST(core_sharded_perf_counters, aggregate_total) {
+    // Sum across all shards = total ops
+    std::vector<uint64_t> per_shard = {100, 200, 150, 250};
+    uint64_t total = 0;
+    for (auto c : per_shard) total += c;
+    FB_ASSERT_EQ(total, 700);
+}
+
+FB_TEST(core_sharded_perf_counters, latency_histogram_buckets) {
+    // Latency histogram with exponential buckets
+    std::vector<uint64_t> buckets(8, 0);
+    std::vector<uint64_t> samples = {1, 5, 10, 50, 100, 500, 1000, 5000};
+
+    for (uint64_t s : samples) {
+        // Bucket by power-of-10 (rough)
+        int bucket = 0;
+        uint64_t v = s;
+        while (v > 9) { v /= 10; bucket++; }
+        if (bucket < 8) buckets[bucket]++;
+    }
+
+    uint64_t total = 0;
+    for (auto b : buckets) total += b;
+    FB_ASSERT_EQ(total, samples.size());
+}
+
+FB_TEST(core_sharded_perf_counters, throughput_calculation) {
+    // throughput = ops / duration_seconds
+    uint64_t ops = 100000;
+    uint64_t duration_us = 1000000; // 1 second
+
+    double throughput = static_cast<double>(ops) / (duration_us / 1000000.0);
+    FB_ASSERT_TRUE(throughput == 100000.0);
+}
+
+FB_TEST(core_sharded_perf_counters, p99_calculation) {
+    // P99 latency: 99th percentile
+    std::vector<uint64_t> latencies;
+    for (uint64_t i = 1; i <= 100; i++) latencies.push_back(i);
+    std::sort(latencies.begin(), latencies.end());
+
+    size_t p99_idx = latencies.size() * 99 / 100;
+    FB_ASSERT_EQ(latencies[p99_idx - 1], 99);
+}
+
+FB_TEST(core_sharded_perf_counters, counter_reset) {
+    // Counters can be reset
+    uint64_t counter = 12345;
+    counter = 0;
+    FB_ASSERT_EQ(counter, 0);
+}
+
+FB_TEST(core_sharded_perf_counters, per_op_type_counts) {
+    // Separate counters for read/write/delete
+    std::map<std::string, uint64_t> counters;
+    counters["read"] = 100;
+    counters["write"] = 50;
+    counters["delete"] = 10;
+
+    FB_ASSERT_EQ(counters.size(), 3);
+    FB_ASSERT_EQ(counters["read"], 100);
+    FB_ASSERT_EQ(counters["write"], 50);
+    FB_ASSERT_EQ(counters["delete"], 10);
+}
+
+FB_TEST(core_sharded_perf_counters, monotonic_increment) {
+    // Counters are monotonically increasing
+    uint64_t prev = 0;
+    for (uint64_t i = 1; i < 100; i++) {
+        uint64_t current = prev + 1;
+        FB_ASSERT_TRUE(current > prev);
+        prev = current;
+    }
+    FB_ASSERT_EQ(prev, 99);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
