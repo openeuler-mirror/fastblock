@@ -4666,4 +4666,310 @@ FB_TEST(buffer_list_encoder_basic, insufficient_space) {
     FB_ASSERT_FALSE(encoder.put(1ull));  // Needs 8 bytes, but we have 10
 }
 
+// ============================================================================
+// Test Suite: buffer_list_encoder_cross_buffer (Cross Buffer Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_encoder_cross_buffer) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_encoder_cross_buffer) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_list_encoder_cross_buffer, cross_buffer_uint64) {
+    char buf1[4], buf2[10];
+    spdk_buffer sbuf1(buf1, 4);
+    spdk_buffer sbuf2(buf2, 10);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    buffer_list_encoder encoder(bl);
+    FB_ASSERT_TRUE(encoder.put(12345ull));
+
+    FB_ASSERT_EQ(encoder.used(), 8u);
+}
+
+FB_TEST(buffer_list_encoder_cross_buffer, cross_buffer_string) {
+    char buf1[5], buf2[15];
+    spdk_buffer sbuf1(buf1, 5);
+    spdk_buffer sbuf2(buf2, 15);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    buffer_list_encoder encoder(bl);
+    FB_ASSERT_TRUE(encoder.put("hello"));  // 8 + 5 = 13 bytes
+
+    FB_ASSERT_EQ(encoder.used(), 13u);
+}
+
+FB_TEST(buffer_list_encoder_cross_buffer, cross_buffer_get_uint64) {
+    char buf1[4], buf2[10];
+    spdk_buffer sbuf1(buf1, 4);
+    spdk_buffer sbuf2(buf2, 10);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    buffer_list_encoder encoder(bl);
+    encoder.put(888ull);
+
+    bl.begin()->reset();
+    (++bl.begin())->reset();
+
+    buffer_list_encoder decoder(bl);
+    uint64_t value;
+    FB_ASSERT_TRUE(decoder.get(value));
+    FB_ASSERT_EQ(value, 888ull);
+}
+
+FB_TEST(buffer_list_encoder_cross_buffer, cross_buffer_get_string) {
+    char buf1[5], buf2[15];
+    spdk_buffer sbuf1(buf1, 5);
+    spdk_buffer sbuf2(buf2, 15);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    buffer_list_encoder encoder(bl);
+    encoder.put("test123");
+
+    bl.begin()->reset();
+    (++bl.begin())->reset();
+
+    buffer_list_encoder decoder(bl);
+    std::string str;
+    FB_ASSERT_TRUE(decoder.get(str));
+    FB_ASSERT_EQ(str, "test123");
+}
+
+FB_TEST(buffer_list_encoder_cross_buffer, cross_buffer_multiple_values) {
+    char buf1[10], buf2[50];
+    spdk_buffer sbuf1(buf1, 10);
+    spdk_buffer sbuf2(buf2, 50);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    buffer_list_encoder encoder(bl);
+    encoder.put(1ull);
+    encoder.put("cross");
+    encoder.put(2ull);
+
+    bl.begin()->reset();
+    (++bl.begin())->reset();
+
+    buffer_list_encoder decoder(bl);
+    uint64_t v1, v2;
+    std::string str;
+    decoder.get(v1);
+    decoder.get(str);
+    decoder.get(v2);
+
+    FB_ASSERT_EQ(v1, 1ull);
+    FB_ASSERT_EQ(str, "cross");
+    FB_ASSERT_EQ(v2, 2ull);
+}
+
+FB_TEST(buffer_list_encoder_cross_buffer, cross_buffer_large_data) {
+    char buf1[50], buf2[1000];
+    spdk_buffer sbuf1(buf1, 50);
+    spdk_buffer sbuf2(buf2, 1000);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    buffer_list_encoder encoder(bl);
+    encoder.put(100ull);
+    encoder.put(std::string(100, 'x'));
+
+    FB_ASSERT_EQ(encoder.used(), 116u);  // 8 + (8 + 100)
+}
+
+FB_TEST(buffer_list_encoder_cross_buffer, cross_buffer_char_array) {
+    char buf1[5], buf2[15];
+    spdk_buffer sbuf1(buf1, 5);
+    spdk_buffer sbuf2(buf2, 15);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    buffer_list_encoder encoder(bl);
+    const char* data = "1234567890";
+    encoder.put(data, 10);
+
+    FB_ASSERT_EQ(encoder.used(), 10u);
+}
+
+FB_TEST(buffer_list_encoder_cross_buffer, cross_buffer_get_char_array) {
+    char buf1[5], buf2[15];
+    spdk_buffer sbuf1(buf1, 5);
+    spdk_buffer sbuf2(buf2, 15);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    buffer_list_encoder encoder(bl);
+    encoder.put("abcdefghij", 10);
+
+    bl.begin()->reset();
+    (++bl.begin())->reset();
+
+    buffer_list_encoder decoder(bl);
+    char output[11] = {};
+    decoder.get(output, 10);
+
+    FB_ASSERT_TRUE(strcmp(output, "abcdefghij") == 0);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_iterator (Buffer List Iterator Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_iterator) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_iterator) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_list_iterator, begin_end_empty) {
+    buffer_list bl;
+    FB_ASSERT_TRUE(bl.begin() == bl.end());
+}
+
+FB_TEST(buffer_list_iterator, begin_end_single) {
+    char buf[100];
+    spdk_buffer sbuf(buf, 100);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    FB_ASSERT_TRUE(bl.begin() != bl.end());
+}
+
+FB_TEST(buffer_list_iterator, iterate_single) {
+    char buf[100];
+    spdk_buffer sbuf(buf, 100);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    size_t count = 0;
+    for (auto it = bl.begin(); it != bl.end(); ++it) {
+        count++;
+    }
+
+    FB_ASSERT_EQ(count, 1u);
+}
+
+FB_TEST(buffer_list_iterator, iterate_multiple) {
+    char buf1[100], buf2[200], buf3[300];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+    spdk_buffer sbuf3(buf3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    size_t count = 0;
+    for (auto it = bl.begin(); it != bl.end(); ++it) {
+        count++;
+    }
+
+    FB_ASSERT_EQ(count, 3u);
+}
+
+FB_TEST(buffer_list_iterator, access_buffer_size) {
+    char buf1[100], buf2[200];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    auto it = bl.begin();
+    FB_ASSERT_EQ(it->size(), 100u);
+
+    ++it;
+    FB_ASSERT_EQ(it->size(), 200u);
+}
+
+FB_TEST(buffer_list_iterator, const_iterator) {
+    char buf[100];
+    spdk_buffer sbuf(buf, 100);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list::const_iterator cit = bl.begin();
+    FB_ASSERT_TRUE(cit != bl.end());
+}
+
+FB_TEST(buffer_list_iterator, front_back_access) {
+    char buf1[100], buf2[200];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    FB_ASSERT_EQ(bl.front().size(), 100u);
+    FB_ASSERT_EQ(bl.back().size(), 200u);
+}
+
+FB_TEST(buffer_list_iterator, iterator_after_trim) {
+    char buf1[100], buf2[200];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    bl.trim_front();
+
+    size_t count = 0;
+    for (auto it = bl.begin(); it != bl.end(); ++it) {
+        count++;
+    }
+
+    FB_ASSERT_EQ(count, 1u);
+}
+
+FB_TEST(buffer_list_iterator, iterator_after_pop) {
+    char buf1[100], buf2[200];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    bl.pop_front();
+
+    size_t count = 0;
+    for (auto it = bl.begin(); it != bl.end(); ++it) {
+        count++;
+    }
+
+    FB_ASSERT_EQ(count, 1u);
+}
+
 FB_TEST_MAIN()
