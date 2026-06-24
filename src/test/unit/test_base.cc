@@ -4851,11 +4851,13 @@ FB_TEST(lambda_ctx_args_storage, args_forwarded_to_func_via_apply) {
 }
 
 FB_TEST(lambda_ctx_args_storage, args_with_reference_types) {
-    // Args can include reference types (carefully)
+    // Args can include reference wrappers (carefully)
     int external = 100;
     auto args = std::make_tuple(std::ref(external));
 
-    std::get<0>(args).get() = 200;
+    // std::get<0>(args) returns int& because of reference_wrapper unwrap
+    int& ref = std::get<0>(args);
+    ref = 200;
     FB_ASSERT_EQ(external, 200);
 }
 
