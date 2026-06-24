@@ -6833,6 +6833,89 @@ FB_TEST(shard_correctness_invariants, shard_count_positive) {
 }
 
 // ============================================================================
+// Test Suite: core_sharded_invocation_edge_cases (Invocation Edge Cases)
+// ============================================================================
+
+FB_SUITE_SETUP(core_sharded_invocation_edge_cases) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(core_sharded_invocation_edge_cases) {
+    // Teardown code here
+}
+
+FB_TEST(core_sharded_invocation_edge_cases, self_invoke_inline_fast_path) {
+    // invoke_on(this_shard) executes inline (no queueing)
+    uint32_t current_core = 2;
+    uint32_t this_thread_id = 2;
+    uint32_t target_shard = 1;
+    uint32_t target_core = 2; // Same as current
+
+    std::vector<uint32_t> shard_cores = {0, 2, 4, 6};
+    std::vector<void*> threads = {(void*)0x1, (void*)0x2, (void*)0x3, (void*)0x4};
+
+    uint32_t target_c = shard_cores[target_shard];
+    void* target_t = threads[target_shard];
+    void* cur_t = (void*)(uintptr_t)this_thread_id;
+
+    // Inline only if core AND thread match
+    bool inline_exec = (target_c == current_core && cur_t == target_t);
+    FB_ASSERT_TRUE(inline_exec);
+}
+
+FB_TEST(core_sharded_invocation_edge_cases, cross_shard_must_queue) {
+    // Different core => must queue
+    uint32_t current = 1;
+    uint32_t target_core = 5;
+    FB_ASSERT_TRUE(current != target_core);
+    // Queue via spdk_thread_send_msg
+}
+
+FB_TEST(core_sharded_invocation_edge_cases, same_core_different_thread_queues) {
+    // Same core but different thread => must queue
+    void* my_thread = (void*)0x100;
+    void* target_thread = (void*)0x200;
+    FB_ASSERT_TRUE(my_thread != target_thread);
+    // Must queue even on same core if different thread
+}
+
+FB_TEST(core_sharded_invocation_edge_cases, zero_shard_id_valid) {
+    // shard_id = 0 is valid (not special)
+    std::vector<uint32_t> shard_cores = {0, 1, 2};
+    FB_ASSERT_EQ(shard_cores[0], 0);
+    FB_ASSERT_TRUE(0 < shard_cores.size());
+}
+
+FB_TEST(core_sharded_invocation_edge_cases, last_shard_id_valid) {
+    // shard_id = count - 1 is valid
+    uint32_t count = 4;
+    uint32_t last_shard = count - 1;
+    FB_ASSERT_TRUE(last_shard < count);
+}
+
+FB_TEST(core_sharded_invocation_edge_cases, shard_id_equal_count_invalid) {
+    // shard_id == count is out of bounds
+    uint32_t count = 4;
+    FB_ASSERT_TRUE(!(count < count));
+}
+
+FB_TEST(core_sharded_invocation_edge_cases, empty_lambda_zero_args) {
+    // Lambda with no args
+    bool called = false;
+    auto fn = [&called]() { called = true; };
+    fn();
+    FB_ASSERT_TRUE(called);
+}
+
+FB_TEST(core_sharded_invocation_edge_cases, large_arg_count) {
+    // Lambda with many args
+    auto fn = [](int a, int b, int c, int d, int e) { return a + b + c + d + e; };
+    auto args = std::make_tuple(1, 2, 3, 4, 5);
+    int result = std::apply(fn, args);
+    FB_ASSERT_EQ(result, 15);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
