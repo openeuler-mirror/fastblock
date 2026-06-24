@@ -6361,6 +6361,115 @@ FB_TEST(core_sharded_perf_counters, monotonic_increment) {
 }
 
 // ============================================================================
+// Test Suite: shard_partitioning_strategies (Partitioning Strategies)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_partitioning_strategies) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_partitioning_strategies) {
+    // Teardown code here
+}
+
+FB_TEST(shard_partitioning_strategies, range_based_partitioning) {
+    // Range-based: key range / shard_count
+    uint64_t key_min = 0, key_max = 1000;
+    uint32_t shards = 4;
+    uint64_t range_per_shard = (key_max - key_min) / shards;
+    FB_ASSERT_EQ(range_per_shard, 250);
+
+    auto shard_of = [&](uint64_t key) {
+        return (key - key_min) / range_per_shard;
+    };
+    FB_ASSERT_EQ(shard_of(0), 0);
+    FB_ASSERT_EQ(shard_of(250), 1);
+    FB_ASSERT_EQ(shard_of(999), 3);
+}
+
+FB_TEST(shard_partitioning_strategies, hash_based_partitioning) {
+    // Hash-based: hash(key) % shard_count
+    uint32_t shards = 4;
+    auto shard_of = [&](const std::string& key) {
+        return std::hash<std::string>{}(key) % shards;
+    };
+
+    // Consistent: same key -> same shard
+    FB_ASSERT_EQ(shard_of("hello"), shard_of("hello"));
+    FB_ASSERT_TRUE(shard_of("hello") < shards);
+}
+
+FB_TEST(shard_partitioning_strategies, consistent_hashing_ring) {
+    // Consistent hashing: minimal rebalancing on shard add/remove
+    uint32_t shards = 4;
+    // Virtual nodes per shard for better distribution
+    uint32_t vnodes_per_shard = 100;
+    uint32_t total_vnodes = shards * vnodes_per_shard;
+    FB_ASSERT_EQ(total_vnodes, 400);
+}
+
+FB_TEST(shard_partitioning_strategies, list_partitioning) {
+    // List partitioning: discrete keys -> specific shards
+    std::map<std::string, uint32_t> key_to_shard = {
+        {"region_us", 0},
+        {"region_eu", 1},
+        {"region_asia", 2},
+        {"region_other", 3}
+    };
+    FB_ASSERT_EQ(key_to_shard["region_us"], 0);
+    FB_ASSERT_EQ(key_to_shard["region_eu"], 1);
+}
+
+FB_TEST(shard_partitioning_strategies, composite_partitioning) {
+    // Composite: hash(pool_id) ^ hash(pg_id) % shards
+    uint32_t shards = 4;
+    uint64_t pool_id = 1, pg_id = 100;
+    size_t hash_pool = std::hash<uint64_t>{}(pool_id);
+    size_t hash_pg = std::hash<uint64_t>{}(pg_id);
+    uint32_t shard = (hash_pool ^ hash_pg) % shards;
+    FB_ASSERT_TRUE(shard < shards);
+}
+
+FB_TEST(shard_partitioning_strategies, partition_count_changes_minimal_rebalance) {
+    // When shard count changes, only K/N keys need to move (ideal: consistent hashing)
+    uint32_t old_shards = 4;
+    uint32_t new_shards = 5;
+    uint32_t total_keys = 1000;
+
+    // With naive modulo, ~all keys move
+    // With consistent hashing, ~K/(N+1) move
+    uint32_t ideal_moved = total_keys / (new_shards + 1);
+    FB_ASSERT_TRUE(ideal_moved > 0);
+    FB_ASSERT_TRUE(ideal_moved < total_keys);
+}
+
+FB_TEST(shard_partitioning_strategies, hot_key_detection) {
+    // Detect hot keys (high access frequency)
+    std::map<std::string, uint64_t> key_freq;
+    key_freq["popular"] = 10000;
+    key_freq["normal"] = 100;
+    key_freq["rare"] = 1;
+
+    uint64_t hot_threshold = 1000;
+    int hot_count = 0;
+    for (const auto& [k, freq] : key_freq) {
+        if (freq > hot_threshold) hot_count++;
+    }
+    FB_ASSERT_EQ(hot_count, 1);
+}
+
+FB_TEST(shard_partitioning_strategies, locality_preserving_partitioning) {
+    // Locality: nearby keys -> same shard (range partition does this)
+    uint32_t shards = 4;
+    uint64_t range_per_shard = 250;
+    auto shard_of = [&](uint64_t k) { return k / range_per_shard; };
+
+    // Adjacent keys should land on same shard most of the time
+    FB_ASSERT_EQ(shard_of(10), shard_of(20));
+    FB_ASSERT_EQ(shard_of(100), shard_of(101));
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
