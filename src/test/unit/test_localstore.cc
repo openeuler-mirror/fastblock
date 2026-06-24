@@ -1401,4 +1401,166 @@ FB_TEST(kv_checkpoint_new_xattr_structure, shard_id_assignment) {
     FB_ASSERT_EQ(xattr.shard_id, 99u);
 }
 
+// ============================================================================
+// Test Suite: super_xattr_structure (Super Blob Xattr Structure Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(super_xattr_structure) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(super_xattr_structure) {
+    // Teardown code here
+}
+
+FB_TEST(super_xattr_structure, xattr_names_count) {
+    FB_ASSERT_EQ(super_xattr::xattr_count, 1);
+}
+
+FB_TEST(super_xattr_structure, xattr_names_type) {
+    FB_ASSERT_EQ(strcmp(super_xattr::xattr_names[0], "type"), 0);
+}
+
+FB_TEST(super_xattr_structure, type_value) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(super_xattr::type), 7);
+}
+
+FB_TEST(super_xattr_structure, default_construct) {
+    super_xattr xattr{};
+    // No data members besides static type, just verify it constructs
+    FB_ASSERT_TRUE(true);
+}
+
+// ============================================================================
+// Test Suite: free_xattr_structure (Free Blob Xattr Structure Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(free_xattr_structure) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(free_xattr_structure) {
+    // Teardown code here
+}
+
+FB_TEST(free_xattr_structure, xattr_names_count) {
+    FB_ASSERT_EQ(free_xattr::xattr_count, 1);
+}
+
+FB_TEST(free_xattr_structure, xattr_names_type) {
+    FB_ASSERT_EQ(strcmp(free_xattr::xattr_names[0], "type"), 0);
+}
+
+FB_TEST(free_xattr_structure, type_value) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(free_xattr::type), 8);
+}
+
+FB_TEST(free_xattr_structure, default_construct) {
+    free_xattr xattr{};
+    FB_ASSERT_TRUE(true);
+}
+
+// ============================================================================
+// Test Suite: fb_blob_structure (FB Blob Structure Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(fb_blob_structure) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(fb_blob_structure) {
+    // Teardown code here
+}
+
+FB_TEST(fb_blob_structure, default_blob_null) {
+    fb_blob blob{};
+    FB_ASSERT_TRUE(blob.blob == nullptr);
+}
+
+FB_TEST(fb_blob_structure, default_blobid_zero) {
+    fb_blob blob{};
+    FB_ASSERT_EQ(blob.blobid, 0ull);
+}
+
+FB_TEST(fb_blob_structure, blobid_assignment) {
+    fb_blob blob{};
+    blob.blobid = 12345;
+    FB_ASSERT_EQ(blob.blobid, 12345ull);
+}
+
+FB_TEST(fb_blob_structure, blobid_large_value) {
+    fb_blob blob{};
+    blob.blobid = 0xFFFFFFFFFFFFFFFFULL;
+    FB_ASSERT_EQ(blob.blobid, 0xFFFFFFFFFFFFFFFFULL);
+}
+
+FB_TEST(fb_blob_structure, blob_pointer_default) {
+    fb_blob blob{};
+    FB_ASSERT_EQ(blob.blob, nullptr);
+}
+
+FB_TEST(fb_blob_structure, copy_blob) {
+    fb_blob blob1{};
+    blob1.blobid = 999;
+    fb_blob blob2 = blob1;
+    FB_ASSERT_EQ(blob2.blobid, 999ull);
+}
+
+// ============================================================================
+// Test Suite: blob_type_mapping (Blob Type to Xattr Mapping Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(blob_type_mapping) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(blob_type_mapping) {
+    // Teardown code here
+}
+
+FB_TEST(blob_type_mapping, log_maps_to_log_xattr) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::log),
+                 static_cast<uint32_t>(log_xattr::type));
+}
+
+FB_TEST(blob_type_mapping, object_maps_to_object_xattr) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::object),
+                 static_cast<uint32_t>(object_xattr::type));
+}
+
+FB_TEST(blob_type_mapping, object_snap_maps_to_snap_xattr) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::object_snap),
+                 static_cast<uint32_t>(object_snap_xattr::type));
+}
+
+FB_TEST(blob_type_mapping, object_recover_maps_to_recover_xattr) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::object_recover),
+                 static_cast<uint32_t>(object_recover_xattr::type));
+}
+
+FB_TEST(blob_type_mapping, kv_maps_to_kv_xattr) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::kv),
+                 static_cast<uint32_t>(kv_xattr::type));
+}
+
+FB_TEST(blob_type_mapping, kv_checkpoint_maps_to_checkpoint_xattr) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::kv_checkpoint),
+                 static_cast<uint32_t>(kv_checkpoint_xattr::type));
+}
+
+FB_TEST(blob_type_mapping, kv_checkpoint_new_maps_to_new_xattr) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::kv_checkpoint_new),
+                 static_cast<uint32_t>(kv_checkpoint_new_xattr::type));
+}
+
+FB_TEST(blob_type_mapping, super_blob_maps_to_super_xattr) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::super_blob),
+                 static_cast<uint32_t>(super_xattr::type));
+}
+
+FB_TEST(blob_type_mapping, free_maps_to_free_xattr) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::free),
+                 static_cast<uint32_t>(free_xattr::type));
+}
+
 FB_TEST_MAIN()
