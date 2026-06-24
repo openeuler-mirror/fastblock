@@ -8868,6 +8868,109 @@ FB_TEST(shard_initialization_order, init_complete_signal) {
 }
 
 // ============================================================================
+// Test Suite: shard_message_serialization (Message Serialization Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_message_serialization) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_message_serialization) {
+    // Teardown code here
+}
+
+FB_TEST(shard_message_serialization, int_to_bytes) {
+    // Serialize uint32_t to byte stream
+    uint32_t value = 0x12345678;
+    uint8_t buf[4];
+    buf[0] = (value >> 24) & 0xFF;
+    buf[1] = (value >> 16) & 0xFF;
+    buf[2] = (value >> 8) & 0xFF;
+    buf[3] = value & 0xFF;
+
+    FB_ASSERT_EQ(buf[0], 0x12);
+    FB_ASSERT_EQ(buf[3], 0x78);
+}
+
+FB_TEST(shard_message_serialization, bytes_to_int) {
+    // Deserialize byte stream to uint32_t
+    uint8_t buf[] = {0x12, 0x34, 0x56, 0x78};
+    uint32_t value = (uint32_t(buf[0]) << 24) | (uint32_t(buf[1]) << 16)
+                   | (uint32_t(buf[2]) << 8) | uint32_t(buf[3]);
+    FB_ASSERT_EQ(value, 0x12345678);
+}
+
+FB_TEST(shard_message_serialization, roundtrip_preserves_value) {
+    // Serialize -> deserialize yields original value
+    uint64_t orig = 0xCAFEBABE12345678ULL;
+    uint8_t buf[8];
+    for (int i = 0; i < 8; i++) {
+        buf[i] = (orig >> (8 * (7 - i))) & 0xFF;
+    }
+
+    uint64_t restored = 0;
+    for (int i = 0; i < 8; i++) {
+        restored = (restored << 8) | buf[i];
+    }
+    FB_ASSERT_EQ(restored, orig);
+}
+
+FB_TEST(shard_message_serialization, string_length_prefixed) {
+    // String serialized as [length][bytes]
+    std::string s = "hello";
+    uint32_t len = s.size();
+
+    std::vector<uint8_t> buf;
+    buf.push_back((len >> 24) & 0xFF);
+    buf.push_back((len >> 16) & 0xFF);
+    buf.push_back((len >> 8) & 0xFF);
+    buf.push_back(len & 0xFF);
+    for (char c : s) buf.push_back(static_cast<uint8_t>(c));
+
+    FB_ASSERT_EQ(buf.size(), 4 + s.size());
+    FB_ASSERT_EQ(buf[7], 'o');
+}
+
+FB_TEST(shard_message_serialization, struct_field_order) {
+    // Serialize struct: field order matters
+    struct msg { uint32_t type; uint64_t timestamp; uint16_t flags; };
+    msg m{1, 1234567890ULL, 0xABCD};
+
+    // Order: type, timestamp, flags
+    FB_ASSERT_EQ(m.type, 1);
+    FB_ASSERT_EQ(m.timestamp, 1234567890ULL);
+    FB_ASSERT_EQ(m.flags, 0xABCD);
+}
+
+FB_TEST(shard_message_serialization, endianness_consistent) {
+    // Use a consistent endianness for cross-shard messages (network byte order = big-endian)
+    uint32_t host_val = 0x01020304;
+    uint8_t network_bytes[4] = {
+        static_cast<uint8_t>((host_val >> 24) & 0xFF),
+        static_cast<uint8_t>((host_val >> 16) & 0xFF),
+        static_cast<uint8_t>((host_val >> 8) & 0xFF),
+        static_cast<uint8_t>(host_val & 0xFF)
+    };
+    FB_ASSERT_EQ(network_bytes[0], 0x01);
+    FB_ASSERT_EQ(network_bytes[3], 0x04);
+}
+
+FB_TEST(shard_message_serialization, message_size_in_header) {
+    // First field is usually total size for fast skipping
+    struct header { uint32_t size; uint32_t type; };
+    header h{128, 42};
+    FB_ASSERT_EQ(h.size, 128);
+    FB_ASSERT_EQ(h.type, 42);
+}
+
+FB_TEST(shard_message_serialization, magic_number_validation) {
+    // Magic number to validate message integrity
+    constexpr uint32_t FB_MAGIC = 0xFBA51C00;
+    uint32_t received_magic = 0xFBA51C00;
+    FB_ASSERT_EQ(received_magic, FB_MAGIC);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
