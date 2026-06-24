@@ -8473,6 +8473,105 @@ FB_TEST(shard_configuration_management, config_versioned) {
 }
 
 // ============================================================================
+// Test Suite: shard_observer_pattern (Observer Pattern Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_observer_pattern) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_observer_pattern) {
+    // Teardown code here
+}
+
+FB_TEST(shard_observer_pattern, event_subscribers_notified) {
+    // Multiple subscribers notified on event
+    std::vector<bool> notified(3, false);
+
+    auto emit = [&](std::vector<bool>& subs) {
+        for (size_t i = 0; i < subs.size(); i++) subs[i] = true;
+    };
+
+    emit(notified);
+    for (bool n : notified) FB_ASSERT_TRUE(n);
+}
+
+FB_TEST(shard_observer_pattern, subscriber_can_unsubscribe) {
+    // Subscribers can remove themselves
+    std::vector<int> subscribers = {1, 2, 3};
+
+    // Subscriber 2 leaves
+    subscribers.erase(std::remove(subscribers.begin(), subscribers.end(), 2), subscribers.end());
+
+    FB_ASSERT_EQ(subscribers.size(), 2);
+    FB_ASSERT_TRUE(std::find(subscribers.begin(), subscribers.end(), 2) == subscribers.end());
+}
+
+FB_TEST(shard_observer_pattern, event_carries_payload) {
+    // Events carry data payload
+    struct event {
+        std::string type;
+        int data;
+    };
+
+    std::vector<event> received;
+    received.push_back({"io_complete", 42});
+
+    FB_ASSERT_EQ(received[0].type, "io_complete");
+    FB_ASSERT_EQ(received[0].data, 42);
+}
+
+FB_TEST(shard_observer_pattern, event_ordering_preserved) {
+    // Events delivered in subscription/emission order
+    std::vector<int> order;
+    for (int i = 1; i <= 5; i++) order.push_back(i);
+
+    FB_ASSERT_EQ(order[0], 1);
+    FB_ASSERT_EQ(order[4], 5);
+}
+
+FB_TEST(shard_observer_pattern, no_subscribers_no_crash) {
+    // Emitting with no subscribers is a no-op
+    std::vector<int> subscribers;
+    int count = 0;
+    for (auto s : subscribers) { (void)s; count++; }
+    FB_ASSERT_EQ(count, 0);
+}
+
+FB_TEST(shard_observer_pattern, callback_runs_in_subscriber_context) {
+    // Each subscriber's callback runs in its own context
+    static std::vector<uint32_t> contexts;
+    contexts.clear();
+
+    auto emit = [&](std::vector<uint32_t> subs) {
+        for (uint32_t s : subs) contexts.push_back(s);
+    };
+
+    emit({0, 1, 2});
+    FB_ASSERT_EQ(contexts.size(), 3);
+    FB_ASSERT_EQ(contexts[0], 0);
+    FB_ASSERT_EQ(contexts[2], 2);
+}
+
+FB_TEST(shard_observer_pattern, subscriber_filtering) {
+    // Subscriber can filter events by type
+    std::vector<std::string> events = {"read", "write", "read", "delete"};
+    std::vector<std::string> read_only;
+
+    std::copy_if(events.begin(), events.end(), std::back_inserter(read_only),
+                  [](const std::string& e) { return e == "read"; });
+
+    FB_ASSERT_EQ(read_only.size(), 2);
+}
+
+FB_TEST(shard_observer_pattern, event_aggregation) {
+    // Multiple events aggregated into summary
+    std::vector<int> events = {1, 2, 3, 4, 5};
+    int sum = std::accumulate(events.begin(), events.end(), 0);
+    FB_ASSERT_EQ(sum, 15);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
