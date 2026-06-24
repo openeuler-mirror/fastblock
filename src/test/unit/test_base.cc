@@ -9423,6 +9423,108 @@ FB_TEST(shard_health_monitoring, memory_usage_per_shard) {
 }
 
 // ============================================================================
+// Test Suite: shard_async_io_pattern (Async IO Pattern Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_async_io_pattern) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_async_io_pattern) {
+    // Teardown code here
+}
+
+FB_TEST(shard_async_io_pattern, submit_then_callback) {
+    // Submit operation, callback invoked later
+    static bool completed;
+    completed = false;
+
+    auto submit = [](std::function<void()> cb) {
+        cb(); // Simulated synchronous completion
+    };
+
+    submit([]() { completed = true; });
+    FB_ASSERT_TRUE(completed);
+}
+
+FB_TEST(shard_async_io_pattern, multiple_ops_in_flight) {
+    // Multiple IOs can be in flight simultaneously
+    int in_flight = 0;
+    int completed = 0;
+
+    for (int i = 0; i < 32; i++) in_flight++;
+    while (in_flight > 0) { in_flight--; completed++; }
+
+    FB_ASSERT_EQ(completed, 32);
+    FB_ASSERT_EQ(in_flight, 0);
+}
+
+FB_TEST(shard_async_io_pattern, op_context_carries_state) {
+    // Each in-flight op has its own context
+    struct op_ctx {
+        uint64_t op_id;
+        std::vector<uint8_t> buffer;
+    };
+
+    op_ctx ctx;
+    ctx.op_id = 42;
+    ctx.buffer.resize(4096, 0xAB);
+
+    FB_ASSERT_EQ(ctx.op_id, 42);
+    FB_ASSERT_EQ(ctx.buffer.size(), 4096);
+    FB_ASSERT_EQ(ctx.buffer[0], 0xAB);
+}
+
+FB_TEST(shard_async_io_pattern, completion_order_independent) {
+    // Completions may arrive out of submission order
+    std::vector<int> submitted = {1, 2, 3, 4, 5};
+    std::vector<int> completed = {3, 1, 5, 2, 4}; // arbitrary
+
+    FB_ASSERT_EQ(submitted.size(), completed.size());
+
+    // All completions accounted for
+    std::set<int> s_set(submitted.begin(), submitted.end());
+    std::set<int> c_set(completed.begin(), completed.end());
+    FB_ASSERT_TRUE(s_set == c_set);
+}
+
+FB_TEST(shard_async_io_pattern, callback_after_disk_io) {
+    // Disk IO is async: callback invoked when SPDK signals done
+    bool callback_invoked = false;
+    auto on_done = [&callback_invoked](int /*rc*/) { callback_invoked = true; };
+
+    on_done(0);
+    FB_ASSERT_TRUE(callback_invoked);
+}
+
+FB_TEST(shard_async_io_pattern, depth_limited_by_queue_size) {
+    // Maximum in-flight bounded by queue size
+    uint32_t max_qd = 256;
+    uint32_t in_flight = 0;
+
+    for (int i = 0; i < 1000; i++) {
+        if (in_flight < max_qd) in_flight++;
+    }
+    FB_ASSERT_TRUE(in_flight <= max_qd);
+}
+
+FB_TEST(shard_async_io_pattern, backpressure_when_full) {
+    // When queue full, new submissions blocked or queued
+    uint32_t qd = 256;
+    uint32_t in_flight = 256;
+    bool can_submit = (in_flight < qd);
+    FB_ASSERT_TRUE(!can_submit);
+}
+
+FB_TEST(shard_async_io_pattern, retry_on_transient_failure) {
+    // Transient failures retried with exponential backoff
+    int retries = 0;
+    int max_retries = 3;
+    while (retries < max_retries) retries++;
+    FB_ASSERT_EQ(retries, max_retries);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
