@@ -6636,4 +6636,262 @@ FB_TEST(spdk_buffer_state_tracking, track_multiple_reuses) {
     }
 }
 
+// ============================================================================
+// Test Suite: iovecs_operations (IO Vector Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(iovecs_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(iovecs_operations) {
+    // Teardown code here
+}
+
+FB_TEST(iovecs_operations, iovecs_empty_creation) {
+    iovecs iovs;
+    FB_ASSERT_TRUE(iovs.empty());
+}
+
+FB_TEST(iovecs_operations, iovecs_single_element) {
+    iovec iov;
+    iov.iov_base = nullptr;
+    iov.iov_len = 100;
+
+    iovecs iovs;
+    iovs.push_back(iov);
+
+    FB_ASSERT_EQ(iovs.size(), 1u);
+    FB_ASSERT_EQ(iovs[0].iov_len, 100u);
+}
+
+FB_TEST(iovecs_operations, iovecs_multiple_elements) {
+    iovec iov1, iov2, iov3;
+    iov1.iov_len = 100;
+    iov2.iov_len = 200;
+    iov3.iov_len = 300;
+
+    iovecs iovs;
+    iovs.push_back(iov1);
+    iovs.push_back(iov2);
+    iovs.push_back(iov3);
+
+    FB_ASSERT_EQ(iovs.size(), 3u);
+}
+
+FB_TEST(iovecs_operations, iovecs_total_length) {
+    iovec iov1, iov2;
+    iov1.iov_len = 100;
+    iov2.iov_len = 200;
+
+    iovecs iovs;
+    iovs.push_back(iov1);
+    iovs.push_back(iov2);
+
+    size_t total = 0;
+    for (const auto& iov : iovs) {
+        total += iov.iov_len;
+    }
+    FB_ASSERT_EQ(total, 300u);
+}
+
+FB_TEST(iovecs_operations, iovecs_clear) {
+    iovec iov;
+    iov.iov_len = 100;
+
+    iovecs iovs;
+    iovs.push_back(iov);
+
+    iovs.clear();
+    FB_ASSERT_TRUE(iovs.empty());
+}
+
+FB_TEST(iovecs_operations, iovecs_from_buffer_list) {
+    char buf1[100], buf2[200];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    iovecs iovs = bl.to_iovec();
+    FB_ASSERT_EQ(iovs.size(), 2u);
+}
+
+FB_TEST(iovecs_operations, iovecs_partial_from_buffer_list) {
+    char buf1[100], buf2[200], buf3[300];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+    spdk_buffer sbuf3(buf3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    iovecs iovs = bl.to_iovec(50, 250);
+    FB_ASSERT_EQ(iovs.size(), 2u);
+}
+
+FB_TEST(iovecs_operations, iovecs_base_pointer_valid) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    iovecs iovs = bl.to_iovec();
+    FB_ASSERT_TRUE(iovs[0].iov_base != nullptr);
+}
+
+// ============================================================================
+// Test Suite: iovecs_advanced (Advanced IO Vector Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(iovecs_advanced) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(iovecs_advanced) {
+    // Teardown code here
+}
+
+FB_TEST(iovecs_advanced, iovecs_iteration) {
+    char buf1[100], buf2[200];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    iovecs iovs = bl.to_iovec();
+
+    int count = 0;
+    for (const auto& iov : iovs) {
+        count++;
+        FB_ASSERT_TRUE(iov.iov_len > 0);
+    }
+    FB_ASSERT_EQ(count, 2);
+}
+
+FB_TEST(iovecs_advanced, iovecs_access_by_index) {
+    char buf1[100], buf2[200], buf3[300];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+    spdk_buffer sbuf3(buf3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    iovecs iovs = bl.to_iovec();
+
+    FB_ASSERT_EQ(iovs[0].iov_len, 100u);
+    FB_ASSERT_EQ(iovs[1].iov_len, 200u);
+    FB_ASSERT_EQ(iovs[2].iov_len, 300u);
+}
+
+FB_TEST(iovecs_advanced, iovecs_front_back) {
+    char buf1[100], buf2[200];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    iovecs iovs = bl.to_iovec();
+
+    FB_ASSERT_EQ(iovs.front().iov_len, 100u);
+    FB_ASSERT_EQ(iovs.back().iov_len, 200u);
+}
+
+FB_TEST(iovecs_advanced, iovecs_size_method) {
+    char buf1[100], buf2[200], buf3[300];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+    spdk_buffer sbuf3(buf3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    iovecs iovs = bl.to_iovec();
+    FB_ASSERT_EQ(iovs.size(), 3u);
+}
+
+FB_TEST(iovecs_advanced, iovecs_copy) {
+    char buf1[100];
+    spdk_buffer sbuf1(buf1, 100);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+
+    iovecs iovs1 = bl.to_iovec();
+    iovecs iovs2 = iovs1;
+
+    FB_ASSERT_EQ(iovs2.size(), iovs1.size());
+    FB_ASSERT_EQ(iovs2[0].iov_len, iovs1[0].iov_len);
+}
+
+FB_TEST(iovecs_advanced, iovecs_partial_coverage) {
+    char buf1[100], buf2[200];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    // Get iovec covering middle portion
+    iovecs iovs = bl.to_iovec(50, 200);
+
+    // Should span end of first buffer and start of second
+    FB_ASSERT_EQ(iovs.size(), 2u);
+    FB_ASSERT_EQ(iovs[0].iov_len, 50u);  // Remaining 50 from first buffer
+    FB_ASSERT_EQ(iovs[1].iov_len, 150u); // First 150 from second buffer
+}
+
+FB_TEST(iovecs_advanced, iovecs_boundary_positions) {
+    char buf1[100], buf2[200];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    // Position at exact boundary between buffers
+    iovecs iovs = bl.to_iovec(100, 100);
+
+    FB_ASSERT_EQ(iovs.size(), 1u);
+    FB_ASSERT_EQ(iovs[0].iov_len, 100u);
+}
+
+FB_TEST(iovecs_advanced, iovecs_full_scan) {
+    char buf1[100], buf2[200], buf3[300];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+    spdk_buffer sbuf3(buf3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    iovecs iovs = bl.to_iovec(0, 600);
+
+    FB_ASSERT_EQ(iovs.size(), 3u);
+
+    size_t total = 0;
+    for (const auto& iov : iovs) {
+        total += iov.iov_len;
+    }
+    FB_ASSERT_EQ(total, 600u);
+}
+
 FB_TEST_MAIN()
