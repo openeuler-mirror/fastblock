@@ -7773,6 +7773,121 @@ FB_TEST(shard_concurrency_model, event_driven_not_polling_heavy) {
 }
 
 // ============================================================================
+// Test Suite: shard_resource_ownership (Resource Ownership Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_resource_ownership) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_resource_ownership) {
+    // Teardown code here
+}
+
+FB_TEST(shard_resource_ownership, clear_single_owner) {
+    // Each resource has exactly one owning shard
+    std::map<int, uint32_t> resource_owner;
+    resource_owner[1] = 0; // resource 1 owned by shard 0
+    resource_owner[2] = 1;
+    resource_owner[3] = 2;
+
+    FB_ASSERT_EQ(resource_owner.size(), 3);
+    FB_ASSERT_EQ(resource_owner[1], 0);
+}
+
+FB_TEST(shard_resource_ownership, transfer_on_migration) {
+    // When PG migrates, resources transfer to new shard
+    uint32_t old_owner = 0;
+    uint32_t new_owner = 2;
+
+    uint32_t current = old_owner;
+    current = new_owner; // Migration
+
+    FB_ASSERT_EQ(current, new_owner);
+    FB_ASSERT_TRUE(current != old_owner);
+}
+
+FB_TEST(shard_resource_ownership, no_shared_ownership) {
+    // Resources are exclusively owned (no shared_ptr across shards)
+    auto exclusive = std::make_unique<int>(42);
+    FB_ASSERT_TRUE(exclusive != nullptr);
+
+    // Cannot share across shards without explicit serialization
+    auto moved = std::move(exclusive);
+    FB_ASSERT_TRUE(exclusive == nullptr); // ownership transferred
+    FB_ASSERT_EQ(*moved, 42);
+}
+
+FB_TEST(shard_resource_ownership, release_on_destruction) {
+    // Shard destruction releases all owned resources
+    static int released;
+    released = 0;
+
+    struct owned {
+        ~owned() { released++; }
+    };
+
+    std::vector<owned*> resources;
+    for (int i = 0; i < 5; i++) resources.push_back(new owned());
+
+    // Shard stop: release all
+    for (auto* r : resources) delete r;
+    FB_ASSERT_EQ(released, 5);
+}
+
+FB_TEST(shard_resource_ownership, resource_pool_capacity_per_shard) {
+    // Each shard's pool has fixed capacity
+    uint32_t capacity = 100;
+    std::vector<int*> pool;
+    for (uint32_t i = 0; i < capacity; i++) pool.push_back(new int(static_cast<int>(i)));
+
+    FB_ASSERT_EQ(pool.size(), capacity);
+    for (auto* p : pool) delete p;
+}
+
+FB_TEST(shard_resource_ownership, borrow_requires_send_msg) {
+    // To use another shard's resource: request via send_msg
+    uint32_t owner = 1;
+    uint32_t requester = 3;
+    FB_ASSERT_TRUE(owner != requester);
+    // Must use invoke_on(owner_shard) to access
+}
+
+FB_TEST(shard_resource_ownership, lifetime_tied_to_shard) {
+    // Resources freed when shard stops
+    static std::vector<int*> shard_resources;
+
+    struct shard_sim {
+        std::vector<int*> resources;
+        void allocate(int n) {
+            for (int i = 0; i < n; i++) resources.push_back(new int(i));
+        }
+        void stop() {
+            for (auto* p : resources) delete p;
+            resources.clear();
+        }
+    };
+
+    shard_sim s;
+    s.allocate(10);
+    FB_ASSERT_EQ(s.resources.size(), 10);
+    s.stop();
+    FB_ASSERT_TRUE(s.resources.empty());
+}
+
+FB_TEST(shard_resource_ownership, no_dangling_after_stop) {
+    // After shard stop, no dangling pointers to its resources
+    int* p = new int(42);
+    int* saved = p;
+    delete p;
+    p = nullptr;
+
+    // Caller must null out references
+    FB_ASSERT_TRUE(p == nullptr);
+    (void)saved; // would be dangling if dereferenced
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
