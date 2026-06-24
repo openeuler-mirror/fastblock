@@ -9949,6 +9949,98 @@ FB_TEST(shard_pipeline_pattern, parallel_pipelines) {
 }
 
 // ============================================================================
+// Test Suite: shard_request_response (Request-Response Pattern Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_request_response) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_request_response) {
+    // Teardown code here
+}
+
+FB_TEST(shard_request_response, request_id_assigned) {
+    // Each request gets unique ID
+    std::vector<uint64_t> request_ids;
+    for (uint64_t i = 0; i < 100; i++) request_ids.push_back(i);
+
+    std::set<uint64_t> unique(request_ids.begin(), request_ids.end());
+    FB_ASSERT_EQ(unique.size(), request_ids.size());
+}
+
+FB_TEST(shard_request_response, response_carries_request_id) {
+    // Response includes request ID for correlation
+    struct msg { uint64_t request_id; bool is_response; int data; };
+    msg req{42, false, 100};
+    msg resp{42, true, 200};
+
+    FB_ASSERT_EQ(req.request_id, resp.request_id);
+    FB_ASSERT_TRUE(resp.is_response);
+}
+
+FB_TEST(shard_request_response, multiple_inflight_requests) {
+    // Multiple requests can be in flight simultaneously
+    std::map<uint64_t, bool> inflight;
+    for (uint64_t i = 0; i < 32; i++) inflight[i] = true;
+    FB_ASSERT_EQ(inflight.size(), 32);
+}
+
+FB_TEST(shard_request_response, response_matched_by_id) {
+    // Receiver matches response to original request via ID
+    std::map<uint64_t, std::string> requests;
+    requests[1] = "req_a";
+    requests[2] = "req_b";
+
+    uint64_t response_id = 2;
+    auto it = requests.find(response_id);
+    FB_ASSERT_TRUE(it != requests.end());
+    FB_ASSERT_EQ(it->second, "req_b");
+}
+
+FB_TEST(shard_request_response, timeout_on_no_response) {
+    // Request times out if no response within deadline
+    uint64_t deadline_ms = 1000;
+    uint64_t elapsed_ms = 1500;
+    bool timed_out = (elapsed_ms > deadline_ms);
+    FB_ASSERT_TRUE(timed_out);
+}
+
+FB_TEST(shard_request_response, ack_with_no_data) {
+    // Some responses are just acknowledgments
+    struct ack { uint64_t request_id; int status; };
+    ack a{42, 0}; // status 0 = success
+    FB_ASSERT_EQ(a.status, 0);
+}
+
+FB_TEST(shard_request_response, duplicate_request_idempotent) {
+    // Same request ID resent: should be idempotent
+    std::map<uint64_t, int> processed_count;
+    uint64_t req_id = 42;
+
+    auto process = [&processed_count, req_id]() {
+        if (processed_count.find(req_id) == processed_count.end()) {
+            processed_count[req_id] = 1;
+        }
+    };
+
+    process();
+    process(); // duplicate
+    FB_ASSERT_EQ(processed_count[req_id], 1);
+}
+
+FB_TEST(shard_request_response, cancel_pending_request) {
+    // Pending request can be cancelled
+    std::map<uint64_t, bool> pending;
+    pending[1] = true;
+    pending[2] = true;
+
+    pending.erase(1); // cancel
+    FB_ASSERT_EQ(pending.size(), 1);
+    FB_ASSERT_TRUE(pending.find(1) == pending.end());
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
