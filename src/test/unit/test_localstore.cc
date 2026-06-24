@@ -3660,4 +3660,167 @@ FB_TEST(stress_patterns, sequential_optional_strings) {
     }
 }
 
+// ============================================================================
+// Test Suite: special_scenarios (Special Scenarios Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(special_scenarios) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(special_scenarios) {
+    // Teardown code here
+}
+
+FB_TEST(special_scenarios, empty_to_empty_roundtrip) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::string original;
+    FB_ASSERT_TRUE(PutString(sbuf, original));
+
+    sbuf.reset();
+    std::string decoded = "not_empty";
+    FB_ASSERT_TRUE(GetString(sbuf, decoded));
+
+    FB_ASSERT_TRUE(decoded.empty());
+}
+
+FB_TEST(special_scenarios, nullopt_roundtrip) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::optional<std::string> original = std::nullopt;
+    FB_ASSERT_TRUE(PutOptString(sbuf, original));
+
+    sbuf.reset();
+    std::optional<std::string> decoded = "has_value";
+    FB_ASSERT_TRUE(GetOptString(sbuf, decoded));
+
+    FB_ASSERT_FALSE(decoded.has_value());
+}
+
+FB_TEST(special_scenarios, fixed32_all_bits_set) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    uint32_t value = 0xFFFFFFFF;
+    FB_ASSERT_TRUE(PutFixed32(sbuf, value));
+
+    sbuf.reset();
+    uint32_t decoded;
+    FB_ASSERT_TRUE(GetFixed32(sbuf, decoded));
+    FB_ASSERT_EQ(decoded, value);
+}
+
+FB_TEST(special_scenarios, fixed64_all_bits_set) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    uint64_t value = 0xFFFFFFFFFFFFFFFFULL;
+    FB_ASSERT_TRUE(PutFixed64(sbuf, value));
+
+    sbuf.reset();
+    uint64_t decoded;
+    FB_ASSERT_TRUE(GetFixed64(sbuf, decoded));
+    FB_ASSERT_EQ(decoded, value);
+}
+
+FB_TEST(special_scenarios, string_with_only_nulls) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::string original(10, '\0');
+    FB_ASSERT_TRUE(PutString(sbuf, original));
+
+    sbuf.reset();
+    std::string decoded;
+    FB_ASSERT_TRUE(GetString(sbuf, decoded));
+
+    FB_ASSERT_EQ(decoded.size(), 10);
+    FB_ASSERT_EQ(decoded, original);
+}
+
+FB_TEST(special_scenarios, string_single_char) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    FB_ASSERT_TRUE(PutString(sbuf, "a"));
+
+    sbuf.reset();
+    std::string decoded;
+    FB_ASSERT_TRUE(GetString(sbuf, decoded));
+
+    FB_ASSERT_EQ(decoded, "a");
+    FB_ASSERT_EQ(decoded.size(), 1);
+}
+
+FB_TEST(special_scenarios, log_entry_zero_meta) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    log_entry_t entry{};
+    entry.term_id = 1;
+    entry.index = 2;
+    entry.meta = "";
+
+    FB_ASSERT_TRUE(EncodeLogHeader(sbuf, entry));
+
+    sbuf.reset();
+    log_entry_t decoded{};
+    FB_ASSERT_TRUE(DecodeLogHeader(sbuf, decoded));
+
+    FB_ASSERT_TRUE(decoded.meta.empty());
+}
+
+FB_TEST(special_scenarios, log_entry_zero_size) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    log_entry_t entry{};
+    entry.size = 0;
+
+    FB_ASSERT_TRUE(EncodeLogHeader(sbuf, entry));
+}
+
+FB_TEST(special_scenarios, entry_type_all_valid_types) {
+    log_entry_t entry{};
+
+    int valid_types[] = {
+        RAFT_LOGTYPE_WRITE,
+        RAFT_LOGTYPE_DELETE,
+        RAFT_LOGTYPE_ADD_NONVOTING_NODE,
+        RAFT_LOGTYPE_CONFIGURATION
+    };
+
+    for (int type : valid_types) {
+        entry.type = type;
+        FB_ASSERT_TRUE(entry.type >= 0);
+    }
+}
+
+FB_TEST(special_scenarios, xattr_pg_empty_allowed) {
+    log_xattr xattr{};
+    xattr.pg = "";
+
+    FB_ASSERT_TRUE(xattr.pg.empty());
+    FB_ASSERT_EQ(xattr.pg.size(), 0);
+}
+
+FB_TEST(special_scenarios, xattr_obj_name_empty_allowed) {
+    object_xattr xattr{};
+    xattr.obj_name = "";
+
+    FB_ASSERT_TRUE(xattr.obj_name.empty());
+    FB_ASSERT_EQ(xattr.obj_name.size(), 0);
+}
+
+FB_TEST(special_scenarios, xattr_snap_name_empty_allowed) {
+    object_snap_xattr xattr{};
+    xattr.snap_name = "";
+
+    FB_ASSERT_TRUE(xattr.snap_name.empty());
+    FB_ASSERT_EQ(xattr.snap_name.size(), 0);
+}
+
 FB_TEST_MAIN()
