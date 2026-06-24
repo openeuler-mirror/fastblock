@@ -9608,6 +9608,87 @@ FB_TEST(shard_msg_routing_table, hash_table_alternative) {
 }
 
 // ============================================================================
+// Test Suite: shard_runtime_metrics (Runtime Metrics Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_runtime_metrics) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_runtime_metrics) {
+    // Teardown code here
+}
+
+FB_TEST(shard_runtime_metrics, ops_per_second_calculation) {
+    uint64_t ops = 5000;
+    uint64_t duration_ms = 500;
+    uint64_t ops_per_sec = ops * 1000 / duration_ms;
+    FB_ASSERT_EQ(ops_per_sec, 10000);
+}
+
+FB_TEST(shard_runtime_metrics, bytes_per_second_calculation) {
+    uint64_t bytes = 1024 * 1024 * 100;
+    uint64_t duration_us = 1000000;
+    uint64_t bytes_per_sec = bytes * 1000000 / duration_us;
+    FB_ASSERT_EQ(bytes_per_sec, 1024ULL * 1024 * 100);
+}
+
+FB_TEST(shard_runtime_metrics, average_latency) {
+    std::vector<uint64_t> latencies = {100, 200, 150, 300, 250};
+    uint64_t sum = std::accumulate(latencies.begin(), latencies.end(), 0ULL);
+    uint64_t avg = sum / latencies.size();
+    FB_ASSERT_EQ(avg, 200);
+}
+
+FB_TEST(shard_runtime_metrics, percentile_calculation) {
+    std::vector<uint64_t> sorted = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100};
+    size_t p50_idx = sorted.size() * 50 / 100;
+    size_t p99_idx = sorted.size() * 99 / 100;
+
+    FB_ASSERT_EQ(sorted[p50_idx], 60);
+    FB_ASSERT_TRUE(sorted[p99_idx] >= 90);
+}
+
+FB_TEST(shard_runtime_metrics, throughput_max) {
+    std::vector<uint64_t> per_sec = {1000, 1200, 900, 1500, 1100};
+    uint64_t max = *std::max_element(per_sec.begin(), per_sec.end());
+    FB_ASSERT_EQ(max, 1500);
+}
+
+FB_TEST(shard_runtime_metrics, error_count) {
+    std::map<std::string, uint64_t> errors;
+    errors["EIO"] = 5;
+    errors["ENOMEM"] = 2;
+    errors["ETIMEDOUT"] = 3;
+
+    uint64_t total = 0;
+    for (const auto& [e, c] : errors) total += c;
+    FB_ASSERT_EQ(total, 10);
+}
+
+FB_TEST(shard_runtime_metrics, success_failure_ratio) {
+    uint64_t success = 9500;
+    uint64_t failure = 500;
+    uint64_t total = success + failure;
+    double success_rate = static_cast<double>(success) / total;
+    FB_ASSERT_TRUE(success_rate >= 0.95);
+}
+
+FB_TEST(shard_runtime_metrics, metric_window_rolling) {
+    // Rolling window for recent metrics
+    std::deque<uint64_t> window;
+    size_t max_window = 10;
+
+    for (uint64_t i = 0; i < 20; i++) {
+        window.push_back(i);
+        if (window.size() > max_window) window.pop_front();
+    }
+    FB_ASSERT_EQ(window.size(), max_window);
+    FB_ASSERT_EQ(window.back(), 19);
+    FB_ASSERT_EQ(window.front(), 10);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
