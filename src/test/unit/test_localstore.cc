@@ -2029,4 +2029,154 @@ FB_TEST(xattr_val_type_variant, reassignment_different_types) {
     FB_ASSERT_EQ(std::get<std::string>(val), "changed");
 }
 
+// ============================================================================
+// Test Suite: set_xattr_ctx_structure (Set Xattr Context Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(set_xattr_ctx_structure) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(set_xattr_ctx_structure) {
+    // Teardown code here
+}
+
+FB_TEST(set_xattr_ctx_structure, default_construct) {
+    set_xattr_ctx ctx{};
+    FB_ASSERT_TRUE(ctx.cb_fn == nullptr);
+    FB_ASSERT_TRUE(ctx.arg == nullptr);
+}
+
+FB_TEST(set_xattr_ctx_structure, assignment) {
+    set_xattr_ctx ctx;
+    ctx.cb_fn = [](void*, int) {};
+    ctx.arg = nullptr;
+
+    FB_ASSERT_TRUE(ctx.cb_fn != nullptr);
+    FB_ASSERT_TRUE(ctx.arg == nullptr);
+}
+
+FB_TEST(set_xattr_ctx_structure, with_arg) {
+    int dummy = 42;
+    set_xattr_ctx ctx;
+    ctx.arg = &dummy;
+
+    FB_ASSERT_EQ(ctx.arg, &dummy);
+}
+
+// ============================================================================
+// Test Suite: rblob_xattr_complete_callback (Xattr Complete Callback Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(rblob_xattr_complete_callback) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(rblob_xattr_complete_callback) {
+    // Teardown code here
+}
+
+FB_TEST(rblob_xattr_complete_callback, callback_signature) {
+    // Verify callback type exists and can be assigned
+    rblob_xattr_complete cb = [](void* arg, int rc) {};
+    FB_ASSERT_TRUE(cb != nullptr);
+}
+
+FB_TEST(rblob_xattr_complete_callback, callback_invocation) {
+    int result = 0;
+    rblob_xattr_complete cb = [](void* arg, int rc) {
+        int* out = static_cast<int*>(arg);
+        *out = rc;
+    };
+
+    cb(&result, 42);
+    FB_ASSERT_EQ(result, 42);
+}
+
+FB_TEST(rblob_xattr_complete_callback, null_arg) {
+    rblob_xattr_complete cb = [](void* arg, int rc) {
+        // Callback can handle null arg
+    };
+
+    cb(nullptr, 0);
+    FB_ASSERT_TRUE(true);  // Just verify it doesn't crash
+}
+
+FB_TEST(rblob_xattr_complete_callback, error_code_zero) {
+    int result = -1;
+    rblob_xattr_complete cb = [](void* arg, int rc) {
+        int* out = static_cast<int*>(arg);
+        *out = rc;
+    };
+
+    cb(&result, 0);  // Success
+    FB_ASSERT_EQ(result, 0);
+}
+
+FB_TEST(rblob_xattr_complete_callback, error_code_nonzero) {
+    int result = 0;
+    rblob_xattr_complete cb = [](void* arg, int rc) {
+        int* out = static_cast<int*>(arg);
+        *out = rc;
+    };
+
+    cb(&result, -1);  // Error
+    FB_ASSERT_EQ(result, -1);
+}
+
+// ============================================================================
+// Test Suite: blob_type_string_output (Blob Type String Output Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(blob_type_string_output) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(blob_type_string_output) {
+    // Teardown code here
+}
+
+FB_TEST(blob_type_string_output, all_types_unique) {
+    std::set<std::string> strings;
+
+    strings.insert(type_string(blob_type::log));
+    strings.insert(type_string(blob_type::object));
+    strings.insert(type_string(blob_type::object_snap));
+    strings.insert(type_string(blob_type::object_recover));
+    strings.insert(type_string(blob_type::kv));
+    strings.insert(type_string(blob_type::kv_checkpoint));
+    strings.insert(type_string(blob_type::kv_checkpoint_new));
+    strings.insert(type_string(blob_type::super_blob));
+    strings.insert(type_string(blob_type::free));
+
+    FB_ASSERT_EQ(strings.size(), 9);
+}
+
+FB_TEST(blob_type_string_output, contains_blob_type_prefix) {
+    std::string s = type_string(blob_type::log);
+    FB_ASSERT_TRUE(s.find("blob_type::") == 0);
+}
+
+FB_TEST(blob_type_string_output, matches_enum_name) {
+    FB_ASSERT_EQ(type_string(blob_type::log), "blob_type::log");
+    FB_ASSERT_EQ(type_string(blob_type::object), "blob_type::object");
+    FB_ASSERT_EQ(type_string(blob_type::kv), "blob_type::kv");
+}
+
+FB_TEST(blob_type_string_output, operator_ostream) {
+    std::ostringstream oss;
+    oss << blob_type::log;
+    FB_ASSERT_EQ(oss.str(), type_string(blob_type::log));
+}
+
+FB_TEST(blob_type_string_output, multiple_outputs) {
+    std::ostringstream oss;
+    oss << blob_type::log << " " << blob_type::object << " " << blob_type::kv;
+
+    std::string expected = type_string(blob_type::log) + " " +
+                          type_string(blob_type::object) + " " +
+                          type_string(blob_type::kv);
+    FB_ASSERT_EQ(oss.str(), expected);
+}
+
 FB_TEST_MAIN()
