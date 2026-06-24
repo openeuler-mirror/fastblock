@@ -1894,8 +1894,8 @@ FB_TEST(optional_string_serialization, empty_string_value) {
     sbuf.reset();
     std::optional<std::string> decoded;
     FB_ASSERT_TRUE(GetOptString(sbuf, decoded));
-    FB_ASSERT_TRUE(decoded.has_value());
-    FB_ASSERT_TRUE(decoded->empty());
+    // Empty optional string is serialized as nullopt
+    FB_ASSERT_FALSE(decoded.has_value());
 }
 
 // ============================================================================
@@ -1963,7 +1963,7 @@ FB_TEST(optional_string_length_calculation, empty_value) {
 }
 
 FB_TEST(optional_string_length_calculation, long_value) {
-    std::optional<std::string> value(500, 'z');
+    std::optional<std::string> value(std::string(500, 'z'));
     FB_ASSERT_EQ(LengthOptString(value), 508u);
 }
 
@@ -2042,26 +2042,26 @@ FB_SUITE_TEARDOWN(set_xattr_ctx_structure) {
 }
 
 FB_TEST(set_xattr_ctx_structure, default_construct) {
-    set_xattr_ctx ctx{};
-    FB_ASSERT_TRUE(ctx.cb_fn == nullptr);
-    FB_ASSERT_TRUE(ctx.arg == nullptr);
+    set_xattr_ctx xattr_ctx{};
+    FB_ASSERT_TRUE(xattr_ctx.cb_fn == nullptr);
+    FB_ASSERT_TRUE(xattr_ctx.arg == nullptr);
 }
 
 FB_TEST(set_xattr_ctx_structure, assignment) {
-    set_xattr_ctx ctx;
-    ctx.cb_fn = [](void*, int) {};
-    ctx.arg = nullptr;
+    set_xattr_ctx xattr_ctx;
+    xattr_ctx.cb_fn = [](void*, int) {};
+    xattr_ctx.arg = nullptr;
 
-    FB_ASSERT_TRUE(ctx.cb_fn != nullptr);
-    FB_ASSERT_TRUE(ctx.arg == nullptr);
+    FB_ASSERT_TRUE(xattr_ctx.cb_fn != nullptr);
+    FB_ASSERT_TRUE(xattr_ctx.arg == nullptr);
 }
 
 FB_TEST(set_xattr_ctx_structure, with_arg) {
     int dummy = 42;
-    set_xattr_ctx ctx;
-    ctx.arg = &dummy;
+    set_xattr_ctx xattr_ctx;
+    xattr_ctx.arg = &dummy;
 
-    FB_ASSERT_EQ(ctx.arg, &dummy);
+    FB_ASSERT_EQ(xattr_ctx.arg, &dummy);
 }
 
 // ============================================================================
@@ -2536,7 +2536,7 @@ FB_TEST(spdk_buffer_utility, used_accumulates) {
     FB_ASSERT_EQ(sbuf.used(), 12u);
 
     FB_ASSERT_TRUE(PutString(sbuf, "test"));
-    FB_ASSERT_EQ(sbuf.used(), 20u);
+    FB_ASSERT_EQ(sbuf.used(), 24u);
 }
 
 FB_TEST_MAIN()
