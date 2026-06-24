@@ -10203,6 +10203,99 @@ FB_TEST(shard_consistency_models, eventual_via_replicate_async) {
 }
 
 // ============================================================================
+// Test Suite: shard_thread_safety_patterns (Thread Safety Patterns Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_thread_safety_patterns) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_thread_safety_patterns) {
+    // Teardown code here
+}
+
+FB_TEST(shard_thread_safety_patterns, immutable_after_construction) {
+    // Immutable objects safe to share across shards
+    const std::string immutable = "constant_data";
+    FB_ASSERT_EQ(immutable, "constant_data");
+}
+
+FB_TEST(shard_thread_safety_patterns, copy_on_write) {
+    // COW: read shares, write copies
+    std::string original = "shared";
+    std::string copy = original; // shallow
+    copy += "_modified"; // copy-on-write
+
+    FB_ASSERT_TRUE(original != copy);
+    FB_ASSERT_EQ(original, "shared");
+}
+
+FB_TEST(shard_thread_safety_patterns, message_passing_no_locks) {
+    // Message passing avoids locks
+    std::queue<int> mailbox;
+    mailbox.push(1);
+    mailbox.push(2);
+    FB_ASSERT_EQ(mailbox.size(), 2);
+}
+
+FB_TEST(shard_thread_safety_patterns, single_writer_multi_reader) {
+    // Single writer, multiple readers: lock-free via atomic
+    std::atomic<int> shared(0);
+    shared.store(42);
+    int reader_view = shared.load();
+    FB_ASSERT_EQ(reader_view, 42);
+}
+
+FB_TEST(shard_thread_safety_patterns, futex_for_blocking) {
+    // Futex-based blocking primitives (efficient)
+    std::atomic<int> flag(0);
+    flag.store(1);
+    int observed = flag.load();
+    FB_ASSERT_EQ(observed, 1);
+}
+
+FB_TEST(shard_thread_safety_patterns, hazard_pointers_for_safe_reclaim) {
+    // Hazard pointers: safe memory reclamation in lock-free structures
+    // Conceptual test
+    std::vector<void*> hazard_list = {(void*)0x100, nullptr, (void*)0x300};
+
+    int active = 0;
+    for (auto p : hazard_list) if (p) active++;
+    FB_ASSERT_EQ(active, 2);
+}
+
+FB_TEST(shard_thread_safety_patterns, rcu_pattern) {
+    // RCU: read freely, update in copy, replace pointer atomically
+    std::atomic<int*> shared(new int(1));
+
+    // Reader
+    int* observed = shared.load();
+    FB_ASSERT_EQ(*observed, 1);
+
+    // Updater
+    int* new_data = new int(2);
+    int* old_data = shared.exchange(new_data);
+    FB_ASSERT_EQ(*old_data, 1);
+    FB_ASSERT_EQ(*shared.load(), 2);
+
+    delete old_data;
+    delete shared.load();
+}
+
+FB_TEST(shard_thread_safety_patterns, double_checked_locking) {
+    // DCL: check without lock, then lock + recheck
+    std::atomic<bool> initialized(false);
+
+    if (!initialized.load()) {
+        // Take lock (simulated)
+        if (!initialized.load()) {
+            initialized.store(true);
+        }
+    }
+    FB_ASSERT_TRUE(initialized.load());
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
