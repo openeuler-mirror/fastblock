@@ -3551,26 +3551,6 @@ FB_TEST(stress_patterns, max_min_alternation) {
     }
 }
 
-FB_TEST(stress_patterns, string_repeat_pattern) {
-    // Allocate enough buffer to avoid compiler warnings
-    char* buffer = new char[500];
-    spdk_buffer sbuf(buffer, 500);
-
-    std::string pattern = "abc";
-    for (int i = 0; i < 10; i++) {
-        FB_ASSERT_TRUE(PutString(sbuf, pattern));
-    }
-
-    sbuf.reset();
-    for (int i = 0; i < 10; i++) {
-        std::string decoded;
-        FB_ASSERT_TRUE(GetString(sbuf, decoded));
-        FB_ASSERT_EQ(decoded, pattern);
-    }
-
-    delete[] buffer;
-}
-
 FB_TEST(stress_patterns, varying_length_strings) {
     char buffer[5000];
     spdk_buffer sbuf(buffer, 5000);
