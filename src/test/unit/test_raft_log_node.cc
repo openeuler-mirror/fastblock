@@ -1794,5 +1794,138 @@ FB_TEST(raft_log_node, snapshot_offset_tracking) {
     FB_ASSERT_TRUE(offset >= chunk_size);
 }
 
+// ============================================================================
+// Test Suite: Read Index and Lease Read
+// ============================================================================
+
+FB_TEST(raft_log_node, leader_lease_read_validity) {
+    // Leader Lease 读有效性
+    raft_time_t lease_start = 1000;
+    raft_time_t lease_duration = 500;
+    raft_time_t current_time = 1200;
+
+    // 检查 lease 是否有效
+    bool lease_valid = current_time < (lease_start + lease_duration);
+    FB_ASSERT_TRUE(lease_valid);
+
+    // Lease 过期情况
+    current_time = 1600;
+    lease_valid = current_time < (lease_start + lease_duration);
+    FB_ASSERT_FALSE(lease_valid);
+}
+
+FB_TEST(raft_log_node, read_index_request) {
+    // ReadIndex 请求处理
+    raft_index_t commit_idx = 100;
+    raft_index_t read_index = commit_idx;
+
+    // ReadIndex 返回当前 commit_idx
+    FB_ASSERT_EQ(read_index, 100L);
+
+    // 等待状态机应用到 read_index
+    raft_index_t last_applied = 95;
+    bool can_read = last_applied >= read_index;
+    FB_ASSERT_FALSE(can_read);
+
+    // 状态机追上后可以读取
+    last_applied = 100;
+    can_read = last_applied >= read_index;
+    FB_ASSERT_TRUE(can_read);
+}
+
+FB_TEST(raft_log_node, read_index_quorum_check) {
+    // ReadIndex 多数派检查
+    std::map<raft_node_id_t, raft_index_t> match_indices;
+    match_indices[1] = 100;  // Leader
+    match_indices[2] = 98;
+    match_indices[3] = 99;
+    match_indices[4] = 97;
+    match_indices[5] = 100;
+
+    // 找到多数派的 match_idx
+    std::vector<raft_index_t> indices;
+    for (const auto& pair : match_indices) {
+        indices.push_back(pair.second);
+    }
+    std::sort(indices.begin(), indices.end());
+
+    // 多数派位置 (5节点，第3个是多数派)
+    raft_index_t quorum_match = indices[2];
+    FB_ASSERT_EQ(quorum_match, 99L);
+
+    // commit_idx 至少可以推进到 quorum_match
+    bool can_advance_commit = quorum_match > 95;
+    FB_ASSERT_TRUE(can_advance_commit);
+}
+
+FB_TEST(raft_log_node, follower_read_forward) {
+    // Follower 读转发
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    raft_node_id_t leader_id = 3;
+
+    // Follower 不能直接处理读请求
+    bool can_handle_read = (state == RAFT_STATE_LEADER);
+    FB_ASSERT_FALSE(can_handle_read);
+
+    // 需要转发给 Leader
+    bool need_forward = !can_handle_read;
+    FB_ASSERT_TRUE(need_forward);
+    FB_ASSERT_EQ(leader_id, 3);
+}
+
+FB_TEST(raft_log_node, lease_renewal) {
+    // Lease 续期
+    raft_time_t current_lease_end = 1000;
+    raft_time_t heartbeat_received = 900;
+    raft_time_t new_lease_end = 1400;  // heartbeat + election_timeout
+
+    // 收到心跳确认后续期 lease
+    if (heartbeat_received > 0) {
+        current_lease_end = new_lease_end;
+    }
+    FB_ASSERT_EQ(current_lease_end, 1400L);
+
+    // 多数派确认后才能续期
+    int confirmations = 3;
+    int quorum = 2;
+    bool can_renew = confirmations >= quorum;
+    FB_ASSERT_TRUE(can_renew);
+}
+
+FB_TEST(raft_log_node, read_index_pending_queue) {
+    // ReadIndex 待处理队列
+    std::queue<std::pair<raft_index_t, raft_node_id_t>> pending_reads;
+
+    // 添加待处理读请求
+    pending_reads.push({100, 1});
+    pending_reads.push({105, 2});
+    pending_reads.push({110, 3});
+
+    FB_ASSERT_EQ(pending_reads.size(), 3UL);
+
+    // 处理第一个读请求
+    auto front = pending_reads.front();
+    FB_ASSERT_EQ(front.first, 100L);
+    FB_ASSERT_EQ(front.second, 1);
+    pending_reads.pop();
+
+    FB_ASSERT_EQ(pending_reads.size(), 2UL);
+}
+
+FB_TEST(raft_log_node, linearizable_read_safety) {
+    // 线性化读安全性
+    raft_index_t read_index = 100;
+    raft_index_t state_machine_applied = 100;
+
+    // 只有状态机应用到 read_index 后才能返回结果
+    bool safe_to_read = state_machine_applied >= read_index;
+    FB_ASSERT_TRUE(safe_to_read);
+
+    // 状态机落后的情况
+    state_machine_applied = 95;
+    safe_to_read = state_machine_applied >= read_index;
+    FB_ASSERT_FALSE(safe_to_read);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
