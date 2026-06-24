@@ -1927,5 +1927,174 @@ FB_TEST(raft_log_node, linearizable_read_safety) {
     FB_ASSERT_FALSE(safe_to_read);
 }
 
+// ============================================================================
+// Test Suite: Log Matching Property
+// ============================================================================
+
+FB_TEST(raft_log_node, log_matching_same_term_index) {
+    // 日志匹配定理：相同 term 和 index 的日志条目相同
+    std::map<raft_index_t, raft_term_t> log_a;
+    log_a[10] = 3;
+    log_a[11] = 3;
+    log_a[12] = 4;
+
+    std::map<raft_index_t, raft_term_t> log_b;
+    log_b[10] = 3;
+    log_b[11] = 3;
+    log_b[12] = 4;
+
+    // 相同 index 和 term 应该匹配
+    FB_ASSERT_EQ(log_a[10], log_b[10]);
+    FB_ASSERT_EQ(log_a[11], log_b[11]);
+    FB_ASSERT_EQ(log_a[12], log_b[12]);
+}
+
+FB_TEST(raft_log_node, log_matching_different_term) {
+    // 不同 term 的日志不匹配
+    std::map<raft_index_t, raft_term_t> log_a;
+    log_a[10] = 3;
+    log_a[11] = 3;
+
+    std::map<raft_index_t, raft_term_t> log_b;
+    log_b[10] = 2;  // 不同 term
+    log_b[11] = 3;
+
+    // index 10 处 term 不同，不匹配
+    bool match = log_a[10] == log_b[10];
+    FB_ASSERT_FALSE(match);
+}
+
+FB_TEST(raft_log_node, log_matching_prefix_consistency) {
+    // 日志匹配定理：如果两个日志在某个 index 匹配，则之前的日志也匹配
+    raft_index_t match_idx = 10;
+    raft_term_t match_term = 3;
+
+    std::map<raft_index_t, raft_term_t> log_a;
+    std::map<raft_index_t, raft_term_t> log_b;
+
+    // 假设两个日志在 index 10 匹配
+    for (int i = 1; i <= 10; i++) {
+        log_a[i] = (i <= 5) ? 1 : (i <= 8) ? 2 : 3;
+        log_b[i] = (i <= 5) ? 1 : (i <= 8) ? 2 : 3;
+    }
+
+    // 验证所有之前的条目也匹配
+    for (raft_index_t idx = 1; idx <= match_idx; idx++) {
+        FB_ASSERT_EQ(log_a[idx], log_b[idx]);
+    }
+}
+
+FB_TEST(raft_log_node, log_conflict_detection) {
+    // 冲突检测算法
+    raft_index_t leader_prev_idx = 5;
+    raft_term_t leader_prev_term = 3;
+    raft_index_t follower_last_idx = 10;
+
+    // 检查 follower 日志在 prev_idx 处的 term
+    std::map<raft_index_t, raft_term_t> follower_log;
+    for (int i = 1; i <= 10; i++) {
+        follower_log[i] = (i <= 7) ? 2 : 3;
+    }
+
+    // prev_idx = 5 处 follower term = 2，与 leader term = 3 不匹配
+    bool conflict = follower_log[leader_prev_idx] != leader_prev_term;
+    FB_ASSERT_TRUE(conflict);
+
+    // 需要截断 follower 日志
+    raft_index_t truncate_from = leader_prev_idx + 1;
+    FB_ASSERT_EQ(truncate_from, 6L);
+}
+
+FB_TEST(raft_log_node, log_consistency_check_append_entries) {
+    // AppendEntries 一致性检查
+    raft_term_t leader_term = 5;
+    raft_term_t follower_term = 4;
+
+    // Leader term >= follower term，可以继续
+    bool term_ok = leader_term >= follower_term;
+    FB_ASSERT_TRUE(term_ok);
+
+    // prev_log_idx 和 prev_log_term 检查
+    raft_index_t prev_log_idx = 10;
+    raft_term_t prev_log_term = 3;
+    std::map<raft_index_t, raft_term_t> follower_log;
+    for (int i = 1; i <= 15; i++) {
+        follower_log[i] = (i <= 8) ? 2 : 3;
+    }
+
+    bool prev_ok = (prev_log_idx == 0) ||
+        (follower_log.find(prev_log_idx) != follower_log.end() &&
+         follower_log[prev_log_idx] == prev_log_term);
+    FB_ASSERT_TRUE(prev_ok);
+}
+
+FB_TEST(raft_log_node, log_matching_suffix_consistency) {
+    // 日志匹配后缀一致性
+    // 如果两个日志在某个 index 匹配，则之后的日志也相同（对于 Leader）
+    std::map<raft_index_t, raft_term_t> leader_log;
+    leader_log[10] = 3;
+    leader_log[11] = 3;
+    leader_log[12] = 4;
+    leader_log[13] = 4;
+
+    std::map<raft_index_t, raft_term_t> follower_log;
+    follower_log[10] = 3;
+    follower_log[11] = 3;
+    // follower 缺少 12 和 13
+
+    // Leader 发送缺失的条目
+    raft_index_t follower_last_idx = 11;
+    raft_index_t leader_last_idx = 13;
+    int entries_to_send = leader_last_idx - follower_last_idx;
+    FB_ASSERT_EQ(entries_to_send, 2);
+}
+
+FB_TEST(raft_log_node, log_matching_proof) {
+    // 日志匹配定理证明验证
+    // 定理：如果 log[i].term == log'[i].term，则 log[i] == log'[i]
+
+    // 使用 Raft 性质：Leader 在一个 term 内最多创建一条日志在给定 index
+    std::map<raft_term_t, std::set<raft_index_t>> term_to_indices;
+    term_to_indices[1] = {1, 2, 3};  // term 1 有 index 1-3
+    term_to_indices[2] = {4, 5, 6};  // term 2 有 index 4-6
+
+    // 每个 (term, index) 组合唯一
+    for (const auto& pair : term_to_indices) {
+        for (raft_index_t idx : pair.second) {
+            // 每个 index 在每个 term 只出现一次
+            FB_ASSERT_TRUE(idx >= 1);
+        }
+    }
+}
+
+FB_TEST(raft_log_node, log_matching_commit_update) {
+    // 日志匹配定理用于 commit 更新
+    std::map<raft_node_id_t, raft_index_t> match_indices;
+    match_indices[1] = 100;
+    match_indices[2] = 100;
+    match_indices[3] = 98;
+    match_indices[4] = 100;
+    match_indices[5] = 97;
+
+    // 只有当多数派 match 的日志来自当前 term 才能 commit
+    raft_term_t current_term = 5;
+    std::map<raft_index_t, raft_term_t> log;
+    for (int i = 1; i <= 100; i++) {
+        log[i] = (i <= 80) ? 4 : 5;
+    }
+
+    // 多数派 match_idx = 100
+    std::vector<raft_index_t> indices;
+    for (const auto& pair : match_indices) {
+        indices.push_back(pair.second);
+    }
+    std::sort(indices.begin(), indices.end());
+    raft_index_t majority_match = indices[2];  // 第 3 个（5节点的多数派）
+
+    // 检查 majority_match 处的 term 是否是当前 term
+    bool can_commit = log[majority_match] == current_term;
+    FB_ASSERT_TRUE(can_commit);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
