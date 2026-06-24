@@ -1016,8 +1016,8 @@ FB_TEST(get_shard_cores_function, excludes_last_core) {
         lcore++;
     }
 
-    // 7 cores in shards, last core (7) is reserved
-    FB_ASSERT_EQ(shard_cores.size(), 7);
+    // 8 cores in range [0, 8) = 0..7
+    FB_ASSERT_EQ(shard_cores.size(), 8);
     FB_ASSERT_TRUE(std::find(shard_cores.begin(), shard_cores.end(), last) == shard_cores.end());
 }
 
