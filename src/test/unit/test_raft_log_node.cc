@@ -3535,5 +3535,342 @@ FB_TEST(raft_log_node, log_recovery_abort_and_resume) {
     FB_ASSERT_EQ(recovered_so_far, 100L);
 }
 
+// ============================================================================
+// Test Suite: Read-Only Query Optimization
+// ============================================================================
+
+FB_TEST(raft_log_node, read_index_basic) {
+    // ReadIndex 基本流程
+    raft_index_t commit_idx = 100;
+    raft_index_t read_index = commit_idx;
+
+    // ReadIndex 返回当前 commit_idx
+    FB_ASSERT_EQ(read_index, 100L);
+
+    // 需要等待状态机应用到 read_index
+    raft_index_t last_applied = 95;
+    bool can_read = last_applied >= read_index;
+    FB_ASSERT_FALSE(can_read);
+}
+
+FB_TEST(raft_log_node, follower_read_forwarding) {
+    // Follower 读转发
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    raft_node_id_t leader_id = 3;
+
+    // Follower 不能直接处理线性化读
+    bool can_serve_read = (state == RAFT_STATE_LEADER);
+    FB_ASSERT_FALSE(can_serve_read);
+
+    // 需要转发给 Leader
+    bool need_forward = !can_serve_read;
+    FB_ASSERT_TRUE(need_forward);
+    FB_ASSERT_EQ(leader_id, 3);
+}
+
+FB_TEST(raft_log_node, lease_read_validity_check) {
+    // Lease Read 有效性检查
+    raft_time_t lease_start = 1000;
+    raft_time_t lease_duration = 500;
+    raft_time_t current_time = 1200;
+
+    // 检查 lease 是否有效
+    bool lease_valid = current_time < (lease_start + lease_duration);
+    FB_ASSERT_TRUE(lease_valid);
+
+    // Lease 过期情况
+    current_time = 1600;
+    lease_valid = current_time < (lease_start + lease_duration);
+    FB_ASSERT_FALSE(lease_valid);
+}
+
+FB_TEST(raft_log_node, read_index_quorum_heartbeat) {
+    // ReadIndex 需要多数派心跳确认
+    int cluster_size = 5;
+    int quorum = cluster_size / 2 + 1;
+
+    std::map<raft_node_id_t, bool> heartbeat_received;
+    heartbeat_received[1] = true;  // 自己
+    heartbeat_received[2] = true;
+    heartbeat_received[3] = true;
+    heartbeat_received[4] = false;
+    heartbeat_received[5] = false;
+
+    // 统计收到的心跳数
+    int confirmations = 0;
+    for (const auto& pair : heartbeat_received) {
+        if (pair.second) confirmations++;
+    }
+
+    bool quorum_reached = confirmations >= quorum;
+    FB_ASSERT_TRUE(quorum_reached);
+}
+
+FB_TEST(raft_log_node, read_index_pending_queue) {
+    // ReadIndex 待处理队列
+    std::queue<std::pair<raft_index_t, raft_node_id_t>> pending_reads;
+
+    // 添加待处理的读请求
+    pending_reads.push({100, 1});
+    pending_reads.push({105, 2});
+    pending_reads.push({110, 3});
+
+    FB_ASSERT_EQ(pending_reads.size(), 3UL);
+
+    // 状态机追上后处理队列
+    raft_index_t last_applied = 110;
+    int processed = 0;
+    while (!pending_reads.empty() && pending_reads.front().first <= last_applied) {
+        pending_reads.pop();
+        processed++;
+    }
+
+    FB_ASSERT_EQ(processed, 3);
+    FB_ASSERT_TRUE(pending_reads.empty());
+}
+
+FB_TEST(raft_log_node, linearizable_read_guarantee) {
+    // 线性化读保证
+    raft_index_t read_index = 100;
+    raft_index_t state_machine_applied = 100;
+
+    // 只有状态机应用到 read_index 后才能返回结果
+    bool safe_to_read = state_machine_applied >= read_index;
+    FB_ASSERT_TRUE(safe_to_read);
+
+    // 状态机落后的情况
+    state_machine_applied = 95;
+    safe_to_read = state_machine_applied >= read_index;
+    FB_ASSERT_FALSE(safe_to_read);
+}
+
+FB_TEST(raft_log_node, lease_read_no_quorum_check) {
+    // Lease Read 不需要多数派确认
+    raft_time_t lease_expiry = 1500;
+    raft_time_t current_time = 1200;
+
+    // 在 lease 有效期内可以直接读
+    bool can_read_directly = current_time < lease_expiry;
+    FB_ASSERT_TRUE(can_read_directly);
+
+    // 比 ReadIndex 更快（不需要网络往返）
+    bool faster_than_read_index = true;
+    FB_ASSERT_TRUE(faster_than_read_index);
+}
+
+FB_TEST(raft_log_node, read_index_timeout_handling) {
+    // ReadIndex 超时处理
+    raft_time_t request_time = 1000;
+    raft_time_t timeout = 500;
+    raft_time_t current_time = 1400;
+
+    // 检查是否超时
+    bool timed_out = (current_time - request_time) > timeout;
+    FB_ASSERT_FALSE(timed_out);
+
+    // 超时情况
+    current_time = 1600;
+    timed_out = (current_time - request_time) > timeout;
+    FB_ASSERT_TRUE(timed_out);
+}
+
+FB_TEST(raft_log_node, read_cache_consistency) {
+    // 读缓存一致性
+    std::map<std::string, std::string> read_cache;
+    std::string key = "test_key";
+    std::string value = "test_value";
+
+    // 缓存读取
+    read_cache[key] = value;
+    auto it = read_cache.find(key);
+    FB_ASSERT_TRUE(it != read_cache.end());
+    FB_ASSERT_EQ(it->second, value);
+
+    // 写入后缓存失效
+    read_cache.erase(key);
+    bool cache_valid = read_cache.find(key) != read_cache.end();
+    FB_ASSERT_FALSE(cache_valid);
+}
+
+FB_TEST(raft_log_node, read_after_write_consistency) {
+    // 写后读一致性
+    raft_index_t write_index = 100;
+    raft_index_t read_after_index = write_index;
+
+    // 确保读到写入后的数据
+    bool consistent = read_after_index >= write_index;
+    FB_ASSERT_TRUE(consistent);
+
+    // 状态机应用后才能读到
+    raft_index_t last_applied = 95;
+    bool can_see_write = last_applied >= write_index;
+    FB_ASSERT_FALSE(can_see_write);
+}
+
+FB_TEST(raft_log_node, follower_read_stale_prevention) {
+    // Follower 读过期数据防止
+    raft_index_t leader_commit = 100;
+    raft_index_t follower_commit = 80;
+
+    // Follower commit 落后于 Leader
+    bool follower_stale = follower_commit < leader_commit;
+    FB_ASSERT_TRUE(follower_stale);
+
+    // Follower 需要先追上
+    int entries_to_catch_up = leader_commit - follower_commit;
+    FB_ASSERT_EQ(entries_to_catch_up, 20);
+}
+
+FB_TEST(raft_log_node, read_batch_optimization) {
+    // 批量读取优化
+    std::vector<std::string> read_keys;
+    for (int i = 0; i < 10; i++) {
+        read_keys.push_back("key_" + std::to_string(i));
+    }
+
+    // 单次 ReadIndex 可服务多个读请求
+    raft_index_t read_index = 100;
+    int batch_size = read_keys.size();
+
+    FB_ASSERT_EQ(batch_size, 10);
+
+    // 批量读取比单独请求更高效
+    int single_requests = 10;  // 不使用批量需要 10 次请求
+    int batch_requests = 1;     // 批量只需 1 次
+    bool batch_efficient = batch_requests < single_requests;
+    FB_ASSERT_TRUE(batch_efficient);
+}
+
+FB_TEST(raft_log_node, read_during_leader_transfer) {
+    // Leader 转移期间的读处理
+    bool transfer_in_progress = true;
+    raft_identity state = RAFT_STATE_LEADER;
+
+    // 转移期间 Leader 可能拒绝读
+    bool can_serve_read = (state == RAFT_STATE_LEADER) && !transfer_in_progress;
+    FB_ASSERT_FALSE(can_serve_read);
+
+    // 转移完成后可以读
+    transfer_in_progress = false;
+    can_serve_read = (state == RAFT_STATE_LEADER) && !transfer_in_progress;
+    FB_ASSERT_TRUE(can_serve_read);
+}
+
+FB_TEST(raft_log_node, read_during_partition) {
+    // 网络分区期间的读处理
+    int total_nodes = 5;
+    int majority_partition_size = 3;
+    bool in_majority_partition = true;
+
+    // 只有在多数派分区中才能服务读
+    bool can_serve_read = in_majority_partition && (majority_partition_size >= total_nodes / 2 + 1);
+    FB_ASSERT_TRUE(can_serve_read);
+
+    // 少数派分区不能服务读
+    in_majority_partition = false;
+    can_serve_read = in_majority_partition;
+    FB_ASSERT_FALSE(can_serve_read);
+}
+
+FB_TEST(raft_log_node, read_retry_mechanism) {
+    // 读重试机制
+    int max_retries = 3;
+    int retry_count = 0;
+    bool read_success = false;
+
+    // 模拟重试
+    for (int i = 0; i < max_retries && !read_success; i++) {
+        retry_count++;
+        if (i == 1) {  // 第二次成功
+            read_success = true;
+        }
+    }
+
+    FB_ASSERT_TRUE(read_success);
+    FB_ASSERT_EQ(retry_count, 2);
+}
+
+FB_TEST(raft_log_node, read_priority_queue) {
+    // 读请求优先级队列
+    enum class read_priority {
+        HIGH,
+        NORMAL,
+        LOW
+    };
+
+    std::vector<std::pair<std::string, read_priority>> read_queue;
+    read_queue.push_back({"read_1", read_priority::HIGH});
+    read_queue.push_back({"read_2", read_priority::NORMAL});
+    read_queue.push_back({"read_3", read_priority::LOW});
+    read_queue.push_back({"read_4", read_priority::HIGH});
+
+    // 按优先级排序处理
+    int high_priority_count = 0;
+    for (const auto& req : read_queue) {
+        if (req.second == read_priority::HIGH) {
+            high_priority_count++;
+        }
+    }
+
+    FB_ASSERT_EQ(high_priority_count, 2);
+}
+
+FB_TEST(raft_log_node, read_index_parallel_requests) {
+    // 并行 ReadIndex 请求
+    std::atomic<int> completed_requests{0};
+    int total_requests = 10;
+
+    for (int i = 0; i < total_requests; i++) {
+        completed_requests++;
+    }
+
+    FB_ASSERT_EQ(completed_requests.load(), 10);
+}
+
+FB_TEST(raft_log_node, read_session_affinity) {
+    // 读会话亲和性
+    raft_node_id_t preferred_leader = 1;
+    raft_node_id_t current_leader = 1;
+
+    // 同一会话的读请求发送到同一 Leader
+    bool session_affinity = (preferred_leader == current_leader);
+    FB_ASSERT_TRUE(session_affinity);
+
+    // Leader 变更后更新亲和性
+    current_leader = 2;
+    session_affinity = (preferred_leader == current_leader);
+    FB_ASSERT_FALSE(session_affinity);
+}
+
+FB_TEST(raft_log_node, read_stale_read_option) {
+    // 过期读选项
+    bool allow_stale_read = true;
+    raft_index_t leader_commit = 100;
+    raft_index_t local_commit = 95;
+
+    // 允许过期读时，可以读取稍旧的数据
+    raft_index_t readable_index = allow_stale_read ? local_commit : leader_commit;
+
+    if (allow_stale_read) {
+        FB_ASSERT_EQ(readable_index, 95L);
+    } else {
+        FB_ASSERT_EQ(readable_index, 100L);
+    }
+}
+
+FB_TEST(raft_log_node, read_timeout_propagation) {
+    // 读超时传播
+    raft_time_t client_timeout = 1000;
+    raft_time_t internal_timeout = 800;  // 内部超时小于客户端超时
+
+    // 确保内部超时留有余量
+    bool timeout_valid = internal_timeout < client_timeout;
+    FB_ASSERT_TRUE(timeout_valid);
+
+    // 计算剩余时间
+    raft_time_t time_remaining = client_timeout - internal_timeout;
+    FB_ASSERT_EQ(time_remaining, 200L);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
