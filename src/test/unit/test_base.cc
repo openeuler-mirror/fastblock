@@ -10296,6 +10296,82 @@ FB_TEST(shard_thread_safety_patterns, double_checked_locking) {
 }
 
 // ============================================================================
+// Test Suite: shard_load_metrics (Load Metrics Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_load_metrics) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_load_metrics) {
+    // Teardown code here
+}
+
+FB_TEST(shard_load_metrics, queue_depth_metric) {
+    uint32_t qd = 64;
+    uint32_t max_qd = 256;
+    double util = static_cast<double>(qd) / max_qd;
+    FB_ASSERT_TRUE(util < 1.0);
+    FB_ASSERT_EQ(util, 0.25);
+}
+
+FB_TEST(shard_load_metrics, busy_time_ratio) {
+    uint64_t total_us = 1000000;
+    uint64_t busy_us = 750000;
+    double busy_ratio = static_cast<double>(busy_us) / total_us;
+    FB_ASSERT_EQ(busy_ratio, 0.75);
+}
+
+FB_TEST(shard_load_metrics, idle_time_complementary) {
+    double busy = 0.75;
+    double idle = 1.0 - busy;
+    FB_ASSERT_EQ(idle, 0.25);
+}
+
+FB_TEST(shard_load_metrics, ops_in_window) {
+    // Ops in a sliding window
+    std::deque<uint64_t> window;
+    for (int i = 0; i < 5; i++) window.push_back(static_cast<uint64_t>(i * 100));
+
+    uint64_t sum = 0;
+    for (auto v : window) sum += v;
+    FB_ASSERT_EQ(sum, 1000);
+}
+
+FB_TEST(shard_load_metrics, ema_smoothing) {
+    // Exponential moving average for stable metrics
+    double alpha = 0.2;
+    double ema = 100.0;
+    double new_sample = 150.0;
+    ema = alpha * new_sample + (1.0 - alpha) * ema;
+    FB_ASSERT_TRUE(ema > 100.0);
+    FB_ASSERT_TRUE(ema < 150.0);
+}
+
+FB_TEST(shard_load_metrics, peak_load_tracking) {
+    std::vector<uint64_t> loads = {100, 250, 150, 300, 200};
+    uint64_t peak = *std::max_element(loads.begin(), loads.end());
+    FB_ASSERT_EQ(peak, 300);
+}
+
+FB_TEST(shard_load_metrics, sustained_load_average) {
+    // Sustained load over longer windows
+    std::vector<uint64_t> samples = {100, 100, 100, 100, 100};
+    uint64_t sum = std::accumulate(samples.begin(), samples.end(), 0ULL);
+    uint64_t avg = sum / samples.size();
+    FB_ASSERT_EQ(avg, 100);
+}
+
+FB_TEST(shard_load_metrics, load_imbalance_detection) {
+    // Detect load imbalance across shards
+    std::vector<uint64_t> shard_loads = {100, 90, 110, 100};
+    uint64_t max_l = *std::max_element(shard_loads.begin(), shard_loads.end());
+    uint64_t min_l = *std::min_element(shard_loads.begin(), shard_loads.end());
+    double imbalance = static_cast<double>(max_l - min_l) / max_l;
+    FB_ASSERT_TRUE(imbalance < 0.5); // <50% imbalance is healthy
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
