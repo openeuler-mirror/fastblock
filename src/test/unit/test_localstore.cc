@@ -1730,4 +1730,172 @@ FB_TEST(fixed64_serialization, buffer_usage) {
     FB_ASSERT_EQ(sbuf.used(), 8u);
 }
 
+// ============================================================================
+// Test Suite: string_serialization (String Serialization Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(string_serialization) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(string_serialization) {
+    // Teardown code here
+}
+
+FB_TEST(string_serialization, put_and_get_basic) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::string value = "hello world";
+    FB_ASSERT_TRUE(PutString(sbuf, value));
+
+    sbuf.reset();
+    std::string decoded;
+    FB_ASSERT_TRUE(GetString(sbuf, decoded));
+    FB_ASSERT_EQ(decoded, value);
+}
+
+FB_TEST(string_serialization, empty_string) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::string value;
+    FB_ASSERT_TRUE(PutString(sbuf, value));
+
+    sbuf.reset();
+    std::string decoded = "not_empty";
+    FB_ASSERT_TRUE(GetString(sbuf, decoded));
+    FB_ASSERT_TRUE(decoded.empty());
+}
+
+FB_TEST(string_serialization, long_string) {
+    char buffer[1000];
+    spdk_buffer sbuf(buffer, 1000);
+
+    std::string value(500, 'a');
+    FB_ASSERT_TRUE(PutString(sbuf, value));
+
+    sbuf.reset();
+    std::string decoded;
+    FB_ASSERT_TRUE(GetString(sbuf, decoded));
+    FB_ASSERT_EQ(decoded, value);
+    FB_ASSERT_EQ(decoded.size(), 500);
+}
+
+FB_TEST(string_serialization, binary_data) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::string value = "\x00\x01\x02\x03";
+    FB_ASSERT_TRUE(PutString(sbuf, value));
+
+    sbuf.reset();
+    std::string decoded;
+    FB_ASSERT_TRUE(GetString(sbuf, decoded));
+    FB_ASSERT_EQ(decoded, value);
+}
+
+FB_TEST(string_serialization, insufficient_space_put) {
+    char buffer[5];
+    spdk_buffer sbuf(buffer, 5);
+
+    std::string value = "hello";
+    FB_ASSERT_FALSE(PutString(sbuf, value));
+}
+
+FB_TEST(string_serialization, buffer_usage_empty) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::string value;
+    FB_ASSERT_TRUE(PutString(sbuf, value));
+    FB_ASSERT_EQ(sbuf.used(), 8u);  // Only size field
+}
+
+FB_TEST(string_serialization, buffer_usage_non_empty) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::string value = "test";
+    FB_ASSERT_TRUE(PutString(sbuf, value));
+    FB_ASSERT_EQ(sbuf.used(), 12u);  // 8 for size + 4 for data
+}
+
+FB_TEST(string_serialization, multiple_strings) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::string s1 = "first";
+    std::string s2 = "second";
+    std::string s3 = "third";
+
+    FB_ASSERT_TRUE(PutString(sbuf, s1));
+    FB_ASSERT_TRUE(PutString(sbuf, s2));
+    FB_ASSERT_TRUE(PutString(sbuf, s3));
+
+    sbuf.reset();
+
+    std::string d1, d2, d3;
+    FB_ASSERT_TRUE(GetString(sbuf, d1));
+    FB_ASSERT_TRUE(GetString(sbuf, d2));
+    FB_ASSERT_TRUE(GetString(sbuf, d3));
+
+    FB_ASSERT_EQ(d1, s1);
+    FB_ASSERT_EQ(d2, s2);
+    FB_ASSERT_EQ(d3, s3);
+}
+
+// ============================================================================
+// Test Suite: optional_string_serialization (Optional String Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(optional_string_serialization) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(optional_string_serialization) {
+    // Teardown code here
+}
+
+FB_TEST(optional_string_serialization, has_value) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::optional<std::string> value = "test_value";
+    FB_ASSERT_TRUE(PutOptString(sbuf, value));
+
+    sbuf.reset();
+    std::optional<std::string> decoded;
+    FB_ASSERT_TRUE(GetOptString(sbuf, decoded));
+    FB_ASSERT_TRUE(decoded.has_value());
+    FB_ASSERT_EQ(*decoded, "test_value");
+}
+
+FB_TEST(optional_string_serialization, no_value) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::optional<std::string> value = std::nullopt;
+    FB_ASSERT_TRUE(PutOptString(sbuf, value));
+
+    sbuf.reset();
+    std::optional<std::string> decoded = "old";
+    FB_ASSERT_TRUE(GetOptString(sbuf, decoded));
+    FB_ASSERT_FALSE(decoded.has_value());
+}
+
+FB_TEST(optional_string_serialization, empty_string_value) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::optional<std::string> value = "";
+    FB_ASSERT_TRUE(PutOptString(sbuf, value));
+
+    sbuf.reset();
+    std::optional<std::string> decoded;
+    FB_ASSERT_TRUE(GetOptString(sbuf, decoded));
+    FB_ASSERT_TRUE(decoded.has_value());
+    FB_ASSERT_TRUE(decoded->empty());
+}
+
 FB_TEST_MAIN()
