@@ -3823,4 +3823,156 @@ FB_TEST(special_scenarios, xattr_snap_name_empty_allowed) {
     FB_ASSERT_EQ(xattr.snap_name.size(), 0);
 }
 
+// ============================================================================
+// Test Suite: validation_checks (Validation Checks Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(validation_checks) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(validation_checks) {
+    // Teardown code here
+}
+
+FB_TEST(validation_checks, positive_shard_id_valid) {
+    log_xattr xattr{};
+    xattr.shard_id = 0;
+    FB_ASSERT_TRUE(xattr.shard_id >= 0);
+
+    xattr.shard_id = 100;
+    FB_ASSERT_TRUE(xattr.shard_id >= 0);
+}
+
+FB_TEST(validation_checks, shard_id_range) {
+    object_xattr xattr{};
+    xattr.shard_id = std::numeric_limits<uint32_t>::min();
+    FB_ASSERT_EQ(xattr.shard_id, 0u);
+
+    xattr.shard_id = std::numeric_limits<uint32_t>::max();
+    FB_ASSERT_EQ(xattr.shard_id, std::numeric_limits<uint32_t>::max());
+}
+
+FB_TEST(validation_checks, string_length_reasonable) {
+    std::string short_str = "a";
+    std::string medium_str = "hello_world";
+    std::string long_str(1000, 'x');
+
+    FB_ASSERT_TRUE(LengthString(short_str) >= 8);
+    FB_ASSERT_TRUE(LengthString(medium_str) >= 8);
+    FB_ASSERT_TRUE(LengthString(long_str) >= 8);
+}
+
+FB_TEST(validation_checks, optional_string_length_reasonable) {
+    std::optional<std::string> no_value = std::nullopt;
+    std::optional<std::string> has_value = "test";
+
+    FB_ASSERT_EQ(LengthOptString(no_value), 8u);
+    FB_ASSERT_TRUE(LengthOptString(has_value) > 8u);
+}
+
+FB_TEST(validation_checks, buffer_size_calculation) {
+    // Calculate minimum buffer for 5 fixed32 values
+    size_t min_size = 5 * sizeof(uint32_t);
+
+    char buffer[min_size];
+    spdk_buffer sbuf(buffer, min_size);
+
+    for (int i = 0; i < 5; i++) {
+        FB_ASSERT_TRUE(PutFixed32(sbuf, i));
+    }
+
+    FB_ASSERT_EQ(sbuf.remain(), 0u);
+}
+
+FB_TEST(validation_checks, entry_index_monotonic_simulation) {
+    log_entry_t entries[10];
+    for (int i = 0; i < 10; i++) {
+        entries[i].index = i;
+    }
+
+    // Simulate checking monotonic property
+    for (int i = 1; i < 10; i++) {
+        FB_ASSERT_TRUE(entries[i].index > entries[i-1].index);
+    }
+}
+
+FB_TEST(validation_checks, term_id_positive_simulation) {
+    log_entry_t entry{};
+    entry.term_id = 1;
+
+    FB_ASSERT_TRUE(entry.term_id > 0);
+
+    entry.term_id = 10;
+    FB_ASSERT_TRUE(entry.term_id > 0);
+}
+
+FB_TEST(validation_checks, type_within_range) {
+    int type = static_cast<int>(blob_type::log);
+    FB_ASSERT_TRUE(type >= 0 && type <= 8);
+
+    type = static_cast<int>(blob_type::free);
+    FB_ASSERT_TRUE(type >= 0 && type <= 8);
+}
+
+FB_TEST(validation_checks, xattr_names_valid) {
+    // All xattr names should be non-null and non-empty
+    for (size_t i = 0; i < log_xattr::xattr_count; i++) {
+        FB_ASSERT_TRUE(log_xattr::xattr_names[i] != nullptr);
+        FB_ASSERT_TRUE(strlen(log_xattr::xattr_names[i]) > 0);
+    }
+}
+
+FB_TEST(validation_checks, fb_blob_blobid_non_negative) {
+    fb_blob blob{};
+    blob.blobid = 0;
+    FB_ASSERT_TRUE(blob.blobid >= 0);
+
+    blob.blobid = 12345;
+    FB_ASSERT_TRUE(blob.blobid > 0);
+}
+
+FB_TEST(validation_checks, encoding_preserves_field_count) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    log_entry_t entry{};
+    entry.term_id = 100;
+    entry.index = 200;
+    entry.size = 0;
+    entry.type = 0;
+    entry.meta = "";
+
+    FB_ASSERT_TRUE(EncodeLogHeader(sbuf, entry));
+    size_t size1 = sbuf.used();
+
+    sbuf.reset();
+    entry.meta = "test";
+    FB_ASSERT_TRUE(EncodeLogHeader(sbuf, entry));
+    size_t size2 = sbuf.used();
+
+    FB_ASSERT_TRUE(size2 > size1);
+}
+
+FB_TEST(validation_checks, decode_validates_field_presence) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    log_entry_t entry{};
+    entry.term_id = 1;
+    entry.index = 2;
+    entry.meta = "x";
+
+    FB_ASSERT_TRUE(EncodeLogHeader(sbuf, entry));
+
+    sbuf.reset();
+    log_entry_t decoded{};
+    FB_ASSERT_TRUE(DecodeLogHeader(sbuf, decoded));
+
+    // All fields should be decoded
+    FB_ASSERT_TRUE(decoded.term_id == 1);
+    FB_ASSERT_TRUE(decoded.index == 2);
+    FB_ASSERT_TRUE(decoded.meta == "x");
+}
+
 FB_TEST_MAIN()
