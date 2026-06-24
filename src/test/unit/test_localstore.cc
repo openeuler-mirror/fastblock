@@ -1563,4 +1563,171 @@ FB_TEST(blob_type_mapping, free_maps_to_free_xattr) {
                  static_cast<uint32_t>(free_xattr::type));
 }
 
+// ============================================================================
+// Test Suite: fixed32_serialization (Fixed32 Serialization Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(fixed32_serialization) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(fixed32_serialization) {
+    // Teardown code here
+}
+
+FB_TEST(fixed32_serialization, put_and_get_basic) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    uint32_t value = 0x12345678;
+    FB_ASSERT_TRUE(PutFixed32(sbuf, value));
+
+    sbuf.reset();
+    uint32_t decoded = 0;
+    FB_ASSERT_TRUE(GetFixed32(sbuf, decoded));
+    FB_ASSERT_EQ(decoded, value);
+}
+
+FB_TEST(fixed32_serialization, put_zero) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 0u));
+
+    sbuf.reset();
+    uint32_t decoded = 1;
+    FB_ASSERT_TRUE(GetFixed32(sbuf, decoded));
+    FB_ASSERT_EQ(decoded, 0u);
+}
+
+FB_TEST(fixed32_serialization, put_max_value) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    uint32_t value = 0xFFFFFFFF;
+    FB_ASSERT_TRUE(PutFixed32(sbuf, value));
+
+    sbuf.reset();
+    uint32_t decoded = 0;
+    FB_ASSERT_TRUE(GetFixed32(sbuf, decoded));
+    FB_ASSERT_EQ(decoded, value);
+}
+
+FB_TEST(fixed32_serialization, insufficient_space_put) {
+    char buffer[2];
+    spdk_buffer sbuf(buffer, 2);
+
+    uint32_t value = 123;
+    FB_ASSERT_FALSE(PutFixed32(sbuf, value));
+}
+
+FB_TEST(fixed32_serialization, insufficient_space_get) {
+    char buffer[2];
+    spdk_buffer sbuf(buffer, 2);
+
+    uint32_t decoded = 0;
+    FB_ASSERT_FALSE(GetFixed32(sbuf, decoded));
+}
+
+FB_TEST(fixed32_serialization, multiple_values) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 1u));
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 2u));
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 3u));
+
+    sbuf.reset();
+    uint32_t v1, v2, v3;
+    FB_ASSERT_TRUE(GetFixed32(sbuf, v1));
+    FB_ASSERT_TRUE(GetFixed32(sbuf, v2));
+    FB_ASSERT_TRUE(GetFixed32(sbuf, v3));
+
+    FB_ASSERT_EQ(v1, 1u);
+    FB_ASSERT_EQ(v2, 2u);
+    FB_ASSERT_EQ(v3, 3u);
+}
+
+FB_TEST(fixed32_serialization, buffer_usage) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 12345));
+    FB_ASSERT_EQ(sbuf.used(), 4u);
+}
+
+// ============================================================================
+// Test Suite: fixed64_serialization (Fixed64 Serialization Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(fixed64_serialization) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(fixed64_serialization) {
+    // Teardown code here
+}
+
+FB_TEST(fixed64_serialization, put_and_get_basic) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    uint64_t value = 0x123456789ABCDEF0ULL;
+    FB_ASSERT_TRUE(PutFixed64(sbuf, value));
+
+    sbuf.reset();
+    uint64_t decoded = 0;
+    FB_ASSERT_TRUE(GetFixed64(sbuf, decoded));
+    FB_ASSERT_EQ(decoded, value);
+}
+
+FB_TEST(fixed64_serialization, put_zero) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    FB_ASSERT_TRUE(PutFixed64(sbuf, 0ull));
+
+    sbuf.reset();
+    uint64_t decoded = 1;
+    FB_ASSERT_TRUE(GetFixed64(sbuf, decoded));
+    FB_ASSERT_EQ(decoded, 0ull);
+}
+
+FB_TEST(fixed64_serialization, put_max_value) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    uint64_t value = 0xFFFFFFFFFFFFFFFFULL;
+    FB_ASSERT_TRUE(PutFixed64(sbuf, value));
+
+    sbuf.reset();
+    uint64_t decoded = 0;
+    FB_ASSERT_TRUE(GetFixed64(sbuf, decoded));
+    FB_ASSERT_EQ(decoded, value);
+}
+
+FB_TEST(fixed64_serialization, insufficient_space_put) {
+    char buffer[4];
+    spdk_buffer sbuf(buffer, 4);
+
+    uint64_t value = 123;
+    FB_ASSERT_FALSE(PutFixed64(sbuf, value));
+}
+
+FB_TEST(fixed64_serialization, insufficient_space_get) {
+    char buffer[4];
+    spdk_buffer sbuf(buffer, 4);
+
+    uint64_t decoded = 0;
+    FB_ASSERT_FALSE(GetFixed64(sbuf, decoded));
+}
+
+FB_TEST(fixed64_serialization, buffer_usage) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    FB_ASSERT_TRUE(PutFixed64(sbuf, 12345));
+    FB_ASSERT_EQ(sbuf.used(), 8u);
+}
+
 FB_TEST_MAIN()
