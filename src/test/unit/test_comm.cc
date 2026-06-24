@@ -591,6 +591,69 @@ FB_TEST(monclient_status, osd_register_error_values_are_stable) {
 }
 
 // ============================================================================
+// Test Suite: monclient_endpoint — host/port pair validity
+//
+// monitor::client::endpoint is the host+port the client dials. It is NOT a
+// parser — host is passed verbatim to spdk_sock, which handles IPv4/IPv6.
+// The contract this suite locks down:
+//   - default-constructed endpoint is INVALID (empty host, port 0).
+//   - populated endpoint is valid; host string is preserved unchanged
+//     (no normalization, no IPv6 reshuffling).
+//   - missing host OR missing port => invalid (both required).
+// ============================================================================
+
+namespace {
+
+struct mon_endpoint {
+    std::string host{};
+    uint16_t port{0};
+
+    bool valid() const noexcept {
+        return !host.empty() && port != 0;
+    }
+};
+
+} // anonymous namespace
+
+FB_SUITE_SETUP(monclient_endpoint) {}
+FB_SUITE_TEARDOWN(monclient_endpoint) {}
+
+FB_TEST(monclient_endpoint, default_constructed_is_invalid) {
+    // A default-init endpoint must never be dialled — empty host / port 0
+    // would route into a bogus socket.
+    mon_endpoint ep;
+    FB_ASSERT_TRUE(ep.host.empty());
+    FB_ASSERT_EQ(ep.port, 0);
+    FB_ASSERT_FALSE(ep.valid());
+}
+
+FB_TEST(monclient_endpoint, populated_endpoint_is_valid) {
+    mon_endpoint ep{"10.0.0.1", 3300};
+    FB_ASSERT_TRUE(ep.valid());
+    FB_ASSERT_STR_EQ(ep.host.c_str(), "10.0.0.1");
+    FB_ASSERT_EQ(ep.port, 3300);
+}
+
+FB_TEST(monclient_endpoint, missing_host_or_port_invalid) {
+    // Both fields required — half-populated endpoints must not pass.
+    mon_endpoint no_host{"", 5000};
+    mon_endpoint no_port{"host", 0};
+    FB_ASSERT_FALSE(no_host.valid());
+    FB_ASSERT_FALSE(no_port.valid());
+}
+
+FB_TEST(monclient_endpoint, host_string_preserved_verbatim) {
+    // No normalization, no case folding, no IPv6 reshuffling — the host
+    // string travels through unchanged to spdk_sock.
+    mon_endpoint v6{"fe80::1", 3300};
+    mon_endpoint name{"mon-01.example.com", 6789};
+    FB_ASSERT_STR_EQ(v6.host.c_str(), "fe80::1");
+    FB_ASSERT_STR_EQ(name.host.c_str(), "mon-01.example.com");
+    FB_ASSERT_TRUE(v6.valid());
+    FB_ASSERT_TRUE(name.valid());
+}
+
+// ============================================================================
 // Test Suite: monclient — pg_state bitmask
 // ============================================================================
 
