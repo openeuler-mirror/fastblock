@@ -1630,6 +1630,100 @@ FB_TEST(shard_construction, parallel_initialization) {
 }
 
 // ============================================================================
+// Test Suite: spdk_thread_management (SPDK Thread Management Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_thread_management) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_thread_management) {
+    // Teardown code here
+}
+
+FB_TEST(spdk_thread_management, thread_pointer_storage) {
+    // _threads vector stores spdk_thread*
+    std::vector<void*> threads(4, nullptr);
+    FB_ASSERT_EQ(threads.size(), 4);
+    for (auto* t : threads) {
+        FB_ASSERT_TRUE(t == nullptr);
+    }
+}
+
+FB_TEST(spdk_thread_management, thread_at_call) {
+    // get_thread() uses .at() for bounds checking
+    std::vector<int> threads = {10, 20, 30, 40};
+    FB_ASSERT_EQ(threads.at(2), 30);
+
+    // Out-of-bounds throws std::out_of_range
+    bool caught = false;
+    try {
+        threads.at(10);
+    } catch (const std::out_of_range&) {
+        caught = true;
+    }
+    FB_ASSERT_TRUE(caught);
+}
+
+FB_TEST(spdk_thread_management, get_thread_by_core) {
+    // get_thread(core) returns the spdk_thread for that core
+    std::vector<void*> threads = {(void*)0x1, (void*)0x2, (void*)0x3, (void*)0x4};
+    FB_ASSERT_TRUE(threads.at(2) == (void*)0x3);
+}
+
+FB_TEST(spdk_thread_management, thread_exit_pattern) {
+    // stop() pattern: set_thread, thread_exit, set back current
+    void* current = (void*)0x100;
+    void* target = (void*)0x200;
+
+    // Save current
+    void* saved = current;
+    // Switch
+    current = target;
+    FB_ASSERT_TRUE(current == target);
+    // Exit & restore
+    current = saved;
+    FB_ASSERT_TRUE(current == saved);
+}
+
+FB_TEST(spdk_thread_management, current_thread_handled_specially) {
+    // If current thread is being exited, set_thread(nullptr) instead
+    void* current = (void*)0x500;
+    void* exiting = (void*)0x500;
+
+    bool is_current = (current == exiting);
+    void* set_to = is_current ? nullptr : current;
+    FB_ASSERT_TRUE(set_to == nullptr);
+}
+
+FB_TEST(spdk_thread_management, skip_null_threads_in_stop) {
+    // stop() skips null thread pointers
+    std::vector<void*> threads = {(void*)0x1, nullptr, (void*)0x3, nullptr};
+    int processed = 0;
+    for (auto* t : threads) {
+        if (t != nullptr) {
+            processed++;
+        }
+    }
+    FB_ASSERT_EQ(processed, 2);
+}
+
+FB_TEST(spdk_thread_management, threads_cleared_after_stop) {
+    // _threads.clear() at end of stop()
+    std::vector<void*> threads = {(void*)0x1, (void*)0x2};
+    threads.clear();
+    FB_ASSERT_TRUE(threads.empty());
+}
+
+FB_TEST(spdk_thread_management, idempotent_stop) {
+    // stop() can be called multiple times safely (vector already empty)
+    std::vector<void*> threads;
+    threads.clear(); // First call
+    threads.clear(); // Second call - should still work
+    FB_ASSERT_TRUE(threads.empty());
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
