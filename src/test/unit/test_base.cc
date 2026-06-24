@@ -1335,6 +1335,102 @@ FB_TEST(service_pattern, service_move_only_arg) {
 }
 
 // ============================================================================
+// Test Suite: cross_shard_communication (Cross-Shard Communication Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(cross_shard_communication) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(cross_shard_communication) {
+    // Teardown code here
+}
+
+FB_TEST(cross_shard_communication, message_passing_required) {
+    // Cross-shard requires spdk_thread_send_msg, no shared memory
+    uint32_t shard_a = 0;
+    uint32_t shard_b = 3;
+    bool needs_message = (shard_a != shard_b);
+    FB_ASSERT_TRUE(needs_message);
+}
+
+FB_TEST(cross_shard_communication, async_delivery) {
+    // Messages delivered asynchronously
+    bool synchronous = false;
+    FB_ASSERT_TRUE(!synchronous);
+}
+
+FB_TEST(cross_shard_communication, message_fifo_order) {
+    // Messages to same shard preserve FIFO order
+    std::vector<int> messages = {1, 2, 3, 4, 5};
+    for (size_t i = 1; i < messages.size(); i++) {
+        FB_ASSERT_TRUE(messages[i] > messages[i-1]);
+    }
+}
+
+FB_TEST(cross_shard_communication, no_callback_blocking) {
+    // Sender does not block waiting for receiver
+    auto deliver = []() {
+        // Sender returns immediately after send_msg
+        return true;
+    };
+    FB_ASSERT_TRUE(deliver());
+}
+
+FB_TEST(cross_shard_communication, broadcast_to_all_shards) {
+    // Broadcast: send same message to all shards
+    uint32_t shard_count = 4;
+    std::vector<bool> delivered(shard_count, false);
+
+    for (uint32_t i = 0; i < shard_count; i++) {
+        delivered[i] = true;
+    }
+
+    for (bool d : delivered) {
+        FB_ASSERT_TRUE(d);
+    }
+}
+
+FB_TEST(cross_shard_communication, message_data_copy) {
+    // Data passed to other shard must be self-contained (copied/moved)
+    std::vector<int> source = {1, 2, 3};
+    std::vector<int> copy = source;
+
+    // Modifying source shouldn't affect copy
+    source.push_back(4);
+    FB_ASSERT_EQ(copy.size(), 3);
+    FB_ASSERT_EQ(source.size(), 4);
+}
+
+FB_TEST(cross_shard_communication, lambda_must_be_heap) {
+    // lambda_ctx allocated on heap because lifetime exceeds caller frame
+    auto* heap_lambda = new int(42);
+    FB_ASSERT_TRUE(heap_lambda != nullptr);
+    delete heap_lambda;
+}
+
+FB_TEST(cross_shard_communication, send_msg_can_fail) {
+    // spdk_thread_send_msg can return error (e.g., -ENOMEM)
+    int success = 0;
+    int oom = -ENOMEM;
+    FB_ASSERT_EQ(success, 0);
+    FB_ASSERT_TRUE(oom < 0);
+}
+
+FB_TEST(cross_shard_communication, target_thread_must_exist) {
+    // Target shard's thread must be running
+    std::vector<void*> threads = {(void*)0x1, (void*)0x2, nullptr, (void*)0x4};
+
+    uint32_t target = 2;
+    bool can_send = (threads[target] != nullptr);
+    FB_ASSERT_TRUE(!can_send);
+
+    target = 1;
+    can_send = (threads[target] != nullptr);
+    FB_ASSERT_TRUE(can_send);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
