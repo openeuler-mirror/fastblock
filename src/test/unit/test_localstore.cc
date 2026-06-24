@@ -1898,4 +1898,135 @@ FB_TEST(optional_string_serialization, empty_string_value) {
     FB_ASSERT_TRUE(decoded->empty());
 }
 
+// ============================================================================
+// Test Suite: string_length_calculation (String Length Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(string_length_calculation) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(string_length_calculation) {
+    // Teardown code here
+}
+
+FB_TEST(string_length_calculation, empty_string) {
+    std::string value;
+    FB_ASSERT_EQ(LengthString(value), 8u);
+}
+
+FB_TEST(string_length_calculation, single_char) {
+    std::string value = "a";
+    FB_ASSERT_EQ(LengthString(value), 9u);
+}
+
+FB_TEST(string_length_calculation, typical_string) {
+    std::string value = "hello";
+    FB_ASSERT_EQ(LengthString(value), 13u);
+}
+
+FB_TEST(string_length_calculation, long_string) {
+    std::string value(1000, 'x');
+    FB_ASSERT_EQ(LengthString(value), 1008u);
+}
+
+FB_TEST(string_length_calculation, exact_size_match) {
+    std::string value(92, 'y');  // 92 + 8 = 100
+    FB_ASSERT_EQ(LengthString(value), 100u);
+}
+
+// ============================================================================
+// Test Suite: optional_string_length_calculation (Optional String Length Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(optional_string_length_calculation) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(optional_string_length_calculation) {
+    // Teardown code here
+}
+
+FB_TEST(optional_string_length_calculation, has_value) {
+    std::optional<std::string> value = "test";
+    FB_ASSERT_EQ(LengthOptString(value), 12u);
+}
+
+FB_TEST(optional_string_length_calculation, no_value) {
+    std::optional<std::string> value = std::nullopt;
+    FB_ASSERT_EQ(LengthOptString(value), 8u);
+}
+
+FB_TEST(optional_string_length_calculation, empty_value) {
+    std::optional<std::string> value = "";
+    FB_ASSERT_EQ(LengthOptString(value), 8u);
+}
+
+FB_TEST(optional_string_length_calculation, long_value) {
+    std::optional<std::string> value(500, 'z');
+    FB_ASSERT_EQ(LengthOptString(value), 508u);
+}
+
+// ============================================================================
+// Test Suite: xattr_val_type_variant (Xattr Variant Type Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_val_type_variant) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_val_type_variant) {
+    // Teardown code here
+}
+
+FB_TEST(xattr_val_type_variant, holds_blob_type) {
+    xattr_val_type val = blob_type::log;
+    FB_ASSERT_TRUE(std::holds_alternative<blob_type>(val));
+    FB_ASSERT_EQ(std::get<blob_type>(val), blob_type::log);
+}
+
+FB_TEST(xattr_val_type_variant, holds_uint32) {
+    xattr_val_type val = 12345u;
+    FB_ASSERT_TRUE(std::holds_alternative<uint32_t>(val));
+    FB_ASSERT_EQ(std::get<uint32_t>(val), 12345u);
+}
+
+FB_TEST(xattr_val_type_variant, holds_string) {
+    xattr_val_type val = std::string("test");
+    FB_ASSERT_TRUE(std::holds_alternative<std::string>(val));
+    FB_ASSERT_EQ(std::get<std::string>(val), "test");
+}
+
+FB_TEST(xattr_val_type_variant, assignment_blob_type) {
+    xattr_val_type val;
+    val = blob_type::object;
+    FB_ASSERT_EQ(std::get<blob_type>(val), blob_type::object);
+}
+
+FB_TEST(xattr_val_type_variant, assignment_uint32) {
+    xattr_val_type val;
+    val = 999u;
+    FB_ASSERT_EQ(std::get<uint32_t>(val), 999u);
+}
+
+FB_TEST(xattr_val_type_variant, assignment_string) {
+    xattr_val_type val;
+    val = std::string("assigned");
+    FB_ASSERT_EQ(std::get<std::string>(val), "assigned");
+}
+
+FB_TEST(xattr_val_type_variant, reassignment_different_types) {
+    xattr_val_type val;
+    val = blob_type::kv;
+    FB_ASSERT_TRUE(std::holds_alternative<blob_type>(val));
+
+    val = 42u;
+    FB_ASSERT_TRUE(std::holds_alternative<uint32_t>(val));
+    FB_ASSERT_EQ(std::get<uint32_t>(val), 42u);
+
+    val = std::string("changed");
+    FB_ASSERT_TRUE(std::holds_alternative<std::string>(val));
+    FB_ASSERT_EQ(std::get<std::string>(val), "changed");
+}
+
 FB_TEST_MAIN()
