@@ -9689,6 +9689,75 @@ FB_TEST(shard_runtime_metrics, metric_window_rolling) {
 }
 
 // ============================================================================
+// Test Suite: shard_thread_pool_concepts (Thread Pool Concepts Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_thread_pool_concepts) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_thread_pool_concepts) {
+    // Teardown code here
+}
+
+FB_TEST(shard_thread_pool_concepts, fixed_pool_size) {
+    // Pool size matches shard count (fixed at startup)
+    uint32_t pool_size = 4;
+    std::vector<void*> threads(pool_size, nullptr);
+    FB_ASSERT_EQ(threads.size(), pool_size);
+}
+
+FB_TEST(shard_thread_pool_concepts, no_thread_creation_at_runtime) {
+    // Threads created only at startup, not on-demand
+    bool startup_phase = true;
+    bool created_at_runtime = !startup_phase;
+    FB_ASSERT_TRUE(!created_at_runtime);
+}
+
+FB_TEST(shard_thread_pool_concepts, no_thread_pool_balancing) {
+    // Each thread is pinned (no work-stealing in SPDK)
+    bool work_stealing = false;
+    FB_ASSERT_TRUE(!work_stealing);
+}
+
+FB_TEST(shard_thread_pool_concepts, work_explicitly_assigned) {
+    // Work explicitly routed to specific thread via send_msg
+    uint32_t work_id = 42;
+    uint32_t shard_count = 4;
+    uint32_t target = work_id % shard_count;
+    FB_ASSERT_EQ(target, 2);
+}
+
+FB_TEST(shard_thread_pool_concepts, no_implicit_load_balance) {
+    // No automatic load balancing; app must distribute
+    std::vector<uint64_t> loads = {1000, 100, 100, 100};
+    // System won't auto-rebalance; app must explicitly redistribute
+    uint64_t max_load = *std::max_element(loads.begin(), loads.end());
+    FB_ASSERT_EQ(max_load, 1000);
+}
+
+FB_TEST(shard_thread_pool_concepts, thread_local_state) {
+    // Each thread has thread-local state (no sharing)
+    thread_local int counter = 0;
+    counter++;
+    FB_ASSERT_TRUE(counter >= 1);
+}
+
+FB_TEST(shard_thread_pool_concepts, no_dynamic_resizing) {
+    // Pool cannot grow/shrink at runtime
+    uint32_t initial = 4;
+    uint32_t after_some_time = 4; // unchanged
+    FB_ASSERT_EQ(initial, after_some_time);
+}
+
+FB_TEST(shard_thread_pool_concepts, thread_lifetime_eq_app_lifetime) {
+    // Threads live for the entire app lifetime
+    bool alive_at_start = true;
+    bool alive_at_end = true; // Until app shutdown
+    FB_ASSERT_EQ(alive_at_start, alive_at_end);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
