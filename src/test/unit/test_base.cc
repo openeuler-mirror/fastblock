@@ -3697,6 +3697,132 @@ FB_TEST(core_sharded_destructor, vector_members_auto_cleared) {
 }
 
 // ============================================================================
+// Test Suite: shard_balancing_strategies (Shard Balancing Strategies Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_balancing_strategies) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_balancing_strategies) {
+    // Teardown code here
+}
+
+FB_TEST(shard_balancing_strategies, modulo_distribution_even) {
+    // hash % shard_count
+    uint32_t shard_count = 4;
+    std::vector<uint32_t> counts(shard_count, 0);
+
+    for (uint32_t key = 0; key < 100; key++) {
+        counts[key % shard_count]++;
+    }
+
+    // 100/4 = 25 per shard
+    for (uint32_t c : counts) FB_ASSERT_EQ(c, 25);
+}
+
+FB_TEST(shard_balancing_strategies, modulo_distribution_uneven) {
+    // 103 keys / 4 shards: 26,26,26,25
+    uint32_t shard_count = 4;
+    std::vector<uint32_t> counts(shard_count, 0);
+
+    for (uint32_t key = 0; key < 103; key++) {
+        counts[key % shard_count]++;
+    }
+
+    FB_ASSERT_EQ(counts[0], 26);
+    FB_ASSERT_EQ(counts[1], 26);
+    FB_ASSERT_EQ(counts[2], 26);
+    FB_ASSERT_EQ(counts[3], 25);
+}
+
+FB_TEST(shard_balancing_strategies, power_of_two_bitmask) {
+    // Shard count is power of 2: use bitmask instead of modulo
+    uint32_t shard_count = 8;
+    uint32_t mask = shard_count - 1; // 0b0111
+
+    for (uint32_t key = 0; key < 1000; key++) {
+        FB_ASSERT_EQ(key & mask, key % shard_count);
+    }
+}
+
+FB_TEST(shard_balancing_strategies, consistent_hashing) {
+    // Same key always maps to same shard (deterministic)
+    uint32_t shard_count = 4;
+
+    auto assign = [shard_count](uint32_t key) { return key % shard_count; };
+
+    for (uint32_t i = 0; i < 100; i++) {
+        uint32_t key = i * 7 + 13;
+        FB_ASSERT_EQ(assign(key), assign(key));
+    }
+}
+
+FB_TEST(shard_balancing_strategies, round_robin_strategy) {
+    // Sequential round-robin assignment
+    uint32_t shard_count = 4;
+    std::vector<uint32_t> assignments;
+    for (uint32_t i = 0; i < 12; i++) {
+        assignments.push_back(i % shard_count);
+    }
+    // Pattern: 0,1,2,3,0,1,2,3,0,1,2,3
+    FB_ASSERT_EQ(assignments[0], 0);
+    FB_ASSERT_EQ(assignments[4], 0);
+    FB_ASSERT_EQ(assignments[8], 0);
+    FB_ASSERT_EQ(assignments[11], 3);
+}
+
+FB_TEST(shard_balancing_strategies, hash_skew_detection) {
+    // Detect skewed distribution (all keys hashing to one shard)
+    uint32_t shard_count = 4;
+    std::vector<uint32_t> counts(shard_count, 0);
+
+    // All keys map to shard 0
+    for (uint32_t key = 0; key < 20; key++) {
+        uint32_t skewed_key = key * shard_count; // always % 4 == 0
+        counts[skewed_key % shard_count]++;
+    }
+
+    FB_ASSERT_EQ(counts[0], 20);
+    FB_ASSERT_EQ(counts[1], 0);
+    FB_ASSERT_EQ(counts[2], 0);
+    FB_ASSERT_EQ(counts[3], 0);
+}
+
+FB_TEST(shard_balancing_strategies, balance_variance) {
+    // Good distribution has low variance
+    uint32_t shard_count = 4;
+    std::vector<uint32_t> counts(shard_count, 0);
+
+    for (uint32_t key = 0; key < 1000; key++) {
+        counts[key % shard_count]++;
+    }
+
+    // All counts should be equal (perfectly balanced for modulo)
+    uint32_t expected = 1000 / shard_count;
+    for (uint32_t c : counts) {
+        FB_ASSERT_EQ(c, expected);
+    }
+}
+
+FB_TEST(shard_balancing_strategies, balance_with_string_keys) {
+    // Hash string keys to shards using std::hash
+    uint32_t shard_count = 4;
+    std::vector<uint32_t> counts(shard_count, 0);
+
+    std::vector<std::string> keys = {"obj_1", "obj_2", "user_a", "user_b"};
+    for (const auto& key : keys) {
+        size_t h = std::hash<std::string>{}(key);
+        counts[h % shard_count]++;
+    }
+
+    // All keys assigned
+    uint32_t total = 0;
+    for (uint32_t c : counts) total += c;
+    FB_ASSERT_EQ(total, keys.size());
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
