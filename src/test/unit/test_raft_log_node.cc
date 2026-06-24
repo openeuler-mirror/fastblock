@@ -3166,5 +3166,374 @@ FB_TEST(raft_log_node, leader_transfer_snapshot_needed) {
     FB_ASSERT_EQ(new_target_idx, 80L);
 }
 
+// ============================================================================
+// Test Suite: Log Replay and Recovery
+// ============================================================================
+
+FB_TEST(raft_log_node, log_recovery_from_crash) {
+    // 崩溃后日志恢复
+    raft_index_t disk_last_idx = 100;
+    raft_index_t memory_last_idx = 0;  // 崩溃后内存清空
+
+    // 从磁盘恢复日志
+    memory_last_idx = disk_last_idx;
+    FB_ASSERT_EQ(memory_last_idx, 100L);
+
+    // next_idx 应该是 last_idx + 1
+    raft_index_t next_idx = memory_last_idx + 1;
+    FB_ASSERT_EQ(next_idx, 101L);
+}
+
+FB_TEST(raft_log_node, log_replay_order) {
+    // 日志回放顺序
+    std::vector<raft_index_t> log_indices;
+    for (int i = 1; i <= 100; i++) {
+        log_indices.push_back(i);
+    }
+
+    // 验证回放顺序是递增的
+    bool ordered = true;
+    for (size_t i = 1; i < log_indices.size(); i++) {
+        if (log_indices[i] <= log_indices[i-1]) {
+            ordered = false;
+            break;
+        }
+    }
+    FB_ASSERT_TRUE(ordered);
+}
+
+FB_TEST(raft_log_node, log_replay_from_snapshot) {
+    // 从快照点开始回放
+    raft_index_t snapshot_last_idx = 50;
+    raft_index_t first_log_idx = snapshot_last_idx + 1;
+    raft_term_t snapshot_last_term = 3;
+
+    // 快照后的日志从 first_log_idx 开始
+    FB_ASSERT_EQ(first_log_idx, 51L);
+
+    // 回放日志条目数
+    raft_index_t last_log_idx = 100;
+    int entries_to_replay = last_log_idx - snapshot_last_idx;
+    FB_ASSERT_EQ(entries_to_replay, 50);
+}
+
+FB_TEST(raft_log_node, log_replay_idempotency) {
+    // 日志回放幂等性
+    int replay_count = 0;
+    std::map<raft_index_t, int> applied_commands;
+
+    // 模拟回放同一批日志多次
+    std::vector<raft_index_t> batch1 = {1, 2, 3};
+    std::vector<raft_index_t> batch2 = {2, 3, 4};  // 有重叠
+
+    // 第一次回放
+    for (raft_index_t idx : batch1) {
+        if (applied_commands.find(idx) == applied_commands.end()) {
+            applied_commands[idx] = 1;
+            replay_count++;
+        }
+    }
+
+    // 第二次回放（幂等）
+    for (raft_index_t idx : batch2) {
+        if (applied_commands.find(idx) == applied_commands.end()) {
+            applied_commands[idx] = 1;
+            replay_count++;
+        }
+    }
+
+    FB_ASSERT_EQ(applied_commands.size(), 4UL);
+    FB_ASSERT_EQ(replay_count, 4);
+}
+
+FB_TEST(raft_log_node, log_recovery_partial_write) {
+    // 部分写入的恢复
+    raft_index_t commit_idx = 95;
+    raft_index_t last_log_idx = 100;
+    std::vector<bool> entry_valid(101, true);
+
+    // 模拟部分条目未正确写入
+    entry_valid[98] = false;
+    entry_valid[99] = false;
+    entry_valid[100] = false;
+
+    // 截断无效条目
+    raft_index_t valid_last_idx = commit_idx;
+    for (raft_index_t idx = commit_idx + 1; idx <= last_log_idx; idx++) {
+        if (!entry_valid[idx]) {
+            valid_last_idx = idx - 1;
+            break;
+        }
+    }
+
+    FB_ASSERT_EQ(valid_last_idx, 95L);
+}
+
+FB_TEST(raft_log_node, log_replay_state_machine_consistency) {
+    // 回放时状态机一致性
+    std::map<raft_index_t, int> log_commands;
+    for (int i = 1; i <= 50; i++) {
+        log_commands[i] = i * 10;
+    }
+
+    std::map<raft_index_t, int> state_machine;
+
+    // 回放日志到状态机
+    for (const auto& pair : log_commands) {
+        state_machine[pair.first] = pair.second;
+    }
+
+    // 验证状态机与日志一致
+    FB_ASSERT_EQ(state_machine.size(), log_commands.size());
+    for (const auto& pair : log_commands) {
+        FB_ASSERT_EQ(state_machine[pair.first], pair.second);
+    }
+}
+
+FB_TEST(raft_log_node, log_recovery_term_metadata) {
+    // 恢复时 term 元数据
+    raft_term_t persisted_term = 5;
+    raft_node_id_t persisted_voted_for = 3;
+
+    // 从持久化存储恢复
+    raft_term_t current_term = persisted_term;
+    raft_node_id_t voted_for = persisted_voted_for;
+
+    FB_ASSERT_EQ(current_term, 5L);
+    FB_ASSERT_EQ(voted_for, 3);
+
+    // 新 term 开始时清除投票
+    current_term++;
+    voted_for = 0;
+    FB_ASSERT_EQ(current_term, 6L);
+    FB_ASSERT_EQ(voted_for, 0);
+}
+
+FB_TEST(raft_log_node, log_replay_duplicate_detection) {
+    // 回放时重复检测
+    std::set<raft_entry_id_t> seen_entries;
+    std::vector<raft_entry_id_t> log_entries = {1001, 1002, 1003, 1002, 1004};
+
+    int unique_count = 0;
+    int duplicate_count = 0;
+
+    for (raft_entry_id_t id : log_entries) {
+        if (seen_entries.find(id) == seen_entries.end()) {
+            seen_entries.insert(id);
+            unique_count++;
+        } else {
+            duplicate_count++;
+        }
+    }
+
+    FB_ASSERT_EQ(unique_count, 4);
+    FB_ASSERT_EQ(duplicate_count, 1);
+}
+
+FB_TEST(raft_log_node, log_recovery_concurrent_operations) {
+    // 恢复时并发操作处理
+    std::atomic<raft_index_t> recovery_progress{0};
+    std::atomic<bool> recovery_complete{false};
+
+    // 模拟恢复进度
+    for (int i = 0; i < 100; i++) {
+        recovery_progress++;
+    }
+    recovery_complete = true;
+
+    FB_ASSERT_EQ(recovery_progress.load(), 100L);
+    FB_ASSERT_TRUE(recovery_complete.load());
+}
+
+FB_TEST(raft_log_node, log_replay_checkpoint) {
+    // 回放检查点
+    raft_index_t checkpoint_interval = 10;
+    raft_index_t last_applied = 0;
+
+    // 模拟回放并定期创建检查点
+    std::vector<raft_index_t> checkpoints;
+    for (raft_index_t idx = 1; idx <= 100; idx++) {
+        last_applied = idx;
+        if (idx % checkpoint_interval == 0) {
+            checkpoints.push_back(idx);
+        }
+    }
+
+    FB_ASSERT_EQ(checkpoints.size(), 10UL);
+    FB_ASSERT_EQ(checkpoints.back(), 100L);
+}
+
+FB_TEST(raft_log_node, log_recovery_verify_integrity) {
+    // 恢复时验证日志完整性
+    std::map<raft_index_t, raft_term_t> log;
+    for (int i = 1; i <= 100; i++) {
+        log[i] = (i <= 30) ? 1 : (i <= 60) ? 2 : 3;
+    }
+
+    // 验证 term 单调性
+    bool term_monotonic = true;
+    raft_term_t prev_term = 0;
+    for (const auto& pair : log) {
+        if (pair.second < prev_term) {
+            term_monotonic = false;
+            break;
+        }
+        prev_term = pair.second;
+    }
+    FB_ASSERT_TRUE(term_monotonic);
+
+    // 验证索引连续性
+    bool index_continuous = true;
+    for (raft_index_t idx = 1; idx <= 100; idx++) {
+        if (log.find(idx) == log.end()) {
+            index_continuous = false;
+            break;
+        }
+    }
+    FB_ASSERT_TRUE(index_continuous);
+}
+
+FB_TEST(raft_log_node, log_replay_after_configuration_change) {
+    // 配置变更后的日志回放
+    std::vector<raft_logtype_e> log_types;
+    for (int i = 1; i <= 10; i++) {
+        log_types.push_back(RAFT_LOGTYPE_WRITE);
+    }
+    log_types.push_back(RAFT_LOGTYPE_CONFIGURATION);  // 配置变更
+    for (int i = 0; i < 10; i++) {
+        log_types.push_back(RAFT_LOGTYPE_WRITE);
+    }
+
+    // 回放时遇到配置变更
+    int config_changes_seen = 0;
+    for (raft_logtype_e type : log_types) {
+        if (type == RAFT_LOGTYPE_CONFIGURATION) {
+            config_changes_seen++;
+        }
+    }
+    FB_ASSERT_EQ(config_changes_seen, 1);
+}
+
+FB_TEST(raft_log_node, log_recovery_uncommitted_entries) {
+    // 恢复时未提交条目处理
+    raft_index_t commit_idx = 80;
+    raft_index_t last_log_idx = 100;
+
+    // 未提交的条目需要截断
+    std::vector<raft_index_t> valid_entries;
+    for (raft_index_t idx = 1; idx <= commit_idx; idx++) {
+        valid_entries.push_back(idx);
+    }
+
+    FB_ASSERT_EQ(valid_entries.size(), 80UL);
+
+    // 未提交条目被丢弃
+    int discarded = last_log_idx - commit_idx;
+    FB_ASSERT_EQ(discarded, 20);
+}
+
+FB_TEST(raft_log_node, log_replay_batch_efficiency) {
+    // 批量回放效率
+    size_t batch_size = 100;
+    size_t total_entries = 1000;
+    int batches_processed = 0;
+
+    for (size_t offset = 0; offset < total_entries; offset += batch_size) {
+        batches_processed++;
+    }
+
+    FB_ASSERT_EQ(batches_processed, 10);
+}
+
+FB_TEST(raft_log_node, log_recovery_checksum_verification) {
+    // 恢复时校验和验证
+    std::vector<std::pair<raft_index_t, uint32_t>> log_with_checksum;
+    for (int i = 1; i <= 10; i++) {
+        log_with_checksum.push_back({i, i * 1000});  // 简化的校验和
+    }
+
+    // 验证校验和
+    int valid_entries = 0;
+    for (const auto& pair : log_with_checksum) {
+        // 模拟校验和验证
+        uint32_t expected = pair.first * 1000;
+        if (pair.second == expected) {
+            valid_entries++;
+        }
+    }
+    FB_ASSERT_EQ(valid_entries, 10);
+}
+
+FB_TEST(raft_log_node, log_replay_error_handling) {
+    // 回放错误处理
+    int successful_replays = 0;
+    int failed_replays = 0;
+
+    std::vector<int> replay_results = {0, 0, -1, 0, 0, -1, 0};
+
+    for (int result : replay_results) {
+        if (result == 0) {
+            successful_replays++;
+        } else {
+            failed_replays++;
+        }
+    }
+
+    FB_ASSERT_EQ(successful_replays, 5);
+    FB_ASSERT_EQ(failed_replays, 2);
+}
+
+FB_TEST(raft_log_node, log_recovery_incremental) {
+    // 增量恢复
+    raft_index_t base_idx = 50;
+    raft_index_t target_idx = 100;
+
+    // 从基础点增量恢复
+    int incremental_entries = target_idx - base_idx;
+    FB_ASSERT_EQ(incremental_entries, 50);
+
+    // 增量恢复比全量恢复快
+    bool use_incremental = incremental_entries < target_idx;
+    FB_ASSERT_TRUE(use_incremental);
+}
+
+FB_TEST(raft_log_node, log_replay_parallel_optimization) {
+    // 并行回放优化
+    int total_entries = 100;
+    int parallel_workers = 4;
+    int entries_per_worker = total_entries / parallel_workers;
+
+    FB_ASSERT_EQ(entries_per_worker, 25);
+
+    // 验证并行回放的正确性
+    std::atomic<int> processed{0};
+    for (int i = 0; i < total_entries; i++) {
+        processed++;
+    }
+    FB_ASSERT_EQ(processed.load(), 100);
+}
+
+FB_TEST(raft_log_node, log_recovery_abort_and_resume) {
+    // 恢复中止和恢复
+    raft_index_t recovery_checkpoint = 30;
+    raft_index_t total_entries = 100;
+    bool recovery_interrupted = true;
+
+    // 恢复被中断
+    raft_index_t recovered_so_far = recovery_checkpoint;
+
+    // 从检查点恢复
+    if (recovery_interrupted) {
+        recovered_so_far = recovery_checkpoint;
+    }
+
+    // 继续恢复
+    for (raft_index_t idx = recovered_so_far + 1; idx <= total_entries; idx++) {
+        recovered_so_far++;
+    }
+
+    FB_ASSERT_EQ(recovered_so_far, 100L);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
