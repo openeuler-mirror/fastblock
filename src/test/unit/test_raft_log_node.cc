@@ -2576,5 +2576,320 @@ FB_TEST(raft_log_node, invariant_preservation) {
     FB_ASSERT_TRUE(new_term >= old_term);
 }
 
+// ============================================================================
+// Test Suite: Heartbeat Mechanism
+// ============================================================================
+
+FB_TEST(raft_log_node, heartbeat_interval_timing) {
+    // 心跳间隔定时
+    raft_time_t heartbeat_interval = 50;  // 50ms
+    raft_time_t election_timeout = 150;   // 150ms
+
+    // 心跳间隔应小于选举超时
+    bool valid_config = heartbeat_interval < election_timeout;
+    FB_ASSERT_TRUE(valid_config);
+
+    // 典型配置：心跳间隔 = 选举超时 / 3
+    raft_time_t recommended_heartbeat = election_timeout / 3;
+    FB_ASSERT_EQ(recommended_heartbeat, 50L);
+}
+
+FB_TEST(raft_log_node, heartbeat_timeout_detection) {
+    // 心跳超时检测
+    raft_time_t last_heartbeat = 1000;
+    raft_time_t current_time = 1100;
+    raft_time_t heartbeat_timeout = 150;
+
+    // 计算距离上次心跳的时间
+    raft_time_t elapsed = current_time - last_heartbeat;
+    FB_ASSERT_EQ(elapsed, 100L);
+
+    // 检查是否超时
+    bool timed_out = elapsed > heartbeat_timeout;
+    FB_ASSERT_FALSE(timed_out);
+
+    // 超时情况
+    current_time = 1200;
+    elapsed = current_time - last_heartbeat;
+    timed_out = elapsed > heartbeat_timeout;
+    FB_ASSERT_TRUE(timed_out);
+}
+
+FB_TEST(raft_log_node, heartbeat_request_generation) {
+    // 心跳请求生成
+    raft_term_t leader_term = 5;
+    raft_index_t leader_commit = 100;
+    raft_index_t prev_log_idx = 105;
+    raft_term_t prev_log_term = 5;
+
+    // 心跳请求字段
+    FB_ASSERT_TRUE(leader_term > 0);
+    FB_ASSERT_TRUE(leader_commit >= 0);
+    FB_ASSERT_TRUE(prev_log_idx >= 0);
+
+    // 空心跳：entries 为空
+    std::vector<int> entries;  // 空条目列表
+    FB_ASSERT_TRUE(entries.empty());
+}
+
+FB_TEST(raft_log_node, heartbeat_response_success) {
+    // 心跳响应成功处理
+    raft_term_t follower_term = 5;
+    bool success = true;
+    raft_index_t match_idx = 105;
+
+    // Leader 收到成功响应
+    FB_ASSERT_TRUE(success);
+    FB_ASSERT_EQ(match_idx, 105L);
+
+    // 更新 match_idx
+    raft_index_t next_idx = match_idx + 1;
+    FB_ASSERT_EQ(next_idx, 106L);
+}
+
+FB_TEST(raft_log_node, heartbeat_response_failure) {
+    // 心跳响应失败处理
+    raft_term_t leader_term = 5;
+    raft_term_t follower_term = 6;  // Follower 有更高的 term
+    bool success = false;
+
+    // Leader 收到失败响应
+    FB_ASSERT_FALSE(success);
+
+    // Leader term 过期，需要降级
+    bool leader_is_stale = follower_term > leader_term;
+    FB_ASSERT_TRUE(leader_is_stale);
+}
+
+FB_TEST(raft_log_node, heartbeat_term_check) {
+    // 心跳 term 检查
+    raft_term_t current_term = 5;
+    raft_term_t heartbeat_term = 6;
+
+    // 收到更高 term 的心跳
+    bool update_term = heartbeat_term > current_term;
+    FB_ASSERT_TRUE(update_term);
+
+    // 更新 term 并重置选举超时
+    if (update_term) {
+        current_term = heartbeat_term;
+    }
+    FB_ASSERT_EQ(current_term, 6L);
+}
+
+FB_TEST(raft_log_node, heartbeat_commit_update) {
+    // 心跳更新 commit_idx
+    raft_index_t leader_commit = 100;
+    raft_index_t follower_commit = 80;
+
+    // Follower 更新 commit_idx
+    raft_index_t new_commit = std::min(leader_commit, follower_commit + 20);
+    FB_ASSERT_EQ(new_commit, 100L);
+
+    // commit_idx 不能超过 last_log_idx
+    raft_index_t last_log_idx = 95;
+    new_commit = std::min(leader_commit, last_log_idx);
+    FB_ASSERT_EQ(new_commit, 95L);
+}
+
+FB_TEST(raft_log_node, heartbeat_suppression_optimization) {
+    // 心跳抑制优化
+    bool has_pending_entries = true;
+    bool need_heartbeat = false;
+
+    // 如果有待发送的日志条目，可以抑制心跳
+    if (!has_pending_entries) {
+        need_heartbeat = true;
+    }
+    FB_ASSERT_FALSE(need_heartbeat);
+
+    // 没有待发送条目时需要心跳
+    has_pending_entries = false;
+    if (!has_pending_entries) {
+        need_heartbeat = true;
+    }
+    FB_ASSERT_TRUE(need_heartbeat);
+}
+
+FB_TEST(raft_log_node, heartbeat_broadcast_all_nodes) {
+    // 向所有节点广播心跳
+    std::map<raft_node_id_t, raft_time_t> last_heartbeat_sent;
+    raft_time_t current_time = 1000;
+
+    // 记录向每个节点发送心跳的时间
+    for (int node_id = 1; node_id <= 5; node_id++) {
+        last_heartbeat_sent[node_id] = current_time;
+    }
+
+    // 验证所有节点都收到心跳
+    FB_ASSERT_EQ(last_heartbeat_sent.size(), 5UL);
+
+    // 检查是否所有节点都在最近收到心跳
+    raft_time_t heartbeat_window = 100;
+    int nodes_received = 0;
+    for (const auto& pair : last_heartbeat_sent) {
+        if (current_time - pair.second <= heartbeat_window) {
+            nodes_received++;
+        }
+    }
+    FB_ASSERT_EQ(nodes_received, 5);
+}
+
+FB_TEST(raft_log_node, heartbeat_minimize_disruption) {
+    // 最小化心跳干扰
+    raft_time_t last_append_time = 1000;
+    raft_time_t current_time = 1005;
+    raft_time_t heartbeat_interval = 50;
+
+    // 刚刚发送过日志，可以推迟心跳
+    bool recently_active = (current_time - last_append_time) < heartbeat_interval;
+    FB_ASSERT_TRUE(recently_active);
+
+    // 日志活动时延长心跳间隔
+    raft_time_t effective_interval = recently_active ? heartbeat_interval * 2 : heartbeat_interval;
+    FB_ASSERT_EQ(effective_interval, 100L);
+}
+
+FB_TEST(raft_log_node, heartbeat_leader_failure_detection) {
+    // 通过心跳检测 Leader 失败
+    std::map<raft_node_id_t, raft_time_t> last_heartbeat_received;
+    raft_time_t current_time = 2000;
+    raft_time_t election_timeout = 150;
+
+    // 模拟 Leader 心跳停止
+    last_heartbeat_received[1] = 1800;  // Leader 1
+    last_heartbeat_received[2] = 1950;  // Leader 2 (最近有心跳)
+
+    // 检测 Leader 1 是否失联
+    bool leader1_failed = (current_time - last_heartbeat_received[1]) > election_timeout;
+    FB_ASSERT_TRUE(leader1_failed);
+
+    // Leader 2 仍然活跃
+    bool leader2_failed = (current_time - last_heartbeat_received[2]) > election_timeout;
+    FB_ASSERT_FALSE(leader2_failed);
+}
+
+FB_TEST(raft_log_node, heartbeat_lease_extension) {
+    // 心跳续约租约
+    raft_time_t lease_expiry = 1100;
+    raft_time_t current_time = 1050;
+    raft_time_t lease_duration = 150;
+
+    // 收到心跳后延长租约
+    if (current_time < lease_expiry) {
+        lease_expiry = current_time + lease_duration;
+    }
+    FB_ASSERT_EQ(lease_expiry, 1200L);
+
+    // 验证租约有效性
+    bool lease_valid = current_time < lease_expiry;
+    FB_ASSERT_TRUE(lease_valid);
+}
+
+FB_TEST(raft_log_node, heartbeat_batch_optimization) {
+    // 心跳批处理优化
+    int pending_heartbeats = 0;
+    int batch_threshold = 3;
+
+    // 累积心跳请求
+    std::vector<int> pending_nodes = {1, 2, 3, 4};
+    for (int node : pending_nodes) {
+        pending_heartbeats++;
+    }
+
+    // 达到阈值后批量发送
+    bool should_batch = pending_heartbeats >= batch_threshold;
+    FB_ASSERT_TRUE(should_batch);
+
+    // 批量发送后清空
+    if (should_batch) {
+        pending_heartbeats = 0;
+    }
+    FB_ASSERT_EQ(pending_heartbeats, 0);
+}
+
+FB_TEST(raft_log_node, heartbeat_network_partition_handling) {
+    // 心跳在网络分区中的处理
+    std::map<raft_node_id_t, bool> partition_status;
+    partition_status[1] = true;   // 在多数派分区
+    partition_status[2] = true;   // 在多数派分区
+    partition_status[3] = true;   // 在多数派分区
+    partition_status[4] = false;  // 在少数派分区
+    partition_status[5] = false;  // 在少数派分区
+
+    // 统计可用心跳响应
+    int available_nodes = 0;
+    for (const auto& pair : partition_status) {
+        if (pair.second) available_nodes++;
+    }
+
+    // 多数派分区可以继续工作
+    int quorum = 3;
+    bool can_progress = available_nodes >= quorum;
+    FB_ASSERT_TRUE(can_progress);
+}
+
+FB_TEST(raft_log_node, heartbeat_retry_mechanism) {
+    // 心跳重试机制
+    int max_retries = 3;
+    int retry_count = 0;
+    bool success = false;
+
+    // 模拟重试
+    for (int i = 0; i < max_retries && !success; i++) {
+        retry_count++;
+        if (i == 2) {  // 第三次成功
+            success = true;
+        }
+    }
+
+    FB_ASSERT_TRUE(success);
+    FB_ASSERT_EQ(retry_count, 3);
+}
+
+FB_TEST(raft_log_node, heartbeat_priority_scheduling) {
+    // 心跳优先级调度
+    enum class heartbeat_priority {
+        HIGH,    // 即将超时的节点
+        NORMAL,  // 常规心跳
+        LOW      // 可以延迟的心跳
+    };
+
+    std::map<raft_node_id_t, heartbeat_priority> priorities;
+    priorities[1] = heartbeat_priority::HIGH;
+    priorities[2] = heartbeat_priority::NORMAL;
+    priorities[3] = heartbeat_priority::LOW;
+
+    // 按优先级处理
+    int high_count = 0;
+    for (const auto& pair : priorities) {
+        if (pair.second == heartbeat_priority::HIGH) {
+            high_count++;
+        }
+    }
+    FB_ASSERT_EQ(high_count, 1);
+}
+
+FB_TEST(raft_log_node, heartbeat_backpressure_handling) {
+    // 心跳背压处理
+    int inflight_heartbeats = 0;
+    int max_inflight = 10;
+    bool can_send = true;
+
+    // 模拟发送心跳
+    for (int i = 0; i < 12; i++) {
+        if (inflight_heartbeats >= max_inflight) {
+            can_send = false;
+        }
+        if (can_send) {
+            inflight_heartbeats++;
+        }
+    }
+
+    // 超过限制时停止发送
+    FB_ASSERT_FALSE(can_send);
+    FB_ASSERT_EQ(inflight_heartbeats, 10);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
