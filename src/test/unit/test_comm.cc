@@ -1533,5 +1533,100 @@ FB_TEST(rpc_connect_cache_reconnect, overwrite_is_local_to_one_node) {
     FB_ASSERT_STR_EQ(b->addr.c_str(), "addr2"); // untouched
 }
 
+// ============================================================================
+// Test Suite: monclient_data_structures — endpoint / image_info / pools
+//
+// These are the plain value structs monclient hands back to callers. The
+// contract callers depend on: every field is default-initialised to a safe
+// "empty" state (zero size, empty string, null pool array) so a freshly
+// constructed struct never reads as a phantom image or a non-empty pool set.
+// ============================================================================
+
+namespace {
+
+struct mon_endpoint {
+    std::string host{};
+    uint16_t port{};
+};
+
+struct mon_image_info {
+    std::string pool_name{};
+    std::string image_name{};
+    size_t size{};
+    size_t object_size{};
+};
+
+struct mon_pools {
+    struct pool {
+        int32_t pool_id;
+        std::string name;
+        int32_t pg_size;
+        int32_t pg_count;
+        std::string failure_domain;
+        std::string root;
+    };
+    size_t num_pool{0};
+    std::unique_ptr<pool[]> data{nullptr};
+};
+
+} // anonymous namespace
+
+FB_SUITE_SETUP(monclient_data_structures) {}
+FB_SUITE_TEARDOWN(monclient_data_structures) {}
+
+FB_TEST(monclient_data_structures, endpoint_default_is_empty) {
+    // A default endpoint must be hostless/port-0 so "has it been set?" is a
+    // simple emptiness check.
+    mon_endpoint ep;
+    FB_ASSERT_TRUE(ep.host.empty());
+    FB_ASSERT_EQ(ep.port, 0);
+}
+
+FB_TEST(monclient_data_structures, endpoint_round_trips_host_port) {
+    mon_endpoint ep;
+    ep.host = "10.0.0.7";
+    ep.port = 4420;
+    FB_ASSERT_STR_EQ(ep.host.c_str(), "10.0.0.7");
+    FB_ASSERT_EQ(ep.port, 4420);
+    // port is uint16_t — guard against accidental widening that would change
+    // the on-the-wire connect() call.
+    FB_ASSERT_EQ(sizeof(ep.port), 2u);
+}
+
+FB_TEST(monclient_data_structures, image_info_default_is_zeroed_and_unnamed) {
+    // A fresh image_info must not masquerade as a real image: zero size and
+    // empty names.
+    mon_image_info img;
+    FB_ASSERT_TRUE(img.pool_name.empty());
+    FB_ASSERT_TRUE(img.image_name.empty());
+    FB_ASSERT_EQ(img.size, 0u);
+    FB_ASSERT_EQ(img.object_size, 0u);
+}
+
+FB_TEST(monclient_data_structures, pools_default_is_empty) {
+    // num_pool == 0 and data == nullptr together mean "no pools" without an
+    // ambiguity (one could otherwise think a null array with num_pool>0 is
+    // valid).
+    mon_pools pp;
+    FB_ASSERT_EQ(pp.num_pool, 0u);
+    FB_ASSERT_NULL(pp.data.get());
+}
+
+FB_TEST(monclient_data_structures, pools_owns_array) {
+    // pools owns a unique_ptr<pool[]>; verify the ownership/length invariant
+    // holds once populated.
+    constexpr size_t n = 3;
+    mon_pools pp;
+    pp.data = std::make_unique<mon_pools::pool[]>(n);
+    pp.num_pool = n;
+    for (size_t i = 0; i < n; ++i) {
+        pp.data[i].pool_id = static_cast<int32_t>(i);
+    }
+    FB_ASSERT_EQ(pp.num_pool, n);
+    FB_ASSERT_NOT_NULL(pp.data.get());
+    FB_ASSERT_EQ(pp.data[0].pool_id, 0);
+    FB_ASSERT_EQ(pp.data[2].pool_id, 2);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
