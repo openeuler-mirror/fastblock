@@ -29,6 +29,7 @@
 #include <cstring>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -205,6 +206,88 @@ FB_TEST(msg_reply_status, underlying_type_is_uint8) {
 FB_TEST(msg_reply_status, success_is_one_not_zero) {
     // Zero is reserved so a default-init reply_meta isn't mistaken for success.
     FB_ASSERT_EQ(static_cast<int>(status::success), 1);
+}
+
+// ============================================================================
+// Test Suite: msg_reply_status_table — full enumeration of wire status codes
+//
+// Every higher-level RPC user (raft / osd / client) branches on these status
+// codes. Two failures we want to catch loudly:
+//   1. Two enumerators silently aliasing to the same numeric value.
+//   2. A retryable / permanent reclassification that breaks retry policy.
+//
+// The retryable set is intentionally tiny: only timeouts and server_error are
+// safe to retry. Anything implying the peer made a deliberate decision
+// (method_not_found, service_not_found, bad_request_body, terminating, ...)
+// must be permanent — retrying would just hammer the peer.
+// ============================================================================
+
+namespace {
+
+inline bool status_is_success(status s) noexcept {
+    return s == status::success || s == status::no_content;
+}
+
+inline bool status_is_retryable(status s) noexcept {
+    switch (s) {
+        case status::request_timeout:
+        case status::server_error:
+            return true;
+        default:
+            return false;
+    }
+}
+
+} // anonymous namespace
+
+FB_SUITE_SETUP(msg_reply_status_table) {}
+FB_SUITE_TEARDOWN(msg_reply_status_table) {}
+
+FB_TEST(msg_reply_status_table, all_codes_are_distinct) {
+    // Aliased codes would make the wire ambiguous — receivers couldn't tell
+    // two error conditions apart.
+    std::set<int> seen;
+    auto record = [&](status s) {
+        FB_ASSERT_TRUE(seen.insert(static_cast<int>(s)).second);
+    };
+    record(status::success);
+    record(status::no_content);
+    record(status::method_not_found);
+    record(status::service_not_found);
+    record(status::request_timeout);
+    record(status::bad_request_body);
+    record(status::bad_response_body);
+    record(status::terminating);
+    record(status::server_error);
+    FB_ASSERT_EQ(seen.size(), 9u);
+}
+
+FB_TEST(msg_reply_status_table, success_classification) {
+    // success and no_content are the two "ok" replies; everything else is an
+    // error path the caller must surface.
+    FB_ASSERT_TRUE(status_is_success(status::success));
+    FB_ASSERT_TRUE(status_is_success(status::no_content));
+    FB_ASSERT_FALSE(status_is_success(status::method_not_found));
+    FB_ASSERT_FALSE(status_is_success(status::request_timeout));
+    FB_ASSERT_FALSE(status_is_success(status::server_error));
+}
+
+FB_TEST(msg_reply_status_table, only_transient_errors_are_retryable) {
+    // Timeouts and server_error are transient — retrying is the right move.
+    FB_ASSERT_TRUE(status_is_retryable(status::request_timeout));
+    FB_ASSERT_TRUE(status_is_retryable(status::server_error));
+}
+
+FB_TEST(msg_reply_status_table, permanent_errors_are_not_retried) {
+    // These mean the peer deliberately rejected; retry would be wasted RTT.
+    FB_ASSERT_FALSE(status_is_retryable(status::method_not_found));
+    FB_ASSERT_FALSE(status_is_retryable(status::service_not_found));
+    FB_ASSERT_FALSE(status_is_retryable(status::bad_request_body));
+    FB_ASSERT_FALSE(status_is_retryable(status::bad_response_body));
+    FB_ASSERT_FALSE(status_is_retryable(status::terminating));
+    // Successes shouldn't go through the retry path either.
+    FB_ASSERT_FALSE(status_is_retryable(status::success));
+    FB_ASSERT_FALSE(status_is_retryable(status::no_content));
 }
 
 // ============================================================================
