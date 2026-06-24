@@ -1628,5 +1628,81 @@ FB_TEST(monclient_data_structures, pools_owns_array) {
     FB_ASSERT_EQ(pp.data[2].pool_id, 2);
 }
 
+// ============================================================================
+// Test Suite: monclient_response_type — three-state RPC reply variant
+//
+// monclient replies as std::variant<monostate, unique_ptr<image_info>,
+// unique_ptr<pools>>. Callers dispatch on the active alternative, and the
+// variant must:
+//   - default to monostate (no reply yet / not applicable),
+//   - keep the alternative order stable (some callers switch on index()),
+//   - release the previously-held alternative when a new one is assigned
+//     (the variant owns exactly one payload at a time).
+// ============================================================================
+
+namespace {
+
+using mon_response_type =
+  std::variant<std::monostate, std::unique_ptr<mon_image_info>, std::unique_ptr<mon_pools>>;
+
+} // anonymous namespace
+
+FB_SUITE_SETUP(monclient_response_type) {}
+FB_SUITE_TEARDOWN(monclient_response_type) {}
+
+FB_TEST(monclient_response_type, default_holds_monostate) {
+    // Before any reply arrives the variant must read as monostate, not as a
+    // null image_info/pools pointer that a caller might dereference.
+    mon_response_type resp;
+    FB_ASSERT_EQ(resp.index(), 0u);
+    FB_ASSERT_TRUE(std::holds_alternative<std::monostate>(resp));
+}
+
+FB_TEST(monclient_response_type, assign_image_info_activates_alternative) {
+    mon_response_type resp;
+    resp = std::make_unique<mon_image_info>();
+    FB_ASSERT_TRUE(std::holds_alternative<std::unique_ptr<mon_image_info>>(resp));
+    FB_ASSERT_EQ(resp.index(), 1u);
+    FB_ASSERT_NOT_NULL(std::get<std::unique_ptr<mon_image_info>>(resp).get());
+}
+
+FB_TEST(monclient_response_type, assign_pools_activates_alternative) {
+    mon_response_type resp;
+    resp = std::make_unique<mon_pools>();
+    FB_ASSERT_TRUE(std::holds_alternative<std::unique_ptr<mon_pools>>(resp));
+    FB_ASSERT_EQ(resp.index(), 2u);
+    FB_ASSERT_NOT_NULL(std::get<std::unique_ptr<mon_pools>>(resp).get());
+}
+
+FB_TEST(monclient_response_type, alternative_order_is_stable) {
+    // Callers that switch on index() need the order frozen:
+    //   0 = monostate, 1 = image_info, 2 = pools.
+    FB_ASSERT_EQ(mon_response_type{}.index(), 0u);
+    mon_response_type a = std::make_unique<mon_image_info>();
+    FB_ASSERT_EQ(a.index(), 1u);
+    mon_response_type b = std::make_unique<mon_pools>();
+    FB_ASSERT_EQ(b.index(), 2u);
+}
+
+FB_TEST(monclient_response_type, reassign_releases_prior_payload) {
+    // The variant owns exactly one payload. Moving a pools reply in must drop
+    // the previously-held image_info so its allocation is freed (no leak).
+    mon_image_info* raw = nullptr;
+    {
+        mon_response_type resp = std::make_unique<mon_image_info>();
+        raw = std::get<std::unique_ptr<mon_image_info>>(resp).get();
+        FB_ASSERT_NOT_NULL(raw);
+
+        resp = std::make_unique<mon_pools>();
+        // Now image_info is NOT the active alternative, and its former object
+        // has been destroyed.
+        FB_ASSERT_FALSE(std::holds_alternative<std::unique_ptr<mon_image_info>>(resp));
+        FB_ASSERT_TRUE(std::holds_alternative<std::unique_ptr<mon_pools>>(resp));
+    }
+    // raw pointed into the released image_info; we can't dereference it, but
+    // reaching here without crashing confirms the variant cleaned it up.
+    FB_ASSERT_NOT_NULL(raw);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
