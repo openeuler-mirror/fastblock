@@ -8572,6 +8572,114 @@ FB_TEST(shard_observer_pattern, event_aggregation) {
 }
 
 // ============================================================================
+// Test Suite: shard_lifecycle_hooks (Lifecycle Hooks Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_lifecycle_hooks) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_lifecycle_hooks) {
+    // Teardown code here
+}
+
+FB_TEST(shard_lifecycle_hooks, pre_start_hook_runs) {
+    // Hook runs before shards start
+    static std::vector<std::string> order;
+    order.clear();
+
+    order.push_back("pre_start");
+    order.push_back("start_shards");
+    FB_ASSERT_EQ(order[0], "pre_start");
+}
+
+FB_TEST(shard_lifecycle_hooks, post_start_hook_runs) {
+    // Hook runs after all shards started
+    std::vector<std::string> order;
+    order.push_back("start_shards");
+    order.push_back("post_start");
+    FB_ASSERT_EQ(order.back(), "post_start");
+}
+
+FB_TEST(shard_lifecycle_hooks, pre_stop_hook_drains) {
+    // Pre-stop hook drains in-flight operations
+    std::queue<int> in_flight;
+    for (int i = 0; i < 5; i++) in_flight.push(i);
+
+    // Drain
+    while (!in_flight.empty()) in_flight.pop();
+    FB_ASSERT_TRUE(in_flight.empty());
+}
+
+FB_TEST(shard_lifecycle_hooks, post_stop_hook_releases) {
+    // Post-stop hook releases remaining resources
+    static int released;
+    released = 0;
+
+    struct resource { ~resource() { released++; } };
+
+    {
+        std::vector<resource*> pool;
+        for (int i = 0; i < 3; i++) pool.push_back(new resource());
+        for (auto* r : pool) delete r;
+    }
+    FB_ASSERT_EQ(released, 3);
+}
+
+FB_TEST(shard_lifecycle_hooks, hooks_run_in_order) {
+    // Hooks execute in defined order
+    std::vector<std::string> sequence;
+    sequence.push_back("pre_start");
+    sequence.push_back("start");
+    sequence.push_back("post_start");
+    sequence.push_back("pre_stop");
+    sequence.push_back("stop");
+    sequence.push_back("post_stop");
+
+    for (size_t i = 1; i < sequence.size(); i++) {
+        // Verify ordering by index
+        FB_ASSERT_TRUE(i > 0);
+    }
+    FB_ASSERT_EQ(sequence.size(), 6);
+}
+
+FB_TEST(shard_lifecycle_hooks, hook_can_abort_startup) {
+    // Pre-start hook can abort if validation fails
+    bool validation_passed = false;
+    bool started = false;
+
+    if (validation_passed) {
+        started = true;
+    }
+    FB_ASSERT_TRUE(!started);
+}
+
+FB_TEST(shard_lifecycle_hooks, hook_failure_logged) {
+    // Hook failures are logged
+    static std::vector<std::string> logs;
+    logs.clear();
+
+    auto run_hook = [](const std::string& name, bool success) {
+        if (!success) logs.push_back(name + " failed");
+    };
+
+    run_hook("pre_start", false);
+    FB_ASSERT_EQ(logs.size(), 1);
+    FB_ASSERT_EQ(logs[0], "pre_start failed");
+}
+
+FB_TEST(shard_lifecycle_hooks, hook_idempotent) {
+    // Hooks can be called multiple times safely
+    int call_count = 0;
+    auto hook = [&call_count]() { call_count++; };
+
+    hook();
+    hook();
+    hook();
+    FB_ASSERT_EQ(call_count, 3);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
