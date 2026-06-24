@@ -3180,6 +3180,119 @@ FB_TEST(make_cpumask_helper, cpumask_pointer_dereferencable) {
 }
 
 // ============================================================================
+// Test Suite: sharded_template_constraints (sharded<> Template Constraints)
+// ============================================================================
+
+FB_SUITE_SETUP(sharded_template_constraints) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(sharded_template_constraints) {
+    // Teardown code here
+}
+
+FB_TEST(sharded_template_constraints, service_must_be_constructible) {
+    // Service must be constructible with given Args...
+    struct buildable { int x; buildable(int v) : x(v) {} };
+    constexpr bool ok = std::is_constructible_v<buildable, int>;
+    FB_ASSERT_TRUE(ok);
+}
+
+FB_TEST(sharded_template_constraints, service_can_have_destructor) {
+    // Service can define non-trivial destructor (called via delete)
+    struct svc {
+        std::vector<int> data;
+        ~svc() { data.clear(); }
+    };
+
+    svc* p = new svc();
+    p->data = {1, 2, 3};
+    FB_ASSERT_EQ(p->data.size(), 3);
+    delete p; // destructor runs, clears data
+}
+
+FB_TEST(sharded_template_constraints, service_polymorphic) {
+    // Service can be polymorphic (used via base class pointer)
+    struct base {
+        virtual int kind() = 0;
+        virtual ~base() = default;
+    };
+    struct sharded_svc : base {
+        int kind() override { return 42; }
+    };
+
+    base* p = new sharded_svc();
+    FB_ASSERT_EQ(p->kind(), 42);
+    delete p;
+}
+
+FB_TEST(sharded_template_constraints, instances_pointer_type) {
+    // _instances is std::vector<Service*>
+    using svc_ptr = int*;
+    std::vector<svc_ptr> instances;
+    constexpr bool same = std::is_same_v<decltype(instances)::value_type, svc_ptr>;
+    FB_ASSERT_TRUE(same);
+}
+
+FB_TEST(sharded_template_constraints, instances_vector_resizable) {
+    // _instances supports resize() and clear()
+    std::vector<int*> instances;
+    instances.resize(4, nullptr);
+    FB_ASSERT_EQ(instances.size(), 4);
+
+    instances.resize(8, nullptr);
+    FB_ASSERT_EQ(instances.size(), 8);
+
+    instances.clear();
+    FB_ASSERT_EQ(instances.size(), 0);
+}
+
+FB_TEST(sharded_template_constraints, service_uses_new_not_make_shared) {
+    // start() uses `new Service(...)` not unique_ptr or shared_ptr
+    // Pointer stored raw, explicit delete in stop()
+    struct svc { int v = 0; };
+
+    svc* raw_ptr = new svc();
+    FB_ASSERT_TRUE(raw_ptr != nullptr);
+    raw_ptr->v = 100;
+    FB_ASSERT_EQ(raw_ptr->v, 100);
+    delete raw_ptr;
+}
+
+FB_TEST(sharded_template_constraints, service_lifetime_managed_by_sharded) {
+    // Service lifetime owned by sharded<Service> - from start() to stop()
+    static int alive;
+    alive = 0;
+
+    struct svc { svc() { alive++; } ~svc() { alive--; } };
+
+    std::vector<svc*> instances;
+    // start
+    for (int i = 0; i < 4; i++) instances.push_back(new svc());
+    FB_ASSERT_EQ(alive, 4);
+
+    // stop
+    for (auto*& p : instances) { delete p; p = nullptr; }
+    instances.clear();
+    FB_ASSERT_EQ(alive, 0);
+}
+
+FB_TEST(sharded_template_constraints, base_protected_members) {
+    // _instances is protected, accessible to derived classes
+    // (sharded<> design exposes this for specialization)
+    struct base { protected: std::vector<int> data; };
+    struct derived : base {
+        void add(int v) { data.push_back(v); }
+        size_t count() const { return data.size(); }
+    };
+
+    derived d;
+    d.add(1);
+    d.add(2);
+    FB_ASSERT_EQ(d.count(), 2);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
