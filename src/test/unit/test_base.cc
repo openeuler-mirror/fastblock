@@ -1575,7 +1575,8 @@ FB_TEST(shard_construction, shard_core_pushback) {
     for (uint32_t c : source) {
         collected.push_back(c);
     }
-    FB_ASSERT_EQ(collected, source);
+    FB_ASSERT_TRUE(collected == source);
+    FB_ASSERT_EQ(collected.size(), source.size());
 }
 
 FB_TEST(shard_construction, cpuset_zero_then_set_pattern) {
