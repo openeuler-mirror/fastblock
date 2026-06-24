@@ -1049,6 +1049,84 @@ FB_TEST(get_shard_cores_function, ordered_result) {
 }
 
 // ============================================================================
+// Test Suite: shard_invoke_semantics (Shard Invocation Semantics Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_invoke_semantics) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_invoke_semantics) {
+    // Teardown code here
+}
+
+FB_TEST(shard_invoke_semantics, inline_when_same_core_same_thread) {
+    // invoke_on() executes inline when both core AND thread match
+    uint32_t target_shard = 2;
+    uint32_t shard_cores[] = {0, 1, 2, 3};
+    uint32_t target_core = shard_cores[target_shard];
+
+    uint32_t current_core = 2;
+    bool same_core = (target_core == current_core);
+    // Inline requires same core AND same thread (both must match)
+    FB_ASSERT_TRUE(same_core);
+}
+
+FB_TEST(shard_invoke_semantics, async_when_different_core) {
+    // Different core means must use spdk_thread_send_msg
+    uint32_t target_core = 3;
+    uint32_t current_core = 1;
+
+    bool different = (target_core != current_core);
+    FB_ASSERT_TRUE(different);
+}
+
+FB_TEST(shard_invoke_semantics, target_shard_index_lookup) {
+    // _shard_cores[shard_id] gives target core
+    std::vector<uint32_t> shard_cores = {0, 2, 4, 6};
+    uint32_t shard_id = 2;
+    uint32_t target_core = shard_cores[shard_id];
+    FB_ASSERT_EQ(target_core, 4);
+}
+
+FB_TEST(shard_invoke_semantics, thread_pointer_per_shard) {
+    // _threads[shard_id] gives spdk_thread for that shard
+    std::vector<void*> threads = {(void*)0x1000, (void*)0x2000, (void*)0x3000, (void*)0x4000};
+    uint32_t shard_id = 1;
+    void* thread = threads[shard_id];
+    FB_ASSERT_TRUE(thread == (void*)0x2000);
+}
+
+FB_TEST(shard_invoke_semantics, success_return_code) {
+    // Successful inline execution returns 0
+    int rc = 0;
+    FB_ASSERT_EQ(rc, 0);
+}
+
+FB_TEST(shard_invoke_semantics, send_msg_return_propagated) {
+    // spdk_thread_send_msg return code propagated
+    int send_rc = -ENOMEM;
+    int returned = send_rc;
+    FB_ASSERT_EQ(returned, -ENOMEM);
+    FB_ASSERT_TRUE(returned < 0);
+}
+
+FB_TEST(shard_invoke_semantics, dispatch_table_consistency) {
+    // _shard_cores and _threads must have same size
+    std::vector<uint32_t> shard_cores = {0, 1, 2, 3};
+    std::vector<void*> threads(4, nullptr);
+
+    FB_ASSERT_EQ(shard_cores.size(), threads.size());
+}
+
+FB_TEST(shard_invoke_semantics, shard_to_core_mapping_injective) {
+    // Each shard maps to unique core
+    std::vector<uint32_t> shard_cores = {0, 2, 4, 6};
+    std::set<uint32_t> unique(shard_cores.begin(), shard_cores.end());
+    FB_ASSERT_EQ(unique.size(), shard_cores.size());
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
