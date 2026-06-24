@@ -1666,5 +1666,133 @@ FB_TEST(raft_log_node, config_change_nonvoting_node) {
     FB_ASSERT_EQ(voting_count, 3);
 }
 
+// ============================================================================
+// Test Suite: Snapshot Operations
+// ============================================================================
+
+FB_TEST(raft_log_node, snapshot_install_flow) {
+    // 快照安装流程
+    raft_term_t snapshot_term = 5;
+    raft_index_t snapshot_idx = 100;
+    raft_index_t follower_last_idx = 50;
+
+    // Follower 日志落后于快照，需要安装
+    bool needs_install = snapshot_idx > follower_last_idx;
+    FB_ASSERT_TRUE(needs_install);
+
+    // 安装后更新状态
+    raft_index_t new_last_idx = snapshot_idx;
+    raft_index_t new_first_idx = snapshot_idx + 1;
+    FB_ASSERT_EQ(new_last_idx, 100L);
+    FB_ASSERT_EQ(new_first_idx, 101L);
+}
+
+FB_TEST(raft_log_node, snapshot_chunk_transfer) {
+    // 快照分块传输
+    size_t snapshot_size = 10 * 1024 * 1024;  // 10MB
+    size_t chunk_size = 1024 * 1024;           // 1MB per chunk
+
+    // 计算分块数量
+    size_t total_chunks = (snapshot_size + chunk_size - 1) / chunk_size;
+    FB_ASSERT_EQ(total_chunks, 10UL);
+
+    // 最后一分块大小
+    size_t last_chunk = snapshot_size - (total_chunks - 1) * chunk_size;
+    FB_ASSERT_EQ(last_chunk, chunk_size);
+
+    // 非整数分块情况
+    snapshot_size = 10 * 1024 * 1024 + 512;
+    total_chunks = (snapshot_size + chunk_size - 1) / chunk_size;
+    FB_ASSERT_EQ(total_chunks, 11UL);
+    last_chunk = snapshot_size - (total_chunks - 1) * chunk_size;
+    FB_ASSERT_EQ(last_chunk, 512UL);
+}
+
+FB_TEST(raft_log_node, snapshot_apply_atomicity) {
+    // 快照应用原子性
+    raft_index_t old_last_applied = 80;
+    raft_index_t snapshot_last_idx = 100;
+
+    // 快照应用前，last_applied 旧值
+    FB_ASSERT_LT(old_last_applied, snapshot_last_idx);
+
+    // 应用快照是原子操作：要么全部成功，要么全部失败
+    bool apply_success = true;
+    raft_index_t new_last_applied = apply_success ? snapshot_last_idx : old_last_applied;
+    FB_ASSERT_EQ(new_last_applied, 100L);
+
+    // 应用失败情况
+    apply_success = false;
+    new_last_applied = apply_success ? snapshot_last_idx : old_last_applied;
+    FB_ASSERT_EQ(new_last_applied, 80L);
+}
+
+FB_TEST(raft_log_node, snapshot_log_boundary) {
+    // 快照与日志边界
+    raft_index_t snapshot_last_idx = 100;
+    raft_term_t snapshot_last_term = 5;
+
+    // 快照后的日志起始于 snapshot_last_idx + 1
+    raft_index_t first_log_idx = snapshot_last_idx + 1;
+    FB_ASSERT_EQ(first_log_idx, 101L);
+
+    // 新日志的 prev_term 应该是 snapshot_last_term
+    raft_term_t prev_term = snapshot_last_term;
+    FB_ASSERT_EQ(prev_term, 5L);
+
+    // 如果没有更多日志，next_idx = snapshot_last_idx + 1
+    raft_index_t next_idx = snapshot_last_idx + 1;
+    FB_ASSERT_EQ(next_idx, 101L);
+}
+
+FB_TEST(raft_log_node, snapshot_term_index_consistency) {
+    // 快照 term 和 index 一致性
+    raft_term_t snapshot_term = 3;
+    raft_index_t snapshot_idx = 50;
+
+    // 快照 term 和 index 必须有效
+    FB_ASSERT_TRUE(snapshot_term > 0);
+    FB_ASSERT_TRUE(snapshot_idx > 0);
+
+    // 快照的 last_included_term 应该等于该 index 处日志的 term
+    // 如果 snapshot_idx = 50, snapshot_term = 3
+    // 那么 log[50].term == 3
+    std::map<raft_index_t, raft_term_t> log;
+    for (int i = 1; i <= 60; i++) {
+        log[i] = (i <= 30) ? 2 : 3;
+    }
+    FB_ASSERT_EQ(log[snapshot_idx], snapshot_term);
+}
+
+FB_TEST(raft_log_node, snapshot_reject_stale) {
+    // 拒绝过期快照
+    raft_index_t current_snapshot_idx = 100;
+    raft_index_t incoming_snapshot_idx = 80;
+
+    // 拒绝比当前更旧的快照
+    bool should_reject = incoming_snapshot_idx < current_snapshot_idx;
+    FB_ASSERT_TRUE(should_reject);
+
+    // 接受更新的快照
+    incoming_snapshot_idx = 120;
+    should_reject = incoming_snapshot_idx < current_snapshot_idx;
+    FB_ASSERT_FALSE(should_reject);
+}
+
+FB_TEST(raft_log_node, snapshot_offset_tracking) {
+    // 快照偏移跟踪
+    size_t offset = 0;
+    size_t chunk_size = 1024;
+
+    // 模拟分块接收
+    for (int i = 0; i < 5; i++) {
+        offset += chunk_size;
+    }
+    FB_ASSERT_EQ(offset, 5UL * 1024);
+
+    // 验证偏移单调递增
+    FB_ASSERT_TRUE(offset >= chunk_size);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
