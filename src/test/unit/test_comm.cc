@@ -1379,5 +1379,70 @@ FB_TEST(msg_reply_meta, status_round_trips_through_buffer) {
     FB_ASSERT_EQ(in.reply_status, wire_status);
 }
 
+// ============================================================================
+// Test Suite: msg_iterate_tag — connection-scoped iteration control
+//
+// iterate_tag is the return value the transport's per-connection iteration
+// callback hands back: 'keep' to continue visiting connections, 'stop' to
+// terminate early (e.g. once a target is found). It starts at 1 so a
+// default-zero return can't be mistaken for "keep iterating".
+// ============================================================================
+
+namespace {
+
+enum class iterate_tag {
+    keep = 1,
+    stop
+};
+
+} // anonymous namespace
+
+FB_SUITE_SETUP(msg_iterate_tag) {}
+FB_SUITE_TEARDOWN(msg_iterate_tag) {}
+
+FB_TEST(msg_iterate_tag, keep_is_one_not_zero) {
+    // Zero is reserved for "unset"; if keep were 0, an uninitialised return
+    // would silently mean "keep iterating" past the intended stop point.
+    FB_ASSERT_EQ(static_cast<int>(iterate_tag::keep), 1);
+}
+
+FB_TEST(msg_iterate_tag, values_are_distinct_and_ordered) {
+    // stop must be the terminal, distinct from keep. The numeric ordering
+    // (stop > keep) is what visitor loops rely on when they check "did we
+    // reach the stop tag".
+    FB_ASSERT_TRUE(iterate_tag::keep != iterate_tag::stop);
+    FB_ASSERT_TRUE(static_cast<int>(iterate_tag::stop) > static_cast<int>(iterate_tag::keep));
+    FB_ASSERT_EQ(static_cast<int>(iterate_tag::stop), 2);
+}
+
+FB_TEST(msg_iterate_tag, stop_short_circuits_iteration) {
+    // Model a tiny visitor: walk until it sees 'stop', then halt. This is the
+    // actual control-flow contract — stop must terminate the loop immediately.
+    std::vector<iterate_tag> seq = {
+        iterate_tag::keep, iterate_tag::keep, iterate_tag::stop, iterate_tag::keep};
+    int visited = 0;
+    bool stopped_early = false;
+    for (auto tag : seq) {
+        if (tag == iterate_tag::stop) {
+            stopped_early = true;
+            break;
+        }
+        ++visited;
+    }
+    FB_ASSERT_TRUE(stopped_early);
+    FB_ASSERT_EQ(visited, 2); // the trailing 'keep' after 'stop' is never reached
+}
+
+FB_TEST(msg_iterate_tag, keep_continues_full_iteration) {
+    // A keep-only sequence must walk every element without early exit.
+    std::vector<iterate_tag> seq(5, iterate_tag::keep);
+    int visited = 0;
+    for (auto tag : seq) {
+        if (tag == iterate_tag::stop) break;
+        ++visited;
+    }
+    FB_ASSERT_EQ(visited, 5);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
