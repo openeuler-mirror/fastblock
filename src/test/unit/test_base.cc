@@ -1127,6 +1127,90 @@ FB_TEST(shard_invoke_semantics, shard_to_core_mapping_injective) {
 }
 
 // ============================================================================
+// Test Suite: core_iterator_advanced (Advanced Core Iterator Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(core_iterator_advanced) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(core_iterator_advanced) {
+    // Teardown code here
+}
+
+FB_TEST(core_iterator_advanced, pre_increment_returns_reference) {
+    // ++it returns reference (for chaining)
+    std::vector<uint32_t> v = {0, 1, 2};
+    auto it = v.begin();
+    auto& ref = ++it;
+    FB_ASSERT_TRUE(&ref == &it);
+    FB_ASSERT_EQ(*it, 1);
+}
+
+FB_TEST(core_iterator_advanced, post_increment_returns_old) {
+    // it++ returns old value, then advances
+    std::vector<uint32_t> v = {10, 20, 30};
+    auto it = v.begin();
+    auto old = it++;
+    FB_ASSERT_EQ(*old, 10);
+    FB_ASSERT_EQ(*it, 20);
+}
+
+FB_TEST(core_iterator_advanced, copy_constructible) {
+    // Iterator is copy constructible
+    std::vector<uint32_t> v = {1, 2, 3};
+    auto it1 = v.begin();
+    auto it2(it1);
+    FB_ASSERT_TRUE(it1 == it2);
+    FB_ASSERT_EQ(*it1, *it2);
+}
+
+FB_TEST(core_iterator_advanced, assignable) {
+    // Iterator is assignable
+    std::vector<uint32_t> v = {5, 6, 7};
+    auto it1 = v.begin();
+    auto it2 = v.begin() + 2;
+    FB_ASSERT_TRUE(it1 != it2);
+    it1 = it2;
+    FB_ASSERT_TRUE(it1 == it2);
+}
+
+FB_TEST(core_iterator_advanced, move_constructible) {
+    // Iterator is move constructible
+    std::vector<uint32_t> v = {100, 200};
+    auto it1 = v.begin();
+    auto it2 = std::move(it1);
+    FB_ASSERT_EQ(*it2, 100);
+}
+
+FB_TEST(core_iterator_advanced, iteration_full_range) {
+    // Iterate through full range
+    std::vector<uint32_t> v = {0, 1, 2, 3, 4};
+    uint32_t sum = 0;
+    for (auto it = v.begin(); it != v.end(); ++it) {
+        sum += *it;
+    }
+    FB_ASSERT_EQ(sum, 10);
+}
+
+FB_TEST(core_iterator_advanced, range_based_for) {
+    // Range-based for loop
+    std::vector<uint32_t> v = {1, 2, 3, 4};
+    uint32_t product = 1;
+    for (uint32_t val : v) {
+        product *= val;
+    }
+    FB_ASSERT_EQ(product, 24);
+}
+
+FB_TEST(core_iterator_advanced, distance_calculation) {
+    // std::distance works with forward iterators
+    std::vector<uint32_t> v = {0, 1, 2, 3, 4, 5};
+    auto dist = std::distance(v.begin(), v.end());
+    FB_ASSERT_EQ(dist, 6);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
