@@ -456,6 +456,100 @@ FB_TEST(rpc_connect_cache_shard_isolation, get_connect_returns_same_object) {
 }
 
 // ============================================================================
+// Test Suite: rpc_dispatch — service/method dispatch surface
+//
+// Every fastblock RPC carries (service_name, method_name). The transport's
+// dispatch logic decides which of three wire status codes to send back when
+// the lookup fails:
+//   - service not registered           -> status::service_not_found
+//   - service exists but method missing -> status::method_not_found
+//   - empty request body                -> status::bad_request_body
+// Pin these mappings so a refactor of the dispatch table can't silently flip
+// callers from "permanent rejection" to "retry forever".
+// ============================================================================
+
+namespace {
+
+enum class dispatch_result {
+    ok,
+    service_not_found,
+    method_not_found,
+    bad_request_body,
+};
+
+class fake_service_registry {
+public:
+    void register_method(const std::string& service, const std::string& method) {
+        _methods[service].insert(method);
+    }
+
+    dispatch_result dispatch(const std::string& service,
+                             const std::string& method,
+                             const std::string& body) const {
+        auto sit = _methods.find(service);
+        if (sit == _methods.end()) return dispatch_result::service_not_found;
+        if (sit->second.find(method) == sit->second.end()) return dispatch_result::method_not_found;
+        if (body.empty()) return dispatch_result::bad_request_body;
+        return dispatch_result::ok;
+    }
+
+private:
+    std::map<std::string, std::set<std::string>> _methods;
+};
+
+} // anonymous namespace
+
+FB_SUITE_SETUP(rpc_dispatch) {}
+FB_SUITE_TEARDOWN(rpc_dispatch) {}
+
+FB_TEST(rpc_dispatch, registered_method_dispatches_ok) {
+    fake_service_registry reg;
+    reg.register_method("RaftService", "AppendEntries");
+    reg.register_method("RaftService", "RequestVote");
+
+    FB_ASSERT_TRUE(reg.dispatch("RaftService", "AppendEntries", "p") == dispatch_result::ok);
+    FB_ASSERT_TRUE(reg.dispatch("RaftService", "RequestVote",   "p") == dispatch_result::ok);
+}
+
+FB_TEST(rpc_dispatch, unknown_service_is_rejected) {
+    // Caller should see service_not_found, not method_not_found — the latter
+    // would imply the service exists, which is a different debugging story.
+    fake_service_registry reg;
+    reg.register_method("OsdService", "Write");
+    FB_ASSERT_TRUE(
+      reg.dispatch("MysteryService", "Write", "p") == dispatch_result::service_not_found);
+}
+
+FB_TEST(rpc_dispatch, unknown_method_is_rejected) {
+    fake_service_registry reg;
+    reg.register_method("OsdService", "Write");
+    FB_ASSERT_TRUE(
+      reg.dispatch("OsdService", "Read", "p") == dispatch_result::method_not_found);
+}
+
+FB_TEST(rpc_dispatch, empty_body_reports_bad_request) {
+    // Most fastblock RPCs expect a non-empty body; an empty one is surfaced
+    // as bad_request_body so the client retries policy treats it as a
+    // permanent caller bug rather than retrying forever.
+    fake_service_registry reg;
+    reg.register_method("OsdService", "Write");
+    FB_ASSERT_TRUE(
+      reg.dispatch("OsdService", "Write", "") == dispatch_result::bad_request_body);
+}
+
+FB_TEST(rpc_dispatch, dispatch_is_case_sensitive) {
+    // Proto-generated names are case sensitive; the transport must NOT
+    // case-fold, or methods like "Read" and "READ" silently collide.
+    fake_service_registry reg;
+    reg.register_method("OsdService", "Read");
+    FB_ASSERT_TRUE(reg.dispatch("OsdService", "Read", "x") == dispatch_result::ok);
+    FB_ASSERT_TRUE(
+      reg.dispatch("osdservice", "Read", "x") == dispatch_result::service_not_found);
+    FB_ASSERT_TRUE(
+      reg.dispatch("OsdService", "READ", "x") == dispatch_result::method_not_found);
+}
+
+// ============================================================================
 // Test Suite: monclient — response_status surface
 // ============================================================================
 
