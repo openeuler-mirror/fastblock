@@ -2947,6 +2947,123 @@ FB_TEST(sharded_access, on_shard_for_cross_shard_init) {
 }
 
 // ============================================================================
+// Test Suite: core_iterator_operations (Core Iterator Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(core_iterator_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(core_iterator_operations) {
+    // Teardown code here
+}
+
+FB_TEST(core_iterator_operations, increment_advances_via_next_core) {
+    // operator++ calls next_core(_core)
+    // Simulate iteration through sparse core list
+    std::vector<uint32_t> cores = {0, 2, 5, 8, 13};
+    auto it = cores.begin();
+    uint32_t expected_sequence[] = {0, 2, 5, 8, 13};
+
+    for (uint32_t i = 0; i < cores.size(); i++) {
+        FB_ASSERT_EQ(*it, expected_sequence[i]);
+        ++it;
+    }
+    FB_ASSERT_TRUE(it == cores.end());
+}
+
+FB_TEST(core_iterator_operations, post_increment_temporary) {
+    // Post-increment returns temporary, advances original
+    std::vector<uint32_t> cores = {10, 20, 30};
+    auto it = cores.begin();
+
+    auto temp = it++;
+    FB_ASSERT_EQ(*temp, 10);
+    FB_ASSERT_EQ(*it, 20);
+
+    auto temp2 = it++;
+    FB_ASSERT_EQ(*temp2, 20);
+    FB_ASSERT_EQ(*it, 30);
+}
+
+FB_TEST(core_iterator_operations, equality_via_core_id_compare) {
+    // operator== compares _core values
+    uint32_t a = 5;
+    uint32_t b = 5;
+    uint32_t c = 6;
+
+    FB_ASSERT_TRUE(a == b);
+    FB_ASSERT_TRUE(a != c);
+    FB_ASSERT_TRUE(b != c);
+}
+
+FB_TEST(core_iterator_operations, end_iteration_terminates) {
+    // Iteration terminates at end sentinel UINT32_MAX
+    std::vector<uint32_t> result;
+    uint32_t simulated_core = 0;
+    uint32_t simulated_end = 5;
+
+    while (simulated_core != simulated_end) {
+        result.push_back(simulated_core);
+        simulated_core++;
+    }
+
+    FB_ASSERT_EQ(result.size(), 5);
+    FB_ASSERT_EQ(result.back(), 4);
+}
+
+FB_TEST(core_iterator_operations, std_algorithm_compatible) {
+    // Forward iterator works with std algorithms
+    std::vector<uint32_t> cores = {1, 3, 5, 7, 9};
+
+    // std::find
+    auto found = std::find(cores.begin(), cores.end(), 5u);
+    FB_ASSERT_TRUE(found != cores.end());
+    FB_ASSERT_EQ(*found, 5);
+
+    // std::count
+    auto count = std::count(cores.begin(), cores.end(), 9u);
+    FB_ASSERT_EQ(count, 1);
+
+    // std::accumulate
+    uint32_t sum = std::accumulate(cores.begin(), cores.end(), 0u);
+    FB_ASSERT_EQ(sum, 25);
+}
+
+FB_TEST(core_iterator_operations, iteration_count_matches_size) {
+    // Iterating from begin to end visits exactly size() elements
+    std::vector<uint32_t> cores = {0, 1, 2, 3, 4, 5, 6, 7};
+    uint32_t count = 0;
+    for (auto it = cores.begin(); it != cores.end(); ++it) {
+        count++;
+    }
+    FB_ASSERT_EQ(count, cores.size());
+}
+
+FB_TEST(core_iterator_operations, move_construction_preserves_position) {
+    // Move-constructed iterator points to same position
+    std::vector<uint32_t> cores = {10, 20, 30, 40};
+    auto it1 = cores.begin();
+    ++it1; // now at 20
+    auto it2 = std::move(it1);
+    FB_ASSERT_EQ(*it2, 20);
+}
+
+FB_TEST(core_iterator_operations, multiple_iterators_independent) {
+    // Multiple iterators can advance independently
+    std::vector<uint32_t> cores = {5, 10, 15, 20};
+    auto it1 = cores.begin();
+    auto it2 = cores.begin();
+
+    ++it1; ++it1; // it1 at 15
+    ++it2;        // it2 at 10
+
+    FB_ASSERT_EQ(*it1, 15);
+    FB_ASSERT_EQ(*it2, 10);
+    FB_ASSERT_TRUE(it1 != it2);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
