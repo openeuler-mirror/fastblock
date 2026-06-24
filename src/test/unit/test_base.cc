@@ -3579,14 +3579,14 @@ FB_TEST(core_sharded_destructor, dtor_handles_partial_init) {
         }
     };
 
-    partial p;
-    p.resources.push_back(new int(1));
-    p.resources.push_back(nullptr); // partial: never created
-    p.resources.push_back(new int(3));
-    // dtor handles nulls
-    p.~partial();
+    {
+        partial p;
+        p.resources.push_back(new int(1));
+        p.resources.push_back(nullptr); // partial: never created
+        p.resources.push_back(new int(3));
+        // dtor handles nulls at scope exit
+    }
     FB_ASSERT_EQ(cleaned, 2);
-    p.resources.clear(); // prevent double-free
 }
 
 FB_TEST(core_sharded_destructor, multiple_objects_destroy_in_reverse) {
