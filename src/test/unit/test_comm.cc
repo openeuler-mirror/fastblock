@@ -1444,5 +1444,94 @@ FB_TEST(msg_iterate_tag, keep_continues_full_iteration) {
     FB_ASSERT_EQ(visited, 5);
 }
 
+// ============================================================================
+// Test Suite: rpc_connect_cache_reconnect — connection overwrite on reconnect
+//
+// Production connect_cache::create_connect assigns
+//   _cache[shard_id][node_id] = conn
+// unconditionally on success. That means a reconnect for an EXISTING node
+// overwrites the stale entry with the fresh connection — which is exactly
+// what we want (the old QP is dead). This suite pins that overwrite
+// contract with a fake that mirrors it (unlike rpc_connect_cache's fake,
+// which models the first-connect case).
+// ============================================================================
+
+namespace {
+
+class overwrite_connect_cache {
+public:
+    using connect_ptr = std::shared_ptr<fake_connection>;
+
+    explicit overwrite_connect_cache(uint32_t shard_count) {
+        _cache.resize(shard_count);
+    }
+
+    // Mirrors production: always assign, overwriting any prior entry.
+    void create_connect(uint32_t shard_id, int node_id, std::string addr, uint16_t port) {
+        if (shard_id >= _cache.size()) return;
+        _cache[shard_id][node_id] =
+          std::make_shared<fake_connection>(fake_connection{node_id, std::move(addr), port});
+    }
+
+    connect_ptr get_connect(uint32_t shard_id, int node_id) const {
+        if (shard_id >= _cache.size()) return nullptr;
+        auto it = _cache[shard_id].find(node_id);
+        return it == _cache[shard_id].end() ? nullptr : it->second;
+    }
+
+private:
+    std::vector<std::map<int, connect_ptr>> _cache;
+};
+
+} // anonymous namespace
+
+FB_SUITE_SETUP(rpc_connect_cache_reconnect) {}
+FB_SUITE_TEARDOWN(rpc_connect_cache_reconnect) {}
+
+FB_TEST(rpc_connect_cache_reconnect, reconnect_overwrites_cached_entry) {
+    // A second successful connect for the same node must replace the stale
+    // connection. Callers reusing the cached handle would otherwise send on a
+    // dead QP.
+    overwrite_connect_cache cache(1);
+    cache.create_connect(0, 7, "10.0.0.1", 5000);
+    auto first = cache.get_connect(0, 7);
+    FB_ASSERT_NOT_NULL(first.get());
+    FB_ASSERT_STR_EQ(first->addr.c_str(), "10.0.0.1");
+
+    cache.create_connect(0, 7, "10.0.0.2", 6000);
+    auto second = cache.get_connect(0, 7);
+    FB_ASSERT_NOT_NULL(second.get());
+    FB_ASSERT_STR_EQ(second->addr.c_str(), "10.0.0.2");
+    FB_ASSERT_EQ(second->port, 6000);
+}
+
+FB_TEST(rpc_connect_cache_reconnect, node_mapping_preserved_after_overwrite) {
+    // shard/node still resolve to the right slot after the overwrite — the
+    // key isn't disturbed, only the value is replaced.
+    overwrite_connect_cache cache(1);
+    cache.create_connect(0, 42, "old", 1);
+    cache.create_connect(0, 42, "new", 2);
+
+    auto conn = cache.get_connect(0, 42);
+    FB_ASSERT_NOT_NULL(conn.get());
+    FB_ASSERT_EQ(conn->node_id, 42);
+    FB_ASSERT_STR_EQ(conn->addr.c_str(), "new");
+}
+
+FB_TEST(rpc_connect_cache_reconnect, overwrite_is_local_to_one_node) {
+    // Reconnecting node A must not perturb node B's cached entry — regression
+    // target for a future "clear all then insert" refactor.
+    overwrite_connect_cache cache(1);
+    cache.create_connect(0, 1, "addr1", 1);
+    cache.create_connect(0, 2, "addr2", 2);
+
+    cache.create_connect(0, 1, "addr1_new", 3);
+
+    auto a = cache.get_connect(0, 1);
+    auto b = cache.get_connect(0, 2);
+    FB_ASSERT_STR_EQ(a->addr.c_str(), "addr1_new");
+    FB_ASSERT_STR_EQ(b->addr.c_str(), "addr2"); // untouched
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
