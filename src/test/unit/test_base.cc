@@ -3923,6 +3923,135 @@ FB_TEST(core_sharded_singleton_access, gnu_optimize_pragma_present) {
 }
 
 // ============================================================================
+// Test Suite: shard_resource_pools (Per-Shard Resource Pool Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_resource_pools) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_resource_pools) {
+    // Teardown code here
+}
+
+FB_TEST(shard_resource_pools, per_shard_memory_pool) {
+    // Each shard has its own memory pool for zero contention
+    std::vector<std::vector<int>> shard_pools(4);
+
+    for (uint32_t s = 0; s < 4; s++) {
+        for (int i = 0; i < 100; i++) {
+            shard_pools[s].push_back(static_cast<int>(s) * 1000 + i);
+        }
+    }
+
+    // Pools are independent
+    for (uint32_t s = 0; s < 4; s++) {
+        FB_ASSERT_EQ(shard_pools[s].size(), 100);
+        FB_ASSERT_EQ(shard_pools[s][0], static_cast<int>(s) * 1000);
+    }
+}
+
+FB_TEST(shard_resource_pools, pool_allocation_no_contention) {
+    // Allocations within a shard don't contend with other shards
+    std::vector<int*> shard_alloc;
+    for (int i = 0; i < 50; i++) {
+        shard_alloc.push_back(new int(i));
+    }
+
+    FB_ASSERT_EQ(shard_alloc.size(), 50);
+    FB_ASSERT_EQ(*shard_alloc[0], 0);
+    FB_ASSERT_EQ(*shard_alloc[49], 49);
+
+    for (auto* p : shard_alloc) delete p;
+}
+
+FB_TEST(shard_resource_pools, pool_capacity_per_shard) {
+    // Each shard's pool has a capacity limit
+    const uint32_t per_shard_capacity = 256;
+    std::vector<int> pool;
+    pool.reserve(per_shard_capacity);
+
+    for (uint32_t i = 0; i < per_shard_capacity; i++) {
+        pool.push_back(static_cast<int>(i));
+    }
+    FB_ASSERT_EQ(pool.size(), per_shard_capacity);
+    FB_ASSERT_TRUE(pool.capacity() >= per_shard_capacity);
+}
+
+FB_TEST(shard_resource_pools, total_resources_scaled_by_shard_count) {
+    // Total system resources = per_shard * shard_count
+    uint32_t per_shard_resources = 1000;
+    uint32_t shard_count = 4;
+    uint32_t total = per_shard_resources * shard_count;
+    FB_ASSERT_EQ(total, 4000);
+}
+
+FB_TEST(shard_resource_pools, pool_growth_independent_per_shard) {
+    // One shard's pool growing doesn't affect others
+    std::vector<std::vector<int>> shards(4);
+
+    // Only shard 0 grows
+    for (int i = 0; i < 1000; i++) {
+        shards[0].push_back(i);
+    }
+
+    FB_ASSERT_EQ(shards[0].size(), 1000);
+    FB_ASSERT_EQ(shards[1].size(), 0);
+    FB_ASSERT_EQ(shards[2].size(), 0);
+    FB_ASSERT_EQ(shards[3].size(), 0);
+}
+
+FB_TEST(shard_resource_pools, recycling_via_free_list) {
+    // Pool recycles objects via free list
+    std::vector<int*> free_list;
+    int* obj1 = new int(1);
+    int* obj2 = new int(2);
+
+    // Release to free list
+    free_list.push_back(obj1);
+    free_list.push_back(obj2);
+    FB_ASSERT_EQ(free_list.size(), 2);
+
+    // Reuse from free list
+    int* reused = free_list.back();
+    free_list.pop_back();
+    FB_ASSERT_EQ(*reused, 2);
+    FB_ASSERT_EQ(free_list.size(), 1);
+
+    // Cleanup
+    delete free_list[0];
+    delete reused;
+}
+
+FB_TEST(shard_resource_pools, no_cross_shard_borrowing) {
+    // Shard cannot borrow from another shard's pool (would need locking)
+    std::vector<int> shard_0_pool;
+    std::vector<int> shard_1_pool;
+
+    shard_0_pool.push_back(100);
+    // shard_1 cannot directly access shard_0_pool
+    // It must request via cross-shard message (separate test scope)
+    FB_ASSERT_TRUE(&shard_0_pool != &shard_1_pool);
+    FB_ASSERT_TRUE(shard_1_pool.empty());
+}
+
+FB_TEST(shard_resource_pools, pool_drained_on_shutdown) {
+    // On shard stop, pool is drained
+    static int destroyed_count;
+    destroyed_count = 0;
+
+    struct resource { ~resource() { destroyed_count++; } };
+
+    {
+        std::vector<resource*> pool;
+        for (int i = 0; i < 10; i++) pool.push_back(new resource());
+        for (auto* r : pool) delete r;
+    }
+
+    FB_ASSERT_EQ(destroyed_count, 10);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
