@@ -2356,5 +2356,84 @@ FB_TEST(bdev_config_validation, non_zero_object_size_is_preserved) {
     FB_ASSERT_EQ(effective, 8 * 1024 * 1024u);
 }
 
+// ============================================================================
+// Test Suite: client_image_object_name — image object addressing
+//
+// libblk_client maps (pool_id, image_name, object_seq) → object name.
+// The exact string format is on-the-wire: every OSD parses it back, so the
+// format change is a breaking change. Mirror the two helpers and pin:
+//   prefix = "{pool_id}__blk_data___{image_name}"
+//   name   = prefix + "{seq}"
+// The "__blk_data___" infix (2+8+3 underscores) is deliberately unusual so
+// it can't collide with a legitimate image name suffix.
+// ============================================================================
+
+namespace {
+
+std::string calc_image_object_prefix(uint64_t pool_id, const std::string& image_name) {
+    return std::to_string(pool_id) + "__blk_data___" + image_name;
+}
+
+std::string get_image_object_name(const std::string& prefix, uint64_t seq) {
+    char buf[17];
+    snprintf(buf, sizeof(buf), "%lu", seq);
+    return prefix + buf;
+}
+
+} // anonymous namespace
+
+FB_SUITE_SETUP(client_image_object_name) {}
+FB_SUITE_TEARDOWN(client_image_object_name) {}
+
+FB_TEST(client_image_object_name, prefix_format_is_stable) {
+    // Exact format pinned — every OSD parses this back.
+    FB_ASSERT_STR_EQ(calc_image_object_prefix(0, "img").c_str(), "0__blk_data___img");
+    FB_ASSERT_STR_EQ(calc_image_object_prefix(42, "vol-a").c_str(), "42__blk_data___vol-a");
+}
+
+FB_TEST(client_image_object_name, infix_has_distinctive_underscore_pattern) {
+    // "__blk_data___" (2-8-3 underscores around 'blk_data') is the discriminator
+    // that prevents collision with a legitimate image name suffix. Pin it.
+    auto prefix = calc_image_object_prefix(1, "x");
+    FB_ASSERT_TRUE(prefix.find("__blk_data___") != std::string::npos);
+}
+
+FB_TEST(client_image_object_name, prefix_round_trips_pool_id) {
+    // pool_id appears at the very start of the prefix — an OSD can split on
+    // "__blk_data___" to recover (pool_id, image_name).
+    auto prefix = calc_image_object_prefix(123, "myimg");
+    auto sep = prefix.find("__blk_data___");
+    FB_ASSERT_TRUE(sep != std::string::npos);
+    FB_ASSERT_STR_EQ(prefix.substr(0, sep).c_str(), "123");
+    FB_ASSERT_STR_EQ(prefix.substr(sep + strlen("__blk_data___")).c_str(), "myimg");
+}
+
+FB_TEST(client_image_object_name, object_name_appends_seq) {
+    auto prefix = calc_image_object_prefix(1, "img");
+    FB_ASSERT_STR_EQ(get_image_object_name(prefix, 0).c_str(), "1__blk_data___img0");
+    FB_ASSERT_STR_EQ(get_image_object_name(prefix, 7).c_str(), "1__blk_data___img7");
+    FB_ASSERT_STR_EQ(get_image_object_name(prefix, 12345).c_str(), "1__blk_data___img12345");
+}
+
+FB_TEST(client_image_object_name, distinct_seqs_yield_distinct_names) {
+    // Object names are the unique key in the OSD store; distinct seqs must
+    // never collide for any (pool_id, image_name).
+    auto prefix = calc_image_object_prefix(1, "img");
+    std::set<std::string> names;
+    for (uint64_t s = 0; s < 100; ++s) {
+        names.insert(get_image_object_name(prefix, s));
+    }
+    FB_ASSERT_EQ(names.size(), 100u);
+}
+
+FB_TEST(client_image_object_name, different_images_have_different_prefixes) {
+    // Same pool but different image names → different prefixes.
+    FB_ASSERT_TRUE(
+      calc_image_object_prefix(1, "a") != calc_image_object_prefix(1, "b"));
+    // Same image name, different pools → different prefixes.
+    FB_ASSERT_TRUE(
+      calc_image_object_prefix(1, "img") != calc_image_object_prefix(2, "img"));
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
