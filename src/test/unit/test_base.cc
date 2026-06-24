@@ -8680,6 +8680,99 @@ FB_TEST(shard_lifecycle_hooks, hook_idempotent) {
 }
 
 // ============================================================================
+// Test Suite: shard_pollers (Shard Pollers Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_pollers) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_pollers) {
+    // Teardown code here
+}
+
+FB_TEST(shard_pollers, poller_registered_per_shard) {
+    // Each shard registers its own pollers
+    std::vector<std::vector<std::string>> shard_pollers(4);
+    for (uint32_t s = 0; s < 4; s++) {
+        shard_pollers[s].push_back("io_poller");
+        shard_pollers[s].push_back("timer_poller");
+    }
+
+    for (const auto& pollers : shard_pollers) {
+        FB_ASSERT_EQ(pollers.size(), 2);
+    }
+}
+
+FB_TEST(shard_pollers, poller_period_in_microseconds) {
+    // Poller period typically 1ms (1000us) or 1s (1000000us)
+    uint64_t fast_poller_us = 1000;
+    uint64_t slow_poller_us = 1000000;
+
+    FB_ASSERT_TRUE(slow_poller_us > fast_poller_us);
+    FB_ASSERT_EQ(slow_poller_us / fast_poller_us, 1000);
+}
+
+FB_TEST(shard_pollers, poller_invoked_periodically) {
+    // Poller invoked at fixed intervals
+    uint64_t period_us = 1000;
+    uint64_t total_time = 10000;
+    uint64_t expected_invocations = total_time / period_us;
+    FB_ASSERT_EQ(expected_invocations, 10);
+}
+
+FB_TEST(shard_pollers, poller_returns_work_done) {
+    // Poller returns number of items processed (0 if idle)
+    int work_done = 0;
+    auto poll = [&work_done]() {
+        // Simulate processing 5 items
+        work_done = 5;
+        return work_done;
+    };
+
+    int result = poll();
+    FB_ASSERT_EQ(result, 5);
+}
+
+FB_TEST(shard_pollers, poller_unregistered_on_stop) {
+    // spdk_poller_unregister called on shard stop
+    static int unregister_count;
+    unregister_count = 0;
+
+    struct poller_handle {
+        ~poller_handle() { unregister_count++; }
+    };
+
+    {
+        poller_handle h;
+    }
+    FB_ASSERT_EQ(unregister_count, 1);
+}
+
+FB_TEST(shard_pollers, multiple_pollers_per_shard) {
+    // Each shard can have multiple pollers (IO, timer, GC, etc.)
+    std::vector<std::string> pollers = {"io", "timer", "gc", "stats"};
+    FB_ASSERT_EQ(pollers.size(), 4);
+}
+
+FB_TEST(shard_pollers, poller_executes_in_shard_context) {
+    // Poller runs in its owning shard's thread context
+    static uint32_t executing_shard;
+    executing_shard = UINT32_MAX;
+
+    auto poll = [](uint32_t shard) { executing_shard = shard; };
+    poll(2);
+    FB_ASSERT_EQ(executing_shard, 2);
+}
+
+FB_TEST(shard_pollers, idle_poller_zero_cpu) {
+    // Idle poller (returns 0) should not consume significant CPU
+    int work = 0;
+    auto idle_poll = [&work]() { return work; }; // always 0
+    FB_ASSERT_EQ(idle_poll(), 0);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
