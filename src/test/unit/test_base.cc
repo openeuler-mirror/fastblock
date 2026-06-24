@@ -17,6 +17,8 @@
 #include "test/framework/test_framework.h"
 #include "test/framework/test_harness.h"
 
+#include "fastblock/utils/utils.h"
+
 #include <cstdint>
 #include <limits>
 #include <vector>
@@ -7639,9 +7641,9 @@ FB_TEST(shard_invocation_dispatch_modes, lambda_ctx_for_async) {
     static int alive;
     alive = 0;
 
-    struct ctx { ctx() { alive++; } ~ctx() { alive--; } };
+    struct async_ctx { async_ctx() { alive++; } ~async_ctx() { alive--; } };
 
-    ctx* c = new ctx();
+    async_ctx* c = new async_ctx();
     FB_ASSERT_EQ(alive, 1);
 
     // ... queued, processed on other thread ...
@@ -7764,7 +7766,7 @@ FB_TEST(shard_concurrency_model, non_blocking_io_required) {
 FB_TEST(shard_concurrency_model, event_driven_not_polling_heavy) {
     // Event-driven: respond to messages, not busy-poll
     std::vector<std::string> events = {"io_complete", "timer", "msg"};
-    int handled = 0;
+    size_t handled = 0;
     for (const auto& e : events) {
         (void)e;
         handled++;
