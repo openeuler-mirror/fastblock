@@ -6095,6 +6095,94 @@ FB_TEST(shard_invoke_callbacks, void_returning_callback) {
 }
 
 // ============================================================================
+// Test Suite: shard_runtime_introspection (Runtime Introspection Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_runtime_introspection) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_runtime_introspection) {
+    // Teardown code here
+}
+
+FB_TEST(shard_runtime_introspection, type_info_provides_name) {
+    // typeid(T).name() returns string representation of type
+    struct my_service {};
+    std::string name = typeid(my_service).name();
+    FB_ASSERT_TRUE(!name.empty());
+}
+
+FB_TEST(shard_runtime_introspection, type_index_unique) {
+    // type_index allows comparing types
+    std::type_index t_int(typeid(int));
+    std::type_index t_double(typeid(double));
+
+    FB_ASSERT_TRUE(t_int != t_double);
+    FB_ASSERT_TRUE(t_int == std::type_index(typeid(int)));
+}
+
+FB_TEST(shard_runtime_introspection, sizeof_known_at_compile_time) {
+    struct svc { int a, b, c; };
+    constexpr size_t sz = sizeof(svc);
+    FB_ASSERT_TRUE(sz >= 12);
+    FB_ASSERT_TRUE(sz <= 16); // possible padding
+}
+
+FB_TEST(shard_runtime_introspection, alignof_for_dma) {
+    // alignof for DMA-suitable structures (typically 64 or higher)
+    struct alignas(64) dma_buffer {
+        char data[64];
+    };
+    constexpr size_t align = alignof(dma_buffer);
+    FB_ASSERT_EQ(align, 64);
+}
+
+FB_TEST(shard_runtime_introspection, dynamic_cast_validates_polymorphic) {
+    struct base { virtual int kind() { return 0; } virtual ~base() = default; };
+    struct derived_a : base { int kind() override { return 1; } };
+    struct derived_b : base { int kind() override { return 2; } };
+
+    base* a = new derived_a();
+    auto* p = dynamic_cast<derived_a*>(a);
+    FB_ASSERT_TRUE(p != nullptr);
+
+    auto* q = dynamic_cast<derived_b*>(a);
+    FB_ASSERT_TRUE(q == nullptr); // wrong type
+    delete a;
+}
+
+FB_TEST(shard_runtime_introspection, vtable_dispatch_runtime) {
+    struct base { virtual int kind() = 0; virtual ~base() = default; };
+    struct a : base { int kind() override { return 1; } };
+    struct b : base { int kind() override { return 2; } };
+
+    std::vector<base*> services;
+    services.push_back(new a());
+    services.push_back(new b());
+
+    FB_ASSERT_EQ(services[0]->kind(), 1);
+    FB_ASSERT_EQ(services[1]->kind(), 2);
+
+    for (auto* p : services) delete p;
+}
+
+FB_TEST(shard_runtime_introspection, ptr_alignment_check) {
+    // Heap-allocated pointers usually aligned to 8 bytes
+    void* p = new int(0);
+    uintptr_t addr = reinterpret_cast<uintptr_t>(p);
+    FB_ASSERT_EQ(addr % alignof(int), 0);
+    delete static_cast<int*>(p);
+}
+
+FB_TEST(shard_runtime_introspection, function_signature_inspection) {
+    auto fn = [](int a, double b) -> std::string { return "result"; };
+    using ret_t = decltype(fn(0, 0.0));
+    constexpr bool returns_string = std::is_same_v<ret_t, std::string>;
+    FB_ASSERT_TRUE(returns_string);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
