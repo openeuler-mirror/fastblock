@@ -1347,4 +1347,65 @@ FB_TEST(itos_negative_numbers, sign_present) {
     FB_ASSERT_EQ(result[0], '-');
 }
 
+// ============================================================================
+// Test Suite: varint_special_values (Varint Special Values Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(varint_special_values) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(varint_special_values) {
+    // Teardown code here
+}
+
+FB_TEST(varint_special_values, power_of_two_minus_one) {
+    char buffer[10];
+
+    for (int i = 1; i <= 32; i++) {
+        uint32_t val = (1U << i) - 1;
+        size_t len = encode_varint32(buffer, val);
+        auto [decoded, decoded_len] = decode_varint32(buffer, len);
+        FB_ASSERT_EQ(decoded, val);
+    }
+}
+
+FB_TEST(varint_special_values, power_of_two) {
+    char buffer[10];
+
+    for (int i = 0; i < 32; i++) {
+        uint32_t val = 1U << i;
+        size_t len = encode_varint32(buffer, val);
+        auto [decoded, decoded_len] = decode_varint32(buffer, len);
+        FB_ASSERT_EQ(decoded, val);
+    }
+}
+
+FB_TEST(varint_special_values, power_of_two_plus_one) {
+    char buffer[10];
+
+    for (int i = 1; i < 31; i++) {
+        uint32_t val = (1U << i) + 1;
+        size_t len = encode_varint32(buffer, val);
+        auto [decoded, decoded_len] = decode_varint32(buffer, len);
+        FB_ASSERT_EQ(decoded, val);
+    }
+}
+
+FB_TEST(varint_special_values, alternating_bits_32) {
+    char buffer[5];
+    uint32_t val = 0xAAAAAAAA;
+    size_t len = encode_varint32(buffer, val);
+    auto [decoded, decoded_len] = decode_varint32(buffer, len);
+    FB_ASSERT_EQ(decoded, val);
+}
+
+FB_TEST(varint_special_values, alternating_bits_64) {
+    char buffer[10];
+    uint64_t val = 0xAAAAAAAAAAAAAAAAULL;
+    size_t len = encode_varint64(buffer, val);
+    auto [decoded, decoded_len] = decode_varint64(buffer, len);
+    FB_ASSERT_EQ(decoded, val);
+}
+
 FB_TEST_MAIN()
