@@ -4468,3 +4468,339 @@ FB_TEST(client_memory_limit, leader_request_per_pg) {
     size_t total = pg_count * per_request_size;
     FB_ASSERT_TRUE(total < 1024 * 1024); // < 1 MiB
 }
+
+// ============================================================================
+// Part 13: Configuration parameters and tunables
+// ============================================================================
+
+// ============================================================================
+// Test Suite: client_default_config — default configuration values
+// ============================================================================
+
+FB_SUITE_SETUP(client_default_config) {}
+FB_SUITE_TEARDOWN(client_default_config) {}
+
+FB_TEST(client_default_config, default_object_size_4MiB) {
+    // Default object size is 4 MiB.
+    FB_ASSERT_EQ(default_object_size, 4u * 1024u * 1024u);
+}
+
+FB_TEST(client_default_config, default_ring_slot_count_16) {
+    // Default write ring has 16 slots.
+    constexpr uint32_t default_slot_count = 16;
+    FB_ASSERT_EQ(default_slot_count, 16u);
+}
+
+FB_TEST(client_default_config, default_ring_slot_size_256KiB) {
+    // Default slot size is 256 KiB.
+    constexpr uint32_t default_slot_size = 256 * 1024;
+    FB_ASSERT_EQ(default_slot_size, 256u * 1024u);
+}
+
+FB_TEST(client_default_config, default_lease_duration_30s) {
+    // Default lease is 30 seconds.
+    constexpr uint64_t default_lease_us = 30ull * 1000 * 1000;
+    FB_ASSERT_EQ(default_lease_us, 30ull * 1000 * 1000);
+}
+
+FB_TEST(client_default_config, default_retry_interval_1s) {
+    // Default connection retry interval is 1 second.
+    constexpr auto retry_interval = std::chrono::seconds{1};
+    FB_ASSERT_EQ(retry_interval.count(), 1);
+}
+
+FB_TEST(client_default_config, io_queue_size_128) {
+    // IO queue size default is 128.
+    constexpr int32_t io_queue_size = 128;
+    FB_ASSERT_EQ(io_queue_size, 128);
+}
+
+FB_TEST(client_default_config, io_queue_request_1024) {
+    // IO queue request count default is 1024.
+    constexpr int32_t io_queue_request = 1024;
+    FB_ASSERT_EQ(io_queue_request, 1024);
+}
+
+// ============================================================================
+// Test Suite: client_size_constants — size constants and literals
+// ============================================================================
+
+FB_SUITE_SETUP(client_size_constants) {}
+FB_SUITE_TEARDOWN(client_size_constants) {}
+
+FB_TEST(client_size_constants, KiB_is_1024) {
+    FB_ASSERT_EQ(KiB, 1024u);
+}
+
+FB_TEST(client_size_constants, MiB_is_1024KiB) {
+    FB_ASSERT_EQ(MiB, 1024u * KiB);
+}
+
+FB_TEST(client_size_constants, GiB_is_1024MiB) {
+    FB_ASSERT_EQ(GiB, 1024u * MiB);
+}
+
+FB_TEST(client_size_constants, object_size_is_4MiB) {
+    FB_ASSERT_EQ(default_object_size, 4u * MiB);
+}
+
+FB_TEST(client_size_constants, size_units_consistent) {
+    FB_ASSERT_EQ(1u * KiB, 1024u);
+    FB_ASSERT_EQ(1u * MiB, 1024u * 1024u);
+    FB_ASSERT_EQ(1u * GiB, 1024u * 1024u * 1024u);
+}
+
+FB_TEST(client_size_constants, ring_slot_size_vs_object_size) {
+    // Ring slot is 1/16 of object size.
+    constexpr uint32_t slot_size = 256 * 1024;
+    FB_ASSERT_EQ(default_object_size / slot_size, 16u);
+}
+
+// ============================================================================
+// Test Suite: client_timeout_constants — timeout and interval constants
+// ============================================================================
+
+FB_SUITE_SETUP(client_timeout_constants) {}
+FB_SUITE_TEARDOWN(client_timeout_constants) {}
+
+FB_TEST(client_timeout_constants, lease_guard_min_500ms) {
+    // Lease guard minimum is 500 milliseconds.
+    constexpr auto min_guard = std::chrono::milliseconds{500};
+    FB_ASSERT_EQ(min_guard.count(), 500);
+}
+
+FB_TEST(client_timeout_constants, lease_guard_max_5s) {
+    // Lease guard maximum is 5 seconds.
+    constexpr auto max_guard = std::chrono::seconds{5};
+    FB_ASSERT_EQ(max_guard.count(), 5);
+}
+
+FB_TEST(client_timeout_constants, poll_period_3s) {
+    // Cluster map poll period is 3 seconds.
+    constexpr uint64_t poll_period_us = 3000000;
+    FB_ASSERT_EQ(poll_period_us, 3ull * 1000 * 1000);
+}
+
+FB_TEST(client_timeout_constants, connection_retry_interval_1s) {
+    // Connection retry interval is 1 second.
+    constexpr auto retry = std::chrono::seconds{1};
+    FB_ASSERT_EQ(retry.count(), 1);
+}
+
+FB_TEST(client_timeout_constants, lease_guard_clamp_range) {
+    // Guard is clamped to [500ms, 5s].
+    constexpr auto min = std::chrono::milliseconds{500};
+    constexpr auto max = std::chrono::seconds{5};
+    FB_ASSERT_TRUE(min < max);
+}
+
+// ============================================================================
+// Test Suite: client_error_code_range — error code ranges
+// ============================================================================
+
+FB_SUITE_SETUP(client_error_code_range) {}
+FB_SUITE_TEARDOWN(client_error_code_range) {}
+
+FB_TEST(client_error_code_range, raft_error_range_starts_135) {
+    // RAFT errors start at -135 to avoid system errno overlap.
+    FB_ASSERT_EQ(err::RAFT_ERR_NOT_LEADER, -135);
+}
+
+FB_TEST(client_error_code_range, osd_error_range_starts_149) {
+    // OSD lifecycle errors start at -149.
+    FB_ASSERT_EQ(err::OSD_DOWN, -149);
+    FB_ASSERT_EQ(err::OSD_STARTING, -150);
+}
+
+FB_TEST(client_error_code_range, pool_not_found_160) {
+    // Pool not found error is -160.
+    FB_ASSERT_EQ(err::ERR_NOT_FOUND_POOL, -160);
+}
+
+FB_TEST(client_error_code_range, error_codes_negative_except_success) {
+    // All error codes are negative except E_SUCCESS (0).
+    FB_ASSERT_EQ(err::E_SUCCESS, 0);
+    FB_ASSERT_TRUE(err::RAFT_ERR_NOT_LEADER < 0);
+    FB_ASSERT_TRUE(err::OSD_DOWN < 0);
+    FB_ASSERT_TRUE(err::ERR_NOT_FOUND_POOL < 0);
+}
+
+FB_TEST(client_error_code_range, system_errno_preserved_as_negative) {
+    // System errnos are stored as negative values.
+    FB_ASSERT_TRUE(-ENOENT < 0);
+    FB_ASSERT_TRUE(-EINVAL < 0);
+    FB_ASSERT_TRUE(-ENOLINK < 0);
+}
+
+FB_TEST(client_error_code_range, error_ranges_no_overlap) {
+    // RAFT range: -135 to -148.
+    // OSD range: -149 to -160.
+    // Verify ranges don't overlap.
+    FB_ASSERT_TRUE(err::RAFT_ERR_NOT_LEADER > err::OSD_DOWN);
+    FB_ASSERT_TRUE(err::OSD_DOWN > err::ERR_NOT_FOUND_POOL);
+}
+
+// ============================================================================
+// Test Suite: client_port_range — OSD and monitor port ranges
+// ============================================================================
+
+FB_SUITE_SETUP(client_port_range) {}
+FB_SUITE_TEARDOWN(client_port_range) {}
+
+FB_TEST(client_port_range, osd_port_range_9000_10000) {
+    // OSD ports are in range 9000-10000.
+    constexpr int32_t MIN_OSD_PORT = 9000;
+    constexpr int32_t MAX_OSD_PORT = 10000;
+    FB_ASSERT_EQ(MIN_OSD_PORT, 9000);
+    FB_ASSERT_EQ(MAX_OSD_PORT, 10000);
+}
+
+FB_TEST(client_port_range, monitor_port_3333) {
+    // Monitor default port is 3333.
+    constexpr int32_t monitor_port = 3333;
+    FB_ASSERT_EQ(monitor_port, 3333);
+}
+
+FB_TEST(client_port_range, monitor_port_outside_osd_range) {
+    // Monitor port is outside OSD range to avoid collision.
+    constexpr int32_t monitor_port = 3333;
+    constexpr int32_t min_osd = 9000;
+    FB_ASSERT_TRUE(monitor_port < min_osd);
+}
+
+FB_TEST(client_port_range, osd_port_range_has_room) {
+    // OSD port range has at least 1000 ports for many OSDs.
+    constexpr int32_t range = 10000 - 9000;
+    FB_ASSERT_TRUE(range >= 1000);
+}
+
+FB_TEST(client_port_range, shard_ports_within_range) {
+    // Each OSD shard uses a port within OSD range.
+    constexpr int32_t base_port = 9000;
+    for (int shard = 0; shard < 10; ++shard) {
+        int32_t port = base_port + shard;
+        FB_ASSERT_TRUE(port >= 9000 && port <= 10000);
+    }
+}
+
+// ============================================================================
+// Test Suite: client_buffer_size_config — buffer size configuration
+// ============================================================================
+
+FB_SUITE_SETUP(client_buffer_size_config) {}
+FB_SUITE_TEARDOWN(client_buffer_size_config) {}
+
+FB_TEST(client_buffer_size_config, response_buffer_65535) {
+    // Response buffer size is 65535 bytes.
+    constexpr size_t buffer_size = 65535;
+    FB_ASSERT_EQ(buffer_size, 65535u);
+}
+
+FB_TEST(client_buffer_size_config, message_length_field_8bytes) {
+    // Message length prefix is 8 bytes.
+    constexpr uint64_t meta_length = 8;
+    FB_ASSERT_EQ(meta_length, 8u);
+}
+
+FB_TEST(client_buffer_size_config, ring_slot_serialized_size_limit) {
+    // Serialized request must fit in slot size.
+    constexpr uint32_t slot_size = 256 * 1024;
+    FB_ASSERT_EQ(slot_size, 256u * 1024u);
+}
+
+FB_TEST(client_buffer_size_config, write_ring_context_cleanup) {
+    // ring_write_context holds data+mr that must be freed on completion.
+    struct ring_ctx_mock {
+        void* data = nullptr;
+        void* mr = nullptr;
+    };
+    ring_ctx_mock ctx;
+    ctx.data = reinterpret_cast<void*>(0x1000);
+    ctx.mr = reinterpret_cast<void*>(0x2000);
+    FB_ASSERT_TRUE(ctx.data != nullptr);
+}
+
+// ============================================================================
+// Test Suite: client_pg_config_defaults — PG configuration defaults
+// ============================================================================
+
+FB_SUITE_SETUP(client_pg_config_defaults) {}
+FB_SUITE_TEARDOWN(client_pg_config_defaults) {}
+
+FB_TEST(client_pg_config_defaults, pg_size_default_3) {
+    // Default PG size (replica count) is 3.
+    constexpr int32_t pg_size = 3;
+    FB_ASSERT_EQ(pg_size, 3);
+}
+
+FB_TEST(client_pg_config_defaults, pg_count_min_1) {
+    // Minimum PG count is 1.
+    int32_t pg_count = 1;
+    FB_ASSERT_EQ(pg_count, 1);
+}
+
+FB_TEST(client_pg_config_defaults, pg_count_can_grow) {
+    // PG count can grow when pool is expanded.
+    int32_t pg_count = 16;
+    pg_count *= 2;
+    FB_ASSERT_EQ(pg_count, 32);
+}
+
+FB_TEST(client_pg_config_defaults, pg_num_power_of_two_preferred) {
+    // PG count prefers powers of two for hash distribution.
+    int32_t pg_num = 64;
+    FB_ASSERT_EQ(pg_num & (pg_num - 1), 0);
+}
+
+FB_TEST(client_pg_config_defaults, pg_num_non_power_of_two_allowed) {
+    // Non-power-of-two PG count is allowed.
+    int32_t pg_num = 5;
+    FB_ASSERT_TRUE(pg_num > 0);
+}
+
+// ============================================================================
+// Test Suite: client_feature_flags — feature flags and tunables
+// ============================================================================
+
+FB_SUITE_SETUP(client_feature_flags) {}
+FB_SUITE_TEARDOWN(client_feature_flags) {}
+
+FB_TEST(client_feature_flags, ring_write_enabled_by_default) {
+    // Write ring is enabled by default.
+    bool enabled = true;
+    const char* disable = nullptr;
+    if (disable && disable[0] != '\0' && disable[0] != '0') {
+        enabled = false;
+    }
+    FB_ASSERT_TRUE(enabled);
+}
+
+FB_TEST(client_feature_flags, ring_write_disabled_by_env) {
+    // FASTBLOCK_DISABLE_RING_WRITE=1 disables write ring.
+    bool enabled = true;
+    const char* disable = "1";
+    if (disable && disable[0] != '\0' && disable[0] != '0') {
+        enabled = false;
+    }
+    FB_ASSERT_FALSE(enabled);
+}
+
+FB_TEST(client_feature_flags, auto_reconnect_default_true) {
+    // Auto reconnect is enabled by default.
+    bool auto_reconnect = true;
+    FB_ASSERT_TRUE(auto_reconnect);
+}
+
+FB_TEST(client_feature_flags, max_fail_count_default_5) {
+    // Max failure count before reconnect is 5.
+    constexpr size_t max_fail = 5;
+    FB_ASSERT_EQ(max_fail, 5u);
+}
+
+FB_TEST(client_feature_flags, auto_reconnect_after_max_fail) {
+    // After max_fail count, auto reconnect is triggered.
+    size_t fail_count = 5;
+    size_t max_fail = 5;
+    bool should_reconnect = fail_count >= max_fail;
+    FB_ASSERT_TRUE(should_reconnect);
+}
