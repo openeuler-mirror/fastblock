@@ -20,6 +20,7 @@
 #include "utils/itos.h"
 #include "utils/units.h"
 #include "utils/md5.h"
+#include "utils/varint.h"
 
 #include <string>
 #include <cstring>
@@ -157,4 +158,232 @@ FB_TEST(md5, different_inputs) {
     std::string hash1 = utils::md5(data1, strlen(data1));
     std::string hash2 = utils::md5(data2, strlen(data2));
     FB_ASSERT_TRUE(hash1 != hash2);
+}
+
+// ============================================================================
+// Test Suite: varint32 (Variable Integer Encoding 32-bit)
+// ============================================================================
+
+FB_SUITE_SETUP(varint32) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(varint32) {
+    // Teardown code here
+}
+
+FB_TEST(varint32, encode_zero) {
+    char buffer[5];
+    size_t len = encode_varint32(buffer, 0);
+    FB_ASSERT_EQ(len, 1);
+    FB_ASSERT_EQ(static_cast<uint8_t>(buffer[0]), 0);
+}
+
+FB_TEST(varint32, encode_one_byte) {
+    char buffer[5];
+    size_t len = encode_varint32(buffer, 127);
+    FB_ASSERT_EQ(len, 1);
+    FB_ASSERT_EQ(static_cast<uint8_t>(buffer[0]), 127);
+}
+
+FB_TEST(varint32, encode_two_bytes) {
+    char buffer[5];
+    size_t len = encode_varint32(buffer, 128);
+    FB_ASSERT_EQ(len, 2);
+}
+
+FB_TEST(varint32, encode_max_uint32) {
+    char buffer[5];
+    uint32_t max_val = 4294967295U;
+    size_t len = encode_varint32(buffer, max_val);
+    FB_ASSERT_TRUE(len <= 5);
+}
+
+FB_TEST(varint32, roundtrip_zero) {
+    char buffer[5];
+    size_t len = encode_varint32(buffer, 0);
+    auto [value, decoded_len] = decode_varint32(buffer, len);
+    FB_ASSERT_EQ(value, 0);
+    FB_ASSERT_EQ(decoded_len, 1);
+}
+
+FB_TEST(varint32, roundtrip_small) {
+    char buffer[5];
+    uint32_t original = 42;
+    size_t len = encode_varint32(buffer, original);
+    auto [value, decoded_len] = decode_varint32(buffer, len);
+    FB_ASSERT_EQ(value, original);
+    FB_ASSERT_EQ(decoded_len, len);
+}
+
+FB_TEST(varint32, roundtrip_large) {
+    char buffer[5];
+    uint32_t original = 12345678;
+    size_t len = encode_varint32(buffer, original);
+    auto [value, decoded_len] = decode_varint32(buffer, len);
+    FB_ASSERT_EQ(value, original);
+    FB_ASSERT_EQ(decoded_len, len);
+}
+
+FB_TEST(varint32, roundtrip_max) {
+    char buffer[5];
+    uint32_t original = 4294967295U;
+    size_t len = encode_varint32(buffer, original);
+    auto [value, decoded_len] = decode_varint32(buffer, len);
+    FB_ASSERT_EQ(value, original);
+}
+
+// ============================================================================
+// Test Suite: varint64 (Variable Integer Encoding 64-bit)
+// ============================================================================
+
+FB_SUITE_SETUP(varint64) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(varint64) {
+    // Teardown code here
+}
+
+FB_TEST(varint64, encode_zero) {
+    char buffer[10];
+    size_t len = encode_varint64(buffer, 0);
+    FB_ASSERT_EQ(len, 1);
+}
+
+FB_TEST(varint64, encode_one_byte) {
+    char buffer[10];
+    size_t len = encode_varint64(buffer, 127);
+    FB_ASSERT_EQ(len, 1);
+}
+
+FB_TEST(varint64, encode_max_uint64) {
+    char buffer[10];
+    uint64_t max_val = 18446744073709551615ULL;
+    size_t len = encode_varint64(buffer, max_val);
+    FB_ASSERT_TRUE(len <= 10);
+}
+
+FB_TEST(varint64, roundtrip_zero) {
+    char buffer[10];
+    size_t len = encode_varint64(buffer, 0);
+    auto [value, decoded_len] = decode_varint64(buffer, len);
+    FB_ASSERT_EQ(value, 0);
+}
+
+FB_TEST(varint64, roundtrip_small) {
+    char buffer[10];
+    uint64_t original = 42;
+    size_t len = encode_varint64(buffer, original);
+    auto [value, decoded_len] = decode_varint64(buffer, len);
+    FB_ASSERT_EQ(value, original);
+}
+
+FB_TEST(varint64, roundtrip_large) {
+    char buffer[10];
+    uint64_t original = 12345678901234ULL;
+    size_t len = encode_varint64(buffer, original);
+    auto [value, decoded_len] = decode_varint64(buffer, len);
+    FB_ASSERT_EQ(value, original);
+}
+
+FB_TEST(varint64, roundtrip_max) {
+    char buffer[10];
+    uint64_t original = 18446744073709551615ULL;
+    size_t len = encode_varint64(buffer, original);
+    auto [value, decoded_len] = decode_varint64(buffer, len);
+    FB_ASSERT_EQ(value, original);
+}
+
+// ============================================================================
+// Test Suite: fixed32 (Fixed-size Integer Encoding 32-bit)
+// ============================================================================
+
+FB_SUITE_SETUP(fixed32) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(fixed32) {
+    // Teardown code here
+}
+
+FB_TEST(fixed32, encode_zero) {
+    char buffer[4];
+    encode_fixed32(buffer, 0);
+    uint32_t value = decode_fixed32(buffer);
+    FB_ASSERT_EQ(value, 0);
+}
+
+FB_TEST(fixed32, encode_one) {
+    char buffer[4];
+    encode_fixed32(buffer, 1);
+    uint32_t value = decode_fixed32(buffer);
+    FB_ASSERT_EQ(value, 1);
+}
+
+FB_TEST(fixed32, encode_max) {
+    char buffer[4];
+    uint32_t original = 4294967295U;
+    encode_fixed32(buffer, original);
+    uint32_t value = decode_fixed32(buffer);
+    FB_ASSERT_EQ(value, original);
+}
+
+FB_TEST(fixed32, encode_arbitrary) {
+    char buffer[4];
+    uint32_t original = 0x12345678;
+    encode_fixed32(buffer, original);
+    uint32_t value = decode_fixed32(buffer);
+    FB_ASSERT_EQ(value, original);
+}
+
+// ============================================================================
+// Test Suite: fixed64 (Fixed-size Integer Encoding 64-bit)
+// ============================================================================
+
+FB_SUITE_SETUP(fixed64) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(fixed64) {
+    // Teardown code here
+}
+
+FB_TEST(fixed64, encode_zero) {
+    char buffer[8];
+    encode_fixed64(buffer, 0);
+    uint64_t value = decode_fixed64(buffer);
+    FB_ASSERT_EQ(value, 0);
+}
+
+FB_TEST(fixed64, encode_one) {
+    char buffer[8];
+    encode_fixed64(buffer, 1);
+    uint64_t value = decode_fixed64(buffer);
+    FB_ASSERT_EQ(value, 1);
+}
+
+FB_TEST(fixed64, encode_max) {
+    char buffer[8];
+    uint64_t original = 18446744073709551615ULL;
+    encode_fixed64(buffer, original);
+    uint64_t value = decode_fixed64(buffer);
+    FB_ASSERT_EQ(value, original);
+}
+
+FB_TEST(fixed64, encode_arbitrary) {
+    char buffer[8];
+    uint64_t original = 0x123456789ABCDEF0ULL;
+    encode_fixed64(buffer, original);
+    uint64_t value = decode_fixed64(buffer);
+    FB_ASSERT_EQ(value, original);
+}
+
+FB_TEST(fixed64, encode_split) {
+    char buffer1[4];
+    char buffer2[4];
+    uint64_t original = 0x123456789ABCDEF0ULL;
+    encode_fixed64(buffer1, 3, buffer2, original);
+    uint64_t value = decode_fixed64(buffer1, 3, buffer2);
+    FB_ASSERT_EQ(value, original);
 }
