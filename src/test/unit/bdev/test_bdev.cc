@@ -311,6 +311,182 @@ FB_TEST(bdev_rpc_create, optional_object_size) {
 }
 
 // ============================================================================
+// Test Suite: bdev_rpc_delete — RPC delete request structure
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_rpc_delete) {}
+FB_SUITE_TEARDOWN(bdev_rpc_delete) {}
+
+FB_TEST(bdev_rpc_delete, default_values) {
+    rpc_bdev_fastblock_delete_mirror req;
+    FB_ASSERT_TRUE(req.name.empty());
+}
+
+FB_TEST(bdev_rpc_delete, name_assignment) {
+    rpc_bdev_fastblock_delete_mirror req;
+    req.name = "bdev_to_delete";
+    FB_ASSERT_STR_EQ(req.name.c_str(), "bdev_to_delete");
+}
+
+// ============================================================================
+// Test Suite: bdev_rpc_resize — RPC resize request structure
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_rpc_resize) {}
+FB_SUITE_TEARDOWN(bdev_rpc_resize) {}
+
+FB_TEST(bdev_rpc_resize, default_values) {
+    rpc_bdev_fastblock_resize_mirror req;
+    FB_ASSERT_TRUE(req.name.empty());
+    FB_ASSERT_EQ(req.new_size, 0u);
+}
+
+FB_TEST(bdev_rpc_resize, fields_populated) {
+    rpc_bdev_fastblock_resize_mirror req;
+    req.name = "bdev0";
+    req.new_size = 200;
+
+    FB_ASSERT_STR_EQ(req.name.c_str(), "bdev0");
+    FB_ASSERT_EQ(req.new_size, 200u);
+}
+
+FB_TEST(bdev_rpc_resize, size_in_mib) {
+    rpc_bdev_fastblock_resize_mirror req;
+    req.new_size = 1024;
+    FB_ASSERT_EQ(req.new_size, 1024u);
+
+    uint64_t bytes = req.new_size * 1024 * 1024;
+    FB_ASSERT_EQ(bytes, 1073741824ull);
+}
+
+// ============================================================================
+// Test Suite: bdev_config — Configuration management
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_config) {}
+FB_SUITE_TEARDOWN(bdev_config) {}
+
+FB_TEST(bdev_config, empty_config) {
+    bdev_config config;
+    FB_ASSERT_EQ(config.count(), 0u);
+    FB_ASSERT_FALSE(config.get("key").has_value());
+}
+
+FB_TEST(bdev_config, add_and_retrieve) {
+    bdev_config config;
+    config.add("mon_host", "10.0.0.1");
+    config.add("rdma_device_name", "mlx5_0");
+
+    FB_ASSERT_EQ(config.count(), 2u);
+    FB_ASSERT_TRUE(config.get("mon_host").has_value());
+    FB_ASSERT_STR_EQ(config.get("mon_host").value().c_str(), "10.0.0.1");
+    FB_ASSERT_STR_EQ(config.get("rdma_device_name").value().c_str(), "mlx5_0");
+}
+
+FB_TEST(bdev_config, missing_key) {
+    bdev_config config;
+    config.add("existing", "value");
+
+    auto result = config.get("nonexistent");
+    FB_ASSERT_FALSE(result.has_value());
+}
+
+FB_TEST(bdev_config, clear_config) {
+    bdev_config config;
+    config.add("key1", "value1");
+    config.add("key2", "value2");
+
+    FB_ASSERT_EQ(config.count(), 2u);
+    config.clear();
+    FB_ASSERT_EQ(config.count(), 0u);
+}
+
+FB_TEST(bdev_config, duplicate_keys) {
+    bdev_config config;
+    config.add("mon_host", "10.0.0.1");
+    config.add("mon_host", "10.0.0.2");
+
+    FB_ASSERT_EQ(config.count(), 2u);
+    FB_ASSERT_STR_EQ(config.get("mon_host").value().c_str(), "10.0.0.1");
+}
+
+// ============================================================================
+// Test Suite: bdev_global_config — Global configuration
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_global_config) {}
+FB_SUITE_TEARDOWN(bdev_global_config) {}
+
+FB_TEST(bdev_global_config, default_values) {
+    bdev_global_config_mirror cfg;
+    FB_ASSERT_TRUE(cfg.mon_cluster_endpoints.empty());
+    FB_ASSERT_TRUE(cfg.conf_path.empty());
+    FB_ASSERT_EQ(cfg.core_num, 1);
+    FB_ASSERT_TRUE(cfg.app_name.empty());
+    FB_ASSERT_FALSE(cfg.app_stop);
+}
+
+FB_TEST(bdev_global_config, field_assignment) {
+    bdev_global_config_mirror cfg;
+    cfg.mon_cluster_endpoints = "10.0.0.1,10.0.0.2,10.0.0.3";
+    cfg.conf_path = "/etc/fastblock/fastblock.json";
+    cfg.core_num = 4;
+    cfg.app_name = "fastblock-vhost";
+    cfg.app_stop = true;
+
+    FB_ASSERT_STR_EQ(cfg.mon_cluster_endpoints.c_str(), "10.0.0.1,10.0.0.2,10.0.0.3");
+    FB_ASSERT_STR_EQ(cfg.conf_path.c_str(), "/etc/fastblock/fastblock.json");
+    FB_ASSERT_EQ(cfg.core_num, 4);
+    FB_ASSERT_STR_EQ(cfg.app_name.c_str(), "fastblock-vhost");
+    FB_ASSERT_TRUE(cfg.app_stop);
+}
+
+// ============================================================================
+// Test Suite: bdev_app_stop_state — App stop state machine
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_app_stop_state) {}
+FB_SUITE_TEARDOWN(bdev_app_stop_state) {}
+
+FB_TEST(bdev_app_stop_state, initial_state) {
+    app_stop_context_mirror ctx;
+    FB_ASSERT_TRUE(ctx.current_state == app_stop_state::running);
+    FB_ASSERT_EQ(ctx.counter, 0);
+}
+
+FB_TEST(bdev_app_stop_state, state_transitions) {
+    app_stop_context_mirror ctx;
+
+    ctx.advance();
+    FB_ASSERT_TRUE(ctx.current_state == app_stop_state::monitor_stopped);
+
+    ctx.advance();
+    FB_ASSERT_TRUE(ctx.current_state == app_stop_state::connect_cache_stopped);
+
+    ctx.advance();
+    FB_ASSERT_TRUE(ctx.current_state == app_stop_state::stopping_block_clients);
+
+    ctx.advance();
+    FB_ASSERT_TRUE(ctx.current_state == app_stop_state::stopping_spdk_threads);
+}
+
+FB_TEST(bdev_app_stop_state, counter_increments) {
+    app_stop_context_mirror ctx;
+    ctx.counter = 0;
+    ctx.counter++;
+    ctx.counter++;
+    FB_ASSERT_EQ(ctx.counter, 2);
+}
+
+FB_TEST(bdev_app_stop_state, terminal_state_stays) {
+    app_stop_context_mirror ctx;
+    ctx.current_state = app_stop_state::stopping_spdk_threads;
+
+    ctx.advance();
+    FB_ASSERT_TRUE(ctx.current_state == app_stop_state::stopping_spdk_threads);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
