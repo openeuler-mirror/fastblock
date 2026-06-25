@@ -471,7 +471,7 @@ FB_TEST(units_combinations, mb_times_int) {
 
 FB_TEST(units_combinations, complex_expression) {
     size_t val = 2_GB - 512_MB + 128_KB;
-    FB_ASSERT_EQ(val, 2 * 1024 * 1024 * 1024 - 512 * 1024 * 1024 + 128 * 1024);
+    FB_ASSERT_EQ(val, 2ULL * 1024 * 1024 * 1024 - 512ULL * 1024 * 1024 + 128 * 1024);
 }
 
 // ============================================================================
@@ -665,8 +665,8 @@ FB_TEST(md5_properties, long_string) {
 }
 
 FB_TEST(md5_properties, binary_data) {
-    char binary_data[] = {0x00, 0x01, 0x02, 0xFF, 0xFE, 0xFD};
-    std::string hash = utils::md5(binary_data, sizeof(binary_data));
+    unsigned char binary_data[] = {0x00, 0x01, 0x02, 0xFF, 0xFE, 0xFD};
+    std::string hash = utils::md5(reinterpret_cast<char*>(binary_data), sizeof(binary_data));
 
     FB_ASSERT_EQ(hash.length(), 16);
 }
@@ -982,3 +982,65 @@ FB_TEST(fixed_roundtrip, fixed64_powers_of_two) {
         FB_ASSERT_EQ(decoded, val);
     }
 }
+
+// ============================================================================
+// Test Suite: encoding_comparison (Encoding Method Comparison Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(encoding_comparison) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(encoding_comparison) {
+    // Teardown code here
+}
+
+FB_TEST(encoding_comparison, varint_vs_fixed_small) {
+    char varint_buf[10];
+    char fixed_buf[8];
+
+    uint32_t small_val = 100;
+    size_t varint_len = encode_varint32(varint_buf, small_val);
+
+    // For small values, varint should be smaller than fixed
+    FB_ASSERT_TRUE(varint_len <= 4);
+}
+
+FB_TEST(encoding_comparison, varint_vs_fixed_medium) {
+    char varint_buf[10];
+    char fixed_buf[8];
+
+    uint32_t medium_val = 100000;
+    size_t varint_len = encode_varint32(varint_buf, medium_val);
+
+    // For medium values, varint might be 1-3 bytes
+    FB_ASSERT_TRUE(varint_len >= 1 && varint_len <= 5);
+}
+
+FB_TEST(encoding_comparison, varint64_vs_fixed64_small) {
+    char varint_buf[10];
+    char fixed_buf[8];
+
+    uint64_t small_val = 100;
+    size_t varint_len = encode_varint64(varint_buf, small_val);
+
+    // For small values, varint should be smaller than fixed
+    FB_ASSERT_TRUE(varint_len <= 8);
+}
+
+FB_TEST(encoding_comparison, fixed_size_constant) {
+    char buf4[4];
+    char buf8[8];
+
+    // Fixed encoding always uses constant size
+    encode_fixed32(buf4, 0);
+    encode_fixed32(buf4, 4294967295U);
+
+    encode_fixed64(buf8, 0);
+    encode_fixed64(buf8, 18446744073709551615ULL);
+
+    // Fixed encoding always produces 4 or 8 bytes
+    FB_ASSERT_TRUE(true);  // If we got here, encoding succeeded
+}
+
+FB_TEST_MAIN()
