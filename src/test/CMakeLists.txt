@@ -9,9 +9,97 @@ if(BUILD_FASTBLOCK_TESTS)
 	# Unified test framework
 	add_subdirectory(framework)
 
-	# Unit tests
+	# ============================================================================
+	# Unit Tests - Organized by module
+	# ============================================================================
+
+	# ----------------------------------------------------------------------------
+	# base module tests
+	# ----------------------------------------------------------------------------
+	add_executable(test_base
+	  unit/base/test_base.cc
+	)
+
+	target_include_directories(test_base
+	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+	target_link_libraries(test_base
+	  PUBLIC
+	    test_framework
+	    base
+	)
+
+	# ----------------------------------------------------------------------------
+	# client module tests
+	# ----------------------------------------------------------------------------
+	add_executable(test_client
+	  unit/client/test_client.cc
+	)
+
+	target_include_directories(test_client
+	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+	target_link_libraries(test_client
+	  PUBLIC
+	    test_framework
+	    base
+	)
+
+	# ----------------------------------------------------------------------------
+	# localstore module tests
+	# ----------------------------------------------------------------------------
+	add_executable(test_localstore
+	  unit/localstore/test_localstore.cc
+	)
+
+	target_include_directories(test_localstore
+	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+	  PRIVATE ${FASTBLOCK_DEPS_INSTALL_DIR}/include)
+
+	target_link_libraries(test_localstore
+	  PUBLIC
+	    test_framework
+	    raft_msg
+	)
+
+	# ----------------------------------------------------------------------------
+	# monclient module tests
+	# ----------------------------------------------------------------------------
+	add_executable(test_monclient
+	  unit/monclient/test_monclient.cc
+	)
+
+	target_include_directories(test_monclient
+	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+	target_link_libraries(test_monclient
+	  PUBLIC
+	    test_framework
+	    base
+	)
+
+	# ----------------------------------------------------------------------------
+	# osd module tests
+	# ----------------------------------------------------------------------------
+	add_executable(test_osd
+	  unit/osd/test_osd.cc
+	)
+
+	target_include_directories(test_osd
+	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+	target_link_libraries(test_osd
+	  PUBLIC
+	    test_framework
+	    base
+	    osd_msg
+	)
+
+	# ----------------------------------------------------------------------------
+	# raft module tests
+	# ----------------------------------------------------------------------------
 	add_executable(test_raft_state
-	  unit/test_raft_state.cc
+	  unit/raft/test_raft_state.cc
 	)
 
 	target_include_directories(test_raft_state
@@ -30,7 +118,7 @@ if(BUILD_FASTBLOCK_TESTS)
 	)
 
 	add_executable(test_raft_rpc
-	  unit/test_raft_rpc.cc
+	  unit/raft/test_raft_rpc.cc
 	)
 
 	target_include_directories(test_raft_rpc
@@ -42,21 +130,8 @@ if(BUILD_FASTBLOCK_TESTS)
 	    base
 	)
 
-	add_executable(test_framework_macros
-	  unit/test_framework_macros.cc
-	)
-
-	target_include_directories(test_framework_macros
-	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-	target_link_libraries(test_framework_macros
-	  PUBLIC
-	    test_framework
-	    base
-	)
-
 	add_executable(test_raft_log_node
-	  unit/test_raft_log_node.cc
+	  unit/raft/test_raft_log_node.cc
 	)
 
 	target_include_directories(test_raft_log_node
@@ -68,86 +143,11 @@ if(BUILD_FASTBLOCK_TESTS)
 	    base
 	)
 
-	add_executable(test_utils
-	  unit/test_utils.cc
-	)
-
-	target_include_directories(test_utils
-	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-	target_link_libraries(test_utils
-	  PUBLIC
-	    test_framework
-	    base
-	)
-
-	# Extra utils tests: covers utils contracts NOT in test_utils.cc —
-	# err_num error codes, utils.h align_up/align_down (bitmask version,
-	# power-of-2 only), constants (port range, blobstore cluster size),
-	# osd_info_t / pg_info_type / core_shard_map, overload helper,
-	# duration_map percentile arithmetic. Headers are mirrored locally
-	# (don't link any production code) so the test binary stays free of
-	# spdk_env / pthread globals.
-	add_executable(test_utils_extra
-	  unit/test_utils_extra.cc
-	)
-
-	target_include_directories(test_utils_extra
-	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-	target_link_libraries(test_utils_extra
-	  PUBLIC
-	    test_framework
-	    base
-	)
-
-
-	add_executable(test_localstore
-	  unit/test_localstore.cc
-	)
-
-	target_include_directories(test_localstore
-	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
-	  PRIVATE ${FASTBLOCK_DEPS_INSTALL_DIR}/include)
-
-	target_link_libraries(test_localstore
-	  PUBLIC
-	    test_framework
-	    raft_msg
-	)
-	add_executable(test_osd
-	  unit/test_osd.cc
-	)
-
-	target_include_directories(test_osd
-	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-	target_link_libraries(test_osd
-	  PUBLIC
-	    test_framework
-	    base
-	    osd_msg
-	)
-
-	add_executable(test_base
-	  unit/test_base.cc
-	)
-
-	target_include_directories(test_base
-	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-	target_link_libraries(test_base
-	  PUBLIC
-	    test_framework
-	    base
-	)
-
-	# Communication-link unit tests: msg / rpc / monclient combined.
-	# Does NOT link the real msg/rpc/monclient libs (they pull in rdmacm /
-	# ibverbs / spdk env that may be absent in CI). Tests mirror the data
-	# contracts; production headers stay the source of truth.
+	# ----------------------------------------------------------------------------
+	# rpc/msg module tests (communication layer)
+	# ----------------------------------------------------------------------------
 	add_executable(test_comm
-	  unit/test_comm.cc
+	  unit/rpc/test_comm.cc
 	)
 
 	target_include_directories(test_comm
@@ -159,24 +159,54 @@ if(BUILD_FASTBLOCK_TESTS)
 	    base
 	)
 
-	# Client unit tests: routing, addressing, object splitting.
-	# Part 1 of the client test suite covering the arithmetic contracts
-	# invoked on every IO path. Mirrors contracts locally to avoid
-	# pulling rdmacm/ibverbs/spdk_env into the test binary.
-	add_executable(test_client
-	  unit/test_client.cc
+	# ----------------------------------------------------------------------------
+	# utils module tests
+	# ----------------------------------------------------------------------------
+	add_executable(test_utils
+	  unit/utils/test_utils.cc
 	)
 
-	target_include_directories(test_client
+	target_include_directories(test_utils
 	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-	target_link_libraries(test_client
+	target_link_libraries(test_utils
 	  PUBLIC
 	    test_framework
 	    base
 	)
 
-	# Stress tests
+	add_executable(test_utils_extra
+	  unit/utils/test_utils_extra.cc
+	)
+
+	target_include_directories(test_utils_extra
+	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+	target_link_libraries(test_utils_extra
+	  PUBLIC
+	    test_framework
+	    base
+	)
+
+	# ----------------------------------------------------------------------------
+	# framework tests (test framework itself)
+	# ----------------------------------------------------------------------------
+	add_executable(test_framework_macros
+	  unit/framework/test_framework_macros.cc
+	)
+
+	target_include_directories(test_framework_macros
+	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+	target_link_libraries(test_framework_macros
+	  PUBLIC
+	    test_framework
+	    base
+	)
+
+	# ============================================================================
+	# Stress Tests
+	# ============================================================================
 	add_executable(raft_membership
 	  framework/osd_client.cc
 	  stress/raft_membership.cc
