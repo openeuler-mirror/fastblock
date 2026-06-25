@@ -1131,4 +1131,63 @@ FB_TEST(varint_encoding_efficiency, space_savings) {
     FB_ASSERT_TRUE(varint_len < fixed_len);
 }
 
+// ============================================================================
+// Test Suite: md5_collision (MD5 Collision Resistance Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(md5_collision) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(md5_collision) {
+    // Teardown code here
+}
+
+FB_TEST(md5_collision, sequential_strings) {
+    std::string prev_hash;
+    for (int i = 0; i < 100; i++) {
+        std::string data = "test" + std::to_string(i);
+        std::string hash = utils::md5(const_cast<char*>(data.c_str()), data.size());
+
+        // Each hash should be different
+        if (!prev_hash.empty()) {
+            FB_ASSERT_TRUE(hash != prev_hash);
+        }
+        prev_hash = hash;
+    }
+}
+
+FB_TEST(md5_collision, similar_strings) {
+    std::string data1 = "string1";
+    std::string data2 = "string2";
+
+    std::string hash1 = utils::md5(const_cast<char*>(data1.c_str()), data1.size());
+    std::string hash2 = utils::md5(const_cast<char*>(data2.c_str()), data2.size());
+
+    // Similar strings should have different hashes
+    FB_ASSERT_TRUE(hash1 != hash2);
+}
+
+FB_TEST(md5_collision, single_char_diff) {
+    std::string data1 = "hello";
+    std::string data2 = "hello!";
+
+    std::string hash1 = utils::md5(const_cast<char*>(data1.c_str()), data1.size());
+    std::string hash2 = utils::md5(const_cast<char*>(data2.c_str()), data2.size());
+
+    // Single character difference should produce different hash
+    FB_ASSERT_TRUE(hash1 != hash2);
+}
+
+FB_TEST(md5_collision, case_difference) {
+    std::string data1 = "Hello";
+    std::string data2 = "hello";
+
+    std::string hash1 = utils::md5(const_cast<char*>(data1.c_str()), data1.size());
+    std::string hash2 = utils::md5(const_cast<char*>(data2.c_str()), data2.size());
+
+    // Case difference should produce different hash
+    FB_ASSERT_TRUE(hash1 != hash2);
+}
+
 FB_TEST_MAIN()
