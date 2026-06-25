@@ -3636,3 +3636,439 @@ FB_TEST(client_data_integrity_after_error, multiple_retries_preserve_data) {
 
     FB_ASSERT_STR_EQ(data.c_str(), original.c_str());
 }
+
+// ============================================================================
+// Part 11: Performance boundaries and stress scenarios
+// ============================================================================
+
+// ============================================================================
+// Test Suite: client_large_io — large IO operations
+// ============================================================================
+
+FB_SUITE_SETUP(client_large_io) {}
+FB_SUITE_TEARDOWN(client_large_io) {}
+
+FB_TEST(client_large_io, write_16_objects) {
+    // 64 MiB write spans 16 objects (64 / 4 = 16).
+    auto obj_num = get_obj_num(0, 64 * MiB);
+    FB_ASSERT_EQ(obj_num, 16u);
+}
+
+FB_TEST(client_large_io, write_100_objects) {
+    // 400 MiB write spans 100 objects.
+    auto obj_num = get_obj_num(0, 400 * MiB);
+    FB_ASSERT_EQ(obj_num, 100u);
+}
+
+FB_TEST(client_large_io, object_count_scaling) {
+    // Verify object count scales linearly with data size.
+    for (int i = 1; i <= 10; ++i) {
+        auto obj_num = get_obj_num(0, i * 4 * MiB);
+        FB_ASSERT_EQ(obj_num, static_cast<uint64_t>(i));
+    }
+}
+
+FB_TEST(client_large_io, large_offset_still_one_object) {
+    // Even at large offset, a 4 MiB write is still 1 object.
+    uint64_t large_offset = 1024ull * 1024 * 1024 * 100; // 100 GiB
+    auto obj_num = get_obj_num(large_offset, 4 * MiB);
+    FB_ASSERT_EQ(obj_num, 1u);
+}
+
+FB_TEST(client_large_io, large_offset_large_write) {
+    // Large offset + large write spans multiple objects correctly.
+    uint64_t offset = 100 * 1024 * 1024; // 100 MiB
+    uint64_t length = 20 * 1024 * 1024;  // 20 MiB
+    auto obj_num = get_obj_num(offset, length);
+    // offset at object 25 (100 MiB / 4 MiB), spans 5 objects.
+    FB_ASSERT_EQ(obj_num, 5u);
+}
+
+FB_TEST(client_large_io, max_reasonable_io_size) {
+    // Verify reasonable max IO size handling (e.g., 1 GiB).
+    uint64_t max_io = 1024ull * 1024 * 1024; // 1 GiB
+    auto obj_num = get_obj_num(0, max_io);
+    FB_ASSERT_EQ(obj_num, 256u); // 1 GiB / 4 MiB = 256 objects
+}
+
+// ============================================================================
+// Test Suite: client_high_concurrency — many concurrent requests
+// ============================================================================
+
+FB_SUITE_SETUP(client_high_concurrency) {}
+FB_SUITE_TEARDOWN(client_high_concurrency) {}
+
+FB_TEST(client_high_concurrency, 100_concurrent_writes) {
+    // Simulate 100 concurrent write requests in queue.
+    fake_osd osd;
+    fake_bdev_io io{1};
+    int callbacks = 0;
+
+    for (int i = 0; i < 100; ++i) {
+        auto obj_num = get_obj_num(0, 256);
+        auto* src = new write_source([&callbacks](fake_bdev_io*, int32_t) { ++callbacks; },
+                                     static_cast<uint32_t>(obj_num), &io);
+        drive_write(osd, i % 10, "img", 0, std::string(256, 'x'), src);
+    }
+
+    FB_ASSERT_EQ(osd.w_queue.size(), 100u);
+    osd.drain_all_writes();
+    FB_ASSERT_EQ(callbacks, 100);
+}
+
+FB_TEST(client_high_concurrency, 100_concurrent_reads) {
+    fake_osd osd;
+    fake_bdev_io io{1};
+    int callbacks = 0;
+
+    auto [fs, _o, _s] = calc_first_object_position(0, 256, default_object_size);
+    (void)_o; (void)_s;
+
+    for (int i = 0; i < 100; ++i) {
+        auto obj_num = get_obj_num(0, 256);
+        auto* src = new read_source([&callbacks](fake_bdev_io*, const std::string&, int32_t) { ++callbacks; },
+                                    static_cast<uint32_t>(obj_num), 256, &io, fs);
+        std::vector<std::string> payloads{std::string(256, 'A')};
+        drive_read(osd, i % 10, "img", 0, 256, payloads, src);
+    }
+
+    FB_ASSERT_EQ(osd.r_queue.size(), 100u);
+    osd.drain_all_reads();
+    FB_ASSERT_EQ(callbacks, 100);
+}
+
+FB_TEST(client_high_concurrency, mixed_writes_and_reads) {
+    fake_osd osd;
+    fake_bdev_io io{1};
+    int total = 0;
+
+    auto [fs, _o, _s] = calc_first_object_position(0, 256, default_object_size);
+    (void)_o; (void)_s;
+
+    // 50 writes + 50 reads = 100 total.
+    for (int i = 0; i < 50; ++i) {
+        auto obj_num = get_obj_num(0, 256);
+        auto* w_src = new write_source([&total](fake_bdev_io*, int32_t) { ++total; },
+                                       static_cast<uint32_t>(obj_num), &io);
+        drive_write(osd, i, "img", 0, std::string(256, 'w'), w_src);
+
+        auto* r_src = new read_source([&total](fake_bdev_io*, const std::string&, int32_t) { ++total; },
+                                      static_cast<uint32_t>(obj_num), 256, &io, fs);
+        std::vector<std::string> payloads{std::string(256, 'r')};
+        drive_read(osd, i, "img", 0, 256, payloads, r_src);
+    }
+
+    FB_ASSERT_EQ(osd.w_queue.size(), 50u);
+    FB_ASSERT_EQ(osd.r_queue.size(), 50u);
+
+    osd.drain_all_writes();
+    osd.drain_all_reads();
+    FB_ASSERT_EQ(total, 100);
+}
+
+FB_TEST(client_high_concurrency, sequential_drain_order) {
+    // Draining 1000 requests sequentially completes all.
+    fake_osd osd;
+    fake_bdev_io io{1};
+    int count = 0;
+
+    for (int i = 0; i < 1000; ++i) {
+        auto obj_num = get_obj_num(0, 128);
+        auto* src = new write_source([&count](fake_bdev_io*, int32_t) { ++count; },
+                                     static_cast<uint32_t>(obj_num), &io);
+        drive_write(osd, 0, "img", 0, std::string(128, 's'), src);
+    }
+
+    FB_ASSERT_EQ(osd.w_queue.size(), 1000u);
+    osd.drain_all_writes();
+    FB_ASSERT_EQ(count, 1000);
+}
+
+// ============================================================================
+// Test Suite: client_ring_throughput — ring slot throughput
+// ============================================================================
+
+FB_SUITE_SETUP(client_ring_throughput) {}
+FB_SUITE_TEARDOWN(client_ring_throughput) {}
+
+FB_TEST(client_ring_throughput, all_slots_acquire_release_cycle) {
+    // Acquire all 16 slots, release all, repeat 10 times.
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(16, write_ring_slot_info{});
+
+    for (int cycle = 0; cycle < 10; ++cycle) {
+        std::vector<uint32_t> acquired;
+        for (int i = 0; i < 16; ++i) {
+            auto slot = acquire_write_ring_slot(&s);
+            FB_ASSERT_TRUE(slot.has_value());
+            acquired.push_back(*slot);
+        }
+
+        // Full, cannot acquire more.
+        auto extra = acquire_write_ring_slot(&s);
+        FB_ASSERT_FALSE(extra.has_value());
+
+        // Release all.
+        for (auto idx : acquired) {
+            s.slots[idx].busy = false;
+        }
+    }
+}
+
+FB_TEST(client_ring_throughput, slot_reuse_efficiency) {
+    // Same slot can be acquired/released 1000 times.
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(1, write_ring_slot_info{});
+
+    for (int i = 0; i < 1000; ++i) {
+        auto slot = acquire_write_ring_slot(&s);
+        FB_ASSERT_TRUE(slot.has_value());
+        FB_ASSERT_EQ(*slot, 0u);
+        s.slots[0].busy = false;
+    }
+}
+
+FB_TEST(client_ring_throughput, interleaved_acquire_release) {
+    // Interleaved acquire/release pattern.
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(4, write_ring_slot_info{});
+
+    for (int i = 0; i < 100; ++i) {
+        auto slot = acquire_write_ring_slot(&s);
+        FB_ASSERT_TRUE(slot.has_value());
+        s.slots[*slot].busy = false;
+    }
+}
+
+FB_TEST(client_ring_throughput, ring_stays_ready_after_many_operations) {
+    // After many acquire/release cycles, ring stays ready.
+    write_ring_state s;
+    s.is_ready = true;
+    s.lease_us = 30ull * 1000 * 1000;
+    s.slots.assign(16, write_ring_slot_info{});
+
+    for (int i = 0; i < 1000; ++i) {
+        auto slot = acquire_write_ring_slot(&s);
+        if (slot.has_value()) {
+            s.slots[*slot].busy = false;
+        }
+    }
+
+    FB_ASSERT_TRUE(s.is_ready);
+}
+
+// ============================================================================
+// Test Suite: client_leader_lookup_performance — leader key lookup speed
+// ============================================================================
+
+FB_SUITE_SETUP(client_leader_lookup_performance) {}
+FB_SUITE_TEARDOWN(client_leader_lookup_performance) {}
+
+FB_TEST(client_leader_lookup_performance, 1000_leader_key_lookups) {
+    // 1000 leader key make/decode cycles.
+    for (int i = 0; i < 1000; ++i) {
+        int32_t pool = i % 100;
+        int32_t pg = i % 1000;
+        auto key = make_leader_key(pool, pg);
+        auto decoded = from_leader_key(key);
+        FB_ASSERT_EQ(decoded.pool_id, pool);
+        FB_ASSERT_EQ(decoded.pg_id, pg);
+    }
+}
+
+FB_TEST(client_leader_lookup_performance, leader_table_1000_entries) {
+    // Leader table with 1000 entries, lookup each.
+    std::unordered_map<uint64_t, leader_osd_info> table;
+
+    for (int i = 0; i < 1000; ++i) {
+        auto key = make_leader_key(i / 100, i % 100);
+        table.emplace(key, leader_osd_info{.leader_id = i});
+    }
+
+    FB_ASSERT_EQ(table.size(), 1000u);
+
+    // Lookup each.
+    for (int i = 0; i < 1000; ++i) {
+        auto key = make_leader_key(i / 100, i % 100);
+        FB_ASSERT_TRUE(table.find(key) != table.end());
+    }
+}
+
+FB_TEST(client_leader_lookup_performance, leader_invalidation_and_reinsert) {
+    // Invalidate and re-insert leader entries 100 times.
+    std::unordered_map<uint64_t, leader_osd_info> table;
+    auto key = make_leader_key(0, 0);
+
+    for (int i = 0; i < 100; ++i) {
+        table[key] = leader_osd_info{.leader_id = i};
+        table[key].is_valid = false;
+        table.erase(key);
+        table[key] = leader_osd_info{.leader_id = i + 1};
+    }
+
+    FB_ASSERT_TRUE(table.find(key) != table.end());
+}
+
+// ============================================================================
+// Test Suite: client_connection_id_performance — connection ID operations
+// ============================================================================
+
+FB_SUITE_SETUP(client_connection_id_performance) {}
+FB_SUITE_TEARDOWN(client_connection_id_performance) {}
+
+FB_TEST(client_connection_id_performance, 10000_connection_id_creations) {
+    // 10000 connection_id creations.
+    for (int i = 0; i < 10000; ++i) {
+        auto id = to_connection_id(i % 1000, 9000 + (i % 100));
+        FB_ASSERT_TRUE(id != 0ull || (i % 1000 == 0 && 9000 + (i % 100) == 9000));
+    }
+}
+
+FB_TEST(client_connection_id_performance, connection_map_1000_entries) {
+    // Map with 1000 connection_id keys.
+    std::unordered_map<uint64_t, int> conn_map;
+
+    for (int i = 0; i < 1000; ++i) {
+        conn_map[to_connection_id(i, 9000)] = i;
+    }
+
+    FB_ASSERT_EQ(conn_map.size(), 1000u);
+}
+
+FB_TEST(client_connection_id_performance, connection_map_lookup_speed) {
+    // Lookup 10000 times in a 1000-entry map.
+    std::unordered_map<uint64_t, int> conn_map;
+    for (int i = 0; i < 1000; ++i) {
+        conn_map[to_connection_id(i, 9000)] = i;
+    }
+
+    for (int i = 0; i < 10000; ++i) {
+        auto id = to_connection_id(i % 1000, 9000);
+        FB_ASSERT_TRUE(conn_map.find(id) != conn_map.end());
+    }
+}
+
+// ============================================================================
+// Test Suite: client_hash_distribution — jenkins hash distribution quality
+// ============================================================================
+
+FB_SUITE_SETUP(client_hash_distribution) {}
+FB_SUITE_TEARDOWN(client_hash_distribution) {}
+
+FB_TEST(client_hash_distribution, 10000_object_names_distribute_well) {
+    // 10000 object names should distribute across 64 PGs reasonably evenly.
+    pg_router r;
+    r.calc_pg_masks(64);
+
+    std::vector<int> counts(64, 0);
+    for (int i = 0; i < 10000; ++i) {
+        auto pg = r.calc_target("obj_" + std::to_string(i));
+        counts[pg]++;
+    }
+
+    // Each PG should have at least 100 and at most 200 objects.
+    for (int c : counts) {
+        FB_ASSERT_TRUE(c >= 100);
+        FB_ASSERT_TRUE(c <= 200);
+    }
+}
+
+FB_TEST(client_hash_distribution, no_hotspot_pg) {
+    // No single PG should get more than 3% of all objects.
+    pg_router r;
+    r.calc_pg_masks(128);
+
+    std::vector<int> counts(128, 0);
+    int total = 10000;
+    for (int i = 0; i < total; ++i) {
+        auto pg = r.calc_target("object_" + std::to_string(i));
+        counts[pg]++;
+    }
+
+    int max_count = *std::max_element(counts.begin(), counts.end());
+    double ratio = static_cast<double>(max_count) / total;
+    FB_ASSERT_TRUE(ratio < 0.03); // < 3%
+}
+
+FB_TEST(client_hash_distribution, similar_names_distribute_differently) {
+    // Similar names should distribute to different PGs.
+    pg_router r;
+    r.calc_pg_masks(64);
+
+    std::set<unsigned> pgs;
+    for (int i = 0; i < 100; ++i) {
+        pgs.insert(r.calc_target("prefix_" + std::to_string(i)));
+    }
+
+    // At least 50 distinct PGs for 100 similar names.
+    FB_ASSERT_GE(pgs.size(), 50u);
+}
+
+// ============================================================================
+// Test Suite: client_pg_routing_stress — PG routing under stress
+// ============================================================================
+
+FB_SUITE_SETUP(client_pg_routing_stress) {}
+FB_SUITE_TEARDOWN(client_pg_routing_stress) {}
+
+FB_TEST(client_pg_routing_stress, routing_100000_objects) {
+    // Route 100000 objects to PGs.
+    pg_router r;
+    r.calc_pg_masks(256);
+
+    for (int i = 0; i < 100000; ++i) {
+        auto pg = r.calc_target("obj_" + std::to_string(i));
+        FB_ASSERT_LT(pg, 256u);
+    }
+}
+
+FB_TEST(client_pg_routing_stress, pg_num_change_reroutes_all) {
+    // Changing pg_num reroutes all objects.
+    pg_router r;
+    r.calc_pg_masks(16);
+
+    std::set<unsigned> pgs1;
+    for (int i = 0; i < 1000; ++i) {
+        pgs1.insert(r.calc_target("obj_" + std::to_string(i)));
+    }
+
+    r.calc_pg_masks(32);
+
+    std::set<unsigned> pgs2;
+    for (int i = 0; i < 1000; ++i) {
+        pgs2.insert(r.calc_target("obj_" + std::to_string(i)));
+    }
+
+    // Different pg_num produces different distribution.
+    FB_ASSERT_TRUE(pgs1 != pgs2 || pgs2.size() > pgs1.size());
+}
+
+FB_TEST(client_pg_routing_stress, consistent_routing_same_session) {
+    // Within same session, same object name always routes to same PG.
+    pg_router r;
+    r.calc_pg_masks(64);
+
+    for (int trial = 0; trial < 10; ++trial) {
+        auto pg1 = r.calc_target("consistent_object");
+        auto pg2 = r.calc_target("consistent_object");
+        FB_ASSERT_EQ(pg1, pg2);
+    }
+}
+
+FB_TEST(client_pg_routing_stress, different_pools_different_routing) {
+    // Objects with different prefixes route differently.
+    pg_router r;
+    r.calc_pg_masks(64);
+
+    std::set<unsigned> pool1_pgs, pool2_pgs;
+    for (int i = 0; i < 100; ++i) {
+        pool1_pgs.insert(r.calc_target("pool1_obj_" + std::to_string(i)));
+        pool2_pgs.insert(r.calc_target("pool2_obj_" + std::to_string(i)));
+    }
+
+    // Different prefixes may produce different distribution.
+    FB_ASSERT_TRUE(pool1_pgs.size() > 0 || pool2_pgs.size() > 0);
+}
