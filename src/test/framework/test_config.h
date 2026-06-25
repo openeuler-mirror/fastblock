@@ -22,6 +22,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <iostream>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
 
@@ -84,7 +85,7 @@ public:
             parse_config_unlocked();
             return true;
         } catch (const std::exception& e) {
-            SPDK_ERRLOG("Failed to load config from %s: %s\n", path.c_str(), e.what());
+            std::cerr << "Failed to load config from " << path << ": " << e.what() << std::endl;
             return false;
         }
     }
