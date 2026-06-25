@@ -1476,4 +1476,52 @@ FB_TEST(fixed_special_values, checkerboard_64) {
     FB_ASSERT_EQ(decoded, 0x5555555555555555ULL);
 }
 
+// ============================================================================
+// Test Suite: itos_positive_numbers (Positive Number Conversion Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(itos_positive_numbers) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(itos_positive_numbers) {
+    // Teardown code here
+}
+
+FB_TEST(itos_positive_numbers, single_digit_positive) {
+    FB_ASSERT_EQ(itos(1), "1");
+    FB_ASSERT_EQ(itos(2), "2");
+    FB_ASSERT_EQ(itos(3), "3");
+    FB_ASSERT_EQ(itos(4), "4");
+    FB_ASSERT_EQ(itos(5), "5");
+    FB_ASSERT_EQ(itos(6), "6");
+    FB_ASSERT_EQ(itos(7), "7");
+    FB_ASSERT_EQ(itos(8), "8");
+    FB_ASSERT_EQ(itos(9), "9");
+}
+
+FB_TEST(itos_positive_numbers, double_digit_positive) {
+    FB_ASSERT_EQ(itos(10), "10");
+    FB_ASSERT_EQ(itos(11), "11");
+    FB_ASSERT_EQ(itos(99), "99");
+}
+
+FB_TEST(itos_positive_numbers, triple_digit_positive) {
+    FB_ASSERT_EQ(itos(100), "100");
+    FB_ASSERT_EQ(itos(101), "101");
+    FB_ASSERT_EQ(itos(999), "999");
+}
+
+FB_TEST(itos_positive_numbers, quadruple_digit_positive) {
+    FB_ASSERT_EQ(itos(1000), "1000");
+    FB_ASSERT_EQ(itos(1234), "1234");
+    FB_ASSERT_EQ(itos(9999), "9999");
+}
+
+FB_TEST(itos_positive_numbers, no_leading_zeros) {
+    std::string result = itos(42);
+    FB_ASSERT_EQ(result, "42");
+    FB_ASSERT_TRUE(result[0] != '0');
+}
+
 FB_TEST_MAIN()
