@@ -865,3 +865,64 @@ FB_TEST(itos_types, uint32) {
     std::string result = itos(val);
     FB_ASSERT_EQ(result, "4294967295");
 }
+
+// ============================================================================
+// Test Suite: varint_roundtrip (Varint Roundtrip Stress Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(varint_roundtrip) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(varint_roundtrip) {
+    // Teardown code here
+}
+
+FB_TEST(varint_roundtrip, varint32_ascending) {
+    char buffer[5];
+    for (uint32_t i = 0; i < 1000; i++) {
+        size_t len = encode_varint32(buffer, i);
+        auto [value, decoded_len] = decode_varint32(buffer, len);
+        FB_ASSERT_EQ(value, i);
+    }
+}
+
+FB_TEST(varint_roundtrip, varint32_powers_of_two) {
+    char buffer[5];
+    for (int i = 0; i < 32; i++) {
+        uint32_t val = 1U << i;
+        size_t len = encode_varint32(buffer, val);
+        auto [value, decoded_len] = decode_varint32(buffer, len);
+        FB_ASSERT_EQ(value, val);
+    }
+}
+
+FB_TEST(varint_roundtrip, varint64_ascending) {
+    char buffer[10];
+    for (uint64_t i = 0; i < 1000; i++) {
+        size_t len = encode_varint64(buffer, i);
+        auto [value, decoded_len] = decode_varint64(buffer, len);
+        FB_ASSERT_EQ(value, i);
+    }
+}
+
+FB_TEST(varint_roundtrip, varint64_powers_of_two) {
+    char buffer[10];
+    for (int i = 0; i < 64; i++) {
+        uint64_t val = 1ULL << i;
+        size_t len = encode_varint64(buffer, val);
+        auto [value, decoded_len] = decode_varint64(buffer, len);
+        FB_ASSERT_EQ(value, val);
+    }
+}
+
+FB_TEST(varint_roundtrip, varint32_random_values) {
+    char buffer[5];
+    uint32_t values[] = {100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000};
+
+    for (uint32_t val : values) {
+        size_t len = encode_varint32(buffer, val);
+        auto [value, decoded_len] = decode_varint32(buffer, len);
+        FB_ASSERT_EQ(value, val);
+    }
+}
