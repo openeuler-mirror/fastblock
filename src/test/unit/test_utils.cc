@@ -670,3 +670,81 @@ FB_TEST(md5_properties, binary_data) {
 
     FB_ASSERT_EQ(hash.length(), 16);
 }
+
+// ============================================================================
+// Test Suite: fixed_encoding_properties (Fixed Encoding Properties Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(fixed_encoding_properties) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(fixed_encoding_properties) {
+    // Teardown code here
+}
+
+FB_TEST(fixed_encoding_properties, fixed32_endian_swap) {
+    char buffer[4];
+    uint32_t original = 0x12345678;
+    encode_fixed32(buffer, original);
+    uint32_t decoded = decode_fixed32(buffer);
+    FB_ASSERT_EQ(decoded, original);
+}
+
+FB_TEST(fixed_encoding_properties, fixed64_endian_swap) {
+    char buffer[8];
+    uint64_t original = 0x0123456789ABCDEFULL;
+    encode_fixed64(buffer, original);
+    uint64_t decoded = decode_fixed64(buffer);
+    FB_ASSERT_EQ(decoded, original);
+}
+
+FB_TEST(fixed_encoding_properties, fixed32_all_bytes) {
+    char buffer[4];
+    uint32_t original = 0x01020304;
+    encode_fixed32(buffer, original);
+
+    // Check that each byte is encoded correctly (little-endian)
+    FB_ASSERT_EQ(static_cast<uint8_t>(buffer[0]), 0x04);
+    FB_ASSERT_EQ(static_cast<uint8_t>(buffer[1]), 0x03);
+    FB_ASSERT_EQ(static_cast<uint8_t>(buffer[2]), 0x02);
+    FB_ASSERT_EQ(static_cast<uint8_t>(buffer[3]), 0x01);
+}
+
+FB_TEST(fixed_encoding_properties, fixed64_all_bytes) {
+    char buffer[8];
+    uint64_t original = 0x0102030405060708ULL;
+    encode_fixed64(buffer, original);
+
+    // Check that each byte is encoded correctly (little-endian)
+    FB_ASSERT_EQ(static_cast<uint8_t>(buffer[0]), 0x08);
+    FB_ASSERT_EQ(static_cast<uint8_t>(buffer[1]), 0x07);
+    FB_ASSERT_EQ(static_cast<uint8_t>(buffer[2]), 0x06);
+    FB_ASSERT_EQ(static_cast<uint8_t>(buffer[3]), 0x05);
+    FB_ASSERT_EQ(static_cast<uint8_t>(buffer[4]), 0x04);
+    FB_ASSERT_EQ(static_cast<uint8_t>(buffer[5]), 0x03);
+    FB_ASSERT_EQ(static_cast<uint8_t>(buffer[6]), 0x02);
+    FB_ASSERT_EQ(static_cast<uint8_t>(buffer[7]), 0x01);
+}
+
+FB_TEST(fixed_encoding_properties, fixed32_consistency) {
+    char buffer1[4];
+    char buffer2[4];
+    uint32_t value = 0xDEADBEEF;
+
+    encode_fixed32(buffer1, value);
+    encode_fixed32(buffer2, value);
+
+    FB_ASSERT_EQ(memcmp(buffer1, buffer2, 4), 0);
+}
+
+FB_TEST(fixed_encoding_properties, fixed64_consistency) {
+    char buffer1[8];
+    char buffer2[8];
+    uint64_t value = 0xDEADBEEFCAFEBABEULL;
+
+    encode_fixed64(buffer1, value);
+    encode_fixed64(buffer2, value);
+
+    FB_ASSERT_EQ(memcmp(buffer1, buffer2, 8), 0);
+}
