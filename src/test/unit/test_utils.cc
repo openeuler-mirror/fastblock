@@ -805,3 +805,63 @@ FB_TEST(varint_length, varint64_max_bytes) {
     // Maximum 10 bytes for 64-bit varint
     FB_ASSERT_TRUE(len <= 10);
 }
+
+// ============================================================================
+// Test Suite: itos_types (Integer Types Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(itos_types) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(itos_types) {
+    // Teardown code here
+}
+
+FB_TEST(itos_types, int8) {
+    int8_t val = 127;
+    std::string result = itos(val);
+    FB_ASSERT_EQ(result, "127");
+}
+
+FB_TEST(itos_types, int8_negative) {
+    int8_t val = -128;
+    std::string result = itos(val);
+    FB_ASSERT_EQ(result, "-128");
+}
+
+FB_TEST(itos_types, uint8) {
+    uint8_t val = 255;
+    std::string result = itos(val);
+    FB_ASSERT_EQ(result, "255");
+}
+
+FB_TEST(itos_types, int16) {
+    int16_t val = 32767;
+    std::string result = itos(val);
+    FB_ASSERT_EQ(result, "32767");
+}
+
+FB_TEST(itos_types, int16_negative) {
+    int16_t val = -32768;
+    std::string result = itos(val);
+    FB_ASSERT_EQ(result, "-32768");
+}
+
+FB_TEST(itos_types, uint16) {
+    uint16_t val = 65535;
+    std::string result = itos(val);
+    FB_ASSERT_EQ(result, "65535");
+}
+
+FB_TEST(itos_types, int32) {
+    int32_t val = 2147483647;
+    std::string result = itos(val);
+    FB_ASSERT_EQ(result, "2147483647");
+}
+
+FB_TEST(itos_types, uint32) {
+    uint32_t val = 4294967295U;
+    std::string result = itos(val);
+    FB_ASSERT_EQ(result, "4294967295");
+}
