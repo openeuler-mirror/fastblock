@@ -748,3 +748,60 @@ FB_TEST(fixed_encoding_properties, fixed64_consistency) {
 
     FB_ASSERT_EQ(memcmp(buffer1, buffer2, 8), 0);
 }
+
+// ============================================================================
+// Test Suite: varint_length (Varint Encoding Length Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(varint_length) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(varint_length) {
+    // Teardown code here
+}
+
+FB_TEST(varint_length, varint32_single_byte) {
+    char buffer[5];
+    // Values 0-127 use 1 byte
+    FB_ASSERT_EQ(encode_varint32(buffer, 0), 1);
+    FB_ASSERT_EQ(encode_varint32(buffer, 1), 1);
+    FB_ASSERT_EQ(encode_varint32(buffer, 127), 1);
+}
+
+FB_TEST(varint_length, varint32_two_bytes) {
+    char buffer[5];
+    // Values 128-16383 use 2 bytes
+    FB_ASSERT_EQ(encode_varint32(buffer, 128), 2);
+    FB_ASSERT_EQ(encode_varint32(buffer, 255), 2);
+    FB_ASSERT_EQ(encode_varint32(buffer, 16383), 2);
+}
+
+FB_TEST(varint_length, varint32_three_bytes) {
+    char buffer[5];
+    // Values 16384-2097151 use 3 bytes
+    FB_ASSERT_EQ(encode_varint32(buffer, 16384), 3);
+    FB_ASSERT_EQ(encode_varint32(buffer, 65535), 3);
+}
+
+FB_TEST(varint_length, varint64_single_byte) {
+    char buffer[10];
+    // Values 0-127 use 1 byte
+    FB_ASSERT_EQ(encode_varint64(buffer, 0), 1);
+    FB_ASSERT_EQ(encode_varint64(buffer, 127), 1);
+}
+
+FB_TEST(varint_length, varint64_two_bytes) {
+    char buffer[10];
+    // Values 128-16383 use 2 bytes
+    FB_ASSERT_EQ(encode_varint64(buffer, 128), 2);
+    FB_ASSERT_EQ(encode_varint64(buffer, 16383), 2);
+}
+
+FB_TEST(varint_length, varint64_max_bytes) {
+    char buffer[10];
+    uint64_t max_val = 18446744073709551615ULL;
+    size_t len = encode_varint64(buffer, max_val);
+    // Maximum 10 bytes for 64-bit varint
+    FB_ASSERT_TRUE(len <= 10);
+}
