@@ -1524,4 +1524,53 @@ FB_TEST(itos_positive_numbers, no_leading_zeros) {
     FB_ASSERT_TRUE(result[0] != '0');
 }
 
+// ============================================================================
+// Test Suite: mixed_encoding (Mixed Encoding Type Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(mixed_encoding) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(mixed_encoding) {
+    // Teardown code here
+}
+
+FB_TEST(mixed_encoding, encode_decode_sequence) {
+    char buffer[20];
+    size_t offset = 0;
+
+    // Encode a sequence of different types
+    encode_fixed32(buffer + offset, 0x12345678);
+    offset += 4;
+
+    encode_varint32(buffer + offset, 1000);
+    offset += encode_varint32(buffer + offset, 1000);
+
+    encode_fixed64(buffer + offset, 0x123456789ABCDEF0ULL);
+    offset += 8;
+
+    // Decode the sequence
+    offset = 0;
+    FB_ASSERT_EQ(decode_fixed32(buffer + offset), 0x12345678);
+    offset += 4;
+
+    auto [val32, len32] = decode_varint32(buffer + offset, 10);
+    FB_ASSERT_EQ(val32, 1000);
+    offset += len32;
+
+    FB_ASSERT_EQ(decode_fixed64(buffer + offset), 0x123456789ABCDEF0ULL);
+}
+
+FB_TEST(mixed_encoding, buffer_reuse) {
+    char buffer[10];
+
+    // Encode and decode multiple times using same buffer
+    for (int i = 0; i < 10; i++) {
+        encode_varint32(buffer, i * 100);
+        auto [val, len] = decode_varint32(buffer, 5);
+        FB_ASSERT_EQ(val, static_cast<uint32_t>(i * 100));
+    }
+}
+
 FB_TEST_MAIN()
