@@ -1190,4 +1190,64 @@ FB_TEST(md5_collision, case_difference) {
     FB_ASSERT_TRUE(hash1 != hash2);
 }
 
+// ============================================================================
+// Test Suite: encoding_decode_edge_cases (Encoding Decode Edge Cases)
+// ============================================================================
+
+FB_SUITE_SETUP(encoding_decode_edge_cases) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(encoding_decode_edge_cases) {
+    // Teardown code here
+}
+
+FB_TEST(encoding_decode_edge_cases, varint32_min_buffer) {
+    char buffer[5];
+    uint32_t value = 1;
+    size_t len = encode_varint32(buffer, value);
+    FB_ASSERT_TRUE(len >= 1);
+
+    auto [decoded, decoded_len] = decode_varint32(buffer, len);
+    FB_ASSERT_EQ(decoded, value);
+}
+
+FB_TEST(encoding_decode_edge_cases, varint64_min_buffer) {
+    char buffer[10];
+    uint64_t value = 1;
+    size_t len = encode_varint64(buffer, value);
+    FB_ASSERT_TRUE(len >= 1);
+
+    auto [decoded, decoded_len] = decode_varint64(buffer, len);
+    FB_ASSERT_EQ(decoded, value);
+}
+
+FB_TEST(encoding_decode_edge_cases, fixed32_min_value) {
+    char buffer[4];
+    encode_fixed32(buffer, 0);
+    uint32_t decoded = decode_fixed32(buffer);
+    FB_ASSERT_EQ(decoded, 0);
+}
+
+FB_TEST(encoding_decode_edge_cases, fixed64_min_value) {
+    char buffer[8];
+    encode_fixed64(buffer, 0);
+    uint64_t decoded = decode_fixed64(buffer);
+    FB_ASSERT_EQ(decoded, 0);
+}
+
+FB_TEST(encoding_decode_edge_cases, fixed32_all_ones) {
+    char buffer[4];
+    encode_fixed32(buffer, 0xFFFFFFFF);
+    uint32_t decoded = decode_fixed32(buffer);
+    FB_ASSERT_EQ(decoded, 0xFFFFFFFF);
+}
+
+FB_TEST(encoding_decode_edge_cases, fixed64_all_ones) {
+    char buffer[8];
+    encode_fixed64(buffer, 0xFFFFFFFFFFFFFFFFULL);
+    uint64_t decoded = decode_fixed64(buffer);
+    FB_ASSERT_EQ(decoded, 0xFFFFFFFFFFFFFFFFULL);
+}
+
 FB_TEST_MAIN()
