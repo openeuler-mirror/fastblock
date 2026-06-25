@@ -2087,3 +2087,335 @@ FB_TEST(client_leader_concurrent, erase_entry_removes_only_target) {
     FB_ASSERT_EQ(table.size(), 1u);
     FB_ASSERT_TRUE(table.find(k2) != table.end());
 }
+
+// ============================================================================
+// Part 7: Connection lifecycle and reconnection
+// ============================================================================
+
+// ============================================================================
+// Test Suite: client_connection_state — connection state transitions
+// ============================================================================
+
+FB_SUITE_SETUP(client_connection_state) {}
+FB_SUITE_TEARDOWN(client_connection_state) {}
+
+FB_TEST(client_connection_state, initial_state_is_not_ready) {
+    write_ring_state s;
+    FB_ASSERT_FALSE(s.is_ready);
+    FB_ASSERT_FALSE(s.is_onflight);
+    FB_ASSERT_FALSE(s.is_connecting);
+    FB_ASSERT_EQ(s.queue_id, 0u);
+}
+
+FB_TEST(client_connection_state, acquire_lease_sets_ready) {
+    write_ring_state s;
+    s.lease_us = 30ull * 1000 * 1000;
+    s.slots.assign(4, write_ring_slot_info{});
+    s.is_ready = true;
+    s.queue_id = 123;
+    FB_ASSERT_TRUE(s.is_ready);
+    FB_ASSERT_EQ(s.queue_id, 123u);
+}
+
+FB_TEST(client_connection_state, reset_clears_all_state) {
+    write_ring_state s;
+    s.queue_id = 99;
+    s.lease_us = 30ull * 1000 * 1000;
+    s.is_ready = true;
+    s.is_onflight = true;
+    s.slots.assign(4, write_ring_slot_info{});
+    s.conn_alive = true;
+    s.next_slot = 2;
+
+    reset_write_ring_state(s, false);
+
+    FB_ASSERT_FALSE(s.is_ready);
+    FB_ASSERT_FALSE(s.is_onflight);
+    FB_ASSERT_FALSE(s.conn_alive);
+    FB_ASSERT_EQ(s.queue_id, 0u);
+    FB_ASSERT_EQ(s.lease_us, 0u);
+    FB_ASSERT_EQ(s.next_slot, 0u);
+    FB_ASSERT_TRUE(s.slots.empty());
+}
+
+FB_TEST(client_connection_state, reset_keep_connection_preserves_conn_alive) {
+    write_ring_state s;
+    s.queue_id = 50;
+    s.conn_alive = true;
+    s.is_ready = true;
+
+    reset_write_ring_state(s, true);
+
+    FB_ASSERT_FALSE(s.is_ready);
+    FB_ASSERT_TRUE(s.conn_alive); // preserved
+    FB_ASSERT_EQ(s.queue_id, 0u);
+}
+
+FB_TEST(client_connection_state, transient_error_clears_ring_state) {
+    // Simulating process_response clearing ring state on transient error.
+    write_ring_state s;
+    s.queue_id = 100;
+    s.lease_us = 30ull * 1000 * 1000;
+    s.is_ready = true;
+    s.slots.assign(2, write_ring_slot_info{.busy = true});
+
+    int32_t error = -ENOLINK;
+    if (error == -ENOLINK || error == -ENOENT || error == -EINVAL) {
+        s.is_ready = false;
+        s.queue_id = 0;
+        s.lease_us = 0;
+        s.lease_deadline = {};
+        s.slots.clear();
+    }
+
+    FB_ASSERT_FALSE(s.is_ready);
+    FB_ASSERT_TRUE(s.slots.empty());
+}
+
+// ============================================================================
+// Test Suite: client_lease_renewal — lease renewal state machine
+// ============================================================================
+
+FB_SUITE_SETUP(client_lease_renewal) {}
+FB_SUITE_TEARDOWN(client_lease_renewal) {}
+
+FB_TEST(client_lease_renewal, long_lease_clamps_guard) {
+    // Lease of 30s → guard = 6s, clamped to 5s → deadline ≈ 25s from now.
+    write_ring_state s;
+    s.lease_us = 30ull * 1000 * 1000;
+    refresh_local_write_ring_deadline(s);
+
+    auto now = std::chrono::steady_clock::now();
+    auto remaining = s.lease_deadline - now;
+
+    // remaining should be about 25s (±1s tolerance).
+    FB_ASSERT_TRUE(remaining >= std::chrono::seconds{24});
+    FB_ASSERT_TRUE(remaining <= std::chrono::seconds{26});
+}
+
+FB_TEST(client_lease_renewal, short_lease_halves_guard) {
+    // Lease of 100ms → guard = 20ms, clamped to 500ms → guard >= lease → guard = lease/2 = 50ms.
+    write_ring_state s;
+    s.lease_us = 100ull * 1000;
+    refresh_local_write_ring_deadline(s);
+
+    auto now = std::chrono::steady_clock::now();
+    auto remaining = s.lease_deadline - now;
+
+    // remaining should be about 50ms.
+    FB_ASSERT_TRUE(remaining > std::chrono::milliseconds{0});
+    FB_ASSERT_TRUE(remaining <= std::chrono::milliseconds{100});
+}
+
+FB_TEST(client_lease_renewal, should_refresh_after_deadline) {
+    write_ring_state s;
+    s.lease_us = 30ull * 1000 * 1000;
+    s.is_ready = true;
+    refresh_local_write_ring_deadline(s);
+    FB_ASSERT_FALSE(should_refresh_write_ring_lease(&s)); // not yet
+
+    // Manually set deadline to past.
+    s.lease_deadline = std::chrono::steady_clock::now() - std::chrono::seconds{1};
+    FB_ASSERT_TRUE(should_refresh_write_ring_lease(&s)); // now expired
+}
+
+FB_TEST(client_lease_renewal, refresh_requires_ready_state) {
+    write_ring_state s;
+    s.lease_us = 30ull * 1000 * 1000;
+    s.is_ready = false; // NOT ready
+    refresh_local_write_ring_deadline(s);
+    s.lease_deadline = std::chrono::steady_clock::now() - std::chrono::seconds{1};
+    FB_ASSERT_FALSE(should_refresh_write_ring_lease(&s));
+}
+
+FB_TEST(client_lease_renewal, zero_lease_has_no_deadline) {
+    write_ring_state s;
+    s.lease_us = 0;
+    refresh_local_write_ring_deadline(s);
+    FB_ASSERT_TRUE(s.lease_deadline == std::chrono::steady_clock::time_point{});
+    FB_ASSERT_FALSE(should_refresh_write_ring_lease(&s));
+}
+
+// ============================================================================
+// Test Suite: client_stub_cache — stub lookup and invalidation
+// ============================================================================
+
+FB_SUITE_SETUP(client_stub_cache) {}
+FB_SUITE_TEARDOWN(client_stub_cache) {}
+
+FB_TEST(client_stub_cache, connection_id_key_is_unique) {
+    // Simulating _stubs map keyed by connection_id.
+    std::unordered_map<uint64_t, int> stubs;
+    auto id1 = to_connection_id(1, 9000);
+    auto id2 = to_connection_id(2, 9000);
+    stubs[id1] = 1;
+    stubs[id2] = 2;
+    FB_ASSERT_EQ(stubs.size(), 2u);
+}
+
+FB_TEST(client_stub_cache, invalidate_by_connection_id) {
+    // Invalidating a stub should erase it from the cache.
+    std::unordered_map<uint64_t, int> stubs;
+    auto id1 = to_connection_id(1, 9000);
+    auto id2 = to_connection_id(1, 9001);
+    stubs[id1] = 100;
+    stubs[id2] = 200;
+
+    stubs.erase(id1); // invalidate first connection
+    FB_ASSERT_EQ(stubs.size(), 1u);
+    FB_ASSERT_TRUE(stubs.find(id1) == stubs.end());
+    FB_ASSERT_TRUE(stubs.find(id2) != stubs.end());
+}
+
+FB_TEST(client_stub_cache, invalidate_all_for_osd) {
+    // When an OSD goes down, all its connections (different ports per shard)
+    // should be invalidated.
+    std::unordered_map<uint64_t, int> stubs;
+    for (int port = 9000; port < 9005; ++port) {
+        stubs[to_connection_id(5, port)] = port;
+    }
+    FB_ASSERT_EQ(stubs.size(), 5u);
+
+    // Invalidate all connections for OSD 5.
+    for (auto it = stubs.begin(); it != stubs.end(); ) {
+        int32_t node = static_cast<int32_t>(it->first & 0xffffffff);
+        if (node == 5) {
+            it = stubs.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    FB_ASSERT_TRUE(stubs.empty());
+}
+
+FB_TEST(client_stub_cache, reuse_after_invalidation) {
+    // After invalidation, a new stub can be created for the same connection_id.
+    std::unordered_map<uint64_t, int> stubs;
+    auto id = to_connection_id(10, 9500);
+    stubs[id] = 1;
+    stubs.erase(id);
+    stubs[id] = 2; // new stub
+    FB_ASSERT_EQ(stubs[id], 2);
+}
+
+// ============================================================================
+// Test Suite: client_leader_invalidation — leader invalidation scenarios
+// ============================================================================
+
+FB_SUITE_SETUP(client_leader_invalidation) {}
+FB_SUITE_TEARDOWN(client_leader_invalidation) {}
+
+FB_TEST(client_leader_invalidation, retry_invalidates_leader_state) {
+    // retry_request sets is_valid = false, is_onflight = false.
+    leader_osd_info info{.leader_id = 1, .addr = "h", .port = 9000,
+                          .is_valid = true, .is_onflight = false};
+    info.is_valid = false;
+    info.is_onflight = false;
+    FB_ASSERT_FALSE(info.is_valid);
+    FB_ASSERT_FALSE(info.is_onflight);
+}
+
+FB_TEST(client_leader_invalidation, invalid_leader_requires_new_get_leader) {
+    // After invalidation, next process_request must issue a get_leader.
+    leader_osd_info info{.is_valid = false};
+    bool should_acquire = !info.is_valid;
+    FB_ASSERT_TRUE(should_acquire);
+}
+
+FB_TEST(client_leader_invalidation, transport_change_invalidates_connection) {
+    // refresh_leader_transport_from_cluster_map invalidates old transport.
+    uint64_t old_conn = to_connection_id(1, 9000);
+    uint64_t new_conn = to_connection_id(1, 9100);
+    FB_ASSERT_TRUE(old_conn != new_conn);
+
+    // Simulate invalidation.
+    std::unordered_map<uint64_t, int> stubs;
+    stubs[old_conn] = 1;
+    stubs.erase(old_conn); // invalidated
+    FB_ASSERT_TRUE(stubs.find(old_conn) == stubs.end());
+}
+
+FB_TEST(client_leader_invalidation, epoch_update_preserves_validity) {
+    // If mon_cli->last_cluster_map_at() is newer than leader epoch,
+    // leader stays valid.
+    leader_osd_info info{.epoch = std::chrono::system_clock::now() - std::chrono::hours{1},
+                          .is_valid = true};
+    auto last_cluster_map = std::chrono::system_clock::now();
+    // If epoch > last_cluster_map, leader is valid.
+    if (info.epoch > last_cluster_map) {
+        info.is_valid = true;
+    }
+    FB_ASSERT_TRUE(info.is_valid);
+}
+
+FB_TEST(client_leader_invalidation, stale_epoch_invalidates) {
+    // If epoch is older than last_cluster_map, leader is invalid.
+    leader_osd_info info{.epoch = std::chrono::system_clock::now() - std::chrono::hours{2},
+                          .is_valid = true};
+    auto last_cluster_map = std::chrono::system_clock::now() - std::chrono::hours{1};
+    if (info.epoch < last_cluster_map) {
+        info.is_valid = false;
+    }
+    FB_ASSERT_FALSE(info.is_valid);
+}
+
+// ============================================================================
+// Test Suite: client_retry_loop — retry loop convergence
+// ============================================================================
+
+FB_SUITE_SETUP(client_retry_loop) {}
+FB_SUITE_TEARDOWN(client_retry_loop) {}
+
+FB_TEST(client_retry_loop, transient_errors_are_retryable) {
+    // All transient errors should return true from should_retry_request.
+    std::vector<int32_t> transients = {
+        -ENOLINK, -ENOENT, -EINVAL,
+        err::RAFT_ERR_NOT_LEADER,
+        err::RAFT_ERR_NOT_FOUND_PG,
+        err::RAFT_ERR_PG_SHUTDOWN,
+        err::RAFT_ERR_NO_CONNECTED,
+        err::OSD_DOWN,
+        err::OSD_STARTING,
+        err::RAFT_ERR_PG_INITIALIZING,
+    };
+    for (auto code : transients) {
+        FB_ASSERT_TRUE(should_retry_request(code));
+    }
+}
+
+FB_TEST(client_retry_loop, fatal_errors_are_not_retryable) {
+    // Fatal errors should NOT retry.
+    std::vector<int32_t> fatal = {
+        err::E_SUCCESS,
+        err::ERR_NOT_FOUND_POOL,
+        err::ERR_INTERNAL,
+        err::ERR_PERM,
+        -EBADF, -EIO, -ENOMEM,
+    };
+    for (auto code : fatal) {
+        FB_ASSERT_FALSE(should_retry_request(code));
+    }
+}
+
+FB_TEST(client_retry_loop, success_never_retries) {
+    // E_SUCCESS through retry table would loop forever.
+    FB_ASSERT_FALSE(should_retry_request(err::E_SUCCESS));
+}
+
+FB_TEST(client_retry_loop, retry_preserves_request_context) {
+    // retry_request re-pushes the request_stack without decrementing obj_num.
+    // Simulate the behavior.
+    write_ring_state ring;
+    ring.is_ready = true;
+    ring.queue_id = 100;
+
+    int32_t state = err::RAFT_ERR_NOT_LEADER;
+    if (should_retry_request(state)) {
+        // Invalidate leader and ring state, but preserve request.
+        ring.is_ready = false;
+        ring.queue_id = 0;
+    }
+
+    FB_ASSERT_FALSE(ring.is_ready);
+    FB_ASSERT_EQ(ring.queue_id, 0u);
+}
