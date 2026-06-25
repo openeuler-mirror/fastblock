@@ -387,3 +387,47 @@ FB_TEST(fixed64, encode_split) {
     uint64_t value = decode_fixed64(buffer1, 3, buffer2);
     FB_ASSERT_EQ(value, original);
 }
+
+// ============================================================================
+// Test Suite: itos_edge_cases (Edge Cases for Integer to String)
+// ============================================================================
+
+FB_SUITE_SETUP(itos_edge_cases) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(itos_edge_cases) {
+    // Teardown code here
+}
+
+FB_TEST(itos_edge_cases, one) {
+    std::string result = itos(1);
+    FB_ASSERT_EQ(result, "1");
+}
+
+FB_TEST(itos_edge_cases, negative_one) {
+    std::string result = itos(-1);
+    FB_ASSERT_EQ(result, "-1");
+}
+
+FB_TEST(itos_edge_cases, power_of_two) {
+    std::string result = itos(1024);
+    FB_ASSERT_EQ(result, "1024");
+}
+
+FB_TEST(itos_edge_cases, power_of_ten) {
+    std::string result = itos(1000000);
+    FB_ASSERT_EQ(result, "1000000");
+}
+
+FB_TEST(itos_edge_cases, int32_max) {
+    int32_t max_val = 2147483647;
+    std::string result = itos(max_val);
+    FB_ASSERT_EQ(result, "2147483647");
+}
+
+FB_TEST(itos_edge_cases, int32_min) {
+    int32_t min_val = -2147483648;
+    std::string result = itos(min_val);
+    FB_ASSERT_EQ(result, "-2147483648");
+}
