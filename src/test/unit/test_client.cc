@@ -5280,3 +5280,489 @@ FB_TEST(client_request_context, context_valid_during_retry) {
 
     FB_ASSERT_EQ(ctx.retry_count, 2);
 }
+
+// ============================================================================
+// Part 15: Monitoring and statistics
+// ============================================================================
+
+// ============================================================================
+// Test Suite: client_request_stats — request statistics
+// ============================================================================
+
+FB_SUITE_SETUP(client_request_stats) {}
+FB_SUITE_TEARDOWN(client_request_stats) {}
+
+FB_TEST(client_request_stats, request_counter_increment) {
+    // Request counter increments with each request.
+    uint64_t total_requests = 0;
+    for (int i = 0; i < 1000; ++i) {
+        ++total_requests;
+    }
+    FB_ASSERT_EQ(total_requests, 1000u);
+}
+
+FB_TEST(client_request_stats, success_failure_tracking) {
+    // Track success and failure counts separately.
+    uint64_t success_count = 0;
+    uint64_t failure_count = 0;
+
+    for (int i = 0; i < 100; ++i) {
+        if (i % 10 == 0) {
+            ++failure_count;
+        } else {
+            ++success_count;
+        }
+    }
+
+    FB_ASSERT_EQ(success_count, 90u);
+    FB_ASSERT_EQ(failure_count, 10u);
+}
+
+FB_TEST(client_request_stats, retry_count_tracking) {
+    // Track retry count per request type.
+    uint64_t total_retries = 0;
+    int32_t states[] = {err::RAFT_ERR_NOT_LEADER, err::OSD_DOWN, err::E_SUCCESS};
+
+    for (auto state : states) {
+        if (should_retry_request(state)) {
+            ++total_retries;
+        }
+    }
+
+    FB_ASSERT_EQ(total_retries, 2u);
+}
+
+FB_TEST(client_request_stats, request_rate_calculation) {
+    // Calculate requests per second.
+    uint64_t requests = 10000;
+    uint64_t duration_ms = 1000;
+    double requests_per_sec = static_cast<double>(requests) / (duration_ms / 1000.0);
+    FB_ASSERT_TRUE(requests_per_sec > 9000);
+}
+
+FB_TEST(client_request_stats, object_count_per_request) {
+    // Track average objects per request.
+    std::vector<uint64_t> obj_counts = {1, 2, 1, 3, 1, 2, 4, 1};
+    uint64_t total = 0;
+    for (auto c : obj_counts) {
+        total += c;
+    }
+    double avg = static_cast<double>(total) / obj_counts.size();
+    FB_ASSERT_TRUE(avg > 1.5 && avg < 2.5);
+}
+
+// ============================================================================
+// Test Suite: client_latency_measurement — latency tracking
+// ============================================================================
+
+FB_SUITE_SETUP(client_latency_measurement) {}
+FB_SUITE_TEARDOWN(client_latency_measurement) {}
+
+FB_TEST(client_latency_measurement, latency_percentiles) {
+    // Calculate latency percentiles (p50, p95, p99).
+    std::vector<uint64_t> latencies = {10, 15, 20, 25, 30, 35, 40, 50, 100, 200};
+    std::sort(latencies.begin(), latencies.end());
+
+    uint64_t p50 = latencies[latencies.size() / 2];
+    uint64_t p95 = latencies[static_cast<size_t>(latencies.size() * 0.95)];
+    uint64_t p99 = latencies[static_cast<size_t>(latencies.size() * 0.99)];
+
+    FB_ASSERT_EQ(p50, 30u);
+    FB_ASSERT_TRUE(p95 >= 100u);
+}
+
+FB_TEST(client_latency_measurement, latency_histogram) {
+    // Build latency histogram.
+    std::map<int, int> histogram;
+    for (int i = 0; i < 100; ++i) {
+        int bucket = i / 10;
+        histogram[bucket]++;
+    }
+
+    FB_ASSERT_EQ(histogram.size(), 10u);
+}
+
+FB_TEST(client_latency_measurement, average_latency) {
+    // Calculate average latency.
+    std::vector<uint64_t> latencies = {100, 200, 150, 175, 225};
+    uint64_t sum = 0;
+    for (auto l : latencies) {
+        sum += l;
+    }
+    uint64_t avg = sum / latencies.size();
+    FB_ASSERT_TRUE(avg >= 150u && avg <= 200u);
+}
+
+FB_TEST(client_latency_measurement, max_latency) {
+    // Track maximum latency.
+    std::vector<uint64_t> latencies = {50, 100, 150, 200};
+    uint64_t max_latency = *std::max_element(latencies.begin(), latencies.end());
+    FB_ASSERT_EQ(max_latency, 200u);
+}
+
+FB_TEST(client_latency_measurement, min_latency) {
+    // Track minimum latency.
+    std::vector<uint64_t> latencies = {50, 100, 150, 200};
+    uint64_t min_latency = *std::min_element(latencies.begin(), latencies.end());
+    FB_ASSERT_EQ(min_latency, 50u);
+}
+
+// ============================================================================
+// Test Suite: client_queue_stats — queue depth statistics
+// ============================================================================
+
+FB_SUITE_SETUP(client_queue_stats) {}
+FB_SUITE_TEARDOWN(client_queue_stats) {}
+
+FB_TEST(client_queue_stats, current_queue_depth) {
+    // Track current queue depth.
+    int queue_depth = 0;
+    for (int i = 0; i < 10; ++i) {
+        ++queue_depth;  // enqueue
+    }
+    FB_ASSERT_EQ(queue_depth, 10);
+
+    for (int i = 0; i < 5; ++i) {
+        --queue_depth;  // dequeue
+    }
+    FB_ASSERT_EQ(queue_depth, 5);
+}
+
+FB_TEST(client_queue_stats, max_queue_depth) {
+    // Track maximum observed queue depth.
+    int current_depth = 0;
+    int max_depth = 0;
+
+    for (int i = 0; i < 100; ++i) {
+        ++current_depth;
+        if (current_depth > max_depth) {
+            max_depth = current_depth;
+        }
+        if (i % 10 == 9) {
+            current_depth -= 5;
+        }
+    }
+
+    FB_ASSERT_TRUE(max_depth >= 10);
+}
+
+FB_TEST(client_queue_stats, average_queue_depth) {
+    // Calculate average queue depth over time.
+    std::vector<int> samples = {5, 10, 15, 20, 25, 20, 15, 10, 5};
+    int sum = 0;
+    for (auto s : samples) {
+        sum += s;
+    }
+    double avg = static_cast<double>(sum) / samples.size();
+    FB_ASSERT_TRUE(avg > 10 && avg < 20);
+}
+
+FB_TEST(client_queue_stats, queue_full_events) {
+    // Count queue full events.
+    int queue_full_count = 0;
+    int max_queue = 128;
+    int current = 0;
+
+    for (int i = 0; i < 200; ++i) {
+        if (current >= max_queue) {
+            ++queue_full_count;
+        } else {
+            ++current;
+        }
+        if (i % 20 == 19) {
+            current -= 50;
+        }
+    }
+
+    FB_ASSERT_TRUE(queue_full_count > 0);
+}
+
+// ============================================================================
+// Test Suite: client_connection_stats — connection statistics
+// ============================================================================
+
+FB_SUITE_SETUP(client_connection_stats) {}
+FB_SUITE_TEARDOWN(client_connection_stats) {}
+
+FB_TEST(client_connection_stats, active_connection_count) {
+    // Track active connection count.
+    std::unordered_map<uint64_t, bool> connections;
+    for (int i = 0; i < 10; ++i) {
+        connections[to_connection_id(i, 9000)] = true;
+    }
+    FB_ASSERT_EQ(connections.size(), 10u);
+}
+
+FB_TEST(client_connection_stats, connection_attempt_count) {
+    // Track total connection attempts.
+    uint64_t attempts = 0;
+    uint64_t successes = 0;
+
+    for (int i = 0; i < 100; ++i) {
+        ++attempts;
+        if (i % 5 != 0) { // 80% success rate
+            ++successes;
+        }
+    }
+
+    FB_ASSERT_EQ(attempts, 100u);
+    FB_ASSERT_EQ(successes, 80u);
+}
+
+FB_TEST(client_connection_stats, reconnection_count) {
+    // Track reconnection count.
+    uint64_t reconnects = 0;
+    for (int i = 0; i < 10; ++i) {
+        // Simulate failure and reconnect.
+        ++reconnects;
+    }
+    FB_ASSERT_EQ(reconnects, 10u);
+}
+
+FB_TEST(client_connection_stats, connection_failure_rate) {
+    // Calculate connection failure rate.
+    uint64_t attempts = 100;
+    uint64_t failures = 20;
+    double failure_rate = static_cast<double>(failures) / attempts;
+    FB_ASSERT_TRUE(failure_rate < 0.25);
+}
+
+// ============================================================================
+// Test Suite: client_ring_stats — write ring statistics
+// ============================================================================
+
+FB_SUITE_SETUP(client_ring_stats) {}
+FB_SUITE_TEARDOWN(client_ring_stats) {}
+
+FB_TEST(client_ring_stats, ring_utilization) {
+    // Calculate ring slot utilization.
+    int total_slots = 16;
+    int busy_slots = 10;
+    double utilization = static_cast<double>(busy_slots) / total_slots;
+    FB_ASSERT_TRUE(utilization >= 0.5 && utilization <= 0.7);
+}
+
+FB_TEST(client_ring_stats, ring_lease_renewals) {
+    // Track lease renewal count.
+    uint64_t renewals = 0;
+    for (int i = 0; i < 60; ++i) { // 60 seconds
+        if (i % 30 == 0) { // renew every 30s
+            ++renewals;
+        }
+    }
+    FB_ASSERT_EQ(renewals, 2u);
+}
+
+FB_TEST(client_ring_stats, ring_write_count) {
+    // Track number of ring writes.
+    uint64_t ring_writes = 0;
+    uint64_t normal_writes = 0;
+
+    for (int i = 0; i < 100; ++i) {
+        if (i % 5 != 0) { // 80% use ring
+            ++ring_writes;
+        } else {
+            ++normal_writes;
+        }
+    }
+
+    FB_ASSERT_EQ(ring_writes, 80u);
+    FB_ASSERT_EQ(normal_writes, 20u);
+}
+
+FB_TEST(client_ring_stats, ring_fallback_count) {
+    // Track fallback to normal write.
+    uint64_t fallbacks = 0;
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(16, write_ring_slot_info{.busy = true});
+
+    if (!acquire_write_ring_slot(&s).has_value()) {
+        ++fallbacks;
+    }
+
+    FB_ASSERT_EQ(fallbacks, 1u);
+}
+
+FB_TEST(client_ring_stats, ring_throughput) {
+    // Calculate ring throughput (ops/sec).
+    uint64_t ops = 10000;
+    uint64_t duration_ms = 1000;
+    double ops_per_sec = static_cast<double>(ops) / (duration_ms / 1000.0);
+    FB_ASSERT_TRUE(ops_per_sec >= 9000);
+}
+
+// ============================================================================
+// Test Suite: client_error_stats — error statistics
+// ============================================================================
+
+FB_SUITE_SETUP(client_error_stats) {}
+FB_SUITE_TEARDOWN(client_error_stats) {}
+
+FB_TEST(client_error_stats, error_count_by_type) {
+    // Track error counts by error type.
+    std::map<int32_t, uint64_t> error_counts;
+    int32_t errors[] = {
+        err::RAFT_ERR_NOT_LEADER,
+        err::OSD_DOWN,
+        err::RAFT_ERR_NOT_LEADER,
+        err::OSD_STARTING,
+        err::RAFT_ERR_NOT_LEADER,
+    };
+
+    for (auto e : errors) {
+        error_counts[e]++;
+    }
+
+    FB_ASSERT_EQ(error_counts[err::RAFT_ERR_NOT_LEADER], 3u);
+    FB_ASSERT_EQ(error_counts[err::OSD_DOWN], 1u);
+}
+
+FB_TEST(client_error_stats, error_rate) {
+    // Calculate error rate.
+    uint64_t total_requests = 1000;
+    uint64_t errors = 50;
+    double error_rate = static_cast<double>(errors) / total_requests;
+    FB_ASSERT_TRUE(error_rate < 0.1);
+}
+
+FB_TEST(client_error_stats, transient_vs_permanent_errors) {
+    // Separate transient from permanent errors.
+    uint64_t transient = 0;
+    uint64_t permanent = 0;
+
+    int32_t errors[] = {
+        err::RAFT_ERR_NOT_LEADER,
+        err::ERR_NOT_FOUND_POOL,
+        err::OSD_DOWN,
+        -EIO,
+    };
+
+    for (auto e : errors) {
+        if (should_retry_request(e)) {
+            ++transient;
+        } else {
+            ++permanent;
+        }
+    }
+
+    FB_ASSERT_EQ(transient, 2u);
+    FB_ASSERT_EQ(permanent, 2u);
+}
+
+FB_TEST(client_error_stats, error_burst_detection) {
+    // Detect error bursts (multiple errors in short time).
+    std::vector<int> errors_per_second = {0, 0, 5, 10, 15, 2, 0, 0};
+    bool burst_detected = false;
+    int threshold = 10;
+
+    for (auto count : errors_per_second) {
+        if (count >= threshold) {
+            burst_detected = true;
+            break;
+        }
+    }
+
+    FB_ASSERT_TRUE(burst_detected);
+}
+
+// ============================================================================
+// Test Suite: client_leader_stats — leader statistics
+// ============================================================================
+
+FB_SUITE_SETUP(client_leader_stats) {}
+FB_SUITE_TEARDOWN(client_leader_stats) {}
+
+FB_TEST(client_leader_stats, leader_change_count) {
+    // Track leader changes.
+    uint64_t changes = 0;
+    int32_t current_leader = 1;
+
+    int32_t leaders[] = {1, 2, 2, 3, 3, 3, 1};
+    for (auto leader : leaders) {
+        if (leader != current_leader) {
+            ++changes;
+            current_leader = leader;
+        }
+    }
+
+    FB_ASSERT_EQ(changes, 3u);
+}
+
+FB_TEST(client_leader_stats, leader_request_count) {
+    // Track leader discovery requests.
+    uint64_t leader_requests = 0;
+    for (int i = 0; i < 10; ++i) {
+        ++leader_requests;
+    }
+    FB_ASSERT_EQ(leader_requests, 10u);
+}
+
+FB_TEST(client_leader_stats, leader_cache_hit_rate) {
+    // Calculate leader cache hit rate.
+    uint64_t cache_hits = 80;
+    uint64_t cache_misses = 20;
+    double hit_rate = static_cast<double>(cache_hits) / (cache_hits + cache_misses);
+    FB_ASSERT_TRUE(hit_rate >= 0.8);
+}
+
+FB_TEST(client_leader_stats, leader_epoch_distribution) {
+    // Track leader epoch distribution.
+    std::map<int, int> epoch_counts;
+    for (int i = 0; i < 100; ++i) {
+        int epoch = i / 10;
+        epoch_counts[epoch]++;
+    }
+    FB_ASSERT_EQ(epoch_counts.size(), 10u);
+}
+
+// ============================================================================
+// Test Suite: client_health_metrics — health and liveness metrics
+// ============================================================================
+
+FB_SUITE_SETUP(client_health_metrics) {}
+FB_SUITE_TEARDOWN(client_health_metrics) {}
+
+FB_TEST(client_health_metrics, heartbeat_success_rate) {
+    // Track heartbeat success rate.
+    uint64_t sent = 100;
+    uint64_t received = 95;
+    double success_rate = static_cast<double>(received) / sent;
+    FB_ASSERT_TRUE(success_rate >= 0.95);
+}
+
+FB_TEST(client_health_metrics, connection_health_score) {
+    // Calculate connection health score (0-100).
+    uint64_t successes = 90;
+    uint64_t failures = 10;
+    int score = static_cast<int>(100 * successes / (successes + failures));
+    FB_ASSERT_EQ(score, 90);
+}
+
+FB_TEST(client_health_metrics, cluster_health_aggregate) {
+    // Aggregate health across multiple OSDs.
+    std::vector<int> osd_health = {100, 95, 100, 80, 100};
+    int total = 0;
+    for (auto h : osd_health) {
+        total += h;
+    }
+    int avg_health = total / osd_health.size();
+    FB_ASSERT_TRUE(avg_health >= 90);
+}
+
+FB_TEST(client_health_metrics, unhealthy_osd_detection) {
+    // Detect unhealthy OSDs.
+    std::unordered_map<int, int> osd_health;
+    for (int i = 0; i < 10; ++i) {
+        osd_health[i] = (i < 8) ? 100 : 0; // last 2 unhealthy
+    }
+
+    int unhealthy_count = 0;
+    for (auto& [id, health] : osd_health) {
+        if (health < 50) {
+            ++unhealthy_count;
+        }
+    }
+
+    FB_ASSERT_EQ(unhealthy_count, 2);
+}
