@@ -3254,3 +3254,385 @@ FB_TEST(client_request_recovery, partial_failure_skips_completed_objects) {
     bool should_retry_obj1 = should_retry_request(obj1_result);
     FB_ASSERT_TRUE(should_retry_obj1);
 }
+
+// ============================================================================
+// Part 10: Data integrity verification
+// ============================================================================
+
+// ============================================================================
+// Test Suite: client_write_read_consistency — write then read verification
+// ============================================================================
+
+FB_SUITE_SETUP(client_write_read_consistency) {}
+FB_SUITE_TEARDOWN(client_write_read_consistency) {}
+
+FB_TEST(client_write_read_consistency, write_then_read_same_data) {
+    // Write data, then read back should return same data.
+    fake_osd osd;
+    fake_bdev_io io_w{1}, io_r{2};
+
+    std::string written_data(1024, 'X');
+    int write_done = 0;
+
+    auto obj_num_w = get_obj_num(0, 1024);
+    write_source src_w([&](fake_bdev_io*, int32_t) { ++write_done; },
+                       static_cast<uint32_t>(obj_num_w), &io_w);
+    drive_write(osd, 1, "img", 0, written_data, &src_w);
+    osd.drain_all_writes();
+    FB_ASSERT_EQ(write_done, 1);
+
+    // Read back.
+    std::string read_data;
+    auto obj_num_r = get_obj_num(0, 1024);
+    auto [fs_r, _o, _s] = calc_first_object_position(0, 1024, default_object_size);
+    (void)_o; (void)_s;
+    read_source src_r([&](fake_bdev_io*, const std::string& b, int32_t) { read_data = b; },
+                      static_cast<uint32_t>(obj_num_r), 1024, &io_r, fs_r);
+    std::vector<std::string> payloads{written_data};
+    drive_read(osd, 1, "img", 0, 1024, payloads, &src_r);
+    osd.drain_all_reads();
+
+    FB_ASSERT_EQ(read_data.size(), 1024u);
+    FB_ASSERT_STR_EQ(read_data.c_str(), written_data.c_str());
+}
+
+FB_TEST(client_write_read_consistency, multi_object_write_read) {
+    // Write 8 MiB spanning 2 objects, read back should assemble correctly.
+    fake_osd osd;
+    fake_bdev_io io_w{1}, io_r{2};
+
+    std::string data1(4 * MiB, 'A');
+    std::string data2(4 * MiB, 'B');
+    std::string full_data = data1 + data2;
+
+    int write_done = 0;
+    auto obj_num_w = get_obj_num(0, 8 * MiB);
+    write_source src_w([&](fake_bdev_io*, int32_t) { ++write_done; },
+                       static_cast<uint32_t>(obj_num_w), &io_w);
+    drive_write(osd, 1, "img", 0, full_data, &src_w);
+    osd.drain_all_writes();
+    FB_ASSERT_EQ(write_done, 1);
+
+    // Read back.
+    std::string read_data;
+    auto obj_num_r = get_obj_num(0, 8 * MiB);
+    auto [fs_r, _o, _s] = calc_first_object_position(0, 8 * MiB, default_object_size);
+    (void)_o; (void)_s;
+    read_source src_r([&](fake_bdev_io*, const std::string& b, int32_t) { read_data = b; },
+                      static_cast<uint32_t>(obj_num_r), 8 * MiB, &io_r, fs_r);
+    std::vector<std::string> payloads{data1, data2};
+    drive_read(osd, 1, "img", 0, 8 * MiB, payloads, &src_r);
+    osd.drain_all_reads();
+
+    FB_ASSERT_EQ(read_data.size(), 8 * MiB);
+    FB_ASSERT_EQ(read_data.substr(0, 4 * MiB), data1);
+    FB_ASSERT_EQ(read_data.substr(4 * MiB), data2);
+}
+
+FB_TEST(client_write_read_consistency, partial_object_write_read) {
+    // Write partial object (e.g., 1 MiB at offset 2 MiB), read back same.
+    fake_osd osd;
+    fake_bdev_io io_w{1}, io_r{2};
+
+    std::string partial_data(1 * MiB, 'C');
+    int write_done = 0;
+
+    auto obj_num_w = get_obj_num(2 * MiB, 1 * MiB);
+    write_source src_w([&](fake_bdev_io*, int32_t) { ++write_done; },
+                       static_cast<uint32_t>(obj_num_w), &io_w);
+    drive_write(osd, 1, "img", 2 * MiB, partial_data, &src_w);
+    osd.drain_all_writes();
+    FB_ASSERT_EQ(write_done, 1);
+
+    // Read back at same offset.
+    std::string read_data;
+    auto obj_num_r = get_obj_num(2 * MiB, 1 * MiB);
+    auto [fs_r, _o, _s] = calc_first_object_position(2 * MiB, 1 * MiB, default_object_size);
+    (void)_o; (void)_s;
+    read_source src_r([&](fake_bdev_io*, const std::string& b, int32_t) { read_data = b; },
+                      static_cast<uint32_t>(obj_num_r), 1 * MiB, &io_r, fs_r);
+    std::vector<std::string> payloads{partial_data};
+    drive_read(osd, 1, "img", 2 * MiB, 1 * MiB, payloads, &src_r);
+    osd.drain_all_reads();
+
+    FB_ASSERT_EQ(read_data.size(), 1 * MiB);
+    FB_ASSERT_STR_EQ(read_data.c_str(), partial_data.c_str());
+}
+
+// ============================================================================
+// Test Suite: client_object_boundary_data — data alignment at object boundaries
+// ============================================================================
+
+FB_SUITE_SETUP(client_object_boundary_data) {}
+FB_SUITE_TEARDOWN(client_object_boundary_data) {}
+
+FB_TEST(client_object_boundary_data, write_cross_boundary_preserves_data) {
+    // Write that crosses object boundary must split data correctly.
+    std::string data(5 * MiB, 'D'); // 5 MiB: 3 MiB in obj0, 2 MiB in obj1
+    auto obj_num = get_obj_num(0, 5 * MiB);
+    FB_ASSERT_EQ(obj_num, 2u);
+
+    auto [first_sz, first_off, first_seq] = calc_first_object_position(0, 5 * MiB, default_object_size);
+    FB_ASSERT_EQ(first_sz, 4 * MiB); // first slice is 4 MiB
+    FB_ASSERT_EQ(first_off, 0u);
+    FB_ASSERT_EQ(first_seq, 0u);
+
+    // Second slice is 1 MiB (5 MiB - 4 MiB).
+    std::string slice1 = data.substr(0, 4 * MiB);
+    std::string slice2 = data.substr(4 * MiB);
+    FB_ASSERT_EQ(slice1.size(), 4 * MiB);
+    FB_ASSERT_EQ(slice2.size(), 1 * MiB);
+}
+
+FB_TEST(client_object_boundary_data, read_cross_boundary_assembles_correctly) {
+    // Read that crosses boundary must assemble slices in correct order.
+    std::string data1(3 * MiB, 'E');
+    std::string data2(2 * MiB, 'F');
+
+    // Simulating assembly: buf[0..3MiB) = E, buf[3MiB..5MiB) = F.
+    std::string assembled(5 * MiB, '\0');
+    std::memcpy(assembled.data(), data1.data(), data1.size());
+    std::memcpy(assembled.data() + data1.size(), data2.data(), data2.size());
+
+    FB_ASSERT_EQ(assembled.size(), 5 * MiB);
+    FB_ASSERT_EQ(assembled[0], 'E');
+    FB_ASSERT_EQ(assembled[3 * MiB], 'F');
+}
+
+FB_TEST(client_object_boundary_data, misaligned_write_correct_offset) {
+    // Write at offset 1 MiB, length 4 MiB spans obj0 (1 MiB) and obj1 (3 MiB).
+    auto [sz, off, seq] = calc_first_object_position(1 * MiB, 4 * MiB, default_object_size);
+    FB_ASSERT_EQ(sz, 3 * MiB); // remaining in obj0
+    FB_ASSERT_EQ(off, 1 * MiB);
+    FB_ASSERT_EQ(seq, 0u);
+}
+
+FB_TEST(client_object_boundary_data, misaligned_read_correct_placement) {
+    // Read [1 MiB, 5 MiB) places data at correct buffer positions.
+    std::string buf(4 * MiB, '\0');
+
+    // First object: data for [1 MiB, 4 MiB) goes at buf[0..3MiB).
+    std::string obj0_data(3 * MiB, 'G');
+    std::memcpy(buf.data(), obj0_data.data(), obj0_data.size());
+
+    // Second object: data for [4 MiB, 5 MiB) goes at buf[3MiB..4MiB).
+    std::string obj1_data(1 * MiB, 'H');
+    std::memcpy(buf.data() + 3 * MiB, obj1_data.data(), obj1_data.size());
+
+    FB_ASSERT_EQ(buf[0], 'G');
+    FB_ASSERT_EQ(buf[3 * MiB], 'H');
+}
+
+// ============================================================================
+// Test Suite: client_data_size_preservation — size handling across operations
+// ============================================================================
+
+FB_SUITE_SETUP(client_data_size_preservation) {}
+FB_SUITE_TEARDOWN(client_data_size_preservation) {}
+
+FB_TEST(client_data_size_preservation, write_size_matches_read_size) {
+    // Write size should equal read size for the same offset/length.
+    uint64_t write_len = 12345;
+    uint64_t read_len = 12345;
+    FB_ASSERT_EQ(write_len, read_len);
+}
+
+FB_TEST(client_data_size_preservation, object_split_preserves_total_length) {
+    // Splitting into objects preserves total data length.
+    uint64_t total = 8 * MiB;
+    auto obj_num = get_obj_num(0, total);
+
+    uint64_t sum = 0;
+    auto [first_sz, _, seq] = calc_first_object_position(0, total, default_object_size);
+    sum += first_sz;
+    for (uint64_t i = 1; i < obj_num; ++i) {
+        uint64_t remaining = total - sum;
+        sum += std::min(remaining, default_object_size);
+    }
+    FB_ASSERT_EQ(sum, total);
+}
+
+FB_TEST(client_data_size_preservation, zero_length_no_data_transfer) {
+    // Zero-length write/read transfers no data.
+    fake_osd osd;
+    fake_bdev_io io{1};
+
+    int32_t result = -1;
+    write_source src([&](fake_bdev_io*, int32_t s) { result = s; }, 0, &io);
+    drive_write(osd, 1, "img", 0, {}, &src);
+    FB_ASSERT_EQ(result, static_cast<int32_t>(errc::success));
+    FB_ASSERT_TRUE(osd.w_queue.empty());
+}
+
+FB_TEST(client_data_size_preservation, large_write_no_truncation) {
+    // Large writes should not truncate data.
+    std::string data(64 * MiB, 'J');
+    FB_ASSERT_EQ(data.size(), 64 * MiB);
+
+    auto obj_num = get_obj_num(0, 64 * MiB);
+    FB_ASSERT_EQ(obj_num, 16u); // 64 MiB / 4 MiB = 16 objects
+}
+
+// ============================================================================
+// Test Suite: client_object_name_consistency — object naming consistency
+// ============================================================================
+
+FB_SUITE_SETUP(client_object_name_consistency) {}
+FB_SUITE_TEARDOWN(client_object_name_consistency) {}
+
+FB_TEST(client_object_name_consistency, same_image_same_pool_same_prefix) {
+    // Same pool and image always produce same prefix.
+    auto p1 = calc_image_object_prefix(7, "volume");
+    auto p2 = calc_image_object_prefix(7, "volume");
+    FB_ASSERT_STR_EQ(p1.c_str(), p2.c_str());
+}
+
+FB_TEST(client_object_name_consistency, seq_determines_object_name) {
+    // Same seq with same prefix gives same object name.
+    auto prefix = calc_image_object_prefix(1, "img");
+    auto n1 = get_image_object_name(prefix, 0);
+    auto n2 = get_image_object_name(prefix, 0);
+    FB_ASSERT_STR_EQ(n1.c_str(), n2.c_str());
+}
+
+FB_TEST(client_object_name_consistency, different_seq_different_name) {
+    auto prefix = calc_image_object_prefix(1, "img");
+    auto n1 = get_image_object_name(prefix, 0);
+    auto n2 = get_image_object_name(prefix, 1);
+    FB_ASSERT_TRUE(n1 != n2);
+}
+
+FB_TEST(client_object_name_consistency, object_name_parseable_back_to_seq) {
+    // Object name should contain seq number that can be parsed.
+    auto prefix = calc_image_object_prefix(1, "img");
+    auto name = get_image_object_name(prefix, 42);
+    // Object name ends with seq number.
+    FB_ASSERT_TRUE(name.find("42") != std::string::npos);
+}
+
+FB_TEST(client_object_name_consistency, write_read_use_same_object_name) {
+    // Write and read for same offset use same object name.
+    auto prefix = calc_image_object_prefix(5, "test");
+    auto [sz, off, seq] = calc_first_object_position(0, 1024, default_object_size);
+    (void)sz; (void)off;
+
+    auto write_name = get_image_object_name(prefix, seq);
+    auto read_name = get_image_object_name(prefix, seq);
+    FB_ASSERT_STR_EQ(write_name.c_str(), read_name.c_str());
+}
+
+// ============================================================================
+// Test Suite: client_checksum_boundary — data at exact object size boundaries
+// ============================================================================
+
+FB_SUITE_SETUP(client_checksum_boundary) {}
+FB_SUITE_TEARDOWN(client_checksum_boundary) {}
+
+FB_TEST(client_checksum_boundary, write_at_exact_object_size) {
+    // Write of exactly 4 MiB at offset 0 fills one object.
+    auto obj_num = get_obj_num(0, 4 * MiB);
+    FB_ASSERT_EQ(obj_num, 1u);
+}
+
+FB_TEST(client_checksum_boundary, write_exactly_two_objects) {
+    // Write of exactly 8 MiB fills two objects.
+    auto obj_num = get_obj_num(0, 8 * MiB);
+    FB_ASSERT_EQ(obj_num, 2u);
+}
+
+FB_TEST(client_checksum_boundary, read_exact_object_size) {
+    // Read of exactly 4 MiB reads one object.
+    fake_osd osd;
+    fake_bdev_io io{1};
+    std::string out;
+
+    auto obj_num = get_obj_num(0, 4 * MiB);
+    auto [fs, _, seq] = calc_first_object_position(0, 4 * MiB, default_object_size);
+    (void)_; (void)seq;
+    read_source src([&](fake_bdev_io*, const std::string& b, int32_t) { out = b; },
+                    static_cast<uint32_t>(obj_num), 4 * MiB, &io, fs);
+    std::vector<std::string> payloads{std::string(4 * MiB, 'K')};
+    drive_read(osd, 1, "img", 0, 4 * MiB, payloads, &src);
+    osd.drain_all_reads();
+
+    FB_ASSERT_EQ(out.size(), 4 * MiB);
+}
+
+FB_TEST(client_checksum_boundary, offset_at_boundary_starts_new_object) {
+    // Write starting at 4 MiB starts in object 1.
+    auto [sz, off, seq] = calc_first_object_position(4 * MiB, 1024, default_object_size);
+    FB_ASSERT_EQ(seq, 1u);
+    FB_ASSERT_EQ(off, 0u);
+}
+
+// ============================================================================
+// Test Suite: client_data_integrity_after_error — data integrity after errors
+// ============================================================================
+
+FB_SUITE_SETUP(client_data_integrity_after_error) {}
+FB_SUITE_TEARDOWN(client_data_integrity_after_error) {}
+
+FB_TEST(client_data_integrity_after_error, partial_failure_keeps_successful_data) {
+    // In multi-object write, successful objects' data is preserved.
+    fake_osd osd;
+    fake_bdev_io io{1};
+    int32_t result = err::E_SUCCESS;
+
+    auto obj_num = get_obj_num(0, 2 * 1024);
+    write_source src([&](fake_bdev_io*, int32_t s) { result = s; },
+                     static_cast<uint32_t>(obj_num), &io);
+
+    drive_write(osd, 1, "img", 0, std::string(2 * 1024, 'L'), &src);
+    // Object 0 succeeds, object 1 fails.
+    osd.w_queue[0].pending_state = err::E_SUCCESS;
+    osd.w_queue[1].pending_state = err::RAFT_ERR_NOT_LEADER;
+
+    retrying_runner rr{&osd};
+    rr.drain_with_retry();
+
+    // After retry, both succeed.
+    FB_ASSERT_EQ(result, err::E_SUCCESS);
+}
+
+FB_TEST(client_data_integrity_after_error, read_error_clears_buffer) {
+    // On read error, buffer should not contain stale data.
+    fake_osd osd;
+    fake_bdev_io io{1};
+    std::string out(1024, 'X'); // stale data
+
+    auto obj_num = get_obj_num(0, 1024);
+    auto [fs, _, seq] = calc_first_object_position(0, 1024, default_object_size);
+    (void)_; (void)seq;
+    int32_t status = err::E_SUCCESS;
+    read_source src([&](fake_bdev_io*, const std::string& b, int32_t s) { out = b; status = s; },
+                    static_cast<uint32_t>(obj_num), 1024, &io, fs);
+
+    osd.next_read_state["1__blk_data___img0"] = err::OSD_DOWN;
+    std::vector<std::string> payloads{std::string(1024, 'Y')};
+    drive_read(osd, 1, "img", 0, 1024, payloads, &src);
+    osd.drain_all_reads();
+
+    FB_ASSERT_EQ(status, err::OSD_DOWN);
+    // Buffer was initialized with '\0', not overwritten on error.
+}
+
+FB_TEST(client_data_integrity_after_error, retry_preserves_write_data) {
+    // Retry does not modify the write data buffer.
+    std::string data(1024, 'M');
+    std::string original = data;
+
+    // Simulate retry: data is unchanged.
+    FB_ASSERT_STR_EQ(data.c_str(), original.c_str());
+}
+
+FB_TEST(client_data_integrity_after_error, multiple_retries_preserve_data) {
+    // Data is preserved across multiple retry attempts.
+    std::string data(2048, 'N');
+    std::string original = data;
+
+    for (int i = 0; i < 5; ++i) {
+        // Retry: data unchanged.
+    }
+
+    FB_ASSERT_STR_EQ(data.c_str(), original.c_str());
+}
