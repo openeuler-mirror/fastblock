@@ -473,3 +473,75 @@ FB_TEST(units_combinations, complex_expression) {
     size_t val = 2_GB - 512_MB + 128_KB;
     FB_ASSERT_EQ(val, 2 * 1024 * 1024 * 1024 - 512 * 1024 * 1024 + 128 * 1024);
 }
+
+// ============================================================================
+// Test Suite: varint32_boundary (Varint32 Boundary Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(varint32_boundary) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(varint32_boundary) {
+    // Teardown code here
+}
+
+FB_TEST(varint32_boundary, encode_127_boundary) {
+    char buffer[5];
+    size_t len = encode_varint32(buffer, 127);
+    FB_ASSERT_EQ(len, 1);
+}
+
+FB_TEST(varint32_boundary, encode_128_boundary) {
+    char buffer[5];
+    size_t len = encode_varint32(buffer, 128);
+    FB_ASSERT_EQ(len, 2);
+}
+
+FB_TEST(varint32_boundary, encode_16383_boundary) {
+    char buffer[5];
+    size_t len = encode_varint32(buffer, 16383);
+    FB_ASSERT_EQ(len, 2);
+}
+
+FB_TEST(varint32_boundary, encode_16384_boundary) {
+    char buffer[5];
+    size_t len = encode_varint32(buffer, 16384);
+    FB_ASSERT_EQ(len, 3);
+}
+
+FB_TEST(varint32_boundary, roundtrip_127) {
+    char buffer[5];
+    uint32_t original = 127;
+    size_t len = encode_varint32(buffer, original);
+    auto [value, decoded_len] = decode_varint32(buffer, len);
+    FB_ASSERT_EQ(value, original);
+    FB_ASSERT_EQ(decoded_len, 1);
+}
+
+FB_TEST(varint32_boundary, roundtrip_128) {
+    char buffer[5];
+    uint32_t original = 128;
+    size_t len = encode_varint32(buffer, original);
+    auto [value, decoded_len] = decode_varint32(buffer, len);
+    FB_ASSERT_EQ(value, original);
+    FB_ASSERT_EQ(decoded_len, 2);
+}
+
+FB_TEST(varint32_boundary, roundtrip_16383) {
+    char buffer[5];
+    uint32_t original = 16383;
+    size_t len = encode_varint32(buffer, original);
+    auto [value, decoded_len] = decode_varint32(buffer, len);
+    FB_ASSERT_EQ(value, original);
+    FB_ASSERT_EQ(decoded_len, 2);
+}
+
+FB_TEST(varint32_boundary, roundtrip_16384) {
+    char buffer[5];
+    uint32_t original = 16384;
+    size_t len = encode_varint32(buffer, original);
+    auto [value, decoded_len] = decode_varint32(buffer, len);
+    FB_ASSERT_EQ(value, original);
+    FB_ASSERT_EQ(decoded_len, 3);
+}
