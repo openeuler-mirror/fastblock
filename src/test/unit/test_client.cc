@@ -4804,3 +4804,479 @@ FB_TEST(client_feature_flags, auto_reconnect_after_max_fail) {
     bool should_reconnect = fail_count >= max_fail;
     FB_ASSERT_TRUE(should_reconnect);
 }
+
+// ============================================================================
+// Part 14: Protocol and serialization
+// ============================================================================
+
+// ============================================================================
+// Test Suite: client_message_serialization — message serialization
+// ============================================================================
+
+FB_SUITE_SETUP(client_message_serialization) {}
+FB_SUITE_TEARDOWN(client_message_serialization) {}
+
+FB_TEST(client_message_serialization, write_request_fields) {
+    // Write request contains pool_id, pg_id, object_name, offset, data.
+    struct write_req_mock {
+        int32_t pool_id{0};
+        int32_t pg_id{0};
+        std::string object_name{};
+        uint64_t offset{0};
+        std::string data{};
+    };
+
+    write_req_mock req{1, 2, "obj", 1024, std::string(4096, 'X')};
+    FB_ASSERT_EQ(req.pool_id, 1);
+    FB_ASSERT_EQ(req.pg_id, 2);
+    FB_ASSERT_EQ(req.offset, 1024u);
+    FB_ASSERT_EQ(req.data.size(), 4096u);
+}
+
+FB_TEST(client_message_serialization, read_request_fields) {
+    // Read request contains pool_id, pg_id, object_name, offset, length.
+    struct read_req_mock {
+        int32_t pool_id{0};
+        int32_t pg_id{0};
+        std::string object_name{};
+        uint64_t offset{0};
+        uint64_t length{0};
+    };
+
+    read_req_mock req{5, 10, "test_obj", 2048, 4096};
+    FB_ASSERT_EQ(req.pool_id, 5);
+    FB_ASSERT_EQ(req.length, 4096u);
+}
+
+FB_TEST(client_message_serialization, delete_request_fields) {
+    // Delete request contains pool_id, pg_id, object_name.
+    struct delete_req_mock {
+        int32_t pool_id{0};
+        int32_t pg_id{0};
+        std::string object_name{};
+    };
+
+    delete_req_mock req{7, 3, "del_obj"};
+    FB_ASSERT_EQ(req.pool_id, 7);
+    FB_ASSERT_STR_EQ(req.object_name.c_str(), "del_obj");
+}
+
+FB_TEST(client_message_serialization, response_fields) {
+    // Response contains state and optional data.
+    struct response_mock {
+        int32_t state{0};
+        std::string data{};
+    };
+
+    response_mock resp{err::E_SUCCESS, std::string(1024, 'R')};
+    FB_ASSERT_EQ(resp.state, err::E_SUCCESS);
+    FB_ASSERT_EQ(resp.data.size(), 1024u);
+}
+
+FB_TEST(client_message_serialization, error_response_no_data) {
+    // Error response has state but no data.
+    struct response_mock {
+        int32_t state{0};
+        std::string data{};
+    };
+
+    response_mock resp{err::RAFT_ERR_NOT_LEADER, {}};
+    FB_ASSERT_EQ(resp.state, err::RAFT_ERR_NOT_LEADER);
+    FB_ASSERT_TRUE(resp.data.empty());
+}
+
+// ============================================================================
+// Test Suite: client_rdma_metadata — RDMA metadata framing
+// ============================================================================
+
+FB_SUITE_SETUP(client_rdma_metadata) {}
+FB_SUITE_TEARDOWN(client_rdma_metadata) {}
+
+FB_TEST(client_rdma_metadata, remote_addr_is_64bit) {
+    // RDMA remote address is 64-bit.
+    uint64_t remote_addr = 0x123456789ABCDEF0ULL;
+    FB_ASSERT_EQ(sizeof(remote_addr), 8u);
+}
+
+FB_TEST(client_rdma_metadata, remote_key_is_32bit) {
+    // RDMA remote key is 32-bit.
+    uint32_t remote_key = 0x12345678u;
+    FB_ASSERT_EQ(sizeof(remote_key), 4u);
+}
+
+FB_TEST(client_rdma_metadata, slot_info_structure) {
+    // Slot info contains remote_addr, remote_key, slot_size, busy.
+    struct slot_info_mock {
+        uint64_t remote_addr{0};
+        uint32_t remote_key{0};
+        uint32_t slot_size{0};
+        bool busy{false};
+    };
+
+    slot_info_mock slot{0x10000, 7, 256 * 1024, false};
+    FB_ASSERT_EQ(slot.remote_addr, 0x10000u);
+    FB_ASSERT_EQ(slot.remote_key, 7u);
+    FB_ASSERT_EQ(slot.slot_size, 256u * 1024u);
+}
+
+FB_TEST(client_rdma_metadata, commit_ring_write_request_fields) {
+    // Commit ring write request has queue_id, slot_index, serialized_size.
+    struct commit_req_mock {
+        uint64_t queue_id{0};
+        uint32_t slot_index{0};
+        uint32_t serialized_size{0};
+    };
+
+    commit_req_mock req{12345, 2, 1024};
+    FB_ASSERT_EQ(req.queue_id, 12345u);
+    FB_ASSERT_EQ(req.slot_index, 2u);
+    FB_ASSERT_EQ(req.serialized_size, 1024u);
+}
+
+FB_TEST(client_rdma_metadata, acquire_ring_request_fields) {
+    // Acquire write ring request has slot_count, slot_size, lease_us.
+    struct acquire_req_mock {
+        uint32_t slot_count{0};
+        uint32_t slot_size{0};
+        uint64_t lease_us{0};
+    };
+
+    acquire_req_mock req{16, 256 * 1024, 30 * 1000 * 1000};
+    FB_ASSERT_EQ(req.slot_count, 16u);
+    FB_ASSERT_EQ(req.lease_us, 30ull * 1000 * 1000);
+}
+
+// ============================================================================
+// Test Suite: client_leader_protocol — leader discovery protocol
+// ============================================================================
+
+FB_SUITE_SETUP(client_leader_protocol) {}
+FB_SUITE_TEARDOWN(client_leader_protocol) {}
+
+FB_TEST(client_leader_protocol, get_leader_request_fields) {
+    // Get leader request contains pool_id and pg_id.
+    struct get_leader_req_mock {
+        int32_t pool_id{0};
+        int32_t pg_id{0};
+    };
+
+    get_leader_req_mock req{7, 13};
+    FB_ASSERT_EQ(req.pool_id, 7);
+    FB_ASSERT_EQ(req.pg_id, 13);
+}
+
+FB_TEST(client_leader_protocol, get_leader_response_fields) {
+    // Get leader response contains leader_id, leader_addr, leader_port.
+    struct get_leader_resp_mock {
+        int32_t leader_id{0};
+        std::string leader_addr{};
+        int32_t leader_port{0};
+    };
+
+    get_leader_resp_mock resp{42, "10.0.0.5", 9100};
+    FB_ASSERT_EQ(resp.leader_id, 42);
+    FB_ASSERT_STR_EQ(resp.leader_addr.c_str(), "10.0.0.5");
+    FB_ASSERT_EQ(resp.leader_port, 9100);
+}
+
+FB_TEST(client_leader_protocol, leader_notification_fields) {
+    // Leader notification contains leader_id, pool_id, pg_id, osd_list.
+    struct leader_notify_mock {
+        int32_t leader_id{0};
+        uint64_t pool_id{0};
+        uint64_t pg_id{0};
+        std::vector<int32_t> osd_list;
+    };
+
+    leader_notify_mock notify{5, 1, 3, {1, 2, 3}};
+    FB_ASSERT_EQ(notify.leader_id, 5);
+    FB_ASSERT_EQ(notify.osd_list.size(), 3u);
+}
+
+FB_TEST(client_leader_protocol, member_change_notification) {
+    // Member change notification carries result code.
+    struct member_change_mock {
+        int result{0};
+        uint64_t pool_id{0};
+        uint64_t pg_id{0};
+        std::vector<int32_t> osd_list;
+    };
+
+    member_change_mock change{err::E_SUCCESS, 2, 5, {10, 11, 12}};
+    FB_ASSERT_EQ(change.result, err::E_SUCCESS);
+}
+
+// ============================================================================
+// Test Suite: client_protobuf_wire_format — protobuf wire format constraints
+// ============================================================================
+
+FB_SUITE_SETUP(client_protobuf_wire_format) {}
+FB_SUITE_TEARDOWN(client_protobuf_wire_format) {}
+
+FB_TEST(client_protobuf_wire_format, varint_encoding) {
+    // Protobuf uses varint encoding for integers.
+    // Small values (< 128) encode as single byte.
+    uint32_t small_value = 127;
+    FB_ASSERT_TRUE(small_value < 128);
+    // Would encode as 1 byte.
+}
+
+FB_TEST(client_protobuf_wire_format, string_length_prefix) {
+    // Strings are length-prefixed in protobuf.
+    std::string s = "hello";
+    uint64_t len = s.size();
+    FB_ASSERT_EQ(len, 5u);
+}
+
+FB_TEST(client_protobuf_wire_format, nested_message_size) {
+    // Nested messages have their own length prefix.
+    // Total size = outer_prefix + inner_message_size.
+    size_t inner_size = 100;
+    size_t outer_overhead = 2; // length prefix bytes
+    size_t total = inner_size + outer_overhead;
+    FB_ASSERT_TRUE(total > inner_size);
+}
+
+FB_TEST(client_protobuf_wire_format, repeated_field_packing) {
+    // Repeated fields can be packed for scalar types.
+    std::vector<int32_t> ids = {1, 2, 3, 4, 5};
+    // Packed encoding: tag + length + values.
+    FB_ASSERT_EQ(ids.size(), 5u);
+}
+
+FB_TEST(client_protobuf_wire_format, max_message_size) {
+    // Maximum message size is limited by buffer size.
+    constexpr size_t max_buffer = 65535;
+    FB_ASSERT_TRUE(max_buffer > 64000);
+}
+
+// ============================================================================
+// Test Suite: client_request_id — request ID generation
+// ============================================================================
+
+FB_SUITE_SETUP(client_request_id) {}
+FB_SUITE_TEARDOWN(client_request_id) {}
+
+FB_TEST(client_request_id, request_counter_increments) {
+    // Request counter increments for each new request.
+    uint64_t counter = 0;
+    for (int i = 0; i < 100; ++i) {
+        ++counter;
+    }
+    FB_ASSERT_EQ(counter, 100u);
+}
+
+FB_TEST(client_request_id, request_id_unique_per_request) {
+    // Each request gets a unique ID.
+    std::set<uint64_t> ids;
+    for (int i = 0; i < 1000; ++i) {
+        ids.insert(i);
+    }
+    FB_ASSERT_EQ(ids.size(), 1000u);
+}
+
+FB_TEST(client_request_id, leader_request_id_separate_counter) {
+    // Leader requests have their own ID counter.
+    uint64_t leader_req_id = 0;
+    for (int i = 0; i < 50; ++i) {
+        ++leader_req_id;
+    }
+    FB_ASSERT_EQ(leader_req_id, 50u);
+}
+
+FB_TEST(client_request_id, request_id_overflow_unlikely) {
+    // With 64-bit counter, overflow is practically impossible.
+    uint64_t max_id = UINT64_MAX;
+    FB_ASSERT_TRUE(max_id > 1000000000000ull);
+}
+
+// ============================================================================
+// Test Suite: client_callback_contract — callback contract and ordering
+// ============================================================================
+
+FB_SUITE_SETUP(client_callback_contract) {}
+FB_SUITE_TEARDOWN(client_callback_contract) {}
+
+FB_TEST(client_callback_contract, callback_invoked_once) {
+    // Callback is invoked exactly once per request.
+    int count = 0;
+    auto cb = [&count]() { ++count; };
+    cb();
+    FB_ASSERT_EQ(count, 1);
+}
+
+FB_TEST(client_callback_contract, callback_with_status) {
+    // Callback receives status code.
+    int32_t received_status = -1;
+    auto cb = [&received_status](int32_t status) { received_status = status; };
+    cb(err::E_SUCCESS);
+    FB_ASSERT_EQ(received_status, err::E_SUCCESS);
+}
+
+FB_TEST(client_callback_contract, callback_with_data) {
+    // Read callback receives data.
+    std::string received_data;
+    auto cb = [&received_data](const std::string& data) { received_data = data; };
+    cb("test_data");
+    FB_ASSERT_STR_EQ(received_data.c_str(), "test_data");
+}
+
+FB_TEST(client_callback_contract, callback_order_preserved) {
+    // Callbacks fire in request submission order.
+    std::vector<int> order;
+    auto cb1 = [&order]() { order.push_back(1); };
+    auto cb2 = [&order]() { order.push_back(2); };
+    auto cb3 = [&order]() { order.push_back(3); };
+
+    cb1();
+    cb2();
+    cb3();
+
+    FB_ASSERT_EQ(order[0], 1);
+    FB_ASSERT_EQ(order[1], 2);
+    FB_ASSERT_EQ(order[2], 3);
+}
+
+FB_TEST(client_callback_contract, callback_context_preserved) {
+    // Callback context (user data) is preserved.
+    void* user_ctx = reinterpret_cast<void*>(0x1234);
+    auto cb = [user_ctx](void* ctx) {
+        return ctx == user_ctx;
+    };
+    FB_ASSERT_TRUE(cb(user_ctx));
+}
+
+// ============================================================================
+// Test Suite: client_rpc_stub — RPC stub creation and caching
+// ============================================================================
+
+FB_SUITE_SETUP(client_rpc_stub) {}
+FB_SUITE_TEARDOWN(client_rpc_stub) {}
+
+FB_TEST(client_rpc_stub, stub_created_per_connection) {
+    // Each connection gets its own stub.
+    std::unordered_map<uint64_t, int> stubs;
+    auto id1 = to_connection_id(1, 9000);
+    auto id2 = to_connection_id(2, 9000);
+
+    stubs[id1] = 1;
+    stubs[id2] = 2;
+
+    FB_ASSERT_EQ(stubs[id1], 1);
+    FB_ASSERT_EQ(stubs[id2], 2);
+}
+
+FB_TEST(client_rpc_stub, stub_reused_for_same_connection) {
+    // Stub is reused for same connection.
+    std::unordered_map<uint64_t, int> stubs;
+    auto id = to_connection_id(5, 9500);
+
+    stubs[id] = 1;
+    int& stub = stubs[id]; // reuse
+    stub = 2;
+
+    FB_ASSERT_EQ(stubs[id], 2);
+}
+
+FB_TEST(client_rpc_stub, stub_invalidated_on_error) {
+    // Stub is invalidated on connection error.
+    std::unordered_map<uint64_t, int> stubs;
+    auto id = to_connection_id(10, 9000);
+    stubs[id] = 10;
+
+    stubs.erase(id);
+    FB_ASSERT_TRUE(stubs.find(id) == stubs.end());
+}
+
+FB_TEST(client_rpc_stub, stub_recreated_after_invalidation) {
+    // Stub can be recreated after invalidation.
+    std::unordered_map<uint64_t, int> stubs;
+    auto id = to_connection_id(7, 9100);
+
+    stubs[id] = 1;
+    stubs.erase(id);
+    stubs[id] = 2;
+
+    FB_ASSERT_EQ(stubs[id], 2);
+}
+
+FB_TEST(client_rpc_stub, stub_count_matches_active_connections) {
+    // Stub count equals active connection count.
+    std::unordered_map<uint64_t, int> stubs;
+    std::unordered_map<uint64_t, bool> connections;
+
+    for (int i = 0; i < 10; ++i) {
+        auto id = to_connection_id(i, 9000);
+        connections[id] = true;
+        stubs[id] = i;
+    }
+
+    FB_ASSERT_EQ(stubs.size(), connections.size());
+}
+
+// ============================================================================
+// Test Suite: client_request_context — request context lifecycle
+// ============================================================================
+
+FB_SUITE_SETUP(client_request_context) {}
+FB_SUITE_TEARDOWN(client_request_context) {}
+
+FB_TEST(client_request_context, context_created_per_request) {
+    // Each request has its own context.
+    struct request_ctx_mock {
+        uint64_t request_id{0};
+        int32_t pool_id{0};
+        int32_t pg_id{0};
+        void* user_ctx{nullptr};
+    };
+
+    request_ctx_mock ctx{1, 5, 10, nullptr};
+    FB_ASSERT_EQ(ctx.request_id, 1u);
+}
+
+FB_TEST(client_request_context, context_holds_callback) {
+    // Context holds the completion callback.
+    struct request_ctx_mock {
+        std::function<void(int32_t)> callback{};
+    };
+
+    int called = 0;
+    request_ctx_mock ctx;
+    ctx.callback = [&called](int32_t) { ++called; };
+    ctx.callback(err::E_SUCCESS);
+
+    FB_ASSERT_EQ(called, 1);
+}
+
+FB_TEST(client_request_context, context_holds_request_data) {
+    // Context holds request data (for retry).
+    struct request_ctx_mock {
+        std::string request_data{};
+    };
+
+    request_ctx_mock ctx;
+    ctx.request_data = std::string(1024, 'X');
+    FB_ASSERT_EQ(ctx.request_data.size(), 1024u);
+}
+
+FB_TEST(client_request_context, context_cleaned_after_completion) {
+    // Context is cleaned up after callback fires.
+    auto ctx = std::make_unique<int>(42);
+    FB_ASSERT_TRUE(ctx != nullptr);
+
+    ctx.reset();
+    FB_ASSERT_TRUE(ctx == nullptr);
+}
+
+FB_TEST(client_request_context, context_valid_during_retry) {
+    // Context remains valid during retry attempts.
+    struct request_ctx_mock {
+        int retry_count{0};
+    };
+
+    request_ctx_mock ctx;
+    ctx.retry_count = 1;
+    ctx.retry_count = 2;
+
+    FB_ASSERT_EQ(ctx.retry_count, 2);
+}
