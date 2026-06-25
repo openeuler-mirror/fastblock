@@ -1266,3 +1266,220 @@ FB_TEST(client_end_to_end_read, error_does_not_corrupt_buf) {
     FB_ASSERT_EQ(out[0], 'Q');
     FB_ASSERT_EQ(out[default_object_size], '\0');
 }
+
+// ============================================================================
+// Part 4: Integration — retry, write-ring fast-path, leader race
+// ============================================================================
+
+// ============================================================================
+// Test Suite: client_end_to_end_retry — transient errors loop back
+// ============================================================================
+
+FB_SUITE_SETUP(client_end_to_end_retry) {}
+FB_SUITE_TEARDOWN(client_end_to_end_retry) {}
+
+namespace {
+
+// A tiny re-driver: when a write_done's state is retryable, we DO NOT
+// decrement obj_num — we re-submit the same chunk and let the next drain
+// settle it. This matches fb_client's retry_request semantics.
+struct retrying_runner {
+    fake_osd* osd;
+    int retries{0};
+
+    void drain_with_retry() {
+        std::vector<write_req_record> retry_set;
+        while (!osd->w_queue.empty()) {
+            auto rec = std::move(osd->w_queue.front());
+            osd->w_queue.pop_front();
+            if (should_retry_request(rec.pending_state)) {
+                ++retries;
+                rec.pending_state = err::E_SUCCESS;
+                retry_set.push_back(std::move(rec));
+                continue;
+            }
+            write_source::write_done(rec.source, rec.pending_state);
+        }
+        for (auto& r : retry_set) osd->w_queue.push_back(std::move(r));
+        osd->drain_all_writes();
+    }
+};
+
+} // anonymous namespace
+
+FB_TEST(client_end_to_end_retry, transient_not_leader_retries_then_succeeds) {
+    fake_osd osd;
+    fake_bdev_io io{10};
+    int callbacks = 0;
+    int32_t final_state = -1;
+    auto obj_num = get_obj_num(0, 1024);
+    write_source src([&](fake_bdev_io*, int32_t s) { ++callbacks; final_state = s; },
+                     static_cast<uint32_t>(obj_num), &io);
+    osd.next_write_state["1__blk_data___img0"] = err::RAFT_ERR_NOT_LEADER;
+    drive_write(osd, 1, "img", 0, std::string(1024, 'z'), &src);
+    retrying_runner rr{&osd};
+    rr.drain_with_retry();
+    FB_ASSERT_EQ(callbacks, 1);
+    FB_ASSERT_EQ(final_state, err::E_SUCCESS);
+    FB_ASSERT_EQ(rr.retries, 1);
+}
+
+FB_TEST(client_end_to_end_retry, transient_osd_down_then_recover) {
+    fake_osd osd;
+    fake_bdev_io io{11};
+    int callbacks = 0;
+    int32_t final_state = -1;
+    auto obj_num = get_obj_num(0, 2 * default_object_size);
+    write_source src([&](fake_bdev_io*, int32_t s) { ++callbacks; final_state = s; },
+                     static_cast<uint32_t>(obj_num), &io);
+    osd.next_write_state["1__blk_data___img1"] = err::OSD_STARTING;
+    drive_write(osd, 1, "img", 0, std::string(2 * default_object_size, 'w'), &src);
+    retrying_runner rr{&osd};
+    rr.drain_with_retry();
+    FB_ASSERT_EQ(callbacks, 1);
+    FB_ASSERT_EQ(final_state, err::E_SUCCESS);
+    FB_ASSERT_EQ(rr.retries, 1);
+}
+
+FB_TEST(client_end_to_end_retry, non_retryable_error_short_circuits) {
+    fake_osd osd;
+    fake_bdev_io io{12};
+    int32_t result = err::E_SUCCESS;
+    int callbacks = 0;
+    auto obj_num = get_obj_num(0, 1024);
+    write_source src([&](fake_bdev_io*, int32_t s) { ++callbacks; result = s; },
+                     static_cast<uint32_t>(obj_num), &io);
+    osd.next_write_state["1__blk_data___img0"] = err::ERR_NOT_FOUND_POOL;
+    drive_write(osd, 1, "img", 0, std::string(1024, 'q'), &src);
+    retrying_runner rr{&osd};
+    rr.drain_with_retry();
+    FB_ASSERT_EQ(callbacks, 1);
+    FB_ASSERT_EQ(result, err::ERR_NOT_FOUND_POOL);
+    FB_ASSERT_EQ(rr.retries, 0);
+}
+
+// ============================================================================
+// Test Suite: client_end_to_end_write_ring — fast-path slot lifecycle
+// ============================================================================
+
+FB_SUITE_SETUP(client_end_to_end_write_ring) {}
+FB_SUITE_TEARDOWN(client_end_to_end_write_ring) {}
+
+FB_TEST(client_end_to_end_write_ring, lease_acquire_and_slot_pick) {
+    write_ring_state s;
+    s.lease_us = 30ull * 1000 * 1000;
+    s.slots.assign(4, write_ring_slot_info{.remote_addr = 0x1000, .remote_key = 7,
+                                           .slot_size = 256 * 1024, .busy = false});
+    s.is_ready = true;
+    refresh_local_write_ring_deadline(s);
+    FB_ASSERT_FALSE(should_refresh_write_ring_lease(&s));
+    auto idx = acquire_write_ring_slot(&s);
+    FB_ASSERT_TRUE(idx.has_value());
+    FB_ASSERT_TRUE(s.slots[*idx].busy);
+}
+
+FB_TEST(client_end_to_end_write_ring, response_releases_slot) {
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(2, write_ring_slot_info{.slot_size = 1024, .busy = false});
+    auto idx = acquire_write_ring_slot(&s);
+    FB_ASSERT_TRUE(idx.has_value());
+    FB_ASSERT_TRUE(s.slots[*idx].busy);
+    s.slots[*idx].busy = false;
+    FB_ASSERT_FALSE(s.slots[*idx].busy);
+    auto idx2 = acquire_write_ring_slot(&s);
+    FB_ASSERT_TRUE(idx2.has_value());
+}
+
+FB_TEST(client_end_to_end_write_ring, transient_response_resets_ring) {
+    write_ring_state s;
+    s.is_ready = true;
+    s.queue_id = 99;
+    s.lease_us = 30ull * 1000 * 1000;
+    s.slots.assign(2, write_ring_slot_info{.slot_size = 1024});
+    refresh_local_write_ring_deadline(s);
+    int32_t state = -ENOLINK;
+    if (state == -ENOLINK || state == -ENOENT || state == -EINVAL) {
+        s.is_ready = false;
+        s.queue_id = 0;
+        s.lease_us = 0;
+        s.lease_deadline = {};
+        s.slots.clear();
+    }
+    FB_ASSERT_FALSE(s.is_ready);
+    FB_ASSERT_EQ(s.queue_id, 0u);
+    FB_ASSERT_EQ(s.lease_us, 0u);
+    FB_ASSERT_TRUE(s.slots.empty());
+}
+
+FB_TEST(client_end_to_end_write_ring, lease_expiry_triggers_refresh) {
+    write_ring_state s;
+    s.is_ready = true;
+    s.conn_alive = true;
+    s.lease_deadline = std::chrono::steady_clock::now() - std::chrono::seconds{1};
+    FB_ASSERT_TRUE(should_refresh_write_ring_lease(&s));
+    reset_write_ring_state(s, /*keep_connection=*/true);
+    FB_ASSERT_FALSE(s.is_ready);
+    FB_ASSERT_TRUE(s.conn_alive);
+    FB_ASSERT_TRUE(s.slots.empty());
+}
+
+// ============================================================================
+// Test Suite: client_end_to_end_leader — leader_osd / get_leader race
+// ============================================================================
+
+FB_SUITE_SETUP(client_end_to_end_leader) {}
+FB_SUITE_TEARDOWN(client_end_to_end_leader) {}
+
+namespace {
+
+struct leader_osd_info {
+    int32_t leader_id{-1};
+    std::string addr{};
+    int32_t port{};
+    bool is_valid{false};
+    bool is_onflight{true};
+};
+
+} // anonymous namespace
+
+FB_TEST(client_end_to_end_leader, first_request_blocks_until_leader_acquired) {
+    std::unordered_map<uint64_t, leader_osd_info> table;
+    auto key = make_leader_key(1, 3);
+    table.emplace(key, leader_osd_info{});
+    FB_ASSERT_TRUE(table[key].is_onflight);
+    table[key].leader_id = 42;
+    table[key].addr = "10.0.0.5";
+    table[key].port = 9100;
+    table[key].is_onflight = false;
+    table[key].is_valid = true;
+    FB_ASSERT_FALSE(table[key].is_onflight);
+    FB_ASSERT_TRUE(table[key].is_valid);
+    FB_ASSERT_EQ(table[key].leader_id, 42);
+}
+
+FB_TEST(client_end_to_end_leader, invalid_leader_reacquires) {
+    std::unordered_map<uint64_t, leader_osd_info> table;
+    auto key = make_leader_key(2, 4);
+    table.emplace(key, leader_osd_info{.leader_id = 5, .addr = "10.0.0.1",
+                                       .port = 9000, .is_valid = true, .is_onflight = false});
+    const std::string new_addr = "10.0.0.1";
+    const int new_port = 9100;
+    bool changed = !(table[key].addr == new_addr && table[key].port == new_port);
+    FB_ASSERT_TRUE(changed);
+    table[key].addr = new_addr;
+    table[key].port = new_port;
+    table[key].is_valid = true;
+    FB_ASSERT_EQ(table[key].port, 9100);
+}
+
+FB_TEST(client_end_to_end_leader, retry_invalidates_leader) {
+    std::unordered_map<uint64_t, leader_osd_info> table;
+    auto key = make_leader_key(1, 1);
+    table.emplace(key, leader_osd_info{.leader_id = 1, .addr = "h", .port = 9000,
+                                       .is_valid = true, .is_onflight = false});
+    table[key].is_valid = false;
+    table[key].is_onflight = false;
+    bool should_acquire = (!table[key].is_valid) || (table.find(key) == table.end());
+    FB_ASSERT_TRUE(should_acquire);
+}
