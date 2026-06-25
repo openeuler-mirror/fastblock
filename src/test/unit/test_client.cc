@@ -1483,3 +1483,283 @@ FB_TEST(client_end_to_end_leader, retry_invalidates_leader) {
     bool should_acquire = (!table[key].is_valid) || (table.find(key) == table.end());
     FB_ASSERT_TRUE(should_acquire);
 }
+
+// ============================================================================
+// Part 5: Error paths and edge cases
+// ============================================================================
+
+// ============================================================================
+// Test Suite: client_write_edge_cases — write boundary conditions
+// ============================================================================
+
+FB_SUITE_SETUP(client_write_edge_cases) {}
+FB_SUITE_TEARDOWN(client_write_edge_cases) {}
+
+FB_TEST(client_write_edge_cases, offset_at_object_boundary) {
+    // Offset exactly at 4 MiB: lands in object 1, first_object_offset=0.
+    auto [sz, off, seq] = calc_first_object_position(4 * MiB, 1024, default_object_size);
+    FB_ASSERT_EQ(seq, 1u);
+    FB_ASSERT_EQ(off, 0u);
+    FB_ASSERT_EQ(sz, 1024u);
+}
+
+FB_TEST(client_write_edge_cases, offset_at_last_byte_of_object) {
+    // Offset at 4 MiB - 1 byte: still within object 0.
+    auto [sz, off, seq] = calc_first_object_position(4 * MiB - 1, 1, default_object_size);
+    FB_ASSERT_EQ(seq, 0u);
+    FB_ASSERT_EQ(off, 4 * MiB - 1);
+    FB_ASSERT_EQ(sz, 1u);
+}
+
+FB_TEST(client_write_edge_cases, length_exceeds_single_object) {
+    // Length > object_size must span multiple objects.
+    auto obj_num = get_obj_num(0, 5 * MiB);
+    FB_ASSERT_EQ(obj_num, 2u);
+}
+
+FB_TEST(client_write_edge_cases, write_spans_exactly_two_objects) {
+    // [2 MiB, 6 MiB) spans object 0 (partial 2 MiB) and object 1 (4 MiB).
+    auto obj_num = get_obj_num(2 * MiB, 4 * MiB);
+    FB_ASSERT_EQ(obj_num, 2u);
+    auto [sz, off, seq] = calc_first_object_position(2 * MiB, 4 * MiB, default_object_size);
+    FB_ASSERT_EQ(sz, 2 * MiB); // first slice is partial
+    FB_ASSERT_EQ(off, 2 * MiB);
+    FB_ASSERT_EQ(seq, 0u);
+}
+
+FB_TEST(client_write_edge_cases, very_large_offset) {
+    // Stress large offset arithmetic (should not overflow).
+    uint64_t large_offset = 1024ull * 1024 * 1024 * 1024; // 1 TiB
+    auto obj_num = get_obj_num(large_offset, 4 * MiB);
+    FB_ASSERT_EQ(obj_num, 1u); // exactly one object at any offset
+    auto [sz, off, seq] = calc_first_object_position(large_offset, 4 * MiB, default_object_size);
+    FB_ASSERT_EQ(sz, 4 * MiB);
+    FB_ASSERT_EQ(seq, large_offset / default_object_size);
+}
+
+FB_TEST(client_write_edge_cases, zero_length_write_is_valid) {
+    // Zero-length writes are valid and should short-circuit without error.
+    auto obj_num = get_obj_num(0, 0);
+    FB_ASSERT_EQ(obj_num, 0u); // degenerate case: no objects
+}
+
+// ============================================================================
+// Test Suite: client_read_edge_cases — read boundary conditions
+// ============================================================================
+
+FB_SUITE_SETUP(client_read_edge_cases) {}
+FB_SUITE_TEARDOWN(client_read_edge_cases) {}
+
+FB_TEST(client_read_edge_cases, read_single_byte_from_first_object) {
+    auto obj_num = get_obj_num(0, 1);
+    FB_ASSERT_EQ(obj_num, 1u);
+    auto [sz, off, seq] = calc_first_object_position(0, 1, default_object_size);
+    FB_ASSERT_EQ(sz, 1u);
+    FB_ASSERT_EQ(off, 0u);
+    FB_ASSERT_EQ(seq, 0u);
+}
+
+FB_TEST(client_read_edge_cases, read_single_byte_from_last_position) {
+    // Read 1 byte at position 4 MiB - 1 (last byte of object 0).
+    auto obj_num = get_obj_num(4 * MiB - 1, 1);
+    FB_ASSERT_EQ(obj_num, 1u);
+    auto [sz, off, seq] = calc_first_object_position(4 * MiB - 1, 1, default_object_size);
+    FB_ASSERT_EQ(sz, 1u);
+    FB_ASSERT_EQ(off, 4 * MiB - 1);
+    FB_ASSERT_EQ(seq, 0u);
+}
+
+FB_TEST(client_read_edge_cases, read_across_object_boundary) {
+    // Read 5 MiB starting at 3 MiB: spans objects 0, 1, 2.
+    auto obj_num = get_obj_num(3 * MiB, 5 * MiB);
+    FB_ASSERT_EQ(obj_num, 3u);
+}
+
+FB_TEST(client_read_edge_cases, first_slice_size_matches_first_object_size) {
+    // The first read slice size MUST match the first_object_size calculated.
+    fake_osd osd;
+    fake_bdev_io io{100};
+    std::string out;
+    auto obj_num = get_obj_num(1 * MiB, 8 * MiB); // starts mid-object
+    auto [first_sz, _o, _s] = calc_first_object_position(1 * MiB, 8 * MiB, default_object_size);
+    (void)_o; (void)_s;
+    read_source src([&](fake_bdev_io*, const std::string& b, int32_t) { out = b; },
+                    static_cast<uint32_t>(obj_num), 8 * MiB, &io, first_sz);
+    // first_sz should be 3 MiB (remaining in object 0)
+    FB_ASSERT_EQ(first_sz, 3 * MiB);
+    std::vector<std::string> payloads{
+        std::string(3 * MiB, 'A'),
+        std::string(4 * MiB, 'B'),
+        std::string(1 * MiB, 'C'),
+    };
+    drive_read(osd, 1, "img", 1 * MiB, 8 * MiB, payloads, &src);
+    osd.drain_all_reads();
+    FB_ASSERT_EQ(out.size(), 8 * MiB);
+    FB_ASSERT_EQ(out[0], 'A');
+    FB_ASSERT_EQ(out[3 * MiB], 'B');
+    FB_ASSERT_EQ(out[7 * MiB], 'C');
+}
+
+// ============================================================================
+// Test Suite: client_object_name_edge — object naming edge cases
+// ============================================================================
+
+FB_SUITE_SETUP(client_object_name_edge) {}
+FB_SUITE_TEARDOWN(client_object_name_edge) {}
+
+FB_TEST(client_object_name_edge, pool_id_zero_is_valid) {
+    auto prefix = calc_image_object_prefix(0, "test");
+    FB_ASSERT_STR_EQ(prefix.c_str(), "0__blk_data___test");
+}
+
+FB_TEST(client_object_name_edge, pool_id_negative_preserved) {
+    // Negative pool_id might be used for internal pools.
+    auto prefix = calc_image_object_prefix(-1, "internal");
+    FB_ASSERT_STR_EQ(prefix.c_str(), "-1__blk_data___internal");
+}
+
+FB_TEST(client_object_name_edge, image_name_with_special_chars) {
+    // Image names can contain underscores, hyphens, dots.
+    auto prefix = calc_image_object_prefix(1, "test-image_vol.v2");
+    FB_ASSERT_TRUE(prefix.find("test-image_vol.v2") != std::string::npos);
+}
+
+FB_TEST(client_object_name_edge, image_name_empty_is_valid) {
+    // Empty image name is syntactically valid (creates object prefix with
+    // pool_id only).
+    auto prefix = calc_image_object_prefix(5, "");
+    FB_ASSERT_STR_EQ(prefix.c_str(), "5__blk_data___");
+}
+
+FB_TEST(client_object_name_edge, seq_max_uint64) {
+    auto prefix = calc_image_object_prefix(0, "");
+    auto name = get_image_object_name(prefix, 18446744073709551615ull);
+    // Name should contain the number (may truncate due to buffer size).
+    FB_ASSERT_TRUE(!name.empty());
+}
+
+// ============================================================================
+// Test Suite: client_pg_routing_edge — PG routing edge cases
+// ============================================================================
+
+FB_SUITE_SETUP(client_pg_routing_edge) {}
+FB_SUITE_TEARDOWN(client_pg_routing_edge) {}
+
+FB_TEST(client_pg_routing_edge, pg_num_one_all_objects_route_to_pg0) {
+    pg_router r;
+    r.calc_pg_masks(1);
+    for (int i = 0; i < 100; ++i) {
+        FB_ASSERT_EQ(r.calc_target("obj_" + std::to_string(i)), 0u);
+    }
+}
+
+FB_TEST(client_pg_routing_edge, pg_num_power_of_two_distribution) {
+    pg_router r;
+    r.calc_pg_masks(8);
+    std::set<unsigned> hit;
+    for (int i = 0; i < 1000; ++i) {
+        hit.insert(r.calc_target("obj_" + std::to_string(i)));
+    }
+    // Should hit all 8 PGs with reasonable distribution.
+    FB_ASSERT_EQ(hit.size(), 8u);
+}
+
+FB_TEST(client_pg_routing_edge, pg_num_change_invalidates_cache) {
+    // When pg_num changes, cached routing decisions become stale.
+    // This test documents the expected behavior (no implicit invalidation).
+    pg_router r;
+    r.calc_pg_masks(16);
+    auto pg1 = r.calc_target("object_a");
+    r.calc_pg_masks(32);
+    auto pg2 = r.calc_target("object_a");
+    // pg2 is re-computed; may differ from pg1.
+    FB_ASSERT_LT(pg1, 16u);
+    FB_ASSERT_LT(pg2, 32u);
+}
+
+FB_TEST(client_pg_routing_edge, object_name_affects_hash) {
+    pg_router r;
+    r.calc_pg_masks(64);
+    auto pg1 = r.calc_target("image_obj_0");
+    auto pg2 = r.calc_target("image_obj_1");
+    // Different names should generally route to different PGs (hash mixes).
+    // We don't require always different, but verify they're within range.
+    FB_ASSERT_LT(pg1, 64u);
+    FB_ASSERT_LT(pg2, 64u);
+}
+
+// ============================================================================
+// Test Suite: client_connection_cache — stub cache behavior
+// ============================================================================
+
+FB_SUITE_SETUP(client_connection_cache) {}
+FB_SUITE_TEARDOWN(client_connection_cache) {}
+
+FB_TEST(client_connection_cache, different_osds_dont_share_connection) {
+    // Each OSD node_id+port pair gets its own connection_id key.
+    auto id1 = to_connection_id(1, 9000);
+    auto id2 = to_connection_id(2, 9000);
+    auto id3 = to_connection_id(1, 9001);
+    FB_ASSERT_TRUE(id1 != id2);
+    FB_ASSERT_TRUE(id1 != id3);
+    FB_ASSERT_TRUE(id2 != id3);
+}
+
+FB_TEST(client_connection_cache, same_osd_same_port_reuses_key) {
+    // Same node_id and port => same connection_id.
+    auto id1 = to_connection_id(5, 9500);
+    auto id2 = to_connection_id(5, 9500);
+    FB_ASSERT_EQ(id1, id2);
+}
+
+FB_TEST(client_connection_cache, max_port_value) {
+    // uint16_t max port is 65535; connection_id must handle it.
+    auto id = to_connection_id(1, 65535);
+    FB_ASSERT_TRUE(id != 0ull);
+}
+
+FB_TEST(client_connection_cache, negative_node_id_allowed) {
+    // node_id is int32_t; negative values should be preserved.
+    auto id = to_connection_id(-1, 9000);
+    // Layout: low 32 bits = node_id, high 32 bits = port.
+    int32_t node = static_cast<int32_t>(id & 0xffffffff);
+    FB_ASSERT_EQ(node, -1);
+}
+
+// ============================================================================
+// Test Suite: client_leader_key_edge — leader key edge cases
+// ============================================================================
+
+FB_SUITE_SETUP(client_leader_key_edge) {}
+FB_SUITE_TEARDOWN(client_leader_key_edge) {}
+
+FB_TEST(client_leader_key_edge, pool_id_negative_preserved_in_key) {
+    auto key = make_leader_key(-100, 5);
+    auto unpacked = from_leader_key(key);
+    FB_ASSERT_EQ(unpacked.pool_id, -100);
+    FB_ASSERT_EQ(unpacked.pg_id, 5);
+}
+
+FB_TEST(client_leader_key_edge, pg_id_negative_preserved_in_key) {
+    auto key = make_leader_key(1, -10);
+    auto unpacked = from_leader_key(key);
+    FB_ASSERT_EQ(unpacked.pool_id, 1);
+    FB_ASSERT_EQ(unpacked.pg_id, -10);
+}
+
+FB_TEST(client_leader_key_edge, both_negative_preserved) {
+    auto key = make_leader_key(-1, -1);
+    auto unpacked = from_leader_key(key);
+    FB_ASSERT_EQ(unpacked.pool_id, -1);
+    FB_ASSERT_EQ(unpacked.pg_id, -1);
+}
+
+FB_TEST(client_leader_key_edge, key_is_unique_per_pool_pg_pair) {
+    std::set<uint64_t> keys;
+    for (int32_t pool = 0; pool < 10; ++pool) {
+        for (int32_t pg = 0; pg < 10; ++pg) {
+            keys.insert(make_leader_key(pool, pg));
+        }
+    }
+    FB_ASSERT_EQ(keys.size(), 100u);
+}
