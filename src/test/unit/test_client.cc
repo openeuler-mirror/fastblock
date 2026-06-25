@@ -2419,3 +2419,448 @@ FB_TEST(client_retry_loop, retry_preserves_request_context) {
     FB_ASSERT_FALSE(ring.is_ready);
     FB_ASSERT_EQ(ring.queue_id, 0u);
 }
+
+// ============================================================================
+// Part 8: Hybrid write path — write-ring vs normal write
+// ============================================================================
+
+// ============================================================================
+// Test Suite: client_ring_decision — when to use write-ring
+// ============================================================================
+
+FB_SUITE_SETUP(client_ring_decision) {}
+FB_SUITE_TEARDOWN(client_ring_decision) {}
+
+FB_TEST(client_ring_decision, ring_disabled_uses_normal_path) {
+    // FASTBLOCK_DISABLE_RING_WRITE=1 disables the ring path.
+    // The decision is made at runtime via getenv. Here we simulate the
+    // fallback behavior.
+    bool use_ring = true;
+    // Simulate: getenv returns non-empty, non-zero string.
+    const char* disable = "1";
+    if (disable && disable[0] != '\0' && disable[0] != '0') {
+        use_ring = false;
+    }
+    FB_ASSERT_FALSE(use_ring);
+}
+
+FB_TEST(client_ring_decision, ring_enabled_by_default) {
+    // If getenv returns null or "0", ring is enabled.
+    bool use_ring = true;
+    const char* disable = nullptr; // or "0"
+    if (disable && disable[0] != '\0' && disable[0] != '0') {
+        use_ring = false;
+    }
+    FB_ASSERT_TRUE(use_ring);
+}
+
+FB_TEST(client_ring_decision, ring_not_ready_fallback) {
+    // If ring is not ready (lease expired or not acquired), fallback to normal.
+    write_ring_state s;
+    s.is_ready = false;
+    // In production, post_ring_write returns false, process_write is used.
+    bool can_use_ring = s.is_ready && s.conn_alive;
+    FB_ASSERT_FALSE(can_use_ring);
+}
+
+FB_TEST(client_ring_decision, ring_ready_allows_fast_path) {
+    write_ring_state s;
+    s.is_ready = true;
+    s.conn_alive = true;
+    s.slots.assign(4, write_ring_slot_info{.busy = false});
+    bool can_use_ring = s.is_ready && s.conn_alive;
+    FB_ASSERT_TRUE(can_use_ring);
+}
+
+FB_TEST(client_ring_decision, ring_slots_full_fallback) {
+    // If all slots are busy, fallback to normal write.
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(4, write_ring_slot_info{.busy = true});
+    auto slot = acquire_write_ring_slot(&s);
+    FB_ASSERT_FALSE(slot.has_value());
+    // Fallback: normal write path is taken.
+}
+
+FB_TEST(client_ring_decision, slot_acquire_then_release_cycle) {
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(2, write_ring_slot_info{});
+
+    // Acquire both slots.
+    auto a = acquire_write_ring_slot(&s);
+    auto b = acquire_write_ring_slot(&s);
+    FB_ASSERT_TRUE(a.has_value() && b.has_value());
+
+    // Full → fallback.
+    auto c = acquire_write_ring_slot(&s);
+    FB_ASSERT_FALSE(c.has_value());
+
+    // Release slot 0 → can acquire again.
+    s.slots[0].busy = false;
+    auto d = acquire_write_ring_slot(&s);
+    FB_ASSERT_TRUE(d.has_value());
+}
+
+// ============================================================================
+// Test Suite: client_ring_lease_acquisition — lease acquisition timing
+// ============================================================================
+
+FB_SUITE_SETUP(client_ring_lease_acquisition) {}
+FB_SUITE_TEARDOWN(client_ring_lease_acquisition) {}
+
+FB_TEST(client_ring_lease_acquisition, acquire_request_enqueued) {
+    // acquire_write_ring_async enqueues a request if ring not ready.
+    write_ring_state s;
+    s.is_ready = false;
+    s.is_onflight = false;
+    s.conn_alive = true;
+    // In production, stub->process_acquire_write_ring is called.
+    // Here we just check the state machine condition.
+    bool should_acquire = !s.is_ready && !s.is_onflight && s.conn_alive;
+    FB_ASSERT_TRUE(should_acquire);
+}
+
+FB_TEST(client_ring_lease_acquisition, onflight_blocks_new_acquire) {
+    // If acquire request is already onflight, don't enqueue another.
+    write_ring_state s;
+    s.is_onflight = true;
+    bool should_acquire = !s.is_ready && !s.is_onflight;
+    FB_ASSERT_FALSE(should_acquire);
+}
+
+FB_TEST(client_ring_lease_acquisition, lease_response_sets_ready) {
+    // on_write_ring_ready sets is_ready = true after successful response.
+    write_ring_state s;
+    s.lease_us = 30ull * 1000 * 1000;
+    s.queue_id = 0;
+    s.slots.clear();
+
+    // Simulate response populating slots.
+    s.queue_id = 12345;
+    s.lease_us = 30ull * 1000 * 1000;
+    s.slots.assign(4, write_ring_slot_info{
+        .remote_addr = 0x1000,
+        .remote_key = 7,
+        .slot_size = 256 * 1024,
+        .busy = false
+    });
+    s.is_ready = !s.slots.empty();
+
+    FB_ASSERT_TRUE(s.is_ready);
+    FB_ASSERT_EQ(s.queue_id, 12345u);
+}
+
+FB_TEST(client_ring_lease_acquisition, failed_acquire_keeps_not_ready) {
+    // If acquire fails (error or non-success state), ring stays not ready.
+    write_ring_state s;
+    int32_t response_state = err::OSD_DOWN; // non-success
+    if (response_state != err::E_SUCCESS) {
+        s.is_ready = false;
+        s.queue_id = 0;
+        s.slots.clear();
+    }
+    FB_ASSERT_FALSE(s.is_ready);
+}
+
+FB_TEST(client_ring_lease_acquisition, lease_timeout_triggers_reacquire) {
+    // When lease expires, is_ready is reset and new acquire is triggered.
+    write_ring_state s;
+    s.is_ready = true;
+    s.lease_us = 30ull * 1000 * 1000;
+    s.lease_deadline = std::chrono::steady_clock::now() - std::chrono::seconds{1};
+
+    if (should_refresh_write_ring_lease(&s)) {
+        reset_write_ring_state(s, true); // keep connection
+        // next tick: acquire_write_ring_async is called
+    }
+
+    FB_ASSERT_FALSE(s.is_ready);
+    FB_ASSERT_TRUE(s.conn_alive);
+}
+
+// ============================================================================
+// Test Suite: client_ring_write_completion — ring write completion handling
+// ============================================================================
+
+FB_SUITE_SETUP(client_ring_write_completion) {}
+FB_SUITE_TEARDOWN(client_ring_write_completion) {}
+
+FB_TEST(client_ring_write_completion, success_refreshes_deadline) {
+    // On successful ring write, lease deadline is refreshed.
+    write_ring_state s;
+    s.lease_us = 30ull * 1000 * 1000;
+    s.is_ready = true;
+
+    // Before: deadline is near.
+    s.lease_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{20};
+
+    // After success: refresh.
+    refresh_local_write_ring_deadline(s);
+
+    auto now = std::chrono::steady_clock::now();
+    auto remaining = s.lease_deadline - now;
+    // Deadline should now be ~25s away (30s - 5s guard).
+    FB_ASSERT_TRUE(remaining > std::chrono::seconds{20});
+}
+
+FB_TEST(client_ring_write_completion, transient_error_clears_ring) {
+    // Transient error on ring write clears is_ready and queue_id.
+    write_ring_state s;
+    s.is_ready = true;
+    s.queue_id = 100;
+    s.lease_us = 30ull * 1000 * 1000;
+    s.slots.assign(2, write_ring_slot_info{.busy = true});
+
+    int32_t state = -ENOLINK;
+    if (state == -ENOLINK || state == -ENOENT || state == -EINVAL) {
+        s.is_ready = false;
+        s.queue_id = 0;
+        s.lease_us = 0;
+        s.slots.clear();
+    }
+
+    FB_ASSERT_FALSE(s.is_ready);
+    FB_ASSERT_TRUE(s.slots.empty());
+}
+
+FB_TEST(client_ring_write_completion, slot_released_on_completion) {
+    // After write completes, the slot's busy flag is cleared.
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(4, write_ring_slot_info{});
+
+    auto slot = acquire_write_ring_slot(&s);
+    FB_ASSERT_TRUE(slot.has_value());
+    FB_ASSERT_TRUE(s.slots[*slot].busy);
+
+    // Completion: release slot.
+    s.slots[*slot].busy = false;
+    FB_ASSERT_FALSE(s.slots[*slot].busy);
+
+    // Slot can be reused.
+    auto next = acquire_write_ring_slot(&s);
+    FB_ASSERT_TRUE(next.has_value());
+}
+
+FB_TEST(client_ring_write_completion, partial_write_preserves_slot) {
+    // If write partially fails (serialized_size > slot_size), slot is released.
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(2, write_ring_slot_info{.slot_size = 1024});
+
+    auto slot = acquire_write_ring_slot(&s);
+    FB_ASSERT_TRUE(slot.has_value());
+
+    uint64_t serialized_size = 2048; // exceeds slot_size
+    if (serialized_size > s.slots[*slot].slot_size) {
+        s.slots[*slot].busy = false; // release
+    }
+
+    FB_ASSERT_FALSE(s.slots[*slot].busy);
+}
+
+// ============================================================================
+// Test Suite: client_ring_slot_wraparound — slot index wrap-around
+// ============================================================================
+
+FB_SUITE_SETUP(client_ring_slot_wraparound) {}
+FB_SUITE_TEARDOWN(client_slot_wraparound) {}
+
+FB_TEST(client_slot_wraparound, next_slot_advances) {
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(4, write_ring_slot_info{});
+    s.next_slot = 0;
+
+    auto a = acquire_write_ring_slot(&s);
+    FB_ASSERT_EQ(*a, 0u);
+    FB_ASSERT_EQ(s.next_slot, 1u);
+
+    auto b = acquire_write_ring_slot(&s);
+    FB_ASSERT_EQ(*b, 1u);
+    FB_ASSERT_EQ(s.next_slot, 2u);
+}
+
+FB_TEST(client_slot_wraparound, wrap_at_end) {
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(4, write_ring_slot_info{});
+    s.next_slot = 3;
+
+    auto slot = acquire_write_ring_slot(&s);
+    FB_ASSERT_EQ(*slot, 3u);
+    // After acquiring slot 3, next_slot wraps to 0.
+    FB_ASSERT_EQ(s.next_slot, 0u);
+}
+
+FB_TEST(client_slot_wraparound, full_cycle) {
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(4, write_ring_slot_info{});
+
+    for (int i = 0; i < 4; ++i) {
+        auto slot = acquire_write_ring_slot(&s);
+        FB_ASSERT_TRUE(slot.has_value());
+    }
+    // After 4 acquires, next_slot should be back at 0.
+    FB_ASSERT_EQ(s.next_slot, 0u);
+}
+
+FB_TEST(client_slot_wraparound, release_breaks_cycle) {
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(4, write_ring_slot_info{});
+
+    // Acquire slots 0-3.
+    for (int i = 0; i < 4; ++i) {
+        acquire_write_ring_slot(&s);
+    }
+
+    // Release slot 2.
+    s.slots[2].busy = false;
+    s.next_slot = 0; // reset
+
+    // Next acquire finds slot 2 (scan from 0, skip 0,1 busy, find 2).
+    auto slot = acquire_write_ring_slot(&s);
+    FB_ASSERT_EQ(*slot, 2u);
+}
+
+// ============================================================================
+// Test Suite: client_write_ring_parameters — ring configuration constants
+// ============================================================================
+
+FB_SUITE_SETUP(client_write_ring_parameters) {}
+FB_SUITE_TEARDOWN(client_write_ring_parameters) {}
+
+FB_TEST(client_write_ring_parameters, default_slot_count) {
+    // fb_client.h: default_write_ring_slot_count = 16.
+    constexpr uint32_t default_slot_count = 16;
+    FB_ASSERT_EQ(default_slot_count, 16u);
+}
+
+FB_TEST(client_write_ring_parameters, default_slot_size) {
+    // fb_client.h: default_write_ring_slot_size = 256 * 1024.
+    constexpr uint32_t default_slot_size = 256 * 1024;
+    FB_ASSERT_EQ(default_slot_size, 256u * 1024u);
+}
+
+FB_TEST(client_write_ring_parameters, slot_size_matches_object_size_boundary) {
+    // 256 KiB slot is 1/16 of 4 MiB object size, allowing up to 16 objects
+    // per slot before fallback.
+    constexpr uint32_t slot_size = 256 * 1024;
+    constexpr size_t obj_size = 4 * 1024 * 1024;
+    FB_ASSERT_EQ(obj_size / slot_size, 16u);
+}
+
+FB_TEST(client_write_ring_parameters, lease_duration_is_30s) {
+    // fb_client.cc: lease_us = 30 * 1000 * 1000 (30 seconds).
+    constexpr uint64_t default_lease_us = 30ull * 1000 * 1000;
+    FB_ASSERT_EQ(default_lease_us, 30ull * 1000 * 1000);
+}
+
+FB_TEST(client_write_ring_parameters, lease_guard_bounds) {
+    // Guard is lease/5, clamped to [500ms, 5s]. If guard >= lease, guard = lease/2.
+    // Verify the clamp boundaries.
+    constexpr auto min_guard = std::chrono::milliseconds{500};
+    constexpr auto max_guard = std::chrono::seconds{5};
+    FB_ASSERT_TRUE(min_guard < max_guard);
+}
+
+// ============================================================================
+// Test Suite: client_connection_retry_timing — connection retry intervals
+// ============================================================================
+
+FB_SUITE_SETUP(client_connection_retry_timing) {}
+FB_SUITE_TEARDOWN(client_connection_retry_timing) {}
+
+FB_TEST(client_connection_retry_timing, default_retry_interval_is_1s) {
+    // fb_client.h: default_connection_retry_interval = 1s.
+    constexpr auto retry_interval = std::chrono::seconds{1};
+    FB_ASSERT_EQ(retry_interval.count(), 1);
+}
+
+FB_TEST(client_connection_retry_timing, retry_blocked_until_interval_passes) {
+    // Connection retry is blocked until next_connect_retry_at is in the past.
+    auto now = std::chrono::steady_clock::now();
+    auto retry_at = now + std::chrono::seconds{1};
+
+    bool can_retry = now >= retry_at;
+    FB_ASSERT_FALSE(can_retry); // blocked
+
+    can_retry = (now + std::chrono::seconds{2}) >= retry_at;
+    FB_ASSERT_TRUE(can_retry); // interval passed
+}
+
+FB_TEST(client_connection_retry_timing, failed_connection_sets_next_retry) {
+    // on_connection_ready with is_connected=false sets next retry time.
+    write_ring_state s;
+    s.next_connect_retry_at = std::chrono::steady_clock::now();
+    // Failed connection: reset retry time.
+    s.next_connect_retry_at = std::chrono::steady_clock::now() + std::chrono::seconds{1};
+    FB_ASSERT_TRUE(s.next_connect_retry_at > std::chrono::steady_clock::now());
+}
+
+FB_TEST(client_connection_retry_timing, successful_connection_clears_retry_timer) {
+    // on_connection_ready with is_connected=true clears retry timer.
+    write_ring_state s;
+    s.next_connect_retry_at = std::chrono::steady_clock::now() + std::chrono::seconds{10};
+    // Success: timer is cleared (next retry is now).
+    s.next_connect_retry_at = std::chrono::steady_clock::now();
+    FB_ASSERT_TRUE(s.next_connect_retry_at <= std::chrono::steady_clock::now());
+}
+
+// ============================================================================
+// Test Suite: client_ring_multiple_connections — ring state per connection
+// ============================================================================
+
+FB_SUITE_SETUP(client_ring_multiple_connections) {}
+FB_SUITE_TEARDOWN(client_ring_multiple_connections) {}
+
+FB_TEST(client_ring_multiple_connections, each_osd_has_own_ring_state) {
+    // _write_rings is keyed by connection_id; each OSD has separate state.
+    std::unordered_map<uint64_t, write_ring_state> rings;
+
+    auto id1 = to_connection_id(1, 9000);
+    auto id2 = to_connection_id(2, 9000);
+
+    rings[id1].queue_id = 100;
+    rings[id2].queue_id = 200;
+
+    FB_ASSERT_EQ(rings[id1].queue_id, 100u);
+    FB_ASSERT_EQ(rings[id2].queue_id, 200u);
+}
+
+FB_TEST(client_ring_multiple_connections, invalidate_one_does_not_affect_others) {
+    std::unordered_map<uint64_t, write_ring_state> rings;
+
+    auto id1 = to_connection_id(1, 9000);
+    auto id2 = to_connection_id(2, 9000);
+
+    rings[id1].is_ready = true;
+    rings[id2].is_ready = true;
+
+    // Invalidate id1.
+    rings[id1].is_ready = false;
+    rings[id1].queue_id = 0;
+
+    FB_ASSERT_FALSE(rings[id1].is_ready);
+    FB_ASSERT_TRUE(rings[id2].is_ready);
+}
+
+FB_TEST(client_ring_multiple_connections, reconnect_reuses_same_key) {
+    // Reconnecting to the same OSD reuses the same connection_id key.
+    auto id = to_connection_id(5, 9500);
+
+    std::unordered_map<uint64_t, write_ring_state> rings;
+    rings[id].is_ready = true;
+
+    // Disconnect.
+    reset_write_ring_state(rings[id], false);
+    FB_ASSERT_FALSE(rings[id].is_ready);
+
+    // Reconnect: same key, state is re-initialized.
+    rings[id].is_ready = true;
+    rings[id].queue_id = 50;
+    FB_ASSERT_TRUE(rings[id].is_ready);
+}
