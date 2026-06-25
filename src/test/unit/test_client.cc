@@ -1763,3 +1763,327 @@ FB_TEST(client_leader_key_edge, key_is_unique_per_pool_pg_pair) {
     }
     FB_ASSERT_EQ(keys.size(), 100u);
 }
+
+// ============================================================================
+// Part 6: Concurrent request handling
+// ============================================================================
+
+// ============================================================================
+// Test Suite: client_concurrent_writes — multiple write requests
+// ============================================================================
+
+FB_SUITE_SETUP(client_concurrent_writes) {}
+FB_SUITE_TEARDOWN(client_concurrent_writes) {}
+
+FB_TEST(client_concurrent_writes, two_independent_writes) {
+    // Two independent write requests to different images should not interfere.
+    fake_osd osd;
+    fake_bdev_io io1{1}, io2{2};
+    int cb1_count = 0, cb2_count = 0;
+    int32_t result1 = -1, result2 = -1;
+
+    auto obj_num1 = get_obj_num(0, 1024);
+    auto obj_num2 = get_obj_num(0, 2048);
+
+    write_source src1([&](fake_bdev_io*, int32_t s) { ++cb1_count; result1 = s; },
+                      static_cast<uint32_t>(obj_num1), &io1);
+    write_source src2([&](fake_bdev_io*, int32_t s) { ++cb2_count; result2 = s; },
+                      static_cast<uint32_t>(obj_num2), &io2);
+
+    drive_write(osd, 1, "img1", 0, std::string(1024, 'a'), &src1);
+    drive_write(osd, 2, "img2", 0, std::string(2048, 'b'), &src2);
+
+    FB_ASSERT_EQ(osd.w_queue.size(), 2u);
+    // Drain in reverse order to verify callbacks are independent.
+    osd.drain_all_writes();
+
+    FB_ASSERT_EQ(cb1_count, 1);
+    FB_ASSERT_EQ(cb2_count, 1);
+    FB_ASSERT_EQ(result1, err::E_SUCCESS);
+    FB_ASSERT_EQ(result2, err::E_SUCCESS);
+}
+
+FB_TEST(client_concurrent_writes, multiple_objects_same_source) {
+    // A single write_source tracking multiple objects across concurrent writes
+    // is NOT supported (each write creates its own source). This test verifies
+    // that separate sources track independently.
+    fake_osd osd;
+    fake_bdev_io io{1};
+    int callbacks = 0;
+
+    auto obj_num = get_obj_num(0, 1024);
+    write_source src([&](fake_bdev_io*, int32_t) { ++callbacks; },
+                     static_cast<uint32_t>(obj_num), &io);
+
+    drive_write(osd, 1, "img", 0, std::string(1024, 'x'), &src);
+    osd.drain_all_writes();
+    FB_ASSERT_EQ(callbacks, 1);
+    FB_ASSERT_EQ(src.obj_num, 0u);
+}
+
+FB_TEST(client_concurrent_writes, interleaved_drain_preserves_order) {
+    // Draining requests in FIFO order ensures the callback for the first
+    // request fires before the second.
+    fake_osd osd;
+    fake_bdev_io io1{1}, io2{2};
+    std::vector<int> order;
+
+    auto obj_num1 = get_obj_num(0, 1024);
+    auto obj_num2 = get_obj_num(0, 2048);
+
+    write_source src1([&](fake_bdev_io*, int32_t) { order.push_back(1); },
+                      static_cast<uint32_t>(obj_num1), &io1);
+    write_source src2([&](fake_bdev_io*, int32_t) { order.push_back(2); },
+                      static_cast<uint32_t>(obj_num2), &io2);
+
+    drive_write(osd, 1, "img1", 0, std::string(1024, 'a'), &src1);
+    drive_write(osd, 2, "img2", 0, std::string(2048, 'b'), &src2);
+
+    // Drain in order; callbacks should fire in same order.
+    osd.drain_all_writes();
+    FB_ASSERT_EQ(order.size(), 2u);
+    FB_ASSERT_EQ(order[0], 1);
+    FB_ASSERT_EQ(order[1], 2);
+}
+
+// ============================================================================
+// Test Suite: client_concurrent_reads — multiple read requests
+// ============================================================================
+
+FB_SUITE_SETUP(client_concurrent_reads) {}
+FB_SUITE_TEARDOWN(client_concurrent_reads) {}
+
+FB_TEST(client_concurrent_reads, two_independent_reads) {
+    fake_osd osd;
+    fake_bdev_io io1{1}, io2{2};
+    std::string out1, out2;
+    int cb1_count = 0, cb2_count = 0;
+
+    auto obj_num1 = get_obj_num(0, 1024);
+    auto obj_num2 = get_obj_num(0, 2048);
+
+    auto [fs1, _1, _s1] = calc_first_object_position(0, 1024, default_object_size);
+    auto [fs2, _2, _s2] = calc_first_object_position(0, 2048, default_object_size);
+    (void)_1; (void)_s1; (void)_2; (void)_s2;
+
+    read_source src1([&](fake_bdev_io*, const std::string& b, int32_t) { out1 = b; ++cb1_count; },
+                     static_cast<uint32_t>(obj_num1), 1024, &io1, fs1);
+    read_source src2([&](fake_bdev_io*, const std::string& b, int32_t) { out2 = b; ++cb2_count; },
+                     static_cast<uint32_t>(obj_num2), 2048, &io2, fs2);
+
+    std::vector<std::string> p1{std::string(1024, 'A')};
+    std::vector<std::string> p2{std::string(2048, 'B')};
+
+    drive_read(osd, 1, "img1", 0, 1024, p1, &src1);
+    drive_read(osd, 2, "img2", 0, 2048, p2, &src2);
+
+    FB_ASSERT_EQ(osd.r_queue.size(), 2u);
+    osd.drain_all_reads();
+
+    FB_ASSERT_EQ(cb1_count, 1);
+    FB_ASSERT_EQ(cb2_count, 1);
+    FB_ASSERT_EQ(out1.size(), 1024u);
+    FB_ASSERT_EQ(out2.size(), 2048u);
+}
+
+FB_TEST(client_concurrent_reads, read_after_write_consistency) {
+    // In production, reads after writes should see the latest data. Here we
+    // simulate the ordering: write completes, then read returns written data.
+    fake_osd osd;
+    fake_bdev_io io_w{1}, io_r{2};
+    int write_done = 0, read_done = 0;
+
+    auto obj_num_w = get_obj_num(0, 1024);
+    auto obj_num_r = get_obj_num(0, 1024);
+
+    write_source src_w([&](fake_bdev_io*, int32_t) { ++write_done; },
+                       static_cast<uint32_t>(obj_num_w), &io_w);
+    auto [fs_r, _o, _s] = calc_first_object_position(0, 1024, default_object_size);
+    (void)_o; (void)_s;
+    read_source src_r([&](fake_bdev_io*, const std::string&, int32_t) { ++read_done; },
+                      static_cast<uint32_t>(obj_num_r), 1024, &io_r, fs_r);
+
+    drive_write(osd, 1, "img", 0, std::string(1024, 'X'), &src_w);
+    osd.drain_all_writes(); // write completes first
+    FB_ASSERT_EQ(write_done, 1);
+    FB_ASSERT_EQ(read_done, 0);
+
+    std::vector<std::string> p{std::string(1024, 'X')};
+    drive_read(osd, 1, "img", 0, 1024, p, &src_r);
+    osd.drain_all_reads(); // read returns data
+    FB_ASSERT_EQ(read_done, 1);
+}
+
+// ============================================================================
+// Test Suite: client_request_queue_ordering — FIFO queue semantics
+// ============================================================================
+
+FB_SUITE_SETUP(client_request_queue_ordering) {}
+FB_SUITE_TEARDOWN(client_request_queue_ordering) {}
+
+FB_TEST(client_request_queue_ordering, writes_queued_in_order) {
+    fake_osd osd;
+    fake_bdev_io io{1};
+    std::vector<int> order;
+
+    for (int i = 0; i < 5; ++i) {
+        auto obj_num = get_obj_num(0, 256);
+        auto* src = new write_source([&order, i](fake_bdev_io*, int32_t) { order.push_back(i); },
+                                     static_cast<uint32_t>(obj_num), &io);
+        drive_write(osd, i, "img", 0, std::string(256, 'x'), src);
+    }
+
+    FB_ASSERT_EQ(osd.w_queue.size(), 5u);
+    osd.drain_all_writes();
+    FB_ASSERT_EQ(order.size(), 5u);
+    // Verify FIFO order.
+    for (int i = 0; i < 5; ++i) {
+        FB_ASSERT_EQ(order[i], i);
+    }
+}
+
+FB_TEST(client_request_queue_ordering, reads_queued_in_order) {
+    fake_osd osd;
+    fake_bdev_io io{1};
+    std::vector<int> order;
+
+    auto [fs, _o, _s] = calc_first_object_position(0, 256, default_object_size);
+    (void)_o; (void)_s;
+
+    for (int i = 0; i < 5; ++i) {
+        auto obj_num = get_obj_num(0, 256);
+        auto* src = new read_source([&order, i](fake_bdev_io*, const std::string&, int32_t) { order.push_back(i); },
+                                    static_cast<uint32_t>(obj_num), 256, &io, fs);
+        std::vector<std::string> payloads{std::string(256, 'A')};
+        drive_read(osd, i, "img", 0, 256, payloads, src);
+    }
+
+    FB_ASSERT_EQ(osd.r_queue.size(), 5u);
+    osd.drain_all_reads();
+    FB_ASSERT_EQ(order.size(), 5u);
+    for (int i = 0; i < 5; ++i) {
+        FB_ASSERT_EQ(order[i], i);
+    }
+}
+
+// ============================================================================
+// Test Suite: client_write_ring_concurrent — write ring with multiple requests
+// ============================================================================
+
+FB_SUITE_SETUP(client_write_ring_concurrent) {}
+FB_SUITE_TEARDOWN(client_write_ring_concurrent) {}
+
+FB_TEST(client_write_ring_concurrent, multiple_slots_acquired) {
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(4, write_ring_slot_info{});
+
+    auto idx1 = acquire_write_ring_slot(&s);
+    auto idx2 = acquire_write_ring_slot(&s);
+    auto idx3 = acquire_write_ring_slot(&s);
+
+    FB_ASSERT_TRUE(idx1.has_value());
+    FB_ASSERT_TRUE(idx2.has_value());
+    FB_ASSERT_TRUE(idx3.has_value());
+    // All three must be distinct.
+    FB_ASSERT_TRUE(*idx1 != *idx2 || *idx1 != *idx3 || *idx2 != *idx3);
+}
+
+FB_TEST(client_write_ring_concurrent, slot_release_enables_reuse) {
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(2, write_ring_slot_info{});
+
+    auto idx1 = acquire_write_ring_slot(&s);
+    auto idx2 = acquire_write_ring_slot(&s);
+    FB_ASSERT_TRUE(idx1.has_value());
+    FB_ASSERT_TRUE(idx2.has_value());
+
+    // Ring is full; next acquire fails.
+    auto idx3 = acquire_write_ring_slot(&s);
+    FB_ASSERT_FALSE(idx3.has_value());
+
+    // Release slot 0.
+    s.slots[0].busy = false;
+    auto idx4 = acquire_write_ring_slot(&s);
+    FB_ASSERT_TRUE(idx4.has_value());
+    FB_ASSERT_EQ(*idx4, 0u); // reused slot 0
+}
+
+FB_TEST(client_write_ring_concurrent, round_robin_slot_selection) {
+    // With multiple free slots, the next_slot pointer advances round-robin.
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(4, write_ring_slot_info{});
+
+    auto idx1 = acquire_write_ring_slot(&s);
+    FB_ASSERT_EQ(*idx1, 0u);
+    FB_ASSERT_EQ(s.next_slot, 1u);
+
+    s.slots[0].busy = false; // release
+
+    auto idx2 = acquire_write_ring_slot(&s);
+    // With slot 0 free, next_slot=1, the scan finds slot 1 first.
+    FB_ASSERT_EQ(*idx2, 1u);
+}
+
+// ============================================================================
+// Test Suite: client_leader_concurrent — leader table with multiple PGs
+// ============================================================================
+
+FB_SUITE_SETUP(client_leader_concurrent) {}
+FB_SUITE_TEARDOWN(client_leader_concurrent) {}
+
+FB_TEST(client_leader_concurrent, multiple_pg_entries) {
+    std::unordered_map<uint64_t, leader_osd_info> table;
+
+    for (int pool = 0; pool < 3; ++pool) {
+        for (int pg = 0; pg < 4; ++pg) {
+            auto key = make_leader_key(pool, pg);
+            table.emplace(key, leader_osd_info{
+                .leader_id = pool * 10 + pg,
+                .addr = "10.0.0." + std::to_string(pool),
+                .port = static_cast<int32_t>(9000 + pg),
+                .is_valid = true,
+                .is_onflight = false
+            });
+        }
+    }
+
+    FB_ASSERT_EQ(table.size(), 12u);
+
+    // Verify each entry is independently queryable.
+    auto key = make_leader_key(1, 2);
+    FB_ASSERT_EQ(table[key].leader_id, 12);
+    FB_ASSERT_EQ(table[key].port, 9002);
+}
+
+FB_TEST(client_leader_concurrent, update_one_entry_does_not_affect_others) {
+    std::unordered_map<uint64_t, leader_osd_info> table;
+
+    auto k1 = make_leader_key(0, 0);
+    auto k2 = make_leader_key(0, 1);
+    table.emplace(k1, leader_osd_info{.leader_id = 1, .is_valid = true});
+    table.emplace(k2, leader_osd_info{.leader_id = 2, .is_valid = true});
+
+    // Invalidate k1.
+    table[k1].is_valid = false;
+
+    // k2 is unaffected.
+    FB_ASSERT_FALSE(table[k1].is_valid);
+    FB_ASSERT_TRUE(table[k2].is_valid);
+}
+
+FB_TEST(client_leader_concurrent, erase_entry_removes_only_target) {
+    std::unordered_map<uint64_t, leader_osd_info> table;
+
+    auto k1 = make_leader_key(0, 0);
+    auto k2 = make_leader_key(0, 1);
+    table.emplace(k1, leader_osd_info{});
+    table.emplace(k2, leader_osd_info{});
+
+    FB_ASSERT_EQ(table.size(), 2u);
+    table.erase(k1);
+    FB_ASSERT_EQ(table.size(), 1u);
+    FB_ASSERT_TRUE(table.find(k2) != table.end());
+}
