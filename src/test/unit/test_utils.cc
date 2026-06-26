@@ -1620,12 +1620,64 @@ FB_TEST(stress_tests, fixed32_many_roundtrips) {
 }
 
 FB_TEST(stress_tests, fixed64_many_roundtrips) {
-    char buffer[8];
+    char buffer[8] = {0};
     for (uint64_t i = 0; i < 10000; i++) {
         encode_fixed64(buffer, i);
         uint64_t val = decode_fixed64(buffer);
         FB_ASSERT_EQ(val, i);
     }
+}
+
+// ============================================================================
+// Test Suite: boundary_values (Boundary Values Comprehensive Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(boundary_values) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(boundary_values) {
+    // Teardown code here
+}
+
+FB_TEST(boundary_values, uint8_max) {
+    uint8_t val = 255;
+    std::string result = itos(val);
+    FB_ASSERT_EQ(result, "255");
+}
+
+FB_TEST(boundary_values, uint16_max) {
+    uint16_t val = 65535;
+    std::string result = itos(val);
+    FB_ASSERT_EQ(result, "65535");
+}
+
+FB_TEST(boundary_values, int8_min) {
+    int8_t val = -128;
+    std::string result = itos(val);
+    FB_ASSERT_EQ(result, "-128");
+}
+
+FB_TEST(boundary_values, int16_min) {
+    int16_t val = -32768;
+    std::string result = itos(val);
+    FB_ASSERT_EQ(result, "-32768");
+}
+
+FB_TEST(boundary_values, varint32_max_encoded_length) {
+    char buffer[5];
+    uint32_t max_val = UINT32_MAX;
+    size_t len = encode_varint32(buffer, max_val);
+    // Maximum 5 bytes for 32-bit varint
+    FB_ASSERT_TRUE(len <= 5);
+}
+
+FB_TEST(boundary_values, varint64_max_encoded_length) {
+    char buffer[10];
+    uint64_t max_val = UINT64_MAX;
+    size_t len = encode_varint64(buffer, max_val);
+    // Maximum 10 bytes for 64-bit varint
+    FB_ASSERT_TRUE(len <= 10);
 }
 
 FB_TEST_MAIN()
