@@ -3296,6 +3296,251 @@ FB_TEST(bdev_error_recovery, success_clears_recovery_attempts) {
 }
 
 // ============================================================================
+// Test Suite: bdev_cache_coherence — Cache state coherence management
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_cache_coherence) {}
+FB_SUITE_TEARDOWN(bdev_cache_coherence) {}
+
+enum class cache_state {
+    clean,
+    dirty,
+    flushing,
+    invalid
+};
+
+struct cache_entry {
+    uint64_t key{0};
+    cache_state state{cache_state::clean};
+    uint64_t version{0};
+    uint64_t last_access_us{0};
+    bool pinned{false};
+
+    void mark_dirty(uint64_t new_version, uint64_t now_us) {
+        if (state != cache_state::invalid && !pinned) {
+            state = cache_state::dirty;
+            version = new_version;
+            last_access_us = now_us;
+        }
+    }
+
+    void mark_clean() {
+        if (state == cache_state::dirty || state == cache_state::flushing) {
+            state = cache_state::clean;
+        }
+    }
+
+    void start_flush() {
+        if (state == cache_state::dirty) {
+            state = cache_state::flushing;
+        }
+    }
+
+    void invalidate() {
+        if (!pinned) {
+            state = cache_state::invalid;
+        }
+    }
+
+    void pin() { pinned = true; }
+    void unpin() { pinned = false; }
+
+    bool is_valid() const { return state != cache_state::invalid; }
+    bool needs_flush() const { return state == cache_state::dirty; }
+};
+
+struct cache_manager {
+    std::unordered_map<uint64_t, cache_entry> entries;
+    uint64_t current_version{1};
+
+    cache_entry* get(uint64_t key, uint64_t now_us) {
+        auto it = entries.find(key);
+        if (it != entries.end() && it->second.is_valid()) {
+            it->second.last_access_us = now_us;
+            return &it->second;
+        }
+        return nullptr;
+    }
+
+    cache_entry& insert(uint64_t key, uint64_t now_us) {
+        cache_entry entry;
+        entry.key = key;
+        entry.last_access_us = now_us;
+        entry.version = current_version;
+        entries[key] = entry;
+        return entries[key];
+    }
+
+    void mark_dirty(uint64_t key, uint64_t now_us) {
+        auto it = entries.find(key);
+        if (it != entries.end()) {
+            current_version++;
+            it->second.mark_dirty(current_version, now_us);
+        }
+    }
+
+    size_t dirty_count() const {
+        size_t n = 0;
+        for (const auto& [_, entry] : entries) {
+            if (entry.needs_flush()) n++;
+        }
+        return n;
+    }
+
+    void flush_all() {
+        for (auto& [_, entry] : entries) {
+            entry.start_flush();
+        }
+    }
+
+    void complete_flush(uint64_t key) {
+        auto it = entries.find(key);
+        if (it != entries.end()) {
+            it->second.mark_clean();
+        }
+    }
+
+    void invalidate_all() {
+        for (auto& [_, entry] : entries) {
+            entry.invalidate();
+        }
+    }
+
+    size_t valid_count() const {
+        size_t n = 0;
+        for (const auto& [_, entry] : entries) {
+            if (entry.is_valid()) n++;
+        }
+        return n;
+    }
+
+    void pin(uint64_t key) {
+        auto it = entries.find(key);
+        if (it != entries.end()) it->second.pin();
+    }
+
+    void unpin(uint64_t key) {
+        auto it = entries.find(key);
+        if (it != entries.end()) it->second.unpin();
+    }
+};
+
+FB_TEST(bdev_cache_coherence, entry_initial_clean) {
+    cache_entry entry;
+    FB_ASSERT_TRUE(entry.state == cache_state::clean);
+    FB_ASSERT_TRUE(entry.is_valid());
+}
+
+FB_TEST(bdev_cache_coherence, mark_dirty_changes_state) {
+    cache_entry entry;
+    entry.mark_dirty(2, 1000000);
+    FB_ASSERT_TRUE(entry.state == cache_state::dirty);
+    FB_ASSERT_TRUE(entry.needs_flush());
+}
+
+FB_TEST(bdev_cache_coherence, pinned_cannot_dirty) {
+    cache_entry entry;
+    entry.pin();
+    entry.mark_dirty(2, 1000000);
+    FB_ASSERT_TRUE(entry.state == cache_state::clean);  // unchanged
+}
+
+FB_TEST(bdev_cache_coherence, pinned_cannot_invalidate) {
+    cache_entry entry;
+    entry.pin();
+    entry.invalidate();
+    FB_ASSERT_TRUE(entry.is_valid());
+}
+
+FB_TEST(bdev_cache_coherence, start_flush_from_dirty) {
+    cache_entry entry;
+    entry.mark_dirty(2, 1000000);
+    entry.start_flush();
+    FB_ASSERT_TRUE(entry.state == cache_state::flushing);
+}
+
+FB_TEST(bdev_cache_coherence, mark_clean_after_flush) {
+    cache_entry entry;
+    entry.mark_dirty(2, 1000000);
+    entry.start_flush();
+    entry.mark_clean();
+    FB_ASSERT_TRUE(entry.state == cache_state::clean);
+}
+
+FB_TEST(bdev_cache_coherence, invalidate_from_clean) {
+    cache_entry entry;
+    entry.invalidate();
+    FB_ASSERT_TRUE(entry.state == cache_state::invalid);
+    FB_ASSERT_FALSE(entry.is_valid());
+}
+
+FB_TEST(bdev_cache_coherence, manager_insert_get) {
+    cache_manager cm;
+    cm.insert(100, 1000000);
+
+    auto entry = cm.get(100, 2000000);
+    FB_ASSERT_TRUE(entry != nullptr);
+    FB_ASSERT_EQ(entry->last_access_us, 2000000u);
+}
+
+FB_TEST(bdev_cache_coherence, manager_mark_dirty) {
+    cache_manager cm;
+    cm.insert(100, 0);
+    cm.mark_dirty(100, 1000000);
+
+    FB_ASSERT_EQ(cm.dirty_count(), 1u);
+    FB_ASSERT_TRUE(cm.entries[100].needs_flush());
+}
+
+FB_TEST(bdev_cache_coherence, manager_flush_all) {
+    cache_manager cm;
+    cm.insert(100, 0);
+    cm.insert(200, 0);
+    cm.mark_dirty(100, 0);
+    cm.mark_dirty(200, 0);
+
+    cm.flush_all();
+    FB_ASSERT_EQ(cm.dirty_count(), 0u);  // all flushing
+}
+
+FB_TEST(bdev_cache_coherence, manager_invalidate_all) {
+    cache_manager cm;
+    cm.insert(100, 0);
+    cm.insert(200, 0);
+    cm.invalidate_all();
+
+    FB_ASSERT_EQ(cm.valid_count(), 0u);
+}
+
+FB_TEST(bdev_cache_coherence, version_increments_on_dirty) {
+    cache_manager cm;
+    cm.insert(100, 0);
+    cm.mark_dirty(100, 0);
+    cm.mark_dirty(100, 0);
+
+    FB_ASSERT_EQ(cm.current_version, 3u);
+}
+
+FB_TEST(bdev_cache_coherence, get_invalid_returns_null) {
+    cache_manager cm;
+    cm.insert(100, 0);
+    cm.entries[100].invalidate();
+
+    FB_ASSERT_TRUE(cm.get(100, 0) == nullptr);
+}
+
+FB_TEST(bdev_cache_coherence, pin_unpin_flow) {
+    cache_manager cm;
+    cm.insert(100, 0);
+    cm.pin(100);
+
+    FB_ASSERT_TRUE(cm.entries[100].pinned);
+
+    cm.unpin(100);
+    FB_ASSERT_FALSE(cm.entries[100].pinned);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
