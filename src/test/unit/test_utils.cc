@@ -1819,6 +1819,34 @@ FB_TEST(units_operations, comparison_ops) {
 }
 
 // ============================================================================
+// Test Suite: itos_boundary_comprehensive (Comprehensive Boundary Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(itos_boundary_comprehensive) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(itos_boundary_comprehensive) {
+    // Teardown code here
+}
+
+FB_TEST(itos_boundary_comprehensive, int8_all_values) {
+    // Test all int8_t boundary values
+    FB_ASSERT_EQ(itos(static_cast<int8_t>(0)), "0");
+    FB_ASSERT_EQ(itos(static_cast<int8_t>(127)), "127");
+    FB_ASSERT_EQ(itos(static_cast<int8_t>(-128)), "-128");
+    FB_ASSERT_EQ(itos(static_cast<int8_t>(-1)), "-1");
+    FB_ASSERT_EQ(itos(static_cast<int8_t>(1)), "1");
+}
+
+FB_TEST(itos_boundary_comprehensive, uint8_all_values) {
+    FB_ASSERT_EQ(itos(static_cast<uint8_t>(0)), "0");
+    FB_ASSERT_EQ(itos(static_cast<uint8_t>(255)), "255");
+    FB_ASSERT_EQ(itos(static_cast<uint8_t>(127)), "127");
+    FB_ASSERT_EQ(itos(static_cast<uint8_t>(128)), "128");
+}
+
+// ============================================================================
 // Test Suite: final_validation (Final Validation Tests)
 // ============================================================================
 
