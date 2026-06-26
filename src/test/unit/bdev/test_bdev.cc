@@ -8621,6 +8621,244 @@ FB_TEST(bdev_device_lifecycle, time_in_state_calculation) {
 }
 
 // ============================================================================
+// Test Suite: bdev_error_injection — Error injection for testing
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_error_injection) {}
+FB_SUITE_TEARDOWN(bdev_error_injection) {}
+
+enum class inject_kind : uint8_t {
+    io_timeout,
+    io_error,
+    device_failure,
+    connection_loss,
+    memory_pressure
+};
+
+struct injection_rule {
+    uint64_t rule_id{0};
+    inject_kind kind;
+    uint64_t trigger_after_count{0};  // inject after N successful ops
+    uint64_t trigger_count{0};
+    uint32_t probability{0};  // 0-100 percent
+    bool one_shot{false};  // trigger only once
+    bool enabled{true};
+    uint64_t applied_count{0};
+
+    bool should_trigger(uint64_t current_count) const {
+        if (!enabled) return false;
+        if (one_shot && applied_count > 0) return false;
+        if (trigger_after_count > 0 && current_count < trigger_after_count) return false;
+        return true;
+    }
+
+    bool evaluate(uint64_t current_count, uint32_t random_value) const {
+        if (!should_trigger(current_count)) return false;
+        if (probability == 100) return true;
+        return random_value < probability;
+    }
+
+    void apply() { applied_count++; }
+
+    void reset() { applied_count = 0; enabled = true; }
+
+    void disable() { enabled = false; }
+};
+
+struct error_injector {
+    std::vector<injection_rule> rules;
+    uint64_t next_rule_id{1};
+    uint64_t successful_op_count{0};
+    uint64_t injected_count{0};
+
+    uint64_t add_rule(inject_kind kind, uint64_t after, uint32_t prob, bool one_shot) {
+        injection_rule rule;
+        rule.rule_id = next_rule_id++;
+        rule.kind = kind;
+        rule.trigger_after_count = after;
+        rule.probability = prob;
+        rule.one_shot = one_shot;
+        rules.push_back(rule);
+        return rule.rule_id;
+    }
+
+    void remove_rule(uint64_t rule_id) {
+        rules.erase(std::remove_if(rules.begin(), rules.end(),
+            [rule_id](const injection_rule& r) { return r.rule_id == rule_id; }), rules.end());
+    }
+
+    std::optional<inject_kind> check_injection(uint32_t random_value) {
+        for (auto& rule : rules) {
+            if (rule.evaluate(successful_op_count, random_value)) {
+                rule.apply();
+                injected_count++;
+                return rule.kind;
+            }
+        }
+        return std::nullopt;
+    }
+
+    void record_success() { successful_op_count++; }
+
+    void reset_all() {
+        for (auto& rule : rules) rule.reset();
+        successful_op_count = 0;
+        injected_count = 0;
+    }
+
+    size_t enabled_count() const {
+        size_t n = 0;
+        for (const auto& r : rules) { if (r.enabled) n++; }
+        return n;
+    }
+
+    injection_rule* get_rule(uint64_t rule_id) {
+        for (auto& r : rules) { if (r.rule_id == rule_id) return &r; }
+        return nullptr;
+    }
+
+    void disable_rule(uint64_t rule_id) {
+        auto* r = get_rule(rule_id);
+        if (r) r->disable();
+    }
+
+    void enable_rule(uint64_t rule_id) {
+        auto* r = get_rule(rule_id);
+        if (r) r->enabled = true;
+    }
+};
+
+FB_TEST(bdev_error_injection, rule_initial_enabled) {
+    injection_rule rule;
+    FB_ASSERT_TRUE(rule.enabled);
+}
+
+FB_TEST(bdev_error_injection, rule_should_trigger_below_threshold) {
+    injection_rule rule;
+    rule.trigger_after_count = 10;
+    FB_ASSERT_FALSE(rule.should_trigger(5));
+}
+
+FB_TEST(bdev_error_injection, rule_should_trigger_at_threshold) {
+    injection_rule rule;
+    rule.trigger_after_count = 10;
+    FB_ASSERT_TRUE(rule.should_trigger(10));
+}
+
+FB_TEST(bdev_error_injection, rule_should_trigger_disabled) {
+    injection_rule rule;
+    rule.trigger_after_count = 0;
+    rule.enabled = false;
+    FB_ASSERT_FALSE(rule.should_trigger(0));
+}
+
+FB_TEST(bdev_error_injection, rule_one_shot_prevents_repeat) {
+    injection_rule rule;
+    rule.one_shot = true;
+    rule.applied_count = 1;
+    FB_ASSERT_FALSE(rule.should_trigger(0));
+}
+
+FB_TEST(bdev_error_injection, rule_probability_100) {
+    injection_rule rule;
+    rule.probability = 100;
+    FB_ASSERT_TRUE(rule.evaluate(0, 50));  // always triggers
+}
+
+FB_TEST(bdev_error_injection, rule_probability_50_passes) {
+    injection_rule rule;
+    rule.probability = 50;
+    FB_ASSERT_TRUE(rule.evaluate(0, 30));  // 30 < 50 triggers
+}
+
+FB_TEST(bdev_error_injection, rule_probability_50_fails) {
+    injection_rule rule;
+    rule.probability = 50;
+    FB_ASSERT_FALSE(rule.evaluate(0, 70));  // 70 >= 50 doesn't trigger
+}
+
+FB_TEST(bdev_error_injection, rule_apply_increments_count) {
+    injection_rule rule;
+    rule.apply();
+    FB_ASSERT_EQ(rule.applied_count, 1u);
+}
+
+FB_TEST(bdev_error_injection, rule_reset_clears_applied) {
+    injection_rule rule;
+    rule.applied_count = 5;
+    rule.reset();
+    FB_ASSERT_EQ(rule.applied_count, 0u);
+}
+
+FB_TEST(bdev_error_injection, injector_add_rule) {
+    error_injector inj;
+    uint64_t id = inj.add_rule(inject_kind::io_timeout, 0, 100, false);
+    FB_ASSERT_NE(id, 0u);
+    FB_ASSERT_EQ(inj.rules.size(), 1u);
+}
+
+FB_TEST(bdev_error_injection, injector_remove_rule) {
+    error_injector inj;
+    uint64_t id = inj.add_rule(inject_kind::io_error, 0, 100, false);
+    inj.remove_rule(id);
+    FB_ASSERT_EQ(inj.rules.size(), 0u);
+}
+
+FB_TEST(bdev_error_injection, injector_check_injection_trigger) {
+    error_injector inj;
+    inj.add_rule(inject_kind::io_error, 0, 100, false);  // always trigger
+    auto kind = inj.check_injection(0);
+    FB_ASSERT_TRUE(kind.has_value());
+    FB_ASSERT_TRUE(*kind == inject_kind::io_error);
+    FB_ASSERT_EQ(inj.injected_count, 1u);
+}
+
+FB_TEST(bdev_error_injection, injector_check_injection_none) {
+    error_injector inj;
+    inj.add_rule(inject_kind::io_error, 10, 100, false);  // after 10 ops
+    auto kind = inj.check_injection(0);  // only 0 successful ops
+    FB_ASSERT_FALSE(kind.has_value());
+}
+
+FB_TEST(bdev_error_injection, injector_record_success) {
+    error_injector inj;
+    inj.record_success();
+    inj.record_success();
+    FB_ASSERT_EQ(inj.successful_op_count, 2u);
+}
+
+FB_TEST(bdev_error_injection, injector_reset_all) {
+    error_injector inj;
+    inj.add_rule(inject_kind::io_error, 0, 100, false);
+    inj.check_injection(0);
+    inj.reset_all();
+    FB_ASSERT_EQ(inj.successful_op_count, 0u);
+    FB_ASSERT_EQ(inj.injected_count, 0u);
+}
+
+FB_TEST(bdev_error_injection, injector_enabled_count) {
+    error_injector inj;
+    inj.add_rule(inject_kind::io_error, 0, 100, false);
+    inj.add_rule(inject_kind::io_timeout, 0, 50, false);
+    FB_ASSERT_EQ(inj.enabled_count(), 2u);
+}
+
+FB_TEST(bdev_error_injection, injector_disable_rule) {
+    error_injector inj;
+    uint64_t id = inj.add_rule(inject_kind::io_error, 0, 100, false);
+    inj.disable_rule(id);
+    FB_ASSERT_EQ(inj.enabled_count(), 0u);
+}
+
+FB_TEST(bdev_error_injection, injector_enable_rule) {
+    error_injector inj;
+    uint64_t id = inj.add_rule(inject_kind::io_error, 0, 100, false);
+    inj.disable_rule(id);
+    inj.enable_rule(id);
+    FB_ASSERT_EQ(inj.enabled_count(), 1u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
