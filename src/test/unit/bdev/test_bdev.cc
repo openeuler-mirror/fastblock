@@ -7895,6 +7895,174 @@ FB_TEST(bdev_stripe_align, write_amplification) {
 }
 
 // ============================================================================
+// Test Suite: bdev_io_splitting — Large IO splitting across objects
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_io_splitting) {}
+FB_SUITE_TEARDOWN(bdev_io_splitting) {}
+
+struct io_split_entry {
+    uint64_t split_id{0};
+    uint64_t original_offset{0};
+    uint64_t original_length{0};
+    uint64_t split_offset{0};
+    uint64_t split_length{0};
+    uint32_t split_index{0};
+    bool completed{false};
+};
+
+struct io_splitter {
+    uint64_t object_size{4 * 1024 * 1024};  // 4 MiB
+    std::vector<io_split_entry> splits;
+    uint64_t next_split_id{1};
+
+    void split(uint64_t offset, uint64_t length) {
+        uint64_t remaining = length;
+        uint64_t current_offset = offset;
+        uint32_t index = 0;
+
+        while (remaining > 0) {
+            io_split_entry entry;
+            entry.split_id = next_split_id++;
+            entry.original_offset = offset;
+            entry.original_length = length;
+            entry.split_offset = current_offset;
+            entry.split_index = index;
+
+            uint64_t offset_in_obj = current_offset % object_size;
+            uint64_t max_in_obj = object_size - offset_in_obj;
+            entry.split_length = std::min(remaining, max_in_obj);
+
+            splits.push_back(entry);
+            current_offset += entry.split_length;
+            remaining -= entry.split_length;
+            index++;
+        }
+    }
+
+    size_t split_count() const { return splits.size(); }
+
+    uint64_t total_split_length() const {
+        uint64_t total = 0;
+        for (const auto& s : splits) total += s.split_length;
+        return total;
+    }
+
+    bool verify_total_length() const {
+        return splits.empty() || splits[0].original_length == total_split_length();
+    }
+
+    std::optional<io_split_entry> get_split(uint64_t split_id) const {
+        for (const auto& s : splits) { if (s.split_id == split_id) return s; }
+        return std::nullopt;
+    }
+
+    void mark_completed(uint64_t split_id) {
+        for (auto& s : splits) { if (s.split_id == split_id) s.completed = true; }
+    }
+
+    size_t completed_count() const {
+        size_t n = 0;
+        for (const auto& s : splits) { if (s.completed) n++; }
+        return n;
+    }
+
+    bool all_completed() const {
+        for (const auto& s : splits) { if (!s.completed) return false; }
+        return true;
+    }
+
+    void clear() { splits.clear(); }
+};
+
+FB_TEST(bdev_io_splitting, split_single_object) {
+    io_splitter splitter;
+    splitter.split(0, 1024);  // fits in one object
+    FB_ASSERT_EQ(splitter.split_count(), 1u);
+}
+
+FB_TEST(bdev_io_splitting, split_across_boundary) {
+    io_splitter splitter;
+    splitter.split(4 * 1024 * 1024 - 512, 1024);  // spans two objects
+    FB_ASSERT_EQ(splitter.split_count(), 2u);
+}
+
+FB_TEST(bdev_io_splitting, split_multiple_objects) {
+    io_splitter splitter;
+    splitter.split(0, 12 * 1024 * 1024);  // 3 objects
+    FB_ASSERT_EQ(splitter.split_count(), 3u);
+}
+
+FB_TEST(bdev_io_splitting, split_preserves_total_length) {
+    io_splitter splitter;
+    splitter.split(1024, 8 * 1024 * 1024);
+    FB_ASSERT_TRUE(splitter.verify_total_length());
+}
+
+FB_TEST(bdev_io_splitting, split_length_matches) {
+    io_splitter splitter;
+    splitter.split(0, 1024);
+    FB_ASSERT_EQ(splitter.splits[0].split_length, 1024u);
+}
+
+FB_TEST(bdev_io_splitting, split_offset_sequence) {
+    io_splitter splitter;
+    splitter.split(0, 8 * 1024 * 1024 + 512);
+    FB_ASSERT_EQ(splitter.splits[0].split_offset, 0u);
+    FB_ASSERT_EQ(splitter.splits[1].split_offset, 4 * 1024 * 1024);
+    FB_ASSERT_EQ(splitter.splits[2].split_offset, 8 * 1024 * 1024);
+}
+
+FB_TEST(bdev_io_splitting, split_index_sequence) {
+    io_splitter splitter;
+    splitter.split(0, 9 * 1024 * 1024);
+    FB_ASSERT_EQ(splitter.splits[0].split_index, 0u);
+    FB_ASSERT_EQ(splitter.splits[1].split_index, 1u);
+    FB_ASSERT_EQ(splitter.splits[2].split_index, 2u);
+}
+
+FB_TEST(bdev_io_splitting, split_partial_first_object) {
+    io_splitter splitter;
+    splitter.split(2 * 1024 * 1024, 1024);  // starts mid-object
+    FB_ASSERT_EQ(splitter.splits[0].split_offset, 2 * 1024 * 1024);
+    FB_ASSERT_EQ(splitter.splits[0].split_length, 1024u);
+}
+
+FB_TEST(bdev_io_splitting, split_partial_last_object) {
+    io_splitter splitter;
+    splitter.split(0, 5 * 1024 * 1024);  // 1 full + 1 partial
+    FB_ASSERT_EQ(splitter.splits[1].split_length, 1 * 1024 * 1024);
+}
+
+FB_TEST(bdev_io_splitting, split_get_by_id) {
+    io_splitter splitter;
+    splitter.split(0, 1024);
+    auto s = splitter.get_split(1);
+    FB_ASSERT_TRUE(s.has_value());
+}
+
+FB_TEST(bdev_io_splitting, split_mark_completed) {
+    io_splitter splitter;
+    splitter.split(0, 1024);
+    splitter.mark_completed(1);
+    FB_ASSERT_EQ(splitter.completed_count(), 1u);
+}
+
+FB_TEST(bdev_io_splitting, split_all_completed) {
+    io_splitter splitter;
+    splitter.split(0, 1024);
+    splitter.mark_completed(1);
+    FB_ASSERT_TRUE(splitter.all_completed());
+}
+
+FB_TEST(bdev_io_splitting, split_clear) {
+    io_splitter splitter;
+    splitter.split(0, 1024);
+    splitter.clear();
+    FB_ASSERT_EQ(splitter.split_count(), 0u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
