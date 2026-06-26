@@ -3116,6 +3116,186 @@ FB_TEST(bdev_async_callback, operation_duration_before_complete_zero) {
 }
 
 // ============================================================================
+// Test Suite: bdev_error_recovery — Error recovery and state restoration
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_error_recovery) {}
+FB_SUITE_TEARDOWN(bdev_error_recovery) {}
+
+enum class error_type {
+    none,
+    transient,
+    persistent,
+    critical
+};
+
+struct recovery_state {
+    error_type last_error{error_type::none};
+    int error_count{0};
+    int recovery_attempts{0};
+    bool recovering{false};
+    bool recovered{false};
+
+    void set_error(error_type err) {
+        last_error = err;
+        if (err != error_type::none) {
+            error_count++;
+            recovering = false;
+            recovered = false;
+        }
+    }
+
+    bool can_recover() const {
+        return last_error == error_type::transient ||
+               (last_error == error_type::persistent && recovery_attempts < 3);
+    }
+
+    void start_recovery() {
+        if (can_recover() && !recovering) {
+            recovering = true;
+            recovery_attempts++;
+        }
+    }
+
+    void complete_recovery(bool success) {
+        if (recovering) {
+            recovering = false;
+            recovered = success;
+            if (success) {
+                last_error = error_type::none;
+                recovery_attempts = 0;
+            }
+        }
+    }
+
+    void reset() {
+        last_error = error_type::none;
+        error_count = 0;
+        recovery_attempts = 0;
+        recovering = false;
+        recovered = false;
+    }
+};
+
+FB_TEST(bdev_error_recovery, initial_no_error) {
+    recovery_state rs;
+    FB_ASSERT_TRUE(rs.last_error == error_type::none);
+    FB_ASSERT_EQ(rs.error_count, 0);
+}
+
+FB_TEST(bdev_error_recovery, set_transient_error) {
+    recovery_state rs;
+    rs.set_error(error_type::transient);
+    FB_ASSERT_TRUE(rs.last_error == error_type::transient);
+    FB_ASSERT_EQ(rs.error_count, 1);
+}
+
+FB_TEST(bdev_error_recovery, can_recover_transient) {
+    recovery_state rs;
+    rs.set_error(error_type::transient);
+    FB_ASSERT_TRUE(rs.can_recover());
+}
+
+FB_TEST(bdev_error_recovery, can_recover_persistent_with_limit) {
+    recovery_state rs;
+    rs.set_error(error_type::persistent);
+    FB_ASSERT_TRUE(rs.can_recover());
+
+    rs.start_recovery();
+    rs.complete_recovery(false);
+    rs.set_error(error_type::persistent);
+
+    FB_ASSERT_TRUE(rs.can_recover());  // still can try
+}
+
+FB_TEST(bdev_error_recovery, cannot_recover_critical) {
+    recovery_state rs;
+    rs.set_error(error_type::critical);
+    FB_ASSERT_FALSE(rs.can_recover());
+}
+
+FB_TEST(bdev_error_recovery, start_recovery_increments_attempts) {
+    recovery_state rs;
+    rs.set_error(error_type::transient);
+    rs.start_recovery();
+
+    FB_ASSERT_TRUE(rs.recovering);
+    FB_ASSERT_EQ(rs.recovery_attempts, 1);
+}
+
+FB_TEST(bdev_error_recovery, complete_recovery_success) {
+    recovery_state rs;
+    rs.set_error(error_type::transient);
+    rs.start_recovery();
+    rs.complete_recovery(true);
+
+    FB_ASSERT_TRUE(rs.recovered);
+    FB_ASSERT_TRUE(rs.last_error == error_type::none);
+}
+
+FB_TEST(bdev_error_recovery, complete_recovery_failure) {
+    recovery_state rs;
+    rs.set_error(error_type::transient);
+    rs.start_recovery();
+    rs.complete_recovery(false);
+
+    FB_ASSERT_FALSE(rs.recovered);
+    FB_ASSERT_TRUE(rs.last_error == error_type::transient);
+}
+
+FB_TEST(bdev_error_recovery, reset_clears_all) {
+    recovery_state rs;
+    rs.set_error(error_type::transient);
+    rs.start_recovery();
+    rs.reset();
+
+    FB_ASSERT_TRUE(rs.last_error == error_type::none);
+    FB_ASSERT_EQ(rs.error_count, 0);
+}
+
+FB_TEST(bdev_error_recovery, multiple_errors_counted) {
+    recovery_state rs;
+    rs.set_error(error_type::transient);
+    rs.set_error(error_type::persistent);
+    rs.set_error(error_type::critical);
+
+    FB_ASSERT_EQ(rs.error_count, 3);
+}
+
+FB_TEST(bdev_error_recovery, persistent_exhausted_no_recovery) {
+    recovery_state rs;
+    rs.set_error(error_type::persistent);
+    rs.start_recovery(); rs.complete_recovery(false);
+    rs.set_error(error_type::persistent);
+    rs.start_recovery(); rs.complete_recovery(false);
+    rs.set_error(error_type::persistent);
+    rs.start_recovery(); rs.complete_recovery(false);
+    rs.set_error(error_type::persistent);
+
+    FB_ASSERT_EQ(rs.recovery_attempts, 3);
+    FB_ASSERT_FALSE(rs.can_recover());
+}
+
+FB_TEST(bdev_error_recovery, cannot_start_recovery_while_recovering) {
+    recovery_state rs;
+    rs.set_error(error_type::transient);
+    rs.start_recovery();
+
+    rs.start_recovery();  // second call
+    FB_ASSERT_EQ(rs.recovery_attempts, 1);  // unchanged
+}
+
+FB_TEST(bdev_error_recovery, success_clears_recovery_attempts) {
+    recovery_state rs;
+    rs.set_error(error_type::transient);
+    rs.start_recovery(); rs.complete_recovery(false);
+    rs.set_error(error_type::transient);
+    rs.start_recovery(); rs.complete_recovery(true);
+
+    FB_ASSERT_EQ(rs.recovery_attempts, 0);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
