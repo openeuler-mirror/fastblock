@@ -7245,6 +7245,232 @@ FB_TEST(bdev_write_barrier, manager_multiple_barriers_order) {
 }
 
 // ============================================================================
+// Test Suite: bdev_io_statistics — IO statistics collection
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_io_statistics) {}
+FB_SUITE_TEARDOWN(bdev_io_statistics) {}
+
+struct io_stat_entry {
+    uint64_t read_ops{0};
+    uint64_t write_ops{0};
+    uint64_t read_bytes{0};
+    uint64_t write_bytes{0};
+    uint64_t read_latency_us{0};
+    uint64_t write_latency_us{0};
+    uint64_t read_errors{0};
+    uint64_t write_errors{0};
+
+    void record_read(uint64_t bytes, uint64_t latency_us) {
+        read_ops++;
+        read_bytes += bytes;
+        read_latency_us += latency_us;
+    }
+
+    void record_write(uint64_t bytes, uint64_t latency_us) {
+        write_ops++;
+        write_bytes += bytes;
+        write_latency_us += latency_us;
+    }
+
+    void record_read_error() { read_errors++; }
+
+    void record_write_error() { write_errors++; }
+
+    uint64_t total_ops() const { return read_ops + write_ops; }
+
+    uint64_t total_bytes() const { return read_bytes + write_bytes; }
+
+    uint64_t total_errors() const { return read_errors + write_errors; }
+
+    double avg_read_latency() const {
+        return read_ops > 0 ? static_cast<double>(read_latency_us) / read_ops : 0.0;
+    }
+
+    double avg_write_latency() const {
+        return write_ops > 0 ? static_cast<double>(write_latency_us) / write_ops : 0.0;
+    }
+
+    double read_error_rate() const {
+        return read_ops > 0 ? static_cast<double>(read_errors) / read_ops : 0.0;
+    }
+
+    double write_error_rate() const {
+        return write_ops > 0 ? static_cast<double>(write_errors) / write_ops : 0.0;
+    }
+};
+
+struct io_stats_collector {
+    io_stat_entry current;
+    io_stat_entry historical;
+    uint64_t collection_start_us{0};
+    uint64_t collection_interval_us{1000000};  // 1 second
+
+    void record_read(uint64_t bytes, uint64_t latency, uint64_t now_us) {
+        current.record_read(bytes, latency);
+    }
+
+    void record_write(uint64_t bytes, uint64_t latency, uint64_t now_us) {
+        current.record_write(bytes, latency);
+    }
+
+    void record_read_error(uint64_t now_us) { current.record_read_error(); }
+
+    void record_write_error(uint64_t now_us) { current.record_write_error(); }
+
+    void collect(uint64_t now_us) {
+        if (now_us - collection_start_us >= collection_interval_us) {
+            historical.read_ops += current.read_ops;
+            historical.write_ops += current.write_ops;
+            historical.read_bytes += current.read_bytes;
+            historical.write_bytes += current.write_bytes;
+            historical.read_errors += current.read_errors;
+            historical.write_errors += current.write_errors;
+            current = io_stat_entry{};
+            collection_start_us = now_us;
+        }
+    }
+
+    uint64_t throughput_bytes_per_sec(uint64_t interval_us) const {
+        if (interval_us == 0) return 0;
+        return (current.read_bytes + current.write_bytes) * 1000000 / interval_us;
+    }
+
+    uint64_t iops(uint64_t interval_us) const {
+        if (interval_us == 0) return 0;
+        return current.total_ops() * 1000000 / interval_us;
+    }
+
+    double read_write_ratio() const {
+        if (write_ops == 0) return 0.0;
+        return static_cast<double>(current.read_ops) / current.write_ops;
+    }
+
+    void reset() {
+        current = io_stat_entry{};
+        historical = io_stat_entry{};
+        collection_start_us = 0;
+    }
+};
+
+FB_TEST(bdev_io_statistics, entry_initial_zero) {
+    io_stat_entry stats;
+    FB_ASSERT_EQ(stats.read_ops, 0u);
+    FB_ASSERT_EQ(stats.write_ops, 0u);
+}
+
+FB_TEST(bdev_io_statistics, entry_record_read) {
+    io_stat_entry stats;
+    stats.record_read(1024, 1000);
+    FB_ASSERT_EQ(stats.read_ops, 1u);
+    FB_ASSERT_EQ(stats.read_bytes, 1024u);
+}
+
+FB_TEST(bdev_io_statistics, entry_record_write) {
+    io_stat_entry stats;
+    stats.record_write(2048, 2000);
+    FB_ASSERT_EQ(stats.write_ops, 1u);
+    FB_ASSERT_EQ(stats.write_bytes, 2048u);
+}
+
+FB_TEST(bdev_io_statistics, entry_record_read_error) {
+    io_stat_entry stats;
+    stats.record_read(1024, 1000);
+    stats.record_read_error();
+    FB_ASSERT_EQ(stats.read_errors, 1u);
+}
+
+FB_TEST(bdev_io_statistics, entry_record_write_error) {
+    io_stat_entry stats;
+    stats.record_write(2048, 2000);
+    stats.record_write_error();
+    FB_ASSERT_EQ(stats.write_errors, 1u);
+}
+
+FB_TEST(bdev_io_statistics, entry_total_ops) {
+    io_stat_entry stats;
+    stats.record_read(1024, 1000);
+    stats.record_write(2048, 2000);
+    FB_ASSERT_EQ(stats.total_ops(), 2u);
+}
+
+FB_TEST(bdev_io_statistics, entry_total_bytes) {
+    io_stat_entry stats;
+    stats.record_read(1024, 1000);
+    stats.record_write(2048, 2000);
+    FB_ASSERT_EQ(stats.total_bytes(), 3072u);
+}
+
+FB_TEST(bdev_io_statistics, entry_avg_read_latency) {
+    io_stat_entry stats;
+    stats.record_read(1024, 1000);
+    stats.record_read(1024, 3000);
+    FB_ASSERT_TRUE(stats.avg_read_latency() > 1.9 && stats.avg_read_latency() < 2.1);
+}
+
+FB_TEST(bdev_io_statistics, entry_avg_write_latency) {
+    io_stat_entry stats;
+    stats.record_write(1024, 2000);
+    FB_ASSERT_EQ(stats.avg_write_latency(), 2000.0);
+}
+
+FB_TEST(bdev_io_statistics, entry_read_error_rate) {
+    io_stat_entry stats;
+    stats.record_read(1024, 1000);
+    stats.record_read(1024, 1000);
+    stats.record_read_error();
+    FB_ASSERT_TRUE(stats.read_error_rate() > 0.3 && stats.read_error_rate() < 0.6);
+}
+
+FB_TEST(bdev_io_statistics, collector_record) {
+    io_stats_collector collector;
+    collector.record_read(1024, 1000, 0);
+    collector.record_write(2048, 2000, 0);
+    FB_ASSERT_EQ(collector.current.total_ops(), 2u);
+}
+
+FB_TEST(bdev_io_statistics, collector_collect_historical) {
+    io_stats_collector collector;
+    collector.collection_start_us = 0;
+    collector.record_read(1024, 1000, 500000);
+    collector.collect(1000000);  // triggers collection
+    FB_ASSERT_EQ(collector.historical.read_ops, 1u);
+    FB_ASSERT_EQ(collector.current.read_ops, 0u);  // reset
+}
+
+FB_TEST(bdev_io_statistics, collector_throughput_calculation) {
+    io_stats_collector collector;
+    collector.record_read(1024 * 1024, 1000, 0);
+    collector.record_write(1024 * 1024, 1000, 0);
+    uint64_t throughput = collector.throughput_bytes_per_sec(1000000);
+    FB_ASSERT_EQ(throughput, 2u * 1024u * 1024u);
+}
+
+FB_TEST(bdev_io_statistics, collector_iops_calculation) {
+    io_stats_collector collector;
+    collector.record_read(1024, 1000, 0);
+    collector.record_write(1024, 1000, 0);
+    uint64_t iops = collector.iops(1000000);
+    FB_ASSERT_EQ(iops, 2u);
+}
+
+FB_TEST(bdev_io_statistics, collector_read_write_ratio) {
+    io_stats_collector collector;
+    collector.record_read(1024, 1000, 0);
+    collector.record_write(1024, 1000, 0);
+    collector.record_write(1024, 1000, 0);
+    FB_ASSERT_TRUE(collector.read_write_ratio() > 0.3 && collector.read_write_ratio() < 0.6);
+}
+
+FB_TEST(bdev_io_statistics, collector_reset) {
+    io_stats_collector collector;
+    collector.record_read(1024, 1000, 0);
+    collector.reset();
+    FB_ASSERT_EQ(collector.current.read_ops, 0u);
+    FB_ASSERT_EQ(collector.historical.read_ops, 0u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
