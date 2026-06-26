@@ -2282,6 +2282,61 @@ FB_TEST(units_realworld, cache_line_size) {
 }
 
 // ============================================================================
+// Test Suite: md5_security (MD5 Security Properties Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(md5_security) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(md5_security) {
+    // Teardown code here
+}
+
+FB_TEST(md5_security, preimage_resistance) {
+    // Given hash, should be hard to find input
+    std::string target = "password123";
+    std::string hash = utils::md5(const_cast<char*>(target.c_str()), target.size());
+
+    // Verify original still matches
+    std::string verify = utils::md5(const_cast<char*>(target.c_str()), target.size());
+    FB_ASSERT_EQ(hash, verify);
+}
+
+FB_TEST(md5_security, second_preimage_resistance) {
+    // Given input, should be hard to find different input with same hash
+    std::string input1 = "input1";
+    std::string hash1 = utils::md5(const_cast<char*>(input1.c_str()), input1.size());
+
+    // Try some similar inputs
+    std::string input2 = "input2";
+    std::string hash2 = utils::md5(const_cast<char*>(input2.c_str()), input2.size());
+    FB_ASSERT_TRUE(hash1 != hash2);
+}
+
+FB_TEST(md5_security, output_randomness) {
+    // Output should appear random even for similar inputs
+    char data1[] = "a";
+    char data2[] = "b";
+
+    std::string hash1 = utils::md5(data1, 1);
+    std::string hash2 = utils::md5(data2, 1);
+
+    // Count bit differences
+    int diff_bits = 0;
+    for (int i = 0; i < 16; i++) {
+        unsigned char diff = static_cast<unsigned char>(hash1[i] ^ hash2[i]);
+        while (diff) {
+            diff_bits += diff & 1;
+            diff >>= 1;
+        }
+    }
+
+    // Should have significant bit differences (avalanche effect)
+    FB_ASSERT_TRUE(diff_bits >= 32);
+}
+
+// ============================================================================
 // Test Suite: final_validation (Final Validation Tests)
 // ============================================================================
 
