@@ -2569,6 +2569,184 @@ FB_TEST(bdev_throttling, partial_interval_no_refill) {
 }
 
 // ============================================================================
+// Test Suite: bdev_snapshot_state — Snapshot creation and tracking
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_snapshot_state) {}
+FB_SUITE_TEARDOWN(bdev_snapshot_state) {}
+
+struct snapshot_info {
+    uint64_t snap_id{0};
+    std::string name;
+    uint64_t created_at_us{0};
+    uint64_t size_bytes{0};
+    bool is_complete{false};
+    bool is_protected{false};
+};
+
+struct snapshot_manager {
+    std::unordered_map<uint64_t, snapshot_info> snapshots;
+    uint64_t next_snap_id{1};
+
+    uint64_t create(const std::string& name, uint64_t now_us, uint64_t size) {
+        uint64_t id = next_snap_id++;
+        snapshot_info snap;
+        snap.snap_id = id;
+        snap.name = name;
+        snap.created_at_us = now_us;
+        snap.size_bytes = size;
+        snap.is_complete = false;
+        snapshots[id] = snap;
+        return id;
+    }
+
+    std::optional<snapshot_info> get(uint64_t id) const {
+        auto it = snapshots.find(id);
+        if (it != snapshots.end()) return it->second;
+        return std::nullopt;
+    }
+
+    bool complete(uint64_t id) {
+        auto it = snapshots.find(id);
+        if (it != snapshots.end() && !it->second.is_complete) {
+            it->second.is_complete = true;
+            return true;
+        }
+        return false;
+    }
+
+    bool protect(uint64_t id) {
+        auto it = snapshots.find(id);
+        if (it != snapshots.end()) {
+            it->second.is_protected = true;
+            return true;
+        }
+        return false;
+    }
+
+    bool unprotect(uint64_t id) {
+        auto it = snapshots.find(id);
+        if (it != snapshots.end() && it->second.is_protected) {
+            it->second.is_protected = false;
+            return true;
+        }
+        return false;
+    }
+
+    bool can_delete(uint64_t id) const {
+        auto it = snapshots.find(id);
+        return it != snapshots.end() && !it->second.is_protected && it->second.is_complete;
+    }
+
+    bool delete_snapshot(uint64_t id) {
+        if (can_delete(id)) {
+            snapshots.erase(id);
+            return true;
+        }
+        return false;
+    }
+
+    size_t count() const { return snapshots.size(); }
+
+    size_t complete_count() const {
+        size_t n = 0;
+        for (const auto& [_, snap] : snapshots) {
+            if (snap.is_complete) n++;
+        }
+        return n;
+    }
+};
+
+FB_TEST(bdev_snapshot_state, create_returns_id) {
+    snapshot_manager sm;
+    uint64_t id = sm.create("snap1", 1000000, 10ull * 1024 * 1024 * 1024);
+    FB_ASSERT_EQ(id, 1u);
+    FB_ASSERT_EQ(sm.count(), 1u);
+}
+
+FB_TEST(bdev_snapshot_state, get_returns_info) {
+    snapshot_manager sm;
+    uint64_t id = sm.create("snap1", 1000000, 1024);
+
+    auto snap = sm.get(id);
+    FB_ASSERT_TRUE(snap.has_value());
+    FB_ASSERT_STR_EQ(snap->name.c_str(), "snap1");
+    FB_ASSERT_EQ(snap->size_bytes, 1024u);
+}
+
+FB_TEST(bdev_snapshot_state, get_invalid_returns_nullopt) {
+    snapshot_manager sm;
+    FB_ASSERT_FALSE(sm.get(999).has_value());
+}
+
+FB_TEST(bdev_snapshot_state, complete_marks_done) {
+    snapshot_manager sm;
+    uint64_t id = sm.create("snap1", 1000000, 1024);
+
+    FB_ASSERT_FALSE(sm.get(id)->is_complete);
+    sm.complete(id);
+    FB_ASSERT_TRUE(sm.get(id)->is_complete);
+}
+
+FB_TEST(bdev_snapshot_state, protect_prevents_delete) {
+    snapshot_manager sm;
+    uint64_t id = sm.create("snap1", 1000000, 1024);
+    sm.complete(id);
+    sm.protect(id);
+
+    FB_ASSERT_FALSE(sm.can_delete(id));
+    FB_ASSERT_FALSE(sm.delete_snapshot(id));
+}
+
+FB_TEST(bdev_snapshot_state, unprotect_allows_delete) {
+    snapshot_manager sm;
+    uint64_t id = sm.create("snap1", 1000000, 1024);
+    sm.complete(id);
+    sm.protect(id);
+    sm.unprotect(id);
+
+    FB_ASSERT_TRUE(sm.can_delete(id));
+    FB_ASSERT_TRUE(sm.delete_snapshot(id));
+    FB_ASSERT_EQ(sm.count(), 0u);
+}
+
+FB_TEST(bdev_snapshot_state, incomplete_cannot_delete) {
+    snapshot_manager sm;
+    uint64_t id = sm.create("snap1", 1000000, 1024);
+    // not completed
+
+    FB_ASSERT_FALSE(sm.can_delete(id));
+}
+
+FB_TEST(bdev_snapshot_state, multiple_snapshots) {
+    snapshot_manager sm;
+    sm.create("snap1", 1000000, 1024);
+    sm.create("snap2", 2000000, 2048);
+    sm.create("snap3", 3000000, 4096);
+
+    FB_ASSERT_EQ(sm.count(), 3u);
+}
+
+FB_TEST(bdev_snapshot_state, complete_count) {
+    snapshot_manager sm;
+    auto id1 = sm.create("snap1", 1000000, 1024);
+    auto id2 = sm.create("snap2", 2000000, 2048);
+    sm.create("snap3", 3000000, 4096);
+
+    sm.complete(id1);
+    sm.complete(id2);
+
+    FB_ASSERT_EQ(sm.complete_count(), 2u);
+}
+
+FB_TEST(bdev_snapshot_state, sequential_ids) {
+    snapshot_manager sm;
+    FB_ASSERT_EQ(sm.create("a", 0, 0), 1u);
+    FB_ASSERT_EQ(sm.create("b", 0, 0), 2u);
+    FB_ASSERT_EQ(sm.create("c", 0, 0), 3u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
