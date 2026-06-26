@@ -7471,6 +7471,148 @@ FB_TEST(bdev_io_statistics, collector_reset) {
 }
 
 // ============================================================================
+// Test Suite: bdev_token_throttle — Token bucket throttling
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_token_throttle) {}
+FB_SUITE_TEARDOWN(bdev_token_throttle) {}
+
+struct token_bucket {
+    uint64_t tokens{0};
+    uint64_t max_tokens{1000};
+    uint64_t refill_rate{100};  // tokens per second
+    uint64_t last_refill_us{0};
+
+    void refill(uint64_t now_us) {
+        uint64_t elapsed_us = now_us - last_refill_us;
+        uint64_t new_tokens = elapsed_us * refill_rate / 1000000;
+        tokens = std::min(tokens + new_tokens, max_tokens);
+        last_refill_us = now_us;
+    }
+
+    bool try_consume(uint64_t count, uint64_t now_us) {
+        refill(now_us);
+        if (tokens >= count) {
+            tokens -= count;
+            return true;
+        }
+        return false;
+    }
+
+    uint64_t available(uint64_t now_us) {
+        refill(now_us);
+        return tokens;
+    }
+
+    bool can_consume(uint64_t count, uint64_t now_us) {
+        refill(now_us);
+        return tokens >= count;
+    }
+
+    uint64_t wait_time_for(uint64_t count, uint64_t now_us) const {
+        if (count <= tokens) return 0;
+        uint64_t deficit = count - tokens;
+        return deficit * 1000000 / refill_rate;
+    }
+
+    void reset() { tokens = max_tokens; }
+};
+
+FB_TEST(bdev_token_throttle, bucket_initial_tokens) {
+    token_bucket bucket;
+    bucket.max_tokens = 1000;
+    bucket.tokens = 1000;
+    FB_ASSERT_EQ(bucket.tokens, 1000u);
+}
+
+FB_TEST(bdev_token_throttle, bucket_refill_adds_tokens) {
+    token_bucket bucket;
+    bucket.tokens = 0;
+    bucket.last_refill_us = 0;
+    bucket.refill(1000000);  // 1 second
+    FB_ASSERT_EQ(bucket.tokens, 100u);  // refill_rate = 100
+}
+
+FB_TEST(bdev_token_throttle, bucket_refill_caps_at_max) {
+    token_bucket bucket;
+    bucket.tokens = 950;
+    bucket.max_tokens = 1000;
+    bucket.last_refill_us = 0;
+    bucket.refill(1000000);
+    FB_ASSERT_EQ(bucket.tokens, 1000u);  // capped
+}
+
+FB_TEST(bdev_token_throttle, bucket_try_consume_success) {
+    token_bucket bucket;
+    bucket.tokens = 100;
+    bucket.last_refill_us = 1000000;
+    FB_ASSERT_TRUE(bucket.try_consume(50, 1000000));
+    FB_ASSERT_EQ(bucket.tokens, 50u);
+}
+
+FB_TEST(bdev_token_throttle, bucket_try_consume_fail_insufficient) {
+    token_bucket bucket;
+    bucket.tokens = 30;
+    bucket.last_refill_us = 0;
+    FB_ASSERT_FALSE(bucket.try_consume(50, 0));
+}
+
+FB_TEST(bdev_token_throttle, bucket_available_after_refill) {
+    token_bucket bucket;
+    bucket.tokens = 0;
+    bucket.last_refill_us = 0;
+    FB_ASSERT_EQ(bucket.available(5000000), 500u);  // 5s = 500 tokens
+}
+
+FB_TEST(bdev_token_throttle, bucket_can_consume_check) {
+    token_bucket bucket;
+    bucket.tokens = 80;
+    bucket.last_refill_us = 0;
+    FB_ASSERT_TRUE(bucket.can_consume(80, 0));
+    FB_ASSERT_FALSE(bucket.can_consume(81, 0));
+}
+
+FB_TEST(bdev_token_throttle, bucket_wait_time_for_deficit) {
+    token_bucket bucket;
+    bucket.tokens = 20;
+    bucket.refill_rate = 100;
+    FB_ASSERT_EQ(bucket.wait_time_for(100, 0), 800000u);  // 80 deficit * 1s/100
+}
+
+FB_TEST(bdev_token_throttle, bucket_wait_time_zero_if_sufficient) {
+    token_bucket bucket;
+    bucket.tokens = 100;
+    FB_ASSERT_EQ(bucket.wait_time_for(50, 0), 0u);
+}
+
+FB_TEST(bdev_token_throttle, bucket_reset_to_max) {
+    token_bucket bucket;
+    bucket.tokens = 10;
+    bucket.max_tokens = 1000;
+    bucket.reset();
+    FB_ASSERT_EQ(bucket.tokens, 1000u);
+}
+
+FB_TEST(bdev_token_throttle, bucket_multiple_consumes) {
+    token_bucket bucket;
+    bucket.tokens = 100;
+    bucket.last_refill_us = 0;
+    bucket.try_consume(30, 0);
+    bucket.try_consume(40, 0);
+    FB_ASSERT_EQ(bucket.tokens, 30u);
+}
+
+FB_TEST(bdev_token_throttle, bucket_refill_between_consumes) {
+    token_bucket bucket;
+    bucket.tokens = 10;
+    bucket.last_refill_us = 0;
+    bucket.try_consume(10, 0);  // consume all
+    FB_ASSERT_FALSE(bucket.can_consume(1, 0));
+    bucket.refill(1000000);  // refill 100 tokens
+    FB_ASSERT_TRUE(bucket.can_consume(50, 1000000));
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
