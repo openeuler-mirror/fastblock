@@ -48,11 +48,11 @@ constexpr int RAFT_NODE_VOTED_FOR_ME = (1 << 0);
 } // anonymous namespace
 
 FB_SUITE_SETUP(raft_log_node) {
-    FB_LOG_INFO("Setting up raft_log_node test suite");
+    // Setup code here
 }
 
 FB_SUITE_TEARDOWN(raft_log_node) {
-    FB_LOG_INFO("Tearing down raft_log_node test suite");
+    // Teardown code here
 }
 
 // ============================================================================
@@ -1212,9 +1212,9 @@ FB_TEST(raft_log_node, log_cache_pressure_handling) {
 FB_TEST(raft_log_node, log_high_frequency_operations) {
     // 高频操作测试
     std::map<raft_index_t, int> cache;
-    int operations = 1000;
+    size_t operations = 1000;
 
-    for (int i = 1; i <= operations; i++) {
+    for (size_t i = 1; i <= operations; i++) {
         cache[i] = i;
     }
 
@@ -2445,7 +2445,7 @@ FB_TEST(raft_log_node, state_machine_safety_order) {
     }
 }
 
-FB_TEST(raft_log_node, election_safety_single_leader) {
+FB_TEST(raft_log_node, election_safety_single_leader_v2) {
     // 选举安全性：每个 term 最多有一个 Leader
     std::map<raft_term_t, std::set<raft_node_id_t>> term_leaders;
 
@@ -3606,7 +3606,7 @@ FB_TEST(raft_log_node, read_index_quorum_heartbeat) {
     FB_ASSERT_TRUE(quorum_reached);
 }
 
-FB_TEST(raft_log_node, read_index_pending_queue) {
+FB_TEST(raft_log_node, read_index_pending_queue_v2) {
     // ReadIndex 待处理队列
     std::queue<std::pair<raft_index_t, raft_node_id_t>> pending_reads;
 
@@ -4596,7 +4596,7 @@ FB_TEST(raft_log_node, resource_quota_management) {
     quotas["memory_per_node"] = 10 * 1024 * 1024;
 
     // 检查配额
-    int current_log_entries = 8000;
+    size_t current_log_entries = 8000;
     bool within_quota = current_log_entries <= quotas["log_entries"];
     FB_ASSERT_TRUE(within_quota);
 
