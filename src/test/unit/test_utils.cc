@@ -1725,4 +1725,52 @@ FB_TEST(md5_input_variations, incremental_bytes) {
     FB_ASSERT_EQ(hash.length(), 16);
 }
 
+// ============================================================================
+// Test Suite: encoding_sequence (Encoding Sequence Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(encoding_sequence) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(encoding_sequence) {
+    // Teardown code here
+}
+
+FB_TEST(encoding_sequence, encode_ascending) {
+    char buffer[5];
+    for (uint32_t i = 1; i <= 100; i++) {
+        size_t len = encode_varint32(buffer, i);
+        auto [val, decoded_len] = decode_varint32(buffer, len);
+        FB_ASSERT_EQ(val, i);
+    }
+}
+
+FB_TEST(encoding_sequence, encode_descending) {
+    char buffer[5];
+    for (uint32_t i = 100; i >= 1; i--) {
+        size_t len = encode_varint32(buffer, i);
+        auto [val, decoded_len] = decode_varint32(buffer, len);
+        FB_ASSERT_EQ(val, i);
+    }
+}
+
+FB_TEST(encoding_sequence, encode_powers) {
+    char buffer[5];
+    for (uint32_t i = 1; i <= 1000000; i *= 10) {
+        size_t len = encode_varint32(buffer, i);
+        auto [val, decoded_len] = decode_varint32(buffer, len);
+        FB_ASSERT_EQ(val, i);
+    }
+}
+
+FB_TEST(encoding_sequence, encode_multiples) {
+    char buffer[5];
+    for (uint32_t i = 0; i <= 1000; i += 100) {
+        size_t len = encode_varint32(buffer, i);
+        auto [val, decoded_len] = decode_varint32(buffer, len);
+        FB_ASSERT_EQ(val, i);
+    }
+}
+
 FB_TEST_MAIN()
