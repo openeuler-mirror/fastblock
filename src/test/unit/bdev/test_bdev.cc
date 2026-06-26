@@ -1489,6 +1489,170 @@ FB_TEST(bdev_rpc_error_handling, reset_clears_state) {
 }
 
 // ============================================================================
+// Test Suite: bdev_leader_tracking — Leader election tracking
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_leader_tracking) {}
+FB_SUITE_TEARDOWN(bdev_leader_tracking) {}
+
+struct leader_info {
+    int32_t leader_id{-1};
+    uint64_t term{0};
+    uint64_t epoch{0};
+    bool is_valid{false};
+
+    void update(int32_t new_leader, uint64_t new_term, uint64_t new_epoch) {
+        if (new_term >= term && new_epoch >= epoch) {
+            leader_id = new_leader;
+            term = new_term;
+            epoch = new_epoch;
+            is_valid = true;
+        }
+    }
+
+    void invalidate() {
+        is_valid = false;
+    }
+
+    bool is_newer_than(uint64_t other_term, uint64_t other_epoch) const {
+        if (term != other_term) return term > other_term;
+        return epoch > other_epoch;
+    }
+};
+
+struct leader_cache {
+    std::unordered_map<int32_t, leader_info> cache;
+
+    void set_leader(int32_t pool_id, const leader_info& info) {
+        cache[pool_id] = info;
+    }
+
+    std::optional<leader_info> get_leader(int32_t pool_id) const {
+        auto it = cache.find(pool_id);
+        if (it != cache.end() && it->second.is_valid) {
+            return it->second;
+        }
+        return std::nullopt;
+    }
+
+    void invalidate_pool(int32_t pool_id) {
+        auto it = cache.find(pool_id);
+        if (it != cache.end()) {
+            it->second.invalidate();
+        }
+    }
+
+    size_t valid_count() const {
+        size_t count = 0;
+        for (const auto& [_, info] : cache) {
+            if (info.is_valid) count++;
+        }
+        return count;
+    }
+};
+
+FB_TEST(bdev_leader_tracking, leader_info_default_invalid) {
+    leader_info info;
+    FB_ASSERT_EQ(info.leader_id, -1);
+    FB_ASSERT_EQ(info.term, 0u);
+    FB_ASSERT_FALSE(info.is_valid);
+}
+
+FB_TEST(bdev_leader_tracking, update_sets_valid) {
+    leader_info info;
+    info.update(5, 1, 100);
+    FB_ASSERT_EQ(info.leader_id, 5);
+    FB_ASSERT_EQ(info.term, 1u);
+    FB_ASSERT_TRUE(info.is_valid);
+}
+
+FB_TEST(bdev_leader_tracking, update_rejected_if_older) {
+    leader_info info;
+    info.update(5, 2, 100);
+
+    info.update(3, 1, 50);  // older term
+    FB_ASSERT_EQ(info.leader_id, 5);  // unchanged
+
+    info.update(3, 2, 50);  // same term, older epoch
+    FB_ASSERT_EQ(info.leader_id, 5);  // unchanged
+}
+
+FB_TEST(bdev_leader_tracking, update_accepted_if_newer) {
+    leader_info info;
+    info.update(5, 1, 100);
+
+    info.update(3, 2, 50);  // newer term
+    FB_ASSERT_EQ(info.leader_id, 3);
+
+    info.update(7, 2, 150);  // same term, newer epoch
+    FB_ASSERT_EQ(info.leader_id, 7);
+}
+
+FB_TEST(bdev_leader_tracking, invalidate_marks_invalid) {
+    leader_info info;
+    info.update(5, 1, 100);
+    FB_ASSERT_TRUE(info.is_valid);
+
+    info.invalidate();
+    FB_ASSERT_FALSE(info.is_valid);
+    FB_ASSERT_EQ(info.leader_id, 5);  // data preserved
+}
+
+FB_TEST(bdev_leader_tracking, cache_store_and_retrieve) {
+    leader_cache cache;
+    leader_info info;
+    info.update(5, 1, 100);
+
+    cache.set_leader(1, info);
+    auto retrieved = cache.get_leader(1);
+    FB_ASSERT_TRUE(retrieved.has_value());
+    FB_ASSERT_EQ(retrieved->leader_id, 5);
+}
+
+FB_TEST(bdev_leader_tracking, cache_returns_nullopt_for_invalid) {
+    leader_cache cache;
+    leader_info info;
+    info.update(5, 1, 100);
+    info.invalidate();
+
+    cache.set_leader(1, info);
+    auto retrieved = cache.get_leader(1);
+    FB_ASSERT_FALSE(retrieved.has_value());
+}
+
+FB_TEST(bdev_leader_tracking, cache_invalidate_pool) {
+    leader_cache cache;
+    leader_info info;
+    info.update(5, 1, 100);
+
+    cache.set_leader(1, info);
+    cache.invalidate_pool(1);
+    FB_ASSERT_FALSE(cache.get_leader(1).has_value());
+}
+
+FB_TEST(bdev_leader_tracking, cache_valid_count) {
+    leader_cache cache;
+    leader_info info;
+    info.update(5, 1, 100);
+
+    cache.set_leader(1, info);
+    cache.set_leader(2, info);
+    info.invalidate();
+    cache.set_leader(3, info);
+
+    FB_ASSERT_EQ(cache.valid_count(), 2u);
+}
+
+FB_TEST(bdev_leader_tracking, newer_term_check) {
+    leader_info info;
+    info.update(5, 2, 100);
+
+    FB_ASSERT_FALSE(info.is_newer_than(3, 100));  // other has higher term
+    FB_ASSERT_TRUE(info.is_newer_than(1, 100));   // info has higher term
+    FB_ASSERT_TRUE(info.is_newer_than(2, 50));    // same term, higher epoch
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
