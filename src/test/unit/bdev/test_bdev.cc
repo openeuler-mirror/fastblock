@@ -2318,6 +2318,138 @@ FB_TEST(bdev_lease_renewal, renew_fails_if_not_should_renew) {
 }
 
 // ============================================================================
+// Test Suite: bdev_io_priority — IO priority queue management
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_io_priority) {}
+FB_SUITE_TEARDOWN(bdev_io_priority) {}
+
+enum class io_priority : uint8_t {
+    low = 0,
+    normal = 1,
+    high = 2,
+    critical = 3
+};
+
+struct priority_queue {
+    struct entry {
+        uint64_t id;
+        io_priority prio;
+        uint64_t timestamp;
+    };
+
+    std::vector<entry> entries;
+
+    void enqueue(uint64_t id, io_priority prio, uint64_t ts) {
+        entries.push_back({id, prio, ts});
+        std::stable_sort(entries.begin(), entries.end(), [](const entry& a, const entry& b) {
+            if (a.prio != b.prio) return static_cast<uint8_t>(a.prio) > static_cast<uint8_t>(b.prio);
+            return a.timestamp < b.timestamp;
+        });
+    }
+
+    std::optional<entry> dequeue() {
+        if (entries.empty()) return std::nullopt;
+        entry e = entries.front();
+        entries.erase(entries.begin());
+        return e;
+    }
+
+    std::optional<entry> peek() const {
+        if (entries.empty()) return std::nullopt;
+        return entries.front();
+    }
+
+    size_t size() const { return entries.size(); }
+
+    size_t count_by_priority(io_priority prio) const {
+        return std::count_if(entries.begin(), entries.end(),
+            [prio](const entry& e) { return e.prio == prio; });
+    }
+
+    void clear() { entries.clear(); }
+};
+
+FB_TEST(bdev_io_priority, empty_queue) {
+    priority_queue pq;
+    FB_ASSERT_EQ(pq.size(), 0u);
+    FB_ASSERT_FALSE(pq.dequeue().has_value());
+    FB_ASSERT_FALSE(pq.peek().has_value());
+}
+
+FB_TEST(bdev_io_priority, enqueue_single) {
+    priority_queue pq;
+    pq.enqueue(1, io_priority::normal, 100);
+    FB_ASSERT_EQ(pq.size(), 1u);
+    FB_ASSERT_EQ(pq.peek()->id, 1u);
+}
+
+FB_TEST(bdev_io_priority, priority_ordering) {
+    priority_queue pq;
+    pq.enqueue(1, io_priority::low, 100);
+    pq.enqueue(2, io_priority::high, 100);
+    pq.enqueue(3, io_priority::normal, 100);
+
+    FB_ASSERT_EQ(pq.dequeue()->id, 2u);
+    FB_ASSERT_EQ(pq.dequeue()->id, 3u);
+    FB_ASSERT_EQ(pq.dequeue()->id, 1u);
+}
+
+FB_TEST(bdev_io_priority, timestamp_ordering_same_priority) {
+    priority_queue pq;
+    pq.enqueue(1, io_priority::normal, 300);
+    pq.enqueue(2, io_priority::normal, 100);
+    pq.enqueue(3, io_priority::normal, 200);
+
+    FB_ASSERT_EQ(pq.dequeue()->id, 2u);
+    FB_ASSERT_EQ(pq.dequeue()->id, 3u);
+    FB_ASSERT_EQ(pq.dequeue()->id, 1u);
+}
+
+FB_TEST(bdev_io_priority, critical_highest) {
+    priority_queue pq;
+    pq.enqueue(1, io_priority::high, 100);
+    pq.enqueue(2, io_priority::critical, 100);
+
+    FB_ASSERT_EQ(pq.dequeue()->prio, io_priority::critical);
+}
+
+FB_TEST(bdev_io_priority, count_by_priority) {
+    priority_queue pq;
+    pq.enqueue(1, io_priority::high, 100);
+    pq.enqueue(2, io_priority::high, 200);
+    pq.enqueue(3, io_priority::low, 100);
+
+    FB_ASSERT_EQ(pq.count_by_priority(io_priority::high), 2u);
+    FB_ASSERT_EQ(pq.count_by_priority(io_priority::low), 1u);
+}
+
+FB_TEST(bdev_io_priority, dequeue_removes_front) {
+    priority_queue pq;
+    pq.enqueue(1, io_priority::high, 100);
+    pq.enqueue(2, io_priority::low, 100);
+
+    pq.dequeue();
+    FB_ASSERT_EQ(pq.size(), 1u);
+}
+
+FB_TEST(bdev_io_priority, clear_empties_queue) {
+    priority_queue pq;
+    pq.enqueue(1, io_priority::high, 100);
+    pq.enqueue(2, io_priority::low, 100);
+    pq.clear();
+    FB_ASSERT_EQ(pq.size(), 0u);
+}
+
+FB_TEST(bdev_io_priority, priority_over_timestamp) {
+    priority_queue pq;
+    pq.enqueue(1, io_priority::normal, 100);
+    pq.enqueue(2, io_priority::high, 500);
+
+    FB_ASSERT_EQ(pq.dequeue()->id, 2u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
