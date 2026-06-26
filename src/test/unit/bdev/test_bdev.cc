@@ -6522,6 +6522,190 @@ FB_TEST(bdev_connection_pool, pool_remove) {
 }
 
 // ============================================================================
+// Test Suite: bdev_memory_pool — Memory pool allocation
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_memory_pool) {}
+FB_SUITE_TEARDOWN(bdev_memory_pool) {}
+
+struct memory_block {
+    uint64_t block_id{0};
+    uint64_t size{0};
+    uint8_t* ptr{nullptr};
+    bool allocated{false};
+
+    bool is_free() const { return !allocated; }
+
+    void mark_allocated() { allocated = true; }
+
+    void mark_free() { allocated = false; }
+};
+
+struct memory_pool {
+    std::vector<memory_block> blocks;
+    uint64_t block_size{4096};
+    uint64_t total_blocks{0};
+    uint64_t allocated_blocks{0};
+    uint64_t next_block_id{1};
+
+    void initialize(uint64_t count) {
+        total_blocks = count;
+        blocks.reserve(count);
+        for (uint64_t i = 0; i < count; ++i) {
+            blocks.push_back({next_block_id++, block_size, nullptr, false});
+        }
+    }
+
+    std::optional<memory_block*> allocate() {
+        for (auto& blk : blocks) {
+            if (blk.is_free()) {
+                blk.mark_allocated();
+                allocated_blocks++;
+                return &blk;
+            }
+        }
+        return std::nullopt;  // pool exhausted
+    }
+
+    void free(uint64_t block_id) {
+        for (auto& blk : blocks) {
+            if (blk.block_id == block_id && blk.allocated) {
+                blk.mark_free();
+                allocated_blocks--;
+            }
+        }
+    }
+
+    uint64_t free_count() const { return total_blocks - allocated_blocks; }
+
+    bool has_available() const { return free_count() > 0; }
+
+    double utilization() const {
+        if (total_blocks == 0) return 0.0;
+        return static_cast<double>(allocated_blocks) / total_blocks;
+    }
+
+    void reset() {
+        for (auto& blk : blocks) blk.mark_free();
+        allocated_blocks = 0;
+    }
+
+    std::vector<uint64_t> get_allocated_ids() const {
+        std::vector<uint64_t> ids;
+        for (const auto& blk : blocks) { if (blk.allocated) ids.push_back(blk.block_id); }
+        return ids;
+    }
+};
+
+FB_TEST(bdev_memory_pool, block_initial_free) {
+    memory_block blk;
+    FB_ASSERT_TRUE(blk.is_free());
+}
+
+FB_TEST(bdev_memory_pool, block_mark_allocated) {
+    memory_block blk;
+    blk.mark_allocated();
+    FB_ASSERT_FALSE(blk.is_free());
+}
+
+FB_TEST(bdev_memory_pool, block_mark_free) {
+    memory_block blk;
+    blk.mark_allocated();
+    blk.mark_free();
+    FB_ASSERT_TRUE(blk.is_free());
+}
+
+FB_TEST(bdev_memory_pool, pool_initialize) {
+    memory_pool pool;
+    pool.initialize(100);
+    FB_ASSERT_EQ(pool.total_blocks, 100u);
+    FB_ASSERT_EQ(pool.blocks.size(), 100u);
+}
+
+FB_TEST(bdev_memory_pool, pool_allocate_success) {
+    memory_pool pool;
+    pool.initialize(10);
+    auto blk = pool.allocate();
+    FB_ASSERT_TRUE(blk.has_value());
+    FB_ASSERT_EQ(pool.allocated_blocks, 1u);
+}
+
+FB_TEST(bdev_memory_pool, pool_allocate_exhausted) {
+    memory_pool pool;
+    pool.initialize(3);
+    pool.allocate();
+    pool.allocate();
+    pool.allocate();
+    auto blk = pool.allocate();  // should fail
+    FB_ASSERT_FALSE(blk.has_value());
+}
+
+FB_TEST(bdev_memory_pool, pool_free_reduces_count) {
+    memory_pool pool;
+    pool.initialize(10);
+    auto blk = pool.allocate();
+    pool.free(blk->block_id);
+    FB_ASSERT_EQ(pool.allocated_blocks, 0u);
+}
+
+FB_TEST(bdev_memory_pool, pool_free_count) {
+    memory_pool pool;
+    pool.initialize(10);
+    pool.allocate();
+    pool.allocate();
+    FB_ASSERT_EQ(pool.free_count(), 8u);
+}
+
+FB_TEST(bdev_memory_pool, pool_has_available) {
+    memory_pool pool;
+    pool.initialize(10);
+    FB_ASSERT_TRUE(pool.has_available());
+}
+
+FB_TEST(bdev_memory_pool, pool_no_available_when_full) {
+    memory_pool pool;
+    pool.initialize(3);
+    pool.allocate();
+    pool.allocate();
+    pool.allocate();
+    FB_ASSERT_FALSE(pool.has_available());
+}
+
+FB_TEST(bdev_memory_pool, pool_utilization) {
+    memory_pool pool;
+    pool.initialize(10);
+    pool.allocate(); pool.allocate();
+    FB_ASSERT_TRUE(pool.utilization() > 0.19 && pool.utilization() < 0.21);
+}
+
+FB_TEST(bdev_memory_pool, pool_reset) {
+    memory_pool pool;
+    pool.initialize(10);
+    pool.allocate();
+    pool.reset();
+    FB_ASSERT_EQ(pool.allocated_blocks, 0u);
+}
+
+FB_TEST(bdev_memory_pool, pool_get_allocated_ids) {
+    memory_pool pool;
+    pool.initialize(10);
+    pool.allocate();
+    pool.allocate();
+    auto ids = pool.get_allocated_ids();
+    FB_ASSERT_EQ(ids.size(), 2u);
+}
+
+FB_TEST(bdev_memory_pool, pool_multiple_allocate_free_cycle) {
+    memory_pool pool;
+    pool.initialize(5);
+    auto b1 = pool.allocate();
+    auto b2 = pool.allocate();
+    pool.free(b1->block_id);
+    auto b3 = pool.allocate();  // should reuse b1's slot
+    FB_ASSERT_EQ(pool.allocated_blocks, 2u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
