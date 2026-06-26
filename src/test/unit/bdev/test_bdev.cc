@@ -8859,6 +8859,346 @@ FB_TEST(bdev_error_injection, injector_enable_rule) {
 }
 
 // ============================================================================
+// Test Suite: bdev_topology — Device topology and path management
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_topology) {}
+FB_SUITE_TEARDOWN(bdev_topology) {}
+
+enum class path_state : uint8_t {
+    unknown,
+    active,
+    standby,
+    failed,
+    disabled
+};
+
+struct path_entry {
+    uint64_t path_id{0};
+    std::string adapter;
+    std::string target;
+    path_state state{path_state::unknown};
+    uint64_t io_count{0};
+    uint64_t error_count{0};
+
+    bool is_usable() const {
+        return state == path_state::active || state == path_state::standby;
+    }
+
+    void record_io() { io_count++; }
+    void record_error() { error_count++; }
+
+    double error_rate() const {
+        return io_count > 0 ? static_cast<double>(error_count) / io_count : 0.0;
+    }
+
+    void set_active() { state = path_state::active; }
+    void set_standby() { state = path_state::standby; }
+    void set_failed() { state = path_state::failed; }
+};
+
+struct topology_manager {
+    std::vector<path_entry> paths;
+    uint64_t next_path_id{1};
+    uint64_t active_path_id{0};
+
+    uint64_t add_path(const std::string& adapter, const std::string& target) {
+        path_entry p;
+        p.path_id = next_path_id++;
+        p.adapter = adapter;
+        p.target = target;
+        p.state = path_state::standby;
+        paths.push_back(p);
+        return p.path_id;
+    }
+
+    void set_active_path(uint64_t path_id) {
+        for (auto& p : paths) {
+            if (p.path_id == path_id && p.is_usable()) {
+                p.set_active();
+                active_path_id = path_id;
+            } else if (p.state == path_state::active) {
+                p.set_standby();
+            }
+        }
+    }
+
+    path_entry* find_path(uint64_t path_id) {
+        for (auto& p : paths) { if (p.path_id == path_id) return &p; }
+        return nullptr;
+    }
+
+    std::vector<uint64_t> get_failed_paths() const {
+        std::vector<uint64_t> failed;
+        for (const auto& p : paths) { if (p.state == path_state::failed) failed.push_back(p.path_id); }
+        return failed;
+    }
+
+    size_t usable_count() const {
+        size_t n = 0;
+        for (const auto& p : paths) { if (p.is_usable()) n++; }
+        return n;
+    }
+
+    bool failover() {
+        for (auto& p : paths) {
+            if (p.state == path_state::standby) {
+                p.set_active();
+                active_path_id = p.path_id;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    size_t path_count() const { return paths.size(); }
+};
+
+FB_TEST(bdev_topology, path_initial_unknown) {
+    path_entry p;
+    FB_ASSERT_TRUE(p.state == path_state::unknown);
+}
+
+FB_TEST(bdev_topology, path_is_usable_active) {
+    path_entry p;
+    p.set_active();
+    FB_ASSERT_TRUE(p.is_usable());
+}
+
+FB_TEST(bdev_topology, path_is_usable_standby) {
+    path_entry p;
+    p.set_standby();
+    FB_ASSERT_TRUE(p.is_usable());
+}
+
+FB_TEST(bdev_topology, path_not_usable_failed) {
+    path_entry p;
+    p.set_failed();
+    FB_ASSERT_FALSE(p.is_usable());
+}
+
+FB_TEST(bdev_topology, path_record_io) {
+    path_entry p;
+    p.record_io();
+    FB_ASSERT_EQ(p.io_count, 1u);
+}
+
+FB_TEST(bdev_topology, path_error_rate) {
+    path_entry p;
+    p.io_count = 100;
+    p.error_count = 5;
+    FB_ASSERT_TRUE(p.error_rate() > 0.04 && p.error_rate() < 0.06);
+}
+
+FB_TEST(bdev_topology, manager_add_path) {
+    topology_manager mgr;
+    uint64_t id = mgr.add_path("hba0", "target0");
+    FB_ASSERT_NE(id, 0u);
+    FB_ASSERT_EQ(mgr.path_count(), 1u);
+}
+
+FB_TEST(bdev_topology, manager_set_active_path) {
+    topology_manager mgr;
+    uint64_t id = mgr.add_path("hba0", "target0");
+    mgr.set_active_path(id);
+    FB_ASSERT_EQ(mgr.active_path_id, id);
+}
+
+FB_TEST(bdev_topology, manager_switch_active_demotes_old) {
+    topology_manager mgr;
+    uint64_t id1 = mgr.add_path("hba0", "target0");
+    uint64_t id2 = mgr.add_path("hba1", "target1");
+    mgr.set_active_path(id1);
+    mgr.set_active_path(id2);
+    auto* old = mgr.find_path(id1);
+    FB_ASSERT_TRUE(old->state == path_state::standby);
+}
+
+FB_TEST(bdev_topology, manager_get_failed_paths) {
+    topology_manager mgr;
+    mgr.add_path("hba0", "t0");
+    mgr.add_path("hba1", "t1");
+    mgr.find_path(1)->set_failed();
+    auto failed = mgr.get_failed_paths();
+    FB_ASSERT_EQ(failed.size(), 1u);
+}
+
+FB_TEST(bdev_topology, manager_usable_count) {
+    topology_manager mgr;
+    mgr.add_path("hba0", "t0");
+    mgr.add_path("hba1", "t1");
+    mgr.find_path(1)->set_failed();
+    FB_ASSERT_EQ(mgr.usable_count(), 1u);
+}
+
+FB_TEST(bdev_topology, manager_failover_success) {
+    topology_manager mgr;
+    uint64_t id1 = mgr.add_path("hba0", "t0");
+    uint64_t id2 = mgr.add_path("hba1", "t1");
+    mgr.set_active_path(id1);
+    mgr.find_path(id1)->set_failed();
+    bool ok = mgr.failover();
+    FB_ASSERT_TRUE(ok);
+    FB_ASSERT_EQ(mgr.active_path_id, id2);
+}
+
+FB_TEST(bdev_topology, manager_failover_no_standby) {
+    topology_manager mgr;
+    uint64_t id = mgr.add_path("hba0", "t0");
+    mgr.set_active_path(id);
+    mgr.find_path(id)->set_failed();
+    bool ok = mgr.failover();
+    FB_ASSERT_FALSE(ok);
+}
+
+// ============================================================================
+// Test Suite: bdev_queue_depth_dynamic — Dynamic queue depth adjustment
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_queue_depth_dynamic) {}
+FB_SUITE_TEARDOWN(bdev_queue_depth_dynamic) {}
+
+struct queue_depth_state {
+    uint32_t current_depth{128};
+    uint32_t min_depth{16};
+    uint32_t max_depth{512};
+    uint32_t step_size{16};
+    uint64_t congestion_events{0};
+    uint64_t idle_events{0};
+
+    bool can_increase() const { return current_depth + step_size <= max_depth; }
+    bool can_decrease() const { return current_depth - step_size >= min_depth; }
+
+    void increase() {
+        if (can_increase()) current_depth += step_size;
+    }
+
+    void decrease() {
+        if (can_decrease()) current_depth -= step_size;
+    }
+
+    void record_congestion() {
+        congestion_events++;
+        decrease();
+    }
+
+    void record_idle() {
+        idle_events++;
+        increase();
+    }
+
+    double utilization() const {
+        return static_cast<double>(current_depth) / max_depth;
+    }
+
+    void reset() {
+        current_depth = 128;
+        congestion_events = 0;
+        idle_events = 0;
+    }
+
+    uint32_t effective_depth() const { return current_depth; }
+};
+
+FB_TEST(bdev_queue_depth_dynamic, initial_depth) {
+    queue_depth_state state;
+    FB_ASSERT_EQ(state.current_depth, 128u);
+}
+
+FB_TEST(bdev_queue_depth_dynamic, can_increase_below_max) {
+    queue_depth_state state;
+    state.current_depth = 400;
+    FB_ASSERT_TRUE(state.can_increase());
+}
+
+FB_TEST(bdev_queue_depth_dynamic, cannot_increase_at_max) {
+    queue_depth_state state;
+    state.current_depth = 512;
+    FB_ASSERT_FALSE(state.can_increase());
+}
+
+FB_TEST(bdev_queue_depth_dynamic, can_decrease_above_min) {
+    queue_depth_state state;
+    state.current_depth = 100;
+    FB_ASSERT_TRUE(state.can_decrease());
+}
+
+FB_TEST(bdev_queue_depth_dynamic, cannot_decrease_at_min) {
+    queue_depth_state state;
+    state.current_depth = 16;
+    FB_ASSERT_FALSE(state.can_decrease());
+}
+
+FB_TEST(bdev_queue_depth_dynamic, increase_adds_step) {
+    queue_depth_state state;
+    state.current_depth = 100;
+    state.increase();
+    FB_ASSERT_EQ(state.current_depth, 116u);
+}
+
+FB_TEST(bdev_queue_depth_dynamic, decrease_subtracts_step) {
+    queue_depth_state state;
+    state.current_depth = 100;
+    state.decrease();
+    FB_ASSERT_EQ(state.current_depth, 84u);
+}
+
+FB_TEST(bdev_queue_depth_dynamic, record_congestion_decreases) {
+    queue_depth_state state;
+    state.current_depth = 128;
+    state.record_congestion();
+    FB_ASSERT_EQ(state.current_depth, 112u);
+    FB_ASSERT_EQ(state.congestion_events, 1u);
+}
+
+FB_TEST(bdev_queue_depth_dynamic, record_idle_increases) {
+    queue_depth_state state;
+    state.current_depth = 128;
+    state.record_idle();
+    FB_ASSERT_EQ(state.current_depth, 144u);
+    FB_ASSERT_EQ(state.idle_events, 1u);
+}
+
+FB_TEST(bdev_queue_depth_dynamic, utilization_calculation) {
+    queue_depth_state state;
+    state.current_depth = 256;
+    state.max_depth = 512;
+    FB_ASSERT_TRUE(state.utilization() > 0.49 && state.utilization() < 0.51);
+}
+
+FB_TEST(bdev_queue_depth_dynamic, reset_returns_to_initial) {
+    queue_depth_state state;
+    state.current_depth = 400;
+    state.congestion_events = 10;
+    state.reset();
+    FB_ASSERT_EQ(state.current_depth, 128u);
+    FB_ASSERT_EQ(state.congestion_events, 0u);
+}
+
+FB_TEST(bdev_queue_depth_dynamic, effective_depth_equals_current) {
+    queue_depth_state state;
+    state.current_depth = 200;
+    FB_ASSERT_EQ(state.effective_depth(), 200u);
+}
+
+FB_TEST(bdev_queue_depth_dynamic, multiple_congestion_events) {
+    queue_depth_state state;
+    state.current_depth = 128;
+    state.record_congestion();
+    state.record_congestion();
+    state.record_congestion();
+    FB_ASSERT_EQ(state.current_depth, 80u);  // 128 - 16*3
+}
+
+FB_TEST(bdev_depth_dynamic, alternation_idle_congestion) {
+    queue_depth_state state;
+    state.current_depth = 100;
+    state.record_idle();  // 100 + 16 = 116
+    state.record_congestion();  // 116 - 16 = 100
+    FB_ASSERT_EQ(state.current_depth, 100u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
