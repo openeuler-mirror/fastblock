@@ -2245,6 +2245,43 @@ FB_TEST(varint_compression, savings_percentage) {
 }
 
 // ============================================================================
+// Test Suite: units_realworld (Real-world Usage Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(units_realworld) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(units_realworld) {
+    // Teardown code here
+}
+
+FB_TEST(units_realworld, page_size) {
+    size_t page = 4_KB;
+    FB_ASSERT_EQ(page, 4096);
+}
+
+FB_TEST(units_realworld, typical_file_size) {
+    size_t file_size = 1_MB + 512_KB;
+    FB_ASSERT_EQ(file_size, 1572864);
+}
+
+FB_TEST(units_realworld, disk_size) {
+    size_t disk_size = 100_GB;
+    FB_ASSERT_EQ(disk_size, 100ULL * 1024 * 1024 * 1024);
+}
+
+FB_TEST(units_realworld, memory_allocation) {
+    size_t buffer_size = 64_KB;
+    FB_ASSERT_TRUE(buffer_size >= 65536);
+}
+
+FB_TEST(units_realworld, cache_line_size) {
+    size_t cache_line = 64;  // 64 bytes
+    FB_ASSERT_EQ(cache_line, 64);
+}
+
+// ============================================================================
 // Test Suite: final_validation (Final Validation Tests)
 // ============================================================================
 
