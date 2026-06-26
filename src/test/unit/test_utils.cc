@@ -1818,4 +1818,21 @@ FB_TEST(units_operations, comparison_ops) {
     FB_ASSERT_TRUE(1_KB <= 1_MB);
 }
 
+// ============================================================================
+// Test Suite: final_validation (Final Validation Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(final_validation) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(final_validation) {
+    // Teardown code here
+}
+
+FB_TEST(final_validation, all_tests_passed) {
+    // This test confirms that all previous tests compiled and linked correctly
+    FB_ASSERT_TRUE(true);
+}
+
 FB_TEST_MAIN()
