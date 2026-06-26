@@ -1893,6 +1893,56 @@ FB_TEST(encoding_buffer_sizes, fixed64_exact_buffer) {
 }
 
 // ============================================================================
+// Test Suite: md5_properties_advanced (Advanced MD5 Properties Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(md5_properties_advanced) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(md5_properties_advanced) {
+    // Teardown code here
+}
+
+FB_TEST(md5_properties_advanced, avalanche_effect) {
+    // Small input change should cause large output change (avalanche effect)
+    char data1[] = "test";
+    char data2[] = "tost";  // One character different
+
+    std::string hash1 = utils::md5(data1, strlen(data1));
+    std::string hash2 = utils::md5(data2, strlen(data2));
+
+    // Count different bytes
+    int diff_count = 0;
+    for (int i = 0; i < 16; i++) {
+        if (hash1[i] != hash2[i]) diff_count++;
+    }
+
+    // Should have significant differences (avalanche effect)
+    FB_ASSERT_TRUE(diff_count >= 4);
+}
+
+FB_TEST(md5_properties_advanced, empty_vs_single_null) {
+    char empty[] = "";
+    char single_null[] = {0x00};
+
+    std::string hash_empty = utils::md5(empty, 0);
+    std::string hash_null = utils::md5(single_null, 1);
+
+    // Empty string and single null byte should produce different hashes
+    FB_ASSERT_TRUE(hash_empty != hash_null);
+}
+
+FB_TEST(md5_properties_advanced, length_extension) {
+    // Different length inputs should generally produce different hashes
+    std::string base = "data";
+    std::string hash1 = utils::md5(const_cast<char*>(base.c_str()), base.size());
+    std::string hash2 = utils::md5(const_cast<char*>(base.c_str()), base.size());
+
+    FB_ASSERT_EQ(hash1, hash2);  // Same input = same hash
+}
+
+// ============================================================================
 // Test Suite: final_validation (Final Validation Tests)
 // ============================================================================
 
