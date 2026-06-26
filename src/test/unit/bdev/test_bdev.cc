@@ -867,6 +867,138 @@ FB_TEST(bdev_queue_depth_management, available_count_correct) {
 }
 
 // ============================================================================
+// Test Suite: bdev_image_resize_state — Image resize state machine
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_image_resize_state) {}
+FB_SUITE_TEARDOWN(bdev_image_resize_state) {}
+
+enum class resize_state {
+    idle,
+    requested,
+    in_progress,
+    completed,
+    failed
+};
+
+struct resize_context {
+    resize_state state{resize_state::idle};
+    uint64_t old_size{0};
+    uint64_t new_size{0};
+    int retry_count{0};
+    static constexpr int max_retries = 3;
+
+    bool can_start() const { return state == resize_state::idle; }
+    bool can_complete() const { return state == resize_state::in_progress; }
+
+    void start_resize(uint64_t old_sz, uint64_t new_sz) {
+        if (!can_start()) return;
+        old_size = old_sz;
+        new_size = new_sz;
+        state = resize_state::requested;
+        retry_count = 0;
+    }
+
+    void begin() {
+        if (state == resize_state::requested) {
+            state = resize_state::in_progress;
+        }
+    }
+
+    void complete() {
+        if (can_complete()) {
+            state = resize_state::completed;
+        }
+    }
+
+    void fail() {
+        if (state == resize_state::in_progress) {
+            retry_count++;
+            if (retry_count >= max_retries) {
+                state = resize_state::failed;
+            } else {
+                state = resize_state::requested;  // retry
+            }
+        }
+    }
+
+    void reset() {
+        state = resize_state::idle;
+        retry_count = 0;
+    }
+};
+
+FB_TEST(bdev_image_resize_state, starts_from_idle) {
+    resize_context ctx;
+    FB_ASSERT_TRUE(ctx.can_start());
+    FB_ASSERT_TRUE(ctx.state == resize_state::idle);
+}
+
+FB_TEST(bdev_image_resize_state, state_transitions_success_path) {
+    resize_context ctx;
+    ctx.start_resize(100, 200);
+    FB_ASSERT_TRUE(ctx.state == resize_state::requested);
+
+    ctx.begin();
+    FB_ASSERT_TRUE(ctx.state == resize_state::in_progress);
+
+    ctx.complete();
+    FB_ASSERT_TRUE(ctx.state == resize_state::completed);
+}
+
+FB_TEST(bdev_image_resize_state, fail_retries_up_to_max) {
+    resize_context ctx;
+    ctx.start_resize(100, 200);
+    ctx.begin();
+
+    ctx.fail();
+    FB_ASSERT_TRUE(ctx.state == resize_state::requested);
+    FB_ASSERT_EQ(ctx.retry_count, 1);
+
+    ctx.begin();
+    ctx.fail();
+    FB_ASSERT_EQ(ctx.retry_count, 2);
+
+    ctx.begin();
+    ctx.fail();
+    FB_ASSERT_EQ(ctx.retry_count, 3);
+    FB_ASSERT_TRUE(ctx.state == resize_state::failed);
+}
+
+FB_TEST(bdev_image_resize_state, cannot_start_from_non_idle) {
+    resize_context ctx;
+    ctx.start_resize(100, 200);
+    ctx.begin();
+
+    // Try to start another resize while one is in progress
+    ctx.start_resize(200, 300);
+    FB_ASSERT_EQ(ctx.old_size, 100u);  // Should still have old values
+    FB_ASSERT_EQ(ctx.new_size, 200u);
+}
+
+FB_TEST(bdev_image_resize_state, reset_returns_to_idle) {
+    resize_context ctx;
+    ctx.start_resize(100, 200);
+    ctx.begin();
+    ctx.fail();
+    ctx.fail();
+    ctx.fail();
+
+    ctx.reset();
+    FB_ASSERT_TRUE(ctx.state == resize_state::idle);
+    FB_ASSERT_EQ(ctx.retry_count, 0);
+    FB_ASSERT_TRUE(ctx.can_start());
+}
+
+FB_TEST(bdev_image_resize_state, complete_only_from_in_progress) {
+    resize_context ctx;
+    ctx.start_resize(100, 200);
+    // Not calling begin(), still in requested state
+    ctx.complete();
+    FB_ASSERT_TRUE(ctx.state == resize_state::requested);  // unchanged
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
