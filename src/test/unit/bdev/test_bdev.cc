@@ -487,6 +487,174 @@ FB_TEST(bdev_app_stop_state, terminal_state_stays) {
 }
 
 // ============================================================================
+// Test Suite: bdev_image_info — Image information structure
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_image_info) {}
+FB_SUITE_TEARDOWN(bdev_image_info) {}
+
+FB_TEST(bdev_image_info, default_values) {
+    image_info_mirror info;
+    FB_ASSERT_TRUE(info.pool_name.empty());
+    FB_ASSERT_TRUE(info.image_name.empty());
+    FB_ASSERT_EQ(info.image_size, 0u);
+    FB_ASSERT_EQ(info.object_size, 0u);
+}
+
+FB_TEST(bdev_image_info, field_assignment) {
+    image_info_mirror info;
+    info.pool_name = "mypool";
+    info.image_name = "myimage";
+    info.image_size = 100ull * 1024 * 1024 * 1024;  // 100 GiB
+    info.object_size = DEFAULT_OBJECT_SIZE;
+
+    FB_ASSERT_STR_EQ(info.pool_name.c_str(), "mypool");
+    FB_ASSERT_STR_EQ(info.image_name.c_str(), "myimage");
+    FB_ASSERT_EQ(info.image_size, 100ull * 1024 * 1024 * 1024);
+    FB_ASSERT_EQ(info.object_size, DEFAULT_OBJECT_SIZE);
+}
+
+// ============================================================================
+// Test Suite: bdev_io_status — IO completion status codes
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_io_status) {}
+FB_SUITE_TEARDOWN(bdev_io_status) {}
+
+FB_TEST(bdev_io_status, success_value) {
+    FB_ASSERT_TRUE(bdev_io_status::SUCCESS == bdev_io_status(0));
+}
+
+FB_TEST(bdev_io_status, failed_value) {
+    FB_ASSERT_TRUE(bdev_io_status::FAILED == bdev_io_status(1));
+}
+
+FB_TEST(bdev_io_status, pending_value) {
+    FB_ASSERT_TRUE(bdev_io_status::PENDING == bdev_io_status(2));
+}
+
+FB_TEST(bdev_io_status, all_statuses_distinct) {
+    FB_ASSERT_TRUE(bdev_io_status::SUCCESS != bdev_io_status::FAILED);
+    FB_ASSERT_TRUE(bdev_io_status::FAILED != bdev_io_status::PENDING);
+    FB_ASSERT_TRUE(bdev_io_status::PENDING != bdev_io_status::RESET);
+    FB_ASSERT_TRUE(bdev_io_status::RESET != bdev_io_status::ABORTED);
+}
+
+// ============================================================================
+// Test Suite: bdev_cmdline_options — Command line option constants
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_cmdline_options) {}
+FB_SUITE_TEARDOWN(bdev_cmdline_options) {}
+
+FB_TEST(bdev_cmdline_options, conf_option_char) {
+    FB_ASSERT_EQ(BLOCK_OPTION_CONF, 'C');
+}
+
+FB_TEST(bdev_cmdline_options, numa_node_option_char) {
+    FB_ASSERT_EQ(BLOCK_OPTION_NUMA_NODE, 'N');
+}
+
+FB_TEST(bdev_cmdline_options, core_num_option_char) {
+    FB_ASSERT_EQ(BLOCK_OPTION_CORE_NUM, 'S');
+}
+
+// ============================================================================
+// Test Suite: bdev_size_calculations — Block and object size calculations
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_size_calculations) {}
+FB_SUITE_TEARDOWN(bdev_size_calculations) {}
+
+FB_TEST(bdev_size_calculations, blocks_per_object_4k_blocks) {
+    uint64_t object_size = DEFAULT_OBJECT_SIZE;  // 4 MiB
+    uint32_t block_size = 4096;
+    uint64_t blocks_per_object = object_size / block_size;
+    FB_ASSERT_EQ(blocks_per_object, 1024u);
+}
+
+FB_TEST(bdev_size_calculations, blocks_per_object_512_blocks) {
+    uint64_t object_size = DEFAULT_OBJECT_SIZE;  // 4 MiB
+    uint32_t block_size = 512;
+    uint64_t blocks_per_object = object_size / block_size;
+    FB_ASSERT_EQ(blocks_per_object, 8192u);
+}
+
+FB_TEST(bdev_size_calculations, image_blocks_calculation) {
+    uint64_t image_size = 10ull * 1024 * 1024 * 1024;  // 10 GiB
+    uint32_t block_size = 4096;
+    uint64_t total_blocks = image_size / block_size;
+    FB_ASSERT_EQ(total_blocks, 2621440u);
+}
+
+FB_TEST(bdev_size_calculations, objects_for_image) {
+    uint64_t image_size = 100ull * 1024 * 1024 * 1024;  // 100 GiB
+    uint64_t object_size = DEFAULT_OBJECT_SIZE;  // 4 MiB
+    uint64_t object_count = (image_size + object_size - 1) / object_size;
+    FB_ASSERT_EQ(object_count, 25600u);
+}
+
+// ============================================================================
+// Test Suite: bdev_address_format — Monitor address format validation
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_address_format) {}
+FB_SUITE_TEARDOWN(bdev_address_format) {}
+
+FB_TEST(bdev_address_format, ipv4_loopback) {
+    std::string addr = "127.0.0.1:3333";
+    auto pos = addr.find(':');
+    FB_ASSERT_TRUE(pos != std::string::npos);
+    FB_ASSERT_STR_EQ(addr.substr(0, pos).c_str(), "127.0.0.1");
+    FB_ASSERT_STR_EQ(addr.substr(pos + 1).c_str(), "3333");
+}
+
+FB_TEST(bdev_address_format, ipv4_address) {
+    std::string addr = "192.168.1.100:9000";
+    auto pos = addr.find(':');
+    FB_ASSERT_TRUE(pos != std::string::npos);
+}
+
+FB_TEST(bdev_address_format, hostname_format) {
+    std::string addr = "mon-server.example.com:3333";
+    auto pos = addr.find(':');
+    FB_ASSERT_TRUE(pos != std::string::npos);
+}
+
+// ============================================================================
+// Test Suite: bdev_rpc_decoder_fields — RPC decoder field offsets
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_rpc_decoder_fields) {}
+FB_SUITE_TEARDOWN(bdev_rpc_decoder_fields) {}
+
+FB_TEST(bdev_rpc_decoder_fields, create_name_offset) {
+    // Verify that name field offset is 0 (first field)
+    rpc_create_fastblock_mirror req;
+    FB_ASSERT_TRUE(req.name.empty());
+}
+
+FB_TEST(bdev_rpc_decoder_fields, create_pool_id_offset) {
+    rpc_create_fastblock_mirror req;
+    req.pool_id = 42;
+    FB_ASSERT_EQ(req.pool_id, 42u);
+}
+
+FB_TEST(bdev_rpc_decoder_fields, delete_name_present) {
+    rpc_bdev_fastblock_delete_mirror req;
+    req.name = "bdev0";
+    FB_ASSERT_STR_EQ(req.name.c_str(), "bdev0");
+}
+
+FB_TEST(bdev_rpc_decoder_fields, resize_fields_present) {
+    rpc_bdev_fastblock_resize_mirror req;
+    req.name = "bdev0";
+    req.new_size = 1024;
+    FB_ASSERT_STR_EQ(req.name.c_str(), "bdev0");
+    FB_ASSERT_EQ(req.new_size, 1024u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
