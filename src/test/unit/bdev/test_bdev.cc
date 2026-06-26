@@ -7777,6 +7777,124 @@ FB_TEST(bdev_image_lock, force_release_all) {
 }
 
 // ============================================================================
+// Test Suite: bdev_stripe_align — Stripe alignment for RAID
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_stripe_align) {}
+FB_SUITE_TEARDOWN(bdev_stripe_align) {}
+
+struct stripe_config {
+    uint64_t stripe_size{65536};   // 64 KiB default
+    uint32_t stripe_count{4};      // number of data stripes
+    uint32_t parity_count{1};      // number of parity stripes
+
+    uint64_t align_down(uint64_t offset) const {
+        return offset & ~(stripe_size - 1);
+    }
+
+    uint64_t align_up(uint64_t offset) const {
+        return (offset + stripe_size - 1) & ~(stripe_size - 1);
+    }
+
+    bool is_aligned(uint64_t offset) const {
+        return (offset & (stripe_size - 1)) == 0;
+    }
+
+    uint64_t stripe_index(uint64_t offset) const {
+        return offset / stripe_size;
+    }
+
+    uint64_t parity_group(uint64_t stripe_idx) const {
+        return stripe_idx / stripe_count;
+    }
+
+    uint64_t offset_in_stripe(uint64_t offset) const {
+        return offset % stripe_size;
+    }
+
+    uint64_t remaining_in_stripe(uint64_t offset) const {
+        return stripe_size - offset_in_stripe(offset);
+    }
+
+    uint32_t total_disks() const { return stripe_count + parity_count; }
+
+    double write_amplification() const {
+        return static_cast<double>(total_disks()) / stripe_count;
+    }
+};
+
+FB_TEST(bdev_stripe_align, default_stripe_size) {
+    stripe_config cfg;
+    FB_ASSERT_EQ(cfg.stripe_size, 65536u);
+}
+
+FB_TEST(bdev_stripe_align, align_down) {
+    stripe_config cfg;
+    FB_ASSERT_EQ(cfg.align_down(70000), 65536u);
+}
+
+FB_TEST(bdev_stripe_align, align_up) {
+    stripe_config cfg;
+    FB_ASSERT_EQ(cfg.align_up(70000), 131072u);
+}
+
+FB_TEST(bdev_stripe_align, align_up_already_aligned) {
+    stripe_config cfg;
+    FB_ASSERT_EQ(cfg.align_up(65536), 65536u);
+}
+
+FB_TEST(bdev_stripe_align, is_aligned_true) {
+    stripe_config cfg;
+    FB_ASSERT_TRUE(cfg.is_aligned(0));
+    FB_ASSERT_TRUE(cfg.is_aligned(65536));
+}
+
+FB_TEST(bdev_stripe_align, is_aligned_false) {
+    stripe_config cfg;
+    FB_ASSERT_FALSE(cfg.is_aligned(1));
+    FB_ASSERT_FALSE(cfg.is_aligned(100));
+}
+
+FB_TEST(bdev_stripe_align, stripe_index) {
+    stripe_config cfg;
+    FB_ASSERT_EQ(cfg.stripe_index(0), 0u);
+    FB_ASSERT_EQ(cfg.stripe_index(65536), 1u);
+    FB_ASSERT_EQ(cfg.stripe_index(131072), 2u);
+}
+
+FB_TEST(bdev_stripe_align, parity_group) {
+    stripe_config cfg;
+    cfg.stripe_count = 4;
+    FB_ASSERT_EQ(cfg.parity_group(0), 0u);
+    FB_ASSERT_EQ(cfg.parity_group(3), 0u);
+    FB_ASSERT_EQ(cfg.parity_group(4), 1u);
+}
+
+FB_TEST(bdev_stripe_align, offset_in_stripe) {
+    stripe_config cfg;
+    FB_ASSERT_EQ(cfg.offset_in_stripe(0), 0u);
+    FB_ASSERT_EQ(cfg.offset_in_stripe(100), 100u);
+    FB_ASSERT_EQ(cfg.offset_in_stripe(65536), 0u);
+}
+
+FB_TEST(bdev_stripe_align, remaining_in_stripe) {
+    stripe_config cfg;
+    FB_ASSERT_EQ(cfg.remaining_in_stripe(0), 65536u);
+    FB_ASSERT_EQ(cfg.remaining_in_stripe(100), 65436u);
+}
+
+FB_TEST(bdev_stripe_align, total_disks) {
+    stripe_config cfg;
+    FB_ASSERT_EQ(cfg.total_disks(), 5u);  // 4 data + 1 parity
+}
+
+FB_TEST(bdev_stripe_align, write_amplification) {
+    stripe_config cfg;
+    double amp = cfg.write_amplification();
+    FB_ASSERT_TRUE(amp > 1.0 && amp < 2.0);  // 5/4 = 1.25
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
