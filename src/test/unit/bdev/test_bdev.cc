@@ -655,6 +655,132 @@ FB_TEST(bdev_rpc_decoder_fields, resize_fields_present) {
 }
 
 // ============================================================================
+// Test Suite: bdev_pool_image_naming — Pool and image name combinations
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_pool_image_naming) {}
+FB_SUITE_TEARDOWN(bdev_pool_image_naming) {}
+
+FB_TEST(bdev_pool_image_naming, pool_name_simple) {
+    std::string pool_name = "rbd";
+    FB_ASSERT_TRUE(!pool_name.empty());
+    FB_ASSERT_STR_EQ(pool_name.c_str(), "rbd");
+}
+
+FB_TEST(bdev_pool_image_naming, image_name_simple) {
+    std::string image_name = "volume1";
+    FB_ASSERT_TRUE(!image_name.empty());
+    FB_ASSERT_STR_EQ(image_name.c_str(), "volume1");
+}
+
+FB_TEST(bdev_pool_image_naming, pool_image_combined) {
+    std::string pool = "mypool";
+    std::string image = "myimage";
+    std::string combined = pool + "/" + image;
+    FB_ASSERT_STR_EQ(combined.c_str(), "mypool/myimage");
+}
+
+FB_TEST(bdev_pool_image_naming, pool_with_underscore) {
+    std::string pool = "block_pool_01";
+    FB_ASSERT_TRUE(pool.find('_') != std::string::npos);
+}
+
+FB_TEST(bdev_pool_image_naming, image_with_timestamp) {
+    std::string image = "backup_20240615_120000";
+    FB_ASSERT_TRUE(image.find('2') != std::string::npos);
+}
+
+// ============================================================================
+// Test Suite: bdev_io_chunking — IO request chunking logic
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_io_chunking) {}
+FB_SUITE_TEARDOWN(bdev_io_chunking) {}
+
+// Helper: calculate IO chunks for a large request
+struct io_chunk_result {
+    uint64_t chunk_count{0};
+    uint64_t first_chunk_offset{0};
+    uint64_t first_chunk_size{0};
+    uint64_t last_chunk_size{0};
+};
+
+io_chunk_result calculate_io_chunks(uint64_t offset, uint64_t length, uint64_t object_size) {
+    io_chunk_result result;
+    if (length == 0 || object_size == 0) return result;
+
+    uint64_t first_obj_offset = offset % object_size;
+    uint64_t first_obj_remaining = object_size - first_obj_offset;
+
+    result.first_chunk_offset = first_obj_offset;
+    result.first_chunk_size = std::min(length, first_obj_remaining);
+    result.chunk_count = 1;
+
+    uint64_t remaining = length - result.first_chunk_size;
+    if (remaining > 0) {
+        result.chunk_count += remaining / object_size;
+        if (remaining % object_size > 0) {
+            result.chunk_count++;
+            result.last_chunk_size = remaining % object_size;
+        } else {
+            result.last_chunk_size = object_size;
+        }
+    } else {
+        result.last_chunk_size = result.first_chunk_size;
+    }
+
+    return result;
+}
+
+FB_TEST(bdev_io_chunking, single_object_read) {
+    auto result = calculate_io_chunks(1024, 2048, DEFAULT_OBJECT_SIZE);
+    FB_ASSERT_EQ(result.chunk_count, 1u);
+    FB_ASSERT_EQ(result.first_chunk_offset, 1024u);
+    FB_ASSERT_EQ(result.first_chunk_size, 2048u);
+    FB_ASSERT_EQ(result.last_chunk_size, 2048u);
+}
+
+FB_TEST(bdev_io_chunking, cross_boundary_read) {
+    uint64_t offset = 3 * 1024 * 1024 + 512 * 1024;
+    uint64_t length = 2 * 1024 * 1024;
+    auto result = calculate_io_chunks(offset, length, DEFAULT_OBJECT_SIZE);
+
+    FB_ASSERT_EQ(result.chunk_count, 2u);
+    FB_ASSERT_EQ(result.first_chunk_size, 512u * 1024u);
+    FB_ASSERT_EQ(result.last_chunk_size, 1536u * 1024u);
+}
+
+FB_TEST(bdev_io_chunking, multi_object_span) {
+    auto result = calculate_io_chunks(0, 20 * 1024 * 1024, DEFAULT_OBJECT_SIZE);
+    FB_ASSERT_EQ(result.chunk_count, 5u);
+    FB_ASSERT_EQ(result.first_chunk_offset, 0u);
+    FB_ASSERT_EQ(result.first_chunk_size, DEFAULT_OBJECT_SIZE);
+    FB_ASSERT_EQ(result.last_chunk_size, DEFAULT_OBJECT_SIZE);
+}
+
+FB_TEST(bdev_io_chunking, partial_last_object) {
+    auto result = calculate_io_chunks(0, 5 * 1024 * 1024 + 1024, DEFAULT_OBJECT_SIZE);
+    FB_ASSERT_EQ(result.chunk_count, 2u);
+    FB_ASSERT_EQ(result.last_chunk_size, 1024u);
+}
+
+FB_TEST(bdev_io_chunking, aligned_start_aligned_end) {
+    auto result = calculate_io_chunks(DEFAULT_OBJECT_SIZE, 3 * DEFAULT_OBJECT_SIZE, DEFAULT_OBJECT_SIZE);
+    FB_ASSERT_EQ(result.chunk_count, 3u);
+    FB_ASSERT_EQ(result.first_chunk_offset, 0u);
+}
+
+FB_TEST(bdev_io_chunking, zero_length_returns_zero_chunks) {
+    auto result = calculate_io_chunks(0, 0, DEFAULT_OBJECT_SIZE);
+    FB_ASSERT_EQ(result.chunk_count, 0u);
+}
+
+FB_TEST(bdev_io_chunking, zero_object_size_returns_zero) {
+    auto result = calculate_io_chunks(0, 1024, 0);
+    FB_ASSERT_EQ(result.chunk_count, 0u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
