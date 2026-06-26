@@ -21,6 +21,8 @@ if(BUILD_FASTBLOCK_TESTS)
 	  PUBLIC
 	    test_framework
 	    base
+	    osd_msg
+	    raft_msg
 	)
 
 	add_executable(test_raft_rpc

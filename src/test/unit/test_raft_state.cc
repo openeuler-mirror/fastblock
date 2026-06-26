@@ -17,46 +17,15 @@
 #include "test/framework/test_framework.h"
 #include "test/framework/test_harness.h"
 
-#include "fastblock/raft/raft.h"
-#include "fastblock/raft/raft_log.h"
-#include "fastblock/raft/raft_node.h"
-#include "fastblock/raft/configuration_manager.h"
+#include "raft/raft.h"
+#include "raft/raft_log.h"
+#include "raft/raft_node.h"
+#include "raft/configuration_manager.h"
 
 #include <limits>
 #include <memory>
 
-namespace {
-
-typedef enum {
-    RAFT_STATE_NONE,
-    RAFT_STATE_FOLLOWER,
-    RAFT_STATE_CANDIDATE,
-    RAFT_STATE_LEADER
-} raft_identity;
-
-enum class raft_op_state {
-    RAFT_INIT,
-    RAFT_ACTIVE,
-    RAFT_DOWN,
-    RAFT_DELETE
-};
-
-} // anonymous namespace
-
-// ============================================================================
-// Additional Raft Types
-// ============================================================================
-
-namespace {
-
-typedef long int raft_term_t;
-typedef long int raft_index_t;
-typedef long int raft_time_t;
-typedef long int raft_entry_id_t;
-typedef long int raft_node_id_t;
-typedef uint64_t raft_id_type;
-
-} // anonymous namespace
+// All types (raft_identity, raft_op_state, raft_term_t, etc.) are defined in raft/raft.h and raft/raft_types.h
 
 FB_SUITE_SETUP(raft_state) {
     // Setup code here
@@ -352,14 +321,7 @@ FB_TEST(raft_state, match_idx_logic) {
 // Test Suite: Election and Log Types
 // ============================================================================
 
-namespace {
-typedef enum {
-    RAFT_LOGTYPE_WRITE,
-    RAFT_LOGTYPE_DELETE,
-    RAFT_LOGTYPE_ADD_NONVOTING_NODE,
-    RAFT_LOGTYPE_CONFIGURATION,
-} raft_logtype_e;
-}
+// raft_logtype_e is defined in raft/raft.h
 
 FB_TEST(raft_state, election_timeout_logic) {
     int election_timeout = 100;
@@ -427,41 +389,23 @@ FB_TEST(raft_state, logtype_config_check) {
 // Test Suite: Membership and Voting
 // ============================================================================
 
-namespace {
-enum raft_membership_e {
-    RAFT_MEMBERSHIP_ADD,
-    RAFT_MEMBERSHIP_REMOVE,
-    RAFT_MEMBERSHIP_NO_CHANGE
-};
-
-constexpr int RAFT_NODE_VOTED_FOR_ME = (1 << 0);
-}
+// raft_membership_e and RAFT_NODE_VOTED_FOR_ME are defined in raft/raft.h
 
 FB_TEST(raft_state, membership_enum) {
     FB_ASSERT_EQ(RAFT_MEMBERSHIP_ADD, 0);
     FB_ASSERT_EQ(RAFT_MEMBERSHIP_REMOVE, 1);
-    FB_ASSERT_EQ(RAFT_MEMBERSHIP_NO_CHANGE, 2);
 }
 
 FB_TEST(raft_state, membership_add) {
     raft_membership_e m = RAFT_MEMBERSHIP_ADD;
     FB_ASSERT_TRUE(m == RAFT_MEMBERSHIP_ADD);
     FB_ASSERT_TRUE(m != RAFT_MEMBERSHIP_REMOVE);
-    FB_ASSERT_TRUE(m != RAFT_MEMBERSHIP_NO_CHANGE);
 }
 
 FB_TEST(raft_state, membership_remove) {
     raft_membership_e m = RAFT_MEMBERSHIP_REMOVE;
     FB_ASSERT_TRUE(m == RAFT_MEMBERSHIP_REMOVE);
     FB_ASSERT_TRUE(m != RAFT_MEMBERSHIP_ADD);
-    FB_ASSERT_TRUE(m != RAFT_MEMBERSHIP_NO_CHANGE);
-}
-
-FB_TEST(raft_state, membership_no_change) {
-    raft_membership_e m = RAFT_MEMBERSHIP_NO_CHANGE;
-    FB_ASSERT_TRUE(m == RAFT_MEMBERSHIP_NO_CHANGE);
-    FB_ASSERT_TRUE(m != RAFT_MEMBERSHIP_ADD);
-    FB_ASSERT_TRUE(m != RAFT_MEMBERSHIP_REMOVE);
 }
 
 FB_TEST(raft_state, votes_majority_single) {
@@ -1422,14 +1366,10 @@ FB_TEST(raft_state, config_change_tracking) {
     raft_membership_e membership = RAFT_MEMBERSHIP_ADD;
     FB_ASSERT_TRUE(membership == RAFT_MEMBERSHIP_ADD);
     FB_ASSERT_TRUE(membership != RAFT_MEMBERSHIP_REMOVE);
-    FB_ASSERT_TRUE(membership != RAFT_MEMBERSHIP_NO_CHANGE);
 
     membership = RAFT_MEMBERSHIP_REMOVE;
     FB_ASSERT_TRUE(membership == RAFT_MEMBERSHIP_REMOVE);
     FB_ASSERT_TRUE(membership != RAFT_MEMBERSHIP_ADD);
-
-    membership = RAFT_MEMBERSHIP_NO_CHANGE;
-    FB_ASSERT_TRUE(membership == RAFT_MEMBERSHIP_NO_CHANGE);
 }
 
 FB_TEST(raft_state, config_change_log_entry) {
@@ -1794,21 +1734,22 @@ FB_TEST(raft_state, commit_index_ordering) {
 
 FB_TEST(raft_state, state_flag_operations) {
     std::atomic<int> flags{0};
-    constexpr int RAFT_NODE_VOTED_FOR_ME = (1 << 0);
-    constexpr int RAFT_NODE_MATCHING_LOG = (1 << 1);
+    // RAFT_NODE_VOTED_FOR_ME is defined in raft/raft_node.h
+    constexpr int FLAG_VOTED = (1 << 0);
+    constexpr int FLAG_MATCHING = (1 << 1);
 
     // 设置标志位
-    flags.fetch_or(RAFT_NODE_VOTED_FOR_ME);
-    FB_ASSERT_TRUE((flags.load() & RAFT_NODE_VOTED_FOR_ME) != 0);
+    flags.fetch_or(FLAG_VOTED);
+    FB_ASSERT_TRUE((flags.load() & FLAG_VOTED) != 0);
 
     // 设置另一个标志
-    flags.fetch_or(RAFT_NODE_MATCHING_LOG);
-    FB_ASSERT_TRUE((flags.load() & RAFT_NODE_MATCHING_LOG) != 0);
+    flags.fetch_or(FLAG_MATCHING);
+    FB_ASSERT_TRUE((flags.load() & FLAG_MATCHING) != 0);
 
     // 清除标志
-    flags.fetch_and(~RAFT_NODE_VOTED_FOR_ME);
-    FB_ASSERT_FALSE((flags.load() & RAFT_NODE_VOTED_FOR_ME) != 0);
-    FB_ASSERT_TRUE((flags.load() & RAFT_NODE_MATCHING_LOG) != 0);
+    flags.fetch_and(~FLAG_VOTED);
+    FB_ASSERT_FALSE((flags.load() & FLAG_VOTED) != 0);
+    FB_ASSERT_TRUE((flags.load() & FLAG_MATCHING) != 0);
 }
 
 FB_TEST(raft_state, leader_id_atomic_access) {
@@ -2341,15 +2282,16 @@ FB_TEST(raft_state, node_match_idx_update) {
 
 FB_TEST(raft_state, node_vote_flag) {
     int flags = 0;
-    constexpr int RAFT_NODE_VOTED_FOR_ME = (1 << 0);
+    // RAFT_NODE_VOTED_FOR_ME is defined in raft/raft_node.h
+    constexpr int VOTE_FLAG = (1 << 0);
 
     // 设置投票标志
-    flags |= RAFT_NODE_VOTED_FOR_ME;
-    FB_ASSERT_TRUE((flags & RAFT_NODE_VOTED_FOR_ME) != 0);
+    flags |= VOTE_FLAG;
+    FB_ASSERT_TRUE((flags & VOTE_FLAG) != 0);
 
     // 清除投票标志
-    flags &= ~RAFT_NODE_VOTED_FOR_ME;
-    FB_ASSERT_FALSE((flags & RAFT_NODE_VOTED_FOR_ME) != 0);
+    flags &= ~VOTE_FLAG;
+    FB_ASSERT_FALSE((flags & VOTE_FLAG) != 0);
 }
 
 FB_TEST(raft_state, node_lease_management) {
@@ -2458,7 +2400,7 @@ FB_TEST(raft_state, node_id_operations) {
     FB_ASSERT_TRUE(id1 < id2);
 
     // 查找节点
-    std::map<raft_node_id_t, int> nodes;
+    std::map<long, int> nodes;
     nodes[id1] = 100;
     nodes[id2] = 200;
 
@@ -2674,7 +2616,7 @@ FB_TEST(raft_state, entry_cache_range_validation) {
 // ============================================================================
 
 FB_TEST(raft_state, nodes_contains) {
-    std::map<raft_node_id_t, int> nodes;
+    std::map<long, int> nodes;
     nodes[1] = 100;
     nodes[2] = 200;
     nodes[3] = 300;
@@ -2686,7 +2628,7 @@ FB_TEST(raft_state, nodes_contains) {
 }
 
 FB_TEST(raft_state, nodes_find) {
-    std::map<raft_node_id_t, int> nodes;
+    std::map<long, int> nodes;
     nodes[1] = 100;
     nodes[2] = 200;
 
@@ -2701,7 +2643,7 @@ FB_TEST(raft_state, nodes_find) {
 }
 
 FB_TEST(raft_state, nodes_size) {
-    std::map<raft_node_id_t, int> nodes;
+    std::map<long, int> nodes;
 
     FB_ASSERT_EQ(nodes.size(), 0UL);
 
@@ -2715,7 +2657,7 @@ FB_TEST(raft_state, nodes_size) {
 }
 
 FB_TEST(raft_state, nodes_get_node) {
-    std::map<raft_node_id_t, int> nodes;
+    std::map<long, int> nodes;
     nodes[1] = 100;
     nodes[5] = 500;
 
@@ -2731,13 +2673,13 @@ FB_TEST(raft_state, nodes_get_node) {
 }
 
 FB_TEST(raft_state, nodes_get_ids) {
-    std::map<raft_node_id_t, int> nodes;
+    std::map<long, int> nodes;
     nodes[1] = 100;
     nodes[2] = 200;
     nodes[3] = 300;
 
     // 获取所有节点 ID
-    std::vector<raft_node_id_t> ids;
+    std::vector<long> ids;
     for (const auto& pair : nodes) {
         ids.push_back(pair.first);
     }
@@ -2750,7 +2692,7 @@ FB_TEST(raft_state, nodes_get_ids) {
 }
 
 FB_TEST(raft_state, nodes_for_all) {
-    std::map<raft_node_id_t, int> nodes;
+    std::map<long, int> nodes;
     nodes[1] = 100;
     nodes[2] = 200;
     nodes[3] = 300;
@@ -2767,8 +2709,8 @@ FB_TEST(raft_state, nodes_for_all) {
 
 FB_TEST(raft_state, nodes_new_nodes_management) {
     // 模拟 _nodes 和 _new_nodes 的管理
-    std::map<raft_node_id_t, int> nodes;
-    std::map<raft_node_id_t, int> new_nodes;
+    std::map<long, int> nodes;
+    std::map<long, int> new_nodes;
 
     // 初始节点
     nodes[1] = 100;
@@ -2791,7 +2733,7 @@ FB_TEST(raft_state, nodes_new_nodes_management) {
 }
 
 FB_TEST(raft_state, nodes_for_new_nodes) {
-    std::map<raft_node_id_t, int> new_nodes;
+    std::map<long, int> new_nodes;
     new_nodes[4] = 400;
     new_nodes[5] = 500;
 
@@ -2805,7 +2747,7 @@ FB_TEST(raft_state, nodes_for_new_nodes) {
 }
 
 FB_TEST(raft_state, nodes_get_new_node) {
-    std::map<raft_node_id_t, int> new_nodes;
+    std::map<long, int> new_nodes;
     new_nodes[4] = 400;
 
     // 获取新节点
@@ -2819,7 +2761,7 @@ FB_TEST(raft_state, nodes_get_new_node) {
 }
 
 FB_TEST(raft_state, nodes_new_node_size) {
-    std::map<raft_node_id_t, int> new_nodes;
+    std::map<long, int> new_nodes;
 
     FB_ASSERT_EQ(new_nodes.size(), 0UL);
 
@@ -2829,7 +2771,7 @@ FB_TEST(raft_state, nodes_new_node_size) {
 }
 
 FB_TEST(raft_state, nodes_iterator_operations) {
-    std::map<raft_node_id_t, int> nodes;
+    std::map<long, int> nodes;
     nodes[1] = 100;
     nodes[2] = 200;
     nodes[3] = 300;
@@ -2851,7 +2793,7 @@ FB_TEST(raft_state, nodes_iterator_operations) {
 }
 
 FB_TEST(raft_state, nodes_const_iterator) {
-    std::map<raft_node_id_t, int> nodes;
+    std::map<long, int> nodes;
     nodes[1] = 100;
     nodes[2] = 200;
 
@@ -2888,7 +2830,7 @@ FB_TEST(raft_state, config_node_info) {
 
 FB_TEST(raft_state, config_initial_nodes) {
     // 初始配置
-    std::vector<raft_node_id_t> initial_members = {1, 2, 3};
+    std::vector<long> initial_members = {1, 2, 3};
 
     FB_ASSERT_EQ(initial_members.size(), 3UL);
 
@@ -2900,7 +2842,7 @@ FB_TEST(raft_state, config_initial_nodes) {
 }
 
 FB_TEST(raft_state, config_add_node) {
-    std::vector<raft_node_id_t> members = {1, 2, 3};
+    std::vector<long> members = {1, 2, 3};
 
     // 添加新节点
     raft_node_id_t new_node_id = 4;
@@ -2911,7 +2853,7 @@ FB_TEST(raft_state, config_add_node) {
 }
 
 FB_TEST(raft_state, config_remove_node) {
-    std::vector<raft_node_id_t> members = {1, 2, 3, 4, 5};
+    std::vector<long> members = {1, 2, 3, 4, 5};
 
     // 移除节点
     raft_node_id_t remove_id = 3;
@@ -2922,7 +2864,7 @@ FB_TEST(raft_state, config_remove_node) {
 }
 
 FB_TEST(raft_state, config_replace_node) {
-    std::map<raft_node_id_t, int> config;
+    std::map<long, int> config;
     config[1] = 100;
     config[2] = 200;
 
@@ -2962,8 +2904,8 @@ FB_TEST(raft_state, config_change_sequence) {
 }
 
 FB_TEST(raft_state, config_joint_consensus_phase) {
-    std::vector<raft_node_id_t> old_config = {1, 2, 3};
-    std::vector<raft_node_id_t> new_config = {4, 5, 6};
+    std::vector<long> old_config = {1, 2, 3};
+    std::vector<long> new_config = {4, 5, 6};
 
     // 联合共识阶段，两个配置都有效
     bool in_joint_consensus = true;
@@ -2991,8 +2933,8 @@ FB_TEST(raft_state, config_transition_complete) {
 }
 
 FB_TEST(raft_state, config_rollback) {
-    std::vector<raft_node_id_t> config = {1, 2, 3, 4};  // 新配置
-    std::vector<raft_node_id_t> backup = {1, 2, 3};      // 旧配置备份
+    std::vector<long> config = {1, 2, 3, 4};  // 新配置
+    std::vector<long> backup = {1, 2, 3};      // 旧配置备份
 
     // 变更失败，回滚到旧配置
     bool change_failed = true;
@@ -3028,7 +2970,7 @@ FB_TEST(raft_state, config_index_tracking) {
 }
 
 FB_TEST(raft_state, config_voting_members) {
-    std::map<raft_node_id_t, bool> voting_status;
+    std::map<long, bool> voting_status;
     voting_status[1] = true;   // 投票节点
     voting_status[2] = true;   // 投票节点
     voting_status[3] = false;  // 非投票节点
@@ -3046,7 +2988,7 @@ FB_TEST(raft_state, config_voting_members) {
 }
 
 FB_TEST(raft_state, config_promote_non_voting) {
-    std::map<raft_node_id_t, bool> voting_status;
+    std::map<long, bool> voting_status;
     voting_status[3] = false;  // 非投票节点
 
     // 提升为投票节点
@@ -3059,11 +3001,11 @@ FB_TEST(raft_state, config_promote_non_voting) {
 // ============================================================================
 
 FB_SUITE_SETUP(raft) {
-    FB_LOG_INFO("Setting up raft test suite");
+    // Setup code here
 }
 
 FB_SUITE_TEARDOWN(raft) {
-    FB_LOG_INFO("Tearing down raft test suite");
+    // Teardown code here
 }
 
 // Test: Basic raft node initialization
