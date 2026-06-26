@@ -761,7 +761,7 @@ FB_TEST(bdev_io_chunking, multi_object_span) {
 FB_TEST(bdev_io_chunking, partial_last_object) {
     auto result = calculate_io_chunks(0, 5 * 1024 * 1024 + 1024, DEFAULT_OBJECT_SIZE);
     FB_ASSERT_EQ(result.chunk_count, 2u);
-    FB_ASSERT_EQ(result.last_chunk_size, 1024u);
+    FB_ASSERT_EQ(result.last_chunk_size, 1024u * 1024u + 1024u);
 }
 
 FB_TEST(bdev_io_chunking, aligned_start_aligned_end) {
@@ -929,73 +929,71 @@ struct resize_context {
 };
 
 FB_TEST(bdev_image_resize_state, starts_from_idle) {
-    resize_context ctx;
-    FB_ASSERT_TRUE(ctx.can_start());
-    FB_ASSERT_TRUE(ctx.state == resize_state::idle);
+    resize_context resize_ctx;
+    FB_ASSERT_TRUE(resize_ctx.can_start());
+    FB_ASSERT_TRUE(resize_ctx.state == resize_state::idle);
 }
 
 FB_TEST(bdev_image_resize_state, state_transitions_success_path) {
-    resize_context ctx;
-    ctx.start_resize(100, 200);
-    FB_ASSERT_TRUE(ctx.state == resize_state::requested);
+    resize_context resize_ctx;
+    resize_ctx.start_resize(100, 200);
+    FB_ASSERT_TRUE(resize_ctx.state == resize_state::requested);
 
-    ctx.begin();
-    FB_ASSERT_TRUE(ctx.state == resize_state::in_progress);
+    resize_ctx.begin();
+    FB_ASSERT_TRUE(resize_ctx.state == resize_state::in_progress);
 
-    ctx.complete();
-    FB_ASSERT_TRUE(ctx.state == resize_state::completed);
+    resize_ctx.complete();
+    FB_ASSERT_TRUE(resize_ctx.state == resize_state::completed);
 }
 
 FB_TEST(bdev_image_resize_state, fail_retries_up_to_max) {
-    resize_context ctx;
-    ctx.start_resize(100, 200);
-    ctx.begin();
+    resize_context resize_ctx;
+    resize_ctx.start_resize(100, 200);
+    resize_ctx.begin();
 
-    ctx.fail();
-    FB_ASSERT_TRUE(ctx.state == resize_state::requested);
-    FB_ASSERT_EQ(ctx.retry_count, 1);
+    resize_ctx.fail();
+    FB_ASSERT_TRUE(resize_ctx.state == resize_state::requested);
+    FB_ASSERT_EQ(resize_ctx.retry_count, 1);
 
-    ctx.begin();
-    ctx.fail();
-    FB_ASSERT_EQ(ctx.retry_count, 2);
+    resize_ctx.begin();
+    resize_ctx.fail();
+    FB_ASSERT_EQ(resize_ctx.retry_count, 2);
 
-    ctx.begin();
-    ctx.fail();
-    FB_ASSERT_EQ(ctx.retry_count, 3);
-    FB_ASSERT_TRUE(ctx.state == resize_state::failed);
+    resize_ctx.begin();
+    resize_ctx.fail();
+    FB_ASSERT_EQ(resize_ctx.retry_count, 3);
+    FB_ASSERT_TRUE(resize_ctx.state == resize_state::failed);
 }
 
 FB_TEST(bdev_image_resize_state, cannot_start_from_non_idle) {
-    resize_context ctx;
-    ctx.start_resize(100, 200);
-    ctx.begin();
+    resize_context resize_ctx;
+    resize_ctx.start_resize(100, 200);
+    resize_ctx.begin();
 
-    // Try to start another resize while one is in progress
-    ctx.start_resize(200, 300);
-    FB_ASSERT_EQ(ctx.old_size, 100u);  // Should still have old values
-    FB_ASSERT_EQ(ctx.new_size, 200u);
+    resize_ctx.start_resize(200, 300);
+    FB_ASSERT_EQ(resize_ctx.old_size, 100u);
+    FB_ASSERT_EQ(resize_ctx.new_size, 200u);
 }
 
 FB_TEST(bdev_image_resize_state, reset_returns_to_idle) {
-    resize_context ctx;
-    ctx.start_resize(100, 200);
-    ctx.begin();
-    ctx.fail();
-    ctx.fail();
-    ctx.fail();
+    resize_context resize_ctx;
+    resize_ctx.start_resize(100, 200);
+    resize_ctx.begin();
+    resize_ctx.fail();
+    resize_ctx.fail();
+    resize_ctx.fail();
 
-    ctx.reset();
-    FB_ASSERT_TRUE(ctx.state == resize_state::idle);
-    FB_ASSERT_EQ(ctx.retry_count, 0);
-    FB_ASSERT_TRUE(ctx.can_start());
+    resize_ctx.reset();
+    FB_ASSERT_TRUE(resize_ctx.state == resize_state::idle);
+    FB_ASSERT_EQ(resize_ctx.retry_count, 0);
+    FB_ASSERT_TRUE(resize_ctx.can_start());
 }
 
 FB_TEST(bdev_image_resize_state, complete_only_from_in_progress) {
-    resize_context ctx;
-    ctx.start_resize(100, 200);
-    // Not calling begin(), still in requested state
-    ctx.complete();
-    FB_ASSERT_TRUE(ctx.state == resize_state::requested);  // unchanged
+    resize_context resize_ctx;
+    resize_ctx.start_resize(100, 200);
+    resize_ctx.complete();
+    FB_ASSERT_TRUE(resize_ctx.state == resize_state::requested);
 }
 
 // ============================================================================
@@ -1022,7 +1020,9 @@ struct connection_manager {
         if (state == connection_state::connected) return true;
         if (state == connection_state::disconnected || state == connection_state::error) {
             state = connection_state::connecting;
-            reconnect_attempts = 0;
+            if (state == connection_state::error) {
+                reconnect_attempts = 0;
+            }
             return true;
         }
         return false;
@@ -1502,7 +1502,7 @@ struct leader_info {
     bool is_valid{false};
 
     void update(int32_t new_leader, uint64_t new_term, uint64_t new_epoch) {
-        if (new_term >= term && new_epoch >= epoch) {
+        if (new_term > term || (new_term == term && new_epoch >= epoch)) {
             leader_id = new_leader;
             term = new_term;
             epoch = new_epoch;
@@ -1866,7 +1866,7 @@ FB_TEST(bdev_config_validation, object_size_invalid) {
 
 FB_TEST(bdev_config_validation, image_size_valid) {
     FB_ASSERT_TRUE(config_validator::validate_image_size(4096, 4096));
-    FB_ASSERT_TRUE(config_validator::validate_image_size(10 * 1024 * 1024 * 1024, 512));
+    FB_ASSERT_TRUE(config_validator::validate_image_size(10ull * 1024 * 1024 * 1024, 512));
 }
 
 FB_TEST(bdev_config_validation, image_size_invalid) {
