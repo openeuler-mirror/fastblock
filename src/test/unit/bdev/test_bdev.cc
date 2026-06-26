@@ -6903,6 +6903,179 @@ FB_TEST(bdev_object_dedup, manager_shared_count) {
 }
 
 // ============================================================================
+// Test Suite: bdev_async_callback — Async operation callback tracking
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_async_callback) {}
+FB_SUITE_TEARDOWN(bdev_async_callback) {}
+
+struct async_op {
+    uint64_t op_id{0};
+    uint64_t start_us{0};
+    uint64_t timeout_us{0};
+    bool completed{false};
+    bool cancelled{false};
+
+    bool is_pending() const { return !completed && !cancelled; }
+    void mark_completed() { completed = true; }
+    void mark_cancelled() { cancelled = true; }
+    bool timed_out(uint64_t now_us) const {
+        return is_pending() && now_us - start_us > timeout_us;
+    }
+};
+
+struct callback_entry {
+    uint64_t cb_id{0};
+    uint64_t op_id{0};
+    int32_t result_code{0};
+    uint64_t completed_at_us{0};
+    bool executed{false};
+
+    void execute(int32_t code, uint64_t now_us) {
+        result_code = code;
+        completed_at_us = now_us;
+        executed = true;
+    }
+};
+
+struct async_callback_manager {
+    std::deque<async_op> pending_ops;
+    std::unordered_map<uint64_t, callback_entry> callbacks;
+    uint64_t next_op_id{1};
+    uint64_t next_cb_id{1};
+    uint64_t completed_count{0};
+    uint64_t cancelled_count{0};
+
+    uint64_t start_op(uint64_t now_us, uint64_t timeout_us) {
+        async_op op;
+        op.op_id = next_op_id++;
+        op.start_us = now_us;
+        op.timeout_us = timeout_us;
+        pending_ops.push_back(op);
+        return op.op_id;
+    }
+
+    uint64_t register_callback(uint64_t op_id) {
+        callback_entry cb;
+        cb.cb_id = next_cb_id++;
+        cb.op_id = op_id;
+        callbacks[cb.cb_id] = cb;
+        return cb.cb_id;
+    }
+
+    void complete_op(uint64_t op_id, int32_t code, uint64_t now_us) {
+        pending_ops.erase(std::remove_if(pending_ops.begin(), pending_ops.end(),
+            [op_id](const async_op& o) { return o.op_id == op_id; }), pending_ops.end());
+        for (auto& [id, cb] : callbacks) {
+            if (cb.op_id == op_id && !cb.executed) {
+                cb.execute(code, now_us);
+                completed_count++;
+            }
+        }
+    }
+
+    void cancel_op(uint64_t op_id) {
+        pending_ops.erase(std::remove_if(pending_ops.begin(), pending_ops.end(),
+            [op_id](const async_op& o) { return o.op_id == op_id; }), pending_ops.end());
+        for (auto& [id, cb] : callbacks) {
+            if (cb.op_id == op_id && !cb.executed) {
+                cb.execute(-1, 0);
+                cancelled_count++;
+            }
+        }
+    }
+
+    std::vector<uint64_t> get_timeout_ops(uint64_t now_us) const {
+        std::vector<uint64_t> timed;
+        for (const auto& op : pending_ops) { if (op.timed_out(now_us)) timed.push_back(op.op_id); }
+        return timed;
+    }
+
+    size_t pending_count() const { return pending_ops.size(); }
+    callback_entry* get_callback(uint64_t cb_id) {
+        auto it = callbacks.find(cb_id);
+        return it != callbacks.end() ? &it->second : nullptr;
+    }
+};
+
+FB_TEST(bdev_async_callback, op_initial_pending) {
+    async_op op;
+    FB_ASSERT_TRUE(op.is_pending());
+}
+
+FB_TEST(bdev_async_callback, op_mark_completed) {
+    async_op op;
+    op.mark_completed();
+    FB_ASSERT_FALSE(op.is_pending());
+}
+
+FB_TEST(bdev_async_callback, op_timed_out) {
+    async_op op;
+    op.start_us = 0;
+    op.timeout_us = 10000;
+    FB_ASSERT_TRUE(op.timed_out(50000));
+}
+
+FB_TEST(bdev_async_callback, cb_initial_not_executed) {
+    callback_entry cb;
+    FB_ASSERT_FALSE(cb.executed);
+}
+
+FB_TEST(bdev_async_callback, cb_execute_sets_result) {
+    callback_entry cb;
+    cb.execute(0, 1000);
+    FB_ASSERT_TRUE(cb.executed);
+}
+
+FB_TEST(bdev_async_callback, manager_start_op) {
+    async_callback_manager mgr;
+    mgr.start_op(1000, 30000);
+    FB_ASSERT_EQ(mgr.pending_count(), 1u);
+}
+
+FB_TEST(bdev_async_callback, manager_register_callback) {
+    async_callback_manager mgr;
+    uint64_t op_id = mgr.start_op(1000, 30000);
+    uint64_t cb_id = mgr.register_callback(op_id);
+    FB_ASSERT_NE(cb_id, 0u);
+}
+
+FB_TEST(bdev_async_callback, manager_complete_op) {
+    async_callback_manager mgr;
+    uint64_t op_id = mgr.start_op(1000, 30000);
+    uint64_t cb_id = mgr.register_callback(op_id);
+    mgr.complete_op(op_id, 0, 2000);
+    FB_ASSERT_EQ(mgr.pending_count(), 0u);
+    FB_ASSERT_TRUE(mgr.get_callback(cb_id)->executed);
+}
+
+FB_TEST(bdev_async_callback, manager_cancel_op) {
+    async_callback_manager mgr;
+    uint64_t op_id = mgr.start_op(1000, 30000);
+    uint64_t cb_id = mgr.register_callback(op_id);
+    mgr.cancel_op(op_id);
+    FB_ASSERT_EQ(mgr.get_callback(cb_id)->result_code, -1);
+}
+
+FB_TEST(bdev_async_callback, manager_get_timeout_ops) {
+    async_callback_manager mgr;
+    mgr.start_op(0, 10000);
+    mgr.start_op(0, 60000);
+    auto timed = mgr.get_timeout_ops(50000);
+    FB_ASSERT_EQ(timed.size(), 1u);
+}
+
+FB_TEST(bdev_async_callback, manager_multiple_callbacks) {
+    async_callback_manager mgr;
+    uint64_t op_id = mgr.start_op(1000, 30000);
+    uint64_t cb1 = mgr.register_callback(op_id);
+    uint64_t cb2 = mgr.register_callback(op_id);
+    mgr.complete_op(op_id, 0, 2000);
+    FB_ASSERT_TRUE(mgr.get_callback(cb1)->executed);
+    FB_ASSERT_TRUE(mgr.get_callback(cb2)->executed);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
