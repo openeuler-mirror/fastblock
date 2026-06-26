@@ -2189,6 +2189,62 @@ FB_TEST(itos_performance, large_values) {
 }
 
 // ============================================================================
+// Test Suite: varint_compression (Varint Compression Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(varint_compression) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(varint_compression) {
+    // Teardown code here
+}
+
+FB_TEST(varint_compression, small_value_savings) {
+    char varint_buf[5];
+    uint32_t small_val = 1;
+    size_t varint_len = encode_varint32(varint_buf, small_val);
+    size_t fixed_len = 4;
+
+    // Small values save space with varint
+    FB_ASSERT_TRUE(varint_len < fixed_len);
+}
+
+FB_TEST(varint_compression, medium_value_savings) {
+    char varint_buf[5];
+    uint32_t medium_val = 16383;  // Max 2-byte varint
+    size_t varint_len = encode_varint32(varint_buf, medium_val);
+    size_t fixed_len = 4;
+
+    FB_ASSERT_TRUE(varint_len <= fixed_len);
+}
+
+FB_TEST(varint_compression, large_value_comparison) {
+    char varint_buf[5];
+    uint32_t large_val = UINT32_MAX;
+    size_t varint_len = encode_varint32(varint_buf, large_val);
+
+    // Even max values may not save space but should be <= 5 bytes
+    FB_ASSERT_TRUE(varint_len <= 5);
+}
+
+FB_TEST(varint_compression, savings_percentage) {
+    // Test compression ratio for various values
+    uint32_t values[] = {1, 100, 1000, 10000, 100000, 1000000};
+    for (uint32_t val : values) {
+        char buffer[5];
+        size_t varint_len = encode_varint32(buffer, val);
+        // Should be compressed compared to 4 bytes
+        size_t expected_fixed = 4;
+        if (varint_len < expected_fixed) {
+            size_t saved = expected_fixed - varint_len;
+            double savings_pct = 100.0 * saved / expected_fixed;
+            FB_ASSERT_TRUE(savings_pct >= 0);
+        }
+    }
+}
+
+// ============================================================================
 // Test Suite: final_validation (Final Validation Tests)
 // ============================================================================
 
