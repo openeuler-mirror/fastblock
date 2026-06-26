@@ -8431,6 +8431,196 @@ FB_TEST(bdev_event_subscription, dispatcher_multiple_events) {
 }
 
 // ============================================================================
+// Test Suite: bdev_device_lifecycle — Device lifecycle management
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_device_lifecycle) {}
+FB_SUITE_TEARDOWN(bdev_device_lifecycle) {}
+
+enum class device_state : uint8_t {
+    uninitialized,
+    initializing,
+    ready,
+    active,
+    stopping,
+    stopped,
+    error
+};
+
+struct device_lifecycle {
+    device_state state{device_state::uninitialized};
+    uint64_t last_state_change_us{0};
+    uint64_t state_transitions{0};
+    std::string error_message;
+
+    bool can_transition_to(device_state target) const {
+        switch (state) {
+            case device_state::uninitialized:
+                return target == device_state::initializing;
+            case device_state::initializing:
+                return target == device_state::ready || target == device_state::error;
+            case device_state::ready:
+                return target == device_state::active || target == device_state::stopping;
+            case device_state::active:
+                return target == device_state::stopping || target == device_state::error;
+            case device_state::stopping:
+                return target == device_state::stopped;
+            case device_state::stopped:
+                return target == device_state::initializing;
+            case device_state::error:
+                return target == device_state::initializing;
+        }
+        return false;
+    }
+
+    bool transition_to(device_state target, uint64_t now_us) {
+        if (!can_transition_to(target)) return false;
+        state = target;
+        last_state_change_us = now_us;
+        state_transitions++;
+        return true;
+    }
+
+    void set_error(const std::string& msg) {
+        state = device_state::error;
+        error_message = msg;
+    }
+
+    void clear_error() { error_message.clear(); }
+
+    bool is_operational() const {
+        return state == device_state::ready || state == device_state::active;
+    }
+
+    bool can_start_io() const { return state == device_state::active; }
+
+    bool needs_recovery() const { return state == device_state::error; }
+
+    uint64_t time_in_state(uint64_t now_us) const {
+        return now_us - last_state_change_us;
+    }
+};
+
+FB_TEST(bdev_device_lifecycle, initial_uninitialized) {
+    device_lifecycle lc;
+    FB_ASSERT_TRUE(lc.state == device_state::uninitialized);
+}
+
+FB_TEST(bdev_device_lifecycle, can_transition_uninitialized_to_initializing) {
+    device_lifecycle lc;
+    FB_ASSERT_TRUE(lc.can_transition_to(device_state::initializing));
+}
+
+FB_TEST(bdev_device_lifecycle, cannot_transition_uninitialized_to_ready) {
+    device_lifecycle lc;
+    FB_ASSERT_FALSE(lc.can_transition_to(device_state::ready));
+}
+
+FB_TEST(bdev_device_lifecycle, transition_success) {
+    device_lifecycle lc;
+    FB_ASSERT_TRUE(lc.transition_to(device_state::initializing, 0));
+    FB_ASSERT_TRUE(lc.state == device_state::initializing);
+    FB_ASSERT_EQ(lc.state_transitions, 1u);
+}
+
+FB_TEST(bdev_device_lifecycle, transition_failure_invalid) {
+    device_lifecycle lc;
+    FB_ASSERT_FALSE(lc.transition_to(device_state::active, 0));
+    FB_ASSERT_EQ(lc.state_transitions, 0u);
+}
+
+FB_TEST(bdev_device_lifecycle, full_init_sequence) {
+    device_lifecycle lc;
+    lc.transition_to(device_state::initializing, 0);
+    lc.transition_to(device_state::ready, 1000);
+    lc.transition_to(device_state::active, 2000);
+    FB_ASSERT_TRUE(lc.state == device_state::active);
+    FB_ASSERT_EQ(lc.state_transitions, 3u);
+}
+
+FB_TEST(bdev_device_lifecycle, error_from_initializing) {
+    device_lifecycle lc;
+    lc.transition_to(device_state::initializing, 0);
+    lc.transition_to(device_state::error, 1000);
+    FB_ASSERT_TRUE(lc.state == device_state::error);
+}
+
+FB_TEST(bdev_device_lifecycle, recovery_from_error) {
+    device_lifecycle lc;
+    lc.transition_to(device_state::initializing, 0);
+    lc.transition_to(device_state::error, 1000);
+    lc.transition_to(device_state::initializing, 2000);  // recovery
+    FB_ASSERT_TRUE(lc.state == device_state::initializing);
+}
+
+FB_TEST(bdev_device_lifecycle, stop_sequence) {
+    device_lifecycle lc;
+    lc.transition_to(device_state::initializing, 0);
+    lc.transition_to(device_state::ready, 1000);
+    lc.transition_to(device_state::active, 2000);
+    lc.transition_to(device_state::stopping, 3000);
+    lc.transition_to(device_state::stopped, 4000);
+    FB_ASSERT_TRUE(lc.state == device_state::stopped);
+}
+
+FB_TEST(bdev_device_lifecycle, restart_sequence) {
+    device_lifecycle lc;
+    lc.transition_to(device_state::initializing, 0);
+    lc.transition_to(device_state::ready, 1000);
+    lc.transition_to(device_state::stopping, 2000);
+    lc.transition_to(device_state::stopped, 3000);
+    lc.transition_to(device_state::initializing, 4000);  // restart
+    FB_ASSERT_TRUE(lc.state == device_state::initializing);
+}
+
+FB_TEST(bdev_device_lifecycle, set_error_message) {
+    device_lifecycle lc;
+    lc.set_error("IO failure");
+    FB_ASSERT_STR_EQ(lc.error_message.c_str(), "IO failure");
+}
+
+FB_TEST(bdev_device_lifecycle, clear_error_message) {
+    device_lifecycle lc;
+    lc.set_error("IO failure");
+    lc.clear_error();
+    FB_ASSERT_TRUE(lc.error_message.empty());
+}
+
+FB_TEST(bdev_device_lifecycle, is_operational_ready_or_active) {
+    device_lifecycle lc;
+    lc.transition_to(device_state::initializing, 0);
+    lc.transition_to(device_state::ready, 1000);
+    FB_ASSERT_TRUE(lc.is_operational());
+}
+
+FB_TEST(bdev_device_lifecycle, is_operational_false_other_states) {
+    device_lifecycle lc;
+    FB_ASSERT_FALSE(lc.is_operational());  // uninitialized
+}
+
+FB_TEST(bdev_device_lifecycle, can_start_io_only_active) {
+    device_lifecycle lc;
+    lc.transition_to(device_state::initializing, 0);
+    lc.transition_to(device_state::ready, 1000);
+    FB_ASSERT_FALSE(lc.can_start_io());  // ready, not active
+    lc.transition_to(device_state::active, 2000);
+    FB_ASSERT_TRUE(lc.can_start_io());
+}
+
+FB_TEST(bdev_device_lifecycle, needs_recovery_error_state) {
+    device_lifecycle lc;
+    lc.transition_to(device_state::initializing, 0);
+    lc.transition_to(device_state::error, 1000);
+    FB_ASSERT_TRUE(lc.needs_recovery());
+}
+
+FB_TEST(bdev_device_lifecycle, time_in_state_calculation) {
+    device_lifecycle lc;
+    lc.transition_to(device_state::initializing, 1000);
+    FB_ASSERT_EQ(lc.time_in_state(5000), 4000u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
