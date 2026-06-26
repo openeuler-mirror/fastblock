@@ -4804,6 +4804,210 @@ FB_TEST(bdev_health_monitor, monitor_get_unhealthy_metrics) {
 }
 
 // ============================================================================
+// Test Suite: bdev_io_timeout — IO timeout and expiration
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_io_timeout) {}
+FB_SUITE_TEARDOWN(bdev_io_timeout) {}
+
+struct timeout_config {
+    uint64_t default_timeout_us{30000000};  // 30s
+    uint64_t min_timeout_us{1000000};       // 1s
+    uint64_t max_timeout_us{300000000};     // 5min
+
+    bool is_valid(uint64_t timeout_us) const {
+        return timeout_us >= min_timeout_us && timeout_us <= max_timeout_us;
+    }
+
+    uint64_t clamp(uint64_t timeout_us) const {
+        if (timeout_us < min_timeout_us) return min_timeout_us;
+        if (timeout_us > max_timeout_us) return max_timeout_us;
+        return timeout_us;
+    }
+};
+
+struct io_timeout_tracker {
+    uint64_t io_id{0};
+    uint64_t start_us{0};
+    uint64_t deadline_us{0};
+    bool completed{false};
+    bool timed_out{false};
+
+    void start(uint64_t id, uint64_t now_us, uint64_t timeout_us) {
+        io_id = id;
+        start_us = now_us;
+        deadline_us = now_us + timeout_us;
+        completed = false;
+        timed_out = false;
+    }
+
+    bool is_expired(uint64_t now_us) const {
+        return !completed && now_us >= deadline_us;
+    }
+
+    void mark_completed(uint64_t now_us) {
+        completed = true;
+        (void)now_us;
+    }
+
+    uint64_t elapsed_us(uint64_t now_us) const {
+        return now_us - start_us;
+    }
+
+    uint64_t remaining_us(uint64_t now_us) const {
+        if (completed || timed_out) return 0;
+        if (now_us >= deadline_us) return 0;
+        return deadline_us - now_us;
+    }
+};
+
+struct timeout_manager {
+    timeout_config config;
+    std::unordered_map<uint64_t, io_timeout_tracker> pending_ios;
+    uint64_t timeout_count{0};
+
+    uint64_t start_io(uint64_t io_id, uint64_t now_us, uint64_t timeout_us) {
+        uint64_t actual_timeout = config.clamp(timeout_us);
+        pending_ios[io_id].start(io_id, now_us, actual_timeout);
+        return actual_timeout;
+    }
+
+    void complete_io(uint64_t io_id, uint64_t now_us) {
+        auto it = pending_ios.find(io_id);
+        if (it != pending_ios.end()) {
+            it->second.mark_completed(now_us);
+            pending_ios.erase(it);
+        }
+    }
+
+    std::vector<uint64_t> check_timeouts(uint64_t now_us) {
+        std::vector<uint64_t> expired;
+        for (auto& [id, tracker] : pending_ios) {
+            if (tracker.is_expired(now_us)) {
+                tracker.timed_out = true;
+                expired.push_back(id);
+                timeout_count++;
+            }
+        }
+        return expired;
+    }
+
+    bool has_pending(uint64_t io_id) const {
+        return pending_ios.find(io_id) != pending_ios.end();
+    }
+
+    size_t pending_count() const { return pending_ios.size(); }
+
+    void cancel_io(uint64_t io_id) { pending_ios.erase(io_id); }
+
+    void clear() {
+        pending_ios.clear();
+        timeout_count = 0;
+    }
+};
+
+FB_TEST(bdev_io_timeout, config_valid_range) {
+    timeout_config cfg;
+    FB_ASSERT_TRUE(cfg.is_valid(30000000));
+    FB_ASSERT_FALSE(cfg.is_valid(500000));    // too low
+    FB_ASSERT_FALSE(cfg.is_valid(400000000)); // too high
+}
+
+FB_TEST(bdev_io_timeout, config_clamp_low) {
+    timeout_config cfg;
+    FB_ASSERT_EQ(cfg.clamp(500000), cfg.min_timeout_us);
+}
+
+FB_TEST(bdev_io_timeout, config_clamp_high) {
+    timeout_config cfg;
+    FB_ASSERT_EQ(cfg.clamp(400000000), cfg.max_timeout_us);
+}
+
+FB_TEST(bdev_io_timeout, config_clamp_within) {
+    timeout_config cfg;
+    FB_ASSERT_EQ(cfg.clamp(60000000), 60000000u);
+}
+
+FB_TEST(bdev_io_timeout, tracker_start) {
+    io_timeout_tracker tracker;
+    tracker.start(1, 1000000, 30000000);
+
+    FB_ASSERT_EQ(tracker.io_id, 1u);
+    FB_ASSERT_EQ(tracker.deadline_us, 31000000u);
+}
+
+FB_TEST(bdev_io_timeout, tracker_not_expired) {
+    io_timeout_tracker tracker;
+    tracker.start(1, 1000000, 30000000);
+
+    FB_ASSERT_FALSE(tracker.is_expired(20000000));
+}
+
+FB_TEST(bdev_io_timeout, tracker_expired) {
+    io_timeout_tracker tracker;
+    tracker.start(1, 1000000, 30000000);
+
+    FB_ASSERT_TRUE(tracker.is_expired(35000000));
+}
+
+FB_TEST(bdev_io_timeout, tracker_completed_not_expired) {
+    io_timeout_tracker tracker;
+    tracker.start(1, 1000000, 30000000);
+    tracker.mark_completed(20000000);
+
+    FB_ASSERT_FALSE(tracker.is_expired(35000000));
+}
+
+FB_TEST(bdev_io_timeout, tracker_elapsed) {
+    io_timeout_tracker tracker;
+    tracker.start(1, 1000000, 30000000);
+
+    FB_ASSERT_EQ(tracker.elapsed_us(5000000), 4000000u);
+}
+
+FB_TEST(bdev_io_timeout, tracker_remaining) {
+    io_timeout_tracker tracker;
+    tracker.start(1, 1000000, 30000000);
+
+    FB_ASSERT_EQ(tracker.remaining_us(5000000), 26000000u);
+}
+
+FB_TEST(bdev_io_timeout, manager_start_io) {
+    timeout_manager mgr;
+    mgr.start_io(1, 0, 30000000);
+
+    FB_ASSERT_TRUE(mgr.has_pending(1));
+    FB_ASSERT_EQ(mgr.pending_count(), 1u);
+}
+
+FB_TEST(bdev_io_timeout, manager_complete_io) {
+    timeout_manager mgr;
+    mgr.start_io(1, 0, 30000000);
+    mgr.complete_io(1, 15000000);
+
+    FB_ASSERT_FALSE(mgr.has_pending(1));
+}
+
+FB_TEST(bdev_io_timeout, manager_check_timeouts) {
+    timeout_manager mgr;
+    mgr.start_io(1, 0, 10000000);
+    mgr.start_io(2, 0, 30000000);
+
+    auto expired = mgr.check_timeouts(20000000);
+    FB_ASSERT_EQ(expired.size(), 1u);
+    FB_ASSERT_EQ(expired[0], 1u);
+    FB_ASSERT_EQ(mgr.timeout_count, 1u);
+}
+
+FB_TEST(bdev_io_timeout, manager_cancel_io) {
+    timeout_manager mgr;
+    mgr.start_io(1, 0, 30000000);
+    mgr.cancel_io(1);
+
+    FB_ASSERT_FALSE(mgr.has_pending(1));
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
