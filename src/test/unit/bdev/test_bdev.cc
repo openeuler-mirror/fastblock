@@ -2450,6 +2450,125 @@ FB_TEST(bdev_io_priority, priority_over_timestamp) {
 }
 
 // ============================================================================
+// Test Suite: bdev_throttling — IO rate limiting and throttling
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_throttling) {}
+FB_SUITE_TEARDOWN(bdev_throttling) {}
+
+struct throttle_state {
+    uint64_t bucket_capacity{1000};  // max IOs per interval
+    uint64_t refill_rate{100};       // IOs added per interval
+    uint64_t current_tokens{1000};
+    uint64_t last_refill_us{0};
+    uint64_t interval_us{1000000};   // 1 second
+
+    void refill(uint64_t now_us) {
+        uint64_t elapsed = now_us - last_refill_us;
+        if (elapsed >= interval_us) {
+            uint64_t intervals = elapsed / interval_us;
+            uint64_t added = intervals * refill_rate;
+            current_tokens = std::min(current_tokens + added, bucket_capacity);
+            last_refill_us += intervals * interval_us;
+        }
+    }
+
+    bool can_proceed(uint64_t now_us) {
+        refill(now_us);
+        return current_tokens > 0;
+    }
+
+    void consume(uint64_t now_us, uint64_t count) {
+        refill(now_us);
+        if (current_tokens >= count) {
+            current_tokens -= count;
+        }
+    }
+
+    uint64_t wait_time(uint64_t now_us, uint64_t needed) {
+        refill(now_us);
+        if (current_tokens >= needed) return 0;
+        uint64_t deficit = needed - current_tokens;
+        uint64_t intervals_needed = (deficit / refill_rate) + 1;
+        return intervals_needed * interval_us;
+    }
+
+    double current_rate(uint64_t now_us) {
+        refill(now_us);
+        return static_cast<double>(current_tokens) / bucket_capacity;
+    }
+};
+
+FB_TEST(bdev_throttling, initial_full_bucket) {
+    throttle_state ts;
+    FB_ASSERT_EQ(ts.current_tokens, ts.bucket_capacity);
+}
+
+FB_TEST(bdev_throttling, can_proceed_when_tokens_available) {
+    throttle_state ts;
+    FB_ASSERT_TRUE(ts.can_proceed(0));
+}
+
+FB_TEST(bdev_throttling, consume_reduces_tokens) {
+    throttle_state ts;
+    ts.consume(0, 100);
+    FB_ASSERT_EQ(ts.current_tokens, 900u);
+}
+
+FB_TEST(bdev_throttling, refill_adds_tokens) {
+    throttle_state ts;
+    ts.consume(0, 500);
+    FB_ASSERT_EQ(ts.current_tokens, 500u);
+
+    ts.refill(1000000);  // 1 second later
+    FB_ASSERT_EQ(ts.current_tokens, 600u);  // +100 refill
+}
+
+FB_TEST(bdev_throttling, refill_capped_at_capacity) {
+    throttle_state ts;
+    ts.current_tokens = 950;
+    ts.refill(1000000);
+    FB_ASSERT_EQ(ts.current_tokens, ts.bucket_capacity);
+}
+
+FB_TEST(bdev_throttling, wait_time_zero_if_tokens_available) {
+    throttle_state ts;
+    FB_ASSERT_EQ(ts.wait_time(0, 100), 0u);
+}
+
+FB_TEST(bdev_throttling, wait_time_when_tokens_depleted) {
+    throttle_state ts;
+    ts.consume(0, 1000);  // empty bucket
+    FB_ASSERT_EQ(ts.current_tokens, 0u);
+
+    uint64_t wait = ts.wait_time(0, 100);
+    FB_ASSERT_EQ(wait, 1000000u);  // need 1 interval to get 100 tokens
+}
+
+FB_TEST(bdev_throttling, current_rate_decreases_after_consume) {
+    throttle_state ts;
+    ts.consume(0, 500);
+    FB_ASSERT_TRUE(ts.current_rate(0) < 0.6 && ts.current_rate(0) > 0.4);
+}
+
+FB_TEST(bdev_throttling, multiple_intervals_refill) {
+    throttle_state ts;
+    ts.consume(0, 800);
+    ts.last_refill_us = 0;
+
+    ts.refill(5000000);  // 5 intervals
+    FB_ASSERT_EQ(ts.current_tokens, ts.bucket_capacity);  // capped
+}
+
+FB_TEST(bdev_throttling, partial_interval_no_refill) {
+    throttle_state ts;
+    ts.consume(0, 500);
+    ts.refill(500000);  // only half interval
+
+    FB_ASSERT_EQ(ts.current_tokens, 500u);  // unchanged
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
