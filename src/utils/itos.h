@@ -21,12 +21,14 @@ inline std::string itos(T i) {
     if (i == 0) return "0";
 
     bool neg = false;
-    if (i < 0) { neg = true, i = -1 * i; }
+    // Use int64_t to handle minimum negative values correctly (e.g., INT8_MIN = -128)
+    int64_t val = i;
+    if (val < 0) { neg = true; val = -val; }
 
     std::string str;
-    while(i) {
-        str += "0123456789"[i % 10];
-        i /= 10;
+    while(val) {
+        str += "0123456789"[val % 10];
+        val /= 10;
     }
     if (neg) { str += "-"; }
 
