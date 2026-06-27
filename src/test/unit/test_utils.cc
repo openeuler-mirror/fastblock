@@ -2539,6 +2539,44 @@ FB_TEST(md5_inputs, unicode_like_bytes) {
 }
 
 // ============================================================================
+// Test Suite: varint_decode_edge (Varint Decode Edge Cases)
+// ============================================================================
+
+FB_SUITE_SETUP(varint_decode_edge) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(varint_decode_edge) {
+    // Teardown code here
+}
+
+FB_TEST(varint_decode_edge, decode_single_byte) {
+    char buffer[] = {0x7F};  // 127
+    auto [val, len] = decode_varint32(buffer, 1);
+    FB_ASSERT_EQ(val, 127);
+    FB_ASSERT_EQ(len, 1);
+}
+
+FB_TEST(varint_decode_edge, decode_two_bytes) {
+    char buffer[] = {(char)0x80, 0x01};  // 128
+    auto [val, len] = decode_varint32(buffer, 2);
+    FB_ASSERT_EQ(val, 128);
+    FB_ASSERT_EQ(len, 2);
+}
+
+FB_TEST(varint_decode_edge, decode_max_single_byte) {
+    char buffer[] = {0x7F};
+    auto [val, len] = decode_varint32(buffer, 1);
+    FB_ASSERT_EQ(val, 127);
+}
+
+FB_TEST(varint_decode_edge, decode_min_two_bytes) {
+    char buffer[] = {(char)0x80, 0x01};  // 128 = minimum 2-byte value
+    auto [val, len] = decode_varint32(buffer, 2);
+    FB_ASSERT_EQ(val, 128);
+}
+
+// ============================================================================
 // Test Suite: final_validation (Final Validation Tests)
 // ============================================================================
 
