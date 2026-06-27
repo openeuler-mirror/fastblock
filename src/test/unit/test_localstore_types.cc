@@ -16,49 +16,16 @@
 
 #include "test/framework/test_framework.h"
 #include "test/framework/test_harness.h"
+#include "localstore/spdk_buffer.h"
+#include "localstore/types.h"
 
 #include <string>
 #include <cstdint>
+#include <cstring>
 
 // ============================================================================
 // Test Suite: blob_type (Blob Type Enumeration)
 // ============================================================================
-
-namespace {
-
-enum class blob_type : uint32_t {
-  log = 0,
-  object = 1,
-  object_snap = 2,
-  object_recover = 3,
-  kv = 4,
-  kv_checkpoint = 5,
-  kv_checkpoint_new = 6,
-  super_blob = 7,
-  free = 8,
-};
-
-inline std::string type_string(const blob_type& type) {
-  switch (type) {
-    case blob_type::log: return "blob_type::log";
-    case blob_type::object: return "blob_type::object";
-    case blob_type::object_snap: return "blob_type::object_snap";
-    case blob_type::object_recover: return "blob_type::object_recover";
-    case blob_type::kv: return "blob_type::kv";
-    case blob_type::kv_checkpoint: return "blob_type::kv_checkpoint";
-    case blob_type::kv_checkpoint_new: return "blob_type::kv_checkpoint_new";
-    case blob_type::super_blob: return "blob_type::super_blob";
-    case blob_type::free: return "blob_type::free";
-    default: return "blob_type::unknown";
-  }
-}
-
-struct fb_blob {
-    void* blob = nullptr;
-    uint64_t blobid = 0;
-};
-
-} // anonymous namespace
 
 FB_SUITE_SETUP(blob_type) {
     // Setup code here
@@ -587,4 +554,647 @@ FB_TEST(blob_type_bitwise, bitwise_xor) {
 FB_TEST(blob_type_bitwise, complement_check) {
     uint32_t free_val = static_cast<uint32_t>(blob_type::free);
     FB_ASSERT_TRUE(free_val == 8);
+}
+
+// ============================================================================
+// Test Suite: spdk_buffer_basic (SPDK Buffer Basic Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_basic) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_basic) {
+    // Teardown code here
+}
+
+FB_TEST(spdk_buffer_basic, default_constructor) {
+    spdk_buffer sbuf;
+    FB_ASSERT_EQ(sbuf.size(), 0);
+    FB_ASSERT_EQ(sbuf.used(), 0);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
+FB_TEST(spdk_buffer_basic, parameterized_constructor) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    FB_ASSERT_EQ(sbuf.size(), 100);
+    FB_ASSERT_EQ(sbuf.used(), 0);
+    FB_ASSERT_EQ(sbuf.remain(), 100);
+}
+
+FB_TEST(spdk_buffer_basic, get_buf) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    FB_ASSERT_EQ(sbuf.get_buf(), buffer);
+}
+
+FB_TEST(spdk_buffer_basic, get_append_initial) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    FB_ASSERT_EQ(sbuf.get_append(), buffer);
+}
+
+FB_TEST(spdk_buffer_basic, inc_basic) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    size_t inc_size = sbuf.inc(10);
+    FB_ASSERT_EQ(inc_size, 10);
+    FB_ASSERT_EQ(sbuf.used(), 10);
+    FB_ASSERT_EQ(sbuf.remain(), 90);
+}
+
+FB_TEST(spdk_buffer_basic, inc_overflow) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    size_t inc_size = sbuf.inc(200); // Try to increment more than size
+    FB_ASSERT_EQ(inc_size, 100); // Should only increment up to size
+    FB_ASSERT_EQ(sbuf.used(), 100);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
+FB_TEST(spdk_buffer_basic, reset) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.inc(50);
+    FB_ASSERT_EQ(sbuf.used(), 50);
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.used(), 0);
+    FB_ASSERT_EQ(sbuf.remain(), 100);
+}
+
+FB_TEST(spdk_buffer_basic, set_used_valid) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.set_used(50);
+    FB_ASSERT_EQ(sbuf.used(), 50);
+}
+
+FB_TEST(spdk_buffer_basic, set_used_overflow) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.set_used(200); // Try to set more than size
+    FB_ASSERT_EQ(sbuf.used(), 100); // Should cap at size
+}
+
+// ============================================================================
+// Test Suite: spdk_buffer_append (SPDK Buffer Append Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_append) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_append) {
+    // Teardown code here
+}
+
+FB_TEST(spdk_buffer_append, append_basic) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    const char* data = "hello";
+    size_t appended = sbuf.append(data, 5);
+    FB_ASSERT_EQ(appended, 5);
+    FB_ASSERT_EQ(sbuf.used(), 5);
+    FB_ASSERT_EQ(sbuf.remain(), 95);
+}
+
+FB_TEST(spdk_buffer_append, append_string) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    std::string str = "test_string";
+    size_t appended = sbuf.append(str);
+    FB_ASSERT_EQ(appended, 11);
+    FB_ASSERT_EQ(sbuf.used(), 11);
+}
+
+FB_TEST(spdk_buffer_append, append_partial) {
+    char buffer[10];
+    spdk_buffer sbuf(buffer, 10);
+    const char* data = "hello world"; // 11 chars
+    size_t appended = sbuf.append(data, 11);
+    FB_ASSERT_EQ(appended, 10); // Only 10 fit
+    FB_ASSERT_EQ(sbuf.used(), 10);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
+FB_TEST(spdk_buffer_append, append_empty) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    size_t appended = sbuf.append("", 0);
+    FB_ASSERT_EQ(appended, 0);
+    FB_ASSERT_EQ(sbuf.used(), 0);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_basic (Buffer List Basic Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_basic) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_basic) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_list_basic, empty_list) {
+    buffer_list bl;
+    FB_ASSERT_EQ(bl.bytes(), 0);
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_basic, single_buffer) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    FB_ASSERT_EQ(bl.bytes(), 100);
+    FB_ASSERT_FALSE(bl.empty());
+}
+
+FB_TEST(buffer_list_basic, multiple_buffers) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    FB_ASSERT_EQ(bl.bytes(), 600);
+}
+
+FB_TEST(buffer_list_basic, prepend_buffer) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.prepend_buffer(sbuf2);
+
+    FB_ASSERT_EQ(bl.bytes(), 300);
+}
+
+FB_TEST(buffer_list_basic, clear_list) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    FB_ASSERT_EQ(bl.bytes(), 100);
+
+    bl.clear();
+    FB_ASSERT_EQ(bl.bytes(), 0);
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+// ============================================================================
+// Test Suite: buffer_list_operations (Buffer List Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_operations) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_list_operations, trim_front) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    FB_ASSERT_EQ(bl.bytes(), 300);
+
+    bl.trim_front();
+    FB_ASSERT_EQ(bl.bytes(), 200);
+}
+
+FB_TEST(buffer_list_operations, trim_back) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    FB_ASSERT_EQ(bl.bytes(), 300);
+
+    bl.trim_back();
+    FB_ASSERT_EQ(bl.bytes(), 100);
+}
+
+FB_TEST(buffer_list_operations, pop_front) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    spdk_buffer popped = bl.pop_front();
+    FB_ASSERT_EQ(popped.size(), 100);
+    FB_ASSERT_EQ(bl.bytes(), 0);
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_operations, iteration) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    int count = 0;
+    for (auto& buf : bl) {
+        (void)buf;  // Suppress unused warning
+        count++;
+    }
+    FB_ASSERT_EQ(count, 1);
+}
+
+// ============================================================================
+// Test Suite: serialization_fixed32 (Fixed32 Serialization Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization_fixed32) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization_fixed32) {
+    // Teardown code here
+}
+
+FB_TEST(serialization_fixed32, put_and_get) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    uint32_t value_in = 0x12345678;
+    bool put_ok = PutFixed32(sbuf, value_in);
+    FB_ASSERT_TRUE(put_ok);
+    FB_ASSERT_EQ(sbuf.used(), sizeof(uint32_t));
+
+    sbuf.reset();
+    uint32_t value_out = 0;
+    bool get_ok = GetFixed32(sbuf, value_out);
+    FB_ASSERT_TRUE(get_ok);
+    FB_ASSERT_EQ(value_out, value_in);
+}
+
+FB_TEST(serialization_fixed32, put_insufficient_space) {
+    char buffer[2];
+    spdk_buffer sbuf(buffer, 2);
+
+    uint32_t value = 0x12345678;
+    bool put_ok = PutFixed32(sbuf, value);
+    FB_ASSERT_FALSE(put_ok); // Should fail - not enough space
+}
+
+FB_TEST(serialization_fixed32, get_insufficient_space) {
+    char buffer[2];
+    spdk_buffer sbuf(buffer, 2);
+
+    uint32_t value = 0;
+    bool get_ok = GetFixed32(sbuf, value);
+    FB_ASSERT_FALSE(get_ok); // Should fail - not enough space
+}
+
+FB_TEST(serialization_fixed32, zero_value) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    uint32_t value_in = 0;
+    bool put_ok = PutFixed32(sbuf, value_in);
+    FB_ASSERT_TRUE(put_ok);
+
+    sbuf.reset();
+    uint32_t value_out = 0xFFFFFFFF;
+    bool get_ok = GetFixed32(sbuf, value_out);
+    FB_ASSERT_TRUE(get_ok);
+    FB_ASSERT_EQ(value_out, 0);
+}
+
+FB_TEST(serialization_fixed32, max_value) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    uint32_t value_in = 0xFFFFFFFF;
+    bool put_ok = PutFixed32(sbuf, value_in);
+    FB_ASSERT_TRUE(put_ok);
+
+    sbuf.reset();
+    uint32_t value_out = 0;
+    bool get_ok = GetFixed32(sbuf, value_out);
+    FB_ASSERT_TRUE(get_ok);
+    FB_ASSERT_EQ(value_out, 0xFFFFFFFF);
+}
+
+// ============================================================================
+// Test Suite: serialization_fixed64 (Fixed64 Serialization Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization_fixed64) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization_fixed64) {
+    // Teardown code here
+}
+
+FB_TEST(serialization_fixed64, put_and_get) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    uint64_t value_in = 0x123456789ABCDEF0ULL;
+    bool put_ok = PutFixed64(sbuf, value_in);
+    FB_ASSERT_TRUE(put_ok);
+    FB_ASSERT_EQ(sbuf.used(), sizeof(uint64_t));
+
+    sbuf.reset();
+    uint64_t value_out = 0;
+    bool get_ok = GetFixed64(sbuf, value_out);
+    FB_ASSERT_TRUE(get_ok);
+    FB_ASSERT_EQ(value_out, value_in);
+}
+
+FB_TEST(serialization_fixed64, put_insufficient_space) {
+    char buffer[4];
+    spdk_buffer sbuf(buffer, 4);
+
+    uint64_t value = 0x123456789ABCDEF0ULL;
+    bool put_ok = PutFixed64(sbuf, value);
+    FB_ASSERT_FALSE(put_ok);
+}
+
+FB_TEST(serialization_fixed64, get_insufficient_space) {
+    char buffer[4];
+    spdk_buffer sbuf(buffer, 4);
+
+    uint64_t value = 0;
+    bool get_ok = GetFixed64(sbuf, value);
+    FB_ASSERT_FALSE(get_ok);
+}
+
+FB_TEST(serialization_fixed64, zero_value) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    uint64_t value_in = 0;
+    bool put_ok = PutFixed64(sbuf, value_in);
+    FB_ASSERT_TRUE(put_ok);
+
+    sbuf.reset();
+    uint64_t value_out = 0xFFFFFFFFFFFFFFFFULL;
+    bool get_ok = GetFixed64(sbuf, value_out);
+    FB_ASSERT_TRUE(get_ok);
+    FB_ASSERT_EQ(value_out, 0);
+}
+
+FB_TEST(serialization_fixed64, max_value) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    uint64_t value_in = 0xFFFFFFFFFFFFFFFFULL;
+    bool put_ok = PutFixed64(sbuf, value_in);
+    FB_ASSERT_TRUE(put_ok);
+
+    sbuf.reset();
+    uint64_t value_out = 0;
+    bool get_ok = GetFixed64(sbuf, value_out);
+    FB_ASSERT_TRUE(get_ok);
+    FB_ASSERT_EQ(value_out, 0xFFFFFFFFFFFFFFFFULL);
+}
+
+// ============================================================================
+// Test Suite: serialization_string (String Serialization Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization_string) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization_string) {
+    // Teardown code here
+}
+
+FB_TEST(serialization_string, put_and_get) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::string str_in = "hello world";
+    bool put_ok = PutString(sbuf, str_in);
+    FB_ASSERT_TRUE(put_ok);
+    // 8 bytes for length + string data
+    FB_ASSERT_EQ(sbuf.used(), sizeof(uint64_t) + str_in.size());
+
+    sbuf.reset();
+    std::string str_out;
+    bool get_ok = GetString(sbuf, str_out);
+    FB_ASSERT_TRUE(get_ok);
+    FB_ASSERT_EQ(str_out, str_in);
+}
+
+FB_TEST(serialization_string, empty_string) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::string str_in = "";
+    bool put_ok = PutString(sbuf, str_in);
+    FB_ASSERT_TRUE(put_ok);
+    FB_ASSERT_EQ(sbuf.used(), sizeof(uint64_t)); // Just length
+
+    sbuf.reset();
+    std::string str_out = "dummy";
+    bool get_ok = GetString(sbuf, str_out);
+    FB_ASSERT_TRUE(get_ok);
+    FB_ASSERT_EQ(str_out, "");
+}
+
+FB_TEST(serialization_string, long_string) {
+    char buffer[1000];
+    spdk_buffer sbuf(buffer, 1000);
+
+    std::string str_in(500, 'x');
+    bool put_ok = PutString(sbuf, str_in);
+    FB_ASSERT_TRUE(put_ok);
+
+    sbuf.reset();
+    std::string str_out;
+    bool get_ok = GetString(sbuf, str_out);
+    FB_ASSERT_TRUE(get_ok);
+    FB_ASSERT_EQ(str_out, str_in);
+}
+
+FB_TEST(serialization_string, put_insufficient_space) {
+    char buffer[5];
+    spdk_buffer sbuf(buffer, 5);
+
+    std::string str = "hello world";
+    bool put_ok = PutString(sbuf, str);
+    FB_ASSERT_FALSE(put_ok);
+}
+
+FB_TEST(serialization_string, get_insufficient_space) {
+    char buffer[5];
+    spdk_buffer sbuf(buffer, 5);
+
+    std::string str_out;
+    bool get_ok = GetString(sbuf, str_out);
+    FB_ASSERT_FALSE(get_ok);
+}
+
+// ============================================================================
+// Test Suite: serialization_optional_string (Optional String Serialization Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization_optional_string) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization_optional_string) {
+    // Teardown code here
+}
+
+FB_TEST(serialization_optional_string, put_and_get_value) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::optional<std::string> str_in = "test value";
+    bool put_ok = PutOptString(sbuf, str_in);
+    FB_ASSERT_TRUE(put_ok);
+
+    sbuf.reset();
+    std::optional<std::string> str_out;
+    bool get_ok = GetOptString(sbuf, str_out);
+    FB_ASSERT_TRUE(get_ok);
+    FB_ASSERT_TRUE(str_out.has_value());
+    FB_ASSERT_EQ(*str_out, *str_in);
+}
+
+FB_TEST(serialization_optional_string, put_and_get_empty) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::optional<std::string> str_in = std::nullopt;
+    bool put_ok = PutOptString(sbuf, str_in);
+    FB_ASSERT_TRUE(put_ok);
+
+    sbuf.reset();
+    std::optional<std::string> str_out = "dummy";
+    bool get_ok = GetOptString(sbuf, str_out);
+    FB_ASSERT_TRUE(get_ok);
+    FB_ASSERT_FALSE(str_out.has_value());
+}
+
+FB_TEST(serialization_optional_string, put_empty_string) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::optional<std::string> str_in = "";
+    bool put_ok = PutOptString(sbuf, str_in);
+    FB_ASSERT_TRUE(put_ok);
+
+    sbuf.reset();
+    std::optional<std::string> str_out;
+    bool get_ok = GetOptString(sbuf, str_out);
+    FB_ASSERT_TRUE(get_ok);
+    // Empty string is stored as value, not nullopt
+    FB_ASSERT_TRUE(str_out.has_value());
+    FB_ASSERT_EQ(*str_out, "");
+}
+
+// ============================================================================
+// Test Suite: length_calculation (Length Calculation Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(length_calculation) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(length_calculation) {
+    // Teardown code here
+}
+
+FB_TEST(length_calculation, length_string) {
+    std::string str = "hello";
+    uint64_t len = LengthString(str);
+    FB_ASSERT_EQ(len, sizeof(uint64_t) + 5);
+}
+
+FB_TEST(length_calculation, length_empty_string) {
+    std::string str = "";
+    uint64_t len = LengthString(str);
+    FB_ASSERT_EQ(len, sizeof(uint64_t));
+}
+
+FB_TEST(length_calculation, length_opt_string_value) {
+    std::optional<std::string> str = "test";
+    uint64_t len = LengthOptString(str);
+    FB_ASSERT_EQ(len, sizeof(uint64_t) + 4);
+}
+
+FB_TEST(length_calculation, length_opt_string_nullopt) {
+    std::optional<std::string> str = std::nullopt;
+    uint64_t len = LengthOptString(str);
+    FB_ASSERT_EQ(len, sizeof(uint64_t));
+}
+
+// ============================================================================
+// Test Suite: xattr_val_type (Xattr Value Type Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_val_type) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_val_type) {
+    // Teardown code here
+}
+
+FB_TEST(xattr_val_type, holds_blob_type) {
+    xattr_val_type val = blob_type::log;
+    FB_ASSERT_TRUE(std::holds_alternative<blob_type>(val));
+    FB_ASSERT_EQ(std::get<blob_type>(val), blob_type::log);
+}
+
+FB_TEST(xattr_val_type, holds_uint32) {
+    xattr_val_type val = 12345u;
+    FB_ASSERT_TRUE(std::holds_alternative<uint32_t>(val));
+    FB_ASSERT_EQ(std::get<uint32_t>(val), 12345);
+}
+
+FB_TEST(xattr_val_type, holds_string) {
+    xattr_val_type val = std::string("test");
+    FB_ASSERT_TRUE(std::holds_alternative<std::string>(val));
+    FB_ASSERT_EQ(std::get<std::string>(val), "test");
+}
+
+// ============================================================================
+// Test Suite: set_xattr_ctx (Set Xattr Context Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(set_xattr_ctx) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(set_xattr_ctx) {
+    // Teardown code here
+}
+
+FB_TEST(set_xattr_ctx, default_values) {
+    set_xattr_ctx ctx;
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+FB_TEST(set_xattr_ctx, initialized_values) {
+    set_xattr_ctx ctx;
+    ctx.cb_fn = [](void*, int) {};
+    ctx.arg = reinterpret_cast<void*>(0x12345678);
+    FB_ASSERT_TRUE(ctx.cb_fn != nullptr);
+    FB_ASSERT_EQ(ctx.arg, reinterpret_cast<void*>(0x12345678));
 }
