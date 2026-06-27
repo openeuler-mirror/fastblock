@@ -77,6 +77,20 @@ if(BUILD_FASTBLOCK_TESTS)
 	    base
 	)
 
+	add_executable(test_osd
+	  unit/test_osd.cc
+	)
+
+	target_include_directories(test_osd
+	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+	target_link_libraries(test_osd
+	  PUBLIC
+	    test_framework
+	    base
+	    osd_msg
+	)
+
 	# Stress tests
 	add_executable(raft_membership
 	  framework/osd_client.cc
