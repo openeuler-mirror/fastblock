@@ -77,6 +77,20 @@ if(BUILD_FASTBLOCK_TESTS)
 	    base
 	)
 
+
+	add_executable(test_localstore
+	  unit/test_localstore.cc
+	)
+
+	target_include_directories(test_localstore
+	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+	target_link_libraries(test_localstore
+	  PUBLIC
+	    test_framework
+	    base
+	    raft_msg
+	)
 	add_executable(test_osd
 	  unit/test_osd.cc
 	)
