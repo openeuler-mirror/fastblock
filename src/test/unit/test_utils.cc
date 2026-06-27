@@ -2577,6 +2577,48 @@ FB_TEST(varint_decode_edge, decode_min_two_bytes) {
 }
 
 // ============================================================================
+// Test Suite: fixed_encoding_values (Fixed Encoding Value Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(fixed_encoding_values) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(fixed_encoding_values) {
+    // Teardown code here
+}
+
+FB_TEST(fixed_encoding_values, encode_decode_0) {
+    char buffer[4];
+    encode_fixed32(buffer, 0);
+    FB_ASSERT_EQ(decode_fixed32(buffer), 0);
+}
+
+FB_TEST(fixed_encoding_values, encode_decode_max) {
+    char buffer[4];
+    encode_fixed32(buffer, UINT32_MAX);
+    FB_ASSERT_EQ(decode_fixed32(buffer), UINT32_MAX);
+}
+
+FB_TEST(fixed_encoding_values, encode_decode_mid) {
+    char buffer[4];
+    encode_fixed32(buffer, 0x12345678);
+    FB_ASSERT_EQ(decode_fixed32(buffer), 0x12345678);
+}
+
+FB_TEST(fixed_encoding_values, encode_decode_64_0) {
+    char buffer[8];
+    encode_fixed64(buffer, 0);
+    FB_ASSERT_EQ(decode_fixed64(buffer), 0);
+}
+
+FB_TEST(fixed_encoding_values, encode_decode_64_max) {
+    char buffer[8];
+    encode_fixed64(buffer, UINT64_MAX);
+    FB_ASSERT_EQ(decode_fixed64(buffer), UINT64_MAX);
+}
+
+// ============================================================================
 // Test Suite: final_validation (Final Validation Tests)
 // ============================================================================
 
