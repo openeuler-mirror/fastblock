@@ -73,4 +73,52 @@ FB_TEST(blob_type, free_value) {
     FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::free), 8);
 }
 
+// ============================================================================
+// Test Suite: blob_type_string (Blob Type String Conversion Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(blob_type_string) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(blob_type_string) {
+    // Teardown code here
+}
+
+FB_TEST(blob_type_string, log_string) {
+    FB_ASSERT_EQ(type_string(blob_type::log), "blob_type::log");
+}
+
+FB_TEST(blob_type_string, object_string) {
+    FB_ASSERT_EQ(type_string(blob_type::object), "blob_type::object");
+}
+
+FB_TEST(blob_type_string, object_snap_string) {
+    FB_ASSERT_EQ(type_string(blob_type::object_snap), "blob_type::object_snap");
+}
+
+FB_TEST(blob_type_string, object_recover_string) {
+    FB_ASSERT_EQ(type_string(blob_type::object_recover), "blob_type::object_recover");
+}
+
+FB_TEST(blob_type_string, kv_string) {
+    FB_ASSERT_EQ(type_string(blob_type::kv), "blob_type::kv");
+}
+
+FB_TEST(blob_type_string, kv_checkpoint_string) {
+    FB_ASSERT_EQ(type_string(blob_type::kv_checkpoint), "blob_type::kv_checkpoint");
+}
+
+FB_TEST(blob_type_string, kv_checkpoint_new_string) {
+    FB_ASSERT_EQ(type_string(blob_type::kv_checkpoint_new), "blob_type::kv_checkpoint_new");
+}
+
+FB_TEST(blob_type_string, super_blob_string) {
+    FB_ASSERT_EQ(type_string(blob_type::super_blob), "blob_type::super_blob");
+}
+
+FB_TEST(blob_type_string, free_string) {
+    FB_ASSERT_EQ(type_string(blob_type::free), "blob_type::free");
+}
+
 FB_TEST_MAIN()
