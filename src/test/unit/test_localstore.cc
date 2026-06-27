@@ -20,6 +20,7 @@
 #include "localstore/types.h"
 #include "localstore/log_entry.h"
 #include "localstore/spdk_buffer.h"
+#include "raft/raft.h"
 
 #include <string>
 #include <cstring>
@@ -217,6 +218,369 @@ FB_TEST(spdk_buffer, append_overflow) {
     FB_ASSERT_EQ(written, 10);  // Only 10 bytes written
     FB_ASSERT_EQ(sbuf.used(), 10);
     FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
+// ============================================================================
+// Test Suite: spdk_buffer_advanced (Advanced SPDK Buffer Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_advanced) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_advanced) {
+    // Teardown code here
+}
+
+FB_TEST(spdk_buffer_advanced, inc_basic) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    size_t inc = sbuf.inc(10);
+    FB_ASSERT_EQ(inc, 10);
+    FB_ASSERT_EQ(sbuf.used(), 10);
+}
+
+FB_TEST(spdk_buffer_advanced, inc_overflow) {
+    char buffer[10];
+    spdk_buffer sbuf(buffer, 10);
+
+    size_t inc = sbuf.inc(100);
+    FB_ASSERT_EQ(inc, 10);
+    FB_ASSERT_EQ(sbuf.used(), 10);
+}
+
+FB_TEST(spdk_buffer_advanced, reset) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.append("test", 4);
+    FB_ASSERT_EQ(sbuf.used(), 4);
+
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.used(), 0);
+    FB_ASSERT_EQ(sbuf.remain(), 100);
+}
+
+FB_TEST(spdk_buffer_advanced, set_used) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.set_used(50);
+    FB_ASSERT_EQ(sbuf.used(), 50);
+    FB_ASSERT_EQ(sbuf.remain(), 50);
+}
+
+FB_TEST(spdk_buffer_advanced, set_used_overflow) {
+    char buffer[10];
+    spdk_buffer sbuf(buffer, 10);
+
+    sbuf.set_used(100);
+    FB_ASSERT_EQ(sbuf.used(), 10);  // Capped at size
+}
+
+FB_TEST(spdk_buffer_advanced, get_append) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    char* append_ptr = sbuf.get_append();
+    FB_ASSERT_EQ(append_ptr, buffer);
+
+    sbuf.inc(10);
+    append_ptr = sbuf.get_append();
+    FB_ASSERT_EQ(append_ptr, buffer + 10);
+}
+
+// ============================================================================
+// Test Suite: log_entry (Log Entry Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_entry) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_entry) {
+    // Teardown code here
+}
+
+FB_TEST(log_entry, default_values) {
+    log_entry_t entry;
+    FB_ASSERT_EQ(entry.term_id, std::numeric_limits<uint64_t>::max());
+    FB_ASSERT_EQ(entry.index, std::numeric_limits<uint64_t>::max());
+    FB_ASSERT_EQ(entry.size, std::numeric_limits<uint64_t>::max());
+    FB_ASSERT_EQ(entry.type, std::numeric_limits<uint64_t>::max());
+}
+
+FB_TEST(log_entry, initialization) {
+    log_entry_t entry;
+    entry.term_id = 1;
+    entry.index = 100;
+    entry.size = 256;
+    entry.type = 1;  // log type
+    entry.meta = "test_meta";
+
+    FB_ASSERT_EQ(entry.term_id, 1);
+    FB_ASSERT_EQ(entry.index, 100);
+    FB_ASSERT_EQ(entry.size, 256);
+    FB_ASSERT_EQ(entry.type, 1);
+    FB_ASSERT_EQ(entry.meta, "test_meta");
+}
+
+FB_TEST(log_entry, header_size) {
+    FB_ASSERT_EQ(entry_header_size, sizeof(uint64_t) * 3);
+}
+
+FB_TEST(log_entry, multiple_entries) {
+    log_entry_t entries[10];
+    for (int i = 0; i < 10; i++) {
+        entries[i].term_id = i;
+        entries[i].index = i * 10;
+        entries[i].size = i * 100;
+    }
+
+    for (int i = 0; i < 10; i++) {
+        FB_ASSERT_EQ(entries[i].term_id, static_cast<uint64_t>(i));
+        FB_ASSERT_EQ(entries[i].index, static_cast<uint64_t>(i * 10));
+        FB_ASSERT_EQ(entries[i].size, static_cast<uint64_t>(i * 100));
+    }
+}
+
+FB_TEST(log_entry, meta_string_operations) {
+    log_entry_t entry;
+    entry.meta = "hello";
+    FB_ASSERT_EQ(entry.meta.size(), 5);
+
+    entry.meta = "";
+    FB_ASSERT_EQ(entry.meta.size(), 0);
+
+    entry.meta = "a very long metadata string for testing";
+    FB_ASSERT_TRUE(entry.meta.size() > 30);
+}
+
+FB_TEST(log_entry, term_progression) {
+    log_entry_t entry;
+    for (uint64_t term = 1; term <= 100; term++) {
+        entry.term_id = term;
+        FB_ASSERT_EQ(entry.term_id, term);
+    }
+}
+
+FB_TEST(log_entry, index_progression) {
+    log_entry_t entry;
+    for (uint64_t idx = 0; idx < 1000; idx++) {
+        entry.index = idx;
+        FB_ASSERT_EQ(entry.index, idx);
+    }
+}
+
+// ============================================================================
+// Test Suite: log_entry_types (Log Entry Type Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_entry_types) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_entry_types) {
+    // Teardown code here
+}
+
+FB_TEST(log_entry_types, write_type) {
+    log_entry_t entry;
+    entry.type = static_cast<uint64_t>(RAFT_LOGTYPE_WRITE);
+    FB_ASSERT_EQ(entry.type, 0);
+}
+
+FB_TEST(log_entry_types, delete_type) {
+    log_entry_t entry;
+    entry.type = static_cast<uint64_t>(RAFT_LOGTYPE_DELETE);
+    FB_ASSERT_EQ(entry.type, 1);
+}
+
+FB_TEST(log_entry_types, add_nonvoting_type) {
+    log_entry_t entry;
+    entry.type = static_cast<uint64_t>(RAFT_LOGTYPE_ADD_NONVOTING_NODE);
+    FB_ASSERT_EQ(entry.type, 2);
+}
+
+FB_TEST(log_entry_types, configuration_type) {
+    log_entry_t entry;
+    entry.type = static_cast<uint64_t>(RAFT_LOGTYPE_CONFIGURATION);
+    FB_ASSERT_EQ(entry.type, 3);
+}
+
+FB_TEST(log_entry_types, type_comparison) {
+    log_entry_t entry1, entry2;
+    entry1.type = static_cast<uint64_t>(RAFT_LOGTYPE_WRITE);
+    entry2.type = static_cast<uint64_t>(RAFT_LOGTYPE_CONFIGURATION);
+    FB_ASSERT_TRUE(entry1.type < entry2.type);
+}
+
+// ============================================================================
+// Test Suite: buffer_list (Buffer List Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_list, empty_list) {
+    buffer_list bl;
+    FB_ASSERT_EQ(bl.bytes(), 0);
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list, single_buffer) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    FB_ASSERT_EQ(bl.bytes(), 100);
+    FB_ASSERT_FALSE(bl.empty());
+}
+
+FB_TEST(buffer_list, multiple_buffers) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    FB_ASSERT_EQ(bl.bytes(), 600);
+}
+
+FB_TEST(buffer_list, prepend_buffer) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.prepend_buffer(sbuf2);
+
+    FB_ASSERT_EQ(bl.bytes(), 300);
+}
+
+FB_TEST(buffer_list, clear_list) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    FB_ASSERT_EQ(bl.bytes(), 100);
+
+    bl.clear();
+    FB_ASSERT_EQ(bl.bytes(), 0);
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+// ============================================================================
+// Test Suite: buffer_list_advanced (Advanced Buffer List Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_advanced) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_advanced) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_list_advanced, append_buffer_list) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl1, bl2;
+    bl1.append_buffer(sbuf1);
+    bl2.append_buffer(sbuf2);
+
+    bl1.append_buffer(bl2);
+    FB_ASSERT_EQ(bl1.bytes(), 300);
+}
+
+FB_TEST(buffer_list_advanced, move_append) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl1;
+    bl1.append_buffer(sbuf);
+
+    buffer_list bl2;
+    bl2.append_buffer(std::move(bl1));
+    FB_ASSERT_EQ(bl2.bytes(), 100);
+}
+
+FB_TEST(buffer_list_advanced, trim_front_single) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    bl.trim_front();
+    FB_ASSERT_EQ(bl.bytes(), 0);
+}
+
+FB_TEST(buffer_list_advanced, trim_front_multiple) {
+    char buffer1[100], buffer2[100], buffer3[100];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 100);
+    spdk_buffer sbuf3(buffer3, 100);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    bl.trim_front();
+    FB_ASSERT_EQ(bl.bytes(), 200);
+}
+
+FB_TEST(buffer_list_advanced, trim_back) {
+    char buffer1[100], buffer2[100];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 100);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    bl.trim_back();
+    FB_ASSERT_EQ(bl.bytes(), 100);
+}
+
+FB_TEST(buffer_list_advanced, iteration) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    int count = 0;
+    for (auto& buf : bl) {
+        (void)buf;  // Suppress unused warning
+        count++;
+    }
+    FB_ASSERT_EQ(count, 1);
+}
+
+FB_TEST(buffer_list_advanced, const_iteration) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    const buffer_list& cbl = bl;
+    int count = 0;
+    for (const auto& buf : cbl) {
+        (void)buf;
+        count++;
+    }
+    FB_ASSERT_EQ(count, 1);
 }
 
 FB_TEST_MAIN()
