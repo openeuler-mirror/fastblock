@@ -30,7 +30,7 @@ using iovecs = std::vector<::iovec>;
 class spdk_buffer {
 public:
     spdk_buffer(char* buf, size_t sz) : _buf(buf), _size(sz), _used(0) {}
-    spdk_buffer() noexcept = default;
+    spdk_buffer() noexcept : _buf(nullptr), _size(0), _used(0) {}
 
     size_t append(const char* in, size_t len) {
       size_t sz = std::min(len, remain());
@@ -98,6 +98,12 @@ public:
   void trim_front() noexcept {
     size_t len = front().size();
     pop_front();
+    total -= len;
+  }
+
+  void trim_back() noexcept {
+    size_t len = back().size();
+    pop_back();
     total -= len;
   }
 
@@ -175,6 +181,8 @@ public:
   using base::const_iterator;
   using base::begin;
   using base::end;
+  using base::empty;
+  using base::clear;
 
 private:
   size_t total{0};
