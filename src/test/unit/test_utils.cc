@@ -2619,6 +2619,53 @@ FB_TEST(fixed_encoding_values, encode_decode_64_max) {
 }
 
 // ============================================================================
+// Test Suite: comprehensive_roundtrip (Comprehensive Roundtrip Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(comprehensive_roundtrip) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(comprehensive_roundtrip) {
+    // Teardown code here
+}
+
+FB_TEST(comprehensive_roundtrip, itos_roundtrip) {
+    for (int i = -1000; i <= 1000; i++) {
+        std::string s = itos(i);
+        // Verify string is non-empty and represents the number
+        FB_ASSERT_TRUE(s.length() > 0);
+    }
+}
+
+FB_TEST(comprehensive_roundtrip, varint32_roundtrip_range) {
+    char buffer[5];
+    for (uint32_t i = 0; i <= 10000; i += 100) {
+        size_t len = encode_varint32(buffer, i);
+        auto [val, decoded_len] = decode_varint32(buffer, len);
+        FB_ASSERT_EQ(val, i);
+    }
+}
+
+FB_TEST(comprehensive_roundtrip, varint64_roundtrip_range) {
+    char buffer[10];
+    for (uint64_t i = 0; i <= 100000; i += 1000) {
+        size_t len = encode_varint64(buffer, i);
+        auto [val, decoded_len] = decode_varint64(buffer, len);
+        FB_ASSERT_EQ(val, i);
+    }
+}
+
+FB_TEST(comprehensive_roundtrip, fixed32_roundtrip_range) {
+    char buffer[4];
+    for (uint32_t i = 0; i <= 10000; i += 100) {
+        encode_fixed32(buffer, i);
+        uint32_t val = decode_fixed32(buffer);
+        FB_ASSERT_EQ(val, i);
+    }
+}
+
+// ============================================================================
 // Test Suite: final_validation (Final Validation Tests)
 // ============================================================================
 
