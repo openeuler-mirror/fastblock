@@ -787,4 +787,175 @@ FB_TEST(serialization, length_calculation) {
     FB_ASSERT_EQ(empty_len, sizeof(uint64_t));
 }
 
+// ============================================================================
+// Test Suite: encoding_edge_cases (Encoding Edge Cases Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(encoding_edge_cases) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(encoding_edge_cases) {
+    // Teardown code here
+}
+
+FB_TEST(encoding_edge_cases, buffer_insufficient) {
+    char buffer[1];  // Too small
+    spdk_buffer sbuf(buffer, 1);
+
+    uint32_t val = 0x12345678;
+    FB_ASSERT_FALSE(PutFixed32(sbuf, val));
+}
+
+FB_TEST(encoding_edge_cases, buffer_insufficient_64) {
+    char buffer[4];  // Too small for 64-bit
+    spdk_buffer sbuf(buffer, 4);
+
+    uint64_t val = 0x123456789ABCDEF0ULL;
+    FB_ASSERT_FALSE(PutFixed64(sbuf, val));
+}
+
+FB_TEST(encoding_edge_cases, buffer_insufficient_string) {
+    char buffer[5];  // Too small
+    spdk_buffer sbuf(buffer, 5);
+
+    std::string str = "hello world";  // 11 chars
+    FB_ASSERT_FALSE(PutString(sbuf, str));
+}
+
+FB_TEST(encoding_edge_cases, multiple_values) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 1));
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 2));
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 3));
+    FB_ASSERT_EQ(sbuf.used(), 12);
+}
+
+FB_TEST(encoding_edge_cases, mixed_types) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 100));
+    FB_ASSERT_TRUE(PutFixed64(sbuf, 1000));
+    FB_ASSERT_TRUE(PutString(sbuf, "test"));
+
+    FB_ASSERT_TRUE(sbuf.used() > 0);
+}
+
+FB_TEST(encoding_edge_cases, reset_and_reuse) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 123));
+    sbuf.reset();
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 456));
+    sbuf.reset();
+
+    FB_ASSERT_TRUE(PutFixed64(sbuf, 789));
+    FB_ASSERT_EQ(sbuf.used(), 8);
+}
+
+// ============================================================================
+// Test Suite: log_entry_serialization (Log Entry Serialization Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_entry_serialization) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_entry_serialization) {
+    // Teardown code here
+}
+
+FB_TEST(log_entry_serialization, encode_basic) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    log_entry_t entry;
+    entry.term_id = 1;
+    entry.index = 10;
+    entry.size = 256;
+    entry.type = 0;
+    entry.meta = "test";
+
+    FB_ASSERT_TRUE(EncodeLogHeader(sbuf, entry));
+}
+
+FB_TEST(log_entry_serialization, encode_decode_roundtrip) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    log_entry_t original;
+    original.term_id = 5;
+    original.index = 100;
+    original.size = 512;
+    original.type = 1;
+    original.meta = "metadata";
+
+    FB_ASSERT_TRUE(EncodeLogHeader(sbuf, original));
+    sbuf.reset();
+
+    log_entry_t decoded;
+    FB_ASSERT_TRUE(DecodeLogHeader(sbuf, decoded));
+    FB_ASSERT_EQ(decoded.term_id, original.term_id);
+    FB_ASSERT_EQ(decoded.index, original.index);
+    FB_ASSERT_EQ(decoded.size, original.size);
+    FB_ASSERT_EQ(decoded.type, original.type);
+    FB_ASSERT_EQ(decoded.meta, original.meta);
+}
+
+FB_TEST(log_entry_serialization, encode_multiple) {
+    char buffer[500];
+    spdk_buffer sbuf(buffer, 500);
+
+    for (int i = 0; i < 5; i++) {
+        log_entry_t entry;
+        entry.term_id = i;
+        entry.index = i * 10;
+        entry.size = i * 100;
+        entry.type = 0;
+        entry.meta = "entry_" + std::to_string(i);
+
+        FB_ASSERT_TRUE(EncodeLogHeader(sbuf, entry));
+    }
+
+    FB_ASSERT_TRUE(sbuf.used() > 0);
+}
+
+FB_TEST(log_entry_serialization, empty_meta) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    log_entry_t entry;
+    entry.term_id = 1;
+    entry.index = 1;
+    entry.size = 0;
+    entry.type = 0;
+    entry.meta = "";
+
+    FB_ASSERT_TRUE(EncodeLogHeader(sbuf, entry));
+    sbuf.reset();
+
+    log_entry_t decoded;
+    FB_ASSERT_TRUE(DecodeLogHeader(sbuf, decoded));
+    FB_ASSERT_EQ(decoded.meta, "");
+}
+
+FB_TEST(log_entry_serialization, long_meta) {
+    char buffer[1000];
+    spdk_buffer sbuf(buffer, 1000);
+
+    log_entry_t entry;
+    entry.term_id = 1;
+    entry.index = 1;
+    entry.size = 0;
+    entry.type = 0;
+    entry.meta = "this is a very long metadata string for testing purposes";
+
+    FB_ASSERT_TRUE(EncodeLogHeader(sbuf, entry));
+}
+
 FB_TEST_MAIN()
