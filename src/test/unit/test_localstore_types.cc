@@ -3709,3 +3709,369 @@ FB_TEST(functional_types, callback_with_capture) {
     std::function<int()> get_value = [value]() { return value; };
     FB_ASSERT_EQ(get_value(), 10);
 }
+
+// ============================================================================
+// Test Suite: tuple_operations (Tuple Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(tuple_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(tuple_operations) {
+    // Teardown code here
+}
+
+FB_TEST(tuple_operations, create_tuple) {
+    std::tuple<uint64_t, uint64_t, uint64_t, uint64_t> t(1, 2, 3, 4);
+    FB_ASSERT_EQ(std::get<0>(t), 1);
+    FB_ASSERT_EQ(std::get<1>(t), 2);
+    FB_ASSERT_EQ(std::get<2>(t), 3);
+    FB_ASSERT_EQ(std::get<3>(t), 4);
+}
+
+FB_TEST(tuple_operations, tuple_size) {
+    std::tuple<uint64_t, uint64_t, uint64_t, uint64_t> t;
+    FB_ASSERT_EQ(std::tuple_size<decltype(t)>::value, 4);
+}
+
+FB_TEST(tuple_operations, tuple_element_type) {
+    std::tuple<uint64_t, std::string, int> t;
+    FB_ASSERT_TRUE((std::is_same_v<std::tuple_element_t<0, decltype(t)>, uint64_t>));
+    FB_ASSERT_TRUE((std::is_same_v<std::tuple_element_t<1, decltype(t)>, std::string>));
+}
+
+FB_TEST(tuple_operations, make_tuple) {
+    auto t = std::make_tuple(100, 200, 300);
+    FB_ASSERT_EQ(std::get<0>(t), 100);
+    FB_ASSERT_EQ(std::get<1>(t), 200);
+    FB_ASSERT_EQ(std::get<2>(t), 300);
+}
+
+FB_TEST(tuple_operations, tuple_in_vector) {
+    std::vector<std::tuple<uint64_t, uint64_t>> vec;
+    vec.emplace_back(1, 10);
+    vec.emplace_back(2, 20);
+    vec.emplace_back(3, 30);
+
+    FB_ASSERT_EQ(vec.size(), 3);
+    FB_ASSERT_EQ(std::get<1>(vec[1]), 20);
+}
+
+// ============================================================================
+// Test Suite: vector_operations (Vector Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(vector_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(vector_operations) {
+    // Teardown code here
+}
+
+FB_TEST(vector_operations, empty_vector) {
+    std::vector<uint64_t> vec;
+    FB_ASSERT_TRUE(vec.empty());
+    FB_ASSERT_EQ(vec.size(), 0);
+}
+
+FB_TEST(vector_operations, push_back) {
+    std::vector<uint64_t> vec;
+    vec.push_back(1);
+    vec.push_back(2);
+    vec.push_back(3);
+    FB_ASSERT_EQ(vec.size(), 3);
+    FB_ASSERT_EQ(vec[0], 1);
+}
+
+FB_TEST(vector_operations, emplace_back) {
+    std::vector<std::string> vec;
+    vec.emplace_back("a");
+    vec.emplace_back("b");
+    vec.emplace_back("c");
+    FB_ASSERT_EQ(vec.size(), 3);
+}
+
+FB_TEST(vector_operations, clear_vector) {
+    std::vector<int> vec{1, 2, 3, 4, 5};
+    FB_ASSERT_EQ(vec.size(), 5);
+    vec.clear();
+    FB_ASSERT_TRUE(vec.empty());
+}
+
+FB_TEST(vector_operations, reserve_capacity) {
+    std::vector<int> vec;
+    vec.reserve(100);
+    FB_ASSERT_TRUE(vec.capacity() >= 100);
+    FB_ASSERT_TRUE(vec.empty());
+}
+
+FB_TEST(vector_operations, iteration) {
+    std::vector<int> vec{10, 20, 30};
+    int sum = 0;
+    for (const auto& v : vec) {
+        sum += v;
+    }
+    FB_ASSERT_EQ(sum, 60);
+}
+
+FB_TEST(vector_operations, erase_element) {
+    std::vector<int> vec{1, 2, 3, 4, 5};
+    vec.erase(vec.begin() + 1);
+    FB_ASSERT_EQ(vec.size(), 4);
+    FB_ASSERT_EQ(vec[1], 3);
+}
+
+// ============================================================================
+// Test Suite: string_operations (String Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(string_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(string_operations) {
+    // Teardown code here
+}
+
+FB_TEST(string_operations, empty_string) {
+    std::string str;
+    FB_ASSERT_TRUE(str.empty());
+    FB_ASSERT_EQ(str.size(), 0);
+}
+
+FB_TEST(string_operations, string_length) {
+    std::string str = "hello";
+    FB_ASSERT_EQ(str.size(), 5);
+    FB_ASSERT_EQ(str.length(), 5);
+}
+
+FB_TEST(string_operations, string_concat) {
+    std::string str1 = "hello";
+    std::string str2 = " world";
+    std::string result = str1 + str2;
+    FB_ASSERT_EQ(result, "hello world");
+}
+
+FB_TEST(string_operations, string_append) {
+    std::string str = "hello";
+    str.append(" world");
+    FB_ASSERT_EQ(str, "hello world");
+}
+
+FB_TEST(string_operations, string_find) {
+    std::string str = "hello world";
+    size_t pos = str.find("world");
+    FB_ASSERT_EQ(pos, 6);
+}
+
+FB_TEST(string_operations, string_substr) {
+    std::string str = "hello world";
+    std::string sub = str.substr(0, 5);
+    FB_ASSERT_EQ(sub, "hello");
+}
+
+FB_TEST(string_operations, string_compare) {
+    std::string str1 = "abc";
+    std::string str2 = "abc";
+    std::string str3 = "def";
+
+    FB_ASSERT_TRUE(str1 == str2);
+    FB_ASSERT_TRUE(str1 != str3);
+    FB_ASSERT_TRUE(str1 < str3);
+}
+
+// ============================================================================
+// Test Suite: map_operations (Map Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(map_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(map_operations) {
+    // Teardown code here
+}
+
+FB_TEST(map_operations, empty_map) {
+    std::map<std::string, int> m;
+    FB_ASSERT_TRUE(m.empty());
+    FB_ASSERT_EQ(m.size(), 0);
+}
+
+FB_TEST(map_operations, insert_element) {
+    std::map<std::string, int> m;
+    m["key1"] = 100;
+    m["key2"] = 200;
+    FB_ASSERT_EQ(m.size(), 2);
+    FB_ASSERT_EQ(m["key1"], 100);
+}
+
+FB_TEST(map_operations, find_element) {
+    std::map<std::string, int> m;
+    m["key"] = 50;
+
+    auto it = m.find("key");
+    FB_ASSERT_TRUE(it != m.end());
+    FB_ASSERT_EQ(it->second, 50);
+}
+
+FB_TEST(map_operations, element_not_found) {
+    std::map<std::string, int> m;
+    auto it = m.find("nonexistent");
+    FB_ASSERT_TRUE(it == m.end());
+}
+
+FB_TEST(map_operations, erase_element) {
+    std::map<std::string, int> m;
+    m["key"] = 100;
+    m.erase("key");
+    FB_ASSERT_TRUE(m.empty());
+}
+
+FB_TEST(map_operations, iterate_map) {
+    std::map<std::string, int> m;
+    m["a"] = 1;
+    m["b"] = 2;
+    m["c"] = 3;
+
+    int count = 0;
+    for (const auto& pair : m) {
+        count++;
+    }
+    FB_ASSERT_EQ(count, 3);
+}
+
+// ============================================================================
+// Test Suite: pointer_operations (Pointer Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(pointer_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(pointer_operations) {
+    // Teardown code here
+}
+
+FB_TEST(pointer_operations, nullptr_check) {
+    void* ptr = nullptr;
+    FB_ASSERT_TRUE(ptr == nullptr);
+    FB_ASSERT_FALSE(ptr != nullptr);
+}
+
+FB_TEST(pointer_operations, valid_pointer) {
+    int value = 42;
+    void* ptr = &value;
+    FB_ASSERT_TRUE(ptr != nullptr);
+}
+
+FB_TEST(pointer_operations, reinterpret_cast) {
+    uint64_t value = 0x12345678;
+    void* ptr = reinterpret_cast<void*>(value);
+    FB_ASSERT_EQ(ptr, reinterpret_cast<void*>(0x12345678));
+}
+
+FB_TEST(pointer_operations, pointer_arithmetic) {
+    char buffer[100];
+    char* ptr = buffer;
+    ptr += 50;
+    FB_ASSERT_EQ(ptr, buffer + 50);
+}
+
+FB_TEST(pointer_operations, pointer_difference) {
+    char buffer[100];
+    char* ptr1 = buffer;
+    char* ptr2 = buffer + 50;
+    ptrdiff_t diff = ptr2 - ptr1;
+    FB_ASSERT_EQ(diff, 50);
+}
+
+// ============================================================================
+// Test Suite: size_calculations (Size Calculations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(size_calculations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(size_calculations) {
+    // Teardown code here
+}
+
+FB_TEST(size_calculations, struct_size) {
+    FB_ASSERT_TRUE(sizeof(fb_blob) >= sizeof(void*) + sizeof(uint64_t));
+}
+
+FB_TEST(size_calculations, enum_size) {
+    FB_ASSERT_EQ(sizeof(blob_type), sizeof(uint32_t));
+}
+
+FB_TEST(size_calculations, pointer_size) {
+    FB_ASSERT_TRUE(sizeof(void*) == 4 || sizeof(void*) == 8);
+}
+
+FB_TEST(size_calculations, buffer_list_size) {
+    buffer_list bl;
+    FB_ASSERT_TRUE(sizeof(bl) > 0);
+}
+
+FB_TEST(size_calculations, spdk_buffer_size) {
+    FB_ASSERT_TRUE(sizeof(spdk_buffer) >= sizeof(char*) + 2 * sizeof(size_t));
+}
+
+FB_TEST(size_calculations, log_entry_size) {
+    log_entry_t entry;
+    FB_ASSERT_TRUE(sizeof(entry) > sizeof(uint64_t) * 4);
+}
+
+// ============================================================================
+// Test Suite: iterator_operations (Iterator Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(iterator_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(iterator_operations) {
+    // Teardown code here
+}
+
+FB_TEST(iterator_operations, vector_begin_end) {
+    std::vector<int> vec{1, 2, 3};
+    FB_ASSERT_TRUE(vec.begin() != vec.end());
+}
+
+FB_TEST(iterator_operations, vector_distance) {
+    std::vector<int> vec{1, 2, 3, 4, 5};
+    auto dist = std::distance(vec.begin(), vec.end());
+    FB_ASSERT_EQ(dist, 5);
+}
+
+FB_TEST(iterator_operations, advance_iterator) {
+    std::vector<int> vec{1, 2, 3, 4, 5};
+    auto it = vec.begin();
+    std::advance(it, 2);
+    FB_ASSERT_EQ(*it, 3);
+}
+
+FB_TEST(iterator_operations, buffer_list_iterator) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    int count = 0;
+    for (auto it = bl.begin(); it != bl.end(); ++it) {
+        count++;
+    }
+    FB_ASSERT_EQ(count, 1);
+}
+
+FB_TEST(iterator_operations, const_iterator) {
+    std::vector<int> vec{1, 2, 3};
+    std::vector<int>::const_iterator it = vec.begin();
+    int val = *it;
+    FB_ASSERT_EQ(val, 1);
+}
