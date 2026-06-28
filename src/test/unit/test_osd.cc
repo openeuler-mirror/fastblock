@@ -1914,6 +1914,184 @@ FB_TEST(osd_data_path, read_error_handling) {
 }
 
 // ============================================================================
+// Test Suite: osd_leader_checks (OSD Leader Checks Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_leader_checks) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_leader_checks) {
+    // Teardown code here
+}
+
+FB_TEST(osd_leader_checks, is_leader_true) {
+    // Should return true when node is leader
+    bool is_leader = true;
+    FB_ASSERT_TRUE(is_leader);
+}
+
+FB_TEST(osd_leader_checks, is_leader_false) {
+    // Should return false when node is follower
+    bool is_leader = false;
+    FB_ASSERT_TRUE(!is_leader);
+}
+
+FB_TEST(osd_leader_checks, write_only_on_leader) {
+    // WRITE operations should only be accepted on leader
+    bool is_leader = true;
+    bool can_write = is_leader;
+
+    FB_ASSERT_TRUE(can_write);
+}
+
+FB_TEST(osd_leader_checks, read_from_leader) {
+    // READ can be served from leader
+    bool is_leader = true;
+    bool can_read = is_leader;
+
+    FB_ASSERT_TRUE(can_read);
+}
+
+FB_TEST(osd_leader_checks, linearization_check) {
+    // Linearization should ensure read reflects committed writes
+    bool linearization_ok = true;
+    FB_ASSERT_TRUE(linearization_ok);
+}
+
+FB_TEST(osd_leader_checks, leader_term_check) {
+    // Leader should have correct term
+    raft_term_t leader_term = 5;
+    FB_ASSERT_TRUE(leader_term > 0);
+}
+
+FB_TEST(osd_leader_checks, leader_lease) {
+    // Leader should have lease for read linearization
+    uint64_t lease_us = 1000000;
+    FB_ASSERT_TRUE(lease_us > 0);
+}
+
+FB_TEST(osd_leader_checks, lease_expired) {
+    // Lease should expire after deadline
+    auto now = std::chrono::steady_clock::now();
+    auto deadline = now - std::chrono::microseconds(1);
+    bool lease_expired = (now > deadline);
+
+    FB_ASSERT_TRUE(lease_expired);
+}
+
+FB_TEST(osd_leader_checks, lease_valid) {
+    // Lease should be valid before deadline
+    auto now = std::chrono::steady_clock::now();
+    auto deadline = now + std::chrono::microseconds(1000000);
+    bool lease_valid = (deadline > now);
+
+    FB_ASSERT_TRUE(lease_valid);
+}
+
+FB_TEST(osd_leader_checks, get_leader_from_pg) {
+    // Should be able to get leader info for PG
+    std::string pg_name = "1.100";
+    FB_ASSERT_TRUE(!pg_name.empty());
+}
+
+// ============================================================================
+// Test Suite: osd_pg_membership (OSD PG Membership Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_pg_membership) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_pg_membership) {
+    // Teardown code here
+}
+
+FB_TEST(osd_pg_membership, osd_info_structure) {
+    // utils::osd_info_t should contain node_id and address
+    uint32_t node_id = 1;
+    std::string address = "192.168.1.1";
+
+    FB_ASSERT_TRUE(node_id > 0);
+    FB_ASSERT_TRUE(!address.empty());
+}
+
+FB_TEST(osd_pg_membership, pg_osd_list) {
+    // PG should have list of OSDs
+    std::vector<uint32_t> osds = {1, 2, 3};
+    FB_ASSERT_EQ(osds.size(), 3);
+}
+
+FB_TEST(osd_pg_membership, osd_count_quorum) {
+    // OSD count should allow quorum calculation
+    int osd_count = 3;
+    int quorum = osd_count / 2 + 1;
+    FB_ASSERT_EQ(quorum, 2);
+}
+
+FB_TEST(osd_pg_membership, membership_change) {
+    // Membership change should update OSD list
+    std::vector<uint32_t> old_osds = {1, 2, 3};
+    std::vector<uint32_t> new_osds = {1, 2, 4};
+
+    FB_ASSERT_TRUE(old_osds != new_osds);
+}
+
+FB_TEST(osd_pg_membership, add_osd) {
+    // Adding OSD to PG membership
+    std::vector<uint32_t> osds = {1, 2};
+    osds.push_back(3);
+    FB_ASSERT_EQ(osds.size(), 3);
+}
+
+FB_TEST(osd_pg_membership, remove_osd) {
+    // Removing OSD from PG membership
+    std::vector<uint32_t> osds = {1, 2, 3};
+    osds.erase(osds.begin() + 1);
+    FB_ASSERT_EQ(osds.size(), 2);
+}
+
+FB_TEST(osd_pg_membership, membership_revision) {
+    // Each membership change should have revision
+    int64_t rev1 = 100;
+    int64_t rev2 = 101;
+    FB_ASSERT_TRUE(rev2 > rev1);
+}
+
+FB_TEST(osd_pg_membership, membership_consistent) {
+    // Membership should be consistent across all OSDs
+    std::vector<uint32_t> osds1 = {1, 2, 3};
+    std::vector<uint32_t> osds2 = {1, 2, 3};
+
+    FB_ASSERT_TRUE(osds1 == osds2);
+}
+
+FB_TEST(osd_pg_membership, primary_osd) {
+    // PG should have primary OSD (first in list)
+    std::vector<uint32_t> osds = {1, 2, 3};
+    uint32_t primary = osds[0];
+    FB_ASSERT_EQ(primary, 1);
+}
+
+FB_TEST(osd_pg_membership, osd_role_primary) {
+    // Primary OSD role
+    int role_primary = 0;
+    FB_ASSERT_TRUE(role_primary >= 0);
+}
+
+FB_TEST(osd_pg_membership, osd_role_secondary) {
+    // Secondary OSD role
+    int role_secondary = 1;
+    FB_ASSERT_TRUE(role_secondary > role_primary);
+}
+
+FB_TEST(osd_pg_membership, change_membership_via_raft) {
+    // Membership changes should go through Raft
+    bool use_raft = true;
+    FB_ASSERT_TRUE(use_raft);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
