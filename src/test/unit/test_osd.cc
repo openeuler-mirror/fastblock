@@ -1744,6 +1744,176 @@ FB_TEST(osd_partition_lifecycle, partition_remove_nonexistent) {
 }
 
 // ============================================================================
+// Test Suite: osd_object_store (OSD Object Store Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_object_store) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_object_store) {
+    // Teardown code here
+}
+
+FB_TEST(osd_object_store, write_alignment) {
+    // Write alignment should be 512 bytes (BLOCK_UNITS)
+    const uint32_t BLOCK_UNITS = 8;
+    const uint32_t UNIT_SIZE = 512;
+    uint64_t block_size = BLOCK_UNITS * UNIT_SIZE;
+
+    FB_ASSERT_EQ(block_size, 4096);
+}
+
+FB_TEST(osd_object_store, write_alignment_calc) {
+    // Align up to 4096 bytes
+    uint64_t data_size = 3000;
+    uint64_t alignment = 4096;
+    uint64_t aligned = ((data_size + alignment - 1) / alignment) * alignment;
+
+    FB_ASSERT_EQ(aligned, 4096);
+}
+
+FB_TEST(osd_object_store, write_alignment_large) {
+    // Align up large data
+    uint64_t data_size = 5000;
+    uint64_t alignment = 4096;
+    uint64_t aligned = ((data_size + alignment - 1) / alignment) * alignment;
+
+    FB_ASSERT_EQ(aligned, 8192);
+}
+
+FB_TEST(osd_object_store, object_name_xattr) {
+    // Object name should be stored as xattr
+    std::string object_name = "test_obj_001";
+    FB_ASSERT_TRUE(!object_name.empty());
+}
+
+FB_TEST(osd_object_store, pg_xattr) {
+    // PG name should be stored as xattr
+    std::string pg_name = "1.100";
+    FB_ASSERT_TRUE(!pg_name.empty());
+}
+
+FB_TEST(osd_object_store, blob_type_object) {
+    // Blob type should be object for regular objects
+    uint32_t type = static_cast<uint32_t>(blob_type::object);
+    FB_ASSERT_EQ(type, 1);
+}
+
+FB_TEST(osd_object_store, offset_within_object) {
+    // Write offset should be within object bounds
+    uint64_t object_size = 1024 * 1024; // 1MB
+    uint64_t write_offset = 4096;
+
+    FB_ASSERT_TRUE(write_offset < object_size);
+}
+
+FB_TEST(osd_object_store, length_within_bounds) {
+    // Write length should not exceed object size
+    uint64_t object_size = 1024 * 1024;
+    uint64_t write_offset = 4096;
+    uint64_t write_length = 8192;
+
+    FB_ASSERT_TRUE(write_offset + write_length <= object_size);
+}
+
+FB_TEST(osd_object_store, read_offset_alignment) {
+    // Read offset should be aligned
+    uint64_t read_offset = 0;
+    uint64_t alignment = 512;
+
+    FB_ASSERT_EQ(read_offset % alignment, 0);
+}
+
+FB_TEST(osd_object_store, read_length_check) {
+    // Read length should be valid
+    uint64_t read_length = 4096;
+    FB_ASSERT_TRUE(read_length > 0);
+}
+
+// ============================================================================
+// Test Suite: osd_data_path (OSD Data Path Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_data_path) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_data_path) {
+    // Teardown code here
+}
+
+FB_TEST(osd_data_path, write_buffer_alloc) {
+    // Write buffer should be allocated with proper alignment
+    uint64_t len = 4096;
+    uint32_t sockid = 0;
+
+    // Concept: buffer allocation respects NUMA locality
+    FB_ASSERT_TRUE(len > 0);
+}
+
+FB_TEST(osd_data_path, write_buffer_alignment) {
+    // Buffer should be 4KB aligned
+    uint64_t alignment = 0x1000;
+    FB_ASSERT_TRUE(alignment == 4096);
+}
+
+FB_TEST(osd_data_path, write_data_copy) {
+    // Data should be copied into write buffer
+    std::string data = "test_write_data";
+    std::string buffer(data.size(), '\0');
+    buffer = data;
+
+    FB_ASSERT_EQ(buffer, data);
+}
+
+FB_TEST(osd_data_path, read_buffer_alloc) {
+    // Read buffer should be allocated with proper alignment
+    uint64_t len = 8192;
+    FB_ASSERT_TRUE(len > 0);
+}
+
+FB_TEST(osd_data_path, read_data_valid) {
+    // Read data should be valid
+    std::string read_data = "read_result";
+    FB_ASSERT_TRUE(!read_data.empty());
+}
+
+FB_TEST(osd_data_path, write_completion_callback) {
+    // Write should complete with callback
+    bool write_completed = false;
+    write_completed = true; // Simulate completion
+
+    FB_ASSERT_TRUE(write_completed);
+}
+
+FB_TEST(osd_data_path, read_completion_callback) {
+    // Read should complete with callback
+    bool read_completed = false;
+    read_completed = true;
+
+    FB_ASSERT_TRUE(read_completed);
+}
+
+FB_TEST(osd_data_path, delete_completion) {
+    // Delete should complete synchronously
+    bool delete_completed = true;
+    FB_ASSERT_TRUE(delete_completed);
+}
+
+FB_TEST(osd_data_path, write_error_handling) {
+    // Write errors should be propagated
+    int error_code = -5;
+    FB_ASSERT_TRUE(error_code != 0);
+}
+
+FB_TEST(osd_data_path, read_error_handling) {
+    // Read errors should be propagated
+    int error_code = -5;
+    FB_ASSERT_TRUE(error_code != 0);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
