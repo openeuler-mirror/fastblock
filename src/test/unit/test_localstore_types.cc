@@ -3460,3 +3460,252 @@ FB_TEST(time_constants, slow_io_threshold) {
     uint64_t ms = slow_io_warn_us / US_PER_MS;
     FB_ASSERT_EQ(ms, 100);
 }
+
+// ============================================================================
+// Test Suite: iovec_operations (Iovec Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(iovec_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(iovec_operations) {
+    // Teardown code here
+}
+
+FB_TEST(iovec_operations, single_iovec) {
+    struct iovec iov;
+    char buffer[100];
+    iov.iov_base = buffer;
+    iov.iov_len = 100;
+
+    FB_ASSERT_EQ(iov.iov_len, 100);
+    FB_ASSERT_EQ(iov.iov_base, buffer);
+}
+
+FB_TEST(iovec_operations, iovecs_vector) {
+    iovecs iovs;
+    char buffer1[100], buffer2[200];
+
+    struct iovec iov1, iov2;
+    iov1.iov_base = buffer1;
+    iov1.iov_len = 100;
+    iov2.iov_base = buffer2;
+    iov2.iov_len = 200;
+
+    iovs.push_back(iov1);
+    iovs.push_back(iov2);
+
+    FB_ASSERT_EQ(iovs.size(), 2);
+    FB_ASSERT_EQ(iovs[0].iov_len + iovs[1].iov_len, 300);
+}
+
+FB_TEST(iovec_operations, total_length) {
+    iovecs iovs;
+    struct iovec iov1, iov2, iov3;
+    iov1.iov_len = 512;
+    iov2.iov_len = 1024;
+    iov3.iov_len = 2048;
+
+    iovs.push_back(iov1);
+    iovs.push_back(iov2);
+    iovs.push_back(iov3);
+
+    uint64_t total = 0;
+    for (const auto& iov : iovs) {
+        total += iov.iov_len;
+    }
+    FB_ASSERT_EQ(total, 3584);
+}
+
+FB_TEST(iovec_operations, clear_iovecs) {
+    iovecs iovs;
+    struct iovec iov;
+    iov.iov_len = 100;
+    iovs.push_back(iov);
+
+    FB_ASSERT_EQ(iovs.size(), 1);
+    iovs.clear();
+    FB_ASSERT_TRUE(iovs.empty());
+}
+
+// ============================================================================
+// Test Suite: buffer_list_iovec_conversion (Buffer List Iovec Conversion Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_iovec_conversion) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_iovec_conversion) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_list_iovec_conversion, empty_to_iovec) {
+    buffer_list bl;
+    iovecs iovs = bl.to_iovec();
+    FB_ASSERT_TRUE(iovs.empty());
+}
+
+FB_TEST(buffer_list_iovec_conversion, single_buffer_to_iovec) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    iovecs iovs = bl.to_iovec();
+    FB_ASSERT_EQ(iovs.size(), 1);
+    FB_ASSERT_EQ(iovs[0].iov_len, 1024);
+}
+
+FB_TEST(buffer_list_iovec_conversion, partial_to_iovec) {
+    char buffer1[512], buffer2[1024], buffer3[2048];
+    spdk_buffer sbuf1(buffer1, 512);
+    spdk_buffer sbuf2(buffer2, 1024);
+    spdk_buffer sbuf3(buffer3, 2048);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    // Request partial range starting from offset 256, length 1280
+    iovecs iovs = bl.to_iovec(256, 1280);
+    FB_ASSERT_TRUE(iovs.size() >= 1);
+}
+
+FB_TEST(buffer_list_iovec_conversion, across_boundary) {
+    char buffer1[512], buffer2[1024];
+    spdk_buffer sbuf1(buffer1, 512);
+    spdk_buffer sbuf2(buffer2, 1024);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    // Request range that spans both buffers
+    iovecs iovs = bl.to_iovec(256, 1024);
+    FB_ASSERT_TRUE(iovs.size() >= 2);
+}
+
+// ============================================================================
+// Test Suite: variant_operations (Variant Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(variant_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(variant_operations) {
+    // Teardown code here
+}
+
+FB_TEST(variant_operations, holds_alternative) {
+    xattr_val_type val1 = blob_type::log;
+    xattr_val_type val2 = 12345u;
+    xattr_val_type val3 = std::string("test");
+
+    FB_ASSERT_TRUE(std::holds_alternative<blob_type>(val1));
+    FB_ASSERT_TRUE(std::holds_alternative<uint32_t>(val2));
+    FB_ASSERT_TRUE(std::holds_alternative<std::string>(val3));
+}
+
+FB_TEST(variant_operations, get_value) {
+    xattr_val_type val = blob_type::kv;
+    blob_type t = std::get<blob_type>(val);
+    FB_ASSERT_EQ(t, blob_type::kv);
+}
+
+FB_TEST(variant_operations, variant_size) {
+    FB_ASSERT_TRUE(sizeof(xattr_val_type) >= sizeof(blob_type));
+    FB_ASSERT_TRUE(sizeof(xattr_val_type) >= sizeof(uint32_t));
+    FB_ASSERT_TRUE(sizeof(xattr_val_type) >= sizeof(std::string));
+}
+
+FB_TEST(variant_operations, variant_assignment) {
+    xattr_val_type val;
+    val = blob_type::object;
+    FB_ASSERT_TRUE(std::holds_alternative<blob_type>(val));
+
+    val = 999u;
+    FB_ASSERT_TRUE(std::holds_alternative<uint32_t>(val));
+
+    val = std::string("changed");
+    FB_ASSERT_TRUE(std::holds_alternative<std::string>(val));
+}
+
+// ============================================================================
+// Test Suite: optional_operations (Optional Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(optional_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(optional_operations) {
+    // Teardown code here
+}
+
+FB_TEST(optional_operations, empty_optional) {
+    std::optional<std::string> opt;
+    FB_ASSERT_FALSE(opt.has_value());
+}
+
+FB_TEST(optional_operations, with_value) {
+    std::optional<std::string> opt = "test";
+    FB_ASSERT_TRUE(opt.has_value());
+    FB_ASSERT_EQ(*opt, "test");
+}
+
+FB_TEST(optional_operations, reset_optional) {
+    std::optional<std::string> opt = "value";
+    opt.reset();
+    FB_ASSERT_FALSE(opt.has_value());
+}
+
+FB_TEST(optional_operations, assign_nullopt) {
+    std::optional<std::string> opt = "value";
+    opt = std::nullopt;
+    FB_ASSERT_FALSE(opt.has_value());
+}
+
+FB_TEST(optional_operations, value_or_default) {
+    std::optional<std::string> opt;
+    std::string result = opt.value_or("default");
+    FB_ASSERT_EQ(result, "default");
+}
+
+// ============================================================================
+// Test Suite: functional_types (Functional Types Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(functional_types) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(functional_types) {
+    // Teardown code here
+}
+
+FB_TEST(functional_types, callback_not_null) {
+    std::function<void(void*, int)> cb = [](void*, int) {};
+    FB_ASSERT_TRUE(cb != nullptr);
+}
+
+FB_TEST(functional_types, callback_default_null) {
+    std::function<void(void*, int)> cb;
+    FB_ASSERT_FALSE(static_cast<bool>(cb));
+}
+
+FB_TEST(functional_types, callback_invocation) {
+    int called = 0;
+    std::function<void()> cb = [&called]() { called++; };
+    cb();
+    FB_ASSERT_EQ(called, 1);
+}
+
+FB_TEST(functional_types, callback_with_capture) {
+    int value = 10;
+    std::function<int()> get_value = [value]() { return value; };
+    FB_ASSERT_EQ(get_value(), 10);
+}
