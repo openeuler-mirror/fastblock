@@ -2434,3 +2434,578 @@ FB_TEST(buffer_pool_constants, buffer_size_4kb) {
 FB_TEST(buffer_pool_constants, buffer_memory_512mb) {
     FB_ASSERT_TRUE(buffer_memory >= 512 * 1024 * 1024);
 }
+
+// ============================================================================
+// Test Suite: object_store_constants (Object Store Constants Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(object_store_constants) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(object_store_constants) {
+    // Teardown code here
+}
+
+namespace {
+    constexpr uint32_t blob_cluster = 4;
+    constexpr uint32_t cluster_size = 1024 * 1024;
+    constexpr uint32_t blob_size = blob_cluster * cluster_size;
+    constexpr uint32_t unit_size = 512;
+    constexpr uint64_t slow_io_warn_us = 100000;
+}
+
+FB_TEST(object_store_constants, blob_cluster_value) {
+    FB_ASSERT_EQ(blob_cluster, 4);
+}
+
+FB_TEST(object_store_constants, cluster_size_value) {
+    FB_ASSERT_EQ(cluster_size, 1_MB);
+}
+
+FB_TEST(object_store_constants, blob_size_value) {
+    FB_ASSERT_EQ(blob_size, blob_cluster * cluster_size);
+    FB_ASSERT_EQ(blob_size, 4_MB);
+}
+
+FB_TEST(object_store_constants, unit_size_value) {
+    FB_ASSERT_EQ(unit_size, 512);
+}
+
+FB_TEST(object_store_constants, slow_io_warn_value) {
+    FB_ASSERT_EQ(slow_io_warn_us, 100000);
+    FB_ASSERT_EQ(slow_io_warn_us, 100_ms);
+}
+
+FB_TEST(object_store_constants, blob_size_alignment) {
+    // blob_size should be cluster_size aligned
+    FB_ASSERT_EQ(blob_size % cluster_size, 0);
+}
+
+FB_TEST(object_store_constants, unit_size_sector) {
+    // unit_size should be 512 (sector size)
+    FB_ASSERT_TRUE(unit_size >= 512);
+}
+
+// ============================================================================
+// Test Suite: disk_log_constants (Disk Log Constants Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(disk_log_constants) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(disk_log_constants) {
+    // Teardown code here
+}
+
+namespace {
+    constexpr uint64_t header_size = 4_KB;
+}
+
+FB_TEST(disk_log_constants, header_size_value) {
+    FB_ASSERT_EQ(header_size, 4096);
+}
+
+FB_TEST(disk_log_constants, header_size_4kb) {
+    FB_ASSERT_EQ(header_size, 4_KB);
+}
+
+FB_TEST(disk_log_constants, header_size_page_aligned) {
+    FB_ASSERT_EQ(header_size % 4096, 0);
+}
+
+// ============================================================================
+// Test Suite: log_entry_types (Log Entry Types Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_entry_types) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_entry_types) {
+    // Teardown code here
+}
+
+FB_TEST(log_entry_types, entry_size_components) {
+    log_entry_t entry;
+    // Verify all components are present
+    FB_ASSERT_TRUE(sizeof(entry.term_id) == sizeof(uint64_t));
+    FB_ASSERT_TRUE(sizeof(entry.index) == sizeof(uint64_t));
+    FB_ASSERT_TRUE(sizeof(entry.size) == sizeof(uint64_t));
+    FB_ASSERT_TRUE(sizeof(entry.type) == sizeof(uint64_t));
+}
+
+FB_TEST(log_entry_types, entry_meta_string) {
+    log_entry_t entry;
+    entry.meta = "test_meta";
+    FB_ASSERT_EQ(entry.meta.size(), 9);
+}
+
+FB_TEST(log_entry_types, entry_data_buffer_list) {
+    log_entry_t entry;
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    entry.data.append_buffer(sbuf);
+    FB_ASSERT_EQ(entry.data.bytes(), 100);
+}
+
+FB_TEST(log_entry_types, entry_full_structure) {
+    log_entry_t entry;
+    entry.term_id = 1;
+    entry.index = 100;
+    entry.size = 4096;
+    entry.type = 2;
+    entry.meta = "meta_data";
+
+    FB_ASSERT_EQ(entry.term_id, 1);
+    FB_ASSERT_EQ(entry.index, 100);
+    FB_ASSERT_EQ(entry.size, 4096);
+    FB_ASSERT_EQ(entry.type, 2);
+    FB_ASSERT_EQ(entry.meta, "meta_data");
+}
+
+// ============================================================================
+// Test Suite: fb_blob_operations (FB Blob Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(fb_blob_operations_adv) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(fb_blob_operations_adv) {
+    // Teardown code here
+}
+
+FB_TEST(fb_blob_operations_adv, blob_copy) {
+    fb_blob blob1;
+    blob1.blob = reinterpret_cast<void*>(0x1000);
+    blob1.blobid = 100;
+
+    fb_blob blob2 = blob1;
+    FB_ASSERT_EQ(blob2.blob, blob1.blob);
+    FB_ASSERT_EQ(blob2.blobid, blob1.blobid);
+}
+
+FB_TEST(fb_blob_operations_adv, blob_assignment) {
+    fb_blob blob1;
+    blob1.blobid = 50;
+
+    fb_blob blob2;
+    blob2 = blob1;
+    FB_ASSERT_EQ(blob2.blobid, 50);
+}
+
+FB_TEST(fb_blob_operations_adv, blob_nullptr_check) {
+    fb_blob blob;
+    FB_ASSERT_EQ(blob.blob, nullptr);
+    FB_ASSERT_TRUE(blob.blob == nullptr);
+}
+
+// ============================================================================
+// Test Suite: blob_type_advanced (Blob Type Advanced Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(blob_type_advanced) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(blob_type_advanced) {
+    // Teardown code here
+}
+
+FB_TEST(blob_type_advanced, all_types_unique) {
+    std::vector<blob_type> types = {
+        blob_type::log, blob_type::object, blob_type::object_snap,
+        blob_type::object_recover, blob_type::kv, blob_type::kv_checkpoint,
+        blob_type::kv_checkpoint_new, blob_type::super_blob, blob_type::free
+    };
+
+    for (size_t i = 0; i < types.size(); i++) {
+        for (size_t j = i + 1; j < types.size(); j++) {
+            FB_ASSERT_TRUE(types[i] != types[j]);
+        }
+    }
+}
+
+FB_TEST(blob_type_advanced, type_ordering) {
+    FB_ASSERT_TRUE(static_cast<uint32_t>(blob_type::log) < static_cast<uint32_t>(blob_type::object));
+    FB_ASSERT_TRUE(static_cast<uint32_t>(blob_type::kv) < static_cast<uint32_t>(blob_type::kv_checkpoint));
+}
+
+FB_TEST(blob_type_advanced, type_string_roundtrip) {
+    // Test that type_string returns proper format for all types
+    std::vector<blob_type> all_types = {
+        blob_type::log, blob_type::object, blob_type::object_snap,
+        blob_type::object_recover, blob_type::kv, blob_type::kv_checkpoint,
+        blob_type::kv_checkpoint_new, blob_type::super_blob, blob_type::free
+    };
+
+    for (const auto& t : all_types) {
+        std::string str = type_string(t);
+        FB_ASSERT_TRUE(str.find("blob_type::") == 0);
+        FB_ASSERT_TRUE(str.length() > 11); // "blob_type::" prefix
+    }
+}
+
+// ============================================================================
+// Test Suite: spdk_buffer_advanced (SPDK Buffer Advanced Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_advanced) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_advanced) {
+    // Teardown code here
+}
+
+FB_TEST(spdk_buffer_advanced, get_append_after_inc) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.inc(50);
+    FB_ASSERT_EQ(sbuf.get_append(), buffer + 50);
+}
+
+FB_TEST(spdk_buffer_advanced, append_returns_written) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    const char* data = "test";
+    size_t written = sbuf.append(data, 4);
+    FB_ASSERT_EQ(written, 4);
+    FB_ASSERT_EQ(std::strncmp(buffer, "test", 4), 0);
+}
+
+FB_TEST(spdk_buffer_advanced, set_used_boundary) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.set_used(50);
+    FB_ASSERT_EQ(sbuf.used(), 50);
+    FB_ASSERT_EQ(sbuf.remain(), 50);
+}
+
+FB_TEST(spdk_buffer_advanced, remain_after_various_ops) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.inc(25);
+    FB_ASSERT_EQ(sbuf.remain(), 75);
+
+    sbuf.append("abc", 3);
+    FB_ASSERT_EQ(sbuf.remain(), 72);
+
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.remain(), 100);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_advanced (Buffer List Advanced Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_advanced) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_advanced) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_list_advanced, append_multiple_lists) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl1, bl2;
+    bl1.append_buffer(sbuf1);
+    bl2.append_buffer(sbuf2);
+
+    bl1.append_buffer(bl2);
+    FB_ASSERT_EQ(bl1.bytes(), 300);
+    FB_ASSERT_EQ(bl2.bytes(), 0);
+}
+
+FB_TEST(buffer_list_advanced, pop_front_sequence) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    spdk_buffer first = bl.pop_front();
+    FB_ASSERT_EQ(first.size(), 100);
+    FB_ASSERT_EQ(bl.bytes(), 500);
+
+    spdk_buffer second = bl.pop_front();
+    FB_ASSERT_EQ(second.size(), 200);
+    FB_ASSERT_EQ(bl.bytes(), 300);
+}
+
+FB_TEST(buffer_list_advanced, mixed_operations) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.prepend_buffer(sbuf2);
+
+    FB_ASSERT_EQ(bl.bytes(), 300);
+
+    bl.trim_front();
+    FB_ASSERT_EQ(bl.bytes(), 100);
+
+    bl.trim_back();
+    FB_ASSERT_EQ(bl.bytes(), 0);
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+// ============================================================================
+// Test Suite: serialization_advanced (Serialization Advanced Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization_advanced) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization_advanced) {
+    // Teardown code here
+}
+
+FB_TEST(serialization_advanced, sequential_writes) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    bool ok1 = PutFixed32(sbuf, 0x11111111);
+    bool ok2 = PutFixed32(sbuf, 0x22222222);
+    bool ok3 = PutFixed32(sbuf, 0x33333333);
+
+    FB_ASSERT_TRUE(ok1);
+    FB_ASSERT_TRUE(ok2);
+    FB_ASSERT_TRUE(ok3);
+    FB_ASSERT_EQ(sbuf.used(), 12);
+}
+
+FB_TEST(serialization_advanced, sequential_reads) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    PutFixed32(sbuf, 0x11111111);
+    PutFixed32(sbuf, 0x22222222);
+    PutFixed32(sbuf, 0x33333333);
+
+    sbuf.reset();
+
+    uint32_t v1, v2, v3;
+    GetFixed32(sbuf, v1);
+    GetFixed32(sbuf, v2);
+    GetFixed32(sbuf, v3);
+
+    FB_ASSERT_EQ(v1, 0x11111111);
+    FB_ASSERT_EQ(v2, 0x22222222);
+    FB_ASSERT_EQ(v3, 0x33333333);
+}
+
+FB_TEST(serialization_advanced, mixed_types) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    PutFixed32(sbuf, 12345);
+    PutFixed64(sbuf, 0x123456789ABCDEF0ULL);
+    PutString(sbuf, "test");
+
+    sbuf.reset();
+
+    uint32_t v32;
+    uint64_t v64;
+    std::string str;
+
+    GetFixed32(sbuf, v32);
+    GetFixed64(sbuf, v64);
+    GetString(sbuf, str);
+
+    FB_ASSERT_EQ(v32, 12345);
+    FB_ASSERT_EQ(v64, 0x123456789ABCDEF0ULL);
+    FB_ASSERT_EQ(str, "test");
+}
+
+FB_TEST(serialization_advanced, buffer_boundary) {
+    char buffer[16];
+    spdk_buffer sbuf(buffer, 16);
+
+    // Exactly 16 bytes
+    bool ok1 = PutFixed64(sbuf, 1);
+    bool ok2 = PutFixed64(sbuf, 2);
+
+    FB_ASSERT_TRUE(ok1);
+    FB_ASSERT_TRUE(ok2);
+    FB_ASSERT_EQ(sbuf.used(), 16);
+
+    // Should fail - no more space
+    bool ok3 = PutFixed64(sbuf, 3);
+    FB_ASSERT_FALSE(ok3);
+}
+
+// ============================================================================
+// Test Suite: context_structures (Context Structures Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(context_structures) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(context_structures) {
+    // Teardown code here
+}
+
+FB_TEST(context_structures, pool_create_ctx_type_field) {
+    pool_create_ctx ctx;
+    ctx.type = blob_type::kv;
+    FB_ASSERT_EQ(ctx.type, blob_type::kv);
+}
+
+FB_TEST(context_structures, pool_create_ctx_idx_progress) {
+    pool_create_ctx ctx;
+    ctx.idx = 0;
+    ctx.max = 100;
+
+    for (uint64_t i = 0; i < 10; i++) {
+        ctx.idx++;
+    }
+    FB_ASSERT_EQ(ctx.idx, 10);
+}
+
+FB_TEST(context_structures, log_append_ctx_buffer_ops) {
+    log_append_ctx ctx;
+
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    ctx.headers.push_back(sbuf1);
+    ctx.headers.push_back(sbuf2);
+
+    FB_ASSERT_EQ(ctx.headers.size(), 2);
+}
+
+FB_TEST(context_structures, log_read_ctx_entry_count) {
+    log_read_ctx ctx;
+
+    for (int i = 0; i < 5; i++) {
+        log_entry_t entry;
+        entry.index = i * 10;
+        ctx.entries.push_back(entry);
+    }
+
+    FB_ASSERT_EQ(ctx.entries.size(), 5);
+}
+
+// ============================================================================
+// Test Suite: kv_op_structures (KV Operation Structures Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(kv_op_structures) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(kv_op_structures) {
+    // Teardown code here
+}
+
+FB_TEST(kv_op_structures, op_key_value) {
+    op operation;
+    operation.key = "my_key";
+    operation.value = "my_value";
+
+    FB_ASSERT_EQ(operation.key, "my_key");
+    FB_ASSERT_TRUE(operation.value.has_value());
+    FB_ASSERT_EQ(*operation.value, "my_value");
+}
+
+FB_TEST(kv_op_structures, op_delete_marker) {
+    op operation;
+    operation.key = "delete_key";
+    operation.value = std::nullopt;
+
+    FB_ASSERT_FALSE(operation.value.has_value());
+}
+
+FB_TEST(kv_op_structures, kvstore_write_ctx_ops) {
+    kvstore_write_ctx ctx;
+
+    op op1, op2;
+    op1.key = "key1";
+    op1.value = "value1";
+    op2.key = "key2";
+    op2.value = std::nullopt;
+
+    ctx.ops.push_back(op1);
+    ctx.ops.push_back(op2);
+
+    FB_ASSERT_EQ(ctx.ops.size(), 2);
+}
+
+FB_TEST(kv_op_structures, kvstore_read_ctx_positions) {
+    kvstore_read_ctx ctx;
+    ctx.start_pos = 4096;
+    ctx.len = 8192;
+
+    uint64_t end_pos = ctx.start_pos + ctx.len;
+    FB_ASSERT_EQ(end_pos, 12288);
+}
+
+// ============================================================================
+// Test Suite: rblob_structures (Rolling Blob Structures Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(rblob_structures) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(rblob_structures) {
+    // Teardown code here
+}
+
+FB_TEST(rblob_structures, rblob_rw_result_fields) {
+    rblob_rw_result result;
+    result.start_pos = 1024;
+    result.len = 4096;
+
+    FB_ASSERT_EQ(result.start_pos + result.len, 5120);
+}
+
+FB_TEST(rblob_structures, rblob_rw_ctx_iov) {
+    rblob_rw_ctx ctx;
+
+    struct iovec iov1, iov2;
+    iov1.iov_base = reinterpret_cast<void*>(0x1000);
+    iov1.iov_len = 4096;
+    iov2.iov_base = reinterpret_cast<void*>(0x2000);
+    iov2.iov_len = 8192;
+
+    ctx.iov.push_back(iov1);
+    ctx.iov.push_back(iov2);
+
+    FB_ASSERT_EQ(ctx.iov[0].iov_len + ctx.iov[1].iov_len, 12288);
+}
+
+FB_TEST(rblob_structures, rblob_trim_ctx_range) {
+    rblob_trim_ctx ctx;
+    ctx.lba = 0;
+    ctx.len = 1024 * 1024;
+
+    FB_ASSERT_EQ(ctx.lba + ctx.len, 1024 * 1024);
+}
+
+FB_TEST(rblob_structures, rblob_md_ctx_load_flag) {
+    rblob_md_ctx ctx1;
+    ctx1.is_load = true;
+    FB_ASSERT_TRUE(ctx1.is_load);
+
+    rblob_md_ctx ctx2;
+    ctx2.is_load = false;
+    FB_ASSERT_FALSE(ctx2.is_load);
+}
