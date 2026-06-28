@@ -4211,3 +4211,165 @@ FB_TEST(buffer_pool_api, buffer_memory_is_512mb) {
 FB_TEST(buffer_pool_api, buffer_size_is_4kb) {
     FB_ASSERT_EQ(buffer_size, 4_KB);
 }
+
+// ============================================================================
+// Test Suite: log_entry_type_traits (Log Entry Type Traits Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_entry_type_traits) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_entry_type_traits) {
+    // Setup code here
+}
+
+FB_TEST(log_entry_type_traits, init_constant_value) {
+    FB_ASSERT_EQ(log_entry_t::init, std::numeric_limits<uint64_t>::max());
+}
+
+FB_TEST(log_entry_type_traits, init_is_max) {
+    FB_ASSERT_TRUE(log_entry_t::init == UINT64_MAX);
+}
+
+FB_TEST(log_entry_type_traits, has_buffer_list_member) {
+    log_entry_t entry;
+    FB_ASSERT_EQ(entry.data.bytes(), 0);
+}
+
+FB_TEST(log_entry_type_traits, has_string_member) {
+    log_entry_t entry;
+    FB_ASSERT_TRUE(entry.meta.empty());
+}
+
+FB_TEST(log_entry_type_traits, has_uint64_members) {
+    log_entry_t entry;
+    FB_ASSERT_TRUE(sizeof(entry.term_id) == sizeof(uint64_t));
+    FB_ASSERT_TRUE(sizeof(entry.index) == sizeof(uint64_t));
+    FB_ASSERT_TRUE(sizeof(entry.size) == sizeof(uint64_t));
+    FB_ASSERT_TRUE(sizeof(entry.type) == sizeof(uint64_t));
+}
+
+// ============================================================================
+// Test Suite: entry_header_encoding (Entry Header Encoding Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(entry_header_encoding) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(entry_header_encoding) {
+    // Setup code here
+}
+
+FB_TEST(entry_header_encoding, header_size_calculation) {
+    // entry_header_size = sizeof(uint64_t) * 3
+    FB_ASSERT_EQ(entry_header_size, 24);
+}
+
+FB_TEST(entry_header_encoding, header_size_is_24) {
+    FB_ASSERT_EQ(entry_header_size, 3 * sizeof(uint64_t));
+}
+
+FB_TEST(entry_header_encoding, encode_requires_buffer) {
+    // Encoding requires at least header_size + type + meta
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    log_entry_t entry;
+    entry.term_id = 1;
+    entry.index = 100;
+    entry.size = 4096;
+    entry.type = 2;
+    entry.meta = "test";
+
+    bool ok = EncodeLogHeader(sbuf, entry);
+    FB_ASSERT_TRUE(ok);
+}
+
+// ============================================================================
+// Test Suite: trim_percentage (Trim Percentage Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(trim_percentage) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(trim_percentage) {
+    // Setup code here
+}
+
+FB_TEST(trim_percentage, trigger_is_half) {
+    FB_ASSERT_TRUE(TRIM_TRIGGER_PERCENTAGE > 0.4f);
+    FB_ASSERT_TRUE(TRIM_TRIGGER_PERCENTAGE < 0.6f);
+}
+
+FB_TEST(trim_percentage, trim_is_smaller) {
+    FB_ASSERT_TRUE(TRIM_PERCENTAGE < TRIM_TRIGGER_PERCENTAGE);
+}
+
+FB_TEST(trim_percentage, both_positive) {
+    FB_ASSERT_TRUE(TRIM_TRIGGER_PERCENTAGE > 0.0f);
+    FB_ASSERT_TRUE(TRIM_PERCENTAGE > 0.0f);
+}
+
+FB_TEST(trim_percentage, both_less_than_one) {
+    FB_ASSERT_TRUE(TRIM_TRIGGER_PERCENTAGE < 1.0f);
+    FB_ASSERT_TRUE(TRIM_PERCENTAGE < 1.0f);
+}
+
+// ============================================================================
+// Test Suite: context_structures_sizes (Context Structures Sizes Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(context_structures_sizes) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(context_structures_sizes) {
+    // Setup code here
+}
+
+FB_TEST(context_structures_sizes, log_append_ctx_size) {
+    FB_ASSERT_TRUE(sizeof(log_append_ctx) > 0);
+}
+
+FB_TEST(context_structures_sizes, log_read_ctx_size) {
+    FB_ASSERT_TRUE(sizeof(log_read_ctx) > 0);
+}
+
+FB_TEST(context_structures_sizes, log_op_ctx_size) {
+    FB_ASSERT_TRUE(sizeof(log_op_ctx) > 0);
+}
+
+FB_TEST(context_structures_sizes, pool_create_ctx_size) {
+    FB_ASSERT_TRUE(sizeof(pool_create_ctx) > 0);
+}
+
+FB_TEST(context_structures_sizes, pool_delete_ctx_size) {
+    FB_ASSERT_TRUE(sizeof(pool_delete_ctx) > 0);
+}
+
+FB_TEST(context_structures_sizes, kvstore_write_ctx_size) {
+    FB_ASSERT_TRUE(sizeof(kvstore_write_ctx) > 0);
+}
+
+FB_TEST(context_structures_sizes, kvstore_read_ctx_size) {
+    FB_ASSERT_TRUE(sizeof(kvstore_read_ctx) > 0);
+}
+
+FB_TEST(context_structures_sizes, kvstore_ckpt_ctx_size) {
+    FB_ASSERT_TRUE(sizeof(kvstore_ckpt_ctx) > 0);
+}
+
+FB_TEST(context_structures_sizes, rblob_rw_ctx_size) {
+    FB_ASSERT_TRUE(sizeof(rblob_rw_ctx) > 0);
+}
+
+FB_TEST(context_structures_sizes, rblob_md_ctx_size) {
+    FB_ASSERT_TRUE(sizeof(rblob_md_ctx) > 0);
+}
+
+FB_TEST(context_structures_sizes, rblob_trim_ctx_size) {
+    FB_ASSERT_TRUE(sizeof(rblob_trim_ctx) > 0);
+}
