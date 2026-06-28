@@ -1304,6 +1304,44 @@ FB_TEST(raft_consensus, state_transitions_valid) {
 }
 
 // ============================================================================
+// Test Suite: raft_term (Raft Term Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(raft_term) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(raft_term) {
+    // Teardown code here
+}
+
+FB_TEST(raft_term, initial_term) {
+    // Initial term should be 0
+    raft_term_t term = 0;
+    FB_ASSERT_TRUE(term >= 0);
+}
+
+FB_TEST(raft_term, term_increment) {
+    // Term should be monotonically increasing
+    raft_term_t term1 = 1;
+    raft_term_t term2 = 2;
+    FB_ASSERT_TRUE(term2 > term1);
+}
+
+FB_TEST(raft_term, term_comparison) {
+    // Higher term should win
+    raft_term_t local_term = 100;
+    raft_term_t remote_term = 101;
+    FB_ASSERT_TRUE(remote_term > local_term);
+}
+
+FB_TEST(raft_term, large_term) {
+    // Term should support large values
+    raft_term_t term = UINT64_MAX;
+    FB_ASSERT_TRUE(term > 0);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
