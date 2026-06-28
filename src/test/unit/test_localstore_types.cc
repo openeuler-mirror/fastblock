@@ -5694,3 +5694,224 @@ FB_TEST(pool_context_defaults, pool_delete_ctx_pool_null) {
     pool_delete_ctx ctx;
     FB_ASSERT_EQ(ctx.pool, nullptr);
 }
+
+// ============================================================================
+// Test Suite: fb_blob_field_access (FB Blob Field Access Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(fb_blob_field_access) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(fb_blob_field_access) {
+    // Setup code here
+}
+
+FB_TEST(fb_blob_field_access, blob_field_nullptr_default) {
+    fb_blob blob;
+    FB_ASSERT_EQ(blob.blob, nullptr);
+}
+
+FB_TEST(fb_blob_field_access, blobid_field_zero_default) {
+    fb_blob blob;
+    FB_ASSERT_EQ(blob.blobid, 0);
+}
+
+FB_TEST(fb_blob_field_access, set_blob_ptr) {
+    fb_blob blob;
+    char buffer[100];
+    blob.blob = buffer;
+    FB_ASSERT_EQ(blob.blob, buffer);
+}
+
+FB_TEST(fb_blob_field_access, set_blobid) {
+    fb_blob blob;
+    blob.blobid = 0x1234567890ULL;
+    FB_ASSERT_EQ(blob.blobid, 0x1234567890ULL);
+}
+
+FB_TEST(fb_blob_field_access, blobid_max) {
+    fb_blob blob;
+    blob.blobid = UINT64_MAX;
+    FB_ASSERT_EQ(blob.blobid, UINT64_MAX);
+}
+
+FB_TEST(fb_blob_field_access, blobid_increment) {
+    fb_blob blob;
+    blob.blobid = 100;
+    blob.blobid++;
+    FB_ASSERT_EQ(blob.blobid, 101);
+}
+
+// ============================================================================
+// Test Suite: buffer_size_checks (Buffer Size Checks Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_size_checks) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_size_checks) {
+    // Setup code here
+}
+
+FB_TEST(buffer_size_checks, spdk_buffer_size_zero) {
+    spdk_buffer sbuf;
+    FB_ASSERT_EQ(sbuf.size(), 0);
+}
+
+FB_TEST(buffer_size_checks, spdk_buffer_size_positive) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    FB_ASSERT_EQ(sbuf.size(), 100);
+}
+
+FB_TEST(buffer_size_checks, spdk_buffer_used_zero) {
+    spdk_buffer sbuf;
+    FB_ASSERT_EQ(sbuf.used(), 0);
+}
+
+FB_TEST(buffer_size_checks, spdk_buffer_remain_zero) {
+    spdk_buffer sbuf;
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
+FB_TEST(buffer_size_checks, spdk_buffer_remain_positive) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    FB_ASSERT_EQ(sbuf.remain(), 100);
+}
+
+FB_TEST(buffer_size_checks, spdk_buffer_remain_after_inc) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.inc(50);
+    FB_ASSERT_EQ(sbuf.remain(), 50);
+}
+
+FB_TEST(buffer_size_checks, spdk_buffer_size_remain_consistency) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    FB_ASSERT_EQ(sbuf.size(), sbuf.used() + sbuf.remain());
+}
+
+// ============================================================================
+// Test Suite: buffer_list_byte_tracking (Buffer List Byte Tracking Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_byte_tracking) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_byte_tracking) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_byte_tracking, bytes_zero_initially) {
+    buffer_list bl;
+    FB_ASSERT_EQ(bl.bytes(), 0);
+}
+
+FB_TEST(buffer_list_byte_tracking, bytes_single_buffer) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    FB_ASSERT_EQ(bl.bytes(), 100);
+}
+
+FB_TEST(buffer_list_byte_tracking, bytes_multiple_buffers) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    FB_ASSERT_EQ(bl.bytes(), 300);
+}
+
+FB_TEST(buffer_list_byte_tracking, bytes_after_trim) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.trim_front();
+    FB_ASSERT_EQ(bl.bytes(), 200);
+}
+
+FB_TEST(buffer_list_byte_tracking, bytes_after_clear) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    bl.clear();
+    FB_ASSERT_EQ(bl.bytes(), 0);
+}
+
+FB_TEST(buffer_list_byte_tracking, bytes_after_pop) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.pop_front();
+    FB_ASSERT_EQ(bl.bytes(), 200);
+}
+
+// ============================================================================
+// Test Suite: spdk_buffer_append_tracking (SPDK Buffer Append Tracking Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_append_tracking) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_append_tracking) {
+    // Setup code here
+}
+
+FB_TEST(spdk_buffer_append_tracking, append_returns_correct_size) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    size_t written = sbuf.append("hello", 5);
+    FB_ASSERT_EQ(written, 5);
+}
+
+FB_TEST(spdk_buffer_append_tracking, append_updates_used) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.append("hello", 5);
+    FB_ASSERT_EQ(sbuf.used(), 5);
+}
+
+FB_TEST(spdk_buffer_append_tracking, append_updates_remain) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.append("hello", 5);
+    FB_ASSERT_EQ(sbuf.remain(), 95);
+}
+
+FB_TEST(spdk_buffer_append_tracking, append_string) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    size_t written = sbuf.append(std::string("test"));
+    FB_ASSERT_EQ(written, 4);
+}
+
+FB_TEST(spdk_buffer_append_tracking, append_overflow) {
+    char buffer[10];
+    spdk_buffer sbuf(buffer, 10);
+    size_t written = sbuf.append("hello world", 11);
+    FB_ASSERT_EQ(written, 10); // Only 10 fit
+}
+
+FB_TEST(spdk_buffer_append_tracking, append_empty) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    size_t written = sbuf.append("", 0);
+    FB_ASSERT_EQ(written, 0);
+    FB_ASSERT_EQ(sbuf.used(), 0);
+}
