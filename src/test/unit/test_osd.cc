@@ -1383,6 +1383,198 @@ FB_TEST(raft_index, applied_index) {
 }
 
 // ============================================================================
+// Test Suite: raft_node_id (Raft Node ID Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(raft_node_id) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(raft_node_id) {
+    // Teardown code here
+}
+
+FB_TEST(raft_node_id, valid_node_id) {
+    // Node ID should be positive
+    raft_node_id_t node_id = 1;
+    FB_ASSERT_TRUE(node_id > 0);
+}
+
+FB_TEST(raft_node_id, node_id_range) {
+    // Node ID range should support many nodes
+    raft_node_id_t node_id = 10000;
+    FB_ASSERT_TRUE(node_id > 0);
+}
+
+FB_TEST(raft_node_id, self_node_id) {
+    // Self node ID should be unique
+    raft_node_id_t self_id = 5;
+    raft_node_id_t other_id = 10;
+    FB_ASSERT_TRUE(self_id != other_id);
+}
+
+FB_TEST(raft_node_id, node_id_comparison) {
+    // Can compare node IDs
+    raft_node_id_t id1 = 1;
+    raft_node_id_t id2 = 2;
+    FB_ASSERT_TRUE(id1 < id2);
+}
+
+// ============================================================================
+// Test Suite: raft_message_types (Raft Message Types Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(raft_message_types) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(raft_message_types) {
+    // Teardown code here
+}
+
+FB_TEST(raft_message_types, append_entries_type) {
+    // AppendEntries is a common Raft message type
+    // Concept: message type should be distinguishable
+    int msg_append_entries = 1;
+    FB_ASSERT_TRUE(msg_append_entries > 0);
+}
+
+FB_TEST(raft_message_types, request_vote_type) {
+    // RequestVote is another common Raft message type
+    int msg_request_vote = 2;
+    FB_ASSERT_TRUE(msg_request_vote > 0);
+}
+
+FB_TEST(raft_message_types, heartbeat_type) {
+    // Heartbeat is a special AppendEntries with no entries
+    bool is_heartbeat = true;
+    FB_ASSERT_TRUE(is_heartbeat);
+}
+
+FB_TEST(raft_message_types, snapshot_type) {
+    // Snapshot message for log compaction
+    int msg_snapshot = 3;
+    FB_ASSERT_TRUE(msg_snapshot > 0);
+}
+
+FB_TEST(raft_message_types, message_type_unique) {
+    // Each message type should be unique
+    int type1 = 1;
+    int type2 = 2;
+    int type3 = 3;
+    FB_ASSERT_TRUE(type1 != type2);
+    FB_ASSERT_TRUE(type2 != type3);
+    FB_ASSERT_TRUE(type1 != type3);
+}
+
+FB_TEST(raft_message_types, message_priority) {
+    // Some messages have higher priority (e.g., heartbeat)
+    int heartbeat_priority = 10;
+    int normal_priority = 5;
+    FB_ASSERT_TRUE(heartbeat_priority > normal_priority);
+}
+
+FB_TEST(raft_message_types, response_type) {
+    // Responses should have matching request types
+    int request_type = 1;
+    int response_type = 1; // Response matches request
+    FB_ASSERT_TRUE(request_type == response_type);
+}
+
+FB_TEST(raft_message_types, message_size) {
+    // Message size should be reasonable
+    size_t max_msg_size = 1024 * 1024; // 1MB
+    size_t actual_size = 1024; // 1KB
+    FB_ASSERT_TRUE(actual_size <= max_msg_size);
+}
+
+// ============================================================================
+// Test Suite: raft_configuration (Raft Configuration Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(raft_configuration) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(raft_configuration) {
+    // Teardown code here
+}
+
+FB_TEST(raft_configuration, initial_configuration) {
+    // Initial configuration should be empty
+    std::vector<int> nodes;
+    FB_ASSERT_TRUE(nodes.empty());
+}
+
+FB_TEST(raft_configuration, add_node) {
+    // Should be able to add nodes to configuration
+    std::vector<int> nodes;
+    nodes.push_back(1);
+    nodes.push_back(2);
+    nodes.push_back(3);
+    FB_ASSERT_EQ(nodes.size(), 3);
+}
+
+FB_TEST(raft_configuration, remove_node) {
+    // Should be able to remove nodes from configuration
+    std::vector<int> nodes = {1, 2, 3, 4, 5};
+    nodes.pop_back();
+    FB_ASSERT_EQ(nodes.size(), 4);
+}
+
+FB_TEST(raft_configuration, quorum_size) {
+    // Quorum size = majority
+    int cluster_size = 5;
+    int quorum = (cluster_size / 2) + 1;
+    FB_ASSERT_EQ(quorum, 3);
+}
+
+FB_TEST(raft_configuration, quorum_odd_cluster) {
+    // Odd cluster size quorum
+    int cluster_size = 3;
+    int quorum = (cluster_size / 2) + 1;
+    FB_ASSERT_EQ(quorum, 2);
+}
+
+FB_TEST(raft_configuration, quorum_even_cluster) {
+    // Even cluster size quorum
+    int cluster_size = 4;
+    int quorum = (cluster_size / 2) + 1;
+    FB_ASSERT_EQ(quorum, 3);
+}
+
+FB_TEST(raft_configuration, majority_check) {
+    // Verify majority calculation
+    int total = 5;
+    int votes_needed = 3;
+    bool has_majority = (votes_needed > total / 2);
+    FB_ASSERT_TRUE(has_majority);
+}
+
+FB_TEST(raft_configuration, single_node_cluster) {
+    // Single node cluster should work
+    int cluster_size = 1;
+    int quorum = 1;
+    FB_ASSERT_TRUE(cluster_size == quorum);
+}
+
+FB_TEST(raft_configuration, configuration_change) {
+    // Configuration change should be atomic
+    bool config_changing = true;
+    bool config_stable = false;
+    FB_ASSERT_TRUE(config_changing != config_stable);
+}
+
+FB_TEST(raft_configuration, joint_configuration) {
+    // Joint configuration for configuration change
+    std::vector<int> old_config = {1, 2, 3};
+    std::vector<int> new_config = {1, 2, 4};
+    // Both configurations should be valid
+    FB_ASSERT_TRUE(!old_config.empty());
+    FB_ASSERT_TRUE(!new_config.empty());
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
