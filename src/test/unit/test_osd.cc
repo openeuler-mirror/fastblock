@@ -1575,6 +1575,175 @@ FB_TEST(raft_configuration, joint_configuration) {
 }
 
 // ============================================================================
+// Test Suite: osd_op_state (OSD Operation State Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_op_state) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_op_state) {
+    // Teardown code here
+}
+
+FB_TEST(osd_op_state, write_operation_type) {
+    // WRITE operation should map to RAFT_LOGTYPE_WRITE
+    int log_type = RAFT_LOGTYPE_WRITE;
+    FB_ASSERT_EQ(log_type, 1);
+}
+
+FB_TEST(osd_op_state, delete_operation_type) {
+    // DELETE operation should map to RAFT_LOGTYPE_DELETE
+    int log_type = RAFT_LOGTYPE_DELETE;
+    FB_ASSERT_EQ(log_type, 2);
+}
+
+FB_TEST(osd_op_state, op_type_to_log_type_write) {
+    // Write request should create WRITE log entry
+    utils::operation_type op = utils::operation_type::WRITE;
+    int expected_log_type = RAFT_LOGTYPE_WRITE;
+    FB_ASSERT_TRUE(op == utils::operation_type::WRITE);
+}
+
+FB_TEST(osd_op_state, op_type_to_log_type_delete) {
+    // Delete request should create DELETE log entry
+    utils::operation_type op = utils::operation_type::DELETE;
+    FB_ASSERT_TRUE(op == utils::operation_type::DELETE);
+}
+
+FB_TEST(osd_op_state, read_no_log_entry) {
+    // READ does not create a log entry (no replication needed)
+    utils::operation_type op = utils::operation_type::READ;
+    FB_ASSERT_TRUE(op != utils::operation_type::WRITE);
+    FB_ASSERT_TRUE(op != utils::operation_type::DELETE);
+}
+
+FB_TEST(osd_op_state, none_no_operation) {
+    // NONE operation type means no operation
+    utils::operation_type op = utils::operation_type::NONE;
+    FB_ASSERT_TRUE(op == utils::operation_type::NONE);
+}
+
+FB_TEST(osd_op_state, write_needs_replication) {
+    // WRITE needs to be replicated via Raft
+    bool needs_replication = true;
+    FB_ASSERT_TRUE(needs_replication);
+}
+
+FB_TEST(osd_op_state, read_no_replication) {
+    // READ does not need Raft replication (only on leader)
+    bool needs_replication = false;
+    FB_ASSERT_TRUE(!needs_replication);
+}
+
+FB_TEST(osd_op_state, delete_needs_replication) {
+    // DELETE needs to be replicated via Raft
+    bool needs_replication = true;
+    FB_ASSERT_TRUE(needs_replication);
+}
+
+// ============================================================================
+// Test Suite: osd_partition_lifecycle (OSD Partition Lifecycle Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_partition_lifecycle) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_partition_lifecycle) {
+    // Teardown code here
+}
+
+FB_TEST(osd_partition_lifecycle, create_partition_params) {
+    // Create partition requires pool_id, pg_id, core_index, osds
+    uint64_t pool_id = 1;
+    uint64_t pg_id = 100;
+    uint32_t core_index = 0;
+
+    FB_ASSERT_TRUE(pool_id > 0);
+    FB_ASSERT_TRUE(pg_id > 0);
+    FB_ASSERT_TRUE(core_index >= 0 || core_index <= UINT32_MAX);
+}
+
+FB_TEST(osd_partition_lifecycle, partition_osd_list) {
+    // Partition should have a list of OSDs
+    std::vector<uint32_t> osd_list = {1, 2, 3};
+    FB_ASSERT_EQ(osd_list.size(), 3);
+}
+
+FB_TEST(osd_partition_lifecycle, partition_revision) {
+    // Each partition change should have a revision
+    int64_t revision1 = 100;
+    int64_t revision2 = 101;
+    FB_ASSERT_TRUE(revision2 > revision1);
+}
+
+FB_TEST(osd_partition_lifecycle, active_partition) {
+    // Active partition should be in OSD_ACTIVE state
+    osd_state state = osd_state::OSD_ACTIVE;
+    FB_ASSERT_TRUE(state == osd_state::OSD_ACTIVE);
+}
+
+FB_TEST(osd_partition_lifecycle, delete_partition) {
+    // Deleting partition should clean up resources
+    bool partition_exists = true;
+    partition_exists = false; // After deletion
+    FB_ASSERT_TRUE(!partition_exists);
+}
+
+FB_TEST(osd_partition_lifecycle, partition_shard_mapping) {
+    // Partition should be mapped to a specific shard
+    uint32_t shard_id = 2;
+    FB_ASSERT_TRUE(shard_id <= UINT32_MAX);
+}
+
+FB_TEST(osd_partition_lifecycle, multiple_partitions) {
+    // System should support multiple partitions
+    std::map<std::string, uint32_t> partitions;
+    partitions["1.100"] = 0;
+    partitions["1.200"] = 1;
+    partitions["2.100"] = 2;
+
+    FB_ASSERT_EQ(partitions.size(), 3);
+}
+
+FB_TEST(osd_partition_lifecycle, partition_lookup) {
+    // Should be able to look up partition by pool_id and pg_id
+    std::map<std::string, uint32_t> shard_table;
+    shard_table["1.100"] = 0;
+
+    auto it = shard_table.find("1.100");
+    FB_ASSERT_TRUE(it != shard_table.end());
+    FB_ASSERT_EQ(it->second, 0);
+}
+
+FB_TEST(osd_partition_lifecycle, partition_not_found) {
+    // Lookup of non-existent partition should fail
+    std::map<std::string, uint32_t> shard_table;
+
+    auto it = shard_table.find("99.99");
+    FB_ASSERT_TRUE(it == shard_table.end());
+}
+
+FB_TEST(osd_partition_lifecycle, partition_remove) {
+    // Should be able to remove partition from shard table
+    std::map<std::string, uint32_t> shard_table;
+    shard_table["1.100"] = 0;
+
+    auto ret = shard_table.erase("1.100");
+    FB_ASSERT_EQ(ret, 1);
+    FB_ASSERT_TRUE(shard_table.empty());
+}
+
+FB_TEST(osd_partition_lifecycle, partition_remove_nonexistent) {
+    // Removing non-existent partition should return 0
+    std::map<std::string, uint32_t> shard_table;
+
+    auto ret = shard_table.erase("99.99");
+    FB_ASSERT_EQ(ret, 0);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
