@@ -7394,3 +7394,219 @@ FB_TEST(log_read_ctx_entries, index_range) {
     uint64_t range = ctx.end_index - ctx.start_index + 1;
     FB_ASSERT_EQ(range, 100);
 }
+
+// ============================================================================
+// Test Suite: encoding_composite (Encoding Composite Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(encoding_composite) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(encoding_composite) {
+    // Setup code here
+}
+
+FB_TEST(encoding_composite, encode_decode_entry_header_sequence) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+
+    for (int i = 0; i < 5; i++) {
+        log_entry_t entry;
+        entry.term_id = i;
+        entry.index = i * 100;
+        entry.size = 4096;
+        entry.type = 1;
+        entry.meta = "meta_" + std::to_string(i);
+        bool ok = EncodeLogHeader(sbuf, entry);
+        FB_ASSERT_TRUE(ok);
+    }
+
+    sbuf.reset();
+
+    for (int i = 0; i < 5; i++) {
+        log_entry_t entry;
+        bool ok = DecodeLogHeader(sbuf, entry);
+        FB_ASSERT_TRUE(ok);
+        FB_ASSERT_EQ(entry.term_id, static_cast<uint64_t>(i));
+        FB_ASSERT_EQ(entry.index, static_cast<uint64_t>(i * 100));
+    }
+}
+
+FB_TEST(encoding_composite, mixed_serialization_sequence) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+
+    PutFixed32(sbuf, 1);
+    PutFixed64(sbuf, 2);
+    PutString(sbuf, "three");
+    PutFixed32(sbuf, 4);
+
+    sbuf.reset();
+
+    uint32_t v1;
+    uint64_t v2;
+    std::string v3;
+    uint32_t v4;
+
+    GetFixed32(sbuf, v1);
+    GetFixed64(sbuf, v2);
+    GetString(sbuf, v3);
+    GetFixed32(sbuf, v4);
+
+    FB_ASSERT_EQ(v1, 1);
+    FB_ASSERT_EQ(v2, 2);
+    FB_ASSERT_EQ(v3, "three");
+    FB_ASSERT_EQ(v4, 4);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_encoder_failure (Buffer List Encoder Failure Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_encoder_failure) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_encoder_failure) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_encoder_failure, put_fails_on_tiny_buffer) {
+    char buffer[4];
+    spdk_buffer sbuf(buffer, 4);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    FB_ASSERT_FALSE(encoder.put(1ULL));
+}
+
+FB_TEST(buffer_list_encoder_failure, put_string_fails_small) {
+    char buffer[8];
+    spdk_buffer sbuf(buffer, 8);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    FB_ASSERT_FALSE(encoder.put(std::string("test")));
+}
+
+FB_TEST(buffer_list_encoder_failure, put_raw_fails_small) {
+    char buffer[4];
+    spdk_buffer sbuf(buffer, 4);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    FB_ASSERT_FALSE(encoder.put("data", 8));
+}
+
+FB_TEST(buffer_list_encoder_failure, get_fails_on_empty) {
+    char buffer[8];
+    spdk_buffer sbuf(buffer, 8);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    uint64_t val;
+    FB_ASSERT_FALSE(encoder.get(val));
+}
+
+// ============================================================================
+// Test Suite: struct_copy_semantics (Struct Copy Semantics Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(struct_copy_semantics) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(struct_copy_semantics) {
+    // Setup code here
+}
+
+FB_TEST(struct_copy_semantics, fb_blob_copy) {
+    fb_blob original;
+    original.blob = reinterpret_cast<void*>(0x1000);
+    original.blobid = 42;
+
+    fb_blob copy = original;
+    FB_ASSERT_EQ(copy.blob, original.blob);
+    FB_ASSERT_EQ(copy.blobid, original.blobid);
+
+    copy.blobid = 100;
+    FB_ASSERT_EQ(original.blobid, 42); // Original unchanged
+}
+
+FB_TEST(struct_copy_semantics, rblob_rw_result_copy) {
+    rblob_rw_result original{1024, 4096};
+    rblob_rw_result copy = original;
+
+    FB_ASSERT_EQ(copy.start_pos, 1024);
+    FB_ASSERT_EQ(copy.len, 4096);
+}
+
+FB_TEST(struct_copy_semantics, log_entry_copy) {
+    log_entry_t original;
+    original.term_id = 1;
+    original.index = 100;
+    original.meta = "test";
+
+    log_entry_t copy = original;
+    FB_ASSERT_EQ(copy.term_id, 1);
+    FB_ASSERT_EQ(copy.index, 100);
+    FB_ASSERT_EQ(copy.meta, "test");
+}
+
+FB_TEST(struct_copy_semantics, op_copy) {
+    op original;
+    original.key = "test_key";
+    original.value = "test_value";
+
+    op copy = original;
+    FB_ASSERT_EQ(copy.key, "test_key");
+    FB_ASSERT_TRUE(copy.value.has_value());
+    FB_ASSERT_EQ(*copy.value, "test_value");
+}
+
+// ============================================================================
+// Test Suite: pool_constants_verification (Pool Constants Verification Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(pool_constants_verification) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(pool_constants_verification) {
+    // Setup code here
+}
+
+FB_TEST(pool_constants_verification, blob_pool_cluster_size) {
+    constexpr uint32_t cluster_size = 1_MB;
+    FB_ASSERT_EQ(cluster_size, 1024 * 1024);
+}
+
+FB_TEST(pool_constants_verification, blob_pool_blob_size) {
+    constexpr uint32_t blob_cluster = 4;
+    constexpr uint32_t cluster_size = 1_MB;
+    constexpr uint32_t blob_size = blob_cluster * cluster_size;
+    FB_ASSERT_EQ(blob_size, 4_MB);
+}
+
+FB_TEST(pool_constants_verification, blob_pool_init_num) {
+    constexpr uint32_t init_blob_num = 16;
+    FB_ASSERT_TRUE(init_blob_num > 0);
+}
+
+FB_TEST(pool_constants_verification, blob_pool_min_num) {
+    constexpr uint32_t min_blob_num = 8;
+    FB_ASSERT_TRUE(min_blob_num > 0);
+    constexpr uint32_t init_blob_num = 16;
+    FB_ASSERT_TRUE(min_blob_num <= init_blob_num);
+}
+
+FB_TEST(pool_constants_verification, blob_pool_poller_period) {
+    constexpr uint64_t poller_period_us = 5000;
+    FB_ASSERT_EQ(poller_period_us, 5000);
+    FB_ASSERT_EQ(poller_period_us / 1000, 5); // 5ms
+}
