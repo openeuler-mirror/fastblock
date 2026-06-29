@@ -8176,3 +8176,231 @@ FB_TEST(encoding_put_get_consistency, length_matches_actual_size) {
     PutString(sbuf, str);
     FB_ASSERT_EQ(sbuf.used(), predicted);
 }
+
+// ============================================================================
+// Test Suite: buffer_list_combined_operations (Buffer List Combined Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_combined_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_combined_operations) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_combined_operations, append_prepend_trim) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.prepend_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    FB_ASSERT_EQ(bl.bytes(), 600);
+
+    bl.trim_front();
+    FB_ASSERT_EQ(bl.bytes(), 400);
+
+    bl.trim_back();
+    FB_ASSERT_EQ(bl.bytes(), 100);
+}
+
+FB_TEST(buffer_list_combined_operations, append_pop_append) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.pop_front();
+    FB_ASSERT_TRUE(bl.empty());
+
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+    FB_ASSERT_EQ(bl.bytes(), 500);
+}
+
+FB_TEST(buffer_list_combined_operations, clear_then_repopulate) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.clear();
+    FB_ASSERT_EQ(bl.bytes(), 0);
+
+    bl.append_buffer(sbuf2);
+    FB_ASSERT_EQ(bl.bytes(), 200);
+}
+
+FB_TEST(buffer_list_combined_operations, splice_trim_clear) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl1, bl2;
+    bl2.append_buffer(sbuf1);
+    bl2.append_buffer(sbuf2);
+
+    bl1.append_buffer(bl2);
+    FB_ASSERT_EQ(bl1.bytes(), 300);
+
+    bl1.trim_front();
+    FB_ASSERT_EQ(bl1.bytes(), 200);
+
+    bl1.clear();
+    FB_ASSERT_EQ(bl1.bytes(), 0);
+}
+
+// ============================================================================
+// Test Suite: log_entry_data_operations (Log Entry Data Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_entry_data_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_entry_data_operations) {
+    // Setup code here
+}
+
+FB_TEST(log_entry_data_operations, entry_data_empty) {
+    log_entry_t entry;
+    FB_ASSERT_EQ(entry.data.bytes(), 0);
+    FB_ASSERT_TRUE(entry.data.empty());
+}
+
+FB_TEST(log_entry_data_operations, entry_data_append) {
+    log_entry_t entry;
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    entry.data.append_buffer(sbuf);
+    FB_ASSERT_EQ(entry.data.bytes(), 1024);
+}
+
+FB_TEST(log_entry_data_operations, entry_data_multiple_append) {
+    log_entry_t entry;
+    char buffer1[256], buffer2[512];
+    spdk_buffer sbuf1(buffer1, 256);
+    spdk_buffer sbuf2(buffer2, 512);
+    entry.data.append_buffer(sbuf1);
+    entry.data.append_buffer(sbuf2);
+    FB_ASSERT_EQ(entry.data.bytes(), 768);
+}
+
+FB_TEST(log_entry_data_operations, entry_data_clear) {
+    log_entry_t entry;
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    entry.data.append_buffer(sbuf);
+    entry.data.clear();
+    FB_ASSERT_EQ(entry.data.bytes(), 0);
+}
+
+FB_TEST(log_entry_data_operations, entry_data_to_iovec) {
+    log_entry_t entry;
+    char buffer[512];
+    spdk_buffer sbuf(buffer, 512);
+    entry.data.append_buffer(sbuf);
+
+    iovecs iovs = entry.data.to_iovec();
+    FB_ASSERT_EQ(iovs.size(), 1);
+    FB_ASSERT_EQ(iovs[0].iov_len, 512);
+}
+
+// ============================================================================
+// Test Suite: encoding_opt_string_advanced (Encoding Optional String Advanced Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(encoding_opt_string_advanced) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(encoding_opt_string_advanced) {
+    // Setup code here
+}
+
+FB_TEST(encoding_opt_string_advanced, nullopt_then_value) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    std::optional<std::string> none = std::nullopt;
+    std::optional<std::string> some = "value";
+
+    PutOptString(sbuf, none);
+    PutOptString(sbuf, some);
+
+    sbuf.reset();
+
+    std::optional<std::string> out1, out2;
+    GetOptString(sbuf, out1);
+    GetOptString(sbuf, out2);
+
+    FB_ASSERT_FALSE(out1.has_value());
+    FB_ASSERT_TRUE(out2.has_value());
+    FB_ASSERT_EQ(*out2, "value");
+}
+
+FB_TEST(encoding_opt_string_advanced, value_then_nullopt) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    std::optional<std::string> some = "first";
+    std::optional<std::string> none = std::nullopt;
+
+    PutOptString(sbuf, some);
+    PutOptString(sbuf, none);
+
+    sbuf.reset();
+
+    std::optional<std::string> out1, out2;
+    GetOptString(sbuf, out1);
+    GetOptString(sbuf, out2);
+
+    FB_ASSERT_TRUE(out1.has_value());
+    FB_ASSERT_EQ(*out1, "first");
+    FB_ASSERT_FALSE(out2.has_value());
+}
+
+FB_TEST(encoding_opt_string_advanced, empty_string_vs_nullopt_roundtrip) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    std::optional<std::string> empty_str = "";
+    std::optional<std::string> null_opt = std::nullopt;
+
+    PutOptString(sbuf, empty_str);
+    PutOptString(sbuf, null_opt);
+
+    sbuf.reset();
+
+    std::optional<std::string> out1, out2;
+    GetOptString(sbuf, out1);
+    GetOptString(sbuf, out2);
+
+    FB_ASSERT_TRUE(out1.has_value());
+    FB_ASSERT_EQ(*out1, "");
+    FB_ASSERT_FALSE(out2.has_value());
+}
+
+FB_TEST(encoding_opt_string_advanced, long_optional_string) {
+    char buffer[8192];
+    spdk_buffer sbuf(buffer, 8192);
+
+    std::optional<std::string> long_val = std::string(5000, 'z');
+    PutOptString(sbuf, long_val);
+
+    sbuf.reset();
+
+    std::optional<std::string> out;
+    GetOptString(sbuf, out);
+
+    FB_ASSERT_TRUE(out.has_value());
+    FB_ASSERT_EQ(out->size(), 5000);
+}
