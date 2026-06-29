@@ -1662,7 +1662,7 @@ FB_TEST(osd_partition_lifecycle, create_partition_params) {
 
     FB_ASSERT_TRUE(pool_id > 0);
     FB_ASSERT_TRUE(pg_id > 0);
-    FB_ASSERT_TRUE(core_index >= 0 || core_index <= UINT32_MAX);
+    FB_ASSERT_TRUE(core_index <= UINT32_MAX);
 }
 
 FB_TEST(osd_partition_lifecycle, partition_osd_list) {
@@ -2082,7 +2082,7 @@ FB_TEST(osd_pg_membership, osd_role_primary) {
 FB_TEST(osd_pg_membership, osd_role_secondary) {
     // Secondary OSD role
     int role_secondary = 1;
-    FB_ASSERT_TRUE(role_secondary > role_primary);
+    FB_ASSERT_TRUE(role_secondary > 0);
 }
 
 FB_TEST(osd_pg_membership, change_membership_via_raft) {
