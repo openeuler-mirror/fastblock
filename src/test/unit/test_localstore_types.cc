@@ -6128,3 +6128,203 @@ FB_TEST(data_integrity, mixed_data_preserves_order) {
     FB_ASSERT_EQ(s4, "second");
     FB_ASSERT_EQ(v5, 333);
 }
+
+// ============================================================================
+// Test Suite: buffer_list_splice (Buffer List Splice Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_splice) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_splice) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_splice, splice_from_empty) {
+    buffer_list bl1, bl2;
+    bl1.append_buffer(bl2);
+    FB_ASSERT_EQ(bl1.bytes(), 0);
+}
+
+FB_TEST(buffer_list_splice, splice_from_nonempty) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    buffer_list bl1, bl2;
+    bl2.append_buffer(sbuf);
+    bl1.append_buffer(bl2);
+
+    FB_ASSERT_EQ(bl1.bytes(), 100);
+    FB_ASSERT_EQ(bl2.bytes(), 0);
+}
+
+FB_TEST(buffer_list_splice, splice_rvalue) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    buffer_list bl1, bl2;
+    bl2.append_buffer(sbuf);
+    bl1.append_buffer(std::move(bl2));
+
+    FB_ASSERT_EQ(bl1.bytes(), 100);
+}
+
+FB_TEST(buffer_list_splice, multiple_splice) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl1, bl2, bl3;
+    bl2.append_buffer(sbuf1);
+    bl2.append_buffer(sbuf2);
+    bl3.append_buffer(sbuf3);
+
+    bl1.append_buffer(bl2);
+    bl1.append_buffer(bl3);
+
+    FB_ASSERT_EQ(bl1.bytes(), 600);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_pop_operations (Buffer List Pop Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_pop_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_pop_operations) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_pop_operations, pop_front_single) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    spdk_buffer popped = bl.pop_front();
+    FB_ASSERT_EQ(popped.size(), 100);
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_pop_operations, pop_front_multiple) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    spdk_buffer first = bl.pop_front();
+    FB_ASSERT_EQ(first.size(), 100);
+    FB_ASSERT_EQ(bl.bytes(), 500);
+
+    spdk_buffer second = bl.pop_front();
+    FB_ASSERT_EQ(second.size(), 200);
+    FB_ASSERT_EQ(bl.bytes(), 300);
+}
+
+FB_TEST(buffer_list_pop_operations, pop_front_list_single) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list popped = bl.pop_front_list(1);
+    FB_ASSERT_EQ(popped.bytes(), 100);
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_pop_operations, pop_front_list_partial) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    buffer_list popped = bl.pop_front_list(2);
+    FB_ASSERT_EQ(popped.bytes(), 300);
+    FB_ASSERT_EQ(bl.bytes(), 300);
+}
+
+FB_TEST(buffer_list_pop_operations, pop_front_list_all) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    buffer_list popped = bl.pop_front_list(2);
+    FB_ASSERT_EQ(popped.bytes(), 300);
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+// ============================================================================
+// Test Suite: spdk_buffer_inc_operations (SPDK Buffer Inc Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_inc_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_inc_operations) {
+    // Setup code here
+}
+
+FB_TEST(spdk_buffer_inc_operations, inc_zero) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    size_t inc = sbuf.inc(0);
+    FB_ASSERT_EQ(inc, 0);
+    FB_ASSERT_EQ(sbuf.used(), 0);
+}
+
+FB_TEST(spdk_buffer_inc_operations, inc_exact_size) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    size_t inc = sbuf.inc(100);
+    FB_ASSERT_EQ(inc, 100);
+    FB_ASSERT_EQ(sbuf.used(), 100);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
+FB_TEST(spdk_buffer_inc_operations, inc_overflow) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    size_t inc = sbuf.inc(200);
+    FB_ASSERT_EQ(inc, 100);
+    FB_ASSERT_EQ(sbuf.used(), 100);
+}
+
+FB_TEST(spdk_buffer_inc_operations, inc_partial) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.inc(50);
+    FB_ASSERT_EQ(sbuf.used(), 50);
+    FB_ASSERT_EQ(sbuf.remain(), 50);
+
+    sbuf.inc(30);
+    FB_ASSERT_EQ(sbuf.used(), 80);
+    FB_ASSERT_EQ(sbuf.remain(), 20);
+}
+
+FB_TEST(spdk_buffer_inc_operations, inc_twice_full) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.inc(100);
+    size_t inc = sbuf.inc(1);
+    FB_ASSERT_EQ(inc, 0);
+    FB_ASSERT_EQ(sbuf.used(), 100);
+}
