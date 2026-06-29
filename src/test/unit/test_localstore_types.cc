@@ -6838,3 +6838,284 @@ FB_TEST(length_string_calculations, length_consistency_with_put) {
     PutString(sbuf, str);
     FB_ASSERT_EQ(sbuf.used(), expected_len);
 }
+
+// ============================================================================
+// Test Suite: blob_type_switch_coverage (Blob Type Switch Coverage Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(blob_type_switch_coverage) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(blob_type_switch_coverage) {
+    // Setup code here
+}
+
+FB_TEST(blob_type_switch_coverage, switch_all_types) {
+    for (uint32_t i = 0; i <= 8; i++) {
+        blob_type t = static_cast<blob_type>(i);
+        std::string str = type_string(t);
+        FB_ASSERT_TRUE(!str.empty());
+        FB_ASSERT_EQ(str.find("blob_type::"), 0u);
+    }
+}
+
+FB_TEST(blob_type_switch_coverage, switch_default_case) {
+    blob_type invalid = static_cast<blob_type>(100);
+    std::string str = type_string(invalid);
+    FB_ASSERT_EQ(str, "blob_type::unknown");
+}
+
+FB_TEST(blob_type_switch_coverage, each_type_unique_string) {
+    std::set<std::string> strings;
+    for (uint32_t i = 0; i <= 8; i++) {
+        blob_type t = static_cast<blob_type>(i);
+        std::string str = type_string(t);
+        FB_ASSERT_TRUE(strings.find(str) == strings.end());
+        strings.insert(str);
+    }
+    FB_ASSERT_EQ(strings.size(), 9u);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_prepend_operations (Buffer List Prepend Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_prepend_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_prepend_operations) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_prepend_operations, prepend_to_empty) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.prepend_buffer(sbuf);
+    FB_ASSERT_EQ(bl.bytes(), 100);
+}
+
+FB_TEST(buffer_list_prepend_operations, prepend_multiple) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl;
+    bl.prepend_buffer(sbuf1);
+    bl.prepend_buffer(sbuf2);
+    bl.prepend_buffer(sbuf3);
+
+    FB_ASSERT_EQ(bl.bytes(), 600);
+}
+
+FB_TEST(buffer_list_prepend_operations, prepend_after_append) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.prepend_buffer(sbuf2);
+
+    FB_ASSERT_EQ(bl.bytes(), 300);
+}
+
+FB_TEST(buffer_list_prepend_operations, prepend_then_trim_back) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.prepend_buffer(sbuf2);
+    bl.trim_back();
+
+    FB_ASSERT_EQ(bl.bytes(), 200);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_trim_operations (Buffer List Trim Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_trim_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_trim_operations) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_trim_operations, trim_front_single) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    bl.trim_front();
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_trim_operations, trim_back_single) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    bl.trim_back();
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_trim_operations, trim_front_then_back) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    bl.trim_front();
+    FB_ASSERT_EQ(bl.bytes(), 500);
+
+    bl.trim_back();
+    FB_ASSERT_EQ(bl.bytes(), 200);
+}
+
+FB_TEST(buffer_list_trim_operations, trim_all_front) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    bl.trim_front();
+    bl.trim_front();
+    FB_ASSERT_TRUE(bl.empty());
+    FB_ASSERT_EQ(bl.bytes(), 0);
+}
+
+FB_TEST(buffer_list_trim_operations, trim_all_back) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    bl.trim_back();
+    bl.trim_back();
+    FB_ASSERT_TRUE(bl.empty());
+    FB_ASSERT_EQ(bl.bytes(), 0);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_clear_operations (Buffer List Clear Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_clear_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_clear_operations) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_clear_operations, clear_empty) {
+    buffer_list bl;
+    bl.clear();
+    FB_ASSERT_TRUE(bl.empty());
+    FB_ASSERT_EQ(bl.bytes(), 0);
+}
+
+FB_TEST(buffer_list_clear_operations, clear_single) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    bl.clear();
+    FB_ASSERT_TRUE(bl.empty());
+    FB_ASSERT_EQ(bl.bytes(), 0);
+}
+
+FB_TEST(buffer_list_clear_operations, clear_multiple) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    bl.clear();
+    FB_ASSERT_TRUE(bl.empty());
+    FB_ASSERT_EQ(bl.bytes(), 0);
+}
+
+FB_TEST(buffer_list_clear_operations, clear_then_reuse) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.clear();
+    FB_ASSERT_TRUE(bl.empty());
+
+    bl.append_buffer(sbuf2);
+    FB_ASSERT_EQ(bl.bytes(), 200);
+}
+
+// ============================================================================
+// Test Suite: spdk_buffer_size_edge_cases (SPDK Buffer Size Edge Cases Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_size_edge_cases) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_size_edge_cases) {
+    // Setup code here
+}
+
+FB_TEST(spdk_buffer_size_edge_cases, size_one) {
+    char buffer[1];
+    spdk_buffer sbuf(buffer, 1);
+    FB_ASSERT_EQ(sbuf.size(), 1);
+    FB_ASSERT_EQ(sbuf.remain(), 1);
+
+    size_t written = sbuf.append("x", 1);
+    FB_ASSERT_EQ(written, 1);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
+FB_TEST(spdk_buffer_size_edge_cases, zero_append_to_nonempty) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    size_t written = sbuf.append("", 0);
+    FB_ASSERT_EQ(written, 0);
+    FB_ASSERT_EQ(sbuf.used(), 0);
+}
+
+FB_TEST(spdk_buffer_size_edge_cases, exact_fill) {
+    char buffer[10];
+    spdk_buffer sbuf(buffer, 10);
+    sbuf.append("1234567890", 10);
+    FB_ASSERT_EQ(sbuf.used(), 10);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
+FB_TEST(spdk_buffer_size_edge_cases, one_over_fill) {
+    char buffer[10];
+    spdk_buffer sbuf(buffer, 10);
+    size_t written = sbuf.append("12345678901", 11);
+    FB_ASSERT_EQ(written, 10);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
