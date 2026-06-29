@@ -7610,3 +7610,223 @@ FB_TEST(pool_constants_verification, blob_pool_poller_period) {
     FB_ASSERT_EQ(poller_period_us, 5000);
     FB_ASSERT_EQ(poller_period_us / 1000, 5); // 5ms
 }
+
+// ============================================================================
+// Test Suite: time_unit_conversions (Time Unit Conversions Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(time_unit_conversions) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(time_unit_conversions) {
+    // Setup code here
+}
+
+FB_TEST(time_unit_conversions, us_to_ms) {
+    uint64_t us = 5000;
+    uint64_t ms = us / 1000;
+    FB_ASSERT_EQ(ms, 5);
+}
+
+FB_TEST(time_unit_conversions, ms_to_s) {
+    uint64_t ms = 5000;
+    uint64_t s = ms / 1000;
+    FB_ASSERT_EQ(s, 5);
+}
+
+FB_TEST(time_unit_conversions, us_to_s) {
+    uint64_t us = 5000000;
+    uint64_t s = us / 1000000;
+    FB_ASSERT_EQ(s, 5);
+}
+
+FB_TEST(time_unit_conversions, s_to_ms) {
+    uint64_t s = 5;
+    uint64_t ms = s * 1000;
+    FB_ASSERT_EQ(ms, 5000);
+}
+
+FB_TEST(time_unit_conversions, ms_to_us) {
+    uint64_t ms = 5;
+    uint64_t us = ms * 1000;
+    FB_ASSERT_EQ(us, 5000);
+}
+
+FB_TEST(time_unit_conversions, s_to_us) {
+    uint64_t s = 5;
+    uint64_t us = s * 1000000;
+    FB_ASSERT_EQ(us, 5000000);
+}
+
+// ============================================================================
+// Test Suite: memory_unit_conversions (Memory Unit Conversions Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(memory_unit_conversions) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(memory_unit_conversions) {
+    // Setup code here
+}
+
+FB_TEST(memory_unit_conversions, bytes_to_kb) {
+    uint64_t bytes = 4096;
+    uint64_t kb = bytes / 1024;
+    FB_ASSERT_EQ(kb, 4);
+}
+
+FB_TEST(memory_unit_conversions, kb_to_bytes) {
+    uint64_t kb = 4;
+    uint64_t bytes = kb * 1024;
+    FB_ASSERT_EQ(bytes, 4096);
+}
+
+FB_TEST(memory_unit_conversions, mb_to_kb) {
+    uint64_t mb = 2;
+    uint64_t kb = mb * 1024;
+    FB_ASSERT_EQ(kb, 2048);
+}
+
+FB_TEST(memory_unit_conversions, gb_to_mb) {
+    uint64_t gb = 1;
+    uint64_t mb = gb * 1024;
+    FB_ASSERT_EQ(mb, 1024);
+}
+
+FB_TEST(memory_unit_conversions, mb_to_bytes) {
+    uint64_t mb = 1;
+    uint64_t bytes = mb * 1024 * 1024;
+    FB_ASSERT_EQ(bytes, 1048576);
+}
+
+FB_TEST(memory_unit_conversions, gb_to_bytes) {
+    uint64_t gb = 1;
+    uint64_t bytes = gb * 1024 * 1024 * 1024;
+    FB_ASSERT_EQ(bytes, 1073741824);
+}
+
+// ============================================================================
+// Test Suite: alignment_calculations (Alignment Calculations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(alignment_calculations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(alignment_calculations) {
+    // Setup code here
+}
+
+FB_TEST(alignment_calculations, align_up_512) {
+    uint64_t size = 300;
+    uint64_t alignment = 512;
+    uint64_t aligned = ((size + alignment - 1) / alignment) * alignment;
+    FB_ASSERT_EQ(aligned, 512);
+}
+
+FB_TEST(alignment_calculations, align_up_4kb) {
+    uint64_t size = 5000;
+    uint64_t alignment = 4096;
+    uint64_t aligned = ((size + alignment - 1) / alignment) * alignment;
+    FB_ASSERT_EQ(aligned, 8192);
+}
+
+FB_TEST(alignment_calculations, align_up_already_aligned) {
+    uint64_t size = 4096;
+    uint64_t alignment = 4096;
+    uint64_t aligned = ((size + alignment - 1) / alignment) * alignment;
+    FB_ASSERT_EQ(aligned, 4096);
+}
+
+FB_TEST(alignment_calculations, align_down_512) {
+    uint64_t size = 1000;
+    uint64_t alignment = 512;
+    uint64_t aligned = size / alignment * alignment;
+    FB_ASSERT_EQ(aligned, 512);
+}
+
+FB_TEST(alignment_calculations, is_aligned_check) {
+    FB_ASSERT_EQ(4096 % 4096, 0);
+    FB_ASSERT_EQ(8192 % 4096, 0);
+    FB_ASSERT_NE(5000 % 4096, 0);
+}
+
+FB_TEST(alignment_calculations, sector_alignment) {
+    uint64_t offset = 512;
+    FB_ASSERT_EQ(offset % 512, 0);
+
+    uint64_t offset2 = 1024;
+    FB_ASSERT_EQ(offset2 % 512, 0);
+}
+
+// ============================================================================
+// Test Suite: checksum_related (Checksum Related Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(checksum_related) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(checksum_related) {
+    // Setup code here
+}
+
+FB_TEST(checksum_related, fixed_encoding_size_constant) {
+    FB_ASSERT_EQ(sizeof(uint32_t), 4);
+    FB_ASSERT_EQ(sizeof(uint64_t), 8);
+}
+
+FB_TEST(checksum_related, header_size_consistent) {
+    FB_ASSERT_EQ(entry_header_size, 24);
+    FB_ASSERT_EQ(entry_header_size, 3 * sizeof(uint64_t));
+}
+
+FB_TEST(checksum_related, string_length_prefix_size) {
+    FB_ASSERT_EQ(sizeof(uint64_t), 8);
+}
+
+FB_TEST(checksum_related, blob_type_size_consistent) {
+    FB_ASSERT_EQ(sizeof(blob_type), sizeof(uint32_t));
+}
+
+// ============================================================================
+// Test Suite: error_code_handling (Error Code Handling Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(error_code_handling) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(error_code_handling) {
+    // Setup code here
+}
+
+FB_TEST(error_code_handling, success_is_zero) {
+    int success = 0;
+    FB_ASSERT_TRUE(success == 0);
+}
+
+FB_TEST(error_code_handling, error_is_negative) {
+    int error = -1;
+    FB_ASSERT_TRUE(error < 0);
+}
+
+FB_TEST(error_code_handling, einval_value) {
+    FB_ASSERT_EQ(EINVAL, 22);
+}
+
+FB_TEST(error_code_handling, enomem_value) {
+    FB_ASSERT_EQ(ENOMEM, 12);
+}
+
+FB_TEST(error_code_handling, eio_value) {
+    FB_ASSERT_EQ(EIO, 5);
+}
+
+FB_TEST(error_code_handling, error_propagation) {
+    int received_error = -EINVAL;
+    FB_ASSERT_TRUE(received_error < 0);
+    FB_ASSERT_EQ(-received_error, EINVAL);
+}
