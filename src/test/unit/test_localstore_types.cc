@@ -6568,3 +6568,273 @@ FB_TEST(buffer_list_to_iovec_edge, to_iovec_offset_exceeds_total) {
     iovecs iovs = bl.to_iovec(1000, 10);
     FB_ASSERT_TRUE(iovs.empty());
 }
+
+// ============================================================================
+// Test Suite: kvstore_context_operations (KV Store Context Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(kvstore_context_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(kvstore_context_operations) {
+    // Setup code here
+}
+
+FB_TEST(kvstore_context_operations, write_ctx_multiple_ops) {
+    kvstore_write_ctx ctx;
+    for (int i = 0; i < 100; i++) {
+        op operation;
+        operation.key = "key_" + std::to_string(i);
+        operation.value = "value_" + std::to_string(i);
+        ctx.ops.push_back(operation);
+    }
+    FB_ASSERT_EQ(ctx.ops.size(), 100);
+}
+
+FB_TEST(kvstore_context_operations, write_ctx_mixed_ops) {
+    kvstore_write_ctx ctx;
+    op write_op, delete_op;
+    write_op.key = "key1";
+    write_op.value = "value1";
+    delete_op.key = "key2";
+    delete_op.value = std::nullopt;
+
+    ctx.ops.push_back(write_op);
+    ctx.ops.push_back(delete_op);
+
+    FB_ASSERT_TRUE(ctx.ops[0].value.has_value());
+    FB_ASSERT_FALSE(ctx.ops[1].value.has_value());
+}
+
+FB_TEST(kvstore_context_operations, read_ctx_range_calculation) {
+    kvstore_read_ctx ctx;
+    ctx.start_pos = 0;
+    ctx.len = 4096;
+    uint64_t end = ctx.start_pos + ctx.len;
+    FB_ASSERT_EQ(end, 4096);
+}
+
+FB_TEST(kvstore_context_operations, ckpt_ctx_buffer_accumulation) {
+    kvstore_ckpt_ctx ctx;
+    char buffer1[256], buffer2[512];
+    spdk_buffer sbuf1(buffer1, 256);
+    spdk_buffer sbuf2(buffer2, 512);
+
+    ctx.bl.append_buffer(sbuf1);
+    ctx.bl.append_buffer(sbuf2);
+
+    FB_ASSERT_EQ(ctx.bl.bytes(), 768);
+}
+
+// ============================================================================
+// Test Suite: rblob_context_operations (RBlob Context Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(rblob_context_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(rblob_context_operations) {
+    // Setup code here
+}
+
+FB_TEST(rblob_context_operations, rw_ctx_read_mode) {
+    rblob_rw_ctx ctx;
+    ctx.is_read = true;
+    ctx.start_pos = 0;
+    ctx.len = 4096;
+
+    FB_ASSERT_TRUE(ctx.is_read);
+    FB_ASSERT_EQ(ctx.len, 4096);
+}
+
+FB_TEST(rblob_context_operations, rw_ctx_write_mode) {
+    rblob_rw_ctx ctx;
+    ctx.is_read = false;
+    ctx.start_pos = 4096;
+    ctx.len = 8192;
+
+    FB_ASSERT_FALSE(ctx.is_read);
+    FB_ASSERT_EQ(ctx.start_pos, 4096);
+}
+
+FB_TEST(rblob_context_operations, rw_ctx_iov_accumulation) {
+    rblob_rw_ctx ctx;
+    struct iovec iov;
+    iov.iov_base = nullptr;
+    iov.iov_len = 4096;
+    ctx.iov.push_back(iov);
+
+    FB_ASSERT_EQ(ctx.iov.size(), 1);
+    FB_ASSERT_EQ(ctx.iov[0].iov_len, 4096);
+}
+
+FB_TEST(rblob_context_operations, trim_ctx_range) {
+    rblob_trim_ctx ctx;
+    ctx.lba = 1024;
+    ctx.len = 2048;
+    uint64_t end = ctx.lba + ctx.len;
+    FB_ASSERT_EQ(end, 3072);
+}
+
+FB_TEST(rblob_context_operations, md_ctx_load_vs_save) {
+    rblob_md_ctx load_ctx;
+    load_ctx.is_load = true;
+    FB_ASSERT_TRUE(load_ctx.is_load);
+
+    rblob_md_ctx save_ctx;
+    save_ctx.is_load = false;
+    FB_ASSERT_FALSE(save_ctx.is_load);
+}
+
+// ============================================================================
+// Test Suite: log_entry_encode_decode (Log Entry Encode Decode Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_entry_encode_decode) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_entry_encode_decode) {
+    // Setup code here
+}
+
+FB_TEST(log_entry_encode_decode, encode_decode_minimal) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    log_entry_t entry_in;
+    entry_in.term_id = 0;
+    entry_in.index = 0;
+    entry_in.size = 0;
+    entry_in.type = 0;
+    entry_in.meta = "";
+
+    bool ok = EncodeLogHeader(sbuf, entry_in);
+    FB_ASSERT_TRUE(ok);
+
+    sbuf.reset();
+
+    log_entry_t entry_out;
+    ok = DecodeLogHeader(sbuf, entry_out);
+    FB_ASSERT_TRUE(ok);
+
+    FB_ASSERT_EQ(entry_out.term_id, 0);
+    FB_ASSERT_EQ(entry_out.index, 0);
+    FB_ASSERT_EQ(entry_out.size, 0);
+    FB_ASSERT_EQ(entry_out.type, 0);
+    FB_ASSERT_EQ(entry_out.meta, "");
+}
+
+FB_TEST(log_entry_encode_decode, encode_decode_with_long_meta) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+
+    log_entry_t entry_in;
+    entry_in.term_id = 42;
+    entry_in.index = 1000;
+    entry_in.size = 65536;
+    entry_in.type = 3;
+    entry_in.meta = std::string(1000, 'x');
+
+    bool ok = EncodeLogHeader(sbuf, entry_in);
+    FB_ASSERT_TRUE(ok);
+
+    sbuf.reset();
+
+    log_entry_t entry_out;
+    ok = DecodeLogHeader(sbuf, entry_out);
+    FB_ASSERT_TRUE(ok);
+
+    FB_ASSERT_EQ(entry_out.term_id, 42);
+    FB_ASSERT_EQ(entry_out.index, 1000);
+    FB_ASSERT_EQ(entry_out.size, 65536);
+    FB_ASSERT_EQ(entry_out.type, 3);
+    FB_ASSERT_EQ(entry_out.meta.size(), 1000);
+}
+
+FB_TEST(log_entry_encode_decode, encode_decode_preserves_all) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    log_entry_t entry_in;
+    entry_in.term_id = 0xDEADBEEF;
+    entry_in.index = 0x12345678;
+    entry_in.size = 0xABCDEF00;
+    entry_in.type = 7;
+    entry_in.meta = "complex_meta";
+
+    EncodeLogHeader(sbuf, entry_in);
+    sbuf.reset();
+
+    log_entry_t entry_out;
+    DecodeLogHeader(sbuf, entry_out);
+
+    FB_ASSERT_EQ(entry_out.term_id, entry_in.term_id);
+    FB_ASSERT_EQ(entry_out.index, entry_in.index);
+    FB_ASSERT_EQ(entry_out.size, entry_in.size);
+    FB_ASSERT_EQ(entry_out.type, entry_in.type);
+    FB_ASSERT_EQ(entry_out.meta, entry_in.meta);
+}
+
+FB_TEST(log_entry_encode_decode, partial_decode_fails) {
+    char buffer[16];
+    spdk_buffer sbuf(buffer, 16);
+
+    log_entry_t entry;
+    bool ok = DecodeLogHeader(sbuf, entry);
+    FB_ASSERT_FALSE(ok);
+}
+
+// ============================================================================
+// Test Suite: length_string_calculations (Length String Calculations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(length_string_calculations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(length_string_calculations) {
+    // Setup code here
+}
+
+FB_TEST(length_string_calculations, length_short_string) {
+    FB_ASSERT_EQ(LengthString("a"), sizeof(uint64_t) + 1);
+}
+
+FB_TEST(length_string_calculations, length_medium_string) {
+    std::string str(100, 'x');
+    FB_ASSERT_EQ(LengthString(str), sizeof(uint64_t) + 100);
+}
+
+FB_TEST(length_string_calculations, length_large_string) {
+    std::string str(4096, 'y');
+    FB_ASSERT_EQ(LengthString(str), sizeof(uint64_t) + 4096);
+}
+
+FB_TEST(length_string_calculations, length_opt_with_value) {
+    std::optional<std::string> opt = "test";
+    FB_ASSERT_EQ(LengthOptString(opt), sizeof(uint64_t) + 4);
+}
+
+FB_TEST(length_string_calculations, length_opt_without_value) {
+    std::optional<std::string> opt = std::nullopt;
+    FB_ASSERT_EQ(LengthOptString(opt), sizeof(uint64_t));
+}
+
+FB_TEST(length_string_calculations, length_opt_empty_string) {
+    std::optional<std::string> opt = std::string("");
+    FB_ASSERT_EQ(LengthOptString(opt), sizeof(uint64_t));
+}
+
+FB_TEST(length_string_calculations, length_consistency_with_put) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    std::string str = "hello";
+    uint64_t expected_len = LengthString(str);
+
+    PutString(sbuf, str);
+    FB_ASSERT_EQ(sbuf.used(), expected_len);
+}
