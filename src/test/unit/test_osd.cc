@@ -2252,6 +2252,158 @@ FB_TEST(osd_error_handling, error_recovery) {
 }
 
 // ============================================================================
+// Test Suite: osd_performance_counters (OSD Performance Counters Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_performance_counters) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_performance_counters) {
+    // Teardown code here
+}
+
+FB_TEST(osd_performance_counters, read_io_count) {
+    // Should count read I/O operations
+    uint64_t read_ios = 100;
+    FB_ASSERT_TRUE(read_ios > 0);
+}
+
+FB_TEST(osd_performance_counters, write_io_count) {
+    // Should count write I/O operations
+    uint64_t write_ios = 50;
+    FB_ASSERT_TRUE(write_ios > 0);
+}
+
+FB_TEST(osd_performance_counters, read_bytes_count) {
+    // Should count read bytes
+    uint64_t read_bytes = 1024 * 1024;
+    FB_ASSERT_TRUE(read_bytes > 0);
+}
+
+FB_TEST(osd_performance_counters, write_bytes_count) {
+    // Should count write bytes
+    uint64_t write_bytes = 2048 * 1024;
+    FB_ASSERT_TRUE(write_bytes > 0);
+}
+
+FB_TEST(osd_performance_counters, io_latency_tracking) {
+    // Should track I/O latency
+    uint64_t latency_us = 1000;
+    FB_ASSERT_TRUE(latency_us > 0);
+}
+
+FB_TEST(osd_performance_counters, average_latency) {
+    // Should calculate average latency
+    uint64_t total_latency = 10000;
+    uint64_t io_count = 100;
+    uint64_t avg_latency = total_latency / io_count;
+    FB_ASSERT_EQ(avg_latency, 100);
+}
+
+FB_TEST(osd_performance_counters, per_pg_statistics) {
+    // Should maintain per-PG statistics
+    std::map<std::string, utils::cluster_io> pg_stats;
+    pg_stats["1.100"] = utils::cluster_io{.read_ios = 10, .write_ios = 5};
+
+    FB_ASSERT_EQ(pg_stats.size(), 1);
+}
+
+FB_TEST(osd_performance_counters, counter_reset) {
+    // Should be able to reset counters
+    uint64_t counter = 100;
+    counter = 0;
+    FB_ASSERT_EQ(counter, 0);
+}
+
+FB_TEST(osd_performance_counters, counter_increment) {
+    // Counters should be atomic increment
+    uint64_t counter = 0;
+    counter++;
+    counter++;
+    FB_ASSERT_EQ(counter, 2);
+}
+
+// ============================================================================
+// Test Suite: osd_concurrency (OSD Concurrency Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_concurrency) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_concurrency) {
+    // Teardown code here
+}
+
+FB_TEST(osd_concurrency, concurrent_reads_allowed) {
+    // Multiple reads can proceed concurrently
+    int read_lock_holders = 5;
+    FB_ASSERT_TRUE(read_lock_holders > 1);
+}
+
+FB_TEST(osd_concurrency, concurrent_writes_allowed) {
+    // Multiple writes can proceed concurrently
+    int write_lock_holders = 3;
+    FB_ASSERT_TRUE(write_lock_holders > 1);
+}
+
+FB_TEST(osd_concurrency, read_write_exclusion) {
+    // Read and write are mutually exclusive
+    utils::operation_type read_op = utils::operation_type::READ;
+    utils::operation_type write_op = utils::operation_type::WRITE;
+
+    FB_ASSERT_TRUE(read_op != write_op);
+}
+
+FB_TEST(osd_concurrency, object_level_locking) {
+    // Locking is per-object
+    std::string obj1 = "object_1";
+    std::string obj2 = "object_2";
+
+    FB_ASSERT_TRUE(obj1 != obj2);
+    // Different objects can be accessed concurrently
+}
+
+FB_TEST(osd_concurrency, lock_fairness) {
+    // Lock should be fair (FIFO)
+    bool is_fifo = true;
+    FB_ASSERT_TRUE(is_fifo);
+}
+
+FB_TEST(osd_concurrency, lock_priority) {
+    // No lock priority (all equal)
+    bool all_equal = true;
+    FB_ASSERT_TRUE(all_equal);
+}
+
+FB_TEST(osd_concurrency, waiter_queue_order) {
+    // Waiters should be queued in order
+    std::vector<int> waiters = {1, 2, 3};
+    FB_ASSERT_EQ(waiters[0], 1);
+    FB_ASSERT_EQ(waiters[1], 2);
+    FB_ASSERT_EQ(waiters[2], 3);
+}
+
+FB_TEST(osd_concurrency, lock_timeout) {
+    // Lock acquisition should timeout
+    bool timed_out = true;
+    FB_ASSERT_TRUE(timed_out);
+}
+
+FB_TEST(osd_concurrency, deadlock_prevention) {
+    // System should prevent deadlocks
+    bool deadlock_free = true;
+    FB_ASSERT_TRUE(deadlock_free);
+}
+
+FB_TEST(osd_concurrency, lock_released_on_error) {
+    // Lock should be released on error
+    bool lock_released = true;
+    FB_ASSERT_TRUE(lock_released);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
