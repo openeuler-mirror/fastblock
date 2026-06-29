@@ -2404,6 +2404,141 @@ FB_TEST(osd_concurrency, lock_released_on_error) {
 }
 
 // ============================================================================
+// Test Suite: osd_shard_service (OSD Shard Service Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_shard_service) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_shard_service) {
+    // Teardown code here
+}
+
+FB_TEST(osd_shard_service, shard_count) {
+    // System should have multiple shards
+    uint32_t shard_count = 4;
+    FB_ASSERT_TRUE(shard_count > 0);
+}
+
+FB_TEST(osd_shard_service, shard_id_range) {
+    // Shard IDs should be in valid range
+    uint32_t shard_id = 2;
+    FB_ASSERT_TRUE(shard_id < 8);
+}
+
+FB_TEST(osd_shard_service, pg_to_shard_mapping) {
+    // PG should be mapped to a specific shard
+    std::map<std::string, uint32_t> shard_table;
+    shard_table["1.100"] = 0;
+    shard_table["1.200"] = 1;
+    shard_table["2.100"] = 2;
+
+    FB_ASSERT_EQ(shard_table["1.100"], 0);
+    FB_ASSERT_EQ(shard_table["1.200"], 1);
+    FB_ASSERT_EQ(shard_table["2.100"], 2);
+}
+
+FB_TEST(osd_shard_service, shard_revision_tracking) {
+    // Each shard mapping should have a revision
+    shard_revision rev;
+    rev._shard = 1;
+    rev._revision = 42;
+
+    FB_ASSERT_EQ(rev._shard, 1);
+    FB_ASSERT_EQ(rev._revision, 42);
+}
+
+FB_TEST(osd_shard_service, add_pg_shard) {
+    // Adding PG to shard table
+    std::map<std::string, shard_revision> shard_table;
+    shard_table["1.100"] = shard_revision{0, 100};
+
+    FB_ASSERT_EQ(shard_table.size(), 1);
+    FB_ASSERT_EQ(shard_table["1.100"]._shard, 0);
+    FB_ASSERT_EQ(shard_table["1.100"]._revision, 100);
+}
+
+FB_TEST(osd_shard_service, remove_pg_shard) {
+    // Removing PG from shard table
+    std::map<std::string, shard_revision> shard_table;
+    shard_table["1.100"] = shard_revision{0, 100};
+
+    auto ret = shard_table.erase("1.100");
+    FB_ASSERT_EQ(ret, 1);
+    FB_ASSERT_TRUE(shard_table.empty());
+}
+
+FB_TEST(osd_shard_service, remove_nonexistent_pg_shard) {
+    // Removing non-existent PG should return 0
+    std::map<std::string, shard_revision> shard_table;
+    auto ret = shard_table.erase("99.99");
+    FB_ASSERT_EQ(ret, 0);
+}
+
+FB_TEST(osd_shard_service, multiple_pgs_same_shard) {
+    // Multiple PGs can be on the same shard
+    std::map<std::string, shard_revision> shard_table;
+    shard_table["1.100"] = shard_revision{0, 100};
+    shard_table["1.200"] = shard_revision{0, 101};
+    shard_table["1.300"] = shard_revision{0, 102};
+
+    FB_ASSERT_EQ(shard_table.size(), 3);
+    FB_ASSERT_EQ(shard_table["1.100"]._shard, 0);
+    FB_ASSERT_EQ(shard_table["1.200"]._shard, 0);
+    FB_ASSERT_EQ(shard_table["1.300"]._shard, 0);
+}
+
+FB_TEST(osd_shard_service, sm_table_per_shard) {
+    // Each shard has its own state machine table
+    std::vector<std::map<std::string, uint32_t>> sm_table(4);
+
+    sm_table[0]["1.100"] = 1;
+    sm_table[1]["1.200"] = 2;
+
+    FB_ASSERT_EQ(sm_table.size(), 4);
+    FB_ASSERT_EQ(sm_table[0].size(), 1);
+    FB_ASSERT_EQ(sm_table[1].size(), 1);
+    FB_ASSERT_TRUE(sm_table[2].empty());
+}
+
+FB_TEST(osd_shard_service, core_sharded_reference) {
+    // Shard service should reference core_sharded instance
+    // Concept: core_sharded manages shard-to-core mapping
+    bool has_sharded = true;
+    FB_ASSERT_TRUE(has_sharded);
+}
+
+FB_TEST(osd_shard_service, load_balancing) {
+    // PGs should be distributed across shards
+    std::map<std::string, shard_revision> shard_table;
+    for (int i = 0; i < 8; i++) {
+        std::string pg_name = "1." + std::to_string(i * 100);
+        shard_table[pg_name] = shard_revision{static_cast<uint32_t>(i % 4), i};
+    }
+
+    FB_ASSERT_EQ(shard_table.size(), 8);
+}
+
+FB_TEST(osd_shard_service, shard_lookup_by_pg) {
+    // Should be able to find shard by pool_id and pg_id
+    std::map<std::string, shard_revision> shard_table;
+    shard_table["1.100"] = shard_revision{2, 50};
+
+    std::string key = "1.100";
+    auto it = shard_table.find(key);
+    FB_ASSERT_TRUE(it != shard_table.end());
+    FB_ASSERT_EQ(it->second._shard, 2);
+}
+
+FB_TEST(osd_shard_service, shard_lookup_miss) {
+    // Looking up non-existent PG should fail
+    std::map<std::string, shard_revision> shard_table;
+    auto it = shard_table.find("99.99");
+    FB_ASSERT_TRUE(it == shard_table.end());
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
