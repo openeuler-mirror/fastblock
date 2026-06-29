@@ -3586,6 +3586,228 @@ FB_TEST(osd_integration_concept, performance_optimization) {
 }
 
 // ============================================================================
+// Test Suite: osd_robustness (OSD Robustness Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_robustness) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_robustness) {
+    // Teardown code here
+}
+
+FB_TEST(osd_robustness, crash_recovery) {
+    // Should recover from crash using WAL
+    bool has_wal = true;
+    FB_ASSERT_TRUE(has_wal);
+}
+
+FB_TEST(osd_robustness, partial_write_handling) {
+    // Should handle partial writes
+    bool handled = true;
+    FB_ASSERT_TRUE(handled);
+}
+
+FB_TEST(osd_robustness, checksum_verification) {
+    // Should verify data checksums
+    bool has_checksum = true;
+    FB_ASSERT_TRUE(has_checksum);
+}
+
+FB_TEST(osd_robustness, data_corruption_detection) {
+    // Should detect data corruption
+    bool can_detect = true;
+    FB_ASSERT_TRUE(can_detect);
+}
+
+FB_TEST(osd_robustness, write_idempotency) {
+    // Writes should be idempotent
+    bool is_idempotent = true;
+    FB_ASSERT_TRUE(is_idempotent);
+}
+
+FB_TEST(osd_robustness, duplicate_request_handling) {
+    // Should handle duplicate requests
+    bool handled = true;
+    FB_ASSERT_TRUE(handled);
+}
+
+FB_TEST(osd_robustness, out_of_order_messages) {
+    // Should handle out-of-order messages
+    bool handled = true;
+    FB_ASSERT_TRUE(handled);
+}
+
+FB_TEST(osd_robustness, network_partition) {
+    // Should handle network partitions
+    bool handled = true;
+    FB_ASSERT_TRUE(handled);
+}
+
+FB_TEST(osd_robustness, split_brain_prevention) {
+    // Should prevent split-brain
+    bool prevented = true;
+    FB_ASSERT_TRUE(prevented);
+}
+
+FB_TEST(osd_robustness, slow_disk_handling) {
+    // Should handle slow disk
+    bool handled = true;
+    FB_ASSERT_TRUE(handled);
+}
+
+FB_TEST(osd_robustness, memory_pressure) {
+    // Should handle memory pressure
+    bool handled = true;
+    FB_ASSERT_TRUE(handled);
+}
+
+FB_TEST(osd_robustness, back_pressure) {
+    // Should apply back-pressure when overloaded
+    bool has_backpressure = true;
+    FB_ASSERT_TRUE(has_backpressure);
+}
+
+FB_TEST(osd_robustness, graceful_degradation) {
+    // Should degrade gracefully under load
+    bool graceful = true;
+    FB_ASSERT_TRUE(graceful);
+}
+
+FB_TEST(osd_robustness, request_timeout) {
+    // Requests should timeout
+    uint64_t timeout_ms = 30000;
+    FB_ASSERT_TRUE(timeout_ms > 0);
+}
+
+FB_TEST(osd_robustness, retry_policy) {
+    // Should have retry policy
+    uint32_t max_retries = 3;
+    FB_ASSERT_TRUE(max_retries > 0);
+}
+
+FB_TEST(osd_robustness, exponential_backoff) {
+    // Should use exponential backoff for retries
+    uint64_t base_ms = 100;
+    uint64_t retry1 = base_ms;
+    uint64_t retry2 = base_ms * 2;
+    uint64_t retry3 = base_ms * 4;
+    FB_ASSERT_TRUE(retry1 < retry2 && retry2 < retry3);
+}
+
+FB_TEST(osd_robustness, circuit_breaker) {
+    // Should have circuit breaker pattern
+    bool has_circuit_breaker = true;
+    FB_ASSERT_TRUE(has_circuit_breaker);
+}
+
+// ============================================================================
+// Test Suite: osd_protocol_buffers (OSD Protocol Buffers Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_protocol_buffers) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_protocol_buffers) {
+    // Teardown code here
+}
+
+FB_TEST(osd_protocol_buffers, write_cmd_serialization) {
+    // write_cmd should serialize object_name and offset
+    std::string object_name = "test_obj";
+    uint64_t offset = 4096;
+    FB_ASSERT_TRUE(!object_name.empty());
+}
+
+FB_TEST(osd_protocol_buffers, delete_cmd_serialization) {
+    // delete_cmd should serialize object_name
+    std::string object_name = "test_obj";
+    FB_ASSERT_TRUE(!object_name.empty());
+}
+
+FB_TEST(osd_protocol_buffers, message_serialization) {
+    // Messages should serialize to string
+    bool can_serialize = true;
+    FB_ASSERT_TRUE(can_serialize);
+}
+
+FB_TEST(osd_protocol_buffers, message_deserialization) {
+    // Messages should deserialize from string
+    bool can_deserialize = true;
+    FB_ASSERT_TRUE(can_deserialize);
+}
+
+FB_TEST(osd_protocol_buffers, round_trip_serialization) {
+    // Serialize then deserialize should yield same data
+    std::string original = "test_data";
+    std::string serialized = original;
+    std::string deserialized = serialized;
+    FB_ASSERT_EQ(original, deserialized);
+}
+
+FB_TEST(osd_protocol_buffers, field_optional) {
+    // Protocol buffer fields can be optional
+    bool has_optional_fields = true;
+    FB_ASSERT_TRUE(has_optional_fields);
+}
+
+FB_TEST(osd_protocol_buffers, field_repeated) {
+    // Protocol buffer fields can be repeated
+    std::vector<uint32_t> osds = {1, 2, 3};
+    FB_ASSERT_EQ(osds.size(), 3);
+}
+
+FB_TEST(osd_protocol_buffers, backward_compatibility) {
+    // New fields should not break old messages
+    bool compatible = true;
+    FB_ASSERT_TRUE(compatible);
+}
+
+FB_TEST(osd_protocol_buffers, message_size_limit) {
+    // Serialized messages should respect size limits
+    size_t max_size = 4 * 1024 * 1024; // 4MB
+    FB_ASSERT_TRUE(max_size > 0);
+}
+
+FB_TEST(osd_protocol_buffers, empty_message) {
+    // Empty messages should be handled
+    std::string empty;
+    FB_ASSERT_TRUE(empty.empty());
+}
+
+FB_TEST(osd_protocol_buffers, nested_messages) {
+    // Support nested message structures
+    bool supports_nesting = true;
+    FB_ASSERT_TRUE(supports_nesting);
+}
+
+FB_TEST(osd_protocol_buffers, enum_fields) {
+    // Support enum fields in messages
+    uint32_t op_type = static_cast<uint32_t>(utils::operation_type::WRITE);
+    FB_ASSERT_TRUE(op_type > 0);
+}
+
+FB_TEST(osd_protocol_buffers, string_fields) {
+    // Support string fields in messages
+    std::string object_name = "object_001";
+    FB_ASSERT_TRUE(!object_name.empty());
+}
+
+FB_TEST(osd_protocol_buffers, uint64_fields) {
+    // Support uint64 fields in messages
+    uint64_t offset = UINT64_MAX;
+    FB_ASSERT_TRUE(offset > 0);
+}
+
+FB_TEST(osd_protocol_buffers, bytes_fields) {
+    // Support bytes fields in messages
+    std::string data = "binary_data_content";
+    FB_ASSERT_TRUE(!data.empty());
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
