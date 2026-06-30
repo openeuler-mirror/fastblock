@@ -9839,3 +9839,427 @@ FB_TEST(buffer_list_bytes_tracking, bytes_after_trim_back) {
     bl.trim_back();
     FB_ASSERT_EQ(bl.bytes(), 256);
 }
+
+// ============================================================================
+// Test Suite: log_entry_meta_operations (Log Entry Meta Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_entry_meta_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_entry_meta_operations) {
+    // Setup code here
+}
+
+FB_TEST(log_entry_meta_operations, meta_empty_default) {
+    log_entry_t entry;
+    FB_ASSERT_TRUE(entry.meta.empty());
+}
+
+FB_TEST(log_entry_meta_operations, meta_set_simple) {
+    log_entry_t entry;
+    entry.meta = "simple_meta";
+    FB_ASSERT_EQ(entry.meta, "simple_meta");
+}
+
+FB_TEST(log_entry_meta_operations, meta_set_json) {
+    log_entry_t entry;
+    entry.meta = R"({"key":"value","num":42})";
+    FB_ASSERT_TRUE(entry.meta.find("key") != std::string::npos);
+}
+
+FB_TEST(log_entry_meta_operations, meta_set_long) {
+    log_entry_t entry;
+    entry.meta = std::string(1000, 'm');
+    FB_ASSERT_EQ(entry.meta.size(), 1000);
+}
+
+FB_TEST(log_entry_meta_operations, meta_copy) {
+    log_entry_t entry1;
+    entry1.meta = "original";
+
+    log_entry_t entry2 = entry1;
+    FB_ASSERT_EQ(entry2.meta, "original");
+
+    entry2.meta = "modified";
+    FB_ASSERT_EQ(entry1.meta, "original");
+}
+
+FB_TEST(log_entry_meta_operations, meta_clear) {
+    log_entry_t entry;
+    entry.meta = "data";
+    entry.meta.clear();
+    FB_ASSERT_TRUE(entry.meta.empty());
+}
+
+// ============================================================================
+// Test Suite: log_entry_data_advanced (Log Entry Data Advanced Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_entry_data_advanced) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_entry_data_advanced) {
+    // Setup code here
+}
+
+FB_TEST(log_entry_data_advanced, data_empty_default) {
+    log_entry_t entry;
+    FB_ASSERT_EQ(entry.data.bytes(), 0);
+}
+
+FB_TEST(log_entry_data_advanced, data_append_single) {
+    log_entry_t entry;
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    entry.data.append_buffer(sbuf);
+    FB_ASSERT_EQ(entry.data.bytes(), 1024);
+}
+
+FB_TEST(log_entry_data_advanced, data_append_multiple) {
+    log_entry_t entry;
+    char buffer1[256], buffer2[512];
+    spdk_buffer sbuf1(buffer1, 256);
+    spdk_buffer sbuf2(buffer2, 512);
+    entry.data.append_buffer(sbuf1);
+    entry.data.append_buffer(sbuf2);
+    FB_ASSERT_EQ(entry.data.bytes(), 768);
+}
+
+FB_TEST(log_entry_data_advanced, data_to_iovec_single) {
+    log_entry_t entry;
+    char buffer[512];
+    spdk_buffer sbuf(buffer, 512);
+    entry.data.append_buffer(sbuf);
+
+    iovecs iovs = entry.data.to_iovec();
+    FB_ASSERT_EQ(iovs.size(), 1);
+}
+
+FB_TEST(log_entry_data_advanced, data_to_iovec_multiple) {
+    log_entry_t entry;
+    char buffer1[256], buffer2[512];
+    spdk_buffer sbuf1(buffer1, 256);
+    spdk_buffer sbuf2(buffer2, 512);
+    entry.data.append_buffer(sbuf1);
+    entry.data.append_buffer(sbuf2);
+
+    iovecs iovs = entry.data.to_iovec();
+    FB_ASSERT_EQ(iovs.size(), 2);
+}
+
+FB_TEST(log_entry_data_advanced, data_clear) {
+    log_entry_t entry;
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    entry.data.append_buffer(sbuf);
+    entry.data.clear();
+    FB_ASSERT_EQ(entry.data.bytes(), 0);
+}
+
+FB_TEST(log_entry_data_advanced, data_pop_front) {
+    log_entry_t entry;
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    entry.data.append_buffer(sbuf1);
+    entry.data.append_buffer(sbuf2);
+
+    entry.data.pop_front();
+    FB_ASSERT_EQ(entry.data.bytes(), 200);
+}
+
+FB_TEST(log_entry_data_advanced, data_trim_front) {
+    log_entry_t entry;
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    entry.data.append_buffer(sbuf);
+
+    entry.data.trim_front();
+    FB_ASSERT_EQ(entry.data.bytes(), 0);
+}
+
+FB_TEST(log_entry_data_advanced, data_trim_back) {
+    log_entry_t entry;
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    entry.data.append_buffer(sbuf);
+
+    entry.data.trim_back();
+    FB_ASSERT_EQ(entry.data.bytes(), 0);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_encoder_failure_modes (Buffer List Encoder Failure Modes Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_encoder_failure_modes) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_encoder_failure_modes) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_encoder_failure_modes, put_on_empty_list) {
+    buffer_list bl;
+    buffer_list_encoder encoder(bl);
+    FB_ASSERT_FALSE(encoder.put(1ULL));
+}
+
+FB_TEST(buffer_list_encoder_failure_modes, put_on_full_buffer) {
+    char buffer[8];
+    spdk_buffer sbuf(buffer, 8);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    encoder.put(1ULL);
+    FB_ASSERT_FALSE(encoder.put(2ULL));
+}
+
+FB_TEST(buffer_list_encoder_failure_modes, put_string_insufficient_space) {
+    char buffer[4];
+    spdk_buffer sbuf(buffer, 4);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    FB_ASSERT_FALSE(encoder.put(std::string("test")));
+}
+
+FB_TEST(buffer_list_encoder_failure_modes, get_on_empty_buffer) {
+    char buffer[8];
+    spdk_buffer sbuf(buffer, 8);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    uint64_t val;
+    FB_ASSERT_FALSE(encoder.get(val));
+}
+
+FB_TEST(buffer_list_encoder_failure_modes, get_string_on_empty) {
+    char buffer[8];
+    spdk_buffer sbuf(buffer, 8);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    std::string val;
+    FB_ASSERT_FALSE(encoder.get(val));
+}
+
+// ============================================================================
+// Test Suite: encoding_partial_failure (Encoding Partial Failure Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(encoding_partial_failure) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(encoding_partial_failure) {
+    // Setup code here
+}
+
+FB_TEST(encoding_partial_failure, partial_put_sequence) {
+    char buffer[20];
+    spdk_buffer sbuf(buffer, 20);
+
+    PutFixed32(sbuf, 1);
+    PutFixed64(sbuf, 2);
+    FB_ASSERT_TRUE(sbuf.used() == 12);
+
+    bool ok = PutFixed32(sbuf, 3);
+    FB_ASSERT_TRUE(ok);
+    FB_ASSERT_TRUE(sbuf.used() == 16);
+
+    ok = PutFixed32(sbuf, 4);
+    FB_ASSERT_FALSE(ok);
+    FB_ASSERT_TRUE(sbuf.used() == 16);
+}
+
+FB_TEST(encoding_partial_failure, partial_string_put) {
+    char buffer[16];
+    spdk_buffer sbuf(buffer, 16);
+
+    PutFixed64(sbuf, 0);
+    FB_ASSERT_TRUE(sbuf.used() == 8);
+
+    std::string str = "test";
+    bool ok = PutString(sbuf, str);
+    FB_ASSERT_FALSE(ok); // Need 8 + 4 = 12, only 8 remaining
+}
+
+FB_TEST(encoding_partial_failure, recoverable_failure) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+
+    PutFixed32(sbuf, 1);
+    PutFixed32(sbuf, 2);
+
+    std::string long_str(100, 'x');
+    bool ok = PutString(sbuf, long_str);
+    FB_ASSERT_FALSE(ok);
+
+    // Should still be able to put more fixed values
+    sbuf.reset();
+    PutFixed32(sbuf, 1);
+    FB_ASSERT_TRUE(sbuf.used() == 4);
+}
+
+FB_TEST(encoding_partial_failure, boundary_exact_fill) {
+    char buffer[12];
+    spdk_buffer sbuf(buffer, 12);
+
+    PutFixed32(sbuf, 1);
+    PutFixed32(sbuf, 2);
+    PutFixed32(sbuf, 3);
+
+    FB_ASSERT_TRUE(sbuf.used() == 12);
+    FB_ASSERT_TRUE(sbuf.remain() == 0);
+}
+
+FB_TEST(encoding_partial_failure, boundary_one_byte_short) {
+    char buffer[11];
+    spdk_buffer sbuf(buffer, 11);
+
+    PutFixed32(sbuf, 1);
+    PutFixed32(sbuf, 2);
+
+    bool ok = PutFixed32(sbuf, 3);
+    FB_ASSERT_FALSE(ok);
+}
+
+// ============================================================================
+// Test Suite: serialization_mixed_types (Serialization Mixed Types Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization_mixed_types) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization_mixed_types) {
+    // Setup code here
+}
+
+FB_TEST(serialization_mixed_types, uint32_then_string) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    PutFixed32(sbuf, 100);
+    PutString(sbuf, "test");
+
+    sbuf.reset();
+
+    uint32_t num;
+    std::string str;
+    GetFixed32(sbuf, num);
+    GetString(sbuf, str);
+
+    FB_ASSERT_EQ(num, 100);
+    FB_ASSERT_EQ(str, "test");
+}
+
+FB_TEST(serialization_mixed_types, string_then_uint64) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    PutString(sbuf, "prefix");
+    PutFixed64(sbuf, 0x1234567890ULL);
+
+    sbuf.reset();
+
+    std::string str;
+    uint64_t num;
+    GetString(sbuf, str);
+    GetFixed64(sbuf, num);
+
+    FB_ASSERT_EQ(str, "prefix");
+    FB_ASSERT_EQ(num, 0x1234567890ULL);
+}
+
+FB_TEST(serialization_mixed_types, alternating_sequence) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    for (int i = 0; i < 5; i++) {
+        PutFixed32(sbuf, i);
+        PutString(sbuf, std::to_string(i));
+        PutFixed64(sbuf, i * 100);
+    }
+
+    sbuf.reset();
+
+    for (int i = 0; i < 5; i++) {
+        uint32_t v32;
+        std::string str;
+        uint64_t v64;
+        GetFixed32(sbuf, v32);
+        GetString(sbuf, str);
+        GetFixed64(sbuf, v64);
+
+        FB_ASSERT_EQ(v32, static_cast<uint32_t>(i));
+        FB_ASSERT_EQ(str, std::to_string(i));
+        FB_ASSERT_EQ(v64, static_cast<uint64_t>(i * 100));
+    }
+}
+
+FB_TEST(serialization_mixed_types, opt_string_mixed) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    PutFixed32(sbuf, 1);
+    PutOptString(sbuf, std::nullopt);
+    PutFixed32(sbuf, 2);
+    PutOptString(sbuf, std::string("value"));
+
+    sbuf.reset();
+
+    uint32_t v1, v2;
+    std::optional<std::string> o1, o2;
+
+    GetFixed32(sbuf, v1);
+    GetOptString(sbuf, o1);
+    GetFixed32(sbuf, v2);
+    GetOptString(sbuf, o2);
+
+    FB_ASSERT_EQ(v1, 1);
+    FB_ASSERT_FALSE(o1.has_value());
+    FB_ASSERT_EQ(v2, 2);
+    FB_ASSERT_TRUE(o2.has_value());
+    FB_ASSERT_EQ(*o2, "value");
+}
+
+FB_TEST(serialization_mixed_types, all_types_sequence) {
+    char buffer[512];
+    spdk_buffer sbuf(buffer, 512);
+
+    PutFixed32(sbuf, 32);
+    PutFixed64(sbuf, 64);
+    PutString(sbuf, "str");
+    PutOptString(sbuf, std::nullopt);
+    PutOptString(sbuf, std::string("opt"));
+
+    sbuf.reset();
+
+    uint32_t v32;
+    uint64_t v64;
+    std::string str;
+    std::optional<std::string> o1, o2;
+
+    GetFixed32(sbuf, v32);
+    GetFixed64(sbuf, v64);
+    GetString(sbuf, str);
+    GetOptString(sbuf, o1);
+    GetOptString(sbuf, o2);
+
+    FB_ASSERT_EQ(v32, 32);
+    FB_ASSERT_EQ(v64, 64);
+    FB_ASSERT_EQ(str, "str");
+    FB_ASSERT_FALSE(o1.has_value());
+    FB_ASSERT_TRUE(o2.has_value());
+    FB_ASSERT_EQ(*o2, "opt");
+}
