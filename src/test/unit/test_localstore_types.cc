@@ -5917,6 +5917,370 @@ FB_TEST(spdk_buffer_append_tracking, append_empty) {
 }
 
 // ============================================================================
+// Test Suite: log_header_roundtrip (Log Header Roundtrip Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_header_roundtrip) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_header_roundtrip) {
+    // Setup code here
+}
+
+FB_TEST(log_header_roundtrip, small_values) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    log_entry_t entry_in;
+    entry_in.term_id = 1;
+    entry_in.index = 1;
+    entry_in.size = 64;
+    entry_in.type = 0;
+    entry_in.meta = "a";
+
+    EncodeLogHeader(sbuf, entry_in);
+    sbuf.reset();
+
+    log_entry_t entry_out;
+    DecodeLogHeader(sbuf, entry_out);
+
+    FB_ASSERT_EQ(entry_out.term_id, 1);
+    FB_ASSERT_EQ(entry_out.index, 1);
+    FB_ASSERT_EQ(entry_out.size, 64);
+    FB_ASSERT_EQ(entry_out.type, 0);
+    FB_ASSERT_EQ(entry_out.meta, "a");
+}
+
+FB_TEST(log_header_roundtrip, large_meta) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+
+    log_entry_t entry_in;
+    entry_in.term_id = 10;
+    entry_in.index = 999;
+    entry_in.size = 1048576;
+    entry_in.type = 3;
+    entry_in.meta = std::string(1000, 'x');
+
+    bool encode_ok = EncodeLogHeader(sbuf, entry_in);
+    FB_ASSERT_TRUE(encode_ok);
+
+    sbuf.reset();
+
+    log_entry_t entry_out;
+    bool decode_ok = DecodeLogHeader(sbuf, entry_out);
+    FB_ASSERT_TRUE(decode_ok);
+
+    FB_ASSERT_EQ(entry_out.term_id, 10);
+    FB_ASSERT_EQ(entry_out.index, 999);
+    FB_ASSERT_EQ(entry_out.meta.size(), 1000);
+}
+
+FB_TEST(log_header_roundtrip, multiple_roundtrips) {
+    char buffer[1024];
+    for (int i = 0; i < 5; i++) {
+        spdk_buffer sbuf(buffer, 1024);
+
+        log_entry_t entry_in;
+        entry_in.term_id = i;
+        entry_in.index = i * 100;
+        entry_in.size = i * 4096;
+        entry_in.type = i % 9;
+        entry_in.meta = "meta" + std::to_string(i);
+
+        EncodeLogHeader(sbuf, entry_in);
+        sbuf.reset();
+
+        log_entry_t entry_out;
+        DecodeLogHeader(sbuf, entry_out);
+
+        FB_ASSERT_EQ(entry_out.term_id, static_cast<uint64_t>(i));
+        FB_ASSERT_EQ(entry_out.index, static_cast<uint64_t>(i * 100));
+    }
+}
+
+// ============================================================================
+// Test Suite: kv_context_operations (KV Context Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(kv_context_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(kv_context_operations) {
+    // Setup code here
+}
+
+FB_TEST(kv_context_operations, write_ctx_add_ops) {
+    kvstore_write_ctx ctx;
+
+    for (int i = 0; i < 20; i++) {
+        op operation;
+        operation.key = "key_" + std::to_string(i);
+        operation.value = "val_" + std::to_string(i);
+        ctx.ops.push_back(operation);
+    }
+
+    FB_ASSERT_EQ(ctx.ops.size(), 20);
+    FB_ASSERT_EQ(ctx.ops[0].key, "key_0");
+    FB_ASSERT_EQ(ctx.ops[19].key, "key_19");
+}
+
+FB_TEST(kv_context_operations, write_ctx_mixed_ops) {
+    kvstore_write_ctx ctx;
+
+    op put_op;
+    put_op.key = "put_key";
+    put_op.value = "put_val";
+
+    op del_op;
+    del_op.key = "del_key";
+    del_op.value = std::nullopt;
+
+    ctx.ops.push_back(put_op);
+    ctx.ops.push_back(del_op);
+
+    FB_ASSERT_EQ(ctx.ops.size(), 2);
+    FB_ASSERT_TRUE(ctx.ops[0].value.has_value());
+    FB_ASSERT_FALSE(ctx.ops[1].value.has_value());
+}
+
+FB_TEST(kv_context_operations, read_ctx_range) {
+    kvstore_read_ctx ctx;
+    ctx.start_pos = 1024;
+    ctx.len = 8192;
+
+    FB_ASSERT_EQ(ctx.start_pos + ctx.len, 9216);
+}
+
+FB_TEST(kv_context_operations, ckpt_ctx_buffer) {
+    kvstore_ckpt_ctx ctx;
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+    ctx.bl.append_buffer(sbuf);
+
+    FB_ASSERT_EQ(ctx.bl.bytes(), 4096);
+}
+
+// ============================================================================
+// Test Suite: rblob_context_operations (RBlob Context Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(rblob_context_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(rblob_context_operations) {
+    // Setup code here
+}
+
+FB_TEST(rblob_context_operations, rw_ctx_is_read_write) {
+    rblob_rw_ctx ctx_read;
+    ctx_read.is_read = true;
+    FB_ASSERT_TRUE(ctx_read.is_read);
+
+    rblob_rw_ctx ctx_write;
+    ctx_write.is_read = false;
+    FB_ASSERT_FALSE(ctx_write.is_read);
+}
+
+FB_TEST(rblob_context_operations, rw_ctx_positions) {
+    rblob_rw_ctx ctx;
+    ctx.start_pos = 0;
+    ctx.lba = 100;
+    ctx.len = 50;
+
+    uint64_t end_lba = ctx.lba + ctx.len;
+    FB_ASSERT_EQ(end_lba, 150);
+}
+
+FB_TEST(rblob_context_operations, rw_ctx_iov_accumulate) {
+    rblob_rw_ctx ctx;
+
+    for (int i = 0; i < 4; i++) {
+        struct iovec iov;
+        iov.iov_base = nullptr;
+        iov.iov_len = 4096;
+        ctx.iov.push_back(iov);
+    }
+
+    FB_ASSERT_EQ(ctx.iov.size(), 4);
+
+    size_t total = 0;
+    for (const auto& iov : ctx.iov) {
+        total += iov.iov_len;
+    }
+    FB_ASSERT_EQ(total, 16384);
+}
+
+FB_TEST(rblob_context_operations, trim_ctx_range) {
+    rblob_trim_ctx ctx;
+    ctx.lba = 500;
+    ctx.len = 1000;
+
+    FB_ASSERT_EQ(ctx.lba + ctx.len, 1500);
+}
+
+FB_TEST(rblob_context_operations, md_ctx_flags) {
+    rblob_md_ctx load_ctx;
+    load_ctx.is_load = true;
+    FB_ASSERT_TRUE(load_ctx.is_load);
+
+    rblob_md_ctx save_ctx;
+    save_ctx.is_load = false;
+    FB_ASSERT_FALSE(save_ctx.is_load);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_splice (Buffer List Splice Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_splice) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_splice) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_splice, append_lvalue_transfer) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl1, bl2;
+    bl1.append_buffer(sbuf1);
+    bl2.append_buffer(sbuf2);
+
+    bl1.append_buffer(bl2);
+
+    FB_ASSERT_EQ(bl1.bytes(), 300);
+    FB_ASSERT_EQ(bl2.bytes(), 0);
+    FB_ASSERT_TRUE(bl2.empty());
+}
+
+FB_TEST(buffer_list_splice, append_rvalue_transfer) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl1, bl2;
+    bl1.append_buffer(sbuf1);
+    bl2.append_buffer(sbuf2);
+
+    bl1.append_buffer(std::move(bl2));
+
+    FB_ASSERT_EQ(bl1.bytes(), 300);
+}
+
+FB_TEST(buffer_list_splice, pop_front_list_split) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    buffer_list front = bl.pop_front_list(2);
+    FB_ASSERT_EQ(front.bytes(), 300);
+    FB_ASSERT_EQ(bl.bytes(), 300);
+}
+
+FB_TEST(buffer_list_splice, pop_front_list_all) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    buffer_list all = bl.pop_front_list(2);
+    FB_ASSERT_EQ(all.bytes(), 300);
+    FB_ASSERT_EQ(bl.bytes(), 0);
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+// ============================================================================
+// Test Suite: serialization_stress (Serialization Stress Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization_stress) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization_stress) {
+    // Setup code here
+}
+
+FB_TEST(serialization_stress, many_fixed32_writes) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+
+    bool all_ok = true;
+    for (uint32_t i = 0; i < 1000; i++) {
+        if (!PutFixed32(sbuf, i)) {
+            all_ok = false;
+            break;
+        }
+    }
+    FB_ASSERT_TRUE(all_ok);
+    FB_ASSERT_EQ(sbuf.used(), 4000);
+}
+
+FB_TEST(serialization_stress, many_fixed64_reads) {
+    char buffer[8192];
+    spdk_buffer sbuf(buffer, 8192);
+
+    for (uint64_t i = 0; i < 1000; i++) {
+        PutFixed64(sbuf, i);
+    }
+
+    sbuf.reset();
+
+    bool all_ok = true;
+    for (uint64_t i = 0; i < 1000; i++) {
+        uint64_t val;
+        if (!GetFixed64(sbuf, val) || val != i) {
+            all_ok = false;
+            break;
+        }
+    }
+    FB_ASSERT_TRUE(all_ok);
+}
+
+FB_TEST(serialization_stress, alternating_types) {
+    char buffer[8192];
+    spdk_buffer sbuf(buffer, 8192);
+
+    for (int i = 0; i < 100; i++) {
+        PutFixed32(sbuf, static_cast<uint32_t>(i));
+        PutFixed64(sbuf, static_cast<uint64_t>(i * 100));
+    }
+
+    sbuf.reset();
+
+    bool all_ok = true;
+    for (int i = 0; i < 100; i++) {
+        uint32_t v32;
+        uint64_t v64;
+        if (!GetFixed32(sbuf, v32) || !GetFixed64(sbuf, v64)) {
+            all_ok = false;
+            break;
+        }
+        if (v32 != static_cast<uint32_t>(i) || v64 != static_cast<uint64_t>(i * 100)) {
+            all_ok = false;
+            break;
+        }
+    }
+    FB_ASSERT_TRUE(all_ok);
+}
+
+// ============================================================================
 // Test Suite: xattr_val_type_operations (Xattr Val Type Operations Tests)
 // ============================================================================
 
