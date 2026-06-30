@@ -3266,7 +3266,7 @@ FB_TEST(osd_resource_management, dma_memory_tracking) {
 FB_TEST(osd_resource_management, numa_locality) {
     // Resources should respect NUMA locality
     uint32_t numa_node = 0;
-    FB_ASSERT_TRUE(numuma_node <= UINT32_MAX);
+    FB_ASSERT_TRUE(numa_node <= UINT32_MAX);
 }
 
 FB_TEST(osd_resource_management, resource_limit) {
