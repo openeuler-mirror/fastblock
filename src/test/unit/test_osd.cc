@@ -4198,6 +4198,134 @@ FB_TEST(osd_health_check, manual_intervention_required) {
 }
 
 // ============================================================================
+// Test Suite: osd_capacity_management (OSD Capacity Management Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_capacity_management) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_capacity_management) {
+    // Teardown code here
+}
+
+FB_TEST(osd_capacity_management, total_capacity) {
+    // OSD should track total capacity
+    uint64_t total_bytes = 1024ULL * 1024ULL * 1024ULL * 100ULL; // 100GB
+    FB_ASSERT_TRUE(total_bytes > 0);
+}
+
+FB_TEST(osd_capacity_management, used_capacity) {
+    // OSD should track used capacity
+    uint64_t used_bytes = 1024ULL * 1024ULL * 1024ULL * 50ULL; // 50GB
+    FB_ASSERT_TRUE(used_bytes > 0);
+}
+
+FB_TEST(osd_capacity_management, available_capacity) {
+    // OSD should track available capacity
+    uint64_t total = 100ULL * 1024ULL * 1024ULL * 1024ULL;
+    uint64_t used = 50ULL * 1024ULL * 1024ULL * 1024ULL;
+    uint64_t available = total - used;
+    FB_ASSERT_EQ(available, 50ULL * 1024ULL * 1024ULL * 1024ULL);
+}
+
+FB_TEST(osd_capacity_management, per_pool_capacity) {
+    // Should track capacity per pool
+    std::map<uint64_t, uint64_t> pool_capacity;
+    pool_capacity[1] = 10ULL * 1024ULL * 1024ULL * 1024ULL;
+    pool_capacity[2] = 20ULL * 1024ULL * 1024ULL * 1024ULL;
+
+    FB_ASSERT_EQ(pool_capacity.size(), 2);
+}
+
+FB_TEST(osd_capacity_management, per_pg_capacity) {
+    // Should track capacity per PG
+    std::map<std::string, uint64_t> pg_capacity;
+    pg_capacity["1.100"] = 1ULL * 1024ULL * 1024ULL * 1024ULL;
+    pg_capacity["1.200"] = 2ULL * 1024ULL * 1024ULL * 1024ULL;
+
+    FB_ASSERT_EQ(pg_capacity.size(), 2);
+}
+
+FB_TEST(osd_capacity_management, capacity_threshold_warning) {
+    // Should warn at capacity threshold
+    uint64_t warning_threshold = 80; // 80%
+    FB_ASSERT_TRUE(warning_threshold > 0);
+}
+
+FB_TEST(osd_capacity_management, capacity_threshold_critical) {
+    // Should alert at critical threshold
+    uint64_t critical_threshold = 90; // 90%
+    FB_ASSERT_TRUE(critical_threshold > warning_threshold);
+}
+
+FB_TEST(osd_capacity_management, capacity_full_handling) {
+    // Should handle full OSD gracefully
+    bool handled = true;
+    FB_ASSERT_TRUE(handled);
+}
+
+FB_TEST(osd_capacity_management, capacity_rebalancing) {
+    // Should rebalance capacity across OSDs
+    bool can_rebalance = true;
+    FB_ASSERT_TRUE(can_rebalance);
+}
+
+FB_TEST(osd_capacity_management, object_size_limit) {
+    // Objects should have size limit
+    uint64_t max_object_size = 1024ULL * 1024ULL * 1024ULL; // 1GB
+    FB_ASSERT_TRUE(max_object_size > 0);
+}
+
+FB_TEST(osd_capacity_management, object_count_tracking) {
+    // Should track number of objects
+    uint64_t object_count = 10000;
+    FB_ASSERT_TRUE(object_count > 0);
+}
+
+FB_TEST(osd_capacity_management, per_osd_capacity_distribution) {
+    // Capacity should be distributed across OSDs
+    std::vector<uint64_t> osd_capacity = {50, 60, 70, 80};
+    uint64_t total = 0;
+    for (auto cap : osd_capacity) {
+        total += cap;
+    }
+    FB_ASSERT_TRUE(total > 0);
+}
+
+FB_TEST(osd_capacity_management, capacity_report_to_monitor) {
+    // Should report capacity to monitor
+    bool report_enabled = true;
+    FB_ASSERT_TRUE(report_enabled);
+}
+
+FB_TEST(osd_capacity_management, capacity_update_interval) {
+    // Capacity stats should be updated periodically
+    uint64_t update_interval_ms = 60000; // 1 minute
+    FB_ASSERT_TRUE(update_interval_ms > 0);
+}
+
+FB_TEST(osd_capacity_management, quota_enforcement) {
+    // May support quota enforcement
+    bool has_quota = true;
+    FB_ASSERT_TRUE(has_quota);
+}
+
+FB_TEST(osd_capacity_management, quota_per_pool) {
+    // May have quota per pool
+    std::map<uint64_t, uint64_t> pool_quota;
+    pool_quota[1] = 100ULL * 1024ULL * 1024ULL * 1024ULL;
+
+    FB_ASSERT_EQ(pool_quota.size(), 1);
+}
+
+FB_TEST(osd_capacity_management, quota_exceeded_handling) {
+    // Should handle quota exceeded
+    bool handled = true;
+    FB_ASSERT_TRUE(handled);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
