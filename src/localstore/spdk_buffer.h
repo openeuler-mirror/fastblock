@@ -97,13 +97,13 @@ public:
 
   void trim_front() noexcept {
     size_t len = front().size();
-    pop_front();
+    std::list<spdk_buffer>::pop_front();
     total -= len;
   }
 
   void trim_back() noexcept {
     size_t len = back().size();
-    pop_back();
+    std::list<spdk_buffer>::pop_back();
     total -= len;
   }
 
@@ -182,7 +182,11 @@ public:
   using base::begin;
   using base::end;
   using base::empty;
-  using base::clear;
+
+  void clear() noexcept {
+    std::list<spdk_buffer>::clear();
+    total = 0;
+  }
 
 private:
   size_t total{0};
