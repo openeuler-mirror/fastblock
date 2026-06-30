@@ -10849,3 +10849,353 @@ FB_TEST(final_comprehensive_tests, comprehensive_log_entry_header) {
     FB_ASSERT_EQ(decoded.type, entry.type);
     FB_ASSERT_EQ(decoded.meta, entry.meta);
 }
+
+// ============================================================================
+// Test Suite: stress_tests (Stress Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(stress_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(stress_tests) {
+    // Setup code here
+}
+
+FB_TEST(stress_tests, many_small_appends) {
+    buffer_list bl;
+    char buffers[100][128];
+    for (int i = 0; i < 100; i++) {
+        spdk_buffer sbuf(buffers[i], 128);
+        bl.append_buffer(sbuf);
+    }
+    FB_ASSERT_EQ(bl.bytes(), 12800);
+}
+
+FB_TEST(stress_tests, rapid_put_get_cycle) {
+    char buffer[8192];
+    spdk_buffer sbuf(buffer, 8192);
+
+    for (int cycle = 0; cycle < 100; cycle++) {
+        sbuf.reset();
+        PutFixed32(sbuf, cycle);
+        sbuf.reset();
+        uint32_t val;
+        GetFixed32(sbuf, val);
+        FB_ASSERT_EQ(val, static_cast<uint32_t>(cycle));
+    }
+}
+
+FB_TEST(stress_tests, encoder_decode_many_values) {
+    char buffer[8192];
+    spdk_buffer sbuf(buffer, 8192);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    for (int i = 0; i < 100; i++) {
+        encoder.put(static_cast<uint64_t>(i));
+    }
+
+    bl.begin()->reset();
+
+    buffer_list_encoder decoder(bl);
+    for (int i = 0; i < 100; i++) {
+        uint64_t val;
+        decoder.get(val);
+        FB_ASSERT_EQ(val, static_cast<uint64_t>(i));
+    }
+}
+
+FB_TEST(stress_tests, many_log_entry_encodes) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    for (int i = 0; i < 50; i++) {
+        sbuf.reset();
+        log_entry_t entry;
+        entry.term_id = i;
+        entry.index = i * 100;
+        entry.meta = std::to_string(i);
+        EncodeLogHeader(sbuf, entry);
+        FB_ASSERT_TRUE(sbuf.used() > 0);
+    }
+}
+
+FB_TEST(stress_tests, many_type_string_calls) {
+    for (uint32_t i = 0; i <= 8; i++) {
+        blob_type t = static_cast<blob_type>(i);
+        std::string str = type_string(t);
+        FB_ASSERT_TRUE(!str.empty());
+    }
+}
+
+// ============================================================================
+// Test Suite: invariant_tests (Invariant Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(invariant_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(invariant_tests) {
+    // Setup code here
+}
+
+FB_TEST(invariant_tests, spdk_buffer_size_remain_consistency) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    FB_ASSERT_EQ(sbuf.size(), sbuf.used() + sbuf.remain());
+
+    sbuf.inc(100);
+    FB_ASSERT_EQ(sbuf.size(), sbuf.used() + sbuf.remain());
+
+    sbuf.append("test", 4);
+    FB_ASSERT_EQ(sbuf.size(), sbuf.used() + sbuf.remain());
+
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.size(), sbuf.used() + sbuf.remain());
+}
+
+FB_TEST(invariant_tests, buffer_list_bytes_matches_content) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    size_t total = 0;
+    for (auto& buf : bl) {
+        total += buf.size();
+    }
+    FB_ASSERT_EQ(bl.bytes(), total);
+}
+
+FB_TEST(invariant_tests, encoding_roundtrip_preserves_value) {
+    for (uint32_t val : {0u, 1u, 127u, 255u, 65535u, UINT32_MAX}) {
+        char buffer[64];
+        spdk_buffer sbuf(buffer, 64);
+        PutFixed32(sbuf, val);
+        sbuf.reset();
+        uint32_t out;
+        GetFixed32(sbuf, out);
+        FB_ASSERT_EQ(out, val);
+    }
+}
+
+FB_TEST(invariant_tests, encoding_roundtrip_preserves_string) {
+    for (std::string val : {"", "a", "hello", std::string(100, 'x')}) {
+        char buffer[256];
+        spdk_buffer sbuf(buffer, 256);
+        PutString(sbuf, val);
+        sbuf.reset();
+        std::string out;
+        GetString(sbuf, out);
+        FB_ASSERT_EQ(out, val);
+    }
+}
+
+FB_TEST(invariant_tests, blob_type_values_are_unique) {
+    std::set<uint32_t> values;
+    for (uint32_t i = 0; i <= 8; i++) {
+        values.insert(i);
+    }
+    FB_ASSERT_EQ(values.size(), 9u);
+}
+
+FB_TEST(invariant_tests, log_entry_init_is_max) {
+    FB_ASSERT_EQ(log_entry_t::init, UINT64_MAX);
+}
+
+FB_TEST(invariant_tests, entry_header_size_is_correct) {
+    FB_ASSERT_EQ(entry_header_size, 3 * sizeof(uint64_t));
+}
+
+// ============================================================================
+// Test Suite: regression_tests (Regression Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(regression_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(regression_tests) {
+    // Setup code here
+}
+
+FB_TEST(regression_tests, empty_string_preserves_size) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+    std::string str = "";
+    PutString(sbuf, str);
+
+    sbuf.reset();
+    std::string out = "dummy";
+    GetString(sbuf, out);
+    FB_ASSERT_TRUE(out.empty());
+}
+
+FB_TEST(regression_tests, nullopt_vs_empty_string_distinction) {
+    char buffer[128];
+    spdk_buffer sbuf(buffer, 128);
+
+    std::optional<std::string> nullopt_val = std::nullopt;
+    std::optional<std::string> empty_val = "";
+
+    PutOptString(sbuf, nullopt_val);
+    PutOptString(sbuf, empty_val);
+
+    sbuf.reset();
+
+    std::optional<std::string> out1, out2;
+    GetOptString(sbuf, out1);
+    GetOptString(sbuf, out2);
+
+    FB_ASSERT_FALSE(out1.has_value());
+    FB_ASSERT_TRUE(out2.has_value());
+    FB_ASSERT_EQ(*out2, "");
+}
+
+FB_TEST(regression_tests, trim_after_append) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    bl.trim_back();
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(regression_tests, pop_after_append) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    bl.pop_front();
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(regression_tests, splice_preserves_bytes) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    buffer_list bl1, bl2;
+    bl2.append_buffer(sbuf);
+    bl1.append_buffer(bl2);
+
+    FB_ASSERT_EQ(bl1.bytes(), 100);
+    FB_ASSERT_EQ(bl2.bytes(), 0);
+}
+
+FB_TEST(regression_tests, reset_preserves_capacity) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    sbuf.inc(512);
+    sbuf.reset();
+
+    FB_ASSERT_EQ(sbuf.size(), 1024);
+    FB_ASSERT_EQ(sbuf.remain(), 1024);
+}
+
+FB_TEST(regression_tests, set_used_caps_at_size) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.set_used(200);
+
+    FB_ASSERT_EQ(sbuf.used(), 100);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
+FB_TEST(regression_tests, append_partial_returns_actual_written) {
+    char buffer[10];
+    spdk_buffer sbuf(buffer, 10);
+    size_t written = sbuf.append("1234567890extra", 14);
+
+    FB_ASSERT_EQ(written, 10);
+}
+
+// ============================================================================
+// Test Suite: edge_case_combinations (Edge Case Combinations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(edge_case_combinations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(edge_case_combinations) {
+    // Setup code here
+}
+
+FB_TEST(edge_case_combinations, empty_then_nonempty) {
+    buffer_list bl;
+    FB_ASSERT_TRUE(bl.empty());
+
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    bl.append_buffer(sbuf);
+    FB_ASSERT_FALSE(bl.empty());
+}
+
+FB_TEST(edge_case_combinations, full_then_empty) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    sbuf.inc(100);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.remain(), 100);
+}
+
+FB_TEST(edge_case_combinations, zero_max_cycle) {
+    for (uint64_t val : {0ULL, UINT64_MAX}) {
+        char buffer[64];
+        spdk_buffer sbuf(buffer, 64);
+        PutFixed64(sbuf, val);
+        sbuf.reset();
+        uint64_t out;
+        GetFixed64(sbuf, out);
+        FB_ASSERT_EQ(out, val);
+    }
+}
+
+FB_TEST(edge_case_combinations, prepend_append_trim_cycle) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.prepend_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    FB_ASSERT_EQ(bl.bytes(), 600);
+
+    bl.trim_front();
+    bl.trim_back();
+
+    FB_ASSERT_EQ(bl.bytes(), 200);
+}
+
+FB_TEST(edge_case_combinations, encode_decode_cycle) {
+    for (int i = 0; i < 10; i++) {
+        char buffer[256];
+        spdk_buffer sbuf(buffer, 256);
+
+        log_entry_t entry;
+        entry.term_id = i;
+        entry.index = i * 100;
+        entry.meta = std::to_string(i);
+
+        EncodeLogHeader(sbuf, entry);
+        sbuf.reset();
+
+        log_entry_t decoded;
+        DecodeLogHeader(sbuf, decoded);
+
+        FB_ASSERT_EQ(decoded.term_id, entry.term_id);
+        FB_ASSERT_EQ(decoded.index, entry.index);
+        FB_ASSERT_EQ(decoded.meta, entry.meta);
+    }
+}
