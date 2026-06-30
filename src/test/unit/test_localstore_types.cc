@@ -11504,3 +11504,144 @@ FB_TEST(final_boundary_tests, final_type_verification) {
     FB_ASSERT_EQ(sizeof(spdk_blob_id), sizeof(uint64_t));
     FB_ASSERT_EQ(entry_header_size, 24);
 }
+
+// ============================================================================
+// Test Suite: comprehensive_roundtrip_tests (Comprehensive Roundtrip Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(comprehensive_roundtrip_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(comprehensive_roundtrip_tests) {
+    // Setup code here
+}
+
+FB_TEST(comprehensive_roundtrip_tests, all_fixed32_values) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+    uint32_t test_vals[] = {0, 1, 127, 128, 255, 256, 65535, 65536, 0x80000000, 0xFFFFFFFF};
+
+    for (auto val : test_vals) {
+        sbuf.reset();
+        PutFixed32(sbuf, val);
+        sbuf.reset();
+        uint32_t out;
+        GetFixed32(sbuf, out);
+        FB_ASSERT_EQ(out, val);
+    }
+}
+
+FB_TEST(comprehensive_roundtrip_tests, all_fixed64_values) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+    uint64_t test_vals[] = {0, 1, 0x7FFFFFFFFFFFFFFFULL, 0x8000000000000000ULL, 0xFFFFFFFFFFFFFFFFULL};
+
+    for (auto val : test_vals) {
+        sbuf.reset();
+        PutFixed64(sbuf, val);
+        sbuf.reset();
+        uint64_t out;
+        GetFixed64(sbuf, out);
+        FB_ASSERT_EQ(out, val);
+    }
+}
+
+FB_TEST(comprehensive_roundtrip_tests, various_string_lengths) {
+    char buffer[8192];
+    spdk_buffer sbuf(buffer, 8192);
+
+    for (int len : {0, 1, 10, 100, 1000}) {
+        sbuf.reset();
+        std::string str(len, 'x');
+        PutString(sbuf, str);
+        sbuf.reset();
+        std::string out;
+        GetString(sbuf, out);
+        FB_ASSERT_EQ(out.size(), static_cast<size_t>(len));
+    }
+}
+
+FB_TEST(comprehensive_roundtrip_tests, various_opt_string_states) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+
+    std::optional<std::string> states[] = {
+        std::nullopt,
+        std::string(""),
+        std::string("short"),
+        std::string(100, 'y')
+    };
+
+    for (const auto& val : states) {
+        sbuf.reset();
+        PutOptString(sbuf, val);
+        sbuf.reset();
+        std::optional<std::string> out;
+        GetOptString(sbuf, out);
+
+        if (val.has_value()) {
+            FB_ASSERT_TRUE(out.has_value());
+            FB_ASSERT_EQ(*out, *val);
+        } else {
+            FB_ASSERT_FALSE(out.has_value());
+        }
+    }
+}
+
+FB_TEST(comprehensive_roundtrip_tests, log_entry_various_metas) {
+    for (std::string meta : {"", "a", "test_meta", std::string(100, 'm')}) {
+        char buffer[4096];
+        spdk_buffer sbuf(buffer, 4096);
+
+        log_entry_t entry;
+        entry.term_id = 1;
+        entry.index = 100;
+        entry.meta = meta;
+
+        EncodeLogHeader(sbuf, entry);
+        sbuf.reset();
+
+        log_entry_t decoded;
+        DecodeLogHeader(sbuf, decoded);
+        FB_ASSERT_EQ(decoded.meta, meta);
+    }
+}
+
+FB_TEST(comprehensive_roundtrip_tests, encoder_decoder_many_types) {
+    char buffer[8192];
+    spdk_buffer sbuf(buffer, 8192);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+
+    encoder.put(1ULL);
+    encoder.put(std::string("hello"));
+    encoder.put("raw", 3);
+    encoder.put(2ULL);
+    encoder.put(std::string("world"));
+    encoder.put(3ULL);
+
+    bl.begin()->reset();
+
+    buffer_list_encoder decoder(bl);
+
+    uint64_t v1, v2, v3;
+    std::string s1, s2;
+    char raw[4] = {0};
+
+    decoder.get(v1);
+    decoder.get(s1);
+    decoder.get(raw, 3);
+    decoder.get(v2);
+    decoder.get(s2);
+    decoder.get(v3);
+
+    FB_ASSERT_EQ(v1, 1);
+    FB_ASSERT_EQ(s1, "hello");
+    FB_ASSERT_EQ(std::string(raw, 3), "raw");
+    FB_ASSERT_EQ(v2, 2);
+    FB_ASSERT_EQ(s2, "world");
+    FB_ASSERT_EQ(v3, 3);
+}
