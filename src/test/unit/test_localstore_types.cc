@@ -8221,6 +8221,339 @@ FB_TEST(final_performance_tests, map_ops_count) {
 }
 
 // ============================================================================
+// Test Suite: spdk_buffer_copy_tests (SPDK Buffer Copy Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_copy_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_copy_tests) {
+    // Setup code here
+}
+
+FB_TEST(spdk_buffer_copy_tests, copy_small_data) {
+    char src[10] = "hello";
+    char dst[20] = {};
+    spdk_buffer sbuf(dst, 20);
+
+    size_t written = sbuf.append(src, 5);
+    FB_ASSERT_EQ(written, 5);
+}
+
+FB_TEST(spdk_buffer_copy_tests, copy_exact_fit) {
+    char src[100];
+    char dst[100];
+    spdk_buffer sbuf(dst, 100);
+
+    size_t written = sbuf.append(src, 100);
+    FB_ASSERT_EQ(written, 100);
+}
+
+FB_TEST(spdk_buffer_copy_tests, copy_overflow) {
+    char src[200];
+    char dst[100];
+    spdk_buffer sbuf(dst, 100);
+
+    size_t written = sbuf.append(src, 200);
+    FB_ASSERT_EQ(written, 100);
+}
+
+FB_TEST(spdk_buffer_copy_tests, copy_empty) {
+    char dst[100];
+    spdk_buffer sbuf(dst, 100);
+
+    size_t written = sbuf.append("", 0);
+    FB_ASSERT_EQ(written, 0);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_copy_tests (Buffer List Copy Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_copy_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_copy_tests) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_copy_tests, copy_via_pop_front) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    spdk_buffer copy = bl.pop_front();
+    FB_ASSERT_EQ(copy.size(), 100);
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_copy_tests, copy_via_pop_front_list) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    buffer_list copy = bl.pop_front_list(2);
+    FB_ASSERT_EQ(copy.bytes(), 300);
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+// ============================================================================
+// Test Suite: iovec_boundary_tests (Iovec Boundary Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(iovec_boundary_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(iovec_boundary_tests) {
+    // Setup code here
+}
+
+FB_TEST(iovec_boundary_tests, iov_len_max) {
+    struct iovec iov;
+    iov.iov_len = SIZE_MAX;
+    FB_ASSERT_EQ(iov.iov_len, SIZE_MAX);
+}
+
+FB_TEST(iovec_boundary_tests, iov_len_zero_valid) {
+    struct iovec iov;
+    iov.iov_len = 0;
+    FB_ASSERT_EQ(iov.iov_len, 0);
+}
+
+FB_TEST(iovec_boundary_tests, iovs_empty_valid) {
+    iovecs iovs;
+    FB_ASSERT_TRUE(iovs.empty());
+}
+
+// ============================================================================
+// Test Suite: iovec_merge_tests (Iovec Merge Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(iovec_merge_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(iovec_merge_tests) {
+    // Setup code here
+}
+
+FB_TEST(iovec_merge_tests, merge_two_iovecs) {
+    iovecs iovs1, iovs2;
+
+    struct iovec iov1, iov2;
+    iov1.iov_len = 512;
+    iov2.iov_len = 1024;
+
+    iovs1.push_back(iov1);
+    iovs2.push_back(iov2);
+
+    iovs1.insert(iovs1.end(), iovs2.begin(), iovs2.end());
+    FB_ASSERT_EQ(iovs1.size(), 2);
+}
+
+FB_TEST(iovec_merge_tests, merge_three_iovecs) {
+    iovecs iovs;
+
+    struct iovec iov1, iov2, iov3;
+    iov1.iov_len = 512;
+    iov2.iov_len = 1024;
+    iov3.iov_len = 2048;
+
+    iovs.push_back(iov1);
+    iovs.push_back(iov2);
+    iovs.push_back(iov3);
+
+    FB_ASSERT_EQ(iovs.size(), 3);
+}
+
+// ============================================================================
+// Test Suite: log_entry_data_tests (Log Entry Data Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_entry_data_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_entry_data_tests) {
+    // Setup code here
+}
+
+FB_TEST(log_entry_data_tests, data_empty_initially) {
+    log_entry_t entry;
+    FB_ASSERT_EQ(entry.data.bytes(), 0);
+}
+
+FB_TEST(log_entry_data_tests, data_append_buffer) {
+    log_entry_t entry;
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    entry.data.append_buffer(sbuf);
+    FB_ASSERT_EQ(entry.data.bytes(), 1024);
+}
+
+FB_TEST(log_entry_data_tests, data_append_multiple) {
+    log_entry_t entry;
+    char buffer1[512], buffer2[1024];
+    spdk_buffer sbuf1(buffer1, 512);
+    spdk_buffer sbuf2(buffer2, 1024);
+    entry.data.append_buffer(sbuf1);
+    entry.data.append_buffer(sbuf2);
+    FB_ASSERT_EQ(entry.data.bytes(), 1536);
+}
+
+FB_TEST(log_entry_data_tests, data_clear) {
+    log_entry_t entry;
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    entry.data.append_buffer(sbuf);
+    entry.data.clear();
+    FB_ASSERT_EQ(entry.data.bytes(), 0);
+}
+
+// ============================================================================
+// Test Suite: encoder_boundary_tests (Encoder Boundary Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(encoder_boundary_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(encoder_boundary_tests) {
+    // Setup code here
+}
+
+FB_TEST(encoder_boundary_tests, encoder_remain_exhausted) {
+    char buffer[8];
+    spdk_buffer sbuf(buffer, 8);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder enc(bl);
+    FB_ASSERT_EQ(enc.remain(), 8);
+
+    enc.put(1ULL);
+    FB_ASSERT_EQ(enc.remain(), 0);
+}
+
+FB_TEST(encoder_boundary_tests, encoder_used_full) {
+    char buffer[8];
+    spdk_buffer sbuf(buffer, 8);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder enc(bl);
+    enc.put(0ULL);
+    FB_ASSERT_EQ(enc.used(), 8);
+}
+
+FB_TEST(encoder_boundary_tests, encoder_bytes_constant) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder enc(bl);
+    enc.put(1ULL);
+    enc.put(2ULL);
+    FB_ASSERT_EQ(enc.bytes(), 1024);
+}
+
+// ============================================================================
+// Test Suite: variant_boundary_tests (Variant Boundary Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(variant_boundary_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(variant_boundary_tests) {
+    // Setup code here
+}
+
+FB_TEST(variant_boundary_tests, variant_size_constant) {
+    xattr_val_type v = blob_type::log;
+    size_t s = sizeof(v);
+    FB_ASSERT_GT(s, 0);
+}
+
+FB_TEST(variant_boundary_tests, variant_index_bounded) {
+    xattr_val_type v = blob_type::log;
+    FB_ASSERT_LT(v.index(), 3);
+}
+
+// ============================================================================
+// Test Suite: context_size_boundary_tests (Context Size Boundary Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(context_size_boundary_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(context_size_boundary_tests) {
+    // Setup code here
+}
+
+FB_TEST(context_size_boundary_tests, log_append_ctx_size) {
+    FB_ASSERT_GT(sizeof(log_append_ctx), 0);
+}
+
+FB_TEST(context_size_boundary_tests, log_read_ctx_size) {
+    FB_ASSERT_GT(sizeof(log_read_ctx), 0);
+}
+
+FB_TEST(context_size_boundary_tests, kvstore_write_ctx_size) {
+    FB_ASSERT_GT(sizeof(kvstore_write_ctx), 0);
+}
+
+FB_TEST(context_size_boundary_tests, rblob_rw_ctx_size) {
+    FB_ASSERT_GT(sizeof(rblob_rw_ctx), 0);
+}
+
+// ============================================================================
+// Test Suite: final_boundary_tests (Final Boundary Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(final_boundary_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(final_boundary_tests) {
+    // Setup code here
+}
+
+FB_TEST(final_boundary_tests, blob_type_count_correct) {
+    uint32_t count = static_cast<uint32_t>(blob_type::free) - static_cast<uint32_t>(blob_type::log) + 1;
+    FB_ASSERT_EQ(count, 9);
+}
+
+FB_TEST(final_boundary_tests, entry_header_size_correct) {
+    FB_ASSERT_EQ(entry_header_size, 24);
+}
+
+FB_TEST(final_boundary_tests, buffer_pool_size_correct) {
+    FB_ASSERT_EQ(buffer_pool_size, 128 * 1024);
+}
+
+FB_TEST(final_boundary_tests, buffer_size_correct) {
+    FB_ASSERT_EQ(buffer_size, 4096);
+}
+
+FB_TEST(final_boundary_tests, buffer_memory_correct) {
+    FB_ASSERT_EQ(buffer_memory, 512 * 1024 * 1024);
+}
+
+FB_TEST(final_boundary_tests, log_init_correct) {
+    FB_ASSERT_EQ(log_entry_t::init, UINT64_MAX);
+}
+
+// ============================================================================
 // Test Suite: xattr_val_type_operations (Xattr Val Type Operations Tests)
 // ============================================================================
 
