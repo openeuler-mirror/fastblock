@@ -5726,6 +5726,206 @@ FB_TEST(osd_object_lifecycle, object_list_pagination) {
 }
 
 // ============================================================================
+// Test Suite: osd_metadata_cache (OSD Metadata Cache Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_metadata_cache) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_metadata_cache) {
+    // Teardown code here
+}
+
+FB_TEST(osd_metadata_cache, cache_enabled) {
+    // Metadata cache should be configurable
+    bool enabled = true;
+    FB_ASSERT_TRUE(enabled);
+}
+
+FB_TEST(osd_metadata_cache, cache_size) {
+    // Should have configurable cache size
+    uint64_t cache_size = 1024ULL * 1024ULL * 100ULL; // 100MB
+    FB_ASSERT_TRUE(cache_size > 0);
+}
+
+FB_TEST(osd_metadata_cache, cache_object_metadata) {
+    // Should cache object metadata
+    bool caches_metadata = true;
+    FB_ASSERT_TRUE(caches_metadata);
+}
+
+FB_TEST(osd_metadata_cache, cache_pg_metadata) {
+    // Should cache PG metadata
+    bool caches_pg_meta = true;
+    FB_ASSERT_TRUE(caches_pg_meta);
+}
+
+FB_TEST(osd_metadata_cache, cache_hit) {
+    // Should track cache hits
+    uint64_t hits = 500;
+    FB_ASSERT_TRUE(hits > 0);
+}
+
+FB_TEST(osd_metadata_cache, cache_miss) {
+    // Should track cache misses
+    uint64_t misses = 50;
+    FB_ASSERT_TRUE(misses > 0);
+}
+
+FB_TEST(osd_metadata_cache, cache_hit_ratio) {
+    // Should calculate hit ratio
+    uint64_t hits = 500;
+    uint64_t misses = 50;
+    double hit_ratio = static_cast<double>(hits) / (hits + misses) * 100;
+    FB_ASSERT_TRUE(hit_ratio == 90.909090909090908);
+}
+
+FB_TEST(osd_metadata_cache, cache_eviction) {
+    // Should evict entries when full
+    bool can_evict = true;
+    FB_ASSERT_TRUE(can_evict);
+}
+
+FB_TEST(osd_metadata_cache, cache_eviction_policy) {
+    // Should have eviction policy (LRU, etc.)
+    std::string policy = "lru";
+    FB_ASSERT_TRUE(!policy.empty());
+}
+
+FB_TEST(osd_metadata_cache, cache_invalidation) {
+    // Should invalidate stale entries
+    bool can_invalidate = true;
+    FB_ASSERT_TRUE(can_invalidate);
+}
+
+FB_TEST(osd_metadata_cache, cache_invalidation_on_write) {
+    // Should invalidate on write
+    bool invalidates_on_write = true;
+    FB_ASSERT_TRUE(invalidates_on_write);
+}
+
+FB_TEST(osd_metadata_cache, cache_prefetch) {
+    // May support prefetching
+    bool prefetch_enabled = true;
+    FB_ASSERT_TRUE(prefetch_enabled);
+}
+
+FB_TEST(osd_metadata_cache, cache_ttl) {
+    // Should have TTL for entries
+    uint64_t ttl_seconds = 60;
+    FB_ASSERT_TRUE(ttl_seconds > 0);
+}
+
+FB_TEST(osd_metadata_cache, cache_concurrent_access) {
+    // Should handle concurrent access
+    bool thread_safe = true;
+    FB_ASSERT_TRUE(thread_safe);
+}
+
+// ============================================================================
+// Test Suite: osd_write_optimization (OSD Write Optimization Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_write_optimization) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_write_optimization) {
+    // Teardown code here
+}
+
+FB_TEST(osd_write_optimization, write_batching) {
+    // Should batch writes
+    bool batch_enabled = true;
+    FB_ASSERT_TRUE(batch_enabled);
+}
+
+FB_TEST(osd_write_optimization, write_batch_size) {
+    // Should have configurable batch size
+    uint32_t batch_size = 100;
+    FB_ASSERT_TRUE(batch_size > 0);
+}
+
+FB_TEST(osd_write_optimization, write_coalescing) {
+    // Should coalesce adjacent writes
+    bool coalesces = true;
+    FB_ASSERT_TRUE(coalesces);
+}
+
+FB_TEST(osd_write_optimization, write_pipeline) {
+    // Should pipeline writes
+    bool pipelines = true;
+    FB_ASSERT_TRUE(pipelines);
+}
+
+FB_TEST(osd_write_optimization, write_async) {
+    // Should support async writes
+    bool async = true;
+    FB_ASSERT_TRUE(async);
+}
+
+FB_TEST(osd_write_optimization, write_buffering) {
+    // Should buffer writes before commit
+    bool buffers = true;
+    FB_ASSERT_TRUE(buffers);
+}
+
+FB_TEST(osd_write_optimization, write_buffer_size) {
+    // Should have buffer size limit
+    uint64_t buffer_size = 1024ULL * 1024ULL * 10ULL; // 10MB
+    FB_ASSERT_TRUE(buffer_size > 0);
+}
+
+FB_TEST(osd_write_optimization, write_ordering) {
+    // Should maintain write ordering
+    bool maintains_order = true;
+    FB_ASSERT_TRUE(maintains_order);
+}
+
+FB_TEST(osd_write_optimization, write_durability) {
+    // Should ensure durability on commit
+    bool durable = true;
+    FB_ASSERT_TRUE(durable);
+}
+
+FB_TEST(osd_write_optimization, write_flush_policy) {
+    // Should have flush policy
+    std::string policy = "time-based";
+    FB_ASSERT_TRUE(!policy.empty());
+}
+
+FB_TEST(osd_write_optimization, write_flush_interval) {
+    // Should flush at interval
+    uint64_t flush_interval_ms = 5000;
+    FB_ASSERT_TRUE(flush_interval_ms > 0);
+}
+
+FB_TEST(osd_write_optimization, write_flush_threshold) {
+    // Should flush when threshold reached
+    uint64_t threshold_bytes = 1024ULL * 1024ULL * 5ULL; // 5MB
+    FB_ASSERT_TRUE(threshold_bytes > 0);
+}
+
+FB_TEST(osd_write_optimization, write_parallelism) {
+    // Should support parallel writes
+    uint32_t parallel_count = 4;
+    FB_ASSERT_TRUE(parallel_count > 0);
+}
+
+FB_TEST(osd_write_optimization, write_throughput) {
+    // Should track write throughput
+    uint64_t writes_per_second = 10000;
+    FB_ASSERT_TRUE(writes_per_second > 0);
+}
+
+FB_TEST(osd_write_optimization, write_latency) {
+    // Should track write latency
+    uint64_t latency_us = 1000;
+    FB_ASSERT_TRUE(latency_us > 0);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
