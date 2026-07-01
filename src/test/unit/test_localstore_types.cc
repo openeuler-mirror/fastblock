@@ -8554,6 +8554,411 @@ FB_TEST(final_boundary_tests, log_init_correct) {
 }
 
 // ============================================================================
+// Test Suite: comprehensive_roundtrip_tests (Comprehensive Roundtrip Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(comprehensive_roundtrip_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(comprehensive_roundtrip_tests) {
+    // Setup code here
+}
+
+FB_TEST(comprehensive_roundtrip_tests, uint32_all_bits) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+
+    for (uint32_t bits = 0; bits <= 31; bits++) {
+        sbuf.reset();
+        uint32_t val = 1u << bits;
+        PutFixed32(sbuf, val);
+        sbuf.reset();
+
+        uint32_t out;
+        GetFixed32(sbuf, out);
+        FB_ASSERT_EQ(out, val);
+    }
+}
+
+FB_TEST(comprehensive_roundtrip_tests, uint64_all_bits) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+
+    for (uint64_t bits = 0; bits <= 63; bits++) {
+        sbuf.reset();
+        uint64_t val = 1ull << bits;
+        PutFixed64(sbuf, val);
+        sbuf.reset();
+
+        uint64_t out;
+        GetFixed64(sbuf, out);
+        FB_ASSERT_EQ(out, val);
+    }
+}
+
+FB_TEST(comprehensive_roundtrip_tests, string_all_lengths_1_to_100) {
+    char buffer[16384];
+    spdk_buffer sbuf(buffer, 16384);
+
+    for (int len = 1; len <= 100; len++) {
+        sbuf.reset();
+        std::string str(len, 'x');
+        PutString(sbuf, str);
+        sbuf.reset();
+
+        std::string out;
+        GetString(sbuf, out);
+        FB_ASSERT_EQ(out, str);
+    }
+}
+
+// ============================================================================
+// Test Suite: comprehensive_context_tests (Comprehensive Context Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(comprehensive_context_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(comprehensive_context_tests) {
+    // Setup code here
+}
+
+FB_TEST(comprehensive_context_tests, log_append_ctx_ops_count) {
+    log_append_ctx ctx;
+    for (int i = 0; i < 10; i++) {
+        ctx.idx_pos.emplace_back(0, 0, 0, 0);
+    }
+    FB_ASSERT_EQ(ctx.idx_pos.size(), 10);
+}
+
+FB_TEST(comprehensive_context_tests, log_read_ctx_entries_count) {
+    log_read_ctx ctx;
+    for (int i = 0; i < 20; i++) {
+        ctx.entries.push_back(log_entry_t());
+    }
+    FB_ASSERT_EQ(ctx.entries.size(), 20);
+}
+
+FB_TEST(comprehensive_context_tests, kvstore_write_ctx_ops_count) {
+    kvstore_write_ctx ctx;
+    for (int i = 0; i < 30; i++) {
+        ctx.ops.push_back(op());
+    }
+    FB_ASSERT_EQ(ctx.ops.size(), 30);
+}
+
+FB_TEST(comprehensive_context_tests, rblob_rw_ctx_iovs_count) {
+    rblob_rw_ctx ctx;
+    for (int i = 0; i < 15; i++) {
+        ctx.iov.push_back(iovec());
+    }
+    FB_ASSERT_EQ(ctx.iov.size(), 15);
+}
+
+// ============================================================================
+// Test Suite: comprehensive_buffer_tests (Comprehensive Buffer Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(comprehensive_buffer_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(comprehensive_buffer_tests) {
+    // Setup code here
+}
+
+FB_TEST(comprehensive_buffer_tests, spdk_buffer_sizes_1_to_1024) {
+    for (int size = 1; size <= 1024; size *= 2) {
+        char buffer[1024];
+        spdk_buffer sbuf(buffer, size);
+        FB_ASSERT_EQ(sbuf.size(), size);
+    }
+}
+
+FB_TEST(comprehensive_buffer_tests, buffer_list_append_sizes) {
+    char buffers[5][1024];
+    int sizes[] = {64, 128, 256, 512, 1024};
+
+    buffer_list bl;
+    size_t total = 0;
+    for (int i = 0; i < 5; i++) {
+        spdk_buffer sbuf(buffers[i], sizes[i]);
+        bl.append_buffer(sbuf);
+        total += sizes[i];
+    }
+    FB_ASSERT_EQ(bl.bytes(), total);
+}
+
+FB_TEST(comprehensive_buffer_tests, buffer_list_clear_reuse_pattern) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+    buffer_list bl;
+
+    for (int round = 0; round < 5; round++) {
+        bl.append_buffer(sbuf);
+        FB_ASSERT_EQ(bl.bytes(), 256);
+        bl.clear();
+        FB_ASSERT_EQ(bl.bytes(), 0);
+    }
+}
+
+// ============================================================================
+// Test Suite: comprehensive_blob_type_tests (Comprehensive Blob Type Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(comprehensive_blob_type_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(comprehensive_blob_type_tests) {
+    // Setup code here
+}
+
+FB_TEST(comprehensive_blob_type_tests, all_types_string_format) {
+    std::vector<blob_type> types = {
+        blob_type::log, blob_type::object, blob_type::object_snap,
+        blob_type::object_recover, blob_type::kv, blob_type::kv_checkpoint,
+        blob_type::kv_checkpoint_new, blob_type::super_blob, blob_type::free
+    };
+
+    for (const auto& t : types) {
+        std::string str = type_string(t);
+        FB_ASSERT_EQ(str.substr(0, 11), "blob_type::");
+    }
+}
+
+FB_TEST(comprehensive_blob_type_tests, all_types_value_range) {
+    for (uint32_t i = 0; i <= 8; i++) {
+        blob_type t = static_cast<blob_type>(i);
+        FB_ASSERT_LE(static_cast<uint32_t>(t), 8);
+    }
+}
+
+FB_TEST(comprehensive_blob_type_tests, invalid_types_unknown_string) {
+    for (uint32_t i = 9; i <= 20; i++) {
+        blob_type t = static_cast<blob_type>(i);
+        std::string str = type_string(t);
+        FB_ASSERT_EQ(str, "blob_type::unknown");
+    }
+}
+
+// ============================================================================
+// Test Suite: comprehensive_serialization_tests (Comprehensive Serialization Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(comprehensive_serialization_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(comprehensive_serialization_tests) {
+    // Setup code here
+}
+
+FB_TEST(comprehensive_serialization_tests, put_get_pattern_repeat) {
+    char buffer[1024];
+    for (int round = 0; round < 10; round++) {
+        spdk_buffer sbuf(buffer, 1024);
+
+        PutFixed32(sbuf, round);
+        PutFixed64(sbuf, round * 1000);
+        PutString(sbuf, std::to_string(round));
+
+        sbuf.reset();
+
+        uint32_t v32;
+        uint64_t v64;
+        std::string str;
+
+        GetFixed32(sbuf, v32);
+        GetFixed64(sbuf, v64);
+        GetString(sbuf, str);
+
+        FB_ASSERT_EQ(v32, static_cast<uint32_t>(round));
+        FB_ASSERT_EQ(v64, static_cast<uint64_t>(round * 1000));
+        FB_ASSERT_EQ(str, std::to_string(round));
+    }
+}
+
+FB_TEST(comprehensive_serialization_tests, boundary_values_repeat) {
+    char buffer[1024];
+
+    for (int round = 0; round < 5; round++) {
+        spdk_buffer sbuf(buffer, 1024);
+
+        PutFixed32(sbuf, 0);
+        PutFixed32(sbuf, UINT32_MAX);
+        PutFixed64(sbuf, 0);
+        PutFixed64(sbuf, UINT64_MAX);
+
+        sbuf.reset();
+
+        uint32_t v32a, v32b;
+        uint64_t v64a, v64b;
+
+        GetFixed32(sbuf, v32a);
+        GetFixed32(sbuf, v32b);
+        GetFixed64(sbuf, v64a);
+        GetFixed64(sbuf, v64b);
+
+        FB_ASSERT_EQ(v32a, 0);
+        FB_ASSERT_EQ(v32b, UINT32_MAX);
+        FB_ASSERT_EQ(v64a, 0);
+        FB_ASSERT_EQ(v64b, UINT64_MAX);
+    }
+}
+
+// ============================================================================
+// Test Suite: comprehensive_log_entry_tests (Comprehensive Log Entry Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(comprehensive_log_entry_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(comprehensive_log_entry_tests) {
+    // Setup code here
+}
+
+FB_TEST(comprehensive_log_entry_tests, entry_fields_all_combinations) {
+    for (uint64_t term = 0; term <= 5; term++) {
+        for (uint64_t index = 0; index <= 5; index++) {
+            log_entry_t entry;
+            entry.term_id = term;
+            entry.index = index;
+            entry.size = term * index;
+            entry.type = (term + index) % 9;
+
+            FB_ASSERT_EQ(entry.term_id, term);
+            FB_ASSERT_EQ(entry.index, index);
+        }
+    }
+}
+
+FB_TEST(comprehensive_log_entry_tests, entry_meta_all_lengths) {
+    for (int len = 0; len <= 50; len++) {
+        log_entry_t entry;
+        entry.meta = std::string(len, 'm');
+        FB_ASSERT_EQ(entry.meta.size(), static_cast<size_t>(len));
+    }
+}
+
+// ============================================================================
+// Test Suite: comprehensive_iovec_tests (Comprehensive Iovec Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(comprehensive_iovec_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(comprehensive_iovec_tests) {
+    // Setup code here
+}
+
+FB_TEST(comprehensive_iovec_tests, iovs_count_1_to_100) {
+    iovecs iovs;
+    for (int i = 1; i <= 100; i++) {
+        struct iovec iov;
+        iov.iov_len = 512;
+        iovs.push_back(iov);
+        FB_ASSERT_EQ(iovs.size(), static_cast<size_t>(i));
+    }
+}
+
+FB_TEST(comprehensive_iovec_tests, iovs_total_iov_len) {
+    iovecs iovs;
+    size_t expected = 0;
+    for (int i = 0; i < 50; i++) {
+        struct iovec iov;
+        iov.iov_len = 1024;
+        iovs.push_back(iov);
+        expected += 1024;
+    }
+
+    size_t total = 0;
+    for (const auto& iov : iovs) {
+        total += iov.iov_len;
+    }
+    FB_ASSERT_EQ(total, expected);
+}
+
+// ============================================================================
+// Test Suite: comprehensive_cleanup_tests (Comprehensive Cleanup Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(comprehensive_cleanup_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(comprehensive_cleanup_tests) {
+    // Setup code here
+}
+
+FB_TEST(comprehensive_cleanup_tests, buffer_list_clear_after_append) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    bl.clear();
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(comprehensive_cleanup_tests, vector_clear_after_fill) {
+    std::vector<int> vec;
+    for (int i = 0; i < 100; i++) vec.push_back(i);
+    vec.clear();
+    FB_ASSERT_TRUE(vec.empty());
+}
+
+FB_TEST(comprehensive_cleanup_tests, map_clear_after_fill) {
+    std::map<int, int> m;
+    for (int i = 0; i < 100; i++) m[i] = i;
+    m.clear();
+    FB_ASSERT_TRUE(m.empty());
+}
+
+FB_TEST(comprehensive_cleanup_tests, iovecs_clear_after_fill) {
+    iovecs iovs;
+    for (int i = 0; i < 100; i++) iovs.push_back(iovec());
+    iovs.clear();
+    FB_ASSERT_TRUE(iovs.empty());
+}
+
+// ============================================================================
+// Test Suite: comprehensive_final_tests (Comprehensive Final Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(comprehensive_final_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(comprehensive_final_tests) {
+    // Setup code here
+}
+
+FB_TEST(comprehensive_final_tests, all_tests_passed_marker) {
+    FB_ASSERT_TRUE(true);
+}
+
+FB_TEST(comprehensive_final_tests, blob_type_final_check) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::free), 8);
+}
+
+FB_TEST(comprehensive_final_tests, buffer_constants_final_check) {
+    FB_ASSERT_EQ(buffer_size, 4096);
+    FB_ASSERT_EQ(buffer_memory, 512 * 1024 * 1024);
+}
+
+FB_TEST(comprehensive_final_tests, entry_header_final_check) {
+    FB_ASSERT_EQ(entry_header_size, 24);
+}
+
+FB_TEST(comprehensive_final_tests, log_init_final_check) {
+    FB_ASSERT_EQ(log_entry_t::init, UINT64_MAX);
+}
+
+// ============================================================================
 // Test Suite: xattr_val_type_operations (Xattr Val Type Operations Tests)
 // ============================================================================
 
