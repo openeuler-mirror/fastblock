@@ -16237,3 +16237,362 @@ FB_TEST(context_initialization, rblob_rw_ctx_iov_management) {
     ctx.len = 50;
     FB_ASSERT_EQ(ctx.lba + ctx.len, 150);
 }
+
+// ============================================================================
+// Test Suite: buffer_list_iovec_integration (Buffer List Iovec Integration Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_iovec_integration) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_iovec_integration) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_iovec_integration, full_range_matches_bytes) {
+    char buffer1[512], buffer2[1024], buffer3[2048];
+    spdk_buffer sbuf1(buffer1, 512);
+    spdk_buffer sbuf2(buffer2, 1024);
+    spdk_buffer sbuf3(buffer3, 2048);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    iovecs iovs = bl.to_iovec();
+    FB_ASSERT_EQ(iovs.size(), 3);
+
+    // Verify total iov_len matches bytes()
+    size_t total_iov_len = 0;
+    for (auto& iov : iovs) {
+        total_iov_len += iov.iov_len;
+    }
+    FB_ASSERT_EQ(total_iov_len, bl.bytes());
+}
+
+FB_TEST(buffer_list_iovec_integration, partial_range_sum) {
+    char buffer1[1024], buffer2[2048];
+    spdk_buffer sbuf1(buffer1, 1024);
+    spdk_buffer sbuf2(buffer2, 2048);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    // Request 1536 bytes starting at offset 512
+    iovecs iovs = bl.to_iovec(512, 1536);
+
+    size_t total_iov_len = 0;
+    for (auto& iov : iovs) {
+        total_iov_len += iov.iov_len;
+    }
+    FB_ASSERT_EQ(total_iov_len, 1536);
+}
+
+FB_TEST(buffer_list_iovec_integration, offset_at_boundary) {
+    char buffer1[1024], buffer2[2048];
+    spdk_buffer sbuf1(buffer1, 1024);
+    spdk_buffer sbuf2(buffer2, 2048);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    // Offset exactly at buffer boundary
+    iovecs iovs = bl.to_iovec(1024, 1024);
+    FB_ASSERT_GE(iovs.size(), 1);
+
+    size_t total_iov_len = 0;
+    for (auto& iov : iovs) {
+        total_iov_len += iov.iov_len;
+    }
+    FB_ASSERT_EQ(total_iov_len, 1024);
+}
+
+// ============================================================================
+// Test Suite: length_calculation_validation (Length Calculation Validation Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(length_calculation_validation) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(length_calculation_validation) {
+    // Setup code here
+}
+
+FB_TEST(length_calculation_validation, length_string_matches_serialized) {
+    std::string str = "Hello, World!";
+    uint64_t len = LengthString(str);
+
+    // Verify length matches actual serialized size
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+    PutString(sbuf, str);
+
+    FB_ASSERT_EQ(len, sbuf.used());
+}
+
+FB_TEST(length_calculation_validation, length_empty_string) {
+    std::string str = "";
+    uint64_t len = LengthString(str);
+    FB_ASSERT_EQ(len, sizeof(uint64_t)); // Only length prefix
+}
+
+FB_TEST(length_calculation_validation, length_opt_string_value) {
+    std::optional<std::string> val = "test";
+    uint64_t len = LengthOptString(val);
+    FB_ASSERT_EQ(len, sizeof(uint64_t) + 4);
+}
+
+FB_TEST(length_calculation_validation, length_opt_string_nullopt) {
+    std::optional<std::string> val = std::nullopt;
+    uint64_t len = LengthOptString(val);
+    FB_ASSERT_EQ(len, sizeof(uint64_t));
+}
+
+FB_TEST(length_calculation_validation, multiple_lengths_sum) {
+    std::string s1 = "hello";
+    std::string s2 = "world";
+    std::string s3 = "!";
+
+    uint64_t total = LengthString(s1) + LengthString(s2) + LengthString(s3);
+
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+    PutString(sbuf, s1);
+    PutString(sbuf, s2);
+    PutString(sbuf, s3);
+
+    FB_ASSERT_EQ(total, sbuf.used());
+}
+
+// ============================================================================
+// Test Suite: variant_data_validation (Variant Data Validation Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(variant_data_validation) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(variant_data_validation) {
+    // Setup code here
+}
+
+FB_TEST(variant_data_validation, blob_type_roundtrip) {
+    xattr_val_type val = blob_type::kv;
+    FB_ASSERT_TRUE(std::holds_alternative<blob_type>(val));
+
+    blob_type retrieved = std::get<blob_type>(val);
+    FB_ASSERT_EQ(retrieved, blob_type::kv);
+    FB_ASSERT_EQ(type_string(retrieved), "blob_type::kv");
+}
+
+FB_TEST(variant_data_validation, uint32_roundtrip) {
+    xattr_val_type val = 42u;
+    FB_ASSERT_TRUE(std::holds_alternative<uint32_t>(val));
+
+    uint32_t retrieved = std::get<uint32_t>(val);
+    FB_ASSERT_EQ(retrieved, 42);
+}
+
+FB_TEST(variant_data_validation, string_roundtrip) {
+    xattr_val_type val = std::string("test_value");
+    FB_ASSERT_TRUE(std::holds_alternative<std::string>(val));
+
+    std::string retrieved = std::get<std::string>(val);
+    FB_ASSERT_EQ(retrieved, "test_value");
+}
+
+FB_TEST(variant_data_validation, type_switching) {
+    xattr_val_type val;
+
+    val = blob_type::object;
+    FB_ASSERT_TRUE(std::holds_alternative<blob_type>(val));
+    FB_ASSERT_EQ(std::get<blob_type>(val), blob_type::object);
+
+    val = 100u;
+    FB_ASSERT_TRUE(std::holds_alternative<uint32_t>(val));
+    FB_ASSERT_EQ(std::get<uint32_t>(val), 100);
+
+    val = std::string("changed");
+    FB_ASSERT_TRUE(std::holds_alternative<std::string>(val));
+    FB_ASSERT_EQ(std::get<std::string>(val), "changed");
+}
+
+FB_TEST(variant_data_validation, get_if_safe_access) {
+    xattr_val_type val = blob_type::log;
+
+    auto* ptr = std::get_if<blob_type>(&val);
+    FB_ASSERT_TRUE(ptr != nullptr);
+    FB_ASSERT_EQ(*ptr, blob_type::log);
+
+    auto* bad_ptr = std::get_if<uint32_t>(&val);
+    FB_ASSERT_EQ(bad_ptr, nullptr);
+}
+
+// ============================================================================
+// Test Suite: optional_data_validation (Optional Data Validation Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(optional_data_validation) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(optional_data_validation) {
+    // Setup code here
+}
+
+FB_TEST(optional_data_validation, nullopt_vs_empty_string) {
+    std::optional<std::string> opt_nullopt = std::nullopt;
+    std::optional<std::string> opt_empty = "";
+
+    FB_ASSERT_FALSE(opt_nullopt.has_value());
+    FB_ASSERT_TRUE(opt_empty.has_value());
+    FB_ASSERT_TRUE(opt_empty->empty());
+
+    // Serialize and deserialize both
+    char buffer[128];
+    spdk_buffer sbuf(buffer, 128);
+
+    PutOptString(sbuf, opt_nullopt);
+    PutOptString(sbuf, opt_empty);
+
+    sbuf.reset();
+
+    std::optional<std::string> r1, r2;
+    GetOptString(sbuf, r1);
+    GetOptString(sbuf, r2);
+
+    FB_ASSERT_FALSE(r1.has_value());
+    FB_ASSERT_TRUE(r2.has_value());
+    FB_ASSERT_TRUE(r2->empty());
+}
+
+FB_TEST(optional_data_validation, value_or_default) {
+    std::optional<std::string> opt;
+
+    std::string result = opt.value_or("default");
+    FB_ASSERT_EQ(result, "default");
+
+    opt = "actual";
+    result = opt.value_or("default");
+    FB_ASSERT_EQ(result, "actual");
+}
+
+FB_TEST(optional_data_validation, reset_clears_value) {
+    std::optional<std::string> opt = "value";
+    FB_ASSERT_TRUE(opt.has_value());
+
+    opt.reset();
+    FB_ASSERT_FALSE(opt.has_value());
+
+    opt = "new_value";
+    FB_ASSERT_TRUE(opt.has_value());
+    FB_ASSERT_EQ(*opt, "new_value");
+}
+
+// ============================================================================
+// Test Suite: fb_blob_data_validation (FB Blob Data Validation Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(fb_blob_data_validation) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(fb_blob_data_validation) {
+    // Setup code here
+}
+
+FB_TEST(fb_blob_data_validation, blob_and_id_consistency) {
+    fb_blob blob;
+    char data[100];
+    blob.blob = data;
+    blob.blobid = 12345;
+
+    // Copy and verify consistency
+    fb_blob copy = blob;
+    FB_ASSERT_EQ(copy.blob, data);
+    FB_ASSERT_EQ(copy.blobid, 12345);
+
+    // Modify copy doesn't affect original
+    copy.blobid = 99999;
+    FB_ASSERT_EQ(blob.blobid, 12345);
+    FB_ASSERT_EQ(copy.blobid, 99999);
+}
+
+FB_TEST(fb_blob_data_validation, null_blob_valid_id) {
+    fb_blob blob;
+    blob.blob = nullptr;
+    blob.blobid = 100;
+
+    FB_ASSERT_EQ(blob.blob, nullptr);
+    FB_ASSERT_EQ(blob.blobid, 100);
+}
+
+FB_TEST(fb_blob_data_validation, blob_id_in_vector) {
+    std::vector<fb_blob> blobs;
+    for (uint64_t i = 1; i <= 10; i++) {
+        fb_blob blob;
+        blob.blobid = i;
+        blobs.push_back(blob);
+    }
+
+    // Verify all IDs are present and unique
+    FB_ASSERT_EQ(blobs.size(), 10);
+    for (uint64_t i = 0; i < 10; i++) {
+        FB_ASSERT_EQ(blobs[i].blobid, i + 1);
+    }
+}
+
+// ============================================================================
+// Test Suite: pool_context_validation (Pool Context Validation Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(pool_context_validation) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(pool_context_validation) {
+    // Setup code here
+}
+
+FB_TEST(pool_context_validation, create_ctx_type_field) {
+    pool_create_ctx ctx;
+
+    // Test all blob types in context
+    blob_type types[] = {
+        blob_type::log, blob_type::object, blob_type::kv,
+        blob_type::super_blob, blob_type::free
+    };
+
+    for (auto t : types) {
+        ctx.type = t;
+        FB_ASSERT_EQ(ctx.type, t);
+        FB_ASSERT_EQ(type_string(ctx.type), type_string(t));
+    }
+}
+
+FB_TEST(pool_context_validation, create_ctx_idx_progress) {
+    pool_create_ctx ctx;
+    ctx.max = 100;
+
+    for (uint64_t i = 0; i < ctx.max; i++) {
+        ctx.idx = i;
+        FB_ASSERT_LT(ctx.idx, ctx.max);
+    }
+
+    ctx.idx = ctx.max;
+    FB_ASSERT_EQ(ctx.idx, ctx.max);
+}
+
+FB_TEST(pool_context_validation, delete_ctx_blob_tracking) {
+    pool_delete_ctx ctx;
+    fb_blob blob;
+    blob.blobid = 42;
+
+    ctx.blob = blob;
+    FB_ASSERT_EQ(ctx.blob.blobid, 42);
+}
