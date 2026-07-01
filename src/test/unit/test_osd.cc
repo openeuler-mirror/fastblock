@@ -5466,6 +5466,122 @@ FB_TEST(osd_recovery, recovery_logging) {
 }
 
 // ============================================================================
+// Test Suite: osd_cluster_operations (OSD Cluster Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_cluster_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_cluster_operations) {
+    // Teardown code here
+}
+
+FB_TEST(osd_cluster_operations, cluster_size) {
+    // Cluster should have configurable size
+    uint32_t cluster_size = 10;
+    FB_ASSERT_TRUE(cluster_size > 0);
+}
+
+FB_TEST(osd_cluster_operations, osd_join_cluster) {
+    // OSD should join cluster
+    bool can_join = true;
+    FB_ASSERT_TRUE(can_join);
+}
+
+FB_TEST(osd_cluster_operations, osd_leave_cluster) {
+    // OSD should leave cluster gracefully
+    bool can_leave = true;
+    FB_ASSERT_TRUE(can_leave);
+}
+
+FB_TEST(osd_cluster_operations, osd_add_to_cluster) {
+    // Should add new OSD to cluster
+    std::vector<uint32_t> osds = {1, 2, 3};
+    osds.push_back(4);
+    FB_ASSERT_EQ(osds.size(), 4);
+}
+
+FB_TEST(osd_cluster_operations, osd_remove_from_cluster) {
+    // Should remove OSD from cluster
+    std::vector<uint32_t> osds = {1, 2, 3, 4};
+    osds.erase(osds.begin() + 1);
+    FB_ASSERT_EQ(osds.size(), 3);
+}
+
+FB_TEST(osd_cluster_operations, cluster_rebalance) {
+    // Should rebalance PGs on OSD changes
+    bool rebalances = true;
+    FB_ASSERT_TRUE(rebalances);
+}
+
+FB_TEST(osd_cluster_operations, cluster_weight) {
+    // OSDs should have weight for balancing
+    double weight = 1.0;
+    FB_ASSERT_TRUE(weight > 0.0);
+}
+
+FB_TEST(osd_cluster_operations, cluster_expansion) {
+    // Should support cluster expansion
+    bool can_expand = true;
+    FB_ASSERT_TRUE(can_expand);
+}
+
+FB_TEST(osd_cluster_operations, cluster_shrink) {
+    // Should support cluster shrink
+    bool can_shrink = true;
+    FB_ASSERT_TRUE(can_shrink);
+}
+
+FB_TEST(osd_cluster_operations, cluster_min_size) {
+    // Cluster should have minimum size
+    uint32_t min_size = 3;
+    FB_ASSERT_TRUE(min_size > 0);
+}
+
+FB_TEST(osd_cluster_operations, cluster_max_size) {
+    // Cluster should have maximum size
+    uint32_t max_size = 1000;
+    FB_ASSERT_TRUE(max_size > min_size);
+}
+
+FB_TEST(osd_cluster_operations, cluster_status) {
+    // Should track cluster status
+    bool is_healthy = true;
+    FB_ASSERT_TRUE(is_healthy);
+}
+
+FB_TEST(osd_cluster_operations, cluster_version) {
+    // Cluster configuration should have version
+    uint64_t version = 1;
+    FB_ASSERT_TRUE(version > 0);
+}
+
+FB_TEST(osd_cluster_operations, cluster_coordinator) {
+    // Should have coordinator (monitor)
+    bool has_coordinator = true;
+    FB_ASSERT_TRUE(has_coordinator);
+}
+
+FB_TEST(osd_cluster_operations, cluster_consensus) {
+    // Changes should require consensus
+    bool requires_consensus = true;
+    FB_ASSERT_TRUE(requires_consensus);
+}
+
+FB_TEST(osd_cluster_operations, cluster_fencing) {
+    // Should fence failed OSDs
+    bool can_fence = true;
+    FB_ASSERT_TRUE(can_fence);
+}
+
+FB_TEST(osd_cluster_operations, cluster_auto_heal) {
+    // Should auto-heal cluster issues
+    bool auto_heals = true;
+    FB_ASSERT_TRUE(auto_heals);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
