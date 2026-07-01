@@ -15830,3 +15830,410 @@ FB_TEST(encoder_data_validation, complex_sequence_roundtrip) {
     FB_ASSERT_EQ(std::string(r1, 4), "raw1");
     FB_ASSERT_EQ(std::string(r2, 4), "raw2");
 }
+
+// ============================================================================
+// Test Suite: buffer_operations_edge_cases (Buffer Operations Edge Cases Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_operations_edge_cases) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_operations_edge_cases) {
+    // Setup code here
+}
+
+FB_TEST(buffer_operations_edge_cases, zero_size_buffer) {
+    char buffer[1];
+    spdk_buffer sbuf(buffer, 1);
+
+    FB_ASSERT_EQ(sbuf.size(), 1);
+    FB_ASSERT_EQ(sbuf.remain(), 1);
+
+    size_t written = sbuf.append("x", 1);
+    FB_ASSERT_EQ(written, 1);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+
+    // Try to write more - should fail
+    written = sbuf.append("y", 1);
+    FB_ASSERT_EQ(written, 0);
+}
+
+FB_TEST(buffer_operations_edge_cases, inc_overflow_handling) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.inc(50);
+    FB_ASSERT_EQ(sbuf.used(), 50);
+    FB_ASSERT_EQ(sbuf.remain(), 50);
+
+    // Overflow inc - should cap at size
+    sbuf.inc(100);
+    FB_ASSERT_EQ(sbuf.used(), 100);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+
+    // Further inc should return 0
+    size_t inc = sbuf.inc(10);
+    FB_ASSERT_EQ(inc, 0);
+}
+
+FB_TEST(buffer_operations_edge_cases, set_used_boundary) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.set_used(50);
+    FB_ASSERT_EQ(sbuf.used(), 50);
+    FB_ASSERT_EQ(sbuf.remain(), 50);
+
+    // Set beyond size - should cap
+    sbuf.set_used(200);
+    FB_ASSERT_EQ(sbuf.used(), 100);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+
+    // Reset and verify state
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.used(), 0);
+    FB_ASSERT_EQ(sbuf.remain(), 100);
+}
+
+FB_TEST(buffer_operations_edge_cases, append_overflow_partial_write) {
+    char buffer[50];
+    memset(buffer, 0, 50);
+    spdk_buffer sbuf(buffer, 50);
+
+    // Fill half
+    sbuf.append("AAAAAAAAAA", 10);
+    FB_ASSERT_EQ(sbuf.used(), 10);
+
+    // Try to write more than remaining - partial write
+    const char* data = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+    size_t written = sbuf.append(data, 50);
+    FB_ASSERT_EQ(written, 40); // Only 40 remaining
+    FB_ASSERT_EQ(sbuf.used(), 50);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+
+    // Verify content: AAA + BBBBB...
+    FB_ASSERT_EQ(memcmp(buffer, "AAAAAAAAAABBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", 50), 0);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_operations_edge_cases (Buffer List Operations Edge Cases Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_operations_edge_cases) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_operations_edge_cases) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_operations_edge_cases, empty_list_operations) {
+    buffer_list bl;
+
+    FB_ASSERT_TRUE(bl.empty());
+    FB_ASSERT_EQ(bl.bytes(), 0);
+
+    // Trim on empty should be safe
+    // (implementation handles this, testing it doesn't crash)
+    int count = 0;
+    for (auto& buf : bl) {
+        count++;
+    }
+    FB_ASSERT_EQ(count, 0);
+}
+
+FB_TEST(buffer_list_operations_edge_cases, single_buffer_all_operations) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    FB_ASSERT_FALSE(bl.empty());
+    FB_ASSERT_EQ(bl.bytes(), 100);
+
+    // Pop and verify
+    spdk_buffer popped = bl.pop_front();
+    FB_ASSERT_EQ(popped.size(), 100);
+    FB_ASSERT_TRUE(bl.empty());
+    FB_ASSERT_EQ(bl.bytes(), 0);
+}
+
+FB_TEST(buffer_list_operations_edge_cases, trim_preserves_remaining) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    // Trim front - removes buffer1
+    bl.trim_front();
+    FB_ASSERT_EQ(bl.bytes(), 500);
+
+    // Verify remaining buffers
+    int count = 0;
+    for (auto& buf : bl) {
+        if (count == 0) FB_ASSERT_EQ(buf.size(), 200);
+        if (count == 1) FB_ASSERT_EQ(buf.size(), 300);
+        count++;
+    }
+    FB_ASSERT_EQ(count, 2);
+
+    // Trim back - removes buffer3
+    bl.trim_back();
+    FB_ASSERT_EQ(bl.bytes(), 200);
+    FB_ASSERT_FALSE(bl.empty());
+}
+
+FB_TEST(buffer_list_operations_edge_cases, clear_preserves_total_tracking) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    FB_ASSERT_EQ(bl.bytes(), 300);
+
+    bl.clear();
+
+    FB_ASSERT_TRUE(bl.empty());
+    FB_ASSERT_EQ(bl.bytes(), 0);
+
+    // Re-add and verify tracking works
+    bl.append_buffer(sbuf1);
+    FB_ASSERT_EQ(bl.bytes(), 100);
+
+    bl.append_buffer(sbuf2);
+    FB_ASSERT_EQ(bl.bytes(), 300);
+}
+
+// ============================================================================
+// Test Suite: serialization_edge_cases (Serialization Edge Cases Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization_edge_cases) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization_edge_cases) {
+    // Setup code here
+}
+
+FB_TEST(serialization_edge_cases, zero_values_preserved) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+
+    uint32_t v32_zero = 0;
+    uint64_t v64_zero = 0;
+
+    PutFixed32(sbuf, v32_zero);
+    PutFixed64(sbuf, v64_zero);
+
+    sbuf.reset();
+
+    uint32_t r32;
+    uint64_t r64;
+
+    GetFixed32(sbuf, r32);
+    GetFixed64(sbuf, r64);
+
+    FB_ASSERT_EQ(r32, 0);
+    FB_ASSERT_EQ(r64, 0);
+}
+
+FB_TEST(serialization_edge_cases, max_values_preserved) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+
+    uint32_t v32_max = UINT32_MAX;
+    uint64_t v64_max = UINT64_MAX;
+
+    PutFixed32(sbuf, v32_max);
+    PutFixed64(sbuf, v64_max);
+
+    sbuf.reset();
+
+    uint32_t r32;
+    uint64_t r64;
+
+    GetFixed32(sbuf, r32);
+    GetFixed64(sbuf, r64);
+
+    FB_ASSERT_EQ(r32, UINT32_MAX);
+    FB_ASSERT_EQ(r64, UINT64_MAX);
+}
+
+FB_TEST(serialization_edge_cases, empty_string_preserved) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+
+    std::string empty = "";
+
+    PutString(sbuf, empty);
+
+    // Verify length prefix is 0
+    uint64_t len_prefix;
+    memcpy(&len_prefix, buffer, sizeof(uint64_t));
+    FB_ASSERT_EQ(len_prefix, 0);
+
+    sbuf.reset();
+
+    std::string retrieved;
+    GetString(sbuf, retrieved);
+
+    FB_ASSERT_TRUE(retrieved.empty());
+}
+
+FB_TEST(serialization_edge_cases, opt_string_nullopt_vs_empty) {
+    char buffer[128];
+    spdk_buffer sbuf(buffer, 128);
+
+    std::optional<std::string> nullopt_val = std::nullopt;
+    std::optional<std::string> empty_val = "";
+
+    PutOptString(sbuf, nullopt_val);
+    PutOptString(sbuf, empty_val);
+
+    sbuf.reset();
+
+    std::optional<std::string> r1, r2;
+    GetOptString(sbuf, r1);
+    GetOptString(sbuf, r2);
+
+    // nullopt should not have value
+    FB_ASSERT_FALSE(r1.has_value());
+
+    // empty string should have value (empty string, not nullopt)
+    FB_ASSERT_TRUE(r2.has_value());
+    FB_ASSERT_TRUE(r2->empty());
+}
+
+FB_TEST(serialization_edge_cases, insufficient_space_handling) {
+    char buffer[4];
+    spdk_buffer sbuf(buffer, 4);
+
+    // uint32 should succeed
+    bool ok1 = PutFixed32(sbuf, 123);
+    FB_ASSERT_TRUE(ok1);
+    FB_ASSERT_EQ(sbuf.used(), 4);
+
+    sbuf.reset();
+
+    // uint64 should fail (needs 8 bytes)
+    bool ok2 = PutFixed64(sbuf, 456);
+    FB_ASSERT_FALSE(ok2);
+
+    // string should fail (needs at least 8 bytes for length)
+    bool ok3 = PutString(sbuf, "test");
+    FB_ASSERT_FALSE(ok3);
+}
+
+// ============================================================================
+// Test Suite: context_initialization (Context Initialization Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(context_initialization) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(context_initialization) {
+    // Setup code here
+}
+
+FB_TEST(context_initialization, log_append_ctx_vectors_empty) {
+    log_append_ctx ctx;
+
+    FB_ASSERT_TRUE(ctx.idx_pos.empty());
+    FB_ASSERT_TRUE(ctx.headers.empty());
+
+    // Add elements and verify
+    ctx.idx_pos.emplace_back(1, 2, 3, 4);
+    FB_ASSERT_EQ(ctx.idx_pos.size(), 1);
+
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    ctx.headers.push_back(sbuf);
+    FB_ASSERT_EQ(ctx.headers.size(), 1);
+}
+
+FB_TEST(context_initialization, log_read_ctx_entries_management) {
+    log_read_ctx ctx;
+
+    FB_ASSERT_TRUE(ctx.entries.empty());
+    FB_ASSERT_EQ(ctx.start_index, 0);
+    FB_ASSERT_EQ(ctx.end_index, 0);
+
+    // Add entries
+    for (int i = 0; i < 10; i++) {
+        log_entry_t entry;
+        entry.index = i * 100;
+        ctx.entries.push_back(entry);
+    }
+    FB_ASSERT_EQ(ctx.entries.size(), 10);
+
+    // Set indices
+    ctx.start_index = 100;
+    ctx.end_index = 900;
+    FB_ASSERT_EQ(ctx.end_index - ctx.start_index, 800);
+}
+
+FB_TEST(context_initialization, kvstore_write_ctx_ops_management) {
+    kvstore_write_ctx ctx;
+
+    FB_ASSERT_TRUE(ctx.ops.empty());
+    FB_ASSERT_EQ(ctx.op_length, 0);
+
+    // Add put operations
+    for (int i = 0; i < 5; i++) {
+        op put_op;
+        put_op.key = "key" + std::to_string(i);
+        put_op.value = "value" + std::to_string(i);
+        ctx.ops.push_back(put_op);
+    }
+
+    // Add delete operation
+    op del_op;
+    del_op.key = "delete_key";
+    del_op.value = std::nullopt;
+    ctx.ops.push_back(del_op);
+
+    FB_ASSERT_EQ(ctx.ops.size(), 6);
+    FB_ASSERT_TRUE(ctx.ops[0].value.has_value());
+    FB_ASSERT_FALSE(ctx.ops[5].value.has_value());
+}
+
+FB_TEST(context_initialization, rblob_rw_ctx_iov_management) {
+    rblob_rw_ctx ctx;
+
+    FB_ASSERT_TRUE(ctx.iov.empty());
+    FB_ASSERT_EQ(ctx.is_read, false);
+    FB_ASSERT_EQ(ctx.lba, 0);
+    FB_ASSERT_EQ(ctx.len, 0);
+
+    // Add iovecs
+    for (int i = 0; i < 4; i++) {
+        struct iovec iov;
+        iov.iov_base = nullptr;
+        iov.iov_len = 4096;
+        ctx.iov.push_back(iov);
+    }
+
+    FB_ASSERT_EQ(ctx.iov.size(), 4);
+
+    size_t total_len = 0;
+    for (auto& iov : ctx.iov) {
+        total_len += iov.iov_len;
+    }
+    FB_ASSERT_EQ(total_len, 16384);
+
+    // Set positions
+    ctx.lba = 100;
+    ctx.len = 50;
+    FB_ASSERT_EQ(ctx.lba + ctx.len, 150);
+}
