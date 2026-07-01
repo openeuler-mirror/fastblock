@@ -4254,7 +4254,8 @@ FB_TEST(osd_capacity_management, capacity_threshold_warning) {
 }
 
 FB_TEST(osd_capacity_management, capacity_threshold_critical) {
-    // Should alert at critical threshold
+    // Should alert at critical threshold (higher than warning)
+    uint64_t warning_threshold = 80;
     uint64_t critical_threshold = 90; // 90%
     FB_ASSERT_TRUE(critical_threshold > warning_threshold);
 }
