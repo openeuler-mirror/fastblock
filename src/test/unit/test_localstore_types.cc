@@ -15485,3 +15485,348 @@ FB_TEST(serialization_data_validation, mixed_types_preserve_order) {
     GetString(sbuf, rstr2);
     FB_ASSERT_EQ(rstr2, str2);
 }
+
+// ============================================================================
+// Test Suite: log_entry_validation (Log Entry Validation Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_entry_validation) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_entry_validation) {
+    // Setup code here
+}
+
+FB_TEST(log_entry_validation, encode_decode_field_mapping) {
+    char buffer[1024];
+    memset(buffer, 0, 1024);
+    spdk_buffer sbuf(buffer, 1024);
+
+    log_entry_t entry;
+    entry.term_id = 42;
+    entry.index = 1000;
+    entry.size = 4096;
+    entry.type = 1;
+    entry.meta = "metadata_test";
+
+    EncodeLogHeader(sbuf, entry);
+    sbuf.reset();
+
+    log_entry_t decoded;
+    DecodeLogHeader(sbuf, decoded);
+
+    FB_ASSERT_EQ(decoded.term_id, 42);
+    FB_ASSERT_EQ(decoded.index, 1000);
+    FB_ASSERT_EQ(decoded.size, 4096);
+    FB_ASSERT_EQ(decoded.type, 1);
+    FB_ASSERT_EQ(decoded.meta, "metadata_test");
+}
+
+FB_TEST(log_entry_validation, multiple_encode_consistency) {
+    char buffer[2048];
+
+    log_entry_t entries[3];
+    entries[0].term_id = 1; entries[0].index = 100; entries[0].meta = "a";
+    entries[1].term_id = 2; entries[1].index = 200; entries[1].meta = "bb";
+    entries[2].term_id = 3; entries[2].index = 300; entries[2].meta = "ccc";
+
+    spdk_buffer sbuf(buffer, 2048);
+    for (int i = 0; i < 3; i++) {
+        EncodeLogHeader(sbuf, entries[i]);
+    }
+
+    sbuf.reset();
+    for (int i = 0; i < 3; i++) {
+        log_entry_t decoded;
+        DecodeLogHeader(sbuf, decoded);
+
+        FB_ASSERT_EQ(decoded.term_id, entries[i].term_id);
+        FB_ASSERT_EQ(decoded.index, entries[i].index);
+    }
+}
+
+FB_TEST(log_entry_validation, meta_boundary_handling) {
+    char buffer[1024];
+
+    // Empty meta
+    {
+        spdk_buffer sbuf(buffer, 1024);
+        log_entry_t entry;
+        entry.meta = "";
+
+        EncodeLogHeader(sbuf, entry);
+        sbuf.reset();
+
+        log_entry_t decoded;
+        DecodeLogHeader(sbuf, decoded);
+        FB_ASSERT_TRUE(decoded.meta.empty());
+    }
+
+    // Single character
+    {
+        spdk_buffer sbuf(buffer, 1024);
+        log_entry_t entry;
+        entry.meta = "x";
+
+        EncodeLogHeader(sbuf, entry);
+        sbuf.reset();
+
+        log_entry_t decoded;
+        DecodeLogHeader(sbuf, decoded);
+        FB_ASSERT_EQ(decoded.meta, "x");
+    }
+
+    // Long meta
+    {
+        spdk_buffer sbuf(buffer, 1024);
+        log_entry_t entry;
+        entry.meta = std::string(100, 'm');
+
+        EncodeLogHeader(sbuf, entry);
+        sbuf.reset();
+
+        log_entry_t decoded;
+        DecodeLogHeader(sbuf, decoded);
+        FB_ASSERT_EQ(decoded.meta.size(), 100);
+    }
+}
+
+// ============================================================================
+// Test Suite: iovec_conversion_validation (Iovec Conversion Validation Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(iovec_conversion_validation) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(iovec_conversion_validation) {
+    // Setup code here
+}
+
+FB_TEST(iovec_conversion_validation, single_buffer_exact_range) {
+    char buffer[4096];
+    memset(buffer, 'A', 4096);
+    spdk_buffer sbuf(buffer, 4096);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    iovecs iovs = bl.to_iovec(0, 4096);
+    FB_ASSERT_EQ(iovs.size(), 1);
+    FB_ASSERT_EQ(iovs[0].iov_len, 4096);
+    FB_ASSERT_EQ(iovs[0].iov_base, buffer);
+}
+
+FB_TEST(iovec_conversion_validation, partial_offset_range) {
+    char buffer[4096];
+    memset(buffer, 'A', 4096);
+    spdk_buffer sbuf(buffer, 4096);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    // Request from offset 512, length 1024
+    iovecs iovs = bl.to_iovec(512, 1024);
+    FB_ASSERT_GE(iovs.size(), 1);
+
+    size_t total_len = 0;
+    for (auto& iov : iovs) {
+        total_len += iov.iov_len;
+    }
+    FB_ASSERT_EQ(total_len, 1024);
+
+    // Verify iov_base starts at correct offset
+    FB_ASSERT_GE(iovs[0].iov_base, buffer + 512);
+}
+
+FB_TEST(iovec_conversion_validation, two_buffers_spanning) {
+    char buffer1[4096], buffer2[4096];
+    memset(buffer1, 'A', 4096);
+    memset(buffer2, 'B', 4096);
+
+    spdk_buffer sbuf1(buffer1, 4096);
+    spdk_buffer sbuf2(buffer2, 4096);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    // Request spanning both buffers (starts in first, ends in second)
+    iovecs iovs = bl.to_iovec(2048, 4096);
+    FB_ASSERT_GE(iovs.size(), 2);
+
+    size_t total_len = 0;
+    for (auto& iov : iovs) {
+        total_len += iov.iov_len;
+    }
+    FB_ASSERT_EQ(total_len, 4096);
+}
+
+FB_TEST(iovec_conversion_validation, three_buffers_full) {
+    char buffer1[1024], buffer2[2048], buffer3[4096];
+    spdk_buffer sbuf1(buffer1, 1024);
+    spdk_buffer sbuf2(buffer2, 2048);
+    spdk_buffer sbuf3(buffer3, 4096);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    iovecs iovs = bl.to_iovec();
+    FB_ASSERT_EQ(iovs.size(), 3);
+
+    FB_ASSERT_EQ(iovs[0].iov_len, 1024);
+    FB_ASSERT_EQ(iovs[1].iov_len, 2048);
+    FB_ASSERT_EQ(iovs[2].iov_len, 4096);
+
+    FB_ASSERT_EQ(iovs[0].iov_base, buffer1);
+    FB_ASSERT_EQ(iovs[1].iov_base, buffer2);
+    FB_ASSERT_EQ(iovs[2].iov_base, buffer3);
+}
+
+FB_TEST(iovec_conversion_validation, out_of_bounds_returns_empty) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    // Request beyond buffer capacity
+    iovecs iovs = bl.to_iovec(0, 200);
+    FB_ASSERT_TRUE(iovs.empty());
+
+    // Request starting beyond buffer
+    iovs = bl.to_iovec(200, 50);
+    FB_ASSERT_TRUE(iovs.empty());
+}
+
+// ============================================================================
+// Test Suite: encoder_data_validation (Encoder Data Validation Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(encoder_data_validation) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(encoder_data_validation) {
+    // Setup code here
+}
+
+FB_TEST(encoder_data_validation, put_get_roundtrip) {
+    char buffer[1024];
+    memset(buffer, 0, 1024);
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    encoder.put(42ULL);
+    encoder.put(std::string("hello"));
+    encoder.put("raw", 3);
+
+    bl.begin()->reset();
+    buffer_list_encoder reader(bl);
+
+    uint64_t v;
+    std::string s;
+    char raw[4] = {0};
+
+    bool ok1 = reader.get(v);
+    FB_ASSERT_TRUE(ok1);
+    FB_ASSERT_EQ(v, 42);
+
+    bool ok2 = reader.get(s);
+    FB_ASSERT_TRUE(ok2);
+    FB_ASSERT_EQ(s, "hello");
+
+    bool ok3 = reader.get(raw, 3);
+    FB_ASSERT_TRUE(ok3);
+    FB_ASSERT_EQ(std::string(raw, 3), "raw");
+}
+
+FB_TEST(encoder_data_validation, sequential_put_updates_tracking) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+
+    FB_ASSERT_EQ(encoder.used(), 0);
+    FB_ASSERT_EQ(encoder.remain(), 1024);
+
+    encoder.put(1ULL);
+    FB_ASSERT_EQ(encoder.used(), 8);
+    FB_ASSERT_EQ(encoder.remain(), 1016);
+
+    encoder.put(2ULL);
+    FB_ASSERT_EQ(encoder.used(), 16);
+    FB_ASSERT_EQ(encoder.remain(), 1008);
+
+    encoder.put(std::string("test"));
+    FB_ASSERT_EQ(encoder.used(), 16 + 8 + 4);
+}
+
+FB_TEST(encoder_data_validation, put_fails_on_insufficient_space) {
+    char buffer[16];
+    spdk_buffer sbuf(buffer, 16);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+
+    bool ok1 = encoder.put(1ULL);
+    FB_ASSERT_TRUE(ok1);
+    FB_ASSERT_EQ(encoder.used(), 8);
+
+    bool ok2 = encoder.put(2ULL);
+    FB_ASSERT_TRUE(ok2);
+    FB_ASSERT_EQ(encoder.used(), 16);
+
+    // No more space
+    bool ok3 = encoder.put(3ULL);
+    FB_ASSERT_FALSE(ok3);
+}
+
+FB_TEST(encoder_data_validation, complex_sequence_roundtrip) {
+    char buffer[512];
+    memset(buffer, 0, 512);
+    spdk_buffer sbuf(buffer, 512);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+
+    encoder.put(10ULL);
+    encoder.put(20ULL);
+    encoder.put(30ULL);
+    encoder.put(std::string("first"));
+    encoder.put(std::string("second"));
+    encoder.put("raw1", 4);
+    encoder.put("raw2", 4);
+
+    size_t expected_used = 3*8 + 2*(8+5) + 2*4;
+    FB_ASSERT_EQ(encoder.used(), expected_used);
+
+    bl.begin()->reset();
+    buffer_list_encoder reader(bl);
+
+    uint64_t v1, v2, v3;
+    std::string s1, s2;
+    char r1[5] = {0}, r2[5] = {0};
+
+    reader.get(v1);
+    reader.get(v2);
+    reader.get(v3);
+    reader.get(s1);
+    reader.get(s2);
+    reader.get(r1, 4);
+    reader.get(r2, 4);
+
+    FB_ASSERT_EQ(v1, 10);
+    FB_ASSERT_EQ(v2, 20);
+    FB_ASSERT_EQ(v3, 30);
+    FB_ASSERT_EQ(s1, "first");
+    FB_ASSERT_EQ(s2, "second");
+    FB_ASSERT_EQ(std::string(r1, 4), "raw1");
+    FB_ASSERT_EQ(std::string(r2, 4), "raw2");
+}
