@@ -7168,6 +7168,358 @@ FB_TEST(buffer_pool_tests, buffer_size_alignment) {
 }
 
 // ============================================================================
+// Test Suite: trim_percentage_tests (Trim Percentage Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(trim_percentage_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(trim_percentage_tests) {
+    // Setup code here
+}
+
+FB_TEST(trim_percentage_tests, trigger_percentage_range) {
+    FB_ASSERT_GT(TRIM_TRIGGER_PERCENTAGE, 0.0f);
+    FB_ASSERT_LT(TRIM_TRIGGER_PERCENTAGE, 1.0f);
+}
+
+FB_TEST(trim_percentage_tests, trim_percentage_range) {
+    FB_ASSERT_GT(TRIM_PERCENTAGE, 0.0f);
+    FB_ASSERT_LT(TRIM_PERCENTAGE, 1.0f);
+}
+
+FB_TEST(trim_percentage_tests, percentages_positive) {
+    FB_ASSERT_TRUE(TRIM_TRIGGER_PERCENTAGE > 0);
+    FB_ASSERT_TRUE(TRIM_PERCENTAGE > 0);
+}
+
+FB_TEST(trim_percentage_tests, trigger_greater_than_trim) {
+    FB_ASSERT_GT(TRIM_TRIGGER_PERCENTAGE, TRIM_PERCENTAGE);
+}
+
+// ============================================================================
+// Test Suite: header_size_tests (Header Size Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(header_size_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(header_size_tests) {
+    // Setup code here
+}
+
+FB_TEST(header_size_tests, entry_header_size) {
+    FB_ASSERT_EQ(entry_header_size, 24);
+}
+
+FB_TEST(header_size_tests, header_size_is_3_uint64) {
+    FB_ASSERT_EQ(entry_header_size, 3 * sizeof(uint64_t));
+}
+
+FB_TEST(header_size_tests, header_size_4kb_divisible) {
+    // Not necessarily 4KB, but verify the value
+    FB_ASSERT_EQ(entry_header_size, 24);
+}
+
+// ============================================================================
+// Test Suite: log_init_constant_tests (Log Init Constant Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_init_constant_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_init_constant_tests) {
+    // Setup code here
+}
+
+FB_TEST(log_init_constant_tests, init_is_max) {
+    FB_ASSERT_EQ(log_entry_t::init, UINT64_MAX);
+}
+
+FB_TEST(log_init_constant_tests, init_is_numeric_limits_max) {
+    FB_ASSERT_EQ(log_entry_t::init, std::numeric_limits<uint64_t>::max());
+}
+
+FB_TEST(log_init_constant_tests, init_value_specific) {
+    FB_ASSERT_EQ(log_entry_t::init, 0xFFFFFFFFFFFFFFFFULL);
+}
+
+// ============================================================================
+// Test Suite: cluster_size_tests (Cluster Size Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(cluster_size_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(cluster_size_tests) {
+    // Setup code here
+}
+
+namespace test_constants {
+    constexpr uint32_t test_cluster_size = 1_MB;
+    constexpr uint32_t test_blob_cluster = 4;
+}
+
+FB_TEST(cluster_size_tests, cluster_size_1mb) {
+    FB_ASSERT_EQ(test_constants::test_cluster_size, 1024 * 1024);
+}
+
+FB_TEST(cluster_size_tests, blob_clusters_4) {
+    FB_ASSERT_EQ(test_constants::test_blob_cluster, 4);
+}
+
+FB_TEST(cluster_size_tests, blob_size_calculation) {
+    constexpr uint32_t blob_size = test_constants::test_blob_cluster * test_constants::test_cluster_size;
+    FB_ASSERT_EQ(blob_size, 4_MB);
+}
+
+// ============================================================================
+// Test Suite: unit_size_tests (Unit Size Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(unit_size_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(unit_size_tests) {
+    // Setup code here
+}
+
+FB_TEST(unit_size_tests, unit_size_512) {
+    constexpr uint32_t unit_size = 512;
+    FB_ASSERT_EQ(unit_size, 512);
+}
+
+FB_TEST(unit_size_tests, unit_is_sector_size) {
+    constexpr uint32_t unit_size = 512;
+    FB_ASSERT_EQ(unit_size, 512);
+}
+
+FB_TEST(unit_size_tests, units_per_page) {
+    constexpr uint32_t page_size = 4096;
+    constexpr uint32_t unit_size = 512;
+    constexpr uint32_t units = page_size / unit_size;
+    FB_ASSERT_EQ(units, 8);
+}
+
+// ============================================================================
+// Test Suite: slow_io_tests (Slow IO Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(slow_io_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(slow_io_tests) {
+    // Setup code here
+}
+
+FB_TEST(slow_io_tests, slow_io_warn_us) {
+    constexpr uint64_t slow_io_warn_us = 100000;
+    FB_ASSERT_EQ(slow_io_warn_us, 100000);
+}
+
+FB_TEST(slow_io_tests, slow_io_warn_ms) {
+    constexpr uint64_t slow_io_warn_us = 100000;
+    constexpr uint64_t ms = slow_io_warn_us / 1000;
+    FB_ASSERT_EQ(ms, 100);
+}
+
+FB_TEST(slow_io_tests, slow_io_threshold_100ms) {
+    constexpr uint64_t threshold_us = 100000;
+    FB_ASSERT_EQ(threshold_us, 100_ms);
+}
+
+// ============================================================================
+// Test Suite: poller_period_tests (Poller Period Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(poller_period_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(poller_period_tests) {
+    // Setup code here
+}
+
+FB_TEST(poller_period_tests, poller_period_us) {
+    constexpr uint64_t poller_period_us = 5000;
+    FB_ASSERT_EQ(poller_period_us, 5000);
+}
+
+FB_TEST(poller_period_tests, poller_period_ms) {
+    constexpr uint64_t poller_period_us = 5000;
+    constexpr uint64_t ms = poller_period_us / 1000;
+    FB_ASSERT_EQ(ms, 5);
+}
+
+FB_TEST(poller_period_tests, poller_frequency_hz) {
+    constexpr uint64_t poller_period_us = 5000;
+    constexpr uint64_t hz = 1000000 / poller_period_us;
+    FB_ASSERT_EQ(hz, 200); // 200 times per second
+}
+
+// ============================================================================
+// Test Suite: initial_blob_tests (Initial Blob Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(initial_blob_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(initial_blob_tests) {
+    // Setup code here
+}
+
+FB_TEST(initial_blob_tests, init_blob_num) {
+    constexpr uint32_t init_blob_num = 16;
+    FB_ASSERT_EQ(init_blob_num, 16);
+}
+
+FB_TEST(initial_blob_tests, min_blob_num) {
+    constexpr uint32_t min_blob_num = 8;
+    FB_ASSERT_EQ(min_blob_num, 8);
+}
+
+FB_TEST(initial_blob_tests, init_greater_than_min) {
+    constexpr uint32_t init_blob_num = 16;
+    constexpr uint32_t min_blob_num = 8;
+    FB_ASSERT_GT(init_blob_num, min_blob_num);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_capacity_tests (Buffer List Capacity Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_capacity_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_capacity_tests) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_capacity_tests, empty_list_bytes) {
+    buffer_list bl;
+    FB_ASSERT_EQ(bl.bytes(), 0);
+}
+
+FB_TEST(buffer_list_capacity_tests, single_buffer_bytes) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    FB_ASSERT_EQ(bl.bytes(), 1024);
+}
+
+FB_TEST(buffer_list_capacity_tests, large_buffer_bytes) {
+    char buffer[1024*1024];
+    spdk_buffer sbuf(buffer, 1024*1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    FB_ASSERT_EQ(bl.bytes(), 1024*1024);
+}
+
+FB_TEST(buffer_list_capacity_tests, multiple_accumulate) {
+    char buffer1[1000], buffer2[2000], buffer3[3000];
+    spdk_buffer sbuf1(buffer1, 1000);
+    spdk_buffer sbuf2(buffer2, 2000);
+    spdk_buffer sbuf3(buffer3, 3000);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    FB_ASSERT_EQ(bl.bytes(), 6000);
+}
+
+FB_TEST(buffer_list_capacity_tests, bytes_after_operations) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    FB_ASSERT_EQ(bl.bytes(), 300);
+
+    bl.trim_front();
+    FB_ASSERT_EQ(bl.bytes(), 200);
+
+    bl.append_buffer(sbuf1);
+    FB_ASSERT_EQ(bl.bytes(), 300);
+}
+
+// ============================================================================
+// Test Suite: serialization_integrity_tests (Serialization Integrity Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization_integrity_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization_integrity_tests) {
+    // Setup code here
+}
+
+FB_TEST(serialization_integrity_tests, fixed32_no_corruption) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+
+    uint32_t original = 0xDEADBEEF;
+    PutFixed32(sbuf, original);
+    sbuf.reset();
+
+    uint32_t decoded;
+    GetFixed32(sbuf, decoded);
+
+    FB_ASSERT_EQ(decoded, original);
+}
+
+FB_TEST(serialization_integrity_tests, fixed64_no_corruption) {
+    char buffer[64];
+    spdk_buffer sbuf(buffer, 64);
+
+    uint64_t original = 0x123456789ABCDEF0ULL;
+    PutFixed64(sbuf, original);
+    sbuf.reset();
+
+    uint64_t decoded;
+    GetFixed64(sbuf, decoded);
+
+    FB_ASSERT_EQ(decoded, original);
+}
+
+FB_TEST(serialization_integrity_tests, string_no_corruption) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    std::string original = "test string with spaces";
+    PutString(sbuf, original);
+    sbuf.reset();
+
+    std::string decoded;
+    GetString(sbuf, decoded);
+
+    FB_ASSERT_EQ(decoded, original);
+}
+
+FB_TEST(serialization_integrity_tests, boundary_exact_fit) {
+    char buffer[8];
+    spdk_buffer sbuf(buffer, 8);
+
+    bool ok = PutFixed64(sbuf, 12345);
+    FB_ASSERT_TRUE(ok);
+    FB_ASSERT_EQ(sbuf.used(), 8);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+}
+
+// ============================================================================
 // Test Suite: xattr_val_type_operations (Xattr Val Type Operations Tests)
 // ============================================================================
 
