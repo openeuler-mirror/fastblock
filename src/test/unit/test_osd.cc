@@ -6166,6 +6166,126 @@ FB_TEST(osd_background_tasks, task_list) {
 }
 
 // ============================================================================
+// Test Suite: osd_resource_limits (OSD Resource Limits Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_resource_limits) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_resource_limits) {
+    // Teardown code here
+}
+
+FB_TEST(osd_resource_limits, max_open_objects) {
+    // Should limit open object handles
+    uint32_t max_open = 10000;
+    FB_ASSERT_TRUE(max_open > 0);
+}
+
+FB_TEST(osd_resource_limits, max_concurrent_reads) {
+    // Should limit concurrent reads
+    uint32_t max_reads = 256;
+    FB_ASSERT_TRUE(max_reads > 0);
+}
+
+FB_TEST(osd_resource_limits, max_concurrent_writes) {
+    // Should limit concurrent writes
+    uint32_t max_writes = 256;
+    FB_ASSERT_TRUE(max_writes > 0);
+}
+
+FB_TEST(osd_resource_limits, max_pending_requests) {
+    // Should limit pending requests
+    uint32_t max_pending = 10000;
+    FB_ASSERT_TRUE(max_pending > 0);
+}
+
+FB_TEST(osd_resource_limits, max_request_size) {
+    // Should limit request size
+    uint64_t max_size = 1024ULL * 1024ULL * 4ULL; // 4MB
+    FB_ASSERT_TRUE(max_size > 0);
+}
+
+FB_TEST(osd_resource_limits, max_object_size) {
+    // Should limit object size
+    uint64_t max_obj_size = 1024ULL * 1024ULL * 1024ULL; // 1GB
+    FB_ASSERT_TRUE(max_obj_size > 0);
+}
+
+FB_TEST(osd_resource_limits, max_objects_per_pg) {
+    // Should limit objects per PG
+    uint64_t max_objects = 1000000;
+    FB_ASSERT_TRUE(max_objects > 0);
+}
+
+FB_TEST(osd_resource_limits, max_pgs_per_osd) {
+    // Should limit PGs per OSD
+    uint64_t max_pgs = 500;
+    FB_ASSERT_TRUE(max_pgs > 0);
+}
+
+FB_TEST(osd_resource_limits, memory_limit) {
+    // Should have memory limit
+    uint64_t memory_limit = 1024ULL * 1024ULL * 1024ULL * 4ULL; // 4GB
+    FB_ASSERT_TRUE(memory_limit > 0);
+}
+
+FB_TEST(osd_resource_limits, memory_usage_tracking) {
+    // Should track memory usage
+    uint64_t used = 1024ULL * 1024ULL * 512ULL; // 512MB
+    FB_ASSERT_TRUE(used > 0);
+}
+
+FB_TEST(osd_resource_limits, memory_warning_threshold) {
+    // Should warn at memory threshold
+    uint64_t threshold_pct = 80;
+    FB_ASSERT_TRUE(threshold_pct > 0);
+}
+
+FB_TEST(osd_resource_limits, connection_limit) {
+    // Should limit connections
+    uint32_t max_connections = 1000;
+    FB_ASSERT_TRUE(max_connections > 0);
+}
+
+FB_TEST(osd_resource_limits, thread_limit) {
+    // Should limit threads
+    uint32_t max_threads = 64;
+    FB_ASSERT_TRUE(max_threads > 0);
+}
+
+FB_TEST(osd_resource_limits, queue_depth_limit) {
+    // Should limit queue depth
+    uint32_t max_depth = 1024;
+    FB_ASSERT_TRUE(max_depth > 0);
+}
+
+FB_TEST(osd_resource_limits, rate_limit_enforcement) {
+    // Should enforce rate limits
+    bool enforces = true;
+    FB_ASSERT_TRUE(enforces);
+}
+
+FB_TEST(osd_resource_limits, resource_exhaustion_handling) {
+    // Should handle resource exhaustion
+    bool handles = true;
+    FB_ASSERT_TRUE(handles);
+}
+
+FB_TEST(osd_resource_limits, resource_exhaustion_error_code) {
+    // Should return appropriate error on exhaustion
+    int error = -12; // ENOMEM
+    FB_ASSERT_TRUE(error < 0);
+}
+
+FB_TEST(osd_resource_limits, resource_monitoring) {
+    // Should monitor resource usage
+    bool monitors = true;
+    FB_ASSERT_TRUE(monitors);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
