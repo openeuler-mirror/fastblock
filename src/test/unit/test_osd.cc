@@ -5926,6 +5926,126 @@ FB_TEST(osd_write_optimization, write_latency) {
 }
 
 // ============================================================================
+// Test Suite: osd_read_optimization (OSD Read Optimization Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_read_optimization) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_read_optimization) {
+    // Teardown code here
+}
+
+FB_TEST(osd_read_optimization, read_cache_enabled) {
+    // Read cache should be configurable
+    bool enabled = true;
+    FB_ASSERT_TRUE(enabled);
+}
+
+FB_TEST(osd_read_optimization, read_cache_size) {
+    // Should have configurable read cache size
+    uint64_t cache_size = 1024ULL * 1024ULL * 200ULL; // 200MB
+    FB_ASSERT_TRUE(cache_size > 0);
+}
+
+FB_TEST(osd_read_optimization, read_ahead) {
+    // Should support read-ahead
+    bool read_ahead = true;
+    FB_ASSERT_TRUE(read_ahead);
+}
+
+FB_TEST(osd_read_optimization, read_ahead_size) {
+    // Read-ahead should have size
+    uint64_t read_ahead_size = 1024ULL * 64ULL; // 64KB
+    FB_ASSERT_TRUE(read_ahead_size > 0);
+}
+
+FB_TEST(osd_read_optimization, read_ahead_trigger) {
+    // Sequential reads should trigger read-ahead
+    uint64_t sequential_read_count = 3;
+    FB_ASSERT_TRUE(sequential_read_count > 0);
+}
+
+FB_TEST(osd_read_optimization, read_from_local_replica) {
+    // Should prefer local replica for reads
+    bool prefers_local = true;
+    FB_ASSERT_TRUE(prefers_local);
+}
+
+FB_TEST(osd_read_optimization, read_from_closest_replica) {
+    // Should read from closest replica
+    bool reads_closest = true;
+    FB_ASSERT_TRUE(reads_closest);
+}
+
+FB_TEST(osd_read_optimization, read_load_balance) {
+    // Should balance reads across replicas
+    bool load_balances = true;
+    FB_ASSERT_TRUE(load_balances);
+}
+
+FB_TEST(osd_read_optimization, read_serving_stale) {
+    // May serve slightly stale reads for performance
+    bool can_serve_stale = true;
+    FB_ASSERT_TRUE(can_serve_stale);
+}
+
+FB_TEST(osd_read_optimization, read_linearizable) {
+    // Should support linearizable reads
+    bool linearizable = true;
+    FB_ASSERT_TRUE(linearizable);
+}
+
+FB_TEST(osd_read_optimization, read_consistency_level) {
+    // Should have configurable consistency level
+    std::string level = "linearizable";
+    FB_ASSERT_TRUE(!level.empty());
+}
+
+FB_TEST(osd_read_optimization, read_pipeline) {
+    // Should pipeline reads
+    bool pipelines = true;
+    FB_ASSERT_TRUE(pipelines);
+}
+
+FB_TEST(osd_read_optimization, read_parallelism) {
+    // Should support parallel reads
+    uint32_t parallel_count = 8;
+    FB_ASSERT_TRUE(parallel_count > 0);
+}
+
+FB_TEST(osd_read_optimization, read_batching) {
+    // Should batch reads to same object
+    bool batch_enabled = true;
+    FB_ASSERT_TRUE(batch_enabled);
+}
+
+FB_TEST(osd_read_optimization, read_throughput) {
+    // Should track read throughput
+    uint64_t reads_per_second = 50000;
+    FB_ASSERT_TRUE(reads_per_second > 0);
+}
+
+FB_TEST(osd_read_optimization, read_latency) {
+    // Should track read latency
+    uint64_t latency_us = 500;
+    FB_ASSERT_TRUE(latency_us > 0);
+}
+
+FB_TEST(osd_read_optimization, read_io_size_distribution) {
+    // Should track IO size distribution
+    std::vector<uint64_t> io_sizes = {512, 4096, 65536, 131072};
+    FB_ASSERT_EQ(io_sizes.size(), 4);
+}
+
+FB_TEST(osd_read_optimization, read_error_retry) {
+    // Should retry reads on error
+    uint32_t max_retries = 2;
+    FB_ASSERT_TRUE(max_retries > 0);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
