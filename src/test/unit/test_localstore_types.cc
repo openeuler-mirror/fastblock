@@ -15180,3 +15180,308 @@ FB_TEST(comprehensive_roundtrip_tests, encoder_decoder_many_types) {
     FB_ASSERT_EQ(s2, "world");
     FB_ASSERT_EQ(v3, 3);
 }
+
+// ============================================================================
+// Test Suite: buffer_data_integrity (Buffer Data Integrity Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_data_integrity) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_data_integrity) {
+    // Setup code here
+}
+
+FB_TEST(buffer_data_integrity, append_preserves_content) {
+    char buffer[256];
+    memset(buffer, 0, 256);
+    spdk_buffer sbuf(buffer, 256);
+
+    const char* test_data = "Hello, World! This is test data.";
+    size_t data_len = strlen(test_data);
+    size_t written = sbuf.append(test_data, data_len);
+
+    FB_ASSERT_EQ(written, data_len);
+    FB_ASSERT_EQ(memcmp(buffer, test_data, data_len), 0);
+    FB_ASSERT_EQ(sbuf.used(), data_len);
+    FB_ASSERT_EQ(sbuf.remain(), 256 - data_len);
+}
+
+FB_TEST(buffer_data_integrity, append_string_null_terminator) {
+    char buffer[256];
+    memset(buffer, 0xFF, 256);
+    spdk_buffer sbuf(buffer, 256);
+
+    std::string test_str = "TestString";
+    size_t written = sbuf.append(test_str);
+
+    FB_ASSERT_EQ(written, test_str.size());
+    FB_ASSERT_EQ(memcmp(buffer, test_str.c_str(), test_str.size()), 0);
+    FB_ASSERT_EQ(sbuf.get_append(), buffer + test_str.size());
+}
+
+FB_TEST(buffer_data_integrity, sequential_append_accumulates) {
+    char buffer[1024];
+    memset(buffer, 0, 1024);
+    spdk_buffer sbuf(buffer, 1024);
+
+    const char* chunks[] = {"AAA", "BBB", "CCC", "DDD"};
+    size_t total_written = 0;
+
+    for (int i = 0; i < 4; i++) {
+        size_t chunk_len = strlen(chunks[i]);
+        size_t written = sbuf.append(chunks[i], chunk_len);
+        FB_ASSERT_EQ(written, chunk_len);
+        total_written += chunk_len;
+    }
+
+    FB_ASSERT_EQ(sbuf.used(), total_written);
+    FB_ASSERT_EQ(memcmp(buffer, "AAABBBCCCDDD", total_written), 0);
+}
+
+FB_TEST(buffer_data_integrity, inc_advances_pointer) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    sbuf.append("Initial", 7);
+    FB_ASSERT_EQ(sbuf.used(), 7);
+
+    size_t inc1 = sbuf.inc(10);
+    FB_ASSERT_EQ(inc1, 10);
+    FB_ASSERT_EQ(sbuf.used(), 17);
+
+    size_t inc2 = sbuf.inc(100);
+    FB_ASSERT_EQ(inc2, 100);
+    FB_ASSERT_EQ(sbuf.used(), 117);
+
+    size_t inc3 = sbuf.inc(1000);
+    FB_ASSERT_EQ(inc3, 1024 - 117);
+    FB_ASSERT_EQ(sbuf.used(), 1024);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_data_flow (Buffer List Data Flow Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_data_flow) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_data_flow) {
+    // Setup code here
+}
+
+FB_TEST(buffer_list_data_flow, append_prepend_order) {
+    char buffers[4][100];
+    spdk_buffer sbuf1(buffers[0], 100);
+    spdk_buffer sbuf2(buffers[1], 100);
+    spdk_buffer sbuf3(buffers[2], 100);
+    spdk_buffer sbuf4(buffers[3], 100);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf2);
+    bl.prepend_buffer(sbuf1);
+    bl.append_buffer(sbuf4);
+    bl.prepend_buffer(sbuf3);
+
+    std::vector<size_t> expected = {100, 100, 100, 100};
+    size_t idx = 0;
+    for (auto& buf : bl) {
+        FB_ASSERT_LT(idx, expected.size());
+        FB_ASSERT_EQ(buf.size(), expected[idx]);
+        idx++;
+    }
+    FB_ASSERT_EQ(idx, 4);
+    FB_ASSERT_EQ(bl.bytes(), 400);
+}
+
+FB_TEST(buffer_list_data_flow, pop_front_returns_correct) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    memset(buffer1, 'A', 100);
+    memset(buffer2, 'B', 200);
+    memset(buffer3, 'C', 300);
+
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    spdk_buffer first = bl.pop_front();
+    FB_ASSERT_EQ(first.size(), 100);
+    FB_ASSERT_EQ(first.get_buf(), buffer1);
+
+    spdk_buffer second = bl.pop_front();
+    FB_ASSERT_EQ(second.size(), 200);
+    FB_ASSERT_EQ(second.get_buf(), buffer2);
+
+    FB_ASSERT_EQ(bl.bytes(), 300);
+}
+
+FB_TEST(buffer_list_data_flow, splice_transfers_ownership) {
+    char buffers[3][100];
+    spdk_buffer sbuf1(buffers[0], 100);
+    spdk_buffer sbuf2(buffers[1], 100);
+    spdk_buffer sbuf3(buffers[2], 100);
+
+    buffer_list bl1, bl2;
+    bl1.append_buffer(sbuf1);
+    bl2.append_buffer(sbuf2);
+    bl2.append_buffer(sbuf3);
+
+    bl1.append_buffer(bl2);
+
+    FB_ASSERT_EQ(bl1.bytes(), 300);
+    FB_ASSERT_EQ(bl2.bytes(), 0);
+    FB_ASSERT_TRUE(bl2.empty());
+
+    int count = 0;
+    for (auto& buf : bl1) {
+        FB_ASSERT_EQ(buf.size(), 100);
+        count++;
+    }
+    FB_ASSERT_EQ(count, 3);
+}
+
+FB_TEST(buffer_list_data_flow, pop_front_list_splits) {
+    char buffers[5][100];
+    spdk_buffer sbufs[5];
+    for (int i = 0; i < 5; i++) {
+        sbufs[i] = spdk_buffer(buffers[i], 100);
+    }
+
+    buffer_list bl;
+    for (int i = 0; i < 5; i++) {
+        bl.append_buffer(sbufs[i]);
+    }
+    FB_ASSERT_EQ(bl.bytes(), 500);
+
+    buffer_list front = bl.pop_front_list(3);
+    FB_ASSERT_EQ(front.bytes(), 300);
+    FB_ASSERT_EQ(bl.bytes(), 200);
+
+    int front_count = 0;
+    for (auto& buf : front) {
+        FB_ASSERT_EQ(buf.size(), 100);
+        front_count++;
+    }
+    FB_ASSERT_EQ(front_count, 3);
+
+    int remaining = 0;
+    for (auto& buf : bl) {
+        FB_ASSERT_EQ(buf.size(), 100);
+        remaining++;
+    }
+    FB_ASSERT_EQ(remaining, 2);
+}
+
+// ============================================================================
+// Test Suite: serialization_data_validation (Serialization Data Validation Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization_data_validation) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization_data_validation) {
+    // Setup code here
+}
+
+FB_TEST(serialization_data_validation, fixed32_endian_correct) {
+    char buffer[64];
+    memset(buffer, 0, 64);
+    spdk_buffer sbuf(buffer, 64);
+
+    uint32_t test_value = 0x12345678;
+    PutFixed32(sbuf, test_value);
+    sbuf.reset();
+
+    uint32_t retrieved;
+    GetFixed32(sbuf, retrieved);
+    FB_ASSERT_EQ(retrieved, test_value);
+
+    uint8_t expected[] = {0x78, 0x56, 0x34, 0x12};
+    FB_ASSERT_EQ(memcmp(buffer, expected, 4), 0);
+}
+
+FB_TEST(serialization_data_validation, fixed64_endian_correct) {
+    char buffer[64];
+    memset(buffer, 0, 64);
+    spdk_buffer sbuf(buffer, 64);
+
+    uint64_t test_value = 0x0102030405060708ULL;
+    PutFixed64(sbuf, test_value);
+    sbuf.reset();
+
+    uint64_t retrieved;
+    GetFixed64(sbuf, retrieved);
+    FB_ASSERT_EQ(retrieved, test_value);
+
+    uint8_t expected[] = {0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01};
+    FB_ASSERT_EQ(memcmp(buffer, expected, 8), 0);
+}
+
+FB_TEST(serialization_data_validation, string_length_prefix) {
+    char buffer[256];
+    memset(buffer, 0, 256);
+    spdk_buffer sbuf(buffer, 256);
+
+    std::string test_str = "Hello";
+    PutString(sbuf, test_str);
+
+    uint64_t length_prefix;
+    memcpy(&length_prefix, buffer, sizeof(uint64_t));
+    FB_ASSERT_EQ(length_prefix, 5);
+
+    FB_ASSERT_EQ(memcmp(buffer + 8, "Hello", 5), 0);
+
+    sbuf.reset();
+    std::string retrieved;
+    GetString(sbuf, retrieved);
+    FB_ASSERT_EQ(retrieved, test_str);
+}
+
+FB_TEST(serialization_data_validation, mixed_types_preserve_order) {
+    char buffer[1024];
+    memset(buffer, 0, 1024);
+    spdk_buffer sbuf(buffer, 1024);
+
+    uint32_t v32_1 = 100, v32_2 = 200;
+    uint64_t v64_1 = 1000, v64_2 = 2000;
+    std::string str1 = "first", str2 = "second";
+
+    PutFixed32(sbuf, v32_1);
+    PutFixed64(sbuf, v64_1);
+    PutString(sbuf, str1);
+    PutFixed32(sbuf, v32_2);
+    PutFixed64(sbuf, v64_2);
+    PutString(sbuf, str2);
+
+    sbuf.reset();
+
+    uint32_t r32_1, r32_2;
+    uint64_t r64_1, r64_2;
+    std::string rstr1, rstr2;
+
+    GetFixed32(sbuf, r32_1);
+    FB_ASSERT_EQ(r32_1, v32_1);
+
+    GetFixed64(sbuf, r64_1);
+    FB_ASSERT_EQ(r64_1, v64_1);
+
+    GetString(sbuf, rstr1);
+    FB_ASSERT_EQ(rstr1, str1);
+
+    GetFixed32(sbuf, r32_2);
+    FB_ASSERT_EQ(r32_2, v32_2);
+
+    GetFixed64(sbuf, r64_2);
+    FB_ASSERT_EQ(r64_2, v64_2);
+
+    GetString(sbuf, rstr2);
+    FB_ASSERT_EQ(rstr2, str2);
+}
