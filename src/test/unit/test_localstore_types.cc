@@ -6928,6 +6928,246 @@ FB_TEST(buffer_list_to_iovec_advanced, zero_length) {
 }
 
 // ============================================================================
+// Test Suite: iovec_advanced_operations (Iovec Advanced Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(iovec_advanced_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(iovec_advanced_operations) {
+    // Setup code here
+}
+
+FB_TEST(iovec_advanced_operations, iov_base_nullptr) {
+    struct iovec iov;
+    iov.iov_base = nullptr;
+    iov.iov_len = 100;
+
+    FB_ASSERT_EQ(iov.iov_base, nullptr);
+    FB_ASSERT_EQ(iov.iov_len, 100);
+}
+
+FB_TEST(iovec_advanced_operations, iov_len_zero) {
+    struct iovec iov;
+    iov.iov_base = reinterpret_cast<void*>(0x1000);
+    iov.iov_len = 0;
+
+    FB_ASSERT_EQ(iov.iov_len, 0);
+}
+
+FB_TEST(iovec_advanced_operations, iov_max_len) {
+    struct iovec iov;
+    iov.iov_len = SIZE_MAX;
+
+    FB_ASSERT_EQ(iov.iov_len, SIZE_MAX);
+}
+
+FB_TEST(iovec_advanced_operations, iovecs_total_iov_len) {
+    iovecs iovs;
+
+    struct iovec iov1, iov2, iov3;
+    iov1.iov_len = 512;
+    iov2.iov_len = 1024;
+    iov3.iov_len = 2048;
+
+    iovs.push_back(iov1);
+    iovs.push_back(iov2);
+    iovs.push_back(iov3);
+
+    size_t total = 0;
+    for (size_t i = 0; i < iovs.size(); i++) {
+        total += iovs[i].iov_len;
+    }
+    FB_ASSERT_EQ(total, 3584);
+}
+
+// ============================================================================
+// Test Suite: xattr_value_type_tests (Xattr Value Type Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_value_type_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_value_type_tests) {
+    // Setup code here
+}
+
+FB_TEST(xattr_value_type_tests, variant_index) {
+    xattr_val_type v1 = blob_type::log;
+    xattr_val_type v2 = 12345u;
+    xattr_val_type v3 = std::string("test");
+
+    FB_ASSERT_EQ(v1.index(), 0); // blob_type is first alternative
+    FB_ASSERT_EQ(v2.index(), 1); // uint32_t is second
+    FB_ASSERT_EQ(v3.index(), 2); // std::string is third
+}
+
+FB_TEST(xattr_value_type_tests, variant_reset) {
+    xattr_val_type v = blob_type::kv;
+    FB_ASSERT_TRUE(std::holds_alternative<blob_type>(v));
+
+    v = 999u;
+    FB_ASSERT_TRUE(std::holds_alternative<uint32_t>(v));
+
+    v = std::string("changed");
+    FB_ASSERT_TRUE(std::holds_alternative<std::string>(v));
+}
+
+FB_TEST(xattr_value_type_tests, variant_try_get) {
+    xattr_val_type v = blob_type::object;
+    auto* ptr = std::get_if<blob_type>(&v);
+    FB_ASSERT_TRUE(ptr != nullptr);
+    FB_ASSERT_EQ(*ptr, blob_type::object);
+
+    auto* bad_ptr = std::get_if<uint32_t>(&v);
+    FB_ASSERT_EQ(bad_ptr, nullptr);
+}
+
+// ============================================================================
+// Test Suite: set_xattr_ctx_tests (Set Xattr Context Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(set_xattr_ctx_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(set_xattr_ctx_tests) {
+    // Setup code here
+}
+
+FB_TEST(set_xattr_ctx_tests, ctx_default_null) {
+    set_xattr_ctx ctx;
+    FB_ASSERT_EQ(ctx.cb_fn, nullptr);
+    FB_ASSERT_EQ(ctx.arg, nullptr);
+}
+
+FB_TEST(set_xattr_ctx_tests, ctx_set_callback) {
+    set_xattr_ctx ctx;
+    ctx.cb_fn = [](void*, int) {};
+    FB_ASSERT_TRUE(ctx.cb_fn != nullptr);
+}
+
+FB_TEST(set_xattr_ctx_tests, ctx_set_arg) {
+    set_xattr_ctx ctx;
+    ctx.arg = reinterpret_cast<void*>(0x1234);
+    FB_ASSERT_EQ(ctx.arg, reinterpret_cast<void*>(0x1234));
+}
+
+// ============================================================================
+// Test Suite: fb_blob_comparison_tests (FB Blob Comparison Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(fb_blob_comparison_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(fb_blob_comparison_tests) {
+    // Setup code here
+}
+
+FB_TEST(fb_blob_comparison_tests, same_blobid) {
+    fb_blob blob1, blob2;
+    blob1.blobid = 100;
+    blob2.blobid = 100;
+
+    FB_ASSERT_EQ(blob1.blobid, blob2.blobid);
+}
+
+FB_TEST(fb_blob_comparison_tests, different_blobid) {
+    fb_blob blob1, blob2;
+    blob1.blobid = 100;
+    blob2.blobid = 200;
+
+    FB_ASSERT_TRUE(blob1.blobid != blob2.blobid);
+}
+
+FB_TEST(fb_blob_comparison_tests, blobid_ordering) {
+    fb_blob blob1, blob2;
+    blob1.blobid = 100;
+    blob2.blobid = 200;
+
+    FB_ASSERT_TRUE(blob1.blobid < blob2.blobid);
+}
+
+FB_TEST(fb_blob_comparison_tests, same_blob_ptr) {
+    fb_blob blob1, blob2;
+    blob1.blob = reinterpret_cast<void*>(0x1000);
+    blob2.blob = reinterpret_cast<void*>(0x1000);
+
+    FB_ASSERT_EQ(blob1.blob, blob2.blob);
+}
+
+// ============================================================================
+// Test Suite: blob_type_enum_tests (Blob Type Enum Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(blob_type_enum_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(blob_type_enum_tests) {
+    // Setup code here
+}
+
+FB_TEST(blob_type_enum_tests, sequential_values) {
+    FB_ASSERT_LT(static_cast<uint32_t>(blob_type::log), static_cast<uint32_t>(blob_type::object));
+    FB_ASSERT_LT(static_cast<uint32_t>(blob_type::object), static_cast<uint32_t>(blob_type::object_snap));
+    FB_ASSERT_LT(static_cast<uint32_t>(blob_type::object_snap), static_cast<uint32_t>(blob_type::object_recover));
+    FB_ASSERT_LT(static_cast<uint32_t>(blob_type::object_recover), static_cast<uint32_t>(blob_type::kv));
+    FB_ASSERT_LT(static_cast<uint32_t>(blob_type::kv), static_cast<uint32_t>(blob_type::kv_checkpoint));
+    FB_ASSERT_LT(static_cast<uint32_t>(blob_type::kv_checkpoint), static_cast<uint32_t>(blob_type::kv_checkpoint_new));
+    FB_ASSERT_LT(static_cast<uint32_t>(blob_type::kv_checkpoint_new), static_cast<uint32_t>(blob_type::super_blob));
+    FB_ASSERT_LT(static_cast<uint32_t>(blob_type::super_blob), static_cast<uint32_t>(blob_type::free));
+}
+
+FB_TEST(blob_type_enum_tests, value_range) {
+    for (uint32_t i = 0; i <= 8; i++) {
+        blob_type t = static_cast<blob_type>(i);
+        FB_ASSERT_LE(static_cast<uint32_t>(t), 8);
+    }
+}
+
+FB_TEST(blob_type_enum_tests, invalid_value) {
+    blob_type invalid = static_cast<blob_type>(999);
+    std::string str = type_string(invalid);
+    FB_ASSERT_EQ(str, "blob_type::unknown");
+}
+
+// ============================================================================
+// Test Suite: buffer_pool_tests (Buffer Pool Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_pool_tests) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_pool_tests) {
+    // Setup code here
+}
+
+FB_TEST(buffer_pool_tests, pool_size_positive) {
+    FB_ASSERT_GT(buffer_pool_size, 0);
+}
+
+FB_TEST(buffer_pool_tests, pool_memory_positive) {
+    FB_ASSERT_GT(buffer_memory, 0);
+}
+
+FB_TEST(buffer_pool_tests, buffer_size_positive) {
+    FB_ASSERT_GT(buffer_size, 0);
+}
+
+FB_TEST(buffer_pool_tests, pool_size_calculation) {
+    FB_ASSERT_EQ(buffer_pool_size, buffer_memory / buffer_size);
+}
+
+FB_TEST(buffer_pool_tests, buffer_size_alignment) {
+    FB_ASSERT_EQ(buffer_size % 512, 0); // 4KB aligned
+}
+
+// ============================================================================
 // Test Suite: xattr_val_type_operations (Xattr Val Type Operations Tests)
 // ============================================================================
 
