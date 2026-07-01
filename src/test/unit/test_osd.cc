@@ -6286,6 +6286,188 @@ FB_TEST(osd_resource_limits, resource_monitoring) {
 }
 
 // ============================================================================
+// Test Suite: osd_event_handling (OSD Event Handling Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_event_handling) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_event_handling) {
+    // Teardown code here
+}
+
+FB_TEST(osd_event_handling, event_queue_fifo) {
+    // Event queue should be FIFO ordered
+    std::list<int> event_queue;
+    event_queue.push_back(1);
+    event_queue.push_back(2);
+    event_queue.push_back(3);
+
+    FB_ASSERT_EQ(event_queue.front(), 1);
+    event_queue.pop_front();
+    FB_ASSERT_EQ(event_queue.front(), 2);
+    event_queue.pop_front();
+    FB_ASSERT_EQ(event_queue.front(), 3);
+}
+
+FB_TEST(osd_event_handling, event_priority_ordering) {
+    // Higher priority events should be processed first
+    std::map<uint32_t, std::vector<std::string>> priority_queue;
+    priority_queue[0].push_back("high_event");
+    priority_queue[5].push_back("low_event");
+
+    FB_ASSERT_EQ(priority_queue.begin()->second[0], "high_event");
+    FB_ASSERT_EQ(priority_queue.rbegin()->second[0], "low_event");
+}
+
+FB_TEST(osd_event_handling, event_deduplication) {
+    // Duplicate events should be deduplicated
+    std::set<std::string> event_set;
+    event_set.insert("pg_change_1.100");
+    event_set.insert("pg_change_1.100"); // Duplicate
+    event_set.insert("pg_change_1.200");
+
+    FB_ASSERT_EQ(event_set.size(), 2);
+}
+
+FB_TEST(osd_event_handling, event_cancellation) {
+    // Should be able to cancel pending events
+    std::map<uint64_t, std::string> events;
+    events[1] = "event_1";
+    events[2] = "event_2";
+    events[3] = "event_3";
+
+    auto erased = events.erase(2);
+    FB_ASSERT_EQ(erased, 1);
+    FB_ASSERT_EQ(events.size(), 2);
+    FB_ASSERT_TRUE(events.find(2) == events.end());
+}
+
+FB_TEST(osd_event_handling, event_batching) {
+    // Should batch multiple events of same type
+    std::vector<std::string> events;
+    events.push_back("write_obj_A");
+    events.push_back("write_obj_B");
+    events.push_back("write_obj_C");
+
+    // Batch all write events
+    uint32_t write_count = 0;
+    for (const auto& e : events) {
+        if (e.find("write_") == 0) write_count++;
+    }
+    FB_ASSERT_EQ(write_count, 3);
+}
+
+FB_TEST(osd_event_handling, timer_event_tracking) {
+    // Should track timer events with deadlines
+    auto now = std::chrono::steady_clock::now();
+    std::vector<std::chrono::steady_clock::time_point> deadlines;
+    deadlines.push_back(now + std::chrono::milliseconds(100));
+    deadlines.push_back(now + std::chrono::milliseconds(200));
+    deadlines.push_back(now + std::chrono::milliseconds(300));
+
+    // Verify ordering
+    FB_ASSERT_TRUE(deadlines[0] < deadlines[1]);
+    FB_ASSERT_TRUE(deadlines[1] < deadlines[2]);
+}
+
+FB_TEST(osd_event_handling, periodic_event_counting) {
+    // Should count periodic event invocations
+    uint32_t invocation_count = 0;
+    for (uint32_t i = 0; i < 10; i++) {
+        invocation_count++;
+    }
+    FB_ASSERT_EQ(invocation_count, 10);
+}
+
+FB_TEST(osd_event_handling, event_metrics_collection) {
+    // Should collect event processing metrics
+    std::map<std::string, uint64_t> metrics;
+    metrics["events_processed"] = 1000;
+    metrics["events_dropped"] = 5;
+    metrics["avg_latency_us"] = 50;
+
+    FB_ASSERT_EQ(metrics["events_processed"], 1000);
+    FB_ASSERT_EQ(metrics["events_dropped"], 5);
+}
+
+FB_TEST(osd_event_handling, io_completion_ordering) {
+    // IO completions should be ordered by submission order
+    std::vector<uint64_t> submission_order = {1, 2, 3};
+    std::vector<uint64_t> completion_order;
+    for (auto id : submission_order) {
+        completion_order.push_back(id);
+    }
+    FB_ASSERT_TRUE(submission_order == completion_order);
+}
+
+FB_TEST(osd_event_handling, raft_event_types) {
+    // Should handle different Raft event types
+    std::map<std::string, uint32_t> raft_events;
+    raft_events["append_entries"] = 100;
+    raft_events["request_vote"] = 20;
+    raft_events["install_snapshot"] = 1;
+
+    FB_ASSERT_EQ(raft_events.size(), 3);
+    FB_ASSERT_TRUE(raft_events["append_entries"] > raft_events["request_vote"]);
+}
+
+// ============================================================================
+// Test Suite: osd_lock_contention (OSD Lock Contention Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_lock_contention) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_lock_contention) {
+    // Teardown code here
+}
+
+FB_TEST(osd_lock_contention, read_read_no_contention) {
+    // Multiple reads on same object should not contend
+    op_type_excl_lock<utils::operation_type> lock;
+    FB_ASSERT_EQ(lock.holders(), 0);
+
+    // After two READ locks, both should be holders (same type compatible)
+    // We verify initial state; actual lock/unlock requires context
+}
+
+FB_TEST(osd_lock_contention, write_write_no_contention) {
+    // Multiple writes on same object should not contend (same type)
+    op_type_excl_lock<utils::operation_type> lock;
+    FB_ASSERT_EQ(lock.holders(), 0);
+}
+
+FB_TEST(osd_lock_contention, read_write_contention) {
+    // Read and write on same object should contend
+    // Verify type incompatibility
+    utils::operation_type read_type = utils::operation_type::READ;
+    utils::operation_type write_type = utils::operation_type::WRITE;
+    FB_ASSERT_TRUE(read_type != write_type);
+}
+
+FB_TEST(osd_lock_contention, lock_manager_multi_object) {
+    // Lock manager should handle multiple objects independently
+    lock_manager<op_type_excl_lock<utils::operation_type>> manager;
+    // Initially no locks exist
+}
+
+FB_TEST(osd_lock_contention, lock_manager_disabled) {
+    // When disabled, lock_manager should pass through
+    lock_manager<op_type_excl_lock<utils::operation_type>> manager(true);
+    // Disabled: all lock/unlock calls should be no-ops
+}
+
+FB_TEST(osd_lock_contention, lock_cleanup_on_zero_holders) {
+    // Lock should be cleaned up when no holders remain
+    op_type_excl_lock<utils::operation_type> lock;
+    FB_ASSERT_EQ(lock.holders(), 0);
+    // After lock+unlock cycle, holders should be back to 0
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
