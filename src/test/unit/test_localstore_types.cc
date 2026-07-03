@@ -16596,3 +16596,524 @@ FB_TEST(pool_context_validation, delete_ctx_blob_tracking) {
     ctx.blob = blob;
     FB_ASSERT_EQ(ctx.blob.blobid, 42);
 }
+
+// ============================================================================
+// Test Suite: encoder_decoder_integration (Encoder Decoder Integration Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(encoder_decoder_integration) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(encoder_decoder_integration) {
+    // Setup code here
+}
+
+FB_TEST(encoder_decoder_integration, mixed_types_sequence) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+
+    encoder.put(1ULL);
+    encoder.put(std::string("hello"));
+    encoder.put(2ULL);
+    encoder.put(std::string("world"));
+    encoder.put(3ULL);
+    encoder.put("raw", 3);
+
+    size_t expected = 3*8 + 2*(8+5) + 3;
+    FB_ASSERT_EQ(encoder.used(), expected);
+
+    bl.begin()->reset();
+    buffer_list_encoder decoder(bl);
+
+    uint64_t v1, v2, v3;
+    std::string s1, s2;
+    char raw[4] = {0};
+
+    decoder.get(v1);
+    decoder.get(s1);
+    decoder.get(v2);
+    decoder.get(s2);
+    decoder.get(v3);
+    decoder.get(raw, 3);
+
+    FB_ASSERT_EQ(v1, 1);
+    FB_ASSERT_EQ(v2, 2);
+    FB_ASSERT_EQ(v3, 3);
+    FB_ASSERT_EQ(s1, "hello");
+    FB_ASSERT_EQ(s2, "world");
+    FB_ASSERT_EQ(std::string(raw, 3), "raw");
+}
+
+FB_TEST(encoder_decoder_integration, empty_string_handling) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+
+    encoder.put(std::string(""));
+    encoder.put(std::string("nonempty"));
+
+    bl.begin()->reset();
+    buffer_list_encoder decoder(bl);
+
+    std::string s1, s2;
+    decoder.get(s1);
+    decoder.get(s2);
+
+    FB_ASSERT_TRUE(s1.empty());
+    FB_ASSERT_EQ(s2, "nonempty");
+}
+
+FB_TEST(encoder_decoder_integration, remain_tracking_accuracy) {
+    char buffer[128];
+    spdk_buffer sbuf(buffer, 128);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    FB_ASSERT_EQ(encoder.remain(), 128);
+
+    encoder.put(10ULL);
+    FB_ASSERT_EQ(encoder.remain(), 120);
+
+    encoder.put(20ULL);
+    FB_ASSERT_EQ(encoder.remain(), 112);
+
+    encoder.put(std::string("test"));
+    FB_ASSERT_EQ(encoder.remain(), 112 - 8 - 4);
+}
+
+FB_TEST(encoder_decoder_integration, used_tracking_accuracy) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+    FB_ASSERT_EQ(encoder.used(), 0);
+
+    encoder.put(1ULL);
+    FB_ASSERT_EQ(encoder.used(), 8);
+
+    encoder.put(std::string("ab"));
+    FB_ASSERT_EQ(encoder.used(), 8 + 8 + 2);
+
+    encoder.put(2ULL);
+    FB_ASSERT_EQ(encoder.used(), 8 + 8 + 2 + 8);
+}
+
+// ============================================================================
+// Test Suite: complex_serialization_scenarios (Complex Serialization Scenarios Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(complex_serialization_scenarios) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(complex_serialization_scenarios) {
+    // Setup code here
+}
+
+FB_TEST(complex_serialization_scenarios, log_header_with_data) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+
+    log_entry_t entry;
+    entry.term_id = 5;
+    entry.index = 100;
+    entry.size = 1024;
+    entry.type = 2;
+    entry.meta = "{\"op\":\"write\"}";
+
+    EncodeLogHeader(sbuf, entry);
+
+    // Calculate expected size: 4 uint64 + 1 uint64 (meta len) + meta
+    size_t expected = 4*8 + 8 + entry.meta.size();
+    FB_ASSERT_EQ(sbuf.used(), expected);
+
+    sbuf.reset();
+
+    log_entry_t decoded;
+    DecodeLogHeader(sbuf, decoded);
+
+    FB_ASSERT_EQ(decoded.term_id, 5);
+    FB_ASSERT_EQ(decoded.index, 100);
+    FB_ASSERT_EQ(decoded.size, 1024);
+    FB_ASSERT_EQ(decoded.type, 2);
+    FB_ASSERT_EQ(decoded.meta, "{\"op\":\"write\"}");
+}
+
+FB_TEST(complex_serialization_scenarios, multiple_log_headers) {
+    char buffer[8192];
+    spdk_buffer sbuf(buffer, 8192);
+
+    log_entry_t entries[5];
+    for (int i = 0; i < 5; i++) {
+        entries[i].term_id = i;
+        entries[i].index = i * 100;
+        entries[i].size = i * 1024;
+        entries[i].type = i % 9;
+        entries[i].meta = std::to_string(i);
+
+        EncodeLogHeader(sbuf, entries[i]);
+    }
+
+    size_t expected_total = 0;
+    for (int i = 0; i < 5; i++) {
+        expected_total += 4*8 + 8 + std::to_string(i).size();
+    }
+    FB_ASSERT_EQ(sbuf.used(), expected_total);
+
+    sbuf.reset();
+
+    for (int i = 0; i < 5; i++) {
+        log_entry_t decoded;
+        DecodeLogHeader(sbuf, decoded);
+
+        FB_ASSERT_EQ(decoded.term_id, static_cast<uint64_t>(i));
+        FB_ASSERT_EQ(decoded.index, static_cast<uint64_t>(i * 100));
+        FB_ASSERT_EQ(decoded.meta, std::to_string(i));
+    }
+}
+
+FB_TEST(complex_serialization_scenarios, serialization_then_clear_reuse) {
+    char buffer[512];
+    spdk_buffer sbuf(buffer, 512);
+
+    // First round
+    PutFixed32(sbuf, 100);
+    PutFixed64(sbuf, 200);
+    PutString(sbuf, "first");
+
+    sbuf.reset();
+
+    uint32_t r1;
+    uint64_t r2;
+    std::string r3;
+
+    GetFixed32(sbuf, r1);
+    GetFixed64(sbuf, r2);
+    GetString(sbuf, r3);
+
+    FB_ASSERT_EQ(r1, 100);
+    FB_ASSERT_EQ(r2, 200);
+    FB_ASSERT_EQ(r3, "first");
+
+    // Reset and reuse for second round
+    sbuf.reset();
+
+    PutFixed32(sbuf, 300);
+    PutFixed64(sbuf, 400);
+    PutString(sbuf, "second");
+
+    sbuf.reset();
+
+    GetFixed32(sbuf, r1);
+    GetFixed64(sbuf, r2);
+    GetString(sbuf, r3);
+
+    FB_ASSERT_EQ(r1, 300);
+    FB_ASSERT_EQ(r2, 400);
+    FB_ASSERT_EQ(r3, "second");
+}
+
+// ============================================================================
+// Test Suite: data_flow_validation (Data Flow Validation Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(data_flow_validation) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(data_flow_validation) {
+    // Setup code here
+}
+
+FB_TEST(data_flow_validation, buffer_list_append_clear_cycle) {
+    char buffers[3][100];
+    spdk_buffer sbufs[3];
+    for (int i = 0; i < 3; i++) {
+        sbufs[i] = spdk_buffer(buffers[i], 100);
+    }
+
+    buffer_list bl;
+
+    for (int round = 0; round < 5; round++) {
+        bl.append_buffer(sbufs[0]);
+        bl.append_buffer(sbufs[1]);
+        bl.append_buffer(sbufs[2]);
+
+        FB_ASSERT_EQ(bl.bytes(), 300);
+        FB_ASSERT_FALSE(bl.empty());
+
+        int count = 0;
+        for (auto& buf : bl) {
+            FB_ASSERT_EQ(buf.size(), 100);
+            count++;
+        }
+        FB_ASSERT_EQ(count, 3);
+
+        bl.clear();
+        FB_ASSERT_TRUE(bl.empty());
+        FB_ASSERT_EQ(bl.bytes(), 0);
+    }
+}
+
+FB_TEST(data_flow_validation, buffer_list_pop_append_cycle) {
+    char buffers[2][100];
+    spdk_buffer sbuf1(buffers[0], 100);
+    spdk_buffer sbuf2(buffers[1], 100);
+
+    buffer_list bl;
+
+    bl.append_buffer(sbuf1);
+    FB_ASSERT_EQ(bl.bytes(), 100);
+
+    spdk_buffer popped = bl.pop_front();
+    FB_ASSERT_EQ(popped.size(), 100);
+    FB_ASSERT_TRUE(bl.empty());
+
+    bl.append_buffer(sbuf2);
+    FB_ASSERT_EQ(bl.bytes(), 100);
+
+    popped = bl.pop_front();
+    FB_ASSERT_EQ(popped.size(), 100);
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(data_flow_validation, buffer_list_trim_cycle) {
+    char buffers[3][100];
+    spdk_buffer sbufs[3];
+    for (int i = 0; i < 3; i++) {
+        sbufs[i] = spdk_buffer(buffers[i], 100);
+    }
+
+    buffer_list bl;
+    bl.append_buffer(sbufs[0]);
+    bl.append_buffer(sbufs[1]);
+    bl.append_buffer(sbufs[2]);
+
+    FB_ASSERT_EQ(bl.bytes(), 300);
+
+    bl.trim_front();
+    FB_ASSERT_EQ(bl.bytes(), 200);
+
+    bl.append_buffer(sbufs[0]);
+    FB_ASSERT_EQ(bl.bytes(), 300);
+
+    bl.trim_back();
+    FB_ASSERT_EQ(bl.bytes(), 200);
+
+    bl.append_buffer(sbufs[2]);
+    FB_ASSERT_EQ(bl.bytes(), 300);
+}
+
+// ============================================================================
+// Test Suite: boundary_validation (Boundary Validation Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(boundary_validation) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(boundary_validation) {
+    // Setup code here
+}
+
+FB_TEST(boundary_validation, serialization_exact_buffer_fit) {
+    char buffer[8];
+    spdk_buffer sbuf(buffer, 8);
+
+    bool ok = PutFixed64(sbuf, 12345);
+    FB_ASSERT_TRUE(ok);
+    FB_ASSERT_EQ(sbuf.used(), 8);
+    FB_ASSERT_EQ(sbuf.remain(), 0);
+
+    sbuf.reset();
+
+    uint64_t val;
+    bool read_ok = GetFixed64(sbuf, val);
+    FB_ASSERT_TRUE(read_ok);
+    FB_ASSERT_EQ(val, 12345);
+}
+
+FB_TEST(boundary_validation, serialization_one_byte_short) {
+    char buffer[7];
+    spdk_buffer sbuf(buffer, 7);
+
+    bool ok = PutFixed64(sbuf, 12345);
+    FB_ASSERT_FALSE(ok);
+    FB_ASSERT_EQ(sbuf.used(), 0);
+}
+
+FB_TEST(boundary_validation, iovec_exact_range) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    iovecs iovs = bl.to_iovec(0, 1024);
+    FB_ASSERT_EQ(iovs.size(), 1);
+    FB_ASSERT_EQ(iovs[0].iov_len, 1024);
+}
+
+FB_TEST(boundary_validation, iovec_one_byte_over) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    iovecs iovs = bl.to_iovec(0, 1025);
+    FB_ASSERT_TRUE(iovs.empty());
+}
+
+FB_TEST(boundary_validation, encoder_full_capacity) {
+    char buffer[128];
+    spdk_buffer sbuf(buffer, 128);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder encoder(bl);
+
+    // Fill exactly to capacity
+    for (int i = 0; i < 16; i++) {
+        bool ok = encoder.put(static_cast<uint64_t>(i));
+        FB_ASSERT_TRUE(ok);
+    }
+    FB_ASSERT_EQ(encoder.used(), 128);
+    FB_ASSERT_EQ(encoder.remain(), 0);
+
+    // Further writes should fail
+    bool ok = encoder.put(17ULL);
+    FB_ASSERT_FALSE(ok);
+}
+
+// ============================================================================
+// Test Suite: final_validation_roundtrip (Final Validation Roundtrip Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(final_validation_roundtrip) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(final_validation_roundtrip) {
+    // Setup code here
+}
+
+FB_TEST(final_validation_roundtrip, all_blob_types_roundtrip) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    blob_type types[] = {
+        blob_type::log, blob_type::object, blob_type::object_snap,
+        blob_type::object_recover, blob_type::kv, blob_type::kv_checkpoint,
+        blob_type::kv_checkpoint_new, blob_type::super_blob, blob_type::free
+    };
+
+    for (auto t : types) {
+        xattr_val_type val = t;
+        blob_type retrieved = std::get<blob_type>(val);
+        FB_ASSERT_EQ(retrieved, t);
+        FB_ASSERT_EQ(static_cast<uint32_t>(retrieved), static_cast<uint32_t>(t));
+    }
+}
+
+FB_TEST(final_validation_roundtrip, serialization_full_cycle) {
+    char buffer[512];
+    spdk_buffer sbuf(buffer, 512);
+
+    // Write various data types
+    uint32_t v32 = 42;
+    uint64_t v64 = 12345;
+    std::string str = "test string";
+
+    PutFixed32(sbuf, v32);
+    PutFixed64(sbuf, v64);
+    PutString(sbuf, str);
+
+    sbuf.reset();
+
+    // Read back and verify
+    uint32_t r32;
+    uint64_t r64;
+    std::string rstr;
+
+    GetFixed32(sbuf, r32);
+    FB_ASSERT_EQ(r32, v32);
+
+    GetFixed64(sbuf, r64);
+    FB_ASSERT_EQ(r64, v64);
+
+    GetString(sbuf, rstr);
+    FB_ASSERT_EQ(rstr, str);
+
+    // Buffer should be exhausted
+    FB_ASSERT_EQ(sbuf.remain(), 512 - (4 + 8 + 8 + str.size()));
+}
+
+FB_TEST(final_validation_roundtrip, buffer_list_operations_cycle) {
+    char buffers[5][100];
+    spdk_buffer sbufs[5];
+    for (int i = 0; i < 5; i++) {
+        sbufs[i] = spdk_buffer(buffers[i], 100);
+    }
+
+    buffer_list bl;
+
+    // Append all
+    for (int i = 0; i < 5; i++) {
+        bl.append_buffer(sbufs[i]);
+    }
+    FB_ASSERT_EQ(bl.bytes(), 500);
+
+    // Pop half
+    buffer_list front = bl.pop_front_list(2);
+    FB_ASSERT_EQ(front.bytes(), 200);
+    FB_ASSERT_EQ(bl.bytes(), 300);
+
+    // Trim both ends
+    bl.trim_front();
+    bl.trim_back();
+    FB_ASSERT_EQ(bl.bytes(), 100);
+
+    // Append back
+    bl.append_buffer(sbufs[0]);
+    bl.append_buffer(sbufs[1]);
+    FB_ASSERT_EQ(bl.bytes(), 300);
+
+    // Clear and verify
+    bl.clear();
+    FB_ASSERT_TRUE(bl.empty());
+    FB_ASSERT_EQ(bl.bytes(), 0);
+}
+
+FB_TEST(final_validation_roundtrip, log_entry_full_cycle) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    log_entry_t original;
+    original.term_id = 10;
+    original.index = 500;
+    original.size = 4096;
+    original.type = 3;
+    original.meta = "test_meta_data";
+
+    EncodeLogHeader(sbuf, original);
+    sbuf.reset();
+
+    log_entry_t decoded;
+    DecodeLogHeader(sbuf, decoded);
+
+    FB_ASSERT_EQ(decoded.term_id, original.term_id);
+    FB_ASSERT_EQ(decoded.index, original.index);
+    FB_ASSERT_EQ(decoded.size, original.size);
+    FB_ASSERT_EQ(decoded.type, original.type);
+    FB_ASSERT_EQ(decoded.meta, original.meta);
+}
