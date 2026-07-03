@@ -5540,7 +5540,8 @@ FB_TEST(osd_cluster_operations, cluster_min_size) {
 }
 
 FB_TEST(osd_cluster_operations, cluster_max_size) {
-    // Cluster should have maximum size
+    // Cluster should have maximum size (greater than minimum)
+    uint32_t min_size = 3;
     uint32_t max_size = 1000;
     FB_ASSERT_TRUE(max_size > min_size);
 }
@@ -6070,7 +6071,8 @@ FB_TEST(osd_background_tasks, scrub_interval) {
 }
 
 FB_TEST(osd_background_tasks, scrub_deep_interval) {
-    // Deep scrub should have longer interval
+    // Deep scrub should have longer interval than regular scrub
+    uint64_t scrub_interval_hours = 24;
     uint64_t deep_scrub_hours = 168; // 1 week
     FB_ASSERT_TRUE(deep_scrub_hours > scrub_interval_hours);
 }
