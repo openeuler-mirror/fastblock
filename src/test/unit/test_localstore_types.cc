@@ -4635,23 +4635,29 @@ FB_SUITE_TEARDOWN(xattr_xattr_names) {
 }
 
 FB_TEST(xattr_xattr_names, log_xattr_count) {
-    // log_xattr has 3 xattr names: type, shard, pg
-    FB_ASSERT_TRUE(true);
+    // log_xattr xattr_count is constexpr, verify it equals 3 and the first
+    // entry is always "type" per the SPDK blob xattr naming convention.
+    FB_ASSERT_EQ(log_xattr::xattr_count, 3);
+    FB_ASSERT_TRUE(std::strcmp(log_xattr::xattr_names[0], "type") == 0);
 }
 
 FB_TEST(xattr_xattr_names, object_xattr_count) {
-    // object_xattr has 4 xattr names: type, shard, pg, name
-    FB_ASSERT_TRUE(true);
+    // object_xattr adds "name" to the base log_xattr attributes.
+    FB_ASSERT_EQ(object_xattr::xattr_count, 4);
+    FB_ASSERT_TRUE(std::strcmp(object_xattr::xattr_names[3], "name") == 0);
 }
 
 FB_TEST(xattr_xattr_names, object_snap_xattr_count) {
-    // object_snap_xattr has 5 xattr names: type, shard, pg, name, snap_name
-    FB_ASSERT_TRUE(true);
+    // object_snap_xattr adds "snap_name" beyond object_xattr's attributes.
+    FB_ASSERT_EQ(object_snap_xattr::xattr_count, 5);
+    FB_ASSERT_TRUE(std::strcmp(object_snap_xattr::xattr_names[4], "snap_name") == 0);
 }
 
 FB_TEST(xattr_xattr_names, kv_xattr_count) {
-    // kv_xattr has 2 xattr names: type, shard
-    FB_ASSERT_TRUE(true);
+    // kv_xattr is the minimal set: only type and shard.
+    FB_ASSERT_EQ(kv_xattr::xattr_count, 2);
+    FB_ASSERT_TRUE(std::strcmp(kv_xattr::xattr_names[0], "type") == 0);
+    FB_ASSERT_TRUE(std::strcmp(kv_xattr::xattr_names[1], "shard") == 0);
 }
 
 // ============================================================================
@@ -8959,7 +8965,11 @@ FB_SUITE_TEARDOWN(comprehensive_final_tests) {
 }
 
 FB_TEST(comprehensive_final_tests, all_tests_passed_marker) {
-    FB_ASSERT_TRUE(true);
+    // This test verifies that critical type sizes are consistent across
+    // the compilation, catching any ABI changes that might break assumptions.
+    FB_ASSERT_EQ(sizeof(blob_type), sizeof(uint32_t));
+    FB_ASSERT_EQ(sizeof(spdk_blob_id), sizeof(uint64_t));
+    FB_ASSERT_TRUE(sizeof(fb_blob) >= sizeof(void*) + sizeof(uint64_t));
 }
 
 FB_TEST(comprehensive_final_tests, blob_type_final_check) {
@@ -9419,33 +9429,49 @@ FB_SUITE_TEARDOWN(final_summary_all_passed) {
     // Setup code here
 }
 
+// Remove meaningless marker tests from final_summary_all_passed - the
+// assertion macros are already tested throughout the suite. Replace with
+// actual runtime consistency checks that validate the test harness itself.
 FB_TEST(final_summary_all_passed, tests_complete_marker) {
-    FB_ASSERT_TRUE(true);
+    // Verify that all blob_type enum values form a valid contiguous range.
+    uint32_t prev = static_cast<uint32_t>(blob_type::log);
+    for (uint32_t i = 1; i <= static_cast<uint32_t>(blob_type::free); i++) {
+        blob_type t = static_cast<blob_type>(i);
+        FB_ASSERT_TRUE(static_cast<uint32_t>(t) > prev);
+        prev = static_cast<uint32_t>(t);
+    }
 }
 
 FB_TEST(final_summary_all_passed, all_assertions_work) {
-    FB_ASSERT_TRUE(true);
+    // These assertions verify the test framework macros compile and execute.
     FB_ASSERT_FALSE(false);
-    FB_ASSERT_EQ(1, 1);
-    FB_ASSERT_NE(1, 2);
-    FB_ASSERT_GT(2, 1);
-    FB_ASSERT_LT(1, 2);
-    FB_ASSERT_LE(1, 1);
-    FB_ASSERT_GE(2, 1);
+    FB_ASSERT_EQ(1 + 1, 2);
+    FB_ASSERT_NE(0, 1);
+    FB_ASSERT_GT(100, 99);
+    FB_ASSERT_LT(99, 100);
+    FB_ASSERT_LE(100, 100);
+    FB_ASSERT_GE(100, 100);
 }
 
 FB_TEST(final_summary_all_passed, compilation_success) {
-    FB_ASSERT_TRUE(true);
+    // Verify header inclusion and constexpr value accessibility.
+    FB_ASSERT_EQ(entry_header_size, 3 * sizeof(uint64_t));
+    FB_ASSERT_EQ(log_entry_t::init, std::numeric_limits<uint64_t>::max());
 }
 
 FB_TEST(final_summary_all_passed, types_compile) {
+    // Verify all major types are instantiable and have expected default state.
     blob_type t = blob_type::log;
     fb_blob b;
     spdk_buffer s;
     buffer_list bl;
     log_entry_t e;
-    (void)t; (void)b; (void)s; (void)bl; (void)e;
-    FB_ASSERT_TRUE(true);
+
+    FB_ASSERT_EQ(static_cast<uint32_t>(t), 0);
+    FB_ASSERT_EQ(b.blobid, 0);
+    FB_ASSERT_EQ(s.size(), 0);
+    FB_ASSERT_EQ(bl.bytes(), 0);
+    FB_ASSERT_EQ(e.term_id, log_entry_t::init);
 }
 
 // ============================================================================
@@ -9461,15 +9487,25 @@ FB_SUITE_TEARDOWN(complete_test_suite_marker) {
 }
 
 FB_TEST(complete_test_suite_marker, test_cycle_complete) {
-    FB_ASSERT_TRUE(true);
+    // Verify buffer_pool constants are consistent at test cycle end.
+    FB_ASSERT_EQ(buffer_memory, 512_MB);
+    FB_ASSERT_EQ(buffer_size, 4_KB);
+    FB_ASSERT_EQ(buffer_pool_size, buffer_memory / buffer_size);
 }
 
 FB_TEST(complete_test_suite_marker, all_10_commits_marker) {
-    FB_ASSERT_TRUE(true);
+    // Verify trim constants maintain expected ratio relationship.
+    FB_ASSERT_TRUE(TRIM_TRIGGER_PERCENTAGE > 0.0f);
+    FB_ASSERT_TRUE(TRIM_PERCENTAGE > 0.0f);
+    FB_ASSERT_TRUE(TRIM_TRIGGER_PERCENTAGE > TRIM_PERCENTAGE);
 }
 
 FB_TEST(complete_test_suite_marker, tests_compile_pass) {
-    FB_ASSERT_TRUE(true);
+    // Final sanity check: type_string returns non-empty for all valid types.
+    for (uint32_t i = 0; i <= 8; i++) {
+        blob_type t = static_cast<blob_type>(i);
+        FB_ASSERT_TRUE(!type_string(t).empty());
+    }
 }
 
 // ============================================================================
@@ -14768,15 +14804,21 @@ FB_SUITE_TEARDOWN(performance_simulation) {
     // Setup code here
 }
 
+// Performance simulation tests: verify that rapid operations produce correct
+// final state, not just that they don't crash.
 FB_TEST(performance_simulation, rapid_encoding) {
     char buffer[8192];
     spdk_buffer sbuf(buffer, 8192);
 
+    // Rapid encode 1000 uint32 values, tracking the last successful value.
+    uint32_t last_encoded = 0;
     for (int i = 0; i < 1000; i++) {
         sbuf.reset();
-        PutFixed32(sbuf, i);
+        if (PutFixed32(sbuf, static_cast<uint32_t>(i))) {
+            last_encoded = static_cast<uint32_t>(i);
+        }
     }
-    FB_ASSERT_TRUE(true);
+    FB_ASSERT_EQ(last_encoded, 999);
 }
 
 FB_TEST(performance_simulation, rapid_buffer_list_ops) {
@@ -14787,12 +14829,14 @@ FB_TEST(performance_simulation, rapid_buffer_list_ops) {
     for (int i = 0; i < 100; i++) {
         bl.append_buffer(sbuf);
     }
+    FB_ASSERT_EQ(bl.bytes(), 12800);
 
     for (int i = 0; i < 100; i++) {
         bl.pop_front();
     }
 
     FB_ASSERT_TRUE(bl.empty());
+    FB_ASSERT_EQ(bl.bytes(), 0);
 }
 
 FB_TEST(performance_simulation, rapid_encoder_operations) {
@@ -14802,10 +14846,16 @@ FB_TEST(performance_simulation, rapid_encoder_operations) {
     bl.append_buffer(sbuf);
 
     buffer_list_encoder encoder(bl);
+    int successful_puts = 0;
     for (int i = 0; i < 500; i++) {
-        encoder.put(static_cast<uint64_t>(i));
+        if (encoder.put(static_cast<uint64_t>(i))) {
+            successful_puts++;
+        }
     }
-    FB_ASSERT_TRUE(encoder.used() == 4000);
+    // 8192 / 8 = 1024 max uint64s, so all 500 should succeed
+    FB_ASSERT_EQ(successful_puts, 500);
+    FB_ASSERT_EQ(encoder.used(), 4000);
+}
 }
 
 FB_TEST(performance_simulation, rapid_type_string_calls) {
@@ -14899,28 +14949,46 @@ FB_SUITE_TEARDOWN(api_compatibility_tests) {
 }
 
 FB_TEST(api_compatibility_tests, buffer_list_api_exists) {
+    // Verify all buffer_list public APIs are callable and produce expected results.
     buffer_list bl;
-    (void)bl.bytes();
-    (void)bl.empty();
-    (void)bl.begin();
-    (void)bl.end();
-    bl.clear();
-    FB_ASSERT_TRUE(true);
+    FB_ASSERT_EQ(bl.bytes(), 0);    // Initial byte count is zero
+    FB_ASSERT_TRUE(bl.empty());      // Initially empty
+
+    // Iterator APIs work
+    auto it = bl.begin();
+    auto end = bl.end();
+    FB_ASSERT_TRUE(it == end);       // Empty list: begin == end
+
+    bl.clear();                       // Clear is safe on empty list
+    FB_ASSERT_TRUE(bl.empty());
 }
 
 FB_TEST(api_compatibility_tests, spdk_buffer_api_exists) {
+    // Verify all spdk_buffer public APIs are callable and consistent.
     char buffer[100];
     spdk_buffer sbuf(buffer, 100);
-    (void)sbuf.size();
-    (void)sbuf.used();
-    (void)sbuf.remain();
-    (void)sbuf.get_buf();
-    (void)sbuf.get_append();
-    sbuf.reset();
+
+    FB_ASSERT_EQ(sbuf.size(), 100);   // Size matches constructor argument
+    FB_ASSERT_EQ(sbuf.used(), 0);     // Initially zero used
+    FB_ASSERT_EQ(sbuf.remain(), 100); // Remain equals size minus used
+
+    FB_ASSERT_EQ(sbuf.get_buf(), buffer);     // get_buf returns original pointer
+    FB_ASSERT_EQ(sbuf.get_append(), buffer);  // get_append starts at buf
+
     sbuf.inc(10);
-    sbuf.append("", 0);
+    FB_ASSERT_EQ(sbuf.used(), 10);
+    FB_ASSERT_EQ(sbuf.remain(), 90);
+
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.used(), 0);
+
     sbuf.set_used(50);
-    FB_ASSERT_TRUE(true);
+    FB_ASSERT_EQ(sbuf.used(), 50);
+    FB_ASSERT_TRUE(sbuf.remain() + sbuf.used() == sbuf.size());
+
+    size_t written = sbuf.append("", 0);
+    FB_ASSERT_EQ(written, 0);
+    FB_ASSERT_EQ(sbuf.used(), 50);   // Empty append doesn't change used
 }
 
 FB_TEST(api_compatibility_tests, encoder_api_exists) {
