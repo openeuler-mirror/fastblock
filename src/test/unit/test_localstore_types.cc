@@ -4192,14 +4192,21 @@ FB_SUITE_TEARDOWN(make_buffer_list) {
 }
 
 FB_TEST(make_buffer_list, declaration_check) {
-    // Verify make_buffer_list function is declared
-    // Can't call it without SPDK environment, but verify signature exists
-    FB_ASSERT_TRUE(true);
+    // Verify make_buffer_list function is declared with correct signature.
+    // It should accept a size_t parameter and return a buffer_list.
+    // We cannot invoke it without SPDK malloc, but we verify the declaration
+    // compiles by checking the function pointer type is valid.
+    using MakeBufferListFunc = buffer_list(*)(size_t);
+    MakeBufferListFunc fn_ptr = make_buffer_list;
+    FB_ASSERT_TRUE(fn_ptr != nullptr);
 }
 
 FB_TEST(make_buffer_list, free_buffer_list_declaration) {
-    // Verify free_buffer_list function is declared
-    FB_ASSERT_TRUE(true);
+    // Verify free_buffer_list function is declared with correct signature.
+    // It should accept a buffer_list reference parameter.
+    using FreeBufferListFunc = void(*)(buffer_list&);
+    FreeBufferListFunc fn_ptr = free_buffer_list;
+    FB_ASSERT_TRUE(fn_ptr != nullptr);
 }
 
 // ============================================================================
