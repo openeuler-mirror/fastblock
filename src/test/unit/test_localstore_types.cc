@@ -17437,3 +17437,148 @@ FB_TEST(context_data_flow, rblob_rw_iov_accumulation) {
     }
     FB_ASSERT_EQ(total, 512 + 1024 + 2048 + 4096);
 }
+
+// ============================================================================
+// Test Suite: buffer_list_stress_operations (Buffer List Stress Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_stress_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_stress_operations) {
+    // Setup code here
+}
+
+// Stress test: rapid append and pop cycles
+FB_TEST(buffer_list_stress_operations, rapid_append_pop_cycle) {
+    buffer_list bl;
+    char buffers[10][1024];
+
+    for (int cycle = 0; cycle < 100; cycle++) {
+        // Append multiple buffers
+        for (int i = 0; i < 10; i++) {
+            spdk_buffer sbuf(buffers[i], 1024);
+            bl.append_buffer(sbuf);
+        }
+        FB_ASSERT_EQ(bl.bytes(), 10 * 1024);
+
+        // Pop them all
+        while (!bl.empty()) {
+            bl.pop_front();
+        }
+        FB_ASSERT_EQ(bl.bytes(), 0);
+        FB_ASSERT_TRUE(bl.empty());
+    }
+}
+
+// Stress test: alternating prepend and append
+FB_TEST(buffer_list_stress_operations, alternating_prepend_append) {
+    buffer_list bl;
+    char buffer_pre[10][256];
+    char buffer_app[10][512];
+
+    for (int i = 0; i < 10; i++) {
+        spdk_buffer pre_buf(buffer_pre[i], 256);
+        spdk_buffer app_buf(buffer_app[i], 512);
+
+        bl.prepend_buffer(pre_buf);
+        bl.append_buffer(app_buf);
+
+        FB_ASSERT_EQ(bl.bytes(), (i + 1) * (256 + 512));
+    }
+
+    FB_ASSERT_EQ(bl.bytes(), 10 * 768);
+}
+
+// Stress test: large number of buffers
+FB_TEST(buffer_list_stress_operations, large_buffer_count) {
+    buffer_list bl;
+    std::vector<char*> buffers;
+
+    // Allocate and append 1000 small buffers
+    for (int i = 0; i < 1000; i++) {
+        char* buf = new char[64];
+        buffers.push_back(buf);
+        spdk_buffer sbuf(buf, 64);
+        bl.append_buffer(sbuf);
+    }
+
+    FB_ASSERT_EQ(bl.bytes(), 64000);
+    FB_ASSERT_FALSE(bl.empty());
+
+    // Verify iteration over all buffers
+    int count = 0;
+    for (auto& buf : bl) {
+        (void)buf;
+        count++;
+    }
+    FB_ASSERT_EQ(count, 1000);
+
+    // Cleanup
+    bl.clear();
+    for (char* buf : buffers) {
+        delete[] buf;
+    }
+}
+
+// Stress test: trim operations with edge cases
+FB_TEST(buffer_list_stress_operations, trim_edge_cases) {
+    buffer_list bl;
+    char buffer1[1], buffer2[2], buffer3[3], buffer4[4];
+
+    spdk_buffer sbuf1(buffer1, 1);
+    spdk_buffer sbuf2(buffer2, 2);
+    spdk_buffer sbuf3(buffer3, 3);
+    spdk_buffer sbuf4(buffer4, 4);
+
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+    bl.append_buffer(sbuf4);
+
+    FB_ASSERT_EQ(bl.bytes(), 1 + 2 + 3 + 4);
+
+    // Trim smallest first
+    bl.trim_front();
+    FB_ASSERT_EQ(bl.bytes(), 2 + 3 + 4);
+
+    // Trim largest last
+    bl.trim_back();
+    FB_ASSERT_EQ(bl.bytes(), 2 + 3);
+
+    // Clear remaining
+    bl.clear();
+    FB_ASSERT_EQ(bl.bytes(), 0);
+}
+
+// Stress test: buffer list merging operations
+FB_TEST(buffer_list_stress_operations, merge_multiple_lists) {
+    buffer_list bl1, bl2, bl3;
+    char buffer1[100], buffer2[200], buffer3[300];
+
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    bl1.append_buffer(sbuf1);
+    bl2.append_buffer(sbuf2);
+    bl3.append_buffer(sbuf3);
+
+    // Merge bl2 into bl1
+    bl1.append_buffer(std::move(bl2));
+    FB_ASSERT_EQ(bl1.bytes(), 100 + 200);
+    FB_ASSERT_EQ(bl2.bytes(), 0);
+
+    // Merge bl3 into bl1
+    bl1.append_buffer(std::move(bl3));
+    FB_ASSERT_EQ(bl1.bytes(), 100 + 200 + 300);
+    FB_ASSERT_EQ(bl3.bytes(), 0);
+
+    // Verify all three buffers present
+    int count = 0;
+    for (auto& buf : bl1) {
+        count++;
+    }
+    FB_ASSERT_EQ(count, 3);
+}
