@@ -17738,3 +17738,149 @@ FB_TEST(encoder_decoder_integrity, partial_consumption) {
     // At this point, reader position is at string "marker"
     FB_ASSERT_EQ(reader.remain(), sizeof(uint64_t) + 6); // length prefix + "marker"
 }
+
+// ============================================================================
+// Test Suite: log_header_codec_integrity (Log Header Codec Integrity Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_header_codec_integrity) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_header_codec_integrity) {
+    // Setup code here
+}
+
+// Encode/decode log entries with progressively increasing field values
+FB_TEST(log_header_codec_integrity, progressive_values) {
+    char buffer[8192];
+    spdk_buffer sbuf(buffer, 8192);
+
+    for (uint64_t i = 0; i < 50; i++) {
+        sbuf.reset();
+
+        log_entry_t entry_in;
+        entry_in.term_id = i;
+        entry_in.index = i * 100;
+        entry_in.size = i * 4096;
+        entry_in.type = i % 9; // Cycle through blob_type values
+        entry_in.meta = "entry_" + std::to_string(i);
+
+        FB_ASSERT_TRUE(EncodeLogHeader(sbuf, entry_in));
+
+        sbuf.reset();
+
+        log_entry_t entry_out;
+        FB_ASSERT_TRUE(DecodeLogHeader(sbuf, entry_out));
+
+        FB_ASSERT_EQ(entry_out.term_id, i);
+        FB_ASSERT_EQ(entry_out.index, i * 100);
+        FB_ASSERT_EQ(entry_out.size, i * 4096);
+        FB_ASSERT_EQ(entry_out.type, i % 9);
+        FB_ASSERT_EQ(entry_out.meta, "entry_" + std::to_string(i));
+    }
+}
+
+// Encode multiple log headers sequentially in one buffer
+FB_TEST(log_header_codec_integrity, sequential_encode_decode) {
+    char buffer[8192];
+    spdk_buffer sbuf(buffer, 8192);
+
+    // Encode 5 entries
+    std::vector<log_entry_t> entries;
+    for (int i = 0; i < 5; i++) {
+        log_entry_t entry;
+        entry.term_id = i + 1;
+        entry.index = (i + 1) * 10;
+        entry.size = (i + 1) * 512;
+        entry.type = i;
+        entry.meta = "seq_" + std::to_string(i);
+        entries.push_back(entry);
+
+        FB_ASSERT_TRUE(EncodeLogHeader(sbuf, entry));
+    }
+
+    // Decode them back
+    sbuf.reset();
+    for (int i = 0; i < 5; i++) {
+        log_entry_t entry_out;
+        FB_ASSERT_TRUE(DecodeLogHeader(sbuf, entry_out));
+
+        FB_ASSERT_EQ(entry_out.term_id, entries[i].term_id);
+        FB_ASSERT_EQ(entry_out.index, entries[i].index);
+        FB_ASSERT_EQ(entry_out.size, entries[i].size);
+        FB_ASSERT_EQ(entry_out.type, entries[i].type);
+        FB_ASSERT_EQ(entry_out.meta, entries[i].meta);
+    }
+}
+
+// Test encode/decode with long meta strings
+FB_TEST(log_header_codec_integrity, long_meta_string) {
+    char buffer[16384];
+    spdk_buffer sbuf(buffer, 16384);
+
+    log_entry_t entry_in;
+    entry_in.term_id = 1;
+    entry_in.index = 100;
+    entry_in.size = 4096;
+    entry_in.type = 2;
+    entry_in.meta = std::string(10000, 'M'); // 10KB meta string
+
+    FB_ASSERT_TRUE(EncodeLogHeader(sbuf, entry_in));
+
+    sbuf.reset();
+
+    log_entry_t entry_out;
+    FB_ASSERT_TRUE(DecodeLogHeader(sbuf, entry_out));
+
+    FB_ASSERT_EQ(entry_out.term_id, 1);
+    FB_ASSERT_EQ(entry_out.index, 100);
+    FB_ASSERT_EQ(entry_out.meta.size(), 10000);
+}
+
+// Test boundary condition: exactly fits buffer
+FB_TEST(log_header_codec_integrity, exact_buffer_fit) {
+    // Minimum buffer: 4 * sizeof(uint64_t) + sizeof(uint64_t) + 0 = 40 bytes
+    char buffer[40];
+    spdk_buffer sbuf(buffer, 40);
+
+    log_entry_t entry_in;
+    entry_in.term_id = 1;
+    entry_in.index = 100;
+    entry_in.size = 4096;
+    entry_in.type = 2;
+    entry_in.meta = "";
+
+    FB_ASSERT_TRUE(EncodeLogHeader(sbuf, entry_in));
+    FB_ASSERT_EQ(sbuf.used(), 40);
+
+    sbuf.reset();
+
+    log_entry_t entry_out;
+    FB_ASSERT_TRUE(DecodeLogHeader(sbuf, entry_out));
+    FB_ASSERT_EQ(entry_out.term_id, 1);
+}
+
+// Verify that a partially written header cannot be decoded
+FB_TEST(log_header_codec_integrity, truncated_header_fails) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+
+    log_entry_t entry;
+    entry.term_id = 1;
+    entry.index = 100;
+    entry.size = 4096;
+    entry.type = 2;
+    entry.meta = "test";
+
+    FB_ASSERT_TRUE(EncodeLogHeader(sbuf, entry));
+
+    // Now create a smaller buffer that truncates the data
+    size_t encoded_size = sbuf.used();
+    char small_buffer[16];
+    memcpy(small_buffer, buffer, 16);
+    spdk_buffer small_sbuf(small_buffer, 16);
+
+    log_entry_t out;
+    FB_ASSERT_FALSE(DecodeLogHeader(small_sbuf, out));
+}
