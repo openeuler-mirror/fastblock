@@ -18610,3 +18610,201 @@ FB_TEST(log_context_operations, read_data_buffer) {
 
     FB_ASSERT_EQ(ctx.bl.bytes(), 4096);
 }
+
+// ============================================================================
+// Test Suite: iovec_advanced_scenarios (Iovec Advanced Scenarios Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(iovec_advanced_scenarios) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(iovec_advanced_scenarios) {
+    // Setup code here
+}
+
+// Simulate scattered gather I/O scenario
+FB_TEST(iovec_advanced_scenarios, scattered_gather_io) {
+    iovecs iovs;
+
+    // Simulate 8 scattered 4KB buffers
+    char buffers[8][4096];
+    for (int i = 0; i < 8; i++) {
+        struct iovec iov;
+        iov.iov_base = buffers[i];
+        iov.iov_len = 4096;
+        iovs.push_back(iov);
+    }
+
+    FB_ASSERT_EQ(iovs.size(), 8);
+
+    // Calculate total scattered I/O size
+    size_t total = 0;
+    for (auto& iov : iovs) {
+        total += iov.iov_len;
+    }
+    FB_ASSERT_EQ(total, 32_KB);
+}
+
+// Simulate variable-length iovec entries
+FB_TEST(iovec_advanced_scenarios, variable_length_entries) {
+    iovecs iovs;
+
+    size_t lengths[] = {512, 1024, 2048, 4096, 8192, 16384};
+
+    for (size_t len : lengths) {
+        char* buf = new char[len];
+        struct iovec iov;
+        iov.iov_base = buf;
+        iov.iov_len = len;
+        iovs.push_back(iov);
+    }
+
+    FB_ASSERT_EQ(iovs.size(), 6);
+
+    // Verify progressive length increase
+    for (size_t i = 0; i < iovs.size(); i++) {
+        FB_ASSERT_EQ(iovs[i].iov_len, lengths[i]);
+    }
+
+    // Cleanup
+    for (auto& iov : iovs) {
+        delete[] static_cast<char*>(iov.iov_base);
+    }
+}
+
+// Simulate iovec merging scenario
+FB_TEST(iovec_advanced_scenarios, iovec_merge_scenario) {
+    iovecs iovs1, iovs2, merged;
+
+    char buf1[1024], buf2[2048], buf3[4096], buf4[8192];
+
+    iovs1.push_back({buf1, 1024});
+    iovs1.push_back({buf2, 2048});
+    iovs2.push_back({buf3, 4096});
+    iovs2.push_back({buf4, 8192});
+
+    // Merge two iovec sets
+    for (auto& iov : iovs1) merged.push_back(iov);
+    for (auto& iov : iovs2) merged.push_back(iov);
+
+    FB_ASSERT_EQ(merged.size(), 4);
+
+    size_t total = 0;
+    for (auto& iov : merged) total += iov.iov_len;
+    FB_ASSERT_EQ(total, 1024 + 2048 + 4096 + 8192);
+}
+
+// Simulate iovec split scenario
+FB_TEST(iovec_advanced_scenarios, iovec_split_scenario) {
+    iovecs original, split1, split2;
+
+    char buffers[6][1024];
+    for (int i = 0; i < 6; i++) {
+        original.push_back({buffers[i], 1024});
+    }
+
+    // Split into two groups
+    for (int i = 0; i < 3; i++) split1.push_back(original[i]);
+    for (int i = 3; i < 6; i++) split2.push_back(original[i]);
+
+    FB_ASSERT_EQ(split1.size(), 3);
+    FB_ASSERT_EQ(split2.size(), 3);
+
+    size_t total1 = 0, total2 = 0;
+    for (auto& iov : split1) total1 += iov.iov_len;
+    for (auto& iov : split2) total2 += iov.iov_len;
+
+    FB_ASSERT_EQ(total1, 3_KB);
+    FB_ASSERT_EQ(total2, 3_KB);
+}
+
+// ============================================================================
+// Test Suite: final_integrity_check (Final Integrity Check Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(final_integrity_check) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(final_integrity_check) {
+    // Setup code here
+}
+
+// Comprehensive integration test: encode/decode full pipeline
+FB_TEST(final_integrity_check, full_pipeline_integration) {
+    // Create buffer_list with data
+    char buffer[8192];
+    spdk_buffer sbuf(buffer, 8192);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    // Encode log header
+    buffer_list_encoder encoder(bl);
+    log_entry_t entry;
+    entry.term_id = 1;
+    entry.index = 500;
+    entry.size = 1024;
+    entry.type = 1;
+    entry.meta = "integration_test";
+
+    EncodeLogHeader(sbuf, entry);
+
+    // Add data
+    encoder.put(42ULL);
+    encoder.put(std::string("payload_data"));
+
+    // Reset and decode
+    bl.begin()->reset();
+    buffer_list_encoder reader(bl);
+
+    log_entry_t decoded_entry;
+    DecodeLogHeader(sbuf, decoded_entry);
+
+    FB_ASSERT_EQ(decoded_entry.term_id, 1);
+    FB_ASSERT_EQ(decoded_entry.index, 500);
+    FB_ASSERT_EQ(decoded_entry.meta, "integration_test");
+
+    uint64_t val;
+    std::string str;
+    reader.get(val);
+    reader.get(str);
+
+    FB_ASSERT_EQ(val, 42);
+    FB_ASSERT_EQ(str, "payload_data");
+}
+
+// Test all blob_type values are valid
+FB_TEST(final_integrity_check, all_blob_types_valid) {
+    blob_type types[] = {
+        blob_type::log, blob_type::object, blob_type::object_snap,
+        blob_type::object_recover, blob_type::kv, blob_type::kv_checkpoint,
+        blob_type::kv_checkpoint_new, blob_type::super_blob, blob_type::free
+    };
+
+    for (auto& t : types) {
+        uint32_t val = static_cast<uint32_t>(t);
+        FB_ASSERT_TRUE(val >= 0 && val <= 8);
+
+        std::string str = type_string(t);
+        FB_ASSERT_TRUE(!str.empty());
+        FB_ASSERT_TRUE(str.find("blob_type::") == 0);
+    }
+}
+
+// Test constants consistency
+FB_TEST(final_integrity_check, constants_consistency) {
+    // Buffer pool constants
+    FB_ASSERT_EQ(buffer_memory / buffer_size, buffer_pool_size);
+    FB_ASSERT_EQ(buffer_memory, 512_MB);
+    FB_ASSERT_EQ(buffer_size, 4_KB);
+
+    // Trim constants
+    FB_ASSERT_TRUE(TRIM_TRIGGER_PERCENTAGE > TRIM_PERCENTAGE);
+    FB_ASSERT_TRUE(TRIM_TRIGGER_PERCENTAGE < 1.0f);
+    FB_ASSERT_TRUE(TRIM_PERCENTAGE < 1.0f);
+
+    // Entry header size
+    FB_ASSERT_EQ(entry_header_size, 24);
+    FB_ASSERT_EQ(entry_header_size, 3 * sizeof(uint64_t));
+}
