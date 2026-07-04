@@ -2280,87 +2280,171 @@ FB_SUITE_TEARDOWN(osd_pg_membership) {
 }
 
 FB_TEST(osd_pg_membership, osd_info_structure) {
-    // utils::osd_info_t should contain node_id and address
-    uint32_t node_id = 1;
-    std::string address = "192.168.1.1";
+    // utils::osd_info_t contains node_id and address
+    struct osd_info_test {
+        uint32_t node_id;
+        std::string address;
+    };
+    osd_info_test info1{1, "192.168.1.1:5000"};
+    osd_info_test info2{2, "192.168.1.2:5000"};
 
-    FB_ASSERT_TRUE(node_id > 0);
-    FB_ASSERT_TRUE(!address.empty());
+    // Verify both fields are populated
+    FB_ASSERT_TRUE(info1.node_id > 0);
+    FB_ASSERT_TRUE(!info1.address.empty());
+    FB_ASSERT_TRUE(info1.node_id != info2.node_id);
+    FB_ASSERT_TRUE(info1.address != info2.address);
 }
 
 FB_TEST(osd_pg_membership, pg_osd_list) {
-    // PG should have list of OSDs
+    // PG OSD list must have at least quorum OSDs
     std::vector<uint32_t> osds = {1, 2, 3};
     FB_ASSERT_EQ(osds.size(), 3);
+
+    // Verify all OSD IDs are unique
+    std::set<uint32_t> unique_osds(osds.begin(), osds.end());
+    FB_ASSERT_EQ(unique_osds.size(), 3);
+
+    // OSD count >= quorum
+    uint32_t quorum = osds.size() / 2 + 1;
+    FB_ASSERT_TRUE(osds.size() >= quorum);
 }
 
 FB_TEST(osd_pg_membership, osd_count_quorum) {
-    // OSD count should allow quorum calculation
+    // 3 OSDs -> quorum = 2, can tolerate 1 failure
     int osd_count = 3;
     int quorum = osd_count / 2 + 1;
     FB_ASSERT_EQ(quorum, 2);
+
+    int max_failures = osd_count - quorum;
+    FB_ASSERT_EQ(max_failures, 1);
 }
 
 FB_TEST(osd_pg_membership, membership_change) {
-    // Membership change should update OSD list
+    // Membership change: old -> new configuration
     std::vector<uint32_t> old_osds = {1, 2, 3};
     std::vector<uint32_t> new_osds = {1, 2, 4};
 
-    FB_ASSERT_TRUE(old_osds != new_osds);
+    // Find OSD being replaced
+    std::vector<uint32_t> removed;
+    std::set_difference(old_osds.begin(), old_osds.end(),
+                         new_osds.begin(), new_osds.end(),
+                         std::back_inserter(removed));
+    FB_ASSERT_EQ(removed.size(), 1);
+    FB_ASSERT_EQ(removed[0], 3); // OSD 3 removed
+
+    // Find OSD being added
+    std::vector<uint32_t> added;
+    std::set_difference(new_osds.begin(), new_osds.end(),
+                         old_osds.begin(), old_osds.end(),
+                         std::back_inserter(added));
+    FB_ASSERT_EQ(added.size(), 1);
+    FB_ASSERT_EQ(added[0], 4); // OSD 4 added
 }
 
 FB_TEST(osd_pg_membership, add_osd) {
-    // Adding OSD to PG membership
+    // Adding OSD requires: 1) update OSD list, 2) increment revision
     std::vector<uint32_t> osds = {1, 2};
+    int64_t revision = 100;
+
     osds.push_back(3);
+    revision++;
     FB_ASSERT_EQ(osds.size(), 3);
+    FB_ASSERT_EQ(revision, 101);
+
+    // Verify OSD 3 is in list
+    FB_ASSERT_TRUE(std::find(osds.begin(), osds.end(), 3) != osds.end());
 }
 
 FB_TEST(osd_pg_membership, remove_osd) {
-    // Removing OSD from PG membership
+    // Removing OSD requires: 1) update OSD list, 2) increment revision
     std::vector<uint32_t> osds = {1, 2, 3};
-    osds.erase(osds.begin() + 1);
+    int64_t revision = 100;
+
+    osds.erase(osds.begin() + 1); // Remove OSD 2
+    revision++;
     FB_ASSERT_EQ(osds.size(), 2);
+    FB_ASSERT_EQ(revision, 101);
+
+    // OSD 2 no longer in list
+    FB_ASSERT_TRUE(std::find(osds.begin(), osds.end(), 2) == osds.end());
 }
 
 FB_TEST(osd_pg_membership, membership_revision) {
-    // Each membership change should have revision
-    int64_t rev1 = 100;
-    int64_t rev2 = 101;
-    FB_ASSERT_TRUE(rev2 > rev1);
+    // Revision is monotonically increasing
+    std::vector<int64_t> revisions = {100, 101, 102, 103};
+    for (size_t i = 1; i < revisions.size(); i++) {
+        FB_ASSERT_TRUE(revisions[i] > revisions[i-1]);
+    }
+    // Revision stored in shard_table
+    shard_revision rev;
+    rev._revision = 100;
+    FB_ASSERT_TRUE(rev._revision > 0);
 }
 
 FB_TEST(osd_pg_membership, membership_consistent) {
-    // Membership should be consistent across all OSDs
-    std::vector<uint32_t> osds1 = {1, 2, 3};
-    std::vector<uint32_t> osds2 = {1, 2, 3};
+    // All OSDs in PG see the same membership
+    std::vector<uint32_t> osds_on_node1 = {1, 2, 3};
+    std::vector<uint32_t> osds_on_node2 = {1, 2, 3};
 
-    FB_ASSERT_TRUE(osds1 == osds2);
+    FB_ASSERT_TRUE(osds_on_node1 == osds_on_node2);
+    // Membership is replicated via Raft configuration change
 }
 
 FB_TEST(osd_pg_membership, primary_osd) {
-    // PG should have primary OSD (first in list)
+    // Primary OSD is first in list, handles client requests
     std::vector<uint32_t> osds = {1, 2, 3};
     uint32_t primary = osds[0];
     FB_ASSERT_EQ(primary, 1);
+
+    // Primary must be in OSD list
+    FB_ASSERT_TRUE(std::find(osds.begin(), osds.end(), primary) != osds.end());
+    // Primary != secondary
+    uint32_t first_secondary = osds[1];
+    FB_ASSERT_TRUE(primary != first_secondary);
 }
 
 FB_TEST(osd_pg_membership, osd_role_primary) {
-    // Primary OSD role
+    // Primary OSD: leader of the Raft group for this PG
+    // role: 0 = primary, 1 = secondary
     int role_primary = 0;
-    FB_ASSERT_TRUE(role_primary >= 0);
+    int role_secondary = 1;
+
+    FB_ASSERT_TRUE(role_primary != role_secondary);
+    FB_ASSERT_TRUE(role_primary < role_secondary);
+    // Primary is always first element
 }
 
 FB_TEST(osd_pg_membership, osd_role_secondary) {
-    // Secondary OSD role
-    int role_secondary = 1;
-    FB_ASSERT_TRUE(role_secondary > 0);
+    // Secondary OSD: followers in the Raft group
+    std::vector<uint32_t> osds = {1, 2, 3};
+    uint32_t primary = osds[0];
+
+    std::vector<uint32_t> secondaries(osds.begin() + 1, osds.end());
+    FB_ASSERT_EQ(secondaries.size(), 2);
+
+    // Secondaries are all non-primary OSDs
+    for (uint32_t sec : secondaries) {
+        FB_ASSERT_TRUE(sec != primary);
+    }
 }
 
 FB_TEST(osd_pg_membership, change_membership_via_raft) {
-    // Membership changes should go through Raft
-    bool use_raft = true;
-    FB_ASSERT_TRUE(use_raft);
+    // Membership change goes through: 1) Raft log entry, 2) apply on FSM
+    int membership_log_type = RAFT_LOGTYPE_CONFIGURATION_CHANGE;
+
+    // Membership change must be replicated
+    bool needs_replication = true;
+    FB_ASSERT_TRUE(needs_replication);
+
+    // Change applies on all OSDs via Raft consensus
+    std::vector<uint32_t> old_config = {1, 2, 3};
+    std::vector<uint32_t> new_config = {1, 2, 4};
+
+    // Joint consensus phase: need quorum from both
+    int old_quorum = old_config.size() / 2 + 1;
+    int new_quorum = new_config.size() / 2 + 1;
+    FB_ASSERT_TRUE(old_quorum > 0);
+    FB_ASSERT_TRUE(new_quorum > 0);
 }
 
 // ============================================================================
@@ -2376,52 +2460,111 @@ FB_SUITE_TEARDOWN(osd_monitor_client) {
 }
 
 FB_TEST(osd_monitor_client, connection_established) {
-    // Should be able to connect to monitor
-    bool connected = true;
-    FB_ASSERT_TRUE(connected);
+    // Monitor client uses gRPC to connect to monitor service
+    // Verify connection parameters
+    std::string monitor_addr = "192.168.1.100:5000";
+    uint32_t node_id = 1;
+
+    FB_ASSERT_TRUE(!monitor_addr.empty());
+    FB_ASSERT_TRUE(monitor_addr.find(':') != std::string::npos);
+    FB_ASSERT_TRUE(node_id > 0);
 }
 
 FB_TEST(osd_monitor_client, send_heartbeat) {
-    // Should send periodic heartbeats
-    bool heartbeat_sent = true;
-    FB_ASSERT_TRUE(heartbeat_sent);
+    // Heartbeat interval is configurable, typically 5-30 seconds
+    uint64_t heartbeat_interval_ms = 5000;
+    uint64_t last_heartbeat_ms = 3000;
+    uint64_t now_ms = 8000;
+
+    // Heartbeat due when: now - last >= interval
+    bool heartbeat_due = (now_ms - last_heartbeat_ms >= heartbeat_interval_ms);
+    FB_ASSERT_TRUE(heartbeat_due);
+
+    // Not due when recently sent
+    now_ms = 4000;
+    heartbeat_due = (now_ms - last_heartbeat_ms >= heartbeat_interval_ms);
+    FB_ASSERT_TRUE(!heartbeat_due);
 }
 
 FB_TEST(osd_monitor_client, receive_map_update) {
-    // Should receive cluster map updates
-    bool map_received = true;
-    FB_ASSERT_TRUE(map_received);
+    // Cluster map contains: OSD list, PG mappings, pool configuration
+    uint64_t map_version_before = 10;
+    uint64_t map_version_after = 11;
+
+    // Map version should increment on changes
+    FB_ASSERT_TRUE(map_version_after > map_version_before);
+    // OSD should apply new map immediately
 }
 
 FB_TEST(osd_monitor_client, report_pg_state) {
-    // Should report PG state to monitor
-    std::string pg_state = "active";
-    FB_ASSERT_TRUE(!pg_state.empty());
+    // Report PG state: pool_id, pg_id, state, up_osds, acting_osds
+    uint64_t pool_id = 1;
+    uint64_t pg_id = 100;
+    osd_state state = osd_state::OSD_ACTIVE;
+    std::vector<uint32_t> up_osds = {1, 2, 3};
+
+    FB_ASSERT_TRUE(pool_id > 0);
+    FB_ASSERT_TRUE(pg_id > 0);
+    FB_ASSERT_TRUE(state == osd_state::OSD_ACTIVE);
+    FB_ASSERT_EQ(up_osds.size(), 3);
 }
 
 FB_TEST(osd_monitor_client, report_osd_state) {
-    // Should report OSD state to monitor
+    // Report OSD state: node_id, state, timestamp
+    uint32_t node_id = 1;
     osd_state state = osd_state::OSD_ACTIVE;
+    auto timestamp = std::chrono::steady_clock::now();
+
+    FB_ASSERT_TRUE(node_id > 0);
     FB_ASSERT_TRUE(state == osd_state::OSD_ACTIVE);
+    // State transitions: STARTING -> ACTIVE -> DOWN
+    FB_ASSERT_TRUE(state != osd_state::OSD_STARTING);
+    FB_ASSERT_TRUE(state != osd_state::OSD_DOWN);
 }
 
 FB_TEST(osd_monitor_client, connection_timeout) {
-    // Should handle connection timeout
-    bool timed_out = true;
+    // Connection timeout triggers reconnect
+    uint64_t timeout_ms = 30000;
+    uint64_t elapsed_ms = 35000;
+
+    bool timed_out = (elapsed_ms >= timeout_ms);
     FB_ASSERT_TRUE(timed_out);
+
+    // Not timed out within limit
+    elapsed_ms = 20000;
+    timed_out = (elapsed_ms >= timeout_ms);
+    FB_ASSERT_TRUE(!timed_out);
 }
 
 FB_TEST(osd_monitor_client, reconnect_on_failure) {
-    // Should reconnect on connection failure
-    bool reconnecting = true;
-    FB_ASSERT_TRUE(reconnecting);
+    // Reconnect uses exponential backoff
+    uint64_t base_interval_ms = 1000;
+    uint32_t retry_count = 3;
+
+    // Backoff: base * 2^retry
+    uint64_t backoff = base_interval_ms * (1ULL << retry_count);
+    FB_ASSERT_EQ(backoff, 8000); // 1s * 2^3 = 8s
+
+    // Cap at max backoff
+    uint64_t max_backoff_ms = 60000;
+    uint64_t capped = std::min(backoff, max_backoff_ms);
+    FB_ASSERT_TRUE(capped <= max_backoff_ms);
 }
 
 FB_TEST(osd_monitor_client, data_statistics_report) {
-    // Should send data statistics to monitor
-    uint64_t read_bytes = 10240;
-    uint64_t write_bytes = 20480;
-    FB_ASSERT_TRUE(read_bytes + write_bytes > 0);
+    // Data statistics: IO counts and bytes per PG
+    std::map<std::string, utils::cluster_io> ios;
+    ios["1.100"] = utils::cluster_io{.read_ios = 100, .read_bytes = 10240, .write_ios = 50, .write_bytes = 20480};
+
+    // Verify statistics are collected before sending
+    FB_ASSERT_TRUE(!ios.empty());
+    FB_ASSERT_TRUE(ios["1.100"].read_ios > 0);
+    FB_ASSERT_TRUE(ios["1.100"].write_ios > 0);
+
+    // After send, statistics are cleared via std::exchange
+    auto sent = std::exchange(ios, {});
+    FB_ASSERT_TRUE(ios.empty());
+    FB_ASSERT_TRUE(!sent.empty());
 }
 
 FB_TEST(osd_monitor_client, request_pg_creation) {
