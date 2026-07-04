@@ -18461,3 +18461,152 @@ FB_TEST(rblob_context_scenarios, trim_large_range) {
     uint64_t bytes_trimmed = ctx.len * 512;
     FB_ASSERT_EQ(bytes_trimmed, 1_GB);
 }
+
+// ============================================================================
+// Test Suite: pool_context_operations (Pool Context Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(pool_context_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(pool_context_operations) {
+    // Setup code here
+}
+
+// Simulate pool blob allocation tracking
+FB_TEST(pool_context_operations, allocation_tracking) {
+    pool_create_ctx ctx;
+    ctx.type = blob_type::free;
+    ctx.idx = 0;
+    ctx.max = 100;
+
+    // Simulate allocation progress
+    for (uint64_t i = 0; i < ctx.max; i++) {
+        ctx.idx = i;
+        ctx.blob.blobid = i + 1;
+
+        // Verify allocation state
+        FB_ASSERT_TRUE(ctx.idx <= ctx.max);
+        FB_ASSERT_TRUE(ctx.blob.blobid > 0);
+    }
+
+    FB_ASSERT_EQ(ctx.idx, ctx.max - 1);
+}
+
+// Simulate pool creation callback chain
+FB_TEST(pool_context_operations, creation_callback_chain) {
+    pool_create_ctx ctx1, ctx2, ctx3;
+
+    // Simulate chained creation
+    int callback_count = 0;
+
+    ctx1.cb_fn = [&callback_count](void*, int) { callback_count++; };
+    ctx2.cb_fn = [&callback_count](void*, int) { callback_count++; };
+    ctx3.cb_fn = [&callback_count](void*, int) { callback_count++; };
+
+    ctx1.cb_fn(nullptr, 0);
+    ctx2.cb_fn(nullptr, 0);
+    ctx3.cb_fn(nullptr, 0);
+
+    FB_ASSERT_EQ(callback_count, 3);
+}
+
+// Simulate pool deletion context
+FB_TEST(pool_context_operations, deletion_context) {
+    pool_delete_ctx ctx;
+
+    ctx.blob.blobid = 12345;
+    ctx.blob.blob = reinterpret_cast<void*>(0x1000);
+
+    // Verify blob being deleted
+    FB_ASSERT_EQ(ctx.blob.blobid, 12345);
+    FB_ASSERT_TRUE(ctx.blob.blob != nullptr);
+
+    // Simulate deletion callback
+    int deleted = 0;
+    ctx.cb_fn = [&deleted](void*, int) { deleted++; };
+    ctx.cb_fn(nullptr, 0);
+    FB_ASSERT_EQ(deleted, 1);
+}
+
+// ============================================================================
+// Test Suite: log_context_operations (Log Context Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_context_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_context_operations) {
+    // Setup code here
+}
+
+// Simulate log append with index tracking
+FB_TEST(log_context_operations, append_index_tracking) {
+    log_append_ctx ctx;
+
+    // Simulate tracking multiple append positions
+    for (int i = 0; i < 10; i++) {
+        ctx.idx_pos.emplace_back(i, i * 4096, 0, 4096);
+    }
+
+    FB_ASSERT_EQ(ctx.idx_pos.size(), 10);
+
+    // Verify position tuples
+    for (int i = 0; i < 10; i++) {
+        FB_ASSERT_EQ(std::get<0>(ctx.idx_pos[i]), i);
+        FB_ASSERT_EQ(std::get<1>(ctx.idx_pos[i]), i * 4096);
+    }
+}
+
+// Simulate log append with headers
+FB_TEST(log_context_operations, append_with_headers) {
+    log_append_ctx ctx;
+
+    // Allocate header buffers
+    char header_buffers[5][256];
+    for (int i = 0; i < 5; i++) {
+        spdk_buffer sbuf(header_buffers[i], 256);
+        ctx.headers.push_back(sbuf);
+
+        // Encode header into buffer
+        buffer_list_encoder encoder(ctx.bl);
+        EncodeLogHeader(ctx.headers.back(), *(new log_entry_t));
+    }
+
+    FB_ASSERT_EQ(ctx.headers.size(), 5);
+}
+
+// Simulate log read with entry collection
+FB_TEST(log_context_operations, read_entry_collection) {
+    log_read_ctx ctx;
+    ctx.start_index = 0;
+    ctx.end_index = 99;
+
+    // Simulate reading entries
+    for (uint64_t i = ctx.start_index; i <= ctx.end_index; i++) {
+        log_entry_t entry;
+        entry.index = i;
+        entry.term_id = 1;
+        ctx.entries.push_back(std::move(entry));
+    }
+
+    FB_ASSERT_EQ(ctx.entries.size(), 100);
+
+    // Verify entry range
+    FB_ASSERT_EQ(ctx.entries.front().index, 0);
+    FB_ASSERT_EQ(ctx.entries.back().index, 99);
+}
+
+// Simulate log read data buffer
+FB_TEST(log_context_operations, read_data_buffer) {
+    log_read_ctx ctx;
+
+    // Allocate read buffer
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+    ctx.bl.append_buffer(sbuf);
+
+    FB_ASSERT_EQ(ctx.bl.bytes(), 4096);
+}
