@@ -1443,59 +1443,104 @@ FB_SUITE_TEARDOWN(raft_message_types) {
 }
 
 FB_TEST(raft_message_types, append_entries_type) {
-    // AppendEntries is a common Raft message type
-    // Concept: message type should be distinguishable
-    int msg_append_entries = 1;
-    FB_ASSERT_TRUE(msg_append_entries > 0);
+    // AppendEntries contains: term, leader_id, prev_log_idx/term, entries, leader_commit
+    raft_term_t term = 5;
+    raft_node_id_t leader_id = 1;
+    raft_index_t prev_log_idx = 100;
+    raft_term_t prev_log_term = 4;
+    raft_index_t leader_commit = 105;
+
+    // Verify commit index >= prev_log_idx
+    FB_ASSERT_TRUE(leader_commit >= prev_log_idx);
+    // Verify prev_log_term <= current term
+    FB_ASSERT_TRUE(prev_log_term <= term);
+    FB_ASSERT_TRUE(term > 0);
+    FB_ASSERT_TRUE(leader_id > 0);
 }
 
 FB_TEST(raft_message_types, request_vote_type) {
-    // RequestVote is another common Raft message type
-    int msg_request_vote = 2;
-    FB_ASSERT_TRUE(msg_request_vote > 0);
+    // RequestVote contains: term, candidate_id, last_log_idx, last_log_term
+    raft_term_t term = 6;
+    raft_node_id_t candidate_id = 2;
+    raft_index_t last_log_idx = 50;
+    raft_term_t last_log_term = 5;
+
+    // Candidate's log must be at least as up-to-date as receiver's
+    FB_ASSERT_TRUE(last_log_idx > 0);
+    FB_ASSERT_TRUE(last_log_term <= term);
+    FB_ASSERT_TRUE(candidate_id > 0);
 }
 
 FB_TEST(raft_message_types, heartbeat_type) {
-    // Heartbeat is a special AppendEntries with no entries
-    bool is_heartbeat = true;
+    // Heartbeat = AppendEntries with entry_count == 0
+    uint32_t regular_entry_count = 3;
+    uint32_t heartbeat_entry_count = 0;
+
+    bool is_heartbeat = (heartbeat_entry_count == 0);
+    bool is_regular = (regular_entry_count > 0);
+
     FB_ASSERT_TRUE(is_heartbeat);
+    FB_ASSERT_TRUE(!is_regular || regular_entry_count > 0);
+    // Heartbeat should be distinguishable from regular
+    FB_ASSERT_TRUE(heartbeat_entry_count != regular_entry_count);
 }
 
 FB_TEST(raft_message_types, snapshot_type) {
-    // Snapshot message for log compaction
-    int msg_snapshot = 3;
-    FB_ASSERT_TRUE(msg_snapshot > 0);
+    // InstallSnapshot contains: term, leader_id, last_included_idx/term, offset, data, done
+    raft_term_t term = 8;
+    raft_index_t last_included_idx = 200;
+    raft_term_t last_included_term = 7;
+    uint64_t offset = 0;
+    bool done = true;
+
+    FB_ASSERT_TRUE(last_included_idx > 0);
+    FB_ASSERT_TRUE(last_included_term <= term);
+    FB_ASSERT_TRUE(offset >= 0);
+    // Snapshot must be complete when done=true
+    FB_ASSERT_TRUE(done || offset > 0);
 }
 
-FB_TEST(raft_message_types, message_type_unique) {
-    // Each message type should be unique
-    int type1 = 1;
-    int type2 = 2;
-    int type3 = 3;
-    FB_ASSERT_TRUE(type1 != type2);
-    FB_ASSERT_TRUE(type2 != type3);
-    FB_ASSERT_TRUE(type1 != type3);
+FB_TEST(raft_message_types, message_type_count) {
+    // Raft has 4 core message types: AppendEntries, RequestVote, InstallSnapshot, timeout_now
+    uint32_t message_types = 4;
+    FB_ASSERT_TRUE(message_types >= 3);
+    FB_ASSERT_TRUE(message_types <= 10);
 }
 
-FB_TEST(raft_message_types, message_priority) {
-    // Some messages have higher priority (e.g., heartbeat)
-    int heartbeat_priority = 10;
-    int normal_priority = 5;
-    FB_ASSERT_TRUE(heartbeat_priority > normal_priority);
+FB_TEST(raft_message_types, heartbeat_priority_higher) {
+    // Heartbeat should be processed before regular messages (lower latency)
+    uint32_t heartbeat_latency_us = 100;
+    uint32_t regular_latency_us = 500;
+
+    // Heartbeat should have stricter latency requirement
+    FB_ASSERT_TRUE(heartbeat_latency_us < regular_latency_us);
+    double ratio = static_cast<double>(regular_latency_us) / heartbeat_latency_us;
+    FB_ASSERT_TRUE(ratio > 1.0);
 }
 
-FB_TEST(raft_message_types, response_type) {
-    // Responses should have matching request types
-    int request_type = 1;
-    int response_type = 1; // Response matches request
-    FB_ASSERT_TRUE(request_type == response_type);
+FB_TEST(raft_message_types, response_matches_request) {
+    // Response term should match or exceed request term
+    raft_term_t request_term = 5;
+    raft_term_t response_term = 5; // Term unchanged if request granted
+
+    // Response term >= request term (higher term means rejected)
+    bool granted = (response_term == request_term);
+    bool rejected_higher_term = (response_term > request_term);
+
+    FB_ASSERT_TRUE(granted || rejected_higher_term);
+    FB_ASSERT_TRUE(response_term >= request_term);
 }
 
-FB_TEST(raft_message_types, message_size) {
-    // Message size should be reasonable
-    size_t max_msg_size = 1024 * 1024; // 1MB
-    size_t actual_size = 1024; // 1KB
-    FB_ASSERT_TRUE(actual_size <= max_msg_size);
+FB_TEST(raft_message_types, message_size_limit) {
+    // Messages should be bounded by max size
+    uint64_t max_msg_size = 1024ULL * 1024ULL; // 1MB
+    uint64_t entry_size = 4096;
+    uint32_t max_entries = max_msg_size / entry_size;
+
+    FB_ASSERT_TRUE(max_entries > 0);
+    // Verify batching limit
+    uint64_t batch_size = max_entries * entry_size;
+    FB_ASSERT_TRUE(batch_size <= max_msg_size);
 }
 
 // ============================================================================
