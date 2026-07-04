@@ -17582,3 +17582,159 @@ FB_TEST(buffer_list_stress_operations, merge_multiple_lists) {
     }
     FB_ASSERT_EQ(count, 3);
 }
+
+// ============================================================================
+// Test Suite: encoder_decoder_integrity (Encoder Decoder Integrity Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(encoder_decoder_integrity) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(encoder_decoder_integrity) {
+    // Setup code here
+}
+
+// Test encoding multiple uint64 values with different magnitudes
+FB_TEST(encoder_decoder_integrity, multi_magnitude_uint64) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder enc(bl);
+    uint64_t values[] = {0, 127, 128, 255, 256, 65535, 65536, UINT32_MAX, UINT64_MAX};
+
+    for (auto v : values) {
+        FB_ASSERT_TRUE(enc.put(v));
+    }
+
+    // Reset for reading
+    bl.begin()->reset();
+    buffer_list_encoder reader(bl);
+
+    for (auto expected : values) {
+        uint64_t got = 0;
+        FB_ASSERT_TRUE(reader.get(got));
+        FB_ASSERT_EQ(got, expected);
+    }
+}
+
+// Test encoding strings with special characters
+FB_TEST(encoder_decoder_integrity, special_character_strings) {
+    char buffer[2048];
+    spdk_buffer sbuf(buffer, 2048);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder enc(bl);
+
+    std::string strings[] = {
+        "",                                     // Empty
+        " ",                                    // Space
+        "\n\t\r",                              // Control chars
+        "中文测试",                            // Unicode
+        "special!@#$%^&*()",                  // Special symbols
+        std::string(500, 'x'),               // Long repeated
+        "null\0embedded"                      // Embedded null
+    };
+
+    for (const auto& str : strings) {
+        FB_ASSERT_TRUE(enc.put(str));
+    }
+
+    // Reset and verify
+    bl.begin()->reset();
+    buffer_list_encoder reader(bl);
+
+    for (size_t i = 0; i < sizeof(strings)/sizeof(strings[0]); i++) {
+        std::string got;
+        FB_ASSERT_TRUE(reader.get(got));
+        FB_ASSERT_EQ(got.size(), strings[i].size());
+    }
+}
+
+// Test encoding mix of types in sequence
+FB_TEST(encoder_decoder_integrity, mixed_type_sequence) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder enc(bl);
+
+    // Encode alternating uint64 and string
+    for (int i = 0; i < 20; i++) {
+        FB_ASSERT_TRUE(enc.put(static_cast<uint64_t>(i)));
+        FB_ASSERT_TRUE(enc.put(std::string("item_" + std::to_string(i))));
+    }
+
+    // Reset and decode
+    bl.begin()->reset();
+    buffer_list_encoder reader(bl);
+
+    for (int i = 0; i < 20; i++) {
+        uint64_t num = 0;
+        std::string str;
+
+        FB_ASSERT_TRUE(reader.get(num));
+        FB_ASSERT_EQ(num, i);
+
+        FB_ASSERT_TRUE(reader.get(str));
+        FB_ASSERT_EQ(str, "item_" + std::to_string(i));
+    }
+}
+
+// Test encoding with buffer exhaustion handling
+FB_TEST(encoder_decoder_integrity, buffer_exhaustion_recovery) {
+    char small_buffer[32];
+    spdk_buffer sbuf(small_buffer, 32);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder enc(bl);
+
+    // Successfully encode 3 uint64 (24 bytes)
+    FB_ASSERT_TRUE(enc.put(1ULL));
+    FB_ASSERT_TRUE(enc.put(2ULL));
+    FB_ASSERT_TRUE(enc.put(3ULL));
+
+    // Fourth should fail (needs 8 more bytes, only 8 remain but need length prefix for string)
+    uint64_t fail_val = 4ULL;
+    FB_ASSERT_TRUE(enc.put(fail_val)); // This succeeds, exactly fills buffer
+
+    // Any further write should fail
+    FB_ASSERT_FALSE(enc.put(5ULL));
+
+    // Verify used space
+    FB_ASSERT_EQ(enc.used(), 32);
+}
+
+// Test decoding from partially consumed buffer
+FB_TEST(encoder_decoder_integrity, partial_consumption) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder enc(bl);
+
+    // Write known pattern
+    enc.put(0xDEADBEEFULL);
+    enc.put(0xCAFEBABEULL);
+    enc.put(std::string("marker"));
+
+    // Read back partially
+    bl.begin()->reset();
+    buffer_list_encoder reader(bl);
+
+    uint64_t v1, v2;
+    FB_ASSERT_TRUE(reader.get(v1));
+    FB_ASSERT_EQ(v1, 0xDEADBEEFULL);
+
+    FB_ASSERT_TRUE(reader.get(v2));
+    FB_ASSERT_EQ(v2, 0xCAFEBABEULL);
+
+    // At this point, reader position is at string "marker"
+    FB_ASSERT_EQ(reader.remain(), sizeof(uint64_t) + 6); // length prefix + "marker"
+}
