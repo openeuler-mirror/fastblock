@@ -1559,6 +1559,7 @@ FB_TEST(raft_configuration, initial_configuration) {
     // Initial configuration should be empty
     std::vector<int> nodes;
     FB_ASSERT_TRUE(nodes.empty());
+    FB_ASSERT_EQ(nodes.size(), 0);
 }
 
 FB_TEST(raft_configuration, add_node) {
@@ -1568,6 +1569,9 @@ FB_TEST(raft_configuration, add_node) {
     nodes.push_back(2);
     nodes.push_back(3);
     FB_ASSERT_EQ(nodes.size(), 3);
+    // Verify node IDs are unique
+    std::set<int> unique_nodes(nodes.begin(), nodes.end());
+    FB_ASSERT_EQ(unique_nodes.size(), 3);
 }
 
 FB_TEST(raft_configuration, remove_node) {
@@ -1575,58 +1579,87 @@ FB_TEST(raft_configuration, remove_node) {
     std::vector<int> nodes = {1, 2, 3, 4, 5};
     nodes.pop_back();
     FB_ASSERT_EQ(nodes.size(), 4);
+    // Verify remaining nodes don't contain removed ID
+    FB_ASSERT_TRUE(std::find(nodes.begin(), nodes.end(), 5) == nodes.end());
 }
 
 FB_TEST(raft_configuration, quorum_size) {
-    // Quorum size = majority
+    // Quorum size = majority = floor(N/2) + 1
     int cluster_size = 5;
     int quorum = (cluster_size / 2) + 1;
     FB_ASSERT_EQ(quorum, 3);
+    // Quorum must be > half
+    FB_ASSERT_TRUE(quorum > cluster_size / 2);
 }
 
 FB_TEST(raft_configuration, quorum_odd_cluster) {
-    // Odd cluster size quorum
+    // Odd cluster size: 3 -> quorum 2
     int cluster_size = 3;
     int quorum = (cluster_size / 2) + 1;
     FB_ASSERT_EQ(quorum, 2);
+    FB_ASSERT_TRUE(quorum <= cluster_size);
 }
 
 FB_TEST(raft_configuration, quorum_even_cluster) {
-    // Even cluster size quorum
+    // Even cluster size: 4 -> quorum 3
     int cluster_size = 4;
     int quorum = (cluster_size / 2) + 1;
     FB_ASSERT_EQ(quorum, 3);
+    // Quorum > N/2
+    FB_ASSERT_TRUE(quorum > cluster_size / 2);
 }
 
 FB_TEST(raft_configuration, majority_check) {
-    // Verify majority calculation
+    // Verify majority calculation with actual vote counts
     int total = 5;
-    int votes_needed = 3;
-    bool has_majority = (votes_needed > total / 2);
-    FB_ASSERT_TRUE(has_majority);
+    int votes_needed = (total / 2) + 1;  // 3
+
+    // Exactly majority
+    FB_ASSERT_TRUE(3 >= votes_needed);
+    // Below majority
+    FB_ASSERT_TRUE(2 < votes_needed);
+    // Majority formula correctness
+    FB_ASSERT_TRUE(votes_needed <= total);
 }
 
 FB_TEST(raft_configuration, single_node_cluster) {
-    // Single node cluster should work
+    // Single node cluster needs only 1 vote
     int cluster_size = 1;
     int quorum = 1;
     FB_ASSERT_TRUE(cluster_size == quorum);
+    // Single node is always leader when active
+    FB_ASSERT_TRUE(quorum == 1);
 }
 
-FB_TEST(raft_configuration, configuration_change) {
-    // Configuration change should be atomic
-    bool config_changing = true;
-    bool config_stable = false;
-    FB_ASSERT_TRUE(config_changing != config_stable);
-}
-
-FB_TEST(raft_configuration, joint_configuration) {
-    // Joint configuration for configuration change
+FB_TEST(raft_configuration, configuration_change_atomic) {
+    // Configuration change uses joint consensus (C_old + C_new)
     std::vector<int> old_config = {1, 2, 3};
     std::vector<int> new_config = {1, 2, 4};
-    // Both configurations should be valid
-    FB_ASSERT_TRUE(!old_config.empty());
-    FB_ASSERT_TRUE(!new_config.empty());
+
+    // During change, need quorum from BOTH configs
+    int old_quorum = (old_config.size() / 2) + 1;
+    int new_quorum = (new_config.size() / 2) + 1;
+
+    // Both quorums must be achievable simultaneously
+    FB_ASSERT_TRUE(old_quorum <= old_config.size());
+    FB_ASSERT_TRUE(new_quorum <= new_config.size());
+    FB_ASSERT_TRUE(old_quorum + new_quorum <= old_config.size() + new_config.size());
+}
+
+FB_TEST(raft_configuration, joint_configuration_overlap) {
+    // Joint configuration ensures smooth transition
+    std::vector<int> old_config = {1, 2, 3};
+    std::vector<int> new_config = {1, 2, 4};
+
+    // Find common nodes between old and new
+    std::vector<int> intersection;
+    std::set_intersection(old_config.begin(), old_config.end(),
+                           new_config.begin(), new_config.end(),
+                           std::back_inserter(intersection));
+
+    // Overlapping nodes ensure transition is possible
+    FB_ASSERT_TRUE(!intersection.empty());
+    FB_ASSERT_TRUE(intersection.size() >= 1);
 }
 
 // ============================================================================
