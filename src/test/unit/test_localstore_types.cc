@@ -18150,3 +18150,127 @@ FB_TEST(serialization_stress, batch_overflow_detection) {
     // 256 / 8 = 32 max uint64 values
     FB_ASSERT_EQ(successful_writes, 32);
 }
+
+// ============================================================================
+// Test Suite: log_entry_data_operations (Log Entry Data Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_entry_data_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_entry_data_operations) {
+    // Setup code here
+}
+
+// Test log entry with serialized data in buffer_list
+FB_TEST(log_entry_data_operations, entry_with_serialized_data) {
+    log_entry_t entry;
+    entry.term_id = 1;
+    entry.index = 50;
+    entry.size = 256;
+    entry.type = 1; // WRITE
+    entry.meta = "pool=1,pg=0";
+
+    // Simulate writing data into the entry's buffer_list
+    char data_buf[256];
+    spdk_buffer sbuf(data_buf, 256);
+    entry.data.append_buffer(sbuf);
+
+    // Serialize data into the buffer
+    buffer_list_encoder encoder(entry.data);
+    FB_ASSERT_TRUE(encoder.put(42ULL));
+    FB_ASSERT_TRUE(encoder.put(std::string("payload")));
+
+    // Entry should track correct byte count
+    FB_ASSERT_EQ(entry.data.bytes(), 256);
+}
+
+// Test multiple log entries in a vector with different types
+FB_TEST(log_entry_data_operations, entry_vector_with_types) {
+    std::vector<log_entry_t> entries;
+
+    // Create entries simulating different operation types
+    for (int i = 0; i < 10; i++) {
+        log_entry_t entry;
+        entry.term_id = 1;
+        entry.index = i;
+        entry.size = 1024;
+        entry.type = (i % 3 == 0) ? 1 : 2; // Alternating WRITE/DELETE
+        entry.meta = "op_" + std::to_string(i);
+
+        char buf[1024];
+        spdk_buffer sbuf(buf, 1024);
+        entry.data.append_buffer(sbuf);
+
+        entries.push_back(std::move(entry));
+    }
+
+    FB_ASSERT_EQ(entries.size(), 10);
+
+    // Verify entries maintain their metadata
+    int write_count = 0, delete_count = 0;
+    for (const auto& e : entries) {
+        if (e.type == 1) write_count++;
+        else delete_count++;
+    }
+
+    // 0,3,6,9 are WRITE (4), rest are DELETE (6)
+    FB_ASSERT_EQ(write_count, 4);
+    FB_ASSERT_EQ(delete_count, 6);
+}
+
+// Test log entry lifecycle: create, populate, encode, decode
+FB_TEST(log_entry_data_operations, full_lifecycle) {
+    // Create and populate
+    log_entry_t original;
+    original.term_id = 5;
+    original.index = 200;
+    original.size = 512;
+    original.type = 1;
+    original.meta = "lifecycle_test";
+
+    // Encode
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+    FB_ASSERT_TRUE(EncodeLogHeader(sbuf, original));
+
+    // Decode into new entry
+    sbuf.reset();
+    log_entry_t decoded;
+    FB_ASSERT_TRUE(DecodeLogHeader(sbuf, decoded));
+
+    // Verify all fields match
+    FB_ASSERT_EQ(decoded.term_id, 5);
+    FB_ASSERT_EQ(decoded.index, 200);
+    FB_ASSERT_EQ(decoded.size, 512);
+    FB_ASSERT_EQ(decoded.type, 1);
+    FB_ASSERT_EQ(decoded.meta, "lifecycle_test");
+
+    // Data field should still be default (not encoded in header)
+    FB_ASSERT_EQ(decoded.data.bytes(), 0);
+}
+
+// Test log entries with maximum field values
+FB_TEST(log_entry_data_operations, max_field_values) {
+    log_entry_t entry;
+    entry.term_id = UINT64_MAX;
+    entry.index = UINT64_MAX;
+    entry.size = UINT64_MAX;
+    entry.type = UINT64_MAX;
+    entry.meta = std::string(1000, 'Z');
+
+    char buffer[8192];
+    spdk_buffer sbuf(buffer, 8192);
+    FB_ASSERT_TRUE(EncodeLogHeader(sbuf, entry));
+
+    sbuf.reset();
+    log_entry_t decoded;
+    FB_ASSERT_TRUE(DecodeLogHeader(sbuf, decoded));
+
+    FB_ASSERT_EQ(decoded.term_id, UINT64_MAX);
+    FB_ASSERT_EQ(decoded.index, UINT64_MAX);
+    FB_ASSERT_EQ(decoded.size, UINT64_MAX);
+    FB_ASSERT_EQ(decoded.type, UINT64_MAX);
+    FB_ASSERT_EQ(decoded.meta.size(), 1000);
+}
