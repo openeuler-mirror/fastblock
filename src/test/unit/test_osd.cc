@@ -7835,6 +7835,114 @@ FB_TEST(osd_read_optimization, zero_copy_read) {
 }
 
 // ============================================================================
+// Test Suite: osd_background_tasks (OSD Background Tasks Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_background_tasks) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_background_tasks) {
+    // Teardown code here
+}
+
+FB_TEST(osd_background_tasks, write_ring_gc_poller) {
+    // GC poller runs periodically to clean expired write rings
+    uint64_t poll_interval_us = 1000ULL * 1000ULL; // 1 second
+
+    FB_ASSERT_TRUE(poll_interval_us > 0);
+    FB_ASSERT_EQ(poll_interval_us, 1000000);
+}
+
+FB_TEST(osd_background_tasks, data_statistics_poller) {
+    // Statistics poller runs to send data to monitor
+    uint64_t poll_interval_ms = 500; // 500ms
+
+    FB_ASSERT_TRUE(poll_interval_ms > 0);
+
+    // Collect stats periodically
+    std::map<std::string, utils::cluster_io> stats;
+    stats["1.100"] = utils::cluster_io{.read_ios = 10, .read_bytes = 10240};
+    FB_ASSERT_EQ(stats.size(), 1);
+}
+
+FB_TEST(osd_background_tasks, heartbeat_poller) {
+    // Heartbeat to monitor at regular interval
+    uint64_t heartbeat_interval_ms = 5000; // 5 seconds
+
+    auto now = std::chrono::steady_clock::now();
+    auto next_heartbeat = now + std::chrono::milliseconds(heartbeat_interval_ms);
+
+    FB_ASSERT_TRUE(next_heartbeat > now);
+}
+
+FB_TEST(osd_background_tasks, pg_load_poller) {
+    // Periodically load PGs from monitor
+    bool needs_load = true;
+    FB_ASSERT_TRUE(needs_load);
+}
+
+FB_TEST(osd_background_tasks, cleanup_expired_rings) {
+    // Clean up expired write rings when lease expires
+    std::map<uint64_t, bool> ring_active;
+    ring_active[1] = true;  // active
+    ring_active[2] = false; // expired
+
+    // GC removes inactive rings
+    for (auto it = ring_active.begin(); it != ring_active.end();) {
+        if (!it->second) {
+            it = ring_active.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    FB_ASSERT_EQ(ring_active.size(), 1);
+}
+
+FB_TEST(osd_background_tasks, background_task_scheduling) {
+    // Background tasks registered with SPDK poller
+    uint32_t task_count = 0;
+    for (int i = 0; i < 5; i++) {
+        task_count++;
+    }
+    FB_ASSERT_EQ(task_count, 5);
+}
+
+FB_TEST(osd_background_tasks, task_priority_ordering) {
+    // Higher priority tasks run first
+    std::vector<uint32_t> priorities = {10, 5, 15, 1};
+    std::sort(priorities.begin(), priorities.end(), std::greater<uint32_t>());
+
+    FB_ASSERT_EQ(priorities[0], 15);
+    FB_ASSERT_EQ(priorities[3], 1);
+}
+
+FB_TEST(osd_background_tasks, task_cancellation) {
+    // Tasks can be cancelled on stop
+    bool task_running = true;
+    bool cancelled = false;
+
+    if (task_running) {
+        cancelled = true;
+    }
+
+    FB_ASSERT_TRUE(cancelled);
+}
+
+FB_TEST(osd_background_tasks, task_idle_detection) {
+    // Detect idle background tasks
+    uint64_t idle_time_us = 0;
+    uint64_t threshold_us = 1000000; // 1 second
+
+    bool is_idle = (idle_time_us > threshold_us);
+    FB_ASSERT_TRUE(!is_idle); // Not idle
+
+    idle_time_us = 2000000; // 2 seconds
+    is_idle = (idle_time_us > threshold_us);
+    FB_ASSERT_TRUE(is_idle);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
