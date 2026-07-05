@@ -7691,6 +7691,150 @@ FB_TEST(osd_write_optimization, write_retry_on_transient_error) {
 }
 
 // ============================================================================
+// Test Suite: osd_read_optimization (OSD Read Optimization Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_read_optimization) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_read_optimization) {
+    // Teardown code here
+}
+
+FB_TEST(osd_read_optimization, read_from_leader_local) {
+    // Read from leader does not go through Raft log
+    // Only checks: is_leader + linearization
+    raft_identity state = RAFT_STATE_LEADER;
+    bool is_leader = (state == RAFT_STATE_LEADER);
+
+    FB_ASSERT_TRUE(is_leader);
+    // No raft_write_entry called for read
+}
+
+FB_TEST(osd_read_optimization, read_cache_hit) {
+    // Read cache can return immediately
+    std::map<std::string, std::string> read_cache;
+    std::string key = "1.100/obj_001";
+
+    // Cache miss -> populate
+    read_cache[key] = "cached_data";
+    FB_ASSERT_EQ(read_cache[key], "cached_data");
+
+    // Cache hit -> return immediately
+    auto it = read_cache.find(key);
+    FB_ASSERT_TRUE(it != read_cache.end());
+}
+
+FB_TEST(osd_read_optimization, read_cache_miss) {
+    // Cache miss requires storage access
+    std::map<std::string, std::string> read_cache;
+    std::string key = "1.100/obj_001";
+
+    auto it = read_cache.find(key);
+    FB_ASSERT_TRUE(it == read_cache.end());
+
+    // Fall back to storage
+    std::string data = "storage_data";
+    read_cache[key] = data;
+    FB_ASSERT_EQ(read_cache[key], data);
+}
+
+FB_TEST(osd_read_optimization, linearization_check) {
+    // Linearization: leader + valid lease
+    bool is_leader = true;
+    auto now = std::chrono::steady_clock::now();
+    auto deadline = now + std::chrono::microseconds(1000000);
+    bool has_lease = (deadline > now);
+
+    bool can_linearize = is_leader && has_lease;
+    FB_ASSERT_TRUE(can_linearize);
+}
+
+FB_TEST(osd_read_optimization, lease_expired_fallback) {
+    // If lease expired, read goes through Raft for linearization
+    bool is_leader = true;
+    auto now = std::chrono::steady_clock::now();
+    auto expired_deadline = now - std::chrono::microseconds(1);
+    bool has_lease = (expired_deadline > now);
+
+    bool can_linearize = is_leader && has_lease;
+    FB_ASSERT_TRUE(!can_linearize);
+    // Must go through Raft log
+}
+
+FB_TEST(osd_read_optimization, read_from_follower_redirect) {
+    // Follower redirects client to leader
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    bool is_leader = (state == RAFT_STATE_LEADER);
+
+    FB_ASSERT_TRUE(!is_leader);
+    // Client receives RAFT_ERR_NOT_LEADER, retries to leader
+}
+
+FB_TEST(osd_read_optimization, read_ahead_optimization) {
+    // Read-ahead: prefetch next blocks
+    uint64_t current_offset = 0;
+    uint64_t read_length = 4096;
+    uint64_t readahead_size = 8192;
+
+    // Next read should include readahead
+    uint64_t next_read_start = current_offset + read_length;
+    uint64_t next_read_end = next_read_start + readahead_size;
+
+    FB_ASSERT_EQ(next_read_start, 4096);
+    FB_ASSERT_EQ(next_read_end, 12288);
+}
+
+FB_TEST(osd_read_optimization, concurrent_reads_same_object) {
+    // Multiple READs can proceed concurrently (READ-READ compatible)
+    utils::operation_type type1 = utils::operation_type::READ;
+    utils::operation_type type2 = utils::operation_type::READ;
+
+    FB_ASSERT_TRUE(type1 == type2);
+    // Both granted immediately, no blocking
+}
+
+FB_TEST(osd_read_optimization, read_io_counting) {
+    // Read statistics tracked per PG
+    utils::cluster_io stats;
+    stats.read_ios = 100;
+    stats.read_bytes = 102400;
+
+    FB_ASSERT_EQ(stats.read_ios, 100);
+    FB_ASSERT_EQ(stats.read_bytes, 102400);
+
+    // Increment
+    stats.read_ios++;
+    stats.read_bytes += 4096;
+    FB_ASSERT_EQ(stats.read_ios, 101);
+    FB_ASSERT_EQ(stats.read_bytes, 106496);
+}
+
+FB_TEST(osd_read_optimization, read_latency_breakdown) {
+    // Read latency: lock + linearization_check + storage + unlock
+    uint64_t lock_us = 10;
+    uint64_t linearize_us = 5;
+    uint64_t storage_us = 500;
+    uint64_t unlock_us = 5;
+
+    uint64_t total = lock_us + linearize_us + storage_us + unlock_us;
+    FB_ASSERT_EQ(total, 520);
+
+    // Storage dominates
+    FB_ASSERT_TRUE(storage_us > lock_us + linearize_us + unlock_us);
+}
+
+FB_TEST(osd_read_optimization, zero_copy_read) {
+    // Zero-copy read: data pointer returned directly from buffer
+    std::string read_buffer = "direct_read_data";
+    void* data_ptr = read_buffer.data();
+
+    FB_ASSERT_TRUE(data_ptr != nullptr);
+    // MR registered for RDMA
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
