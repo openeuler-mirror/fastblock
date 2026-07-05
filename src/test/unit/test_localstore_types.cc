@@ -20985,3 +20985,53 @@ FB_TEST(buffer_list_prepend_operations, prepend_multiple) {
     ++it;
     FB_ASSERT_EQ(it->size(), 100);  // s1 last
 }
+
+// ============================================================================
+// Test Suite: buffer_list_trim_operations (Buffer List Trim Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_trim_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_trim_operations) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_list_trim_operations, trim_front_single) {
+    char b1[100], b2[200];
+    spdk_buffer s1(b1, 100), s2(b2, 200);
+    buffer_list bl;
+    bl.append_buffer(s1);
+    bl.append_buffer(s2);
+
+    bl.trim_front();
+    FB_ASSERT_EQ(bl.bytes(), 200);
+    auto it = bl.begin();
+    FB_ASSERT_EQ(it->size(), 200);
+}
+
+FB_TEST(buffer_list_trim_operations, trim_back_single) {
+    char b1[100], b2[200];
+    spdk_buffer s1(b1, 100), s2(b2, 200);
+    buffer_list bl;
+    bl.append_buffer(s1);
+    bl.append_buffer(s2);
+
+    bl.trim_back();
+    FB_ASSERT_EQ(bl.bytes(), 100);
+}
+
+FB_TEST(buffer_list_trim_operations, trim_front_back_sequence) {
+    char b1[100], b2[200], b3[300];
+    spdk_buffer s1(b1, 100), s2(b2, 200), s3(b3, 300);
+    buffer_list bl;
+    bl.append_buffer(s1);
+    bl.append_buffer(s2);
+    bl.append_buffer(s3);
+
+    bl.trim_front(); // Remove 100
+    FB_ASSERT_EQ(bl.bytes(), 500);
+    bl.trim_back();  // Remove 300
+    FB_ASSERT_EQ(bl.bytes(), 200);
+}
