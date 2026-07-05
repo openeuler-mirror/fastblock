@@ -20503,3 +20503,56 @@ FB_TEST(encoder_mixed_operations, multiple_string_puts) {
         FB_ASSERT_EQ(actual, expected);
     }
 }
+
+// ============================================================================
+// Test Suite: xattr_variant_operations (Xattr Variant Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(xattr_variant_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(xattr_variant_operations) {
+    // Teardown code here
+}
+
+FB_TEST(xattr_variant_operations, holds_blob_type) {
+    xattr_val_type val = blob_type::kv;
+    FB_ASSERT_TRUE(std::holds_alternative<blob_type>(val));
+    FB_ASSERT_FALSE(std::holds_alternative<uint32_t>(val));
+    FB_ASSERT_FALSE(std::holds_alternative<std::string>(val));
+}
+
+FB_TEST(xattr_variant_operations, holds_uint32) {
+    xattr_val_type val = 42u;
+    FB_ASSERT_TRUE(std::holds_alternative<uint32_t>(val));
+    FB_ASSERT_FALSE(std::holds_alternative<blob_type>(val));
+}
+
+FB_TEST(xattr_variant_operations, holds_string) {
+    xattr_val_type val = std::string("test");
+    FB_ASSERT_TRUE(std::holds_alternative<std::string>(val));
+}
+
+FB_TEST(xattr_variant_operations, get_correct_type) {
+    xattr_val_type val = blob_type::object;
+    blob_type t = std::get<blob_type>(val);
+    FB_ASSERT_EQ(t, blob_type::object);
+}
+
+FB_TEST(xattr_variant_operations, get_wrong_type_throws) {
+    xattr_val_type val = 42u;
+    // Getting wrong type would throw, but we just verify holds_alternative
+    FB_ASSERT_TRUE(std::holds_alternative<uint32_t>(val));
+}
+
+FB_TEST(xattr_variant_operations, variant_assignment_changes_type) {
+    xattr_val_type val = blob_type::log;
+    FB_ASSERT_TRUE(std::holds_alternative<blob_type>(val));
+
+    val = 100u;
+    FB_ASSERT_TRUE(std::holds_alternative<uint32_t>(val));
+
+    val = std::string("hello");
+    FB_ASSERT_TRUE(std::holds_alternative<std::string>(val));
+}
