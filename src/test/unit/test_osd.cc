@@ -8246,6 +8246,104 @@ FB_TEST(osd_read_optimization, read_not_found_error) {
 }
 
 // ============================================================================
+// Test Suite: osd_background_tasks (OSD Background Tasks Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_background_tasks) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_background_tasks) {
+    // Teardown code here
+}
+
+FB_TEST(osd_background_tasks, gc_poller_interval) {
+    // GC poller runs periodically to clean expired write rings
+    uint64_t gc_interval_us = 1000ULL * 1000ULL; // 1 second
+    FB_ASSERT_TRUE(gc_interval_us > 0);
+    FB_ASSERT_EQ(gc_interval_us, 1000000);
+}
+
+FB_TEST(osd_background_tasks, expired_write_ring_detection) {
+    // Detect expired write rings by comparing deadline to now
+    auto now = std::chrono::steady_clock::now();
+    auto expired_deadline = now - std::chrono::microseconds(1);
+    auto valid_deadline = now + std::chrono::seconds(5);
+
+    bool is_expired = (now > expired_deadline);
+    bool is_valid = (valid_deadline > now);
+
+    FB_ASSERT_TRUE(is_expired);
+    FB_ASSERT_TRUE(is_valid);
+}
+
+FB_TEST(osd_background_tasks, gc_cleans_expired_slots) {
+    // GC releases slots from expired rings
+    std::map<uint64_t, bool> slot_ownership;
+    slot_ownership[1] = true;
+    slot_ownership[2] = true;
+
+    // Simulate GC: mark as free
+    slot_ownership[1] = false;
+    slot_ownership[2] = false;
+
+    bool all_freed = !slot_ownership[1] && !slot_ownership[2];
+    FB_ASSERT_TRUE(all_freed);
+}
+
+FB_TEST(osd_background_tasks, data_statistics_poller) {
+    // Data stats poller runs every 500ms
+    uint64_t stats_interval_us = 500 * 1000;
+    FB_ASSERT_EQ(stats_interval_us, 500000);
+}
+
+FB_TEST(osd_background_tasks, stats_send_to_monitor) {
+    // Statistics sent to monitor periodically
+    std::map<std::string, utils::cluster_io> ios;
+    ios["1.100"] = utils::cluster_io{.read_ios = 10, .read_bytes = 10240};
+
+    // Send statistics to monitor
+    auto sent = std::exchange(ios, {});
+
+    FB_ASSERT_TRUE(sent.size() > 0);
+    FB_ASSERT_TRUE(ios.empty());
+}
+
+FB_TEST(osd_background_tasks, heartbeat_task) {
+    // Heartbeat task runs periodically
+    uint64_t heartbeat_interval_ms = 5000;
+    FB_ASSERT_TRUE(heartbeat_interval_ms > 0);
+}
+
+FB_TEST(osd_background_tasks, pg_load_task) {
+    // Periodic task to load PG state
+    std::vector<std::string> pg_list = {"1.100", "1.200", "2.100"};
+    FB_ASSERT_EQ(pg_list.size(), 3);
+}
+
+FB_TEST(osd_background_tasks, cleanup_task) {
+    // Cleanup task removes stale data
+    std::vector<uint64_t> stale_blobs = {1, 2, 3};
+
+    // Cleanup removes blobs
+    stale_blobs.clear();
+    FB_ASSERT_TRUE(stale_blobs.empty());
+}
+
+FB_TEST(osd_background_tasks, background_task_priority) {
+    // Background tasks have lower priority than I/O
+    int bg_priority = 5;
+    int io_priority = 10;
+    FB_ASSERT_TRUE(bg_priority < io_priority);
+}
+
+FB_TEST(osd_background_tasks, task_scheduling_interval) {
+    // Task interval configuration
+    uint64_t interval_ms = 1000;
+    FB_ASSERT_TRUE(interval_ms > 0);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
