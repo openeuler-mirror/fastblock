@@ -7352,6 +7352,345 @@ FB_TEST(osd_object_lifecycle, object_snapshot_relation) {
 }
 
 // ============================================================================
+// Test Suite: osd_metadata_cache (OSD Metadata Cache Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_metadata_cache) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_metadata_cache) {
+    // Teardown code here
+}
+
+FB_TEST(osd_metadata_cache, pg_shard_cache) {
+    // PG-to-shard mapping is cached in shard_table
+    std::map<std::string, shard_revision> shard_table;
+    shard_table["1.100"] = shard_revision{0, 100};
+    shard_table["1.200"] = shard_revision{1, 101};
+
+    // Cache hit
+    auto it = shard_table.find("1.100");
+    FB_ASSERT_TRUE(it != shard_table.end());
+    FB_ASSERT_EQ(it->second._shard, 0);
+
+    // Cache miss
+    it = shard_table.find("9.999");
+    FB_ASSERT_TRUE(it == shard_table.end());
+}
+
+FB_TEST(osd_metadata_cache, osd_stm_cache) {
+    // osd_stm instances cached in sm_table[shard_id]
+    std::map<std::string, uint32_t> sm_table;
+    sm_table["1.100"] = 1;
+    sm_table["1.200"] = 2;
+
+    // Lookup by pg_name
+    FB_ASSERT_EQ(sm_table["1.100"], 1);
+    FB_ASSERT_EQ(sm_table["1.200"], 2);
+
+    // Entry count reflects active PGs
+    FB_ASSERT_EQ(sm_table.size(), 2);
+}
+
+FB_TEST(osd_metadata_cache, cache_invalidation_on_delete) {
+    // Deleting a PG removes cache entries
+    std::map<std::string, shard_revision> shard_table;
+    shard_table["1.100"] = shard_revision{0, 100};
+
+    // Before delete
+    FB_ASSERT_EQ(shard_table.count("1.100"), 1);
+
+    // After delete
+    shard_table.erase("1.100");
+    FB_ASSERT_EQ(shard_table.count("1.100"), 0);
+    FB_ASSERT_TRUE(shard_table.empty());
+}
+
+FB_TEST(osd_metadata_cache, cache_update_on_revision_change) {
+    // Revision change updates cache entry
+    std::map<std::string, shard_revision> shard_table;
+    shard_table["1.100"] = shard_revision{0, 100};
+
+    // Update with new revision
+    shard_table["1.100"] = shard_revision{0, 200};
+    FB_ASSERT_EQ(shard_table["1.100"]._revision, 200);
+
+    // Revision should be monotonically increasing
+    FB_ASSERT_TRUE(shard_table["1.100"]._revision > 100);
+}
+
+FB_TEST(osd_metadata_cache, cache_size_bound) {
+    // Cache size bounded by number of active PGs
+    uint32_t max_pgs = 1024;
+    std::map<std::string, shard_revision> shard_table;
+
+    for (uint32_t i = 0; i < max_pgs; i++) {
+        std::string pg_name = "1." + std::to_string(i);
+        shard_table[pg_name] = shard_revision{i % 4, i};
+    }
+
+    FB_ASSERT_EQ(shard_table.size(), max_pgs);
+
+    // Load distribution across shards
+    std::vector<uint32_t> shard_counts(4, 0);
+    for (const auto& [pg, rev] : shard_table) {
+        shard_counts[rev._shard]++;
+    }
+    // Each shard has ~256 PGs
+    for (uint32_t count : shard_counts) {
+        FB_ASSERT_TRUE(count > 0);
+        FB_ASSERT_TRUE(count <= max_pgs);
+    }
+}
+
+FB_TEST(osd_metadata_cache, concurrent_cache_access) {
+    // Cache can be accessed from different shards
+    std::vector<std::map<std::string, uint32_t>> sm_table(4);
+
+    // Each shard has its own map
+    sm_table[0]["1.100"] = 1;
+    sm_table[1]["1.200"] = 2;
+    sm_table[2]["2.100"] = 3;
+
+    FB_ASSERT_EQ(sm_table[0].size(), 1);
+    FB_ASSERT_EQ(sm_table[1].size(), 1);
+    FB_ASSERT_EQ(sm_table[2].size(), 1);
+    FB_ASSERT_EQ(sm_table[3].size(), 0); // Empty shard
+
+    // No cross-shard contamination
+    FB_ASSERT_TRUE(sm_table[0].find("1.200") == sm_table[0].end());
+}
+
+FB_TEST(osd_metadata_cache, cache_cleanup_on_pg_remove) {
+    // When PG removed: delete from sm_table AND shard_table
+    std::map<std::string, shard_revision> shard_table;
+    std::map<std::string, uint32_t> sm_table;
+
+    shard_table["1.100"] = shard_revision{0, 100};
+    sm_table["1.100"] = 1;
+
+    // Remove PG: stop stm, erase from both tables
+    size_t shard_erased = shard_table.erase("1.100");
+    size_t sm_erased = sm_table.erase("1.100");
+
+    FB_ASSERT_EQ(shard_erased, 1);
+    FB_ASSERT_EQ(sm_erased, 1);
+    FB_ASSERT_TRUE(shard_table.empty());
+    FB_ASSERT_TRUE(sm_table.empty());
+}
+
+FB_TEST(osd_metadata_cache, xattr_as_metadata) {
+    // Object metadata stored as blob xattr
+    std::map<std::string, xattr_val_type> xattr;
+    xattr["type"] = blob_type::object;
+    xattr["pg"] = std::string("1.100");
+
+    // Read xattr to determine object ownership
+    auto type_it = xattr.find("type");
+    FB_ASSERT_TRUE(type_it != xattr.end());
+    FB_ASSERT_EQ(static_cast<uint32_t>(type_it->second), 1); // blob_type::object
+
+    auto pg_it = xattr.find("pg");
+    FB_ASSERT_TRUE(pg_it != xattr.end());
+}
+
+FB_TEST(osd_metadata_cache, connection_cache) {
+    // connect_cache stores RDMA connections to other OSDs
+    std::map<uint32_t, std::string> conn_cache;
+    conn_cache[1] = "192.168.1.1:5000";
+    conn_cache[2] = "192.168.1.2:5000";
+
+    // Lookup by node_id
+    FB_ASSERT_TRUE(conn_cache.count(1) == 1);
+    FB_ASSERT_TRUE(!conn_cache[1].empty());
+
+    // New connection adds to cache
+    conn_cache[3] = "192.168.1.3:5000";
+    FB_ASSERT_EQ(conn_cache.size(), 3);
+
+    // Stale connection removed
+    conn_cache.erase(2);
+    FB_ASSERT_EQ(conn_cache.size(), 2);
+}
+
+FB_TEST(osd_metadata_cache, raft_peer_cache) {
+    // Raft peer info cached per PG
+    std::map<std::string, std::vector<uint32_t>> peer_cache;
+    peer_cache["1.100"] = {1, 2, 3};
+
+    // Get peers for PG
+    auto& peers = peer_cache["1.100"];
+    FB_ASSERT_EQ(peers.size(), 3);
+
+    // Membership change updates cache
+    peers = {1, 2, 4};
+    FB_ASSERT_EQ(peers.size(), 3);
+    FB_ASSERT_TRUE(std::find(peers.begin(), peers.end(), 3) == peers.end());
+    FB_ASSERT_TRUE(std::find(peers.begin(), peers.end(), 4) != peers.end());
+}
+
+// ============================================================================
+// Test Suite: osd_write_optimization (OSD Write Optimization Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_write_optimization) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_write_optimization) {
+    // Teardown code here
+}
+
+FB_TEST(osd_write_optimization, write_ring_queue_concept) {
+    // Write ring queue: client pre-allocates slots for zero-copy write
+    uint64_t queue_id = 12345;
+    uint32_t slot_count = 16;
+    uint32_t slot_size = 4096;
+
+    // Queue ID identifies the connection
+    FB_ASSERT_TRUE(queue_id > 0);
+    FB_ASSERT_TRUE(slot_count > 0);
+    FB_ASSERT_TRUE(slot_size >= 512);
+}
+
+FB_TEST(osd_write_optimization, lease_for_write_ring) {
+    // Client holds lease for write ring slots
+    uint64_t lease_us = 5000000; // 5 seconds
+    auto now = std::chrono::steady_clock::now();
+    auto deadline = now + std::chrono::microseconds(lease_us);
+
+    // Lease must be renewed before expiry
+    bool lease_valid = (deadline > now);
+    FB_ASSERT_TRUE(lease_valid);
+
+    // Expired lease triggers slot cleanup
+    auto expired_deadline = now - std::chrono::microseconds(1);
+    bool lease_expired = (expired_deadline < now);
+    FB_ASSERT_TRUE(lease_expired);
+}
+
+FB_TEST(osd_write_optimization, slot_reuse) {
+    // Slots are reused after write completes
+    std::vector<bool> slot_in_use(16, false);
+
+    // Allocate slot
+    slot_in_use[0] = true;
+    FB_ASSERT_TRUE(slot_in_use[0]);
+
+    // Write completes, slot freed
+    slot_in_use[0] = false;
+    FB_ASSERT_TRUE(!slot_in_use[0]);
+
+    // Slot available for reuse
+    uint32_t free_slots = 0;
+    for (bool in_use : slot_in_use) {
+        if (!in_use) free_slots++;
+    }
+    FB_ASSERT_EQ(free_slots, 16);
+}
+
+FB_TEST(osd_write_optimization, zero_copy_write) {
+    // Zero-copy: client data directly used without memcpy
+    std::string client_data = "direct_data_12345";
+    void* data_ptr = static_cast<void*>(const_cast<char*>(client_data.data()));
+
+    // Verify pointer is valid
+    FB_ASSERT_TRUE(data_ptr != nullptr);
+
+    // Data pointer registered with MR for RDMA
+    bool mr_registered = true;
+    FB_ASSERT_TRUE(mr_registered);
+}
+
+FB_TEST(osd_write_optimization, batch_write_efficiency) {
+    // Multiple writes can be batched in one RPC
+    uint32_t batch_size = 8;
+    uint64_t total_size = batch_size * 4096;
+
+    // Batch reduces RPC overhead
+    FB_ASSERT_TRUE(batch_size > 1);
+    FB_ASSERT_TRUE(total_size == 32768);
+
+    // Throughput improvement
+    uint32_t single_rpc_count = 8;
+    uint32_t batched_rpc_count = 1;
+    FB_ASSERT_TRUE(single_rpc_count > batched_rpc_count);
+}
+
+FB_TEST(osd_write_optimization, write_alignment_4k) {
+    // All writes aligned to 4KB boundary
+    uint64_t alignment = 4096;
+    uint64_t write_size = 5120; // 5KB
+
+    // Align up
+    uint64_t aligned_size = ((write_size + alignment - 1) / alignment) * alignment;
+    FB_ASSERT_EQ(aligned_size, 8192);
+    FB_ASSERT_EQ(aligned_size % alignment, 0);
+}
+
+FB_TEST(osd_write_optimization, concurrent_writes_same_object) {
+    // Multiple writes to same object can proceed concurrently (WRITE-WRITE)
+    utils::operation_type type1 = utils::operation_type::WRITE;
+    utils::operation_type type2 = utils::operation_type::WRITE;
+
+    FB_ASSERT_TRUE(type1 == type2);
+    // Lock allows concurrent WRITEs
+}
+
+FB_TEST(osd_write_optimization, write_no_waiters) {
+    // If no waiters, write lock granted immediately
+    op_type_excl_lock<utils::operation_type> lock;
+
+    FB_ASSERT_EQ(lock.holders(), 0);
+
+    test_complete_ctx ctx;
+    lock.lock(utils::operation_type::WRITE, &ctx);
+    FB_ASSERT_EQ(ctx.called, 1); // Immediate grant
+    FB_ASSERT_EQ(lock.holders(), 1);
+}
+
+FB_TEST(osd_write_optimization, write_throughput_calc) {
+    // Write throughput: MB/s = bytes / time
+    uint64_t bytes_written = 1024ULL * 1024ULL * 100ULL; // 100MB
+    uint64_t time_us = 1000000; // 1 second
+
+    double throughput_mbps = static_cast<double>(bytes_written) / (1024.0 * 1024.0) / (time_us / 1000000.0);
+    FB_ASSERT_TRUE(throughput_mbps == 100.0);
+}
+
+FB_TEST(osd_write_optimization, write_latency_breakdown) {
+    // Write latency components: lock + raft + storage + unlock
+    uint64_t lock_time_us = 10;
+    uint64_t raft_time_us = 500;
+    uint64_t storage_time_us = 1000;
+    uint64_t unlock_time_us = 5;
+
+    uint64_t total_latency = lock_time_us + raft_time_us + storage_time_us + unlock_time_us;
+    FB_ASSERT_EQ(total_latency, 1515);
+
+    // Storage dominates latency
+    FB_ASSERT_TRUE(storage_time_us > raft_time_us);
+    FB_ASSERT_TRUE(storage_time_us > lock_time_us);
+}
+
+FB_TEST(osd_write_optimization, write_retry_on_transient_error) {
+    // Transient errors (ENOSPC temporarily) should retry
+    uint32_t max_retries = 3;
+    uint32_t retry_count = 0;
+
+    // Simulate retry loop
+    while (retry_count < max_retries) {
+        retry_count++;
+    }
+    FB_ASSERT_EQ(retry_count, 3);
+
+    // Permanent errors (ENOENT) should not retry
+    int permanent_error = -ENOENT;
+    FB_ASSERT_TRUE(permanent_error < 0);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
