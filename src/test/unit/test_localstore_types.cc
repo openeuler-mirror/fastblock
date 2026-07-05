@@ -20404,3 +20404,102 @@ FB_TEST(serialization_varint_patterns, mixed_operations_stress) {
         FB_ASSERT_EQ(v64, i * 1000ULL);
     }
 }
+
+// ============================================================================
+// Test Suite: encoder_mixed_operations (Encoder Mixed Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(encoder_mixed_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(encoder_mixed_operations) {
+    // Teardown code here
+}
+
+FB_TEST(encoder_mixed_operations, encode_decode_roundtrip) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    // Encode multiple types
+    buffer_list_encoder enc(bl);
+    enc.put(42ULL);
+    enc.put("test_string");
+    enc.put("raw", 3);
+
+    // Decode in same order
+    bl.begin()->reset();
+    buffer_list_encoder dec(bl);
+
+    uint64_t val64;
+    std::string str;
+    char raw[10] = {0};
+
+    bool ok1 = dec.get(val64);
+    bool ok2 = dec.get(str);
+    bool ok3 = dec.get(raw, 3);
+
+    FB_ASSERT_TRUE(ok1);
+    FB_ASSERT_TRUE(ok2);
+    FB_ASSERT_TRUE(ok3);
+    FB_ASSERT_EQ(val64, 42ULL);
+    FB_ASSERT_EQ(str, "test_string");
+    FB_ASSERT_EQ(std::string(raw, 3), "raw");
+}
+
+FB_TEST(encoder_mixed_operations, encoder_used_increases) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder enc(bl);
+    size_t initial_used = enc.used();
+
+    enc.put(1ULL);
+    FB_ASSERT_GT(enc.used(), initial_used);
+
+    enc.put("hello");
+    FB_ASSERT_GT(enc.used(), initial_used + 8);
+}
+
+FB_TEST(encoder_mixed_operations, encoder_remain_decreases) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder enc(bl);
+    size_t initial_remain = enc.remain();
+
+    enc.put(1ULL);
+    FB_ASSERT_LT(enc.remain(), initial_remain);
+
+    enc.put("hello");
+    FB_ASSERT_LT(enc.remain(), initial_remain - 8);
+}
+
+FB_TEST(encoder_mixed_operations, multiple_string_puts) {
+    char buffer[4096];
+    spdk_buffer sbuf(buffer, 4096);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list_encoder enc(bl);
+
+    std::string strings[] = {"one", "two", "three", "four", "five"};
+    for (const auto& s : strings) {
+        enc.put(s);
+    }
+
+    bl.begin()->reset();
+    buffer_list_encoder dec(bl);
+
+    for (const auto& expected : strings) {
+        std::string actual;
+        dec.get(actual);
+        FB_ASSERT_EQ(actual, expected);
+    }
+}
