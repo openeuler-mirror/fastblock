@@ -20109,3 +20109,185 @@ FB_TEST(context_default_state, set_xattr_ctx_defaults) {
     FB_ASSERT_EQ(ctx.cb_fn, nullptr);
     FB_ASSERT_EQ(ctx.arg, nullptr);
 }
+
+// ============================================================================
+// Test Suite: buffer_list_iterator_operations (Buffer List Iterator Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_iterator_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_iterator_operations) {
+    // Setup code here
+}
+
+// Test forward iteration over single buffer
+FB_TEST(buffer_list_iterator_operations, forward_single) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    auto it = bl.begin();
+    FB_ASSERT_TRUE(it != bl.end());
+    FB_ASSERT_EQ(it->size(), 100);
+
+    ++it;
+    FB_ASSERT_TRUE(it == bl.end());
+}
+
+// Test forward iteration over multiple buffers
+FB_TEST(buffer_list_iterator_operations, forward_multiple) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    size_t expected_sizes[] = {100, 200, 300};
+    int index = 0;
+    for (auto it = bl.begin(); it != bl.end(); ++it) {
+        FB_ASSERT_EQ(it->size(), expected_sizes[index]);
+        index++;
+    }
+    FB_ASSERT_EQ(index, 3);
+}
+
+// Test post-increment iterator
+FB_TEST(buffer_list_iterator_operations, post_increment) {
+    char buffer1[50], buffer2[100];
+    spdk_buffer sbuf1(buffer1, 50);
+    spdk_buffer sbuf2(buffer2, 100);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    auto it = bl.begin();
+    spdk_buffer first = *it++;  // Post-increment
+    FB_ASSERT_EQ(first.size(), 50);
+    FB_ASSERT_EQ(it->size(), 100);
+}
+
+// Test iterator dereference returns correct buffer
+FB_TEST(buffer_list_iterator_operations, dereference_correct) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    auto it = bl.begin();
+    spdk_buffer& ref = *it;
+    FB_ASSERT_EQ(ref.size(), 256);
+    FB_ASSERT_EQ(ref.used(), 0);
+    FB_ASSERT_EQ(ref.remain(), 256);
+}
+
+// Test const_iterator on buffer_list
+FB_TEST(buffer_list_iterator_operations, const_iterator) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    buffer_list::const_iterator cit = bl.begin();
+    FB_ASSERT_TRUE(cit != bl.end());
+    FB_ASSERT_EQ(cit->size(), 100);
+
+    ++cit;
+    FB_ASSERT_TRUE(cit == bl.end());
+}
+
+// Test iteration after splice
+FB_TEST(buffer_list_iterator_operations, iteration_after_splice) {
+    char buffer1[100], buffer2[200];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+
+    buffer_list bl1, bl2;
+    bl1.append_buffer(sbuf1);
+    bl2.append_buffer(sbuf2);
+
+    bl1.append_buffer(std::move(bl2));
+
+    int count = 0;
+    for (auto& buf : bl1) {
+        count++;
+    }
+    FB_ASSERT_EQ(count, 2);
+}
+
+// Test iteration after pop_front
+FB_TEST(buffer_list_iterator_operations, iteration_after_pop) {
+    char buffer1[100], buffer2[200], buffer3[300];
+    spdk_buffer sbuf1(buffer1, 100);
+    spdk_buffer sbuf2(buffer2, 200);
+    spdk_buffer sbuf3(buffer3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    bl.pop_front();
+
+    size_t expected_sizes[] = {200, 300};
+    int index = 0;
+    for (auto& buf : bl) {
+        FB_ASSERT_EQ(buf.size(), expected_sizes[index]);
+        index++;
+    }
+    FB_ASSERT_EQ(index, 2);
+}
+
+// Test range-based for loop
+FB_TEST(buffer_list_iterator_operations, range_based_for) {
+    char buffers[10][64];
+    buffer_list bl;
+
+    for (int i = 0; i < 10; i++) {
+        spdk_buffer sbuf(buffers[i], 64);
+        bl.append_buffer(sbuf);
+    }
+
+    int count = 0;
+    for (const auto& buf : bl) {
+        FB_ASSERT_EQ(buf.size(), 64);
+        count++;
+    }
+    FB_ASSERT_EQ(count, 10);
+}
+
+// Test iterator equality comparison
+FB_TEST(buffer_list_iterator_operations, iterator_equality) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+
+    auto it1 = bl.begin();
+    auto it2 = bl.begin();
+    FB_ASSERT_TRUE(it1 == it2);
+
+    ++it1;
+    FB_ASSERT_FALSE(it1 == it2);
+}
+
+// Test iterator on empty list
+FB_TEST(buffer_list_iterator_operations, empty_list_iterator) {
+    buffer_list bl;
+
+    auto it = bl.begin();
+    FB_ASSERT_TRUE(it == bl.end());
+
+    int count = 0;
+    for (auto& buf : bl) {
+        count++;
+    }
+    FB_ASSERT_EQ(count, 0);
+}
