@@ -20797,3 +20797,96 @@ FB_TEST(buffer_list_prepend_operations, prepend_affects_order) {
 
     FB_ASSERT_EQ(bl.begin()->size(), 200);
 }
+
+// ============================================================================
+// Test Suite: serialization_string_edge_cases (Serialization String Edge Cases Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(serialization_string_edge_cases) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(serialization_string_edge_cases) {
+    // Teardown code here
+}
+
+FB_TEST(serialization_string_edge_cases, string_with_null_bytes) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    std::string original = std::string("hello\0world", 11);
+    PutString(sbuf, original);
+
+    sbuf.reset();
+    std::string decoded;
+    GetString(sbuf, decoded);
+
+    FB_ASSERT_EQ(decoded.size(), original.size());
+}
+
+FB_TEST(serialization_string_edge_cases, very_long_string) {
+    char buffer[8192];
+    spdk_buffer sbuf(buffer, 8192);
+
+    std::string original(7000, 'X');
+    bool ok = PutString(sbuf, original);
+    FB_ASSERT_TRUE(ok);
+
+    sbuf.reset();
+    std::string decoded;
+    GetString(sbuf, decoded);
+    FB_ASSERT_EQ(decoded, original);
+}
+
+FB_TEST(serialization_string_edge_cases, single_char_string) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    PutString(sbuf, "A");
+
+    sbuf.reset();
+    std::string decoded;
+    GetString(sbuf, decoded);
+    FB_ASSERT_EQ(decoded, "A");
+}
+
+FB_TEST(serialization_string_edge_cases, whitespace_string) {
+    char buffer[256];
+    spdk_buffer sbuf(buffer, 256);
+
+    std::string original = "  spaces  and\n\ttabs  ";
+    PutString(sbuf, original);
+
+    sbuf.reset();
+    std::string decoded;
+    GetString(sbuf, decoded);
+    FB_ASSERT_EQ(decoded, original);
+}
+
+FB_TEST(serialization_string_edge_cases, unicode_string) {
+    char buffer[512];
+    spdk_buffer sbuf(buffer, 512);
+
+    std::string original = "你好世界";
+    PutString(sbuf, original);
+
+    sbuf.reset();
+    std::string decoded;
+    GetString(sbuf, decoded);
+    FB_ASSERT_EQ(decoded, original);
+}
+
+FB_TEST(serialization_string_edge_cases, boundary_size_string) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+
+    // String that just fits
+    std::string original(1016, 'B'); // 8 bytes for length + 1016 = 1024
+    bool ok = PutString(sbuf, original);
+    FB_ASSERT_TRUE(ok);
+
+    sbuf.reset();
+    std::string decoded;
+    GetString(sbuf, decoded);
+    FB_ASSERT_EQ(decoded, original);
+}
