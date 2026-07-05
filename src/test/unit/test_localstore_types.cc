@@ -20943,3 +20943,45 @@ FB_TEST(buffer_list_pop_front_operations, pop_front_list) {
     FB_ASSERT_EQ(front_list.bytes(), 300);
     FB_ASSERT_EQ(bl.bytes(), 300);
 }
+
+// ============================================================================
+// Test Suite: buffer_list_prepend_operations (Buffer List Prepend Operations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_prepend_operations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_prepend_operations) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_list_prepend_operations, prepend_single) {
+    char b1[100], b2[200];
+    spdk_buffer s1(b1, 100), s2(b2, 200);
+    buffer_list bl;
+    bl.append_buffer(s1);
+    bl.prepend_buffer(s2);
+
+    FB_ASSERT_EQ(bl.bytes(), 300);
+    // First buffer should be s2
+    auto it = bl.begin();
+    FB_ASSERT_EQ(it->size(), 200);
+}
+
+FB_TEST(buffer_list_prepend_operations, prepend_multiple) {
+    char b1[100], b2[200], b3[300];
+    spdk_buffer s1(b1, 100), s2(b2, 200), s3(b3, 300);
+    buffer_list bl;
+    bl.append_buffer(s1);
+    bl.prepend_buffer(s2);
+    bl.prepend_buffer(s3);
+
+    FB_ASSERT_EQ(bl.bytes(), 600);
+    auto it = bl.begin();
+    FB_ASSERT_EQ(it->size(), 300);  // s3 first
+    ++it;
+    FB_ASSERT_EQ(it->size(), 200); // s2 second
+    ++it;
+    FB_ASSERT_EQ(it->size(), 100);  // s1 last
+}
