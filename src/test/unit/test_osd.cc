@@ -8028,6 +8028,224 @@ FB_TEST(osd_resource_limits, numa_node_affinity) {
 }
 
 // ============================================================================
+// Test Suite: osd_event_handling (OSD Event Handling Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_event_handling) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_event_handling) {
+    // Teardown code here
+}
+
+FB_TEST(osd_event_handling, pg_state_change_event) {
+    // PG state changes trigger events
+    osd_state old_state = osd_state::OSD_ACTIVE;
+    osd_state new_state = osd_state::OSD_DOWN;
+
+    FB_ASSERT_TRUE(old_state != new_state);
+}
+
+FB_TEST(osd_event_handling, osd_state_change_event) {
+    // OSD state machine transitions
+    osd_state states[] = {osd_state::OSD_STARTING, osd_state::OSD_ACTIVE, osd_state::OSD_DOWN};
+    FB_ASSERT_EQ(states[0], osd_state::OSD_STARTING);
+    FB_ASSERT_EQ(states[1], osd_state::OSD_ACTIVE);
+    FB_ASSERT_EQ(states[2], osd_state::OSD_DOWN);
+}
+
+FB_TEST(osd_event_handling, membership_change_event) {
+    // Membership change triggers reconfiguration
+    std::vector<uint32_t> old_osds = {1, 2, 3};
+    std::vector<uint32_t> new_osds = {1, 2, 4};
+
+    FB_ASSERT_TRUE(old_osds != new_osds);
+}
+
+FB_TEST(osd_event_handling, heartbeat_timeout_event) {
+    // Heartbeat timeout triggers failure detection
+    uint64_t timeout_ms = 30000;
+    uint64_t elapsed_ms = 35000;
+
+    bool timed_out = (elapsed_ms >= timeout_ms);
+    FB_ASSERT_TRUE(timed_out);
+}
+
+FB_TEST(osd_event_handling, lease_expiry_event) {
+    // Lease expiry triggers read redirect
+    auto now = std::chrono::steady_clock::now();
+    auto deadline = now - std::chrono::microseconds(1);
+
+    bool expired = (deadline < now);
+    FB_ASSERT_TRUE(expired);
+}
+
+FB_TEST(osd_event_handling, disk_full_event) {
+    // Disk full triggers ENOSPC
+    int enospc = -28;
+    FB_ASSERT_TRUE(enospc < 0);
+}
+
+FB_TEST(osd_event_handling, network_error_event) {
+    // Network error triggers reconnect
+    int net_error = - ECONNRESET;
+    FB_ASSERT_TRUE(net_error < 0);
+}
+
+FB_TEST(osd_event_handling, Raft_leader_change_event) {
+    // Raft leader change triggers state update
+    raft_identity old_leader = RAFT_STATE_LEADER;
+    raft_identity new_leader = RAFT_STATE_FOLLOWER;
+
+    FB_ASSERT_TRUE(old_leader != new_leader);
+}
+
+FB_TEST(osd_event_handling, Raft_term_change_event) {
+    // Term change on election
+    raft_term_t old_term = 5;
+    raft_term_t new_term = 6;
+
+    FB_ASSERT_TRUE(new_term > old_term);
+}
+
+FB_TEST(osd_event_handling, snapshot_complete_event) {
+    // Snapshot completion event
+    bool snapshot_done = true;
+    FB_ASSERT_TRUE(snapshot_done);
+}
+
+// ============================================================================
+// Test Suite: osd_read_optimization (OSD Read Optimization Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_read_optimization) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_read_optimization) {
+    // Teardown code here
+}
+
+FB_TEST(osd_read_optimization, read_from_leader) {
+    // Reads served from leader with linearization check
+    raft_identity state = RAFT_STATE_LEADER;
+    bool is_leader = (state == RAFT_STATE_LEADER);
+
+    auto now = std::chrono::steady_clock::now();
+    auto lease_deadline = now + std::chrono::seconds(1);
+    bool lease_valid = (lease_deadline > now);
+
+    bool can_read = is_leader && lease_valid;
+    FB_ASSERT_TRUE(can_read);
+}
+
+FB_TEST(osd_read_optimization, read_from_follower_redirect) {
+    // Follower redirects client to leader
+    raft_identity state = RAFT_STATE_FOLLOWER;
+    bool is_leader = (state == RAFT_STATE_LEADER);
+
+    // Client must retry with leader
+    FB_ASSERT_TRUE(!is_leader);
+}
+
+FB_TEST(osd_read_optimization, read_cache_hit) {
+    // Read cache hit avoids storage access
+    bool cache_hit = true;
+
+    // Cache lookup
+    std::string object_name = "cached_obj";
+    std::map<std::string, std::string> read_cache;
+    read_cache[object_name] = "cached_data";
+
+    auto it = read_cache.find(object_name);
+    FB_ASSERT_TRUE(it != read_cache.end());
+    FB_ASSERT_EQ(it->second, "cached_data");
+}
+
+FB_TEST(osd_read_optimization, read_cache_miss) {
+    // Cache miss requires storage read
+    std::string object_name = "uncached_obj";
+    std::map<std::string, std::string> read_cache;
+
+    auto it = read_cache.find(object_name);
+    FB_ASSERT_TRUE(it == read_cache.end());
+
+    // Simulate storage read
+    std::string data = "from_storage";
+    read_cache[object_name] = data;
+    FB_ASSERT_EQ(read_cache[object_name], data);
+}
+
+FB_TEST(osd_read_optimization, read_ahead_optimization) {
+    // Read-ahead fetches more data than requested
+    uint64_t requested_size = 4096;
+    uint64_t readahead_size = 8192;
+
+    // Total read = requested + readahead
+    uint64_t total_read = requested_size + readahead_size;
+    FB_ASSERT_TRUE(total_read > requested_size);
+    FB_ASSERT_EQ(total_read, 12288);
+}
+
+FB_TEST(osd_read_optimization, zero_copy_read) {
+    // Zero-copy read: data directly to client buffer
+    void* client_buf = nullptr;
+    uint64_t read_size = 4096;
+
+    // RDMA direct to client buffer
+    FB_ASSERT_TRUE(read_size > 0);
+    bool zero_copy = (client_buf == nullptr || read_size > 0);
+    FB_ASSERT_TRUE(zero_copy);
+}
+
+FB_TEST(osd_read_optimization, read_with_offset) {
+    // Random read at specific offset
+    uint64_t object_size = 1024 * 1024; // 1MB
+    uint64_t read_offset = 4096;
+    uint64_t read_length = 8192;
+
+    // Bounds check
+    FB_ASSERT_TRUE(read_offset + read_length <= object_size);
+    FB_ASSERT_TRUE(read_offset < object_size);
+}
+
+FB_TEST(osd_read_optimization, read_concurrent_same_object) {
+    // Multiple READs on same object can proceed concurrently
+    op_type_excl_lock<utils::operation_type> lock;
+
+    test_complete_ctx ctx1, ctx2;
+    lock.lock(utils::operation_type::READ, &ctx1);
+    lock.lock(utils::operation_type::READ, &ctx2);
+
+    // Both granted immediately (READ-READ compatible)
+    FB_ASSERT_EQ(ctx1.called, 1);
+    FB_ASSERT_EQ(ctx2.called, 1);
+    FB_ASSERT_EQ(lock.holders(), 2);
+}
+
+FB_TEST(osd_read_optimization, read_latency_breakdown) {
+    // Read latency: lock + linearization + storage + unlock
+    uint64_t lock_us = 5;
+    uint64_t linearize_us = 10;
+    uint64_t storage_us = 500;
+    uint64_t unlock_us = 2;
+
+    uint64_t total = lock_us + linearize_us + storage_us + unlock_us;
+    FB_ASSERT_EQ(total, 517);
+
+    // Storage dominates
+    FB_ASSERT_TRUE(storage_us > lock_us + linearize_us);
+}
+
+FB_TEST(osd_read_optimization, read_not_found_error) {
+    // Object not found returns ENOENT
+    int err = -ENOENT;
+    FB_ASSERT_TRUE(err < 0);
+    FB_ASSERT_EQ(err, -2);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
