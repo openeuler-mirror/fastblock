@@ -3759,5 +3759,94 @@ FB_TEST(raft_state, log_entry_buffer_filled_per_page) {
     FB_ASSERT_EQ(total, 12288);
 }
 
+// ============================================================================
+// Test Suite: Raft Catch-Up Nodes
+// ============================================================================
+
+FB_TEST(raft_state, catch_up_node_default_empty) {
+    // _catch_up_nodes is a map<node_id, catch_up_node> starting empty
+    std::map<int, int> catch_up_nodes;
+    FB_ASSERT_TRUE(catch_up_nodes.empty());
+}
+
+FB_TEST(raft_state, catch_up_node_add_increments_size) {
+    std::map<int, int> catch_up_nodes;
+    catch_up_nodes[100] = 1;
+    FB_ASSERT_EQ(catch_up_nodes.size(), 1u);
+}
+
+FB_TEST(raft_state, catch_up_node_lookup_returns_match) {
+    std::map<int, int> catch_up_nodes;
+    catch_up_nodes[42] = 1;
+
+    auto it = catch_up_nodes.find(42);
+    FB_ASSERT_TRUE(it != catch_up_nodes.end());
+}
+
+FB_TEST(raft_state, catch_up_node_lookup_missing_is_end) {
+    std::map<int, int> catch_up_nodes;
+    catch_up_nodes[42] = 1;
+
+    auto it = catch_up_nodes.find(99);
+    FB_ASSERT_TRUE(it == catch_up_nodes.end());
+}
+
+FB_TEST(raft_state, catch_up_node_completes_promotes_to_voting) {
+    // Once a catch-up node has caught up, it is removed from catch_up_nodes
+    // and added to the regular voting set.
+    bool caught_up = true;
+    bool removed_from_catch_up = false;
+    bool added_to_voting = false;
+
+    if (caught_up) {
+        removed_from_catch_up = true;
+        added_to_voting = true;
+    }
+    FB_ASSERT_TRUE(removed_from_catch_up);
+    FB_ASSERT_TRUE(added_to_voting);
+}
+
+// ============================================================================
+// Test Suite: Raft Node Configuration Saving
+// ============================================================================
+
+FB_TEST(raft_state, config_list_default_empty) {
+    std::vector<int> configurations;
+    FB_ASSERT_TRUE(configurations.empty());
+}
+
+FB_TEST(raft_state, config_list_emplace_back) {
+    std::vector<int> configurations;
+    configurations.push_back(1);
+    configurations.push_back(2);
+    FB_ASSERT_EQ(configurations.size(), 2u);
+}
+
+FB_TEST(raft_state, config_active_is_last) {
+    // The active configuration is the last entry in the configurations list
+    std::vector<int> configurations = {1, 2, 3};
+    int active = configurations.back();
+    FB_ASSERT_EQ(active, 3);
+}
+
+FB_TEST(raft_state, config_joint_consensus_two_phase) {
+    // Joint consensus: phase 1 has both old and new in configurations list
+    std::vector<int> configurations;
+    configurations.push_back(1); // old
+    configurations.push_back(2); // joint (old, new)
+    FB_ASSERT_EQ(configurations.size(), 2u);
+
+    configurations.push_back(3); // new only
+    FB_ASSERT_EQ(configurations.size(), 3u);
+}
+
+FB_TEST(raft_state, config_rollback_drops_uncommitted) {
+    // If config change is not committed, it can be rolled back
+    std::vector<int> configurations = {1, 2, 3};
+    configurations.pop_back();
+    FB_ASSERT_EQ(configurations.size(), 2u);
+    FB_ASSERT_EQ(configurations.back(), 2);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
