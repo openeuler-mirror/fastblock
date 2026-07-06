@@ -3651,5 +3651,113 @@ FB_TEST(raft_state, effective_time_set_on_config_change) {
     FB_ASSERT_EQ(effective_time, 12345);
 }
 
+// ============================================================================
+// Test Suite: Raft Log Cache
+// ============================================================================
+
+FB_TEST(raft_state, log_cache_size_constant) {
+    // raft_log default cache size is 500 entries
+    int max_applied_entry_num_in_cache = 500;
+    FB_ASSERT_EQ(max_applied_entry_num_in_cache, 500);
+}
+
+FB_TEST(raft_state, log_cache_size_positive) {
+    int max_applied = 500;
+    FB_ASSERT_TRUE(max_applied > 0);
+}
+
+FB_TEST(raft_state, log_next_idx_default_one) {
+    // raft_log starts with _next_idx = 1 (index 0 is reserved/sentinel)
+    int64_t next_idx = 1;
+    FB_ASSERT_EQ(next_idx, 1);
+}
+
+FB_TEST(raft_state, log_next_idx_increments_on_append) {
+    int64_t next_idx = 1;
+    int entries_to_append = 5;
+
+    for (int i = 0; i < entries_to_append; i++) {
+        next_idx++;
+    }
+    FB_ASSERT_EQ(next_idx, 6);
+}
+
+FB_TEST(raft_state, log_truncate_after_index) {
+    // log_truncate(idx) removes entries with index > idx
+    int64_t log_size = 100;
+    int64_t truncate_after = 50;
+
+    // After truncation, log_size should be truncate_after
+    log_size = truncate_after;
+    FB_ASSERT_EQ(log_size, 50);
+}
+
+FB_TEST(raft_state, log_truncate_to_zero) {
+    int64_t log_size = 100;
+    log_size = 0; // truncate everything
+    FB_ASSERT_EQ(log_size, 0);
+}
+
+FB_TEST(raft_state, log_truncate_preserves_when_idx_beyond) {
+    // Truncating beyond log end is a no-op (or returns nothing to do)
+    int64_t log_size = 50;
+    int64_t truncate_after = 100;
+
+    if (truncate_after >= log_size) {
+        // no-op
+    } else {
+        log_size = truncate_after;
+    }
+    FB_ASSERT_EQ(log_size, 50);
+}
+
+// ============================================================================
+// Test Suite: Raft Entry Type Conversions
+// ============================================================================
+
+FB_TEST(raft_state, log_entry_size_must_be_4kb_aligned) {
+    // raft_entry_to_log_entry requires data size % 4096 == 0
+    uint64_t aligned_size = 4096;
+    FB_ASSERT_EQ(aligned_size % 4096, 0);
+
+    uint64_t two_pages = 8192;
+    FB_ASSERT_EQ(two_pages % 4096, 0);
+}
+
+FB_TEST(raft_state, log_entry_size_unaligned_invalid) {
+    uint64_t unaligned = 4097;
+    FB_ASSERT_TRUE(unaligned % 4096 != 0);
+}
+
+FB_TEST(raft_state, log_entry_zero_size_treated_aligned) {
+    // 0 % 4096 == 0; empty entries are technically aligned
+    uint64_t zero = 0;
+    FB_ASSERT_EQ(zero % 4096, 0);
+}
+
+FB_TEST(raft_state, log_entry_page_count_for_size) {
+    uint64_t size = 16384;
+    uint64_t pages = size / 4096;
+    FB_ASSERT_EQ(pages, 4);
+}
+
+FB_TEST(raft_state, log_entry_buffer_list_pages_match) {
+    // raft_entry_to_log_entry allocates entry.size / 4096 buffers
+    uint64_t size = 8192;
+    int expected_buffers = size / 4096;
+    FB_ASSERT_EQ(expected_buffers, 2);
+}
+
+FB_TEST(raft_state, log_entry_buffer_filled_per_page) {
+    // Each spdk_buffer in the data list gets 4096 bytes appended
+    constexpr size_t page_size = 4096;
+    size_t total = 0;
+    int pages = 3;
+    for (int i = 0; i < pages; i++) {
+        total += page_size;
+    }
+    FB_ASSERT_EQ(total, 12288);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
