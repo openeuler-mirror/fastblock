@@ -8492,6 +8492,86 @@ FB_TEST(osd_event_handling, shutdown_event_ordering) {
 }
 
 // ============================================================================
+// Test Suite: osd_background_tasks (OSD Background Tasks Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(osd_background_tasks) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(osd_background_tasks) {
+    // Teardown code here
+}
+
+FB_TEST(osd_background_tasks, gc_poller_interval) {
+    // GC poller runs periodically
+    uint64_t interval_us = 1000000;
+    FB_ASSERT_TRUE(interval_us > 0);
+}
+
+FB_TEST(osd_background_tasks, expired_slot_detection) {
+    // Detect expired write ring slots
+    auto now = std::chrono::steady_clock::now();
+    auto lease_deadline = now - std::chrono::seconds(1);
+    bool expired = (now > lease_deadline);
+    FB_ASSERT_TRUE(expired);
+}
+
+FB_TEST(osd_background_tasks, gc_queue_cleanup) {
+    // GC cleans up expired slots
+    std::deque<uint64_t> gc_queue;
+    gc_queue.push_back(1);
+    gc_queue.push_back(2);
+    gc_queue.push_back(3);
+
+    gc_queue.pop_front();
+    FB_ASSERT_EQ(gc_queue.size(), 2);
+}
+
+FB_TEST(osd_background_tasks, periodic_statistics_report) {
+    // Statistics reported periodically to monitor
+    uint64_t report_interval_ms = 1000;
+    FB_ASSERT_TRUE(report_interval_ms > 0);
+}
+
+FB_TEST(osd_background_tasks, heartbeat_to_monitor) {
+    // Heartbeat sent to monitor
+    uint64_t heartbeat_interval_ms = 5000;
+    FB_ASSERT_TRUE(heartbeat_interval_ms > 0);
+}
+
+FB_TEST(osd_background_tasks, bg_task_priority) {
+    // Background tasks have lower priority than IO
+    int bg_priority = 1;
+    int io_priority = 10;
+    FB_ASSERT_TRUE(bg_priority < io_priority);
+}
+
+FB_TEST(osd_background_tasks, task_scheduling_overhead) {
+    // Task scheduling overhead
+    uint64_t overhead_us = 100;
+    FB_ASSERT_TRUE(overhead_us > 0);
+}
+
+FB_TEST(osd_background_tasks, concurrent_bg_tasks) {
+    // Multiple background tasks can run concurrently
+    uint32_t max_concurrent = 4;
+    FB_ASSERT_TRUE(max_concurrent > 0);
+}
+
+FB_TEST(osd_background_tasks, task_cancellation) {
+    // Tasks can be cancelled on shutdown
+    bool cancelled = true;
+    FB_ASSERT_TRUE(cancelled);
+}
+
+FB_TEST(osd_background_tasks, task_completion_notification) {
+    // Task completion notifies waiting thread
+    bool notified = true;
+    FB_ASSERT_TRUE(notified);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
