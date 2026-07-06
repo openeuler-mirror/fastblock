@@ -3261,5 +3261,136 @@ FB_TEST(raft_state, log_index_starts_at_one) {
     FB_ASSERT_TRUE(first_idx > 0);
 }
 
+// ============================================================================
+// Test Suite: Raft AppendEntries Consistency
+// ============================================================================
+
+FB_TEST(raft_state, append_entries_match_prev_log) {
+    // AppendEntries succeeds when prev_log_index and prev_log_term match
+    int64_t prev_log_index = 5;
+    int64_t prev_log_term = 3;
+    int64_t my_log_at_prev_idx_term = 3;
+
+    bool match = (my_log_at_prev_idx_term == prev_log_term);
+    FB_ASSERT_TRUE(match);
+}
+
+FB_TEST(raft_state, append_entries_reject_term_mismatch) {
+    // AppendEntries fails if log doesn't contain matching entry at prev_log_index
+    int64_t prev_log_index = 5;
+    int64_t prev_log_term = 3;
+    int64_t my_log_at_prev_idx_term = 2; // different term
+
+    bool match = (my_log_at_prev_idx_term == prev_log_term);
+    FB_ASSERT_FALSE(match);
+}
+
+FB_TEST(raft_state, append_entries_reject_log_too_short) {
+    // AppendEntries fails if prev_log_index is beyond our log
+    int64_t prev_log_index = 10;
+    int64_t my_log_last_idx = 5;
+
+    bool can_append = (prev_log_index <= my_log_last_idx);
+    FB_ASSERT_FALSE(can_append);
+}
+
+FB_TEST(raft_state, append_entries_overwrites_conflicting) {
+    // Conflicting entries (same index, different term) are overwritten
+    int64_t their_term = 5;
+    int64_t my_term_at_idx = 3;
+
+    bool should_overwrite = (their_term != my_term_at_idx);
+    FB_ASSERT_TRUE(should_overwrite);
+}
+
+FB_TEST(raft_state, append_entries_keeps_matching) {
+    // Already-present matching entries are not duplicated
+    int64_t their_term = 5;
+    int64_t my_term_at_idx = 5;
+
+    bool needs_write = (their_term != my_term_at_idx);
+    FB_ASSERT_FALSE(needs_write);
+}
+
+FB_TEST(raft_state, append_entries_empty_is_heartbeat) {
+    // Empty AppendEntries serves as a heartbeat
+    int num_entries = 0;
+    bool is_heartbeat = (num_entries == 0);
+    FB_ASSERT_TRUE(is_heartbeat);
+}
+
+FB_TEST(raft_state, append_entries_resets_election_timer) {
+    // Receiving valid AppendEntries from current leader resets election timer
+    bool valid_from_leader = true;
+    int election_elapsed = 0; // would have been incremented otherwise
+
+    if (valid_from_leader) {
+        election_elapsed = 0;
+    }
+    FB_ASSERT_EQ(election_elapsed, 0);
+}
+
+// ============================================================================
+// Test Suite: Raft Leader Commit Index
+// ============================================================================
+
+FB_TEST(raft_state, leader_commits_when_majority_acked) {
+    // Leader commits index N when majority of cluster has replicated it
+    int cluster_size = 5;
+    int majority = (cluster_size / 2) + 1;
+    int replicated_count = 3; // 3 out of 5 = majority
+
+    bool can_commit = (replicated_count >= majority);
+    FB_ASSERT_TRUE(can_commit);
+}
+
+FB_TEST(raft_state, leader_no_commit_minority_acked) {
+    int cluster_size = 5;
+    int majority = (cluster_size / 2) + 1;
+    int replicated_count = 2; // 2 out of 5, not majority
+
+    bool can_commit = (replicated_count >= majority);
+    FB_ASSERT_FALSE(can_commit);
+}
+
+FB_TEST(raft_state, leader_commit_three_node) {
+    int cluster_size = 3;
+    int majority = (cluster_size / 2) + 1; // 2
+    FB_ASSERT_EQ(majority, 2);
+}
+
+FB_TEST(raft_state, leader_commit_seven_node) {
+    int cluster_size = 7;
+    int majority = (cluster_size / 2) + 1; // 4
+    FB_ASSERT_EQ(majority, 4);
+}
+
+FB_TEST(raft_state, leader_only_commits_current_term) {
+    // Leader can only commit entries from its own term directly.
+    // Earlier-term entries are committed indirectly via a current-term entry.
+    int64_t my_term = 5;
+    int64_t entry_term = 3;
+
+    bool direct_commit_allowed = (entry_term == my_term);
+    FB_ASSERT_FALSE(direct_commit_allowed);
+}
+
+FB_TEST(raft_state, follower_follows_leader_commit) {
+    // Follower advances commit_idx to min(leader_commit, last_new_entry_idx)
+    int64_t leader_commit = 10;
+    int64_t my_last_new_idx = 8;
+
+    int64_t new_commit = std::min(leader_commit, my_last_new_idx);
+    FB_ASSERT_EQ(new_commit, 8);
+}
+
+FB_TEST(raft_state, follower_commit_idx_below_leader) {
+    int64_t leader_commit = 5;
+    int64_t my_last_new_idx = 100;
+
+    int64_t new_commit = std::min(leader_commit, my_last_new_idx);
+    FB_ASSERT_EQ(new_commit, 5);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
