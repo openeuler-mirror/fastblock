@@ -21200,3 +21200,53 @@ FB_TEST(buffer_encoder_state, bytes_total_constant) {
     enc.put(1ULL);
     FB_ASSERT_EQ(enc.bytes(), 512); // Total unchanged
 }
+
+// ============================================================================
+// Test Suite: log_entry_mutations (Log Entry Mutations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(log_entry_mutations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(log_entry_mutations) {
+    // Teardown code here
+}
+
+FB_TEST(log_entry_mutations, set_term_id) {
+    log_entry_t entry;
+    entry.term_id = 5;
+    FB_ASSERT_EQ(entry.term_id, 5);
+}
+
+FB_TEST(log_entry_mutations, set_index) {
+    log_entry_t entry;
+    entry.index = 100;
+    FB_ASSERT_EQ(entry.index, 100);
+}
+
+FB_TEST(log_entry_mutations, set_size) {
+    log_entry_t entry;
+    entry.size = 4096;
+    FB_ASSERT_EQ(entry.size, 4096);
+}
+
+FB_TEST(log_entry_mutations, set_type) {
+    log_entry_t entry;
+    entry.type = 2;
+    FB_ASSERT_EQ(entry.type, 2);
+}
+
+FB_TEST(log_entry_mutations, set_meta) {
+    log_entry_t entry;
+    entry.meta = "test_meta";
+    FB_ASSERT_EQ(entry.meta, "test_meta");
+}
+
+FB_TEST(log_entry_mutations, set_data) {
+    log_entry_t entry;
+    char buf[100];
+    spdk_buffer sbuf(buf, 100);
+    entry.data.append_buffer(sbuf);
+    FB_ASSERT_EQ(entry.data.bytes(), 100);
+}
