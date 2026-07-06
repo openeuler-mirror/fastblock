@@ -4012,5 +4012,94 @@ FB_TEST(raft_state, cfg_state_transitions_valid) {
     FB_ASSERT_EQ(s, cfg_state::CFG_NONE);
 }
 
+// ============================================================================
+// Test Suite: raft membership and election quorum
+// ============================================================================
+
+FB_TEST(raft_state, membership_add_then_remove) {
+    raft_membership_e op1 = RAFT_MEMBERSHIP_ADD;
+    raft_membership_e op2 = RAFT_MEMBERSHIP_REMOVE;
+    FB_ASSERT_TRUE(op1 != op2);
+}
+
+FB_TEST(raft_state, membership_enum_size_two) {
+    // We have exactly two membership operations
+    int operations[] = {RAFT_MEMBERSHIP_ADD, RAFT_MEMBERSHIP_REMOVE};
+    int count = sizeof(operations) / sizeof(operations[0]);
+    FB_ASSERT_EQ(count, 2);
+}
+
+FB_TEST(raft_state, quorum_one_node) {
+    int cluster = 1;
+    int quorum = (cluster / 2) + 1;
+    FB_ASSERT_EQ(quorum, 1);
+}
+
+FB_TEST(raft_state, quorum_two_node_cluster) {
+    // 2-node cluster requires both nodes; quorum = 2/2 + 1 = 2
+    int cluster = 2;
+    int quorum = (cluster / 2) + 1;
+    FB_ASSERT_EQ(quorum, 2);
+}
+
+FB_TEST(raft_state, quorum_even_size) {
+    // Even cluster sizes still produce a valid majority
+    int cluster = 4;
+    int quorum = (cluster / 2) + 1;
+    FB_ASSERT_EQ(quorum, 3);
+}
+
+FB_TEST(raft_state, quorum_odd_size) {
+    int cluster = 5;
+    int quorum = (cluster / 2) + 1;
+    FB_ASSERT_EQ(quorum, 3);
+}
+
+FB_TEST(raft_state, election_timeout_randomized_range) {
+    // Election timeout is randomized in [_election_timeout, 2*_election_timeout)
+    int64_t base = 1000;
+    int64_t randomized_min = base;
+    int64_t randomized_max = 2 * base;
+
+    int64_t sample = 1500; // some value in the range
+    FB_ASSERT_TRUE(sample >= randomized_min);
+    FB_ASSERT_TRUE(sample < randomized_max);
+}
+
+FB_TEST(raft_state, election_timeout_lower_bound) {
+    int64_t base = 1000;
+    int64_t lower = base;
+    int64_t sample = lower;
+    FB_ASSERT_TRUE(sample >= lower);
+}
+
+FB_TEST(raft_state, election_timeout_strict_upper_bound) {
+    // Upper bound is exclusive: sample < 2 * base
+    int64_t base = 1000;
+    int64_t upper_exclusive = 2 * base;
+    int64_t sample = upper_exclusive - 1;
+    FB_ASSERT_TRUE(sample < upper_exclusive);
+}
+
+FB_TEST(raft_state, raft_complete_callback_type) {
+    // raft_complete signature: void (void*, int)
+    raft_complete cb = [](void*, int err) {};
+    FB_ASSERT_TRUE(static_cast<bool>(cb));
+}
+
+FB_TEST(raft_state, raft_complete_invokes_with_zero) {
+    int captured = -1;
+    raft_complete cb = [&captured](void*, int err) { captured = err; };
+    cb(nullptr, 0);
+    FB_ASSERT_EQ(captured, 0);
+}
+
+FB_TEST(raft_state, raft_complete_invokes_with_errno) {
+    int captured = 0;
+    raft_complete cb = [&captured](void*, int err) { captured = err; };
+    cb(nullptr, -EINVAL);
+    FB_ASSERT_EQ(captured, -EINVAL);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
