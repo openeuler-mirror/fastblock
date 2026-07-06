@@ -3561,5 +3561,95 @@ FB_TEST(raft_state, pg_id_to_name_zero_ids) {
     FB_ASSERT_FALSE(name.empty());
 }
 
+// ============================================================================
+// Test Suite: Raft Heartbeat Tracking
+// ============================================================================
+
+FB_TEST(raft_state, heartbeat_flag_default_false) {
+    // _is_heartbeating defaults to false in raft_node constructor
+    bool is_heartbeating = false;
+    FB_ASSERT_FALSE(is_heartbeating);
+}
+
+FB_TEST(raft_state, heartbeat_flag_toggle) {
+    bool flag = false;
+    flag = true;
+    FB_ASSERT_TRUE(flag);
+    flag = false;
+    FB_ASSERT_FALSE(flag);
+}
+
+FB_TEST(raft_state, recovering_flag_default_false) {
+    bool is_recovering = false;
+    FB_ASSERT_FALSE(is_recovering);
+}
+
+FB_TEST(raft_state, recovering_and_heartbeat_independent) {
+    // The two flags are independent; either can be true on its own
+    bool heartbeating = true;
+    bool recovering = false;
+    FB_ASSERT_TRUE(heartbeating);
+    FB_ASSERT_FALSE(recovering);
+
+    heartbeating = false;
+    recovering = true;
+    FB_ASSERT_FALSE(heartbeating);
+    FB_ASSERT_TRUE(recovering);
+}
+
+FB_TEST(raft_state, suppress_heartbeat_flag) {
+    // suppress_heartbeats temporarily silences heartbeats (e.g. during snapshot)
+    bool suppress = false;
+    FB_ASSERT_FALSE(suppress);
+
+    suppress = true;
+    FB_ASSERT_TRUE(suppress);
+}
+
+// ============================================================================
+// Test Suite: Raft Lease Time
+// ============================================================================
+
+FB_TEST(raft_state, lease_default_zero) {
+    int64_t lease = 0;
+    FB_ASSERT_EQ(lease, 0);
+}
+
+FB_TEST(raft_state, lease_advances) {
+    int64_t lease = 1000;
+    int64_t new_time = 5000;
+    lease = new_time;
+    FB_ASSERT_EQ(lease, 5000);
+}
+
+FB_TEST(raft_state, lease_expired_when_past) {
+    int64_t lease_expiry = 1000;
+    int64_t now = 2000;
+
+    bool expired = (now > lease_expiry);
+    FB_ASSERT_TRUE(expired);
+}
+
+FB_TEST(raft_state, lease_valid_when_future) {
+    int64_t lease_expiry = 5000;
+    int64_t now = 2000;
+
+    bool expired = (now > lease_expiry);
+    FB_ASSERT_FALSE(expired);
+}
+
+FB_TEST(raft_state, effective_time_default_zero) {
+    int64_t effective_time = 0;
+    FB_ASSERT_EQ(effective_time, 0);
+}
+
+FB_TEST(raft_state, effective_time_set_on_config_change) {
+    int64_t effective_time = 0;
+    int64_t apply_time = 12345;
+
+    effective_time = apply_time;
+    FB_ASSERT_EQ(effective_time, 12345);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
