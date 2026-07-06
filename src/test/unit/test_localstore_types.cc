@@ -21141,3 +21141,62 @@ FB_TEST(spdk_buffer_state_tracking, remain_decreases_with_used) {
     sbuf.inc(20);
     FB_ASSERT_EQ(sbuf.remain(), 50);
 }
+
+// ============================================================================
+// Test Suite: buffer_encoder_state (Buffer Encoder State Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_encoder_state) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_encoder_state) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_encoder_state, initial_used_zero) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    buffer_list_encoder enc(bl);
+    FB_ASSERT_EQ(enc.used(), 0);
+}
+
+FB_TEST(buffer_encoder_state, used_increases_with_put) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    buffer_list_encoder enc(bl);
+
+    enc.put(1ULL);
+    FB_ASSERT_EQ(enc.used(), 8);
+
+    enc.put(2ULL);
+    FB_ASSERT_EQ(enc.used(), 16);
+}
+
+FB_TEST(buffer_encoder_state, remain_decreases_with_put) {
+    char buffer[1024];
+    spdk_buffer sbuf(buffer, 1024);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    buffer_list_encoder enc(bl);
+
+    FB_ASSERT_EQ(enc.remain(), 1024);
+    enc.put(1ULL);
+    FB_ASSERT_EQ(enc.remain(), 1016);
+}
+
+FB_TEST(buffer_encoder_state, bytes_total_constant) {
+    char buffer[512];
+    spdk_buffer sbuf(buffer, 512);
+    buffer_list bl;
+    bl.append_buffer(sbuf);
+    buffer_list_encoder enc(bl);
+
+    FB_ASSERT_EQ(enc.bytes(), 512);
+    enc.put(1ULL);
+    FB_ASSERT_EQ(enc.bytes(), 512); // Total unchanged
+}
