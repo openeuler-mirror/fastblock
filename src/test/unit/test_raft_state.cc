@@ -3848,5 +3848,81 @@ FB_TEST(raft_state, config_rollback_drops_uncommitted) {
     FB_ASSERT_EQ(configurations.back(), 2);
 }
 
+// ============================================================================
+// Test Suite: node_configuration default construction
+// ============================================================================
+
+FB_TEST(raft_state, node_config_default_index_zero) {
+    node_configuration cfg;
+    FB_ASSERT_EQ(cfg.get_node_size(), 0);
+}
+
+FB_TEST(raft_state, node_config_default_no_new_nodes) {
+    node_configuration cfg;
+    FB_ASSERT_EQ(cfg.get_new_node_size(), 0);
+}
+
+FB_TEST(raft_state, node_config_add_node_grows_count) {
+    node_configuration cfg;
+    std::string addr = "10.0.0.1";
+    cfg.add_node(1, addr, 8080);
+    FB_ASSERT_EQ(cfg.get_node_size(), 1);
+
+    cfg.add_node(2, addr, 8081);
+    FB_ASSERT_EQ(cfg.get_node_size(), 2);
+}
+
+FB_TEST(raft_state, node_config_find_existing_node) {
+    node_configuration cfg;
+    std::string addr = "10.0.0.1";
+    cfg.add_node(42, addr, 8080);
+    FB_ASSERT_TRUE(cfg.find_node(42));
+}
+
+FB_TEST(raft_state, node_config_find_missing_node) {
+    node_configuration cfg;
+    std::string addr = "10.0.0.1";
+    cfg.add_node(42, addr, 8080);
+    FB_ASSERT_FALSE(cfg.find_node(99));
+}
+
+FB_TEST(raft_state, node_config_find_new_node_separate_from_nodes) {
+    // _nodes and _new_nodes are separate collections; find_node() should only
+    // look at _nodes, find_new_node() should only look at _new_nodes.
+    node_configuration cfg;
+    std::string addr = "10.0.0.1";
+    cfg.add_node(42, addr, 8080);
+
+    // find_new_node should return false since we only added to _nodes
+    FB_ASSERT_FALSE(cfg.find_new_node(42));
+    FB_ASSERT_TRUE(cfg.find_node(42));
+}
+
+FB_TEST(raft_state, node_config_multiple_distinct_ids) {
+    node_configuration cfg;
+    std::string addr = "10.0.0.1";
+    cfg.add_node(1, addr, 8080);
+    cfg.add_node(2, addr, 8081);
+    cfg.add_node(3, addr, 8082);
+
+    FB_ASSERT_TRUE(cfg.find_node(1));
+    FB_ASSERT_TRUE(cfg.find_node(2));
+    FB_ASSERT_TRUE(cfg.find_node(3));
+    FB_ASSERT_FALSE(cfg.find_node(4));
+}
+
+FB_TEST(raft_state, node_config_size_independent_of_find) {
+    node_configuration cfg;
+    std::string addr = "10.0.0.1";
+
+    // Searching empty config returns false without modifying state
+    FB_ASSERT_FALSE(cfg.find_node(1));
+    FB_ASSERT_EQ(cfg.get_node_size(), 0);
+
+    cfg.add_node(1, addr, 8080);
+    FB_ASSERT_TRUE(cfg.find_node(1));
+    FB_ASSERT_EQ(cfg.get_node_size(), 1);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
