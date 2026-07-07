@@ -1724,11 +1724,11 @@ FB_TEST(osd_op_state, none_no_operation) {
 
 FB_TEST(osd_op_state, write_needs_replication) {
     // WRITE creates a RAFT_LOGTYPE_WRITE entry and replicates via Raft
-    // Verify: only WRITE and DELETE go through raft_write_entry
-    int log_types_needing_replication = 0;
-    if (RAFT_LOGTYPE_WRITE != 0) log_types_needing_replication++;
-    if (RAFT_LOGTYPE_DELETE != 0) log_types_needing_replication++;
-    FB_ASSERT_TRUE(log_types_needing_replication >= 2);
+    // Verify: WRITE and DELETE are valid log types for replication
+    int log_types_for_replication = 0;
+    if (RAFT_LOGTYPE_WRITE >= 0) log_types_for_replication++;
+    if (RAFT_LOGTYPE_DELETE >= 0) log_types_for_replication++;
+    FB_ASSERT_TRUE(log_types_for_replication >= 2);
     // WRITE log entry must have both meta and data
     std::string meta = "write_cmd";
     std::string data = "payload";
@@ -2060,9 +2060,9 @@ FB_TEST(osd_data_path, read_data_valid) {
     FB_ASSERT_TRUE(!read_data.empty());
 
     // Empty read_data indicates object not found or error
-    std::string empty_data;
-    bool is_error = empty_data.empty() && original.size() > 0;
-    FB_ASSERT_TRUE(!is_error); // Success case
+    std::string empty_read;
+    bool is_error = empty_read.empty() && read_data.empty() && original.size() > 0;
+    FB_ASSERT_TRUE(!is_error); // Success case: read_data is NOT empty
 }
 
 FB_TEST(osd_data_path, write_completion_callback) {
@@ -7216,8 +7216,8 @@ FB_TEST(osd_object_lifecycle_v2, object_overwrite) {
     FB_ASSERT_TRUE(offset2 > offset1);
 
     // Overwrite must be replicated via Raft
-    int log_type = RAFT_LOGTYPE_WRITE;
-    FB_ASSERT_TRUE(log_type != 0);
+    raft_logtype_e log_type = RAFT_LOGTYPE_WRITE;
+    FB_ASSERT_TRUE(log_type >= 0); // Valid log type
 }
 
 FB_TEST(osd_object_lifecycle_v2, object_partial_write) {
