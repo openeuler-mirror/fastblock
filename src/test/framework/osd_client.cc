@@ -21,7 +21,8 @@ namespace osd_config {
     uint64_t pool_id = 0;
     uint64_t pg_id = 0;
 }
-}
+} // namespace test
+} // namespace fastblock
 
 void get_leader_source::process_response(){
     SPDK_NOTICELOG("leader of the pg %lu.%lu is %d\n", _request->pool_id(), _request->pg_id(), response.leader_id());

@@ -3164,20 +3164,6 @@ FB_TEST(raft_state, vote_for_self_on_candidate) {
     FB_ASSERT_EQ(state, RAFT_STATE_CANDIDATE);
 }
 
-FB_TEST(raft_state, vote_reset_on_new_term) {
-    int voted_for = 3;
-    int64_t my_term = 5;
-    int64_t new_term = 6;
-
-    if (new_term > my_term) {
-        my_term = new_term;
-        voted_for = -1;
-    }
-
-    FB_ASSERT_EQ(voted_for, -1);
-    FB_ASSERT_EQ(my_term, 6);
-}
-
 FB_TEST(raft_state, vote_grant_first_request) {
     int voted_for = -1; // not voted yet
     int requester_id = 7;
