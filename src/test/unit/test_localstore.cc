@@ -1103,4 +1103,179 @@ FB_TEST(object_xattr_structure, all_fields_assignment) {
     FB_ASSERT_EQ(xattr.obj_name, "obj");
 }
 
+// ============================================================================
+// Test Suite: object_snap_xattr_structure (Object Snap Xattr Structure Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(object_snap_xattr_structure) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(object_snap_xattr_structure) {
+    // Teardown code here
+}
+
+FB_TEST(object_snap_xattr_structure, xattr_names_count) {
+    FB_ASSERT_EQ(object_snap_xattr::xattr_count, 5);
+}
+
+FB_TEST(object_snap_xattr_structure, xattr_names_type) {
+    FB_ASSERT_EQ(strcmp(object_snap_xattr::xattr_names[0], "type"), 0);
+}
+
+FB_TEST(object_snap_xattr_structure, xattr_names_shard) {
+    FB_ASSERT_EQ(strcmp(object_snap_xattr::xattr_names[1], "shard"), 0);
+}
+
+FB_TEST(object_snap_xattr_structure, xattr_names_pg) {
+    FB_ASSERT_EQ(strcmp(object_snap_xattr::xattr_names[2], "pg"), 0);
+}
+
+FB_TEST(object_snap_xattr_structure, xattr_names_name) {
+    FB_ASSERT_EQ(strcmp(object_snap_xattr::xattr_names[3], "name"), 0);
+}
+
+FB_TEST(object_snap_xattr_structure, xattr_names_snap_name) {
+    FB_ASSERT_EQ(strcmp(object_snap_xattr::xattr_names[4], "snap_name"), 0);
+}
+
+FB_TEST(object_snap_xattr_structure, type_value) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(object_snap_xattr::type), 2);
+}
+
+FB_TEST(object_snap_xattr_structure, default_shard_id) {
+    object_snap_xattr xattr;
+    FB_ASSERT_EQ(xattr.shard_id, 0u);
+}
+
+FB_TEST(object_snap_xattr_structure, shard_id_assignment) {
+    object_snap_xattr xattr;
+    xattr.shard_id = 99;
+    FB_ASSERT_EQ(xattr.shard_id, 99u);
+}
+
+FB_TEST(object_snap_xattr_structure, pg_default_empty) {
+    object_snap_xattr xattr;
+    FB_ASSERT_TRUE(xattr.pg.empty());
+}
+
+FB_TEST(object_snap_xattr_structure, pg_string_assignment) {
+    object_snap_xattr xattr;
+    xattr.pg = "pool3.pg50";
+    FB_ASSERT_EQ(xattr.pg, "pool3.pg50");
+}
+
+FB_TEST(object_snap_xattr_structure, obj_name_default_empty) {
+    object_snap_xattr xattr;
+    FB_ASSERT_TRUE(xattr.obj_name.empty());
+}
+
+FB_TEST(object_snap_xattr_structure, obj_name_assignment) {
+    object_snap_xattr xattr;
+    xattr.obj_name = "snap_object_1";
+    FB_ASSERT_EQ(xattr.obj_name, "snap_object_1");
+}
+
+FB_TEST(object_snap_xattr_structure, snap_name_default_empty) {
+    object_snap_xattr xattr;
+    FB_ASSERT_TRUE(xattr.snap_name.empty());
+}
+
+FB_TEST(object_snap_xattr_structure, snap_name_assignment) {
+    object_snap_xattr xattr;
+    xattr.snap_name = "snapshot_20240101";
+    FB_ASSERT_EQ(xattr.snap_name, "snapshot_20240101");
+}
+
+FB_TEST(object_snap_xattr_structure, all_fields_assignment) {
+    object_snap_xattr xattr;
+    xattr.shard_id = 10;
+    xattr.pg = "pool.pg";
+    xattr.obj_name = "obj";
+    xattr.snap_name = "snap";
+    FB_ASSERT_EQ(xattr.shard_id, 10u);
+    FB_ASSERT_EQ(xattr.pg, "pool.pg");
+    FB_ASSERT_EQ(xattr.obj_name, "obj");
+    FB_ASSERT_EQ(xattr.snap_name, "snap");
+}
+
+// ============================================================================
+// Test Suite: object_recover_xattr_structure (Object Recover Xattr Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(object_recover_xattr_structure) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(object_recover_xattr_structure) {
+    // Teardown code here
+}
+
+FB_TEST(object_recover_xattr_structure, xattr_names_count) {
+    FB_ASSERT_EQ(object_recover_xattr::xattr_count, 4);
+}
+
+FB_TEST(object_recover_xattr_structure, xattr_names_type) {
+    FB_ASSERT_EQ(strcmp(object_recover_xattr::xattr_names[0], "type"), 0);
+}
+
+FB_TEST(object_recover_xattr_structure, xattr_names_shard) {
+    FB_ASSERT_EQ(strcmp(object_recover_xattr::xattr_names[1], "shard"), 0);
+}
+
+FB_TEST(object_recover_xattr_structure, xattr_names_pg) {
+    FB_ASSERT_EQ(strcmp(object_recover_xattr::xattr_names[2], "pg"), 0);
+}
+
+FB_TEST(object_recover_xattr_structure, xattr_names_name) {
+    FB_ASSERT_EQ(strcmp(object_recover_xattr::xattr_names[3], "name"), 0);
+}
+
+FB_TEST(object_recover_xattr_structure, type_value) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(object_recover_xattr::type), 3);
+}
+
+FB_TEST(object_recover_xattr_structure, default_shard_id) {
+    object_recover_xattr xattr{};
+    FB_ASSERT_EQ(xattr.shard_id, 0u);
+}
+
+FB_TEST(object_recover_xattr_structure, shard_id_assignment) {
+    object_recover_xattr xattr;
+    xattr.shard_id = 255;
+    FB_ASSERT_EQ(xattr.shard_id, 255u);
+}
+
+FB_TEST(object_recover_xattr_structure, pg_default_empty) {
+    object_recover_xattr xattr;
+    FB_ASSERT_TRUE(xattr.pg.empty());
+}
+
+FB_TEST(object_recover_xattr_structure, pg_string_assignment) {
+    object_recover_xattr xattr;
+    xattr.pg = "recovery_pool.pg1";
+    FB_ASSERT_EQ(xattr.pg, "recovery_pool.pg1");
+}
+
+FB_TEST(object_recover_xattr_structure, obj_name_default_empty) {
+    object_recover_xattr xattr;
+    FB_ASSERT_TRUE(xattr.obj_name.empty());
+}
+
+FB_TEST(object_recover_xattr_structure, obj_name_assignment) {
+    object_recover_xattr xattr;
+    xattr.obj_name = "recovered_object";
+    FB_ASSERT_EQ(xattr.obj_name, "recovered_object");
+}
+
+FB_TEST(object_recover_xattr_structure, all_fields_assignment) {
+    object_recover_xattr xattr;
+    xattr.shard_id = 7;
+    xattr.pg = "pool.pg";
+    xattr.obj_name = "recovery_obj";
+    FB_ASSERT_EQ(xattr.shard_id, 7u);
+    FB_ASSERT_EQ(xattr.pg, "pool.pg");
+    FB_ASSERT_EQ(xattr.obj_name, "recovery_obj");
+}
+
 FB_TEST_MAIN()
