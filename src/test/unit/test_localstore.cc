@@ -3468,4 +3468,196 @@ FB_TEST(consistency_checks, fb_blob_initial_state) {
     FB_ASSERT_EQ(blob.blobid, blob2.blobid);
 }
 
+// ============================================================================
+// Test Suite: stress_patterns (Stress Patterns Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(stress_patterns) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(stress_patterns) {
+    // Teardown code here
+}
+
+FB_TEST(stress_patterns, repeated_same_value) {
+    char buffer[1000];
+    spdk_buffer sbuf(buffer, 1000);
+
+    uint32_t value = 12345;
+    for (int i = 0; i < 100; i++) {
+        FB_ASSERT_TRUE(PutFixed32(sbuf, value));
+    }
+
+    sbuf.reset();
+    for (int i = 0; i < 100; i++) {
+        uint32_t decoded;
+        FB_ASSERT_TRUE(GetFixed32(sbuf, decoded));
+        FB_ASSERT_EQ(decoded, value);
+    }
+}
+
+FB_TEST(stress_patterns, incrementing_sequence) {
+    char buffer[1000];
+    spdk_buffer sbuf(buffer, 1000);
+
+    for (int i = 0; i < 200; i++) {
+        FB_ASSERT_TRUE(PutFixed32(sbuf, i));
+    }
+
+    sbuf.reset();
+    for (int i = 0; i < 200; i++) {
+        uint32_t decoded;
+        FB_ASSERT_TRUE(GetFixed32(sbuf, decoded));
+        FB_ASSERT_EQ(decoded, static_cast<uint32_t>(i));
+    }
+}
+
+FB_TEST(stress_patterns, alternating_patterns) {
+    char buffer[1000];
+    spdk_buffer sbuf(buffer, 1000);
+
+    for (int i = 0; i < 50; i++) {
+        FB_ASSERT_TRUE(PutFixed32(sbuf, 0u));
+        FB_ASSERT_TRUE(PutFixed32(sbuf, 1u));
+    }
+
+    sbuf.reset();
+    for (int i = 0; i < 50; i++) {
+        uint32_t v0, v1;
+        FB_ASSERT_TRUE(GetFixed32(sbuf, v0));
+        FB_ASSERT_TRUE(GetFixed32(sbuf, v1));
+        FB_ASSERT_EQ(v0, 0u);
+        FB_ASSERT_EQ(v1, 1u);
+    }
+}
+
+FB_TEST(stress_patterns, max_min_alternation) {
+    char buffer[1000];
+    spdk_buffer sbuf(buffer, 1000);
+
+    for (int i = 0; i < 50; i++) {
+        FB_ASSERT_TRUE(PutFixed32(sbuf, 0u));
+        FB_ASSERT_TRUE(PutFixed32(sbuf, std::numeric_limits<uint32_t>::max()));
+    }
+
+    sbuf.reset();
+    for (int i = 0; i < 50; i++) {
+        uint32_t min_val, max_val;
+        FB_ASSERT_TRUE(GetFixed32(sbuf, min_val));
+        FB_ASSERT_TRUE(GetFixed32(sbuf, max_val));
+        FB_ASSERT_EQ(min_val, 0u);
+        FB_ASSERT_EQ(max_val, std::numeric_limits<uint32_t>::max());
+    }
+}
+
+FB_TEST(stress_patterns, string_repeat_pattern) {
+    char buffer[5000];
+    spdk_buffer sbuf(buffer, 5000);
+
+    std::string pattern = "abc";
+    for (int i = 0; i < 100; i++) {
+        FB_ASSERT_TRUE(PutString(sbuf, pattern));
+    }
+
+    sbuf.reset();
+    for (int i = 0; i < 100; i++) {
+        std::string decoded;
+        FB_ASSERT_TRUE(GetString(sbuf, decoded));
+        FB_ASSERT_EQ(decoded, pattern);
+    }
+}
+
+FB_TEST(stress_patterns, varying_length_strings) {
+    char buffer[5000];
+    spdk_buffer sbuf(buffer, 5000);
+
+    for (int i = 1; i <= 20; i++) {
+        FB_ASSERT_TRUE(PutString(sbuf, std::string(i, 'x')));
+    }
+
+    sbuf.reset();
+    for (int i = 1; i <= 20; i++) {
+        std::string decoded;
+        FB_ASSERT_TRUE(GetString(sbuf, decoded));
+        FB_ASSERT_EQ(decoded.size(), static_cast<size_t>(i));
+    }
+}
+
+FB_TEST(stress_patterns, mixed_type_batches) {
+    char buffer[3000];
+    spdk_buffer sbuf(buffer, 3000);
+
+    for (int batch = 0; batch < 10; batch++) {
+        FB_ASSERT_TRUE(PutFixed32(sbuf, batch));
+        FB_ASSERT_TRUE(PutFixed64(sbuf, batch));
+        FB_ASSERT_TRUE(PutString(sbuf, std::to_string(batch)));
+    }
+
+    sbuf.reset();
+    for (int batch = 0; batch < 10; batch++) {
+        uint32_t v1;
+        uint64_t v2;
+        std::string v3;
+        FB_ASSERT_TRUE(GetFixed32(sbuf, v1));
+        FB_ASSERT_TRUE(GetFixed64(sbuf, v2));
+        FB_ASSERT_TRUE(GetString(sbuf, v3));
+        FB_ASSERT_EQ(v1, static_cast<uint32_t>(batch));
+        FB_ASSERT_EQ(v2, static_cast<uint64_t>(batch));
+        FB_ASSERT_EQ(v3, std::to_string(batch));
+    }
+}
+
+FB_TEST(stress_patterns, log_entry_batch) {
+    char buffer[5000];
+    spdk_buffer sbuf(buffer, 5000);
+
+    for (int i = 0; i < 20; i++) {
+        log_entry_t entry{};
+        entry.term_id = i;
+        entry.index = i * 10;
+        entry.meta = "meta_" + std::to_string(i);
+        FB_ASSERT_TRUE(EncodeLogHeader(sbuf, entry));
+    }
+
+    FB_ASSERT_TRUE(sbuf.used() > 0);
+}
+
+FB_TEST(stress_patterns, reset_and_refill_multiple_times) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    for (int round = 0; round < 10; round++) {
+        // Fill with different data each round
+        FB_ASSERT_TRUE(PutFixed32(sbuf, round));
+        FB_ASSERT_TRUE(PutString(sbuf, std::to_string(round)));
+
+        sbuf.reset();
+
+        // Verify can start fresh
+        FB_ASSERT_EQ(sbuf.used(), 0u);
+    }
+}
+
+FB_TEST(stress_patterns, sequential_optional_strings) {
+    char buffer[2000];
+    spdk_buffer sbuf(buffer, 2000);
+
+    for (int i = 0; i < 50; i++) {
+        std::optional<std::string> opt = (i % 2 == 0) ? "present" : std::nullopt;
+        FB_ASSERT_TRUE(PutOptString(sbuf, opt));
+    }
+
+    sbuf.reset();
+    for (int i = 0; i < 50; i++) {
+        std::optional<std::string> decoded;
+        FB_ASSERT_TRUE(GetOptString(sbuf, decoded));
+        bool should_have_value = (i % 2 == 0);
+        FB_ASSERT_EQ(decoded.has_value(), should_have_value);
+        if (should_have_value) {
+            FB_ASSERT_EQ(*decoded, "present");
+        }
+    }
+}
+
 FB_TEST_MAIN()
