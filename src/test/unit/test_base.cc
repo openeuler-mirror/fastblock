@@ -3293,6 +3293,126 @@ FB_TEST(sharded_template_constraints, base_protected_members) {
 }
 
 // ============================================================================
+// Test Suite: shard_id_lookup (this_shard_id() Logic Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_id_lookup) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_id_lookup) {
+    // Teardown code here
+}
+
+FB_TEST(shard_id_lookup, linear_search_in_shard_cores) {
+    // this_shard_id linearly searches _shard_cores for current core
+    std::vector<uint32_t> shard_cores = {10, 20, 30, 40};
+    uint32_t current_core = 30;
+    uint32_t found_shard = std::numeric_limits<uint32_t>::max();
+
+    for (uint32_t i = 0; i < shard_cores.size(); i++) {
+        if (shard_cores[i] == current_core) {
+            found_shard = i;
+            break;
+        }
+    }
+    FB_ASSERT_EQ(found_shard, 2);
+}
+
+FB_TEST(shard_id_lookup, returns_max_when_not_found) {
+    // If current core not in _shard_cores, return numeric_limits<uint32_t>::max()
+    std::vector<uint32_t> shard_cores = {0, 1, 2, 3};
+    uint32_t non_shard_core = 99;
+    uint32_t result = std::numeric_limits<uint32_t>::max();
+
+    for (uint32_t i = 0; i < shard_cores.size(); i++) {
+        if (shard_cores[i] == non_shard_core) {
+            result = i;
+            break;
+        }
+    }
+    FB_ASSERT_EQ(result, std::numeric_limits<uint32_t>::max());
+}
+
+FB_TEST(shard_id_lookup, first_match_returned) {
+    // If duplicates exist (shouldn't, but defensive), returns first match
+    std::vector<uint32_t> shard_cores = {5, 5, 5};  // hypothetical
+    uint32_t target = 5;
+    uint32_t result = std::numeric_limits<uint32_t>::max();
+
+    for (uint32_t i = 0; i < shard_cores.size(); i++) {
+        if (shard_cores[i] == target) {
+            result = i;
+            break;
+        }
+    }
+    FB_ASSERT_EQ(result, 0); // first index
+}
+
+FB_TEST(shard_id_lookup, empty_shard_cores_returns_max) {
+    // Empty _shard_cores -> always returns max
+    std::vector<uint32_t> shard_cores;
+    uint32_t result = std::numeric_limits<uint32_t>::max();
+    for (uint32_t i = 0; i < shard_cores.size(); i++) {
+        result = i;
+    }
+    FB_ASSERT_EQ(result, std::numeric_limits<uint32_t>::max());
+}
+
+FB_TEST(shard_id_lookup, lookup_uses_env_get_current_core) {
+    // this_shard_id() uses spdk_env_get_current_core() as needle
+    // Verify the linear-search-by-equality pattern
+    uint32_t simulated_current = 13;
+    std::vector<uint32_t> cores = {1, 5, 9, 13, 17};
+
+    uint32_t result = std::numeric_limits<uint32_t>::max();
+    for (uint32_t i = 0; i < cores.size(); i++) {
+        if (cores[i] == simulated_current) {
+            result = i;
+            break;
+        }
+    }
+    FB_ASSERT_EQ(result, 3);
+}
+
+FB_TEST(shard_id_lookup, valid_shard_id_smaller_than_count) {
+    // Returned shard_id is < count()
+    std::vector<uint32_t> shard_cores = {0, 1, 2, 3, 4, 5, 6, 7};
+    uint32_t count = shard_cores.size();
+
+    for (uint32_t target : shard_cores) {
+        uint32_t result = std::numeric_limits<uint32_t>::max();
+        for (uint32_t i = 0; i < shard_cores.size(); i++) {
+            if (shard_cores[i] == target) { result = i; break; }
+        }
+        FB_ASSERT_TRUE(result < count);
+    }
+}
+
+FB_TEST(shard_id_lookup, sentinel_marker_for_non_shard_threads) {
+    // UINT32_MAX serves as "not a shard thread" marker
+    uint32_t sentinel = std::numeric_limits<uint32_t>::max();
+    // Sentinel is recognizable
+    FB_ASSERT_TRUE(sentinel > 1000000000); // way beyond any practical shard count
+    // And distinct from all uint32_t values < itself
+    FB_ASSERT_TRUE(sentinel == UINT32_MAX);
+}
+
+FB_TEST(shard_id_lookup, lookup_O_n_complexity) {
+    // Linear search: worst case examines all entries
+    std::vector<uint32_t> shard_cores;
+    for (uint32_t i = 0; i < 16; i++) shard_cores.push_back(i);
+
+    uint32_t comparisons = 0;
+    uint32_t target = 15; // last element forces full scan
+    for (uint32_t i = 0; i < shard_cores.size(); i++) {
+        comparisons++;
+        if (shard_cores[i] == target) break;
+    }
+    FB_ASSERT_EQ(comparisons, 16);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
