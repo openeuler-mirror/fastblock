@@ -1421,14 +1421,10 @@ FB_TEST(super_xattr_structure, xattr_names_type) {
     FB_ASSERT_EQ(strcmp(super_xattr::xattr_names[0], "type"), 0);
 }
 
-FB_TEST(super_xattr_structure, type_value) {
-    FB_ASSERT_EQ(static_cast<uint32_t>(super_xattr::type), 7);
-}
-
 FB_TEST(super_xattr_structure, default_construct) {
     super_xattr xattr{};
-    // No data members besides static type, just verify it constructs
-    FB_ASSERT_TRUE(true);
+    // Verify structure can be default constructed and type is correct
+    FB_ASSERT_EQ(static_cast<uint32_t>(xattr.type), 7u);
 }
 
 // ============================================================================
@@ -1451,13 +1447,10 @@ FB_TEST(free_xattr_structure, xattr_names_type) {
     FB_ASSERT_EQ(strcmp(free_xattr::xattr_names[0], "type"), 0);
 }
 
-FB_TEST(free_xattr_structure, type_value) {
-    FB_ASSERT_EQ(static_cast<uint32_t>(free_xattr::type), 8);
-}
-
 FB_TEST(free_xattr_structure, default_construct) {
     free_xattr xattr{};
-    FB_ASSERT_TRUE(true);
+    // Verify structure can be default constructed and type is correct
+    FB_ASSERT_EQ(static_cast<uint32_t>(xattr.type), 8u);
 }
 
 // ============================================================================
@@ -2094,12 +2087,14 @@ FB_TEST(rblob_xattr_complete_callback, callback_invocation) {
 }
 
 FB_TEST(rblob_xattr_complete_callback, null_arg) {
-    rblob_xattr_complete cb = [](void* arg, int rc) {
-        // Callback can handle null arg
+    int call_count = 0;
+    rblob_xattr_complete cb = [&call_count](void* arg, int rc) {
+        call_count++;
     };
 
     cb(nullptr, 0);
-    FB_ASSERT_TRUE(true);  // Just verify it doesn't crash
+    // Verify callback was actually invoked
+    FB_ASSERT_EQ(call_count, 1);
 }
 
 FB_TEST(rblob_xattr_complete_callback, error_code_zero) {
