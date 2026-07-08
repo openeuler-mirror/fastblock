@@ -3308,4 +3308,164 @@ FB_TEST(data_integrity, long_term_id) {
     FB_ASSERT_EQ(decoded.meta, "long_term_test");
 }
 
+// ============================================================================
+// Test Suite: consistency_checks (Consistency Checks Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(consistency_checks) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(consistency_checks) {
+    // Teardown code here
+}
+
+FB_TEST(consistency_checks, buffer_remain_matches_size) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    FB_ASSERT_EQ(sbuf.remain() + sbuf.used(), 100u);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 1u));
+    FB_ASSERT_EQ(sbuf.remain() + sbuf.used(), 100u);
+
+    FB_ASSERT_TRUE(PutString(sbuf, "test"));
+    FB_ASSERT_EQ(sbuf.remain() + sbuf.used(), 100u);
+}
+
+FB_TEST(consistency_checks, used_accumulates_correctly) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    FB_ASSERT_EQ(sbuf.used(), 0u);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 1u));
+    FB_ASSERT_EQ(sbuf.used(), 4u);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 2u));
+    FB_ASSERT_EQ(sbuf.used(), 8u);
+
+    FB_ASSERT_TRUE(PutFixed64(sbuf, 3ull));
+    FB_ASSERT_EQ(sbuf.used(), 16u);
+}
+
+FB_TEST(consistency_checks, reset_clears_consistently) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    // Fill buffer partially
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 1u));
+    FB_ASSERT_TRUE(PutString(sbuf, "data"));
+
+    size_t used_before = sbuf.used();
+    FB_ASSERT_TRUE(used_before > 0);
+
+    // Reset
+    sbuf.reset();
+
+    FB_ASSERT_EQ(sbuf.used(), 0u);
+    FB_ASSERT_EQ(sbuf.remain(), 100u);
+}
+
+FB_TEST(consistency_checks, encode_decode_size_match) {
+    char buffer[500];
+    spdk_buffer sbuf(buffer, 500);
+
+    log_entry_t entry{};
+    entry.term_id = 100;
+    entry.index = 200;
+    entry.meta = "test";
+
+    FB_ASSERT_TRUE(EncodeLogHeader(sbuf, entry));
+    size_t encoded_size = sbuf.used();
+
+    sbuf.reset();
+    log_entry_t decoded{};
+    FB_ASSERT_TRUE(DecodeLogHeader(sbuf, decoded));
+
+    FB_ASSERT_EQ(sbuf.used(), encoded_size);
+}
+
+FB_TEST(consistency_checks, string_length_consistency) {
+    std::string test = "hello";
+
+    size_t length = LengthString(test);
+
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    FB_ASSERT_TRUE(PutString(sbuf, test));
+    FB_ASSERT_EQ(sbuf.used(), length);
+}
+
+FB_TEST(consistency_checks, optional_string_length_consistency) {
+    std::optional<std::string> test1 = "value";
+    std::optional<std::string> test2 = std::nullopt;
+
+    size_t len1 = LengthOptString(test1);
+    size_t len2 = LengthOptString(test2);
+
+    FB_ASSERT_TRUE(len1 > len2);
+
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    FB_ASSERT_TRUE(PutOptString(sbuf, test1));
+    FB_ASSERT_EQ(sbuf.used(), len1);
+
+    sbuf.reset();
+    FB_ASSERT_TRUE(PutOptString(sbuf, test2));
+    FB_ASSERT_EQ(sbuf.used(), len2);
+}
+
+FB_TEST(consistency_checks, type_enum_values_unique) {
+    std::set<uint32_t> values;
+
+    values.insert(static_cast<uint32_t>(blob_type::log));
+    values.insert(static_cast<uint32_t>(blob_type::object));
+    values.insert(static_cast<uint32_t>(blob_type::object_snap));
+    values.insert(static_cast<uint32_t>(blob_type::object_recover));
+    values.insert(static_cast<uint32_t>(blob_type::kv));
+    values.insert(static_cast<uint32_t>(blob_type::kv_checkpoint));
+    values.insert(static_cast<uint32_t>(blob_type::kv_checkpoint_new));
+    values.insert(static_cast<uint32_t>(blob_type::super_blob));
+    values.insert(static_cast<uint32_t>(blob_type::free));
+
+    FB_ASSERT_EQ(values.size(), 9u);  // All values are unique
+}
+
+FB_TEST(consistency_checks, type_enum_sequential) {
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::log), 0u);
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::object), 1u);
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::object_snap), 2u);
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::object_recover), 3u);
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::kv), 4u);
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::kv_checkpoint), 5u);
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::kv_checkpoint_new), 6u);
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::super_blob), 7u);
+    FB_ASSERT_EQ(static_cast<uint32_t>(blob_type::free), 8u);
+}
+
+FB_TEST(consistency_checks, xattr_count_matches_names) {
+    FB_ASSERT_EQ(log_xattr::xattr_count, 3u);
+    FB_ASSERT_EQ(object_xattr::xattr_count, 4u);
+    FB_ASSERT_EQ(object_snap_xattr::xattr_count, 5u);
+    FB_ASSERT_EQ(object_recover_xattr::xattr_count, 4u);
+    FB_ASSERT_EQ(kv_xattr::xattr_count, 2u);
+    FB_ASSERT_EQ(kv_checkpoint_xattr::xattr_count, 2u);
+    FB_ASSERT_EQ(kv_checkpoint_new_xattr::xattr_count, 2u);
+    FB_ASSERT_EQ(super_xattr::xattr_count, 1u);
+    FB_ASSERT_EQ(free_xattr::xattr_count, 1u);
+}
+
+FB_TEST(consistency_checks, fb_blob_initial_state) {
+    fb_blob blob{};
+    FB_ASSERT_TRUE(blob.blob == nullptr);
+    FB_ASSERT_EQ(blob.blobid, 0ull);
+
+    // Both fields default to zero/null
+    fb_blob blob2{};
+    FB_ASSERT_EQ(blob.blobid, blob2.blobid);
+}
+
 FB_TEST_MAIN()
