@@ -2955,4 +2955,164 @@ FB_TEST(serialization_large_data, sequential_fixed64) {
     }
 }
 
+// ============================================================================
+// Test Suite: error_recovery (Error Recovery Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(error_recovery) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(error_recovery) {
+    // Teardown code here
+}
+
+FB_TEST(error_recovery, partial_write_recovery) {
+    char buffer[10];
+    spdk_buffer sbuf(buffer, 10);
+
+    // First write succeeds
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 100u));
+
+    // Second write fails (insufficient space)
+    FB_ASSERT_FALSE(PutFixed64(sbuf, 200ull));
+
+    // Buffer state should remain unchanged after failure
+    FB_ASSERT_EQ(sbuf.used(), 4u);
+
+    // Can still do operations that fit
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 300u));
+    FB_ASSERT_EQ(sbuf.used(), 8u);
+}
+
+FB_TEST(error_recovery, reset_after_failure) {
+    char buffer[10];
+    spdk_buffer sbuf(buffer, 10);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 1u));
+    FB_ASSERT_FALSE(PutFixed64(sbuf, 2ull));
+
+    // Reset clears the failure state
+    sbuf.reset();
+
+    FB_ASSERT_EQ(sbuf.used(), 0u);
+    FB_ASSERT_TRUE(PutFixed64(sbuf, 3ull));
+}
+
+FB_TEST(error_recovery, read_after_write_failure) {
+    char buffer[10];
+    spdk_buffer sbuf(buffer, 10);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 42u));
+
+    // Failed write shouldn't affect previous data
+    FB_ASSERT_FALSE(PutFixed64(sbuf, 99ull));
+
+    sbuf.reset();
+
+    uint32_t v;
+    FB_ASSERT_TRUE(GetFixed32(sbuf, v));
+    FB_ASSERT_EQ(v, 42u);
+}
+
+FB_TEST(error_recovery, consecutive_failures) {
+    char buffer[4];
+    spdk_buffer sbuf(buffer, 4);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 1u));
+
+    // Multiple consecutive failures
+    for (int i = 0; i < 10; i++) {
+        FB_ASSERT_FALSE(PutFixed32(sbuf, i));
+    }
+
+    // Buffer state remains consistent
+    FB_ASSERT_EQ(sbuf.used(), 4u);
+}
+
+FB_TEST(error_recovery, mixed_success_failure) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 1u));    // Success
+    FB_ASSERT_FALSE(PutString(sbuf, std::string(200, 'x')));  // Fail
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 2u));    // Success
+    FB_ASSERT_FALSE(PutFixed64(sbuf, 3ull)); // Fail
+    FB_ASSERT_TRUE(PutString(sbuf, "ok"));  // Success
+
+    FB_ASSERT_EQ(sbuf.used(), 16u);  // 4 + 4 + 8
+}
+
+FB_TEST(error_recovery, get_with_insufficient_data) {
+    char buffer[4];
+    spdk_buffer sbuf(buffer, 4);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 123u));
+    sbuf.reset();
+
+    // Read successfully
+    uint32_t v;
+    FB_ASSERT_TRUE(GetFixed32(sbuf, v));
+
+    // Try to read more (no data left)
+    uint32_t v2;
+    FB_ASSERT_FALSE(GetFixed32(sbuf, v2));
+
+    // Buffer position unchanged after failed read
+    FB_ASSERT_EQ(sbuf.used(), 4u);
+}
+
+FB_TEST(error_recovery, string_read_failure_preserves_state) {
+    char buffer[10];
+    spdk_buffer sbuf(buffer, 10);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 1u));
+    sbuf.reset();
+
+    uint32_t v;
+    FB_ASSERT_TRUE(GetFixed32(sbuf, v));
+
+    // Try to read string (insufficient data for header)
+    std::string s;
+    FB_ASSERT_FALSE(GetString(sbuf, s));
+
+    // State preserved
+    FB_ASSERT_EQ(sbuf.used(), 4u);
+}
+
+FB_TEST(error_recovery, reset_clears_all_state) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    // Multiple operations
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 1u));
+    FB_ASSERT_FALSE(PutString(sbuf, std::string(200, 'x')));
+    FB_ASSERT_TRUE(PutString(sbuf, "test"));
+
+    size_t used_before = sbuf.used();
+
+    // Reset
+    sbuf.reset();
+
+    FB_ASSERT_EQ(sbuf.used(), 0u);
+    FB_ASSERT_EQ(sbuf.remain(), 100u);
+
+    // Can start fresh
+    FB_ASSERT_TRUE(PutFixed64(sbuf, 999ull));
+}
+
+FB_TEST(error_recovery, optional_string_failure_handling) {
+    char buffer[20];
+    spdk_buffer sbuf(buffer, 20);
+
+    FB_ASSERT_TRUE(PutFixed32(sbuf, 1u));
+
+    // Try to put optional string that's too large
+    std::optional<std::string> large_opt(std::string(100, 'x'));
+    FB_ASSERT_FALSE(PutOptString(sbuf, large_opt));
+
+    // Previous data intact
+    FB_ASSERT_EQ(sbuf.used(), 4u);
+}
+
 FB_TEST_MAIN()
