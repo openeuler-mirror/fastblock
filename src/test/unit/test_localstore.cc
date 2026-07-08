@@ -4229,4 +4229,158 @@ FB_TEST(final_comprehensive, comprehensive_roundtrip) {
     FB_ASSERT_FALSE(opt2.has_value());
 }
 
+// ============================================================================
+// Test Suite: buffer_list_basic (Buffer List Basic Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_basic) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_basic) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_list_basic, empty_list_bytes_zero) {
+    buffer_list bl;
+    FB_ASSERT_EQ(bl.bytes(), 0u);
+}
+
+FB_TEST(buffer_list_basic, empty_list_empty) {
+    buffer_list bl;
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_basic, append_single_buffer) {
+    char buf1[100];
+    spdk_buffer sbuf1(buf1, 100);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+
+    FB_ASSERT_EQ(bl.bytes(), 100u);
+    FB_ASSERT_FALSE(bl.empty());
+}
+
+FB_TEST(buffer_list_basic, append_multiple_buffers) {
+    char buf1[100], buf2[200];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    FB_ASSERT_EQ(bl.bytes(), 300u);
+}
+
+FB_TEST(buffer_list_basic, prepend_buffer) {
+    char buf1[100], buf2[200];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.prepend_buffer(sbuf2);
+
+    FB_ASSERT_EQ(bl.bytes(), 300u);
+    FB_ASSERT_EQ(bl.front().size(), 200u);
+}
+
+FB_TEST(buffer_list_basic, append_buffer_list) {
+    char buf1[100], buf2[200], buf3[300];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+    spdk_buffer sbuf3(buf3, 300);
+
+    buffer_list bl1;
+    bl1.append_buffer(sbuf1);
+
+    buffer_list bl2;
+    bl2.append_buffer(sbuf2);
+    bl2.append_buffer(sbuf3);
+
+    bl1.append_buffer(bl2);
+
+    FB_ASSERT_EQ(bl1.bytes(), 600u);
+    FB_ASSERT_TRUE(bl2.empty());
+}
+
+FB_TEST(buffer_list_basic, clear_list) {
+    char buf1[100], buf2[200];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    FB_ASSERT_EQ(bl.bytes(), 300u);
+
+    bl.clear();
+
+    FB_ASSERT_EQ(bl.bytes(), 0u);
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_basic, trim_front) {
+    char buf1[100], buf2[200];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    bl.trim_front();
+
+    FB_ASSERT_EQ(bl.bytes(), 200u);
+}
+
+FB_TEST(buffer_list_basic, trim_back) {
+    char buf1[100], buf2[200];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    bl.trim_back();
+
+    FB_ASSERT_EQ(bl.bytes(), 100u);
+}
+
+FB_TEST(buffer_list_basic, pop_front) {
+    char buf1[100], buf2[200];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    spdk_buffer front = bl.pop_front();
+
+    FB_ASSERT_EQ(front.size(), 100u);
+    FB_ASSERT_EQ(bl.bytes(), 200u);
+}
+
+FB_TEST(buffer_list_basic, pop_front_list) {
+    char buf1[100], buf2[200], buf3[300];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+    spdk_buffer sbuf3(buf3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    buffer_list front_list = bl.pop_front_list(2);
+
+    FB_ASSERT_EQ(front_list.bytes(), 300u);
+    FB_ASSERT_EQ(bl.bytes(), 300u);
+}
+
 FB_TEST_MAIN()
