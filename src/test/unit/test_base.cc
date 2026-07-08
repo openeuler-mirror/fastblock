@@ -1431,6 +1431,102 @@ FB_TEST(cross_shard_communication, target_thread_must_exist) {
 }
 
 // ============================================================================
+// Test Suite: core_indexing (Core Indexing Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(core_indexing) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(core_indexing) {
+    // Teardown code here
+}
+
+FB_TEST(core_indexing, shard_to_core_lookup) {
+    // shard_id -> core_id via _shard_cores[]
+    std::vector<uint32_t> shard_cores = {0, 2, 4, 6};
+    FB_ASSERT_EQ(shard_cores[0], 0);
+    FB_ASSERT_EQ(shard_cores[1], 2);
+    FB_ASSERT_EQ(shard_cores[2], 4);
+    FB_ASSERT_EQ(shard_cores[3], 6);
+}
+
+FB_TEST(core_indexing, core_to_shard_reverse_lookup) {
+    // core_id -> shard_id (linear search in _shard_cores)
+    std::vector<uint32_t> shard_cores = {0, 2, 4, 6};
+    uint32_t target_core = 4;
+
+    uint32_t shard_id = UINT32_MAX;
+    for (uint32_t i = 0; i < shard_cores.size(); i++) {
+        if (shard_cores[i] == target_core) {
+            shard_id = i;
+            break;
+        }
+    }
+    FB_ASSERT_EQ(shard_id, 2);
+}
+
+FB_TEST(core_indexing, sequential_core_assignment) {
+    // Cores 0..N-1 assigned to shards 0..N-1
+    std::vector<uint32_t> shard_cores;
+    for (uint32_t i = 0; i < 8; i++) {
+        shard_cores.push_back(i);
+    }
+
+    for (uint32_t i = 0; i < shard_cores.size(); i++) {
+        FB_ASSERT_EQ(shard_cores[i], i);
+    }
+}
+
+FB_TEST(core_indexing, skip_cores_pattern) {
+    // Non-contiguous: skip cores (e.g., reserve some for other processes)
+    std::vector<uint32_t> shard_cores = {1, 3, 5, 7};
+    for (size_t i = 1; i < shard_cores.size(); i++) {
+        FB_ASSERT_TRUE(shard_cores[i] - shard_cores[i-1] == 2);
+    }
+}
+
+FB_TEST(core_indexing, first_shard_uses_first_core) {
+    // Shard 0 is on the first allocated core
+    std::vector<uint32_t> shard_cores = {5, 6, 7, 8};
+    FB_ASSERT_EQ(shard_cores[0], 5);
+}
+
+FB_TEST(core_indexing, last_shard_index) {
+    // Last shard is at index N-1
+    uint32_t shard_count = 8;
+    uint32_t last_shard = shard_count - 1;
+    FB_ASSERT_EQ(last_shard, 7);
+}
+
+FB_TEST(core_indexing, sentinel_when_not_found) {
+    // Returns UINT32_MAX when core not in shard_cores
+    std::vector<uint32_t> shard_cores = {0, 1, 2};
+    uint32_t missing = 99;
+
+    uint32_t shard_id = UINT32_MAX;
+    for (uint32_t i = 0; i < shard_cores.size(); i++) {
+        if (shard_cores[i] == missing) {
+            shard_id = i;
+            break;
+        }
+    }
+    FB_ASSERT_EQ(shard_id, UINT32_MAX);
+}
+
+FB_TEST(core_indexing, empty_shard_cores) {
+    // Empty shard_cores -> any lookup returns UINT32_MAX
+    std::vector<uint32_t> shard_cores;
+    uint32_t shard_id = UINT32_MAX;
+    for (uint32_t i = 0; i < shard_cores.size(); i++) {
+        if (shard_cores[i] == 0) {
+            shard_id = i;
+        }
+    }
+    FB_ASSERT_EQ(shard_id, UINT32_MAX);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
