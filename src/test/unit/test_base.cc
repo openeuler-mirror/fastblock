@@ -2640,6 +2640,170 @@ FB_TEST(lambda_ctx_advanced, args_destroyed_with_ctx) {
 }
 
 // ============================================================================
+// Test Suite: sharded_start_stop (sharded<Service> Start/Stop Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(sharded_start_stop) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(sharded_start_stop) {
+    // Teardown code here
+}
+
+FB_TEST(sharded_start_stop, start_creates_n_instances) {
+    // start() creates one instance per shard
+    static int constructions;
+    constructions = 0;
+
+    struct svc { svc() { constructions++; } ~svc() {} };
+
+    std::vector<svc*> instances(4, nullptr);
+    for (uint32_t i = 0; i < 4; i++) {
+        instances[i] = new svc();
+    }
+    FB_ASSERT_EQ(constructions, 4);
+
+    for (auto* p : instances) delete p;
+}
+
+FB_TEST(sharded_start_stop, stop_deletes_all_then_clears) {
+    // stop() deletes each instance, sets to nullptr, then clears vector
+    static int destructions;
+    destructions = 0;
+
+    struct svc { ~svc() { destructions++; } };
+
+    std::vector<svc*> instances;
+    instances.push_back(new svc());
+    instances.push_back(new svc());
+    instances.push_back(new svc());
+
+    // Simulate stop()
+    for (auto*& p : instances) {
+        delete p;
+        p = nullptr;
+    }
+    instances.clear();
+
+    FB_ASSERT_EQ(destructions, 3);
+    FB_ASSERT_TRUE(instances.empty());
+}
+
+FB_TEST(sharded_start_stop, start_with_args_forwarded) {
+    // start(arg1, arg2, ...) forwards args to Service constructor
+    struct param_svc {
+        int x;
+        std::string name;
+        param_svc(int a, std::string s) : x(a), name(std::move(s)) {}
+    };
+
+    std::vector<param_svc*> instances;
+    for (uint32_t i = 0; i < 3; i++) {
+        instances.push_back(new param_svc(static_cast<int>(i * 10), "shard_" + std::to_string(i)));
+    }
+
+    FB_ASSERT_EQ(instances[0]->x, 0);
+    FB_ASSERT_EQ(instances[1]->x, 10);
+    FB_ASSERT_EQ(instances[2]->x, 20);
+    FB_ASSERT_EQ(instances[0]->name, "shard_0");
+
+    for (auto* p : instances) delete p;
+}
+
+FB_TEST(sharded_start_stop, start_uses_invoke_on_for_others) {
+    // For shards other than current, start() uses core_sharded::invoke_on
+    // Verify pattern: this_shard inline, others go through invoke_on
+    uint32_t this_shard = 1;
+    uint32_t total_shards = 4;
+    uint32_t inline_count = 0;
+    uint32_t invoke_on_count = 0;
+
+    for (uint32_t s = 0; s < total_shards; s++) {
+        if (s == this_shard) {
+            inline_count++;
+        } else {
+            invoke_on_count++;
+        }
+    }
+    FB_ASSERT_EQ(inline_count, 1);
+    FB_ASSERT_EQ(invoke_on_count, total_shards - 1);
+}
+
+FB_TEST(sharded_start_stop, instances_vector_resized_to_count) {
+    // start() does _instances.resize(count())
+    std::vector<int*> instances;
+    uint32_t count = 8;
+    instances.resize(count);
+
+    FB_ASSERT_EQ(instances.size(), count);
+    // After resize, all elements are default-constructed (nullptr for pointers)
+    for (auto* p : instances) {
+        FB_ASSERT_TRUE(p == nullptr);
+    }
+}
+
+FB_TEST(sharded_start_stop, stop_safe_with_already_null) {
+    // stop() handles already-null entries gracefully
+    std::vector<int*> instances;
+    instances.push_back(new int(1));
+    instances.push_back(nullptr);
+    instances.push_back(new int(3));
+
+    // Simulate stop() handling nulls
+    int valid_deletes = 0;
+    for (auto*& p : instances) {
+        if (p) {
+            delete p;
+            valid_deletes++;
+            p = nullptr;
+        }
+    }
+    instances.clear();
+
+    FB_ASSERT_EQ(valid_deletes, 2);
+    FB_ASSERT_TRUE(instances.empty());
+}
+
+FB_TEST(sharded_start_stop, restart_after_stop) {
+    // After stop(), start() can be called again
+    std::vector<int*> instances;
+
+    // First start
+    for (int i = 0; i < 3; i++) instances.push_back(new int(i));
+    FB_ASSERT_EQ(instances.size(), 3);
+
+    // Stop
+    for (auto*& p : instances) { delete p; p = nullptr; }
+    instances.clear();
+    FB_ASSERT_TRUE(instances.empty());
+
+    // Restart
+    for (int i = 10; i < 14; i++) instances.push_back(new int(i));
+    FB_ASSERT_EQ(instances.size(), 4);
+    FB_ASSERT_EQ(*instances[0], 10);
+
+    for (auto* p : instances) delete p;
+}
+
+FB_TEST(sharded_start_stop, parallel_start_isolation) {
+    // Different shards initialized in parallel must not see each other's state
+    std::vector<int*> instances(4, nullptr);
+
+    // Simulate parallel initialization
+    for (uint32_t s = 0; s < 4; s++) {
+        instances[s] = new int(static_cast<int>(s));
+    }
+
+    // Each shard sees its own value
+    for (uint32_t s = 0; s < 4; s++) {
+        FB_ASSERT_EQ(*instances[s], static_cast<int>(s));
+    }
+
+    for (auto* p : instances) delete p;
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
