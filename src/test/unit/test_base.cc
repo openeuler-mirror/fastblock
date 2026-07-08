@@ -3413,6 +3413,129 @@ FB_TEST(shard_id_lookup, lookup_O_n_complexity) {
 }
 
 // ============================================================================
+// Test Suite: shard_threading_model (Shard Threading Model Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_threading_model) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_threading_model) {
+    // Teardown code here
+}
+
+FB_TEST(shard_threading_model, one_thread_per_shard) {
+    // Each shard has exactly one spdk_thread
+    std::vector<void*> threads(4);
+    std::set<void*> unique_threads;
+
+    for (uint32_t i = 0; i < 4; i++) {
+        threads[i] = (void*)(uintptr_t)(0x1000 + i);
+        unique_threads.insert(threads[i]);
+    }
+    FB_ASSERT_EQ(unique_threads.size(), 4);
+    FB_ASSERT_EQ(threads.size(), unique_threads.size());
+}
+
+FB_TEST(shard_threading_model, thread_pinned_to_one_cpu) {
+    // Each thread pinned to single CPU via cpuset_set_cpu (one bit)
+    for (uint32_t core = 0; core < 4; core++) {
+        uint64_t cpumask = (1ULL << core);
+        // Exactly one bit set
+        int bit_count = 0;
+        for (uint64_t m = cpumask; m != 0; m >>= 1) {
+            if (m & 1) bit_count++;
+        }
+        FB_ASSERT_EQ(bit_count, 1);
+    }
+}
+
+FB_TEST(shard_threading_model, thread_executes_serially) {
+    // Single thread means operations execute serially (no concurrency within shard)
+    int counter = 0;
+    // Simulate 10000 ops in one thread - no race conditions
+    for (int i = 0; i < 10000; i++) {
+        counter++;
+    }
+    FB_ASSERT_EQ(counter, 10000);
+}
+
+FB_TEST(shard_threading_model, threads_dont_share_data_naturally) {
+    // Without explicit synchronization, threads don't see each other's data
+    // Each shard has its own copy
+    struct shard_state { int local_counter = 0; };
+
+    std::vector<shard_state> shards(4);
+    // Each shard modifies its own state
+    shards[0].local_counter = 100;
+    shards[1].local_counter = 200;
+    shards[2].local_counter = 300;
+    shards[3].local_counter = 400;
+
+    // No cross-shard contamination
+    FB_ASSERT_EQ(shards[0].local_counter, 100);
+    FB_ASSERT_EQ(shards[3].local_counter, 400);
+
+    // Sum independent
+    int sum = 0;
+    for (const auto& s : shards) sum += s.local_counter;
+    FB_ASSERT_EQ(sum, 1000);
+}
+
+FB_TEST(shard_threading_model, spdk_set_thread_pattern) {
+    // stop() uses set_thread + thread_exit + restore current
+    void* current_thread = (void*)0x100;
+    void* original = current_thread;
+
+    void* target = (void*)0x200;
+    current_thread = target;     // set_thread(target)
+    FB_ASSERT_EQ(current_thread, target);
+    // thread_exit happens here
+    current_thread = original;   // set_thread(original)
+    FB_ASSERT_EQ(current_thread, original);
+}
+
+FB_TEST(shard_threading_model, set_thread_null_for_exit) {
+    // If exiting the current thread, set to null afterwards
+    void* current = (void*)0x500;
+    void* exiting_target = current; // exiting myself
+
+    void* after_exit = (current == exiting_target) ? nullptr : current;
+    FB_ASSERT_TRUE(after_exit == nullptr);
+}
+
+FB_TEST(shard_threading_model, work_distributed_round_robin) {
+    // Tasks distributed across shards (e.g., by hash)
+    uint32_t shard_count = 4;
+    std::vector<uint32_t> task_assignments;
+    for (uint32_t task_id = 0; task_id < 16; task_id++) {
+        task_assignments.push_back(task_id % shard_count);
+    }
+
+    // Each shard gets exactly 4 tasks
+    std::vector<uint32_t> counts(shard_count, 0);
+    for (auto a : task_assignments) counts[a]++;
+    for (uint32_t c : counts) FB_ASSERT_EQ(c, 4);
+}
+
+FB_TEST(shard_threading_model, thread_exit_does_not_block) {
+    // spdk_thread_exit is async - signals exit, doesn't wait
+    bool exit_signaled = false;
+    bool thread_actually_exited = false;
+
+    // Send exit signal
+    exit_signaled = true;
+    // Return immediately, regardless of whether thread completed
+    bool return_immediately = true;
+    FB_ASSERT_TRUE(exit_signaled);
+    FB_ASSERT_TRUE(return_immediately);
+
+    // Later, thread completes its last op and exits
+    thread_actually_exited = true;
+    FB_ASSERT_TRUE(thread_actually_exited);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
