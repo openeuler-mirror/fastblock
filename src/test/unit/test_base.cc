@@ -38,7 +38,8 @@ FB_SUITE_TEARDOWN(core_id_type) {
 FB_TEST(core_id_type, type_is_uint32) {
     // core_id_type should be uint32_t
     using core_id_type = uint32_t;
-    FB_ASSERT_TRUE(std::is_same_v<core_id_type, uint32_t>);
+    constexpr bool same_type = std::is_same_v<core_id_type, uint32_t>;
+    FB_ASSERT_TRUE(same_type);
     FB_ASSERT_TRUE(std::is_unsigned_v<core_id_type>);
 }
 
@@ -182,7 +183,8 @@ FB_SUITE_TEARDOWN(core_iterator) {
 FB_TEST(core_iterator, iterator_category) {
     // core_iterator should be forward_iterator
     using iter_category = std::forward_iterator_tag;
-    FB_ASSERT_TRUE(std::is_same_v<iter_category, std::forward_iterator_tag>);
+    constexpr bool same = std::is_same_v<iter_category, std::forward_iterator_tag>;
+    FB_ASSERT_TRUE(same);
 }
 
 FB_TEST(core_iterator, value_type) {
