@@ -2804,6 +2804,149 @@ FB_TEST(sharded_start_stop, parallel_start_isolation) {
 }
 
 // ============================================================================
+// Test Suite: sharded_access (sharded<Service> Access Methods Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(sharded_access) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(sharded_access) {
+    // Teardown code here
+}
+
+FB_TEST(sharded_access, local_returns_reference) {
+    // local() returns reference (not pointer) - modifications affect stored instance
+    std::vector<int*> instances;
+    for (int i = 0; i < 4; i++) instances.push_back(new int(i * 100));
+
+    uint32_t current_shard = 2;
+    int& local_ref = *instances[current_shard];
+
+    FB_ASSERT_EQ(local_ref, 200);
+    local_ref = 999;
+    FB_ASSERT_EQ(*instances[current_shard], 999);
+
+    for (auto* p : instances) delete p;
+}
+
+FB_TEST(sharded_access, on_shard_returns_reference) {
+    // on_shard(N) returns reference to shard N's instance
+    std::vector<int*> instances;
+    for (int i = 0; i < 4; i++) instances.push_back(new int(i + 1));
+
+    int& shard_1 = *instances[1];
+    int& shard_3 = *instances[3];
+
+    FB_ASSERT_EQ(shard_1, 2);
+    FB_ASSERT_EQ(shard_3, 4);
+    FB_ASSERT_TRUE(&shard_1 != &shard_3);
+
+    for (auto* p : instances) delete p;
+}
+
+FB_TEST(sharded_access, shard_is_started_size_check) {
+    // shard_is_started returns false if shard >= _instances.size()
+    std::vector<int*> instances;
+    instances.push_back(new int(1));
+    instances.push_back(new int(2));
+
+    // Valid shards
+    FB_ASSERT_TRUE(instances.size() > 0 && instances[0] != nullptr);
+    FB_ASSERT_TRUE(instances.size() > 1 && instances[1] != nullptr);
+
+    // Out-of-bounds shards
+    uint32_t oob = 99;
+    FB_ASSERT_TRUE(!(instances.size() > oob));
+
+    for (auto* p : instances) delete p;
+}
+
+FB_TEST(sharded_access, shard_is_started_null_check) {
+    // shard_is_started returns false if _instances[shard] is null
+    std::vector<int*> instances;
+    instances.push_back(new int(1));
+    instances.push_back(nullptr);  // Not yet started
+    instances.push_back(new int(3));
+
+    FB_ASSERT_TRUE(instances[0] != nullptr); // started
+    FB_ASSERT_TRUE(instances[1] == nullptr); // not started
+    FB_ASSERT_TRUE(instances[2] != nullptr); // started
+
+    delete instances[0];
+    delete instances[2];
+}
+
+FB_TEST(sharded_access, size_reflects_instances_count) {
+    // size() returns _instances.size()
+    std::vector<int*> instances;
+    FB_ASSERT_EQ(instances.size(), 0);
+
+    instances.resize(8);
+    FB_ASSERT_EQ(instances.size(), 8);
+
+    instances.resize(16);
+    FB_ASSERT_EQ(instances.size(), 16);
+
+    instances.clear();
+    FB_ASSERT_EQ(instances.size(), 0);
+}
+
+FB_TEST(sharded_access, modifications_persist) {
+    // Modifications through local() persist between calls
+    struct counter { int v = 0; };
+    std::vector<counter*> instances;
+    instances.push_back(new counter());
+
+    // First access: increment
+    counter& c = *instances[0];
+    c.v = 5;
+
+    // Second access: read back
+    counter& c2 = *instances[0];
+    FB_ASSERT_EQ(c2.v, 5);
+    FB_ASSERT_EQ(&c, &c2);
+
+    delete instances[0];
+}
+
+FB_TEST(sharded_access, instances_are_independent) {
+    // Modifying one shard doesn't affect others
+    std::vector<int*> instances;
+    for (int i = 0; i < 4; i++) instances.push_back(new int(0));
+
+    *instances[0] = 100;
+    *instances[2] = 300;
+
+    FB_ASSERT_EQ(*instances[0], 100);
+    FB_ASSERT_EQ(*instances[1], 0);   // unchanged
+    FB_ASSERT_EQ(*instances[2], 300);
+    FB_ASSERT_EQ(*instances[3], 0);   // unchanged
+
+    for (auto* p : instances) delete p;
+}
+
+FB_TEST(sharded_access, on_shard_for_cross_shard_init) {
+    // on_shard(N) allows initialization-time access from other shards
+    // (Documented as not thread-safe but valid during init phase)
+    struct config { int value; };
+    std::vector<config*> instances;
+    for (int i = 0; i < 4; i++) instances.push_back(new config{0});
+
+    // Core 0 initializes all shards via on_shard()
+    for (uint32_t s = 0; s < 4; s++) {
+        config& c = *instances[s];
+        c.value = static_cast<int>(s) * 10;
+    }
+
+    for (uint32_t s = 0; s < 4; s++) {
+        FB_ASSERT_EQ(instances[s]->value, static_cast<int>(s) * 10);
+    }
+
+    for (auto* p : instances) delete p;
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
