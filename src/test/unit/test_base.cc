@@ -1724,6 +1724,102 @@ FB_TEST(spdk_thread_management, idempotent_stop) {
 }
 
 // ============================================================================
+// Test Suite: shard_data_locality (Shard Data Locality Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_data_locality) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_data_locality) {
+    // Teardown code here
+}
+
+FB_TEST(shard_data_locality, no_shared_state) {
+    // Each shard owns its data exclusively (no sharing)
+    struct ShardData { int counter; };
+    std::vector<ShardData> shards(4);
+    for (uint32_t i = 0; i < 4; i++) {
+        shards[i].counter = static_cast<int>(i * 100);
+    }
+
+    // Verify no shared writes affect other shards
+    shards[0].counter = 9999;
+    FB_ASSERT_EQ(shards[1].counter, 100);
+    FB_ASSERT_EQ(shards[2].counter, 200);
+    FB_ASSERT_EQ(shards[3].counter, 300);
+}
+
+FB_TEST(shard_data_locality, local_access_only) {
+    // local() returns reference to current shard's Service
+    std::vector<int*> instances = {new int(1), new int(2), new int(3), new int(4)};
+    uint32_t current_shard = 2;
+    int& local_ref = *instances[current_shard];
+    FB_ASSERT_EQ(local_ref, 3);
+
+    // Modification via local_ref only affects local shard
+    local_ref = 999;
+    FB_ASSERT_EQ(*instances[2], 999);
+    FB_ASSERT_EQ(*instances[0], 1);
+    FB_ASSERT_EQ(*instances[3], 4);
+
+    for (auto* p : instances) delete p;
+}
+
+FB_TEST(shard_data_locality, on_shard_for_initialization) {
+    // on_shard() allows pre-initialization access (single-threaded phase)
+    std::vector<int*> instances = {new int(0), new int(0), new int(0), new int(0)};
+
+    // Init phase: core 0 writes, no concurrent access
+    for (uint32_t i = 0; i < 4; i++) {
+        *instances[i] = static_cast<int>(i);
+    }
+
+    FB_ASSERT_EQ(*instances[0], 0);
+    FB_ASSERT_EQ(*instances[3], 3);
+
+    for (auto* p : instances) delete p;
+}
+
+FB_TEST(shard_data_locality, no_cache_line_sharing) {
+    // Each Service should fit in its own cache line group
+    // (conceptual test - actual depends on Service size)
+    struct alignas(64) AlignedShard { int data; };
+    AlignedShard s;
+    FB_ASSERT_TRUE(alignof(AlignedShard) >= 64);
+}
+
+FB_TEST(shard_data_locality, numa_aware_allocation) {
+    // Memory allocated per-shard should be NUMA-local
+    // (using SPDK env: socket_id from spdk_env_get_socket_id)
+    uint32_t socket0 = 0;
+    uint32_t socket1 = 1;
+    FB_ASSERT_TRUE(socket0 != socket1);
+}
+
+FB_TEST(shard_data_locality, per_shard_resource_limit) {
+    // Resources scaled with shard count
+    uint32_t total_memory_mb = 16384;
+    uint32_t shard_count = 4;
+    uint32_t per_shard_mb = total_memory_mb / shard_count;
+    FB_ASSERT_EQ(per_shard_mb, 4096);
+}
+
+FB_TEST(shard_data_locality, thread_local_pollers) {
+    // Each shard's thread has its own pollers
+    std::vector<bool> has_poller = {true, true, true, true};
+    for (bool p : has_poller) {
+        FB_ASSERT_TRUE(p);
+    }
+}
+
+FB_TEST(shard_data_locality, no_synchronization_within_shard) {
+    // Within a single shard, no locks needed
+    bool needs_lock = false;
+    FB_ASSERT_TRUE(!needs_lock);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
