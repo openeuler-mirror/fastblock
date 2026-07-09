@@ -5250,24 +5250,24 @@ FB_TEST(buffer_list_stress, trim_operations_cycle) {
 }
 
 // ============================================================================
-// Test Suite: buffer_list_iovec (Buffer List IO Vector Tests)
+// Test Suite: buffer_list_iovec_advanced (Buffer List IO Vector Advanced Tests)
 // ============================================================================
 
-FB_SUITE_SETUP(buffer_list_iovec) {
+FB_SUITE_SETUP(buffer_list_iovec_advanced) {
     // Setup code here
 }
 
-FB_SUITE_TEARDOWN(buffer_list_iovec) {
+FB_SUITE_TEARDOWN(buffer_list_iovec_advanced) {
     // Teardown code here
 }
 
-FB_TEST(buffer_list_iovec, to_iovec_empty_list) {
+FB_TEST(buffer_list_iovec_advanced, to_iovec_empty_list) {
     buffer_list bl;
     iovecs iovs = bl.to_iovec();
     FB_ASSERT_TRUE(iovs.empty());
 }
 
-FB_TEST(buffer_list_iovec, to_iovec_single_buffer) {
+FB_TEST(buffer_list_iovec_advanced, to_iovec_single_buffer) {
     char buf1[100];
     spdk_buffer sbuf1(buf1, 100);
 
@@ -5279,7 +5279,7 @@ FB_TEST(buffer_list_iovec, to_iovec_single_buffer) {
     FB_ASSERT_EQ(iovs[0].iov_len, 100u);
 }
 
-FB_TEST(buffer_list_iovec, to_iovec_multiple_buffers) {
+FB_TEST(buffer_list_iovec_advanced, to_iovec_multiple_buffers) {
     char buf1[100], buf2[200], buf3[300];
     spdk_buffer sbuf1(buf1, 100);
     spdk_buffer sbuf2(buf2, 200);
@@ -5297,7 +5297,7 @@ FB_TEST(buffer_list_iovec, to_iovec_multiple_buffers) {
     FB_ASSERT_EQ(iovs[2].iov_len, 300u);
 }
 
-FB_TEST(buffer_list_iovec, to_iovec_partial_from_start) {
+FB_TEST(buffer_list_iovec_advanced, to_iovec_partial_from_start) {
     char buf1[100], buf2[200];
     spdk_buffer sbuf1(buf1, 100);
     spdk_buffer sbuf2(buf2, 200);
@@ -5312,7 +5312,7 @@ FB_TEST(buffer_list_iovec, to_iovec_partial_from_start) {
     FB_ASSERT_EQ(iovs[1].iov_len, 50u);
 }
 
-FB_TEST(buffer_list_iovec, to_iovec_partial_middle) {
+FB_TEST(buffer_list_iovec_advanced, to_iovec_partial_middle) {
     char buf1[100], buf2[200], buf3[300];
     spdk_buffer sbuf1(buf1, 100);
     spdk_buffer sbuf2(buf2, 200);
@@ -5329,7 +5329,7 @@ FB_TEST(buffer_list_iovec, to_iovec_partial_middle) {
     FB_ASSERT_EQ(iovs[1].iov_len, 150u);
 }
 
-FB_TEST(buffer_list_iovec, to_iovec_exceeds_bytes) {
+FB_TEST(buffer_list_iovec_advanced, to_iovec_exceeds_bytes) {
     char buf1[100];
     spdk_buffer sbuf1(buf1, 100);
 
@@ -5340,7 +5340,7 @@ FB_TEST(buffer_list_iovec, to_iovec_exceeds_bytes) {
     FB_ASSERT_TRUE(iovs.empty());
 }
 
-FB_TEST(buffer_list_iovec, to_iovec_at_boundary) {
+FB_TEST(buffer_list_iovec_advanced, to_iovec_at_boundary) {
     char buf1[100], buf2[200];
     spdk_buffer sbuf1(buf1, 100);
     spdk_buffer sbuf2(buf2, 200);
@@ -5354,7 +5354,7 @@ FB_TEST(buffer_list_iovec, to_iovec_at_boundary) {
     FB_ASSERT_EQ(iovs[0].iov_len, 100u);
 }
 
-FB_TEST(buffer_list_iovec, to_iovec_full_length) {
+FB_TEST(buffer_list_iovec_advanced, to_iovec_full_length) {
     char buf1[100], buf2[200];
     spdk_buffer sbuf1(buf1, 100);
     spdk_buffer sbuf2(buf2, 200);
