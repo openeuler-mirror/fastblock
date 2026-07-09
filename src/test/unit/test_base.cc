@@ -2340,7 +2340,8 @@ FB_TEST(core_sharded_initialization, shard_cores_vector_grows_by_n_core) {
     // After construction, _shard_cores.size() == n_core
     std::vector<uint32_t> shard_cores;
     uint32_t n_core = 6;
-    auto it = std::vector<uint32_t>{2, 4, 6, 8, 10, 12, 14}.begin();
+    std::vector<uint32_t> source = {2, 4, 6, 8, 10, 12, 14};
+    auto it = source.begin();
     for (uint32_t i = 0; i < n_core; i++) {
         shard_cores.push_back(*it);
         ++it;
@@ -2555,22 +2556,23 @@ FB_TEST(lambda_ctx_advanced, func_stored_by_value) {
 
 FB_TEST(lambda_ctx_advanced, args_perfect_forwarding) {
     // make_tuple with forward<Args>... preserves value categories
+    static int copies = 0;
+    static int moves = 0;
+    copies = 0;
+    moves = 0;
+
     struct trace {
-        static int copies;
-        static int moves;
         trace() = default;
         trace(const trace&) { copies++; }
         trace(trace&&) noexcept { moves++; }
     };
-    trace::copies = 0;
-    trace::moves = 0;
 
     auto make = [](trace&& t) { return std::make_tuple(std::forward<trace>(t)); };
     auto tup = make(trace{});
 
-    FB_ASSERT_TRUE(trace::moves >= 1);
+    FB_ASSERT_TRUE(moves >= 1);
     // No copy when rvalue forwarded
-    FB_ASSERT_EQ(trace::copies, 0);
+    FB_ASSERT_EQ(copies, 0);
 }
 
 FB_TEST(lambda_ctx_advanced, run_task_invokes_apply) {
