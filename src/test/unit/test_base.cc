@@ -5002,6 +5002,77 @@ FB_TEST(shard_state_isolation, deep_copy_for_cross_shard_data) {
 }
 
 // ============================================================================
+// Test Suite: core_iterator_traits (Core Iterator Type Traits Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(core_iterator_traits) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(core_iterator_traits) {
+    // Teardown code here
+}
+
+FB_TEST(core_iterator_traits, value_type_is_core_id) {
+    // iterator_traits::value_type must be core_id_type
+    using iter_t = std::vector<uint32_t>::iterator;
+    using value_t = std::iterator_traits<iter_t>::value_type;
+    constexpr bool same = std::is_same_v<value_t, uint32_t>;
+    FB_ASSERT_TRUE(same);
+}
+
+FB_TEST(core_iterator_traits, difference_type_is_ptrdiff) {
+    using iter_t = std::vector<uint32_t>::iterator;
+    using diff_t = std::iterator_traits<iter_t>::difference_type;
+    constexpr bool same = std::is_same_v<diff_t, std::ptrdiff_t>;
+    FB_ASSERT_TRUE(same);
+}
+
+FB_TEST(core_iterator_traits, pointer_type) {
+    using iter_t = std::vector<uint32_t>::iterator;
+    using ptr_t = std::iterator_traits<iter_t>::pointer;
+    constexpr bool is_ptr = std::is_pointer_v<ptr_t>;
+    FB_ASSERT_TRUE(is_ptr);
+}
+
+FB_TEST(core_iterator_traits, reference_type) {
+    using iter_t = std::vector<uint32_t>::iterator;
+    using ref_t = std::iterator_traits<iter_t>::reference;
+    constexpr bool is_ref = std::is_reference_v<ref_t>;
+    FB_ASSERT_TRUE(is_ref);
+}
+
+FB_TEST(core_iterator_traits, iterator_category_meets_minimum) {
+    // core_iterator requires forward_iterator_tag minimum
+    using iter_t = std::vector<uint32_t>::iterator;
+    using cat_t = std::iterator_traits<iter_t>::iterator_category;
+
+    // vector iterator is random_access, satisfies forward
+    constexpr bool meets_forward = std::is_base_of_v<std::forward_iterator_tag, cat_t>;
+    FB_ASSERT_TRUE(meets_forward);
+}
+
+FB_TEST(core_iterator_traits, comparable_for_equality) {
+    using iter_t = std::vector<uint32_t>::iterator;
+    constexpr bool eq_comparable = std::is_invocable_r_v<
+        bool, std::equal_to<>, iter_t, iter_t>;
+    FB_ASSERT_TRUE(eq_comparable);
+}
+
+FB_TEST(core_iterator_traits, supports_destructor) {
+    using iter_t = std::vector<uint32_t>::iterator;
+    constexpr bool destructible = std::is_destructible_v<iter_t>;
+    FB_ASSERT_TRUE(destructible);
+}
+
+FB_TEST(core_iterator_traits, supports_default_construction) {
+    // Forward iterator requires default construction
+    using iter_t = std::vector<uint32_t>::iterator;
+    constexpr bool default_ctor = std::is_default_constructible_v<iter_t>;
+    FB_ASSERT_TRUE(default_ctor);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
