@@ -5886,6 +5886,125 @@ FB_TEST(shard_message_queue, msg_carries_callback_and_arg) {
 }
 
 // ============================================================================
+// Test Suite: shard_service_specialization (Service Specialization Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_service_specialization) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_service_specialization) {
+    // Teardown code here
+}
+
+FB_TEST(shard_service_specialization, service_as_class_type) {
+    // Service must be a class type (not int, void, etc.)
+    struct ValidService { int v = 0; };
+    constexpr bool is_class = std::is_class_v<ValidService>;
+    FB_ASSERT_TRUE(is_class);
+}
+
+FB_TEST(shard_service_specialization, service_with_inheritance) {
+    // Service can inherit from base classes
+    struct base { virtual int kind() { return 0; } virtual ~base() = default; };
+    struct derived : base { int kind() override { return 1; } };
+
+    derived* d = new derived();
+    base* b = d;
+    FB_ASSERT_EQ(b->kind(), 1);
+    delete d;
+}
+
+FB_TEST(shard_service_specialization, service_with_template_params) {
+    // Service itself can be a template
+    template<typename T> struct generic_svc {
+        T value;
+        generic_svc(T v) : value(v) {}
+    };
+
+    generic_svc<int> s_int(42);
+    generic_svc<std::string> s_str("hello");
+    FB_ASSERT_EQ(s_int.value, 42);
+    FB_ASSERT_EQ(s_str.value, "hello");
+}
+
+FB_TEST(shard_service_specialization, service_with_no_default_ctor) {
+    // Service can require args (no default ctor)
+    struct no_default {
+        int v;
+        no_default(int x) : v(x) {}
+    };
+
+    constexpr bool has_default = std::is_default_constructible_v<no_default>;
+    FB_ASSERT_TRUE(!has_default);
+
+    no_default s(42);
+    FB_ASSERT_EQ(s.v, 42);
+}
+
+FB_TEST(shard_service_specialization, service_with_complex_init) {
+    // Service can do complex initialization in ctor
+    struct complex_init {
+        std::vector<int> data;
+        int sum;
+        complex_init(int n) : data(n) {
+            for (int i = 0; i < n; i++) data[i] = i;
+            sum = 0;
+            for (int v : data) sum += v;
+        }
+    };
+
+    complex_init s(10);
+    FB_ASSERT_EQ(s.data.size(), 10);
+    FB_ASSERT_EQ(s.sum, 45); // 0+1+...+9
+}
+
+FB_TEST(shard_service_specialization, service_with_shared_state) {
+    // Although shards are isolated, Service can hold shared (static) state
+    struct shared_state_svc {
+        static int counter;
+        shared_state_svc() { counter++; }
+    };
+
+    // Note: in real sharded<>, each shard has its own instance,
+    // but static members are shared across all instances
+    shared_state_svc::counter = 0;
+    shared_state_svc s1;
+    shared_state_svc s2;
+    FB_ASSERT_EQ(shared_state_svc::counter, 2);
+}
+
+FB_TEST(shard_service_specialization, service_destructor_called) {
+    // Service destructor must be called for cleanup
+    static int dtor_count;
+    dtor_count = 0;
+
+    struct svc {
+        ~svc() { dtor_count++; }
+    };
+
+    {
+        svc* p1 = new svc();
+        svc* p2 = new svc();
+        delete p1;
+        delete p2;
+    }
+    FB_ASSERT_EQ(dtor_count, 2);
+}
+
+FB_TEST(shard_service_specialization, service_holds_resources) {
+    // Service can own resources (files, threads, memory)
+    struct resource_holder {
+        std::unique_ptr<int> resource;
+        resource_holder() : resource(std::make_unique<int>(42)) {}
+    };
+
+    resource_holder s;
+    FB_ASSERT_TRUE(s.resource != nullptr);
+    FB_ASSERT_EQ(*s.resource, 42);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
