@@ -691,5 +691,120 @@ FB_TEST(monclient_pg_state, states_can_be_combined) {
     FB_ASSERT_FALSE((combined & PgDown) != 0);
 }
 
+// ============================================================================
+// Test Suite: monclient_pg_map_update — pool migration state machine
+//
+// pg_map::pool_update tracks per-pg progress during a pool reconfiguration.
+// Each pg holds one of three sentinel values:
+//   -1  =>  update failed for this pg
+//    0  =>  update completed for this pg
+//    1  =>  update still in progress
+// The integers are encoded across modules; if their meaning shifts, callers
+// silently misclassify a failed migration as a successful one and flip the
+// pool to ACTIVE prematurely. Pin everything down here.
+// ============================================================================
+
+namespace {
+
+constexpr int PG_UPDATE_FAILED  = -1;
+constexpr int PG_UPDATE_DONE    = 0;
+constexpr int PG_UPDATE_RUNNING = 1;
+
+struct pool_update_info {
+    int64_t pool_version{0};
+    std::map<int32_t, int> pgs{}; // pg_id -> update state
+};
+
+struct fake_pg_map {
+    std::map<int32_t, pool_update_info> pool_update{};
+
+    bool pool_is_updating(int32_t pool_id) const {
+        auto it = pool_update.find(pool_id);
+        if (it == pool_update.end()) return false;
+        for (auto& [_, st] : it->second.pgs) {
+            if (st == PG_UPDATE_RUNNING) return true;
+        }
+        return false;
+    }
+
+    bool pool_update_all_done(int32_t pool_id) const {
+        auto it = pool_update.find(pool_id);
+        if (it == pool_update.end()) return false;
+        if (it->second.pgs.empty()) return false;
+        for (auto& [_, st] : it->second.pgs) {
+            if (st != PG_UPDATE_DONE) return false;
+        }
+        return true;
+    }
+};
+
+} // anonymous namespace
+
+FB_SUITE_SETUP(monclient_pg_map_update) {}
+FB_SUITE_TEARDOWN(monclient_pg_map_update) {}
+
+FB_TEST(monclient_pg_map_update, sentinel_values_are_stable) {
+    // -1 / 0 / 1 are encoded across modules — changing them is a wire break.
+    FB_ASSERT_EQ(PG_UPDATE_FAILED,  -1);
+    FB_ASSERT_EQ(PG_UPDATE_DONE,     0);
+    FB_ASSERT_EQ(PG_UPDATE_RUNNING,  1);
+}
+
+FB_TEST(monclient_pg_map_update, unknown_pool_is_neither_running_nor_done) {
+    // A pool we've never heard of is NOT updating, but also NOT done — the
+    // caller shouldn't flip an unknown pool active.
+    fake_pg_map m;
+    FB_ASSERT_FALSE(m.pool_is_updating(42));
+    FB_ASSERT_FALSE(m.pool_update_all_done(42));
+}
+
+FB_TEST(monclient_pg_map_update, running_pg_marks_pool_updating) {
+    fake_pg_map m;
+    pool_update_info info;
+    info.pgs[1] = PG_UPDATE_DONE;
+    info.pgs[2] = PG_UPDATE_RUNNING; // one running pg => pool is updating
+    info.pgs[3] = PG_UPDATE_DONE;
+    m.pool_update[100] = info;
+
+    FB_ASSERT_TRUE(m.pool_is_updating(100));
+    FB_ASSERT_FALSE(m.pool_update_all_done(100));
+}
+
+FB_TEST(monclient_pg_map_update, all_done_pool_reports_finished) {
+    fake_pg_map m;
+    pool_update_info info;
+    info.pgs[1] = PG_UPDATE_DONE;
+    info.pgs[2] = PG_UPDATE_DONE;
+    m.pool_update[200] = info;
+
+    FB_ASSERT_FALSE(m.pool_is_updating(200));
+    FB_ASSERT_TRUE(m.pool_update_all_done(200));
+}
+
+FB_TEST(monclient_pg_map_update, failed_pg_blocks_all_done) {
+    // Even a single failed pg means the migration is not fully done; the
+    // caller must not flip the pool to ACTIVE based on the other pgs.
+    fake_pg_map m;
+    pool_update_info info;
+    info.pgs[1] = PG_UPDATE_DONE;
+    info.pgs[2] = PG_UPDATE_FAILED;
+    m.pool_update[300] = info;
+
+    FB_ASSERT_FALSE(m.pool_update_all_done(300));
+    // No pg is running anymore (one is failed), so pool_is_updating is false.
+    // The pool is stuck in a "needs operator attention" limbo.
+    FB_ASSERT_FALSE(m.pool_is_updating(300));
+}
+
+FB_TEST(monclient_pg_map_update, empty_pool_is_not_done) {
+    // A pool entry with zero pgs hasn't started yet. pool_update_all_done
+    // must NOT report it as done — otherwise the caller flips the pool
+    // active before any pg is actually migrated.
+    fake_pg_map m;
+    m.pool_update[400] = pool_update_info{};
+    FB_ASSERT_FALSE(m.pool_update_all_done(400));
+    FB_ASSERT_FALSE(m.pool_is_updating(400));
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
