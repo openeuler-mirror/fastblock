@@ -6228,4 +6228,412 @@ FB_TEST(bytes_tracking, bytes_preserved_through_operations) {
     FB_ASSERT_EQ(popped.bytes(), 300u);
 }
 
+// ============================================================================
+// Test Suite: spdk_buffer_advanced_append (Advanced Append Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_advanced_append) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_advanced_append) {
+    // Teardown code here
+}
+
+FB_TEST(spdk_buffer_advanced_append, append_to_end_of_partial_buffer) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.append("first", 5);
+    FB_ASSERT_EQ(sbuf.used(), 5u);
+
+    sbuf.append("second", 6);
+    FB_ASSERT_EQ(sbuf.used(), 11u);
+}
+
+FB_TEST(spdk_buffer_advanced_append, append_multiple_strings) {
+    char buffer[1000];
+    spdk_buffer sbuf(buffer, 1000);
+
+    for (int i = 0; i < 10; i++) {
+        sbuf.append(std::to_string(i));
+    }
+
+    FB_ASSERT_TRUE(sbuf.used() > 0);
+}
+
+FB_TEST(spdk_buffer_advanced_append, append_full_capacity) {
+    char buffer[10];
+    spdk_buffer sbuf(buffer, 10);
+
+    size_t written = sbuf.append("1234567890", 10);
+    FB_ASSERT_EQ(written, 10u);
+    FB_ASSERT_EQ(sbuf.remain(), 0u);
+}
+
+FB_TEST(spdk_buffer_advanced_append, append_overflow_returns_partial) {
+    char buffer[10];
+    spdk_buffer sbuf(buffer, 10);
+
+    sbuf.append("12345", 5);
+    size_t written = sbuf.append("67890extra", 10);
+
+    FB_ASSERT_EQ(written, 5u);
+    FB_ASSERT_EQ(sbuf.used(), 10u);
+}
+
+FB_TEST(spdk_buffer_advanced_append, append_exact_remaining) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.inc(50);
+    FB_ASSERT_EQ(sbuf.remain(), 50u);
+
+    size_t written = sbuf.append("test", 4);
+    FB_ASSERT_EQ(written, 4u);
+    FB_ASSERT_EQ(sbuf.remain(), 46u);
+}
+
+// ============================================================================
+// Test Suite: spdk_buffer_edge_inc (Edge Case Increment Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_edge_inc) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_edge_inc) {
+    // Teardown code here
+}
+
+FB_TEST(spdk_buffer_edge_inc, inc_to_exact_size) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.inc(100);
+    FB_ASSERT_EQ(sbuf.used(), 100u);
+    FB_ASSERT_EQ(sbuf.remain(), 0u);
+}
+
+FB_TEST(spdk_buffer_edge_inc, inc_one_past_size) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.inc(101);
+    FB_ASSERT_EQ(sbuf.used(), 100u);  // Clamped
+    FB_ASSERT_EQ(sbuf.remain(), 0u);
+}
+
+FB_TEST(spdk_buffer_edge_inc, inc_max_size_t) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.inc(std::numeric_limits<size_t>::max());
+    FB_ASSERT_EQ(sbuf.used(), 100u);  // Clamped to size
+}
+
+FB_TEST(spdk_buffer_edge_inc, inc_after_append) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.append("test", 4);
+    sbuf.inc(10);
+    FB_ASSERT_EQ(sbuf.used(), 14u);
+}
+
+FB_TEST(spdk_buffer_edge_inc, inc_zero_after_full) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.inc(100);
+    sbuf.inc(0);
+    FB_ASSERT_EQ(sbuf.used(), 100u);
+}
+
+FB_TEST(spdk_buffer_edge_inc, inc_sequence_cumulative) {
+    char buffer[1000];
+    spdk_buffer sbuf(buffer, 1000);
+
+    for (int i = 0; i < 10; i++) {
+        sbuf.inc(10);
+    }
+
+    FB_ASSERT_EQ(sbuf.used(), 100u);
+}
+
+FB_TEST(spdk_buffer_edge_inc, inc_after_reset) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.inc(50);
+    sbuf.reset();
+    sbuf.inc(30);
+
+    FB_ASSERT_EQ(sbuf.used(), 30u);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_edge_cases (Buffer List Edge Cases Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_edge_cases) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_edge_cases) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_list_edge_cases, single_buffer_operations) {
+    char buf1[100];
+    spdk_buffer sbuf1(buf1, 100);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+
+    FB_ASSERT_EQ(bl.bytes(), 100u);
+
+    bl.trim_front();
+    FB_ASSERT_EQ(bl.bytes(), 0u);
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_edge_cases, trim_all_front) {
+    char buf1[100], buf2[200];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    bl.trim_front();
+    bl.trim_front();
+
+    FB_ASSERT_EQ(bl.bytes(), 0u);
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_edge_cases, trim_all_back) {
+    char buf1[100], buf2[200];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    bl.trim_back();
+    bl.trim_back();
+
+    FB_ASSERT_EQ(bl.bytes(), 0u);
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_edge_cases, pop_front_single) {
+    char buf1[100];
+    spdk_buffer sbuf1(buf1, 100);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+
+    spdk_buffer popped = bl.pop_front();
+    FB_ASSERT_TRUE(bl.empty());
+    FB_ASSERT_EQ(bl.bytes(), 0u);
+}
+
+FB_TEST(buffer_list_edge_cases, append_empty_list_to_list) {
+    char buf1[100];
+    spdk_buffer sbuf1(buf1, 100);
+
+    buffer_list bl1;
+    bl1.append_buffer(sbuf1);
+
+    buffer_list bl2;
+    bl1.append_buffer(bl2);
+
+    FB_ASSERT_EQ(bl1.bytes(), 100u);
+}
+
+FB_TEST(buffer_list_edge_cases, append_list_to_empty_list) {
+    char buf1[100];
+    spdk_buffer sbuf1(buf1, 100);
+
+    buffer_list bl1;
+
+    buffer_list bl2;
+    bl2.append_buffer(sbuf1);
+
+    bl1.append_buffer(bl2);
+
+    FB_ASSERT_EQ(bl1.bytes(), 100u);
+    FB_ASSERT_TRUE(bl2.empty());
+}
+
+FB_TEST(buffer_list_edge_cases, to_iovec_after_multiple_operations) {
+    char buf1[100], buf2[200], buf3[300];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+    spdk_buffer sbuf3(buf3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.trim_front();
+    bl.append_buffer(sbuf3);
+
+    FB_ASSERT_EQ(bl.bytes(), 500u);
+    iovecs iovs = bl.to_iovec();
+    FB_ASSERT_EQ(iovs.size(), 2u);
+}
+
+FB_TEST(buffer_list_edge_cases, clear_after_full) {
+    char buf1[100], buf2[200];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    bl.trim_back();
+    bl.clear();
+
+    FB_ASSERT_EQ(bl.bytes(), 0u);
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_edge_cases, bytes_consistency_after_operations) {
+    char buf1[100], buf2[200], buf3[300];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+    spdk_buffer sbuf3(buf3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    size_t initial = bl.bytes();
+    bl.trim_front();
+    bl.trim_back();
+
+    FB_ASSERT_EQ(bl.bytes(), initial - 100 - 300);
+}
+
+// ============================================================================
+// Test Suite: spdk_buffer_state_tracking (State Tracking Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_state_tracking) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_state_tracking) {
+    // Teardown code here
+}
+
+FB_TEST(spdk_buffer_state_tracking, track_used_through_multiple_operations) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.append("a", 1);
+    FB_ASSERT_EQ(sbuf.used(), 1u);
+
+    sbuf.inc(5);
+    FB_ASSERT_EQ(sbuf.used(), 6u);
+
+    sbuf.append("b", 1);
+    FB_ASSERT_EQ(sbuf.used(), 7u);
+}
+
+FB_TEST(spdk_buffer_state_tracking, track_remain_decreasing) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    for (int i = 0; i < 10; i++) {
+        size_t before = sbuf.remain();
+        sbuf.inc(5);
+        size_t after = sbuf.remain();
+
+        FB_ASSERT_TRUE(after < before);
+    }
+}
+
+FB_TEST(spdk_buffer_state_tracking, track_size_constant) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    for (int i = 0; i < 20; i++) {
+        sbuf.inc(1);
+        FB_ASSERT_EQ(sbuf.size(), 100u);
+    }
+}
+
+FB_TEST(spdk_buffer_state_tracking, track_position_after_append) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.append("hello", 5);
+    char* pos1 = sbuf.get_append();
+
+    sbuf.append("world", 5);
+    char* pos2 = sbuf.get_append();
+
+    FB_ASSERT_TRUE(pos2 > pos1);
+    FB_ASSERT_EQ(pos2 - pos1, 5);
+}
+
+FB_TEST(spdk_buffer_state_tracking, track_position_after_inc) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.inc(10);
+    char* pos1 = sbuf.get_append();
+
+    sbuf.inc(20);
+    char* pos2 = sbuf.get_append();
+
+    FB_ASSERT_EQ(pos2 - pos1, 20);
+}
+
+FB_TEST(spdk_buffer_state_tracking, track_state_after_full_reset_cycle) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.inc(50);
+    FB_ASSERT_EQ(sbuf.used(), 50u);
+
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.used(), 0u);
+    FB_ASSERT_EQ(sbuf.remain(), 100u);
+
+    sbuf.inc(30);
+    FB_ASSERT_EQ(sbuf.used(), 30u);
+}
+
+FB_TEST(spdk_buffer_state_tracking, track_state_through_append_inc_reset) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.append("test", 4);
+    sbuf.inc(10);
+    sbuf.reset();
+
+    sbuf.append("new", 3);
+    FB_ASSERT_EQ(sbuf.used(), 3u);
+}
+
+FB_TEST(spdk_buffer_state_tracking, track_multiple_reuses) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    for (int round = 0; round < 5; round++) {
+        sbuf.append("data", 4);
+        FB_ASSERT_EQ(sbuf.used(), 4u);
+        sbuf.reset();
+        FB_ASSERT_EQ(sbuf.used(), 0u);
+    }
+}
+
 FB_TEST_MAIN()
