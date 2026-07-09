@@ -4291,6 +4291,108 @@ FB_TEST(shard_concurrent_safety, race_free_for_per_shard_state) {
 }
 
 // ============================================================================
+// Test Suite: lambda_capture_modes (Lambda Capture Modes Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(lambda_capture_modes) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(lambda_capture_modes) {
+    // Teardown code here
+}
+
+FB_TEST(lambda_capture_modes, capture_by_value_isolated) {
+    // Capture by value: lambda owns its own copy
+    int original = 100;
+    auto fn = [original]() { return original; };
+
+    original = 999;  // Modifying original doesn't affect captured copy
+    FB_ASSERT_EQ(fn(), 100);
+}
+
+FB_TEST(lambda_capture_modes, capture_by_reference_shared) {
+    // Capture by reference: lambda sees current value
+    int original = 100;
+    auto fn = [&original]() { return original; };
+
+    original = 999;
+    FB_ASSERT_EQ(fn(), 999);
+}
+
+FB_TEST(lambda_capture_modes, capture_by_move) {
+    // Capture by move (C++14): unique_ptr can be captured
+    auto p = std::make_unique<int>(42);
+    auto fn = [p = std::move(p)]() { return *p; };
+
+    FB_ASSERT_TRUE(p == nullptr); // moved away
+    FB_ASSERT_EQ(fn(), 42);
+}
+
+FB_TEST(lambda_capture_modes, mutable_capture_can_modify_copy) {
+    // mutable lambda can modify captured-by-value variables (the copy)
+    int original = 0;
+    auto fn = [original]() mutable {
+        original++;
+        return original;
+    };
+
+    FB_ASSERT_EQ(fn(), 1);
+    FB_ASSERT_EQ(fn(), 2);  // internal state persists
+    FB_ASSERT_EQ(original, 0); // outer unchanged
+}
+
+FB_TEST(lambda_capture_modes, capture_all_by_value) {
+    // [=] captures all referenced variables by value
+    int a = 1, b = 2, c = 3;
+    auto fn = [=]() { return a + b + c; };
+
+    a = 100; b = 200; c = 300;
+    FB_ASSERT_EQ(fn(), 6); // still uses old values
+}
+
+FB_TEST(lambda_capture_modes, capture_all_by_reference) {
+    // [&] captures all referenced variables by reference
+    int a = 1, b = 2, c = 3;
+    auto fn = [&]() { return a + b + c; };
+
+    a = 100; b = 200; c = 300;
+    FB_ASSERT_EQ(fn(), 600); // sees new values
+}
+
+FB_TEST(lambda_capture_modes, capture_lifetime_dangling_ref) {
+    // Captured reference becomes dangling if referent dies
+    // This test demonstrates the rule (without actually accessing dangling)
+    auto make_lambda = []() {
+        int local = 42;
+        return [&local]() { return local; }; // BAD: reference to local
+    };
+
+    auto bad_fn = make_lambda();
+    (void)bad_fn; // do NOT call - would access dangling ref
+
+    // This is why send_msg requires copying/moving captures
+    FB_ASSERT_TRUE(true);
+}
+
+FB_TEST(lambda_capture_modes, capture_this_pointer) {
+    // Lambda capturing `this` accesses member variables
+    struct test_class {
+        int value = 100;
+        auto make_lambda() {
+            return [this]() { return value; };
+        }
+    };
+
+    test_class t;
+    auto fn = t.make_lambda();
+    FB_ASSERT_EQ(fn(), 100);
+
+    t.value = 200;
+    FB_ASSERT_EQ(fn(), 200); // accesses live member
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
