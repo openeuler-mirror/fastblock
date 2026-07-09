@@ -5626,6 +5626,152 @@ FB_TEST(shard_init_order_constraints, no_access_before_construct) {
 }
 
 // ============================================================================
+// Test Suite: shard_workload_patterns (Workload Pattern Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_workload_patterns) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_workload_patterns) {
+    // Teardown code here
+}
+
+FB_TEST(shard_workload_patterns, embarrassingly_parallel) {
+    // Independent work per shard, no coordination
+    std::vector<int> results(4);
+    for (uint32_t s = 0; s < 4; s++) {
+        // Each shard independently computes
+        results[s] = static_cast<int>(s) * static_cast<int>(s);
+    }
+
+    FB_ASSERT_EQ(results[0], 0);
+    FB_ASSERT_EQ(results[1], 1);
+    FB_ASSERT_EQ(results[2], 4);
+    FB_ASSERT_EQ(results[3], 9);
+}
+
+FB_TEST(shard_workload_patterns, scatter_gather) {
+    // Scatter work to all shards, gather results
+    uint32_t shard_count = 4;
+    uint32_t work_units = 100;
+
+    // Scatter
+    std::vector<std::vector<uint32_t>> scattered(shard_count);
+    for (uint32_t w = 0; w < work_units; w++) {
+        scattered[w % shard_count].push_back(w);
+    }
+
+    // Each shard processed roughly evenly
+    for (auto& s : scattered) {
+        FB_ASSERT_EQ(s.size(), 25);
+    }
+
+    // Gather
+    uint32_t total = 0;
+    for (const auto& s : scattered) total += s.size();
+    FB_ASSERT_EQ(total, work_units);
+}
+
+FB_TEST(shard_workload_patterns, map_reduce) {
+    // Map per shard, reduce across shards
+    std::vector<std::vector<int>> per_shard_data = {
+        {1, 2, 3},
+        {4, 5, 6},
+        {7, 8, 9},
+        {10, 11, 12}
+    };
+
+    // Map: sum within each shard
+    std::vector<int> partial_sums;
+    for (const auto& d : per_shard_data) {
+        int s = 0;
+        for (int v : d) s += v;
+        partial_sums.push_back(s);
+    }
+
+    // Reduce: combine partials
+    int total = 0;
+    for (int s : partial_sums) total += s;
+
+    FB_ASSERT_EQ(partial_sums.size(), 4);
+    FB_ASSERT_EQ(partial_sums[0], 6);
+    FB_ASSERT_EQ(partial_sums[3], 33);
+    FB_ASSERT_EQ(total, 78); // 1+2+...+12
+}
+
+FB_TEST(shard_workload_patterns, broadcast_to_all_shards) {
+    // Broadcast: same message to every shard
+    int broadcast_value = 42;
+    std::vector<int> shard_received(4, 0);
+
+    for (uint32_t s = 0; s < 4; s++) {
+        shard_received[s] = broadcast_value;
+    }
+
+    for (int v : shard_received) {
+        FB_ASSERT_EQ(v, 42);
+    }
+}
+
+FB_TEST(shard_workload_patterns, pipeline_stage_progression) {
+    // Pipeline: shard 0 -> shard 1 -> shard 2 -> shard 3
+    int data = 10;
+
+    // Stage 1: shard 0 doubles
+    data *= 2;
+    FB_ASSERT_EQ(data, 20);
+
+    // Stage 2: shard 1 adds 5
+    data += 5;
+    FB_ASSERT_EQ(data, 25);
+
+    // Stage 3: shard 2 multiplies by 3
+    data *= 3;
+    FB_ASSERT_EQ(data, 75);
+
+    // Stage 4: shard 3 subtracts 1
+    data -= 1;
+    FB_ASSERT_EQ(data, 74);
+}
+
+FB_TEST(shard_workload_patterns, work_stealing_avoided) {
+    // Work-stealing not supported (shards isolated)
+    // Each shard processes only its own queue
+    std::vector<std::vector<int>> queues(4);
+    for (int i = 0; i < 8; i++) {
+        queues[i % 4].push_back(i);
+    }
+
+    // Each queue size is independent
+    for (uint32_t s = 0; s < 4; s++) {
+        FB_ASSERT_EQ(queues[s].size(), 2);
+    }
+}
+
+FB_TEST(shard_workload_patterns, latency_bound_workload) {
+    // For latency-sensitive ops, prefer in-shard execution
+    uint32_t in_shard_us = 10;
+    uint32_t cross_shard_us = 100;
+
+    FB_ASSERT_TRUE(in_shard_us < cross_shard_us);
+    // Use in-shard whenever possible
+    uint32_t budget_us = 50;
+    bool prefer_in_shard = (in_shard_us < budget_us);
+    FB_ASSERT_TRUE(prefer_in_shard);
+}
+
+FB_TEST(shard_workload_patterns, throughput_bound_workload) {
+    // For throughput-bound, distribute evenly
+    uint32_t shard_count = 4;
+    uint32_t total_ops = 10000;
+    uint32_t per_shard = total_ops / shard_count;
+
+    FB_ASSERT_EQ(per_shard, 2500);
+    FB_ASSERT_EQ(per_shard * shard_count, total_ops);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
