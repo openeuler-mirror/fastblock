@@ -5168,6 +5168,84 @@ FB_TEST(sharded_template_methods, ref_invalidated_after_stop) {
 }
 
 // ============================================================================
+// Test Suite: core_id_arithmetic (Core ID Arithmetic Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(core_id_arithmetic) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(core_id_arithmetic) {
+    // Teardown code here
+}
+
+FB_TEST(core_id_arithmetic, core_id_addition) {
+    uint32_t a = 5, b = 3;
+    FB_ASSERT_EQ(a + b, 8);
+}
+
+FB_TEST(core_id_arithmetic, core_id_difference) {
+    // Difference between two valid core IDs
+    uint32_t a = 10, b = 3;
+    uint32_t diff = a - b;
+    FB_ASSERT_EQ(diff, 7);
+}
+
+FB_TEST(core_id_arithmetic, core_id_modulo_shard_count) {
+    // Modulo operation: maps core_id to shard_id
+    uint32_t shard_count = 4;
+    uint32_t core_id = 9;
+    uint32_t shard = core_id % shard_count;
+    FB_ASSERT_EQ(shard, 1);
+}
+
+FB_TEST(core_id_arithmetic, overflow_wraps_around) {
+    // uint32_t arithmetic wraps modulo 2^32
+    uint32_t near_max = UINT32_MAX - 5;
+    uint32_t overflowed = near_max + 10; // wraps
+    FB_ASSERT_EQ(overflowed, 4);
+}
+
+FB_TEST(core_id_arithmetic, underflow_wraps_around) {
+    uint32_t small = 3;
+    uint32_t underflowed = small - 5; // wraps to huge value
+    FB_ASSERT_EQ(underflowed, UINT32_MAX - 1);
+}
+
+FB_TEST(core_id_arithmetic, increment_increments_core_id) {
+    uint32_t core = 5;
+    core++;
+    FB_ASSERT_EQ(core, 6);
+    core++;
+    FB_ASSERT_EQ(core, 7);
+}
+
+FB_TEST(core_id_arithmetic, comparison_operators) {
+    uint32_t a = 5, b = 10;
+    FB_ASSERT_TRUE(a < b);
+    FB_ASSERT_TRUE(b > a);
+    FB_ASSERT_TRUE(a <= b);
+    FB_ASSERT_TRUE(b >= a);
+    FB_ASSERT_TRUE(a != b);
+}
+
+FB_TEST(core_id_arithmetic, bitwise_ops_on_mask) {
+    // Bit operations for cpumask building
+    uint64_t mask = 0;
+    mask |= (1ULL << 3); // set bit 3
+    mask |= (1ULL << 5); // set bit 5
+
+    FB_ASSERT_TRUE((mask & (1ULL << 3)) != 0);
+    FB_ASSERT_TRUE((mask & (1ULL << 5)) != 0);
+    FB_ASSERT_TRUE((mask & (1ULL << 4)) == 0); // not set
+
+    // Clear bit 3
+    mask &= ~(1ULL << 3);
+    FB_ASSERT_TRUE((mask & (1ULL << 3)) == 0);
+    FB_ASSERT_TRUE((mask & (1ULL << 5)) != 0);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
