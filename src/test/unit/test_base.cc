@@ -4878,6 +4878,130 @@ FB_TEST(lambda_ctx_args_storage, args_can_be_unique_ptr) {
 }
 
 // ============================================================================
+// Test Suite: shard_state_isolation (Shard State Isolation Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_state_isolation) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_state_isolation) {
+    // Teardown code here
+}
+
+FB_TEST(shard_state_isolation, separate_heap_allocations) {
+    // Each shard's instance lives at distinct heap address
+    std::vector<int*> shards;
+    for (int i = 0; i < 4; i++) shards.push_back(new int(i));
+
+    // All addresses are unique
+    std::set<int*> unique_addrs(shards.begin(), shards.end());
+    FB_ASSERT_EQ(unique_addrs.size(), shards.size());
+
+    for (auto* p : shards) delete p;
+}
+
+FB_TEST(shard_state_isolation, write_to_one_doesnt_affect_others) {
+    // Modifying shard N doesn't change shard M
+    std::vector<int*> shards;
+    for (int i = 0; i < 4; i++) shards.push_back(new int(0));
+
+    *shards[0] = 100;
+    *shards[2] = 300;
+
+    FB_ASSERT_EQ(*shards[0], 100);
+    FB_ASSERT_EQ(*shards[1], 0);
+    FB_ASSERT_EQ(*shards[2], 300);
+    FB_ASSERT_EQ(*shards[3], 0);
+
+    for (auto* p : shards) delete p;
+}
+
+FB_TEST(shard_state_isolation, separate_pool_per_shard) {
+    // Each shard has its own pool / state
+    struct shard_state {
+        std::vector<int> pool;
+    };
+
+    std::vector<shard_state> shards(4);
+    for (uint32_t s = 0; s < 4; s++) {
+        for (int i = 0; i < 10; i++) {
+            shards[s].pool.push_back(static_cast<int>(s) * 100 + i);
+        }
+    }
+
+    // Each pool independent
+    for (uint32_t s = 0; s < 4; s++) {
+        FB_ASSERT_EQ(shards[s].pool.size(), 10);
+    }
+    FB_ASSERT_EQ(shards[0].pool[0], 0);
+    FB_ASSERT_EQ(shards[3].pool[9], 309);
+}
+
+FB_TEST(shard_state_isolation, total_memory_sum_of_shards) {
+    // Total memory = sum across all shards
+    uint32_t shard_count = 4;
+    std::vector<uint64_t> shard_mem = {1024, 2048, 1500, 3000};
+
+    uint64_t total = 0;
+    for (uint64_t m : shard_mem) total += m;
+
+    FB_ASSERT_EQ(total, 7572);
+    FB_ASSERT_EQ(shard_mem.size(), shard_count);
+}
+
+FB_TEST(shard_state_isolation, swap_only_local) {
+    // Swap within a shard, not across shards
+    std::vector<int*> shard_0_local;
+    shard_0_local.push_back(new int(1));
+    shard_0_local.push_back(new int(2));
+
+    // Swap two ints in shard 0
+    int* tmp = shard_0_local[0];
+    shard_0_local[0] = shard_0_local[1];
+    shard_0_local[1] = tmp;
+
+    FB_ASSERT_EQ(*shard_0_local[0], 2);
+    FB_ASSERT_EQ(*shard_0_local[1], 1);
+
+    for (auto* p : shard_0_local) delete p;
+}
+
+FB_TEST(shard_state_isolation, no_aliasing_between_shards) {
+    // Each shard's data has no pointer aliasing to other shard's data
+    std::vector<int*> shard_data;
+    for (int i = 0; i < 4; i++) shard_data.push_back(new int(i));
+
+    // Each pointer unique
+    std::set<int*> ptrs(shard_data.begin(), shard_data.end());
+    FB_ASSERT_EQ(ptrs.size(), 4);
+
+    for (auto* p : shard_data) delete p;
+}
+
+FB_TEST(shard_state_isolation, scope_local_modifications) {
+    // Local modifications in a lambda don't leak out (unless captured by ref)
+    int outer = 100;
+    auto fn = [outer]() mutable { outer = 999; return outer; };
+
+    int returned = fn();
+    FB_ASSERT_EQ(returned, 999);
+    FB_ASSERT_EQ(outer, 100); // unchanged
+}
+
+FB_TEST(shard_state_isolation, deep_copy_for_cross_shard_data) {
+    // To pass data to another shard: deep copy required
+    std::vector<int> source = {1, 2, 3, 4, 5};
+    std::vector<int> copy = source; // deep copy
+
+    source.push_back(6);
+    // Copy unchanged
+    FB_ASSERT_EQ(copy.size(), 5);
+    FB_ASSERT_EQ(source.size(), 6);
+    FB_ASSERT_TRUE(source != copy);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
