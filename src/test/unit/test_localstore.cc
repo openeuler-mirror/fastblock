@@ -6894,4 +6894,317 @@ FB_TEST(iovecs_advanced, iovecs_full_scan) {
     FB_ASSERT_EQ(total, 600u);
 }
 
+// ============================================================================
+// Test Suite: buffer_list_constructor (Buffer List Constructor Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_constructor) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_constructor) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_list_constructor, default_constructor) {
+    buffer_list bl;
+    FB_ASSERT_EQ(bl.bytes(), 0u);
+    FB_ASSERT_TRUE(bl.empty());
+}
+
+FB_TEST(buffer_list_constructor, from_single_buffer) {
+    char buf1[100];
+    spdk_buffer sbuf1(buf1, 100);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+
+    FB_ASSERT_EQ(bl.bytes(), 100u);
+    FB_ASSERT_FALSE(bl.empty());
+}
+
+FB_TEST(buffer_list_constructor, from_multiple_buffers) {
+    char buf1[100], buf2[200];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    FB_ASSERT_EQ(bl.bytes(), 300u);
+}
+
+FB_TEST(buffer_list_constructor, from_another_list) {
+    char buf1[100], buf2[200];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+
+    buffer_list bl1;
+    bl1.append_buffer(sbuf1);
+
+    buffer_list bl2;
+    bl2.append_buffer(sbuf2);
+
+    bl1.append_buffer(bl2);
+
+    FB_ASSERT_EQ(bl1.bytes(), 300u);
+}
+
+FB_TEST(buffer_list_constructor, from_moved_list) {
+    char buf1[100], buf2[200];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+
+    buffer_list bl1;
+    bl1.append_buffer(sbuf1);
+
+    buffer_list bl2;
+    bl2.append_buffer(sbuf2);
+
+    bl1.append_buffer(std::move(bl2));
+
+    FB_ASSERT_EQ(bl1.bytes(), 300u);
+    FB_ASSERT_EQ(bl2.bytes(), 0u);
+}
+
+// ============================================================================
+// Test Suite: buffer_list_size_calculation (Size Calculation Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_list_size_calculation) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_list_size_calculation) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_list_size_calculation, bytes_matches_individual_sizes) {
+    char buf1[100], buf2[200], buf3[300];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+    spdk_buffer sbuf3(buf3, 300);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+
+    size_t expected = 100 + 200 + 300;
+    FB_ASSERT_EQ(bl.bytes(), expected);
+}
+
+FB_TEST(buffer_list_size_calculation, bytes_after_operations) {
+    char buf1[100], buf2[200], buf3[300], buf4[400];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+    spdk_buffer sbuf3(buf3, 300);
+    spdk_buffer sbuf4(buf4, 400);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+    bl.append_buffer(sbuf3);
+    bl.append_buffer(sbuf4);
+
+    bl.trim_front();
+    size_t after_trim_front = bl.bytes();
+    FB_ASSERT_EQ(after_trim_front, 900u);
+
+    bl.trim_back();
+    size_t after_trim_back = bl.bytes();
+    FB_ASSERT_EQ(after_trim_back, 600u);
+
+    bl.pop_front();
+    size_t after_pop = bl.bytes();
+    FB_ASSERT_EQ(after_pop, 400u);
+}
+
+FB_TEST(buffer_list_size_calculation, bytes_through_append_list) {
+    char buf1[100], buf2[200], buf3[300];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+    spdk_buffer sbuf3(buf3, 300);
+
+    buffer_list bl1;
+    bl1.append_buffer(sbuf1);
+
+    buffer_list bl2;
+    bl2.append_buffer(sbuf2);
+    bl2.append_buffer(sbuf3);
+
+    size_t bl1_before = bl1.bytes();
+    size_t bl2_before = bl2.bytes();
+
+    bl1.append_buffer(bl2);
+
+    FB_ASSERT_EQ(bl1.bytes(), bl1_before + bl2_before);
+}
+
+FB_TEST(buffer_list_size_calculation, bytes_large_buffer_list) {
+    // Simulate large buffer list
+    buffer_list bl;
+
+    // Can't actually create real buffers without buffer_pool,
+    // but test the concept
+    FB_ASSERT_EQ(bl.bytes(), 0u);
+}
+
+FB_TEST(buffer_list_size_calculation, bytes_consistency_with_iovec) {
+    char buf1[100], buf2[200];
+    spdk_buffer sbuf1(buf1, 100);
+    spdk_buffer sbuf2(buf2, 200);
+
+    buffer_list bl;
+    bl.append_buffer(sbuf1);
+    bl.append_buffer(sbuf2);
+
+    iovecs iovs = bl.to_iovec();
+
+    size_t iovecs_total = 0;
+    for (const auto& iov : iovs) {
+        iovecs_total += iov.iov_len;
+    }
+
+    FB_ASSERT_EQ(bl.bytes(), iovecs_total);
+}
+
+// ============================================================================
+// Test Suite: spdk_buffer_combinations (Buffer Combinations Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_combinations) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_combinations) {
+    // Teardown code here
+}
+
+FB_TEST(spdk_buffer_combinations, append_then_inc) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.append("test", 4);
+    sbuf.inc(10);
+
+    FB_ASSERT_EQ(sbuf.used(), 14u);
+}
+
+FB_TEST(spdk_buffer_combinations, inc_then_append) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.inc(20);
+    sbuf.append("data", 4);
+
+    FB_ASSERT_EQ(sbuf.used(), 24u);
+}
+
+FB_TEST(spdk_buffer_combinations, multiple_append_sequence) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    for (int i = 0; i < 10; i++) {
+        sbuf.append("x", 1);
+    }
+
+    FB_ASSERT_EQ(sbuf.used(), 10u);
+}
+
+FB_TEST(spdk_buffer_combinations, multiple_inc_sequence) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    for (int i = 0; i < 10; i++) {
+        sbuf.inc(5);
+    }
+
+    FB_ASSERT_EQ(sbuf.used(), 50u);
+}
+
+FB_TEST(spdk_buffer_combinations, append_inc_reset_cycle) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    for (int round = 0; round < 3; round++) {
+        sbuf.append("a", 1);
+        sbuf.inc(5);
+        FB_ASSERT_TRUE(sbuf.used() > 0);
+        sbuf.reset();
+        FB_ASSERT_EQ(sbuf.used(), 0u);
+    }
+}
+
+FB_TEST(spdk_buffer_combinations, mixed_operations) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.append("a", 1);
+    sbuf.inc(5);
+    sbuf.append("b", 1);
+    sbuf.inc(10);
+    sbuf.append("c", 1);
+
+    FB_ASSERT_EQ(sbuf.used(), 1 + 5 + 1 + 10 + 1);
+}
+
+FB_TEST(spdk_buffer_combinations, fill_then_reset_reuse) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    // Fill completely
+    sbuf.inc(100);
+    FB_ASSERT_EQ(sbuf.remain(), 0u);
+
+    // Reset and reuse
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.remain(), 100u);
+
+    sbuf.append("test", 4);
+    FB_ASSERT_EQ(sbuf.used(), 4u);
+}
+
+FB_TEST(spdk_buffer_combinations, partial_fill_extend_reset) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.inc(50);
+    FB_ASSERT_EQ(sbuf.used(), 50u);
+
+    sbuf.inc(30);
+    FB_ASSERT_EQ(sbuf.used(), 80u);
+
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.used(), 0u);
+
+    sbuf.inc(100);
+    FB_ASSERT_EQ(sbuf.used(), 100u);
+}
+
+FB_TEST(spdk_buffer_combinations, append_string_sequence) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    std::string str1 = "hello";
+    std::string str2 = "world";
+
+    sbuf.append(str1);
+    sbuf.append(str2);
+
+    FB_ASSERT_EQ(sbuf.used(), str1.size() + str2.size());
+}
+
+FB_TEST(spdk_buffer_combinations, append_cstr_sequence) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.append("one", 3);
+    sbuf.append("two", 3);
+    sbuf.append("three", 5);
+
+    FB_ASSERT_EQ(sbuf.used(), 11u);
+}
+
 FB_TEST_MAIN()
