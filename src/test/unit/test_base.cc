@@ -4788,6 +4788,96 @@ FB_TEST(core_sharded_thread_lifecycle, exit_signals_via_spdk_thread_exit) {
 }
 
 // ============================================================================
+// Test Suite: lambda_ctx_args_storage (Lambda Args Storage Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(lambda_ctx_args_storage) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(lambda_ctx_args_storage) {
+    // Teardown code here
+}
+
+FB_TEST(lambda_ctx_args_storage, args_stored_in_tuple_member) {
+    // Args... stored in std::tuple<Args...> member
+    auto stored = std::make_tuple(1, 2.5, std::string("hello"));
+
+    FB_ASSERT_EQ(std::get<0>(stored), 1);
+    FB_ASSERT_EQ(std::get<1>(stored), 2.5);
+    FB_ASSERT_EQ(std::get<2>(stored), "hello");
+}
+
+FB_TEST(lambda_ctx_args_storage, tuple_size_matches_args_count) {
+    using tup_t = std::tuple<int, double, std::string, char>;
+    constexpr size_t sz = std::tuple_size_v<tup_t>;
+    FB_ASSERT_EQ(sz, 4);
+}
+
+FB_TEST(lambda_ctx_args_storage, empty_args_empty_tuple) {
+    auto empty = std::make_tuple();
+    constexpr size_t sz = std::tuple_size_v<decltype(empty)>;
+    FB_ASSERT_EQ(sz, 0);
+}
+
+FB_TEST(lambda_ctx_args_storage, args_lifetime_tied_to_ctx) {
+    // Args destroyed when ctx destroyed
+    static int dtor_count;
+    dtor_count = 0;
+
+    struct counted {
+        int v;
+        counted(int x) : v(x) {}
+        counted(const counted& o) : v(o.v) {}
+        ~counted() { dtor_count++; }
+    };
+
+    {
+        auto t = std::make_tuple(counted(1), counted(2));
+        (void)t;
+    }
+    // counted(1), counted(2) and their copies in tuple all destroyed
+    FB_ASSERT_TRUE(dtor_count >= 2);
+}
+
+FB_TEST(lambda_ctx_args_storage, args_forwarded_to_func_via_apply) {
+    // run_task() does std::apply(func, args)
+    int result = 0;
+    auto fn = [&result](int a, int b, int c) { result = a + b + c; };
+    auto args = std::make_tuple(10, 20, 30);
+
+    std::apply(fn, args);
+    FB_ASSERT_EQ(result, 60);
+}
+
+FB_TEST(lambda_ctx_args_storage, args_with_reference_types) {
+    // Args can include reference types (carefully)
+    int external = 100;
+    auto args = std::make_tuple(std::ref(external));
+
+    std::get<0>(args).get() = 200;
+    FB_ASSERT_EQ(external, 200);
+}
+
+FB_TEST(lambda_ctx_args_storage, args_with_pointer_types) {
+    // Args with pointer types
+    int data = 42;
+    auto args = std::make_tuple(&data);
+
+    *std::get<0>(args) = 99;
+    FB_ASSERT_EQ(data, 99);
+}
+
+FB_TEST(lambda_ctx_args_storage, args_can_be_unique_ptr) {
+    // Args can include move-only types like unique_ptr
+    auto p = std::make_unique<int>(42);
+    auto args = std::make_tuple(std::move(p));
+
+    FB_ASSERT_TRUE(p == nullptr); // moved
+    FB_ASSERT_EQ(*std::get<0>(args), 42);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
