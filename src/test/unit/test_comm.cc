@@ -378,6 +378,84 @@ FB_TEST(rpc_connect_cache, remove_clears_entry) {
 }
 
 // ============================================================================
+// Test Suite: rpc_connect_cache_shard_isolation — cross-shard side effects
+//
+// connect_cache fans out one map per shard so each poller thread can mutate
+// its own slice without locks. The invariant is: an operation against shard A
+// must not change shard B's data. Equally important — shared_ptr returned
+// from get_connect must keep the connection alive after the cache entry is
+// removed, otherwise a poller currently holding the ptr would tear down
+// mid-RPC.
+// ============================================================================
+
+FB_SUITE_SETUP(rpc_connect_cache_shard_isolation) {}
+FB_SUITE_TEARDOWN(rpc_connect_cache_shard_isolation) {}
+
+FB_TEST(rpc_connect_cache_shard_isolation, same_node_id_lives_in_each_shard) {
+    // Different shards must each be able to hold a connection for the same
+    // node_id (e.g. node 1 reached from shard 0's poller and shard 1's
+    // poller). The two entries are independent.
+    fake_connect_cache cache(3);
+    FB_ASSERT_TRUE(cache.create_connect(0, 1, "addr-a", 100));
+    FB_ASSERT_TRUE(cache.create_connect(1, 1, "addr-b", 200));
+    FB_ASSERT_TRUE(cache.create_connect(2, 1, "addr-c", 300));
+
+    FB_ASSERT_STR_EQ(cache.get_connect(0, 1)->addr.c_str(), "addr-a");
+    FB_ASSERT_STR_EQ(cache.get_connect(1, 1)->addr.c_str(), "addr-b");
+    FB_ASSERT_STR_EQ(cache.get_connect(2, 1)->addr.c_str(), "addr-c");
+    FB_ASSERT_EQ(cache.get_connect(0, 1)->port, 100);
+    FB_ASSERT_EQ(cache.get_connect(1, 1)->port, 200);
+    FB_ASSERT_EQ(cache.get_connect(2, 1)->port, 300);
+}
+
+FB_TEST(rpc_connect_cache_shard_isolation, remove_one_shard_keeps_others) {
+    // Removing node 1 from shard 1 must leave shard 0 and shard 2 untouched.
+    // Regression target: a stray iterator across the vector of maps could
+    // accidentally erase the wrong shard.
+    fake_connect_cache cache(3);
+    cache.create_connect(0, 1, "a", 100);
+    cache.create_connect(1, 1, "b", 200);
+    cache.create_connect(2, 1, "c", 300);
+
+    FB_ASSERT_TRUE(cache.remove_connect(1, 1));
+    FB_ASSERT_TRUE(cache.contains(0, 1));
+    FB_ASSERT_FALSE(cache.contains(1, 1));
+    FB_ASSERT_TRUE(cache.contains(2, 1));
+}
+
+FB_TEST(rpc_connect_cache_shard_isolation, shared_ptr_outlives_removal) {
+    // get_connect returns a shared_ptr<connection>. A poller may grab the
+    // ptr right before another control path removes the entry; the
+    // underlying connection MUST stay valid until the poller drops its ptr.
+    fake_connect_cache cache(1);
+    cache.create_connect(0, 5, "host", 9000);
+
+    auto held = cache.get_connect(0, 5);
+    FB_ASSERT_NOT_NULL(held.get());
+
+    // Remove from the cache; the held shared_ptr must still be usable.
+    FB_ASSERT_TRUE(cache.remove_connect(0, 5));
+    FB_ASSERT_FALSE(cache.contains(0, 5));
+
+    FB_ASSERT_EQ(held->node_id, 5);
+    FB_ASSERT_STR_EQ(held->addr.c_str(), "host");
+    FB_ASSERT_EQ(held->port, 9000);
+}
+
+FB_TEST(rpc_connect_cache_shard_isolation, get_connect_returns_same_object) {
+    // Two consecutive get_connect() calls return shared_ptrs that point to
+    // the SAME underlying connection — not a copy. Otherwise callers in
+    // different code paths would mutate disjoint state.
+    fake_connect_cache cache(1);
+    cache.create_connect(0, 9, "h", 80);
+    auto a = cache.get_connect(0, 9);
+    auto b = cache.get_connect(0, 9);
+    FB_ASSERT_NOT_NULL(a.get());
+    FB_ASSERT_NOT_NULL(b.get());
+    FB_ASSERT_EQ(a.get(), b.get()); // same object, not just equal fields
+}
+
+// ============================================================================
 // Test Suite: monclient — response_status surface
 // ============================================================================
 
