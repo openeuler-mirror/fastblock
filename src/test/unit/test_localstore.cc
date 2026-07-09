@@ -5486,4 +5486,150 @@ FB_TEST(spdk_buffer_inc, inc_full) {
     FB_ASSERT_EQ(sbuf.remain(), 0u);
 }
 
+// ============================================================================
+// Test Suite: spdk_buffer_set_used (Spdk Buffer Set Used Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_set_used) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_set_used) {
+    // Teardown code here
+}
+
+FB_TEST(spdk_buffer_set_used, set_used_basic) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.set_used(50);
+    FB_ASSERT_EQ(sbuf.used(), 50u);
+    FB_ASSERT_EQ(sbuf.remain(), 50u);
+}
+
+FB_TEST(spdk_buffer_set_used, set_used_exceed_size) {
+    char buffer[50];
+    spdk_buffer sbuf(buffer, 50);
+
+    sbuf.set_used(100);
+    FB_ASSERT_EQ(sbuf.used(), 50u);  // Clamped to size
+}
+
+FB_TEST(spdk_buffer_set_used, set_used_zero) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.append("test", 4);
+    sbuf.set_used(0);
+    FB_ASSERT_EQ(sbuf.used(), 0u);
+}
+
+FB_TEST(spdk_buffer_set_used, set_used_full) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    sbuf.set_used(100);
+    FB_ASSERT_EQ(sbuf.used(), 100u);
+    FB_ASSERT_EQ(sbuf.remain(), 0u);
+}
+
+FB_TEST(spdk_buffer_set_used, set_used_negative_scenario) {
+    char buffer[100];
+    spdk_buffer sbuf(buffer, 100);
+
+    // set_used with size_t, negative not applicable
+    sbuf.set_used(0);
+    FB_ASSERT_EQ(sbuf.used(), 0u);
+}
+
+// ============================================================================
+// Test Suite: spdk_buffer_default (Spdk Buffer Default Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(spdk_buffer_default) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(spdk_buffer_default) {
+    // Teardown code here
+}
+
+FB_TEST(spdk_buffer_default, default_constructor_null) {
+    spdk_buffer sbuf;
+    FB_ASSERT_TRUE(sbuf.get_buf() == nullptr);
+}
+
+FB_TEST(spdk_buffer_default, default_size_zero) {
+    spdk_buffer sbuf;
+    FB_ASSERT_EQ(sbuf.size(), 0u);
+}
+
+FB_TEST(spdk_buffer_default, default_used_zero) {
+    spdk_buffer sbuf;
+    FB_ASSERT_EQ(sbuf.used(), 0u);
+}
+
+FB_TEST(spdk_buffer_default, default_remain_zero) {
+    spdk_buffer sbuf;
+    FB_ASSERT_EQ(sbuf.remain(), 0u);
+}
+
+FB_TEST(spdk_buffer_default, append_to_default) {
+    spdk_buffer sbuf;
+    size_t written = sbuf.append("test", 4);
+    FB_ASSERT_EQ(written, 0u);
+}
+
+FB_TEST(spdk_buffer_default, inc_on_default) {
+    spdk_buffer sbuf;
+    size_t incremented = sbuf.inc(10);
+    FB_ASSERT_EQ(incremented, 0u);
+}
+
+FB_TEST(spdk_buffer_default, reset_on_default) {
+    spdk_buffer sbuf;
+    sbuf.reset();
+    FB_ASSERT_EQ(sbuf.used(), 0u);
+}
+
+// ============================================================================
+// Test Suite: buffer_pool_constants (Buffer Pool Constants Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(buffer_pool_constants) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(buffer_pool_constants) {
+    // Teardown code here
+}
+
+FB_TEST(buffer_pool_constants, buffer_size_value) {
+    FB_ASSERT_EQ(buffer_size, 4_KB);
+}
+
+FB_TEST(buffer_pool_constants, buffer_memory_value) {
+    FB_ASSERT_EQ(buffer_memory, 512_MB);
+}
+
+FB_TEST(buffer_pool_constants, buffer_pool_size_calculation) {
+    FB_ASSERT_EQ(buffer_pool_size, buffer_memory / buffer_size);
+    FB_ASSERT_EQ(buffer_pool_size, 512_MB / 4_KB);
+}
+
+FB_TEST(buffer_pool_constants, buffer_pool_size_positive) {
+    FB_ASSERT_TRUE(buffer_pool_size > 0);
+}
+
+FB_TEST(buffer_pool_constants, buffer_size_alignment) {
+    // 4KB is typically page-aligned
+    FB_ASSERT_TRUE(buffer_size % 4096 == 0);
+}
+
+FB_TEST(buffer_pool_constants, constants_consistency) {
+    // Verify mathematical relationship
+    uint64_t calculated = buffer_memory / buffer_size;
+    FB_ASSERT_EQ(calculated, static_cast<uint64_t>(buffer_pool_size));
+}
+
 FB_TEST_MAIN()
