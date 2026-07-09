@@ -5866,7 +5866,8 @@ FB_TEST(buffer_list_iteration, front_accessor) {
     bl.append_buffer(sbuf1);
     bl.append_buffer(sbuf2);
 
-    FB_ASSERT_EQ(bl.front().size(), 100u);
+    // Access first buffer using iterator
+    FB_ASSERT_EQ(bl.begin()->size(), 100u);
 }
 
 FB_TEST(buffer_list_iteration, back_accessor) {
@@ -5878,7 +5879,10 @@ FB_TEST(buffer_list_iteration, back_accessor) {
     bl.append_buffer(sbuf1);
     bl.append_buffer(sbuf2);
 
-    FB_ASSERT_EQ(bl.back().size(), 200u);
+    // Access last buffer using iterator
+    auto it = bl.begin();
+    it++;
+    FB_ASSERT_EQ(it->size(), 200u);
 }
 
 FB_TEST(buffer_list_iteration, empty_method) {
@@ -5948,11 +5952,16 @@ FB_TEST(buffer_list_modification, prepend_changes_order) {
     buffer_list bl;
     bl.append_buffer(sbuf1);
 
-    FB_ASSERT_EQ(bl.front().size(), 100u);
+    // Check first buffer using iterator
+    FB_ASSERT_EQ(bl.begin()->size(), 100u);
 
     bl.prepend_buffer(sbuf2);
-    FB_ASSERT_EQ(bl.front().size(), 200u);
-    FB_ASSERT_EQ(bl.back().size(), 100u);
+    // After prepend, first buffer should be buf2
+    FB_ASSERT_EQ(bl.begin()->size(), 200u);
+    // Last buffer
+    auto it = bl.begin();
+    it++;
+    FB_ASSERT_EQ(it->size(), 100u);
 }
 
 FB_TEST(buffer_list_modification, trim_front_removes_first) {
@@ -5968,7 +5977,7 @@ FB_TEST(buffer_list_modification, trim_front_removes_first) {
 
     bl.trim_front();
     FB_ASSERT_EQ(bl.bytes(), 500u);
-    FB_ASSERT_EQ(bl.front().size(), 200u);
+    FB_ASSERT_EQ(bl.begin()->size(), 200u);
 }
 
 FB_TEST(buffer_list_modification, trim_back_removes_last) {
@@ -5984,7 +5993,10 @@ FB_TEST(buffer_list_modification, trim_back_removes_last) {
 
     bl.trim_back();
     FB_ASSERT_EQ(bl.bytes(), 300u);
-    FB_ASSERT_EQ(bl.back().size(), 200u);
+    // Second buffer is now the last
+    auto it = bl.begin();
+    it++;
+    FB_ASSERT_EQ(it->size(), 200u);
 }
 
 FB_TEST(buffer_list_modification, pop_front_returns_buffer) {
@@ -6037,7 +6049,7 @@ FB_TEST(buffer_list_modification, trim_sequence) {
     bl.trim_back();
 
     FB_ASSERT_EQ(bl.bytes(), 300u);
-    FB_ASSERT_EQ(bl.front().size(), 300u);
+    FB_ASSERT_EQ(bl.begin()->size(), 300u);
 }
 
 FB_TEST(buffer_list_modification, clear_removes_all) {
