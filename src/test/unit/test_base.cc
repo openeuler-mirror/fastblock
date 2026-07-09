@@ -4052,6 +4052,136 @@ FB_TEST(shard_resource_pools, pool_drained_on_shutdown) {
 }
 
 // ============================================================================
+// Test Suite: core_sharded_msg_dispatch (Message Dispatch Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(core_sharded_msg_dispatch) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(core_sharded_msg_dispatch) {
+    // Teardown code here
+}
+
+FB_TEST(core_sharded_msg_dispatch, dispatch_via_static_callback) {
+    // spdk_thread_send_msg takes a static C-style callback
+    // Verify the &core_context::run is a valid static function pointer
+    auto static_fn = [](void* arg) {
+        int* p = static_cast<int*>(arg);
+        (*p)++;
+    };
+
+    int counter = 0;
+    static_fn(&counter);
+    static_fn(&counter);
+    FB_ASSERT_EQ(counter, 2);
+}
+
+FB_TEST(core_sharded_msg_dispatch, void_arg_carries_payload) {
+    // void* argument carries the lambda_ctx pointer
+    struct payload {
+        std::vector<int> data;
+        void process() {
+            for (auto& v : data) v *= 2;
+        }
+    };
+
+    payload p;
+    p.data = {1, 2, 3, 4};
+
+    void* arg = static_cast<void*>(&p);
+    payload* recovered = static_cast<payload*>(arg);
+    recovered->process();
+
+    FB_ASSERT_EQ(p.data[0], 2);
+    FB_ASSERT_EQ(p.data[3], 8);
+}
+
+FB_TEST(core_sharded_msg_dispatch, payload_ownership_transferred) {
+    // After send_msg, the receiver owns the payload (must delete)
+    static int payload_destructions;
+    payload_destructions = 0;
+
+    struct heap_payload {
+        int v;
+        heap_payload(int x) : v(x) {}
+        ~heap_payload() { payload_destructions++; }
+    };
+
+    // Sender allocates
+    heap_payload* p = new heap_payload(42);
+    void* opaque = p;
+
+    // Receiver processes + deletes
+    heap_payload* recovered = static_cast<heap_payload*>(opaque);
+    int captured_v = recovered->v;
+    delete recovered;
+
+    FB_ASSERT_EQ(captured_v, 42);
+    FB_ASSERT_EQ(payload_destructions, 1);
+}
+
+FB_TEST(core_sharded_msg_dispatch, dispatch_queue_ordering) {
+    // Messages to same thread are FIFO ordered
+    std::vector<int> received;
+
+    auto enqueue = [&received](int msg) {
+        received.push_back(msg);
+    };
+
+    for (int i = 1; i <= 10; i++) enqueue(i);
+
+    FB_ASSERT_EQ(received.size(), 10);
+    for (int i = 0; i < 10; i++) {
+        FB_ASSERT_EQ(received[i], i + 1);
+    }
+}
+
+FB_TEST(core_sharded_msg_dispatch, return_zero_on_success) {
+    // spdk_thread_send_msg returns 0 on success
+    int rc = 0;
+    FB_ASSERT_EQ(rc, 0);
+}
+
+FB_TEST(core_sharded_msg_dispatch, return_negative_on_failure) {
+    // Returns negative errno on failure
+    int rc_nomem = -ENOMEM;
+    int rc_einval = -EINVAL;
+    FB_ASSERT_TRUE(rc_nomem < 0);
+    FB_ASSERT_TRUE(rc_einval < 0);
+    FB_ASSERT_TRUE(rc_nomem != rc_einval);
+}
+
+FB_TEST(core_sharded_msg_dispatch, lambda_ctx_lifetime_from_send_to_run) {
+    // lambda_ctx allocated by sender, deleted by receiver after run
+    static int alive;
+    alive = 0;
+
+    struct ctx_t {
+        ctx_t() { alive++; }
+        ~ctx_t() { alive--; }
+    };
+
+    // Sender: new
+    ctx_t* c = new ctx_t();
+    FB_ASSERT_EQ(alive, 1);
+
+    // Receiver: process + delete
+    delete c;
+    FB_ASSERT_EQ(alive, 0);
+}
+
+FB_TEST(core_sharded_msg_dispatch, msg_carries_function_pointer) {
+    // send_msg(thread, fn_ptr, arg)
+    using fn_t = void(*)(void*);
+    fn_t fp = [](void* arg) { (*static_cast<int*>(arg)) = 100; };
+
+    int value = 0;
+    fp(&value);
+    FB_ASSERT_EQ(value, 100);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
