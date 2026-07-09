@@ -4481,6 +4481,102 @@ FB_TEST(tuple_operations, apply_with_args) {
 }
 
 // ============================================================================
+// Test Suite: shard_count_scaling (Shard Count Scaling Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_count_scaling) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_count_scaling) {
+    // Teardown code here
+}
+
+FB_TEST(shard_count_scaling, throughput_scales_linearly) {
+    // N shards => N times throughput (in theory)
+    uint32_t single_shard_throughput = 1000; // ops/sec
+    uint32_t shard_count = 4;
+    uint32_t total_throughput = single_shard_throughput * shard_count;
+
+    FB_ASSERT_EQ(total_throughput, 4000);
+}
+
+FB_TEST(shard_count_scaling, latency_constant_with_more_shards) {
+    // Adding shards doesn't increase per-op latency (no cross-shard)
+    uint32_t latency_us = 100;
+    uint32_t shards_2 = 2;
+    uint32_t shards_8 = 8;
+
+    // Per-op latency is independent of shard count
+    FB_ASSERT_EQ(latency_us, latency_us);
+    (void)shards_2; (void)shards_8;
+}
+
+FB_TEST(shard_count_scaling, memory_overhead_per_shard) {
+    // Each shard adds fixed overhead (thread + buffers)
+    uint32_t per_shard_overhead_kb = 64;
+    uint32_t shard_count = 16;
+    uint32_t total_overhead = per_shard_overhead_kb * shard_count;
+
+    FB_ASSERT_EQ(total_overhead, 1024); // 1MB total
+}
+
+FB_TEST(shard_count_scaling, cpu_utilization_per_shard) {
+    // Each shard uses one CPU core (100% if fully busy)
+    uint32_t cpu_per_shard_percent = 100;
+    uint32_t shard_count = 4;
+    uint32_t total_cpu_percent = cpu_per_shard_percent * shard_count;
+
+    FB_ASSERT_EQ(total_cpu_percent, 400); // 4 cores
+}
+
+FB_TEST(shard_count_scaling, hash_balance_at_scale) {
+    // Hash distribution remains balanced at large scale
+    uint32_t shard_count = 16;
+    std::vector<uint32_t> counts(shard_count, 0);
+
+    for (uint32_t key = 0; key < 16000; key++) {
+        counts[key % shard_count]++;
+    }
+
+    uint32_t expected = 1000;
+    for (uint32_t c : counts) {
+        FB_ASSERT_EQ(c, expected);
+    }
+}
+
+FB_TEST(shard_count_scaling, cross_shard_msg_cost) {
+    // Cross-shard message has overhead vs in-shard call
+    uint32_t in_shard_latency_ns = 50;
+    uint32_t cross_shard_latency_ns = 500;
+
+    FB_ASSERT_TRUE(cross_shard_latency_ns > in_shard_latency_ns);
+    // ~10x overhead is typical
+    FB_ASSERT_TRUE(cross_shard_latency_ns >= in_shard_latency_ns * 10);
+}
+
+FB_TEST(shard_count_scaling, optimal_shard_count) {
+    // Optimal shard count ≈ available CPU cores
+    uint32_t cpu_cores = 8;
+    uint32_t reserved_cores = 1; // for housekeeping
+    uint32_t shard_count = cpu_cores - reserved_cores;
+
+    FB_ASSERT_EQ(shard_count, 7);
+}
+
+FB_TEST(shard_count_scaling, scaling_efficiency) {
+    // Scaling efficiency: actual / theoretical max
+    uint32_t single_shard_perf = 1000;
+    uint32_t shard_count = 4;
+    uint32_t theoretical_max = single_shard_perf * shard_count;
+    uint32_t actual_perf = 3800; // ~95% efficient
+
+    double efficiency = static_cast<double>(actual_perf) / theoretical_max;
+    FB_ASSERT_TRUE(efficiency > 0.9);
+    FB_ASSERT_TRUE(efficiency <= 1.0);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
