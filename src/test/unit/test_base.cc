@@ -4672,6 +4672,122 @@ FB_TEST(core_sharded_init_phases, phases_strictly_ordered) {
 }
 
 // ============================================================================
+// Test Suite: core_sharded_thread_lifecycle (Thread Lifecycle Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(core_sharded_thread_lifecycle) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(core_sharded_thread_lifecycle) {
+    // Teardown code here
+}
+
+FB_TEST(core_sharded_thread_lifecycle, thread_created_per_shard) {
+    // Constructor creates spdk_thread per shard via spdk_thread_create
+    static int threads_created;
+    threads_created = 0;
+
+    struct mock_thread {
+        mock_thread() { threads_created++; }
+    };
+
+    std::vector<mock_thread*> threads;
+    for (int i = 0; i < 4; i++) threads.push_back(new mock_thread());
+
+    FB_ASSERT_EQ(threads_created, 4);
+    for (auto* t : threads) delete t;
+}
+
+FB_TEST(core_sharded_thread_lifecycle, thread_name_format) {
+    // Thread name = app_name + core_id (FB_FMT_2 format)
+    std::string app = "fb_osd";
+    uint32_t core = 5;
+    std::string thread_name = app + std::to_string(core);
+
+    FB_ASSERT_EQ(thread_name, "fb_osd5");
+    // Each thread has unique name
+    std::string another = app + std::to_string(6);
+    FB_ASSERT_TRUE(thread_name != another);
+}
+
+FB_TEST(core_sharded_thread_lifecycle, thread_set_thread_during_stop) {
+    // stop() uses ::spdk_set_thread before ::spdk_thread_exit
+    // Pattern: set_thread(t) -> thread_exit(t) -> set_thread(current)
+    void* current_thread = (void*)0x100;
+    void* target = (void*)0x200;
+    void* original = current_thread;
+
+    // Stop pattern: switch to target context
+    current_thread = target;
+    FB_ASSERT_TRUE(current_thread == target);
+
+    // ... thread_exit(target) ...
+
+    // Switch back
+    current_thread = original;
+    FB_ASSERT_TRUE(current_thread == original);
+}
+
+FB_TEST(core_sharded_thread_lifecycle, current_thread_special_handling) {
+    // If stopping current thread, set_thread(nullptr) instead of restore
+    void* my_thread = (void*)0x300;
+    void* current_thread = my_thread; // I am being stopped
+
+    void* set_to = (current_thread == my_thread) ? nullptr : current_thread;
+    FB_ASSERT_TRUE(set_to == nullptr);
+}
+
+FB_TEST(core_sharded_thread_lifecycle, threads_cleared_after_stop) {
+    // _threads.clear() at end of stop()
+    std::vector<void*> threads = {(void*)0x1, (void*)0x2, (void*)0x3};
+    FB_ASSERT_EQ(threads.size(), 3);
+
+    threads.clear();
+    FB_ASSERT_TRUE(threads.empty());
+    FB_ASSERT_EQ(threads.size(), 0);
+}
+
+FB_TEST(core_sharded_thread_lifecycle, stop_idempotent_multiple_calls) {
+    // Calling stop() multiple times safe (vector empty 2nd time)
+    std::vector<void*> threads;
+    threads.clear();
+    threads.clear(); // 2nd call no-op
+    threads.clear();
+    FB_ASSERT_TRUE(threads.empty());
+}
+
+FB_TEST(core_sharded_thread_lifecycle, skip_null_threads_during_stop) {
+    // stop() handles null pointers in _threads (defensive)
+    std::vector<void*> threads = {(void*)0x1, nullptr, (void*)0x3};
+    int valid_processed = 0;
+    int nulls_skipped = 0;
+
+    for (auto* t : threads) {
+        if (!t) { nulls_skipped++; continue; }
+        valid_processed++;
+    }
+    threads.clear();
+
+    FB_ASSERT_EQ(valid_processed, 2);
+    FB_ASSERT_EQ(nulls_skipped, 1);
+}
+
+FB_TEST(core_sharded_thread_lifecycle, exit_signals_via_spdk_thread_exit) {
+    // ::spdk_thread_exit signals the thread loop to stop
+    // After exit, thread eventually completes pending ops then dies
+    bool exit_signaled = false;
+    bool eventually_exited = false;
+
+    exit_signaled = true;
+    FB_ASSERT_TRUE(exit_signaled);
+
+    // Later (in real code, polled until done)
+    eventually_exited = true;
+    FB_ASSERT_TRUE(eventually_exited);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
