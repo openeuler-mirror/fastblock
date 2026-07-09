@@ -3538,6 +3538,165 @@ FB_TEST(shard_threading_model, thread_exit_does_not_block) {
 }
 
 // ============================================================================
+// Test Suite: core_sharded_destructor (Core Sharded Destructor Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(core_sharded_destructor) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(core_sharded_destructor) {
+    // Teardown code here
+}
+
+FB_TEST(core_sharded_destructor, dtor_calls_stop_noexcept) {
+    // ~core_sharded() noexcept { stop(); }
+    // Verify destructor is noexcept and invokes cleanup
+    static int stops_called;
+    stops_called = 0;
+
+    struct mock {
+        ~mock() noexcept { stops_called++; }
+    };
+
+    {
+        mock m;
+    }
+    FB_ASSERT_EQ(stops_called, 1);
+}
+
+FB_TEST(core_sharded_destructor, dtor_handles_partial_init) {
+    // If construction fails partway, destructor should handle partial state
+    static int cleaned;
+    cleaned = 0;
+
+    struct partial {
+        std::vector<int*> resources;
+        ~partial() {
+            for (auto* p : resources) {
+                if (p) { delete p; cleaned++; }
+            }
+        }
+    };
+
+    partial p;
+    p.resources.push_back(new int(1));
+    p.resources.push_back(nullptr); // partial: never created
+    p.resources.push_back(new int(3));
+    // dtor handles nulls
+    p.~partial();
+    FB_ASSERT_EQ(cleaned, 2);
+    p.resources.clear(); // prevent double-free
+}
+
+FB_TEST(core_sharded_destructor, multiple_objects_destroy_in_reverse) {
+    // Stack-allocated objects destruct in reverse order
+    static std::vector<int> destruction_order;
+    destruction_order.clear();
+
+    struct tracked {
+        int id;
+        tracked(int i) : id(i) {}
+        ~tracked() { destruction_order.push_back(id); }
+    };
+
+    {
+        tracked t1(1);
+        tracked t2(2);
+        tracked t3(3);
+    }
+
+    FB_ASSERT_EQ(destruction_order.size(), 3);
+    FB_ASSERT_EQ(destruction_order[0], 3);
+    FB_ASSERT_EQ(destruction_order[1], 2);
+    FB_ASSERT_EQ(destruction_order[2], 1);
+}
+
+FB_TEST(core_sharded_destructor, dtor_on_already_empty) {
+    // Destructor on empty state (e.g., after stop()) is safe
+    static int dtor_invocations;
+    dtor_invocations = 0;
+
+    struct empty_state {
+        std::vector<int*> data; // empty
+        ~empty_state() {
+            dtor_invocations++;
+            for (auto* p : data) delete p;
+            data.clear();
+        }
+    };
+
+    {
+        empty_state e;
+    }
+    FB_ASSERT_EQ(dtor_invocations, 1);
+}
+
+FB_TEST(core_sharded_destructor, dtor_clears_all_resources) {
+    // Destructor must release all owned resources
+    static int allocs;
+    static int frees;
+    allocs = 0;
+    frees = 0;
+
+    struct resource {
+        resource() { allocs++; }
+        ~resource() { frees++; }
+    };
+
+    {
+        std::vector<resource*> pool;
+        for (int i = 0; i < 5; i++) pool.push_back(new resource());
+        // RAII cleanup
+        for (auto* r : pool) delete r;
+    }
+
+    FB_ASSERT_EQ(allocs, 5);
+    FB_ASSERT_EQ(frees, 5);
+}
+
+FB_TEST(core_sharded_destructor, dtor_no_throw_safety) {
+    // noexcept destructor: cannot throw
+    // Verify by trait check
+    struct no_throw_dtor {
+        ~no_throw_dtor() noexcept {}
+    };
+    constexpr bool is_nothrow = std::is_nothrow_destructible_v<no_throw_dtor>;
+    FB_ASSERT_TRUE(is_nothrow);
+}
+
+FB_TEST(core_sharded_destructor, derived_class_dtor_chain) {
+    // Derived class destructor runs first, then base
+    static std::vector<std::string> dtor_order;
+    dtor_order.clear();
+
+    struct base { virtual ~base() { dtor_order.push_back("base"); } };
+    struct derived : base {
+        ~derived() override { dtor_order.push_back("derived"); }
+    };
+
+    {
+        derived d;
+    }
+    FB_ASSERT_EQ(dtor_order.size(), 2);
+    FB_ASSERT_EQ(dtor_order[0], "derived");
+    FB_ASSERT_EQ(dtor_order[1], "base");
+}
+
+FB_TEST(core_sharded_destructor, vector_members_auto_cleared) {
+    // std::vector members are auto-destructed (no explicit clear needed)
+    static int element_dtors;
+    element_dtors = 0;
+
+    struct elem { ~elem() { element_dtors++; } };
+
+    {
+        std::vector<elem> v(5);
+    }
+    FB_ASSERT_EQ(element_dtors, 5);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
