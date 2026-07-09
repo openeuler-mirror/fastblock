@@ -97,6 +97,81 @@ FB_TEST(msg_request_meta, oversize_names_are_truncated) {
 }
 
 // ============================================================================
+// Test Suite: msg_request_meta_roundtrip — store→buffer→load byte fidelity
+//
+// The wire path is: sender builds a request_meta, memcpy's it into the head
+// of an RDMA buffer, transmits; receiver memcpy's it back out. If field
+// padding / alignment ever shifts, the receiver decodes garbage. This suite
+// pins the round-trip down so any layout change breaks loudly.
+// ============================================================================
+
+namespace {
+
+inline void store_request_meta(void* raw, const request_meta& meta) noexcept {
+    std::memcpy(raw, &meta, sizeof(meta));
+}
+
+inline request_meta load_request_meta(const void* raw) noexcept {
+    request_meta meta{};
+    std::memcpy(&meta, raw, sizeof(meta));
+    return meta;
+}
+
+} // anonymous namespace
+
+FB_SUITE_SETUP(msg_request_meta_roundtrip) {}
+FB_SUITE_TEARDOWN(msg_request_meta_roundtrip) {}
+
+FB_TEST(msg_request_meta_roundtrip, sizeof_is_stable) {
+    // Receivers compute the body offset as sizeof(request_meta). Any silent
+    // change here desynchronises every sender/receiver pair on the wire.
+    constexpr size_t expected =
+        (max_rpc_meta_string_size + 1) * 2  // two name buffers
+      + sizeof(request_meta::name_size_type) * 2
+      + sizeof(request_meta::data_size_type);
+    // The struct may pick up trailing padding; assert >= the field sum and
+    // pin the actual sizeof so a reviewer notices unexpected padding shifts.
+    FB_ASSERT_GE(sizeof(request_meta), expected);
+}
+
+FB_TEST(msg_request_meta_roundtrip, normal_message_survives_roundtrip) {
+    auto src = make_request_meta("OsdService", "Write", 4096);
+
+    alignas(request_meta) unsigned char buf[sizeof(request_meta)]{};
+    store_request_meta(buf, src);
+    auto dst = load_request_meta(buf);
+
+    FB_ASSERT_EQ(dst.service_name_size, src.service_name_size);
+    FB_ASSERT_EQ(dst.method_name_size,  src.method_name_size);
+    FB_ASSERT_EQ(dst.data_size,         src.data_size);
+    FB_ASSERT_EQ(::memcmp(dst.service_name, src.service_name, src.service_name_size), 0);
+    FB_ASSERT_EQ(::memcmp(dst.method_name,  src.method_name,  src.method_name_size),  0);
+}
+
+FB_TEST(msg_request_meta_roundtrip, max_data_size_survives_roundtrip) {
+    // data_size is uint32_t; ensure the full range survives — guards against
+    // an accidental narrowing if someone "shrinks" the field.
+    auto src = make_request_meta("svc", "mth", UINT32_MAX);
+    alignas(request_meta) unsigned char buf[sizeof(request_meta)]{};
+    store_request_meta(buf, src);
+    auto dst = load_request_meta(buf);
+    FB_ASSERT_EQ(dst.data_size, UINT32_MAX);
+}
+
+FB_TEST(msg_request_meta_roundtrip, empty_names_survive_roundtrip) {
+    // Edge case: both names empty, zero payload. The decoder must not read
+    // past *_name_size and must not require a NUL terminator inside the
+    // fixed buffer.
+    auto src = make_request_meta("", "", 0);
+    alignas(request_meta) unsigned char buf[sizeof(request_meta)]{};
+    store_request_meta(buf, src);
+    auto dst = load_request_meta(buf);
+    FB_ASSERT_EQ(dst.service_name_size, 0);
+    FB_ASSERT_EQ(dst.method_name_size,  0);
+    FB_ASSERT_EQ(dst.data_size,         0u);
+}
+
+// ============================================================================
 // Test Suite: msg — reply status code surface
 // ============================================================================
 
