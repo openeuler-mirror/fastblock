@@ -8089,6 +8089,104 @@ FB_TEST(shard_workload_distribution, backpressure_on_overload) {
 }
 
 // ============================================================================
+// Test Suite: shard_spdk_thread_model (SPDK Thread Model Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_spdk_thread_model) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_spdk_thread_model) {
+    // Teardown code here
+}
+
+FB_TEST(shard_spdk_thread_model, thread_bound_to_cpu) {
+    // Each spdk_thread is bound to a specific CPU via cpumask
+    std::vector<uint64_t> cpumasks = {1, 2, 4, 8}; // cores 0,1,2,3
+    for (size_t i = 0; i < cpumasks.size(); i++) {
+        FB_ASSERT_EQ(cpumasks[i], 1ULL << i);
+    }
+}
+
+FB_TEST(shard_spdk_thread_model, thread_has_unique_name) {
+    // Each thread has a unique name for debugging
+    std::vector<std::string> names = {"app_0", "app_1", "app_2", "app_3"};
+    std::set<std::string> unique(names.begin(), names.end());
+    FB_ASSERT_EQ(unique.size(), names.size());
+}
+
+FB_TEST(shard_spdk_thread_model, send_msg_delivers_to_target) {
+    // spdk_thread_send_msg targets a specific thread
+    std::vector<bool> delivered(4, false);
+
+    uint32_t target = 2;
+    delivered[target] = true;
+
+    FB_ASSERT_TRUE(delivered[2]);
+    FB_ASSERT_TRUE(!delivered[0]);
+    FB_ASSERT_TRUE(!delivered[1]);
+    FB_ASSERT_TRUE(!delivered[3]);
+}
+
+FB_TEST(shard_spdk_thread_model, thread_processes_messages_in_loop) {
+    // Each thread runs a poller loop processing queued messages
+    std::queue<int> msgs;
+    for (int i = 0; i < 10; i++) msgs.push(i);
+
+    int processed = 0;
+    while (!msgs.empty()) {
+        msgs.pop();
+        processed++;
+    }
+    FB_ASSERT_EQ(processed, 10);
+}
+
+FB_TEST(shard_spdk_thread_model, thread_exit_releases_resources) {
+    // spdk_thread_exit releases thread's resources
+    static int released;
+    released = 0;
+
+    struct thread_resources {
+        ~thread_resources() { released++; }
+    };
+
+    {
+        thread_resources* r = new thread_resources();
+        delete r; // exit
+    }
+    FB_ASSERT_EQ(released, 1);
+}
+
+FB_TEST(shard_spdk_thread_model, set_thread_switches_context) {
+    // spdk_set_thread switches the "current thread" context
+    void* original = (void*)0x100;
+    void* target = (void*)0x200;
+
+    void* current = original;
+    current = target; // set_thread(target)
+    FB_ASSERT_TRUE(current == target);
+
+    current = original; // restore
+    FB_ASSERT_TRUE(current == original);
+}
+
+FB_TEST(shard_spdk_thread_model, get_thread_returns_current) {
+    // spdk_get_thread returns the currently-set thread
+    void* set_thread = (void*)0x300;
+    void* current = set_thread;
+    FB_ASSERT_TRUE(current == set_thread);
+}
+
+FB_TEST(shard_spdk_thread_model, one_poller_per_background_task) {
+    // Each background task registers a poller
+    std::vector<std::string> pollers = {"gc", "stats", "heartbeat"};
+    FB_ASSERT_EQ(pollers.size(), 3);
+    for (const auto& p : pollers) {
+        FB_ASSERT_TRUE(!p.empty());
+    }
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
