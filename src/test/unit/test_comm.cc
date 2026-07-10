@@ -692,17 +692,17 @@ FB_TEST(rpc_request_lifecycle, success_invokes_callback_once) {
     // damage is double-free / double-release downstream.
     int call_count = 0;
     rpc_callback_status seen = rpc_callback_status::fail;
-    fake_request_context ctx;
-    ctx.request_id = 7;
-    ctx.cb = [&](rpc_callback_status s, fake_request_context* c) {
+    fake_request_context req_ctx;
+    req_ctx.request_id = 7;
+    req_ctx.cb = [&](rpc_callback_status s, fake_request_context* c) {
         ++call_count;
         seen = s;
-        // ctx pointer must still be valid inside the callback.
+        // request_context pointer must still be valid inside the callback.
         FB_ASSERT_NOT_NULL(c);
         FB_ASSERT_EQ(c->request_id, 7);
     };
     fake_request_runner runner;
-    runner.submit(&ctx, /*simulate_success=*/true);
+    runner.submit(&req_ctx, /*simulate_success=*/true);
 
     FB_ASSERT_EQ(call_count, 1);
     FB_ASSERT_TRUE(seen == rpc_callback_status::ok);
@@ -713,13 +713,13 @@ FB_TEST(rpc_request_lifecycle, failure_still_invokes_callback) {
     // forever for a response that will never arrive.
     int call_count = 0;
     rpc_callback_status seen = rpc_callback_status::ok;
-    fake_request_context ctx;
-    ctx.cb = [&](rpc_callback_status s, fake_request_context*) {
+    fake_request_context req_ctx;
+    req_ctx.cb = [&](rpc_callback_status s, fake_request_context*) {
         ++call_count;
         seen = s;
     };
     fake_request_runner runner;
-    runner.submit(&ctx, /*simulate_success=*/false);
+    runner.submit(&req_ctx, /*simulate_success=*/false);
 
     FB_ASSERT_EQ(call_count, 1);
     FB_ASSERT_TRUE(seen == rpc_callback_status::fail);
@@ -729,14 +729,14 @@ FB_TEST(rpc_request_lifecycle, callback_can_read_payload) {
     // The callback receives the same request_context the caller submitted —
     // its payload field must be unchanged so the callback can correlate the
     // response with the original request.
-    fake_request_context ctx;
-    ctx.payload = "AppendEntries:term=5,leader=1";
+    fake_request_context req_ctx;
+    req_ctx.payload = "AppendEntries:term=5,leader=1";
     std::string captured;
-    ctx.cb = [&](rpc_callback_status, fake_request_context* c) {
+    req_ctx.cb = [&](rpc_callback_status, fake_request_context* c) {
         captured = c->payload;
     };
     fake_request_runner runner;
-    runner.submit(&ctx, /*simulate_success=*/true);
+    runner.submit(&req_ctx, /*simulate_success=*/true);
 
     FB_ASSERT_STR_EQ(captured.c_str(), "AppendEntries:term=5,leader=1");
 }
