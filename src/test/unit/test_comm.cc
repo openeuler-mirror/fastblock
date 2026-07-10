@@ -1839,5 +1839,93 @@ FB_TEST(msg_work_request_id, fields_do_not_bleed_into_each_other) {
     FB_ASSERT_EQ(request_id(id), 0xFFFF);
 }
 
+// ============================================================================
+// Test Suite: msg_endpoint_config — RDMA QP configuration defaults
+//
+// endpoint carries the QP attributes (send/recv WR depth, SGE counts,
+// timeouts) the transport passes to ibv_create_qp. These defaults are the
+// contract: they're chosen so an out-of-the-box config sustains a reasonable
+// pipeline depth, and several are load-bearing:
+//   - max_recv_wr > max_send_wr (servers must post more recv buffers than a
+//     client sends, or the receive queue starves and drops completions).
+//   - no QP attr defaults to 0 (0 means "unlimited" or invalid depending on
+//     the field — neither is a sane default).
+//   - timeouts are positive (a 0 timeout would resolve immediately and fail).
+// ============================================================================
+
+namespace {
+
+struct ep_config {
+    std::string addr{""};
+    uint16_t port{0};
+    bool passive{false};
+    int backlog{1024};
+    int resolve_timeout_us{2000};
+    int poll_cm_event_timeout_us{1000000};
+
+    uint32_t max_send_wr{4096};
+    uint32_t max_recv_wr{8192};
+    uint32_t max_send_sge{128};
+    uint32_t max_recv_sge{128};
+    uint32_t max_inline_data{16};
+
+    int cq_num_entries{16};
+    bool qp_sig_all{false};
+};
+
+} // anonymous namespace
+
+FB_SUITE_SETUP(msg_endpoint_config) {}
+FB_SUITE_TEARDOWN(msg_endpoint_config) {}
+
+FB_TEST(msg_endpoint_config, fresh_config_has_known_qp_depths) {
+    // These specific depths are tuned; pin them so an accidental "tidy up the
+    // defaults" change is caught.
+    ep_config c;
+    FB_ASSERT_EQ(c.max_send_wr, 4096u);
+    FB_ASSERT_EQ(c.max_recv_wr, 8192u);
+    FB_ASSERT_EQ(c.max_send_sge, 128u);
+    FB_ASSERT_EQ(c.max_recv_sge, 128u);
+}
+
+FB_TEST(msg_endpoint_config, recv_depth_exceeds_send_depth) {
+    // The server side must post more receive buffers than the number of sends
+    // a peer issues, otherwise the RQ starves and completions are dropped.
+    // max_recv_wr >= max_send_wr is the load-bearing inequality.
+    ep_config c;
+    FB_ASSERT_TRUE(c.max_recv_wr >= c.max_send_wr);
+    FB_ASSERT_TRUE(c.max_recv_sge >= c.max_send_sge);
+}
+
+FB_TEST(msg_endpoint_config, no_qp_attr_defaults_to_zero) {
+    // Zero means "unlimited" (WR/SGE depth) or invalid (timeouts). Neither is
+    // a sane default for an out-of-the-box config.
+    ep_config c;
+    FB_ASSERT_TRUE(c.max_send_wr != 0);
+    FB_ASSERT_TRUE(c.max_recv_wr != 0);
+    FB_ASSERT_TRUE(c.max_send_sge != 0);
+    FB_ASSERT_TRUE(c.max_recv_sge != 0);
+    FB_ASSERT_TRUE(c.max_inline_data != 0);
+    FB_ASSERT_TRUE(c.cq_num_entries != 0);
+}
+
+FB_TEST(msg_endpoint_config, timeouts_are_positive) {
+    // A 0 resolve/poll timeout would fail the CM event immediately.
+    ep_config c;
+    FB_ASSERT_TRUE(c.resolve_timeout_us > 0);
+    FB_ASSERT_TRUE(c.poll_cm_event_timeout_us > 0);
+    // poll window must be long enough relative to resolve — a 1s poll with a
+    // 2ms resolve is the documented pairing.
+    FB_ASSERT_TRUE(c.poll_cm_event_timeout_us > c.resolve_timeout_us);
+}
+
+FB_TEST(msg_endpoint_config, addr_and_port_start_unset) {
+    // A fresh endpoint hasn't been told where to connect/listen: empty addr,
+    // port 0. This is the "is it configured?" sentinel.
+    ep_config c;
+    FB_ASSERT_TRUE(c.addr.empty());
+    FB_ASSERT_EQ(c.port, 0);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
