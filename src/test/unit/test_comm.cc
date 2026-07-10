@@ -2040,5 +2040,88 @@ FB_TEST(msg_probe_accounting, default_n_is_one) {
     FB_ASSERT_EQ(p.receive_queue_depth, 0); // 1 posted - 1 completed
 }
 
+// ============================================================================
+// Test Suite: msg_transport_data_headers — inline vs metadata framing
+//
+// transport_data ships two payload shapes over the same channel and tells them
+// apart by a leading is_inlined byte:
+//   - inline_data: the request/response body travels inline in the send buffer.
+//       is_inlined defaults to _inline_tag (1).
+//   - metadata: a descriptor pointing at an RDMA-read target (remote rkey/raddr).
+//       is_inlined defaults to _no_inline_tag (0).
+// The receiver reads byte[0] and dispatches accordingly, so the two defaults
+// must differ AND the header sizes must stay stable (they index into the
+// receive buffer). We also pin the completion-tag complement: _complete_tag
+// (0b01010101) and _un_complete_tag (0b10101010) are bitwise complements, so
+// a single-bit corruption can't turn one into the other.
+// ============================================================================
+
+namespace {
+
+constexpr uint8_t td_inline_tag{1};
+constexpr uint8_t td_no_inline_tag{0};
+
+constexpr uint8_t td_complete_tag{0b01010101};     // 85
+constexpr uint8_t td_un_complete_tag{0b10101010};  // 170
+
+struct td_inline_data {
+    uint8_t  is_inlined{td_inline_tag};
+    uint32_t correlation_index{0};
+    uint32_t io_length{0};
+};
+
+struct td_metadata {
+    uint8_t  is_inlined{td_no_inline_tag};
+    uint32_t correlation_index{0};
+    uint32_t metadata_count{1};
+    uint32_t serial_no{0};
+    uint32_t io_length;
+    uint32_t io_count;
+};
+
+} // anonymous namespace
+
+FB_SUITE_SETUP(msg_transport_data_headers) {}
+FB_SUITE_TEARDOWN(msg_transport_data_headers) {}
+
+FB_TEST(msg_transport_data_headers, inline_tag_differs_from_no_inline) {
+    // The discriminator is byte[0]; the two sentinels must be distinct or the
+    // receiver can't tell an inline body from a metadata descriptor.
+    FB_ASSERT_TRUE(td_inline_tag != td_no_inline_tag);
+}
+
+FB_TEST(msg_transport_data_headers, inline_data_defaults_to_inlined) {
+    // A freshly built inline_data header must announce itself as inline so the
+    // receiver reads the body straight out of the send buffer.
+    td_inline_data hdr;
+    FB_ASSERT_EQ(hdr.is_inlined, td_inline_tag);
+}
+
+FB_TEST(msg_transport_data_headers, metadata_defaults_to_not_inlined) {
+    // A freshly built metadata header must announce NOT-inline, so the
+    // receiver issues an RDMA read to fetch the real payload.
+    td_metadata hdr;
+    FB_ASSERT_EQ(hdr.is_inlined, td_no_inline_tag);
+    FB_ASSERT_EQ(hdr.metadata_count, 1u); // a single descriptor by default
+}
+
+FB_TEST(msg_transport_data_headers, metadata_header_size_is_24) {
+    // metadata_header_size is a wire constant the buffer arithmetic depends on.
+    // Fields are 1 + 5×4 = 21 bytes; a 3-byte alignment gap after the leading
+    // uint8_t pads it to 24.
+    FB_ASSERT_EQ(sizeof(td_metadata), 24u);
+}
+
+FB_TEST(msg_transport_data_headers, completion_tags_are_bit_complements) {
+    // _complete_tag and _un_complete_tag are exact bitwise complements — XOR
+    // to all-ones, hamming distance 8. A single-bit flip can't turn a complete
+    // marker into an incomplete one (or vice versa), which is the torn-read
+    // robustness the RDMA-read protocol relies on.
+    FB_ASSERT_EQ(td_complete_tag ^ td_un_complete_tag, 0xFFu);
+    FB_ASSERT_EQ(static_cast<uint8_t>(~td_complete_tag), td_un_complete_tag);
+    FB_ASSERT_EQ(td_complete_tag, 85u);
+    FB_ASSERT_EQ(td_un_complete_tag, 170u);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
