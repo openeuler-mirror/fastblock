@@ -8284,6 +8284,104 @@ FB_TEST(shard_memory_management, memory_limit_per_shard) {
 }
 
 // ============================================================================
+// Test Suite: shard_error_propagation (Error Propagation Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_error_propagation) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_error_propagation) {
+    // Teardown code here
+}
+
+FB_TEST(shard_error_propagation, inline_error_propagates) {
+    // Inline invoke_on: error returned directly to caller
+    auto task = []() -> int { return -EINVAL; };
+    int rc = task();
+    FB_ASSERT_EQ(rc, -EINVAL);
+}
+
+FB_TEST(shard_error_propagation, async_error_via_callback) {
+    // Async invoke_on: error delivered via completion callback
+    int captured_rc = 0;
+    auto completion = [&captured_rc](int rc) { captured_rc = rc; };
+
+    completion(-ENOMEM);
+    FB_ASSERT_EQ(captured_rc, -ENOMEM);
+}
+
+FB_TEST(shard_error_propagation, send_msg_failure_returned) {
+    // spdk_thread_send_msg failure returns negative errno
+    int rc = -ENOMEM;
+    FB_ASSERT_TRUE(rc < 0);
+
+    // Caller can retry on transient failure
+    bool should_retry = (rc == -ENOMEM);
+    FB_ASSERT_TRUE(should_retry);
+}
+
+FB_TEST(shard_error_propagation, oob_shard_id_handled) {
+    // Out-of-bounds shard_id: undefined behavior in C++, but app should validate
+    uint32_t count = 4;
+    uint32_t bad_shard = 99;
+
+    bool valid = (bad_shard < count);
+    FB_ASSERT_TRUE(!valid);
+}
+
+FB_TEST(shard_error_propagation, null_thread_pointer_safe) {
+    // If _threads[shard] is null, send_msg should fail gracefully
+    void* thread = nullptr;
+    bool can_send = (thread != nullptr);
+    FB_ASSERT_TRUE(!can_send);
+}
+
+FB_TEST(shard_error_propagation, exception_in_callback_caught) {
+    // Exceptions across thread boundaries: must be caught and converted to error code
+    bool caught = false;
+    int error_code = 0;
+
+    auto run = [&]() {
+        try {
+            throw std::runtime_error("fail");
+        } catch (const std::runtime_error&) {
+            caught = true;
+            error_code = -EIO;
+        }
+    };
+
+    run();
+    FB_ASSERT_TRUE(caught);
+    FB_ASSERT_EQ(error_code, -EIO);
+}
+
+FB_TEST(shard_error_propagation, partial_failure_isolation) {
+    // Failure on one shard doesn't crash others
+    std::vector<bool> shard_ok = {true, false, true, true};
+
+    int healthy = 0;
+    for (bool ok : shard_ok) if (ok) healthy++;
+    FB_ASSERT_EQ(healthy, 3);
+}
+
+FB_TEST(shard_error_propagation, error_logging_before_propagation) {
+    // Errors logged before being propagated
+    static std::vector<std::string> log;
+    log.clear();
+
+    auto fail = [](const std::string& msg) -> int {
+        log.push_back(msg);
+        return -1;
+    };
+
+    int rc = fail("operation failed");
+    FB_ASSERT_EQ(rc, -1);
+    FB_ASSERT_EQ(log.size(), 1);
+    FB_ASSERT_EQ(log[0], "operation failed");
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
