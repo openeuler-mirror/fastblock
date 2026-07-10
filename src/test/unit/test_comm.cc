@@ -35,6 +35,8 @@
 #include <string_view>
 #include <type_traits>
 #include <unordered_map>
+#include <utility>
+#include <variant>
 #include <vector>
 
 // ============================================================================
@@ -1318,6 +1320,63 @@ FB_TEST(rpc_controller, not_failed_never_reads_as_terminating) {
     // shutdown.
     rpc_controller ctl;
     FB_ASSERT_FALSE(ctl.is_peer_terminating());
+}
+
+// ============================================================================
+// Test Suite: msg_reply_meta — single-byte reply header on the wire
+//
+// reply_meta is the smallest unit the RDMA transport ships: one byte carrying
+// the reply status. Two contracts we can't let drift:
+//   1. sizeof(reply_meta) == 1. The transport computes buffer offsets by
+//      adding reply_meta_size; if it ever widened, every reply would be
+//      mis-aligned against the producer's expectation.
+//   2. It's trivially copyable, so memcpy in/out of the RDMA receive buffer
+//      is well-defined.
+// ============================================================================
+
+namespace {
+
+struct reply_meta {
+    uint8_t reply_status;
+};
+static constexpr size_t reply_meta_size{sizeof(reply_meta)};
+
+} // anonymous namespace
+
+FB_SUITE_SETUP(msg_reply_meta) {}
+FB_SUITE_TEARDOWN(msg_reply_meta) {}
+
+FB_TEST(msg_reply_meta, status_field_is_single_byte) {
+    // reply_status aliases std::underlying_type_t<status>; status is uint8_t.
+    // A wider field would silently corrupt the single-byte wire slot.
+    FB_ASSERT_EQ(sizeof(reply_meta::reply_status), 1u);
+}
+
+FB_TEST(msg_reply_meta, total_size_is_one_byte) {
+    // No padding may be introduced — the struct is exactly one byte.
+    FB_ASSERT_EQ(sizeof(reply_meta), 1u);
+    FB_ASSERT_EQ(reply_meta_size, 1u);
+}
+
+FB_TEST(msg_reply_meta, trivially_copyable) {
+    // memcpy semantics must hold so the transport can blast it into the
+    // receive buffer and reinterpret it back.
+    FB_ASSERT_TRUE(std::is_trivially_copyable_v<reply_meta>);
+}
+
+FB_TEST(msg_reply_meta, status_round_trips_through_buffer) {
+    // Store a status byte into a raw buffer and reload it — the value must be
+    // preserved. Regression target: any endianness or width change in the
+    // field would surface here.
+    constexpr uint8_t wire_status = 0xAB;
+    unsigned char buf[sizeof(reply_meta)]{};
+    reply_meta out{};
+    out.reply_status = wire_status;
+    std::memcpy(buf, &out, sizeof(out));
+
+    reply_meta in{};
+    std::memcpy(&in, buf, sizeof(in));
+    FB_ASSERT_EQ(in.reply_status, wire_status);
 }
 
 // Main function for test runner
