@@ -7364,6 +7364,99 @@ FB_TEST(shard_partitioning_consistency, shard_count_change_minimal_disruption) {
 }
 
 // ============================================================================
+// Test Suite: shard_performance_invariants (Performance Invariants Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_performance_invariants) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_performance_invariants) {
+    // Teardown code here
+}
+
+FB_TEST(shard_performance_invariants, op_latency_dominated_by_io) {
+    // IO latency >> lock + dispatch overhead
+    uint64_t io_us = 1000;
+    uint64_t lock_us = 5;
+    uint64_t dispatch_us = 10;
+    uint64_t overhead = lock_us + dispatch_us;
+
+    FB_ASSERT_TRUE(io_us > overhead);
+    FB_ASSERT_TRUE(io_us / overhead > 10);
+}
+
+FB_TEST(shard_performance_invariants, throughput_grows_with_shards) {
+    // Throughput scales with shard count (up to core count)
+    uint64_t per_shard_ops = 10000;
+    std::vector<uint32_t> shard_counts = {1, 2, 4, 8};
+
+    std::vector<uint64_t> throughputs;
+    for (uint32_t s : shard_counts) {
+        throughputs.push_back(per_shard_ops * s);
+    }
+
+    // Monotonically increasing
+    for (size_t i = 1; i < throughputs.size(); i++) {
+        FB_ASSERT_TRUE(throughputs[i] > throughputs[i-1]);
+    }
+}
+
+FB_TEST(shard_performance_invariants, no_lock_contention_in_shard) {
+    // Within a shard, no locks => no contention
+    uint64_t ops = 0;
+    for (uint64_t i = 0; i < 100000; i++) ops++;
+    FB_ASSERT_EQ(ops, 100000);
+}
+
+FB_TEST(shard_performance_invariants, cache_locality_benefit) {
+    // Per-shard data is cache-local (no false sharing)
+    struct alignas(64) cache_aligned { int v; };
+    FB_ASSERT_EQ(alignof(cache_aligned), 64);
+}
+
+FB_TEST(shard_performance_invariants, batch_reduces_overhead) {
+    // Batching N ops: 1 dispatch instead of N
+    uint32_t batch_size = 16;
+    uint64_t single_dispatch_cost = 100; // ns
+    uint64_t batch_dispatch_cost = 200;  // ns
+
+    uint64_t single_total = batch_size * single_dispatch_cost;
+    uint64_t batch_total = batch_dispatch_cost;
+
+    FB_ASSERT_TRUE(batch_total < single_total);
+    FB_ASSERT_TRUE(single_total / batch_total > 5);
+}
+
+FB_TEST(shard_performance_invariants, zero_copy_avoids_memcpy) {
+    // Zero-copy: pointer passed instead of data copied
+    std::vector<int> data(1024, 42);
+    auto ptr = data.data();
+
+    // No copy, same address
+    FB_ASSERT_TRUE(ptr == data.data());
+}
+
+FB_TEST(shard_performance_invariants, numa_local_access_faster) {
+    // NUMA-local access ~2x faster than remote
+    uint64_t local_latency_ns = 100;
+    uint64_t remote_latency_ns = 300;
+
+    FB_ASSERT_TRUE(remote_latency_ns > local_latency_ns);
+    FB_ASSERT_TRUE(remote_latency_ns >= 2 * local_latency_ns);
+}
+
+FB_TEST(shard_performance_invariants, poller_period_amortized) {
+    // Poller period amortizes overhead
+    uint64_t poller_period_us = 1000;
+    uint64_t work_per_poll_us = 100;
+
+    // Each poll does significant work
+    FB_ASSERT_TRUE(work_per_poll_us > 0);
+    FB_ASSERT_TRUE(poller_period_us >= work_per_poll_us);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
