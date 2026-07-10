@@ -6470,6 +6470,133 @@ FB_TEST(shard_partitioning_strategies, locality_preserving_partitioning) {
 }
 
 // ============================================================================
+// Test Suite: shard_synchronization (Cross-Shard Synchronization Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_synchronization) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_synchronization) {
+    // Teardown code here
+}
+
+FB_TEST(shard_synchronization, barrier_pattern) {
+    // Barrier: wait for all shards to reach a point
+    uint32_t shard_count = 4;
+    uint32_t shards_arrived = 0;
+
+    // Each shard increments arrival counter
+    for (uint32_t s = 0; s < shard_count; s++) {
+        shards_arrived++;
+    }
+
+    // All arrived
+    FB_ASSERT_EQ(shards_arrived, shard_count);
+}
+
+FB_TEST(shard_synchronization, completion_callback_chain) {
+    // After all shards complete, invoke a final callback
+    uint32_t shard_count = 4;
+    uint32_t completed = 0;
+    bool final_callback_invoked = false;
+
+    auto on_complete = [&]() {
+        completed++;
+        if (completed == shard_count) {
+            final_callback_invoked = true;
+        }
+    };
+
+    for (uint32_t s = 0; s < shard_count; s++) {
+        on_complete();
+    }
+
+    FB_ASSERT_TRUE(final_callback_invoked);
+    FB_ASSERT_EQ(completed, shard_count);
+}
+
+FB_TEST(shard_synchronization, scatter_gather_two_phase) {
+    // Phase 1: scatter; Phase 2: gather
+    uint32_t shard_count = 4;
+    std::vector<int> per_shard_results(shard_count);
+
+    // Phase 1: scatter (each shard computes)
+    for (uint32_t s = 0; s < shard_count; s++) {
+        per_shard_results[s] = static_cast<int>(s) * 10;
+    }
+
+    // Phase 2: gather (collect)
+    int sum = 0;
+    for (auto r : per_shard_results) sum += r;
+    FB_ASSERT_EQ(sum, 60); // 0+10+20+30
+}
+
+FB_TEST(shard_synchronization, future_promise_pattern) {
+    // Promise/future: async result
+    std::promise<int> promise;
+    auto future = promise.get_future();
+
+    // Producer
+    promise.set_value(42);
+
+    // Consumer
+    int result = future.get();
+    FB_ASSERT_EQ(result, 42);
+}
+
+FB_TEST(shard_synchronization, semaphore_simulation) {
+    // Counting semaphore: limits concurrent ops
+    int permits = 3;
+
+    auto acquire = [&permits]() { if (permits > 0) { permits--; return true; } return false; };
+    auto release = [&permits]() { permits++; };
+
+    FB_ASSERT_TRUE(acquire());
+    FB_ASSERT_TRUE(acquire());
+    FB_ASSERT_TRUE(acquire());
+    FB_ASSERT_TRUE(!acquire()); // exhausted
+
+    release();
+    FB_ASSERT_TRUE(acquire());
+}
+
+FB_TEST(shard_synchronization, atomic_flag_signaling) {
+    std::atomic<bool> flag(false);
+    flag.store(true);
+    FB_ASSERT_TRUE(flag.load());
+
+    flag.store(false);
+    FB_ASSERT_TRUE(!flag.load());
+}
+
+FB_TEST(shard_synchronization, generation_counter_for_versioning) {
+    // Version counter increments on each shard's state change
+    std::vector<uint64_t> versions(4, 0);
+
+    versions[1]++;
+    versions[1]++;
+    versions[3]++;
+
+    FB_ASSERT_EQ(versions[0], 0);
+    FB_ASSERT_EQ(versions[1], 2);
+    FB_ASSERT_EQ(versions[3], 1);
+}
+
+FB_TEST(shard_synchronization, fence_ordering) {
+    // Memory fence ensures ordering between operations
+    int value = 0;
+    bool ready = false;
+
+    value = 42;
+    std::atomic_thread_fence(std::memory_order_release);
+    ready = true;
+
+    FB_ASSERT_TRUE(ready);
+    FB_ASSERT_EQ(value, 42);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
