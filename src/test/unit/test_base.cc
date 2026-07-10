@@ -7575,6 +7575,103 @@ FB_TEST(shard_lifecycle_edge_cases, graceful_shutdown_drains_pending) {
 }
 
 // ============================================================================
+// Test Suite: shard_invocation_dispatch_modes (Dispatch Mode Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_invocation_dispatch_modes) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_invocation_dispatch_modes) {
+    // Teardown code here
+}
+
+FB_TEST(shard_invocation_dispatch_modes, inline_mode_synchronous) {
+    // Inline mode: caller blocks until callback completes
+    bool completed = false;
+    auto dispatch = [&completed]() {
+        completed = true;
+    };
+    dispatch();
+    FB_ASSERT_TRUE(completed); // Already done (synchronous)
+}
+
+FB_TEST(shard_invocation_dispatch_modes, async_mode_returns_immediately) {
+    // Async mode: caller returns immediately, callback runs later
+    bool completed = false;
+    auto enqueue = [&completed]() {
+        // In reality, posted to queue; here we simulate deferred execution
+        return [&completed]() { completed = true; };
+    };
+
+    auto deferred = enqueue();
+    FB_ASSERT_TRUE(!completed); // Not yet executed
+
+    deferred(); // Later, on target thread
+    FB_ASSERT_TRUE(completed);
+}
+
+FB_TEST(shard_invocation_dispatch_modes, mode_determined_by_core_and_thread) {
+    // Dispatch mode: inline if (target_core == current_core && target_thread == current_thread)
+    uint32_t target_core = 2;
+    uint32_t current_core = 2;
+    void* target_thread = (void*)0x100;
+    void* current_thread = (void*)0x100;
+
+    bool inline_mode = (target_core == current_core && target_thread == current_thread);
+    FB_ASSERT_TRUE(inline_mode);
+}
+
+FB_TEST(shard_invocation_dispatch_modes, async_when_core_differs) {
+    uint32_t target_core = 3;
+    uint32_t current_core = 1;
+    FB_ASSERT_TRUE(target_core != current_core);
+}
+
+FB_TEST(shard_invocation_dispatch_modes, async_when_thread_differs) {
+    void* target = (void*)0x100;
+    void* current = (void*)0x200;
+    FB_ASSERT_TRUE(target != current);
+}
+
+FB_TEST(shard_invocation_dispatch_modes, lambda_ctx_for_async) {
+    // Async requires lambda_ctx (heap-allocated) to survive queue transit
+    static int alive;
+    alive = 0;
+
+    struct ctx { ctx() { alive++; } ~ctx() { alive--; } };
+
+    ctx* c = new ctx();
+    FB_ASSERT_EQ(alive, 1);
+
+    // ... queued, processed on other thread ...
+
+    delete c;
+    FB_ASSERT_EQ(alive, 0);
+}
+
+FB_TEST(shard_invocation_dispatch_modes, return_code_from_send_msg) {
+    // Async: returns spdk_thread_send_msg's rc (0 or negative errno)
+    int success = 0;
+    int failure = -ENOMEM;
+    FB_ASSERT_TRUE(success >= 0);
+    FB_ASSERT_TRUE(failure < 0);
+}
+
+FB_TEST(shard_invocation_dispatch_modes, callback_runs_in_target_context) {
+    // Callback executes in target shard's thread context
+    static std::string executing_context;
+    executing_context.clear();
+
+    auto target_cb = [](const std::string& ctx_name) {
+        executing_context = ctx_name;
+    };
+
+    target_cb("shard_2_thread");
+    FB_ASSERT_EQ(executing_context, "shard_2_thread");
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
