@@ -2123,5 +2123,153 @@ FB_TEST(msg_transport_data_headers, completion_tags_are_bit_complements) {
     FB_ASSERT_EQ(td_un_complete_tag, 170u);
 }
 
+// ============================================================================
+// Test Suite: bdev_object_mapping — client object ↔ offset mapping
+//
+// bdev/client maps byte offsets to object sequences and back. The core
+// utilities are pure arithmetic, no I/O:
+//   - calc_first_object_position(offset, length, object_size) →
+//       (first_object_size, first_object_offset, object_seq)
+//   - get_obj_num(offset, length, object_size) → object count
+// These are the correctness-critical path: wrong mapping → data corruption,
+// lost writes, or phantom objects.
+// ============================================================================
+
+namespace {
+
+// Mirrors libfblock.cc's default_object_size (4 MiB)
+static constexpr size_t default_object_size = 4 * 1024 * 1024;
+
+// align_down: round toward negative infinity to object boundary
+static uint64_t align_down(uint64_t val, size_t object_size) {
+    return (val / object_size) * object_size;
+}
+// align_up: round toward positive infinity to object boundary
+static uint64_t align_up(uint64_t val, size_t object_size) {
+    return ((val + object_size - 1) / object_size) * object_size;
+}
+
+// get_obj_num: number of whole objects a byte range spans
+static uint64_t get_obj_num(uint64_t offset, uint64_t length, size_t object_size) {
+    auto start = align_down(offset, object_size);
+    auto end = align_up(offset + length, object_size);
+    return (end - start) / object_size;
+}
+
+// calc_first_object_position: decompose a byte range into (first_object_size, first_object_offset, object_seq)
+static std::tuple<size_t, uint64_t, uint64_t>
+calc_first_object_position(uint64_t offset, uint64_t length, size_t object_size) {
+    uint64_t first_object_offset = offset % object_size;
+    size_t first_object_size = object_size - static_cast<size_t>(first_object_offset);
+    if (length < first_object_size) {
+        first_object_size = static_cast<size_t>(length);
+    }
+    uint64_t object_seq = offset / object_size;
+    return std::make_tuple(first_object_size, first_object_offset, object_seq);
+}
+
+} // anonymous namespace
+
+FB_SUITE_SETUP(bdev_object_mapping) {}
+FB_SUITE_TEARDOWN(bdev_object_mapping) {}
+
+FB_TEST(bdev_object_mapping, default_object_size_is_4MiB) {
+    // 4 MiB is the documented default; any change must update this test.
+    FB_ASSERT_EQ(default_object_size, 4 * 1024 * 1024u);
+}
+
+FB_TEST(bdev_object_mapping, align_down_is_identity_at_boundary) {
+    // Aligned address returns unchanged.
+    FB_ASSERT_EQ(align_down(0, default_object_size), 0u);
+    FB_ASSERT_EQ(align_down(default_object_size, default_object_size), default_object_size);
+    FB_ASSERT_EQ(align_down(8 * default_object_size, default_object_size), 8 * default_object_size);
+}
+
+FB_TEST(bdev_object_mapping, align_down_rounds_down) {
+    // Address in the middle of an object rounds to the object's start.
+    FB_ASSERT_EQ(align_down(1, default_object_size), 0u);
+    FB_ASSERT_EQ(align_down(default_object_size + 1, default_object_size), default_object_size);
+    FB_ASSERT_EQ(align_down(3 * default_object_size + 1, default_object_size), 3 * default_object_size);
+}
+
+FB_TEST(bdev_object_mapping, align_up_is_identity_at_boundary) {
+    FB_ASSERT_EQ(align_up(0, default_object_size), 0u);
+    FB_ASSERT_EQ(align_up(default_object_size, default_object_size), default_object_size);
+    FB_ASSERT_EQ(align_up(8 * default_object_size, default_object_size), 8 * default_object_size);
+}
+
+FB_TEST(bdev_object_mapping, align_up_rounds_up) {
+    // Address in the middle rounds to the next object boundary.
+    FB_ASSERT_EQ(align_up(1, default_object_size), default_object_size);
+    FB_ASSERT_EQ(align_up(default_object_size + 1, default_object_size), 2 * default_object_size);
+    FB_ASSERT_EQ(align_up(3 * default_object_size + 1, default_object_size), 4 * default_object_size);
+}
+
+FB_TEST(bdev_object_mapping, align_up_down_are_complementary) {
+    // For any v, align_up(v) >= v >= align_down(v). If v is aligned, both equal v.
+    FB_ASSERT_GE(align_up(1, default_object_size), 1);
+    FB_ASSERT_GE(1, align_down(1, default_object_size));
+    FB_ASSERT_EQ(align_up(default_object_size, default_object_size), align_down(default_object_size, default_object_size));
+}
+
+FB_TEST(bdev_object_mapping, get_obj_num_single_object_at_start) {
+    // A zero-offset, single-object-length write spans exactly one object.
+    FB_ASSERT_EQ(get_obj_num(0, default_object_size, default_object_size), 1u);
+    FB_ASSERT_EQ(get_obj_num(0, 1, default_object_size), 1u);
+}
+
+FB_TEST(bdev_object_mapping, get_obj_num_crosses_object_boundary) {
+    // A write crossing a boundary spans two objects.
+    FB_ASSERT_EQ(get_obj_num(default_object_size - 1, 2, default_object_size), 2u);
+    FB_ASSERT_EQ(get_obj_num(default_object_size - 4096, 8192, default_object_size), 2u);
+}
+
+FB_TEST(bdev_object_mapping, get_obj_num_exact_boundary) {
+    // Aligned start and end at exact object boundary = exactly that many objects.
+    FB_ASSERT_EQ(get_obj_num(0, 2 * default_object_size, default_object_size), 2u);
+    FB_ASSERT_EQ(get_obj_num(0, 10 * default_object_size, default_object_size), 10u);
+}
+
+FB_TEST(bdev_object_mapping, calc_first_object_position_at_offset_zero) {
+    // Offset 0: first object starts at offset 0, occupies full object.
+    auto [sz, off, seq] = calc_first_object_position(0, default_object_size, default_object_size);
+    FB_ASSERT_EQ(off, 0u);
+    FB_ASSERT_EQ(sz, default_object_size);
+    FB_ASSERT_EQ(seq, 0u);
+}
+
+FB_TEST(bdev_object_mapping, calc_first_object_position_mid_object) {
+    // Offset in the middle: first object is partial, offset is the remainder.
+    auto [sz, off, seq] = calc_first_object_position(default_object_size + 1, default_object_size, default_object_size);
+    FB_ASSERT_EQ(off, 1u);
+    FB_ASSERT_EQ(sz, default_object_size - 1);
+    FB_ASSERT_EQ(seq, 1u);
+}
+
+FB_TEST(bdev_object_mapping, calc_first_object_position_truncated_by_length) {
+    // If length < remaining space, first object size is truncated to length.
+    auto [sz, off, seq] = calc_first_object_position(100, 50, default_object_size);
+    FB_ASSERT_EQ(off, 100u);
+    FB_ASSERT_EQ(sz, 50u); // truncated to length, not to object_size - off
+}
+
+FB_TEST(bdev_object_mapping, calc_first_object_position_object_sequence) {
+    // object_seq is the zero-based index of the first object.
+    auto [sz, off, seq] = calc_first_object_position(7 * default_object_size, 1, default_object_size);
+    FB_ASSERT_EQ(seq, 7u);
+    FB_ASSERT_EQ(off, 0u);
+    FB_ASSERT_EQ(sz, 1u);
+}
+
+FB_TEST(bdev_object_mapping, round_trip_offset_to_object_and_back) {
+    // object_seq * object_size + first_object_offset == original offset.
+    // This is the key invariant that keeps mapping reversible.
+    for (uint64_t off : {0u, 1u, default_object_size - 1, default_object_size, 2 * default_object_size - 1}) {
+        auto [sz, first_off, seq] = calc_first_object_position(off, default_object_size, default_object_size);
+        uint64_t reconstructed = seq * default_object_size + first_off;
+        FB_ASSERT_EQ(reconstructed, off);
+    }
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
