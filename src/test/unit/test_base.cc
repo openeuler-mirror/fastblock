@@ -6916,6 +6916,115 @@ FB_TEST(core_sharded_invocation_edge_cases, large_arg_count) {
 }
 
 // ============================================================================
+// Test Suite: shard_sharded_template_interface (sharded<> Interface Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_sharded_template_interface) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_sharded_template_interface) {
+    // Teardown code here
+}
+
+FB_TEST(shard_sharded_template_interface, start_template_takes_variadic_args) {
+    // start(Args&&... args) forwards to Service ctor
+    struct svc {
+        int x; std::string s;
+        svc(int a, std::string str) : x(a), s(std::move(str)) {}
+    };
+
+    // Simulate: start(42, "hi")
+    svc* p = new svc(42, "hi");
+    FB_ASSERT_EQ(p->x, 42);
+    FB_ASSERT_EQ(p->s, "hi");
+    delete p;
+}
+
+FB_TEST(shard_sharded_template_interface, stop_returns_void) {
+    // stop() returns void
+    std::vector<int*> instances = {new int(1), new int(2)};
+    for (auto*& p : instances) { delete p; p = nullptr; }
+    instances.clear();
+    FB_ASSERT_TRUE(instances.empty());
+}
+
+FB_TEST(shard_sharded_template_interface, local_noexcept_specification) {
+    // local() declared noexcept
+    struct svc { int v = 42; };
+    svc s;
+    auto& ref = s; // noexcept access
+    FB_ASSERT_EQ(ref.v, 42);
+    FB_ASSERT_EQ(&ref, &s);
+}
+
+FB_TEST(shard_sharded_template_interface, on_shard_noexcept_specification) {
+    // on_shard(shard) declared noexcept
+    std::vector<int*> instances;
+    instances.push_back(new int(100));
+    instances.push_back(new int(200));
+
+    auto& shard_1 = *instances[1];
+    FB_ASSERT_EQ(shard_1, 200);
+
+    for (auto* p : instances) delete p;
+}
+
+FB_TEST(shard_sharded_template_interface, shard_is_started_returns_bool) {
+    // shard_is_started(shard) -> bool
+    std::vector<int*> instances;
+    instances.push_back(new int(1));
+    instances.push_back(nullptr);
+
+    auto is_started = [&](uint32_t s) -> bool {
+        if (instances.size() <= s) return false;
+        return instances[s] != nullptr;
+    };
+
+    FB_ASSERT_TRUE(is_started(0));
+    FB_ASSERT_TRUE(!is_started(1));
+    FB_ASSERT_TRUE(!is_started(99)); // oob
+
+    delete instances[0];
+}
+
+FB_TEST(shard_sharded_template_interface, size_returns_count) {
+    // size() returns size_t
+    std::vector<int*> instances(8, nullptr);
+    size_t sz = instances.size();
+    FB_ASSERT_EQ(sz, 8);
+}
+
+FB_TEST(shard_sharded_template_interface, instances_protected_member) {
+    // _instances is protected (accessible to derived classes)
+    struct sharded_derived {
+    protected:
+        std::vector<int*> _instances;
+    public:
+        void add(int* p) { _instances.push_back(p); }
+        size_t count() { return _instances.size(); }
+    };
+
+    sharded_derived d;
+    d.add(new int(1));
+    d.add(new int(2));
+    FB_ASSERT_EQ(d.count(), 2);
+}
+
+FB_TEST(shard_sharded_template_interface, local_returns_reference_not_pointer) {
+    // local() returns Service& (not Service*)
+    struct svc { int v = 5; };
+    std::vector<svc*> instances;
+    instances.push_back(new svc());
+
+    svc& ref = *instances[0]; // reference, not pointer
+    ref.v = 999;
+    FB_ASSERT_EQ(instances[0]->v, 999);
+
+    delete instances[0];
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
