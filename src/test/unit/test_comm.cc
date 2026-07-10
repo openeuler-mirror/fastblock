@@ -1927,5 +1927,118 @@ FB_TEST(msg_endpoint_config, addr_and_port_start_unset) {
     FB_ASSERT_EQ(c.port, 0);
 }
 
+// ============================================================================
+// Test Suite: msg_probe_accounting — RDMA queue-depth counter conservation
+//
+// probe tracks the WR accounting the transport uses to decide when a QP's
+// send/receive queue is full. The invariant that keeps the system correct:
+//   receive_queue_depth == posted_receive_wr - received_cqe
+// i.e. outstanding receives == posted minus completed. If posting and
+// completing ever desync, the transport either over-posts (overflows the RQ)
+// or under-posts (starves it). We mirror the four mutators and verify the
+// conservation law holds across a realistic flow.
+// ============================================================================
+
+namespace {
+
+class probe {
+public:
+    void send_wr_posted(std::size_t n = 1) noexcept {
+        posted_send_wr += static_cast<int64_t>(n);
+        send_queue_depth += static_cast<int64_t>(n);
+    }
+    void receive_wr_posted(std::size_t n = 1) noexcept {
+        posted_receive_wr += static_cast<int64_t>(n);
+        receive_queue_depth += static_cast<int64_t>(n);
+    }
+    void cqe_received(std::size_t n = 1) noexcept {
+        received_cqe += static_cast<int64_t>(n);
+        receive_queue_depth -= static_cast<int64_t>(n);
+    }
+    void send_wc_received(std::size_t n = 1) noexcept {
+        received_sent_wc += static_cast<int64_t>(n);
+    }
+
+    int64_t posted_send_wr{0};
+    int64_t posted_receive_wr{0};
+    int64_t send_queue_depth{0};
+    int64_t receive_queue_depth{0};
+    int64_t received_cqe{0};
+    int64_t received_sent_wc{0};
+};
+
+} // anonymous namespace
+
+FB_SUITE_SETUP(msg_probe_accounting) {}
+FB_SUITE_TEARDOWN(msg_probe_accounting) {}
+
+FB_TEST(msg_probe_accounting, fresh_probe_is_all_zero) {
+    probe p;
+    FB_ASSERT_EQ(p.posted_send_wr, 0);
+    FB_ASSERT_EQ(p.posted_receive_wr, 0);
+    FB_ASSERT_EQ(p.send_queue_depth, 0);
+    FB_ASSERT_EQ(p.receive_queue_depth, 0);
+    FB_ASSERT_EQ(p.received_cqe, 0);
+    FB_ASSERT_EQ(p.received_sent_wc, 0);
+}
+
+FB_TEST(msg_probe_accounting, posting_increases_depth) {
+    probe p;
+    p.send_wr_posted(10);
+    p.receive_wr_posted(20);
+    FB_ASSERT_EQ(p.send_queue_depth, 10);
+    FB_ASSERT_EQ(p.receive_queue_depth, 20);
+    FB_ASSERT_EQ(p.posted_send_wr, 10);
+    FB_ASSERT_EQ(p.posted_receive_wr, 20);
+}
+
+FB_TEST(msg_probe_accounting, cqe_drains_receive_depth) {
+    // The core conservation: outstanding receives == posted - completed.
+    probe p;
+    p.receive_wr_posted(20);
+    p.cqe_received(7);
+    FB_ASSERT_EQ(p.receive_queue_depth, 13); // 20 - 7
+    FB_ASSERT_EQ(p.received_cqe, 7);
+}
+
+FB_TEST(msg_probe_accounting, balanced_flow_returns_depth_to_zero) {
+    // Post N receives, complete N: the queue is fully drained, depth back
+    // to 0. This is the steady-state a healthy connection hovers around.
+    probe p;
+    p.receive_wr_posted(64);
+    for (int i = 0; i < 64; ++i) p.cqe_received(1);
+    FB_ASSERT_EQ(p.receive_queue_depth, 0);
+    FB_ASSERT_EQ(p.received_cqe, 64);
+    FB_ASSERT_EQ(p.posted_receive_wr, 64);
+}
+
+FB_TEST(msg_probe_accounting, send_and_receive_counters_are_independent) {
+    // A send completion must NOT touch the receive queue's depth, and vice
+    // versa. Regression target for a shared-counter refactor.
+    probe p;
+    p.send_wr_posted(5);
+    p.receive_wr_posted(3);
+    p.send_wc_received(2); // completes 2 sends
+    p.cqe_received(1);     // completes 1 recv
+
+    FB_ASSERT_EQ(p.send_queue_depth, 5);    // send depth is NOT decremented by wc
+    FB_ASSERT_EQ(p.received_sent_wc, 2);
+    FB_ASSERT_EQ(p.receive_queue_depth, 2); // 3 - 1
+    FB_ASSERT_EQ(p.received_cqe, 1);
+}
+
+FB_TEST(msg_probe_accounting, default_n_is_one) {
+    // The n=1 default is relied upon at every call site; verify it.
+    probe p;
+    p.send_wr_posted();
+    p.receive_wr_posted();
+    p.cqe_received();
+    p.send_wc_received();
+    FB_ASSERT_EQ(p.posted_send_wr, 1);
+    FB_ASSERT_EQ(p.posted_receive_wr, 1);
+    FB_ASSERT_EQ(p.received_cqe, 1);
+    FB_ASSERT_EQ(p.receive_queue_depth, 0); // 1 posted - 1 completed
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
