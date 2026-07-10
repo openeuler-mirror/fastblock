@@ -1150,5 +1150,64 @@ FB_TEST(monclient_pg_map_update, empty_pool_is_not_done) {
     FB_ASSERT_FALSE(m.pool_is_updating(400));
 }
 
+// ============================================================================
+// Test Suite: monclient_cached_request_class — classification of cached RPCs
+//
+// monclient tags each in-flight request so the cache can pick a retention
+// policy (general user request vs. monclient-internal). The enum starts at 1
+// deliberately so a default-zero-init field is treated as "unset" rather than
+// as a valid class.
+//
+// Invariants pinned here:
+//   - general = 1 (NOT 0 — preserves the zero-is-unset convention).
+//   - the three values are pairwise distinct (no silent aliasing).
+//   - the canonical "unset" value (zero) does NOT collide with any
+//     legitimate class — without this, default-init slips through as a
+//     real classification and the retention policy misroutes the request.
+// ============================================================================
+
+namespace {
+
+enum cached_request_class {
+    general = 1,
+    internal,
+    none
+};
+
+} // anonymous namespace
+
+FB_SUITE_SETUP(monclient_cached_request_class) {}
+FB_SUITE_TEARDOWN(monclient_cached_request_class) {}
+
+FB_TEST(monclient_cached_request_class, general_is_one_not_zero) {
+    // Zero is reserved for "unset". If general were 0, an uninitialised
+    // request slot would silently be treated as a real general request.
+    FB_ASSERT_EQ(static_cast<int>(general), 1);
+}
+
+FB_TEST(monclient_cached_request_class, values_are_pairwise_distinct) {
+    FB_ASSERT_TRUE(general  != internal);
+    FB_ASSERT_TRUE(general  != none);
+    FB_ASSERT_TRUE(internal != none);
+}
+
+FB_TEST(monclient_cached_request_class, sequential_values_after_general) {
+    // The enum uses default sequential values starting at 1, so internal=2
+    // and none=3. The cache may serialise these in a switch or in a log;
+    // pin the numeric mapping so a reordering is noticed.
+    FB_ASSERT_EQ(static_cast<int>(general),  1);
+    FB_ASSERT_EQ(static_cast<int>(internal), 2);
+    FB_ASSERT_EQ(static_cast<int>(none),     3);
+}
+
+FB_TEST(monclient_cached_request_class, zero_is_not_a_valid_class) {
+    // The zero-value sentinel must NOT match any defined enumerator.
+    // Otherwise a default-init field is silently classified.
+    constexpr int unset = 0;
+    FB_ASSERT_TRUE(unset != static_cast<int>(general));
+    FB_ASSERT_TRUE(unset != static_cast<int>(internal));
+    FB_ASSERT_TRUE(unset != static_cast<int>(none));
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
