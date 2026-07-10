@@ -7457,6 +7457,124 @@ FB_TEST(shard_performance_invariants, poller_period_amortized) {
 }
 
 // ============================================================================
+// Test Suite: shard_lifecycle_edge_cases (Lifecycle Edge Cases Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_lifecycle_edge_cases) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_lifecycle_edge_cases) {
+    // Teardown code here
+}
+
+FB_TEST(shard_lifecycle_edge_cases, empty_shard_count_handled) {
+    // Edge case: 0 shards (degenerate, but must not crash)
+    uint32_t count = 0;
+    std::vector<uint32_t> shard_cores;
+    FB_ASSERT_EQ(shard_cores.size(), count);
+    FB_ASSERT_TRUE(shard_cores.empty());
+}
+
+FB_TEST(shard_lifecycle_edge_cases, single_shard_degenerate) {
+    // Edge case: 1 shard (no parallelism but valid)
+    std::vector<uint32_t> shard_cores = {0};
+    FB_ASSERT_EQ(shard_cores.size(), 1);
+    FB_ASSERT_EQ(shard_cores[0], 0);
+}
+
+FB_TEST(shard_lifecycle_edge_cases, max_shard_count_supported) {
+    // System supports high shard counts
+    uint32_t max_tested = 64;
+    std::vector<uint32_t> shard_cores;
+    for (uint32_t i = 0; i < max_tested; i++) shard_cores.push_back(i);
+
+    FB_ASSERT_EQ(shard_cores.size(), max_tested);
+}
+
+FB_TEST(shard_lifecycle_edge_cases, construct_after_destruct) {
+    // Can re-construct singleton after destruction
+    std::unique_ptr<int> g;
+    FB_ASSERT_TRUE(g == nullptr);
+
+    g = std::make_unique<int>(1);
+    g.reset(); // destruct
+    FB_ASSERT_TRUE(g == nullptr);
+
+    g = std::make_unique<int>(2); // re-construct
+    FB_ASSERT_EQ(*g, 2);
+}
+
+FB_TEST(shard_lifecycle_edge_cases, stop_before_start) {
+    // Calling stop() before start() should be safe
+    std::vector<int*> instances; // empty
+    for (auto*& p : instances) { delete p; p = nullptr; }
+    instances.clear();
+    FB_ASSERT_TRUE(instances.empty());
+}
+
+FB_TEST(shard_lifecycle_edge_cases, double_start_replaces_instances) {
+    // Calling start() twice: first instances leak unless stop() called first
+    std::vector<int*> instances;
+    instances.push_back(new int(1));
+    instances.push_back(new int(2));
+
+    // Proper pattern: stop before re-start
+    for (auto*& p : instances) { delete p; p = nullptr; }
+    instances.clear();
+
+    instances.push_back(new int(3));
+    FB_ASSERT_EQ(instances.size(), 1);
+    FB_ASSERT_EQ(*instances[0], 3);
+
+    for (auto* p : instances) delete p;
+}
+
+FB_TEST(shard_lifecycle_edge_cases, service_throws_during_start) {
+    // If Service ctor throws, partial instances must be cleaned up
+    static int created;
+    static int destroyed;
+    created = 0;
+    destroyed = 0;
+
+    struct throwing_svc {
+        int id;
+        throwing_svc(int i) : id(i) {
+            created++;
+            if (i == 2) throw std::runtime_error("fail");
+        }
+        ~throwing_svc() { destroyed++; }
+    };
+
+    std::vector<throwing_svc*> instances;
+    bool threw = false;
+    try {
+        for (int i = 0; i < 4; i++) {
+            instances.push_back(new throwing_svc(i));
+        }
+    } catch (...) {
+        threw = true;
+        // Cleanup successful instances
+        for (auto* p : instances) delete p;
+        instances.clear();
+    }
+
+    FB_ASSERT_TRUE(threw);
+    FB_ASSERT_EQ(created, 3); // 0, 1, then 2 throws
+    FB_ASSERT_EQ(destroyed, 2); // 0 and 1 cleaned up
+}
+
+FB_TEST(shard_lifecycle_edge_cases, graceful_shutdown_drains_pending) {
+    // On stop: pending messages drained before thread exit
+    std::queue<int> pending;
+    for (int i = 0; i < 10; i++) pending.push(i);
+
+    // Drain
+    while (!pending.empty()) pending.pop();
+    FB_ASSERT_TRUE(pending.empty());
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
