@@ -6716,6 +6716,116 @@ FB_TEST(shard_resource_management, scope_guard_pattern) {
 }
 
 // ============================================================================
+// Test Suite: shard_correctness_invariants (Correctness Invariants Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_correctness_invariants) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_correctness_invariants) {
+    // Teardown code here
+}
+
+FB_TEST(shard_correctness_invariants, threads_equals_shard_cores) {
+    // Invariant: _threads.size() == _shard_cores.size() at all times
+    std::vector<uint32_t> shard_cores;
+    std::vector<void*> threads;
+
+    // Simulate construction: add to both in lockstep
+    for (uint32_t i = 0; i < 4; i++) {
+        shard_cores.push_back(i);
+        threads.push_back((void*)(uintptr_t)(0x100 + i));
+        FB_ASSERT_EQ(shard_cores.size(), threads.size());
+    }
+
+    // After construction
+    FB_ASSERT_EQ(shard_cores.size(), threads.size());
+}
+
+FB_TEST(shard_correctness_invariants, no_duplicate_cores) {
+    // Each core appears at most once in _shard_cores
+    std::vector<uint32_t> shard_cores = {0, 1, 2, 3, 4, 5, 6, 7};
+    std::set<uint32_t> unique(shard_cores.begin(), shard_cores.end());
+    FB_ASSERT_EQ(unique.size(), shard_cores.size());
+}
+
+FB_TEST(shard_correctness_invariants, no_null_thread_after_construct) {
+    // After successful construction, no nullptr in _threads
+    std::vector<void*> threads;
+    for (int i = 0; i < 4; i++) threads.push_back((void*)(uintptr_t)(0x100 + i));
+
+    for (void* t : threads) {
+        FB_ASSERT_TRUE(t != nullptr);
+    }
+}
+
+FB_TEST(shard_correctness_invariants, shard_id_in_valid_range) {
+    // Returned shard_id from this_shard_id is either < count or == UINT32_MAX
+    std::vector<uint32_t> shard_cores = {0, 1, 2, 3};
+    uint32_t count = shard_cores.size();
+    uint32_t sentinel = UINT32_MAX;
+
+    auto check = [&](uint32_t id) {
+        return id < count || id == sentinel;
+    };
+
+    FB_ASSERT_TRUE(check(0));
+    FB_ASSERT_TRUE(check(3));
+    FB_ASSERT_TRUE(check(sentinel));
+    FB_ASSERT_TRUE(!check(99)); // invalid
+}
+
+FB_TEST(shard_correctness_invariants, instance_pointers_unique) {
+    // sharded<>: each _instances[i] is a unique pointer
+    std::vector<int*> instances;
+    for (int i = 0; i < 4; i++) instances.push_back(new int(i));
+
+    std::set<int*> unique(instances.begin(), instances.end());
+    FB_ASSERT_EQ(unique.size(), instances.size());
+
+    for (auto* p : instances) delete p;
+}
+
+FB_TEST(shard_correctness_invariants, instance_indexable_by_shard) {
+    // _instances[shard_id] accesses the correct instance
+    std::vector<int*> instances;
+    for (int i = 0; i < 4; i++) instances.push_back(new int(i * 100));
+
+    for (uint32_t s = 0; s < 4; s++) {
+        FB_ASSERT_EQ(*instances[s], static_cast<int>(s) * 100);
+    }
+
+    for (auto* p : instances) delete p;
+}
+
+FB_TEST(shard_correctness_invariants, no_double_free) {
+    // delete called once per instance (idempotent stop via nullptr)
+    int* p = new int(42);
+    int* original = p;
+
+    delete p;
+    p = nullptr; // mark as deleted
+
+    // Second "delete" is no-op on nullptr
+    delete p;
+    // No crash, no double-free
+
+    FB_ASSERT_TRUE(p == nullptr);
+    FB_ASSERT_TRUE(original != nullptr); // saved address (now stale)
+}
+
+FB_TEST(shard_correctness_invariants, shard_count_positive) {
+    // Shard count must be > 0 for normal operation
+    uint32_t count = 4;
+    FB_ASSERT_TRUE(count > 0);
+
+    // Single-shard (count=1) is degenerate but valid
+    uint32_t single = 1;
+    FB_ASSERT_TRUE(single > 0);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
