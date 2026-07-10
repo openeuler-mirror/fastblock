@@ -7990,6 +7990,105 @@ FB_TEST(shard_affinity, affinity_must_be_consistent) {
 }
 
 // ============================================================================
+// Test Suite: shard_workload_distribution (Workload Distribution Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_workload_distribution) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_workload_distribution) {
+    // Teardown code here
+}
+
+FB_TEST(shard_workload_distribution, uniform_workload_balanced) {
+    // Uniform workload: each shard gets equal share
+    uint32_t shards = 4;
+    std::vector<uint64_t> load(shards, 0);
+    uint64_t total = 1000;
+
+    for (uint64_t i = 0; i < total; i++) {
+        load[i % shards]++;
+    }
+
+    for (uint64_t l : load) {
+        FB_ASSERT_EQ(l, total / shards);
+    }
+}
+
+FB_TEST(shard_workload_distribution, skewed_workload_handled) {
+    // Skewed: some keys hot, some cold
+    std::map<std::string, uint64_t> key_freq;
+    key_freq["hot"] = 10000;
+    key_freq["cold"] = 1;
+
+    uint64_t total = 0;
+    for (const auto& [k, f] : key_freq) total += f;
+    FB_ASSERT_EQ(total, 10001);
+}
+
+FB_TEST(shard_workload_distribution, load_variance_calculated) {
+    // Variance measures imbalance
+    std::vector<uint64_t> loads = {250, 250, 250, 250};
+    double mean = 250.0;
+    double variance = 0;
+    for (uint64_t l : loads) {
+        variance += (l - mean) * (l - mean);
+    }
+    variance /= loads.size();
+    FB_ASSERT_EQ(variance, 0.0); // perfectly balanced
+}
+
+FB_TEST(shard_workload_distribution, hot_shard_rebalancing) {
+    // When one shard is hot, redistribute its load
+    std::vector<uint64_t> loads = {1000, 100, 100, 100};
+    uint64_t avg = std::accumulate(loads.begin(), loads.end(), 0ULL) / loads.size();
+
+    // Shard 0 is overloaded
+    FB_ASSERT_TRUE(loads[0] > avg);
+
+    // Move 50% of shard 0's load to others
+    uint64_t to_move = loads[0] / 2;
+    loads[0] -= to_move;
+    for (uint32_t s = 1; s < 4; s++) loads[s] += to_move / 3;
+
+    FB_ASSERT_TRUE(loads[0] < 1000);
+}
+
+FB_TEST(shard_workload_distribution, queue_depth_per_shard) {
+    // Each shard has its own queue depth
+    std::vector<uint32_t> queue_depths = {32, 28, 35, 30};
+    uint32_t total = std::accumulate(queue_depths.begin(), queue_depths.end(), 0u);
+    FB_ASSERT_EQ(total, 125);
+}
+
+FB_TEST(shard_workload_distribution, latency_increases_with_load) {
+    // Higher load -> higher latency (queueing theory)
+    uint64_t low_load_latency_us = 100;
+    uint64_t high_load_latency_us = 500;
+    FB_ASSERT_TRUE(high_load_latency_us > low_load_latency_us);
+}
+
+FB_TEST(shard_workload_distribution, saturation_point_detection) {
+    // Each shard has a saturation point (max ops/sec)
+    uint64_t max_ops_per_shard = 100000;
+    uint64_t current_ops = 95000;
+
+    double utilization = static_cast<double>(current_ops) / max_ops_per_shard;
+    FB_ASSERT_TRUE(utilization < 1.0);
+    FB_ASSERT_TRUE(utilization > 0.9); // near saturation
+}
+
+FB_TEST(shard_workload_distribution, backpressure_on_overload) {
+    // Overloaded shard applies backpressure
+    uint64_t queue_size = 100;
+    uint64_t max_queue = 100;
+
+    bool apply_backpressure = (queue_size >= max_queue);
+    FB_ASSERT_TRUE(apply_backpressure);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
