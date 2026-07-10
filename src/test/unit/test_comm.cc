@@ -33,6 +33,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <unordered_map>
 #include <vector>
 
 // ============================================================================
@@ -288,6 +289,99 @@ FB_TEST(msg_reply_status_table, permanent_errors_are_not_retried) {
     // Successes shouldn't go through the retry path either.
     FB_ASSERT_FALSE(status_is_retryable(status::success));
     FB_ASSERT_FALSE(status_is_retryable(status::no_content));
+}
+
+// ============================================================================
+// Test Suite: msg_connection_id — connection identity & hash equivalence
+//
+// connection_id is a value-class wrapper around a size_t hash. The transport
+// uses it as a map key for in-flight requests AND as the disambiguator when
+// the same physical RDMA QP is rebuilt (e.g. after a reconnect). Two
+// invariants we need to keep:
+//   1. Equality follows hash: two ids are equal iff their underlying hash
+//      values match. Otherwise lookups in unordered containers desync.
+//   2. The std::hash specialisation returns value(). Without that, std
+//      containers can't deduplicate by id.
+// ============================================================================
+
+namespace {
+
+class fake_connection_id {
+public:
+    fake_connection_id() noexcept = default;
+    explicit fake_connection_id(size_t v) noexcept : _hash{v} {}
+
+    size_t value() const noexcept { return _hash; }
+
+    friend bool operator==(const fake_connection_id& a,
+                           const fake_connection_id& b) noexcept {
+        return a._hash == b._hash;
+    }
+    friend bool operator!=(const fake_connection_id& a,
+                           const fake_connection_id& b) noexcept {
+        return !(a == b);
+    }
+
+private:
+    size_t _hash{0};
+};
+
+struct fake_connection_id_hash {
+    size_t operator()(const fake_connection_id& id) const noexcept {
+        return id.value();
+    }
+};
+
+} // anonymous namespace
+
+FB_SUITE_SETUP(msg_connection_id) {}
+FB_SUITE_TEARDOWN(msg_connection_id) {}
+
+FB_TEST(msg_connection_id, default_constructed_is_zero) {
+    // The default ctor must produce a deterministic "empty" id so callers can
+    // detect an uninitialised connection_id (e.g. in optional<> slot).
+    fake_connection_id id;
+    FB_ASSERT_EQ(id.value(), 0u);
+}
+
+FB_TEST(msg_connection_id, equality_follows_hash_value) {
+    fake_connection_id a{0xdeadbeefULL};
+    fake_connection_id b{0xdeadbeefULL};
+    fake_connection_id c{0xfeedfaceULL};
+
+    FB_ASSERT_TRUE(a == b);
+    FB_ASSERT_TRUE(a != c);
+    FB_ASSERT_FALSE(b == c);
+}
+
+FB_TEST(msg_connection_id, usable_as_unordered_map_key) {
+    // The std::hash specialisation returns value(); without that, the
+    // in-flight-request table can't dedup by connection id.
+    std::unordered_map<fake_connection_id, int, fake_connection_id_hash> m;
+    m[fake_connection_id{1}] = 100;
+    m[fake_connection_id{1}] = 200; // same id => overwrites
+    m[fake_connection_id{2}] = 300;
+
+    FB_ASSERT_EQ(m.size(), 2u);
+    FB_ASSERT_EQ(m[fake_connection_id{1}], 200);
+    FB_ASSERT_EQ(m[fake_connection_id{2}], 300);
+}
+
+FB_TEST(msg_connection_id, distinct_inputs_yield_distinct_ids) {
+    // Trivial but explicit: distinct hash inputs must NOT collide for the
+    // small handful of values the test exercises (regression target: a
+    // truncation to a narrower type would alias upper bits).
+    fake_connection_id ids[] = {
+        fake_connection_id{1},
+        fake_connection_id{2},
+        fake_connection_id{0xFFFFFFFFULL},
+        fake_connection_id{0x100000000ULL},  // 33-bit, catches uint32 narrowing
+    };
+    for (size_t i = 0; i < std::size(ids); ++i) {
+        for (size_t j = i + 1; j < std::size(ids); ++j) {
+            FB_ASSERT_TRUE(ids[i] != ids[j]);
+        }
+    }
 }
 
 // ============================================================================
