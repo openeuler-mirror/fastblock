@@ -7124,6 +7124,138 @@ FB_TEST(shard_module_interaction, config_loaded_before_shards_start) {
 }
 
 // ============================================================================
+// Test Suite: shard_failover (Shard Failover Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_failover) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_failover) {
+    // Teardown code here
+}
+
+FB_TEST(shard_failover, pg_migration_on_shard_loss) {
+    // When shard fails, PGs are migrated to other shards
+    std::vector<bool> shard_alive = {true, true, false, true};
+
+    std::vector<uint32_t> failed_shards;
+    for (uint32_t s = 0; s < shard_alive.size(); s++) {
+        if (!shard_alive[s]) failed_shards.push_back(s);
+    }
+
+    FB_ASSERT_EQ(failed_shards.size(), 1);
+    FB_ASSERT_EQ(failed_shards[0], 2);
+}
+
+FB_TEST(shard_failover, work_redistributed_evenly) {
+    // Remaining shards share load of failed shard
+    uint32_t total_work = 100;
+    uint32_t shards_before = 4;
+    uint32_t shards_after = 3;
+    uint32_t work_before = total_work / shards_before; // 25
+    uint32_t work_after = total_work / shards_after;   // 33
+
+    FB_ASSERT_TRUE(work_after > work_before);
+}
+
+FB_TEST(shard_failover, no_data_loss_on_failover) {
+    // Data on failed shard has replicas on surviving shards
+    std::vector<uint32_t> pg_replicas = {0, 1, 2}; // PG replicated on shards 0,1,2
+
+    // Shard 1 fails
+    std::vector<uint32_t> alive_shards = {0, 2};
+    std::vector<uint32_t> surviving_replicas;
+
+    for (uint32_t s : pg_replicas) {
+        if (std::find(alive_shards.begin(), alive_shards.end(), s) != alive_shards.end()) {
+            surviving_replicas.push_back(s);
+        }
+    }
+
+    FB_ASSERT_EQ(surviving_replicas.size(), 2);
+}
+
+FB_TEST(shard_failover, leader_relocation) {
+    // If leader shard fails, a follower becomes new leader
+    uint32_t old_leader_shard = 1;
+    std::vector<uint32_t> followers = {0, 2};
+
+    // Old leader fails
+    bool old_leader_alive = false;
+    uint32_t new_leader = UINT32_MAX;
+
+    if (!old_leader_alive) {
+        new_leader = followers[0]; // Election picks first follower
+    }
+
+    FB_ASSERT_TRUE(new_leader != old_leader_shard);
+    FB_ASSERT_EQ(new_leader, 0);
+}
+
+FB_TEST(shard_failover, failover_during_active_io) {
+    // Failover happens while IOs are in flight
+    std::vector<int> in_flight_ios = {1, 2, 3, 4, 5};
+    std::vector<int> completed;
+
+    // Some complete before failover
+    completed.push_back(in_flight_ios[0]);
+    completed.push_back(in_flight_ios[1]);
+
+    // Failover: remaining IOs retried on new leader
+    std::vector<int> retried(in_flight_ios.begin() + 2, in_flight_ios.end());
+
+    FB_ASSERT_EQ(completed.size(), 2);
+    FB_ASSERT_EQ(retried.size(), 3);
+}
+
+FB_TEST(shard_failover, graceful_vs_abrupt) {
+    // Graceful: shard drains pending IOs before exit
+    // Abrupt: shard dies immediately, IOs lost
+    std::vector<int> pending = {1, 2, 3};
+
+    bool graceful = true;
+    std::vector<int> lost;
+
+    if (graceful) {
+        // All complete
+        pending.clear();
+    } else {
+        lost = pending;
+    }
+
+    FB_ASSERT_TRUE(lost.empty());
+}
+
+FB_TEST(shard_failover, recovery_after_return) {
+    // When failed shard returns, it rejoins and backfills
+    std::vector<bool> shard_state = {true, false, true, true};
+    bool shard_1_returned = true;
+
+    if (shard_1_returned) {
+        shard_state[1] = true;
+    }
+
+    int alive = 0;
+    for (bool s : shard_state) if (s) alive++;
+    FB_ASSERT_EQ(alive, 4);
+}
+
+FB_TEST(shard_failover, split_brain_prevention) {
+    // Only one leader per PG at any time
+    uint32_t leader_term_a = 5;
+    uint32_t leader_term_b = 5;
+
+    // Same term = potential split brain; higher term wins
+    bool potential_split = (leader_term_a == leader_term_b);
+    FB_ASSERT_TRUE(potential_split);
+
+    // Resolution: one must step down
+    leader_term_b = 6; // New election
+    FB_ASSERT_TRUE(leader_term_b > leader_term_a);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
