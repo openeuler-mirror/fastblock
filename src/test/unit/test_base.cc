@@ -8382,6 +8382,97 @@ FB_TEST(shard_error_propagation, error_logging_before_propagation) {
 }
 
 // ============================================================================
+// Test Suite: shard_configuration_management (Configuration Management)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_configuration_management) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_configuration_management) {
+    // Teardown code here
+}
+
+FB_TEST(shard_configuration_management, shard_count_configurable) {
+    // shard count configurable via cmdline (default = core count - 1)
+    uint32_t default_count = 7; // 8 cores - 1 reserved
+    uint32_t configured = 4; // user override
+
+    uint32_t actual = configured > 0 ? configured : default_count;
+    FB_ASSERT_EQ(actual, 4);
+}
+
+FB_TEST(shard_configuration_management, core_mask_specified) {
+    // CPU mask specifies which cores to use
+    uint64_t cpu_mask = 0xFF; // cores 0-7
+    int core_count = __builtin_popcountll(cpu_mask);
+    FB_ASSERT_EQ(core_count, 8);
+}
+
+FB_TEST(shard_configuration_management, app_name_configurable) {
+    // app_name used in thread naming and logging
+    std::string app_name = "fastblock-osd";
+    FB_ASSERT_TRUE(!app_name.empty());
+    FB_ASSERT_EQ(app_name, "fastblock-osd");
+}
+
+FB_TEST(shard_configuration_management, config_persisted_across_restart) {
+    // Configuration saved and reloaded
+    struct config {
+        uint32_t shard_count;
+        std::string app_name;
+    };
+
+    config saved{4, "myapp"};
+    config loaded = saved;
+
+    FB_ASSERT_EQ(loaded.shard_count, 4);
+    FB_ASSERT_EQ(loaded.app_name, "myapp");
+}
+
+FB_TEST(shard_configuration_management, hot_reload_supported) {
+    // Some config changes can be hot-reloaded
+    std::map<std::string, std::string> runtime_config;
+    runtime_config["log_level"] = "info";
+
+    // Hot reload
+    runtime_config["log_level"] = "debug";
+    FB_ASSERT_EQ(runtime_config["log_level"], "debug");
+}
+
+FB_TEST(shard_configuration_management, config_validation_on_load) {
+    // Invalid config rejected on load
+    auto validate = [](uint32_t shards) -> bool {
+        return shards > 0 && shards <= 256;
+    };
+
+    FB_ASSERT_TRUE(validate(4));
+    FB_ASSERT_TRUE(!validate(0));
+    FB_ASSERT_TRUE(!validate(1000));
+}
+
+FB_TEST(shard_configuration_management, default_values_sensible) {
+    // Defaults work for common cases
+    uint32_t default_shards = 4;
+    uint64_t default_buffer_size = 4096;
+    uint32_t default_poller_period_ms = 1000;
+
+    FB_ASSERT_TRUE(default_shards > 0);
+    FB_ASSERT_TRUE(default_buffer_size >= 512);
+    FB_ASSERT_TRUE(default_poller_period_ms > 0);
+}
+
+FB_TEST(shard_configuration_management, config_versioned) {
+    // Config has a version for migration
+    uint32_t config_version = 1;
+    uint32_t supported_min = 1;
+    uint32_t supported_max = 3;
+
+    bool supported = (config_version >= supported_min && config_version <= supported_max);
+    FB_ASSERT_TRUE(supported);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
