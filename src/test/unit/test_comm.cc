@@ -1700,5 +1700,144 @@ FB_TEST(monclient_response_type, reassign_releases_prior_payload) {
     FB_ASSERT_NOT_NULL(raw);
 }
 
+// ============================================================================
+// Test Suite: msg_work_request_id — 64-bit async-completion correlation key
+//
+// work_request_id packs four fields into one uint64_t so an RDMA completion
+// can be correlated back to its originating request without a lookup table:
+//   shard_id (9 bits) | epoch (27 bits) | connection_id (12 bits) | request_id (16 bits)
+// The layout is a TIGHT partition: 9 + 27 + 12 + 16 == 64, no overlap, no gap.
+// The static extractors (request_id / dispatch_id / shard_id / connection_id)
+// are the contract every CQE handler depends on. We mirror them here.
+// ============================================================================
+
+namespace {
+namespace wr {
+
+constexpr uint8_t shard_id_len{9};
+constexpr uint8_t epoch_len{27};
+constexpr uint8_t connection_id_len{12};
+constexpr uint8_t request_id_len{16};
+
+constexpr uint8_t shard_id_shift{64 - shard_id_len};                          // 55
+constexpr uint8_t epoch_shift{static_cast<uint8_t>(shard_id_shift - epoch_len)};          // 28
+constexpr uint8_t connection_id_shift{static_cast<uint8_t>(epoch_shift - connection_id_len)};        // 16
+constexpr uint8_t request_id_shift{static_cast<uint8_t>(connection_id_shift - request_id_len)};      // 0
+
+constexpr uint64_t make_mask(uint64_t length, uint64_t offset) {
+    return ((uint64_t{1} << length) - 1) << offset;
+}
+
+constexpr uint64_t shard_id_mask      = make_mask(shard_id_len, shard_id_shift);
+constexpr uint64_t epoch_mask         = make_mask(epoch_len, epoch_shift);
+constexpr uint64_t connection_id_mask = make_mask(connection_id_len, connection_id_shift);
+constexpr uint64_t request_id_mask    = make_mask(request_id_len, request_id_shift);
+
+using value_type        = uint64_t;
+using shard_id_type     = uint16_t;
+using connection_id_type = uint16_t;
+using request_id_type   = uint16_t;
+using dispatch_id_type  = uint64_t;
+
+inline shard_id_type shard_id(value_type id) noexcept {
+    return static_cast<shard_id_type>((id & shard_id_mask) >> shard_id_shift);
+}
+inline connection_id_type connection_id(value_type id) noexcept {
+    return static_cast<connection_id_type>((id & connection_id_mask) >> connection_id_shift);
+}
+inline request_id_type request_id(value_type id) noexcept {
+    return static_cast<request_id_type>(id & request_id_mask);
+}
+inline dispatch_id_type dispatch_id(value_type id) noexcept {
+    return id & ~request_id_mask;
+}
+
+inline value_type build(shard_id_type sh, uint32_t ep,
+                        connection_id_type conn, request_id_type req) noexcept {
+    value_type id = 0;
+    id |= (static_cast<value_type>(sh)   << shard_id_shift)      & shard_id_mask;
+    id |= (static_cast<value_type>(ep)   << epoch_shift)         & epoch_mask;
+    id |= (static_cast<value_type>(conn) << connection_id_shift) & connection_id_mask;
+    id |= (static_cast<value_type>(req)  << request_id_shift)    & request_id_mask;
+    return id;
+}
+
+} // namespace wr
+} // anonymous namespace
+
+FB_SUITE_SETUP(msg_work_request_id) {}
+FB_SUITE_TEARDOWN(msg_work_request_id) {}
+
+FB_TEST(msg_work_request_id, fields_partition_exactly_64_bits) {
+    // The four field widths must sum to 64 AND their masks must be a clean,
+    // non-overlapping partition of the whole word. A future "add a field"
+    // change that doesn't rebalance the widths breaks correlation outright.
+    using namespace wr;
+    FB_ASSERT_EQ(shard_id_len + epoch_len + connection_id_len + request_id_len, 64);
+
+    constexpr uint64_t all = shard_id_mask | epoch_mask | connection_id_mask | request_id_mask;
+    FB_ASSERT_EQ(all, UINT64_MAX);
+
+    // Pairwise disjoint — no bit claimed by two fields.
+    FB_ASSERT_EQ(shard_id_mask      & epoch_mask,         0ULL);
+    FB_ASSERT_EQ(epoch_mask         & connection_id_mask, 0ULL);
+    FB_ASSERT_EQ(connection_id_mask & request_id_mask,    0ULL);
+}
+
+FB_TEST(msg_work_request_id, shard_id_round_trips) {
+    // shard_id occupies the top 9 bits (max 511). Extraction must invert the
+    // packing for any in-range value.
+    using namespace wr;
+    for (shard_id_type s : {shard_id_type{0}, shard_id_type{1}, shard_id_type{255}, shard_id_type{511}}) {
+        value_type id = build(s, 0, 0, 0);
+        FB_ASSERT_EQ(shard_id(id), s);
+    }
+}
+
+FB_TEST(msg_work_request_id, connection_id_round_trips) {
+    // connection_id is 12 bits (max 4095).
+    using namespace wr;
+    for (connection_id_type c : {connection_id_type{0}, connection_id_type{1}, connection_id_type{1024}, connection_id_type{4095}}) {
+        value_type id = build(0, 0, c, 0);
+        FB_ASSERT_EQ(connection_id(id), c);
+    }
+}
+
+FB_TEST(msg_work_request_id, request_id_round_trips_and_wraps_at_16_bits) {
+    // request_id is the lowest 16 bits. Extraction returns exactly those bits;
+    // the mask truncates anything above 0xFFFF.
+    using namespace wr;
+    FB_ASSERT_EQ(request_id(build(0, 0, 0, 1234)), 1234);
+    FB_ASSERT_EQ(request_id(build(0, 0, 0, 0xFFFF)), 0xFFFF);
+    // A raw value whose low 16 bits are 0xABCD reads back as 0xABCD regardless
+    // of the upper bits (this is the CQE-correlation contract).
+    FB_ASSERT_EQ(request_id(0xFFFFFFFFFFFFABCDULL), 0xABCDu);
+}
+
+FB_TEST(msg_work_request_id, dispatch_id_strips_only_request_field) {
+    // dispatch_id is the key used to fan a completion out to its connection/
+    // shard handler — it must keep shard/epoch/connection but drop request_id.
+    // I.e. dispatch_id(id) == id with the low 16 bits cleared.
+    using namespace wr;
+    value_type id = build(7, 123456, 42, 999);
+    FB_ASSERT_EQ(dispatch_id(id), id & ~request_id_mask);
+
+    // dispatch_id preserves shard/connection, and is independent of request_id.
+    FB_ASSERT_EQ(shard_id(dispatch_id(id)), 7);
+    FB_ASSERT_EQ(connection_id(dispatch_id(id)), 42);
+    FB_ASSERT_EQ(dispatch_id(build(7, 123456, 42, 0)), dispatch_id(build(7, 123456, 42, 999)));
+}
+
+FB_TEST(msg_work_request_id, fields_do_not_bleed_into_each_other) {
+    // Maxing out every field at once must still round-trip each one exactly —
+    // the regression target for a width change that would let one field's
+    // high bits spill into the neighbour.
+    using namespace wr;
+    value_type id = build(511, (1u << 27) - 1, 4095, 0xFFFF);
+    FB_ASSERT_EQ(shard_id(id), 511);
+    FB_ASSERT_EQ(connection_id(id), 4095);
+    FB_ASSERT_EQ(request_id(id), 0xFFFF);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
