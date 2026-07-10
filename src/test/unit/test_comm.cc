@@ -2264,7 +2264,14 @@ FB_TEST(bdev_object_mapping, calc_first_object_position_object_sequence) {
 FB_TEST(bdev_object_mapping, round_trip_offset_to_object_and_back) {
     // object_seq * object_size + first_object_offset == original offset.
     // This is the key invariant that keeps mapping reversible.
-    for (uint64_t off : {0u, 1u, default_object_size - 1, default_object_size, 2 * default_object_size - 1}) {
+    std::array<uint64_t, 5> offsets = {
+        0u,
+        1u,
+        static_cast<uint64_t>(default_object_size) - 1,
+        static_cast<uint64_t>(default_object_size),
+        static_cast<uint64_t>(2 * default_object_size) - 1
+    };
+    for (uint64_t off : offsets) {
         auto [sz, first_off, seq] = calc_first_object_position(off, default_object_size, default_object_size);
         uint64_t reconstructed = seq * default_object_size + first_off;
         FB_ASSERT_EQ(reconstructed, off);
