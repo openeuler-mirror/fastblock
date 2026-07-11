@@ -7947,13 +7947,14 @@ FB_TEST(shard_affinity, rebalancing_changes_affinity) {
 }
 
 FB_TEST(shard_affinity, affinity_table_lookup) {
-    // shard_table maps pg_name -> shard_revision
-    std::map<std::string, shard_revision> shard_table;
-    shard_table["1.100"] = shard_revision{2, 50};
+    // shard_table maps pg_name -> {shard, revision}
+    struct local_shard_revision { uint32_t shard; int64_t revision; };
+    std::map<std::string, local_shard_revision> shard_table;
+    shard_table["1.100"] = local_shard_revision{2, 50};
 
     auto it = shard_table.find("1.100");
     FB_ASSERT_TRUE(it != shard_table.end());
-    FB_ASSERT_EQ(it->second._shard, 2);
+    FB_ASSERT_EQ(it->second.shard, 2);
 }
 
 FB_TEST(shard_affinity, affinity_persists_across_restart) {
