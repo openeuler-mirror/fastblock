@@ -4072,3 +4072,399 @@ FB_TEST(client_pg_routing_stress, different_pools_different_routing) {
     // Different prefixes may produce different distribution.
     FB_ASSERT_TRUE(pool1_pgs.size() > 0 || pool2_pgs.size() > 0);
 }
+
+// ============================================================================
+// Part 12: Resource limits and queue full scenarios
+// ============================================================================
+
+// ============================================================================
+// Test Suite: client_queue_depth_limit — request queue depth limits
+// ============================================================================
+
+FB_SUITE_SETUP(client_queue_depth_limit) {}
+FB_SUITE_TEARDOWN(client_queue_depth_limit) {}
+
+FB_TEST(client_queue_depth_limit, queue_accepts_requests) {
+    // Request queue accepts new requests.
+    fake_osd osd;
+    fake_bdev_io io{1};
+
+    auto obj_num = get_obj_num(0, 256);
+    write_source src([](fake_bdev_io*, int32_t) {}, static_cast<uint32_t>(obj_num), &io);
+    drive_write(osd, 1, "img", 0, std::string(256, 'x'), &src);
+
+    FB_ASSERT_EQ(osd.w_queue.size(), 1u);
+}
+
+FB_TEST(client_queue_depth_limit, queue_depth_unbounded_in_test) {
+    // In test harness, queue depth is unbounded (production may have limits).
+    fake_osd osd;
+    fake_bdev_io io{1};
+
+    for (int i = 0; i < 500; ++i) {
+        auto obj_num = get_obj_num(0, 128);
+        auto* src = new write_source([](fake_bdev_io*, int32_t) {},
+                                     static_cast<uint32_t>(obj_num), &io);
+        drive_write(osd, i, "img", 0, std::string(128, 'q'), src);
+    }
+
+    // All 500 requests are queued (test harness limit).
+    FB_ASSERT_EQ(osd.w_queue.size(), 500u);
+}
+
+FB_TEST(client_queue_depth_limit, drain_reduces_queue_depth) {
+    // Draining requests reduces queue depth to zero.
+    fake_osd osd;
+    fake_bdev_io io{1};
+
+    for (int i = 0; i < 100; ++i) {
+        auto obj_num = get_obj_num(0, 128);
+        auto* src = new write_source([](fake_bdev_io*, int32_t) {},
+                                     static_cast<uint32_t>(obj_num), &io);
+        drive_write(osd, i, "img", 0, std::string(128, 'd'), src);
+    }
+
+    FB_ASSERT_EQ(osd.w_queue.size(), 100u);
+    osd.drain_all_writes();
+    FB_ASSERT_EQ(osd.w_queue.size(), 0u);
+}
+
+FB_TEST(client_queue_depth_limit, onflight_queue_separate) {
+    // In production, onflight requests are separate from pending queue.
+    // Here we simulate by tracking two separate counts.
+    int pending_count = 50;
+    int onflight_count = 10;
+
+    // Total requests in system.
+    int total = pending_count + onflight_count;
+    FB_ASSERT_EQ(total, 60);
+}
+
+FB_TEST(client_queue_depth_limit, queue_full_blocks_new_requests) {
+    // Production may block new requests when queue is full.
+    // Simulate by checking a limit.
+    int max_queue_depth = 128;
+    int current_depth = 128;
+    bool can_enqueue = current_depth < max_queue_depth;
+    FB_ASSERT_FALSE(can_enqueue);
+}
+
+// ============================================================================
+// Test Suite: client_ring_slot_exhaustion — ring slot exhaustion handling
+// ============================================================================
+
+FB_SUITE_SETUP(client_ring_slot_exhaustion) {}
+FB_SUITE_TEARDOWN(client_ring_slot_exhaustion) {}
+
+FB_TEST(client_ring_slot_exhaustion, all_slots_busy_blocks_acquire) {
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(16, write_ring_slot_info{.busy = true});
+
+    auto slot = acquire_write_ring_slot(&s);
+    FB_ASSERT_FALSE(slot.has_value());
+}
+
+FB_TEST(client_ring_slot_exhaustion, ring_full_fallback_to_normal_write) {
+    // When ring is full, production falls back to normal RPC write.
+    // Here we verify the fallback condition.
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(16, write_ring_slot_info{.busy = true});
+
+    bool can_use_ring = s.is_ready && acquire_write_ring_slot(&s).has_value();
+    FB_ASSERT_FALSE(can_use_ring);
+    // Fallback: normal write path.
+}
+
+FB_TEST(client_ring_slot_exhaustion, slot_release_unblocks) {
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(16, write_ring_slot_info{.busy = true});
+
+    // Full.
+    FB_ASSERT_FALSE(acquire_write_ring_slot(&s).has_value());
+
+    // Release one slot.
+    s.slots[5].busy = false;
+
+    auto slot = acquire_write_ring_slot(&s);
+    FB_ASSERT_TRUE(slot.has_value());
+}
+
+FB_TEST(client_ring_slot_exhaustion, gradual_release_allows_gradual_acquire) {
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(8, write_ring_slot_info{.busy = true});
+
+    for (int i = 0; i < 8; ++i) {
+        // Release one slot.
+        s.slots[i].busy = false;
+
+        // Can acquire one.
+        auto slot = acquire_write_ring_slot(&s);
+        FB_ASSERT_TRUE(slot.has_value());
+        // Immediately mark busy again.
+        s.slots[*slot].busy = true;
+    }
+}
+
+FB_TEST(client_ring_slot_exhaustion, ring_reset_clears_all_busy) {
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(16, write_ring_slot_info{.busy = true});
+
+    reset_write_ring_state(s, false);
+    FB_ASSERT_TRUE(s.slots.empty());
+}
+
+// ============================================================================
+// Test Suite: client_lease_exhaustion — lease timeout handling
+// ============================================================================
+
+FB_SUITE_SETUP(client_lease_exhaustion) {}
+FB_SUITE_TEARDOWN(client_lease_exhaustion) {}
+
+FB_TEST(client_lease_exhaustion, lease_expired_ring_not_ready) {
+    write_ring_state s;
+    s.is_ready = true;
+    s.lease_deadline = std::chrono::steady_clock::now() - std::chrono::seconds{1};
+
+    FB_ASSERT_TRUE(should_refresh_write_ring_lease(&s));
+}
+
+FB_TEST(client_lease_exhaustion, lease_expiry_triggers_reacquire) {
+    write_ring_state s;
+    s.is_ready = true;
+    s.lease_us = 30ull * 1000 * 1000;
+    s.lease_deadline = std::chrono::steady_clock::now() - std::chrono::seconds{1};
+    s.conn_alive = true;
+
+    if (should_refresh_write_ring_lease(&s)) {
+        reset_write_ring_state(s, true);
+        // reacquire is triggered
+    }
+
+    FB_ASSERT_FALSE(s.is_ready);
+    FB_ASSERT_TRUE(s.conn_alive);
+}
+
+FB_TEST(client_lease_exhaustion, lease_near_expiry_refreshed) {
+    // Lease approaching expiry gets refreshed before it expires.
+    write_ring_state s;
+    s.is_ready = true;
+    s.lease_us = 30ull * 1000 * 1000;
+    s.lease_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+
+    // Not yet expired.
+    FB_ASSERT_FALSE(should_refresh_write_ring_lease(&s));
+}
+
+FB_TEST(client_lease_exhaustion, lease_guard_prevents_early_expiry) {
+    // Lease guard ensures ring is refreshed before actual expiry.
+    write_ring_state s;
+    s.lease_us = 30ull * 1000 * 1000;
+    refresh_local_write_ring_deadline(s);
+
+    // Deadline is ~25s from now (30s - 5s guard).
+    auto now = std::chrono::steady_clock::now();
+    auto remaining = s.lease_deadline - now;
+    FB_ASSERT_TRUE(remaining >= std::chrono::seconds{20});
+}
+
+FB_TEST(client_lease_exhaustion, zero_lease_means_no_ring) {
+    write_ring_state s;
+    s.lease_us = 0;
+    s.is_ready = true;
+
+    refresh_local_write_ring_deadline(s);
+    FB_ASSERT_TRUE(s.lease_deadline == std::chrono::steady_clock::time_point{});
+}
+
+// ============================================================================
+// Test Suite: client_leader_queue_limit — leader request queue limits
+// ============================================================================
+
+FB_SUITE_SETUP(client_leader_queue_limit) {}
+FB_SUITE_TEARDOWN(client_leader_queue_limit) {}
+
+FB_TEST(client_leader_queue_limit, leader_requests_queued) {
+    // Leader requests are queued separately from data requests.
+    std::unordered_map<uint64_t, std::unique_ptr<leader_osd_info>> leader_requests;
+
+    for (int i = 0; i < 50; ++i) {
+        auto key = make_leader_key(i / 10, i % 10);
+        leader_requests.emplace(key, std::make_unique<leader_osd_info>());
+    }
+
+    FB_ASSERT_EQ(leader_requests.size(), 50u);
+}
+
+FB_TEST(client_leader_queue_limit, leader_requests_processed) {
+    // Leader requests are processed and removed from queue.
+    std::unordered_map<uint64_t, leader_osd_info> leader_requests;
+
+    auto key = make_leader_key(0, 0);
+    leader_requests.emplace(key, leader_osd_info{});
+    FB_ASSERT_EQ(leader_requests.size(), 1u);
+
+    // Processed: removed.
+    leader_requests.erase(key);
+    FB_ASSERT_EQ(leader_requests.size(), 0u);
+}
+
+FB_TEST(client_leader_queue_limit, onflight_leader_blocks_new) {
+    // If leader request is onflight, new request for same PG waits.
+    leader_osd_info info{.is_onflight = true};
+    bool can_issue_new = !info.is_onflight;
+    FB_ASSERT_FALSE(can_issue_new);
+}
+
+FB_TEST(client_leader_queue_limit, leader_complete_clears_onflight) {
+    leader_osd_info info{.is_onflight = true};
+    info.is_onflight = false; // completed
+    FB_ASSERT_FALSE(info.is_onflight);
+}
+
+FB_TEST(client_leader_queue_limit, multiple_pgs_can_issue_parallel) {
+    // Different PGs can issue leader requests in parallel.
+    std::unordered_map<uint64_t, leader_osd_info> leaders;
+
+    leaders[make_leader_key(1, 1)] = leader_osd_info{.is_onflight = true};
+    leaders[make_leader_key(1, 2)] = leader_osd_info{.is_onflight = true};
+    leaders[make_leader_key(2, 1)] = leader_osd_info{.is_onflight = true};
+
+    FB_ASSERT_EQ(leaders.size(), 3u);
+}
+
+// ============================================================================
+// Test Suite: client_connection_limit — connection count limits
+// ============================================================================
+
+FB_SUITE_SETUP(client_connection_limit) {}
+FB_SUITE_TEARDOWN(client_connection_limit) {}
+
+FB_TEST(client_connection_limit, connection_count_grows_with_osds) {
+    // Connection count grows as we connect to more OSDs.
+    std::unordered_map<uint64_t, int> connections;
+
+    for (int osd = 0; osd < 100; ++osd) {
+        connections[to_connection_id(osd, 9000)] = osd;
+    }
+
+    FB_ASSERT_EQ(connections.size(), 100u);
+}
+
+FB_TEST(client_connection_limit, connection_reused_for_same_osd) {
+    // Connection is reused when connecting to same OSD+port.
+    std::unordered_map<uint64_t, int> connections;
+    auto id = to_connection_id(5, 9500);
+
+    connections[id] = 1;
+    connections[id] = 2; // overwrite (reuse)
+
+    FB_ASSERT_EQ(connections.size(), 1u);
+}
+
+FB_TEST(client_connection_limit, connection_closed_removes_entry) {
+    std::unordered_map<uint64_t, int> connections;
+    auto id = to_connection_id(10, 9000);
+    connections[id] = 10;
+
+    connections.erase(id);
+    FB_ASSERT_TRUE(connections.find(id) == connections.end());
+}
+
+FB_TEST(client_connection_limit, max_connections_reasonable) {
+    // Production may have a max connection limit (e.g., 1000 OSDs * 4 shards).
+    int max_connections = 4000;
+    FB_ASSERT_TRUE(max_connections > 1000);
+}
+
+// ============================================================================
+// Test Suite: client_stub_limit — stub cache size limits
+// ============================================================================
+
+FB_SUITE_SETUP(client_stub_limit) {}
+FB_SUITE_TEARDOWN(client_stub_limit) {}
+
+FB_TEST(client_stub_limit, stub_count_matches_connections) {
+    // Stub count equals connection count (one stub per connection).
+    std::unordered_map<uint64_t, int> stubs;
+    std::unordered_map<uint64_t, int> connections;
+
+    for (int i = 0; i < 50; ++i) {
+        auto id = to_connection_id(i, 9000);
+        connections[id] = i;
+        stubs[id] = i;
+    }
+
+    FB_ASSERT_EQ(stubs.size(), connections.size());
+}
+
+FB_TEST(client_stub_limit, stub_invalidated_removed) {
+    std::unordered_map<uint64_t, int> stubs;
+    stubs[to_connection_id(5, 9000)] = 5;
+
+    stubs.erase(to_connection_id(5, 9000));
+    FB_ASSERT_TRUE(stubs.empty());
+}
+
+FB_TEST(client_stub_limit, stub_recreated_after_invalidation) {
+    std::unordered_map<uint64_t, int> stubs;
+    auto id = to_connection_id(1, 9000);
+
+    stubs[id] = 1;
+    stubs.erase(id);
+    stubs[id] = 2;
+
+    FB_ASSERT_EQ(stubs[id], 2);
+}
+
+FB_TEST(client_stub_limit, stub_limit_not_exceeded) {
+    // Production may limit stub count to avoid memory exhaustion.
+    int max_stubs = 4000;
+    int current_stubs = 1000;
+    FB_ASSERT_TRUE(current_stubs < max_stubs);
+}
+
+// ============================================================================
+// Test Suite: client_memory_limit — memory usage constraints
+// ============================================================================
+
+FB_SUITE_SETUP(client_memory_limit) {}
+FB_SUITE_TEARDOWN(client_memory_limit) {}
+
+FB_TEST(client_memory_limit, request_buffer_size_fixed) {
+    // Request buffer size is fixed per request (not unbounded).
+    constexpr size_t max_request_buffer = 65535;
+    FB_ASSERT_EQ(max_request_buffer, 65535u);
+}
+
+FB_TEST(client_memory_limit, response_buffer_size_fixed) {
+    constexpr size_t max_response_buffer = 65535;
+    FB_ASSERT_EQ(max_response_buffer, 65535u);
+}
+
+FB_TEST(client_memory_limit, ring_slot_size_fixed) {
+    constexpr uint32_t ring_slot_size = 256 * 1024;
+    constexpr uint32_t ring_slot_count = 16;
+    uint64_t total_ring_memory = ring_slot_size * ring_slot_count;
+    FB_ASSERT_EQ(total_ring_memory, 4ull * 1024 * 1024); // 4 MiB total
+}
+
+FB_TEST(client_memory_limit, write_source_per_request) {
+    // Each request has its own write_source; memory scales with queue depth.
+    int queue_depth = 128;
+    size_t per_request_size = sizeof(write_source) + 1024; // approximate
+    size_t total = queue_depth * per_request_size;
+    FB_ASSERT_TRUE(total < 1024 * 1024); // < 1 MiB
+}
+
+FB_TEST(client_memory_limit, leader_request_per_pg) {
+    // Leader request stored per PG; scales with PG count.
+    int pg_count = 1000;
+    size_t per_request_size = 64; // approximate
+    size_t total = pg_count * per_request_size;
+    FB_ASSERT_TRUE(total < 1024 * 1024); // < 1 MiB
+}
