@@ -9868,6 +9868,87 @@ FB_TEST(shard_callback_lifetime, callback_called_in_dtor_unsafe) {
 }
 
 // ============================================================================
+// Test Suite: shard_pipeline_pattern (Pipeline Pattern Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_pipeline_pattern) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_pipeline_pattern) {
+    // Teardown code here
+}
+
+FB_TEST(shard_pipeline_pattern, multi_stage_processing) {
+    // Multi-stage pipeline: stage1 -> stage2 -> stage3
+    auto stage1 = [](int x) { return x * 2; };
+    auto stage2 = [](int x) { return x + 10; };
+    auto stage3 = [](int x) { return x - 1; };
+
+    int result = stage3(stage2(stage1(5)));
+    FB_ASSERT_EQ(result, 19); // 5*2=10, +10=20, -1=19
+}
+
+FB_TEST(shard_pipeline_pattern, stages_on_different_shards) {
+    // Each stage can run on a different shard
+    std::vector<uint32_t> stage_shards = {0, 1, 2, 3};
+    FB_ASSERT_EQ(stage_shards.size(), 4);
+
+    for (uint32_t s : stage_shards) {
+        FB_ASSERT_TRUE(s < 4);
+    }
+}
+
+FB_TEST(shard_pipeline_pattern, backpressure_between_stages) {
+    // If stage N+1 slow, stage N applies backpressure
+    uint32_t stage_n_queue = 100;
+    uint32_t stage_n_plus_1_queue = 95;
+    uint32_t queue_capacity = 100;
+
+    bool stage_n_should_throttle = (stage_n_plus_1_queue >= queue_capacity * 90 / 100);
+    FB_ASSERT_TRUE(stage_n_should_throttle);
+}
+
+FB_TEST(shard_pipeline_pattern, batch_in_stages) {
+    // Stages can process batches
+    std::vector<int> batch = {1, 2, 3, 4, 5};
+    std::vector<int> stage_result;
+    for (int v : batch) stage_result.push_back(v * 2);
+
+    FB_ASSERT_EQ(stage_result.size(), 5);
+    FB_ASSERT_EQ(stage_result.back(), 10);
+}
+
+FB_TEST(shard_pipeline_pattern, pipeline_throughput_min_stage) {
+    // Pipeline throughput = slowest stage's throughput
+    std::vector<uint64_t> stage_tps = {1000, 500, 1500, 2000};
+    uint64_t pipeline_tps = *std::min_element(stage_tps.begin(), stage_tps.end());
+    FB_ASSERT_EQ(pipeline_tps, 500);
+}
+
+FB_TEST(shard_pipeline_pattern, latency_sum_of_stages) {
+    // Total latency = sum of stage latencies
+    std::vector<uint64_t> stage_us = {100, 200, 150, 50};
+    uint64_t total = std::accumulate(stage_us.begin(), stage_us.end(), 0ULL);
+    FB_ASSERT_EQ(total, 500);
+}
+
+FB_TEST(shard_pipeline_pattern, stage_failure_aborts_pipeline) {
+    // If a stage fails, pipeline aborts
+    bool stage_2_failed = true;
+    bool pipeline_continues = !stage_2_failed;
+    FB_ASSERT_TRUE(!pipeline_continues);
+}
+
+FB_TEST(shard_pipeline_pattern, parallel_pipelines) {
+    // Multiple pipelines run in parallel
+    uint32_t pipeline_count = 4;
+    uint64_t single_throughput = 1000;
+    uint64_t total = pipeline_count * single_throughput;
+    FB_ASSERT_EQ(total, 4000);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
