@@ -895,3 +895,374 @@ FB_TEST(client_endpoint_parse, hostname) {
     FB_ASSERT_STR_EQ(ep.host.c_str(), "monitor.example.com");
     FB_ASSERT_EQ(ep.port, 9999);
 }
+
+// ============================================================================
+// Part 3: Integration — write & read fanout
+// ============================================================================
+
+namespace {
+
+// ---------- fake bdev_io / source structs (mirrored skeletons) ------------
+
+struct fake_bdev_io {
+    int id{0};
+};
+
+// write_source — mirrors libfblock.cc's write_source fan-in counter.
+struct write_source {
+    uint32_t obj_num;
+    fake_bdev_io* bdev_io;
+    int32_t result;
+    std::function<void(fake_bdev_io*, int32_t)> cb;
+    bool callback_fired{false};
+
+    write_source(std::function<void(fake_bdev_io*, int32_t)> _cb,
+                 uint32_t n, fake_bdev_io* io)
+      : obj_num{n}, bdev_io{io}, result{err::E_SUCCESS}, cb{std::move(_cb)} {}
+
+    static void write_done(void* src, int32_t state) {
+        auto* s = reinterpret_cast<write_source*>(src);
+        if (state != err::E_SUCCESS) s->result = state;
+        --s->obj_num;
+        if (s->obj_num == 0) {
+            s->callback_fired = true;
+            s->cb(s->bdev_io, s->result);
+        }
+    }
+};
+
+// read_source — mirrors libfblock.cc's read_source per-object copy.
+struct read_source {
+    uint32_t obj_num;
+    std::string buf;
+    uint64_t first_object_size;
+    int32_t result;
+    fake_bdev_io* bdev_io;
+    std::function<void(fake_bdev_io*, const std::string&, int32_t)> cb;
+    bool callback_fired{false};
+
+    read_source(std::function<void(fake_bdev_io*, const std::string&, int32_t)> _cb,
+                uint32_t n, uint64_t len, fake_bdev_io* io, uint64_t first_obj_sz)
+      : obj_num{n}, buf(len, '\0'), first_object_size{first_obj_sz},
+        result{err::E_SUCCESS}, bdev_io{io}, cb{std::move(_cb)} {}
+
+    static void read_done(void* src, uint64_t object_idx, const std::string& data, int32_t state) {
+        auto* s = reinterpret_cast<read_source*>(src);
+        if (state == err::E_SUCCESS) {
+            char* ptr = s->buf.data();
+            if (object_idx == 0) {
+                std::memcpy(ptr, data.data(), data.size());
+            } else {
+                ptr += s->first_object_size + (object_idx - 1) * default_object_size;
+                std::memcpy(ptr, data.data(), data.size());
+            }
+        } else {
+            s->result = state;
+        }
+        --s->obj_num;
+        if (s->obj_num == 0) {
+            s->callback_fired = true;
+            s->cb(s->bdev_io, s->buf, s->result);
+        }
+    }
+};
+
+// ---------- fake OSD: holds deferred responses for the runner --------------
+
+struct write_req_record {
+    std::string object_name;
+    uint64_t offset;
+    std::string data;
+    void* source;
+    int32_t pending_state{err::E_SUCCESS};
+};
+
+struct read_req_record {
+    std::string object_name;
+    uint64_t offset;
+    uint64_t length;
+    void* source;
+    uint64_t object_idx;
+    int32_t pending_state{err::E_SUCCESS};
+    std::string payload;
+};
+
+struct fake_osd {
+    std::deque<write_req_record> w_queue;
+    std::deque<read_req_record>  r_queue;
+    std::map<std::string, int32_t> next_write_state;
+    std::map<std::string, int32_t> next_read_state;
+
+    void submit_write(std::string object_name, uint64_t off,
+                      std::string data, write_source* src) {
+        write_req_record r{std::move(object_name), off, std::move(data), src};
+        auto it = next_write_state.find(r.object_name);
+        if (it != next_write_state.end()) {
+            r.pending_state = it->second;
+            next_write_state.erase(it);
+        }
+        w_queue.push_back(std::move(r));
+    }
+
+    void submit_read(std::string object_name, uint64_t off, uint64_t len,
+                     read_source* src, uint64_t obj_idx, std::string payload) {
+        read_req_record r{std::move(object_name), off, len, src, obj_idx,
+                          err::E_SUCCESS, std::move(payload)};
+        auto it = next_read_state.find(r.object_name);
+        if (it != next_read_state.end()) {
+            r.pending_state = it->second;
+            next_read_state.erase(it);
+        }
+        r_queue.push_back(std::move(r));
+    }
+
+    bool drain_one_write() {
+        if (w_queue.empty()) return false;
+        auto rec = std::move(w_queue.front());
+        w_queue.pop_front();
+        write_source::write_done(rec.source, rec.pending_state);
+        return true;
+    }
+    bool drain_one_read() {
+        if (r_queue.empty()) return false;
+        auto rec = std::move(r_queue.front());
+        r_queue.pop_front();
+        const std::string& d = (rec.pending_state == err::E_SUCCESS) ? rec.payload : std::string{};
+        read_source::read_done(rec.source, rec.object_idx, d, rec.pending_state);
+        return true;
+    }
+
+    void drain_all_writes() { while (drain_one_write()) {} }
+    void drain_all_reads()  { while (drain_one_read())  {} }
+};
+
+// ---------- libblk_client::write driver (mirrors libfblock.cc:178) --------
+
+void drive_write(fake_osd& osd, uint64_t pool_id, const std::string& image,
+                 uint64_t offset, const std::string& buf,
+                 write_source* src) {
+    if (buf.empty()) {
+        src->cb(src->bdev_io, errc::success);
+        return;
+    }
+    auto length = buf.size();
+    auto prefix = calc_image_object_prefix(pool_id, image);
+    auto [expected, obj_off, obj_seq] =
+        calc_first_object_position(offset, length, default_object_size);
+    size_t write_bytes = 0;
+    while (write_bytes < length) {
+        auto name = get_image_object_name(prefix, obj_seq);
+        std::string chunk{buf.data() + write_bytes, expected};
+        osd.submit_write(name, obj_off, std::move(chunk), src);
+        write_bytes += expected;
+        expected = default_object_size;
+        if (expected > length - write_bytes) expected = length - write_bytes;
+        obj_off = 0;
+        ++obj_seq;
+    }
+}
+
+// ---------- libblk_client::read driver (mirrors libfblock.cc:296) ---------
+
+void drive_read(fake_osd& osd, uint64_t pool_id, const std::string& image,
+                uint64_t offset, uint64_t length,
+                const std::vector<std::string>& object_payloads,
+                read_source* src) {
+    if (length == 0) {
+        src->cb(src->bdev_io, std::string{}, err::E_SUCCESS);
+        return;
+    }
+    auto prefix = calc_image_object_prefix(pool_id, image);
+    auto [expected, obj_off, obj_seq] =
+        calc_first_object_position(offset, length, default_object_size);
+    size_t read_bytes = 0;
+    uint64_t idx = 0;
+    while (read_bytes < length) {
+        auto name = get_image_object_name(prefix, obj_seq);
+        std::string payload = (idx < object_payloads.size()) ? object_payloads[idx] : std::string(expected, '?');
+        if (payload.size() > expected) payload.resize(expected);
+        osd.submit_read(name, obj_off, expected, src, idx, std::move(payload));
+        read_bytes += expected;
+        expected = default_object_size;
+        if (expected > length - read_bytes) expected = length - read_bytes;
+        obj_off = 0;
+        ++obj_seq;
+        ++idx;
+    }
+}
+
+} // anonymous namespace
+
+// ============================================================================
+// Test Suite: client_end_to_end_write — full write fanout
+// ============================================================================
+
+FB_SUITE_SETUP(client_end_to_end_write) {}
+FB_SUITE_TEARDOWN(client_end_to_end_write) {}
+
+FB_TEST(client_end_to_end_write, empty_buffer_fires_callback_immediately) {
+    fake_osd osd;
+    fake_bdev_io io{1};
+    int32_t result = -1;
+    write_source src([&](fake_bdev_io*, int32_t s) { result = s; },
+                     /*obj_num=*/0, &io);
+    drive_write(osd, /*pool=*/1, "img", /*off=*/0, /*buf=*/{}, &src);
+    FB_ASSERT_EQ(result, static_cast<int32_t>(errc::success));
+    FB_ASSERT_TRUE(osd.w_queue.empty());
+}
+
+FB_TEST(client_end_to_end_write, single_object_path) {
+    fake_osd osd;
+    fake_bdev_io io{1};
+    bool fired = false;
+    int32_t result = -1;
+    auto obj_num = get_obj_num(0, 1024);
+    write_source src([&](fake_bdev_io*, int32_t s) { fired = true; result = s; },
+                     static_cast<uint32_t>(obj_num), &io);
+    drive_write(osd, 1, "img", 0, std::string(1024, 'a'), &src);
+    FB_ASSERT_EQ(osd.w_queue.size(), 1u);
+    FB_ASSERT_STR_EQ(osd.w_queue.front().object_name.c_str(), "1__blk_data___img0");
+    FB_ASSERT_EQ(osd.w_queue.front().offset, 0u);
+    FB_ASSERT_EQ(osd.w_queue.front().data.size(), 1024u);
+    osd.drain_all_writes();
+    FB_ASSERT_TRUE(fired);
+    FB_ASSERT_EQ(result, err::E_SUCCESS);
+    FB_ASSERT_EQ(src.obj_num, 0u);
+}
+
+FB_TEST(client_end_to_end_write, multi_object_fanout) {
+    fake_osd osd;
+    fake_bdev_io io{2};
+    int callbacks = 0;
+    auto obj_num = get_obj_num(3 * MiB, 7 * MiB);
+    FB_ASSERT_EQ(obj_num, 3u);
+    write_source src([&](fake_bdev_io*, int32_t) { ++callbacks; },
+                     static_cast<uint32_t>(obj_num), &io);
+    drive_write(osd, 7, "vol", 3 * MiB, std::string(7 * MiB, 'x'), &src);
+    FB_ASSERT_EQ(osd.w_queue.size(), 3u);
+    FB_ASSERT_STR_EQ(osd.w_queue[0].object_name.c_str(), "7__blk_data___vol0");
+    FB_ASSERT_EQ(osd.w_queue[0].offset, 3 * MiB);
+    FB_ASSERT_EQ(osd.w_queue[0].data.size(), 1 * MiB);
+    FB_ASSERT_STR_EQ(osd.w_queue[1].object_name.c_str(), "7__blk_data___vol1");
+    FB_ASSERT_EQ(osd.w_queue[1].offset, 0u);
+    FB_ASSERT_EQ(osd.w_queue[1].data.size(), 4 * MiB);
+    FB_ASSERT_STR_EQ(osd.w_queue[2].object_name.c_str(), "7__blk_data___vol2");
+    FB_ASSERT_EQ(osd.w_queue[2].offset, 0u);
+    FB_ASSERT_EQ(osd.w_queue[2].data.size(), 2 * MiB);
+    osd.drain_one_write();
+    FB_ASSERT_EQ(callbacks, 0);
+    FB_ASSERT_EQ(src.obj_num, 2u);
+    osd.drain_one_write();
+    FB_ASSERT_EQ(callbacks, 0);
+    FB_ASSERT_EQ(src.obj_num, 1u);
+    osd.drain_one_write();
+    FB_ASSERT_EQ(callbacks, 1);
+    FB_ASSERT_EQ(src.obj_num, 0u);
+}
+
+FB_TEST(client_end_to_end_write, partial_failure_propagates_last_error) {
+    fake_osd osd;
+    fake_bdev_io io{3};
+    int32_t result = err::E_SUCCESS;
+    auto obj_num = get_obj_num(0, 2 * default_object_size);
+    write_source src([&](fake_bdev_io*, int32_t s) { result = s; },
+                     static_cast<uint32_t>(obj_num), &io);
+    osd.next_write_state["3__blk_data___v0"] = -ENOLINK;
+    drive_write(osd, 3, "v", 0, std::string(2 * default_object_size, 'b'), &src);
+    osd.drain_all_writes();
+    FB_ASSERT_EQ(src.obj_num, 0u);
+    FB_ASSERT_EQ(result, -ENOLINK);
+}
+
+FB_TEST(client_end_to_end_write, callback_fires_exactly_once) {
+    fake_osd osd;
+    fake_bdev_io io{4};
+    int callbacks = 0;
+    auto obj_num = get_obj_num(0, 4 * default_object_size);
+    write_source src([&](fake_bdev_io*, int32_t) { ++callbacks; },
+                     static_cast<uint32_t>(obj_num), &io);
+    drive_write(osd, 0, "img", 0, std::string(4 * default_object_size, 'c'), &src);
+    osd.drain_all_writes();
+    FB_ASSERT_EQ(callbacks, 1);
+}
+
+// ============================================================================
+// Test Suite: client_end_to_end_read — full read assembly
+// ============================================================================
+
+FB_SUITE_SETUP(client_end_to_end_read) {}
+FB_SUITE_TEARDOWN(client_end_to_end_read) {}
+
+FB_TEST(client_end_to_end_read, zero_length_short_circuits) {
+    fake_osd osd;
+    fake_bdev_io io{1};
+    bool fired = false;
+    read_source src([&](fake_bdev_io*, const std::string&, int32_t) { fired = true; },
+                    0, 0, &io, 0);
+    drive_read(osd, 1, "img", 0, 0, {}, &src);
+    FB_ASSERT_TRUE(fired);
+    FB_ASSERT_TRUE(osd.r_queue.empty());
+}
+
+FB_TEST(client_end_to_end_read, single_object_assembly) {
+    fake_osd osd;
+    fake_bdev_io io{1};
+    std::string out;
+    auto obj_num = get_obj_num(0, 1024);
+    auto [first_sz, _o, _s] = calc_first_object_position(0, 1024, default_object_size);
+    (void)_o; (void)_s;
+    read_source src([&](fake_bdev_io*, const std::string& b, int32_t) { out = b; },
+                    static_cast<uint32_t>(obj_num), 1024, &io, first_sz);
+    std::vector<std::string> payloads{std::string(1024, 'A')};
+    drive_read(osd, 1, "img", 0, 1024, payloads, &src);
+    osd.drain_all_reads();
+    FB_ASSERT_EQ(out.size(), 1024u);
+    FB_ASSERT_EQ(out, std::string(1024, 'A'));
+}
+
+FB_TEST(client_end_to_end_read, multi_object_offset_placement) {
+    fake_osd osd;
+    fake_bdev_io io{2};
+    std::string out;
+    auto obj_num = get_obj_num(3 * MiB, 7 * MiB);
+    auto [first_sz, _o, _s] = calc_first_object_position(3 * MiB, 7 * MiB, default_object_size);
+    (void)_o; (void)_s;
+    read_source src([&](fake_bdev_io*, const std::string& b, int32_t) { out = b; },
+                    static_cast<uint32_t>(obj_num), 7 * MiB, &io, first_sz);
+    std::vector<std::string> payloads{
+        std::string(1 * MiB, 'X'),
+        std::string(4 * MiB, 'Y'),
+        std::string(2 * MiB, 'Z'),
+    };
+    drive_read(osd, 0, "v", 3 * MiB, 7 * MiB, payloads, &src);
+    osd.drain_all_reads();
+    FB_ASSERT_EQ(out.size(), 7 * MiB);
+    FB_ASSERT_EQ(out[0],              'X');
+    FB_ASSERT_EQ(out[1 * MiB - 1],    'X');
+    FB_ASSERT_EQ(out[1 * MiB],        'Y');
+    FB_ASSERT_EQ(out[5 * MiB - 1],    'Y');
+    FB_ASSERT_EQ(out[5 * MiB],        'Z');
+    FB_ASSERT_EQ(out[7 * MiB - 1],    'Z');
+}
+
+FB_TEST(client_end_to_end_read, error_does_not_corrupt_buf) {
+    fake_osd osd;
+    fake_bdev_io io{3};
+    std::string out;
+    int32_t status = err::E_SUCCESS;
+    auto obj_num = get_obj_num(0, 2 * default_object_size);
+    auto [first_sz, _o, _s] = calc_first_object_position(0, 2 * default_object_size, default_object_size);
+    (void)_o; (void)_s;
+    read_source src([&](fake_bdev_io*, const std::string& b, int32_t s) { out = b; status = s; },
+                    static_cast<uint32_t>(obj_num), 2 * default_object_size, &io, first_sz);
+    std::vector<std::string> payloads{
+        std::string(default_object_size, 'Q'),
+        std::string(default_object_size, 'R'),
+    };
+    osd.next_read_state["5__blk_data___im1"] = err::OSD_DOWN;
+    drive_read(osd, 5, "im", 0, 2 * default_object_size, payloads, &src);
+    osd.drain_all_reads();
+    FB_ASSERT_EQ(status, err::OSD_DOWN);
+    FB_ASSERT_EQ(out[0], 'Q');
+    FB_ASSERT_EQ(out[default_object_size], '\0');
+}
