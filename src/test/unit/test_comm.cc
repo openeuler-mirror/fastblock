@@ -2435,5 +2435,105 @@ FB_TEST(client_image_object_name, different_images_have_different_prefixes) {
       calc_image_object_prefix(1, "img") != calc_image_object_prefix(2, "img"));
 }
 
+// ============================================================================
+// Test Suite: bdev_io_size_arithmetic — block ↔ byte conversion and iov sum
+//
+// bdev_fastblock_write / read translate SPDK's (offset_blocks, num_blocks)
+// representation into byte offset+length by multiplying with blocklen, then
+// sum iovec lengths to compute total_len. The 4 KiB alignment check
+//   bool aligned = !(total_len % 4096);
+// gates a fast path. This suite pins:
+//   - offset_bytes = offset_blocks * blocklen, length_bytes = num_blocks * blocklen
+//   - sum of iov lengths == total_len
+//   - aligned iff (total_len % 4096 == 0)
+// ============================================================================
+
+namespace {
+
+struct fake_iov {
+    size_t iov_len;
+};
+
+uint64_t io_offset_bytes(uint64_t offset_blocks, uint32_t blocklen) {
+    return offset_blocks * blocklen;
+}
+
+uint64_t io_length_bytes(uint64_t num_blocks, uint32_t blocklen) {
+    return num_blocks * blocklen;
+}
+
+size_t sum_iov_lengths(const fake_iov* iovs, int iovcnt) {
+    size_t total = 0;
+    for (int i = 0; i < iovcnt; ++i) total += iovs[i].iov_len;
+    return total;
+}
+
+bool is_4k_aligned(size_t total_len) {
+    return (total_len % 4096) == 0;
+}
+
+} // anonymous namespace
+
+FB_SUITE_SETUP(bdev_io_size_arithmetic) {}
+FB_SUITE_TEARDOWN(bdev_io_size_arithmetic) {}
+
+FB_TEST(bdev_io_size_arithmetic, offset_blocks_to_bytes) {
+    // SPDK reports IO in blocks; we multiply by blocklen for the byte offset.
+    FB_ASSERT_EQ(io_offset_bytes(0, 4096), 0u);
+    FB_ASSERT_EQ(io_offset_bytes(1, 4096), 4096u);
+    FB_ASSERT_EQ(io_offset_bytes(1024, 4096), 4 * 1024 * 1024u);
+}
+
+FB_TEST(bdev_io_size_arithmetic, num_blocks_to_bytes) {
+    FB_ASSERT_EQ(io_length_bytes(0, 4096), 0u);
+    FB_ASSERT_EQ(io_length_bytes(1, 4096), 4096u);
+    FB_ASSERT_EQ(io_length_bytes(8, 512), 4096u);
+}
+
+FB_TEST(bdev_io_size_arithmetic, different_blocklens_scale_independently) {
+    // The conversion is purely multiplicative — different blocklens scale
+    // the byte representation linearly.
+    FB_ASSERT_EQ(io_length_bytes(8, 512), 4096u);
+    FB_ASSERT_EQ(io_length_bytes(8, 4096), 32 * 1024u);
+    FB_ASSERT_EQ(io_length_bytes(8, 8192), 64 * 1024u);
+}
+
+FB_TEST(bdev_io_size_arithmetic, sum_iov_empty_is_zero) {
+    FB_ASSERT_EQ(sum_iov_lengths(nullptr, 0), 0u);
+}
+
+FB_TEST(bdev_io_size_arithmetic, sum_iov_single_segment) {
+    fake_iov iov = {4096};
+    FB_ASSERT_EQ(sum_iov_lengths(&iov, 1), 4096u);
+}
+
+FB_TEST(bdev_io_size_arithmetic, sum_iov_multiple_segments) {
+    fake_iov iovs[3] = {{1024}, {2048}, {4096}};
+    FB_ASSERT_EQ(sum_iov_lengths(iovs, 3), 7168u);
+}
+
+FB_TEST(bdev_io_size_arithmetic, aligned_at_4k_boundaries) {
+    FB_ASSERT_TRUE(is_4k_aligned(0));
+    FB_ASSERT_TRUE(is_4k_aligned(4096));
+    FB_ASSERT_TRUE(is_4k_aligned(4096 * 1024));
+}
+
+FB_TEST(bdev_io_size_arithmetic, unaligned_below_or_above_4k) {
+    FB_ASSERT_FALSE(is_4k_aligned(1));
+    FB_ASSERT_FALSE(is_4k_aligned(4095));
+    FB_ASSERT_FALSE(is_4k_aligned(4097));
+    FB_ASSERT_FALSE(is_4k_aligned(512)); // 512-byte sector NOT 4K aligned
+}
+
+FB_TEST(bdev_io_size_arithmetic, multi_segment_iov_alignment) {
+    // Three 4K segments = 12K total = aligned.
+    fake_iov aligned_iovs[3] = {{4096}, {4096}, {4096}};
+    FB_ASSERT_TRUE(is_4k_aligned(sum_iov_lengths(aligned_iovs, 3)));
+
+    // Two 4K plus one 512 = 8704 — NOT aligned.
+    fake_iov unaligned_iovs[3] = {{4096}, {4096}, {512}};
+    FB_ASSERT_FALSE(is_4k_aligned(sum_iov_lengths(unaligned_iovs, 3)));
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
