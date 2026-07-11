@@ -489,3 +489,409 @@ FB_TEST(client_errc_enum, non_success_are_positive) {
     FB_ASSERT_TRUE(static_cast<int>(errc::image_not_exist) > 0);
     FB_ASSERT_TRUE(static_cast<int>(errc::invalid_write_data_size) > 0);
 }
+
+// ============================================================================
+// Part 2: Identifiers, retry classification, and write-ring state machine
+// ============================================================================
+
+namespace {
+
+// ---------- fb_client error-code surface used by should_retry_request -----
+namespace err {
+    constexpr int32_t E_SUCCESS                   = 0;
+    constexpr int32_t RAFT_ERR_NOT_LEADER         = -135;
+    constexpr int32_t RAFT_ERR_NOT_FOUND_PG       = -141;
+    constexpr int32_t RAFT_ERR_PG_SHUTDOWN        = -142;
+    constexpr int32_t RAFT_ERR_NO_CONNECTED       = -143;
+    constexpr int32_t RAFT_ERR_PG_INITIALIZING    = -144;
+    constexpr int32_t OSD_DOWN                    = -149;
+    constexpr int32_t OSD_STARTING                = -150;
+    constexpr int32_t ERR_NOT_FOUND_POOL          = -160;
+    constexpr int32_t ERR_INTERNAL                = -180;
+    constexpr int32_t ERR_PERM                    = -EPERM;
+}
+
+// ---------- fb_client.h connection_id / leader_key (bit-packed) -----------
+struct connection_id_layout {
+    int32_t  node_id;
+    uint32_t port;
+};
+static_assert(sizeof(connection_id_layout) == sizeof(uint64_t));
+
+uint64_t to_connection_id(int32_t node_id, int port) {
+    uint64_t ret{};
+    auto* p = reinterpret_cast<connection_id_layout*>(&ret);
+    p->node_id = node_id;
+    p->port    = static_cast<uint32_t>(port);
+    return ret;
+}
+
+struct leader_key_layout {
+    int32_t pool_id;
+    int32_t pg_id;
+};
+static_assert(sizeof(leader_key_layout) == sizeof(uint64_t));
+
+uint64_t make_leader_key(int32_t pool_id, int32_t pg_id) {
+    uint64_t k{};
+    auto* p = reinterpret_cast<leader_key_layout*>(&k);
+    p->pg_id   = pg_id;
+    p->pool_id = pool_id;
+    return k;
+}
+
+leader_key_layout from_leader_key(uint64_t k) {
+    auto* p = reinterpret_cast<leader_key_layout*>(&k);
+    return {p->pool_id, p->pg_id};
+}
+
+// ---------- fb_client::should_retry_request (verbatim switch) -------------
+bool should_retry_request(int32_t state) noexcept {
+    switch (state) {
+    case -ENOLINK:
+    case -ENOENT:
+    case -EINVAL:
+    case err::RAFT_ERR_NOT_LEADER:
+    case err::RAFT_ERR_NOT_FOUND_PG:
+    case err::RAFT_ERR_PG_SHUTDOWN:
+    case err::RAFT_ERR_NO_CONNECTED:
+    case err::OSD_DOWN:
+    case err::OSD_STARTING:
+    case err::RAFT_ERR_PG_INITIALIZING:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// ---------- write_ring_state mirror (just the test-observable fields) -----
+struct write_ring_slot_info {
+    uint64_t remote_addr{0};
+    uint32_t remote_key{0};
+    uint32_t slot_size{0};
+    bool     busy{false};
+};
+
+struct write_ring_state {
+    uint64_t queue_id{0};
+    uint64_t lease_us{0};
+    uint32_t next_slot{0};
+    bool     is_ready{false};
+    bool     is_onflight{false};
+    bool     is_connecting{false};
+    int32_t  node_id{-1};
+    uint32_t port{0};
+    std::string addr{};
+    std::chrono::steady_clock::time_point lease_deadline{};
+    std::vector<write_ring_slot_info> slots{};
+    bool conn_alive{false};
+};
+
+void reset_write_ring_state(write_ring_state& s, bool keep_connection = false) {
+    s.queue_id = 0;
+    s.lease_us = 0;
+    s.next_slot = 0;
+    s.is_ready = false;
+    s.is_onflight = false;
+    s.lease_deadline = {};
+    s.slots.clear();
+    if (!keep_connection) s.conn_alive = false;
+}
+
+void refresh_local_write_ring_deadline(write_ring_state& s) noexcept {
+    if (s.lease_us == 0) {
+        s.lease_deadline = {};
+        return;
+    }
+    auto lease = std::chrono::microseconds{s.lease_us};
+    auto guard = lease / 5;
+    if (guard < std::chrono::milliseconds{500}) guard = std::chrono::milliseconds{500};
+    if (guard > std::chrono::seconds{5})       guard = std::chrono::seconds{5};
+    if (guard >= lease)                        guard = lease / 2;
+    s.lease_deadline = std::chrono::steady_clock::now() + lease - guard;
+}
+
+bool should_refresh_write_ring_lease(const write_ring_state* s) noexcept {
+    return s && s->is_ready && s->lease_deadline != std::chrono::steady_clock::time_point{} &&
+           std::chrono::steady_clock::now() >= s->lease_deadline;
+}
+
+std::optional<uint32_t> acquire_write_ring_slot(write_ring_state* s) {
+    if (!s || !s->is_ready || s->slots.empty()) return std::nullopt;
+    for (size_t i = 0; i < s->slots.size(); ++i) {
+        auto idx = (s->next_slot + i) % s->slots.size();
+        if (!s->slots[idx].busy) {
+            s->slots[idx].busy = true;
+            s->next_slot = static_cast<uint32_t>((idx + 1) % s->slots.size());
+            return static_cast<uint32_t>(idx);
+        }
+    }
+    return std::nullopt;
+}
+
+// ---------- monitor::client::endpoint::parse (mirrored) -------------------
+struct endpoint {
+    std::string host;
+    int port{0};
+};
+
+endpoint parse_endpoint(const char* address) {
+    std::string s{address};
+    auto p = s.find(':');
+    endpoint ep;
+    ep.host = s.substr(0, p);
+    ep.port = std::stoi(s.substr(p + 1));
+    return ep;
+}
+
+} // anonymous namespace
+
+// ============================================================================
+// Test Suite: client_connection_id — node_id/port bit-packing
+// ============================================================================
+
+FB_SUITE_SETUP(client_connection_id) {}
+FB_SUITE_TEARDOWN(client_connection_id) {}
+
+FB_TEST(client_connection_id, different_node_ids_differ) {
+    FB_ASSERT_NE(to_connection_id(1, 9000), to_connection_id(2, 9000));
+}
+
+FB_TEST(client_connection_id, different_ports_differ) {
+    FB_ASSERT_NE(to_connection_id(1, 9000), to_connection_id(1, 9001));
+}
+
+FB_TEST(client_connection_id, layout_matches_reinterpret) {
+    auto k = to_connection_id(0x11223344, 0x55667788);
+    FB_ASSERT_EQ(static_cast<uint32_t>(k & 0xffffffff), 0x11223344u);
+    FB_ASSERT_EQ(static_cast<uint32_t>((k >> 32) & 0xffffffff), 0x55667788u);
+}
+
+FB_TEST(client_connection_id, zero_id_zero_port_is_zero) {
+    FB_ASSERT_EQ(to_connection_id(0, 0), 0ull);
+}
+
+// ============================================================================
+// Test Suite: client_leader_key — pool_id/pg_id bit-packing
+// ============================================================================
+
+FB_SUITE_SETUP(client_leader_key) {}
+FB_SUITE_TEARDOWN(client_leader_key) {}
+
+FB_TEST(client_leader_key, roundtrip) {
+    auto k = make_leader_key(7, 13);
+    auto unpacked = from_leader_key(k);
+    FB_ASSERT_EQ(unpacked.pool_id, 7);
+    FB_ASSERT_EQ(unpacked.pg_id,   13);
+}
+
+FB_TEST(client_leader_key, distinct_pgs_distinct_keys) {
+    FB_ASSERT_NE(make_leader_key(7, 13), make_leader_key(7, 14));
+    FB_ASSERT_NE(make_leader_key(7, 13), make_leader_key(8, 13));
+}
+
+FB_TEST(client_leader_key, negative_pool_id_preserved) {
+    auto k = make_leader_key(-1, 0);
+    auto u = from_leader_key(k);
+    FB_ASSERT_EQ(u.pool_id, -1);
+    FB_ASSERT_EQ(u.pg_id,    0);
+}
+
+// ============================================================================
+// Test Suite: client_retry_classification — should_retry_request
+// ============================================================================
+
+FB_SUITE_SETUP(client_retry_classification) {}
+FB_SUITE_TEARDOWN(client_retry_classification) {}
+
+FB_TEST(client_retry_classification, system_errnos_retry) {
+    FB_ASSERT_TRUE(should_retry_request(-ENOLINK));
+    FB_ASSERT_TRUE(should_retry_request(-ENOENT));
+    FB_ASSERT_TRUE(should_retry_request(-EINVAL));
+}
+
+FB_TEST(client_retry_classification, raft_transients_retry) {
+    FB_ASSERT_TRUE(should_retry_request(err::RAFT_ERR_NOT_LEADER));
+    FB_ASSERT_TRUE(should_retry_request(err::RAFT_ERR_NOT_FOUND_PG));
+    FB_ASSERT_TRUE(should_retry_request(err::RAFT_ERR_PG_SHUTDOWN));
+    FB_ASSERT_TRUE(should_retry_request(err::RAFT_ERR_NO_CONNECTED));
+    FB_ASSERT_TRUE(should_retry_request(err::RAFT_ERR_PG_INITIALIZING));
+}
+
+FB_TEST(client_retry_classification, osd_lifecycle_states_retry) {
+    FB_ASSERT_TRUE(should_retry_request(err::OSD_DOWN));
+    FB_ASSERT_TRUE(should_retry_request(err::OSD_STARTING));
+}
+
+FB_TEST(client_retry_classification, success_not_retried) {
+    FB_ASSERT_FALSE(should_retry_request(err::E_SUCCESS));
+}
+
+FB_TEST(client_retry_classification, pool_not_found_not_retried) {
+    FB_ASSERT_FALSE(should_retry_request(err::ERR_NOT_FOUND_POOL));
+}
+
+FB_TEST(client_retry_classification, internal_errors_propagate) {
+    FB_ASSERT_FALSE(should_retry_request(err::ERR_INTERNAL));
+    FB_ASSERT_FALSE(should_retry_request(err::ERR_PERM));
+    FB_ASSERT_FALSE(should_retry_request(-EBADF));
+    FB_ASSERT_FALSE(should_retry_request(-EIO));
+}
+
+// ============================================================================
+// Test Suite: client_write_ring_slots — slot allocation arithmetic
+// ============================================================================
+
+FB_SUITE_SETUP(client_write_ring_slots) {}
+FB_SUITE_TEARDOWN(client_write_ring_slots) {}
+
+FB_TEST(client_write_ring_slots, not_ready_returns_null) {
+    write_ring_state s;
+    s.is_ready = false;
+    FB_ASSERT_FALSE(acquire_write_ring_slot(&s).has_value());
+}
+
+FB_TEST(client_write_ring_slots, empty_slots_returns_null) {
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.clear();
+    FB_ASSERT_FALSE(acquire_write_ring_slot(&s).has_value());
+}
+
+FB_TEST(client_write_ring_slots, sequential_allocation) {
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(4, write_ring_slot_info{});
+    auto a = acquire_write_ring_slot(&s);
+    auto b = acquire_write_ring_slot(&s);
+    auto c = acquire_write_ring_slot(&s);
+    auto d = acquire_write_ring_slot(&s);
+    FB_ASSERT_TRUE(a.has_value()); FB_ASSERT_EQ(*a, 0u);
+    FB_ASSERT_TRUE(b.has_value()); FB_ASSERT_EQ(*b, 1u);
+    FB_ASSERT_TRUE(c.has_value()); FB_ASSERT_EQ(*c, 2u);
+    FB_ASSERT_TRUE(d.has_value()); FB_ASSERT_EQ(*d, 3u);
+}
+
+FB_TEST(client_write_ring_slots, full_ring_returns_null) {
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(2, write_ring_slot_info{.busy = true});
+    FB_ASSERT_FALSE(acquire_write_ring_slot(&s).has_value());
+}
+
+FB_TEST(client_write_ring_slots, release_then_reallocate) {
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.assign(2, write_ring_slot_info{});
+    auto a = acquire_write_ring_slot(&s);
+    auto b = acquire_write_ring_slot(&s);
+    FB_ASSERT_TRUE(a.has_value() && b.has_value());
+    s.slots[0].busy = false;
+    auto c = acquire_write_ring_slot(&s);
+    FB_ASSERT_TRUE(c.has_value());
+    FB_ASSERT_EQ(*c, 0u);
+}
+
+FB_TEST(client_write_ring_slots, wrap_around_continues_scan) {
+    write_ring_state s;
+    s.is_ready = true;
+    s.slots.resize(4);
+    s.slots[0].busy = true;
+    s.slots[1].busy = true;
+    s.slots[2].busy = false;
+    s.slots[3].busy = false;
+    auto x = acquire_write_ring_slot(&s);
+    FB_ASSERT_TRUE(x.has_value());
+    FB_ASSERT_EQ(*x, 2u);
+    FB_ASSERT_EQ(s.next_slot, 3u);
+}
+
+// ============================================================================
+// Test Suite: client_write_ring_lease — lease deadline + reset
+// ============================================================================
+
+FB_SUITE_SETUP(client_write_ring_lease) {}
+FB_SUITE_TEARDOWN(client_write_ring_lease) {}
+
+FB_TEST(client_write_ring_lease, zero_lease_clears_deadline) {
+    write_ring_state s;
+    s.lease_us = 0;
+    refresh_local_write_ring_deadline(s);
+    FB_ASSERT_TRUE(s.lease_deadline == std::chrono::steady_clock::time_point{});
+}
+
+FB_TEST(client_write_ring_lease, long_lease_uses_clamped_guard) {
+    write_ring_state s;
+    s.lease_us = 30ull * 1000 * 1000;
+    auto before = std::chrono::steady_clock::now();
+    refresh_local_write_ring_deadline(s);
+    auto after = std::chrono::steady_clock::now();
+    auto delta = s.lease_deadline - after;
+    FB_ASSERT_TRUE(delta >= std::chrono::seconds{24});
+    FB_ASSERT_TRUE(delta <= std::chrono::seconds{26});
+    FB_ASSERT_TRUE(s.lease_deadline > before);
+}
+
+FB_TEST(client_write_ring_lease, short_lease_uses_minimum_guard) {
+    write_ring_state s;
+    s.lease_us = 100ull * 1000;
+    auto before = std::chrono::steady_clock::now();
+    refresh_local_write_ring_deadline(s);
+    auto delta = s.lease_deadline - before;
+    FB_ASSERT_TRUE(delta > std::chrono::microseconds{0});
+    FB_ASSERT_TRUE(delta <= std::chrono::milliseconds{100});
+}
+
+FB_TEST(client_write_ring_lease, refresh_predicate_requires_ready) {
+    write_ring_state s;
+    s.is_ready = false;
+    s.lease_us = 30ull * 1000 * 1000;
+    refresh_local_write_ring_deadline(s);
+    FB_ASSERT_FALSE(should_refresh_write_ring_lease(&s));
+    s.is_ready = true;
+    s.lease_deadline = std::chrono::steady_clock::now() - std::chrono::seconds{1};
+    FB_ASSERT_TRUE(should_refresh_write_ring_lease(&s));
+}
+
+FB_TEST(client_write_ring_lease, reset_keep_connection) {
+    write_ring_state s;
+    s.queue_id = 99;
+    s.is_ready = true;
+    s.is_onflight = true;
+    s.slots.assign(3, write_ring_slot_info{});
+    s.conn_alive = true;
+    reset_write_ring_state(s, /*keep_connection=*/true);
+    FB_ASSERT_EQ(s.queue_id, 0u);
+    FB_ASSERT_FALSE(s.is_ready);
+    FB_ASSERT_FALSE(s.is_onflight);
+    FB_ASSERT_TRUE(s.slots.empty());
+    FB_ASSERT_TRUE(s.conn_alive);
+}
+
+FB_TEST(client_write_ring_lease, reset_drops_connection) {
+    write_ring_state s;
+    s.conn_alive = true;
+    s.queue_id = 5;
+    reset_write_ring_state(s, /*keep_connection=*/false);
+    FB_ASSERT_FALSE(s.conn_alive);
+    FB_ASSERT_EQ(s.queue_id, 0u);
+}
+
+// ============================================================================
+// Test Suite: client_endpoint_parse — libfblock parse_endpoint
+// ============================================================================
+
+FB_SUITE_SETUP(client_endpoint_parse) {}
+FB_SUITE_TEARDOWN(client_endpoint_parse) {}
+
+FB_TEST(client_endpoint_parse, simple_ipv4) {
+    auto ep = parse_endpoint("127.0.0.1:3333");
+    FB_ASSERT_STR_EQ(ep.host.c_str(), "127.0.0.1");
+    FB_ASSERT_EQ(ep.port, 3333);
+}
+
+FB_TEST(client_endpoint_parse, hostname) {
+    auto ep = parse_endpoint("monitor.example.com:9999");
+    FB_ASSERT_STR_EQ(ep.host.c_str(), "monitor.example.com");
+    FB_ASSERT_EQ(ep.port, 9999);
+}
