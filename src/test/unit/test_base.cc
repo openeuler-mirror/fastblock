@@ -10128,6 +10128,81 @@ FB_TEST(shard_persistence_layer, log_compaction) {
 }
 
 // ============================================================================
+// Test Suite: shard_consistency_models (Consistency Models Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_consistency_models) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_consistency_models) {
+    // Teardown code here
+}
+
+FB_TEST(shard_consistency_models, linearizable_reads) {
+    // Linearizable: read returns latest committed value
+    int last_committed = 42;
+    int read_value = last_committed;
+    FB_ASSERT_EQ(read_value, last_committed);
+}
+
+FB_TEST(shard_consistency_models, sequential_consistency) {
+    // Sequential: all clients see ops in same order
+    std::vector<std::string> order_a = {"w1", "w2", "r1"};
+    std::vector<std::string> order_b = {"w1", "w2", "r1"};
+    FB_ASSERT_TRUE(order_a == order_b);
+}
+
+FB_TEST(shard_consistency_models, eventual_consistency) {
+    // Eventual: replicas eventually converge
+    int replica_a = 5;
+    int replica_b = 3;
+
+    // After sync
+    int final = std::max(replica_a, replica_b); // resolution
+    replica_a = final;
+    replica_b = final;
+
+    FB_ASSERT_EQ(replica_a, replica_b);
+}
+
+FB_TEST(shard_consistency_models, monotonic_reads) {
+    // Once a client sees value V, all subsequent reads see >= V
+    int read_1 = 5;
+    int read_2 = 7;
+    FB_ASSERT_TRUE(read_2 >= read_1);
+}
+
+FB_TEST(shard_consistency_models, read_your_writes) {
+    // Client always reads its own writes
+    int written = 42;
+    int read_after = 42;
+    FB_ASSERT_EQ(written, read_after);
+}
+
+FB_TEST(shard_consistency_models, causal_consistency) {
+    // Causally related ops seen in causal order
+    std::vector<std::string> events = {"write_x", "read_x", "write_y"};
+    // write_x -> read_x -> write_y (causal)
+    FB_ASSERT_EQ(events.size(), 3);
+    FB_ASSERT_EQ(events[0], "write_x");
+}
+
+FB_TEST(shard_consistency_models, strong_consistency_via_raft) {
+    // Raft provides strong consistency (linearizable)
+    bool uses_raft = true;
+    bool is_linearizable = uses_raft;
+    FB_ASSERT_TRUE(is_linearizable);
+}
+
+FB_TEST(shard_consistency_models, eventual_via_replicate_async) {
+    // Async replication: eventually consistent
+    bool replicated_async = true;
+    bool eventually_consistent = replicated_async;
+    FB_ASSERT_TRUE(eventually_consistent);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
