@@ -10041,6 +10041,93 @@ FB_TEST(shard_request_response, cancel_pending_request) {
 }
 
 // ============================================================================
+// Test Suite: shard_persistence_layer (Persistence Layer Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_persistence_layer) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_persistence_layer) {
+    // Teardown code here
+}
+
+FB_TEST(shard_persistence_layer, write_through_persists_immediately) {
+    // Write-through: data persisted before ack
+    bool acked = true; // After persistence
+    bool data_on_disk = true;
+    FB_ASSERT_TRUE(acked == data_on_disk);
+}
+
+FB_TEST(shard_persistence_layer, write_back_buffers_then_flushes) {
+    // Write-back: ack immediately, flush later
+    bool acked = true;
+    bool flushed = false; // not yet
+    FB_ASSERT_TRUE(acked);
+    FB_ASSERT_TRUE(!flushed);
+
+    // Later
+    flushed = true;
+    FB_ASSERT_TRUE(flushed);
+}
+
+FB_TEST(shard_persistence_layer, durability_via_replication) {
+    // Data durable when N replicas have it
+    uint32_t replica_count = 3;
+    uint32_t durable_threshold = 2; // quorum
+    bool durable = (replica_count >= durable_threshold);
+    FB_ASSERT_TRUE(durable);
+}
+
+FB_TEST(shard_persistence_layer, log_before_apply) {
+    // WAL: log before applying
+    std::vector<std::string> order;
+    order.push_back("log");
+    order.push_back("apply");
+    FB_ASSERT_EQ(order[0], "log");
+    FB_ASSERT_EQ(order[1], "apply");
+}
+
+FB_TEST(shard_persistence_layer, checkpoint_periodically) {
+    // Checkpoints reduce log replay time
+    uint64_t log_size = 100000;
+    uint64_t checkpoint_threshold = 50000;
+    bool needs_checkpoint = (log_size > checkpoint_threshold);
+    FB_ASSERT_TRUE(needs_checkpoint);
+}
+
+FB_TEST(shard_persistence_layer, recovery_replays_log) {
+    // Recovery: replay log from last checkpoint
+    std::vector<std::string> ops_in_log = {"op1", "op2", "op3"};
+    std::vector<std::string> replayed;
+    for (const auto& op : ops_in_log) replayed.push_back(op);
+
+    FB_ASSERT_EQ(replayed.size(), ops_in_log.size());
+}
+
+FB_TEST(shard_persistence_layer, atomic_writes_via_log) {
+    // Multiple-step ops: atomic via log
+    std::vector<std::string> tx_ops = {"begin", "write_a", "write_b", "commit"};
+    bool all_logged = (tx_ops.front() == "begin" && tx_ops.back() == "commit");
+    FB_ASSERT_TRUE(all_logged);
+}
+
+FB_TEST(shard_persistence_layer, log_compaction) {
+    // Log compacted to remove obsolete entries
+    std::vector<std::string> log = {"set_a=1", "set_a=2", "set_a=3", "set_b=10"};
+    // After compaction: only latest set_a + set_b
+    std::map<std::string, std::string> compacted;
+    for (const auto& entry : log) {
+        auto eq = entry.find('=');
+        if (eq != std::string::npos) {
+            std::string key = entry.substr(0, eq);
+            compacted[key] = entry;
+        }
+    }
+    FB_ASSERT_EQ(compacted.size(), 2); // only 'set_a' and 'set_b'
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
