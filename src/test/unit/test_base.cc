@@ -9211,12 +9211,16 @@ FB_TEST(shard_completion_handlers, handler_carries_user_data) {
     struct user_data { int id; std::string name; };
     user_data ud{42, "request_123"};
 
-    auto handler = [ud](int /*rc*/) {
-        FB_ASSERT_EQ(ud.id, 42);
-        FB_ASSERT_EQ(ud.name, "request_123");
+    int captured_id = 0;
+    std::string captured_name;
+    auto handler = [ud, &captured_id, &captured_name](int /*rc*/) {
+        captured_id = ud.id;
+        captured_name = ud.name;
     };
 
     handler(0);
+    FB_ASSERT_EQ(captured_id, 42);
+    FB_ASSERT_EQ(captured_name, "request_123");
 }
 
 FB_TEST(shard_completion_handlers, multiple_handlers_per_op) {
@@ -9466,13 +9470,13 @@ FB_TEST(shard_async_io_pattern, op_context_carries_state) {
         std::vector<uint8_t> buffer;
     };
 
-    op_ctx ctx;
-    ctx.op_id = 42;
-    ctx.buffer.resize(4096, 0xAB);
+    op_ctx my_op;
+    my_op.op_id = 42;
+    my_op.buffer.resize(4096, 0xAB);
 
-    FB_ASSERT_EQ(ctx.op_id, 42);
-    FB_ASSERT_EQ(ctx.buffer.size(), 4096);
-    FB_ASSERT_EQ(ctx.buffer[0], 0xAB);
+    FB_ASSERT_EQ(my_op.op_id, 42);
+    FB_ASSERT_EQ(my_op.buffer.size(), 4096);
+    FB_ASSERT_EQ(my_op.buffer[0], 0xAB);
 }
 
 FB_TEST(shard_async_io_pattern, completion_order_independent) {
