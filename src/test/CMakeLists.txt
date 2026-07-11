@@ -96,6 +96,22 @@ if(BUILD_FASTBLOCK_TESTS)
 	)
 
 	# ----------------------------------------------------------------------------
+	# bdev module tests
+	# ----------------------------------------------------------------------------
+	add_executable(test_bdev
+	  unit/bdev/test_bdev.cc
+	)
+
+	target_include_directories(test_bdev
+	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+	target_link_libraries(test_bdev
+	  PUBLIC
+	    test_framework
+	    base
+	)
+
+	# ----------------------------------------------------------------------------
 	# raft module tests
 	# ----------------------------------------------------------------------------
 	add_executable(test_raft_state
