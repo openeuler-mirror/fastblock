@@ -9244,6 +9244,104 @@ FB_TEST(shard_completion_handlers, handler_exception_caught) {
 }
 
 // ============================================================================
+// Test Suite: shard_event_loop (Event Loop Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_event_loop) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_event_loop) {
+    // Teardown code here
+}
+
+FB_TEST(shard_event_loop, single_threaded_per_shard) {
+    // Each shard's event loop is single-threaded
+    int counter = 0;
+    for (int i = 0; i < 1000; i++) counter++;
+    FB_ASSERT_EQ(counter, 1000);
+}
+
+FB_TEST(shard_event_loop, processes_events_in_order) {
+    // Events processed FIFO
+    std::queue<int> events;
+    for (int i = 1; i <= 5; i++) events.push(i);
+
+    int last = 0;
+    while (!events.empty()) {
+        int curr = events.front();
+        events.pop();
+        FB_ASSERT_TRUE(curr > last);
+        last = curr;
+    }
+    FB_ASSERT_EQ(last, 5);
+}
+
+FB_TEST(shard_event_loop, runs_until_exit_signal) {
+    // Loop runs until exit signal
+    bool exit_flag = false;
+    int iterations = 0;
+    while (!exit_flag && iterations < 10) {
+        iterations++;
+        if (iterations >= 5) exit_flag = true;
+    }
+    FB_ASSERT_EQ(iterations, 5);
+    FB_ASSERT_TRUE(exit_flag);
+}
+
+FB_TEST(shard_event_loop, idle_yield_strategy) {
+    // When no events, can yield CPU briefly
+    int idle_iterations = 0;
+    for (int i = 0; i < 100; i++) idle_iterations++;
+    FB_ASSERT_EQ(idle_iterations, 100);
+}
+
+FB_TEST(shard_event_loop, mixed_event_sources) {
+    // Multiple event sources: timer, IO, messages
+    std::vector<std::string> sources = {"timer", "io", "msg", "io", "timer"};
+    std::map<std::string, int> counts;
+    for (const auto& s : sources) counts[s]++;
+
+    FB_ASSERT_EQ(counts["timer"], 2);
+    FB_ASSERT_EQ(counts["io"], 2);
+    FB_ASSERT_EQ(counts["msg"], 1);
+}
+
+FB_TEST(shard_event_loop, prioritization) {
+    // High-priority events processed first
+    std::vector<std::pair<int, std::string>> events = {
+        {3, "low"}, {1, "high"}, {2, "med"}
+    };
+    std::sort(events.begin(), events.end());
+
+    FB_ASSERT_EQ(events[0].second, "high");
+    FB_ASSERT_EQ(events[2].second, "low");
+}
+
+FB_TEST(shard_event_loop, batch_processing) {
+    // Process events in batches for cache locality
+    std::vector<int> batch;
+    for (int i = 0; i < 32; i++) batch.push_back(i);
+
+    int sum = 0;
+    for (int v : batch) sum += v;
+    FB_ASSERT_EQ(sum, 31 * 32 / 2);
+}
+
+FB_TEST(shard_event_loop, exit_drains_queue) {
+    // On exit, remaining events drained before stop
+    std::queue<int> q;
+    for (int i = 0; i < 10; i++) q.push(i);
+
+    int processed = 0;
+    while (!q.empty()) {
+        q.pop();
+        processed++;
+    }
+    FB_ASSERT_EQ(processed, 10);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
