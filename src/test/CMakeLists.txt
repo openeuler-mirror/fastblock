@@ -159,6 +159,23 @@ if(BUILD_FASTBLOCK_TESTS)
 	    base
 	)
 
+	# Client unit tests: routing, addressing, object splitting.
+	# Part 1 of the client test suite covering the arithmetic contracts
+	# invoked on every IO path. Mirrors contracts locally to avoid
+	# pulling rdmacm/ibverbs/spdk_env into the test binary.
+	add_executable(test_client
+	  unit/test_client.cc
+	)
+
+	target_include_directories(test_client
+	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+	target_link_libraries(test_client
+	  PUBLIC
+	    test_framework
+	    base
+	)
+
 	# Stress tests
 	add_executable(raft_membership
 	  framework/osd_client.cc
