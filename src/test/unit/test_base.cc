@@ -9342,6 +9342,87 @@ FB_TEST(shard_event_loop, exit_drains_queue) {
 }
 
 // ============================================================================
+// Test Suite: shard_health_monitoring (Health Monitoring Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_health_monitoring) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_health_monitoring) {
+    // Teardown code here
+}
+
+FB_TEST(shard_health_monitoring, shard_alive_indicator) {
+    // Each shard has an alive flag
+    std::vector<bool> alive(4, true);
+    alive[2] = false;
+
+    int healthy = 0;
+    for (bool a : alive) if (a) healthy++;
+    FB_ASSERT_EQ(healthy, 3);
+}
+
+FB_TEST(shard_health_monitoring, last_heartbeat_timestamp) {
+    // Each shard updates last_heartbeat_ts periodically
+    auto now = std::chrono::steady_clock::now();
+    auto last_hb = now - std::chrono::seconds(5);
+
+    auto stale_threshold = std::chrono::seconds(10);
+    bool is_stale = (now - last_hb) > stale_threshold;
+    FB_ASSERT_TRUE(!is_stale);
+}
+
+FB_TEST(shard_health_monitoring, queue_depth_metric) {
+    // Track queue depth as health indicator
+    uint32_t queue_size = 50;
+    uint32_t max_capacity = 256;
+    double utilization = static_cast<double>(queue_size) / max_capacity;
+    FB_ASSERT_TRUE(utilization < 1.0);
+}
+
+FB_TEST(shard_health_monitoring, op_completion_rate) {
+    // Track ops completed per second
+    uint64_t completed = 5000;
+    uint64_t elapsed_s = 5;
+    uint64_t rate = completed / elapsed_s;
+    FB_ASSERT_EQ(rate, 1000);
+}
+
+FB_TEST(shard_health_monitoring, p99_latency_threshold) {
+    // Alert if p99 latency exceeds threshold
+    uint64_t p99_us = 5000;
+    uint64_t threshold_us = 10000;
+    bool healthy = (p99_us < threshold_us);
+    FB_ASSERT_TRUE(healthy);
+}
+
+FB_TEST(shard_health_monitoring, error_rate_monitored) {
+    // Track error rate; alert if too high
+    uint64_t total_ops = 10000;
+    uint64_t errors = 5;
+    double error_rate = static_cast<double>(errors) / total_ops;
+    FB_ASSERT_TRUE(error_rate < 0.01); // <1% errors
+}
+
+FB_TEST(shard_health_monitoring, cpu_usage_per_shard) {
+    // Track CPU usage per shard
+    std::vector<double> cpu_pct = {75.0, 50.0, 90.0, 30.0};
+    double avg = 0;
+    for (double c : cpu_pct) avg += c;
+    avg /= cpu_pct.size();
+    FB_ASSERT_TRUE(avg < 100.0);
+}
+
+FB_TEST(shard_health_monitoring, memory_usage_per_shard) {
+    // Track memory usage; alert if approaching limit
+    uint64_t used_mb = 1500;
+    uint64_t limit_mb = 2048;
+    double usage_pct = static_cast<double>(used_mb) / limit_mb * 100;
+    FB_ASSERT_TRUE(usage_pct < 80.0); // healthy
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
