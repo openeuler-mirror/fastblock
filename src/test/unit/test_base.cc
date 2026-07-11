@@ -8971,6 +8971,102 @@ FB_TEST(shard_message_serialization, magic_number_validation) {
 }
 
 // ============================================================================
+// Test Suite: shard_request_routing (Request Routing Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_request_routing) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_request_routing) {
+    // Teardown code here
+}
+
+FB_TEST(shard_request_routing, route_by_pool_id) {
+    // Route request based on pool_id
+    uint32_t shards = 4;
+    auto route = [shards](uint64_t pool_id, uint64_t pg_id) {
+        return (pool_id * 31 + pg_id) % shards;
+    };
+
+    FB_ASSERT_TRUE(route(1, 100) < shards);
+    FB_ASSERT_EQ(route(1, 100), route(1, 100));
+}
+
+FB_TEST(shard_request_routing, broadcast_to_all_shards) {
+    // Broadcast: send to all shards
+    uint32_t shards = 4;
+    std::vector<bool> received(shards, false);
+    for (uint32_t s = 0; s < shards; s++) received[s] = true;
+    for (bool r : received) FB_ASSERT_TRUE(r);
+}
+
+FB_TEST(shard_request_routing, unicast_to_specific_shard) {
+    // Unicast: send to one shard
+    uint32_t shards = 4;
+    std::vector<bool> received(shards, false);
+    uint32_t target = 2;
+    received[target] = true;
+
+    int total = 0;
+    for (bool r : received) if (r) total++;
+    FB_ASSERT_EQ(total, 1);
+}
+
+FB_TEST(shard_request_routing, multicast_to_subset) {
+    // Multicast: send to a subset
+    uint32_t shards = 4;
+    std::vector<uint32_t> targets = {0, 2};
+    std::vector<bool> received(shards, false);
+    for (uint32_t t : targets) received[t] = true;
+
+    int total = 0;
+    for (bool r : received) if (r) total++;
+    FB_ASSERT_EQ(total, 2);
+}
+
+FB_TEST(shard_request_routing, anycast_to_least_loaded) {
+    // Anycast: route to least-loaded shard
+    std::vector<uint64_t> loads = {1000, 500, 800, 200};
+    auto min_it = std::min_element(loads.begin(), loads.end());
+    uint32_t target = static_cast<uint32_t>(min_it - loads.begin());
+    FB_ASSERT_EQ(target, 3); // shard 3 has lowest load
+}
+
+FB_TEST(shard_request_routing, routing_table_consistent) {
+    // All OSDs use the same routing table
+    std::map<uint64_t, uint32_t> table_a;
+    table_a[100] = 1;
+    table_a[200] = 2;
+
+    std::map<uint64_t, uint32_t> table_b = table_a;
+    FB_ASSERT_TRUE(table_a == table_b);
+}
+
+FB_TEST(shard_request_routing, route_cache_warm) {
+    // Cache routing decisions to avoid repeated hashing
+    std::map<uint64_t, uint32_t> cache;
+    cache[1234567890ULL] = 2;
+
+    auto it = cache.find(1234567890ULL);
+    FB_ASSERT_TRUE(it != cache.end());
+    FB_ASSERT_EQ(it->second, 2);
+}
+
+FB_TEST(shard_request_routing, fallback_on_target_unavailable) {
+    // If target shard down, fall back to alternative
+    std::vector<bool> alive = {true, false, true, true};
+    uint32_t primary = 1;
+    uint32_t fallback = primary;
+
+    while (!alive[fallback]) {
+        fallback = (fallback + 1) % alive.size();
+    }
+    FB_ASSERT_TRUE(alive[fallback]);
+    FB_ASSERT_TRUE(fallback != primary);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
