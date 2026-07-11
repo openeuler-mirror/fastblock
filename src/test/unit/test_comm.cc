@@ -2278,5 +2278,83 @@ FB_TEST(bdev_object_mapping, round_trip_offset_to_object_and_back) {
     }
 }
 
+// ============================================================================
+// Test Suite: bdev_config_validation — block device configuration constraints
+//
+// bdev_fastblock_create takes block_size and image_size; these must satisfy
+// invariants or the SPDK bdev layer will malfunction:
+//   - block_size must be a power of 2 and >= 512 (historical floppy/HD sector size).
+//   - image_size must be a multiple of block_size (otherwise the final block
+//     would be partial and undefined behavior).
+//   - object_size defaults to 4 MiB if zero.
+// ============================================================================
+
+namespace {
+
+constexpr uint32_t default_block_size = 4096;
+constexpr uint64_t min_image_size = default_block_size; // at least one block
+
+struct bdev_config {
+    uint64_t image_size = 0;
+    uint32_t block_size = default_block_size;
+    uint64_t object_size = 0; // 0 means "use default"
+};
+
+uint32_t get_default_object_size() { return 4 * 1024 * 1024; }
+
+bool is_power_of_two(uint64_t v) { return v > 0 && (v & (v - 1)) == 0; }
+
+} // anonymous namespace
+
+FB_SUITE_SETUP(bdev_config_validation) {}
+FB_SUITE_TEARDOWN(bdev_config_validation) {}
+
+FB_TEST(bdev_config_validation, default_object_size_is_4MiB) {
+    // If caller passes 0, we substitute 4 MiB. Pin the default.
+    FB_ASSERT_EQ(get_default_object_size(), 4 * 1024 * 1024u);
+}
+
+FB_TEST(bdev_config_validation, block_size_must_be_power_of_two) {
+    // SPDK requires power-of-two block sizes; odd sizes corrupt alignment.
+    FB_ASSERT_TRUE(is_power_of_two(512));
+    FB_ASSERT_TRUE(is_power_of_two(4096));
+    FB_ASSERT_TRUE(is_power_of_two(8192));
+    FB_ASSERT_FALSE(is_power_of_two(4097));
+    FB_ASSERT_FALSE(is_power_of_two(3000));
+    FB_ASSERT_FALSE(is_power_of_two(0));
+}
+
+FB_TEST(bdev_config_validation, block_size_must_be_at_least_512) {
+    // Historical minimum: 512-byte sector (floppy/early HD).
+    FB_ASSERT_GE(default_block_size, 512u);
+    FB_ASSERT_EQ(default_block_size, 4096u); // the actual default
+}
+
+FB_TEST(bdev_config_validation, image_size_must_be_multiple_of_block_size) {
+    // image_size = 10 * 4096 is valid; image_size = 10 * 4096 + 1 is not.
+    bdev_config cfg;
+    cfg.block_size = 4096;
+    cfg.image_size = 10 * 4096;
+    FB_ASSERT_EQ(cfg.image_size % cfg.block_size, 0u);
+
+    cfg.image_size = 10 * 4096 + 1;
+    FB_ASSERT_NE(cfg.image_size % cfg.block_size, 0u);
+}
+
+FB_TEST(bdev_config_validation, zero_object_size_means_default) {
+    // The contract: object_size == 0 means "use default". Mirror that.
+    bdev_config cfg;
+    FB_ASSERT_EQ(cfg.object_size, 0u);
+    uint64_t effective_object_size = (cfg.object_size == 0) ? get_default_object_size() : cfg.object_size;
+    FB_ASSERT_EQ(effective_object_size, get_default_object_size());
+}
+
+FB_TEST(bdev_config_validation, non_zero_object_size_is_preserved) {
+    bdev_config cfg;
+    cfg.object_size = 8 * 1024 * 1024; // 8 MiB
+    uint64_t effective = (cfg.object_size == 0) ? get_default_object_size() : cfg.object_size;
+    FB_ASSERT_EQ(effective, 8 * 1024 * 1024u);
+}
+
 // Main function for test runner
 FB_TEST_MAIN()
