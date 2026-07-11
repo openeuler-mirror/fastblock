@@ -8928,7 +8928,7 @@ FB_TEST(shard_message_serialization, string_length_prefixed) {
     for (char c : s) buf.push_back(static_cast<uint8_t>(c));
 
     FB_ASSERT_EQ(buf.size(), 4 + s.size());
-    FB_ASSERT_EQ(buf[7], 'o');
+    FB_ASSERT_EQ(buf[8], 'o');  // buf[4]='h', buf[5]='e', buf[6]='l', buf[7]='l', buf[8]='o'
 }
 
 FB_TEST(shard_message_serialization, struct_field_order) {

@@ -11,8 +11,6 @@ target_include_directories(test_framework
 
 target_link_libraries(test_framework
     PUBLIC
-        base
-        spdk::spdk
 )
 
 # Test runner executable

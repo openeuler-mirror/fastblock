@@ -54,8 +54,12 @@
 #include <unistd.h>
 #endif
 
-#include "spdk/stdinc.h"
-#include "spdk/log.h"
+#include <iostream>
+#include <cstdio>
+#include <cstdint>
+#include <cstring>
+#include <dirent.h>
+#include <sys/stat.h>
 
 namespace fastblock {
 namespace test {
@@ -169,8 +173,7 @@ public:
         _fail_message = message;
         _fail_file = file;
         _fail_line = line;
-        SPDK_ERRLOG("TEST FAILED: %s at %s:%d - %s\n",
-                    _test_case.name().c_str(), file.c_str(), line, message.c_str());
+        std::cerr << "TEST FAILED: " << _test_case.name() << " at " << file << ":" << line << " - " << message << std::endl;
     }
 
     /**
@@ -179,22 +182,21 @@ public:
     void skip(const std::string& reason) {
         _skipped = true;
         _skip_reason = reason;
-        SPDK_NOTICELOG("TEST SKIPPED: %s - %s\n",
-                       _test_case.name().c_str(), reason.c_str());
+        std::cout << "TEST SKIPPED: " << _test_case.name() << " - " << reason << std::endl;
     }
 
     /**
      * @brief Log informational message
      */
     void log_info(const std::string& message) {
-        SPDK_NOTICELOG("[TEST %s] %s\n", _test_case.name().c_str(), message.c_str());
+        std::cout << "[TEST " << _test_case.name() << "] " << message << std::endl;
     }
 
     /**
      * @brief Log debug message
      */
     void log_debug(const std::string& message) {
-        SPDK_DEBUGLOG(test, "[TEST %s] %s\n", _test_case.name().c_str(), message.c_str());
+        std::cout << "[TEST " << _test_case.name() << "] " << message << std::endl;
     }
 
     bool failed() const { return _failed; }
@@ -954,11 +956,8 @@ public:
                         bench_func func)
         : test_case(name, suite, [this, func](test_context& ctx) {
             auto result = func();
-            SPDK_NOTICELOG("BENCHMARK %s: %d iterations, avg %.2f ns, "
-                          "%.2f ops/sec\n",
-                          result.name.c_str(), result.iterations,
-                          (double)result.avg_time.count(),
-                          result.ops_per_second());
+            std::cout << "BENCHMARK " << result.name << ": " << result.iterations << " iterations, avg "
+                      << (double)result.avg_time.count() << " ns, " << result.ops_per_second() << " ops/sec" << std::endl;
         }) {}
 };
 
@@ -1552,7 +1551,7 @@ public:
         auto end = std::chrono::high_resolution_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             end - _start);
-        SPDK_NOTICELOG("[%s] elapsed: %ld ms\n", _name.c_str(), elapsed.count());
+        std::cout << "[" << _name << "] elapsed: " << elapsed.count() << " ms" << std::endl;
     }
 
 private:
@@ -2892,9 +2891,9 @@ public:
         ss << message;
 
         if (level >= test_log_level::ERROR) {
-            SPDK_ERRLOG("%s\n", ss.str().c_str());
+            std::cerr << ss.str() << std::endl;
         } else {
-            SPDK_NOTICELOG("%s\n", ss.str().c_str());
+            std::cout << ss.str() << std::endl;
         }
     }
 

@@ -74,15 +74,17 @@ class buffer_list : private std::list<spdk_buffer> {
 public:
 
   void append_buffer(buffer_list& bl) noexcept {
-    size_t byte = bl.bytes();
+    size_t byte = bl.total;
     splice(end(), bl);
     total += byte;
+    bl.total = 0;  // Clear source list's byte count
   }
 
   void append_buffer(buffer_list&& bl) noexcept {
-    size_t bytes = bl.bytes();
+    size_t bytes = bl.total;
     splice(end(), std::move(bl));
     total += bytes;
+    bl.total = 0;  // Clear source list's byte count
   }
 
   void append_buffer(const spdk_buffer& sbuf) {

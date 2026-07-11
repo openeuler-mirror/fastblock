@@ -25,8 +25,8 @@ test_result test_case::execute(test_context& ctx) {
     result.severity = _severity;
 
     _status = test_status::RUNNING;
-    SPDK_NOTICELOG("=== Running test: %s.%s (timeout: %u s) ===\n",
-                   _suite.c_str(), _name.c_str(), _timeout_seconds);
+    std::cout << "=== Running test: " << _suite << "." << _name
+              << " (timeout: " << _timeout_seconds << " s) ===" << std::endl;
 
     // Execute test with timeout checking
     auto future = std::async(std::launch::async, [this, &ctx]() {
@@ -45,7 +45,7 @@ test_result test_case::execute(test_context& ctx) {
         result.message = "Test timed out after " + std::to_string(_timeout_seconds) + " seconds";
         result.file = __FILE__;
         result.line = __LINE__;
-        SPDK_ERRLOG("=== Test %s.%s TIMEOUT ===\n", _suite.c_str(), _name.c_str());
+        std::cerr << "=== Test " << _suite << "." << _name << " TIMEOUT ===" << std::endl;
     } else {
         // Test completed within timeout
         try {
@@ -80,9 +80,8 @@ test_result test_case::execute(test_context& ctx) {
         }
     }
 
-    SPDK_NOTICELOG("=== Test %s.%s: %s (duration: %lu us) ===\n",
-                   _suite.c_str(), _name.c_str(),
-                   test_status_str(_status), result.duration.count());
+    std::cout << "=== Test " << _suite << "." << _name << ": "
+              << test_status_str(_status) << " (duration: " << result.duration.count() << " us) ===" << std::endl;
 
     return result;
 }
@@ -91,9 +90,9 @@ test_runner::summary test_runner::run_all() {
     summary s;
     _results.clear();
 
-    SPDK_NOTICELOG("\n========================================\n");
-    SPDK_NOTICELOG("Running all tests\n");
-    SPDK_NOTICELOG("========================================\n");
+    std::cout << "\n========================================\n";
+    std::cout << "Running all tests\n";
+    std::cout << "========================================\n";
 
     for (auto& suite : test_registry::instance().suites()) {
         suite->run_setup();
@@ -115,7 +114,7 @@ test_runner::summary test_runner::run_all() {
                     // Stop if critical test fails
                     if (tc->severity() == test_severity::CRITICAL) {
                         suite->run_teardown();
-                        SPDK_ERRLOG("Critical test failed, stopping execution\n");
+                        std::cerr << "Critical test failed, stopping execution" << std::endl;;
                         return s;
                     }
                     break;
@@ -176,7 +175,7 @@ test_runner::summary test_runner::run_suite(const std::string& suite_name) {
     }
 
     if (!found) {
-        SPDK_ERRLOG("Suite '%s' not found\n", suite_name.c_str());
+        std::cerr << "Suite '" << suite_name << "' not found" << std::endl;
     }
 
     return s;
@@ -187,7 +186,7 @@ test_runner::summary test_runner::run_matching(const std::string& pattern) {
     _results.clear();
 
     std::regex re(pattern);
-    SPDK_NOTICELOG("Running tests matching pattern: %s\n", pattern.c_str());
+    std::cout << "Running tests matching pattern: " << pattern << std::endl;
 
     for (auto& suite : test_registry::instance().suites()) {
         bool suite_matched = false;
@@ -240,7 +239,7 @@ test_runner::summary test_runner::run_by_tag(test_tag tag) {
     summary s;
     _results.clear();
 
-    SPDK_NOTICELOG("Running tests with tag: %d\n", static_cast<int>(tag));
+    std::cout << "Running tests with tag: " << static_cast<int>(tag) << std::endl;
 
     for (auto& suite : test_registry::instance().suites()) {
         bool suite_matched = false;
@@ -288,7 +287,7 @@ test_runner::summary test_runner::run_by_tag(test_tag tag) {
     }
 
     if (s.total == 0) {
-        SPDK_NOTICELOG("No tests found with tag %d\n", static_cast<int>(tag));
+        std::cout << "No tests found with tag " << static_cast<int>(tag) << std::endl;
     }
 
     return s;
