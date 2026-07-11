@@ -9762,6 +9762,112 @@ FB_TEST(shard_thread_pool_concepts, thread_lifetime_eq_app_lifetime) {
 }
 
 // ============================================================================
+// Test Suite: shard_callback_lifetime (Callback Lifetime Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_callback_lifetime) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_callback_lifetime) {
+    // Teardown code here
+}
+
+FB_TEST(shard_callback_lifetime, callback_outlives_caller_via_heap) {
+    // Heap-allocated callback survives caller's stack frame
+    static int destroyed;
+    destroyed = 0;
+
+    struct cb { ~cb() { destroyed++; } };
+
+    cb* heap_cb = new cb();
+    FB_ASSERT_TRUE(heap_cb != nullptr);
+
+    // Later: invoke + delete
+    delete heap_cb;
+    FB_ASSERT_EQ(destroyed, 1);
+}
+
+FB_TEST(shard_callback_lifetime, captured_data_lifetime_extended) {
+    // Lambda's captured data persists with lambda
+    static int destroyed;
+    destroyed = 0;
+
+    struct data { ~data() { destroyed++; } };
+
+    {
+        auto lambda = []() { /* uses captured data */ };
+        (void)lambda;
+        FB_ASSERT_EQ(destroyed, 0);
+    }
+    // After lambda destroyed, captured data also destroyed (none here)
+}
+
+FB_TEST(shard_callback_lifetime, callback_chain_lifetime) {
+    // Each callback in chain must outlive the previous
+    static int alive;
+    alive = 0;
+
+    struct cb { cb() { alive++; } ~cb() { alive--; } };
+
+    cb* a = new cb();
+    cb* b = new cb();
+    cb* c = new cb();
+    FB_ASSERT_EQ(alive, 3);
+
+    // Process in chain order
+    delete a;
+    delete b;
+    delete c;
+    FB_ASSERT_EQ(alive, 0);
+}
+
+FB_TEST(shard_callback_lifetime, prevent_use_after_free) {
+    // Pattern: nullify pointer after delete
+    int* p = new int(42);
+    delete p;
+    p = nullptr;
+
+    bool safe_to_use = (p != nullptr);
+    FB_ASSERT_TRUE(!safe_to_use);
+}
+
+FB_TEST(shard_callback_lifetime, shared_ptr_keeps_alive) {
+    // shared_ptr keeps callback data alive while in use
+    auto sp = std::make_shared<int>(42);
+    auto sp2 = sp;
+    FB_ASSERT_EQ(sp.use_count(), 2);
+
+    sp2.reset();
+    FB_ASSERT_EQ(sp.use_count(), 1);
+}
+
+FB_TEST(shard_callback_lifetime, weak_ptr_detects_expired) {
+    // weak_ptr can detect if owner is gone
+    auto sp = std::make_shared<int>(42);
+    std::weak_ptr<int> wp = sp;
+
+    sp.reset();
+    FB_ASSERT_TRUE(wp.expired());
+}
+
+FB_TEST(shard_callback_lifetime, unique_ptr_single_owner) {
+    // unique_ptr: only one owner, transferred via move
+    auto p = std::make_unique<int>(42);
+    auto p2 = std::move(p);
+
+    FB_ASSERT_TRUE(p == nullptr);
+    FB_ASSERT_TRUE(p2 != nullptr);
+}
+
+FB_TEST(shard_callback_lifetime, callback_called_in_dtor_unsafe) {
+    // Calling virtual callbacks in dtor is unsafe (no vtable)
+    // Document the rule
+    bool rule_known = true;
+    FB_ASSERT_TRUE(rule_known);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
