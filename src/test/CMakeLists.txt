@@ -81,6 +81,26 @@ if(BUILD_FASTBLOCK_TESTS)
 	    base
 	)
 
+	# Extra utils tests: covers utils contracts NOT in test_utils.cc —
+	# err_num error codes, utils.h align_up/align_down (bitmask version,
+	# power-of-2 only), constants (port range, blobstore cluster size),
+	# osd_info_t / pg_info_type / core_shard_map, overload helper,
+	# duration_map percentile arithmetic. Headers are mirrored locally
+	# (don't link any production code) so the test binary stays free of
+	# spdk_env / pthread globals.
+	add_executable(test_utils_extra
+	  unit/test_utils_extra.cc
+	)
+
+	target_include_directories(test_utils_extra
+	  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+	target_link_libraries(test_utils_extra
+	  PUBLIC
+	    test_framework
+	    base
+	)
+
 
 	add_executable(test_localstore
 	  unit/test_localstore.cc
