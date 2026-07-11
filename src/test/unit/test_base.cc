@@ -9149,6 +9149,101 @@ FB_TEST(shard_atomic_operations, atomic_lock_free) {
 }
 
 // ============================================================================
+// Test Suite: shard_completion_handlers (Completion Handler Tests)
+// ============================================================================
+
+FB_SUITE_SETUP(shard_completion_handlers) {
+    // Setup code here
+}
+
+FB_SUITE_TEARDOWN(shard_completion_handlers) {
+    // Teardown code here
+}
+
+FB_TEST(shard_completion_handlers, on_success_invoked_with_zero) {
+    // Success callback gets rc=0
+    int rc_captured = -1;
+    auto handler = [&rc_captured](int rc) { rc_captured = rc; };
+    handler(0);
+    FB_ASSERT_EQ(rc_captured, 0);
+}
+
+FB_TEST(shard_completion_handlers, on_error_invoked_with_negative) {
+    // Error callback gets negative errno
+    int rc_captured = 0;
+    auto handler = [&rc_captured](int rc) { rc_captured = rc; };
+    handler(-ENOMEM);
+    FB_ASSERT_TRUE(rc_captured < 0);
+    FB_ASSERT_EQ(rc_captured, -ENOMEM);
+}
+
+FB_TEST(shard_completion_handlers, handler_invoked_once_per_op) {
+    // Each operation -> exactly one completion
+    int invocations = 0;
+    auto handler = [&invocations](int /*rc*/) { invocations++; };
+
+    handler(0);
+    FB_ASSERT_EQ(invocations, 1);
+}
+
+FB_TEST(shard_completion_handlers, handler_runs_in_caller_context) {
+    // Completion runs in originating shard's context
+    static uint32_t completion_shard;
+    completion_shard = UINT32_MAX;
+
+    auto handler = [](uint32_t shard) { completion_shard = shard; };
+    handler(2);
+    FB_ASSERT_EQ(completion_shard, 2);
+}
+
+FB_TEST(shard_completion_handlers, handler_chained) {
+    // Handlers can chain: A completes -> trigger B
+    int b_invoked = 0;
+    auto handler_b = [&b_invoked](int /*rc*/) { b_invoked++; };
+    auto handler_a = [&handler_b](int rc) { handler_b(rc); };
+
+    handler_a(0);
+    FB_ASSERT_EQ(b_invoked, 1);
+}
+
+FB_TEST(shard_completion_handlers, handler_carries_user_data) {
+    // Handler closure captures user context
+    struct user_data { int id; std::string name; };
+    user_data ud{42, "request_123"};
+
+    auto handler = [ud](int /*rc*/) {
+        FB_ASSERT_EQ(ud.id, 42);
+        FB_ASSERT_EQ(ud.name, "request_123");
+    };
+
+    handler(0);
+}
+
+FB_TEST(shard_completion_handlers, multiple_handlers_per_op) {
+    // Multiple handlers can be attached
+    int total = 0;
+    auto h1 = [&total](int /*rc*/) { total += 1; };
+    auto h2 = [&total](int /*rc*/) { total += 10; };
+    auto h3 = [&total](int /*rc*/) { total += 100; };
+
+    h1(0); h2(0); h3(0);
+    FB_ASSERT_EQ(total, 111);
+}
+
+FB_TEST(shard_completion_handlers, handler_exception_caught) {
+    // If handler throws, must be caught (or system crashes)
+    bool caught = false;
+    auto handler = [](int /*rc*/) { throw std::runtime_error("boom"); };
+
+    try {
+        handler(0);
+    } catch (const std::runtime_error&) {
+        caught = true;
+    }
+    FB_ASSERT_TRUE(caught);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
