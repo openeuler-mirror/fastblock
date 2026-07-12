@@ -3775,7 +3775,7 @@ struct replica_state {
     }
 
     void start_recovery() {
-        if (health == replica_health::degraded || health == replica_role::failed) {
+        if (health == replica_health::degraded || health == replica_health::failed) {
             health = replica_health::recovering;
             is_syncing = true;
         }
@@ -4336,56 +4336,56 @@ struct checksum_manager {
 };
 
 FB_TEST(bdev_checksum_verification, initial_no_checksum) {
-    checksum_ctx ctx;
-    FB_ASSERT_TRUE(ctx.type == checksum_type::none);
+    checksum_ctx chk_ctx;
+    FB_ASSERT_TRUE(chk_ctx.type == checksum_type::none);
 }
 
 FB_TEST(bdev_checksum_verification, set_checksum_type_and_value) {
-    checksum_ctx ctx;
-    ctx.set(checksum_type::crc32, 0x12345678);
-    FB_ASSERT_TRUE(ctx.type == checksum_type::crc32);
-    FB_ASSERT_EQ(ctx.value, 0x12345678ull);
+    checksum_ctx chk_ctx;
+    chk_ctx.set(checksum_type::crc32, 0x12345678);
+    FB_ASSERT_TRUE(chk_ctx.type == checksum_type::crc32);
+    FB_ASSERT_EQ(chk_ctx.value, 0x12345678ull);
 }
 
 FB_TEST(bdev_checksum_verification, compute_crc32) {
-    checksum_ctx ctx;
+    checksum_ctx chk_ctx;
     uint8_t data[] = {1, 2, 3, 4, 5};
-    ctx.compute_crc32(data, 5);
-    FB_ASSERT_TRUE(ctx.type == checksum_type::crc32);
-    FB_ASSERT_NE(ctx.computed_value, 0ull);
+    chk_ctx.compute_crc32(data, 5);
+    FB_ASSERT_TRUE(chk_ctx.type == checksum_type::crc32);
+    FB_ASSERT_NE(chk_ctx.computed_value, 0ull);
 }
 
 FB_TEST(bdev_checksum_verification, verify_success_when_match) {
-    checksum_ctx ctx;
+    checksum_ctx chk_ctx;
     uint8_t data[] = {1, 2, 3, 4, 5};
-    ctx.compute_crc32(data, 5);
-    ctx.value = ctx.computed_value;  // match
+    chk_ctx.compute_crc32(data, 5);
+    chk_ctx.value = chk_ctx.computed_value;  // match
 
-    FB_ASSERT_TRUE(ctx.verify());
+    FB_ASSERT_TRUE(chk_ctx.verify());
 }
 
 FB_TEST(bdev_checksum_verification, verify_fails_on_mismatch) {
-    checksum_ctx ctx;
-    ctx.type = checksum_type::crc32;
-    ctx.value = 0x12345678;
-    ctx.computed_value = 0x87654321;
+    checksum_ctx chk_ctx;
+    chk_ctx.type = checksum_type::crc32;
+    chk_ctx.value = 0x12345678;
+    chk_ctx.computed_value = 0x87654321;
 
-    FB_ASSERT_FALSE(ctx.verify());
+    FB_ASSERT_FALSE(chk_ctx.verify());
 }
 
 FB_TEST(bdev_checksum_verification, verify_none_always_succeeds) {
-    checksum_ctx ctx;
-    ctx.type = checksum_type::none;
-    FB_ASSERT_TRUE(ctx.verify());
+    checksum_ctx chk_ctx;
+    chk_ctx.type = checksum_type::none;
+    FB_ASSERT_TRUE(chk_ctx.verify());
 }
 
 FB_TEST(bdev_checksum_verification, reset_clears_all) {
-    checksum_ctx ctx;
-    ctx.set(checksum_type::crc32, 123);
-    ctx.reset();
+    checksum_ctx chk_ctx;
+    chk_ctx.set(checksum_type::crc32, 123);
+    chk_ctx.reset();
 
-    FB_ASSERT_TRUE(ctx.type == checksum_type::none);
-    FB_ASSERT_EQ(ctx.value, 0ull);
+    FB_ASSERT_TRUE(chk_ctx.type == checksum_type::none);
+    FB_ASSERT_EQ(chk_ctx.value, 0ull);
 }
 
 FB_TEST(bdev_checksum_verification, manager_set_checksum) {
@@ -5364,7 +5364,7 @@ enum class snapshot_state : uint8_t {
     error
 };
 
-struct snapshot_entry {
+struct snap_entry {
     uint64_t snap_id{0};
     std::string name;
     uint64_t created_at_us{0};
@@ -5374,19 +5374,18 @@ struct snapshot_entry {
 
     bool is_available() const { return state == snapshot_state::available; }
 
-    bool is_ancestor_of(const snapshot_entry& other) const {
-        // Check if this snapshot is in the other's lineage
+    bool is_ancestor_of(const snap_entry& other) const {
         if (other.parent_snap_id == 0) return false;
         return other.parent_snap_id == snap_id;
     }
 };
 
-struct snapshot_manager {
-    std::unordered_map<uint64_t, snapshot_entry> snapshots;
+struct snap_lineage_manager {
+    std::unordered_map<uint64_t, snap_entry> snapshots;
     uint64_t next_snap_id{1};
 
     uint64_t create(const std::string& name, uint64_t now_us, uint64_t size, uint64_t parent_id) {
-        snapshot_entry entry;
+        snap_entry entry;
         entry.snap_id = next_snap_id++;
         entry.name = name;
         entry.created_at_us = now_us;
@@ -5422,12 +5421,12 @@ struct snapshot_manager {
         }
     }
 
-    snapshot_entry* get(uint64_t snap_id) {
+    snap_entry* get(uint64_t snap_id) {
         auto it = snapshots.find(snap_id);
         return it != snapshots.end() ? &it->second : nullptr;
     }
 
-    snapshot_entry* find_by_name(const std::string& name) {
+    snap_entry* find_by_name(const std::string& name) {
         for (auto& [_, snap] : snapshots) {
             if (snap.name == name) return &snap;
         }
@@ -5466,7 +5465,6 @@ struct snapshot_manager {
         auto it = snapshots.find(snap_id);
         if (it == snapshots.end()) return false;
         if (!it->second.is_available()) return false;
-        // Cannot delete if it has available children
         for (const auto& [id, snap] : snapshots) {
             if (snap.parent_snap_id == snap_id && snap.is_available()) {
                 return false;
@@ -5477,30 +5475,30 @@ struct snapshot_manager {
 };
 
 FB_TEST(bdev_snapshot_manager, create_returns_id) {
-    snapshot_manager mgr;
+    snap_lineage_manager mgr;
     uint64_t id = mgr.create("snap1", 1000, 1024 * 1024, 0);
 
     FB_ASSERT_EQ(id, 1u);
     FB_ASSERT_EQ(mgr.count(), 1u);
 }
 
-FB_TEST(bdev_snapshot_manager, create_initial_state_creating) {
-    snapshot_manager mgr;
+FB_TEST(bdev_snap_lineage_manager, create_initial_state_creating) {
+    snap_lineage_manager mgr;
     uint64_t id = mgr.create("snap1", 1000, 1024, 0);
 
     FB_ASSERT_TRUE(mgr.get(id)->state == snapshot_state::creating);
 }
 
-FB_TEST(bdev_snapshot_manager, mark_available_changes_state) {
-    snapshot_manager mgr;
+FB_TEST(bdev_snap_lineage_manager, mark_available_changes_state) {
+    snap_lineage_manager mgr;
     uint64_t id = mgr.create("snap1", 1000, 1024, 0);
     mgr.mark_available(id);
 
     FB_ASSERT_TRUE(mgr.get(id)->is_available());
 }
 
-FB_TEST(bdev_snapshot_manager, mark_deleting_from_available) {
-    snapshot_manager mgr;
+FB_TEST(bdev_snap_lineage_manager, mark_deleting_from_available) {
+    snap_lineage_manager mgr;
     uint64_t id = mgr.create("snap1", 1000, 1024, 0);
     mgr.mark_available(id);
     mgr.mark_deleting(id);
@@ -5508,24 +5506,24 @@ FB_TEST(bdev_snapshot_manager, mark_deleting_from_available) {
     FB_ASSERT_TRUE(mgr.get(id)->state == snapshot_state::deleting);
 }
 
-FB_TEST(bdev_snapshot_manager, remove_deletes_entry) {
-    snapshot_manager mgr;
+FB_TEST(bdev_snap_lineage_manager, remove_deletes_entry) {
+    snap_lineage_manager mgr;
     uint64_t id = mgr.create("snap1", 1000, 1024, 0);
     mgr.remove(id);
 
     FB_ASSERT_TRUE(mgr.get(id) == nullptr);
 }
 
-FB_TEST(bdev_snapshot_manager, mark_error_state) {
-    snapshot_manager mgr;
+FB_TEST(bdev_snap_lineage_manager, mark_error_state) {
+    snap_lineage_manager mgr;
     uint64_t id = mgr.create("snap1", 1000, 1024, 0);
     mgr.mark_error(id);
 
     FB_ASSERT_TRUE(mgr.get(id)->state == snapshot_state::error);
 }
 
-FB_TEST(bdev_snapshot_manager, find_by_name) {
-    snapshot_manager mgr;
+FB_TEST(bdev_snap_lineage_manager, find_by_name) {
+    snap_lineage_manager mgr;
     mgr.create("snap1", 1000, 1024, 0);
     mgr.create("snap2", 2000, 2048, 0);
 
@@ -5534,8 +5532,8 @@ FB_TEST(bdev_snapshot_manager, find_by_name) {
     FB_ASSERT_TRUE(mgr.find_by_name("snap3") == nullptr);
 }
 
-FB_TEST(bdev_snapshot_manager, parent_child_lineage) {
-    snapshot_manager mgr;
+FB_TEST(bdev_snap_lineage_manager, parent_child_lineage) {
+    snap_lineage_manager mgr;
     uint64_t id1 = mgr.create("snap1", 1000, 1024, 0);
     mgr.mark_available(id1);
     uint64_t id2 = mgr.create("snap2", 2000, 2048, id1);
@@ -5547,8 +5545,8 @@ FB_TEST(bdev_snapshot_manager, parent_child_lineage) {
     FB_ASSERT_EQ(children[0], id2);
 }
 
-FB_TEST(bdev_snapshot_manager, available_count) {
-    snapshot_manager mgr;
+FB_TEST(bdev_snap_lineage_manager, available_count) {
+    snap_lineage_manager mgr;
     uint64_t id1 = mgr.create("snap1", 1000, 1024, 0);
     uint64_t id2 = mgr.create("snap2", 2000, 2048, 0);
     mgr.mark_available(id1);
@@ -5556,8 +5554,8 @@ FB_TEST(bdev_snapshot_manager, available_count) {
     FB_ASSERT_EQ(mgr.available_count(), 1u);
 }
 
-FB_TEST(bdev_snapshot_manager, total_size_available_only) {
-    snapshot_manager mgr;
+FB_TEST(bdev_snap_lineage_manager, total_size_available_only) {
+    snap_lineage_manager mgr;
     uint64_t id1 = mgr.create("snap1", 1000, 1024, 0);
     mgr.mark_available(id1);
     mgr.create("snap2", 2000, 2048, 0);  // still creating
@@ -5565,16 +5563,16 @@ FB_TEST(bdev_snapshot_manager, total_size_available_only) {
     FB_ASSERT_EQ(mgr.total_size(), 1024u);  // only snap1 counted
 }
 
-FB_TEST(bdev_snapshot_manager, can_delete_no_children) {
-    snapshot_manager mgr;
+FB_TEST(bdev_snap_lineage_manager, can_delete_no_children) {
+    snap_lineage_manager mgr;
     uint64_t id = mgr.create("snap1", 1000, 1024, 0);
     mgr.mark_available(id);
 
     FB_ASSERT_TRUE(mgr.can_delete(id));
 }
 
-FB_TEST(bdev_snapshot_manager, cannot_delete_with_available_children) {
-    snapshot_manager mgr;
+FB_TEST(bdev_snap_lineage_manager, cannot_delete_with_available_children) {
+    snap_lineage_manager mgr;
     uint64_t id1 = mgr.create("snap1", 1000, 1024, 0);
     mgr.mark_available(id1);
     uint64_t id2 = mgr.create("snap2", 2000, 2048, id1);
@@ -5583,8 +5581,8 @@ FB_TEST(bdev_snapshot_manager, cannot_delete_with_available_children) {
     FB_ASSERT_FALSE(mgr.can_delete(id1));  // has child snap2
 }
 
-FB_TEST(bdev_snapshot_manager, can_delete_after_child_deleted) {
-    snapshot_manager mgr;
+FB_TEST(bdev_snap_lineage_manager, can_delete_after_child_deleted) {
+    snap_lineage_manager mgr;
     uint64_t id1 = mgr.create("snap1", 1000, 1024, 0);
     mgr.mark_available(id1);
     uint64_t id2 = mgr.create("snap2", 2000, 2048, id1);
@@ -5596,8 +5594,8 @@ FB_TEST(bdev_snapshot_manager, can_delete_after_child_deleted) {
     FB_ASSERT_TRUE(mgr.can_delete(id1));  // child gone
 }
 
-FB_TEST(bdev_snapshot_manager, snapshot_chain_depth) {
-    snapshot_manager mgr;
+FB_TEST(bdev_snap_lineage_manager, snapshot_chain_depth) {
+    snap_lineage_manager mgr;
     uint64_t id1 = mgr.create("snap1", 1000, 1024, 0);
     mgr.mark_available(id1);
     uint64_t id2 = mgr.create("snap2", 2000, 2048, id1);
@@ -5611,8 +5609,8 @@ FB_TEST(bdev_snapshot_manager, snapshot_chain_depth) {
     FB_ASSERT_EQ(mgr.get(id1)->parent_snap_id, 0u);
 }
 
-FB_TEST(bdev_snapshot_manager, cannot_delete_creating_snapshot) {
-    snapshot_manager mgr;
+FB_TEST(bdev_snap_lineage_manager, cannot_delete_creating_snapshot) {
+    snap_lineage_manager mgr;
     uint64_t id = mgr.create("snap1", 1000, 1024, 0);
     // still in creating state
 
