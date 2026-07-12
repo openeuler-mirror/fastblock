@@ -1127,6 +1127,125 @@ FB_TEST(bdev_connection_lifecycle, disconnect_from_disconnected_fails) {
 }
 
 // ============================================================================
+// Test Suite: bdev_io_completion_tracking — IO completion tracking and stats
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_io_completion_tracking) {}
+FB_SUITE_TEARDOWN(bdev_io_completion_tracking) {}
+
+struct io_stats {
+    uint64_t total_submitted{0};
+    uint64_t completed_success{0};
+    uint64_t completed_failed{0};
+    uint64_t total_bytes{0};
+    uint64_t min_latency_us{UINT64_MAX};
+    uint64_t max_latency_us{0};
+    uint64_t total_latency_us{0};
+
+    void submit(uint64_t bytes) {
+        total_submitted++;
+        total_bytes += bytes;
+    }
+
+    void complete(uint64_t latency_us, bool success) {
+        if (success) {
+            completed_success++;
+        } else {
+            completed_failed++;
+        }
+        total_latency_us += latency_us;
+        if (latency_us < min_latency_us) min_latency_us = latency_us;
+        if (latency_us > max_latency_us) max_latency_us = latency_us;
+    }
+
+    uint64_t pending() const { return total_submitted - completed_success - completed_failed; }
+    double avg_latency() const {
+        uint64_t total_completed = completed_success + completed_failed;
+        return total_completed > 0 ? (double)total_latency_us / total_completed : 0.0;
+    }
+    double success_rate() const {
+        uint64_t total_completed = completed_success + completed_failed;
+        return total_completed > 0 ? (double)completed_success / total_completed : 0.0;
+    }
+};
+
+FB_TEST(bdev_io_completion_tracking, initial_stats_zero) {
+    io_stats stats;
+    FB_ASSERT_EQ(stats.total_submitted, 0u);
+    FB_ASSERT_EQ(stats.completed_success, 0u);
+    FB_ASSERT_EQ(stats.completed_failed, 0u);
+    FB_ASSERT_EQ(stats.pending(), 0u);
+}
+
+FB_TEST(bdev_io_completion_tracking, submit_increments_counters) {
+    io_stats stats;
+    stats.submit(4096);
+    stats.submit(4096);
+    FB_ASSERT_EQ(stats.total_submitted, 2u);
+    FB_ASSERT_EQ(stats.total_bytes, 8192u);
+    FB_ASSERT_EQ(stats.pending(), 2u);
+}
+
+FB_TEST(bdev_io_completion_tracking, complete_updates_stats) {
+    io_stats stats;
+    stats.submit(4096);
+    stats.complete(100, true);
+    FB_ASSERT_EQ(stats.completed_success, 1u);
+    FB_ASSERT_EQ(stats.pending(), 0u);
+    FB_ASSERT_EQ(stats.min_latency_us, 100u);
+    FB_ASSERT_EQ(stats.max_latency_us, 100u);
+}
+
+FB_TEST(bdev_io_completion_tracking, failed_io_counted) {
+    io_stats stats;
+    stats.submit(4096);
+    stats.submit(4096);
+    stats.complete(50, true);
+    stats.complete(50, false);
+    FB_ASSERT_EQ(stats.completed_success, 1u);
+    FB_ASSERT_EQ(stats.completed_failed, 1u);
+}
+
+FB_TEST(bdev_io_completion_tracking, latency_tracking) {
+    io_stats stats;
+    stats.submit(4096);
+    stats.complete(100, true);
+    stats.submit(4096);
+    stats.complete(200, true);
+    stats.submit(4096);
+    stats.complete(50, true);
+
+    FB_ASSERT_EQ(stats.min_latency_us, 50u);
+    FB_ASSERT_EQ(stats.max_latency_us, 200u);
+    FB_ASSERT_EQ(stats.total_latency_us, 350u);
+    FB_ASSERT_TRUE(stats.avg_latency() > 116 && stats.avg_latency() < 117);
+}
+
+FB_TEST(bdev_io_completion_tracking, success_rate_calculation) {
+    io_stats stats;
+    for (int i = 0; i < 10; ++i) {
+        stats.submit(4096);
+        stats.complete(100, i < 8);  // 8 success, 2 failures
+    }
+    FB_ASSERT_EQ(stats.completed_success, 8u);
+    FB_ASSERT_EQ(stats.completed_failed, 2u);
+    FB_ASSERT_TRUE(stats.success_rate() > 0.79 && stats.success_rate() < 0.81);
+}
+
+FB_TEST(bdev_io_completion_tracking, pending_count_with_inflight_ios) {
+    io_stats stats;
+    for (int i = 0; i < 100; ++i) stats.submit(4096);
+    for (int i = 0; i < 80; ++i) stats.complete(100, true);
+    FB_ASSERT_EQ(stats.pending(), 20u);
+}
+
+FB_TEST(bdev_io_completion_tracking, avg_latency_zero_when_no_completions) {
+    io_stats stats;
+    stats.submit(4096);
+    FB_ASSERT_TRUE(stats.avg_latency() == 0.0);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
