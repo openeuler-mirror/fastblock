@@ -449,41 +449,41 @@ FB_SUITE_SETUP(bdev_app_stop_state) {}
 FB_SUITE_TEARDOWN(bdev_app_stop_state) {}
 
 FB_TEST(bdev_app_stop_state, initial_state) {
-    app_stop_context_mirror ctx;
-    FB_ASSERT_TRUE(ctx.current_state == app_stop_state::running);
-    FB_ASSERT_EQ(ctx.counter, 0);
+    app_stop_context_mirror stop_ctx;
+    FB_ASSERT_TRUE(stop_ctx.current_state == app_stop_state::running);
+    FB_ASSERT_EQ(stop_ctx.counter, 0);
 }
 
 FB_TEST(bdev_app_stop_state, state_transitions) {
-    app_stop_context_mirror ctx;
+    app_stop_context_mirror stop_ctx;
 
-    ctx.advance();
-    FB_ASSERT_TRUE(ctx.current_state == app_stop_state::monitor_stopped);
+    stop_ctx.advance();
+    FB_ASSERT_TRUE(stop_ctx.current_state == app_stop_state::monitor_stopped);
 
-    ctx.advance();
-    FB_ASSERT_TRUE(ctx.current_state == app_stop_state::connect_cache_stopped);
+    stop_ctx.advance();
+    FB_ASSERT_TRUE(stop_ctx.current_state == app_stop_state::connect_cache_stopped);
 
-    ctx.advance();
-    FB_ASSERT_TRUE(ctx.current_state == app_stop_state::stopping_block_clients);
+    stop_ctx.advance();
+    FB_ASSERT_TRUE(stop_ctx.current_state == app_stop_state::stopping_block_clients);
 
-    ctx.advance();
-    FB_ASSERT_TRUE(ctx.current_state == app_stop_state::stopping_spdk_threads);
+    stop_ctx.advance();
+    FB_ASSERT_TRUE(stop_ctx.current_state == app_stop_state::stopping_spdk_threads);
 }
 
 FB_TEST(bdev_app_stop_state, counter_increments) {
-    app_stop_context_mirror ctx;
-    ctx.counter = 0;
-    ctx.counter++;
-    ctx.counter++;
-    FB_ASSERT_EQ(ctx.counter, 2);
+    app_stop_context_mirror stop_ctx;
+    stop_ctx.counter = 0;
+    stop_ctx.counter++;
+    stop_ctx.counter++;
+    FB_ASSERT_EQ(stop_ctx.counter, 2);
 }
 
 FB_TEST(bdev_app_stop_state, terminal_state_stays) {
-    app_stop_context_mirror ctx;
-    ctx.current_state = app_stop_state::stopping_spdk_threads;
+    app_stop_context_mirror stop_ctx;
+    stop_ctx.current_state = app_stop_state::stopping_spdk_threads;
 
-    ctx.advance();
-    FB_ASSERT_TRUE(ctx.current_state == app_stop_state::stopping_spdk_threads);
+    stop_ctx.advance();
+    FB_ASSERT_TRUE(stop_ctx.current_state == app_stop_state::stopping_spdk_threads);
 }
 
 // ============================================================================
