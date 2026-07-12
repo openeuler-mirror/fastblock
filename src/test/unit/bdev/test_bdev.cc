@@ -6106,6 +6106,228 @@ FB_TEST(bdev_dirty_tracking, tracker_clear) {
 }
 
 // ============================================================================
+// Test Suite: bdev_io_replay — IO replay and recovery
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_io_replay) {}
+FB_SUITE_TEARDOWN(bdev_io_replay) {}
+
+enum class replay_status : uint8_t {
+    pending,
+    in_progress,
+    completed,
+    failed,
+    abandoned
+};
+
+struct replay_entry {
+    uint64_t io_id{0};
+    uint64_t original_offset{0};
+    uint64_t original_length{0};
+    uint64_t submitted_at_us{0};
+    uint32_t attempt_count{0};
+    replay_status status{replay_status::pending};
+    uint32_t max_attempts{3};
+
+    bool can_retry() const {
+        return attempt_count < max_attempts && status != replay_status::abandoned;
+    }
+
+    void mark_attempt() { attempt_count++; }
+
+    void mark_in_progress() { status = replay_status::in_progress; }
+
+    void mark_completed() { status = replay_status::completed; }
+
+    void mark_failed() {
+        if (can_retry()) {
+            status = replay_status::pending;
+        } else {
+            status = replay_status::abandoned;
+        }
+    }
+
+    bool is_finished() const {
+        return status == replay_status::completed ||
+               status == replay_status::abandoned;
+    }
+
+    bool needs_recovery() const {
+        return status == replay_status::failed || status == replay_status::pending;
+    }
+};
+
+struct io_replay_manager {
+    std::deque<replay_entry> pending_replays;
+    std::unordered_map<uint64_t, replay_entry> active_replays;
+    uint64_t replay_id_counter{1};
+    uint64_t completed_count{0};
+    uint64_t abandoned_count{0};
+
+    uint64_t enqueue(uint64_t offset, uint64_t length, uint64_t now_us) {
+        replay_entry entry;
+        entry.io_id = replay_id_counter++;
+        entry.original_offset = offset;
+        entry.original_length = length;
+        entry.submitted_at_us = now_us;
+        pending_replays.push_back(entry);
+        return entry.io_id;
+    }
+
+    std::optional<replay_entry> dequeue() {
+        if (pending_replays.empty()) return std::nullopt;
+        replay_entry entry = pending_replays.front();
+        pending_replays.pop_front();
+        entry.mark_in_progress();
+        active_replays[entry.io_id] = entry;
+        return entry;
+    }
+
+    void handle_success(uint64_t io_id) {
+        auto it = active_replays.find(io_id);
+        if (it != active_replays.end()) {
+            it->second.mark_completed();
+            completed_count++;
+            active_replays.erase(it);
+        }
+    }
+
+    void handle_failure(uint64_t io_id) {
+        auto it = active_replays.find(io_id);
+        if (it != active_replays.end()) {
+            it->second.mark_attempt();
+            it->second.mark_failed();
+            if (it->second.can_retry()) {
+                pending_replays.push_back(it->second);
+                active_replays.erase(it);
+            } else {
+                abandoned_count++;
+                active_replays.erase(it);
+            }
+        }
+    }
+
+    size_t pending_count() const { return pending_replays.size(); }
+    size_t active_count() const { return active_replays.size(); }
+
+    size_t unfinished_count() const {
+        return pending_count() + active_count();
+    }
+};
+
+FB_TEST(bdev_io_replay, entry_initial_pending) {
+    replay_entry entry;
+    FB_ASSERT_TRUE(entry.status == replay_status::pending);
+}
+
+FB_TEST(bdev_io_replay, entry_can_retry_below_max) {
+    replay_entry entry;
+    entry.attempt_count = 1;
+    FB_ASSERT_TRUE(entry.can_retry());
+}
+
+FB_TEST(bdev_io_replay, entry_cannot_retry_at_max) {
+    replay_entry entry;
+    entry.attempt_count = 3;
+    FB_ASSERT_FALSE(entry.can_retry());
+}
+
+FB_TEST(bdev_io_replay, entry_mark_attempt_increments) {
+    replay_entry entry;
+    entry.mark_attempt();
+    FB_ASSERT_EQ(entry.attempt_count, 1u);
+}
+
+FB_TEST(bdev_io_replay, entry_mark_completed) {
+    replay_entry entry;
+    entry.mark_in_progress();
+    entry.mark_completed();
+    FB_ASSERT_TRUE(entry.status == replay_status::completed);
+}
+
+FB_TEST(bdev_io_replay, entry_mark_failed_retryable) {
+    replay_entry entry;
+    entry.attempt_count = 1;
+    entry.mark_in_progress();
+    entry.mark_failed();
+    FB_ASSERT_TRUE(entry.status == replay_status::pending);  // can retry
+}
+
+FB_TEST(bdev_io_replay, entry_mark_failed_abandoned) {
+    replay_entry entry;
+    entry.attempt_count = 3;
+    entry.mark_in_progress();
+    entry.mark_failed();
+    FB_ASSERT_TRUE(entry.status == replay_status::abandoned);  // max reached
+}
+
+FB_TEST(bdev_io_replay, entry_is_finished_completed) {
+    replay_entry entry;
+    entry.mark_completed();
+    FB_ASSERT_TRUE(entry.is_finished());
+}
+
+FB_TEST(bdev_io_replay, entry_is_finished_abandoned) {
+    replay_entry entry;
+    entry.status = replay_status::abandoned;
+    FB_ASSERT_TRUE(entry.is_finished());
+}
+
+FB_TEST(bdev_io_replay, manager_enqueue) {
+    io_replay_manager mgr;
+    mgr.enqueue(0, 1024, 1000);
+    FB_ASSERT_EQ(mgr.pending_count(), 1u);
+}
+
+FB_TEST(bdev_io_replay, manager_dequeue) {
+    io_replay_manager mgr;
+    mgr.enqueue(0, 1024, 1000);
+    auto entry = mgr.dequeue();
+    FB_ASSERT_TRUE(entry.has_value());
+    FB_ASSERT_TRUE(entry->status == replay_status::in_progress);
+    FB_ASSERT_EQ(mgr.pending_count(), 0u);
+    FB_ASSERT_EQ(mgr.active_count(), 1u);
+}
+
+FB_TEST(bdev_io_replay, manager_handle_success) {
+    io_replay_manager mgr;
+    uint64_t id = mgr.enqueue(0, 1024, 1000);
+    mgr.dequeue();
+    mgr.handle_success(id);
+    FB_ASSERT_EQ(mgr.completed_count, 1u);
+    FB_ASSERT_EQ(mgr.active_count(), 0u);
+}
+
+FB_TEST(bdev_io_replay, manager_handle_failure_retry) {
+    io_replay_manager mgr;
+    uint64_t id = mgr.enqueue(0, 1024, 1000);
+    mgr.dequeue();
+    mgr.handle_failure(id);  // attempt 1
+    FB_ASSERT_EQ(mgr.pending_count(), 1u);  // re-queued for retry
+    FB_ASSERT_EQ(mgr.abandoned_count, 0u);
+}
+
+FB_TEST(bdev_io_replay, manager_handle_failure_abandon) {
+    io_replay_manager mgr;
+    uint64_t id = mgr.enqueue(0, 1024, 1000);
+    mgr.dequeue();
+    mgr.handle_failure(id);  // attempt 1 -> retry
+    mgr.dequeue();
+    mgr.handle_failure(id);  // attempt 2 -> retry
+    mgr.dequeue();
+    mgr.handle_failure(id);  // attempt 3 -> abandon
+    FB_ASSERT_EQ(mgr.abandoned_count, 1u);
+}
+
+FB_TEST(bdev_io_replay, manager_unfinished_count) {
+    io_replay_manager mgr;
+    mgr.enqueue(0, 1024, 1000);
+    mgr.enqueue(2048, 512, 2000);
+    mgr.dequeue();  // one active, one pending
+    FB_ASSERT_EQ(mgr.unfinished_count(), 2u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
