@@ -4441,6 +4441,179 @@ FB_TEST(bdev_checksum_verification, manager_clear) {
 }
 
 // ============================================================================
+// Test Suite: bdev_quota_management — Quota enforcement
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_quota_management) {}
+FB_SUITE_TEARDOWN(bdev_quota_management) {}
+
+struct quota_limit {
+    uint64_t max_bytes{0};
+    uint64_t used_bytes{0};
+    uint64_t reserved_bytes{0};
+    bool enforced{true};
+
+    void set_limit(uint64_t limit) { max_bytes = limit; }
+
+    bool can_allocate(uint64_t size) const {
+        if (!enforced) return true;
+        return used_bytes + reserved_bytes + size <= max_bytes;
+    }
+
+    void allocate(uint64_t size) {
+        if (can_allocate(size)) used_bytes += size;
+    }
+
+    void free(uint64_t size) {
+        if (used_bytes >= size) used_bytes -= size;
+        else used_bytes = 0;
+    }
+
+    void reserve(uint64_t size) {
+        if (can_allocate(size)) reserved_bytes += size;
+    }
+
+    void release_reservation(uint64_t size) {
+        if (reserved_bytes >= size) reserved_bytes -= size;
+        else reserved_bytes = 0;
+    }
+
+    uint64_t available() const {
+        if (used_bytes + reserved_bytes > max_bytes) return 0;
+        return max_bytes - used_bytes - reserved_bytes;
+    }
+
+    double usage_ratio() const {
+        if (max_bytes == 0) return 0.0;
+        return static_cast<double>(used_bytes) / max_bytes;
+    }
+
+    void reset() { used_bytes = 0; reserved_bytes = 0; }
+};
+
+struct quota_manager {
+    std::unordered_map<std::string, quota_limit> pool_quotas;
+
+    void set_pool_quota(const std::string& pool, uint64_t limit) {
+        pool_quotas[pool].set_limit(limit);
+    }
+
+    quota_limit* get_quota(const std::string& pool) {
+        auto it = pool_quotas.find(pool);
+        return it != pool_quotas.end() ? &it->second : nullptr;
+    }
+
+    bool can_allocate(const std::string& pool, uint64_t size) const {
+        auto it = pool_quotas.find(pool);
+        return it == pool_quotas.end() || it->second.can_allocate(size);
+    }
+
+    void allocate(const std::string& pool, uint64_t size) {
+        auto it = pool_quotas.find(pool);
+        if (it != pool_quotas.end()) it->second.allocate(size);
+    }
+
+    void free(const std::string& pool, uint64_t size) {
+        auto it = pool_quotas.find(pool);
+        if (it != pool_quotas.end()) it->second.free(size);
+    }
+
+    uint64_t total_used() const {
+        uint64_t total = 0;
+        for (const auto& [_, q] : pool_quotas) total += q.used_bytes;
+        return total;
+    }
+
+    size_t pool_count() const { return pool_quotas.size(); }
+};
+
+FB_TEST(bdev_quota_management, limit_initial_zero) {
+    quota_limit limit;
+    FB_ASSERT_EQ(limit.max_bytes, 0u);
+}
+
+FB_TEST(bdev_quota_management, set_limit_configures_max) {
+    quota_limit limit;
+    limit.set_limit(10ull * 1024 * 1024 * 1024);
+    FB_ASSERT_EQ(limit.max_bytes, 10ull * 1024 * 1024 * 1024);
+}
+
+FB_TEST(bdev_quota_management, can_allocate_within_limit) {
+    quota_limit limit;
+    limit.set_limit(1000);
+    FB_ASSERT_TRUE(limit.can_allocate(500));
+}
+
+FB_TEST(bdev_quota_management, can_allocate_exceeds_limit) {
+    quota_limit limit;
+    limit.set_limit(100);
+    FB_ASSERT_FALSE(limit.can_allocate(200));
+}
+
+FB_TEST(bdev_quota_management, can_allocate_unenforced) {
+    quota_limit limit;
+    limit.set_limit(100);
+    limit.enforced = false;
+    FB_ASSERT_TRUE(limit.can_allocate(1000));
+}
+
+FB_TEST(bdev_quota_management, allocate_increments_used) {
+    quota_limit limit;
+    limit.set_limit(1000);
+    limit.allocate(100);
+    FB_ASSERT_EQ(limit.used_bytes, 100u);
+}
+
+FB_TEST(bdev_quota_management, free_decrements_used) {
+    quota_limit limit;
+    limit.set_limit(1000);
+    limit.allocate(100);
+    limit.free(50);
+    FB_ASSERT_EQ(limit.used_bytes, 50u);
+}
+
+FB_TEST(bdev_quota_management, reserve_affects_available) {
+    quota_limit limit;
+    limit.set_limit(1000);
+    limit.reserve(100);
+    FB_ASSERT_EQ(limit.available(), 900u);
+}
+
+FB_TEST(bdev_quota_management, usage_ratio) {
+    quota_limit limit;
+    limit.set_limit(1000);
+    limit.allocate(250);
+    FB_ASSERT_TRUE(limit.usage_ratio() > 0.24 && limit.usage_ratio() < 0.26);
+}
+
+FB_TEST(bdev_quota_management, manager_set_pool_quota) {
+    quota_manager mgr;
+    mgr.set_pool_quota("pool1", 1000);
+    FB_ASSERT_EQ(mgr.pool_count(), 1u);
+}
+
+FB_TEST(bdev_quota_management, manager_can_allocate) {
+    quota_manager mgr;
+    mgr.set_pool_quota("pool1", 100);
+    FB_ASSERT_TRUE(mgr.can_allocate("pool1", 50));
+    FB_ASSERT_FALSE(mgr.can_allocate("pool1", 200));
+}
+
+FB_TEST(bdev_quota_management, manager_no_limit_allows_all) {
+    quota_manager mgr;
+    FB_ASSERT_TRUE(mgr.can_allocate("unknown_pool", 1000000));
+}
+
+FB_TEST(bdev_quota_management, manager_total_used) {
+    quota_manager mgr;
+    mgr.set_pool_quota("pool1", 1000);
+    mgr.set_pool_quota("pool2", 2000);
+    mgr.allocate("pool1", 100);
+    mgr.allocate("pool2", 200);
+    FB_ASSERT_EQ(mgr.total_used(), 300u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
