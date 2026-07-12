@@ -3987,6 +3987,260 @@ FB_TEST(bdev_replica_state, group_cannot_write_without_primary) {
 }
 
 // ============================================================================
+// Test Suite: bdev_extent_allocator — Extent allocation tracking
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_extent_allocator) {}
+FB_SUITE_TEARDOWN(bdev_extent_allocator) {}
+
+struct extent {
+    uint64_t start_block{0};
+    uint64_t length{0};
+    uint64_t allocated_at_us{0};
+    bool is_free{false};
+
+    bool contains(uint64_t block) const {
+        return block >= start_block && block < start_block + length;
+    }
+
+    bool overlaps(const extent& other) const {
+        return !(start_block + length <= other.start_block ||
+                 other.start_block + other.length <= start_block);
+    }
+
+    bool can_merge(const extent& other) const {
+        return is_free && other.is_free &&
+               (start_block + length == other.start_block ||
+                other.start_block + other.length == start_block);
+    }
+};
+
+struct extent_allocator {
+    std::vector<extent> extents;
+    uint64_t total_blocks{0};
+    uint64_t free_blocks{0};
+    uint64_t next_search_start{0};
+
+    void initialize(uint64_t total) {
+        total_blocks = total;
+        free_blocks = total;
+        extent e;
+        e.start_block = 0;
+        e.length = total;
+        e.is_free = true;
+        extents.push_back(e);
+    }
+
+    std::optional<extent> allocate(uint64_t size, uint64_t now_us) {
+        if (size > free_blocks) return std::nullopt;
+
+        for (size_t i = 0; i < extents.size(); ++i) {
+            if (extents[i].is_free && extents[i].length >= size) {
+                extent allocated;
+                allocated.start_block = extents[i].start_block;
+                allocated.length = size;
+                allocated.allocated_at_us = now_us;
+                allocated.is_free = false;
+
+                // Split the free extent
+                if (extents[i].length > size) {
+                    extent remaining;
+                    remaining.start_block = extents[i].start_block + size;
+                    remaining.length = extents[i].length - size;
+                    remaining.is_free = true;
+                    extents.insert(extents.begin() + i + 1, remaining);
+                }
+
+                extents[i] = allocated;
+                free_blocks -= size;
+                return allocated;
+            }
+        }
+        return std::nullopt;
+    }
+
+    void free(uint64_t start, uint64_t length) {
+        for (size_t i = 0; i < extents.size(); ++i) {
+            if (extents[i].start_block == start) {
+                extents[i].is_free = true;
+                free_blocks += length;
+                coalesce_adjacent(i);
+                return;
+            }
+        }
+    }
+
+    void coalesce_adjacent(size_t idx) {
+        // Coalesce with next
+        if (idx + 1 < extents.size() && extents[idx].can_merge(extents[idx + 1])) {
+            extents[idx].length += extents[idx + 1].length;
+            extents.erase(extents.begin() + idx + 1);
+        }
+        // Coalesce with previous
+        if (idx > 0 && extents[idx].can_merge(extents[idx - 1])) {
+            extents[idx - 1].length += extents[idx].length;
+            extents.erase(extents.begin() + idx);
+        }
+    }
+
+    double utilization() const {
+        if (total_blocks == 0) return 0.0;
+        return static_cast<double>(total_blocks - free_blocks) / total_blocks;
+    }
+
+    extent* find_extent(uint64_t block) {
+        for (auto& e : extents) {
+            if (e.contains(block)) return &e;
+        }
+        return nullptr;
+    }
+};
+
+FB_TEST(bdev_extent_allocator, initialize_creates_single_free_extent) {
+    extent_allocator alloc;
+    alloc.initialize(1000);
+    FB_ASSERT_EQ(alloc.extents.size(), 1u);
+    FB_ASSERT_EQ(alloc.free_blocks, 1000u);
+}
+
+FB_TEST(bdev_extent_allocator, allocate_success) {
+    extent_allocator alloc;
+    alloc.initialize(1000);
+
+    auto ext = alloc.allocate(100, 0);
+    FB_ASSERT_TRUE(ext.has_value());
+    FB_ASSERT_EQ(ext->length, 100u);
+    FB_ASSERT_EQ(alloc.free_blocks, 900u);
+}
+
+FB_TEST(bdev_extent_allocator, allocate_fails_if_insufficient) {
+    extent_allocator alloc;
+    alloc.initialize(100);
+
+    auto ext = alloc.allocate(200, 0);
+    FB_ASSERT_FALSE(ext.has_value());
+}
+
+FB_TEST(bdev_extent_allocator, allocate_splits_extent) {
+    extent_allocator alloc;
+    alloc.initialize(1000);
+    alloc.allocate(100, 0);
+
+    FB_ASSERT_EQ(alloc.extents.size(), 2u);
+    FB_ASSERT_TRUE(alloc.extents[1].is_free);
+    FB_ASSERT_EQ(alloc.extents[1].start_block, 100u);
+}
+
+FB_TEST(bdev_extent_allocator, free_restores_space) {
+    extent_allocator alloc;
+    alloc.initialize(1000);
+    auto ext = alloc.allocate(100, 0);
+
+    alloc.free(ext->start_block, ext->length);
+    FB_ASSERT_EQ(alloc.free_blocks, 1000u);
+}
+
+FB_TEST(bdev_extent_allocator, free_coalesces_adjacent) {
+    extent_allocator alloc;
+    alloc.initialize(1000);
+    auto e1 = alloc.allocate(100, 0);
+    auto e2 = alloc.allocate(100, 0);
+
+    alloc.free(e1->start_block, e1->length);
+    alloc.free(e2->start_block, e2->length);
+
+    FB_ASSERT_EQ(alloc.extents.size(), 1u);  // merged back
+}
+
+FB_TEST(bdev_extent_allocator, utilization_calculation) {
+    extent_allocator alloc;
+    alloc.initialize(1000);
+    alloc.allocate(250, 0);
+
+    FB_ASSERT_TRUE(alloc.utilization() > 0.24 && alloc.utilization() < 0.26);
+}
+
+FB_TEST(bdev_extent_allocator, find_extent_by_block) {
+    extent_allocator alloc;
+    alloc.initialize(1000);
+    alloc.allocate(100, 0);
+
+    auto ext = alloc.find_extent(50);
+    FB_ASSERT_TRUE(ext != nullptr);
+    FB_ASSERT_FALSE(ext->is_free);
+}
+
+FB_TEST(bdev_extent_allocator, find_extent_free_block) {
+    extent_allocator alloc;
+    alloc.initialize(1000);
+    alloc.allocate(100, 0);
+
+    auto ext = alloc.find_extent(150);
+    FB_ASSERT_TRUE(ext != nullptr);
+    FB_ASSERT_TRUE(ext->is_free);
+}
+
+FB_TEST(bdev_extent_allocator, multiple_allocations) {
+    extent_allocator alloc;
+    alloc.initialize(1000);
+
+    alloc.allocate(100, 0);
+    alloc.allocate(200, 0);
+    alloc.allocate(50, 0);
+
+    FB_ASSERT_EQ(alloc.free_blocks, 650u);
+    FB_ASSERT_EQ(alloc.extents.size(), 4u);
+}
+
+FB_TEST(bdev_extent_allocator, extent_contains_check) {
+    extent ext;
+    ext.start_block = 100;
+    ext.length = 50;
+
+    FB_ASSERT_TRUE(ext.contains(100));
+    FB_ASSERT_TRUE(ext.contains(149));
+    FB_ASSERT_FALSE(ext.contains(150));
+}
+
+FB_TEST(bdev_extent_allocator, extent_overlaps_check) {
+    extent e1;
+    e1.start_block = 0;
+    e1.length = 100;
+
+    extent e2;
+    e2.start_block = 50;
+    e2.length = 100;
+
+    FB_ASSERT_TRUE(e1.overlaps(e2));
+}
+
+FB_TEST(bdev_extent_allocator, extent_no_overlap) {
+    extent e1;
+    e1.start_block = 0;
+    e1.length = 100;
+
+    extent e2;
+    e2.start_block = 100;
+    e2.length = 100;
+
+    FB_ASSERT_FALSE(e1.overlaps(e2));
+}
+
+FB_TEST(bdev_extent_allocator, extent_can_merge_contiguous) {
+    extent e1;
+    e1.start_block = 0;
+    e1.length = 100;
+    e1.is_free = true;
+
+    extent e2;
+    e2.start_block = 100;
+    e2.length = 50;
+    e2.is_free = true;
+
+    FB_ASSERT_TRUE(e1.can_merge(e2));
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
