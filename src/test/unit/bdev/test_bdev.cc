@@ -781,6 +781,92 @@ FB_TEST(bdev_io_chunking, zero_object_size_returns_zero) {
 }
 
 // ============================================================================
+// Test Suite: bdev_queue_depth_management — Queue depth and slot allocation
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_queue_depth_management) {}
+FB_SUITE_TEARDOWN(bdev_queue_depth_management) {}
+
+// Simulated slot allocator
+struct slot_allocator {
+    uint32_t total_slots;
+    uint32_t used_slots{0};
+    uint32_t next_slot{0};
+
+    slot_allocator(uint32_t n) : total_slots(n) {}
+
+    std::optional<uint32_t> allocate() {
+        if (used_slots >= total_slots) return std::nullopt;
+        uint32_t slot = next_slot;
+        next_slot = (next_slot + 1) % total_slots;
+        used_slots++;
+        return slot;
+    }
+
+    void deallocate(uint32_t slot) {
+        if (used_slots > 0) used_slots--;
+        (void)slot;
+    }
+
+    uint32_t available() const { return total_slots - used_slots; }
+    bool is_full() const { return used_slots >= total_slots; }
+};
+
+FB_TEST(bdev_queue_depth_management, allocate_single_slot) {
+    slot_allocator alloc(128);
+    auto slot = alloc.allocate();
+    FB_ASSERT_TRUE(slot.has_value());
+    FB_ASSERT_EQ(slot.value(), 0u);
+    FB_ASSERT_EQ(alloc.used_slots, 1u);
+}
+
+FB_TEST(bdev_queue_depth_management, allocate_all_slots) {
+    slot_allocator alloc(128);
+    for (uint32_t i = 0; i < 128; ++i) {
+        auto slot = alloc.allocate();
+        FB_ASSERT_TRUE(slot.has_value());
+        FB_ASSERT_EQ(slot.value(), i);
+    }
+    FB_ASSERT_TRUE(alloc.is_full());
+}
+
+FB_TEST(bdev_queue_depth_management, allocate_fails_when_full) {
+    slot_allocator alloc(4);
+    for (int i = 0; i < 4; ++i) alloc.allocate();
+    auto slot = alloc.allocate();
+    FB_ASSERT_FALSE(slot.has_value());
+}
+
+FB_TEST(bdev_queue_depth_management, deallocate_frees_slot) {
+    slot_allocator alloc(4);
+    alloc.allocate();
+    alloc.allocate();
+    FB_ASSERT_EQ(alloc.available(), 2u);
+    alloc.deallocate(0);
+    FB_ASSERT_EQ(alloc.available(), 3u);
+}
+
+FB_TEST(bdev_queue_depth_management, slot_wraps_around) {
+    slot_allocator alloc(4);
+    for (int i = 0; i < 4; ++i) alloc.allocate();
+    alloc.deallocate(0);
+    alloc.deallocate(1);
+    alloc.deallocate(2);
+    alloc.deallocate(3);
+    // After deallocating all, next_slot continues from where it was
+    FB_ASSERT_EQ(alloc.next_slot, 0u);
+}
+
+FB_TEST(bdev_queue_depth_management, available_count_correct) {
+    slot_allocator alloc(128);
+    FB_ASSERT_EQ(alloc.available(), 128u);
+    alloc.allocate();
+    alloc.allocate();
+    alloc.allocate();
+    FB_ASSERT_EQ(alloc.available(), 125u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
