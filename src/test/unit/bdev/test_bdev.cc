@@ -3727,6 +3727,266 @@ FB_TEST(bdev_io_scheduler, weighted_with_same_weight_picks_first) {
 }
 
 // ============================================================================
+// Test Suite: bdev_replica_state — Replica state machine tracking
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_replica_state) {}
+FB_SUITE_TEARDOWN(bdev_replica_state) {}
+
+enum class replica_role {
+    unknown,
+    primary,
+    secondary,
+    spare
+};
+
+enum class replica_health {
+    healthy,
+    degraded,
+    recovering,
+    failed
+};
+
+struct replica_state {
+    uint32_t replica_id{0};
+    replica_role role{replica_role::unknown};
+    replica_health health{replica_health::healthy};
+    uint64_t last_sync_us{0};
+    uint64_t sync_lag_us{0};
+    bool is_syncing{false};
+
+    void set_primary() {
+        role = replica_role::primary;
+        health = replica_health::healthy;
+    }
+
+    void set_secondary(uint64_t now_us) {
+        role = replica_role::secondary;
+        last_sync_us = now_us;
+    }
+
+    void update_sync_lag(uint64_t now_us) {
+        if (role == replica_role::secondary) {
+            sync_lag_us = now_us - last_sync_us;
+            if (sync_lag_us > 10000000) {  // 10s threshold
+                health = replica_health::degraded;
+            }
+        }
+    }
+
+    void start_recovery() {
+        if (health == replica_health::degraded || health == replica_role::failed) {
+            health = replica_health::recovering;
+            is_syncing = true;
+        }
+    }
+
+    void complete_recovery(uint64_t now_us) {
+        if (health == replica_health::recovering) {
+            health = replica_health::healthy;
+            is_syncing = false;
+            last_sync_us = now_us;
+        }
+    }
+
+    void mark_failed() {
+        health = replica_health::failed;
+        is_syncing = false;
+    }
+
+    bool needs_recovery() const {
+        return health == replica_health::degraded || health == replica_health::failed;
+    }
+
+    bool is_available() const {
+        return health == replica_health::healthy && role != replica_role::unknown;
+    }
+};
+
+struct replica_group {
+    std::vector<replica_state> replicas;
+    uint32_t primary_id{0};
+
+    void add_replica(uint32_t id) {
+        replica_state r;
+        r.replica_id = id;
+        replicas.push_back(r);
+    }
+
+    replica_state* get_replica(uint32_t id) {
+        for (auto& r : replicas) {
+            if (r.replica_id == id) return &r;
+        }
+        return nullptr;
+    }
+
+    void designate_primary(uint32_t id) {
+        auto* r = get_replica(id);
+        if (r) {
+            r->set_primary();
+            primary_id = id;
+        }
+    }
+
+    size_t healthy_count() const {
+        size_t n = 0;
+        for (const auto& r : replicas) {
+            if (r.health == replica_health::healthy) n++;
+        }
+        return n;
+    }
+
+    size_t available_count() const {
+        size_t n = 0;
+        for (const auto& r : replicas) {
+            if (r.is_available()) n++;
+        }
+        return n;
+    }
+
+    bool can_serve_reads() const {
+        return healthy_count() >= 2;
+    }
+
+    bool can_serve_writes() const {
+        for (const auto& r : replicas) {
+            if (r.role == replica_role::primary && r.is_available()) return true;
+        }
+        return false;
+    }
+};
+
+FB_TEST(bdev_replica_state, initial_unknown_role) {
+    replica_state r;
+    FB_ASSERT_TRUE(r.role == replica_role::unknown);
+    FB_ASSERT_FALSE(r.is_available());
+}
+
+FB_TEST(bdev_replica_state, set_primary_healthy) {
+    replica_state r;
+    r.set_primary();
+    FB_ASSERT_TRUE(r.role == replica_role::primary);
+    FB_ASSERT_TRUE(r.health == replica_health::healthy);
+    FB_ASSERT_TRUE(r.is_available());
+}
+
+FB_TEST(bdev_replica_state, set_secondary_updates_sync_time) {
+    replica_state r;
+    r.set_secondary(1000000);
+    FB_ASSERT_TRUE(r.role == replica_role::secondary);
+    FB_ASSERT_EQ(r.last_sync_us, 1000000u);
+}
+
+FB_TEST(bdev_replica_state, sync_lag_marks_degraded) {
+    replica_state r;
+    r.set_secondary(0);
+    r.update_sync_lag(20000000);  // 20s lag
+
+    FB_ASSERT_TRUE(r.health == replica_health::degraded);
+}
+
+FB_TEST(bdev_replica_state, small_lag_healthy) {
+    replica_state r;
+    r.set_secondary(0);
+    r.update_sync_lag(5000000);  // 5s lag
+
+    FB_ASSERT_TRUE(r.health == replica_health::healthy);
+}
+
+FB_TEST(bdev_replica_state, start_recovery_from_degraded) {
+    replica_state r;
+    r.health = replica_health::degraded;
+    r.start_recovery();
+
+    FB_ASSERT_TRUE(r.health == replica_health::recovering);
+    FB_ASSERT_TRUE(r.is_syncing);
+}
+
+FB_TEST(bdev_replica_state, complete_recovery_becomes_healthy) {
+    replica_state r;
+    r.health = replica_health::recovering;
+    r.complete_recovery(1000000);
+
+    FB_ASSERT_TRUE(r.health == replica_health::healthy);
+    FB_ASSERT_FALSE(r.is_syncing);
+}
+
+FB_TEST(bdev_replica_state, mark_failed_stops_syncing) {
+    replica_state r;
+    r.health = replica_health::recovering;
+    r.is_syncing = true;
+    r.mark_failed();
+
+    FB_ASSERT_TRUE(r.health == replica_health::failed);
+    FB_ASSERT_FALSE(r.is_syncing);
+}
+
+FB_TEST(bdev_replica_state, needs_recovery_check) {
+    replica_state r;
+    r.health = replica_health::degraded;
+    FB_ASSERT_TRUE(r.needs_recovery());
+
+    r.health = replica_health::healthy;
+    FB_ASSERT_FALSE(r.needs_recovery());
+}
+
+FB_TEST(bdev_replica_state, group_add_replica) {
+    replica_group group;
+    group.add_replica(1);
+    group.add_replica(2);
+    FB_ASSERT_EQ(group.replicas.size(), 2u);
+}
+
+FB_TEST(bdev_replica_state, group_designate_primary) {
+    replica_group group;
+    group.add_replica(1);
+    group.designate_primary(1);
+
+    FB_ASSERT_EQ(group.primary_id, 1u);
+    FB_ASSERT_TRUE(group.get_replica(1)->role == replica_role::primary);
+}
+
+FB_TEST(bdev_replica_state, group_healthy_count) {
+    replica_group group;
+    group.add_replica(1);
+    group.add_replica(2);
+    group.add_replica(3);
+    group.designate_primary(1);
+    group.get_replica(2)->set_secondary(0);
+    group.get_replica(3)->set_secondary(0);
+    group.get_replica(3)->health = replica_health::degraded;
+
+    FB_ASSERT_EQ(group.healthy_count(), 2u);
+}
+
+FB_TEST(bdev_replica_state, group_can_serve_reads) {
+    replica_group group;
+    group.add_replica(1);
+    group.add_replica(2);
+    group.designate_primary(1);
+    group.get_replica(2)->set_secondary(0);
+
+    FB_ASSERT_TRUE(group.can_serve_reads());
+}
+
+FB_TEST(bdev_replica_state, group_can_serve_writes_with_primary) {
+    replica_group group;
+    group.add_replica(1);
+    group.designate_primary(1);
+
+    FB_ASSERT_TRUE(group.can_serve_writes());
+}
+
+FB_TEST(bdev_replica_state, group_cannot_write_without_primary) {
+    replica_group group;
+    group.add_replica(1);
+    group.add_replica(2);
+    // no primary designated
+
+    FB_ASSERT_FALSE(group.can_serve_writes());
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
