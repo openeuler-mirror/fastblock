@@ -1357,7 +1357,135 @@ FB_TEST(bdev_write_ring_state, next_slot_advances_independently) {
     for (int i = 0; i < 10; ++i) {
         ring.next_slot = (ring.next_slot + 1) % ring.slot_count;
     }
-    FB_ASSERT_EQ(ring.next_slot, 2u);  // 10 % 4 = 2
+    FB_ASSERT_EQ(ring.next_slot, 2u);
+}
+
+// ============================================================================
+// Test Suite: bdev_rpc_error_handling — RPC error code handling
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_rpc_error_handling) {}
+FB_SUITE_TEARDOWN(bdev_rpc_error_handling) {}
+
+enum class rpc_error_code {
+    success = 0,
+    invalid_param = -1,
+    not_found = -2,
+    already_exists = -3,
+    permission_denied = -4,
+    internal_error = -5,
+    timeout = -6
+};
+
+struct rpc_error_handler {
+    rpc_error_code last_error{rpc_error_code::success};
+    uint64_t error_count{0};
+
+    bool is_success(rpc_error_code code) const {
+        return code == rpc_error_code::success;
+    }
+
+    bool is_retryable(rpc_error_code code) const {
+        return code == rpc_error_code::timeout ||
+               code == rpc_error_code::internal_error;
+    }
+
+    bool is_client_error(rpc_error_code code) const {
+        return code == rpc_error_code::invalid_param ||
+               code == rpc_error_code::not_found ||
+               code == rpc_error_code::already_exists ||
+               code == rpc_error_code::permission_denied;
+    }
+
+    bool is_server_error(rpc_error_code code) const {
+        return code == rpc_error_code::internal_error ||
+               code == rpc_error_code::timeout;
+    }
+
+    std::string error_message(rpc_error_code code) const {
+        switch (code) {
+            case rpc_error_code::success: return "success";
+            case rpc_error_code::invalid_param: return "invalid parameter";
+            case rpc_error_code::not_found: return "not found";
+            case rpc_error_code::already_exists: return "already exists";
+            case rpc_error_code::permission_denied: return "permission denied";
+            case rpc_error_code::internal_error: return "internal error";
+            case rpc_error_code::timeout: return "timeout";
+            default: return "unknown error";
+        }
+    }
+
+    void record_error(rpc_error_code code) {
+        last_error = code;
+        if (!is_success(code)) error_count++;
+    }
+
+    void reset() {
+        last_error = rpc_error_code::success;
+        error_count = 0;
+    }
+};
+
+FB_TEST(bdev_rpc_error_handling, success_is_not_error) {
+    rpc_error_handler handler;
+    FB_ASSERT_TRUE(handler.is_success(rpc_error_code::success));
+    FB_ASSERT_FALSE(handler.is_client_error(rpc_error_code::success));
+    FB_ASSERT_FALSE(handler.is_server_error(rpc_error_code::success));
+}
+
+FB_TEST(bdev_rpc_error_handling, timeout_is_retryable) {
+    rpc_error_handler handler;
+    FB_ASSERT_TRUE(handler.is_retryable(rpc_error_code::timeout));
+    FB_ASSERT_FALSE(handler.is_retryable(rpc_error_code::invalid_param));
+}
+
+FB_TEST(bdev_rpc_error_handling, client_vs_server_errors) {
+    rpc_error_handler handler;
+    FB_ASSERT_TRUE(handler.is_client_error(rpc_error_code::invalid_param));
+    FB_ASSERT_TRUE(handler.is_client_error(rpc_error_code::not_found));
+    FB_ASSERT_TRUE(handler.is_server_error(rpc_error_code::internal_error));
+    FB_ASSERT_TRUE(handler.is_server_error(rpc_error_code::timeout));
+}
+
+FB_TEST(bdev_rpc_error_handling, error_messages_correct) {
+    rpc_error_handler handler;
+    FB_ASSERT_STR_EQ(handler.error_message(rpc_error_code::success).c_str(), "success");
+    FB_ASSERT_STR_EQ(handler.error_message(rpc_error_code::invalid_param).c_str(), "invalid parameter");
+    FB_ASSERT_STR_EQ(handler.error_message(rpc_error_code::timeout).c_str(), "timeout");
+}
+
+FB_TEST(bdev_rpc_error_handling, record_error_increments_count) {
+    rpc_error_handler handler;
+    FB_ASSERT_EQ(handler.error_count, 0u);
+
+    handler.record_error(rpc_error_code::success);
+    FB_ASSERT_EQ(handler.error_count, 0u);  // success not counted
+
+    handler.record_error(rpc_error_code::timeout);
+    FB_ASSERT_EQ(handler.error_count, 1u);
+
+    handler.record_error(rpc_error_code::not_found);
+    FB_ASSERT_EQ(handler.error_count, 2u);
+}
+
+FB_TEST(bdev_rpc_error_handling, last_error_tracking) {
+    rpc_error_handler handler;
+    handler.record_error(rpc_error_code::timeout);
+    FB_ASSERT_TRUE(handler.last_error == rpc_error_code::timeout);
+
+    handler.record_error(rpc_error_code::not_found);
+    FB_ASSERT_TRUE(handler.last_error == rpc_error_code::not_found);
+}
+
+FB_TEST(bdev_rpc_error_handling, reset_clears_state) {
+    rpc_error_handler handler;
+    handler.record_error(rpc_error_code::timeout);
+    handler.record_error(rpc_error_code::internal_error);
+    FB_ASSERT_EQ(handler.error_count, 2u);
+
+    handler.reset();
+    FB_ASSERT_EQ(handler.error_count, 0u);
+    FB_ASSERT_TRUE(handler.last_error == rpc_error_code::success);
 }
 
 // ============================================================================
