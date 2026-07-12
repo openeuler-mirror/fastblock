@@ -5618,6 +5618,168 @@ FB_TEST(bdev_snap_lineage_manager, cannot_delete_creating_snapshot) {
 }
 
 // ============================================================================
+// Test Suite: bdev_rpc_request — RPC request parsing and validation
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_rpc_request) {}
+FB_SUITE_TEARDOWN(bdev_rpc_request) {}
+
+struct rpc_create_params {
+    std::string name;
+    std::string pool_name;
+    std::string image_name;
+    uint64_t image_size{0};
+    uint64_t object_size{0};
+    uint32_t block_size{512};
+    std::string monitor_address;
+};
+
+struct rpc_delete_params {
+    std::string name;
+};
+
+struct rpc_resize_params {
+    std::string name;
+    uint64_t new_size{0};
+};
+
+struct field_decoder {
+    std::string field_name;
+    bool required;
+};
+
+static const std::vector<field_decoder> create_decoders = {
+    {"name", true}, {"pool_name", true}, {"image_name", true},
+    {"image_size", true}, {"object_size", true}, {"block_size", false},
+    {"monitor_address", true}
+};
+
+struct rpc_validator {
+    static bool validate_required(const std::unordered_map<std::string, std::string>& fields,
+                                  const std::vector<field_decoder>& decoders) {
+        for (const auto& dec : decoders) {
+            if (dec.required && fields.find(dec.field_name) == fields.end()) return false;
+        }
+        return true;
+    }
+
+    static std::vector<std::string> missing_fields(const std::unordered_map<std::string, std::string>& fields,
+                                                    const std::vector<field_decoder>& decoders) {
+        std::vector<std::string> missing;
+        for (const auto& dec : decoders) {
+            if (dec.required && fields.find(dec.field_name) == fields.end()) {
+                missing.push_back(dec.field_name);
+            }
+        }
+        return missing;
+    }
+
+    static std::optional<rpc_create_params> parse_create(const std::unordered_map<std::string, std::string>& fields) {
+        if (!validate_required(fields, create_decoders)) return std::nullopt;
+        rpc_create_params params;
+        params.name = fields.at("name");
+        params.pool_name = fields.at("pool_name");
+        params.image_name = fields.at("image_name");
+        params.image_size = std::stoull(fields.at("image_size"));
+        params.object_size = std::stoull(fields.at("object_size"));
+        params.monitor_address = fields.at("monitor_address");
+        auto it = fields.find("block_size");
+        if (it != fields.end()) params.block_size = static_cast<uint32_t>(std::stoul(it->second));
+        return params;
+    }
+
+    static std::optional<rpc_delete_params> parse_delete(const std::unordered_map<std::string, std::string>& fields) {
+        if (fields.find("name") == fields.end()) return std::nullopt;
+        return rpc_delete_params{fields.at("name")};
+    }
+
+    static std::optional<rpc_resize_params> parse_resize(const std::unordered_map<std::string, std::string>& fields) {
+        if (fields.find("name") == fields.end() || fields.find("new_size") == fields.end()) return std::nullopt;
+        return rpc_resize_params{fields.at("name"), std::stoull(fields.at("new_size"))};
+    }
+};
+
+FB_TEST(bdev_rpc_request, create_decoder_count) {
+    FB_ASSERT_EQ(create_decoders.size(), 7u);
+}
+
+FB_TEST(bdev_rpc_request, create_required_fields) {
+    FB_ASSERT_TRUE(create_decoders[0].required);   // name
+    FB_ASSERT_FALSE(create_decoders[5].required);  // block_size optional
+}
+
+FB_TEST(bdev_rpc_request, validate_all_present) {
+    std::unordered_map<std::string, std::string> f = {
+        {"name", "b0"}, {"pool_name", "p0"}, {"image_name", "i0"},
+        {"image_size", "1"}, {"object_size", "1"}, {"monitor_address", "m0"}
+    };
+    FB_ASSERT_TRUE(rpc_validator::validate_required(f, create_decoders));
+}
+
+FB_TEST(bdev_rpc_request, validate_missing_required) {
+    std::unordered_map<std::string, std::string> f = {{ "name", "b0" }};
+    FB_ASSERT_FALSE(rpc_validator::validate_required(f, create_decoders));
+}
+
+FB_TEST(bdev_rpc_request, missing_fields_returns_list) {
+    std::unordered_map<std::string, std::string> f;
+    auto missing = rpc_validator::missing_fields(f, create_decoders);
+    FB_ASSERT_TRUE(missing.size() >= 5u);
+}
+
+FB_TEST(bdev_rpc_request, parse_create_success) {
+    std::unordered_map<std::string, std::string> f = {
+        {"name", "b0"}, {"pool_name", "p0"}, {"image_name", "i0"},
+        {"image_size", "1024"}, {"object_size", "4096"}, {"monitor_address", "m0"}
+    };
+    auto r = rpc_validator::parse_create(f);
+    FB_ASSERT_TRUE(r.has_value());
+    FB_ASSERT_STR_EQ(r->name.c_str(), "b0");
+}
+
+FB_TEST(bdev_rpc_request, parse_create_with_optional_block_size) {
+    std::unordered_map<std::string, std::string> f = {
+        {"name", "b0"}, {"pool_name", "p0"}, {"image_name", "i0"},
+        {"image_size", "1024"}, {"object_size", "4096"}, {"monitor_address", "m0"},
+        {"block_size", "512"}
+    };
+    auto r = rpc_validator::parse_create(f);
+    FB_ASSERT_TRUE(r.has_value());
+    FB_ASSERT_EQ(r->block_size, 512u);
+}
+
+FB_TEST(bdev_rpc_request, parse_create_fails_missing) {
+    std::unordered_map<std::string, std::string> f = {{ "name", "b0" }};
+    auto r = rpc_validator::parse_create(f);
+    FB_ASSERT_FALSE(r.has_value());
+}
+
+FB_TEST(bdev_rpc_request, parse_delete_success) {
+    std::unordered_map<std::string, std::string> f = {{"name", "b0"}};
+    auto r = rpc_validator::parse_delete(f);
+    FB_ASSERT_TRUE(r.has_value());
+}
+
+FB_TEST(bdev_rpc_request, parse_delete_fails_no_name) {
+    std::unordered_map<std::string, std::string> f;
+    auto r = rpc_validator::parse_delete(f);
+    FB_ASSERT_FALSE(r.has_value());
+}
+
+FB_TEST(bdev_rpc_request, parse_resize_success) {
+    std::unordered_map<std::string, std::string> f = {{ "name", "b0" }, { "new_size", "2048" }};
+    auto r = rpc_validator::parse_resize(f);
+    FB_ASSERT_TRUE(r.has_value());
+    FB_ASSERT_EQ(r->new_size, 2048ull);
+}
+
+FB_TEST(bdev_rpc_request, parse_resize_fails_missing_size) {
+    std::unordered_map<std::string, std::string> f = {{ "name", "b0" }};
+    auto r = rpc_validator::parse_resize(f);
+    FB_ASSERT_FALSE(r.has_value());
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
