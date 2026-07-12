@@ -6328,6 +6328,200 @@ FB_TEST(bdev_io_replay, manager_unfinished_count) {
 }
 
 // ============================================================================
+// Test Suite: bdev_connection_pool — Connection pool management
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_connection_pool) {}
+FB_SUITE_TEARDOWN(bdev_connection_pool) {}
+
+struct connection_entry {
+    uint64_t conn_id{0};
+    std::string endpoint;
+    bool is_active{false};
+    bool is_busy{false};
+    uint64_t last_used_us{0};
+    uint64_t idle_timeout_us{30000000};  // 30s
+
+    void activate() { is_active = true; }
+
+    void deactivate() { is_active = false; is_busy = false; }
+
+    void acquire(uint64_t now_us) { is_busy = true; last_used_us = now_us; }
+
+    void release() { is_busy = false; }
+
+    bool is_idle(uint64_t now_us) const {
+        return is_active && !is_busy && now_us - last_used_us > idle_timeout_us;
+    }
+
+    bool is_available() const { return is_active && !is_busy; }
+};
+
+struct connection_pool {
+    std::vector<connection_entry> connections;
+    uint64_t next_conn_id{1};
+    uint64_t max_connections{10};
+
+    uint64_t create(const std::string& endpoint) {
+        if (connections.size() >= max_connections) return 0;
+        connection_entry conn;
+        conn.conn_id = next_conn_id++;
+        conn.endpoint = endpoint;
+        conn.activate();
+        connections.push_back(conn);
+        return conn.conn_id;
+    }
+
+    std::optional<uint64_t> acquire_available(uint64_t now_us) {
+        for (auto& conn : connections) {
+            if (conn.is_available()) {
+                conn.acquire(now_us);
+                return conn.conn_id;
+            }
+        }
+        return std::nullopt;
+    }
+
+    void release(uint64_t conn_id) {
+        for (auto& conn : connections) {
+            if (conn.conn_id == conn_id) conn.release();
+        }
+    }
+
+    size_t active_count() const {
+        size_t n = 0;
+        for (const auto& c : connections) { if (c.is_active) n++; }
+        return n;
+    }
+
+    size_t available_count() const {
+        size_t n = 0;
+        for (const auto& c : connections) { if (c.is_available()) n++; }
+        return n;
+    }
+
+    std::vector<uint64_t> get_idle_connections(uint64_t now_us) const {
+        std::vector<uint64_t> idle;
+        for (const auto& c : connections) { if (c.is_idle(now_us)) idle.push_back(c.conn_id); }
+        return idle;
+    }
+
+    void close(uint64_t conn_id) {
+        for (auto it = connections.begin(); it != connections.end(); ++it) {
+            if (it->conn_id == conn_id) { it->deactivate(); }
+        }
+    }
+
+    void remove(uint64_t conn_id) {
+        connections.erase(std::remove_if(connections.begin(), connections.end(),
+            [conn_id](const connection_entry& c) { return c.conn_id == conn_id; }), connections.end());
+    }
+};
+
+FB_TEST(bdev_connection_pool, entry_initial_inactive) {
+    connection_entry conn;
+    FB_ASSERT_FALSE(conn.is_active);
+}
+
+FB_TEST(bdev_connection_pool, entry_activate) {
+    connection_entry conn;
+    conn.activate();
+    FB_ASSERT_TRUE(conn.is_active);
+}
+
+FB_TEST(bdev_connection_pool, entry_acquire_sets_busy) {
+    connection_entry conn;
+    conn.activate();
+    conn.acquire(1000);
+    FB_ASSERT_TRUE(conn.is_busy);
+}
+
+FB_TEST(bdev_connection_pool, entry_release_clears_busy) {
+    connection_entry conn;
+    conn.activate();
+    conn.acquire(1000);
+    conn.release();
+    FB_ASSERT_FALSE(conn.is_busy);
+}
+
+FB_TEST(bdev_connection_pool, entry_is_idle_after_timeout) {
+    connection_entry conn;
+    conn.activate();
+    conn.acquire(0);
+    conn.release();
+    FB_ASSERT_TRUE(conn.is_idle(60000000));  // 60s later
+}
+
+FB_TEST(bdev_connection_pool, entry_is_available_when_active_not_busy) {
+    connection_entry conn;
+    conn.activate();
+    FB_ASSERT_TRUE(conn.is_available());
+}
+
+FB_TEST(bdev_connection_pool, pool_create) {
+    connection_pool pool;
+    uint64_t id = pool.create("127.0.0.1:9000");
+    FB_ASSERT_NE(id, 0u);
+    FB_ASSERT_EQ(pool.active_count(), 1u);
+}
+
+FB_TEST(bdev_connection_pool, pool_max_connections) {
+    connection_pool pool;
+    pool.max_connections = 3;
+    pool.create("e1");
+    pool.create("e2");
+    pool.create("e3");
+    uint64_t id = pool.create("e4");  // should fail
+    FB_ASSERT_EQ(id, 0u);  // cannot create beyond max
+}
+
+FB_TEST(bdev_connection_pool, pool_acquire_available) {
+    connection_pool pool;
+    pool.create("e1");
+    auto id = pool.acquire_available(1000);
+    FB_ASSERT_TRUE(id.has_value());
+}
+
+FB_TEST(bdev_connection_pool, pool_acquire_no_available) {
+    connection_pool pool;
+    pool.create("e1");
+    pool.acquire_available(1000);  // busy now
+    auto id2 = pool.acquire_available(2000);
+    FB_ASSERT_FALSE(id2.has_value());  // none available
+}
+
+FB_TEST(bdev_connection_pool, pool_release) {
+    connection_pool pool;
+    uint64_t id = pool.create("e1");
+    pool.acquire_available(1000);
+    pool.release(id);
+    FB_ASSERT_EQ(pool.available_count(), 1u);
+}
+
+FB_TEST(bdev_connection_pool, pool_get_idle_connections) {
+    connection_pool pool;
+    pool.create("e1");
+    pool.acquire_available(0);
+    pool.release(1);
+    auto idle = pool.get_idle_connections(60000000);
+    FB_ASSERT_EQ(idle.size(), 1u);
+}
+
+FB_TEST(bdev_connection_pool, pool_close) {
+    connection_pool pool;
+    pool.create("e1");
+    pool.close(1);
+    FB_ASSERT_EQ(pool.active_count(), 0u);
+}
+
+FB_TEST(bdev_connection_pool, pool_remove) {
+    connection_pool pool;
+    pool.create("e1");
+    pool.remove(1);
+    FB_ASSERT_EQ(pool.connections.size(), 0u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
