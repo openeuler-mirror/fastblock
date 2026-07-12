@@ -6706,6 +6706,203 @@ FB_TEST(bdev_memory_pool, pool_multiple_allocate_free_cycle) {
 }
 
 // ============================================================================
+// Test Suite: bdev_object_dedup — Object deduplication tracking
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_object_dedup) {}
+FB_SUITE_TEARDOWN(bdev_object_dedup) {}
+
+struct dedup_entry {
+    uint64_t hash{0};
+    uint64_t physical_block{0};
+    uint64_t ref_count{1};
+    uint64_t size{0};
+
+    bool has_multiple_refs() const { return ref_count > 1; }
+
+    void add_ref() { ref_count++; }
+
+    void remove_ref() { if (ref_count > 0) ref_count--; }
+
+    bool is_unique() const { return ref_count == 1; }
+
+    bool is_dead() const { return ref_count == 0; }
+};
+
+struct dedup_manager {
+    std::unordered_map<uint64_t, dedup_entry> hash_table;
+    std::unordered_map<uint64_t, uint64_t> logical_to_hash;  // logical_block -> hash
+    uint64_t dedup_count{0};
+    uint64_t saved_bytes{0};
+
+    uint64_t compute_hash(const void* data, size_t len) {
+        // Simplified hash simulation
+        uint64_t h = 0;
+        const uint8_t* bytes = static_cast<const uint8_t*>(data);
+        for (size_t i = 0; i < len; ++i) h = h * 31 + bytes[i];
+        return h;
+    }
+
+    std::optional<uint64_t> lookup(uint64_t hash) const {
+        auto it = hash_table.find(hash);
+        return it != hash_table.end() ? it->second.physical_block : std::nullopt;
+    }
+
+    bool is_duplicate(uint64_t hash) const {
+        return hash_table.find(hash) != hash_table.end();
+    }
+
+    uint64_t store(uint64_t hash, uint64_t phys_block, uint64_t size) {
+        if (is_duplicate(hash)) {
+            hash_table[hash].add_ref();
+            dedup_count++;
+            saved_bytes += size;
+            return hash_table[hash].physical_block;
+        }
+        dedup_entry entry{hash, phys_block, 1, size};
+        hash_table[hash] = entry;
+        return phys_block;
+    }
+
+    void map_logical(uint64_t logical_block, uint64_t hash) {
+        logical_to_hash[logical_block] = hash;
+    }
+
+    uint64_t get_physical(uint64_t logical_block) const {
+        auto it = logical_to_hash.find(logical_block);
+        if (it == logical_to_hash.end()) return logical_block;  // no mapping
+        auto hash_entry = hash_table.find(it->second);
+        return hash_entry != hash_table.end() ? hash_entry->second.physical_block : logical_block;
+    }
+
+    void release(uint64_t hash) {
+        auto it = hash_table.find(hash);
+        if (it != hash_table.end()) {
+            it->second.remove_ref();
+            if (it->second.is_dead()) hash_table.erase(it);
+        }
+    }
+
+    size_t entry_count() const { return hash_table.size(); }
+
+    size_t shared_count() const {
+        size_t n = 0;
+        for (const auto& [_, e] : hash_table) { if (e.has_multiple_refs()) n++; }
+        return n;
+    }
+};
+
+FB_TEST(bdev_object_dedup, entry_initial_ref_count) {
+    dedup_entry entry;
+    FB_ASSERT_EQ(entry.ref_count, 1u);
+}
+
+FB_TEST(bdev_object_dedup, entry_add_ref) {
+    dedup_entry entry;
+    entry.add_ref();
+    FB_ASSERT_EQ(entry.ref_count, 2u);
+}
+
+FB_TEST(bdev_object_dedup, entry_remove_ref) {
+    dedup_entry entry;
+    entry.add_ref();
+    entry.remove_ref();
+    FB_ASSERT_EQ(entry.ref_count, 1u);
+}
+
+FB_TEST(bdev_object_dedup, entry_has_multiple_refs) {
+    dedup_entry entry;
+    entry.add_ref();
+    FB_ASSERT_TRUE(entry.has_multiple_refs());
+}
+
+FB_TEST(bdev_object_dedup, entry_is_unique) {
+    dedup_entry entry;
+    FB_ASSERT_TRUE(entry.is_unique());
+}
+
+FB_TEST(bdev_object_dedup, entry_is_dead) {
+    dedup_entry entry;
+    entry.remove_ref();
+    FB_ASSERT_TRUE(entry.is_dead());
+}
+
+FB_TEST(bdev_object_dedup, manager_compute_hash) {
+    dedup_manager mgr;
+    uint8_t data[] = {1, 2, 3};
+    uint64_t h = mgr.compute_hash(data, 3);
+    FB_ASSERT_NE(h, 0u);
+}
+
+FB_TEST(bdev_object_dedup, manager_lookup_existing) {
+    dedup_manager mgr;
+    mgr.store(12345, 100, 4096);
+    auto phys = mgr.lookup(12345);
+    FB_ASSERT_TRUE(phys.has_value());
+    FB_ASSERT_EQ(*phys, 100u);
+}
+
+FB_TEST(bdev_object_dedup, manager_lookup_missing) {
+    dedup_manager mgr;
+    auto phys = mgr.lookup(99999);
+    FB_ASSERT_FALSE(phys.has_value());
+}
+
+FB_TEST(bdev_object_dedup, manager_is_duplicate_true) {
+    dedup_manager mgr;
+    mgr.store(12345, 100, 4096);
+    FB_ASSERT_TRUE(mgr.is_duplicate(12345));
+}
+
+FB_TEST(bdev_object_dedup, manager_is_duplicate_false) {
+    dedup_manager mgr;
+    FB_ASSERT_FALSE(mgr.is_duplicate(99999));
+}
+
+FB_TEST(bdev_object_dedup, manager_store_new) {
+    dedup_manager mgr;
+    uint64_t phys = mgr.store(12345, 100, 4096);
+    FB_ASSERT_EQ(phys, 100u);
+    FB_ASSERT_EQ(mgr.entry_count(), 1u);
+}
+
+FB_TEST(bdev_object_dedup, manager_store_duplicate) {
+    dedup_manager mgr;
+    mgr.store(12345, 100, 4096);
+    uint64_t phys2 = mgr.store(12345, 200, 4096);  // duplicate hash
+    FB_ASSERT_EQ(phys2, 100u);  // returns original physical block
+    FB_ASSERT_EQ(mgr.entry_count(), 1u);  // no new entry
+    FB_ASSERT_EQ(mgr.dedup_count, 1u);
+}
+
+FB_TEST(bdev_object_dedup, manager_map_logical) {
+    dedup_manager mgr;
+    mgr.store(12345, 100, 4096);
+    mgr.map_logical(50, 12345);
+    FB_ASSERT_EQ(mgr.get_physical(50), 100u);
+}
+
+FB_TEST(bdev_object_dedup, manager_get_physical_no_mapping) {
+    dedup_manager mgr;
+    FB_ASSERT_EQ(mgr.get_physical(999), 999u);  // returns logical itself
+}
+
+FB_TEST(bdev_object_dedup, manager_release) {
+    dedup_manager mgr;
+    mgr.store(12345, 100, 4096);
+    mgr.release(12345);
+    FB_ASSERT_EQ(mgr.entry_count(), 0u);  // entry removed (dead)
+}
+
+FB_TEST(bdev_object_dedup, manager_shared_count) {
+    dedup_manager mgr;
+    mgr.store(111, 100, 4096);
+    mgr.store(111, 200, 4096);  // duplicate
+    mgr.store(222, 300, 4096);  // unique
+    FB_ASSERT_EQ(mgr.shared_count(), 1u);  // hash 111 is shared
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
