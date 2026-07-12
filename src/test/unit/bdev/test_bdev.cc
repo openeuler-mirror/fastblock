@@ -5008,6 +5008,176 @@ FB_TEST(bdev_io_timeout, manager_cancel_io) {
 }
 
 // ============================================================================
+// Test Suite: bdev_write_ordering — Write ordering guarantees
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_write_ordering) {}
+FB_SUITE_TEARDOWN(bdev_write_ordering) {}
+
+enum class write_order : uint8_t {
+    none,
+    strict,
+    relaxed
+};
+
+struct ordered_write {
+    uint64_t sequence{0};
+    uint64_t offset{0};
+    uint64_t length{0};
+    bool committed{false};
+    bool acked{false};
+};
+
+struct write_ordering_manager {
+    write_order order_policy{write_order::relaxed};
+    std::deque<ordered_write> pending_writes;
+    uint64_t next_sequence{1};
+    uint64_t committed_sequence{0};
+
+    void submit(uint64_t offset, uint64_t length) {
+        ordered_write w;
+        w.sequence = next_sequence++;
+        w.offset = offset;
+        w.length = length;
+        pending_writes.push_back(w);
+    }
+
+    bool can_commit(const ordered_write& w) const {
+        if (order_policy == write_order::strict) {
+            return w.sequence == committed_sequence + 1;
+        }
+        return true;  // relaxed allows any order
+    }
+
+    void commit(uint64_t seq) {
+        for (auto& w : pending_writes) {
+            if (w.sequence == seq && can_commit(w)) {
+                w.committed = true;
+                if (seq > committed_sequence) committed_sequence = seq;
+            }
+        }
+    }
+
+    void ack(uint64_t seq) {
+        for (auto it = pending_writes.begin(); it != pending_writes.end(); ++it) {
+            if (it->sequence == seq && it->committed) {
+                it->acked = true;
+                pending_writes.erase(it);
+                return;
+            }
+        }
+    }
+
+    size_t pending_count() const { return pending_writes.size(); }
+
+    std::optional<ordered_write> find_pending(uint64_t seq) const {
+        for (const auto& w : pending_writes) {
+            if (w.sequence == seq) return w;
+        }
+        return std::nullopt;
+    }
+
+    void clear() {
+        pending_writes.clear();
+        next_sequence = 1;
+        committed_sequence = 0;
+    }
+};
+
+FB_TEST(bdev_write_ordering, submit_assigns_sequence) {
+    write_ordering_manager mgr;
+    mgr.submit(0, 1024);
+    mgr.submit(1024, 512);
+
+    FB_ASSERT_EQ(mgr.pending_count(), 2u);
+    FB_ASSERT_EQ(mgr.find_pending(1)->sequence, 1u);
+    FB_ASSERT_EQ(mgr.find_pending(2)->sequence, 2u);
+}
+
+FB_TEST(bdev_write_ordering, relaxed_allows_any_commit) {
+    write_ordering_manager mgr;
+    mgr.order_policy = write_order::relaxed;
+    mgr.submit(0, 1024);
+    mgr.submit(1024, 512);
+
+    FB_ASSERT_TRUE(mgr.can_commit(*mgr.find_pending(2)));
+}
+
+FB_TEST(bdev_write_ordering, strict_requires_sequence) {
+    write_ordering_manager mgr;
+    mgr.order_policy = write_order::strict;
+    mgr.submit(0, 1024);
+    mgr.submit(1024, 512);
+
+    FB_ASSERT_TRUE(mgr.can_commit(*mgr.find_pending(1)));
+    FB_ASSERT_FALSE(mgr.can_commit(*mgr.find_pending(2)));
+}
+
+FB_TEST(bdev_write_ordering, commit_updates_committed_sequence) {
+    write_ordering_manager mgr;
+    mgr.submit(0, 1024);
+    mgr.commit(1);
+
+    FB_ASSERT_TRUE(mgr.find_pending(1)->committed);
+    FB_ASSERT_EQ(mgr.committed_sequence, 1u);
+}
+
+FB_TEST(bdev_write_ordering, ack_removes_committed) {
+    write_ordering_manager mgr;
+    mgr.submit(0, 1024);
+    mgr.commit(1);
+    mgr.ack(1);
+
+    FB_ASSERT_EQ(mgr.pending_count(), 0u);
+}
+
+FB_TEST(bdev_write_ordering, ack_fails_if_not_committed) {
+    write_ordering_manager mgr;
+    mgr.submit(0, 1024);
+    mgr.ack(1);  // not committed yet
+
+    FB_ASSERT_EQ(mgr.pending_count(), 1u);  // still pending
+}
+
+FB_TEST(bdev_write_ordering, strict_enforces_order) {
+    write_ordering_manager mgr;
+    mgr.order_policy = write_order::strict;
+    mgr.submit(0, 1024);
+    mgr.submit(1024, 512);
+
+    mgr.commit(2);  // should fail - sequence 1 not committed
+    FB_ASSERT_FALSE(mgr.find_pending(2)->committed);
+
+    mgr.commit(1);  // should succeed
+    FB_ASSERT_TRUE(mgr.find_pending(1)->committed);
+}
+
+FB_TEST(bdev_write_ordering, clear_resets_state) {
+    write_ordering_manager mgr;
+    mgr.submit(0, 1024);
+    mgr.commit(1);
+    mgr.clear();
+
+    FB_ASSERT_EQ(mgr.pending_count(), 0u);
+    FB_ASSERT_EQ(mgr.next_sequence, 1u);
+    FB_ASSERT_EQ(mgr.committed_sequence, 0u);
+}
+
+FB_TEST(bdev_write_ordering, multiple_commits) {
+    write_ordering_manager mgr;
+    mgr.order_policy = write_order::relaxed;
+    for (int i = 0; i < 5; ++i) {
+        mgr.submit(i * 1024, 1024);
+    }
+
+    for (int i = 1; i <= 5; ++i) {
+        mgr.commit(i);
+    }
+
+    FB_ASSERT_EQ(mgr.committed_sequence, 5u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
