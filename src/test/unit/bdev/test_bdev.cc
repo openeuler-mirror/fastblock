@@ -2747,6 +2747,171 @@ FB_TEST(bdev_snapshot_state, sequential_ids) {
 }
 
 // ============================================================================
+// Test Suite: bdev_clone_state — Clone volume tracking
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_clone_state) {}
+FB_SUITE_TEARDOWN(bdev_clone_state) {}
+
+struct clone_info {
+    uint64_t clone_id{0};
+    std::string name;
+    uint64_t parent_snap_id{0};
+    uint64_t created_at_us{0};
+    bool is_temporary{false};
+    bool is_flattened{false};
+};
+
+struct clone_manager {
+    std::unordered_map<uint64_t, clone_info> clones;
+    uint64_t next_clone_id{1};
+
+    uint64_t create(const std::string& name, uint64_t parent_snap, uint64_t now_us, bool temp) {
+        uint64_t id = next_clone_id++;
+        clone_info clone;
+        clone.clone_id = id;
+        clone.name = name;
+        clone.parent_snap_id = parent_snap;
+        clone.created_at_us = now_us;
+        clone.is_temporary = temp;
+        clones[id] = clone;
+        return id;
+    }
+
+    std::optional<clone_info> get(uint64_t id) const {
+        auto it = clones.find(id);
+        if (it != clones.end()) return it->second;
+        return std::nullopt;
+    }
+
+    bool flatten(uint64_t id) {
+        auto it = clones.find(id);
+        if (it != clones.end()) {
+            it->second.is_flattened = true;
+            it->second.parent_snap_id = 0;  // No parent after flatten
+            return true;
+        }
+        return false;
+    }
+
+    std::vector<uint64_t> get_clones_of_parent(uint64_t parent_snap) const {
+        std::vector<uint64_t> result;
+        for (const auto& [id, clone] : clones) {
+            if (clone.parent_snap_id == parent_snap) {
+                result.push_back(id);
+            }
+        }
+        return result;
+    }
+
+    bool delete_clone(uint64_t id) {
+        return clones.erase(id) > 0;
+    }
+
+    size_t count() const { return clones.size(); }
+
+    size_t temporary_count() const {
+        size_t n = 0;
+        for (const auto& [_, clone] : clones) {
+            if (clone.is_temporary) n++;
+        }
+        return n;
+    }
+
+    bool is_dependent(uint64_t clone_id) const {
+        auto it = clones.find(clone_id);
+        return it != clones.end() && it->second.parent_snap_id != 0 && !it->second.is_flattened;
+    }
+};
+
+FB_TEST(bdev_clone_state, create_returns_id) {
+    clone_manager cm;
+    uint64_t id = cm.create("clone1", 100, 1000000, false);
+    FB_ASSERT_EQ(id, 1u);
+    FB_ASSERT_EQ(cm.count(), 1u);
+}
+
+FB_TEST(bdev_clone_state, get_returns_info) {
+    clone_manager cm;
+    uint64_t id = cm.create("clone1", 100, 1000000, false);
+
+    auto clone = cm.get(id);
+    FB_ASSERT_TRUE(clone.has_value());
+    FB_ASSERT_STR_EQ(clone->name.c_str(), "clone1");
+    FB_ASSERT_EQ(clone->parent_snap_id, 100u);
+}
+
+FB_TEST(bdev_clone_state, temporary_clone_flag) {
+    clone_manager cm;
+    uint64_t id1 = cm.create("temp_clone", 100, 0, true);
+    uint64_t id2 = cm.create("perm_clone", 100, 0, false);
+
+    FB_ASSERT_TRUE(cm.get(id1)->is_temporary);
+    FB_ASSERT_FALSE(cm.get(id2)->is_temporary);
+    FB_ASSERT_EQ(cm.temporary_count(), 1u);
+}
+
+FB_TEST(bdev_clone_state, flatten_removes_parent) {
+    clone_manager cm;
+    uint64_t id = cm.create("clone1", 100, 0, false);
+
+    FB_ASSERT_TRUE(cm.is_dependent(id));
+    cm.flatten(id);
+    FB_ASSERT_FALSE(cm.is_dependent(id));
+    FB_ASSERT_EQ(cm.get(id)->parent_snap_id, 0u);
+}
+
+FB_TEST(bdev_clone_state, get_clones_of_parent) {
+    clone_manager cm;
+    cm.create("clone1", 100, 0, false);
+    cm.create("clone2", 100, 0, false);
+    cm.create("clone3", 200, 0, false);
+
+    auto clones = cm.get_clones_of_parent(100);
+    FB_ASSERT_EQ(clones.size(), 2u);
+}
+
+FB_TEST(bdev_clone_state, delete_clone_success) {
+    clone_manager cm;
+    uint64_t id = cm.create("clone1", 100, 0, false);
+
+    FB_ASSERT_TRUE(cm.delete_clone(id));
+    FB_ASSERT_EQ(cm.count(), 0u);
+}
+
+FB_TEST(bdev_clone_state, is_dependent_before_flatten) {
+    clone_manager cm;
+    uint64_t id = cm.create("clone1", 100, 0, false);
+
+    FB_ASSERT_TRUE(cm.is_dependent(id));
+}
+
+FB_TEST(bdev_clone_state, flattened_not_dependent) {
+    clone_manager cm;
+    uint64_t id = cm.create("clone1", 100, 0, false);
+    cm.flatten(id);
+
+    FB_ASSERT_FALSE(cm.is_dependent(id));
+}
+
+FB_TEST(bdev_clone_state, multiple_clones_different_parents) {
+    clone_manager cm;
+    cm.create("c1", 100, 0, false);
+    cm.create("c2", 200, 0, false);
+    cm.create("c3", 300, 0, false);
+
+    FB_ASSERT_EQ(cm.get_clones_of_parent(100).size(), 1u);
+    FB_ASSERT_EQ(cm.get_clones_of_parent(200).size(), 1u);
+}
+
+FB_TEST(bdev_clone_state, sequential_ids) {
+    clone_manager cm;
+    FB_ASSERT_EQ(cm.create("a", 0, 0, false), 1u);
+    FB_ASSERT_EQ(cm.create("b", 0, 0, false), 2u);
+    FB_ASSERT_EQ(cm.create("c", 0, 0, false), 3u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
