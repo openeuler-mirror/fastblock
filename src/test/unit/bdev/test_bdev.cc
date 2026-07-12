@@ -2049,6 +2049,118 @@ FB_TEST(bdev_scatter_gather, total_len_preserved_after_coalesce) {
 }
 
 // ============================================================================
+// Test Suite: bdev_retry_backoff — Retry with exponential backoff
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_retry_backoff) {}
+FB_SUITE_TEARDOWN(bdev_retry_backoff) {}
+
+struct backoff_policy {
+    uint64_t initial_delay_us{1000};  // 1ms
+    uint64_t max_delay_us{60000000};  // 60s
+    double multiplier{2.0};
+    int max_retries{5};
+
+    uint64_t calculate_delay(int retry_count) const {
+        if (retry_count <= 0) return 0;
+
+        double delay = initial_delay_us;
+        for (int i = 1; i < retry_count; ++i) {
+            delay *= multiplier;
+        }
+        return std::min(static_cast<uint64_t>(delay), max_delay_us);
+    }
+
+    bool should_retry(int retry_count) const {
+        return retry_count < max_retries;
+    }
+
+    int remaining_retries(int retry_count) const {
+        return max_retries - retry_count;
+    }
+
+    // Check if current delay exceeds threshold for abort
+    bool delay_exceeds_threshold(uint64_t delay_us, uint64_t threshold_us) const {
+        return delay_us > threshold_us;
+    }
+};
+
+FB_TEST(bdev_retry_backoff, initial_delay) {
+    backoff_policy policy;
+    FB_ASSERT_EQ(policy.calculate_delay(1), 1000u);  // 1ms
+}
+
+FB_TEST(bdev_retry_backoff, exponential_growth) {
+    backoff_policy policy;
+    FB_ASSERT_EQ(policy.calculate_delay(1), 1000u);      // 1ms
+    FB_ASSERT_EQ(policy.calculate_delay(2), 2000u);      // 2ms
+    FB_ASSERT_EQ(policy.calculate_delay(3), 4000u);      // 4ms
+    FB_ASSERT_EQ(policy.calculate_delay(4), 8000u);      // 8ms
+}
+
+FB_TEST(bdev_retry_backoff, capped_at_max) {
+    backoff_policy policy;
+    policy.initial_delay_us = 10000000;  // 10s
+    policy.max_delay_us = 30000000;      // 30s cap
+
+    // 10s * 2^4 = 160s, but capped to 30s
+    FB_ASSERT_EQ(policy.calculate_delay(4), 30000000u);
+}
+
+FB_TEST(bdev_retry_backoff, zero_retries_zero_delay) {
+    backoff_policy policy;
+    FB_ASSERT_EQ(policy.calculate_delay(0), 0u);
+}
+
+FB_TEST(bdev_retry_backoff, should_retry_within_limit) {
+    backoff_policy policy;
+    policy.max_retries = 5;
+
+    FB_ASSERT_TRUE(policy.should_retry(0));
+    FB_ASSERT_TRUE(policy.should_retry(4));
+    FB_ASSERT_FALSE(policy.should_retry(5));
+}
+
+FB_TEST(bdev_retry_backoff, remaining_retries_count) {
+    backoff_policy policy;
+    policy.max_retries = 5;
+
+    FB_ASSERT_EQ(policy.remaining_retries(0), 5);
+    FB_ASSERT_EQ(policy.remaining_retries(3), 2);
+    FB_ASSERT_EQ(policy.remaining_retries(5), 0);
+}
+
+FB_TEST(bdev_retry_backoff, delay_threshold_check) {
+    backoff_policy policy;
+    uint64_t threshold = 10000;  // 10ms
+
+    FB_ASSERT_FALSE(policy.delay_exceeds_threshold(5000, threshold));
+    FB_ASSERT_TRUE(policy.delay_exceeds_threshold(15000, threshold));
+}
+
+FB_TEST(bdev_retry_backoff, custom_multiplier) {
+    backoff_policy policy;
+    policy.multiplier = 1.5;
+    policy.initial_delay_us = 1000;
+
+    FB_ASSERT_EQ(policy.calculate_delay(1), 1000u);
+    FB_ASSERT_EQ(policy.calculate_delay(2), 1500u);
+    FB_ASSERT_EQ(policy.calculate_delay(3), 2250u);
+}
+
+FB_TEST(bdev_retry_backoff, large_retry_count_still_capped) {
+    backoff_policy policy;
+    FB_ASSERT_EQ(policy.calculate_delay(100), policy.max_delay_us);
+}
+
+FB_TEST(bdev_retry_backoff, no_retries_policy) {
+    backoff_policy policy;
+    policy.max_retries = 0;
+    FB_ASSERT_FALSE(policy.should_retry(0));
+    FB_ASSERT_EQ(policy.remaining_retries(0), 0);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
