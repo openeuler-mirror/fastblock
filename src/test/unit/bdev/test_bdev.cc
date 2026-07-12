@@ -1246,6 +1246,121 @@ FB_TEST(bdev_io_completion_tracking, avg_latency_zero_when_no_completions) {
 }
 
 // ============================================================================
+// Test Suite: bdev_write_ring_state — Write ring buffer state management
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_write_ring_state) {}
+FB_SUITE_TEARDOWN(bdev_write_ring_state) {}
+
+struct write_ring {
+    uint64_t queue_id{0};
+    uint64_t lease_deadline_us{0};
+    uint32_t slot_count{0};
+    uint32_t next_slot{0};
+    bool is_ready{false};
+    bool is_connecting{false};
+    bool lease_valid{false};
+
+    bool has_valid_lease(uint64_t current_time_us) const {
+        return lease_valid && current_time_us < lease_deadline_us;
+    }
+
+    bool can_accept_io() const {
+        return is_ready && !is_connecting && queue_id > 0;
+    }
+
+    void invalidate() {
+        queue_id = 0;
+        is_ready = false;
+        lease_valid = false;
+        next_slot = 0;
+    }
+
+    void set_lease(uint64_t qid, uint64_t deadline_us) {
+        queue_id = qid;
+        lease_deadline_us = deadline_us;
+        lease_valid = true;
+        is_ready = true;
+    }
+};
+
+FB_TEST(bdev_write_ring_state, initial_state_not_ready) {
+    write_ring ring;
+    FB_ASSERT_FALSE(ring.is_ready);
+    FB_ASSERT_FALSE(ring.can_accept_io());
+    FB_ASSERT_EQ(ring.queue_id, 0u);
+}
+
+FB_TEST(bdev_write_ring_state, set_lease_makes_ready) {
+    write_ring ring;
+    ring.set_lease(12345, 1000000);
+    FB_ASSERT_TRUE(ring.is_ready);
+    FB_ASSERT_TRUE(ring.lease_valid);
+    FB_ASSERT_EQ(ring.queue_id, 12345u);
+}
+
+FB_TEST(bdev_write_ring_state, has_valid_lease_checks_time) {
+    write_ring ring;
+    ring.set_lease(12345, 1000000);
+    ring.lease_valid = true;
+
+    FB_ASSERT_TRUE(ring.has_valid_lease(500000));
+    FB_ASSERT_FALSE(ring.has_valid_lease(1500000));
+}
+
+FB_TEST(bdev_write_ring_state, can_accept_io_requires_ready_and_queue) {
+    write_ring ring;
+    FB_ASSERT_FALSE(ring.can_accept_io());
+
+    ring.is_ready = true;
+    FB_ASSERT_FALSE(ring.can_accept_io());  // still no queue_id
+
+    ring.queue_id = 12345;
+    FB_ASSERT_TRUE(ring.can_accept_io());
+}
+
+FB_TEST(bdev_write_ring_state, connecting_blocks_io) {
+    write_ring ring;
+    ring.set_lease(12345, 1000000);
+    FB_ASSERT_TRUE(ring.can_accept_io());
+
+    ring.is_connecting = true;
+    FB_ASSERT_FALSE(ring.can_accept_io());
+}
+
+FB_TEST(bdev_write_ring_state, invalidate_resets_state) {
+    write_ring ring;
+    ring.set_lease(12345, 1000000);
+    ring.next_slot = 10;
+
+    ring.invalidate();
+    FB_ASSERT_FALSE(ring.is_ready);
+    FB_ASSERT_FALSE(ring.lease_valid);
+    FB_ASSERT_EQ(ring.queue_id, 0u);
+    FB_ASSERT_EQ(ring.next_slot, 0u);
+}
+
+FB_TEST(bdev_write_ring_state, lease_valid_flag_independent) {
+    write_ring ring;
+    ring.set_lease(12345, 1000000);
+    ring.lease_valid = false;  // manually invalidate lease
+
+    FB_ASSERT_FALSE(ring.has_valid_lease(500000));  // even though time is within range
+}
+
+FB_TEST(bdev_write_ring_state, next_slot_advances_independently) {
+    write_ring ring;
+    ring.set_lease(12345, 1000000);
+    ring.slot_count = 4;
+    ring.next_slot = 0;
+
+    for (int i = 0; i < 10; ++i) {
+        ring.next_slot = (ring.next_slot + 1) % ring.slot_count;
+    }
+    FB_ASSERT_EQ(ring.next_slot, 2u);  // 10 % 4 = 2
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
