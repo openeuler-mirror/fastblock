@@ -999,6 +999,134 @@ FB_TEST(bdev_image_resize_state, complete_only_from_in_progress) {
 }
 
 // ============================================================================
+// Test Suite: bdev_connection_lifecycle — Connection state management
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_connection_lifecycle) {}
+FB_SUITE_TEARDOWN(bdev_connection_lifecycle) {}
+
+enum class connection_state {
+    disconnected,
+    connecting,
+    connected,
+    disconnecting,
+    error
+};
+
+struct connection_manager {
+    connection_state state{connection_state::disconnected};
+    int reconnect_attempts{0};
+    static constexpr int max_reconnect = 5;
+
+    bool connect() {
+        if (state == connection_state::connected) return true;
+        if (state == connection_state::disconnected || state == connection_state::error) {
+            state = connection_state::connecting;
+            reconnect_attempts = 0;
+            return true;
+        }
+        return false;
+    }
+
+    void on_connect_complete(bool success) {
+        if (state != connection_state::connecting) return;
+        if (success) {
+            state = connection_state::connected;
+            reconnect_attempts = 0;
+        } else {
+            reconnect_attempts++;
+            if (reconnect_attempts >= max_reconnect) {
+                state = connection_state::error;
+            } else {
+                state = connection_state::disconnected;
+            }
+        }
+    }
+
+    bool disconnect() {
+        if (state != connection_state::connected) return false;
+        state = connection_state::disconnecting;
+        return true;
+    }
+
+    void on_disconnect_complete() {
+        if (state == connection_state::disconnecting) {
+            state = connection_state::disconnected;
+        }
+    }
+
+    bool is_connected() const { return state == connection_state::connected; }
+};
+
+FB_TEST(bdev_connection_lifecycle, initial_state_disconnected) {
+    connection_manager cm;
+    FB_ASSERT_TRUE(cm.state == connection_state::disconnected);
+    FB_ASSERT_FALSE(cm.is_connected());
+}
+
+FB_TEST(bdev_connection_lifecycle, successful_connection) {
+    connection_manager cm;
+    FB_ASSERT_TRUE(cm.connect());
+    FB_ASSERT_TRUE(cm.state == connection_state::connecting);
+
+    cm.on_connect_complete(true);
+    FB_ASSERT_TRUE(cm.is_connected());
+    FB_ASSERT_EQ(cm.reconnect_attempts, 0);
+}
+
+FB_TEST(bdev_connection_lifecycle, connection_failure_retries) {
+    connection_manager cm;
+    cm.connect();
+    cm.on_connect_complete(false);
+    FB_ASSERT_TRUE(cm.state == connection_state::disconnected);
+    FB_ASSERT_EQ(cm.reconnect_attempts, 1);
+}
+
+FB_TEST(bdev_connection_lifecycle, max_reconnects_goes_to_error) {
+    connection_manager cm;
+    for (int i = 0; i < connection_manager::max_reconnect; ++i) {
+        cm.connect();
+        cm.on_connect_complete(false);
+    }
+    FB_ASSERT_TRUE(cm.state == connection_state::error);
+}
+
+FB_TEST(bdev_connection_lifecycle, successful_reconnect_resets_counter) {
+    connection_manager cm;
+    cm.connect();
+    cm.on_connect_complete(false);
+    cm.connect();
+    cm.on_connect_complete(false);
+    cm.connect();
+    cm.on_connect_complete(true);
+    FB_ASSERT_TRUE(cm.is_connected());
+    FB_ASSERT_EQ(cm.reconnect_attempts, 0);
+}
+
+FB_TEST(bdev_connection_lifecycle, disconnect_flow) {
+    connection_manager cm;
+    cm.connect();
+    cm.on_connect_complete(true);
+    FB_ASSERT_TRUE(cm.disconnect());
+    FB_ASSERT_TRUE(cm.state == connection_state::disconnecting);
+    cm.on_disconnect_complete();
+    FB_ASSERT_TRUE(cm.state == connection_state::disconnected);
+}
+
+FB_TEST(bdev_connection_lifecycle, connect_from_connected_returns_true) {
+    connection_manager cm;
+    cm.connect();
+    cm.on_connect_complete(true);
+    FB_ASSERT_TRUE(cm.connect());
+    FB_ASSERT_TRUE(cm.is_connected());
+}
+
+FB_TEST(bdev_connection_lifecycle, disconnect_from_disconnected_fails) {
+    connection_manager cm;
+    FB_ASSERT_FALSE(cm.disconnect());
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
