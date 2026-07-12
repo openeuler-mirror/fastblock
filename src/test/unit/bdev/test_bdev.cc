@@ -5351,6 +5351,275 @@ FB_TEST(bdev_rate_limiter, ops_remaining_unlimited) {
 }
 
 // ============================================================================
+// Test Suite: bdev_snapshot_manager — Snapshot creation and management
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_snapshot_manager) {}
+FB_SUITE_TEARDOWN(bdev_snapshot_manager) {}
+
+enum class snapshot_state : uint8_t {
+    creating,
+    available,
+    deleting,
+    error
+};
+
+struct snapshot_entry {
+    uint64_t snap_id{0};
+    std::string name;
+    uint64_t created_at_us{0};
+    uint64_t size_bytes{0};
+    snapshot_state state{snapshot_state::creating};
+    uint64_t parent_snap_id{0};  // 0 = no parent
+
+    bool is_available() const { return state == snapshot_state::available; }
+
+    bool is_ancestor_of(const snapshot_entry& other) const {
+        // Check if this snapshot is in the other's lineage
+        if (other.parent_snap_id == 0) return false;
+        return other.parent_snap_id == snap_id;
+    }
+};
+
+struct snapshot_manager {
+    std::unordered_map<uint64_t, snapshot_entry> snapshots;
+    uint64_t next_snap_id{1};
+
+    uint64_t create(const std::string& name, uint64_t now_us, uint64_t size, uint64_t parent_id) {
+        snapshot_entry entry;
+        entry.snap_id = next_snap_id++;
+        entry.name = name;
+        entry.created_at_us = now_us;
+        entry.size_bytes = size;
+        entry.parent_snap_id = parent_id;
+        entry.state = snapshot_state::creating;
+        snapshots[entry.snap_id] = entry;
+        return entry.snap_id;
+    }
+
+    void mark_available(uint64_t snap_id) {
+        auto it = snapshots.find(snap_id);
+        if (it != snapshots.end() && it->second.state == snapshot_state::creating) {
+            it->second.state = snapshot_state::available;
+        }
+    }
+
+    void mark_deleting(uint64_t snap_id) {
+        auto it = snapshots.find(snap_id);
+        if (it != snapshots.end() && it->second.state == snapshot_state::available) {
+            it->second.state = snapshot_state::deleting;
+        }
+    }
+
+    void remove(uint64_t snap_id) {
+        snapshots.erase(snap_id);
+    }
+
+    void mark_error(uint64_t snap_id) {
+        auto it = snapshots.find(snap_id);
+        if (it != snapshots.end()) {
+            it->second.state = snapshot_state::error;
+        }
+    }
+
+    snapshot_entry* get(uint64_t snap_id) {
+        auto it = snapshots.find(snap_id);
+        return it != snapshots.end() ? &it->second : nullptr;
+    }
+
+    snapshot_entry* find_by_name(const std::string& name) {
+        for (auto& [_, snap] : snapshots) {
+            if (snap.name == name) return &snap;
+        }
+        return nullptr;
+    }
+
+    std::vector<uint64_t> get_children(uint64_t parent_id) const {
+        std::vector<uint64_t> children;
+        for (const auto& [id, snap] : snapshots) {
+            if (snap.parent_snap_id == parent_id) {
+                children.push_back(id);
+            }
+        }
+        return children;
+    }
+
+    size_t available_count() const {
+        size_t n = 0;
+        for (const auto& [_, snap] : snapshots) {
+            if (snap.is_available()) n++;
+        }
+        return n;
+    }
+
+    size_t count() const { return snapshots.size(); }
+
+    uint64_t total_size() const {
+        uint64_t total = 0;
+        for (const auto& [_, snap] : snapshots) {
+            if (snap.is_available()) total += snap.size_bytes;
+        }
+        return total;
+    }
+
+    bool can_delete(uint64_t snap_id) const {
+        auto it = snapshots.find(snap_id);
+        if (it == snapshots.end()) return false;
+        if (!it->second.is_available()) return false;
+        // Cannot delete if it has available children
+        for (const auto& [id, snap] : snapshots) {
+            if (snap.parent_snap_id == snap_id && snap.is_available()) {
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
+FB_TEST(bdev_snapshot_manager, create_returns_id) {
+    snapshot_manager mgr;
+    uint64_t id = mgr.create("snap1", 1000, 1024 * 1024, 0);
+
+    FB_ASSERT_EQ(id, 1u);
+    FB_ASSERT_EQ(mgr.count(), 1u);
+}
+
+FB_TEST(bdev_snapshot_manager, create_initial_state_creating) {
+    snapshot_manager mgr;
+    uint64_t id = mgr.create("snap1", 1000, 1024, 0);
+
+    FB_ASSERT_TRUE(mgr.get(id)->state == snapshot_state::creating);
+}
+
+FB_TEST(bdev_snapshot_manager, mark_available_changes_state) {
+    snapshot_manager mgr;
+    uint64_t id = mgr.create("snap1", 1000, 1024, 0);
+    mgr.mark_available(id);
+
+    FB_ASSERT_TRUE(mgr.get(id)->is_available());
+}
+
+FB_TEST(bdev_snapshot_manager, mark_deleting_from_available) {
+    snapshot_manager mgr;
+    uint64_t id = mgr.create("snap1", 1000, 1024, 0);
+    mgr.mark_available(id);
+    mgr.mark_deleting(id);
+
+    FB_ASSERT_TRUE(mgr.get(id)->state == snapshot_state::deleting);
+}
+
+FB_TEST(bdev_snapshot_manager, remove_deletes_entry) {
+    snapshot_manager mgr;
+    uint64_t id = mgr.create("snap1", 1000, 1024, 0);
+    mgr.remove(id);
+
+    FB_ASSERT_TRUE(mgr.get(id) == nullptr);
+}
+
+FB_TEST(bdev_snapshot_manager, mark_error_state) {
+    snapshot_manager mgr;
+    uint64_t id = mgr.create("snap1", 1000, 1024, 0);
+    mgr.mark_error(id);
+
+    FB_ASSERT_TRUE(mgr.get(id)->state == snapshot_state::error);
+}
+
+FB_TEST(bdev_snapshot_manager, find_by_name) {
+    snapshot_manager mgr;
+    mgr.create("snap1", 1000, 1024, 0);
+    mgr.create("snap2", 2000, 2048, 0);
+
+    FB_ASSERT_TRUE(mgr.find_by_name("snap1") != nullptr);
+    FB_ASSERT_TRUE(mgr.find_by_name("snap2") != nullptr);
+    FB_ASSERT_TRUE(mgr.find_by_name("snap3") == nullptr);
+}
+
+FB_TEST(bdev_snapshot_manager, parent_child_lineage) {
+    snapshot_manager mgr;
+    uint64_t id1 = mgr.create("snap1", 1000, 1024, 0);
+    mgr.mark_available(id1);
+    uint64_t id2 = mgr.create("snap2", 2000, 2048, id1);
+    mgr.mark_available(id2);
+
+    FB_ASSERT_EQ(mgr.get(id2)->parent_snap_id, id1);
+    auto children = mgr.get_children(id1);
+    FB_ASSERT_EQ(children.size(), 1u);
+    FB_ASSERT_EQ(children[0], id2);
+}
+
+FB_TEST(bdev_snapshot_manager, available_count) {
+    snapshot_manager mgr;
+    uint64_t id1 = mgr.create("snap1", 1000, 1024, 0);
+    uint64_t id2 = mgr.create("snap2", 2000, 2048, 0);
+    mgr.mark_available(id1);
+
+    FB_ASSERT_EQ(mgr.available_count(), 1u);
+}
+
+FB_TEST(bdev_snapshot_manager, total_size_available_only) {
+    snapshot_manager mgr;
+    uint64_t id1 = mgr.create("snap1", 1000, 1024, 0);
+    mgr.mark_available(id1);
+    mgr.create("snap2", 2000, 2048, 0);  // still creating
+
+    FB_ASSERT_EQ(mgr.total_size(), 1024u);  // only snap1 counted
+}
+
+FB_TEST(bdev_snapshot_manager, can_delete_no_children) {
+    snapshot_manager mgr;
+    uint64_t id = mgr.create("snap1", 1000, 1024, 0);
+    mgr.mark_available(id);
+
+    FB_ASSERT_TRUE(mgr.can_delete(id));
+}
+
+FB_TEST(bdev_snapshot_manager, cannot_delete_with_available_children) {
+    snapshot_manager mgr;
+    uint64_t id1 = mgr.create("snap1", 1000, 1024, 0);
+    mgr.mark_available(id1);
+    uint64_t id2 = mgr.create("snap2", 2000, 2048, id1);
+    mgr.mark_available(id2);
+
+    FB_ASSERT_FALSE(mgr.can_delete(id1));  // has child snap2
+}
+
+FB_TEST(bdev_snapshot_manager, can_delete_after_child_deleted) {
+    snapshot_manager mgr;
+    uint64_t id1 = mgr.create("snap1", 1000, 1024, 0);
+    mgr.mark_available(id1);
+    uint64_t id2 = mgr.create("snap2", 2000, 2048, id1);
+    mgr.mark_available(id2);
+
+    mgr.mark_deleting(id2);
+    mgr.remove(id2);
+
+    FB_ASSERT_TRUE(mgr.can_delete(id1));  // child gone
+}
+
+FB_TEST(bdev_snapshot_manager, snapshot_chain_depth) {
+    snapshot_manager mgr;
+    uint64_t id1 = mgr.create("snap1", 1000, 1024, 0);
+    mgr.mark_available(id1);
+    uint64_t id2 = mgr.create("snap2", 2000, 2048, id1);
+    mgr.mark_available(id2);
+    uint64_t id3 = mgr.create("snap3", 3000, 4096, id2);
+    mgr.mark_available(id3);
+
+    // Verify chain: snap3 -> snap2 -> snap1
+    FB_ASSERT_EQ(mgr.get(id3)->parent_snap_id, id2);
+    FB_ASSERT_EQ(mgr.get(id2)->parent_snap_id, id1);
+    FB_ASSERT_EQ(mgr.get(id1)->parent_snap_id, 0u);
+}
+
+FB_TEST(bdev_snapshot_manager, cannot_delete_creating_snapshot) {
+    snapshot_manager mgr;
+    uint64_t id = mgr.create("snap1", 1000, 1024, 0);
+    // still in creating state
+
+    FB_ASSERT_FALSE(mgr.can_delete(id));
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
