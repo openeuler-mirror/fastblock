@@ -1647,9 +1647,124 @@ FB_TEST(bdev_leader_tracking, newer_term_check) {
     leader_info info;
     info.update(5, 2, 100);
 
-    FB_ASSERT_FALSE(info.is_newer_than(3, 100));  // other has higher term
-    FB_ASSERT_TRUE(info.is_newer_than(1, 100));   // info has higher term
-    FB_ASSERT_TRUE(info.is_newer_than(2, 50));    // same term, higher epoch
+    FB_ASSERT_FALSE(info.is_newer_than(3, 100));
+    FB_ASSERT_TRUE(info.is_newer_than(1, 100));
+    FB_ASSERT_TRUE(info.is_newer_than(2, 50));
+}
+
+// ============================================================================
+// Test Suite: bdev_object_name_builder — Object name construction
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_object_name_builder) {}
+FB_SUITE_TEARDOWN(bdev_object_name_builder) {}
+
+struct object_name_builder {
+    static std::string build(uint64_t pool_id, const std::string& pool_name,
+                             const std::string& image_name, uint64_t object_seq) {
+        return std::to_string(pool_id) + "_" + pool_name + "_" + image_name + "_" + std::to_string(object_seq);
+    }
+
+    static std::string build_prefix(uint64_t pool_id, const std::string& image_name) {
+        return std::to_string(pool_id) + "__blk_data___" + image_name;
+    }
+
+    static std::string build_full(uint64_t pool_id, const std::string& image_name, uint64_t seq) {
+        return build_prefix(pool_id, image_name) + "_" + std::to_string(seq);
+    }
+
+    static bool parse_sequence(const std::string& obj_name, uint64_t& seq) {
+        auto last_underscore = obj_name.rfind('_');
+        if (last_underscore == std::string::npos || last_underscore + 1 >= obj_name.size()) {
+            return false;
+        }
+        try {
+            seq = std::stoull(obj_name.substr(last_underscore + 1));
+            return true;
+        } catch (...) {
+            return false;
+        }
+    }
+
+    static std::optional<uint64_t> extract_pool_id(const std::string& obj_name) {
+        auto first_underscore = obj_name.find('_');
+        if (first_underscore == std::string::npos || first_underscore == 0) {
+            return std::nullopt;
+        }
+        try {
+            return std::stoull(obj_name.substr(0, first_underscore));
+        } catch (...) {
+            return std::nullopt;
+        }
+    }
+};
+
+FB_TEST(bdev_object_name_builder, build_full_name) {
+    auto name = object_name_builder::build(42, "mypool", "myimage", 5);
+    FB_ASSERT_STR_EQ(name.c_str(), "42_mypool_myimage_5");
+}
+
+FB_TEST(bdev_object_name_builder, build_prefix_format) {
+    auto prefix = object_name_builder::build_prefix(1, "test");
+    FB_ASSERT_STR_EQ(prefix.c_str(), "1__blk_data___test");
+}
+
+FB_TEST(bdev_object_name_builder, build_full_with_sequence) {
+    auto name = object_name_builder::build_full(1, "volume", 0);
+    FB_ASSERT_STR_EQ(name.c_str(), "1__blk_data___volume_0");
+
+    name = object_name_builder::build_full(1, "volume", 100);
+    FB_ASSERT_STR_EQ(name.c_str(), "1__blk_data___volume_100");
+}
+
+FB_TEST(bdev_object_name_builder, parse_sequence_success) {
+    uint64_t seq = 0;
+    FB_ASSERT_TRUE(object_name_builder::parse_sequence("1_pool_image_123", seq));
+    FB_ASSERT_EQ(seq, 123u);
+}
+
+FB_TEST(bdev_object_name_builder, parse_sequence_failure) {
+    uint64_t seq = 0;
+    FB_ASSERT_FALSE(object_name_builder::parse_sequence("invalid", seq));
+    FB_ASSERT_FALSE(object_name_builder::parse_sequence("no_seq_", seq));
+}
+
+FB_TEST(bdev_object_name_builder, extract_pool_id_success) {
+    auto pool_id = object_name_builder::extract_pool_id("42_pool_image_123");
+    FB_ASSERT_TRUE(pool_id.has_value());
+    FB_ASSERT_EQ(pool_id.value(), 42u);
+}
+
+FB_TEST(bdev_object_name_builder, extract_pool_id_failure) {
+    auto pool_id = object_name_builder::extract_pool_id("invalid");
+    FB_ASSERT_FALSE(pool_id.has_value());
+
+    pool_id = object_name_builder::extract_pool_id("_starts_with_underscore");
+    FB_ASSERT_FALSE(pool_id.has_value());
+}
+
+FB_TEST(bdev_object_name_builder, pool_id_zero_valid) {
+    auto prefix = object_name_builder::build_prefix(0, "internal");
+    FB_ASSERT_STR_EQ(prefix.c_str(), "0__blk_data___internal");
+
+    auto pool_id = object_name_builder::extract_pool_id("0_internal_image_5");
+    FB_ASSERT_TRUE(pool_id.has_value());
+    FB_ASSERT_EQ(pool_id.value(), 0u);
+}
+
+FB_TEST(bdev_object_name_builder, large_sequence_number) {
+    uint64_t large_seq = 999999999999ull;
+    auto name = object_name_builder::build_full(1, "bigvol", large_seq);
+    FB_ASSERT_TRUE(name.find(std::to_string(large_seq)) != std::string::npos);
+
+    uint64_t parsed_seq = 0;
+    FB_ASSERT_TRUE(object_name_builder::parse_sequence(name, parsed_seq));
+    FB_ASSERT_EQ(parsed_seq, large_seq);
+}
+
+FB_TEST(bdev_object_name_builder, empty_image_name) {
+    auto prefix = object_name_builder::build_prefix(1, "");
+    FB_ASSERT_STR_EQ(prefix.c_str(), "1__blk_data___");
 }
 
 // ============================================================================
