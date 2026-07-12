@@ -5780,6 +5780,153 @@ FB_TEST(bdev_rpc_request, parse_resize_fails_missing_size) {
 }
 
 // ============================================================================
+// Test Suite: bdev_io_merge — IO merge and coalescing
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_io_merge) {}
+FB_SUITE_TEARDOWN(bdev_io_merge) {}
+
+struct merge_request {
+    uint64_t offset{0};
+    uint64_t length{0};
+    uint32_t flags{0};
+    bool merged{false};
+
+    bool is_contiguous_with(const merge_request& other) const {
+        return offset + length == other.offset;
+    }
+
+    bool overlaps_with(const merge_request& other) const {
+        return offset < other.offset + other.length && other.offset < offset + length;
+    }
+
+    bool can_merge_with(const merge_request& other) const {
+        return flags == other.flags && (is_contiguous_with(other) || overlaps_with(other));
+    }
+};
+
+struct io_merge_engine {
+    std::vector<merge_request> pending;
+    uint64_t merge_count{0};
+
+    void submit(merge_request req) {
+        for (auto& existing : pending) {
+            if (existing.can_merge_with(req) && !existing.merged) {
+                uint64_t new_end = std::max(existing.offset + existing.length, req.offset + req.length);
+                existing.offset = std::min(existing.offset, req.offset);
+                existing.length = new_end - existing.offset;
+                existing.merged = true;
+                merge_count++;
+                return;
+            }
+        }
+        pending.push_back(req);
+    }
+
+    size_t pending_count() const { return pending.size(); }
+
+    std::optional<merge_request> get_merged() const {
+        for (const auto& req : pending) { if (req.merged) return req; }
+        return std::nullopt;
+    }
+
+    void flush() { pending.clear(); }
+
+    uint64_t total_pending_bytes() const {
+        uint64_t total = 0;
+        for (const auto& req : pending) total += req.length;
+        return total;
+    }
+};
+
+FB_TEST(bdev_io_merge, contiguous_requests) {
+    merge_request a{0, 1024, 0};
+    merge_request b{1024, 2048, 0};
+    FB_ASSERT_TRUE(a.is_contiguous_with(b));
+}
+
+FB_TEST(bdev_io_merge, non_contiguous_requests) {
+    merge_request a{0, 1024, 0};
+    merge_request b{2048, 1024, 0};
+    FB_ASSERT_FALSE(a.is_contiguous_with(b));
+}
+
+FB_TEST(bdev_io_merge, overlapping_requests) {
+    merge_request a{0, 2048, 0};
+    merge_request b{1024, 2048, 0};
+    FB_ASSERT_TRUE(a.overlaps_with(b));
+}
+
+FB_TEST(bdev_io_merge, can_merge_same_flags_contiguous) {
+    merge_request a{0, 1024, 1};
+    merge_request b{1024, 2048, 1};
+    FB_ASSERT_TRUE(a.can_merge_with(b));
+}
+
+FB_TEST(bdev_io_merge, cannot_merge_different_flags) {
+    merge_request a{0, 1024, 1};
+    merge_request b{1024, 2048, 2};
+    FB_ASSERT_FALSE(a.can_merge_with(b));
+}
+
+FB_TEST(bdev_io_merge, engine_submit_no_merge) {
+    io_merge_engine engine;
+    engine.submit({0, 1024, 1});
+    engine.submit({4096, 1024, 1});  // gap
+    FB_ASSERT_EQ(engine.pending_count(), 2u);
+    FB_ASSERT_EQ(engine.merge_count, 0u);
+}
+
+FB_TEST(bdev_io_merge, engine_submit_with_merge) {
+    io_merge_engine engine;
+    engine.submit({0, 1024, 1});
+    engine.submit({1024, 2048, 1});
+    FB_ASSERT_EQ(engine.pending_count(), 1u);
+    FB_ASSERT_EQ(engine.merge_count, 1u);
+}
+
+FB_TEST(bdev_io_merge, engine_merged_request_size) {
+    io_merge_engine engine;
+    engine.submit({0, 1024, 1});
+    engine.submit({1024, 2048, 1});
+    auto merged = engine.get_merged();
+    FB_ASSERT_TRUE(merged.has_value());
+    FB_ASSERT_EQ(merged->length, 3072u);
+}
+
+FB_TEST(bdev_io_merge, engine_overlapping_merge) {
+    io_merge_engine engine;
+    engine.submit({0, 2048, 1});
+    engine.submit({1024, 2048, 1});
+    FB_ASSERT_EQ(engine.pending_count(), 1u);
+    FB_ASSERT_EQ(engine.get_merged()->length, 3072u);
+}
+
+FB_TEST(bdev_io_merge, engine_flush_clears) {
+    io_merge_engine engine;
+    engine.submit({0, 1024, 1});
+    engine.flush();
+    FB_ASSERT_EQ(engine.pending_count(), 0u);
+}
+
+FB_TEST(bdev_io_merge, engine_total_pending_bytes) {
+    io_merge_engine engine;
+    engine.submit({0, 1024, 1});
+    engine.submit({4096, 2048, 1});
+    FB_ASSERT_EQ(engine.total_pending_bytes(), 3072u);
+}
+
+FB_TEST(bdev_io_merge, engine_multiple_merges) {
+    io_merge_engine engine;
+    engine.submit({0, 1024, 1});
+    engine.submit({1024, 1024, 1});
+    engine.submit({4096, 512, 2});
+    engine.submit({4608, 512, 2});
+    FB_ASSERT_EQ(engine.pending_count(), 2u);
+    FB_ASSERT_EQ(engine.merge_count, 2u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
