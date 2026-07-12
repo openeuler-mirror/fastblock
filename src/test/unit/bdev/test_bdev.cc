@@ -4614,6 +4614,196 @@ FB_TEST(bdev_quota_management, manager_total_used) {
 }
 
 // ============================================================================
+// Test Suite: bdev_health_monitor — Device health monitoring
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_health_monitor) {}
+FB_SUITE_TEARDOWN(bdev_health_monitor) {}
+
+enum class health_status : uint8_t {
+    unknown,
+    healthy,
+    warning,
+    degraded,
+    failed
+};
+
+struct health_metric {
+    std::string name;
+    uint64_t current_value{0};
+    uint64_t warning_threshold{0};
+    uint64_t critical_threshold{0};
+    health_status status{health_status::unknown};
+
+    void set_thresholds(uint64_t warn, uint64_t crit) {
+        warning_threshold = warn;
+        critical_threshold = crit;
+    }
+
+    void update(uint64_t value) {
+        current_value = value;
+        if (critical_threshold > 0 && value >= critical_threshold) {
+            status = health_status::failed;
+        } else if (warning_threshold > 0 && value >= warning_threshold) {
+            status = health_status::warning;
+        } else {
+            status = health_status::healthy;
+        }
+    }
+
+    bool is_healthy() const { return status == health_status::healthy; }
+    bool needs_attention() const {
+        return status == health_status::warning ||
+               status == health_status::degraded ||
+               status == health_status::failed;
+    }
+};
+
+struct health_monitor {
+    std::unordered_map<std::string, health_metric> metrics;
+    health_status overall_status{health_status::unknown};
+    uint64_t last_check_us{0};
+    uint64_t check_interval_us{60000000};  // 1 minute
+
+    void add_metric(const std::string& name, uint64_t warn, uint64_t crit) {
+        metrics[name].name = name;
+        metrics[name].set_thresholds(warn, crit);
+    }
+
+    void update_metric(const std::string& name, uint64_t value) {
+        auto it = metrics.find(name);
+        if (it != metrics.end()) {
+            it->second.update(value);
+            update_overall();
+        }
+    }
+
+    void update_overall() {
+        overall_status = health_status::healthy;
+        for (const auto& [_, m] : metrics) {
+            if (static_cast<uint8_t>(m.status) > static_cast<uint8_t>(overall_status)) {
+                overall_status = m.status;
+            }
+        }
+    }
+
+    bool should_check(uint64_t now_us) const {
+        return now_us - last_check_us >= check_interval_us;
+    }
+
+    void mark_checked(uint64_t now_us) { last_check_us = now_us; }
+
+    size_t unhealthy_count() const {
+        size_t n = 0;
+        for (const auto& [_, m] : metrics) {
+            if (!m.is_healthy()) n++;
+        }
+        return n;
+    }
+
+    std::vector<std::string> get_unhealthy_metrics() const {
+        std::vector<std::string> result;
+        for (const auto& [name, m] : metrics) {
+            if (!m.is_healthy()) result.push_back(name);
+        }
+        return result;
+    }
+};
+
+FB_TEST(bdev_health_monitor, metric_initial_unknown) {
+    health_metric m;
+    FB_ASSERT_TRUE(m.status == health_status::unknown);
+}
+
+FB_TEST(bdev_health_monitor, metric_set_thresholds) {
+    health_metric m;
+    m.set_thresholds(100, 200);
+    FB_ASSERT_EQ(m.warning_threshold, 100u);
+    FB_ASSERT_EQ(m.critical_threshold, 200u);
+}
+
+FB_TEST(bdev_health_monitor, metric_update_healthy) {
+    health_metric m;
+    m.set_thresholds(100, 200);
+    m.update(50);
+    FB_ASSERT_TRUE(m.status == health_status::healthy);
+}
+
+FB_TEST(bdev_health_monitor, metric_update_warning) {
+    health_metric m;
+    m.set_thresholds(100, 200);
+    m.update(150);
+    FB_ASSERT_TRUE(m.status == health_status::warning);
+}
+
+FB_TEST(bdev_health_monitor, metric_update_failed) {
+    health_metric m;
+    m.set_thresholds(100, 200);
+    m.update(250);
+    FB_ASSERT_TRUE(m.status == health_status::failed);
+}
+
+FB_TEST(bdev_health_monitor, metric_needs_attention) {
+    health_metric m;
+    m.set_thresholds(100, 200);
+    m.update(150);
+    FB_ASSERT_TRUE(m.needs_attention());
+}
+
+FB_TEST(bdev_health_monitor, monitor_add_metric) {
+    health_monitor mon;
+    mon.add_metric("error_rate", 100, 200);
+    FB_ASSERT_EQ(mon.metrics.size(), 1u);
+}
+
+FB_TEST(bdev_health_monitor, monitor_update_metric) {
+    health_monitor mon;
+    mon.add_metric("error_rate", 100, 200);
+    mon.update_metric("error_rate", 150);
+
+    FB_ASSERT_TRUE(mon.metrics["error_rate"].status == health_status::warning);
+}
+
+FB_TEST(bdev_health_monitor, monitor_overall_status) {
+    health_monitor mon;
+    mon.add_metric("metric1", 100, 200);
+    mon.add_metric("metric2", 100, 200);
+    mon.update_metric("metric1", 50);   // healthy
+    mon.update_metric("metric2", 250); // failed
+
+    FB_ASSERT_TRUE(mon.overall_status == health_status::failed);
+}
+
+FB_TEST(bdev_health_monitor, monitor_should_check) {
+    health_monitor mon;
+    mon.last_check_us = 0;
+    FB_ASSERT_TRUE(mon.should_check(60000000));
+}
+
+FB_TEST(bdev_health_monitor, monitor_unhealthy_count) {
+    health_monitor mon;
+    mon.add_metric("m1", 100, 200);
+    mon.add_metric("m2", 100, 200);
+    mon.add_metric("m3", 100, 200);
+    mon.update_metric("m1", 50);   // healthy
+    mon.update_metric("m2", 150); // warning
+    mon.update_metric("m3", 250); // failed
+
+    FB_ASSERT_EQ(mon.unhealthy_count(), 2u);
+}
+
+FB_TEST(bdev_health_monitor, monitor_get_unhealthy_metrics) {
+    health_monitor mon;
+    mon.add_metric("m1", 100, 200);
+    mon.add_metric("m2", 100, 200);
+    mon.update_metric("m1", 150);
+    mon.update_metric("m2", 250);
+
+    auto unhealthy = mon.get_unhealthy_metrics();
+    FB_ASSERT_EQ(unhealthy.size(), 2u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
