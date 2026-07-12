@@ -5927,6 +5927,185 @@ FB_TEST(bdev_io_merge, engine_multiple_merges) {
 }
 
 // ============================================================================
+// Test Suite: bdev_dirty_tracking — Dirty block tracking
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_dirty_tracking) {}
+FB_SUITE_TEARDOWN(bdev_dirty_tracking) {}
+
+struct dirty_block {
+    uint64_t block_id{0};
+    uint64_t dirty_since_us{0};
+    bool is_dirty{false};
+    bool needs_flush{false};
+
+    void mark_dirty(uint64_t now_us) {
+        is_dirty = true;
+        dirty_since_us = now_us;
+        needs_flush = true;
+    }
+
+    void mark_clean() {
+        is_dirty = false;
+        needs_flush = false;
+    }
+
+    uint64_t dirty_duration(uint64_t now_us) const {
+        return is_dirty ? now_us - dirty_since_us : 0;
+    }
+
+    bool dirty_timeout_exceeded(uint64_t now_us, uint64_t timeout_us) const {
+        return is_dirty && dirty_duration(now_us) > timeout_us;
+    }
+};
+
+struct dirty_tracker {
+    std::unordered_map<uint64_t, dirty_block> blocks;
+    uint64_t dirty_timeout_us{30000000};  // 30 seconds
+    uint64_t last_flush_us{0};
+    uint64_t flush_interval_us{60000000};  // 60 seconds
+
+    void mark_block_dirty(uint64_t block_id, uint64_t now_us) {
+        blocks[block_id].mark_dirty(now_us);
+    }
+
+    void mark_block_clean(uint64_t block_id) {
+        auto it = blocks.find(block_id);
+        if (it != blocks.end()) it->second.mark_clean();
+    }
+
+    size_t dirty_count() const {
+        size_t n = 0;
+        for (const auto& [_, blk] : blocks) { if (blk.is_dirty) n++; }
+        return n;
+    }
+
+    std::vector<uint64_t> get_timeout_blocks(uint64_t now_us) const {
+        std::vector<uint64_t> result;
+        for (const auto& [id, blk] : blocks) {
+            if (blk.dirty_timeout_exceeded(now_us, dirty_timeout_us)) result.push_back(id);
+        }
+        return result;
+    }
+
+    bool needs_flush(uint64_t now_us) const {
+        if (dirty_count() > 0 && now_us - last_flush_us >= flush_interval_us) return true;
+        return get_timeout_blocks(now_us).size() > 0;
+    }
+
+    void record_flush(uint64_t now_us) {
+        last_flush_us = now_us;
+        for (auto& [_, blk] : blocks) { blk.mark_clean(); }
+    }
+
+    void clear() {
+        blocks.clear();
+        last_flush_us = 0;
+    }
+};
+
+FB_TEST(bdev_dirty_tracking, block_initial_not_dirty) {
+    dirty_block blk;
+    FB_ASSERT_FALSE(blk.is_dirty);
+}
+
+FB_TEST(bdev_dirty_tracking, mark_dirty_sets_state) {
+    dirty_block blk;
+    blk.mark_dirty(1000);
+    FB_ASSERT_TRUE(blk.is_dirty);
+    FB_ASSERT_EQ(blk.dirty_since_us, 1000u);
+}
+
+FB_TEST(bdev_dirty_tracking, mark_clean_clears_state) {
+    dirty_block blk;
+    blk.mark_dirty(1000);
+    blk.mark_clean();
+    FB_ASSERT_FALSE(blk.is_dirty);
+}
+
+FB_TEST(bdev_dirty_tracking, dirty_duration_calculation) {
+    dirty_block blk;
+    blk.mark_dirty(1000);
+    FB_ASSERT_EQ(blk.dirty_duration(5000), 4000u);
+}
+
+FB_TEST(bdev_dirty_tracking, dirty_duration_zero_if_clean) {
+    dirty_block blk;
+    FB_ASSERT_EQ(blk.dirty_duration(5000), 0u);
+}
+
+FB_TEST(bdev_dirty_tracking, dirty_timeout_exceeded) {
+    dirty_block blk;
+    blk.mark_dirty(0);
+    FB_ASSERT_TRUE(blk.dirty_timeout_exceeded(60000, 30000));
+}
+
+FB_TEST(bdev_dirty_tracking, dirty_timeout_not_exceeded) {
+    dirty_block blk;
+    blk.mark_dirty(0);
+    FB_ASSERT_FALSE(blk.dirty_timeout_exceeded(10000, 30000));
+}
+
+FB_TEST(bdev_dirty_tracking, tracker_mark_block_dirty) {
+    dirty_tracker tracker;
+    tracker.mark_block_dirty(100, 0);
+    FB_ASSERT_EQ(tracker.dirty_count(), 1u);
+}
+
+FB_TEST(bdev_dirty_tracking, tracker_mark_block_clean) {
+    dirty_tracker tracker;
+    tracker.mark_block_dirty(100, 0);
+    tracker.mark_block_clean(100);
+    FB_ASSERT_EQ(tracker.dirty_count(), 0u);
+}
+
+FB_TEST(bdev_dirty_tracking, tracker_dirty_count) {
+    dirty_tracker tracker;
+    tracker.mark_block_dirty(1, 0);
+    tracker.mark_block_dirty(2, 0);
+    tracker.mark_block_dirty(3, 0);
+    FB_ASSERT_EQ(tracker.dirty_count(), 3u);
+}
+
+FB_TEST(bdev_dirty_tracking, tracker_get_timeout_blocks) {
+    dirty_tracker tracker;
+    tracker.dirty_timeout_us = 10000;
+    tracker.mark_block_dirty(1, 0);
+    tracker.mark_block_dirty(2, 20000);  // not timeout yet
+    auto timeout_blocks = tracker.get_timeout_blocks(25000);
+    FB_ASSERT_EQ(timeout_blocks.size(), 1u);
+}
+
+FB_TEST(bdev_dirty_tracking, tracker_needs_flush_by_interval) {
+    dirty_tracker tracker;
+    tracker.flush_interval_us = 10000;
+    tracker.mark_block_dirty(1, 0);
+    FB_ASSERT_TRUE(tracker.needs_flush(15000));
+}
+
+FB_TEST(bdev_dirty_tracking, tracker_needs_flush_by_timeout) {
+    dirty_tracker tracker;
+    tracker.dirty_timeout_us = 5000;
+    tracker.mark_block_dirty(1, 0);
+    FB_ASSERT_TRUE(tracker.needs_flush(10000));
+}
+
+FB_TEST(bdev_dirty_tracking, tracker_record_flush_clears_all) {
+    dirty_tracker tracker;
+    tracker.mark_block_dirty(1, 0);
+    tracker.mark_block_dirty(2, 0);
+    tracker.record_flush(50000);
+    FB_ASSERT_EQ(tracker.dirty_count(), 0u);
+}
+
+FB_TEST(bdev_dirty_tracking, tracker_clear) {
+    dirty_tracker tracker;
+    tracker.mark_block_dirty(1, 0);
+    tracker.clear();
+    FB_ASSERT_EQ(tracker.blocks.size(), 0u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
