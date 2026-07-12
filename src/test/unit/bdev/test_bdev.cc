@@ -12,10 +12,6 @@
 /**
  * @file test_bdev.cc
  * @brief Unit tests for bdev module data contracts (mirrored locally).
- *
- * This file tests the data structures and constants defined in the bdev module
- * without requiring SPDK runtime environment. All types are mirrored locally
- * to avoid pulling SPDK headers that require runtime initialization.
  */
 
 #include "test/framework/test_framework.h"
@@ -28,6 +24,8 @@
 #include <map>
 #include <optional>
 #include <functional>
+#include <algorithm>
+#include <limits>
 
 // ============================================================================
 // Local mirrors of bdev data contracts
@@ -41,7 +39,7 @@ constexpr uint32_t MAX_EVENTS_PER_POLL = 128;
 
 // ---------- bdev_fastblock structure (mirrored) ---------------------------
 struct bdev_fastblock_mirror {
-    std::string name;           // bdev name
+    std::string name;
     std::string image_name;
     std::string monitor_address;
     uint64_t pool_id{0};
@@ -134,7 +132,6 @@ struct app_stop_context_mirror {
                 current_state = app_stop_state::stopping_spdk_threads;
                 break;
             case app_stop_state::stopping_spdk_threads:
-                // Terminal state
                 break;
         }
     }
@@ -175,7 +172,7 @@ struct image_info_mirror {
 
 // ---------- Default values --------------------------------------------------
 constexpr uint32_t DEFAULT_BLOCK_SIZE = 4096;
-constexpr uint64_t DEFAULT_OBJECT_SIZE = 4194304;  // 4 MiB
+constexpr uint64_t DEFAULT_OBJECT_SIZE = 4194304;
 constexpr uint32_t DEFAULT_QUEUE_DEPTH = SPDK_FASTBLOCK_QUEUE_DEPTH;
 
 } // anonymous namespace
@@ -198,6 +195,119 @@ FB_TEST(bdev_constants, max_events_per_poll) {
 
 FB_TEST(bdev_constants, default_block_size) {
     FB_ASSERT_EQ(DEFAULT_BLOCK_SIZE, 4096u);
+}
+
+FB_TEST(bdev_constants, default_object_size) {
+    FB_ASSERT_EQ(DEFAULT_OBJECT_SIZE, 4194304u);
+    FB_ASSERT_EQ(DEFAULT_OBJECT_SIZE, 4u * 1024 * 1024);
+}
+
+FB_TEST(bdev_constants, queue_depth_equals_max_events) {
+    FB_ASSERT_EQ(SPDK_FASTBLOCK_QUEUE_DEPTH, MAX_EVENTS_PER_POLL);
+}
+
+// ============================================================================
+// Test Suite: bdev_fastblock_struct — bdev_fastblock structure
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_fastblock_struct) {}
+FB_SUITE_TEARDOWN(bdev_fastblock_struct) {}
+
+FB_TEST(bdev_fastblock_struct, default_values) {
+    bdev_fastblock_mirror bdev;
+    FB_ASSERT_TRUE(bdev.name.empty());
+    FB_ASSERT_TRUE(bdev.image_name.empty());
+    FB_ASSERT_TRUE(bdev.monitor_address.empty());
+    FB_ASSERT_EQ(bdev.pool_id, 0u);
+    FB_ASSERT_TRUE(bdev.pool_name.empty());
+    FB_ASSERT_EQ(bdev.image_size, 0u);
+    FB_ASSERT_EQ(bdev.block_size, 0u);
+    FB_ASSERT_EQ(bdev.object_size, 0u);
+}
+
+FB_TEST(bdev_fastblock_struct, field_assignment) {
+    bdev_fastblock_mirror bdev;
+    bdev.name = "fbdev0";
+    bdev.image_name = "myimage";
+    bdev.monitor_address = "127.0.0.1:3333";
+    bdev.pool_id = 1;
+    bdev.pool_name = "fb";
+    bdev.image_size = 100ull * 1024 * 1024 * 1024;
+    bdev.block_size = 4096;
+    bdev.object_size = 4 * 1024 * 1024;
+
+    FB_ASSERT_STR_EQ(bdev.name.c_str(), "fbdev0");
+    FB_ASSERT_STR_EQ(bdev.image_name.c_str(), "myimage");
+    FB_ASSERT_STR_EQ(bdev.monitor_address.c_str(), "127.0.0.1:3333");
+    FB_ASSERT_EQ(bdev.pool_id, 1u);
+    FB_ASSERT_STR_EQ(bdev.pool_name.c_str(), "fb");
+    FB_ASSERT_EQ(bdev.image_size, 100ull * 1024 * 1024 * 1024);
+    FB_ASSERT_EQ(bdev.block_size, 4096u);
+    FB_ASSERT_EQ(bdev.object_size, 4194304u);
+}
+
+FB_TEST(bdev_fastblock_struct, large_image_size) {
+    bdev_fastblock_mirror bdev;
+    bdev.image_size = std::numeric_limits<uint64_t>::max();
+    FB_ASSERT_EQ(bdev.image_size, std::numeric_limits<uint64_t>::max());
+}
+
+FB_TEST(bdev_fastblock_struct, block_size_alignment) {
+    bdev_fastblock_mirror bdev;
+    bdev.block_size = 512;
+    FB_ASSERT_EQ(bdev.block_size, 512u);
+
+    bdev.block_size = 4096;
+    FB_ASSERT_EQ(bdev.block_size, 4096u);
+}
+
+// ============================================================================
+// Test Suite: bdev_rpc_create — RPC create request structure
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_rpc_create) {}
+FB_SUITE_TEARDOWN(bdev_rpc_create) {}
+
+FB_TEST(bdev_rpc_create, default_values) {
+    rpc_create_fastblock_mirror req;
+    FB_ASSERT_TRUE(req.name.empty());
+    FB_ASSERT_EQ(req.pool_id, 0u);
+    FB_ASSERT_TRUE(req.pool_name.empty());
+    FB_ASSERT_TRUE(req.image_name.empty());
+    FB_ASSERT_EQ(req.image_size, 0u);
+    FB_ASSERT_EQ(req.object_size, 0u);
+    FB_ASSERT_EQ(req.block_size, 0u);
+    FB_ASSERT_TRUE(req.monitor_address.empty());
+}
+
+FB_TEST(bdev_rpc_create, all_fields_populated) {
+    rpc_create_fastblock_mirror req;
+    req.name = "bdev0";
+    req.pool_id = 42;
+    req.pool_name = "mypool";
+    req.image_name = "myvol";
+    req.image_size = 107374182400;
+    req.object_size = 4194304;
+    req.block_size = 4096;
+    req.monitor_address = "10.0.0.1:3333";
+
+    FB_ASSERT_STR_EQ(req.name.c_str(), "bdev0");
+    FB_ASSERT_EQ(req.pool_id, 42u);
+    FB_ASSERT_STR_EQ(req.pool_name.c_str(), "mypool");
+    FB_ASSERT_STR_EQ(req.image_name.c_str(), "myvol");
+    FB_ASSERT_EQ(req.image_size, 107374182400u);
+    FB_ASSERT_EQ(req.object_size, 4194304u);
+    FB_ASSERT_EQ(req.block_size, 4096u);
+    FB_ASSERT_STR_EQ(req.monitor_address.c_str(), "10.0.0.1:3333");
+}
+
+FB_TEST(bdev_rpc_create, optional_object_size) {
+    rpc_create_fastblock_mirror req;
+    req.object_size = 0;
+    FB_ASSERT_EQ(req.object_size, 0u);
+
+    req.object_size = DEFAULT_OBJECT_SIZE;
+    FB_ASSERT_EQ(req.object_size, DEFAULT_OBJECT_SIZE);
 }
 
 // ============================================================================
