@@ -5178,6 +5178,179 @@ FB_TEST(bdev_write_ordering, multiple_commits) {
 }
 
 // ============================================================================
+// Test Suite: bdev_rate_limiter — IO rate limiting
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_rate_limiter) {}
+FB_SUITE_TEARDOWN(bdev_rate_limiter) {}
+
+struct rate_limiter {
+    uint64_t max_ops_per_sec{1000};
+    uint64_t max_bytes_per_sec{0};  // 0 means unlimited
+    uint64_t ops_in_window{0};
+    uint64_t bytes_in_window{0};
+    uint64_t window_start_us{0};
+    uint64_t window_size_us{1000000};  // 1 second
+    bool enabled{true};
+
+    void set_limits(uint64_t ops, uint64_t bytes) {
+        max_ops_per_sec = ops;
+        max_bytes_per_sec = bytes;
+    }
+
+    void reset_window(uint64_t now_us) {
+        window_start_us = now_us;
+        ops_in_window = 0;
+        bytes_in_window = 0;
+    }
+
+    bool window_expired(uint64_t now_us) const {
+        return now_us - window_start_us >= window_size_us;
+    }
+
+    bool can_submit(uint64_t bytes) {
+        if (!enabled) return true;
+
+        if (max_ops_per_sec > 0 && ops_in_window >= max_ops_per_sec) {
+            return false;
+        }
+        if (max_bytes_per_sec > 0 && bytes_in_window + bytes > max_bytes_per_sec) {
+            return false;
+        }
+        return true;
+    }
+
+    void record_submit(uint64_t bytes) {
+        ops_in_window++;
+        bytes_in_window += bytes;
+    }
+
+    void try_submit(uint64_t now_us, uint64_t bytes) {
+        if (window_expired(now_us)) {
+            reset_window(now_us);
+        }
+        if (can_submit(bytes)) {
+            record_submit(bytes);
+        }
+    }
+
+    uint64_t ops_remaining() const {
+        if (max_ops_per_sec == 0) return UINT64_MAX;
+        if (ops_in_window >= max_ops_per_sec) return 0;
+        return max_ops_per_sec - ops_in_window;
+    }
+
+    double ops_utilization() const {
+        if (max_ops_per_sec == 0) return 0.0;
+        return static_cast<double>(ops_in_window) / max_ops_per_sec;
+    }
+};
+
+FB_TEST(bdev_rate_limiter, initial_no_limits) {
+    rate_limiter limiter;
+    limiter.enabled = false;
+    FB_ASSERT_TRUE(limiter.can_submit(1000000));
+}
+
+FB_TEST(bdev_rate_limiter, set_limits_configures) {
+    rate_limiter limiter;
+    limiter.set_limits(100, 1024 * 1024);
+    FB_ASSERT_EQ(limiter.max_ops_per_sec, 100u);
+    FB_ASSERT_EQ(limiter.max_bytes_per_sec, 1024u * 1024u);
+}
+
+FB_TEST(bdev_rate_limiter, can_submit_within_ops_limit) {
+    rate_limiter limiter;
+    limiter.set_limits(100, 0);
+    limiter.ops_in_window = 50;
+
+    FB_ASSERT_TRUE(limiter.can_submit(1024));
+}
+
+FB_TEST(bdev_rate_limiter, cannot_submit_exceeds_ops) {
+    rate_limiter limiter;
+    limiter.set_limits(100, 0);
+    limiter.ops_in_window = 100;
+
+    FB_ASSERT_FALSE(limiter.can_submit(1024));
+}
+
+FB_TEST(bdev_rate_limiter, cannot_submit_exceeds_bytes) {
+    rate_limiter limiter;
+    limiter.set_limits(0, 1000);
+    limiter.bytes_in_window = 800;
+
+    FB_ASSERT_FALSE(limiter.can_submit(300));  // would exceed 1000
+}
+
+FB_TEST(bdev_rate_limiter, record_submit_increments) {
+    rate_limiter limiter;
+    limiter.record_submit(1024);
+
+    FB_ASSERT_EQ(limiter.ops_in_window, 1u);
+    FB_ASSERT_EQ(limiter.bytes_in_window, 1024u);
+}
+
+FB_TEST(bdev_rate_limiter, window_expired_after_time) {
+    rate_limiter limiter;
+    limiter.window_start_us = 0;
+
+    FB_ASSERT_TRUE(limiter.window_expired(1000000));
+    FB_ASSERT_FALSE(limiter.window_expired(500000));
+}
+
+FB_TEST(bdev_rate_limiter, reset_window_clears_counters) {
+    rate_limiter limiter;
+    limiter.ops_in_window = 50;
+    limiter.bytes_in_window = 5000;
+    limiter.reset_window(1000000);
+
+    FB_ASSERT_EQ(limiter.ops_in_window, 0u);
+    FB_ASSERT_EQ(limiter.bytes_in_window, 0u);
+}
+
+FB_TEST(bdev_rate_limiter, try_submit_with_window_reset) {
+    rate_limiter limiter;
+    limiter.set_limits(100, 0);
+    limiter.window_start_us = 0;
+    limiter.ops_in_window = 100;
+
+    limiter.try_submit(2000000, 1024);  // window expired, reset
+    FB_ASSERT_EQ(limiter.ops_in_window, 1u);
+}
+
+FB_TEST(bdev_rate_limiter, ops_remaining_calculation) {
+    rate_limiter limiter;
+    limiter.set_limits(100, 0);
+    limiter.ops_in_window = 30;
+
+    FB_ASSERT_EQ(limiter.ops_remaining(), 70u);
+}
+
+FB_TEST(bdev_rate_limiter, ops_utilization_calculation) {
+    rate_limiter limiter;
+    limiter.set_limits(100, 0);
+    limiter.ops_in_window = 25;
+
+    FB_ASSERT_TRUE(limiter.ops_utilization() > 0.24 && limiter.ops_utilization() < 0.26);
+}
+
+FB_TEST(bdev_rate_limiter, ops_remaining_zero_at_limit) {
+    rate_limiter limiter;
+    limiter.set_limits(100, 0);
+    limiter.ops_in_window = 100;
+
+    FB_ASSERT_EQ(limiter.ops_remaining(), 0u);
+}
+
+FB_TEST(bdev_rate_limiter, ops_remaining_unlimited) {
+    rate_limiter limiter;
+    limiter.max_ops_per_sec = 0;
+
+    FB_ASSERT_EQ(limiter.ops_remaining(), UINT64_MAX);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
