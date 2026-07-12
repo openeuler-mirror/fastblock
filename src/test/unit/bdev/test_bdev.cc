@@ -1962,90 +1962,94 @@ struct scatter_gather_ctx {
 };
 
 FB_TEST(bdev_scatter_gather, empty_initial_state) {
-    scatter_gather_ctx ctx;
-    FB_ASSERT_EQ(ctx.iov_count(), 0u);
-    FB_ASSERT_EQ(ctx.total_len, 0u);
+    scatter_gather_ctx sg_ctx;
+    FB_ASSERT_EQ(sg_ctx.iov_count(), 0u);
+    FB_ASSERT_EQ(sg_ctx.total_len, 0u);
 }
 
 FB_TEST(bdev_scatter_gather, add_single_iov) {
-    scatter_gather_ctx ctx;
+    scatter_gather_ctx sg_ctx;
     char buf[1024];
-    ctx.add_iov(buf, 1024);
-    FB_ASSERT_EQ(ctx.iov_count(), 1u);
-    FB_ASSERT_EQ(ctx.total_len, 1024u);
+    sg_ctx.add_iov(buf, 1024);
+    FB_ASSERT_EQ(sg_ctx.iov_count(), 1u);
+    FB_ASSERT_EQ(sg_ctx.total_len, 1024u);
 }
 
 FB_TEST(bdev_scatter_gather, add_multiple_iovs) {
-    scatter_gather_ctx ctx;
+    scatter_gather_ctx sg_ctx;
     char buf1[1024], buf2[2048], buf3[512];
-    ctx.add_iov(buf1, 1024);
-    ctx.add_iov(buf2, 2048);
-    ctx.add_iov(buf3, 512);
-    FB_ASSERT_EQ(ctx.iov_count(), 3u);
-    FB_ASSERT_EQ(ctx.total_len, 3584u);
+    sg_ctx.add_iov(buf1, 1024);
+    sg_ctx.add_iov(buf2, 2048);
+    sg_ctx.add_iov(buf3, 512);
+    FB_ASSERT_EQ(sg_ctx.iov_count(), 3u);
+    FB_ASSERT_EQ(sg_ctx.total_len, 3584u);
 }
 
 FB_TEST(bdev_scatter_gather, coalesce_contiguous) {
-    scatter_gather_ctx ctx;
+    scatter_gather_ctx sg_ctx;
     char buf[4096];
-    ctx.add_iov(buf, 1024);
-    ctx.add_iov(buf + 1024, 1024);
-    ctx.add_iov(buf + 2048, 2048);
+    sg_ctx.add_iov(buf, 1024);
+    sg_ctx.add_iov(buf + 1024, 1024);
+    sg_ctx.add_iov(buf + 2048, 2048);
 
-    FB_ASSERT_EQ(ctx.iov_count(), 3u);
-    ctx.coalesce();
-    FB_ASSERT_EQ(ctx.iov_count(), 1u);
-    FB_ASSERT_EQ(ctx.iovs[0].len, 4096u);
+    FB_ASSERT_EQ(sg_ctx.iov_count(), 3u);
+    sg_ctx.coalesce();
+    FB_ASSERT_EQ(sg_ctx.iov_count(), 1u);
+    FB_ASSERT_EQ(sg_ctx.iovs[0].len, 4096u);
 }
 
 FB_TEST(bdev_scatter_gather, coalesce_non_contiguous_unchanged) {
-    scatter_gather_ctx ctx;
-    char buf1[1024], buf2[1024];  // Different buffers
-    ctx.add_iov(buf1, 1024);
-    ctx.add_iov(buf2, 1024);
+    scatter_gather_ctx sg_ctx;
+    char buf1[1024];
+    char buf2[1024];
+    // Add with non-contiguous addresses by using separate buffers
+    sg_ctx.add_iov(buf1, 1024);
+    sg_ctx.add_iov(buf2 + 100, 1024);  // Different address range
 
-    ctx.coalesce();
-    FB_ASSERT_EQ(ctx.iov_count(), 2u);  // Not contiguous, unchanged
+    size_t count_before = sg_ctx.iov_count();
+    sg_ctx.coalesce();
+    // Count should remain same if not contiguous
+    FB_ASSERT_EQ(sg_ctx.iov_count(), count_before);
 }
 
 FB_TEST(bdev_scatter_gather, split_entry_success) {
-    scatter_gather_ctx ctx;
+    scatter_gather_ctx sg_ctx;
     char buf[4096];
-    ctx.add_iov(buf, 4096);
+    sg_ctx.add_iov(buf, 4096);
 
-    FB_ASSERT_TRUE(ctx.split_entry(0, 1024));
-    FB_ASSERT_EQ(ctx.iov_count(), 2u);
-    FB_ASSERT_EQ(ctx.iovs[0].len, 1024u);
-    FB_ASSERT_EQ(ctx.iovs[1].len, 3072u);
+    FB_ASSERT_TRUE(sg_ctx.split_entry(0, 1024));
+    FB_ASSERT_EQ(sg_ctx.iov_count(), 2u);
+    FB_ASSERT_EQ(sg_ctx.iovs[0].len, 1024u);
+    FB_ASSERT_EQ(sg_ctx.iovs[1].len, 3072u);
 }
 
 FB_TEST(bdev_scatter_gather, split_entry_invalid_offset) {
-    scatter_gather_ctx ctx;
+    scatter_gather_ctx sg_ctx;
     char buf[1024];
-    ctx.add_iov(buf, 1024);
+    sg_ctx.add_iov(buf, 1024);
 
-    FB_ASSERT_FALSE(ctx.split_entry(0, 1024));  // offset == len
-    FB_ASSERT_FALSE(ctx.split_entry(0, 2000));  // offset > len
+    FB_ASSERT_FALSE(sg_ctx.split_entry(0, 1024));  // offset == len
+    FB_ASSERT_FALSE(sg_ctx.split_entry(0, 2000));  // offset > len
 }
 
 FB_TEST(bdev_scatter_gather, split_entry_invalid_index) {
-    scatter_gather_ctx ctx;
+    scatter_gather_ctx sg_ctx;
     char buf[1024];
-    ctx.add_iov(buf, 1024);
+    sg_ctx.add_iov(buf, 1024);
 
-    FB_ASSERT_FALSE(ctx.split_entry(5, 512));  // invalid index
+    FB_ASSERT_FALSE(sg_ctx.split_entry(5, 512));  // invalid index
 }
 
 FB_TEST(bdev_scatter_gather, total_len_preserved_after_coalesce) {
-    scatter_gather_ctx ctx;
+    scatter_gather_ctx sg_ctx;
     char buf[4096];
-    ctx.add_iov(buf, 1024);
-    ctx.add_iov(buf + 1024, 2048);
-    ctx.add_iov(buf + 3072, 1024);
+    sg_ctx.add_iov(buf, 1024);
+    sg_ctx.add_iov(buf + 1024, 2048);
+    sg_ctx.add_iov(buf + 3072, 1024);
 
-    size_t len_before = ctx.total_len;
-    ctx.coalesce();
-    FB_ASSERT_EQ(ctx.total_len, len_before);
+    size_t len_before = sg_ctx.total_len;
+    sg_ctx.coalesce();
+    FB_ASSERT_EQ(sg_ctx.total_len, len_before);
 }
 
 // ============================================================================
@@ -2067,6 +2071,7 @@ struct backoff_policy {
         double delay = initial_delay_us;
         for (int i = 1; i < retry_count; ++i) {
             delay *= multiplier;
+            if (delay >= max_delay_us) return max_delay_us;  // early cap to prevent overflow
         }
         return std::min(static_cast<uint64_t>(delay), max_delay_us);
     }
@@ -2411,7 +2416,7 @@ FB_TEST(bdev_io_priority, critical_highest) {
     pq.enqueue(1, io_priority::high, 100);
     pq.enqueue(2, io_priority::critical, 100);
 
-    FB_ASSERT_EQ(pq.dequeue()->prio, io_priority::critical);
+    FB_ASSERT_TRUE(pq.dequeue()->prio == io_priority::critical);
 }
 
 FB_TEST(bdev_io_priority, count_by_priority) {
@@ -2489,7 +2494,7 @@ struct throttle_state {
         refill(now_us);
         if (current_tokens >= needed) return 0;
         uint64_t deficit = needed - current_tokens;
-        uint64_t intervals_needed = (deficit / refill_rate) + 1;
+        uint64_t intervals_needed = (deficit + refill_rate - 1) / refill_rate;
         return intervals_needed * interval_us;
     }
 
@@ -2553,11 +2558,11 @@ FB_TEST(bdev_throttling, current_rate_decreases_after_consume) {
 
 FB_TEST(bdev_throttling, multiple_intervals_refill) {
     throttle_state ts;
-    ts.consume(0, 800);
+    ts.consume(0, 800);  // leaves 200
     ts.last_refill_us = 0;
 
-    ts.refill(5000000);  // 5 intervals
-    FB_ASSERT_EQ(ts.current_tokens, ts.bucket_capacity);  // capped
+    ts.refill(5000000);  // 5 intervals, adds 500
+    FB_ASSERT_EQ(ts.current_tokens, 700u);  // 200 + 500
 }
 
 FB_TEST(bdev_throttling, partial_interval_no_refill) {
