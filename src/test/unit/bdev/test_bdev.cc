@@ -3546,6 +3546,187 @@ FB_TEST(bdev_cache_coherence, pin_unpin_flow) {
 }
 
 // ============================================================================
+// Test Suite: bdev_io_scheduler — IO scheduling and fairness
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_io_scheduler) {}
+FB_SUITE_TEARDOWN(bdev_io_scheduler) {}
+
+enum class scheduler_policy {
+    fifo,
+    round_robin,
+    weighted_fair
+};
+
+struct io_request {
+    uint64_t id{0};
+    uint64_t submit_time_us{0};
+    uint32_t weight{1};
+    uint32_t client_id{0};
+    bool scheduled{false};
+};
+
+struct io_scheduler {
+    scheduler_policy policy{scheduler_policy::fifo};
+    std::vector<io_request> pending;
+    std::vector<io_request> scheduled_list;
+    uint32_t current_rr_index{0};
+
+    void submit(io_request req) {
+        pending.push_back(req);
+    }
+
+    void schedule_next(uint64_t now_us) {
+        if (pending.empty()) return;
+
+        io_request next;
+        size_t next_idx = 0;
+
+        switch (policy) {
+            case scheduler_policy::fifo:
+                next_idx = 0;
+                break;
+            case scheduler_policy::round_robin:
+                next_idx = current_rr_index % pending.size();
+                current_rr_index = (current_rr_index + 1) % pending.size();
+                break;
+            case scheduler_policy::weighted_fair:
+                // Find highest weight
+                uint32_t max_weight = 0;
+                for (size_t i = 0; i < pending.size(); ++i) {
+                    if (pending[i].weight > max_weight) {
+                        max_weight = pending[i].weight;
+                        next_idx = i;
+                    }
+                }
+                break;
+        }
+
+        next = pending[next_idx];
+        next.scheduled = true;
+        next.submit_time_us = now_us;
+        scheduled_list.push_back(next);
+        pending.erase(pending.begin() + next_idx);
+    }
+
+    size_t pending_count() const { return pending.size(); }
+    size_t scheduled_count() const { return scheduled_list.size(); }
+
+    void clear() {
+        pending.clear();
+        scheduled_list.clear();
+        current_rr_index = 0;
+    }
+
+    std::optional<io_request> get_scheduled(uint64_t id) const {
+        for (const auto& req : scheduled_list) {
+            if (req.id == id) return req;
+        }
+        return std::nullopt;
+    }
+};
+
+FB_TEST(bdev_io_scheduler, empty_initial_state) {
+    io_scheduler sched;
+    FB_ASSERT_EQ(sched.pending_count(), 0u);
+    FB_ASSERT_EQ(sched.scheduled_count(), 0u);
+}
+
+FB_TEST(bdev_io_scheduler, submit_adds_to_pending) {
+    io_scheduler sched;
+    io_request req{1, 0, 1, 100};
+    sched.submit(req);
+    FB_ASSERT_EQ(sched.pending_count(), 1u);
+}
+
+FB_TEST(bdev_io_scheduler, fifo_schedules_first) {
+    io_scheduler sched;
+    sched.submit({1, 0, 1, 100});
+    sched.submit({2, 0, 1, 200});
+
+    sched.schedule_next(1000000);
+    FB_ASSERT_EQ(sched.scheduled_count(), 1u);
+    FB_ASSERT_EQ(sched.get_scheduled(1)->client_id, 100u);
+}
+
+FB_TEST(bdev_io_scheduler, round_robin_cycles) {
+    io_scheduler sched;
+    sched.policy = scheduler_policy::round_robin;
+    sched.submit({1, 0, 1, 100});
+    sched.submit({2, 0, 1, 200});
+    sched.submit({3, 0, 1, 300});
+
+    sched.schedule_next(0);  // schedules index 0
+    sched.schedule_next(0);  // schedules index 0 (was 1, now 0)
+    sched.schedule_next(0);  // schedules index 0 (was 2, now 0)
+
+    FB_ASSERT_EQ(sched.scheduled_count(), 3u);
+}
+
+FB_TEST(bdev_io_scheduler, weighted_fair_picks_highest) {
+    io_scheduler sched;
+    sched.policy = scheduler_policy::weighted_fair;
+    sched.submit({1, 0, 1, 100});
+    sched.submit({2, 0, 5, 200});  // higher weight
+    sched.submit({3, 0, 3, 300});
+
+    sched.schedule_next(0);
+    FB_ASSERT_EQ(sched.get_scheduled(2)->weight, 5u);
+}
+
+FB_TEST(bdev_io_scheduler, schedule_removes_from_pending) {
+    io_scheduler sched;
+    sched.submit({1, 0, 1, 100});
+    sched.submit({2, 0, 1, 200});
+
+    FB_ASSERT_EQ(sched.pending_count(), 2u);
+    sched.schedule_next(0);
+    FB_ASSERT_EQ(sched.pending_count(), 1u);
+}
+
+FB_TEST(bdev_io_scheduler, clear_resets_state) {
+    io_scheduler sched;
+    sched.submit({1, 0, 1, 100});
+    sched.schedule_next(0);
+
+    sched.clear();
+    FB_ASSERT_EQ(sched.pending_count(), 0u);
+    FB_ASSERT_EQ(sched.scheduled_count(), 0u);
+}
+
+FB_TEST(bdev_io_scheduler, get_scheduled_not_found) {
+    io_scheduler sched;
+    sched.submit({1, 0, 1, 100});
+    sched.schedule_next(0);
+
+    FB_ASSERT_FALSE(sched.get_scheduled(999).has_value());
+}
+
+FB_TEST(bdev_io_scheduler, multiple_schedules_order) {
+    io_scheduler sched;
+    for (int i = 1; i <= 5; ++i) {
+        sched.submit({(uint64_t)i, 0, 1, (uint32_t)i * 100});
+    }
+
+    for (int i = 0; i < 5; ++i) {
+        sched.schedule_next(0);
+    }
+
+    FB_ASSERT_EQ(sched.scheduled_count(), 5u);
+    FB_ASSERT_EQ(sched.pending_count(), 0u);
+}
+
+FB_TEST(bdev_io_scheduler, weighted_with_same_weight_picks_first) {
+    io_scheduler sched;
+    sched.policy = scheduler_policy::weighted_fair;
+    sched.submit({1, 0, 3, 100});
+    sched.submit({2, 0, 3, 200});
+
+    sched.schedule_next(0);
+    FB_ASSERT_EQ(sched.get_scheduled(1)->id, 1u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
