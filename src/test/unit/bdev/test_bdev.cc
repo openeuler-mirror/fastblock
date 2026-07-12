@@ -1768,6 +1768,144 @@ FB_TEST(bdev_object_name_builder, empty_image_name) {
 }
 
 // ============================================================================
+// Test Suite: bdev_config_validation — Configuration parameter validation
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_config_validation) {}
+FB_SUITE_TEARDOWN(bdev_config_validation) {}
+
+struct config_validator {
+    // Validate monitor address format
+    static bool validate_monitor_address(const std::string& addr) {
+        if (addr.empty()) return false;
+        auto colon = addr.find(':');
+        if (colon == std::string::npos || colon == 0 || colon == addr.size() - 1) {
+            return false;
+        }
+        // Check port is numeric
+        std::string port_str = addr.substr(colon + 1);
+        for (char c : port_str) {
+            if (c < '0' || c > '9') return false;
+        }
+        return true;
+    }
+
+    // Validate block size (power of 2, >= 512)
+    static bool validate_block_size(uint32_t size) {
+        return size >= 512 && (size & (size - 1)) == 0;
+    }
+
+    // Validate object size (power of 2, >= block_size)
+    static bool validate_object_size(uint64_t size, uint32_t block_size) {
+        return size >= block_size && (size & (size - 1)) == 0;
+    }
+
+    // Validate image size (multiple of block_size)
+    static bool validate_image_size(uint64_t size, uint32_t block_size) {
+        return size > 0 && size % block_size == 0;
+    }
+
+    // Validate core count (positive)
+    static bool validate_core_count(int cores) {
+        return cores > 0;
+    }
+
+    // Validate all parameters for bdev creation
+    static bool validate_create_params(const std::string& pool_name,
+                                        const std::string& image_name,
+                                        const std::string& mon_addr,
+                                        uint32_t block_size,
+                                        uint64_t object_size,
+                                        uint64_t image_size) {
+        if (pool_name.empty() || image_name.empty()) return false;
+        if (!validate_monitor_address(mon_addr)) return false;
+        if (!validate_block_size(block_size)) return false;
+        if (!validate_object_size(object_size, block_size)) return false;
+        if (!validate_image_size(image_size, block_size)) return false;
+        return true;
+    }
+};
+
+FB_TEST(bdev_config_validation, monitor_address_valid_format) {
+    FB_ASSERT_TRUE(config_validator::validate_monitor_address("127.0.0.1:9000"));
+    FB_ASSERT_TRUE(config_validator::validate_monitor_address("localhost:8080"));
+    FB_ASSERT_TRUE(config_validator::validate_monitor_address("10.0.0.1:3333"));
+}
+
+FB_TEST(bdev_config_validation, monitor_address_invalid_format) {
+    FB_ASSERT_FALSE(config_validator::validate_monitor_address(""));
+    FB_ASSERT_FALSE(config_validator::validate_monitor_address("noport"));
+    FB_ASSERT_FALSE(config_validator::validate_monitor_address(":9000"));
+    FB_ASSERT_FALSE(config_validator::validate_monitor_address("host:"));
+    FB_ASSERT_FALSE(config_validator::validate_monitor_address("host:abc"));
+}
+
+FB_TEST(bdev_config_validation, block_size_valid_values) {
+    FB_ASSERT_TRUE(config_validator::validate_block_size(512));
+    FB_ASSERT_TRUE(config_validator::validate_block_size(4096));
+    FB_ASSERT_TRUE(config_validator::validate_block_size(65536));
+}
+
+FB_TEST(bdev_config_validation, block_size_invalid_values) {
+    FB_ASSERT_FALSE(config_validator::validate_block_size(0));
+    FB_ASSERT_FALSE(config_validator::validate_block_size(256));
+    FB_ASSERT_FALSE(config_validator::validate_block_size(513));
+    FB_ASSERT_FALSE(config_validator::validate_block_size(1023));
+}
+
+FB_TEST(bdev_config_validation, object_size_valid) {
+    FB_ASSERT_TRUE(config_validator::validate_object_size(4096, 512));
+    FB_ASSERT_TRUE(config_validator::validate_object_size(4 * 1024 * 1024, 512));
+}
+
+FB_TEST(bdev_config_validation, object_size_invalid) {
+    FB_ASSERT_FALSE(config_validator::validate_object_size(0, 512));
+    FB_ASSERT_FALSE(config_validator::validate_object_size(256, 512));  // smaller than block
+    FB_ASSERT_FALSE(config_validator::validate_object_size(3 * 1024 * 1024, 512));  // not power of 2
+}
+
+FB_TEST(bdev_config_validation, image_size_valid) {
+    FB_ASSERT_TRUE(config_validator::validate_image_size(4096, 4096));
+    FB_ASSERT_TRUE(config_validator::validate_image_size(10 * 1024 * 1024 * 1024, 512));
+}
+
+FB_TEST(bdev_config_validation, image_size_invalid) {
+    FB_ASSERT_FALSE(config_validator::validate_image_size(0, 512));
+    FB_ASSERT_FALSE(config_validator::validate_image_size(1000, 512));  // not aligned
+}
+
+FB_TEST(bdev_config_validation, core_count_valid) {
+    FB_ASSERT_TRUE(config_validator::validate_core_count(1));
+    FB_ASSERT_TRUE(config_validator::validate_core_count(16));
+}
+
+FB_TEST(bdev_config_validation, core_count_invalid) {
+    FB_ASSERT_FALSE(config_validator::validate_core_count(0));
+    FB_ASSERT_FALSE(config_validator::validate_core_count(-1));
+}
+
+FB_TEST(bdev_config_validation, create_params_all_valid) {
+    FB_ASSERT_TRUE(config_validator::validate_create_params(
+        "mypool", "myimage", "127.0.0.1:9000",
+        4096, 4 * 1024 * 1024, 10ull * 1024 * 1024 * 1024));
+}
+
+FB_TEST(bdev_config_validation, create_params_empty_pool_fails) {
+    FB_ASSERT_FALSE(config_validator::validate_create_params(
+        "", "myimage", "127.0.0.1:9000", 4096, 4 * 1024 * 1024, 1024));
+}
+
+FB_TEST(bdev_config_validation, create_params_empty_image_fails) {
+    FB_ASSERT_FALSE(config_validator::validate_create_params(
+        "mypool", "", "127.0.0.1:9000", 4096, 4 * 1024 * 1024, 1024));
+}
+
+FB_TEST(bdev_config_validation, create_params_invalid_block_size_fails) {
+    FB_ASSERT_FALSE(config_validator::validate_create_params(
+        "mypool", "myimage", "127.0.0.1:9000", 1000, 4 * 1024 * 1024, 1024));
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
