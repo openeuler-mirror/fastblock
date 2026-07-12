@@ -2912,6 +2912,210 @@ FB_TEST(bdev_clone_state, sequential_ids) {
 }
 
 // ============================================================================
+// Test Suite: bdev_async_callback — Async operation callback tracking
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_async_callback) {}
+FB_SUITE_TEARDOWN(bdev_async_callback) {}
+
+template<typename T>
+struct async_result {
+    T value{};
+    int error_code{0};
+    bool completed{false};
+
+    void set_success(T val) {
+        value = val;
+        error_code = 0;
+        completed = true;
+    }
+
+    void set_error(int err) {
+        error_code = err;
+        completed = true;
+    }
+
+    bool is_success() const { return completed && error_code == 0; }
+    bool is_error() const { return completed && error_code != 0; }
+    bool is_pending() const { return !completed; }
+};
+
+struct callback_tracker {
+    int callbacks_fired{0};
+    int errors{0};
+    int successes{0};
+    std::vector<int> error_codes;
+
+    void record_success() {
+        callbacks_fired++;
+        successes++;
+    }
+
+    void record_error(int err) {
+        callbacks_fired++;
+        errors++;
+        error_codes.push_back(err);
+    }
+
+    void reset() {
+        callbacks_fired = 0;
+        errors = 0;
+        successes = 0;
+        error_codes.clear();
+    }
+
+    double success_rate() const {
+        if (callbacks_fired == 0) return 0.0;
+        return static_cast<double>(successes) / callbacks_fired;
+    }
+};
+
+struct async_operation {
+    uint64_t op_id{0};
+    uint64_t start_us{0};
+    uint64_t end_us{0};
+    bool started{false};
+    bool cancelled{false};
+
+    async_result<uint64_t> result;
+
+    void start(uint64_t id, uint64_t now_us) {
+        op_id = id;
+        start_us = now_us;
+        started = true;
+    }
+
+    void complete(uint64_t now_us, uint64_t val, int err, callback_tracker& tracker) {
+        if (!started || cancelled) return;
+        end_us = now_us;
+        if (err == 0) {
+            result.set_success(val);
+            tracker.record_success();
+        } else {
+            result.set_error(err);
+            tracker.record_error(err);
+        }
+    }
+
+    void cancel() {
+        if (started && !result.completed) {
+            cancelled = true;
+        }
+    }
+
+    uint64_t duration_us() const {
+        if (!started || end_us == 0) return 0;
+        return end_us - start_us;
+    }
+};
+
+FB_TEST(bdev_async_callback, result_initial_pending) {
+    async_result<int> result;
+    FB_ASSERT_TRUE(result.is_pending());
+    FB_ASSERT_FALSE(result.completed);
+}
+
+FB_TEST(bdev_async_callback, result_success) {
+    async_result<int> result;
+    result.set_success(42);
+    FB_ASSERT_TRUE(result.is_success());
+    FB_ASSERT_EQ(result.value, 42);
+}
+
+FB_TEST(bdev_async_callback, result_error) {
+    async_result<int> result;
+    result.set_error(-1);
+    FB_ASSERT_TRUE(result.is_error());
+    FB_ASSERT_EQ(result.error_code, -1);
+}
+
+FB_TEST(bdev_async_callback, tracker_records_success) {
+    callback_tracker tracker;
+    tracker.record_success();
+    tracker.record_success();
+    FB_ASSERT_EQ(tracker.callbacks_fired, 2);
+    FB_ASSERT_EQ(tracker.successes, 2);
+}
+
+FB_TEST(bdev_async_callback, tracker_records_errors) {
+    callback_tracker tracker;
+    tracker.record_error(-1);
+    tracker.record_error(-2);
+    FB_ASSERT_EQ(tracker.errors, 2);
+    FB_ASSERT_EQ(tracker.error_codes.size(), 2u);
+}
+
+FB_TEST(bdev_async_callback, tracker_success_rate) {
+    callback_tracker tracker;
+    tracker.record_success();
+    tracker.record_success();
+    tracker.record_error(-1);
+    FB_ASSERT_TRUE(tracker.success_rate() > 0.65 && tracker.success_rate() < 0.68);
+}
+
+FB_TEST(bdev_async_callback, tracker_reset) {
+    callback_tracker tracker;
+    tracker.record_success();
+    tracker.record_error(-1);
+    tracker.reset();
+    FB_ASSERT_EQ(tracker.callbacks_fired, 0);
+}
+
+FB_TEST(bdev_async_callback, operation_start) {
+    async_operation op;
+    op.start(12345, 1000000);
+    FB_ASSERT_TRUE(op.started);
+    FB_ASSERT_EQ(op.op_id, 12345u);
+}
+
+FB_TEST(bdev_async_callback, operation_complete_success) {
+    async_operation op;
+    callback_tracker tracker;
+    op.start(1, 1000000);
+    op.complete(2000000, 42, 0, tracker);
+
+    FB_ASSERT_TRUE(op.result.is_success());
+    FB_ASSERT_EQ(op.duration_us(), 1000000u);
+}
+
+FB_TEST(bdev_async_callback, operation_complete_error) {
+    async_operation op;
+    callback_tracker tracker;
+    op.start(1, 1000000);
+    op.complete(2000000, 0, -5, tracker);
+
+    FB_ASSERT_TRUE(op.result.is_error());
+    FB_ASSERT_EQ(tracker.errors, 1);
+}
+
+FB_TEST(bdev_async_callback, operation_cancel_prevents_complete) {
+    async_operation op;
+    callback_tracker tracker;
+    op.start(1, 1000000);
+    op.cancel();
+    op.complete(2000000, 42, 0, tracker);
+
+    FB_ASSERT_TRUE(op.cancelled);
+    FB_ASSERT_TRUE(op.result.is_pending());  // not completed
+}
+
+FB_TEST(bdev_async_callback, operation_cancel_after_complete_fails) {
+    async_operation op;
+    callback_tracker tracker;
+    op.start(1, 1000000);
+    op.complete(2000000, 42, 0, tracker);
+    op.cancel();  // already completed
+
+    FB_ASSERT_FALSE(op.cancelled);
+}
+
+FB_TEST(bdev_async_callback, operation_duration_before_complete_zero) {
+    async_operation op;
+    op.start(1, 1000000);
+    FB_ASSERT_EQ(op.duration_us(), 0u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
