@@ -2161,6 +2161,163 @@ FB_TEST(bdev_retry_backoff, no_retries_policy) {
 }
 
 // ============================================================================
+// Test Suite: bdev_lease_renewal — Lease renewal and expiration
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_lease_renewal) {}
+FB_SUITE_TEARDOWN(bdev_lease_renewal) {}
+
+struct lease_state {
+    uint64_t lease_id{0};
+    uint64_t granted_at_us{0};
+    uint64_t duration_us{0};
+    uint64_t renew_at_us{0};  // When to renew (before expiry)
+    bool is_valid{false};
+    bool renew_pending{false};
+
+    void grant(uint64_t id, uint64_t now_us, uint64_t dur_us, uint64_t renew_window_us) {
+        lease_id = id;
+        granted_at_us = now_us;
+        duration_us = dur_us;
+        renew_at_us = now_us + dur_us - renew_window_us;
+        is_valid = true;
+        renew_pending = false;
+    }
+
+    uint64_t expires_at() const {
+        return granted_at_us + duration_us;
+    }
+
+    uint64_t remaining_us(uint64_t now_us) const {
+        if (!is_valid || now_us >= expires_at()) return 0;
+        return expires_at() - now_us;
+    }
+
+    bool should_renew(uint64_t now_us) const {
+        return is_valid && now_us >= renew_at_us && !renew_pending;
+    }
+
+    bool is_expired(uint64_t now_us) const {
+        return !is_valid || now_us >= expires_at();
+    }
+
+    void renew(uint64_t now_us) {
+        if (should_renew(now_us)) {
+            granted_at_us = now_us;
+            renew_at_us = now_us + duration_us - (duration_us / 10);  // 10% guard
+            renew_pending = false;
+        }
+    }
+
+    void invalidate() {
+        is_valid = false;
+        renew_pending = false;
+    }
+
+    void start_renewal() {
+        if (is_valid) renew_pending = true;
+    }
+
+    void cancel_renewal() {
+        renew_pending = false;
+    }
+};
+
+FB_TEST(bdev_lease_renewal, grant_sets_valid) {
+    lease_state lease;
+    lease.grant(12345, 0, 30000000, 5000000);  // 30s lease, 5s renew window
+
+    FB_ASSERT_TRUE(lease.is_valid);
+    FB_ASSERT_EQ(lease.lease_id, 12345u);
+    FB_ASSERT_EQ(lease.expires_at(), 30000000u);
+}
+
+FB_TEST(bdev_lease_renewal, remaining_time_calculation) {
+    lease_state lease;
+    lease.grant(1, 0, 30000000, 5000000);
+
+    FB_ASSERT_EQ(lease.remaining_us(0), 30000000u);
+    FB_ASSERT_EQ(lease.remaining_us(10000000), 20000000u);
+    FB_ASSERT_EQ(lease.remaining_us(30000000), 0u);
+}
+
+FB_TEST(bdev_lease_renewal, should_renew_after_renew_window) {
+    lease_state lease;
+    lease.grant(1, 0, 30000000, 5000000);  // renew at 25s
+
+    FB_ASSERT_FALSE(lease.should_renew(0));
+    FB_ASSERT_FALSE(lease.should_renew(20000000));
+    FB_ASSERT_TRUE(lease.should_renew(25000000));
+}
+
+FB_TEST(bdev_lease_renewal, should_not_renew_if_pending) {
+    lease_state lease;
+    lease.grant(1, 0, 30000000, 5000000);
+    lease.start_renewal();
+
+    FB_ASSERT_TRUE(lease.renew_pending);
+    FB_ASSERT_FALSE(lease.should_renew(25000000));
+}
+
+FB_TEST(bdev_lease_renewal, renew_updates_granted_time) {
+    lease_state lease;
+    lease.grant(1, 0, 30000000, 5000000);
+
+    uint64_t now = 26000000;  // Within renew window
+    lease.renew(now);
+
+    FB_ASSERT_EQ(lease.granted_at_us, now);
+    FB_ASSERT_EQ(lease.expires_at(), now + 30000000);
+}
+
+FB_TEST(bdev_lease_renewal, is_expired_checks_time) {
+    lease_state lease;
+    lease.grant(1, 0, 30000000, 5000000);
+
+    FB_ASSERT_FALSE(lease.is_expired(0));
+    FB_ASSERT_FALSE(lease.is_expired(29000000));
+    FB_ASSERT_TRUE(lease.is_expired(30000000));
+}
+
+FB_TEST(bdev_lease_renewal, invalidate_clears_state) {
+    lease_state lease;
+    lease.grant(1, 0, 30000000, 5000000);
+    lease.invalidate();
+
+    FB_ASSERT_FALSE(lease.is_valid);
+    FB_ASSERT_TRUE(lease.is_expired(0));
+}
+
+FB_TEST(bdev_lease_renewal, start_and_cancel_renewal) {
+    lease_state lease;
+    lease.grant(1, 0, 30000000, 5000000);
+
+    lease.start_renewal();
+    FB_ASSERT_TRUE(lease.renew_pending);
+
+    lease.cancel_renewal();
+    FB_ASSERT_FALSE(lease.renew_pending);
+}
+
+FB_TEST(bdev_lease_renewal, remaining_zero_if_expired) {
+    lease_state lease;
+    lease.grant(1, 0, 30000000, 5000000);
+    lease.invalidate();
+
+    FB_ASSERT_EQ(lease.remaining_us(0), 0u);
+}
+
+FB_TEST(bdev_lease_renewal, renew_fails_if_not_should_renew) {
+    lease_state lease;
+    lease.grant(1, 0, 30000000, 5000000);
+
+    uint64_t old_granted = lease.granted_at_us;
+    lease.renew(10000000);  // Too early, before renew_at
+
+    FB_ASSERT_EQ(lease.granted_at_us, old_granted);  // unchanged
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
