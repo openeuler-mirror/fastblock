@@ -4241,6 +4241,206 @@ FB_TEST(bdev_extent_allocator, extent_can_merge_contiguous) {
 }
 
 // ============================================================================
+// Test Suite: bdev_checksum_verification — Checksum verification
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_checksum_verification) {}
+FB_SUITE_TEARDOWN(bdev_checksum_verification) {}
+
+enum class checksum_type : uint8_t {
+    none = 0,
+    crc32 = 1,
+    crc64 = 2,
+    xxhash = 3
+};
+
+struct checksum_ctx {
+    checksum_type type{checksum_type::none};
+    uint64_t value{0};
+    uint64_t computed_value{0};
+    bool verified{false};
+
+    void set(checksum_type t, uint64_t val) {
+        type = t;
+        value = val;
+        verified = false;
+    }
+
+    void compute_crc32(const void* data, size_t len) {
+        // Simplified CRC32 simulation
+        uint32_t crc = 0xFFFFFFFF;
+        const uint8_t* bytes = static_cast<const uint8_t*>(data);
+        for (size_t i = 0; i < len; ++i) {
+            crc ^= bytes[i];
+            for (int j = 0; j < 8; ++j) {
+                crc = (crc >> 1) ^ (0xEDB88320 & -(crc & 1));
+            }
+        }
+        computed_value = ~crc;
+        type = checksum_type::crc32;
+    }
+
+    bool verify() {
+        if (type == checksum_type::none) return true;
+        verified = (value == computed_value);
+        return verified;
+    }
+
+    void reset() {
+        type = checksum_type::none;
+        value = 0;
+        computed_value = 0;
+        verified = false;
+    }
+};
+
+struct checksum_manager {
+    std::unordered_map<uint64_t, checksum_ctx> block_checksums;
+
+    void set_checksum(uint64_t block, checksum_type type, uint64_t value) {
+        block_checksums[block].set(type, value);
+    }
+
+    bool verify_block(uint64_t block, const void* data, size_t len) {
+        auto it = block_checksums.find(block);
+        if (it == block_checksums.end()) return true;  // no checksum
+
+        if (it->second.type == checksum_type::crc32) {
+            it->second.compute_crc32(data, len);
+        } else if (it->second.type == checksum_type::crc64) {
+            it->second.computed_value = *(static_cast<const uint64_t*>(data));  // simplified
+        }
+
+        return it->second.verify();
+    }
+
+    bool has_checksum(uint64_t block) const {
+        return block_checksums.find(block) != block_checksums.end();
+    }
+
+    void remove_checksum(uint64_t block) {
+        block_checksums.erase(block);
+    }
+
+    size_t count() const { return block_checksums.size(); }
+
+    size_t verified_count() const {
+        size_t n = 0;
+        for (const auto& [_, ctx] : block_checksums) {
+            if (ctx.verified) n++;
+        }
+        return n;
+    }
+
+    void clear() { block_checksums.clear(); }
+};
+
+FB_TEST(bdev_checksum_verification, initial_no_checksum) {
+    checksum_ctx ctx;
+    FB_ASSERT_TRUE(ctx.type == checksum_type::none);
+}
+
+FB_TEST(bdev_checksum_verification, set_checksum_type_and_value) {
+    checksum_ctx ctx;
+    ctx.set(checksum_type::crc32, 0x12345678);
+    FB_ASSERT_TRUE(ctx.type == checksum_type::crc32);
+    FB_ASSERT_EQ(ctx.value, 0x12345678ull);
+}
+
+FB_TEST(bdev_checksum_verification, compute_crc32) {
+    checksum_ctx ctx;
+    uint8_t data[] = {1, 2, 3, 4, 5};
+    ctx.compute_crc32(data, 5);
+    FB_ASSERT_TRUE(ctx.type == checksum_type::crc32);
+    FB_ASSERT_NE(ctx.computed_value, 0ull);
+}
+
+FB_TEST(bdev_checksum_verification, verify_success_when_match) {
+    checksum_ctx ctx;
+    uint8_t data[] = {1, 2, 3, 4, 5};
+    ctx.compute_crc32(data, 5);
+    ctx.value = ctx.computed_value;  // match
+
+    FB_ASSERT_TRUE(ctx.verify());
+}
+
+FB_TEST(bdev_checksum_verification, verify_fails_on_mismatch) {
+    checksum_ctx ctx;
+    ctx.type = checksum_type::crc32;
+    ctx.value = 0x12345678;
+    ctx.computed_value = 0x87654321;
+
+    FB_ASSERT_FALSE(ctx.verify());
+}
+
+FB_TEST(bdev_checksum_verification, verify_none_always_succeeds) {
+    checksum_ctx ctx;
+    ctx.type = checksum_type::none;
+    FB_ASSERT_TRUE(ctx.verify());
+}
+
+FB_TEST(bdev_checksum_verification, reset_clears_all) {
+    checksum_ctx ctx;
+    ctx.set(checksum_type::crc32, 123);
+    ctx.reset();
+
+    FB_ASSERT_TRUE(ctx.type == checksum_type::none);
+    FB_ASSERT_EQ(ctx.value, 0ull);
+}
+
+FB_TEST(bdev_checksum_verification, manager_set_checksum) {
+    checksum_manager mgr;
+    mgr.set_checksum(100, checksum_type::crc32, 0xABCD);
+
+    FB_ASSERT_TRUE(mgr.has_checksum(100));
+    FB_ASSERT_EQ(mgr.count(), 1u);
+}
+
+FB_TEST(bdev_checksum_verification, manager_verify_block_no_checksum) {
+    checksum_manager mgr;
+    uint8_t data[] = {1, 2, 3};
+
+    FB_ASSERT_TRUE(mgr.verify_block(999, data, 3));  // no checksum
+}
+
+FB_TEST(bdev_checksum_verification, manager_verify_block_with_checksum) {
+    checksum_manager mgr;
+    uint8_t data[] = {1, 2, 3, 4, 5};
+
+    checksum_ctx temp;
+    temp.compute_crc32(data, 5);
+    mgr.set_checksum(100, checksum_type::crc32, temp.computed_value);
+
+    FB_ASSERT_TRUE(mgr.verify_block(100, data, 5));
+}
+
+FB_TEST(bdev_checksum_verification, manager_remove_checksum) {
+    checksum_manager mgr;
+    mgr.set_checksum(100, checksum_type::crc32, 123);
+    mgr.remove_checksum(100);
+
+    FB_ASSERT_FALSE(mgr.has_checksum(100));
+}
+
+FB_TEST(bdev_checksum_verification, manager_verified_count) {
+    checksum_manager mgr;
+    mgr.set_checksum(1, checksum_type::crc32, 100);
+    mgr.set_checksum(2, checksum_type::crc32, 200);
+
+    mgr.block_checksums[1].verified = true;
+    FB_ASSERT_EQ(mgr.verified_count(), 1u);
+}
+
+FB_TEST(bdev_checksum_verification, manager_clear) {
+    checksum_manager mgr;
+    mgr.set_checksum(1, checksum_type::crc32, 100);
+    mgr.set_checksum(2, checksum_type::crc32, 200);
+    mgr.clear();
+
+    FB_ASSERT_EQ(mgr.count(), 0u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
