@@ -8063,6 +8063,199 @@ FB_TEST(bdev_io_splitting, split_clear) {
 }
 
 // ============================================================================
+// Test Suite: bdev_read_ahead — Read-ahead and prefetch strategy
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_read_ahead) {}
+FB_SUITE_TEARDOWN(bdev_read_ahead) {}
+
+struct read_ahead_entry {
+    uint64_t prefetch_offset{0};
+    uint64_t prefetch_length{0};
+    uint64_t triggered_by_offset{0};
+    uint64_t triggered_at_us{0};
+    bool completed{false};
+    bool consumed{false};
+};
+
+struct read_ahead_manager {
+    std::deque<read_ahead_entry> prefetch_queue;
+    uint64_t prefetch_size{64 * 1024};  // 64 KiB default
+    uint64_t prefetch_distance{256 * 1024};  // 256 KiB ahead
+    uint64_t max_prefetch_count{8};
+    uint64_t next_prefetch_id{1};
+    uint64_t prefetch_hits{0};
+    uint64_t prefetch_misses{0};
+
+    std::optional<read_ahead_entry> trigger(uint64_t read_offset, uint64_t now_us) {
+        if (prefetch_queue.size() >= max_prefetch_count) return std::nullopt;
+
+        read_ahead_entry entry;
+        entry.prefetch_offset = read_offset + prefetch_distance;
+        entry.prefetch_length = prefetch_size;
+        entry.triggered_by_offset = read_offset;
+        entry.triggered_at_us = now_us;
+
+        prefetch_queue.push_back(entry);
+        return entry;
+    }
+
+    void mark_completed(uint64_t offset) {
+        for (auto& p : prefetch_queue) {
+            if (p.prefetch_offset == offset && !p.completed) p.completed = true;
+        }
+    }
+
+    std::optional<read_ahead_entry> find_prefetch(uint64_t read_offset) {
+        for (auto& p : prefetch_queue) {
+            if (p.completed && !p.consumed &&
+                read_offset >= p.prefetch_offset &&
+                read_offset < p.prefetch_offset + p.prefetch_length) {
+                p.consumed = true;
+                prefetch_hits++;
+                return p;
+            }
+        }
+        prefetch_misses++;
+        return std::nullopt;
+    }
+
+    bool has_prefetch_for(uint64_t offset) const {
+        for (const auto& p : prefetch_queue) {
+            if (p.completed && !p.consumed &&
+                offset >= p.prefetch_offset &&
+                offset < p.prefetch_offset + p.prefetch_length) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void cleanup_consumed() {
+        prefetch_queue.erase(std::remove_if(prefetch_queue.begin(), prefetch_queue.end(),
+            [](const read_ahead_entry& p) { return p.consumed; }), prefetch_queue.end());
+    }
+
+    void cleanup_expired(uint64_t now_us, uint64_t timeout_us) {
+        prefetch_queue.erase(std::remove_if(prefetch_queue.begin(), prefetch_queue.end(),
+            [now_us, timeout_us](const read_ahead_entry& p) {
+                return now_us - p.triggered_at_us > timeout_us && !p.consumed;
+            }), prefetch_queue.end());
+    }
+
+    size_t pending_count() const { return prefetch_queue.size(); }
+
+    size_t completed_count() const {
+        size_t n = 0;
+        for (const auto& p : prefetch_queue) { if (p.completed) n++; }
+        return n;
+    }
+
+    double hit_rate() const {
+        uint64_t total = prefetch_hits + prefetch_misses;
+        return total > 0 ? static_cast<double>(prefetch_hits) / total : 0.0;
+    }
+
+    void reset_stats() { prefetch_hits = 0; prefetch_misses = 0; }
+};
+
+FB_TEST(bdev_read_ahead, trigger_creates_entry) {
+    read_ahead_manager mgr;
+    auto entry = mgr.trigger(1024, 0);
+    FB_ASSERT_TRUE(entry.has_value());
+    FB_ASSERT_EQ(mgr.pending_count(), 1u);
+}
+
+FB_TEST(bdev_read_ahead, trigger_respects_max_count) {
+    read_ahead_manager mgr;
+    mgr.max_prefetch_count = 2;
+    mgr.trigger(0, 0);
+    mgr.trigger(1024, 0);
+    auto entry3 = mgr.trigger(2048, 0);  // should fail
+    FB_ASSERT_FALSE(entry3.has_value());
+}
+
+FB_TEST(bdev_read_ahead, prefetch_offset_calculation) {
+    read_ahead_manager mgr;
+    mgr.prefetch_distance = 1024;
+    auto entry = mgr.trigger(0, 0);
+    FB_ASSERT_EQ(entry->prefetch_offset, 1024u);
+}
+
+FB_TEST(bdev_read_ahead, prefetch_length_configured) {
+    read_ahead_manager mgr;
+    mgr.prefetch_size = 4096;
+    auto entry = mgr.trigger(0, 0);
+    FB_ASSERT_EQ(entry->prefetch_length, 4096u);
+}
+
+FB_TEST(bdev_read_ahead, mark_completed) {
+    read_ahead_manager mgr;
+    mgr.trigger(0, 0);
+    mgr.mark_completed(256 * 1024);  // prefetch_offset
+    FB_ASSERT_EQ(mgr.completed_count(), 1u);
+}
+
+FB_TEST(bdev_read_ahead, find_prefetch_hit) {
+    read_ahead_manager mgr;
+    mgr.prefetch_distance = 0;  // trigger at same offset
+    mgr.trigger(1024, 0);
+    mgr.mark_completed(1024);
+    auto hit = mgr.find_prefetch(1024);
+    FB_ASSERT_TRUE(hit.has_value());
+    FB_ASSERT_EQ(mgr.prefetch_hits, 1u);
+}
+
+FB_TEST(bdev_read_ahead, find_prefetch_miss) {
+    read_ahead_manager mgr;
+    mgr.trigger(0, 0);
+    mgr.mark_completed(256 * 1024);
+    auto hit = mgr.find_prefetch(512 * 1024);  // different offset
+    FB_ASSERT_FALSE(hit.has_value());
+    FB_ASSERT_EQ(mgr.prefetch_misses, 1u);
+}
+
+FB_TEST(bdev_read_ahead, has_prefetch_for_check) {
+    read_ahead_manager mgr;
+    mgr.prefetch_distance = 0;
+    mgr.trigger(4096, 0);
+    mgr.mark_completed(4096);
+    FB_ASSERT_TRUE(mgr.has_prefetch_for(4096));
+}
+
+FB_TEST(bdev_read_ahead, cleanup_consumed) {
+    read_ahead_manager mgr;
+    mgr.prefetch_distance = 0;
+    mgr.trigger(0, 0);
+    mgr.mark_completed(0);
+    mgr.find_prefetch(0);  // consumes it
+    mgr.cleanup_consumed();
+    FB_ASSERT_EQ(mgr.pending_count(), 0u);
+}
+
+FB_TEST(bdev_read_ahead, cleanup_expired) {
+    read_ahead_manager mgr;
+    mgr.trigger(0, 0);
+    mgr.cleanup_expired(1000000, 500000);  // 1s now, 500ms timeout
+    FB_ASSERT_EQ(mgr.pending_count(), 0u);  // expired
+}
+
+FB_TEST(bdev_read_ahead, hit_rate_calculation) {
+    read_ahead_manager mgr;
+    mgr.prefetch_hits = 8;
+    mgr.prefetch_misses = 2;
+    FB_ASSERT_TRUE(mgr.hit_rate() > 0.7 && mgr.hit_rate() < 0.9);  // 80%
+}
+
+FB_TEST(bdev_read_ahead, reset_stats) {
+    read_ahead_manager mgr;
+    mgr.prefetch_hits = 10;
+    mgr.prefetch_misses = 5;
+    mgr.reset_stats();
+    FB_ASSERT_EQ(mgr.prefetch_hits, 0u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
