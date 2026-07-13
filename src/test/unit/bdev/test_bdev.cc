@@ -6644,7 +6644,7 @@ FB_TEST(bdev_memory_pool, pool_free_reduces_count) {
     memory_pool pool;
     pool.initialize(10);
     auto blk = pool.allocate();
-    pool.free(blk->block_id);
+    pool.free((*blk)->block_id);
     FB_ASSERT_EQ(pool.allocated_blocks, 0u);
 }
 
@@ -6700,7 +6700,7 @@ FB_TEST(bdev_memory_pool, pool_multiple_allocate_free_cycle) {
     pool.initialize(5);
     auto b1 = pool.allocate();
     auto b2 = pool.allocate();
-    pool.free(b1->block_id);
+    pool.free((*b1)->block_id);
     auto b3 = pool.allocate();  // should reuse b1's slot
     FB_ASSERT_EQ(pool.allocated_blocks, 2u);
 }
@@ -6745,7 +6745,7 @@ struct dedup_manager {
 
     std::optional<uint64_t> lookup(uint64_t hash) const {
         auto it = hash_table.find(hash);
-        return it != hash_table.end() ? it->second.physical_block : std::nullopt;
+        return it != hash_table.end() ? std::optional<uint64_t>(it->second.physical_block) : std::nullopt;
     }
 
     bool is_duplicate(uint64_t hash) const {
@@ -6906,8 +6906,8 @@ FB_TEST(bdev_object_dedup, manager_shared_count) {
 // Test Suite: bdev_async_callback — Async operation callback tracking
 // ============================================================================
 
-FB_SUITE_SETUP(bdev_async_callback) {}
-FB_SUITE_TEARDOWN(bdev_async_callback) {}
+FB_SUITE_SETUP(bdev_async_op_tracking) {}
+FB_SUITE_TEARDOWN(bdev_async_op_tracking) {}
 
 struct async_op {
     uint64_t op_id{0};
@@ -6998,49 +6998,49 @@ struct async_callback_manager {
     }
 };
 
-FB_TEST(bdev_async_callback, op_initial_pending) {
+FB_TEST(bdev_async_op_tracking, op_initial_pending) {
     async_op op;
     FB_ASSERT_TRUE(op.is_pending());
 }
 
-FB_TEST(bdev_async_callback, op_mark_completed) {
+FB_TEST(bdev_async_op_tracking, op_mark_completed) {
     async_op op;
     op.mark_completed();
     FB_ASSERT_FALSE(op.is_pending());
 }
 
-FB_TEST(bdev_async_callback, op_timed_out) {
+FB_TEST(bdev_async_op_tracking, op_timed_out) {
     async_op op;
     op.start_us = 0;
     op.timeout_us = 10000;
     FB_ASSERT_TRUE(op.timed_out(50000));
 }
 
-FB_TEST(bdev_async_callback, cb_initial_not_executed) {
+FB_TEST(bdev_async_op_tracking, cb_initial_not_executed) {
     callback_entry cb;
     FB_ASSERT_FALSE(cb.executed);
 }
 
-FB_TEST(bdev_async_callback, cb_execute_sets_result) {
+FB_TEST(bdev_async_op_tracking, cb_execute_sets_result) {
     callback_entry cb;
     cb.execute(0, 1000);
     FB_ASSERT_TRUE(cb.executed);
 }
 
-FB_TEST(bdev_async_callback, manager_start_op) {
+FB_TEST(bdev_async_op_tracking, manager_start_op) {
     async_callback_manager mgr;
     mgr.start_op(1000, 30000);
     FB_ASSERT_EQ(mgr.pending_count(), 1u);
 }
 
-FB_TEST(bdev_async_callback, manager_register_callback) {
+FB_TEST(bdev_async_op_tracking, manager_register_callback) {
     async_callback_manager mgr;
     uint64_t op_id = mgr.start_op(1000, 30000);
     uint64_t cb_id = mgr.register_callback(op_id);
     FB_ASSERT_NE(cb_id, 0u);
 }
 
-FB_TEST(bdev_async_callback, manager_complete_op) {
+FB_TEST(bdev_async_op_tracking, manager_complete_op) {
     async_callback_manager mgr;
     uint64_t op_id = mgr.start_op(1000, 30000);
     uint64_t cb_id = mgr.register_callback(op_id);
@@ -7342,7 +7342,7 @@ struct io_stats_collector {
     }
 
     double read_write_ratio() const {
-        if (write_ops == 0) return 0.0;
+        if (current.write_ops == 0) return 0.0;
         return static_cast<double>(current.read_ops) / current.write_ops;
     }
 
@@ -7405,7 +7405,7 @@ FB_TEST(bdev_io_statistics, entry_avg_read_latency) {
     io_stat_entry stats;
     stats.record_read(1024, 1000);
     stats.record_read(1024, 3000);
-    FB_ASSERT_TRUE(stats.avg_read_latency() > 1.9 && stats.avg_read_latency() < 2.1);
+    FB_ASSERT_EQ(stats.avg_read_latency(), 2000.0);
 }
 
 FB_TEST(bdev_io_statistics, entry_avg_write_latency) {
