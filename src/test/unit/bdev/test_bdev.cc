@@ -7613,6 +7613,170 @@ FB_TEST(bdev_token_throttle, bucket_refill_between_consumes) {
 }
 
 // ============================================================================
+// Test Suite: bdev_image_lock — Image locking for exclusive access
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_image_lock) {}
+FB_SUITE_TEARDOWN(bdev_image_lock) {}
+
+enum class lock_mode : uint8_t {
+    none,
+    shared,
+    exclusive
+};
+
+struct lock_holder {
+    uint64_t holder_id{0};
+    lock_mode mode{lock_mode::none};
+    uint64_t acquired_at_us{0};
+    uint64_t timeout_us{0};
+
+    bool is_expired(uint64_t now_us) const {
+        return timeout_us > 0 && now_us - acquired_at_us > timeout_us;
+    }
+};
+
+struct image_lock {
+    std::vector<lock_holder> holders;
+    uint64_t next_holder_id{1};
+
+    std::optional<uint64_t> acquire(lock_mode mode, uint64_t now_us, uint64_t timeout_us) {
+        // Exclusive: no other holders allowed
+        if (mode == lock_mode::exclusive && !holders.empty()) return std::nullopt;
+        // Shared: only if no exclusive holder
+        if (mode == lock_mode::shared) {
+            for (const auto& h : holders) {
+                if (h.mode == lock_mode::exclusive) return std::nullopt;
+            }
+        }
+
+        lock_holder holder;
+        holder.holder_id = next_holder_id++;
+        holder.mode = mode;
+        holder.acquired_at_us = now_us;
+        holder.timeout_us = timeout_us;
+        holders.push_back(holder);
+        return holder.holder_id;
+    }
+
+    bool release(uint64_t holder_id) {
+        auto it = std::find_if(holders.begin(), holders.end(),
+            [holder_id](const lock_holder& h) { return h.holder_id == holder_id; });
+        if (it != holders.end()) { holders.erase(it); return true; }
+        return false;
+    }
+
+    void purge_expired(uint64_t now_us) {
+        holders.erase(std::remove_if(holders.begin(), holders.end(),
+            [now_us](const lock_holder& h) { return h.is_expired(now_us); }), holders.end());
+    }
+
+    bool is_locked() const { return !holders.empty(); }
+
+    bool has_exclusive() const {
+        for (const auto& h : holders) { if (h.mode == lock_mode::exclusive) return true; }
+        return false;
+    }
+
+    size_t shared_count() const {
+        size_t n = 0;
+        for (const auto& h : holders) { if (h.mode == lock_mode::shared) n++; }
+        return n;
+    }
+
+    size_t holder_count() const { return holders.size(); }
+
+    void force_release_all() { holders.clear(); }
+};
+
+FB_TEST(bdev_image_lock, acquire_shared_success) {
+    image_lock lock;
+    auto id = lock.acquire(lock_mode::shared, 0, 0);
+    FB_ASSERT_TRUE(id.has_value());
+    FB_ASSERT_EQ(lock.holder_count(), 1u);
+}
+
+FB_TEST(bdev_image_lock, acquire_exclusive_success) {
+    image_lock lock;
+    auto id = lock.acquire(lock_mode::exclusive, 0, 0);
+    FB_ASSERT_TRUE(id.has_value());
+    FB_ASSERT_TRUE(lock.has_exclusive());
+}
+
+FB_TEST(bdev_image_lock, multiple_shared_allowed) {
+    image_lock lock;
+    lock.acquire(lock_mode::shared, 0, 0);
+    auto id2 = lock.acquire(lock_mode::shared, 0, 0);
+    FB_ASSERT_TRUE(id2.has_value());
+    FB_ASSERT_EQ(lock.shared_count(), 2u);
+}
+
+FB_TEST(bdev_image_lock, shared_blocks_exclusive) {
+    image_lock lock;
+    lock.acquire(lock_mode::shared, 0, 0);
+    auto id = lock.acquire(lock_mode::exclusive, 0, 0);
+    FB_ASSERT_FALSE(id.has_value());
+}
+
+FB_TEST(bdev_image_lock, exclusive_blocks_shared) {
+    image_lock lock;
+    lock.acquire(lock_mode::exclusive, 0, 0);
+    auto id = lock.acquire(lock_mode::shared, 0, 0);
+    FB_ASSERT_FALSE(id.has_value());
+}
+
+FB_TEST(bdev_image_lock, exclusive_blocks_exclusive) {
+    image_lock lock;
+    lock.acquire(lock_mode::exclusive, 0, 0);
+    auto id = lock.acquire(lock_mode::exclusive, 0, 0);
+    FB_ASSERT_FALSE(id.has_value());
+}
+
+FB_TEST(bdev_image_lock, release_success) {
+    image_lock lock;
+    auto id = lock.acquire(lock_mode::shared, 0, 0);
+    FB_ASSERT_TRUE(lock.release(*id));
+    FB_ASSERT_EQ(lock.holder_count(), 0u);
+}
+
+FB_TEST(bdev_image_lock, release_allows_new_exclusive) {
+    image_lock lock;
+    auto id = lock.acquire(lock_mode::shared, 0, 0);
+    lock.release(*id);
+    auto ex = lock.acquire(lock_mode::exclusive, 0, 0);
+    FB_ASSERT_TRUE(ex.has_value());
+}
+
+FB_TEST(bdev_image_lock, is_locked_check) {
+    image_lock lock;
+    FB_ASSERT_FALSE(lock.is_locked());
+    lock.acquire(lock_mode::shared, 0, 0);
+    FB_ASSERT_TRUE(lock.is_locked());
+}
+
+FB_TEST(bdev_image_lock, purge_expired_removes_timed_out) {
+    image_lock lock;
+    lock.acquire(lock_mode::shared, 0, 10000);  // 10ms timeout
+    lock.purge_expired(50000);  // 50ms later
+    FB_ASSERT_EQ(lock.holder_count(), 0u);
+}
+
+FB_TEST(bdev_image_lock, purge_expired_keeps_valid) {
+    image_lock lock;
+    lock.acquire(lock_mode::shared, 0, 60000);  // 60s timeout
+    lock.purge_expired(5000);
+    FB_ASSERT_EQ(lock.holder_count(), 1u);
+}
+
+FB_TEST(bdev_image_lock, force_release_all) {
+    image_lock lock;
+    lock.acquire(lock_mode::shared, 0, 0);
+    lock.acquire(lock_mode::shared, 0, 0);
+    lock.force_release_all();
+    FB_ASSERT_EQ(lock.holder_count(), 0u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
