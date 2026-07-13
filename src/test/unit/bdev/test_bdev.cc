@@ -8256,6 +8256,181 @@ FB_TEST(bdev_read_ahead, reset_stats) {
 }
 
 // ============================================================================
+// Test Suite: bdev_event_subscription — Event notification and subscription
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_event_subscription) {}
+FB_SUITE_TEARDOWN(bdev_event_subscription) {}
+
+enum class event_kind : uint8_t {
+    io_error,
+    state_change,
+    threshold_reached,
+    device_removed
+};
+
+struct event_subscriber {
+    uint64_t subscriber_id{0};
+    std::vector<event_kind> interests;
+    uint64_t event_count{0};
+    bool active{true};
+
+    bool is_interested(event_kind kind) const {
+        return active && std::find(interests.begin(), interests.end(), kind) != interests.end();
+    }
+
+    void notify(event_kind kind) {
+        if (is_interested(kind)) event_count++;
+    }
+
+    void deactivate() { active = false; }
+
+    void add_interest(event_kind kind) {
+        if (std::find(interests.begin(), interests.end(), kind) == interests.end()) {
+            interests.push_back(kind);
+        }
+    }
+
+    void remove_interest(event_kind kind) {
+        interests.erase(std::remove(interests.begin(), interests.end(), kind), interests.end());
+    }
+};
+
+struct event_dispatcher {
+    std::unordered_map<uint64_t, event_subscriber> subscribers;
+    uint64_t next_sub_id{1};
+    uint64_t events_dispatched{0};
+
+    uint64_t subscribe(std::vector<event_kind> interests) {
+        event_subscriber sub;
+        sub.subscriber_id = next_sub_id++;
+        sub.interests = interests;
+        subscribers[sub.subscriber_id] = sub;
+        return sub.subscriber_id;
+    }
+
+    void unsubscribe(uint64_t sub_id) { subscribers.erase(sub_id); }
+
+    void dispatch(event_kind kind) {
+        for (auto& [id, sub] : subscribers) {
+            if (sub.is_interested(kind)) {
+                sub.notify(kind);
+                events_dispatched++;
+            }
+        }
+    }
+
+    size_t active_count() const {
+        size_t n = 0;
+        for (const auto& [_, sub] : subscribers) { if (sub.active) n++; }
+        return n;
+    }
+
+    size_t interested_count(event_kind kind) const {
+        size_t n = 0;
+        for (const auto& [_, sub] : subscribers) { if (sub.is_interested(kind)) n++; }
+        return n;
+    }
+
+    uint64_t subscriber_event_count(uint64_t sub_id) const {
+        auto it = subscribers.find(sub_id);
+        return it != subscribers.end() ? it->second.event_count : 0;
+    }
+};
+
+FB_TEST(bdev_event_subscription, subscriber_initial_state) {
+    event_subscriber sub;
+    FB_ASSERT_EQ(sub.event_count, 0u);
+    FB_ASSERT_TRUE(sub.active);
+}
+
+FB_TEST(bdev_event_subscription, subscriber_is_interested) {
+    event_subscriber sub;
+    sub.interests = {event_kind::io_error, event_kind::state_change};
+    FB_ASSERT_TRUE(sub.is_interested(event_kind::io_error));
+    FB_ASSERT_FALSE(sub.is_interested(event_kind::device_removed));
+}
+
+FB_TEST(bdev_event_subscription, subscriber_notify_matching) {
+    event_subscriber sub;
+    sub.interests = {event_kind::io_error};
+    sub.notify(event_kind::io_error);
+    FB_ASSERT_EQ(sub.event_count, 1u);
+}
+
+FB_TEST(bdev_event_subscription, subscriber_notify_no_match) {
+    event_subscriber sub;
+    sub.interests = {event_kind::io_error};
+    sub.notify(event_kind::state_change);
+    FB_ASSERT_EQ(sub.event_count, 0u);
+}
+
+FB_TEST(bdev_event_subscription, subscriber_deactivate_ignores) {
+    event_subscriber sub;
+    sub.interests = {event_kind::io_error};
+    sub.deactivate();
+    sub.notify(event_kind::io_error);
+    FB_ASSERT_EQ(sub.event_count, 0u);
+}
+
+FB_TEST(bdev_event_subscription, subscriber_add_interest) {
+    event_subscriber sub;
+    sub.add_interest(event_kind::io_error);
+    FB_ASSERT_TRUE(sub.is_interested(event_kind::io_error));
+}
+
+FB_TEST(bdev_event_subscription, subscriber_remove_interest) {
+    event_subscriber sub;
+    sub.interests = {event_kind::io_error, event_kind::state_change};
+    sub.remove_interest(event_kind::io_error);
+    FB_ASSERT_FALSE(sub.is_interested(event_kind::io_error));
+}
+
+FB_TEST(bdev_event_subscription, dispatcher_subscribe) {
+    event_dispatcher disp;
+    uint64_t id = disp.subscribe({event_kind::io_error});
+    FB_ASSERT_NE(id, 0u);
+    FB_ASSERT_EQ(disp.active_count(), 1u);
+}
+
+FB_TEST(bdev_event_subscription, dispatcher_unsubscribe) {
+    event_dispatcher disp;
+    uint64_t id = disp.subscribe({event_kind::io_error});
+    disp.unsubscribe(id);
+    FB_ASSERT_EQ(disp.active_count(), 0u);
+}
+
+FB_TEST(bdev_event_subscription, dispatcher_dispatch_notifies) {
+    event_dispatcher disp;
+    uint64_t id = disp.subscribe({event_kind::io_error});
+    disp.dispatch(event_kind::io_error);
+    FB_ASSERT_EQ(disp.subscriber_event_count(id), 1u);
+}
+
+FB_TEST(bdev_event_subscription, dispatcher_dispatch_only_interested) {
+    event_dispatcher disp;
+    uint64_t id = disp.subscribe({event_kind::io_error});
+    disp.dispatch(event_kind::state_change);
+    FB_ASSERT_EQ(disp.subscriber_event_count(id), 0u);
+}
+
+FB_TEST(bdev_event_subscription, dispatcher_interested_count) {
+    event_dispatcher disp;
+    disp.subscribe({event_kind::io_error});
+    disp.subscribe({event_kind::io_error, event_kind::state_change});
+    disp.subscribe({event_kind::state_change});
+    FB_ASSERT_EQ(disp.interested_count(event_kind::io_error), 2u);
+}
+
+FB_TEST(bdev_event_subscription, dispatcher_multiple_events) {
+    event_dispatcher disp;
+    uint64_t id = disp.subscribe({event_kind::io_error, event_kind::state_change});
+    disp.dispatch(event_kind::io_error);
+    disp.dispatch(event_kind::state_change);
+    FB_ASSERT_EQ(disp.subscriber_event_count(id), 2u);
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
