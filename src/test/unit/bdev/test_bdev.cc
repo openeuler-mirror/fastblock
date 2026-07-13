@@ -7076,6 +7076,175 @@ FB_TEST(bdev_async_callback, manager_multiple_callbacks) {
 }
 
 // ============================================================================
+// Test Suite: bdev_write_barrier — Write barrier and flush ordering
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_write_barrier) {}
+FB_SUITE_TEARDOWN(bdev_write_barrier) {}
+
+struct barrier_entry {
+    uint64_t barrier_id{0};
+    uint64_t issued_at_us{0};
+    bool acknowledged{false};
+    bool pending_flushes{false};
+
+    void set_pending() { pending_flushes = true; }
+
+    void clear_pending() { pending_flushes = false; }
+
+    void acknowledge() { acknowledged = true; }
+
+    bool is_complete() const { return acknowledged && !pending_flushes; }
+};
+
+struct write_barrier_manager {
+    std::deque<barrier_entry> barriers;
+    uint64_t next_barrier_id{1};
+    uint64_t pending_writes_before_barrier{0};
+
+    uint64_t issue_barrier(uint64_t now_us) {
+        barrier_entry b;
+        b.barrier_id = next_barrier_id++;
+        b.issued_at_us = now_us;
+        b.set_pending();
+        barriers.push_back(b);
+        return b.barrier_id;
+    }
+
+    void complete_pending_flushes(uint64_t barrier_id) {
+        for (auto& b : barriers) {
+            if (b.barrier_id == barrier_id) b.clear_pending();
+        }
+    }
+
+    void acknowledge_barrier(uint64_t barrier_id) {
+        for (auto& b : barriers) {
+            if (b.barrier_id == barrier_id) b.acknowledge();
+        }
+    }
+
+    std::optional<barrier_entry> get_next_pending() const {
+        for (const auto& b : barriers) {
+            if (b.pending_flushes) return b;
+        }
+        return std::nullopt;
+    }
+
+    size_t pending_barrier_count() const {
+        size_t n = 0;
+        for (const auto& b : barriers) { if (b.pending_flushes) n++; }
+        return n;
+    }
+
+    size_t complete_barrier_count() const {
+        size_t n = 0;
+        for (const auto& b : barriers) { if (b.is_complete()) n++; }
+        return n;
+    }
+
+    bool has_pending_barriers() const { return pending_barrier_count() > 0; }
+
+    void remove_completed() {
+        barriers.erase(std::remove_if(barriers.begin(), barriers.end(),
+            [](const barrier_entry& b) { return b.is_complete(); }), barriers.end());
+    }
+
+    uint64_t total_barrier_count() const { return barriers.size(); }
+};
+
+FB_TEST(bdev_write_barrier, entry_initial_not_acknowledged) {
+    barrier_entry b;
+    FB_ASSERT_FALSE(b.acknowledged);
+}
+
+FB_TEST(bdev_write_barrier, entry_set_pending) {
+    barrier_entry b;
+    b.set_pending();
+    FB_ASSERT_TRUE(b.pending_flushes);
+}
+
+FB_TEST(bdev_write_barrier, entry_clear_pending) {
+    barrier_entry b;
+    b.set_pending();
+    b.clear_pending();
+    FB_ASSERT_FALSE(b.pending_flushes);
+}
+
+FB_TEST(bdev_write_barrier, entry_acknowledge) {
+    barrier_entry b;
+    b.acknowledge();
+    FB_ASSERT_TRUE(b.acknowledged);
+}
+
+FB_TEST(bdev_write_barrier, entry_is_complete) {
+    barrier_entry b;
+    b.set_pending();
+    b.clear_pending();
+    b.acknowledge();
+    FB_ASSERT_TRUE(b.is_complete());
+}
+
+FB_TEST(bdev_write_barrier, manager_issue_barrier) {
+    write_barrier_manager mgr;
+    uint64_t id = mgr.issue_barrier(1000);
+    FB_ASSERT_NE(id, 0u);
+    FB_ASSERT_EQ(mgr.total_barrier_count(), 1u);
+}
+
+FB_TEST(bdev_write_barrier, manager_complete_pending_flushes) {
+    write_barrier_manager mgr;
+    uint64_t id = mgr.issue_barrier(1000);
+    mgr.complete_pending_flushes(id);
+    auto b = mgr.get_next_pending();
+    FB_ASSERT_FALSE(b.has_value());  // no more pending
+}
+
+FB_TEST(bdev_write_barrier, manager_acknowledge_barrier) {
+    write_barrier_manager mgr;
+    uint64_t id = mgr.issue_barrier(1000);
+    mgr.complete_pending_flushes(id);
+    mgr.acknowledge_barrier(id);
+    FB_ASSERT_EQ(mgr.complete_barrier_count(), 1u);
+}
+
+FB_TEST(bdev_write_barrier, manager_get_next_pending) {
+    write_barrier_manager mgr;
+    mgr.issue_barrier(1000);
+    auto b = mgr.get_next_pending();
+    FB_ASSERT_TRUE(b.has_value());
+}
+
+FB_TEST(bdev_write_barrier, manager_pending_barrier_count) {
+    write_barrier_manager mgr;
+    mgr.issue_barrier(1000);
+    mgr.issue_barrier(2000);
+    FB_ASSERT_EQ(mgr.pending_barrier_count(), 2u);
+}
+
+FB_TEST(bdev_write_barrier, manager_has_pending_barriers) {
+    write_barrier_manager mgr;
+    mgr.issue_barrier(1000);
+    FB_ASSERT_TRUE(mgr.has_pending_barriers());
+}
+
+FB_TEST(bdev_write_barrier, manager_remove_completed) {
+    write_barrier_manager mgr;
+    uint64_t id = mgr.issue_barrier(1000);
+    mgr.complete_pending_flushes(id);
+    mgr.acknowledge_barrier(id);
+    mgr.remove_completed();
+    FB_ASSERT_EQ(mgr.total_barrier_count(), 0u);
+}
+
+FB_TEST(bdev_write_barrier, manager_multiple_barriers_order) {
+    write_barrier_manager mgr;
+    uint64_t id1 = mgr.issue_barrier(1000);
+    uint64_t id2 = mgr.issue_barrier(2000);
+
+    FB_ASSERT_EQ(mgr.get_next_pending()->barrier_id, id1);  // FIFO order
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
