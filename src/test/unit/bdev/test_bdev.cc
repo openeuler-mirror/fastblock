@@ -9199,6 +9199,209 @@ FB_TEST(bdev_depth_dynamic, alternation_idle_congestion) {
 }
 
 // ============================================================================
+// Test Suite: bdev_io_type_support — IO type support matrix
+// Mirrors: bdev_fastblock_io_type_supported() from bdev_fastblock.cc
+// Supported: READ, WRITE, FLUSH, RESET; all others unsupported
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_io_type_support) {}
+FB_SUITE_TEARDOWN(bdev_io_type_support) {}
+
+enum class bdev_io_type : uint8_t {
+    read,
+    write,
+    flush,
+    reset,
+    unmap,
+    write_zeroes,
+    copy,
+    abort
+};
+
+struct io_type_matrix {
+    std::unordered_map<bdev_io_type, bool> supported;
+
+    io_type_matrix() {
+        supported[bdev_io_type::read] = true;
+        supported[bdev_io_type::write] = true;
+        supported[bdev_io_type::flush] = true;
+        supported[bdev_io_type::reset] = true;
+        supported[bdev_io_type::unmap] = false;
+        supported[bdev_io_type::write_zeroes] = false;
+        supported[bdev_io_type::copy] = false;
+        supported[bdev_io_type::abort] = false;
+    }
+
+    bool is_supported(bdev_io_type type) const {
+        auto it = supported.find(type);
+        return it != supported.end() && it->second;
+    }
+
+    std::vector<bdev_io_type> get_supported() const {
+        std::vector<bdev_io_type> result;
+        for (const auto& [type, sup] : supported) {
+            if (sup) result.push_back(type);
+        }
+        return result;
+    }
+
+    std::vector<bdev_io_type> get_unsupported() const {
+        std::vector<bdev_io_type> result;
+        for (const auto& [type, sup] : supported) {
+            if (!sup) result.push_back(type);
+        }
+        return result;
+    }
+
+    size_t supported_count() const { return get_supported().size(); }
+};
+
+FB_TEST(bdev_io_type_support, read_supported) {
+    io_type_matrix matrix;
+    FB_ASSERT_TRUE(matrix.is_supported(bdev_io_type::read));
+}
+
+FB_TEST(bdev_io_type_support, write_supported) {
+    io_type_matrix matrix;
+    FB_ASSERT_TRUE(matrix.is_supported(bdev_io_type::write));
+}
+
+FB_TEST(bdev_io_type_support, flush_supported) {
+    io_type_matrix matrix;
+    FB_ASSERT_TRUE(matrix.is_supported(bdev_io_type::flush));
+}
+
+FB_TEST(bdev_io_type_support, reset_supported) {
+    io_type_matrix matrix;
+    FB_ASSERT_TRUE(matrix.is_supported(bdev_io_type::reset));
+}
+
+FB_TEST(bdev_io_type_support, unmap_not_supported) {
+    io_type_matrix matrix;
+    FB_ASSERT_FALSE(matrix.is_supported(bdev_io_type::unmap));
+}
+
+FB_TEST(bdev_io_type_support, write_zeroes_not_supported) {
+    io_type_matrix matrix;
+    FB_ASSERT_FALSE(matrix.is_supported(bdev_io_type::write_zeroes));
+}
+
+FB_TEST(bdev_io_type_support, copy_not_supported) {
+    io_type_matrix matrix;
+    FB_ASSERT_FALSE(matrix.is_supported(bdev_io_type::copy));
+}
+
+FB_TEST(bdev_io_type_support, supported_count_is_four) {
+    io_type_matrix matrix;
+    FB_ASSERT_EQ(matrix.supported_count(), 4u);
+}
+
+FB_TEST(bdev_io_type_support, get_supported_list) {
+    io_type_matrix matrix;
+    auto list = matrix.get_supported();
+    FB_ASSERT_EQ(list.size(), 4u);
+}
+
+FB_TEST(bdev_io_type_support, get_unsupported_list) {
+    io_type_matrix matrix;
+    auto list = matrix.get_unsupported();
+    FB_ASSERT_TRUE(list.size() >= 3u);
+}
+
+// ============================================================================
+// Test Suite: bdev_write_alignment — Write alignment and padding
+// Mirrors: alignment check from bdev_fastblock_write()
+// ============================================================================
+
+FB_SUITE_SETUP(bdev_write_alignment) {}
+FB_SUITE_TEARDOWN(bdev_write_alignment) {}
+
+struct alignment_checker {
+    uint32_t alignment{4096};  // 4 KiB sector alignment
+
+    bool is_aligned(uint64_t offset, uint64_t length) const {
+        return (offset % alignment == 0) && (length % alignment == 0);
+    }
+
+    uint64_t align_up(uint64_t value) const {
+        return (value + alignment - 1) & ~(uint64_t)(alignment - 1);
+    }
+
+    uint64_t align_down(uint64_t value) const {
+        return value & ~(uint64_t)(alignment - 1);
+    }
+
+    uint64_t padding_needed(uint64_t offset) const {
+        uint64_t aligned = align_up(offset);
+        return aligned - offset;
+    }
+
+    uint64_t total_padded_length(uint64_t offset, uint64_t length) const {
+        uint64_t start = align_down(offset);
+        uint64_t end = align_up(offset + length);
+        return end - start;
+    }
+
+    bool needs_padding(uint64_t offset, uint64_t length) const {
+        return !is_aligned(offset, length);
+    }
+};
+
+FB_TEST(bdev_write_alignment, aligned_offset_and_length) {
+    alignment_checker checker;
+    FB_ASSERT_TRUE(checker.is_aligned(0, 4096));
+    FB_ASSERT_TRUE(checker.is_aligned(8192, 4096));
+}
+
+FB_TEST(bdev_write_alignment, unaligned_offset) {
+    alignment_checker checker;
+    FB_ASSERT_FALSE(checker.is_aligned(100, 4096));
+}
+
+FB_TEST(bdev_write_alignment, unaligned_length) {
+    alignment_checker checker;
+    FB_ASSERT_FALSE(checker.is_aligned(0, 3000));
+}
+
+FB_TEST(bdev_write_alignment, align_up_rounds) {
+    alignment_checker checker;
+    FB_ASSERT_EQ(checker.align_up(100), 4096u);
+    FB_ASSERT_EQ(checker.align_up(4096), 4096u);
+}
+
+FB_TEST(bdev_write_alignment, align_down_truncates) {
+    alignment_checker checker;
+    FB_ASSERT_EQ(checker.align_down(5000), 4096u);
+    FB_ASSERT_EQ(checker.align_down(4096), 4096u);
+}
+
+FB_TEST(bdev_write_alignment, padding_needed_calculation) {
+    alignment_checker checker;
+    FB_ASSERT_EQ(checker.padding_needed(100), 3996u);
+    FB_ASSERT_EQ(checker.padding_needed(4096), 0u);
+}
+
+FB_TEST(bdev_write_alignment, total_padded_length) {
+    alignment_checker checker;
+    FB_ASSERT_EQ(checker.total_padded_length(100, 8000), 12288u);  // 0..12288
+}
+
+FB_TEST(bdev_write_alignment, no_padding_when_aligned) {
+    alignment_checker checker;
+    FB_ASSERT_EQ(checker.total_padded_length(0, 4096), 4096u);
+}
+
+FB_TEST(bdev_write_alignment, needs_padding_unaligned) {
+    alignment_checker checker;
+    FB_ASSERT_TRUE(checker.needs_padding(100, 4096));
+}
+
+FB_TEST(bdev_write_alignment, no_padding_needed_aligned) {
+    alignment_checker checker;
+    FB_ASSERT_FALSE(checker.needs_padding(0, 4096));
+}
+
+// ============================================================================
 // Test Main Entry Point
 // ============================================================================
 
