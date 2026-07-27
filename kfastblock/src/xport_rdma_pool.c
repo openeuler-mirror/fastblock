@@ -247,6 +247,54 @@ void kfastblock_rdma_pool_put(struct kfastblock_rdma_pool *pool,
 	}
 }
 
+u32 kfastblock_rdma_pool_count_state(struct kfastblock_rdma_pool *pool,
+				     u8 state)
+{
+	u32 i, n = 0;
+
+	if (!pool || !pool->slots)
+		return 0;
+	for (i = 0; i < pool->nr_slots; ++i) {
+		struct kfastblock_rdma_pool_slot *slot = &pool->slots[i];
+
+		mutex_lock(&slot->lock);
+		if (slot->state == state)
+			n++;
+		mutex_unlock(&slot->lock);
+	}
+	return n;
+}
+
+struct kfastblock_rdma_conn *
+kfastblock_rdma_pool_try_get(struct kfastblock_rdma_pool *pool,
+			     const struct kfastblock_leader_info *leader)
+{
+	u32 i;
+
+	if (!pool || !pool->slots || !kfastblock_leader_has_rdma(leader))
+		return NULL;
+
+	for (i = 0; i < pool->nr_slots; ++i) {
+		struct kfastblock_rdma_pool_slot *slot = &pool->slots[i];
+		struct kfastblock_rdma_conn *conn;
+
+		mutex_lock(&slot->lock);
+		if (slot->state == KFASTBLOCK_RDMA_POOL_SLOT_IDLE &&
+		    kfastblock_rdma_pool_slot_matches_locked(slot, leader) &&
+		    kfastblock_rdma_conn_is_connected(slot->conn)) {
+			slot->state = KFASTBLOCK_RDMA_POOL_SLOT_BUSY;
+			slot->reuse_hits++;
+			slot->last_use_jiffies = jiffies;
+			pool->get_hits++;
+			conn = slot->conn;
+			mutex_unlock(&slot->lock);
+			return conn;
+		}
+		mutex_unlock(&slot->lock);
+	}
+	return NULL;
+}
+
 void kfastblock_rdma_pool_snapshot(struct kfastblock_rdma_pool *pool,
 				   struct kfastblock_rdma_pool_snapshot *snap)
 {
