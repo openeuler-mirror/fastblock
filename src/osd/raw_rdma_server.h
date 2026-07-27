@@ -39,6 +39,8 @@ public:
     bool start(const std::string& bind_address, uint32_t shard_count);
     void stop() noexcept;
 
+    bool is_running() const noexcept;
+    uint32_t shard_count() const noexcept;
     uint16_t listen_port(uint32_t shard_id) const noexcept;
     size_t connection_count() const noexcept;
 
