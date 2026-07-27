@@ -456,10 +456,10 @@ int kfastblock_rdma_pool_format_stats(struct kfastblock_rdma_pool *pool,
 	}
 	kfastblock_rdma_pool_snapshot(pool, &snap);
 	return scnprintf(buf, buf_len,
-			 "slots=%u empty=%u idle=%u busy=%u dead=%u connected=%u max_idle=%u hits=%llu misses=%llu evict=%llu",
+			 "slots=%u empty=%u idle=%u busy=%u dead=%u connected=%u ready=%u max_idle=%u hits=%llu misses=%llu evict=%llu",
 			 snap.total_slots, snap.empty_slots, snap.idle_slots,
 			 snap.busy_slots, snap.dead_slots, snap.connected_slots,
-			 snap.max_idle,
+			 kfastblock_rdma_pool_ready_count(pool), snap.max_idle,
 			 (unsigned long long)snap.get_hits,
 			 (unsigned long long)snap.get_misses,
 			 (unsigned long long)snap.idle_evictions);
