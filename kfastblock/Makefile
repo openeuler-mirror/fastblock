@@ -28,6 +28,7 @@ kfastblock-objs := \
 	src/connpool.o \
 	src/diag.o \
 	src/fault.o \
+	src/fault_rdma.o \
 	src/meta.o \
 	src/pipeline.o \
 	src/recovery.o \
