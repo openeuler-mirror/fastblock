@@ -328,6 +328,27 @@ kfastblock_meta_find_osd_shard(const struct kfastblock_osd_endpoint *osd,
 	return NULL;
 }
 
+u16 kfastblock_meta_lookup_rdma_port(const struct kfastblock_cluster_view *view,
+				     u32 osd_id, u16 tcp_port)
+{
+	const struct kfastblock_osd_endpoint *osd;
+	u32 i;
+
+	if (!view || !tcp_port)
+		return 0;
+
+	osd = kfastblock_meta_find_osd(view, osd_id);
+	if (!osd || !osd->shards)
+		return 0;
+
+	for (i = 0; i < osd->shard_count; ++i) {
+		if (osd->shards[i].port == tcp_port)
+			return osd->shards[i].rdma_port;
+	}
+
+	return 0;
+}
+
 const struct kfastblock_pg_route *
 kfastblock_meta_find_pg_route(const struct kfastblock_cluster_view *view,
 			      u32 pool_id, u32 pg_id)
