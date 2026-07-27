@@ -1042,3 +1042,23 @@ const char *kfastblock_rdma_conn_state_str(const struct kfastblock_rdma_conn *co
 		return "null";
 	return kfastblock_rdma_conn_state_name(conn->state);
 }
+
+bool kfastblock_rdma_conn_is_usable(const struct kfastblock_rdma_conn *conn)
+{
+	return kfastblock_rdma_conn_is_connected(conn) &&
+	       conn->last_error == 0 &&
+	       conn->cm_id && conn->cm_id->qp &&
+	       conn->send_mapped && conn->recv_mapped;
+}
+
+bool kfastblock_rdma_conn_matches_leader(
+	const struct kfastblock_rdma_conn *conn,
+	const struct kfastblock_leader_info *leader)
+{
+	if (!conn || !leader || !leader->address[0] || !leader->rdma_port)
+		return false;
+	if (conn->peer_port != leader->rdma_port)
+		return false;
+	return strncmp(conn->peer_addr, leader->address,
+		       KFASTBLOCK_MAX_ADDR_LEN) == 0;
+}
