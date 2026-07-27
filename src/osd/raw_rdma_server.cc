@@ -1198,3 +1198,14 @@ size_t osd_raw_rdma_server::connection_count() const noexcept {
     std::lock_guard<std::mutex> lock(_connections_mutex);
     return _connections.size();
 }
+
+size_t osd_raw_rdma_server::connection_count(uint32_t shard_id) const noexcept {
+    std::lock_guard<std::mutex> lock(_connections_mutex);
+    size_t n = 0;
+    for (const auto& c : _connections) {
+        if (c && c->shard_id == shard_id) {
+            ++n;
+        }
+    }
+    return n;
+}
