@@ -49,3 +49,41 @@ int kfastblock_rdma_pool_init(struct kfastblock_rdma_pool *pool, u32 nr_slots)
 		kfastblock_rdma_pool_slot_init(&pool->slots[i]);
 	return 0;
 }
+
+static void kfastblock_rdma_pool_slot_clear_identity(
+	struct kfastblock_rdma_pool_slot *slot)
+{
+	if (!slot)
+		return;
+	memset(slot->address, 0, sizeof(slot->address));
+	slot->osd_id = 0;
+	slot->rdma_port = 0;
+}
+
+static void kfastblock_rdma_pool_slot_disconnect_locked(
+	struct kfastblock_rdma_pool_slot *slot)
+{
+	if (!slot)
+		return;
+	if (slot->conn) {
+		kfastblock_rdma_conn_free(slot->conn);
+		slot->conn = NULL;
+	}
+	slot->state = KFASTBLOCK_RDMA_POOL_SLOT_EMPTY;
+	kfastblock_rdma_pool_slot_clear_identity(slot);
+}
+
+void kfastblock_rdma_pool_close(struct kfastblock_rdma_pool *pool)
+{
+	u32 i;
+
+	if (!pool || !pool->slots)
+		return;
+	for (i = 0; i < pool->nr_slots; ++i) {
+		struct kfastblock_rdma_pool_slot *slot = &pool->slots[i];
+
+		mutex_lock(&slot->lock);
+		kfastblock_rdma_pool_slot_disconnect_locked(slot);
+		mutex_unlock(&slot->lock);
+	}
+}
