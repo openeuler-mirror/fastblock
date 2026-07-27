@@ -1,6 +1,7 @@
 #include <linux/errno.h>
 
 #include "kfastblock/xport.h"
+#include "kfastblock/xport_rdma.h"
 
 static int kfastblock_xport_tcp_probe(const struct kfastblock_leader_info *leader)
 {
@@ -11,10 +12,18 @@ static int kfastblock_xport_tcp_probe(const struct kfastblock_leader_info *leade
 
 static int kfastblock_xport_rdma_probe(const struct kfastblock_leader_info *leader)
 {
+	struct kfastblock_rdma_conn *conn;
+	int ret;
+
 	if (!leader || !leader->address[0] || !leader->rdma_port)
 		return -ENOTCONN;
-	/* RDMA backend is not implemented yet. */
-	return -EOPNOTSUPP;
+
+	conn = kfastblock_rdma_conn_alloc();
+	if (!conn)
+		return -ENOMEM;
+	ret = kfastblock_rdma_conn_connect(conn, leader);
+	kfastblock_rdma_conn_free(conn);
+	return ret;
 }
 
 static const struct kfastblock_xport_ops kfastblock_xport_tcp = {
