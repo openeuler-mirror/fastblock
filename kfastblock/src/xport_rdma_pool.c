@@ -102,20 +102,40 @@ void kfastblock_rdma_pool_destroy(struct kfastblock_rdma_pool *pool)
 	pool->nr_slots = 0;
 }
 
+/*
+ * Endpoint identity is address + rdma_port (raw RDMA listen key).
+ * osd_id is advisory: mismatch means map churn — treat as non-match so
+ * try_get falls through to reconnect rather than reuse a wrong peer.
+ */
+static bool kfastblock_rdma_pool_slot_endpoint_eq_locked(
+	const struct kfastblock_rdma_pool_slot *slot,
+	const struct kfastblock_leader_info *leader)
+{
+	if (!slot || !leader)
+		return false;
+	if (!leader->address[0] || !leader->rdma_port)
+		return false;
+	if (slot->rdma_port != leader->rdma_port)
+		return false;
+	return strncmp(slot->address, leader->address,
+		       KFASTBLOCK_MAX_ADDR_LEN) == 0;
+}
+
 static bool kfastblock_rdma_pool_slot_matches_locked(
 	const struct kfastblock_rdma_pool_slot *slot,
 	const struct kfastblock_leader_info *leader)
 {
 	if (!slot || !leader)
 		return false;
-	if (!slot->conn || slot->state == KFASTBLOCK_RDMA_POOL_SLOT_EMPTY)
+	if (!slot->conn || slot->state == KFASTBLOCK_RDMA_POOL_SLOT_EMPTY ||
+	    slot->state == KFASTBLOCK_RDMA_POOL_SLOT_DEAD)
 		return false;
-	if (slot->osd_id != leader->osd_id)
+	if (!kfastblock_rdma_pool_slot_endpoint_eq_locked(slot, leader))
 		return false;
-	if (slot->rdma_port != leader->rdma_port)
+	/* Same endpoint but different osd_id: stale binding, do not reuse. */
+	if (slot->osd_id && leader->osd_id && slot->osd_id != leader->osd_id)
 		return false;
-	return strncmp(slot->address, leader->address,
-		       KFASTBLOCK_MAX_ADDR_LEN) == 0;
+	return true;
 }
 
 static void kfastblock_rdma_pool_slot_bind_locked(
