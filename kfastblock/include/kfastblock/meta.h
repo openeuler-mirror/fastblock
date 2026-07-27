@@ -78,6 +78,21 @@ static inline bool kfastblock_osd_endpoint_has_address(
 	return osd && osd->address[0];
 }
 
+/* Count shards on one OSD that advertise a raw RDMA port. */
+static inline u32 kfastblock_osd_endpoint_rdma_shard_count(
+	const struct kfastblock_osd_endpoint *osd)
+{
+	u32 i, n = 0;
+
+	if (!osd || !osd->shards)
+		return 0;
+	for (i = 0; i < osd->shard_count; ++i) {
+		if (kfastblock_osd_shard_has_rdma(&osd->shards[i]))
+			n++;
+	}
+	return n;
+}
+
 struct kfastblock_pg_route {
 	u32 pool_id;
 	u32 pg_id;
