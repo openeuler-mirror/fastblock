@@ -54,3 +54,39 @@ bool kfastblock_xport_diag_rdma_unavailable(
 	       xport->leader_valid_count > 0 &&
 	       xport->leader_rdma_ready_count == 0;
 }
+
+void kfastblock_xport_diag_dump_seq(
+	struct seq_file *m, const char *prefix,
+	const struct kfastblock_diag_xport_snapshot *xport)
+{
+	char summary[256];
+
+	if (!m || !xport)
+		return;
+	if (!prefix)
+		prefix = "";
+
+	seq_printf(m, "%sxport.preference=%u\n", prefix, xport->preference);
+	seq_printf(m, "%sxport.preference_name=%s\n", prefix,
+		   xport->preference_name);
+	seq_printf(m, "%sxport.prefers_rdma=%u\n", prefix, xport->prefers_rdma);
+	seq_printf(m, "%sxport.leader_valid_count=%u\n", prefix,
+		   xport->leader_valid_count);
+	seq_printf(m, "%sxport.leader_rdma_ready_count=%u\n", prefix,
+		   xport->leader_rdma_ready_count);
+	seq_printf(m, "%sxport.leader_tcp_only_count=%u\n", prefix,
+		   xport->leader_tcp_only_count);
+	seq_printf(m, "%sxport.leader_rdma_pct=%u\n", prefix,
+		   kfastblock_xport_diag_leader_rdma_pct(xport));
+	seq_printf(m, "%sxport.shard_count=%u\n", prefix, xport->shard_count);
+	seq_printf(m, "%sxport.shard_rdma_port_count=%u\n", prefix,
+		   xport->shard_rdma_port_count);
+	seq_printf(m, "%sxport.shard_rdma_pct=%u\n", prefix,
+		   kfastblock_xport_diag_shard_rdma_pct(xport));
+	seq_printf(m, "%sxport.osd_with_rdma_count=%u\n", prefix,
+		   xport->osd_with_rdma_count);
+	seq_printf(m, "%sxport.rdma_unavailable=%u\n", prefix,
+		   kfastblock_xport_diag_rdma_unavailable(xport) ? 1 : 0);
+	kfastblock_xport_diag_format_summary(xport, summary, sizeof(summary));
+	seq_printf(m, "%sxport.summary=%s\n", prefix, summary);
+}
