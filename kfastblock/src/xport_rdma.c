@@ -435,9 +435,15 @@ static int kfastblock_rdma_post_recv(struct kfastblock_rdma_conn *conn)
 	wr.sg_list = &sge;
 	wr.num_sge = 1;
 
+	/* Ensure device sees any prior CPU writes into the recv staging area. */
+	ib_dma_sync_single_for_device(conn->cm_id->device, conn->recv_dma,
+				      conn->recv_buf_len, DMA_FROM_DEVICE);
+
 	ret = ib_post_recv(conn->cm_id->qp, &wr, &bad);
-	if (ret)
+	if (ret) {
+		conn->last_error = ret;
 		return ret;
+	}
 	if (!conn->recv_posted) {
 		reinit_completion(&conn->recv_done);
 		conn->recv_wc_status = 0;
