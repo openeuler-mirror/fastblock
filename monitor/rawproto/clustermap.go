@@ -120,10 +120,12 @@ func encodeOSDEntry(body *bytes.Buffer, osdInfo *msg.OsdDynamicInfo) error {
 	}
 	for _, shardID := range shardIDs {
 		core := shards[shardID]
+		/* Port = raw TCP data plane; RdmaPort = raw RDMA data plane (not protobuf RDMA). */
 		port := core.GetRawPort()
-		rdmaPort := core.GetPort()
+		rdmaPort := core.GetRawRdmaPort()
 		if port == 0 {
-			port = rdmaPort
+			/* Fallback: legacy maps may only expose protobuf RDMA port. */
+			port = core.GetPort()
 		}
 		entry := osdShardEntry{
 			ShardID:  shardID,
