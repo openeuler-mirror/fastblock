@@ -4444,7 +4444,6 @@ static DEVICE_ATTR_WO(force_refresh);
 static DEVICE_ATTR_WO(reset_backoff);
 static DEVICE_ATTR_RO(osd_transport);
 static DEVICE_ATTR_WO(drop_transport);
-static DEVICE_ATTR_WO(flush_rdma_cache);
 static DEVICE_ATTR_WO(reset_leaders);
 static DEVICE_ATTR_WO(pause_queue);
 static DEVICE_ATTR_WO(resume_queue);
