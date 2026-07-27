@@ -193,7 +193,7 @@ kfastblock_xport_select_explained(u32 preference,
 	const char *why = "forced-tcp";
 
 	if (!kfastblock_xport_preference_valid(preference)) {
-		preference = KFASTBLOCK_OSD_TRANSPORT_TCP;
+		preference = kfastblock_xport_preference_clamp(preference);
 		why = "invalid-tcp";
 	} else if (preference == KFASTBLOCK_OSD_TRANSPORT_AUTO) {
 		ops = &kfastblock_xport_rdma;
