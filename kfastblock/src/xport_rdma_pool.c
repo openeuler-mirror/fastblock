@@ -246,3 +246,49 @@ void kfastblock_rdma_pool_put(struct kfastblock_rdma_pool *pool,
 		return;
 	}
 }
+
+void kfastblock_rdma_pool_snapshot(struct kfastblock_rdma_pool *pool,
+				   struct kfastblock_rdma_pool_snapshot *snap)
+{
+	u32 i;
+	u64 reuse = 0;
+
+	if (!snap)
+		return;
+	memset(snap, 0, sizeof(*snap));
+	if (!pool || !pool->slots)
+		return;
+
+	snap->total_slots = pool->nr_slots;
+	snap->get_hits = pool->get_hits;
+	snap->get_misses = pool->get_misses;
+	snap->connect_ok = pool->connect_ok;
+	snap->connect_err = pool->connect_err;
+
+	for (i = 0; i < pool->nr_slots; ++i) {
+		struct kfastblock_rdma_pool_slot *slot = &pool->slots[i];
+
+		mutex_lock(&slot->lock);
+		switch (slot->state) {
+		case KFASTBLOCK_RDMA_POOL_SLOT_EMPTY:
+			snap->empty_slots++;
+			break;
+		case KFASTBLOCK_RDMA_POOL_SLOT_IDLE:
+			snap->idle_slots++;
+			break;
+		case KFASTBLOCK_RDMA_POOL_SLOT_BUSY:
+			snap->busy_slots++;
+			break;
+		case KFASTBLOCK_RDMA_POOL_SLOT_DEAD:
+			snap->dead_slots++;
+			break;
+		default:
+			break;
+		}
+		if (slot->conn && kfastblock_rdma_conn_is_connected(slot->conn))
+			snap->connected_slots++;
+		reuse += slot->reuse_hits;
+		mutex_unlock(&slot->lock);
+	}
+	snap->reuse_hits = reuse;
+}
