@@ -40,6 +40,44 @@ u64 kfastblock_xport_probe_cache_misses(void)
 	return READ_ONCE(kfastblock_xport_probe_cache_miss_count);
 }
 
+/* Return true and fill *result when a non-expired cache entry matches. */
+static bool kfastblock_xport_probe_cache_lookup(
+	const struct kfastblock_leader_info *leader, int *result)
+{
+	unsigned long flags;
+	u32 i;
+	bool hit = false;
+
+	if (!leader || !result)
+		return false;
+
+	spin_lock_irqsave(&kfastblock_xport_probe_cache_lock, flags);
+	for (i = 0; i < KFASTBLOCK_XPORT_PROBE_CACHE_SIZE; ++i) {
+		struct kfastblock_xport_probe_cache_entry *e =
+			&kfastblock_xport_probe_cache[i];
+
+		if (!e->valid)
+			continue;
+		if (time_after(jiffies, e->expire_jiffies)) {
+			e->valid = false;
+			continue;
+		}
+		if (e->rdma_port != leader->rdma_port)
+			continue;
+		if (strncmp(e->address, leader->address,
+			    KFASTBLOCK_MAX_ADDR_LEN) != 0)
+			continue;
+		*result = e->result;
+		hit = true;
+		kfastblock_xport_probe_cache_hit_count++;
+		break;
+	}
+	if (!hit)
+		kfastblock_xport_probe_cache_miss_count++;
+	spin_unlock_irqrestore(&kfastblock_xport_probe_cache_lock, flags);
+	return hit;
+}
+
 static int kfastblock_xport_tcp_probe(const struct kfastblock_leader_info *leader)
 {
 	if (!kfastblock_leader_has_tcp(leader))
@@ -58,6 +96,10 @@ static int kfastblock_xport_tcp_probe(const struct kfastblock_leader_info *leade
  */
 static int kfastblock_xport_rdma_probe(const struct kfastblock_leader_info *leader)
 {
+	int cached;
+
+	if (kfastblock_xport_probe_cache_lookup(leader, &cached))
+		return cached;
 	if (!kfastblock_leader_has_rdma(leader))
 		return -ENOTCONN;
 	return 0;
