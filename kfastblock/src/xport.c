@@ -28,6 +28,14 @@ static DEFINE_SPINLOCK(kfastblock_xport_probe_cache_lock);
 static u64 kfastblock_xport_probe_cache_hit_count;
 static u64 kfastblock_xport_probe_cache_miss_count;
 
+/* Read-only hit/miss counters for operators (also available via diag dump). */
+module_param_named(xport_probe_cache_hits, kfastblock_xport_probe_cache_hit_count,
+		   ullong, 0444);
+MODULE_PARM_DESC(xport_probe_cache_hits, "RDMA xport probe cache hit count");
+module_param_named(xport_probe_cache_misses,
+		   kfastblock_xport_probe_cache_miss_count, ullong, 0444);
+MODULE_PARM_DESC(xport_probe_cache_misses, "RDMA xport probe cache miss count");
+
 void kfastblock_xport_probe_cache_invalidate(void)
 {
 	unsigned long flags;
