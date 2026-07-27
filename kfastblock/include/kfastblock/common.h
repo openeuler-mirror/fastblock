@@ -31,6 +31,8 @@
 #define KFASTBLOCK_OSD_TRANSPORT_MAX KFASTBLOCK_OSD_TRANSPORT_AUTO
 /* Default number of cached raw RDMA connections per volume (connpool). */
 #define KFASTBLOCK_DEFAULT_RDMA_CONN_SLOTS 8U
+/* Upper bound for module_param / attach-time RDMA slot count. */
+#define KFASTBLOCK_MAX_RDMA_CONN_SLOTS 64U
 
 #define KFASTBLOCK_MAX_NAME_LEN 128
 #define KFASTBLOCK_MAX_ADDR_LEN 256
