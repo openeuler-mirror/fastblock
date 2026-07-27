@@ -256,9 +256,12 @@ static void kfastblock_rdma_conn_destroy_resources(struct kfastblock_rdma_conn *
 	if (!conn)
 		return;
 
-	if (conn->cm_id && conn->cm_id->qp) {
+	/*
+	 * Teardown order: QP (flushes outstanding WRs) -> unmap/free staging
+	 * buffers -> CQ -> PD -> CM id. Reverse of connect() setup.
+	 */
+	if (conn->cm_id && conn->cm_id->qp)
 		rdma_destroy_qp(conn->cm_id);
-	}
 	kfastblock_rdma_conn_free_bufs(conn);
 	if (conn->cq) {
 		ib_destroy_cq(conn->cq);
@@ -272,6 +275,10 @@ static void kfastblock_rdma_conn_destroy_resources(struct kfastblock_rdma_conn *
 		rdma_destroy_id(conn->cm_id);
 		conn->cm_id = NULL;
 	}
+	conn->recv_posted = false;
+	conn->recv_posted_count = 0;
+	conn->recv_wr_slot = 0;
+	conn->recv_depth = 0;
 }
 
 static int kfastblock_rdma_cm_event_handler(struct rdma_cm_id *cm_id,
