@@ -394,6 +394,14 @@ void start_monitor(server_t* ctx) {
           raw_rdma_port};
         index++;
     }
+    if (global_raw_rdma_server && global_raw_rdma_server->is_running()) {
+        SPDK_NOTICELOG("boot publishing raw RDMA %s\n",
+                       format_raw_rdma_server_stats(
+                         global_raw_rdma_server->collect_stats())
+                         .c_str());
+    } else {
+        SPDK_NOTICELOG("boot publishing raw_rdma_port=0 (RDMA data plane off)\n");
+    }
 
     std::stringstream ss{};
     auto srv_opt = msg::rdma::server::make_options(ctx->pt);
