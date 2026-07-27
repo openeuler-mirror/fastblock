@@ -39,4 +39,19 @@ int kfastblock_rdma_conn_send(struct kfastblock_rdma_conn *conn,
 int kfastblock_rdma_conn_recv(struct kfastblock_rdma_conn *conn,
 			      void *buf, u32 buf_len);
 
+/*
+ * Send request frame then wait for a response with matching seq.
+ * @req / @req_len is the full raw header+body request.
+ * @rsp / @rsp_cap receives the full raw header+body response.
+ * Returns response length on success, negative errno on failure.
+ */
+int kfastblock_rdma_conn_exchange(struct kfastblock_rdma_conn *conn,
+				  const void *req, u32 req_len,
+				  void *rsp, u32 rsp_cap, u64 expect_seq);
+
+/* Peer address helpers for diagnostics. */
+const char *kfastblock_rdma_conn_peer_addr(const struct kfastblock_rdma_conn *conn);
+u16 kfastblock_rdma_conn_peer_port(const struct kfastblock_rdma_conn *conn);
+int kfastblock_rdma_conn_last_error(const struct kfastblock_rdma_conn *conn);
+
 #endif
