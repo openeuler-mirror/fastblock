@@ -93,6 +93,20 @@ kfastblock_xport_ops_id(const struct kfastblock_xport_ops *ops)
 	return ops->transport_id;
 }
 
+/* True when selected ops is the RDMA backend. */
+static inline bool
+kfastblock_xport_ops_is_rdma(const struct kfastblock_xport_ops *ops)
+{
+	return ops && ops->transport_id == KFASTBLOCK_OSD_TRANSPORT_RDMA;
+}
+
+/* True when selected ops is the TCP backend. */
+static inline bool
+kfastblock_xport_ops_is_tcp(const struct kfastblock_xport_ops *ops)
+{
+	return !ops || ops->transport_id == KFASTBLOCK_OSD_TRANSPORT_TCP;
+}
+
 /* Short-TTL RDMA probe cache (address:rdma_port -> result). */
 #define KFASTBLOCK_XPORT_PROBE_CACHE_TTL_MS 2000U
 #define KFASTBLOCK_XPORT_PROBE_CACHE_SIZE 16U

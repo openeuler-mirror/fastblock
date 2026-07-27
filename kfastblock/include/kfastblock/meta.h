@@ -64,6 +64,20 @@ static inline bool kfastblock_leader_has_tcp(
 	return leader && leader->address[0] && leader->port;
 }
 
+/* True when OSD shard advertises a raw RDMA data-plane port. */
+static inline bool kfastblock_osd_shard_has_rdma(
+	const struct kfastblock_osd_shard *shard)
+{
+	return shard && shard->rdma_port;
+}
+
+/* True when OSD endpoint has a non-empty address. */
+static inline bool kfastblock_osd_endpoint_has_address(
+	const struct kfastblock_osd_endpoint *osd)
+{
+	return osd && osd->address[0];
+}
+
 struct kfastblock_pg_route {
 	u32 pool_id;
 	u32 pg_id;
