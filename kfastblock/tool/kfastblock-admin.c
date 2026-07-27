@@ -605,6 +605,16 @@ int main(int argc, char *argv[])
 		free_config(&cfg);
 		return EXIT_FAILURE;
 	}
+	if (cfg.osd_transport &&
+	    strcmp(cfg.osd_transport, "tcp") != 0 &&
+	    strcmp(cfg.osd_transport, "rdma") != 0 &&
+	    strcmp(cfg.osd_transport, "auto") != 0) {
+		fprintf(stderr,
+			"osd-transport must be tcp, rdma, or auto (got %s)\n",
+			cfg.osd_transport);
+		free_config(&cfg);
+		return EXIT_FAILURE;
+	}
 	if ((strcmp(operation, "set-dispatch-window") == 0 ||
 	     strcmp(operation, "set-refresh-interval") == 0 ||
 	     strcmp(operation, "set-image-refresh-interval") == 0) &&
