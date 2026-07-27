@@ -61,6 +61,9 @@ public:
     const std::string& bind_address() const noexcept;
     /* Connections that completed RDMA_CM ESTABLISHED. */
     size_t established_connection_count() const noexcept;
+    /* Lifetime accept/reject counters (survive connection teardown). */
+    uint64_t accept_total() const noexcept;
+    uint64_t reject_total() const noexcept;
 
 private:
     struct listener_context {
