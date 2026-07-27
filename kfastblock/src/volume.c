@@ -1642,6 +1642,8 @@ static void kfastblock_volume_close_osd_cached_sockets(struct kfastblock_volume 
 
 	kfastblock_osd_conn_pool_close(vol->socket_cache,
 				       KFASTBLOCK_MAX_SOCKET_CACHE);
+	kfastblock_rdma_conn_pool_close(vol->rdma_cache,
+					KFASTBLOCK_MAX_RDMA_CACHE);
 }
 
 static void kfastblock_volume_close_monitor_cached_sockets(struct kfastblock_volume *vol)
@@ -5010,6 +5012,8 @@ int kfastblock_volume_attach(const struct kfastblock_attach_spec *spec, int majo
 				      KFASTBLOCK_MAX_SOCKET_CACHE);
 	kfastblock_monitor_conn_pool_init(vol->monitor_cache,
 					  KFASTBLOCK_MAX_MONITORS);
+	kfastblock_rdma_conn_pool_init(vol->rdma_cache,
+				       KFASTBLOCK_MAX_RDMA_CACHE);
 	INIT_DELAYED_WORK(&vol->refresh_work, kfastblock_volume_refresh_workfn);
 	INIT_LIST_HEAD(&vol->node);
 
