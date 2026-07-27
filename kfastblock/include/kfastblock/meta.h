@@ -150,6 +150,9 @@ kfastblock_meta_find_osd_shard(const struct kfastblock_osd_endpoint *osd,
 /* Match shard by raw TCP port and return its rdma_port (0 if unknown). */
 u16 kfastblock_meta_lookup_rdma_port(const struct kfastblock_cluster_view *view,
 				     u32 osd_id, u16 tcp_port);
+/* Match shard by raw RDMA port and return its TCP port (0 if unknown). */
+u16 kfastblock_meta_lookup_tcp_port(const struct kfastblock_cluster_view *view,
+				    u32 osd_id, u16 rdma_port);
 const struct kfastblock_pg_route *
 kfastblock_meta_find_pg_route(const struct kfastblock_cluster_view *view,
 			      u32 pool_id, u32 pg_id);
