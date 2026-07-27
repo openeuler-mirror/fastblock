@@ -199,7 +199,8 @@ static int kfastblock_transport_decode_osd_entries(
 	size_t body_len,
 	size_t *offset,
 	struct kfastblock_osd_endpoint *osds,
-	u32 osd_count);
+	u32 osd_count,
+	u8 version_minor);
 static int kfastblock_transport_decode_pg_entries(
 	const u8 *body,
 	size_t body_len,
@@ -1752,7 +1753,8 @@ static int kfastblock_transport_response_decode_cluster_map(
 	ret = kfastblock_transport_decode_osd_entries(response->body,
 						      response->body_len, &offset,
 						      scratch.osds,
-						      scratch.osd_count);
+						      scratch.osd_count,
+						      response->hdr.version_minor);
 	if (ret)
 		goto out;
 
@@ -1880,9 +1882,12 @@ static int kfastblock_transport_decode_osd_entries(
 	size_t body_len,
 	size_t *offset,
 	struct kfastblock_osd_endpoint *osds,
-	u32 osd_count)
+	u32 osd_count,
+	u8 version_minor)
 {
 	u32 i;
+	bool have_rdma_port =
+		version_minor >= KFASTBLOCK_RAW_VERSION_MINOR_RDMA_PORT;
 
 	for (i = 0; i < osd_count; ++i) {
 		struct kfastblock_raw_osd_entry_hdr osd_hdr;
@@ -1924,20 +1929,35 @@ static int kfastblock_transport_decode_osd_entries(
 			return -ENOMEM;
 
 		for (shard_idx = 0; shard_idx < shard_count; ++shard_idx) {
-			struct kfastblock_raw_osd_shard_entry shard_entry;
+			if (have_rdma_port) {
+				struct kfastblock_raw_osd_shard_entry_v1 se;
 
-			ret = kfastblock_transport_copy_from_body(
-				body, body_len, offset, &shard_entry,
-				sizeof(shard_entry));
-			if (ret)
-				return ret;
+				ret = kfastblock_transport_copy_from_body(
+					body, body_len, offset, &se, sizeof(se));
+				if (ret)
+					return ret;
+				osds[i].shards[shard_idx].shard_id =
+					le32_to_cpu(se.shard_id);
+				osds[i].shards[shard_idx].port =
+					le16_to_cpu(se.port);
+				osds[i].shards[shard_idx].core_id =
+					le16_to_cpu(se.core_id);
+				osds[i].shards[shard_idx].rdma_port =
+					le16_to_cpu(se.rdma_port);
+			} else {
+				struct kfastblock_raw_osd_shard_entry se;
 
-			osds[i].shards[shard_idx].shard_id =
-				le32_to_cpu(shard_entry.shard_id);
-			osds[i].shards[shard_idx].port =
-				le16_to_cpu(shard_entry.port);
-			osds[i].shards[shard_idx].core_id =
-				le16_to_cpu(shard_entry.core_id);
+				ret = kfastblock_transport_copy_from_body(
+					body, body_len, offset, &se, sizeof(se));
+				if (ret)
+					return ret;
+				osds[i].shards[shard_idx].shard_id =
+					le32_to_cpu(se.shard_id);
+				osds[i].shards[shard_idx].port =
+					le16_to_cpu(se.port);
+				osds[i].shards[shard_idx].core_id =
+					le16_to_cpu(se.core_id);
+			}
 		}
 	}
 
