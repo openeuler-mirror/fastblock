@@ -16,6 +16,8 @@
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <poll.h>
+#include <unistd.h>
 
 #include <cerrno>
 #include <cstring>
@@ -100,7 +102,9 @@ bool osd_raw_rdma_server::start_listener(uint32_t shard_id) {
 
     SPDK_NOTICELOG("raw RDMA shard %u listening on %s:%u\n",
                    shard_id, _bind_address.c_str(), listener.port);
-    /* worker event loop lands in follow-up commits. */
+    listener.worker = std::thread([this, shard_id]() {
+        run_listener(shard_id);
+    });
     return true;
 }
 
@@ -124,8 +128,49 @@ void osd_raw_rdma_server::run_listener(uint32_t shard_id) noexcept {
     if (shard_id >= _listeners.size() || !_listeners[shard_id]) {
         return;
     }
-    /* Event loop lands in follow-up commits. */
-    (void)*_listeners[shard_id];
+    auto& listener = *_listeners[shard_id];
+    if (!listener.channel) {
+        return;
+    }
+
+    while (!listener.stop.load(std::memory_order_acquire)) {
+        pollfd pfd{};
+        pfd.fd = listener.channel->fd;
+        pfd.events = POLLIN;
+        const int rc = ::poll(&pfd, 1, 200);
+        if (rc < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            SPDK_ERRLOG("raw RDMA shard %u poll failed: %s\n",
+                        shard_id, std::strerror(errno));
+            break;
+        }
+        if (rc == 0 || (pfd.revents & POLLIN) == 0) {
+            continue;
+        }
+
+        rdma_cm_event* event = nullptr;
+        if (::rdma_get_cm_event(listener.channel, &event)) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                continue;
+            }
+            if (!listener.stop.load(std::memory_order_acquire)) {
+                SPDK_ERRLOG("raw RDMA shard %u get_cm_event failed: %s\n",
+                            shard_id, std::strerror(errno));
+            }
+            break;
+        }
+
+        /* Accept path lands in follow-up commits; drop request for now. */
+        if (event->event == RDMA_CM_EVENT_CONNECT_REQUEST) {
+            SPDK_NOTICELOG(
+              "raw RDMA shard %u got CONNECT_REQUEST (accept not ready)\n",
+              shard_id);
+            ::rdma_reject(event->id, nullptr, 0);
+        }
+        ::rdma_ack_cm_event(event);
+    }
 }
 
 bool osd_raw_rdma_server::start(const std::string& bind_address,
