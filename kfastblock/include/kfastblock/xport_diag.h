@@ -37,4 +37,10 @@ void kfastblock_xport_diag_dump_seq(
 void kfastblock_xport_diag_dump_probe_cache(struct seq_file *m,
 					    const char *prefix);
 
+/* Severity: 0=ok, 1=warn (partial RDMA), 2=error (prefer RDMA none ready). */
+u32 kfastblock_xport_diag_severity(
+	const struct kfastblock_diag_xport_snapshot *xport);
+
+const char *kfastblock_xport_diag_severity_name(u32 severity);
+
 #endif

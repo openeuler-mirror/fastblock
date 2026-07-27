@@ -106,3 +106,32 @@ void kfastblock_xport_diag_dump_probe_cache(struct seq_file *m,
 	seq_printf(m, "%sxport.probe_cache_valid=%u\n", prefix,
 		   kfastblock_xport_probe_cache_valid_count());
 }
+
+u32 kfastblock_xport_diag_severity(
+	const struct kfastblock_diag_xport_snapshot *xport)
+{
+	u32 pct;
+
+	if (!xport || !xport->prefers_rdma)
+		return 0;
+	if (kfastblock_xport_diag_rdma_unavailable(xport))
+		return 2;
+	pct = kfastblock_xport_diag_leader_rdma_pct(xport);
+	if (xport->leader_valid_count && pct < 100)
+		return 1;
+	return 0;
+}
+
+const char *kfastblock_xport_diag_severity_name(u32 severity)
+{
+	switch (severity) {
+	case 0:
+		return "ok";
+	case 1:
+		return "warn";
+	case 2:
+		return "error";
+	default:
+		return "unknown";
+	}
+}
