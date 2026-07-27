@@ -70,4 +70,10 @@ bool kfastblock_rdma_conn_matches_leader(
 	const struct kfastblock_rdma_conn *conn,
 	const struct kfastblock_leader_info *leader);
 
+/* Outstanding RECV posts currently in flight on this conn. */
+u8 kfastblock_rdma_conn_recv_posted(const struct kfastblock_rdma_conn *conn);
+
+/* Configured RECV depth for this conn (0 if not connected yet). */
+u8 kfastblock_rdma_conn_recv_depth(const struct kfastblock_rdma_conn *conn);
+
 #endif
