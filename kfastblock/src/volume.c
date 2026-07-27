@@ -4989,7 +4989,12 @@ static int kfastblock_volume_add_disk(struct kfastblock_volume *vol,
 	vol->tag_set.nr_hw_queues = 1;
 	vol->tag_set.cmd_size = sizeof(struct kfastblock_request);
 	vol->tag_set.driver_data = vol;
-	vol->tag_set.flags = BLK_MQ_F_SHOULD_MERGE;
+	/*
+	 * queue_rq may sleep (leader query / socket connect / mux wait).
+	 * Without BLOCKING, blk-mq treats queue_rq as non-sleeping and can
+	 * deadlock or leave I/O stuck when transport blocks.
+	 */
+	vol->tag_set.flags = BLK_MQ_F_SHOULD_MERGE | BLK_MQ_F_BLOCKING;
 
 	ret = blk_mq_alloc_tag_set(&vol->tag_set);
 	if (ret)
