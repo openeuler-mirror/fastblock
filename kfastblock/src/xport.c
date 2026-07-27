@@ -185,23 +185,43 @@ kfastblock_xport_ops_lookup(u32 transport_id)
 }
 
 const struct kfastblock_xport_ops *
-kfastblock_xport_select(u32 preference,
-			const struct kfastblock_leader_info *leader)
+kfastblock_xport_select_explained(u32 preference,
+				  const struct kfastblock_leader_info *leader,
+				  char *reason, size_t reason_len)
 {
 	const struct kfastblock_xport_ops *ops;
+	const char *why = "forced-tcp";
 
-	if (!kfastblock_xport_preference_valid(preference))
+	if (!kfastblock_xport_preference_valid(preference)) {
 		preference = KFASTBLOCK_OSD_TRANSPORT_TCP;
-
-	if (preference == KFASTBLOCK_OSD_TRANSPORT_AUTO) {
+		why = "invalid-tcp";
+	} else if (preference == KFASTBLOCK_OSD_TRANSPORT_AUTO) {
 		ops = &kfastblock_xport_rdma;
-		if (ops->probe && !ops->probe(leader))
+		if (ops->probe && !ops->probe(leader)) {
+			if (reason && reason_len)
+				strscpy(reason, "auto-rdma", reason_len);
 			return ops;
+		}
+		if (reason && reason_len)
+			strscpy(reason, "auto-tcp", reason_len);
 		return &kfastblock_xport_tcp;
+	} else if (preference == KFASTBLOCK_OSD_TRANSPORT_RDMA) {
+		why = "forced-rdma";
 	}
 
 	ops = kfastblock_xport_ops_lookup(preference);
-	if (!ops)
-		return &kfastblock_xport_tcp;
+	if (!ops) {
+		ops = &kfastblock_xport_tcp;
+		why = "invalid-tcp";
+	}
+	if (reason && reason_len)
+		strscpy(reason, why, reason_len);
 	return ops;
+}
+
+const struct kfastblock_xport_ops *
+kfastblock_xport_select(u32 preference,
+			const struct kfastblock_leader_info *leader)
+{
+	return kfastblock_xport_select_explained(preference, leader, NULL, 0);
 }

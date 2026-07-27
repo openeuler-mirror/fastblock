@@ -30,6 +30,16 @@ const struct kfastblock_xport_ops *
 kfastblock_xport_select(u32 preference,
 			const struct kfastblock_leader_info *leader);
 
+/*
+ * Same as select, but fills @reason with a short stable token for logs:
+ * "auto-rdma", "auto-tcp", "forced-rdma", "forced-tcp", "invalid-tcp".
+ * @reason_len includes the trailing NUL; ignored if reason is NULL.
+ */
+const struct kfastblock_xport_ops *
+kfastblock_xport_select_explained(u32 preference,
+				  const struct kfastblock_leader_info *leader,
+				  char *reason, size_t reason_len);
+
 /* True when preference is RDMA or AUTO (caller still probes). */
 static inline bool kfastblock_xport_prefers_rdma(u32 preference)
 {
