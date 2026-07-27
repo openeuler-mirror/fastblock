@@ -27,6 +27,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <deque>
@@ -36,6 +37,7 @@
 #include <mutex>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -290,6 +292,8 @@ void osd_raw_rdma_server::destroy_connection(connection_context* conn) noexcept 
         return;
     }
     conn->established = false;
+    /* Best-effort drain so in-flight responses can complete. */
+    drain_send_queue(conn, 200);
     conn->send_in_flight = false;
     {
         std::lock_guard<std::mutex> lock(conn->send_mu);
@@ -447,6 +451,42 @@ void osd_raw_rdma_server::try_flush_send_queue(connection_context* conn) noexcep
     std::memcpy(conn->send_buf, frame.data(), frame.size());
     if (!post_send(conn, frame.size())) {
         SPDK_ERRLOG("raw RDMA: flush post_send failed\n");
+    }
+}
+
+void osd_raw_rdma_server::drain_send_queue(connection_context* conn,
+                                           int timeout_ms) noexcept {
+    if (!conn || timeout_ms < 0) {
+        return;
+    }
+    try_flush_send_queue(conn);
+    const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    while (std::chrono::steady_clock::now() < deadline) {
+        bool inflight = false;
+        size_t queued = 0;
+        {
+            std::lock_guard<std::mutex> lock(conn->send_mu);
+            inflight = conn->send_in_flight;
+            queued = conn->send_queue.size();
+        }
+        if (!inflight && queued == 0) {
+            return;
+        }
+        poll_cq(conn);
+        try_flush_send_queue(conn);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    size_t leftover = 0;
+    {
+        std::lock_guard<std::mutex> lock(conn->send_mu);
+        leftover = conn->send_queue.size();
+    }
+    if (leftover > 0 || conn->send_in_flight) {
+        SPDK_NOTICELOG(
+          "raw RDMA drain timeout peer=%s queued=%zu inflight=%d\n",
+          conn->peer_address.c_str(), leftover,
+          conn->send_in_flight ? 1 : 0);
     }
 }
 
