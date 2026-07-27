@@ -74,6 +74,8 @@ message ShardCore{
     uint32 coreid = 1;
     uint32 port = 2;
     uint32 raw_port = 3;
+    /* kfastblock raw-over-RDMA data plane listen port (not protobuf RDMA) */
+    uint32 raw_rdma_port = 4;
 }
 
 message BootRequest {
