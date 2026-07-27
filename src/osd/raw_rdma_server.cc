@@ -909,22 +909,37 @@ bool osd_raw_rdma_server::post_recv_slot(connection_context* conn,
     return true;
 }
 
+size_t osd_raw_rdma_server::recv_posted_count(
+  const connection_context* conn) noexcept {
+    if (!conn) {
+        return 0;
+    }
+    size_t n = 0;
+    for (size_t i = 0; i < connection_context::max_recv_slots; ++i) {
+        if (conn->recv_slots[i].posted) {
+            ++n;
+        }
+    }
+    return n;
+}
+
 bool osd_raw_rdma_server::post_recv(connection_context* conn) noexcept {
     if (!conn) {
         return false;
     }
     /* Post all free slots (used on ESTABLISHED and as bulk re-arm). */
-    int posted = 0;
+    int newly = 0;
     for (size_t i = 0; i < connection_context::max_recv_slots; ++i) {
         if (conn->recv_slots[i].posted) {
             continue;
         }
         if (post_recv_slot(conn, i)) {
-            ++posted;
+            ++newly;
         }
     }
-    return posted > 0 ||
-           (conn->recv_slots[0].posted); /* already fully armed */
+    /* Success if we posted something or the depth was already full. */
+    return newly > 0 ||
+           recv_posted_count(conn) == connection_context::max_recv_slots;
 }
 
 bool osd_raw_rdma_server::handle_connect_request(rdma_cm_id* id,

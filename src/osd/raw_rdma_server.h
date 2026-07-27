@@ -115,6 +115,8 @@ private:
     bool post_recv_slot(connection_context* conn, size_t slot) noexcept;
     bool ensure_recv_slots(connection_context* conn) noexcept;
     void free_recv_slots(connection_context* conn) noexcept;
+    /* How many RECV slots currently posted on a connection. */
+    static size_t recv_posted_count(const connection_context* conn) noexcept;
     bool ensure_send_mr(connection_context* conn) noexcept;
     bool post_send(connection_context* conn, size_t length) noexcept;
     bool send_response(connection_context* conn,
