@@ -45,6 +45,8 @@ public:
     size_t connection_count() const noexcept;
     /* Connections currently established on a single shard listener. */
     size_t connection_count(uint32_t shard_id) const noexcept;
+    /* Comma-separated listen ports for all shards (empty if stopped). */
+    std::string ports_string() const;
     /* Aggregate per-connection counters across all live connections. */
     void get_io_totals(uint64_t* recv_total,
                        uint64_t* send_total,
