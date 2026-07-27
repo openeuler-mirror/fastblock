@@ -2721,11 +2721,23 @@ static int kfastblock_transport_prepare_object_exchange(
 			ctx->rdma = NULL;
 			/* Strict RDMA preference: do not silently use TCP. */
 			if (ctx->vol->spec.osd_transport ==
-			    KFASTBLOCK_OSD_TRANSPORT_RDMA)
+			    KFASTBLOCK_OSD_TRANSPORT_RDMA) {
+				pr_warn_ratelimited(
+					"kfastblock: RDMA connect failed peer=%s:%u err=%d\n",
+					ctx->leader.address, ctx->leader.rdma_port,
+					ret);
 				return ret;
+			}
+			pr_info_ratelimited(
+				"kfastblock: RDMA unavailable, fallback TCP peer=%s err=%d\n",
+				ctx->leader.address, ret);
 			/* AUTO continues and falls back to TCP below. */
 		} else {
 			ctx->use_rdma = true;
+			pr_info_ratelimited(
+				"kfastblock: object I/O via RDMA peer=%s:%u op=%u\n",
+				ctx->leader.address, ctx->leader.rdma_port,
+				ctx->raw_opcode);
 			seq = (u64)get_random_u64();
 			if (!seq)
 				seq = 1;
