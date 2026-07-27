@@ -29,10 +29,34 @@ struct kfastblock_rdma_conn {
 	bool connected;
 	int last_error;
 	struct rdma_cm_id *cm_id;
+	struct ib_pd *pd;
+	struct ib_cq *cq;
 	struct completion cm_done;
 	enum rdma_cm_event_type cm_event;
 	int cm_event_status;
 };
+
+static void kfastblock_rdma_conn_destroy_resources(struct kfastblock_rdma_conn *conn)
+{
+	if (!conn)
+		return;
+
+	if (conn->cm_id && conn->cm_id->qp) {
+		rdma_destroy_qp(conn->cm_id);
+	}
+	if (conn->cq) {
+		ib_destroy_cq(conn->cq);
+		conn->cq = NULL;
+	}
+	if (conn->pd) {
+		ib_dealloc_pd(conn->pd);
+		conn->pd = NULL;
+	}
+	if (conn->cm_id) {
+		rdma_destroy_id(conn->cm_id);
+		conn->cm_id = NULL;
+	}
+}
 
 static int kfastblock_rdma_cm_event_handler(struct rdma_cm_id *cm_id,
 					    struct rdma_cm_event *event)
@@ -174,8 +198,7 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 	conn->last_error = -EOPNOTSUPP;
 err_destroy_id:
 	conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
-	rdma_destroy_id(conn->cm_id);
-	conn->cm_id = NULL;
+	kfastblock_rdma_conn_destroy_resources(conn);
 	return conn->last_error;
 }
 
@@ -183,10 +206,8 @@ void kfastblock_rdma_conn_disconnect(struct kfastblock_rdma_conn *conn)
 {
 	if (!conn)
 		return;
-	if (conn->cm_id) {
-		rdma_destroy_id(conn->cm_id);
-		conn->cm_id = NULL;
-	}
+	conn->state = KFASTBLOCK_RDMA_CONN_DISCONNECTING;
+	kfastblock_rdma_conn_destroy_resources(conn);
 	conn->connected = false;
 	conn->state = KFASTBLOCK_RDMA_CONN_IDLE;
 	conn->last_error = 0;
