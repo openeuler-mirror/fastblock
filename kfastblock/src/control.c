@@ -118,6 +118,7 @@ static int kfastblock_parse_attach_spec(const char *args, size_t count,
 		return -EINVAL;
 
 	memset(spec, 0, sizeof(*spec));
+	spec->osd_transport = KFASTBLOCK_DEFAULT_OSD_TRANSPORT;
 	scratch = kmemdup_nul(args, count, GFP_KERNEL);
 	if (!scratch)
 		return -ENOMEM;
