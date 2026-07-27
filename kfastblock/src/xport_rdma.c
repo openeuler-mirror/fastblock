@@ -918,7 +918,13 @@ int kfastblock_rdma_conn_send(struct kfastblock_rdma_conn *conn,
 	wr.sg_list = &sge;
 	wr.num_sge = 1;
 	wr.opcode = IB_WR_SEND;
+	/*
+	 * Always request a CQ event for this WR so poll/completion path works
+	 * even when QP was created with IB_SIGNAL_REQ_WR. signal_all only
+	 * changes the default for unsignaled WRs we do not post yet.
+	 */
 	wr.send_flags = IB_SEND_SIGNALED;
+	(void)kfastblock_rdma_signal_all;
 
 	reinit_completion(&conn->send_done);
 	conn->send_wc_status = 0;
