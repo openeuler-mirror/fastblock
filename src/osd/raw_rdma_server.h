@@ -43,6 +43,8 @@ public:
     uint32_t shard_count() const noexcept;
     uint16_t listen_port(uint32_t shard_id) const noexcept;
     size_t connection_count() const noexcept;
+    /* Connections currently established on a single shard listener. */
+    size_t connection_count(uint32_t shard_id) const noexcept;
 
 private:
     struct listener_context {
