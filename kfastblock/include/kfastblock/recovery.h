@@ -71,4 +71,15 @@ void kfastblock_recovery_invalidate_rdma_for_leader(
 /* Close every RDMA cache slot on the volume (manual flush / detach). */
 void kfastblock_recovery_flush_rdma_cache(struct kfastblock_volume *vol);
 
+/* Format @actions bitmask into a short comma-separated token list. */
+void kfastblock_recovery_format_actions(unsigned int actions,
+					char *buf, size_t buf_len);
+
+/* True when actions request RDMA cache invalidation. */
+static inline bool
+kfastblock_recovery_actions_invalidate_rdma(unsigned int actions)
+{
+	return (actions & KFASTBLOCK_RECOVERY_INVALIDATE_RDMA) != 0;
+}
+
 #endif
