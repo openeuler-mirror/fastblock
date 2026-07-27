@@ -251,6 +251,40 @@ osd_service::leader_endpoint osd_service::resolve_pg_leader(
     return endpoint;
 }
 
+osd_service::leader_endpoint osd_service::resolve_pg_leader_raw_rdma(
+  const uint64_t pool_id,
+  const uint64_t pg_id) const {
+    leader_endpoint endpoint{};
+    uint32_t shard_id{};
+
+    if (!_pm->get_pg_shard(pool_id, pg_id, shard_id)) {
+        SPDK_WARNLOG("not find pg %lu.%lu\n", pool_id, pg_id);
+        endpoint.state = err::RAFT_ERR_NOT_FOUND_PG;
+        return endpoint;
+    }
+
+    auto raft = _pm->get_pg(shard_id, pool_id, pg_id);
+    if (!raft) {
+        SPDK_WARNLOG("not find pg %lu.%lu\n", pool_id, pg_id);
+        endpoint.state = err::RAFT_ERR_NOT_FOUND_PG;
+        return endpoint;
+    }
+
+    endpoint.leader_id = raft->raft_get_current_leader();
+    auto leader = _monitor_client->get_osd_raw_rdma_addr(endpoint.leader_id,
+                                                         shard_id);
+    if (leader.first.empty() || leader.second == 0) {
+        endpoint.state = err::RAFT_ERR_NOT_FOUND_LEADER;
+        endpoint.leader_id = -1;
+        return endpoint;
+    }
+
+    endpoint.state = err::E_SUCCESS;
+    endpoint.leader_addr = std::move(leader.first);
+    endpoint.leader_port = leader.second;
+    return endpoint;
+}
+
 void osd_service::process_get_leader(google::protobuf::RpcController* controller,
             const osd::pg_leader_request* request,
             osd::pg_leader_response* response,
