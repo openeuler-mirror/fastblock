@@ -528,6 +528,8 @@ func ProcessGetOsdMapMessage(ctx context.Context, cv int64, oid int32) ([]*msg.O
 			shard_core.Coreid = shard_port.Coreid
 			shard_core.Port = shard_port.Port
 			shard_core.RawPort = shard_port.RawPort
+			/* Preserve kfastblock raw RDMA listen port across map reloads. */
+			shard_core.RawRdmaPort = shard_port.RawRdmaPort
 			info.ShardedPorts[shard_id] = &shard_core
 		}
 		// info.ShardedPorts = osdState.ShardedPorts
