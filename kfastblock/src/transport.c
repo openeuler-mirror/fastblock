@@ -2757,6 +2757,12 @@ static int kfastblock_transport_prepare_object_exchange(
 			/* AUTO: treat inject as acquire miss and fall TCP. */
 			goto prepare_tcp;
 		}
+		if (!g_kfastblock_rdma_pool_enable) {
+			pr_info_ratelimited(
+				"kfastblock: rdma_pool_enable=0 skip pool peer=%s\n",
+				ctx->leader.address);
+			goto prepare_tcp;
+		}
 		ctx->rdma_slot = kfastblock_rdma_conn_pool_acquire(
 			ctx->vol->rdma_cache, KFASTBLOCK_MAX_RDMA_CACHE,
 			&ctx->leader);
