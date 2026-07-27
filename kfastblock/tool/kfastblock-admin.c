@@ -15,6 +15,7 @@
 #define SYSFS_PATH_LAST_ERROR "/sys/bus/kfastblock/last_error"
 #define SYSFS_DEVICE_ROOT "/sys/bus/kfastblock/devices"
 #define SYSFS_DEVICE_PREFIX "kfastblock-vol-"
+#define MODULE_PARAM_ROOT "/sys/module/kfastblock/parameters"
 
 #define MAX_LINE_LEN 1024
 #define MAX_CMD_LEN 4096
@@ -26,6 +27,8 @@ struct config {
 	char *image_name;
 	char *conf_file;
 	char *read_only;
+	/* OSD data-plane: tcp | rdma | auto (default tcp in kernel) */
+	char *osd_transport;
 	char *debug_size_bytes;
 	char *debug_object_size;
 	char *debug_pool_id;
@@ -89,6 +92,8 @@ static void parse_config_file(const char *filename, struct config *cfg)
 			maybe_set(&cfg->image_name, value);
 		} else if (strcmp(key, "read_only") == 0) {
 			maybe_set(&cfg->read_only, value);
+		} else if (strcmp(key, "osd_transport") == 0) {
+			maybe_set(&cfg->osd_transport, value);
 		} else if (strcmp(key, "debug_size_bytes") == 0) {
 			maybe_set(&cfg->debug_size_bytes, value);
 		} else if (strcmp(key, "debug_object_size") == 0) {
@@ -110,7 +115,7 @@ static void parse_config_file(const char *filename, struct config *cfg)
 static void print_usage(const char *prog_name)
 {
 	fprintf(stderr,
-		"Usage: %s <attach|detach|force-refresh|reset-backoff|drop-transport|reset-leaders|pause-queue|resume-queue|set-dispatch-window|set-refresh-interval|set-image-refresh-interval|list|show> [options]\n",
+		"Usage: %s <attach|detach|force-refresh|reset-backoff|drop-transport|reset-leaders|pause-queue|resume-queue|set-dispatch-window|set-refresh-interval|set-image-refresh-interval|list|show|show-rdma-params> [options]\n",
 		prog_name);
 	fprintf(stderr, "Options:\n");
 	fprintf(stderr, "  -c, --conf <file>\n");
@@ -118,6 +123,8 @@ static void print_usage(const char *prog_name)
 	fprintf(stderr, "  --pool-name <name>\n");
 	fprintf(stderr, "  --image-name <name>\n");
 	fprintf(stderr, "  --read-only <true|false>\n");
+	fprintf(stderr,
+		"  --osd-transport <tcp|rdma|auto>  OSD data-plane preference\n");
 	fprintf(stderr, "  --debug-size-bytes <bytes>\n");
 	fprintf(stderr, "  --debug-object-size <bytes>\n");
 	fprintf(stderr, "  --debug-pool-id <id>\n");
@@ -127,6 +134,10 @@ static void print_usage(const char *prog_name)
 	fprintf(stderr, "\nExamples:\n");
 	fprintf(stderr, "  %s list\n", prog_name);
 	fprintf(stderr, "  %s show --pool-name <pool> --image-name <image>\n", prog_name);
+	fprintf(stderr,
+		"  %s attach --monitor-addr <m> --pool-name <p> --image-name <i> --osd-transport auto\n",
+		prog_name);
+	fprintf(stderr, "  %s show-rdma-params\n", prog_name);
 	fprintf(stderr, "  %s pause-queue --pool-name <pool> --image-name <image>\n", prog_name);
 	fprintf(stderr, "  %s set-dispatch-window --pool-name <pool> --image-name <image> --value 16\n", prog_name);
 }
@@ -227,7 +238,48 @@ static int op_is_volume_level(const char *operation)
 static int op_is_read_only(const char *operation)
 {
 	return strcmp(operation, "list") == 0 ||
-		strcmp(operation, "show") == 0;
+		strcmp(operation, "show") == 0 ||
+		strcmp(operation, "show-rdma-params") == 0;
+}
+
+/*
+ * Dump RDMA-related module parameters from sysfs so operators can see
+ * timeouts and data-plane counters without grepping dmesg.
+ */
+static int do_show_rdma_params(void)
+{
+	static const char *const names[] = {
+		"rdma_cm_timeout_ms",
+		"rdma_io_timeout_ms",
+		"rdma_send_ok",
+		"rdma_send_err",
+		"rdma_recv_ok",
+		"rdma_recv_err",
+		"rdma_exchange_ok",
+		"rdma_exchange_err",
+		"rdma_connect_ok",
+		"rdma_connect_err",
+	};
+	char path[MAX_SYSFS_PATH];
+	char value[MAX_LINE_LEN];
+	size_t i;
+	int shown = 0;
+
+	for (i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+		if (snprintf(path, sizeof(path), "%s/%s", MODULE_PARAM_ROOT,
+			     names[i]) >= (int)sizeof(path))
+			continue;
+		if (read_text_file(path, value, sizeof(value)) < 0)
+			continue;
+		printf("%s=%s\n", names[i], value);
+		shown++;
+	}
+	if (!shown) {
+		fprintf(stderr,
+			"no RDMA module params found (is kfastblock loaded?)\n");
+		return -1;
+	}
+	return 0;
 }
 
 static const char *volume_attr_for_operation(const char *operation)
@@ -262,6 +314,7 @@ static void free_config(struct config *cfg)
 	free(cfg->image_name);
 	free(cfg->conf_file);
 	free(cfg->read_only);
+	free(cfg->osd_transport);
 	free(cfg->debug_size_bytes);
 	free(cfg->debug_object_size);
 	free(cfg->debug_pool_id);
@@ -438,6 +491,7 @@ int main(int argc, char *argv[])
 		{"pool-name", required_argument, 0, 0},
 		{"image-name", required_argument, 0, 0},
 		{"read-only", required_argument, 0, 0},
+		{"osd-transport", required_argument, 0, 0},
 		{"debug-size-bytes", required_argument, 0, 0},
 		{"debug-object-size", required_argument, 0, 0},
 		{"debug-pool-id", required_argument, 0, 0},
@@ -465,7 +519,8 @@ int main(int argc, char *argv[])
 	    strcmp(operation, "set-refresh-interval") != 0 &&
 	    strcmp(operation, "set-image-refresh-interval") != 0 &&
 	    strcmp(operation, "list") != 0 &&
-	    strcmp(operation, "show") != 0) {
+	    strcmp(operation, "show") != 0 &&
+	    strcmp(operation, "show-rdma-params") != 0) {
 		print_usage(argv[0]);
 		return EXIT_FAILURE;
 	}
@@ -490,6 +545,9 @@ int main(int argc, char *argv[])
 			} else if (strcmp(long_options[option_index].name,
 				  "read-only") == 0) {
 				maybe_set(&cfg.read_only, optarg);
+			} else if (strcmp(long_options[option_index].name,
+				  "osd-transport") == 0) {
+				maybe_set(&cfg.osd_transport, optarg);
 			} else if (strcmp(long_options[option_index].name,
 				  "debug-size-bytes") == 0) {
 				maybe_set(&cfg.debug_size_bytes, optarg);
@@ -526,8 +584,12 @@ int main(int argc, char *argv[])
 	if (op_is_read_only(operation)) {
 		int ret;
 
-		ret = strcmp(operation, "list") == 0 ?
-			do_list_volumes() : do_show_volume(&cfg);
+		if (strcmp(operation, "list") == 0)
+			ret = do_list_volumes();
+		else if (strcmp(operation, "show-rdma-params") == 0)
+			ret = do_show_rdma_params();
+		else
+			ret = do_show_volume(&cfg);
 		free_config(&cfg);
 		return ret == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 	}
@@ -561,6 +623,8 @@ int main(int argc, char *argv[])
 			  cfg.image_name);
 		append_kv(command_str, sizeof(command_str), "read_only",
 			  cfg.read_only);
+		append_kv(command_str, sizeof(command_str), "osd_transport",
+			  cfg.osd_transport);
 		append_kv(command_str, sizeof(command_str), "debug_size_bytes",
 			  cfg.debug_size_bytes);
 		append_kv(command_str, sizeof(command_str), "debug_object_size",
