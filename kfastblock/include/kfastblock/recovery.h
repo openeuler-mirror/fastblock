@@ -15,6 +15,8 @@ enum kfastblock_recovery_action {
 	KFASTBLOCK_RECOVERY_INVALIDATE_LEADER = 1U << 1,
 	KFASTBLOCK_RECOVERY_KICK_REFRESH = 1U << 2,
 	KFASTBLOCK_RECOVERY_RETRY = 1U << 3,
+	/* Drop cached RDMA conn for peer so next I/O reconnects. */
+	KFASTBLOCK_RECOVERY_INVALIDATE_RDMA = 1U << 4,
 };
 
 unsigned int kfastblock_recovery_classify_object_failure(int ret);
@@ -56,5 +58,17 @@ void kfastblock_recovery_finalize_monitor_socket(
 	struct kfastblock_cached_monitor_socket *cached,
 	int ret,
 	unsigned int actions);
+
+/*
+ * Invalidate cached RDMA connection(s) for @leader (address:rdma_port).
+ * Safe when leader is NULL (no-op). Does not require holding slot locks
+ * from the caller; takes per-slot mutexes itself.
+ */
+void kfastblock_recovery_invalidate_rdma_for_leader(
+	struct kfastblock_volume *vol,
+	const struct kfastblock_leader_info *leader);
+
+/* Close every RDMA cache slot on the volume (manual flush / detach). */
+void kfastblock_recovery_flush_rdma_cache(struct kfastblock_volume *vol);
 
 #endif
