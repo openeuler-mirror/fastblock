@@ -119,7 +119,7 @@ static void parse_config_file(const char *filename, struct config *cfg)
 static void print_usage(const char *prog_name)
 {
 	fprintf(stderr,
-		"Usage: %s <attach|detach|force-refresh|reset-backoff|drop-transport|reset-leaders|pause-queue|resume-queue|set-dispatch-window|set-refresh-interval|set-image-refresh-interval|list|show|show-rdma-params|show-xport> [options]\n",
+		"Usage: %s <attach|detach|force-refresh|reset-backoff|drop-transport|flush-rdma-cache|reset-leaders|pause-queue|resume-queue|set-dispatch-window|set-refresh-interval|set-image-refresh-interval|list|show|show-rdma-params|show-xport|show-transport|show-rdma-pool> [options]\n",
 		prog_name);
 	fprintf(stderr, "Options:\n");
 	fprintf(stderr, "  -c, --conf <file>\n");
@@ -144,6 +144,15 @@ static void print_usage(const char *prog_name)
 	fprintf(stderr, "  %s show-rdma-params\n", prog_name);
 	fprintf(stderr,
 		"  %s show-xport --pool-name <pool> --image-name <image>\n",
+		prog_name);
+	fprintf(stderr,
+		"  %s show-transport --pool-name <pool> --image-name <image>\n",
+		prog_name);
+	fprintf(stderr,
+		"  %s show-rdma-pool --pool-name <pool> --image-name <image>\n",
+		prog_name);
+	fprintf(stderr,
+		"  %s flush-rdma-cache --pool-name <pool> --image-name <image>\n",
 		prog_name);
 	fprintf(stderr, "  %s pause-queue --pool-name <pool> --image-name <image>\n", prog_name);
 	fprintf(stderr, "  %s set-dispatch-window --pool-name <pool> --image-name <image> --value 16\n", prog_name);
@@ -234,6 +243,7 @@ static int op_is_volume_level(const char *operation)
 	return strcmp(operation, "force-refresh") == 0 ||
 		strcmp(operation, "reset-backoff") == 0 ||
 		strcmp(operation, "drop-transport") == 0 ||
+		strcmp(operation, "flush-rdma-cache") == 0 ||
 		strcmp(operation, "reset-leaders") == 0 ||
 		strcmp(operation, "pause-queue") == 0 ||
 		strcmp(operation, "resume-queue") == 0 ||
@@ -247,7 +257,9 @@ static int op_is_read_only(const char *operation)
 	return strcmp(operation, "list") == 0 ||
 		strcmp(operation, "show") == 0 ||
 		strcmp(operation, "show-rdma-params") == 0 ||
-		strcmp(operation, "show-xport") == 0;
+		strcmp(operation, "show-xport") == 0 ||
+		strcmp(operation, "show-transport") == 0 ||
+		strcmp(operation, "show-rdma-pool") == 0;
 }
 
 static int build_volume_root_path(char *buf, size_t buf_len,
@@ -658,6 +670,7 @@ int main(int argc, char *argv[])
 	    strcmp(operation, "force-refresh") != 0 &&
 	    strcmp(operation, "reset-backoff") != 0 &&
 	    strcmp(operation, "drop-transport") != 0 &&
+	    strcmp(operation, "flush-rdma-cache") != 0 &&
 	    strcmp(operation, "reset-leaders") != 0 &&
 	    strcmp(operation, "pause-queue") != 0 &&
 	    strcmp(operation, "resume-queue") != 0 &&
@@ -667,7 +680,9 @@ int main(int argc, char *argv[])
 	    strcmp(operation, "list") != 0 &&
 	    strcmp(operation, "show") != 0 &&
 	    strcmp(operation, "show-rdma-params") != 0 &&
-	    strcmp(operation, "show-xport") != 0) {
+	    strcmp(operation, "show-xport") != 0 &&
+	    strcmp(operation, "show-transport") != 0 &&
+	    strcmp(operation, "show-rdma-pool") != 0) {
 		print_usage(argv[0]);
 		return EXIT_FAILURE;
 	}
@@ -737,6 +752,10 @@ int main(int argc, char *argv[])
 			ret = do_show_rdma_params();
 		else if (strcmp(operation, "show-xport") == 0)
 			ret = do_show_xport(&cfg);
+		else if (strcmp(operation, "show-transport") == 0)
+			ret = do_show_transport(&cfg);
+		else if (strcmp(operation, "show-rdma-pool") == 0)
+			ret = do_show_rdma_pool(&cfg);
 		else
 			ret = do_show_volume(&cfg);
 		free_config(&cfg);
