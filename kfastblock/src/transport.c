@@ -2259,7 +2259,8 @@ static int kfastblock_transport_build_raw_frame(
 			body_len += parts[i].len;
 	}
 	frame_len = sizeof(*hdr) + body_len;
-	frame = kzalloc(frame_len, GFP_KERNEL);
+	/* Object bodies can reach ~4MiB; prefer kvzalloc over order-11 kzalloc. */
+	frame = kvzalloc(frame_len, GFP_KERNEL);
 	if (!frame)
 		return -ENOMEM;
 
@@ -2312,41 +2313,41 @@ static int kfastblock_transport_rdma_exchange_parts(
 	if (ret)
 		return ret;
 
-	rsp_frame = kzalloc(rsp_cap, GFP_KERNEL);
+	rsp_frame = kvzalloc(rsp_cap, GFP_KERNEL);
 	if (!rsp_frame) {
-		kfree(req_frame);
+		kvfree(req_frame);
 		return -ENOMEM;
 	}
 
 	ret = kfastblock_rdma_conn_exchange(rdma, req_frame, req_len, rsp_frame,
 					    rsp_cap, seq);
-	kfree(req_frame);
+	kvfree(req_frame);
 	if (ret < 0) {
-		kfree(rsp_frame);
+		kvfree(rsp_frame);
 		return ret;
 	}
 
 	if ((u32)ret < sizeof(response->hdr)) {
-		kfree(rsp_frame);
+		kvfree(rsp_frame);
 		return -EPROTO;
 	}
 	memcpy(&response->hdr, rsp_frame, sizeof(response->hdr));
 	body_len = le32_to_cpu(response->hdr.body_len);
 	if (sizeof(response->hdr) + body_len > (u32)ret) {
-		kfree(rsp_frame);
+		kvfree(rsp_frame);
 		return -EPROTO;
 	}
 	if (body_len) {
-		response->body = kzalloc(body_len, GFP_KERNEL);
+		response->body = kvzalloc(body_len, GFP_KERNEL);
 		if (!response->body) {
-			kfree(rsp_frame);
+			kvfree(rsp_frame);
 			return -ENOMEM;
 		}
 		memcpy(response->body,
 		       (u8 *)rsp_frame + sizeof(response->hdr), body_len);
 		response->body_len = body_len;
 	}
-	kfree(rsp_frame);
+	kvfree(rsp_frame);
 	response->ret = kfastblock_transport_status_to_errno(
 		le32_to_cpu(response->hdr.status));
 	return response->ret;
