@@ -106,3 +106,15 @@ fastblock/build/src/osd/fastblock-osd -s 1024 -m 0x1 -C fastblock.json --id 1
 ```bash
 fbclient -op=fakeapplyid -uuid=`uuidgen`
 ```
+
+### raw RDMA 数据面（kfastblock）
+
+OSD 在每个 shard 上额外监听 raw 协议的 RDMA 端口，供内核客户端 `kfastblock` 走 raw-over-RDMA 数据面。与用户态 protobuf RDMA RPC 相互独立。
+
+配置项（JSON，可选，默认 `true`）：
+
+```json
+"enable_raw_rdma": true
+```
+
+设为 `false` 时不创建 raw RDMA 监听，boot 上报的 `raw_rdma_port` 为 0。启用时每个 shard 在 `20001-29999` 随机端口上 `rdma_listen`，并通过 cluster map 的 `RdmaPort` 下发给客户端。
