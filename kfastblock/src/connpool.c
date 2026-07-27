@@ -512,6 +512,9 @@ static void kfastblock_conn_pool_finalize_average(
 		snapshot->min_health_score = 0;
 	if (snapshot->total_slots)
 		snapshot->avg_health_score /= snapshot->total_slots;
+	/* Classic socket pool: every ready slot is a TCP connection. */
+	snapshot->tcp_ready_slots = snapshot->ready_slots;
+	snapshot->rdma_ready_slots = 0;
 }
 
 void kfastblock_osd_conn_pool_init(struct kfastblock_cached_socket *slots,
