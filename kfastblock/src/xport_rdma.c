@@ -846,16 +846,22 @@ int kfastblock_rdma_conn_send(struct kfastblock_rdma_conn *conn,
 	while (!completion_done(&conn->send_done)) {
 		ret = kfastblock_rdma_poll_one(conn, deadline);
 		if (ret) {
+			/* poll_one already set last_error for timeout/disconnect. */
+			if (!conn->last_error)
+				conn->last_error = ret;
 			kfastblock_rdma_send_err++;
 			return ret;
 		}
 	}
 	if (conn->send_wc_status != IB_WC_SUCCESS) {
 		conn->last_error = -EIO;
+		conn->connected = false;
+		conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
 		kfastblock_rdma_send_err++;
 		return -EIO;
 	}
 	kfastblock_rdma_send_ok++;
+	conn->last_error = 0;
 	return 0;
 }
 
@@ -883,15 +889,22 @@ int kfastblock_rdma_conn_recv(struct kfastblock_rdma_conn *conn,
 	deadline = jiffies + msecs_to_jiffies(kfastblock_rdma_timeout_ms_or_default(kfastblock_rdma_io_timeout_ms, 5000));
 	while (!completion_done(&conn->recv_done)) {
 		ret = kfastblock_rdma_poll_one(conn, deadline);
-		if (ret)
+		if (ret) {
+			if (!conn->last_error)
+				conn->last_error = ret;
+			kfastblock_rdma_recv_err++;
 			return ret;
+		}
 	}
 	if (conn->recv_wc_status != IB_WC_SUCCESS) {
 		conn->last_error = -EIO;
+		conn->connected = false;
+		conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
 		kfastblock_rdma_recv_err++;
 		return -EIO;
 	}
 	if (conn->recv_byte_len > buf_len) {
+		conn->last_error = -EMSGSIZE;
 		kfastblock_rdma_recv_err++;
 		return -EMSGSIZE;
 	}
