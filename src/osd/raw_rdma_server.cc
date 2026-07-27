@@ -108,6 +108,17 @@ bool osd_raw_rdma_server::start_listener(uint32_t shard_id) {
     return true;
 }
 
+void osd_raw_rdma_server::destroy_connection(connection_context* conn) noexcept {
+    if (!conn) {
+        return;
+    }
+    /* Resource teardown lands in follow-up commits. */
+    conn->established = false;
+    conn->id = nullptr;
+    conn->pd = nullptr;
+    conn->cq = nullptr;
+}
+
 void osd_raw_rdma_server::stop_listener(listener_context& listener) noexcept {
     listener.stop.store(true, std::memory_order_release);
     if (listener.worker.joinable()) {
