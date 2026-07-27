@@ -725,19 +725,24 @@ void osd_raw_rdma_server::dispatch_get_leader(connection_context* conn,
 }
 
 void osd_raw_rdma_server::handle_recv_complete(connection_context* conn,
-                                               uint32_t byte_len) noexcept {
-    if (!conn || !conn->recv_buf || byte_len < sizeof(raw_header)) {
-        SPDK_ERRLOG("raw RDMA: RECV too short (%u)\n", byte_len);
+                                               uint32_t byte_len,
+                                               size_t slot) noexcept {
+    if (!conn || slot >= connection_context::max_recv_slots) {
+        return;
+    }
+    auto& rs = conn->recv_slots[slot];
+    rs.posted = false;
+    if (!rs.buf || byte_len < sizeof(raw_header)) {
+        SPDK_ERRLOG("raw RDMA: RECV too short (%u) slot=%zu\n", byte_len, slot);
         return;
     }
 
     raw_header hdr{};
-    std::memcpy(&hdr, conn->recv_buf, sizeof(hdr));
+    std::memcpy(&hdr, rs.buf, sizeof(hdr));
     if (!validate_request_header(hdr)) {
         conn->error_count.fetch_add(1, std::memory_order_relaxed);
         SPDK_ERRLOG("raw RDMA: invalid request header op=%u body_len=%u\n",
                     hdr.opcode, le32toh(hdr.body_len));
-        /* Best-effort error response if buffer looks like a header. */
         send_response(conn, &hdr, raw_status_invalid_request, nullptr, 0);
         return;
     }
@@ -750,8 +755,15 @@ void osd_raw_rdma_server::handle_recv_complete(connection_context* conn,
         return;
     }
 
-    const auto* body = static_cast<const uint8_t*>(conn->recv_buf) +
-                       sizeof(raw_header);
+    /* Copy out of staging slot so it can be re-posted immediately. */
+    std::vector<uint8_t> body_copy;
+    if (body_len > 0) {
+        const auto* body_ptr =
+          static_cast<const uint8_t*>(rs.buf) + sizeof(raw_header);
+        body_copy.assign(body_ptr, body_ptr + body_len);
+    }
+    const uint8_t* body = body_copy.empty() ? nullptr : body_copy.data();
+
     switch (hdr.opcode) {
     case raw_op_get_leader:
         dispatch_get_leader(conn, &hdr, body, body_len);
@@ -1136,8 +1148,17 @@ bool osd_raw_rdma_server::start(const std::string& bind_address,
             return false;
         }
     }
-    SPDK_NOTICELOG("raw RDMA server started on %s shards=%u\n",
-                   _bind_address.c_str(), shard_count);
+    {
+        std::string ports;
+        for (uint32_t i = 0; i < shard_count; ++i) {
+            if (i) {
+                ports.push_back(',');
+            }
+            ports += std::to_string(_listeners[i] ? _listeners[i]->port : 0);
+        }
+        SPDK_NOTICELOG("raw RDMA server started on %s shards=%u ports=[%s]\n",
+                       _bind_address.c_str(), shard_count, ports.c_str());
+    }
     _running.store(true, std::memory_order_release);
     return true;
 }
