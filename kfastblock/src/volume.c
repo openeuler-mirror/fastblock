@@ -4292,6 +4292,7 @@ static ssize_t run_selfcheck_store(struct device *dev,
 	return count;
 }
 
+static DEVICE_ATTR_RO(rdma_cache_stats);
 static DEVICE_ATTR_RO(pool_name);
 static DEVICE_ATTR_RO(image_name);
 static DEVICE_ATTR_RO(size_bytes);
@@ -4427,6 +4428,7 @@ static DEVICE_ATTR_WO(reset_diagnostic_baseline);
 
 static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_osd_transport.attr,
+	&dev_attr_rdma_cache_stats.attr,
 	&dev_attr_pool_name.attr,
 	&dev_attr_image_name.attr,
 	&dev_attr_size_bytes.attr,
