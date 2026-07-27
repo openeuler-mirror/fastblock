@@ -536,3 +536,20 @@ void kfastblock_rdma_pool_snapshot(struct kfastblock_rdma_pool *pool,
 	}
 	snap->reuse_hits = reuse;
 }
+
+u32 kfastblock_rdma_pool_set_max_idle(struct kfastblock_rdma_pool *pool,
+				      u32 max_idle)
+{
+	u32 prev;
+
+	if (!pool)
+		return 0;
+	prev = pool->max_idle;
+	if (max_idle && pool->nr_slots && max_idle > pool->nr_slots)
+		max_idle = pool->nr_slots;
+	pool->max_idle = max_idle;
+	/* Opportunistically reclaim if new cap is tighter. */
+	if (pool->max_idle)
+		kfastblock_rdma_pool_evict_idle_lru(pool, NULL);
+	return prev;
+}
