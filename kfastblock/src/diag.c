@@ -15,6 +15,7 @@ static void kfastblock_diag_collect_xport(struct kfastblock_volume *vol,
 {
 	struct kfastblock_diag_xport_snapshot *xport;
 	const char *name;
+	u32 i, j;
 
 	if (!vol || !snapshot)
 		return;
@@ -25,6 +26,34 @@ static void kfastblock_diag_collect_xport(struct kfastblock_volume *vol,
 	strscpy(xport->preference_name, name, sizeof(xport->preference_name));
 	xport->prefers_rdma =
 		kfastblock_xport_prefers_rdma(xport->preference) ? 1 : 0;
+
+	down_read(&vol->state_lock);
+	for (i = 0; i < vol->view.route_count; ++i) {
+		const struct kfastblock_pg_route *route = &vol->view.routes[i];
+
+		if (!route->leader_valid)
+			continue;
+		xport->leader_valid_count++;
+		if (route->leader.rdma_port > 0)
+			xport->leader_rdma_ready_count++;
+		else
+			xport->leader_tcp_only_count++;
+	}
+	for (i = 0; i < vol->view.osd_count; ++i) {
+		const struct kfastblock_osd_endpoint *osd = &vol->view.osds[i];
+		bool osd_has_rdma = false;
+
+		for (j = 0; j < osd->shard_count; ++j) {
+			xport->shard_count++;
+			if (osd->shards[j].rdma_port > 0) {
+				xport->shard_rdma_port_count++;
+				osd_has_rdma = true;
+			}
+		}
+		if (osd_has_rdma)
+			xport->osd_with_rdma_count++;
+	}
+	up_read(&vol->state_lock);
 }
 
 static const char *kfastblock_diag_health_state_name(u32 state)
