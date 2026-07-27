@@ -362,21 +362,27 @@ void start_monitor(server_t* ctx) {
     uint32_t core_id = 0;
     uint32_t port = 0;
     uint32_t raw_port = 0;
+    uint32_t raw_rdma_port = 0;
     SPDK_ENV_FOREACH_CORE(core_id){
         port = ctx->rpc_servers[index]->listen_port();
         raw_port = global_raw_tcp_server ? global_raw_tcp_server->listen_port(index) : 0;
+        raw_rdma_port = global_raw_rdma_server
+                          ? global_raw_rdma_server->listen_port(index)
+                          : 0;
         SPDK_DEBUGLOG(
           osd,
-          "core id : %u, shard_id: %u, rdma port: %u, raw tcp port: %u\n",
+          "core id : %u, shard_id: %u, rdma port: %u, raw tcp port: %u, raw rdma port: %u\n",
           core_id,
           index,
           port,
-          raw_port);
+          raw_port,
+          raw_rdma_port);
         sharded_ports[index] = utils::core_shard_map{
           port,
           raw_port,
           core_id,
-          index};
+          index,
+          raw_rdma_port};
         index++;
     }
 
