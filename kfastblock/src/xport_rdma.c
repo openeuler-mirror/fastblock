@@ -234,10 +234,37 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 				goto err_destroy_id;
 			}
 		}
+
+		{
+			struct rdma_conn_param conn_param = {
+				.responder_resources = 1,
+				.initiator_depth = 1,
+				.retry_count = 3,
+				.rnr_retry_count = 3,
+			};
+
+			reinit_completion(&conn->cm_done);
+			conn->state = KFASTBLOCK_RDMA_CONN_CONNECTING;
+			ret = rdma_connect(conn->cm_id, &conn_param);
+			if (ret) {
+				conn->last_error = ret;
+				goto err_destroy_id;
+			}
+
+			ret = kfastblock_rdma_wait_cm_event(
+				conn, RDMA_CM_EVENT_ESTABLISHED);
+			if (ret) {
+				conn->last_error = ret;
+				goto err_destroy_id;
+			}
+		}
 	}
 
-	/* rdma_connect lands in follow-up commits. */
-	conn->last_error = -EOPNOTSUPP;
+	conn->connected = true;
+	conn->state = KFASTBLOCK_RDMA_CONN_ESTABLISHED;
+	conn->last_error = 0;
+	return 0;
+
 err_destroy_id:
 	conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
 	kfastblock_rdma_conn_destroy_resources(conn);
