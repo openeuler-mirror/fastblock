@@ -51,6 +51,7 @@ void monitor_client::emplace_osd_boot_request(
         shard_core.set_coreid(it->second.core_id);
         shard_core.set_port(it->second.port);
         shard_core.set_raw_port(it->second.raw_port);
+        shard_core.set_raw_rdma_port(it->second.raw_rdma_port);
         proto_sharded_ports->insert({it->first, std::move(shard_core)});
     }
     boot_req->set_size(size);
