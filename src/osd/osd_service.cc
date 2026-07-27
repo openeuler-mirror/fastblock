@@ -222,6 +222,10 @@ osd_service::leader_endpoint osd_service::resolve_pg_leader(
     leader_endpoint endpoint{};
     uint32_t shard_id{};
 
+    if (!_pm) {
+        endpoint.state = err::RAFT_ERR_NOT_FOUND_PG;
+        return endpoint;
+    }
     if(!_pm->get_pg_shard(pool_id, pg_id, shard_id)){
         SPDK_WARNLOG("not find pg %lu.%lu\n", pool_id, pg_id);
         endpoint.state = err::RAFT_ERR_NOT_FOUND_PG;
@@ -236,6 +240,13 @@ osd_service::leader_endpoint osd_service::resolve_pg_leader(
     }
 
     endpoint.leader_id = raft->raft_get_current_leader();
+    if (!_monitor_client) {
+        SPDK_WARNLOG("resolve_pg_leader: monitor client missing for pg %lu.%lu\n",
+                     pool_id, pg_id);
+        endpoint.state = err::RAFT_ERR_NOT_FOUND_LEADER;
+        endpoint.leader_id = -1;
+        return endpoint;
+    }
     auto leader = use_raw_port
       ? _monitor_client->get_osd_raw_addr(endpoint.leader_id, shard_id)
       : _monitor_client->get_osd_addr(endpoint.leader_id, shard_id);
