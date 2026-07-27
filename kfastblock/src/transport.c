@@ -6,6 +6,7 @@
 #include <linux/inet.h>
 #include <linux/kernel.h>
 #include <linux/net.h>
+#include <linux/random.h>
 #include <linux/highmem.h>
 #include <linux/jiffies.h>
 #include <linux/slab.h>
@@ -2677,7 +2678,11 @@ static int kfastblock_transport_prepare_object_exchange(
 		if (ret) {
 			kfastblock_rdma_conn_free(ctx->rdma);
 			ctx->rdma = NULL;
-			/* Fall back to TCP raw when RDMA setup fails. */
+			/* Strict RDMA preference: do not silently use TCP. */
+			if (ctx->vol->spec.osd_transport ==
+			    KFASTBLOCK_OSD_TRANSPORT_RDMA)
+				return ret;
+			/* AUTO continues and falls back to TCP below. */
 		} else {
 			ctx->use_rdma = true;
 			seq = (u64)get_random_u64();
