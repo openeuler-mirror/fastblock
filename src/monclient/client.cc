@@ -24,7 +24,8 @@ static void make_sharded_ports(
             it->second.port(),
             it->second.raw_port(),
             it->second.coreid(),
-            it->first});
+            it->first,
+            it->second.raw_rdma_port()});
     }
 }
 }
