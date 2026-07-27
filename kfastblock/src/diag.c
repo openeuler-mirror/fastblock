@@ -159,6 +159,44 @@ static const char *kfastblock_diag_event_type_name(u32 type)
 	}
 }
 
+static void kfastblock_diag_format_anomaly_flags(u32 flags, char *buf,
+						size_t buf_len)
+{
+	size_t used = 0;
+
+	if (!buf || !buf_len)
+		return;
+	buf[0] = '\0';
+	if (!flags) {
+		strscpy(buf, "none", buf_len);
+		return;
+	}
+
+#define KFB_ANOM_APPEND(bit, name)                                          \
+	do {                                                                \
+		if (flags & (bit)) {                                        \
+			used += scnprintf(buf + used, buf_len - used,       \
+					  "%s%s", used ? "," : "", (name)); \
+		}                                                           \
+	} while (0)
+
+	KFB_ANOM_APPEND(KFASTBLOCK_DIAG_ANOMALY_QUEUE_PAUSED, "queue_paused");
+	KFB_ANOM_APPEND(KFASTBLOCK_DIAG_ANOMALY_HEALTH_DEGRADED, "health_degraded");
+	KFB_ANOM_APPEND(KFASTBLOCK_DIAG_ANOMALY_META_STALE, "meta_stale");
+	KFB_ANOM_APPEND(KFASTBLOCK_DIAG_ANOMALY_BUFFER_PRESSURE, "buffer_pressure");
+	KFB_ANOM_APPEND(KFASTBLOCK_DIAG_ANOMALY_SCHEDULER_SHRUNK, "scheduler_shrunk");
+	KFB_ANOM_APPEND(KFASTBLOCK_DIAG_ANOMALY_OSD_CONN_UNSTABLE, "osd_conn_unstable");
+	KFB_ANOM_APPEND(KFASTBLOCK_DIAG_ANOMALY_MONITOR_CONN_UNSTABLE,
+			"monitor_conn_unstable");
+	KFB_ANOM_APPEND(KFASTBLOCK_DIAG_ANOMALY_SELFCHECK_FAILING, "selfcheck_failing");
+	KFB_ANOM_APPEND(KFASTBLOCK_DIAG_ANOMALY_SELFCHECK_WARNING, "selfcheck_warning");
+	KFB_ANOM_APPEND(KFASTBLOCK_DIAG_ANOMALY_FAULT_ARMED, "fault_armed");
+	KFB_ANOM_APPEND(KFASTBLOCK_DIAG_ANOMALY_EVENT_ERROR_SPIKE, "event_error_spike");
+	KFB_ANOM_APPEND(KFASTBLOCK_DIAG_ANOMALY_PIPELINE_UNSTABLE, "pipeline_unstable");
+	KFB_ANOM_APPEND(KFASTBLOCK_DIAG_ANOMALY_RDMA_UNAVAILABLE, "rdma_unavailable");
+#undef KFB_ANOM_APPEND
+}
+
 const char *kfastblock_diag_anomaly_status(u32 score)
 {
 	if (score >= 60)
@@ -939,12 +977,22 @@ static int kfastblock_diag_dump_snapshot_prefixed(
 		   snapshot->pipeline.last_response_body_len);
 	seq_printf(m, "%spipeline.last_transport_flags=0x%x\n", prefix,
 		   snapshot->pipeline.last_transport_flags);
-	seq_printf(m, "%sdiagnostics.anomaly_score=%u\n", prefix,
-		   snapshot->anomaly_score);
-	seq_printf(m, "%sdiagnostics.anomaly_status=%s\n", prefix,
-		   kfastblock_diag_anomaly_status(snapshot->anomaly_score));
-	seq_printf(m, "%sdiagnostics.anomaly_flags=0x%x\n", prefix,
-		   snapshot->anomaly_flags);
+	{
+		char anom_text[192];
+
+		kfastblock_diag_format_anomaly_flags(snapshot->anomaly_flags,
+						     anom_text,
+						     sizeof(anom_text));
+		seq_printf(m, "%sdiagnostics.anomaly_score=%u\n", prefix,
+			   snapshot->anomaly_score);
+		seq_printf(m, "%sdiagnostics.anomaly_status=%s\n", prefix,
+			   kfastblock_diag_anomaly_status(
+				   snapshot->anomaly_score));
+		seq_printf(m, "%sdiagnostics.anomaly_flags=0x%x\n", prefix,
+			   snapshot->anomaly_flags);
+		seq_printf(m, "%sdiagnostics.anomaly_flags_text=%s\n", prefix,
+			   anom_text);
+	}
 	return 0;
 }
 
@@ -1258,12 +1306,21 @@ int kfastblock_diag_dump_seq(struct seq_file *m,
 		   snapshot->events.oldest_jiffies);
 	seq_printf(m, "events.newest_jiffies=%lu\n",
 		   snapshot->events.newest_jiffies);
-	seq_printf(m, "diagnostics.anomaly_score=%u\n",
-		   snapshot->anomaly_score);
-	seq_printf(m, "diagnostics.anomaly_status=%s\n",
-		   kfastblock_diag_anomaly_status(snapshot->anomaly_score));
-	seq_printf(m, "diagnostics.anomaly_flags=0x%x\n",
-		   snapshot->anomaly_flags);
+	{
+		char anom_text[192];
+
+		kfastblock_diag_format_anomaly_flags(snapshot->anomaly_flags,
+						     anom_text,
+						     sizeof(anom_text));
+		seq_printf(m, "diagnostics.anomaly_score=%u\n",
+			   snapshot->anomaly_score);
+		seq_printf(m, "diagnostics.anomaly_status=%s\n",
+			   kfastblock_diag_anomaly_status(
+				   snapshot->anomaly_score));
+		seq_printf(m, "diagnostics.anomaly_flags=0x%x\n",
+			   snapshot->anomaly_flags);
+		seq_printf(m, "diagnostics.anomaly_flags_text=%s\n", anom_text);
+	}
 	return 0;
 }
 
