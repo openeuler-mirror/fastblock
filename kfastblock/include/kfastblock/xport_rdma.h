@@ -56,5 +56,7 @@ int kfastblock_rdma_conn_exchange(struct kfastblock_rdma_conn *conn,
 const char *kfastblock_rdma_conn_peer_addr(const struct kfastblock_rdma_conn *conn);
 u16 kfastblock_rdma_conn_peer_port(const struct kfastblock_rdma_conn *conn);
 int kfastblock_rdma_conn_last_error(const struct kfastblock_rdma_conn *conn);
+/* State machine name for diagnostics (idle/established/...). */
+const char *kfastblock_rdma_conn_state_str(const struct kfastblock_rdma_conn *conn);
 
 #endif
