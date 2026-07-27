@@ -573,3 +573,21 @@ u32 kfastblock_rdma_pool_set_max_idle(struct kfastblock_rdma_pool *pool,
 		kfastblock_rdma_pool_evict_idle_lru(pool, NULL);
 	return prev;
 }
+
+u32 kfastblock_rdma_pool_ready_count(struct kfastblock_rdma_pool *pool)
+{
+	u32 i, n = 0;
+
+	if (!pool || !pool->slots)
+		return 0;
+	for (i = 0; i < pool->nr_slots; ++i) {
+		struct kfastblock_rdma_pool_slot *slot = &pool->slots[i];
+
+		mutex_lock(&slot->lock);
+		if (slot->state == KFASTBLOCK_RDMA_POOL_SLOT_IDLE &&
+		    slot->conn && kfastblock_rdma_conn_is_usable(slot->conn))
+			n++;
+		mutex_unlock(&slot->lock);
+	}
+	return n;
+}
