@@ -69,6 +69,12 @@ private:
         /* Serialized responses waiting for SEND slot (async object I/O). */
         std::mutex send_mu{};
         std::deque<std::vector<uint8_t>> send_queue{};
+        static constexpr size_t max_send_queue{64};
+        /* Per-connection counters for diagnostics. */
+        std::atomic<uint64_t> recv_count{0};
+        std::atomic<uint64_t> send_count{0};
+        std::atomic<uint64_t> error_count{0};
+        std::string peer_address{};
     };
 
     bool start_listener(uint32_t shard_id);

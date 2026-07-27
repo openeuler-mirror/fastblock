@@ -269,6 +269,10 @@ void osd_raw_rdma_server::destroy_connection(connection_context* conn) noexcept 
     }
     conn->established = false;
     conn->send_in_flight = false;
+    {
+        std::lock_guard<std::mutex> lock(conn->send_mu);
+        conn->send_queue.clear();
+    }
     if (conn->id) {
         if (conn->id->qp) {
             ::rdma_destroy_qp(conn->id);
@@ -379,6 +383,12 @@ bool osd_raw_rdma_server::enqueue_response_frame(
     }
     {
         std::lock_guard<std::mutex> lock(conn->send_mu);
+        if (conn->send_queue.size() >= connection_context::max_send_queue) {
+            SPDK_ERRLOG("raw RDMA: send queue full depth=%lu\n",
+                        static_cast<unsigned long>(conn->send_queue.size()));
+            conn->error_count.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
         conn->send_queue.emplace_back(std::move(frame));
     }
     try_flush_send_queue(conn);
@@ -677,6 +687,7 @@ void osd_raw_rdma_server::handle_recv_complete(connection_context* conn,
     raw_header hdr{};
     std::memcpy(&hdr, conn->recv_buf, sizeof(hdr));
     if (!validate_request_header(hdr)) {
+        conn->error_count.fetch_add(1, std::memory_order_relaxed);
         SPDK_ERRLOG("raw RDMA: invalid request header op=%u body_len=%u\n",
                     hdr.opcode, le32toh(hdr.body_len));
         /* Best-effort error response if buffer looks like a header. */
@@ -721,17 +732,21 @@ void osd_raw_rdma_server::poll_cq(connection_context* conn) noexcept {
     const int n = ::ibv_poll_cq(conn->cq, 16, wc);
     for (int i = 0; i < n; ++i) {
         if (wc[i].status != IBV_WC_SUCCESS) {
-            SPDK_ERRLOG("raw RDMA CQ error status=%d opcode=%d\n",
-                        wc[i].status, wc[i].opcode);
+            conn->error_count.fetch_add(1, std::memory_order_relaxed);
+            SPDK_ERRLOG("raw RDMA CQ error status=%d opcode=%d peer=%s\n",
+                        wc[i].status, wc[i].opcode,
+                        conn->peer_address.c_str());
             if (wc[i].opcode == IBV_WC_SEND) {
                 conn->send_in_flight = false;
             }
             continue;
         }
         if (wc[i].opcode == IBV_WC_RECV) {
+            conn->recv_count.fetch_add(1, std::memory_order_relaxed);
             handle_recv_complete(conn, wc[i].byte_len);
             post_recv(conn);
         } else if (wc[i].opcode == IBV_WC_SEND) {
+            conn->send_count.fetch_add(1, std::memory_order_relaxed);
             conn->send_in_flight = false;
             try_flush_send_queue(conn);
         }
@@ -836,10 +851,22 @@ bool osd_raw_rdma_server::handle_connect_request(rdma_cm_id* id,
     conn->id = id;
     id->context = conn.get();
     {
+        char addrbuf[INET_ADDRSTRLEN] = {};
+        auto* sa = ::rdma_get_peer_addr(id);
+        if (sa && sa->sa_family == AF_INET) {
+            auto* sin = reinterpret_cast<sockaddr_in*>(sa);
+            if (::inet_ntop(AF_INET, &sin->sin_addr, addrbuf, sizeof(addrbuf))) {
+                conn->peer_address = addrbuf;
+            }
+        }
+    }
+    const std::string peer = conn->peer_address;
+    {
         std::lock_guard<std::mutex> lock(_connections_mutex);
         _connections.emplace_back(std::move(conn));
     }
-    SPDK_NOTICELOG("raw RDMA shard %u accepted connection request\n", shard_id);
+    SPDK_NOTICELOG("raw RDMA shard %u accepted connection request peer=%s\n",
+                   shard_id, peer.empty() ? "?" : peer.c_str());
     return true;
 }
 
