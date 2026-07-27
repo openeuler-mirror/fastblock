@@ -129,6 +129,9 @@ kfastblock_xport_ops_is_tcp(const struct kfastblock_xport_ops *ops)
 #define KFASTBLOCK_XPORT_PROBE_CACHE_SIZE 16U
 
 void kfastblock_xport_probe_cache_invalidate(void);
+/* Drop cache entries matching leader address:rdma_port (if any). */
+void kfastblock_xport_probe_cache_invalidate_leader(
+	const struct kfastblock_leader_info *leader);
 u64 kfastblock_xport_probe_cache_hits(void);
 u64 kfastblock_xport_probe_cache_misses(void);
 /* Number of currently valid (non-expired) probe cache entries. */
