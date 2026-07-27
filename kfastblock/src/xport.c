@@ -1,6 +1,44 @@
 #include <linux/errno.h>
+#include <linux/jiffies.h>
+#include <linux/spinlock.h>
+#include <linux/string.h>
 
 #include "kfastblock/xport.h"
+
+struct kfastblock_xport_probe_cache_entry {
+	char address[KFASTBLOCK_MAX_ADDR_LEN];
+	u16 rdma_port;
+	int result;
+	unsigned long expire_jiffies;
+	bool valid;
+};
+
+static struct kfastblock_xport_probe_cache_entry
+	kfastblock_xport_probe_cache[KFASTBLOCK_XPORT_PROBE_CACHE_SIZE];
+static DEFINE_SPINLOCK(kfastblock_xport_probe_cache_lock);
+static u64 kfastblock_xport_probe_cache_hit_count;
+static u64 kfastblock_xport_probe_cache_miss_count;
+
+void kfastblock_xport_probe_cache_invalidate(void)
+{
+	unsigned long flags;
+	u32 i;
+
+	spin_lock_irqsave(&kfastblock_xport_probe_cache_lock, flags);
+	for (i = 0; i < KFASTBLOCK_XPORT_PROBE_CACHE_SIZE; ++i)
+		kfastblock_xport_probe_cache[i].valid = false;
+	spin_unlock_irqrestore(&kfastblock_xport_probe_cache_lock, flags);
+}
+
+u64 kfastblock_xport_probe_cache_hits(void)
+{
+	return READ_ONCE(kfastblock_xport_probe_cache_hit_count);
+}
+
+u64 kfastblock_xport_probe_cache_misses(void)
+{
+	return READ_ONCE(kfastblock_xport_probe_cache_miss_count);
+}
 
 static int kfastblock_xport_tcp_probe(const struct kfastblock_leader_info *leader)
 {
