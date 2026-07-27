@@ -31,7 +31,8 @@ enum kfastblock_request_object_state {
 struct kfastblock_request_pg_target {
 	u32 osd_id;
 	u32 flags;
-	u16 port;
+	u16 port;	/* raw TCP data-plane port */
+	u16 rdma_port;	/* raw RDMA data-plane port; 0 = unavailable */
 	char address[KFASTBLOCK_MAX_ADDR_LEN];
 };
 

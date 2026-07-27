@@ -1448,6 +1448,7 @@ static int kfastblock_transport_exec_mux_request_parts(
 		    msecs_to_jiffies(KFASTBLOCK_DEFAULT_SOCKET_TIMEOUT_MS * 2))) {
 		unsigned long flags;
 		bool still_waiting;
+		struct socket *sock = NULL;
 
 		spin_lock_irqsave(&cached->mux_waiter_lock, flags);
 		still_waiting = !list_empty(&waiter.link);
@@ -1458,19 +1459,33 @@ static int kfastblock_transport_exec_mux_request_parts(
 		}
 		spin_unlock_irqrestore(&cached->mux_waiter_lock, flags);
 
+		/*
+		 * Always shut down the socket so a blocked recv worker wakes.
+		 * Marking mux_dead alone does not interrupt sk_wait_data.
+		 */
+		mutex_lock(&cached->send_lock);
+		mutex_lock(&cached->lock);
+		cached->mux_dead = true;
+		sock = cached->sock;
+		mutex_unlock(&cached->lock);
+		if (sock)
+			kernel_sock_shutdown(sock, SHUT_RDWR);
+		mutex_unlock(&cached->send_lock);
+		queue_work(system_unbound_wq, &cached->mux_recv_work);
+
 		if (still_waiting) {
-			/* Drop the socket so a stuck recv worker exits. */
-			mutex_lock(&cached->send_lock);
-			mutex_lock(&cached->lock);
-			cached->mux_dead = true;
-			mutex_unlock(&cached->lock);
-			mutex_unlock(&cached->send_lock);
-			queue_work(system_unbound_wq, &cached->mux_recv_work);
 			waiter.ret = -ETIMEDOUT;
 			kfastblock_transport_response_ctx_reset(&waiter.response);
-		} else {
-			/* Recv path already claimed us; wait for its complete. */
-			wait_for_completion(&waiter.done);
+		} else if (!wait_for_completion_timeout(
+				   &waiter.done,
+				   msecs_to_jiffies(
+					   KFASTBLOCK_DEFAULT_SOCKET_TIMEOUT_MS))) {
+			/*
+			 * Recv claimed the waiter but never completed even
+			 * after shutdown. Do not wait forever (bio D-state).
+			 */
+			waiter.ret = -ETIMEDOUT;
+			kfastblock_transport_response_ctx_reset(&waiter.response);
 		}
 	}
 	*rsp = waiter.response;
@@ -3448,6 +3463,7 @@ static int kfastblock_transport_prepare_leader_query_target(
 
 	ctx->target.osd_id = target_hint->osd_id;
 	ctx->target.port = target_hint->port;
+	ctx->target.rdma_port = target_hint->rdma_port;
 	strscpy(ctx->target.address, target_hint->address,
 		sizeof(ctx->target.address));
 	return 0;
@@ -3560,10 +3576,20 @@ static int kfastblock_transport_drive_leader_query_target(
 		kfastblock_volume_account_leader_query(
 			ctx->vol, ctx->hint->pg_id, ctx->target.osd_id, ctx->ret);
 		if (!ctx->ret) {
-			/* When leader_port is raw RDMA, also keep rdma_port. */
+			/*
+			 * OSD GET_LEADER returns raw TCP leader_port. Resolve
+			 * rdma_port from cluster map (or the RDMA target we
+			 * used); never assume leader_port == rdma_port.
+			 */
 			if (!ctx->leader_out->rdma_port)
 				ctx->leader_out->rdma_port =
-					ctx->leader_out->port;
+					kfastblock_meta_lookup_rdma_port(
+						&ctx->vol->view,
+						ctx->leader_out->osd_id,
+						ctx->leader_out->port);
+			if (!ctx->leader_out->rdma_port)
+				ctx->leader_out->rdma_port =
+					ctx->target.rdma_port;
 			ctx->ret = kfastblock_recovery_update_live_pg_leader(
 				ctx->vol, ctx->kf_req->request_pool_id,
 				ctx->hint->pg_id, ctx->leader_out);
