@@ -185,6 +185,22 @@ struct kfastblock_diag_event_snapshot {
 	char last_type_text[48];
 };
 
+/*
+ * OSD data-plane transport preference and RDMA readiness summary.
+ * preference is KFASTBLOCK_OSD_TRANSPORT_*; counts come from cluster view.
+ */
+struct kfastblock_diag_xport_snapshot {
+	u32 preference; /* KFASTBLOCK_OSD_TRANSPORT_* */
+	char preference_name[16];
+	u32 prefers_rdma; /* 1 when preference is RDMA or AUTO */
+	u32 leader_valid_count;
+	u32 leader_rdma_ready_count; /* leader_valid && rdma_port > 0 */
+	u32 leader_tcp_only_count; /* leader_valid && rdma_port == 0 */
+	u32 shard_count;
+	u32 shard_rdma_port_count; /* shards with rdma_port > 0 */
+	u32 osd_with_rdma_count; /* OSDs that have at least one RDMA shard */
+};
+
 struct kfastblock_diag_snapshot {
 	struct kfastblock_diag_volume_snapshot volume;
 	struct kfastblock_diag_buffer_snapshot buffer;
@@ -195,6 +211,7 @@ struct kfastblock_diag_snapshot {
 	struct kfastblock_diag_selfcheck_snapshot selfcheck;
 	struct kfastblock_diag_fault_snapshot fault;
 	struct kfastblock_diag_event_snapshot events;
+	struct kfastblock_diag_xport_snapshot xport;
 	u32 anomaly_score;
 	u32 anomaly_flags;
 };
