@@ -2393,6 +2393,44 @@ static ssize_t osd_transport_show(struct device *dev,
 			 kfastblock_xport_preference_name(pref));
 }
 
+/*
+ * Snapshot RDMA connection cache: ready/empty/fail/reuse counters for
+ * operator diagnostics (admin show-rdma-pool).
+ */
+static ssize_t rdma_cache_stats_show(struct device *dev,
+				     struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	u32 i;
+	u32 ready = 0, empty = 0, connecting = 0;
+	u64 reuse = 0, fail = 0, ok = 0, attempts = 0;
+
+	if (!vol)
+		return -ENODEV;
+
+	for (i = 0; i < KFASTBLOCK_MAX_RDMA_CACHE; ++i) {
+		struct kfastblock_cached_rdma *c = &vol->rdma_cache[i];
+
+		mutex_lock(&c->lock);
+		if (c->conn && kfastblock_rdma_conn_is_connected(c->conn))
+			ready++;
+		else if (c->state == KFASTBLOCK_CONN_STATE_CONNECTING)
+			connecting++;
+		else
+			empty++;
+		reuse += c->reuse_hits;
+		fail += c->failure_count;
+		ok += c->success_count;
+		attempts += c->connect_attempts;
+		mutex_unlock(&c->lock);
+	}
+
+	return scnprintf(buf, PAGE_SIZE,
+			 "slots=%u ready=%u empty=%u connecting=%u reuse=%llu ok=%llu fail=%llu attempts=%llu\n",
+			 KFASTBLOCK_MAX_RDMA_CACHE, ready, empty, connecting,
+			 reuse, ok, fail, attempts);
+}
+
 static ssize_t pool_name_show(struct device *dev,
 			      struct device_attribute *attr, char *buf)
 {
@@ -4377,6 +4415,7 @@ static DEVICE_ATTR_RO(selfcheck_last_flags);
 static DEVICE_ATTR_RO(selfcheck_last_run);
 static DEVICE_ATTR_WO(force_refresh);
 static DEVICE_ATTR_WO(reset_backoff);
+static DEVICE_ATTR_RO(osd_transport);
 static DEVICE_ATTR_WO(drop_transport);
 static DEVICE_ATTR_WO(reset_leaders);
 static DEVICE_ATTR_WO(pause_queue);
@@ -4387,6 +4426,7 @@ static DEVICE_ATTR_WO(capture_diagnostic_baseline);
 static DEVICE_ATTR_WO(reset_diagnostic_baseline);
 
 static struct attribute *kfastblock_volume_attrs[] = {
+	&dev_attr_osd_transport.attr,
 	&dev_attr_pool_name.attr,
 	&dev_attr_image_name.attr,
 	&dev_attr_size_bytes.attr,
