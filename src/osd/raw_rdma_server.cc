@@ -779,6 +779,8 @@ void osd_raw_rdma_server::handle_recv_complete(connection_context* conn,
     auto& rs = conn->recv_slots[slot];
     rs.posted = false;
     if (!rs.buf || byte_len < sizeof(raw_header)) {
+        conn->error_count.fetch_add(1, std::memory_order_relaxed);
+        _dispatch_error_total.fetch_add(1, std::memory_order_relaxed);
         SPDK_ERRLOG("raw RDMA: RECV too short (%u) slot=%zu\n", byte_len, slot);
         return;
     }
@@ -796,6 +798,8 @@ void osd_raw_rdma_server::handle_recv_complete(connection_context* conn,
 
     const uint32_t body_len = le32toh(hdr.body_len);
     if (sizeof(raw_header) + body_len > byte_len) {
+        conn->error_count.fetch_add(1, std::memory_order_relaxed);
+        _dispatch_error_total.fetch_add(1, std::memory_order_relaxed);
         SPDK_ERRLOG("raw RDMA: truncated body need=%zu got=%u\n",
                     sizeof(raw_header) + body_len, byte_len);
         send_response(conn, &hdr, raw_status_invalid_request, nullptr, 0);
@@ -848,6 +852,18 @@ void osd_raw_rdma_server::poll_cq(connection_context* conn) noexcept {
                         conn->peer_address.c_str());
             if (wc[i].opcode == IBV_WC_SEND) {
                 conn->send_in_flight = false;
+                try_flush_send_queue(conn);
+            } else if (wc[i].opcode == IBV_WC_RECV) {
+                /* Always re-arm the failed RECV slot so the QP stays usable. */
+                const size_t slot = static_cast<size_t>(wc[i].wr_id);
+                if (slot < connection_context::max_recv_slots) {
+                    conn->recv_slots[slot].posted = false;
+                    if (!post_recv_slot(conn, slot)) {
+                        SPDK_ERRLOG(
+                          "raw RDMA: re-post RECV after CQ error failed slot=%zu\n",
+                          slot);
+                    }
+                }
             }
             continue;
         }
@@ -855,7 +871,11 @@ void osd_raw_rdma_server::poll_cq(connection_context* conn) noexcept {
             conn->recv_count.fetch_add(1, std::memory_order_relaxed);
             const size_t slot = static_cast<size_t>(wc[i].wr_id);
             handle_recv_complete(conn, wc[i].byte_len, slot);
-            post_recv_slot(conn, slot);
+            if (!post_recv_slot(conn, slot)) {
+                conn->error_count.fetch_add(1, std::memory_order_relaxed);
+                SPDK_ERRLOG("raw RDMA: post_recv_slot failed after complete slot=%zu\n",
+                            slot);
+            }
         } else if (wc[i].opcode == IBV_WC_SEND) {
             conn->send_count.fetch_add(1, std::memory_order_relaxed);
             conn->send_in_flight = false;
