@@ -46,14 +46,21 @@ void monitor_client::emplace_osd_boot_request(
     boot_req->set_address(osd_addr.c_str());
     boot_req->set_config(config);
     auto* proto_sharded_ports = boot_req->mutable_sharded_ports();
+    uint32_t raw_rdma_published = 0;
     for (auto it = sharded_ports.begin(); it != sharded_ports.end(); ++it) {
         msg::ShardCore shard_core;
         shard_core.set_coreid(it->second.core_id);
         shard_core.set_port(it->second.port);
         shard_core.set_raw_port(it->second.raw_port);
         shard_core.set_raw_rdma_port(it->second.raw_rdma_port);
+        if (it->second.raw_rdma_port != 0) {
+            ++raw_rdma_published;
+        }
         proto_sharded_ports->insert({it->first, std::move(shard_core)});
     }
+    SPDK_NOTICELOG(
+      "osd boot request id=%d addr=%s shards=%zu raw_rdma_ports=%u\n",
+      osd_id, osd_addr.c_str(), sharded_ports.size(), raw_rdma_published);
     boot_req->set_size(size);
     boot_req->set_core_num(core_num);
     char hostname[1024];
