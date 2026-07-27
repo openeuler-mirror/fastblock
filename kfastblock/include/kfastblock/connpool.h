@@ -254,6 +254,11 @@ void kfastblock_rdma_conn_pool_snapshot(struct kfastblock_cached_rdma *slots,
 					u32 nr_slots,
 					struct kfastblock_conn_pool_snapshot *snapshot);
 
+/* Count connected RDMA slots (optionally matching leader when non-NULL). */
+u32 kfastblock_rdma_conn_pool_ready_count(
+	struct kfastblock_cached_rdma *slots, u32 nr_slots,
+	const struct kfastblock_leader_info *leader);
+
 /*
  * Overlay RDMA ready count onto a TCP-oriented pool snapshot for dual-stack
  * diagnostics. Leaves other fields unchanged.

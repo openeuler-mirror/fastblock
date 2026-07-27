@@ -1074,6 +1074,31 @@ u64 kfastblock_rdma_conn_slot_next_seq(struct kfastblock_cached_rdma *cached)
 	return cached->next_seq++;
 }
 
+u32 kfastblock_rdma_conn_pool_ready_count(
+	struct kfastblock_cached_rdma *slots, u32 nr_slots,
+	const struct kfastblock_leader_info *leader)
+{
+	u32 i, n = 0;
+
+	if (!slots)
+		return 0;
+	for (i = 0; i < nr_slots; ++i) {
+		struct kfastblock_cached_rdma *cached = &slots[i];
+
+		mutex_lock(&cached->lock);
+		if (leader) {
+			if (kfastblock_rdma_slot_matches_locked(cached, leader))
+				n++;
+		} else if (cached->conn &&
+			   kfastblock_rdma_conn_is_connected(cached->conn) &&
+			   cached->state == KFASTBLOCK_CONN_STATE_READY) {
+			n++;
+		}
+		mutex_unlock(&cached->lock);
+	}
+	return n;
+}
+
 void kfastblock_rdma_conn_pool_snapshot(struct kfastblock_cached_rdma *slots,
 					u32 nr_slots,
 					struct kfastblock_conn_pool_snapshot *snapshot)
