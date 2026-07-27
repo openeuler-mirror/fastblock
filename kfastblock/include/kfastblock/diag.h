@@ -23,6 +23,8 @@ enum kfastblock_diag_anomaly_flag {
 	KFASTBLOCK_DIAG_ANOMALY_FAULT_ARMED = 1U << 9,
 	KFASTBLOCK_DIAG_ANOMALY_EVENT_ERROR_SPIKE = 1U << 10,
 	KFASTBLOCK_DIAG_ANOMALY_PIPELINE_UNSTABLE = 1U << 11,
+	/* prefer RDMA/AUTO but no leader advertises rdma_port */
+	KFASTBLOCK_DIAG_ANOMALY_RDMA_UNAVAILABLE = 1U << 12,
 };
 
 enum kfastblock_diag_drift_flag {
@@ -36,6 +38,7 @@ enum kfastblock_diag_drift_flag {
 	KFASTBLOCK_DIAG_DRIFT_FAULT = 1U << 7,
 	KFASTBLOCK_DIAG_DRIFT_EVENTS = 1U << 8,
 	KFASTBLOCK_DIAG_DRIFT_PIPELINE = 1U << 9,
+	KFASTBLOCK_DIAG_DRIFT_XPORT = 1U << 10,
 };
 
 struct kfastblock_diag_volume_snapshot {
