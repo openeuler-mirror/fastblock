@@ -81,6 +81,17 @@ MODULE_PARM_DESC(rdma_connect_ok, "RDMA connect successes");
 module_param_named(rdma_connect_err, kfastblock_rdma_connect_err, ulong, 0444);
 MODULE_PARM_DESC(rdma_connect_err, "RDMA connect failures");
 
+/*
+ * Connection state machine (client):
+ *   IDLE -> RESOLVING_ADDR -> RESOLVING_ROUTE -> CONNECTING -> ESTABLISHED
+ *   any of the above -> ERROR on CM/verbs failure
+ *   ESTABLISHED -> DISCONNECTING -> IDLE on teardown
+ *   ERROR -> IDLE after destroy_resources (reconnect allowed via connect())
+ *
+ * Poll / I/O must only run in ESTABLISHED. If state leaves ESTABLISHED
+ * mid-poll (async CM disconnect, explicit disconnect), return -ENOTCONN
+ * and surface via last_error.
+ */
 enum kfastblock_rdma_conn_state {
 	KFASTBLOCK_RDMA_CONN_IDLE = 0,
 	KFASTBLOCK_RDMA_CONN_RESOLVING_ADDR,
@@ -90,6 +101,28 @@ enum kfastblock_rdma_conn_state {
 	KFASTBLOCK_RDMA_CONN_ERROR,
 	KFASTBLOCK_RDMA_CONN_DISCONNECTING,
 };
+
+static const char *__maybe_unused kfastblock_rdma_conn_state_name(u8 state)
+{
+	switch (state) {
+	case KFASTBLOCK_RDMA_CONN_IDLE:
+		return "idle";
+	case KFASTBLOCK_RDMA_CONN_RESOLVING_ADDR:
+		return "resolving_addr";
+	case KFASTBLOCK_RDMA_CONN_RESOLVING_ROUTE:
+		return "resolving_route";
+	case KFASTBLOCK_RDMA_CONN_CONNECTING:
+		return "connecting";
+	case KFASTBLOCK_RDMA_CONN_ESTABLISHED:
+		return "established";
+	case KFASTBLOCK_RDMA_CONN_ERROR:
+		return "error";
+	case KFASTBLOCK_RDMA_CONN_DISCONNECTING:
+		return "disconnecting";
+	default:
+		return "unknown";
+	}
+}
 
 enum kfastblock_rdma_wr_id {
 	KFASTBLOCK_RDMA_WR_SEND = 1,
@@ -788,4 +821,11 @@ u16 kfastblock_rdma_conn_peer_port(const struct kfastblock_rdma_conn *conn)
 int kfastblock_rdma_conn_last_error(const struct kfastblock_rdma_conn *conn)
 {
 	return conn ? conn->last_error : -EINVAL;
+}
+
+const char *kfastblock_rdma_conn_state_str(const struct kfastblock_rdma_conn *conn)
+{
+	if (!conn)
+		return "null";
+	return kfastblock_rdma_conn_state_name(conn->state);
 }
