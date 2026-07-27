@@ -1083,7 +1083,14 @@ int kfastblock_rdma_conn_exchange(struct kfastblock_rdma_conn *conn,
 	}
 	/* body_len must fit inside the provided frame buffer. */
 	req_body_len = le32_to_cpu(rhdr->body_len);
-	if (req_body_len > req_len - sizeof(struct kfastblock_raw_header)) {
+	if (req_body_len > req_len - sizeof(struct kfastblock_raw_header) ||
+	    req_body_len > KFASTBLOCK_RDMA_BUF_LEN) {
+		conn->last_error = -EMSGSIZE;
+		kfastblock_rdma_exchange_err++;
+		return -EMSGSIZE;
+	}
+	/* Full frame size must not wrap u32. */
+	if (sizeof(struct kfastblock_raw_header) + req_body_len < req_body_len) {
 		conn->last_error = -EMSGSIZE;
 		kfastblock_rdma_exchange_err++;
 		return -EMSGSIZE;
