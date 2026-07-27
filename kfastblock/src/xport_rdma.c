@@ -696,10 +696,12 @@ int kfastblock_rdma_conn_exchange(struct kfastblock_rdma_conn *conn,
 	    shdr->opcode != rhdr->opcode ||
 	    shdr->service != rhdr->service) {
 		kfastblock_rdma_exchange_err++;
+		conn->last_error = -EPROTO;
 		return -EPROTO;
 	}
 
 	kfastblock_rdma_exchange_ok++;
+	conn->last_error = 0;
 	return ret;
 }
 
