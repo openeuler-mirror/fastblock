@@ -416,6 +416,21 @@ public:
         return std::pair<std::string, int>{it->second->address, static_cast<int>(raw_port)};
     }
 
+    /* kfastblock raw-over-RDMA data plane listen port (0 if unavailable). */
+    std::pair<std::string, int> get_osd_raw_rdma_addr(int osd_id, uint32_t shard_id) {
+        auto it = _osd_map.data.find(osd_id);
+        if (it == _osd_map.data.end()) {
+            return std::make_pair<std::string, int>("", 0);
+        }
+
+        auto& shard = it->second->sharded_ports.at(shard_id);
+        if (shard.raw_rdma_port == 0) {
+            return std::make_pair<std::string, int>("", 0);
+        }
+        return std::pair<std::string, int>{
+          it->second->address, static_cast<int>(shard.raw_rdma_port)};
+    }
+
     auto last_cluster_map_at() noexcept {
         return _last_cluster_map_at;
     }
