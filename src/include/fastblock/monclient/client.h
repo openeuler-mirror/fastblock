@@ -398,22 +398,32 @@ public:
 
     std::pair<std::string, int> get_osd_addr(int osd_id, uint32_t shard_id) {
         auto it = _osd_map.data.find(osd_id);
-        if (it == _osd_map.data.end()) {
+        if (it == _osd_map.data.end() || !it->second) {
             return std::make_pair<std::string, int>("", 0);
         }
 
-        return std::pair<std::string, int>{it->second->address, it->second->sharded_ports.at(shard_id).port};
+        auto spit = it->second->sharded_ports.find(shard_id);
+        if (spit == it->second->sharded_ports.end()) {
+            return std::make_pair<std::string, int>("", 0);
+        }
+        return std::pair<std::string, int>{it->second->address,
+                                           static_cast<int>(spit->second.port)};
     }
 
     std::pair<std::string, int> get_osd_raw_addr(int osd_id, uint32_t shard_id) {
         auto it = _osd_map.data.find(osd_id);
-        if (it == _osd_map.data.end()) {
+        if (it == _osd_map.data.end() || !it->second) {
             return std::make_pair<std::string, int>("", 0);
         }
 
-        auto& shard = it->second->sharded_ports.at(shard_id);
-        auto raw_port = shard.raw_port != 0 ? shard.raw_port : shard.port;
-        return std::pair<std::string, int>{it->second->address, static_cast<int>(raw_port)};
+        auto spit = it->second->sharded_ports.find(shard_id);
+        if (spit == it->second->sharded_ports.end()) {
+            return std::make_pair<std::string, int>("", 0);
+        }
+        auto raw_port = spit->second.raw_port != 0 ? spit->second.raw_port
+                                                   : spit->second.port;
+        return std::pair<std::string, int>{it->second->address,
+                                           static_cast<int>(raw_port)};
     }
 
     /* kfastblock raw-over-RDMA data plane listen port (0 if unavailable). */
