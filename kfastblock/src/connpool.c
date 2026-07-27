@@ -984,7 +984,7 @@ kfastblock_rdma_conn_pool_acquire(struct kfastblock_cached_rdma *slots,
 	struct kfastblock_cached_rdma *empty = NULL;
 	int ret;
 
-	if (!slots || !leader || !leader->rdma_port || !leader->address[0])
+	if (!slots || !kfastblock_leader_has_rdma(leader))
 		return NULL;
 
 	/* Prefer ready match. */
