@@ -38,3 +38,19 @@ const struct kfastblock_xport_ops *kfastblock_xport_rdma_ops(void)
 {
 	return &kfastblock_xport_rdma;
 }
+
+const struct kfastblock_xport_ops *
+kfastblock_xport_ops_lookup(u32 transport_id)
+{
+	switch (transport_id) {
+	case KFASTBLOCK_OSD_TRANSPORT_TCP:
+		return &kfastblock_xport_tcp;
+	case KFASTBLOCK_OSD_TRANSPORT_RDMA:
+		return &kfastblock_xport_rdma;
+	case KFASTBLOCK_OSD_TRANSPORT_AUTO:
+		/* Prefer RDMA when available; caller still falls back. */
+		return &kfastblock_xport_rdma;
+	default:
+		return NULL;
+	}
+}
