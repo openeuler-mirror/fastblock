@@ -204,6 +204,7 @@ kfastblock_rdma_pool_get(struct kfastblock_rdma_pool *pool,
 				pool->connect_err++;
 				mutex_unlock(&slot->lock);
 				pool->get_misses++;
+				kfastblock_rdma_pool_miss_total++;
 				return NULL;
 			}
 		}
@@ -218,6 +219,7 @@ kfastblock_rdma_pool_get(struct kfastblock_rdma_pool *pool,
 			pool->connect_err++;
 			mutex_unlock(&slot->lock);
 			pool->get_misses++;
+			kfastblock_rdma_pool_miss_total++;
 			return NULL;
 		}
 
