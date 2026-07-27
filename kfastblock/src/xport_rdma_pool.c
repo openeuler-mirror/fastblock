@@ -287,18 +287,31 @@ kfastblock_rdma_pool_try_get(struct kfastblock_rdma_pool *pool,
 		struct kfastblock_rdma_conn *conn;
 
 		mutex_lock(&slot->lock);
-		if (slot->state == KFASTBLOCK_RDMA_POOL_SLOT_IDLE &&
-		    kfastblock_rdma_pool_slot_matches_locked(slot, leader) &&
-		    kfastblock_rdma_conn_is_connected(slot->conn)) {
-			slot->state = KFASTBLOCK_RDMA_POOL_SLOT_BUSY;
-			slot->reuse_hits++;
-			slot->last_use_jiffies = jiffies;
-			pool->get_hits++;
-			conn = slot->conn;
+		if (slot->state != KFASTBLOCK_RDMA_POOL_SLOT_IDLE) {
 			mutex_unlock(&slot->lock);
-			return conn;
+			continue;
 		}
+		if (!kfastblock_rdma_pool_slot_matches_locked(slot, leader)) {
+			mutex_unlock(&slot->lock);
+			continue;
+		}
+		/* Broken idle conn: invalidate so get() can reconnect. */
+		if (!slot->conn || !kfastblock_rdma_conn_is_connected(slot->conn) ||
+		    kfastblock_rdma_conn_last_error(slot->conn)) {
+			kfastblock_rdma_pool_slot_disconnect_locked(slot);
+			slot->state = KFASTBLOCK_RDMA_POOL_SLOT_DEAD;
+			slot->failure_count++;
+			slot->last_error = -ENOTCONN;
+			mutex_unlock(&slot->lock);
+			continue;
+		}
+		slot->state = KFASTBLOCK_RDMA_POOL_SLOT_BUSY;
+		slot->reuse_hits++;
+		slot->last_use_jiffies = jiffies;
+		pool->get_hits++;
+		conn = slot->conn;
 		mutex_unlock(&slot->lock);
+		return conn;
 	}
 	return NULL;
 }
