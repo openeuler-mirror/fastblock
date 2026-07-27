@@ -409,8 +409,9 @@ void osd_raw_rdma_server::dispatch_get_leader(connection_context* conn,
 
     raw_get_leader_req req{};
     std::memcpy(&req, body, sizeof(req));
-    auto leader = _service->resolve_pg_leader(le32toh(req.pool_id),
-                                              le32toh(req.pg_id), true);
+    /* Return raw RDMA data-plane port so kernel client can stay on RDMA. */
+    auto leader = _service->resolve_pg_leader_raw_rdma(le32toh(req.pool_id),
+                                                      le32toh(req.pg_id));
     if (leader.state != err::E_SUCCESS) {
         send_response(conn, req_hdr,
                       raw_status_from_errno(leader.state), nullptr, 0);
