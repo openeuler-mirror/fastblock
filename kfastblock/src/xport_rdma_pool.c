@@ -203,34 +203,33 @@ kfastblock_rdma_pool_get(struct kfastblock_rdma_pool *pool,
 void kfastblock_rdma_pool_put(struct kfastblock_rdma_pool *pool,
 			      struct kfastblock_rdma_conn *conn, bool ok)
 {
-	u32 i;
+	struct kfastblock_rdma_pool_slot *slot;
 
 	if (!pool || !pool->slots || !conn)
 		return;
 
-	for (i = 0; i < pool->nr_slots; ++i) {
-		struct kfastblock_rdma_pool_slot *slot = &pool->slots[i];
+	slot = kfastblock_rdma_pool_find_slot(pool, conn);
+	if (!slot)
+		return;
 
-		mutex_lock(&slot->lock);
-		if (slot->conn != conn) {
-			mutex_unlock(&slot->lock);
-			continue;
-		}
-		if (ok && kfastblock_rdma_conn_is_connected(conn)) {
-			slot->state = KFASTBLOCK_RDMA_POOL_SLOT_IDLE;
-			slot->success_count++;
-			slot->last_use_jiffies = jiffies;
-			slot->last_error = 0;
-		} else {
-			kfastblock_rdma_pool_slot_disconnect_locked(slot);
-			slot->state = KFASTBLOCK_RDMA_POOL_SLOT_DEAD;
-			slot->failure_count++;
-			if (!ok)
-				slot->last_error = -EIO;
-		}
+	mutex_lock(&slot->lock);
+	if (slot->conn != conn) {
 		mutex_unlock(&slot->lock);
 		return;
 	}
+	if (ok && kfastblock_rdma_conn_is_connected(conn)) {
+		slot->state = KFASTBLOCK_RDMA_POOL_SLOT_IDLE;
+		slot->success_count++;
+		slot->last_use_jiffies = jiffies;
+		slot->last_error = 0;
+	} else {
+		kfastblock_rdma_pool_slot_disconnect_locked(slot);
+		slot->state = KFASTBLOCK_RDMA_POOL_SLOT_DEAD;
+		slot->failure_count++;
+		if (!ok)
+			slot->last_error = -EIO;
+	}
+	mutex_unlock(&slot->lock);
 }
 
 u32 kfastblock_rdma_pool_count_state(struct kfastblock_rdma_pool *pool,
