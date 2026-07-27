@@ -1354,6 +1354,7 @@ raw_rdma_server_stats osd_raw_rdma_server::collect_stats() const {
     st.running = is_running();
     st.shard_count = shard_count();
     st.connection_count = connection_count();
+    st.established_connection_count = established_connection_count();
     get_io_totals(&st.recv_total, &st.send_total, &st.error_total);
     st.accept_total = _accept_total.load(std::memory_order_relaxed);
     st.reject_total = _reject_total.load(std::memory_order_relaxed);
