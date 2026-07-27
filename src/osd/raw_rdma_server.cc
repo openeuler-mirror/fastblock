@@ -12,6 +12,7 @@
 #include "raw_rdma_server.h"
 
 #include "osd_service.h"
+#include "fastblock/rpc/osd_msg.pb.h"
 #include "fastblock/utils/err_num.h"
 
 #include <infiniband/verbs.h>
@@ -20,6 +21,7 @@
 
 #include <arpa/inet.h>
 #include <endian.h>
+#include <google/protobuf/stubs/callback.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <unistd.h>
@@ -27,7 +29,11 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <deque>
+#include <functional>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <random>
 #include <string>
 #include <vector>
@@ -365,6 +371,47 @@ bool osd_raw_rdma_server::post_send(connection_context* conn,
     return true;
 }
 
+bool osd_raw_rdma_server::enqueue_response_frame(
+  connection_context* conn,
+  std::vector<uint8_t> frame) noexcept {
+    if (!conn || frame.empty()) {
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(conn->send_mu);
+        conn->send_queue.emplace_back(std::move(frame));
+    }
+    try_flush_send_queue(conn);
+    return true;
+}
+
+void osd_raw_rdma_server::try_flush_send_queue(connection_context* conn) noexcept {
+    if (!conn) {
+        return;
+    }
+    if (!ensure_send_mr(conn)) {
+        return;
+    }
+
+    std::vector<uint8_t> frame;
+    {
+        std::lock_guard<std::mutex> lock(conn->send_mu);
+        if (conn->send_in_flight || conn->send_queue.empty()) {
+            return;
+        }
+        frame = std::move(conn->send_queue.front());
+        conn->send_queue.pop_front();
+    }
+    if (frame.size() > conn->send_buf_len) {
+        SPDK_ERRLOG("raw RDMA: queued frame too large size=%zu\n", frame.size());
+        return;
+    }
+    std::memcpy(conn->send_buf, frame.data(), frame.size());
+    if (!post_send(conn, frame.size())) {
+        SPDK_ERRLOG("raw RDMA: flush post_send failed\n");
+    }
+}
+
 bool osd_raw_rdma_server::send_response(connection_context* conn,
                                         const void* req_hdr,
                                         uint32_t status,
@@ -376,10 +423,7 @@ bool osd_raw_rdma_server::send_response(connection_context* conn,
     if (body_len > 0 && !body) {
         return false;
     }
-    if (!ensure_send_mr(conn)) {
-        return false;
-    }
-    if (sizeof(raw_header) + body_len > conn->send_buf_len) {
+    if (sizeof(raw_header) + body_len > raw_rdma_send_buf_len) {
         SPDK_ERRLOG("raw RDMA: response too large body=%u\n", body_len);
         return false;
     }
@@ -387,12 +431,195 @@ bool osd_raw_rdma_server::send_response(connection_context* conn,
     raw_header req{};
     std::memcpy(&req, req_hdr, sizeof(req));
     const raw_header rsp = make_response_header(req, status, body_len);
-    std::memcpy(conn->send_buf, &rsp, sizeof(rsp));
+    std::vector<uint8_t> frame(sizeof(rsp) + body_len);
+    std::memcpy(frame.data(), &rsp, sizeof(rsp));
     if (body_len > 0) {
-        std::memcpy(static_cast<uint8_t*>(conn->send_buf) + sizeof(rsp),
-                    body, body_len);
+        std::memcpy(frame.data() + sizeof(rsp), body, body_len);
     }
-    return post_send(conn, sizeof(rsp) + body_len);
+    return enqueue_response_frame(conn, std::move(frame));
+}
+
+namespace {
+
+class raw_rdma_async_done : public google::protobuf::Closure {
+public:
+    explicit raw_rdma_async_done(std::function<void()> fn)
+      : _fn(std::move(fn)) {}
+
+    void Run() override {
+        if (_fn) {
+            _fn();
+        }
+        delete this;
+    }
+
+private:
+    std::function<void()> _fn{};
+};
+
+std::vector<uint8_t> build_read_response_body(const std::string& data) {
+    raw_read_object_rsp rsp{};
+    std::vector<uint8_t> body(sizeof(rsp) + data.size());
+    rsp.data_len = htole32(static_cast<uint32_t>(data.size()));
+    rsp.reserved = 0;
+    std::memcpy(body.data(), &rsp, sizeof(rsp));
+    if (!data.empty()) {
+        std::memcpy(body.data() + sizeof(rsp), data.data(), data.size());
+    }
+    return body;
+}
+
+} // namespace
+
+void osd_raw_rdma_server::dispatch_read(connection_context* conn,
+                                        const void* req_hdr,
+                                        const uint8_t* body,
+                                        uint32_t body_len) noexcept {
+    if (!conn || !req_hdr || !_service) {
+        return;
+    }
+    if (!body || body_len < sizeof(raw_read_object_req)) {
+        send_response(conn, req_hdr, raw_status_invalid_request, nullptr, 0);
+        return;
+    }
+
+    raw_read_object_req req{};
+    std::memcpy(&req, body, sizeof(req));
+    const uint16_t object_name_len = le16toh(req.object_name_len);
+    if (body_len != sizeof(req) + object_name_len || object_name_len == 0) {
+        send_response(conn, req_hdr, raw_status_invalid_request, nullptr, 0);
+        return;
+    }
+
+    struct read_ctx {
+        osd_raw_rdma_server* server{nullptr};
+        connection_context* conn{nullptr};
+        raw_header req_hdr{};
+        osd::read_request request{};
+        osd::read_reply response{};
+    };
+    auto rctx = std::make_shared<read_ctx>();
+    rctx->server = this;
+    rctx->conn = conn;
+    std::memcpy(&rctx->req_hdr, req_hdr, sizeof(rctx->req_hdr));
+    rctx->request.set_pool_id(le32toh(req.pool_id));
+    rctx->request.set_pg_id(le32toh(req.pg_id));
+    rctx->request.set_offset(le64toh(req.offset));
+    rctx->request.set_length(le32toh(req.length));
+    rctx->request.set_object_name(
+      reinterpret_cast<const char*>(body + sizeof(req)), object_name_len);
+
+    _service->process_read(
+      nullptr, &rctx->request, &rctx->response,
+      new raw_rdma_async_done([rctx]() {
+          const auto state = rctx->response.state();
+          if (state != err::E_SUCCESS) {
+              rctx->server->send_response(
+                rctx->conn, &rctx->req_hdr,
+                raw_status_from_errno(state), nullptr, 0);
+              return;
+          }
+          auto body_out = build_read_response_body(rctx->response.data());
+          rctx->server->send_response(
+            rctx->conn, &rctx->req_hdr, raw_status_ok,
+            body_out.data(), static_cast<uint32_t>(body_out.size()));
+      }));
+}
+
+void osd_raw_rdma_server::dispatch_write(connection_context* conn,
+                                         const void* req_hdr,
+                                         const uint8_t* body,
+                                         uint32_t body_len) noexcept {
+    if (!conn || !req_hdr || !_service) {
+        return;
+    }
+    if (!body || body_len < sizeof(raw_write_object_req)) {
+        send_response(conn, req_hdr, raw_status_invalid_request, nullptr, 0);
+        return;
+    }
+
+    raw_write_object_req req{};
+    std::memcpy(&req, body, sizeof(req));
+    const uint16_t object_name_len = le16toh(req.object_name_len);
+    const uint32_t data_len = le32toh(req.data_len);
+    if (body_len != sizeof(req) + object_name_len + data_len ||
+        object_name_len == 0) {
+        send_response(conn, req_hdr, raw_status_invalid_request, nullptr, 0);
+        return;
+    }
+
+    struct write_ctx {
+        osd_raw_rdma_server* server{nullptr};
+        connection_context* conn{nullptr};
+        raw_header req_hdr{};
+        osd::write_request request{};
+        osd::write_reply response{};
+    };
+    auto wctx = std::make_shared<write_ctx>();
+    wctx->server = this;
+    wctx->conn = conn;
+    std::memcpy(&wctx->req_hdr, req_hdr, sizeof(wctx->req_hdr));
+    wctx->request.set_pool_id(le32toh(req.pool_id));
+    wctx->request.set_pg_id(le32toh(req.pg_id));
+    wctx->request.set_offset(le64toh(req.offset));
+    wctx->request.set_object_name(
+      reinterpret_cast<const char*>(body + sizeof(req)), object_name_len);
+    wctx->request.set_data(
+      reinterpret_cast<const char*>(body + sizeof(req) + object_name_len),
+      data_len);
+
+    _service->process_write(
+      nullptr, &wctx->request, &wctx->response,
+      new raw_rdma_async_done([wctx]() {
+          wctx->server->send_response(
+            wctx->conn, &wctx->req_hdr,
+            raw_status_from_errno(wctx->response.state()), nullptr, 0);
+      }));
+}
+
+void osd_raw_rdma_server::dispatch_delete(connection_context* conn,
+                                          const void* req_hdr,
+                                          const uint8_t* body,
+                                          uint32_t body_len) noexcept {
+    if (!conn || !req_hdr || !_service) {
+        return;
+    }
+    if (!body || body_len < sizeof(raw_delete_object_req)) {
+        send_response(conn, req_hdr, raw_status_invalid_request, nullptr, 0);
+        return;
+    }
+
+    raw_delete_object_req req{};
+    std::memcpy(&req, body, sizeof(req));
+    const uint16_t object_name_len = le16toh(req.object_name_len);
+    if (body_len != sizeof(req) + object_name_len || object_name_len == 0) {
+        send_response(conn, req_hdr, raw_status_invalid_request, nullptr, 0);
+        return;
+    }
+
+    struct delete_ctx {
+        osd_raw_rdma_server* server{nullptr};
+        connection_context* conn{nullptr};
+        raw_header req_hdr{};
+        osd::delete_request request{};
+        osd::delete_reply response{};
+    };
+    auto dctx = std::make_shared<delete_ctx>();
+    dctx->server = this;
+    dctx->conn = conn;
+    std::memcpy(&dctx->req_hdr, req_hdr, sizeof(dctx->req_hdr));
+    dctx->request.set_pool_id(le32toh(req.pool_id));
+    dctx->request.set_pg_id(le32toh(req.pg_id));
+    dctx->request.set_object_name(
+      reinterpret_cast<const char*>(body + sizeof(req)), object_name_len);
+
+    _service->process_delete(
+      nullptr, &dctx->request, &dctx->response,
+      new raw_rdma_async_done([dctx]() {
+          dctx->server->send_response(
+            dctx->conn, &dctx->req_hdr,
+            raw_status_from_errno(dctx->response.state()), nullptr, 0);
+      }));
 }
 
 void osd_raw_rdma_server::dispatch_get_leader(connection_context* conn,
@@ -472,10 +699,13 @@ void osd_raw_rdma_server::handle_recv_complete(connection_context* conn,
         dispatch_get_leader(conn, &hdr, body, body_len);
         break;
     case raw_op_read_object:
+        dispatch_read(conn, &hdr, body, body_len);
+        break;
     case raw_op_write_object:
+        dispatch_write(conn, &hdr, body, body_len);
+        break;
     case raw_op_delete_object:
-        /* Async object I/O dispatch lands in follow-up commits. */
-        send_response(conn, &hdr, raw_status_internal_error, nullptr, 0);
+        dispatch_delete(conn, &hdr, body, body_len);
         break;
     default:
         send_response(conn, &hdr, raw_status_invalid_request, nullptr, 0);
@@ -503,6 +733,7 @@ void osd_raw_rdma_server::poll_cq(connection_context* conn) noexcept {
             post_recv(conn);
         } else if (wc[i].opcode == IBV_WC_SEND) {
             conn->send_in_flight = false;
+            try_flush_send_queue(conn);
         }
     }
 }
