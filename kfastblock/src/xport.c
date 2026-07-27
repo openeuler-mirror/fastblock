@@ -54,3 +54,22 @@ kfastblock_xport_ops_lookup(u32 transport_id)
 		return NULL;
 	}
 }
+
+const struct kfastblock_xport_ops *
+kfastblock_xport_select(u32 preference,
+			const struct kfastblock_leader_info *leader)
+{
+	const struct kfastblock_xport_ops *ops;
+
+	if (preference == KFASTBLOCK_OSD_TRANSPORT_AUTO) {
+		ops = &kfastblock_xport_rdma;
+		if (ops->probe && !ops->probe(leader))
+			return ops;
+		return &kfastblock_xport_tcp;
+	}
+
+	ops = kfastblock_xport_ops_lookup(preference);
+	if (!ops)
+		return &kfastblock_xport_tcp;
+	return ops;
+}

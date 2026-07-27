@@ -22,4 +22,12 @@ kfastblock_xport_ops_lookup(u32 transport_id);
 const struct kfastblock_xport_ops *kfastblock_xport_tcp_ops(void);
 const struct kfastblock_xport_ops *kfastblock_xport_rdma_ops(void);
 
+/*
+ * Choose a backend for one OSD endpoint according to attach preference.
+ * AUTO prefers RDMA when probe succeeds, otherwise TCP.
+ */
+const struct kfastblock_xport_ops *
+kfastblock_xport_select(u32 preference,
+			const struct kfastblock_leader_info *leader);
+
 #endif
