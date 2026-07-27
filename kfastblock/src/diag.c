@@ -8,6 +8,24 @@
 #include "kfastblock/scheduler.h"
 #include "kfastblock/selfcheck.h"
 #include "kfastblock/volume.h"
+#include "kfastblock/xport.h"
+
+static void kfastblock_diag_collect_xport(struct kfastblock_volume *vol,
+					 struct kfastblock_diag_snapshot *snapshot)
+{
+	struct kfastblock_diag_xport_snapshot *xport;
+	const char *name;
+
+	if (!vol || !snapshot)
+		return;
+
+	xport = &snapshot->xport;
+	xport->preference = vol->spec.osd_transport;
+	name = kfastblock_xport_preference_name(xport->preference);
+	strscpy(xport->preference_name, name, sizeof(xport->preference_name));
+	xport->prefers_rdma =
+		kfastblock_xport_prefers_rdma(xport->preference) ? 1 : 0;
+}
 
 static const char *kfastblock_diag_health_state_name(u32 state)
 {
@@ -904,6 +922,7 @@ void kfastblock_diag_collect(struct kfastblock_volume *vol,
 	kfastblock_diag_collect_selfcheck(vol, snapshot);
 	kfastblock_diag_collect_fault(vol, snapshot);
 	kfastblock_diag_collect_events(vol, snapshot);
+	kfastblock_diag_collect_xport(vol, snapshot);
 	kfastblock_diag_compute_anomaly(snapshot);
 }
 
