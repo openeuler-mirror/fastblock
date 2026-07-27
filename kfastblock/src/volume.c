@@ -19,10 +19,13 @@
 #include "kfastblock/buffer.h"
 #include "kfastblock/diag.h"
 #include "kfastblock/meta.h"
+#include "kfastblock/recovery.h"
 #include "kfastblock/request.h"
 #include "kfastblock/scheduler.h"
 #include "kfastblock/transport.h"
 #include "kfastblock/volume.h"
+#include "kfastblock/xport.h"
+#include "kfastblock/xport_rdma.h"
 
 static LIST_HEAD(g_kfastblock_volumes);
 static DEFINE_MUTEX(g_kfastblock_volumes_lock);
@@ -2374,6 +2377,20 @@ static void kfastblock_volume_refresh_workfn(struct work_struct *work)
 	up_write(&vol->state_lock);
 
 	kfastblock_volume_schedule_refresh(vol);
+}
+
+static ssize_t osd_transport_show(struct device *dev,
+				  struct device_attribute *attr, char *buf)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	u32 pref;
+
+	if (!vol)
+		return -ENODEV;
+
+	pref = kfastblock_xport_preference_clamp(vol->spec.osd_transport);
+	return scnprintf(buf, PAGE_SIZE, "%s\n",
+			 kfastblock_xport_preference_name(pref));
 }
 
 static ssize_t pool_name_show(struct device *dev,
