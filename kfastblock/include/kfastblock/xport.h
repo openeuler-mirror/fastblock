@@ -138,4 +138,21 @@ u32 kfastblock_xport_probe_cache_valid_count(void);
 int kfastblock_xport_format_leader(const struct kfastblock_leader_info *leader,
 				   char *buf, size_t buf_len);
 
+/*
+ * Should I/O use RDMA for this preference+leader?
+ * forces_rdma => true even without advertised port (caller fails hard).
+ * AUTO => true only when cheap probe succeeds.
+ * TCP => false.
+ */
+static inline bool kfastblock_xport_should_use_rdma(
+	u32 preference, const struct kfastblock_leader_info *leader)
+{
+	if (kfastblock_xport_forces_tcp(preference))
+		return false;
+	if (kfastblock_xport_forces_rdma(preference))
+		return true;
+	/* AUTO */
+	return kfastblock_leader_has_rdma(leader);
+}
+
 #endif
