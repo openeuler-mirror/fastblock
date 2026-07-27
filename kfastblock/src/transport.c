@@ -2618,10 +2618,22 @@ static void kfastblock_transport_release_object_buffer(
 static int kfastblock_transport_execute_object_opcode(
 	struct kfastblock_transport_object_io_ctx *ctx)
 {
+	int fault_ret;
+
 	if (!ctx)
 		return -EINVAL;
 
 	if (ctx->use_rdma && ctx->rdma) {
+		/* Inject exchange timeout-like failure before real SEND/RECV. */
+		fault_ret = kfastblock_transport_maybe_inject_fault(
+			ctx->vol, KFASTBLOCK_FAULT_RDMA_EXCHANGE);
+		if (fault_ret) {
+			pr_warn_ratelimited(
+				"kfastblock: fault rdma_exchange peer=%s:%u ret=%d\n",
+				ctx->leader.address, ctx->leader.rdma_port,
+				fault_ret);
+			return fault_ret;
+		}
 		if (ctx->op == REQ_OP_WRITE || ctx->op == REQ_OP_WRITE_ZEROES)
 			return kfastblock_transport_rdma_write_object(
 				ctx->rdma, ctx->kf_req->request_pool_id,
