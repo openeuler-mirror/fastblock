@@ -966,6 +966,9 @@ void kfastblock_volume_account_fault_injection(struct kfastblock_volume *vol,
 		break;
 	case KFASTBLOCK_FAULT_OSD_CONNECT:
 	case KFASTBLOCK_FAULT_OBJECT_IO:
+	case KFASTBLOCK_FAULT_RDMA_CONNECT:
+	case KFASTBLOCK_FAULT_RDMA_EXCHANGE:
+	case KFASTBLOCK_FAULT_FORCE_TCP:
 		failure_source = KFASTBLOCK_VOLUME_SOURCE_OSD_SOCKET;
 		break;
 	case KFASTBLOCK_FAULT_LEADER_QUERY:
