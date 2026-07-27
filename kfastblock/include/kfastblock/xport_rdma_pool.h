@@ -89,4 +89,16 @@ void kfastblock_rdma_pool_snapshot(struct kfastblock_rdma_pool *pool,
 
 const char *kfastblock_rdma_pool_slot_state_name(u8 state);
 
+/* Count slots currently in @state (EMPTY/IDLE/BUSY/DEAD). */
+u32 kfastblock_rdma_pool_count_state(struct kfastblock_rdma_pool *pool,
+				     u8 state);
+
+/*
+ * Try reuse only: return idle matching connected conn without CM connect.
+ * Returns NULL if no warm slot; caller may fall back to get().
+ */
+struct kfastblock_rdma_conn *
+kfastblock_rdma_pool_try_get(struct kfastblock_rdma_pool *pool,
+			     const struct kfastblock_leader_info *leader);
+
 #endif
