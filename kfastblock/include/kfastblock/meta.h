@@ -30,7 +30,8 @@ struct kfastblock_image_info {
 
 struct kfastblock_osd_shard {
 	u32 shard_id;
-	u16 port;
+	u16 port;	/* raw TCP data-plane port */
+	u16 rdma_port;	/* raw RDMA data-plane port; 0 = unavailable */
 	u16 core_id;
 };
 
@@ -44,7 +45,8 @@ struct kfastblock_osd_endpoint {
 
 struct kfastblock_leader_info {
 	u32 osd_id;
-	u16 port;
+	u16 port;	/* raw TCP leader port */
+	u16 rdma_port;	/* raw RDMA leader port; 0 = unavailable */
 	char address[KFASTBLOCK_MAX_ADDR_LEN];
 };
 
