@@ -33,4 +33,8 @@ void kfastblock_xport_diag_dump_seq(
 	struct seq_file *m, const char *prefix,
 	const struct kfastblock_diag_xport_snapshot *xport);
 
+/* Append probe-cache hit/miss/valid lines (uses xport probe cache). */
+void kfastblock_xport_diag_dump_probe_cache(struct seq_file *m,
+					    const char *prefix);
+
 #endif
