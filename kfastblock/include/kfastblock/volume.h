@@ -26,6 +26,7 @@ struct dentry;
 #include "kfastblock/selfcheck.h"
 
 #define KFASTBLOCK_MAX_SOCKET_CACHE 16
+#define KFASTBLOCK_MAX_RDMA_CACHE 8
 #define KFASTBLOCK_MAX_VOLUME_EVENTS 128
 
 enum kfastblock_volume_event_type {
@@ -202,6 +203,7 @@ struct kfastblock_volume {
 	u32 image_refresh_interval_ms;
 	struct kfastblock_cached_socket socket_cache[KFASTBLOCK_MAX_SOCKET_CACHE];
 	struct kfastblock_cached_monitor_socket monitor_cache[KFASTBLOCK_MAX_MONITORS];
+	struct kfastblock_cached_rdma rdma_cache[KFASTBLOCK_MAX_RDMA_CACHE];
 };
 
 int kfastblock_volume_init(void);

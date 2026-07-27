@@ -909,3 +909,164 @@ struct kfastblock_cached_socket *kfastblock_osd_conn_pool_reserve(
 	kfastblock_osd_conn_slot_begin_connect_locked(best);
 	return best;
 }
+
+void kfastblock_rdma_conn_slot_init(struct kfastblock_cached_rdma *cached)
+{
+	if (!cached)
+		return;
+	memset(cached, 0, sizeof(*cached));
+	mutex_init(&cached->lock);
+	cached->state = KFASTBLOCK_CONN_STATE_EMPTY;
+}
+
+void kfastblock_rdma_conn_slot_close(struct kfastblock_cached_rdma *cached)
+{
+	if (!cached)
+		return;
+	mutex_lock(&cached->lock);
+	if (cached->conn) {
+		kfastblock_rdma_conn_free(cached->conn);
+		cached->conn = NULL;
+	}
+	cached->address[0] = '\0';
+	cached->rdma_port = 0;
+	cached->osd_id = 0;
+	cached->state = KFASTBLOCK_CONN_STATE_EMPTY;
+	mutex_unlock(&cached->lock);
+}
+
+void kfastblock_rdma_conn_pool_init(struct kfastblock_cached_rdma *slots,
+				    u32 nr_slots)
+{
+	u32 i;
+
+	if (!slots)
+		return;
+	for (i = 0; i < nr_slots; ++i)
+		kfastblock_rdma_conn_slot_init(&slots[i]);
+}
+
+void kfastblock_rdma_conn_pool_close(struct kfastblock_cached_rdma *slots,
+				     u32 nr_slots)
+{
+	u32 i;
+
+	if (!slots)
+		return;
+	for (i = 0; i < nr_slots; ++i)
+		kfastblock_rdma_conn_slot_close(&slots[i]);
+}
+
+static bool kfastblock_rdma_slot_matches_locked(
+	const struct kfastblock_cached_rdma *cached,
+	const struct kfastblock_leader_info *leader)
+{
+	if (!cached || !leader || !leader->rdma_port)
+		return false;
+	if (cached->rdma_port != leader->rdma_port)
+		return false;
+	if (strncmp(cached->address, leader->address,
+		    KFASTBLOCK_MAX_ADDR_LEN) != 0)
+		return false;
+	return cached->conn &&
+	       kfastblock_rdma_conn_is_connected(cached->conn);
+}
+
+struct kfastblock_cached_rdma *
+kfastblock_rdma_conn_pool_acquire(struct kfastblock_cached_rdma *slots,
+				  u32 nr_slots,
+				  const struct kfastblock_leader_info *leader)
+{
+	u32 i;
+	struct kfastblock_cached_rdma *empty = NULL;
+	int ret;
+
+	if (!slots || !leader || !leader->rdma_port || !leader->address[0])
+		return NULL;
+
+	/* Prefer ready match. */
+	for (i = 0; i < nr_slots; ++i) {
+		struct kfastblock_cached_rdma *c = &slots[i];
+
+		mutex_lock(&c->lock);
+		if (kfastblock_rdma_slot_matches_locked(c, leader)) {
+			c->reuse_hits++;
+			c->last_use_jiffies = jiffies;
+			if (empty && empty != c)
+				mutex_unlock(&empty->lock);
+			return c; /* lock held for caller release */
+		}
+		if (!empty && c->state == KFASTBLOCK_CONN_STATE_EMPTY)
+			empty = c; /* keep lock; candidate for connect */
+		else
+			mutex_unlock(&c->lock);
+	}
+
+	/* Reuse empty slot or evict first slot. */
+	if (!empty) {
+		empty = &slots[0];
+		mutex_lock(&empty->lock);
+		if (empty->conn) {
+			kfastblock_rdma_conn_free(empty->conn);
+			empty->conn = NULL;
+		}
+	}
+
+	empty->state = KFASTBLOCK_CONN_STATE_CONNECTING;
+	empty->connect_attempts++;
+	strscpy(empty->address, leader->address, sizeof(empty->address));
+	empty->rdma_port = leader->rdma_port;
+	empty->osd_id = leader->osd_id;
+	empty->conn = kfastblock_rdma_conn_alloc();
+	if (!empty->conn) {
+		empty->state = KFASTBLOCK_CONN_STATE_EMPTY;
+		empty->last_error = -ENOMEM;
+		mutex_unlock(&empty->lock);
+		return NULL;
+	}
+	ret = kfastblock_rdma_conn_connect(empty->conn, leader);
+	if (ret) {
+		kfastblock_rdma_conn_free(empty->conn);
+		empty->conn = NULL;
+		empty->state = KFASTBLOCK_CONN_STATE_EMPTY;
+		empty->last_error = ret;
+		empty->failure_count++;
+		mutex_unlock(&empty->lock);
+		return NULL;
+	}
+	empty->state = KFASTBLOCK_CONN_STATE_READY;
+	empty->last_use_jiffies = jiffies;
+	empty->last_error = 0;
+	return empty; /* lock held */
+}
+
+void kfastblock_rdma_conn_pool_release(struct kfastblock_cached_rdma *cached,
+				       int io_ret)
+{
+	if (!cached)
+		return;
+	if (io_ret) {
+		cached->failure_count++;
+		cached->last_error = io_ret;
+		cached->fail_streak++;
+		if (cached->conn) {
+			kfastblock_rdma_conn_free(cached->conn);
+			cached->conn = NULL;
+		}
+		cached->state = KFASTBLOCK_CONN_STATE_EMPTY;
+	} else {
+		cached->success_count++;
+		cached->fail_streak = 0;
+		cached->last_use_jiffies = jiffies;
+	}
+	mutex_unlock(&cached->lock);
+}
+
+u64 kfastblock_rdma_conn_slot_next_seq(struct kfastblock_cached_rdma *cached)
+{
+	if (!cached)
+		return 1;
+	if (!cached->next_seq)
+		cached->next_seq = 1;
+	return cached->next_seq++;
+}
