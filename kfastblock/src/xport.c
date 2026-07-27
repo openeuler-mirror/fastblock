@@ -1,9 +1,18 @@
 #include <linux/errno.h>
 #include <linux/jiffies.h>
+#include <linux/module.h>
 #include <linux/spinlock.h>
 #include <linux/string.h>
 
 #include "kfastblock/xport.h"
+
+/* Overridable probe-cache TTL (ms); 0 disables caching. */
+static unsigned int kfastblock_xport_probe_cache_ttl_ms =
+	KFASTBLOCK_XPORT_PROBE_CACHE_TTL_MS;
+module_param_named(xport_probe_cache_ttl_ms, kfastblock_xport_probe_cache_ttl_ms,
+		   uint, 0644);
+MODULE_PARM_DESC(xport_probe_cache_ttl_ms,
+		 "RDMA xport probe cache TTL in ms (0=disable)");
 
 struct kfastblock_xport_probe_cache_entry {
 	char address[KFASTBLOCK_MAX_ADDR_LEN];
@@ -121,11 +130,13 @@ static void kfastblock_xport_probe_cache_store(
 	unsigned long flags;
 	u32 i;
 	struct kfastblock_xport_probe_cache_entry *slot = NULL;
-	unsigned long ttl =
-		msecs_to_jiffies(KFASTBLOCK_XPORT_PROBE_CACHE_TTL_MS);
+	unsigned long ttl;
 
 	if (!leader || !leader->address[0])
 		return;
+	if (!kfastblock_xport_probe_cache_ttl_ms)
+		return;
+	ttl = msecs_to_jiffies(kfastblock_xport_probe_cache_ttl_ms);
 
 	spin_lock_irqsave(&kfastblock_xport_probe_cache_lock, flags);
 	for (i = 0; i < KFASTBLOCK_XPORT_PROBE_CACHE_SIZE; ++i) {
@@ -172,13 +183,15 @@ static int kfastblock_xport_rdma_probe(const struct kfastblock_leader_info *lead
 	int cached;
 	int ret;
 
-	if (kfastblock_xport_probe_cache_lookup(leader, &cached))
+	if (kfastblock_xport_probe_cache_ttl_ms &&
+	    kfastblock_xport_probe_cache_lookup(leader, &cached))
 		return cached;
 	if (!kfastblock_leader_has_rdma(leader))
 		ret = -ENOTCONN;
 	else
 		ret = 0;
-	kfastblock_xport_probe_cache_store(leader, ret);
+	if (kfastblock_xport_probe_cache_ttl_ms)
+		kfastblock_xport_probe_cache_store(leader, ret);
 	return ret;
 }
 
