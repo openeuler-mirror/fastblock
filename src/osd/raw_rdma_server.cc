@@ -16,13 +16,16 @@
 #include <spdk/log.h>
 
 #include <arpa/inet.h>
+#include <endian.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstdint>
 #include <cstring>
 #include <random>
+#include <vector>
 
 namespace {
 
@@ -31,12 +34,67 @@ constexpr uint16_t max_raw_rdma_port = 29999U;
 constexpr int raw_rdma_bind_attempts = 64;
 /* raw header (24) + max object body (~4MiB) + margin */
 constexpr size_t raw_rdma_recv_buf_len = (4U * 1024U * 1024U) + 4096U;
+constexpr size_t raw_rdma_send_buf_len = raw_rdma_recv_buf_len;
+constexpr size_t max_raw_body_len = (4U * 1024U * 1024U) + 1024U;
+
+constexpr uint32_t raw_magic = 0x46425257U;
+constexpr uint8_t raw_version_major = 1U;
+constexpr uint8_t raw_version_minor = 0U;
+constexpr uint8_t raw_service_osd = 2U;
+
+constexpr uint8_t raw_op_get_leader = 1U;
+constexpr uint8_t raw_op_read_object = 2U;
+constexpr uint8_t raw_op_write_object = 3U;
+constexpr uint8_t raw_op_delete_object = 4U;
+
+constexpr uint32_t raw_flag_response = 1U << 0;
+
+constexpr uint32_t raw_status_ok = 0U;
+constexpr uint32_t raw_status_invalid_request = 1U;
+constexpr uint32_t raw_status_not_found = 2U;
+constexpr uint32_t raw_status_stale_epoch = 3U;
+constexpr uint32_t raw_status_retry_later = 4U;
+constexpr uint32_t raw_status_not_leader = 5U;
+constexpr uint32_t raw_status_pg_initializing = 6U;
+constexpr uint32_t raw_status_osd_down = 7U;
+constexpr uint32_t raw_status_internal_error = 8U;
+
+struct raw_header {
+    uint32_t magic;
+    uint8_t version_major;
+    uint8_t version_minor;
+    uint8_t service;
+    uint8_t opcode;
+    uint32_t flags;
+    uint64_t seq;
+    uint32_t status;
+    uint32_t body_len;
+} __attribute__((packed));
 
 uint16_t random_raw_rdma_port() {
     thread_local std::mt19937 gen{std::random_device{}()};
     std::uniform_int_distribution<uint32_t> dist(min_raw_rdma_port,
                                                  max_raw_rdma_port);
     return static_cast<uint16_t>(dist(gen));
+}
+
+bool validate_request_header(const raw_header& hdr) noexcept {
+    if (le32toh(hdr.magic) != raw_magic) {
+        return false;
+    }
+    if (hdr.version_major != raw_version_major) {
+        return false;
+    }
+    if (hdr.service != raw_service_osd) {
+        return false;
+    }
+    if ((le32toh(hdr.flags) & raw_flag_response) != 0) {
+        return false;
+    }
+    if (le32toh(hdr.body_len) > max_raw_body_len) {
+        return false;
+    }
+    return true;
 }
 
 } // namespace
