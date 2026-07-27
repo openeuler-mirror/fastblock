@@ -174,6 +174,7 @@ void osd_raw_rdma_server::destroy_connection(connection_context* conn) noexcept 
         return;
     }
     conn->established = false;
+    conn->send_in_flight = false;
     if (conn->id) {
         if (conn->id->qp) {
             ::rdma_destroy_qp(conn->id);
@@ -189,6 +190,15 @@ void osd_raw_rdma_server::destroy_connection(connection_context* conn) noexcept 
         ::free(conn->recv_buf);
         conn->recv_buf = nullptr;
         conn->recv_buf_len = 0;
+    }
+    if (conn->send_mr) {
+        ::ibv_dereg_mr(conn->send_mr);
+        conn->send_mr = nullptr;
+    }
+    if (conn->send_buf) {
+        ::free(conn->send_buf);
+        conn->send_buf = nullptr;
+        conn->send_buf_len = 0;
     }
     if (conn->cq) {
         ::ibv_destroy_cq(conn->cq);
@@ -208,6 +218,94 @@ void osd_raw_rdma_server::close_all_connections() noexcept {
     _connections.clear();
 }
 
+bool osd_raw_rdma_server::ensure_send_mr(connection_context* conn) noexcept {
+    if (!conn || !conn->pd) {
+        return false;
+    }
+    if (conn->send_buf && conn->send_mr) {
+        return true;
+    }
+    if (!conn->send_buf) {
+        conn->send_buf = ::malloc(raw_rdma_send_buf_len);
+        if (!conn->send_buf) {
+            return false;
+        }
+        conn->send_buf_len = raw_rdma_send_buf_len;
+    }
+    conn->send_mr = ::ibv_reg_mr(conn->pd, conn->send_buf, conn->send_buf_len,
+                                 0);
+    if (!conn->send_mr) {
+        SPDK_ERRLOG("raw RDMA: ibv_reg_mr send failed: %s\n",
+                    std::strerror(errno));
+        ::free(conn->send_buf);
+        conn->send_buf = nullptr;
+        conn->send_buf_len = 0;
+        return false;
+    }
+    return true;
+}
+
+bool osd_raw_rdma_server::post_send(connection_context* conn,
+                                    size_t length) noexcept {
+    if (!conn || !conn->id || !conn->id->qp || !conn->send_mr ||
+        !conn->send_buf || length == 0 || length > conn->send_buf_len) {
+        return false;
+    }
+    if (conn->send_in_flight) {
+        SPDK_ERRLOG("raw RDMA: post_send while previous SEND in flight\n");
+        return false;
+    }
+
+    ibv_sge sge{};
+    sge.addr = reinterpret_cast<uint64_t>(conn->send_buf);
+    sge.length = static_cast<uint32_t>(length);
+    sge.lkey = conn->send_mr->lkey;
+
+    ibv_send_wr wr{};
+    wr.wr_id = reinterpret_cast<uint64_t>(conn);
+    wr.sg_list = &sge;
+    wr.num_sge = 1;
+    wr.opcode = IBV_WR_SEND;
+    wr.send_flags = IBV_SEND_SIGNALED;
+
+    ibv_send_wr* bad = nullptr;
+    if (::ibv_post_send(conn->id->qp, &wr, &bad)) {
+        SPDK_ERRLOG("raw RDMA: ibv_post_send failed: %s\n", std::strerror(errno));
+        return false;
+    }
+    conn->send_in_flight = true;
+    return true;
+}
+
+void osd_raw_rdma_server::handle_recv_complete(connection_context* conn,
+                                               uint32_t byte_len) noexcept {
+    if (!conn || !conn->recv_buf || byte_len < sizeof(raw_header)) {
+        SPDK_ERRLOG("raw RDMA: RECV too short (%u)\n", byte_len);
+        return;
+    }
+
+    raw_header hdr{};
+    std::memcpy(&hdr, conn->recv_buf, sizeof(hdr));
+    if (!validate_request_header(hdr)) {
+        SPDK_ERRLOG("raw RDMA: invalid request header op=%u body_len=%u\n",
+                    hdr.opcode, le32toh(hdr.body_len));
+        return;
+    }
+
+    const uint32_t body_len = le32toh(hdr.body_len);
+    if (sizeof(raw_header) + body_len > byte_len) {
+        SPDK_ERRLOG("raw RDMA: truncated body need=%zu got=%u\n",
+                    sizeof(raw_header) + body_len, byte_len);
+        return;
+    }
+
+    /* Opcode dispatch + response SEND land in follow-up commits. */
+    (void)body_len;
+    SPDK_DEBUGLOG(osd, "raw RDMA RECV seq=%llu op=%u body=%u\n",
+                  static_cast<unsigned long long>(le64toh(hdr.seq)),
+                  hdr.opcode, body_len);
+}
+
 void osd_raw_rdma_server::poll_cq(connection_context* conn) noexcept {
     if (!conn || !conn->cq) {
         return;
@@ -218,12 +316,16 @@ void osd_raw_rdma_server::poll_cq(connection_context* conn) noexcept {
         if (wc[i].status != IBV_WC_SUCCESS) {
             SPDK_ERRLOG("raw RDMA CQ error status=%d opcode=%d\n",
                         wc[i].status, wc[i].opcode);
+            if (wc[i].opcode == IBV_WC_SEND) {
+                conn->send_in_flight = false;
+            }
             continue;
         }
         if (wc[i].opcode == IBV_WC_RECV) {
-            /* Frame dispatch lands in follow-up commits. */
-            (void)wc[i].byte_len;
+            handle_recv_complete(conn, wc[i].byte_len);
             post_recv(conn);
+        } else if (wc[i].opcode == IBV_WC_SEND) {
+            conn->send_in_flight = false;
         }
     }
 }
