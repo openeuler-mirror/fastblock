@@ -105,4 +105,24 @@ u32 kfastblock_fault_injection_last_site(
 s32 kfastblock_fault_injection_last_errno(
 	struct kfastblock_fault_injection_state *state);
 
+/* True when @site is one of the RDMA data-plane injection points. */
+static inline bool kfastblock_fault_site_is_rdma(u32 site)
+{
+	return (site & KFASTBLOCK_FAULT_RDMA_MASK) != 0;
+}
+
+/* True when force_tcp is armed for the current mask (single-bit check). */
+static inline bool kfastblock_fault_site_is_force_tcp(u32 site)
+{
+	return site == KFASTBLOCK_FAULT_FORCE_TCP;
+}
+
+/*
+ * Peek whether @site would fire without consuming budget. Used by hot
+ * paths that need a side-effect-free preference override (force_tcp).
+ */
+bool kfastblock_fault_injection_armed(
+	struct kfastblock_fault_injection_state *state,
+	u32 site);
+
 #endif

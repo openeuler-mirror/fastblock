@@ -237,6 +237,22 @@ void kfastblock_fault_injection_reset(
 	spin_unlock_irqrestore(&state->lock, flags);
 }
 
+bool kfastblock_fault_injection_armed(
+	struct kfastblock_fault_injection_state *state,
+	u32 site)
+{
+	unsigned long flags;
+	bool armed = false;
+
+	if (!state || !site)
+		return false;
+
+	spin_lock_irqsave(&state->lock, flags);
+	armed = state->enabled && (state->mask & site) && state->budget > 0;
+	spin_unlock_irqrestore(&state->lock, flags);
+	return armed;
+}
+
 bool kfastblock_fault_injection_should_fail(
 	struct kfastblock_fault_injection_state *state,
 	u32 site,
