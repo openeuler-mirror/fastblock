@@ -867,6 +867,8 @@ int kfastblock_rdma_conn_exchange(struct kfastblock_rdma_conn *conn,
 {
 	const struct kfastblock_raw_header *rhdr;
 	struct kfastblock_raw_header *shdr;
+	u32 req_body_len;
+	u32 rsp_body_len;
 	int ret;
 
 	if (!kfastblock_rdma_conn_is_connected(conn) || !req || !req_len ||
@@ -874,10 +876,30 @@ int kfastblock_rdma_conn_exchange(struct kfastblock_rdma_conn *conn,
 		return -EINVAL;
 	if (req_len < sizeof(struct kfastblock_raw_header))
 		return -EINVAL;
+	/* Reject frames larger than SEND staging buffer early. */
+	if (req_len > KFASTBLOCK_RDMA_BUF_LEN ||
+	    (conn->send_buf_len && req_len > conn->send_buf_len)) {
+		conn->last_error = -EMSGSIZE;
+		kfastblock_rdma_exchange_err++;
+		return -EMSGSIZE;
+	}
+	if (rsp_cap < sizeof(struct kfastblock_raw_header)) {
+		conn->last_error = -EINVAL;
+		return -EINVAL;
+	}
 
 	rhdr = req;
+	if (le32_to_cpu(rhdr->magic) != KFASTBLOCK_RAW_MAGIC)
+		return -EINVAL;
 	if (le64_to_cpu(rhdr->seq) != expect_seq)
 		return -EINVAL;
+	/* body_len must fit inside the provided frame buffer. */
+	req_body_len = le32_to_cpu(rhdr->body_len);
+	if (req_body_len > req_len - sizeof(struct kfastblock_raw_header)) {
+		conn->last_error = -EMSGSIZE;
+		kfastblock_rdma_exchange_err++;
+		return -EMSGSIZE;
+	}
 
 	ret = kfastblock_rdma_conn_send(conn, req, req_len);
 	if (ret) {
@@ -891,6 +913,7 @@ int kfastblock_rdma_conn_exchange(struct kfastblock_rdma_conn *conn,
 		return ret;
 	}
 	if ((u32)ret < sizeof(struct kfastblock_raw_header)) {
+		conn->last_error = -EPROTO;
 		kfastblock_rdma_exchange_err++;
 		return -EPROTO;
 	}
@@ -904,6 +927,14 @@ int kfastblock_rdma_conn_exchange(struct kfastblock_rdma_conn *conn,
 		kfastblock_rdma_exchange_err++;
 		conn->last_error = -EPROTO;
 		return -EPROTO;
+	}
+	/* Response body_len must not exceed the received frame. */
+	rsp_body_len = le32_to_cpu(shdr->body_len);
+	if (rsp_body_len > (u32)ret - sizeof(struct kfastblock_raw_header) ||
+	    sizeof(struct kfastblock_raw_header) + rsp_body_len > rsp_cap) {
+		conn->last_error = -EMSGSIZE;
+		kfastblock_rdma_exchange_err++;
+		return -EMSGSIZE;
 	}
 
 	kfastblock_rdma_exchange_ok++;
