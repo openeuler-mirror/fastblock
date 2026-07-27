@@ -61,6 +61,9 @@ int kfastblock_rdma_pool_init(struct kfastblock_rdma_pool *pool, u32 nr_slots)
 		return -EINVAL;
 	if (!nr_slots)
 		nr_slots = KFASTBLOCK_RDMA_POOL_DEFAULT_SLOTS;
+	/* Hard cap to avoid runaway kcalloc under bad module params. */
+	if (nr_slots > 256)
+		nr_slots = 256;
 
 	memset(pool, 0, sizeof(*pool));
 	pool->slots = kcalloc(nr_slots, sizeof(*pool->slots), GFP_KERNEL);
