@@ -1,3 +1,4 @@
+#include <linux/errno.h>
 #include <linux/string.h>
 
 #include "kfastblock/connpool.h"
@@ -229,6 +230,8 @@ void kfastblock_recovery_apply_object_failure(
 	if (!vol || !extent || !actions)
 		return;
 
+	if (actions & KFASTBLOCK_RECOVERY_INVALIDATE_RDMA)
+		kfastblock_recovery_invalidate_rdma_for_leader(vol, leader);
 	if (actions & KFASTBLOCK_RECOVERY_INVALIDATE_LEADER) {
 		kfastblock_volume_account_leader_invalidate(vol, extent->pg_id, ret);
 		kfastblock_recovery_invalidate_live_pg_leader(vol, pool_id,
@@ -256,6 +259,12 @@ void kfastblock_recovery_apply_leader_failure(
 	if (!vol || !actions)
 		return;
 
+	/*
+	 * Leader query does not always carry a full leader endpoint here;
+	 * flush all RDMA slots so a bad peer cannot be reused blindly.
+	 */
+	if (actions & KFASTBLOCK_RECOVERY_INVALIDATE_RDMA)
+		kfastblock_recovery_flush_rdma_cache(vol);
 	if (actions & KFASTBLOCK_RECOVERY_INVALIDATE_LEADER) {
 		kfastblock_volume_account_leader_invalidate(vol, pg_id, ret);
 		kfastblock_recovery_invalidate_live_pg_leader(vol, pool_id, pg_id);
