@@ -81,7 +81,11 @@ private:
         ibv_pd* pd{nullptr};
         ibv_cq* cq{nullptr};
         bool established{false};
-        /* Multi-slot RECV staging for pipelined client requests. */
+        /*
+         * Multi-slot RECV staging for pipelined client requests.
+         * Depth 4 matches typical soft-RoCE / small RNIC SRQ-less clients;
+         * each completion must re-post its slot (see poll_cq).
+         */
         static constexpr size_t max_recv_slots{4};
         struct recv_slot {
             void* buf{nullptr};
