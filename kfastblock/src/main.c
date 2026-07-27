@@ -162,3 +162,5 @@ module_exit(kfastblock_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("OpenAI");
 MODULE_DESCRIPTION("kfastblock kernel client scaffold");
+/* OSD data-plane RDMA backend needs rdma_cm/ib_core when used. */
+MODULE_SOFTDEP("pre: rdma_cm ib_core");
