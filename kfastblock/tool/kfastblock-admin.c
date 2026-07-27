@@ -37,6 +37,10 @@ struct config {
 	char *value;
 };
 
+static int build_volume_root_path(char *buf, size_t buf_len,
+				  const struct config *cfg);
+static int print_volume_attr(const char *root_path, const char *attr);
+
 static void trim(char *str)
 {
 	char *start;
