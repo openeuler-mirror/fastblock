@@ -91,7 +91,16 @@ bool osd_raw_rdma_server::start_listener(uint32_t shard_id) {
                     _bind_address.c_str(), raw_rdma_bind_attempts);
         return false;
     }
-    /* listen lands in follow-up commits. */
+
+    if (::rdma_listen(listener.listen_id, 128)) {
+        SPDK_ERRLOG("raw RDMA: rdma_listen failed on %s:%u: %s\n",
+                    _bind_address.c_str(), listener.port, std::strerror(errno));
+        return false;
+    }
+
+    SPDK_NOTICELOG("raw RDMA shard %u listening on %s:%u\n",
+                   shard_id, _bind_address.c_str(), listener.port);
+    /* worker event loop lands in follow-up commits. */
     return true;
 }
 
