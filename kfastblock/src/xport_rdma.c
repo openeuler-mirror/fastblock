@@ -27,6 +27,16 @@ module_param_named(rdma_io_timeout_ms, kfastblock_rdma_io_timeout_ms, uint, 0644
 MODULE_PARM_DESC(rdma_io_timeout_ms,
 		 "RDMA SEND/RECV completion poll timeout in milliseconds");
 
+static unsigned int kfastblock_rdma_timeout_ms_or_default(unsigned int v,
+							 unsigned int def)
+{
+	if (!v)
+		return def;
+	if (v > 60000U)
+		return 60000U;
+	return v;
+}
+
 static unsigned long kfastblock_rdma_send_ok;
 static unsigned long kfastblock_rdma_send_err;
 static unsigned long kfastblock_rdma_recv_ok;
@@ -190,7 +200,7 @@ static int kfastblock_rdma_build_dst_addr(const char *host, u16 port,
 static int kfastblock_rdma_wait_cm_event(struct kfastblock_rdma_conn *conn,
 					 enum rdma_cm_event_type expect)
 {
-	unsigned long timeout = msecs_to_jiffies(kfastblock_rdma_cm_timeout_ms);
+	unsigned long timeout = msecs_to_jiffies(kfastblock_rdma_timeout_ms_or_default(kfastblock_rdma_cm_timeout_ms, 3000));
 
 	if (!wait_for_completion_timeout(&conn->cm_done, timeout))
 		return -ETIMEDOUT;
@@ -381,7 +391,9 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 		conn->state = KFASTBLOCK_RDMA_CONN_RESOLVING_ADDR;
 		ret = rdma_resolve_addr(conn->cm_id, NULL,
 					(struct sockaddr *)&dst,
-					kfastblock_rdma_cm_timeout_ms);
+					kfastblock_rdma_timeout_ms_or_default(
+						kfastblock_rdma_cm_timeout_ms,
+						3000));
 		if (ret) {
 			conn->last_error = ret;
 			goto err_destroy_id;
@@ -397,7 +409,9 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 		reinit_completion(&conn->cm_done);
 		conn->state = KFASTBLOCK_RDMA_CONN_RESOLVING_ROUTE;
 		ret = rdma_resolve_route(conn->cm_id,
-					 kfastblock_rdma_cm_timeout_ms);
+					 kfastblock_rdma_timeout_ms_or_default(
+						 kfastblock_rdma_cm_timeout_ms,
+						 3000));
 		if (ret) {
 			conn->last_error = ret;
 			goto err_destroy_id;
@@ -571,7 +585,7 @@ int kfastblock_rdma_conn_send(struct kfastblock_rdma_conn *conn,
 		return ret;
 	}
 
-	deadline = jiffies + msecs_to_jiffies(kfastblock_rdma_io_timeout_ms);
+	deadline = jiffies + msecs_to_jiffies(kfastblock_rdma_timeout_ms_or_default(kfastblock_rdma_io_timeout_ms, 5000));
 	while (!completion_done(&conn->send_done)) {
 		ret = kfastblock_rdma_poll_one(conn, deadline);
 		if (ret) {
@@ -607,7 +621,7 @@ int kfastblock_rdma_conn_recv(struct kfastblock_rdma_conn *conn,
 			return ret;
 	}
 
-	deadline = jiffies + msecs_to_jiffies(kfastblock_rdma_io_timeout_ms);
+	deadline = jiffies + msecs_to_jiffies(kfastblock_rdma_timeout_ms_or_default(kfastblock_rdma_io_timeout_ms, 5000));
 	while (!completion_done(&conn->recv_done)) {
 		ret = kfastblock_rdma_poll_one(conn, deadline);
 		if (ret)
