@@ -18,6 +18,7 @@ struct kfastblock_rdma_conn {
 	u16 peer_port;
 	u8 state;
 	bool connected;
+	int last_error;
 };
 
 struct kfastblock_rdma_conn *kfastblock_rdma_conn_alloc(void)
@@ -47,9 +48,11 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 	strscpy(conn->peer_addr, leader->address, sizeof(conn->peer_addr));
 	conn->peer_port = leader->rdma_port;
 	conn->connected = false;
+	conn->last_error = -EOPNOTSUPP;
+	conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
 
 	/* CM/QP wiring lands in follow-up commits. */
-	return -EOPNOTSUPP;
+	return conn->last_error;
 }
 
 void kfastblock_rdma_conn_disconnect(struct kfastblock_rdma_conn *conn)
@@ -58,6 +61,7 @@ void kfastblock_rdma_conn_disconnect(struct kfastblock_rdma_conn *conn)
 		return;
 	conn->connected = false;
 	conn->state = KFASTBLOCK_RDMA_CONN_IDLE;
+	conn->last_error = 0;
 	conn->peer_port = 0;
 	conn->peer_addr[0] = '\0';
 }
