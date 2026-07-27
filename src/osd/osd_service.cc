@@ -271,9 +271,19 @@ osd_service::leader_endpoint osd_service::resolve_pg_leader_raw_rdma(
     }
 
     endpoint.leader_id = raft->raft_get_current_leader();
+    if (!_monitor_client) {
+        SPDK_WARNLOG("raw RDMA leader resolve: monitor client missing for pg %lu.%lu\n",
+                     pool_id, pg_id);
+        endpoint.state = err::RAFT_ERR_NOT_FOUND_LEADER;
+        endpoint.leader_id = -1;
+        return endpoint;
+    }
     auto leader = _monitor_client->get_osd_raw_rdma_addr(endpoint.leader_id,
                                                          shard_id);
     if (leader.first.empty() || leader.second == 0) {
+        SPDK_INFOLOG(osd,
+                     "raw RDMA port unavailable for leader %d shard %u pg %lu.%lu\n",
+                     endpoint.leader_id, shard_id, pool_id, pg_id);
         endpoint.state = err::RAFT_ERR_NOT_FOUND_LEADER;
         endpoint.leader_id = -1;
         return endpoint;
