@@ -2087,7 +2087,7 @@ static int kfastblock_transport_fetch_pg_leader_from_osd(
 	}
 	ret = kfastblock_transport_response_decode_leader(&response, leader);
 	kfastblock_transport_response_ctx_release(&response);
-	return 0;
+	return ret;
 }
 
 static int kfastblock_transport_write_object(
