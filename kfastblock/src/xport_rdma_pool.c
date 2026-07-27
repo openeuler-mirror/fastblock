@@ -311,6 +311,26 @@ bool kfastblock_rdma_pool_has_busy(struct kfastblock_rdma_pool *pool)
 		       pool, KFASTBLOCK_RDMA_POOL_SLOT_BUSY) > 0;
 }
 
+int kfastblock_rdma_pool_format_stats(struct kfastblock_rdma_pool *pool,
+				      char *buf, size_t buf_len)
+{
+	struct kfastblock_rdma_pool_snapshot snap;
+
+	if (!buf || !buf_len)
+		return -EINVAL;
+	if (!pool) {
+		buf[0] = '\0';
+		return -EINVAL;
+	}
+	kfastblock_rdma_pool_snapshot(pool, &snap);
+	return scnprintf(buf, buf_len,
+			 "slots=%u empty=%u idle=%u busy=%u dead=%u connected=%u hits=%llu misses=%llu",
+			 snap.total_slots, snap.empty_slots, snap.idle_slots,
+			 snap.busy_slots, snap.dead_slots, snap.connected_slots,
+			 (unsigned long long)snap.get_hits,
+			 (unsigned long long)snap.get_misses);
+}
+
 void kfastblock_rdma_pool_snapshot(struct kfastblock_rdma_pool *pool,
 				   struct kfastblock_rdma_pool_snapshot *snap)
 {
