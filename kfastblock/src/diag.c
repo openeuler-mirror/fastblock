@@ -217,6 +217,41 @@ const char *kfastblock_diag_drift_status(bool valid, u32 score)
 	return "ok";
 }
 
+static void kfastblock_diag_format_drift_flags(u32 flags, char *buf,
+					       size_t buf_len)
+{
+	size_t used = 0;
+
+	if (!buf || !buf_len)
+		return;
+	buf[0] = '\0';
+	if (!flags) {
+		strscpy(buf, "none", buf_len);
+		return;
+	}
+
+#define KFB_DRIFT_APPEND(bit, name)                                         \
+	do {                                                                \
+		if (flags & (bit)) {                                        \
+			used += scnprintf(buf + used, buf_len - used,       \
+					  "%s%s", used ? "," : "", (name)); \
+		}                                                           \
+	} while (0)
+
+	KFB_DRIFT_APPEND(KFASTBLOCK_DIAG_DRIFT_HEALTH, "health");
+	KFB_DRIFT_APPEND(KFASTBLOCK_DIAG_DRIFT_META, "meta");
+	KFB_DRIFT_APPEND(KFASTBLOCK_DIAG_DRIFT_SCHEDULER, "scheduler");
+	KFB_DRIFT_APPEND(KFASTBLOCK_DIAG_DRIFT_BUFFER, "buffer");
+	KFB_DRIFT_APPEND(KFASTBLOCK_DIAG_DRIFT_OSD_CONN, "osd_conn");
+	KFB_DRIFT_APPEND(KFASTBLOCK_DIAG_DRIFT_MONITOR_CONN, "monitor_conn");
+	KFB_DRIFT_APPEND(KFASTBLOCK_DIAG_DRIFT_SELFCHECK, "selfcheck");
+	KFB_DRIFT_APPEND(KFASTBLOCK_DIAG_DRIFT_FAULT, "fault");
+	KFB_DRIFT_APPEND(KFASTBLOCK_DIAG_DRIFT_EVENTS, "events");
+	KFB_DRIFT_APPEND(KFASTBLOCK_DIAG_DRIFT_PIPELINE, "pipeline");
+	KFB_DRIFT_APPEND(KFASTBLOCK_DIAG_DRIFT_XPORT, "xport");
+#undef KFB_DRIFT_APPEND
+}
+
 static void kfastblock_diag_collect_volume(struct kfastblock_volume *vol,
 					   struct kfastblock_diag_snapshot *snapshot)
 {
@@ -1403,10 +1438,17 @@ int kfastblock_diag_dump_baseline_seq(
 	seq_printf(m, "baseline.last_capture_jiffies=%lu\n", last_capture);
 	seq_printf(m, "baseline.last_reset_jiffies=%lu\n", last_reset);
 	seq_printf(m, "baseline.last_compare_jiffies=%lu\n", last_compare);
-	seq_printf(m, "drift.score=%u\n", drift_score);
-	seq_printf(m, "drift.flags=0x%x\n", drift_flags);
-	seq_printf(m, "drift.status=%s\n",
-		   kfastblock_diag_drift_status(valid, drift_score));
+	{
+		char drift_text[160];
+
+		kfastblock_diag_format_drift_flags(drift_flags, drift_text,
+						   sizeof(drift_text));
+		seq_printf(m, "drift.score=%u\n", drift_score);
+		seq_printf(m, "drift.flags=0x%x\n", drift_flags);
+		seq_printf(m, "drift.flags_text=%s\n", drift_text);
+		seq_printf(m, "drift.status=%s\n",
+			   kfastblock_diag_drift_status(valid, drift_score));
+	}
 	if (valid)
 		kfastblock_diag_dump_snapshot_prefixed(m, "baseline.",
 						       &baseline);
