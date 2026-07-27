@@ -308,6 +308,20 @@ void osd_raw_rdma_server::destroy_connection(connection_context* conn) noexcept 
     }
 }
 
+std::shared_ptr<osd_raw_rdma_server::connection_context>
+osd_raw_rdma_server::retain_connection(connection_context* conn) noexcept {
+    if (!conn) {
+        return nullptr;
+    }
+    std::lock_guard<std::mutex> lock(_connections_mutex);
+    for (auto& c : _connections) {
+        if (c.get() == conn) {
+            return c;
+        }
+    }
+    return nullptr;
+}
+
 void osd_raw_rdma_server::close_all_connections() noexcept {
     std::lock_guard<std::mutex> lock(_connections_mutex);
     for (auto& conn : _connections) {
@@ -503,14 +517,17 @@ void osd_raw_rdma_server::dispatch_read(connection_context* conn,
 
     struct read_ctx {
         osd_raw_rdma_server* server{nullptr};
-        connection_context* conn{nullptr};
+        std::shared_ptr<connection_context> conn{};
         raw_header req_hdr{};
         osd::read_request request{};
         osd::read_reply response{};
     };
     auto rctx = std::make_shared<read_ctx>();
     rctx->server = this;
-    rctx->conn = conn;
+    rctx->conn = retain_connection(conn);
+    if (!rctx->conn) {
+        return;
+    }
     std::memcpy(&rctx->req_hdr, req_hdr, sizeof(rctx->req_hdr));
     rctx->request.set_pool_id(le32toh(req.pool_id));
     rctx->request.set_pg_id(le32toh(req.pg_id));
@@ -522,16 +539,26 @@ void osd_raw_rdma_server::dispatch_read(connection_context* conn,
     _service->process_read(
       nullptr, &rctx->request, &rctx->response,
       new raw_rdma_async_done([rctx]() {
+          if (!rctx->server || !rctx->conn) {
+              return;
+          }
+          auto* c = rctx->conn.get();
           const auto state = rctx->response.state();
           if (state != err::E_SUCCESS) {
               rctx->server->send_response(
-                rctx->conn, &rctx->req_hdr,
+                c, &rctx->req_hdr,
                 raw_status_from_errno(state), nullptr, 0);
+              return;
+          }
+          if (rctx->response.data().size() >
+              max_raw_body_len - sizeof(raw_read_object_rsp)) {
+              rctx->server->send_response(
+                c, &rctx->req_hdr, raw_status_internal_error, nullptr, 0);
               return;
           }
           auto body_out = build_read_response_body(rctx->response.data());
           rctx->server->send_response(
-            rctx->conn, &rctx->req_hdr, raw_status_ok,
+            c, &rctx->req_hdr, raw_status_ok,
             body_out.data(), static_cast<uint32_t>(body_out.size()));
       }));
 }
@@ -560,14 +587,17 @@ void osd_raw_rdma_server::dispatch_write(connection_context* conn,
 
     struct write_ctx {
         osd_raw_rdma_server* server{nullptr};
-        connection_context* conn{nullptr};
+        std::shared_ptr<connection_context> conn{};
         raw_header req_hdr{};
         osd::write_request request{};
         osd::write_reply response{};
     };
     auto wctx = std::make_shared<write_ctx>();
     wctx->server = this;
-    wctx->conn = conn;
+    wctx->conn = retain_connection(conn);
+    if (!wctx->conn) {
+        return;
+    }
     std::memcpy(&wctx->req_hdr, req_hdr, sizeof(wctx->req_hdr));
     wctx->request.set_pool_id(le32toh(req.pool_id));
     wctx->request.set_pg_id(le32toh(req.pg_id));
@@ -581,8 +611,11 @@ void osd_raw_rdma_server::dispatch_write(connection_context* conn,
     _service->process_write(
       nullptr, &wctx->request, &wctx->response,
       new raw_rdma_async_done([wctx]() {
+          if (!wctx->server || !wctx->conn) {
+              return;
+          }
           wctx->server->send_response(
-            wctx->conn, &wctx->req_hdr,
+            wctx->conn.get(), &wctx->req_hdr,
             raw_status_from_errno(wctx->response.state()), nullptr, 0);
       }));
 }
@@ -609,14 +642,17 @@ void osd_raw_rdma_server::dispatch_delete(connection_context* conn,
 
     struct delete_ctx {
         osd_raw_rdma_server* server{nullptr};
-        connection_context* conn{nullptr};
+        std::shared_ptr<connection_context> conn{};
         raw_header req_hdr{};
         osd::delete_request request{};
         osd::delete_reply response{};
     };
     auto dctx = std::make_shared<delete_ctx>();
     dctx->server = this;
-    dctx->conn = conn;
+    dctx->conn = retain_connection(conn);
+    if (!dctx->conn) {
+        return;
+    }
     std::memcpy(&dctx->req_hdr, req_hdr, sizeof(dctx->req_hdr));
     dctx->request.set_pool_id(le32toh(req.pool_id));
     dctx->request.set_pg_id(le32toh(req.pg_id));
@@ -626,8 +662,11 @@ void osd_raw_rdma_server::dispatch_delete(connection_context* conn,
     _service->process_delete(
       nullptr, &dctx->request, &dctx->response,
       new raw_rdma_async_done([dctx]() {
+          if (!dctx->server || !dctx->conn) {
+              return;
+          }
           dctx->server->send_response(
-            dctx->conn, &dctx->req_hdr,
+            dctx->conn.get(), &dctx->req_hdr,
             raw_status_from_errno(dctx->response.state()), nullptr, 0);
       }));
 }
@@ -798,7 +837,7 @@ bool osd_raw_rdma_server::handle_connect_request(rdma_cm_id* id,
         return false;
     }
 
-    auto conn = std::make_unique<connection_context>();
+    auto conn = std::make_shared<connection_context>();
     conn->shard_id = shard_id;
     /* Own cm_id only after accept succeeds; caller rejects/destroys on failure. */
     conn->id = nullptr;
@@ -896,13 +935,19 @@ void osd_raw_rdma_server::run_listener(uint32_t shard_id) noexcept {
     }
 
     while (!listener.stop.load(std::memory_order_acquire)) {
+        /* Snapshot shared_ptrs so poll/dispatch can retain without
+         * re-locking _connections_mutex (avoids deadlock). */
+        std::vector<std::shared_ptr<connection_context>> active;
         {
             std::lock_guard<std::mutex> lock(_connections_mutex);
             for (auto& c : _connections) {
                 if (c && c->shard_id == shard_id && c->established) {
-                    poll_cq(c.get());
+                    active.push_back(c);
                 }
             }
+        }
+        for (auto& c : active) {
+            poll_cq(c.get());
         }
 
         pollfd pfd{};

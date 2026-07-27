@@ -112,11 +112,13 @@ private:
     void poll_cq(connection_context* conn) noexcept;
     void destroy_connection(connection_context* conn) noexcept;
     void close_all_connections() noexcept;
+    std::shared_ptr<connection_context>
+    retain_connection(connection_context* conn) noexcept;
 
     osd_service* _service{nullptr};
     std::atomic<bool> _running{false};
     std::string _bind_address{};
     std::vector<std::unique_ptr<listener_context>> _listeners{};
     std::mutex _connections_mutex{};
-    std::vector<std::unique_ptr<connection_context>> _connections{};
+    std::vector<std::shared_ptr<connection_context>> _connections{};
 };
