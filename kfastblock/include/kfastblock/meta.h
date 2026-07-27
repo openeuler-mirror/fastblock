@@ -50,6 +50,20 @@ struct kfastblock_leader_info {
 	char address[KFASTBLOCK_MAX_ADDR_LEN];
 };
 
+/* True when leader advertises a non-empty address and raw RDMA port. */
+static inline bool kfastblock_leader_has_rdma(
+	const struct kfastblock_leader_info *leader)
+{
+	return leader && leader->address[0] && leader->rdma_port;
+}
+
+/* True when leader advertises a non-empty address and raw TCP port. */
+static inline bool kfastblock_leader_has_tcp(
+	const struct kfastblock_leader_info *leader)
+{
+	return leader && leader->address[0] && leader->port;
+}
+
 struct kfastblock_pg_route {
 	u32 pool_id;
 	u32 pg_id;
