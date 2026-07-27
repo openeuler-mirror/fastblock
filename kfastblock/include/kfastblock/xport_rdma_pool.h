@@ -101,4 +101,10 @@ struct kfastblock_rdma_conn *
 kfastblock_rdma_pool_try_get(struct kfastblock_rdma_pool *pool,
 			     const struct kfastblock_leader_info *leader);
 
+/* Reclaim DEAD slots to EMPTY (drop any leftover identity). Returns count. */
+u32 kfastblock_rdma_pool_reclaim_dead(struct kfastblock_rdma_pool *pool);
+
+/* True when any slot is BUSY (in-flight I/O). */
+bool kfastblock_rdma_pool_has_busy(struct kfastblock_rdma_pool *pool);
+
 #endif
