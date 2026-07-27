@@ -11,6 +11,7 @@
 
 #include "raw_rdma_server.h"
 
+#include <infiniband/verbs.h>
 #include <rdma/rdma_cma.h>
 #include <spdk/log.h>
 
@@ -112,11 +113,40 @@ void osd_raw_rdma_server::destroy_connection(connection_context* conn) noexcept 
     if (!conn) {
         return;
     }
-    /* Resource teardown lands in follow-up commits. */
     conn->established = false;
-    conn->id = nullptr;
-    conn->pd = nullptr;
-    conn->cq = nullptr;
+    if (conn->id) {
+        if (conn->id->qp) {
+            ::rdma_destroy_qp(conn->id);
+        }
+        ::rdma_destroy_id(conn->id);
+        conn->id = nullptr;
+    }
+    if (conn->cq) {
+        ::ibv_destroy_cq(conn->cq);
+        conn->cq = nullptr;
+    }
+    if (conn->pd) {
+        ::ibv_dealloc_pd(conn->pd);
+        conn->pd = nullptr;
+    }
+}
+
+void osd_raw_rdma_server::close_all_connections() noexcept {
+    std::lock_guard<std::mutex> lock(_connections_mutex);
+    for (auto& conn : _connections) {
+        destroy_connection(conn.get());
+    }
+    _connections.clear();
+}
+
+bool osd_raw_rdma_server::handle_connect_request(rdma_cm_id* id,
+                                                 uint32_t shard_id) noexcept {
+    if (!id || !id->verbs) {
+        return false;
+    }
+    /* PD/CQ/QP + accept land in follow-up commits. */
+    (void)shard_id;
+    return false;
 }
 
 void osd_raw_rdma_server::stop_listener(listener_context& listener) noexcept {
@@ -221,6 +251,7 @@ void osd_raw_rdma_server::stop() noexcept {
             stop_listener(*listener);
         }
     }
+    close_all_connections();
     _listeners.clear();
     _bind_address.clear();
     SPDK_NOTICELOG("raw RDMA server stopped\n");
