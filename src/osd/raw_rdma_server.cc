@@ -137,6 +137,7 @@ bool validate_request_header(const raw_header& hdr) noexcept {
     if (hdr.version_major != raw_version_major) {
         return false;
     }
+    /* Minor is soft: accept any minor for forward compatibility. */
     if (hdr.service != raw_service_osd) {
         return false;
     }
