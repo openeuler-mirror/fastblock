@@ -100,6 +100,12 @@ bool is_ipv4_literal(const char* s) noexcept {
     if (!s || !*s) {
         return false;
     }
+    /* Reject whitespace-padded strings; inet_pton is strict on content. */
+    for (const char* p = s; *p; ++p) {
+        if (*p == ' ' || *p == '\t') {
+            return false;
+        }
+    }
     in_addr addr{};
     return ::inet_pton(AF_INET, s, &addr) == 1;
 }
