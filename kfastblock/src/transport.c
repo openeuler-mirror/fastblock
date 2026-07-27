@@ -21,6 +21,7 @@
 #include "kfastblock/buffer.h"
 #include "kfastblock/connpool.h"
 #include "kfastblock/fault.h"
+#include "kfastblock/fault_rdma.h"
 #include "kfastblock/rawproto.h"
 #include "kfastblock/recovery.h"
 #include "kfastblock/scheduler.h"
@@ -2625,9 +2626,12 @@ static int kfastblock_transport_execute_object_opcode(
 
 	if (ctx->use_rdma && ctx->rdma) {
 		/* Inject exchange timeout-like failure before real SEND/RECV. */
-		fault_ret = kfastblock_transport_maybe_inject_fault(
-			ctx->vol, KFASTBLOCK_FAULT_RDMA_EXCHANGE);
+		fault_ret = kfastblock_fault_rdma_take_exchange(
+			&ctx->vol->fault_injection);
 		if (fault_ret) {
+			kfastblock_volume_account_fault_injection(
+				ctx->vol, KFASTBLOCK_FAULT_RDMA_EXCHANGE,
+				fault_ret);
 			pr_warn_ratelimited(
 				"kfastblock: fault rdma_exchange peer=%s:%u ret=%d\n",
 				ctx->leader.address, ctx->leader.rdma_port,
@@ -2730,9 +2734,8 @@ static int kfastblock_transport_prepare_object_exchange(
 	ctx->rdma_slot = NULL;
 
 	/* force_tcp: consume budget and skip RDMA so AUTO fallback is testable. */
-	if (kfastblock_fault_injection_should_fail(
-		    &ctx->vol->fault_injection, KFASTBLOCK_FAULT_FORCE_TCP,
-		    &ret)) {
+	if (kfastblock_fault_rdma_take_force_tcp(&ctx->vol->fault_injection,
+						 &ret)) {
 		kfastblock_volume_account_fault_injection(
 			ctx->vol, KFASTBLOCK_FAULT_FORCE_TCP, ret);
 		pr_info_ratelimited(
@@ -2745,9 +2748,11 @@ static int kfastblock_transport_prepare_object_exchange(
 				       &ctx->leader);
 	if (xops && xops->transport_id == KFASTBLOCK_OSD_TRANSPORT_RDMA &&
 	    ctx->leader.rdma_port) {
-		ret = kfastblock_transport_maybe_inject_fault(
-			ctx->vol, KFASTBLOCK_FAULT_RDMA_CONNECT);
+		ret = kfastblock_fault_rdma_take_connect(
+			&ctx->vol->fault_injection);
 		if (ret) {
+			kfastblock_volume_account_fault_injection(
+				ctx->vol, KFASTBLOCK_FAULT_RDMA_CONNECT, ret);
 			pr_warn_ratelimited(
 				"kfastblock: fault rdma_connect peer=%s:%u ret=%d\n",
 				ctx->leader.address, ctx->leader.rdma_port, ret);
@@ -3459,9 +3464,8 @@ static int kfastblock_transport_drive_leader_query_target(
 		return ctx->ret;
 
 	/* force_tcp: skip RDMA GET_LEADER so AUTO fallback is testable. */
-	if (kfastblock_fault_injection_should_fail(
-		    &ctx->vol->fault_injection, KFASTBLOCK_FAULT_FORCE_TCP,
-		    &ctx->ret)) {
+	if (kfastblock_fault_rdma_take_force_tcp(&ctx->vol->fault_injection,
+						 &ctx->ret)) {
 		kfastblock_volume_account_fault_injection(
 			ctx->vol, KFASTBLOCK_FAULT_FORCE_TCP, ctx->ret);
 		goto leader_query_tcp;
@@ -3471,9 +3475,12 @@ static int kfastblock_transport_drive_leader_query_target(
 				       &ctx->target);
 	if (xops && xops->transport_id == KFASTBLOCK_OSD_TRANSPORT_RDMA &&
 	    ctx->target.rdma_port) {
-		ctx->ret = kfastblock_transport_maybe_inject_fault(
-			ctx->vol, KFASTBLOCK_FAULT_RDMA_CONNECT);
+		ctx->ret = kfastblock_fault_rdma_take_connect(
+			&ctx->vol->fault_injection);
 		if (ctx->ret) {
+			kfastblock_volume_account_fault_injection(
+				ctx->vol, KFASTBLOCK_FAULT_RDMA_CONNECT,
+				ctx->ret);
 			if (ctx->vol->spec.osd_transport ==
 			    KFASTBLOCK_OSD_TRANSPORT_RDMA)
 				return ctx->ret;
