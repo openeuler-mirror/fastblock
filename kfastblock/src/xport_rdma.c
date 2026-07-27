@@ -625,19 +625,31 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 {
 	if (!conn || !leader)
 		return -EINVAL;
-	if (!leader->address[0] || !leader->rdma_port)
+	if (!leader->address[0] || !leader->rdma_port) {
+		if (conn)
+			conn->last_error = -ENOTCONN;
 		return -ENOTCONN;
+	}
+	/* Reject nonsensical TCP-ish well-known ports mistaken for RDMA. */
+	if (leader->rdma_port == 0) {
+		conn->last_error = -EINVAL;
+		return -EINVAL;
+	}
 	if (conn->state != KFASTBLOCK_RDMA_CONN_IDLE &&
-	    conn->state != KFASTBLOCK_RDMA_CONN_ERROR)
+	    conn->state != KFASTBLOCK_RDMA_CONN_ERROR) {
+		conn->last_error = -EBUSY;
 		return -EBUSY;
+	}
 
 	strscpy(conn->peer_addr, leader->address, sizeof(conn->peer_addr));
 	conn->peer_port = leader->rdma_port;
 	conn->connected = false;
 	conn->last_error = 0;
 
-	if (conn->cm_id)
+	if (conn->cm_id) {
+		conn->last_error = -EBUSY;
 		return -EBUSY;
+	}
 
 	conn->cm_id = rdma_create_id(&init_net, kfastblock_rdma_cm_event_handler,
 				     conn, RDMA_PS_TCP, IB_QPT_RC);
