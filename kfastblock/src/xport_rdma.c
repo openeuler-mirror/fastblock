@@ -988,10 +988,15 @@ int kfastblock_rdma_conn_recv(struct kfastblock_rdma_conn *conn,
 	unsigned long deadline;
 	int ret;
 
-	if (!kfastblock_rdma_conn_is_connected(conn) || !buf || !buf_len)
+	if (!kfastblock_rdma_conn_is_connected(conn) || !buf || !buf_len) {
+		if (conn)
+			conn->last_error = -EINVAL;
 		return -EINVAL;
-	if (!conn->cm_id->qp || !conn->pd || !conn->recv_mapped)
+	}
+	if (!conn->cm_id->qp || !conn->pd || !conn->recv_mapped) {
+		conn->last_error = -ENOTCONN;
 		return -ENOTCONN;
+	}
 
 	dev = conn->cm_id->device;
 	if (!conn->recv_posted || !conn->recv_posted_count) {
