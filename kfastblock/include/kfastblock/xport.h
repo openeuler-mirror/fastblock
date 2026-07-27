@@ -77,4 +77,12 @@ kfastblock_xport_ops_id(const struct kfastblock_xport_ops *ops)
 	return ops->transport_id;
 }
 
+/* Short-TTL RDMA probe cache (address:rdma_port -> result). */
+#define KFASTBLOCK_XPORT_PROBE_CACHE_TTL_MS 2000U
+#define KFASTBLOCK_XPORT_PROBE_CACHE_SIZE 16U
+
+void kfastblock_xport_probe_cache_invalidate(void);
+u64 kfastblock_xport_probe_cache_hits(void);
+u64 kfastblock_xport_probe_cache_misses(void);
+
 #endif
