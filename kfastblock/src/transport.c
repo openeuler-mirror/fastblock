@@ -3044,6 +3044,9 @@ static int kfastblock_transport_drive_leader_query_target(
 		ctx->vol, ctx->hint->pg_id, ctx->target.osd_id, ctx->ret);
 
 	if (!ctx->ret) {
+		ctx->leader_out->rdma_port = kfastblock_meta_lookup_rdma_port(
+			&ctx->vol->view, ctx->leader_out->osd_id,
+			ctx->leader_out->port);
 		ctx->ret = kfastblock_recovery_update_live_pg_leader(
 			ctx->vol, ctx->kf_req->request_pool_id, ctx->hint->pg_id,
 			ctx->leader_out);
