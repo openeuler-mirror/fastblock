@@ -799,6 +799,16 @@ void kfastblock_diag_compare_baseline(
 		flags |= KFASTBLOCK_DIAG_DRIFT_EVENTS;
 		score += 12;
 	}
+	if (base.xport.preference != current_snapshot->xport.preference ||
+	    base.xport.leader_rdma_ready_count !=
+		    current_snapshot->xport.leader_rdma_ready_count ||
+	    base.xport.shard_rdma_port_count !=
+		    current_snapshot->xport.shard_rdma_port_count ||
+	    base.xport.osd_with_rdma_count !=
+		    current_snapshot->xport.osd_with_rdma_count) {
+		flags |= KFASTBLOCK_DIAG_DRIFT_XPORT;
+		score += 8;
+	}
 
 	score = min_t(u32, score, 100);
 	mutex_lock(&state->lock);
