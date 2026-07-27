@@ -16,8 +16,6 @@
 
 #define KFASTBLOCK_RDMA_CM_TIMEOUT_MS 3000
 #define KFASTBLOCK_RDMA_IO_TIMEOUT_MS 5000
-/* raw header (24) + max object body (~4MiB) + margin */
-#define KFASTBLOCK_RDMA_BUF_LEN ((4U * 1024U * 1024U) + 4096U)
 
 enum kfastblock_rdma_conn_state {
 	KFASTBLOCK_RDMA_CONN_IDLE = 0,

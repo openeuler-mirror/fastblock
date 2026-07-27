@@ -5,6 +5,9 @@
 
 #include "kfastblock/meta.h"
 
+/* raw header (24) + max object body (~4MiB) + margin */
+#define KFASTBLOCK_RDMA_BUF_LEN ((4U * 1024U * 1024U) + 4096U)
+
 struct kfastblock_rdma_conn;
 
 /* Allocate an idle RDMA connection object (not connected yet). */
