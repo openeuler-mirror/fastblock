@@ -149,6 +149,21 @@ bool validate_request_header(const raw_header& hdr) noexcept {
     return true;
 }
 
+const char* raw_opcode_name(uint8_t op) noexcept {
+    switch (op) {
+    case raw_op_get_leader:
+        return "GET_LEADER";
+    case raw_op_read_object:
+        return "READ";
+    case raw_op_write_object:
+        return "WRITE";
+    case raw_op_delete_object:
+        return "DELETE";
+    default:
+        return "UNKNOWN";
+    }
+}
+
 uint32_t raw_status_from_errno(const int state) noexcept {
     switch (state) {
     case err::E_SUCCESS:
@@ -758,6 +773,9 @@ void osd_raw_rdma_server::handle_recv_complete(connection_context* conn,
         dispatch_delete(conn, &hdr, body, body_len);
         break;
     default:
+        SPDK_ERRLOG("raw RDMA: unsupported opcode=%u (%s) peer=%s\n",
+                    hdr.opcode, raw_opcode_name(hdr.opcode),
+                    conn->peer_address.c_str());
         send_response(conn, &hdr, raw_status_invalid_request, nullptr, 0);
         break;
     }
