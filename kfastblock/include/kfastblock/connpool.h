@@ -35,6 +35,13 @@ struct kfastblock_conn_pool_snapshot {
 	u64 failure_count;
 	unsigned long oldest_last_use_jiffies;
 	unsigned long newest_last_use_jiffies;
+	/*
+	 * Transport accounting: classic OSD socket pool is TCP-only, so
+	 * tcp_ready_slots mirrors ready_slots and rdma_ready_slots stays 0.
+	 * Callers that merge RDMA pool stats can overwrite rdma_ready_slots.
+	 */
+	u32 tcp_ready_slots;
+	u32 rdma_ready_slots;
 };
 
 struct kfastblock_cached_socket {
