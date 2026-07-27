@@ -106,6 +106,7 @@ struct core_shard_map {
     uint32_t raw_port;
     uint32_t core_id;
     uint32_t shard_id;
+    uint32_t raw_rdma_port{0};
 };
 
 struct osd_info_t
