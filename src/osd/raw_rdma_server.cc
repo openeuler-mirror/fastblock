@@ -1338,6 +1338,14 @@ size_t osd_raw_rdma_server::established_connection_count() const noexcept {
     return n;
 }
 
+uint64_t osd_raw_rdma_server::accept_total() const noexcept {
+    return _accept_total.load(std::memory_order_relaxed);
+}
+
+uint64_t osd_raw_rdma_server::reject_total() const noexcept {
+    return _reject_total.load(std::memory_order_relaxed);
+}
+
 std::string osd_raw_rdma_server::ports_string() const {
     std::string ports;
     for (size_t i = 0; i < _listeners.size(); ++i) {
@@ -1360,6 +1368,7 @@ raw_rdma_server_stats osd_raw_rdma_server::collect_stats() const {
     st.reject_total = _reject_total.load(std::memory_order_relaxed);
     st.dispatch_error_total =
       _dispatch_error_total.load(std::memory_order_relaxed);
+    st.max_connections = max_connection_limit();
     st.listen_ports.reserve(_listeners.size());
     for (size_t i = 0; i < _listeners.size(); ++i) {
         st.listen_ports.push_back(_listeners[i] ? _listeners[i]->port : 0);
