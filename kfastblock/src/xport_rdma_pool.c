@@ -317,18 +317,24 @@ void kfastblock_rdma_pool_put(struct kfastblock_rdma_pool *pool,
 		mutex_unlock(&slot->lock);
 		return;
 	}
-	if (ok && kfastblock_rdma_conn_is_connected(conn)) {
+	if (ok && kfastblock_rdma_conn_is_usable(conn)) {
 		slot->state = KFASTBLOCK_RDMA_POOL_SLOT_IDLE;
 		slot->success_count++;
 		slot->last_use_jiffies = jiffies;
 		slot->last_error = 0;
 		became_idle = true;
 	} else {
+		int err = kfastblock_rdma_conn_last_error(conn);
+
 		kfastblock_rdma_pool_slot_disconnect_locked(slot);
 		slot->state = KFASTBLOCK_RDMA_POOL_SLOT_DEAD;
 		slot->failure_count++;
 		if (!ok)
-			slot->last_error = -EIO;
+			slot->last_error = err ? err : -EIO;
+		else if (err)
+			slot->last_error = err;
+		else
+			slot->last_error = -ENOTCONN;
 	}
 	mutex_unlock(&slot->lock);
 
