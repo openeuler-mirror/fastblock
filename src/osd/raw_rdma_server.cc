@@ -1179,6 +1179,14 @@ void osd_raw_rdma_server::stop() noexcept {
     SPDK_NOTICELOG("raw RDMA server stopped\n");
 }
 
+bool osd_raw_rdma_server::is_running() const noexcept {
+    return _running.load(std::memory_order_acquire);
+}
+
+uint32_t osd_raw_rdma_server::shard_count() const noexcept {
+    return static_cast<uint32_t>(_listeners.size());
+}
+
 uint16_t osd_raw_rdma_server::listen_port(uint32_t shard_id) const noexcept {
     if (shard_id >= _listeners.size() || !_listeners[shard_id]) {
         return 0;
