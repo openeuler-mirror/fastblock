@@ -2060,6 +2060,13 @@ static int kfastblock_transport_fetch_cluster_map_from_monitor(
 	return ret;
 }
 
+static int kfastblock_transport_rdma_exchange_parts(
+	struct kfastblock_rdma_conn *rdma,
+	u8 service, u8 opcode, u64 seq,
+	const struct kfastblock_transport_body_part *parts,
+	unsigned int nr_parts,
+	struct kfastblock_transport_response_ctx *response);
+
 static int kfastblock_transport_fetch_pg_leader_from_osd(
 	struct kfastblock_cached_socket *cached,
 	u32 pool_id,
@@ -2086,6 +2093,40 @@ static int kfastblock_transport_fetch_pg_leader_from_osd(
 		cached, KFASTBLOCK_RAW_SERVICE_OSD,
 		KFASTBLOCK_RAW_OSD_OP_GET_LEADER, seq,
 		&part, 1, &response);
+	if (ret) {
+		kfastblock_transport_response_ctx_release(&response);
+		return ret;
+	}
+	ret = kfastblock_transport_response_decode_leader(&response, leader);
+	kfastblock_transport_response_ctx_release(&response);
+	return ret;
+}
+
+static int kfastblock_transport_fetch_pg_leader_from_osd_rdma(
+	struct kfastblock_rdma_conn *rdma,
+	u32 pool_id,
+	u32 pg_id,
+	u64 seq,
+	struct kfastblock_leader_info *leader)
+{
+	struct kfastblock_raw_get_leader_req req = {
+		.pool_id = cpu_to_le32(pool_id),
+		.pg_id = cpu_to_le32(pg_id),
+	};
+	struct kfastblock_transport_body_part part = {
+		.buf = &req,
+		.len = sizeof(req),
+	};
+	struct kfastblock_transport_response_ctx response = {};
+	int ret;
+
+	if (!rdma || !leader)
+		return -EINVAL;
+
+	memset(leader, 0, sizeof(*leader));
+	ret = kfastblock_transport_rdma_exchange_parts(
+		rdma, KFASTBLOCK_RAW_SERVICE_OSD,
+		KFASTBLOCK_RAW_OSD_OP_GET_LEADER, seq, &part, 1, &response);
 	if (ret) {
 		kfastblock_transport_response_ctx_release(&response);
 		return ret;
@@ -3335,12 +3376,49 @@ static int kfastblock_transport_prepare_leader_query_request(
 static int kfastblock_transport_drive_leader_query_target(
 	struct kfastblock_transport_leader_query_ctx *ctx)
 {
+	const struct kfastblock_xport_ops *xops;
+	struct kfastblock_rdma_conn *rdma = NULL;
+
 	if (!ctx)
 		return -EINVAL;
 
 	ctx->ret = kfastblock_transport_prepare_leader_query_target(ctx);
 	if (ctx->ret)
 		return ctx->ret;
+
+	xops = kfastblock_xport_select(ctx->vol->spec.osd_transport,
+				       &ctx->target);
+	if (xops && xops->transport_id == KFASTBLOCK_OSD_TRANSPORT_RDMA &&
+	    ctx->target.rdma_port) {
+		rdma = kfastblock_rdma_conn_alloc();
+		if (!rdma) {
+			ctx->ret = -ENOMEM;
+			return ctx->ret;
+		}
+		ctx->ret = kfastblock_rdma_conn_connect(rdma, &ctx->target);
+		if (!ctx->ret) {
+			ctx->seq = (u64)get_random_u64();
+			if (!ctx->seq)
+				ctx->seq = 1;
+			ctx->ret = kfastblock_transport_fetch_pg_leader_from_osd_rdma(
+				rdma, ctx->kf_req->request_pool_id,
+				ctx->hint->pg_id, ctx->seq, ctx->leader_out);
+		}
+		kfastblock_rdma_conn_free(rdma);
+		ctx->actions = kfastblock_recovery_classify_leader_failure(ctx->ret);
+		kfastblock_volume_account_leader_query(
+			ctx->vol, ctx->hint->pg_id, ctx->target.osd_id, ctx->ret);
+		if (!ctx->ret) {
+			/* When leader_port is raw RDMA, also keep rdma_port. */
+			if (!ctx->leader_out->rdma_port)
+				ctx->leader_out->rdma_port =
+					ctx->leader_out->port;
+			ctx->ret = kfastblock_recovery_update_live_pg_leader(
+				ctx->vol, ctx->kf_req->request_pool_id,
+				ctx->hint->pg_id, ctx->leader_out);
+		}
+		return ctx->ret;
+	}
 
 	ctx->ret = kfastblock_transport_prepare_mux_osd_socket(
 		ctx->vol, &ctx->target, &ctx->cached);
