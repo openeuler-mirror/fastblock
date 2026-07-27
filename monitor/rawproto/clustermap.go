@@ -3,6 +3,7 @@ package rawproto
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"sort"
 
 	"monitor/msg"
@@ -122,6 +123,23 @@ func CountOSDWithAnyRdmaPort(osds []*msg.OsdDynamicInfo) int {
 		}
 	}
 	return n
+}
+
+/* FormatRdmaCoverage returns a short diagnostic string for map logs. */
+func FormatRdmaCoverage(osds []*msg.OsdDynamicInfo) string {
+	osdsWith := CountOSDWithAnyRdmaPort(osds)
+	shardsWith := 0
+	shardsTotal := 0
+	for _, osd := range osds {
+		if osd == nil {
+			continue
+		}
+		shards := osd.GetShardedPorts()
+		shardsTotal += len(shards)
+		shardsWith += CountShardsWithRdmaPort(shards)
+	}
+	return fmt.Sprintf("rdma_osds=%d/%d rdma_shards=%d/%d",
+		osdsWith, len(osds), shardsWith, shardsTotal)
 }
 
 func encodeOSDEntry(body *bytes.Buffer, osdInfo *msg.OsdDynamicInfo) error {
