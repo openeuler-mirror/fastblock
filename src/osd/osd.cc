@@ -331,6 +331,7 @@ static void service_init(partition_manager* pm, server_t *server, std::function<
 	global_raft_service = std::make_unique<::raft_service<::partition_manager>>(global_pm.get());
     global_osd_service = std::make_unique<::osd_service>(global_pm.get(), g_monitor_client);
     global_raw_tcp_server = std::make_unique<osd_raw_tcp_server>(global_osd_service.get());
+    global_raw_rdma_server = std::make_unique<osd_raw_rdma_server>(global_osd_service.get());
 
     server->rpc_servers.resize(core_sharded::system::capacity());
     server->rpc_servers_started_cb = cb;
