@@ -399,13 +399,39 @@ static int kfastblock_rdma_poll_one(struct kfastblock_rdma_conn *conn,
 		return -EINVAL;
 
 	while (time_before(jiffies, deadline)) {
+		/* Disconnect during poll: stop spinning and surface ENOTCONN. */
+		if (conn->state != KFASTBLOCK_RDMA_CONN_ESTABLISHED ||
+		    !conn->connected) {
+			conn->last_error = -ENOTCONN;
+			return -ENOTCONN;
+		}
+		if (!conn->cq)
+			return -ENOTCONN;
+
 		n = ib_poll_cq(conn->cq, 1, &wc);
-		if (n < 0)
+		if (n < 0) {
+			conn->last_error = n;
+			conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
 			return n;
+		}
 		if (n == 0) {
 			cpu_relax();
 			continue;
 		}
+
+		/* Non-success WC: still deliver to waiter; caller checks status. */
+		if (wc.status != IB_WC_SUCCESS) {
+			conn->last_error = -EIO;
+			/* Fatal CQ errors tear down usability of this conn. */
+			if (wc.status == IB_WC_WR_FLUSH_ERR ||
+			    wc.status == IB_WC_RETRY_EXC_ERR ||
+			    wc.status == IB_WC_RESP_TIMEOUT_ERR ||
+			    wc.status == IB_WC_FATAL_ERR) {
+				conn->connected = false;
+				conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
+			}
+		}
+
 		if (wc.wr_id == KFASTBLOCK_RDMA_WR_SEND) {
 			conn->send_wc_status = wc.status;
 			complete(&conn->send_done);
@@ -420,7 +446,9 @@ static int kfastblock_rdma_poll_one(struct kfastblock_rdma_conn *conn,
 			complete(&conn->recv_done);
 			return 0;
 		}
+		/* Unknown wr_id: ignore and keep polling. */
 	}
+	conn->last_error = -ETIMEDOUT;
 	return -ETIMEDOUT;
 }
 
