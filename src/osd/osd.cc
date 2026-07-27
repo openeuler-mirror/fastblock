@@ -662,7 +662,15 @@ struct pm_load_context : public utils::context{
         }
 
         auto shard_count = core_sharded::system::capacity();
-        return global_raw_tcp_server->start(server->osd_addr, shard_count);
+        if (!global_raw_tcp_server->start(server->osd_addr, shard_count)) {
+            return false;
+        }
+        /* RDMA raw is best-effort until CM listen is fully wired. */
+        if (global_raw_rdma_server &&
+            !global_raw_rdma_server->start(server->osd_addr, shard_count)) {
+            SPDK_WARNLOG("start raw RDMA server failed; continue with TCP raw\n");
+        }
+        return true;
     }
 
     static void osd_load_done(void *arg){
