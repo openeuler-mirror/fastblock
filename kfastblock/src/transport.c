@@ -1,6 +1,5 @@
 #include <linux/byteorder/little_endian.h>
 #include <linux/blk-mq.h>
-#include <linux/atomic.h>
 #include <linux/completion.h>
 #include <linux/errno.h>
 #include <linux/in.h>
@@ -50,7 +49,7 @@ static struct workqueue_struct *g_kfastblock_transport_wq;
 static unsigned int g_kfastblock_osd_endpoint_parallel_limit = 1;
 static bool g_kfastblock_osd_endpoint_parallel_trace;
 
-static atomic64_t g_kfastblock_rdma_seq = ATOMIC64_INIT(1);
+
 
 module_param_named(osd_endpoint_parallel_limit,
 		   g_kfastblock_osd_endpoint_parallel_limit,
@@ -107,6 +106,7 @@ struct kfastblock_transport_object_io_ctx {
 	struct kfastblock_leader_info leader;
 	struct kfastblock_cached_socket *cached;
 	struct kfastblock_rdma_conn *rdma;
+	struct kfastblock_cached_rdma *rdma_slot;
 	struct socket *sock;
 	void *buf;
 	unsigned int object_index;
@@ -2710,40 +2710,36 @@ static int kfastblock_transport_prepare_object_exchange(
 
 	ctx->use_rdma = false;
 	ctx->rdma = NULL;
+	ctx->rdma_slot = NULL;
 
 	xops = kfastblock_xport_select(ctx->vol->spec.osd_transport,
 				       &ctx->leader);
 	if (xops && xops->transport_id == KFASTBLOCK_OSD_TRANSPORT_RDMA &&
 	    ctx->leader.rdma_port) {
-		ctx->rdma = kfastblock_rdma_conn_alloc();
-		if (!ctx->rdma)
-			return -ENOMEM;
-		ret = kfastblock_rdma_conn_connect(ctx->rdma, &ctx->leader);
-		if (ret) {
-			kfastblock_rdma_conn_free(ctx->rdma);
-			ctx->rdma = NULL;
+		ctx->rdma_slot = kfastblock_rdma_conn_pool_acquire(
+			ctx->vol->rdma_cache, KFASTBLOCK_MAX_RDMA_CACHE,
+			&ctx->leader);
+		if (!ctx->rdma_slot) {
 			/* Strict RDMA preference: do not silently use TCP. */
 			if (ctx->vol->spec.osd_transport ==
 			    KFASTBLOCK_OSD_TRANSPORT_RDMA) {
 				pr_warn_ratelimited(
-					"kfastblock: RDMA connect failed peer=%s:%u err=%d\n",
-					ctx->leader.address, ctx->leader.rdma_port,
-					ret);
-				return ret;
+					"kfastblock: RDMA acquire failed peer=%s:%u\n",
+					ctx->leader.address, ctx->leader.rdma_port);
+				return -ENOTCONN;
 			}
 			pr_info_ratelimited(
-				"kfastblock: RDMA unavailable, fallback TCP peer=%s err=%d\n",
-				ctx->leader.address, ret);
+				"kfastblock: RDMA unavailable, fallback TCP peer=%s\n",
+				ctx->leader.address);
 			/* AUTO continues and falls back to TCP below. */
 		} else {
+			ctx->rdma = ctx->rdma_slot->conn;
 			ctx->use_rdma = true;
 			pr_info_ratelimited(
 				"kfastblock: object I/O via RDMA peer=%s:%u op=%u\n",
 				ctx->leader.address, ctx->leader.rdma_port,
 				ctx->raw_opcode);
-			seq = (u64)atomic64_inc_return(&g_kfastblock_rdma_seq);
-			if (!seq)
-				seq = (u64)atomic64_inc_return(&g_kfastblock_rdma_seq);
+			seq = kfastblock_rdma_conn_slot_next_seq(ctx->rdma_slot);
 			return kfastblock_transport_begin_exchange(
 				&ctx->exchange, ctx->kf_req, ctx->object_index,
 				KFASTBLOCK_RAW_SERVICE_OSD, ctx->raw_opcode,
@@ -2786,7 +2782,13 @@ static void kfastblock_transport_finalize_object_socket(
 	if (!ctx)
 		return;
 
-	if (ctx->rdma) {
+	if (ctx->rdma_slot) {
+		kfastblock_rdma_conn_pool_release(ctx->rdma_slot, ctx->ret);
+		ctx->rdma_slot = NULL;
+		ctx->rdma = NULL;
+		ctx->use_rdma = false;
+	} else if (ctx->rdma) {
+		/* Uncached path (e.g. leader query). */
 		kfastblock_rdma_conn_free(ctx->rdma);
 		ctx->rdma = NULL;
 		ctx->use_rdma = false;
@@ -2842,7 +2844,12 @@ static void kfastblock_transport_cleanup_object_io(
 	if (!ctx)
 		return;
 
-	if (ctx->rdma) {
+	if (ctx->rdma_slot) {
+		kfastblock_rdma_conn_pool_release(ctx->rdma_slot, ctx->ret);
+		ctx->rdma_slot = NULL;
+		ctx->rdma = NULL;
+		ctx->use_rdma = false;
+	} else if (ctx->rdma) {
 		kfastblock_rdma_conn_free(ctx->rdma);
 		ctx->rdma = NULL;
 		ctx->use_rdma = false;
@@ -2948,6 +2955,7 @@ static void kfastblock_transport_object_io_ctx_reset_attempt(
 	memset(&ctx->leader, 0, sizeof(ctx->leader));
 	ctx->cached = NULL;
 	ctx->rdma = NULL;
+	ctx->rdma_slot = NULL;
 	ctx->use_rdma = false;
 	ctx->sock = NULL;
 	ctx->ret = 0;
