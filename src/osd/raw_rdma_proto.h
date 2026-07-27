@@ -73,4 +73,10 @@ header make_response_header(const header& req, uint32_t status,
 /* True if s is a dotted-quad IPv4 literal (not hostname). */
 bool is_ipv4_literal(const char* s) noexcept;
 
+/* Human-readable raw status for logs / tests. */
+const char* status_name(uint32_t status) noexcept;
+
+/* True if opcode is one of the four OSD object-path ops. */
+bool is_known_opcode(uint8_t op) noexcept;
+
 } // namespace raw_rdma_proto
