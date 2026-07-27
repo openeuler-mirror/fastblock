@@ -791,15 +791,19 @@ err_destroy_id:
 
 void kfastblock_rdma_conn_disconnect(struct kfastblock_rdma_conn *conn)
 {
+	int saved_err;
+
 	if (!conn)
 		return;
+	/* Preserve last_error across teardown so callers can inspect cause. */
+	saved_err = conn->last_error;
 	conn->state = KFASTBLOCK_RDMA_CONN_DISCONNECTING;
 	if (conn->cm_id && conn->connected)
 		rdma_disconnect(conn->cm_id);
 	kfastblock_rdma_conn_destroy_resources(conn);
 	conn->connected = false;
 	conn->state = KFASTBLOCK_RDMA_CONN_IDLE;
-	conn->last_error = 0;
+	conn->last_error = saved_err;
 	conn->peer_port = 0;
 	conn->peer_addr[0] = '\0';
 }
