@@ -194,6 +194,12 @@ kfastblock_rdma_pool_get(struct kfastblock_rdma_pool *pool,
 
 	if (!pool || !pool->slots || !kfastblock_leader_has_rdma(leader))
 		return NULL;
+	/* Defensive: address+rdma_port must both be present (has_rdma may lag). */
+	if (!leader->address[0] || !leader->rdma_port) {
+		pool->get_misses++;
+		kfastblock_rdma_pool_miss_total++;
+		return NULL;
+	}
 
 	/* Pass 1: warm reuse (no CM). */
 	conn = kfastblock_rdma_pool_try_get(pool, leader);
