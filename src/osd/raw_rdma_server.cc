@@ -11,6 +11,9 @@
 
 #include "raw_rdma_server.h"
 
+#include "osd_service.h"
+#include "fastblock/utils/err_num.h"
+
 #include <infiniband/verbs.h>
 #include <rdma/rdma_cma.h>
 #include <spdk/log.h>
@@ -24,7 +27,9 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <random>
+#include <string>
 #include <vector>
 
 namespace {
@@ -71,6 +76,47 @@ struct raw_header {
     uint32_t body_len;
 } __attribute__((packed));
 
+struct raw_get_leader_req {
+    uint32_t pool_id;
+    uint32_t pg_id;
+} __attribute__((packed));
+
+struct raw_get_leader_rsp {
+    uint32_t leader_id;
+    uint16_t leader_port;
+    uint16_t address_len;
+} __attribute__((packed));
+
+struct raw_read_object_req {
+    uint32_t pool_id;
+    uint32_t pg_id;
+    uint64_t offset;
+    uint32_t length;
+    uint16_t object_name_len;
+    uint16_t reserved;
+} __attribute__((packed));
+
+struct raw_read_object_rsp {
+    uint32_t data_len;
+    uint32_t reserved;
+} __attribute__((packed));
+
+struct raw_write_object_req {
+    uint32_t pool_id;
+    uint32_t pg_id;
+    uint64_t offset;
+    uint32_t data_len;
+    uint16_t object_name_len;
+    uint16_t reserved;
+} __attribute__((packed));
+
+struct raw_delete_object_req {
+    uint32_t pool_id;
+    uint32_t pg_id;
+    uint16_t object_name_len;
+    uint16_t reserved;
+} __attribute__((packed));
+
 uint16_t random_raw_rdma_port() {
     thread_local std::mt19937 gen{std::random_device{}()};
     std::uniform_int_distribution<uint32_t> dist(min_raw_rdma_port,
@@ -95,6 +141,48 @@ bool validate_request_header(const raw_header& hdr) noexcept {
         return false;
     }
     return true;
+}
+
+uint32_t raw_status_from_errno(const int state) noexcept {
+    switch (state) {
+    case err::E_SUCCESS:
+        return raw_status_ok;
+    case err::E_INVAL:
+        return raw_status_invalid_request;
+    case err::RAFT_ERR_NOT_FOUND_PG:
+    case err::ERR_NOT_FOUND_POOL:
+        return raw_status_not_found;
+    case err::RAFT_ERR_NOT_FOUND_LEADER:
+    case err::RAFT_ERR_NO_CONNECTED:
+    case err::RAFT_ERR_MEMBERSHIP_CHANGING:
+    case err::RAFT_ERR_SNAPSHOT_WAIT_APPLY:
+        return raw_status_retry_later;
+    case err::RAFT_ERR_NOT_LEADER:
+        return raw_status_not_leader;
+    case err::RAFT_ERR_PG_INITIALIZING:
+    case err::OSD_STARTING:
+        return raw_status_pg_initializing;
+    case err::OSD_DOWN:
+        return raw_status_osd_down;
+    default:
+        return raw_status_internal_error;
+    }
+}
+
+raw_header make_response_header(const raw_header& req,
+                                uint32_t status,
+                                uint32_t body_len) noexcept {
+    raw_header rsp{};
+    rsp.magic = htole32(raw_magic);
+    rsp.version_major = raw_version_major;
+    rsp.version_minor = raw_version_minor;
+    rsp.service = req.service;
+    rsp.opcode = req.opcode;
+    rsp.flags = htole32(raw_flag_response);
+    rsp.seq = req.seq;
+    rsp.status = htole32(status);
+    rsp.body_len = htole32(body_len);
+    return rsp;
 }
 
 } // namespace
@@ -277,6 +365,80 @@ bool osd_raw_rdma_server::post_send(connection_context* conn,
     return true;
 }
 
+bool osd_raw_rdma_server::send_response(connection_context* conn,
+                                        const void* req_hdr,
+                                        uint32_t status,
+                                        const void* body,
+                                        uint32_t body_len) noexcept {
+    if (!conn || !req_hdr) {
+        return false;
+    }
+    if (body_len > 0 && !body) {
+        return false;
+    }
+    if (!ensure_send_mr(conn)) {
+        return false;
+    }
+    if (sizeof(raw_header) + body_len > conn->send_buf_len) {
+        SPDK_ERRLOG("raw RDMA: response too large body=%u\n", body_len);
+        return false;
+    }
+
+    raw_header req{};
+    std::memcpy(&req, req_hdr, sizeof(req));
+    const raw_header rsp = make_response_header(req, status, body_len);
+    std::memcpy(conn->send_buf, &rsp, sizeof(rsp));
+    if (body_len > 0) {
+        std::memcpy(static_cast<uint8_t*>(conn->send_buf) + sizeof(rsp),
+                    body, body_len);
+    }
+    return post_send(conn, sizeof(rsp) + body_len);
+}
+
+void osd_raw_rdma_server::dispatch_get_leader(connection_context* conn,
+                                              const void* req_hdr,
+                                              const uint8_t* body,
+                                              uint32_t body_len) noexcept {
+    if (!conn || !req_hdr || !_service) {
+        return;
+    }
+    if (body_len != sizeof(raw_get_leader_req) || !body) {
+        send_response(conn, req_hdr, raw_status_invalid_request, nullptr, 0);
+        return;
+    }
+
+    raw_get_leader_req req{};
+    std::memcpy(&req, body, sizeof(req));
+    auto leader = _service->resolve_pg_leader(le32toh(req.pool_id),
+                                              le32toh(req.pg_id), true);
+    if (leader.state != err::E_SUCCESS) {
+        send_response(conn, req_hdr,
+                      raw_status_from_errno(leader.state), nullptr, 0);
+        return;
+    }
+    if (leader.leader_port <= 0 ||
+        leader.leader_port > std::numeric_limits<uint16_t>::max() ||
+        leader.leader_id < 0 ||
+        leader.leader_addr.size() > std::numeric_limits<uint16_t>::max()) {
+        send_response(conn, req_hdr, raw_status_internal_error, nullptr, 0);
+        return;
+    }
+
+    raw_get_leader_rsp rsp{};
+    rsp.leader_id = htole32(static_cast<uint32_t>(leader.leader_id));
+    rsp.leader_port = htole16(static_cast<uint16_t>(leader.leader_port));
+    rsp.address_len = htole16(static_cast<uint16_t>(leader.leader_addr.size()));
+
+    std::vector<uint8_t> out(sizeof(rsp) + leader.leader_addr.size());
+    std::memcpy(out.data(), &rsp, sizeof(rsp));
+    if (!leader.leader_addr.empty()) {
+        std::memcpy(out.data() + sizeof(rsp), leader.leader_addr.data(),
+                    leader.leader_addr.size());
+    }
+    send_response(conn, req_hdr, raw_status_ok, out.data(),
+                  static_cast<uint32_t>(out.size()));
+}
+
 void osd_raw_rdma_server::handle_recv_complete(connection_context* conn,
                                                uint32_t byte_len) noexcept {
     if (!conn || !conn->recv_buf || byte_len < sizeof(raw_header)) {
@@ -289,6 +451,8 @@ void osd_raw_rdma_server::handle_recv_complete(connection_context* conn,
     if (!validate_request_header(hdr)) {
         SPDK_ERRLOG("raw RDMA: invalid request header op=%u body_len=%u\n",
                     hdr.opcode, le32toh(hdr.body_len));
+        /* Best-effort error response if buffer looks like a header. */
+        send_response(conn, &hdr, raw_status_invalid_request, nullptr, 0);
         return;
     }
 
@@ -296,14 +460,26 @@ void osd_raw_rdma_server::handle_recv_complete(connection_context* conn,
     if (sizeof(raw_header) + body_len > byte_len) {
         SPDK_ERRLOG("raw RDMA: truncated body need=%zu got=%u\n",
                     sizeof(raw_header) + body_len, byte_len);
+        send_response(conn, &hdr, raw_status_invalid_request, nullptr, 0);
         return;
     }
 
-    /* Opcode dispatch + response SEND land in follow-up commits. */
-    (void)body_len;
-    SPDK_DEBUGLOG(osd, "raw RDMA RECV seq=%llu op=%u body=%u\n",
-                  static_cast<unsigned long long>(le64toh(hdr.seq)),
-                  hdr.opcode, body_len);
+    const auto* body = static_cast<const uint8_t*>(conn->recv_buf) +
+                       sizeof(raw_header);
+    switch (hdr.opcode) {
+    case raw_op_get_leader:
+        dispatch_get_leader(conn, &hdr, body, body_len);
+        break;
+    case raw_op_read_object:
+    case raw_op_write_object:
+    case raw_op_delete_object:
+        /* Async object I/O dispatch lands in follow-up commits. */
+        send_response(conn, &hdr, raw_status_internal_error, nullptr, 0);
+        break;
+    default:
+        send_response(conn, &hdr, raw_status_invalid_request, nullptr, 0);
+        break;
+    }
 }
 
 void osd_raw_rdma_server::poll_cq(connection_context* conn) noexcept {

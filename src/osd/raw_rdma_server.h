@@ -74,6 +74,15 @@ private:
     bool post_recv(connection_context* conn) noexcept;
     bool ensure_send_mr(connection_context* conn) noexcept;
     bool post_send(connection_context* conn, size_t length) noexcept;
+    bool send_response(connection_context* conn,
+                       const void* req_hdr,
+                       uint32_t status,
+                       const void* body,
+                       uint32_t body_len) noexcept;
+    void dispatch_get_leader(connection_context* conn,
+                             const void* req_hdr,
+                             const uint8_t* body,
+                             uint32_t body_len) noexcept;
     void handle_recv_complete(connection_context* conn, uint32_t byte_len) noexcept;
     void poll_cq(connection_context* conn) noexcept;
     void destroy_connection(connection_context* conn) noexcept;
