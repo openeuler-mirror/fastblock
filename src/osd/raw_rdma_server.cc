@@ -941,7 +941,9 @@ bool osd_raw_rdma_server::handle_connect_request(rdma_cm_id* id,
         return false;
     }
 
-    conn->cq = ::ibv_create_cq(id->verbs, 64, nullptr, nullptr, 0);
+    /* CQ depth covers multi-slot RECV + SEND queue + margin. */
+    constexpr int cq_depth = 64;
+    conn->cq = ::ibv_create_cq(id->verbs, cq_depth, nullptr, nullptr, 0);
     if (!conn->cq) {
         SPDK_ERRLOG("raw RDMA: ibv_create_cq failed: %s\n", std::strerror(errno));
         destroy_connection(conn.get());
@@ -953,7 +955,12 @@ bool osd_raw_rdma_server::handle_connect_request(rdma_cm_id* id,
     qp_attr.recv_cq = conn->cq;
     qp_attr.qp_type = IBV_QPT_RC;
     qp_attr.cap.max_send_wr = 32;
-    qp_attr.cap.max_recv_wr = 32;
+    /* At least max_recv_slots outstanding RECV WRs per connection. */
+    qp_attr.cap.max_recv_wr =
+      static_cast<uint32_t>(connection_context::max_recv_slots) + 4U;
+    if (qp_attr.cap.max_recv_wr < 8) {
+        qp_attr.cap.max_recv_wr = 8;
+    }
     qp_attr.cap.max_send_sge = 1;
     qp_attr.cap.max_recv_sge = 1;
     qp_attr.sq_sig_all = 0;
