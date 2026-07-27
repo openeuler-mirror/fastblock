@@ -285,3 +285,10 @@ void kfastblock_rdma_conn_disconnect(struct kfastblock_rdma_conn *conn)
 	conn->peer_port = 0;
 	conn->peer_addr[0] = '\0';
 }
+
+bool kfastblock_rdma_conn_is_connected(const struct kfastblock_rdma_conn *conn)
+{
+	return conn && conn->connected &&
+	       conn->state == KFASTBLOCK_RDMA_CONN_ESTABLISHED &&
+	       conn->cm_id;
+}
