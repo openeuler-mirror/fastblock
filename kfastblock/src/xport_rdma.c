@@ -246,6 +246,33 @@ static int kfastblock_rdma_cm_event_handler(struct rdma_cm_id *cm_id,
 
 	conn->cm_event = event->event;
 	conn->cm_event_status = event->status;
+
+	/*
+	 * Async disconnect / device removal while ESTABLISHED: mark error so
+	 * in-flight poll_one exits with -ENOTCONN instead of hanging on CQ.
+	 */
+	switch (event->event) {
+	case RDMA_CM_EVENT_DISCONNECTED:
+	case RDMA_CM_EVENT_DEVICE_REMOVAL:
+	case RDMA_CM_EVENT_ADDR_CHANGE:
+	case RDMA_CM_EVENT_TIMEWAIT_EXIT:
+		if (conn->state == KFASTBLOCK_RDMA_CONN_ESTABLISHED ||
+		    conn->state == KFASTBLOCK_RDMA_CONN_CONNECTING) {
+			conn->connected = false;
+			conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
+			conn->last_error = event->status ? event->status
+							 : -ECONNRESET;
+		}
+		break;
+	case RDMA_CM_EVENT_REJECTED:
+	case RDMA_CM_EVENT_UNREACHABLE:
+	case RDMA_CM_EVENT_CONNECT_ERROR:
+		conn->last_error = event->status ? event->status : -ECONNREFUSED;
+		break;
+	default:
+		break;
+	}
+
 	complete(&conn->cm_done);
 	return 0;
 }
