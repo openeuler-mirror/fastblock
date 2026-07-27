@@ -827,6 +827,8 @@ int main(int argc, char *argv[])
 		    strcmp(operation, "set-refresh-interval") == 0 ||
 		    strcmp(operation, "set-image-refresh-interval") == 0)
 			strncpy(command_str, cfg.value, sizeof(command_str) - 1);
+		else if (strcmp(operation, "flush-rdma-cache") == 0)
+			strncpy(command_str, "1", sizeof(command_str) - 1);
 		else
 			strncpy(command_str, cfg.scope ? cfg.scope : "all",
 				sizeof(command_str) - 1);
