@@ -1140,10 +1140,24 @@ void osd_raw_rdma_server::run_listener(uint32_t shard_id) noexcept {
 bool osd_raw_rdma_server::start(const std::string& bind_address,
                                 uint32_t shard_count) {
     if (_running.load(std::memory_order_acquire)) {
+        SPDK_NOTICELOG("raw RDMA server already running shards=%u\n",
+                       static_cast<unsigned>(this->shard_count()));
         return true;
     }
     if (!_service || bind_address.empty() || shard_count == 0) {
+        SPDK_ERRLOG("raw RDMA start rejected: service=%p bind=%s shards=%u\n",
+                    static_cast<void*>(_service),
+                    bind_address.empty() ? "(empty)" : bind_address.c_str(),
+                    shard_count);
         return false;
+    }
+    {
+        sockaddr_in probe{};
+        if (::inet_pton(AF_INET, bind_address.c_str(), &probe.sin_addr) != 1) {
+            SPDK_ERRLOG("raw RDMA start rejected: invalid IPv4 bind address %s\n",
+                        bind_address.c_str());
+            return false;
+        }
     }
 
     _bind_address = bind_address;
@@ -1251,6 +1265,19 @@ void osd_raw_rdma_server::get_io_totals(uint64_t* recv_total,
     }
 }
 
+std::vector<uint16_t> osd_raw_rdma_server::listen_ports() const {
+    std::vector<uint16_t> ports;
+    ports.reserve(_listeners.size());
+    for (const auto& listener : _listeners) {
+        ports.push_back(listener ? listener->port : 0);
+    }
+    return ports;
+}
+
+size_t osd_raw_rdma_server::max_connection_limit() const noexcept {
+    return max_connections;
+}
+
 std::string osd_raw_rdma_server::ports_string() const {
     std::string ports;
     for (size_t i = 0; i < _listeners.size(); ++i) {
@@ -1260,4 +1287,17 @@ std::string osd_raw_rdma_server::ports_string() const {
         ports += std::to_string(_listeners[i] ? _listeners[i]->port : 0);
     }
     return ports;
+}
+
+raw_rdma_server_stats osd_raw_rdma_server::collect_stats() const {
+    raw_rdma_server_stats st{};
+    st.running = is_running();
+    st.shard_count = shard_count();
+    st.connection_count = connection_count();
+    get_io_totals(&st.recv_total, &st.send_total, &st.error_total);
+    st.listen_ports.reserve(_listeners.size());
+    for (size_t i = 0; i < _listeners.size(); ++i) {
+        st.listen_ports.push_back(_listeners[i] ? _listeners[i]->port : 0);
+    }
+    return st;
 }

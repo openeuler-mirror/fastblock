@@ -10,6 +10,8 @@
  */
 #pragma once
 
+#include "raw_rdma_stats.h"
+
 #include <atomic>
 #include <cstdint>
 #include <deque>
@@ -47,10 +49,14 @@ public:
     size_t connection_count(uint32_t shard_id) const noexcept;
     /* Comma-separated listen ports for all shards (empty if stopped). */
     std::string ports_string() const;
+    raw_rdma_server_stats collect_stats() const;
     /* Aggregate per-connection counters across all live connections. */
     void get_io_totals(uint64_t* recv_total,
                        uint64_t* send_total,
                        uint64_t* error_total) const noexcept;
+    /* Snapshot of per-shard listen ports (0 if shard missing). */
+    std::vector<uint16_t> listen_ports() const;
+    size_t max_connection_limit() const noexcept;
 
 private:
     struct listener_context {
