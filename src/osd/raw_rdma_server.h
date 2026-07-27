@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -65,6 +66,9 @@ private:
         size_t send_buf_len{0};
         ibv_mr* send_mr{nullptr};
         bool send_in_flight{false};
+        /* Serialized responses waiting for SEND slot (async object I/O). */
+        std::mutex send_mu{};
+        std::deque<std::vector<uint8_t>> send_queue{};
     };
 
     bool start_listener(uint32_t shard_id);
@@ -79,10 +83,25 @@ private:
                        uint32_t status,
                        const void* body,
                        uint32_t body_len) noexcept;
+    bool enqueue_response_frame(connection_context* conn,
+                                std::vector<uint8_t> frame) noexcept;
+    void try_flush_send_queue(connection_context* conn) noexcept;
     void dispatch_get_leader(connection_context* conn,
                              const void* req_hdr,
                              const uint8_t* body,
                              uint32_t body_len) noexcept;
+    void dispatch_read(connection_context* conn,
+                       const void* req_hdr,
+                       const uint8_t* body,
+                       uint32_t body_len) noexcept;
+    void dispatch_write(connection_context* conn,
+                        const void* req_hdr,
+                        const uint8_t* body,
+                        uint32_t body_len) noexcept;
+    void dispatch_delete(connection_context* conn,
+                         const void* req_hdr,
+                         const uint8_t* body,
+                         uint32_t body_len) noexcept;
     void handle_recv_complete(connection_context* conn, uint32_t byte_len) noexcept;
     void poll_cq(connection_context* conn) noexcept;
     void destroy_connection(connection_context* conn) noexcept;
