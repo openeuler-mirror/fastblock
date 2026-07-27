@@ -1008,6 +1008,11 @@ static void osd_stop(void *arg) noexcept {
     }
     case stop_state::raw_server: {
         cur_stop_state = stop_state::monitor_client;
+        if (global_raw_rdma_server) {
+            SPDK_NOTICELOG("Stopping the raw RDMA server\n");
+            global_raw_rdma_server->stop();
+            global_raw_rdma_server.reset();
+        }
         if (global_raw_tcp_server) {
             SPDK_NOTICELOG("Stopping the raw tcp server\n");
             global_raw_tcp_server->stop();
@@ -1072,6 +1077,7 @@ static void osd_stop(void *arg) noexcept {
         if (global_osd_service) {
             global_osd_service->stop();
         }
+        global_raw_rdma_server.reset();
         global_raw_tcp_server.reset();
         ::storage_fini(on_blob_closed, nullptr);
         return;
