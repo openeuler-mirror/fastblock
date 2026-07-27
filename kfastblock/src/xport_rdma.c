@@ -345,10 +345,19 @@ static int kfastblock_rdma_wait_cm_event(struct kfastblock_rdma_conn *conn,
 {
 	unsigned long timeout = msecs_to_jiffies(kfastblock_rdma_timeout_ms_or_default(kfastblock_rdma_cm_timeout_ms, 3000));
 
-	if (!wait_for_completion_timeout(&conn->cm_done, timeout))
+	if (!conn)
+		return -EINVAL;
+	if (!wait_for_completion_timeout(&conn->cm_done, timeout)) {
+		conn->last_error = -ETIMEDOUT;
 		return -ETIMEDOUT;
-	if (conn->cm_event != expect)
-		return conn->cm_event_status ? conn->cm_event_status : -ECONNREFUSED;
+	}
+	if (conn->cm_event != expect) {
+		int err = conn->cm_event_status ? conn->cm_event_status
+						: -ECONNREFUSED;
+
+		conn->last_error = err;
+		return err;
+	}
 	return 0;
 }
 
