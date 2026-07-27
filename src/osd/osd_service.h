@@ -102,6 +102,8 @@ public:
     /* Resolve leader address using raw RDMA data-plane port. */
     leader_endpoint resolve_pg_leader_raw_rdma(uint64_t pool_id,
                                               uint64_t pg_id) const;
+    /* True when monitor client is attached (needed for leader lookup). */
+    bool has_monitor_client() const noexcept;
     void process_get_leader(google::protobuf::RpcController *controller,
                             const osd::pg_leader_request *request,
                             osd::pg_leader_response *response,
