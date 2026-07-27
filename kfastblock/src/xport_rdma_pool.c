@@ -1,10 +1,24 @@
 #include <linux/errno.h>
 #include <linux/jiffies.h>
+#include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 
 #include "kfastblock/xport_rdma.h"
 #include "kfastblock/xport_rdma_pool.h"
+
+/* Aggregate across all pools; exposed as module params for quick sysfs peek. */
+static unsigned long kfastblock_rdma_pool_hit_total;
+static unsigned long kfastblock_rdma_pool_miss_total;
+static unsigned long kfastblock_rdma_pool_evict_total;
+
+module_param_named(rdma_pool_hit, kfastblock_rdma_pool_hit_total, ulong, 0444);
+MODULE_PARM_DESC(rdma_pool_hit, "RDMA pool get warm-hit total");
+module_param_named(rdma_pool_miss, kfastblock_rdma_pool_miss_total, ulong, 0444);
+MODULE_PARM_DESC(rdma_pool_miss, "RDMA pool get miss/cold-connect total");
+module_param_named(rdma_pool_evict, kfastblock_rdma_pool_evict_total, ulong, 0444);
+MODULE_PARM_DESC(rdma_pool_evict, "RDMA pool idle LRU eviction total");
 
 const char *kfastblock_rdma_pool_slot_state_name(u8 state)
 {
@@ -214,12 +228,14 @@ kfastblock_rdma_pool_get(struct kfastblock_rdma_pool *pool,
 		slot->last_error = 0;
 		pool->connect_ok++;
 		pool->get_misses++;
+		kfastblock_rdma_pool_miss_total++;
 		conn = slot->conn;
 		mutex_unlock(&slot->lock);
 		return conn;
 	}
 
 	pool->get_misses++;
+	kfastblock_rdma_pool_miss_total++;
 	return NULL;
 }
 
@@ -261,6 +277,7 @@ static void kfastblock_rdma_pool_evict_idle_lru(
 	if (victim->state == KFASTBLOCK_RDMA_POOL_SLOT_IDLE) {
 		kfastblock_rdma_pool_slot_disconnect_locked(victim);
 		pool->idle_evictions++;
+		kfastblock_rdma_pool_evict_total++;
 	}
 	mutex_unlock(&victim->lock);
 }
@@ -357,6 +374,7 @@ kfastblock_rdma_pool_try_get(struct kfastblock_rdma_pool *pool,
 		slot->reuse_hits++;
 		slot->last_use_jiffies = jiffies;
 		pool->get_hits++;
+		kfastblock_rdma_pool_hit_total++;
 		conn = slot->conn;
 		mutex_unlock(&slot->lock);
 		return conn;
