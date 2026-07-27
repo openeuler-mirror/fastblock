@@ -11,6 +11,7 @@
 #include <rdma/ib_verbs.h>
 #include <rdma/rdma_cm.h>
 
+#include "kfastblock/rawproto.h"
 #include "kfastblock/xport_rdma.h"
 
 #define KFASTBLOCK_RDMA_CM_TIMEOUT_MS 3000
@@ -591,4 +592,60 @@ int kfastblock_rdma_conn_recv(struct kfastblock_rdma_conn *conn,
 			return ret;
 		return (int)got;
 	}
+}
+
+int kfastblock_rdma_conn_exchange(struct kfastblock_rdma_conn *conn,
+				  const void *req, u32 req_len,
+				  void *rsp, u32 rsp_cap, u64 expect_seq)
+{
+	const struct kfastblock_raw_header *rhdr;
+	struct kfastblock_raw_header *shdr;
+	int ret;
+
+	if (!kfastblock_rdma_conn_is_connected(conn) || !req || !req_len ||
+	    !rsp || !rsp_cap)
+		return -EINVAL;
+	if (req_len < sizeof(struct kfastblock_raw_header))
+		return -EINVAL;
+
+	rhdr = req;
+	if (le64_to_cpu(rhdr->seq) != expect_seq)
+		return -EINVAL;
+
+	ret = kfastblock_rdma_conn_send(conn, req, req_len);
+	if (ret)
+		return ret;
+
+	ret = kfastblock_rdma_conn_recv(conn, rsp, rsp_cap);
+	if (ret < 0)
+		return ret;
+	if ((u32)ret < sizeof(struct kfastblock_raw_header))
+		return -EPROTO;
+
+	shdr = rsp;
+	if (le32_to_cpu(shdr->magic) != KFASTBLOCK_RAW_MAGIC)
+		return -EPROTO;
+	if (!(le32_to_cpu(shdr->flags) & KFASTBLOCK_RAW_FLAG_RESPONSE))
+		return -EPROTO;
+	if (le64_to_cpu(shdr->seq) != expect_seq)
+		return -EPROTO;
+	if (shdr->opcode != rhdr->opcode || shdr->service != rhdr->service)
+		return -EPROTO;
+
+	return ret;
+}
+
+const char *kfastblock_rdma_conn_peer_addr(const struct kfastblock_rdma_conn *conn)
+{
+	return conn ? conn->peer_addr : "";
+}
+
+u16 kfastblock_rdma_conn_peer_port(const struct kfastblock_rdma_conn *conn)
+{
+	return conn ? conn->peer_port : 0;
+}
+
+int kfastblock_rdma_conn_last_error(const struct kfastblock_rdma_conn *conn)
+{
+	return conn ? conn->last_error : -EINVAL;
 }
