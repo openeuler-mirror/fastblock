@@ -1,5 +1,7 @@
 #include <linux/completion.h>
 #include <linux/errno.h>
+#include <linux/in.h>
+#include <linux/inet.h>
 #include <linux/slab.h>
 #include <net/net_namespace.h>
 
@@ -7,6 +9,8 @@
 #include <rdma/rdma_cm.h>
 
 #include "kfastblock/xport_rdma.h"
+
+#define KFASTBLOCK_RDMA_CM_TIMEOUT_MS 3000
 
 enum kfastblock_rdma_conn_state {
 	KFASTBLOCK_RDMA_CONN_IDLE = 0,
@@ -45,6 +49,32 @@ static int kfastblock_rdma_cm_event_handler(struct rdma_cm_id *cm_id,
 	conn->cm_event = event->event;
 	conn->cm_event_status = event->status;
 	complete(&conn->cm_done);
+	return 0;
+}
+
+static int kfastblock_rdma_build_dst_addr(const char *host, u16 port,
+					  struct sockaddr_in *dst)
+{
+	if (!host || !port || !dst)
+		return -EINVAL;
+
+	memset(dst, 0, sizeof(*dst));
+	dst->sin_family = AF_INET;
+	dst->sin_port = htons(port);
+	if (in4_pton(host, -1, (u8 *)&dst->sin_addr.s_addr, -1, NULL) != 1)
+		return -EINVAL;
+	return 0;
+}
+
+static int kfastblock_rdma_wait_cm_event(struct kfastblock_rdma_conn *conn,
+					 enum rdma_cm_event_type expect)
+{
+	unsigned long timeout = msecs_to_jiffies(KFASTBLOCK_RDMA_CM_TIMEOUT_MS);
+
+	if (!wait_for_completion_timeout(&conn->cm_done, timeout))
+		return -ETIMEDOUT;
+	if (conn->cm_event != expect)
+		return conn->cm_event_status ? conn->cm_event_status : -ECONNREFUSED;
 	return 0;
 }
 
@@ -95,8 +125,38 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 		return conn->last_error;
 	}
 
-	/* Address resolve lands in follow-up commits. */
+	{
+		struct sockaddr_in dst;
+		int ret;
+
+		ret = kfastblock_rdma_build_dst_addr(conn->peer_addr,
+						     conn->peer_port, &dst);
+		if (ret) {
+			conn->last_error = ret;
+			goto err_destroy_id;
+		}
+
+		reinit_completion(&conn->cm_done);
+		conn->state = KFASTBLOCK_RDMA_CONN_RESOLVING_ADDR;
+		ret = rdma_resolve_addr(conn->cm_id, NULL,
+					(struct sockaddr *)&dst,
+					KFASTBLOCK_RDMA_CM_TIMEOUT_MS);
+		if (ret) {
+			conn->last_error = ret;
+			goto err_destroy_id;
+		}
+
+		ret = kfastblock_rdma_wait_cm_event(
+			conn, RDMA_CM_EVENT_ADDR_RESOLVED);
+		if (ret) {
+			conn->last_error = ret;
+			goto err_destroy_id;
+		}
+	}
+
+	/* Route resolve lands in follow-up commits. */
 	conn->last_error = -EOPNOTSUPP;
+err_destroy_id:
 	conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
 	rdma_destroy_id(conn->cm_id);
 	conn->cm_id = NULL;
