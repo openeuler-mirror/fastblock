@@ -125,4 +125,25 @@ bool kfastblock_fault_injection_armed(
 	struct kfastblock_fault_injection_state *state,
 	u32 site);
 
+/* True when force_tcp is armed (enabled+mask+budget) without consuming. */
+static inline bool kfastblock_fault_injection_force_tcp_armed(
+	struct kfastblock_fault_injection_state *state)
+{
+	return kfastblock_fault_injection_armed(state,
+						KFASTBLOCK_FAULT_FORCE_TCP);
+}
+
+/* True when any RDMA site is armed. */
+static inline bool kfastblock_fault_injection_rdma_armed(
+	struct kfastblock_fault_injection_state *state)
+{
+	if (!state)
+		return false;
+	return kfastblock_fault_injection_armed(state,
+						KFASTBLOCK_FAULT_RDMA_CONNECT) ||
+	       kfastblock_fault_injection_armed(state,
+						KFASTBLOCK_FAULT_RDMA_EXCHANGE) ||
+	       kfastblock_fault_injection_force_tcp_armed(state);
+}
+
 #endif
