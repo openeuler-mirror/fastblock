@@ -135,4 +135,7 @@ bool kfastblock_rdma_pool_invalidate_leader(
 u32 kfastblock_rdma_pool_set_max_idle(struct kfastblock_rdma_pool *pool,
 				      u32 max_idle);
 
+/* Count IDLE slots with a usable connected conn (ready for try_get). */
+u32 kfastblock_rdma_pool_ready_count(struct kfastblock_rdma_pool *pool);
+
 #endif
