@@ -121,6 +121,9 @@ private:
     bool enqueue_response_frame(connection_context* conn,
                                 std::vector<uint8_t> frame) noexcept;
     void try_flush_send_queue(connection_context* conn) noexcept;
+    /* Drain outstanding SEND WRs with a bounded wait before destroy. */
+    void drain_send_queue(connection_context* conn,
+                          int timeout_ms) noexcept;
     void dispatch_get_leader(connection_context* conn,
                              const void* req_hdr,
                              const uint8_t* body,
