@@ -378,8 +378,9 @@ kfastblock_rdma_pool_try_get(struct kfastblock_rdma_pool *pool,
 			continue;
 		}
 		/* Broken idle conn: invalidate so get() can reconnect. */
-		if (!slot->conn || !kfastblock_rdma_conn_is_connected(slot->conn) ||
-		    kfastblock_rdma_conn_last_error(slot->conn)) {
+		if (!slot->conn ||
+		    !kfastblock_rdma_conn_is_usable(slot->conn) ||
+		    !kfastblock_rdma_conn_matches_leader(slot->conn, leader)) {
 			kfastblock_rdma_pool_slot_disconnect_locked(slot);
 			slot->state = KFASTBLOCK_RDMA_POOL_SLOT_DEAD;
 			slot->failure_count++;
