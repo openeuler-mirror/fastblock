@@ -920,6 +920,12 @@ bool osd_raw_rdma_server::handle_connect_request(rdma_cm_id* id,
     const std::string peer = conn->peer_address;
     {
         std::lock_guard<std::mutex> lock(_connections_mutex);
+        if (_connections.size() >= max_connections) {
+            SPDK_ERRLOG("raw RDMA: connections full limit=%zu peer=%s\n",
+                        max_connections, peer.empty() ? "?" : peer.c_str());
+            destroy_connection(conn.get());
+            return false;
+        }
         _connections.emplace_back(std::move(conn));
     }
     SPDK_NOTICELOG("raw RDMA shard %u accepted connection request peer=%s\n",

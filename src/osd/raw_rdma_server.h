@@ -121,4 +121,5 @@ private:
     std::vector<std::unique_ptr<listener_context>> _listeners{};
     std::mutex _connections_mutex{};
     std::vector<std::shared_ptr<connection_context>> _connections{};
+    static constexpr size_t max_connections{256};
 };
