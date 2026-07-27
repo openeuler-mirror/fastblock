@@ -249,4 +249,21 @@ void kfastblock_rdma_conn_pool_release(struct kfastblock_cached_rdma *cached,
 				       int io_ret);
 u64 kfastblock_rdma_conn_slot_next_seq(struct kfastblock_cached_rdma *cached);
 
+/* Snapshot classic fields + fill rdma_ready_slots from connected RDMA slots. */
+void kfastblock_rdma_conn_pool_snapshot(struct kfastblock_cached_rdma *slots,
+					u32 nr_slots,
+					struct kfastblock_conn_pool_snapshot *snapshot);
+
+/*
+ * Overlay RDMA ready count onto a TCP-oriented pool snapshot for dual-stack
+ * diagnostics. Leaves other fields unchanged.
+ */
+static inline void kfastblock_conn_pool_snapshot_set_rdma_ready(
+	struct kfastblock_conn_pool_snapshot *snapshot, u32 rdma_ready)
+{
+	if (!snapshot)
+		return;
+	snapshot->rdma_ready_slots = rdma_ready;
+}
+
 #endif

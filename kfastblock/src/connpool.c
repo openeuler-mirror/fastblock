@@ -1073,3 +1073,35 @@ u64 kfastblock_rdma_conn_slot_next_seq(struct kfastblock_cached_rdma *cached)
 		cached->next_seq = 1;
 	return cached->next_seq++;
 }
+
+void kfastblock_rdma_conn_pool_snapshot(struct kfastblock_cached_rdma *slots,
+					u32 nr_slots,
+					struct kfastblock_conn_pool_snapshot *snapshot)
+{
+	u32 i;
+
+	kfastblock_conn_pool_snapshot_init(snapshot, nr_slots);
+	if (!slots || !snapshot)
+		return;
+
+	for (i = 0; i < nr_slots; ++i) {
+		struct kfastblock_cached_rdma *cached = &slots[i];
+		bool active;
+
+		mutex_lock(&cached->lock);
+		active = cached->conn &&
+			 kfastblock_rdma_conn_is_connected(cached->conn);
+		kfastblock_conn_pool_account_locked(
+			snapshot, cached->state,
+			active ? (struct socket *)1UL : NULL,
+			50 /* neutral health for RDMA slots */,
+			cached->connect_attempts, cached->reuse_hits,
+			cached->success_count, cached->failure_count,
+			cached->last_use_jiffies);
+		mutex_unlock(&cached->lock);
+	}
+	kfastblock_conn_pool_finalize_average(snapshot);
+	/* RDMA pool: ready means connected RDMA, not TCP. */
+	snapshot->rdma_ready_slots = snapshot->ready_slots;
+	snapshot->tcp_ready_slots = 0;
+}
