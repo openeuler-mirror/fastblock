@@ -14,7 +14,6 @@
 #define KFASTBLOCK_MAX_IO_BYTES (4U * 1024U * 1024U)
 #define KFASTBLOCK_DEFAULT_MONITOR_PORT 3334U
 #define KFASTBLOCK_DEFAULT_SOCKET_TIMEOUT_MS 3000U
-#define KFASTBLOCK_DEFAULT_TRANSPORT_MAX_ACTIVE 32U
 #define KFASTBLOCK_DEFAULT_OBJECT_DISPATCH_WINDOW 8U
 #define KFASTBLOCK_DEFAULT_REFRESH_INTERVAL_MS 3000U
 #define KFASTBLOCK_DEFAULT_IMAGE_REFRESH_INTERVAL_MS 30000U
@@ -22,11 +21,12 @@
 /*
  * OSD data-plane transport preference for kfastblock.
  * Monitor control-plane stays raw TCP; only kernel client <-> OSD may use RDMA.
+ * Default AUTO: prefer RDMA when map has rdma_port, else TCP.
  */
 #define KFASTBLOCK_OSD_TRANSPORT_TCP 0U
 #define KFASTBLOCK_OSD_TRANSPORT_RDMA 1U
 #define KFASTBLOCK_OSD_TRANSPORT_AUTO 2U
-#define KFASTBLOCK_DEFAULT_OSD_TRANSPORT KFASTBLOCK_OSD_TRANSPORT_TCP
+#define KFASTBLOCK_DEFAULT_OSD_TRANSPORT KFASTBLOCK_OSD_TRANSPORT_AUTO
 /* Upper bound for module_param / ioctl validation of osd_transport. */
 #define KFASTBLOCK_OSD_TRANSPORT_MAX KFASTBLOCK_OSD_TRANSPORT_AUTO
 /* Default number of cached raw RDMA connections per volume (connpool). */
