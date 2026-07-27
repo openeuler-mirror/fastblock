@@ -3458,10 +3458,27 @@ static int kfastblock_transport_drive_leader_query_target(
 	if (ctx->ret)
 		return ctx->ret;
 
+	/* force_tcp: skip RDMA GET_LEADER so AUTO fallback is testable. */
+	if (kfastblock_fault_injection_should_fail(
+		    &ctx->vol->fault_injection, KFASTBLOCK_FAULT_FORCE_TCP,
+		    &ctx->ret)) {
+		kfastblock_volume_account_fault_injection(
+			ctx->vol, KFASTBLOCK_FAULT_FORCE_TCP, ctx->ret);
+		goto leader_query_tcp;
+	}
+
 	xops = kfastblock_xport_select(ctx->vol->spec.osd_transport,
 				       &ctx->target);
 	if (xops && xops->transport_id == KFASTBLOCK_OSD_TRANSPORT_RDMA &&
 	    ctx->target.rdma_port) {
+		ctx->ret = kfastblock_transport_maybe_inject_fault(
+			ctx->vol, KFASTBLOCK_FAULT_RDMA_CONNECT);
+		if (ctx->ret) {
+			if (ctx->vol->spec.osd_transport ==
+			    KFASTBLOCK_OSD_TRANSPORT_RDMA)
+				return ctx->ret;
+			goto leader_query_tcp;
+		}
 		rdma = kfastblock_rdma_conn_alloc();
 		if (!rdma) {
 			ctx->ret = -ENOMEM;
@@ -3491,6 +3508,8 @@ static int kfastblock_transport_drive_leader_query_target(
 		}
 		return ctx->ret;
 	}
+
+leader_query_tcp:
 
 	ctx->ret = kfastblock_transport_prepare_mux_osd_socket(
 		ctx->vol, &ctx->target, &ctx->cached);
