@@ -19,6 +19,10 @@
 /* Tunable via module params; defaults match previous hardcodes. */
 static unsigned int kfastblock_rdma_cm_timeout_ms = 3000;
 static unsigned int kfastblock_rdma_io_timeout_ms = 5000;
+/* Client outstanding RECV posts; depth>1 pipelines next response. */
+static unsigned int kfastblock_rdma_recv_depth = 2;
+#define KFASTBLOCK_RDMA_RECV_DEPTH_MIN 1U
+#define KFASTBLOCK_RDMA_RECV_DEPTH_MAX 16U
 
 module_param_named(rdma_cm_timeout_ms, kfastblock_rdma_cm_timeout_ms, uint, 0644);
 MODULE_PARM_DESC(rdma_cm_timeout_ms,
@@ -26,6 +30,9 @@ MODULE_PARM_DESC(rdma_cm_timeout_ms,
 module_param_named(rdma_io_timeout_ms, kfastblock_rdma_io_timeout_ms, uint, 0644);
 MODULE_PARM_DESC(rdma_io_timeout_ms,
 		 "RDMA SEND/RECV completion poll timeout in milliseconds");
+module_param_named(rdma_recv_depth, kfastblock_rdma_recv_depth, uint, 0644);
+MODULE_PARM_DESC(rdma_recv_depth,
+		 "Outstanding RDMA RECV posts per connection (1-16)");
 
 static unsigned int kfastblock_rdma_timeout_ms_or_default(unsigned int v,
 							 unsigned int def)
@@ -35,6 +42,17 @@ static unsigned int kfastblock_rdma_timeout_ms_or_default(unsigned int v,
 	if (v > 60000U)
 		return 60000U;
 	return v;
+}
+
+static unsigned int kfastblock_rdma_recv_depth_clamped(void)
+{
+	unsigned int d = kfastblock_rdma_recv_depth;
+
+	if (d < KFASTBLOCK_RDMA_RECV_DEPTH_MIN)
+		return KFASTBLOCK_RDMA_RECV_DEPTH_MIN;
+	if (d > KFASTBLOCK_RDMA_RECV_DEPTH_MAX)
+		return KFASTBLOCK_RDMA_RECV_DEPTH_MAX;
+	return d;
 }
 
 static unsigned long kfastblock_rdma_send_ok;
