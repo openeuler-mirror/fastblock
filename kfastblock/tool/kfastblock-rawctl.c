@@ -721,6 +721,10 @@ static int cmd_get_cluster_map(const struct config *cfg)
 
 	cursor = body + sizeof(rsp);
 	end = body + le32toh(hdr.body_len);
+	{
+	uint32_t rdma_shards = 0;
+	uint32_t total_shards = 0;
+
 	for (i = 0; i < osd_count; ++i) {
 		struct raw_osd_entry_hdr osd_hdr;
 		uint16_t address_len;
@@ -756,28 +760,36 @@ static int cmd_get_cluster_map(const struct config *cfg)
 		       i, le32toh(osd_hdr.osd_id), le32toh(osd_hdr.flags), address,
 		       shard_count);
 		free(address);
+		total_shards += shard_count;
 		for (j = 0; j < shard_count; ++j) {
 			if (have_rdma) {
 				struct raw_osd_shard_entry_v1 shard;
+				uint16_t rdma_port;
 
 				memcpy(&shard, cursor, sizeof(shard));
 				cursor += sizeof(shard);
+				rdma_port = le16toh(shard.rdma_port);
+				if (rdma_port)
+					rdma_shards++;
 				printf("  shard=%u port=%u rdma_port=%u core=%u\n",
 				       le32toh(shard.shard_id),
 				       le16toh(shard.port),
-				       le16toh(shard.rdma_port),
+				       rdma_port,
 				       le16toh(shard.core_id));
 			} else {
 				struct raw_osd_shard_entry shard;
 
 				memcpy(&shard, cursor, sizeof(shard));
 				cursor += sizeof(shard);
-				printf("  shard=%u port=%u core=%u\n",
+				printf("  shard=%u port=%u core=%u (no rdma_port in map)\n",
 				       le32toh(shard.shard_id),
 				       le16toh(shard.port),
 				       le16toh(shard.core_id));
 			}
 		}
+	}
+	printf("rdma_summary: version_minor=%u total_shards=%u rdma_port_set=%u\n",
+	       hdr.version_minor, total_shards, rdma_shards);
 	}
 
 	for (i = 0; i < pg_count; ++i) {
