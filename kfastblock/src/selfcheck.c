@@ -11,10 +11,12 @@
 #include "kfastblock/connpool.h"
 #include "kfastblock/fault.h"
 #include "kfastblock/meta.h"
+#include "kfastblock/rawproto.h"
 #include "kfastblock/request.h"
 #include "kfastblock/scheduler.h"
 #include "kfastblock/selfcheck.h"
 #include "kfastblock/volume.h"
+#include "kfastblock/xport.h"
 
 static void kfastblock_selfcheck_note(struct kfastblock_selfcheck_report *report,
 				      struct seq_file *m,
@@ -416,6 +418,50 @@ static void kfastblock_selfcheck_check_fault_injection(
 				  -EINVAL, detail);
 }
 
+static void kfastblock_selfcheck_check_xport(
+	struct kfastblock_volume *vol,
+	struct kfastblock_selfcheck_report *report,
+	struct seq_file *m)
+{
+	char detail[192];
+	u32 pref;
+	const char *pref_name;
+	const struct kfastblock_xport_ops *ops;
+	bool pref_ok;
+
+	if (!vol)
+		return;
+
+	pref = vol->spec.osd_transport;
+	pref_ok = pref == KFASTBLOCK_OSD_TRANSPORT_TCP ||
+		  pref == KFASTBLOCK_OSD_TRANSPORT_RDMA ||
+		  pref == KFASTBLOCK_OSD_TRANSPORT_AUTO;
+	pref_name = kfastblock_xport_preference_name(pref);
+	scnprintf(detail, sizeof(detail), "osd_transport=%u name=%s",
+		  pref, pref_name);
+	kfastblock_selfcheck_note(report, m, "xport.preference_enum",
+				  pref_ok, false, KFASTBLOCK_SELFCHECK_XPORT,
+				  -EINVAL, detail);
+
+	ops = kfastblock_xport_ops_lookup(pref);
+	scnprintf(detail, sizeof(detail),
+		  "lookup_ops=%s transport_id=%u",
+		  ops ? ops->name : "null",
+		  ops ? ops->transport_id : 0);
+	kfastblock_selfcheck_note(report, m, "xport.ops_lookup",
+				  pref_ok ? ops != NULL : true, false,
+				  KFASTBLOCK_SELFCHECK_XPORT, -ENOENT, detail);
+
+	scnprintf(detail, sizeof(detail), "prefers_rdma=%u",
+		  kfastblock_xport_prefers_rdma(pref) ? 1 : 0);
+	kfastblock_selfcheck_note(report, m, "xport.prefers_rdma_helper",
+				  (pref == KFASTBLOCK_OSD_TRANSPORT_RDMA ||
+				   pref == KFASTBLOCK_OSD_TRANSPORT_AUTO) ==
+				  kfastblock_xport_prefers_rdma(pref),
+				  false, KFASTBLOCK_SELFCHECK_XPORT,
+				  -EINVAL, detail);
+}
+
 static void kfastblock_selfcheck_commit(struct kfastblock_volume *vol,
 					const struct kfastblock_selfcheck_report *report)
 {
@@ -471,6 +517,7 @@ int kfastblock_selfcheck_run(struct kfastblock_volume *vol,
 	kfastblock_selfcheck_check_osd_conn_pool(vol, &local, m);
 	kfastblock_selfcheck_check_monitor_conn_pool(vol, &local, m);
 	kfastblock_selfcheck_check_fault_injection(vol, &local, m);
+	kfastblock_selfcheck_check_xport(vol, &local, m);
 	if (m) {
 		seq_printf(m,
 			   "summary total=%u failed=%u warnings=%u flags=0x%x result_errno=%d\n",
