@@ -670,17 +670,19 @@ static int kfastblock_transport_queue_object_work(
 	if (ret)
 		return ret;
 
+	/*
+	 * Run object IO inline. queue_rq is BLK_MQ_F_BLOCKING, so sleeping
+	 * (connect / mux wait / leader query) is legal here.
+	 *
+	 * Previously we only queue_work() onto g_kfastblock_transport_wq.
+	 * On Soft-RoCE smoke that left bios stuck forever: object work never
+	 * executed (pipeline.queued_objects>0, buffer allocs=0, no kfastblock
+	 * worker stacks), so the request never reached complete_request.
+	 */
 	INIT_WORK(&kf_req->object_works[object_index].work,
 		  kfastblock_transport_object_work);
-	if (!g_kfastblock_transport_wq ||
-	    !queue_work(g_kfastblock_transport_wq,
-			&kf_req->object_works[object_index].work)) {
-		if (kf_req->vol)
-			kfastblock_scheduler_note_dispatch_failure(
-				&kf_req->vol->scheduler);
-		return -EBUSY;
-	}
-
+	kfastblock_transport_object_work(
+		&kf_req->object_works[object_index].work);
 	return 0;
 }
 
@@ -3578,19 +3580,44 @@ static int kfastblock_transport_drive_leader_query_target(
 			ctx->vol, ctx->hint->pg_id, ctx->target.osd_id, ctx->ret);
 		if (!ctx->ret) {
 			/*
-			 * OSD GET_LEADER returns raw TCP leader_port. Resolve
-			 * rdma_port from cluster map (or the RDMA target we
-			 * used); never assume leader_port == rdma_port.
+			 * RDMA-path GET_LEADER (osd_raw_rdma_server) returns
+			 * leader_port as the **raw RDMA** listen port.
+			 * TCP-path GET_LEADER returns raw TCP port.
+			 * Normalize to (port=TCP, rdma_port=RDMA).
 			 */
-			if (!ctx->leader_out->rdma_port)
-				ctx->leader_out->rdma_port =
-					kfastblock_meta_lookup_rdma_port(
+			u16 returned = ctx->leader_out->port;
+			u16 tcp = 0;
+			u16 rdma = 0;
+
+			if (ctx->target.rdma_port &&
+			    returned == ctx->target.rdma_port) {
+				rdma = returned;
+				tcp = ctx->target.port;
+			} else if (ctx->target.port &&
+				   returned == ctx->target.port) {
+				tcp = returned;
+				rdma = ctx->target.rdma_port;
+			} else {
+				/* Ambiguous: map as TCP first, else as RDMA. */
+				rdma = kfastblock_meta_lookup_rdma_port(
+					&ctx->vol->view,
+					ctx->leader_out->osd_id, returned);
+				if (rdma) {
+					tcp = returned;
+				} else {
+					rdma = returned;
+					tcp = kfastblock_meta_lookup_tcp_port(
 						&ctx->vol->view,
 						ctx->leader_out->osd_id,
-						ctx->leader_out->port);
-			if (!ctx->leader_out->rdma_port)
-				ctx->leader_out->rdma_port =
-					ctx->target.rdma_port;
+						returned);
+				}
+			}
+			if (!rdma)
+				rdma = ctx->target.rdma_port;
+			if (!tcp)
+				tcp = ctx->target.port;
+			ctx->leader_out->port = tcp;
+			ctx->leader_out->rdma_port = rdma;
 			ctx->ret = kfastblock_recovery_update_live_pg_leader(
 				ctx->vol, ctx->kf_req->request_pool_id,
 				ctx->hint->pg_id, ctx->leader_out);
@@ -4194,6 +4221,15 @@ static int kfastblock_transport_queue_initial_dispatch(
 	if (ctx->stage != KFASTBLOCK_SUBMIT_STAGE_BATCH_QUEUING)
 		return -EINVAL;
 	if (ctx->batch_queue_index >= ctx->batch.nr_indexes) {
+		/*
+		 * Empty dispatch with outstanding objects would leave
+		 * pending_objects > 0 forever (bio stuck in D state).
+		 * Undo get_device; finish_submit_ctx ends the request.
+		 */
+		if (!ctx->batch.nr_indexes && ctx->kf_req->nr_objects) {
+			ctx->ret = -EAGAIN;
+			put_device(&ctx->kf_req->vol->dev);
+		}
 		ctx->stage = KFASTBLOCK_SUBMIT_STAGE_BATCH_QUEUED;
 		return 0;
 	}
@@ -4201,8 +4237,17 @@ static int kfastblock_transport_queue_initial_dispatch(
 	ctx->ret = kfastblock_transport_queue_object_work(
 		ctx->kf_req, ctx->batch.indexes[ctx->batch_queue_index]);
 	if (ctx->ret) {
-		kfastblock_transport_abort_request(ctx->kf_req, ctx->ret);
-		return 0;
+		/*
+		 * -EALREADY: object no longer QUEUED (e.g. cancelled when a
+		 * sibling finished with first_error). Treat as already handled.
+		 */
+		if (ctx->ret == -EALREADY) {
+			ctx->ret = 0;
+		} else {
+			kfastblock_transport_abort_request(ctx->kf_req,
+							   ctx->ret);
+			return 0;
+		}
 	}
 
 	ctx->batch_queue_index++;
