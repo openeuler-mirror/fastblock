@@ -69,6 +69,9 @@ kfastblock_xport_select(u32 preference,
 {
 	const struct kfastblock_xport_ops *ops;
 
+	if (!kfastblock_xport_preference_valid(preference))
+		preference = KFASTBLOCK_OSD_TRANSPORT_TCP;
+
 	if (preference == KFASTBLOCK_OSD_TRANSPORT_AUTO) {
 		ops = &kfastblock_xport_rdma;
 		if (ops->probe && !ops->probe(leader))
