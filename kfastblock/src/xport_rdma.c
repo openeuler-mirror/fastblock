@@ -152,9 +152,25 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 			conn->last_error = ret;
 			goto err_destroy_id;
 		}
+
+		reinit_completion(&conn->cm_done);
+		conn->state = KFASTBLOCK_RDMA_CONN_RESOLVING_ROUTE;
+		ret = rdma_resolve_route(conn->cm_id,
+					 KFASTBLOCK_RDMA_CM_TIMEOUT_MS);
+		if (ret) {
+			conn->last_error = ret;
+			goto err_destroy_id;
+		}
+
+		ret = kfastblock_rdma_wait_cm_event(
+			conn, RDMA_CM_EVENT_ROUTE_RESOLVED);
+		if (ret) {
+			conn->last_error = ret;
+			goto err_destroy_id;
+		}
 	}
 
-	/* Route resolve lands in follow-up commits. */
+	/* QP setup lands in follow-up commits. */
 	conn->last_error = -EOPNOTSUPP;
 err_destroy_id:
 	conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
