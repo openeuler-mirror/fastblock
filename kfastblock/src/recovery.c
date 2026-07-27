@@ -266,6 +266,45 @@ void kfastblock_recovery_apply_leader_failure(
 	}
 }
 
+void kfastblock_recovery_invalidate_rdma_for_leader(
+	struct kfastblock_volume *vol,
+	const struct kfastblock_leader_info *leader)
+{
+	u32 i;
+
+	if (!vol || !leader || !leader->rdma_port || !leader->address[0])
+		return;
+
+	for (i = 0; i < KFASTBLOCK_MAX_RDMA_CACHE; ++i) {
+		struct kfastblock_cached_rdma *c = &vol->rdma_cache[i];
+
+		mutex_lock(&c->lock);
+		if (c->rdma_port == leader->rdma_port &&
+		    c->osd_id == leader->osd_id &&
+		    strncmp(c->address, leader->address,
+			    KFASTBLOCK_MAX_ADDR_LEN) == 0) {
+			if (c->conn) {
+				kfastblock_rdma_conn_free(c->conn);
+				c->conn = NULL;
+			}
+			c->address[0] = '\0';
+			c->rdma_port = 0;
+			c->osd_id = 0;
+			c->state = KFASTBLOCK_CONN_STATE_EMPTY;
+			c->last_error = -ENOTCONN;
+		}
+		mutex_unlock(&c->lock);
+	}
+}
+
+void kfastblock_recovery_flush_rdma_cache(struct kfastblock_volume *vol)
+{
+	if (!vol)
+		return;
+	kfastblock_rdma_conn_pool_close(vol->rdma_cache,
+					KFASTBLOCK_MAX_RDMA_CACHE);
+}
+
 void kfastblock_recovery_finalize_monitor_socket(
 	struct kfastblock_volume *vol,
 	struct kfastblock_cached_monitor_socket *cached,
