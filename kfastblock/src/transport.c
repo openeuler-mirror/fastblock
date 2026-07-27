@@ -1,5 +1,6 @@
 #include <linux/byteorder/little_endian.h>
 #include <linux/blk-mq.h>
+#include <linux/atomic.h>
 #include <linux/completion.h>
 #include <linux/errno.h>
 #include <linux/in.h>
@@ -48,6 +49,8 @@ kfastblock_transport_reserve_osd_slot(struct kfastblock_volume *vol);
 static struct workqueue_struct *g_kfastblock_transport_wq;
 static unsigned int g_kfastblock_osd_endpoint_parallel_limit = 1;
 static bool g_kfastblock_osd_endpoint_parallel_trace;
+
+static atomic64_t g_kfastblock_rdma_seq = ATOMIC64_INIT(1);
 
 module_param_named(osd_endpoint_parallel_limit,
 		   g_kfastblock_osd_endpoint_parallel_limit,
@@ -2738,9 +2741,9 @@ static int kfastblock_transport_prepare_object_exchange(
 				"kfastblock: object I/O via RDMA peer=%s:%u op=%u\n",
 				ctx->leader.address, ctx->leader.rdma_port,
 				ctx->raw_opcode);
-			seq = (u64)get_random_u64();
+			seq = (u64)atomic64_inc_return(&g_kfastblock_rdma_seq);
 			if (!seq)
-				seq = 1;
+				seq = (u64)atomic64_inc_return(&g_kfastblock_rdma_seq);
 			return kfastblock_transport_begin_exchange(
 				&ctx->exchange, ctx->kf_req, ctx->object_index,
 				KFASTBLOCK_RAW_SERVICE_OSD, ctx->raw_opcode,

@@ -1011,13 +1011,16 @@ void osd_raw_rdma_server::run_listener(uint32_t shard_id) noexcept {
             auto* conn = static_cast<connection_context*>(event->id->context);
             if (conn) {
                 conn->established = true;
+                /* Single staging recv buffer: only one outstanding RECV WR. */
                 if (!post_recv(conn)) {
                     SPDK_ERRLOG(
-                      "raw RDMA shard %u post_recv failed after ESTABLISHED\n",
-                      shard_id);
+                      "raw RDMA shard %u post_recv failed after ESTABLISHED peer=%s\n",
+                      shard_id, conn->peer_address.c_str());
+                } else {
+                    SPDK_NOTICELOG(
+                      "raw RDMA shard %u connection established peer=%s\n",
+                      shard_id, conn->peer_address.c_str());
                 }
-                SPDK_NOTICELOG("raw RDMA shard %u connection established\n",
-                               shard_id);
             }
         } else if (event->event == RDMA_CM_EVENT_DISCONNECTED ||
                    event->event == RDMA_CM_EVENT_DEVICE_REMOVAL) {
