@@ -27,6 +27,32 @@ module_param_named(rdma_io_timeout_ms, kfastblock_rdma_io_timeout_ms, uint, 0644
 MODULE_PARM_DESC(rdma_io_timeout_ms,
 		 "RDMA SEND/RECV completion poll timeout in milliseconds");
 
+static unsigned long kfastblock_rdma_send_ok;
+static unsigned long kfastblock_rdma_send_err;
+static unsigned long kfastblock_rdma_recv_ok;
+static unsigned long kfastblock_rdma_recv_err;
+static unsigned long kfastblock_rdma_exchange_ok;
+static unsigned long kfastblock_rdma_exchange_err;
+static unsigned long kfastblock_rdma_connect_ok;
+static unsigned long kfastblock_rdma_connect_err;
+
+module_param_named(rdma_send_ok, kfastblock_rdma_send_ok, ulong, 0444);
+MODULE_PARM_DESC(rdma_send_ok, "RDMA SEND successes");
+module_param_named(rdma_send_err, kfastblock_rdma_send_err, ulong, 0444);
+MODULE_PARM_DESC(rdma_send_err, "RDMA SEND failures");
+module_param_named(rdma_recv_ok, kfastblock_rdma_recv_ok, ulong, 0444);
+MODULE_PARM_DESC(rdma_recv_ok, "RDMA RECV successes");
+module_param_named(rdma_recv_err, kfastblock_rdma_recv_err, ulong, 0444);
+MODULE_PARM_DESC(rdma_recv_err, "RDMA RECV failures");
+module_param_named(rdma_exchange_ok, kfastblock_rdma_exchange_ok, ulong, 0444);
+MODULE_PARM_DESC(rdma_exchange_ok, "RDMA exchange successes");
+module_param_named(rdma_exchange_err, kfastblock_rdma_exchange_err, ulong, 0444);
+MODULE_PARM_DESC(rdma_exchange_err, "RDMA exchange failures");
+module_param_named(rdma_connect_ok, kfastblock_rdma_connect_ok, ulong, 0444);
+MODULE_PARM_DESC(rdma_connect_ok, "RDMA connect successes");
+module_param_named(rdma_connect_err, kfastblock_rdma_connect_err, ulong, 0444);
+MODULE_PARM_DESC(rdma_connect_err, "RDMA connect failures");
+
 enum kfastblock_rdma_conn_state {
 	KFASTBLOCK_RDMA_CONN_IDLE = 0,
 	KFASTBLOCK_RDMA_CONN_RESOLVING_ADDR,
@@ -470,11 +496,13 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 	conn->connected = true;
 	conn->state = KFASTBLOCK_RDMA_CONN_ESTABLISHED;
 	conn->last_error = 0;
+	kfastblock_rdma_connect_ok++;
 	return 0;
 
 err_destroy_id:
 	conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
 	kfastblock_rdma_conn_destroy_resources(conn);
+	kfastblock_rdma_connect_err++;
 	return conn->last_error;
 }
 
@@ -539,19 +567,24 @@ int kfastblock_rdma_conn_send(struct kfastblock_rdma_conn *conn,
 	ret = ib_post_send(conn->cm_id->qp, &wr, &bad);
 	if (ret) {
 		conn->last_error = ret;
+		kfastblock_rdma_send_err++;
 		return ret;
 	}
 
 	deadline = jiffies + msecs_to_jiffies(kfastblock_rdma_io_timeout_ms);
 	while (!completion_done(&conn->send_done)) {
 		ret = kfastblock_rdma_poll_one(conn, deadline);
-		if (ret)
+		if (ret) {
+			kfastblock_rdma_send_err++;
 			return ret;
+		}
 	}
 	if (conn->send_wc_status != IB_WC_SUCCESS) {
 		conn->last_error = -EIO;
+		kfastblock_rdma_send_err++;
 		return -EIO;
 	}
+	kfastblock_rdma_send_ok++;
 	return 0;
 }
 
@@ -582,10 +615,13 @@ int kfastblock_rdma_conn_recv(struct kfastblock_rdma_conn *conn,
 	}
 	if (conn->recv_wc_status != IB_WC_SUCCESS) {
 		conn->last_error = -EIO;
+		kfastblock_rdma_recv_err++;
 		return -EIO;
 	}
-	if (conn->recv_byte_len > buf_len)
+	if (conn->recv_byte_len > buf_len) {
+		kfastblock_rdma_recv_err++;
 		return -EMSGSIZE;
+	}
 
 	{
 		u32 got = conn->recv_byte_len;
@@ -596,8 +632,11 @@ int kfastblock_rdma_conn_recv(struct kfastblock_rdma_conn *conn,
 
 		/* Re-post for the next response/request cycle. */
 		ret = kfastblock_rdma_post_recv(conn);
-		if (ret)
+		if (ret) {
+			kfastblock_rdma_recv_err++;
 			return ret;
+		}
+		kfastblock_rdma_recv_ok++;
 		return (int)got;
 	}
 }
@@ -621,25 +660,32 @@ int kfastblock_rdma_conn_exchange(struct kfastblock_rdma_conn *conn,
 		return -EINVAL;
 
 	ret = kfastblock_rdma_conn_send(conn, req, req_len);
-	if (ret)
+	if (ret) {
+		kfastblock_rdma_exchange_err++;
 		return ret;
+	}
 
 	ret = kfastblock_rdma_conn_recv(conn, rsp, rsp_cap);
-	if (ret < 0)
+	if (ret < 0) {
+		kfastblock_rdma_exchange_err++;
 		return ret;
-	if ((u32)ret < sizeof(struct kfastblock_raw_header))
+	}
+	if ((u32)ret < sizeof(struct kfastblock_raw_header)) {
+		kfastblock_rdma_exchange_err++;
 		return -EPROTO;
+	}
 
 	shdr = rsp;
-	if (le32_to_cpu(shdr->magic) != KFASTBLOCK_RAW_MAGIC)
+	if (le32_to_cpu(shdr->magic) != KFASTBLOCK_RAW_MAGIC ||
+	    !(le32_to_cpu(shdr->flags) & KFASTBLOCK_RAW_FLAG_RESPONSE) ||
+	    le64_to_cpu(shdr->seq) != expect_seq ||
+	    shdr->opcode != rhdr->opcode ||
+	    shdr->service != rhdr->service) {
+		kfastblock_rdma_exchange_err++;
 		return -EPROTO;
-	if (!(le32_to_cpu(shdr->flags) & KFASTBLOCK_RAW_FLAG_RESPONSE))
-		return -EPROTO;
-	if (le64_to_cpu(shdr->seq) != expect_seq)
-		return -EPROTO;
-	if (shdr->opcode != rhdr->opcode || shdr->service != rhdr->service)
-		return -EPROTO;
+	}
 
+	kfastblock_rdma_exchange_ok++;
 	return ret;
 }
 
