@@ -188,10 +188,11 @@ static void kfastblock_selfcheck_check_meta_view(
 					  -EINVAL, detail);
 		if (route->leader_valid) {
 			scnprintf(detail, sizeof(detail),
-				  "route[%u] leader_osd=%u addr=%s port=%u",
+				  "route[%u] leader_osd=%u addr=%s port=%u rdma_port=%u",
 				  i, route->leader.osd_id,
 				  route->leader.address,
-				  route->leader.port);
+				  route->leader.port,
+				  route->leader.rdma_port);
 			kfastblock_selfcheck_note(report, m, "meta.route.leader",
 						  route->leader.osd_id > 0 &&
 						  route->leader.address[0] != '\0' &&
@@ -474,6 +475,26 @@ static void kfastblock_selfcheck_check_xport(
 				  !kfastblock_xport_preference_valid(99U),
 				  false, KFASTBLOCK_SELFCHECK_XPORT,
 				  -EINVAL, detail);
+
+	/* Backend ops tables must be present at runtime. */
+	{
+		const struct kfastblock_xport_ops *tcp_ops =
+			kfastblock_xport_tcp_ops();
+		const struct kfastblock_xport_ops *rdma_ops =
+			kfastblock_xport_rdma_ops();
+
+		scnprintf(detail, sizeof(detail), "tcp=%s rdma=%s",
+			  kfastblock_xport_ops_name(tcp_ops),
+			  kfastblock_xport_ops_name(rdma_ops));
+		kfastblock_selfcheck_note(report, m, "xport.backend_ops",
+					  tcp_ops && rdma_ops &&
+					  tcp_ops->transport_id ==
+						  KFASTBLOCK_OSD_TRANSPORT_TCP &&
+					  rdma_ops->transport_id ==
+						  KFASTBLOCK_OSD_TRANSPORT_RDMA,
+					  false, KFASTBLOCK_SELFCHECK_XPORT,
+					  -ENOENT, detail);
+	}
 
 	/* TCP preference must select TCP ops without probing RDMA. */
 	{
