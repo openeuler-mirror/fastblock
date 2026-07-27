@@ -262,12 +262,20 @@ osd_service::leader_endpoint osd_service::resolve_pg_leader(
     return endpoint;
 }
 
+bool osd_service::has_monitor_client() const noexcept {
+    return static_cast<bool>(_monitor_client);
+}
+
 osd_service::leader_endpoint osd_service::resolve_pg_leader_raw_rdma(
   const uint64_t pool_id,
   const uint64_t pg_id) const {
     leader_endpoint endpoint{};
     uint32_t shard_id{};
 
+    if (!_pm) {
+        endpoint.state = err::RAFT_ERR_NOT_FOUND_PG;
+        return endpoint;
+    }
     if (!_pm->get_pg_shard(pool_id, pg_id, shard_id)) {
         SPDK_WARNLOG("not find pg %lu.%lu\n", pool_id, pg_id);
         endpoint.state = err::RAFT_ERR_NOT_FOUND_PG;

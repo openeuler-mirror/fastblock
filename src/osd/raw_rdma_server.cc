@@ -194,10 +194,12 @@ bool osd_raw_rdma_server::start_listener(uint32_t shard_id) {
         return false;
     }
 
+    /* IPv4-only bind path. IPv6 readiness: when enabling dual-stack, switch
+     * to sockaddr_storage + rdma_getaddrinfo, and keep random port logic. */
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     if (::inet_pton(AF_INET, _bind_address.c_str(), &addr.sin_addr) != 1) {
-        SPDK_ERRLOG("raw RDMA: invalid bind address %s\n",
+        SPDK_ERRLOG("raw RDMA: invalid IPv4 bind address %s (IPv6 not yet)\n",
                     _bind_address.c_str());
         return false;
     }
@@ -1000,11 +1002,18 @@ bool osd_raw_rdma_server::handle_connect_request(rdma_cm_id* id,
     conn->id = id;
     id->context = conn.get();
     {
-        char addrbuf[INET_ADDRSTRLEN] = {};
+        /* IPv4 today; INET6_ADDRSTRLEN covers future dual-stack bind. */
+        char addrbuf[INET6_ADDRSTRLEN] = {};
         auto* sa = ::rdma_get_peer_addr(id);
         if (sa && sa->sa_family == AF_INET) {
             auto* sin = reinterpret_cast<sockaddr_in*>(sa);
             if (::inet_ntop(AF_INET, &sin->sin_addr, addrbuf, sizeof(addrbuf))) {
+                conn->peer_address = addrbuf;
+            }
+        } else if (sa && sa->sa_family == AF_INET6) {
+            auto* sin6 = reinterpret_cast<sockaddr_in6*>(sa);
+            if (::inet_ntop(AF_INET6, &sin6->sin6_addr, addrbuf,
+                            sizeof(addrbuf))) {
                 conn->peer_address = addrbuf;
             }
         }

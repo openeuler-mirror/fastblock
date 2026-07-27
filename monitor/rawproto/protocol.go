@@ -30,6 +30,9 @@ const (
 	StatusInternalError  uint32 = 8
 )
 
+/* Size of binary-encoded osdShardEntry (ShardID+Port+CoreID+RdmaPort+Reserved). */
+const OsdShardEntryBytes = 12
+
 type Header struct {
 	Magic        uint32
 	VersionMajor uint8
