@@ -213,9 +213,30 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 				goto err_destroy_id;
 			}
 		}
+
+		{
+			struct ib_qp_init_attr qp_attr = {
+				.send_cq = conn->cq,
+				.recv_cq = conn->cq,
+				.cap = {
+					.max_send_wr = 32,
+					.max_recv_wr = 32,
+					.max_send_sge = 1,
+					.max_recv_sge = 1,
+				},
+				.qp_type = IB_QPT_RC,
+				.sq_sig_type = IB_SIGNAL_REQ_WR,
+			};
+
+			ret = rdma_create_qp(conn->cm_id, conn->pd, &qp_attr);
+			if (ret) {
+				conn->last_error = ret;
+				goto err_destroy_id;
+			}
+		}
 	}
 
-	/* QP setup lands in follow-up commits. */
+	/* rdma_connect lands in follow-up commits. */
 	conn->last_error = -EOPNOTSUPP;
 err_destroy_id:
 	conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
