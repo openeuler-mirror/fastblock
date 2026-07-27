@@ -20,6 +20,7 @@
 
 class osd_service;
 struct ibv_cq;
+struct ibv_mr;
 struct ibv_pd;
 struct rdma_cm_event;
 struct rdma_cm_id;
@@ -55,6 +56,10 @@ private:
         ibv_pd* pd{nullptr};
         ibv_cq* cq{nullptr};
         bool established{false};
+        /* Single posted recv buffer for raw header+body (MVP). */
+        void* recv_buf{nullptr};
+        size_t recv_buf_len{0};
+        ibv_mr* recv_mr{nullptr};
     };
 
     bool start_listener(uint32_t shard_id);
