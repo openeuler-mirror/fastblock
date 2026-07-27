@@ -296,15 +296,7 @@ void osd_raw_rdma_server::destroy_connection(connection_context* conn) noexcept 
         ::rdma_destroy_id(conn->id);
         conn->id = nullptr;
     }
-    if (conn->recv_mr) {
-        ::ibv_dereg_mr(conn->recv_mr);
-        conn->recv_mr = nullptr;
-    }
-    if (conn->recv_buf) {
-        ::free(conn->recv_buf);
-        conn->recv_buf = nullptr;
-        conn->recv_buf_len = 0;
-    }
+    free_recv_slots(conn);
     if (conn->send_mr) {
         ::ibv_dereg_mr(conn->send_mr);
         conn->send_mr = nullptr;
@@ -801,8 +793,9 @@ void osd_raw_rdma_server::poll_cq(connection_context* conn) noexcept {
         }
         if (wc[i].opcode == IBV_WC_RECV) {
             conn->recv_count.fetch_add(1, std::memory_order_relaxed);
-            handle_recv_complete(conn, wc[i].byte_len);
-            post_recv(conn);
+            const size_t slot = static_cast<size_t>(wc[i].wr_id);
+            handle_recv_complete(conn, wc[i].byte_len, slot);
+            post_recv_slot(conn, slot);
         } else if (wc[i].opcode == IBV_WC_SEND) {
             conn->send_count.fetch_add(1, std::memory_order_relaxed);
             conn->send_in_flight = false;
@@ -811,43 +804,109 @@ void osd_raw_rdma_server::poll_cq(connection_context* conn) noexcept {
     }
 }
 
-bool osd_raw_rdma_server::post_recv(connection_context* conn) noexcept {
-    if (!conn || !conn->id || !conn->id->qp || !conn->pd) {
+void osd_raw_rdma_server::free_recv_slots(connection_context* conn) noexcept {
+    if (!conn) {
+        return;
+    }
+    for (size_t i = 0; i < connection_context::max_recv_slots; ++i) {
+        auto& rs = conn->recv_slots[i];
+        if (rs.mr) {
+            ::ibv_dereg_mr(rs.mr);
+            rs.mr = nullptr;
+        }
+        if (rs.buf) {
+            ::free(rs.buf);
+            rs.buf = nullptr;
+        }
+        rs.len = 0;
+        rs.posted = false;
+    }
+    conn->recv_buf = nullptr;
+    conn->recv_buf_len = 0;
+    conn->recv_mr = nullptr;
+}
+
+bool osd_raw_rdma_server::ensure_recv_slots(connection_context* conn) noexcept {
+    if (!conn || !conn->pd) {
         return false;
     }
-    if (!conn->recv_buf) {
-        conn->recv_buf = ::malloc(raw_rdma_recv_buf_len);
-        if (!conn->recv_buf) {
+    for (size_t i = 0; i < connection_context::max_recv_slots; ++i) {
+        auto& rs = conn->recv_slots[i];
+        if (rs.buf && rs.mr) {
+            continue;
+        }
+        rs.buf = ::malloc(raw_rdma_recv_buf_len);
+        if (!rs.buf) {
+            free_recv_slots(conn);
             return false;
         }
-        conn->recv_buf_len = raw_rdma_recv_buf_len;
-        conn->recv_mr = ::ibv_reg_mr(
-          conn->pd, conn->recv_buf, conn->recv_buf_len,
-          IBV_ACCESS_LOCAL_WRITE);
-        if (!conn->recv_mr) {
-            ::free(conn->recv_buf);
-            conn->recv_buf = nullptr;
-            conn->recv_buf_len = 0;
+        rs.len = raw_rdma_recv_buf_len;
+        rs.mr = ::ibv_reg_mr(conn->pd, rs.buf, rs.len, IBV_ACCESS_LOCAL_WRITE);
+        if (!rs.mr) {
+            SPDK_ERRLOG("raw RDMA: ibv_reg_mr recv slot %zu failed: %s\n",
+                        i, std::strerror(errno));
+            free_recv_slots(conn);
             return false;
         }
+        rs.posted = false;
+    }
+    /* Keep slot0 aliases for any residual single-buffer call sites. */
+    conn->recv_buf = conn->recv_slots[0].buf;
+    conn->recv_buf_len = conn->recv_slots[0].len;
+    conn->recv_mr = conn->recv_slots[0].mr;
+    return true;
+}
+
+bool osd_raw_rdma_server::post_recv_slot(connection_context* conn,
+                                         size_t slot) noexcept {
+    if (!conn || !conn->id || !conn->id->qp || !conn->pd ||
+        slot >= connection_context::max_recv_slots) {
+        return false;
+    }
+    if (!ensure_recv_slots(conn)) {
+        return false;
+    }
+    auto& rs = conn->recv_slots[slot];
+    if (rs.posted) {
+        return true;
     }
 
     ibv_sge sge{};
-    sge.addr = reinterpret_cast<uint64_t>(conn->recv_buf);
-    sge.length = static_cast<uint32_t>(conn->recv_buf_len);
-    sge.lkey = conn->recv_mr->lkey;
+    sge.addr = reinterpret_cast<uint64_t>(rs.buf);
+    sge.length = static_cast<uint32_t>(rs.len);
+    sge.lkey = rs.mr->lkey;
 
     ibv_recv_wr wr{};
-    wr.wr_id = reinterpret_cast<uint64_t>(conn);
+    wr.wr_id = static_cast<uint64_t>(slot);
     wr.sg_list = &sge;
     wr.num_sge = 1;
 
     ibv_recv_wr* bad = nullptr;
     if (::ibv_post_recv(conn->id->qp, &wr, &bad)) {
-        SPDK_ERRLOG("raw RDMA: ibv_post_recv failed: %s\n", std::strerror(errno));
+        SPDK_ERRLOG("raw RDMA: ibv_post_recv slot=%zu failed: %s\n",
+                    slot, std::strerror(errno));
         return false;
     }
+    rs.posted = true;
     return true;
+}
+
+bool osd_raw_rdma_server::post_recv(connection_context* conn) noexcept {
+    if (!conn) {
+        return false;
+    }
+    /* Post all free slots (used on ESTABLISHED and as bulk re-arm). */
+    int posted = 0;
+    for (size_t i = 0; i < connection_context::max_recv_slots; ++i) {
+        if (conn->recv_slots[i].posted) {
+            continue;
+        }
+        if (post_recv_slot(conn, i)) {
+            ++posted;
+        }
+    }
+    return posted > 0 ||
+           (conn->recv_slots[0].posted); /* already fully armed */
 }
 
 bool osd_raw_rdma_server::handle_connect_request(rdma_cm_id* id,
@@ -1104,4 +1163,9 @@ uint16_t osd_raw_rdma_server::listen_port(uint32_t shard_id) const noexcept {
         return 0;
     }
     return _listeners[shard_id]->port;
+}
+
+size_t osd_raw_rdma_server::connection_count() const noexcept {
+    std::lock_guard<std::mutex> lock(_connections_mutex);
+    return _connections.size();
 }
