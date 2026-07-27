@@ -462,6 +462,22 @@ static int kfastblock_rdma_poll_one(struct kfastblock_rdma_conn *conn,
 			return n;
 		}
 		if (n == 0) {
+			if (kfastblock_rdma_use_cq_notify) {
+				unsigned long left = deadline - jiffies;
+				/*
+				 * Hybrid path: re-arm notify, wait for CQ event
+				 * or timeout, then fall through to poll again.
+				 * Pure busy-poll remains default for latency.
+				 */
+				(void)ib_req_notify_cq(conn->cq, IB_CQ_NEXT_COMP);
+				if (time_after(jiffies, deadline))
+					break;
+				reinit_completion(&conn->cq_event);
+				if (!wait_for_completion_timeout(&conn->cq_event,
+								 left))
+					break;
+				continue;
+			}
 			cpu_relax();
 			continue;
 		}
