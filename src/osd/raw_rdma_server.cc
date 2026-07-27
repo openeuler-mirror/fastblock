@@ -12,6 +12,7 @@
 #include "raw_rdma_server.h"
 
 #include "osd_service.h"
+#include "raw_rdma_proto.h"
 #include "fastblock/rpc/osd_msg.pb.h"
 #include "fastblock/utils/err_num.h"
 
@@ -54,41 +55,35 @@ constexpr int raw_rdma_cq_depth = 64;
 /* raw header (24) + max object body (~4MiB) + margin */
 constexpr size_t raw_rdma_recv_buf_len = (4U * 1024U * 1024U) + 4096U;
 constexpr size_t raw_rdma_send_buf_len = raw_rdma_recv_buf_len;
-constexpr size_t max_raw_body_len = (4U * 1024U * 1024U) + 1024U;
+constexpr size_t max_raw_body_len = raw_rdma_proto::max_body_len;
 
-constexpr uint32_t raw_magic = 0x46425257U;
-constexpr uint8_t raw_version_major = 1U;
-constexpr uint8_t raw_version_minor = 0U;
-constexpr uint8_t raw_service_osd = 2U;
+/* Protocol constants live in raw_rdma_proto (unit-testable). */
+constexpr uint32_t raw_magic = raw_rdma_proto::magic;
+constexpr uint8_t raw_version_major = raw_rdma_proto::version_major;
+constexpr uint8_t raw_version_minor = raw_rdma_proto::version_minor;
+constexpr uint8_t raw_service_osd = raw_rdma_proto::service_osd;
 
-constexpr uint8_t raw_op_get_leader = 1U;
-constexpr uint8_t raw_op_read_object = 2U;
-constexpr uint8_t raw_op_write_object = 3U;
-constexpr uint8_t raw_op_delete_object = 4U;
+constexpr uint8_t raw_op_get_leader = raw_rdma_proto::op_get_leader;
+constexpr uint8_t raw_op_read_object = raw_rdma_proto::op_read_object;
+constexpr uint8_t raw_op_write_object = raw_rdma_proto::op_write_object;
+constexpr uint8_t raw_op_delete_object = raw_rdma_proto::op_delete_object;
 
-constexpr uint32_t raw_flag_response = 1U << 0;
+constexpr uint32_t raw_flag_response = raw_rdma_proto::flag_response;
 
-constexpr uint32_t raw_status_ok = 0U;
-constexpr uint32_t raw_status_invalid_request = 1U;
-constexpr uint32_t raw_status_not_found = 2U;
-constexpr uint32_t raw_status_stale_epoch = 3U;
-constexpr uint32_t raw_status_retry_later = 4U;
-constexpr uint32_t raw_status_not_leader = 5U;
-constexpr uint32_t raw_status_pg_initializing = 6U;
-constexpr uint32_t raw_status_osd_down = 7U;
-constexpr uint32_t raw_status_internal_error = 8U;
+constexpr uint32_t raw_status_ok = raw_rdma_proto::status_ok;
+constexpr uint32_t raw_status_invalid_request =
+  raw_rdma_proto::status_invalid_request;
+constexpr uint32_t raw_status_not_found = raw_rdma_proto::status_not_found;
+constexpr uint32_t raw_status_stale_epoch = raw_rdma_proto::status_stale_epoch;
+constexpr uint32_t raw_status_retry_later = raw_rdma_proto::status_retry_later;
+constexpr uint32_t raw_status_not_leader = raw_rdma_proto::status_not_leader;
+constexpr uint32_t raw_status_pg_initializing =
+  raw_rdma_proto::status_pg_initializing;
+constexpr uint32_t raw_status_osd_down = raw_rdma_proto::status_osd_down;
+constexpr uint32_t raw_status_internal_error =
+  raw_rdma_proto::status_internal_error;
 
-struct raw_header {
-    uint32_t magic;
-    uint8_t version_major;
-    uint8_t version_minor;
-    uint8_t service;
-    uint8_t opcode;
-    uint32_t flags;
-    uint64_t seq;
-    uint32_t status;
-    uint32_t body_len;
-} __attribute__((packed));
+using raw_header = raw_rdma_proto::header;
 
 struct raw_get_leader_req {
     uint32_t pool_id;
@@ -139,64 +134,15 @@ uint16_t random_raw_rdma_port() {
 }
 
 bool validate_request_header(const raw_header& hdr) noexcept {
-    if (le32toh(hdr.magic) != raw_magic) {
-        return false;
-    }
-    if (hdr.version_major != raw_version_major) {
-        return false;
-    }
-    /* Minor is soft: accept any minor for forward compatibility. */
-    if (hdr.service != raw_service_osd) {
-        return false;
-    }
-    if ((le32toh(hdr.flags) & raw_flag_response) != 0) {
-        return false;
-    }
-    if (le32toh(hdr.body_len) > max_raw_body_len) {
-        return false;
-    }
-    return true;
+    return raw_rdma_proto::validate_request_header(hdr);
 }
 
 const char* raw_opcode_name(uint8_t op) noexcept {
-    switch (op) {
-    case raw_op_get_leader:
-        return "GET_LEADER";
-    case raw_op_read_object:
-        return "READ";
-    case raw_op_write_object:
-        return "WRITE";
-    case raw_op_delete_object:
-        return "DELETE";
-    default:
-        return "UNKNOWN";
-    }
+    return raw_rdma_proto::opcode_name(op);
 }
 
 uint32_t raw_status_from_errno(const int state) noexcept {
-    switch (state) {
-    case err::E_SUCCESS:
-        return raw_status_ok;
-    case err::E_INVAL:
-        return raw_status_invalid_request;
-    case err::RAFT_ERR_NOT_FOUND_PG:
-    case err::ERR_NOT_FOUND_POOL:
-        return raw_status_not_found;
-    case err::RAFT_ERR_NOT_FOUND_LEADER:
-    case err::RAFT_ERR_NO_CONNECTED:
-    case err::RAFT_ERR_MEMBERSHIP_CHANGING:
-    case err::RAFT_ERR_SNAPSHOT_WAIT_APPLY:
-        return raw_status_retry_later;
-    case err::RAFT_ERR_NOT_LEADER:
-        return raw_status_not_leader;
-    case err::RAFT_ERR_PG_INITIALIZING:
-    case err::OSD_STARTING:
-        return raw_status_pg_initializing;
-    case err::OSD_DOWN:
-        return raw_status_osd_down;
-    default:
-        return raw_status_internal_error;
-    }
+    return raw_rdma_proto::status_from_errno(state);
 }
 
 raw_header make_response_header(const raw_header& req,
