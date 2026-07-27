@@ -45,6 +45,10 @@ constexpr uint16_t max_raw_rdma_port = 29999U;
 constexpr int raw_rdma_bind_attempts = 64;
 /* Backlog for rdma_listen; parallel to TCP raw accept queue depth. */
 constexpr int raw_rdma_listen_backlog = 128;
+/* Listener poll() timeout between CQ sweeps (ms). */
+constexpr int raw_rdma_poll_timeout_ms = 200;
+/* Per-connection CQ capacity; must cover multi-slot RECV + SEND pipeline. */
+constexpr int raw_rdma_cq_depth = 64;
 /* raw header (24) + max object body (~4MiB) + margin */
 constexpr size_t raw_rdma_recv_buf_len = (4U * 1024U * 1024U) + 4096U;
 constexpr size_t raw_rdma_send_buf_len = raw_rdma_recv_buf_len;
@@ -942,8 +946,7 @@ bool osd_raw_rdma_server::handle_connect_request(rdma_cm_id* id,
     }
 
     /* CQ depth covers multi-slot RECV + SEND queue + margin. */
-    constexpr int cq_depth = 64;
-    conn->cq = ::ibv_create_cq(id->verbs, cq_depth, nullptr, nullptr, 0);
+    conn->cq = ::ibv_create_cq(id->verbs, raw_rdma_cq_depth, nullptr, nullptr, 0);
     if (!conn->cq) {
         SPDK_ERRLOG("raw RDMA: ibv_create_cq failed: %s\n", std::strerror(errno));
         destroy_connection(conn.get());
@@ -1058,7 +1061,7 @@ void osd_raw_rdma_server::run_listener(uint32_t shard_id) noexcept {
         pollfd pfd{};
         pfd.fd = listener.channel->fd;
         pfd.events = POLLIN;
-        const int rc = ::poll(&pfd, 1, 200);
+        const int rc = ::poll(&pfd, 1, raw_rdma_poll_timeout_ms);
         if (rc < 0) {
             if (errno == EINTR) {
                 continue;
@@ -1108,6 +1111,16 @@ void osd_raw_rdma_server::run_listener(uint32_t shard_id) noexcept {
                     SPDK_ERRLOG(
                       "raw RDMA shard %u post_recv failed after ESTABLISHED peer=%s\n",
                       shard_id, conn->peer_address.c_str());
+                    /* Tear down unusable connection immediately. */
+                    std::lock_guard<std::mutex> lock(_connections_mutex);
+                    for (auto it = _connections.begin(); it != _connections.end();
+                         ++it) {
+                        if (it->get() == conn) {
+                            destroy_connection(conn);
+                            _connections.erase(it);
+                            break;
+                        }
+                    }
                 } else {
                     SPDK_NOTICELOG(
                       "raw RDMA shard %u connection established peer=%s recv_slots=%zu\n",
@@ -1202,16 +1215,9 @@ void osd_raw_rdma_server::stop() noexcept {
         }
     }
     {
-        uint64_t recv_total = 0;
-        uint64_t send_total = 0;
-        uint64_t error_total = 0;
-        get_io_totals(&recv_total, &send_total, &error_total);
-        SPDK_NOTICELOG(
-          "raw RDMA server stopping conns=%zu recv=%llu send=%llu err=%llu\n",
-          connection_count(),
-          static_cast<unsigned long long>(recv_total),
-          static_cast<unsigned long long>(send_total),
-          static_cast<unsigned long long>(error_total));
+        const auto st = collect_stats();
+        SPDK_NOTICELOG("raw RDMA server stopping %s\n",
+                       format_raw_rdma_server_stats(st).c_str());
     }
     close_all_connections();
     _listeners.clear();
