@@ -407,11 +407,13 @@ int kfastblock_rdma_pool_format_stats(struct kfastblock_rdma_pool *pool,
 	}
 	kfastblock_rdma_pool_snapshot(pool, &snap);
 	return scnprintf(buf, buf_len,
-			 "slots=%u empty=%u idle=%u busy=%u dead=%u connected=%u hits=%llu misses=%llu",
+			 "slots=%u empty=%u idle=%u busy=%u dead=%u connected=%u max_idle=%u hits=%llu misses=%llu evict=%llu",
 			 snap.total_slots, snap.empty_slots, snap.idle_slots,
 			 snap.busy_slots, snap.dead_slots, snap.connected_slots,
+			 snap.max_idle,
 			 (unsigned long long)snap.get_hits,
-			 (unsigned long long)snap.get_misses);
+			 (unsigned long long)snap.get_misses,
+			 (unsigned long long)snap.idle_evictions);
 }
 
 struct kfastblock_rdma_pool_slot *
@@ -465,10 +467,12 @@ void kfastblock_rdma_pool_snapshot(struct kfastblock_rdma_pool *pool,
 		return;
 
 	snap->total_slots = pool->nr_slots;
+	snap->max_idle = pool->max_idle;
 	snap->get_hits = pool->get_hits;
 	snap->get_misses = pool->get_misses;
 	snap->connect_ok = pool->connect_ok;
 	snap->connect_err = pool->connect_err;
+	snap->idle_evictions = pool->idle_evictions;
 
 	for (i = 0; i < pool->nr_slots; ++i) {
 		struct kfastblock_rdma_pool_slot *slot = &pool->slots[i];
