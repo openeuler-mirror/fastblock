@@ -1013,6 +1013,22 @@ int kfastblock_diag_dump_seq(struct seq_file *m,
 		   snapshot->volume.last_image_refresh_jiffies);
 	seq_printf(m, "volume.event_count=%u\n", snapshot->volume.event_count);
 
+	seq_printf(m, "xport.preference=%u\n", snapshot->xport.preference);
+	seq_printf(m, "xport.preference_name=%s\n",
+		   snapshot->xport.preference_name);
+	seq_printf(m, "xport.prefers_rdma=%u\n", snapshot->xport.prefers_rdma);
+	seq_printf(m, "xport.leader_valid_count=%u\n",
+		   snapshot->xport.leader_valid_count);
+	seq_printf(m, "xport.leader_rdma_ready_count=%u\n",
+		   snapshot->xport.leader_rdma_ready_count);
+	seq_printf(m, "xport.leader_tcp_only_count=%u\n",
+		   snapshot->xport.leader_tcp_only_count);
+	seq_printf(m, "xport.shard_count=%u\n", snapshot->xport.shard_count);
+	seq_printf(m, "xport.shard_rdma_port_count=%u\n",
+		   snapshot->xport.shard_rdma_port_count);
+	seq_printf(m, "xport.osd_with_rdma_count=%u\n",
+		   snapshot->xport.osd_with_rdma_count);
+
 	seq_printf(m, "buffer.cached=%u\n", snapshot->buffer.cached);
 	seq_printf(m, "buffer.cache_limit=%u\n", snapshot->buffer.cache_limit);
 	seq_printf(m, "buffer.chunk_bytes=%u\n", snapshot->buffer.chunk_bytes);
