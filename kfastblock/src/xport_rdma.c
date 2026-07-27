@@ -466,11 +466,50 @@ static int kfastblock_rdma_post_recv_fill(struct kfastblock_rdma_conn *conn)
 	return 0;
 }
 
+/* Apply one polled WC to conn completion state. Returns 0 or -EIO for unknown. */
+static int kfastblock_rdma_apply_wc(struct kfastblock_rdma_conn *conn,
+				    const struct ib_wc *wc)
+{
+	if (!conn || !wc)
+		return -EINVAL;
+
+	/* Non-success WC: still deliver to waiter; caller checks status. */
+	if (wc->status != IB_WC_SUCCESS) {
+		conn->last_error = -EIO;
+		/* Fatal CQ errors tear down usability of this conn. */
+		if (wc->status == IB_WC_WR_FLUSH_ERR ||
+		    wc->status == IB_WC_RETRY_EXC_ERR ||
+		    wc->status == IB_WC_RESP_TIMEOUT_ERR ||
+		    wc->status == IB_WC_FATAL_ERR) {
+			conn->connected = false;
+			conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
+		}
+	}
+
+	if (wc->wr_id == KFASTBLOCK_RDMA_WR_SEND) {
+		conn->send_wc_status = wc->status;
+		complete(&conn->send_done);
+		return 0;
+	}
+	if (kfastblock_rdma_wr_is_recv(wc->wr_id)) {
+		conn->recv_wc_status = wc->status;
+		conn->recv_byte_len = wc->byte_len;
+		if (conn->recv_posted_count)
+			conn->recv_posted_count--;
+		conn->recv_posted = conn->recv_posted_count > 0;
+		complete(&conn->recv_done);
+		return 0;
+	}
+	/* Unknown wr_id: ignore. */
+	return 0;
+}
+
 static int kfastblock_rdma_poll_one(struct kfastblock_rdma_conn *conn,
 				    unsigned long deadline)
 {
 	struct ib_wc wc;
 	int n;
+	int ret;
 
 	if (!conn || !conn->cq)
 		return -EINVAL;
@@ -512,34 +551,13 @@ static int kfastblock_rdma_poll_one(struct kfastblock_rdma_conn *conn,
 			continue;
 		}
 
-		/* Non-success WC: still deliver to waiter; caller checks status. */
-		if (wc.status != IB_WC_SUCCESS) {
-			conn->last_error = -EIO;
-			/* Fatal CQ errors tear down usability of this conn. */
-			if (wc.status == IB_WC_WR_FLUSH_ERR ||
-			    wc.status == IB_WC_RETRY_EXC_ERR ||
-			    wc.status == IB_WC_RESP_TIMEOUT_ERR ||
-			    wc.status == IB_WC_FATAL_ERR) {
-				conn->connected = false;
-				conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
-			}
-		}
-
-		if (wc.wr_id == KFASTBLOCK_RDMA_WR_SEND) {
-			conn->send_wc_status = wc.status;
-			complete(&conn->send_done);
+		ret = kfastblock_rdma_apply_wc(conn, &wc);
+		if (ret)
+			return ret;
+		/* Matched SEND or RECV (or ignored unknown wr_id after apply). */
+		if (wc.wr_id == KFASTBLOCK_RDMA_WR_SEND ||
+		    kfastblock_rdma_wr_is_recv(wc.wr_id))
 			return 0;
-		}
-		if (kfastblock_rdma_wr_is_recv(wc.wr_id)) {
-			conn->recv_wc_status = wc.status;
-			conn->recv_byte_len = wc.byte_len;
-			if (conn->recv_posted_count)
-				conn->recv_posted_count--;
-			conn->recv_posted = conn->recv_posted_count > 0;
-			complete(&conn->recv_done);
-			return 0;
-		}
-		/* Unknown wr_id: ignore and keep polling. */
 	}
 	conn->last_error = -ETIMEDOUT;
 	return -ETIMEDOUT;
