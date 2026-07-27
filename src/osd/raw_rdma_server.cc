@@ -1177,6 +1177,9 @@ bool osd_raw_rdma_server::start(const std::string& bind_address,
     for (uint32_t i = 0; i < shard_count; ++i) {
         _listeners.emplace_back(std::make_unique<listener_context>());
     }
+    /* Mark running before workers process CONNECT_REQUEST so early
+     * clients are accepted once a shard is listening. */
+    _running.store(true, std::memory_order_release);
     for (uint32_t i = 0; i < shard_count; ++i) {
         if (!start_listener(i)) {
             stop();
@@ -1185,7 +1188,6 @@ bool osd_raw_rdma_server::start(const std::string& bind_address,
     }
     SPDK_NOTICELOG("raw RDMA server started on %s shards=%u ports=[%s]\n",
                    _bind_address.c_str(), shard_count, ports_string().c_str());
-    _running.store(true, std::memory_order_release);
     return true;
 }
 
