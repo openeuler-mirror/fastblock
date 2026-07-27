@@ -504,6 +504,9 @@ static int kfastblock_rdma_apply_wc(struct kfastblock_rdma_conn *conn,
 	return 0;
 }
 
+static int kfastblock_rdma_poll_batch(struct kfastblock_rdma_conn *conn,
+				      int max_wc);
+
 static int kfastblock_rdma_poll_one(struct kfastblock_rdma_conn *conn,
 				    unsigned long deadline)
 {
