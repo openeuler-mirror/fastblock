@@ -1025,6 +1025,15 @@ void osd_raw_rdma_server::run_listener(uint32_t shard_id) noexcept {
             ::rdma_ack_cm_event(event);
             event = nullptr;
             if (conn) {
+                SPDK_NOTICELOG(
+                  "raw RDMA disconnect peer=%s recv=%lu send=%lu err=%lu\n",
+                  conn->peer_address.c_str(),
+                  static_cast<unsigned long>(
+                    conn->recv_count.load(std::memory_order_relaxed)),
+                  static_cast<unsigned long>(
+                    conn->send_count.load(std::memory_order_relaxed)),
+                  static_cast<unsigned long>(
+                    conn->error_count.load(std::memory_order_relaxed)));
                 std::lock_guard<std::mutex> lock(_connections_mutex);
                 for (auto it = _connections.begin(); it != _connections.end();
                      ++it) {
