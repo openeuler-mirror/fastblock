@@ -1162,3 +1162,13 @@ bool kfastblock_rdma_conn_matches_leader(
 	return strncmp(conn->peer_addr, leader->address,
 		       KFASTBLOCK_MAX_ADDR_LEN) == 0;
 }
+
+u8 kfastblock_rdma_conn_recv_posted(const struct kfastblock_rdma_conn *conn)
+{
+	return conn ? conn->recv_posted_count : 0;
+}
+
+u8 kfastblock_rdma_conn_recv_depth(const struct kfastblock_rdma_conn *conn)
+{
+	return conn ? conn->recv_depth : 0;
+}
