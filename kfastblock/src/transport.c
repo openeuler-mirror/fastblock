@@ -1435,8 +1435,44 @@ static int kfastblock_transport_exec_mux_request_parts(
 		return ret;
 	}
 
-	queue_work(g_kfastblock_transport_wq, &cached->mux_recv_work);
-	wait_for_completion(&waiter.done);
+	/*
+	 * Run mux recv on system_unbound_wq, not the object-IO transport WQ.
+	 * Object work already runs on g_kfastblock_transport_wq and waits here;
+	 * queuing mux_recv on the same WQ risks delayed/starved completion.
+	 * Also bound the wait: bare wait_for_completion can hang forever if
+	 * recv never runs or the peer never replies.
+	 */
+	queue_work(system_unbound_wq, &cached->mux_recv_work);
+	if (!wait_for_completion_timeout(
+		    &waiter.done,
+		    msecs_to_jiffies(KFASTBLOCK_DEFAULT_SOCKET_TIMEOUT_MS * 2))) {
+		unsigned long flags;
+		bool still_waiting;
+
+		spin_lock_irqsave(&cached->mux_waiter_lock, flags);
+		still_waiting = !list_empty(&waiter.link);
+		if (still_waiting) {
+			list_del_init(&waiter.link);
+			if (cached->mux_inflight)
+				cached->mux_inflight--;
+		}
+		spin_unlock_irqrestore(&cached->mux_waiter_lock, flags);
+
+		if (still_waiting) {
+			/* Drop the socket so a stuck recv worker exits. */
+			mutex_lock(&cached->send_lock);
+			mutex_lock(&cached->lock);
+			cached->mux_dead = true;
+			mutex_unlock(&cached->lock);
+			mutex_unlock(&cached->send_lock);
+			queue_work(system_unbound_wq, &cached->mux_recv_work);
+			waiter.ret = -ETIMEDOUT;
+			kfastblock_transport_response_ctx_reset(&waiter.response);
+		} else {
+			/* Recv path already claimed us; wait for its complete. */
+			wait_for_completion(&waiter.done);
+		}
+	}
 	*rsp = waiter.response;
 	return waiter.ret;
 }
