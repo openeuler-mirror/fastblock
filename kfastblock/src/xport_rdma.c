@@ -40,6 +40,13 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 		return -EINVAL;
 	if (!leader->address[0] || !leader->rdma_port)
 		return -ENOTCONN;
+	if (conn->state != KFASTBLOCK_RDMA_CONN_IDLE &&
+	    conn->state != KFASTBLOCK_RDMA_CONN_ERROR)
+		return -EBUSY;
+
+	strscpy(conn->peer_addr, leader->address, sizeof(conn->peer_addr));
+	conn->peer_port = leader->rdma_port;
+	conn->connected = false;
 
 	/* CM/QP wiring lands in follow-up commits. */
 	return -EOPNOTSUPP;
