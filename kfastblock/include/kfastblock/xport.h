@@ -51,4 +51,12 @@ static inline const char *kfastblock_xport_preference_name(u32 preference)
 	}
 }
 
+/* True for TCP / RDMA / AUTO; false for unknown values. */
+static inline bool kfastblock_xport_preference_valid(u32 preference)
+{
+	return preference == KFASTBLOCK_OSD_TRANSPORT_TCP ||
+	       preference == KFASTBLOCK_OSD_TRANSPORT_RDMA ||
+	       preference == KFASTBLOCK_OSD_TRANSPORT_AUTO;
+}
+
 #endif
