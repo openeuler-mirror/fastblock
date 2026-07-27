@@ -30,6 +30,7 @@ struct raw_rdma_server_stats {
     uint64_t accept_total{0};
     uint64_t reject_total{0};
     uint64_t dispatch_error_total{0};
+    size_t max_connections{0};
     std::vector<uint16_t> listen_ports{};
 };
 
