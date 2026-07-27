@@ -1079,11 +1079,15 @@ void kfastblock_rdma_conn_pool_release(struct kfastblock_cached_rdma *cached,
 			kfastblock_rdma_conn_free(cached->conn);
 			cached->conn = NULL;
 		}
+		cached->address[0] = '\0';
+		cached->rdma_port = 0;
+		cached->osd_id = 0;
 		cached->state = KFASTBLOCK_CONN_STATE_EMPTY;
 	} else {
 		cached->success_count++;
 		cached->fail_streak = 0;
 		cached->last_use_jiffies = jiffies;
+		cached->state = KFASTBLOCK_CONN_STATE_READY;
 	}
 	mutex_unlock(&cached->lock);
 }
