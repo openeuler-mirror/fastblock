@@ -486,8 +486,14 @@ bool kfastblock_rdma_pool_invalidate_leader(
 		struct kfastblock_rdma_pool_slot *slot = &pool->slots[i];
 
 		mutex_lock(&slot->lock);
+		/*
+		 * Match by address+rdma_port only (ignore osd_id / usable).
+		 * Never touch BUSY slots mid-I/O; leave them for put().
+		 */
 		if (slot->state != KFASTBLOCK_RDMA_POOL_SLOT_BUSY &&
-		    kfastblock_rdma_pool_slot_matches_locked(slot, leader)) {
+		    slot->state != KFASTBLOCK_RDMA_POOL_SLOT_EMPTY &&
+		    kfastblock_rdma_pool_slot_endpoint_eq_locked(slot,
+								 leader)) {
 			kfastblock_rdma_pool_slot_disconnect_locked(slot);
 			closed = true;
 		}
