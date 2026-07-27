@@ -42,6 +42,25 @@ module_param_named(rdma_use_cq_notify, kfastblock_rdma_use_cq_notify, bool, 0644
 MODULE_PARM_DESC(rdma_use_cq_notify,
 		 "Use ib_req_notify_cq hybrid wait (1) instead of pure poll (0)");
 
+/* QP init / conn_param knobs (sane defaults for RC raw SEND/RECV). */
+static unsigned int kfastblock_rdma_qp_max_send_wr = 32;
+static unsigned int kfastblock_rdma_qp_max_recv_wr = 32;
+static unsigned int kfastblock_rdma_retry_count = 3;
+static unsigned int kfastblock_rdma_rnr_retry_count = 3;
+static bool kfastblock_rdma_signal_all;
+
+module_param_named(rdma_qp_max_send_wr, kfastblock_rdma_qp_max_send_wr, uint, 0644);
+MODULE_PARM_DESC(rdma_qp_max_send_wr, "QP max_send_wr (default 32)");
+module_param_named(rdma_qp_max_recv_wr, kfastblock_rdma_qp_max_recv_wr, uint, 0644);
+MODULE_PARM_DESC(rdma_qp_max_recv_wr, "QP max_recv_wr (default 32)");
+module_param_named(rdma_retry_count, kfastblock_rdma_retry_count, uint, 0644);
+MODULE_PARM_DESC(rdma_retry_count, "RC retry_count in conn_param (0-7, default 3)");
+module_param_named(rdma_rnr_retry_count, kfastblock_rdma_rnr_retry_count, uint, 0644);
+MODULE_PARM_DESC(rdma_rnr_retry_count, "RC rnr_retry_count (0-7, default 3)");
+module_param_named(rdma_signal_all, kfastblock_rdma_signal_all, bool, 0644);
+MODULE_PARM_DESC(rdma_signal_all,
+		 "QP sq_sig_type=IB_SIGNAL_ALL_WR (1) else REQ_WR (0)");
+
 static unsigned int kfastblock_rdma_timeout_ms_or_default(unsigned int v,
 							 unsigned int def)
 {
