@@ -27,6 +27,8 @@ static void kfastblock_diag_collect_xport(struct kfastblock_volume *vol,
 	strscpy(xport->preference_name, name, sizeof(xport->preference_name));
 	xport->prefers_rdma =
 		kfastblock_xport_prefers_rdma(xport->preference) ? 1 : 0;
+	xport->probe_cache_hits = kfastblock_xport_probe_cache_hits();
+	xport->probe_cache_misses = kfastblock_xport_probe_cache_misses();
 
 	down_read(&vol->state_lock);
 	for (i = 0; i < vol->view.route_count; ++i) {
