@@ -651,10 +651,22 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 		}
 
 		{
-			struct ib_cq_init_attr cq_attr = {
-				.cqe = 64,
-			};
+			unsigned int cqe;
+			struct ib_cq_init_attr cq_attr;
 			ib_comp_handler comp_handler = NULL;
+
+			/*
+			 * CQ depth covers max send + recv WRs with headroom so
+			 * multi-depth RECV + SIGNALED SEND do not overrun.
+			 */
+			cqe = kfastblock_rdma_qp_max_send_wr +
+			      kfastblock_rdma_qp_max_recv_wr + 8;
+			if (cqe < 16)
+				cqe = 16;
+			if (cqe > 512)
+				cqe = 512;
+			memset(&cq_attr, 0, sizeof(cq_attr));
+			cq_attr.cqe = cqe;
 
 			/* Event-driven path registers CQ completion handler. */
 			if (kfastblock_rdma_use_cq_notify)
