@@ -335,6 +335,13 @@ static int do_show_rdma_params(void)
 	static const char *const names[] = {
 		"rdma_cm_timeout_ms",
 		"rdma_io_timeout_ms",
+		"rdma_recv_depth",
+		"rdma_use_cq_notify",
+		"rdma_qp_max_send_wr",
+		"rdma_qp_max_recv_wr",
+		"rdma_retry_count",
+		"rdma_rnr_retry_count",
+		"rdma_signal_all",
 		"rdma_send_ok",
 		"rdma_send_err",
 		"rdma_recv_ok",
@@ -343,6 +350,10 @@ static int do_show_rdma_params(void)
 		"rdma_exchange_err",
 		"rdma_connect_ok",
 		"rdma_connect_err",
+		"rdma_dma_map_err",
+		"xport_probe_cache_ttl_ms",
+		"xport_probe_cache_hits",
+		"xport_probe_cache_misses",
 	};
 	char path[MAX_SYSFS_PATH];
 	char value[MAX_LINE_LEN];
@@ -512,12 +523,12 @@ static int do_show_volume(const struct config *cfg)
 		"leader_epoch",
 		"last_refresh",
 		"last_image_refresh",
-			"read_only",
-			"open_count",
-			"sync_state",
-			"queue_paused",
-			"manual_queue_pause",
-			"flush_in_progress",
+		"read_only",
+		"open_count",
+		"sync_state",
+		"queue_paused",
+		"manual_queue_pause",
+		"flush_in_progress",
 		"inflight_ios",
 		"health_state",
 		"health_since",
@@ -525,6 +536,9 @@ static int do_show_volume(const struct config *cfg)
 		"last_failure_source",
 		"last_failure_jiffies",
 		"last_success_jiffies",
+		/* OSD data-plane transport preference and RDMA cache */
+		"osd_transport",
+		"rdma_cache_stats",
 		"io_submitted",
 		"io_completed",
 		"io_failed",
@@ -535,15 +549,15 @@ static int do_show_volume(const struct config *cfg)
 		"cluster_refresh_fail",
 		"image_refresh_ok",
 		"image_refresh_fail",
-			"leader_query_ok",
-			"leader_query_fail",
-			"refresh_kicks",
-			"leader_invalidations",
-			"osd_socket_drops",
-			"monitor_socket_drops",
-			"manual_queue_pauses",
-			"manual_queue_resumes",
-		};
+		"leader_query_ok",
+		"leader_query_fail",
+		"refresh_kicks",
+		"leader_invalidations",
+		"osd_socket_drops",
+		"monitor_socket_drops",
+		"manual_queue_pauses",
+		"manual_queue_resumes",
+	};
 	char root_path[MAX_SYSFS_PATH];
 	size_t i;
 
