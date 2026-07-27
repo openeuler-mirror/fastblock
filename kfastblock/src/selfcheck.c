@@ -462,6 +462,40 @@ static void kfastblock_selfcheck_check_xport(
 				  kfastblock_xport_prefers_rdma(pref),
 				  false, KFASTBLOCK_SELFCHECK_XPORT,
 				  -EINVAL, detail);
+
+	scnprintf(detail, sizeof(detail),
+		  "valid=%u clamp_bad=%u",
+		  kfastblock_xport_preference_valid(pref) ? 1 : 0,
+		  kfastblock_xport_preference_clamp(99U));
+	kfastblock_selfcheck_note(report, m, "xport.preference_valid_clamp",
+				  kfastblock_xport_preference_valid(pref) &&
+				  kfastblock_xport_preference_clamp(99U) ==
+					  KFASTBLOCK_DEFAULT_OSD_TRANSPORT &&
+				  !kfastblock_xport_preference_valid(99U),
+				  false, KFASTBLOCK_SELFCHECK_XPORT,
+				  -EINVAL, detail);
+
+	/* TCP preference must select TCP ops without probing RDMA. */
+	{
+		struct kfastblock_leader_info leader = {};
+		const struct kfastblock_xport_ops *sel;
+		char reason[32] = {};
+
+		strscpy(leader.address, "127.0.0.1", sizeof(leader.address));
+		leader.port = 1;
+		leader.rdma_port = 0;
+		sel = kfastblock_xport_select_explained(
+			KFASTBLOCK_OSD_TRANSPORT_TCP, &leader, reason,
+			sizeof(reason));
+		scnprintf(detail, sizeof(detail), "ops=%s reason=%s",
+			  kfastblock_xport_ops_name(sel), reason);
+		kfastblock_selfcheck_note(report, m, "xport.select_tcp",
+					  sel &&
+					  sel->transport_id ==
+						  KFASTBLOCK_OSD_TRANSPORT_TCP,
+					  false, KFASTBLOCK_SELFCHECK_XPORT,
+					  -EINVAL, detail);
+	}
 }
 
 static void kfastblock_selfcheck_check_rawproto(
