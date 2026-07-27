@@ -121,6 +121,8 @@ void kfastblock_rdma_pool_destroy(struct kfastblock_rdma_pool *pool)
 	kfree(pool->slots);
 	pool->slots = NULL;
 	pool->nr_slots = 0;
+	pool->max_idle = 0;
+	/* Keep hit/miss counters for post-mortem via snapshot callers. */
 }
 
 /*
