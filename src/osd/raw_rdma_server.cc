@@ -11,7 +11,11 @@
 
 #include "raw_rdma_server.h"
 
+#include <rdma/rdma_cma.h>
 #include <spdk/log.h>
+
+#include <cerrno>
+#include <cstring>
 
 osd_raw_rdma_server::osd_raw_rdma_server(osd_service* service)
   : _service(service) {}
@@ -27,7 +31,14 @@ bool osd_raw_rdma_server::start_listener(uint32_t shard_id) {
     auto& listener = *_listeners[shard_id];
     listener.shard_id = shard_id;
     listener.stop.store(false, std::memory_order_release);
-    /* CM bind/listen lands in follow-up commits. */
+
+    listener.channel = ::rdma_create_event_channel();
+    if (!listener.channel) {
+        SPDK_ERRLOG("raw RDMA: rdma_create_event_channel failed: %s\n",
+                    std::strerror(errno));
+        return false;
+    }
+    /* create_id/bind/listen lands in follow-up commits. */
     return true;
 }
 
@@ -36,9 +47,15 @@ void osd_raw_rdma_server::stop_listener(listener_context& listener) noexcept {
     if (listener.worker.joinable()) {
         listener.worker.join();
     }
+    if (listener.listen_id) {
+        ::rdma_destroy_id(listener.listen_id);
+        listener.listen_id = nullptr;
+    }
+    if (listener.channel) {
+        ::rdma_destroy_event_channel(listener.channel);
+        listener.channel = nullptr;
+    }
     listener.port = 0;
-    listener.channel = nullptr;
-    listener.listen_id = nullptr;
 }
 
 void osd_raw_rdma_server::run_listener(uint32_t shard_id) noexcept {
