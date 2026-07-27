@@ -121,6 +121,15 @@ void osd_raw_rdma_server::destroy_connection(connection_context* conn) noexcept 
         ::rdma_destroy_id(conn->id);
         conn->id = nullptr;
     }
+    if (conn->recv_mr) {
+        ::ibv_dereg_mr(conn->recv_mr);
+        conn->recv_mr = nullptr;
+    }
+    if (conn->recv_buf) {
+        ::free(conn->recv_buf);
+        conn->recv_buf = nullptr;
+        conn->recv_buf_len = 0;
+    }
     if (conn->cq) {
         ::ibv_destroy_cq(conn->cq);
         conn->cq = nullptr;
