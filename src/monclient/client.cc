@@ -16,8 +16,19 @@
 namespace {
 static void make_sharded_ports(
     const google::protobuf::Map<google::protobuf::uint32, msg::ShardCore>& proto_shard_ports,
-    std::map<uint32_t, utils::core_shard_map>& osd_sharded_ports) {
+    std::map<uint32_t, utils::core_shard_map>& osd_sharded_ports,
+    const std::map<uint32_t, utils::core_shard_map>* previous = nullptr) {
     for (auto it = proto_shard_ports.begin(); it != proto_shard_ports.end(); ++it) {
+        uint32_t raw_rdma = it->second.raw_rdma_port();
+        /* Map reload edge case: if monitor temporarily omits raw_rdma_port
+         * (0), keep the last known non-zero value so kfastblock can still
+         * reach the raw RDMA data plane until the next full refresh. */
+        if (raw_rdma == 0 && previous) {
+            auto prev_it = previous->find(it->first);
+            if (prev_it != previous->end() && prev_it->second.raw_rdma_port != 0) {
+                raw_rdma = prev_it->second.raw_rdma_port;
+            }
+        }
         osd_sharded_ports.emplace(
           it->first,
           utils::core_shard_map{
@@ -25,7 +36,7 @@ static void make_sharded_ports(
             it->second.raw_port(),
             it->second.coreid(),
             it->first,
-            it->second.raw_rdma_port()});
+            raw_rdma});
     }
 }
 }
@@ -606,8 +617,10 @@ void client::process_osd_map(std::shared_ptr<msg::Response> response) {
             osd_it->second->isin = osds[i].isin();
             osd_it->second->ispendingcreate = osds[i].ispendingcreate();
             auto& sharded_ports = osds[i].sharded_ports();
+            auto previous_ports = osd_it->second->sharded_ports;
             osd_it->second->sharded_ports.clear();
-            make_sharded_ports(sharded_ports, osd_it->second->sharded_ports);
+            make_sharded_ports(sharded_ports, osd_it->second->sharded_ports,
+                              &previous_ports);
             osd_it->second->address = osds[i].address();
             if(osd_it->second->isup && !osds[i].isup() && osd_it->second->node_id != _self_osd_id){
                 SPDK_DEBUGLOG(mon, "osd %d is down, remove connect to it\n", osds[i].osdid());
