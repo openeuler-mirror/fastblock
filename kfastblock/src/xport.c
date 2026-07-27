@@ -274,3 +274,25 @@ kfastblock_xport_select(u32 preference,
 {
 	return kfastblock_xport_select_explained(preference, leader, NULL, 0);
 }
+
+/*
+ * Select + format a one-line decision string into @line for pr_debug callers.
+ * Example: "pref=auto reason=auto-rdma ops=rdma leader=1.2.3.4 tcp=7000 rdma=7100 osd=1"
+ */
+int kfastblock_xport_select_describe(u32 preference,
+				     const struct kfastblock_leader_info *leader,
+				     char *line, size_t line_len)
+{
+	const struct kfastblock_xport_ops *ops;
+	char reason[24];
+	char endpoint[KFASTBLOCK_MAX_ADDR_LEN + 64];
+
+	if (!line || !line_len)
+		return -EINVAL;
+	ops = kfastblock_xport_select_explained(preference, leader, reason,
+						sizeof(reason));
+	kfastblock_xport_format_leader(leader, endpoint, sizeof(endpoint));
+	return scnprintf(line, line_len, "pref=%s reason=%s ops=%s leader={%s}",
+			 kfastblock_xport_preference_name(preference), reason,
+			 kfastblock_xport_ops_name(ops), endpoint);
+}
