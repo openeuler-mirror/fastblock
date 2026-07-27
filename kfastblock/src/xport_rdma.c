@@ -199,9 +199,23 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 			conn->pd = NULL;
 			goto err_destroy_id;
 		}
+
+		{
+			struct ib_cq_init_attr cq_attr = {
+				.cqe = 64,
+			};
+
+			conn->cq = ib_create_cq(conn->cm_id->device, NULL, NULL,
+						conn, &cq_attr);
+			if (IS_ERR(conn->cq)) {
+				conn->last_error = PTR_ERR(conn->cq);
+				conn->cq = NULL;
+				goto err_destroy_id;
+			}
+		}
 	}
 
-	/* CQ/QP setup lands in follow-up commits. */
+	/* QP setup lands in follow-up commits. */
 	conn->last_error = -EOPNOTSUPP;
 err_destroy_id:
 	conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
