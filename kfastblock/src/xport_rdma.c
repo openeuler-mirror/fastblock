@@ -90,6 +90,7 @@ static unsigned long kfastblock_rdma_exchange_ok;
 static unsigned long kfastblock_rdma_exchange_err;
 static unsigned long kfastblock_rdma_connect_ok;
 static unsigned long kfastblock_rdma_connect_err;
+static unsigned long kfastblock_rdma_dma_map_err;
 
 module_param_named(rdma_send_ok, kfastblock_rdma_send_ok, ulong, 0444);
 MODULE_PARM_DESC(rdma_send_ok, "RDMA SEND successes");
@@ -107,6 +108,8 @@ module_param_named(rdma_connect_ok, kfastblock_rdma_connect_ok, ulong, 0444);
 MODULE_PARM_DESC(rdma_connect_ok, "RDMA connect successes");
 module_param_named(rdma_connect_err, kfastblock_rdma_connect_err, ulong, 0444);
 MODULE_PARM_DESC(rdma_connect_err, "RDMA connect failures");
+module_param_named(rdma_dma_map_err, kfastblock_rdma_dma_map_err, ulong, 0444);
+MODULE_PARM_DESC(rdma_dma_map_err, "RDMA DMA map single failures");
 
 /*
  * Connection state machine (client):
@@ -373,14 +376,19 @@ static int kfastblock_rdma_map_bufs(struct kfastblock_rdma_conn *conn)
 		return -EINVAL;
 	if (!conn->send_buf || !conn->recv_buf)
 		return -ENOMEM;
+	if (!conn->send_buf_len || !conn->recv_buf_len)
+		return -EINVAL;
 	dev = conn->cm_id->device;
 
 	if (!conn->send_mapped) {
 		conn->send_dma = ib_dma_map_single(dev, conn->send_buf,
 						   conn->send_buf_len,
 						   DMA_TO_DEVICE);
-		if (ib_dma_mapping_error(dev, conn->send_dma))
+		if (ib_dma_mapping_error(dev, conn->send_dma)) {
+			conn->send_dma = 0;
+			kfastblock_rdma_dma_map_err++;
 			return -EIO;
+		}
 		conn->send_mapped = true;
 	}
 	if (!conn->recv_mapped) {
@@ -388,7 +396,10 @@ static int kfastblock_rdma_map_bufs(struct kfastblock_rdma_conn *conn)
 						   conn->recv_buf_len,
 						   DMA_FROM_DEVICE);
 		if (ib_dma_mapping_error(dev, conn->recv_dma)) {
+			conn->recv_dma = 0;
+			/* Roll back send map so retry starts clean. */
 			kfastblock_rdma_conn_unmap_bufs(conn);
+			kfastblock_rdma_dma_map_err++;
 			return -EIO;
 		}
 		conn->recv_mapped = true;
