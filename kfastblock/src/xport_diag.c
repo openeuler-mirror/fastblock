@@ -88,6 +88,11 @@ void kfastblock_xport_diag_dump_seq(
 		   xport->osd_with_rdma_count);
 	seq_printf(m, "%sxport.rdma_unavailable=%u\n", prefix,
 		   kfastblock_xport_diag_rdma_unavailable(xport) ? 1 : 0);
+	seq_printf(m, "%sxport.severity=%u\n", prefix,
+		   kfastblock_xport_diag_severity(xport));
+	seq_printf(m, "%sxport.severity_name=%s\n", prefix,
+		   kfastblock_xport_diag_severity_name(
+			   kfastblock_xport_diag_severity(xport)));
 	kfastblock_xport_diag_format_summary(xport, summary, sizeof(summary));
 	seq_printf(m, "%sxport.summary=%s\n", prefix, summary);
 }
