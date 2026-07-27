@@ -59,4 +59,22 @@ static inline bool kfastblock_xport_preference_valid(u32 preference)
 	       preference == KFASTBLOCK_OSD_TRANSPORT_AUTO;
 }
 
+/* Safe ops name for logs; never returns NULL. */
+static inline const char *
+kfastblock_xport_ops_name(const struct kfastblock_xport_ops *ops)
+{
+	if (!ops || !ops->name)
+		return "none";
+	return ops->name;
+}
+
+/* Transport id from ops, or TCP when ops is NULL. */
+static inline u32
+kfastblock_xport_ops_id(const struct kfastblock_xport_ops *ops)
+{
+	if (!ops)
+		return KFASTBLOCK_OSD_TRANSPORT_TCP;
+	return ops->transport_id;
+}
+
 #endif
