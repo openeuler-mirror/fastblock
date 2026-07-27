@@ -276,6 +276,8 @@ void kfastblock_rdma_conn_disconnect(struct kfastblock_rdma_conn *conn)
 	if (!conn)
 		return;
 	conn->state = KFASTBLOCK_RDMA_CONN_DISCONNECTING;
+	if (conn->cm_id && conn->connected)
+		rdma_disconnect(conn->cm_id);
 	kfastblock_rdma_conn_destroy_resources(conn);
 	conn->connected = false;
 	conn->state = KFASTBLOCK_RDMA_CONN_IDLE;
