@@ -148,17 +148,7 @@ uint32_t raw_status_from_errno(const int state) noexcept {
 raw_header make_raw_response_header(const raw_header& req,
                                 uint32_t status,
                                 uint32_t body_len) noexcept {
-    raw_header rsp{};
-    rsp.magic = htole32(raw_magic);
-    rsp.version_major = raw_version_major;
-    rsp.version_minor = raw_version_minor;
-    rsp.service = req.service;
-    rsp.opcode = req.opcode;
-    rsp.flags = htole32(raw_flag_response);
-    rsp.seq = req.seq;
-    rsp.status = htole32(status);
-    rsp.body_len = htole32(body_len);
-    return rsp;
+    return raw_rdma_proto::make_response_header(req, status, body_len);
 }
 
 } // namespace
@@ -1192,13 +1182,10 @@ bool osd_raw_rdma_server::start(const std::string& bind_address,
                     shard_count);
         return false;
     }
-    {
-        sockaddr_in probe{};
-        if (::inet_pton(AF_INET, bind_address.c_str(), &probe.sin_addr) != 1) {
-            SPDK_ERRLOG("raw RDMA start rejected: invalid IPv4 bind address %s\n",
-                        bind_address.c_str());
-            return false;
-        }
+    if (!raw_rdma_proto::is_ipv4_literal(bind_address.c_str())) {
+        SPDK_ERRLOG("raw RDMA start rejected: invalid IPv4 bind address %s\n",
+                    bind_address.c_str());
+        return false;
     }
 
     _bind_address = bind_address;
