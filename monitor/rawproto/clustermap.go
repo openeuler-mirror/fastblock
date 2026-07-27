@@ -91,6 +91,25 @@ func EncodeGetClusterMapResponse(
 	}, body.Bytes(), nil
 }
 
+/* clampPort16 treats out-of-range ports as unpublished (0). */
+func clampPort16(port uint32) uint16 {
+	if port == 0 || port > 0xffff {
+		return 0
+	}
+	return uint16(port)
+}
+
+/* CountShardsWithRdmaPort reports how many shards advertise a non-zero RdmaPort. */
+func CountShardsWithRdmaPort(shards map[uint32]*msg.ShardCore) int {
+	n := 0
+	for _, core := range shards {
+		if core != nil && clampPort16(core.GetRawRdmaPort()) != 0 {
+			n++
+		}
+	}
+	return n
+}
+
 func encodeOSDEntry(body *bytes.Buffer, osdInfo *msg.OsdDynamicInfo) error {
 	flags := uint32(0)
 	if osdInfo.GetIsin() {
@@ -127,18 +146,11 @@ func encodeOSDEntry(body *bytes.Buffer, osdInfo *msg.OsdDynamicInfo) error {
 			/* Fallback: legacy maps may only expose protobuf RDMA port. */
 			port = core.GetPort()
 		}
-		/* Clamp to uint16 range; values above are treated as unpublished (0). */
-		if port > 0xffff {
-			port = 0
-		}
-		if rdmaPort > 0xffff {
-			rdmaPort = 0
-		}
 		entry := osdShardEntry{
 			ShardID:  shardID,
-			Port:     uint16(port),
+			Port:     clampPort16(port),
 			CoreID:   uint16(core.GetCoreid()),
-			RdmaPort: uint16(rdmaPort),
+			RdmaPort: clampPort16(rdmaPort),
 		}
 		if err := binary.Write(body, binary.LittleEndian, &entry); err != nil {
 			return err
