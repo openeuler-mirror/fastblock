@@ -138,4 +138,10 @@ u32 kfastblock_rdma_pool_set_max_idle(struct kfastblock_rdma_pool *pool,
 /* Count IDLE slots with a usable connected conn (ready for try_get). */
 u32 kfastblock_rdma_pool_ready_count(struct kfastblock_rdma_pool *pool);
 
+/*
+ * Walk non-BUSY slots; disconnect any that are not usable. Returns number
+ * of slots invalidated. Used after transport faults / map churn.
+ */
+u32 kfastblock_rdma_pool_invalidate_broken(struct kfastblock_rdma_pool *pool);
+
 #endif
