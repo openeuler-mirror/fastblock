@@ -78,6 +78,43 @@ static bool kfastblock_xport_probe_cache_lookup(
 	return hit;
 }
 
+/* Store probe result; overwrite first free/expired or slot 0 (round-robin-ish). */
+static void kfastblock_xport_probe_cache_store(
+	const struct kfastblock_leader_info *leader, int result)
+{
+	unsigned long flags;
+	u32 i;
+	struct kfastblock_xport_probe_cache_entry *slot = NULL;
+	unsigned long ttl =
+		msecs_to_jiffies(KFASTBLOCK_XPORT_PROBE_CACHE_TTL_MS);
+
+	if (!leader || !leader->address[0])
+		return;
+
+	spin_lock_irqsave(&kfastblock_xport_probe_cache_lock, flags);
+	for (i = 0; i < KFASTBLOCK_XPORT_PROBE_CACHE_SIZE; ++i) {
+		struct kfastblock_xport_probe_cache_entry *e =
+			&kfastblock_xport_probe_cache[i];
+
+		if (e->valid && e->rdma_port == leader->rdma_port &&
+		    strncmp(e->address, leader->address,
+			    KFASTBLOCK_MAX_ADDR_LEN) == 0) {
+			slot = e;
+			break;
+		}
+		if (!slot && (!e->valid || time_after(jiffies, e->expire_jiffies)))
+			slot = e;
+	}
+	if (!slot)
+		slot = &kfastblock_xport_probe_cache[0];
+	strscpy(slot->address, leader->address, sizeof(slot->address));
+	slot->rdma_port = leader->rdma_port;
+	slot->result = result;
+	slot->expire_jiffies = jiffies + ttl;
+	slot->valid = true;
+	spin_unlock_irqrestore(&kfastblock_xport_probe_cache_lock, flags);
+}
+
 static int kfastblock_xport_tcp_probe(const struct kfastblock_leader_info *leader)
 {
 	if (!kfastblock_leader_has_tcp(leader))
@@ -97,12 +134,16 @@ static int kfastblock_xport_tcp_probe(const struct kfastblock_leader_info *leade
 static int kfastblock_xport_rdma_probe(const struct kfastblock_leader_info *leader)
 {
 	int cached;
+	int ret;
 
 	if (kfastblock_xport_probe_cache_lookup(leader, &cached))
 		return cached;
 	if (!kfastblock_leader_has_rdma(leader))
-		return -ENOTCONN;
-	return 0;
+		ret = -ENOTCONN;
+	else
+		ret = 0;
+	kfastblock_xport_probe_cache_store(leader, ret);
+	return ret;
 }
 
 static const struct kfastblock_xport_ops kfastblock_xport_tcp = {
