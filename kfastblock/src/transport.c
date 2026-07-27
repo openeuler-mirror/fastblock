@@ -51,7 +51,6 @@ static int kfastblock_transport_check_osd_backoff(
 	const struct kfastblock_leader_info *leader);
 static struct kfastblock_cached_socket *
 kfastblock_transport_reserve_osd_slot(struct kfastblock_volume *vol);
-static struct workqueue_struct *g_kfastblock_transport_wq;
 static unsigned int g_kfastblock_osd_endpoint_parallel_limit = 1;
 static bool g_kfastblock_osd_endpoint_parallel_trace;
 
@@ -671,13 +670,9 @@ static int kfastblock_transport_queue_object_work(
 		return ret;
 
 	/*
-	 * Run object IO inline. queue_rq is BLK_MQ_F_BLOCKING, so sleeping
-	 * (connect / mux wait / leader query) is legal here.
-	 *
-	 * Previously we only queue_work() onto g_kfastblock_transport_wq.
-	 * On Soft-RoCE smoke that left bios stuck forever: object work never
-	 * executed (pipeline.queued_objects>0, buffer allocs=0, no kfastblock
-	 * worker stacks), so the request never reached complete_request.
+	 * Run object IO inline on the blk-mq path (BLK_MQ_F_BLOCKING).
+	 * Async transport WQ dispatch left bios stuck in D state when the
+	 * work never ran; complete_request must run in this call chain.
 	 */
 	INIT_WORK(&kf_req->object_works[object_index].work,
 		  kfastblock_transport_object_work);
@@ -1438,11 +1433,9 @@ static int kfastblock_transport_exec_mux_request_parts(
 	}
 
 	/*
-	 * Run mux recv on system_unbound_wq, not the object-IO transport WQ.
-	 * Object work already runs on g_kfastblock_transport_wq and waits here;
-	 * queuing mux_recv on the same WQ risks delayed/starved completion.
-	 * Also bound the wait: bare wait_for_completion can hang forever if
-	 * recv never runs or the peer never replies.
+	 * Recv on system_unbound_wq while the caller waits here (inline object
+	 * IO or other paths). Bound the wait: bare wait_for_completion can
+	 * hang forever if recv never runs or the peer never replies.
 	 */
 	queue_work(system_unbound_wq, &cached->mux_recv_work);
 	if (!wait_for_completion_timeout(
@@ -3215,21 +3208,12 @@ static int kfastblock_transport_submit_object_io(
 
 int kfastblock_transport_init(void)
 {
-	g_kfastblock_transport_wq = alloc_workqueue(
-		"kfastblock-transport",
-		WQ_UNBOUND | WQ_MEM_RECLAIM,
-		KFASTBLOCK_DEFAULT_TRANSPORT_MAX_ACTIVE);
-	return g_kfastblock_transport_wq ? 0 : -ENOMEM;
+	/* Object IO runs inline under BLK_MQ_F_BLOCKING; no private WQ. */
+	return 0;
 }
 
 void kfastblock_transport_exit(void)
 {
-	if (!g_kfastblock_transport_wq)
-		return;
-
-	drain_workqueue(g_kfastblock_transport_wq);
-	destroy_workqueue(g_kfastblock_transport_wq);
-	g_kfastblock_transport_wq = NULL;
 }
 
 static int kfastblock_transport_sockaddr_from_host_port(const char *host,
@@ -4061,8 +4045,11 @@ static void kfastblock_transport_object_work(struct work_struct *work)
 	struct kfastblock_request *kf_req = obj_work->parent;
 	int ret;
 
-	if (!kf_req || !kf_req->rq || !kf_req->vol)
+	if (!kf_req || !kf_req->rq || !kf_req->vol) {
+		pr_err_ratelimited(
+			"kfastblock: object_work missing parent/rq/vol\n");
 		return;
+	}
 
 	ret = kfastblock_transport_submit_object(kf_req,
 					       obj_work->object_index);
