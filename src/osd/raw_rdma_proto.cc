@@ -11,10 +11,13 @@
 
 #include "raw_rdma_proto.h"
 
-#include <cstring>
-#include <endian.h>
-
 #include "fastblock/utils/err_num.h"
+
+#include <arpa/inet.h>
+#include <endian.h>
+#include <netinet/in.h>
+
+#include <cstring>
 
 namespace raw_rdma_proto {
 
@@ -77,6 +80,21 @@ uint32_t status_from_errno(const int state) noexcept {
     default:
         return status_internal_error;
     }
+}
+
+header make_response_header(const header& req, uint32_t status,
+                            uint32_t body_len) noexcept {
+    header rsp{};
+    rsp.magic = htole32(magic);
+    rsp.version_major = version_major;
+    rsp.version_minor = version_minor;
+    rsp.service = req.service;
+    rsp.opcode = req.opcode;
+    rsp.flags = htole32(flag_response);
+    rsp.seq = req.seq;
+    rsp.status = htole32(status);
+    rsp.body_len = htole32(body_len);
+    return rsp;
 }
 
 } // namespace raw_rdma_proto

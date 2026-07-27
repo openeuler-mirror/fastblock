@@ -145,7 +145,7 @@ uint32_t raw_status_from_errno(const int state) noexcept {
     return raw_rdma_proto::status_from_errno(state);
 }
 
-raw_header make_response_header(const raw_header& req,
+raw_header make_raw_response_header(const raw_header& req,
                                 uint32_t status,
                                 uint32_t body_len) noexcept {
     raw_header rsp{};
@@ -456,7 +456,7 @@ bool osd_raw_rdma_server::send_response(connection_context* conn,
 
     raw_header req{};
     std::memcpy(&req, req_hdr, sizeof(req));
-    const raw_header rsp = make_response_header(req, status, body_len);
+    const raw_header rsp = make_raw_response_header(req, status, body_len);
     std::vector<uint8_t> frame(sizeof(rsp) + body_len);
     std::memcpy(frame.data(), &rsp, sizeof(rsp));
     if (body_len > 0) {

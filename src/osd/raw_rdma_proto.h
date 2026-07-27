@@ -67,4 +67,10 @@ const char* opcode_name(uint8_t op) noexcept;
 /* Map localstore/raft errno-style codes to raw status (subset used by OSD). */
 uint32_t status_from_errno(int state) noexcept;
 
+header make_response_header(const header& req, uint32_t status,
+                            uint32_t body_len) noexcept;
+
+/* True if s is a dotted-quad IPv4 literal (not hostname). */
+bool is_ipv4_literal(const char* s) noexcept;
+
 } // namespace raw_rdma_proto
