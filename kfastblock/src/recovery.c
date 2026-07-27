@@ -315,6 +315,41 @@ void kfastblock_recovery_flush_rdma_cache(struct kfastblock_volume *vol)
 					KFASTBLOCK_MAX_RDMA_CACHE);
 }
 
+void kfastblock_recovery_format_actions(unsigned int actions,
+					char *buf, size_t buf_len)
+{
+	static const struct {
+		unsigned int bit;
+		const char *name;
+	} map[] = {
+		{ KFASTBLOCK_RECOVERY_DROP_SOCKET, "drop_socket" },
+		{ KFASTBLOCK_RECOVERY_INVALIDATE_LEADER, "invalidate_leader" },
+		{ KFASTBLOCK_RECOVERY_KICK_REFRESH, "kick_refresh" },
+		{ KFASTBLOCK_RECOVERY_RETRY, "retry" },
+		{ KFASTBLOCK_RECOVERY_INVALIDATE_RDMA, "invalidate_rdma" },
+	};
+	size_t used = 0;
+	u32 i;
+
+	if (!buf || !buf_len)
+		return;
+	buf[0] = '\0';
+	if (!actions) {
+		scnprintf(buf, buf_len, "none");
+		return;
+	}
+	for (i = 0; i < ARRAY_SIZE(map); ++i) {
+		if (!(actions & map[i].bit))
+			continue;
+		used += scnprintf(buf + used, buf_len > used ? buf_len - used : 0,
+				  "%s%s", used ? "," : "", map[i].name);
+		actions &= ~map[i].bit;
+	}
+	if (actions && used < buf_len)
+		scnprintf(buf + used, buf_len - used, "%s0x%x",
+			  used ? "," : "", actions);
+}
+
 void kfastblock_recovery_finalize_monitor_socket(
 	struct kfastblock_volume *vol,
 	struct kfastblock_cached_monitor_socket *cached,
