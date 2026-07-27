@@ -76,6 +76,8 @@ typedef struct
     int raft_heartbeat_period_time_msec;
     int raft_lease_time_msec;
     int raft_election_timeout_msec;
+    /* When false, skip raw RDMA data-plane listeners (boot publishes port 0). */
+    bool enable_raw_rdma{true};
 } server_t;
 
 static const char* g_json_conf{nullptr};
@@ -331,7 +333,13 @@ static void service_init(partition_manager* pm, server_t *server, std::function<
 	global_raft_service = std::make_unique<::raft_service<::partition_manager>>(global_pm.get());
     global_osd_service = std::make_unique<::osd_service>(global_pm.get(), g_monitor_client);
     global_raw_tcp_server = std::make_unique<osd_raw_tcp_server>(global_osd_service.get());
-    global_raw_rdma_server = std::make_unique<osd_raw_rdma_server>(global_osd_service.get());
+    if (server->enable_raw_rdma) {
+        global_raw_rdma_server =
+          std::make_unique<osd_raw_rdma_server>(global_osd_service.get());
+    } else {
+        global_raw_rdma_server.reset();
+        SPDK_NOTICELOG("raw RDMA server disabled by config (enable_raw_rdma=false)\n");
+    }
 
     server->rpc_servers.resize(core_sharded::system::capacity());
     server->rpc_servers_started_cb = cb;
@@ -366,12 +374,12 @@ void start_monitor(server_t* ctx) {
     SPDK_ENV_FOREACH_CORE(core_id){
         port = ctx->rpc_servers[index]->listen_port();
         raw_port = global_raw_tcp_server ? global_raw_tcp_server->listen_port(index) : 0;
-        raw_rdma_port = global_raw_rdma_server
+        /* Publish 0 when raw RDMA is disabled or failed to start. */
+        raw_rdma_port = (global_raw_rdma_server && global_raw_rdma_server->is_running())
                           ? global_raw_rdma_server->listen_port(index)
                           : 0;
-        SPDK_DEBUGLOG(
-          osd,
-          "core id : %u, shard_id: %u, rdma port: %u, raw tcp port: %u, raw rdma port: %u\n",
+        SPDK_NOTICELOG(
+          "boot map core=%u shard=%u rpc=%u raw_tcp=%u raw_rdma=%u\n",
           core_id,
           index,
           port,
@@ -671,10 +679,16 @@ struct pm_load_context : public utils::context{
         if (!global_raw_tcp_server->start(server->osd_addr, shard_count)) {
             return false;
         }
-        /* RDMA raw is best-effort until CM listen is fully wired. */
-        if (global_raw_rdma_server &&
+        /* RDMA raw is best-effort; disabled via enable_raw_rdma publishes port 0. */
+        if (server->enable_raw_rdma && global_raw_rdma_server &&
             !global_raw_rdma_server->start(server->osd_addr, shard_count)) {
             SPDK_WARNLOG("start raw RDMA server failed; continue with TCP raw\n");
+        }
+        if (global_raw_rdma_server && global_raw_rdma_server->is_running()) {
+            SPDK_NOTICELOG(
+              "raw RDMA active shards=%u connections=%zu\n",
+              global_raw_rdma_server->shard_count(),
+              global_raw_rdma_server->connection_count());
         }
         return true;
     }
@@ -1360,6 +1374,11 @@ main(int argc, char *argv[])
             return -EINVAL;
         }
         osd_server.raft_election_timeout_msec = value;
+    }
+    /* Optional: disable kfastblock raw-over-RDMA data plane (default true). */
+    if (osd_server.pt.count("enable_raw_rdma") > 0) {
+        osd_server.enable_raw_rdma =
+          osd_server.pt.get_child("enable_raw_rdma").get_value<bool>();
     }
 
     if(from_configuration(&osd_server) != 0){
