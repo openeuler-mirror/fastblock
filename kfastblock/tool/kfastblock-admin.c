@@ -115,7 +115,7 @@ static void parse_config_file(const char *filename, struct config *cfg)
 static void print_usage(const char *prog_name)
 {
 	fprintf(stderr,
-		"Usage: %s <attach|detach|force-refresh|reset-backoff|drop-transport|reset-leaders|pause-queue|resume-queue|set-dispatch-window|set-refresh-interval|set-image-refresh-interval|list|show|show-rdma-params> [options]\n",
+		"Usage: %s <attach|detach|force-refresh|reset-backoff|drop-transport|reset-leaders|pause-queue|resume-queue|set-dispatch-window|set-refresh-interval|set-image-refresh-interval|list|show|show-rdma-params|show-xport> [options]\n",
 		prog_name);
 	fprintf(stderr, "Options:\n");
 	fprintf(stderr, "  -c, --conf <file>\n");
@@ -138,6 +138,9 @@ static void print_usage(const char *prog_name)
 		"  %s attach --monitor-addr <m> --pool-name <p> --image-name <i> --osd-transport auto\n",
 		prog_name);
 	fprintf(stderr, "  %s show-rdma-params\n", prog_name);
+	fprintf(stderr,
+		"  %s show-xport --pool-name <pool> --image-name <image>\n",
+		prog_name);
 	fprintf(stderr, "  %s pause-queue --pool-name <pool> --image-name <image>\n", prog_name);
 	fprintf(stderr, "  %s set-dispatch-window --pool-name <pool> --image-name <image> --value 16\n", prog_name);
 }
@@ -239,7 +242,88 @@ static int op_is_read_only(const char *operation)
 {
 	return strcmp(operation, "list") == 0 ||
 		strcmp(operation, "show") == 0 ||
-		strcmp(operation, "show-rdma-params") == 0;
+		strcmp(operation, "show-rdma-params") == 0 ||
+		strcmp(operation, "show-xport") == 0;
+}
+
+/*
+ * Filter debugfs diagnostics for xport.* lines (transport preference / RDMA).
+ * Path: /sys/kernel/debug/kfastblock/<disk>/diagnostics
+ */
+static int do_show_xport(const struct config *cfg)
+{
+	DIR *dir;
+	struct dirent *de;
+	char path[MAX_SYSFS_PATH];
+	char line[MAX_LINE_LEN];
+	int shown = 0;
+
+	if (!cfg || !cfg->pool_name || !cfg->image_name) {
+		fprintf(stderr,
+			"pool-name and image-name are required for show-xport\n");
+		return -1;
+	}
+
+	dir = opendir("/sys/kernel/debug/kfastblock");
+	if (!dir) {
+		fprintf(stderr,
+			"debugfs kfastblock not available (mount debugfs? module loaded?)\n");
+		return -1;
+	}
+
+	while ((de = readdir(dir)) != NULL) {
+		char vol_pool[MAX_LINE_LEN] = {0};
+		char vol_image[MAX_LINE_LEN] = {0};
+		FILE *fp;
+		int match = 0;
+
+		if (de->d_name[0] == '.')
+			continue;
+		if (snprintf(path, sizeof(path),
+			     "/sys/kernel/debug/kfastblock/%s/diagnostics",
+			     de->d_name) >= (int)sizeof(path))
+			continue;
+		fp = fopen(path, "r");
+		if (!fp)
+			continue;
+
+		while (fgets(line, sizeof(line), fp)) {
+			if (strncmp(line, "volume.pool=", 12) == 0) {
+				snprintf(vol_pool, sizeof(vol_pool), "%s",
+					 line + 12);
+				trim(vol_pool);
+			} else if (strncmp(line, "volume.image=", 13) == 0) {
+				snprintf(vol_image, sizeof(vol_image), "%s",
+					 line + 13);
+				trim(vol_image);
+			}
+		}
+		match = (strcmp(vol_pool, cfg->pool_name) == 0 &&
+			 strcmp(vol_image, cfg->image_name) == 0);
+		if (match) {
+			printf("disk=%s\n", de->d_name);
+			rewind(fp);
+			while (fgets(line, sizeof(line), fp)) {
+				if (strncmp(line, "xport.", 6) == 0 ||
+				    strncmp(line, "diagnostics.anomaly_flags", 25) == 0) {
+					fputs(line, stdout);
+					shown++;
+				}
+			}
+		}
+		fclose(fp);
+		if (match)
+			break;
+	}
+	closedir(dir);
+
+	if (!shown) {
+		fprintf(stderr,
+			"no xport diagnostics found for pool=%s image=%s\n",
+			cfg->pool_name, cfg->image_name);
+		return -1;
+	}
+	return 0;
 }
 
 /*
@@ -520,7 +604,8 @@ int main(int argc, char *argv[])
 	    strcmp(operation, "set-image-refresh-interval") != 0 &&
 	    strcmp(operation, "list") != 0 &&
 	    strcmp(operation, "show") != 0 &&
-	    strcmp(operation, "show-rdma-params") != 0) {
+	    strcmp(operation, "show-rdma-params") != 0 &&
+	    strcmp(operation, "show-xport") != 0) {
 		print_usage(argv[0]);
 		return EXIT_FAILURE;
 	}
@@ -588,6 +673,8 @@ int main(int argc, char *argv[])
 			ret = do_list_volumes();
 		else if (strcmp(operation, "show-rdma-params") == 0)
 			ret = do_show_rdma_params();
+		else if (strcmp(operation, "show-xport") == 0)
+			ret = do_show_xport(&cfg);
 		else
 			ret = do_show_volume(&cfg);
 		free_config(&cfg);
