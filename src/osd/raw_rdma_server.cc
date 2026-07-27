@@ -1209,3 +1209,31 @@ size_t osd_raw_rdma_server::connection_count(uint32_t shard_id) const noexcept {
     }
     return n;
 }
+
+void osd_raw_rdma_server::get_io_totals(uint64_t* recv_total,
+                                        uint64_t* send_total,
+                                        uint64_t* error_total) const noexcept {
+    uint64_t r = 0;
+    uint64_t s = 0;
+    uint64_t e = 0;
+    {
+        std::lock_guard<std::mutex> lock(_connections_mutex);
+        for (const auto& c : _connections) {
+            if (!c) {
+                continue;
+            }
+            r += c->recv_count.load(std::memory_order_relaxed);
+            s += c->send_count.load(std::memory_order_relaxed);
+            e += c->error_count.load(std::memory_order_relaxed);
+        }
+    }
+    if (recv_total) {
+        *recv_total = r;
+    }
+    if (send_total) {
+        *send_total = s;
+    }
+    if (error_total) {
+        *error_total = e;
+    }
+}
