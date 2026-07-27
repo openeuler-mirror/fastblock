@@ -25,6 +25,8 @@
 #include "kfastblock/scheduler.h"
 #include "kfastblock/transport.h"
 #include "kfastblock/volume.h"
+#include "kfastblock/xport.h"
+#include "kfastblock/xport_rdma.h"
 
 #define KFASTBLOCK_OBJECT_IO_MAX_ATTEMPTS 2
 
