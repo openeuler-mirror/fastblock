@@ -38,7 +38,16 @@ bool osd_raw_rdma_server::start_listener(uint32_t shard_id) {
                     std::strerror(errno));
         return false;
     }
-    /* create_id/bind/listen lands in follow-up commits. */
+
+    if (::rdma_create_id(listener.channel, &listener.listen_id, &listener,
+                         RDMA_PS_TCP)) {
+        SPDK_ERRLOG("raw RDMA: rdma_create_id failed: %s\n",
+                    std::strerror(errno));
+        ::rdma_destroy_event_channel(listener.channel);
+        listener.channel = nullptr;
+        return false;
+    }
+    /* bind/listen lands in follow-up commits. */
     return true;
 }
 
