@@ -97,3 +97,30 @@ void kfastblock_rdma_pool_destroy(struct kfastblock_rdma_pool *pool)
 	pool->slots = NULL;
 	pool->nr_slots = 0;
 }
+
+static bool kfastblock_rdma_pool_slot_matches_locked(
+	const struct kfastblock_rdma_pool_slot *slot,
+	const struct kfastblock_leader_info *leader)
+{
+	if (!slot || !leader)
+		return false;
+	if (!slot->conn || slot->state == KFASTBLOCK_RDMA_POOL_SLOT_EMPTY)
+		return false;
+	if (slot->osd_id != leader->osd_id)
+		return false;
+	if (slot->rdma_port != leader->rdma_port)
+		return false;
+	return strncmp(slot->address, leader->address,
+		       KFASTBLOCK_MAX_ADDR_LEN) == 0;
+}
+
+static void kfastblock_rdma_pool_slot_bind_locked(
+	struct kfastblock_rdma_pool_slot *slot,
+	const struct kfastblock_leader_info *leader)
+{
+	if (!slot || !leader)
+		return;
+	slot->osd_id = leader->osd_id;
+	slot->rdma_port = leader->rdma_port;
+	strscpy(slot->address, leader->address, sizeof(slot->address));
+}
