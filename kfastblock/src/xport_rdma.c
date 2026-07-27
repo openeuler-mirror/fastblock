@@ -192,9 +192,16 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 			conn->last_error = ret;
 			goto err_destroy_id;
 		}
+
+		conn->pd = ib_alloc_pd(conn->cm_id->device, 0);
+		if (IS_ERR(conn->pd)) {
+			conn->last_error = PTR_ERR(conn->pd);
+			conn->pd = NULL;
+			goto err_destroy_id;
+		}
 	}
 
-	/* QP setup lands in follow-up commits. */
+	/* CQ/QP setup lands in follow-up commits. */
 	conn->last_error = -EOPNOTSUPP;
 err_destroy_id:
 	conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
