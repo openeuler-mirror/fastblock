@@ -66,6 +66,7 @@ private:
     void stop_listener(listener_context& listener) noexcept;
     void run_listener(uint32_t shard_id) noexcept;
     bool handle_connect_request(rdma_cm_id* id, uint32_t shard_id) noexcept;
+    bool post_recv(connection_context* conn) noexcept;
     void destroy_connection(connection_context* conn) noexcept;
     void close_all_connections() noexcept;
 

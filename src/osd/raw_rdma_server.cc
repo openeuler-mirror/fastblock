@@ -29,6 +29,8 @@ namespace {
 constexpr uint16_t min_raw_rdma_port = 20001U;
 constexpr uint16_t max_raw_rdma_port = 29999U;
 constexpr int raw_rdma_bind_attempts = 64;
+/* raw header (24) + max object body (~4MiB) + margin */
+constexpr size_t raw_rdma_recv_buf_len = (4U * 1024U * 1024U) + 4096U;
 
 uint16_t random_raw_rdma_port() {
     thread_local std::mt19937 gen{std::random_device{}()};
@@ -146,6 +148,45 @@ void osd_raw_rdma_server::close_all_connections() noexcept {
         destroy_connection(conn.get());
     }
     _connections.clear();
+}
+
+bool osd_raw_rdma_server::post_recv(connection_context* conn) noexcept {
+    if (!conn || !conn->id || !conn->id->qp || !conn->pd) {
+        return false;
+    }
+    if (!conn->recv_buf) {
+        conn->recv_buf = ::malloc(raw_rdma_recv_buf_len);
+        if (!conn->recv_buf) {
+            return false;
+        }
+        conn->recv_buf_len = raw_rdma_recv_buf_len;
+        conn->recv_mr = ::ibv_reg_mr(
+          conn->pd, conn->recv_buf, conn->recv_buf_len,
+          IBV_ACCESS_LOCAL_WRITE);
+        if (!conn->recv_mr) {
+            ::free(conn->recv_buf);
+            conn->recv_buf = nullptr;
+            conn->recv_buf_len = 0;
+            return false;
+        }
+    }
+
+    ibv_sge sge{};
+    sge.addr = reinterpret_cast<uint64_t>(conn->recv_buf);
+    sge.length = static_cast<uint32_t>(conn->recv_buf_len);
+    sge.lkey = conn->recv_mr->lkey;
+
+    ibv_recv_wr wr{};
+    wr.wr_id = reinterpret_cast<uint64_t>(conn);
+    wr.sg_list = &sge;
+    wr.num_sge = 1;
+
+    ibv_recv_wr* bad = nullptr;
+    if (::ibv_post_recv(conn->id->qp, &wr, &bad)) {
+        SPDK_ERRLOG("raw RDMA: ibv_post_recv failed: %s\n", std::strerror(errno));
+        return false;
+    }
+    return true;
 }
 
 bool osd_raw_rdma_server::handle_connect_request(rdma_cm_id* id,
@@ -277,6 +318,11 @@ void osd_raw_rdma_server::run_listener(uint32_t shard_id) noexcept {
             auto* conn = static_cast<connection_context*>(event->id->context);
             if (conn) {
                 conn->established = true;
+                if (!post_recv(conn)) {
+                    SPDK_ERRLOG(
+                      "raw RDMA shard %u post_recv failed after ESTABLISHED\n",
+                      shard_id);
+                }
                 SPDK_NOTICELOG("raw RDMA shard %u connection established\n",
                                shard_id);
             }
