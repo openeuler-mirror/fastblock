@@ -30,4 +30,25 @@ const struct kfastblock_xport_ops *
 kfastblock_xport_select(u32 preference,
 			const struct kfastblock_leader_info *leader);
 
+/* True when preference is RDMA or AUTO (caller still probes). */
+static inline bool kfastblock_xport_prefers_rdma(u32 preference)
+{
+	return preference == KFASTBLOCK_OSD_TRANSPORT_RDMA ||
+	       preference == KFASTBLOCK_OSD_TRANSPORT_AUTO;
+}
+
+static inline const char *kfastblock_xport_preference_name(u32 preference)
+{
+	switch (preference) {
+	case KFASTBLOCK_OSD_TRANSPORT_TCP:
+		return "tcp";
+	case KFASTBLOCK_OSD_TRANSPORT_RDMA:
+		return "rdma";
+	case KFASTBLOCK_OSD_TRANSPORT_AUTO:
+		return "auto";
+	default:
+		return "unknown";
+	}
+}
+
 #endif
