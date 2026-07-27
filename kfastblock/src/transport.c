@@ -27,8 +27,6 @@
 #include "kfastblock/volume.h"
 #include "kfastblock/xport.h"
 #include "kfastblock/xport_rdma.h"
-#include "kfastblock/xport.h"
-#include "kfastblock/xport_rdma.h"
 
 #define KFASTBLOCK_OBJECT_IO_MAX_ATTEMPTS 2
 
