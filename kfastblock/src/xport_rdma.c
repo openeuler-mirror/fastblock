@@ -3,9 +3,20 @@
 
 #include "kfastblock/xport_rdma.h"
 
+enum kfastblock_rdma_conn_state {
+	KFASTBLOCK_RDMA_CONN_IDLE = 0,
+	KFASTBLOCK_RDMA_CONN_RESOLVING_ADDR,
+	KFASTBLOCK_RDMA_CONN_RESOLVING_ROUTE,
+	KFASTBLOCK_RDMA_CONN_CONNECTING,
+	KFASTBLOCK_RDMA_CONN_ESTABLISHED,
+	KFASTBLOCK_RDMA_CONN_ERROR,
+	KFASTBLOCK_RDMA_CONN_DISCONNECTING,
+};
+
 struct kfastblock_rdma_conn {
 	char peer_addr[KFASTBLOCK_MAX_ADDR_LEN];
 	u16 peer_port;
+	u8 state;
 	bool connected;
 };
 
@@ -39,6 +50,7 @@ void kfastblock_rdma_conn_disconnect(struct kfastblock_rdma_conn *conn)
 	if (!conn)
 		return;
 	conn->connected = false;
+	conn->state = KFASTBLOCK_RDMA_CONN_IDLE;
 	conn->peer_port = 0;
 	conn->peer_addr[0] = '\0';
 }
