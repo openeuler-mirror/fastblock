@@ -12,7 +12,31 @@ enum kfastblock_fault_site {
 	KFASTBLOCK_FAULT_MONITOR_FETCH_IMAGE = 1U << 3,
 	KFASTBLOCK_FAULT_MONITOR_FETCH_CLUSTER = 1U << 4,
 	KFASTBLOCK_FAULT_OBJECT_IO = 1U << 5,
+	/* RDMA data-plane: fail CM connect before pool acquire. */
+	KFASTBLOCK_FAULT_RDMA_CONNECT = 1U << 6,
+	/* RDMA data-plane: fail send/recv exchange (timeout-like). */
+	KFASTBLOCK_FAULT_RDMA_EXCHANGE = 1U << 7,
+	/* Force AUTO/RDMA selection onto TCP for fallback testing. */
+	KFASTBLOCK_FAULT_FORCE_TCP = 1U << 8,
 };
+
+/* Mask of all defined fault sites (kept in sync with enum above). */
+#define KFASTBLOCK_FAULT_ALL_MASK \
+	(KFASTBLOCK_FAULT_MONITOR_CONNECT | \
+	 KFASTBLOCK_FAULT_OSD_CONNECT | \
+	 KFASTBLOCK_FAULT_LEADER_QUERY | \
+	 KFASTBLOCK_FAULT_MONITOR_FETCH_IMAGE | \
+	 KFASTBLOCK_FAULT_MONITOR_FETCH_CLUSTER | \
+	 KFASTBLOCK_FAULT_OBJECT_IO | \
+	 KFASTBLOCK_FAULT_RDMA_CONNECT | \
+	 KFASTBLOCK_FAULT_RDMA_EXCHANGE | \
+	 KFASTBLOCK_FAULT_FORCE_TCP)
+
+/* RDMA-related sites used when testing AUTO fallback / reconnect. */
+#define KFASTBLOCK_FAULT_RDMA_MASK \
+	(KFASTBLOCK_FAULT_RDMA_CONNECT | \
+	 KFASTBLOCK_FAULT_RDMA_EXCHANGE | \
+	 KFASTBLOCK_FAULT_FORCE_TCP)
 
 struct kfastblock_fault_injection_state {
 	spinlock_t lock;
