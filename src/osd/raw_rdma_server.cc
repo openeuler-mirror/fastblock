@@ -133,7 +133,7 @@ uint16_t random_raw_rdma_port() {
     return static_cast<uint16_t>(dist(gen));
 }
 
-bool validate_request_header(const raw_header& hdr) noexcept {
+bool validate_raw_request_header(const raw_header& hdr) noexcept {
     return raw_rdma_proto::validate_request_header(hdr);
 }
 
@@ -735,7 +735,7 @@ void osd_raw_rdma_server::handle_recv_complete(connection_context* conn,
 
     raw_header hdr{};
     std::memcpy(&hdr, rs.buf, sizeof(hdr));
-    if (!validate_request_header(hdr)) {
+    if (!validate_raw_request_header(hdr)) {
         conn->error_count.fetch_add(1, std::memory_order_relaxed);
         _dispatch_error_total.fetch_add(1, std::memory_order_relaxed);
         SPDK_ERRLOG("raw RDMA: invalid request header op=%u body_len=%u\n",

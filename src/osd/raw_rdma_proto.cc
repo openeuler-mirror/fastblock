@@ -11,9 +11,10 @@
 
 #include "raw_rdma_proto.h"
 
-#include "fastblock/utils/err_num.h"
-
+#include <cstring>
 #include <endian.h>
+
+#include "fastblock/utils/err_num.h"
 
 namespace raw_rdma_proto {
 

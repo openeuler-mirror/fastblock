@@ -42,10 +42,10 @@ constexpr uint32_t status_pg_initializing = 6U;
 constexpr uint32_t status_osd_down = 7U;
 constexpr uint32_t status_internal_error = 8U;
 
-/* raw header (24) + max object body (~4MiB) + margin ceiling for body alone */
+/* raw header (28) + max object body (~4MiB) + margin ceiling for body alone */
 constexpr size_t max_body_len = (4U * 1024U * 1024U) + 1024U;
 
-struct header {
+struct __attribute__((packed)) header {
     uint32_t magic;
     uint8_t version_major;
     uint8_t version_minor;
@@ -55,9 +55,9 @@ struct header {
     uint64_t seq;
     uint32_t status;
     uint32_t body_len;
-} __attribute__((packed));
+};
 
-static_assert(sizeof(header) == 24, "raw RDMA header must be 24 bytes");
+static_assert(sizeof(header) == 28, "raw RDMA header must be 28 bytes");
 
 /* True when hdr looks like a client request (not a response). */
 bool validate_request_header(const header& hdr) noexcept;
