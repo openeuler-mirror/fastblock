@@ -494,6 +494,20 @@ static void kfastblock_selfcheck_check_rawproto(
 				  -EINVAL, detail);
 
 	scnprintf(detail, sizeof(detail),
+		  "get_leader_req=%zu read_req=%zu write_req=%zu del_req=%zu",
+		  sizeof(struct kfastblock_raw_get_leader_req),
+		  sizeof(struct kfastblock_raw_read_object_req),
+		  sizeof(struct kfastblock_raw_write_object_req),
+		  sizeof(struct kfastblock_raw_delete_object_req));
+	kfastblock_selfcheck_note(report, m, "rawproto.osd_ops",
+				  sizeof(struct kfastblock_raw_get_leader_req) == 8 &&
+				  sizeof(struct kfastblock_raw_read_object_req) >= 20 &&
+				  sizeof(struct kfastblock_raw_write_object_req) >= 24 &&
+				  sizeof(struct kfastblock_raw_delete_object_req) >= 12,
+				  false, KFASTBLOCK_SELFCHECK_RAWPROTO,
+				  -EPROTO, detail);
+
+	scnprintf(detail, sizeof(detail),
 		  "magic=0x%x major=%u minor=%u",
 		  KFASTBLOCK_RAW_MAGIC, KFASTBLOCK_RAW_VERSION_MAJOR,
 		  KFASTBLOCK_RAW_VERSION_MINOR);
