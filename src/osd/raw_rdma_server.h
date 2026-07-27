@@ -57,6 +57,10 @@ public:
     /* Snapshot of per-shard listen ports (0 if shard missing). */
     std::vector<uint16_t> listen_ports() const;
     size_t max_connection_limit() const noexcept;
+    /* Bind address used by active listeners (empty when stopped). */
+    const std::string& bind_address() const noexcept;
+    /* Connections that completed RDMA_CM ESTABLISHED. */
+    size_t established_connection_count() const noexcept;
 
 private:
     struct listener_context {
