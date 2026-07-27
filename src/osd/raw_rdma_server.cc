@@ -43,6 +43,8 @@ namespace {
 constexpr uint16_t min_raw_rdma_port = 20001U;
 constexpr uint16_t max_raw_rdma_port = 29999U;
 constexpr int raw_rdma_bind_attempts = 64;
+/* Backlog for rdma_listen; parallel to TCP raw accept queue depth. */
+constexpr int raw_rdma_listen_backlog = 128;
 /* raw header (24) + max object body (~4MiB) + margin */
 constexpr size_t raw_rdma_recv_buf_len = (4U * 1024U * 1024U) + 4096U;
 constexpr size_t raw_rdma_send_buf_len = raw_rdma_recv_buf_len;
@@ -265,7 +267,7 @@ bool osd_raw_rdma_server::start_listener(uint32_t shard_id) {
         return false;
     }
 
-    if (::rdma_listen(listener.listen_id, 128)) {
+    if (::rdma_listen(listener.listen_id, raw_rdma_listen_backlog)) {
         SPDK_ERRLOG("raw RDMA: rdma_listen failed on %s:%u: %s\n",
                     _bind_address.c_str(), listener.port, std::strerror(errno));
         return false;
@@ -1083,15 +1085,16 @@ void osd_raw_rdma_server::run_listener(uint32_t shard_id) noexcept {
             auto* conn = static_cast<connection_context*>(event->id->context);
             if (conn) {
                 conn->established = true;
-                /* Single staging recv buffer: only one outstanding RECV WR. */
+                /* Post multi-slot RECVs so clients can pipeline requests. */
                 if (!post_recv(conn)) {
                     SPDK_ERRLOG(
                       "raw RDMA shard %u post_recv failed after ESTABLISHED peer=%s\n",
                       shard_id, conn->peer_address.c_str());
                 } else {
                     SPDK_NOTICELOG(
-                      "raw RDMA shard %u connection established peer=%s\n",
-                      shard_id, conn->peer_address.c_str());
+                      "raw RDMA shard %u connection established peer=%s recv_slots=%zu\n",
+                      shard_id, conn->peer_address.c_str(),
+                      connection_context::max_recv_slots);
                 }
             }
         } else if (event->event == RDMA_CM_EVENT_DISCONNECTED ||
