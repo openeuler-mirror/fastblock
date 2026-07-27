@@ -1,29 +1,28 @@
 #include <linux/errno.h>
 
 #include "kfastblock/xport.h"
-#include "kfastblock/xport_rdma.h"
 
 static int kfastblock_xport_tcp_probe(const struct kfastblock_leader_info *leader)
 {
-	if (!leader || !leader->address[0] || !leader->port)
+	if (!kfastblock_leader_has_tcp(leader))
 		return -EINVAL;
 	return 0;
 }
 
+/*
+ * Cheap RDMA capability probe: only validate that the leader advertises
+ * address + rdma_port. Do NOT open an RDMA CM connection here.
+ *
+ * Why: xport_select() may run on every I/O path decision / meta refresh.
+ * Full connect/disconnect would thrash CM, allocate QP/MR, and add multi-
+ * second latency on failure. Real I/O still performs a full connect via
+ * kfastblock_rdma_conn_connect() (transport / RDMA pool owns that).
+ */
 static int kfastblock_xport_rdma_probe(const struct kfastblock_leader_info *leader)
 {
-	struct kfastblock_rdma_conn *conn;
-	int ret;
-
-	if (!leader || !leader->address[0] || !leader->rdma_port)
+	if (!kfastblock_leader_has_rdma(leader))
 		return -ENOTCONN;
-
-	conn = kfastblock_rdma_conn_alloc();
-	if (!conn)
-		return -ENOMEM;
-	ret = kfastblock_rdma_conn_connect(conn, leader);
-	kfastblock_rdma_conn_free(conn);
-	return ret;
+	return 0;
 }
 
 static const struct kfastblock_xport_ops kfastblock_xport_tcp = {
