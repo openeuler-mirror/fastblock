@@ -607,6 +607,16 @@ static void kfastblock_diag_compute_anomaly(struct kfastblock_diag_snapshot *sna
 			       refresh_fail_events * 3 +
 			       socket_events * 2);
 	}
+	/*
+	 * Prefer RDMA (or AUTO) but no valid leader advertises rdma_port:
+	 * data plane cannot use RDMA until map/leader includes it.
+	 */
+	if (snapshot->xport.prefers_rdma &&
+	    snapshot->xport.leader_valid_count > 0 &&
+	    snapshot->xport.leader_rdma_ready_count == 0) {
+		flags |= KFASTBLOCK_DIAG_ANOMALY_RDMA_UNAVAILABLE;
+		score += 10;
+	}
 
 	snapshot->anomaly_flags = flags;
 	snapshot->anomaly_score = min_t(u32, score, 100);
