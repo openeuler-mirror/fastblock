@@ -22,6 +22,7 @@ struct raw_rdma_server_stats {
     bool running{false};
     uint32_t shard_count{0};
     size_t connection_count{0};
+    size_t established_connection_count{0};
     uint64_t recv_total{0};
     uint64_t send_total{0};
     uint64_t error_total{0};
