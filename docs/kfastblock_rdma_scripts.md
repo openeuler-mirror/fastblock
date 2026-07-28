@@ -12,6 +12,7 @@
 | `scripts/run-kfastblock-rdma-seq-64k.sh` | 顺序多 4K 块 |
 | `scripts/run-kfastblock-rdma-write-only.sh` | 仅写 |
 | `scripts/run-kfastblock-rdma-read-only.sh` | 写后多次读 |
+| `scripts/run-kfastblock-rdma-bs-sweep.sh` | 4K/8K 扫测 |
 | `scripts/post-reboot-rdma-smoke.sh` | 冷启动全路径 |
 | `scripts/check-kfastblock-rdma-params.sh` | 模块参数存在性 |
 | `scripts/run-kfastblock-rdma-suite.sh` | 最小套件入口 |
