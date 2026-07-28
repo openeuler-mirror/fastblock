@@ -502,8 +502,9 @@ kfastblock_module_param() {
 kfastblock_print_rdma_counters() {
     local p
     for p in rdma_connect_ok rdma_connect_err rdma_connect_timeout rdma_exchange_ok \
-             rdma_exchange_err rdma_exchange_stale rdma_send_ok rdma_recv_ok \
-             rdma_pool_hit rdma_pool_miss rdma_io_timeout_total rdma_connect_timeout; do
+             rdma_exchange_err rdma_exchange_stale rdma_send_ok rdma_send_err \
+             rdma_recv_ok rdma_recv_err rdma_wc_err rdma_dma_map_err \
+             rdma_pool_hit rdma_pool_miss rdma_io_timeout_total; do
         if [ -r "/sys/module/kfastblock/parameters/$p" ]; then
             printf '%s=%s\n' "$p" "$(tr -d '\n' < "/sys/module/kfastblock/parameters/$p")"
         fi
