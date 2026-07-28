@@ -101,6 +101,14 @@ struct raw_osd_shard_entry {
 	uint16_t core_id;
 } __attribute__((packed));
 
+struct raw_osd_shard_entry_v1 {
+	uint32_t shard_id;
+	uint16_t port;
+	uint16_t core_id;
+	uint16_t rdma_port;
+	uint16_t reserved;
+} __attribute__((packed));
+
 struct raw_pg_entry_hdr {
 	uint32_t pool_id;
 	uint32_t pg_id;
@@ -711,8 +719,10 @@ static int cmd_get_cluster_map(const struct config *cfg)
 		struct raw_osd_entry_hdr osd_hdr;
 		uint16_t address_len;
 		uint16_t shard_count;
+		size_t shard_size;
 		char *address;
 		uint32_t j;
+		bool have_rdma = hdr.version_minor >= 1;
 
 		if ((size_t)(end - cursor) < sizeof(osd_hdr)) {
 			ret = -EPROTO;
@@ -722,8 +732,10 @@ static int cmd_get_cluster_map(const struct config *cfg)
 		cursor += sizeof(osd_hdr);
 		address_len = le16toh(osd_hdr.address_len);
 		shard_count = le16toh(osd_hdr.shard_count);
+		shard_size = have_rdma ? sizeof(struct raw_osd_shard_entry_v1)
+				      : sizeof(struct raw_osd_shard_entry);
 		if ((size_t)(end - cursor) < address_len +
-		    shard_count * sizeof(struct raw_osd_shard_entry)) {
+		    shard_count * shard_size) {
 			ret = -EPROTO;
 			goto out;
 		}
@@ -739,13 +751,26 @@ static int cmd_get_cluster_map(const struct config *cfg)
 		       shard_count);
 		free(address);
 		for (j = 0; j < shard_count; ++j) {
-			struct raw_osd_shard_entry shard;
+			if (have_rdma) {
+				struct raw_osd_shard_entry_v1 shard;
 
-			memcpy(&shard, cursor, sizeof(shard));
-			cursor += sizeof(shard);
-			printf("  shard=%u port=%u core=%u\n",
-			       le32toh(shard.shard_id), le16toh(shard.port),
-			       le16toh(shard.core_id));
+				memcpy(&shard, cursor, sizeof(shard));
+				cursor += sizeof(shard);
+				printf("  shard=%u port=%u rdma_port=%u core=%u\n",
+				       le32toh(shard.shard_id),
+				       le16toh(shard.port),
+				       le16toh(shard.rdma_port),
+				       le16toh(shard.core_id));
+			} else {
+				struct raw_osd_shard_entry shard;
+
+				memcpy(&shard, cursor, sizeof(shard));
+				cursor += sizeof(shard);
+				printf("  shard=%u port=%u core=%u\n",
+				       le32toh(shard.shard_id),
+				       le16toh(shard.port),
+				       le16toh(shard.core_id));
+			}
 		}
 	}
 
