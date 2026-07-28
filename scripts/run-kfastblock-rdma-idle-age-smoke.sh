@@ -16,8 +16,8 @@ echo 2 > /sys/module/kfastblock/parameters/rdma_pool_idle_max_age_s
 AGE_SLEEP="${KFASTBLOCK_IDLE_AGE_SLEEP:-3}"
 
 MON="$(kfastblock_resolve_monitor_addr "$CONF")"
-POOL=fb
-IMAGE="rdma-age-$(date +%s)"
+POOL="${KFASTBLOCK_POOL:-fb}"
+IMAGE="${KFASTBLOCK_IMAGE:-rdma-age-$(date +%s)}"
 kfastblock_create_image "$REPO_ROOT" "$CONF" "$POOL" "$IMAGE"
 "$REPO_ROOT/kfastblock/tool/kfastblock-admin" attach \
   --monitor-addr "${MON}:3334" --pool-name "$POOL" --image-name "$IMAGE" \
