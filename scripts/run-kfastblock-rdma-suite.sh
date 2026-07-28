@@ -16,4 +16,7 @@ fi
 if [ "${KFASTBLOCK_SUITE_SEQ:-0}" = "1" ]; then
   bash scripts/run-kfastblock-rdma-seq-64k.sh
 fi
+if [ "${KFASTBLOCK_SUITE_BS_SWEEP:-0}" = "1" ]; then
+  bash scripts/run-kfastblock-rdma-bs-sweep.sh
+fi
 echo "RDMA_SUITE_OK"
