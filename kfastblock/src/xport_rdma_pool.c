@@ -584,14 +584,15 @@ int kfastblock_rdma_pool_format_stats(struct kfastblock_rdma_pool *pool,
 					snap.connect_lat_count) : 0;
 
 		return scnprintf(buf, buf_len,
-			 "slots=%u empty=%u idle=%u busy=%u dead=%u connected=%u ready=%u max_idle=%u hits=%llu misses=%llu hit_pct=%u util_pct=%u evict=%llu conn_lat_us=%lu/%lu/%lu n=%u",
+			 "slots=%u empty=%u idle=%u busy=%u dead=%u connected=%u ready=%u max_idle=%u hits=%llu misses=%llu hit_pct=%u util_pct=%u evict=%llu conn_lat_us=%lu/%lu/%lu n=%u attempts=%llu",
 			 snap.total_slots, snap.empty_slots, snap.idle_slots,
 			 snap.busy_slots, snap.dead_slots, snap.connected_slots,
 			 kfastblock_rdma_pool_ready_count(pool), snap.max_idle,
 			 hits, misses, hit_pct, util_pct,
 			 (unsigned long long)snap.idle_evictions,
 			 snap.connect_lat_us_min, conn_lat_avg,
-			 snap.connect_lat_us_max, snap.connect_lat_count);
+			 snap.connect_lat_us_max, snap.connect_lat_count,
+			 (unsigned long long)snap.total_connect_attempts);
 	}
 }
 
@@ -690,6 +691,7 @@ void kfastblock_rdma_pool_snapshot(struct kfastblock_rdma_pool *pool,
 		if (slot->conn && kfastblock_rdma_conn_is_connected(slot->conn))
 			snap->connected_slots++;
 		reuse += slot->reuse_hits;
+		snap->total_connect_attempts += slot->connect_attempts;
 		mutex_unlock(&slot->lock);
 	}
 	snap->reuse_hits = reuse;
