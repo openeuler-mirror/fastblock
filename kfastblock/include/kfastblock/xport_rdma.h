@@ -66,7 +66,7 @@ const char *kfastblock_rdma_conn_state_str(const struct kfastblock_rdma_conn *co
  */
 bool kfastblock_rdma_conn_is_usable(const struct kfastblock_rdma_conn *conn);
 
-/* True when conn peer address:port matches leader endpoint. */
+/* True when connected and peer address:rdma_port matches leader. */
 bool kfastblock_rdma_conn_matches_leader(
 	const struct kfastblock_rdma_conn *conn,
 	const struct kfastblock_leader_info *leader);
