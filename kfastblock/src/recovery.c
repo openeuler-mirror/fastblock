@@ -123,6 +123,7 @@ bool kfastblock_recovery_is_transport_errno(int ret)
 	case -ENOTCONN:
 	case -EPROTO:
 	case -EIO:
+	case -EMSGSIZE:
 		return true;
 	default:
 		return false;
@@ -144,6 +145,7 @@ blk_status_t kfastblock_recovery_errno_to_blk_status(int ret)
 	case -ECONNRESET:
 	case -EPIPE:
 	case -ENOTCONN:
+	case -EPROTO:
 		return BLK_STS_TRANSPORT;
 	default:
 		return BLK_STS_IOERR;
