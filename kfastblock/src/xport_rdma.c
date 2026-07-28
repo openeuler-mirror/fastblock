@@ -5,6 +5,7 @@
 #include <linux/in.h>
 #include <linux/inet.h>
 #include <linux/jiffies.h>
+#include <linux/ktime.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/module.h>
@@ -115,6 +116,31 @@ static unsigned long kfastblock_rdma_connect_timeout;
 static unsigned long kfastblock_rdma_dma_map_err;
 static unsigned long kfastblock_rdma_io_timeout_total;
 static unsigned long kfastblock_rdma_wc_err;
+/* Per-op latency tracking (microseconds via ktime_to_us). */
+static unsigned long kfastblock_rdma_send_lat_min_us;
+static unsigned long kfastblock_rdma_send_lat_max_us;
+static unsigned long long kfastblock_rdma_send_lat_total_us;
+static unsigned long kfastblock_rdma_send_lat_count;
+static unsigned long kfastblock_rdma_recv_lat_min_us;
+static unsigned long kfastblock_rdma_recv_lat_max_us;
+static unsigned long long kfastblock_rdma_recv_lat_total_us;
+static unsigned long kfastblock_rdma_recv_lat_count;
+
+static void kfastblock_rdma_update_lat_stats(unsigned long *min_us,
+					     unsigned long *max_us,
+					     unsigned long long *total_us,
+					     unsigned long *count,
+					     ktime_t start)
+{
+	unsigned long elapsed = (unsigned long)ktime_to_us(ktime_sub(ktime_get(), start));
+
+	if (!*count || elapsed < *min_us)
+		*min_us = elapsed;
+	if (elapsed > *max_us)
+		*max_us = elapsed;
+	*total_us += elapsed;
+	(*count)++;
+}
 
 module_param_named(rdma_send_ok, kfastblock_rdma_send_ok, ulong, 0444);
 MODULE_PARM_DESC(rdma_send_ok, "RDMA SEND successes");
@@ -147,6 +173,26 @@ MODULE_PARM_DESC(rdma_io_timeout_total,
 		 "RDMA SEND/RECV poll deadline hits");
 module_param_named(rdma_wc_err, kfastblock_rdma_wc_err, ulong, 0444);
 MODULE_PARM_DESC(rdma_wc_err, "RDMA CQ work completions with error status");
+module_param_named(rdma_send_lat_min_us, kfastblock_rdma_send_lat_min_us,
+		   ulong, 0444);
+MODULE_PARM_DESC(rdma_send_lat_min_us, "RDMA SEND min latency (microseconds)");
+module_param_named(rdma_send_lat_max_us, kfastblock_rdma_send_lat_max_us,
+		   ulong, 0444);
+MODULE_PARM_DESC(rdma_send_lat_max_us, "RDMA SEND max latency (microseconds)");
+module_param_named(rdma_send_lat_avg_us, kfastblock_rdma_send_lat_total_us,
+		   ullong, 0444);
+MODULE_PARM_DESC(rdma_send_lat_avg_us,
+		 "RDMA SEND total latency (microseconds, divide by count)");
+module_param_named(rdma_recv_lat_min_us, kfastblock_rdma_recv_lat_min_us,
+		   ulong, 0444);
+MODULE_PARM_DESC(rdma_recv_lat_min_us, "RDMA RECV min latency (microseconds)");
+module_param_named(rdma_recv_lat_max_us, kfastblock_rdma_recv_lat_max_us,
+		   ulong, 0444);
+MODULE_PARM_DESC(rdma_recv_lat_max_us, "RDMA RECV max latency (microseconds)");
+module_param_named(rdma_recv_lat_avg_us, kfastblock_rdma_recv_lat_total_us,
+		   ullong, 0444);
+MODULE_PARM_DESC(rdma_recv_lat_avg_us,
+		 "RDMA RECV total latency (microseconds, divide by count)");
 
 /*
  * Connection state machine (client):
@@ -1061,6 +1107,7 @@ int kfastblock_rdma_conn_send(struct kfastblock_rdma_conn *conn,
 	const struct ib_send_wr *bad;
 	struct ib_device *dev;
 	unsigned long deadline;
+	ktime_t start;
 	int ret;
 
 	if (!kfastblock_rdma_conn_is_connected(conn) || !buf || !len) {
@@ -1100,6 +1147,7 @@ int kfastblock_rdma_conn_send(struct kfastblock_rdma_conn *conn,
 	wr.send_flags = IB_SEND_SIGNALED;
 	(void)kfastblock_rdma_signal_all;
 
+	start = ktime_get();
 	reinit_completion(&conn->send_done);
 	conn->send_wc_status = 0;
 	ret = ib_post_send(conn->cm_id->qp, &wr, &bad);
@@ -1130,6 +1178,11 @@ int kfastblock_rdma_conn_send(struct kfastblock_rdma_conn *conn,
 		kfastblock_rdma_send_err++;
 		return -EIO;
 	}
+	kfastblock_rdma_update_lat_stats(&kfastblock_rdma_send_lat_min_us,
+					    &kfastblock_rdma_send_lat_max_us,
+					    &kfastblock_rdma_send_lat_total_us,
+					    &kfastblock_rdma_send_lat_count,
+					    start);
 	kfastblock_rdma_send_ok++;
 	conn->last_error = 0;
 	return 0;
@@ -1140,6 +1193,7 @@ int kfastblock_rdma_conn_recv(struct kfastblock_rdma_conn *conn,
 {
 	struct ib_device *dev;
 	unsigned long deadline;
+	ktime_t start;
 	int ret;
 
 	if (!kfastblock_rdma_conn_is_connected(conn) || !buf || !buf_len) {
@@ -1161,6 +1215,7 @@ int kfastblock_rdma_conn_recv(struct kfastblock_rdma_conn *conn,
 		}
 	}
 
+	start = ktime_get();
 	deadline = jiffies + kfastblock_rdma_io_timeout_jiffies();
 	while (!completion_done(&conn->recv_done)) {
 		ret = kfastblock_rdma_poll_one(conn, deadline);
@@ -1201,6 +1256,11 @@ int kfastblock_rdma_conn_recv(struct kfastblock_rdma_conn *conn,
 		reinit_completion(&conn->recv_done);
 		conn->recv_wc_status = 0;
 		conn->recv_byte_len = 0;
+		kfastblock_rdma_update_lat_stats(&kfastblock_rdma_recv_lat_min_us,
+						    &kfastblock_rdma_recv_lat_max_us,
+						    &kfastblock_rdma_recv_lat_total_us,
+						    &kfastblock_rdma_recv_lat_count,
+						    start);
 		kfastblock_rdma_recv_ok++;
 		return (int)got;
 	}
