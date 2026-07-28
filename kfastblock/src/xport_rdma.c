@@ -540,6 +540,9 @@ static int kfastblock_rdma_post_recv(struct kfastblock_rdma_conn *conn)
 	ret = ib_post_recv(conn->cm_id->qp, &wr, &bad);
 	if (ret) {
 		conn->last_error = ret;
+		pr_warn_ratelimited(
+			"kfastblock: ib_post_recv failed ret=%d peer=%s:%u\n",
+			ret, conn->peer_addr, conn->peer_port);
 		return ret;
 	}
 	if (!conn->recv_posted) {
