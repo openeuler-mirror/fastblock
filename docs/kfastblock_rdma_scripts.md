@@ -10,5 +10,6 @@
 | `scripts/run-kfastblock-tcp-4k-verify.sh` | TCP 对照 |
 | `scripts/post-reboot-rdma-smoke.sh` | 冷启动全路径 |
 | `scripts/check-kfastblock-rdma-params.sh` | 模块参数存在性 |
+| `scripts/run-kfastblock-rdma-suite.sh` | 最小套件入口 |
 
 集群需已 `vstart`（或由脚本拉起），Soft-RoCE 见 `scripts/setup-soft-roce.sh`。
