@@ -16,6 +16,8 @@ struct kfastblock_attach_spec {
 	char *pool_name;
 	char *image_name;
 	bool read_only;
+	/* KFASTBLOCK_OSD_TRANSPORT_* : kernel client <-> OSD data plane */
+	u32 osd_transport;
 	u64 debug_size_bytes;
 	u32 debug_object_size;
 	u32 debug_pool_id;
