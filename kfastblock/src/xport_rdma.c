@@ -1480,6 +1480,15 @@ int kfastblock_rdma_conn_exchange(struct kfastblock_rdma_conn *conn,
 		kfastblock_rdma_conn_mark_error(conn, -EMSGSIZE);
 		return -EMSGSIZE;
 	}
+	/*
+	 * A zero-length response body is suspicious for OSD exchanges
+	 * (write/read/delete all return status or data). Log but accept
+	 * since some control responses may legitimately be header-only.
+	 */
+	if (!rsp_body_len)
+		pr_warn_ratelimited(
+			"kfastblock: RDMA exchange zero-length response peer=%s:%u opcode=%u\n",
+			conn->peer_addr, conn->peer_port, shdr->opcode);
 
 	kfastblock_rdma_exchange_ok++;
 	conn->last_error = 0;
