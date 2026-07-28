@@ -2427,8 +2427,10 @@ static ssize_t rdma_cache_stats_show(struct device *dev,
 {
 	struct kfastblock_volume *vol = dev_get_drvdata(dev);
 	u32 i;
-	u32 ready = 0, empty = 0, connecting = 0;
+	u32 ready = 0, empty = 0, connecting = 0, other = 0;
+	u32 fail_streak = 0, recv_posted = 0, recv_depth = 0;
 	u64 reuse = 0, fail = 0, ok = 0, attempts = 0;
+	s32 last_error = 0;
 
 	if (!vol)
 		return -ENODEV;
@@ -2441,8 +2443,18 @@ static ssize_t rdma_cache_stats_show(struct device *dev,
 			ready++;
 		else if (c->state == KFASTBLOCK_CONN_STATE_CONNECTING)
 			connecting++;
-		else
+		else if (c->state == KFASTBLOCK_CONN_STATE_EMPTY)
 			empty++;
+		else
+			other++;
+		if (c->conn) {
+			recv_posted += kfastblock_rdma_conn_recv_posted(c->conn);
+			recv_depth += kfastblock_rdma_conn_recv_depth(c->conn);
+			last_error = kfastblock_rdma_conn_last_error(c->conn);
+		} else if (c->last_error) {
+			last_error = c->last_error;
+		}
+		fail_streak += c->fail_streak;
 		reuse += c->reuse_hits;
 		fail += c->failure_count;
 		ok += c->success_count;
@@ -2451,9 +2463,10 @@ static ssize_t rdma_cache_stats_show(struct device *dev,
 	}
 
 	return scnprintf(buf, PAGE_SIZE,
-			 "slots=%u ready=%u empty=%u connecting=%u reuse=%llu ok=%llu fail=%llu attempts=%llu\n",
+			 "slots=%u ready=%u empty=%u connecting=%u other=%u reuse=%llu ok=%llu fail=%llu attempts=%llu fail_streak=%u last_error=%d recv_posted=%u recv_depth=%u\n",
 			 KFASTBLOCK_MAX_RDMA_CACHE, ready, empty, connecting,
-			 reuse, ok, fail, attempts);
+			 other, reuse, ok, fail, attempts, fail_streak,
+			 last_error, recv_posted, recv_depth);
 }
 
 static ssize_t pool_name_show(struct device *dev,
