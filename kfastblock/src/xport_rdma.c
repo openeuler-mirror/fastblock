@@ -114,6 +114,7 @@ static unsigned long kfastblock_rdma_connect_err;
 static unsigned long kfastblock_rdma_connect_timeout;
 static unsigned long kfastblock_rdma_dma_map_err;
 static unsigned long kfastblock_rdma_io_timeout_total;
+static unsigned long kfastblock_rdma_wc_err;
 
 module_param_named(rdma_send_ok, kfastblock_rdma_send_ok, ulong, 0444);
 MODULE_PARM_DESC(rdma_send_ok, "RDMA SEND successes");
@@ -143,6 +144,8 @@ MODULE_PARM_DESC(rdma_dma_map_err, "RDMA DMA map single failures");
 module_param_named(rdma_io_timeout_total, kfastblock_rdma_io_timeout_total,
 		   ulong, 0444);
 MODULE_PARM_DESC(rdma_io_timeout_total,
+module_param_named(rdma_wc_err, kfastblock_rdma_wc_err, ulong, 0444);
+MODULE_PARM_DESC(rdma_wc_err, "RDMA CQ work completions with error status");
 		 "RDMA SEND/RECV poll deadline hits");
 
 /*
@@ -576,6 +579,7 @@ static int kfastblock_rdma_apply_wc(struct kfastblock_rdma_conn *conn,
 
 	/* Non-success WC: still deliver to waiter; caller checks status. */
 	if (wc->status != IB_WC_SUCCESS) {
+		kfastblock_rdma_wc_err++;
 		conn->last_error = -EIO;
 		/* Fatal CQ errors tear down usability of this conn. */
 		if (wc->status == IB_WC_WR_FLUSH_ERR ||
