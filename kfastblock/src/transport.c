@@ -2847,8 +2847,8 @@ static int kfastblock_transport_prepare_object_exchange(
 				return -ENOTCONN;
 			}
 			pr_info_ratelimited(
-				"kfastblock: RDMA unavailable, fallback TCP peer=%s\n",
-				ctx->leader.address);
+				"kfastblock: RDMA unavailable, fallback TCP peer=%s:%u\n",
+				ctx->leader.address, ctx->leader.rdma_port);
 			/* AUTO continues and falls back to TCP below. */
 		} else {
 			ctx->rdma = ctx->rdma_slot->conn;
