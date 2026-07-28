@@ -67,6 +67,7 @@ while [ "$i" -lt "$ROUNDS" ]; do
 done
 
 err1="$(cat /sys/module/kfastblock/parameters/rdma_exchange_err)"
+stale1="$(cat /sys/module/kfastblock/parameters/rdma_exchange_stale 2>/dev/null || echo 0)"
 ex1="$(cat /sys/module/kfastblock/parameters/rdma_exchange_ok)"
 echo "rdma_exchange_ok: $ex0 -> $ex1 (delta=$((ex1 - ex0)))"
 echo "rdma_exchange_err: $err0 -> $err1 (delta=$((err1 - err0)))"
