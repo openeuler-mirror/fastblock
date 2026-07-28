@@ -14,6 +14,7 @@ lsmod | awk '$1=="kfastblock"{f=1} END{exit f?0:1}' || {
 MON="$(kfastblock_resolve_monitor_addr "$CONF")"
 POOL="${KFASTBLOCK_POOL:-fb}"
 IMAGE="${KFASTBLOCK_IMAGE:-tcp-4k-$(date +%s)}"
+TIMEOUT_S="${KFASTBLOCK_IO_TIMEOUT_S:-30}"
 kfastblock_create_image "$REPO_ROOT" "$CONF" "$POOL" "$IMAGE"
 "$REPO_ROOT/kfastblock/tool/kfastblock-admin" attach \
   --monitor-addr "${MON}:3334" --pool-name "$POOL" --image-name "$IMAGE" \
@@ -24,8 +25,8 @@ echo "osd_transport=$xport"
 [ "$xport" = "tcp" ] || { echo "expected tcp" >&2; exit 1; }
 pay=/tmp/tcp-pay.bin; rb=/tmp/tcp-rb.bin
 printf 'TCP_%s' "$IMAGE" | dd of="$pay" bs=4096 count=1 conv=sync status=none
-timeout 30 dd if="$pay" of="$DEV" bs=4096 count=1 oflag=direct status=none
-timeout 30 dd if="$DEV" of="$rb" bs=4096 count=1 iflag=direct status=none
+timeout "$TIMEOUT_S" dd if="$pay" of="$DEV" bs=4096 count=1 oflag=direct status=none
+timeout "$TIMEOUT_S" dd if="$DEV" of="$rb" bs=4096 count=1 iflag=direct status=none
 cmp -n 4096 "$pay" "$rb"
 kfastblock_detach_volume "$REPO_ROOT" "$POOL" "$IMAGE" || true
 echo "TCP_4K_VERIFY_OK"
