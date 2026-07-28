@@ -125,6 +125,9 @@ static unsigned long kfastblock_rdma_recv_lat_min_us;
 static unsigned long kfastblock_rdma_recv_lat_max_us;
 static unsigned long long kfastblock_rdma_recv_lat_total_us;
 static unsigned long kfastblock_rdma_recv_lat_count;
+/* Cumulative bytes transferred via RDMA SEND/RECV. */
+static unsigned long long kfastblock_rdma_send_bytes;
+static unsigned long long kfastblock_rdma_recv_bytes;
 
 static void kfastblock_rdma_update_lat_stats(unsigned long *min_us,
 					     unsigned long *max_us,
@@ -193,6 +196,10 @@ module_param_named(rdma_recv_lat_avg_us, kfastblock_rdma_recv_lat_total_us,
 		   ullong, 0444);
 MODULE_PARM_DESC(rdma_recv_lat_avg_us,
 		 "RDMA RECV total latency (microseconds, divide by count)");
+module_param_named(rdma_send_bytes, kfastblock_rdma_send_bytes, ullong, 0444);
+MODULE_PARM_DESC(rdma_send_bytes, "RDMA SEND cumulative bytes transmitted");
+module_param_named(rdma_recv_bytes, kfastblock_rdma_recv_bytes, ullong, 0444);
+MODULE_PARM_DESC(rdma_recv_bytes, "RDMA RECV cumulative bytes received");
 
 /*
  * Connection state machine (client):
@@ -1183,6 +1190,7 @@ int kfastblock_rdma_conn_send(struct kfastblock_rdma_conn *conn,
 					    &kfastblock_rdma_send_lat_total_us,
 					    &kfastblock_rdma_send_lat_count,
 					    start);
+	kfastblock_rdma_send_bytes += len;
 	kfastblock_rdma_send_ok++;
 	conn->last_error = 0;
 	return 0;
@@ -1261,6 +1269,7 @@ int kfastblock_rdma_conn_recv(struct kfastblock_rdma_conn *conn,
 						    &kfastblock_rdma_recv_lat_total_us,
 						    &kfastblock_rdma_recv_lat_count,
 						    start);
+		kfastblock_rdma_recv_bytes += got;
 		kfastblock_rdma_recv_ok++;
 		return (int)got;
 	}
