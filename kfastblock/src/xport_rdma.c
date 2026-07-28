@@ -729,6 +729,39 @@ void kfastblock_rdma_conn_free(struct kfastblock_rdma_conn *conn)
 	kfree(conn);
 }
 
+static int kfastblock_rdma_conn_setup_cm(struct kfastblock_rdma_conn *conn)
+{
+	struct rdma_conn_param conn_param;
+	int ret;
+
+	if (!conn || !conn->cm_id)
+		return -EINVAL;
+
+	memset(&conn_param, 0, sizeof(conn_param));
+	conn_param.responder_resources = 1;
+	conn_param.initiator_depth = 1;
+	conn_param.retry_count = kfastblock_rdma_retry_clamped(
+		kfastblock_rdma_retry_count);
+	conn_param.rnr_retry_count = kfastblock_rdma_retry_clamped(
+		kfastblock_rdma_rnr_retry_count);
+
+	reinit_completion(&conn->cm_done);
+	conn->state = KFASTBLOCK_RDMA_CONN_CONNECTING;
+	ret = rdma_connect(conn->cm_id, &conn_param);
+	if (ret) {
+		conn->last_error = ret;
+		pr_warn_ratelimited(
+			"kfastblock: rdma_connect failed ret=%d peer=%s:%u\n",
+			ret, conn->peer_addr, conn->peer_port);
+		return ret;
+	}
+
+	ret = kfastblock_rdma_wait_cm_event(conn, RDMA_CM_EVENT_ESTABLISHED);
+	if (ret)
+		return ret;
+	return 0;
+}
+
 static int kfastblock_rdma_conn_setup_qp(struct kfastblock_rdma_conn *conn)
 {
 	unsigned int max_send_wr = kfastblock_rdma_qp_wr_clamped(
@@ -945,35 +978,9 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 		if (ret)
 			goto err_destroy_id;
 
-		{
-			struct rdma_conn_param conn_param;
-
-			memset(&conn_param, 0, sizeof(conn_param));
-			conn_param.responder_resources = 1;
-			conn_param.initiator_depth = 1;
-			conn_param.retry_count = kfastblock_rdma_retry_clamped(
-				kfastblock_rdma_retry_count);
-			conn_param.rnr_retry_count = kfastblock_rdma_retry_clamped(
-				kfastblock_rdma_rnr_retry_count);
-
-			reinit_completion(&conn->cm_done);
-			conn->state = KFASTBLOCK_RDMA_CONN_CONNECTING;
-			ret = rdma_connect(conn->cm_id, &conn_param);
-			if (ret) {
-				conn->last_error = ret;
-				pr_warn_ratelimited(
-					"kfastblock: rdma_connect failed ret=%d peer=%s:%u\n",
-					ret, conn->peer_addr, conn->peer_port);
-				goto err_destroy_id;
-			}
-
-			ret = kfastblock_rdma_wait_cm_event(
-				conn, RDMA_CM_EVENT_ESTABLISHED);
-			if (ret) {
-				conn->last_error = ret;
-				goto err_destroy_id;
-			}
-		}
+		ret = kfastblock_rdma_conn_setup_cm(conn);
+		if (ret)
+			goto err_destroy_id;
 
 		ret = kfastblock_rdma_alloc_bufs(conn);
 		if (ret) {
