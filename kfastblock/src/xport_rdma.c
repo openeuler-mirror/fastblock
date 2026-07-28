@@ -106,6 +106,8 @@ static unsigned long kfastblock_rdma_recv_ok;
 static unsigned long kfastblock_rdma_recv_err;
 static unsigned long kfastblock_rdma_exchange_ok;
 static unsigned long kfastblock_rdma_exchange_err;
+/* Response header magic/seq/opcode/service mismatch after successful RECV. */
+static unsigned long kfastblock_rdma_exchange_stale;
 static unsigned long kfastblock_rdma_connect_ok;
 static unsigned long kfastblock_rdma_connect_err;
 static unsigned long kfastblock_rdma_dma_map_err;
@@ -116,6 +118,10 @@ module_param_named(rdma_send_err, kfastblock_rdma_send_err, ulong, 0444);
 MODULE_PARM_DESC(rdma_send_err, "RDMA SEND failures");
 module_param_named(rdma_recv_ok, kfastblock_rdma_recv_ok, ulong, 0444);
 MODULE_PARM_DESC(rdma_recv_ok, "RDMA RECV successes");
+module_param_named(rdma_exchange_stale, kfastblock_rdma_exchange_stale, ulong,
+		   0444);
+MODULE_PARM_DESC(rdma_exchange_stale,
+		 "RDMA exchange response header mismatches (stale/wrong frame)");
 module_param_named(rdma_recv_err, kfastblock_rdma_recv_err, ulong, 0444);
 MODULE_PARM_DESC(rdma_recv_err, "RDMA RECV failures");
 module_param_named(rdma_exchange_ok, kfastblock_rdma_exchange_ok, ulong, 0444);
@@ -1162,8 +1168,12 @@ int kfastblock_rdma_conn_exchange(struct kfastblock_rdma_conn *conn,
 	    le64_to_cpu(shdr->seq) != expect_seq ||
 	    shdr->opcode != rhdr->opcode ||
 	    shdr->service != rhdr->service) {
+		/* Stale/wrong frame (e.g. previous response reused). */
+		kfastblock_rdma_exchange_stale++;
 		kfastblock_rdma_exchange_err++;
 		conn->last_error = -EPROTO;
+		conn->connected = false;
+		conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
 		return -EPROTO;
 	}
 	/* Response body_len must not exceed the received frame. */
