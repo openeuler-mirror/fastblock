@@ -19,6 +19,10 @@ kfastblock_create_image "$REPO_ROOT" "$CONF" "$POOL" "$IMAGE"
   --osd-transport rdma
 DEV="$(kfastblock_resolve_device)"
 for bs in $BS_LIST; do
+  if [ "$bs" -lt 4096 ] || [ $((bs % 4096)) -ne 0 ]; then
+    echo "invalid bs=$bs (must be >=4096 and 4K-aligned)" >&2
+    exit 1
+  fi
   count=$((bs/4096))
   pay=/tmp/bs-$bs.pay; rb=/tmp/bs-$bs.rb
   dd if=/dev/urandom of="$pay" bs=4096 count=$count status=none
