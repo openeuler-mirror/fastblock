@@ -1045,6 +1045,9 @@ int kfastblock_rdma_conn_send(struct kfastblock_rdma_conn *conn,
 	if (ret) {
 		conn->last_error = ret;
 		kfastblock_rdma_send_err++;
+		pr_warn_ratelimited(
+			"kfastblock: ib_post_send failed ret=%d peer=%s:%u len=%u\n",
+			ret, conn->peer_addr, conn->peer_port, len);
 		return ret;
 	}
 
