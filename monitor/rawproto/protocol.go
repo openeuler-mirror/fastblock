@@ -10,7 +10,7 @@ import (
 const (
 	Magic        uint32 = 0x46425257
 	VersionMajor uint8  = 1
-	VersionMinor uint8  = 0
+	VersionMinor uint8  = 1 /* shard entry includes rdma_port */
 
 	ServiceMonitor uint8 = 1
 

@@ -23,9 +23,11 @@ type osdEntryHeader struct {
 }
 
 type osdShardEntry struct {
-	ShardID uint32
-	Port    uint16
-	CoreID  uint16
+	ShardID  uint32
+	Port     uint16
+	CoreID   uint16
+	RdmaPort uint16
+	Reserved uint16
 }
 
 type pgEntryHeader struct {
@@ -119,13 +121,15 @@ func encodeOSDEntry(body *bytes.Buffer, osdInfo *msg.OsdDynamicInfo) error {
 	for _, shardID := range shardIDs {
 		core := shards[shardID]
 		port := core.GetRawPort()
+		rdmaPort := core.GetPort()
 		if port == 0 {
-			port = core.GetPort()
+			port = rdmaPort
 		}
 		entry := osdShardEntry{
-			ShardID: shardID,
-			Port:    uint16(port),
-			CoreID:  uint16(core.GetCoreid()),
+			ShardID:  shardID,
+			Port:     uint16(port),
+			CoreID:   uint16(core.GetCoreid()),
+			RdmaPort: uint16(rdmaPort),
 		}
 		if err := binary.Write(body, binary.LittleEndian, &entry); err != nil {
 			return err
