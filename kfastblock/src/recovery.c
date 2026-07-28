@@ -148,6 +148,7 @@ blk_status_t kfastblock_recovery_errno_to_blk_status(int ret)
 	case -EPIPE:
 	case -ENOTCONN:
 	case -EPROTO:
+	case -EMSGSIZE:
 		return BLK_STS_TRANSPORT;
 	default:
 		return BLK_STS_IOERR;
