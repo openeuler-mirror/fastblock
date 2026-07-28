@@ -2294,9 +2294,14 @@ static int kfastblock_transport_build_raw_frame(
 	*frame_len_out = 0;
 
 	if (parts) {
-		for (i = 0; i < nr_parts; ++i)
+		for (i = 0; i < nr_parts; ++i) {
+			if (parts[i].len > U32_MAX - body_len)
+				return -EMSGSIZE;
 			body_len += parts[i].len;
+		}
 	}
+	if (body_len > (16U << 20))
+		return -EMSGSIZE;
 	frame_len = sizeof(*hdr) + body_len;
 	/* Object bodies can reach ~4MiB; prefer kvzalloc over order-11 kzalloc. */
 	frame = kvzalloc(frame_len, GFP_KERNEL);
