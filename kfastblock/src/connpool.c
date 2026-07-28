@@ -23,6 +23,12 @@ module_param_named(rdma_cached_aged_out, kfastblock_rdma_cached_aged_out_total,
 MODULE_PARM_DESC(rdma_cached_aged_out,
 		 "Cached RDMA conn dropped due to idle age limit");
 
+static unsigned long kfastblock_rdma_cached_lru_evict_total;
+module_param_named(rdma_cached_lru_evict, kfastblock_rdma_cached_lru_evict_total,
+		   ulong, 0444);
+MODULE_PARM_DESC(rdma_cached_lru_evict,
+		 "Cached RDMA conn evicted via LRU to make room");
+
 static enum kfastblock_conn_state kfastblock_conn_state_after_reset(bool has_sock,
 								    bool connecting)
 {
@@ -1072,6 +1078,7 @@ kfastblock_rdma_conn_pool_acquire(struct kfastblock_cached_rdma *slots,
 		if (empty->conn) {
 			kfastblock_rdma_conn_free(empty->conn);
 			empty->conn = NULL;
+			kfastblock_rdma_cached_lru_evict_total++;
 		}
 	}
 
