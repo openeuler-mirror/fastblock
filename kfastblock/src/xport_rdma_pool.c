@@ -206,6 +206,9 @@ kfastblock_rdma_pool_get(struct kfastblock_rdma_pool *pool,
 	if (conn)
 		return conn;
 
+	/* Turn DEAD slots back into EMPTY before cold-connect scan. */
+	(void)kfastblock_rdma_pool_reclaim_dead(pool);
+
 	/* Pass 1b: if no empty slot, free one LRU idle to make room. */
 	{
 		u32 empty_n = kfastblock_rdma_pool_count_state(
