@@ -5,7 +5,7 @@
 
 #include "kfastblock/meta.h"
 
-/* raw header (24) + max object body (~4MiB) + margin */
+/* raw header (28) + max object body (~4MiB) + margin */
 #define KFASTBLOCK_RDMA_BUF_LEN ((4U * 1024U * 1024U) + 4096U)
 
 struct kfastblock_rdma_conn;
@@ -30,7 +30,8 @@ bool kfastblock_rdma_conn_is_connected(const struct kfastblock_rdma_conn *conn);
 
 /*
  * Send one contiguous buffer (raw header+body) over RDMA SEND.
- * Returns 0 on success. Not fully wired until CQ completion path lands.
+ * Polls CQ until SEND completes or rdma_io_timeout_ms elapses.
+ * Returns 0 on success, negative errno on failure.
  */
 int kfastblock_rdma_conn_send(struct kfastblock_rdma_conn *conn,
 			      const void *buf, u32 len);
