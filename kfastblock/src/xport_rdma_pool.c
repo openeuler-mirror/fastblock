@@ -18,6 +18,7 @@ static unsigned long kfastblock_rdma_pool_reclaim_total;
 static unsigned long kfastblock_rdma_pool_invalidate_broken_total;
 static unsigned long kfastblock_rdma_pool_put_fail_total;
 static unsigned long kfastblock_rdma_pool_destroy_busy_total;
+static unsigned long kfastblock_rdma_pool_aged_out_total;
 /* Default max_idle applied at pool_init (0 = unlimited). */
 static unsigned int kfastblock_rdma_pool_max_idle_default =
 	KFASTBLOCK_RDMA_POOL_DEFAULT_MAX_IDLE;
@@ -48,6 +49,10 @@ module_param_named(rdma_pool_destroy_busy,
 		   kfastblock_rdma_pool_destroy_busy_total, ulong, 0444);
 MODULE_PARM_DESC(rdma_pool_destroy_busy,
 		 "RDMA pool destroy with BUSY slots remaining");
+module_param_named(rdma_pool_aged_out,
+		   kfastblock_rdma_pool_aged_out_total, ulong, 0444);
+MODULE_PARM_DESC(rdma_pool_aged_out,
+		 "RDMA pool idle conn dropped due to max age");
 module_param_named(rdma_pool_max_idle, kfastblock_rdma_pool_max_idle_default,
 		   uint, 0644);
 MODULE_PARM_DESC(rdma_pool_max_idle,
@@ -508,6 +513,7 @@ kfastblock_rdma_pool_try_get(struct kfastblock_rdma_pool *pool,
 			slot->last_error = -ETIMEDOUT;
 			pool->idle_evictions++;
 			kfastblock_rdma_pool_evict_total++;
+			kfastblock_rdma_pool_aged_out_total++;
 			mutex_unlock(&slot->lock);
 			continue;
 		}
