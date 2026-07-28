@@ -2782,6 +2782,12 @@ static int kfastblock_transport_normalize_object_ret(
 	if (ret == -ENOENT && ctx->op == REQ_OP_DISCARD)
 		return 0;
 
+	if (ret == -EPROTO && ctx->use_rdma)
+		pr_warn_ratelimited(
+			"kfastblock: RDMA object EPROTO peer=%s:%u op=%u\n",
+			ctx->leader.address, ctx->leader.rdma_port,
+			ctx->raw_opcode);
+
 	return ret;
 }
 
