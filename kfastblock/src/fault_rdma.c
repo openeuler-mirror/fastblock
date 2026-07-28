@@ -37,3 +37,14 @@ int kfastblock_fault_rdma_take_exchange(
 		return 0;
 	return err ? err : KFASTBLOCK_FAULT_RDMA_EXCHANGE_ERRNO;
 }
+
+int kfastblock_fault_rdma_take_send(
+	struct kfastblock_fault_injection_state *state)
+{
+	int err = 0;
+
+	if (!kfastblock_fault_injection_should_fail(
+		    state, KFASTBLOCK_FAULT_RDMA_SEND, &err))
+		return 0;
+	return err ? err : -EIO;
+}

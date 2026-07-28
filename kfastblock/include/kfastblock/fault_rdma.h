@@ -35,4 +35,11 @@ int kfastblock_fault_rdma_take_connect(
 int kfastblock_fault_rdma_take_exchange(
 	struct kfastblock_fault_injection_state *state);
 
+/*
+ * If RDMA_SEND is armed, consume one budget hit and return injected err.
+ * Returns 0 when not armed.
+ */
+int kfastblock_fault_rdma_take_send(
+	struct kfastblock_fault_injection_state *state);
+
 #endif
