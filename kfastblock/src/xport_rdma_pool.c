@@ -395,6 +395,22 @@ u32 kfastblock_rdma_pool_count_state(struct kfastblock_rdma_pool *pool,
 	return n;
 }
 
+
+static bool kfastblock_rdma_pool_slot_idle_aged_locked(
+	const struct kfastblock_rdma_pool_slot *slot)
+{
+	unsigned int age_s;
+
+	if (!slot || !kfastblock_rdma_pool_idle_max_age_s)
+		return false;
+	age_s = kfastblock_rdma_pool_idle_max_age_s;
+	if (age_s > 86400U)
+		age_s = 86400U;
+	return time_after(jiffies,
+			  slot->last_use_jiffies +
+				  msecs_to_jiffies(age_s * 1000U));
+}
+
 struct kfastblock_rdma_conn *
 kfastblock_rdma_pool_try_get(struct kfastblock_rdma_pool *pool,
 			     const struct kfastblock_leader_info *leader)
@@ -429,16 +445,7 @@ kfastblock_rdma_pool_try_get(struct kfastblock_rdma_pool *pool,
 			continue;
 		}
 		/* Drop idle conns that sat too long (module param, 0=off). */
-		if (kfastblock_rdma_pool_idle_max_age_s) {
-			unsigned int age_s = kfastblock_rdma_pool_idle_max_age_s;
-
-			/* Avoid absurd jiffies multiplies from bad module params. */
-			if (age_s > 86400U)
-				age_s = 86400U;
-			if (time_after(jiffies,
-				       slot->last_use_jiffies +
-					       msecs_to_jiffies(age_s * 1000U))) {
-
+		if (kfastblock_rdma_pool_slot_idle_aged_locked(slot)) {
 			kfastblock_rdma_pool_slot_disconnect_locked(slot);
 			slot->state = KFASTBLOCK_RDMA_POOL_SLOT_DEAD;
 			slot->failure_count++;
@@ -447,7 +454,6 @@ kfastblock_rdma_pool_try_get(struct kfastblock_rdma_pool *pool,
 			kfastblock_rdma_pool_evict_total++;
 			mutex_unlock(&slot->lock);
 			continue;
-			}
 		}
 		slot->state = KFASTBLOCK_RDMA_POOL_SLOT_BUSY;
 		slot->reuse_hits++;
@@ -639,24 +645,9 @@ u32 kfastblock_rdma_pool_ready_count(struct kfastblock_rdma_pool *pool)
 
 		mutex_lock(&slot->lock);
 		if (slot->state == KFASTBLOCK_RDMA_POOL_SLOT_IDLE &&
-		    slot->conn && kfastblock_rdma_conn_is_usable(slot->conn)) {
-			bool aged = false;
-
-			if (kfastblock_rdma_pool_idle_max_age_s) {
-				unsigned int age_s =
-					kfastblock_rdma_pool_idle_max_age_s;
-
-				if (age_s > 86400U)
-					age_s = 86400U;
-				aged = time_after(
-					jiffies,
-					slot->last_use_jiffies +
-						msecs_to_jiffies(age_s *
-								 1000U));
-			}
-			if (!aged)
-				n++;
-		}
+		    slot->conn && kfastblock_rdma_conn_is_usable(slot->conn) &&
+		    !kfastblock_rdma_pool_slot_idle_aged_locked(slot))
+			n++;
 		mutex_unlock(&slot->lock);
 	}
 	return n;
