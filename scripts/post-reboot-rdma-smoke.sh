@@ -46,8 +46,8 @@ echo "rdma_connect_err=$(cat /sys/module/kfastblock/parameters/rdma_connect_err)
 
 CONF="$REPO_ROOT/.vstart/etc/fastblock/fastblock.json"
 MON="$(kfastblock_resolve_monitor_addr "$CONF")"
-POOL=fb
-IMAGE="rdma-kvzalloc-$(date +%s)"
+POOL="${KFASTBLOCK_POOL:-fb}"
+IMAGE="${KFASTBLOCK_IMAGE:-rdma-kvzalloc-$(date +%s)}"
 
 kfastblock_create_image "$REPO_ROOT" "$CONF" "$POOL" "$IMAGE"
 # Force RDMA data plane (default attach is tcp).
