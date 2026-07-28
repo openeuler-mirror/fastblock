@@ -729,6 +729,25 @@ void kfastblock_rdma_conn_free(struct kfastblock_rdma_conn *conn)
 	kfree(conn);
 }
 
+static int kfastblock_rdma_conn_setup_pd(struct kfastblock_rdma_conn *conn)
+{
+	if (!conn || !conn->cm_id || !conn->cm_id->device)
+		return -EINVAL;
+
+	conn->pd = ib_alloc_pd(conn->cm_id->device, 0);
+	if (IS_ERR(conn->pd)) {
+		conn->last_error = PTR_ERR(conn->pd);
+		conn->pd = NULL;
+		pr_warn_ratelimited(
+			"kfastblock: ib_alloc_pd failed ret=%d peer=%s:%u\n",
+			conn->last_error, conn->peer_addr, conn->peer_port);
+		return conn->last_error;
+	}
+	return 0;
+}
+
+static int kfastblock_rdma_conn_setup_cq(struct kfastblock_rdma_conn *conn);
+
 int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 				 const struct kfastblock_leader_info *leader)
 {
@@ -832,15 +851,9 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 			goto err_destroy_id;
 		}
 
-		conn->pd = ib_alloc_pd(conn->cm_id->device, 0);
-		if (IS_ERR(conn->pd)) {
-			conn->last_error = PTR_ERR(conn->pd);
-			conn->pd = NULL;
-			pr_warn_ratelimited(
-				"kfastblock: ib_alloc_pd failed ret=%d peer=%s:%u\n",
-				conn->last_error, conn->peer_addr, conn->peer_port);
+		ret = kfastblock_rdma_conn_setup_pd(conn);
+		if (ret)
 			goto err_destroy_id;
-		}
 
 		{
 			unsigned int cqe;
