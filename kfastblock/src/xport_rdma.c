@@ -1633,6 +1633,17 @@ int kfastblock_rdma_conn_exchange(struct kfastblock_rdma_conn *conn,
 	    shdr->opcode != rhdr->opcode ||
 	    shdr->service != rhdr->service) {
 		/* Stale/wrong frame (e.g. previous response reused). */
+		pr_warn_ratelimited(
+			"kfastblock: RDMA exchange response mismatch "
+			"magic=%x seq=%llu op=%u svc=%u flags=%x "
+			"expect_seq=%llu expect_op=%u expect_svc=%u peer=%s:%u\n",
+			le32_to_cpu(shdr->magic),
+			(unsigned long long)le64_to_cpu(shdr->seq),
+			shdr->opcode, shdr->service,
+			le32_to_cpu(shdr->flags),
+			(unsigned long long)expect_seq,
+			rhdr->opcode, rhdr->service,
+			conn->peer_addr, conn->peer_port);
 		kfastblock_rdma_exchange_stale++;
 		kfastblock_rdma_exchange_err++;
 		kfastblock_rdma_conn_mark_error(conn, -EPROTO);
