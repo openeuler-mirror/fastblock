@@ -13,4 +13,7 @@ bash scripts/run-kfastblock-auto-4k-verify.sh
 if [ "${KFASTBLOCK_SUITE_PARALLEL:-0}" = "1" ]; then
   bash scripts/run-kfastblock-rdma-parallel-4k.sh
 fi
+if [ "${KFASTBLOCK_SUITE_SEQ:-0}" = "1" ]; then
+  bash scripts/run-kfastblock-rdma-seq-64k.sh
+fi
 echo "RDMA_SUITE_OK"
