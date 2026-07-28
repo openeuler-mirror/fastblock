@@ -1630,6 +1630,19 @@ const char *kfastblock_rdma_conn_state_str(const struct kfastblock_rdma_conn *co
 	return kfastblock_rdma_conn_state_name(conn->state);
 }
 
+int kfastblock_rdma_conn_format_brief(const struct kfastblock_rdma_conn *conn,
+				      char *buf, size_t buf_len)
+{
+	if (!conn || !buf || !buf_len)
+		return 0;
+	return scnprintf(buf, buf_len,
+			 "peer=%s:%u dev=%s state=%s err=%d",
+			 conn->peer_addr, conn->peer_port,
+			 conn->dev_name,
+			 kfastblock_rdma_conn_state_name(conn->state),
+			 conn->last_error);
+}
+
 bool kfastblock_rdma_conn_is_usable(const struct kfastblock_rdma_conn *conn)
 {
 	return kfastblock_rdma_conn_is_connected(conn) &&
