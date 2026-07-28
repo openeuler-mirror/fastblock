@@ -27,6 +27,7 @@ static struct kfastblock_xport_probe_cache_entry
 static DEFINE_SPINLOCK(kfastblock_xport_probe_cache_lock);
 static u64 kfastblock_xport_probe_cache_hit_count;
 static u64 kfastblock_xport_probe_cache_miss_count;
+static u64 kfastblock_xport_probe_cache_total_count;
 
 /* Read-only hit/miss counters for operators (also available via diag dump). */
 module_param_named(xport_probe_cache_hits, kfastblock_xport_probe_cache_hit_count,
@@ -35,6 +36,10 @@ MODULE_PARM_DESC(xport_probe_cache_hits, "RDMA xport probe cache hit count");
 module_param_named(xport_probe_cache_misses,
 		   kfastblock_xport_probe_cache_miss_count, ullong, 0444);
 MODULE_PARM_DESC(xport_probe_cache_misses, "RDMA xport probe cache miss count");
+module_param_named(xport_probe_cache_total,
+		   kfastblock_xport_probe_cache_total_count, ullong, 0444);
+MODULE_PARM_DESC(xport_probe_cache_total,
+		 "RDMA xport probe cache total lookups");
 
 void kfastblock_xport_probe_cache_invalidate(void)
 {
@@ -130,6 +135,7 @@ static bool kfastblock_xport_probe_cache_lookup(
 		return false;
 
 	spin_lock_irqsave(&kfastblock_xport_probe_cache_lock, flags);
+	kfastblock_xport_probe_cache_total_count++;
 	for (i = 0; i < KFASTBLOCK_XPORT_PROBE_CACHE_SIZE; ++i) {
 		struct kfastblock_xport_probe_cache_entry *e =
 			&kfastblock_xport_probe_cache[i];
