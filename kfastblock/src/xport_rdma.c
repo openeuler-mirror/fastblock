@@ -71,6 +71,24 @@ static unsigned int kfastblock_rdma_timeout_ms_or_default(unsigned int v,
 	return v;
 }
 
+/* Clamp RC retry fields (IBTA: 0-7). */
+static u8 kfastblock_rdma_retry_clamped(unsigned int v)
+{
+	if (v > 7U)
+		return 7U;
+	return (u8)v;
+}
+
+/* QP WR limits: at least 1, hard cap 1024. */
+static unsigned int kfastblock_rdma_qp_wr_clamped(unsigned int v)
+{
+	if (!v)
+		return 1U;
+	if (v > 1024U)
+		return 1024U;
+	return v;
+}
+
 static unsigned int kfastblock_rdma_recv_depth_clamped(void)
 {
 	unsigned int d = kfastblock_rdma_recv_depth;
@@ -780,19 +798,14 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 		}
 
 		{
-			unsigned int max_send_wr = kfastblock_rdma_qp_max_send_wr;
-			unsigned int max_recv_wr = kfastblock_rdma_qp_max_recv_wr;
+			unsigned int max_send_wr =
+				kfastblock_rdma_qp_wr_clamped(
+					kfastblock_rdma_qp_max_send_wr);
+			unsigned int max_recv_wr =
+				kfastblock_rdma_qp_wr_clamped(
+					kfastblock_rdma_qp_max_recv_wr);
 			struct ib_qp_init_attr qp_attr;
 
-			/* Clamp to a practical RC range for raw SEND/RECV. */
-			if (max_send_wr < 1)
-				max_send_wr = 1;
-			if (max_send_wr > 256)
-				max_send_wr = 256;
-			if (max_recv_wr < 1)
-				max_recv_wr = 1;
-			if (max_recv_wr > 256)
-				max_recv_wr = 256;
 			/* RECV queue must cover configured outstanding depth. */
 			if (max_recv_wr < kfastblock_rdma_recv_depth_clamped())
 				max_recv_wr = kfastblock_rdma_recv_depth_clamped();
@@ -817,20 +830,15 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 		}
 
 		{
-			unsigned int retry = kfastblock_rdma_retry_count;
-			unsigned int rnr = kfastblock_rdma_rnr_retry_count;
 			struct rdma_conn_param conn_param;
 
-			/* IBTA retry_count / rnr_retry_count are 3-bit fields. */
-			if (retry > 7)
-				retry = 7;
-			if (rnr > 7)
-				rnr = 7;
 			memset(&conn_param, 0, sizeof(conn_param));
 			conn_param.responder_resources = 1;
 			conn_param.initiator_depth = 1;
-			conn_param.retry_count = (u8)retry;
-			conn_param.rnr_retry_count = (u8)rnr;
+			conn_param.retry_count = kfastblock_rdma_retry_clamped(
+				kfastblock_rdma_retry_count);
+			conn_param.rnr_retry_count = kfastblock_rdma_retry_clamped(
+				kfastblock_rdma_rnr_retry_count);
 
 			reinit_completion(&conn->cm_done);
 			conn->state = KFASTBLOCK_RDMA_CONN_CONNECTING;
