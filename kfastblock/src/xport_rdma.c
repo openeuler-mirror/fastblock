@@ -1487,6 +1487,11 @@ int kfastblock_rdma_conn_recv(struct kfastblock_rdma_conn *conn,
 		kfastblock_rdma_recv_err++;
 		return -EMSGSIZE;
 	}
+	if (!conn->recv_byte_len) {
+		pr_warn_ratelimited(
+			"kfastblock: RDMA RECV completed with 0 bytes peer=%s:%u\n",
+			conn->peer_addr, conn->peer_port);
+	}
 
 	{
 		u32 got = conn->recv_byte_len;
