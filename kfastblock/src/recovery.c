@@ -18,6 +18,7 @@ static bool kfastblock_recovery_should_retry_monitor(int ret)
 	case -ECONNREFUSED:
 	case -EHOSTUNREACH:
 	case -ENETUNREACH:
+	case -ENOTCONN:
 	case -EPROTO:
 	case -EIO:
 		return true;
