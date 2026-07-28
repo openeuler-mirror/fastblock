@@ -20,3 +20,5 @@
 集群需已 `vstart`（或由脚本拉起），Soft-RoCE 见 `scripts/setup-soft-roce.sh`。
 
 运行 `bash scripts/kfastblock-rdma-env-help.sh` 可查看常用环境变量。
+
+可选环境：`KFASTBLOCK_SUITE_PARALLEL=1`、`KFASTBLOCK_SUITE_SEQ=1`。
