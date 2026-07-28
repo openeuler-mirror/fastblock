@@ -1232,6 +1232,13 @@ int kfastblock_rdma_conn_send(struct kfastblock_rdma_conn *conn,
 	 * changes the default for unsignaled WRs we do not post yet.
 	 */
 	wr.send_flags = IB_SEND_SIGNALED;
+	/*
+	 * Small messages can be sent inline to avoid DMA map overhead.
+	 * Threshold 64 bytes is conservative; most RC QPs support at least
+	 * this much inline data.
+	 */
+	if (len <= 64)
+		wr.send_flags |= IB_SEND_INLINE;
 	(void)kfastblock_rdma_signal_all;
 
 	start = ktime_get();
