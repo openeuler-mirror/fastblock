@@ -6,6 +6,8 @@
 #define KFASTBLOCK_RAW_MAGIC 0x46425257U
 #define KFASTBLOCK_RAW_VERSION_MAJOR 1U
 #define KFASTBLOCK_RAW_VERSION_MINOR 0U
+/* version_minor >= 1: shard entry carries rdma_port */
+#define KFASTBLOCK_RAW_VERSION_MINOR_RDMA_PORT 1U
 
 #define KFASTBLOCK_RAW_SERVICE_MONITOR 1U
 #define KFASTBLOCK_RAW_SERVICE_OSD 2U
@@ -84,6 +86,15 @@ struct kfastblock_raw_osd_shard_entry {
 	__le32 shard_id;
 	__le16 port;
 	__le16 core_id;
+} __packed;
+
+/* Present when response version_minor >= KFASTBLOCK_RAW_VERSION_MINOR_RDMA_PORT */
+struct kfastblock_raw_osd_shard_entry_v1 {
+	__le32 shard_id;
+	__le16 port;
+	__le16 core_id;
+	__le16 rdma_port;
+	__le16 reserved;
 } __packed;
 
 struct kfastblock_raw_pg_entry_hdr {
