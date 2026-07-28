@@ -1252,6 +1252,8 @@ bool kfastblock_rdma_conn_matches_leader(
 {
 	if (!conn || !leader || !leader->address[0] || !leader->rdma_port)
 		return false;
+	if (!kfastblock_rdma_conn_is_connected(conn))
+		return false;
 	if (conn->peer_port != leader->rdma_port)
 		return false;
 	return strncmp(conn->peer_addr, leader->address,
