@@ -309,8 +309,8 @@ bool osd_raw_rdma_server::ensure_send_mr(connection_context* conn) noexcept {
     conn->send_mr = ::ibv_reg_mr(conn->pd, conn->send_buf, conn->send_buf_len,
                                  0);
     if (!conn->send_mr) {
-        SPDK_ERRLOG("raw RDMA: ibv_reg_mr send failed: %s\n",
-                    std::strerror(errno));
+        SPDK_ERRLOG("raw RDMA: ibv_reg_mr send failed peer=%s: %s\n",
+                    conn->peer_address.c_str(), std::strerror(errno));
         ::free(conn->send_buf);
         conn->send_buf = nullptr;
         conn->send_buf_len = 0;
