@@ -582,6 +582,19 @@ bool kfastblock_rdma_pool_has_busy(struct kfastblock_rdma_pool *pool)
 		       pool, KFASTBLOCK_RDMA_POOL_SLOT_BUSY) > 0;
 }
 
+unsigned int kfastblock_rdma_pool_hit_pct(
+	const struct kfastblock_rdma_pool_snapshot *snap)
+{
+	unsigned long long total;
+
+	if (!snap)
+		return 0;
+	total = snap->get_hits + snap->get_misses;
+	if (!total)
+		return 0;
+	return (unsigned int)((snap->get_hits * 100ULL) / total);
+}
+
 int kfastblock_rdma_pool_format_stats(struct kfastblock_rdma_pool *pool,
 				      char *buf, size_t buf_len)
 {
@@ -595,10 +608,7 @@ int kfastblock_rdma_pool_format_stats(struct kfastblock_rdma_pool *pool,
 	}
 	kfastblock_rdma_pool_snapshot(pool, &snap);
 	{
-		unsigned long long hits = snap.get_hits;
-		unsigned long long misses = snap.get_misses;
-		unsigned long long total = hits + misses;
-		unsigned int hit_pct = total ? (unsigned int)((hits * 100ULL) / total) : 0;
+		unsigned int hit_pct = kfastblock_rdma_pool_hit_pct(&snap);
 		unsigned int util_pct = snap.total_slots ?
 			(unsigned int)((snap.busy_slots * 100ULL) / snap.total_slots) : 0;
 		unsigned long conn_lat_avg = snap.connect_lat_count ?
@@ -610,7 +620,9 @@ int kfastblock_rdma_pool_format_stats(struct kfastblock_rdma_pool *pool,
 			 snap.total_slots, snap.empty_slots, snap.idle_slots,
 			 snap.busy_slots, snap.dead_slots, snap.connected_slots,
 			 kfastblock_rdma_pool_ready_count(pool), snap.max_idle,
-			 hits, misses, hit_pct, util_pct,
+			 (unsigned long long)snap.get_hits,
+			 (unsigned long long)snap.get_misses,
+			 hit_pct, util_pct,
 			 (unsigned long long)snap.idle_evictions,
 			 snap.connect_lat_us_min, conn_lat_avg,
 			 snap.connect_lat_us_max, snap.connect_lat_count,
