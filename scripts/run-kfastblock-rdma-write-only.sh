@@ -11,6 +11,7 @@ lsmod | awk '$1=="kfastblock"{f=1} END{exit f?0:1}' || bash scripts/kfastblock-r
 MON="$(kfastblock_resolve_monitor_addr "$CONF")"
 POOL="${KFASTBLOCK_POOL:-fb}"
 IMAGE="${KFASTBLOCK_IMAGE:-rdma-wo-$(date +%s)}"
+TIMEOUT_S="${KFASTBLOCK_IO_TIMEOUT_S:-30}"
 kfastblock_create_image "$REPO_ROOT" "$CONF" "$POOL" "$IMAGE"
 "$REPO_ROOT/kfastblock/tool/kfastblock-admin" attach \
   --monitor-addr "${MON}:3334" --pool-name "$POOL" --image-name "$IMAGE" \
@@ -18,7 +19,7 @@ kfastblock_create_image "$REPO_ROOT" "$CONF" "$POOL" "$IMAGE"
 DEV="$(kfastblock_resolve_device)"
 pay=/tmp/wo.pay
 printf 'WO_%s' "$IMAGE" | dd of="$pay" bs=4096 count=1 conv=sync status=none
-timeout 30 dd if="$pay" of="$DEV" bs=4096 count=1 oflag=direct status=none
+timeout "$TIMEOUT_S" dd if="$pay" of="$DEV" bs=4096 count=1 oflag=direct status=none
 echo "write ok exchange_ok=$(cat /sys/module/kfastblock/parameters/rdma_exchange_ok)"
 kfastblock_detach_volume "$REPO_ROOT" "$POOL" "$IMAGE" || true
 echo "RDMA_WRITE_ONLY_OK"
