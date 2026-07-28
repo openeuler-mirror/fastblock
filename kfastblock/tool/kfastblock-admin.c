@@ -355,6 +355,7 @@ static int do_show_rdma_params(void)
 	static const char *const names[] = {
 		"rdma_pool_enable",
 		"rdma_object_log",
+		"object_io_max_attempts",
 		"rdma_cm_timeout_ms",
 		"rdma_io_timeout_ms",
 		"rdma_recv_depth",
