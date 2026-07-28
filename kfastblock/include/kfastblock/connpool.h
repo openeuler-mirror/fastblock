@@ -104,6 +104,7 @@ struct kfastblock_cached_rdma {
 	u32 fail_streak;
 	s32 last_error;
 	unsigned long last_use_jiffies;
+	unsigned long last_connect_jiffies;
 	u32 connect_attempts;
 	u32 reuse_hits;
 	u32 success_count;
