@@ -381,6 +381,7 @@ static int do_show_rdma_params(void)
 		"rdma_pool_hit",
 		"rdma_pool_miss",
 		"rdma_pool_evict",
+		"rdma_pool_reclaim",
 		"rdma_pool_max_idle",
 		"rdma_pool_idle_max_age_s",
 		"xport_probe_cache_ttl_ms",
