@@ -38,7 +38,20 @@ raw RDMA active running=1 ... accept=... ports=[...]
 
 1. 加载 kfastblock，偏好 RDMA transport（见 kfastblock admin / xport 参数）。
 2. 挂载 volume，观察 probe/conn pool 是否出现 RDMA ready。
-3. 执行写读校验：`scripts/run-dev-write-read-verify.sh` 或业务负载。
+3. 执行写读校验（推荐）：
+
+```bash
+# 复用已运行集群的快速 4K RDMA 校验
+sudo bash scripts/run-kfastblock-rdma-4k-verify.sh
+# 多轮同连接 exchange（防 recv_done 回归）
+sudo KFASTBLOCK_RDMA_IO_ROUNDS=8 bash scripts/run-kfastblock-rdma-multi-io.sh
+# 或冷启动 post-reboot 全路径
+sudo bash scripts/post-reboot-rdma-smoke.sh
+```
+
+期望：`RDMA_4K_VERIFY_OK` / `RDMA_MULTI_IO_OK` / `SMOKE_OK`，且
+`/sys/module/kfastblock/parameters/rdma_exchange_err` 在跑测期间不增加；
+`osd_transport=rdma`，`io_failed=0`。
 
 ## 4. 失败排查
 
