@@ -154,6 +154,7 @@ static unsigned long kfastblock_rdma_wc_fatal_err;
 static unsigned long kfastblock_rdma_wc_other_err;
 static unsigned long kfastblock_rdma_wc_unknown_id;
 static unsigned long long kfastblock_rdma_poll_empty_total;
+static unsigned long kfastblock_rdma_conn_error_transitions;
 /* Per-op latency tracking (microseconds via ktime_to_us). */
 static unsigned long kfastblock_rdma_send_lat_min_us;
 static unsigned long kfastblock_rdma_send_lat_max_us;
@@ -267,6 +268,10 @@ module_param_named(rdma_poll_empty_total, kfastblock_rdma_poll_empty_total,
 		   ullong, 0444);
 MODULE_PARM_DESC(rdma_poll_empty_total,
 		 "Total empty CQ poll iterations (busy-poll overhead)");
+module_param_named(rdma_conn_error_transitions,
+		   kfastblock_rdma_conn_error_transitions, ulong, 0444);
+MODULE_PARM_DESC(rdma_conn_error_transitions,
+		 "Connections transitioned to ERROR state");
 module_param_named(rdma_send_lat_min_us, kfastblock_rdma_send_lat_min_us,
 		   ulong, 0444);
 MODULE_PARM_DESC(rdma_send_lat_min_us, "RDMA SEND min latency (microseconds)");
@@ -1321,6 +1326,7 @@ static void kfastblock_rdma_conn_mark_error(struct kfastblock_rdma_conn *conn,
 		conn->last_error = err;
 	conn->connected = false;
 	conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
+	kfastblock_rdma_conn_error_transitions++;
 }
 
 bool kfastblock_rdma_conn_is_connected(const struct kfastblock_rdma_conn *conn)
