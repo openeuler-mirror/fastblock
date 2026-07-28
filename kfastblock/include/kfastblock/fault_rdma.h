@@ -10,9 +10,11 @@
  */
 
 /* Suggested errno when simulating RDMA CM connect failure. */
+/* Default injected errno when fault budget does not override. */
 #define KFASTBLOCK_FAULT_RDMA_CONNECT_ERRNO (-ENOTCONN)
 
 /* Suggested errno when simulating RDMA exchange timeout. */
+/* Simulates exchange deadline; recovery treats as transport. */
 #define KFASTBLOCK_FAULT_RDMA_EXCHANGE_ERRNO (-ETIMEDOUT)
 
 /*
