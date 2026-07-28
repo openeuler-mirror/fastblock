@@ -1162,7 +1162,10 @@ int kfastblock_rdma_conn_exchange(struct kfastblock_rdma_conn *conn,
 	}
 	if ((u32)ret < sizeof(struct kfastblock_raw_header)) {
 		conn->last_error = -EPROTO;
+		kfastblock_rdma_exchange_stale++;
 		kfastblock_rdma_exchange_err++;
+		conn->connected = false;
+		conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
 		return -EPROTO;
 	}
 
