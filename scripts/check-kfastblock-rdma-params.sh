@@ -29,7 +29,7 @@ need=(
   rdma_pool_reclaim rdma_pool_invalidate_broken
   rdma_pool_put_fail rdma_pool_destroy_busy rdma_pool_aged_out
   rdma_pool_idle_max_age_s rdma_pool_max_idle
-  rdma_cached_idle_max_age_s rdma_cached_aged_out
+  rdma_cached_idle_max_age_s rdma_cached_aged_out rdma_cached_lru_evict
   rdma_xport_write_ops rdma_xport_read_ops rdma_xport_delete_ops
   rdma_xport_io_err rdma_xport_fallback_tcp
   recovery_rdma_invalidate_leader recovery_rdma_flush
