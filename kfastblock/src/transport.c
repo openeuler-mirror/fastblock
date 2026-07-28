@@ -40,6 +40,24 @@ module_param_named(rdma_object_log, g_kfastblock_rdma_object_log, bool, 0644);
 MODULE_PARM_DESC(rdma_object_log,
 		 "log each object I/O that uses RDMA (default true)");
 
+static unsigned long kfastblock_transport_rdma_write_ops;
+static unsigned long kfastblock_transport_rdma_read_ops;
+static unsigned long kfastblock_transport_rdma_delete_ops;
+static unsigned long kfastblock_transport_rdma_io_err;
+
+module_param_named(rdma_xport_write_ops, kfastblock_transport_rdma_write_ops,
+		   ulong, 0444);
+MODULE_PARM_DESC(rdma_xport_write_ops, "Transport-level RDMA write object ops");
+module_param_named(rdma_xport_read_ops, kfastblock_transport_rdma_read_ops,
+		   ulong, 0444);
+MODULE_PARM_DESC(rdma_xport_read_ops, "Transport-level RDMA read object ops");
+module_param_named(rdma_xport_delete_ops, kfastblock_transport_rdma_delete_ops,
+		   ulong, 0444);
+MODULE_PARM_DESC(rdma_xport_delete_ops, "Transport-level RDMA delete object ops");
+module_param_named(rdma_xport_io_err, kfastblock_transport_rdma_io_err,
+		   ulong, 0444);
+MODULE_PARM_DESC(rdma_xport_io_err, "Transport-level RDMA object I/O errors");
+
 static unsigned int g_kfastblock_object_io_max_attempts = 2;
 module_param_named(object_io_max_attempts, g_kfastblock_object_io_max_attempts,
 		   uint, 0644);
@@ -2725,16 +2743,21 @@ static int kfastblock_transport_execute_object_opcode(
 				fault_ret);
 			return fault_ret;
 		}
-		if (ctx->op == REQ_OP_WRITE || ctx->op == REQ_OP_WRITE_ZEROES)
+		if (ctx->op == REQ_OP_WRITE || ctx->op == REQ_OP_WRITE_ZEROES) {
+			kfastblock_transport_rdma_write_ops++;
 			return kfastblock_transport_rdma_write_object(
 				ctx->rdma, ctx->kf_req->request_pool_id,
 				ctx->extent, ctx->buf, ctx->exchange.seq,
 				&ctx->response);
-		if (ctx->op == REQ_OP_READ)
+		}
+		if (ctx->op == REQ_OP_READ) {
+			kfastblock_transport_rdma_read_ops++;
 			return kfastblock_transport_rdma_read_object(
 				ctx->rdma, ctx->kf_req->request_pool_id,
 				ctx->extent, ctx->buf, ctx->exchange.seq,
 				&ctx->response);
+		}
+		kfastblock_transport_rdma_delete_ops++;
 		return kfastblock_transport_rdma_delete_object(
 			ctx->rdma, ctx->kf_req->request_pool_id, ctx->extent,
 			ctx->exchange.seq, &ctx->response);
@@ -2808,6 +2831,9 @@ static int kfastblock_transport_normalize_object_ret(
 			"kfastblock: RDMA object EPROTO peer=%s:%u op=%u\n",
 			ctx->leader.address, ctx->leader.rdma_port,
 			ctx->raw_opcode);
+
+	if (ret && ctx->use_rdma)
+		kfastblock_transport_rdma_io_err++;
 
 	return ret;
 }
