@@ -169,7 +169,14 @@ static void kfastblock_xport_probe_cache_store(
 		return;
 	if (!kfastblock_xport_probe_cache_ttl_ms)
 		return;
-	ttl = msecs_to_jiffies(kfastblock_xport_probe_cache_ttl_ms);
+	{
+		unsigned int ttl_ms = kfastblock_xport_probe_cache_ttl_ms;
+
+		/* Cap at 10 minutes to avoid absurd jiffies from bad params. */
+		if (ttl_ms > 600000U)
+			ttl_ms = 600000U;
+		ttl = msecs_to_jiffies(ttl_ms);
+	}
 
 	spin_lock_irqsave(&kfastblock_xport_probe_cache_lock, flags);
 	for (i = 0; i < KFASTBLOCK_XPORT_PROBE_CACHE_SIZE; ++i) {
