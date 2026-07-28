@@ -9,7 +9,8 @@ CONF="$REPO_ROOT/.vstart/etc/fastblock/fastblock.json"
 [ -f "$CONF" ] || { echo "no conf" >&2; exit 1; }
 lsmod | awk '$1=="kfastblock"{f=1} END{exit f?0:1}' || bash scripts/kfastblock-reload-module.sh
 MON="$(kfastblock_resolve_monitor_addr "$CONF")"
-POOL=fb; IMAGE="rdma-wo-$(date +%s)"
+POOL="${KFASTBLOCK_POOL:-fb}"
+IMAGE="${KFASTBLOCK_IMAGE:-rdma-wo-$(date +%s)}"
 kfastblock_create_image "$REPO_ROOT" "$CONF" "$POOL" "$IMAGE"
 "$REPO_ROOT/kfastblock/tool/kfastblock-admin" attach \
   --monitor-addr "${MON}:3334" --pool-name "$POOL" --image-name "$IMAGE" \
