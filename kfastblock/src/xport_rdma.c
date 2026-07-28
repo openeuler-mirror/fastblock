@@ -799,10 +799,12 @@ static int kfastblock_rdma_poll_one(struct kfastblock_rdma_conn *conn,
 		ret = kfastblock_rdma_apply_wc(conn, &wc);
 		if (ret)
 			return ret;
-		/* Matched SEND or RECV (or ignored unknown wr_id after apply). */
+		/* Matched SEND or RECV: drain remaining WCs before returning. */
 		if (wc.wr_id == KFASTBLOCK_RDMA_WR_SEND ||
-		    kfastblock_rdma_wr_is_recv(wc.wr_id))
+		    kfastblock_rdma_wr_is_recv(wc.wr_id)) {
+			(void)kfastblock_rdma_poll_batch(conn, 7);
 			return 0;
+		}
 	}
 	conn->last_error = -ETIMEDOUT;
 	kfastblock_rdma_io_timeout_total++;
