@@ -2848,6 +2848,16 @@ static int kfastblock_transport_normalize_object_ret(
 	return ret;
 }
 
+static void kfastblock_transport_init_rdma_ctx(
+	struct kfastblock_transport_object_io_ctx *ctx)
+{
+	if (!ctx)
+		return;
+	ctx->use_rdma = false;
+	ctx->rdma = NULL;
+	ctx->rdma_slot = NULL;
+}
+
 static int kfastblock_transport_prepare_object_exchange(
 	struct kfastblock_transport_object_io_ctx *ctx)
 {
@@ -2858,9 +2868,7 @@ static int kfastblock_transport_prepare_object_exchange(
 	if (!ctx)
 		return -EINVAL;
 
-	ctx->use_rdma = false;
-	ctx->rdma = NULL;
-	ctx->rdma_slot = NULL;
+	kfastblock_transport_init_rdma_ctx(ctx);
 
 	/* force_tcp: consume budget and skip RDMA so AUTO fallback is testable. */
 	if (kfastblock_fault_rdma_take_force_tcp(&ctx->vol->fault_injection,
@@ -3138,9 +3146,7 @@ static void kfastblock_transport_object_io_ctx_reset_attempt(
 
 	memset(&ctx->leader, 0, sizeof(ctx->leader));
 	ctx->cached = NULL;
-	ctx->rdma = NULL;
-	ctx->rdma_slot = NULL;
-	ctx->use_rdma = false;
+	kfastblock_transport_init_rdma_ctx(ctx);
 	ctx->sock = NULL;
 	ctx->ret = 0;
 	ctx->actions = 0;
