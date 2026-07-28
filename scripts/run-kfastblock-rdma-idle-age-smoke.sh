@@ -11,8 +11,11 @@ lsmod | awk '$1=="kfastblock"{f=1} END{exit f?0:1}' || {
   make -C kfastblock KDIR=/lib/modules/$(uname -r)/build modules >/dev/null
   insmod kfastblock/kfastblock.ko
 }
+AGE_PARAM=/sys/module/kfastblock/parameters/rdma_pool_idle_max_age_s
+AGE_PARAM_OLD="$(cat "$AGE_PARAM")"
+trap 'echo "$AGE_PARAM_OLD" > "$AGE_PARAM"' EXIT
 # 2 second idle max age
-echo 2 > /sys/module/kfastblock/parameters/rdma_pool_idle_max_age_s
+echo 2 > "$AGE_PARAM"
 AGE_SLEEP="${KFASTBLOCK_IDLE_AGE_SLEEP:-3}"
 TIMEOUT_S="${KFASTBLOCK_IO_TIMEOUT_S:-30}"
 
@@ -38,7 +41,5 @@ timeout "$TIMEOUT_S" dd if="$DEV" of="$rb" bs=4096 count=1 iflag=direct status=n
 cmp -n 4096 "$pay" "$rb"
 miss1=$(cat /sys/module/kfastblock/parameters/rdma_pool_miss)
 echo "rdma_pool_miss: $miss0 -> $miss1"
-# Reset age to unlimited for other tests
-echo 0 > /sys/module/kfastblock/parameters/rdma_pool_idle_max_age_s
 kfastblock_detach_volume "$REPO_ROOT" "$POOL" "$IMAGE" || true
 echo "RDMA_IDLE_AGE_OK"
