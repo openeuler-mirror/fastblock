@@ -1354,11 +1354,14 @@ int kfastblock_rdma_conn_send(struct kfastblock_rdma_conn *conn,
 	kfastblock_rdma_send_wr_total++;
 	ret = ib_post_send(conn->cm_id->qp, &wr, &bad);
 	if (ret) {
+		char brief[128];
+
 		conn->last_error = ret;
 		kfastblock_rdma_send_err++;
+		kfastblock_rdma_conn_format_brief(conn, brief, sizeof(brief));
 		pr_warn_ratelimited(
-			"kfastblock: ib_post_send failed ret=%d peer=%s:%u len=%u\n",
-			ret, conn->peer_addr, conn->peer_port, len);
+			"kfastblock: ib_post_send failed ret=%d len=%u %s\n",
+			ret, len, brief);
 		return ret;
 	}
 
@@ -1593,10 +1596,14 @@ int kfastblock_rdma_conn_exchange(struct kfastblock_rdma_conn *conn,
 	 * (write/read/delete all return status or data). Log but accept
 	 * since some control responses may legitimately be header-only.
 	 */
-	if (!rsp_body_len)
+	if (!rsp_body_len) {
+		char brief[128];
+
+		kfastblock_rdma_conn_format_brief(conn, brief, sizeof(brief));
 		pr_warn_ratelimited(
-			"kfastblock: RDMA exchange zero-length response peer=%s:%u opcode=%u\n",
-			conn->peer_addr, conn->peer_port, shdr->opcode);
+			"kfastblock: RDMA exchange zero-length response opcode=%u %s\n",
+			shdr->opcode, brief);
+	}
 
 	kfastblock_rdma_exchange_ok++;
 	conn->last_error = 0;
