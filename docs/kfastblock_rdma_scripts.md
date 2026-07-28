@@ -16,6 +16,7 @@
 | `scripts/check-kfastblock-rdma-params.sh` | 模块参数存在性 |
 | `scripts/run-kfastblock-rdma-suite.sh` | 最小套件入口 |
 | `scripts/run-kfastblock-rdma-ci-smoke.sh` | reload+suite |
+| `scripts/run-kfastblock-rdma-suite-help.sh` | suite 步骤说明 |
 | `scripts/kfastblock-reload-module.sh` | 重编并加载模块 |
 | `scripts/kfastblock-detach-all.sh` | 卸掉所有卷 |
 | `scripts/kfastblock-rdma-env-help.sh` | 环境变量说明 |
