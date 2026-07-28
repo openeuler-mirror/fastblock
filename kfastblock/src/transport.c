@@ -2957,23 +2957,30 @@ static void kfastblock_transport_note_object_leader_success(
 	kfastblock_request_set_pg_hint_leader(ctx->hint, &ctx->leader);
 }
 
-static void kfastblock_transport_finalize_object_socket(
+static void kfastblock_transport_release_rdma_ctx(
 	struct kfastblock_transport_object_io_ctx *ctx)
 {
 	if (!ctx)
 		return;
-
 	if (ctx->rdma_slot) {
 		kfastblock_rdma_conn_pool_release(ctx->rdma_slot, ctx->ret);
 		ctx->rdma_slot = NULL;
 		ctx->rdma = NULL;
 		ctx->use_rdma = false;
 	} else if (ctx->rdma) {
-		/* Uncached path (e.g. leader query). */
 		kfastblock_rdma_conn_free(ctx->rdma);
 		ctx->rdma = NULL;
 		ctx->use_rdma = false;
 	}
+}
+
+static void kfastblock_transport_finalize_object_socket(
+	struct kfastblock_transport_object_io_ctx *ctx)
+{
+	if (!ctx)
+		return;
+
+	kfastblock_transport_release_rdma_ctx(ctx);
 	if (!ctx->vol || !ctx->cached)
 		return;
 
@@ -3025,16 +3032,7 @@ static void kfastblock_transport_cleanup_object_io(
 	if (!ctx)
 		return;
 
-	if (ctx->rdma_slot) {
-		kfastblock_rdma_conn_pool_release(ctx->rdma_slot, ctx->ret);
-		ctx->rdma_slot = NULL;
-		ctx->rdma = NULL;
-		ctx->use_rdma = false;
-	} else if (ctx->rdma) {
-		kfastblock_rdma_conn_free(ctx->rdma);
-		ctx->rdma = NULL;
-		ctx->use_rdma = false;
-	}
+	kfastblock_transport_release_rdma_ctx(ctx);
 	if (ctx->cached)
 		kfastblock_transport_release_osd_socket(ctx->cached);
 	if (ctx->ret && ctx->vol && ctx->extent)
