@@ -79,3 +79,9 @@ done
 
 kfastblock_detach_volume "$REPO_ROOT" "$POOL" "$IMAGE" || true
 echo "SMOKE_OK image=$IMAGE device=$DEV log=$LOG_DIR"
+
+# Optional extended multi-round regression after basic smoke (set to 1).
+if [ "${KFASTBLOCK_RDMA_MULTI_AFTER_SMOKE:-0}" = "1" ]; then
+  KFASTBLOCK_KEEP_VOLUME=0 \
+    bash "$REPO_ROOT/scripts/run-kfastblock-rdma-multi-io.sh" || exit 1
+fi
