@@ -513,7 +513,8 @@ kfastblock_print_rdma_counters() {
              rdma_wc_unknown_id rdma_poll_empty_total \
              rdma_conn_error_transitions \
              rdma_inline_threshold rdma_cached_aged_out \
-             recovery_rdma_invalidate_leader recovery_rdma_flush; do
+             recovery_rdma_invalidate_leader recovery_rdma_flush \
+             xport_probe_cache_total; do
         if [ -r "/sys/module/kfastblock/parameters/$p" ]; then
             printf '%s=%s\n' "$p" "$(tr -d '\n' < "/sys/module/kfastblock/parameters/$p")"
         fi
