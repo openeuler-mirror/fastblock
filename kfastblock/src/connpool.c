@@ -1,10 +1,21 @@
 #include <linux/errno.h>
 #include <linux/jiffies.h>
 #include <linux/kernel.h>
+#include <linux/module.h>
 #include <linux/net.h>
 #include <linux/string.h>
 
 #include "kfastblock/connpool.h"
+
+/*
+ * Max age (seconds) for an idle RDMA cached conn before try_acquire refuses
+ * reuse and forces a reconnect. 0 = no age limit.
+ */
+static unsigned int kfastblock_rdma_cached_idle_max_age_s;
+module_param_named(rdma_cached_idle_max_age_s,
+		   kfastblock_rdma_cached_idle_max_age_s, uint, 0644);
+MODULE_PARM_DESC(rdma_cached_idle_max_age_s,
+		 "Max idle age (s) for cached RDMA conn before reconnect (0=off)");
 
 static enum kfastblock_conn_state kfastblock_conn_state_after_reset(bool has_sock,
 								    bool connecting)
@@ -990,6 +1001,17 @@ kfastblock_rdma_conn_pool_try_acquire(struct kfastblock_cached_rdma *slots,
 
 		mutex_lock(&c->lock);
 		if (kfastblock_rdma_slot_matches_locked(c, leader)) {
+			if (kfastblock_rdma_cached_idle_max_age_s &&
+			    time_after(jiffies, c->last_use_jiffies +
+				       msecs_to_jiffies(kfastblock_rdma_cached_idle_max_age_s * 1000U))) {
+				kfastblock_rdma_conn_free(c->conn);
+				c->conn = NULL;
+				c->state = KFASTBLOCK_CONN_STATE_EMPTY;
+				c->last_error = -ETIMEDOUT;
+				c->failure_count++;
+				mutex_unlock(&c->lock);
+				continue;
+			}
 			c->reuse_hits++;
 			c->last_use_jiffies = jiffies;
 			return c; /* lock held */
