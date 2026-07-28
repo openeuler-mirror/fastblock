@@ -736,12 +736,7 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 		return -EINVAL;
 	if (!leader->address[0] || !leader->rdma_port) {
 		if (conn)
-			conn->last_error = -ENOTCONN;
-		return -ENOTCONN;
-	}
-	/* Reject nonsensical TCP-ish well-known ports mistaken for RDMA. */
-	if (leader->rdma_port == 0) {
-		conn->last_error = -EINVAL;
+			conn->last_error = -EINVAL;
 		return -EINVAL;
 	}
 	if (conn->state != KFASTBLOCK_RDMA_CONN_IDLE &&
