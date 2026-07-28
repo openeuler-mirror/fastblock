@@ -1,3 +1,4 @@
+#include <linux/build_bug.h>
 #include <linux/errno.h>
 #include <linux/jiffies.h>
 #include <linux/module.h>
@@ -65,6 +66,9 @@ static void kfastblock_rdma_pool_slot_init(struct kfastblock_rdma_pool_slot *slo
 int kfastblock_rdma_pool_init(struct kfastblock_rdma_pool *pool, u32 nr_slots)
 {
 	u32 i;
+
+	BUILD_BUG_ON(KFASTBLOCK_RDMA_POOL_DEFAULT_SLOTS == 0);
+	BUILD_BUG_ON(KFASTBLOCK_RDMA_POOL_DEFAULT_MAX_IDLE > 256);
 
 	if (!pool)
 		return -EINVAL;
