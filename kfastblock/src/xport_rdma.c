@@ -476,6 +476,9 @@ static int kfastblock_rdma_map_bufs(struct kfastblock_rdma_conn *conn)
 		if (ib_dma_mapping_error(dev, conn->send_dma)) {
 			conn->send_dma = 0;
 			kfastblock_rdma_dma_map_err++;
+			pr_warn_ratelimited(
+				"kfastblock: RDMA DMA map send_buf failed len=%u\n",
+				conn->send_buf_len);
 			return -EIO;
 		}
 		conn->send_mapped = true;
@@ -489,6 +492,9 @@ static int kfastblock_rdma_map_bufs(struct kfastblock_rdma_conn *conn)
 			/* Roll back send map so retry starts clean. */
 			kfastblock_rdma_conn_unmap_bufs(conn);
 			kfastblock_rdma_dma_map_err++;
+			pr_warn_ratelimited(
+				"kfastblock: RDMA DMA map recv_buf failed len=%u\n",
+				conn->recv_buf_len);
 			return -EIO;
 		}
 		conn->recv_mapped = true;
