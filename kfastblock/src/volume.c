@@ -1968,6 +1968,7 @@ static int kfastblock_volume_copy_attach_spec(struct kfastblock_attach_spec *dst
 	}
 
 	dst->read_only = src->read_only;
+	dst->osd_transport = src->osd_transport;
 	dst->debug_size_bytes = src->debug_size_bytes;
 	dst->debug_object_size = src->debug_object_size;
 	dst->debug_pool_id = src->debug_pool_id;
