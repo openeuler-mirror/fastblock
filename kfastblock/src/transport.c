@@ -40,7 +40,23 @@ module_param_named(rdma_object_log, g_kfastblock_rdma_object_log, bool, 0644);
 MODULE_PARM_DESC(rdma_object_log,
 		 "log each object I/O that uses RDMA (default true)");
 
-#define KFASTBLOCK_OBJECT_IO_MAX_ATTEMPTS 2
+static unsigned int g_kfastblock_object_io_max_attempts = 2;
+module_param_named(object_io_max_attempts, g_kfastblock_object_io_max_attempts,
+		   uint, 0644);
+MODULE_PARM_DESC(object_io_max_attempts,
+		 "Max attempts per object IO including retries (default 2, min 1 max 8)");
+
+static unsigned int kfastblock_object_io_max_attempts(void)
+{
+	unsigned int v = g_kfastblock_object_io_max_attempts;
+
+	if (v < 1)
+		return 1;
+	if (v > 8)
+		return 8;
+	return v;
+}
+
 
 static int kfastblock_transport_try_connect_host(const char *host,
 						 u16 port,
@@ -3174,7 +3190,7 @@ static void kfastblock_transport_run_object_attempts(
 	if (!ctx)
 		return;
 
-	for (attempt = 0; attempt < KFASTBLOCK_OBJECT_IO_MAX_ATTEMPTS; ++attempt) {
+	for (attempt = 0; attempt < kfastblock_object_io_max_attempts(); ++attempt) {
 		kfastblock_transport_object_io_ctx_reset_attempt(ctx);
 		ctx->attempt = attempt;
 		if (kfastblock_transport_drive_object_attempt(ctx))
