@@ -451,6 +451,29 @@ static void kfastblock_rdma_conn_destroy_resources(struct kfastblock_rdma_conn *
 	conn->recv_byte_len = 0;
 }
 
+static const char *kfastblock_rdma_cm_event_name(enum rdma_cm_event_type ev)
+{
+	switch (ev) {
+	case RDMA_CM_EVENT_ADDR_RESOLVED:	return "ADDR_RESOLVED";
+	case RDMA_CM_EVENT_ADDR_ERROR:		return "ADDR_ERROR";
+	case RDMA_CM_EVENT_ROUTE_RESOLVED:	return "ROUTE_RESOLVED";
+	case RDMA_CM_EVENT_ROUTE_ERROR:		return "ROUTE_ERROR";
+	case RDMA_CM_EVENT_CONNECT_REQUEST:	return "CONNECT_REQUEST";
+	case RDMA_CM_EVENT_CONNECT_RESPONSE:	return "CONNECT_RESPONSE";
+	case RDMA_CM_EVENT_CONNECT_ERROR:	return "CONNECT_ERROR";
+	case RDMA_CM_EVENT_UNREACHABLE:		return "UNREACHABLE";
+	case RDMA_CM_EVENT_REJECTED:		return "REJECTED";
+	case RDMA_CM_EVENT_ESTABLISHED:		return "ESTABLISHED";
+	case RDMA_CM_EVENT_DISCONNECTED:	return "DISCONNECTED";
+	case RDMA_CM_EVENT_DEVICE_REMOVAL:	return "DEVICE_REMOVAL";
+	case RDMA_CM_EVENT_MULTICAST_JOIN:	return "MULTICAST_JOIN";
+	case RDMA_CM_EVENT_MULTICAST_ERROR:	return "MULTICAST_ERROR";
+	case RDMA_CM_EVENT_ADDR_CHANGE:		return "ADDR_CHANGE";
+	case RDMA_CM_EVENT_TIMEWAIT_EXIT:	return "TIMEWAIT_EXIT";
+	default:				return "UNKNOWN";
+	}
+}
+
 static int kfastblock_rdma_cm_event_handler(struct rdma_cm_id *cm_id,
 					    struct rdma_cm_event *event)
 {
@@ -465,6 +488,10 @@ static int kfastblock_rdma_cm_event_handler(struct rdma_cm_id *cm_id,
 
 	conn->cm_event = event->event;
 	conn->cm_event_status = event->status;
+
+	pr_debug("rdma: cm_event=%s status=%d state=%u\n",
+		 kfastblock_rdma_cm_event_name(event->event),
+		 event->status, conn->state);
 
 	/*
 	 * Async disconnect / device removal while ESTABLISHED: mark error so
