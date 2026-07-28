@@ -9,4 +9,5 @@ run-kfastblock-rdma-suite.sh runs:
 optional:
   KFASTBLOCK_SUITE_PARALLEL=1 -> parallel-4k
   KFASTBLOCK_SUITE_SEQ=1      -> seq-64k
+  KFASTBLOCK_SUITE_BS_SWEEP=1 -> bs-sweep
 EOT
