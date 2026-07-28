@@ -365,10 +365,22 @@ static int kfastblock_rdma_build_dst_addr(const char *host, u16 port,
 	return 0;
 }
 
+static unsigned long kfastblock_rdma_cm_timeout_jiffies(void)
+{
+	return msecs_to_jiffies(kfastblock_rdma_timeout_ms_or_default(
+		kfastblock_rdma_cm_timeout_ms, 3000));
+}
+
+static unsigned long kfastblock_rdma_io_timeout_jiffies(void)
+{
+	return msecs_to_jiffies(kfastblock_rdma_timeout_ms_or_default(
+		kfastblock_rdma_io_timeout_ms, 5000));
+}
+
 static int kfastblock_rdma_wait_cm_event(struct kfastblock_rdma_conn *conn,
 					 enum rdma_cm_event_type expect)
 {
-	unsigned long timeout = msecs_to_jiffies(kfastblock_rdma_timeout_ms_or_default(kfastblock_rdma_cm_timeout_ms, 3000));
+	unsigned long timeout = kfastblock_rdma_cm_timeout_jiffies();
 
 	if (!conn)
 		return -EINVAL;
@@ -978,7 +990,7 @@ int kfastblock_rdma_conn_send(struct kfastblock_rdma_conn *conn,
 		return ret;
 	}
 
-	deadline = jiffies + msecs_to_jiffies(kfastblock_rdma_timeout_ms_or_default(kfastblock_rdma_io_timeout_ms, 5000));
+	deadline = jiffies + kfastblock_rdma_io_timeout_jiffies();
 	while (!completion_done(&conn->send_done)) {
 		ret = kfastblock_rdma_poll_one(conn, deadline);
 		if (ret) {
@@ -1027,7 +1039,7 @@ int kfastblock_rdma_conn_recv(struct kfastblock_rdma_conn *conn,
 		}
 	}
 
-	deadline = jiffies + msecs_to_jiffies(kfastblock_rdma_timeout_ms_or_default(kfastblock_rdma_io_timeout_ms, 5000));
+	deadline = jiffies + kfastblock_rdma_io_timeout_jiffies();
 	while (!completion_done(&conn->recv_done)) {
 		ret = kfastblock_rdma_poll_one(conn, deadline);
 		if (ret) {
