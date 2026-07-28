@@ -106,6 +106,7 @@ private:
         /* Serialized responses waiting for SEND slot (async object I/O). */
         std::mutex send_mu{};
         std::deque<std::vector<uint8_t>> send_queue{};
+        /* Pending response frames before drop (async write completions). */
         static constexpr size_t max_send_queue{64};
         /* Per-connection counters for diagnostics. */
         std::atomic<uint64_t> recv_count{0};
