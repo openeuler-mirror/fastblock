@@ -766,6 +766,10 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 		conn->last_error = PTR_ERR(conn->cm_id);
 		conn->cm_id = NULL;
 		conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
+		kfastblock_rdma_connect_err++;
+		pr_warn_ratelimited(
+			"kfastblock: rdma_create_id failed ret=%d\n",
+			conn->last_error);
 		return conn->last_error;
 	}
 
@@ -833,6 +837,9 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 		if (IS_ERR(conn->pd)) {
 			conn->last_error = PTR_ERR(conn->pd);
 			conn->pd = NULL;
+			pr_warn_ratelimited(
+				"kfastblock: ib_alloc_pd failed ret=%d peer=%s:%u\n",
+				conn->last_error, conn->peer_addr, conn->peer_port);
 			goto err_destroy_id;
 		}
 
@@ -862,6 +869,10 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 			if (IS_ERR(conn->cq)) {
 				conn->last_error = PTR_ERR(conn->cq);
 				conn->cq = NULL;
+				pr_warn_ratelimited(
+					"kfastblock: ib_create_cq failed ret=%d peer=%s:%u\n",
+					conn->last_error, conn->peer_addr,
+					conn->peer_port);
 				goto err_destroy_id;
 			}
 			if (kfastblock_rdma_use_cq_notify) {
