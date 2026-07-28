@@ -354,13 +354,16 @@ static int kfastblock_rdma_cm_event_handler(struct rdma_cm_id *cm_id,
 static int kfastblock_rdma_build_dst_addr(const char *host, u16 port,
 					  struct sockaddr_in *dst)
 {
-	if (!host || !port || !dst)
+	if (!host || !*host || !port || !dst)
 		return -EINVAL;
 
 	memset(dst, 0, sizeof(*dst));
 	dst->sin_family = AF_INET;
 	dst->sin_port = htons(port);
 	if (in4_pton(host, -1, (u8 *)&dst->sin_addr.s_addr, -1, NULL) != 1)
+		return -EINVAL;
+	/* Reject 0.0.0.0 as peer — not a usable RDMA endpoint. */
+	if (!dst->sin_addr.s_addr)
 		return -EINVAL;
 	return 0;
 }
