@@ -12,12 +12,13 @@ MON="$(kfastblock_resolve_monitor_addr "$CONF")"
 POOL="${KFASTBLOCK_POOL:-fb}"
 IMAGE="${KFASTBLOCK_IMAGE:-rdma-bs-$(date +%s)}"
 TIMEOUT_S="${KFASTBLOCK_IO_TIMEOUT_S:-30}"
+BS_LIST="${KFASTBLOCK_BS_LIST:-4096 8192}"
 kfastblock_create_image "$REPO_ROOT" "$CONF" "$POOL" "$IMAGE"
 "$REPO_ROOT/kfastblock/tool/kfastblock-admin" attach \
   --monitor-addr "${MON}:3334" --pool-name "$POOL" --image-name "$IMAGE" \
   --osd-transport rdma
 DEV="$(kfastblock_resolve_device)"
-for bs in 4096 8192; do
+for bs in $BS_LIST; do
   count=$((bs/4096))
   pay=/tmp/bs-$bs.pay; rb=/tmp/bs-$bs.rb
   dd if=/dev/urandom of="$pay" bs=4096 count=$count status=none
