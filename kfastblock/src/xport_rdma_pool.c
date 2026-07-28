@@ -79,6 +79,26 @@ const char *kfastblock_rdma_pool_slot_state_name(u8 state)
 	}
 }
 
+int kfastblock_rdma_pool_slot_format_brief(
+	const struct kfastblock_rdma_pool_slot *slot, char *buf, size_t buf_len)
+{
+	if (!slot || !buf || !buf_len)
+		return 0;
+	if (slot->state == KFASTBLOCK_RDMA_POOL_SLOT_EMPTY)
+		return scnprintf(buf, buf_len, "state=empty");
+	if (slot->conn && kfastblock_rdma_conn_is_connected(slot->conn)) {
+		unsigned long age_s = kfastblock_rdma_conn_age_seconds(slot->conn);
+		return scnprintf(buf, buf_len,
+				 "state=%s peer=%s:%u osd=%u age=%lus err=%d",
+				 kfastblock_rdma_pool_slot_state_name(slot->state),
+				 slot->address, slot->rdma_port, slot->osd_id,
+				 age_s, slot->last_error);
+	}
+	return scnprintf(buf, buf_len, "state=%s err=%d",
+			 kfastblock_rdma_pool_slot_state_name(slot->state),
+			 slot->last_error);
+}
+
 static void kfastblock_rdma_pool_slot_init(struct kfastblock_rdma_pool_slot *slot)
 {
 	if (!slot)
