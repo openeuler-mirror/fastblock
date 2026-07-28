@@ -61,8 +61,8 @@ int kfastblock_rdma_conn_last_error(const struct kfastblock_rdma_conn *conn);
 const char *kfastblock_rdma_conn_state_str(const struct kfastblock_rdma_conn *conn);
 
 /*
- * True if conn is ESTABLISHED, connected, and last_error==0.
- * Pool reuse paths prefer this over bare is_connected.
+ * True if conn is ESTABLISHED, last_error==0, buffers mapped, and at least
+ * one RECV is posted. Pool reuse paths prefer this over bare is_connected.
  */
 bool kfastblock_rdma_conn_is_usable(const struct kfastblock_rdma_conn *conn);
 
