@@ -21,6 +21,7 @@ static bool kfastblock_recovery_should_retry_monitor(int ret)
 	case -ENOTCONN:
 	case -EPROTO:
 	case -EIO:
+	case -EMSGSIZE:
 		return true;
 	default:
 		return false;
