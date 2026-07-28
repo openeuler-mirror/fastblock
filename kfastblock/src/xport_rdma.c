@@ -407,6 +407,9 @@ static int kfastblock_rdma_wait_cm_event(struct kfastblock_rdma_conn *conn,
 	if (!wait_for_completion_timeout(&conn->cm_done, timeout)) {
 		conn->last_error = -ETIMEDOUT;
 		kfastblock_rdma_connect_timeout++;
+		pr_warn_ratelimited(
+			"kfastblock: RDMA CM wait timeout expect=%u peer=%s:%u\n",
+			(unsigned int)expect, conn->peer_addr, conn->peer_port);
 		return -ETIMEDOUT;
 	}
 	if (conn->cm_event != expect) {
