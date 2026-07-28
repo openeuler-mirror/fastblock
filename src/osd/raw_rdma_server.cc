@@ -1156,6 +1156,9 @@ void osd_raw_rdma_server::run_listener(uint32_t shard_id) noexcept {
                 ::rdma_destroy_id(event->id);
             } else if (!handle_connect_request(event->id, shard_id)) {
                 _reject_total.fetch_add(1, std::memory_order_relaxed);
+                SPDK_ERRLOG(
+                  "raw RDMA shard %u reject CONNECT_REQUEST: accept setup failed\n",
+                  shard_id);
                 ::rdma_reject(event->id, nullptr, 0);
                 ::rdma_destroy_id(event->id);
             } else {
