@@ -13,6 +13,7 @@
 static unsigned long kfastblock_rdma_pool_hit_total;
 static unsigned long kfastblock_rdma_pool_miss_total;
 static unsigned long kfastblock_rdma_pool_evict_total;
+static unsigned long kfastblock_rdma_pool_reclaim_total;
 /* Default max_idle applied at pool_init (0 = unlimited). */
 static unsigned int kfastblock_rdma_pool_max_idle_default =
 	KFASTBLOCK_RDMA_POOL_DEFAULT_MAX_IDLE;
@@ -28,6 +29,9 @@ module_param_named(rdma_pool_miss, kfastblock_rdma_pool_miss_total, ulong, 0444)
 MODULE_PARM_DESC(rdma_pool_miss, "RDMA pool get miss/cold-connect total");
 module_param_named(rdma_pool_evict, kfastblock_rdma_pool_evict_total, ulong, 0444);
 MODULE_PARM_DESC(rdma_pool_evict, "RDMA pool idle LRU eviction total");
+module_param_named(rdma_pool_reclaim, kfastblock_rdma_pool_reclaim_total, ulong,
+		   0444);
+MODULE_PARM_DESC(rdma_pool_reclaim, "RDMA pool DEAD slot reclaim total");
 module_param_named(rdma_pool_max_idle, kfastblock_rdma_pool_max_idle_default,
 		   uint, 0644);
 MODULE_PARM_DESC(rdma_pool_max_idle,
@@ -485,6 +489,7 @@ u32 kfastblock_rdma_pool_reclaim_dead(struct kfastblock_rdma_pool *pool)
 			kfastblock_rdma_pool_slot_clear_identity(slot);
 			slot->state = KFASTBLOCK_RDMA_POOL_SLOT_EMPTY;
 			n++;
+			kfastblock_rdma_pool_reclaim_total++;
 		}
 		mutex_unlock(&slot->lock);
 	}
