@@ -1,4 +1,6 @@
 #include <linux/errno.h>
+#include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/string.h>
 
 #include "kfastblock/connpool.h"
@@ -7,6 +9,18 @@
 #include "kfastblock/request.h"
 #include "kfastblock/scheduler.h"
 #include "kfastblock/volume.h"
+
+static unsigned long kfastblock_recovery_rdma_invalidate_leader_total;
+static unsigned long kfastblock_recovery_rdma_flush_total;
+
+module_param_named(recovery_rdma_invalidate_leader,
+		   kfastblock_recovery_rdma_invalidate_leader_total, ulong, 0444);
+MODULE_PARM_DESC(recovery_rdma_invalidate_leader,
+		 "Recovery RDMA invalidate-for-leader slot total");
+module_param_named(recovery_rdma_flush,
+		   kfastblock_recovery_rdma_flush_total, ulong, 0444);
+MODULE_PARM_DESC(recovery_rdma_flush,
+		 "Recovery RDMA full cache flush total");
 
 static bool kfastblock_recovery_should_retry_monitor(int ret)
 {
@@ -335,6 +349,7 @@ void kfastblock_recovery_invalidate_rdma_for_leader(
 			c->osd_id = 0;
 			c->state = KFASTBLOCK_CONN_STATE_EMPTY;
 			c->last_error = -ENOTCONN;
+			kfastblock_recovery_rdma_invalidate_leader_total++;
 		}
 		mutex_unlock(&c->lock);
 	}
@@ -346,6 +361,7 @@ void kfastblock_recovery_flush_rdma_cache(struct kfastblock_volume *vol)
 		return;
 	kfastblock_rdma_conn_pool_close(vol->rdma_cache,
 					KFASTBLOCK_MAX_RDMA_CACHE);
+	kfastblock_recovery_rdma_flush_total++;
 }
 
 void kfastblock_recovery_format_actions(unsigned int actions,
