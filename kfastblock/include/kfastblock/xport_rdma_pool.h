@@ -8,6 +8,7 @@
 #include "kfastblock/meta.h"
 
 struct kfastblock_rdma_conn;
+struct seq_file;
 
 /* Default number of reusable RDMA connection slots per pool. */
 #define KFASTBLOCK_RDMA_POOL_DEFAULT_SLOTS 8U
@@ -126,6 +127,10 @@ bool kfastblock_rdma_pool_has_busy(struct kfastblock_rdma_pool *pool);
 /* Format compact pool stats into @buf for logs. */
 int kfastblock_rdma_pool_format_stats(struct kfastblock_rdma_pool *pool,
 				      char *buf, size_t buf_len);
+
+/* Dump pool stats to seq_file for debugfs/diag. */
+void kfastblock_rdma_pool_dump_seq(struct seq_file *m, const char *prefix,
+				   struct kfastblock_rdma_pool *pool);
 
 /* Find slot owning @conn (does not take slot lock). Returns NULL if unknown. */
 struct kfastblock_rdma_pool_slot *
