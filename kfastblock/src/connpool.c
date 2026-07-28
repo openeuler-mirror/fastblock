@@ -1001,9 +1001,8 @@ kfastblock_rdma_conn_pool_try_acquire(struct kfastblock_cached_rdma *slots,
 
 		mutex_lock(&c->lock);
 		if (kfastblock_rdma_slot_matches_locked(c, leader)) {
-			if (kfastblock_rdma_cached_idle_max_age_s &&
-			    time_after(jiffies, c->last_use_jiffies +
-				       msecs_to_jiffies(kfastblock_rdma_cached_idle_max_age_s * 1000U))) {
+			if (kfastblock_rdma_conn_is_aged(c->conn,
+							 kfastblock_rdma_cached_idle_max_age_s)) {
 				kfastblock_rdma_conn_free(c->conn);
 				c->conn = NULL;
 				c->state = KFASTBLOCK_CONN_STATE_EMPTY;
