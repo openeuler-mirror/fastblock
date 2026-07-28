@@ -595,6 +595,14 @@ unsigned int kfastblock_rdma_pool_hit_pct(
 	return (unsigned int)((snap->get_hits * 100ULL) / total);
 }
 
+unsigned int kfastblock_rdma_pool_util_pct(
+	const struct kfastblock_rdma_pool_snapshot *snap)
+{
+	if (!snap || !snap->total_slots)
+		return 0;
+	return (unsigned int)((snap->busy_slots * 100ULL) / snap->total_slots);
+}
+
 int kfastblock_rdma_pool_format_stats(struct kfastblock_rdma_pool *pool,
 				      char *buf, size_t buf_len)
 {
@@ -609,8 +617,7 @@ int kfastblock_rdma_pool_format_stats(struct kfastblock_rdma_pool *pool,
 	kfastblock_rdma_pool_snapshot(pool, &snap);
 	{
 		unsigned int hit_pct = kfastblock_rdma_pool_hit_pct(&snap);
-		unsigned int util_pct = snap.total_slots ?
-			(unsigned int)((snap.busy_slots * 100ULL) / snap.total_slots) : 0;
+		unsigned int util_pct = kfastblock_rdma_pool_util_pct(&snap);
 		unsigned long conn_lat_avg = snap.connect_lat_count ?
 			(unsigned long)(snap.connect_lat_us_total /
 					snap.connect_lat_count) : 0;
