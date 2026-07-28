@@ -17,6 +17,12 @@ module_param_named(rdma_cached_idle_max_age_s,
 MODULE_PARM_DESC(rdma_cached_idle_max_age_s,
 		 "Max idle age (s) for cached RDMA conn before reconnect (0=off)");
 
+static unsigned long kfastblock_rdma_cached_aged_out_total;
+module_param_named(rdma_cached_aged_out, kfastblock_rdma_cached_aged_out_total,
+		   ulong, 0444);
+MODULE_PARM_DESC(rdma_cached_aged_out,
+		 "Cached RDMA conn dropped due to idle age limit");
+
 static enum kfastblock_conn_state kfastblock_conn_state_after_reset(bool has_sock,
 								    bool connecting)
 {
@@ -1008,6 +1014,7 @@ kfastblock_rdma_conn_pool_try_acquire(struct kfastblock_cached_rdma *slots,
 				c->state = KFASTBLOCK_CONN_STATE_EMPTY;
 				c->last_error = -ETIMEDOUT;
 				c->failure_count++;
+				kfastblock_rdma_cached_aged_out_total++;
 				mutex_unlock(&c->lock);
 				continue;
 			}
