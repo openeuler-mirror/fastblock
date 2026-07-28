@@ -9,12 +9,8 @@
  * a small surface without pulling volume plumbing.
  */
 
-/* Suggested errno when simulating RDMA CM connect failure. */
-/* Default injected errno when fault budget does not override. */
+/* Default injected errno: CM connect failure / exchange deadline. */
 #define KFASTBLOCK_FAULT_RDMA_CONNECT_ERRNO (-ENOTCONN)
-
-/* Suggested errno when simulating RDMA exchange timeout. */
-/* Simulates exchange deadline; recovery treats as transport. */
 #define KFASTBLOCK_FAULT_RDMA_EXCHANGE_ERRNO (-ETIMEDOUT)
 
 /*
