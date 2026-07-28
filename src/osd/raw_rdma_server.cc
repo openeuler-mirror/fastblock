@@ -514,6 +514,9 @@ void osd_raw_rdma_server::dispatch_read(connection_context* conn,
     std::memcpy(&req, body, sizeof(req));
     const uint16_t object_name_len = le16toh(req.object_name_len);
     if (body_len != sizeof(req) + object_name_len || object_name_len == 0) {
+        SPDK_ERRLOG(
+          "raw RDMA READ invalid body peer=%s body=%u name_len=%u\n",
+          conn->peer_address.c_str(), body_len, object_name_len);
         send_response(conn, req_hdr, raw_status_invalid_request, nullptr, 0);
         return;
     }
