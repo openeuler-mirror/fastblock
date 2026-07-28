@@ -727,6 +727,35 @@ static int kfastblock_rdma_post_recv_fill(struct kfastblock_rdma_conn *conn)
 }
 
 /* Apply one polled WC to conn completion state. Returns 0 or -EIO for unknown. */
+static const char *kfastblock_rdma_wc_status_name(int status)
+{
+	switch (status) {
+	case IB_WC_SUCCESS:		return "SUCCESS";
+	case IB_WC_LOC_LEN_ERR:		return "LOC_LEN_ERR";
+	case IB_WC_LOC_QP_OP_ERR:	return "LOC_QP_OP_ERR";
+	case IB_WC_LOC_EEC_OP_ERR:	return "LOC_EEC_OP_ERR";
+	case IB_WC_LOC_PROT_ERR:	return "LOC_PROT_ERR";
+	case IB_WC_WR_FLUSH_ERR:	return "WR_FLUSH_ERR";
+	case IB_WC_MW_BIND_ERR:		return "MW_BIND_ERR";
+	case IB_WC_BAD_RESP_ERR:	return "BAD_RESP_ERR";
+	case IB_WC_LOC_ACCESS_ERR:	return "LOC_ACCESS_ERR";
+	case IB_WC_REM_INV_REQ_ERR:	return "REM_INV_REQ_ERR";
+	case IB_WC_REM_ACCESS_ERR:	return "REM_ACCESS_ERR";
+	case IB_WC_REM_OP_ERR:		return "REM_OP_ERR";
+	case IB_WC_RETRY_EXC_ERR:	return "RETRY_EXC_ERR";
+	case IB_WC_RNR_RETRY_EXC_ERR:	return "RNR_RETRY_EXC_ERR";
+	case IB_WC_LOC_RDD_VIOL_ERR:	return "LOC_RDD_VIOL_ERR";
+	case IB_WC_REM_INV_RD_REQ_ERR:	return "REM_INV_RD_REQ_ERR";
+	case IB_WC_REM_ABORT_ERR:	return "REM_ABORT_ERR";
+	case IB_WC_INV_EECN_ERR:	return "INV_EECN_ERR";
+	case IB_WC_INV_EEC_STATE_ERR:	return "INV_EEC_STATE_ERR";
+	case IB_WC_FATAL_ERR:		return "FATAL_ERR";
+	case IB_WC_RESP_TIMEOUT_ERR:	return "RESP_TIMEOUT_ERR";
+	case IB_WC_GENERAL_ERR:		return "GENERAL_ERR";
+	default:				return "UNKNOWN";
+	}
+}
+
 static int kfastblock_rdma_apply_wc(struct kfastblock_rdma_conn *conn,
 				    const struct ib_wc *wc)
 {
@@ -736,6 +765,9 @@ static int kfastblock_rdma_apply_wc(struct kfastblock_rdma_conn *conn,
 	/* Non-success WC: still deliver to waiter; caller checks status. */
 	if (wc->status != IB_WC_SUCCESS) {
 		kfastblock_rdma_wc_err++;
+		pr_debug("rdma: wc_error=%s wr_id=%llu\n",
+			 kfastblock_rdma_wc_status_name(wc->status),
+			 wc->wr_id);
 		switch (wc->status) {
 		case IB_WC_WR_FLUSH_ERR:
 			kfastblock_rdma_wc_flush_err++;
