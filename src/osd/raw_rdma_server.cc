@@ -53,7 +53,8 @@ constexpr int raw_rdma_poll_timeout_ms = 200;
 /* Per-connection CQ capacity; must cover multi-slot RECV + SEND pipeline. */
 constexpr int raw_rdma_cq_depth = 64;
 /* Bound for drain_send_queue on destroy / graceful stop (ms). */
-constexpr int raw_rdma_drain_timeout_ms = 200;
+/* Soft-RoCE / slow CQ poll may need >200ms to finish SIGNALED SEND. */
+constexpr int raw_rdma_drain_timeout_ms = 500;
 /* raw header (24) + max object body (~4MiB) + margin */
 constexpr size_t raw_rdma_recv_buf_len = (4U * 1024U * 1024U) + 4096U;
 constexpr size_t raw_rdma_send_buf_len = raw_rdma_recv_buf_len;
