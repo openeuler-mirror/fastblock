@@ -7,6 +7,7 @@ need=(
   rdma_connect_ok rdma_pool_hit rdma_pool_miss
   rdma_pool_idle_max_age_s rdma_pool_max_idle
   rdma_object_log
+  object_io_max_attempts
 )
 missing=0
 for n in "${need[@]}"; do
