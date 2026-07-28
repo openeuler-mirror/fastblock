@@ -146,6 +146,7 @@ static unsigned long kfastblock_rdma_wc_rnr_err;
 static unsigned long kfastblock_rdma_wc_remote_err;
 static unsigned long kfastblock_rdma_wc_fatal_err;
 static unsigned long kfastblock_rdma_wc_other_err;
+static unsigned long kfastblock_rdma_wc_unknown_id;
 /* Per-op latency tracking (microseconds via ktime_to_us). */
 static unsigned long kfastblock_rdma_send_lat_min_us;
 static unsigned long kfastblock_rdma_send_lat_max_us;
@@ -251,6 +252,10 @@ module_param_named(rdma_wc_other_err, kfastblock_rdma_wc_other_err, ulong,
 		   0444);
 MODULE_PARM_DESC(rdma_wc_other_err,
 		 "RDMA WC other error status count");
+module_param_named(rdma_wc_unknown_id, kfastblock_rdma_wc_unknown_id, ulong,
+		   0444);
+MODULE_PARM_DESC(rdma_wc_unknown_id,
+		 "RDMA WC completed with unrecognized wr_id");
 module_param_named(rdma_send_lat_min_us, kfastblock_rdma_send_lat_min_us,
 		   ulong, 0444);
 MODULE_PARM_DESC(rdma_send_lat_min_us, "RDMA SEND min latency (microseconds)");
@@ -582,6 +587,11 @@ static int kfastblock_rdma_wait_cm_event(struct kfastblock_rdma_conn *conn,
 		int err = conn->cm_event_status ? conn->cm_event_status
 						: -ECONNREFUSED;
 
+		pr_warn_ratelimited(
+			"kfastblock: RDMA CM event mismatch expect=%s actual=%s err=%d peer=%s:%u\n",
+			kfastblock_rdma_cm_event_name(expect),
+			kfastblock_rdma_cm_event_name(conn->cm_event),
+			err, conn->peer_addr, conn->peer_port);
 		conn->last_error = err;
 		return err;
 	}
@@ -824,7 +834,11 @@ static int kfastblock_rdma_apply_wc(struct kfastblock_rdma_conn *conn,
 		complete(&conn->recv_done);
 		return 0;
 	}
-	/* Unknown wr_id: ignore. */
+	/* Unknown wr_id: count and log for diagnostics. */
+	kfastblock_rdma_wc_unknown_id++;
+	pr_debug_ratelimited(
+		"kfastblock: RDMA WC unknown wr_id=0x%llx status=%u\n",
+		(unsigned long long)wc->wr_id, wc->status);
 	return 0;
 }
 
