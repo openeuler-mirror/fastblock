@@ -113,6 +113,7 @@ static unsigned long kfastblock_rdma_exchange_stale;
 static unsigned long kfastblock_rdma_connect_ok;
 static unsigned long kfastblock_rdma_connect_err;
 static unsigned long kfastblock_rdma_connect_timeout;
+static unsigned long kfastblock_rdma_reconnect_total;
 static unsigned long kfastblock_rdma_dma_map_err;
 static unsigned long kfastblock_rdma_io_timeout_total;
 static unsigned long kfastblock_rdma_wc_err;
@@ -175,6 +176,10 @@ MODULE_PARM_DESC(rdma_connect_err, "RDMA connect failures");
 module_param_named(rdma_connect_timeout, kfastblock_rdma_connect_timeout, ulong,
 		   0444);
 MODULE_PARM_DESC(rdma_connect_timeout, "RDMA CM connect/wait timeouts");
+module_param_named(rdma_reconnect_total, kfastblock_rdma_reconnect_total,
+		   ulong, 0444);
+MODULE_PARM_DESC(rdma_reconnect_total,
+		 "RDMA reconnect total (ERROR/IDLE -> ESTABLISHED)");
 module_param_named(rdma_dma_map_err, kfastblock_rdma_dma_map_err, ulong, 0444);
 MODULE_PARM_DESC(rdma_dma_map_err, "RDMA DMA map single failures");
 module_param_named(rdma_io_timeout_total, kfastblock_rdma_io_timeout_total,
@@ -1045,6 +1050,8 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 			leader->address, leader->rdma_port);
 		return -EBUSY;
 	}
+	if (conn->state == KFASTBLOCK_RDMA_CONN_ERROR)
+		kfastblock_rdma_reconnect_total++;
 
 	strscpy(conn->peer_addr, leader->address, sizeof(conn->peer_addr));
 	conn->peer_port = leader->rdma_port;
