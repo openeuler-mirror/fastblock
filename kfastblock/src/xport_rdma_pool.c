@@ -1,6 +1,7 @@
 #include <linux/build_bug.h>
 #include <linux/errno.h>
 #include <linux/jiffies.h>
+#include <linux/ktime.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/slab.h>
@@ -271,7 +272,23 @@ kfastblock_rdma_pool_get(struct kfastblock_rdma_pool *pool,
 				return NULL;
 			}
 		}
-		ret = kfastblock_rdma_conn_connect(slot->conn, leader);
+		{
+			ktime_t t0 = ktime_get();
+
+			ret = kfastblock_rdma_conn_connect(slot->conn, leader);
+			if (!ret) {
+				unsigned long us =
+					(unsigned long)ktime_us_delta(ktime_get(), t0);
+
+				if (!pool->connect_lat_count ||
+				    us < pool->connect_lat_us_min)
+					pool->connect_lat_us_min = us;
+				if (us > pool->connect_lat_us_max)
+					pool->connect_lat_us_max = us;
+				pool->connect_lat_us_total += us;
+				pool->connect_lat_count++;
+			}
+		}
 		if (ret) {
 			slot->last_error = ret;
 			slot->failure_count++;
@@ -536,14 +553,19 @@ int kfastblock_rdma_pool_format_stats(struct kfastblock_rdma_pool *pool,
 		unsigned int hit_pct = total ? (unsigned int)((hits * 100ULL) / total) : 0;
 		unsigned int util_pct = snap.total_slots ?
 			(unsigned int)((snap.busy_slots * 100ULL) / snap.total_slots) : 0;
+		unsigned long conn_lat_avg = snap.connect_lat_count ?
+			(unsigned long)(snap.connect_lat_us_total /
+					snap.connect_lat_count) : 0;
 
 		return scnprintf(buf, buf_len,
-			 "slots=%u empty=%u idle=%u busy=%u dead=%u connected=%u ready=%u max_idle=%u hits=%llu misses=%llu hit_pct=%u util_pct=%u evict=%llu",
+			 "slots=%u empty=%u idle=%u busy=%u dead=%u connected=%u ready=%u max_idle=%u hits=%llu misses=%llu hit_pct=%u util_pct=%u evict=%llu conn_lat_us=%lu/%lu/%lu n=%u",
 			 snap.total_slots, snap.empty_slots, snap.idle_slots,
 			 snap.busy_slots, snap.dead_slots, snap.connected_slots,
 			 kfastblock_rdma_pool_ready_count(pool), snap.max_idle,
 			 hits, misses, hit_pct, util_pct,
-			 (unsigned long long)snap.idle_evictions);
+			 (unsigned long long)snap.idle_evictions,
+			 snap.connect_lat_us_min, conn_lat_avg,
+			 snap.connect_lat_us_max, snap.connect_lat_count);
 	}
 }
 
@@ -614,6 +636,10 @@ void kfastblock_rdma_pool_snapshot(struct kfastblock_rdma_pool *pool,
 	snap->connect_ok = pool->connect_ok;
 	snap->connect_err = pool->connect_err;
 	snap->idle_evictions = pool->idle_evictions;
+	snap->connect_lat_us_min = pool->connect_lat_us_min;
+	snap->connect_lat_us_max = pool->connect_lat_us_max;
+	snap->connect_lat_us_total = pool->connect_lat_us_total;
+	snap->connect_lat_count = pool->connect_lat_count;
 
 	for (i = 0; i < pool->nr_slots; ++i) {
 		struct kfastblock_rdma_pool_slot *slot = &pool->slots[i];
