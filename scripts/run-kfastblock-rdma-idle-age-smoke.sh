@@ -14,6 +14,7 @@ lsmod | awk '$1=="kfastblock"{f=1} END{exit f?0:1}' || {
 # 2 second idle max age
 echo 2 > /sys/module/kfastblock/parameters/rdma_pool_idle_max_age_s
 AGE_SLEEP="${KFASTBLOCK_IDLE_AGE_SLEEP:-3}"
+TIMEOUT_S="${KFASTBLOCK_IO_TIMEOUT_S:-30}"
 
 MON="$(kfastblock_resolve_monitor_addr "$CONF")"
 POOL="${KFASTBLOCK_POOL:-fb}"
@@ -25,15 +26,15 @@ kfastblock_create_image "$REPO_ROOT" "$CONF" "$POOL" "$IMAGE"
 DEV="$(kfastblock_resolve_device)"
 pay=/tmp/age-pay.bin; rb=/tmp/age-rb.bin
 printf 'AGE1_%s' "$IMAGE" | dd of="$pay" bs=4096 count=1 conv=sync status=none
-timeout 30 dd if="$pay" of="$DEV" bs=4096 count=1 oflag=direct status=none
-timeout 30 dd if="$DEV" of="$rb" bs=4096 count=1 iflag=direct status=none
+timeout "$TIMEOUT_S" dd if="$pay" of="$DEV" bs=4096 count=1 oflag=direct status=none
+timeout "$TIMEOUT_S" dd if="$DEV" of="$rb" bs=4096 count=1 iflag=direct status=none
 cmp -n 4096 "$pay" "$rb"
 miss0=$(cat /sys/module/kfastblock/parameters/rdma_pool_miss)
 echo "sleep ${AGE_SLEEP}s for idle age..."
 sleep "$AGE_SLEEP"
 printf 'AGE2_%s' "$IMAGE" | dd of="$pay" bs=4096 count=1 conv=sync status=none
-timeout 30 dd if="$pay" of="$DEV" bs=4096 count=1 oflag=direct status=none
-timeout 30 dd if="$DEV" of="$rb" bs=4096 count=1 iflag=direct status=none
+timeout "$TIMEOUT_S" dd if="$pay" of="$DEV" bs=4096 count=1 oflag=direct status=none
+timeout "$TIMEOUT_S" dd if="$DEV" of="$rb" bs=4096 count=1 iflag=direct status=none
 cmp -n 4096 "$pay" "$rb"
 miss1=$(cat /sys/module/kfastblock/parameters/rdma_pool_miss)
 echo "rdma_pool_miss: $miss0 -> $miss1"
