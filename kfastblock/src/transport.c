@@ -44,6 +44,7 @@ static unsigned long kfastblock_transport_rdma_write_ops;
 static unsigned long kfastblock_transport_rdma_read_ops;
 static unsigned long kfastblock_transport_rdma_delete_ops;
 static unsigned long kfastblock_transport_rdma_io_err;
+static unsigned long kfastblock_transport_rdma_fallback_tcp;
 
 module_param_named(rdma_xport_write_ops, kfastblock_transport_rdma_write_ops,
 		   ulong, 0444);
@@ -57,6 +58,10 @@ MODULE_PARM_DESC(rdma_xport_delete_ops, "Transport-level RDMA delete object ops"
 module_param_named(rdma_xport_io_err, kfastblock_transport_rdma_io_err,
 		   ulong, 0444);
 MODULE_PARM_DESC(rdma_xport_io_err, "Transport-level RDMA object I/O errors");
+module_param_named(rdma_xport_fallback_tcp,
+		   kfastblock_transport_rdma_fallback_tcp, ulong, 0444);
+MODULE_PARM_DESC(rdma_xport_fallback_tcp,
+		 "RDMA acquire failed and fell back to TCP (AUTO mode)");
 
 static unsigned int g_kfastblock_object_io_max_attempts = 2;
 module_param_named(object_io_max_attempts, g_kfastblock_object_io_max_attempts,
@@ -2902,6 +2907,7 @@ static int kfastblock_transport_prepare_object_exchange(
 			pr_info_ratelimited(
 				"kfastblock: RDMA unavailable, fallback TCP peer=%s:%u\n",
 				ctx->leader.address, ctx->leader.rdma_port);
+			kfastblock_transport_rdma_fallback_tcp++;
 			/* AUTO continues and falls back to TCP below. */
 		} else {
 			ctx->rdma = ctx->rdma_slot->conn;
