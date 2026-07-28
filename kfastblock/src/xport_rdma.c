@@ -156,6 +156,9 @@ static unsigned long kfastblock_rdma_recv_lat_count;
 /* Cumulative bytes transferred via RDMA SEND/RECV. */
 static unsigned long long kfastblock_rdma_send_bytes;
 static unsigned long long kfastblock_rdma_recv_bytes;
+/* Cumulative WR count (includes both ok and err). */
+static unsigned long kfastblock_rdma_send_wr_total;
+static unsigned long kfastblock_rdma_recv_wr_total;
 
 static void kfastblock_rdma_update_lat_stats(unsigned long *min_us,
 					     unsigned long *max_us,
@@ -262,6 +265,12 @@ module_param_named(rdma_send_bytes, kfastblock_rdma_send_bytes, ullong, 0444);
 MODULE_PARM_DESC(rdma_send_bytes, "RDMA SEND cumulative bytes transmitted");
 module_param_named(rdma_recv_bytes, kfastblock_rdma_recv_bytes, ullong, 0444);
 MODULE_PARM_DESC(rdma_recv_bytes, "RDMA RECV cumulative bytes received");
+module_param_named(rdma_send_wr_total, kfastblock_rdma_send_wr_total, ulong,
+		   0444);
+MODULE_PARM_DESC(rdma_send_wr_total, "RDMA SEND WR posted total");
+module_param_named(rdma_recv_wr_total, kfastblock_rdma_recv_wr_total, ulong,
+		   0444);
+MODULE_PARM_DESC(rdma_recv_wr_total, "RDMA RECV WR posted total");
 
 /*
  * Connection state machine (client):
@@ -653,6 +662,7 @@ static int kfastblock_rdma_post_recv(struct kfastblock_rdma_conn *conn)
 	ib_dma_sync_single_for_device(conn->cm_id->device, conn->recv_dma,
 				      conn->recv_buf_len, DMA_FROM_DEVICE);
 
+	kfastblock_rdma_recv_wr_total++;
 	ret = ib_post_recv(conn->cm_id->qp, &wr, &bad);
 	if (ret) {
 		conn->last_error = ret;
@@ -1282,6 +1292,7 @@ int kfastblock_rdma_conn_send(struct kfastblock_rdma_conn *conn,
 	start = ktime_get();
 	reinit_completion(&conn->send_done);
 	conn->send_wc_status = 0;
+	kfastblock_rdma_send_wr_total++;
 	ret = ib_post_send(conn->cm_id->qp, &wr, &bad);
 	if (ret) {
 		conn->last_error = ret;
