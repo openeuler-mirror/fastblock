@@ -17,6 +17,7 @@ static unsigned long kfastblock_rdma_pool_evict_total;
 static unsigned long kfastblock_rdma_pool_reclaim_total;
 static unsigned long kfastblock_rdma_pool_invalidate_broken_total;
 static unsigned long kfastblock_rdma_pool_put_fail_total;
+static unsigned long kfastblock_rdma_pool_destroy_busy_total;
 /* Default max_idle applied at pool_init (0 = unlimited). */
 static unsigned int kfastblock_rdma_pool_max_idle_default =
 	KFASTBLOCK_RDMA_POOL_DEFAULT_MAX_IDLE;
@@ -43,6 +44,10 @@ module_param_named(rdma_pool_put_fail, kfastblock_rdma_pool_put_fail_total,
 		   ulong, 0444);
 MODULE_PARM_DESC(rdma_pool_put_fail,
 		 "RDMA pool put with ok=false (conn discarded)");
+module_param_named(rdma_pool_destroy_busy,
+		   kfastblock_rdma_pool_destroy_busy_total, ulong, 0444);
+MODULE_PARM_DESC(rdma_pool_destroy_busy,
+		 "RDMA pool destroy with BUSY slots remaining");
 module_param_named(rdma_pool_max_idle, kfastblock_rdma_pool_max_idle_default,
 		   uint, 0644);
 MODULE_PARM_DESC(rdma_pool_max_idle,
@@ -146,8 +151,23 @@ void kfastblock_rdma_pool_close(struct kfastblock_rdma_pool *pool)
 
 void kfastblock_rdma_pool_destroy(struct kfastblock_rdma_pool *pool)
 {
+	u32 i, busy_n = 0;
+
 	if (!pool)
 		return;
+
+	if (pool->slots) {
+		for (i = 0; i < pool->nr_slots; ++i) {
+			if (pool->slots[i].state ==
+			    KFASTBLOCK_RDMA_POOL_SLOT_BUSY)
+				busy_n++;
+		}
+		if (busy_n) {
+			pr_warn("rdma_pool: destroy with %u busy slots\n",
+				busy_n);
+			kfastblock_rdma_pool_destroy_busy_total++;
+		}
+	}
 	kfastblock_rdma_pool_close(pool);
 	kfree(pool->slots);
 	pool->slots = NULL;
