@@ -59,6 +59,7 @@ struct kfastblock_rdma_pool_snapshot {
 	unsigned long connect_lat_us_max;
 	unsigned long long connect_lat_us_total;
 	u32 connect_lat_count;
+	u64 total_connect_attempts;
 };
 
 struct kfastblock_rdma_pool {
