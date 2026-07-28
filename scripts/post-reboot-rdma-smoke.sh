@@ -48,6 +48,7 @@ CONF="$REPO_ROOT/.vstart/etc/fastblock/fastblock.json"
 MON="$(kfastblock_resolve_monitor_addr "$CONF")"
 POOL="${KFASTBLOCK_POOL:-fb}"
 IMAGE="${KFASTBLOCK_IMAGE:-rdma-kvzalloc-$(date +%s)}"
+TIMEOUT_S="${KFASTBLOCK_IO_TIMEOUT_S:-30}"
 
 kfastblock_create_image "$REPO_ROOT" "$CONF" "$POOL" "$IMAGE"
 # Force RDMA data plane (default attach is tcp).
@@ -66,8 +67,8 @@ READBACK="$LOG_DIR/readback.bin"
 printf 'KFASTBLOCK_RDMA_KVZ_%s' "$IMAGE" | dd of="$PAYLOAD" bs=4096 count=1 conv=sync status=none
 
 # Bound I/O so we never hang forever in this script
-timeout 30 dd if="$PAYLOAD" of="$DEV" bs=4096 count=1 oflag=direct status=none
-timeout 30 dd if="$DEV" of="$READBACK" bs=4096 count=1 iflag=direct status=none
+timeout "$TIMEOUT_S" dd if="$PAYLOAD" of="$DEV" bs=4096 count=1 oflag=direct status=none
+timeout "$TIMEOUT_S" dd if="$DEV" of="$READBACK" bs=4096 count=1 iflag=direct status=none
 cmp -n 4096 "$PAYLOAD" "$READBACK"
 
 echo "=== counters after IO ==="
