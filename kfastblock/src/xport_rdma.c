@@ -144,9 +144,9 @@ MODULE_PARM_DESC(rdma_dma_map_err, "RDMA DMA map single failures");
 module_param_named(rdma_io_timeout_total, kfastblock_rdma_io_timeout_total,
 		   ulong, 0444);
 MODULE_PARM_DESC(rdma_io_timeout_total,
+		 "RDMA SEND/RECV poll deadline hits");
 module_param_named(rdma_wc_err, kfastblock_rdma_wc_err, ulong, 0444);
 MODULE_PARM_DESC(rdma_wc_err, "RDMA CQ work completions with error status");
-		 "RDMA SEND/RECV poll deadline hits");
 
 /*
  * Connection state machine (client):
@@ -969,6 +969,18 @@ void kfastblock_rdma_conn_disconnect(struct kfastblock_rdma_conn *conn)
 	conn->peer_addr[0] = '\0';
 }
 
+
+static void kfastblock_rdma_conn_mark_error(struct kfastblock_rdma_conn *conn,
+					    int err)
+{
+	if (!conn)
+		return;
+	if (err)
+		conn->last_error = err;
+	conn->connected = false;
+	conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
+}
+
 bool kfastblock_rdma_conn_is_connected(const struct kfastblock_rdma_conn *conn)
 {
 	return conn && conn->connected &&
@@ -1216,11 +1228,9 @@ int kfastblock_rdma_conn_exchange(struct kfastblock_rdma_conn *conn,
 		return ret;
 	}
 	if ((u32)ret < sizeof(struct kfastblock_raw_header)) {
-		conn->last_error = -EPROTO;
 		kfastblock_rdma_exchange_stale++;
 		kfastblock_rdma_exchange_err++;
-		conn->connected = false;
-		conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
+		kfastblock_rdma_conn_mark_error(conn, -EPROTO);
 		return -EPROTO;
 	}
 
@@ -1233,19 +1243,15 @@ int kfastblock_rdma_conn_exchange(struct kfastblock_rdma_conn *conn,
 		/* Stale/wrong frame (e.g. previous response reused). */
 		kfastblock_rdma_exchange_stale++;
 		kfastblock_rdma_exchange_err++;
-		conn->last_error = -EPROTO;
-		conn->connected = false;
-		conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
+		kfastblock_rdma_conn_mark_error(conn, -EPROTO);
 		return -EPROTO;
 	}
 	/* Response body_len must not exceed the received frame. */
 	rsp_body_len = le32_to_cpu(shdr->body_len);
 	if (rsp_body_len > (u32)ret - sizeof(struct kfastblock_raw_header) ||
 	    sizeof(struct kfastblock_raw_header) + rsp_body_len > rsp_cap) {
-		conn->last_error = -EMSGSIZE;
 		kfastblock_rdma_exchange_err++;
-		conn->connected = false;
-		conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
+		kfastblock_rdma_conn_mark_error(conn, -EMSGSIZE);
 		return -EMSGSIZE;
 	}
 
