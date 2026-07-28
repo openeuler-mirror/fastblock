@@ -2331,8 +2331,8 @@ static ssize_t invalidate_rdma_broken_store(struct device *dev,
 	n = kfastblock_rdma_conn_pool_invalidate_broken(vol->rdma_cache,
 							KFASTBLOCK_MAX_RDMA_CACHE);
 	if (n)
-		pr_info("kfastblock: invalidate_rdma_broken vol=%s dropped=%u\n",
-			vol->name, n);
+		pr_info("kfastblock: invalidate_rdma_broken dev=%s dropped=%u\n",
+			vol->disk_name, n);
 	return count;
 }
 
