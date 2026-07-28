@@ -1049,9 +1049,18 @@ kfastblock_rdma_conn_pool_acquire(struct kfastblock_cached_rdma *slots,
 		mutex_unlock(&c->lock);
 	}
 
-	/* Reuse empty slot or evict first slot. */
+	/* Reuse empty slot or evict LRU slot. */
 	if (!empty) {
-		empty = &slots[0];
+		u32 victim_idx = 0;
+		unsigned long oldest = jiffies + 1;
+
+		for (i = 0; i < nr_slots; ++i) {
+			if (time_before(slots[i].last_use_jiffies, oldest)) {
+				oldest = slots[i].last_use_jiffies;
+				victim_idx = i;
+			}
+		}
+		empty = &slots[victim_idx];
 		mutex_lock(&empty->lock);
 		if (empty->conn) {
 			kfastblock_rdma_conn_free(empty->conn);
