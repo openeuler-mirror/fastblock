@@ -41,7 +41,7 @@ kfastblock_create_image "$REPO_ROOT" "$CONF" "$POOL" "$IMAGE"
 	--monitor-addr "${MON}:3334" \
 	--pool-name "$POOL" \
 	--image-name "$IMAGE" \
-	--osd-transport rdma
+	--osd-transport "${KFASTBLOCK_OSD_TRANSPORT:-rdma}"
 DEV="$(kfastblock_resolve_device)"
 echo "device=$DEV image=$IMAGE"
 
