@@ -377,6 +377,8 @@ void osd_raw_rdma_server::try_flush_send_queue(connection_context* conn) noexcep
         return;
     }
     if (!ensure_send_mr(conn)) {
+        SPDK_ERRLOG("raw RDMA: ensure_send_mr failed peer=%s queue=%zu\n",
+                    conn->peer_address.c_str(), conn->send_queue.size());
         return;
     }
 
