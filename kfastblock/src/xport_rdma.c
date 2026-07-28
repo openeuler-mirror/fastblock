@@ -136,6 +136,8 @@ static unsigned long long kfastblock_rdma_connect_lat_total_us;
 static unsigned long kfastblock_rdma_connect_lat_count;
 static unsigned long kfastblock_rdma_dma_map_err;
 static unsigned long kfastblock_rdma_io_timeout_total;
+static unsigned long kfastblock_rdma_send_timeout_total;
+static unsigned long kfastblock_rdma_recv_timeout_total;
 static unsigned long kfastblock_rdma_wc_err;
 /* Per-WC-status breakdown for diagnostics. */
 static unsigned long kfastblock_rdma_wc_flush_err;
@@ -221,6 +223,14 @@ module_param_named(rdma_io_timeout_total, kfastblock_rdma_io_timeout_total,
 		   ulong, 0444);
 MODULE_PARM_DESC(rdma_io_timeout_total,
 		 "RDMA SEND/RECV poll deadline hits");
+module_param_named(rdma_send_timeout, kfastblock_rdma_send_timeout_total,
+		   ulong, 0444);
+MODULE_PARM_DESC(rdma_send_timeout,
+		 "RDMA SEND completion timeout total");
+module_param_named(rdma_recv_timeout, kfastblock_rdma_recv_timeout_total,
+		   ulong, 0444);
+MODULE_PARM_DESC(rdma_recv_timeout,
+		 "RDMA RECV completion timeout total");
 module_param_named(rdma_wc_err, kfastblock_rdma_wc_err, ulong, 0444);
 MODULE_PARM_DESC(rdma_wc_err, "RDMA CQ work completions with error status");
 module_param_named(rdma_wc_flush_err, kfastblock_rdma_wc_flush_err, ulong,
@@ -1372,6 +1382,8 @@ int kfastblock_rdma_conn_send(struct kfastblock_rdma_conn *conn,
 			/* poll_one already set last_error for timeout/disconnect. */
 			if (!conn->last_error)
 				conn->last_error = ret;
+			if (ret == -ETIMEDOUT)
+				kfastblock_rdma_send_timeout_total++;
 			kfastblock_rdma_send_err++;
 			return ret;
 		}
@@ -1428,6 +1440,8 @@ int kfastblock_rdma_conn_recv(struct kfastblock_rdma_conn *conn,
 		if (ret) {
 			if (!conn->last_error)
 				conn->last_error = ret;
+			if (ret == -ETIMEDOUT)
+				kfastblock_rdma_recv_timeout_total++;
 			kfastblock_rdma_recv_err++;
 			return ret;
 		}
