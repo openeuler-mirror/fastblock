@@ -13,6 +13,7 @@ lsmod | awk '$1=="kfastblock"{f=1} END{exit f?0:1}' || {
 MON="$(kfastblock_resolve_monitor_addr "$CONF")"
 POOL="${KFASTBLOCK_POOL:-fb}"
 IMAGE="${KFASTBLOCK_IMAGE:-auto-4k-$(date +%s)}"
+TIMEOUT_S="${KFASTBLOCK_IO_TIMEOUT_S:-30}"
 kfastblock_create_image "$REPO_ROOT" "$CONF" "$POOL" "$IMAGE"
 "$REPO_ROOT/kfastblock/tool/kfastblock-admin" attach \
   --monitor-addr "${MON}:3334" --pool-name "$POOL" --image-name "$IMAGE" \
@@ -22,8 +23,8 @@ xport=$("$REPO_ROOT/kfastblock/tool/kfastblock-admin" show --pool-name "$POOL" -
 echo "osd_transport=$xport"
 pay=/tmp/auto-pay.bin; rb=/tmp/auto-rb.bin
 printf 'AUTO_%s' "$IMAGE" | dd of="$pay" bs=4096 count=1 conv=sync status=none
-timeout 30 dd if="$pay" of="$DEV" bs=4096 count=1 oflag=direct status=none
-timeout 30 dd if="$DEV" of="$rb" bs=4096 count=1 iflag=direct status=none
+timeout "$TIMEOUT_S" dd if="$pay" of="$DEV" bs=4096 count=1 oflag=direct status=none
+timeout "$TIMEOUT_S" dd if="$DEV" of="$rb" bs=4096 count=1 iflag=direct status=none
 cmp -n 4096 "$pay" "$rb"
 # Prefer seeing rdma when Soft-RoCE cluster is up; warn only if tcp.
 if [ "$xport" != "rdma" ] && [ "$xport" != "auto" ] && [ "$xport" != "tcp" ]; then
