@@ -465,12 +465,8 @@ static bool kfastblock_rdma_pool_slot_idle_aged_locked(
 
 	if (!slot || !kfastblock_rdma_pool_idle_max_age_s)
 		return false;
-	age_s = kfastblock_rdma_pool_idle_max_age_s;
-	if (age_s > 86400U)
-		age_s = 86400U;
-	return time_after(jiffies,
-			  slot->last_use_jiffies +
-				  msecs_to_jiffies(age_s * 1000U));
+	age_s = min_t(unsigned int, kfastblock_rdma_pool_idle_max_age_s, 86400U);
+	return kfastblock_rdma_conn_is_aged(slot->conn, age_s);
 }
 
 struct kfastblock_rdma_conn *
