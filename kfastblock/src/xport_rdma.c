@@ -1189,6 +1189,8 @@ int kfastblock_rdma_conn_exchange(struct kfastblock_rdma_conn *conn,
 	    sizeof(struct kfastblock_raw_header) + rsp_body_len > rsp_cap) {
 		conn->last_error = -EMSGSIZE;
 		kfastblock_rdma_exchange_err++;
+		conn->connected = false;
+		conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
 		return -EMSGSIZE;
 	}
 
