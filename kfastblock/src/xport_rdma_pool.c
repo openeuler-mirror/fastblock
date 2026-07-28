@@ -639,8 +639,24 @@ u32 kfastblock_rdma_pool_ready_count(struct kfastblock_rdma_pool *pool)
 
 		mutex_lock(&slot->lock);
 		if (slot->state == KFASTBLOCK_RDMA_POOL_SLOT_IDLE &&
-		    slot->conn && kfastblock_rdma_conn_is_usable(slot->conn))
-			n++;
+		    slot->conn && kfastblock_rdma_conn_is_usable(slot->conn)) {
+			bool aged = false;
+
+			if (kfastblock_rdma_pool_idle_max_age_s) {
+				unsigned int age_s =
+					kfastblock_rdma_pool_idle_max_age_s;
+
+				if (age_s > 86400U)
+					age_s = 86400U;
+				aged = time_after(
+					jiffies,
+					slot->last_use_jiffies +
+						msecs_to_jiffies(age_s *
+								 1000U));
+			}
+			if (!aged)
+				n++;
+		}
 		mutex_unlock(&slot->lock);
 	}
 	return n;
