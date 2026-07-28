@@ -729,6 +729,44 @@ void kfastblock_rdma_conn_free(struct kfastblock_rdma_conn *conn)
 	kfree(conn);
 }
 
+static int kfastblock_rdma_conn_setup_qp(struct kfastblock_rdma_conn *conn)
+{
+	unsigned int max_send_wr = kfastblock_rdma_qp_wr_clamped(
+		kfastblock_rdma_qp_max_send_wr);
+	unsigned int max_recv_wr = kfastblock_rdma_qp_wr_clamped(
+		kfastblock_rdma_qp_max_recv_wr);
+	struct ib_qp_init_attr qp_attr;
+	int ret;
+
+	if (!conn || !conn->cm_id || !conn->pd || !conn->cq)
+		return -EINVAL;
+
+	if (max_recv_wr < kfastblock_rdma_recv_depth_clamped())
+		max_recv_wr = kfastblock_rdma_recv_depth_clamped();
+
+	memset(&qp_attr, 0, sizeof(qp_attr));
+	qp_attr.send_cq = conn->cq;
+	qp_attr.recv_cq = conn->cq;
+	qp_attr.cap.max_send_wr = max_send_wr;
+	qp_attr.cap.max_recv_wr = max_recv_wr;
+	qp_attr.cap.max_send_sge = 1;
+	qp_attr.cap.max_recv_sge = 1;
+	qp_attr.qp_type = IB_QPT_RC;
+	qp_attr.sq_sig_type = kfastblock_rdma_signal_all
+				      ? IB_SIGNAL_ALL_WR
+				      : IB_SIGNAL_REQ_WR;
+
+	ret = rdma_create_qp(conn->cm_id, conn->pd, &qp_attr);
+	if (ret) {
+		conn->last_error = ret;
+		pr_warn_ratelimited(
+			"kfastblock: rdma_create_qp failed ret=%d peer=%s:%u\n",
+			ret, conn->peer_addr, conn->peer_port);
+		return ret;
+	}
+	return 0;
+}
+
 static int kfastblock_rdma_conn_setup_pd(struct kfastblock_rdma_conn *conn)
 {
 	if (!conn || !conn->cm_id || !conn->cm_id->device)
@@ -903,40 +941,9 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 		if (ret)
 			goto err_destroy_id;
 
-		{
-			unsigned int max_send_wr =
-				kfastblock_rdma_qp_wr_clamped(
-					kfastblock_rdma_qp_max_send_wr);
-			unsigned int max_recv_wr =
-				kfastblock_rdma_qp_wr_clamped(
-					kfastblock_rdma_qp_max_recv_wr);
-			struct ib_qp_init_attr qp_attr;
-
-			/* RECV queue must cover configured outstanding depth. */
-			if (max_recv_wr < kfastblock_rdma_recv_depth_clamped())
-				max_recv_wr = kfastblock_rdma_recv_depth_clamped();
-
-			memset(&qp_attr, 0, sizeof(qp_attr));
-			qp_attr.send_cq = conn->cq;
-			qp_attr.recv_cq = conn->cq;
-			qp_attr.cap.max_send_wr = max_send_wr;
-			qp_attr.cap.max_recv_wr = max_recv_wr;
-			qp_attr.cap.max_send_sge = 1;
-			qp_attr.cap.max_recv_sge = 1;
-			qp_attr.qp_type = IB_QPT_RC;
-			qp_attr.sq_sig_type = kfastblock_rdma_signal_all
-						      ? IB_SIGNAL_ALL_WR
-						      : IB_SIGNAL_REQ_WR;
-
-			ret = rdma_create_qp(conn->cm_id, conn->pd, &qp_attr);
-			if (ret) {
-				conn->last_error = ret;
-				pr_warn_ratelimited(
-					"kfastblock: rdma_create_qp failed ret=%d peer=%s:%u\n",
-					ret, conn->peer_addr, conn->peer_port);
-				goto err_destroy_id;
-			}
-		}
+		ret = kfastblock_rdma_conn_setup_qp(conn);
+		if (ret)
+			goto err_destroy_id;
 
 		{
 			struct rdma_conn_param conn_param;
