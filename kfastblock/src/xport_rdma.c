@@ -43,6 +43,21 @@ MODULE_PARM_DESC(rdma_recv_depth,
 module_param_named(rdma_use_cq_notify, kfastblock_rdma_use_cq_notify, bool, 0644);
 MODULE_PARM_DESC(rdma_use_cq_notify,
 		 "Use ib_req_notify_cq hybrid wait (1) instead of pure poll (0)");
+/*
+ * After this many consecutive empty polls, insert udelay to reduce CPU.
+ * 0 = no backoff (pure busy-poll). Default 16 balances latency vs CPU.
+ */
+static unsigned int kfastblock_rdma_poll_backoff_threshold = 16;
+static unsigned int kfastblock_rdma_poll_backoff_us = 1;
+
+module_param_named(rdma_poll_backoff_threshold,
+		   kfastblock_rdma_poll_backoff_threshold, uint, 0644);
+MODULE_PARM_DESC(rdma_poll_backoff_threshold,
+		 "Consecutive empty polls before backoff (0=off, default 16)");
+module_param_named(rdma_poll_backoff_us, kfastblock_rdma_poll_backoff_us,
+		   uint, 0644);
+MODULE_PARM_DESC(rdma_poll_backoff_us,
+		 "Microseconds to udelay after backoff threshold (default 1)");
 
 /* QP init / conn_param knobs (sane defaults for RC raw SEND/RECV). */
 static unsigned int kfastblock_rdma_qp_max_send_wr = 32;
@@ -725,6 +740,7 @@ static int kfastblock_rdma_poll_one(struct kfastblock_rdma_conn *conn,
 	struct ib_wc wc;
 	int n;
 	int ret;
+	unsigned int empty_streak = 0;
 
 	if (!conn || !conn->cq)
 		return -EINVAL;
@@ -768,9 +784,17 @@ static int kfastblock_rdma_poll_one(struct kfastblock_rdma_conn *conn,
 					return 0;
 				continue;
 			}
-			cpu_relax();
+			empty_streak++;
+			if (kfastblock_rdma_poll_backoff_threshold &&
+			    empty_streak >= kfastblock_rdma_poll_backoff_threshold) {
+				udelay(kfastblock_rdma_poll_backoff_us);
+				empty_streak = 0;
+			} else {
+				cpu_relax();
+			}
 			continue;
 		}
+		empty_streak = 0;
 
 		ret = kfastblock_rdma_apply_wc(conn, &wc);
 		if (ret)
