@@ -15,6 +15,11 @@ static unsigned long kfastblock_rdma_pool_evict_total;
 /* Default max_idle applied at pool_init (0 = unlimited). */
 static unsigned int kfastblock_rdma_pool_max_idle_default =
 	KFASTBLOCK_RDMA_POOL_DEFAULT_MAX_IDLE;
+/*
+ * Max age for IDLE conns before reuse is refused (seconds). 0 = no age limit.
+ * Stale Soft-RoCE / RNIC peers often fail after long idle; prefer reconnect.
+ */
+static unsigned int kfastblock_rdma_pool_idle_max_age_s;
 
 module_param_named(rdma_pool_hit, kfastblock_rdma_pool_hit_total, ulong, 0444);
 MODULE_PARM_DESC(rdma_pool_hit, "RDMA pool get warm-hit total");
@@ -26,6 +31,10 @@ module_param_named(rdma_pool_max_idle, kfastblock_rdma_pool_max_idle_default,
 		   uint, 0644);
 MODULE_PARM_DESC(rdma_pool_max_idle,
 		 "Default max IDLE conns per RDMA pool (0=unlimited)");
+module_param_named(rdma_pool_idle_max_age_s,
+		   kfastblock_rdma_pool_idle_max_age_s, uint, 0644);
+MODULE_PARM_DESC(rdma_pool_idle_max_age_s,
+		 "Max IDLE connection age in seconds before drop (0=unlimited)");
 
 const char *kfastblock_rdma_pool_slot_state_name(u8 state)
 {
@@ -412,6 +421,22 @@ kfastblock_rdma_pool_try_get(struct kfastblock_rdma_pool *pool,
 			slot->state = KFASTBLOCK_RDMA_POOL_SLOT_DEAD;
 			slot->failure_count++;
 			slot->last_error = -ENOTCONN;
+			mutex_unlock(&slot->lock);
+			continue;
+		}
+		/* Drop idle conns that sat too long (module param, 0=off). */
+		if (kfastblock_rdma_pool_idle_max_age_s &&
+		    time_after(jiffies,
+			       slot->last_use_jiffies +
+				       msecs_to_jiffies(
+					       kfastblock_rdma_pool_idle_max_age_s *
+					       1000U))) {
+			kfastblock_rdma_pool_slot_disconnect_locked(slot);
+			slot->state = KFASTBLOCK_RDMA_POOL_SLOT_DEAD;
+			slot->failure_count++;
+			slot->last_error = -ETIMEDOUT;
+			pool->idle_evictions++;
+			kfastblock_rdma_pool_evict_total++;
 			mutex_unlock(&slot->lock);
 			continue;
 		}
