@@ -129,6 +129,11 @@ static unsigned long kfastblock_rdma_connect_ok;
 static unsigned long kfastblock_rdma_connect_err;
 static unsigned long kfastblock_rdma_connect_timeout;
 static unsigned long kfastblock_rdma_reconnect_total;
+/* Connect duration tracking (microseconds). */
+static unsigned long kfastblock_rdma_connect_lat_min_us;
+static unsigned long kfastblock_rdma_connect_lat_max_us;
+static unsigned long long kfastblock_rdma_connect_lat_total_us;
+static unsigned long kfastblock_rdma_connect_lat_count;
 static unsigned long kfastblock_rdma_dma_map_err;
 static unsigned long kfastblock_rdma_io_timeout_total;
 static unsigned long kfastblock_rdma_wc_err;
@@ -195,6 +200,18 @@ module_param_named(rdma_reconnect_total, kfastblock_rdma_reconnect_total,
 		   ulong, 0444);
 MODULE_PARM_DESC(rdma_reconnect_total,
 		 "RDMA reconnect total (ERROR/IDLE -> ESTABLISHED)");
+module_param_named(rdma_connect_lat_min_us,
+		   kfastblock_rdma_connect_lat_min_us, ulong, 0444);
+MODULE_PARM_DESC(rdma_connect_lat_min_us,
+		 "RDMA connect min latency (microseconds)");
+module_param_named(rdma_connect_lat_max_us,
+		   kfastblock_rdma_connect_lat_max_us, ulong, 0444);
+MODULE_PARM_DESC(rdma_connect_lat_max_us,
+		 "RDMA connect max latency (microseconds)");
+module_param_named(rdma_connect_lat_total_us,
+		   kfastblock_rdma_connect_lat_total_us, ullong, 0444);
+MODULE_PARM_DESC(rdma_connect_lat_total_us,
+		 "RDMA connect total latency (microseconds)");
 module_param_named(rdma_dma_map_err, kfastblock_rdma_dma_map_err, ulong, 0444);
 MODULE_PARM_DESC(rdma_dma_map_err, "RDMA DMA map single failures");
 module_param_named(rdma_io_timeout_total, kfastblock_rdma_io_timeout_total,
@@ -1072,6 +1089,7 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 				 const struct kfastblock_leader_info *leader)
 {
 	int ret;
+	ktime_t connect_start = ktime_get();
 
 	if (!conn || !leader)
 		return -EINVAL;
@@ -1151,6 +1169,11 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 	conn->connected = true;
 	conn->state = KFASTBLOCK_RDMA_CONN_ESTABLISHED;
 	conn->last_error = 0;
+	kfastblock_rdma_update_lat_stats(&kfastblock_rdma_connect_lat_min_us,
+					    &kfastblock_rdma_connect_lat_max_us,
+					    &kfastblock_rdma_connect_lat_total_us,
+					    &kfastblock_rdma_connect_lat_count,
+					    connect_start);
 	kfastblock_rdma_connect_ok++;
 	return 0;
 
