@@ -374,6 +374,7 @@ static int do_show_rdma_params(void)
 		"rdma_exchange_stale",
 		"rdma_connect_ok",
 		"rdma_connect_err",
+		"rdma_connect_timeout",
 		"rdma_dma_map_err",
 		"rdma_pool_hit",
 		"rdma_pool_miss",
