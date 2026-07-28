@@ -116,6 +116,13 @@ static unsigned long kfastblock_rdma_connect_timeout;
 static unsigned long kfastblock_rdma_dma_map_err;
 static unsigned long kfastblock_rdma_io_timeout_total;
 static unsigned long kfastblock_rdma_wc_err;
+/* Per-WC-status breakdown for diagnostics. */
+static unsigned long kfastblock_rdma_wc_flush_err;
+static unsigned long kfastblock_rdma_wc_retry_err;
+static unsigned long kfastblock_rdma_wc_rnr_err;
+static unsigned long kfastblock_rdma_wc_remote_err;
+static unsigned long kfastblock_rdma_wc_fatal_err;
+static unsigned long kfastblock_rdma_wc_other_err;
 /* Per-op latency tracking (microseconds via ktime_to_us). */
 static unsigned long kfastblock_rdma_send_lat_min_us;
 static unsigned long kfastblock_rdma_send_lat_max_us;
@@ -176,6 +183,24 @@ MODULE_PARM_DESC(rdma_io_timeout_total,
 		 "RDMA SEND/RECV poll deadline hits");
 module_param_named(rdma_wc_err, kfastblock_rdma_wc_err, ulong, 0444);
 MODULE_PARM_DESC(rdma_wc_err, "RDMA CQ work completions with error status");
+module_param_named(rdma_wc_flush_err, kfastblock_rdma_wc_flush_err, ulong,
+		   0444);
+MODULE_PARM_DESC(rdma_wc_flush_err, "RDMA WC WR_FLUSH_ERR count");
+module_param_named(rdma_wc_retry_err, kfastblock_rdma_wc_retry_err, ulong,
+		   0444);
+MODULE_PARM_DESC(rdma_wc_retry_err, "RDMA WC RETRY_EXC_ERR count");
+module_param_named(rdma_wc_rnr_err, kfastblock_rdma_wc_rnr_err, ulong, 0444);
+MODULE_PARM_DESC(rdma_wc_rnr_err, "RDMA WC RNR_RETRY_EXC_ERR count");
+module_param_named(rdma_wc_remote_err, kfastblock_rdma_wc_remote_err, ulong,
+		   0444);
+MODULE_PARM_DESC(rdma_wc_remote_err, "RDMA WC REMOTE_ACCESS_ERR count");
+module_param_named(rdma_wc_fatal_err, kfastblock_rdma_wc_fatal_err, ulong,
+		   0444);
+MODULE_PARM_DESC(rdma_wc_fatal_err, "RDMA WC FATAL_ERR count");
+module_param_named(rdma_wc_other_err, kfastblock_rdma_wc_other_err, ulong,
+		   0444);
+MODULE_PARM_DESC(rdma_wc_other_err,
+		 "RDMA WC other error status count");
 module_param_named(rdma_send_lat_min_us, kfastblock_rdma_send_lat_min_us,
 		   ulong, 0444);
 MODULE_PARM_DESC(rdma_send_lat_min_us, "RDMA SEND min latency (microseconds)");
@@ -636,6 +661,26 @@ static int kfastblock_rdma_apply_wc(struct kfastblock_rdma_conn *conn,
 	/* Non-success WC: still deliver to waiter; caller checks status. */
 	if (wc->status != IB_WC_SUCCESS) {
 		kfastblock_rdma_wc_err++;
+		switch (wc->status) {
+		case IB_WC_WR_FLUSH_ERR:
+			kfastblock_rdma_wc_flush_err++;
+			break;
+		case IB_WC_RETRY_EXC_ERR:
+			kfastblock_rdma_wc_retry_err++;
+			break;
+		case IB_WC_RNR_RETRY_EXC_ERR:
+			kfastblock_rdma_wc_rnr_err++;
+			break;
+		case IB_WC_REM_ACCESS_ERR:
+			kfastblock_rdma_wc_remote_err++;
+			break;
+		case IB_WC_FATAL_ERR:
+			kfastblock_rdma_wc_fatal_err++;
+			break;
+		default:
+			kfastblock_rdma_wc_other_err++;
+			break;
+		}
 		conn->last_error = -EIO;
 		/* Fatal CQ errors tear down usability of this conn. */
 		if (wc->status == IB_WC_WR_FLUSH_ERR ||
