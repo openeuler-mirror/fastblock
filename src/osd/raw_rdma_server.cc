@@ -884,6 +884,7 @@ bool osd_raw_rdma_server::ensure_recv_slots(connection_context* conn) noexcept {
         }
         rs.buf = ::malloc(raw_rdma_recv_buf_len);
         if (!rs.buf) {
+            SPDK_ERRLOG("raw RDMA: malloc recv slot %zu failed\n", i);
             free_recv_slots(conn);
             return false;
         }
