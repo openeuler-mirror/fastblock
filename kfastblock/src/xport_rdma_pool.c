@@ -360,7 +360,7 @@ void kfastblock_rdma_pool_put(struct kfastblock_rdma_pool *pool,
 	if (!slot)
 		return;
 
-	mutex_lock(&slot->lock);
+	/* find_slot returns with slot->lock held. */
 	if (slot->conn != conn) {
 		mutex_unlock(&slot->lock);
 		return;
@@ -550,8 +550,12 @@ kfastblock_rdma_pool_find_slot(struct kfastblock_rdma_pool *pool,
 	if (!pool || !pool->slots || !conn)
 		return NULL;
 	for (i = 0; i < pool->nr_slots; ++i) {
-		if (pool->slots[i].conn == conn)
-			return &pool->slots[i];
+		struct kfastblock_rdma_pool_slot *slot = &pool->slots[i];
+
+		mutex_lock(&slot->lock);
+		if (slot->conn == conn)
+			return slot;
+		mutex_unlock(&slot->lock);
 	}
 	return NULL;
 }
