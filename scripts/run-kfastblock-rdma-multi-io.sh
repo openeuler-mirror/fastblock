@@ -55,10 +55,12 @@ while [ "$i" -lt "$ROUNDS" ]; do
 	# Distinct payload each round so stale-response bugs fail cmp.
 	printf 'KFB_MULTI_%04d_%s' "$i" "$IMAGE" | \
 		dd of="$pay" bs=4096 count=1 conv=sync status=none
+	# Round-robin 4K blocks so multi-object paths get light exercise.
+	seek=$((i % 16))
 	timeout "$TIMEOUT_S" dd if="$pay" of="$DEV" bs=4096 count=1 \
-		oflag=direct seek=0 status=none
+		oflag=direct seek="$seek" status=none
 	timeout "$TIMEOUT_S" dd if="$DEV" of="$rb" bs=4096 count=1 \
-		iflag=direct skip=0 status=none
+		iflag=direct skip="$seek" status=none
 	cmp -n 4096 "$pay" "$rb"
 	echo "round $i OK"
 	i=$((i + 1))
