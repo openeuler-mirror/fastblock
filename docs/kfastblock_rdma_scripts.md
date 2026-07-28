@@ -9,6 +9,7 @@
 | `scripts/run-kfastblock-transport-matrix.sh` | tcp/rdma/auto 矩阵 |
 | `scripts/run-kfastblock-tcp-4k-verify.sh` | TCP 对照 |
 | `scripts/run-kfastblock-auto-4k-verify.sh` | auto transport |
+| `scripts/run-kfastblock-rdma-seq-64k.sh` | 顺序多 4K 块 |
 | `scripts/post-reboot-rdma-smoke.sh` | 冷启动全路径 |
 | `scripts/check-kfastblock-rdma-params.sh` | 模块参数存在性 |
 | `scripts/run-kfastblock-rdma-suite.sh` | 最小套件入口 |
