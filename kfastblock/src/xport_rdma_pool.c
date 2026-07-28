@@ -425,12 +425,16 @@ kfastblock_rdma_pool_try_get(struct kfastblock_rdma_pool *pool,
 			continue;
 		}
 		/* Drop idle conns that sat too long (module param, 0=off). */
-		if (kfastblock_rdma_pool_idle_max_age_s &&
-		    time_after(jiffies,
-			       slot->last_use_jiffies +
-				       msecs_to_jiffies(
-					       kfastblock_rdma_pool_idle_max_age_s *
-					       1000U))) {
+		if (kfastblock_rdma_pool_idle_max_age_s) {
+			unsigned int age_s = kfastblock_rdma_pool_idle_max_age_s;
+
+			/* Avoid absurd jiffies multiplies from bad module params. */
+			if (age_s > 86400U)
+				age_s = 86400U;
+			if (time_after(jiffies,
+				       slot->last_use_jiffies +
+					       msecs_to_jiffies(age_s * 1000U))) {
+
 			kfastblock_rdma_pool_slot_disconnect_locked(slot);
 			slot->state = KFASTBLOCK_RDMA_POOL_SLOT_DEAD;
 			slot->failure_count++;
@@ -439,6 +443,7 @@ kfastblock_rdma_pool_try_get(struct kfastblock_rdma_pool *pool,
 			kfastblock_rdma_pool_evict_total++;
 			mutex_unlock(&slot->lock);
 			continue;
+			}
 		}
 		slot->state = KFASTBLOCK_RDMA_POOL_SLOT_BUSY;
 		slot->reuse_hits++;
