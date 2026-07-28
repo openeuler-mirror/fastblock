@@ -318,6 +318,9 @@ kfastblock_rdma_pool_get(struct kfastblock_rdma_pool *pool,
 		if (ret) {
 			slot->last_error = ret;
 			slot->failure_count++;
+			pr_warn_ratelimited(
+				"kfastblock: rdma_pool connect failed peer=%s:%u err=%d\n",
+				leader->address, leader->rdma_port, ret);
 			kfastblock_rdma_conn_free(slot->conn);
 			slot->conn = NULL;
 			slot->state = KFASTBLOCK_RDMA_POOL_SLOT_EMPTY;
@@ -765,8 +768,8 @@ u32 kfastblock_rdma_pool_invalidate_broken(struct kfastblock_rdma_pool *pool)
 		}
 		if (slot->conn &&
 		    !kfastblock_rdma_conn_is_usable(slot->conn)) {
-			pr_debug("rdma_pool: invalidate slot %u state=%u\n",
-				 i, slot->state);
+			pr_debug_ratelimited("rdma_pool: invalidate slot %u state=%u err=%d\n",
+					     i, slot->state, slot->last_error);
 			kfastblock_rdma_pool_slot_disconnect_locked(slot);
 			slot->state = KFASTBLOCK_RDMA_POOL_SLOT_DEAD;
 			slot->failure_count++;
