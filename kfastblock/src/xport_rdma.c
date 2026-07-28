@@ -153,6 +153,7 @@ static unsigned long kfastblock_rdma_wc_remote_err;
 static unsigned long kfastblock_rdma_wc_fatal_err;
 static unsigned long kfastblock_rdma_wc_other_err;
 static unsigned long kfastblock_rdma_wc_unknown_id;
+static unsigned long long kfastblock_rdma_poll_empty_total;
 /* Per-op latency tracking (microseconds via ktime_to_us). */
 static unsigned long kfastblock_rdma_send_lat_min_us;
 static unsigned long kfastblock_rdma_send_lat_max_us;
@@ -262,6 +263,10 @@ module_param_named(rdma_wc_unknown_id, kfastblock_rdma_wc_unknown_id, ulong,
 		   0444);
 MODULE_PARM_DESC(rdma_wc_unknown_id,
 		 "RDMA WC completed with unrecognized wr_id");
+module_param_named(rdma_poll_empty_total, kfastblock_rdma_poll_empty_total,
+		   ullong, 0444);
+MODULE_PARM_DESC(rdma_poll_empty_total,
+		 "Total empty CQ poll iterations (busy-poll overhead)");
 module_param_named(rdma_send_lat_min_us, kfastblock_rdma_send_lat_min_us,
 		   ulong, 0444);
 MODULE_PARM_DESC(rdma_send_lat_min_us, "RDMA SEND min latency (microseconds)");
@@ -915,6 +920,7 @@ static int kfastblock_rdma_poll_one(struct kfastblock_rdma_conn *conn,
 				continue;
 			}
 			empty_streak++;
+			kfastblock_rdma_poll_empty_total++;
 			if (kfastblock_rdma_poll_backoff_threshold &&
 			    empty_streak >= kfastblock_rdma_poll_backoff_threshold) {
 				udelay(kfastblock_rdma_poll_backoff_us);
