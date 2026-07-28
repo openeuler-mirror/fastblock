@@ -610,11 +610,11 @@ void kfastblock_rdma_pool_dump_seq(struct seq_file *m, const char *prefix,
 	if (kfastblock_rdma_pool_format_stats(pool, buf, sizeof(buf)) > 0)
 		seq_printf(m, "%srdma_pool.stats=%s\n", prefix, buf);
 	seq_printf(m, "%srdma_pool.connect_ok=%llu\n", prefix,
-		   (unsigned long long)pool->connect_ok);
+		   (unsigned long long)READ_ONCE(pool->connect_ok));
 	seq_printf(m, "%srdma_pool.connect_err=%llu\n", prefix,
-		   (unsigned long long)pool->connect_err);
+		   (unsigned long long)READ_ONCE(pool->connect_err));
 	seq_printf(m, "%srdma_pool.idle_evictions=%llu\n", prefix,
-		   (unsigned long long)pool->idle_evictions);
+		   (unsigned long long)READ_ONCE(pool->idle_evictions));
 }
 
 struct kfastblock_rdma_pool_slot *
