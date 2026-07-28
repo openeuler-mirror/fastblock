@@ -1165,6 +1165,9 @@ int kfastblock_rdma_conn_recv(struct kfastblock_rdma_conn *conn,
 			kfastblock_rdma_recv_err++;
 			return ret;
 		}
+		reinit_completion(&conn->recv_done);
+		conn->recv_wc_status = 0;
+		conn->recv_byte_len = 0;
 		kfastblock_rdma_recv_ok++;
 		return (int)got;
 	}
