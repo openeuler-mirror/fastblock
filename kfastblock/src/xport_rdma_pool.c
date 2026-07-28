@@ -4,6 +4,7 @@
 #include <linux/ktime.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
+#include <linux/seq_file.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 
@@ -594,6 +595,25 @@ int kfastblock_rdma_pool_format_stats(struct kfastblock_rdma_pool *pool,
 			 snap.connect_lat_us_max, snap.connect_lat_count,
 			 (unsigned long long)snap.total_connect_attempts);
 	}
+}
+
+void kfastblock_rdma_pool_dump_seq(struct seq_file *m, const char *prefix,
+				   struct kfastblock_rdma_pool *pool)
+{
+	char buf[256];
+
+	if (!m || !pool)
+		return;
+	if (!prefix)
+		prefix = "";
+	if (kfastblock_rdma_pool_format_stats(pool, buf, sizeof(buf)) > 0)
+		seq_printf(m, "%srdma_pool.stats=%s\n", prefix, buf);
+	seq_printf(m, "%srdma_pool.connect_ok=%llu\n", prefix,
+		   (unsigned long long)pool->connect_ok);
+	seq_printf(m, "%srdma_pool.connect_err=%llu\n", prefix,
+		   (unsigned long long)pool->connect_err);
+	seq_printf(m, "%srdma_pool.idle_evictions=%llu\n", prefix,
+		   (unsigned long long)pool->idle_evictions);
 }
 
 struct kfastblock_rdma_pool_slot *
