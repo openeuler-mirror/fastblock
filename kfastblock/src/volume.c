@@ -2431,6 +2431,8 @@ static ssize_t rdma_cache_stats_show(struct device *dev,
 	u32 fail_streak = 0, recv_posted = 0, recv_depth = 0;
 	u64 reuse = 0, fail = 0, ok = 0, attempts = 0;
 	s32 last_error = 0;
+	unsigned long max_age = 0;
+	char brief[128] = "";
 
 	if (!vol)
 		return -ENODEV;
@@ -2439,9 +2441,17 @@ static ssize_t rdma_cache_stats_show(struct device *dev,
 		struct kfastblock_cached_rdma *c = &vol->rdma_cache[i];
 
 		mutex_lock(&c->lock);
-		if (c->conn && kfastblock_rdma_conn_is_connected(c->conn))
+		if (c->conn && kfastblock_rdma_conn_is_connected(c->conn)) {
+			unsigned long age;
+
 			ready++;
-		else if (c->state == KFASTBLOCK_CONN_STATE_CONNECTING)
+			age = kfastblock_rdma_conn_age_seconds(c->conn);
+			if (age > max_age)
+				max_age = age;
+			if (!brief[0])
+				kfastblock_rdma_conn_format_brief(c->conn, brief,
+								  sizeof(brief));
+		} else if (c->state == KFASTBLOCK_CONN_STATE_CONNECTING)
 			connecting++;
 		else if (c->state == KFASTBLOCK_CONN_STATE_EMPTY)
 			empty++;
@@ -2463,10 +2473,10 @@ static ssize_t rdma_cache_stats_show(struct device *dev,
 	}
 
 	return scnprintf(buf, PAGE_SIZE,
-			 "slots=%u ready=%u empty=%u connecting=%u other=%u reuse=%llu ok=%llu fail=%llu attempts=%llu fail_streak=%u last_error=%d recv_posted=%u recv_depth=%u\n",
+			 "slots=%u ready=%u empty=%u connecting=%u other=%u reuse=%llu ok=%llu fail=%llu attempts=%llu fail_streak=%u last_error=%d recv_posted=%u recv_depth=%u max_age=%lu conn=%s\n",
 			 KFASTBLOCK_MAX_RDMA_CACHE, ready, empty, connecting,
 			 other, reuse, ok, fail, attempts, fail_streak,
-			 last_error, recv_posted, recv_depth);
+			 last_error, recv_posted, recv_depth, max_age, brief);
 }
 
 static ssize_t pool_name_show(struct device *dev,
