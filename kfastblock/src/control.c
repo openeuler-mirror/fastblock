@@ -154,6 +154,19 @@ static int kfastblock_parse_attach_spec(const char *args, size_t count,
 				goto out;
 			}
 			spec->read_only = bool_val;
+		} else if (!strcmp(key, "osd_transport")) {
+			if (!strcmp(value, "tcp"))
+				spec->osd_transport = KFASTBLOCK_OSD_TRANSPORT_TCP;
+			else if (!strcmp(value, "rdma"))
+				spec->osd_transport =
+					KFASTBLOCK_OSD_TRANSPORT_RDMA;
+			else if (!strcmp(value, "auto"))
+				spec->osd_transport =
+					KFASTBLOCK_OSD_TRANSPORT_AUTO;
+			else {
+				ret = -EINVAL;
+				goto out;
+			}
 		} else if (!strcmp(key, "debug_size_bytes")) {
 			ret = kstrtou64(value, 10, &spec->debug_size_bytes);
 		} else if (!strcmp(key, "debug_object_size")) {
