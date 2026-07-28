@@ -13,6 +13,7 @@ POOL="${KFASTBLOCK_POOL:-fb}"
 IMAGE="${KFASTBLOCK_IMAGE:-rdma-ro-$(date +%s)}"
 READS="${KFASTBLOCK_READ_ROUNDS:-8}"
 TIMEOUT_S="${KFASTBLOCK_IO_TIMEOUT_S:-30}"
+[ "$READS" -gt 0 ] || { echo "KFASTBLOCK_READ_ROUNDS must be >0" >&2; exit 1; }
 kfastblock_create_image "$REPO_ROOT" "$CONF" "$POOL" "$IMAGE"
 "$REPO_ROOT/kfastblock/tool/kfastblock-admin" attach \
   --monitor-addr "${MON}:3334" --pool-name "$POOL" --image-name "$IMAGE" \
