@@ -763,16 +763,29 @@ static int kfastblock_rdma_poll_one(struct kfastblock_rdma_conn *conn,
 		}
 		if (n == 0) {
 			if (kfastblock_rdma_use_cq_notify) {
-				unsigned long left = deadline - jiffies;
+				unsigned long left;
+
 				/*
-				 * Hybrid path: re-arm notify, wait for CQ event
-				 * or timeout, then batch-drain CQ once.
-				 * Pure busy-poll remains default for latency.
+				 * Hybrid path: reinit BEFORE arming to avoid
+				 * losing a completion that fires between
+				 * req_notify and wait. Then poll once after
+				 * arming to catch anything already pending.
 				 */
-				(void)ib_req_notify_cq(conn->cq, IB_CQ_NEXT_COMP);
+				reinit_completion(&conn->cq_event);
+				(void)ib_req_notify_cq(conn->cq,
+						       IB_CQ_NEXT_COMP);
+				/* Race check: poll again after arming. */
+				ret = kfastblock_rdma_poll_batch(conn, 8);
+				if (ret < 0)
+					return ret;
+				if (ret > 0 ||
+				    completion_done(&conn->send_done) ||
+				    completion_done(&conn->recv_done))
+					return 0;
+
+				left = deadline - jiffies;
 				if (time_after(jiffies, deadline))
 					break;
-				reinit_completion(&conn->cq_event);
 				if (!wait_for_completion_timeout(&conn->cq_event,
 								 left))
 					break;
