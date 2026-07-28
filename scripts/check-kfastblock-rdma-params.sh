@@ -34,6 +34,7 @@ need=(
   rdma_xport_io_err rdma_xport_fallback_tcp
   recovery_rdma_invalidate_leader recovery_rdma_flush
   xport_probe_cache_ttl_ms xport_probe_cache_hits xport_probe_cache_misses
+  xport_probe_cache_total
   rdma_object_log
   object_io_max_attempts
 )
