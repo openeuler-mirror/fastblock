@@ -13,11 +13,15 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
 
 class osd_service;
+struct ibv_cq;
+struct ibv_pd;
+struct rdma_cm_event;
 struct rdma_cm_id;
 struct rdma_event_channel;
 
@@ -45,12 +49,23 @@ private:
         std::atomic<bool> stop{false};
     };
 
+    struct connection_context {
+        uint32_t shard_id{0};
+        rdma_cm_id* id{nullptr};
+        ibv_pd* pd{nullptr};
+        ibv_cq* cq{nullptr};
+        bool established{false};
+    };
+
     bool start_listener(uint32_t shard_id);
     void stop_listener(listener_context& listener) noexcept;
     void run_listener(uint32_t shard_id) noexcept;
+    void destroy_connection(connection_context* conn) noexcept;
 
     osd_service* _service{nullptr};
     std::atomic<bool> _running{false};
     std::string _bind_address{};
     std::vector<std::unique_ptr<listener_context>> _listeners{};
+    std::mutex _connections_mutex{};
+    std::vector<std::unique_ptr<connection_context>> _connections{};
 };
