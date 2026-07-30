@@ -1,6 +1,9 @@
 #include <linux/errno.h>
 #include <linux/slab.h>
 
+#include <rdma/ib_verbs.h>
+#include <rdma/rdma_cm.h>
+
 #include "kfastblock/xport_rdma.h"
 
 enum kfastblock_rdma_conn_state {
@@ -19,6 +22,7 @@ struct kfastblock_rdma_conn {
 	u8 state;
 	bool connected;
 	int last_error;
+	struct rdma_cm_id *cm_id;
 };
 
 struct kfastblock_rdma_conn *kfastblock_rdma_conn_alloc(void)
