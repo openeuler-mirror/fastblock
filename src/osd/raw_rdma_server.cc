@@ -144,9 +144,65 @@ bool osd_raw_rdma_server::handle_connect_request(rdma_cm_id* id,
     if (!id || !id->verbs) {
         return false;
     }
-    /* PD/CQ/QP + accept land in follow-up commits. */
-    (void)shard_id;
-    return false;
+
+    auto conn = std::make_unique<connection_context>();
+    conn->shard_id = shard_id;
+    /* Own cm_id only after accept succeeds; caller rejects/destroys on failure. */
+    conn->id = nullptr;
+    id->context = nullptr;
+
+    conn->pd = ::ibv_alloc_pd(id->verbs);
+    if (!conn->pd) {
+        SPDK_ERRLOG("raw RDMA: ibv_alloc_pd failed: %s\n", std::strerror(errno));
+        return false;
+    }
+
+    conn->cq = ::ibv_create_cq(id->verbs, 64, nullptr, nullptr, 0);
+    if (!conn->cq) {
+        SPDK_ERRLOG("raw RDMA: ibv_create_cq failed: %s\n", std::strerror(errno));
+        destroy_connection(conn.get());
+        return false;
+    }
+
+    ibv_qp_init_attr qp_attr{};
+    qp_attr.send_cq = conn->cq;
+    qp_attr.recv_cq = conn->cq;
+    qp_attr.qp_type = IBV_QPT_RC;
+    qp_attr.cap.max_send_wr = 32;
+    qp_attr.cap.max_recv_wr = 32;
+    qp_attr.cap.max_send_sge = 1;
+    qp_attr.cap.max_recv_sge = 1;
+    qp_attr.sq_sig_all = 0;
+
+    if (::rdma_create_qp(id, conn->pd, &qp_attr)) {
+        SPDK_ERRLOG("raw RDMA: rdma_create_qp failed: %s\n",
+                    std::strerror(errno));
+        destroy_connection(conn.get());
+        return false;
+    }
+
+    rdma_conn_param param{};
+    param.responder_resources = 1;
+    param.initiator_depth = 1;
+    param.retry_count = 3;
+    param.rnr_retry_count = 3;
+    if (::rdma_accept(id, &param)) {
+        SPDK_ERRLOG("raw RDMA: rdma_accept failed: %s\n", std::strerror(errno));
+        if (id->qp) {
+            ::rdma_destroy_qp(id);
+        }
+        destroy_connection(conn.get());
+        return false;
+    }
+
+    conn->id = id;
+    id->context = conn.get();
+    {
+        std::lock_guard<std::mutex> lock(_connections_mutex);
+        _connections.emplace_back(std::move(conn));
+    }
+    SPDK_NOTICELOG("raw RDMA shard %u accepted connection request\n", shard_id);
+    return true;
 }
 
 void osd_raw_rdma_server::stop_listener(listener_context& listener) noexcept {
@@ -203,14 +259,39 @@ void osd_raw_rdma_server::run_listener(uint32_t shard_id) noexcept {
             break;
         }
 
-        /* Accept path lands in follow-up commits; drop request for now. */
         if (event->event == RDMA_CM_EVENT_CONNECT_REQUEST) {
-            SPDK_NOTICELOG(
-              "raw RDMA shard %u got CONNECT_REQUEST (accept not ready)\n",
-              shard_id);
-            ::rdma_reject(event->id, nullptr, 0);
+            if (!handle_connect_request(event->id, shard_id)) {
+                ::rdma_reject(event->id, nullptr, 0);
+                ::rdma_destroy_id(event->id);
+            }
+        } else if (event->event == RDMA_CM_EVENT_ESTABLISHED) {
+            auto* conn = static_cast<connection_context*>(event->id->context);
+            if (conn) {
+                conn->established = true;
+                SPDK_NOTICELOG("raw RDMA shard %u connection established\n",
+                               shard_id);
+            }
+        } else if (event->event == RDMA_CM_EVENT_DISCONNECTED ||
+                   event->event == RDMA_CM_EVENT_DEVICE_REMOVAL) {
+            auto* conn = static_cast<connection_context*>(event->id->context);
+            ::rdma_ack_cm_event(event);
+            event = nullptr;
+            if (conn) {
+                std::lock_guard<std::mutex> lock(_connections_mutex);
+                for (auto it = _connections.begin(); it != _connections.end();
+                     ++it) {
+                    if (it->get() == conn) {
+                        destroy_connection(conn);
+                        _connections.erase(it);
+                        break;
+                    }
+                }
+            }
+            continue;
         }
-        ::rdma_ack_cm_event(event);
+        if (event) {
+            ::rdma_ack_cm_event(event);
+        }
     }
 }
 
