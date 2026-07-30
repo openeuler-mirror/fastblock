@@ -150,6 +150,26 @@ void osd_raw_rdma_server::close_all_connections() noexcept {
     _connections.clear();
 }
 
+void osd_raw_rdma_server::poll_cq(connection_context* conn) noexcept {
+    if (!conn || !conn->cq) {
+        return;
+    }
+    ibv_wc wc[16];
+    const int n = ::ibv_poll_cq(conn->cq, 16, wc);
+    for (int i = 0; i < n; ++i) {
+        if (wc[i].status != IBV_WC_SUCCESS) {
+            SPDK_ERRLOG("raw RDMA CQ error status=%d opcode=%d\n",
+                        wc[i].status, wc[i].opcode);
+            continue;
+        }
+        if (wc[i].opcode == IBV_WC_RECV) {
+            /* Frame dispatch lands in follow-up commits. */
+            (void)wc[i].byte_len;
+            post_recv(conn);
+        }
+    }
+}
+
 bool osd_raw_rdma_server::post_recv(connection_context* conn) noexcept {
     if (!conn || !conn->id || !conn->id->qp || !conn->pd) {
         return false;
@@ -281,6 +301,15 @@ void osd_raw_rdma_server::run_listener(uint32_t shard_id) noexcept {
     }
 
     while (!listener.stop.load(std::memory_order_acquire)) {
+        {
+            std::lock_guard<std::mutex> lock(_connections_mutex);
+            for (auto& c : _connections) {
+                if (c && c->shard_id == shard_id && c->established) {
+                    poll_cq(c.get());
+                }
+            }
+        }
+
         pollfd pfd{};
         pfd.fd = listener.channel->fd;
         pfd.events = POLLIN;
