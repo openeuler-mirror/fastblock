@@ -16,6 +16,10 @@ enum kfastblock_selfcheck_flag {
 	KFASTBLOCK_SELFCHECK_MON_CONN_POOL = 1U << 5,
 	KFASTBLOCK_SELFCHECK_QUEUE_GATE = 1U << 6,
 	KFASTBLOCK_SELFCHECK_FAULT_INJECTION = 1U << 7,
+	/* osd_transport enum, xport helpers, leader rdma_port consistency */
+	KFASTBLOCK_SELFCHECK_XPORT = 1U << 8,
+	/* rawproto layout / RDMA field size assertions */
+	KFASTBLOCK_SELFCHECK_RAWPROTO = 1U << 9,
 };
 
 struct kfastblock_selfcheck_report {
