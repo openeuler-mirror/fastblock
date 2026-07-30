@@ -84,7 +84,7 @@ kfastblock_rdma_pool_get(struct kfastblock_rdma_pool *pool,
 void kfastblock_rdma_pool_put(struct kfastblock_rdma_pool *pool,
 			      struct kfastblock_rdma_conn *conn, bool ok);
 
-void kfastblock_rdma_pool_snapshot(const struct kfastblock_rdma_pool *pool,
+void kfastblock_rdma_pool_snapshot(struct kfastblock_rdma_pool *pool,
 				   struct kfastblock_rdma_pool_snapshot *snap);
 
 const char *kfastblock_rdma_pool_slot_state_name(u8 state);
