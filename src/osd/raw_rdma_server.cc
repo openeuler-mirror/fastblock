@@ -1259,3 +1259,14 @@ void osd_raw_rdma_server::get_io_totals(uint64_t* recv_total,
         *error_total = e;
     }
 }
+
+std::string osd_raw_rdma_server::ports_string() const {
+    std::string ports;
+    for (size_t i = 0; i < _listeners.size(); ++i) {
+        if (i) {
+            ports.push_back(',');
+        }
+        ports += std::to_string(_listeners[i] ? _listeners[i]->port : 0);
+    }
+    return ports;
+}
