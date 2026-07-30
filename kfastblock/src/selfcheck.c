@@ -1,10 +1,12 @@
 #include <linux/blkdev.h>
+#include <linux/build_bug.h>
 #include <linux/errno.h>
 #include <linux/jiffies.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
 #include <linux/seq_file.h>
 #include <linux/spinlock.h>
+#include <linux/stddef.h>
 #include <linux/string.h>
 
 #include "kfastblock/buffer.h"
@@ -462,6 +464,46 @@ static void kfastblock_selfcheck_check_xport(
 				  -EINVAL, detail);
 }
 
+static void kfastblock_selfcheck_check_rawproto(
+	struct kfastblock_selfcheck_report *report,
+	struct seq_file *m)
+{
+	char detail[192];
+	bool layout_ok;
+
+	/* Compile-time layout guards for RDMA-related rawproto fields. */
+	BUILD_BUG_ON(sizeof(struct kfastblock_raw_header) != 28);
+	BUILD_BUG_ON(sizeof(struct kfastblock_raw_osd_shard_entry) != 8);
+	BUILD_BUG_ON(sizeof(struct kfastblock_raw_osd_shard_entry_v1) != 12);
+	BUILD_BUG_ON(offsetof(struct kfastblock_raw_osd_shard_entry_v1,
+			      rdma_port) != 8);
+
+	layout_ok =
+		sizeof(struct kfastblock_raw_header) == 28 &&
+		sizeof(struct kfastblock_raw_osd_shard_entry_v1) == 12 &&
+		KFASTBLOCK_RAW_VERSION_MINOR_RDMA_PORT >= 1;
+	scnprintf(detail, sizeof(detail),
+		  "hdr=%zu shard_v0=%zu shard_v1=%zu rdma_minor=%u",
+		  sizeof(struct kfastblock_raw_header),
+		  sizeof(struct kfastblock_raw_osd_shard_entry),
+		  sizeof(struct kfastblock_raw_osd_shard_entry_v1),
+		  KFASTBLOCK_RAW_VERSION_MINOR_RDMA_PORT);
+	kfastblock_selfcheck_note(report, m, "rawproto.layout",
+				  layout_ok, false,
+				  KFASTBLOCK_SELFCHECK_RAWPROTO,
+				  -EINVAL, detail);
+
+	scnprintf(detail, sizeof(detail),
+		  "magic=0x%x major=%u minor=%u",
+		  KFASTBLOCK_RAW_MAGIC, KFASTBLOCK_RAW_VERSION_MAJOR,
+		  KFASTBLOCK_RAW_VERSION_MINOR);
+	kfastblock_selfcheck_note(report, m, "rawproto.version_constants",
+				  KFASTBLOCK_RAW_MAGIC == 0x46425257U &&
+				  KFASTBLOCK_RAW_VERSION_MAJOR == 1U,
+				  false, KFASTBLOCK_SELFCHECK_RAWPROTO,
+				  -EINVAL, detail);
+}
+
 static void kfastblock_selfcheck_check_leader_rdma(
 	struct kfastblock_volume *vol,
 	struct kfastblock_selfcheck_report *report,
@@ -504,6 +546,38 @@ static void kfastblock_selfcheck_check_leader_rdma(
 				  pref == KFASTBLOCK_OSD_TRANSPORT_RDMA &&
 				  leader_valid > 0 && leader_rdma == 0,
 				  KFASTBLOCK_SELFCHECK_XPORT, 0, detail);
+}
+
+static void kfastblock_selfcheck_check_rdma_conn_pool(
+	struct kfastblock_volume *vol,
+	struct kfastblock_selfcheck_report *report,
+	struct seq_file *m)
+{
+	char detail[192];
+	u32 i;
+	u32 ready = 0, empty = 0, reuse = 0, fail = 0;
+
+	if (!vol)
+		return;
+
+	for (i = 0; i < KFASTBLOCK_MAX_RDMA_CACHE; ++i) {
+		struct kfastblock_cached_rdma *c = &vol->rdma_cache[i];
+
+		mutex_lock(&c->lock);
+		if (c->state == KFASTBLOCK_CONN_STATE_READY && c->conn)
+			ready++;
+		else if (c->state == KFASTBLOCK_CONN_STATE_EMPTY)
+			empty++;
+		reuse += c->reuse_hits;
+		fail += c->failure_count;
+		mutex_unlock(&c->lock);
+	}
+	scnprintf(detail, sizeof(detail),
+		  "slots=%u ready=%u empty=%u reuse_hits=%u failures=%u",
+		  KFASTBLOCK_MAX_RDMA_CACHE, ready, empty, reuse, fail);
+	kfastblock_selfcheck_note(report, m, "rdma_conn_pool.slots",
+				  true, false, KFASTBLOCK_SELFCHECK_OSD_CONN_POOL,
+				  0, detail);
 }
 
 static void kfastblock_selfcheck_commit(struct kfastblock_volume *vol,
@@ -563,6 +637,8 @@ int kfastblock_selfcheck_run(struct kfastblock_volume *vol,
 	kfastblock_selfcheck_check_monitor_conn_pool(vol, &local, m);
 	kfastblock_selfcheck_check_fault_injection(vol, &local, m);
 	kfastblock_selfcheck_check_xport(vol, &local, m);
+	kfastblock_selfcheck_check_rawproto(&local, m);
+	kfastblock_selfcheck_check_rdma_conn_pool(vol, &local, m);
 	if (m) {
 		seq_printf(m,
 			   "summary total=%u failed=%u warnings=%u flags=0x%x result_errno=%d\n",
