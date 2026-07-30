@@ -1,4 +1,5 @@
 #include <linux/errno.h>
+#include <linux/jiffies.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 
@@ -123,4 +124,92 @@ static void kfastblock_rdma_pool_slot_bind_locked(
 	slot->osd_id = leader->osd_id;
 	slot->rdma_port = leader->rdma_port;
 	strscpy(slot->address, leader->address, sizeof(slot->address));
+}
+
+/*
+ * Acquire an established RDMA conn for leader.
+ * Prefer idle matching slot (reuse); otherwise connect into an empty slot.
+ * Returns held conn (slot BUSY); caller must put().
+ */
+struct kfastblock_rdma_conn *
+kfastblock_rdma_pool_get(struct kfastblock_rdma_pool *pool,
+			 const struct kfastblock_leader_info *leader)
+{
+	u32 i;
+	struct kfastblock_rdma_conn *conn;
+	int ret;
+
+	if (!pool || !pool->slots || !kfastblock_leader_has_rdma(leader))
+		return NULL;
+
+	/* Pass 1: reuse idle matching connected slot. */
+	for (i = 0; i < pool->nr_slots; ++i) {
+		struct kfastblock_rdma_pool_slot *slot = &pool->slots[i];
+
+		mutex_lock(&slot->lock);
+		if (slot->state == KFASTBLOCK_RDMA_POOL_SLOT_IDLE &&
+		    kfastblock_rdma_pool_slot_matches_locked(slot, leader) &&
+		    kfastblock_rdma_conn_is_connected(slot->conn)) {
+			slot->state = KFASTBLOCK_RDMA_POOL_SLOT_BUSY;
+			slot->reuse_hits++;
+			slot->last_use_jiffies = jiffies;
+			pool->get_hits++;
+			conn = slot->conn;
+			mutex_unlock(&slot->lock);
+			return conn;
+		}
+		mutex_unlock(&slot->lock);
+	}
+
+	/* Pass 2: connect into first empty/dead slot. */
+	for (i = 0; i < pool->nr_slots; ++i) {
+		struct kfastblock_rdma_pool_slot *slot = &pool->slots[i];
+
+		mutex_lock(&slot->lock);
+		if (slot->state != KFASTBLOCK_RDMA_POOL_SLOT_EMPTY &&
+		    slot->state != KFASTBLOCK_RDMA_POOL_SLOT_DEAD) {
+			mutex_unlock(&slot->lock);
+			continue;
+		}
+
+		slot->connect_attempts++;
+		if (!slot->conn) {
+			slot->conn = kfastblock_rdma_conn_alloc();
+			if (!slot->conn) {
+				slot->last_error = -ENOMEM;
+				slot->state = KFASTBLOCK_RDMA_POOL_SLOT_EMPTY;
+				pool->connect_err++;
+				mutex_unlock(&slot->lock);
+				pool->get_misses++;
+				return NULL;
+			}
+		}
+		ret = kfastblock_rdma_conn_connect(slot->conn, leader);
+		if (ret) {
+			slot->last_error = ret;
+			slot->failure_count++;
+			kfastblock_rdma_conn_free(slot->conn);
+			slot->conn = NULL;
+			slot->state = KFASTBLOCK_RDMA_POOL_SLOT_EMPTY;
+			kfastblock_rdma_pool_slot_clear_identity(slot);
+			pool->connect_err++;
+			mutex_unlock(&slot->lock);
+			pool->get_misses++;
+			return NULL;
+		}
+
+		kfastblock_rdma_pool_slot_bind_locked(slot, leader);
+		slot->state = KFASTBLOCK_RDMA_POOL_SLOT_BUSY;
+		slot->last_connect_jiffies = jiffies;
+		slot->last_use_jiffies = jiffies;
+		slot->last_error = 0;
+		pool->connect_ok++;
+		pool->get_misses++;
+		conn = slot->conn;
+		mutex_unlock(&slot->lock);
+		return conn;
+	}
+
+	pool->get_misses++;
+	return NULL;
 }
