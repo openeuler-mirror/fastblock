@@ -37,7 +37,8 @@ kfastblock-objs := \
 	src/transport.o \
 	src/volume.o \
 	src/xport.o \
-	src/xport_rdma.o
+	src/xport_rdma.o \
+	src/xport_rdma_pool.o
 
 ccflags-y := -I$(src)/include
 
