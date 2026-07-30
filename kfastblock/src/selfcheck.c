@@ -462,6 +462,50 @@ static void kfastblock_selfcheck_check_xport(
 				  -EINVAL, detail);
 }
 
+static void kfastblock_selfcheck_check_leader_rdma(
+	struct kfastblock_volume *vol,
+	struct kfastblock_selfcheck_report *report,
+	struct seq_file *m)
+{
+	char detail[192];
+	u32 i;
+	u32 leader_valid = 0;
+	u32 leader_rdma = 0;
+	u32 pref;
+
+	if (!vol)
+		return;
+
+	pref = vol->spec.osd_transport;
+	for (i = 0; i < vol->view.route_count; ++i) {
+		const struct kfastblock_pg_route *route = &vol->view.routes[i];
+
+		if (!route->leader_valid)
+			continue;
+		leader_valid++;
+		if (route->leader.rdma_port > 0)
+			leader_rdma++;
+		/* leader_valid implies TCP port must be present */
+		scnprintf(detail, sizeof(detail),
+			  "route[%u] osd=%u port=%u rdma_port=%u",
+			  i, route->leader.osd_id, route->leader.port,
+			  route->leader.rdma_port);
+		kfastblock_selfcheck_note(report, m, "xport.leader.port",
+					  route->leader.port > 0, false,
+					  KFASTBLOCK_SELFCHECK_XPORT,
+					  -EINVAL, detail);
+	}
+	scnprintf(detail, sizeof(detail),
+		  "pref=%u leader_valid=%u leader_rdma=%u",
+		  pref, leader_valid, leader_rdma);
+	/* Forced RDMA with leaders but zero rdma_port is a warning */
+	kfastblock_selfcheck_note(report, m, "xport.leader.rdma_coverage",
+				  true,
+				  pref == KFASTBLOCK_OSD_TRANSPORT_RDMA &&
+				  leader_valid > 0 && leader_rdma == 0,
+				  KFASTBLOCK_SELFCHECK_XPORT, 0, detail);
+}
+
 static void kfastblock_selfcheck_commit(struct kfastblock_volume *vol,
 					const struct kfastblock_selfcheck_report *report)
 {
@@ -511,6 +555,7 @@ int kfastblock_selfcheck_run(struct kfastblock_volume *vol,
 	down_read(&vol->state_lock);
 	kfastblock_selfcheck_check_volume_core(vol, &local, m);
 	kfastblock_selfcheck_check_meta_view(vol, &local, m);
+	kfastblock_selfcheck_check_leader_rdma(vol, &local, m);
 	up_read(&vol->state_lock);
 	kfastblock_selfcheck_check_scheduler(vol, &local, m);
 	kfastblock_selfcheck_check_buffer_pool(vol, &local, m);
