@@ -13,9 +13,12 @@
 #include <atomic>
 #include <cstdint>
 #include <string>
+#include <thread>
 #include <vector>
 
 class osd_service;
+struct rdma_cm_id;
+struct rdma_event_channel;
 
 /*
  * Raw protocol over RDMA for kfastblock (kernel client <-> OSD data plane).
@@ -34,7 +37,16 @@ public:
 private:
     struct listener_context {
         uint16_t port{0};
+        uint32_t shard_id{0};
+        rdma_event_channel* channel{nullptr};
+        rdma_cm_id* listen_id{nullptr};
+        std::thread worker{};
+        std::atomic<bool> stop{false};
     };
+
+    bool start_listener(uint32_t shard_id);
+    void stop_listener(listener_context& listener) noexcept;
+    void run_listener(uint32_t shard_id) noexcept;
 
     osd_service* _service{nullptr};
     std::atomic<bool> _running{false};
