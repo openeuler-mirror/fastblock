@@ -62,4 +62,31 @@ struct kfastblock_rdma_pool {
 	u64 connect_err;
 };
 
+/* Allocate slot array and initialize empty pool. nr_slots 0 => default. */
+int kfastblock_rdma_pool_init(struct kfastblock_rdma_pool *pool, u32 nr_slots);
+
+/* Disconnect all slots and free slot array. */
+void kfastblock_rdma_pool_destroy(struct kfastblock_rdma_pool *pool);
+
+/* Close connections but keep slot array (for detach / reset). */
+void kfastblock_rdma_pool_close(struct kfastblock_rdma_pool *pool);
+
+/*
+ * Get a connected RDMA conn for leader. Reuses idle matching slot when
+ * possible; otherwise connects a free/empty slot via public xport_rdma API.
+ * Caller must put() when done. Returns NULL on failure.
+ */
+struct kfastblock_rdma_conn *
+kfastblock_rdma_pool_get(struct kfastblock_rdma_pool *pool,
+			 const struct kfastblock_leader_info *leader);
+
+/* Return conn to pool; ok=false marks slot dead and disconnects. */
+void kfastblock_rdma_pool_put(struct kfastblock_rdma_pool *pool,
+			      struct kfastblock_rdma_conn *conn, bool ok);
+
+void kfastblock_rdma_pool_snapshot(const struct kfastblock_rdma_pool *pool,
+				   struct kfastblock_rdma_pool_snapshot *snap);
+
+const char *kfastblock_rdma_pool_slot_state_name(u8 state);
+
 #endif
