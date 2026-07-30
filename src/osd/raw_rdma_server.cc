@@ -21,10 +21,10 @@ osd_raw_rdma_server::~osd_raw_rdma_server() noexcept {
 }
 
 bool osd_raw_rdma_server::start_listener(uint32_t shard_id) {
-    if (shard_id >= _listeners.size()) {
+    if (shard_id >= _listeners.size() || !_listeners[shard_id]) {
         return false;
     }
-    auto& listener = _listeners[shard_id];
+    auto& listener = *_listeners[shard_id];
     listener.shard_id = shard_id;
     listener.stop.store(false, std::memory_order_release);
     /* CM bind/listen lands in follow-up commits. */
@@ -42,11 +42,11 @@ void osd_raw_rdma_server::stop_listener(listener_context& listener) noexcept {
 }
 
 void osd_raw_rdma_server::run_listener(uint32_t shard_id) noexcept {
-    if (shard_id >= _listeners.size()) {
+    if (shard_id >= _listeners.size() || !_listeners[shard_id]) {
         return;
     }
     /* Event loop lands in follow-up commits. */
-    (void)_listeners[shard_id];
+    (void)*_listeners[shard_id];
 }
 
 bool osd_raw_rdma_server::start(const std::string& bind_address,
@@ -59,7 +59,11 @@ bool osd_raw_rdma_server::start(const std::string& bind_address,
     }
 
     _bind_address = bind_address;
-    _listeners.assign(shard_count, listener_context{});
+    _listeners.clear();
+    _listeners.reserve(shard_count);
+    for (uint32_t i = 0; i < shard_count; ++i) {
+        _listeners.emplace_back(std::make_unique<listener_context>());
+    }
     for (uint32_t i = 0; i < shard_count; ++i) {
         if (!start_listener(i)) {
             stop();
@@ -78,7 +82,9 @@ void osd_raw_rdma_server::stop() noexcept {
         return;
     }
     for (auto& listener : _listeners) {
-        stop_listener(listener);
+        if (listener) {
+            stop_listener(*listener);
+        }
     }
     _listeners.clear();
     _bind_address.clear();
@@ -86,8 +92,8 @@ void osd_raw_rdma_server::stop() noexcept {
 }
 
 uint16_t osd_raw_rdma_server::listen_port(uint32_t shard_id) const noexcept {
-    if (shard_id >= _listeners.size()) {
+    if (shard_id >= _listeners.size() || !_listeners[shard_id]) {
         return 0;
     }
-    return _listeners[shard_id].port;
+    return _listeners[shard_id]->port;
 }

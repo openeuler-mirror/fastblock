@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -51,5 +52,5 @@ private:
     osd_service* _service{nullptr};
     std::atomic<bool> _running{false};
     std::string _bind_address{};
-    std::vector<listener_context> _listeners{};
+    std::vector<std::unique_ptr<listener_context>> _listeners{};
 };
