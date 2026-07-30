@@ -26,6 +26,7 @@
 #include "utils/get_core.h"
 #include "mon_client.h"
 #include "raw_tcp_server.h"
+#include "raw_rdma_server.h"
 
 #include <spdk/string.h>
 
@@ -88,6 +89,7 @@ int g_pid_fd = -1;
 static std::unique_ptr<::raft_service<::partition_manager>> global_raft_service{nullptr};
 static std::unique_ptr<::osd_service> global_osd_service{nullptr};
 static std::unique_ptr<osd_raw_tcp_server> global_raw_tcp_server{nullptr};
+static std::unique_ptr<osd_raw_rdma_server> global_raw_rdma_server{nullptr};
 static std::shared_ptr<::connect_cache> global_conn_cache{nullptr};
 static std::shared_ptr<::partition_manager> global_pm{nullptr};
 static std::shared_ptr<monitor_client> g_monitor_client{nullptr};
