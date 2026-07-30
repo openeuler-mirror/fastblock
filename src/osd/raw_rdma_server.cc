@@ -14,8 +14,27 @@
 #include <rdma/rdma_cma.h>
 #include <spdk/log.h>
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+
 #include <cerrno>
 #include <cstring>
+#include <random>
+
+namespace {
+
+constexpr uint16_t min_raw_rdma_port = 20001U;
+constexpr uint16_t max_raw_rdma_port = 29999U;
+constexpr int raw_rdma_bind_attempts = 64;
+
+uint16_t random_raw_rdma_port() {
+    thread_local std::mt19937 gen{std::random_device{}()};
+    std::uniform_int_distribution<uint32_t> dist(min_raw_rdma_port,
+                                                 max_raw_rdma_port);
+    return static_cast<uint16_t>(dist(gen));
+}
+
+} // namespace
 
 osd_raw_rdma_server::osd_raw_rdma_server(osd_service* service)
   : _service(service) {}
@@ -47,7 +66,32 @@ bool osd_raw_rdma_server::start_listener(uint32_t shard_id) {
         listener.channel = nullptr;
         return false;
     }
-    /* bind/listen lands in follow-up commits. */
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    if (::inet_pton(AF_INET, _bind_address.c_str(), &addr.sin_addr) != 1) {
+        SPDK_ERRLOG("raw RDMA: invalid bind address %s\n",
+                    _bind_address.c_str());
+        return false;
+    }
+
+    bool bound = false;
+    for (int attempt = 0; attempt < raw_rdma_bind_attempts; ++attempt) {
+        const uint16_t port = random_raw_rdma_port();
+        addr.sin_port = htons(port);
+        if (::rdma_bind_addr(listener.listen_id,
+                             reinterpret_cast<sockaddr*>(&addr)) == 0) {
+            listener.port = port;
+            bound = true;
+            break;
+        }
+    }
+    if (!bound) {
+        SPDK_ERRLOG("raw RDMA: rdma_bind_addr failed on %s after %d tries\n",
+                    _bind_address.c_str(), raw_rdma_bind_attempts);
+        return false;
+    }
+    /* listen lands in follow-up commits. */
     return true;
 }
 
