@@ -60,6 +60,11 @@ private:
         void* recv_buf{nullptr};
         size_t recv_buf_len{0};
         ibv_mr* recv_mr{nullptr};
+        /* Response SEND buffer (header+body), registered once per conn. */
+        void* send_buf{nullptr};
+        size_t send_buf_len{0};
+        ibv_mr* send_mr{nullptr};
+        bool send_in_flight{false};
     };
 
     bool start_listener(uint32_t shard_id);
@@ -67,6 +72,9 @@ private:
     void run_listener(uint32_t shard_id) noexcept;
     bool handle_connect_request(rdma_cm_id* id, uint32_t shard_id) noexcept;
     bool post_recv(connection_context* conn) noexcept;
+    bool ensure_send_mr(connection_context* conn) noexcept;
+    bool post_send(connection_context* conn, size_t length) noexcept;
+    void handle_recv_complete(connection_context* conn, uint32_t byte_len) noexcept;
     void poll_cq(connection_context* conn) noexcept;
     void destroy_connection(connection_context* conn) noexcept;
     void close_all_connections() noexcept;
