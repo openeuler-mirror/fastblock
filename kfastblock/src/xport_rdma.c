@@ -292,3 +292,25 @@ bool kfastblock_rdma_conn_is_connected(const struct kfastblock_rdma_conn *conn)
 	       conn->state == KFASTBLOCK_RDMA_CONN_ESTABLISHED &&
 	       conn->cm_id;
 }
+
+int kfastblock_rdma_conn_send(struct kfastblock_rdma_conn *conn,
+			      const void *buf, u32 len)
+{
+	if (!kfastblock_rdma_conn_is_connected(conn) || !buf || !len)
+		return -EINVAL;
+	if (!conn->cm_id->qp || !conn->pd)
+		return -ENOTCONN;
+	/* Full SEND WR + MR path lands in follow-up commits. */
+	return -EOPNOTSUPP;
+}
+
+int kfastblock_rdma_conn_recv(struct kfastblock_rdma_conn *conn,
+			      void *buf, u32 buf_len)
+{
+	if (!kfastblock_rdma_conn_is_connected(conn) || !buf || !buf_len)
+		return -EINVAL;
+	if (!conn->cm_id->qp || !conn->pd)
+		return -ENOTCONN;
+	/* Full RECV WR + poll path lands in follow-up commits. */
+	return -EOPNOTSUPP;
+}
