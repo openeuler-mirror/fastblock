@@ -29,10 +29,34 @@ struct kfastblock_rdma_conn {
 	bool connected;
 	int last_error;
 	struct rdma_cm_id *cm_id;
+	struct ib_pd *pd;
+	struct ib_cq *cq;
 	struct completion cm_done;
 	enum rdma_cm_event_type cm_event;
 	int cm_event_status;
 };
+
+static void kfastblock_rdma_conn_destroy_resources(struct kfastblock_rdma_conn *conn)
+{
+	if (!conn)
+		return;
+
+	if (conn->cm_id && conn->cm_id->qp) {
+		rdma_destroy_qp(conn->cm_id);
+	}
+	if (conn->cq) {
+		ib_destroy_cq(conn->cq);
+		conn->cq = NULL;
+	}
+	if (conn->pd) {
+		ib_dealloc_pd(conn->pd);
+		conn->pd = NULL;
+	}
+	if (conn->cm_id) {
+		rdma_destroy_id(conn->cm_id);
+		conn->cm_id = NULL;
+	}
+}
 
 static int kfastblock_rdma_cm_event_handler(struct rdma_cm_id *cm_id,
 					    struct rdma_cm_event *event)
@@ -152,14 +176,98 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 			conn->last_error = ret;
 			goto err_destroy_id;
 		}
+
+		reinit_completion(&conn->cm_done);
+		conn->state = KFASTBLOCK_RDMA_CONN_RESOLVING_ROUTE;
+		ret = rdma_resolve_route(conn->cm_id,
+					 KFASTBLOCK_RDMA_CM_TIMEOUT_MS);
+		if (ret) {
+			conn->last_error = ret;
+			goto err_destroy_id;
+		}
+
+		ret = kfastblock_rdma_wait_cm_event(
+			conn, RDMA_CM_EVENT_ROUTE_RESOLVED);
+		if (ret) {
+			conn->last_error = ret;
+			goto err_destroy_id;
+		}
+
+		conn->pd = ib_alloc_pd(conn->cm_id->device, 0);
+		if (IS_ERR(conn->pd)) {
+			conn->last_error = PTR_ERR(conn->pd);
+			conn->pd = NULL;
+			goto err_destroy_id;
+		}
+
+		{
+			struct ib_cq_init_attr cq_attr = {
+				.cqe = 64,
+			};
+
+			conn->cq = ib_create_cq(conn->cm_id->device, NULL, NULL,
+						conn, &cq_attr);
+			if (IS_ERR(conn->cq)) {
+				conn->last_error = PTR_ERR(conn->cq);
+				conn->cq = NULL;
+				goto err_destroy_id;
+			}
+		}
+
+		{
+			struct ib_qp_init_attr qp_attr = {
+				.send_cq = conn->cq,
+				.recv_cq = conn->cq,
+				.cap = {
+					.max_send_wr = 32,
+					.max_recv_wr = 32,
+					.max_send_sge = 1,
+					.max_recv_sge = 1,
+				},
+				.qp_type = IB_QPT_RC,
+				.sq_sig_type = IB_SIGNAL_REQ_WR,
+			};
+
+			ret = rdma_create_qp(conn->cm_id, conn->pd, &qp_attr);
+			if (ret) {
+				conn->last_error = ret;
+				goto err_destroy_id;
+			}
+		}
+
+		{
+			struct rdma_conn_param conn_param = {
+				.responder_resources = 1,
+				.initiator_depth = 1,
+				.retry_count = 3,
+				.rnr_retry_count = 3,
+			};
+
+			reinit_completion(&conn->cm_done);
+			conn->state = KFASTBLOCK_RDMA_CONN_CONNECTING;
+			ret = rdma_connect(conn->cm_id, &conn_param);
+			if (ret) {
+				conn->last_error = ret;
+				goto err_destroy_id;
+			}
+
+			ret = kfastblock_rdma_wait_cm_event(
+				conn, RDMA_CM_EVENT_ESTABLISHED);
+			if (ret) {
+				conn->last_error = ret;
+				goto err_destroy_id;
+			}
+		}
 	}
 
-	/* Route resolve lands in follow-up commits. */
-	conn->last_error = -EOPNOTSUPP;
+	conn->connected = true;
+	conn->state = KFASTBLOCK_RDMA_CONN_ESTABLISHED;
+	conn->last_error = 0;
+	return 0;
+
 err_destroy_id:
 	conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
-	rdma_destroy_id(conn->cm_id);
-	conn->cm_id = NULL;
+	kfastblock_rdma_conn_destroy_resources(conn);
 	return conn->last_error;
 }
 
@@ -167,13 +275,20 @@ void kfastblock_rdma_conn_disconnect(struct kfastblock_rdma_conn *conn)
 {
 	if (!conn)
 		return;
-	if (conn->cm_id) {
-		rdma_destroy_id(conn->cm_id);
-		conn->cm_id = NULL;
-	}
+	conn->state = KFASTBLOCK_RDMA_CONN_DISCONNECTING;
+	if (conn->cm_id && conn->connected)
+		rdma_disconnect(conn->cm_id);
+	kfastblock_rdma_conn_destroy_resources(conn);
 	conn->connected = false;
 	conn->state = KFASTBLOCK_RDMA_CONN_IDLE;
 	conn->last_error = 0;
 	conn->peer_port = 0;
 	conn->peer_addr[0] = '\0';
+}
+
+bool kfastblock_rdma_conn_is_connected(const struct kfastblock_rdma_conn *conn)
+{
+	return conn && conn->connected &&
+	       conn->state == KFASTBLOCK_RDMA_CONN_ESTABLISHED &&
+	       conn->cm_id;
 }
