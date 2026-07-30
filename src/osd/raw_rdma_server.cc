@@ -1183,6 +1183,18 @@ void osd_raw_rdma_server::stop() noexcept {
             stop_listener(*listener);
         }
     }
+    {
+        uint64_t recv_total = 0;
+        uint64_t send_total = 0;
+        uint64_t error_total = 0;
+        get_io_totals(&recv_total, &send_total, &error_total);
+        SPDK_NOTICELOG(
+          "raw RDMA server stopping conns=%zu recv=%llu send=%llu err=%llu\n",
+          connection_count(),
+          static_cast<unsigned long long>(recv_total),
+          static_cast<unsigned long long>(send_total),
+          static_cast<unsigned long long>(error_total));
+    }
     close_all_connections();
     _listeners.clear();
     _bind_address.clear();
