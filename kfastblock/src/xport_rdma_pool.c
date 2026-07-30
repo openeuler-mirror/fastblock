@@ -87,3 +87,13 @@ void kfastblock_rdma_pool_close(struct kfastblock_rdma_pool *pool)
 		mutex_unlock(&slot->lock);
 	}
 }
+
+void kfastblock_rdma_pool_destroy(struct kfastblock_rdma_pool *pool)
+{
+	if (!pool)
+		return;
+	kfastblock_rdma_pool_close(pool);
+	kfree(pool->slots);
+	pool->slots = NULL;
+	pool->nr_slots = 0;
+}
