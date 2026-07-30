@@ -23,6 +23,8 @@ enum kfastblock_diag_anomaly_flag {
 	KFASTBLOCK_DIAG_ANOMALY_FAULT_ARMED = 1U << 9,
 	KFASTBLOCK_DIAG_ANOMALY_EVENT_ERROR_SPIKE = 1U << 10,
 	KFASTBLOCK_DIAG_ANOMALY_PIPELINE_UNSTABLE = 1U << 11,
+	/* prefer RDMA/AUTO but no leader advertises rdma_port */
+	KFASTBLOCK_DIAG_ANOMALY_RDMA_UNAVAILABLE = 1U << 12,
 };
 
 enum kfastblock_diag_drift_flag {
@@ -36,6 +38,7 @@ enum kfastblock_diag_drift_flag {
 	KFASTBLOCK_DIAG_DRIFT_FAULT = 1U << 7,
 	KFASTBLOCK_DIAG_DRIFT_EVENTS = 1U << 8,
 	KFASTBLOCK_DIAG_DRIFT_PIPELINE = 1U << 9,
+	KFASTBLOCK_DIAG_DRIFT_XPORT = 1U << 10,
 };
 
 struct kfastblock_diag_volume_snapshot {
@@ -185,6 +188,22 @@ struct kfastblock_diag_event_snapshot {
 	char last_type_text[48];
 };
 
+/*
+ * OSD data-plane transport preference and RDMA readiness summary.
+ * preference is KFASTBLOCK_OSD_TRANSPORT_*; counts come from cluster view.
+ */
+struct kfastblock_diag_xport_snapshot {
+	u32 preference; /* KFASTBLOCK_OSD_TRANSPORT_* */
+	char preference_name[16];
+	u32 prefers_rdma; /* 1 when preference is RDMA or AUTO */
+	u32 leader_valid_count;
+	u32 leader_rdma_ready_count; /* leader_valid && rdma_port > 0 */
+	u32 leader_tcp_only_count; /* leader_valid && rdma_port == 0 */
+	u32 shard_count;
+	u32 shard_rdma_port_count; /* shards with rdma_port > 0 */
+	u32 osd_with_rdma_count; /* OSDs that have at least one RDMA shard */
+};
+
 struct kfastblock_diag_snapshot {
 	struct kfastblock_diag_volume_snapshot volume;
 	struct kfastblock_diag_buffer_snapshot buffer;
@@ -195,6 +214,7 @@ struct kfastblock_diag_snapshot {
 	struct kfastblock_diag_selfcheck_snapshot selfcheck;
 	struct kfastblock_diag_fault_snapshot fault;
 	struct kfastblock_diag_event_snapshot events;
+	struct kfastblock_diag_xport_snapshot xport;
 	u32 anomaly_score;
 	u32 anomaly_flags;
 };

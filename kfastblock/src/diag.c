@@ -8,6 +8,53 @@
 #include "kfastblock/scheduler.h"
 #include "kfastblock/selfcheck.h"
 #include "kfastblock/volume.h"
+#include "kfastblock/xport.h"
+
+static void kfastblock_diag_collect_xport(struct kfastblock_volume *vol,
+					 struct kfastblock_diag_snapshot *snapshot)
+{
+	struct kfastblock_diag_xport_snapshot *xport;
+	const char *name;
+	u32 i, j;
+
+	if (!vol || !snapshot)
+		return;
+
+	xport = &snapshot->xport;
+	xport->preference = vol->spec.osd_transport;
+	name = kfastblock_xport_preference_name(xport->preference);
+	strscpy(xport->preference_name, name, sizeof(xport->preference_name));
+	xport->prefers_rdma =
+		kfastblock_xport_prefers_rdma(xport->preference) ? 1 : 0;
+
+	down_read(&vol->state_lock);
+	for (i = 0; i < vol->view.route_count; ++i) {
+		const struct kfastblock_pg_route *route = &vol->view.routes[i];
+
+		if (!route->leader_valid)
+			continue;
+		xport->leader_valid_count++;
+		if (route->leader.rdma_port > 0)
+			xport->leader_rdma_ready_count++;
+		else
+			xport->leader_tcp_only_count++;
+	}
+	for (i = 0; i < vol->view.osd_count; ++i) {
+		const struct kfastblock_osd_endpoint *osd = &vol->view.osds[i];
+		bool osd_has_rdma = false;
+
+		for (j = 0; j < osd->shard_count; ++j) {
+			xport->shard_count++;
+			if (osd->shards[j].rdma_port > 0) {
+				xport->shard_rdma_port_count++;
+				osd_has_rdma = true;
+			}
+		}
+		if (osd_has_rdma)
+			xport->osd_with_rdma_count++;
+	}
+	up_read(&vol->state_lock);
+}
 
 static const char *kfastblock_diag_health_state_name(u32 state)
 {
@@ -560,6 +607,16 @@ static void kfastblock_diag_compute_anomaly(struct kfastblock_diag_snapshot *sna
 			       refresh_fail_events * 3 +
 			       socket_events * 2);
 	}
+	/*
+	 * Prefer RDMA (or AUTO) but no valid leader advertises rdma_port:
+	 * data plane cannot use RDMA until map/leader includes it.
+	 */
+	if (snapshot->xport.prefers_rdma &&
+	    snapshot->xport.leader_valid_count > 0 &&
+	    snapshot->xport.leader_rdma_ready_count == 0) {
+		flags |= KFASTBLOCK_DIAG_ANOMALY_RDMA_UNAVAILABLE;
+		score += 10;
+	}
 
 	snapshot->anomaly_flags = flags;
 	snapshot->anomaly_score = min_t(u32, score, 100);
@@ -830,6 +887,24 @@ static int kfastblock_diag_dump_snapshot_prefixed(
 		   snapshot->volume.last_image_refresh_jiffies);
 	seq_printf(m, "%svolume.event_count=%u\n", prefix,
 		   snapshot->volume.event_count);
+	seq_printf(m, "%sxport.preference=%u\n", prefix,
+		   snapshot->xport.preference);
+	seq_printf(m, "%sxport.preference_name=%s\n", prefix,
+		   snapshot->xport.preference_name);
+	seq_printf(m, "%sxport.prefers_rdma=%u\n", prefix,
+		   snapshot->xport.prefers_rdma);
+	seq_printf(m, "%sxport.leader_valid_count=%u\n", prefix,
+		   snapshot->xport.leader_valid_count);
+	seq_printf(m, "%sxport.leader_rdma_ready_count=%u\n", prefix,
+		   snapshot->xport.leader_rdma_ready_count);
+	seq_printf(m, "%sxport.leader_tcp_only_count=%u\n", prefix,
+		   snapshot->xport.leader_tcp_only_count);
+	seq_printf(m, "%sxport.shard_count=%u\n", prefix,
+		   snapshot->xport.shard_count);
+	seq_printf(m, "%sxport.shard_rdma_port_count=%u\n", prefix,
+		   snapshot->xport.shard_rdma_port_count);
+	seq_printf(m, "%sxport.osd_with_rdma_count=%u\n", prefix,
+		   snapshot->xport.osd_with_rdma_count);
 	seq_printf(m, "%spipeline.request_prepares=%llu\n", prefix,
 		   snapshot->pipeline.request_prepares);
 	seq_printf(m, "%spipeline.capacity=%u\n", prefix,
@@ -904,6 +979,7 @@ void kfastblock_diag_collect(struct kfastblock_volume *vol,
 	kfastblock_diag_collect_selfcheck(vol, snapshot);
 	kfastblock_diag_collect_fault(vol, snapshot);
 	kfastblock_diag_collect_events(vol, snapshot);
+	kfastblock_diag_collect_xport(vol, snapshot);
 	kfastblock_diag_compute_anomaly(snapshot);
 }
 
@@ -964,6 +1040,22 @@ int kfastblock_diag_dump_seq(struct seq_file *m,
 	seq_printf(m, "volume.last_image_refresh_jiffies=%lu\n",
 		   snapshot->volume.last_image_refresh_jiffies);
 	seq_printf(m, "volume.event_count=%u\n", snapshot->volume.event_count);
+
+	seq_printf(m, "xport.preference=%u\n", snapshot->xport.preference);
+	seq_printf(m, "xport.preference_name=%s\n",
+		   snapshot->xport.preference_name);
+	seq_printf(m, "xport.prefers_rdma=%u\n", snapshot->xport.prefers_rdma);
+	seq_printf(m, "xport.leader_valid_count=%u\n",
+		   snapshot->xport.leader_valid_count);
+	seq_printf(m, "xport.leader_rdma_ready_count=%u\n",
+		   snapshot->xport.leader_rdma_ready_count);
+	seq_printf(m, "xport.leader_tcp_only_count=%u\n",
+		   snapshot->xport.leader_tcp_only_count);
+	seq_printf(m, "xport.shard_count=%u\n", snapshot->xport.shard_count);
+	seq_printf(m, "xport.shard_rdma_port_count=%u\n",
+		   snapshot->xport.shard_rdma_port_count);
+	seq_printf(m, "xport.osd_with_rdma_count=%u\n",
+		   snapshot->xport.osd_with_rdma_count);
 
 	seq_printf(m, "buffer.cached=%u\n", snapshot->buffer.cached);
 	seq_printf(m, "buffer.cache_limit=%u\n", snapshot->buffer.cache_limit);

@@ -30,4 +30,69 @@ const struct kfastblock_xport_ops *
 kfastblock_xport_select(u32 preference,
 			const struct kfastblock_leader_info *leader);
 
+/*
+ * Same as select, but fills @reason with a short stable token for logs:
+ * "auto-rdma", "auto-tcp", "forced-rdma", "forced-tcp", "invalid-tcp".
+ * @reason_len includes the trailing NUL; ignored if reason is NULL.
+ */
+const struct kfastblock_xport_ops *
+kfastblock_xport_select_explained(u32 preference,
+				  const struct kfastblock_leader_info *leader,
+				  char *reason, size_t reason_len);
+
+/* True when preference is RDMA or AUTO (caller still probes). */
+static inline bool kfastblock_xport_prefers_rdma(u32 preference)
+{
+	return preference == KFASTBLOCK_OSD_TRANSPORT_RDMA ||
+	       preference == KFASTBLOCK_OSD_TRANSPORT_AUTO;
+}
+
+static inline const char *kfastblock_xport_preference_name(u32 preference)
+{
+	switch (preference) {
+	case KFASTBLOCK_OSD_TRANSPORT_TCP:
+		return "tcp";
+	case KFASTBLOCK_OSD_TRANSPORT_RDMA:
+		return "rdma";
+	case KFASTBLOCK_OSD_TRANSPORT_AUTO:
+		return "auto";
+	default:
+		return "unknown";
+	}
+}
+
+/* True for TCP / RDMA / AUTO; false for unknown values. */
+static inline bool kfastblock_xport_preference_valid(u32 preference)
+{
+	return preference == KFASTBLOCK_OSD_TRANSPORT_TCP ||
+	       preference == KFASTBLOCK_OSD_TRANSPORT_RDMA ||
+	       preference == KFASTBLOCK_OSD_TRANSPORT_AUTO;
+}
+
+/* Safe ops name for logs; never returns NULL. */
+static inline const char *
+kfastblock_xport_ops_name(const struct kfastblock_xport_ops *ops)
+{
+	if (!ops || !ops->name)
+		return "none";
+	return ops->name;
+}
+
+/* Transport id from ops, or TCP when ops is NULL. */
+static inline u32
+kfastblock_xport_ops_id(const struct kfastblock_xport_ops *ops)
+{
+	if (!ops)
+		return KFASTBLOCK_OSD_TRANSPORT_TCP;
+	return ops->transport_id;
+}
+
+/* Short-TTL RDMA probe cache (address:rdma_port -> result). */
+#define KFASTBLOCK_XPORT_PROBE_CACHE_TTL_MS 2000U
+#define KFASTBLOCK_XPORT_PROBE_CACHE_SIZE 16U
+
+void kfastblock_xport_probe_cache_invalidate(void);
+u64 kfastblock_xport_probe_cache_hits(void);
+u64 kfastblock_xport_probe_cache_misses(void);
+
 #endif

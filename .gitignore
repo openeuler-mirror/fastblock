@@ -14,3 +14,17 @@ monitor/fastblock-fakeosd
 fastblock.json
 .vstart/
 core.*
+
+# kfastblock kernel build artifacts
+kfastblock/*.o
+kfastblock/*.ko
+kfastblock/*.mod
+kfastblock/*.mod.c
+kfastblock/*.mod.o
+kfastblock/Module.symvers
+kfastblock/modules.order
+kfastblock/.*.cmd
+kfastblock/src/*.o
+kfastblock/src/.*.cmd
+kfastblock/tool/kfastblock-admin
+kfastblock/tool/kfastblock-rawctl

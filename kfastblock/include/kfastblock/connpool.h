@@ -10,6 +10,7 @@
 
 #include "kfastblock/control.h"
 #include "kfastblock/meta.h"
+#include "kfastblock/xport_rdma.h"
 
 enum kfastblock_conn_state {
 	KFASTBLOCK_CONN_STATE_EMPTY = 0,
@@ -82,6 +83,24 @@ struct kfastblock_cached_monitor_socket {
 	u32 success_count;
 	u32 failure_count;
 	u32 health_score;
+	u8 state;
+};
+
+/* Cached raw RDMA connections keyed by leader address:rdma_port. */
+struct kfastblock_cached_rdma {
+	u32 osd_id;
+	u16 rdma_port;
+	char address[KFASTBLOCK_MAX_ADDR_LEN];
+	struct kfastblock_rdma_conn *conn;
+	struct mutex lock;
+	u64 next_seq;
+	u32 fail_streak;
+	s32 last_error;
+	unsigned long last_use_jiffies;
+	u32 connect_attempts;
+	u32 reuse_hits;
+	u32 success_count;
+	u32 failure_count;
 	u8 state;
 };
 
@@ -204,5 +223,23 @@ void kfastblock_osd_conn_slot_note_reuse_locked(
 	struct kfastblock_cached_socket *cached);
 void kfastblock_monitor_conn_slot_note_reuse_locked(
 	struct kfastblock_cached_monitor_socket *cached);
+
+void kfastblock_rdma_conn_slot_init(struct kfastblock_cached_rdma *cached);
+void kfastblock_rdma_conn_slot_close(struct kfastblock_cached_rdma *cached);
+void kfastblock_rdma_conn_pool_init(struct kfastblock_cached_rdma *slots,
+				    u32 nr_slots);
+void kfastblock_rdma_conn_pool_close(struct kfastblock_cached_rdma *slots,
+				     u32 nr_slots);
+/*
+ * Acquire an ESTABLISHED RDMA connection for @leader (connect on miss).
+ * Caller must call kfastblock_rdma_conn_pool_release() when done.
+ */
+struct kfastblock_cached_rdma *
+kfastblock_rdma_conn_pool_acquire(struct kfastblock_cached_rdma *slots,
+				  u32 nr_slots,
+				  const struct kfastblock_leader_info *leader);
+void kfastblock_rdma_conn_pool_release(struct kfastblock_cached_rdma *cached,
+				       int io_ret);
+u64 kfastblock_rdma_conn_slot_next_seq(struct kfastblock_cached_rdma *cached);
 
 #endif

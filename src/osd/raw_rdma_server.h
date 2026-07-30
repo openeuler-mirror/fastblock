@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -38,7 +39,12 @@ public:
     bool start(const std::string& bind_address, uint32_t shard_count);
     void stop() noexcept;
 
+    bool is_running() const noexcept;
+    uint32_t shard_count() const noexcept;
     uint16_t listen_port(uint32_t shard_id) const noexcept;
+    size_t connection_count() const noexcept;
+    /* Connections currently established on a single shard listener. */
+    size_t connection_count(uint32_t shard_id) const noexcept;
 
 private:
     struct listener_context {
@@ -56,7 +62,16 @@ private:
         ibv_pd* pd{nullptr};
         ibv_cq* cq{nullptr};
         bool established{false};
-        /* Single posted recv buffer for raw header+body (MVP). */
+        /* Multi-slot RECV staging for pipelined client requests. */
+        static constexpr size_t max_recv_slots{4};
+        struct recv_slot {
+            void* buf{nullptr};
+            size_t len{0};
+            ibv_mr* mr{nullptr};
+            bool posted{false};
+        };
+        recv_slot recv_slots[max_recv_slots]{};
+        /* Legacy single-buffer aliases (slot 0) kept during migration. */
         void* recv_buf{nullptr};
         size_t recv_buf_len{0};
         ibv_mr* recv_mr{nullptr};
@@ -65,6 +80,15 @@ private:
         size_t send_buf_len{0};
         ibv_mr* send_mr{nullptr};
         bool send_in_flight{false};
+        /* Serialized responses waiting for SEND slot (async object I/O). */
+        std::mutex send_mu{};
+        std::deque<std::vector<uint8_t>> send_queue{};
+        static constexpr size_t max_send_queue{64};
+        /* Per-connection counters for diagnostics. */
+        std::atomic<uint64_t> recv_count{0};
+        std::atomic<uint64_t> send_count{0};
+        std::atomic<uint64_t> error_count{0};
+        std::string peer_address{};
     };
 
     bool start_listener(uint32_t shard_id);
@@ -72,17 +96,49 @@ private:
     void run_listener(uint32_t shard_id) noexcept;
     bool handle_connect_request(rdma_cm_id* id, uint32_t shard_id) noexcept;
     bool post_recv(connection_context* conn) noexcept;
+    bool post_recv_slot(connection_context* conn, size_t slot) noexcept;
+    bool ensure_recv_slots(connection_context* conn) noexcept;
+    void free_recv_slots(connection_context* conn) noexcept;
     bool ensure_send_mr(connection_context* conn) noexcept;
     bool post_send(connection_context* conn, size_t length) noexcept;
-    void handle_recv_complete(connection_context* conn, uint32_t byte_len) noexcept;
+    bool send_response(connection_context* conn,
+                       const void* req_hdr,
+                       uint32_t status,
+                       const void* body,
+                       uint32_t body_len) noexcept;
+    bool enqueue_response_frame(connection_context* conn,
+                                std::vector<uint8_t> frame) noexcept;
+    void try_flush_send_queue(connection_context* conn) noexcept;
+    void dispatch_get_leader(connection_context* conn,
+                             const void* req_hdr,
+                             const uint8_t* body,
+                             uint32_t body_len) noexcept;
+    void dispatch_read(connection_context* conn,
+                       const void* req_hdr,
+                       const uint8_t* body,
+                       uint32_t body_len) noexcept;
+    void dispatch_write(connection_context* conn,
+                        const void* req_hdr,
+                        const uint8_t* body,
+                        uint32_t body_len) noexcept;
+    void dispatch_delete(connection_context* conn,
+                         const void* req_hdr,
+                         const uint8_t* body,
+                         uint32_t body_len) noexcept;
+    void handle_recv_complete(connection_context* conn,
+                              uint32_t byte_len,
+                              size_t slot) noexcept;
     void poll_cq(connection_context* conn) noexcept;
     void destroy_connection(connection_context* conn) noexcept;
     void close_all_connections() noexcept;
+    std::shared_ptr<connection_context>
+    retain_connection(connection_context* conn) noexcept;
 
     osd_service* _service{nullptr};
     std::atomic<bool> _running{false};
     std::string _bind_address{};
     std::vector<std::unique_ptr<listener_context>> _listeners{};
-    std::mutex _connections_mutex{};
-    std::vector<std::unique_ptr<connection_context>> _connections{};
+    mutable std::mutex _connections_mutex{};
+    std::vector<std::shared_ptr<connection_context>> _connections{};
+    static constexpr size_t max_connections{256};
 };

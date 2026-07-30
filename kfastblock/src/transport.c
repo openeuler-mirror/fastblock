@@ -6,6 +6,7 @@
 #include <linux/inet.h>
 #include <linux/kernel.h>
 #include <linux/net.h>
+#include <linux/random.h>
 #include <linux/highmem.h>
 #include <linux/jiffies.h>
 #include <linux/slab.h>
@@ -25,6 +26,8 @@
 #include "kfastblock/scheduler.h"
 #include "kfastblock/transport.h"
 #include "kfastblock/volume.h"
+#include "kfastblock/xport.h"
+#include "kfastblock/xport_rdma.h"
 
 #define KFASTBLOCK_OBJECT_IO_MAX_ATTEMPTS 2
 
@@ -45,6 +48,8 @@ kfastblock_transport_reserve_osd_slot(struct kfastblock_volume *vol);
 static struct workqueue_struct *g_kfastblock_transport_wq;
 static unsigned int g_kfastblock_osd_endpoint_parallel_limit = 1;
 static bool g_kfastblock_osd_endpoint_parallel_trace;
+
+
 
 module_param_named(osd_endpoint_parallel_limit,
 		   g_kfastblock_osd_endpoint_parallel_limit,
@@ -100,6 +105,8 @@ struct kfastblock_transport_object_io_ctx {
 	struct kfastblock_request_pg_hint *hint;
 	struct kfastblock_leader_info leader;
 	struct kfastblock_cached_socket *cached;
+	struct kfastblock_rdma_conn *rdma;
+	struct kfastblock_cached_rdma *rdma_slot;
 	struct socket *sock;
 	void *buf;
 	unsigned int object_index;
@@ -108,6 +115,7 @@ struct kfastblock_transport_object_io_ctx {
 	int ret;
 	enum req_op op;
 	u8 raw_opcode;
+	bool use_rdma;
 	struct kfastblock_transport_exchange_ctx exchange;
 	struct kfastblock_transport_response_ctx response;
 };
@@ -2055,6 +2063,13 @@ static int kfastblock_transport_fetch_cluster_map_from_monitor(
 	return ret;
 }
 
+static int kfastblock_transport_rdma_exchange_parts(
+	struct kfastblock_rdma_conn *rdma,
+	u8 service, u8 opcode, u64 seq,
+	const struct kfastblock_transport_body_part *parts,
+	unsigned int nr_parts,
+	struct kfastblock_transport_response_ctx *response);
+
 static int kfastblock_transport_fetch_pg_leader_from_osd(
 	struct kfastblock_cached_socket *cached,
 	u32 pool_id,
@@ -2088,6 +2103,287 @@ static int kfastblock_transport_fetch_pg_leader_from_osd(
 	ret = kfastblock_transport_response_decode_leader(&response, leader);
 	kfastblock_transport_response_ctx_release(&response);
 	return ret;
+}
+
+static int kfastblock_transport_fetch_pg_leader_from_osd_rdma(
+	struct kfastblock_rdma_conn *rdma,
+	u32 pool_id,
+	u32 pg_id,
+	u64 seq,
+	struct kfastblock_leader_info *leader)
+{
+	struct kfastblock_raw_get_leader_req req = {
+		.pool_id = cpu_to_le32(pool_id),
+		.pg_id = cpu_to_le32(pg_id),
+	};
+	struct kfastblock_transport_body_part part = {
+		.buf = &req,
+		.len = sizeof(req),
+	};
+	struct kfastblock_transport_response_ctx response = {};
+	int ret;
+
+	if (!rdma || !leader)
+		return -EINVAL;
+
+	memset(leader, 0, sizeof(*leader));
+	ret = kfastblock_transport_rdma_exchange_parts(
+		rdma, KFASTBLOCK_RAW_SERVICE_OSD,
+		KFASTBLOCK_RAW_OSD_OP_GET_LEADER, seq, &part, 1, &response);
+	if (ret) {
+		kfastblock_transport_response_ctx_release(&response);
+		return ret;
+	}
+	ret = kfastblock_transport_response_decode_leader(&response, leader);
+	kfastblock_transport_response_ctx_release(&response);
+	return ret;
+}
+
+static int kfastblock_transport_rdma_write_object(
+	struct kfastblock_rdma_conn *rdma,
+	u32 pool_id,
+	const struct kfastblock_object_extent *extent,
+	const void *data,
+	u64 seq,
+	struct kfastblock_transport_response_ctx *response);
+static int kfastblock_transport_rdma_read_object(
+	struct kfastblock_rdma_conn *rdma,
+	u32 pool_id,
+	const struct kfastblock_object_extent *extent,
+	void *data,
+	u64 seq,
+	struct kfastblock_transport_response_ctx *response);
+static int kfastblock_transport_rdma_delete_object(
+	struct kfastblock_rdma_conn *rdma,
+	u32 pool_id,
+	const struct kfastblock_object_extent *extent,
+	u64 seq,
+	struct kfastblock_transport_response_ctx *response);
+
+static int kfastblock_transport_build_raw_frame(
+	u8 service, u8 opcode, u64 seq,
+	const struct kfastblock_transport_body_part *parts,
+	unsigned int nr_parts,
+	void **frame_out, u32 *frame_len_out)
+{
+	u32 body_len = 0;
+	u32 frame_len;
+	unsigned int i;
+	u8 *cursor;
+	struct kfastblock_raw_header *hdr;
+	void *frame;
+
+	if (!frame_out || !frame_len_out)
+		return -EINVAL;
+	*frame_out = NULL;
+	*frame_len_out = 0;
+
+	if (parts) {
+		for (i = 0; i < nr_parts; ++i)
+			body_len += parts[i].len;
+	}
+	frame_len = sizeof(*hdr) + body_len;
+	frame = kzalloc(frame_len, GFP_KERNEL);
+	if (!frame)
+		return -ENOMEM;
+
+	hdr = frame;
+	hdr->magic = cpu_to_le32(KFASTBLOCK_RAW_MAGIC);
+	hdr->version_major = KFASTBLOCK_RAW_VERSION_MAJOR;
+	hdr->version_minor = KFASTBLOCK_RAW_VERSION_MINOR;
+	hdr->service = service;
+	hdr->opcode = opcode;
+	hdr->flags = cpu_to_le32(0);
+	hdr->seq = cpu_to_le64(seq);
+	hdr->status = cpu_to_le32(0);
+	hdr->body_len = cpu_to_le32(body_len);
+
+	cursor = (u8 *)frame + sizeof(*hdr);
+	if (parts) {
+		for (i = 0; i < nr_parts; ++i) {
+			if (!parts[i].len)
+				continue;
+			memcpy(cursor, parts[i].buf, parts[i].len);
+			cursor += parts[i].len;
+		}
+	}
+	*frame_out = frame;
+	*frame_len_out = frame_len;
+	return 0;
+}
+
+static int kfastblock_transport_rdma_exchange_parts(
+	struct kfastblock_rdma_conn *rdma,
+	u8 service, u8 opcode, u64 seq,
+	const struct kfastblock_transport_body_part *parts,
+	unsigned int nr_parts,
+	struct kfastblock_transport_response_ctx *response)
+{
+	void *req_frame = NULL;
+	void *rsp_frame = NULL;
+	u32 req_len = 0;
+	u32 rsp_cap = KFASTBLOCK_RDMA_BUF_LEN;
+	int ret;
+	u32 body_len;
+
+	if (!rdma || !response)
+		return -EINVAL;
+
+	kfastblock_transport_response_ctx_reset(response);
+	ret = kfastblock_transport_build_raw_frame(service, opcode, seq, parts,
+						   nr_parts, &req_frame,
+						   &req_len);
+	if (ret)
+		return ret;
+
+	rsp_frame = kzalloc(rsp_cap, GFP_KERNEL);
+	if (!rsp_frame) {
+		kfree(req_frame);
+		return -ENOMEM;
+	}
+
+	ret = kfastblock_rdma_conn_exchange(rdma, req_frame, req_len, rsp_frame,
+					    rsp_cap, seq);
+	kfree(req_frame);
+	if (ret < 0) {
+		kfree(rsp_frame);
+		return ret;
+	}
+
+	if ((u32)ret < sizeof(response->hdr)) {
+		kfree(rsp_frame);
+		return -EPROTO;
+	}
+	memcpy(&response->hdr, rsp_frame, sizeof(response->hdr));
+	body_len = le32_to_cpu(response->hdr.body_len);
+	if (sizeof(response->hdr) + body_len > (u32)ret) {
+		kfree(rsp_frame);
+		return -EPROTO;
+	}
+	if (body_len) {
+		response->body = kzalloc(body_len, GFP_KERNEL);
+		if (!response->body) {
+			kfree(rsp_frame);
+			return -ENOMEM;
+		}
+		memcpy(response->body,
+		       (u8 *)rsp_frame + sizeof(response->hdr), body_len);
+		response->body_len = body_len;
+	}
+	kfree(rsp_frame);
+	response->ret = kfastblock_transport_status_to_errno(
+		le32_to_cpu(response->hdr.status));
+	return response->ret;
+}
+
+static int kfastblock_transport_rdma_write_object(
+	struct kfastblock_rdma_conn *rdma,
+	u32 pool_id,
+	const struct kfastblock_object_extent *extent,
+	const void *data,
+	u64 seq,
+	struct kfastblock_transport_response_ctx *response)
+{
+	struct kfastblock_raw_write_object_req req = {
+		.pool_id = cpu_to_le32(pool_id),
+	};
+	struct kfastblock_transport_body_part parts[3];
+	u32 object_name_len;
+	u32 data_len;
+
+	if (!rdma || !extent || (!data && extent->length) || !response)
+		return -EINVAL;
+
+	object_name_len = strlen(extent->object_name);
+	data_len = extent->length;
+	req.pg_id = cpu_to_le32(extent->pg_id);
+	req.offset = cpu_to_le64(extent->object_offset);
+	req.data_len = cpu_to_le32(data_len);
+	req.object_name_len = cpu_to_le16(object_name_len);
+	req.reserved = 0;
+
+	parts[0].buf = &req;
+	parts[0].len = sizeof(req);
+	parts[1].buf = extent->object_name;
+	parts[1].len = object_name_len;
+	parts[2].buf = data;
+	parts[2].len = data_len;
+
+	return kfastblock_transport_rdma_exchange_parts(
+		rdma, KFASTBLOCK_RAW_SERVICE_OSD,
+		KFASTBLOCK_RAW_OSD_OP_WRITE_OBJECT, seq, parts,
+		ARRAY_SIZE(parts), response);
+}
+
+static int kfastblock_transport_rdma_read_object(
+	struct kfastblock_rdma_conn *rdma,
+	u32 pool_id,
+	const struct kfastblock_object_extent *extent,
+	void *data,
+	u64 seq,
+	struct kfastblock_transport_response_ctx *response)
+{
+	struct kfastblock_raw_read_object_req req = {
+		.pool_id = cpu_to_le32(pool_id),
+		.pg_id = cpu_to_le32(extent->pg_id),
+		.offset = cpu_to_le64(extent->object_offset),
+		.length = cpu_to_le32(extent->length),
+		.object_name_len = cpu_to_le16(strlen(extent->object_name)),
+		.reserved = 0,
+	};
+	struct kfastblock_transport_body_part parts[2];
+	u32 object_name_len;
+	int ret;
+
+	if (!rdma || !extent || (!data && extent->length) || !response)
+		return -EINVAL;
+
+	object_name_len = strlen(extent->object_name);
+	parts[0].buf = &req;
+	parts[0].len = sizeof(req);
+	parts[1].buf = extent->object_name;
+	parts[1].len = object_name_len;
+
+	ret = kfastblock_transport_rdma_exchange_parts(
+		rdma, KFASTBLOCK_RAW_SERVICE_OSD,
+		KFASTBLOCK_RAW_OSD_OP_READ_OBJECT, seq, parts,
+		ARRAY_SIZE(parts), response);
+	if (ret)
+		return ret;
+	return kfastblock_transport_response_decode_read_object(response,
+								extent,
+								data);
+}
+
+static int kfastblock_transport_rdma_delete_object(
+	struct kfastblock_rdma_conn *rdma,
+	u32 pool_id,
+	const struct kfastblock_object_extent *extent,
+	u64 seq,
+	struct kfastblock_transport_response_ctx *response)
+{
+	struct kfastblock_raw_delete_object_req req = {
+		.pool_id = cpu_to_le32(pool_id),
+		.pg_id = cpu_to_le32(extent->pg_id),
+		.object_name_len = cpu_to_le16(strlen(extent->object_name)),
+		.reserved = 0,
+	};
+	struct kfastblock_transport_body_part parts[2];
+	u32 object_name_len;
+
+	if (!rdma || !extent || !response)
+		return -EINVAL;
+
+	object_name_len = strlen(extent->object_name);
+	parts[0].buf = &req;
+	parts[0].len = sizeof(req);
+	parts[1].buf = extent->object_name;
+	parts[1].len = object_name_len;
+
+	return kfastblock_transport_rdma_exchange_parts(
+		rdma, KFASTBLOCK_RAW_SERVICE_OSD,
+		KFASTBLOCK_RAW_OSD_OP_DELETE_OBJECT, seq, parts,
+		ARRAY_SIZE(parts), response);
 }
 
 static int kfastblock_transport_write_object(
@@ -2320,6 +2616,22 @@ static int kfastblock_transport_execute_object_opcode(
 	if (!ctx)
 		return -EINVAL;
 
+	if (ctx->use_rdma && ctx->rdma) {
+		if (ctx->op == REQ_OP_WRITE || ctx->op == REQ_OP_WRITE_ZEROES)
+			return kfastblock_transport_rdma_write_object(
+				ctx->rdma, ctx->kf_req->request_pool_id,
+				ctx->extent, ctx->buf, ctx->exchange.seq,
+				&ctx->response);
+		if (ctx->op == REQ_OP_READ)
+			return kfastblock_transport_rdma_read_object(
+				ctx->rdma, ctx->kf_req->request_pool_id,
+				ctx->extent, ctx->buf, ctx->exchange.seq,
+				&ctx->response);
+		return kfastblock_transport_rdma_delete_object(
+			ctx->rdma, ctx->kf_req->request_pool_id, ctx->extent,
+			ctx->exchange.seq, &ctx->response);
+	}
+
 	if (ctx->op == REQ_OP_WRITE || ctx->op == REQ_OP_WRITE_ZEROES)
 		return kfastblock_transport_write_object(
 			ctx->cached, ctx->kf_req->request_pool_id, ctx->extent,
@@ -2391,9 +2703,49 @@ static int kfastblock_transport_prepare_object_exchange(
 {
 	u64 seq;
 	int ret;
+	const struct kfastblock_xport_ops *xops;
 
 	if (!ctx)
 		return -EINVAL;
+
+	ctx->use_rdma = false;
+	ctx->rdma = NULL;
+	ctx->rdma_slot = NULL;
+
+	xops = kfastblock_xport_select(ctx->vol->spec.osd_transport,
+				       &ctx->leader);
+	if (xops && xops->transport_id == KFASTBLOCK_OSD_TRANSPORT_RDMA &&
+	    ctx->leader.rdma_port) {
+		ctx->rdma_slot = kfastblock_rdma_conn_pool_acquire(
+			ctx->vol->rdma_cache, KFASTBLOCK_MAX_RDMA_CACHE,
+			&ctx->leader);
+		if (!ctx->rdma_slot) {
+			/* Strict RDMA preference: do not silently use TCP. */
+			if (ctx->vol->spec.osd_transport ==
+			    KFASTBLOCK_OSD_TRANSPORT_RDMA) {
+				pr_warn_ratelimited(
+					"kfastblock: RDMA acquire failed peer=%s:%u\n",
+					ctx->leader.address, ctx->leader.rdma_port);
+				return -ENOTCONN;
+			}
+			pr_info_ratelimited(
+				"kfastblock: RDMA unavailable, fallback TCP peer=%s\n",
+				ctx->leader.address);
+			/* AUTO continues and falls back to TCP below. */
+		} else {
+			ctx->rdma = ctx->rdma_slot->conn;
+			ctx->use_rdma = true;
+			pr_info_ratelimited(
+				"kfastblock: object I/O via RDMA peer=%s:%u op=%u\n",
+				ctx->leader.address, ctx->leader.rdma_port,
+				ctx->raw_opcode);
+			seq = kfastblock_rdma_conn_slot_next_seq(ctx->rdma_slot);
+			return kfastblock_transport_begin_exchange(
+				&ctx->exchange, ctx->kf_req, ctx->object_index,
+				KFASTBLOCK_RAW_SERVICE_OSD, ctx->raw_opcode,
+				seq);
+		}
+	}
 
 	ret = kfastblock_transport_prepare_mux_osd_socket(
 		ctx->vol, &ctx->leader, &ctx->cached);
@@ -2427,7 +2779,21 @@ static void kfastblock_transport_note_object_leader_success(
 static void kfastblock_transport_finalize_object_socket(
 	struct kfastblock_transport_object_io_ctx *ctx)
 {
-	if (!ctx || !ctx->vol || !ctx->cached)
+	if (!ctx)
+		return;
+
+	if (ctx->rdma_slot) {
+		kfastblock_rdma_conn_pool_release(ctx->rdma_slot, ctx->ret);
+		ctx->rdma_slot = NULL;
+		ctx->rdma = NULL;
+		ctx->use_rdma = false;
+	} else if (ctx->rdma) {
+		/* Uncached path (e.g. leader query). */
+		kfastblock_rdma_conn_free(ctx->rdma);
+		ctx->rdma = NULL;
+		ctx->use_rdma = false;
+	}
+	if (!ctx->vol || !ctx->cached)
 		return;
 
 	kfastblock_transport_finalize_mux_osd_socket(
@@ -2478,6 +2844,16 @@ static void kfastblock_transport_cleanup_object_io(
 	if (!ctx)
 		return;
 
+	if (ctx->rdma_slot) {
+		kfastblock_rdma_conn_pool_release(ctx->rdma_slot, ctx->ret);
+		ctx->rdma_slot = NULL;
+		ctx->rdma = NULL;
+		ctx->use_rdma = false;
+	} else if (ctx->rdma) {
+		kfastblock_rdma_conn_free(ctx->rdma);
+		ctx->rdma = NULL;
+		ctx->use_rdma = false;
+	}
 	if (ctx->cached)
 		kfastblock_transport_release_osd_socket(ctx->cached);
 	if (ctx->ret && ctx->vol && ctx->extent)
@@ -2578,6 +2954,9 @@ static void kfastblock_transport_object_io_ctx_reset_attempt(
 
 	memset(&ctx->leader, 0, sizeof(ctx->leader));
 	ctx->cached = NULL;
+	ctx->rdma = NULL;
+	ctx->rdma_slot = NULL;
+	ctx->use_rdma = false;
 	ctx->sock = NULL;
 	ctx->ret = 0;
 	ctx->actions = 0;
@@ -3020,12 +3399,49 @@ static int kfastblock_transport_prepare_leader_query_request(
 static int kfastblock_transport_drive_leader_query_target(
 	struct kfastblock_transport_leader_query_ctx *ctx)
 {
+	const struct kfastblock_xport_ops *xops;
+	struct kfastblock_rdma_conn *rdma = NULL;
+
 	if (!ctx)
 		return -EINVAL;
 
 	ctx->ret = kfastblock_transport_prepare_leader_query_target(ctx);
 	if (ctx->ret)
 		return ctx->ret;
+
+	xops = kfastblock_xport_select(ctx->vol->spec.osd_transport,
+				       &ctx->target);
+	if (xops && xops->transport_id == KFASTBLOCK_OSD_TRANSPORT_RDMA &&
+	    ctx->target.rdma_port) {
+		rdma = kfastblock_rdma_conn_alloc();
+		if (!rdma) {
+			ctx->ret = -ENOMEM;
+			return ctx->ret;
+		}
+		ctx->ret = kfastblock_rdma_conn_connect(rdma, &ctx->target);
+		if (!ctx->ret) {
+			ctx->seq = (u64)get_random_u64();
+			if (!ctx->seq)
+				ctx->seq = 1;
+			ctx->ret = kfastblock_transport_fetch_pg_leader_from_osd_rdma(
+				rdma, ctx->kf_req->request_pool_id,
+				ctx->hint->pg_id, ctx->seq, ctx->leader_out);
+		}
+		kfastblock_rdma_conn_free(rdma);
+		ctx->actions = kfastblock_recovery_classify_leader_failure(ctx->ret);
+		kfastblock_volume_account_leader_query(
+			ctx->vol, ctx->hint->pg_id, ctx->target.osd_id, ctx->ret);
+		if (!ctx->ret) {
+			/* When leader_port is raw RDMA, also keep rdma_port. */
+			if (!ctx->leader_out->rdma_port)
+				ctx->leader_out->rdma_port =
+					ctx->leader_out->port;
+			ctx->ret = kfastblock_recovery_update_live_pg_leader(
+				ctx->vol, ctx->kf_req->request_pool_id,
+				ctx->hint->pg_id, ctx->leader_out);
+		}
+		return ctx->ret;
+	}
 
 	ctx->ret = kfastblock_transport_prepare_mux_osd_socket(
 		ctx->vol, &ctx->target, &ctx->cached);

@@ -207,6 +207,12 @@ static void usage(const char *prog)
 	fprintf(stderr, "  --data <string>\n");
 	fprintf(stderr, "  --data-file <path>\n");
 	fprintf(stderr, "  --output <path>\n");
+	fprintf(stderr,
+		"\nNotes:\n"
+		"  get-cluster-map (version_minor>=1) prints per-shard rdma_port for\n"
+		"  kfastblock raw-over-RDMA data plane (not userspace protobuf RDMA).\n"
+		"  OSD object I/O --addr is raw TCP port; kernel module uses rdma_port\n"
+		"  when osd_transport=rdma|auto.\n");
 	fprintf(stderr, "\nExamples:\n");
 	fprintf(stderr, "  %s get-image-info --addr 127.0.0.1:3334 --pool-name pool1 --image-name img1\n", prog);
 	fprintf(stderr, "  %s get-cluster-map --addr 127.0.0.1:3334 --pool-id 1\n", prog);

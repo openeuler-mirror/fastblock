@@ -99,6 +99,9 @@ public:
     leader_endpoint resolve_pg_leader(uint64_t pool_id,
                                       uint64_t pg_id,
                                       bool use_raw_port) const;
+    /* Resolve leader address using raw RDMA data-plane port. */
+    leader_endpoint resolve_pg_leader_raw_rdma(uint64_t pool_id,
+                                              uint64_t pg_id) const;
     void process_get_leader(google::protobuf::RpcController *controller,
                             const osd::pg_leader_request *request,
                             osd::pg_leader_response *response,
