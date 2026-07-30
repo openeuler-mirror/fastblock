@@ -20,6 +20,35 @@ osd_raw_rdma_server::~osd_raw_rdma_server() noexcept {
     stop();
 }
 
+bool osd_raw_rdma_server::start_listener(uint32_t shard_id) {
+    if (shard_id >= _listeners.size()) {
+        return false;
+    }
+    auto& listener = _listeners[shard_id];
+    listener.shard_id = shard_id;
+    listener.stop.store(false, std::memory_order_release);
+    /* CM bind/listen lands in follow-up commits. */
+    return true;
+}
+
+void osd_raw_rdma_server::stop_listener(listener_context& listener) noexcept {
+    listener.stop.store(true, std::memory_order_release);
+    if (listener.worker.joinable()) {
+        listener.worker.join();
+    }
+    listener.port = 0;
+    listener.channel = nullptr;
+    listener.listen_id = nullptr;
+}
+
+void osd_raw_rdma_server::run_listener(uint32_t shard_id) noexcept {
+    if (shard_id >= _listeners.size()) {
+        return;
+    }
+    /* Event loop lands in follow-up commits. */
+    (void)_listeners[shard_id];
+}
+
 bool osd_raw_rdma_server::start(const std::string& bind_address,
                                 uint32_t shard_count) {
     if (_running.load(std::memory_order_acquire)) {
@@ -31,16 +60,25 @@ bool osd_raw_rdma_server::start(const std::string& bind_address,
 
     _bind_address = bind_address;
     _listeners.assign(shard_count, listener_context{});
-    /* CM listen wiring lands in follow-up commits. */
-    SPDK_NOTICELOG("raw RDMA server stub start on %s shards=%u (not listening yet)\n",
+    for (uint32_t i = 0; i < shard_count; ++i) {
+        if (!start_listener(i)) {
+            stop();
+            return false;
+        }
+    }
+    SPDK_NOTICELOG("raw RDMA server started on %s shards=%u\n",
                    _bind_address.c_str(), shard_count);
     _running.store(true, std::memory_order_release);
     return true;
 }
 
 void osd_raw_rdma_server::stop() noexcept {
-    if (!_running.exchange(false, std::memory_order_acq_rel)) {
+    if (!_running.exchange(false, std::memory_order_acq_rel) &&
+        _listeners.empty()) {
         return;
+    }
+    for (auto& listener : _listeners) {
+        stop_listener(listener);
     }
     _listeners.clear();
     _bind_address.clear();
