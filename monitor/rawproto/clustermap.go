@@ -127,6 +127,13 @@ func encodeOSDEntry(body *bytes.Buffer, osdInfo *msg.OsdDynamicInfo) error {
 			/* Fallback: legacy maps may only expose protobuf RDMA port. */
 			port = core.GetPort()
 		}
+		/* Clamp to uint16 range; values above are treated as unpublished (0). */
+		if port > 0xffff {
+			port = 0
+		}
+		if rdmaPort > 0xffff {
+			rdmaPort = 0
+		}
 		entry := osdShardEntry{
 			ShardID:  shardID,
 			Port:     uint16(port),
