@@ -93,8 +93,16 @@ enum kfastblock_rdma_conn_state {
 
 enum kfastblock_rdma_wr_id {
 	KFASTBLOCK_RDMA_WR_SEND = 1,
-	KFASTBLOCK_RDMA_WR_RECV = 2,
+	/* RECV wr_id base; actual id = base + slot index [0, depth). */
+	KFASTBLOCK_RDMA_WR_RECV_BASE = 0x100,
 };
+
+static bool kfastblock_rdma_wr_is_recv(u64 wr_id)
+{
+	return wr_id >= KFASTBLOCK_RDMA_WR_RECV_BASE &&
+	       wr_id < (KFASTBLOCK_RDMA_WR_RECV_BASE +
+			KFASTBLOCK_RDMA_RECV_DEPTH_MAX);
+}
 
 struct kfastblock_rdma_conn {
 	char peer_addr[KFASTBLOCK_MAX_ADDR_LEN];
@@ -118,6 +126,12 @@ struct kfastblock_rdma_conn {
 	bool send_mapped;
 	bool recv_mapped;
 	bool recv_posted;
+	/* Target outstanding RECV posts (clamped at connect). */
+	u8 recv_depth;
+	/* Currently posted RECV count (0..recv_depth). */
+	u8 recv_posted_count;
+	/* Next RECV wr_id slot index (rotates in [0, depth_max)). */
+	u8 recv_wr_slot;
 	struct completion send_done;
 	struct completion recv_done;
 	int send_wc_status;
@@ -158,6 +172,8 @@ static void kfastblock_rdma_conn_free_bufs(struct kfastblock_rdma_conn *conn)
 	conn->recv_buf = NULL;
 	conn->recv_buf_len = 0;
 	conn->recv_posted = false;
+	conn->recv_posted_count = 0;
+	conn->recv_wr_slot = 0;
 }
 
 static void kfastblock_rdma_conn_destroy_resources(struct kfastblock_rdma_conn *conn)
@@ -287,28 +303,56 @@ static int kfastblock_rdma_post_recv(struct kfastblock_rdma_conn *conn)
 	struct ib_recv_wr wr;
 	const struct ib_recv_wr *bad;
 	int ret;
+	u8 slot;
 
 	if (!conn || !conn->cm_id || !conn->cm_id->qp || !conn->pd ||
 	    !conn->recv_mapped)
 		return -ENOTCONN;
+	if (!conn->recv_depth)
+		conn->recv_depth = 1;
+	if (conn->recv_posted_count >= conn->recv_depth)
+		return 0;
 
+	/* Rotating slot tags wr_id so multi-depth CQ entries stay unique. */
+	slot = conn->recv_wr_slot % KFASTBLOCK_RDMA_RECV_DEPTH_MAX;
 	memset(&sge, 0, sizeof(sge));
 	sge.addr = conn->recv_dma;
 	sge.length = conn->recv_buf_len;
 	sge.lkey = conn->pd->local_dma_lkey;
 
 	memset(&wr, 0, sizeof(wr));
-	wr.wr_id = KFASTBLOCK_RDMA_WR_RECV;
+	wr.wr_id = KFASTBLOCK_RDMA_WR_RECV_BASE + slot;
 	wr.sg_list = &sge;
 	wr.num_sge = 1;
 
 	ret = ib_post_recv(conn->cm_id->qp, &wr, &bad);
 	if (ret)
 		return ret;
+	if (!conn->recv_posted) {
+		reinit_completion(&conn->recv_done);
+		conn->recv_wc_status = 0;
+		conn->recv_byte_len = 0;
+	}
 	conn->recv_posted = true;
-	reinit_completion(&conn->recv_done);
-	conn->recv_wc_status = 0;
-	conn->recv_byte_len = 0;
+	conn->recv_posted_count++;
+	conn->recv_wr_slot = (u8)((slot + 1) % KFASTBLOCK_RDMA_RECV_DEPTH_MAX);
+	return 0;
+}
+
+/* Post RECV WRs until outstanding count reaches conn->recv_depth. */
+static int kfastblock_rdma_post_recv_fill(struct kfastblock_rdma_conn *conn)
+{
+	int ret;
+
+	if (!conn)
+		return -EINVAL;
+	if (!conn->recv_depth)
+		conn->recv_depth = (u8)kfastblock_rdma_recv_depth_clamped();
+	while (conn->recv_posted_count < conn->recv_depth) {
+		ret = kfastblock_rdma_post_recv(conn);
+		if (ret)
+			return ret;
+	}
 	return 0;
 }
 
@@ -334,10 +378,12 @@ static int kfastblock_rdma_poll_one(struct kfastblock_rdma_conn *conn,
 			complete(&conn->send_done);
 			return 0;
 		}
-		if (wc.wr_id == KFASTBLOCK_RDMA_WR_RECV) {
+		if (kfastblock_rdma_wr_is_recv(wc.wr_id)) {
 			conn->recv_wc_status = wc.status;
 			conn->recv_byte_len = wc.byte_len;
-			conn->recv_posted = false;
+			if (conn->recv_posted_count)
+				conn->recv_posted_count--;
+			conn->recv_posted = conn->recv_posted_count > 0;
 			complete(&conn->recv_done);
 			return 0;
 		}
@@ -518,7 +564,10 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 			conn->last_error = ret;
 			goto err_destroy_id;
 		}
-		ret = kfastblock_rdma_post_recv(conn);
+		conn->recv_depth = (u8)kfastblock_rdma_recv_depth_clamped();
+		conn->recv_posted_count = 0;
+		conn->recv_wr_slot = 0;
+		ret = kfastblock_rdma_post_recv_fill(conn);
 		if (ret) {
 			conn->last_error = ret;
 			goto err_destroy_id;
@@ -633,10 +682,12 @@ int kfastblock_rdma_conn_recv(struct kfastblock_rdma_conn *conn,
 		return -ENOTCONN;
 
 	dev = conn->cm_id->device;
-	if (!conn->recv_posted) {
-		ret = kfastblock_rdma_post_recv(conn);
-		if (ret)
+	if (!conn->recv_posted || !conn->recv_posted_count) {
+		ret = kfastblock_rdma_post_recv_fill(conn);
+		if (ret) {
+			conn->last_error = ret;
 			return ret;
+		}
 	}
 
 	deadline = jiffies + msecs_to_jiffies(kfastblock_rdma_timeout_ms_or_default(kfastblock_rdma_io_timeout_ms, 5000));
@@ -662,9 +713,10 @@ int kfastblock_rdma_conn_recv(struct kfastblock_rdma_conn *conn,
 					   DMA_FROM_DEVICE);
 		memcpy(buf, conn->recv_buf, got);
 
-		/* Re-post for the next response/request cycle. */
-		ret = kfastblock_rdma_post_recv(conn);
+		/* Keep outstanding RECV depth filled for the next cycle. */
+		ret = kfastblock_rdma_post_recv_fill(conn);
 		if (ret) {
+			conn->last_error = ret;
 			kfastblock_rdma_recv_err++;
 			return ret;
 		}
