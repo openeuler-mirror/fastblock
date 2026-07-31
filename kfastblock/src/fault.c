@@ -17,6 +17,9 @@ static const struct kfastblock_fault_site_desc kfastblock_fault_sites[] = {
 	{ KFASTBLOCK_FAULT_MONITOR_FETCH_IMAGE, "monitor_fetch_image" },
 	{ KFASTBLOCK_FAULT_MONITOR_FETCH_CLUSTER, "monitor_fetch_cluster" },
 	{ KFASTBLOCK_FAULT_OBJECT_IO, "object_io" },
+	{ KFASTBLOCK_FAULT_RDMA_CONNECT, "rdma_connect" },
+	{ KFASTBLOCK_FAULT_RDMA_EXCHANGE, "rdma_exchange" },
+	{ KFASTBLOCK_FAULT_FORCE_TCP, "force_tcp" },
 };
 
 static bool kfastblock_fault_token_matches(const char *token, const char *name)
@@ -33,12 +36,9 @@ static u32 kfastblock_fault_mask_for_token(const char *token)
 	if (!strcmp(token, "none"))
 		return 0;
 	if (!strcmp(token, "all"))
-		return KFASTBLOCK_FAULT_MONITOR_CONNECT |
-			KFASTBLOCK_FAULT_OSD_CONNECT |
-			KFASTBLOCK_FAULT_LEADER_QUERY |
-			KFASTBLOCK_FAULT_MONITOR_FETCH_IMAGE |
-			KFASTBLOCK_FAULT_MONITOR_FETCH_CLUSTER |
-			KFASTBLOCK_FAULT_OBJECT_IO;
+		return KFASTBLOCK_FAULT_ALL_MASK;
+	if (!strcmp(token, "rdma") || !strcmp(token, "rdma_all"))
+		return KFASTBLOCK_FAULT_RDMA_MASK;
 
 	for (i = 0; i < ARRAY_SIZE(kfastblock_fault_sites); ++i) {
 		if (kfastblock_fault_token_matches(token,
