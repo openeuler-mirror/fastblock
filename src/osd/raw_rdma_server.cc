@@ -1084,9 +1084,20 @@ void osd_raw_rdma_server::run_listener(uint32_t shard_id) noexcept {
         }
 
         if (event->event == RDMA_CM_EVENT_CONNECT_REQUEST) {
-            if (!handle_connect_request(event->id, shard_id)) {
+            /* Refuse new work while stop() is draining listeners. */
+            if (!_running.load(std::memory_order_acquire)) {
+                _reject_total.fetch_add(1, std::memory_order_relaxed);
+                SPDK_NOTICELOG(
+                  "raw RDMA shard %u reject CONNECT_REQUEST: server not running\n",
+                  shard_id);
                 ::rdma_reject(event->id, nullptr, 0);
                 ::rdma_destroy_id(event->id);
+            } else if (!handle_connect_request(event->id, shard_id)) {
+                _reject_total.fetch_add(1, std::memory_order_relaxed);
+                ::rdma_reject(event->id, nullptr, 0);
+                ::rdma_destroy_id(event->id);
+            } else {
+                _accept_total.fetch_add(1, std::memory_order_relaxed);
             }
         } else if (event->event == RDMA_CM_EVENT_ESTABLISHED) {
             auto* conn = static_cast<connection_context*>(event->id->context);
@@ -1295,6 +1306,10 @@ raw_rdma_server_stats osd_raw_rdma_server::collect_stats() const {
     st.shard_count = shard_count();
     st.connection_count = connection_count();
     get_io_totals(&st.recv_total, &st.send_total, &st.error_total);
+    st.accept_total = _accept_total.load(std::memory_order_relaxed);
+    st.reject_total = _reject_total.load(std::memory_order_relaxed);
+    st.dispatch_error_total =
+      _dispatch_error_total.load(std::memory_order_relaxed);
     st.listen_ports.reserve(_listeners.size());
     for (size_t i = 0; i < _listeners.size(); ++i) {
         st.listen_ports.push_back(_listeners[i] ? _listeners[i]->port : 0);
