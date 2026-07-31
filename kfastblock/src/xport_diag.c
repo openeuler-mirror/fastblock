@@ -27,3 +27,30 @@ void kfastblock_xport_diag_format_summary(
 		  xport->shard_rdma_port_count,
 		  xport->osd_with_rdma_count);
 }
+
+u32 kfastblock_xport_diag_leader_rdma_pct(
+	const struct kfastblock_diag_xport_snapshot *xport)
+{
+	if (!xport || !xport->leader_valid_count)
+		return 0;
+	return (xport->leader_rdma_ready_count * 100U) /
+	       xport->leader_valid_count;
+}
+
+u32 kfastblock_xport_diag_shard_rdma_pct(
+	const struct kfastblock_diag_xport_snapshot *xport)
+{
+	if (!xport || !xport->shard_count)
+		return 0;
+	return (xport->shard_rdma_port_count * 100U) / xport->shard_count;
+}
+
+bool kfastblock_xport_diag_rdma_unavailable(
+	const struct kfastblock_diag_xport_snapshot *xport)
+{
+	if (!xport)
+		return false;
+	return xport->prefers_rdma &&
+	       xport->leader_valid_count > 0 &&
+	       xport->leader_rdma_ready_count == 0;
+}
