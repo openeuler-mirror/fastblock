@@ -153,4 +153,8 @@ private:
     mutable std::mutex _connections_mutex{};
     std::vector<std::shared_ptr<connection_context>> _connections{};
     static constexpr size_t max_connections{256};
+    /* Global lifetime counters; survive connection teardown. */
+    std::atomic<uint64_t> _accept_total{0};
+    std::atomic<uint64_t> _reject_total{0};
+    std::atomic<uint64_t> _dispatch_error_total{0};
 };
