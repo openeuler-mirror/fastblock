@@ -40,6 +40,11 @@ kfastblock_xport_select_explained(u32 preference,
 				  const struct kfastblock_leader_info *leader,
 				  char *reason, size_t reason_len);
 
+/* One-line select decision for logs (pref/reason/ops/leader). */
+int kfastblock_xport_select_describe(u32 preference,
+				     const struct kfastblock_leader_info *leader,
+				     char *line, size_t line_len);
+
 /* True when preference is RDMA or AUTO (caller still probes). */
 static inline bool kfastblock_xport_prefers_rdma(u32 preference)
 {
