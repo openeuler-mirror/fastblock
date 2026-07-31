@@ -392,9 +392,10 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 	shard_port_m := make(map[uint32]ShardPort)
 	for shard_id, shard_port := range sharded_ports {
 		shardPort := ShardPort{
-			Coreid: shard_port.Coreid,
-			Port:   shard_port.Port,
-			RawPort: shard_port.RawPort,
+			Coreid:      shard_port.Coreid,
+			Port:        shard_port.Port,
+			RawPort:     shard_port.RawPort,
+			RawRdmaPort: shard_port.RawRdmaPort,
 		}
 		shard_port_m[shard_id] = shardPort
 	}
