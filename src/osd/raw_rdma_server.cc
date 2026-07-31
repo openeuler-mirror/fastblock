@@ -1158,17 +1158,8 @@ bool osd_raw_rdma_server::start(const std::string& bind_address,
             return false;
         }
     }
-    {
-        std::string ports;
-        for (uint32_t i = 0; i < shard_count; ++i) {
-            if (i) {
-                ports.push_back(',');
-            }
-            ports += std::to_string(_listeners[i] ? _listeners[i]->port : 0);
-        }
-        SPDK_NOTICELOG("raw RDMA server started on %s shards=%u ports=[%s]\n",
-                       _bind_address.c_str(), shard_count, ports.c_str());
-    }
+    SPDK_NOTICELOG("raw RDMA server started on %s shards=%u ports=[%s]\n",
+                   _bind_address.c_str(), shard_count, ports_string().c_str());
     _running.store(true, std::memory_order_release);
     return true;
 }
