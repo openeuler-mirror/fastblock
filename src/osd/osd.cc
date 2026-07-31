@@ -27,6 +27,7 @@
 #include "mon_client.h"
 #include "raw_tcp_server.h"
 #include "raw_rdma_server.h"
+#include "raw_rdma_stats.h"
 
 #include <spdk/string.h>
 
@@ -685,10 +686,11 @@ struct pm_load_context : public utils::context{
             SPDK_WARNLOG("start raw RDMA server failed; continue with TCP raw\n");
         }
         if (global_raw_rdma_server && global_raw_rdma_server->is_running()) {
+            const auto st = global_raw_rdma_server->collect_stats();
             SPDK_NOTICELOG(
-              "raw RDMA active shards=%u connections=%zu\n",
-              global_raw_rdma_server->shard_count(),
-              global_raw_rdma_server->connection_count());
+              "raw RDMA active %s max_conns=%zu\n",
+              format_raw_rdma_server_stats(st).c_str(),
+              global_raw_rdma_server->max_connection_limit());
         }
         return true;
     }
