@@ -114,5 +114,11 @@ kfastblock_xport_ops_is_tcp(const struct kfastblock_xport_ops *ops)
 void kfastblock_xport_probe_cache_invalidate(void);
 u64 kfastblock_xport_probe_cache_hits(void);
 u64 kfastblock_xport_probe_cache_misses(void);
+/* Number of currently valid (non-expired) probe cache entries. */
+u32 kfastblock_xport_probe_cache_valid_count(void);
+
+/* Format leader endpoint for logs: "addr:tcp/rdma" into @buf. */
+int kfastblock_xport_format_leader(const struct kfastblock_leader_info *leader,
+				   char *buf, size_t buf_len);
 
 #endif
