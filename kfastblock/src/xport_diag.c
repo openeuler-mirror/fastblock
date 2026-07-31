@@ -3,6 +3,7 @@
 #include <linux/string.h>
 
 #include "kfastblock/diag.h"
+#include "kfastblock/xport.h"
 #include "kfastblock/xport_diag.h"
 
 void kfastblock_xport_diag_format_summary(
@@ -89,4 +90,19 @@ void kfastblock_xport_diag_dump_seq(
 		   kfastblock_xport_diag_rdma_unavailable(xport) ? 1 : 0);
 	kfastblock_xport_diag_format_summary(xport, summary, sizeof(summary));
 	seq_printf(m, "%sxport.summary=%s\n", prefix, summary);
+}
+
+void kfastblock_xport_diag_dump_probe_cache(struct seq_file *m,
+					    const char *prefix)
+{
+	if (!m)
+		return;
+	if (!prefix)
+		prefix = "";
+	seq_printf(m, "%sxport.probe_cache_hits=%llu\n", prefix,
+		   (unsigned long long)kfastblock_xport_probe_cache_hits());
+	seq_printf(m, "%sxport.probe_cache_misses=%llu\n", prefix,
+		   (unsigned long long)kfastblock_xport_probe_cache_misses());
+	seq_printf(m, "%sxport.probe_cache_valid=%u\n", prefix,
+		   kfastblock_xport_probe_cache_valid_count());
 }
