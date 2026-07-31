@@ -29,6 +29,11 @@
 #include "kfastblock/xport.h"
 #include "kfastblock/xport_rdma.h"
 
+static bool g_kfastblock_rdma_pool_enable = true;
+module_param_named(rdma_pool_enable, g_kfastblock_rdma_pool_enable, bool, 0644);
+MODULE_PARM_DESC(rdma_pool_enable,
+		 "reuse RDMA connections via volume rdma_cache (default true)");
+
 #define KFASTBLOCK_OBJECT_IO_MAX_ATTEMPTS 2
 
 static int kfastblock_transport_try_connect_host(const char *host,
