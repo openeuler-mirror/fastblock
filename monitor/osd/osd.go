@@ -43,9 +43,11 @@ func isValidPort(port uint32) bool {
 }
 
 type ShardPort struct {
-	Coreid uint32 `json:"shardid"`
-	Port   uint32 `json:"port"`
-	RawPort uint32 `json:"raw_port,omitempty"`
+	Coreid      uint32 `json:"shardid"`
+	Port        uint32 `json:"port"`
+	RawPort     uint32 `json:"raw_port,omitempty"`
+	/* kfastblock raw-over-RDMA data plane; 0 means unpublished. */
+	RawRdmaPort uint32 `json:"raw_rdma_port,omitempty"`
 }
 
 // when osd restarts, following information is changed(host may not)
@@ -372,6 +374,10 @@ func ProcessBootMessage(ctx context.Context, client *etcdapi.EtcdClient, id int3
 		}
 		if shard_port.RawPort != 0 && !isValidPort(shard_port.RawPort) {
 			log.Warn(ctx, "invalide raw port: ", shard_port.RawPort)
+			return OSD_ERR_ADDRESS_INVALID
+		}
+		if shard_port.RawRdmaPort != 0 && !isValidPort(shard_port.RawRdmaPort) {
+			log.Warn(ctx, "invalid raw rdma port: ", shard_port.RawRdmaPort)
 			return OSD_ERR_ADDRESS_INVALID
 		}
 	}
