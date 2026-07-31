@@ -142,24 +142,10 @@ kfastblock_rdma_pool_get(struct kfastblock_rdma_pool *pool,
 	if (!pool || !pool->slots || !kfastblock_leader_has_rdma(leader))
 		return NULL;
 
-	/* Pass 1: reuse idle matching connected slot. */
-	for (i = 0; i < pool->nr_slots; ++i) {
-		struct kfastblock_rdma_pool_slot *slot = &pool->slots[i];
-
-		mutex_lock(&slot->lock);
-		if (slot->state == KFASTBLOCK_RDMA_POOL_SLOT_IDLE &&
-		    kfastblock_rdma_pool_slot_matches_locked(slot, leader) &&
-		    kfastblock_rdma_conn_is_connected(slot->conn)) {
-			slot->state = KFASTBLOCK_RDMA_POOL_SLOT_BUSY;
-			slot->reuse_hits++;
-			slot->last_use_jiffies = jiffies;
-			pool->get_hits++;
-			conn = slot->conn;
-			mutex_unlock(&slot->lock);
-			return conn;
-		}
-		mutex_unlock(&slot->lock);
-	}
+	/* Pass 1: warm reuse (no CM). */
+	conn = kfastblock_rdma_pool_try_get(pool, leader);
+	if (conn)
+		return conn;
 
 	/* Pass 2: connect into first empty/dead slot. */
 	for (i = 0; i < pool->nr_slots; ++i) {
