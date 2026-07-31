@@ -47,6 +47,18 @@ static inline bool kfastblock_xport_prefers_rdma(u32 preference)
 	       preference == KFASTBLOCK_OSD_TRANSPORT_AUTO;
 }
 
+/* True when preference forces RDMA with no TCP fallback at select time. */
+static inline bool kfastblock_xport_forces_rdma(u32 preference)
+{
+	return preference == KFASTBLOCK_OSD_TRANSPORT_RDMA;
+}
+
+/* True when preference forces TCP only. */
+static inline bool kfastblock_xport_forces_tcp(u32 preference)
+{
+	return preference == KFASTBLOCK_OSD_TRANSPORT_TCP;
+}
+
 static inline const char *kfastblock_xport_preference_name(u32 preference)
 {
 	switch (preference) {
