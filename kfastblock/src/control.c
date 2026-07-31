@@ -155,6 +155,11 @@ static int kfastblock_parse_attach_spec(const char *args, size_t count,
 			}
 			spec->read_only = bool_val;
 		} else if (!strcmp(key, "osd_transport")) {
+			/*
+			 * osd_transport=tcp|rdma|auto
+			 * Selects kernel client <-> OSD data-plane backend only.
+			 * Monitor RPC path remains raw TCP regardless of this knob.
+			 */
 			if (!strcmp(value, "tcp"))
 				spec->osd_transport = KFASTBLOCK_OSD_TRANSPORT_TCP;
 			else if (!strcmp(value, "rdma"))

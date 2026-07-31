@@ -16,7 +16,14 @@ struct kfastblock_attach_spec {
 	char *pool_name;
 	char *image_name;
 	bool read_only;
-	/* KFASTBLOCK_OSD_TRANSPORT_* : kernel client <-> OSD data plane */
+	/*
+	 * OSD data-plane transport preference (monitor control-plane is always TCP).
+	 * Attach string: osd_transport=tcp|rdma|auto
+	 *   tcp  - force raw TCP to OSD leaders (default)
+	 *   rdma - force raw RDMA; requires leader.rdma_port; no TCP fallback
+	 *   auto - prefer RDMA when probe succeeds, else TCP
+	 * Values are KFASTBLOCK_OSD_TRANSPORT_*.
+	 */
 	u32 osd_transport;
 	u64 debug_size_bytes;
 	u32 debug_object_size;
