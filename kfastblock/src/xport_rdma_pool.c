@@ -46,6 +46,9 @@ int kfastblock_rdma_pool_init(struct kfastblock_rdma_pool *pool, u32 nr_slots)
 	if (!pool->slots)
 		return -ENOMEM;
 	pool->nr_slots = nr_slots;
+	pool->max_idle = KFASTBLOCK_RDMA_POOL_DEFAULT_MAX_IDLE;
+	if (pool->max_idle > nr_slots)
+		pool->max_idle = nr_slots;
 	for (i = 0; i < nr_slots; ++i)
 		kfastblock_rdma_pool_slot_init(&pool->slots[i]);
 	return 0;
@@ -343,6 +346,29 @@ kfastblock_rdma_pool_find_slot(struct kfastblock_rdma_pool *pool,
 			return &pool->slots[i];
 	}
 	return NULL;
+}
+
+bool kfastblock_rdma_pool_invalidate_leader(
+	struct kfastblock_rdma_pool *pool,
+	const struct kfastblock_leader_info *leader)
+{
+	u32 i;
+	bool closed = false;
+
+	if (!pool || !pool->slots || !leader)
+		return false;
+	for (i = 0; i < pool->nr_slots; ++i) {
+		struct kfastblock_rdma_pool_slot *slot = &pool->slots[i];
+
+		mutex_lock(&slot->lock);
+		if (slot->state != KFASTBLOCK_RDMA_POOL_SLOT_BUSY &&
+		    kfastblock_rdma_pool_slot_matches_locked(slot, leader)) {
+			kfastblock_rdma_pool_slot_disconnect_locked(slot);
+			closed = true;
+		}
+		mutex_unlock(&slot->lock);
+	}
+	return closed;
 }
 
 void kfastblock_rdma_pool_snapshot(struct kfastblock_rdma_pool *pool,

@@ -11,6 +11,8 @@ struct kfastblock_rdma_conn;
 
 /* Default number of reusable RDMA connection slots per pool. */
 #define KFASTBLOCK_RDMA_POOL_DEFAULT_SLOTS 8U
+/* Default max IDLE connections retained; 0 means no limit beyond nr_slots. */
+#define KFASTBLOCK_RDMA_POOL_DEFAULT_MAX_IDLE 4U
 
 enum kfastblock_rdma_pool_slot_state {
 	KFASTBLOCK_RDMA_POOL_SLOT_EMPTY = 0,
@@ -46,20 +48,25 @@ struct kfastblock_rdma_pool_snapshot {
 	u32 busy_slots;
 	u32 dead_slots;
 	u32 connected_slots;
+	u32 max_idle;
 	u64 get_hits;
 	u64 get_misses;
 	u64 connect_ok;
 	u64 connect_err;
 	u64 reuse_hits;
+	u64 idle_evictions;
 };
 
 struct kfastblock_rdma_pool {
 	struct kfastblock_rdma_pool_slot *slots;
 	u32 nr_slots;
+	/* Max IDLE slots retained; excess LRU-evicted on put. 0 = unlimited. */
+	u32 max_idle;
 	u64 get_hits;
 	u64 get_misses;
 	u64 connect_ok;
 	u64 connect_err;
+	u64 idle_evictions;
 };
 
 /* Allocate slot array and initialize empty pool. nr_slots 0 => default. */
@@ -115,5 +122,10 @@ int kfastblock_rdma_pool_format_stats(struct kfastblock_rdma_pool *pool,
 struct kfastblock_rdma_pool_slot *
 kfastblock_rdma_pool_find_slot(struct kfastblock_rdma_pool *pool,
 			       struct kfastblock_rdma_conn *conn);
+
+/* Disconnect and free one idle matching slot (if any). Returns true if closed. */
+bool kfastblock_rdma_pool_invalidate_leader(
+	struct kfastblock_rdma_pool *pool,
+	const struct kfastblock_leader_info *leader);
 
 #endif
