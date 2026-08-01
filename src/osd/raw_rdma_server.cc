@@ -787,6 +787,7 @@ void osd_raw_rdma_server::handle_recv_complete(connection_context* conn,
     std::memcpy(&hdr, rs.buf, sizeof(hdr));
     if (!validate_request_header(hdr)) {
         conn->error_count.fetch_add(1, std::memory_order_relaxed);
+        _dispatch_error_total.fetch_add(1, std::memory_order_relaxed);
         SPDK_ERRLOG("raw RDMA: invalid request header op=%u body_len=%u\n",
                     hdr.opcode, le32toh(hdr.body_len));
         send_response(conn, &hdr, raw_status_invalid_request, nullptr, 0);
@@ -824,6 +825,7 @@ void osd_raw_rdma_server::handle_recv_complete(connection_context* conn,
         dispatch_delete(conn, &hdr, body, body_len);
         break;
     default:
+        _dispatch_error_total.fetch_add(1, std::memory_order_relaxed);
         SPDK_ERRLOG("raw RDMA: unsupported opcode=%u (%s) peer=%s\n",
                     hdr.opcode, raw_opcode_name(hdr.opcode),
                     conn->peer_address.c_str());
@@ -1335,6 +1337,21 @@ std::vector<uint16_t> osd_raw_rdma_server::listen_ports() const {
 
 size_t osd_raw_rdma_server::max_connection_limit() const noexcept {
     return max_connections;
+}
+
+const std::string& osd_raw_rdma_server::bind_address() const noexcept {
+    return _bind_address;
+}
+
+size_t osd_raw_rdma_server::established_connection_count() const noexcept {
+    std::lock_guard<std::mutex> lock(_connections_mutex);
+    size_t n = 0;
+    for (const auto& c : _connections) {
+        if (c && c->established) {
+            ++n;
+        }
+    }
+    return n;
 }
 
 std::string osd_raw_rdma_server::ports_string() const {
