@@ -2717,10 +2717,34 @@ static int kfastblock_transport_prepare_object_exchange(
 	ctx->rdma = NULL;
 	ctx->rdma_slot = NULL;
 
+	/* force_tcp: consume budget and skip RDMA so AUTO fallback is testable. */
+	if (kfastblock_fault_injection_should_fail(
+		    &ctx->vol->fault_injection, KFASTBLOCK_FAULT_FORCE_TCP,
+		    &ret)) {
+		kfastblock_volume_account_fault_injection(
+			ctx->vol, KFASTBLOCK_FAULT_FORCE_TCP, ret);
+		pr_info_ratelimited(
+			"kfastblock: fault force_tcp peer=%s:%u\n",
+			ctx->leader.address, ctx->leader.rdma_port);
+		goto prepare_tcp;
+	}
+
 	xops = kfastblock_xport_select(ctx->vol->spec.osd_transport,
 				       &ctx->leader);
 	if (xops && xops->transport_id == KFASTBLOCK_OSD_TRANSPORT_RDMA &&
 	    ctx->leader.rdma_port) {
+		ret = kfastblock_transport_maybe_inject_fault(
+			ctx->vol, KFASTBLOCK_FAULT_RDMA_CONNECT);
+		if (ret) {
+			pr_warn_ratelimited(
+				"kfastblock: fault rdma_connect peer=%s:%u ret=%d\n",
+				ctx->leader.address, ctx->leader.rdma_port, ret);
+			if (ctx->vol->spec.osd_transport ==
+			    KFASTBLOCK_OSD_TRANSPORT_RDMA)
+				return ret;
+			/* AUTO: treat inject as acquire miss and fall TCP. */
+			goto prepare_tcp;
+		}
 		ctx->rdma_slot = kfastblock_rdma_conn_pool_acquire(
 			ctx->vol->rdma_cache, KFASTBLOCK_MAX_RDMA_CACHE,
 			&ctx->leader);
@@ -2751,6 +2775,8 @@ static int kfastblock_transport_prepare_object_exchange(
 				seq);
 		}
 	}
+
+prepare_tcp:
 
 	ret = kfastblock_transport_prepare_mux_osd_socket(
 		ctx->vol, &ctx->leader, &ctx->cached);
