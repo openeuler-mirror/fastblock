@@ -217,7 +217,8 @@ const char *kfastblock_diag_drift_status(bool valid, u32 score)
 	return "ok";
 }
 
-static void kfastblock_diag_format_drift_flags(u32 flags, char *buf,
+static void __maybe_unused
+kfastblock_diag_format_drift_flags(u32 flags, char *buf,
 					       size_t buf_len)
 {
 	size_t used = 0;
