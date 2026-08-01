@@ -202,6 +202,8 @@ struct kfastblock_diag_xport_snapshot {
 	u32 shard_count;
 	u32 shard_rdma_port_count; /* shards with rdma_port > 0 */
 	u32 osd_with_rdma_count; /* OSDs that have at least one RDMA shard */
+	u64 probe_cache_hits;
+	u64 probe_cache_misses;
 };
 
 struct kfastblock_diag_snapshot {
