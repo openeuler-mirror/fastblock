@@ -47,6 +47,31 @@ void kfastblock_xport_probe_cache_invalidate(void)
 	spin_unlock_irqrestore(&kfastblock_xport_probe_cache_lock, flags);
 }
 
+void kfastblock_xport_probe_cache_invalidate_leader(
+	const struct kfastblock_leader_info *leader)
+{
+	unsigned long flags;
+	u32 i;
+
+	if (!leader)
+		return;
+	spin_lock_irqsave(&kfastblock_xport_probe_cache_lock, flags);
+	for (i = 0; i < KFASTBLOCK_XPORT_PROBE_CACHE_SIZE; ++i) {
+		struct kfastblock_xport_probe_cache_entry *e =
+			&kfastblock_xport_probe_cache[i];
+
+		if (!e->valid)
+			continue;
+		if (e->rdma_port != leader->rdma_port)
+			continue;
+		if (strncmp(e->address, leader->address,
+			    KFASTBLOCK_MAX_ADDR_LEN) != 0)
+			continue;
+		e->valid = false;
+	}
+	spin_unlock_irqrestore(&kfastblock_xport_probe_cache_lock, flags);
+}
+
 u64 kfastblock_xport_probe_cache_hits(void)
 {
 	return READ_ONCE(kfastblock_xport_probe_cache_hit_count);
