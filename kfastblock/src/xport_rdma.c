@@ -665,18 +665,34 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 		}
 
 		{
-			struct ib_qp_init_attr qp_attr = {
-				.send_cq = conn->cq,
-				.recv_cq = conn->cq,
-				.cap = {
-					.max_send_wr = 32,
-					.max_recv_wr = 32,
-					.max_send_sge = 1,
-					.max_recv_sge = 1,
-				},
-				.qp_type = IB_QPT_RC,
-				.sq_sig_type = IB_SIGNAL_REQ_WR,
-			};
+			unsigned int max_send_wr = kfastblock_rdma_qp_max_send_wr;
+			unsigned int max_recv_wr = kfastblock_rdma_qp_max_recv_wr;
+			struct ib_qp_init_attr qp_attr;
+
+			/* Clamp to a practical RC range for raw SEND/RECV. */
+			if (max_send_wr < 1)
+				max_send_wr = 1;
+			if (max_send_wr > 256)
+				max_send_wr = 256;
+			if (max_recv_wr < 1)
+				max_recv_wr = 1;
+			if (max_recv_wr > 256)
+				max_recv_wr = 256;
+			/* RECV queue must cover configured outstanding depth. */
+			if (max_recv_wr < kfastblock_rdma_recv_depth_clamped())
+				max_recv_wr = kfastblock_rdma_recv_depth_clamped();
+
+			memset(&qp_attr, 0, sizeof(qp_attr));
+			qp_attr.send_cq = conn->cq;
+			qp_attr.recv_cq = conn->cq;
+			qp_attr.cap.max_send_wr = max_send_wr;
+			qp_attr.cap.max_recv_wr = max_recv_wr;
+			qp_attr.cap.max_send_sge = 1;
+			qp_attr.cap.max_recv_sge = 1;
+			qp_attr.qp_type = IB_QPT_RC;
+			qp_attr.sq_sig_type = kfastblock_rdma_signal_all
+						      ? IB_SIGNAL_ALL_WR
+						      : IB_SIGNAL_REQ_WR;
 
 			ret = rdma_create_qp(conn->cm_id, conn->pd, &qp_attr);
 			if (ret) {
@@ -686,12 +702,20 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 		}
 
 		{
-			struct rdma_conn_param conn_param = {
-				.responder_resources = 1,
-				.initiator_depth = 1,
-				.retry_count = 3,
-				.rnr_retry_count = 3,
-			};
+			unsigned int retry = kfastblock_rdma_retry_count;
+			unsigned int rnr = kfastblock_rdma_rnr_retry_count;
+			struct rdma_conn_param conn_param;
+
+			/* IBTA retry_count / rnr_retry_count are 3-bit fields. */
+			if (retry > 7)
+				retry = 7;
+			if (rnr > 7)
+				rnr = 7;
+			memset(&conn_param, 0, sizeof(conn_param));
+			conn_param.responder_resources = 1;
+			conn_param.initiator_depth = 1;
+			conn_param.retry_count = (u8)retry;
+			conn_param.rnr_retry_count = (u8)rnr;
 
 			reinit_completion(&conn->cm_done);
 			conn->state = KFASTBLOCK_RDMA_CONN_CONNECTING;
