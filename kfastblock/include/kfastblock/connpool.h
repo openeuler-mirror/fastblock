@@ -280,4 +280,14 @@ static inline void kfastblock_conn_pool_snapshot_set_rdma_ready(
 	snapshot->rdma_ready_slots = rdma_ready;
 }
 
+/* Merge RDMA ready into an already-filled TCP pool snapshot. */
+static inline void kfastblock_conn_pool_snapshot_merge_rdma(
+	struct kfastblock_conn_pool_snapshot *tcp_snap, u32 rdma_ready)
+{
+	if (!tcp_snap)
+		return;
+	tcp_snap->tcp_ready_slots = tcp_snap->ready_slots;
+	tcp_snap->rdma_ready_slots = rdma_ready;
+}
+
 #endif
