@@ -615,6 +615,32 @@ static void kfastblock_selfcheck_check_leader_rdma(
 				  pref == KFASTBLOCK_OSD_TRANSPORT_RDMA &&
 				  leader_valid > 0 && leader_rdma == 0,
 				  KFASTBLOCK_SELFCHECK_XPORT, 0, detail);
+
+	/* meta_lookup_rdma_port should match leader.rdma_port when shard exists */
+	for (i = 0; i < vol->view.route_count; ++i) {
+		const struct kfastblock_pg_route *route = &vol->view.routes[i];
+		u16 looked_up;
+
+		if (!route->leader_valid || !route->leader.port)
+			continue;
+		looked_up = kfastblock_meta_lookup_rdma_port(
+			&vol->view, route->leader.osd_id, route->leader.port);
+		scnprintf(detail, sizeof(detail),
+			  "route[%u] osd=%u tcp=%u leader_rdma=%u map_rdma=%u",
+			  i, route->leader.osd_id, route->leader.port,
+			  route->leader.rdma_port, looked_up);
+		/*
+		 * If map has a non-zero rdma_port for the TCP shard, leader
+		 * should eventually reflect it; mismatch is a soft warning.
+		 */
+		kfastblock_selfcheck_note(report, m, "xport.leader.rdma_vs_map",
+					  true,
+					  looked_up > 0 &&
+					  route->leader.rdma_port > 0 &&
+					  looked_up != route->leader.rdma_port,
+					  KFASTBLOCK_SELFCHECK_XPORT, 0,
+					  detail);
+	}
 }
 
 static void kfastblock_selfcheck_check_rdma_conn_pool(
