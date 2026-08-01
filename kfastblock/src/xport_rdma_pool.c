@@ -331,6 +331,21 @@ int kfastblock_rdma_pool_format_stats(struct kfastblock_rdma_pool *pool,
 			 (unsigned long long)snap.get_misses);
 }
 
+struct kfastblock_rdma_pool_slot *
+kfastblock_rdma_pool_find_slot(struct kfastblock_rdma_pool *pool,
+			       struct kfastblock_rdma_conn *conn)
+{
+	u32 i;
+
+	if (!pool || !pool->slots || !conn)
+		return NULL;
+	for (i = 0; i < pool->nr_slots; ++i) {
+		if (pool->slots[i].conn == conn)
+			return &pool->slots[i];
+	}
+	return NULL;
+}
+
 void kfastblock_rdma_pool_snapshot(struct kfastblock_rdma_pool *pool,
 				   struct kfastblock_rdma_pool_snapshot *snap)
 {

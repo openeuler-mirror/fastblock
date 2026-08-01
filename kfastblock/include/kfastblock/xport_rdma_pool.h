@@ -111,4 +111,9 @@ bool kfastblock_rdma_pool_has_busy(struct kfastblock_rdma_pool *pool);
 int kfastblock_rdma_pool_format_stats(struct kfastblock_rdma_pool *pool,
 				      char *buf, size_t buf_len);
 
+/* Find slot owning @conn (does not take slot lock). Returns NULL if unknown. */
+struct kfastblock_rdma_pool_slot *
+kfastblock_rdma_pool_find_slot(struct kfastblock_rdma_pool *pool,
+			       struct kfastblock_rdma_conn *conn);
+
 #endif
