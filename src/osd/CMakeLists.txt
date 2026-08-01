@@ -7,6 +7,7 @@ add_executable(fastblock-osd
   raw_tcp_server.cc
   raw_rdma_server.cc
   raw_rdma_stats.cc
+  raw_rdma_proto.cc
   partition_manager.cc
   osd_stm.cc
   data_statistics.cc
