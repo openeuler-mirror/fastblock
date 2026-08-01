@@ -23,6 +23,11 @@ static unsigned int kfastblock_rdma_io_timeout_ms = 5000;
 static unsigned int kfastblock_rdma_recv_depth = 2;
 #define KFASTBLOCK_RDMA_RECV_DEPTH_MIN 1U
 #define KFASTBLOCK_RDMA_RECV_DEPTH_MAX 16U
+/*
+ * 0 = busy-poll CQ only (default, low latency for short I/O).
+ * 1 = ib_req_notify_cq + poll hybrid skeleton (event-driven path).
+ */
+static bool kfastblock_rdma_use_cq_notify;
 
 module_param_named(rdma_cm_timeout_ms, kfastblock_rdma_cm_timeout_ms, uint, 0644);
 MODULE_PARM_DESC(rdma_cm_timeout_ms,
@@ -33,6 +38,9 @@ MODULE_PARM_DESC(rdma_io_timeout_ms,
 module_param_named(rdma_recv_depth, kfastblock_rdma_recv_depth, uint, 0644);
 MODULE_PARM_DESC(rdma_recv_depth,
 		 "Outstanding RDMA RECV posts per connection (1-16)");
+module_param_named(rdma_use_cq_notify, kfastblock_rdma_use_cq_notify, bool, 0644);
+MODULE_PARM_DESC(rdma_use_cq_notify,
+		 "Use ib_req_notify_cq hybrid wait (1) instead of pure poll (0)");
 
 static unsigned int kfastblock_rdma_timeout_ms_or_default(unsigned int v,
 							 unsigned int def)
@@ -167,10 +175,22 @@ struct kfastblock_rdma_conn {
 	u8 recv_wr_slot;
 	struct completion send_done;
 	struct completion recv_done;
+	/* Woken by CQ completion event when use_cq_notify is set. */
+	struct completion cq_event;
 	int send_wc_status;
 	int recv_wc_status;
 	u32 recv_byte_len;
 };
+
+/* SoftIRQ/CQ thread: signal waiters; actual WC drain stays in poll_one. */
+static void kfastblock_rdma_cq_comp_handler(struct ib_cq *cq, void *cq_context)
+{
+	struct kfastblock_rdma_conn *conn = cq_context;
+
+	if (!conn)
+		return;
+	complete(&conn->cq_event);
+}
 
 static void kfastblock_rdma_conn_unmap_bufs(struct kfastblock_rdma_conn *conn)
 {
@@ -489,6 +509,7 @@ struct kfastblock_rdma_conn *kfastblock_rdma_conn_alloc(void)
 	init_completion(&conn->cm_done);
 	init_completion(&conn->send_done);
 	init_completion(&conn->recv_done);
+	init_completion(&conn->cq_event);
 	return conn;
 }
 
@@ -587,13 +608,24 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 			struct ib_cq_init_attr cq_attr = {
 				.cqe = 64,
 			};
+			ib_comp_handler comp_handler = NULL;
 
-			conn->cq = ib_create_cq(conn->cm_id->device, NULL, NULL,
-						conn, &cq_attr);
+			/* Event-driven path registers CQ completion handler. */
+			if (kfastblock_rdma_use_cq_notify)
+				comp_handler = kfastblock_rdma_cq_comp_handler;
+			conn->cq = ib_create_cq(conn->cm_id->device, comp_handler,
+						NULL, conn, &cq_attr);
 			if (IS_ERR(conn->cq)) {
 				conn->last_error = PTR_ERR(conn->cq);
 				conn->cq = NULL;
 				goto err_destroy_id;
+			}
+			if (kfastblock_rdma_use_cq_notify) {
+				ret = ib_req_notify_cq(conn->cq, IB_CQ_NEXT_COMP);
+				if (ret) {
+					conn->last_error = ret;
+					goto err_destroy_id;
+				}
 			}
 		}
 
