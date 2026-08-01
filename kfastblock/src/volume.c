@@ -2289,6 +2289,31 @@ static ssize_t drop_transport_store(struct device *dev,
 	return count;
 }
 
+/* Force-drop all cached RDMA connections without touching TCP sockets. */
+static ssize_t flush_rdma_cache_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	int ret;
+
+	if (!vol)
+		return -ENODEV;
+	ret = kfastblock_volume_parse_manual_trigger(buf, count);
+	if (ret)
+		return ret;
+
+	down_write(&vol->state_lock);
+	kfastblock_recovery_flush_rdma_cache(vol);
+	kfastblock_xport_probe_cache_invalidate();
+	atomic64_inc(&vol->stats.manual_transport_drops);
+	kfastblock_volume_record_manual_op(vol,
+				      KFASTBLOCK_VOLUME_EVENT_MANUAL_DROP_TRANSPORT,
+				      KFASTBLOCK_VOLUME_TRANSPORT_OSD, 0);
+	up_write(&vol->state_lock);
+	return count;
+}
+
 static ssize_t reset_leaders_store(struct device *dev,
 			     struct device_attribute *attr,
 			     const char *buf, size_t count)
@@ -4293,6 +4318,7 @@ static ssize_t run_selfcheck_store(struct device *dev,
 }
 
 static DEVICE_ATTR_RO(rdma_cache_stats);
+static DEVICE_ATTR_WO(flush_rdma_cache);
 static DEVICE_ATTR_RO(pool_name);
 static DEVICE_ATTR_RO(image_name);
 static DEVICE_ATTR_RO(size_bytes);
@@ -4418,6 +4444,7 @@ static DEVICE_ATTR_WO(force_refresh);
 static DEVICE_ATTR_WO(reset_backoff);
 static DEVICE_ATTR_RO(osd_transport);
 static DEVICE_ATTR_WO(drop_transport);
+static DEVICE_ATTR_WO(flush_rdma_cache);
 static DEVICE_ATTR_WO(reset_leaders);
 static DEVICE_ATTR_WO(pause_queue);
 static DEVICE_ATTR_WO(resume_queue);
@@ -4429,6 +4456,7 @@ static DEVICE_ATTR_WO(reset_diagnostic_baseline);
 static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_osd_transport.attr,
 	&dev_attr_rdma_cache_stats.attr,
+	&dev_attr_flush_rdma_cache.attr,
 	&dev_attr_pool_name.attr,
 	&dev_attr_image_name.attr,
 	&dev_attr_size_bytes.attr,
