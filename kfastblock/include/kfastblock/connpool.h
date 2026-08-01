@@ -260,6 +260,15 @@ u32 kfastblock_rdma_conn_pool_ready_count(
 	const struct kfastblock_leader_info *leader);
 
 /*
+ * Try acquire an already-connected matching slot without CM connect.
+ * Returns locked cached slot or NULL. Caller must release().
+ */
+struct kfastblock_cached_rdma *
+kfastblock_rdma_conn_pool_try_acquire(struct kfastblock_cached_rdma *slots,
+				      u32 nr_slots,
+				      const struct kfastblock_leader_info *leader);
+
+/*
  * Overlay RDMA ready count onto a TCP-oriented pool snapshot for dual-stack
  * diagnostics. Leaves other fields unchanged.
  */

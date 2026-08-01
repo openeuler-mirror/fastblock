@@ -976,18 +976,15 @@ static bool kfastblock_rdma_slot_matches_locked(
 }
 
 struct kfastblock_cached_rdma *
-kfastblock_rdma_conn_pool_acquire(struct kfastblock_cached_rdma *slots,
-				  u32 nr_slots,
-				  const struct kfastblock_leader_info *leader)
+kfastblock_rdma_conn_pool_try_acquire(struct kfastblock_cached_rdma *slots,
+				      u32 nr_slots,
+				      const struct kfastblock_leader_info *leader)
 {
 	u32 i;
-	struct kfastblock_cached_rdma *empty = NULL;
-	int ret;
 
 	if (!slots || !kfastblock_leader_has_rdma(leader))
 		return NULL;
 
-	/* Prefer ready match. */
 	for (i = 0; i < nr_slots; ++i) {
 		struct kfastblock_cached_rdma *c = &slots[i];
 
@@ -995,14 +992,40 @@ kfastblock_rdma_conn_pool_acquire(struct kfastblock_cached_rdma *slots,
 		if (kfastblock_rdma_slot_matches_locked(c, leader)) {
 			c->reuse_hits++;
 			c->last_use_jiffies = jiffies;
-			if (empty && empty != c)
-				mutex_unlock(&empty->lock);
-			return c; /* lock held for caller release */
+			return c; /* lock held */
 		}
-		if (!empty && c->state == KFASTBLOCK_CONN_STATE_EMPTY)
-			empty = c; /* keep lock; candidate for connect */
-		else
-			mutex_unlock(&c->lock);
+		mutex_unlock(&c->lock);
+	}
+	return NULL;
+}
+
+struct kfastblock_cached_rdma *
+kfastblock_rdma_conn_pool_acquire(struct kfastblock_cached_rdma *slots,
+				  u32 nr_slots,
+				  const struct kfastblock_leader_info *leader)
+{
+	u32 i;
+	struct kfastblock_cached_rdma *empty = NULL;
+	struct kfastblock_cached_rdma *warm;
+	int ret;
+
+	if (!slots || !kfastblock_leader_has_rdma(leader))
+		return NULL;
+
+	warm = kfastblock_rdma_conn_pool_try_acquire(slots, nr_slots, leader);
+	if (warm)
+		return warm;
+
+	/* Find empty slot for cold connect. */
+	for (i = 0; i < nr_slots; ++i) {
+		struct kfastblock_cached_rdma *c = &slots[i];
+
+		mutex_lock(&c->lock);
+		if (c->state == KFASTBLOCK_CONN_STATE_EMPTY) {
+			empty = c; /* keep lock */
+			break;
+		}
+		mutex_unlock(&c->lock);
 	}
 
 	/* Reuse empty slot or evict first slot. */
