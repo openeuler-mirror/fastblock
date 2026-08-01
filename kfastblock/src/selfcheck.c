@@ -516,6 +516,22 @@ static void kfastblock_selfcheck_check_xport(
 						  KFASTBLOCK_OSD_TRANSPORT_TCP,
 					  false, KFASTBLOCK_SELFCHECK_XPORT,
 					  -EINVAL, detail);
+
+		/*
+		 * Forced RDMA returns RDMA ops without probing (caller handles
+		 * connect failure). Do not use AUTO here: AUTO would probe.
+		 */
+		sel = kfastblock_xport_select_explained(
+			KFASTBLOCK_OSD_TRANSPORT_RDMA, &leader, reason,
+			sizeof(reason));
+		scnprintf(detail, sizeof(detail), "ops=%s reason=%s",
+			  kfastblock_xport_ops_name(sel), reason);
+		kfastblock_selfcheck_note(report, m, "xport.select_forced_rdma",
+					  sel &&
+					  sel->transport_id ==
+						  KFASTBLOCK_OSD_TRANSPORT_RDMA,
+					  false, KFASTBLOCK_SELFCHECK_XPORT,
+					  -EINVAL, detail);
 	}
 }
 
