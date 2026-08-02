@@ -104,4 +104,41 @@ bool is_ipv4_literal(const char* s) noexcept {
     return ::inet_pton(AF_INET, s, &addr) == 1;
 }
 
+const char* status_name(uint32_t status) noexcept {
+    switch (status) {
+    case status_ok:
+        return "OK";
+    case status_invalid_request:
+        return "INVALID_REQUEST";
+    case status_not_found:
+        return "NOT_FOUND";
+    case status_stale_epoch:
+        return "STALE_EPOCH";
+    case status_retry_later:
+        return "RETRY_LATER";
+    case status_not_leader:
+        return "NOT_LEADER";
+    case status_pg_initializing:
+        return "PG_INITIALIZING";
+    case status_osd_down:
+        return "OSD_DOWN";
+    case status_internal_error:
+        return "INTERNAL_ERROR";
+    default:
+        return "UNKNOWN_STATUS";
+    }
+}
+
+bool is_known_opcode(uint8_t op) noexcept {
+    switch (op) {
+    case op_get_leader:
+    case op_read_object:
+    case op_write_object:
+    case op_delete_object:
+        return true;
+    default:
+        return false;
+    }
+}
+
 } // namespace raw_rdma_proto
