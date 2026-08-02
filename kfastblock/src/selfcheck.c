@@ -162,6 +162,7 @@ static void kfastblock_selfcheck_check_meta_view(
 
 	for (i = 0; i < vol->view.osd_count; ++i) {
 		const struct kfastblock_osd_endpoint *osd = &vol->view.osds[i];
+		u32 j, rdma_shards = 0;
 
 		scnprintf(detail, sizeof(detail),
 			  "osd[%u] id=%u shard_count=%u addr=%s", i,
@@ -172,6 +173,31 @@ static void kfastblock_selfcheck_check_meta_view(
 					  (osd->shard_count == 0 || osd->shards),
 					  false, KFASTBLOCK_SELFCHECK_META_VIEW,
 					  -EINVAL, detail);
+		for (j = 0; j < osd->shard_count; ++j) {
+			if (osd->shards[j].rdma_port)
+				rdma_shards++;
+			/* TCP port required; rdma_port optional */
+			scnprintf(detail, sizeof(detail),
+				  "osd[%u] shard=%u port=%u rdma_port=%u",
+				  i, osd->shards[j].shard_id,
+				  osd->shards[j].port,
+				  osd->shards[j].rdma_port);
+			kfastblock_selfcheck_note(report, m, "meta.osd.shard",
+						  osd->shards[j].port > 0,
+						  false,
+						  KFASTBLOCK_SELFCHECK_META_VIEW,
+						  -EINVAL, detail);
+		}
+		if (osd->shard_count) {
+			scnprintf(detail, sizeof(detail),
+				  "osd[%u] shards=%u rdma_shards=%u", i,
+				  osd->shard_count, rdma_shards);
+			kfastblock_selfcheck_note(report, m,
+						  "meta.osd.rdma_shards", true,
+						  false,
+						  KFASTBLOCK_SELFCHECK_META_VIEW,
+						  0, detail);
+		}
 	}
 
 	for (i = 0; i < vol->view.route_count; ++i) {

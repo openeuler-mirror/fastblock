@@ -333,6 +333,7 @@ static int do_show_xport(const struct config *cfg)
 static int do_show_rdma_params(void)
 {
 	static const char *const names[] = {
+		"rdma_pool_enable",
 		"rdma_cm_timeout_ms",
 		"rdma_io_timeout_ms",
 		"rdma_recv_depth",
@@ -377,6 +378,42 @@ static int do_show_rdma_params(void)
 	return 0;
 }
 
+/* Print volume osd_transport preference (tcp|rdma|auto). */
+static int do_show_transport(const struct config *cfg)
+{
+	char root_path[MAX_SYSFS_PATH];
+
+	if (build_volume_root_path(root_path, sizeof(root_path), cfg) != 0) {
+		fprintf(stderr,
+			"pool-name and image-name are required for show-transport\n");
+		return -1;
+	}
+	if (print_volume_attr(root_path, "osd_transport") < 0) {
+		fprintf(stderr,
+			"failed to read osd_transport (volume attached?)\n");
+		return -1;
+	}
+	return 0;
+}
+
+/* Print RDMA connection-cache snapshot for one volume. */
+static int do_show_rdma_pool(const struct config *cfg)
+{
+	char root_path[MAX_SYSFS_PATH];
+
+	if (build_volume_root_path(root_path, sizeof(root_path), cfg) != 0) {
+		fprintf(stderr,
+			"pool-name and image-name are required for show-rdma-pool\n");
+		return -1;
+	}
+	if (print_volume_attr(root_path, "rdma_cache_stats") < 0) {
+		fprintf(stderr,
+			"failed to read rdma_cache_stats (volume attached?)\n");
+		return -1;
+	}
+	return 0;
+}
+
 static const char *volume_attr_for_operation(const char *operation)
 {
 	if (strcmp(operation, "force-refresh") == 0)
@@ -385,6 +422,8 @@ static const char *volume_attr_for_operation(const char *operation)
 		return "reset_backoff";
 	if (strcmp(operation, "drop-transport") == 0)
 		return "drop_transport";
+	if (strcmp(operation, "flush-rdma-cache") == 0)
+		return "flush_rdma_cache";
 	if (strcmp(operation, "reset-leaders") == 0)
 		return "reset_leaders";
 	if (strcmp(operation, "pause-queue") == 0)
@@ -456,6 +495,7 @@ static int do_list_volumes(void)
 			"queue_paused",
 			"manual_queue_pause",
 			"open_count",
+			"osd_transport",
 		};
 	DIR *dir;
 	struct dirent *de;
