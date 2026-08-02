@@ -223,10 +223,53 @@ kfastblock_rdma_pool_get(struct kfastblock_rdma_pool *pool,
 	return NULL;
 }
 
+/*
+ * If idle count exceeds max_idle, disconnect the least-recently-used IDLE
+ * slot (not @skip). Caller must NOT hold any slot lock.
+ */
+static void kfastblock_rdma_pool_evict_idle_lru(
+	struct kfastblock_rdma_pool *pool,
+	struct kfastblock_rdma_pool_slot *skip)
+{
+	u32 i, idle_n = 0;
+	struct kfastblock_rdma_pool_slot *victim = NULL;
+	unsigned long oldest = 0;
+
+	if (!pool || !pool->slots || !pool->max_idle)
+		return;
+
+	for (i = 0; i < pool->nr_slots; ++i) {
+		struct kfastblock_rdma_pool_slot *slot = &pool->slots[i];
+
+		mutex_lock(&slot->lock);
+		if (slot->state == KFASTBLOCK_RDMA_POOL_SLOT_IDLE) {
+			idle_n++;
+			if (slot != skip &&
+			    (!victim ||
+			     time_before(slot->last_use_jiffies, oldest))) {
+				victim = slot;
+				oldest = slot->last_use_jiffies;
+			}
+		}
+		mutex_unlock(&slot->lock);
+	}
+
+	if (idle_n <= pool->max_idle || !victim)
+		return;
+
+	mutex_lock(&victim->lock);
+	if (victim->state == KFASTBLOCK_RDMA_POOL_SLOT_IDLE) {
+		kfastblock_rdma_pool_slot_disconnect_locked(victim);
+		pool->idle_evictions++;
+	}
+	mutex_unlock(&victim->lock);
+}
+
 void kfastblock_rdma_pool_put(struct kfastblock_rdma_pool *pool,
 			      struct kfastblock_rdma_conn *conn, bool ok)
 {
 	struct kfastblock_rdma_pool_slot *slot;
+	bool became_idle = false;
 
 	if (!pool || !pool->slots || !conn)
 		return;
@@ -245,6 +288,7 @@ void kfastblock_rdma_pool_put(struct kfastblock_rdma_pool *pool,
 		slot->success_count++;
 		slot->last_use_jiffies = jiffies;
 		slot->last_error = 0;
+		became_idle = true;
 	} else {
 		kfastblock_rdma_pool_slot_disconnect_locked(slot);
 		slot->state = KFASTBLOCK_RDMA_POOL_SLOT_DEAD;
@@ -253,6 +297,10 @@ void kfastblock_rdma_pool_put(struct kfastblock_rdma_pool *pool,
 			slot->last_error = -EIO;
 	}
 	mutex_unlock(&slot->lock);
+
+	/* Over max_idle: drop LRU idle (keep the just-returned slot). */
+	if (became_idle)
+		kfastblock_rdma_pool_evict_idle_lru(pool, slot);
 }
 
 u32 kfastblock_rdma_pool_count_state(struct kfastblock_rdma_pool *pool,
