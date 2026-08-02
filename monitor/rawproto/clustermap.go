@@ -110,6 +110,20 @@ func CountShardsWithRdmaPort(shards map[uint32]*msg.ShardCore) int {
 	return n
 }
 
+/* CountOSDWithAnyRdmaPort counts OSDs that publish at least one raw RDMA port. */
+func CountOSDWithAnyRdmaPort(osds []*msg.OsdDynamicInfo) int {
+	n := 0
+	for _, osd := range osds {
+		if osd == nil {
+			continue
+		}
+		if CountShardsWithRdmaPort(osd.GetShardedPorts()) > 0 {
+			n++
+		}
+	}
+	return n
+}
+
 func encodeOSDEntry(body *bytes.Buffer, osdInfo *msg.OsdDynamicInfo) error {
 	flags := uint32(0)
 	if osdInfo.GetIsin() {
