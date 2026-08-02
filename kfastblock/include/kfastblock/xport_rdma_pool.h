@@ -128,4 +128,11 @@ bool kfastblock_rdma_pool_invalidate_leader(
 	struct kfastblock_rdma_pool *pool,
 	const struct kfastblock_leader_info *leader);
 
+/*
+ * Set max IDLE connections retained (0 = unlimited). Excess is reclaimed on
+ * the next put/get path via LRU eviction. Returns previous value.
+ */
+u32 kfastblock_rdma_pool_set_max_idle(struct kfastblock_rdma_pool *pool,
+				      u32 max_idle);
+
 #endif
