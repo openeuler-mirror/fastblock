@@ -52,6 +52,8 @@ constexpr int raw_rdma_listen_backlog = 128;
 constexpr int raw_rdma_poll_timeout_ms = 200;
 /* Per-connection CQ capacity; must cover multi-slot RECV + SEND pipeline. */
 constexpr int raw_rdma_cq_depth = 64;
+/* Bound for drain_send_queue on destroy / graceful stop (ms). */
+constexpr int raw_rdma_drain_timeout_ms = 200;
 /* raw header (24) + max object body (~4MiB) + margin */
 constexpr size_t raw_rdma_recv_buf_len = (4U * 1024U * 1024U) + 4096U;
 constexpr size_t raw_rdma_send_buf_len = raw_rdma_recv_buf_len;
@@ -231,7 +233,7 @@ void osd_raw_rdma_server::destroy_connection(connection_context* conn) noexcept 
     }
     conn->established = false;
     /* Best-effort drain so in-flight responses can complete. */
-    drain_send_queue(conn, 200);
+    drain_send_queue(conn, raw_rdma_drain_timeout_ms);
     conn->send_in_flight = false;
     {
         std::lock_guard<std::mutex> lock(conn->send_mu);
@@ -1145,8 +1147,10 @@ void osd_raw_rdma_server::run_listener(uint32_t shard_id) noexcept {
                     }
                 } else {
                     SPDK_NOTICELOG(
-                      "raw RDMA shard %u connection established peer=%s recv_slots=%zu\n",
+                      "raw RDMA shard %u connection established peer=%s "
+                      "recv_posted=%zu/%zu\n",
                       shard_id, conn->peer_address.c_str(),
+                      recv_posted_count(conn),
                       connection_context::max_recv_slots);
                 }
             }
