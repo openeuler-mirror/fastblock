@@ -97,4 +97,12 @@ header make_response_header(const header& req, uint32_t status,
     return rsp;
 }
 
+bool is_ipv4_literal(const char* s) noexcept {
+    if (!s || !*s) {
+        return false;
+    }
+    in_addr addr{};
+    return ::inet_pton(AF_INET, s, &addr) == 1;
+}
+
 } // namespace raw_rdma_proto
