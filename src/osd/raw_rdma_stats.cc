@@ -29,6 +29,7 @@ std::string format_raw_rdma_server_stats(const raw_rdma_server_stats& stats) {
     oss << "running=" << (stats.running ? 1 : 0)
         << " shards=" << stats.shard_count
         << " conns=" << stats.connection_count
+        << " established=" << stats.established_connection_count
         << " recv=" << stats.recv_total
         << " send=" << stats.send_total
         << " err=" << stats.error_total
