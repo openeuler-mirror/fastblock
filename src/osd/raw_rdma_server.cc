@@ -190,7 +190,8 @@ bool osd_raw_rdma_server::start_listener(uint32_t shard_id) {
      * to sockaddr_storage + rdma_getaddrinfo, and keep random port logic. */
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
-    if (::inet_pton(AF_INET, _bind_address.c_str(), &addr.sin_addr) != 1) {
+    if (!raw_rdma_proto::is_ipv4_literal(_bind_address.c_str()) ||
+        ::inet_pton(AF_INET, _bind_address.c_str(), &addr.sin_addr) != 1) {
         SPDK_ERRLOG("raw RDMA: invalid IPv4 bind address %s (IPv6 not yet)\n",
                     _bind_address.c_str());
         return false;
@@ -770,9 +771,11 @@ void osd_raw_rdma_server::handle_recv_complete(connection_context* conn,
         break;
     default:
         _dispatch_error_total.fetch_add(1, std::memory_order_relaxed);
-        SPDK_ERRLOG("raw RDMA: unsupported opcode=%u (%s) peer=%s\n",
-                    hdr.opcode, raw_opcode_name(hdr.opcode),
-                    conn->peer_address.c_str());
+        SPDK_ERRLOG(
+          "raw RDMA: unsupported opcode=%u (%s) known=%d peer=%s\n",
+          hdr.opcode, raw_opcode_name(hdr.opcode),
+          raw_rdma_proto::is_known_opcode(hdr.opcode) ? 1 : 0,
+          conn->peer_address.c_str());
         send_response(conn, &hdr, raw_status_invalid_request, nullptr, 0);
         break;
     }
