@@ -11,13 +11,12 @@
 
 #include "raw_rdma_proto.h"
 
-#include "fastblock/utils/err_num.h"
-
 #include <arpa/inet.h>
+#include <cstring>
 #include <endian.h>
 #include <netinet/in.h>
 
-#include <cstring>
+#include "fastblock/utils/err_num.h"
 
 namespace raw_rdma_proto {
 
