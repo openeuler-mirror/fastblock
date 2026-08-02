@@ -59,4 +59,15 @@ int kfastblock_rdma_conn_last_error(const struct kfastblock_rdma_conn *conn);
 /* State machine name for diagnostics (idle/established/...). */
 const char *kfastblock_rdma_conn_state_str(const struct kfastblock_rdma_conn *conn);
 
+/*
+ * True if conn is ESTABLISHED, connected, and last_error==0.
+ * Pool reuse paths prefer this over bare is_connected.
+ */
+bool kfastblock_rdma_conn_is_usable(const struct kfastblock_rdma_conn *conn);
+
+/* True when conn peer address:port matches leader endpoint. */
+bool kfastblock_rdma_conn_matches_leader(
+	const struct kfastblock_rdma_conn *conn,
+	const struct kfastblock_leader_info *leader);
+
 #endif
