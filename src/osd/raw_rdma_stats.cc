@@ -36,6 +36,7 @@ std::string format_raw_rdma_server_stats(const raw_rdma_server_stats& stats) {
         << " accept=" << stats.accept_total
         << " reject=" << stats.reject_total
         << " dispatch_err=" << stats.dispatch_error_total
+        << " max_conns=" << stats.max_connections
         << " ports=[" << format_raw_rdma_listen_ports(stats.listen_ports) << ']';
     return oss.str();
 }
