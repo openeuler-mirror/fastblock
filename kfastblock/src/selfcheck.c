@@ -751,10 +751,37 @@ int kfastblock_selfcheck_run(struct kfastblock_volume *vol,
 	kfastblock_selfcheck_check_rawproto(&local, m);
 	kfastblock_selfcheck_check_rdma_conn_pool(vol, &local, m);
 	if (m) {
+		char flags_text[160];
+		size_t used = 0;
+
+		flags_text[0] = '\0';
+		if (!local.flags)
+			strscpy(flags_text, "none", sizeof(flags_text));
+		else {
+#define KFB_SC_FLAG(bit, name)                                              \
+	do {                                                                \
+		if (local.flags & (bit))                                    \
+			used += scnprintf(flags_text + used,                \
+					  sizeof(flags_text) - used,        \
+					  "%s%s", used ? "," : "", (name)); \
+	} while (0)
+			KFB_SC_FLAG(KFASTBLOCK_SELFCHECK_VOLUME_CORE, "volume_core");
+			KFB_SC_FLAG(KFASTBLOCK_SELFCHECK_META_VIEW, "meta_view");
+			KFB_SC_FLAG(KFASTBLOCK_SELFCHECK_SCHEDULER, "scheduler");
+			KFB_SC_FLAG(KFASTBLOCK_SELFCHECK_BUFFER_POOL, "buffer_pool");
+			KFB_SC_FLAG(KFASTBLOCK_SELFCHECK_OSD_CONN_POOL, "osd_conn_pool");
+			KFB_SC_FLAG(KFASTBLOCK_SELFCHECK_MON_CONN_POOL, "mon_conn_pool");
+			KFB_SC_FLAG(KFASTBLOCK_SELFCHECK_QUEUE_GATE, "queue_gate");
+			KFB_SC_FLAG(KFASTBLOCK_SELFCHECK_FAULT_INJECTION,
+				    "fault_injection");
+			KFB_SC_FLAG(KFASTBLOCK_SELFCHECK_XPORT, "xport");
+			KFB_SC_FLAG(KFASTBLOCK_SELFCHECK_RAWPROTO, "rawproto");
+#undef KFB_SC_FLAG
+		}
 		seq_printf(m,
-			   "summary total=%u failed=%u warnings=%u flags=0x%x result_errno=%d\n",
+			   "summary total=%u failed=%u warnings=%u flags=0x%x flags_text=%s result_errno=%d\n",
 			   local.total_checks, local.failed_checks,
-			   local.warning_checks, local.flags,
+			   local.warning_checks, local.flags, flags_text,
 			   local.result_errno);
 	}
 	kfastblock_selfcheck_commit(vol, &local);
