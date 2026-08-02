@@ -163,6 +163,10 @@ static void kfastblock_rdma_pool_slot_bind_locked(
 	strscpy(slot->address, leader->address, sizeof(slot->address));
 }
 
+static void kfastblock_rdma_pool_evict_idle_lru(
+	struct kfastblock_rdma_pool *pool,
+	struct kfastblock_rdma_pool_slot *skip);
+
 /*
  * Acquire an established RDMA conn for leader.
  * Prefer idle matching slot (reuse); otherwise connect into an empty slot.
@@ -183,6 +187,17 @@ kfastblock_rdma_pool_get(struct kfastblock_rdma_pool *pool,
 	conn = kfastblock_rdma_pool_try_get(pool, leader);
 	if (conn)
 		return conn;
+
+	/* Pass 1b: if no empty slot, free one LRU idle to make room. */
+	{
+		u32 empty_n = kfastblock_rdma_pool_count_state(
+			pool, KFASTBLOCK_RDMA_POOL_SLOT_EMPTY);
+		u32 dead_n = kfastblock_rdma_pool_count_state(
+			pool, KFASTBLOCK_RDMA_POOL_SLOT_DEAD);
+
+		if (!empty_n && !dead_n)
+			kfastblock_rdma_pool_evict_idle_lru(pool, NULL);
+	}
 
 	/* Pass 2: connect into first empty/dead slot. */
 	for (i = 0; i < pool->nr_slots; ++i) {
