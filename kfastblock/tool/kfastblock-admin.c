@@ -250,6 +250,10 @@ static int op_is_read_only(const char *operation)
 		strcmp(operation, "show-xport") == 0;
 }
 
+static int build_volume_root_path(char *buf, size_t buf_len,
+				  const struct config *cfg);
+static int print_volume_attr(const char *root_path, const char *attr);
+
 /*
  * Filter debugfs diagnostics for xport.* lines (transport preference / RDMA).
  * Path: /sys/kernel/debug/kfastblock/<disk>/diagnostics
