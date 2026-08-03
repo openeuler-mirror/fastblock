@@ -77,4 +77,5 @@ echo "scripts：Soft-RoCE 准备完成。后续："
 echo "  1) 启动 monitor / OSD（enable_raw_rdma=true）"
 echo "  2) 确认 OSD 日志 raw RDMA server started ... ports=[...]"
 echo "  3) kfastblock 挂载并偏好 RDMA（见 docs/raw_rdma_e2e_checklist.md）"
+echo "  4) 观察 accept/reject/dispatch_err 累计（OSD stop 日志）"
 exit 0
