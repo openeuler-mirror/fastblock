@@ -1389,6 +1389,8 @@ main(int argc, char *argv[])
     if (osd_server.pt.count("enable_raw_rdma") > 0) {
         osd_server.enable_raw_rdma =
           osd_server.pt.get_child("enable_raw_rdma").get_value<bool>();
+        SPDK_NOTICELOG("config enable_raw_rdma=%d\n",
+                       osd_server.enable_raw_rdma ? 1 : 0);
     }
 
     if(from_configuration(&osd_server) != 0){
