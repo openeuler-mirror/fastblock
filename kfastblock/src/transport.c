@@ -795,6 +795,11 @@ static int kfastblock_transport_send_all(struct socket *sock,
 {
 	size_t sent = 0;
 
+	if (!len)
+		return 0;
+	if (!sock || !buf)
+		return -EINVAL;
+
 	while (sent < len) {
 		struct kvec iov = {
 			.iov_base = (void *)((const u8 *)buf + sent),
@@ -873,7 +878,12 @@ static int kfastblock_transport_send_request(struct socket *sock,
 	ret = kfastblock_transport_send_all(sock, &hdr, sizeof(hdr));
 	if (ret)
 		return ret;
-	if (!body_len)
+	/*
+	 * body == NULL with body_len > 0 means header-only: the declared body
+	 * will be sent by the caller (e.g. send_request_parts) in separate
+	 * writes. Never dereference a NULL body here.
+	 */
+	if (!body_len || !body)
 		return 0;
 	return kfastblock_transport_send_all(sock, body, body_len);
 }
@@ -891,18 +901,27 @@ static int kfastblock_transport_send_request_parts(
 	int ret;
 
 	if (parts && nr_parts) {
-		for (i = 0; i < nr_parts; ++i)
+		for (i = 0; i < nr_parts; ++i) {
+			if (parts[i].len && !parts[i].buf)
+				return -EINVAL;
 			body_len += parts[i].len;
+		}
 	}
 
-	ret = kfastblock_transport_send_request(sock, service, opcode, seq, NULL, body_len);
+	/* Header carries total body_len; payload follows as separate parts. */
+	ret = kfastblock_transport_send_request(sock, service, opcode, seq,
+						NULL, body_len);
 	if (ret)
 		return ret;
+
+	if (!parts || !nr_parts)
+		return 0;
 
 	for (i = 0; i < nr_parts; ++i) {
 		if (!parts[i].len)
 			continue;
-		ret = kfastblock_transport_send_all(sock, parts[i].buf, parts[i].len);
+		ret = kfastblock_transport_send_all(sock, parts[i].buf,
+						    parts[i].len);
 		if (ret)
 			return ret;
 	}
