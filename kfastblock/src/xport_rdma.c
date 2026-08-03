@@ -1113,6 +1113,24 @@ int kfastblock_rdma_conn_exchange(struct kfastblock_rdma_conn *conn,
 		return -EMSGSIZE;
 	}
 
+	/*
+	 * Arm RECV *before* SEND, then reinit recv_done.  send() polls the CQ
+	 * and may complete RECV early; without reinit, the next exchange sees
+	 * completion_done(recv_done) from the previous response and returns
+	 * stale bytes (e.g. write rsp for a read) → -EPROTO / wrong opcode.
+	 */
+	if (!conn->recv_posted || !conn->recv_posted_count) {
+		ret = kfastblock_rdma_post_recv_fill(conn);
+		if (ret) {
+			conn->last_error = ret;
+			kfastblock_rdma_exchange_err++;
+			return ret;
+		}
+	}
+	reinit_completion(&conn->recv_done);
+	conn->recv_wc_status = 0;
+	conn->recv_byte_len = 0;
+
 	ret = kfastblock_rdma_conn_send(conn, req, req_len);
 	if (ret) {
 		kfastblock_rdma_exchange_err++;
