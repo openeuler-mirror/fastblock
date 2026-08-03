@@ -23,6 +23,8 @@ unsigned int kfastblock_recovery_classify_object_failure(int ret);
 unsigned int kfastblock_recovery_classify_leader_failure(int ret);
 unsigned int kfastblock_recovery_classify_monitor_failure(int ret);
 bool kfastblock_recovery_prefetch_should_fail_request(int ret);
+/* True for errno values that should drop/reconnect transport. */
+bool kfastblock_recovery_is_transport_errno(int ret);
 blk_status_t kfastblock_recovery_errno_to_blk_status(int ret);
 int kfastblock_recovery_update_live_pg_leader(
 	struct kfastblock_volume *vol,

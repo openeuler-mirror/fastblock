@@ -28,9 +28,17 @@ static bool kfastblock_recovery_should_retry_monitor(int ret)
 
 unsigned int kfastblock_recovery_classify_object_failure(int ret)
 {
-	switch (ret) {
-	case -ESTALE:
+	unsigned int actions = 0;
+
+	if (ret == -ESTALE)
 		return KFASTBLOCK_RECOVERY_KICK_REFRESH;
+	if (!kfastblock_recovery_is_transport_errno(ret))
+		return 0;
+
+	actions = KFASTBLOCK_RECOVERY_DROP_SOCKET |
+		  KFASTBLOCK_RECOVERY_INVALIDATE_RDMA |
+		  KFASTBLOCK_RECOVERY_KICK_REFRESH;
+	switch (ret) {
 	case -ENOLINK:
 	case -EAGAIN:
 	case -EHOSTDOWN:
@@ -38,23 +46,17 @@ unsigned int kfastblock_recovery_classify_object_failure(int ret)
 	case -ECONNRESET:
 	case -EPIPE:
 	case -ENOTCONN:
-		return KFASTBLOCK_RECOVERY_DROP_SOCKET |
-			KFASTBLOCK_RECOVERY_INVALIDATE_RDMA |
-			KFASTBLOCK_RECOVERY_INVALIDATE_LEADER |
-			KFASTBLOCK_RECOVERY_KICK_REFRESH |
-			KFASTBLOCK_RECOVERY_RETRY;
+		actions |= KFASTBLOCK_RECOVERY_INVALIDATE_LEADER |
+			   KFASTBLOCK_RECOVERY_RETRY;
+		break;
 	case -EPROTO:
-		return KFASTBLOCK_RECOVERY_DROP_SOCKET |
-			KFASTBLOCK_RECOVERY_INVALIDATE_RDMA |
-			KFASTBLOCK_RECOVERY_INVALIDATE_LEADER |
-			KFASTBLOCK_RECOVERY_KICK_REFRESH;
-	case -EIO:
-		return KFASTBLOCK_RECOVERY_DROP_SOCKET |
-			KFASTBLOCK_RECOVERY_INVALIDATE_RDMA |
-			KFASTBLOCK_RECOVERY_KICK_REFRESH;
+		actions |= KFASTBLOCK_RECOVERY_INVALIDATE_LEADER;
+		break;
 	default:
-		return 0;
+		/* -EIO and other transport errno: drop + invalidate RDMA */
+		break;
 	}
+	return actions;
 }
 
 unsigned int kfastblock_recovery_classify_leader_failure(int ret)
@@ -97,6 +99,25 @@ bool kfastblock_recovery_prefetch_should_fail_request(int ret)
 	case -E2BIG:
 	case -EOPNOTSUPP:
 	case -ENOENT:
+		return true;
+	default:
+		return false;
+	}
+}
+
+/* Transport-layer errors that warrant RDMA cache invalidation. */
+bool kfastblock_recovery_is_transport_errno(int ret)
+{
+	switch (ret) {
+	case -ENOLINK:
+	case -EAGAIN:
+	case -EHOSTDOWN:
+	case -ETIMEDOUT:
+	case -ECONNRESET:
+	case -EPIPE:
+	case -ENOTCONN:
+	case -EPROTO:
+	case -EIO:
 		return true;
 	default:
 		return false;
