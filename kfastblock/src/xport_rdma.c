@@ -912,12 +912,19 @@ int kfastblock_rdma_conn_send(struct kfastblock_rdma_conn *conn,
 	unsigned long deadline;
 	int ret;
 
-	if (!kfastblock_rdma_conn_is_connected(conn) || !buf || !len)
+	if (!kfastblock_rdma_conn_is_connected(conn) || !buf || !len) {
+		if (conn)
+			conn->last_error = -EINVAL;
 		return -EINVAL;
-	if (!conn->cm_id->qp || !conn->pd || !conn->send_mapped)
+	}
+	if (!conn->cm_id->qp || !conn->pd || !conn->send_mapped) {
+		conn->last_error = -ENOTCONN;
 		return -ENOTCONN;
-	if (len > conn->send_buf_len)
+	}
+	if (len > conn->send_buf_len) {
+		conn->last_error = -EMSGSIZE;
 		return -EMSGSIZE;
+	}
 
 	dev = conn->cm_id->device;
 	memcpy(conn->send_buf, buf, len);
