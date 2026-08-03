@@ -273,6 +273,7 @@ static int kfastblock_request_capture_pg_hints(
 			hint->targets[replica_idx].osd_id = osd->osd_id;
 			hint->targets[replica_idx].flags = osd->flags;
 			hint->targets[replica_idx].port = shard->port;
+			hint->targets[replica_idx].rdma_port = shard->rdma_port;
 			strscpy(hint->targets[replica_idx].address, osd->address,
 				sizeof(hint->targets[replica_idx].address));
 		}
