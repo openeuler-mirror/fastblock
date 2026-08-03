@@ -240,10 +240,10 @@ static void kfastblock_rdma_conn_free_bufs(struct kfastblock_rdma_conn *conn)
 	if (!conn)
 		return;
 	kfastblock_rdma_conn_unmap_bufs(conn);
-	kfree(conn->send_buf);
+	kvfree(conn->send_buf);
 	conn->send_buf = NULL;
 	conn->send_buf_len = 0;
-	kfree(conn->recv_buf);
+	kvfree(conn->recv_buf);
 	conn->recv_buf = NULL;
 	conn->recv_buf_len = 0;
 	conn->recv_posted = false;
@@ -368,14 +368,19 @@ static int kfastblock_rdma_alloc_bufs(struct kfastblock_rdma_conn *conn)
 	if (conn->send_buf && conn->recv_buf)
 		return 0;
 
-	conn->send_buf = kzalloc(KFASTBLOCK_RDMA_BUF_LEN, GFP_KERNEL);
+	/*
+	 * ~4MiB+ is above typical kmalloc order-10 contiguous limit
+	 * (4MiB+eps needs order-11 and fails with -ENOMEM / page_alloc WARN).
+	 * kvzalloc falls back to vmalloc; Soft-RoCE maps CPU virt addrs fine.
+	 */
+	conn->send_buf = kvzalloc(KFASTBLOCK_RDMA_BUF_LEN, GFP_KERNEL);
 	if (!conn->send_buf)
 		return -ENOMEM;
 	conn->send_buf_len = KFASTBLOCK_RDMA_BUF_LEN;
 
-	conn->recv_buf = kzalloc(KFASTBLOCK_RDMA_BUF_LEN, GFP_KERNEL);
+	conn->recv_buf = kvzalloc(KFASTBLOCK_RDMA_BUF_LEN, GFP_KERNEL);
 	if (!conn->recv_buf) {
-		kfree(conn->send_buf);
+		kvfree(conn->send_buf);
 		conn->send_buf = NULL;
 		conn->send_buf_len = 0;
 		return -ENOMEM;
