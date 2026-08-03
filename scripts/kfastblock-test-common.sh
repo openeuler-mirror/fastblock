@@ -391,11 +391,21 @@ kfastblock_attach_volume() {
     local monitor_addr="$2"
     local pool_name="$3"
     local image_name="$4"
+    # Optional 5th arg: tcp|rdma|auto (default: leave admin default / env).
+    local osd_transport="${5:-${KFASTBLOCK_OSD_TRANSPORT:-}}"
 
-    "$repo_root/kfastblock/tool/kfastblock-admin" attach \
-        --monitor-addr "${monitor_addr}:3334" \
-        --pool-name "$pool_name" \
-        --image-name "$image_name"
+    if [ -n "$osd_transport" ]; then
+        "$repo_root/kfastblock/tool/kfastblock-admin" attach \
+            --monitor-addr "${monitor_addr}:3334" \
+            --pool-name "$pool_name" \
+            --image-name "$image_name" \
+            --osd-transport "$osd_transport"
+    else
+        "$repo_root/kfastblock/tool/kfastblock-admin" attach \
+            --monitor-addr "${monitor_addr}:3334" \
+            --pool-name "$pool_name" \
+            --image-name "$image_name"
+    fi
 }
 
 kfastblock_detach_volume() {
