@@ -572,6 +572,32 @@ static int kfastblock_rdma_poll_one(struct kfastblock_rdma_conn *conn,
 	return -ETIMEDOUT;
 }
 
+static int kfastblock_rdma_poll_batch(struct kfastblock_rdma_conn *conn,
+				      int max_wc)
+{
+	struct ib_wc wcs[8];
+	int n, i, ret, applied = 0;
+
+	if (!conn || !conn->cq || max_wc <= 0)
+		return -EINVAL;
+	if (max_wc > (int)ARRAY_SIZE(wcs))
+		max_wc = ARRAY_SIZE(wcs);
+
+	n = ib_poll_cq(conn->cq, max_wc, wcs);
+	if (n < 0) {
+		conn->last_error = n;
+		conn->state = KFASTBLOCK_RDMA_CONN_ERROR;
+		return n;
+	}
+	for (i = 0; i < n; ++i) {
+		ret = kfastblock_rdma_apply_wc(conn, &wcs[i]);
+		if (ret)
+			return ret;
+		applied++;
+	}
+	return applied;
+}
+
 struct kfastblock_rdma_conn *kfastblock_rdma_conn_alloc(void)
 {
 	struct kfastblock_rdma_conn *conn;
