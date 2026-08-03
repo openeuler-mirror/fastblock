@@ -1037,10 +1037,22 @@ int kfastblock_rdma_conn_exchange(struct kfastblock_rdma_conn *conn,
 	}
 
 	rhdr = req;
-	if (le32_to_cpu(rhdr->magic) != KFASTBLOCK_RAW_MAGIC)
+	if (le32_to_cpu(rhdr->magic) != KFASTBLOCK_RAW_MAGIC) {
+		conn->last_error = -EPROTO;
+		kfastblock_rdma_exchange_err++;
+		return -EPROTO;
+	}
+	if (le64_to_cpu(rhdr->seq) != expect_seq) {
+		conn->last_error = -EINVAL;
+		kfastblock_rdma_exchange_err++;
 		return -EINVAL;
-	if (le64_to_cpu(rhdr->seq) != expect_seq)
+	}
+	/* Requests must not already carry RESPONSE flag. */
+	if (le32_to_cpu(rhdr->flags) & KFASTBLOCK_RAW_FLAG_RESPONSE) {
+		conn->last_error = -EINVAL;
+		kfastblock_rdma_exchange_err++;
 		return -EINVAL;
+	}
 	/* body_len must fit inside the provided frame buffer. */
 	req_body_len = le32_to_cpu(rhdr->body_len);
 	if (req_body_len > req_len - sizeof(struct kfastblock_raw_header)) {
