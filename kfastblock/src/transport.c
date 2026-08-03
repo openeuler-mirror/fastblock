@@ -4140,12 +4140,25 @@ static int kfastblock_transport_prepare_initial_dispatch_batch(
 		return -EINVAL;
 
 	kfastblock_request_dispatch_batch_reset(&ctx->batch);
-	ctx->ret = kfastblock_request_pick_dispatch_batch(
-		ctx->kf_req, &ctx->batch, ctx->initial_dispatch);
-	if (ctx->ret < 0)
-		kfastblock_transport_abort_request(ctx->kf_req, ctx->ret);
-	else
-		ctx->stage = KFASTBLOCK_SUBMIT_STAGE_BATCH_PREPARED;
+	/*
+	 * pick_dispatch_batch returns the number of selected objects (>=0),
+	 * not an errno. Storing that count in ctx->ret made queue_initial_dispatch
+	 * treat success as "already failed/skip" (if (ctx->ret) return 0), so
+	 * object work never ran and bios stayed in_flight forever (D-state dd).
+	 */
+	{
+		int picked = kfastblock_request_pick_dispatch_batch(
+			ctx->kf_req, &ctx->batch, ctx->initial_dispatch);
+
+		if (picked < 0) {
+			ctx->ret = picked;
+			kfastblock_transport_abort_request(ctx->kf_req,
+							   ctx->ret);
+		} else {
+			ctx->ret = 0;
+			ctx->stage = KFASTBLOCK_SUBMIT_STAGE_BATCH_PREPARED;
+		}
+	}
 
 	return 0;
 }
@@ -4197,7 +4210,8 @@ static int kfastblock_transport_queue_initial_dispatch(
 {
 	if (!ctx || !ctx->kf_req)
 		return -EINVAL;
-	if (ctx->ret)
+	/* Only real errors skip queuing; pick count must never live in ctx->ret. */
+	if (ctx->ret < 0)
 		return 0;
 
 	if (ctx->stage == KFASTBLOCK_SUBMIT_STAGE_BATCH_PREPARED) {
