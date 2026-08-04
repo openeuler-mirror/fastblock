@@ -498,3 +498,14 @@ kfastblock_module_param() {
     fi
     tr -d '\n' < "$path"
 }
+
+kfastblock_print_rdma_counters() {
+    local p
+    for p in rdma_connect_ok rdma_connect_err rdma_exchange_ok \
+             rdma_exchange_err rdma_exchange_stale rdma_send_ok rdma_recv_ok \
+             rdma_pool_hit rdma_pool_miss; do
+        if [ -r "/sys/module/kfastblock/parameters/$p" ]; then
+            printf '%s=%s\n' "$p" "$(tr -d '\n' < "/sys/module/kfastblock/parameters/$p")"
+        fi
+    done
+}
