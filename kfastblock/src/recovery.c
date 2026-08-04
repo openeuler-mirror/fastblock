@@ -50,7 +50,12 @@ unsigned int kfastblock_recovery_classify_object_failure(int ret)
 			   KFASTBLOCK_RECOVERY_RETRY;
 		break;
 	case -EPROTO:
-		actions |= KFASTBLOCK_RECOVERY_INVALIDATE_LEADER;
+		/* Stale/wrong RDMA frame: invalidate leader and allow one retry. */
+		actions |= KFASTBLOCK_RECOVERY_INVALIDATE_LEADER |
+			   KFASTBLOCK_RECOVERY_RETRY;
+		break;
+	case -EMSGSIZE:
+		actions |= KFASTBLOCK_RECOVERY_RETRY;
 		break;
 	default:
 		/* -EIO and other transport errno: drop + invalidate RDMA */
