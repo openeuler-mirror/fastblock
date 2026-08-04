@@ -1221,7 +1221,9 @@ bool kfastblock_rdma_conn_is_usable(const struct kfastblock_rdma_conn *conn)
 	return kfastblock_rdma_conn_is_connected(conn) &&
 	       conn->last_error == 0 &&
 	       conn->cm_id && conn->cm_id->qp &&
-	       conn->send_mapped && conn->recv_mapped;
+	       conn->send_mapped && conn->recv_mapped &&
+	       /* Reuse only when at least one RECV is armed for next exchange. */
+	       conn->recv_posted_count > 0;
 }
 
 bool kfastblock_rdma_conn_matches_leader(
