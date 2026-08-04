@@ -1,3 +1,4 @@
+#include <linux/build_bug.h>
 #include <linux/completion.h>
 #include <linux/dma-mapping.h>
 #include <linux/errno.h>
@@ -1077,6 +1078,9 @@ int kfastblock_rdma_conn_exchange(struct kfastblock_rdma_conn *conn,
 	u32 req_body_len;
 	u32 rsp_body_len;
 	int ret;
+
+	/* Wire layout must match OSD raw_header (also checked in selfcheck). */
+	BUILD_BUG_ON(sizeof(struct kfastblock_raw_header) != 28);
 
 	if (!kfastblock_rdma_conn_is_connected(conn) || !req || !req_len ||
 	    !rsp || !rsp_cap)
