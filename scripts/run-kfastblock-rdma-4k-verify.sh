@@ -86,6 +86,8 @@ echo "rdma_exchange_err: $err_before -> $err_after"
 	--pool-name "$POOL" --image-name "$IMAGE" | \
 	grep -E 'io_|object_io|osd_transport|health|rdma_cache' || true
 
+kfastblock_print_rdma_counters || true
+
 if [ "${KFASTBLOCK_KEEP_VOLUME:-0}" != "1" ]; then
 	kfastblock_detach_volume "$REPO_ROOT" "$POOL" "$IMAGE" || true
 fi
