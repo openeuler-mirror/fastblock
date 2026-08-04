@@ -455,7 +455,14 @@ bool osd_raw_rdma_server::send_response(connection_context* conn,
     if (body_len > 0) {
         std::memcpy(frame.data() + sizeof(rsp), body, body_len);
     }
-    return enqueue_response_frame(conn, std::move(frame));
+    const bool ok = enqueue_response_frame(conn, std::move(frame));
+    if (!ok) {
+        conn->error_count.fetch_add(1, std::memory_order_relaxed);
+        _dispatch_error_total.fetch_add(1, std::memory_order_relaxed);
+        SPDK_ERRLOG("raw RDMA: enqueue response failed peer=%s status=%u body=%u\n",
+                    conn->peer_address.c_str(), status, body_len);
+    }
+    return ok;
 }
 
 namespace {
