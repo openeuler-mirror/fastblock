@@ -34,6 +34,11 @@ static bool g_kfastblock_rdma_pool_enable = true;
 module_param_named(rdma_pool_enable, g_kfastblock_rdma_pool_enable, bool, 0644);
 MODULE_PARM_DESC(rdma_pool_enable,
 		 "reuse RDMA connections via volume rdma_cache (default true)");
+/* When false, suppress per-object "I/O via RDMA" info logs (errors still print). */
+static bool g_kfastblock_rdma_object_log = true;
+module_param_named(rdma_object_log, g_kfastblock_rdma_object_log, bool, 0644);
+MODULE_PARM_DESC(rdma_object_log,
+		 "log each object I/O that uses RDMA (default true)");
 
 #define KFASTBLOCK_OBJECT_IO_MAX_ATTEMPTS 2
 
@@ -2859,10 +2864,12 @@ static int kfastblock_transport_prepare_object_exchange(
 		} else {
 			ctx->rdma = ctx->rdma_slot->conn;
 			ctx->use_rdma = true;
-			pr_info_ratelimited(
-				"kfastblock: object I/O via RDMA peer=%s:%u op=%u\n",
-				ctx->leader.address, ctx->leader.rdma_port,
-				ctx->raw_opcode);
+			if (g_kfastblock_rdma_object_log)
+				pr_info_ratelimited(
+					"kfastblock: object I/O via RDMA peer=%s:%u op=%u\n",
+					ctx->leader.address,
+					ctx->leader.rdma_port,
+					ctx->raw_opcode);
 			seq = kfastblock_rdma_conn_slot_next_seq(ctx->rdma_slot);
 			return kfastblock_transport_begin_exchange(
 				&ctx->exchange, ctx->kf_req, ctx->object_index,
