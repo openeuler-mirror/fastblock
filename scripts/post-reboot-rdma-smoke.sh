@@ -71,8 +71,9 @@ timeout 30 dd if="$DEV" of="$READBACK" bs=4096 count=1 iflag=direct status=none
 cmp -n 4096 "$PAYLOAD" "$READBACK"
 
 echo "=== counters after IO ==="
-for p in rdma_connect_ok rdma_connect_err rdma_exchange_ok rdma_exchange_err rdma_dma_map_err; do
-  echo "$p=$(cat /sys/module/kfastblock/parameters/$p)"
+for p in rdma_connect_ok rdma_connect_err rdma_exchange_ok rdma_exchange_err \
+	 rdma_exchange_stale rdma_dma_map_err rdma_pool_hit rdma_pool_miss; do
+  echo "$p=$(cat /sys/module/kfastblock/parameters/$p 2>/dev/null || echo n/a)"
 done
 ./kfastblock/tool/kfastblock-admin show --pool-name "$POOL" --image-name "$IMAGE" | \
   grep -E 'pipeline\.|rdma|xport\.|volume\.(inflight|io_|last_failure|health)' || true
