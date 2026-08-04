@@ -47,6 +47,7 @@ echo "device=$DEV image=$IMAGE"
 
 err0="$(cat /sys/module/kfastblock/parameters/rdma_exchange_err)"
 ex0="$(cat /sys/module/kfastblock/parameters/rdma_exchange_ok)"
+stale0="$(cat /sys/module/kfastblock/parameters/rdma_exchange_stale 2>/dev/null || echo 0)"
 
 i=0
 while [ "$i" -lt "$ROUNDS" ]; do
@@ -71,8 +72,13 @@ stale1="$(cat /sys/module/kfastblock/parameters/rdma_exchange_stale 2>/dev/null 
 ex1="$(cat /sys/module/kfastblock/parameters/rdma_exchange_ok)"
 echo "rdma_exchange_ok: $ex0 -> $ex1 (delta=$((ex1 - ex0)))"
 echo "rdma_exchange_err: $err0 -> $err1 (delta=$((err1 - err0)))"
+echo "rdma_exchange_stale: $stale0 -> $stale1 (delta=$((stale1 - stale0)))"
 [ "$((err1 - err0))" -eq 0 ] || {
 	echo "exchange_err increased during multi-IO" >&2
+	exit 1
+}
+[ "$((stale1 - stale0))" -eq 0 ] || {
+	echo "exchange_stale increased during multi-IO" >&2
 	exit 1
 }
 # At least one write+read exchange pair per round (plus leader queries).
