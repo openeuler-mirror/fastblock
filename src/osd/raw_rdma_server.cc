@@ -730,7 +730,8 @@ void osd_raw_rdma_server::handle_recv_complete(connection_context* conn,
     if (!rs.buf || byte_len < sizeof(raw_header)) {
         conn->error_count.fetch_add(1, std::memory_order_relaxed);
         _dispatch_error_total.fetch_add(1, std::memory_order_relaxed);
-        SPDK_ERRLOG("raw RDMA: RECV too short (%u) slot=%zu\n", byte_len, slot);
+        SPDK_ERRLOG("raw RDMA: RECV too short (%u) slot=%zu peer=%s\n",
+                    byte_len, slot, conn->peer_address.c_str());
         return;
     }
 
@@ -739,8 +740,8 @@ void osd_raw_rdma_server::handle_recv_complete(connection_context* conn,
     if (!validate_raw_request_header(hdr)) {
         conn->error_count.fetch_add(1, std::memory_order_relaxed);
         _dispatch_error_total.fetch_add(1, std::memory_order_relaxed);
-        SPDK_ERRLOG("raw RDMA: invalid request header op=%u body_len=%u\n",
-                    hdr.opcode, le32toh(hdr.body_len));
+        SPDK_ERRLOG("raw RDMA: invalid request header op=%u body_len=%u peer=%s\n",
+                    hdr.opcode, le32toh(hdr.body_len), conn->peer_address.c_str());
         send_response(conn, &hdr, raw_status_invalid_request, nullptr, 0);
         return;
     }
