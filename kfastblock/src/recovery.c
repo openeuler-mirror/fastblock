@@ -79,6 +79,7 @@ unsigned int kfastblock_recovery_classify_leader_failure(int ret)
 	case -ENOTCONN:
 	case -EPROTO:
 	case -EIO:
+	case -EMSGSIZE:
 		return KFASTBLOCK_RECOVERY_DROP_SOCKET |
 			KFASTBLOCK_RECOVERY_INVALIDATE_RDMA |
 			KFASTBLOCK_RECOVERY_INVALIDATE_LEADER |
