@@ -488,3 +488,13 @@ kfastblock_release_test_lock() {
         export KFASTBLOCK_TEST_LOCK_FD
     fi
 }
+
+kfastblock_module_param() {
+    local name="$1"
+    local path="/sys/module/kfastblock/parameters/$name"
+    if [ ! -r "$path" ]; then
+        echo ""
+        return 1
+    fi
+    tr -d '\n' < "$path"
+}
