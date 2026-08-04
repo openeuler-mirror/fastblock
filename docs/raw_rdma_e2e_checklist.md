@@ -45,6 +45,10 @@ raw RDMA active running=1 ... accept=... ports=[...]
 sudo bash scripts/run-kfastblock-rdma-4k-verify.sh
 # 多轮同连接 exchange（防 recv_done 回归）
 sudo KFASTBLOCK_RDMA_IO_ROUNDS=8 bash scripts/run-kfastblock-rdma-multi-io.sh
+# 并行 4K（多 worker）
+sudo bash scripts/run-kfastblock-rdma-parallel-4k.sh
+# tcp/rdma/auto 矩阵
+sudo bash scripts/run-kfastblock-transport-matrix.sh
 # 或冷启动 post-reboot 全路径
 sudo bash scripts/post-reboot-rdma-smoke.sh
 ```
