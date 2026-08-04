@@ -750,8 +750,9 @@ void osd_raw_rdma_server::handle_recv_complete(connection_context* conn,
     if (sizeof(raw_header) + body_len > byte_len) {
         conn->error_count.fetch_add(1, std::memory_order_relaxed);
         _dispatch_error_total.fetch_add(1, std::memory_order_relaxed);
-        SPDK_ERRLOG("raw RDMA: truncated body need=%zu got=%u\n",
-                    sizeof(raw_header) + body_len, byte_len);
+        SPDK_ERRLOG("raw RDMA: truncated body need=%zu got=%u peer=%s\n",
+                    sizeof(raw_header) + body_len, byte_len,
+                    conn->peer_address.c_str());
         send_response(conn, &hdr, raw_status_invalid_request, nullptr, 0);
         return;
     }
