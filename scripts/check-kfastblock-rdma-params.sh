@@ -4,8 +4,9 @@ set -euo pipefail
 need=(
   rdma_cm_timeout_ms rdma_io_timeout_ms rdma_recv_depth
   rdma_exchange_ok rdma_exchange_err rdma_exchange_stale
-  rdma_connect_ok
-  rdma_connect_timeout rdma_pool_hit rdma_pool_miss
+  rdma_connect_ok rdma_connect_err rdma_connect_timeout
+  rdma_io_timeout_total rdma_dma_map_err
+  rdma_pool_hit rdma_pool_miss rdma_pool_evict
   rdma_pool_idle_max_age_s rdma_pool_max_idle
   rdma_object_log
   object_io_max_attempts
