@@ -111,6 +111,7 @@ static unsigned long kfastblock_rdma_exchange_err;
 static unsigned long kfastblock_rdma_exchange_stale;
 static unsigned long kfastblock_rdma_connect_ok;
 static unsigned long kfastblock_rdma_connect_err;
+static unsigned long kfastblock_rdma_connect_timeout;
 static unsigned long kfastblock_rdma_dma_map_err;
 
 module_param_named(rdma_send_ok, kfastblock_rdma_send_ok, ulong, 0444);
@@ -133,6 +134,9 @@ module_param_named(rdma_connect_ok, kfastblock_rdma_connect_ok, ulong, 0444);
 MODULE_PARM_DESC(rdma_connect_ok, "RDMA connect successes");
 module_param_named(rdma_connect_err, kfastblock_rdma_connect_err, ulong, 0444);
 MODULE_PARM_DESC(rdma_connect_err, "RDMA connect failures");
+module_param_named(rdma_connect_timeout, kfastblock_rdma_connect_timeout, ulong,
+		   0444);
+MODULE_PARM_DESC(rdma_connect_timeout, "RDMA CM connect/wait timeouts");
 module_param_named(rdma_dma_map_err, kfastblock_rdma_dma_map_err, ulong, 0444);
 MODULE_PARM_DESC(rdma_dma_map_err, "RDMA DMA map single failures");
 
@@ -397,6 +401,7 @@ static int kfastblock_rdma_wait_cm_event(struct kfastblock_rdma_conn *conn,
 		return -EINVAL;
 	if (!wait_for_completion_timeout(&conn->cm_done, timeout)) {
 		conn->last_error = -ETIMEDOUT;
+		kfastblock_rdma_connect_timeout++;
 		return -ETIMEDOUT;
 	}
 	if (conn->cm_event != expect) {
