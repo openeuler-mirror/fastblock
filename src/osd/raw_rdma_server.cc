@@ -692,6 +692,8 @@ void osd_raw_rdma_server::dispatch_get_leader(connection_context* conn,
     auto leader = _service->resolve_pg_leader_raw_rdma(le32toh(req.pool_id),
                                                       le32toh(req.pg_id));
     if (leader.state != err::E_SUCCESS) {
+        SPDK_NOTICELOG("raw RDMA GET_LEADER fail peer=%s state=%d\n",
+                       conn->peer_address.c_str(), leader.state);
         send_response(conn, req_hdr,
                       raw_status_from_errno(leader.state), nullptr, 0);
         return;
