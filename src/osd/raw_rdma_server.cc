@@ -300,6 +300,8 @@ bool osd_raw_rdma_server::ensure_send_mr(connection_context* conn) noexcept {
     if (!conn->send_buf) {
         conn->send_buf = ::malloc(raw_rdma_send_buf_len);
         if (!conn->send_buf) {
+            SPDK_ERRLOG("raw RDMA: malloc send_buf failed peer=%s\n",
+                        conn->peer_address.c_str());
             return false;
         }
         conn->send_buf_len = raw_rdma_send_buf_len;
