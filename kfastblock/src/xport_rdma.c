@@ -304,6 +304,14 @@ static void kfastblock_rdma_conn_destroy_resources(struct kfastblock_rdma_conn *
 	conn->recv_posted_count = 0;
 	conn->recv_wr_slot = 0;
 	conn->recv_depth = 0;
+	/* Reset completions so a recycled conn object never sees stale done. */
+	reinit_completion(&conn->cm_done);
+	reinit_completion(&conn->send_done);
+	reinit_completion(&conn->recv_done);
+	reinit_completion(&conn->cq_event);
+	conn->send_wc_status = 0;
+	conn->recv_wc_status = 0;
+	conn->recv_byte_len = 0;
 }
 
 static int kfastblock_rdma_cm_event_handler(struct rdma_cm_id *cm_id,
