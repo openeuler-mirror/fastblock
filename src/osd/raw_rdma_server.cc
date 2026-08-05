@@ -691,6 +691,9 @@ void osd_raw_rdma_server::dispatch_get_leader(connection_context* conn,
         return;
     }
     if (body_len != sizeof(raw_get_leader_req) || !body) {
+        SPDK_ERRLOG(
+          "raw RDMA GET_LEADER invalid body peer=%s body=%u expect=%zu\n",
+          conn->peer_address.c_str(), body_len, sizeof(raw_get_leader_req));
         send_response(conn, req_hdr, raw_status_invalid_request, nullptr, 0);
         return;
     }
