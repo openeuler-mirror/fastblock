@@ -134,6 +134,7 @@ static int __init kfastblock_init(void)
 	if (ret)
 		goto err_volume_exit;
 
+	pr_info("kfastblock: loaded major=%d\n", kfastblock_major);
 	return 0;
 
 err_volume_exit:
@@ -154,6 +155,7 @@ static void __exit kfastblock_exit(void)
 	kfastblock_transport_exit();
 	kfastblock_meta_exit();
 	unregister_blkdev(kfastblock_major, KFASTBLOCK_DRV_NAME);
+	pr_info("kfastblock: unloaded\n");
 }
 
 module_init(kfastblock_init);
@@ -161,6 +163,6 @@ module_exit(kfastblock_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("OpenAI");
-MODULE_DESCRIPTION("kfastblock kernel client scaffold");
+MODULE_DESCRIPTION("kfastblock kernel client (TCP/RDMA raw OSD data plane)");
 /* OSD data-plane RDMA backend needs rdma_cm/ib_core when used. */
 MODULE_SOFTDEP("pre: rdma_cm ib_core");
