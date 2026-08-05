@@ -435,12 +435,19 @@ static int kfastblock_rdma_alloc_bufs(struct kfastblock_rdma_conn *conn)
 	 * kvzalloc falls back to vmalloc; Soft-RoCE maps CPU virt addrs fine.
 	 */
 	conn->send_buf = kvzalloc(KFASTBLOCK_RDMA_BUF_LEN, GFP_KERNEL);
-	if (!conn->send_buf)
+	if (!conn->send_buf) {
+		pr_warn_ratelimited(
+			"kfastblock: RDMA send_buf kvzalloc %u failed\n",
+			KFASTBLOCK_RDMA_BUF_LEN);
 		return -ENOMEM;
+	}
 	conn->send_buf_len = KFASTBLOCK_RDMA_BUF_LEN;
 
 	conn->recv_buf = kvzalloc(KFASTBLOCK_RDMA_BUF_LEN, GFP_KERNEL);
 	if (!conn->recv_buf) {
+		pr_warn_ratelimited(
+			"kfastblock: RDMA recv_buf kvzalloc %u failed\n",
+			KFASTBLOCK_RDMA_BUF_LEN);
 		kvfree(conn->send_buf);
 		conn->send_buf = NULL;
 		conn->send_buf_len = 0;
