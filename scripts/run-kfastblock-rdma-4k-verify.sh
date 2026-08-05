@@ -48,17 +48,21 @@ kfastblock_create_image "$REPO_ROOT" "$CONF" "$POOL" "$IMAGE"
 	--monitor-addr "${MON}:3334" \
 	--pool-name "$POOL" \
 	--image-name "$IMAGE" \
-	--osd-transport rdma
+	--osd-transport "${KFASTBLOCK_OSD_TRANSPORT:-rdma}"
 
 DEV="$(kfastblock_resolve_device)"
 echo "device=$DEV image=$IMAGE mon=$MON"
 xport="$("$REPO_ROOT/kfastblock/tool/kfastblock-admin" show \
 	--pool-name "$POOL" --image-name "$IMAGE" | awk -F= '/^osd_transport=/{print $2}')"
 echo "osd_transport=$xport"
-[ "$xport" = "rdma" ] || {
-	echo "expected osd_transport=rdma got=$xport" >&2
+expect_xport="${KFASTBLOCK_OSD_TRANSPORT:-rdma}"
+# auto may resolve to rdma or tcp depending on map.
+if [ "$expect_xport" = "auto" ]; then
+	:
+elif [ "$xport" != "$expect_xport" ]; then
+	echo "expected osd_transport=$expect_xport got=$xport" >&2
 	exit 1
-}
+fi
 
 PAYLOAD="$LOG_DIR/payload.bin"
 READBACK="$LOG_DIR/readback.bin"
