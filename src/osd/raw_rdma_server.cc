@@ -584,6 +584,9 @@ void osd_raw_rdma_server::dispatch_write(connection_context* conn,
     const uint32_t data_len = le32toh(req.data_len);
     if (body_len != sizeof(req) + object_name_len + data_len ||
         object_name_len == 0) {
+        SPDK_ERRLOG(
+          "raw RDMA WRITE invalid body peer=%s body=%u name_len=%u data_len=%u\n",
+          conn->peer_address.c_str(), body_len, object_name_len, data_len);
         send_response(conn, req_hdr, raw_status_invalid_request, nullptr, 0);
         return;
     }
