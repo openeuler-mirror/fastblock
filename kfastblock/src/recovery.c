@@ -106,6 +106,7 @@ bool kfastblock_recovery_prefetch_should_fail_request(int ret)
 	case -E2BIG:
 	case -EOPNOTSUPP:
 	case -ENOENT:
+	case -ENOSYS:
 		return true;
 	default:
 		return false;
