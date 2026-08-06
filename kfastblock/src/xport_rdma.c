@@ -912,6 +912,9 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 			ret = rdma_connect(conn->cm_id, &conn_param);
 			if (ret) {
 				conn->last_error = ret;
+				pr_warn_ratelimited(
+					"kfastblock: rdma_connect failed ret=%d peer=%s:%u\n",
+					ret, conn->peer_addr, conn->peer_port);
 				goto err_destroy_id;
 			}
 
