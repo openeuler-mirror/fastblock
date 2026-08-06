@@ -15,6 +15,7 @@ static unsigned long kfastblock_rdma_pool_miss_total;
 static unsigned long kfastblock_rdma_pool_evict_total;
 static unsigned long kfastblock_rdma_pool_reclaim_total;
 static unsigned long kfastblock_rdma_pool_invalidate_broken_total;
+static unsigned long kfastblock_rdma_pool_put_fail_total;
 /* Default max_idle applied at pool_init (0 = unlimited). */
 static unsigned int kfastblock_rdma_pool_max_idle_default =
 	KFASTBLOCK_RDMA_POOL_DEFAULT_MAX_IDLE;
@@ -37,6 +38,10 @@ module_param_named(rdma_pool_invalidate_broken,
 		   kfastblock_rdma_pool_invalidate_broken_total, ulong, 0444);
 MODULE_PARM_DESC(rdma_pool_invalidate_broken,
 		 "RDMA pool invalidate_broken slot total");
+module_param_named(rdma_pool_put_fail, kfastblock_rdma_pool_put_fail_total,
+		   ulong, 0444);
+MODULE_PARM_DESC(rdma_pool_put_fail,
+		 "RDMA pool put with ok=false (conn discarded)");
 module_param_named(rdma_pool_max_idle, kfastblock_rdma_pool_max_idle_default,
 		   uint, 0644);
 MODULE_PARM_DESC(rdma_pool_max_idle,
@@ -369,6 +374,7 @@ void kfastblock_rdma_pool_put(struct kfastblock_rdma_pool *pool,
 	} else {
 		int err = kfastblock_rdma_conn_last_error(conn);
 
+		kfastblock_rdma_pool_put_fail_total++;
 		kfastblock_rdma_pool_slot_disconnect_locked(slot);
 		slot->state = KFASTBLOCK_RDMA_POOL_SLOT_DEAD;
 		slot->failure_count++;
