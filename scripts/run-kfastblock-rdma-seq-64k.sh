@@ -13,6 +13,7 @@ POOL="${KFASTBLOCK_POOL:-fb}"
 IMAGE="${KFASTBLOCK_IMAGE:-rdma-seq-$(date +%s)}"
 BLOCKS="${KFASTBLOCK_SEQ_BLOCKS:-16}"
 TIMEOUT_S="${KFASTBLOCK_IO_TIMEOUT_S:-30}"
+[ "$BLOCKS" -gt 0 ] || { echo "KFASTBLOCK_SEQ_BLOCKS must be >0" >&2; exit 1; }
 kfastblock_create_image "$REPO_ROOT" "$CONF" "$POOL" "$IMAGE"
 "$REPO_ROOT/kfastblock/tool/kfastblock-admin" attach \
   --monitor-addr "${MON}:3334" --pool-name "$POOL" --image-name "$IMAGE" \
