@@ -935,8 +935,9 @@ bool osd_raw_rdma_server::post_recv_slot(connection_context* conn,
 
     ibv_recv_wr* bad = nullptr;
     if (::ibv_post_recv(conn->id->qp, &wr, &bad)) {
-        SPDK_ERRLOG("raw RDMA: ibv_post_recv slot=%zu failed: %s\n",
-                    slot, std::strerror(errno));
+        SPDK_ERRLOG(
+          "raw RDMA: ibv_post_recv slot=%zu failed peer=%s: %s\n",
+          slot, conn->peer_address.c_str(), std::strerror(errno));
         return false;
     }
     rs.posted = true;
