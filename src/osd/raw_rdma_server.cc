@@ -893,8 +893,9 @@ bool osd_raw_rdma_server::ensure_recv_slots(connection_context* conn) noexcept {
         rs.len = raw_rdma_recv_buf_len;
         rs.mr = ::ibv_reg_mr(conn->pd, rs.buf, rs.len, IBV_ACCESS_LOCAL_WRITE);
         if (!rs.mr) {
-            SPDK_ERRLOG("raw RDMA: ibv_reg_mr recv slot %zu failed: %s\n",
-                        i, std::strerror(errno));
+            SPDK_ERRLOG(
+              "raw RDMA: ibv_reg_mr recv slot %zu failed peer=%s: %s\n",
+              i, conn->peer_address.c_str(), std::strerror(errno));
             free_recv_slots(conn);
             return false;
         }
