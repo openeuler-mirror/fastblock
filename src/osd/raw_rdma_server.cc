@@ -344,7 +344,8 @@ bool osd_raw_rdma_server::post_send(connection_context* conn,
 
     ibv_send_wr* bad = nullptr;
     if (::ibv_post_send(conn->id->qp, &wr, &bad)) {
-        SPDK_ERRLOG("raw RDMA: ibv_post_send failed: %s\n", std::strerror(errno));
+        SPDK_ERRLOG("raw RDMA: ibv_post_send failed peer=%s: %s\n",
+                    conn->peer_address.c_str(), std::strerror(errno));
         return false;
     }
     conn->send_in_flight = true;
