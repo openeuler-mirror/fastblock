@@ -3197,6 +3197,11 @@ static void kfastblock_transport_run_object_attempts(
 			continue;
 		return;
 	}
+	if (ctx->ret)
+		pr_warn_ratelimited(
+			"kfastblock: object IO exhausted attempts=%u ret=%d pg=%u\n",
+			kfastblock_object_io_max_attempts(), ctx->ret,
+			ctx->extent ? ctx->extent->pg_id : 0);
 }
 
 static int kfastblock_transport_run_object_io_ctx(
