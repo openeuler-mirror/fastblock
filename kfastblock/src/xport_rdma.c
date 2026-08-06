@@ -742,6 +742,10 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 	if (conn->state != KFASTBLOCK_RDMA_CONN_IDLE &&
 	    conn->state != KFASTBLOCK_RDMA_CONN_ERROR) {
 		conn->last_error = -EBUSY;
+		pr_warn_ratelimited(
+			"kfastblock: RDMA connect busy state=%s peer=%s:%u\n",
+			kfastblock_rdma_conn_state_str(conn),
+			leader->address, leader->rdma_port);
 		return -EBUSY;
 	}
 
