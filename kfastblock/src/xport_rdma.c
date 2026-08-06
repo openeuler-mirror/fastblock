@@ -789,6 +789,9 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 						3000));
 		if (ret) {
 			conn->last_error = ret;
+			pr_warn_ratelimited(
+				"kfastblock: rdma_resolve_addr failed ret=%d peer=%s:%u\n",
+				ret, conn->peer_addr, conn->peer_port);
 			goto err_destroy_id;
 		}
 
@@ -796,6 +799,9 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 			conn, RDMA_CM_EVENT_ADDR_RESOLVED);
 		if (ret) {
 			conn->last_error = ret;
+			pr_warn_ratelimited(
+				"kfastblock: wait ADDR_RESOLVED failed ret=%d peer=%s:%u\n",
+				ret, conn->peer_addr, conn->peer_port);
 			goto err_destroy_id;
 		}
 
@@ -807,6 +813,9 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 						 3000));
 		if (ret) {
 			conn->last_error = ret;
+			pr_warn_ratelimited(
+				"kfastblock: rdma_resolve_route failed ret=%d peer=%s:%u\n",
+				ret, conn->peer_addr, conn->peer_port);
 			goto err_destroy_id;
 		}
 
@@ -814,6 +823,9 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 			conn, RDMA_CM_EVENT_ROUTE_RESOLVED);
 		if (ret) {
 			conn->last_error = ret;
+			pr_warn_ratelimited(
+				"kfastblock: wait ROUTE_RESOLVED failed ret=%d peer=%s:%u\n",
+				ret, conn->peer_addr, conn->peer_port);
 			goto err_destroy_id;
 		}
 
