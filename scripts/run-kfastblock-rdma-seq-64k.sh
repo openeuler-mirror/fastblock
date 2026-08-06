@@ -12,6 +12,7 @@ MON="$(kfastblock_resolve_monitor_addr "$CONF")"
 POOL="${KFASTBLOCK_POOL:-fb}"
 IMAGE="${KFASTBLOCK_IMAGE:-rdma-seq-$(date +%s)}"
 BLOCKS="${KFASTBLOCK_SEQ_BLOCKS:-16}"
+TIMEOUT_S="${KFASTBLOCK_IO_TIMEOUT_S:-30}"
 kfastblock_create_image "$REPO_ROOT" "$CONF" "$POOL" "$IMAGE"
 "$REPO_ROOT/kfastblock/tool/kfastblock-admin" attach \
   --monitor-addr "${MON}:3334" --pool-name "$POOL" --image-name "$IMAGE" \
@@ -21,8 +22,8 @@ err0=$(cat /sys/module/kfastblock/parameters/rdma_exchange_err)
 for i in $(seq 0 $((BLOCKS-1))); do
   pay=/tmp/seq-$i.pay; rb=/tmp/seq-$i.rb
   printf 'SEQ%04d_%s' "$i" "$IMAGE" | dd of="$pay" bs=4096 count=1 conv=sync status=none
-  timeout 30 dd if="$pay" of="$DEV" bs=4096 count=1 oflag=direct seek=$i status=none
-  timeout 30 dd if="$DEV" of="$rb" bs=4096 count=1 iflag=direct skip=$i status=none
+  timeout "$TIMEOUT_S" dd if="$pay" of="$DEV" bs=4096 count=1 oflag=direct seek=$i status=none
+  timeout "$TIMEOUT_S" dd if="$DEV" of="$rb" bs=4096 count=1 iflag=direct skip=$i status=none
   cmp -n 4096 "$pay" "$rb"
 done
 err1=$(cat /sys/module/kfastblock/parameters/rdma_exchange_err)
