@@ -889,6 +889,9 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 			ret = rdma_create_qp(conn->cm_id, conn->pd, &qp_attr);
 			if (ret) {
 				conn->last_error = ret;
+				pr_warn_ratelimited(
+					"kfastblock: rdma_create_qp failed ret=%d peer=%s:%u\n",
+					ret, conn->peer_addr, conn->peer_port);
 				goto err_destroy_id;
 			}
 		}
