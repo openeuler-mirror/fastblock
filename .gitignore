@@ -14,3 +14,26 @@ monitor/fastblock-fakeosd
 fastblock.json
 .vstart/
 core.*
+
+# Compiled object files and libraries
+*.o
+*.a
+*.so
+*.so.*
+
+# Editor backup files
+*~
+*.bak
+*.orig
+
+# RPM build output
+*.rpm
+rpmbuild/
+
+# IDE configuration
+.idea/
+*.code-workspace
+
+# OS metadata
+.DS_Store
+Thumbs.db

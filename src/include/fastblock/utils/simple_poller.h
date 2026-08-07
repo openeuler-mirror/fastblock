@@ -39,11 +39,11 @@ public:
 
     simple_poller() : _thread{::spdk_get_thread()} {}
 
-    simple_poller(::spdk_thread* thread) : _thread{thread} {}
+    explicit simple_poller(::spdk_thread* thread) : _thread{thread} {}
 
     simple_poller(const simple_poller&) = delete;
 
-    simple_poller(simple_poller&& r)
+    simple_poller(simple_poller&& r) noexcept
       : _poller{std::exchange(r._poller, nullptr)}
       , _thread{std::exchange(r._thread, nullptr)} {}
 

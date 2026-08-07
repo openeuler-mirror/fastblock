@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MulanPSL-2.0
 #define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <ctype.h>

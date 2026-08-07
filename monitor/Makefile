@@ -1,6 +1,6 @@
 # Copyright (c) 2023-2024 ChinaUnicom. Licensed under Mulan PSL v2.
 
-.PHONY: all clean install
+.PHONY: all clean install test
 
 # Internal dependency directories for monitor
 MONITOR_DEPS_DIRS := config election etcdapi leader log msg osd
@@ -25,6 +25,9 @@ fastblock-client: $(FBCLIENT_FILES)
 	go build -o fastblock-client ./cmd/fastblock-client
 clean:
 	rm -f fastblock-mon fastblock-client
+
+test:
+	go test ./...
 
 install:
 	install -m 0755 fastblock-mon /usr/local/bin
