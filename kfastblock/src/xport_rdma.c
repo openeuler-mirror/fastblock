@@ -374,6 +374,7 @@ struct kfastblock_rdma_conn {
 	int send_wc_status;
 	int recv_wc_status;
 	u32 recv_byte_len;
+	unsigned long last_use_jiffies;
 };
 
 /* SoftIRQ/CQ thread: signal waiters; actual WC drain stays in poll_one. */
@@ -1248,6 +1249,7 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 	conn->connected = true;
 	conn->state = KFASTBLOCK_RDMA_CONN_ESTABLISHED;
 	conn->last_error = 0;
+	conn->last_use_jiffies = jiffies;
 	kfastblock_rdma_update_lat_stats(&kfastblock_rdma_connect_lat_min_us,
 					    &kfastblock_rdma_connect_lat_max_us,
 					    &kfastblock_rdma_connect_lat_total_us,
@@ -1402,6 +1404,7 @@ int kfastblock_rdma_conn_send(struct kfastblock_rdma_conn *conn,
 					    start);
 	kfastblock_rdma_send_bytes += len;
 	kfastblock_rdma_send_ok++;
+	conn->last_use_jiffies = jiffies;
 	conn->last_error = 0;
 	return 0;
 }
@@ -1483,6 +1486,7 @@ int kfastblock_rdma_conn_recv(struct kfastblock_rdma_conn *conn,
 						    start);
 		kfastblock_rdma_recv_bytes += got;
 		kfastblock_rdma_recv_ok++;
+		conn->last_use_jiffies = jiffies;
 		return (int)got;
 	}
 }
@@ -1662,6 +1666,13 @@ int kfastblock_rdma_conn_format_brief(const struct kfastblock_rdma_conn *conn,
 			 conn->dev_name,
 			 kfastblock_rdma_conn_state_name(conn->state),
 			 conn->last_error);
+}
+
+unsigned long kfastblock_rdma_conn_age_seconds(const struct kfastblock_rdma_conn *conn)
+{
+	if (!conn || !conn->connected || !conn->last_use_jiffies)
+		return 0;
+	return jiffies_to_msecs(jiffies - conn->last_use_jiffies) / 1000;
 }
 
 bool kfastblock_rdma_conn_is_usable(const struct kfastblock_rdma_conn *conn)

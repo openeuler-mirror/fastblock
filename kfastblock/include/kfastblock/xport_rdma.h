@@ -86,4 +86,7 @@ u8 kfastblock_rdma_conn_recv_posted(const struct kfastblock_rdma_conn *conn);
 /* Configured RECV depth for this conn (0 if not connected yet). */
 u8 kfastblock_rdma_conn_recv_depth(const struct kfastblock_rdma_conn *conn);
 
+/* Return connection age in seconds since last use (0 if not connected). */
+unsigned long kfastblock_rdma_conn_age_seconds(const struct kfastblock_rdma_conn *conn);
+
 #endif
