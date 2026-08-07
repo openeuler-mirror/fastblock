@@ -2822,6 +2822,22 @@ static int kfastblock_transport_pick_object_leader(
 		ctx->kf_req, ctx->hint, &ctx->leader);
 }
 
+static bool kfastblock_transport_is_retryable_error(int ret)
+{
+	switch (ret) {
+	case -EAGAIN:
+	case -ETIMEDOUT:
+	case -ECONNRESET:
+	case -EPIPE:
+	case -ENOTCONN:
+	case -EHOSTDOWN:
+	case -ENOLINK:
+		return true;
+	default:
+		return false;
+	}
+}
+
 static int kfastblock_transport_normalize_object_ret(
 	struct kfastblock_transport_object_io_ctx *ctx,
 	int ret)
@@ -2842,8 +2858,14 @@ static int kfastblock_transport_normalize_object_ret(
 			ctx->leader.address, ctx->leader.rdma_port,
 			ctx->raw_opcode);
 
-	if (ret && ctx->use_rdma)
+	if (ret && ctx->use_rdma) {
 		kfastblock_transport_rdma_io_err++;
+		if (kfastblock_transport_is_retryable_error(ret))
+			pr_debug_ratelimited(
+				"kfastblock: RDMA object retryable err=%d peer=%s:%u op=%u\n",
+				ret, ctx->leader.address, ctx->leader.rdma_port,
+				ctx->raw_opcode);
+	}
 
 	return ret;
 }
