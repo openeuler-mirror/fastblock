@@ -18,6 +18,7 @@ need=(
   rdma_wc_rnr_err rdma_wc_remote_err rdma_wc_fatal_err rdma_wc_other_err
   rdma_wc_unknown_id
   rdma_poll_empty_total
+  rdma_conn_error_transitions
   rdma_inline_threshold
   rdma_send_bytes rdma_recv_bytes
   rdma_send_wr_total rdma_recv_wr_total
