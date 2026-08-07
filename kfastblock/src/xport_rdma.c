@@ -729,6 +729,66 @@ void kfastblock_rdma_conn_free(struct kfastblock_rdma_conn *conn)
 	kfree(conn);
 }
 
+static int kfastblock_rdma_conn_resolve_addr_route(
+	struct kfastblock_rdma_conn *conn)
+{
+	struct sockaddr_in dst;
+	int ret;
+
+	ret = kfastblock_rdma_build_dst_addr(conn->peer_addr,
+					     conn->peer_port, &dst);
+	if (ret) {
+		conn->last_error = ret;
+		return ret;
+	}
+
+	reinit_completion(&conn->cm_done);
+	conn->state = KFASTBLOCK_RDMA_CONN_RESOLVING_ADDR;
+	ret = rdma_resolve_addr(conn->cm_id, NULL,
+				(struct sockaddr *)&dst,
+				kfastblock_rdma_timeout_ms_or_default(
+					kfastblock_rdma_cm_timeout_ms, 3000));
+	if (ret) {
+		conn->last_error = ret;
+		pr_warn_ratelimited(
+			"kfastblock: rdma_resolve_addr failed ret=%d peer=%s:%u\n",
+			ret, conn->peer_addr, conn->peer_port);
+		return ret;
+	}
+
+	ret = kfastblock_rdma_wait_cm_event(conn, RDMA_CM_EVENT_ADDR_RESOLVED);
+	if (ret) {
+		conn->last_error = ret;
+		pr_warn_ratelimited(
+			"kfastblock: wait ADDR_RESOLVED failed ret=%d peer=%s:%u\n",
+			ret, conn->peer_addr, conn->peer_port);
+		return ret;
+	}
+
+	reinit_completion(&conn->cm_done);
+	conn->state = KFASTBLOCK_RDMA_CONN_RESOLVING_ROUTE;
+	ret = rdma_resolve_route(conn->cm_id,
+				 kfastblock_rdma_timeout_ms_or_default(
+					 kfastblock_rdma_cm_timeout_ms, 3000));
+	if (ret) {
+		conn->last_error = ret;
+		pr_warn_ratelimited(
+			"kfastblock: rdma_resolve_route failed ret=%d peer=%s:%u\n",
+			ret, conn->peer_addr, conn->peer_port);
+		return ret;
+	}
+
+	ret = kfastblock_rdma_wait_cm_event(conn, RDMA_CM_EVENT_ROUTE_RESOLVED);
+	if (ret) {
+		conn->last_error = ret;
+		pr_warn_ratelimited(
+			"kfastblock: wait ROUTE_RESOLVED failed ret=%d peer=%s:%u\n",
+			ret, conn->peer_addr, conn->peer_port);
+		return ret;
+	}
+	return 0;
+}
+
 static int kfastblock_rdma_conn_setup_cm(struct kfastblock_rdma_conn *conn)
 {
 	struct rdma_conn_param conn_param;
@@ -866,6 +926,8 @@ static int kfastblock_rdma_conn_setup_cq(struct kfastblock_rdma_conn *conn)
 int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 				 const struct kfastblock_leader_info *leader)
 {
+	int ret;
+
 	if (!conn || !leader)
 		return -EINVAL;
 	if (!leader->address[0] || !leader->rdma_port) {
@@ -906,101 +968,38 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 		return conn->last_error;
 	}
 
-	{
-		struct sockaddr_in dst;
-		int ret;
+	ret = kfastblock_rdma_conn_resolve_addr_route(conn);
+	if (ret)
+		goto err_destroy_id;
 
-		ret = kfastblock_rdma_build_dst_addr(conn->peer_addr,
-						     conn->peer_port, &dst);
-		if (ret) {
-			conn->last_error = ret;
-			goto err_destroy_id;
-		}
+	ret = kfastblock_rdma_conn_setup_pd(conn);
+	if (ret)
+		goto err_destroy_id;
 
-		reinit_completion(&conn->cm_done);
-		conn->state = KFASTBLOCK_RDMA_CONN_RESOLVING_ADDR;
-		ret = rdma_resolve_addr(conn->cm_id, NULL,
-					(struct sockaddr *)&dst,
-					kfastblock_rdma_timeout_ms_or_default(
-						kfastblock_rdma_cm_timeout_ms,
-						3000));
-		if (ret) {
-			conn->last_error = ret;
-			pr_warn_ratelimited(
-				"kfastblock: rdma_resolve_addr failed ret=%d peer=%s:%u\n",
-				ret, conn->peer_addr, conn->peer_port);
-			goto err_destroy_id;
-		}
+	ret = kfastblock_rdma_conn_setup_cq(conn);
+	if (ret)
+		goto err_destroy_id;
 
-		ret = kfastblock_rdma_wait_cm_event(
-			conn, RDMA_CM_EVENT_ADDR_RESOLVED);
-		if (ret) {
-			conn->last_error = ret;
-			pr_warn_ratelimited(
-				"kfastblock: wait ADDR_RESOLVED failed ret=%d peer=%s:%u\n",
-				ret, conn->peer_addr, conn->peer_port);
-			goto err_destroy_id;
-		}
+	ret = kfastblock_rdma_conn_setup_qp(conn);
+	if (ret)
+		goto err_destroy_id;
 
-		reinit_completion(&conn->cm_done);
-		conn->state = KFASTBLOCK_RDMA_CONN_RESOLVING_ROUTE;
-		ret = rdma_resolve_route(conn->cm_id,
-					 kfastblock_rdma_timeout_ms_or_default(
-						 kfastblock_rdma_cm_timeout_ms,
-						 3000));
-		if (ret) {
-			conn->last_error = ret;
-			pr_warn_ratelimited(
-				"kfastblock: rdma_resolve_route failed ret=%d peer=%s:%u\n",
-				ret, conn->peer_addr, conn->peer_port);
-			goto err_destroy_id;
-		}
+	ret = kfastblock_rdma_conn_setup_cm(conn);
+	if (ret)
+		goto err_destroy_id;
 
-		ret = kfastblock_rdma_wait_cm_event(
-			conn, RDMA_CM_EVENT_ROUTE_RESOLVED);
-		if (ret) {
-			conn->last_error = ret;
-			pr_warn_ratelimited(
-				"kfastblock: wait ROUTE_RESOLVED failed ret=%d peer=%s:%u\n",
-				ret, conn->peer_addr, conn->peer_port);
-			goto err_destroy_id;
-		}
-
-		ret = kfastblock_rdma_conn_setup_pd(conn);
-		if (ret)
-			goto err_destroy_id;
-
-		ret = kfastblock_rdma_conn_setup_cq(conn);
-		if (ret)
-			goto err_destroy_id;
-
-		ret = kfastblock_rdma_conn_setup_qp(conn);
-		if (ret)
-			goto err_destroy_id;
-
-		ret = kfastblock_rdma_conn_setup_cm(conn);
-		if (ret)
-			goto err_destroy_id;
-
-		ret = kfastblock_rdma_alloc_bufs(conn);
-		if (ret) {
-			conn->last_error = ret;
-			goto err_destroy_id;
-		}
-		ret = kfastblock_rdma_map_bufs(conn);
-		if (ret) {
-			conn->last_error = ret;
-			goto err_destroy_id;
-		}
-		conn->recv_depth = (u8)kfastblock_rdma_recv_depth_clamped();
-		conn->recv_posted_count = 0;
-		conn->recv_wr_slot = 0;
-		ret = kfastblock_rdma_post_recv_fill(conn);
-		if (ret) {
-			conn->last_error = ret;
-			goto err_destroy_id;
-		}
-	}
+	ret = kfastblock_rdma_alloc_bufs(conn);
+	if (ret)
+		goto err_destroy_id;
+	ret = kfastblock_rdma_map_bufs(conn);
+	if (ret)
+		goto err_destroy_id;
+	conn->recv_depth = (u8)kfastblock_rdma_recv_depth_clamped();
+	conn->recv_posted_count = 0;
+	conn->recv_wr_slot = 0;
+	ret = kfastblock_rdma_post_recv_fill(conn);
+	if (ret)
+		goto err_destroy_id;
 
 	conn->connected = true;
 	conn->state = KFASTBLOCK_RDMA_CONN_ESTABLISHED;
