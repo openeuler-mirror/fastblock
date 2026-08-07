@@ -106,6 +106,9 @@ void kfastblock_rdma_pool_snapshot(struct kfastblock_rdma_pool *pool,
 
 const char *kfastblock_rdma_pool_slot_state_name(u8 state);
 
+int kfastblock_rdma_pool_slot_format_brief(
+	const struct kfastblock_rdma_pool_slot *slot, char *buf, size_t buf_len);
+
 /* Count slots currently in @state (EMPTY/IDLE/BUSY/DEAD). */
 u32 kfastblock_rdma_pool_count_state(struct kfastblock_rdma_pool *pool,
 				     u8 state);
