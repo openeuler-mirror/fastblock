@@ -160,5 +160,5 @@ module_init(kfastblock_init);
 module_exit(kfastblock_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("OpenAI");
+MODULE_AUTHOR("ChinaUnicom");
 MODULE_DESCRIPTION("kfastblock kernel client scaffold");
