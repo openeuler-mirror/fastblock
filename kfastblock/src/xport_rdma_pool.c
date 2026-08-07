@@ -372,14 +372,16 @@ static void kfastblock_rdma_pool_evict_idle_lru(
 	 */
 	for (i = 0; i < pool->nr_slots; ++i) {
 		struct kfastblock_rdma_pool_slot *slot = &pool->slots[i];
+		u8 st = READ_ONCE(slot->state);
 
-		if (slot->state == KFASTBLOCK_RDMA_POOL_SLOT_IDLE) {
+		if (st == KFASTBLOCK_RDMA_POOL_SLOT_IDLE) {
+			unsigned long lu = READ_ONCE(slot->last_use_jiffies);
+
 			idle_n++;
 			if (slot != skip &&
-			    (!victim ||
-			     time_before(slot->last_use_jiffies, oldest))) {
+			    (!victim || time_before(lu, oldest))) {
 				victim = slot;
-				oldest = slot->last_use_jiffies;
+				oldest = lu;
 			}
 		}
 	}
