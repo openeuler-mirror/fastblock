@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MulanPSL-2.0 */
 #ifndef KFASTBLOCK_PIPELINE_H
 #define KFASTBLOCK_PIPELINE_H
 

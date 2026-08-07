@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MulanPSL-2.0 */
 #ifndef KFASTBLOCK_CONNPOOL_H
 #define KFASTBLOCK_CONNPOOL_H
 

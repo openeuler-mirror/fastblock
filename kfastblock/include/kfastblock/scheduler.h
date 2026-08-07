@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MulanPSL-2.0 */
 #ifndef KFASTBLOCK_SCHEDULER_H
 #define KFASTBLOCK_SCHEDULER_H
 
