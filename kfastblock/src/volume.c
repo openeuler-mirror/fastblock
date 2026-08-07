@@ -2314,6 +2314,28 @@ static ssize_t flush_rdma_cache_store(struct device *dev,
 	return count;
 }
 
+static ssize_t invalidate_rdma_broken_store(struct device *dev,
+					    struct device_attribute *attr,
+					    const char *buf, size_t count)
+{
+	struct kfastblock_volume *vol = dev_get_drvdata(dev);
+	u32 n;
+	int ret;
+
+	if (!vol)
+		return -ENODEV;
+	ret = kfastblock_volume_parse_manual_trigger(buf, count);
+	if (ret)
+		return ret;
+
+	n = kfastblock_rdma_conn_pool_invalidate_broken(vol->rdma_cache,
+							KFASTBLOCK_MAX_RDMA_CACHE);
+	if (n)
+		pr_info("kfastblock: invalidate_rdma_broken vol=%s dropped=%u\n",
+			vol->name, n);
+	return count;
+}
+
 static ssize_t reset_leaders_store(struct device *dev,
 			     struct device_attribute *attr,
 			     const char *buf, size_t count)
@@ -4342,6 +4364,7 @@ static ssize_t run_selfcheck_store(struct device *dev,
 
 static DEVICE_ATTR_RO(rdma_cache_stats);
 static DEVICE_ATTR_WO(flush_rdma_cache);
+static DEVICE_ATTR_WO(invalidate_rdma_broken);
 static DEVICE_ATTR_RO(pool_name);
 static DEVICE_ATTR_RO(image_name);
 static DEVICE_ATTR_RO(size_bytes);
@@ -4479,6 +4502,7 @@ static struct attribute *kfastblock_volume_attrs[] = {
 	&dev_attr_osd_transport.attr,
 	&dev_attr_rdma_cache_stats.attr,
 	&dev_attr_flush_rdma_cache.attr,
+	&dev_attr_invalidate_rdma_broken.attr,
 	&dev_attr_pool_name.attr,
 	&dev_attr_image_name.attr,
 	&dev_attr_size_bytes.attr,
