@@ -75,7 +75,7 @@ inline const char *  string_status(int raft_errno) noexcept{
     case RAFT_ERR_NOT_LEADER:
         return "the osd is not the leader of the pg";
     case RAFT_ERR_ONE_VOTING_CHANGE_ONLY:
-        return "";
+        return "only one voting membership change is allowed at a time";
     case RAFT_ERR_SHUTDOWN:
         return "has a seriously wrong";
     case RAFT_ERR_NOMEM:
@@ -85,7 +85,7 @@ inline const char *  string_status(int raft_errno) noexcept{
     case RAFT_ERR_SNAPSHOT_IN_PROGRESS:
         return "snapshot is in progress";
     case RAFT_ERR_SNAPSHOT_ALREADY_LOADED:
-        return "snapshot is aleready loaded";
+        return "snapshot is already loaded";
     case RAFT_ERR_INVALID_CFG_CHANGE:
         return "change config is invalid";
     case RAFT_ERR_NOT_FOUND_LEADER:
