@@ -171,4 +171,16 @@ void kfastblock_meta_invalidate_pg_leader(struct kfastblock_cluster_view *view,
 					  u32 pool_id, u32 pg_id);
 void kfastblock_meta_invalidate_all_pg_leaders(struct kfastblock_cluster_view *view);
 
+static inline int kfastblock_leader_format_brief(
+	const struct kfastblock_leader_info *leader, char *buf, size_t buf_len)
+{
+	if (!leader || !buf || !buf_len)
+		return 0;
+	if (!leader->address[0])
+		return scnprintf(buf, buf_len, "leader=(none)");
+	return scnprintf(buf, buf_len, "leader=%s:%u rdma=%u osd=%u",
+			 leader->address, leader->port, leader->rdma_port,
+			 leader->osd_id);
+}
+
 #endif
