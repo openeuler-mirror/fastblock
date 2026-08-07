@@ -260,6 +260,10 @@ u32 kfastblock_rdma_conn_pool_ready_count(
 	struct kfastblock_cached_rdma *slots, u32 nr_slots,
 	const struct kfastblock_leader_info *leader);
 
+/* Walk all slots; disconnect any with unusable conns. Returns count. */
+u32 kfastblock_rdma_conn_pool_invalidate_broken(
+	struct kfastblock_cached_rdma *slots, u32 nr_slots);
+
 /*
  * Try acquire an already-connected matching slot without CM connect.
  * Returns locked cached slot or NULL. Caller must release().

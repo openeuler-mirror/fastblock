@@ -1127,6 +1127,30 @@ u32 kfastblock_rdma_conn_pool_ready_count(
 	return n;
 }
 
+u32 kfastblock_rdma_conn_pool_invalidate_broken(
+	struct kfastblock_cached_rdma *slots, u32 nr_slots)
+{
+	u32 i, n = 0;
+
+	if (!slots)
+		return 0;
+	for (i = 0; i < nr_slots; ++i) {
+		struct kfastblock_cached_rdma *c = &slots[i];
+
+		mutex_lock(&c->lock);
+		if (c->conn && !kfastblock_rdma_conn_is_usable(c->conn)) {
+			kfastblock_rdma_conn_free(c->conn);
+			c->conn = NULL;
+			c->state = KFASTBLOCK_CONN_STATE_EMPTY;
+			c->last_error = -ENOTCONN;
+			c->failure_count++;
+			n++;
+		}
+		mutex_unlock(&c->lock);
+	}
+	return n;
+}
+
 void kfastblock_rdma_conn_pool_snapshot(struct kfastblock_cached_rdma *slots,
 					u32 nr_slots,
 					struct kfastblock_conn_pool_snapshot *snapshot)
