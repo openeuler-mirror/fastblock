@@ -18,6 +18,6 @@ constexpr size_t KB = 1024 * B;
 constexpr size_t MB = 1024 * KB;
 constexpr size_t GB = 1024 * MB;
 
-constexpr size_t operator"" _KB(unsigned long long n) { return n * KB; }
-constexpr size_t operator"" _MB(unsigned long long n) { return n * MB; }
-constexpr size_t operator"" _GB(unsigned long long n) { return n * GB; }
+constexpr size_t operator"" _KB(unsigned long long n) noexcept { return n * KB; }
+constexpr size_t operator"" _MB(unsigned long long n) noexcept { return n * MB; }
+constexpr size_t operator"" _GB(unsigned long long n) noexcept { return n * GB; }
