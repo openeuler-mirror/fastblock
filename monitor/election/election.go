@@ -49,7 +49,7 @@ func (l *LeaderElection) Run(ctx context.Context) error {
 	// Create a lease to hold the leader key
 	lid, err := l.etcdClient.Grant(ctx, 10)
 	if err != nil {
-		return err
+		return fmt.Errorf("grant leader election lease: %w", err)
 	}
 	l.Mutex.Lock()
 	l.leaseID = lid

@@ -191,5 +191,8 @@ type Duration struct {
 func (d *Duration) UnmarshalText(text []byte) error {
 	var err error
 	d.Duration, err = time.ParseDuration(string(text))
-	return err
+	if err != nil {
+		return fmt.Errorf("parse duration %q: %w", string(text), err)
+	}
+	return nil
 }
