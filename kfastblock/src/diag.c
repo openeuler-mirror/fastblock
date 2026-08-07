@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MulanPSL-2.0
 #include <linux/seq_file.h>
 #include <linux/spinlock.h>
 #include <linux/string.h>
