@@ -15,13 +15,13 @@
 
 namespace utils {
 
-inline std::string md5(char *data, size_t len)
+inline std::string md5(const char *data, size_t len)
 {
     MD5_CTX c;
     unsigned char md[MD5_DIGEST_LENGTH];
 
     MD5_Init(&c);
-    MD5_Update(&c, data, len);
+    MD5_Update(&c, static_cast<const void *>(data), len);
     MD5_Final(md, &c);
 
     std::string hash(md, md + MD5_DIGEST_LENGTH);
