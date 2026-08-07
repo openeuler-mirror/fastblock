@@ -1661,11 +1661,12 @@ int kfastblock_rdma_conn_format_brief(const struct kfastblock_rdma_conn *conn,
 	if (!conn || !buf || !buf_len)
 		return 0;
 	return scnprintf(buf, buf_len,
-			 "peer=%s:%u dev=%s state=%s err=%d",
+			 "peer=%s:%u dev=%s state=%s err=%d age=%lus",
 			 conn->peer_addr, conn->peer_port,
 			 conn->dev_name,
 			 kfastblock_rdma_conn_state_name(conn->state),
-			 conn->last_error);
+			 conn->last_error,
+			 kfastblock_rdma_conn_age_seconds(conn));
 }
 
 unsigned long kfastblock_rdma_conn_age_seconds(const struct kfastblock_rdma_conn *conn)
