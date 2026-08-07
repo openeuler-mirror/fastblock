@@ -1,17 +1,19 @@
+# Copyright (c) 2023-2024 ChinaUnicom. Licensed under Mulan PSL v2.
+
 .PHONY: all clean install
 
-# monitor.go 的内部依赖目录
+# Internal dependency directories for monitor
 MONITOR_DEPS_DIRS := config election etcdapi leader log msg osd
-# 查找所有 monitor 依赖目录中的 Go 文件
+# Go source files in all monitor dependency directories
 MONITOR_DEPS_FILES := $(foreach dir,$(MONITOR_DEPS_DIRS),$(wildcard $(dir)/*.go))
-# 添加 monitor main 本身
+# Add monitor main entry point
 MONITOR_FILES := cmd/fastblock-mon/main.go $(MONITOR_DEPS_FILES)
 
-# fbclient 的内部依赖目录
+# Internal dependency directories for fbclient
 FBCLIENT_DEPS_DIRS := config msg utils
-# 查找所有 fbclient 依赖目录中的 Go 文件
+# Go source files in all fbclient dependency directories
 FBCLIENT_DEPS_FILES := $(foreach dir,$(FBCLIENT_DEPS_DIRS),$(wildcard $(dir)/*.go))
-# 添加 fbclient main 本身
+# Add fbclient main entry point
 FBCLIENT_FILES := cmd/fastblock-client/main.go $(FBCLIENT_DEPS_FILES)
 
 all: fastblock-mon fastblock-client
