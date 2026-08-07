@@ -60,7 +60,8 @@ public:
         SPDK_INFOLOG(pg_group, "entry.size:%lu \n", entry.size);
         if (entry.size % 4096 != 0) {
             SPDK_ERRLOG("data size:%lu not align.\n", entry.size);
-            /// TODO: 怎么处理这个错误
+            /// TODO: Consider propagating this error to the caller instead of
+            /// silently returning an empty entry, which may hide data corruption.
             return log_entry_t{};
         }
 
@@ -191,7 +192,8 @@ public:
         return _entries;
     }
 
-    /// TODO: 这里一定要改。等raft_index_t改成uint64_t，这里就不用强制转换了
+    /// TODO: Remove this cast once raft_index_t is changed to uint64_t.
+    /// The cast is needed because advance_trim_index expects uint64_t.
     void set_trim_index(raft_index_t index) {
         _log->advance_trim_index((uint64_t)index);
     }
