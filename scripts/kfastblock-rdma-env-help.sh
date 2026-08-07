@@ -6,6 +6,7 @@ KFASTBLOCK_RDMA_IO_ROUNDS  multi-io rounds (default 8)
 KFASTBLOCK_RDMA_PARALLEL_JOBS / _ROUNDS
 KFASTBLOCK_SEQ_BLOCKS      seq-64k block count (default 16)
 KFASTBLOCK_READ_ROUNDS     read-only read count (default 8)
+KFASTBLOCK_IDLE_AGE_SLEEP  idle-age sleep seconds (default 3)
 KFASTBLOCK_BS_LIST         bs-sweep sizes, e.g. "4096 8192 16384"
 KFASTBLOCK_IO_TIMEOUT_S    dd timeout seconds (default 30)
 KFASTBLOCK_SUITE_PARALLEL=1 / KFASTBLOCK_SUITE_SEQ=1
