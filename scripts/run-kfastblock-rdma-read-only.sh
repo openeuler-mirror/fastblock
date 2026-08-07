@@ -12,6 +12,7 @@ MON="$(kfastblock_resolve_monitor_addr "$CONF")"
 POOL="${KFASTBLOCK_POOL:-fb}"
 IMAGE="${KFASTBLOCK_IMAGE:-rdma-ro-$(date +%s)}"
 READS="${KFASTBLOCK_READ_ROUNDS:-8}"
+TIMEOUT_S="${KFASTBLOCK_IO_TIMEOUT_S:-30}"
 kfastblock_create_image "$REPO_ROOT" "$CONF" "$POOL" "$IMAGE"
 "$REPO_ROOT/kfastblock/tool/kfastblock-admin" attach \
   --monitor-addr "${MON}:3334" --pool-name "$POOL" --image-name "$IMAGE" \
@@ -19,11 +20,11 @@ kfastblock_create_image "$REPO_ROOT" "$CONF" "$POOL" "$IMAGE"
 DEV="$(kfastblock_resolve_device)"
 pay=/tmp/ro.pay; rb=/tmp/ro.rb
 printf 'RO_%s' "$IMAGE" | dd of="$pay" bs=4096 count=1 conv=sync status=none
-timeout 30 dd if="$pay" of="$DEV" bs=4096 count=1 oflag=direct status=none
+timeout "$TIMEOUT_S" dd if="$pay" of="$DEV" bs=4096 count=1 oflag=direct status=none
 err0=$(cat /sys/module/kfastblock/parameters/rdma_exchange_err)
 stale0=$(cat /sys/module/kfastblock/parameters/rdma_exchange_stale 2>/dev/null || echo 0)
 for i in $(seq 1 "$READS"); do
-  timeout 30 dd if="$DEV" of="$rb" bs=4096 count=1 iflag=direct status=none
+  timeout "$TIMEOUT_S" dd if="$DEV" of="$rb" bs=4096 count=1 iflag=direct status=none
   cmp -n 4096 "$pay" "$rb"
 done
 err1=$(cat /sys/module/kfastblock/parameters/rdma_exchange_err)
