@@ -777,13 +777,13 @@ static inline std::string get_bdev_json_file_name(){
 }
 
 static inline std::string get_bdev_disk_addr_file() {
-    //部署集群时创建此文件，并把磁盘地址写入
+    // Create this file during cluster deployment and write disk address into it
     std::string file_name = g_conf_path + "/osd-" + std::to_string(g_id) + "/disk";
     return  file_name;
 }
 
 static inline std::string get_bdev_type_file() {
-    //部署集群时创建此文件，并把磁盘地址写入
+    // Create this file during cluster deployment and write disk address into it
     std::string file_name = g_conf_path + "/osd-" + std::to_string(g_id) + "/bdev_type";
     return  file_name;
 }
@@ -824,7 +824,7 @@ static void block_started(server_t *server) {
     buffer_pool_init();
     SPDK_INFOLOG(osd, "buffer_pool_init done, current g_mkfs is %d\n", g_mkfs);
     if (g_mkfs) {
-        //初始化log磁盘
+        // Initialize log disk
         SPDK_INFOLOG(osd, "start calling blobstore_init\n");
         blobstore_init(server->bdev_disk, server->osd_uuid, g_force,
                 disk_init_complete, server);
@@ -1150,7 +1150,7 @@ std::optional<int> get_core_size(){
     ifs.close();
     int core_size;
     try {
-        //第一次启动时osd配置文件core_mask里面保存的时mkfs时绑定的核数
+        // On first boot, core_mask in OSD config stores the core count bound during mkfs
         core_size = std::stoi(data);
     } catch (const std::invalid_argument& ) {
         std::cerr << "date in file core_size is invalid" << std::endl;
@@ -1353,7 +1353,7 @@ main(int argc, char *argv[])
             return -EINVAL;
         }
 
-        //mkfs时保存cpu核数，启动osd时读出核数，分配cpu核
+        // Read saved CPU core count from mkfs and allocate CPU cores on OSD startup
         if(save_core_size(g_core_num) != 0){
             return -EINVAL;
         }

@@ -150,7 +150,7 @@ private:
     int osd_state_is_not_active();
 
     pg_group_t _pgs;
-    //记录pg到cpu核的对应关系
+    // Record the mapping from PG to CPU core
     std::map<std::string, shard_revision> _shard_table;
     core_sharded&  _shard;
     std::vector<uint32_t> _shard_cores;

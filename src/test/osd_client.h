@@ -399,7 +399,7 @@ private:
     std::vector<uint32_t> _shard_cores;
     int32_t _leader_id;
 
-    // 每个cpu核上有一个map
+    // One map per CPU core
     std::vector<std::map<int, std::shared_ptr<osd::rpc_service_osd_Stub>>> _stubs;
     core_sharded &_shard;
 };
