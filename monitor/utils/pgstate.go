@@ -31,13 +31,13 @@ func PgStateStr(state PGSTATE) string {
 	case  PgCreating:
 		return "creating";
 	case  PgActive:
-        return "active";
+		return "active";
 	case  PgUndersize:
-        return "undersize";
+		return "undersize";
 	case  PgDown:
-        return "down";
+		return "down";
 	case  PgRemapped:
-        return "remapped";
+		return "remapped";
 	case  PgCreating | PgUndersize:
 		return "creating+undersize";
 	case  PgCreating | PgDown:
@@ -47,6 +47,6 @@ func PgStateStr(state PGSTATE) string {
 	case  PgDown | PgRemapped:
 		return "down+remapped"
 	default:
-        return "unknown";
+		return "unknown";
 	}
 }
