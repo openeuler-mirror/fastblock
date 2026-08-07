@@ -16,15 +16,18 @@ import (
 	"monitor/log"
 )
 
+// LeaderCallback is invoked when this node becomes the leader.
 func LeaderCallback(whoami string, ctx context.Context) {
 	log.Info(ctx, "I'm the leader, I'm %s", whoami)
 }
 
+// LeaderProcessBootMessage handles boot message processing for the leader.
 func LeaderProcessBootMessage(id int32, uuid string, size int64) {
 
 
 }
 
+// FollowerCallback is invoked when this node becomes a follower.
 func FollowerCallback(leaderID string, ctx context.Context) {
 	log.Info(ctx, "i'm the follower, leader is %s", leaderID)
 }
