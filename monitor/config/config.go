@@ -13,7 +13,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"time"
 )
 
@@ -87,7 +87,7 @@ func SetupConfig(configFilePath string, monitorId string) {
 }
 
 func marshalJsonConfig(configFilePath string, monitorId string) error {
-	data, err := ioutil.ReadFile(configFilePath)
+	data, err := os.ReadFile(configFilePath)
 	if err != nil {
 		if err != nil {
 			panic("Cannot open " + configFilePath)
