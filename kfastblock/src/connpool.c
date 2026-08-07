@@ -1062,6 +1062,7 @@ kfastblock_rdma_conn_pool_acquire(struct kfastblock_cached_rdma *slots,
 	}
 	empty->state = KFASTBLOCK_CONN_STATE_READY;
 	empty->last_use_jiffies = jiffies;
+	empty->last_connect_jiffies = jiffies;
 	empty->last_error = 0;
 	return empty; /* lock held */
 }
