@@ -60,7 +60,7 @@ enum {
     RAFT_ERR_LAST = -200,
 };
 
-inline const char *  string_status(int raft_errno) noexcept{
+[[nodiscard]] inline const char *string_status(int raft_errno) noexcept{
     switch (raft_errno) {
     case E_SUCCESS:
         return "success";
