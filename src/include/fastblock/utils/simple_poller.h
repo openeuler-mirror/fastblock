@@ -39,7 +39,7 @@ public:
 
     simple_poller() : _thread{::spdk_get_thread()} {}
 
-    simple_poller(::spdk_thread* thread) : _thread{thread} {}
+    explicit simple_poller(::spdk_thread* thread) : _thread{thread} {}
 
     simple_poller(const simple_poller&) = delete;
 
