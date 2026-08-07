@@ -17,7 +17,7 @@
 
 template <class T>
 requires std::is_integral_v<T>
-inline std::string itos(T i) {
+[[nodiscard]] inline std::string itos(T i) {
     if (i == 0) return "0";
 
     bool neg = false;

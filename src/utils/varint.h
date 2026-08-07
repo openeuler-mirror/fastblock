@@ -24,7 +24,7 @@
 #include <spdk/env.h>
 #include <spdk/log.h>
 
-inline size_t
+[[nodiscard]] inline size_t
 encode_varint32(char* dst, uint32_t v) {
   size_t bytes = 0;
   uint8_t* buffer = reinterpret_cast<uint8_t*>(dst);
@@ -36,7 +36,7 @@ encode_varint32(char* dst, uint32_t v) {
   return bytes;
 }
 
-inline size_t
+[[nodiscard]] inline size_t
 encode_varint64(char* dst, uint64_t v) {
   size_t bytes = 0;
   uint8_t* buffer = reinterpret_cast<uint8_t*>(dst);
@@ -48,7 +48,7 @@ encode_varint64(char* dst, uint64_t v) {
   return bytes;
 }
 
-inline std::pair<uint32_t, size_t>
+[[nodiscard]] inline std::pair<uint32_t, size_t>
 decode_varint32(char* src, size_t len) {
   size_t bytes = 0;
   uint32_t result = 0;
@@ -67,7 +67,7 @@ decode_varint32(char* src, size_t len) {
 }
 
 
-inline std::pair<uint64_t, size_t>
+[[nodiscard]] inline std::pair<uint64_t, size_t>
 decode_varint64(char* src, size_t len) {
   size_t bytes = 0;
   uint64_t result = 0;
@@ -103,7 +103,7 @@ encode_fixed64(char* buffer, uint64_t value) {
     }
 }
 
-inline uint32_t
+[[nodiscard]] inline uint32_t
 decode_fixed32(const char* buffer) {
     uint32_t result = 0;
     for (int i = 3; i >= 0; i--) {
@@ -113,7 +113,7 @@ decode_fixed32(const char* buffer) {
     return result;
 }
 
-inline uint64_t
+[[nodiscard]] inline uint64_t
 decode_fixed64(const char* buffer) {
     uint64_t result = 0;
     for (int i = 7; i >= 0; i--) {
@@ -147,7 +147,7 @@ encode_fixed64(char* dst, uint64_t value) {
   buffer[7] = static_cast<uint8_t>(value >> 56);
 }
 
-inline uint32_t
+[[nodiscard]] inline uint32_t
 decode_fixed32(const char* ptr) {
   const uint8_t* const buffer = reinterpret_cast<const uint8_t*>(ptr);
   uint32_t result = (static_cast<uint32_t>(buffer[0])) |
@@ -157,7 +157,7 @@ decode_fixed32(const char* ptr) {
   return result;
 }
 
-inline uint64_t
+[[nodiscard]] inline uint64_t
 decode_fixed64(const char* ptr) {
   const uint8_t* const buffer = reinterpret_cast<const uint8_t*>(ptr);
   uint64_t result = (static_cast<uint64_t>(buffer[0])) |
@@ -182,7 +182,7 @@ encode_fixed64(char* dst1, size_t len1, char* dst2, uint64_t value) {
     memcpy(dst2, buffer + len1, 8 - len1);
 }
 
-inline uint64_t
+[[nodiscard]] inline uint64_t
 decode_fixed64(const char* ptr1, size_t len1, const char* ptr2) {
     char buffer[8];
     memcpy(buffer, ptr1, len1);
