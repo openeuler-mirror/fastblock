@@ -285,6 +285,7 @@ static bool kfastblock_rdma_wr_is_recv(u64 wr_id)
 struct kfastblock_rdma_conn {
 	char peer_addr[KFASTBLOCK_MAX_ADDR_LEN];
 	u16 peer_port;
+	char dev_name[IB_DEVICE_NAME_MAX];
 	u8 state;
 	bool connected;
 	int last_error;
@@ -972,6 +973,8 @@ static int kfastblock_rdma_conn_setup_pd(struct kfastblock_rdma_conn *conn)
 			conn->last_error, conn->peer_addr, conn->peer_port);
 		return conn->last_error;
 	}
+	strscpy(conn->dev_name, conn->cm_id->device->name,
+		sizeof(conn->dev_name));
 	return 0;
 }
 
@@ -1129,6 +1132,7 @@ void kfastblock_rdma_conn_disconnect(struct kfastblock_rdma_conn *conn)
 	conn->last_error = saved_err;
 	conn->peer_port = 0;
 	conn->peer_addr[0] = '\0';
+	conn->dev_name[0] = '\0';
 }
 
 
@@ -1452,6 +1456,11 @@ const char *kfastblock_rdma_conn_peer_addr(const struct kfastblock_rdma_conn *co
 u16 kfastblock_rdma_conn_peer_port(const struct kfastblock_rdma_conn *conn)
 {
 	return conn ? conn->peer_port : 0;
+}
+
+const char *kfastblock_rdma_conn_dev_name(const struct kfastblock_rdma_conn *conn)
+{
+	return conn ? conn->dev_name : "";
 }
 
 int kfastblock_rdma_conn_last_error(const struct kfastblock_rdma_conn *conn)
