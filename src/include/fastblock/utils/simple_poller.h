@@ -43,7 +43,7 @@ public:
 
     simple_poller(const simple_poller&) = delete;
 
-    simple_poller(simple_poller&& r)
+    simple_poller(simple_poller&& r) noexcept
       : _poller{std::exchange(r._poller, nullptr)}
       , _thread{std::exchange(r._thread, nullptr)} {}
 
