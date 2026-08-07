@@ -319,10 +319,14 @@ static void kfastblock_rdma_pool_evict_idle_lru(
 	if (!pool || !pool->slots || !pool->max_idle)
 		return;
 
+	/*
+	 * Phase 1: lockless scan for candidate victim.
+	 * Reading state/last_use_jiffies without lock is safe here:
+	 * worst case we pick a stale candidate and re-check under lock.
+	 */
 	for (i = 0; i < pool->nr_slots; ++i) {
 		struct kfastblock_rdma_pool_slot *slot = &pool->slots[i];
 
-		mutex_lock(&slot->lock);
 		if (slot->state == KFASTBLOCK_RDMA_POOL_SLOT_IDLE) {
 			idle_n++;
 			if (slot != skip &&
@@ -332,12 +336,12 @@ static void kfastblock_rdma_pool_evict_idle_lru(
 				oldest = slot->last_use_jiffies;
 			}
 		}
-		mutex_unlock(&slot->lock);
 	}
 
 	if (idle_n <= pool->max_idle || !victim)
 		return;
 
+	/* Phase 2: confirm under lock and evict. */
 	mutex_lock(&victim->lock);
 	if (victim->state == KFASTBLOCK_RDMA_POOL_SLOT_IDLE) {
 		kfastblock_rdma_pool_slot_disconnect_locked(victim);
