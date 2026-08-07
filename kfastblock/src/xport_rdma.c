@@ -293,7 +293,7 @@ enum kfastblock_rdma_conn_state {
 	KFASTBLOCK_RDMA_CONN_DISCONNECTING,
 };
 
-static const char *__maybe_unused kfastblock_rdma_conn_state_name(u8 state)
+static const char *kfastblock_rdma_conn_state_name(u8 state)
 {
 	switch (state) {
 	case KFASTBLOCK_RDMA_CONN_IDLE:
