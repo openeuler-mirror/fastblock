@@ -17,6 +17,7 @@ need=(
   rdma_pool_invalidate_broken
   rdma_pool_put_fail
   rdma_pool_idle_max_age_s rdma_pool_max_idle
+  xport_probe_cache_ttl_ms xport_probe_cache_hits xport_probe_cache_misses
   rdma_object_log
   object_io_max_attempts
 )
