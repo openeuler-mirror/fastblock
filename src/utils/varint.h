@@ -50,6 +50,7 @@ encode_varint64(char* dst, uint64_t v) {
 
 inline std::pair<uint32_t, size_t>
 decode_varint32(char* src, size_t len) {
+  if (len == 0) return {0, 0};
   size_t bytes = 0;
   uint32_t result = 0;
   int shift = 0;
@@ -69,6 +70,7 @@ decode_varint32(char* src, size_t len) {
 
 inline std::pair<uint64_t, size_t>
 decode_varint64(char* src, size_t len) {
+  if (len == 0) return {0, 0};
   size_t bytes = 0;
   uint64_t result = 0;
   int shift = 0;
