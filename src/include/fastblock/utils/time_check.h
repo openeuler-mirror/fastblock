@@ -20,7 +20,7 @@ public:
 
     time_check() = delete;
 
-    time_check(const std::chrono::system_clock::duration dur) : _check_dur{dur} {}
+    time_check(const std::chrono::system_clock::duration dur) noexcept : _check_dur{dur} {}
 
 public:
 
