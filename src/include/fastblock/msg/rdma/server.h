@@ -831,7 +831,7 @@ private:
             if (is_new_task or is_inlined) {
                 SPDK_DEBUGLOG(msg, "new rpc task with correlation index %d\n", task_id);
                 auto task = std::make_unique<rpc_task>(_task_id_gen++, task_id, conn);
-                task->this_server = this; // FIXME: 这里 this 指向的 server 可能已经析构了，在访问时。
+                task->this_server = this; // FIXME: The server pointed to by this may have been destructed at access time.
 
                 if (_is_terminated) {
                     make_response_data(task.get(), status::terminating);
@@ -1068,8 +1068,8 @@ public:
 
         default:
             /*
-             * 这里的 rdma_ack_cm_event(evt) 调用挪到了 handle_other_cm_event() 内
-             * 否则在调用 rdma_destroy_id() 前如果没有先调用 rdma_ack_cm_event()，会死锁
+             * The rdma_ack_cm_event(evt) call was moved into handle_other_cm_event()
+             * Otherwise, calling rdma_destroy_id() without rdma_ack_cm_event() first causes deadlock
              */
             handle_other_cm_event(evt);
             break;
@@ -1226,10 +1226,10 @@ public:
               event->element.qp);
             break;
         case ::IBV_EVENT_QP_LAST_WQE_REACHED:
-            // 在 SRQ 上才会有的事件，我们暂时没用到
+            // SRQ-only event, not used currently
             break;
         case ::IBV_EVENT_SQ_DRAINED: {
-            // 发送这个事件时，qp 可能出错，也可能没有
+            // QP may or may not be in error state when this event is sent
             auto sock = reinterpret_cast<socket*>(
               event->element.qp->qp_context);
             auto state = sock->update_qp_attr();

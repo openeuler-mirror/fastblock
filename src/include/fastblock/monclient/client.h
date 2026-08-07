@@ -132,11 +132,11 @@ public:
 
         struct pool_update_info{
             version_type pool_version{0};
-            /* key为pg_id
-             * value的值表示状态
-             *  -1  表示更新失败
-             *  0   表示更新完成
-             *  1   表示更新中
+            /* key is pg_id
+             * value indicates status
+             *  -1  update failed
+             *  0   update completed
+             *  1   update in progress
              */
             std::unordered_map<pg_id_type, int> pgs{};
         };
@@ -193,7 +193,7 @@ public:
             }
         }
 
-        //根据pool_name找对应的pool_id
+        // Find the corresponding pool_id by pool_name
         bool get_pool_id(std::string &pool_name, pool_id_type& pool_id){
             for(auto &[id, name] : pools){
                 if(pool_name == name){
