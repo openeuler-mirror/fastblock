@@ -55,6 +55,10 @@ struct kfastblock_rdma_pool_snapshot {
 	u64 connect_err;
 	u64 reuse_hits;
 	u64 idle_evictions;
+	unsigned long connect_lat_us_min;
+	unsigned long connect_lat_us_max;
+	unsigned long long connect_lat_us_total;
+	u32 connect_lat_count;
 };
 
 struct kfastblock_rdma_pool {
@@ -67,6 +71,10 @@ struct kfastblock_rdma_pool {
 	u64 connect_ok;
 	u64 connect_err;
 	u64 idle_evictions;
+	unsigned long connect_lat_us_min;
+	unsigned long connect_lat_us_max;
+	unsigned long long connect_lat_us_total;
+	u32 connect_lat_count;
 };
 
 /* Allocate slot array and initialize empty pool. nr_slots 0 => default. */
