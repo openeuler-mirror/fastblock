@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: MulanPSL-2.0
+# kfastblock kernel module Makefile
+
+# --- Module definition ---
 obj-m := kfastblock.o
 
 KFASTBLOCK_ROOT := $(PWD)
@@ -21,6 +25,7 @@ else
 DEFAULT_KDIR := /lib/modules/$(UNAME_R)/build
 endif
 
+# --- Object file list ---
 kfastblock-objs := \
 	src/main.o \
 	src/control.o \
@@ -42,6 +47,7 @@ ccflags-y := -I$(src)/include
 KDIR ?= $(DEFAULT_KDIR)
 PWD := $(shell pwd)
 
+# --- Build targets ---
 all: modules kfastblock-admin kfastblock-rawctl
 
 modules:

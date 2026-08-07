@@ -49,7 +49,7 @@ public:
 
     duration_map() = default;
 
-    duration_map(std::string name) : _name{name} {};
+    explicit duration_map(std::string name) : _name{name} {};
 
     duration_map(const duration_map&) = delete;
 

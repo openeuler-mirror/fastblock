@@ -381,7 +381,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
 
         if(!ec.contains(pool_id)){
             SPDK_WARNLOG("pool %d is deleted\n", pool_id);
-            //pool被删除
+            // Pool has been deleted
             auto pg_item = pg_infos.begin();
             while(pg_item != pg_infos.end()){
                 auto pg_id = pg_item->first;
@@ -440,7 +440,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
         }
 
         if(_pg_map.pool_version[pool_key] == pv.at(pool_key)){
-            //检查之前添加pool时，是否有pg没有添加成功
+            // Check if any PG failed to be added when previously adding the pool
             auto info_it = pgs.find(pool_key);
             if (info_it == pgs.end()) {
                 SPDK_DEBUGLOG(mon, "Cant find the info of pg %d\n", pool_key);
@@ -456,17 +456,17 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
         }
 
         /*
-         *  下面的change_pg_membership时会检查当前osd是否是pg的leader，如果不是就相当于更新pg成员失败，如果更新成员失败，
-         *   _pg_map中pg 版本和pool版本都不会更新。当pool下的所有pg都处理成功（包含创建pg和pg更新成员）后，_pg_map中pg 版本
-         *   和pool版本都会更新。
-         *   若更新pg成员失败，下次调用process_pg_map检查到这里时，因为_pg_map中pool版本小，还是会进行下面的处理：
-         *       如果_pg_map中pg版本和monitor中pg版本相同，不需要处理。
-         *       如果_pg_map中pg版本为0，出现这种情况是当前osd刚重启，需要激活pg
-         *       如果monitor上pg还是PgRemapped，就需要继续调用change_pg_membership；
-         *       如果monitor上pg不是PgRemapped，就需要分情况了
-         *          1 当前osd不在monitor上pg的osd列表中，表示monitor的pg成员变更完成，当前osd从pg中移除，因此需要删除osd上pg。
-         *          2 当前osd在monitor上pg的osd列表中，但_pg_map中pg的osd列表与monitor上pg的osd列表不同，表示monitor的pg成员
-         *            变更完成，因此需要更新_pg_map中pg的osd列表为monitor上pg的osd列表
+         *  The subsequent change_pg_membership call checks if the current OSD is the PG leader.
+         *   If not, it is treated as a PG member update failure. On failure, neither PG nor pool version
+         *   in _pg_map is updated. Once all PGs under the pool are processed (including PG creation
+         *   and member updates), both versions are updated.
+         *   On PG member update failure, the next process_pg_map call will retry since the pool version
+         *   in _pg_map is stale:
+         *       - If PG version in _pg_map matches monitor, no action needed.
+         *       - If PG version in _pg_map is 0 (OSD just restarted), activate the PG.
+         *       - If PG is still PgRemapped on monitor, retry change_pg_membership.
+         *       - If PG is not PgRemapped on monitor, two cases:
+         *         1. Current OSD not in monitors PG OSD list: OSD was removed, delete PG locally.
          */
         if (_pg_map.pool_version[pool_key] < pv.at(pool_key)) {
             auto info_it = pgs.find(pool_key);
@@ -485,7 +485,7 @@ void client::process_pg_map(const msg::GetPgMapResponse& pg_map_response) {
                 }
                 bool contain_in_monitor = in_monitor_list(info);
 
-                //当前node不在monitor上pg的osd列表中
+                // Current node is not in the monitors PG OSD list
                 if(!contain_in_monitor ){
                     remove_pg(pool_id, pgid, _pg_map.pool_version[pool_id]);
                 } else if(contain_in_monitor){

@@ -85,45 +85,8 @@ decode_varint64(char* src, size_t len) {
   return {result, bytes};
 }
 
-/***********************************************************/
-/*
-inline void
-encode_fixed32(char* buffer, uint32_t value) {
-    for (int i = 0; i < 4; i++) {
-        buffer[i] = static_cast<char>(value & 0xFF);
-        value >>= 8;
-    }
-}
 
-inline void
-encode_fixed64(char* buffer, uint64_t value) {
-    for (int i = 0; i < 8; i++) {
-        buffer[i] = static_cast<char>(value & 0xFF);
-        value >>= 8;
-    }
-}
 
-[[nodiscard]] inline uint32_t
-decode_fixed32(const char* buffer) {
-    uint32_t result = 0;
-    for (int i = 3; i >= 0; i--) {
-        result <<= 8;
-        result |= static_cast<unsigned char>(buffer[i]);
-    }
-    return result;
-}
-
-[[nodiscard]] inline uint64_t
-decode_fixed64(const char* buffer) {
-    uint64_t result = 0;
-    for (int i = 7; i >= 0; i--) {
-        result <<= 8;
-        result |= static_cast<unsigned char>(buffer[i]);
-    }
-    return result;
-}
-*/
-/***********************************************************/
 
 inline void
 encode_fixed32(char* dst, uint32_t value) {

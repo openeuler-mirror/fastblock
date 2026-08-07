@@ -13,7 +13,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"time"
 )
 
@@ -87,11 +87,9 @@ func SetupConfig(configFilePath string, monitorId string) {
 }
 
 func marshalJsonConfig(configFilePath string, monitorId string) error {
-	data, err := ioutil.ReadFile(configFilePath)
+	data, err := os.ReadFile(configFilePath)
 	if err != nil {
-		if err != nil {
-			panic("Cannot open " + configFilePath)
-		}
+		panic("Cannot open " + configFilePath)
 	}
 	var c Config
 	err = json.Unmarshal([]byte(data), &c)
@@ -193,5 +191,8 @@ type Duration struct {
 func (d *Duration) UnmarshalText(text []byte) error {
 	var err error
 	d.Duration, err = time.ParseDuration(string(text))
-	return err
+	if err != nil {
+		return fmt.Errorf("parse duration %q: %w", string(text), err)
+	}
+	return nil
 }

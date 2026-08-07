@@ -33,6 +33,8 @@ type LeaderElection struct {
 	leaderChangeChan chan struct{}
 }
 
+// NewLeaderElection creates a new leader election instance using etcd.
+// NewLeaderElection creates a new leader election instance using etcd.
 func NewLeaderElection(etcdClient *etcdapi.EtcdClient, electionKey string, candidateID string, leaderCallback func(string, context.Context, *etcdapi.EtcdClient), followerCallback func(string, context.Context)) *LeaderElection {
 	return &LeaderElection{
 		etcdClient:       etcdClient,
@@ -45,11 +47,13 @@ func NewLeaderElection(etcdClient *etcdapi.EtcdClient, electionKey string, candi
 	}
 }
 
+// Run starts the leader election process.
+// Run starts the leader election process.
 func (l *LeaderElection) Run(ctx context.Context) error {
 	// Create a lease to hold the leader key
 	lid, err := l.etcdClient.Grant(ctx, 10)
 	if err != nil {
-		return err
+		return fmt.Errorf("grant leader election lease: %w", err)
 	}
 	l.Mutex.Lock()
 	l.leaseID = lid

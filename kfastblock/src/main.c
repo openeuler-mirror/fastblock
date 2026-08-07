@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MulanPSL-2.0
 #include <linux/blkdev.h>
 #include <linux/device.h>
 #include <linux/init.h>
@@ -87,6 +88,11 @@ static ssize_t last_error_show(const struct bus_type *bus, char *buf)
 	return scnprintf(buf, PAGE_SIZE, "%s\n", kfastblock_control_last_error());
 }
 
+/**
+ * kfastblock_sysfs_init - Register sysfs bus and root device for kfastblock.
+ *
+ * Return: 0 on success, negative errno on failure.
+ */
 static int kfastblock_sysfs_init(void)
 {
 	int ret;
@@ -104,12 +110,23 @@ static int kfastblock_sysfs_init(void)
 	return 0;
 }
 
+/**
+ * kfastblock_sysfs_exit - Unregister sysfs bus and root device.
+ */
 static void kfastblock_sysfs_exit(void)
 {
 	device_unregister(&kfastblock_root_dev);
 	bus_unregister(&kfastblock_bus_type);
 }
 
+/**
+ * kfastblock_init - Module initialization entry point.
+ *
+ * Registers the block device, initializes meta/transport/volume subsystems,
+ * and creates sysfs attributes.
+ *
+ * Return: 0 on success, negative errno on failure.
+ */
 static int __init kfastblock_init(void)
 {
 	int ret;
@@ -147,6 +164,12 @@ err_unreg_blkdev:
 	return ret;
 }
 
+/**
+ * kfastblock_exit - Module cleanup entry point.
+ *
+ * Tears down sysfs, volume, transport, and meta subsystems,
+ * then unregisters the block device.
+ */
 static void __exit kfastblock_exit(void)
 {
 	kfastblock_sysfs_exit();
@@ -160,5 +183,6 @@ module_init(kfastblock_init);
 module_exit(kfastblock_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("OpenAI");
+MODULE_AUTHOR("ChinaUnicom");
 MODULE_DESCRIPTION("kfastblock kernel client scaffold");
+MODULE_VERSION("0.1");

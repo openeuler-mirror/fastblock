@@ -18,7 +18,7 @@
 #include <errno.h>
 #include <concepts>
 
-// 每次写8个units，就是4k
+// Write 8 units at a time, i.e. 4K
 #define BLOCK_UNITS 8
 
 osd_stm::osd_stm()

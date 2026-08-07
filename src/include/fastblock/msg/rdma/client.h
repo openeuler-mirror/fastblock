@@ -609,7 +609,7 @@ public:
             auto* stack_ptr = it->get();
             if (rc == -EINVAL) {
                 SPDK_ERRLOG(
-                  "ERROR: Timeout occured of rpc request key %d\n",
+                  "ERROR: Timeout occurred of rpc request key %d\n",
                   stack_ptr->request_key);
                 stack_ptr->ctrlr->SetFailed("timeout");
                 stack_ptr->closure->Run();
@@ -1284,7 +1284,7 @@ public:
 
     client() = delete;
 
-    //thread有调用者传入，需要有调用者释放
+    // Thread is passed by caller and must be released by caller
     client(std::string name, ::spdk_thread* thread, std::shared_ptr<options> opts, int sock_id = SPDK_ENV_SOCKET_ID_ANY)
       : _opts{opts}
       , _dev{std::make_shared<device>()}
@@ -1541,7 +1541,7 @@ public:
               _busy_priority_connections,
               shared_from_this(),
               _sock_id);
-            // 不要调整这里的 erase 和 emplace 的顺序
+            // Do not reorder the erase and emplace operations here
             _cm_records.emplace(new_fd_id, task_ptr->conn);
             _cm_records.erase(old_fd_id);
             _connections.erase(old_conn_id);
@@ -1571,7 +1571,7 @@ public:
             auto cm_rd_it = _cm_records.find(evt->id);
             if (cm_rd_it != _cm_records.end()) {
                 SPDK_ERRLOG(
-                  "ERROR: cm id %p should not occured in cm records map on event %s\n",
+                  "ERROR: cm id %p should not occur in cm records map on event %s\n",
                   evt->id, ::rdma_event_str(evt->event));
                 std::raise(SIGINT);
             }
