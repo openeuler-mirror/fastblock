@@ -39,7 +39,7 @@ public:
     core_context() {}
     virtual ~core_context() {}
     static void run(void *arg) {
-        core_context *con = (core_context *)arg;
+        core_context *con = static_cast<core_context *>(arg);
         con->run_task();
         delete con;
     }
@@ -219,10 +219,10 @@ public:
         uint32_t core = _shard_cores[shard_id];
         auto cur_thread = spdk_get_thread();
         if(core == spdk_env_get_current_core() && cur_thread == _threads[shard_id]){
-            core_context::run((void *)lambda);
+            core_context::run(static_cast<void *>(lambda));
             return 0;
         }else
-            return spdk_thread_send_msg(_threads[shard_id], &core_context::run, (void *)lambda);
+            return spdk_thread_send_msg(_threads[shard_id], &core_context::run, static_cast<void *>(lambda));
     }
 
     uint32_t count(){
