@@ -679,15 +679,15 @@ void kfastblock_rdma_pool_snapshot(struct kfastblock_rdma_pool *pool,
 
 	snap->total_slots = pool->nr_slots;
 	snap->max_idle = pool->max_idle;
-	snap->get_hits = pool->get_hits;
-	snap->get_misses = pool->get_misses;
-	snap->connect_ok = pool->connect_ok;
-	snap->connect_err = pool->connect_err;
-	snap->idle_evictions = pool->idle_evictions;
-	snap->connect_lat_us_min = pool->connect_lat_us_min;
-	snap->connect_lat_us_max = pool->connect_lat_us_max;
-	snap->connect_lat_us_total = pool->connect_lat_us_total;
-	snap->connect_lat_count = pool->connect_lat_count;
+	snap->get_hits = READ_ONCE(pool->get_hits);
+	snap->get_misses = READ_ONCE(pool->get_misses);
+	snap->connect_ok = READ_ONCE(pool->connect_ok);
+	snap->connect_err = READ_ONCE(pool->connect_err);
+	snap->idle_evictions = READ_ONCE(pool->idle_evictions);
+	snap->connect_lat_us_min = READ_ONCE(pool->connect_lat_us_min);
+	snap->connect_lat_us_max = READ_ONCE(pool->connect_lat_us_max);
+	snap->connect_lat_us_total = READ_ONCE(pool->connect_lat_us_total);
+	snap->connect_lat_count = READ_ONCE(pool->connect_lat_count);
 
 	for (i = 0; i < pool->nr_slots; ++i) {
 		struct kfastblock_rdma_pool_slot *slot = &pool->slots[i];
