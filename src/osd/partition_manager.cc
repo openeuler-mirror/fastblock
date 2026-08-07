@@ -177,8 +177,8 @@ struct partition_op_ctx{
     int64_t revision_id;
     partition_manager* pm;
     /*
-     1 表示要创建pg
-     0 表示要删除pg
+     1 means create PG
+     0 means delete PG
     */
     int op;
 };
@@ -233,7 +233,7 @@ int partition_manager::create_partition(
 void partition_manager::load_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg_id, struct spdk_blob* blob,
                             object_store::container objects, pm_complete cb_fn, void *arg){
     auto dlog = make_disk_log(global_blobstore(shard_id), global_io_channel(shard_id), blob);
-    // TODO:为什么要先创建osd_stm，然后再load呢？直接创建的时候构造object_store不可以吗？
+    // TODO: Why create osd_stm first and then load? Could we construct object_store directly during creation?
     auto sm = std::make_shared<osd_stm>();
 
     get_pg_group().load_pg(sm, shard_id, pool_id, pg_id, dlog,
@@ -242,7 +242,7 @@ void partition_manager::load_pg(uint32_t shard_id, uint64_t pool_id, uint64_t pg
             cb_fn(arg, lerrno);
             return;
         }
-        // note: 直接把pg string放进object里，后面不用再传了
+        // note: Put PG string directly into the object to avoid passing it later
         std::string pg = pg_id_to_name(pool_id, pg_id);
         SPDK_INFOLOG(osd, "[test] create pg:%s!\n", pg.c_str());
         sm->set_pg(pg);
