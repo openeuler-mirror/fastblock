@@ -11,7 +11,7 @@
 #pragma once
 
 #include <errno.h>
-namespace err{
+namespace err {
 
 /*
  1 - 133是errno.h中的错误码
