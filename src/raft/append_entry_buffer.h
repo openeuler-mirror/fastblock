@@ -35,7 +35,7 @@ public:
     void start();
 
     static int buffer_flush(void *arg){
-        append_entries_buffer* buff = (append_entries_buffer *)arg;
+        append_entries_buffer* buff = static_cast<append_entries_buffer *>(arg);
         buff->do_flush();
         return 0;
     }
