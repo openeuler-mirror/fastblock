@@ -15,7 +15,7 @@
 
 namespace utils {
 
-inline std::string md5(const char *data, size_t len)
+[[nodiscard]] inline std::string md5(const char *data, size_t len)
 {
     MD5_CTX c;
     unsigned char md[MD5_DIGEST_LENGTH];
