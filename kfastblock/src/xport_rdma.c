@@ -78,6 +78,12 @@ module_param_named(rdma_signal_all, kfastblock_rdma_signal_all, bool, 0644);
 MODULE_PARM_DESC(rdma_signal_all,
 		 "QP sq_sig_type=IB_SIGNAL_ALL_WR (1) else REQ_WR (0)");
 
+static unsigned int kfastblock_rdma_inline_threshold = 64;
+module_param_named(rdma_inline_threshold, kfastblock_rdma_inline_threshold,
+		   uint, 0644);
+MODULE_PARM_DESC(rdma_inline_threshold,
+		 "Max SEND bytes to post inline (0=disable, default 64)");
+
 static unsigned int kfastblock_rdma_timeout_ms_or_default(unsigned int v,
 							 unsigned int def)
 {
@@ -1367,10 +1373,10 @@ int kfastblock_rdma_conn_send(struct kfastblock_rdma_conn *conn,
 	wr.send_flags = IB_SEND_SIGNALED;
 	/*
 	 * Small messages can be sent inline to avoid DMA map overhead.
-	 * Threshold 64 bytes is conservative; most RC QPs support at least
-	 * this much inline data.
+	 * Threshold is tunable via rdma_inline_threshold (default 64).
 	 */
-	if (len <= 64)
+	if (kfastblock_rdma_inline_threshold &&
+	    len <= kfastblock_rdma_inline_threshold)
 		wr.send_flags |= IB_SEND_INLINE;
 	(void)kfastblock_rdma_signal_all;
 
