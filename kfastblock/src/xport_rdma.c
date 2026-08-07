@@ -746,7 +746,51 @@ static int kfastblock_rdma_conn_setup_pd(struct kfastblock_rdma_conn *conn)
 	return 0;
 }
 
-static int kfastblock_rdma_conn_setup_cq(struct kfastblock_rdma_conn *conn);
+static int kfastblock_rdma_conn_setup_cq(struct kfastblock_rdma_conn *conn)
+{
+	unsigned int cqe;
+	struct ib_cq_init_attr cq_attr;
+	ib_comp_handler comp_handler = NULL;
+	int ret;
+
+	if (!conn || !conn->cm_id || !conn->cm_id->device)
+		return -EINVAL;
+
+	/*
+	 * CQ depth covers max send + recv WRs with headroom so
+	 * multi-depth RECV + SIGNALED SEND do not overrun.
+	 */
+	cqe = kfastblock_rdma_qp_max_send_wr +
+	      kfastblock_rdma_qp_max_recv_wr + 8;
+	if (cqe < 16)
+		cqe = 16;
+	if (cqe > 512)
+		cqe = 512;
+	memset(&cq_attr, 0, sizeof(cq_attr));
+	cq_attr.cqe = cqe;
+
+	if (kfastblock_rdma_use_cq_notify)
+		comp_handler = kfastblock_rdma_cq_comp_handler;
+	conn->cq = ib_create_cq(conn->cm_id->device, comp_handler,
+				NULL, conn, &cq_attr);
+	if (IS_ERR(conn->cq)) {
+		conn->last_error = PTR_ERR(conn->cq);
+		conn->cq = NULL;
+		pr_warn_ratelimited(
+			"kfastblock: ib_create_cq failed ret=%d peer=%s:%u\n",
+			conn->last_error, conn->peer_addr,
+			conn->peer_port);
+		return conn->last_error;
+	}
+	if (kfastblock_rdma_use_cq_notify) {
+		ret = ib_req_notify_cq(conn->cq, IB_CQ_NEXT_COMP);
+		if (ret) {
+			conn->last_error = ret;
+			return ret;
+		}
+	}
+	return 0;
+}
 
 int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 				 const struct kfastblock_leader_info *leader)
@@ -855,46 +899,9 @@ int kfastblock_rdma_conn_connect(struct kfastblock_rdma_conn *conn,
 		if (ret)
 			goto err_destroy_id;
 
-		{
-			unsigned int cqe;
-			struct ib_cq_init_attr cq_attr;
-			ib_comp_handler comp_handler = NULL;
-
-			/*
-			 * CQ depth covers max send + recv WRs with headroom so
-			 * multi-depth RECV + SIGNALED SEND do not overrun.
-			 */
-			cqe = kfastblock_rdma_qp_max_send_wr +
-			      kfastblock_rdma_qp_max_recv_wr + 8;
-			if (cqe < 16)
-				cqe = 16;
-			if (cqe > 512)
-				cqe = 512;
-			memset(&cq_attr, 0, sizeof(cq_attr));
-			cq_attr.cqe = cqe;
-
-			/* Event-driven path registers CQ completion handler. */
-			if (kfastblock_rdma_use_cq_notify)
-				comp_handler = kfastblock_rdma_cq_comp_handler;
-			conn->cq = ib_create_cq(conn->cm_id->device, comp_handler,
-						NULL, conn, &cq_attr);
-			if (IS_ERR(conn->cq)) {
-				conn->last_error = PTR_ERR(conn->cq);
-				conn->cq = NULL;
-				pr_warn_ratelimited(
-					"kfastblock: ib_create_cq failed ret=%d peer=%s:%u\n",
-					conn->last_error, conn->peer_addr,
-					conn->peer_port);
-				goto err_destroy_id;
-			}
-			if (kfastblock_rdma_use_cq_notify) {
-				ret = ib_req_notify_cq(conn->cq, IB_CQ_NEXT_COMP);
-				if (ret) {
-					conn->last_error = ret;
-					goto err_destroy_id;
-				}
-			}
-		}
+		ret = kfastblock_rdma_conn_setup_cq(conn);
+		if (ret)
+			goto err_destroy_id;
 
 		{
 			unsigned int max_send_wr =
