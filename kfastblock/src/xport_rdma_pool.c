@@ -719,9 +719,10 @@ u32 kfastblock_rdma_pool_invalidate_broken(struct kfastblock_rdma_pool *pool)
 			mutex_unlock(&slot->lock);
 			continue;
 		}
-		if (slot->state == KFASTBLOCK_RDMA_POOL_SLOT_IDLE &&
-		    slot->conn &&
+		if (slot->conn &&
 		    !kfastblock_rdma_conn_is_usable(slot->conn)) {
+			pr_debug("rdma_pool: invalidate slot %u state=%u\n",
+				 i, slot->state);
 			kfastblock_rdma_pool_slot_disconnect_locked(slot);
 			slot->state = KFASTBLOCK_RDMA_POOL_SLOT_DEAD;
 			slot->failure_count++;
@@ -730,5 +731,7 @@ u32 kfastblock_rdma_pool_invalidate_broken(struct kfastblock_rdma_pool *pool)
 		}
 		mutex_unlock(&slot->lock);
 	}
+	if (n)
+		kfastblock_rdma_pool_invalidate_broken_total += n;
 	return n;
 }
