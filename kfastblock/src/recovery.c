@@ -350,6 +350,10 @@ void kfastblock_recovery_invalidate_rdma_for_leader(
 			c->state = KFASTBLOCK_CONN_STATE_EMPTY;
 			c->last_error = -ENOTCONN;
 			kfastblock_recovery_rdma_invalidate_leader_total++;
+			pr_debug_ratelimited(
+				"kfastblock: recovery invalidate RDMA slot %u for peer=%s:%u osd=%u\n",
+				i, leader->address, leader->rdma_port,
+				leader->osd_id);
 		}
 		mutex_unlock(&c->lock);
 	}
@@ -359,6 +363,9 @@ void kfastblock_recovery_flush_rdma_cache(struct kfastblock_volume *vol)
 {
 	if (!vol)
 		return;
+	pr_debug_ratelimited(
+		"kfastblock: recovery flush RDMA cache dev=%s\n",
+		vol->disk_name);
 	kfastblock_rdma_conn_pool_close(vol->rdma_cache,
 					KFASTBLOCK_MAX_RDMA_CACHE);
 	kfastblock_recovery_rdma_flush_total++;
