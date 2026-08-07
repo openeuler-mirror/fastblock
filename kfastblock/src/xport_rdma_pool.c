@@ -534,13 +534,15 @@ int kfastblock_rdma_pool_format_stats(struct kfastblock_rdma_pool *pool,
 		unsigned long long misses = snap.get_misses;
 		unsigned long long total = hits + misses;
 		unsigned int hit_pct = total ? (unsigned int)((hits * 100ULL) / total) : 0;
+		unsigned int util_pct = snap.total_slots ?
+			(unsigned int)((snap.busy_slots * 100ULL) / snap.total_slots) : 0;
 
 		return scnprintf(buf, buf_len,
-			 "slots=%u empty=%u idle=%u busy=%u dead=%u connected=%u ready=%u max_idle=%u hits=%llu misses=%llu hit_pct=%u evict=%llu",
+			 "slots=%u empty=%u idle=%u busy=%u dead=%u connected=%u ready=%u max_idle=%u hits=%llu misses=%llu hit_pct=%u util_pct=%u evict=%llu",
 			 snap.total_slots, snap.empty_slots, snap.idle_slots,
 			 snap.busy_slots, snap.dead_slots, snap.connected_slots,
 			 kfastblock_rdma_pool_ready_count(pool), snap.max_idle,
-			 hits, misses, hit_pct,
+			 hits, misses, hit_pct, util_pct,
 			 (unsigned long long)snap.idle_evictions);
 	}
 }
