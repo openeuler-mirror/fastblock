@@ -162,3 +162,4 @@ module_exit(kfastblock_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("OpenAI");
 MODULE_DESCRIPTION("kfastblock kernel client scaffold");
+MODULE_VERSION("0.1");
