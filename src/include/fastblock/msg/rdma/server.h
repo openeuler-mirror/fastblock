@@ -864,7 +864,7 @@ private:
                 task_it = it;
                 _task_list.push_back(std::move(task));
             } else if (task_it == conn->rpc_tasks.end()) {
-                SPDK_NOTICELOG("rpc task with id %d has been set to timeout state, going to skip this transfered data\n", task_id);
+                SPDK_NOTICELOG("rpc task with id %d has been set to timeout state, going to skip this transferred data\n", task_id);
                 auto rc = post_recv(conn.get(), recv_ctx);
                 if (rc) {
                     SPDK_ERRLOG("ERROR: Post receive wr error, '%s'\n", rc->message().c_str());

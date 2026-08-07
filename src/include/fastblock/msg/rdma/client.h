@@ -609,7 +609,7 @@ public:
             auto* stack_ptr = it->get();
             if (rc == -EINVAL) {
                 SPDK_ERRLOG(
-                  "ERROR: Timeout occured of rpc request key %d\n",
+                  "ERROR: Timeout occurred of rpc request key %d\n",
                   stack_ptr->request_key);
                 stack_ptr->ctrlr->SetFailed("timeout");
                 stack_ptr->closure->Run();
@@ -1571,7 +1571,7 @@ public:
             auto cm_rd_it = _cm_records.find(evt->id);
             if (cm_rd_it != _cm_records.end()) {
                 SPDK_ERRLOG(
-                  "ERROR: cm id %p should not occured in cm records map on event %s\n",
+                  "ERROR: cm id %p should not occur in cm records map on event %s\n",
                   evt->id, ::rdma_event_str(evt->event));
                 std::raise(SIGINT);
             }
