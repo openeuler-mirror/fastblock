@@ -89,4 +89,8 @@ u8 kfastblock_rdma_conn_recv_depth(const struct kfastblock_rdma_conn *conn);
 /* Return connection age in seconds since last use (0 if not connected). */
 unsigned long kfastblock_rdma_conn_age_seconds(const struct kfastblock_rdma_conn *conn);
 
+/* True if connection age exceeds max_age_s (0 means no age limit). */
+bool kfastblock_rdma_conn_is_aged(const struct kfastblock_rdma_conn *conn,
+				  unsigned int max_age_s);
+
 #endif

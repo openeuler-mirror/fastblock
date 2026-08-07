@@ -1675,6 +1675,14 @@ unsigned long kfastblock_rdma_conn_age_seconds(const struct kfastblock_rdma_conn
 	return jiffies_to_msecs(jiffies - conn->last_use_jiffies) / 1000;
 }
 
+bool kfastblock_rdma_conn_is_aged(const struct kfastblock_rdma_conn *conn,
+				  unsigned int max_age_s)
+{
+	if (!max_age_s)
+		return false;
+	return kfastblock_rdma_conn_age_seconds(conn) >= max_age_s;
+}
+
 bool kfastblock_rdma_conn_is_usable(const struct kfastblock_rdma_conn *conn)
 {
 	return kfastblock_rdma_conn_is_connected(conn) &&
