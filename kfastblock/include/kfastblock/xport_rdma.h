@@ -63,6 +63,13 @@ int kfastblock_rdma_conn_last_error(const struct kfastblock_rdma_conn *conn);
 const char *kfastblock_rdma_conn_state_str(const struct kfastblock_rdma_conn *conn);
 
 /*
+ * Format a one-line summary of conn into @buf: peer, dev, state, last_error.
+ * Returns number of chars written (excluding NUL). Safe for logging.
+ */
+int kfastblock_rdma_conn_format_brief(const struct kfastblock_rdma_conn *conn,
+				      char *buf, size_t buf_len);
+
+/*
  * True if conn is ESTABLISHED, last_error==0, buffers mapped, and at least
  * one RECV is posted. Pool reuse paths prefer this over bare is_connected.
  */
