@@ -127,6 +127,10 @@ u32 kfastblock_rdma_pool_reclaim_dead(struct kfastblock_rdma_pool *pool);
 /* True when any slot is BUSY (in-flight I/O). */
 bool kfastblock_rdma_pool_has_busy(struct kfastblock_rdma_pool *pool);
 
+/* Calculate hit ratio percentage from snapshot (0-100). */
+unsigned int kfastblock_rdma_pool_hit_pct(
+	const struct kfastblock_rdma_pool_snapshot *snap);
+
 /* Format compact pool stats into @buf for logs. */
 int kfastblock_rdma_pool_format_stats(struct kfastblock_rdma_pool *pool,
 				      char *buf, size_t buf_len);
