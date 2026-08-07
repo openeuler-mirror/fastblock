@@ -89,9 +89,7 @@ func SetupConfig(configFilePath string, monitorId string) {
 func marshalJsonConfig(configFilePath string, monitorId string) error {
 	data, err := ioutil.ReadFile(configFilePath)
 	if err != nil {
-		if err != nil {
-			panic("Cannot open " + configFilePath)
-		}
+		panic("Cannot open " + configFilePath)
 	}
 	var c Config
 	err = json.Unmarshal([]byte(data), &c)
