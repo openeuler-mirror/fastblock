@@ -255,11 +255,11 @@ void print_result() {
 }
 
 /**
- * 如果 rpc_client_same_core 为 true，那么 client 各占一颗核，
- * 与其他 rpc_bench 进程建立的连接都归在同一个 client 实例下。
+ * If rpc_client_same_core is true, each client occupies one core,
+ * and connections to other rpc_bench processes are grouped under the same client instance.
  *
- * 如果 rpc_client_same_core 为 false，假如有 8 个 rpc_bench 进程，则每个 rpc_bench 进程的
- * client 实例各占一颗核。
+ * If rpc_client_same_core is false, for example with 8 rpc_bench processes, each process
+ * has its own client instance on a dedicated core.
 */
 void start_rpc_bench_server() {
     auto opts = msg::rdma::server::make_options(g_pt);

@@ -311,7 +311,7 @@ void monitor_client::change_pg_membership(const msg::PGInfo &info,
     _pm->change_pg_membership(pool_id, pgid, new_osd_infos, complete);    
 }
 
-//info为从monitor收到的pg的信息
+// info: PG info received from monitor
 void monitor_client::check_and_active_pg(monitor::client::pg_map::pool_id_type pool_id, 
                                     monitor::client::pg_map::pg_id_type pg_id, 
                                     monitor::client::pg_map::version_type pool_version, 
@@ -320,7 +320,7 @@ void monitor_client::check_and_active_pg(monitor::client::pg_map::pool_id_type p
     if(pit->version != 0)
         return;
 
-    //出现这种情况是当前osd刚重启，恢复处理的_pg_map中pg的版本都是0，这时需要激活pg
+    // This happens when the OSD just restarted; PG versions in _pg_map are all 0, need to activate PG
     
     
     bool pg_is_remap = (info.state() & PgRemapped) != 0;
