@@ -11,6 +11,7 @@
 #pragma once
 #include <chrono>
 
+#include <limits>
 #include <random>
 #include <string>
 #include <functional>
@@ -122,6 +123,8 @@ struct pg_info_type {
     uint64_t pg_id{0};
     int64_t   version{0};
     std::vector<int> osds{};
+    /** PG home shard index on OSD (monitor CoreIndex). UINT32_MAX = unknown. */
+    uint32_t coreindex{std::numeric_limits<uint32_t>::max()};
 };
 
 template <typename T>
