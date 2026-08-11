@@ -23,6 +23,7 @@
 #include <iostream>
 #include <errno.h>
 #include <sys/uio.h>
+#include <utility>
 
 
 using iovecs = std::vector<::iovec>;
@@ -72,17 +73,34 @@ private:
 // 偷懒的做法，不想封装迭代器，直接继承list
 class buffer_list : private std::list<spdk_buffer> {
 public:
+  buffer_list() noexcept = default;
+  buffer_list(const buffer_list&) = delete;
+  buffer_list& operator=(const buffer_list&) = delete;
+
+  buffer_list(buffer_list&& other) noexcept
+    : std::list<spdk_buffer>(std::move(other))
+    , total(std::exchange(other.total, 0)) {}
+
+  buffer_list& operator=(buffer_list&& other) noexcept {
+    if (this != &other) {
+      std::list<spdk_buffer>::operator=(std::move(other));
+      total = std::exchange(other.total, 0);
+    }
+    return *this;
+  }
 
   void append_buffer(buffer_list& bl) noexcept {
     size_t byte = bl.bytes();
     splice(end(), bl);
     total += byte;
+    bl.total = 0;
   }
 
   void append_buffer(buffer_list&& bl) noexcept {
     size_t bytes = bl.bytes();
     splice(end(), std::move(bl));
     total += bytes;
+    bl.total = 0;
   }
 
   void append_buffer(const spdk_buffer& sbuf) {
