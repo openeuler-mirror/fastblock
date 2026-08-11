@@ -180,7 +180,7 @@ raft_membership(void *arg1)
         }
         case CREATE_PG:
         {
-            cli->create_pg(server->node_id, server->pool_id, server->pg_id, g_pool_version);
+            cli->create_pg(server->node_id, server->pool_id, server->pg_id, 0, std::move(g_osd_list), g_pool_version);
             break;
         }
         default:
