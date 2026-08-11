@@ -84,14 +84,16 @@ public:
     }
 
     void process_response(){
+        int state = response.state();
         if (ctrlr.Failed()) {
-            response.set_state(err::RAFT_ERR_NO_CONNECTED);
+            state = err::RAFT_ERR_NO_CONNECTED;
             SPDK_ERRLOG("change membership in the pg %lu.%lu rpc failed: %s\n",
               _request->pool_id(), _request->pg_id(), ctrlr.ErrorText().c_str());
         } else {
             SPDK_NOTICELOG("change membership in the pg %lu.%lu result: %d\n",
-              _request->pool_id(), _request->pg_id(), response.state());
+              _request->pool_id(), _request->pg_id(), state);
         }
+        spdk_app_stop(state);
         delete this;
     }
 
@@ -112,14 +114,16 @@ public:
     }
 
     void process_response(){
+        int state = response.state();
         if (ctrlr.Failed()) {
-            response.set_state(err::RAFT_ERR_NO_CONNECTED);
+            state = err::RAFT_ERR_NO_CONNECTED;
             SPDK_ERRLOG("create pg %lu.%lu rpc failed: %s\n",
               _request->pool_id(), _request->pg_id(), ctrlr.ErrorText().c_str());
         } else {
             SPDK_NOTICELOG("create pg %lu.%lu result: %d\n",
-              _request->pool_id(), _request->pg_id(), response.state());
+              _request->pool_id(), _request->pg_id(), state);
         }
+        spdk_app_stop(state);
         delete this;
     }
 
@@ -321,12 +325,19 @@ public:
         return err::E_SUCCESS;
     }
 
-    int create_pg(int32_t target_node_id, uint64_t pool_id, uint64_t pg_id, int64_t pool_version){
+    int create_pg(int32_t target_node_id, uint64_t pool_id, uint64_t pg_id,
+                  uint32_t core_index, std::vector<raft_node_info> node_infos,
+                  int64_t pool_version){
         auto shard_id = 0;
         osd::create_pg_request* request = new osd::create_pg_request();
         request->set_pool_id(pool_id);
         request->set_pg_id(pg_id);
         request->set_vision_id(pool_version);
+        request->set_coreindex(core_index);
+        for (auto& node_info : node_infos) {
+            auto node = request->add_nodes();
+            *node = std::move(node_info);
+        }
 
         auto * source = new create_pg_source(request);
         auto done = google::protobuf::NewCallback(source, &create_pg_source::process_response);
