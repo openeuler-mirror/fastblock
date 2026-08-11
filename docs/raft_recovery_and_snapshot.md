@@ -134,3 +134,47 @@ message installsnapshot_response {
 leader给follower发送对象快照信息时，还需要发送创建快照时记录的_snapshot_index和_snapshot_term，且还需要有一个是否是此快照最后一批对象快照的标志，当follower收到最后一批对象快照信息并写入对象后，修改raft的_last_applied_idx（之前的都已经apply）为快照信息中的last_idx，修改raft的_current_idx分别为快照信息中的last_idx，修改raft的_commit_idx为快照信息中的last_idx，修改raft_log中的_next_idx为快照信息中的last_idx + 1。
 follower收到leader发送来的快照信息时，需要确保等follower的_last_applied_idx等于_commit_idx（即当前log都已经apply）后才处理。
 恢复完快照后，删除快照。
+
+# 3 关键回归测试缺口：大幅落后 follower 触发 install snapshot
+
+记录日期：2026-08-11。
+
+当前代码已经实现 install snapshot 路径。大幅落后 follower 的触发条件在 `raft_server_t::do_recovery()`：
+
+```c++
+if (next_idx < raft_get_log()->log_get_base_index()){
+    _recovery_by_snapshot(node);
+    return;
+}
+```
+
+这个 case 必须作为 raft 的关键回归场景单独覆盖。原因是普通 append entries recovery 只验证日志仍在 leader cache 或 disk log 中的情况，不能证明 follower 所需日志已经被 leader trim 后仍能恢复。
+
+## 3.1 目标场景
+
+建议自动化测试按下面步骤构造：
+
+1. 启动 4 OSD、8 PG、replica 3 的开发集群。
+2. 选定一个目标 PG，确认 leader 与 follower 分布。
+3. 停掉一个 follower，或阻断该 follower 的 append entries。
+4. 对目标 PG 持续写入，写入量要超过 raft log trim 阈值。
+5. 等待 leader 的 disk log trim 生效，使该 follower 的 `next_idx` 小于 leader 的 `log_get_base_index()`。
+6. 恢复 follower。
+7. 验证 leader 自动进入 `_recovery_by_snapshot()`，并出现 `snapshot_check`、`installsnapshot_request`、`installsnapshot_response` 流程。
+8. 验证 PG 最终恢复 active，业务 read-verify 通过，过程中无 assert、core dump、无限 recovery 或卡住。
+
+## 3.2 验收不变量
+
+- 大幅落后时必须自动触发 install snapshot，不能继续尝试读取已经 trim 的日志。
+- follower 收到最后一批 snapshot 后，`last_applied_idx`、`current_idx`、`commit_idx` 必须推进到 snapshot 的 `last_idx`。
+- follower 的 raft log next index 必须被设置为 `last_idx + 1`。
+- leader 后续必须从 `snapshot_index + 1` 继续给该 follower 追加日志。
+- snapshot recovery 结束后，leader 必须恢复 apply，清理临时 snapshot 资源。
+- 数据校验必须通过，不能只验证 raft 状态。
+
+## 3.3 当前风险点
+
+- `_snapshot_index` 对应 term 的查询如果碰到日志 trim 边界，可能失败或得到不一致状态。
+- follower 处理 `snapshot_check` 前要求 `commit_idx == last_applied_idx`，如果 apply 卡住会导致 snapshot recovery 卡住。
+- snapshot object recovery 的 `_obr` 生命周期、snapshot cleanup 与 leader stop/restart 交织时仍缺少压力验证。
+- 当前已有基础手工验证记录，但缺少专门、可重复、能在回归中稳定触发 `next_idx < log_get_base_index()` 的自动化用例。
