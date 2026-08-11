@@ -508,6 +508,18 @@ int raft_server_t::raft_process_appendentries_reply(
     node->raft_node_set_lease(r->lease());
 
     raft_index_t match_idx = node->raft_node_get_match_idx();
+    if (is_heartbeat &&
+            !node->raft_node_is_recovering() &&
+            r->current_idx() >= match_idx &&
+            r->current_idx() < raft_get_current_idx()) {
+        node->raft_node_set_next_idx(r->current_idx() + 1);
+        node->raft_node_set_match_idx(r->current_idx());
+        SPDK_NOTICELOG(
+          "pg: %lu.%lu, heartbeat shows node %d behind current_idx=%ld rsp_current_idx=%ld, dispatch recovery\n",
+          _pool_id, _pg_id, node->raft_node_get_id(), raft_get_current_idx(), r->current_idx());
+        dispatch_recovery(node);
+        return 0;
+    }
 
     if (0 == r->success())
     {
