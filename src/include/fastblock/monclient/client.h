@@ -464,6 +464,11 @@ public:
     utils::osd_info_t* get_pg_first_available_osd_info(int32_t pool_id, int32_t pg_id);
     int get_pg_num(int32_t pool_id);
     utils::osd_info_t* get_osd_info(const int32_t node_id);
+    /**
+     * RTC PR-6: return monitor CoreIndex (home shard) for pool.pg.
+     * Returns UINT32_MAX if unknown.
+     */
+    uint32_t get_pg_coreindex(int32_t pool_id, int32_t pg_id) const;
     pg_map& get_pg_map(){
         return _pg_map;
     }
