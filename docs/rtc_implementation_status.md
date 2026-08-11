@@ -27,6 +27,10 @@ g++ -std=c++20 -o /tmp/pg_shard_table_cow_test src/test/pg_shard_table_cow_test.
 ctest -R 'pg_home_shard|rtc_local_first|pg_shard_table_cow'
 ```
 
+## 未覆盖的关键回归
+
+- raft install snapshot 大幅落后 follower：必须自动化覆盖 `next_idx < log_get_base_index()` 后触发 `_recovery_by_snapshot()` 的场景。详细复现步骤、验收不变量和风险点见 [raft_recovery_and_snapshot.md](./raft_recovery_and_snapshot.md#3-关键回归测试缺口大幅落后-follower-触发-install-snapshot)。
+
 ## 环境变量
 
 | 变量 | 含义 |
