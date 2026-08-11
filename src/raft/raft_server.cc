@@ -16,6 +16,7 @@
 
 #include <string.h>
 #include <assert.h>
+#include <cstdlib>
 
 /* for varags */
 #include <stdarg.h>
@@ -649,6 +650,12 @@ int raft_server_t::raft_recv_appendentries(
               ae->prev_log_idx(),
               ae->prev_log_term(),
               entries_num);
+    if (0 < entries_num && std::getenv("FASTBLOCK_RAFT_RECOVERY_TEST_LOGS")) {
+        SPDK_NOTICELOG(
+          "raft recovery test appendentries received from node %d pg: %lu.%lu prev_log_idx:%ld entries %d leader_commit:%ld current_idx:%ld\n",
+          ae->node_id(), ae->pool_id(), ae->pg_id(), ae->prev_log_idx(), entries_num,
+          ae->leader_commit(), raft_get_current_idx());
+    }
 
     auto hand_error = [this, r, ae, complete](int err_num){
         r->set_term(raft_get_current_term());
