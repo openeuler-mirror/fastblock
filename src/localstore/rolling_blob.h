@@ -153,7 +153,7 @@ public:
         append(bl, cb_fn, arg);
     }
 
-    void append(buffer_list bl, rblob_rw_complete cb_fn, void* arg) {
+    void append(buffer_list& bl, rblob_rw_complete cb_fn, void* arg) {
         struct rblob_rw_ctx* ctx;
         uint64_t length = bl.bytes();
 
@@ -225,7 +225,7 @@ public:
         read(start, length, bl, cb_fn, arg, is_load);
     }
 
-    void read(uint64_t start, uint64_t length, buffer_list bl,
+    void read(uint64_t start, uint64_t length, buffer_list& bl,
             rblob_rw_complete cb_fn, void* arg, bool is_load = false) {
         struct rblob_rw_ctx* ctx;
 
