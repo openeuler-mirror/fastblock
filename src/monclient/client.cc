@@ -13,6 +13,8 @@
 #include "fastblock/monclient/messages.pb.h"
 #include "fastblock/utils/err_num.h"
 
+#include <limits>
+
 namespace {
 static void make_sharded_ports(
     const google::protobuf::Map<google::protobuf::uint32, msg::ShardCore>& proto_shard_ports,
@@ -318,13 +320,15 @@ void client::create_pg(pg_map::pool_id_type pool_id, std::string& pool_name, pg_
     auto pit = std::make_unique<utils::pg_info_type>();
     pit->pg_id = info.pgid();
     pit->version = info.version();
+    // RTC PR-6: sticky home_shard seed from monitor CoreIndex (proto3 field).
+    pit->coreindex = info.coreindex();
     std::string osd_str;
     for (auto osd_id : info.osdid()){
         pit->osds.push_back(osd_id);
         osd_str += std::to_string(osd_id) + ",";
     }
-    SPDK_DEBUGLOG(mon, "core [%u] pool: %d pg: %lu version: %ld  osd_list: %s\n",
-          ::spdk_env_get_current_core(), pool_id, pit->pg_id, pit->version, osd_str.data());
+    SPDK_DEBUGLOG(mon, "core [%u] pool: %d pg: %lu version: %ld coreindex: %u osd_list: %s\n",
+          ::spdk_env_get_current_core(), pool_id, pit->pg_id, pit->version, pit->coreindex, osd_str.data());
     _pg_map.pool_pg_map[pool_id].emplace(pit->pg_id, std::move(pit));
     _pg_map.add_pools(pool_id, pool_name);
 }
@@ -1072,6 +1076,18 @@ utils::osd_info_t* client::get_osd_info(const int32_t node_id) {
     }
 
     return it->second.get();
+}
+
+uint32_t client::get_pg_coreindex(int32_t pool_id, int32_t pg_id) const {
+    auto pool_it = _pg_map.pool_pg_map.find(pool_id);
+    if (pool_it == _pg_map.pool_pg_map.end()) {
+        return std::numeric_limits<uint32_t>::max();
+    }
+    auto pg_it = pool_it->second.find(pg_id);
+    if (pg_it == pool_it->second.end() || !pg_it->second) {
+        return std::numeric_limits<uint32_t>::max();
+    }
+    return pg_it->second->coreindex;
 }
 
 void client::send_leader_be_elected_notify_request(
