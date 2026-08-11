@@ -28,6 +28,18 @@ add_executable(pg_shard_table_cow_test
 )
 add_test(NAME pg_shard_table_cow_test COMMAND pg_shard_table_cow_test)
 
+add_executable(raft_contract_test
+  raft_contract_test.cc
+)
+target_include_directories(raft_contract_test
+  PRIVATE ${CMAKE_SOURCE_DIR}/src/include)
+target_link_libraries(raft_contract_test
+  PUBLIC
+    raft_msg
+    spdk::spdk
+)
+add_test(NAME raft_contract_test COMMAND raft_contract_test)
+
 add_executable(raft_membership
   osd_client.cc
   raft_membership.cc
