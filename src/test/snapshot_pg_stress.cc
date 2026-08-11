@@ -13,6 +13,7 @@
 
 #include <spdk/accel.h>
 #include <spdk/bdev.h>
+#include <spdk/event.h>
 #include <spdk/thread.h>
 
 enum {
@@ -87,6 +88,7 @@ static void on_read_finished(int state, const std::string& data)
 
     SPDK_NOTICELOG("snapshot_pg_stress read verify success, object=%s size=%lu\n",
       g_object_name.c_str(), data.size());
+    spdk_app_stop(0);
 }
 
 static void on_write_finished(osd_client* cli, server_t* server, int state)
@@ -106,6 +108,7 @@ static void on_write_finished(osd_client* cli, server_t* server, int state)
     if (g_done_count >= g_write_count) {
         SPDK_NOTICELOG("snapshot_pg_stress write finished object=%s pg=%lu.%lu\n",
           g_object_name.c_str(), server->pool_id, server->pg_id);
+        spdk_app_stop(0);
         return;
     }
 
