@@ -1,5 +1,33 @@
 find_package(absl REQUIRED)
 
+enable_testing()
+
+# RTC PR-1: sticky home_shard routing helpers (no SPDK / RDMA)
+add_executable(pg_home_shard_test
+  pg_home_shard_test.cc
+)
+
+target_include_directories(pg_home_shard_test
+  PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/include
+    ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_test(NAME pg_home_shard_test COMMAND pg_home_shard_test)
+
+# RTC PR-2: local-first predicate regression
+add_executable(rtc_local_first_test
+  rtc_local_first_test.cc
+)
+target_include_directories(rtc_local_first_test
+  PRIVATE ${CMAKE_SOURCE_DIR}/src/include)
+add_test(NAME rtc_local_first_test COMMAND rtc_local_first_test)
+
+# RTC PR-4: pg→shard COW semantics
+add_executable(pg_shard_table_cow_test
+  pg_shard_table_cow_test.cc
+)
+add_test(NAME pg_shard_table_cow_test COMMAND pg_shard_table_cow_test)
+
 add_executable(raft_membership
   osd_client.cc
   raft_membership.cc
